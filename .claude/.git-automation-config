@@ -1,0 +1,5 @@
+# Git Automation Config
+# このファイルが存在し enabled=true の場合のみ自動化が動作します
+enabled=true
+branch_prefix=dev/
+base_branch=main
