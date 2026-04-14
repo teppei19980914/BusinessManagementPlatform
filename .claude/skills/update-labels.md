@@ -13,6 +13,6 @@ description: アプリのラベルやメッセージを変更する
 4. 静的解析とテストで検証する
 
 ```bash
-{{ANALYZE_COMMAND}}
-{{TEST_COMMAND}}
+pnpm lint
+pnpm test
 ```

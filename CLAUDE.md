@@ -1,8 +1,8 @@
-# {{PROJECT_NAME}} - Claude Code 運用ガイド
+# たすきば Knowledge Relay - Claude Code 運用ガイド
 
 ## プロジェクト概要
 
-- **{{PROJECT_NAME}}** - {{TECH_STACK}} プロジェクト
+- **たすきば Knowledge Relay** - Next.js / TypeScript / PostgreSQL プロジェクト
 
 ## 情報源の信頼性ルール（必須遵守・例外なし）
 
@@ -72,7 +72,7 @@
    - **設計段階 (Skill)**: 新機能実装前に `/threat-model` で STRIDE 分析を必須化
    - **セキュリティテスト必須**: 認可境界、不正入力（SQLi/XSS payload）、認証バイパス試行のテストを追加
 3. **パフォーマンスチェック** — N+1禁止、不要な再描画、非同期並列化
-4. **デプロイチェック** — `{{ANALYZE_COMMAND}}` → `{{TEST_COMMAND}}` → `{{BUILD_COMMAND}}` をローカル実行
+4. **デプロイチェック** — `pnpm lint` → `pnpm test` → `pnpm build` をローカル実行
 5. **単体テスト** — テスト数の増減を確認、旧文言の残留を検索
 6. **ドキュメント最新化** — 変更内容に応じて以下のドキュメントを必ず更新する
    - `README.md` — プロジェクト概要・セットアップ手順

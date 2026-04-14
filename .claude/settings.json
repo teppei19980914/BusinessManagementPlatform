@@ -11,7 +11,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"{{PROJECT_DIR}}/.claude/hooks/session-start-git.sh\""
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/session-start-git.sh\""
           }
         ]
       }
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"{{PROJECT_DIR}}/.claude/hooks/block-dangerous-edit.sh\""
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/block-dangerous-edit.sh\""
           }
         ]
       }
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"{{PROJECT_DIR}}\" && {{FORMAT_COMMAND}} $(echo $CLAUDE_TOOL_INPUT | grep -oP '\"file_path\":\\s*\"\\K[^\"]+') 2>/dev/null || true"
+            "command": "cd \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform\" && pnpm prettier --write $(echo $CLAUDE_TOOL_INPUT | grep -oP '\"file_path\":\\s*\"\\K[^\"]+') 2>/dev/null || true"
           }
         ]
       }
@@ -43,15 +43,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"{{PROJECT_DIR}}/.claude/hooks/secret-scan.sh\""
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/secret-scan.sh\""
           },
           {
             "type": "command",
-            "command": "cd \"{{PROJECT_DIR}}\" && echo '=== デプロイチェック ===' && echo '--- 静的解析 ---' && {{ANALYZE_COMMAND}} 2>&1 && echo '--- テスト ---' && {{TEST_COMMAND}} 2>&1 && echo '=== チェック完了 ==='"
+            "command": "cd \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform\" && echo '=== デプロイチェック ===' && echo '--- 静的解析 ---' && pnpm lint 2>&1 && echo '--- テスト ---' && pnpm test 2>&1 && echo '=== チェック完了 ==='"
           },
           {
             "type": "command",
-            "command": "bash \"{{PROJECT_DIR}}/.claude/hooks/auto-commit.sh\""
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/auto-commit.sh\""
           },
           {
             "type": "prompt",
