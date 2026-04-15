@@ -2560,6 +2560,204 @@ tasukiba-vX.X.X.zip
   LICENSE
 ```
 
+#### 10.0.8 クラウド環境の構成
+
+外部ユーザが AWS または Azure でデプロイする場合の構成パターンを定義する。
+コンテナ方式とサーバレス方式の 2 パターンを提供する。
+
+##### 構成パターン一覧
+
+| パターン | AWS | Azure | 特徴 | 月額目安 |
+|---|---|---|---|---|
+| **A: コンテナ方式** | ECS Fargate + RDS | App Service + Azure DB for PostgreSQL | Docker イメージをそのまま利用。オンプレと同じ運用感 | $30〜80 |
+| **B: サーバレス方式** | Lambda (via SST) + Aurora Serverless v2 | Functions + Azure DB for PostgreSQL Flexible (Burstable) | 使った分だけ課金。低トラフィック時にコスト最小 | $10〜40 |
+
+##### パターン A: コンテナ方式
+
+**AWS 構成**
+
+```
+ユーザ (HTTPS)
+  |
+  v
+ALB (Application Load Balancer)
+  - SSL 終端
+  - ヘルスチェック
+  |
+  v
+ECS Fargate
+  - tasukiba-app コンテナ
+  - Dockerfile をそのまま使用
+  - 環境変数は Secrets Manager / Parameter Store から取得
+  |
+  v
+RDS PostgreSQL 16
+  - db.t4g.micro（Free Tier 対象: 12ヶ月無料）
+  - 自動バックアップ（7日間保持）
+  - Multi-AZ なし（コスト優先）
+```
+
+| コンポーネント | AWS サービス | スペック | 月額目安 |
+|---|---|---|---|
+| ロードバランサー | ALB | - | ~$16 |
+| アプリケーション | ECS Fargate | 0.25 vCPU / 0.5 GB | ~$10 |
+| データベース | RDS PostgreSQL | db.t4g.micro (Free Tier) | $0（初年度）/ ~$15 |
+| シークレット管理 | Secrets Manager | - | ~$1 |
+| コンテナレジストリ | ECR | - | ~$1 |
+| **合計** | | | **~$28（初年度）/ ~$43** |
+
+**Azure 構成**
+
+```
+ユーザ (HTTPS)
+  |
+  v
+Application Gateway / Front Door
+  - SSL 終端
+  |
+  v
+App Service (Linux)
+  - Docker コンテナデプロイ
+  - B1 プラン
+  |
+  v
+Azure Database for PostgreSQL Flexible Server
+  - Burstable B1ms
+  - 自動バックアップ（7日間保持）
+```
+
+| コンポーネント | Azure サービス | スペック | 月額目安 |
+|---|---|---|---|
+| アプリケーション | App Service (Linux B1) | 1 vCPU / 1.75 GB | ~$13 |
+| データベース | Azure DB for PostgreSQL (B1ms) | 1 vCPU / 2 GB | ~$25 |
+| SSL | App Service 付属 | - | $0 |
+| **合計** | | | **~$38** |
+
+**コンテナ方式のデプロイ手順（概要）**
+
+```bash
+# AWS の場合
+# 1. ECR にイメージをプッシュ
+docker build -t tasukiba .
+docker tag tasukiba:latest <account>.dkr.ecr.<region>.amazonaws.com/tasukiba:latest
+docker push <account>.dkr.ecr.<region>.amazonaws.com/tasukiba:latest
+
+# 2. ECS タスク定義で環境変数を設定（Secrets Manager 参照）
+# 3. ECS サービスを作成
+# 4. RDS に対してマイグレーション実行
+#    ローカルから DATABASE_URL を RDS に向けて実行
+pnpm prisma migrate deploy
+pnpm db:seed
+```
+
+```bash
+# Azure の場合
+# 1. App Service にコンテナデプロイ
+az webapp create --resource-group <rg> --plan <plan> \
+  --name tasukiba --deployment-container-image-name <image>
+
+# 2. Azure DB for PostgreSQL を作成
+# 3. App Service の環境変数を設定
+# 4. マイグレーション + シード実行
+```
+
+##### パターン B: サーバレス方式
+
+**AWS サーバレス構成**
+
+```
+ユーザ (HTTPS)
+  |
+  v
+CloudFront (CDN)
+  - 静的アセット配信
+  - SSL 終端
+  |
+  v
+API Gateway / Lambda (via SST or OpenNext)
+  - Next.js standalone を Lambda にデプロイ
+  - SST (Serverless Stack) または OpenNext で変換
+  - コールドスタート: ~1-2秒（初回アクセス時）
+  |
+  v
+Aurora Serverless v2 (PostgreSQL 互換)
+  - 0.5 ACU〜（使用量に応じて自動スケール）
+  - 未使用時は最小 ACU で待機
+  - 自動バックアップ
+```
+
+| コンポーネント | AWS サービス | 課金方式 | 月額目安（低トラフィック） |
+|---|---|---|---|
+| CDN | CloudFront | リクエスト数 | ~$1 |
+| API + 実行 | API Gateway + Lambda | リクエスト数 + 実行時間 | ~$1〜5 |
+| データベース | Aurora Serverless v2 | ACU 使用量 | ~$10〜30 |
+| シークレット管理 | Secrets Manager | - | ~$1 |
+| **合計** | | | **~$13〜37** |
+
+**Azure サーバレス構成**
+
+```
+ユーザ (HTTPS)
+  |
+  v
+Azure Static Web Apps / Front Door
+  - 静的アセット配信
+  - SSL 終端
+  |
+  v
+Azure Functions (Node.js)
+  - Next.js を Azure Functions Adapter でデプロイ
+  - 従量課金プラン
+  |
+  v
+Azure Database for PostgreSQL Flexible Server (Burstable)
+  - B1ms
+  - 自動バックアップ
+```
+
+| コンポーネント | Azure サービス | 課金方式 | 月額目安（低トラフィック） |
+|---|---|---|---|
+| 静的配信 | Static Web Apps (Free) | - | $0 |
+| API + 実行 | Functions (従量課金) | 実行数 + 実行時間 | ~$1〜5 |
+| データベース | Azure DB for PostgreSQL (B1ms) | 固定 | ~$25 |
+| **合計** | | | **~$26〜30** |
+
+##### サーバレス方式の注意事項
+
+| 注意点 | 影響 | 対策 |
+|---|---|---|
+| **コールドスタート** | 初回アクセスが 1〜2 秒遅延 | Provisioned Concurrency（AWS）で緩和可能（コスト増） |
+| **DB 接続数** | Lambda は同時実行ごとに接続を消費 | Prisma Data Proxy または RDS Proxy で接続プーリング |
+| **セッション管理** | Lambda はステートレス | DB セッション（現在の設計）で対応済み |
+| **Cron バッチ** | Lambda 単体では定期実行できない | EventBridge (AWS) / Timer Trigger (Azure) で実行 |
+| **デプロイ複雑度** | SST / OpenNext / Azure Adapter の学習コスト | セットアップガイドで手順を提供 |
+
+##### パターン選択ガイド
+
+| 判断基準 | コンテナ方式（A） | サーバレス方式（B） |
+|---|---|---|
+| チーム規模 | 10 名以上で常時利用 | 10 名以下、利用頻度にムラがある |
+| コスト優先度 | 月額固定で予測しやすい | 低トラフィック時にコスト最小化したい |
+| 運用スキル | Docker / ECS / App Service の経験あり | サーバレスの経験あり |
+| レスポンス | 常に高速 | コールドスタートを許容できる |
+| オンプレからの移行 | Docker イメージをそのまま使える | 追加のデプロイ設定が必要 |
+
+**推奨**: 初めてクラウドにデプロイするユーザには**コンテナ方式（A）**を推奨する。Docker Compose で動作確認した構成をそのままクラウドに持ち込めるため、学習コストが低い。
+
+##### 可搬性の確認（全デプロイ形態の対応状況）
+
+| 実装ルール | PC | オンプレ | クラウド(コンテナ) | クラウド(サーバレス) |
+|---|---|---|---|---|
+| Supabase 非依存 | ○ | ○ | ○ | ○ |
+| PostgreSQL 標準のみ | ○ | ○ | ○ | ○（Aurora 互換） |
+| 環境変数で全設定 | ○ | ○ | ○ | ○ |
+| MailProvider 抽象化 | ○ | ○ | ○ | ○ |
+| standalone ビルド | ○ | ○ | ○ | ○（Lambda 変換） |
+| CDN 非依存 | ○ | ○ | ○ | ○（CDN は任意） |
+| DB セッション | ○ | ○ | ○ | ○（ステートレス対応済） |
+| ポート変更可能 | ○ | ○ | -（LB で制御） | -（API Gateway で制御） |
+| Docker Compose | ○ | ○ | △（ECS 変換） | ×（SST/OpenNext） |
+
 ### 10.1 開発環境構成図
 
 ```
