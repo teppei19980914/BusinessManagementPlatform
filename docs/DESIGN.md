@@ -2134,46 +2134,16 @@ tasukiba-vX.X.X.zip
   LICENSE
 ```
 
-#### 10.0.3 Docker Compose による一式起動構成
+#### 10.0.3 セットアップ方法（2方式）
 
-外部ユーザが Docker のみで全て起動できる構成を提供する。
+外部ユーザの環境に応じて、Docker 方式と非 Docker 方式の 2 つを提供する。
 
-```yaml
-# docker-compose.yml（配布用）
-services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/tasukiba
-      - NEXTAUTH_URL=http://localhost:3000
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-      - RESEND_API_KEY=${RESEND_API_KEY}
-      - MAIL_FROM=${MAIL_FROM}
-    depends_on:
-      db:
-        condition: service_healthy
+| 方式 | 対象ユーザ | 必要なもの |
+|---|---|---|
+| **方式A: Docker** | Docker 導入済み or 新規導入可能 | Docker + Docker Compose |
+| **方式B: 非 Docker** | Docker を使わない or 使えない | Node.js 22 + PostgreSQL 16 |
 
-  db:
-    image: postgres:16
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_DB=tasukiba
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-    healthcheck:
-      test: ["CMD-LINE", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  pgdata:
-```
-
-外部ユーザの起動手順:
+##### 方式A: Docker によるセットアップ
 
 ```bash
 # 1. 展開
@@ -2181,31 +2151,175 @@ unzip tasukiba-vX.X.X.zip && cd tasukiba
 
 # 2. 環境変数設定
 cp .env.example .env
-# .env を編集（DB_PASSWORD, NEXTAUTH_SECRET 等）
+# .env を編集（ポート番号、パスワード等）
 
-# 3. 起動
+# 3. 起動（アプリ + DB が一括で起動）
 docker compose up -d
 
-# 4. マイグレーション + シード
+# 4. マイグレーション + 初期管理者作成
 docker compose exec app pnpm prisma migrate deploy
 docker compose exec app pnpm db:seed
 
-# 5. アクセス
-# http://localhost:3000
+# 5. アクセス → http://localhost:${APP_PORT}
 ```
 
-#### 10.0.4 可搬性を維持するための実装ルール
+##### 方式B: 非 Docker によるセットアップ
+
+```bash
+# 前提: Node.js 22 + pnpm + PostgreSQL 16 がインストール済み
+
+# 1. 展開
+unzip tasukiba-vX.X.X.zip && cd tasukiba
+
+# 2. 依存パッケージインストール
+pnpm install
+
+# 3. 環境変数設定
+cp .env.example .env
+# .env を編集（DATABASE_URL に既存の PostgreSQL 接続先を設定）
+
+# 4. マイグレーション + 初期管理者作成
+pnpm prisma migrate deploy
+pnpm db:seed
+
+# 5. ビルド + 起動
+pnpm build
+pnpm start
+
+# 6. アクセス → http://localhost:${APP_PORT}
+```
+
+#### 10.0.4 Docker Compose 設計（既存環境との衝突回避）
+
+Docker 運用中のユーザの既存環境に影響を与えないよう、以下の対策を設計する。
+
+##### 衝突回避の設計方針
+
+| 問題 | 対策 |
+|---|---|
+| ポート競合（3000, 5432 が使用中） | 全ポートを環境変数で変更可能にする |
+| コンテナ名の衝突 | プロジェクト名プレフィックス（tasukiba-）を自動付与 |
+| ボリューム名の衝突 | プロジェクト名プレフィックスで名前空間を分離 |
+| ネットワーク名の衝突 | 専用ネットワーク（tasukiba-network）を作成 |
+
+##### docker-compose.yml
+
+```yaml
+# docker-compose.yml
+# 全ポート・認証情報は .env で変更可能
+# 既存 Docker 環境との衝突を回避する設計
+
+name: tasukiba  # プロジェクト名（コンテナ・ボリューム・ネットワークのプレフィックス）
+
+services:
+  app:
+    build: .
+    container_name: tasukiba-app
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@tasukiba-db:5432/${DB_NAME:-tasukiba}
+      - DIRECT_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@tasukiba-db:5432/${DB_NAME:-tasukiba}
+      - NEXTAUTH_URL=http://localhost:${APP_PORT:-3000}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - tasukiba-network
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: tasukiba-db
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - tasukiba-pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${DB_NAME:-tasukiba}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tasukiba-network
+    restart: unless-stopped
+
+volumes:
+  tasukiba-pgdata:
+    name: tasukiba-pgdata
+
+networks:
+  tasukiba-network:
+    name: tasukiba-network
+```
+
+##### 衝突回避のポイント
+
+| 設計 | 説明 |
+|---|---|
+| `name: tasukiba` | Docker Compose プロジェクト名。全リソースに `tasukiba-` プレフィックスが付与される |
+| `container_name: tasukiba-app / tasukiba-db` | 明示的な名前で他プロジェクトと衝突しない |
+| `APP_PORT:-3000` | アプリポート。デフォルト 3000。競合時は .env で変更 |
+| `DB_PORT:-5433` | **DB 外部ポートはデフォルト 5433**（5432 は既存 PostgreSQL と競合しやすいため回避） |
+| `tasukiba-pgdata` | 名前付きボリュームで他プロジェクトのデータと分離 |
+| `tasukiba-network` | 専用ネットワークで他コンテナから分離 |
+| `restart: unless-stopped` | PC 再起動時に自動復旧 |
+
+##### .env.example（Docker 用の設定項目）
+
+```bash
+# === ポート設定（既存環境と競合する場合に変更） ===
+APP_PORT=3000
+DB_PORT=5433
+
+# === データベース設定 ===
+DB_NAME=tasukiba
+DB_USER=postgres
+DB_PASSWORD=     # 必須: 強力なパスワードを設定
+
+# === アプリケーション設定 ===
+NEXTAUTH_SECRET= # 必須: openssl rand -base64 32 で生成
+NEXTAUTH_URL=http://localhost:3000
+
+# === メール設定 ===
+MAIL_PROVIDER=console  # console / resend / smtp
+MAIL_FROM=noreply@example.com
+# Resend の場合
+RESEND_API_KEY=
+# SMTP の場合
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+
+# === 初期管理者（シード用） ===
+INITIAL_ADMIN_EMAIL=admin@example.com
+INITIAL_ADMIN_PASSWORD= # 必須: パスワードポリシー準拠
+
+# === オプション ===
+SEARCH_PROVIDER=pg_trgm
+ENABLE_OPERATION_TRACE=false
+```
+
+#### 10.0.5 可搬性を維持するための実装ルール
 
 | ルール | 理由 |
 |---|---|
 | Supabase 固有の API・機能を使用しない | 外部ユーザは素の PostgreSQL を使う |
 | PostgreSQL 標準機能のみ使用（pg_trgm 等の標準 contrib は可） | DB の可搬性を確保 |
 | 全ての外部サービス接続を環境変数で設定可能にする | 環境ごとに接続先が異なる |
+| 全ポートを環境変数で変更可能にする | 既存環境とのポート競合を回避 |
 | メール送信は MailProvider インターフェースで抽象化 | Resend / SMTP / コンソール出力を切替可能 |
 | Next.js は standalone モードでビルド | Docker イメージのサイズ最適化 + Vercel 非依存 |
 | 静的ファイルの CDN 依存なし | オフライン環境でも動作可能 |
+| Docker Compose のリソースにプロジェクト名プレフィックスを付与 | 既存コンテナ・ボリューム・ネットワークとの衝突回避 |
 
-#### 10.0.5 メール送信の環境別対応
+#### 10.0.6 メール送信の環境別対応
 
 | 環境 | プロバイダ | 設定 |
 |---|---|---|
@@ -2326,11 +2440,15 @@ docker compose exec app pnpm db:seed
 
 ### 10.4 環境変数一覧
 
+自社利用（Supabase）と外部配布（Docker / 直接インストール）で設定値が異なる。
+
+#### 共通
+
 | 変数名 | 説明 | 例 |
 |---|---|---|
-| DATABASE_URL | Supabase Pooler 接続文字列 | postgresql://postgres.[ref]:[pass]@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true |
-| DIRECT_URL | Supabase 直接接続文字列（マイグレーション用） | postgresql://postgres.[ref]:[pass]@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres |
-| NEXTAUTH_URL | アプリケーション URL | https://your-app.vercel.app |
+| DATABASE_URL | PostgreSQL 接続文字列 | （下記の環境別を参照） |
+| DIRECT_URL | 直接接続文字列（マイグレーション用） | （下記の環境別を参照） |
+| NEXTAUTH_URL | アプリケーション URL | http://localhost:3000 |
 | NEXTAUTH_SECRET | NextAuth 暗号化キー | ランダム文字列（32文字以上） |
 | NODE_ENV | 実行環境 | development / production |
 | MAIL_PROVIDER | メール送信プロバイダ | console（デフォルト）/ resend / smtp |
@@ -2344,6 +2462,24 @@ docker compose exec app pnpm db:seed
 | INITIAL_ADMIN_PASSWORD | 初期管理者パスワード（シード用） | （ポリシー準拠のパスワード） |
 | SEARCH_PROVIDER | 検索プロバイダ | pg_trgm（デフォルト） |
 | ENABLE_OPERATION_TRACE | 操作トレースログの有効/無効 | false（初期）/ true（本格運用時） |
+
+#### Docker 配布時のみ
+
+| 変数名 | 説明 | デフォルト |
+|---|---|---|
+| APP_PORT | アプリケーション公開ポート | 3000 |
+| DB_PORT | PostgreSQL 公開ポート | 5433（5432 との競合回避） |
+| DB_NAME | データベース名 | tasukiba |
+| DB_USER | データベースユーザ | postgres |
+| DB_PASSWORD | データベースパスワード | （必須設定） |
+
+#### 環境別の DATABASE_URL / DIRECT_URL
+
+| 環境 | DATABASE_URL | DIRECT_URL |
+|---|---|---|
+| 自社（Supabase） | Pooler 経由 (ポート 6543, ?pgbouncer=true) | 直接接続 (ポート 5432) |
+| Docker 配布 | postgresql://DB_USER:DB_PASSWORD@tasukiba-db:5432/DB_NAME | DATABASE_URL と同一 |
+| 非 Docker 配布 | ユーザの PostgreSQL 接続先 | DATABASE_URL と同一 |
 
 ---
 
