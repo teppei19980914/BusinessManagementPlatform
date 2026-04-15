@@ -145,7 +145,17 @@ export function ProjectDetailClient({ project, projectRole, systemRole }: Props)
         </TabsContent>
 
         <TabsContent value="tasks" className="mt-4">
-          <p className="text-gray-500">タスク管理はタスク #6 で実装予定です。</p>
+          <div className="flex justify-end">
+            <a
+              href={`/projects/${project.id}/tasks`}
+              className="text-sm text-blue-600 hover:underline"
+            >
+              タスク管理画面を開く →
+            </a>
+          </div>
+          <p className="mt-2 text-sm text-gray-500">
+            詳細なタスク管理（作成・編集・進捗更新）はタスク管理画面で行います。
+          </p>
         </TabsContent>
 
         <TabsContent value="knowledge" className="mt-4">
