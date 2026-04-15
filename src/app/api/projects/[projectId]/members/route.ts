@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { listMembers, addMember } from '@/services/member.service';
+import { recordAuditLog } from '@/services/audit.service';
 import { z } from 'zod/v4';
 
 const addMemberSchema = z.object({
@@ -12,13 +13,11 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> },
 ) {
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
-  }
-  if (session.user.systemRole !== 'admin') {
-    return NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
-  }
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;
+
+  const forbidden = requireAdmin(user);
+  if (forbidden) return forbidden;
 
   const { projectId } = await params;
   const members = await listMembers(projectId);
@@ -29,13 +28,11 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> },
 ) {
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
-  }
-  if (session.user.systemRole !== 'admin') {
-    return NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
-  }
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;
+
+  const forbidden = requireAdmin(user);
+  if (forbidden) return forbidden;
 
   const { projectId } = await params;
   const body = await req.json();
@@ -52,8 +49,17 @@ export async function POST(
       projectId,
       parsed.data.userId,
       parsed.data.projectRole,
-      session.user.id,
+      user.id,
     );
+
+    await recordAuditLog({
+      userId: user.id,
+      action: 'CREATE',
+      entityType: 'project_member',
+      entityId: member.id,
+      afterValue: { projectId, userId: parsed.data.userId, projectRole: parsed.data.projectRole },
+    });
+
     return NextResponse.json({ data: member }, { status: 201 });
   } catch (e) {
     if (e instanceof Error) {

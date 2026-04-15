@@ -2,6 +2,7 @@ import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/db';
+import { recordAuthEvent } from '@/services/auth-event.service';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -22,31 +23,38 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           where: { email, deletedAt: null },
         });
 
-        if (!user) return null;
+        if (!user) {
+          await recordAuthEvent({ eventType: 'login_failure', email, detail: { reason: 'user_not_found' } });
+          return null;
+        }
 
-        // アカウント有効性チェック
-        if (!user.isActive) return null;
+        if (!user.isActive) {
+          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'inactive' } });
+          return null;
+        }
 
-        // 恒久ロックチェック
-        if (user.permanentLock) return null;
+        if (user.permanentLock) {
+          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'permanent_lock' } });
+          return null;
+        }
 
-        // 一時ロックチェック
-        if (user.lockedUntil && user.lockedUntil > new Date()) return null;
+        if (user.lockedUntil && user.lockedUntil > new Date()) {
+          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'temporary_lock' } });
+          return null;
+        }
 
-        // パスワード照合
         const isValid = await compare(password, user.passwordHash);
 
         if (!isValid) {
-          // ログイン失敗: カウントをインクリメント
           const newCount = user.failedLoginCount + 1;
           const updateData: Record<string, unknown> = {
             failedLoginCount: newCount,
           };
 
-          // 10分以内に5回失敗で一時ロック
           if (newCount >= 5) {
-            updateData.lockedUntil = new Date(Date.now() + 30 * 60 * 1000); // 30分
+            updateData.lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
             updateData.failedLoginCount = 0;
+            await recordAuthEvent({ eventType: 'lock', userId: user.id, email, detail: { lockType: 'temporary' } });
           }
 
           await prisma.user.update({
@@ -54,10 +62,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             data: updateData,
           });
 
+          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'invalid_password' } });
           return null;
         }
 
-        // ログイン成功: カウントリセット + 最終ログイン日時更新
+        // ログイン成功
         await prisma.user.update({
           where: { id: user.id },
           data: {
@@ -66,6 +75,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             lastLoginAt: new Date(),
           },
         });
+
+        await recordAuthEvent({ eventType: 'login_success', userId: user.id, email });
 
         return {
           id: user.id,
@@ -79,7 +90,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   ],
   session: {
     strategy: 'jwt',
-    maxAge: 24 * 60 * 60, // 24時間
+    maxAge: 24 * 60 * 60,
   },
   pages: {
     signIn: '/login',

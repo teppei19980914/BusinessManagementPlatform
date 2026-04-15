@@ -1,29 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { createUserSchema } from '@/lib/validators/auth';
 import { listUsers, createUser } from '@/services/user.service';
+import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
+import { recordAuthEvent } from '@/services/auth-event.service';
 
 export async function GET() {
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
-  }
-  if (session.user.systemRole !== 'admin') {
-    return NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
-  }
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;
+
+  const forbidden = requireAdmin(user);
+  if (forbidden) return forbidden;
 
   const users = await listUsers();
   return NextResponse.json({ data: users });
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
-  }
-  if (session.user.systemRole !== 'admin') {
-    return NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
-  }
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;
+
+  const forbidden = requireAdmin(user);
+  if (forbidden) return forbidden;
 
   const body = await req.json();
   const parsed = createUserSchema.safeParse(body);
@@ -35,8 +33,24 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { user, recoveryCodes } = await createUser(parsed.data, session.user.id);
-    return NextResponse.json({ data: { user, recoveryCodes } }, { status: 201 });
+    const { user: newUser, recoveryCodes } = await createUser(parsed.data, user.id);
+
+    await recordAuditLog({
+      userId: user.id,
+      action: 'CREATE',
+      entityType: 'user',
+      entityId: newUser.id,
+      afterValue: sanitizeForAudit(newUser as unknown as Record<string, unknown>),
+    });
+
+    await recordAuthEvent({
+      eventType: 'account_created',
+      userId: newUser.id,
+      email: newUser.email,
+      detail: { createdBy: user.id },
+    });
+
+    return NextResponse.json({ data: { user: newUser, recoveryCodes } }, { status: 201 });
   } catch (e) {
     if (e instanceof Error && e.message === 'DUPLICATE_EMAIL') {
       return NextResponse.json(

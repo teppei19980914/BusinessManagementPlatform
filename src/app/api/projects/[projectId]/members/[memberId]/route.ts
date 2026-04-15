@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { updateMemberRole, removeMember } from '@/services/member.service';
+import { recordAuditLog } from '@/services/audit.service';
 import { z } from 'zod/v4';
 
 const updateRoleSchema = z.object({
@@ -11,13 +12,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ projectId: string; memberId: string }> },
 ) {
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
-  }
-  if (session.user.systemRole !== 'admin') {
-    return NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
-  }
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;
+
+  const forbidden = requireAdmin(user);
+  if (forbidden) return forbidden;
 
   const { memberId } = await params;
   const body = await req.json();
@@ -30,7 +29,16 @@ export async function PATCH(
   }
 
   try {
-    const member = await updateMemberRole(memberId, parsed.data.projectRole, session.user.id);
+    const member = await updateMemberRole(memberId, parsed.data.projectRole, user.id);
+
+    await recordAuditLog({
+      userId: user.id,
+      action: 'UPDATE',
+      entityType: 'project_member',
+      entityId: memberId,
+      afterValue: { projectRole: parsed.data.projectRole },
+    });
+
     return NextResponse.json({ data: member });
   } catch (e) {
     if (e instanceof Error && e.message === 'NOT_FOUND') {
@@ -47,18 +55,24 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ projectId: string; memberId: string }> },
 ) {
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
-  }
-  if (session.user.systemRole !== 'admin') {
-    return NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
-  }
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;
+
+  const forbidden = requireAdmin(user);
+  if (forbidden) return forbidden;
 
   const { memberId } = await params;
 
   try {
-    await removeMember(memberId, session.user.id);
+    await removeMember(memberId, user.id);
+
+    await recordAuditLog({
+      userId: user.id,
+      action: 'DELETE',
+      entityType: 'project_member',
+      entityId: memberId,
+    });
+
     return NextResponse.json({ data: { success: true } });
   } catch (e) {
     if (e instanceof Error && e.message === 'NOT_FOUND') {
