@@ -16,6 +16,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { LabeledSelect } from '@/components/labeled-select';
 import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -151,13 +152,12 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
                   </div>
                   <div className="space-y-2">
                     <Label>担当者</Label>
-                    <Select value={form.assigneeId} onValueChange={(v) => setForm({ ...form, assigneeId: v ?? '' })}>
-                      <SelectTrigger><SelectValue placeholder="未設定" /></SelectTrigger>
-                      <SelectContent>
-                        {members.length === 0 && <SelectItem value="" disabled>メンバー未登録</SelectItem>}
-                        {members.map((m) => <SelectItem key={m.userId} value={m.userId}>{m.userName}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <LabeledSelect
+                      value={form.assigneeId}
+                      onValueChange={(v) => setForm({ ...form, assigneeId: v ?? '' })}
+                      options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
+                      placeholder="未設定"
+                    />
                   </div>
                   <Button type="submit" className="w-full">起票</Button>
                 </form>

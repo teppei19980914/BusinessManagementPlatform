@@ -15,13 +15,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { LabeledSelect } from '@/components/labeled-select';
 import { TASK_CATEGORIES, TASK_STATUSES, PRIORITIES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
@@ -296,21 +289,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     {members.length === 0 ? (
                       <p className="text-sm text-red-500">メンバーが未登録です。先にメンバー管理から追加してください。</p>
                     ) : (
-                      <Select
+                      <LabeledSelect
                         value={form.assigneeId}
                         onValueChange={(v) => v && setForm({ ...form, assigneeId: v })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="選択..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {members.map((m) => (
-                            <SelectItem key={m.userId} value={m.userId}>
-                              {m.userName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
+                        placeholder="選択..."
+                      />
                     )}
                   </div>
                 </div>
