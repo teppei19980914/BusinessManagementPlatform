@@ -45,12 +45,26 @@ model User {
   authEventLogs        AuthEventLog[]
   roleChangesPerformed RoleChangeLog[]     @relation("RoleChanger")
   roleChangesReceived  RoleChangeLog[]     @relation("RoleTarget")
+  sessions             Session[]
   recoveryCodes        RecoveryCode[]
   passwordHistories    PasswordHistory[]
 
   @@unique([email], map: "idx_users_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
   @@map("users")
+}
+
+model Session {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionToken String   @unique @map("session_token") @db.VarChar(255)
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime @db.Timestamptz
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_sessions_user")
+  @@map("sessions")
 }
 
 model RecoveryCode {
