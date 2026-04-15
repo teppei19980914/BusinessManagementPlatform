@@ -43,7 +43,7 @@
 | フロントエンド | Next.js 15 (App Router) / React 19 / TypeScript |
 | UI | shadcn/ui / Tailwind CSS |
 | バックエンド | Next.js API Routes / Server Actions |
-| ORM | Prisma 6 |
+| ORM | Prisma 7 |
 | データベース | PostgreSQL 16 |
 | 認証 | NextAuth.js (Auth.js) 5 |
 | テスト | Vitest / Playwright |

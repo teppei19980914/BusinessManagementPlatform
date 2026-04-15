@@ -42,7 +42,7 @@
 | ガントチャート | @neodrag/gantt または自前実装 | - | MVP では読み取り専用のため軽量ライブラリで十分 |
 | 状態管理 | TanStack Query (React Query) | 5.x | サーバ状態管理、キャッシュ、楽観的更新 |
 | フォーム | React Hook Form + Zod | - | バリデーション共有（フロント/バック） |
-| ORM | Prisma | 6.x | 型安全なクエリ、マイグレーション管理 |
+| ORM | Prisma | 7.x | 型安全なクエリ、マイグレーション管理、pg adapter 方式 |
 | データベース | PostgreSQL | 16.x | JSONB 対応、全文検索、信頼性 |
 | 認証 | NextAuth.js (Auth.js) | 5.x | Credentials + OAuth 対応、セッション管理 |
 | テスト | Vitest + Playwright | - | 単体テスト + E2E テスト |
@@ -3393,21 +3393,42 @@ CREATE INDEX idx_risks_search
 
 ### 17.3 DB コネクションプール
 
-Supabase Free では Pooler（Transaction mode）経由での接続が必要。Prisma の設定に注意が必要。
+Prisma 7 では接続 URL を prisma.config.ts で管理し、ランタイム接続は pg adapter 経由で行う。
 
 | 項目 | 設定値 | 理由 |
 |---|---|---|
-| Prisma 接続プールサイズ | 5 | 初期 5〜10 名の利用に十分。Supabase Free の負荷軽減 |
+| pg Pool 接続数 | 5（pg Pool デフォルト: 10） | 初期 5〜10 名の利用に十分。Supabase Free の負荷軽減 |
 | 接続タイムアウト | 5 秒 | プール枯渇時の待機上限 |
-| 接続方式 | Supabase Pooler (Transaction mode) | Free プランの制約 |
+| 接続方式 | @prisma/adapter-pg（pg Pool 経由） | Prisma 7 の推奨方式 |
 
 ```prisma
-// schema.prisma - Supabase Free 対応設定
+// schema.prisma - Prisma 7 形式（URL は schema 内に記載しない）
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")       // Pooler 経由（ランタイム用）
-  directUrl = env("DIRECT_URL")         // 直接接続（マイグレーション用）
+  provider = "postgresql"
 }
+```
+
+```typescript
+// prisma.config.ts - マイグレーション用の接続設定
+export default defineConfig({
+  schema: 'prisma/schema.prisma',
+  datasource: {
+    // DIRECT_URL が設定されていればマイグレーション用に使用
+    // なければ DATABASE_URL を使用（ローカル開発時は同一）
+    url: process.env['DIRECT_URL'] || process.env['DATABASE_URL'],
+  },
+});
+```
+
+```typescript
+// src/lib/db.ts - ランタイム接続（pg adapter 経由）
+import { PrismaClient } from '@/generated/prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+export const prisma = new PrismaClient({ adapter });
 ```
 
 ### 17.4 ページネーション
