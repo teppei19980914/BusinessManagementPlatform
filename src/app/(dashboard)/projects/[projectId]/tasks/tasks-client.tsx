@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { LabeledSelect } from '@/components/labeled-select';
 import { TASK_CATEGORIES, TASK_STATUSES, PRIORITIES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -50,6 +51,7 @@ function TaskTreeNode({
   userId,
   projectId,
   router,
+  onLoading,
 }: {
   task: TaskDTO;
   depth: number;
@@ -58,6 +60,7 @@ function TaskTreeNode({
   userId: string;
   projectId: string;
   router: ReturnType<typeof useRouter>;
+  onLoading: <T>(fn: () => Promise<T>) => Promise<T>;
 }) {
   const [showProgress, setShowProgress] = useState(false);
   const [progressForm, setProgressForm] = useState({
@@ -71,11 +74,13 @@ function TaskTreeNode({
 
   async function handleProgressSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await fetch(`/api/projects/${projectId}/tasks/${task.id}/progress`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(progressForm),
-    });
+    await onLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/${task.id}/progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(progressForm),
+      }),
+    );
     setShowProgress(false);
     router.refresh();
   }
@@ -109,11 +114,29 @@ function TaskTreeNode({
         <td className="px-3 py-2 text-sm">{task.plannedStartDate}</td>
         <td className="px-3 py-2 text-sm">{task.plannedEndDate}</td>
         <td className="px-3 py-2">
-          {(canProgress || isAssignee) && (
-            <Button variant="outline" size="sm" onClick={() => setShowProgress(!showProgress)}>
-              進捗
-            </Button>
-          )}
+          <div className="flex gap-1">
+            {(canProgress || isAssignee) && (
+              <Button variant="outline" size="sm" onClick={() => setShowProgress(!showProgress)}>
+                進捗
+              </Button>
+            )}
+            {canEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red-600 hover:text-red-700"
+                onClick={async () => {
+                  if (!confirm('このタスクを削除しますか？')) return;
+                  await onLoading(() =>
+                    fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
+                  );
+                  router.refresh();
+                }}
+              >
+                削除
+              </Button>
+            )}
+          </div>
         </td>
       </tr>
       {showProgress && (
@@ -148,21 +171,12 @@ function TaskTreeNode({
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">ステータス</Label>
-                <Select
+                <LabeledSelect
                   value={progressForm.status}
                   onValueChange={(v) => v && setProgressForm({ ...progressForm, status: v })}
-                >
-                  <SelectTrigger className="w-28">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(TASK_STATUSES).map(([key, label]) => (
-                      <SelectItem key={key} value={key}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  options={TASK_STATUSES}
+                  className="w-28"
+                />
               </div>
               <Button type="submit" size="sm">
                 更新
@@ -184,6 +198,7 @@ function TaskTreeNode({
           userId={userId}
           projectId={projectId}
           router={router}
+          onLoading={onLoading}
         />
       ))}
     </>
@@ -270,21 +285,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>区分</Label>
-                    <Select
+                    <LabeledSelect
                       value={form.category}
                       onValueChange={(v) => v && setForm({ ...form, category: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(TASK_CATEGORIES).map(([key, label]) => (
-                          <SelectItem key={key} value={key}>
-                            {label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      options={TASK_CATEGORIES}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>担当者</Label>
@@ -338,28 +343,18 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       step={0.5}
                       value={form.plannedEffort}
                       onChange={(e) =>
-                        setForm({ ...form, plannedEffort: Number(e.target.value) })
+                        setForm({ ...form, plannedEffort: e.target.value })
                       }
                       required
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>優先度</Label>
-                    <Select
+                    <LabeledSelect
                       value={form.priority}
                       onValueChange={(v) => v && setForm({ ...form, priority: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(PRIORITIES).map(([key, label]) => (
-                          <SelectItem key={key} value={key}>
-                            {label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      options={PRIORITIES}
+                    />
                   </div>
                 </div>
                 <Button type="submit" className="w-full">
@@ -396,6 +391,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 userId={userId}
                 projectId={projectId}
                 router={router}
+                onLoading={withLoading}
               />
             ))}
             {tasks.length === 0 && (

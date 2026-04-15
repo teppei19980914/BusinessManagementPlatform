@@ -13,9 +13,7 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { LabeledSelect } from '@/components/labeled-select';
 import { TASK_CATEGORIES, DEV_METHODS, EFFORT_UNITS } from '@/types';
 import type { EstimateDTO } from '@/services/estimate.service';
 
@@ -96,21 +94,11 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>区分</Label>
-                    <Select value={form.category} onValueChange={(v) => v && setForm({ ...form, category: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(TASK_CATEGORIES).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <LabeledSelect value={form.category} onValueChange={(v) => v && setForm({ ...form, category: v })} options={TASK_CATEGORIES} />
                   </div>
                   <div className="space-y-2">
                     <Label>開発方式</Label>
-                    <Select value={form.devMethod} onValueChange={(v) => v && setForm({ ...form, devMethod: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(DEV_METHODS).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <LabeledSelect value={form.devMethod} onValueChange={(v) => v && setForm({ ...form, devMethod: v })} options={DEV_METHODS} />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -120,12 +108,7 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
                   </div>
                   <div className="space-y-2">
                     <Label>単位</Label>
-                    <Select value={form.effortUnit} onValueChange={(v) => v && setForm({ ...form, effortUnit: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(EFFORT_UNITS).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <LabeledSelect value={form.effortUnit} onValueChange={(v) => v && setForm({ ...form, effortUnit: v })} options={EFFORT_UNITS} />
                   </div>
                 </div>
                 <div className="space-y-2">
