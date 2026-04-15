@@ -66,7 +66,20 @@ export function UsersClient({ initialUsers }: Props) {
     const json = await res.json();
 
     if (!res.ok) {
-      setError(json.error?.message || json.error?.details?.[0]?.message || '登録に失敗しました');
+      const code = json.error?.code;
+      if (code === 'DUPLICATE_EMAIL') {
+        setError('このメールアドレスは既に登録されています。別のメールアドレスを使用してください。');
+      } else if (code === 'EMAIL_SEND_FAILED') {
+        setError(
+          '検証メールの送信に失敗しました。メールアドレスに誤りがないか確認し、再度お試しください。',
+        );
+      } else if (code === 'VALIDATION_ERROR') {
+        setError(
+          json.error?.details?.[0]?.message || '入力内容に不備があります。確認してください。',
+        );
+      } else {
+        setError(json.error?.message || '登録に失敗しました。しばらくしてから再度お試しください。');
+      }
       return;
     }
 

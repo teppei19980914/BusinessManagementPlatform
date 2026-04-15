@@ -2,7 +2,10 @@ import { prisma } from '@/lib/db';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import type { CreateUserInput } from '@/lib/validators/auth';
-import { sendVerificationEmail } from './email-verification.service';
+import {
+  sendVerificationEmail,
+  EmailSendError,
+} from './email-verification.service';
 
 const BCRYPT_COST = 12;
 const RECOVERY_CODE_COUNT = 10;
@@ -59,12 +62,31 @@ export async function createUser(
   creatorId: string,
   options?: { baseUrl?: string },
 ): Promise<{ user: UserDTO; recoveryCodes: string[] }> {
-  // メールアドレス重複チェック
-  const existing = await prisma.user.findFirst({
+  // メールアドレス重複チェック（有効なユーザ）
+  const existingActive = await prisma.user.findFirst({
     where: { email: input.email, deletedAt: null },
   });
-  if (existing) {
+  if (existingActive) {
     throw new Error('DUPLICATE_EMAIL');
+  }
+
+  // 未有効化（deletedAt 付き）の既存ユーザがあれば削除して再登録を許可
+  const existingInactive = await prisma.user.findFirst({
+    where: { email: input.email, deletedAt: { not: null }, isActive: false },
+  });
+  if (existingInactive) {
+    await prisma.$transaction([
+      prisma.emailVerificationToken.deleteMany({
+        where: { userId: existingInactive.id },
+      }),
+      prisma.recoveryCode.deleteMany({
+        where: { userId: existingInactive.id },
+      }),
+      prisma.roleChangeLog.deleteMany({
+        where: { targetUserId: existingInactive.id },
+      }),
+      prisma.user.delete({ where: { id: existingInactive.id } }),
+    ]);
   }
 
   const passwordHash = await hash(input.password, BCRYPT_COST);
@@ -75,14 +97,16 @@ export async function createUser(
     recoveryCodes.push(generateRecoveryCode());
   }
 
+  const requiresEmailVerification = process.env.MAIL_PROVIDER !== 'console';
+
   const user = await prisma.user.create({
     data: {
       name: input.name,
       email: input.email,
       passwordHash,
       systemRole: input.systemRole,
-      isActive: process.env.MAIL_PROVIDER === 'console',
-      deletedAt: process.env.MAIL_PROVIDER === 'console' ? null : new Date(),
+      isActive: !requiresEmailVerification,
+      deletedAt: requiresEmailVerification ? new Date() : null,
       forcePasswordChange: true,
       recoveryCodes: {
         create: await Promise.all(
@@ -107,8 +131,26 @@ export async function createUser(
   });
 
   // メール検証（MAIL_PROVIDER が console 以外の場合）
-  if (process.env.MAIL_PROVIDER !== 'console' && options?.baseUrl) {
-    await sendVerificationEmail(user.id, user.email, options.baseUrl);
+  if (requiresEmailVerification && options?.baseUrl) {
+    try {
+      await sendVerificationEmail(user.id, user.email, options.baseUrl);
+    } catch (e) {
+      // メール送信失敗時はユーザ・関連レコードをロールバック
+      await prisma.$transaction([
+        prisma.emailVerificationToken.deleteMany({
+          where: { userId: user.id },
+        }),
+        prisma.recoveryCode.deleteMany({ where: { userId: user.id } }),
+        prisma.roleChangeLog.deleteMany({
+          where: { targetUserId: user.id },
+        }),
+        prisma.user.delete({ where: { id: user.id } }),
+      ]);
+      if (e instanceof EmailSendError) {
+        throw new Error('EMAIL_SEND_FAILED');
+      }
+      throw e;
+    }
   }
 
   return { user: toUserDTO(user), recoveryCodes };
