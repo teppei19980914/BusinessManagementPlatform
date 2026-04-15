@@ -2105,6 +2105,122 @@ users テーブルへのカラム追加:
 
 ## 10. インフラ構成
 
+### 10.0 デプロイ方針と外部配布
+
+#### 10.0.1 想定デプロイ形態
+
+本システムは以下の 3 形態でのデプロイを想定する。
+
+| 形態 | 対象 | 構成 |
+|---|---|---|
+| **ローカル（PC）** | 個人・小規模チーム | Docker Compose で PC 上に一式起動 |
+| **オンプレミス** | 社内サーバ保有の組織 | 物理/仮想サーバに Docker または直接デプロイ |
+| **クラウド** | クラウド利用の組織 | Vercel + Supabase、AWS、Azure 等 |
+
+#### 10.0.2 配布形態
+
+アプリケーションを .zip パッケージとして配布し、外部ユーザが自前の環境で構築・運用する。
+
+```
+tasukiba-vX.X.X.zip
+  src/                     # アプリケーションコード
+  prisma/                  # スキーマ + マイグレーション
+  docker-compose.yml       # アプリ + PostgreSQL 一式起動
+  docker-compose.prod.yml  # 本番向け構成
+  Dockerfile               # アプリのコンテナイメージ
+  .env.example             # 環境変数テンプレート
+  package.json
+  SETUP.md                 # セットアップ手順（外部ユーザ向け）
+  LICENSE
+```
+
+#### 10.0.3 Docker Compose による一式起動構成
+
+外部ユーザが Docker のみで全て起動できる構成を提供する。
+
+```yaml
+# docker-compose.yml（配布用）
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/tasukiba
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - RESEND_API_KEY=${RESEND_API_KEY}
+      - MAIL_FROM=${MAIL_FROM}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=tasukiba
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-LINE", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+```
+
+外部ユーザの起動手順:
+
+```bash
+# 1. 展開
+unzip tasukiba-vX.X.X.zip && cd tasukiba
+
+# 2. 環境変数設定
+cp .env.example .env
+# .env を編集（DB_PASSWORD, NEXTAUTH_SECRET 等）
+
+# 3. 起動
+docker compose up -d
+
+# 4. マイグレーション + シード
+docker compose exec app pnpm prisma migrate deploy
+docker compose exec app pnpm db:seed
+
+# 5. アクセス
+# http://localhost:3000
+```
+
+#### 10.0.4 可搬性を維持するための実装ルール
+
+| ルール | 理由 |
+|---|---|
+| Supabase 固有の API・機能を使用しない | 外部ユーザは素の PostgreSQL を使う |
+| PostgreSQL 標準機能のみ使用（pg_trgm 等の標準 contrib は可） | DB の可搬性を確保 |
+| 全ての外部サービス接続を環境変数で設定可能にする | 環境ごとに接続先が異なる |
+| メール送信は MailProvider インターフェースで抽象化 | Resend / SMTP / コンソール出力を切替可能 |
+| Next.js は standalone モードでビルド | Docker イメージのサイズ最適化 + Vercel 非依存 |
+| 静的ファイルの CDN 依存なし | オフライン環境でも動作可能 |
+
+#### 10.0.5 メール送信の環境別対応
+
+| 環境 | プロバイダ | 設定 |
+|---|---|---|
+| 開発（ローカル） | ConsoleMailProvider | メール送信せずコンソール出力 |
+| 自社運用（クラウド） | ResendMailProvider | RESEND_API_KEY で設定 |
+| 外部配布（PC/オンプレ） | SmtpMailProvider | SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS で設定 |
+
+環境変数 `MAIL_PROVIDER` で切替:
+
+| 値 | プロバイダ |
+|---|---|
+| console（デフォルト） | コンソール出力 |
+| resend | Resend API |
+| smtp | SMTP 直接送信 |
+
 ### 10.1 開発環境構成図
 
 ```
@@ -2217,7 +2333,12 @@ users テーブルへのカラム追加:
 | NEXTAUTH_URL | アプリケーション URL | https://your-app.vercel.app |
 | NEXTAUTH_SECRET | NextAuth 暗号化キー | ランダム文字列（32文字以上） |
 | NODE_ENV | 実行環境 | development / production |
-| RESEND_API_KEY | Resend メール送信 API キー | re_xxxxxxxxxx |
+| MAIL_PROVIDER | メール送信プロバイダ | console（デフォルト）/ resend / smtp |
+| RESEND_API_KEY | Resend API キー（MAIL_PROVIDER=resend 時） | re_xxxxxxxxxx |
+| SMTP_HOST | SMTP ホスト（MAIL_PROVIDER=smtp 時） | smtp.example.com |
+| SMTP_PORT | SMTP ポート | 587 |
+| SMTP_USER | SMTP ユーザ名 | user@example.com |
+| SMTP_PASS | SMTP パスワード | （パスワード） |
 | MAIL_FROM | メール送信元アドレス | noreply@example.com |
 | INITIAL_ADMIN_EMAIL | 初期管理者メールアドレス（シード用） | admin@example.com |
 | INITIAL_ADMIN_PASSWORD | 初期管理者パスワード（シード用） | （ポリシー準拠のパスワード） |
@@ -2804,17 +2925,24 @@ export class ResendMailProvider implements MailProvider {
   }
 }
 
+// lib/mail/smtp-provider.ts（外部配布用: PC/オンプレ向け）
+// nodemailer を使用した SMTP 送信
+
 // lib/mail/console-provider.ts（開発環境用）
 // メールを送信せずコンソールに出力
 ```
 
 ```typescript
 // lib/mail/index.ts
+// 環境変数 MAIL_PROVIDER で切替（10.0.5 参照）
 export function createMailProvider(): MailProvider {
-  if (process.env.NODE_ENV === 'development') {
-    return new ConsoleMailProvider();
+  const provider = process.env.MAIL_PROVIDER || 'console';
+  switch (provider) {
+    case 'resend': return new ResendMailProvider();
+    case 'smtp': return new SmtpMailProvider();
+    case 'console':
+    default: return new ConsoleMailProvider();
   }
-  return new ResendMailProvider();
 }
 ```
 
