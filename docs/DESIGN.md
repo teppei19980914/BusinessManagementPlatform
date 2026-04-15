@@ -660,6 +660,15 @@ erDiagram
 
 ### 5.3 project_members（プロジェクトメンバー）
 
+ユーザとプロジェクトの多対多の紐付けを管理する中間テーブル。プロジェクトごとに異なるプロジェクトロールを付与する「プロジェクトメンバーシップ」を実現する。
+
+```
+User ──< project_members >── Project
+            (project_role)
+```
+
+**設計意図**: 同一ユーザが複数プロジェクトに参加する際、プロジェクトごとに異なるロール（PM/TL・メンバー・閲覧者）を持てるようにする。例えば、Aプロジェクトではメンバーとして作業し、Bプロジェクトでは PM/TL としてプロジェクトを運営する、といった柔軟な権限運用を可能にする。
+
 | カラム名 | 型 | NULL | デフォルト | 説明 |
 |---|---|---|---|---|
 | id | UUID | NO | gen_random_uuid() | 主キー |
@@ -670,7 +679,9 @@ erDiagram
 | created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
 | updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
 
-**制約**: UNIQUE(project_id, user_id)
+**制約**: UNIQUE(project_id, user_id) — 同一ユーザは同一プロジェクトに1つのロールのみ
+
+**権限チェックでの利用**: Service 層の権限判定で、操作対象プロジェクトに対するユーザのプロジェクトロールをこのテーブルから取得し、操作可否を判定する（詳細はセクション 8 参照）
 
 ### 5.4 estimates（見積もり）
 
@@ -1201,6 +1212,20 @@ function checkPermission(
   // 操作可 = ロール可 AND 状態可 AND 対象データ条件可
 }
 ```
+
+### 8.2.1 プロジェクトメンバーシップと権限判定の関係
+
+権限判定において、`projectRole` は `project_members` テーブルから取得する。
+一般ユーザがプロジェクト関連の操作を行う場合、以下の順序で判定する。
+
+```
+1. project_members テーブルで (project_id, user_id) を検索
+2. レコードが存在しない → アクセス拒否（プロジェクト未参加）
+3. レコードが存在する → project_role を取得
+4. project_role + project_status + resource_owner で操作可否を判定
+```
+
+システム管理者（`system_role = 'admin'`）はプロジェクトメンバーシップに関係なく全プロジェクトにアクセス可能。ただし、監査上は操作記録を残す。
 
 ### 8.3 権限マトリクス（実装用サマリ）
 
