@@ -8,6 +8,10 @@ export function createMailProvider(): MailProvider {
   const provider = process.env.MAIL_PROVIDER || 'console';
   switch (provider) {
     case 'resend':
+      if (!process.env.RESEND_API_KEY) {
+        console.warn('[MailProvider] MAIL_PROVIDER=resend ですが RESEND_API_KEY が未設定です。console にフォールバックします。');
+        return new ConsoleMailProvider();
+      }
       return new ResendMailProvider();
     case 'console':
     default:
