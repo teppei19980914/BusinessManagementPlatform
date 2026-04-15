@@ -120,6 +120,7 @@ model Project {
   estimates         Estimate[]
   tasks             Task[]
   risksIssues       RiskIssue[]
+  retrospectives    Retrospective[]
   knowledgeProjects KnowledgeProject[]
 
   @@index([status], map: "idx_projects_status")
@@ -334,6 +335,50 @@ model TaskKnowledge {
 
   @@unique([taskId, knowledgeId])
   @@map("task_knowledges")
+}
+
+// ============================================================
+// Retrospectives
+// ============================================================
+
+model Retrospective {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId               String    @map("project_id") @db.Uuid
+  conductedDate           DateTime  @map("conducted_date") @db.Date
+  planSummary             String    @map("plan_summary") @db.Text
+  actualSummary           String    @map("actual_summary") @db.Text
+  goodPoints              String    @map("good_points") @db.Text
+  problems                String    @db.Text
+  estimateGapFactors      String?   @map("estimate_gap_factors") @db.Text
+  scheduleGapFactors      String?   @map("schedule_gap_factors") @db.Text
+  qualityIssues           String?   @map("quality_issues") @db.Text
+  riskResponseEvaluation  String?   @map("risk_response_evaluation") @db.Text
+  improvements            String    @db.Text
+  knowledgeToShare        String?   @map("knowledge_to_share") @db.Text
+  state                   String    @default("draft") @db.VarChar(20)
+  createdBy               String    @map("created_by") @db.Uuid
+  updatedBy               String    @map("updated_by") @db.Uuid
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt               DateTime? @map("deleted_at") @db.Timestamptz
+
+  project  Project                @relation(fields: [projectId], references: [id])
+  comments RetrospectiveComment[]
+
+  @@index([projectId], map: "idx_retro_project")
+  @@map("retrospectives")
+}
+
+model RetrospectiveComment {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  retrospectiveId String   @map("retrospective_id") @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  content         String   @db.Text
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  retrospective Retrospective @relation(fields: [retrospectiveId], references: [id])
+
+  @@map("retrospective_comments")
 }
 
 // ============================================================

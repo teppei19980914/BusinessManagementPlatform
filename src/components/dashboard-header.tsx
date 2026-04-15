@@ -16,6 +16,7 @@ type DashboardHeaderProps = {
 
 const navItems = [
   { href: '/projects', label: 'プロジェクト' },
+  { href: '/my-tasks', label: 'マイタスク' },
   { href: '/knowledge', label: 'ナレッジ' },
 ];
 

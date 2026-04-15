@@ -95,6 +95,9 @@ export function ProjectDetailClient({ project, projectRole, systemRole }: Props)
             <TabsTrigger value="estimates">見積もり</TabsTrigger>
           )}
           <TabsTrigger value="tasks">WBS/タスク</TabsTrigger>
+          <TabsTrigger value="gantt">ガント</TabsTrigger>
+          <TabsTrigger value="risks">リスク/課題</TabsTrigger>
+          <TabsTrigger value="retrospectives">振り返り</TabsTrigger>
           <TabsTrigger value="knowledge">ナレッジ</TabsTrigger>
         </TabsList>
 
@@ -167,6 +170,30 @@ export function ProjectDetailClient({ project, projectRole, systemRole }: Props)
           <p className="mt-2 text-sm text-gray-500">
             詳細なタスク管理（作成・編集・進捗更新）はタスク管理画面で行います。
           </p>
+        </TabsContent>
+
+        <TabsContent value="gantt" className="mt-4">
+          <div className="flex justify-end">
+            <a href={`/projects/${project.id}/gantt`} className="text-sm text-blue-600 hover:underline">
+              ガントチャートを開く →
+            </a>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="risks" className="mt-4">
+          <div className="flex justify-end">
+            <a href={`/projects/${project.id}/risks`} className="text-sm text-blue-600 hover:underline">
+              リスク/課題管理画面を開く →
+            </a>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="retrospectives" className="mt-4">
+          <div className="flex justify-end">
+            <a href={`/projects/${project.id}/retrospectives`} className="text-sm text-blue-600 hover:underline">
+              振り返り画面を開く →
+            </a>
+          </div>
         </TabsContent>
 
         <TabsContent value="knowledge" className="mt-4">
