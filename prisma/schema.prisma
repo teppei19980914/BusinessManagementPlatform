@@ -1,0 +1,467 @@
+// たすきば Knowledge Relay - Prisma Schema
+// 設計書: docs/DESIGN.md セクション 4〜5
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// Users & Authentication
+// ============================================================
+
+model User {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String    @db.VarChar(100)
+  email             String    @db.VarChar(255)
+  passwordHash      String    @map("password_hash") @db.VarChar(255)
+  systemRole        String    @default("general") @map("system_role") @db.VarChar(20)
+  isActive          Boolean   @default(true) @map("is_active")
+  failedLoginCount  Int       @default(0) @map("failed_login_count")
+  lockedUntil       DateTime? @map("locked_until") @db.Timestamptz
+  permanentLock     Boolean   @default(false) @map("permanent_lock")
+  mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
+  mfaSecretEncrypted String?  @map("mfa_secret_encrypted") @db.VarChar(255)
+  mfaEnabledAt      DateTime? @map("mfa_enabled_at") @db.Timestamptz
+  lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz
+  forcePasswordChange Boolean @default(false) @map("force_password_change")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz
+
+  // Relations
+  projectMembers       ProjectMember[]     @relation("UserProjectMembers")
+  assignedTasks        Task[]              @relation("TaskAssignee")
+  taskProgressLogs     TaskProgressLog[]   @relation("ProgressUpdater")
+  reportedRisks        RiskIssue[]         @relation("RiskReporter")
+  assignedRisks        RiskIssue[]         @relation("RiskAssignee")
+  createdKnowledges    Knowledge[]         @relation("KnowledgeCreator")
+  updatedKnowledges    Knowledge[]         @relation("KnowledgeUpdater")
+  auditLogs            AuditLog[]
+  authEventLogs        AuthEventLog[]
+  roleChangesPerformed RoleChangeLog[]     @relation("RoleChanger")
+  roleChangesReceived  RoleChangeLog[]     @relation("RoleTarget")
+  sessions                Session[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  recoveryCodes           RecoveryCode[]
+  passwordHistories       PasswordHistory[]
+
+  @@unique([email], map: "idx_users_email")
+  @@index([isActive, lastLoginAt], map: "idx_users_active")
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionToken String   @unique @map("session_token") @db.VarChar(255)
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime @db.Timestamptz
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_sessions_user")
+  @@map("sessions")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  usedAt    DateTime? @map("used_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("email_verification_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  usedAt    DateTime? @map("used_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("password_reset_tokens")
+}
+
+model RecoveryCode {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  String    @map("code_hash") @db.VarChar(255)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("recovery_codes")
+}
+
+model PasswordHistory {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("password_histories")
+}
+
+// ============================================================
+// Projects
+// ============================================================
+
+model Project {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String    @db.VarChar(100)
+  customerName      String    @map("customer_name") @db.VarChar(100)
+  purpose           String    @db.Text
+  background        String    @db.Text
+  scope             String    @db.Text
+  outOfScope        String?   @map("out_of_scope") @db.Text
+  devMethod         String    @map("dev_method") @db.VarChar(30)
+  businessDomainTags Json     @default("[]") @map("business_domain_tags") @db.JsonB
+  techStackTags     Json      @default("[]") @map("tech_stack_tags") @db.JsonB
+  plannedStartDate  DateTime  @map("planned_start_date") @db.Date
+  plannedEndDate    DateTime  @map("planned_end_date") @db.Date
+  status            String    @default("planning") @db.VarChar(20)
+  notes             String?   @db.Text
+  createdBy         String    @map("created_by") @db.Uuid
+  updatedBy         String    @map("updated_by") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz
+
+  // Relations
+  members           ProjectMember[]
+  estimates         Estimate[]
+  tasks             Task[]
+  risksIssues       RiskIssue[]
+  retrospectives    Retrospective[]
+  knowledgeProjects KnowledgeProject[]
+
+  @@index([status], map: "idx_projects_status")
+  @@index([customerName], map: "idx_projects_customer")
+  @@index([plannedStartDate, plannedEndDate], map: "idx_projects_dates")
+  @@map("projects")
+}
+
+// ============================================================
+// Estimates
+// ============================================================
+
+model Estimate {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String    @map("project_id") @db.Uuid
+  itemName        String    @map("item_name") @db.VarChar(100)
+  category        String    @db.VarChar(30)
+  devMethod       String    @map("dev_method") @db.VarChar(30)
+  estimatedEffort Decimal   @map("estimated_effort") @db.Decimal(10, 2)
+  effortUnit      String    @map("effort_unit") @db.VarChar(20)
+  rationale       String    @db.Text
+  preconditions   String?   @db.Text
+  isConfirmed     Boolean   @default(false) @map("is_confirmed")
+  notes           String?   @db.Text
+  createdBy       String    @map("created_by") @db.Uuid
+  updatedBy       String    @map("updated_by") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId], map: "idx_estimates_project")
+  @@map("estimates")
+}
+
+model ProjectMember {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String   @map("project_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  projectRole String   @map("project_role") @db.VarChar(20)
+  assignedBy  String   @map("assigned_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation("UserProjectMembers", fields: [userId], references: [id])
+
+  @@unique([projectId, userId], map: "uq_pm_project_user")
+  @@index([projectId], map: "idx_pm_project")
+  @@index([userId], map: "idx_pm_user")
+  @@map("project_members")
+}
+
+// ============================================================
+// Tasks / WBS
+// ============================================================
+
+model Task {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId        String    @map("project_id") @db.Uuid
+  parentTaskId     String?   @map("parent_task_id") @db.Uuid
+  wbsNumber        String?   @map("wbs_number") @db.VarChar(50)
+  name             String    @db.VarChar(100)
+  description      String?   @db.Text
+  category         String    @db.VarChar(30)
+  assigneeId       String    @map("assignee_id") @db.Uuid
+  plannedStartDate DateTime  @map("planned_start_date") @db.Date
+  plannedEndDate   DateTime  @map("planned_end_date") @db.Date
+  plannedEffort    Decimal   @map("planned_effort") @db.Decimal(10, 2)
+  priority         String?   @default("medium") @db.VarChar(10)
+  status           String    @default("not_started") @db.VarChar(20)
+  progressRate     Int       @default(0) @map("progress_rate")
+  isMilestone      Boolean   @default(false) @map("is_milestone")
+  notes            String?   @db.Text
+  createdBy        String    @map("created_by") @db.Uuid
+  updatedBy        String    @map("updated_by") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
+
+  // Relations
+  project      Project          @relation(fields: [projectId], references: [id])
+  parentTask   Task?            @relation("TaskHierarchy", fields: [parentTaskId], references: [id])
+  childTasks   Task[]           @relation("TaskHierarchy")
+  assignee     User             @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  progressLogs TaskProgressLog[]
+  taskKnowledges TaskKnowledge[]
+
+  @@index([projectId], map: "idx_tasks_project")
+  @@index([assigneeId, status], map: "idx_tasks_assignee")
+  @@index([parentTaskId], map: "idx_tasks_parent")
+  @@index([projectId, plannedStartDate, plannedEndDate], map: "idx_tasks_gantt")
+  @@map("tasks")
+}
+
+model TaskProgressLog {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId          String    @map("task_id") @db.Uuid
+  updatedBy       String    @map("updated_by") @db.Uuid
+  updateDate      DateTime  @map("update_date") @db.Date
+  progressRate    Int       @map("progress_rate")
+  actualEffort    Decimal   @map("actual_effort") @db.Decimal(10, 2)
+  remainingEffort Decimal?  @map("remaining_effort") @db.Decimal(10, 2)
+  status          String    @db.VarChar(20)
+  isDelayed       Boolean   @default(false) @map("is_delayed")
+  delayReason     String?   @map("delay_reason") @db.Text
+  workMemo        String?   @map("work_memo") @db.Text
+  hasIssue        Boolean   @default(false) @map("has_issue")
+  nextAction      String?   @map("next_action") @db.Text
+  completedDate   DateTime? @map("completed_date") @db.Date
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  task    Task @relation(fields: [taskId], references: [id])
+  updater User @relation("ProgressUpdater", fields: [updatedBy], references: [id])
+
+  @@index([taskId, updateDate(sort: Desc)], map: "idx_progress_task")
+  @@map("task_progress_logs")
+}
+
+// ============================================================
+// Risks & Issues
+// ============================================================
+
+model RiskIssue {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String    @map("project_id") @db.Uuid
+  type            String    @db.VarChar(10) // risk | issue
+  title           String    @db.VarChar(100)
+  content         String    @db.Text
+  cause           String?   @db.Text
+  impact          String    @db.VarChar(10) // low | medium | high
+  likelihood      String?   @db.VarChar(10)
+  priority        String    @db.VarChar(10) // low | medium | high
+  responsePolicy  String?   @map("response_policy") @db.Text
+  responseDetail  String?   @map("response_detail") @db.Text
+  reporterId      String    @map("reporter_id") @db.Uuid
+  assigneeId      String?   @map("assignee_id") @db.Uuid
+  deadline        DateTime? @db.Date
+  state           String    @default("open") @db.VarChar(20)
+  result          String?   @db.Text
+  lessonLearned   String?   @map("lesson_learned") @db.Text
+  createdBy       String    @map("created_by") @db.Uuid
+  updatedBy       String    @map("updated_by") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+
+  project  Project @relation(fields: [projectId], references: [id])
+  reporter User    @relation("RiskReporter", fields: [reporterId], references: [id])
+  assignee User?   @relation("RiskAssignee", fields: [assigneeId], references: [id])
+
+  @@index([projectId, type], map: "idx_risks_project")
+  @@index([state, priority], map: "idx_risks_state")
+  @@index([assigneeId], map: "idx_risks_assignee")
+  @@map("risks_issues")
+}
+
+// ============================================================
+// Knowledge
+// ============================================================
+
+model Knowledge {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title          String    @db.VarChar(150)
+  knowledgeType  String    @map("knowledge_type") @db.VarChar(30)
+  background     String    @db.Text
+  content        String    @db.Text
+  result         String    @db.Text
+  conclusion     String?   @db.Text
+  recommendation String?   @db.Text
+  reusability    String?   @db.VarChar(10)
+  techTags       Json      @default("[]") @map("tech_tags") @db.JsonB
+  devMethod      String?   @map("dev_method") @db.VarChar(30)
+  processTags    Json      @default("[]") @map("process_tags") @db.JsonB
+  visibility     String    @default("draft") @db.VarChar(20) // draft | project | company
+  createdBy      String    @map("created_by") @db.Uuid
+  updatedBy      String    @map("updated_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
+
+  creator           User               @relation("KnowledgeCreator", fields: [createdBy], references: [id])
+  updater           User               @relation("KnowledgeUpdater", fields: [updatedBy], references: [id])
+  knowledgeProjects KnowledgeProject[]
+  taskKnowledges    TaskKnowledge[]
+
+  @@index([knowledgeType], map: "idx_knowledges_type")
+  @@index([visibility], map: "idx_knowledges_visibility")
+  @@map("knowledges")
+}
+
+model KnowledgeProject {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  knowledgeId String @map("knowledge_id") @db.Uuid
+  projectId   String @map("project_id") @db.Uuid
+
+  knowledge Knowledge @relation(fields: [knowledgeId], references: [id])
+  project   Project   @relation(fields: [projectId], references: [id])
+
+  @@unique([knowledgeId, projectId])
+  @@map("knowledge_projects")
+}
+
+model TaskKnowledge {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId      String @map("task_id") @db.Uuid
+  knowledgeId String @map("knowledge_id") @db.Uuid
+
+  task      Task      @relation(fields: [taskId], references: [id])
+  knowledge Knowledge @relation(fields: [knowledgeId], references: [id])
+
+  @@unique([taskId, knowledgeId])
+  @@map("task_knowledges")
+}
+
+// ============================================================
+// Retrospectives
+// ============================================================
+
+model Retrospective {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId               String    @map("project_id") @db.Uuid
+  conductedDate           DateTime  @map("conducted_date") @db.Date
+  planSummary             String    @map("plan_summary") @db.Text
+  actualSummary           String    @map("actual_summary") @db.Text
+  goodPoints              String    @map("good_points") @db.Text
+  problems                String    @db.Text
+  estimateGapFactors      String?   @map("estimate_gap_factors") @db.Text
+  scheduleGapFactors      String?   @map("schedule_gap_factors") @db.Text
+  qualityIssues           String?   @map("quality_issues") @db.Text
+  riskResponseEvaluation  String?   @map("risk_response_evaluation") @db.Text
+  improvements            String    @db.Text
+  knowledgeToShare        String?   @map("knowledge_to_share") @db.Text
+  state                   String    @default("draft") @db.VarChar(20)
+  createdBy               String    @map("created_by") @db.Uuid
+  updatedBy               String    @map("updated_by") @db.Uuid
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt               DateTime? @map("deleted_at") @db.Timestamptz
+
+  project  Project                @relation(fields: [projectId], references: [id])
+  comments RetrospectiveComment[]
+
+  @@index([projectId], map: "idx_retro_project")
+  @@map("retrospectives")
+}
+
+model RetrospectiveComment {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  retrospectiveId String   @map("retrospective_id") @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  content         String   @db.Text
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  retrospective Retrospective @relation(fields: [retrospectiveId], references: [id])
+
+  @@map("retrospective_comments")
+}
+
+// ============================================================
+// Audit & Logging
+// ============================================================
+
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  action      String   @db.VarChar(50) // CREATE | UPDATE | DELETE
+  entityType  String   @map("entity_type") @db.VarChar(50)
+  entityId    String   @map("entity_id") @db.Uuid
+  beforeValue Json?    @map("before_value") @db.JsonB
+  afterValue  Json?    @map("after_value") @db.JsonB
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId], map: "idx_audit_entity")
+  @@index([userId, createdAt(sort: Desc)], map: "idx_audit_user")
+  @@index([createdAt(sort: Desc)], map: "idx_audit_date")
+  @@map("audit_logs")
+}
+
+model AuthEventLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventType String   @map("event_type") @db.VarChar(30)
+  userId    String?  @map("user_id") @db.Uuid
+  email     String?  @db.VarChar(255)
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+  userAgent String?  @map("user_agent") @db.Text
+  detail    Json?    @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_auth_events_user")
+  @@index([eventType, createdAt(sort: Desc)], map: "idx_auth_events_type")
+  @@map("auth_event_logs")
+}
+
+model RoleChangeLog {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  changedBy    String    @map("changed_by") @db.Uuid
+  targetUserId String    @map("target_user_id") @db.Uuid
+  changeType   String    @map("change_type") @db.VarChar(20) // system_role | project_role
+  projectId    String?   @map("project_id") @db.Uuid
+  beforeRole   String?   @map("before_role") @db.VarChar(30)
+  afterRole    String    @map("after_role") @db.VarChar(30)
+  reason       String?   @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  changer    User @relation("RoleChanger", fields: [changedBy], references: [id])
+  targetUser User @relation("RoleTarget", fields: [targetUserId], references: [id])
+
+  @@map("role_change_logs")
+}
