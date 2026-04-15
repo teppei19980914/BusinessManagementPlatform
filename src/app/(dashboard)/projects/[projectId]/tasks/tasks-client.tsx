@@ -56,6 +56,12 @@ function TaskTreeNode({
   onLoading: <T>(fn: () => Promise<T>) => Promise<T>;
 }) {
   const [showProgress, setShowProgress] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: task.name,
+    plannedStartDate: task.plannedStartDate,
+    plannedEndDate: task.plannedEndDate,
+  });
   const [progressForm, setProgressForm] = useState({
     progressRate: task.progressRate,
     actualEffort: 0,
@@ -64,6 +70,19 @@ function TaskTreeNode({
 
   const isAssignee = task.assigneeId === userId;
   const canProgress = canUpdateProgress || (canUpdateProgress === false && isAssignee);
+
+  async function handleEditSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await onLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      }),
+    );
+    setShowEdit(false);
+    router.refresh();
+  }
 
   async function handleProgressSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -112,6 +131,9 @@ function TaskTreeNode({
               <Button variant="outline" size="sm" onClick={() => setShowProgress(!showProgress)}>
                 進捗
               </Button>
+            )}
+            {canEdit && (
+              <Button variant="outline" size="sm" onClick={() => setShowEdit(!showEdit)}>編集</Button>
             )}
             {canEdit && (
               <Button
@@ -177,6 +199,28 @@ function TaskTreeNode({
               <Button type="button" variant="outline" size="sm" onClick={() => setShowProgress(false)}>
                 閉じる
               </Button>
+            </form>
+          </td>
+        </tr>
+      )}
+      {showEdit && (
+        <tr className="border-b bg-green-50">
+          <td colSpan={7} className="px-6 py-3">
+            <form onSubmit={handleEditSubmit} className="flex items-end gap-4">
+              <div className="space-y-1">
+                <Label className="text-xs">タスク名</Label>
+                <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="w-48" required />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">開始日</Label>
+                <Input type="date" value={editForm.plannedStartDate} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} className="w-36" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">終了日</Label>
+                <Input type="date" value={editForm.plannedEndDate} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} className="w-36" />
+              </div>
+              <Button type="submit" size="sm">保存</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowEdit(false)}>閉じる</Button>
             </form>
           </td>
         </tr>

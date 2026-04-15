@@ -30,13 +30,6 @@ type Props = {
   systemRole: string;
 };
 
-const stateColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  open: 'destructive',
-  in_progress: 'default',
-  monitoring: 'secondary',
-  resolved: 'outline',
-};
-
 const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
   high: 'destructive',
   medium: 'default',
@@ -177,6 +170,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
             <TableHead>状態</TableHead>
             <TableHead>担当者</TableHead>
             <TableHead>起票日</TableHead>
+            {canCreate && <TableHead>操作</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -186,13 +180,48 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
               <TableCell className="font-medium">{r.title}</TableCell>
               <TableCell><Badge variant={impactColors[r.impact] || 'secondary'}>{PRIORITIES[r.impact as keyof typeof PRIORITIES]}</Badge></TableCell>
               <TableCell><Badge variant={impactColors[r.priority] || 'secondary'}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Badge></TableCell>
-              <TableCell><Badge variant={stateColors[r.state] || 'outline'}>{RISK_ISSUE_STATES[r.state as keyof typeof RISK_ISSUE_STATES]}</Badge></TableCell>
+              <TableCell>
+                <LabeledSelect
+                  value={r.state}
+                  onValueChange={async (v) => {
+                    if (!v || v === r.state) return;
+                    await withLoading(() =>
+                      fetch(`/api/projects/${projectId}/risks/${r.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ state: v }),
+                      }),
+                    );
+                    router.refresh();
+                  }}
+                  options={RISK_ISSUE_STATES}
+                  className="w-24"
+                />
+              </TableCell>
               <TableCell>{r.assigneeName || '-'}</TableCell>
               <TableCell>{new Date(r.createdAt).toLocaleDateString('ja-JP')}</TableCell>
+              {canCreate && (
+                <TableCell>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-red-600"
+                    onClick={async () => {
+                      if (!confirm('このリスク/課題を削除しますか？')) return;
+                      await withLoading(() =>
+                        fetch(`/api/projects/${projectId}/risks/${r.id}`, { method: 'DELETE' }),
+                      );
+                      router.refresh();
+                    }}
+                  >
+                    削除
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
           {risks.length === 0 && (
-            <TableRow><TableCell colSpan={7} className="py-8 text-center text-gray-500">リスク / 課題がありません</TableCell></TableRow>
+            <TableRow><TableCell colSpan={canCreate ? 8 : 7} className="py-8 text-center text-gray-500">リスク / 課題がありません</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

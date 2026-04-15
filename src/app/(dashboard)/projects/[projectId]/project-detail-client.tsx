@@ -9,6 +9,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
+} from '@/components/ui/dialog';
+import { LabeledSelect } from '@/components/labeled-select';
 import { PROJECT_STATUSES, DEV_METHODS } from '@/types';
 import type { ProjectDTO } from '@/services/project.service';
 import type { EstimateDTO } from '@/services/estimate.service';
@@ -60,6 +66,46 @@ export function ProjectDetailClient({
   const canChangeStatus = systemRole === 'admin' || projectRole === 'pm_tl';
   const nextStatuses = NEXT_STATUSES[project.status] || [];
 
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: project.name,
+    customerName: project.customerName,
+    purpose: project.purpose,
+    background: project.background,
+    scope: project.scope,
+    devMethod: project.devMethod,
+    plannedStartDate: project.plannedStartDate,
+    plannedEndDate: project.plannedEndDate,
+  });
+  const [editError, setEditError] = useState('');
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    setEditError('');
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      }),
+    );
+    if (!res.ok) {
+      const json = await res.json();
+      setEditError(json.error?.message || '更新に失敗しました');
+      return;
+    }
+    setIsEditOpen(false);
+    router.refresh();
+  }
+
+  async function handleDelete() {
+    if (!confirm('このプロジェクトを削除しますか？この操作は取り消せません。')) return;
+    await withLoading(() =>
+      fetch(`/api/projects/${project.id}`, { method: 'DELETE' }),
+    );
+    router.push('/projects');
+  }
+
   async function handleStatusChange(newStatus: string | null) {
     if (!newStatus) return;
     setIsChangingStatus(true);
@@ -101,6 +147,50 @@ export function ProjectDetailClient({
                 ))}
               </SelectContent>
             </Select>
+          )}
+          {canEdit && (
+            <>
+              <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+                <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">編集</DialogTrigger>
+                <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>プロジェクト編集</DialogTitle>
+                    <DialogDescription>プロジェクト情報を編集してください。</DialogDescription>
+                  </DialogHeader>
+                  <form onSubmit={handleEdit} className="space-y-4">
+                    {editError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{editError}</div>}
+                    <div className="space-y-2">
+                      <Label>プロジェクト名</Label>
+                      <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>顧客名</Label>
+                      <Input value={editForm.customerName} onChange={(e) => setEditForm({ ...editForm, customerName: e.target.value })} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>目的</Label>
+                      <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.purpose} onChange={(e) => setEditForm({ ...editForm, purpose: e.target.value })} rows={3} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>開発方式</Label>
+                      <LabeledSelect value={editForm.devMethod} onValueChange={(v) => v && setEditForm({ ...editForm, devMethod: v })} options={DEV_METHODS} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>開始予定日</Label>
+                        <Input type="date" value={editForm.plannedStartDate} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} required />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>終了予定日</Label>
+                        <Input type="date" value={editForm.plannedEndDate} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} required />
+                      </div>
+                    </div>
+                    <Button type="submit" className="w-full">更新</Button>
+                  </form>
+                </DialogContent>
+              </Dialog>
+              <Button variant="outline" className="text-red-600" onClick={handleDelete}>削除</Button>
+            </>
           )}
           <Button variant="outline" onClick={() => router.push('/projects')}>
             一覧に戻る

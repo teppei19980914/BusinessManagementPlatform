@@ -240,6 +240,7 @@ export function KnowledgeClient({ initialKnowledge, initialTotal }: Props) {
             <TableHead>公開範囲</TableHead>
             <TableHead>作成者</TableHead>
             <TableHead>作成日</TableHead>
+            <TableHead>操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -266,11 +267,27 @@ export function KnowledgeClient({ initialKnowledge, initialTotal }: Props) {
               </TableCell>
               <TableCell>{k.creatorName || '-'}</TableCell>
               <TableCell>{new Date(k.createdAt).toLocaleDateString('ja-JP')}</TableCell>
+              <TableCell>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-red-600"
+                  onClick={async () => {
+                    if (!confirm('このナレッジを削除しますか？')) return;
+                    await withLoading(() =>
+                      fetch(`/api/knowledge/${k.id}`, { method: 'DELETE' }),
+                    );
+                    router.refresh();
+                  }}
+                >
+                  削除
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
           {initialKnowledge.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={6} className="py-8 text-center text-gray-500">
                 ナレッジがありません
               </TableCell>
             </TableRow>

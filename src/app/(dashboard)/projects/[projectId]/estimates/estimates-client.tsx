@@ -147,9 +147,27 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
               </TableCell>
               {canEdit && (
                 <TableCell>
-                  {!e.isConfirmed && (
-                    <Button variant="outline" size="sm" onClick={() => handleConfirm(e.id)}>確定</Button>
-                  )}
+                  <div className="flex gap-1">
+                    {!e.isConfirmed && (
+                      <Button variant="outline" size="sm" onClick={() => handleConfirm(e.id)}>確定</Button>
+                    )}
+                    {!e.isConfirmed && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600"
+                        onClick={async () => {
+                          if (!confirm('この見積もりを削除しますか？')) return;
+                          await withLoading(() =>
+                            fetch(`/api/projects/${projectId}/estimates/${e.id}`, { method: 'DELETE' }),
+                          );
+                          router.refresh();
+                        }}
+                      >
+                        削除
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               )}
             </TableRow>
