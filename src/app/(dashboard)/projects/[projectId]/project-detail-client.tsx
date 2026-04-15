@@ -91,6 +91,9 @@ export function ProjectDetailClient({ project, projectRole, systemRole }: Props)
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">概要</TabsTrigger>
+          {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+            <TabsTrigger value="estimates">見積もり</TabsTrigger>
+          )}
           <TabsTrigger value="tasks">WBS/タスク</TabsTrigger>
           <TabsTrigger value="knowledge">ナレッジ</TabsTrigger>
         </TabsList>
@@ -142,6 +145,14 @@ export function ProjectDetailClient({ project, projectRole, systemRole }: Props)
               <p className="whitespace-pre-wrap text-sm text-gray-700">{project.notes}</p>
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="estimates" className="mt-4">
+          <div className="flex justify-end">
+            <a href={`/projects/${project.id}/estimates`} className="text-sm text-blue-600 hover:underline">
+              見積もり管理画面を開く →
+            </a>
+          </div>
         </TabsContent>
 
         <TabsContent value="tasks" className="mt-4">

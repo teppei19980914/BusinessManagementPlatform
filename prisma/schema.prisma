@@ -117,6 +117,7 @@ model Project {
 
   // Relations
   members           ProjectMember[]
+  estimates         Estimate[]
   tasks             Task[]
   risksIssues       RiskIssue[]
   knowledgeProjects KnowledgeProject[]
@@ -125,6 +126,34 @@ model Project {
   @@index([customerName], map: "idx_projects_customer")
   @@index([plannedStartDate, plannedEndDate], map: "idx_projects_dates")
   @@map("projects")
+}
+
+// ============================================================
+// Estimates
+// ============================================================
+
+model Estimate {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String    @map("project_id") @db.Uuid
+  itemName        String    @map("item_name") @db.VarChar(100)
+  category        String    @db.VarChar(30)
+  devMethod       String    @map("dev_method") @db.VarChar(30)
+  estimatedEffort Decimal   @map("estimated_effort") @db.Decimal(10, 2)
+  effortUnit      String    @map("effort_unit") @db.VarChar(20)
+  rationale       String    @db.Text
+  preconditions   String?   @db.Text
+  isConfirmed     Boolean   @default(false) @map("is_confirmed")
+  notes           String?   @db.Text
+  createdBy       String    @map("created_by") @db.Uuid
+  updatedBy       String    @map("updated_by") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId], map: "idx_estimates_project")
+  @@map("estimates")
 }
 
 model ProjectMember {
