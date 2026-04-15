@@ -2335,6 +2335,231 @@ ENABLE_OPERATION_TRACE=false
 | resend | Resend API |
 | smtp | SMTP 直接送信 |
 
+#### 10.0.7 オンプレミス環境の追加構成
+
+ローカル PC 構成に加え、オンプレミス（物理サーバ）環境では以下が必要となる。
+
+##### 構成図
+
+```
+社内ネットワーク
+  |
+  | HTTPS (443)
+  v
+┌─────────────────────────────────────────────────┐
+│  物理サーバ                                       │
+│                                                  │
+│  ┌────────────────────────────────────────────┐  │
+│  │  Docker Compose (name: tasukiba)           │  │
+│  │                                            │  │
+│  │  ┌──────────────┐                          │  │
+│  │  │  nginx        │ :443 (HTTPS)            │  │
+│  │  │  リバースプロキシ│ :80 (HTTP → 443転送)   │  │
+│  │  └──────┬───────┘                          │  │
+│  │         | :3000 (内部通信)                   │  │
+│  │  ┌──────┴───────┐  ┌────────────────────┐  │  │
+│  │  │  app          │  │  db                │  │  │
+│  │  │  Next.js      │──│  PostgreSQL 16     │  │  │
+│  │  │  Port: 3000   │  │  Port: 5432 (内部) │  │  │
+│  │  └──────────────┘  └────────────────────┘  │  │
+│  │                                            │  │
+│  └────────────────────────────────────────────┘  │
+│                                                  │
+│  ファイアウォール: 443 のみ外部公開               │
+└─────────────────────────────────────────────────┘
+```
+
+##### docker-compose.onprem.yml（オンプレミス用オーバーライド）
+
+PC 向けの docker-compose.yml に加え、オンプレミス用のオーバーライドファイルを提供する。
+
+```yaml
+# docker-compose.onprem.yml
+# 使い方: docker compose -f docker-compose.yml -f docker-compose.onprem.yml up -d
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: tasukiba-nginx
+    ports:
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - app
+    networks:
+      - tasukiba-network
+    restart: unless-stopped
+
+  app:
+    ports: !reset []
+    # Nginx 経由でのみアクセス。外部にポートを公開しない
+
+  db:
+    ports: !reset []
+    # DB ポートも外部に公開しない（コンテナ間通信のみ）
+```
+
+##### Nginx 設定
+
+```
+# nginx/nginx.conf
+events { worker_connections 1024; }
+
+http {
+    # HTTP → HTTPS リダイレクト
+    server {
+        listen 80;
+        server_name _;
+        return 301 https://$host$request_uri;
+    }
+
+    # HTTPS
+    server {
+        listen 443 ssl;
+        server_name _;
+
+        ssl_certificate     /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+
+        # セキュリティヘッダ
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options DENY;
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains";
+
+        # リクエストサイズ制限
+        client_max_body_size 1m;
+
+        location / {
+            proxy_pass http://tasukiba-app:3000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+}
+```
+
+##### SSL 証明書の選択肢
+
+| 方式 | 用途 | 手順 |
+|---|---|---|
+| **自己署名証明書** | 社内限定利用（ブラウザに警告が表示される） | openssl で生成し nginx/certs/ に配置 |
+| **社内 CA 証明書** | 社内 CA がある場合（警告なし） | 社内 CA から発行してもらい配置 |
+| **Let's Encrypt** | サーバが外部公開されている場合 | certbot で自動取得・更新 |
+
+自己署名証明書の生成手順:
+
+```bash
+mkdir -p nginx/certs
+openssl req -x509 -nodes -days 365 \
+  -newkey rsa:2048 \
+  -keyout nginx/certs/server.key \
+  -out nginx/certs/server.crt \
+  -subj "/CN=tasukiba.local"
+```
+
+##### オンプレミスの起動手順
+
+```bash
+# 1. 展開
+unzip tasukiba-vX.X.X.zip && cd tasukiba
+
+# 2. 環境変数設定
+cp .env.example .env
+# .env を編集
+# NEXTAUTH_URL=https://tasukiba.internal.example.com（サーバのアドレス）
+
+# 3. SSL 証明書を配置
+# nginx/certs/server.crt と server.key を配置
+
+# 4. 起動（オンプレミス構成）
+docker compose -f docker-compose.yml -f docker-compose.onprem.yml up -d
+
+# 5. マイグレーション + シード
+docker compose exec app pnpm prisma migrate deploy
+docker compose exec app pnpm db:seed
+
+# 6. アクセス → https://tasukiba.internal.example.com
+```
+
+##### ファイアウォール設定
+
+| ポート | 方向 | 許可範囲 | 目的 |
+|---|---|---|---|
+| 443 (HTTPS) | Inbound | 社内ネットワーク | ユーザアクセス |
+| 80 (HTTP) | Inbound | 社内ネットワーク | HTTPS リダイレクト用 |
+| 3000 | - | **公開しない** | Nginx → App の内部通信 |
+| 5432 | - | **公開しない** | App → DB の内部通信 |
+| 22 (SSH) | Inbound | 管理者端末のみ | サーバ管理 |
+
+##### バックアップ
+
+| 対象 | 方式 | 頻度 | 保持期間 |
+|---|---|---|---|
+| PostgreSQL データ | docker compose exec db pg_dump で取得 | 日次 | 30 日 |
+| .env ファイル | 手動バックアップ | 設定変更時 | 世代管理 |
+| SSL 証明書 | 手動バックアップ | 更新時 | 世代管理 |
+| Docker ボリューム | docker volume のバックアップは不要（pg_dump で十分） | - | - |
+
+バックアップスクリプト例:
+
+```bash
+#!/bin/bash
+# backup.sh - 日次バックアップ（cron で実行）
+BACKUP_DIR="/path/to/backup"
+DATE=$(date +%Y%m%d)
+
+# PostgreSQL ダンプ
+docker compose exec -T db pg_dump -U postgres tasukiba \
+  > "${BACKUP_DIR}/tasukiba_${DATE}.sql"
+
+# 30日以上前のバックアップを削除
+find "${BACKUP_DIR}" -name "tasukiba_*.sql" -mtime +30 -delete
+```
+
+##### 最小システム要件
+
+| 項目 | 最小 | 推奨 |
+|---|---|---|
+| CPU | 2 コア | 4 コア |
+| メモリ | 2 GB | 4 GB |
+| ディスク | 10 GB | 20 GB |
+| OS | Linux (Ubuntu 22.04+, RHEL 8+) / Windows Server 2019+ | Linux 推奨 |
+| Docker | 24.0+ | 最新安定版 |
+| Docker Compose | v2.20+ | 最新安定版 |
+| ネットワーク | 社内 LAN | - |
+
+##### オンプレミス用追加環境変数
+
+| 変数名 | 説明 | デフォルト |
+|---|---|---|
+| HTTPS_PORT | HTTPS 公開ポート | 443 |
+| HTTP_PORT | HTTP 公開ポート（リダイレクト用） | 80 |
+
+##### 配布パッケージの構成（オンプレミス対応後）
+
+```
+tasukiba-vX.X.X.zip
+  src/
+  prisma/
+  docker-compose.yml            # PC 向け（基本構成）
+  docker-compose.onprem.yml     # オンプレミス追加構成
+  Dockerfile
+  nginx/
+    nginx.conf                  # リバースプロキシ設定
+    certs/                      # SSL 証明書の配置先（空）
+  .env.example
+  backup.sh                     # バックアップスクリプト
+  package.json
+  SETUP.md                      # セットアップ手順
+  LICENSE
+```
+
 ### 10.1 開発環境構成図
 
 ```
@@ -2472,6 +2697,13 @@ ENABLE_OPERATION_TRACE=false
 | DB_NAME | データベース名 | tasukiba |
 | DB_USER | データベースユーザ | postgres |
 | DB_PASSWORD | データベースパスワード | （必須設定） |
+
+#### オンプレミス構成時のみ
+
+| 変数名 | 説明 | デフォルト |
+|---|---|---|
+| HTTPS_PORT | HTTPS 公開ポート | 443 |
+| HTTP_PORT | HTTP 公開ポート（リダイレクト用） | 80 |
 
 #### 環境別の DATABASE_URL / DIRECT_URL
 
