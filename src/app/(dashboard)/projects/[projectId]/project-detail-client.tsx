@@ -159,7 +159,14 @@ export function ProjectDetailClient({ project, projectRole, systemRole }: Props)
         </TabsContent>
 
         <TabsContent value="knowledge" className="mt-4">
-          <p className="text-gray-500">ナレッジ管理はタスク #7 で実装予定です。</p>
+          <div className="flex justify-end">
+            <a href="/knowledge" className="text-sm text-blue-600 hover:underline">
+              ナレッジ一覧を開く →
+            </a>
+          </div>
+          <p className="mt-2 text-sm text-gray-500">
+            ナレッジの作成・検索は横断ナレッジ画面で行います。
+          </p>
         </TabsContent>
       </Tabs>
     </div>

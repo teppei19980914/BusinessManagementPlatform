@@ -16,7 +16,7 @@ type DashboardHeaderProps = {
 
 const navItems = [
   { href: '/projects', label: 'プロジェクト' },
-  { href: '/knowledge', label: 'ナレッジ', disabled: true },
+  { href: '/knowledge', label: 'ナレッジ' },
 ];
 
 const adminNavItems = [{ href: '/admin/users', label: 'ユーザ管理' }];
@@ -32,9 +32,7 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
             たすきば
           </Link>
           <nav className="flex items-center gap-1">
-            {navItems
-              .filter((item) => !item.disabled)
-              .map((item) => (
+            {navItems.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
