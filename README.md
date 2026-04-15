@@ -89,6 +89,7 @@ http://localhost:3000 でアクセスできます。
 | [要件定義書](docs/REQUIREMENTS.md) | プラットフォームの要件定義（たたき台） |
 | [仕様書](docs/SPECIFICATION.md) | MVP の機能仕様・画面仕様・権限マトリクス |
 | [設計書](docs/DESIGN.md) | アーキテクチャ・ER 図・テーブル定義・API 設計 |
+| [開発計画書](docs/PLAN.md) | MVP-1a / 1b / 2 のスケジュール・スコープ・リリース条件 |
 
 ## ライセンス
 
