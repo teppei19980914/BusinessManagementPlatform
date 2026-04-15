@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import type { CreateUserInput } from '@/lib/validators/auth';
+import { sendVerificationEmail } from './email-verification.service';
 
 const BCRYPT_COST = 12;
 const RECOVERY_CODE_COUNT = 10;
@@ -56,6 +57,7 @@ export async function listUsers(): Promise<UserDTO[]> {
 export async function createUser(
   input: CreateUserInput,
   creatorId: string,
+  options?: { baseUrl?: string },
 ): Promise<{ user: UserDTO; recoveryCodes: string[] }> {
   // メールアドレス重複チェック
   const existing = await prisma.user.findFirst({
@@ -79,7 +81,8 @@ export async function createUser(
       email: input.email,
       passwordHash,
       systemRole: input.systemRole,
-      isActive: true,
+      isActive: process.env.MAIL_PROVIDER === 'console',
+      deletedAt: process.env.MAIL_PROVIDER === 'console' ? null : new Date(),
       forcePasswordChange: true,
       recoveryCodes: {
         create: await Promise.all(
@@ -102,6 +105,11 @@ export async function createUser(
       reason: 'ユーザ新規登録',
     },
   });
+
+  // メール検証（MAIL_PROVIDER が console 以外の場合）
+  if (process.env.MAIL_PROVIDER !== 'console' && options?.baseUrl) {
+    await sendVerificationEmail(user.id, user.email, options.baseUrl);
+  }
 
   return { user: toUserDTO(user), recoveryCodes };
 }

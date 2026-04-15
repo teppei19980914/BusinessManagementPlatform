@@ -33,7 +33,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { user: newUser, recoveryCodes } = await createUser(parsed.data, user.id);
+    const baseUrl = process.env.NEXTAUTH_URL || req.nextUrl.origin;
+    const { user: newUser, recoveryCodes } = await createUser(parsed.data, user.id, { baseUrl });
 
     await recordAuditLog({
       userId: user.id,

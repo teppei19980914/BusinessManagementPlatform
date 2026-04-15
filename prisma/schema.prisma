@@ -45,9 +45,10 @@ model User {
   authEventLogs        AuthEventLog[]
   roleChangesPerformed RoleChangeLog[]     @relation("RoleChanger")
   roleChangesReceived  RoleChangeLog[]     @relation("RoleTarget")
-  sessions             Session[]
-  recoveryCodes        RecoveryCode[]
-  passwordHistories    PasswordHistory[]
+  sessions                Session[]
+  emailVerificationTokens EmailVerificationToken[]
+  recoveryCodes           RecoveryCode[]
+  passwordHistories       PasswordHistory[]
 
   @@unique([email], map: "idx_users_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
@@ -65,6 +66,19 @@ model Session {
 
   @@index([userId], map: "idx_sessions_user")
   @@map("sessions")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  usedAt    DateTime? @map("used_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("email_verification_tokens")
 }
 
 model RecoveryCode {
