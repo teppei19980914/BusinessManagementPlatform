@@ -146,10 +146,11 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>対応担当者</Label>
+                    <Label>担当者</Label>
                     <Select value={form.assigneeId} onValueChange={(v) => setForm({ ...form, assigneeId: v ?? '' })}>
                       <SelectTrigger><SelectValue placeholder="未設定" /></SelectTrigger>
                       <SelectContent>
+                        {members.length === 0 && <SelectItem value="" disabled>メンバー未登録</SelectItem>}
                         {members.map((m) => <SelectItem key={m.userId} value={m.userId}>{m.userName}</SelectItem>)}
                       </SelectContent>
                     </Select>

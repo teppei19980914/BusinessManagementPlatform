@@ -203,7 +203,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     assigneeId: '',
     plannedStartDate: '',
     plannedEndDate: '',
-    plannedEffort: 0,
+    plannedEffort: '' as string | number,
     priority: 'medium',
   });
 
@@ -214,7 +214,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     const res = await fetch(`/api/projects/${projectId}/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify({ ...form, plannedEffort: Number(form.plannedEffort) }),
     });
 
     if (!res.ok) {
@@ -230,7 +230,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       assigneeId: '',
       plannedStartDate: '',
       plannedEndDate: '',
-      plannedEffort: 0,
+      plannedEffort: '',
       priority: 'medium',
     });
     router.refresh();
@@ -284,21 +284,25 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   </div>
                   <div className="space-y-2">
                     <Label>担当者</Label>
-                    <Select
-                      value={form.assigneeId}
-                      onValueChange={(v) => v && setForm({ ...form, assigneeId: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="選択..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {members.map((m) => (
-                          <SelectItem key={m.userId} value={m.userId}>
-                            {m.userName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {members.length === 0 ? (
+                      <p className="text-sm text-red-500">メンバーが未登録です。先にメンバー管理から追加してください。</p>
+                    ) : (
+                      <Select
+                        value={form.assigneeId}
+                        onValueChange={(v) => v && setForm({ ...form, assigneeId: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="選択..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {members.map((m) => (
+                            <SelectItem key={m.userId} value={m.userId}>
+                              {m.userName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">

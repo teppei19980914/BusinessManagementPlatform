@@ -171,14 +171,17 @@ export async function deleteRisk(riskId: string, userId: string): Promise<void> 
   });
 }
 
+const IMPACT_LABELS: Record<string, string> = { low: '低', medium: '中', high: '高' };
+const STATE_LABELS: Record<string, string> = { open: '未対応', in_progress: '対応中', monitoring: '監視中', resolved: '解消' };
+
 export function risksToCSV(risks: RiskDTO[]): string {
   const headers = ['種別', '件名', '影響度', '優先度', '状態', '担当者', '期限', '起票日'];
   const rows = risks.map((r) => [
     r.type === 'risk' ? 'リスク' : '課題',
     `"${r.title.replace(/"/g, '""')}"`,
-    r.impact,
-    r.priority,
-    r.state,
+    IMPACT_LABELS[r.impact] || r.impact,
+    IMPACT_LABELS[r.priority] || r.priority,
+    STATE_LABELS[r.state] || r.state,
     r.assigneeName || '',
     r.deadline || '',
     r.createdAt.split('T')[0],

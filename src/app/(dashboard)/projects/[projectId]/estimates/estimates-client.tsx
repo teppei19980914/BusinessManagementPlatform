@@ -32,7 +32,7 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
     itemName: '',
     category: 'development',
     devMethod: 'scratch',
-    estimatedEffort: 0,
+    estimatedEffort: '',
     effortUnit: 'person_hour',
     rationale: '',
   });
@@ -43,7 +43,7 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
     const res = await fetch(`/api/projects/${projectId}/estimates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify({ ...form, estimatedEffort: Number(form.estimatedEffort) }),
     });
     if (!res.ok) {
       const json = await res.json();
@@ -51,7 +51,7 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
       return;
     }
     setIsCreateOpen(false);
-    setForm({ itemName: '', category: 'development', devMethod: 'scratch', estimatedEffort: 0, effortUnit: 'person_hour', rationale: '' });
+    setForm({ itemName: '', category: 'development', devMethod: 'scratch', estimatedEffort: '', effortUnit: 'person_hour', rationale: '' });
     router.refresh();
   }
 
@@ -110,7 +110,7 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>見積工数</Label>
-                    <Input type="number" min={0} step={0.5} value={form.estimatedEffort} onChange={(e) => setForm({ ...form, estimatedEffort: Number(e.target.value) })} required />
+                    <Input type="number" min={0} step={0.5} value={form.estimatedEffort} onChange={(e) => setForm({ ...form, estimatedEffort: e.target.value })} required />
                   </div>
                   <div className="space-y-2">
                     <Label>単位</Label>
