@@ -85,6 +85,11 @@ function LoginForm() {
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'ログイン中...' : 'ログイン'}
             </Button>
+            <p className="text-center text-xs text-gray-500">
+              <a href="/reset-password" className="text-blue-600 hover:underline">
+                パスワードをお忘れですか？
+              </a>
+            </p>
           </form>
         </CardContent>
       </Card>

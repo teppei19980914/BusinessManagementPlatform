@@ -20,7 +20,11 @@ const navItems = [
   { href: '/knowledge', label: 'ナレッジ' },
 ];
 
-const adminNavItems = [{ href: '/admin/users', label: 'ユーザ管理' }];
+const adminNavItems = [
+  { href: '/admin/users', label: 'ユーザ管理' },
+  { href: '/admin/audit-logs', label: '監査ログ' },
+  { href: '/admin/role-changes', label: '権限変更' },
+];
 
 export function DashboardHeader({ user }: DashboardHeaderProps) {
   const pathname = usePathname();
