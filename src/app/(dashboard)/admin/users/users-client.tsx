@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -38,6 +39,7 @@ type Props = {
 
 export function UsersClient({ initialUsers }: Props) {
   const router = useRouter();
+  const { withLoading } = useLoading();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [error, setError] = useState('');
@@ -53,11 +55,13 @@ export function UsersClient({ initialUsers }: Props) {
     e.preventDefault();
     setError('');
 
-    const res = await fetch('/api/admin/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
+    const res = await withLoading(() =>
+      fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      }),
+    );
 
     const json = await res.json();
 

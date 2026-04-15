@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,6 +48,7 @@ const visibilityColors: Record<string, 'default' | 'secondary' | 'outline'> = {
 
 export function KnowledgeClient({ initialKnowledge, initialTotal }: Props) {
   const router = useRouter();
+  const { withLoading } = useLoading();
   const [keyword, setKeyword] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -73,11 +75,13 @@ export function KnowledgeClient({ initialKnowledge, initialTotal }: Props) {
     e.preventDefault();
     setError('');
 
-    const res = await fetch('/api/knowledge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
+    const res = await withLoading(() =>
+      fetch('/api/knowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      }),
+    );
 
     if (!res.ok) {
       const json = await res.json();

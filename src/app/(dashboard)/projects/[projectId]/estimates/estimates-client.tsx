@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -26,6 +27,7 @@ type Props = {
 
 export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
   const router = useRouter();
+  const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
@@ -40,11 +42,13 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    const res = await fetch(`/api/projects/${projectId}/estimates`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, estimatedEffort: Number(form.estimatedEffort) }),
-    });
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/estimates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, estimatedEffort: Number(form.estimatedEffort) }),
+      }),
+    );
     if (!res.ok) {
       const json = await res.json();
       setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
@@ -56,11 +60,13 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
   }
 
   async function handleConfirm(estimateId: string) {
-    await fetch(`/api/projects/${projectId}/estimates/${estimateId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'confirm' }),
-    });
+    await withLoading(() =>
+      fetch(`/api/projects/${projectId}/estimates/${estimateId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'confirm' }),
+      }),
+    );
     router.refresh();
   }
 

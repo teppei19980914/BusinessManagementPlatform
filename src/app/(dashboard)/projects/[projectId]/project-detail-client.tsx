@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -54,6 +55,7 @@ export function ProjectDetailClient({
   canEdit, canCreate,
 }: Props) {
   const router = useRouter();
+  const { withLoading } = useLoading();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   const canChangeStatus = systemRole === 'admin' || projectRole === 'pm_tl';
   const nextStatuses = NEXT_STATUSES[project.status] || [];
@@ -61,11 +63,13 @@ export function ProjectDetailClient({
   async function handleStatusChange(newStatus: string | null) {
     if (!newStatus) return;
     setIsChangingStatus(true);
-    const res = await fetch(`/api/projects/${project.id}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    });
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${project.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      }),
+    );
     setIsChangingStatus(false);
     if (res.ok) router.refresh();
   }

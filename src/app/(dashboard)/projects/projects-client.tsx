@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -51,6 +52,7 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
 
 export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props) {
   const router = useRouter();
+  const { withLoading } = useLoading();
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -79,11 +81,13 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
     e.preventDefault();
     setError('');
 
-    const res = await fetch('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
+    const res = await withLoading(() =>
+      fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      }),
+    );
 
     if (!res.ok) {
       const json = await res.json();

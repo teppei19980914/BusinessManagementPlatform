@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -43,6 +44,7 @@ const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
 
 export function RisksClient({ projectId, risks, members, canCreate, systemRole }: Props) {
   const router = useRouter();
+  const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
@@ -59,11 +61,13 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
     e.preventDefault();
     setError('');
     const body = { ...form, assigneeId: form.assigneeId || undefined, likelihood: form.type === 'risk' ? form.likelihood : undefined };
-    const res = await fetch(`/api/projects/${projectId}/risks`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/risks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
     if (!res.ok) {
       const json = await res.json();
       setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');

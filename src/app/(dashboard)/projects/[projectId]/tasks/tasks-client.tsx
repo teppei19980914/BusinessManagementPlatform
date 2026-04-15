@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -191,6 +192,7 @@ function TaskTreeNode({
 
 export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId }: Props) {
   const router = useRouter();
+  const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
 
@@ -211,11 +213,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     e.preventDefault();
     setError('');
 
-    const res = await fetch(`/api/projects/${projectId}/tasks`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, plannedEffort: Number(form.plannedEffort) }),
-    });
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, plannedEffort: Number(form.plannedEffort) }),
+      }),
+    );
 
     if (!res.ok) {
       const json = await res.json();
