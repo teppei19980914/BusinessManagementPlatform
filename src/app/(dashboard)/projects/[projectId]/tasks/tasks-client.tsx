@@ -254,9 +254,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <h2 className="text-xl font-semibold">WBS / タスク管理</h2>
         {canEdit && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger>
-              <Button>タスク追加</Button>
-            </DialogTrigger>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">タスク追加</DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>タスク作成</DialogTitle>

@@ -85,9 +85,7 @@ export function UsersClient({ initialUsers }: Props) {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">ユーザ管理</h2>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger>
-            <Button>新規ユーザ登録</Button>
-          </DialogTrigger>
+          <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規ユーザ登録</DialogTrigger>
           <DialogContent className="max-w-md">
             {recoveryCodes ? (
               <>

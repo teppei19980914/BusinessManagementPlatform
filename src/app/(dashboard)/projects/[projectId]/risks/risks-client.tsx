@@ -93,7 +93,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
           )}
           {canCreate && (
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-              <DialogTrigger><Button>起票</Button></DialogTrigger>
+              <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">起票</DialogTrigger>
               <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>リスク / 課題 起票</DialogTitle>

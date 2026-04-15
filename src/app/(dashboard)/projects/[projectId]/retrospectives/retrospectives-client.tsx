@@ -82,7 +82,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment }:
         <h2 className="text-xl font-semibold">振り返り</h2>
         {canEdit && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger><Button>振り返り作成</Button></DialogTrigger>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">振り返り作成</DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>振り返り作成</DialogTitle>

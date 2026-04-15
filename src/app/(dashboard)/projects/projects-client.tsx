@@ -117,9 +117,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
         <h2 className="text-xl font-semibold">プロジェクト一覧</h2>
         {isAdmin && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger>
-              <Button>新規プロジェクト</Button>
-            </DialogTrigger>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規プロジェクト</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>新規プロジェクト作成</DialogTitle>
