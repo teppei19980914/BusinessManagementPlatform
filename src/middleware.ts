@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
-const publicPaths = ['/login', '/api/auth'];
+const publicPaths = ['/login', '/reset-password', '/api/auth'];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -16,8 +16,11 @@ export async function middleware(req: NextRequest) {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
   if (!token) {
+    // callbackUrl はクエリパラメータとして正しく渡す
     const loginUrl = new URL('/login', req.nextUrl.origin);
-    loginUrl.searchParams.set('callbackUrl', pathname);
+    if (pathname !== '/') {
+      loginUrl.searchParams.set('callbackUrl', pathname);
+    }
     return NextResponse.redirect(loginUrl);
   }
 

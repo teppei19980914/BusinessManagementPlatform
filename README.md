@@ -22,31 +22,83 @@
 - **知見の循環** - プロジェクトで得た知見をナレッジとして蓄積し、次案件の見積もり・計画に再利用
 - **健全なプロジェクト運営** - QCD のバランスを保ち、リスク・課題を早期に可視化
 
-## MVP 機能
+## 機能一覧
+
+### プロジェクト運営
 
 | 機能 | 説明 |
 |---|---|
-| プロジェクト管理 | 企画から振り返りまでの状態遷移管理 |
-| 見積もり管理 | 過去ナレッジ・実績を参照した見積もり作成 |
-| WBS / タスク管理 | 階層構造のタスク管理、担当割り当て |
-| ガントチャート | スケジュールの時系列可視化 |
-| 進捗・実績管理 | メンバーの進捗更新、実績工数の記録 |
-| リスク・課題管理 | リスク/課題の起票・追跡・対応記録 |
-| ナレッジ管理 | 知見の登録・検索・公開・再利用 |
-| 振り返り | プロジェクト完了後の総括とナレッジ化 |
+| プロジェクト管理 | 企画から振り返りまでの状態遷移管理（作成・編集・削除） |
+| 見積もり管理 | 過去ナレッジ・実績を参照した見積もり作成・確定 |
+| WBS / タスク管理 | 階層構造のタスク管理、担当割り当て、進捗・実績更新 |
+| ガントチャート | スケジュールの時系列可視化（進捗・遅延・マイルストーン表示） |
+| リスク・課題管理 | リスク/課題の起票・状態管理・CSV エクスポート |
+| ナレッジ管理 | 知見の登録・全文検索・公開範囲制御 |
+| 振り返り | プロジェクト完了後の総括・コメント・ナレッジ化 |
+| マイタスク | 自分の担当タスク一覧・進捗更新ショートカット |
+
+### セキュリティ・アカウント管理
+
+| 機能 | 説明 |
+|---|---|
+| 認証 | メール + パスワード認証、セッション管理 |
+| MFA（多要素認証） | TOTP（Google Authenticator 等）対応、管理者必須 |
+| パスワード管理 | パスワードポリシー、変更、リセット（リカバリーコード方式）、履歴チェック |
+| アカウントロック | ログイン失敗5回で一時ロック、3回目で恒久ロック |
 | 権限管理 | RBAC（システム管理者 / PM・TL / メンバー / 閲覧者） |
+| 監査ログ | 全データ変更・認証イベントの自動記録 + 管理者閲覧画面 |
+| 未使用アカウント管理 | 30日未ログインで自動無効化、60日で物理削除 |
 
 ## 技術スタック
 
 | レイヤー | 技術 |
 |---|---|
-| フロントエンド | Next.js 15 (App Router) / React 19 / TypeScript |
+| フロントエンド | Next.js 16 (App Router) / React 19 / TypeScript |
 | UI | shadcn/ui / Tailwind CSS |
 | バックエンド | Next.js API Routes / Server Actions |
-| ORM | Prisma 7 |
+| ORM | Prisma 7（@prisma/adapter-pg 方式） |
 | データベース | PostgreSQL 16 |
 | 認証 | NextAuth.js (Auth.js) 5 |
-| テスト | Vitest / Playwright |
+| MFA | otplib（TOTP / RFC 6238） |
+| 全文検索 | pg_trgm（PostgreSQL 標準拡張） |
+| メール送信 | Resend / SMTP（MailProvider 抽象化で切替可能） |
+| テスト | Vitest |
+
+## アーキテクチャ
+
+```mermaid
+graph TD
+    Browser[ブラウザ] -->|HTTPS| Vercel[Vercel / Next.js]
+    Vercel -->|Pooler| Supabase[Supabase PostgreSQL]
+    Vercel -->|API| Resend[Resend メール送信]
+
+    subgraph Vercel
+        MW[Middleware 認証] --> RH[Route Handlers]
+        RH --> SL[Service Layer]
+        SL --> PA[Prisma + pg adapter]
+    end
+```
+
+## デプロイ
+
+### 自社運用（Vercel + Supabase）
+
+| コンポーネント | サービス | 月額 |
+|---|---|---|
+| アプリケーション | Vercel Hobby | $0 |
+| データベース | Supabase Free | $0 |
+| メール送信 | Resend Free | $0 |
+
+### 外部配布
+
+.zip パッケージとして配布。外部ユーザが自前の環境で構築・運用可能。
+
+| デプロイ形態 | 対応状況 |
+|---|---|
+| PC（ローカル） | Docker Compose で一式起動 |
+| オンプレミス | Nginx + Docker Compose（HTTPS 対応） |
+| クラウド（コンテナ） | AWS ECS / Azure App Service |
+| クラウド（サーバレス） | AWS Lambda / Azure Functions |
 
 ## セットアップ
 
@@ -54,9 +106,9 @@
 
 - Node.js 22 LTS
 - pnpm
-- Docker / Docker Compose（PostgreSQL 用）
+- Docker / Docker Compose（ローカル PostgreSQL 用）または Supabase アカウント
 
-### 手順
+### ローカル開発（Supabase 接続）
 
 ```bash
 # 1. リポジトリのクローン
@@ -70,11 +122,12 @@ pnpm install
 cp .env.example .env
 # .env を編集して DATABASE_URL, NEXTAUTH_SECRET 等を設定
 
-# 4. データベースの起動
-docker compose up -d
+# 4. Prisma Client 生成 + マイグレーション
+npx prisma generate
+npx prisma migrate dev
 
-# 5. マイグレーションの実行
-pnpm prisma migrate dev
+# 5. 初期管理者の作成
+pnpm db:seed
 
 # 6. 開発サーバの起動
 pnpm dev
@@ -86,11 +139,11 @@ http://localhost:3000 でアクセスできます。
 
 | ドキュメント | 説明 |
 |---|---|
-| [要件定義書](docs/REQUIREMENTS.md) | プラットフォームの要件定義（たたき台） |
-| [仕様書](docs/SPECIFICATION.md) | MVP の機能仕様・画面仕様・権限マトリクス |
-| [設計書](docs/DESIGN.md) | アーキテクチャ・ER 図・テーブル定義・API 設計 |
+| [要件定義書](docs/REQUIREMENTS.md) | プラットフォームの要件定義 |
+| [仕様書](docs/SPECIFICATION.md) | 機能仕様・画面仕様・権限マトリクス・アカウントフロー |
+| [設計書](docs/DESIGN.md) | アーキテクチャ・ER 図・テーブル定義・API・セキュリティ・インフラ |
 | [開発計画書](docs/PLAN.md) | MVP-1a / 1b / 2 のスケジュール・スコープ・リリース条件 |
-| [ナレッジ](docs/knowledge/) | プロジェクト運営で得た知見・教訓（テストデータ兼用） |
+| [ナレッジ](docs/knowledge/) | プロジェクト運営で得た知見・教訓 |
 
 ## ライセンス
 

@@ -36,7 +36,7 @@
 | レイヤー | 技術 | バージョン | 選定理由 |
 |---|---|---|---|
 | 言語 | TypeScript | 5.x | 型安全性、フロント/バック統一 |
-| フロントエンド | Next.js (App Router) | 15.x | SSR/SSG、API Routes 統合、React エコシステム |
+| フロントエンド | Next.js (App Router) | 16.x | SSR/SSG、API Routes 統合、React エコシステム |
 | UI ライブラリ | React | 19.x | コンポーネント指向、エコシステムの豊富さ |
 | UI コンポーネント | shadcn/ui + Tailwind CSS | - | カスタマイズ性、軽量、アクセシビリティ |
 | ガントチャート | @neodrag/gantt または自前実装 | - | MVP では読み取り専用のため軽量ライブラリで十分 |
@@ -45,7 +45,9 @@
 | ORM | Prisma | 7.x | 型安全なクエリ、マイグレーション管理、pg adapter 方式 |
 | データベース | PostgreSQL | 16.x | JSONB 対応、全文検索、信頼性 |
 | 認証 | NextAuth.js (Auth.js) | 5.x | Credentials + OAuth 対応、セッション管理 |
-| テスト | Vitest + Playwright | - | 単体テスト + E2E テスト |
+| MFA | otplib | 13.x | TOTP（RFC 6238）対応 |
+| QR コード | qrcode | 1.x | MFA 設定用 QR コード生成 |
+| テスト | Vitest | 4.x | 単体テスト（141件） |
 | Lint / Format | ESLint + Prettier | - | コード品質、一貫性 |
 | CI/CD | GitHub Actions | - | リポジトリ統合 |
 | コンテナ | Docker + Docker Compose | - | ローカル開発環境の統一 |
@@ -3567,19 +3569,23 @@ export function createMailProvider(): MailProvider {
 
 ## 19. 今後の詳細化対象
 
-本設計書は MVP 初版であり、次段階で以下を追加・詳細化する。
+MVP-1a / 1b / 2 の実装が完了し、以下が実装済みとなった。
 
-- Prisma Schema 定義ファイルの実装
-- Zod バリデーションスキーマの詳細定義
+実装済み:
+- ~~Prisma Schema 定義ファイルの実装~~ → prisma/schema.prisma に全テーブル定義済み
+- ~~Zod バリデーションスキーマの詳細定義~~ → src/lib/validators/ に全スキーマ定義済み
+
+次段階で追加・詳細化する:
 - バックアップ・リストア手順
 - 災害復旧（DR）方針
 - 監視・アラート設計
 - ログ運用設計（アプリケーションログのフォーマット・保存期間）
 - 定期棚卸ルール（アカウント・権限・プロジェクトの見直し）
-- デプロイ手順・ロールバック手順
 - CI/CD パイプライン詳細
 - 環境構成（開発・ステージング・本番の差分管理）
 - コーディング規約
+- 編集 UI の充実（見積もり・ナレッジのインライン編集）
+- E2E テスト（Playwright）の導入
 
 ---
 
