@@ -73,6 +73,9 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
               </span>
             )}
           </span>
+          <Link href="/settings" className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
+            設定
+          </Link>
           <Button variant="outline" size="sm" onClick={() => signOut({ callbackUrl: '/login' })}>
             ログアウト
           </Button>
