@@ -1,32 +1,13 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { getToken } from 'next-auth/jwt';
+/**
+ * NextAuth v5 公式パターン: Edge 互換 middleware
+ * auth.config.ts の authorized コールバックで認証チェックを行う。
+ * Prisma などの Node.js 依存を含まないため、Edge Runtime で動作する。
+ */
 
-const publicPaths = ['/login', '/reset-password', '/api/auth'];
+import NextAuth from 'next-auth';
+import { authConfig } from '@/lib/auth.config';
 
-export async function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
-
-  // 公開パスはスキップ
-  if (publicPaths.some((path) => pathname.startsWith(path))) {
-    return NextResponse.next();
-  }
-
-  // JWT トークンで認証チェック（Edge Runtime 対応）
-  const secret = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
-  const token = await getToken({ req, secret });
-
-  if (!token) {
-    // callbackUrl はクエリパラメータとして正しく渡す
-    const loginUrl = new URL('/login', req.nextUrl.origin);
-    if (pathname !== '/') {
-      loginUrl.searchParams.set('callbackUrl', pathname);
-    }
-    return NextResponse.redirect(loginUrl);
-  }
-
-  return NextResponse.next();
-}
+export default NextAuth(authConfig).auth;
 
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],

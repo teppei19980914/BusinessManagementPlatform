@@ -3,8 +3,10 @@ import Credentials from 'next-auth/providers/credentials';
 import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import { recordAuthEvent } from '@/services/auth-event.service';
+import { authConfig } from './auth.config';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  ...authConfig,
   providers: [
     Credentials({
       credentials: {
@@ -66,7 +68,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return null;
         }
 
-        // ログイン成功
         await prisma.user.update({
           where: { id: user.id },
           data: {
@@ -88,32 +89,4 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       },
     }),
   ],
-  secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET,
-  trustHost: true,
-  session: {
-    strategy: 'jwt',
-    maxAge: 24 * 60 * 60,
-  },
-  pages: {
-    signIn: '/login',
-  },
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-        token.systemRole = (user as unknown as { systemRole: string }).systemRole;
-        token.forcePasswordChange = (user as unknown as { forcePasswordChange: boolean })
-          .forcePasswordChange;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id as string;
-        session.user.systemRole = token.systemRole as string;
-        session.user.forcePasswordChange = token.forcePasswordChange as boolean;
-      }
-      return session;
-    },
-  },
 });
