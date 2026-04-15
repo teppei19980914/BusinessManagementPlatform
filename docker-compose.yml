@@ -1,0 +1,24 @@
+name: tasukiba
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: tasukiba-db
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - tasukiba-pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${DB_NAME:-tasukiba}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  tasukiba-pgdata:
+    name: tasukiba-pgdata
