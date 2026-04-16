@@ -236,6 +236,22 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const canUpdateProgress = systemRole === 'admin' || projectRole === 'pm_tl';
 
   const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
+  const [parentTaskId, setParentTaskId] = useState('');
+
+  // 親候補: WP のフラット一覧（ツリーを再帰的に展開）
+  function flattenWPs(nodes: TaskDTO[], depth = 0): { id: string; label: string }[] {
+    const result: { id: string; label: string }[] = [];
+    for (const node of nodes) {
+      if (node.type === 'work_package') {
+        result.push({ id: node.id, label: `${'　'.repeat(depth)}${node.name}` });
+        if (node.children) {
+          result.push(...flattenWPs(node.children, depth + 1));
+        }
+      }
+    }
+    return result;
+  }
+  const parentOptions = flattenWPs(tasks);
 
   const [form, setForm] = useState({
     name: '',
@@ -251,7 +267,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     e.preventDefault();
     setError('');
 
-    const body = createType === 'work_package'
+    const base = createType === 'work_package'
       ? { type: 'work_package', name: form.name, category: form.category }
       : {
           type: 'activity',
@@ -263,6 +279,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           plannedEffort: Number(form.plannedEffort),
           priority: form.priority,
         };
+
+    const body = parentTaskId ? { ...base, parentTaskId } : base;
 
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/tasks`, {
@@ -279,6 +297,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     }
 
     setIsCreateOpen(false);
+    setParentTaskId('');
     setForm({ name: '', category: 'development', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: '', priority: 'medium' });
     router.refresh();
   }
@@ -309,6 +328,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     value={createType}
                     onValueChange={(v) => v && setCreateType(v as 'work_package' | 'activity')}
                     options={WBS_TYPES}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>親ワークパッケージ</Label>
+                  <LabeledSelect
+                    value={parentTaskId}
+                    onValueChange={(v) => setParentTaskId(v ?? '')}
+                    options={Object.fromEntries(parentOptions.map((p) => [p.id, p.label]))}
+                    placeholder="なし（最上位に配置）"
                   />
                 </div>
                 <div className="space-y-2">
