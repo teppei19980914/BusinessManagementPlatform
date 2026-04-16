@@ -64,10 +64,10 @@ function toTaskDTO(t: {
     description: t.description,
     assigneeId: t.assigneeId,
     assigneeName: t.assignee?.name,
-    plannedStartDate: t.plannedStartDate?.toISOString().split('T')[0] ?? null,
-    plannedEndDate: t.plannedEndDate?.toISOString().split('T')[0] ?? null,
-    actualStartDate: t.actualStartDate?.toISOString().split('T')[0] ?? null,
-    actualEndDate: t.actualEndDate?.toISOString().split('T')[0] ?? null,
+    plannedStartDate: safeDate(t.plannedStartDate),
+    plannedEndDate: safeDate(t.plannedEndDate),
+    actualStartDate: safeDate(t.actualStartDate),
+    actualEndDate: safeDate(t.actualEndDate),
     plannedEffort: Number(t.plannedEffort),
     priority: t.priority,
     status: t.status,
@@ -75,6 +75,14 @@ function toTaskDTO(t: {
     isMilestone: t.isMilestone,
     notes: t.notes,
   };
+}
+
+/** Date を安全に YYYY-MM-DD 文字列に変換（無効な日付は null を返す） */
+function safeDate(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  const time = d.getTime();
+  if (isNaN(time)) return null;
+  return d.toISOString().split('T')[0];
 }
 
 /**
@@ -335,9 +343,9 @@ async function recalculateAncestors(taskId: string): Promise<void> {
       ? Math.round(children.reduce((sum, c) => sum + Number(c.plannedEffort) * c.progressRate, 0) / totalEffort)
       : 0;
 
-    // 日付範囲（子の最小開始日〜最大終了日）
-    const startDates = children.map((c) => c.plannedStartDate).filter(Boolean) as Date[];
-    const endDates = children.map((c) => c.plannedEndDate).filter(Boolean) as Date[];
+    // 日付範囲（子の最小開始日〜最大終了日、無効な日付は除外）
+    const startDates = children.map((c) => c.plannedStartDate).filter((d): d is Date => d != null && !isNaN(d.getTime()));
+    const endDates = children.map((c) => c.plannedEndDate).filter((d): d is Date => d != null && !isNaN(d.getTime()));
     const minStart = startDates.length > 0 ? new Date(Math.min(...startDates.map((d) => d.getTime()))) : null;
     const maxEnd = endDates.length > 0 ? new Date(Math.max(...endDates.map((d) => d.getTime()))) : null;
 
@@ -525,8 +533,8 @@ export async function exportWbsTemplate(
       t.type === 'work_package' ? 'WP' : 'ACT',
       escapeCsvField(t.name),
       escapeCsvField(t.wbsNumber),
-      t.plannedStartDate?.toISOString().split('T')[0] ?? '',
-      t.plannedEndDate?.toISOString().split('T')[0] ?? '',
+      safeDate(t.plannedStartDate) ?? '',
+      safeDate(t.plannedEndDate) ?? '',
       String(Number(t.plannedEffort)),
       t.priority ?? '',
       t.isMilestone ? '○' : '',
