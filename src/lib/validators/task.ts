@@ -45,6 +45,7 @@ export const createTaskSchema = z.discriminatedUnion('type', [
 ]);
 
 export const updateTaskSchema = z.object({
+  type: z.enum(['work_package', 'activity']).optional(),
   parentTaskId: z.string().uuid().optional().nullable(),
   wbsNumber: z.string().max(50).optional(),
   name: z.string().min(1).max(100).optional(),

@@ -169,6 +169,18 @@ describe('updateTaskSchema', () => {
   it('不正な日付形式を拒否する', () => {
     expect(updateTaskSchema.safeParse({ actualStartDate: '2026/05/01' }).success).toBe(false);
   });
+
+  it('種別をwork_packageに変更できる', () => {
+    expect(updateTaskSchema.safeParse({ type: 'work_package' }).success).toBe(true);
+  });
+
+  it('種別をactivityに変更できる', () => {
+    expect(updateTaskSchema.safeParse({ type: 'activity' }).success).toBe(true);
+  });
+
+  it('無効な種別を拒否する', () => {
+    expect(updateTaskSchema.safeParse({ type: 'task' }).success).toBe(false);
+  });
 });
 
 describe('wbsTemplateSchema', () => {

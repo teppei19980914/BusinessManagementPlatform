@@ -110,6 +110,7 @@ function TaskTreeNode({
   async function handlePmEditSubmit(e: React.FormEvent) {
     e.preventDefault();
     const body: Record<string, unknown> = {
+      type: pmEditForm.type,
       name: pmEditForm.name,
       parentTaskId: pmEditForm.parentTaskId || null,
     };
@@ -278,7 +279,11 @@ function TaskTreeNode({
               <div className="flex flex-wrap items-end gap-4">
                 <div className="space-y-1">
                   <Label className="text-xs">種別</Label>
-                  <span className="block text-sm font-medium px-1">{isWP ? 'ワークパッケージ' : 'アクティビティ'}</span>
+                  <LabeledSelect
+                    value={pmEditForm.type}
+                    onValueChange={(v) => v && setPmEditForm({ ...pmEditForm, type: v as 'work_package' | 'activity' })}
+                    options={WBS_TYPES}
+                  />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">親WP</Label>
@@ -294,7 +299,7 @@ function TaskTreeNode({
                   <Input value={pmEditForm.name} onChange={(e) => setPmEditForm({ ...pmEditForm, name: e.target.value })} className="w-48" required />
                 </div>
               </div>
-              {!isWP && (
+              {pmEditForm.type === 'activity' && (
                 <div className="flex flex-wrap items-end gap-4">
                   <div className="space-y-1">
                     <Label className="text-xs">担当者</Label>
