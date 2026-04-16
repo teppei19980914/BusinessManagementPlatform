@@ -24,7 +24,19 @@ export async function POST(
     );
   }
 
-  const count = await importWbsTemplate(projectId, parsed.data.tasks, user.id);
+  let count: number;
+  try {
+    count = await importWbsTemplate(projectId, parsed.data.tasks, user.id);
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('IMPORT_VALIDATION_ERROR:')) {
+      const details = e.message.replace('IMPORT_VALIDATION_ERROR:', '');
+      return NextResponse.json(
+        { error: { code: 'IMPORT_VALIDATION_ERROR', message: details } },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     userId: user.id,

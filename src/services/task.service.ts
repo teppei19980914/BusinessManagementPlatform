@@ -524,8 +524,57 @@ export async function exportWbsTemplate(
 }
 
 /**
+ * WBS テンプレートをインポート前にバリデーションする。
+ * エラーがある場合は理由を配列で返す。
+ */
+export function validateWbsTemplate(templateTasks: WbsTemplateTask[]): string[] {
+  const errors: string[] = [];
+  const tempIds = new Set(templateTasks.map((t) => t.tempId));
+
+  // tempId の重複チェック
+  if (tempIds.size !== templateTasks.length) {
+    errors.push('tempId が重複しています');
+  }
+
+  // 親参照の整合性チェック
+  for (const t of templateTasks) {
+    if (t.parentTempId && !tempIds.has(t.parentTempId)) {
+      errors.push(`タスク "${t.name}" (${t.tempId}) の親 "${t.parentTempId}" がテンプレート内に存在しません`);
+    }
+  }
+
+  // 循環参照チェック
+  for (const t of templateTasks) {
+    const visited = new Set<string>();
+    let current: string | null | undefined = t.tempId;
+    while (current) {
+      if (visited.has(current)) {
+        errors.push(`タスク "${t.name}" (${t.tempId}) に循環参照があります`);
+        break;
+      }
+      visited.add(current);
+      const parent = templateTasks.find((p) => p.tempId === current);
+      current = parent?.parentTempId;
+    }
+  }
+
+  // アクティビティの親がワークパッケージであるかチェック
+  for (const t of templateTasks) {
+    if (t.parentTempId) {
+      const parent = templateTasks.find((p) => p.tempId === t.parentTempId);
+      if (parent && parent.type !== 'work_package') {
+        errors.push(`タスク "${t.name}" (${t.tempId}) の親 "${parent.name}" はワークパッケージではありません`);
+      }
+    }
+  }
+
+  return errors;
+}
+
+/**
  * WBS テンプレートをインポート。
  * tempId / parentTempId で階層構造を再構築する。
+ * バリデーションエラー時は例外をスロー、DB操作はトランザクションでロールバック。
  */
 export async function importWbsTemplate(
   projectId: string,
@@ -533,6 +582,12 @@ export async function importWbsTemplate(
   userId: string,
 ): Promise<number> {
   if (templateTasks.length === 0) return 0;
+
+  // 事前バリデーション
+  const validationErrors = validateWbsTemplate(templateTasks);
+  if (validationErrors.length > 0) {
+    throw new Error(`IMPORT_VALIDATION_ERROR:${validationErrors.join('; ')}`);
+  }
 
   // 深度順にソート（parentTempId がないものを先に処理）
   const depthMap = new Map<string, number>();
@@ -550,40 +605,42 @@ export async function importWbsTemplate(
     (a, b) => (depthMap.get(a.tempId) ?? 0) - (depthMap.get(b.tempId) ?? 0),
   );
 
-  // tempId → 実ID マッピング
+  // トランザクションで一括作成（エラー時は自動ロールバック）
   const idMap = new Map<string, string>();
 
-  for (const t of sorted) {
-    const parentId = t.parentTempId ? idMap.get(t.parentTempId) ?? null : null;
-    const isActivity = t.type === 'activity';
+  await prisma.$transaction(async (tx) => {
+    for (const t of sorted) {
+      const parentId = t.parentTempId ? idMap.get(t.parentTempId) ?? null : null;
+      const isActivity = t.type === 'activity';
 
-    const created = await prisma.task.create({
-      data: {
-        projectId,
-        parentTaskId: parentId,
-        type: t.type,
-        wbsNumber: t.wbsNumber ?? null,
-        name: t.name,
-        description: t.description ?? null,
-        category: 'other',
-        assigneeId: isActivity ? (t.assigneeId ?? null) : null,
-        plannedStartDate: isActivity && t.plannedStartDate ? new Date(t.plannedStartDate) : null,
-        plannedEndDate: isActivity && t.plannedEndDate ? new Date(t.plannedEndDate) : null,
-        plannedEffort: isActivity ? (t.plannedEffort ?? 0) : 0,
-        priority: isActivity ? (t.priority ?? 'medium') : null,
-        isMilestone: isActivity ? (t.isMilestone ?? false) : false,
-        notes: t.notes ?? null,
-        status: 'not_started',
-        progressRate: 0,
-        createdBy: userId,
-        updatedBy: userId,
-      },
-    });
+      const created = await tx.task.create({
+        data: {
+          projectId,
+          parentTaskId: parentId,
+          type: t.type,
+          wbsNumber: t.wbsNumber ?? null,
+          name: t.name,
+          description: t.description ?? null,
+          category: 'other',
+          assigneeId: isActivity ? (t.assigneeId ?? null) : null,
+          plannedStartDate: isActivity && t.plannedStartDate ? new Date(t.plannedStartDate) : null,
+          plannedEndDate: isActivity && t.plannedEndDate ? new Date(t.plannedEndDate) : null,
+          plannedEffort: isActivity ? (t.plannedEffort ?? 0) : 0,
+          priority: isActivity ? (t.priority ?? 'medium') : null,
+          isMilestone: isActivity ? (t.isMilestone ?? false) : false,
+          notes: t.notes ?? null,
+          status: 'not_started',
+          progressRate: 0,
+          createdBy: userId,
+          updatedBy: userId,
+        },
+      });
 
-    idMap.set(t.tempId, created.id);
-  }
+      idMap.set(t.tempId, created.id);
+    }
+  });
 
-  // WP の集計を更新
+  // WP の集計を更新（トランザクション外 — 集計失敗はデータ破損にならないため）
   const wpIds = sorted.filter((t) => t.type === 'work_package').map((t) => idMap.get(t.tempId)!);
   for (const wpId of wpIds.reverse()) {
     await recalculateAncestorsPublic(wpId);
