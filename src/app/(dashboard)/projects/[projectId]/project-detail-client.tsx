@@ -42,7 +42,6 @@ type Props = {
   retros: RetroDTO[];
   members: MemberDTO[];
   allUsers: UserDTO[];
-  allProjects: { id: string; name: string }[];
   knowledges: KnowledgeDTO[];
   canEdit: boolean;
   canCreate: boolean;
@@ -60,7 +59,7 @@ const NEXT_STATUSES: Record<string, string[]> = {
 
 export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
-  estimates, tasks, tasksFlat, risks, retros, members, allUsers, allProjects, knowledges,
+  estimates, tasks, tasksFlat, risks, retros, members, allUsers, knowledges,
   canEdit, canCreate,
 }: Props) {
   const router = useRouter();
@@ -276,7 +275,6 @@ export function ProjectDetailClient({
             projectId={project.id}
             tasks={tasks}
             members={members}
-            allProjects={allProjects}
             projectRole={projectRole}
             systemRole={systemRole}
             userId={userId}
