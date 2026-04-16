@@ -47,6 +47,8 @@ function TaskTreeNode({
   projectId,
   router,
   onLoading,
+  selectedIds,
+  onToggleSelect,
 }: {
   task: TaskDTO;
   depth: number;
@@ -55,6 +57,8 @@ function TaskTreeNode({
   projectId: string;
   router: ReturnType<typeof useRouter>;
   onLoading: <T>(fn: () => Promise<T>) => Promise<T>;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
 }) {
   const [showProgress, setShowProgress] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -106,6 +110,11 @@ function TaskTreeNode({
   return (
     <>
       <tr className={`border-b hover:bg-gray-50 ${isWP ? 'bg-gray-50/50' : ''}`}>
+        {canEdit && (
+          <td className="px-2 py-2 w-8">
+            <input type="checkbox" checked={selectedIds.has(task.id)} onChange={() => onToggleSelect(task.id)} className="rounded" />
+          </td>
+        )}
         <td className="px-3 py-2" style={{ paddingLeft: `${depth * 24 + 12}px` }}>
           <div className="flex items-center gap-2">
             <Badge variant={isWP ? 'default' : 'outline'} className="text-[10px] px-1.5 py-0">
@@ -169,7 +178,7 @@ function TaskTreeNode({
       </tr>
       {showProgress && canShowProgress && (
         <tr className="border-b bg-blue-50">
-          <td colSpan={8} className="px-6 py-3">
+          <td colSpan={canEdit ? 9 : 8} className="px-6 py-3">
             <form onSubmit={handleProgressSubmit} className="flex items-end gap-4">
               <div className="space-y-1">
                 <Label className="text-xs">進捗率</Label>
@@ -191,7 +200,7 @@ function TaskTreeNode({
       )}
       {showEdit && (
         <tr className="border-b bg-green-50">
-          <td colSpan={8} className="px-6 py-3">
+          <td colSpan={canEdit ? 9 : 8} className="px-6 py-3">
             <form onSubmit={handleEditSubmit} className="flex items-end gap-4">
               <div className="space-y-1">
                 <Label className="text-xs">名前</Label>
@@ -225,11 +234,12 @@ function TaskTreeNode({
           task={child}
           depth={depth + 1}
           canEdit={canEdit}
-
           userId={userId}
           projectId={projectId}
           router={router}
           onLoading={onLoading}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
         />
       ))}
     </>
@@ -246,6 +256,27 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
   const [error, setError] = useState('');
 
   const canEdit = systemRole === 'admin' || projectRole === 'pm_tl';
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`${selectedIds.size} 件を一括削除しますか？`)) return;
+    for (const id of selectedIds) {
+      await withLoading(() =>
+        fetch(`/api/projects/${projectId}/tasks/${id}`, { method: 'DELETE' }),
+      );
+    }
+    setSelectedIds(new Set());
+    router.refresh();
+  }
 
   // コピー元候補（自分自身を除外）
   const copySourceOptions = Object.fromEntries(
@@ -454,10 +485,19 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
         )}
       </div>
 
+      {canEdit && selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
+          <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
+          <Button variant="outline" size="sm" className="text-red-600" onClick={handleBulkDelete}>一括削除</Button>
+          <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>選択解除</Button>
+        </div>
+      )}
+
       <div className="rounded-lg border">
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
+              {canEdit && <th className="px-2 py-2 w-8"></th>}
               <th className="px-3 py-2 text-left font-medium">名称</th>
               <th className="px-3 py-2 text-left font-medium">担当者</th>
               <th className="px-3 py-2 text-left font-medium">ステータス</th>
@@ -475,16 +515,17 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
                 task={task}
                 depth={0}
                 canEdit={canEdit}
-
                 userId={userId}
                 projectId={projectId}
                 router={router}
                 onLoading={withLoading}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelect}
               />
             ))}
             {tasks.length === 0 && (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-gray-500">
+                <td colSpan={canEdit ? 9 : 8} className="py-8 text-center text-gray-500">
                   WBS が登録されていません
                 </td>
               </tr>
