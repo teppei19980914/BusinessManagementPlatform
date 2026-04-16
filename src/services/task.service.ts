@@ -216,15 +216,14 @@ export async function bulkUpdateTasks(
   updates: { assigneeId?: string | null; priority?: string },
   userId: string,
 ): Promise<number> {
-  const data: Prisma.TaskUpdateInput = { updatedBy: userId };
-
-  if (updates.assigneeId !== undefined) {
-    data.assignee = updates.assigneeId
-      ? { connect: { id: updates.assigneeId } }
-      : { disconnect: true };
-  }
-  if (updates.priority !== undefined) {
-    data.priority = updates.priority;
+  // 担当者がプロジェクトメンバーであることを検証
+  if (updates.assigneeId) {
+    const isMember = await prisma.projectMember.findFirst({
+      where: { projectId, userId: updates.assigneeId },
+    });
+    if (!isMember) {
+      throw new Error('ASSIGNEE_NOT_MEMBER');
+    }
   }
 
   const result = await prisma.task.updateMany({

@@ -32,6 +32,8 @@ const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 const DAY_WIDTH = 32;
 
 export function GanttClient({ tasks: allTasks }: Props) {
+  const today = useMemo(() => new Date().toISOString().split('T')[0], []);
+
   // アクティビティのみ表示（WP は除外）
   const tasks = useMemo(
     () => allTasks.filter((t) => t.type === 'activity' && t.plannedStartDate && t.plannedEndDate),
@@ -40,7 +42,6 @@ export function GanttClient({ tasks: allTasks }: Props) {
 
   const { minDate, totalDays } = useMemo(() => {
     if (tasks.length === 0) {
-      const today = new Date().toISOString().split('T')[0];
       return { minDate: today, totalDays: 30 };
     }
     const starts = tasks.map((t) => t.plannedStartDate!);
@@ -48,7 +49,7 @@ export function GanttClient({ tasks: allTasks }: Props) {
     const min = starts.sort()[0];
     const max = ends.sort().reverse()[0];
     return { minDate: min, totalDays: Math.max(daysBetween(min, max) + 1, 7) };
-  }, [tasks]);
+  }, [tasks, today]);
 
   // 月ヘッダー生成（日単位グリッドの上段）
   const monthHeaders = useMemo(() => {
@@ -128,7 +129,7 @@ export function GanttClient({ tasks: allTasks }: Props) {
             <div className="flex">
               {dayHeaders.map((dh, i) => {
                 const isWeekend = dh.dayOfWeek === 0 || dh.dayOfWeek === 6;
-                const isToday = dh.date === new Date().toISOString().split('T')[0];
+                const isToday = dh.date === today;
                 return (
                   <div
                     key={i}
@@ -168,7 +169,7 @@ export function GanttClient({ tasks: allTasks }: Props) {
                   {/* 週末背景 */}
                   {dayHeaders.map((dh, i) => {
                     const isWeekend = dh.dayOfWeek === 0 || dh.dayOfWeek === 6;
-                    const isToday = dh.date === new Date().toISOString().split('T')[0];
+                    const isToday = dh.date === today;
                     if (!isWeekend && !isToday) return null;
                     return (
                       <div

@@ -25,14 +25,26 @@ export async function PATCH(
   }
 
   const { taskIds, assigneeId, priority } = parsed.data;
-  const count = await bulkUpdateTasks(projectId, taskIds, { assigneeId, priority }, user.id);
+
+  let count: number;
+  try {
+    count = await bulkUpdateTasks(projectId, taskIds, { assigneeId, priority }, user.id);
+  } catch (e) {
+    if (e instanceof Error && e.message === 'ASSIGNEE_NOT_MEMBER') {
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: '指定された担当者はプロジェクトメンバーではありません' } },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     userId: user.id,
     action: 'UPDATE',
     entityType: 'task',
-    entityId: taskIds.join(','),
-    afterValue: { bulk: true, count, assigneeId, priority },
+    entityId: `bulk:${count}`,
+    afterValue: { bulk: true, count, taskIds, projectId, assigneeId, priority },
   });
 
   return NextResponse.json({ data: { updatedCount: count } });

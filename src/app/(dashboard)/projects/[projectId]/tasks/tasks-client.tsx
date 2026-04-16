@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,18 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
   completed: 'secondary',
   on_hold: 'destructive',
 };
+
+/** ツリーから全IDを再帰的に収集する */
+function collectAllIds(nodes: TaskDTO[]): string[] {
+  const ids: string[] = [];
+  for (const node of nodes) {
+    ids.push(node.id);
+    if (node.children) {
+      ids.push(...collectAllIds(node.children));
+    }
+  }
+  return ids;
+}
 
 function TaskTreeNode({
   task,
@@ -258,6 +270,19 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
   const canEdit = systemRole === 'admin' || projectRole === 'pm_tl';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  // 全タスクIDの一覧（全選択用）
+  const allTaskIds = useMemo(() => collectAllIds(tasks), [tasks]);
+
+  const isAllSelected = allTaskIds.length > 0 && allTaskIds.every((id) => selectedIds.has(id));
+
+  function toggleSelectAll() {
+    if (isAllSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allTaskIds));
+    }
+  }
+
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -305,8 +330,9 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
   }
 
   // コピー元候補（自分自身を除外）
-  const copySourceOptions = Object.fromEntries(
-    allProjects.filter((p) => p.id !== projectId).map((p) => [p.id, p.name]),
+  const copySourceProjects = useMemo(
+    () => allProjects.filter((p) => p.id !== projectId),
+    [allProjects, projectId],
   );
 
   async function handleCopyWbs(e: React.FormEvent) {
@@ -337,19 +363,21 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
   const [parentTaskId, setParentTaskId] = useState('');
 
   // 親候補: WP のフラット一覧（ツリーを再帰的に展開）
-  function flattenWPs(nodes: TaskDTO[], depth = 0): { id: string; label: string }[] {
-    const result: { id: string; label: string }[] = [];
-    for (const node of nodes) {
-      if (node.type === 'work_package') {
-        result.push({ id: node.id, label: `${'　'.repeat(depth)}${node.name}` });
-        if (node.children) {
-          result.push(...flattenWPs(node.children, depth + 1));
+  const parentOptions = useMemo(() => {
+    function flattenWPs(nodes: TaskDTO[], depth = 0): { id: string; label: string }[] {
+      const result: { id: string; label: string }[] = [];
+      for (const node of nodes) {
+        if (node.type === 'work_package') {
+          result.push({ id: node.id, label: `${'　'.repeat(depth)}${node.name}` });
+          if (node.children) {
+            result.push(...flattenWPs(node.children, depth + 1));
+          }
         }
       }
+      return result;
     }
-    return result;
-  }
-  const parentOptions = flattenWPs(tasks);
+    return flattenWPs(tasks);
+  }, [tasks]);
 
   const [form, setForm] = useState({
     name: '',
@@ -398,6 +426,9 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
     router.refresh();
   }
 
+  // Dialog 内のセレクト用スタイル（native select — base-ui Select は Dialog Portal と干渉するため）
+  const nativeSelectClass = 'flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50';
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -415,7 +446,16 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
                 {copyError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{copyError}</div>}
                 <div className="space-y-2">
                   <Label>コピー元プロジェクト</Label>
-                  <LabeledSelect value={copySource} onValueChange={(v) => setCopySource(v ?? '')} options={copySourceOptions} placeholder="プロジェクトを選択..." />
+                  <select
+                    value={copySource}
+                    onChange={(e) => setCopySource(e.target.value)}
+                    className={nativeSelectClass}
+                  >
+                    <option value="">プロジェクトを選択...</option>
+                    {copySourceProjects.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <Button type="submit" className="w-full">コピー実行</Button>
               </form>
@@ -438,20 +478,28 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
                 )}
                 <div className="space-y-2">
                   <Label>種別</Label>
-                  <LabeledSelect
+                  <select
                     value={createType}
-                    onValueChange={(v) => v && setCreateType(v as 'work_package' | 'activity')}
-                    options={WBS_TYPES}
-                  />
+                    onChange={(e) => setCreateType(e.target.value as 'work_package' | 'activity')}
+                    className={nativeSelectClass}
+                  >
+                    {Object.entries(WBS_TYPES).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label>親ワークパッケージ</Label>
-                  <LabeledSelect
+                  <select
                     value={parentTaskId}
-                    onValueChange={(v) => setParentTaskId(v ?? '')}
-                    options={Object.fromEntries(parentOptions.map((p) => [p.id, p.label]))}
-                    placeholder="なし（最上位に配置）"
-                  />
+                    onChange={(e) => setParentTaskId(e.target.value)}
+                    className={nativeSelectClass}
+                  >
+                    <option value="">なし（最上位に配置）</option>
+                    {parentOptions.map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label>名称</Label>
@@ -470,12 +518,17 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
                       {members.length === 0 ? (
                         <p className="text-sm text-red-500">メンバーが未登録です。先にメンバー管理から追加してください。</p>
                       ) : (
-                        <LabeledSelect
+                        <select
                           value={form.assigneeId}
-                          onValueChange={(v) => v && setForm({ ...form, assigneeId: v })}
-                          options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
-                          placeholder="選択..."
-                        />
+                          onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
+                          className={nativeSelectClass}
+                          required
+                        >
+                          <option value="">選択...</option>
+                          {members.map((m) => (
+                            <option key={m.userId} value={m.userId}>{m.userName}</option>
+                          ))}
+                        </select>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-4">
@@ -495,7 +548,15 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
                       </div>
                       <div className="space-y-2">
                         <Label>優先度</Label>
-                        <LabeledSelect value={form.priority} onValueChange={(v) => v && setForm({ ...form, priority: v })} options={PRIORITIES} />
+                        <select
+                          value={form.priority}
+                          onChange={(e) => setForm({ ...form, priority: e.target.value })}
+                          className={nativeSelectClass}
+                        >
+                          {Object.entries(PRIORITIES).map(([key, label]) => (
+                            <option key={key} value={key}>{label}</option>
+                          ))}
+                        </select>
                       </div>
                     </div>
                   </>
@@ -538,7 +599,17 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
-              {canEdit && <th className="px-2 py-2 w-8"></th>}
+              {canEdit && (
+                <th className="px-2 py-2 w-8">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded"
+                    title="全選択"
+                  />
+                </th>
+              )}
               <th className="px-3 py-2 text-left font-medium">名称</th>
               <th className="px-3 py-2 text-left font-medium">担当者</th>
               <th className="px-3 py-2 text-left font-medium">ステータス</th>

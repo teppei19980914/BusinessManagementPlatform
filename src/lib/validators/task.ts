@@ -71,7 +71,7 @@ export const updateProgressSchema = z.object({
 });
 
 export const bulkUpdateTaskSchema = z.object({
-  taskIds: z.array(z.string().uuid()).min(1, '対象タスクを選択してください'),
+  taskIds: z.array(z.string().uuid()).min(1, '対象タスクを選択してください').max(100, '一括更新は100件までです'),
   assigneeId: z.string().uuid().optional().nullable(),
   priority: z.enum(['low', 'medium', 'high']).optional(),
 });
