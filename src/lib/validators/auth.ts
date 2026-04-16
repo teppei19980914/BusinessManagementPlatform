@@ -31,9 +31,20 @@ export const createUserSchema = z.object({
     .min(1, 'ユーザ名を入力してください')
     .max(100, 'ユーザ名は100文字以内で入力してください'),
   email: z.email('有効なメールアドレスを入力してください'),
-  password: passwordSchema,
   systemRole: z.enum(['admin', 'general']),
 });
 
+export const setupPasswordSchema = z
+  .object({
+    token: z.string().min(1, 'トークンが必要です'),
+    password: passwordSchema,
+    confirmPassword: z.string().min(1, '確認用パスワードを入力してください'),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'パスワードが一致しません',
+    path: ['confirmPassword'],
+  });
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type SetupPasswordInput = z.infer<typeof setupPasswordSchema>;

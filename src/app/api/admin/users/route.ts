@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const baseUrl = process.env.NEXTAUTH_URL || req.nextUrl.origin;
-    const { user: newUser, recoveryCodes } = await createUser(parsed.data, user.id, { baseUrl });
+    const { user: newUser } = await createUser(parsed.data, user.id, { baseUrl });
 
     await recordAuditLog({
       userId: user.id,
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       detail: { createdBy: user.id },
     });
 
-    return NextResponse.json({ data: { user: newUser, recoveryCodes } }, { status: 201 });
+    return NextResponse.json({ data: { user: newUser } }, { status: 201 });
   } catch (e) {
     if (e instanceof Error) {
       if (e.message === 'DUPLICATE_EMAIL') {

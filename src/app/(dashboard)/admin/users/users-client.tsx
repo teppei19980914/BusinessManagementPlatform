@@ -41,13 +41,12 @@ export function UsersClient({ initialUsers }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
   const [form, setForm] = useState({
     name: '',
     email: '',
-    password: '',
     systemRole: 'general' as 'admin' | 'general',
   });
 
@@ -71,7 +70,7 @@ export function UsersClient({ initialUsers }: Props) {
         setError('このメールアドレスは既に登録されています。別のメールアドレスを使用してください。');
       } else if (code === 'EMAIL_SEND_FAILED') {
         setError(
-          '検証メールの送信に失敗しました。メールアドレスに誤りがないか確認し、再度お試しください。',
+          '招待メールの送信に失敗しました。メールアドレスに誤りがないか確認し、再度お試しください。',
         );
       } else if (code === 'VALIDATION_ERROR') {
         setError(
@@ -83,45 +82,42 @@ export function UsersClient({ initialUsers }: Props) {
       return;
     }
 
-    setRecoveryCodes(json.data.recoveryCodes);
+    setSuccess(true);
     router.refresh();
   }
 
-  function handleCloseRecoveryCodes() {
-    setRecoveryCodes(null);
+  function handleClose() {
+    setSuccess(false);
     setIsDialogOpen(false);
-    setForm({ name: '', email: '', password: '', systemRole: 'general' });
+    setError('');
+    setForm({ name: '', email: '', systemRole: 'general' });
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">ユーザ管理</h2>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsDialogOpen(true); }}>
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規ユーザ登録</DialogTrigger>
           <DialogContent className="max-w-md">
-            {recoveryCodes ? (
+            {success ? (
               <>
                 <DialogHeader>
-                  <DialogTitle>リカバリーコード</DialogTitle>
+                  <DialogTitle>招待メールを送信しました</DialogTitle>
                   <DialogDescription>
-                    このコードを安全な場所に保管してください。再表示はできません。
+                    {form.email} にパスワード設定用のリンクを送信しました。
+                    ユーザがリンクからパスワードを設定すると、アカウントが有効化されます。
                   </DialogDescription>
                 </DialogHeader>
-                <div className="rounded-md bg-gray-50 p-4 font-mono text-sm">
-                  {recoveryCodes.map((code, i) => (
-                    <div key={i}>
-                      {String(i + 1).padStart(2, ' ')}. {code}
-                    </div>
-                  ))}
-                </div>
-                <Button onClick={handleCloseRecoveryCodes}>確認しました</Button>
+                <Button onClick={handleClose}>閉じる</Button>
               </>
             ) : (
               <>
                 <DialogHeader>
                   <DialogTitle>新規ユーザ登録</DialogTitle>
-                  <DialogDescription>ユーザ情報を入力してください。</DialogDescription>
+                  <DialogDescription>
+                    ユーザ情報を入力してください。登録後、パスワード設定用の招待メールが送信されます。
+                  </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
                   {error && (
@@ -148,19 +144,6 @@ export function UsersClient({ initialUsers }: Props) {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="password">初期パスワード</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      value={form.password}
-                      onChange={(e) => setForm({ ...form, password: e.target.value })}
-                      required
-                    />
-                    <p className="text-xs text-gray-500">
-                      10文字以上、英大文字・英小文字・数字・記号のうち3種以上
-                    </p>
-                  </div>
-                  <div className="space-y-2">
                     <Label htmlFor="role">システムロール</Label>
                     <Select
                       value={form.systemRole}
@@ -181,7 +164,7 @@ export function UsersClient({ initialUsers }: Props) {
                     </Select>
                   </div>
                   <Button type="submit" className="w-full">
-                    登録
+                    招待メールを送信
                   </Button>
                 </form>
               </>
