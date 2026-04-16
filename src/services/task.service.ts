@@ -349,3 +349,74 @@ export async function getProgressLogs(taskId: string): Promise<ProgressLogDTO[]>
     createdAt: l.createdAt.toISOString(),
   }));
 }
+
+/**
+ * 既存プロジェクトの WBS を別プロジェクトに一括コピー。
+ * - 階層構造を保持
+ * - 担当者はリセット（null）
+ * - 進捗率・ステータスは初期状態にリセット
+ * - 日程・工数はそのままコピー
+ */
+export async function copyWbs(
+  sourceProjectId: string,
+  targetProjectId: string,
+  userId: string,
+): Promise<number> {
+  const sourceTasks = await prisma.task.findMany({
+    where: { projectId: sourceProjectId, deletedAt: null },
+    orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  if (sourceTasks.length === 0) return 0;
+
+  // 旧ID → 新ID のマッピング
+  const idMap = new Map<string, string>();
+
+  // 親がないもの → 親があるものの順で処理するため、ルートから先に作成
+  const sorted = [...sourceTasks].sort((a, b) => {
+    const depthA = getDepth(a.id, sourceTasks);
+    const depthB = getDepth(b.id, sourceTasks);
+    return depthA - depthB;
+  });
+
+  for (const src of sorted) {
+    const newParentId = src.parentTaskId ? idMap.get(src.parentTaskId) ?? null : null;
+
+    const created = await prisma.task.create({
+      data: {
+        projectId: targetProjectId,
+        parentTaskId: newParentId,
+        type: src.type,
+        wbsNumber: src.wbsNumber,
+        name: src.name,
+        description: src.description,
+        category: src.category,
+        assigneeId: null, // 担当者はリセット
+        plannedStartDate: src.plannedStartDate,
+        plannedEndDate: src.plannedEndDate,
+        plannedEffort: src.plannedEffort,
+        priority: src.priority,
+        status: 'not_started',
+        progressRate: 0,
+        isMilestone: src.isMilestone,
+        notes: src.notes,
+        createdBy: userId,
+        updatedBy: userId,
+      },
+    });
+
+    idMap.set(src.id, created.id);
+  }
+
+  return idMap.size;
+}
+
+function getDepth(taskId: string, tasks: { id: string; parentTaskId: string | null }[]): number {
+  let depth = 0;
+  let current = tasks.find((t) => t.id === taskId);
+  while (current?.parentTaskId) {
+    depth++;
+    current = tasks.find((t) => t.id === current!.parentTaskId);
+  }
+  return depth;
+}

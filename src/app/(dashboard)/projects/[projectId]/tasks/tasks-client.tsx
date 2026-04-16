@@ -20,10 +20,13 @@ import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 
+type ProjectSummary = { id: string; name: string };
+
 type Props = {
   projectId: string;
   tasks: TaskDTO[];
   members: MemberDTO[];
+  allProjects: ProjectSummary[];
   projectRole: string | null;
   systemRole: string;
   userId: string;
@@ -40,7 +43,6 @@ function TaskTreeNode({
   task,
   depth,
   canEdit,
-  canUpdateProgress,
   userId,
   projectId,
   router,
@@ -49,7 +51,6 @@ function TaskTreeNode({
   task: TaskDTO;
   depth: number;
   canEdit: boolean;
-  canUpdateProgress: boolean;
   userId: string;
   projectId: string;
   router: ReturnType<typeof useRouter>;
@@ -61,6 +62,7 @@ function TaskTreeNode({
     name: task.name,
     plannedStartDate: task.plannedStartDate,
     plannedEndDate: task.plannedEndDate,
+    plannedEffort: task.plannedEffort,
   });
   const [progressForm, setProgressForm] = useState({
     progressRate: task.progressRate,
@@ -70,6 +72,10 @@ function TaskTreeNode({
 
   const isWP = task.type === 'work_package';
   const isAssignee = task.assigneeId === userId;
+  // 進捗更新: 担当者のみ（ACT限定）
+  const canShowProgress = !isWP && isAssignee;
+  // 編集: PM/TL・admin のみ
+  // canEdit は親コンポーネントから渡される（systemRole === 'admin' || projectRole === 'pm_tl'）
 
   async function handleEditSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -133,7 +139,7 @@ function TaskTreeNode({
         <td className="px-3 py-2 text-sm">{task.plannedEndDate || '-'}</td>
         <td className="px-3 py-2">
           <div className="flex gap-1">
-            {!isWP && (canUpdateProgress || isAssignee) && (
+            {canShowProgress && (
               <Button variant="outline" size="sm" onClick={() => setShowProgress(!showProgress)}>
                 進捗
               </Button>
@@ -161,7 +167,7 @@ function TaskTreeNode({
           </div>
         </td>
       </tr>
-      {showProgress && !isWP && (
+      {showProgress && canShowProgress && (
         <tr className="border-b bg-blue-50">
           <td colSpan={8} className="px-6 py-3">
             <form onSubmit={handleProgressSubmit} className="flex items-end gap-4">
@@ -201,6 +207,10 @@ function TaskTreeNode({
                     <Label className="text-xs">終了日</Label>
                     <Input type="date" value={editForm.plannedEndDate ?? ''} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} className="w-36" />
                   </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">見積工数</Label>
+                    <Input type="number" min={0} step={0.5} value={editForm.plannedEffort} onChange={(e) => setEditForm({ ...editForm, plannedEffort: Number(e.target.value) })} className="w-24" />
+                  </div>
                 </>
               )}
               <Button type="submit" size="sm">保存</Button>
@@ -215,7 +225,7 @@ function TaskTreeNode({
           task={child}
           depth={depth + 1}
           canEdit={canEdit}
-          canUpdateProgress={canUpdateProgress}
+
           userId={userId}
           projectId={projectId}
           router={router}
@@ -226,14 +236,45 @@ function TaskTreeNode({
   );
 }
 
-export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId }: Props) {
+export function TasksClient({ projectId, tasks, members, allProjects, projectRole, systemRole, userId }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCopyOpen, setIsCopyOpen] = useState(false);
+  const [copySource, setCopySource] = useState('');
+  const [copyError, setCopyError] = useState('');
   const [error, setError] = useState('');
 
   const canEdit = systemRole === 'admin' || projectRole === 'pm_tl';
-  const canUpdateProgress = systemRole === 'admin' || projectRole === 'pm_tl';
+
+  // コピー元候補（自分自身を除外）
+  const copySourceOptions = Object.fromEntries(
+    allProjects.filter((p) => p.id !== projectId).map((p) => [p.id, p.name]),
+  );
+
+  async function handleCopyWbs(e: React.FormEvent) {
+    e.preventDefault();
+    setCopyError('');
+    if (!copySource) { setCopyError('コピー元プロジェクトを選択してください'); return; }
+
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceProjectId: copySource }),
+      }),
+    );
+
+    if (!res.ok) {
+      const json = await res.json();
+      setCopyError(json.error?.message || 'コピーに失敗しました');
+      return;
+    }
+
+    setIsCopyOpen(false);
+    setCopySource('');
+    router.refresh();
+  }
 
   const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
   const [parentTaskId, setParentTaskId] = useState('');
@@ -305,6 +346,24 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">WBS管理</h2>
         {canEdit && (
+          <div className="flex gap-2">
+          <Dialog open={isCopyOpen} onOpenChange={setIsCopyOpen}>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">WBSコピー</DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>WBS コピー</DialogTitle>
+                <DialogDescription>既存プロジェクトの WBS を一括コピーします。担当者はリセットされ、進捗は初期状態になります。</DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleCopyWbs} className="space-y-4">
+                {copyError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{copyError}</div>}
+                <div className="space-y-2">
+                  <Label>コピー元プロジェクト</Label>
+                  <LabeledSelect value={copySource} onValueChange={(v) => setCopySource(v ?? '')} options={copySourceOptions} placeholder="プロジェクトを選択..." />
+                </div>
+                <Button type="submit" className="w-full">コピー実行</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">追加</DialogTrigger>
             <DialogContent className="max-w-lg">
@@ -391,6 +450,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
+          </div>
         )}
       </div>
 
@@ -415,7 +475,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 task={task}
                 depth={0}
                 canEdit={canEdit}
-                canUpdateProgress={canUpdateProgress}
+
                 userId={userId}
                 projectId={projectId}
                 router={router}
