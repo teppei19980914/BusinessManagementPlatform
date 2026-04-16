@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateWbsTemplate } from './task.service';
+import { validateWbsTemplate, parseCsvTemplate, parseCsvLine } from './task.service';
 import type { WbsTemplateTask } from '@/lib/validators/task';
 
 describe('validateWbsTemplate', () => {
@@ -55,5 +55,85 @@ describe('validateWbsTemplate', () => {
   it('ルートタスク（親なし）は正常', () => {
     const root: WbsTemplateTask = { tempId: 'r', parentTempId: null, type: 'work_package', name: 'ルート' };
     expect(validateWbsTemplate([root])).toEqual([]);
+  });
+});
+
+describe('parseCsvLine', () => {
+  it('通常のCSV行をパースできる', () => {
+    expect(parseCsvLine('1,WP,テスト,WBS-1,2026-05-01,2026-05-15,16,medium,,メモ'))
+      .toEqual(['1', 'WP', 'テスト', 'WBS-1', '2026-05-01', '2026-05-15', '16', 'medium', '', 'メモ']);
+  });
+
+  it('ダブルクォートで囲まれたフィールドをパースできる', () => {
+    expect(parseCsvLine('1,WP,"カンマ,含む名前",,,,,,,')).toEqual(['1', 'WP', 'カンマ,含む名前', '', '', '', '', '', '', '']);
+  });
+
+  it('エスケープされたダブルクォートを処理できる', () => {
+    expect(parseCsvLine('1,WP,"名前""付き",,,,,,,')).toEqual(['1', 'WP', '名前"付き', '', '', '', '', '', '', '']);
+  });
+});
+
+describe('parseCsvTemplate', () => {
+  const header = 'レベル,種別,名称,WBS番号,予定開始日,予定終了日,見積工数,優先度,マイルストーン,備考';
+
+  it('正常なCSVをパースできる', () => {
+    const csv = [
+      header,
+      '1,WP,設計フェーズ,,,,,,',
+      '2,ACT,基本設計,,2026-05-01,2026-05-15,16,high,,',
+    ].join('\n');
+
+    const tasks = parseCsvTemplate(csv);
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0].type).toBe('work_package');
+    expect(tasks[0].name).toBe('設計フェーズ');
+    expect(tasks[0].parentTempId).toBeNull();
+    expect(tasks[1].type).toBe('activity');
+    expect(tasks[1].name).toBe('基本設計');
+    expect(tasks[1].parentTempId).toBe(tasks[0].tempId);
+    expect(tasks[1].priority).toBe('high');
+  });
+
+  it('ヘッダーのみのCSVは空配列を返す', () => {
+    expect(parseCsvTemplate(header)).toEqual([]);
+  });
+
+  it('空文字列は空配列を返す', () => {
+    expect(parseCsvTemplate('')).toEqual([]);
+  });
+
+  it('複数レベルの階層を正しく復元する', () => {
+    const csv = [
+      header,
+      '1,WP,プロジェクト,,,,,,',
+      '2,WP,フェーズ1,,,,,,',
+      '3,ACT,タスクA,,2026-05-01,2026-05-15,8,medium,,',
+      '2,WP,フェーズ2,,,,,,',
+      '3,ACT,タスクB,,2026-06-01,2026-06-15,8,low,,',
+    ].join('\n');
+
+    const tasks = parseCsvTemplate(csv);
+    expect(tasks).toHaveLength(5);
+    // フェーズ1 の親はプロジェクト
+    expect(tasks[1].parentTempId).toBe(tasks[0].tempId);
+    // タスクA の親はフェーズ1
+    expect(tasks[2].parentTempId).toBe(tasks[1].tempId);
+    // フェーズ2 の親はプロジェクト（レベル2に戻る）
+    expect(tasks[3].parentTempId).toBe(tasks[0].tempId);
+    // タスクB の親はフェーズ2
+    expect(tasks[4].parentTempId).toBe(tasks[3].tempId);
+  });
+
+  it('マイルストーン ○ を正しく認識する', () => {
+    const csv = [header, '1,ACT,マイルストーン,,2026-05-01,2026-05-01,0,,○,'].join('\n');
+    const tasks = parseCsvTemplate(csv);
+    expect(tasks[0].isMilestone).toBe(true);
+  });
+
+  it('名前が空の行はスキップする', () => {
+    const csv = [header, '1,WP,,,,,,,', '1,WP,有効な行,,,,,,'].join('\n');
+    const tasks = parseCsvTemplate(csv);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].name).toBe('有効な行');
   });
 });

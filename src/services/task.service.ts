@@ -470,26 +470,62 @@ export async function copyWbs(
  * taskIds 指定時はそのタスクのみ、未指定時は全タスクをエクスポート。
  * 階層関係は tempId / parentTempId で表現する。
  */
-export type WbsTemplateExportTask = {
-  tempId: string;
-  parentTempId: string | null;
-  type: string;
-  wbsNumber: string | null;
-  name: string;
-  description: string | null;
-  assigneeId: string | null;
-  plannedStartDate: string | null;
-  plannedEndDate: string | null;
-  plannedEffort: number;
-  priority: string | null;
-  isMilestone: boolean;
-  notes: string | null;
-};
+/** CSV ヘッダー定義 */
+const CSV_HEADERS = [
+  'レベル', '種別', '名称', 'WBS番号', '予定開始日', '予定終了日',
+  '見積工数', '優先度', 'マイルストーン', '備考',
+] as const;
 
+/** CSV フィールドをエスケープ（ダブルクォート） */
+function escapeCsvField(value: string | null | undefined): string {
+  if (value == null) return '';
+  const s = String(value);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+/** CSV 行をパース（ダブルクォート対応） */
+export function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        current += '"';
+        i++; // skip escaped quote
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        fields.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  fields.push(current);
+  return fields;
+}
+
+/**
+ * WBS テンプレートを CSV 形式でエクスポート。
+ * 階層は「レベル」列（1始まり）と行の並び順で表現。
+ */
 export async function exportWbsTemplate(
   projectId: string,
   taskIds?: string[],
-): Promise<{ tasks: WbsTemplateExportTask[] }> {
+): Promise<string> {
   const where: Prisma.TaskWhereInput = { projectId, deletedAt: null };
   if (taskIds && taskIds.length > 0) {
     where.id = { in: taskIds };
@@ -497,30 +533,112 @@ export async function exportWbsTemplate(
 
   const tasks = await prisma.task.findMany({
     where,
+    include: { childTasks: { where: { deletedAt: null }, select: { id: true } } },
     orderBy: [{ plannedStartDate: 'asc' }, { createdAt: 'asc' }],
   });
 
-  // 実ID → tempId マッピング（連番）
-  const idMap = new Map<string, string>();
-  tasks.forEach((t, i) => idMap.set(t.id, `t${i + 1}`));
+  // ツリー構造を構築して深さ優先でフラット化
+  const selectedIds = taskIds ? new Set(taskIds) : null;
 
-  const exportTasks: WbsTemplateExportTask[] = tasks.map((t) => ({
-    tempId: idMap.get(t.id)!,
-    parentTempId: t.parentTaskId && idMap.has(t.parentTaskId) ? idMap.get(t.parentTaskId)! : null,
-    type: t.type,
-    wbsNumber: t.wbsNumber,
-    name: t.name,
-    description: t.description,
-    assigneeId: null, // テンプレートでは担当者はリセット
-    plannedStartDate: t.plannedStartDate?.toISOString().split('T')[0] ?? null,
-    plannedEndDate: t.plannedEndDate?.toISOString().split('T')[0] ?? null,
-    plannedEffort: Number(t.plannedEffort),
-    priority: t.priority,
-    isMilestone: t.isMilestone,
-    notes: t.notes,
-  }));
+  type FlatRow = { level: number; task: typeof tasks[0] };
+  const rows: FlatRow[] = [];
 
-  return { tasks: exportTasks };
+  function walkTree(parentId: string | null, level: number) {
+    const children = tasks.filter((t) => t.parentTaskId === parentId);
+    for (const child of children) {
+      if (selectedIds && !selectedIds.has(child.id)) continue;
+      rows.push({ level, task: child });
+      walkTree(child.id, level + 1);
+    }
+  }
+  walkTree(null, 1);
+
+  // 選択モードで親がない場合はルートとして追加
+  if (selectedIds) {
+    for (const t of tasks) {
+      if (!rows.some((r) => r.task.id === t.id)) {
+        rows.push({ level: 1, task: t });
+      }
+    }
+  }
+
+  // CSV 生成
+  const csvLines = [CSV_HEADERS.join(',')];
+  for (const { level, task: t } of rows) {
+    const line = [
+      String(level),
+      t.type === 'work_package' ? 'WP' : 'ACT',
+      escapeCsvField(t.name),
+      escapeCsvField(t.wbsNumber),
+      t.plannedStartDate?.toISOString().split('T')[0] ?? '',
+      t.plannedEndDate?.toISOString().split('T')[0] ?? '',
+      String(Number(t.plannedEffort)),
+      t.priority ?? '',
+      t.isMilestone ? '○' : '',
+      escapeCsvField(t.notes),
+    ].join(',');
+    csvLines.push(line);
+  }
+
+  return csvLines.join('\n');
+}
+
+/**
+ * CSV テキストを解析してインポート用データに変換。
+ * レベル列と行順序から親子関係を復元する。
+ */
+export function parseCsvTemplate(csvText: string): WbsTemplateTask[] {
+  const lines = csvText.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return []; // ヘッダーのみ
+
+  // ヘッダー行をスキップ
+  const dataLines = lines.slice(1);
+
+  const tasks: WbsTemplateTask[] = [];
+  // レベルごとの直近の tempId を管理するスタック
+  const parentStack: string[] = []; // index = level-1
+
+  for (let i = 0; i < dataLines.length; i++) {
+    const fields = parseCsvLine(dataLines[i]);
+    if (fields.length < 3) continue; // 最低限レベル・種別・名称が必要
+
+    const level = parseInt(fields[0], 10);
+    if (isNaN(level) || level < 1) continue;
+
+    const typeRaw = fields[1]?.trim();
+    const type = typeRaw === 'WP' ? 'work_package' : 'activity';
+    const name = fields[2]?.trim();
+    if (!name) continue;
+
+    const tempId = `csv_${i + 1}`;
+
+    // 親の決定: レベル N の親は直近のレベル N-1
+    let parentTempId: string | null = null;
+    if (level > 1 && parentStack.length >= level - 1) {
+      parentTempId = parentStack[level - 2];
+    }
+
+    // スタック更新
+    parentStack[level - 1] = tempId;
+    // 深いレベルのスタックをクリア
+    parentStack.length = level;
+
+    tasks.push({
+      tempId,
+      parentTempId,
+      type: type as 'work_package' | 'activity',
+      wbsNumber: fields[3]?.trim() || null,
+      name,
+      plannedStartDate: fields[4]?.trim() || null,
+      plannedEndDate: fields[5]?.trim() || null,
+      plannedEffort: fields[6] ? parseFloat(fields[6]) || 0 : undefined,
+      priority: (['low', 'medium', 'high'].includes(fields[7]?.trim()) ? fields[7].trim() : null) as 'low' | 'medium' | 'high' | null,
+      isMilestone: fields[8]?.trim() === '○',
+      notes: fields[9]?.trim() || null,
+    });
+  }
+
+  return tasks;
 }
 
 /**

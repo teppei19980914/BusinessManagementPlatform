@@ -421,7 +421,7 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
     router.refresh();
   }
 
-  // --- WBS テンプレートエクスポート ---
+  // --- WBS テンプレートエクスポート (CSV) ---
   async function handleExport() {
     const body: Record<string, unknown> = {};
     if (selectedIds.size > 0) body.taskIds = [...selectedIds];
@@ -436,17 +436,19 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
 
     if (!res.ok) return;
 
-    const json = await res.json();
-    const blob = new Blob([JSON.stringify(json.data, null, 2)], { type: 'application/json' });
+    const csvText = await res.text();
+    // BOM 付き UTF-8 で Excel 対応
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csvText], { type: 'text/csv; charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `wbs-template-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `wbs-template-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  // --- WBS テンプレートインポート ---
+  // --- WBS テンプレートインポート (CSV) ---
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importError, setImportError] = useState('');
@@ -456,20 +458,13 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
     setImportError('');
     if (!importFile) { setImportError('ファイルを選択してください'); return; }
 
-    let templateData: unknown;
-    try {
-      const text = await importFile.text();
-      templateData = JSON.parse(text);
-    } catch {
-      setImportError('JSONファイルの読み込みに失敗しました');
-      return;
-    }
+    const csvText = await importFile.text();
 
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/import`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(templateData),
+        headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+        body: csvText,
       }),
     );
 
@@ -594,13 +589,13 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>WBS テンプレートインポート</DialogTitle>
-                <DialogDescription>エクスポートした JSON ファイルを編集してインポートします。担当者・進捗は初期状態で作成されます。</DialogDescription>
+                <DialogDescription>エクスポートした CSV ファイルを Excel 等で編集し、インポートします。担当者・進捗は初期状態で作成されます。</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleImport} className="space-y-4">
                 {importError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{importError}</div>}
                 <div className="space-y-2">
-                  <Label>テンプレートファイル（JSON）</Label>
-                  <Input type="file" accept=".json" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
+                  <Label>テンプレートファイル（CSV）</Label>
+                  <Input type="file" accept=".csv" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
                 </div>
                 <Button type="submit" className="w-full">インポート実行</Button>
               </form>

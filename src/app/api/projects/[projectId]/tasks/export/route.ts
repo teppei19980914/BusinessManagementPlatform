@@ -20,7 +20,12 @@ export async function POST(
     ? body.taskIds.filter((id: unknown): id is string => typeof id === 'string' && uuidRegex.test(id))
     : undefined;
 
-  const template = await exportWbsTemplate(projectId, taskIds);
+  const csv = await exportWbsTemplate(projectId, taskIds);
 
-  return NextResponse.json({ data: template });
+  return new NextResponse(csv, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="wbs-template.csv"`,
+    },
+  });
 }

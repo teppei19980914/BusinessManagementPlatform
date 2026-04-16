@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
-import { importWbsTemplate } from '@/services/task.service';
-import { wbsTemplateSchema } from '@/lib/validators/task';
+import { parseCsvTemplate, importWbsTemplate, validateWbsTemplate } from '@/services/task.service';
 import { recordAuditLog } from '@/services/audit.service';
 
 export async function POST(
@@ -15,18 +14,42 @@ export async function POST(
   const forbidden = await checkProjectPermission(user, projectId, 'task:create');
   if (forbidden) return forbidden;
 
-  const body = await req.json();
-  const parsed = wbsTemplateSchema.safeParse(body);
-  if (!parsed.success) {
+  // CSV テキストを取得
+  const csvText = await req.text();
+  if (!csvText.trim()) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', details: parsed.error.issues } },
+      { error: { code: 'VALIDATION_ERROR', message: 'CSVデータが空です' } },
+      { status: 400 },
+    );
+  }
+
+  // CSV をパースしてテンプレートデータに変換
+  const templateTasks = parseCsvTemplate(csvText);
+  if (templateTasks.length === 0) {
+    return NextResponse.json(
+      { error: { code: 'VALIDATION_ERROR', message: 'インポート可能なタスクがありません。ヘッダー行と1件以上のデータ行が必要です' } },
+      { status: 400 },
+    );
+  }
+  if (templateTasks.length > 500) {
+    return NextResponse.json(
+      { error: { code: 'VALIDATION_ERROR', message: 'テンプレートは500件までです' } },
+      { status: 400 },
+    );
+  }
+
+  // 事前バリデーション
+  const validationErrors = validateWbsTemplate(templateTasks);
+  if (validationErrors.length > 0) {
+    return NextResponse.json(
+      { error: { code: 'IMPORT_VALIDATION_ERROR', message: validationErrors.join('; ') } },
       { status: 400 },
     );
   }
 
   let count: number;
   try {
-    count = await importWbsTemplate(projectId, parsed.data.tasks, user.id);
+    count = await importWbsTemplate(projectId, templateTasks, user.id);
   } catch (e) {
     if (e instanceof Error && e.message.startsWith('IMPORT_VALIDATION_ERROR:')) {
       const details = e.message.replace('IMPORT_VALIDATION_ERROR:', '');
