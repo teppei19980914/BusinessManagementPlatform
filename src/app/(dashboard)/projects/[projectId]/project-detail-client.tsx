@@ -206,7 +206,7 @@ export function ProjectDetailClient({
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview">概要</TabsTrigger>
           {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
-          <TabsTrigger value="tasks">WBS/タスク</TabsTrigger>
+          <TabsTrigger value="tasks">WBS管理</TabsTrigger>
           <TabsTrigger value="gantt">ガント</TabsTrigger>
           <TabsTrigger value="risks">リスク/課題</TabsTrigger>
           <TabsTrigger value="retrospectives">振り返り</TabsTrigger>
