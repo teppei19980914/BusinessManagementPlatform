@@ -391,10 +391,10 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
     router.refresh();
   }
 
-  // コピー元候補（自分自身を除外）
+  // コピー元候補（自分自身を含む全プロジェクト）
   const copySourceProjects = useMemo(
-    () => allProjects.filter((p) => p.id !== projectId),
-    [allProjects, projectId],
+    () => allProjects,
+    [allProjects],
   );
 
   async function handleCopyWbs(e: React.FormEvent) {
@@ -418,6 +418,69 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
 
     setIsCopyOpen(false);
     setCopySource('');
+    router.refresh();
+  }
+
+  // --- WBS テンプレートエクスポート ---
+  async function handleExport() {
+    const body: Record<string, unknown> = {};
+    if (selectedIds.size > 0) body.taskIds = [...selectedIds];
+
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+
+    if (!res.ok) return;
+
+    const json = await res.json();
+    const blob = new Blob([JSON.stringify(json.data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wbs-template-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // --- WBS テンプレートインポート ---
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importError, setImportError] = useState('');
+
+  async function handleImport(e: React.FormEvent) {
+    e.preventDefault();
+    setImportError('');
+    if (!importFile) { setImportError('ファイルを選択してください'); return; }
+
+    let templateData: unknown;
+    try {
+      const text = await importFile.text();
+      templateData = JSON.parse(text);
+    } catch {
+      setImportError('JSONファイルの読み込みに失敗しました');
+      return;
+    }
+
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(templateData),
+      }),
+    );
+
+    if (!res.ok) {
+      const json = await res.json();
+      setImportError(json.error?.message || json.error?.details?.[0]?.message || 'インポートに失敗しました');
+      return;
+    }
+
+    setIsImportOpen(false);
+    setImportFile(null);
     router.refresh();
   }
 
@@ -520,6 +583,26 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
                   </select>
                 </div>
                 <Button type="submit" className="w-full">コピー実行</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <Button variant="outline" size="sm" onClick={handleExport}>
+            {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
+          </Button>
+          <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">インポート</DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>WBS テンプレートインポート</DialogTitle>
+                <DialogDescription>エクスポートした JSON ファイルを編集してインポートします。担当者・進捗は初期状態で作成されます。</DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleImport} className="space-y-4">
+                {importError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{importError}</div>}
+                <div className="space-y-2">
+                  <Label>テンプレートファイル（JSON）</Label>
+                  <Input type="file" accept=".json" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
+                </div>
+                <Button type="submit" className="w-full">インポート実行</Button>
               </form>
             </DialogContent>
           </Dialog>
