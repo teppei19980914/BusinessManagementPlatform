@@ -211,17 +211,18 @@ model Task {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   projectId        String    @map("project_id") @db.Uuid
   parentTaskId     String?   @map("parent_task_id") @db.Uuid
+  type             String    @default("activity") @db.VarChar(20) // work_package | activity
   wbsNumber        String?   @map("wbs_number") @db.VarChar(50)
   name             String    @db.VarChar(100)
   description      String?   @db.Text
   category         String    @db.VarChar(30)
-  assigneeId       String    @map("assignee_id") @db.Uuid
-  plannedStartDate DateTime  @map("planned_start_date") @db.Date
-  plannedEndDate   DateTime  @map("planned_end_date") @db.Date
-  plannedEffort    Decimal   @map("planned_effort") @db.Decimal(10, 2)
+  assigneeId       String?   @map("assignee_id") @db.Uuid // WP は null、ACT は必須
+  plannedStartDate DateTime? @map("planned_start_date") @db.Date // WP は子から自動計算
+  plannedEndDate   DateTime? @map("planned_end_date") @db.Date   // WP は子から自動計算
+  plannedEffort    Decimal   @default(0) @map("planned_effort") @db.Decimal(10, 2) // WP は子の合計
   priority         String?   @default("medium") @db.VarChar(10)
   status           String    @default("not_started") @db.VarChar(20)
-  progressRate     Int       @default(0) @map("progress_rate")
+  progressRate     Int       @default(0) @map("progress_rate") // WP は子の加重平均
   isMilestone      Boolean   @default(false) @map("is_milestone")
   notes            String?   @db.Text
   createdBy        String    @map("created_by") @db.Uuid
@@ -234,7 +235,7 @@ model Task {
   project      Project          @relation(fields: [projectId], references: [id])
   parentTask   Task?            @relation("TaskHierarchy", fields: [parentTaskId], references: [id])
   childTasks   Task[]           @relation("TaskHierarchy")
-  assignee     User             @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  assignee     User?            @relation("TaskAssignee", fields: [assigneeId], references: [id])
   progressLogs TaskProgressLog[]
   taskKnowledges TaskKnowledge[]
 

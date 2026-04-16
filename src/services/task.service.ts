@@ -1,19 +1,25 @@
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
-import type { CreateTaskInput, UpdateProgressInput } from '@/lib/validators/task';
+import type { UpdateProgressInput } from '@/lib/validators/task';
+import type { z } from 'zod/v4';
+import type { createTaskSchema, updateTaskSchema } from '@/lib/validators/task';
+
+type CreateTaskInput = z.infer<typeof createTaskSchema>;
+type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 
 export type TaskDTO = {
   id: string;
   projectId: string;
   parentTaskId: string | null;
+  type: string; // 'work_package' | 'activity'
   wbsNumber: string | null;
   name: string;
   description: string | null;
   category: string;
-  assigneeId: string;
+  assigneeId: string | null;
   assigneeName?: string;
-  plannedStartDate: string;
-  plannedEndDate: string;
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
   plannedEffort: number;
   priority: string | null;
   status: string;
@@ -27,14 +33,15 @@ function toTaskDTO(t: {
   id: string;
   projectId: string;
   parentTaskId: string | null;
+  type: string;
   wbsNumber: string | null;
   name: string;
   description: string | null;
   category: string;
-  assigneeId: string;
-  assignee?: { name: string };
-  plannedStartDate: Date;
-  plannedEndDate: Date;
+  assigneeId: string | null;
+  assignee?: { name: string } | null;
+  plannedStartDate: Date | null;
+  plannedEndDate: Date | null;
   plannedEffort: Prisma.Decimal;
   priority: string | null;
   status: string;
@@ -46,14 +53,15 @@ function toTaskDTO(t: {
     id: t.id,
     projectId: t.projectId,
     parentTaskId: t.parentTaskId,
+    type: t.type,
     wbsNumber: t.wbsNumber,
     name: t.name,
     description: t.description,
     category: t.category,
     assigneeId: t.assigneeId,
     assigneeName: t.assignee?.name,
-    plannedStartDate: t.plannedStartDate.toISOString().split('T')[0],
-    plannedEndDate: t.plannedEndDate.toISOString().split('T')[0],
+    plannedStartDate: t.plannedStartDate?.toISOString().split('T')[0] ?? null,
+    plannedEndDate: t.plannedEndDate?.toISOString().split('T')[0] ?? null,
     plannedEffort: Number(t.plannedEffort),
     priority: t.priority,
     status: t.status,
@@ -122,20 +130,23 @@ export async function createTask(
   input: CreateTaskInput,
   userId: string,
 ): Promise<TaskDTO> {
+  const isActivity = input.type === 'activity';
+
   const task = await prisma.task.create({
     data: {
       projectId,
       parentTaskId: input.parentTaskId,
+      type: input.type,
       wbsNumber: input.wbsNumber,
       name: input.name,
       description: input.description,
       category: input.category,
-      assigneeId: input.assigneeId,
-      plannedStartDate: new Date(input.plannedStartDate),
-      plannedEndDate: new Date(input.plannedEndDate),
-      plannedEffort: input.plannedEffort,
-      priority: input.priority || 'medium',
-      isMilestone: input.isMilestone || false,
+      assigneeId: isActivity ? input.assigneeId : null,
+      plannedStartDate: isActivity ? new Date(input.plannedStartDate) : null,
+      plannedEndDate: isActivity ? new Date(input.plannedEndDate) : null,
+      plannedEffort: isActivity ? input.plannedEffort : 0,
+      priority: isActivity ? (input.priority || 'medium') : null,
+      isMilestone: isActivity ? (input.isMilestone || false) : false,
       notes: input.notes,
       createdBy: userId,
       updatedBy: userId,
@@ -143,12 +154,17 @@ export async function createTask(
     include: { assignee: { select: { name: true } } },
   });
 
+  // WP の場合は親の集計を更新
+  if (task.parentTaskId) {
+    await recalculateAncestors(task.parentTaskId);
+  }
+
   return toTaskDTO(task);
 }
 
 export async function updateTask(
   taskId: string,
-  input: Partial<CreateTaskInput>,
+  input: UpdateTaskInput,
   userId: string,
 ): Promise<TaskDTO> {
   const data: Prisma.TaskUpdateInput = { updatedBy: userId };
@@ -158,9 +174,9 @@ export async function updateTask(
   if (input.name !== undefined) data.name = input.name;
   if (input.description !== undefined) data.description = input.description;
   if (input.category !== undefined) data.category = input.category;
-  if (input.assigneeId !== undefined) data.assignee = { connect: { id: input.assigneeId } };
-  if (input.plannedStartDate !== undefined) data.plannedStartDate = new Date(input.plannedStartDate);
-  if (input.plannedEndDate !== undefined) data.plannedEndDate = new Date(input.plannedEndDate);
+  if (input.assigneeId !== undefined) data.assignee = input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true };
+  if (input.plannedStartDate !== undefined) data.plannedStartDate = input.plannedStartDate ? new Date(input.plannedStartDate) : null;
+  if (input.plannedEndDate !== undefined) data.plannedEndDate = input.plannedEndDate ? new Date(input.plannedEndDate) : null;
   if (input.plannedEffort !== undefined) data.plannedEffort = input.plannedEffort;
   if (input.priority !== undefined) data.priority = input.priority;
   if (input.isMilestone !== undefined) data.isMilestone = input.isMilestone;
@@ -171,6 +187,11 @@ export async function updateTask(
     data,
     include: { assignee: { select: { name: true } } },
   });
+
+  // 親ワークパッケージの集計を更新
+  if (task.parentTaskId) {
+    await recalculateAncestors(task.parentTaskId);
+  }
 
   return toTaskDTO(task);
 }
@@ -207,7 +228,7 @@ export async function updateTaskProgress(
   });
 
   // タスク本体の進捗率とステータスも更新
-  await prisma.task.update({
+  const task = await prisma.task.update({
     where: { id: taskId },
     data: {
       progressRate: input.progressRate,
@@ -215,6 +236,83 @@ export async function updateTaskProgress(
       updatedBy: userId,
     },
   });
+
+  // 親ワークパッケージの集計を更新
+  if (task.parentTaskId) {
+    await recalculateAncestors(task.parentTaskId);
+  }
+}
+
+/**
+ * ワークパッケージの集計値（工数・進捗率・日付・ステータス）を子から再計算し更新する。
+ * 祖先に向かって再帰的に伝播する。
+ */
+async function recalculateAncestors(taskId: string): Promise<void> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: {
+      childTasks: {
+        where: { deletedAt: null },
+        select: {
+          plannedEffort: true,
+          progressRate: true,
+          plannedStartDate: true,
+          plannedEndDate: true,
+          status: true,
+          type: true,
+        },
+      },
+    },
+  });
+  if (!task || task.type !== 'work_package') return;
+
+  const children = task.childTasks;
+  if (children.length === 0) {
+    await prisma.task.update({
+      where: { id: taskId },
+      data: { plannedEffort: 0, progressRate: 0, plannedStartDate: null, plannedEndDate: null, status: 'not_started' },
+    });
+  } else {
+    const totalEffort = children.reduce((sum, c) => sum + Number(c.plannedEffort), 0);
+
+    // 加重平均進捗率（工数ベース）
+    const weightedProgress = totalEffort > 0
+      ? Math.round(children.reduce((sum, c) => sum + Number(c.plannedEffort) * c.progressRate, 0) / totalEffort)
+      : 0;
+
+    // 日付範囲（子の最小開始日〜最大終了日）
+    const startDates = children.map((c) => c.plannedStartDate).filter(Boolean) as Date[];
+    const endDates = children.map((c) => c.plannedEndDate).filter(Boolean) as Date[];
+    const minStart = startDates.length > 0 ? new Date(Math.min(...startDates.map((d) => d.getTime()))) : null;
+    const maxEnd = endDates.length > 0 ? new Date(Math.max(...endDates.map((d) => d.getTime()))) : null;
+
+    // ステータス自動判定
+    const statuses = children.map((c) => c.status);
+    let wpStatus = 'not_started';
+    if (statuses.every((s) => s === 'completed')) {
+      wpStatus = 'completed';
+    } else if (statuses.some((s) => s === 'in_progress' || s === 'completed')) {
+      wpStatus = 'in_progress';
+    } else if (statuses.some((s) => s === 'on_hold')) {
+      wpStatus = 'on_hold';
+    }
+
+    await prisma.task.update({
+      where: { id: taskId },
+      data: {
+        plannedEffort: totalEffort,
+        progressRate: weightedProgress,
+        plannedStartDate: minStart,
+        plannedEndDate: maxEnd,
+        status: wpStatus,
+      },
+    });
+  }
+
+  // 親があればさらに上に伝播
+  if (task.parentTaskId) {
+    await recalculateAncestors(task.parentTaskId);
+  }
 }
 
 export type ProgressLogDTO = {

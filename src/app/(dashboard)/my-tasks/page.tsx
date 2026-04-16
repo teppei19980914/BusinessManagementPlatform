@@ -10,6 +10,7 @@ export default async function MyTasksPage() {
   const tasks = await prisma.task.findMany({
     where: {
       assigneeId: session.user.id,
+      type: 'activity',
       deletedAt: null,
     },
     include: {
@@ -25,11 +26,11 @@ export default async function MyTasksPage() {
     name: t.name,
     status: t.status,
     progressRate: t.progressRate,
-    plannedStartDate: t.plannedStartDate.toISOString().split('T')[0],
-    plannedEndDate: t.plannedEndDate.toISOString().split('T')[0],
+    plannedStartDate: t.plannedStartDate!.toISOString().split('T')[0],
+    plannedEndDate: t.plannedEndDate!.toISOString().split('T')[0],
     plannedEffort: Number(t.plannedEffort),
     priority: t.priority,
-    isDelayed: new Date(t.plannedEndDate) < new Date() && t.status !== 'completed',
+    isDelayed: t.plannedEndDate != null && new Date(t.plannedEndDate) < new Date() && t.status !== 'completed',
   }));
 
   return <MyTasksClient tasks={data} />;

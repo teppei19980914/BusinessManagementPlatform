@@ -213,11 +213,11 @@ function TaskTreeNode({
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">開始日</Label>
-                <Input type="date" value={editForm.plannedStartDate} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} className="w-36" />
+                <Input type="date" value={editForm.plannedStartDate ?? ''} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} className="w-36" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">終了日</Label>
-                <Input type="date" value={editForm.plannedEndDate} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} className="w-36" />
+                <Input type="date" value={editForm.plannedEndDate ?? ''} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} className="w-36" />
               </div>
               <Button type="submit" size="sm">保存</Button>
               <Button type="button" variant="outline" size="sm" onClick={() => setShowEdit(false)}>閉じる</Button>

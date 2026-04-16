@@ -20,14 +20,20 @@ function dayOffset(base: string, date: string): number {
   return Math.ceil((d.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-export function GanttClient({ tasks }: Props) {
+export function GanttClient({ tasks: allTasks }: Props) {
+  // アクティビティのみ表示（WP は除外）
+  const tasks = useMemo(
+    () => allTasks.filter((t) => t.type === 'activity' && t.plannedStartDate && t.plannedEndDate),
+    [allTasks],
+  );
+
   const { minDate, maxDate, totalDays } = useMemo(() => {
     if (tasks.length === 0) {
       const today = new Date().toISOString().split('T')[0];
       return { minDate: today, maxDate: today, totalDays: 30 };
     }
-    const starts = tasks.map((t) => t.plannedStartDate);
-    const ends = tasks.map((t) => t.plannedEndDate);
+    const starts = tasks.map((t) => t.plannedStartDate!);
+    const ends = tasks.map((t) => t.plannedEndDate!);
     const min = starts.sort()[0];
     const max = ends.sort().reverse()[0];
     return { minDate: min, maxDate: max, totalDays: Math.max(daysBetween(min, max) + 1, 7) };
@@ -87,11 +93,13 @@ export function GanttClient({ tasks }: Props) {
 
           {/* タスク行 */}
           {tasks.map((task) => {
-            const offset = dayOffset(minDate, task.plannedStartDate);
-            const duration = daysBetween(task.plannedStartDate, task.plannedEndDate) + 1;
+            const startDate = task.plannedStartDate!;
+            const endDate = task.plannedEndDate!;
+            const offset = dayOffset(minDate, startDate);
+            const duration = daysBetween(startDate, endDate) + 1;
             const leftPercent = (offset / totalDays) * 100;
             const widthPercent = (duration / totalDays) * 100;
-            const isDelayed = task.status !== 'completed' && new Date(task.plannedEndDate) < new Date();
+            const isDelayed = task.status !== 'completed' && new Date(endDate) < new Date();
 
             return (
               <div key={task.id} className="flex border-b hover:bg-gray-50">
