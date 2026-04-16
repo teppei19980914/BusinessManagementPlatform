@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createTaskSchema, updateTaskSchema, updateProgressSchema, bulkUpdateTaskSchema } from './task';
+import { createTaskSchema, updateTaskSchema, updateProgressSchema, bulkUpdateTaskSchema, wbsTemplateSchema } from './task';
 
 describe('createTaskSchema - アクティビティ', () => {
   const validActivity = {
@@ -168,5 +168,54 @@ describe('updateTaskSchema', () => {
 
   it('不正な日付形式を拒否する', () => {
     expect(updateTaskSchema.safeParse({ actualStartDate: '2026/05/01' }).success).toBe(false);
+  });
+});
+
+describe('wbsTemplateSchema', () => {
+  const validTask = {
+    tempId: 't1',
+    parentTempId: null,
+    type: 'work_package' as const,
+    name: 'テストWP',
+  };
+
+  const validActivity = {
+    tempId: 't2',
+    parentTempId: 't1',
+    type: 'activity' as const,
+    name: 'テストACT',
+    plannedStartDate: '2026-05-01',
+    plannedEndDate: '2026-05-15',
+    plannedEffort: 16,
+  };
+
+  it('有効なテンプレートを受け入れる', () => {
+    expect(wbsTemplateSchema.safeParse({ tasks: [validTask, validActivity] }).success).toBe(true);
+  });
+
+  it('空のタスク配列を拒否する', () => {
+    expect(wbsTemplateSchema.safeParse({ tasks: [] }).success).toBe(false);
+  });
+
+  it('tempIdが空のタスクを拒否する', () => {
+    expect(wbsTemplateSchema.safeParse({ tasks: [{ ...validTask, tempId: '' }] }).success).toBe(false);
+  });
+
+  it('名前が空のタスクを拒否する', () => {
+    expect(wbsTemplateSchema.safeParse({ tasks: [{ ...validTask, name: '' }] }).success).toBe(false);
+  });
+
+  it('無効なtypeを拒否する', () => {
+    expect(wbsTemplateSchema.safeParse({ tasks: [{ ...validTask, type: 'task' }] }).success).toBe(false);
+  });
+
+  it('501件以上のタスクを拒否する', () => {
+    const tasks = Array.from({ length: 501 }, (_, i) => ({ ...validTask, tempId: `t${i}` }));
+    expect(wbsTemplateSchema.safeParse({ tasks }).success).toBe(false);
+  });
+
+  it('500件のタスクを受け入れる', () => {
+    const tasks = Array.from({ length: 500 }, (_, i) => ({ ...validTask, tempId: `t${i}` }));
+    expect(wbsTemplateSchema.safeParse({ tasks }).success).toBe(true);
   });
 });

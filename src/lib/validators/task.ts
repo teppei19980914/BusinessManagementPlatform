@@ -80,6 +80,29 @@ export const bulkUpdateTaskSchema = z.object({
   priority: z.enum(['low', 'medium', 'high']).optional(),
 });
 
+/** WBS テンプレートのタスク1件分 */
+const wbsTemplateTaskSchema = z.object({
+  tempId: z.string().min(1),
+  parentTempId: z.string().optional().nullable(),
+  type: z.enum(['work_package', 'activity']),
+  wbsNumber: z.string().max(50).optional().nullable(),
+  name: z.string().min(1).max(100),
+  description: z.string().max(2000).optional().nullable(),
+  assigneeId: z.string().uuid().optional().nullable(),
+  plannedStartDate: z.string().regex(dateRegex).optional().nullable(),
+  plannedEndDate: z.string().regex(dateRegex).optional().nullable(),
+  plannedEffort: z.number().min(0).optional(),
+  priority: z.enum(['low', 'medium', 'high']).optional().nullable(),
+  isMilestone: z.boolean().optional(),
+  notes: z.string().max(1000).optional().nullable(),
+});
+
+export const wbsTemplateSchema = z.object({
+  tasks: z.array(wbsTemplateTaskSchema).min(1, 'タスクが1件以上必要です').max(500, 'テンプレートは500件までです'),
+});
+
+export type WbsTemplateTask = z.infer<typeof wbsTemplateTaskSchema>;
+
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateProgressInput = z.infer<typeof updateProgressSchema>;
 export type BulkUpdateTaskInput = z.infer<typeof bulkUpdateTaskSchema>;

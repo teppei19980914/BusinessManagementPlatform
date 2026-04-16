@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
-import type { UpdateProgressInput } from '@/lib/validators/task';
+import type { UpdateProgressInput, WbsTemplateTask } from '@/lib/validators/task';
 import type { z } from 'zod/v4';
 import type { createTaskSchema, updateTaskSchema } from '@/lib/validators/task';
 
@@ -297,6 +297,11 @@ export async function updateTaskProgress(
  * ワークパッケージの集計値（工数・進捗率・日付・ステータス）を子から再計算し更新する。
  * 祖先に向かって再帰的に伝播する。
  */
+/** recalculateAncestors の公開ラッパー（インポート後の再集計用） */
+async function recalculateAncestorsPublic(taskId: string): Promise<void> {
+  return recalculateAncestors(taskId);
+}
+
 async function recalculateAncestors(taskId: string): Promise<void> {
   const task = await prisma.task.findUnique({
     where: { id: taskId },
@@ -455,6 +460,133 @@ export async function copyWbs(
     });
 
     idMap.set(src.id, created.id);
+  }
+
+  return idMap.size;
+}
+
+/**
+ * WBS テンプレートをエクスポート。
+ * taskIds 指定時はそのタスクのみ、未指定時は全タスクをエクスポート。
+ * 階層関係は tempId / parentTempId で表現する。
+ */
+export type WbsTemplateExportTask = {
+  tempId: string;
+  parentTempId: string | null;
+  type: string;
+  wbsNumber: string | null;
+  name: string;
+  description: string | null;
+  assigneeId: string | null;
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
+  plannedEffort: number;
+  priority: string | null;
+  isMilestone: boolean;
+  notes: string | null;
+};
+
+export async function exportWbsTemplate(
+  projectId: string,
+  taskIds?: string[],
+): Promise<{ tasks: WbsTemplateExportTask[] }> {
+  const where: Prisma.TaskWhereInput = { projectId, deletedAt: null };
+  if (taskIds && taskIds.length > 0) {
+    where.id = { in: taskIds };
+  }
+
+  const tasks = await prisma.task.findMany({
+    where,
+    orderBy: [{ plannedStartDate: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  // 実ID → tempId マッピング（連番）
+  const idMap = new Map<string, string>();
+  tasks.forEach((t, i) => idMap.set(t.id, `t${i + 1}`));
+
+  const exportTasks: WbsTemplateExportTask[] = tasks.map((t) => ({
+    tempId: idMap.get(t.id)!,
+    parentTempId: t.parentTaskId && idMap.has(t.parentTaskId) ? idMap.get(t.parentTaskId)! : null,
+    type: t.type,
+    wbsNumber: t.wbsNumber,
+    name: t.name,
+    description: t.description,
+    assigneeId: null, // テンプレートでは担当者はリセット
+    plannedStartDate: t.plannedStartDate?.toISOString().split('T')[0] ?? null,
+    plannedEndDate: t.plannedEndDate?.toISOString().split('T')[0] ?? null,
+    plannedEffort: Number(t.plannedEffort),
+    priority: t.priority,
+    isMilestone: t.isMilestone,
+    notes: t.notes,
+  }));
+
+  return { tasks: exportTasks };
+}
+
+/**
+ * WBS テンプレートをインポート。
+ * tempId / parentTempId で階層構造を再構築する。
+ */
+export async function importWbsTemplate(
+  projectId: string,
+  templateTasks: WbsTemplateTask[],
+  userId: string,
+): Promise<number> {
+  if (templateTasks.length === 0) return 0;
+
+  // 深度順にソート（parentTempId がないものを先に処理）
+  const depthMap = new Map<string, number>();
+  function calcDepth(tempId: string): number {
+    if (depthMap.has(tempId)) return depthMap.get(tempId)!;
+    const task = templateTasks.find((t) => t.tempId === tempId);
+    if (!task?.parentTempId) { depthMap.set(tempId, 0); return 0; }
+    const d = calcDepth(task.parentTempId) + 1;
+    depthMap.set(tempId, d);
+    return d;
+  }
+  templateTasks.forEach((t) => calcDepth(t.tempId));
+
+  const sorted = [...templateTasks].sort(
+    (a, b) => (depthMap.get(a.tempId) ?? 0) - (depthMap.get(b.tempId) ?? 0),
+  );
+
+  // tempId → 実ID マッピング
+  const idMap = new Map<string, string>();
+
+  for (const t of sorted) {
+    const parentId = t.parentTempId ? idMap.get(t.parentTempId) ?? null : null;
+    const isActivity = t.type === 'activity';
+
+    const created = await prisma.task.create({
+      data: {
+        projectId,
+        parentTaskId: parentId,
+        type: t.type,
+        wbsNumber: t.wbsNumber ?? null,
+        name: t.name,
+        description: t.description ?? null,
+        category: 'other',
+        assigneeId: isActivity ? (t.assigneeId ?? null) : null,
+        plannedStartDate: isActivity && t.plannedStartDate ? new Date(t.plannedStartDate) : null,
+        plannedEndDate: isActivity && t.plannedEndDate ? new Date(t.plannedEndDate) : null,
+        plannedEffort: isActivity ? (t.plannedEffort ?? 0) : 0,
+        priority: isActivity ? (t.priority ?? 'medium') : null,
+        isMilestone: isActivity ? (t.isMilestone ?? false) : false,
+        notes: t.notes ?? null,
+        status: 'not_started',
+        progressRate: 0,
+        createdBy: userId,
+        updatedBy: userId,
+      },
+    });
+
+    idMap.set(t.tempId, created.id);
+  }
+
+  // WP の集計を更新
+  const wpIds = sorted.filter((t) => t.type === 'work_package').map((t) => idMap.get(t.tempId)!);
+  for (const wpId of wpIds.reverse()) {
+    await recalculateAncestorsPublic(wpId);
   }
 
   return idMap.size;
