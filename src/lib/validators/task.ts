@@ -52,8 +52,12 @@ export const updateTaskSchema = z.object({
   assigneeId: z.string().uuid().optional().nullable(),
   plannedStartDate: z.string().regex(dateRegex).optional().nullable(),
   plannedEndDate: z.string().regex(dateRegex).optional().nullable(),
+  actualStartDate: z.string().regex(dateRegex).optional().nullable(),
+  actualEndDate: z.string().regex(dateRegex).optional().nullable(),
   plannedEffort: z.number().min(0).optional(),
   priority: z.enum(['low', 'medium', 'high']).optional(),
+  status: z.enum(['not_started', 'in_progress', 'completed', 'on_hold']).optional(),
+  progressRate: z.number().int().min(0).max(100).optional(),
   isMilestone: z.boolean().optional(),
   notes: z.string().max(1000).optional().nullable(),
 });
@@ -70,5 +74,12 @@ export const updateProgressSchema = z.object({
   nextAction: z.string().max(1000).optional(),
 });
 
+export const bulkUpdateTaskSchema = z.object({
+  taskIds: z.array(z.string().uuid()).min(1, '対象タスクを選択してください').max(100, '一括更新は100件までです'),
+  assigneeId: z.string().uuid().optional().nullable(),
+  priority: z.enum(['low', 'medium', 'high']).optional(),
+});
+
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateProgressInput = z.infer<typeof updateProgressSchema>;
+export type BulkUpdateTaskInput = z.infer<typeof bulkUpdateTaskSchema>;

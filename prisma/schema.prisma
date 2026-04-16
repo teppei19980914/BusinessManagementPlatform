@@ -219,6 +219,8 @@ model Task {
   assigneeId       String?   @map("assignee_id") @db.Uuid // WP は null、ACT は必須
   plannedStartDate DateTime? @map("planned_start_date") @db.Date // WP は子から自動計算
   plannedEndDate   DateTime? @map("planned_end_date") @db.Date   // WP は子から自動計算
+  actualStartDate  DateTime? @map("actual_start_date") @db.Date
+  actualEndDate    DateTime? @map("actual_end_date") @db.Date
   plannedEffort    Decimal   @default(0) @map("planned_effort") @db.Decimal(10, 2) // WP は子の合計
   priority         String?   @default("medium") @db.VarChar(10)
   status           String    @default("not_started") @db.VarChar(20)
