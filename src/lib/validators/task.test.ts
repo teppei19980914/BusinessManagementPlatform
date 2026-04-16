@@ -209,6 +209,10 @@ describe('wbsTemplateSchema', () => {
     expect(wbsTemplateSchema.safeParse({ tasks: [{ ...validTask, type: 'task' }] }).success).toBe(false);
   });
 
+  it('名前が101文字以上のタスクを拒否する', () => {
+    expect(wbsTemplateSchema.safeParse({ tasks: [{ ...validTask, name: 'あ'.repeat(101) }] }).success).toBe(false);
+  });
+
   it('501件以上のタスクを拒否する', () => {
     const tasks = Array.from({ length: 501 }, (_, i) => ({ ...validTask, tempId: `t${i}` }));
     expect(wbsTemplateSchema.safeParse({ tasks }).success).toBe(false);

@@ -14,7 +14,10 @@ export async function POST(
   if (forbidden) return forbidden;
 
   const body = await req.json().catch(() => ({}));
-  const taskIds: string[] | undefined = Array.isArray(body.taskIds) ? body.taskIds : undefined;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const taskIds: string[] | undefined = Array.isArray(body.taskIds)
+    ? body.taskIds.filter((id: unknown): id is string => typeof id === 'string' && uuidRegex.test(id))
+    : undefined;
 
   const template = await exportWbsTemplate(projectId, taskIds);
 
