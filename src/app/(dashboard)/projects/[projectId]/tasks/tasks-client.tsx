@@ -94,9 +94,15 @@ function TaskTreeNode({
     actualEndDate: task.actualEndDate ?? '',
   });
 
+  // メンバーが編集する表示値（即時反映用）
+  const [displayStatus, setDisplayStatus] = useState(task.status);
+  const [displayProgressRate, setDisplayProgressRate] = useState(task.progressRate);
+  const [displayActualStartDate, setDisplayActualStartDate] = useState(task.actualStartDate);
+  const [displayActualEndDate, setDisplayActualEndDate] = useState(task.actualEndDate);
+
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(isWP && hasChildren ? true : false);
   const isAssignee = task.assigneeId === userId;
   // メンバー編集: 担当者のみ（ACT限定）
   const canMemberEdit = !isWP && isAssignee;
@@ -126,7 +132,7 @@ function TaskTreeNode({
 
   async function handleMemberEditSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await onLoading(() =>
+    const res = await onLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -138,6 +144,13 @@ function TaskTreeNode({
         }),
       }),
     );
+    if (res.ok) {
+      // 画面表示を即時反映
+      setDisplayStatus(memberEditForm.status);
+      setDisplayProgressRate(memberEditForm.progressRate);
+      setDisplayActualStartDate(memberEditForm.actualStartDate || null);
+      setDisplayActualEndDate(memberEditForm.actualEndDate || null);
+    }
     setShowMemberEdit(false);
     router.refresh();
   }
@@ -180,8 +193,8 @@ function TaskTreeNode({
         </td>
         <td className="px-3 py-2 text-sm">{isWP ? '-' : (task.assigneeName || '-')}</td>
         <td className="px-3 py-2">
-          <Badge variant={statusColors[task.status] || 'outline'}>
-            {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
+          <Badge variant={statusColors[displayStatus] || 'outline'}>
+            {TASK_STATUSES[displayStatus as keyof typeof TASK_STATUSES] || displayStatus}
           </Badge>
         </td>
         <td className="px-3 py-2 text-sm">
@@ -189,17 +202,17 @@ function TaskTreeNode({
             <div className="h-2 w-16 rounded-full bg-gray-200">
               <div
                 className="h-2 rounded-full bg-blue-500"
-                style={{ width: `${task.progressRate}%` }}
+                style={{ width: `${displayProgressRate}%` }}
               />
             </div>
-            <span>{task.progressRate}%</span>
+            <span>{displayProgressRate}%</span>
           </div>
         </td>
         <td className="px-3 py-2 text-sm">{task.plannedEffort > 0 ? task.plannedEffort : '-'}</td>
         <td className="px-3 py-2 text-sm">{task.plannedStartDate || '-'}</td>
         <td className="px-3 py-2 text-sm">{task.plannedEndDate || '-'}</td>
-        <td className="px-3 py-2 text-sm">{task.actualStartDate || '-'}</td>
-        <td className="px-3 py-2 text-sm">{task.actualEndDate || '-'}</td>
+        <td className="px-3 py-2 text-sm">{displayActualStartDate || '-'}</td>
+        <td className="px-3 py-2 text-sm">{displayActualEndDate || '-'}</td>
         <td className="px-3 py-2">
           <div className="flex gap-1">
             {canMemberEdit && (
