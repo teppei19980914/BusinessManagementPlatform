@@ -14,6 +14,7 @@ function hashToken(token: string): string {
 
 /**
  * メール検証トークンを生成し、検証メールを送信する
+ * @throws {EmailSendError} メール送信に失敗した場合
  */
 export async function sendVerificationEmail(
   userId: string,
@@ -44,7 +45,7 @@ export async function sendVerificationEmail(
 
   // メール送信
   const mailProvider = getMailProvider();
-  await mailProvider.send({
+  const result = await mailProvider.send({
     to: email,
     subject: 'たすきば - アカウントの有効化',
     html: `
@@ -56,6 +57,20 @@ export async function sendVerificationEmail(
     `,
     text: `アカウントの有効化\n\n以下のURLにアクセスしてアカウントを有効化してください。\n${verifyUrl}\n\nこのリンクは${TOKEN_EXPIRY_HOURS}時間有効です。`,
   });
+
+  if (!result.success) {
+    throw new EmailSendError(result.error || 'メール送信に失敗しました');
+  }
+}
+
+/**
+ * メール送信失敗を表すエラー
+ */
+export class EmailSendError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EmailSendError';
+  }
 }
 
 /**

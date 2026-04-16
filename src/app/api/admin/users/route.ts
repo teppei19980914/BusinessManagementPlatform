@@ -53,11 +53,30 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: { user: newUser, recoveryCodes } }, { status: 201 });
   } catch (e) {
-    if (e instanceof Error && e.message === 'DUPLICATE_EMAIL') {
-      return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: 'このメールアドレスは既に登録されています' } },
-        { status: 409 },
-      );
+    if (e instanceof Error) {
+      if (e.message === 'DUPLICATE_EMAIL') {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'DUPLICATE_EMAIL',
+              message: 'このメールアドレスは既に登録されています',
+            },
+          },
+          { status: 409 },
+        );
+      }
+      if (e.message === 'EMAIL_SEND_FAILED') {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'EMAIL_SEND_FAILED',
+              message:
+                '検証メールの送信に失敗しました。メールアドレスを確認するか、しばらくしてから再度お試しください。',
+            },
+          },
+          { status: 502 },
+        );
+      }
     }
     throw e;
   }
