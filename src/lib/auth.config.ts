@@ -7,7 +7,7 @@
 import type { NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 
-const publicPaths = ['/login', '/reset-password', '/api/auth'];
+const publicPaths = ['/login', '/reset-password', '/setup-password', '/api/auth'];
 
 export const authConfig: NextAuthConfig = {
   providers: [

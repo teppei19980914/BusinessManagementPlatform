@@ -8,7 +8,6 @@ import {
 } from './email-verification.service';
 
 const BCRYPT_COST = 12;
-const RECOVERY_CODE_COUNT = 10;
 
 export type UserDTO = {
   id: string;
@@ -40,15 +39,6 @@ function toUserDTO(user: {
   };
 }
 
-function generateRecoveryCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = randomBytes(8);
-  return Array.from(bytes)
-    .map((b) => chars[b % chars.length])
-    .join('')
-    .replace(/(.{4})(.{4})/, '$1-$2');
-}
-
 export async function listUsers(): Promise<UserDTO[]> {
   const users = await prisma.user.findMany({
     where: { deletedAt: null },
@@ -61,7 +51,7 @@ export async function createUser(
   input: CreateUserInput,
   creatorId: string,
   options?: { baseUrl?: string },
-): Promise<{ user: UserDTO; recoveryCodes: string[] }> {
+): Promise<{ user: UserDTO }> {
   // メールアドレス重複チェック（有効なユーザ）
   const existingActive = await prisma.user.findFirst({
     where: { email: input.email, deletedAt: null },
@@ -89,32 +79,18 @@ export async function createUser(
     ]);
   }
 
-  const passwordHash = await hash(input.password, BCRYPT_COST);
-
-  // リカバリーコード生成
-  const recoveryCodes: string[] = [];
-  for (let i = 0; i < RECOVERY_CODE_COUNT; i++) {
-    recoveryCodes.push(generateRecoveryCode());
-  }
-
-  const requiresEmailVerification = process.env.MAIL_PROVIDER !== 'console';
+  // パスワードなしで仮登録（ユーザ自身がパスワード設定画面で設定する）
+  const placeholderHash = await hash(randomBytes(32).toString('hex'), BCRYPT_COST);
 
   const user = await prisma.user.create({
     data: {
       name: input.name,
       email: input.email,
-      passwordHash,
+      passwordHash: placeholderHash,
       systemRole: input.systemRole,
-      isActive: !requiresEmailVerification,
-      deletedAt: requiresEmailVerification ? new Date() : null,
-      forcePasswordChange: true,
-      recoveryCodes: {
-        create: await Promise.all(
-          recoveryCodes.map(async (code) => ({
-            codeHash: await hash(code, BCRYPT_COST),
-          })),
-        ),
-      },
+      isActive: false,
+      deletedAt: new Date(),
+      forcePasswordChange: false,
     },
   });
 
@@ -130,8 +106,8 @@ export async function createUser(
     },
   });
 
-  // メール検証（MAIL_PROVIDER が console 以外の場合）
-  if (requiresEmailVerification && options?.baseUrl) {
+  // 招待メール送信（パスワード設定リンク）
+  if (options?.baseUrl) {
     try {
       await sendVerificationEmail(user.id, user.email, options.baseUrl);
     } catch (e) {
@@ -140,7 +116,6 @@ export async function createUser(
         prisma.emailVerificationToken.deleteMany({
           where: { userId: user.id },
         }),
-        prisma.recoveryCode.deleteMany({ where: { userId: user.id } }),
         prisma.roleChangeLog.deleteMany({
           where: { targetUserId: user.id },
         }),
@@ -153,7 +128,7 @@ export async function createUser(
     }
   }
 
-  return { user: toUserDTO(user), recoveryCodes };
+  return { user: toUserDTO(user) };
 }
 
 export async function updateUserStatus(

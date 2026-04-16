@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { passwordSchema, loginSchema, createUserSchema } from './auth';
+import { passwordSchema, loginSchema, createUserSchema, setupPasswordSchema } from './auth';
 
 describe('passwordSchema', () => {
   it('10文字以上で3種以上の文字種を含むパスワードを受け入れる', () => {
@@ -92,11 +92,10 @@ describe('createUserSchema', () => {
   const validInput = {
     name: 'テストユーザ',
     email: 'test@example.com',
-    password: 'Abcdefgh12!',
     systemRole: 'general' as const,
   };
 
-  it('有効な入力を受け入れる', () => {
+  it('有効な入力を受け入れる（パスワードなし）', () => {
     const result = createUserSchema.safeParse(validInput);
     expect(result.success).toBe(true);
   });
@@ -119,5 +118,40 @@ describe('createUserSchema', () => {
   it('admin ロールを受け入れる', () => {
     const result = createUserSchema.safeParse({ ...validInput, systemRole: 'admin' });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('setupPasswordSchema', () => {
+  const validInput = {
+    token: 'abc123',
+    password: 'Abcdefgh12!',
+    confirmPassword: 'Abcdefgh12!',
+  };
+
+  it('有効な入力を受け入れる', () => {
+    const result = setupPasswordSchema.safeParse(validInput);
+    expect(result.success).toBe(true);
+  });
+
+  it('パスワード不一致を拒否する', () => {
+    const result = setupPasswordSchema.safeParse({
+      ...validInput,
+      confirmPassword: 'DifferentPw1!',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('トークンが空の場合を拒否する', () => {
+    const result = setupPasswordSchema.safeParse({ ...validInput, token: '' });
+    expect(result.success).toBe(false);
+  });
+
+  it('パスワードポリシーを適用する', () => {
+    const result = setupPasswordSchema.safeParse({
+      ...validInput,
+      password: 'short',
+      confirmPassword: 'short',
+    });
+    expect(result.success).toBe(false);
   });
 });
