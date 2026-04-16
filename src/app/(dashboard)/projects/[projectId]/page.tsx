@@ -10,6 +10,7 @@ import { listRetrospectives } from '@/services/retrospective.service';
 import { listMembers } from '@/services/member.service';
 import { listKnowledge } from '@/services/knowledge.service';
 import { listUsers } from '@/services/user.service';
+import { prisma } from '@/lib/db';
 import { ProjectDetailClient } from './project-detail-client';
 
 type Props = {
@@ -34,7 +35,7 @@ export default async function ProjectDetailPage({ params }: Props) {
   const isAdmin = session.user.systemRole === 'admin';
 
   // 全タブのデータを並列取得
-  const [estimates, tasks, tasksFlat, risks, retros, members, knowledgeResult, allUsers] = await Promise.all([
+  const [estimates, tasks, tasksFlat, risks, retros, members, knowledgeResult, allUsers, allProjectsRaw] = await Promise.all([
     canEdit ? listEstimates(projectId) : Promise.resolve([]),
     listTasks(projectId),
     listTasksFlat(projectId),
@@ -43,7 +44,9 @@ export default async function ProjectDetailPage({ params }: Props) {
     listMembers(projectId),
     listKnowledge({ page: 1, limit: 100 }, session.user.id, session.user.systemRole),
     isAdmin ? listUsers() : Promise.resolve([]),
+    canEdit ? prisma.project.findMany({ where: { deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }) : Promise.resolve([]),
   ]);
+  const allProjects = allProjectsRaw.map((p) => ({ id: p.id, name: p.name }));
 
   return (
     <ProjectDetailClient
@@ -58,6 +61,7 @@ export default async function ProjectDetailPage({ params }: Props) {
       retros={retros}
       members={members}
       allUsers={allUsers}
+      allProjects={allProjects}
       knowledges={knowledgeResult.data}
       canEdit={canEdit}
       canCreate={canCreate}
