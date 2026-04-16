@@ -471,29 +471,50 @@ export async function exportWbsTemplate(
     orderBy: [{ plannedStartDate: 'asc' }, { createdAt: 'asc' }],
   });
 
-  // ツリー構造を構築して深さ優先でフラット化
-  const selectedIds = taskIds ? new Set(taskIds) : null;
+  // タスクIDセット（子の探索用）
+  const taskIdSet = new Set(tasks.map((t) => t.id));
 
+  // 各タスクの深さを計算
+  function calcLevel(task: typeof tasks[0]): number {
+    let level = 1;
+    let currentParentId = task.parentTaskId;
+    while (currentParentId && taskIdSet.has(currentParentId)) {
+      level++;
+      const parent = tasks.find((t) => t.id === currentParentId);
+      if (!parent) break;
+      currentParentId = parent.parentTaskId;
+    }
+    return level;
+  }
+
+  // 深さ優先でツリー順に並べ替え
   type FlatRow = { level: number; task: typeof tasks[0] };
   const rows: FlatRow[] = [];
+  const visited = new Set<string>();
 
-  function walkTree(parentId: string | null, level: number) {
-    const children = tasks.filter((t) => t.parentTaskId === parentId);
+  function walkTree(parentId: string | null) {
+    const children = tasks
+      .filter((t) => t.parentTaskId === parentId)
+      .sort((a, b) => {
+        const sa = a.plannedStartDate?.getTime() ?? 0;
+        const sb = b.plannedStartDate?.getTime() ?? 0;
+        return sa - sb || a.createdAt.getTime() - b.createdAt.getTime();
+      });
     for (const child of children) {
-      if (selectedIds && !selectedIds.has(child.id)) continue;
-      rows.push({ level, task: child });
-      walkTree(child.id, level + 1);
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      rows.push({ level: calcLevel(child), task: child });
+      walkTree(child.id);
     }
   }
-  walkTree(null, 1);
 
-  // 選択モードで親がない場合はルートとして追加
-  if (selectedIds) {
-    for (const t of tasks) {
-      if (!rows.some((r) => r.task.id === t.id)) {
-        rows.push({ level: 1, task: t });
-      }
-    }
+  // ルート（親がないか、親が対象外）から開始
+  const rootTasks = tasks.filter((t) => !t.parentTaskId || !taskIdSet.has(t.parentTaskId));
+  for (const root of rootTasks) {
+    if (visited.has(root.id)) continue;
+    visited.add(root.id);
+    rows.push({ level: 1, task: root });
+    walkTree(root.id);
   }
 
   // CSV 生成
@@ -522,7 +543,9 @@ export async function exportWbsTemplate(
  * レベル列と行順序から親子関係を復元する。
  */
 export function parseCsvTemplate(csvText: string): WbsTemplateTask[] {
-  const lines = csvText.split(/\r?\n/).filter((l) => l.trim());
+  // BOM を除去
+  const cleanText = csvText.replace(/^\uFEFF/, '');
+  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return []; // ヘッダーのみ
 
   // ヘッダー行をスキップ
