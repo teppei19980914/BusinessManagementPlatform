@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
+// エクスポートは task:create 権限（PM/TL以上）を要求
 import { exportWbsTemplate } from '@/services/task.service';
 
 export async function POST(
@@ -10,7 +11,7 @@ export async function POST(
   if (user instanceof NextResponse) return user;
 
   const { projectId } = await params;
-  const forbidden = await checkProjectPermission(user, projectId, 'task:read');
+  const forbidden = await checkProjectPermission(user, projectId, 'task:create');
   if (forbidden) return forbidden;
 
   const body = await req.json().catch(() => ({}));
@@ -19,7 +20,12 @@ export async function POST(
     ? body.taskIds.filter((id: unknown): id is string => typeof id === 'string' && uuidRegex.test(id))
     : undefined;
 
-  const template = await exportWbsTemplate(projectId, taskIds);
+  const csv = await exportWbsTemplate(projectId, taskIds);
 
-  return NextResponse.json({ data: template });
+  return new NextResponse(csv, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="wbs-template.csv"`,
+    },
+  });
 }
