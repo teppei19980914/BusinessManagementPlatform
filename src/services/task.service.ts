@@ -183,6 +183,7 @@ export async function updateTask(
 ): Promise<TaskDTO> {
   const data: Prisma.TaskUpdateInput = { updatedBy: userId };
 
+  if (input.type !== undefined) data.type = input.type;
   if (input.parentTaskId !== undefined) data.parentTask = input.parentTaskId ? { connect: { id: input.parentTaskId } } : { disconnect: true };
   if (input.wbsNumber !== undefined) data.wbsNumber = input.wbsNumber;
   if (input.name !== undefined) data.name = input.name;
