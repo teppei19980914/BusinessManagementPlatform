@@ -95,6 +95,8 @@ function TaskTreeNode({
   });
 
   const isWP = task.type === 'work_package';
+  const hasChildren = task.children && task.children.length > 0;
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const isAssignee = task.assigneeId === userId;
   // メンバー編集: 担当者のみ（ACT限定）
   const canMemberEdit = !isWP && isAssignee;
@@ -152,12 +154,27 @@ function TaskTreeNode({
         )}
         <td className="px-3 py-2" style={{ paddingLeft: `${depth * 24 + 12}px` }}>
           <div className="flex items-center gap-2">
+            {isWP && hasChildren ? (
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(!isCollapsed)}
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
+                title={isCollapsed ? '展開' : '折りたたみ'}
+              >
+                <span className={`text-xs transition-transform ${isCollapsed ? '' : 'rotate-90'}`}>▶</span>
+              </button>
+            ) : (
+              <span className="w-5 shrink-0" />
+            )}
             <Badge variant={isWP ? 'default' : 'outline'} className="text-[10px] px-1.5 py-0">
               {isWP ? 'WP' : 'ACT'}
             </Badge>
             <span className={`${isWP ? 'font-semibold' : 'font-medium'}`}>{task.name}</span>
             {task.wbsNumber && (
               <span className="text-xs text-gray-400">{task.wbsNumber}</span>
+            )}
+            {isWP && hasChildren && isCollapsed && (
+              <span className="text-xs text-gray-400">({task.children!.length})</span>
             )}
           </div>
         </td>
@@ -297,7 +314,7 @@ function TaskTreeNode({
           </td>
         </tr>
       )}
-      {task.children?.map((child) => (
+      {!isCollapsed && task.children?.map((child) => (
         <TaskTreeNode
           key={child.id}
           task={child}
