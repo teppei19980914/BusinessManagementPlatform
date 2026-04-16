@@ -105,36 +105,20 @@ export function MembersClient({ projectId, members, allUsers, isAdmin }: Props) 
                 )}
                 <div className="space-y-2">
                   <Label>ユーザ</Label>
-                  <Select value={addForm.userId} onValueChange={(v) => v && setAddForm({ ...addForm, userId: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="ユーザを選択..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableUsers.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.name}（{u.email}）
-                        </SelectItem>
-                      ))}
-                      {availableUsers.length === 0 && (
-                        <SelectItem value="__none" disabled>
-                          追加可能なユーザがいません
-                        </SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
+                  <select value={addForm.userId} onChange={(e) => setAddForm({ ...addForm, userId: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" required>
+                    <option value="">ユーザを選択...</option>
+                    {availableUsers.map((u) => (
+                      <option key={u.id} value={u.id}>{u.name}（{u.email}）</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label>プロジェクトロール</Label>
-                  <Select value={addForm.projectRole} onValueChange={(v) => v && setAddForm({ ...addForm, projectRole: v })}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(PROJECT_ROLES).map(([key, label]) => (
-                        <SelectItem key={key} value={key}>{label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <select value={addForm.projectRole} onChange={(e) => setAddForm({ ...addForm, projectRole: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                    {Object.entries(PROJECT_ROLES).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
                 </div>
                 <Button type="submit" className="w-full">追加</Button>
               </form>
