@@ -680,15 +680,17 @@ export async function importWbsTemplate(
     (a, b) => (depthMap.get(a.tempId) ?? 0) - (depthMap.get(b.tempId) ?? 0),
   );
 
-  // トランザクションで一括作成（エラー時は自動ロールバック）
+  // 逐次作成（PgBouncer 環境では $transaction が使えないため）
+  // エラー時は作成済みタスクを論理削除してロールバック
   const idMap = new Map<string, string>();
+  const createdIds: string[] = [];
 
-  await prisma.$transaction(async (tx) => {
+  try {
     for (const t of sorted) {
       const parentId = t.parentTempId ? idMap.get(t.parentTempId) ?? null : null;
       const isActivity = t.type === 'activity';
 
-      const created = await tx.task.create({
+      const created = await prisma.task.create({
         data: {
           projectId,
           parentTaskId: parentId,
@@ -712,10 +714,20 @@ export async function importWbsTemplate(
       });
 
       idMap.set(t.tempId, created.id);
+      createdIds.push(created.id);
     }
-  });
+  } catch (e) {
+    // エラー時: 作成済みタスクを論理削除してロールバック
+    if (createdIds.length > 0) {
+      await prisma.task.updateMany({
+        where: { id: { in: createdIds } },
+        data: { deletedAt: new Date() },
+      });
+    }
+    throw e;
+  }
 
-  // WP の集計を更新（トランザクション外 — 集計失敗はデータ破損にならないため）
+  // WP の集計を更新
   const wpIds = sorted.filter((t) => t.type === 'work_package').map((t) => idMap.get(t.tempId)!);
   for (const wpId of wpIds.reverse()) {
     await recalculateAncestorsPublic(wpId);
