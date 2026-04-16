@@ -680,17 +680,15 @@ export async function importWbsTemplate(
     (a, b) => (depthMap.get(a.tempId) ?? 0) - (depthMap.get(b.tempId) ?? 0),
   );
 
-  // 逐次作成（PgBouncer 環境では $transaction が使えないため）
-  // エラー時は作成済みタスクを論理削除してロールバック
+  // トランザクションで一括作成（directUrl 経由で直接接続、エラー時は自動ロールバック）
   const idMap = new Map<string, string>();
-  const createdIds: string[] = [];
 
-  try {
+  await prisma.$transaction(async (tx) => {
     for (const t of sorted) {
       const parentId = t.parentTempId ? idMap.get(t.parentTempId) ?? null : null;
       const isActivity = t.type === 'activity';
 
-      const created = await prisma.task.create({
+      const created = await tx.task.create({
         data: {
           projectId,
           parentTaskId: parentId,
@@ -714,18 +712,8 @@ export async function importWbsTemplate(
       });
 
       idMap.set(t.tempId, created.id);
-      createdIds.push(created.id);
     }
-  } catch (e) {
-    // エラー時: 作成済みタスクを論理削除してロールバック
-    if (createdIds.length > 0) {
-      await prisma.task.updateMany({
-        where: { id: { in: createdIds } },
-        data: { deletedAt: new Date() },
-      });
-    }
-    throw e;
-  }
+  });
 
   // WP の集計を更新
   const wpIds = sorted.filter((t) => t.type === 'work_package').map((t) => idMap.get(t.tempId)!);
