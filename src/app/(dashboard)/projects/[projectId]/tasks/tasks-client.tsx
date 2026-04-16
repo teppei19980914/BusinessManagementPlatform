@@ -61,6 +61,8 @@ function TaskTreeNode({
   onLoading,
   selectedIds,
   onToggleSelect,
+  members,
+  parentOptions,
 }: {
   task: TaskDTO;
   depth: number;
@@ -71,11 +73,16 @@ function TaskTreeNode({
   onLoading: <T>(fn: () => Promise<T>) => Promise<T>;
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
+  members: MemberDTO[];
+  parentOptions: { id: string; label: string }[];
 }) {
   // PM/TL 用の編集フォーム
   const [showPmEdit, setShowPmEdit] = useState(false);
   const [pmEditForm, setPmEditForm] = useState({
+    type: task.type as 'work_package' | 'activity',
+    parentTaskId: task.parentTaskId ?? '',
     name: task.name,
+    assigneeId: task.assigneeId ?? '',
     plannedStartDate: task.plannedStartDate,
     plannedEndDate: task.plannedEndDate,
     plannedEffort: task.plannedEffort,
@@ -97,11 +104,21 @@ function TaskTreeNode({
 
   async function handlePmEditSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const body: Record<string, unknown> = {
+      name: pmEditForm.name,
+      parentTaskId: pmEditForm.parentTaskId || null,
+    };
+    if (pmEditForm.type === 'activity') {
+      body.assigneeId = pmEditForm.assigneeId || null;
+      body.plannedStartDate = pmEditForm.plannedStartDate;
+      body.plannedEndDate = pmEditForm.plannedEndDate;
+      body.plannedEffort = pmEditForm.plannedEffort;
+    }
     await onLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(pmEditForm),
+        body: JSON.stringify(body),
       }),
     );
     setShowPmEdit(false);
@@ -226,17 +243,41 @@ function TaskTreeNode({
           </td>
         </tr>
       )}
-      {/* PM/TL 編集フォーム: 名前・予定開始日・予定終了日・見積工数 */}
+      {/* PM/TL 編集フォーム */}
       {showPmEdit && (
         <tr className="border-b bg-green-50">
           <td colSpan={colSpan} className="px-6 py-3">
-            <form onSubmit={handlePmEditSubmit} className="flex items-end gap-4">
-              <div className="space-y-1">
-                <Label className="text-xs">名前</Label>
-                <Input value={pmEditForm.name} onChange={(e) => setPmEditForm({ ...pmEditForm, name: e.target.value })} className="w-48" required />
+            <form onSubmit={handlePmEditSubmit} className="space-y-3">
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs">種別</Label>
+                  <span className="block text-sm font-medium px-1">{isWP ? 'ワークパッケージ' : 'アクティビティ'}</span>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">親WP</Label>
+                  <LabeledSelect
+                    value={pmEditForm.parentTaskId}
+                    onValueChange={(v) => setPmEditForm({ ...pmEditForm, parentTaskId: v ?? '' })}
+                    options={Object.fromEntries(parentOptions.filter((p) => p.id !== task.id).map((p) => [p.id, p.label]))}
+                    placeholder="なし（最上位）"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">名前</Label>
+                  <Input value={pmEditForm.name} onChange={(e) => setPmEditForm({ ...pmEditForm, name: e.target.value })} className="w-48" required />
+                </div>
               </div>
               {!isWP && (
-                <>
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="space-y-1">
+                    <Label className="text-xs">担当者</Label>
+                    <LabeledSelect
+                      value={pmEditForm.assigneeId}
+                      onValueChange={(v) => setPmEditForm({ ...pmEditForm, assigneeId: v ?? '' })}
+                      options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
+                      placeholder="未設定"
+                    />
+                  </div>
                   <div className="space-y-1">
                     <Label className="text-xs">予定開始日</Label>
                     <Input type="date" value={pmEditForm.plannedStartDate ?? ''} onChange={(e) => setPmEditForm({ ...pmEditForm, plannedStartDate: e.target.value })} className="w-36" />
@@ -249,10 +290,12 @@ function TaskTreeNode({
                     <Label className="text-xs">見積工数</Label>
                     <Input type="number" min={0} step={0.5} value={pmEditForm.plannedEffort} onChange={(e) => setPmEditForm({ ...pmEditForm, plannedEffort: Number(e.target.value) })} className="w-24" />
                   </div>
-                </>
+                </div>
               )}
-              <Button type="submit" size="sm">保存</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowPmEdit(false)}>閉じる</Button>
+              <div className="flex gap-2">
+                <Button type="submit" size="sm">保存</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowPmEdit(false)}>閉じる</Button>
+              </div>
             </form>
           </td>
         </tr>
@@ -269,6 +312,8 @@ function TaskTreeNode({
           onLoading={onLoading}
           selectedIds={selectedIds}
           onToggleSelect={onToggleSelect}
+          members={members}
+          parentOptions={parentOptions}
         />
       ))}
     </>
@@ -652,6 +697,8 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
                 onLoading={withLoading}
                 selectedIds={selectedIds}
                 onToggleSelect={toggleSelect}
+                members={members}
+                parentOptions={parentOptions}
               />
             ))}
             {tasks.length === 0 && (
