@@ -2318,8 +2318,11 @@ NEXTAUTH_SECRET= # 必須: openssl rand -base64 32 で生成
 NEXTAUTH_URL=http://localhost:3000
 
 # === メール設定 ===
-MAIL_PROVIDER=console  # console / resend / smtp
+MAIL_PROVIDER=console  # console / brevo / resend / smtp
 MAIL_FROM=noreply@example.com
+MAIL_FROM_NAME=たすきば
+# Brevo の場合（推奨）
+BREVO_API_KEY=
 # Resend の場合
 RESEND_API_KEY=
 # SMTP の場合
@@ -2345,7 +2348,7 @@ ENABLE_OPERATION_TRACE=false
 | PostgreSQL 標準機能のみ使用（pg_trgm 等の標準 contrib は可） | DB の可搬性を確保 |
 | 全ての外部サービス接続を環境変数で設定可能にする | 環境ごとに接続先が異なる |
 | 全ポートを環境変数で変更可能にする | 既存環境とのポート競合を回避 |
-| メール送信は MailProvider インターフェースで抽象化 | Resend / SMTP / コンソール出力を切替可能 |
+| メール送信は MailProvider インターフェースで抽象化 | Brevo / Resend / SMTP / コンソール出力を切替可能 |
 | Next.js は standalone モードでビルド | Docker イメージのサイズ最適化 + Vercel 非依存 |
 | 静的ファイルの CDN 依存なし | オフライン環境でも動作可能 |
 | Docker Compose のリソースにプロジェクト名プレフィックスを付与 | 既存コンテナ・ボリューム・ネットワークとの衝突回避 |
@@ -2355,16 +2358,18 @@ ENABLE_OPERATION_TRACE=false
 | 環境 | プロバイダ | 設定 |
 |---|---|---|
 | 開発（ローカル） | ConsoleMailProvider | メール送信せずコンソール出力 |
-| 自社運用（クラウド） | ResendMailProvider | RESEND_API_KEY で設定 |
+| 自社運用（クラウド） | BrevoMailProvider | BREVO_API_KEY で設定（推奨） |
+| 自社運用（クラウド） | ResendMailProvider | RESEND_API_KEY で設定（要ドメイン検証） |
 | 外部配布（PC/オンプレ） | SmtpMailProvider | SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS で設定 |
 
 環境変数 `MAIL_PROVIDER` で切替:
 
-| 値 | プロバイダ |
-|---|---|
-| console（デフォルト） | コンソール出力 |
-| resend | Resend API |
-| smtp | SMTP 直接送信 |
+| 値 | プロバイダ | 備考 |
+|---|---|---|
+| console（デフォルト） | コンソール出力 | 開発・テスト向け |
+| brevo（推奨） | Brevo API | 無料: 300通/日、任意宛先送信可 |
+| resend | Resend API | 無料: 3,000通/月、要ドメイン検証 |
+| smtp | SMTP 直接送信 | オンプレ向け |
 
 #### 10.0.7 オンプレミス環境の追加構成
 
@@ -2819,7 +2824,7 @@ Azure Database for PostgreSQL Flexible Server (Burstable)
 
 ### 10.2 運用環境構成（無料枠）
 
-初期フェーズでは Vercel Hobby + Supabase Free + Resend Free の無料構成で運用する。
+初期フェーズでは Vercel Hobby + Supabase Free + Brevo Free の無料構成で運用する。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -2844,7 +2849,7 @@ Azure Database for PostgreSQL Flexible Server (Burstable)
 │  制約: 直接接続不可、バックアップは日次自動のみ                 │
 └──────────────────────────────────────────────────────────────┘
 
-  メール送信: Resend Free (3,000通/月)
+  メール送信: Brevo Free (300通/日)
   CI/CD: GitHub Actions (無料枠: 2,000分/月)
   ドメイン: Vercel サブドメイン (*.vercel.app)
 ```
@@ -2855,7 +2860,7 @@ Azure Database for PostgreSQL Flexible Server (Burstable)
 |---|---|---|
 | アプリケーション | Vercel Hobby | $0 |
 | データベース | Supabase Free (500MB) | $0 |
-| メール送信 | Resend Free (3,000通/月) | $0 |
+| メール送信 | Brevo Free (300通/日) | $0 |
 | CI/CD | GitHub Actions (2,000分/月) | $0 |
 | ドメイン | Vercel サブドメイン | $0 |
 | **合計** | | **$0/月** |
@@ -2868,7 +2873,7 @@ Azure Database for PostgreSQL Flexible Server (Burstable)
 | Supabase Free: 500MB | 約3年で逼迫（ログ制御後） | ログ保持期間の厳格化で 5 年以上対応可 |
 | Supabase Free: 1週間無操作で停止 | 長期休暇時にDBが停止 | ダッシュボードから手動再開、または定期的なヘルスチェック |
 | Supabase Free: Pooler 経由のみ | Prisma の一部機能に制約 | Transaction mode 対応の接続設定を使用 |
-| Resend Free: 3,000通/月 | 初期フェーズでは十分 | ユーザ増加時に Pro ($20/月) へ移行 |
+| Brevo Free: 300通/日 | 初期フェーズでは十分 | ユーザ増加時に Starter ($9/月) へ移行 |
 
 #### データ量の見積もり（ログ制御後）
 
@@ -2888,7 +2893,7 @@ Azure Database for PostgreSQL Flexible Server (Burstable)
 |---|---|---|
 | 商用利用の開始 | Vercel Pro | +$20/月 |
 | DB 500MB 超過 or 直接接続が必要 | Supabase Pro | +$25/月 |
-| メール 3,000通/月超過 | Resend Pro | +$20/月 |
+| メール 300通/日超過 | Brevo Starter | +$9/月 |
 | 独自ドメインが必要 | ドメイン取得 | +~$1/月 |
 | 大規模運用（100名超） | AWS / Azure への移行 | 要別途見積もり |
 
@@ -2905,7 +2910,9 @@ Azure Database for PostgreSQL Flexible Server (Burstable)
 | NEXTAUTH_URL | アプリケーション URL | http://localhost:3000 |
 | NEXTAUTH_SECRET | NextAuth 暗号化キー | ランダム文字列（32文字以上） |
 | NODE_ENV | 実行環境 | development / production |
-| MAIL_PROVIDER | メール送信プロバイダ | console（デフォルト）/ resend / smtp |
+| MAIL_PROVIDER | メール送信プロバイダ | console（デフォルト）/ brevo / resend / smtp |
+| BREVO_API_KEY | Brevo API キー（MAIL_PROVIDER=brevo 時） | xkeysib-xxxxxxxxxx |
+| MAIL_FROM_NAME | メール送信元表示名（Brevo のみ） | たすきば |
 | RESEND_API_KEY | Resend API キー（MAIL_PROVIDER=resend 時） | re_xxxxxxxxxx |
 | SMTP_HOST | SMTP ホスト（MAIL_PROVIDER=smtp 時） | smtp.example.com |
 | SMTP_PORT | SMTP ポート | 587 |
@@ -3491,9 +3498,9 @@ MVP ではサーバサイドキャッシュ（Redis 等）は導入しない。T
 
 | 項目 | 選定内容 |
 |---|---|
-| サービス | Resend（https://resend.com/） |
-| 選定理由 | Next.js との統合が容易、月3,000通まで無料、API ベースでシンプル |
-| SDK | @resend/react-email（React Email でテンプレート管理） |
+| サービス | Brevo（https://www.brevo.com/）★推奨 |
+| 選定理由 | 無料枠で任意宛先に送信可能（300通/日）、ドメイン未検証でも送信可、API がシンプル |
+| 代替 | Resend（https://resend.com/）— 要ドメイン検証、3,000通/月 |
 
 ### 18.2 将来の移行を考慮した設計
 
@@ -3521,33 +3528,27 @@ export type MailResult = {
 ```
 
 ```typescript
-// lib/mail/resend-provider.ts（MVP 実装）
-import { Resend } from 'resend';
-
-export class ResendMailProvider implements MailProvider {
-  private client: Resend;
-
-  constructor() {
-    this.client = new Resend(process.env.RESEND_API_KEY);
-  }
-
+// lib/mail/brevo-provider.ts（MVP 実装 — 推奨）
+export class BrevoMailProvider implements MailProvider {
   async send(params: MailParams): Promise<MailResult> {
-    const result = await this.client.emails.send({
-      from: process.env.MAIL_FROM || 'noreply@example.com',
-      to: params.to,
-      subject: params.subject,
-      html: params.html,
-      text: params.text,
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'api-key': process.env.BREVO_API_KEY },
+      body: JSON.stringify({
+        sender: { name: process.env.MAIL_FROM_NAME, email: process.env.MAIL_FROM },
+        to: [{ email: params.to }],
+        subject: params.subject,
+        htmlContent: params.html,
+      }),
     });
-    return { success: true, messageId: result.data?.id };
+    const data = await res.json();
+    return { success: res.ok, messageId: data.messageId };
   }
 }
 
+// lib/mail/resend-provider.ts（代替: 要ドメイン検証）
 // lib/mail/smtp-provider.ts（外部配布用: PC/オンプレ向け）
-// nodemailer を使用した SMTP 送信
-
-// lib/mail/console-provider.ts（開発環境用）
-// メールを送信せずコンソールに出力
+// lib/mail/console-provider.ts（開発環境用: コンソール出力）
 ```
 
 ```typescript
@@ -3556,6 +3557,7 @@ export class ResendMailProvider implements MailProvider {
 export function createMailProvider(): MailProvider {
   const provider = process.env.MAIL_PROVIDER || 'console';
   switch (provider) {
+    case 'brevo': return new BrevoMailProvider();
     case 'resend': return new ResendMailProvider();
     case 'smtp': return new SmtpMailProvider();
     case 'console':
