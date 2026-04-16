@@ -28,6 +28,8 @@ import { TasksClient } from './tasks/tasks-client';
 import { GanttClient } from './gantt/gantt-client';
 import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
+import { MembersClient } from './members-client';
+import type { UserDTO } from '@/services/user.service';
 
 type Props = {
   project: ProjectDTO;
@@ -40,6 +42,7 @@ type Props = {
   risks: RiskDTO[];
   retros: RetroDTO[];
   members: MemberDTO[];
+  allUsers: UserDTO[];
   knowledges: KnowledgeDTO[];
   canEdit: boolean;
   canCreate: boolean;
@@ -57,7 +60,7 @@ const NEXT_STATUSES: Record<string, string[]> = {
 
 export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
-  estimates, tasks, tasksFlat, risks, retros, members, knowledges,
+  estimates, tasks, tasksFlat, risks, retros, members, allUsers, knowledges,
   canEdit, canCreate,
 }: Props) {
   const router = useRouter();
@@ -208,6 +211,9 @@ export function ProjectDetailClient({
           <TabsTrigger value="risks">リスク/課題</TabsTrigger>
           <TabsTrigger value="retrospectives">振り返り</TabsTrigger>
           <TabsTrigger value="knowledge">ナレッジ</TabsTrigger>
+          {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+            <TabsTrigger value="members">メンバー</TabsTrigger>
+          )}
         </TabsList>
 
         {/* 概要タブ */}
@@ -327,6 +333,18 @@ export function ProjectDetailClient({
             )}
           </div>
         </TabsContent>
+
+        {/* メンバータブ */}
+        {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+          <TabsContent value="members" className="mt-4">
+            <MembersClient
+              projectId={project.id}
+              members={members}
+              allUsers={allUsers}
+              isAdmin={systemRole === 'admin'}
+            />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
