@@ -49,7 +49,7 @@ export async function POST(
     user,
     projectId,
     'task:update_progress',
-    task.assigneeId,
+    task.assigneeId ?? undefined,
   );
   if (forbidden) return forbidden;
 

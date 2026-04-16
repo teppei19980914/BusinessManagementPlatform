@@ -46,6 +46,13 @@ export const PROJECT_STATUSES = {
 
 export type ProjectStatus = keyof typeof PROJECT_STATUSES;
 
+export const WBS_TYPES = {
+  work_package: 'ワークパッケージ',
+  activity: 'アクティビティ',
+} as const;
+
+export type WbsType = keyof typeof WBS_TYPES;
+
 export const TASK_STATUSES = {
   not_started: '未着手',
   in_progress: '進行中',

@@ -1,29 +1,75 @@
 import { z } from 'zod/v4';
 
-export const createTaskSchema = z.object({
+const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+const categoryEnum = z.enum([
+  'requirements',
+  'design',
+  'development',
+  'testing',
+  'review',
+  'management',
+  'other',
+]);
+
+/**
+ * ワークパッケージ作成スキーマ
+ * - 担当者不要（集約ノード）
+ * - 日付・工数は子から自動計算のため不要
+ */
+export const createWorkPackageSchema = z.object({
+  type: z.literal('work_package'),
   parentTaskId: z.string().uuid().optional(),
   wbsNumber: z.string().max(50).optional(),
-  name: z.string().min(1, 'タスク名を入力してください').max(100),
+  name: z.string().min(1, 'ワークパッケージ名を入力してください').max(100),
   description: z.string().max(2000).optional(),
-  category: z.enum([
-    'requirements',
-    'design',
-    'development',
-    'testing',
-    'review',
-    'management',
-    'other',
-  ]),
+  category: categoryEnum,
+  notes: z.string().max(1000).optional(),
+});
+
+/**
+ * アクティビティ作成スキーマ
+ * - 担当者必須（実作業ノード）
+ * - 日付・工数を直接入力
+ */
+export const createActivitySchema = z.object({
+  type: z.literal('activity'),
+  parentTaskId: z.string().uuid().optional(),
+  wbsNumber: z.string().max(50).optional(),
+  name: z.string().min(1, 'アクティビティ名を入力してください').max(100),
+  description: z.string().max(2000).optional(),
+  category: categoryEnum,
   assigneeId: z.string().uuid('担当者を選択してください'),
-  plannedStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日付形式が不正です'),
-  plannedEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日付形式が不正です'),
+  plannedStartDate: z.string().regex(dateRegex, '日付形式が不正です'),
+  plannedEndDate: z.string().regex(dateRegex, '日付形式が不正です'),
   plannedEffort: z.number().positive('予定工数は正の数で入力してください'),
   priority: z.enum(['low', 'medium', 'high']).optional(),
   isMilestone: z.boolean().optional(),
   notes: z.string().max(1000).optional(),
 });
 
-export const updateTaskSchema = createTaskSchema.partial();
+/**
+ * 統合作成スキーマ（type で分岐）
+ */
+export const createTaskSchema = z.discriminatedUnion('type', [
+  createWorkPackageSchema,
+  createActivitySchema,
+]);
+
+export const updateTaskSchema = z.object({
+  parentTaskId: z.string().uuid().optional().nullable(),
+  wbsNumber: z.string().max(50).optional(),
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().max(2000).optional().nullable(),
+  category: categoryEnum.optional(),
+  assigneeId: z.string().uuid().optional().nullable(),
+  plannedStartDate: z.string().regex(dateRegex).optional().nullable(),
+  plannedEndDate: z.string().regex(dateRegex).optional().nullable(),
+  plannedEffort: z.number().min(0).optional(),
+  priority: z.enum(['low', 'medium', 'high']).optional(),
+  isMilestone: z.boolean().optional(),
+  notes: z.string().max(1000).optional().nullable(),
+});
 
 export const updateProgressSchema = z.object({
   progressRate: z.number().int().min(0).max(100, '進捗率は0〜100で入力してください'),

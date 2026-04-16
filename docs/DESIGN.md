@@ -123,7 +123,7 @@ src/
 │   │   │   └── [projectId]/
 │   │   │       ├── page.tsx      # プロジェクト詳細
 │   │   │       ├── estimates/    # 見積もり管理
-│   │   │       ├── tasks/        # WBS/タスク管理
+│   │   │       ├── tasks/        # WBS管理
 │   │   │       ├── gantt/        # ガントチャート
 │   │   │       ├── risks/        # リスク/課題管理
 │   │   │       ├── knowledge/    # ナレッジ管理
@@ -324,17 +324,18 @@ erDiagram
         uuid id PK
         uuid project_id FK
         uuid parent_task_id FK
+        enum type "work_package | activity"
         varchar wbs_number
         varchar name
         text description
         enum category "requirements | design | development | testing | review | management | other"
-        uuid assignee_id FK
-        date planned_start_date
-        date planned_end_date
-        decimal planned_effort
+        uuid assignee_id FK "nullable - WP は null"
+        date planned_start_date "nullable - WP は子から自動計算"
+        date planned_end_date "nullable - WP は子から自動計算"
+        decimal planned_effort "WP は子の合計を自動計算"
         enum priority "low | medium | high"
         enum status "not_started | in_progress | completed | on_hold"
-        integer progress_rate "0-100"
+        integer progress_rate "0-100 - WP は子の加重平均"
         boolean is_milestone
         text notes
         uuid created_by FK
@@ -951,7 +952,7 @@ stateDiagram-v2
     end note
 
     note right of scheduling
-        条件③: WBS/タスク作成済み
+        条件③: WBS管理作成済み
         かつ担当・工数・期限設定済み
     end note
 
@@ -2967,7 +2968,7 @@ flowchart TD
     PJ_LIST --> PJ_DETAIL[プロジェクト詳細]
 
     PJ_DETAIL --> TAB_EST[見積もり管理]
-    PJ_DETAIL --> TAB_TASK[WBS/タスク管理]
+    PJ_DETAIL --> TAB_TASK[WBS管理]
     PJ_DETAIL --> TAB_GANTT[ガントチャート]
     PJ_DETAIL --> TAB_RISK[リスク/課題一覧]
     PJ_DETAIL --> TAB_KN[ナレッジ管理]
@@ -3001,7 +3002,7 @@ flowchart TD
 |---|---|---|
 | 概要 | /projects/:id | 常時表示 |
 | 見積もり | /projects/:id/estimates | admin, pm_tl のみ |
-| WBS/タスク | /projects/:id/tasks | 常時表示 |
+| WBS管理 | /projects/:id/tasks | 常時表示 |
 | ガントチャート | /projects/:id/gantt | 常時表示 |
 | リスク/課題 | /projects/:id/risks | 常時表示 |
 | ナレッジ | /projects/:id/knowledge | 常時表示 |

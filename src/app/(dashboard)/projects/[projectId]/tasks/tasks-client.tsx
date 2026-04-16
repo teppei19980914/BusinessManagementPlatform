@@ -16,7 +16,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { LabeledSelect } from '@/components/labeled-select';
-import { TASK_CATEGORIES, TASK_STATUSES, PRIORITIES } from '@/types';
+import { TASK_CATEGORIES, TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 
@@ -68,8 +68,8 @@ function TaskTreeNode({
     status: task.status,
   });
 
+  const isWP = task.type === 'work_package';
   const isAssignee = task.assigneeId === userId;
-  const canProgress = canUpdateProgress || (canUpdateProgress === false && isAssignee);
 
   async function handleEditSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -99,14 +99,19 @@ function TaskTreeNode({
 
   return (
     <>
-      <tr className="border-b hover:bg-gray-50">
+      <tr className={`border-b hover:bg-gray-50 ${isWP ? 'bg-gray-50/50' : ''}`}>
         <td className="px-3 py-2" style={{ paddingLeft: `${depth * 24 + 12}px` }}>
-          <span className="font-medium">{task.name}</span>
-          {task.wbsNumber && (
-            <span className="ml-2 text-xs text-gray-400">{task.wbsNumber}</span>
-          )}
+          <div className="flex items-center gap-2">
+            <Badge variant={isWP ? 'default' : 'outline'} className="text-[10px] px-1.5 py-0">
+              {isWP ? 'WP' : 'ACT'}
+            </Badge>
+            <span className={`${isWP ? 'font-semibold' : 'font-medium'}`}>{task.name}</span>
+            {task.wbsNumber && (
+              <span className="text-xs text-gray-400">{task.wbsNumber}</span>
+            )}
+          </div>
         </td>
-        <td className="px-3 py-2 text-sm">{task.assigneeName || '-'}</td>
+        <td className="px-3 py-2 text-sm">{isWP ? '-' : (task.assigneeName || '-')}</td>
         <td className="px-3 py-2">
           <Badge variant={statusColors[task.status] || 'outline'}>
             {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
@@ -123,11 +128,12 @@ function TaskTreeNode({
             <span>{task.progressRate}%</span>
           </div>
         </td>
-        <td className="px-3 py-2 text-sm">{task.plannedStartDate}</td>
-        <td className="px-3 py-2 text-sm">{task.plannedEndDate}</td>
+        <td className="px-3 py-2 text-sm">{task.plannedEffort > 0 ? task.plannedEffort : '-'}</td>
+        <td className="px-3 py-2 text-sm">{task.plannedStartDate || '-'}</td>
+        <td className="px-3 py-2 text-sm">{task.plannedEndDate || '-'}</td>
         <td className="px-3 py-2">
           <div className="flex gap-1">
-            {(canProgress || isAssignee) && (
+            {!isWP && (canUpdateProgress || isAssignee) && (
               <Button variant="outline" size="sm" onClick={() => setShowProgress(!showProgress)}>
                 進捗
               </Button>
@@ -141,7 +147,8 @@ function TaskTreeNode({
                 size="sm"
                 className="text-red-600 hover:text-red-700"
                 onClick={async () => {
-                  if (!confirm('このタスクを削除しますか？')) return;
+                  const label = isWP ? 'ワークパッケージ' : 'アクティビティ';
+                  if (!confirm(`この${label}を削除しますか？`)) return;
                   await onLoading(() =>
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
@@ -154,71 +161,48 @@ function TaskTreeNode({
           </div>
         </td>
       </tr>
-      {showProgress && (
+      {showProgress && !isWP && (
         <tr className="border-b bg-blue-50">
-          <td colSpan={7} className="px-6 py-3">
+          <td colSpan={8} className="px-6 py-3">
             <form onSubmit={handleProgressSubmit} className="flex items-end gap-4">
               <div className="space-y-1">
                 <Label className="text-xs">進捗率</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={progressForm.progressRate}
-                  onChange={(e) =>
-                    setProgressForm({ ...progressForm, progressRate: Number(e.target.value) })
-                  }
-                  className="w-20"
-                />
+                <Input type="number" min={0} max={100} value={progressForm.progressRate} onChange={(e) => setProgressForm({ ...progressForm, progressRate: Number(e.target.value) })} className="w-20" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">実績工数</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={0.5}
-                  value={progressForm.actualEffort}
-                  onChange={(e) =>
-                    setProgressForm({ ...progressForm, actualEffort: Number(e.target.value) })
-                  }
-                  className="w-20"
-                />
+                <Input type="number" min={0} step={0.5} value={progressForm.actualEffort} onChange={(e) => setProgressForm({ ...progressForm, actualEffort: Number(e.target.value) })} className="w-20" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">ステータス</Label>
-                <LabeledSelect
-                  value={progressForm.status}
-                  onValueChange={(v) => v && setProgressForm({ ...progressForm, status: v })}
-                  options={TASK_STATUSES}
-                  className="w-28"
-                />
+                <LabeledSelect value={progressForm.status} onValueChange={(v) => v && setProgressForm({ ...progressForm, status: v })} options={TASK_STATUSES} className="w-28" />
               </div>
-              <Button type="submit" size="sm">
-                更新
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowProgress(false)}>
-                閉じる
-              </Button>
+              <Button type="submit" size="sm">更新</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowProgress(false)}>閉じる</Button>
             </form>
           </td>
         </tr>
       )}
       {showEdit && (
         <tr className="border-b bg-green-50">
-          <td colSpan={7} className="px-6 py-3">
+          <td colSpan={8} className="px-6 py-3">
             <form onSubmit={handleEditSubmit} className="flex items-end gap-4">
               <div className="space-y-1">
-                <Label className="text-xs">タスク名</Label>
+                <Label className="text-xs">名前</Label>
                 <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="w-48" required />
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">開始日</Label>
-                <Input type="date" value={editForm.plannedStartDate} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} className="w-36" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">終了日</Label>
-                <Input type="date" value={editForm.plannedEndDate} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} className="w-36" />
-              </div>
+              {!isWP && (
+                <>
+                  <div className="space-y-1">
+                    <Label className="text-xs">開始日</Label>
+                    <Input type="date" value={editForm.plannedStartDate ?? ''} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} className="w-36" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">終了日</Label>
+                    <Input type="date" value={editForm.plannedEndDate ?? ''} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} className="w-36" />
+                  </div>
+                </>
+              )}
               <Button type="submit" size="sm">保存</Button>
               <Button type="button" variant="outline" size="sm" onClick={() => setShowEdit(false)}>閉じる</Button>
             </form>
@@ -251,6 +235,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const canEdit = systemRole === 'admin' || projectRole === 'pm_tl';
   const canUpdateProgress = systemRole === 'admin' || projectRole === 'pm_tl';
 
+  const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
+
   const [form, setForm] = useState({
     name: '',
     category: 'development',
@@ -265,11 +251,24 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     e.preventDefault();
     setError('');
 
+    const body = createType === 'work_package'
+      ? { type: 'work_package', name: form.name, category: form.category }
+      : {
+          type: 'activity',
+          name: form.name,
+          category: form.category,
+          assigneeId: form.assigneeId,
+          plannedStartDate: form.plannedStartDate,
+          plannedEndDate: form.plannedEndDate,
+          plannedEffort: Number(form.plannedEffort),
+          priority: form.priority,
+        };
+
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, plannedEffort: Number(form.plannedEffort) }),
+        body: JSON.stringify(body),
       }),
     );
 
@@ -280,36 +279,40 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     }
 
     setIsCreateOpen(false);
-    setForm({
-      name: '',
-      category: 'development',
-      assigneeId: '',
-      plannedStartDate: '',
-      plannedEndDate: '',
-      plannedEffort: '',
-      priority: 'medium',
-    });
+    setForm({ name: '', category: 'development', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: '', priority: 'medium' });
     router.refresh();
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">WBS / タスク管理</h2>
+        <h2 className="text-xl font-semibold">WBS管理</h2>
         {canEdit && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">タスク追加</DialogTrigger>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">追加</DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
-                <DialogTitle>タスク作成</DialogTitle>
-                <DialogDescription>タスク情報を入力してください。</DialogDescription>
+                <DialogTitle>{createType === 'work_package' ? 'ワークパッケージ作成' : 'アクティビティ作成'}</DialogTitle>
+                <DialogDescription>
+                  {createType === 'work_package'
+                    ? 'WBS の構造ノードを作成します。工数・日程は子要素から自動集計されます。'
+                    : '実作業を登録します。担当者・日程・工数を入力してください。'}
+                </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && (
                   <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>
                 )}
                 <div className="space-y-2">
-                  <Label>タスク名</Label>
+                  <Label>種別</Label>
+                  <LabeledSelect
+                    value={createType}
+                    onValueChange={(v) => v && setCreateType(v as 'work_package' | 'activity')}
+                    options={WBS_TYPES}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>名称</Label>
                   <Input
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -317,72 +320,53 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     required
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>区分</Label>
-                    <LabeledSelect
-                      value={form.category}
-                      onValueChange={(v) => v && setForm({ ...form, category: v })}
-                      options={TASK_CATEGORIES}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>担当者</Label>
-                    {members.length === 0 ? (
-                      <p className="text-sm text-red-500">メンバーが未登録です。先にメンバー管理から追加してください。</p>
-                    ) : (
-                      <LabeledSelect
-                        value={form.assigneeId}
-                        onValueChange={(v) => v && setForm({ ...form, assigneeId: v })}
-                        options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
-                        placeholder="選択..."
-                      />
-                    )}
-                  </div>
+                <div className="space-y-2">
+                  <Label>区分</Label>
+                  <LabeledSelect
+                    value={form.category}
+                    onValueChange={(v) => v && setForm({ ...form, category: v })}
+                    options={TASK_CATEGORIES}
+                  />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>開始予定日</Label>
-                    <Input
-                      type="date"
-                      value={form.plannedStartDate}
-                      onChange={(e) => setForm({ ...form, plannedStartDate: e.target.value })}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>終了予定日</Label>
-                    <Input
-                      type="date"
-                      value={form.plannedEndDate}
-                      onChange={(e) => setForm({ ...form, plannedEndDate: e.target.value })}
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>予定工数（人時）</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.5}
-                      value={form.plannedEffort}
-                      onChange={(e) =>
-                        setForm({ ...form, plannedEffort: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>優先度</Label>
-                    <LabeledSelect
-                      value={form.priority}
-                      onValueChange={(v) => v && setForm({ ...form, priority: v })}
-                      options={PRIORITIES}
-                    />
-                  </div>
-                </div>
+
+                {createType === 'activity' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>担当者</Label>
+                      {members.length === 0 ? (
+                        <p className="text-sm text-red-500">メンバーが未登録です。先にメンバー管理から追加してください。</p>
+                      ) : (
+                        <LabeledSelect
+                          value={form.assigneeId}
+                          onValueChange={(v) => v && setForm({ ...form, assigneeId: v })}
+                          options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
+                          placeholder="選択..."
+                        />
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>開始予定日</Label>
+                        <Input type="date" value={form.plannedStartDate} onChange={(e) => setForm({ ...form, plannedStartDate: e.target.value })} required />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>終了予定日</Label>
+                        <Input type="date" value={form.plannedEndDate} onChange={(e) => setForm({ ...form, plannedEndDate: e.target.value })} required />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>予定工数（人時）</Label>
+                        <Input type="number" min={0} step={0.5} value={form.plannedEffort} onChange={(e) => setForm({ ...form, plannedEffort: e.target.value })} required />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>優先度</Label>
+                        <LabeledSelect value={form.priority} onValueChange={(v) => v && setForm({ ...form, priority: v })} options={PRIORITIES} />
+                      </div>
+                    </div>
+                  </>
+                )}
+
                 <Button type="submit" className="w-full">
                   作成
                 </Button>
@@ -392,15 +376,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         )}
       </div>
 
-      {/* ツリー表示テーブル */}
       <div className="rounded-lg border">
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-3 py-2 text-left font-medium">タスク名</th>
+              <th className="px-3 py-2 text-left font-medium">名称</th>
               <th className="px-3 py-2 text-left font-medium">担当者</th>
               <th className="px-3 py-2 text-left font-medium">ステータス</th>
               <th className="px-3 py-2 text-left font-medium">進捗</th>
+              <th className="px-3 py-2 text-left font-medium">工数</th>
               <th className="px-3 py-2 text-left font-medium">開始</th>
               <th className="px-3 py-2 text-left font-medium">終了</th>
               <th className="px-3 py-2 text-left font-medium">操作</th>
@@ -422,8 +406,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             ))}
             {tasks.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-gray-500">
-                  タスクがありません
+                <td colSpan={8} className="py-8 text-center text-gray-500">
+                  WBS が登録されていません
                 </td>
               </tr>
             )}
