@@ -20,13 +20,10 @@ import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 
-type ProjectSummary = { id: string; name: string };
-
 type Props = {
   projectId: string;
   tasks: TaskDTO[];
   members: MemberDTO[];
-  allProjects: ProjectSummary[];
   projectRole: string | null;
   systemRole: string;
   userId: string;
@@ -320,13 +317,10 @@ function TaskTreeNode({
   );
 }
 
-export function TasksClient({ projectId, tasks, members, allProjects, projectRole, systemRole, userId }: Props) {
+export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [isCopyOpen, setIsCopyOpen] = useState(false);
-  const [copySource, setCopySource] = useState('');
-  const [copyError, setCopyError] = useState('');
   const [error, setError] = useState('');
 
   const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
@@ -388,36 +382,6 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
     setSelectedIds(new Set());
     setBulkAssigneeId('');
     setBulkPriority('');
-    router.refresh();
-  }
-
-  // コピー元候補（自分自身を含む全プロジェクト）
-  const copySourceProjects = useMemo(
-    () => allProjects,
-    [allProjects],
-  );
-
-  async function handleCopyWbs(e: React.FormEvent) {
-    e.preventDefault();
-    setCopyError('');
-    if (!copySource) { setCopyError('コピー元プロジェクトを選択してください'); return; }
-
-    const res = await withLoading(() =>
-      fetch(`/api/projects/${projectId}/tasks/copy`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceProjectId: copySource }),
-      }),
-    );
-
-    if (!res.ok) {
-      const json = await res.json();
-      setCopyError(json.error?.message || 'コピーに失敗しました');
-      return;
-    }
-
-    setIsCopyOpen(false);
-    setCopySource('');
     router.refresh();
   }
 
@@ -555,32 +519,6 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
         <h2 className="text-xl font-semibold">WBS管理</h2>
         {canEditPmTl && (
           <div className="flex gap-2">
-          <Dialog open={isCopyOpen} onOpenChange={setIsCopyOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">WBSコピー</DialogTrigger>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>WBS コピー</DialogTitle>
-                <DialogDescription>既存プロジェクトの WBS を一括コピーします。担当者はリセットされ、進捗は初期状態になります。</DialogDescription>
-              </DialogHeader>
-              <form onSubmit={handleCopyWbs} className="space-y-4">
-                {copyError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{copyError}</div>}
-                <div className="space-y-2">
-                  <Label>コピー元プロジェクト</Label>
-                  <select
-                    value={copySource}
-                    onChange={(e) => setCopySource(e.target.value)}
-                    className={nativeSelectClass}
-                  >
-                    <option value="">プロジェクトを選択...</option>
-                    {copySourceProjects.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <Button type="submit" className="w-full">コピー実行</Button>
-              </form>
-            </DialogContent>
-          </Dialog>
           <Button variant="outline" size="sm" onClick={handleExport}>
             {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
           </Button>

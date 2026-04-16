@@ -14,9 +14,10 @@ export async function POST(
   const forbidden = await checkProjectPermission(user, projectId, 'task:create');
   if (forbidden) return forbidden;
 
-  // CSV テキストを取得
-  const csvText = await req.text();
-  if (!csvText.trim()) {
+  // CSV テキストを取得（BOM 除去）
+  const rawText = await req.text();
+  const csvText = rawText.replace(/^\uFEFF/, '').trim();
+  if (!csvText) {
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: 'CSVデータが空です' } },
       { status: 400 },
@@ -58,7 +59,11 @@ export async function POST(
         { status: 400 },
       );
     }
-    throw e;
+    console.error('WBS import error:', e);
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'インポート処理中にエラーが発生しました' } },
+      { status: 500 },
+    );
   }
 
   await recordAuditLog({

@@ -404,72 +404,6 @@ export async function getProgressLogs(taskId: string): Promise<ProgressLogDTO[]>
   }));
 }
 
-/**
- * 既存プロジェクトの WBS を別プロジェクトに一括コピー。
- * - 階層構造を保持
- * - 担当者はリセット（null）
- * - 進捗率・ステータスは初期状態にリセット
- * - 日程・工数はそのままコピー
- */
-export async function copyWbs(
-  sourceProjectId: string,
-  targetProjectId: string,
-  userId: string,
-): Promise<number> {
-  const sourceTasks = await prisma.task.findMany({
-    where: { projectId: sourceProjectId, deletedAt: null },
-    orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
-  });
-
-  if (sourceTasks.length === 0) return 0;
-
-  // 旧ID → 新ID のマッピング
-  const idMap = new Map<string, string>();
-
-  // 親がないもの → 親があるものの順で処理するため、ルートから先に作成
-  const sorted = [...sourceTasks].sort((a, b) => {
-    const depthA = getDepth(a.id, sourceTasks);
-    const depthB = getDepth(b.id, sourceTasks);
-    return depthA - depthB;
-  });
-
-  for (const src of sorted) {
-    const newParentId = src.parentTaskId ? idMap.get(src.parentTaskId) ?? null : null;
-
-    const created = await prisma.task.create({
-      data: {
-        projectId: targetProjectId,
-        parentTaskId: newParentId,
-        type: src.type,
-        wbsNumber: src.wbsNumber,
-        name: src.name,
-        description: src.description,
-        category: src.category,
-        assigneeId: null, // 担当者はリセット
-        plannedStartDate: src.plannedStartDate,
-        plannedEndDate: src.plannedEndDate,
-        plannedEffort: src.plannedEffort,
-        priority: src.priority,
-        status: 'not_started',
-        progressRate: 0,
-        isMilestone: src.isMilestone,
-        notes: src.notes,
-        createdBy: userId,
-        updatedBy: userId,
-      },
-    });
-
-    idMap.set(src.id, created.id);
-  }
-
-  return idMap.size;
-}
-
-/**
- * WBS テンプレートをエクスポート。
- * taskIds 指定時はそのタスクのみ、未指定時は全タスクをエクスポート。
- * 階層関係は tempId / parentTempId で表現する。
- */
 /** CSV ヘッダー定義 */
 const CSV_HEADERS = [
   'レベル', '種別', '名称', 'WBS番号', '予定開始日', '予定終了日',
@@ -537,29 +471,50 @@ export async function exportWbsTemplate(
     orderBy: [{ plannedStartDate: 'asc' }, { createdAt: 'asc' }],
   });
 
-  // ツリー構造を構築して深さ優先でフラット化
-  const selectedIds = taskIds ? new Set(taskIds) : null;
+  // タスクIDセット（子の探索用）
+  const taskIdSet = new Set(tasks.map((t) => t.id));
 
+  // 各タスクの深さを計算
+  function calcLevel(task: typeof tasks[0]): number {
+    let level = 1;
+    let currentParentId = task.parentTaskId;
+    while (currentParentId && taskIdSet.has(currentParentId)) {
+      level++;
+      const parent = tasks.find((t) => t.id === currentParentId);
+      if (!parent) break;
+      currentParentId = parent.parentTaskId;
+    }
+    return level;
+  }
+
+  // 深さ優先でツリー順に並べ替え
   type FlatRow = { level: number; task: typeof tasks[0] };
   const rows: FlatRow[] = [];
+  const visited = new Set<string>();
 
-  function walkTree(parentId: string | null, level: number) {
-    const children = tasks.filter((t) => t.parentTaskId === parentId);
+  function walkTree(parentId: string | null) {
+    const children = tasks
+      .filter((t) => t.parentTaskId === parentId)
+      .sort((a, b) => {
+        const sa = a.plannedStartDate?.getTime() ?? 0;
+        const sb = b.plannedStartDate?.getTime() ?? 0;
+        return sa - sb || a.createdAt.getTime() - b.createdAt.getTime();
+      });
     for (const child of children) {
-      if (selectedIds && !selectedIds.has(child.id)) continue;
-      rows.push({ level, task: child });
-      walkTree(child.id, level + 1);
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      rows.push({ level: calcLevel(child), task: child });
+      walkTree(child.id);
     }
   }
-  walkTree(null, 1);
 
-  // 選択モードで親がない場合はルートとして追加
-  if (selectedIds) {
-    for (const t of tasks) {
-      if (!rows.some((r) => r.task.id === t.id)) {
-        rows.push({ level: 1, task: t });
-      }
-    }
+  // ルート（親がないか、親が対象外）から開始
+  const rootTasks = tasks.filter((t) => !t.parentTaskId || !taskIdSet.has(t.parentTaskId));
+  for (const root of rootTasks) {
+    if (visited.has(root.id)) continue;
+    visited.add(root.id);
+    rows.push({ level: 1, task: root });
+    walkTree(root.id);
   }
 
   // CSV 生成
@@ -588,7 +543,9 @@ export async function exportWbsTemplate(
  * レベル列と行順序から親子関係を復元する。
  */
 export function parseCsvTemplate(csvText: string): WbsTemplateTask[] {
-  const lines = csvText.split(/\r?\n/).filter((l) => l.trim());
+  // BOM を除去
+  const cleanText = csvText.replace(/^\uFEFF/, '');
+  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return []; // ヘッダーのみ
 
   // ヘッダー行をスキップ
@@ -767,12 +724,3 @@ export async function importWbsTemplate(
   return idMap.size;
 }
 
-function getDepth(taskId: string, tasks: { id: string; parentTaskId: string | null }[]): number {
-  let depth = 0;
-  let current = tasks.find((t) => t.id === taskId);
-  while (current?.parentTaskId) {
-    depth++;
-    current = tasks.find((t) => t.id === current!.parentTaskId);
-  }
-  return depth;
-}

@@ -136,4 +136,18 @@ describe('parseCsvTemplate', () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0].name).toBe('有効な行');
   });
+
+  it('BOM付きCSVを正しくパースできる', () => {
+    const csv = '\uFEFF' + [header, '1,WP,テスト,,,,,,'].join('\n');
+    const tasks = parseCsvTemplate(csv);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].name).toBe('テスト');
+  });
+
+  it('CRLF改行のCSVを正しくパースできる', () => {
+    const csv = [header, '1,WP,テスト,,,,,,'].join('\r\n');
+    const tasks = parseCsvTemplate(csv);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].name).toBe('テスト');
+  });
 });

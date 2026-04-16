@@ -1078,7 +1078,6 @@ const transitions: TransitionRule[] = [
 | DELETE | /api/projects/:id/tasks/:taskId | 論理削除 | admin, pm_tl |
 | GET | /api/projects/:id/tasks/:taskId/progress | 進捗履歴取得 | 全ロール |
 | POST | /api/projects/:id/tasks/:taskId/progress | 進捗更新 | admin, pm_tl, 担当 member |
-| POST | /api/projects/:id/tasks/copy | WBS一括コピー（自身含む全プロジェクト対応） | admin, pm_tl |
 | PATCH | /api/projects/:id/tasks/bulk-update | 担当者・優先度一括更新 | admin, pm_tl |
 | POST | /api/projects/:id/tasks/export | WBSテンプレートエクスポート（JSON） | 全ロール |
 | POST | /api/projects/:id/tasks/import | WBSテンプレートインポート（JSON） | admin, pm_tl |
