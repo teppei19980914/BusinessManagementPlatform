@@ -2,16 +2,6 @@ import { z } from 'zod/v4';
 
 const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-const categoryEnum = z.enum([
-  'requirements',
-  'design',
-  'development',
-  'testing',
-  'review',
-  'management',
-  'other',
-]);
-
 /**
  * ワークパッケージ作成スキーマ
  * - 担当者不要（集約ノード）
@@ -23,7 +13,6 @@ export const createWorkPackageSchema = z.object({
   wbsNumber: z.string().max(50).optional(),
   name: z.string().min(1, 'ワークパッケージ名を入力してください').max(100),
   description: z.string().max(2000).optional(),
-  category: categoryEnum,
   notes: z.string().max(1000).optional(),
 });
 
@@ -38,7 +27,6 @@ export const createActivitySchema = z.object({
   wbsNumber: z.string().max(50).optional(),
   name: z.string().min(1, 'アクティビティ名を入力してください').max(100),
   description: z.string().max(2000).optional(),
-  category: categoryEnum,
   assigneeId: z.string().uuid('担当者を選択してください'),
   plannedStartDate: z.string().regex(dateRegex, '日付形式が不正です'),
   plannedEndDate: z.string().regex(dateRegex, '日付形式が不正です'),
@@ -61,7 +49,6 @@ export const updateTaskSchema = z.object({
   wbsNumber: z.string().max(50).optional(),
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(2000).optional().nullable(),
-  category: categoryEnum.optional(),
   assigneeId: z.string().uuid().optional().nullable(),
   plannedStartDate: z.string().regex(dateRegex).optional().nullable(),
   plannedEndDate: z.string().regex(dateRegex).optional().nullable(),

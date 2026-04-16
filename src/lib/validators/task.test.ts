@@ -5,7 +5,6 @@ describe('createTaskSchema - アクティビティ', () => {
   const validActivity = {
     type: 'activity' as const,
     name: 'テストアクティビティ',
-    category: 'development' as const,
     assigneeId: '550e8400-e29b-41d4-a716-446655440000',
     plannedStartDate: '2026-05-01',
     plannedEndDate: '2026-05-15',
@@ -30,13 +29,6 @@ describe('createTaskSchema - アクティビティ', () => {
     expect(createTaskSchema.safeParse({ ...validActivity, plannedEffort: 0 }).success).toBe(false);
   });
 
-  it('有効な区分を全て受け入れる', () => {
-    const categories = ['requirements', 'design', 'development', 'testing', 'review', 'management', 'other'];
-    for (const c of categories) {
-      expect(createTaskSchema.safeParse({ ...validActivity, category: c }).success).toBe(true);
-    }
-  });
-
   it('親タスクIDはオプション', () => {
     expect(createTaskSchema.safeParse({
       ...validActivity,
@@ -49,10 +41,9 @@ describe('createTaskSchema - ワークパッケージ', () => {
   const validWP = {
     type: 'work_package' as const,
     name: 'テストWP',
-    category: 'development' as const,
   };
 
-  it('有効なワークパッケージを受け入れる（担当者・日付・工数なし）', () => {
+  it('有効なワークパッケージを受け入れる（名前のみ）', () => {
     expect(createTaskSchema.safeParse(validWP).success).toBe(true);
   });
 
@@ -70,13 +61,11 @@ describe('createTaskSchema - ワークパッケージ', () => {
 
 describe('createTaskSchema - type による分岐', () => {
   it('type 未指定の場合を拒否する', () => {
-    const noType = { name: 'テスト', category: 'development' };
-    expect(createTaskSchema.safeParse(noType).success).toBe(false);
+    expect(createTaskSchema.safeParse({ name: 'テスト' }).success).toBe(false);
   });
 
   it('無効な type を拒否する', () => {
-    const invalid = { type: 'task', name: 'テスト', category: 'development' };
-    expect(createTaskSchema.safeParse(invalid).success).toBe(false);
+    expect(createTaskSchema.safeParse({ type: 'task', name: 'テスト' }).success).toBe(false);
   });
 });
 

@@ -15,7 +15,6 @@ export type TaskDTO = {
   wbsNumber: string | null;
   name: string;
   description: string | null;
-  category: string;
   assigneeId: string | null;
   assigneeName?: string;
   plannedStartDate: string | null;
@@ -37,7 +36,6 @@ function toTaskDTO(t: {
   wbsNumber: string | null;
   name: string;
   description: string | null;
-  category: string;
   assigneeId: string | null;
   assignee?: { name: string } | null;
   plannedStartDate: Date | null;
@@ -57,7 +55,6 @@ function toTaskDTO(t: {
     wbsNumber: t.wbsNumber,
     name: t.name,
     description: t.description,
-    category: t.category,
     assigneeId: t.assigneeId,
     assigneeName: t.assignee?.name,
     plannedStartDate: t.plannedStartDate?.toISOString().split('T')[0] ?? null,
@@ -78,7 +75,7 @@ export async function listTasks(projectId: string): Promise<TaskDTO[]> {
   const tasks = await prisma.task.findMany({
     where: { projectId, deletedAt: null },
     include: { assignee: { select: { name: true } } },
-    orderBy: [{ wbsNumber: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
 
   const dtos = tasks.map(toTaskDTO);
@@ -112,7 +109,7 @@ export async function listTasksFlat(projectId: string): Promise<TaskDTO[]> {
   const tasks = await prisma.task.findMany({
     where: { projectId, deletedAt: null },
     include: { assignee: { select: { name: true } } },
-    orderBy: [{ wbsNumber: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
   return tasks.map(toTaskDTO);
 }
@@ -140,7 +137,7 @@ export async function createTask(
       wbsNumber: input.wbsNumber,
       name: input.name,
       description: input.description,
-      category: input.category,
+      category: 'other',
       assigneeId: isActivity ? input.assigneeId : null,
       plannedStartDate: isActivity ? new Date(input.plannedStartDate) : null,
       plannedEndDate: isActivity ? new Date(input.plannedEndDate) : null,
@@ -173,7 +170,6 @@ export async function updateTask(
   if (input.wbsNumber !== undefined) data.wbsNumber = input.wbsNumber;
   if (input.name !== undefined) data.name = input.name;
   if (input.description !== undefined) data.description = input.description;
-  if (input.category !== undefined) data.category = input.category;
   if (input.assigneeId !== undefined) data.assignee = input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true };
   if (input.plannedStartDate !== undefined) data.plannedStartDate = input.plannedStartDate ? new Date(input.plannedStartDate) : null;
   if (input.plannedEndDate !== undefined) data.plannedEndDate = input.plannedEndDate ? new Date(input.plannedEndDate) : null;
@@ -197,10 +193,15 @@ export async function updateTask(
 }
 
 export async function deleteTask(taskId: string, userId: string): Promise<void> {
-  await prisma.task.update({
+  const task = await prisma.task.update({
     where: { id: taskId },
     data: { deletedAt: new Date(), updatedBy: userId },
   });
+
+  // 親ワークパッケージの集計を更新
+  if (task.parentTaskId) {
+    await recalculateAncestors(task.parentTaskId);
+  }
 }
 
 export async function updateTaskProgress(

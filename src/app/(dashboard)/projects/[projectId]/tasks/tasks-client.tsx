@@ -16,7 +16,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { LabeledSelect } from '@/components/labeled-select';
-import { TASK_CATEGORIES, TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
+import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 
@@ -255,7 +255,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   const [form, setForm] = useState({
     name: '',
-    category: 'development',
     assigneeId: '',
     plannedStartDate: '',
     plannedEndDate: '',
@@ -268,11 +267,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setError('');
 
     const base = createType === 'work_package'
-      ? { type: 'work_package', name: form.name, category: form.category }
+      ? { type: 'work_package', name: form.name }
       : {
           type: 'activity',
           name: form.name,
-          category: form.category,
           assigneeId: form.assigneeId,
           plannedStartDate: form.plannedStartDate,
           plannedEndDate: form.plannedEndDate,
@@ -298,7 +296,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     setIsCreateOpen(false);
     setParentTaskId('');
-    setForm({ name: '', category: 'development', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: '', priority: 'medium' });
+    setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: '', priority: 'medium' });
     router.refresh();
   }
 
@@ -346,14 +344,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                     maxLength={100}
                     required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>区分</Label>
-                  <LabeledSelect
-                    value={form.category}
-                    onValueChange={(v) => v && setForm({ ...form, category: v })}
-                    options={TASK_CATEGORIES}
                   />
                 </div>
 
