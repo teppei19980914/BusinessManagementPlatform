@@ -59,9 +59,10 @@ export async function POST(
         { status: 400 },
       );
     }
-    console.error('WBS import error:', e);
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    console.error('WBS import error:', errorMessage);
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'インポート処理中にエラーが発生しました' } },
+      { error: { code: 'INTERNAL_ERROR', message: `インポート処理中にエラーが発生しました: ${errorMessage}` } },
       { status: 500 },
     );
   }

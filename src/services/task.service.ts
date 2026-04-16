@@ -680,7 +680,7 @@ export async function importWbsTemplate(
     (a, b) => (depthMap.get(a.tempId) ?? 0) - (depthMap.get(b.tempId) ?? 0),
   );
 
-  // トランザクションで一括作成（エラー時は自動ロールバック）
+  // トランザクションで一括作成（directUrl 経由で直接接続、エラー時は自動ロールバック）
   const idMap = new Map<string, string>();
 
   await prisma.$transaction(async (tx) => {
@@ -715,7 +715,7 @@ export async function importWbsTemplate(
     }
   });
 
-  // WP の集計を更新（トランザクション外 — 集計失敗はデータ破損にならないため）
+  // WP の集計を更新
   const wpIds = sorted.filter((t) => t.type === 'work_package').map((t) => idMap.get(t.tempId)!);
   for (const wpId of wpIds.reverse()) {
     await recalculateAncestorsPublic(wpId);
