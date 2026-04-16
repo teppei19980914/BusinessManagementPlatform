@@ -23,13 +23,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { SYSTEM_ROLES } from '@/types';
 import type { UserDTO } from '@/services/user.service';
 
@@ -145,23 +138,11 @@ export function UsersClient({ initialUsers }: Props) {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="role">システムロール</Label>
-                    <Select
-                      value={form.systemRole}
-                      onValueChange={(v) =>
-                        setForm({ ...form, systemRole: v as 'admin' | 'general' })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(SYSTEM_ROLES).map(([key, label]) => (
-                          <SelectItem key={key} value={key}>
-                            {label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <select value={form.systemRole} onChange={(e) => setForm({ ...form, systemRole: e.target.value as 'admin' | 'general' })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                      {Object.entries(SYSTEM_ROLES).map(([key, label]) => (
+                        <option key={key} value={key}>{label}</option>
+                      ))}
+                    </select>
                   </div>
                   <Button type="submit" className="w-full">
                     招待メールを送信

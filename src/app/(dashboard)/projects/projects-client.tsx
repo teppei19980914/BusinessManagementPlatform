@@ -180,21 +180,11 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
                 </div>
                 <div className="space-y-2">
                   <Label>開発方式</Label>
-                  <Select
-                    value={form.devMethod}
-                    onValueChange={(v) => v && setForm({ ...form, devMethod: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(DEV_METHODS).map(([key, label]) => (
-                        <SelectItem key={key} value={key}>
-                          {label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <select value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                    {Object.entries(DEV_METHODS).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
