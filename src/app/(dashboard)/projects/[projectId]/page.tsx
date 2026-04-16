@@ -9,6 +9,7 @@ import { listRisks } from '@/services/risk.service';
 import { listRetrospectives } from '@/services/retrospective.service';
 import { listMembers } from '@/services/member.service';
 import { listKnowledge } from '@/services/knowledge.service';
+import { listUsers } from '@/services/user.service';
 import { ProjectDetailClient } from './project-detail-client';
 
 type Props = {
@@ -30,8 +31,10 @@ export default async function ProjectDetailPage({ params }: Props) {
   const canEdit = session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl';
   const canCreate = session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl' || membership.projectRole === 'member';
 
+  const isAdmin = session.user.systemRole === 'admin';
+
   // 全タブのデータを並列取得
-  const [estimates, tasks, tasksFlat, risks, retros, members, knowledgeResult] = await Promise.all([
+  const [estimates, tasks, tasksFlat, risks, retros, members, knowledgeResult, allUsers] = await Promise.all([
     canEdit ? listEstimates(projectId) : Promise.resolve([]),
     listTasks(projectId),
     listTasksFlat(projectId),
@@ -39,6 +42,7 @@ export default async function ProjectDetailPage({ params }: Props) {
     listRetrospectives(projectId),
     listMembers(projectId),
     listKnowledge({ page: 1, limit: 100 }, session.user.id, session.user.systemRole),
+    isAdmin ? listUsers() : Promise.resolve([]),
   ]);
 
   return (
@@ -53,6 +57,7 @@ export default async function ProjectDetailPage({ params }: Props) {
       risks={risks}
       retros={retros}
       members={members}
+      allUsers={allUsers}
       knowledges={knowledgeResult.data}
       canEdit={canEdit}
       canCreate={canCreate}
