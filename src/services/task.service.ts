@@ -20,6 +20,8 @@ export type TaskDTO = {
   assigneeName?: string;
   plannedStartDate: string | null;
   plannedEndDate: string | null;
+  actualStartDate: string | null;
+  actualEndDate: string | null;
   plannedEffort: number;
   priority: string | null;
   status: string;
@@ -42,6 +44,8 @@ function toTaskDTO(t: {
   assignee?: { name: string } | null;
   plannedStartDate: Date | null;
   plannedEndDate: Date | null;
+  actualStartDate: Date | null;
+  actualEndDate: Date | null;
   plannedEffort: Prisma.Decimal;
   priority: string | null;
   status: string;
@@ -62,6 +66,8 @@ function toTaskDTO(t: {
     assigneeName: t.assignee?.name,
     plannedStartDate: t.plannedStartDate?.toISOString().split('T')[0] ?? null,
     plannedEndDate: t.plannedEndDate?.toISOString().split('T')[0] ?? null,
+    actualStartDate: t.actualStartDate?.toISOString().split('T')[0] ?? null,
+    actualEndDate: t.actualEndDate?.toISOString().split('T')[0] ?? null,
     plannedEffort: Number(t.plannedEffort),
     priority: t.priority,
     status: t.status,
@@ -151,7 +157,7 @@ export async function createTask(
       createdBy: userId,
       updatedBy: userId,
     },
-    include: { assignee: { select: { name: true } } },
+    include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
   });
 
   // WP の場合は親の集計を更新
@@ -176,15 +182,19 @@ export async function updateTask(
   if (input.assigneeId !== undefined) data.assignee = input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true };
   if (input.plannedStartDate !== undefined) data.plannedStartDate = input.plannedStartDate ? new Date(input.plannedStartDate) : null;
   if (input.plannedEndDate !== undefined) data.plannedEndDate = input.plannedEndDate ? new Date(input.plannedEndDate) : null;
+  if (input.actualStartDate !== undefined) data.actualStartDate = input.actualStartDate ? new Date(input.actualStartDate) : null;
+  if (input.actualEndDate !== undefined) data.actualEndDate = input.actualEndDate ? new Date(input.actualEndDate) : null;
   if (input.plannedEffort !== undefined) data.plannedEffort = input.plannedEffort;
   if (input.priority !== undefined) data.priority = input.priority;
+  if (input.status !== undefined) data.status = input.status;
+  if (input.progressRate !== undefined) data.progressRate = input.progressRate;
   if (input.isMilestone !== undefined) data.isMilestone = input.isMilestone;
   if (input.notes !== undefined) data.notes = input.notes;
 
   const task = await prisma.task.update({
     where: { id: taskId },
     data,
-    include: { assignee: { select: { name: true } } },
+    include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
   });
 
   // 親ワークパッケージの集計を更新

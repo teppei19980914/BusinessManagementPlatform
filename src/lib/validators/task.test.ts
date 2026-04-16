@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createTaskSchema, updateProgressSchema, bulkUpdateTaskSchema } from './task';
+import { createTaskSchema, updateTaskSchema, updateProgressSchema, bulkUpdateTaskSchema } from './task';
 
 describe('createTaskSchema - アクティビティ', () => {
   const validActivity = {
@@ -132,5 +132,41 @@ describe('bulkUpdateTaskSchema', () => {
   it('assigneeIdをnullにできる（担当者解除）', () => {
     const input = { taskIds: [validUUID], assigneeId: null };
     expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('101件以上のtaskIdsを拒否する', () => {
+    const ids = Array.from({ length: 101 }, (_, i) =>
+      `550e8400-e29b-41d4-a716-${String(i).padStart(12, '0')}`);
+    expect(bulkUpdateTaskSchema.safeParse({ taskIds: ids, priority: 'high' }).success).toBe(false);
+  });
+
+  it('100件のtaskIdsを受け入れる', () => {
+    const ids = Array.from({ length: 100 }, (_, i) =>
+      `550e8400-e29b-41d4-a716-${String(i).padStart(12, '0')}`);
+    expect(bulkUpdateTaskSchema.safeParse({ taskIds: ids, priority: 'high' }).success).toBe(true);
+  });
+});
+
+describe('updateTaskSchema', () => {
+  it('実績開始日・終了日を受け入れる', () => {
+    const input = { actualStartDate: '2026-05-01', actualEndDate: '2026-05-15' };
+    expect(updateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('ステータスと進捗率を受け入れる', () => {
+    const input = { status: 'in_progress' as const, progressRate: 50 };
+    expect(updateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('進捗率101を拒否する', () => {
+    expect(updateTaskSchema.safeParse({ progressRate: 101 }).success).toBe(false);
+  });
+
+  it('無効なステータスを拒否する', () => {
+    expect(updateTaskSchema.safeParse({ status: 'invalid' }).success).toBe(false);
+  });
+
+  it('不正な日付形式を拒否する', () => {
+    expect(updateTaskSchema.safeParse({ actualStartDate: '2026/05/01' }).success).toBe(false);
   });
 });

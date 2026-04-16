@@ -52,8 +52,12 @@ export const updateTaskSchema = z.object({
   assigneeId: z.string().uuid().optional().nullable(),
   plannedStartDate: z.string().regex(dateRegex).optional().nullable(),
   plannedEndDate: z.string().regex(dateRegex).optional().nullable(),
+  actualStartDate: z.string().regex(dateRegex).optional().nullable(),
+  actualEndDate: z.string().regex(dateRegex).optional().nullable(),
   plannedEffort: z.number().min(0).optional(),
   priority: z.enum(['low', 'medium', 'high']).optional(),
+  status: z.enum(['not_started', 'in_progress', 'completed', 'on_hold']).optional(),
+  progressRate: z.number().int().min(0).max(100).optional(),
   isMilestone: z.boolean().optional(),
   notes: z.string().max(1000).optional().nullable(),
 });

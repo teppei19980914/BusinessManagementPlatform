@@ -54,7 +54,7 @@ function collectAllIds(nodes: TaskDTO[]): string[] {
 function TaskTreeNode({
   task,
   depth,
-  canEdit,
+  canEditPmTl,
   userId,
   projectId,
   router,
@@ -64,7 +64,7 @@ function TaskTreeNode({
 }: {
   task: TaskDTO;
   depth: number;
-  canEdit: boolean;
+  canEditPmTl: boolean;
   userId: string;
   projectId: string;
   router: ReturnType<typeof useRouter>;
@@ -72,57 +72,66 @@ function TaskTreeNode({
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
 }) {
-  const [showProgress, setShowProgress] = useState(false);
-  const [showEdit, setShowEdit] = useState(false);
-  const [editForm, setEditForm] = useState({
+  // PM/TL 用の編集フォーム
+  const [showPmEdit, setShowPmEdit] = useState(false);
+  const [pmEditForm, setPmEditForm] = useState({
     name: task.name,
     plannedStartDate: task.plannedStartDate,
     plannedEndDate: task.plannedEndDate,
     plannedEffort: task.plannedEffort,
   });
-  const [progressForm, setProgressForm] = useState({
-    progressRate: task.progressRate,
-    actualEffort: 0,
+
+  // メンバー用の編集フォーム（実績）
+  const [showMemberEdit, setShowMemberEdit] = useState(false);
+  const [memberEditForm, setMemberEditForm] = useState({
     status: task.status,
+    progressRate: task.progressRate,
+    actualStartDate: task.actualStartDate ?? '',
+    actualEndDate: task.actualEndDate ?? '',
   });
 
   const isWP = task.type === 'work_package';
   const isAssignee = task.assigneeId === userId;
-  // 進捗更新: 担当者のみ（ACT限定）
-  const canShowProgress = !isWP && isAssignee;
-  // 編集: PM/TL・admin のみ
-  // canEdit は親コンポーネントから渡される（systemRole === 'admin' || projectRole === 'pm_tl'）
+  // メンバー編集: 担当者のみ（ACT限定）
+  const canMemberEdit = !isWP && isAssignee;
 
-  async function handleEditSubmit(e: React.FormEvent) {
+  async function handlePmEditSubmit(e: React.FormEvent) {
     e.preventDefault();
     await onLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify(pmEditForm),
       }),
     );
-    setShowEdit(false);
+    setShowPmEdit(false);
     router.refresh();
   }
 
-  async function handleProgressSubmit(e: React.FormEvent) {
+  async function handleMemberEditSubmit(e: React.FormEvent) {
     e.preventDefault();
     await onLoading(() =>
-      fetch(`/api/projects/${projectId}/tasks/${task.id}/progress`, {
-        method: 'POST',
+      fetch(`/api/projects/${projectId}/tasks/${task.id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(progressForm),
+        body: JSON.stringify({
+          status: memberEditForm.status,
+          progressRate: memberEditForm.progressRate,
+          actualStartDate: memberEditForm.actualStartDate || null,
+          actualEndDate: memberEditForm.actualEndDate || null,
+        }),
       }),
     );
-    setShowProgress(false);
+    setShowMemberEdit(false);
     router.refresh();
   }
+
+  const colSpan = canEditPmTl ? 11 : 10;
 
   return (
     <>
       <tr className={`border-b hover:bg-gray-50 ${isWP ? 'bg-gray-50/50' : ''}`}>
-        {canEdit && (
+        {canEditPmTl && (
           <td className="px-2 py-2 w-8">
             <input type="checkbox" checked={selectedIds.has(task.id)} onChange={() => onToggleSelect(task.id)} className="rounded" />
           </td>
@@ -158,17 +167,19 @@ function TaskTreeNode({
         <td className="px-3 py-2 text-sm">{task.plannedEffort > 0 ? task.plannedEffort : '-'}</td>
         <td className="px-3 py-2 text-sm">{task.plannedStartDate || '-'}</td>
         <td className="px-3 py-2 text-sm">{task.plannedEndDate || '-'}</td>
+        <td className="px-3 py-2 text-sm">{task.actualStartDate || '-'}</td>
+        <td className="px-3 py-2 text-sm">{task.actualEndDate || '-'}</td>
         <td className="px-3 py-2">
           <div className="flex gap-1">
-            {canShowProgress && (
-              <Button variant="outline" size="sm" onClick={() => setShowProgress(!showProgress)}>
-                進捗
+            {canMemberEdit && (
+              <Button variant="outline" size="sm" onClick={() => setShowMemberEdit(!showMemberEdit)}>
+                実績
               </Button>
             )}
-            {canEdit && (
-              <Button variant="outline" size="sm" onClick={() => setShowEdit(!showEdit)}>編集</Button>
+            {canEditPmTl && (
+              <Button variant="outline" size="sm" onClick={() => setShowPmEdit(!showPmEdit)}>編集</Button>
             )}
-            {canEdit && (
+            {canEditPmTl && (
               <Button
                 variant="outline"
                 size="sm"
@@ -188,54 +199,60 @@ function TaskTreeNode({
           </div>
         </td>
       </tr>
-      {showProgress && canShowProgress && (
+      {/* メンバー編集フォーム: ステータス・進捗率・実績開始日・実績終了日 */}
+      {showMemberEdit && canMemberEdit && (
         <tr className="border-b bg-blue-50">
-          <td colSpan={canEdit ? 9 : 8} className="px-6 py-3">
-            <form onSubmit={handleProgressSubmit} className="flex items-end gap-4">
-              <div className="space-y-1">
-                <Label className="text-xs">進捗率</Label>
-                <Input type="number" min={0} max={100} value={progressForm.progressRate} onChange={(e) => setProgressForm({ ...progressForm, progressRate: Number(e.target.value) })} className="w-20" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">実績工数</Label>
-                <Input type="number" min={0} step={0.5} value={progressForm.actualEffort} onChange={(e) => setProgressForm({ ...progressForm, actualEffort: Number(e.target.value) })} className="w-20" />
-              </div>
+          <td colSpan={colSpan} className="px-6 py-3">
+            <form onSubmit={handleMemberEditSubmit} className="flex items-end gap-4">
               <div className="space-y-1">
                 <Label className="text-xs">ステータス</Label>
-                <LabeledSelect value={progressForm.status} onValueChange={(v) => v && setProgressForm({ ...progressForm, status: v })} options={TASK_STATUSES} className="w-28" />
+                <LabeledSelect value={memberEditForm.status} onValueChange={(v) => v && setMemberEditForm({ ...memberEditForm, status: v })} options={TASK_STATUSES} className="w-28" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">進捗率</Label>
+                <Input type="number" min={0} max={100} value={memberEditForm.progressRate} onChange={(e) => setMemberEditForm({ ...memberEditForm, progressRate: Number(e.target.value) })} className="w-20" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">開始日（実績）</Label>
+                <Input type="date" value={memberEditForm.actualStartDate} onChange={(e) => setMemberEditForm({ ...memberEditForm, actualStartDate: e.target.value })} className="w-36" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">終了日（実績）</Label>
+                <Input type="date" value={memberEditForm.actualEndDate} onChange={(e) => setMemberEditForm({ ...memberEditForm, actualEndDate: e.target.value })} className="w-36" />
               </div>
               <Button type="submit" size="sm">更新</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowProgress(false)}>閉じる</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowMemberEdit(false)}>閉じる</Button>
             </form>
           </td>
         </tr>
       )}
-      {showEdit && (
+      {/* PM/TL 編集フォーム: 名前・予定開始日・予定終了日・見積工数 */}
+      {showPmEdit && (
         <tr className="border-b bg-green-50">
-          <td colSpan={canEdit ? 9 : 8} className="px-6 py-3">
-            <form onSubmit={handleEditSubmit} className="flex items-end gap-4">
+          <td colSpan={colSpan} className="px-6 py-3">
+            <form onSubmit={handlePmEditSubmit} className="flex items-end gap-4">
               <div className="space-y-1">
                 <Label className="text-xs">名前</Label>
-                <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="w-48" required />
+                <Input value={pmEditForm.name} onChange={(e) => setPmEditForm({ ...pmEditForm, name: e.target.value })} className="w-48" required />
               </div>
               {!isWP && (
                 <>
                   <div className="space-y-1">
-                    <Label className="text-xs">開始日</Label>
-                    <Input type="date" value={editForm.plannedStartDate ?? ''} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} className="w-36" />
+                    <Label className="text-xs">予定開始日</Label>
+                    <Input type="date" value={pmEditForm.plannedStartDate ?? ''} onChange={(e) => setPmEditForm({ ...pmEditForm, plannedStartDate: e.target.value })} className="w-36" />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">終了日</Label>
-                    <Input type="date" value={editForm.plannedEndDate ?? ''} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} className="w-36" />
+                    <Label className="text-xs">予定終了日</Label>
+                    <Input type="date" value={pmEditForm.plannedEndDate ?? ''} onChange={(e) => setPmEditForm({ ...pmEditForm, plannedEndDate: e.target.value })} className="w-36" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">見積工数</Label>
-                    <Input type="number" min={0} step={0.5} value={editForm.plannedEffort} onChange={(e) => setEditForm({ ...editForm, plannedEffort: Number(e.target.value) })} className="w-24" />
+                    <Input type="number" min={0} step={0.5} value={pmEditForm.plannedEffort} onChange={(e) => setPmEditForm({ ...pmEditForm, plannedEffort: Number(e.target.value) })} className="w-24" />
                   </div>
                 </>
               )}
               <Button type="submit" size="sm">保存</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowEdit(false)}>閉じる</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowPmEdit(false)}>閉じる</Button>
             </form>
           </td>
         </tr>
@@ -245,7 +262,7 @@ function TaskTreeNode({
           key={child.id}
           task={child}
           depth={depth + 1}
-          canEdit={canEdit}
+          canEditPmTl={canEditPmTl}
           userId={userId}
           projectId={projectId}
           router={router}
@@ -267,7 +284,7 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
   const [copyError, setCopyError] = useState('');
   const [error, setError] = useState('');
 
-  const canEdit = systemRole === 'admin' || projectRole === 'pm_tl';
+  const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // 全タスクIDの一覧（全選択用）
@@ -433,7 +450,7 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">WBS管理</h2>
-        {canEdit && (
+        {canEditPmTl && (
           <div className="flex gap-2">
           <Dialog open={isCopyOpen} onOpenChange={setIsCopyOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">WBSコピー</DialogTrigger>
@@ -572,7 +589,7 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
         )}
       </div>
 
-      {canEdit && selectedIds.size > 0 && (
+      {canEditPmTl && selectedIds.size > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
           <div className="flex items-center gap-2">
@@ -595,11 +612,11 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
         </div>
       )}
 
-      <div className="rounded-lg border">
+      <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
-              {canEdit && (
+              {canEditPmTl && (
                 <th className="px-2 py-2 w-8">
                   <input
                     type="checkbox"
@@ -615,8 +632,10 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
               <th className="px-3 py-2 text-left font-medium">ステータス</th>
               <th className="px-3 py-2 text-left font-medium">進捗</th>
               <th className="px-3 py-2 text-left font-medium">工数</th>
-              <th className="px-3 py-2 text-left font-medium">開始</th>
-              <th className="px-3 py-2 text-left font-medium">終了</th>
+              <th className="px-3 py-2 text-left font-medium">予定開始</th>
+              <th className="px-3 py-2 text-left font-medium">予定終了</th>
+              <th className="px-3 py-2 text-left font-medium">実績開始</th>
+              <th className="px-3 py-2 text-left font-medium">実績終了</th>
               <th className="px-3 py-2 text-left font-medium">操作</th>
             </tr>
           </thead>
@@ -626,7 +645,7 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
                 key={task.id}
                 task={task}
                 depth={0}
-                canEdit={canEdit}
+                canEditPmTl={canEditPmTl}
                 userId={userId}
                 projectId={projectId}
                 router={router}
@@ -637,7 +656,7 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
             ))}
             {tasks.length === 0 && (
               <tr>
-                <td colSpan={canEdit ? 9 : 8} className="py-8 text-center text-gray-500">
+                <td colSpan={canEditPmTl ? 11 : 10} className="py-8 text-center text-gray-500">
                   WBS が登録されていません
                 </td>
               </tr>

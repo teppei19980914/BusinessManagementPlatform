@@ -13,9 +13,6 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import { LabeledSelect } from '@/components/labeled-select';
 import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
@@ -96,13 +93,10 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
                   {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
                   <div className="space-y-2">
                     <Label>種別</Label>
-                    <Select value={form.type} onValueChange={(v) => v && setForm({ ...form, type: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="risk">リスク</SelectItem>
-                        <SelectItem value="issue">課題</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                      <option value="risk">リスク</option>
+                      <option value="issue">課題</option>
+                    </select>
                   </div>
                   <div className="space-y-2">
                     <Label>件名</Label>
@@ -115,42 +109,31 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>影響度</Label>
-                      <Select value={form.impact} onValueChange={(v) => v && setForm({ ...form, impact: v })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(PRIORITIES).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                      <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                        {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      </select>
                     </div>
                     {form.type === 'risk' && (
                       <div className="space-y-2">
                         <Label>発生可能性</Label>
-                        <Select value={form.likelihood} onValueChange={(v) => v && setForm({ ...form, likelihood: v })}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(PRIORITIES).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
+                        <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                          {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
                       </div>
                     )}
                     <div className="space-y-2">
                       <Label>優先度</Label>
-                      <Select value={form.priority} onValueChange={(v) => v && setForm({ ...form, priority: v })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(PRIORITIES).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                      <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                        {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      </select>
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>担当者</Label>
-                    <LabeledSelect
-                      value={form.assigneeId}
-                      onValueChange={(v) => setForm({ ...form, assigneeId: v ?? '' })}
-                      options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
-                      placeholder="未設定"
-                    />
+                    <select value={form.assigneeId} onChange={(e) => setForm({ ...form, assigneeId: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                      <option value="">未設定</option>
+                      {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
+                    </select>
                   </div>
                   <Button type="submit" className="w-full">起票</Button>
                 </form>
