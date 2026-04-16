@@ -266,6 +266,9 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
     });
   }
 
+  const [bulkAssigneeId, setBulkAssigneeId] = useState('');
+  const [bulkPriority, setBulkPriority] = useState('');
+
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
     if (!confirm(`${selectedIds.size} 件を一括削除しますか？`)) return;
@@ -275,6 +278,29 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
       );
     }
     setSelectedIds(new Set());
+    router.refresh();
+  }
+
+  async function handleBulkUpdate() {
+    if (selectedIds.size === 0) return;
+    const body: Record<string, unknown> = { taskIds: [...selectedIds] };
+    if (bulkAssigneeId) body.assigneeId = bulkAssigneeId;
+    if (bulkPriority) body.priority = bulkPriority;
+    if (!bulkAssigneeId && !bulkPriority) return;
+
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/bulk-update`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+
+    if (!res.ok) return;
+
+    setSelectedIds(new Set());
+    setBulkAssigneeId('');
+    setBulkPriority('');
     router.refresh();
   }
 
@@ -486,10 +512,25 @@ export function TasksClient({ projectId, tasks, members, allProjects, projectRol
       </div>
 
       {canEdit && selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
+          <div className="flex items-center gap-2">
+            <LabeledSelect
+              value={bulkAssigneeId}
+              onValueChange={(v) => setBulkAssigneeId(v ?? '')}
+              options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
+              placeholder="担当者..."
+            />
+            <LabeledSelect
+              value={bulkPriority}
+              onValueChange={(v) => setBulkPriority(v ?? '')}
+              options={PRIORITIES}
+              placeholder="優先度..."
+            />
+            <Button variant="outline" size="sm" onClick={handleBulkUpdate} disabled={!bulkAssigneeId && !bulkPriority}>一括変更</Button>
+          </div>
           <Button variant="outline" size="sm" className="text-red-600" onClick={handleBulkDelete}>一括削除</Button>
-          <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>選択解除</Button>
+          <Button variant="outline" size="sm" onClick={() => { setSelectedIds(new Set()); setBulkAssigneeId(''); setBulkPriority(''); }}>選択解除</Button>
         </div>
       )}
 

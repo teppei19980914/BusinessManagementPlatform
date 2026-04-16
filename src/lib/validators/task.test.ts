@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createTaskSchema, updateProgressSchema } from './task';
+import { createTaskSchema, updateProgressSchema, bulkUpdateTaskSchema } from './task';
 
 describe('createTaskSchema - アクティビティ', () => {
   const validActivity = {
@@ -96,5 +96,41 @@ describe('updateProgressSchema', () => {
     for (const s of ['not_started', 'in_progress', 'completed', 'on_hold']) {
       expect(updateProgressSchema.safeParse({ ...validInput, status: s }).success).toBe(true);
     }
+  });
+});
+
+describe('bulkUpdateTaskSchema', () => {
+  const validUUID = '550e8400-e29b-41d4-a716-446655440000';
+
+  it('担当者のみの一括更新を受け入れる', () => {
+    const input = { taskIds: [validUUID], assigneeId: validUUID };
+    expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('優先度のみの一括更新を受け入れる', () => {
+    const input = { taskIds: [validUUID], priority: 'high' as const };
+    expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('担当者と優先度の同時更新を受け入れる', () => {
+    const input = { taskIds: [validUUID, '550e8400-e29b-41d4-a716-446655440001'], assigneeId: validUUID, priority: 'low' as const };
+    expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('空のtaskIdsを拒否する', () => {
+    expect(bulkUpdateTaskSchema.safeParse({ taskIds: [], assigneeId: validUUID }).success).toBe(false);
+  });
+
+  it('無効なUUIDを拒否する', () => {
+    expect(bulkUpdateTaskSchema.safeParse({ taskIds: ['not-a-uuid'], assigneeId: validUUID }).success).toBe(false);
+  });
+
+  it('無効な優先度を拒否する', () => {
+    expect(bulkUpdateTaskSchema.safeParse({ taskIds: [validUUID], priority: 'urgent' }).success).toBe(false);
+  });
+
+  it('assigneeIdをnullにできる（担当者解除）', () => {
+    const input = { taskIds: [validUUID], assigneeId: null };
+    expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
   });
 });

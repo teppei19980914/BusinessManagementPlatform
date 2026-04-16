@@ -70,5 +70,12 @@ export const updateProgressSchema = z.object({
   nextAction: z.string().max(1000).optional(),
 });
 
+export const bulkUpdateTaskSchema = z.object({
+  taskIds: z.array(z.string().uuid()).min(1, '対象タスクを選択してください'),
+  assigneeId: z.string().uuid().optional().nullable(),
+  priority: z.enum(['low', 'medium', 'high']).optional(),
+});
+
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateProgressInput = z.infer<typeof updateProgressSchema>;
+export type BulkUpdateTaskInput = z.infer<typeof bulkUpdateTaskSchema>;

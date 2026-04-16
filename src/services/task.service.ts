@@ -11,6 +11,7 @@ export type TaskDTO = {
   id: string;
   projectId: string;
   parentTaskId: string | null;
+  parentTaskName?: string;
   type: string; // 'work_package' | 'activity'
   wbsNumber: string | null;
   name: string;
@@ -32,6 +33,7 @@ function toTaskDTO(t: {
   id: string;
   projectId: string;
   parentTaskId: string | null;
+  parentTask?: { name: string } | null;
   type: string;
   wbsNumber: string | null;
   name: string;
@@ -51,6 +53,7 @@ function toTaskDTO(t: {
     id: t.id,
     projectId: t.projectId,
     parentTaskId: t.parentTaskId,
+    parentTaskName: t.parentTask?.name,
     type: t.type,
     wbsNumber: t.wbsNumber,
     name: t.name,
@@ -74,7 +77,7 @@ function toTaskDTO(t: {
 export async function listTasks(projectId: string): Promise<TaskDTO[]> {
   const tasks = await prisma.task.findMany({
     where: { projectId, deletedAt: null },
-    include: { assignee: { select: { name: true } } },
+    include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
     orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
 
@@ -108,7 +111,7 @@ function buildTree(tasks: TaskDTO[]): TaskDTO[] {
 export async function listTasksFlat(projectId: string): Promise<TaskDTO[]> {
   const tasks = await prisma.task.findMany({
     where: { projectId, deletedAt: null },
-    include: { assignee: { select: { name: true } } },
+    include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
     orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
   return tasks.map(toTaskDTO);
@@ -117,7 +120,7 @@ export async function listTasksFlat(projectId: string): Promise<TaskDTO[]> {
 export async function getTask(taskId: string): Promise<TaskDTO | null> {
   const task = await prisma.task.findFirst({
     where: { id: taskId, deletedAt: null },
-    include: { assignee: { select: { name: true } } },
+    include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
   });
   return task ? toTaskDTO(task) : null;
 }
@@ -202,6 +205,43 @@ export async function deleteTask(taskId: string, userId: string): Promise<void> 
   if (task.parentTaskId) {
     await recalculateAncestors(task.parentTaskId);
   }
+}
+
+/**
+ * 複数タスクの担当者・優先度を一括更新
+ */
+export async function bulkUpdateTasks(
+  projectId: string,
+  taskIds: string[],
+  updates: { assigneeId?: string | null; priority?: string },
+  userId: string,
+): Promise<number> {
+  const data: Prisma.TaskUpdateInput = { updatedBy: userId };
+
+  if (updates.assigneeId !== undefined) {
+    data.assignee = updates.assigneeId
+      ? { connect: { id: updates.assigneeId } }
+      : { disconnect: true };
+  }
+  if (updates.priority !== undefined) {
+    data.priority = updates.priority;
+  }
+
+  const result = await prisma.task.updateMany({
+    where: {
+      id: { in: taskIds },
+      projectId,
+      deletedAt: null,
+      type: 'activity', // WPの担当者・優先度は直接変更しない
+    },
+    data: {
+      ...(updates.assigneeId !== undefined ? { assigneeId: updates.assigneeId ?? null } : {}),
+      ...(updates.priority !== undefined ? { priority: updates.priority } : {}),
+      updatedBy: userId,
+    },
+  });
+
+  return result.count;
 }
 
 export async function updateTaskProgress(
