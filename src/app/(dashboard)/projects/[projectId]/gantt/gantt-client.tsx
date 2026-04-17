@@ -1,10 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
+import { filterTreeByAssignee, UNASSIGNED_KEY } from '@/lib/task-tree-utils';
 import { TASK_STATUSES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
+import type { MemberDTO } from '@/services/member.service';
 
 type Props = {
   projectId: string;
@@ -12,6 +16,8 @@ type Props = {
    * WBS と同じ tree (`tasksData.tree`) を受け取り、ガントチャート側で階層を再帰描画する。
    */
   tasks: TaskDTO[];
+  /** 担当者フィルタ候補（WBS と同仕様）*/
+  members: MemberDTO[];
 };
 
 function daysBetween(start: string, end: string): number {
@@ -84,7 +90,7 @@ function rangeText(start: string | null | undefined, end: string | null | undefi
   return `${start || '（未）'} 〜 ${end || '（未）'}`;
 }
 
-export function GanttClient({ tasks: tree }: Props) {
+export function GanttClient({ tasks: tree, members }: Props) {
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   // 折りたたみ状態: 初期は全展開（ガントは詳細可視が基本価値）
@@ -98,7 +104,39 @@ export function GanttClient({ tasks: tree }: Props) {
     });
   };
 
-  const rows = useMemo(() => flattenForGantt(tree, collapsed), [tree, collapsed]);
+  // --- 担当者フィルタ（WBS と同仕様）---
+  // デフォルトは全員 + 未アサインを選択 = 全タスク表示
+  const allAssigneeKeys = useMemo<string[]>(
+    () => [...members.map((m) => m.userId), UNASSIGNED_KEY],
+    [members],
+  );
+  const [assigneeFilter, setAssigneeFilter] = useState<Set<string>>(
+    () => new Set(allAssigneeKeys),
+  );
+  const isAllAssigneesSelected
+    = assigneeFilter.size === allAssigneeKeys.length
+    && allAssigneeKeys.every((k) => assigneeFilter.has(k));
+  const toggleAssignee = useCallback((key: string) => {
+    setAssigneeFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const selectAllAssignees = useCallback(() => {
+    setAssigneeFilter(new Set(allAssigneeKeys));
+  }, [allAssigneeKeys]);
+  const clearAllAssignees = useCallback(() => {
+    setAssigneeFilter(new Set());
+  }, []);
+
+  const filteredTree = useMemo(
+    () => (isAllAssigneesSelected ? tree : filterTreeByAssignee(tree, assigneeFilter)),
+    [tree, assigneeFilter, isAllAssigneesSelected],
+  );
+
+  const rows = useMemo(() => flattenForGantt(filteredTree, collapsed), [filteredTree, collapsed]);
 
   // チャートの期間レンジ: 全タスク（WP 集計含む）の予定・実績から求める
   const { minDate, totalDays } = useMemo(() => {
@@ -168,18 +206,67 @@ export function GanttClient({ tasks: tree }: Props) {
   const chartWidth = totalDays * DAY_WIDTH;
   const totalWidth = NAME_COL_WIDTH + chartWidth;
 
-  if (rows.length === 0) {
-    return (
-      <div className="space-y-6">
-        <h2 className="text-xl font-semibold">ガントチャート</h2>
-        <p className="py-8 text-center text-gray-500">タスクがありません</p>
-      </div>
-    );
-  }
+  const hasAnyTask = tree.length > 0;
 
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">ガントチャート</h2>
+
+      {/* 担当者フィルタ（WBS と同仕様）*/}
+      <div className="flex flex-wrap items-center gap-2">
+        <PopoverPrimitive.Root>
+          <PopoverPrimitive.Trigger render={<Button variant="outline" size="sm" />}>
+            担当者:{' '}
+            {isAllAssigneesSelected
+              ? '全員'
+              : `${assigneeFilter.size} / ${allAssigneeKeys.length} 人`}
+          </PopoverPrimitive.Trigger>
+          <PopoverPrimitive.Portal>
+            <PopoverPrimitive.Positioner sideOffset={6} align="start" className="isolate z-50">
+              <PopoverPrimitive.Popup className="max-h-[60vh] w-64 overflow-y-auto rounded-lg border bg-white p-2 shadow-md ring-1 ring-black/5 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0">
+                <div className="flex gap-2 border-b pb-2">
+                  <Button type="button" variant="outline" size="sm" className="flex-1" onClick={selectAllAssignees}>
+                    すべて選択
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" className="flex-1" onClick={clearAllAssignees}>
+                    すべて解除
+                  </Button>
+                </div>
+                <div className="mt-2 space-y-1">
+                  {members.map((m) => (
+                    <label
+                      key={m.userId}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={assigneeFilter.has(m.userId)}
+                        onChange={() => toggleAssignee(m.userId)}
+                        className="rounded"
+                      />
+                      <span className="truncate">{m.userName}</span>
+                    </label>
+                  ))}
+                  <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      checked={assigneeFilter.has(UNASSIGNED_KEY)}
+                      onChange={() => toggleAssignee(UNASSIGNED_KEY)}
+                      className="rounded"
+                    />
+                    <span className="text-gray-500">（未アサイン）</span>
+                  </label>
+                </div>
+              </PopoverPrimitive.Popup>
+            </PopoverPrimitive.Positioner>
+          </PopoverPrimitive.Portal>
+        </PopoverPrimitive.Root>
+        {!isAllAssigneesSelected && (
+          <Button type="button" variant="ghost" size="sm" onClick={selectAllAssignees}>
+            フィルタ解除
+          </Button>
+        )}
+      </div>
 
       {/* 凡例（上部配置・スクロールに影響されない）*/}
       <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
@@ -197,14 +284,19 @@ export function GanttClient({ tasks: tree }: Props) {
         </div>
       </div>
 
-      {/*
+      {rows.length === 0 ? (
+        <p className="py-8 text-center text-gray-500">
+          {hasAnyTask ? '選択した担当者に該当するタスクはありません' : 'タスクがありません'}
+        </p>
+      ) : (
+      /*
         スクロールコンテナ:
           - 縦スクロール時は月・日ヘッダが sticky top で固定
           - 横スクロール時はタスク列が sticky left で固定
         sticky を効かせるため:
           - このコンテナが overflow: auto を持つスクロール主体
           - 内側要素に position: sticky を指定して top/left を与える
-      */}
+      */
       <div
         className="rounded-lg border overflow-auto relative"
         style={{ maxHeight: CHART_MAX_HEIGHT }}
@@ -301,6 +393,7 @@ export function GanttClient({ tasks: tree }: Props) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

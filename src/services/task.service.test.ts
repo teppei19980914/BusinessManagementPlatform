@@ -6,6 +6,7 @@ import {
   buildTree,
   aggregateWpFromChildren,
   normalizeActualDatesForStatus,
+  normalizeProgressForStatus,
   type WpAggregationChild,
 } from './task.service';
 import type { TaskDTO } from './task.service';
@@ -427,5 +428,36 @@ describe('normalizeActualDatesForStatus', () => {
       actualStartDate: start,
       actualEndDate: null,
     });
+  });
+});
+
+describe('normalizeProgressForStatus', () => {
+  it('status=completed: 進捗率は常に 100 に揃えられる（入力値 0 でも）', () => {
+    expect(normalizeProgressForStatus('completed', 0)).toBe(100);
+  });
+
+  it('status=completed: 入力 50 でも 100 に揃える（ステータスと進捗の矛盾を解消）', () => {
+    expect(normalizeProgressForStatus('completed', 50)).toBe(100);
+  });
+
+  it('status=completed: 入力が undefined でも 100 を返す', () => {
+    expect(normalizeProgressForStatus('completed', undefined)).toBe(100);
+  });
+
+  it('status=in_progress: 入力値をそのまま返す', () => {
+    expect(normalizeProgressForStatus('in_progress', 42)).toBe(42);
+  });
+
+  it('status=not_started: 入力値をそのまま返す（完了以外は書き換えない設計）', () => {
+    expect(normalizeProgressForStatus('not_started', 0)).toBe(0);
+    expect(normalizeProgressForStatus('not_started', 30)).toBe(30);
+  });
+
+  it('status=on_hold: 入力値をそのまま返す', () => {
+    expect(normalizeProgressForStatus('on_hold', 70)).toBe(70);
+  });
+
+  it('未知のステータスは入力値をそのまま返す', () => {
+    expect(normalizeProgressForStatus('unknown', 55)).toBe(55);
   });
 });
