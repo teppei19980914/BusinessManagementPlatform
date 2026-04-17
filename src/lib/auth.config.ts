@@ -7,7 +7,13 @@
 import type { NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 
-const publicPaths = ['/login', '/reset-password', '/setup-password', '/api/auth'];
+const publicPaths = [
+  '/login',
+  '/reset-password',
+  '/setup-password',
+  '/api/auth',
+  '/api/health', // ヘルスチェック/ウォームアップ。外部 cron から定期 ping されるため認証不要
+];
 
 export const authConfig: NextAuthConfig = {
   providers: [
