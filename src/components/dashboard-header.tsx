@@ -31,7 +31,8 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
 
   return (
     <header className="border-b bg-white">
-      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      {/* main と同じ横幅ポリシー: max-w を外し画面いっぱいまで広げる（ヘッダと本文の左右端を揃える） */}
+      <div className="flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-6">
           <Link href="/projects" className="text-lg font-semibold">
             たすきば

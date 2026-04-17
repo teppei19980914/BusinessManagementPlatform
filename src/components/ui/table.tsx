@@ -6,13 +6,10 @@ import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   // overflow-x-auto の役割（2026-04-17 再導入）:
-  //   テーブルのコンテンツ幅が親 (main max-w-7xl) を超えた場合、
-  //   page-level の横スクロールが発生し、ヘッダを含めページ全体が右方向にずれて
-  //   見える (= "右寄り" と認識される) 問題を起こしていた。
-  //   また、wrapper の右 border が overflow したテーブルの途中を貫通して
-  //   「実績期間カラムに縦罫線が出ている」と誤認される見た目にもなっていた。
+  //   main は画面いっぱいまで広げているので通常は横スクロール不要だが、
+  //   viewport が狭い場合や列数が多い場合にテーブル content が親を超えることがある。
   //   wrapper 側に overflow-x-auto を置くことで、テーブルのはみ出しは wrapper 内に
-  //   閉じ込められ、page 全体のレイアウトは max-w-7xl に沿って中央寄せを保てる。
+  //   閉じ込められ、page-level の横スクロールやヘッダずれを防ぐ。
   //   はみ出しが無い場合はスクロールバーも出ないので、通常閲覧時の UX は維持。
   return (
     <div data-slot="table-container" className="relative w-full overflow-x-auto">
