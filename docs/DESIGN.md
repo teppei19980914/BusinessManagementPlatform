@@ -3498,6 +3498,16 @@ export const prisma = new PrismaClient({ adapter });
 
 MVP ではサーバサイドキャッシュ（Redis 等）は導入しない。TanStack Query のクライアントサイドキャッシュで対応する。
 
+### 17.6 パフォーマンス・アンチパターン（コミット前チェックリスト）
+
+再発防止のため、コード変更時は以下を自問する。詳細と背景は [KNW-002](./knowledge/KNW-002_performance-optimization-patterns.md) 参照。
+
+1. **同一テーブルへの重複 findMany** — Server Component の `Promise.all` に、同じエンティティに対する複数の findMany が入っていないか（tree/flat のような後処理違いでも 1 回に集約）
+2. **表示件数とクエリ limit の乖離** — `limit:` / `take:` が実際の表示件数（`slice(0, N)` 等）と一致しているか
+3. **再帰・大量リストの memo 未適用** — 自己再帰コンポーネントや 100 件超のリストは `React.memo` 必須、props は参照安定（Set/Array を直接渡すなら親で boolean に畳む）
+4. **O(N×M) の背景 DOM** — 行 × 列のグリッドで、各行が共通背景を描画していないか（共通背景は行ループ外のオーバーレイへ）
+5. **タブ配下の eager fetch** — 切替で表示する UI のデータを初回ロードで全て取得していないか（可能ならタブ表示時の lazy fetch へ）
+
 ---
 
 ## 18. 通知（メール送信）設計

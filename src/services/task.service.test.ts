@@ -1,6 +1,66 @@
 import { describe, it, expect } from 'vitest';
-import { validateWbsTemplate, parseCsvTemplate, parseCsvLine } from './task.service';
+import { validateWbsTemplate, parseCsvTemplate, parseCsvLine, buildTree } from './task.service';
+import type { TaskDTO } from './task.service';
 import type { WbsTemplateTask } from '@/lib/validators/task';
+
+function baseDto(overrides: Partial<TaskDTO>): TaskDTO {
+  return {
+    id: 'x',
+    projectId: 'p1',
+    parentTaskId: null,
+    type: 'activity',
+    wbsNumber: null,
+    name: 'x',
+    description: null,
+    assigneeId: null,
+    plannedStartDate: null,
+    plannedEndDate: null,
+    actualStartDate: null,
+    actualEndDate: null,
+    plannedEffort: 0,
+    priority: null,
+    status: 'not_started',
+    progressRate: 0,
+    isMilestone: false,
+    notes: null,
+    ...overrides,
+  };
+}
+
+describe('buildTree', () => {
+  it('parentTaskId で親子関係を組み立てる', () => {
+    const tasks: TaskDTO[] = [
+      baseDto({ id: 'wp1', type: 'work_package', name: 'WP1' }),
+      baseDto({ id: 'act1', parentTaskId: 'wp1', name: 'ACT1' }),
+      baseDto({ id: 'act2', parentTaskId: 'wp1', name: 'ACT2' }),
+    ];
+    const tree = buildTree(tasks);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].id).toBe('wp1');
+    expect(tree[0].children).toHaveLength(2);
+    expect(tree[0].children!.map((c) => c.id)).toEqual(['act1', 'act2']);
+  });
+
+  it('親が存在しない要素は root として扱う（孤立ノードもドロップしない）', () => {
+    const tasks: TaskDTO[] = [
+      baseDto({ id: 'orphan', parentTaskId: 'missing-parent', name: 'Orphan' }),
+    ];
+    const tree = buildTree(tasks);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].id).toBe('orphan');
+  });
+
+  it('flat と tree は独立したオブジェクトで構成される（片方の変更が他方に影響しない）', () => {
+    const flat: TaskDTO[] = [
+      baseDto({ id: 'wp1', type: 'work_package', name: 'WP1' }),
+      baseDto({ id: 'act1', parentTaskId: 'wp1', name: 'ACT1' }),
+    ];
+    const tree = buildTree(flat);
+    tree[0].name = 'MUTATED';
+    // 元の flat 側は変更されない
+    expect(flat[0].name).toBe('WP1');
+  });
+});
 
 describe('validateWbsTemplate', () => {
   const wp: WbsTemplateTask = {
