@@ -193,6 +193,43 @@ export async function createTask(
   return toTaskDTO(task);
 }
 
+/**
+ * ステータスとの整合性に基づいて実績開始日・実績終了日を正規化する pure 関数。
+ *
+ * ビジネスルール（2026-04-17 ユーザ要件）:
+ * - 実績開始日: ステータスが「未着手」ではない場合のみ保持。未着手なら null。
+ *   （未着手の状態では「開始されている」とはみなされないため）
+ * - 実績終了日: ステータスが「完了」の場合のみ保持。それ以外は null。
+ *   （完了以外では「完了されている」とはみなされないため）
+ *
+ * @param status 最終ステータス（'not_started' | 'in_progress' | 'completed' | 'on_hold'）
+ * @param actualStartDate ユーザまたは現在値の actualStartDate
+ * @param actualEndDate ユーザまたは現在値の actualEndDate
+ * @returns 正規化後の actualStartDate / actualEndDate
+ */
+export function normalizeActualDatesForStatus(
+  status: string,
+  actualStartDate: Date | null | undefined,
+  actualEndDate: Date | null | undefined,
+): { actualStartDate: Date | null; actualEndDate: Date | null } {
+  if (status === 'not_started') {
+    // 未着手なら開始も終了も「起きていない」
+    return { actualStartDate: null, actualEndDate: null };
+  }
+  if (status !== 'completed') {
+    // 進行中 / 保留: 開始は起きたかもしれないが、完了していないので終了は null
+    return {
+      actualStartDate: actualStartDate ?? null,
+      actualEndDate: null,
+    };
+  }
+  // 完了: 両方保持
+  return {
+    actualStartDate: actualStartDate ?? null,
+    actualEndDate: actualEndDate ?? null,
+  };
+}
+
 export async function updateTask(
   taskId: string,
   input: UpdateTaskInput,
@@ -208,14 +245,36 @@ export async function updateTask(
   if (input.assigneeId !== undefined) data.assignee = input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true };
   if (input.plannedStartDate !== undefined) data.plannedStartDate = input.plannedStartDate ? new Date(input.plannedStartDate) : null;
   if (input.plannedEndDate !== undefined) data.plannedEndDate = input.plannedEndDate ? new Date(input.plannedEndDate) : null;
-  if (input.actualStartDate !== undefined) data.actualStartDate = input.actualStartDate ? new Date(input.actualStartDate) : null;
-  if (input.actualEndDate !== undefined) data.actualEndDate = input.actualEndDate ? new Date(input.actualEndDate) : null;
   if (input.plannedEffort !== undefined) data.plannedEffort = input.plannedEffort;
   if (input.priority !== undefined) data.priority = input.priority;
-  if (input.status !== undefined) data.status = input.status;
   if (input.progressRate !== undefined) data.progressRate = input.progressRate;
   if (input.isMilestone !== undefined) data.isMilestone = input.isMilestone;
   if (input.notes !== undefined) data.notes = input.notes;
+
+  // status / actualStartDate / actualEndDate はステータス整合性ルールに基づき一括正規化する。
+  // どれか 1 つでも変わる場合は現在値を読んで final 状態を確定し、ルール適用後に書き込む。
+  if (input.status !== undefined || input.actualStartDate !== undefined || input.actualEndDate !== undefined) {
+    const current = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { status: true, actualStartDate: true, actualEndDate: true },
+    });
+    if (!current) throw new Error('NOT_FOUND');
+
+    const finalStatus = input.status ?? current.status;
+    const providedStart
+      = input.actualStartDate !== undefined
+        ? (input.actualStartDate ? new Date(input.actualStartDate) : null)
+        : current.actualStartDate;
+    const providedEnd
+      = input.actualEndDate !== undefined
+        ? (input.actualEndDate ? new Date(input.actualEndDate) : null)
+        : current.actualEndDate;
+
+    const normalized = normalizeActualDatesForStatus(finalStatus, providedStart, providedEnd);
+    data.status = finalStatus;
+    data.actualStartDate = normalized.actualStartDate;
+    data.actualEndDate = normalized.actualEndDate;
+  }
 
   const task = await prisma.task.update({
     where: { id: taskId },
@@ -291,13 +350,44 @@ export async function bulkUpdateTasks(
     data.plannedEndDate = updates.plannedEndDate ? new Date(updates.plannedEndDate) : null;
   }
   if (updates.plannedEffort !== undefined) data.plannedEffort = updates.plannedEffort;
-  if (updates.status !== undefined) data.status = updates.status;
   if (updates.progressRate !== undefined) data.progressRate = updates.progressRate;
-  if (updates.actualStartDate !== undefined) {
-    data.actualStartDate = updates.actualStartDate ? new Date(updates.actualStartDate) : null;
-  }
-  if (updates.actualEndDate !== undefined) {
-    data.actualEndDate = updates.actualEndDate ? new Date(updates.actualEndDate) : null;
+
+  // status / actualStartDate / actualEndDate はステータス整合性ルールに基づき一括正規化する。
+  // 一括更新では対象タスクごとの現行 actual 日付を見に行かず、bulk で指定された値のみを
+  // 新しいステータスに照らしてクリア/保持する方針（バッチ処理の単純性と性能を優先）。
+  if (updates.status !== undefined) {
+    // ステータスが指定された場合: 新ステータスに応じて actual 日付を正規化
+    const providedStart
+      = updates.actualStartDate !== undefined
+        ? (updates.actualStartDate ? new Date(updates.actualStartDate) : null)
+        : null; // bulk では「未指定 = null」と同等に扱う
+    const providedEnd
+      = updates.actualEndDate !== undefined
+        ? (updates.actualEndDate ? new Date(updates.actualEndDate) : null)
+        : null;
+    const normalized = normalizeActualDatesForStatus(updates.status, providedStart, providedEnd);
+    data.status = updates.status;
+    // actual 日付が bulk で指定されている、またはステータスに伴い強制クリアが必要な場合は書き込む
+    if (updates.actualStartDate !== undefined || updates.status === 'not_started') {
+      data.actualStartDate = normalized.actualStartDate;
+    }
+    if (
+      updates.actualEndDate !== undefined
+      || updates.status === 'not_started'
+      || updates.status === 'in_progress'
+      || updates.status === 'on_hold'
+    ) {
+      data.actualEndDate = normalized.actualEndDate;
+    }
+  } else {
+    // ステータスが指定されない場合: bulk の actual 日付指定のみ素直に反映（サーバ側では
+    // 各タスクの現在ステータスを個別取得しないため、不整合は呼び出し側の責任とする）
+    if (updates.actualStartDate !== undefined) {
+      data.actualStartDate = updates.actualStartDate ? new Date(updates.actualStartDate) : null;
+    }
+    if (updates.actualEndDate !== undefined) {
+      data.actualEndDate = updates.actualEndDate ? new Date(updates.actualEndDate) : null;
+    }
   }
 
   const result = await prisma.task.updateMany({
@@ -362,12 +452,25 @@ export async function updateTaskProgress(
     },
   });
 
-  // タスク本体の進捗率とステータスも更新
+  // ステータス変更に伴う actual 日付の正規化のため現行値を取得
+  const current = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { actualStartDate: true, actualEndDate: true },
+  });
+  const normalized = normalizeActualDatesForStatus(
+    input.status,
+    current?.actualStartDate ?? null,
+    current?.actualEndDate ?? null,
+  );
+
+  // タスク本体の進捗率・ステータス・実績日付を更新
   const task = await prisma.task.update({
     where: { id: taskId },
     data: {
       progressRate: input.progressRate,
       status: input.status,
+      actualStartDate: normalized.actualStartDate,
+      actualEndDate: normalized.actualEndDate,
       updatedBy: userId,
     },
   });

@@ -304,33 +304,71 @@ function TaskTreeNodeImpl({
           </div>
         </td>
       </tr>
-      {/* メンバー編集フォーム: ステータス・進捗率・実績開始日・実績終了日 */}
-      {showMemberEdit && canMemberEdit && (
-        <tr className="border-b bg-blue-50">
-          <td colSpan={colSpan} className="px-6 py-3">
-            <form onSubmit={handleMemberEditSubmit} className="flex items-end gap-4">
-              <div className="space-y-1">
-                <Label className="text-xs">ステータス</Label>
-                <LabeledSelect value={memberEditForm.status} onValueChange={(v) => v && setMemberEditForm({ ...memberEditForm, status: v })} options={TASK_STATUSES} className="w-28" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">進捗率</Label>
-                <NumberInput min={1} max={100} value={memberEditForm.progressRate} onChange={(n) => setMemberEditForm({ ...memberEditForm, progressRate: n })} className="w-20" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">開始日（実績）</Label>
-                <Input type="date" value={memberEditForm.actualStartDate} onChange={(e) => setMemberEditForm({ ...memberEditForm, actualStartDate: e.target.value })} className="w-36" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">終了日（実績）</Label>
-                <Input type="date" value={memberEditForm.actualEndDate} onChange={(e) => setMemberEditForm({ ...memberEditForm, actualEndDate: e.target.value })} className="w-36" />
-              </div>
-              <Button type="submit" size="sm">更新</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowMemberEdit(false)}>閉じる</Button>
-            </form>
-          </td>
-        </tr>
-      )}
+      {/* メンバー編集フォーム: ステータス・進捗率・実績開始日・実績終了日
+          ステータス整合性ルール:
+          - 未着手: 実績開始/終了とも入力不可（送信時もサーバ側で null に正規化）
+          - 進行中/保留: 実績開始のみ入力可、実績終了は入力不可
+          - 完了: 両方入力可 */}
+      {showMemberEdit && canMemberEdit && (() => {
+        const actualStartDisabled = memberEditForm.status === 'not_started';
+        const actualEndDisabled = memberEditForm.status !== 'completed';
+        return (
+          <tr className="border-b bg-blue-50">
+            <td colSpan={colSpan} className="px-6 py-3">
+              <form onSubmit={handleMemberEditSubmit} className="flex items-end gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs">ステータス</Label>
+                  <LabeledSelect
+                    value={memberEditForm.status}
+                    onValueChange={(v) => {
+                      if (!v) return;
+                      // ステータス変更時に実績日付をルールに合わせてクリア
+                      const next = { ...memberEditForm, status: v };
+                      if (v === 'not_started') {
+                        next.actualStartDate = '';
+                        next.actualEndDate = '';
+                      } else if (v !== 'completed') {
+                        next.actualEndDate = '';
+                      }
+                      setMemberEditForm(next);
+                    }}
+                    options={TASK_STATUSES}
+                    className="w-28"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">進捗率</Label>
+                  <NumberInput min={1} max={100} value={memberEditForm.progressRate} onChange={(n) => setMemberEditForm({ ...memberEditForm, progressRate: n })} className="w-20" />
+                </div>
+                <div className="space-y-1">
+                  <Label className={`text-xs ${actualStartDisabled ? 'text-gray-400' : ''}`}>開始日（実績）</Label>
+                  <Input
+                    type="date"
+                    value={memberEditForm.actualStartDate}
+                    onChange={(e) => setMemberEditForm({ ...memberEditForm, actualStartDate: e.target.value })}
+                    className="w-36"
+                    disabled={actualStartDisabled}
+                    title={actualStartDisabled ? '未着手のタスクには実績開始日を入力できません' : undefined}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className={`text-xs ${actualEndDisabled ? 'text-gray-400' : ''}`}>終了日（実績）</Label>
+                  <Input
+                    type="date"
+                    value={memberEditForm.actualEndDate}
+                    onChange={(e) => setMemberEditForm({ ...memberEditForm, actualEndDate: e.target.value })}
+                    className="w-36"
+                    disabled={actualEndDisabled}
+                    title={actualEndDisabled ? '完了状態のタスクのみ実績終了日を入力できます' : undefined}
+                  />
+                </div>
+                <Button type="submit" size="sm">更新</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowMemberEdit(false)}>閉じる</Button>
+              </form>
+            </td>
+          </tr>
+        );
+      })()}
       {/* PM/TL 編集フォーム */}
       {showPmEdit && (
         <tr className="border-b bg-green-50">
@@ -647,19 +685,32 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setImportError('');
     if (!importFile) { setImportError('ファイルを選択してください'); return; }
 
-    const csvText = await importFile.text();
+    // 多くの環境で挙動が安定する multipart/form-data で送信。
+    // （以前の `text/csv` 生 body は Vercel 側のルーティング / edge 層で
+    //   ERR_CONNECTION_RESET を誘発するケースが観測されたため）
+    const formData = new FormData();
+    formData.append('file', importFile);
 
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/import`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/csv; charset=utf-8' },
-        body: csvText,
+        // Content-Type は boundary 付きで自動設定されるため明示しない
+        body: formData,
       }),
     );
 
     if (!res.ok) {
-      const json = await res.json();
-      setImportError(json.error?.message || json.error?.details?.[0]?.message || 'インポートに失敗しました');
+      // サーバから JSON エラーレスポンスが返らない場合（接続切断等）にも
+      // ユーザに原因を提示できるよう text() でフォールバックする
+      let message = 'インポートに失敗しました';
+      try {
+        const json = await res.json();
+        message = json.error?.message || json.error?.details?.[0]?.message || message;
+      } catch {
+        const text = await res.text().catch(() => '');
+        if (text) message = text.slice(0, 200);
+      }
+      setImportError(message);
       return;
     }
 
@@ -748,7 +799,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
           </Button>
           <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">インポート</DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>インポート</DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>WBS テンプレートインポート</DialogTitle>
@@ -765,7 +816,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             </DialogContent>
           </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">追加</DialogTrigger>
+            <DialogTrigger render={<Button size="sm" />}>追加</DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>{createType === 'work_package' ? 'ワークパッケージ作成' : 'アクティビティ作成'}</DialogTitle>
@@ -879,9 +930,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
           <Dialog open={isBulkEditOpen} onOpenChange={setIsBulkEditOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">
-              一括編集...
-            </DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>一括編集</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>一括編集（{selectedIds.size} 件）</DialogTitle>
@@ -963,9 +1012,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             </DialogContent>
           </Dialog>
           <Dialog open={isBulkActualOpen} onOpenChange={setIsBulkActualOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">
-              一括実績更新...
-            </DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>一括実績更新</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>一括実績更新（{selectedIds.size} 件）</DialogTitle>
@@ -977,6 +1024,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 {bulkActualError && (
                   <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{bulkActualError}</div>
                 )}
+                <div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">
+                  ステータス整合性ルール: 未着手なら実績開始/終了とも自動クリア、進行中/保留なら実績終了のみ自動クリア、完了のみ両方保存されます。
+                </div>
                 <ApplyFieldRow
                   apply={bulkActualApply.status}
                   onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, status: v })}

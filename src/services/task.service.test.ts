@@ -5,6 +5,7 @@ import {
   parseCsvLine,
   buildTree,
   aggregateWpFromChildren,
+  normalizeActualDatesForStatus,
   type WpAggregationChild,
 } from './task.service';
 import type { TaskDTO } from './task.service';
@@ -333,5 +334,66 @@ describe('aggregateWpFromChildren', () => {
       childFixture({ status: 'not_started' }),
     ];
     expect(aggregateWpFromChildren(children).status).toBe('not_started');
+  });
+});
+
+describe('normalizeActualDatesForStatus', () => {
+  const start = new Date('2026-05-01');
+  const end = new Date('2026-05-10');
+
+  it('status=not_started: 実績開始・終了ともクリア', () => {
+    expect(normalizeActualDatesForStatus('not_started', start, end)).toEqual({
+      actualStartDate: null,
+      actualEndDate: null,
+    });
+  });
+
+  it('status=in_progress: 実績開始は保持、実績終了はクリア', () => {
+    expect(normalizeActualDatesForStatus('in_progress', start, end)).toEqual({
+      actualStartDate: start,
+      actualEndDate: null,
+    });
+  });
+
+  it('status=on_hold: 実績開始は保持、実績終了はクリア（進行中と同じ扱い）', () => {
+    expect(normalizeActualDatesForStatus('on_hold', start, end)).toEqual({
+      actualStartDate: start,
+      actualEndDate: null,
+    });
+  });
+
+  it('status=completed: 両方保持', () => {
+    expect(normalizeActualDatesForStatus('completed', start, end)).toEqual({
+      actualStartDate: start,
+      actualEndDate: end,
+    });
+  });
+
+  it('status=in_progress + 実績開始 null: 両方 null でもエラーにならない', () => {
+    expect(normalizeActualDatesForStatus('in_progress', null, null)).toEqual({
+      actualStartDate: null,
+      actualEndDate: null,
+    });
+  });
+
+  it('status=completed + 実績終了のみ null: 実績開始は保持、終了は null のまま', () => {
+    expect(normalizeActualDatesForStatus('completed', start, null)).toEqual({
+      actualStartDate: start,
+      actualEndDate: null,
+    });
+  });
+
+  it('undefined を渡しても null として正規化される', () => {
+    expect(normalizeActualDatesForStatus('in_progress', undefined, undefined)).toEqual({
+      actualStartDate: null,
+      actualEndDate: null,
+    });
+  });
+
+  it('未知のステータス文字列は「completed 以外」として処理される（実績終了はクリア）', () => {
+    expect(normalizeActualDatesForStatus('unknown_status', start, end)).toEqual({
+      actualStartDate: start,
+      actualEndDate: null,
+    });
   });
 });

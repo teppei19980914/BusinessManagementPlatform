@@ -33,6 +33,40 @@ export async function recordAuditLog(params: {
 }
 
 /**
+ * 複数エンティティに対する一括操作の監査ログを `createMany` で一度に記録する。
+ *
+ * なぜこの関数が必要か:
+ * - AuditLog スキーマの entityId は `@db.Uuid` 型であり、`"bulk:24"` のような
+ *   合成文字列を入れると DB レベルで拒否される（PrismaClientKnownRequestError P2007）
+ * - 正しい監査の粒度は「エンティティごとに 1 行」。バルク操作の文脈は afterValue の
+ *   メタデータ（bulk: true, bulkBatchSize, 適用した updates 等）で保持する
+ */
+export async function recordBulkAuditLogs(params: {
+  userId: string;
+  action: AuditAction;
+  entityType: string;
+  /** 監査対象の各 UUID（バリデーション済みであること）*/
+  entityIds: string[];
+  /** 全エンティティ共通の afterValue。バルク適用内容を含めるとトレーサビリティが向上する */
+  afterValue?: Record<string, unknown> | null;
+  beforeValue?: Record<string, unknown> | null;
+  ipAddress?: string;
+}): Promise<void> {
+  if (params.entityIds.length === 0) return;
+  await prisma.auditLog.createMany({
+    data: params.entityIds.map((entityId) => ({
+      userId: params.userId,
+      action: params.action,
+      entityType: params.entityType,
+      entityId, // 個別の UUID を設定（合成文字列を避ける）
+      beforeValue: (params.beforeValue ?? undefined) as Prisma.InputJsonValue | undefined,
+      afterValue: (params.afterValue ?? undefined) as Prisma.InputJsonValue | undefined,
+      ipAddress: params.ipAddress,
+    })),
+  });
+}
+
+/**
  * 変更前後の差分を抽出するヘルパー
  * password_hash 等の機密フィールドは自動的に除外する。
  */
