@@ -244,12 +244,30 @@ export async function deleteTask(taskId: string, userId: string): Promise<void> 
 }
 
 /**
- * 複数タスクの担当者・優先度を一括更新
+ * 複数アクティビティを一括更新する。
+ *
+ * サポート項目（個別フォームの「編集」「実績」に相当）:
+ * - 編集系: assigneeId / priority / plannedStartDate / plannedEndDate / plannedEffort
+ * - 実績系: status / progressRate / actualStartDate / actualEndDate
+ *
+ * 対象は `type: 'activity'` のみ（WP は子から自動集計されるため直接の値変更を避ける）。
+ * 更新後は影響を受けた親 WP すべてに対して recalculateAncestors を実行し、
+ * UI リロード時に正しい集計値が表示されるようにする。
  */
 export async function bulkUpdateTasks(
   projectId: string,
   taskIds: string[],
-  updates: { assigneeId?: string | null; priority?: string },
+  updates: {
+    assigneeId?: string | null;
+    priority?: string;
+    plannedStartDate?: string | null;
+    plannedEndDate?: string | null;
+    plannedEffort?: number;
+    status?: string;
+    progressRate?: number;
+    actualStartDate?: string | null;
+    actualEndDate?: string | null;
+  },
   userId: string,
 ): Promise<number> {
   // 担当者がプロジェクトメンバーであることを検証
@@ -262,19 +280,58 @@ export async function bulkUpdateTasks(
     }
   }
 
+  // updateMany では関係スカラー（assigneeId 等）を直接セットするため UncheckedUpdateManyInput を使う
+  const data: Prisma.TaskUncheckedUpdateManyInput = { updatedBy: userId };
+  if (updates.assigneeId !== undefined) data.assigneeId = updates.assigneeId ?? null;
+  if (updates.priority !== undefined) data.priority = updates.priority;
+  if (updates.plannedStartDate !== undefined) {
+    data.plannedStartDate = updates.plannedStartDate ? new Date(updates.plannedStartDate) : null;
+  }
+  if (updates.plannedEndDate !== undefined) {
+    data.plannedEndDate = updates.plannedEndDate ? new Date(updates.plannedEndDate) : null;
+  }
+  if (updates.plannedEffort !== undefined) data.plannedEffort = updates.plannedEffort;
+  if (updates.status !== undefined) data.status = updates.status;
+  if (updates.progressRate !== undefined) data.progressRate = updates.progressRate;
+  if (updates.actualStartDate !== undefined) {
+    data.actualStartDate = updates.actualStartDate ? new Date(updates.actualStartDate) : null;
+  }
+  if (updates.actualEndDate !== undefined) {
+    data.actualEndDate = updates.actualEndDate ? new Date(updates.actualEndDate) : null;
+  }
+
   const result = await prisma.task.updateMany({
     where: {
       id: { in: taskIds },
       projectId,
       deletedAt: null,
-      type: 'activity', // WPの担当者・優先度は直接変更しない
+      type: 'activity', // WP は対象外（集計値は子から自動算出）
     },
-    data: {
-      ...(updates.assigneeId !== undefined ? { assigneeId: updates.assigneeId ?? null } : {}),
-      ...(updates.priority !== undefined ? { priority: updates.priority } : {}),
-      updatedBy: userId,
-    },
+    data,
   });
+
+  // 親 WP の集計を再計算する必要があるかを判定。
+  // plannedEffort / plannedStartDate / plannedEndDate / status / progressRate いずれかを
+  // 変更した場合は再計算対象。assigneeId / priority / actual 日付は集計に影響しないのでスキップ。
+  const needsRecalc
+    = updates.plannedEffort !== undefined
+    || updates.plannedStartDate !== undefined
+    || updates.plannedEndDate !== undefined
+    || updates.status !== undefined
+    || updates.progressRate !== undefined;
+
+  if (needsRecalc && result.count > 0) {
+    const affected = await prisma.task.findMany({
+      where: { id: { in: taskIds }, projectId, deletedAt: null, type: 'activity' },
+      select: { parentTaskId: true },
+    });
+    const uniqueParentIds = [
+      ...new Set(affected.map((t) => t.parentTaskId).filter((id): id is string => id != null)),
+    ];
+    for (const parentId of uniqueParentIds) {
+      await recalculateAncestors(parentId);
+    }
+  }
 
   return result.count;
 }

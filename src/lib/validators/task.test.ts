@@ -145,6 +145,67 @@ describe('bulkUpdateTaskSchema', () => {
       `550e8400-e29b-41d4-a716-${String(i).padStart(12, '0')}`);
     expect(bulkUpdateTaskSchema.safeParse({ taskIds: ids, priority: 'high' }).success).toBe(true);
   });
+
+  // --- 拡張: 編集系 / 実績系フィールドの一括更新 ---
+  it('予定開始日・予定終了日の一括更新を受け入れる', () => {
+    const input = {
+      taskIds: [validUUID],
+      plannedStartDate: '2026-05-01',
+      plannedEndDate: '2026-05-31',
+    };
+    expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('予定工数の一括更新を受け入れる', () => {
+    const input = { taskIds: [validUUID], plannedEffort: 8 };
+    expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('ステータス・進捗率・実績開始日・実績終了日の一括更新を受け入れる', () => {
+    const input = {
+      taskIds: [validUUID],
+      status: 'in_progress' as const,
+      progressRate: 50,
+      actualStartDate: '2026-05-01',
+      actualEndDate: '2026-05-15',
+    };
+    expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('進捗率が 0-100 の範囲外を拒否する', () => {
+    expect(
+      bulkUpdateTaskSchema.safeParse({ taskIds: [validUUID], progressRate: 150 }).success,
+    ).toBe(false);
+    expect(
+      bulkUpdateTaskSchema.safeParse({ taskIds: [validUUID], progressRate: -1 }).success,
+    ).toBe(false);
+  });
+
+  it('無効なステータスを拒否する', () => {
+    expect(
+      bulkUpdateTaskSchema.safeParse({ taskIds: [validUUID], status: 'invalid_status' }).success,
+    ).toBe(false);
+  });
+
+  it('無効な日付形式を拒否する', () => {
+    expect(
+      bulkUpdateTaskSchema.safeParse({ taskIds: [validUUID], plannedStartDate: '2026/05/01' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('更新項目が一つも指定されていない場合を拒否する', () => {
+    expect(bulkUpdateTaskSchema.safeParse({ taskIds: [validUUID] }).success).toBe(false);
+  });
+
+  it('実績開始日・終了日を null にできる（実績解除）', () => {
+    const input = {
+      taskIds: [validUUID],
+      actualStartDate: null,
+      actualEndDate: null,
+    };
+    expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
+  });
 });
 
 describe('updateTaskSchema', () => {
