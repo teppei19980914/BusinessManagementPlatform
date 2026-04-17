@@ -252,13 +252,13 @@ function TaskTreeNodeImpl({
             )}
           </div>
         </td>
-        <td className="px-3 py-2 text-sm">{isWP ? '-' : (task.assigneeName || '-')}</td>
-        <td className="px-3 py-2">
+        <td className="px-3 py-2 text-sm whitespace-nowrap">{isWP ? '-' : (task.assigneeName || '-')}</td>
+        <td className="px-3 py-2 whitespace-nowrap">
           <Badge variant={statusColors[displayStatus] || 'outline'}>
             {TASK_STATUSES[displayStatus as keyof typeof TASK_STATUSES] || displayStatus}
           </Badge>
         </td>
-        <td className="px-3 py-2 text-sm">
+        <td className="px-3 py-2 text-sm whitespace-nowrap">
           <div className="flex items-center gap-2">
             <div className="h-2 w-16 rounded-full bg-gray-200">
               <div
@@ -269,12 +269,12 @@ function TaskTreeNodeImpl({
             <span>{displayProgressRate}%</span>
           </div>
         </td>
-        <td className="px-3 py-2 text-sm">{task.plannedEffort > 0 ? task.plannedEffort : '-'}</td>
-        <td className="px-3 py-2 text-sm">{task.plannedStartDate || '-'}</td>
-        <td className="px-3 py-2 text-sm">{task.plannedEndDate || '-'}</td>
-        <td className="px-3 py-2 text-sm">{displayActualStartDate || '-'}</td>
-        <td className="px-3 py-2 text-sm">{displayActualEndDate || '-'}</td>
-        <td className="px-3 py-2">
+        <td className="px-3 py-2 text-sm whitespace-nowrap">{task.plannedEffort > 0 ? task.plannedEffort : '-'}</td>
+        <td className="px-3 py-2 text-sm whitespace-nowrap">{task.plannedStartDate || '-'}</td>
+        <td className="px-3 py-2 text-sm whitespace-nowrap">{task.plannedEndDate || '-'}</td>
+        <td className="px-3 py-2 text-sm whitespace-nowrap">{displayActualStartDate || '-'}</td>
+        <td className="px-3 py-2 text-sm whitespace-nowrap">{displayActualEndDate || '-'}</td>
+        <td className="px-3 py-2 whitespace-nowrap">
           <div className="flex gap-1">
             {canMemberEdit && (
               <Button variant="outline" size="sm" onClick={() => setShowMemberEdit(!showMemberEdit)}>
@@ -1035,8 +1035,18 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         </div>
       )}
 
+      {/*
+        テーブルレイアウト方針（2026-04-17）:
+        - `min-w-full` で最低限コンテナ幅を埋めつつ、列数が多い場合は自然と幅が広がる
+        - ユーザの最後の列（操作）が枠線に食い込む問題を、固定 `w-full` で列を圧縮せず
+          content-based sizing に任せることで解消
+        - 日付・操作列には `whitespace-nowrap` を付与し、「2026-」/「04-15」のような折返しを抑制
+        - 名称列のみ `whitespace-normal` で長い名前の wrap を許容
+        - 外枠の border + rounded-lg は視覚的区切りとして残し、`overflow-x-auto` でコンテンツが広いときは
+          ユーザが横スクロールして全列を確認できる
+      */}
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full text-sm">
+        <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
               {canEditPmTl && (
@@ -1051,15 +1061,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 </th>
               )}
               <th className="px-3 py-2 text-left font-medium">名称</th>
-              <th className="px-3 py-2 text-left font-medium">担当者</th>
-              <th className="px-3 py-2 text-left font-medium">ステータス</th>
-              <th className="px-3 py-2 text-left font-medium">進捗</th>
-              <th className="px-3 py-2 text-left font-medium">工数</th>
-              <th className="px-3 py-2 text-left font-medium">予定開始</th>
-              <th className="px-3 py-2 text-left font-medium">予定終了</th>
-              <th className="px-3 py-2 text-left font-medium">実績開始</th>
-              <th className="px-3 py-2 text-left font-medium">実績終了</th>
-              <th className="px-3 py-2 text-left font-medium">操作</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">担当者</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">ステータス</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">進捗</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">工数</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">予定開始</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">予定終了</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">実績開始</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">実績終了</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">操作</th>
             </tr>
           </thead>
           <tbody>
