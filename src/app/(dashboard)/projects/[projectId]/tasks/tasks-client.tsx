@@ -17,7 +17,13 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Pencil, Trash2 } from 'lucide-react';
-import { collectAllIds, collectSelfAndDescendantIds } from '@/lib/task-tree-utils';
+import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
+import {
+  collectAllIds,
+  collectSelfAndDescendantIds,
+  filterTreeByAssignee,
+  UNASSIGNED_KEY,
+} from '@/lib/task-tree-utils';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
@@ -294,6 +300,42 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  // --- 担当者フィルタ ---
+  // デフォルト: 全メンバー + 未アサインを選択済み（= 全タスク表示）。
+  // ユーザが chk を外すとそのメンバー担当のタスクが非表示になる。
+  // 新規にメンバーが追加された場合、初期化タイミング以降は自動的に追加されないが、
+  // ポップオーバー内の "すべて選択" で救済可能。
+  const allAssigneeKeys = useMemo<string[]>(
+    () => [...members.map((m) => m.userId), UNASSIGNED_KEY],
+    [members],
+  );
+  const [assigneeFilter, setAssigneeFilter] = useState<Set<string>>(
+    () => new Set(allAssigneeKeys),
+  );
+  const isAllAssigneesSelected
+    = assigneeFilter.size === allAssigneeKeys.length
+    && allAssigneeKeys.every((k) => assigneeFilter.has(k));
+  const toggleAssignee = useCallback((key: string) => {
+    setAssigneeFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const selectAllAssignees = useCallback(() => {
+    setAssigneeFilter(new Set(allAssigneeKeys));
+  }, [allAssigneeKeys]);
+  const clearAllAssignees = useCallback(() => {
+    setAssigneeFilter(new Set());
+  }, []);
+
+  // 表示用のフィルタ済みタスクツリー
+  const filteredTasks = useMemo(
+    () => (isAllAssigneesSelected ? tasks : filterTreeByAssignee(tasks, assigneeFilter)),
+    [tasks, assigneeFilter, isAllAssigneesSelected],
+  );
+
   // --- 編集ダイアログ（個別タスクをアイコンから開いて編集）---
   // 1 ダイアログを複数タスクで共有（TasksClient レベルで保持し、編集対象が null の間は非表示）
   type EditForm = {
@@ -392,8 +434,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     await reload();
   }
 
-  // 全タスクIDの一覧（全選択用）
-  const allTaskIds = useMemo(() => collectAllIds(tasks), [tasks]);
+  // 全タスクIDの一覧（全選択用）。担当者フィルタで隠れているタスクは対象外。
+  const allTaskIds = useMemo(() => collectAllIds(filteredTasks), [filteredTasks]);
 
   const isAllSelected = allTaskIds.length > 0 && allTaskIds.every((id) => selectedIds.has(id));
 
@@ -877,6 +919,78 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         )}
       </div>
 
+      {/* 担当者フィルタ（全ロール利用可・デフォルト 全員選択）*/}
+      <div className="flex flex-wrap items-center gap-2">
+        <PopoverPrimitive.Root>
+          <PopoverPrimitive.Trigger
+            render={<Button variant="outline" size="sm" />}
+          >
+            担当者:{' '}
+            {isAllAssigneesSelected
+              ? '全員'
+              : `${assigneeFilter.size} / ${allAssigneeKeys.length} 人`}
+          </PopoverPrimitive.Trigger>
+          <PopoverPrimitive.Portal>
+            <PopoverPrimitive.Positioner sideOffset={6} align="start" className="isolate z-50">
+              <PopoverPrimitive.Popup
+                className="max-h-[60vh] w-64 overflow-y-auto rounded-lg border bg-white p-2 shadow-md ring-1 ring-black/5 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+              >
+                <div className="flex gap-2 border-b pb-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={selectAllAssignees}
+                  >
+                    すべて選択
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={clearAllAssignees}
+                  >
+                    すべて解除
+                  </Button>
+                </div>
+                <div className="mt-2 space-y-1">
+                  {members.map((m) => (
+                    <label
+                      key={m.userId}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={assigneeFilter.has(m.userId)}
+                        onChange={() => toggleAssignee(m.userId)}
+                        className="rounded"
+                      />
+                      <span className="truncate">{m.userName}</span>
+                    </label>
+                  ))}
+                  <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      checked={assigneeFilter.has(UNASSIGNED_KEY)}
+                      onChange={() => toggleAssignee(UNASSIGNED_KEY)}
+                      className="rounded"
+                    />
+                    <span className="text-gray-500">（未アサイン）</span>
+                  </label>
+                </div>
+              </PopoverPrimitive.Popup>
+            </PopoverPrimitive.Positioner>
+          </PopoverPrimitive.Portal>
+        </PopoverPrimitive.Root>
+        {!isAllAssigneesSelected && (
+          <Button type="button" variant="ghost" size="sm" onClick={selectAllAssignees}>
+            フィルタ解除
+          </Button>
+        )}
+      </div>
+
       {canEditPmTl && selectedIds.size > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
@@ -1072,7 +1186,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             </tr>
           </thead>
           <tbody>
-            {tasks.map((task) => (
+            {filteredTasks.map((task) => (
               <TaskTreeNode
                 key={task.id}
                 task={task}
@@ -1090,10 +1204,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 onEditClick={openEditDialog}
               />
             ))}
-            {tasks.length === 0 && (
+            {filteredTasks.length === 0 && (
               <tr>
                 <td colSpan={canEditPmTl ? 8 : 7} className="py-8 text-center text-gray-500">
-                  WBS が登録されていません
+                  {tasks.length === 0
+                    ? 'WBS が登録されていません'
+                    : '選択した担当者に該当するタスクはありません'}
                 </td>
               </tr>
             )}
