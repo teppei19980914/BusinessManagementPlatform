@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { TaskDTO } from '@/services/task.service';
-import { collectAllIds, collectSelfAndDescendantIds } from './task-tree-utils';
+import {
+  collectAllIds,
+  collectSelfAndDescendantIds,
+  filterTreeByAssignee,
+  UNASSIGNED_KEY,
+} from './task-tree-utils';
 
 function makeTask(overrides: Partial<TaskDTO>): TaskDTO {
   return {
@@ -100,5 +105,81 @@ describe('collectSelfAndDescendantIds', () => {
 
   it('空ツリーでも空配列を返す', () => {
     expect(collectSelfAndDescendantIds([], 'wp1')).toEqual([]);
+  });
+});
+
+describe('filterTreeByAssignee', () => {
+  /**
+   * テスト用ツリー:
+   *   wp1 (未アサイン)
+   *     ├ act1 (user-A)
+   *     └ wp1-1 (未アサイン)
+   *         ├ act2 (user-B)
+   *         └ act3 (未アサイン)
+   *   wp2 (未アサイン, 子無し)
+   */
+  const tree: TaskDTO[] = [
+    makeTask({
+      id: 'wp1',
+      type: 'work_package',
+      assigneeId: null,
+      children: [
+        makeTask({ id: 'act1', parentTaskId: 'wp1', assigneeId: 'user-A' }),
+        makeTask({
+          id: 'wp1-1',
+          type: 'work_package',
+          parentTaskId: 'wp1',
+          assigneeId: null,
+          children: [
+            makeTask({ id: 'act2', parentTaskId: 'wp1-1', assigneeId: 'user-B' }),
+            makeTask({ id: 'act3', parentTaskId: 'wp1-1', assigneeId: null }),
+          ],
+        }),
+      ],
+    }),
+    makeTask({ id: 'wp2', type: 'work_package', assigneeId: null, children: [] }),
+  ];
+
+  it('全員 + 未アサイン選択時は元ツリーを完全に保持する', () => {
+    const selected = new Set(['user-A', 'user-B', UNASSIGNED_KEY]);
+    const result = filterTreeByAssignee(tree, selected);
+    expect(collectAllIds(result)).toEqual(['wp1', 'act1', 'wp1-1', 'act2', 'act3', 'wp2']);
+  });
+
+  it('user-A のみ選択時は act1 のみ残し、親 WP は階層維持のため残す', () => {
+    const selected = new Set(['user-A']);
+    const result = filterTreeByAssignee(tree, selected);
+    // wp1 は子孫 act1 が該当するため残る。wp1-1 と wp2 は配下に該当者なしで除外
+    expect(collectAllIds(result)).toEqual(['wp1', 'act1']);
+  });
+
+  it('user-B のみ選択時は wp1 → wp1-1 → act2 の階層だけが残る', () => {
+    const selected = new Set(['user-B']);
+    const result = filterTreeByAssignee(tree, selected);
+    expect(collectAllIds(result)).toEqual(['wp1', 'wp1-1', 'act2']);
+  });
+
+  it('未アサインのみ選択時は担当者未設定のタスクとその祖先のみ残る', () => {
+    const selected = new Set([UNASSIGNED_KEY]);
+    const result = filterTreeByAssignee(tree, selected);
+    // wp1 (未), wp1-1 (未) と act3 (未), wp2 (未) が残る
+    expect(collectAllIds(result)).toEqual(['wp1', 'wp1-1', 'act3', 'wp2']);
+  });
+
+  it('選択なし（空セット）では全タスクが除外される', () => {
+    const result = filterTreeByAssignee(tree, new Set());
+    expect(result).toEqual([]);
+  });
+
+  it('空ツリー入力でも空配列を返す', () => {
+    const selected = new Set(['user-A']);
+    expect(filterTreeByAssignee([], selected)).toEqual([]);
+  });
+
+  it('元ツリーを破壊的に変更しない (immutable)', () => {
+    const selected = new Set(['user-A']);
+    const snapshotIds = collectAllIds(tree);
+    filterTreeByAssignee(tree, selected);
+    expect(collectAllIds(tree)).toEqual(snapshotIds);
   });
 });
