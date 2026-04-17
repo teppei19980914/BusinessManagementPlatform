@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { bulkUpdateTaskSchema } from '@/lib/validators/task';
 import { bulkUpdateTasks } from '@/services/task.service';
-import { recordAuditLog } from '@/services/audit.service';
+import { recordBulkAuditLogs } from '@/services/audit.service';
 
 export async function PATCH(
   req: NextRequest,
@@ -39,12 +39,15 @@ export async function PATCH(
     throw e;
   }
 
-  await recordAuditLog({
+  // 監査ログは「タスクごとに 1 行」で記録する。
+  // 以前は entityId に `bulk:${count}` のような合成文字列を入れていたが、
+  // AuditLog.entityId は @db.Uuid 型のため P2007 エラーになり一括更新全体が 500 になっていた。
+  await recordBulkAuditLogs({
     userId: user.id,
     action: 'UPDATE',
     entityType: 'task',
-    entityId: `bulk:${count}`,
-    afterValue: { bulk: true, count, taskIds, projectId, updates },
+    entityIds: taskIds,
+    afterValue: { bulk: true, bulkRequestSize: taskIds.length, bulkUpdatedCount: count, projectId, updates },
   });
 
   return NextResponse.json({ data: { updatedCount: count } });
