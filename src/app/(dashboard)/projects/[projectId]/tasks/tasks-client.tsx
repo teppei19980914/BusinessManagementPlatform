@@ -44,6 +44,38 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
   on_hold: 'destructive',
 };
 
+/**
+ * 一括更新ダイアログ内で「この項目を適用するか」のチェックボックス付きフィールド行。
+ * apply が true のときだけ入力が有効・サーバへ送信対象になる。
+ */
+function ApplyFieldRow({
+  apply,
+  onApplyChange,
+  label,
+  children,
+}: {
+  apply: boolean;
+  onApplyChange: (next: boolean) => void;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <input
+        type="checkbox"
+        checked={apply}
+        onChange={(e) => onApplyChange(e.target.checked)}
+        className="mt-2 rounded"
+        aria-label={`${label}を一括更新する`}
+      />
+      <div className="flex-1 space-y-1">
+        <Label className={apply ? 'text-sm' : 'text-sm text-gray-400'}>{label}</Label>
+        <div className={apply ? '' : 'pointer-events-none opacity-50'}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
 type TaskTreeNodeProps = {
   task: TaskDTO;
   depth: number;
@@ -461,8 +493,39 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     });
   }, [tasks]);
 
-  const [bulkAssigneeId, setBulkAssigneeId] = useState('');
-  const [bulkPriority, setBulkPriority] = useState('');
+  // --- 一括編集（PM/TL 編集フォーム相当）ダイアログ ---
+  const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
+  const [bulkEditApply, setBulkEditApply] = useState({
+    assigneeId: false,
+    priority: false,
+    plannedStartDate: false,
+    plannedEndDate: false,
+    plannedEffort: false,
+  });
+  const [bulkEditValues, setBulkEditValues] = useState({
+    assigneeId: '',
+    priority: 'medium',
+    plannedStartDate: '',
+    plannedEndDate: '',
+    plannedEffort: 0,
+  });
+  const [bulkEditError, setBulkEditError] = useState('');
+
+  // --- 一括実績更新（メンバー 実績フォーム相当）ダイアログ ---
+  const [isBulkActualOpen, setIsBulkActualOpen] = useState(false);
+  const [bulkActualApply, setBulkActualApply] = useState({
+    status: false,
+    progressRate: false,
+    actualStartDate: false,
+    actualEndDate: false,
+  });
+  const [bulkActualValues, setBulkActualValues] = useState({
+    status: 'not_started',
+    progressRate: 0,
+    actualStartDate: '',
+    actualEndDate: '',
+  });
+  const [bulkActualError, setBulkActualError] = useState('');
 
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
@@ -476,26 +539,74 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     await reload();
   }
 
-  async function handleBulkUpdate() {
-    if (selectedIds.size === 0) return;
-    const body: Record<string, unknown> = { taskIds: [...selectedIds] };
-    if (bulkAssigneeId) body.assigneeId = bulkAssigneeId;
-    if (bulkPriority) body.priority = bulkPriority;
-    if (!bulkAssigneeId && !bulkPriority) return;
+  /** 一括更新 API を叩く共通関数。`updates` には apply=true のフィールドのみ入っている想定 */
+  async function postBulkUpdate(updates: Record<string, unknown>): Promise<string | null> {
+    if (selectedIds.size === 0) return '対象タスクがありません';
+    if (Object.keys(updates).length === 0) return '更新項目を1つ以上選択してください';
 
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/bulk-update`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ taskIds: [...selectedIds], ...updates }),
       }),
     );
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      return json.error?.message || json.error?.details?.[0]?.message || '一括更新に失敗しました';
+    }
+    return null;
+  }
 
-    if (!res.ok) return;
+  async function handleBulkEditSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBulkEditError('');
+    const updates: Record<string, unknown> = {};
+    if (bulkEditApply.assigneeId) updates.assigneeId = bulkEditValues.assigneeId || null;
+    if (bulkEditApply.priority) updates.priority = bulkEditValues.priority;
+    if (bulkEditApply.plannedStartDate) updates.plannedStartDate = bulkEditValues.plannedStartDate || null;
+    if (bulkEditApply.plannedEndDate) updates.plannedEndDate = bulkEditValues.plannedEndDate || null;
+    if (bulkEditApply.plannedEffort) updates.plannedEffort = bulkEditValues.plannedEffort;
 
+    const err = await postBulkUpdate(updates);
+    if (err) {
+      setBulkEditError(err);
+      return;
+    }
+    setIsBulkEditOpen(false);
     setSelectedIds(new Set());
-    setBulkAssigneeId('');
-    setBulkPriority('');
+    setBulkEditApply({
+      assigneeId: false,
+      priority: false,
+      plannedStartDate: false,
+      plannedEndDate: false,
+      plannedEffort: false,
+    });
+    await reload();
+  }
+
+  async function handleBulkActualSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBulkActualError('');
+    const updates: Record<string, unknown> = {};
+    if (bulkActualApply.status) updates.status = bulkActualValues.status;
+    if (bulkActualApply.progressRate) updates.progressRate = bulkActualValues.progressRate;
+    if (bulkActualApply.actualStartDate) updates.actualStartDate = bulkActualValues.actualStartDate || null;
+    if (bulkActualApply.actualEndDate) updates.actualEndDate = bulkActualValues.actualEndDate || null;
+
+    const err = await postBulkUpdate(updates);
+    if (err) {
+      setBulkActualError(err);
+      return;
+    }
+    setIsBulkActualOpen(false);
+    setSelectedIds(new Set());
+    setBulkActualApply({
+      status: false,
+      progressRate: false,
+      actualStartDate: false,
+      actualEndDate: false,
+    });
     await reload();
   }
 
@@ -767,23 +878,160 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       {canEditPmTl && selectedIds.size > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
-          <div className="flex items-center gap-2">
-            <LabeledSelect
-              value={bulkAssigneeId}
-              onValueChange={(v) => setBulkAssigneeId(v ?? '')}
-              options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
-              placeholder="担当者..."
-            />
-            <LabeledSelect
-              value={bulkPriority}
-              onValueChange={(v) => setBulkPriority(v ?? '')}
-              options={PRIORITIES}
-              placeholder="優先度..."
-            />
-            <Button variant="outline" size="sm" onClick={handleBulkUpdate} disabled={!bulkAssigneeId && !bulkPriority}>一括変更</Button>
-          </div>
+          <Dialog open={isBulkEditOpen} onOpenChange={setIsBulkEditOpen}>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">
+              一括編集...
+            </DialogTrigger>
+            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>一括編集（{selectedIds.size} 件）</DialogTitle>
+                <DialogDescription>
+                  適用する項目にチェックを入れて値を入力してください。WP は対象外（アクティビティのみ更新されます）。
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleBulkEditSubmit} className="space-y-4">
+                {bulkEditError && (
+                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{bulkEditError}</div>
+                )}
+                <ApplyFieldRow
+                  apply={bulkEditApply.assigneeId}
+                  onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, assigneeId: v })}
+                  label="担当者"
+                >
+                  <select
+                    value={bulkEditValues.assigneeId}
+                    onChange={(e) => setBulkEditValues({ ...bulkEditValues, assigneeId: e.target.value })}
+                    className={nativeSelectClass}
+                  >
+                    <option value="">未設定</option>
+                    {members.map((m) => (
+                      <option key={m.userId} value={m.userId}>{m.userName}</option>
+                    ))}
+                  </select>
+                </ApplyFieldRow>
+                <ApplyFieldRow
+                  apply={bulkEditApply.priority}
+                  onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, priority: v })}
+                  label="優先度"
+                >
+                  <select
+                    value={bulkEditValues.priority}
+                    onChange={(e) => setBulkEditValues({ ...bulkEditValues, priority: e.target.value })}
+                    className={nativeSelectClass}
+                  >
+                    {Object.entries(PRIORITIES).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </ApplyFieldRow>
+                <ApplyFieldRow
+                  apply={bulkEditApply.plannedStartDate}
+                  onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, plannedStartDate: v })}
+                  label="予定開始日"
+                >
+                  <Input
+                    type="date"
+                    value={bulkEditValues.plannedStartDate}
+                    onChange={(e) => setBulkEditValues({ ...bulkEditValues, plannedStartDate: e.target.value })}
+                  />
+                </ApplyFieldRow>
+                <ApplyFieldRow
+                  apply={bulkEditApply.plannedEndDate}
+                  onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, plannedEndDate: v })}
+                  label="予定終了日"
+                >
+                  <Input
+                    type="date"
+                    value={bulkEditValues.plannedEndDate}
+                    onChange={(e) => setBulkEditValues({ ...bulkEditValues, plannedEndDate: e.target.value })}
+                  />
+                </ApplyFieldRow>
+                <ApplyFieldRow
+                  apply={bulkEditApply.plannedEffort}
+                  onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, plannedEffort: v })}
+                  label="予定工数（人時）"
+                >
+                  <NumberInput
+                    min={1}
+                    step={0.5}
+                    value={bulkEditValues.plannedEffort}
+                    onChange={(n) => setBulkEditValues({ ...bulkEditValues, plannedEffort: n })}
+                  />
+                </ApplyFieldRow>
+                <Button type="submit" className="w-full">一括適用</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={isBulkActualOpen} onOpenChange={setIsBulkActualOpen}>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">
+              一括実績更新...
+            </DialogTrigger>
+            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>一括実績更新（{selectedIds.size} 件）</DialogTitle>
+                <DialogDescription>
+                  適用する項目にチェックを入れて値を入力してください。WP は対象外（アクティビティのみ更新されます）。
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleBulkActualSubmit} className="space-y-4">
+                {bulkActualError && (
+                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{bulkActualError}</div>
+                )}
+                <ApplyFieldRow
+                  apply={bulkActualApply.status}
+                  onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, status: v })}
+                  label="ステータス"
+                >
+                  <select
+                    value={bulkActualValues.status}
+                    onChange={(e) => setBulkActualValues({ ...bulkActualValues, status: e.target.value })}
+                    className={nativeSelectClass}
+                  >
+                    {Object.entries(TASK_STATUSES).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </ApplyFieldRow>
+                <ApplyFieldRow
+                  apply={bulkActualApply.progressRate}
+                  onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, progressRate: v })}
+                  label="進捗率（%）"
+                >
+                  <NumberInput
+                    min={1}
+                    max={100}
+                    value={bulkActualValues.progressRate}
+                    onChange={(n) => setBulkActualValues({ ...bulkActualValues, progressRate: n })}
+                  />
+                </ApplyFieldRow>
+                <ApplyFieldRow
+                  apply={bulkActualApply.actualStartDate}
+                  onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, actualStartDate: v })}
+                  label="実績開始日"
+                >
+                  <Input
+                    type="date"
+                    value={bulkActualValues.actualStartDate}
+                    onChange={(e) => setBulkActualValues({ ...bulkActualValues, actualStartDate: e.target.value })}
+                  />
+                </ApplyFieldRow>
+                <ApplyFieldRow
+                  apply={bulkActualApply.actualEndDate}
+                  onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, actualEndDate: v })}
+                  label="実績終了日"
+                >
+                  <Input
+                    type="date"
+                    value={bulkActualValues.actualEndDate}
+                    onChange={(e) => setBulkActualValues({ ...bulkActualValues, actualEndDate: e.target.value })}
+                  />
+                </ApplyFieldRow>
+                <Button type="submit" className="w-full">一括適用</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
           <Button variant="outline" size="sm" className="text-red-600" onClick={handleBulkDelete}>一括削除</Button>
-          <Button variant="outline" size="sm" onClick={() => { setSelectedIds(new Set()); setBulkAssigneeId(''); setBulkPriority(''); }}>選択解除</Button>
+          <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>選択解除</Button>
         </div>
       )}
 

@@ -24,11 +24,11 @@ export async function PATCH(
     );
   }
 
-  const { taskIds, assigneeId, priority } = parsed.data;
+  const { taskIds, ...updates } = parsed.data;
 
   let count: number;
   try {
-    count = await bulkUpdateTasks(projectId, taskIds, { assigneeId, priority }, user.id);
+    count = await bulkUpdateTasks(projectId, taskIds, updates, user.id);
   } catch (e) {
     if (e instanceof Error && e.message === 'ASSIGNEE_NOT_MEMBER') {
       return NextResponse.json(
@@ -44,7 +44,7 @@ export async function PATCH(
     action: 'UPDATE',
     entityType: 'task',
     entityId: `bulk:${count}`,
-    afterValue: { bulk: true, count, taskIds, projectId, assigneeId, priority },
+    afterValue: { bulk: true, count, taskIds, projectId, updates },
   });
 
   return NextResponse.json({ data: { updatedCount: count } });

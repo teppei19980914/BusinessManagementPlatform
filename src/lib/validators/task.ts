@@ -75,11 +75,45 @@ export const updateProgressSchema = z.object({
   nextAction: z.string().max(1000).optional(),
 });
 
-export const bulkUpdateTaskSchema = z.object({
-  taskIds: z.array(z.string().uuid()).min(1, '対象タスクを選択してください').max(100, '一括更新は100件までです'),
-  assigneeId: z.string().uuid().optional().nullable(),
-  priority: z.enum(['low', 'medium', 'high']).optional(),
-});
+/**
+ * 一括更新スキーマ。
+ * 個別の「編集」「実績」フォームと同じフィールド集合を受け付ける。
+ * - 編集系: assigneeId / priority / plannedStartDate / plannedEndDate / plannedEffort
+ * - 実績系: status / progressRate / actualStartDate / actualEndDate
+ * いずれも optional。クライアント側でユーザが「適用する」と選んだ項目のみを送る想定。
+ * 1 件以上の更新項目が必須。
+ */
+export const bulkUpdateTaskSchema = z
+  .object({
+    taskIds: z
+      .array(z.string().uuid())
+      .min(1, '対象タスクを選択してください')
+      .max(100, '一括更新は100件までです'),
+    // 編集系
+    assigneeId: z.string().uuid().optional().nullable(),
+    priority: z.enum(['low', 'medium', 'high']).optional(),
+    plannedStartDate: z.string().regex(dateRegex).optional().nullable(),
+    plannedEndDate: z.string().regex(dateRegex).optional().nullable(),
+    plannedEffort: z.number().min(0).optional(),
+    // 実績系
+    status: z.enum(['not_started', 'in_progress', 'completed', 'on_hold']).optional(),
+    progressRate: z.number().int().min(0).max(100).optional(),
+    actualStartDate: z.string().regex(dateRegex).optional().nullable(),
+    actualEndDate: z.string().regex(dateRegex).optional().nullable(),
+  })
+  .refine(
+    (v) =>
+      v.assigneeId !== undefined
+      || v.priority !== undefined
+      || v.plannedStartDate !== undefined
+      || v.plannedEndDate !== undefined
+      || v.plannedEffort !== undefined
+      || v.status !== undefined
+      || v.progressRate !== undefined
+      || v.actualStartDate !== undefined
+      || v.actualEndDate !== undefined,
+    { message: '更新項目を1つ以上指定してください' },
+  );
 
 /** WBS テンプレートのタスク1件分 */
 const wbsTemplateTaskSchema = z.object({
