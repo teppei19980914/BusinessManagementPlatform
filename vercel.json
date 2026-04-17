@@ -1,4 +1,10 @@
 {
   "installCommand": "pnpm install",
-  "buildCommand": "pnpm prisma generate && pnpm build"
+  "buildCommand": "pnpm prisma generate && pnpm build",
+  "crons": [
+    {
+      "path": "/api/health",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }
