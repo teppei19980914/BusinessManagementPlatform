@@ -532,38 +532,98 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   }, [tasks]);
 
   // --- 一括編集（PM/TL 編集フォーム相当）ダイアログ ---
-  const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
-  const [bulkEditApply, setBulkEditApply] = useState({
+  // ダイアログを新しく開き直したときは初期値（apply=全 false / values=既定）に戻すポリシー。
+  // 以前のセッションの入力値が残っていると「他タスクでの選択が引き継がれてしまう」UX バグになるため。
+  type BulkEditApply = {
+    assigneeId: boolean;
+    priority: boolean;
+    plannedStartDate: boolean;
+    plannedEndDate: boolean;
+    plannedEffort: boolean;
+  };
+  type BulkEditValues = {
+    assigneeId: string;
+    priority: string;
+    plannedStartDate: string;
+    plannedEndDate: string;
+    plannedEffort: number;
+  };
+  const bulkEditInitialApply = (): BulkEditApply => ({
     assigneeId: false,
     priority: false,
     plannedStartDate: false,
     plannedEndDate: false,
     plannedEffort: false,
   });
-  const [bulkEditValues, setBulkEditValues] = useState({
+  const bulkEditInitialValues = (): BulkEditValues => ({
     assigneeId: '',
     priority: 'medium',
     plannedStartDate: '',
     plannedEndDate: '',
     plannedEffort: 0,
   });
+  const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
+  const [bulkEditApply, setBulkEditApply] = useState<BulkEditApply>(bulkEditInitialApply);
+  const [bulkEditValues, setBulkEditValues] = useState<BulkEditValues>(bulkEditInitialValues);
   const [bulkEditError, setBulkEditError] = useState('');
 
   // --- 一括実績更新（メンバー 実績フォーム相当）ダイアログ ---
-  const [isBulkActualOpen, setIsBulkActualOpen] = useState(false);
-  const [bulkActualApply, setBulkActualApply] = useState({
+  type BulkActualApply = {
+    status: boolean;
+    progressRate: boolean;
+    actualStartDate: boolean;
+    actualEndDate: boolean;
+  };
+  type BulkActualValues = {
+    status: string;
+    progressRate: number;
+    actualStartDate: string;
+    actualEndDate: string;
+  };
+  const bulkActualInitialApply = (): BulkActualApply => ({
     status: false,
     progressRate: false,
     actualStartDate: false,
     actualEndDate: false,
   });
-  const [bulkActualValues, setBulkActualValues] = useState({
+  const bulkActualInitialValues = (): BulkActualValues => ({
     status: 'not_started',
     progressRate: 0,
     actualStartDate: '',
     actualEndDate: '',
   });
+  const [isBulkActualOpen, setIsBulkActualOpen] = useState(false);
+  const [bulkActualApply, setBulkActualApply] = useState<BulkActualApply>(bulkActualInitialApply);
+  const [bulkActualValues, setBulkActualValues] = useState<BulkActualValues>(bulkActualInitialValues);
   const [bulkActualError, setBulkActualError] = useState('');
+
+  // ダイアログを開くタイミングで state を初期化する共通ハンドラ。
+  // onOpenChange に直接束縛することで「開くたびに初期値に戻る」挙動を保証する。
+  const handleBulkEditOpenChange = useCallback(
+    (open: boolean) => {
+      setIsBulkEditOpen(open);
+      if (open) {
+        setBulkEditApply(bulkEditInitialApply());
+        setBulkEditValues(bulkEditInitialValues());
+        setBulkEditError('');
+      }
+    },
+    // 初期値ファクトリは毎回新規生成されるが内容は固定なので deps から除外
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const handleBulkActualOpenChange = useCallback(
+    (open: boolean) => {
+      setIsBulkActualOpen(open);
+      if (open) {
+        setBulkActualApply(bulkActualInitialApply());
+        setBulkActualValues(bulkActualInitialValues());
+        setBulkActualError('');
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
@@ -613,13 +673,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     }
     setIsBulkEditOpen(false);
     setSelectedIds(new Set());
-    setBulkEditApply({
-      assigneeId: false,
-      priority: false,
-      plannedStartDate: false,
-      plannedEndDate: false,
-      plannedEffort: false,
-    });
+    // ※ apply / values の明示リセットは不要。次回開く際に onOpenChange→
+    //    handleBulkEditOpenChange(true) が必ずリセットを行うため。
     await reload();
   }
 
@@ -639,12 +694,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     }
     setIsBulkActualOpen(false);
     setSelectedIds(new Set());
-    setBulkActualApply({
-      status: false,
-      progressRate: false,
-      actualStartDate: false,
-      actualEndDate: false,
-    });
+    // ※ 同上。リセットは onOpenChange 経由
     await reload();
   }
 
@@ -929,7 +979,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       {canEditPmTl && selectedIds.size > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
-          <Dialog open={isBulkEditOpen} onOpenChange={setIsBulkEditOpen}>
+          <Dialog open={isBulkEditOpen} onOpenChange={handleBulkEditOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括編集</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
               <DialogHeader>
@@ -1011,7 +1061,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
-          <Dialog open={isBulkActualOpen} onOpenChange={setIsBulkActualOpen}>
+          <Dialog open={isBulkActualOpen} onOpenChange={handleBulkActualOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括実績更新</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
               <DialogHeader>
