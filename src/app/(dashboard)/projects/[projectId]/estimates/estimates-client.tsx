@@ -6,6 +6,7 @@ import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -41,7 +42,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
     itemName: '',
     category: 'development',
     devMethod: 'scratch',
-    estimatedEffort: '',
+    estimatedEffort: 0,
     effortUnit: 'person_hour',
     rationale: '',
   });
@@ -53,7 +54,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
       fetch(`/api/projects/${projectId}/estimates`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, estimatedEffort: Number(form.estimatedEffort) }),
+        body: JSON.stringify(form),
       }),
     );
     if (!res.ok) {
@@ -62,7 +63,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
       return;
     }
     setIsCreateOpen(false);
-    setForm({ itemName: '', category: 'development', devMethod: 'scratch', estimatedEffort: '', effortUnit: 'person_hour', rationale: '' });
+    setForm({ itemName: '', category: 'development', devMethod: 'scratch', estimatedEffort: 0, effortUnit: 'person_hour', rationale: '' });
     await reload();
   }
 
@@ -117,7 +118,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>見積工数</Label>
-                    <Input type="number" min={0} step={0.5} value={form.estimatedEffort} onChange={(e) => setForm({ ...form, estimatedEffort: e.target.value })} required />
+                    <NumberInput min={1} step={0.5} value={form.estimatedEffort} onChange={(n) => setForm({ ...form, estimatedEffort: n })} required />
                   </div>
                   <div className="space-y-2">
                     <Label>単位</Label>

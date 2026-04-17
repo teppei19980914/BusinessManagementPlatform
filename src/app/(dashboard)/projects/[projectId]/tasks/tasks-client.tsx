@@ -6,6 +6,7 @@ import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import {
   Dialog,
@@ -265,7 +266,7 @@ function TaskTreeNodeImpl({
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">進捗率</Label>
-                <Input type="number" min={0} max={100} value={memberEditForm.progressRate} onChange={(e) => setMemberEditForm({ ...memberEditForm, progressRate: Number(e.target.value) })} className="w-20" />
+                <NumberInput min={1} max={100} value={memberEditForm.progressRate} onChange={(n) => setMemberEditForm({ ...memberEditForm, progressRate: n })} className="w-20" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">開始日（実績）</Label>
@@ -330,7 +331,7 @@ function TaskTreeNodeImpl({
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">見積工数</Label>
-                    <Input type="number" min={0} step={0.5} value={pmEditForm.plannedEffort} onChange={(e) => setPmEditForm({ ...pmEditForm, plannedEffort: Number(e.target.value) })} className="w-24" />
+                    <NumberInput min={1} step={0.5} value={pmEditForm.plannedEffort} onChange={(n) => setPmEditForm({ ...pmEditForm, plannedEffort: n })} className="w-24" />
                   </div>
                 </div>
               )}
@@ -542,7 +543,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     assigneeId: '',
     plannedStartDate: '',
     plannedEndDate: '',
-    plannedEffort: '' as string | number,
+    plannedEffort: 0,
     priority: 'medium',
   });
 
@@ -558,7 +559,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           assigneeId: form.assigneeId,
           plannedStartDate: form.plannedStartDate,
           plannedEndDate: form.plannedEndDate,
-          plannedEffort: Number(form.plannedEffort),
+          plannedEffort: form.plannedEffort,
           priority: form.priority,
         };
 
@@ -580,7 +581,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     setIsCreateOpen(false);
     setParentTaskId('');
-    setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: '', priority: 'medium' });
+    setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: 0, priority: 'medium' });
     await reload();
   }
 
@@ -696,7 +697,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>予定工数（人時）</Label>
-                        <Input type="number" min={0} step={0.5} value={form.plannedEffort} onChange={(e) => setForm({ ...form, plannedEffort: e.target.value })} required />
+                        <NumberInput min={1} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
                       </div>
                       <div className="space-y-2">
                         <Label>優先度</Label>
