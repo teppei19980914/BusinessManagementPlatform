@@ -26,6 +26,7 @@ function childFixture(overrides: Partial<WpAggregationChild>): WpAggregationChil
     actualStartDate: null,
     actualEndDate: null,
     status: 'not_started',
+    assigneeId: null,
     ...overrides,
   };
 }
@@ -250,6 +251,7 @@ describe('aggregateWpFromChildren', () => {
       actualStartDate: null,
       actualEndDate: null,
       status: 'not_started',
+      assigneeId: null,
     });
   });
 
@@ -367,6 +369,42 @@ describe('aggregateWpFromChildren', () => {
       childFixture({ status: 'not_started' }),
     ];
     expect(aggregateWpFromChildren(children).status).toBe('not_started');
+  });
+
+  // --- 担当者集約 (uniform-assignee) ---
+  it('子の担当者がすべて同一（user-A）なら親の担当者も user-A', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A' }),
+      childFixture({ assigneeId: 'user-A' }),
+      childFixture({ assigneeId: 'user-A' }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeId).toBe('user-A');
+  });
+
+  it('子の担当者が混在（user-A と user-B）なら親の担当者は null', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A' }),
+      childFixture({ assigneeId: 'user-B' }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeId).toBeNull();
+  });
+
+  it('子の担当者が一部 null と user-A 混在なら親の担当者は null', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A' }),
+      childFixture({ assigneeId: null }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeId).toBeNull();
+  });
+
+  it('子が全て未アサイン (null) なら親の担当者も null', () => {
+    const children = [childFixture({ assigneeId: null }), childFixture({ assigneeId: null })];
+    expect(aggregateWpFromChildren(children).assigneeId).toBeNull();
+  });
+
+  it('子が 1 件のみで user-A なら親も user-A（単一子のケース）', () => {
+    const children = [childFixture({ assigneeId: 'user-A' })];
+    expect(aggregateWpFromChildren(children).assigneeId).toBe('user-A');
   });
 });
 

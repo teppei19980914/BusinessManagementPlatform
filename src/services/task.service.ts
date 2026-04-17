@@ -545,6 +545,7 @@ export type WpAggregationChild = {
   actualStartDate: Date | null;
   actualEndDate: Date | null;
   status: string;
+  assigneeId: string | null;
 };
 
 export type WpAggregationResult = {
@@ -555,6 +556,12 @@ export type WpAggregationResult = {
   actualStartDate: Date | null;
   actualEndDate: Date | null;
   status: string;
+  /**
+   * 子の担当者がすべて同一（非 null）なら親もその担当者を共有する。
+   * 混在または全て未アサインなら null（担当者なし）。
+   * 再帰的 recalculateAncestors により、孫以降の変更もボトムアップで伝播する。
+   */
+  assigneeId: string | null;
 };
 
 export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggregationResult {
@@ -567,6 +574,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
       actualStartDate: null,
       actualEndDate: null,
       status: 'not_started',
+      assigneeId: null,
     };
   }
 
@@ -606,6 +614,16 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
   const rawActualEnd = maxDate(pickDates((c) => c.actualEndDate));
   const normalized = normalizeActualDatesForStatus(wpStatus, rawActualStart, rawActualEnd);
 
+  // 担当者集約: 直接の子の assigneeId がすべて同一 (非 null) なら親もその assignee を共有。
+  // 子 WP は既に自身の recalculateAncestors でボトムアップ集約されているため、
+  // 直接の子のみ見ればよい（recalcAncestors の再帰呼び出しで孫以降の変更も反映される）。
+  //   例) 子 ACT 3 件がすべて user-A → 親 WP も user-A
+  //       子 ACT が user-A と user-B 混在 → 親 WP は null
+  //       子がすべて未アサイン (null) → 親 WP も null
+  const distinctAssignees = new Set(children.map((c) => c.assigneeId));
+  const uniformAssignee: string | null
+    = distinctAssignees.size === 1 ? [...distinctAssignees][0] : null;
+
   return {
     plannedEffort: totalEffort,
     progressRate: weightedProgress,
@@ -614,6 +632,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     actualStartDate: normalized.actualStartDate,
     actualEndDate: normalized.actualEndDate,
     status: wpStatus,
+    assigneeId: uniformAssignee,
   };
 }
 
@@ -632,6 +651,7 @@ async function recalculateAncestors(taskId: string): Promise<void> {
           actualEndDate: true,
           status: true,
           type: true,
+          assigneeId: true,
         },
       },
     },
@@ -639,9 +659,16 @@ async function recalculateAncestors(taskId: string): Promise<void> {
   if (!task || task.type !== 'work_package') return;
 
   const aggregated = aggregateWpFromChildren(task.childTasks);
+  // assignee はリレーション経由での更新が必要（Prisma の update は scalar FK を直書きできない場合がある）
+  const { assigneeId, ...rest } = aggregated;
   await prisma.task.update({
     where: { id: taskId },
-    data: aggregated,
+    data: {
+      ...rest,
+      assignee: assigneeId
+        ? { connect: { id: assigneeId } }
+        : { disconnect: true },
+    },
   });
 
   // 親があればさらに上に伝播
