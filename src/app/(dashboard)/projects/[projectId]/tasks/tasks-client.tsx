@@ -105,11 +105,39 @@ function TaskTreeNodeImpl({
     actualEndDate: task.actualEndDate ?? '',
   });
 
-  // メンバーが編集する表示値（即時反映用）
+  // メンバーが編集する表示値（即時反映用）。
+  // かつ 親 task prop の変更（CRUD 後の reload / WP 集計の再計算など）にも自動追従する。
+  // React 公式パターン: https://react.dev/reference/react/useState#storing-information-from-previous-renders
   const [displayStatus, setDisplayStatus] = useState(task.status);
   const [displayProgressRate, setDisplayProgressRate] = useState(task.progressRate);
   const [displayActualStartDate, setDisplayActualStartDate] = useState(task.actualStartDate);
   const [displayActualEndDate, setDisplayActualEndDate] = useState(task.actualEndDate);
+  // 前回レンダーで観測した task prop の値。変化検知用に保持。
+  const [prevTaskSnapshot, setPrevTaskSnapshot] = useState({
+    status: task.status,
+    progressRate: task.progressRate,
+    actualStartDate: task.actualStartDate,
+    actualEndDate: task.actualEndDate,
+  });
+  if (
+    task.status !== prevTaskSnapshot.status
+    || task.progressRate !== prevTaskSnapshot.progressRate
+    || task.actualStartDate !== prevTaskSnapshot.actualStartDate
+    || task.actualEndDate !== prevTaskSnapshot.actualEndDate
+  ) {
+    // 親からの task prop が変わった（reload 後 / 親 WP 集計再計算など）→
+    // display state をサーバの新しい値に追従させる。
+    setPrevTaskSnapshot({
+      status: task.status,
+      progressRate: task.progressRate,
+      actualStartDate: task.actualStartDate,
+      actualEndDate: task.actualEndDate,
+    });
+    setDisplayStatus(task.status);
+    setDisplayProgressRate(task.progressRate);
+    setDisplayActualStartDate(task.actualStartDate);
+    setDisplayActualEndDate(task.actualEndDate);
+  }
 
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
