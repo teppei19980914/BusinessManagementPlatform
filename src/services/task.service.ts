@@ -99,7 +99,7 @@ export async function listTasks(projectId: string): Promise<TaskDTO[]> {
   return buildTree(dtos);
 }
 
-function buildTree(tasks: TaskDTO[]): TaskDTO[] {
+export function buildTree(tasks: TaskDTO[]): TaskDTO[] {
   const map = new Map<string, TaskDTO>();
   const roots: TaskDTO[] = [];
 
@@ -129,6 +129,23 @@ export async function listTasksFlat(projectId: string): Promise<TaskDTO[]> {
     orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
   return tasks.map(toTaskDTO);
+}
+
+/**
+ * ツリー構造とフラット構造を同時に必要とする画面向け。
+ * 1 回の DB クエリで両方のビューを生成する（listTasks + listTasksFlat の 2 クエリを集約）。
+ * ツリー内のノードと flat のノードは別オブジェクトなので、双方を独立に変更しても影響しない。
+ */
+export async function listTasksWithTree(
+  projectId: string,
+): Promise<{ tree: TaskDTO[]; flat: TaskDTO[] }> {
+  const tasks = await prisma.task.findMany({
+    where: { projectId, deletedAt: null },
+    include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
+    orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
+  });
+  const flat = tasks.map(toTaskDTO);
+  return { tree: buildTree(flat), flat };
 }
 
 export async function getTask(taskId: string): Promise<TaskDTO | null> {

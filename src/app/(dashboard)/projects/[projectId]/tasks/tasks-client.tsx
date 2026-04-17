@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -48,19 +48,7 @@ function collectAllIds(nodes: TaskDTO[]): string[] {
   return ids;
 }
 
-function TaskTreeNode({
-  task,
-  depth,
-  canEditPmTl,
-  userId,
-  projectId,
-  router,
-  onLoading,
-  selectedIds,
-  onToggleSelect,
-  members,
-  parentOptions,
-}: {
+type TaskTreeNodeProps = {
   task: TaskDTO;
   depth: number;
   canEditPmTl: boolean;
@@ -68,11 +56,27 @@ function TaskTreeNode({
   projectId: string;
   router: ReturnType<typeof useRouter>;
   onLoading: <T>(fn: () => Promise<T>) => Promise<T>;
+  isSelected: boolean;
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   members: MemberDTO[];
   parentOptions: { id: string; label: string }[];
-}) {
+};
+
+function TaskTreeNodeImpl({
+  task,
+  depth,
+  canEditPmTl,
+  userId,
+  projectId,
+  router,
+  onLoading,
+  isSelected,
+  selectedIds,
+  onToggleSelect,
+  members,
+  parentOptions,
+}: TaskTreeNodeProps) {
   // PM/TL 用の編集フォーム
   const [showPmEdit, setShowPmEdit] = useState(false);
   const [pmEditForm, setPmEditForm] = useState({
@@ -163,7 +167,7 @@ function TaskTreeNode({
       <tr className={`border-b hover:bg-gray-50 ${isWP ? 'bg-gray-50/50' : ''}`}>
         {canEditPmTl && (
           <td className="px-2 py-2 w-8">
-            <input type="checkbox" checked={selectedIds.has(task.id)} onChange={() => onToggleSelect(task.id)} className="rounded" />
+            <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(task.id)} className="rounded" />
           </td>
         )}
         <td className="px-3 py-2" style={{ paddingLeft: `${depth * 24 + 12}px` }}>
@@ -342,6 +346,7 @@ function TaskTreeNode({
           projectId={projectId}
           router={router}
           onLoading={onLoading}
+          isSelected={selectedIds.has(child.id)}
           selectedIds={selectedIds}
           onToggleSelect={onToggleSelect}
           members={members}
@@ -351,6 +356,25 @@ function TaskTreeNode({
     </>
   );
 }
+
+/**
+ * メモ化: 親ツリーの state 変化（他ノードの編集フォーム開閉や選択状態変更など）で
+ * このノード自身に関係ない再描画を抑制する。
+ * selectedIds は参照が変わる Set なので比較対象から外し、代わりに親で算出した isSelected（boolean）で判定する。
+ */
+const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
+  prev.task === next.task
+  && prev.depth === next.depth
+  && prev.canEditPmTl === next.canEditPmTl
+  && prev.userId === next.userId
+  && prev.projectId === next.projectId
+  && prev.router === next.router
+  && prev.onLoading === next.onLoading
+  && prev.isSelected === next.isSelected
+  && prev.onToggleSelect === next.onToggleSelect
+  && prev.members === next.members
+  && prev.parentOptions === next.parentOptions,
+);
 
 export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId }: Props) {
   const router = useRouter();
@@ -374,13 +398,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     }
   }
 
-  function toggleSelect(id: string) {
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  }
+  }, []);
 
   const [bulkAssigneeId, setBulkAssigneeId] = useState('');
   const [bulkPriority, setBulkPriority] = useState('');
@@ -746,6 +770,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 projectId={projectId}
                 router={router}
                 onLoading={withLoading}
+                isSelected={selectedIds.has(task.id)}
                 selectedIds={selectedIds}
                 onToggleSelect={toggleSelect}
                 members={members}

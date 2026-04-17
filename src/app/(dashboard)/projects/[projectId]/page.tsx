@@ -3,8 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { getProject } from '@/services/project.service';
 import { checkMembership } from '@/lib/permissions';
 import { listEstimates } from '@/services/estimate.service';
-import { listTasks } from '@/services/task.service';
-import { listTasksFlat } from '@/services/task.service';
+import { listTasksWithTree } from '@/services/task.service';
 import { listRisks } from '@/services/risk.service';
 import { listRetrospectives } from '@/services/retrospective.service';
 import { listMembers } from '@/services/member.service';
@@ -34,16 +33,18 @@ export default async function ProjectDetailPage({ params }: Props) {
   const isAdmin = session.user.systemRole === 'admin';
 
   // 全タブのデータを並列取得
-  const [estimates, tasks, tasksFlat, risks, retros, members, knowledgeResult, allUsers] = await Promise.all([
+  // tasks は tree/flat の両形式を同一クエリで取得（WBS タブ用 tree + ガントタブ用 flat）
+  // knowledge は画面表示上 10 件まで（余計なペイロード送信を防止）
+  const [estimates, tasksResult, risks, retros, members, knowledgeResult, allUsers] = await Promise.all([
     canEdit ? listEstimates(projectId) : Promise.resolve([]),
-    listTasks(projectId),
-    listTasksFlat(projectId),
+    listTasksWithTree(projectId),
     listRisks(projectId),
     listRetrospectives(projectId),
     listMembers(projectId),
-    listKnowledge({ page: 1, limit: 100 }, session.user.id, session.user.systemRole),
+    listKnowledge({ page: 1, limit: 10 }, session.user.id, session.user.systemRole),
     isAdmin ? listUsers() : Promise.resolve([]),
   ]);
+  const { tree: tasks, flat: tasksFlat } = tasksResult;
 
   return (
     <ProjectDetailClient

@@ -91,6 +91,19 @@ export function GanttClient({ tasks: allTasks }: Props) {
     return headers;
   }, [minDate, totalDays]);
 
+  // 週末・今日のマーカー位置のみを抽出（全行共通背景を 1 回だけ描画するため）
+  const dayMarkers = useMemo(
+    () =>
+      dayHeaders
+        .map((dh, index) => ({
+          index,
+          isWeekend: dh.dayOfWeek === 0 || dh.dayOfWeek === 6,
+          isToday: dh.date === today,
+        }))
+        .filter((m) => m.isWeekend || m.isToday),
+    [dayHeaders, today],
+  );
+
   const chartWidth = totalDays * DAY_WIDTH;
 
   if (tasks.length === 0) {
@@ -146,64 +159,68 @@ export function GanttClient({ tasks: allTasks }: Props) {
             </div>
           </div>
 
-          {/* タスク行 */}
-          {tasks.map((task) => {
-            const startDate = task.plannedStartDate!;
-            const endDate = task.plannedEndDate!;
-            const offset = dayOffset(minDate, startDate);
-            const duration = daysBetween(startDate, endDate) + 1;
-            const leftPx = offset * DAY_WIDTH;
-            const widthPx = duration * DAY_WIDTH;
-            const isDelayed = task.status !== 'completed' && new Date(endDate) < new Date();
+          {/* タスク行（背景は行内では描画せず、行群の最背面に 1 枚のオーバーレイで表現 → DOM 要素 O(N×D) を O(N+D) に削減） */}
+          <div className="relative">
+            {/* 週末・今日背景（全タスク行共通 — 絶対配置で縦方向に伸びる）*/}
+            <div
+              className="pointer-events-none absolute top-0 bottom-0 flex"
+              style={{ left: '208px', width: `${chartWidth}px` }}
+              aria-hidden
+            >
+              {dayMarkers.map((dm) => (
+                <div
+                  key={dm.index}
+                  className={`absolute top-0 bottom-0 ${dm.isToday ? 'bg-blue-50' : 'bg-gray-50'}`}
+                  style={{ left: `${dm.index * DAY_WIDTH}px`, width: `${DAY_WIDTH}px` }}
+                />
+              ))}
+            </div>
 
-            return (
-              <div key={task.id} className="flex border-b hover:bg-gray-50">
-                <div className="w-52 shrink-0 border-r px-3 py-2">
-                  {task.parentTaskName && (
-                    <div className="truncate text-[10px] text-gray-400">{task.parentTaskName}</div>
-                  )}
-                  <div className="truncate text-sm font-medium">{task.name}</div>
-                  <div className="text-xs text-gray-400">{task.assigneeName}</div>
-                </div>
-                <div className="relative" style={{ width: `${chartWidth}px` }}>
-                  {/* 週末背景 */}
-                  {dayHeaders.map((dh, i) => {
-                    const isWeekend = dh.dayOfWeek === 0 || dh.dayOfWeek === 6;
-                    const isToday = dh.date === today;
-                    if (!isWeekend && !isToday) return null;
-                    return (
-                      <div
-                        key={i}
-                        className={`absolute top-0 h-full ${isToday ? 'bg-blue-50' : 'bg-gray-50'}`}
-                        style={{ left: `${i * DAY_WIDTH}px`, width: `${DAY_WIDTH}px` }}
-                      />
-                    );
-                  })}
-                  {/* バー */}
-                  <div
-                    className="absolute top-2 h-6 rounded"
-                    style={{
-                      left: `${leftPx}px`,
-                      width: `${Math.max(widthPx, DAY_WIDTH)}px`,
-                    }}
-                  >
-                    {task.isMilestone ? (
-                      <div className="flex h-6 items-center justify-center">
-                        <div className="h-3 w-3 rotate-45 bg-purple-500" />
-                      </div>
-                    ) : (
-                      <div className={`h-6 rounded ${isDelayed ? 'bg-red-200' : 'bg-blue-200'}`}>
-                        <div
-                          className={`h-6 rounded ${isDelayed ? 'bg-red-500' : 'bg-blue-500'}`}
-                          style={{ width: `${task.progressRate}%` }}
-                        />
-                      </div>
+            {tasks.map((task) => {
+              const startDate = task.plannedStartDate!;
+              const endDate = task.plannedEndDate!;
+              const offset = dayOffset(minDate, startDate);
+              const duration = daysBetween(startDate, endDate) + 1;
+              const leftPx = offset * DAY_WIDTH;
+              const widthPx = duration * DAY_WIDTH;
+              const isDelayed = task.status !== 'completed' && new Date(endDate) < new Date();
+
+              return (
+                <div key={task.id} className="relative flex border-b hover:bg-gray-50">
+                  <div className="w-52 shrink-0 border-r bg-white px-3 py-2">
+                    {task.parentTaskName && (
+                      <div className="truncate text-[10px] text-gray-400">{task.parentTaskName}</div>
                     )}
+                    <div className="truncate text-sm font-medium">{task.name}</div>
+                    <div className="text-xs text-gray-400">{task.assigneeName}</div>
+                  </div>
+                  <div className="relative" style={{ width: `${chartWidth}px` }}>
+                    {/* バー */}
+                    <div
+                      className="absolute top-2 h-6 rounded"
+                      style={{
+                        left: `${leftPx}px`,
+                        width: `${Math.max(widthPx, DAY_WIDTH)}px`,
+                      }}
+                    >
+                      {task.isMilestone ? (
+                        <div className="flex h-6 items-center justify-center">
+                          <div className="h-3 w-3 rotate-45 bg-purple-500" />
+                        </div>
+                      ) : (
+                        <div className={`h-6 rounded ${isDelayed ? 'bg-red-200' : 'bg-blue-200'}`}>
+                          <div
+                            className={`h-6 rounded ${isDelayed ? 'bg-red-500' : 'bg-blue-500'}`}
+                            style={{ width: `${task.progressRate}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
 
