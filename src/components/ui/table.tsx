@@ -6,10 +6,7 @@ import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
-    <div
-      data-slot="table-container"
-      className="relative w-full overflow-x-auto"
-    >
+    <div data-slot="table-container" className="relative w-full">
       <table
         data-slot="table"
         className={cn("w-full caption-bottom text-sm", className)}
@@ -69,8 +66,10 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   return (
     <th
       data-slot="table-head"
+      // 一覧画面の横スクロール廃止ポリシーに合わせ、ヘッダの whitespace-nowrap を削除。
+      // 各ページで個別に whitespace-nowrap を指定したい場合は className で上書き可能。
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
+        "h-10 px-2 text-left align-middle font-medium text-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
@@ -82,8 +81,9 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   return (
     <td
       data-slot="table-cell"
+      // 本文セルも同上。長文は自然に折返し、ID・日付等は呼び出し側で whitespace-nowrap を指定する運用。
       className={cn(
-        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
+        "p-2 align-middle break-words [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}

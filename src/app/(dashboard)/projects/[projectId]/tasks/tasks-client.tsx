@@ -16,7 +16,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { LabeledSelect } from '@/components/labeled-select';
+import { Pencil, Trash2 } from 'lucide-react';
 import { collectAllIds, collectSelfAndDescendantIds } from '@/lib/task-tree-utils';
 import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
@@ -89,6 +89,8 @@ type TaskTreeNodeProps = {
   onToggleSelect: (id: string) => void;
   members: MemberDTO[];
   parentOptions: { id: string; label: string }[];
+  /** 編集アイコンクリック時に親 (TasksClient) の編集ダイアログを開くコールバック */
+  onEditClick: (task: TaskDTO) => void;
 };
 
 function TaskTreeNodeImpl({
@@ -104,61 +106,11 @@ function TaskTreeNodeImpl({
   onToggleSelect,
   members,
   parentOptions,
+  onEditClick,
 }: TaskTreeNodeProps) {
-  // PM/TL 用の編集フォーム
-  const [showPmEdit, setShowPmEdit] = useState(false);
-  const [pmEditForm, setPmEditForm] = useState({
-    type: task.type as 'work_package' | 'activity',
-    parentTaskId: task.parentTaskId ?? '',
-    name: task.name,
-    assigneeId: task.assigneeId ?? '',
-    plannedStartDate: task.plannedStartDate,
-    plannedEndDate: task.plannedEndDate,
-    plannedEffort: task.plannedEffort,
-  });
-
-  // メンバー用の編集フォーム（実績）
-  const [showMemberEdit, setShowMemberEdit] = useState(false);
-  const [memberEditForm, setMemberEditForm] = useState({
-    status: task.status,
-    progressRate: task.progressRate,
-    actualStartDate: task.actualStartDate ?? '',
-    actualEndDate: task.actualEndDate ?? '',
-  });
-
-  // メンバーが編集する表示値（即時反映用）。
-  // かつ 親 task prop の変更（CRUD 後の reload / WP 集計の再計算など）にも自動追従する。
-  // React 公式パターン: https://react.dev/reference/react/useState#storing-information-from-previous-renders
-  const [displayStatus, setDisplayStatus] = useState(task.status);
-  const [displayProgressRate, setDisplayProgressRate] = useState(task.progressRate);
-  const [displayActualStartDate, setDisplayActualStartDate] = useState(task.actualStartDate);
-  const [displayActualEndDate, setDisplayActualEndDate] = useState(task.actualEndDate);
-  // 前回レンダーで観測した task prop の値。変化検知用に保持。
-  const [prevTaskSnapshot, setPrevTaskSnapshot] = useState({
-    status: task.status,
-    progressRate: task.progressRate,
-    actualStartDate: task.actualStartDate,
-    actualEndDate: task.actualEndDate,
-  });
-  if (
-    task.status !== prevTaskSnapshot.status
-    || task.progressRate !== prevTaskSnapshot.progressRate
-    || task.actualStartDate !== prevTaskSnapshot.actualStartDate
-    || task.actualEndDate !== prevTaskSnapshot.actualEndDate
-  ) {
-    // 親からの task prop が変わった（reload 後 / 親 WP 集計再計算など）→
-    // display state をサーバの新しい値に追従させる。
-    setPrevTaskSnapshot({
-      status: task.status,
-      progressRate: task.progressRate,
-      actualStartDate: task.actualStartDate,
-      actualEndDate: task.actualEndDate,
-    });
-    setDisplayStatus(task.status);
-    setDisplayProgressRate(task.progressRate);
-    setDisplayActualStartDate(task.actualStartDate);
-    setDisplayActualEndDate(task.actualEndDate);
-  }
+  // 表示値は task prop を直接参照する。
+  // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
+  // CRUD 後の reload + stale-while-revalidate（PR #33）で UI が追従する。
 
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
@@ -166,57 +118,20 @@ function TaskTreeNodeImpl({
   const isAssignee = task.assigneeId === userId;
   // メンバー編集: 担当者のみ（ACT限定）
   const canMemberEdit = !isWP && isAssignee;
-
-  async function handlePmEditSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const body: Record<string, unknown> = {
-      type: pmEditForm.type,
-      name: pmEditForm.name,
-      parentTaskId: pmEditForm.parentTaskId || null,
-    };
-    if (pmEditForm.type === 'activity') {
-      body.assigneeId = pmEditForm.assigneeId || null;
-      body.plannedStartDate = pmEditForm.plannedStartDate;
-      body.plannedEndDate = pmEditForm.plannedEndDate;
-      body.plannedEffort = pmEditForm.plannedEffort;
-    }
-    await onLoading(() =>
-      fetch(`/api/projects/${projectId}/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      }),
-    );
-    setShowPmEdit(false);
-    await reload();
-  }
-
-  async function handleMemberEditSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const res = await onLoading(() =>
-      fetch(`/api/projects/${projectId}/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: memberEditForm.status,
-          progressRate: memberEditForm.progressRate,
-          actualStartDate: memberEditForm.actualStartDate || null,
-          actualEndDate: memberEditForm.actualEndDate || null,
-        }),
-      }),
-    );
-    if (res.ok) {
-      // 画面表示を即時反映
-      setDisplayStatus(memberEditForm.status);
-      setDisplayProgressRate(memberEditForm.progressRate);
-      setDisplayActualStartDate(memberEditForm.actualStartDate || null);
-      setDisplayActualEndDate(memberEditForm.actualEndDate || null);
-    }
-    setShowMemberEdit(false);
-    await reload();
-  }
-
-  const colSpan = canEditPmTl ? 11 : 10;
+  const canOpenEdit = canEditPmTl || canMemberEdit;
+  // 予定期間 / 実績期間の表示テキスト（片方しかない場合は "(未)" を反対側に挿入）
+  const plannedRangeText = (() => {
+    if (!task.plannedStartDate && !task.plannedEndDate) return '-';
+    return `${task.plannedStartDate || '（未）'} 〜 ${task.plannedEndDate || '（未）'}`;
+  })();
+  const actualRangeText = (() => {
+    if (!task.actualStartDate && !task.actualEndDate) return '-';
+    return `${task.actualStartDate || '（未）'} 〜 ${task.actualEndDate || '（未）'}`;
+  })();
+  // 進捗&工数の表示: ACT は 進捗% / 工数h、WP は進捗%のみ（工数は子から集計済を表示）
+  const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
+  void parentOptions;
+  void members;
 
   return (
     <>
@@ -254,41 +169,45 @@ function TaskTreeNodeImpl({
         </td>
         <td className="px-3 py-2 text-sm whitespace-nowrap">{isWP ? '-' : (task.assigneeName || '-')}</td>
         <td className="px-3 py-2 whitespace-nowrap">
-          <Badge variant={statusColors[displayStatus] || 'outline'}>
-            {TASK_STATUSES[displayStatus as keyof typeof TASK_STATUSES] || displayStatus}
+          <Badge variant={statusColors[task.status] || 'outline'}>
+            {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
           </Badge>
         </td>
+        {/* 進捗&工数 */}
         <td className="px-3 py-2 text-sm whitespace-nowrap">
           <div className="flex items-center gap-2">
             <div className="h-2 w-16 rounded-full bg-gray-200">
-              <div
-                className="h-2 rounded-full bg-blue-500"
-                style={{ width: `${displayProgressRate}%` }}
-              />
+              <div className="h-2 rounded-full bg-blue-500" style={{ width: `${task.progressRate}%` }} />
             </div>
-            <span>{displayProgressRate}%</span>
+            <span>{task.progressRate}%</span>
+            {effortText && <span className="text-xs text-gray-500">/ {effortText}</span>}
           </div>
         </td>
-        <td className="px-3 py-2 text-sm whitespace-nowrap">{task.plannedEffort > 0 ? task.plannedEffort : '-'}</td>
-        <td className="px-3 py-2 text-sm whitespace-nowrap">{task.plannedStartDate || '-'}</td>
-        <td className="px-3 py-2 text-sm whitespace-nowrap">{task.plannedEndDate || '-'}</td>
-        <td className="px-3 py-2 text-sm whitespace-nowrap">{displayActualStartDate || '-'}</td>
-        <td className="px-3 py-2 text-sm whitespace-nowrap">{displayActualEndDate || '-'}</td>
+        {/* 予定期間 */}
+        <td className="px-3 py-2 text-sm whitespace-nowrap">{plannedRangeText}</td>
+        {/* 実績期間 */}
+        <td className="px-3 py-2 text-sm whitespace-nowrap">{actualRangeText}</td>
+        {/* 操作 */}
         <td className="px-3 py-2 whitespace-nowrap">
           <div className="flex gap-1">
-            {canMemberEdit && (
-              <Button variant="outline" size="sm" onClick={() => setShowMemberEdit(!showMemberEdit)}>
-                実績
+            {canOpenEdit && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => onEditClick(task)}
+                title="編集"
+                aria-label="編集"
+              >
+                <Pencil className="h-4 w-4" />
               </Button>
             )}
             {canEditPmTl && (
-              <Button variant="outline" size="sm" onClick={() => setShowPmEdit(!showPmEdit)}>編集</Button>
-            )}
-            {canEditPmTl && (
               <Button
-                variant="outline"
-                size="sm"
+                variant="ghost"
+                size="icon-sm"
                 className="text-red-600 hover:text-red-700"
+                title="削除"
+                aria-label="削除"
                 onClick={async () => {
                   const label = isWP ? 'ワークパッケージ' : 'アクティビティ';
                   if (!confirm(`この${label}を削除しますか？`)) return;
@@ -298,138 +217,14 @@ function TaskTreeNodeImpl({
                   await reload();
                 }}
               >
-                削除
+                <Trash2 className="h-4 w-4" />
               </Button>
             )}
           </div>
         </td>
       </tr>
-      {/* メンバー編集フォーム: ステータス・進捗率・実績開始日・実績終了日
-          ステータス整合性ルール:
-          - 未着手: 実績開始/終了とも入力不可（送信時もサーバ側で null に正規化）
-          - 進行中/保留: 実績開始のみ入力可、実績終了は入力不可
-          - 完了: 両方入力可 */}
-      {showMemberEdit && canMemberEdit && (() => {
-        const actualStartDisabled = memberEditForm.status === 'not_started';
-        const actualEndDisabled = memberEditForm.status !== 'completed';
-        return (
-          <tr className="border-b bg-blue-50">
-            <td colSpan={colSpan} className="px-6 py-3">
-              <form onSubmit={handleMemberEditSubmit} className="flex items-end gap-4">
-                <div className="space-y-1">
-                  <Label className="text-xs">ステータス</Label>
-                  <LabeledSelect
-                    value={memberEditForm.status}
-                    onValueChange={(v) => {
-                      if (!v) return;
-                      // ステータス変更時に実績日付をルールに合わせてクリア
-                      const next = { ...memberEditForm, status: v };
-                      if (v === 'not_started') {
-                        next.actualStartDate = '';
-                        next.actualEndDate = '';
-                      } else if (v !== 'completed') {
-                        next.actualEndDate = '';
-                      }
-                      setMemberEditForm(next);
-                    }}
-                    options={TASK_STATUSES}
-                    className="w-28"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">進捗率</Label>
-                  <NumberInput min={1} max={100} value={memberEditForm.progressRate} onChange={(n) => setMemberEditForm({ ...memberEditForm, progressRate: n })} className="w-20" />
-                </div>
-                <div className="space-y-1">
-                  <Label className={`text-xs ${actualStartDisabled ? 'text-gray-400' : ''}`}>開始日（実績）</Label>
-                  <Input
-                    type="date"
-                    value={memberEditForm.actualStartDate}
-                    onChange={(e) => setMemberEditForm({ ...memberEditForm, actualStartDate: e.target.value })}
-                    className="w-36"
-                    disabled={actualStartDisabled}
-                    title={actualStartDisabled ? '未着手のタスクには実績開始日を入力できません' : undefined}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className={`text-xs ${actualEndDisabled ? 'text-gray-400' : ''}`}>終了日（実績）</Label>
-                  <Input
-                    type="date"
-                    value={memberEditForm.actualEndDate}
-                    onChange={(e) => setMemberEditForm({ ...memberEditForm, actualEndDate: e.target.value })}
-                    className="w-36"
-                    disabled={actualEndDisabled}
-                    title={actualEndDisabled ? '完了状態のタスクのみ実績終了日を入力できます' : undefined}
-                  />
-                </div>
-                <Button type="submit" size="sm">更新</Button>
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowMemberEdit(false)}>閉じる</Button>
-              </form>
-            </td>
-          </tr>
-        );
-      })()}
-      {/* PM/TL 編集フォーム */}
-      {showPmEdit && (
-        <tr className="border-b bg-green-50">
-          <td colSpan={colSpan} className="px-6 py-3">
-            <form onSubmit={handlePmEditSubmit} className="space-y-3">
-              <div className="flex flex-wrap items-end gap-4">
-                <div className="space-y-1">
-                  <Label className="text-xs">種別</Label>
-                  <LabeledSelect
-                    value={pmEditForm.type}
-                    onValueChange={(v) => v && setPmEditForm({ ...pmEditForm, type: v as 'work_package' | 'activity' })}
-                    options={WBS_TYPES}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">親WP</Label>
-                  <LabeledSelect
-                    value={pmEditForm.parentTaskId}
-                    onValueChange={(v) => setPmEditForm({ ...pmEditForm, parentTaskId: v ?? '' })}
-                    options={Object.fromEntries(parentOptions.filter((p) => p.id !== task.id).map((p) => [p.id, p.label]))}
-                    placeholder="なし（最上位）"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">名前</Label>
-                  <Input value={pmEditForm.name} onChange={(e) => setPmEditForm({ ...pmEditForm, name: e.target.value })} className="w-48" required />
-                </div>
-              </div>
-              {pmEditForm.type === 'activity' && (
-                <div className="flex flex-wrap items-end gap-4">
-                  <div className="space-y-1">
-                    <Label className="text-xs">担当者</Label>
-                    <LabeledSelect
-                      value={pmEditForm.assigneeId}
-                      onValueChange={(v) => setPmEditForm({ ...pmEditForm, assigneeId: v ?? '' })}
-                      options={Object.fromEntries(members.map((m) => [m.userId, m.userName]))}
-                      placeholder="未設定"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">予定開始日</Label>
-                    <Input type="date" value={pmEditForm.plannedStartDate ?? ''} onChange={(e) => setPmEditForm({ ...pmEditForm, plannedStartDate: e.target.value })} className="w-36" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">予定終了日</Label>
-                    <Input type="date" value={pmEditForm.plannedEndDate ?? ''} onChange={(e) => setPmEditForm({ ...pmEditForm, plannedEndDate: e.target.value })} className="w-36" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">見積工数</Label>
-                    <NumberInput min={1} step={0.5} value={pmEditForm.plannedEffort} onChange={(n) => setPmEditForm({ ...pmEditForm, plannedEffort: n })} className="w-24" />
-                  </div>
-                </div>
-              )}
-              <div className="flex gap-2">
-                <Button type="submit" size="sm">保存</Button>
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowPmEdit(false)}>閉じる</Button>
-              </div>
-            </form>
-          </td>
-        </tr>
-      )}
+      {/* インラインの PM / メンバー編集フォームは廃止。
+          編集アイコンクリック時は TasksClient が保持する EditTaskDialog がロール別項目で開く。*/}
       {!isCollapsed && task.children?.map((child) => (
         <TaskTreeNode
           key={child.id}
@@ -445,6 +240,7 @@ function TaskTreeNodeImpl({
           onToggleSelect={onToggleSelect}
           members={members}
           parentOptions={parentOptions}
+          onEditClick={onEditClick}
         />
       ))}
     </>
@@ -467,7 +263,8 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   && prev.isSelected === next.isSelected
   && prev.onToggleSelect === next.onToggleSelect
   && prev.members === next.members
-  && prev.parentOptions === next.parentOptions,
+  && prev.parentOptions === next.parentOptions
+  && prev.onEditClick === next.onEditClick,
 );
 
 export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload }: Props) {
@@ -487,6 +284,104 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // --- 編集ダイアログ（個別タスクをアイコンから開いて編集）---
+  // 1 ダイアログを複数タスクで共有（TasksClient レベルで保持し、編集対象が null の間は非表示）
+  type EditForm = {
+    type: 'work_package' | 'activity';
+    parentTaskId: string;
+    name: string;
+    assigneeId: string;
+    plannedStartDate: string;
+    plannedEndDate: string;
+    plannedEffort: number;
+    status: string;
+    progressRate: number;
+    actualStartDate: string;
+    actualEndDate: string;
+  };
+  const initEditForm = (task: TaskDTO): EditForm => ({
+    type: task.type as 'work_package' | 'activity',
+    parentTaskId: task.parentTaskId ?? '',
+    name: task.name,
+    assigneeId: task.assigneeId ?? '',
+    plannedStartDate: task.plannedStartDate ?? '',
+    plannedEndDate: task.plannedEndDate ?? '',
+    plannedEffort: task.plannedEffort,
+    status: task.status,
+    progressRate: task.progressRate,
+    actualStartDate: task.actualStartDate ?? '',
+    actualEndDate: task.actualEndDate ?? '',
+  });
+  const [editingTask, setEditingTask] = useState<TaskDTO | null>(null);
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  const [editError, setEditError] = useState('');
+  const openEditDialog = useCallback((task: TaskDTO) => {
+    setEditingTask(task);
+    setEditForm(initEditForm(task));
+    setEditError('');
+    // initEditForm は pure 関数相当でクロージャも安定しているため deps 不要
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const closeEditDialog = useCallback(() => {
+    setEditingTask(null);
+    setEditForm(null);
+    setEditError('');
+  }, []);
+  // 編集対象のロール判定
+  const isEditingActivity = editingTask?.type === 'activity';
+  const editingIsAssignee = editingTask?.assigneeId === userId;
+  const editingCanUpdatePm = canEditPmTl; // PM/TL は「編集」系すべて可
+  const editingCanUpdateActual = canEditPmTl || (isEditingActivity && editingIsAssignee);
+  // 実績日付 disable 判定（PR #39 の整合性ルールに準拠）
+  const editingActualStartDisabled = editForm?.status === 'not_started';
+  const editingActualEndDisabled = editForm?.status !== 'completed';
+
+  async function handleEditDialogSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingTask || !editForm) return;
+    setEditError('');
+    const body: Record<string, unknown> = {};
+
+    // PM/TL 編集項目（PM/TL のみ送信）
+    if (editingCanUpdatePm) {
+      body.type = editForm.type;
+      body.name = editForm.name;
+      body.parentTaskId = editForm.parentTaskId || null;
+      if (editForm.type === 'activity') {
+        body.assigneeId = editForm.assigneeId || null;
+        body.plannedStartDate = editForm.plannedStartDate || null;
+        body.plannedEndDate = editForm.plannedEndDate || null;
+        body.plannedEffort = editForm.plannedEffort;
+      }
+    }
+    // 実績系（PM/TL または担当者本人）
+    if (editingCanUpdateActual) {
+      body.status = editForm.status;
+      body.progressRate = editForm.progressRate;
+      body.actualStartDate = editForm.actualStartDate || null;
+      body.actualEndDate = editForm.actualEndDate || null;
+    }
+
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/${editingTask.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    if (!res.ok) {
+      let message = '更新に失敗しました';
+      try {
+        const json = await res.json();
+        message = json.error?.message || json.error?.details?.[0]?.message || message;
+      } catch {}
+      setEditError(message);
+      return;
+    }
+    closeEditDialog();
+    await reload();
+  }
 
   // 全タスクIDの一覧（全選択用）
   const allTaskIds = useMemo(() => collectAllIds(tasks), [tasks]);
@@ -1136,16 +1031,17 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       )}
 
       {/*
-        テーブルレイアウト方針（2026-04-17）:
-        - `min-w-full` で最低限コンテナ幅を埋めつつ、列数が多い場合は自然と幅が広がる
-        - ユーザの最後の列（操作）が枠線に食い込む問題を、固定 `w-full` で列を圧縮せず
-          content-based sizing に任せることで解消
-        - 日付・操作列には `whitespace-nowrap` を付与し、「2026-」/「04-15」のような折返しを抑制
-        - 名称列のみ `whitespace-normal` で長い名前の wrap を許容
-        - 外枠の border + rounded-lg は視覚的区切りとして残し、`overflow-x-auto` でコンテンツが広いときは
-          ユーザが横スクロールして全列を確認できる
+        テーブルレイアウト方針（2026-04-17 更新）:
+        - 列統合（11 列 → 8 列）で viewport に収まるよう設計
+          * 進捗 + 工数 → 進捗&工数
+          * 予定開始 + 予定終了 → 予定期間
+          * 実績開始 + 実績終了 → 実績期間
+          * 操作の「編集」「削除」テキストボタン → アイコンボタン
+        - 横スクロール（overflow-x-auto）は廃止（ユーザ要件: Shift+ホイール不可 / 全情報を1画面表示）
+        - 日付・操作列の whitespace-nowrap は保持（「2026-」等の折返し防止）
+        - 名称列のみ折返し許容（長い名前に対応）
       */}
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="rounded-lg border">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
@@ -1163,12 +1059,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               <th className="px-3 py-2 text-left font-medium">名称</th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">担当者</th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">ステータス</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">進捗</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">工数</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">予定開始</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">予定終了</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">実績開始</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">実績終了</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">進捗&工数</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">予定期間</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">実績期間</th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">操作</th>
             </tr>
           </thead>
@@ -1188,11 +1081,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 onToggleSelect={toggleSelect}
                 members={members}
                 parentOptions={parentOptions}
+                onEditClick={openEditDialog}
               />
             ))}
             {tasks.length === 0 && (
               <tr>
-                <td colSpan={canEditPmTl ? 11 : 10} className="py-8 text-center text-gray-500">
+                <td colSpan={canEditPmTl ? 8 : 7} className="py-8 text-center text-gray-500">
                   WBS が登録されていません
                 </td>
               </tr>
@@ -1200,6 +1094,149 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </tbody>
         </table>
       </div>
+
+      {/* 編集ダイアログ: ロールに応じて PM/TL 編集項目・実績項目を出し分ける */}
+      <Dialog open={editingTask != null} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editingTask?.type === 'work_package' ? 'ワークパッケージ編集' : 'アクティビティ編集'}
+            </DialogTitle>
+            <DialogDescription>
+              {editingCanUpdatePm && editingCanUpdateActual
+                ? '編集項目と実績項目を同時に更新できます。'
+                : editingCanUpdatePm
+                ? 'タスクの基本情報を編集します。'
+                : '実績（ステータス・進捗率・実績日付）を更新します。'}
+            </DialogDescription>
+          </DialogHeader>
+          {editingTask && editForm && (
+            <form onSubmit={handleEditDialogSubmit} className="space-y-4">
+              {editError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{editError}</div>}
+
+              {/* PM/TL 編集セクション */}
+              {editingCanUpdatePm && (
+                <section className="space-y-3 rounded-md border border-gray-200 p-3">
+                  <h4 className="text-sm font-medium text-gray-700">編集項目</h4>
+                  <div className="space-y-2">
+                    <Label>種別</Label>
+                    <select
+                      value={editForm.type}
+                      onChange={(e) => setEditForm({ ...editForm, type: e.target.value as 'work_package' | 'activity' })}
+                      className={nativeSelectClass}
+                    >
+                      {Object.entries(WBS_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>親WP</Label>
+                    <select
+                      value={editForm.parentTaskId}
+                      onChange={(e) => setEditForm({ ...editForm, parentTaskId: e.target.value })}
+                      className={nativeSelectClass}
+                    >
+                      <option value="">なし（最上位に配置）</option>
+                      {parentOptions.filter((p) => p.id !== editingTask.id).map((p) => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>名称</Label>
+                    <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+                  </div>
+                  {editForm.type === 'activity' && (
+                    <>
+                      <div className="space-y-2">
+                        <Label>担当者</Label>
+                        <select
+                          value={editForm.assigneeId}
+                          onChange={(e) => setEditForm({ ...editForm, assigneeId: e.target.value })}
+                          className={nativeSelectClass}
+                        >
+                          <option value="">未設定</option>
+                          {members.map((m) => (
+                            <option key={m.userId} value={m.userId}>{m.userName}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label>予定開始日</Label>
+                          <Input type="date" value={editForm.plannedStartDate} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>予定終了日</Label>
+                          <Input type="date" value={editForm.plannedEndDate} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>見積工数（人時）</Label>
+                        <NumberInput min={1} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+
+              {/* 実績セクション（PM/TL または ACT の担当者本人のみ）*/}
+              {editingCanUpdateActual && editForm.type === 'activity' && (
+                <section className="space-y-3 rounded-md border border-gray-200 p-3">
+                  <h4 className="text-sm font-medium text-gray-700">実績項目</h4>
+                  <div className="space-y-2">
+                    <Label>ステータス</Label>
+                    <select
+                      value={editForm.status}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const next = { ...editForm, status: v };
+                        // 整合性ルール: 未着手→両クリア、完了以外→実績終了クリア
+                        if (v === 'not_started') { next.actualStartDate = ''; next.actualEndDate = ''; }
+                        else if (v !== 'completed') { next.actualEndDate = ''; }
+                        setEditForm(next);
+                      }}
+                      className={nativeSelectClass}
+                    >
+                      {Object.entries(TASK_STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>進捗率</Label>
+                    <NumberInput min={1} max={100} value={editForm.progressRate} onChange={(n) => setEditForm({ ...editForm, progressRate: n })} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label className={editingActualStartDisabled ? 'text-gray-400' : ''}>実績開始日</Label>
+                      <Input
+                        type="date"
+                        value={editForm.actualStartDate}
+                        onChange={(e) => setEditForm({ ...editForm, actualStartDate: e.target.value })}
+                        disabled={editingActualStartDisabled}
+                        title={editingActualStartDisabled ? '未着手のタスクには実績開始日を入力できません' : undefined}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className={editingActualEndDisabled ? 'text-gray-400' : ''}>実績終了日</Label>
+                      <Input
+                        type="date"
+                        value={editForm.actualEndDate}
+                        onChange={(e) => setEditForm({ ...editForm, actualEndDate: e.target.value })}
+                        disabled={editingActualEndDisabled}
+                        title={editingActualEndDisabled ? '完了状態のタスクのみ実績終了日を入力できます' : undefined}
+                      />
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={closeEditDialog}>キャンセル</Button>
+                <Button type="submit">保存</Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
