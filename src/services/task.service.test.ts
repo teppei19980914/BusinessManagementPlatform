@@ -1,7 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import { validateWbsTemplate, parseCsvTemplate, parseCsvLine, buildTree } from './task.service';
+import {
+  validateWbsTemplate,
+  parseCsvTemplate,
+  parseCsvLine,
+  buildTree,
+  aggregateWpFromChildren,
+  type WpAggregationChild,
+} from './task.service';
 import type { TaskDTO } from './task.service';
 import type { WbsTemplateTask } from '@/lib/validators/task';
+import type { Prisma } from '@/generated/prisma/client';
+
+// Prisma.Decimal の代わりにテスト用の軽量代替を提供。
+// Number() で変換される前提なので primitive number / string どちらも受け付けられる。
+const dec = (n: number): Prisma.Decimal => n as unknown as Prisma.Decimal;
+
+function childFixture(overrides: Partial<WpAggregationChild>): WpAggregationChild {
+  return {
+    plannedEffort: dec(0),
+    progressRate: 0,
+    plannedStartDate: null,
+    plannedEndDate: null,
+    actualStartDate: null,
+    actualEndDate: null,
+    status: 'not_started',
+    ...overrides,
+  };
+}
 
 function baseDto(overrides: Partial<TaskDTO>): TaskDTO {
   return {
@@ -209,5 +234,104 @@ describe('parseCsvTemplate', () => {
     const tasks = parseCsvTemplate(csv);
     expect(tasks).toHaveLength(1);
     expect(tasks[0].name).toBe('テスト');
+  });
+});
+
+describe('aggregateWpFromChildren', () => {
+  it('子が0件なら全値を初期値（0 / null / not_started）にする', () => {
+    const result = aggregateWpFromChildren([]);
+    expect(result).toEqual({
+      plannedEffort: 0,
+      progressRate: 0,
+      plannedStartDate: null,
+      plannedEndDate: null,
+      actualStartDate: null,
+      actualEndDate: null,
+      status: 'not_started',
+    });
+  });
+
+  it('子の工数合計・加重平均進捗率を計算する', () => {
+    const children = [
+      childFixture({ plannedEffort: dec(10), progressRate: 50 }),
+      childFixture({ plannedEffort: dec(30), progressRate: 100 }),
+    ];
+    const result = aggregateWpFromChildren(children);
+    expect(result.plannedEffort).toBe(40);
+    // 加重平均: (10*50 + 30*100) / 40 = 87.5 → 四捨五入で 88
+    expect(result.progressRate).toBe(88);
+  });
+
+  it('予定日付を子の最小開始〜最大終了で集計する', () => {
+    const children = [
+      childFixture({
+        plannedStartDate: new Date('2026-05-01'),
+        plannedEndDate: new Date('2026-05-10'),
+      }),
+      childFixture({
+        plannedStartDate: new Date('2026-04-20'),
+        plannedEndDate: new Date('2026-05-15'),
+      }),
+    ];
+    const result = aggregateWpFromChildren(children);
+    expect(result.plannedStartDate?.toISOString().split('T')[0]).toBe('2026-04-20');
+    expect(result.plannedEndDate?.toISOString().split('T')[0]).toBe('2026-05-15');
+  });
+
+  it('実績日付も予定と同じロジック（最小開始〜最大終了）で集計する', () => {
+    const children = [
+      childFixture({
+        actualStartDate: new Date('2026-05-03'),
+        actualEndDate: new Date('2026-05-08'),
+      }),
+      childFixture({
+        actualStartDate: new Date('2026-05-01'),
+        actualEndDate: new Date('2026-05-12'),
+      }),
+    ];
+    const result = aggregateWpFromChildren(children);
+    expect(result.actualStartDate?.toISOString().split('T')[0]).toBe('2026-05-01');
+    expect(result.actualEndDate?.toISOString().split('T')[0]).toBe('2026-05-12');
+  });
+
+  it('実績日付が全て null の子しかない場合は null を返す', () => {
+    const children = [childFixture({}), childFixture({})];
+    const result = aggregateWpFromChildren(children);
+    expect(result.actualStartDate).toBeNull();
+    expect(result.actualEndDate).toBeNull();
+  });
+
+  it('一部の子だけ実績日付を持つ場合、有効な日付のみで集計する', () => {
+    const children = [
+      childFixture({ actualStartDate: new Date('2026-05-05'), actualEndDate: new Date('2026-05-10') }),
+      childFixture({ actualStartDate: null, actualEndDate: null }), // 実績未入力
+    ];
+    const result = aggregateWpFromChildren(children);
+    expect(result.actualStartDate?.toISOString().split('T')[0]).toBe('2026-05-05');
+    expect(result.actualEndDate?.toISOString().split('T')[0]).toBe('2026-05-10');
+  });
+
+  it('子が全て completed ならステータスは completed', () => {
+    const children = [
+      childFixture({ status: 'completed' }),
+      childFixture({ status: 'completed' }),
+    ];
+    expect(aggregateWpFromChildren(children).status).toBe('completed');
+  });
+
+  it('子に in_progress が含まれる場合は in_progress', () => {
+    const children = [
+      childFixture({ status: 'completed' }),
+      childFixture({ status: 'in_progress' }),
+    ];
+    expect(aggregateWpFromChildren(children).status).toBe('in_progress');
+  });
+
+  it('子が全て not_started なら not_started', () => {
+    const children = [
+      childFixture({ status: 'not_started' }),
+      childFixture({ status: 'not_started' }),
+    ];
+    expect(aggregateWpFromChildren(children).status).toBe('not_started');
   });
 });

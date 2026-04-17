@@ -311,12 +311,14 @@ export async function bulkUpdateTasks(
   });
 
   // 親 WP の集計を再計算する必要があるかを判定。
-  // plannedEffort / plannedStartDate / plannedEndDate / status / progressRate いずれかを
-  // 変更した場合は再計算対象。assigneeId / priority / actual 日付は集計に影響しないのでスキップ。
+  // plannedEffort / planned/actual 日付 / status / progressRate いずれかを変更した場合は再計算対象。
+  // assigneeId / priority は集計に影響しないのでスキップ。
   const needsRecalc
     = updates.plannedEffort !== undefined
     || updates.plannedStartDate !== undefined
     || updates.plannedEndDate !== undefined
+    || updates.actualStartDate !== undefined
+    || updates.actualEndDate !== undefined
     || updates.status !== undefined
     || updates.progressRate !== undefined;
 
@@ -385,6 +387,84 @@ async function recalculateAncestorsPublic(taskId: string): Promise<void> {
   return recalculateAncestors(taskId);
 }
 
+/**
+ * 子タスクの集合から WP の集計値を算出する pure 関数。
+ * DB 非依存なので単体テスト可能。
+ *
+ * 実績日付（actualStartDate / actualEndDate）も予定日付と同じロジックで集計する：
+ * 子の有効な actual 日付のうち最小/最大を採用、すべて null なら null。
+ */
+export type WpAggregationChild = {
+  plannedEffort: Prisma.Decimal;
+  progressRate: number;
+  plannedStartDate: Date | null;
+  plannedEndDate: Date | null;
+  actualStartDate: Date | null;
+  actualEndDate: Date | null;
+  status: string;
+};
+
+export type WpAggregationResult = {
+  plannedEffort: number;
+  progressRate: number;
+  plannedStartDate: Date | null;
+  plannedEndDate: Date | null;
+  actualStartDate: Date | null;
+  actualEndDate: Date | null;
+  status: string;
+};
+
+export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggregationResult {
+  if (children.length === 0) {
+    return {
+      plannedEffort: 0,
+      progressRate: 0,
+      plannedStartDate: null,
+      plannedEndDate: null,
+      actualStartDate: null,
+      actualEndDate: null,
+      status: 'not_started',
+    };
+  }
+
+  const totalEffort = children.reduce((sum, c) => sum + Number(c.plannedEffort), 0);
+
+  // 加重平均進捗率（工数ベース）
+  const weightedProgress = totalEffort > 0
+    ? Math.round(children.reduce((sum, c) => sum + Number(c.plannedEffort) * c.progressRate, 0) / totalEffort)
+    : 0;
+
+  // 有効な日付のみを抽出して min/max を取る共通ヘルパー
+  const pickDates = (pick: (c: WpAggregationChild) => Date | null): Date[] =>
+    children.map(pick).filter((d): d is Date => d != null && !isNaN(d.getTime()));
+  const minDate = (dates: Date[]): Date | null =>
+    dates.length > 0 ? new Date(Math.min(...dates.map((d) => d.getTime()))) : null;
+  const maxDate = (dates: Date[]): Date | null =>
+    dates.length > 0 ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null;
+
+  // ステータス自動判定
+  const statuses = children.map((c) => c.status);
+  let wpStatus = 'not_started';
+  if (statuses.every((s) => s === 'completed')) {
+    wpStatus = 'completed';
+  } else if (statuses.some((s) => s === 'in_progress' || s === 'completed')) {
+    wpStatus = 'in_progress';
+  } else if (statuses.some((s) => s === 'on_hold')) {
+    wpStatus = 'on_hold';
+  }
+
+  return {
+    plannedEffort: totalEffort,
+    progressRate: weightedProgress,
+    plannedStartDate: minDate(pickDates((c) => c.plannedStartDate)),
+    plannedEndDate: maxDate(pickDates((c) => c.plannedEndDate)),
+    // 実績日付は予定と同じロジック（min/max）で集計
+    actualStartDate: minDate(pickDates((c) => c.actualStartDate)),
+    actualEndDate: maxDate(pickDates((c) => c.actualEndDate)),
+    status: wpStatus,
+  };
+}
+
 async function recalculateAncestors(taskId: string): Promise<void> {
   const task = await prisma.task.findUnique({
     where: { id: taskId },
@@ -396,6 +476,8 @@ async function recalculateAncestors(taskId: string): Promise<void> {
           progressRate: true,
           plannedStartDate: true,
           plannedEndDate: true,
+          actualStartDate: true,
+          actualEndDate: true,
           status: true,
           type: true,
         },
@@ -404,48 +486,11 @@ async function recalculateAncestors(taskId: string): Promise<void> {
   });
   if (!task || task.type !== 'work_package') return;
 
-  const children = task.childTasks;
-  if (children.length === 0) {
-    await prisma.task.update({
-      where: { id: taskId },
-      data: { plannedEffort: 0, progressRate: 0, plannedStartDate: null, plannedEndDate: null, status: 'not_started' },
-    });
-  } else {
-    const totalEffort = children.reduce((sum, c) => sum + Number(c.plannedEffort), 0);
-
-    // 加重平均進捗率（工数ベース）
-    const weightedProgress = totalEffort > 0
-      ? Math.round(children.reduce((sum, c) => sum + Number(c.plannedEffort) * c.progressRate, 0) / totalEffort)
-      : 0;
-
-    // 日付範囲（子の最小開始日〜最大終了日、無効な日付は除外）
-    const startDates = children.map((c) => c.plannedStartDate).filter((d): d is Date => d != null && !isNaN(d.getTime()));
-    const endDates = children.map((c) => c.plannedEndDate).filter((d): d is Date => d != null && !isNaN(d.getTime()));
-    const minStart = startDates.length > 0 ? new Date(Math.min(...startDates.map((d) => d.getTime()))) : null;
-    const maxEnd = endDates.length > 0 ? new Date(Math.max(...endDates.map((d) => d.getTime()))) : null;
-
-    // ステータス自動判定
-    const statuses = children.map((c) => c.status);
-    let wpStatus = 'not_started';
-    if (statuses.every((s) => s === 'completed')) {
-      wpStatus = 'completed';
-    } else if (statuses.some((s) => s === 'in_progress' || s === 'completed')) {
-      wpStatus = 'in_progress';
-    } else if (statuses.some((s) => s === 'on_hold')) {
-      wpStatus = 'on_hold';
-    }
-
-    await prisma.task.update({
-      where: { id: taskId },
-      data: {
-        plannedEffort: totalEffort,
-        progressRate: weightedProgress,
-        plannedStartDate: minStart,
-        plannedEndDate: maxEnd,
-        status: wpStatus,
-      },
-    });
-  }
+  const aggregated = aggregateWpFromChildren(task.childTasks);
+  await prisma.task.update({
+    where: { id: taskId },
+    data: aggregated,
+  });
 
   // 親があればさらに上に伝播
   if (task.parentTaskId) {
