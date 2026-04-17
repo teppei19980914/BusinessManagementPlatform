@@ -138,12 +138,12 @@ function TaskTreeNodeImpl({
     <>
       <tr className={`border-b hover:bg-gray-50 ${isWP ? 'bg-gray-50/50' : ''}`}>
         {canEditPmTl && (
-          <td className="px-2 py-2 w-8">
+          <td className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
             <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(task.id)} className="rounded" />
           </td>
         )}
-        <td className="px-3 py-2" style={{ paddingLeft: `${depth * 24 + 12}px` }}>
-          <div className="flex items-center gap-2">
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2" style={{ paddingLeft: `${depth * 20 + 8}px` }}>
+          <div className="flex items-center gap-1.5 md:gap-2">
             {isWP && hasChildren ? (
               <button
                 type="button"
@@ -168,16 +168,16 @@ function TaskTreeNodeImpl({
             )}
           </div>
         </td>
-        <td className="px-3 py-2 text-sm whitespace-nowrap">{isWP ? '-' : (task.assigneeName || '-')}</td>
-        <td className="px-3 py-2 whitespace-nowrap">
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{isWP ? '-' : (task.assigneeName || '-')}</td>
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
           <Badge variant={statusColors[task.status] || 'outline'}>
             {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
           </Badge>
         </td>
         {/* 進捗&工数 */}
-        <td className="px-3 py-2 text-sm whitespace-nowrap">
-          <div className="flex items-center gap-2">
-            <div className="h-2 w-16 rounded-full bg-gray-200">
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
+          <div className="flex items-center gap-1.5 md:gap-2">
+            <div className="h-2 w-10 md:w-16 rounded-full bg-gray-200">
               <div className="h-2 rounded-full bg-blue-500" style={{ width: `${task.progressRate}%` }} />
             </div>
             <span>{task.progressRate}%</span>
@@ -185,11 +185,11 @@ function TaskTreeNodeImpl({
           </div>
         </td>
         {/* 予定期間 */}
-        <td className="px-3 py-2 text-sm whitespace-nowrap">{plannedRangeText}</td>
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{plannedRangeText}</td>
         {/* 実績期間 */}
-        <td className="px-3 py-2 text-sm whitespace-nowrap">{actualRangeText}</td>
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{actualRangeText}</td>
         {/* 操作 */}
-        <td className="px-3 py-2 whitespace-nowrap">
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
           <div className="flex gap-1">
             {canOpenEdit && (
               <Button
@@ -1037,22 +1037,22 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       )}
 
       {/*
-        テーブルレイアウト方針（2026-04-17 更新）:
-        - 列統合（11 列 → 8 列）で viewport に収まるよう設計
-          * 進捗 + 工数 → 進捗&工数
-          * 予定開始 + 予定終了 → 予定期間
-          * 実績開始 + 実績終了 → 実績期間
-          * 操作の「編集」「削除」テキストボタン → アイコンボタン
-        - 横スクロール（overflow-x-auto）は廃止（ユーザ要件: Shift+ホイール不可 / 全情報を1画面表示）
+        テーブルレイアウト方針（2026-04-17 再更新）:
+        - 列統合（11 列 → 8 列）は維持
+        - 通常 viewport (1280px+) では 1 画面に収めるが、狭い環境では overflow-x-auto で
+          ラッパ内に横スクロールを閉じ込める（= page 全体の横スクロール・中央寄せ崩れを防止）
+        - 以前あった「wrapper 右 border が overflowed テーブルの実績期間カラムを貫通して
+          縦罫線に見える」バグは、overflow-x-auto でテーブル内にはみ出しを閉じ込めることで解消
+        - 動的リサイズ: md 未満では font-size / padding を圧縮して情報を詰め込む
         - 日付・操作列の whitespace-nowrap は保持（「2026-」等の折返し防止）
         - 名称列のみ折返し許容（長い名前に対応）
       */}
-      <div className="rounded-lg border">
-        <table className="min-w-full text-sm">
+      <div className="rounded-lg border overflow-x-auto">
+        <table className="min-w-full text-xs md:text-sm">
           <thead className="bg-gray-50">
             <tr>
               {canEditPmTl && (
-                <th className="px-2 py-2 w-8">
+                <th className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
                   <input
                     type="checkbox"
                     checked={isAllSelected}
@@ -1062,13 +1062,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   />
                 </th>
               )}
-              <th className="px-3 py-2 text-left font-medium">名称</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">担当者</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">ステータス</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">進捗&工数</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">予定期間</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">実績期間</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">操作</th>
+              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium">名称</th>
+              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">担当者</th>
+              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">ステータス</th>
+              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">進捗&工数</th>
+              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">予定期間</th>
+              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">実績期間</th>
+              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">操作</th>
             </tr>
           </thead>
           <tbody>

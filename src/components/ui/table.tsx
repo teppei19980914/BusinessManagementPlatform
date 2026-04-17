@@ -5,11 +5,20 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
+  // overflow-x-auto の役割（2026-04-17 再導入）:
+  //   テーブルのコンテンツ幅が親 (main max-w-7xl) を超えた場合、
+  //   page-level の横スクロールが発生し、ヘッダを含めページ全体が右方向にずれて
+  //   見える (= "右寄り" と認識される) 問題を起こしていた。
+  //   また、wrapper の右 border が overflow したテーブルの途中を貫通して
+  //   「実績期間カラムに縦罫線が出ている」と誤認される見た目にもなっていた。
+  //   wrapper 側に overflow-x-auto を置くことで、テーブルのはみ出しは wrapper 内に
+  //   閉じ込められ、page 全体のレイアウトは max-w-7xl に沿って中央寄せを保てる。
+  //   はみ出しが無い場合はスクロールバーも出ないので、通常閲覧時の UX は維持。
   return (
-    <div data-slot="table-container" className="relative w-full">
+    <div data-slot="table-container" className="relative w-full overflow-x-auto">
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn("w-full caption-bottom text-xs md:text-sm", className)}
         {...props}
       />
     </div>
@@ -66,10 +75,10 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   return (
     <th
       data-slot="table-head"
-      // 一覧画面の横スクロール廃止ポリシーに合わせ、ヘッダの whitespace-nowrap を削除。
-      // 各ページで個別に whitespace-nowrap を指定したい場合は className で上書き可能。
+      // 動的リサイズ: 小さい viewport では padding と高さを縮めて情報を詰め込む。
+      // md (768px) 以上で通常サイズ。各ページで whitespace-nowrap 等は className 上書き可能。
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium text-foreground [&:has([role=checkbox])]:pr-0",
+        "h-8 px-1.5 md:h-10 md:px-2 text-left align-middle font-medium text-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
@@ -81,9 +90,10 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   return (
     <td
       data-slot="table-cell"
-      // 本文セルも同上。長文は自然に折返し、ID・日付等は呼び出し側で whitespace-nowrap を指定する運用。
+      // 本文セルも同様に compact→通常の段階を持つ。長文は自然に折返し、
+      // ID・日付等は呼び出し側で whitespace-nowrap を指定する運用。
       className={cn(
-        "p-2 align-middle break-words [&:has([role=checkbox])]:pr-0",
+        "p-1.5 md:p-2 align-middle break-words [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
