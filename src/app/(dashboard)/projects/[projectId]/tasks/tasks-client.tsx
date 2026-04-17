@@ -786,7 +786,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
           </Button>
           <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">インポート</DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>インポート</DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>WBS テンプレートインポート</DialogTitle>
@@ -803,7 +803,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             </DialogContent>
           </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">追加</DialogTrigger>
+            <DialogTrigger render={<Button size="sm" />}>追加</DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>{createType === 'work_package' ? 'ワークパッケージ作成' : 'アクティビティ作成'}</DialogTitle>
@@ -917,9 +917,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
           <Dialog open={isBulkEditOpen} onOpenChange={setIsBulkEditOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">
-              一括編集...
-            </DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>一括編集</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>一括編集（{selectedIds.size} 件）</DialogTitle>
@@ -1001,9 +999,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             </DialogContent>
           </Dialog>
           <Dialog open={isBulkActualOpen} onOpenChange={setIsBulkActualOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">
-              一括実績更新...
-            </DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>一括実績更新</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>一括実績更新（{selectedIds.size} 件）</DialogTitle>
