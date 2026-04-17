@@ -248,9 +248,16 @@ function TaskTreeNodeImpl({
 }
 
 /**
- * メモ化: 親ツリーの state 変化（他ノードの編集フォーム開閉や選択状態変更など）で
- * このノード自身に関係ない再描画を抑制する。
- * selectedIds は参照が変わる Set なので比較対象から外し、代わりに親で算出した isSelected（boolean）で判定する。
+ * メモ化: 関連しない再描画を抑制する。
+ *
+ * 重要: `selectedIds` は比較対象に含める必要がある。子タスクの isSelected は
+ * 「この TaskTreeNode の render 結果内で `selectedIds.has(child.id)` を評価して
+ * 子 TaskTreeNode に prop として渡す」ため、親 TaskTreeNode が再描画されないと
+ * 子 TaskTreeNode に最新の isSelected が届かない。
+ *
+ * 以前は selectedIds を除外して isSelected (boolean) のみで判定していたが、
+ * その結果として **子タスクへの isSelected 変更が伝播せず、子のチェックボックスが
+ * UI 上で更新されない不具合** が発生していた。
  */
 const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   prev.task === next.task
@@ -261,6 +268,7 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   && prev.reload === next.reload
   && prev.onLoading === next.onLoading
   && prev.isSelected === next.isSelected
+  && prev.selectedIds === next.selectedIds
   && prev.onToggleSelect === next.onToggleSelect
   && prev.members === next.members
   && prev.parentOptions === next.parentOptions
