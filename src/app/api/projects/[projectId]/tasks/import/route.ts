@@ -3,6 +3,9 @@ import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers'
 import { parseCsvTemplate, importWbsTemplate, validateWbsTemplate } from '@/services/task.service';
 import { recordAuditLog } from '@/services/audit.service';
 
+// WBS CSV インポートは Node Runtime を明示（Prisma + 大きめ body の扱い安定化のため）
+export const runtime = 'nodejs';
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> },
@@ -14,9 +17,37 @@ export async function POST(
   const forbidden = await checkProjectPermission(user, projectId, 'task:create');
   if (forbidden) return forbidden;
 
-  // CSV テキストを取得（BOM 除去）
-  const rawText = await req.text();
-  const csvText = rawText.replace(/^\uFEFF/, '').trim();
+  // multipart/form-data から CSV ファイルを取り出す。
+  // 旧実装は text/csv 生 body を req.text() で受けていたが、Vercel edge 層で
+  // ERR_CONNECTION_RESET を誘発するケースが確認されたため FormData に変更。
+  // 旧形式（text/csv 直接 POST）にもフォールバックして後方互換を維持する。
+  let csvText = '';
+  const contentType = req.headers.get('content-type') ?? '';
+  try {
+    if (contentType.startsWith('multipart/form-data')) {
+      const formData = await req.formData();
+      const file = formData.get('file');
+      if (!(file instanceof File)) {
+        return NextResponse.json(
+          { error: { code: 'VALIDATION_ERROR', message: 'file フィールドにファイルを指定してください' } },
+          { status: 400 },
+        );
+      }
+      csvText = await file.text();
+    } else {
+      // 後方互換: text/csv 等の生 body
+      csvText = await req.text();
+    }
+  } catch (e) {
+    console.error('[wbs-import] body parse error', e);
+    return NextResponse.json(
+      { error: { code: 'VALIDATION_ERROR', message: 'リクエストボディを読み取れませんでした' } },
+      { status: 400 },
+    );
+  }
+
+  // BOM 除去
+  csvText = csvText.replace(/^\uFEFF/, '').trim();
   if (!csvText) {
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: 'CSVデータが空です' } },

@@ -685,19 +685,32 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setImportError('');
     if (!importFile) { setImportError('ファイルを選択してください'); return; }
 
-    const csvText = await importFile.text();
+    // 多くの環境で挙動が安定する multipart/form-data で送信。
+    // （以前の `text/csv` 生 body は Vercel 側のルーティング / edge 層で
+    //   ERR_CONNECTION_RESET を誘発するケースが観測されたため）
+    const formData = new FormData();
+    formData.append('file', importFile);
 
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/import`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/csv; charset=utf-8' },
-        body: csvText,
+        // Content-Type は boundary 付きで自動設定されるため明示しない
+        body: formData,
       }),
     );
 
     if (!res.ok) {
-      const json = await res.json();
-      setImportError(json.error?.message || json.error?.details?.[0]?.message || 'インポートに失敗しました');
+      // サーバから JSON エラーレスポンスが返らない場合（接続切断等）にも
+      // ユーザに原因を提示できるよう text() でフォールバックする
+      let message = 'インポートに失敗しました';
+      try {
+        const json = await res.json();
+        message = json.error?.message || json.error?.details?.[0]?.message || message;
+      } catch {
+        const text = await res.text().catch(() => '');
+        if (text) message = text.slice(0, 200);
+      }
+      setImportError(message);
       return;
     }
 
