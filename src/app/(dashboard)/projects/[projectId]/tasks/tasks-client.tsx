@@ -27,6 +27,12 @@ type Props = {
   projectRole: string | null;
   systemRole: string;
   userId: string;
+  /**
+   * CRUD 後に呼び出すデータ再取得ハンドラ。
+   * 親コンポーネントが保持する lazy fetch の state を再フェッチするために使う。
+   * 未指定時は従来の router.refresh() フォールバック（後方互換）。
+   */
+  onReload?: () => Promise<void> | void;
 };
 
 const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -54,7 +60,7 @@ type TaskTreeNodeProps = {
   canEditPmTl: boolean;
   userId: string;
   projectId: string;
-  router: ReturnType<typeof useRouter>;
+  reload: () => Promise<void> | void;
   onLoading: <T>(fn: () => Promise<T>) => Promise<T>;
   isSelected: boolean;
   selectedIds: Set<string>;
@@ -69,7 +75,7 @@ function TaskTreeNodeImpl({
   canEditPmTl,
   userId,
   projectId,
-  router,
+  reload,
   onLoading,
   isSelected,
   selectedIds,
@@ -132,7 +138,7 @@ function TaskTreeNodeImpl({
       }),
     );
     setShowPmEdit(false);
-    router.refresh();
+    await reload();
   }
 
   async function handleMemberEditSubmit(e: React.FormEvent) {
@@ -157,7 +163,7 @@ function TaskTreeNodeImpl({
       setDisplayActualEndDate(memberEditForm.actualEndDate || null);
     }
     setShowMemberEdit(false);
-    router.refresh();
+    await reload();
   }
 
   const colSpan = canEditPmTl ? 11 : 10;
@@ -239,7 +245,7 @@ function TaskTreeNodeImpl({
                   await onLoading(() =>
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
-                  router.refresh();
+                  await reload();
                 }}
               >
                 削除
@@ -344,7 +350,7 @@ function TaskTreeNodeImpl({
           canEditPmTl={canEditPmTl}
           userId={userId}
           projectId={projectId}
-          router={router}
+          reload={reload}
           onLoading={onLoading}
           isSelected={selectedIds.has(child.id)}
           selectedIds={selectedIds}
@@ -368,7 +374,7 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   && prev.canEditPmTl === next.canEditPmTl
   && prev.userId === next.userId
   && prev.projectId === next.projectId
-  && prev.router === next.router
+  && prev.reload === next.reload
   && prev.onLoading === next.onLoading
   && prev.isSelected === next.isSelected
   && prev.onToggleSelect === next.onToggleSelect
@@ -376,11 +382,20 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   && prev.parentOptions === next.parentOptions,
 );
 
-export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId }: Props) {
+export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
+
+  // 親から渡された遅延フェッチ再取得ハンドラ。未指定時は router.refresh() にフォールバック。
+  const reload = useCallback(async () => {
+    if (onReload) {
+      await onReload();
+    } else {
+      router.refresh();
+    }
+  }, [onReload, router]);
 
   const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -418,7 +433,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       );
     }
     setSelectedIds(new Set());
-    router.refresh();
+    await reload();
   }
 
   async function handleBulkUpdate() {
@@ -441,7 +456,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setSelectedIds(new Set());
     setBulkAssigneeId('');
     setBulkPriority('');
-    router.refresh();
+    await reload();
   }
 
   // --- WBS テンプレートエクスポート (CSV) ---
@@ -499,7 +514,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     setIsImportOpen(false);
     setImportFile(null);
-    router.refresh();
+    await reload();
   }
 
   const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
@@ -566,7 +581,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setIsCreateOpen(false);
     setParentTaskId('');
     setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: '', priority: 'medium' });
-    router.refresh();
+    await reload();
   }
 
   // Dialog 内のセレクト用スタイル（native select — base-ui Select は Dialog Portal と干渉するため）
@@ -768,7 +783,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 canEditPmTl={canEditPmTl}
                 userId={userId}
                 projectId={projectId}
-                router={router}
+                reload={reload}
                 onLoading={withLoading}
                 isSelected={selectedIds.has(task.id)}
                 selectedIds={selectedIds}

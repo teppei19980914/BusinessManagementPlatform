@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,8 @@ type Props = {
   canEdit: boolean;
   canCreate: boolean;
   systemRole: string;
+  /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
+  onReload?: () => Promise<void> | void;
 };
 
 const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
@@ -33,9 +35,16 @@ const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
   low: 'secondary',
 };
 
-export function RisksClient({ projectId, risks, members, canCreate, systemRole }: Props) {
+export function RisksClient({ projectId, risks, members, canCreate, systemRole, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const reload = useCallback(async () => {
+    if (onReload) {
+      await onReload();
+    } else {
+      router.refresh();
+    }
+  }, [onReload, router]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
@@ -66,7 +75,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
     }
     setIsCreateOpen(false);
     setForm({ type: 'risk', title: '', content: '', impact: 'medium', likelihood: 'medium', priority: 'medium', assigneeId: '' });
-    router.refresh();
+    await reload();
   }
 
   async function handleExport() {
@@ -175,7 +184,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
                         body: JSON.stringify({ state: v }),
                       }),
                     );
-                    router.refresh();
+                    await reload();
                   }}
                   options={RISK_ISSUE_STATES}
                   className="w-24"
@@ -194,7 +203,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole }
                       await withLoading(() =>
                         fetch(`/api/projects/${projectId}/risks/${r.id}`, { method: 'DELETE' }),
                       );
-                      router.refresh();
+                      await reload();
                     }}
                   >
                     削除
