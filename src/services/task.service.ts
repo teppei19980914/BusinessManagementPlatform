@@ -207,6 +207,30 @@ export async function createTask(
  * @param actualEndDate ユーザまたは現在値の actualEndDate
  * @returns 正規化後の actualStartDate / actualEndDate
  */
+/**
+ * ステータスと進捗率の整合性ルール（2026-04-17 ユーザ要件）:
+ *   ステータスが completed のときは進捗率を 100% に揃える。
+ *
+ * 理由: 完了ステータスなのに 50% のまま残っていると、親 WP の加重平均進捗が
+ *   実態より低く算出されてしまう（=「完了したのに WP 進捗が 70%」のような不整合）。
+ *   更新経路（updateTask / bulkUpdateTasks / updateTaskProgress）の集計ロジック
+ *   実行前にこの関数を通すことで、ボトムアップ集計値の信頼性を担保する。
+ *
+ * completed 以外は呼び出し側から渡された値をそのまま返す（過剰な書き換えを避けるため）。
+ * 必要に応じて not_started → 0 等の追加ルールは別途検討する。
+ *
+ * @param status 最終ステータス
+ * @param progressRate 呼び出し側の進捗率（未指定時の fallback は呼び出し側で判断）
+ * @returns 正規化後の進捗率
+ */
+export function normalizeProgressForStatus(
+  status: string,
+  progressRate: number | null | undefined,
+): number | null | undefined {
+  if (status === 'completed') return 100;
+  return progressRate;
+}
+
 export function normalizeActualDatesForStatus(
   status: string,
   actualStartDate: Date | null | undefined,
@@ -274,6 +298,12 @@ export async function updateTask(
     data.status = finalStatus;
     data.actualStartDate = normalized.actualStartDate;
     data.actualEndDate = normalized.actualEndDate;
+
+    // ステータス=完了 → 進捗率=100 の整合性ルール（集計前に適用）。
+    // input.progressRate 指定があっても 100 に揃える（完了と矛盾する値を許容しない）。
+    if (finalStatus === 'completed') {
+      data.progressRate = 100;
+    }
   }
 
   const task = await prisma.task.update({
@@ -282,7 +312,7 @@ export async function updateTask(
     include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
   });
 
-  // 親ワークパッケージの集計を更新
+  // 親ワークパッケージの集計を更新（ここは data.progressRate=100 書き込み後なので集計は正しい値を使う）
   if (task.parentTaskId) {
     await recalculateAncestors(task.parentTaskId);
   }
@@ -351,6 +381,13 @@ export async function bulkUpdateTasks(
   }
   if (updates.plannedEffort !== undefined) data.plannedEffort = updates.plannedEffort;
   if (updates.progressRate !== undefined) data.progressRate = updates.progressRate;
+
+  // ステータス=完了 → 進捗率=100 の整合性ルール（集計前に適用）。
+  // bulk では対象タスク全体が一括で completed になるため、progressRate を 100 に揃えても
+  // 個別タスクの現行値を壊さない（どのみち全員 completed で統一される）。
+  if (updates.status === 'completed') {
+    data.progressRate = 100;
+  }
 
   // status / actualStartDate / actualEndDate はステータス整合性ルールに基づき一括正規化する。
   // 一括更新では対象タスクごとの現行 actual 日付を見に行かず、bulk で指定された値のみを
@@ -463,11 +500,14 @@ export async function updateTaskProgress(
     current?.actualEndDate ?? null,
   );
 
+  // ステータス=完了 → 進捗率=100 の整合性ルール（集計前に適用）
+  const normalizedProgress = input.status === 'completed' ? 100 : input.progressRate;
+
   // タスク本体の進捗率・ステータス・実績日付を更新
   const task = await prisma.task.update({
     where: { id: taskId },
     data: {
-      progressRate: input.progressRate,
+      progressRate: normalizedProgress,
       status: input.status,
       actualStartDate: normalized.actualStartDate,
       actualEndDate: normalized.actualEndDate,
@@ -475,7 +515,7 @@ export async function updateTaskProgress(
     },
   });
 
-  // 親ワークパッケージの集計を更新
+  // 親ワークパッケージの集計を更新（完了時は 100% 書き込み後なので加重平均が正しく計算される）
   if (task.parentTaskId) {
     await recalculateAncestors(task.parentTaskId);
   }
@@ -505,6 +545,7 @@ export type WpAggregationChild = {
   actualStartDate: Date | null;
   actualEndDate: Date | null;
   status: string;
+  assigneeId: string | null;
 };
 
 export type WpAggregationResult = {
@@ -515,6 +556,12 @@ export type WpAggregationResult = {
   actualStartDate: Date | null;
   actualEndDate: Date | null;
   status: string;
+  /**
+   * 子の担当者がすべて同一（非 null）なら親もその担当者を共有する。
+   * 混在または全て未アサインなら null（担当者なし）。
+   * 再帰的 recalculateAncestors により、孫以降の変更もボトムアップで伝播する。
+   */
+  assigneeId: string | null;
 };
 
 export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggregationResult {
@@ -527,6 +574,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
       actualStartDate: null,
       actualEndDate: null,
       status: 'not_started',
+      assigneeId: null,
     };
   }
 
@@ -566,6 +614,16 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
   const rawActualEnd = maxDate(pickDates((c) => c.actualEndDate));
   const normalized = normalizeActualDatesForStatus(wpStatus, rawActualStart, rawActualEnd);
 
+  // 担当者集約: 直接の子の assigneeId がすべて同一 (非 null) なら親もその assignee を共有。
+  // 子 WP は既に自身の recalculateAncestors でボトムアップ集約されているため、
+  // 直接の子のみ見ればよい（recalcAncestors の再帰呼び出しで孫以降の変更も反映される）。
+  //   例) 子 ACT 3 件がすべて user-A → 親 WP も user-A
+  //       子 ACT が user-A と user-B 混在 → 親 WP は null
+  //       子がすべて未アサイン (null) → 親 WP も null
+  const distinctAssignees = new Set(children.map((c) => c.assigneeId));
+  const uniformAssignee: string | null
+    = distinctAssignees.size === 1 ? [...distinctAssignees][0] : null;
+
   return {
     plannedEffort: totalEffort,
     progressRate: weightedProgress,
@@ -574,6 +632,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     actualStartDate: normalized.actualStartDate,
     actualEndDate: normalized.actualEndDate,
     status: wpStatus,
+    assigneeId: uniformAssignee,
   };
 }
 
@@ -592,6 +651,7 @@ async function recalculateAncestors(taskId: string): Promise<void> {
           actualEndDate: true,
           status: true,
           type: true,
+          assigneeId: true,
         },
       },
     },
@@ -599,9 +659,16 @@ async function recalculateAncestors(taskId: string): Promise<void> {
   if (!task || task.type !== 'work_package') return;
 
   const aggregated = aggregateWpFromChildren(task.childTasks);
+  // assignee はリレーション経由での更新が必要（Prisma の update は scalar FK を直書きできない場合がある）
+  const { assigneeId, ...rest } = aggregated;
   await prisma.task.update({
     where: { id: taskId },
-    data: aggregated,
+    data: {
+      ...rest,
+      assignee: assigneeId
+        ? { connect: { id: assigneeId } }
+        : { disconnect: true },
+    },
   });
 
   // 親があればさらに上に伝播

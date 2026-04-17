@@ -1,7 +1,8 @@
 import { auth } from '@/lib/auth';
 import { redirect, notFound } from 'next/navigation';
 import { checkMembership } from '@/lib/permissions';
-import { listTasksFlat } from '@/services/task.service';
+import { listTasks } from '@/services/task.service';
+import { listMembers } from '@/services/member.service';
 import { GanttClient } from './gantt-client';
 
 type Props = { params: Promise<{ projectId: string }> };
@@ -14,7 +15,11 @@ export default async function GanttPage({ params }: Props) {
   const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
   if (!membership.isMember) notFound();
 
-  const tasks = await listTasksFlat(projectId);
+  // GanttClient は WBS と同じ tree 構造を要求する（階層描画 + 担当者フィルタのため）
+  const [tasks, members] = await Promise.all([
+    listTasks(projectId),
+    listMembers(projectId),
+  ]);
 
-  return <GanttClient projectId={projectId} tasks={tasks} />;
+  return <GanttClient projectId={projectId} tasks={tasks} members={members} />;
 }

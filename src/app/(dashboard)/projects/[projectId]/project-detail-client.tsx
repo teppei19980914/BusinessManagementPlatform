@@ -127,6 +127,8 @@ export function ProjectDetailClient({
         break;
       case 'gantt':
         tasks.load();
+        // Gantt の担当者フィルタで使う（WBS と同仕様）
+        members.load();
         break;
       case 'risks':
         risks.load();
@@ -385,10 +387,20 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
-        {/* ガントチャートタブ（tree を渡して階層構造を描画・WP 折りたたみ対応）*/}
+        {/* ガントチャートタブ（tree を渡して階層構造を描画・WP 折りたたみ + 担当者フィルタ対応）*/}
         <TabsContent value="gantt" className="mt-4">
           <LazyTabContent state={tasks.state}>
-            {(tasksData) => <GanttClient projectId={project.id} tasks={tasksData.tree} />}
+            {(tasksData) => (
+              <LazyTabContent state={members.state}>
+                {(membersData) => (
+                  <GanttClient
+                    projectId={project.id}
+                    tasks={tasksData.tree}
+                    members={membersData}
+                  />
+                )}
+              </LazyTabContent>
+            )}
           </LazyTabContent>
         </TabsContent>
 

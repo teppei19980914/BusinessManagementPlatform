@@ -6,6 +6,7 @@ import {
   buildTree,
   aggregateWpFromChildren,
   normalizeActualDatesForStatus,
+  normalizeProgressForStatus,
   type WpAggregationChild,
 } from './task.service';
 import type { TaskDTO } from './task.service';
@@ -25,6 +26,7 @@ function childFixture(overrides: Partial<WpAggregationChild>): WpAggregationChil
     actualStartDate: null,
     actualEndDate: null,
     status: 'not_started',
+    assigneeId: null,
     ...overrides,
   };
 }
@@ -249,6 +251,7 @@ describe('aggregateWpFromChildren', () => {
       actualStartDate: null,
       actualEndDate: null,
       status: 'not_started',
+      assigneeId: null,
     });
   });
 
@@ -367,6 +370,42 @@ describe('aggregateWpFromChildren', () => {
     ];
     expect(aggregateWpFromChildren(children).status).toBe('not_started');
   });
+
+  // --- 担当者集約 (uniform-assignee) ---
+  it('子の担当者がすべて同一（user-A）なら親の担当者も user-A', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A' }),
+      childFixture({ assigneeId: 'user-A' }),
+      childFixture({ assigneeId: 'user-A' }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeId).toBe('user-A');
+  });
+
+  it('子の担当者が混在（user-A と user-B）なら親の担当者は null', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A' }),
+      childFixture({ assigneeId: 'user-B' }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeId).toBeNull();
+  });
+
+  it('子の担当者が一部 null と user-A 混在なら親の担当者は null', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A' }),
+      childFixture({ assigneeId: null }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeId).toBeNull();
+  });
+
+  it('子が全て未アサイン (null) なら親の担当者も null', () => {
+    const children = [childFixture({ assigneeId: null }), childFixture({ assigneeId: null })];
+    expect(aggregateWpFromChildren(children).assigneeId).toBeNull();
+  });
+
+  it('子が 1 件のみで user-A なら親も user-A（単一子のケース）', () => {
+    const children = [childFixture({ assigneeId: 'user-A' })];
+    expect(aggregateWpFromChildren(children).assigneeId).toBe('user-A');
+  });
 });
 
 describe('normalizeActualDatesForStatus', () => {
@@ -427,5 +466,36 @@ describe('normalizeActualDatesForStatus', () => {
       actualStartDate: start,
       actualEndDate: null,
     });
+  });
+});
+
+describe('normalizeProgressForStatus', () => {
+  it('status=completed: 進捗率は常に 100 に揃えられる（入力値 0 でも）', () => {
+    expect(normalizeProgressForStatus('completed', 0)).toBe(100);
+  });
+
+  it('status=completed: 入力 50 でも 100 に揃える（ステータスと進捗の矛盾を解消）', () => {
+    expect(normalizeProgressForStatus('completed', 50)).toBe(100);
+  });
+
+  it('status=completed: 入力が undefined でも 100 を返す', () => {
+    expect(normalizeProgressForStatus('completed', undefined)).toBe(100);
+  });
+
+  it('status=in_progress: 入力値をそのまま返す', () => {
+    expect(normalizeProgressForStatus('in_progress', 42)).toBe(42);
+  });
+
+  it('status=not_started: 入力値をそのまま返す（完了以外は書き換えない設計）', () => {
+    expect(normalizeProgressForStatus('not_started', 0)).toBe(0);
+    expect(normalizeProgressForStatus('not_started', 30)).toBe(30);
+  });
+
+  it('status=on_hold: 入力値をそのまま返す', () => {
+    expect(normalizeProgressForStatus('on_hold', 70)).toBe(70);
+  });
+
+  it('未知のステータスは入力値をそのまま返す', () => {
+    expect(normalizeProgressForStatus('unknown', 55)).toBe(55);
   });
 });
