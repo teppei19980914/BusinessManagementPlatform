@@ -556,14 +556,23 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     wpStatus = 'on_hold';
   }
 
+  // 実績日付は予定と同じ min/max ロジックで集計した上で、ステータス整合性ルール（PR #39）を
+  // 親 WP にも適用する。WP のステータスは子から導出されるため:
+  //   - wpStatus='not_started': 子がまだ始まっていない → 実績開始/終了とも null
+  //   - wpStatus='in_progress' / 'on_hold': WP はまだ完了していない → 実績終了日は null
+  //   - wpStatus='completed': 両方保持
+  // これにより「子の一部が未着手なのに親 WP に実績終了日が表示される」問題を防ぐ。
+  const rawActualStart = minDate(pickDates((c) => c.actualStartDate));
+  const rawActualEnd = maxDate(pickDates((c) => c.actualEndDate));
+  const normalized = normalizeActualDatesForStatus(wpStatus, rawActualStart, rawActualEnd);
+
   return {
     plannedEffort: totalEffort,
     progressRate: weightedProgress,
     plannedStartDate: minDate(pickDates((c) => c.plannedStartDate)),
     plannedEndDate: maxDate(pickDates((c) => c.plannedEndDate)),
-    // 実績日付は予定と同じロジック（min/max）で集計
-    actualStartDate: minDate(pickDates((c) => c.actualStartDate)),
-    actualEndDate: maxDate(pickDates((c) => c.actualEndDate)),
+    actualStartDate: normalized.actualStartDate,
+    actualEndDate: normalized.actualEndDate,
     status: wpStatus,
   };
 }

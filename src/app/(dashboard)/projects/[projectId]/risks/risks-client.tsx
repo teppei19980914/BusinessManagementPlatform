@@ -14,6 +14,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { LabeledSelect } from '@/components/labeled-select';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -102,7 +103,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                   {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
                   <div className="space-y-2">
                     <Label>種別</Label>
-                    <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                    <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className={nativeSelectClass}>
                       <option value="risk">リスク</option>
                       <option value="issue">課題</option>
                     </select>
@@ -118,28 +119,28 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>影響度</Label>
-                      <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                      <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className={nativeSelectClass}>
                         {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select>
                     </div>
                     {form.type === 'risk' && (
                       <div className="space-y-2">
                         <Label>発生可能性</Label>
-                        <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                        <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className={nativeSelectClass}>
                           {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                         </select>
                       </div>
                     )}
                     <div className="space-y-2">
                       <Label>優先度</Label>
-                      <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                      <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className={nativeSelectClass}>
                         {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select>
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>担当者</Label>
-                    <select value={form.assigneeId} onChange={(e) => setForm({ ...form, assigneeId: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                    <select value={form.assigneeId} onChange={(e) => setForm({ ...form, assigneeId: e.target.value })} className={nativeSelectClass}>
                       <option value="">未設定</option>
                       {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
                     </select>

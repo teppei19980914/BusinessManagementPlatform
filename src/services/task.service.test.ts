@@ -279,37 +279,69 @@ describe('aggregateWpFromChildren', () => {
     expect(result.plannedEndDate?.toISOString().split('T')[0]).toBe('2026-05-15');
   });
 
-  it('実績日付も予定と同じロジック（最小開始〜最大終了）で集計する', () => {
+  it('子が全て completed のとき、実績日付を予定と同じロジック（最小開始〜最大終了）で集計する', () => {
     const children = [
       childFixture({
+        status: 'completed',
         actualStartDate: new Date('2026-05-03'),
         actualEndDate: new Date('2026-05-08'),
       }),
       childFixture({
+        status: 'completed',
         actualStartDate: new Date('2026-05-01'),
         actualEndDate: new Date('2026-05-12'),
       }),
     ];
     const result = aggregateWpFromChildren(children);
+    expect(result.status).toBe('completed');
     expect(result.actualStartDate?.toISOString().split('T')[0]).toBe('2026-05-01');
     expect(result.actualEndDate?.toISOString().split('T')[0]).toBe('2026-05-12');
   });
 
   it('実績日付が全て null の子しかない場合は null を返す', () => {
+    // 子が not_started のみ → WP も not_started → 両方 null
     const children = [childFixture({}), childFixture({})];
     const result = aggregateWpFromChildren(children);
     expect(result.actualStartDate).toBeNull();
     expect(result.actualEndDate).toBeNull();
   });
 
-  it('一部の子だけ実績日付を持つ場合、有効な日付のみで集計する', () => {
+  it('子の一部が未完了のとき、実績終了日は null になる（WP ステータス != completed のため）', () => {
+    // 完了した子と未着手の子が混在 → WP は in_progress
+    // 実績開始は min(有効な値) で保持、実績終了は status != completed のため null
     const children = [
-      childFixture({ actualStartDate: new Date('2026-05-05'), actualEndDate: new Date('2026-05-10') }),
-      childFixture({ actualStartDate: null, actualEndDate: null }), // 実績未入力
+      childFixture({
+        status: 'completed',
+        actualStartDate: new Date('2026-05-01'),
+        actualEndDate: new Date('2026-05-08'),
+      }),
+      childFixture({ status: 'not_started' }),
     ];
     const result = aggregateWpFromChildren(children);
-    expect(result.actualStartDate?.toISOString().split('T')[0]).toBe('2026-05-05');
-    expect(result.actualEndDate?.toISOString().split('T')[0]).toBe('2026-05-10');
+    expect(result.status).toBe('in_progress');
+    expect(result.actualStartDate?.toISOString().split('T')[0]).toBe('2026-05-01');
+    expect(result.actualEndDate).toBeNull();
+  });
+
+  it('WP が in_progress のとき、子の actualEnd が存在しても実績終了日は null になる', () => {
+    // 両方 in_progress で actualEnd も入力されているレアケース
+    // → 親 WP は in_progress → 実績終了は null に正規化
+    const children = [
+      childFixture({
+        status: 'in_progress',
+        actualStartDate: new Date('2026-05-05'),
+        actualEndDate: new Date('2026-05-10'),
+      }),
+      childFixture({
+        status: 'in_progress',
+        actualStartDate: new Date('2026-05-03'),
+        actualEndDate: null,
+      }),
+    ];
+    const result = aggregateWpFromChildren(children);
+    expect(result.status).toBe('in_progress');
+    expect(result.actualStartDate?.toISOString().split('T')[0]).toBe('2026-05-03');
+    expect(result.actualEndDate).toBeNull();
   });
 
   it('子が全て completed ならステータスは completed', () => {

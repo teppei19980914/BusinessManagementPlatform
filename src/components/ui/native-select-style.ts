@@ -1,0 +1,20 @@
+/**
+ * ネイティブ `<select>` 要素共通のスタイル。
+ *
+ * 設計ポイント:
+ * - 高さ `h-9` (36px) を確保し、`py-1.5` (3+3=6px 上下パディング) にすることで
+ *   text-sm (14px) + 行高 (~18px) = 20px が切れずに表示される
+ * - 旧 class は `h-8 py-2 flex items-center` だったが、`h-8` (32px) - `py-2` (16px)
+ *   = 16px のコンテンツ領域しかなく 14px 文字+行高を確保できず、
+ *   選択値の文字の下半分が見切れて「選択肢が見切れる」と誤認されていた
+ * - `appearance: auto` をデフォルトに（意図せず `none` 化されないため明示は不要だが
+ *   将来リセット CSS が入っても OS 既定の ▼ アイコンを維持する）
+ * - Tailwind の `flex items-center` は `<select>` には適用しない
+ *   （ブラウザ既定のテキスト配置に任せる。flex は inline 配置を崩す挙動があるため）
+ *
+ * 使い方:
+ *   import { nativeSelectClass } from '@/components/ui/native-select-style';
+ *   <select className={nativeSelectClass} ... />
+ */
+export const nativeSelectClass
+  = 'h-9 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50';
