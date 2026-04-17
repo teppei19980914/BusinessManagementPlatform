@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
 import {
   Table,
   TableBody,
@@ -128,7 +129,7 @@ export function KnowledgeClient({ initialKnowledge, initialTotal }: Props) {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>種別</Label>
-                  <select value={form.knowledgeType} onChange={(e) => setForm({ ...form, knowledgeType: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                  <select value={form.knowledgeType} onChange={(e) => setForm({ ...form, knowledgeType: e.target.value })} className={nativeSelectClass}>
                     {Object.entries(KNOWLEDGE_TYPES).map(([key, label]) => (
                       <option key={key} value={key}>{label}</option>
                     ))}
@@ -136,7 +137,7 @@ export function KnowledgeClient({ initialKnowledge, initialTotal }: Props) {
                 </div>
                 <div className="space-y-2">
                   <Label>公開範囲</Label>
-                  <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                  <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
                     {Object.entries(VISIBILITIES).map(([key, label]) => (
                       <option key={key} value={key}>{label}</option>
                     ))}

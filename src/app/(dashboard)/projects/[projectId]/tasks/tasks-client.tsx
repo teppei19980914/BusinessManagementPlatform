@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Pencil, Trash2 } from 'lucide-react';
 import { collectAllIds, collectSelfAndDescendantIds } from '@/lib/task-tree-utils';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -738,9 +739,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: 0, priority: 'medium' });
     await reload();
   }
-
-  // Dialog 内のセレクト用スタイル（native select — base-ui Select は Dialog Portal と干渉するため）
-  const nativeSelectClass = 'flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50';
 
   return (
     <div className="space-y-6">

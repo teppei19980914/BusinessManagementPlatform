@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { PROJECT_STATUSES, DEV_METHODS } from '@/types';
 import type { ProjectDTO } from '@/services/project.service';
 import type { EstimateDTO } from '@/services/estimate.service';
@@ -258,7 +259,7 @@ export function ProjectDetailClient({
                     </div>
                     <div className="space-y-2">
                       <Label>開発方式</Label>
-                      <select value={editForm.devMethod} onChange={(e) => setEditForm({ ...editForm, devMethod: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                      <select value={editForm.devMethod} onChange={(e) => setEditForm({ ...editForm, devMethod: e.target.value })} className={nativeSelectClass}>
                         {Object.entries(DEV_METHODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select>
                     </div>

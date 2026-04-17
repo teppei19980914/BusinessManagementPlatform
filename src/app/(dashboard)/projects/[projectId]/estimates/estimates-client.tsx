@@ -14,6 +14,7 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_CATEGORIES, DEV_METHODS, EFFORT_UNITS } from '@/types';
 import type { EstimateDTO } from '@/services/estimate.service';
 
@@ -104,13 +105,13 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>区分</Label>
-                    <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                    <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={nativeSelectClass}>
                       {Object.entries(TASK_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select>
                   </div>
                   <div className="space-y-2">
                     <Label>開発方式</Label>
-                    <select value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                    <select value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
                       {Object.entries(DEV_METHODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select>
                   </div>
@@ -122,7 +123,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                   </div>
                   <div className="space-y-2">
                     <Label>単位</Label>
-                    <select value={form.effortUnit} onChange={(e) => setForm({ ...form, effortUnit: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                    <select value={form.effortUnit} onChange={(e) => setForm({ ...form, effortUnit: e.target.value })} className={nativeSelectClass}>
                       {Object.entries(EFFORT_UNITS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select>
                   </div>

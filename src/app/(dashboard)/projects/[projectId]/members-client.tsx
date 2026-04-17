@@ -15,6 +15,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { PROJECT_ROLES } from '@/types';
 import type { MemberDTO } from '@/services/member.service';
 import type { UserDTO } from '@/services/user.service';
@@ -114,7 +115,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
                 )}
                 <div className="space-y-2">
                   <Label>ユーザ</Label>
-                  <select value={addForm.userId} onChange={(e) => setAddForm({ ...addForm, userId: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" required>
+                  <select value={addForm.userId} onChange={(e) => setAddForm({ ...addForm, userId: e.target.value })} className={nativeSelectClass} required>
                     <option value="">ユーザを選択...</option>
                     {availableUsers.map((u) => (
                       <option key={u.id} value={u.id}>{u.name}（{u.email}）</option>
@@ -123,7 +124,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
                 </div>
                 <div className="space-y-2">
                   <Label>プロジェクトロール</Label>
-                  <select value={addForm.projectRole} onChange={(e) => setAddForm({ ...addForm, projectRole: e.target.value })} className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+                  <select value={addForm.projectRole} onChange={(e) => setAddForm({ ...addForm, projectRole: e.target.value })} className={nativeSelectClass}>
                     {Object.entries(PROJECT_ROLES).map(([key, label]) => (
                       <option key={key} value={key}>{label}</option>
                     ))}
