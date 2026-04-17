@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { LabeledSelect } from '@/components/labeled-select';
+import { collectAllIds, collectSelfAndDescendantIds } from '@/lib/task-tree-utils';
 import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -42,18 +43,6 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
   completed: 'secondary',
   on_hold: 'destructive',
 };
-
-/** ツリーから全IDを再帰的に収集する */
-function collectAllIds(nodes: TaskDTO[]): string[] {
-  const ids: string[] = [];
-  for (const node of nodes) {
-    ids.push(node.id);
-    if (node.children) {
-      ids.push(...collectAllIds(node.children));
-    }
-  }
-  return ids;
-}
 
 type TaskTreeNodeProps = {
   task: TaskDTO;
@@ -442,13 +431,35 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     }
   }
 
+  /**
+   * タスクのチェック状態をトグルする。
+   * 対象ノードが子をもつ WP の場合は **自身 + 全子孫（子 WP・子 ACT・孫以降）を一括で**
+   * チェック / アンチェックする。これによりユーザが親 WP を選択した瞬間に、
+   * その配下すべてが選択状態になる。
+   *
+   * tasks が変わると callback identity も変わるが、その時点で各 TaskTreeNode の
+   * task prop 自体も変わっている（memo が再描画を許容）ため追加コストはない。
+   */
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      const affectedIds = collectSelfAndDescendantIds(tasks, id);
+      if (affectedIds.length === 0) {
+        // ツリーで見つからない（通常ありえない）→ フォールバックで単体トグル
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      }
+      const wasChecked = next.has(id);
+      if (wasChecked) {
+        // 自身 + 子孫を一括アンチェック
+        for (const affected of affectedIds) next.delete(affected);
+      } else {
+        // 自身 + 子孫を一括チェック
+        for (const affected of affectedIds) next.add(affected);
+      }
       return next;
     });
-  }, []);
+  }, [tasks]);
 
   const [bulkAssigneeId, setBulkAssigneeId] = useState('');
   const [bulkPriority, setBulkPriority] = useState('');
