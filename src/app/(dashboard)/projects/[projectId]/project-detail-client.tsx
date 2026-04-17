@@ -385,10 +385,10 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
-        {/* ガントチャートタブ（tasks.flat のみ、read-only）*/}
+        {/* ガントチャートタブ（tree を渡して階層構造を描画・WP 折りたたみ対応）*/}
         <TabsContent value="gantt" className="mt-4">
           <LazyTabContent state={tasks.state}>
-            {(tasksData) => <GanttClient projectId={project.id} tasks={tasksData.flat} />}
+            {(tasksData) => <GanttClient projectId={project.id} tasks={tasksData.tree} />}
           </LazyTabContent>
         </TabsContent>
 
