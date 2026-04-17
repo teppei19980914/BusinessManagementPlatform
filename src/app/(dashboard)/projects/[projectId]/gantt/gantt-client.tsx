@@ -445,14 +445,10 @@ function GanttRow({
   const isDelayed =
     task.status !== 'completed' && task.plannedEndDate && task.plannedEndDate < today;
 
+  // ツールチップは左タスク列に常時表示していない項目のみ（名称・担当者・ステータス・
+  // 進捗は左列に出ているため重複表示しない）
   const tooltipContent = (
     <div className="space-y-0.5">
-      <div className="font-semibold">{task.name}</div>
-      <div>担当者: {task.assigneeName || '-'}</div>
-      <div>
-        ステータス: {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
-      </div>
-      <div>進捗: {task.progressRate}%</div>
       <div>工数: {task.plannedEffort > 0 ? `${task.plannedEffort}h` : '-'}</div>
       <div>予定: {rangeText(task.plannedStartDate, task.plannedEndDate)}</div>
       <div>実績: {rangeText(task.actualStartDate, task.actualEndDate)}</div>
@@ -461,12 +457,19 @@ function GanttRow({
 
   return (
     <Tooltip content={tooltipContent} side="top" align="start">
+      {/*
+        行ハイライト + 今日縦帯の共存戦略:
+        - ホバー背景は translucent (bg-blue-100/30) にし、背面の今日/週末オーバーレイが
+          透けて見えるようにしている（不透明な hover 背景だと今日帯が隠れてしまう）。
+        - 左側タスク列は sticky で自身の bg が必要だが、group-hover で tint を切り替え
+          ハイライトを左右通しで一体感のあるものにする。
+      */}
       <div
-        className={`relative flex border-b hover:bg-gray-50 ${isWP ? 'bg-gray-50/50' : ''}`}
+        className={`group relative flex border-b transition-colors hover:bg-blue-100/30 ${isWP ? 'bg-gray-50/50' : ''}`}
       >
         {/* 左側タスク列（sticky left）*/}
         <div
-          className="sticky left-0 z-10 shrink-0 border-r bg-white px-2 py-2"
+          className="sticky left-0 z-10 shrink-0 border-r bg-white px-2 py-2 transition-colors group-hover:bg-blue-50"
           style={{
             width: `${NAME_COL_WIDTH}px`,
             paddingLeft: `${depth * 16 + 8}px`,
