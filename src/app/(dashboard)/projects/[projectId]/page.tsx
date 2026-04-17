@@ -2,49 +2,42 @@ import { auth } from '@/lib/auth';
 import { redirect, notFound } from 'next/navigation';
 import { getProject } from '@/services/project.service';
 import { checkMembership } from '@/lib/permissions';
-import { listEstimates } from '@/services/estimate.service';
-import { listTasksWithTree } from '@/services/task.service';
-import { listRisks } from '@/services/risk.service';
-import { listRetrospectives } from '@/services/retrospective.service';
-import { listMembers } from '@/services/member.service';
-import { listKnowledge } from '@/services/knowledge.service';
-import { listUsers } from '@/services/user.service';
 import { ProjectDetailClient } from './project-detail-client';
 
 type Props = {
   params: Promise<{ projectId: string }>;
 };
 
+/**
+ * プロジェクト詳細画面の Server Component。
+ *
+ * 【設計方針（2026-04-17 以降）】
+ * 概要タブで必要な「プロジェクト基本情報」と「権限判定結果」のみサーバで取得し、
+ * 他タブ（WBS・ガント・リスク・振り返り・見積もり・メンバー・ナレッジ）のデータは
+ * クライアント側でタブ切替時に遅延取得する（ProjectDetailClient 内の useLazyFetch）。
+ *
+ * ref: docs/performance/20260417/after/cold-start-and-data-growth-analysis.md §4.2
+ */
 export default async function ProjectDetailPage({ params }: Props) {
   const session = await auth();
   if (!session) redirect('/login');
 
   const { projectId } = await params;
 
-  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
-  if (!membership.isMember) notFound();
+  // 認可チェックと project 取得は並列化（互いに依存しない）
+  const [membership, project] = await Promise.all([
+    checkMembership(projectId, session.user.id, session.user.systemRole),
+    getProject(projectId),
+  ]);
 
-  const project = await getProject(projectId);
+  if (!membership.isMember) notFound();
   if (!project) notFound();
 
   const canEdit = session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl';
-  const canCreate = session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl' || membership.projectRole === 'member';
-
-  const isAdmin = session.user.systemRole === 'admin';
-
-  // 全タブのデータを並列取得
-  // tasks は tree/flat の両形式を同一クエリで取得（WBS タブ用 tree + ガントタブ用 flat）
-  // knowledge は画面表示上 10 件まで（余計なペイロード送信を防止）
-  const [estimates, tasksResult, risks, retros, members, knowledgeResult, allUsers] = await Promise.all([
-    canEdit ? listEstimates(projectId) : Promise.resolve([]),
-    listTasksWithTree(projectId),
-    listRisks(projectId),
-    listRetrospectives(projectId),
-    listMembers(projectId),
-    listKnowledge({ page: 1, limit: 10 }, session.user.id, session.user.systemRole),
-    isAdmin ? listUsers() : Promise.resolve([]),
-  ]);
-  const { tree: tasks, flat: tasksFlat } = tasksResult;
+  const canCreate =
+    session.user.systemRole === 'admin'
+    || membership.projectRole === 'pm_tl'
+    || membership.projectRole === 'member';
 
   return (
     <ProjectDetailClient
@@ -52,14 +45,6 @@ export default async function ProjectDetailPage({ params }: Props) {
       projectRole={membership.projectRole}
       systemRole={session.user.systemRole}
       userId={session.user.id}
-      estimates={estimates}
-      tasks={tasks}
-      tasksFlat={tasksFlat}
-      risks={risks}
-      retros={retros}
-      members={members}
-      allUsers={allUsers}
-      knowledges={knowledgeResult.data}
       canEdit={canEdit}
       canCreate={canCreate}
     />

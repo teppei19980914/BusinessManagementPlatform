@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
+import { getAuthenticatedUser, checkProjectPermission, requireAdmin } from '@/lib/api-helpers';
 import { listMembers, addMember } from '@/services/member.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { z } from 'zod/v4';
@@ -9,6 +9,8 @@ const addMemberSchema = z.object({
   projectRole: z.enum(['pm_tl', 'member', 'viewer']),
 });
 
+// GET: 担当者ドロップダウンや WBS/リスクタブでメンバー一覧を参照するため、
+// プロジェクトメンバー全員に許可（従来 SSR の page.tsx で listMembers を全員に配布していたのと同等）
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> },
@@ -16,10 +18,10 @@ export async function GET(
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const forbidden = requireAdmin(user);
+  const { projectId } = await params;
+  const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
 
-  const { projectId } = await params;
   const members = await listMembers(projectId);
   return NextResponse.json({ data: members });
 }

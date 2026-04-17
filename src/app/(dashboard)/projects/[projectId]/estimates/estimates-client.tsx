@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -20,11 +20,21 @@ type Props = {
   projectId: string;
   estimates: EstimateDTO[];
   canEdit: boolean;
+  /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
+  onReload?: () => Promise<void> | void;
 };
 
-export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
+export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
+
+  const reload = useCallback(async () => {
+    if (onReload) {
+      await onReload();
+    } else {
+      router.refresh();
+    }
+  }, [onReload, router]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
@@ -53,7 +63,7 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
     }
     setIsCreateOpen(false);
     setForm({ itemName: '', category: 'development', devMethod: 'scratch', estimatedEffort: '', effortUnit: 'person_hour', rationale: '' });
-    router.refresh();
+    await reload();
   }
 
   async function handleConfirm(estimateId: string) {
@@ -64,7 +74,7 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
         body: JSON.stringify({ action: 'confirm' }),
       }),
     );
-    router.refresh();
+    await reload();
   }
 
   const totalEffort = estimates.reduce((sum, e) => sum + e.estimatedEffort, 0);
@@ -166,7 +176,7 @@ export function EstimatesClient({ projectId, estimates, canEdit }: Props) {
                           await withLoading(() =>
                             fetch(`/api/projects/${projectId}/estimates/${e.id}`, { method: 'DELETE' }),
                           );
-                          router.refresh();
+                          await reload();
                         }}
                       >
                         削除

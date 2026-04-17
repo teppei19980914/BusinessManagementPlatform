@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -17,11 +17,20 @@ type Props = {
   retros: RetroDTO[];
   canEdit: boolean;
   canComment: boolean;
+  /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
+  onReload?: () => Promise<void> | void;
 };
 
-export function RetrospectivesClient({ projectId, retros, canEdit, canComment }: Props) {
+export function RetrospectivesClient({ projectId, retros, canEdit, canComment, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const reload = useCallback(async () => {
+    if (onReload) {
+      await onReload();
+    } else {
+      router.refresh();
+    }
+  }, [onReload, router]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
@@ -52,7 +61,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment }:
     }
     setIsCreateOpen(false);
     setForm({ conductedDate: new Date().toISOString().split('T')[0], planSummary: '', actualSummary: '', goodPoints: '', problems: '', improvements: '' });
-    router.refresh();
+    await reload();
   }
 
   async function handleConfirm(retroId: string) {
@@ -61,7 +70,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment }:
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'confirm', retroId }),
     });
-    router.refresh();
+    await reload();
   }
 
   async function handleComment(retroId: string) {
@@ -73,7 +82,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment }:
       body: JSON.stringify({ content }),
     });
     setCommentText({ ...commentText, [retroId]: '' });
-    router.refresh();
+    await reload();
   }
 
   return (

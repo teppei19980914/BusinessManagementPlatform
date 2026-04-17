@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -22,27 +22,20 @@ import type { RiskDTO } from '@/services/risk.service';
 import type { RetroDTO } from '@/services/retrospective.service';
 import type { MemberDTO } from '@/services/member.service';
 import type { KnowledgeDTO } from '@/services/knowledge.service';
+import type { UserDTO } from '@/services/user.service';
+import { useLazyFetch, type LazyState } from '@/lib/use-lazy-fetch';
 import { EstimatesClient } from './estimates/estimates-client';
 import { TasksClient } from './tasks/tasks-client';
 import { GanttClient } from './gantt/gantt-client';
 import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
 import { MembersClient } from './members-client';
-import type { UserDTO } from '@/services/user.service';
 
 type Props = {
   project: ProjectDTO;
   projectRole: string | null;
   systemRole: string;
   userId: string;
-  estimates: EstimateDTO[];
-  tasks: TaskDTO[];
-  tasksFlat: TaskDTO[];
-  risks: RiskDTO[];
-  retros: RetroDTO[];
-  members: MemberDTO[];
-  allUsers: UserDTO[];
-  knowledges: KnowledgeDTO[];
   canEdit: boolean;
   canCreate: boolean;
 };
@@ -57,9 +50,32 @@ const NEXT_STATUSES: Record<string, string[]> = {
   closed: [],
 };
 
+/**
+ * 遅延ロードタブの状態に応じて loading / error / content を切り替える表示ラッパー。
+ * 外側でタブ可視時に load() を呼び出す設計とセットで使う。
+ */
+function LazyTabContent<T>({
+  state,
+  children,
+}: {
+  state: LazyState<T>;
+  children: (data: T) => React.ReactNode;
+}) {
+  if (state.status === 'idle' || state.status === 'loading') {
+    return <div className="py-8 text-center text-sm text-gray-500">読み込み中...</div>;
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="py-8 text-center text-sm text-red-500">
+        読み込みに失敗しました: {state.error}
+      </div>
+    );
+  }
+  return <>{children(state.data)}</>;
+}
+
 export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
-  estimates, tasks, tasksFlat, risks, retros, members, allUsers, knowledges,
   canEdit, canCreate,
 }: Props) {
   const router = useRouter();
@@ -80,6 +96,73 @@ export function ProjectDetailClient({
     plannedEndDate: project.plannedEndDate,
   });
   const [editError, setEditError] = useState('');
+
+  // --- タブごとの遅延フェッチ状態 ---
+  // 概要タブ以外のデータは「ユーザがそのタブを最初に開いた時」にフェッチする。
+  // 2 度目以降のタブ切替時はメモリキャッシュから即座に表示する。
+  // CRUD 直後は対応する onReload が force 再取得する。
+  const tasks = useLazyFetch<{ tree: TaskDTO[]; flat: TaskDTO[] }>(
+    `/api/projects/${project.id}/tasks/tree`,
+  );
+  const estimates = useLazyFetch<EstimateDTO[]>(`/api/projects/${project.id}/estimates`);
+  const risks = useLazyFetch<RiskDTO[]>(`/api/projects/${project.id}/risks`);
+  const retros = useLazyFetch<RetroDTO[]>(`/api/projects/${project.id}/retrospectives`);
+  const members = useLazyFetch<MemberDTO[]>(`/api/projects/${project.id}/members`);
+  const knowledges = useLazyFetch<{ data: KnowledgeDTO[] }>(`/api/knowledge?page=1&limit=10`);
+  const allUsers = useLazyFetch<UserDTO[]>(`/api/admin/users`);
+
+  const [activeTab, setActiveTab] = useState('overview');
+
+  function handleTabChange(value: string) {
+    setActiveTab(value);
+    // タブ表示時に必要なデータをロード（キャッシュヒットなら no-op）
+    switch (value) {
+      case 'estimates':
+        estimates.load();
+        break;
+      case 'tasks':
+        tasks.load();
+        members.load();
+        break;
+      case 'gantt':
+        tasks.load();
+        break;
+      case 'risks':
+        risks.load();
+        members.load();
+        break;
+      case 'retrospectives':
+        retros.load();
+        break;
+      case 'knowledge':
+        knowledges.load();
+        break;
+      case 'members':
+        members.load();
+        if (systemRole === 'admin') allUsers.load();
+        break;
+      default:
+        break;
+    }
+  }
+
+  // CRUD 直後に呼ぶ再取得ハンドラ。router.refresh() は概要タブのプロジェクト基本情報のみで
+  // 十分なため、タブ内 CRUD ではタブローカルの load(true) のみで完結させる。
+  const reloadTasks = useCallback(async () => {
+    await tasks.load(true);
+  }, [tasks]);
+  const reloadEstimates = useCallback(async () => {
+    await estimates.load(true);
+  }, [estimates]);
+  const reloadRisks = useCallback(async () => {
+    await risks.load(true);
+  }, [risks]);
+  const reloadRetros = useCallback(async () => {
+    await retros.load(true);
+  }, [retros]);
+  const reloadMembers = useCallback(async () => {
+    await members.load(true);
+  }, [members]);
 
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
@@ -203,7 +286,7 @@ export function ProjectDetailClient({
       </div>
 
       {/* タブ - 全機能をタブ内に直接埋め込み */}
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview">概要</TabsTrigger>
           {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
@@ -217,7 +300,7 @@ export function ProjectDetailClient({
           )}
         </TabsList>
 
-        {/* 概要タブ */}
+        {/* 概要タブ（サーバで既に取得済みの project のみ表示、fetch 不要）*/}
         <TabsContent value="overview" className="mt-4 space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
             <div className="rounded-lg border p-4">
@@ -264,51 +347,87 @@ export function ProjectDetailClient({
           )}
         </TabsContent>
 
-        {/* 見積もりタブ */}
-        <TabsContent value="estimates" className="mt-4">
-          <EstimatesClient projectId={project.id} estimates={estimates} canEdit={canEdit} />
-        </TabsContent>
+        {/* 見積もりタブ（canEdit のみ）*/}
+        {canEdit && (
+          <TabsContent value="estimates" className="mt-4">
+            <LazyTabContent state={estimates.state}>
+              {(data) => (
+                <EstimatesClient
+                  projectId={project.id}
+                  estimates={data}
+                  canEdit={canEdit}
+                  onReload={reloadEstimates}
+                />
+              )}
+            </LazyTabContent>
+          </TabsContent>
+        )}
 
-        {/* WBS/タスクタブ */}
+        {/* WBS/タスクタブ（tasks と members が必要）*/}
         <TabsContent value="tasks" className="mt-4">
-          <TasksClient
-            projectId={project.id}
-            tasks={tasks}
-            members={members}
-            projectRole={projectRole}
-            systemRole={systemRole}
-            userId={userId}
-          />
+          <LazyTabContent state={tasks.state}>
+            {(tasksData) => (
+              <LazyTabContent state={members.state}>
+                {(membersData) => (
+                  <TasksClient
+                    projectId={project.id}
+                    tasks={tasksData.tree}
+                    members={membersData}
+                    projectRole={projectRole}
+                    systemRole={systemRole}
+                    userId={userId}
+                    onReload={reloadTasks}
+                  />
+                )}
+              </LazyTabContent>
+            )}
+          </LazyTabContent>
         </TabsContent>
 
-        {/* ガントチャートタブ */}
+        {/* ガントチャートタブ（tasks.flat のみ、read-only）*/}
         <TabsContent value="gantt" className="mt-4">
-          <GanttClient projectId={project.id} tasks={tasksFlat} />
+          <LazyTabContent state={tasks.state}>
+            {(tasksData) => <GanttClient projectId={project.id} tasks={tasksData.flat} />}
+          </LazyTabContent>
         </TabsContent>
 
-        {/* リスク/課題タブ */}
+        {/* リスク/課題タブ（risks と members が必要）*/}
         <TabsContent value="risks" className="mt-4">
-          <RisksClient
-            projectId={project.id}
-            risks={risks}
-            members={members}
-            canEdit={canEdit}
-            canCreate={canCreate}
-            systemRole={systemRole}
-          />
+          <LazyTabContent state={risks.state}>
+            {(risksData) => (
+              <LazyTabContent state={members.state}>
+                {(membersData) => (
+                  <RisksClient
+                    projectId={project.id}
+                    risks={risksData}
+                    members={membersData}
+                    canEdit={canEdit}
+                    canCreate={canCreate}
+                    systemRole={systemRole}
+                    onReload={reloadRisks}
+                  />
+                )}
+              </LazyTabContent>
+            )}
+          </LazyTabContent>
         </TabsContent>
 
         {/* 振り返りタブ */}
         <TabsContent value="retrospectives" className="mt-4">
-          <RetrospectivesClient
-            projectId={project.id}
-            retros={retros}
-            canEdit={canEdit}
-            canComment={canCreate}
-          />
+          <LazyTabContent state={retros.state}>
+            {(data) => (
+              <RetrospectivesClient
+                projectId={project.id}
+                retros={data}
+                canEdit={canEdit}
+                canComment={canCreate}
+                onReload={reloadRetros}
+              />
+            )}
+          </LazyTabContent>
         </TabsContent>
 
-        {/* ナレッジタブ */}
+        {/* ナレッジタブ（トップ 10 表示のみ、CRUD は /knowledge 画面側）*/}
         <TabsContent value="knowledge" className="mt-4">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -317,33 +436,59 @@ export function ProjectDetailClient({
                 ナレッジ横断検索 →
               </a>
             </div>
-            {knowledges.length === 0 ? (
-              <p className="py-4 text-center text-gray-500">ナレッジがありません</p>
-            ) : (
-              <div className="space-y-2">
-                {knowledges.slice(0, 10).map((k) => (
-                  <div key={k.id} className="rounded border p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">{k.title}</span>
-                      <Badge variant="secondary" className="text-xs">{k.knowledgeType}</Badge>
-                    </div>
-                    <p className="mt-1 text-xs text-gray-500 line-clamp-2">{k.content}</p>
+            <LazyTabContent state={knowledges.state}>
+              {(result) =>
+                result.data.length === 0 ? (
+                  <p className="py-4 text-center text-gray-500">ナレッジがありません</p>
+                ) : (
+                  <div className="space-y-2">
+                    {result.data.slice(0, 10).map((k) => (
+                      <div key={k.id} className="rounded border p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{k.title}</span>
+                          <Badge variant="secondary" className="text-xs">{k.knowledgeType}</Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500 line-clamp-2">{k.content}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+                )
+              }
+            </LazyTabContent>
           </div>
         </TabsContent>
 
-        {/* メンバータブ */}
+        {/* メンバータブ（admin/pm_tl のみ、admin なら allUsers も必要）*/}
         {(systemRole === 'admin' || projectRole === 'pm_tl') && (
           <TabsContent value="members" className="mt-4">
-            <MembersClient
-              projectId={project.id}
-              members={members}
-              allUsers={allUsers}
-              isAdmin={systemRole === 'admin'}
-            />
+            <LazyTabContent state={members.state}>
+              {(membersData) => {
+                if (systemRole === 'admin') {
+                  return (
+                    <LazyTabContent state={allUsers.state}>
+                      {(allUsersData) => (
+                        <MembersClient
+                          projectId={project.id}
+                          members={membersData}
+                          allUsers={allUsersData}
+                          isAdmin={true}
+                          onReload={reloadMembers}
+                        />
+                      )}
+                    </LazyTabContent>
+                  );
+                }
+                return (
+                  <MembersClient
+                    projectId={project.id}
+                    members={membersData}
+                    allUsers={[]}
+                    isAdmin={false}
+                    onReload={reloadMembers}
+                  />
+                );
+              }}
+            </LazyTabContent>
           </TabsContent>
         )}
       </Tabs>

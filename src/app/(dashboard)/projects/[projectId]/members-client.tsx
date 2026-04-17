@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -24,11 +24,20 @@ type Props = {
   members: MemberDTO[];
   allUsers: UserDTO[];
   isAdmin: boolean;
+  /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
+  onReload?: () => Promise<void> | void;
 };
 
-export function MembersClient({ projectId, members, allUsers, isAdmin }: Props) {
+export function MembersClient({ projectId, members, allUsers, isAdmin, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const reload = useCallback(async () => {
+    if (onReload) {
+      await onReload();
+    } else {
+      router.refresh();
+    }
+  }, [onReload, router]);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({ userId: '', projectRole: 'member' });
   const [addError, setAddError] = useState('');
@@ -61,7 +70,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin }: Props) 
 
     setIsAddOpen(false);
     setAddForm({ userId: '', projectRole: 'member' });
-    router.refresh();
+    await reload();
   }
 
   async function handleRoleChange(memberId: string, newRole: string) {
@@ -72,7 +81,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin }: Props) 
         body: JSON.stringify({ projectRole: newRole }),
       }),
     );
-    router.refresh();
+    await reload();
   }
 
   async function handleRemove(memberId: string, userName: string) {
@@ -82,7 +91,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin }: Props) 
         method: 'DELETE',
       }),
     );
-    router.refresh();
+    await reload();
   }
 
   return (
