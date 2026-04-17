@@ -42,7 +42,15 @@ export function useLazyFetch<T>(url: string): LazyFetch<T> {
       if (inflightRef.current) return inflightRef.current;
 
       const promise = (async () => {
-        setState({ status: 'loading' });
+        // stale-while-revalidate:
+        // ready 状態からの force リロード時は loading 状態へ遷移しない。
+        // 新データ到着までの間、消費側（LazyTabContent）には古い data を見せ続け、
+        // 子コンポーネント（TasksClient 等）を再マウントさせない。
+        // これにより selectedIds / isCollapsed 等のローカル state が保持される。
+        // 初回ロード（idle）や失敗後の retry（error）では通常通り loading 表示に。
+        if (stateRef.current.status !== 'ready') {
+          setState({ status: 'loading' });
+        }
         try {
           const res = await fetch(url);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
