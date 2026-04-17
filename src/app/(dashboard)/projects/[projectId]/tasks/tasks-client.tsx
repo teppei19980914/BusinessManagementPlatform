@@ -304,33 +304,71 @@ function TaskTreeNodeImpl({
           </div>
         </td>
       </tr>
-      {/* メンバー編集フォーム: ステータス・進捗率・実績開始日・実績終了日 */}
-      {showMemberEdit && canMemberEdit && (
-        <tr className="border-b bg-blue-50">
-          <td colSpan={colSpan} className="px-6 py-3">
-            <form onSubmit={handleMemberEditSubmit} className="flex items-end gap-4">
-              <div className="space-y-1">
-                <Label className="text-xs">ステータス</Label>
-                <LabeledSelect value={memberEditForm.status} onValueChange={(v) => v && setMemberEditForm({ ...memberEditForm, status: v })} options={TASK_STATUSES} className="w-28" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">進捗率</Label>
-                <NumberInput min={1} max={100} value={memberEditForm.progressRate} onChange={(n) => setMemberEditForm({ ...memberEditForm, progressRate: n })} className="w-20" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">開始日（実績）</Label>
-                <Input type="date" value={memberEditForm.actualStartDate} onChange={(e) => setMemberEditForm({ ...memberEditForm, actualStartDate: e.target.value })} className="w-36" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">終了日（実績）</Label>
-                <Input type="date" value={memberEditForm.actualEndDate} onChange={(e) => setMemberEditForm({ ...memberEditForm, actualEndDate: e.target.value })} className="w-36" />
-              </div>
-              <Button type="submit" size="sm">更新</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowMemberEdit(false)}>閉じる</Button>
-            </form>
-          </td>
-        </tr>
-      )}
+      {/* メンバー編集フォーム: ステータス・進捗率・実績開始日・実績終了日
+          ステータス整合性ルール:
+          - 未着手: 実績開始/終了とも入力不可（送信時もサーバ側で null に正規化）
+          - 進行中/保留: 実績開始のみ入力可、実績終了は入力不可
+          - 完了: 両方入力可 */}
+      {showMemberEdit && canMemberEdit && (() => {
+        const actualStartDisabled = memberEditForm.status === 'not_started';
+        const actualEndDisabled = memberEditForm.status !== 'completed';
+        return (
+          <tr className="border-b bg-blue-50">
+            <td colSpan={colSpan} className="px-6 py-3">
+              <form onSubmit={handleMemberEditSubmit} className="flex items-end gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs">ステータス</Label>
+                  <LabeledSelect
+                    value={memberEditForm.status}
+                    onValueChange={(v) => {
+                      if (!v) return;
+                      // ステータス変更時に実績日付をルールに合わせてクリア
+                      const next = { ...memberEditForm, status: v };
+                      if (v === 'not_started') {
+                        next.actualStartDate = '';
+                        next.actualEndDate = '';
+                      } else if (v !== 'completed') {
+                        next.actualEndDate = '';
+                      }
+                      setMemberEditForm(next);
+                    }}
+                    options={TASK_STATUSES}
+                    className="w-28"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">進捗率</Label>
+                  <NumberInput min={1} max={100} value={memberEditForm.progressRate} onChange={(n) => setMemberEditForm({ ...memberEditForm, progressRate: n })} className="w-20" />
+                </div>
+                <div className="space-y-1">
+                  <Label className={`text-xs ${actualStartDisabled ? 'text-gray-400' : ''}`}>開始日（実績）</Label>
+                  <Input
+                    type="date"
+                    value={memberEditForm.actualStartDate}
+                    onChange={(e) => setMemberEditForm({ ...memberEditForm, actualStartDate: e.target.value })}
+                    className="w-36"
+                    disabled={actualStartDisabled}
+                    title={actualStartDisabled ? '未着手のタスクには実績開始日を入力できません' : undefined}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className={`text-xs ${actualEndDisabled ? 'text-gray-400' : ''}`}>終了日（実績）</Label>
+                  <Input
+                    type="date"
+                    value={memberEditForm.actualEndDate}
+                    onChange={(e) => setMemberEditForm({ ...memberEditForm, actualEndDate: e.target.value })}
+                    className="w-36"
+                    disabled={actualEndDisabled}
+                    title={actualEndDisabled ? '完了状態のタスクのみ実績終了日を入力できます' : undefined}
+                  />
+                </div>
+                <Button type="submit" size="sm">更新</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowMemberEdit(false)}>閉じる</Button>
+              </form>
+            </td>
+          </tr>
+        );
+      })()}
       {/* PM/TL 編集フォーム */}
       {showPmEdit && (
         <tr className="border-b bg-green-50">
@@ -977,6 +1015,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 {bulkActualError && (
                   <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{bulkActualError}</div>
                 )}
+                <div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">
+                  ステータス整合性ルール: 未着手なら実績開始/終了とも自動クリア、進行中/保留なら実績終了のみ自動クリア、完了のみ両方保存されます。
+                </div>
                 <ApplyFieldRow
                   apply={bulkActualApply.status}
                   onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, status: v })}
