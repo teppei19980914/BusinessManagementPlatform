@@ -105,5 +105,6 @@ before では `/settings`・`/admin/*`・`/knowledge`・`/my-tasks`・`/projects
 ## 5. 付属ドキュメント
 
 - [`bottleneck-and-fixes.md`](./bottleneck-and-fixes.md) — 今回の改修でどの問題をどう直したかの詳細説明（コード差分付き）
+- [`cold-start-and-data-growth-analysis.md`](./cold-start-and-data-growth-analysis.md) — TTFB 悪化・ペイロード増加の根拠掘り下げと恒久対策プラン（Vercel Cron warm-up / タブ lazy fetch / Streaming 等）
 - `docs/knowledge/KNW-002_performance-optimization-patterns.md` — 今後のコード変更時に参照する再発防止チェックリスト
 - `docs/DESIGN.md` §17.6 — 設計書本体への反映版（簡易版）
