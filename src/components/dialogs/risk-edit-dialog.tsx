@@ -10,6 +10,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
+import { AttachmentList } from '@/components/attachments/attachment-list';
 
 /**
  * リスク/課題の編集に必要な最小限の形状。RiskDTO / AllRiskDTO 両方と互換。
@@ -213,6 +214,13 @@ export function RiskEditDialog({
             <Input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} />
           </div>
           </fieldset>
+          {/* PR #64 Phase 2: 関連 URL (エビデンス・証跡・関連チケット等) */}
+          <AttachmentList
+            entityType="risk"
+            entityId={risk.id}
+            canEdit={!readOnly}
+            label="関連 URL"
+          />
           {!readOnly && <Button type="submit" className="w-full">保存</Button>}
         </form>
       </DialogContent>

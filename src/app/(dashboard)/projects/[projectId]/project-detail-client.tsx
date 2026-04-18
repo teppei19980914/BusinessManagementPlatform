@@ -25,6 +25,8 @@ import type { MemberDTO } from '@/services/member.service';
 import type { KnowledgeDTO } from '@/services/knowledge.service';
 import type { UserDTO } from '@/services/user.service';
 import { useLazyFetch, type LazyState } from '@/lib/use-lazy-fetch';
+import { AttachmentList } from '@/components/attachments/attachment-list';
+import { SingleUrlField } from '@/components/attachments/single-url-field';
 import { EstimatesClient } from './estimates/estimates-client';
 import { TasksClient } from './tasks/tasks-client';
 import { GanttClient } from './gantt/gantt-client';
@@ -394,6 +396,25 @@ export function ProjectDetailClient({
               <p className="whitespace-pre-wrap text-sm text-gray-700">{project.notes}</p>
             </div>
           )}
+
+          {/* PR #64 Phase 2: プロジェクト関連 URL (メインドキュメント 1 本 + 参考資料 複数) */}
+          <div className="rounded-lg border p-4 space-y-4">
+            <h3 className="font-semibold">関連 URL</h3>
+            <SingleUrlField
+              entityType="project"
+              entityId={project.id}
+              slot="primary"
+              canEdit={canEdit}
+              label="メイン資料"
+              defaultDisplayName="提案書 / 見積根拠"
+            />
+            <AttachmentList
+              entityType="project"
+              entityId={project.id}
+              canEdit={canEdit}
+              label="その他の関連 URL"
+            />
+          </div>
         </TabsContent>
 
         {/* 見積もりタブ（canEdit のみ）*/}

@@ -10,6 +10,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
+import { AttachmentList } from '@/components/attachments/attachment-list';
+import { SingleUrlField } from '@/components/attachments/single-url-field';
 
 type KnowledgeLike = {
   id: string;
@@ -163,6 +165,21 @@ export function KnowledgeEditDialog({
             />
           </div>
           </fieldset>
+          {/* PR #64 Phase 2: 一次情報源 URL (単数) + 参考リンク (複数) */}
+          <SingleUrlField
+            entityType="knowledge"
+            entityId={knowledge.id}
+            slot="source"
+            canEdit={!readOnly}
+            label="一次情報源 URL"
+            defaultDisplayName="公式ドキュメント"
+          />
+          <AttachmentList
+            entityType="knowledge"
+            entityId={knowledge.id}
+            canEdit={!readOnly}
+            label="参考リンク"
+          />
           {!readOnly && <Button type="submit" className="w-full">保存</Button>}
         </form>
       </DialogContent>
