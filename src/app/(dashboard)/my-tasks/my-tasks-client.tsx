@@ -1,10 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { TASK_STATUSES, PRIORITIES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
+import { useSessionStringSet } from '@/lib/use-session-state';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
+import { filterTreeByStatus } from '@/lib/task-tree-utils';
 
 type ProjectGroup = {
   projectId: string;
@@ -25,31 +29,73 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
   on_hold: 'destructive',
 };
 
+const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
+
 /**
- * マイタスクのクライアントコンポーネント (Req 2: PR #57)。
+ * マイタスクのクライアントコンポーネント。
  *
- * 構造:
- *   - プロジェクト毎に折りたたみ可能なセクション (▶ / ▼)
- *   - 各セクション内は WBS 画面と同じ階層ツリー表現
- *     * WP はさらに折りたたみ可能 (子 ACT の表示制御)
- *     * depth に応じてインデント、WP/ACT バッジ
- *     * 担当者フィルタは「自分」で固定済み (filterTreeByAssignee)
+ * 折りたたみ / フィルタ仕様 (PR #61):
+ *   - WBS 画面と同じく「WP はデフォルト折りたたみ」に統一
+ *   - プロジェクト / WP の展開状態は sessionStorage で保持 (同一タブ内で永続)
+ *   - 状況 (task status) の複数選択フィルタを追加 (デフォルト全選択)
  */
 export function MyTasksClient({ projectGroups, today }: Props) {
-  // プロジェクトセクションの折りたたみ状態
-  // 初期値: 全プロジェクトを「折りたたんだ」状態で開始 (PR #59 ユーザ要求)
-  //   → 一覧性を高め、必要なプロジェクトだけ展開する運用に
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
-    () => new Set(projectGroups.map((pg) => pg.projectId)),
+  // 展開状態は「expanded ID の Set」で表現する (空=すべて折りたたみ)。
+  // セッション内で明示的に展開した項目だけが残り、新規セッションでは空に戻る。
+  const [expandedProjects, setExpandedProjects] = useSessionStringSet(
+    'my-tasks:expanded-projects',
+    () => [],
   );
-  const toggleProject = (projectId: string) => {
-    setCollapsedProjects((prev) => {
+  const [expandedTasks, setExpandedTasks] = useSessionStringSet(
+    'my-tasks:expanded-tasks',
+    () => [],
+  );
+  const [selectedStatuses, setSelectedStatuses] = useSessionStringSet(
+    'my-tasks:statuses',
+    () => [...ALL_STATUS_KEYS],
+  );
+
+  const toggleProject = useCallback((projectId: string) => {
+    setExpandedProjects((prev) => {
       const next = new Set(prev);
       if (next.has(projectId)) next.delete(projectId);
       else next.add(projectId);
       return next;
     });
-  };
+  }, [setExpandedProjects]);
+  const toggleTask = useCallback((taskId: string) => {
+    setExpandedTasks((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  }, [setExpandedTasks]);
+  const toggleStatus = useCallback((key: string) => {
+    setSelectedStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, [setSelectedStatuses]);
+  const selectAllStatuses = useCallback(() => {
+    setSelectedStatuses(() => new Set(ALL_STATUS_KEYS));
+  }, [setSelectedStatuses]);
+  const clearAllStatuses = useCallback(() => {
+    setSelectedStatuses(() => new Set());
+  }, [setSelectedStatuses]);
+
+  const isAllStatusesSelected
+    = selectedStatuses.size === ALL_STATUS_KEYS.length
+    && ALL_STATUS_KEYS.every((k) => selectedStatuses.has(k));
+
+  const filteredGroups = useMemo(() => {
+    if (isAllStatusesSelected) return projectGroups;
+    return projectGroups
+      .map((pg) => ({ ...pg, tree: filterTreeByStatus(pg.tree, selectedStatuses) }))
+      .filter((pg) => pg.tree.length > 0);
+  }, [projectGroups, selectedStatuses, isAllStatusesSelected]);
 
   if (projectGroups.length === 0) {
     return (
@@ -62,10 +108,32 @@ export function MyTasksClient({ projectGroups, today }: Props) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">マイタスク</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold">マイタスク</h2>
+        <div className="flex items-center gap-2">
+          <MultiSelectFilter
+            label="状況"
+            options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
+            selected={selectedStatuses}
+            onToggle={toggleStatus}
+            onSelectAll={selectAllStatuses}
+            onClearAll={clearAllStatuses}
+            isAllSelected={isAllStatusesSelected}
+          />
+          {!isAllStatusesSelected && (
+            <Button type="button" variant="ghost" size="sm" onClick={selectAllStatuses}>
+              フィルタ解除
+            </Button>
+          )}
+        </div>
+      </div>
 
-      {projectGroups.map((pg) => {
-        const isProjectCollapsed = collapsedProjects.has(pg.projectId);
+      {filteredGroups.length === 0 && (
+        <p className="py-8 text-center text-gray-500">該当するタスクがありません</p>
+      )}
+
+      {filteredGroups.map((pg) => {
+        const isProjectExpanded = expandedProjects.has(pg.projectId);
         return (
           <div key={pg.projectId} className="rounded-lg border overflow-x-auto">
             {/* プロジェクトセクションヘッダ (クリックで開閉) */}
@@ -74,9 +142,9 @@ export function MyTasksClient({ projectGroups, today }: Props) {
                 type="button"
                 onClick={() => toggleProject(pg.projectId)}
                 className="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
-                aria-label={isProjectCollapsed ? '展開' : '折りたたみ'}
+                aria-label={isProjectExpanded ? '折りたたみ' : '展開'}
               >
-                <span className={`text-xs transition-transform ${isProjectCollapsed ? '' : 'rotate-90'}`}>▶</span>
+                <span className={`text-xs transition-transform ${isProjectExpanded ? 'rotate-90' : ''}`}>▶</span>
               </button>
               <Link
                 href={`/projects/${pg.projectId}`}
@@ -89,7 +157,7 @@ export function MyTasksClient({ projectGroups, today }: Props) {
               </span>
             </div>
 
-            {!isProjectCollapsed && (
+            {isProjectExpanded && (
               <table className="min-w-full text-xs md:text-sm">
                 <thead className="bg-white">
                   <tr>
@@ -103,7 +171,14 @@ export function MyTasksClient({ projectGroups, today }: Props) {
                 </thead>
                 <tbody>
                   {pg.tree.map((task) => (
-                    <TaskRow key={task.id} task={task} depth={0} today={today} />
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      depth={0}
+                      today={today}
+                      expandedTasks={expandedTasks}
+                      onToggleTask={toggleTask}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -116,13 +191,26 @@ export function MyTasksClient({ projectGroups, today }: Props) {
 }
 
 /**
- * 再帰的なタスク行。WBS 画面の TaskTreeNode と同じ折りたたみ・インデント表現を、
- * read-only の軽量版として実装 (編集 UI は不要)。
+ * 再帰的なタスク行 (WBS 画面と同じ「WP デフォルト折りたたみ」仕様)。
+ * 展開状態は親の Set で一元管理され、sessionStorage に永続化される。
  */
-function TaskRow({ task, depth, today }: { task: TaskDTO; depth: number; today: string }) {
+function TaskRow({
+  task,
+  depth,
+  today,
+  expandedTasks,
+  onToggleTask,
+}: {
+  task: TaskDTO;
+  depth: number;
+  today: string;
+  expandedTasks: Set<string>;
+  onToggleTask: (id: string) => void;
+}) {
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  // WP のみ折りたたみ対象。ACT は常に展開表示。
+  const isExpanded = !isWP || !hasChildren || expandedTasks.has(task.id);
 
   const plannedRangeText = (() => {
     if (!task.plannedStartDate && !task.plannedEndDate) return '-';
@@ -152,10 +240,10 @@ function TaskRow({ task, depth, today }: { task: TaskDTO; depth: number; today: 
             {isWP && hasChildren ? (
               <button
                 type="button"
-                onClick={() => setIsCollapsed(!isCollapsed)}
+                onClick={() => onToggleTask(task.id)}
                 className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
               >
-                <span className={`text-xs transition-transform ${isCollapsed ? '' : 'rotate-90'}`}>▶</span>
+                <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
               </button>
             ) : (
               <span className="w-5 shrink-0" />
@@ -165,7 +253,7 @@ function TaskRow({ task, depth, today }: { task: TaskDTO; depth: number; today: 
             </Badge>
             <span className={isWP ? 'font-semibold' : 'font-medium'}>{task.name}</span>
             {task.wbsNumber && <span className="text-xs text-gray-400">{task.wbsNumber}</span>}
-            {isWP && hasChildren && isCollapsed && (
+            {isWP && hasChildren && !isExpanded && (
               <span className="text-xs text-gray-400">({task.children!.length})</span>
             )}
             {isDelayed && <Badge variant="destructive" className="ml-1 text-[10px]">遅延</Badge>}
@@ -193,8 +281,15 @@ function TaskRow({ task, depth, today }: { task: TaskDTO; depth: number; today: 
             : '-'}
         </td>
       </tr>
-      {!isCollapsed && task.children?.map((child) => (
-        <TaskRow key={child.id} task={child} depth={depth + 1} today={today} />
+      {isExpanded && task.children?.map((child) => (
+        <TaskRow
+          key={child.id}
+          task={child}
+          depth={depth + 1}
+          today={today}
+          expandedTasks={expandedTasks}
+          onToggleTask={onToggleTask}
+        />
       ))}
     </>
   );

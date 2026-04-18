@@ -32,11 +32,14 @@ export function RetrospectiveEditDialog({
   open,
   onOpenChange,
   onSaved,
+  readOnly = false,
 }: {
   retro: RetroLike | null;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
+  /** PR #61: 非公開プロジェクト用の参照専用モード */
+  readOnly?: boolean;
 }) {
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
@@ -91,11 +94,14 @@ export function RetrospectiveEditDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>振り返り編集</DialogTitle>
-          <DialogDescription>変更内容を保存します。</DialogDescription>
+          <DialogTitle>{readOnly ? '振り返り詳細' : '振り返り編集'}</DialogTitle>
+          <DialogDescription>
+            {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+          <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
           <div className="space-y-2">
             <Label>実施日</Label>
             <Input type="date" value={form.conductedDate} onChange={(e) => setForm({ ...form, conductedDate: e.target.value })} required />
@@ -124,7 +130,8 @@ export function RetrospectiveEditDialog({
               {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
-          <Button type="submit" className="w-full">保存</Button>
+          </fieldset>
+          {!readOnly && <Button type="submit" className="w-full">保存</Button>}
         </form>
       </DialogContent>
     </Dialog>
