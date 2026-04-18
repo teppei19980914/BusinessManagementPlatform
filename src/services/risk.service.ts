@@ -100,6 +100,10 @@ export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName'> & {
   canAccessProject: boolean;
   reporterName: string | null;
   assigneeName: string | null;
+  /** 作成者氏名 (非メンバーにはマスク) */
+  createdByName: string | null;
+  /** 更新者氏名 (非メンバーにはマスク) */
+  updatedByName: string | null;
 };
 
 /**
@@ -133,6 +137,14 @@ export async function listAllRisksForViewer(
     orderBy: { createdAt: 'desc' },
   });
 
+  // createdBy / updatedBy は scalar カラムで User リレーションが張られていないため、
+  // 関連ユーザ名をバルクで 1 クエリ取得して map 引きする (N+1 回避)。
+  const userIds = Array.from(new Set(risks.flatMap((r) => [r.createdBy, r.updatedBy])));
+  const users = userIds.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
+    : [];
+  const userNameById = new Map(users.map((u) => [u.id, u.name]));
+
   return risks.map((r) => {
     const isMember = isAdmin || memberProjectIds.has(r.projectId);
     const projectDeleted = r.project?.deletedAt != null;
@@ -145,6 +157,8 @@ export async function listAllRisksForViewer(
       // 非メンバーには氏名を返さない (顧客名・見積と同等の機微情報扱い)
       reporterName: isMember ? r.reporter?.name ?? null : null,
       assigneeName: isMember ? r.assignee?.name ?? null : null,
+      createdByName: isMember ? userNameById.get(r.createdBy) ?? null : null,
+      updatedByName: isMember ? userNameById.get(r.updatedBy) ?? null : null,
     };
   });
 }

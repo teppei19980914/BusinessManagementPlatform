@@ -142,6 +142,89 @@ export async function listKnowledge(
 }
 
 /**
+ * 全ナレッジ横断ビュー用の拡張 DTO。
+ * プロジェクトリンク情報と更新者氏名を追加し、非メンバー向けのマスキングに対応。
+ * 複数プロジェクトに紐付いたナレッジは「最初の紐付け先」を主プロジェクトとして扱う。
+ */
+export type AllKnowledgeDTO = KnowledgeDTO & {
+  primaryProjectId: string | null;
+  projectName: string | null;
+  projectDeleted: boolean;
+  canAccessProject: boolean;
+  linkedProjectCount: number;
+  updatedByName: string | null;
+};
+
+/**
+ * 全プロジェクト横断のナレッジを取得する (認可: ログインユーザなら誰でも可)。
+ * 既存の公開範囲 (visibility) 制御は listKnowledge と同じ。
+ * 非メンバー向けには主プロジェクト名・作成者氏名等をマスクする。
+ */
+export async function listAllKnowledgeForViewer(
+  viewerUserId: string,
+  viewerSystemRole: string,
+): Promise<AllKnowledgeDTO[]> {
+  const isAdmin = viewerSystemRole === 'admin';
+  const memberships = isAdmin
+    ? []
+    : await prisma.projectMember.findMany({
+      where: { userId: viewerUserId },
+      select: { projectId: true },
+    });
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
+
+  const where: Prisma.KnowledgeWhereInput = { deletedAt: null };
+  if (!isAdmin) {
+    where.OR = [
+      { visibility: 'company' },
+      {
+        visibility: 'project',
+        knowledgeProjects: {
+          some: { project: { members: { some: { userId: viewerUserId } } } },
+        },
+      },
+      { visibility: 'draft', createdBy: viewerUserId },
+    ];
+  }
+
+  const knowledges = await prisma.knowledge.findMany({
+    where,
+    include: {
+      creator: { select: { name: true } },
+      updater: { select: { name: true } },
+      knowledgeProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return knowledges.map((k) => {
+    const primary = k.knowledgeProjects[0];
+    const primaryProjectId = primary?.projectId ?? null;
+    const primaryProject = primary?.project ?? null;
+    const isMember = primaryProjectId
+      ? isAdmin || memberProjectIds.has(primaryProjectId)
+      : isAdmin;
+    const projectDeleted = primaryProject?.deletedAt != null;
+
+    return {
+      ...toKnowledgeDTO(k),
+      primaryProjectId,
+      projectName: isMember ? primaryProject?.name ?? null : null,
+      projectDeleted: isAdmin ? projectDeleted : false,
+      canAccessProject: isMember && !projectDeleted && primaryProjectId != null,
+      linkedProjectCount: k.knowledgeProjects.length,
+      updatedByName: isMember ? k.updater?.name ?? null : null,
+      creatorName: isMember ? k.creator?.name : undefined,
+    };
+  });
+}
+
+/**
  * プロジェクトに紐づくナレッジのみを取得する (プロジェクト詳細「ナレッジ一覧」タブ用)。
  *
  * 既存 listKnowledge は全ナレッジ (visibility 制御のみ) を返すのに対し、

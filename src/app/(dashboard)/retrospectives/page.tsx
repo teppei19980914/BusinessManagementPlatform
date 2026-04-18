@@ -1,21 +1,27 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { Badge } from '@/components/ui/badge';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { listAllRetrospectivesForViewer } from '@/services/retrospective.service';
 import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
 
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${day} ${hh}:${mm}`;
+}
+
 /**
- * 全プロジェクト横断の振り返りビュー。
+ * 全プロジェクト横断の振り返りビュー (Req 4 列構成: PR #55)。
  *
- * 認可方針 (Phase B):
- *   - 認証済みユーザなら誰でも閲覧可
- *   - 非メンバーには projectName / コメント投稿者氏名をマスクして表示
- *   - 詳細画面リンクは メンバー (canAccessProject=true) のみ表示
- *   - 作成はプロジェクト詳細画面からのみ
+ * 列: プロジェクト・実施日・計画総括・実績総括・良かった点・次回以前事項・
+ *     作成日時・作成者・更新日時・更新者 (+ admin のみ操作)
  */
 export default async function AllRetrospectivesPage() {
   const session = await auth();
@@ -34,24 +40,23 @@ export default async function AllRetrospectivesPage() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>実施日</TableHead>
-            <TableHead>プロジェクト</TableHead>
-            <TableHead>良かった点 (抜粋)</TableHead>
-            <TableHead>課題 (抜粋)</TableHead>
-            <TableHead>状態</TableHead>
-            <TableHead>コメント</TableHead>
+            <TableHead className="whitespace-nowrap">プロジェクト</TableHead>
+            <TableHead className="whitespace-nowrap">実施日</TableHead>
+            <TableHead>計画総括</TableHead>
+            <TableHead>実績総括</TableHead>
+            <TableHead>良かった点</TableHead>
+            <TableHead>次回以前事項</TableHead>
+            <TableHead className="whitespace-nowrap">作成日時</TableHead>
+            <TableHead className="whitespace-nowrap">作成者</TableHead>
+            <TableHead className="whitespace-nowrap">更新日時</TableHead>
+            <TableHead className="whitespace-nowrap">更新者</TableHead>
             {isAdmin && <TableHead className="whitespace-nowrap">操作</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
           {retros.map((r) => (
             <TableRow key={r.id}>
-              <TableCell className="whitespace-nowrap font-medium">
-                {/* 実施日はリンクしない (PR #54 以降、リンクは プロジェクト列へ移設) */}
-                <span>{r.conductedDate}</span>
-              </TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {/* プロジェクト列: 生存プロジェクトのみ /projects/[id] 概要画面へリンク */}
+              <TableCell className="text-sm">
                 {r.projectName == null ? (
                   <span className="text-gray-400">（非公開）</span>
                 ) : r.canAccessProject ? (
@@ -68,14 +73,23 @@ export default async function AllRetrospectivesPage() {
                   </span>
                 )}
               </TableCell>
+              <TableCell className="whitespace-nowrap font-medium">{r.conductedDate}</TableCell>
+              <TableCell className="max-w-xs truncate text-sm">{r.planSummary || '-'}</TableCell>
+              <TableCell className="max-w-xs truncate text-sm">{r.actualSummary || '-'}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.goodPoints || '-'}</TableCell>
-              <TableCell className="max-w-xs truncate text-sm">{r.problems || '-'}</TableCell>
-              <TableCell>
-                <Badge variant={r.state === 'confirmed' ? 'default' : 'outline'}>
-                  {r.state === 'confirmed' ? '確定' : '作成中'}
-                </Badge>
+              <TableCell className="max-w-xs truncate text-sm">{r.improvements || '-'}</TableCell>
+              <TableCell className="whitespace-nowrap text-sm text-gray-600">
+                {formatDateTime(r.createdAt)}
               </TableCell>
-              <TableCell>{r.comments.length} 件</TableCell>
+              <TableCell className="text-sm text-gray-600">
+                {r.createdByName ?? <span className="text-gray-400">-</span>}
+              </TableCell>
+              <TableCell className="whitespace-nowrap text-sm text-gray-600">
+                {formatDateTime(r.updatedAt)}
+              </TableCell>
+              <TableCell className="text-sm text-gray-600">
+                {r.updatedByName ?? <span className="text-gray-400">-</span>}
+              </TableCell>
               {isAdmin && (
                 <TableCell>
                   <AdminRetrospectiveDeleteButton
@@ -89,7 +103,7 @@ export default async function AllRetrospectivesPage() {
           ))}
           {retros.length === 0 && (
             <TableRow>
-              <TableCell colSpan={isAdmin ? 7 : 6} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-gray-500">
                 振り返りがありません
               </TableCell>
             </TableRow>

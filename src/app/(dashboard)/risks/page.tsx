@@ -6,7 +6,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { listAllRisksForViewer } from '@/services/risk.service';
-import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
+import { PRIORITIES } from '@/types';
 import { AdminRiskDeleteButton } from './admin-delete-button';
 
 const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
@@ -15,13 +15,24 @@ const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
 };
 
 /**
- * 全プロジェクト横断のリスク/課題ビュー。
+ * 日時フォーマット (YYYY-MM-DD HH:mm)
+ * テーブル表示用に秒・タイムゾーン表示を省く。
+ */
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${day} ${hh}:${mm}`;
+}
+
+/**
+ * 全プロジェクト横断のリスク/課題ビュー (Req 4 列構成: PR #55)。
  *
- * 認可方針 (Phase B):
- *   - 認証済みユーザなら誰でも閲覧可
- *   - 非メンバーには projectName / 担当者名 / 起票者名をマスクして表示
- *   - 詳細画面リンクは メンバー (canAccessProject=true) のみ表示
- *   - 作成はプロジェクト詳細画面からのみ (ここには作成ボタンを置かない)
+ * 列: プロジェクト・種別・件名・担当者・影響度・発生可能性・優先度・
+ *     作成日時・作成者・更新日時・更新者 (+ admin のみ操作)
  */
 export default async function AllRisksPage() {
   const session = await auth();
@@ -40,36 +51,24 @@ export default async function AllRisksPage() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>種別</TableHead>
+            <TableHead className="whitespace-nowrap">プロジェクト</TableHead>
+            <TableHead className="whitespace-nowrap">種別</TableHead>
             <TableHead>件名</TableHead>
-            <TableHead>プロジェクト</TableHead>
-            <TableHead>影響度</TableHead>
-            <TableHead>優先度</TableHead>
-            <TableHead>状態</TableHead>
-            <TableHead>担当者</TableHead>
-            <TableHead>期限</TableHead>
+            <TableHead className="whitespace-nowrap">担当者</TableHead>
+            <TableHead className="whitespace-nowrap">影響度</TableHead>
+            <TableHead className="whitespace-nowrap">発生可能性</TableHead>
+            <TableHead className="whitespace-nowrap">優先度</TableHead>
+            <TableHead className="whitespace-nowrap">作成日時</TableHead>
+            <TableHead className="whitespace-nowrap">作成者</TableHead>
+            <TableHead className="whitespace-nowrap">更新日時</TableHead>
+            <TableHead className="whitespace-nowrap">更新者</TableHead>
             {isAdmin && <TableHead className="whitespace-nowrap">操作</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
           {risks.map((r) => (
             <TableRow key={r.id}>
-              <TableCell>
-                <Badge variant={typeColors[r.type] || 'outline'}>
-                  {r.type === 'risk' ? 'リスク' : '課題'}
-                </Badge>
-              </TableCell>
-              <TableCell className="font-medium">
-                {/* 件名はリンクしない (PR #54 以降、リンクは プロジェクト列へ移設) */}
-                <span>{r.title}</span>
-              </TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {/*
-                  プロジェクト列の表示ロジック (PR #54):
-                    1. 非メンバー: 「（非公開）」
-                    2. メンバー + 削除済みプロジェクト: プロジェクト名 + 「(削除済)」で非リンク
-                    3. メンバー + 生存プロジェクト: プロジェクト名にリンク (概要画面へ)
-                */}
+              <TableCell className="text-sm">
                 {r.projectName == null ? (
                   <span className="text-gray-400">（非公開）</span>
                 ) : r.canAccessProject ? (
@@ -86,15 +85,34 @@ export default async function AllRisksPage() {
                   </span>
                 )}
               </TableCell>
-              <TableCell>{PRIORITIES[r.impact as keyof typeof PRIORITIES] || r.impact}</TableCell>
-              <TableCell>{PRIORITIES[r.priority as keyof typeof PRIORITIES] || r.priority}</TableCell>
               <TableCell>
-                {RISK_ISSUE_STATES[r.state as keyof typeof RISK_ISSUE_STATES] || r.state}
+                <Badge variant={typeColors[r.type] || 'outline'}>
+                  {r.type === 'risk' ? 'リスク' : '課題'}
+                </Badge>
               </TableCell>
+              <TableCell className="font-medium">{r.title}</TableCell>
               <TableCell className="text-sm text-gray-600">
                 {r.assigneeName ?? <span className="text-gray-400">-</span>}
               </TableCell>
-              <TableCell>{r.deadline || '-'}</TableCell>
+              <TableCell>{PRIORITIES[r.impact as keyof typeof PRIORITIES] || r.impact}</TableCell>
+              <TableCell>
+                {r.likelihood
+                  ? PRIORITIES[r.likelihood as keyof typeof PRIORITIES] || r.likelihood
+                  : '-'}
+              </TableCell>
+              <TableCell>{PRIORITIES[r.priority as keyof typeof PRIORITIES] || r.priority}</TableCell>
+              <TableCell className="whitespace-nowrap text-sm text-gray-600">
+                {formatDateTime(r.createdAt)}
+              </TableCell>
+              <TableCell className="text-sm text-gray-600">
+                {r.createdByName ?? <span className="text-gray-400">-</span>}
+              </TableCell>
+              <TableCell className="whitespace-nowrap text-sm text-gray-600">
+                {formatDateTime(r.updatedAt)}
+              </TableCell>
+              <TableCell className="text-sm text-gray-600">
+                {r.updatedByName ?? <span className="text-gray-400">-</span>}
+              </TableCell>
               {isAdmin && (
                 <TableCell>
                   <AdminRiskDeleteButton
@@ -108,7 +126,7 @@ export default async function AllRisksPage() {
           ))}
           {risks.length === 0 && (
             <TableRow>
-              <TableCell colSpan={isAdmin ? 9 : 8} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-gray-500">
                 リスク/課題がありません
               </TableCell>
             </TableRow>
