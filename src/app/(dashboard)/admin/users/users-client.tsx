@@ -24,6 +24,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
+import { UserEditDialog } from '@/components/dialogs/user-edit-dialog';
 import { SYSTEM_ROLES } from '@/types';
 import type { UserDTO } from '@/services/user.service';
 
@@ -37,6 +38,8 @@ export function UsersClient({ initialUsers }: Props) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  // PR #59 Req 3: 行クリックで編集ダイアログ
+  const [editingUser, setEditingUser] = useState<UserDTO | null>(null);
 
   const [form, setForm] = useState({
     name: '',
@@ -167,7 +170,11 @@ export function UsersClient({ initialUsers }: Props) {
         </TableHeader>
         <TableBody>
           {initialUsers.map((user) => (
-            <TableRow key={user.id}>
+            <TableRow
+              key={user.id}
+              className="cursor-pointer hover:bg-gray-50"
+              onClick={() => setEditingUser(user)}
+            >
               <TableCell className="font-medium">{user.name}</TableCell>
               <TableCell>{user.email}</TableCell>
               <TableCell>
@@ -192,6 +199,13 @@ export function UsersClient({ initialUsers }: Props) {
           )}
         </TableBody>
       </Table>
+
+      <UserEditDialog
+        user={editingUser}
+        open={editingUser != null}
+        onOpenChange={(v) => { if (!v) setEditingUser(null); }}
+        onSaved={async () => { router.refresh(); }}
+      />
     </div>
   );
 }

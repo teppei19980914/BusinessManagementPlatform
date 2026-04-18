@@ -29,7 +29,34 @@ export const authConfig: NextAuthConfig = {
   trustHost: true,
   session: {
     strategy: 'jwt',
+    // JWT 自体の有効期限 (安全網): 24 時間
+    // ただしタブ / ブラウザを閉じた時点でセッション cookie が失われるので実質それまで
     maxAge: 24 * 60 * 60,
+  },
+  /**
+   * セッション cookie 化 (PR #59 Req 4):
+   *   既定では NextAuth は maxAge を cookie の expires にも反映し、永続 cookie に
+   *   するためブラウザを閉じてもログイン状態が残る。ここで明示的に maxAge を
+   *   省いた cookie options を与えることで「ブラウザ/タブを閉じると破棄される」
+   *   セッション cookie に切り替える。
+   *
+   *   name は NextAuth v5 の規約: 本番 (https) では "__Secure-" プレフィックス、
+   *   開発 (http) では通常名を使う。
+   */
+  cookies: {
+    sessionToken: {
+      name:
+        process.env.NODE_ENV === 'production'
+          ? '__Secure-authjs.session-token'
+          : 'authjs.session-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+        // maxAge を指定しない → セッション cookie (タブ/ブラウザ閉じで失効)
+      },
+    },
   },
   pages: {
     signIn: '/login',

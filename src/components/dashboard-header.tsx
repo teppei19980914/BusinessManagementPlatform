@@ -1,9 +1,9 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 type DashboardHeaderProps = {
@@ -19,7 +19,7 @@ const navItems = [
   { href: '/my-tasks', label: 'マイタスク' },
   // 全プロジェクト横断で閲覧できるナレッジ資産（リスク/課題・振り返り・ナレッジ）。
   // プロジェクト詳細タブの「○○一覧」はそのプロジェクトに紐づく一覧、最上部タブは
-  // 全プロジェクトの集約ビュー。認可は「全メンバー閲覧可」方針 (Phase B 以降で実装)。
+  // 全プロジェクトの集約ビュー。
   { href: '/risks', label: '全リスク/課題' },
   { href: '/retrospectives', label: '全振り返り' },
   { href: '/knowledge', label: '全ナレッジ' },
@@ -31,12 +31,85 @@ const adminNavItems = [
   { href: '/admin/role-changes', label: '権限変更' },
 ];
 
+/**
+ * アカウントメニュー (PR #59 Req 6):
+ *   画面右上のアカウント名をクリックすると「設定」「ログアウト」が
+ *   プルダウンで表示される。外部クリック / Escape で閉じる。
+ */
+function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <span>{user.name}</span>
+        {user.systemRole === 'admin' && (
+          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">
+            管理者
+          </span>
+        )}
+        <span className="text-xs text-gray-400">▾</span>
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-md border bg-white shadow-md"
+        >
+          <Link
+            href="/settings"
+            role="menuitem"
+            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            onClick={() => setOpen(false)}
+          >
+            設定
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+            onClick={() => {
+              setOpen(false);
+              signOut({ callbackUrl: '/login' });
+            }}
+          >
+            ログアウト
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DashboardHeader({ user }: DashboardHeaderProps) {
   const pathname = usePathname();
 
   return (
     <header className="border-b bg-white">
-      {/* main と同じ横幅ポリシー: max-w を外し画面いっぱいまで広げる（ヘッダと本文の左右端を揃える） */}
       <div className="flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-6">
           <Link href="/projects" className="text-lg font-semibold">
@@ -44,17 +117,17 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
           </Link>
           <nav className="flex items-center gap-1">
             {navItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-gray-100',
-                    pathname.startsWith(item.href) ? 'bg-gray-100 font-medium' : 'text-gray-600',
-                  )}
-                >
-                  {item.label}
-                </Link>
-              ))}
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-gray-100',
+                  pathname.startsWith(item.href) ? 'bg-gray-100 font-medium' : 'text-gray-600',
+                )}
+              >
+                {item.label}
+              </Link>
+            ))}
             {user.systemRole === 'admin' &&
               adminNavItems.map((item) => (
                 <Link
@@ -70,22 +143,7 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
               ))}
           </nav>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-600">
-            {user.name}
-            {user.systemRole === 'admin' && (
-              <span className="ml-1 rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">
-                管理者
-              </span>
-            )}
-          </span>
-          <Link href="/settings" className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
-            設定
-          </Link>
-          <Button variant="outline" size="sm" onClick={() => signOut({ callbackUrl: '/login' })}>
-            ログアウト
-          </Button>
-        </div>
+        <AccountMenu user={user} />
       </div>
     </header>
   );
