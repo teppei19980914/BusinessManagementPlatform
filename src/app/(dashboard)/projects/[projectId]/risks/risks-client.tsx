@@ -13,7 +13,6 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
-import { LabeledSelect } from '@/components/labeled-select';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
 import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
@@ -181,24 +180,14 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
               <TableCell className="font-medium">{r.title}</TableCell>
               <TableCell><Badge variant={impactColors[r.impact] || 'secondary'}>{PRIORITIES[r.impact as keyof typeof PRIORITIES]}</Badge></TableCell>
               <TableCell><Badge variant={impactColors[r.priority] || 'secondary'}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Badge></TableCell>
-              <TableCell onClick={(e) => e.stopPropagation()}>
-                {/* 状態変更の Select は行クリックの伝播を止めて単独動作させる */}
-                <LabeledSelect
-                  value={r.state}
-                  onValueChange={async (v) => {
-                    if (!v || v === r.state) return;
-                    await withLoading(() =>
-                      fetch(`/api/projects/${projectId}/risks/${r.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ state: v }),
-                      }),
-                    );
-                    await reload();
-                  }}
-                  options={RISK_ISSUE_STATES}
-                  className="w-24"
-                />
+              <TableCell>
+                {/*
+                  PR #59: 状態列はインライン編集を廃止し、他列同様に読み取り専用バッジ表示。
+                  変更は行クリック → RiskEditDialog 内の「状態」選択経由に統一する。
+                */}
+                <Badge variant="outline">
+                  {RISK_ISSUE_STATES[r.state as keyof typeof RISK_ISSUE_STATES] || r.state}
+                </Badge>
               </TableCell>
               <TableCell>{r.assigneeName || '-'}</TableCell>
               <TableCell>{new Date(r.createdAt).toLocaleDateString('ja-JP')}</TableCell>

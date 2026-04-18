@@ -79,6 +79,20 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
     await reload();
   }
 
+  async function handleDelete(retroId: string) {
+    // PR #59: 振り返りリストからの削除 UI を追加 (リスク/課題・ナレッジと同様の DRY 化)。
+    // 実 API は PR #52 で新設済の DELETE /api/projects/:pid/retrospectives/:retroId を使用。
+    if (!confirm('この振り返りを削除しますか？')) return;
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, { method: 'DELETE' }),
+    );
+    if (!res.ok) {
+      alert('削除に失敗しました');
+      return;
+    }
+    await reload();
+  }
+
   async function handleComment(retroId: string) {
     const content = commentText[retroId];
     if (!content?.trim()) return;
@@ -154,13 +168,23 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
                 {retro.state === 'confirmed' ? '確定' : '下書き'}
               </Badge>
             </div>
-            {canEdit && retro.state !== 'confirmed' && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={(e) => { e.stopPropagation(); handleConfirm(retro.id); }}
-              >確定</Button>
-            )}
+            <div className="flex items-center gap-2">
+              {canEdit && retro.state !== 'confirmed' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => { e.stopPropagation(); handleConfirm(retro.id); }}
+                >確定</Button>
+              )}
+              {canEdit && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-red-600"
+                  onClick={(e) => { e.stopPropagation(); handleDelete(retro.id); }}
+                >削除</Button>
+              )}
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
