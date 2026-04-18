@@ -174,7 +174,14 @@ function TaskTreeNodeImpl({
             )}
           </div>
         </td>
-        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{isWP ? '-' : (task.assigneeName || '-')}</td>
+        {/*
+          WP の担当者は子 ACT から自動集約される (PR #45)。
+          旧実装では WP 行で常に '-' をハードコードしていたが、集約済みの値を
+          表示できるよう ACT と同じ分岐に統一する。
+          子の担当者が混在 / 全員未アサインの場合は DTO 側 assigneeName が undefined
+          となり '-' が表示される。
+        */}
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{task.assigneeName || '-'}</td>
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
           <Badge variant={statusColors[task.status] || 'outline'}>
             {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
