@@ -23,6 +23,7 @@ import {
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
 import { KNOWLEDGE_TYPES } from '@/types';
 import type { AllKnowledgeDTO } from '@/services/knowledge.service';
+import { formatDateTime } from '@/lib/format';
 
 type Props = {
   initialKnowledge: AllKnowledgeDTO[];
@@ -38,15 +39,6 @@ type Props = {
  * 検索・フィルタはクライアント側で実施 (全件受け取る前提で現状は運用、
  * 件数が増えたらサーバ検索に切替を検討)。
  */
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${y}-${m}-${day} ${hh}:${mm}`;
-}
 
 export function KnowledgeClient({ initialKnowledge }: Props) {
   const router = useRouter();

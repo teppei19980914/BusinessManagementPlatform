@@ -102,6 +102,13 @@ export function RetrospectiveEditDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
           <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
+          {/* PR #63: 公開範囲を最上位に配置 */}
+          <div className="space-y-2">
+            <Label>公開範囲</Label>
+            <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+              {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
           <div className="space-y-2">
             <Label>実施日</Label>
             <Input type="date" value={form.conductedDate} onChange={(e) => setForm({ ...form, conductedDate: e.target.value })} required />
@@ -124,12 +131,6 @@ export function RetrospectiveEditDialog({
               />
             </div>
           ))}
-          <div className="space-y-2">
-            <Label>公開範囲</Label>
-            <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
-              {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
-          </div>
           </fieldset>
           {!readOnly && <Button type="submit" className="w-full">保存</Button>}
         </form>

@@ -22,10 +22,11 @@ import {
   collectSelfAndDescendantIds,
   filterTreeByAssignee,
   filterTreeByStatus,
+  taskStatusColors,
   UNASSIGNED_KEY,
 } from '@/lib/task-tree-utils';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
-import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
+import { TASK_STATUSES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
@@ -48,12 +49,8 @@ type Props = {
   onReload?: () => Promise<void> | void;
 };
 
-const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  not_started: 'outline',
-  in_progress: 'default',
-  completed: 'secondary',
-  on_hold: 'destructive',
-};
+// 旧ローカル statusColors は lib/task-tree-utils.ts の taskStatusColors に集約 (PR #63 DRY)
+const statusColors = taskStatusColors;
 
 /**
  * 一括更新ダイアログ内で「この項目を適用するか」のチェックボックス付きフィールド行。
@@ -542,30 +539,27 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // --- 一括編集（PM/TL 編集フォーム相当）ダイアログ ---
   // ダイアログを新しく開き直したときは初期値（apply=全 false / values=既定）に戻すポリシー。
   // 以前のセッションの入力値が残っていると「他タスクでの選択が引き継がれてしまう」UX バグになるため。
+  // PR #63: 優先度は UI から撤去 (将来 impact × likelihood から自動算出予定)
   type BulkEditApply = {
     assigneeId: boolean;
-    priority: boolean;
     plannedStartDate: boolean;
     plannedEndDate: boolean;
     plannedEffort: boolean;
   };
   type BulkEditValues = {
     assigneeId: string;
-    priority: string;
     plannedStartDate: string;
     plannedEndDate: string;
     plannedEffort: number;
   };
   const bulkEditInitialApply = (): BulkEditApply => ({
     assigneeId: false,
-    priority: false,
     plannedStartDate: false,
     plannedEndDate: false,
     plannedEffort: false,
   });
   const bulkEditInitialValues = (): BulkEditValues => ({
     assigneeId: '',
-    priority: 'medium',
     plannedStartDate: '',
     plannedEndDate: '',
     plannedEffort: 0,
@@ -669,7 +663,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setBulkEditError('');
     const updates: Record<string, unknown> = {};
     if (bulkEditApply.assigneeId) updates.assigneeId = bulkEditValues.assigneeId || null;
-    if (bulkEditApply.priority) updates.priority = bulkEditValues.priority;
     if (bulkEditApply.plannedStartDate) updates.plannedStartDate = bulkEditValues.plannedStartDate || null;
     if (bulkEditApply.plannedEndDate) updates.plannedEndDate = bulkEditValues.plannedEndDate || null;
     if (bulkEditApply.plannedEffort) updates.plannedEffort = bulkEditValues.plannedEffort;
@@ -831,13 +824,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     plannedStartDate: '',
     plannedEndDate: '',
     plannedEffort: 0,
-    priority: 'medium',
   });
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
 
+    // PR #63: UI から「優先度」を撤去。サーバ側バリデータは optional 扱いのため省略で OK。
     const base = createType === 'work_package'
       ? { type: 'work_package', name: form.name }
       : {
@@ -847,7 +840,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           plannedStartDate: form.plannedStartDate,
           plannedEndDate: form.plannedEndDate,
           plannedEffort: form.plannedEffort,
-          priority: form.priority,
         };
 
     const body = parentTaskId ? { ...base, parentTaskId } : base;
@@ -868,7 +860,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     setIsCreateOpen(false);
     setParentTaskId('');
-    setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: 0, priority: 'medium' });
+    setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
     await reload();
   }
 
@@ -986,23 +978,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                         <Input type="date" value={form.plannedEndDate} onChange={(e) => setForm({ ...form, plannedEndDate: e.target.value })} required />
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>予定工数（人時）</Label>
-                        <NumberInput min={1} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>優先度</Label>
-                        <select
-                          value={form.priority}
-                          onChange={(e) => setForm({ ...form, priority: e.target.value })}
-                          className={nativeSelectClass}
-                        >
-                          {Object.entries(PRIORITIES).map(([key, label]) => (
-                            <option key={key} value={key}>{label}</option>
-                          ))}
-                        </select>
-                      </div>
+                    <div className="space-y-2">
+                      <Label>予定工数（人時）</Label>
+                      <NumberInput min={1} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
                     </div>
                   </>
                 )}
@@ -1082,21 +1060,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <option value="">未設定</option>
                     {members.map((m) => (
                       <option key={m.userId} value={m.userId}>{m.userName}</option>
-                    ))}
-                  </select>
-                </ApplyFieldRow>
-                <ApplyFieldRow
-                  apply={bulkEditApply.priority}
-                  onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, priority: v })}
-                  label="優先度"
-                >
-                  <select
-                    value={bulkEditValues.priority}
-                    onChange={(e) => setBulkEditValues({ ...bulkEditValues, priority: e.target.value })}
-                    className={nativeSelectClass}
-                  >
-                    {Object.entries(PRIORITIES).map(([key, label]) => (
-                      <option key={key} value={key}>{label}</option>
                     ))}
                   </select>
                 </ApplyFieldRow>

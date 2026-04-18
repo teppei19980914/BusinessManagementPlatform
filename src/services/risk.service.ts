@@ -210,7 +210,8 @@ export async function createRisk(
       cause: input.cause,
       impact: input.impact,
       likelihood: input.likelihood,
-      priority: input.priority,
+      // PR #63: 優先度を UI から撤去。暫定で影響度を流用 (将来 impact × likelihood で自動算出予定)。
+      priority: input.priority ?? input.impact,
       responsePolicy: input.responsePolicy,
       responseDetail: input.responseDetail,
       reporterId: userId,

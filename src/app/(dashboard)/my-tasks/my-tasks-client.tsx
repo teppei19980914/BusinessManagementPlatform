@@ -8,7 +8,7 @@ import { TASK_STATUSES, PRIORITIES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
-import { filterTreeByStatus } from '@/lib/task-tree-utils';
+import { filterTreeByStatus, taskStatusColors } from '@/lib/task-tree-utils';
 
 type ProjectGroup = {
   projectId: string;
@@ -22,12 +22,8 @@ type Props = {
   today: string;
 };
 
-const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  not_started: 'outline',
-  in_progress: 'default',
-  completed: 'secondary',
-  on_hold: 'destructive',
-};
+// 旧ローカル statusColors は lib/task-tree-utils.ts の taskStatusColors に集約 (PR #63 DRY)
+const statusColors = taskStatusColors;
 
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
