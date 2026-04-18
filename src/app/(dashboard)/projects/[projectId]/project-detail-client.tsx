@@ -30,6 +30,7 @@ import { TasksClient } from './tasks/tasks-client';
 import { GanttClient } from './gantt/gantt-client';
 import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
+import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
 import { MembersClient } from './members-client';
 
 type Props = {
@@ -109,10 +110,11 @@ export function ProjectDetailClient({
   const risks = useLazyFetch<RiskDTO[]>(`/api/projects/${project.id}/risks`);
   const retros = useLazyFetch<RetroDTO[]>(`/api/projects/${project.id}/retrospectives`);
   const members = useLazyFetch<MemberDTO[]>(`/api/projects/${project.id}/members`);
-  // useLazyFetch は内部で json.data を unwrap するため、ここで期待する型は配列そのもの。
-  // 以前は `{ data: KnowledgeDTO[] }` と誤って二重ラップで型付けしており、
-  // 実行時に result.data が undefined となり `.length` 参照で TypeError を起こしていた。
-  const knowledges = useLazyFetch<KnowledgeDTO[]>(`/api/knowledge?page=1&limit=10`);
+  // プロジェクト scoped のナレッジ一覧 (PR #52): 「ナレッジ一覧」タブは
+  // このプロジェクトに紐づくナレッジのみ表示する。「全ナレッジ」 (/knowledge) は
+  // 全プロジェクトのナレッジを表示するが、どちらも同一 knowledge テーブルを参照する
+  // ため、一方での CRUD がもう一方に即座に反映される (連動)。
+  const knowledges = useLazyFetch<KnowledgeDTO[]>(`/api/projects/${project.id}/knowledge`);
   const allUsers = useLazyFetch<UserDTO[]>(`/api/admin/users`);
 
   const [activeTab, setActiveTab] = useState('overview');
@@ -169,6 +171,9 @@ export function ProjectDetailClient({
   const reloadMembers = useCallback(async () => {
     await members.load(true);
   }, [members]);
+  const reloadKnowledges = useCallback(async () => {
+    await knowledges.load(true);
+  }, [knowledges]);
 
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
@@ -443,35 +448,24 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
-        {/* ナレッジタブ（トップ 10 表示のみ、CRUD は /knowledge 画面側）*/}
+        {/*
+          ナレッジ一覧タブ (PR #52 以降):
+            - このプロジェクトに紐づくナレッジのみ表示 (project-scoped)
+            - 作成/削除はプロジェクトメンバーのみ (ProjectKnowledgeClient 内で制御)
+            - 作成時に projectId を自動で関連付けるため「全ナレッジ」にも即反映
+        */}
         <TabsContent value="knowledge" className="mt-4">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold">関連ナレッジ</h3>
-              <a href="/knowledge" className="text-sm text-blue-600 hover:underline">
-                ナレッジ横断検索 →
-              </a>
-            </div>
-            <LazyTabContent state={knowledges.state}>
-              {(result) =>
-                result.length === 0 ? (
-                  <p className="py-4 text-center text-gray-500">ナレッジがありません</p>
-                ) : (
-                  <div className="space-y-2">
-                    {result.slice(0, 10).map((k) => (
-                      <div key={k.id} className="rounded border p-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">{k.title}</span>
-                          <Badge variant="secondary" className="text-xs">{k.knowledgeType}</Badge>
-                        </div>
-                        <p className="mt-1 text-xs text-gray-500 line-clamp-2">{k.content}</p>
-                      </div>
-                    ))}
-                  </div>
-                )
-              }
-            </LazyTabContent>
-          </div>
+          <LazyTabContent state={knowledges.state}>
+            {(result) => (
+              <ProjectKnowledgeClient
+                projectId={project.id}
+                knowledges={result}
+                canCreate={canCreate}
+                canDelete={canEdit}
+                onReload={reloadKnowledges}
+              />
+            )}
+          </LazyTabContent>
         </TabsContent>
 
         {/* メンバータブ（admin/pm_tl のみ、admin なら allUsers も必要）*/}

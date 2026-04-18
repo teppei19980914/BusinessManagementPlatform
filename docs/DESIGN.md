@@ -1111,12 +1111,16 @@ const transitions: TransitionRule[] = [
 
 | メソッド | パス | 説明 | ロール |
 |---|---|---|---|
-| GET | /api/knowledge | 横断検索 | 全ロール（公開範囲制御あり） |
-| POST | /api/knowledge | 新規作成 | admin, pm_tl, member |
+| GET | /api/knowledge | 横断検索（全ナレッジ） | 全ロール（公開範囲制御あり） |
+| POST | /api/knowledge | 新規作成（プロジェクト紐付けなし） | admin, pm_tl, member |
 | GET | /api/knowledge/:id | 詳細取得 | 公開範囲に応じる |
 | PATCH | /api/knowledge/:id | 更新 | admin, pm_tl, 作成者 member |
 | DELETE | /api/knowledge/:id | 論理削除 | admin, pm_tl |
 | PATCH | /api/knowledge/:id/publish | 公開 | admin, pm_tl |
+| GET | /api/projects/:id/knowledge | プロジェクト紐付けナレッジ一覧 | ProjectMember |
+| POST | /api/projects/:id/knowledge | 作成（当該 projectId を自動紐付け） | ProjectMember |
+| PATCH | /api/projects/:id/knowledge/:knowledgeId | プロジェクト scoped 更新 | ProjectMember |
+| DELETE | /api/projects/:id/knowledge/:knowledgeId | プロジェクト scoped 論理削除 | ProjectMember |
 
 #### 振り返り
 
