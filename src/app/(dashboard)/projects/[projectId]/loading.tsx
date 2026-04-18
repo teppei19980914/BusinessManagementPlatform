@@ -31,7 +31,7 @@ export default function ProjectDetailLoading() {
 
       {/* タブリスト骨格 */}
       <div className="flex flex-wrap gap-2">
-        {['概要', '見積もり', 'WBS管理', 'ガント', 'リスク/課題', '振り返り', 'ナレッジ', 'メンバー'].map((label) => (
+        {['概要', '見積もり', 'WBS管理', 'ガント', 'リスク/課題一覧', '振り返り一覧', 'ナレッジ一覧', 'メンバー'].map((label) => (
           <div
             key={label}
             className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-300"

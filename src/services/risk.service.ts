@@ -86,6 +86,55 @@ export async function listRisks(projectId: string): Promise<RiskDTO[]> {
   return risks.map(toRiskDTO);
 }
 
+/**
+ * 「全リスク/課題」ビュー用 DTO。
+ * 閲覧ユーザが紐づくプロジェクトの ProjectMember か否かで情報量を切り替える:
+ *   - メンバー: projectName 見える + canAccessProject=true (詳細リンク表示)
+ *   - 非メンバー: projectName / 顧客情報を一律マスク + canAccessProject=false
+ * 担当者名 / 起票者名も「非メンバーには氏名非公開」とする (顧客情報に準ずる機微情報)
+ */
+export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName'> & {
+  projectName: string | null;
+  canAccessProject: boolean;
+  reporterName: string | null;
+  assigneeName: string | null;
+};
+
+/**
+ * 全プロジェクトのリスク/課題を取得する (認可: ログインユーザなら誰でも可)。
+ * 非メンバーの場合は projectName / 顧客名 / 担当者氏名をマスクする。
+ */
+export async function listAllRisksForViewer(viewerUserId: string): Promise<AllRiskDTO[]> {
+  // ユーザが所属するプロジェクト ID 集合を先に取得 (非メンバー判定に使う)
+  const memberships = await prisma.projectMember.findMany({
+    where: { userId: viewerUserId },
+    select: { projectId: true },
+  });
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
+
+  const risks = await prisma.riskIssue.findMany({
+    where: { deletedAt: null },
+    include: {
+      reporter: { select: { name: true } },
+      assignee: { select: { name: true } },
+      project: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return risks.map((r) => {
+    const isMember = memberProjectIds.has(r.projectId);
+    return {
+      ...toRiskDTO(r),
+      projectName: isMember ? r.project?.name ?? null : null,
+      canAccessProject: isMember,
+      // 非メンバーには氏名を返さない (顧客名・見積と同等の機微情報扱い)
+      reporterName: isMember ? r.reporter?.name ?? null : null,
+      assigneeName: isMember ? r.assignee?.name ?? null : null,
+    };
+  });
+}
+
 export async function getRisk(riskId: string): Promise<RiskDTO | null> {
   const r = await prisma.riskIssue.findFirst({
     where: { id: riskId, deletedAt: null },

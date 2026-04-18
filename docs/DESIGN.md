@@ -1105,6 +1105,7 @@ const transitions: TransitionRule[] = [
 | PATCH | /api/projects/:id/risks/:riskId | 更新 | admin, pm_tl, 担当/起票 member |
 | DELETE | /api/projects/:id/risks/:riskId | 論理削除 | admin, pm_tl |
 | GET | /api/projects/:id/risks/export | CSV エクスポート | admin, pm_tl |
+| GET | /api/risks | 全プロジェクト横断一覧（非メンバーはプロジェクト名・担当者名・起票者名をマスク） | 認証済み全ユーザ |
 
 #### ナレッジ
 
@@ -1127,6 +1128,7 @@ const transitions: TransitionRule[] = [
 | PATCH | /api/projects/:id/retrospectives/:retroId | 更新 | admin, pm_tl |
 | PATCH | /api/projects/:id/retrospectives/:retroId/confirm | 確定 | admin, pm_tl |
 | POST | /api/projects/:id/retrospectives/:retroId/comments | コメント投稿 | admin, pm_tl, member |
+| GET | /api/retrospectives | 全プロジェクト横断一覧（非メンバーはプロジェクト名・コメント投稿者名をマスク） | 認証済み全ユーザ |
 
 #### システム管理
 
