@@ -89,6 +89,20 @@ graph TD
 | データベース | Supabase Free | $0 |
 | メール送信 | Resend Free | $0 |
 
+#### スキーマ変更時の手順 (重要)
+
+Vercel ビルドでは `prisma migrate deploy` を実行していない（Vercel ビルド環境は IPv4 のみで
+Supabase の直結 URL `db.[ref].supabase.co:5432` に到達できないため）。
+スキーマ変更を含むコードをマージする際は以下を手動で実施する:
+
+1. ローカルから `prisma migrate dev` で `prisma/migrations/` に新規マイグレーションを作成
+2. PR マージ後、Supabase ダッシュボードの SQL Editor で当該 `migration.sql` を実行
+3. 次回デプロイ後にアプリが正常起動することを確認
+
+自動化したい場合は DIRECT_URL を Supavisor セッションモード
+(`pooler.supabase.com:5432`) に変更した上で、`vercel.json` の `buildCommand` に
+`pnpm prisma migrate deploy` を追加する。
+
 ### 外部配布
 
 .zip パッケージとして配布。外部ユーザが自前の環境で構築・運用可能。
