@@ -12,7 +12,11 @@ type ProjectGroup = {
   tree: TaskDTO[];
 };
 
-type Props = { projectGroups: ProjectGroup[] };
+type Props = {
+  projectGroups: ProjectGroup[];
+  /** サーバ側で算出した本日日付 (YYYY-MM-DD)。遅延判定のハイドレーション安全化に使用 */
+  today: string;
+};
 
 const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   not_started: 'outline',
@@ -31,7 +35,7 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
  *     * depth に応じてインデント、WP/ACT バッジ
  *     * 担当者フィルタは「自分」で固定済み (filterTreeByAssignee)
  */
-export function MyTasksClient({ projectGroups }: Props) {
+export function MyTasksClient({ projectGroups, today }: Props) {
   // プロジェクトセクションの折りたたみ状態 (初期展開)
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const toggleProject = (projectId: string) => {
@@ -95,7 +99,7 @@ export function MyTasksClient({ projectGroups }: Props) {
                 </thead>
                 <tbody>
                   {pg.tree.map((task) => (
-                    <TaskRow key={task.id} task={task} depth={0} />
+                    <TaskRow key={task.id} task={task} depth={0} today={today} />
                   ))}
                 </tbody>
               </table>
@@ -111,7 +115,7 @@ export function MyTasksClient({ projectGroups }: Props) {
  * 再帰的なタスク行。WBS 画面の TaskTreeNode と同じ折りたたみ・インデント表現を、
  * read-only の軽量版として実装 (編集 UI は不要)。
  */
-function TaskRow({ task, depth }: { task: TaskDTO; depth: number }) {
+function TaskRow({ task, depth, today }: { task: TaskDTO; depth: number; today: string }) {
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -126,10 +130,12 @@ function TaskRow({ task, depth }: { task: TaskDTO; depth: number }) {
   })();
   const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
 
+  // 遅延判定はサーバ提供の today 文字列と YYYY-MM-DD 比較で決定的に行う
+  // (new Date() の差で発生する hydration mismatch を回避)。
   const isDelayed = !isWP
     && task.plannedEndDate != null
     && task.status !== 'completed'
-    && new Date(task.plannedEndDate) < new Date();
+    && task.plannedEndDate < today;
 
   return (
     <>
@@ -184,7 +190,7 @@ function TaskRow({ task, depth }: { task: TaskDTO; depth: number }) {
         </td>
       </tr>
       {!isCollapsed && task.children?.map((child) => (
-        <TaskRow key={child.id} task={child} depth={depth + 1} />
+        <TaskRow key={child.id} task={child} depth={depth + 1} today={today} />
       ))}
     </>
   );
