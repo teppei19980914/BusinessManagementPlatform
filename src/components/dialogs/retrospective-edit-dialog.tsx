@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
+import { VISIBILITIES } from '@/types';
 
 type RetroLike = {
   id: string;
@@ -18,6 +20,7 @@ type RetroLike = {
   goodPoints: string;
   problems: string;
   improvements: string;
+  visibility: string;
 };
 
 /**
@@ -43,6 +46,7 @@ export function RetrospectiveEditDialog({
     goodPoints: '',
     problems: '',
     improvements: '',
+    visibility: 'draft',
   });
   const [error, setError] = useState('');
   // Derived State パターン (useEffect 不要): retro が切り替わったら form を同期
@@ -56,6 +60,7 @@ export function RetrospectiveEditDialog({
       goodPoints: retro.goodPoints,
       problems: retro.problems,
       improvements: retro.improvements,
+      visibility: retro.visibility,
     });
     setError('');
   }
@@ -113,6 +118,12 @@ export function RetrospectiveEditDialog({
               />
             </div>
           ))}
+          <div className="space-y-2">
+            <Label>公開範囲</Label>
+            <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+              {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
           <Button type="submit" className="w-full">保存</Button>
         </form>
       </DialogContent>

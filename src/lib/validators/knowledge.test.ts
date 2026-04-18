@@ -30,14 +30,18 @@ describe('createKnowledgeSchema', () => {
     }
   });
 
+  // PR #60: 公開範囲を 2 値体系 (draft/public) に統合。project/company は migration で public に集約済。
   it('有効な公開範囲を全て受け入れる', () => {
-    for (const v of ['draft', 'project', 'company']) {
+    for (const v of ['draft', 'public']) {
       expect(createKnowledgeSchema.safeParse({ ...validInput, visibility: v }).success).toBe(true);
     }
   });
 
   it('無効な公開範囲を拒否する', () => {
-    expect(createKnowledgeSchema.safeParse({ ...validInput, visibility: 'public' }).success).toBe(false);
+    // 旧値 (project/company) は PR #60 以降受け付けない
+    expect(createKnowledgeSchema.safeParse({ ...validInput, visibility: 'project' }).success).toBe(false);
+    expect(createKnowledgeSchema.safeParse({ ...validInput, visibility: 'company' }).success).toBe(false);
+    expect(createKnowledgeSchema.safeParse({ ...validInput, visibility: 'invalid' }).success).toBe(false);
   });
 
   it('内容が5001文字の場合を拒否する', () => {

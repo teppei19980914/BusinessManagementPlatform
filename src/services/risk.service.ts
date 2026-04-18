@@ -22,6 +22,9 @@ export type RiskDTO = {
   state: string;
   result: string | null;
   lessonLearned: string | null;
+  // PR #60
+  visibility: string;
+  riskNature: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -46,6 +49,8 @@ function toRiskDTO(r: {
   state: string;
   result: string | null;
   lessonLearned: string | null;
+  visibility: string;
+  riskNature: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): RiskDTO {
@@ -69,14 +74,26 @@ function toRiskDTO(r: {
     state: r.state,
     result: r.result,
     lessonLearned: r.lessonLearned,
+    visibility: r.visibility,
+    riskNature: r.riskNature,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
 }
 
-export async function listRisks(projectId: string): Promise<RiskDTO[]> {
+export async function listRisks(
+  projectId: string,
+  viewerUserId: string,
+  viewerSystemRole: string,
+): Promise<RiskDTO[]> {
+  const isAdmin = viewerSystemRole === 'admin';
+  // PR #60: 非 admin は public + 自身の draft (起票者) のみ
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', reporterId: viewerUserId }] };
+
   const risks = await prisma.riskIssue.findMany({
-    where: { projectId, deletedAt: null },
+    where: { projectId, deletedAt: null, ...visibilityWhere },
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
@@ -127,8 +144,13 @@ export async function listAllRisksForViewer(
     });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
+  // PR #60: 非 admin は public + 自身の draft のみ
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', reporterId: viewerUserId }] };
+
   const risks = await prisma.riskIssue.findMany({
-    where: { deletedAt: null },
+    where: { deletedAt: null, ...visibilityWhere },
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
@@ -194,6 +216,8 @@ export async function createRisk(
       reporterId: userId,
       assigneeId: input.assigneeId,
       deadline: input.deadline ? new Date(input.deadline) : undefined,
+      visibility: input.visibility ?? 'draft',
+      riskNature: input.type === 'risk' ? input.riskNature : null,
       createdBy: userId,
       updatedBy: userId,
     },
@@ -229,6 +253,8 @@ export async function updateRisk(
   if (input.state !== undefined) data.state = input.state;
   if (input.result !== undefined) data.result = input.result;
   if (input.lessonLearned !== undefined) data.lessonLearned = input.lessonLearned;
+  if (input.visibility !== undefined) data.visibility = input.visibility;
+  if (input.riskNature !== undefined) data.riskNature = input.riskNature;
 
   const r = await prisma.riskIssue.update({
     where: { id: riskId },

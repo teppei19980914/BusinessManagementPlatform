@@ -74,10 +74,9 @@ export type ListKnowledgeParams = {
 };
 
 /**
- * ナレッジ一覧（公開範囲制御付き）
- * - company: 全ユーザ閲覧可
- * - project: 該当プロジェクト参加者のみ
- * - draft: 作成者 + PM/TL + admin のみ
+ * ナレッジ一覧（公開範囲制御付き、PR #60 で 2 値体系に刷新）
+ * - public: 全ログインユーザ閲覧可
+ * - draft : 作成者 + admin のみ閲覧可
  */
 export async function listKnowledge(
   params: ListKnowledgeParams,
@@ -90,16 +89,12 @@ export async function listKnowledge(
 
   const where: Prisma.KnowledgeWhereInput = { deletedAt: null };
 
-  // 公開範囲制御
+  // 公開範囲制御 (PR #60 で 2 値体系に刷新):
+  //   - public: 全ログインユーザ閲覧可
+  //   - draft : 作成者 + admin のみ
   if (systemRole !== 'admin') {
     where.OR = [
-      { visibility: 'company' },
-      {
-        visibility: 'project',
-        knowledgeProjects: {
-          some: { project: { members: { some: { userId } } } },
-        },
-      },
+      { visibility: 'public' },
       { visibility: 'draft', createdBy: userId },
     ];
   }
@@ -175,14 +170,9 @@ export async function listAllKnowledgeForViewer(
 
   const where: Prisma.KnowledgeWhereInput = { deletedAt: null };
   if (!isAdmin) {
+    // PR #60: 2 値体系 (public / draft)
     where.OR = [
-      { visibility: 'company' },
-      {
-        visibility: 'project',
-        knowledgeProjects: {
-          some: { project: { members: { some: { userId: viewerUserId } } } },
-        },
-      },
+      { visibility: 'public' },
       { visibility: 'draft', createdBy: viewerUserId },
     ];
   }

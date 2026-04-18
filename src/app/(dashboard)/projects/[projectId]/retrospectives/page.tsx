@@ -14,7 +14,7 @@ export default async function RetrospectivesPage({ params }: Props) {
   const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
   if (!membership.isMember) notFound();
 
-  const retros = await listRetrospectives(projectId);
+  const retros = await listRetrospectives(projectId, session.user.id, session.user.systemRole);
 
   return (
     <RetrospectivesClient

@@ -79,13 +79,32 @@ export const RISK_ISSUE_STATES = {
 
 export type RiskIssueState = keyof typeof RISK_ISSUE_STATES;
 
+/**
+ * 公開範囲 (PR #60 で 2 値体系に統合)
+ *   - draft : 下書き = 作成者 + admin のみ閲覧可
+ *   - public: 公開   = 全ログインユーザが閲覧可
+ * 従来の project/company は migration で全て public に集約済 (20260418 migration)。
+ * リスク/課題、振り返り、ナレッジの 3 エンティティ共通で使用。
+ */
 export const VISIBILITIES = {
   draft: '下書き',
-  project: 'プロジェクト限定',
-  company: '社内公開',
+  public: '公開',
 } as const;
 
 export type Visibility = keyof typeof VISIBILITIES;
+
+/**
+ * リスクの脅威/好機分類 (PR #60)。
+ *   - threat     : 脅威 (ネガティブ事象、従来のリスク概念)
+ *   - opportunity: 好機 (ポジティブ事象、PMBOK ガイド 第 7 版 の「機会」)
+ * 課題 (issue) では使用しない。type='risk' 時のみ UI で表示 / 保存する。
+ */
+export const RISK_NATURES = {
+  threat: '脅威',
+  opportunity: '好機',
+} as const;
+
+export type RiskNature = keyof typeof RISK_NATURES;
 
 export const SYSTEM_ROLES = {
   admin: 'システム管理者',

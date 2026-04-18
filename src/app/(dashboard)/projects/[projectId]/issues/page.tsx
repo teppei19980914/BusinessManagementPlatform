@@ -3,11 +3,15 @@ import { redirect, notFound } from 'next/navigation';
 import { checkMembership } from '@/lib/permissions';
 import { listRisks } from '@/services/risk.service';
 import { listMembers } from '@/services/member.service';
-import { RisksClient } from './risks-client';
+import { RisksClient } from '../risks/risks-client';
 
 type Props = { params: Promise<{ projectId: string }> };
 
-export default async function RisksPage({ params }: Props) {
+/**
+ * プロジェクト詳細 - 課題一覧ページ (PR #60 #1: リスクと分離)。
+ * 同じ RisksClient を typeFilter='issue' で再利用する。
+ */
+export default async function IssuesPage({ params }: Props) {
   const session = await auth();
   if (!session) redirect('/login');
 
@@ -25,7 +29,7 @@ export default async function RisksPage({ params }: Props) {
       projectId={projectId}
       risks={risks}
       members={members}
-      typeFilter="risk"
+      typeFilter="issue"
       canEdit={session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl'}
       canCreate={session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl' || membership.projectRole === 'member'}
       systemRole={session.user.systemRole}

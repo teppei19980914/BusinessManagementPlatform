@@ -11,6 +11,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
+import { VISIBILITIES } from '@/types';
 import type { RetroDTO } from '@/services/retrospective.service';
 
 type Props = {
@@ -45,6 +47,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
     goodPoints: '',
     problems: '',
     improvements: '',
+    visibility: 'draft',
   });
 
   async function handleCreate(e: React.FormEvent) {
@@ -63,7 +66,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
       return;
     }
     setIsCreateOpen(false);
-    setForm({ conductedDate: new Date().toISOString().split('T')[0], planSummary: '', actualSummary: '', goodPoints: '', problems: '', improvements: '' });
+    setForm({ conductedDate: new Date().toISOString().split('T')[0], planSummary: '', actualSummary: '', goodPoints: '', problems: '', improvements: '', visibility: 'draft' });
     await reload();
   }
 
@@ -142,6 +145,12 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
                 <div className="space-y-2">
                   <Label>次回改善事項</Label>
                   <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.improvements} onChange={(e) => setForm({ ...form, improvements: e.target.value })} rows={3} maxLength={3000} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>公開範囲</Label>
+                  <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                    {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
                 </div>
                 <Button type="submit" className="w-full">作成</Button>
               </form>

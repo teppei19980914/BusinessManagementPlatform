@@ -20,7 +20,8 @@ export const createKnowledgeSchema = z.object({
   techTags: z.array(z.string()).max(50).optional(),
   devMethod: z.enum(['scratch', 'power_platform', 'package', 'other']).optional(),
   processTags: z.array(z.string()).max(50).optional(),
-  visibility: z.enum(['draft', 'project', 'company']),
+  // PR #60: visibility を 2 値体系に統合 (project/company は migration で public に集約済)
+  visibility: z.enum(['draft', 'public']),
   projectIds: z.array(z.string().uuid()).optional(),
 });
 

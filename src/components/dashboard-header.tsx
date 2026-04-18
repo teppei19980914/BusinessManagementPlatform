@@ -20,7 +20,9 @@ const navItems = [
   // 全プロジェクト横断で閲覧できるナレッジ資産（リスク/課題・振り返り・ナレッジ）。
   // プロジェクト詳細タブの「○○一覧」はそのプロジェクトに紐づく一覧、最上部タブは
   // 全プロジェクトの集約ビュー。
-  { href: '/risks', label: '全リスク/課題' },
+  // PR #60 #1: 「全リスク」「全課題」を別タブに分離
+  { href: '/risks', label: '全リスク' },
+  { href: '/issues', label: '全課題' },
   { href: '/retrospectives', label: '全振り返り' },
   { href: '/knowledge', label: '全ナレッジ' },
 ];

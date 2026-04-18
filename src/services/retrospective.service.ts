@@ -11,6 +11,8 @@ export type RetroDTO = {
   problems: string;
   improvements: string;
   state: string;
+  // PR #60: 公開範囲 (draft / public)
+  visibility: string;
   createdAt: string;
   comments: { id: string; userName: string; content: string; createdAt: string }[];
 };
@@ -50,8 +52,13 @@ export async function listAllRetrospectivesForViewer(
     });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
+  // PR #60: 公開範囲制御 (admin 以外は public + 自身の draft のみ)
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
+
   const retros = await prisma.retrospective.findMany({
-    where: { deletedAt: null },
+    where: { deletedAt: null, ...visibilityWhere },
     include: {
       comments: { orderBy: { createdAt: 'asc' } },
       project: { select: { id: true, name: true, deletedAt: true } },
@@ -86,6 +93,7 @@ export async function listAllRetrospectivesForViewer(
       problems: r.problems,
       improvements: r.improvements,
       state: r.state,
+      visibility: r.visibility,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
       createdByName: isMember ? userMap.get(r.createdBy) ?? null : null,
@@ -100,9 +108,19 @@ export async function listAllRetrospectivesForViewer(
   });
 }
 
-export async function listRetrospectives(projectId: string): Promise<RetroDTO[]> {
+export async function listRetrospectives(
+  projectId: string,
+  viewerUserId: string,
+  viewerSystemRole: string,
+): Promise<RetroDTO[]> {
+  const isAdmin = viewerSystemRole === 'admin';
+  // PR #60: 非 admin は public + 自身の draft のみ
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
+
   const retros = await prisma.retrospective.findMany({
-    where: { projectId, deletedAt: null },
+    where: { projectId, deletedAt: null, ...visibilityWhere },
     include: {
       comments: {
         orderBy: { createdAt: 'asc' },
@@ -128,6 +146,7 @@ export async function listRetrospectives(projectId: string): Promise<RetroDTO[]>
     problems: r.problems,
     improvements: r.improvements,
     state: r.state,
+    visibility: r.visibility,
     createdAt: r.createdAt.toISOString(),
     comments: r.comments.map((c) => ({
       id: c.id,
@@ -157,6 +176,7 @@ export async function createRetrospective(
       riskResponseEvaluation: input.riskResponseEvaluation,
       improvements: input.improvements,
       knowledgeToShare: input.knowledgeToShare,
+      visibility: input.visibility ?? 'draft',
       createdBy: userId,
       updatedBy: userId,
     },
@@ -171,6 +191,7 @@ export async function createRetrospective(
     problems: r.problems,
     improvements: r.improvements,
     state: r.state,
+    visibility: r.visibility,
     createdAt: r.createdAt.toISOString(),
     comments: [],
   };
@@ -205,6 +226,8 @@ export async function updateRetrospective(
     knowledgeToShare?: string | null;
     /** 'draft' | 'confirmed' 等。確定操作から同一 PATCH で受け付けるため許容 */
     state?: string;
+    /** PR #60: 公開範囲 (draft / public) */
+    visibility?: string;
   },
   userId: string,
 ): Promise<void> {
@@ -221,6 +244,7 @@ export async function updateRetrospective(
   if (input.riskResponseEvaluation !== undefined) data.riskResponseEvaluation = input.riskResponseEvaluation;
   if (input.knowledgeToShare !== undefined) data.knowledgeToShare = input.knowledgeToShare;
   if (input.state !== undefined) data.state = input.state;
+  if (input.visibility !== undefined) data.visibility = input.visibility;
 
   await prisma.retrospective.update({ where: { id: retroId }, data });
 }

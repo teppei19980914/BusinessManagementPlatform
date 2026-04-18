@@ -37,6 +37,17 @@ describe('createRetrospectiveSchema', () => {
       knowledgeToShare: '設計書の作り込みが重要',
     }).success).toBe(true);
   });
+
+  // PR #60: 公開範囲フィールドを追加
+  it('有効な公開範囲を受け入れる', () => {
+    for (const v of ['draft', 'public']) {
+      expect(createRetrospectiveSchema.safeParse({ ...validInput, visibility: v }).success).toBe(true);
+    }
+  });
+
+  it('無効な公開範囲を拒否する', () => {
+    expect(createRetrospectiveSchema.safeParse({ ...validInput, visibility: 'company' }).success).toBe(false);
+  });
 });
 
 describe('addCommentSchema', () => {

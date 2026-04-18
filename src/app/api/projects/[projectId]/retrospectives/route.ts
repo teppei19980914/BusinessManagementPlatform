@@ -13,7 +13,7 @@ export async function GET(
   const { projectId } = await params;
   const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
-  const retros = await listRetrospectives(projectId);
+  const retros = await listRetrospectives(projectId, user.id, user.systemRole);
   return NextResponse.json({ data: retros });
 }
 

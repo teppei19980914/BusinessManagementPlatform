@@ -12,6 +12,9 @@ export const createRiskSchema = z.object({
   responseDetail: z.string().max(2000).optional(),
   assigneeId: z.string().uuid().optional(),
   deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // PR #60: 公開範囲 (draft/public) と リスク脅威/好機分類
+  visibility: z.enum(['draft', 'public']).optional(),
+  riskNature: z.enum(['threat', 'opportunity']).optional(),
 });
 
 export const updateRiskSchema = createRiskSchema.partial().extend({

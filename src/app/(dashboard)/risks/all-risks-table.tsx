@@ -41,10 +41,14 @@ function formatDateTime(iso: string): string {
 export function AllRisksTable({
   risks,
   isAdmin,
+  typeFilter,
 }: {
   risks: AllRiskDTO[];
   isAdmin: boolean;
+  /** PR #60 #1: 'risk' / 'issue' で絞り込み (未指定なら両方表示) */
+  typeFilter?: 'risk' | 'issue';
 }) {
+  const filteredRisks = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
   const router = useRouter();
   const [editingRisk, setEditingRisk] = useState<AllRiskDTO | null>(null);
   const [members, setMembers] = useState<MemberDTO[]>([]);
@@ -70,7 +74,7 @@ export function AllRisksTable({
         <TableHeader>
           <TableRow>
             <TableHead className="whitespace-nowrap">プロジェクト</TableHead>
-            <TableHead className="whitespace-nowrap">種別</TableHead>
+            {!typeFilter && <TableHead className="whitespace-nowrap">種別</TableHead>}
             <TableHead>件名</TableHead>
             <TableHead className="whitespace-nowrap">担当者</TableHead>
             <TableHead className="whitespace-nowrap">影響度</TableHead>
@@ -84,7 +88,7 @@ export function AllRisksTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {risks.map((r) => (
+          {filteredRisks.map((r) => (
             <TableRow
               key={r.id}
               className={r.canAccessProject ? 'cursor-pointer hover:bg-gray-50' : ''}
@@ -104,11 +108,13 @@ export function AllRisksTable({
                   </span>
                 )}
               </TableCell>
-              <TableCell>
-                <Badge variant={typeColors[r.type] || 'outline'}>
-                  {r.type === 'risk' ? 'リスク' : '課題'}
-                </Badge>
-              </TableCell>
+              {!typeFilter && (
+                <TableCell>
+                  <Badge variant={typeColors[r.type] || 'outline'}>
+                    {r.type === 'risk' ? 'リスク' : '課題'}
+                  </Badge>
+                </TableCell>
+              )}
               <TableCell className="font-medium">{r.title}</TableCell>
               <TableCell className="text-sm text-gray-600">
                 {r.assigneeName ?? <span className="text-gray-400">-</span>}
@@ -139,10 +145,10 @@ export function AllRisksTable({
               )}
             </TableRow>
           ))}
-          {risks.length === 0 && (
+          {filteredRisks.length === 0 && (
             <TableRow>
-              <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-gray-500">
-                リスク/課題がありません
+              <TableCell colSpan={(isAdmin ? 12 : 11) - (typeFilter ? 1 : 0)} className="py-8 text-center text-gray-500">
+                {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク/課題がありません'}
               </TableCell>
             </TableRow>
           )}
