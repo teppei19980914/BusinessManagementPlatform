@@ -109,7 +109,10 @@ export function ProjectDetailClient({
   const risks = useLazyFetch<RiskDTO[]>(`/api/projects/${project.id}/risks`);
   const retros = useLazyFetch<RetroDTO[]>(`/api/projects/${project.id}/retrospectives`);
   const members = useLazyFetch<MemberDTO[]>(`/api/projects/${project.id}/members`);
-  const knowledges = useLazyFetch<{ data: KnowledgeDTO[] }>(`/api/knowledge?page=1&limit=10`);
+  // useLazyFetch は内部で json.data を unwrap するため、ここで期待する型は配列そのもの。
+  // 以前は `{ data: KnowledgeDTO[] }` と誤って二重ラップで型付けしており、
+  // 実行時に result.data が undefined となり `.length` 参照で TypeError を起こしていた。
+  const knowledges = useLazyFetch<KnowledgeDTO[]>(`/api/knowledge?page=1&limit=10`);
   const allUsers = useLazyFetch<UserDTO[]>(`/api/admin/users`);
 
   const [activeTab, setActiveTab] = useState('overview');
@@ -451,11 +454,11 @@ export function ProjectDetailClient({
             </div>
             <LazyTabContent state={knowledges.state}>
               {(result) =>
-                result.data.length === 0 ? (
+                result.length === 0 ? (
                   <p className="py-4 text-center text-gray-500">ナレッジがありません</p>
                 ) : (
                   <div className="space-y-2">
-                    {result.data.slice(0, 10).map((k) => (
+                    {result.slice(0, 10).map((k) => (
                       <div key={k.id} className="rounded border p-3">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-sm">{k.title}</span>
