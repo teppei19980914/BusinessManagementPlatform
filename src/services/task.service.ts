@@ -545,20 +545,22 @@ async function recalculateAncestorsPublic(taskId: string): Promise<void> {
  *   このバックフィル関数はプロジェクト内の全 WP を深度降順（深い WP を先）で
  *   再集計し、データを最新ロジックに揃える。
  *
- * 実装上の要点:
- *   - 深度降順で処理することで、親 WP を再計算する時点で全子 WP の集計値が
- *     既に最新状態になっていることを保証する
- *   - recalculateAncestors は自身 + 祖先への再帰伝播を含むため、
- *     深度降順ループでは冗長な上方伝播が発生するが、冪等なので問題ない
+ * パフォーマンス (2026-04-18 改善):
+ *   - A 案: recalculateWpOnly を使い、深度順ループで祖先伝播を省略
+ *     → O(N × depth) → O(N) に削減
+ *   - C 案: 集計値が現在値と一致する WP は update を skip
+ *     → 2 回目以降の実行および部分的に最新のデータで DB 書込を大幅削減
  *
- * @returns 再計算対象となった WP 数
+ * @returns { total: 走査した WP 数, updated: 実際に update された WP 数 }
  */
-export async function recalculateAllProjectWps(projectId: string): Promise<number> {
+export async function recalculateAllProjectWps(
+  projectId: string,
+): Promise<{ total: number; updated: number }> {
   const wps = await prisma.task.findMany({
     where: { projectId, type: 'work_package', deletedAt: null },
     select: { id: true, parentTaskId: true },
   });
-  if (wps.length === 0) return 0;
+  if (wps.length === 0) return { total: 0, updated: 0 };
 
   // 深度マップを作成: 祖先チェーンの長さ = その WP の深度
   const byId = new Map(wps.map((w) => [w.id, w]));
@@ -580,11 +582,15 @@ export async function recalculateAllProjectWps(projectId: string): Promise<numbe
     .map((w) => ({ id: w.id, depth: depthOf(w.id) }))
     .sort((a, b) => b.depth - a.depth);
 
+  let updated = 0;
   for (const w of sorted) {
-    await recalculateAncestors(w.id);
+    // A 案: 深度降順で処理するため、子 WP は既に最新。祖先への伝播は不要。
+    //        recalculateWpOnly は上方伝播せず、自身のみ更新（+ C 案で一致時スキップ）
+    const didUpdate = await recalculateWpOnly(w.id);
+    if (didUpdate) updated++;
   }
 
-  return sorted.length;
+  return { total: sorted.length, updated };
 }
 
 /**
@@ -691,6 +697,103 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     status: wpStatus,
     assigneeId: uniformAssignee,
   };
+}
+
+/**
+ * 集計結果が WP の現在値と完全一致するかを判定する純関数。
+ *
+ * 早期スキップ (C 案) 判定に使う: バックフィル等で全 WP を走査したときに
+ * 既に正しい値が入っていれば update を省略し DB ラウンドトリップを削減する。
+ *
+ * Date / Decimal / null などの個別比較を意識して書いているので、型不一致で
+ * 常に false を返す事故を避けられる。
+ */
+export function isWpAggregationEqual(
+  current: {
+    plannedEffort: Prisma.Decimal | number;
+    progressRate: number;
+    plannedStartDate: Date | null;
+    plannedEndDate: Date | null;
+    actualStartDate: Date | null;
+    actualEndDate: Date | null;
+    status: string;
+    assigneeId: string | null;
+  },
+  next: WpAggregationResult,
+): boolean {
+  const sameDate = (a: Date | null, b: Date | null): boolean => {
+    if (a === null && b === null) return true;
+    if (a === null || b === null) return false;
+    return a.getTime() === b.getTime();
+  };
+  return (
+    Number(current.plannedEffort) === next.plannedEffort
+    && current.progressRate === next.progressRate
+    && sameDate(current.plannedStartDate, next.plannedStartDate)
+    && sameDate(current.plannedEndDate, next.plannedEndDate)
+    && sameDate(current.actualStartDate, next.actualStartDate)
+    && sameDate(current.actualEndDate, next.actualEndDate)
+    && current.status === next.status
+    && (current.assigneeId ?? null) === (next.assigneeId ?? null)
+  );
+}
+
+/**
+ * 単一 WP を集計し直すだけの関数（祖先への上方伝播なし）。
+ *
+ * 用途:
+ *   - 祖先伝播が必要なときは recalculateAncestors を使う（ACT 更新トリガ経路）
+ *   - 全 WP を深度降順で一括処理するバックフィル (recalculateAllProjectWps) は、
+ *     ループ側で深度順に漏れなく走査するため、上方伝播は冗長。本関数を呼ぶことで
+ *     O(N × depth) → O(N) に削減する (A 案)
+ *
+ * 最適化 (C 案):
+ *   集計結果が現在値と一致する場合は update を呼ばずに早期リターン。
+ *   2 回目以降の実行や既に正しい状態のデータでは DB 書込を完全スキップできる。
+ *
+ * @returns true: update 実行 / false: 値一致によりスキップ
+ */
+async function recalculateWpOnly(taskId: string): Promise<boolean> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: {
+      childTasks: {
+        where: { deletedAt: null },
+        select: {
+          plannedEffort: true,
+          progressRate: true,
+          plannedStartDate: true,
+          plannedEndDate: true,
+          actualStartDate: true,
+          actualEndDate: true,
+          status: true,
+          type: true,
+          assigneeId: true,
+        },
+      },
+    },
+  });
+  if (!task || task.type !== 'work_package') return false;
+
+  const aggregated = aggregateWpFromChildren(task.childTasks);
+
+  // C 案: 現在値と一致するなら update をスキップ
+  if (isWpAggregationEqual(task, aggregated)) {
+    return false;
+  }
+
+  // assignee はリレーション経由での更新が必要（Prisma の update は scalar FK を直書きできない場合がある）
+  const { assigneeId, ...rest } = aggregated;
+  await prisma.task.update({
+    where: { id: taskId },
+    data: {
+      ...rest,
+      assignee: assigneeId
+        ? { connect: { id: assigneeId } }
+        : { disconnect: true },
+    },
+  });
+  return true;
 }
 
 async function recalculateAncestors(taskId: string): Promise<void> {

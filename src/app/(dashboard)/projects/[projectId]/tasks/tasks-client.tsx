@@ -648,16 +648,27 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // PR #45 より前に作成された既存 WP の担当者集約が反映されていない場合や、
   // 別サブツリーの更新で未伝播の集計を一括で揃える。
   async function handleRecalculate() {
-    if (!confirm('プロジェクト内の全 WP の集計値（担当者・進捗・日程・ステータス）を再計算します。タスクの内容自体は変更されません。実行しますか？')) return;
+    if (!confirm(
+      'プロジェクト内の全 WP の集計値（担当者・進捗・日程・ステータス）を再計算します。\n'
+      + '・タスクの内容自体は変更されません\n'
+      + '・WP 数が多い場合、数十秒かかることがあります\n\n'
+      + '実行しますか？',
+    )) return;
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/recalculate`, { method: 'POST' }),
     );
     if (!res.ok) {
-      alert('再計算に失敗しました');
+      alert('再計算に失敗しました。ページを再読み込みしてもう一度お試しください。');
       return;
     }
     const json = await res.json();
-    alert(`${json.data?.recalculatedWpCount ?? 0} 件の WP を再計算しました。`);
+    const total = json.data?.totalWp ?? 0;
+    const updated = json.data?.updatedWp ?? 0;
+    alert(
+      `再計算が完了しました。\n`
+      + `・走査した WP: ${total} 件\n`
+      + `・値を更新した WP: ${updated} 件（残り ${total - updated} 件は既に最新）`,
+    );
     await reload();
   }
 

@@ -7,7 +7,9 @@ import {
   aggregateWpFromChildren,
   normalizeActualDatesForStatus,
   normalizeProgressForStatus,
+  isWpAggregationEqual,
   type WpAggregationChild,
+  type WpAggregationResult,
 } from './task.service';
 import type { TaskDTO } from './task.service';
 import type { WbsTemplateTask } from '@/lib/validators/task';
@@ -497,5 +499,69 @@ describe('normalizeProgressForStatus', () => {
 
   it('未知のステータスは入力値をそのまま返す', () => {
     expect(normalizeProgressForStatus('unknown', 55)).toBe(55);
+  });
+});
+
+describe('isWpAggregationEqual', () => {
+  const baseResult: WpAggregationResult = {
+    plannedEffort: 40,
+    progressRate: 50,
+    plannedStartDate: new Date('2026-05-01'),
+    plannedEndDate: new Date('2026-05-10'),
+    actualStartDate: new Date('2026-05-02'),
+    actualEndDate: null,
+    status: 'in_progress',
+    assigneeId: 'user-A',
+  };
+
+  it('全フィールド同値なら true', () => {
+    expect(isWpAggregationEqual({ ...baseResult }, baseResult)).toBe(true);
+  });
+
+  it('plannedEffort の Decimal 表現を number 比較できる', () => {
+    const current = { ...baseResult, plannedEffort: dec(40) };
+    expect(isWpAggregationEqual(current, baseResult)).toBe(true);
+  });
+
+  it('progressRate が異なれば false', () => {
+    const current = { ...baseResult, progressRate: 60 };
+    expect(isWpAggregationEqual(current, baseResult)).toBe(false);
+  });
+
+  it('Date の時刻が同じなら true（参照が別でも getTime() 一致で判定）', () => {
+    const current = { ...baseResult, plannedStartDate: new Date('2026-05-01') };
+    expect(isWpAggregationEqual(current, baseResult)).toBe(true);
+  });
+
+  it('Date の時刻が異なれば false', () => {
+    const current = { ...baseResult, plannedStartDate: new Date('2026-04-30') };
+    expect(isWpAggregationEqual(current, baseResult)).toBe(false);
+  });
+
+  it('片方 null / もう片方 Date なら false', () => {
+    const current = { ...baseResult, actualStartDate: null };
+    expect(isWpAggregationEqual(current, baseResult)).toBe(false);
+  });
+
+  it('両方 null なら true (actualEndDate 同士)', () => {
+    const result = { ...baseResult, actualEndDate: null };
+    const current = { ...baseResult, actualEndDate: null };
+    expect(isWpAggregationEqual(current, result)).toBe(true);
+  });
+
+  it('status が異なれば false', () => {
+    const current = { ...baseResult, status: 'completed' };
+    expect(isWpAggregationEqual(current, baseResult)).toBe(false);
+  });
+
+  it('assigneeId が異なれば false', () => {
+    const current = { ...baseResult, assigneeId: 'user-B' };
+    expect(isWpAggregationEqual(current, baseResult)).toBe(false);
+  });
+
+  it('assigneeId: undefined と null は同値扱い', () => {
+    const result: WpAggregationResult = { ...baseResult, assigneeId: null };
+    const current = { ...baseResult, assigneeId: null as string | null };
+    expect(isWpAggregationEqual(current, result)).toBe(true);
   });
 });
