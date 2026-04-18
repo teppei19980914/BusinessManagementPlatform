@@ -4,6 +4,7 @@ import {
   collectAllIds,
   collectSelfAndDescendantIds,
   filterTreeByAssignee,
+  filterTreeByStatus,
   UNASSIGNED_KEY,
 } from './task-tree-utils';
 
@@ -181,5 +182,65 @@ describe('filterTreeByAssignee', () => {
     const snapshotIds = collectAllIds(tree);
     filterTreeByAssignee(tree, selected);
     expect(collectAllIds(tree)).toEqual(snapshotIds);
+  });
+});
+
+describe('filterTreeByStatus (PR #61)', () => {
+  /**
+   * テスト用ツリー:
+   *   wp1 (not_started)
+   *     ├ act1 (in_progress)
+   *     └ wp1-1 (not_started)
+   *         ├ act2 (completed)
+   *         └ act3 (on_hold)
+   *   wp2 (not_started, 子無し)
+   */
+  const tree: TaskDTO[] = [
+    makeTask({
+      id: 'wp1',
+      type: 'work_package',
+      status: 'not_started',
+      children: [
+        makeTask({ id: 'act1', parentTaskId: 'wp1', status: 'in_progress' }),
+        makeTask({
+          id: 'wp1-1',
+          type: 'work_package',
+          parentTaskId: 'wp1',
+          status: 'not_started',
+          children: [
+            makeTask({ id: 'act2', parentTaskId: 'wp1-1', status: 'completed' }),
+            makeTask({ id: 'act3', parentTaskId: 'wp1-1', status: 'on_hold' }),
+          ],
+        }),
+      ],
+    }),
+    makeTask({ id: 'wp2', type: 'work_package', status: 'not_started', children: [] }),
+  ];
+
+  it('全ステータス選択時は元ツリーを完全に保持する', () => {
+    const selected = new Set(['not_started', 'in_progress', 'completed', 'on_hold']);
+    const result = filterTreeByStatus(tree, selected);
+    expect(collectAllIds(result)).toEqual(['wp1', 'act1', 'wp1-1', 'act2', 'act3', 'wp2']);
+  });
+
+  it('in_progress のみ選択時は act1 と祖先 wp1 のみ残る', () => {
+    const selected = new Set(['in_progress']);
+    const result = filterTreeByStatus(tree, selected);
+    expect(collectAllIds(result)).toEqual(['wp1', 'act1']);
+  });
+
+  it('completed のみ選択時は act2 と祖先 wp1, wp1-1 のみ残る', () => {
+    const selected = new Set(['completed']);
+    const result = filterTreeByStatus(tree, selected);
+    expect(collectAllIds(result)).toEqual(['wp1', 'wp1-1', 'act2']);
+  });
+
+  it('選択なし (空) は全除外', () => {
+    const result = filterTreeByStatus(tree, new Set());
+    expect(result).toEqual([]);
+  });
+
+  it('空ツリーでも空配列を返す', () => {
+    expect(filterTreeByStatus([], new Set(['in_progress']))).toEqual([]);
   });
 });

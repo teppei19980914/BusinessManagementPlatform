@@ -1,14 +1,17 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
-import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
+import { useCallback, useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
-import { filterTreeByAssignee, UNASSIGNED_KEY } from '@/lib/task-tree-utils';
+import { filterTreeByAssignee, filterTreeByStatus, UNASSIGNED_KEY } from '@/lib/task-tree-utils';
 import { TASK_STATUSES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
+import { useSessionStringSet } from '@/lib/use-session-state';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
+
+const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
 type Props = {
   projectId: string;
@@ -90,22 +93,27 @@ function rangeText(start: string | null | undefined, end: string | null | undefi
   return `${start || '（未）'} 〜 ${end || '（未）'}`;
 }
 
-export function GanttClient({ tasks: tree, members }: Props) {
+export function GanttClient({ projectId, tasks: tree, members }: Props) {
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
 
-  // 折りたたみ状態: 初期は全 WP を折りたたんだ状態で開始 (PR #59 ユーザ要求)
-  //   → 一覧性優先。必要な WP をユーザが能動的に展開する運用に
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
-    const ids = new Set<string>();
-    const walk = (nodes: TaskDTO[]) => {
-      for (const n of nodes) {
-        if (n.type === 'work_package') ids.add(n.id);
-        if (n.children) walk(n.children);
-      }
-    };
-    walk(tree);
-    return ids;
-  });
+  // 折りたたみ状態 (PR #61: sessionStorage 永続化)。
+  // セマンティクス: Set に含まれる ID = 「折りたたみ中」。
+  // デフォルトは全 WP を折りたたむ (= WP ID 全件)。
+  // sessionStorage に保存済み値があればそちらを優先 (セッション内の user 操作を尊重)。
+  const [collapsed, setCollapsed] = useSessionStringSet(
+    `gantt:${projectId}:collapsed`,
+    () => {
+      const ids: string[] = [];
+      const walk = (nodes: TaskDTO[]) => {
+        for (const n of nodes) {
+          if (n.type === 'work_package') ids.push(n.id);
+          if (n.children) walk(n.children);
+        }
+      };
+      walk(tree);
+      return ids;
+    },
+  );
   const toggleCollapsed = (id: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev);
@@ -115,14 +123,14 @@ export function GanttClient({ tasks: tree, members }: Props) {
     });
   };
 
-  // --- 担当者フィルタ（WBS と同仕様）---
-  // デフォルトは全員 + 未アサインを選択 = 全タスク表示
+  // --- 担当者フィルタ (PR #61: sessionStorage 永続化) ---
   const allAssigneeKeys = useMemo<string[]>(
     () => [...members.map((m) => m.userId), UNASSIGNED_KEY],
     [members],
   );
-  const [assigneeFilter, setAssigneeFilter] = useState<Set<string>>(
-    () => new Set(allAssigneeKeys),
+  const [assigneeFilter, setAssigneeFilter] = useSessionStringSet(
+    `gantt:${projectId}:assignee-filter`,
+    () => allAssigneeKeys,
   );
   const isAllAssigneesSelected
     = assigneeFilter.size === allAssigneeKeys.length
@@ -134,18 +142,43 @@ export function GanttClient({ tasks: tree, members }: Props) {
       else next.add(key);
       return next;
     });
-  }, []);
+  }, [setAssigneeFilter]);
   const selectAllAssignees = useCallback(() => {
-    setAssigneeFilter(new Set(allAssigneeKeys));
-  }, [allAssigneeKeys]);
+    setAssigneeFilter(() => new Set(allAssigneeKeys));
+  }, [allAssigneeKeys, setAssigneeFilter]);
   const clearAllAssignees = useCallback(() => {
-    setAssigneeFilter(new Set());
-  }, []);
+    setAssigneeFilter(() => new Set());
+  }, [setAssigneeFilter]);
 
-  const filteredTree = useMemo(
-    () => (isAllAssigneesSelected ? tree : filterTreeByAssignee(tree, assigneeFilter)),
-    [tree, assigneeFilter, isAllAssigneesSelected],
+  // --- 状況フィルタ (PR #61) ---
+  const [statusFilter, setStatusFilter] = useSessionStringSet(
+    `gantt:${projectId}:status-filter`,
+    () => [...ALL_STATUS_KEYS],
   );
+  const isAllStatusesSelected
+    = statusFilter.size === ALL_STATUS_KEYS.length
+    && ALL_STATUS_KEYS.every((k) => statusFilter.has(k));
+  const toggleStatus = useCallback((key: string) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, [setStatusFilter]);
+  const selectAllStatuses = useCallback(() => {
+    setStatusFilter(() => new Set(ALL_STATUS_KEYS));
+  }, [setStatusFilter]);
+  const clearAllStatuses = useCallback(() => {
+    setStatusFilter(() => new Set());
+  }, [setStatusFilter]);
+
+  const filteredTree = useMemo(() => {
+    let t = tree;
+    if (!isAllAssigneesSelected) t = filterTreeByAssignee(t, assigneeFilter);
+    if (!isAllStatusesSelected) t = filterTreeByStatus(t, statusFilter);
+    return t;
+  }, [tree, assigneeFilter, isAllAssigneesSelected, statusFilter, isAllStatusesSelected]);
 
   const rows = useMemo(() => flattenForGantt(filteredTree, collapsed), [filteredTree, collapsed]);
 
@@ -223,57 +256,37 @@ export function GanttClient({ tasks: tree, members }: Props) {
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">ガントチャート</h2>
 
-      {/* 担当者フィルタ（WBS と同仕様）*/}
+      {/* フィルタ (担当者 + 状況、PR #61) */}
       <div className="flex flex-wrap items-center gap-2">
-        <PopoverPrimitive.Root>
-          <PopoverPrimitive.Trigger render={<Button variant="outline" size="sm" />}>
-            担当者:{' '}
-            {isAllAssigneesSelected
-              ? '全員'
-              : `${assigneeFilter.size} / ${allAssigneeKeys.length} 人`}
-          </PopoverPrimitive.Trigger>
-          <PopoverPrimitive.Portal>
-            <PopoverPrimitive.Positioner sideOffset={6} align="start" className="isolate z-50">
-              <PopoverPrimitive.Popup className="max-h-[60vh] w-64 overflow-y-auto rounded-lg border bg-white p-2 shadow-md ring-1 ring-black/5 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0">
-                <div className="flex gap-2 border-b pb-2">
-                  <Button type="button" variant="outline" size="sm" className="flex-1" onClick={selectAllAssignees}>
-                    すべて選択
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="flex-1" onClick={clearAllAssignees}>
-                    すべて解除
-                  </Button>
-                </div>
-                <div className="mt-2 space-y-1">
-                  {members.map((m) => (
-                    <label
-                      key={m.userId}
-                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={assigneeFilter.has(m.userId)}
-                        onChange={() => toggleAssignee(m.userId)}
-                        className="rounded"
-                      />
-                      <span className="truncate">{m.userName}</span>
-                    </label>
-                  ))}
-                  <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
-                    <input
-                      type="checkbox"
-                      checked={assigneeFilter.has(UNASSIGNED_KEY)}
-                      onChange={() => toggleAssignee(UNASSIGNED_KEY)}
-                      className="rounded"
-                    />
-                    <span className="text-gray-500">（未アサイン）</span>
-                  </label>
-                </div>
-              </PopoverPrimitive.Popup>
-            </PopoverPrimitive.Positioner>
-          </PopoverPrimitive.Portal>
-        </PopoverPrimitive.Root>
-        {!isAllAssigneesSelected && (
-          <Button type="button" variant="ghost" size="sm" onClick={selectAllAssignees}>
+        <MultiSelectFilter
+          label="担当者"
+          options={[
+            ...members.map((m) => ({ value: m.userId, label: m.userName })),
+            { value: UNASSIGNED_KEY, label: '（未アサイン）', muted: true },
+          ]}
+          selected={assigneeFilter}
+          onToggle={toggleAssignee}
+          onSelectAll={selectAllAssignees}
+          onClearAll={clearAllAssignees}
+          isAllSelected={isAllAssigneesSelected}
+          allLabel="全員"
+        />
+        <MultiSelectFilter
+          label="状況"
+          options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
+          selected={statusFilter}
+          onToggle={toggleStatus}
+          onSelectAll={selectAllStatuses}
+          onClearAll={clearAllStatuses}
+          isAllSelected={isAllStatusesSelected}
+        />
+        {(!isAllAssigneesSelected || !isAllStatusesSelected) && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => { selectAllAssignees(); selectAllStatuses(); }}
+          >
             フィルタ解除
           </Button>
         )}

@@ -17,17 +17,21 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Pencil, Trash2 } from 'lucide-react';
-import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
 import {
   collectAllIds,
   collectSelfAndDescendantIds,
   filterTreeByAssignee,
+  filterTreeByStatus,
   UNASSIGNED_KEY,
 } from '@/lib/task-tree-utils';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_STATUSES, PRIORITIES, WBS_TYPES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
+import { useSessionStringSet } from '@/lib/use-session-state';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
+
+const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
 type Props = {
   projectId: string;
@@ -98,6 +102,10 @@ type TaskTreeNodeProps = {
   parentOptions: { id: string; label: string }[];
   /** 編集アイコンクリック時に親 (TasksClient) の編集ダイアログを開くコールバック */
   onEditClick: (task: TaskDTO) => void;
+  /** PR #61: WP の展開状態 (Set に含まれる ID は展開、含まれなければ折りたたみ) */
+  expandedTaskIds: Set<string>;
+  /** PR #61: WP 展開トグル。子に伝播する */
+  onToggleExpanded: (taskId: string) => void;
 };
 
 function TaskTreeNodeImpl({
@@ -114,6 +122,8 @@ function TaskTreeNodeImpl({
   members,
   parentOptions,
   onEditClick,
+  expandedTaskIds,
+  onToggleExpanded,
 }: TaskTreeNodeProps) {
   // 表示値は task prop を直接参照する。
   // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
@@ -121,7 +131,9 @@ function TaskTreeNodeImpl({
 
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
-  const [isCollapsed, setIsCollapsed] = useState(isWP && hasChildren ? true : false);
+  // PR #61: 折りたたみ状態を親から受け取る (sessionStorage 永続化)。
+  // 対象は WP かつ子を持つノードのみ。デフォルトは「折りたたみ」(Set に含まれない)。
+  const isCollapsed = isWP && hasChildren ? !expandedTaskIds.has(task.id) : false;
   const isAssignee = task.assigneeId === userId;
   // メンバー編集: 担当者のみ（ACT限定）
   const canMemberEdit = !isWP && isAssignee;
@@ -153,7 +165,7 @@ function TaskTreeNodeImpl({
             {isWP && hasChildren ? (
               <button
                 type="button"
-                onClick={() => setIsCollapsed(!isCollapsed)}
+                onClick={() => onToggleExpanded(task.id)}
                 className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
                 title={isCollapsed ? '展開' : '折りたたみ'}
               >
@@ -255,6 +267,8 @@ function TaskTreeNodeImpl({
           members={members}
           parentOptions={parentOptions}
           onEditClick={onEditClick}
+          expandedTaskIds={expandedTaskIds}
+          onToggleExpanded={onToggleExpanded}
         />
       ))}
     </>
@@ -286,7 +300,10 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   && prev.onToggleSelect === next.onToggleSelect
   && prev.members === next.members
   && prev.parentOptions === next.parentOptions
-  && prev.onEditClick === next.onEditClick,
+  && prev.onEditClick === next.onEditClick
+  // PR #61: 展開状態の変化は全ノードの再描画が必要 (子孫が折りたたみ/展開されうるため)
+  && prev.expandedTaskIds === next.expandedTaskIds
+  && prev.onToggleExpanded === next.onToggleExpanded,
 );
 
 export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload }: Props) {
@@ -307,17 +324,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // --- 担当者フィルタ ---
+  // --- 担当者フィルタ (PR #61: sessionStorage 永続化) ---
   // デフォルト: 全メンバー + 未アサインを選択済み（= 全タスク表示）。
-  // ユーザが chk を外すとそのメンバー担当のタスクが非表示になる。
-  // 新規にメンバーが追加された場合、初期化タイミング以降は自動的に追加されないが、
-  // ポップオーバー内の "すべて選択" で救済可能。
+  // 新規メンバー追加時は自動では追加されないが「すべて選択」で救済可能。
   const allAssigneeKeys = useMemo<string[]>(
     () => [...members.map((m) => m.userId), UNASSIGNED_KEY],
     [members],
   );
-  const [assigneeFilter, setAssigneeFilter] = useState<Set<string>>(
-    () => new Set(allAssigneeKeys),
+  const [assigneeFilter, setAssigneeFilter] = useSessionStringSet(
+    `wbs:${projectId}:assignee-filter`,
+    () => allAssigneeKeys,
   );
   const isAllAssigneesSelected
     = assigneeFilter.size === allAssigneeKeys.length
@@ -329,19 +345,58 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       else next.add(key);
       return next;
     });
-  }, []);
+  }, [setAssigneeFilter]);
   const selectAllAssignees = useCallback(() => {
-    setAssigneeFilter(new Set(allAssigneeKeys));
-  }, [allAssigneeKeys]);
+    setAssigneeFilter(() => new Set(allAssigneeKeys));
+  }, [allAssigneeKeys, setAssigneeFilter]);
   const clearAllAssignees = useCallback(() => {
-    setAssigneeFilter(new Set());
-  }, []);
+    setAssigneeFilter(() => new Set());
+  }, [setAssigneeFilter]);
 
-  // 表示用のフィルタ済みタスクツリー
-  const filteredTasks = useMemo(
-    () => (isAllAssigneesSelected ? tasks : filterTreeByAssignee(tasks, assigneeFilter)),
-    [tasks, assigneeFilter, isAllAssigneesSelected],
+  // --- 状況 (status) フィルタ (PR #61) ---
+  const [statusFilter, setStatusFilter] = useSessionStringSet(
+    `wbs:${projectId}:status-filter`,
+    () => [...ALL_STATUS_KEYS],
   );
+  const isAllStatusesSelected
+    = statusFilter.size === ALL_STATUS_KEYS.length
+    && ALL_STATUS_KEYS.every((k) => statusFilter.has(k));
+  const toggleStatus = useCallback((key: string) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, [setStatusFilter]);
+  const selectAllStatuses = useCallback(() => {
+    setStatusFilter(() => new Set(ALL_STATUS_KEYS));
+  }, [setStatusFilter]);
+  const clearAllStatuses = useCallback(() => {
+    setStatusFilter(() => new Set());
+  }, [setStatusFilter]);
+
+  // --- WP 展開状態 (PR #61: sessionStorage 永続化) ---
+  const [expandedTaskIds, setExpandedTaskIds] = useSessionStringSet(
+    `wbs:${projectId}:expanded-tasks`,
+    () => [],
+  );
+  const toggleExpanded = useCallback((taskId: string) => {
+    setExpandedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  }, [setExpandedTaskIds]);
+
+  // 表示用のフィルタ済みタスクツリー (担当者 + 状況の AND)
+  const filteredTasks = useMemo(() => {
+    let t = tasks;
+    if (!isAllAssigneesSelected) t = filterTreeByAssignee(t, assigneeFilter);
+    if (!isAllStatusesSelected) t = filterTreeByStatus(t, statusFilter);
+    return t;
+  }, [tasks, assigneeFilter, isAllAssigneesSelected, statusFilter, isAllStatusesSelected]);
 
   // --- 編集ダイアログ（個別タスクをアイコンから開いて編集）---
   // 1 ダイアログを複数タスクで共有（TasksClient レベルで保持し、編集対象が null の間は非表示）
@@ -962,73 +1017,37 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         )}
       </div>
 
-      {/* 担当者フィルタ（全ロール利用可・デフォルト 全員選択）*/}
+      {/* フィルタ (担当者 + 状況、PR #61) */}
       <div className="flex flex-wrap items-center gap-2">
-        <PopoverPrimitive.Root>
-          <PopoverPrimitive.Trigger
-            render={<Button variant="outline" size="sm" />}
+        <MultiSelectFilter
+          label="担当者"
+          options={[
+            ...members.map((m) => ({ value: m.userId, label: m.userName })),
+            { value: UNASSIGNED_KEY, label: '（未アサイン）', muted: true },
+          ]}
+          selected={assigneeFilter}
+          onToggle={toggleAssignee}
+          onSelectAll={selectAllAssignees}
+          onClearAll={clearAllAssignees}
+          isAllSelected={isAllAssigneesSelected}
+          allLabel="全員"
+        />
+        <MultiSelectFilter
+          label="状況"
+          options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
+          selected={statusFilter}
+          onToggle={toggleStatus}
+          onSelectAll={selectAllStatuses}
+          onClearAll={clearAllStatuses}
+          isAllSelected={isAllStatusesSelected}
+        />
+        {(!isAllAssigneesSelected || !isAllStatusesSelected) && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => { selectAllAssignees(); selectAllStatuses(); }}
           >
-            担当者:{' '}
-            {isAllAssigneesSelected
-              ? '全員'
-              : `${assigneeFilter.size} / ${allAssigneeKeys.length} 人`}
-          </PopoverPrimitive.Trigger>
-          <PopoverPrimitive.Portal>
-            <PopoverPrimitive.Positioner sideOffset={6} align="start" className="isolate z-50">
-              <PopoverPrimitive.Popup
-                className="max-h-[60vh] w-64 overflow-y-auto rounded-lg border bg-white p-2 shadow-md ring-1 ring-black/5 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
-              >
-                <div className="flex gap-2 border-b pb-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={selectAllAssignees}
-                  >
-                    すべて選択
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={clearAllAssignees}
-                  >
-                    すべて解除
-                  </Button>
-                </div>
-                <div className="mt-2 space-y-1">
-                  {members.map((m) => (
-                    <label
-                      key={m.userId}
-                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={assigneeFilter.has(m.userId)}
-                        onChange={() => toggleAssignee(m.userId)}
-                        className="rounded"
-                      />
-                      <span className="truncate">{m.userName}</span>
-                    </label>
-                  ))}
-                  <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
-                    <input
-                      type="checkbox"
-                      checked={assigneeFilter.has(UNASSIGNED_KEY)}
-                      onChange={() => toggleAssignee(UNASSIGNED_KEY)}
-                      className="rounded"
-                    />
-                    <span className="text-gray-500">（未アサイン）</span>
-                  </label>
-                </div>
-              </PopoverPrimitive.Popup>
-            </PopoverPrimitive.Positioner>
-          </PopoverPrimitive.Portal>
-        </PopoverPrimitive.Root>
-        {!isAllAssigneesSelected && (
-          <Button type="button" variant="ghost" size="sm" onClick={selectAllAssignees}>
             フィルタ解除
           </Button>
         )}
@@ -1245,6 +1264,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 members={members}
                 parentOptions={parentOptions}
                 onEditClick={openEditDialog}
+                expandedTaskIds={expandedTaskIds}
+                onToggleExpanded={toggleExpanded}
               />
             ))}
             {filteredTasks.length === 0 && (
@@ -1252,7 +1273,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <td colSpan={canEditPmTl ? 8 : 7} className="py-8 text-center text-gray-500">
                   {tasks.length === 0
                     ? 'WBS が登録されていません'
-                    : '選択した担当者に該当するタスクはありません'}
+                    : '選択したフィルタ条件に該当するタスクはありません'}
                 </td>
               </tr>
             )}

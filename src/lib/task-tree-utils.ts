@@ -27,6 +27,29 @@ export function filterTreeByAssignee(nodes: TaskDTO[], selected: Set<string>): T
   return result;
 }
 
+/**
+ * 状況 (status) の選択セットに基づきタスクツリーをフィルタする (PR #61)。
+ * - タスク自身の status が選択セットに含まれる: 残す
+ * - 自身は非該当だが子孫が残っている: 親 WP として階層を失わないよう残す
+ * - 子を持たない WP は status フィルタの対象外とし、selected が空でない限り残す
+ *   (WP は子 ACT を持つのが本来の姿なので特殊扱いは行わない方針)
+ */
+export function filterTreeByStatus(nodes: TaskDTO[], selected: Set<string>): TaskDTO[] {
+  const result: TaskDTO[] = [];
+  for (const node of nodes) {
+    const childrenFiltered
+      = node.children && node.children.length > 0
+        ? filterTreeByStatus(node.children, selected)
+        : undefined;
+    const selfMatch = selected.has(node.status);
+    const hasFilteredChildren = !!childrenFiltered && childrenFiltered.length > 0;
+    if (selfMatch || hasFilteredChildren) {
+      result.push({ ...node, children: childrenFiltered });
+    }
+  }
+  return result;
+}
+
 /** ツリーから全 ID を再帰的に収集する */
 export function collectAllIds(nodes: TaskDTO[]): string[] {
   const ids: string[] = [];

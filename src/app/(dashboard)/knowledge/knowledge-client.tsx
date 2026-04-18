@@ -119,8 +119,8 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
           {filtered.map((k) => (
             <TableRow
               key={k.id}
-              className={k.canAccessProject ? 'cursor-pointer hover:bg-gray-50' : ''}
-              onClick={k.canAccessProject ? () => setEditingKnowledge(k) : undefined}
+              className="cursor-pointer hover:bg-gray-50"
+              onClick={() => setEditingKnowledge(k)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {k.projectName == null ? (
@@ -185,6 +185,7 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
         open={editingKnowledge != null}
         onOpenChange={(v) => { if (!v) setEditingKnowledge(null); }}
         onSaved={async () => { router.refresh(); }}
+        readOnly={editingKnowledge != null && !editingKnowledge.canAccessProject}
       />
     </div>
   );

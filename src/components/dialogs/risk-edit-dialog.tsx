@@ -44,12 +44,15 @@ export function RiskEditDialog({
   open,
   onOpenChange,
   onSaved,
+  readOnly = false,
 }: {
   risk: RiskLike | null;
   members: { userId: string; userName: string }[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
+  /** PR #61: 非公開プロジェクトの行クリック時など、参照専用で開く場合に true */
+  readOnly?: boolean;
 }) {
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
@@ -124,15 +127,19 @@ export function RiskEditDialog({
     onOpenChange(false);
   }
 
+  const titleText = risk.type === 'risk' ? 'リスク' : '課題';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{risk.type === 'risk' ? 'リスク編集' : '課題編集'}</DialogTitle>
-          <DialogDescription>変更内容を保存します。</DialogDescription>
+          <DialogTitle>{readOnly ? `${titleText}詳細` : `${titleText}編集`}</DialogTitle>
+          <DialogDescription>
+            {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+          <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
           <div className="space-y-2">
             <Label>件名</Label>
             <Input
@@ -210,7 +217,8 @@ export function RiskEditDialog({
               </div>
             )}
           </div>
-          <Button type="submit" className="w-full">保存</Button>
+          </fieldset>
+          {!readOnly && <Button type="submit" className="w-full">保存</Button>}
         </form>
       </DialogContent>
     </Dialog>

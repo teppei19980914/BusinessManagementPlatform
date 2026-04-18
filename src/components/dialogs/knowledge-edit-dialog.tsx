@@ -38,6 +38,7 @@ export function KnowledgeEditDialog({
   open,
   onOpenChange,
   onSaved,
+  readOnly = false,
 }: {
   knowledge: KnowledgeLike | null;
   /** プロジェクトスコープで編集する場合の projectId。省略時はレガシー /api/knowledge/:id を使う */
@@ -45,6 +46,8 @@ export function KnowledgeEditDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
+  /** PR #61: 非公開プロジェクトの行クリック用 参照専用モード */
+  readOnly?: boolean;
 }) {
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
@@ -100,11 +103,14 @@ export function KnowledgeEditDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>ナレッジ編集</DialogTitle>
-          <DialogDescription>変更内容を保存します。</DialogDescription>
+          <DialogTitle>{readOnly ? 'ナレッジ詳細' : 'ナレッジ編集'}</DialogTitle>
+          <DialogDescription>
+            {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+          <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
           <div className="space-y-2">
             <Label>タイトル</Label>
             <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={150} required />
@@ -156,7 +162,8 @@ export function KnowledgeEditDialog({
               required
             />
           </div>
-          <Button type="submit" className="w-full">保存</Button>
+          </fieldset>
+          {!readOnly && <Button type="submit" className="w-full">保存</Button>}
         </form>
       </DialogContent>
     </Dialog>

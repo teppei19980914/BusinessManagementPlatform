@@ -55,8 +55,8 @@ export function AllRetrospectivesTable({
           {retros.map((r) => (
             <TableRow
               key={r.id}
-              className={r.canAccessProject ? 'cursor-pointer hover:bg-gray-50' : ''}
-              onClick={r.canAccessProject ? () => setEditingRetro(r) : undefined}
+              className="cursor-pointer hover:bg-gray-50"
+              onClick={() => setEditingRetro(r)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {r.projectName == null ? (
@@ -111,6 +111,7 @@ export function AllRetrospectivesTable({
         open={editingRetro != null}
         onOpenChange={(v) => { if (!v) setEditingRetro(null); }}
         onSaved={async () => { router.refresh(); }}
+        readOnly={editingRetro != null && !editingRetro.canAccessProject}
       />
     </>
   );

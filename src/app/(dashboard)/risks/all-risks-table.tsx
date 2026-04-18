@@ -53,16 +53,21 @@ export function AllRisksTable({
   const [editingRisk, setEditingRisk] = useState<AllRiskDTO | null>(null);
   const [members, setMembers] = useState<MemberDTO[]>([]);
 
+  // PR #61: 非メンバーでも行クリックで readOnly ダイアログを開けるようにする。
+  // canAccessProject=true → 編集可、false → 参照専用 (readOnly)。
   async function handleRowClick(r: AllRiskDTO) {
-    if (!r.canAccessProject) return;
-    // メンバーリストを取得 (編集ダイアログの担当者選択に必要)
-    try {
-      const res = await fetch(`/api/projects/${r.projectId}/members`);
-      if (res.ok) {
-        const json = await res.json();
-        setMembers(json.data ?? []);
+    if (r.canAccessProject) {
+      try {
+        const res = await fetch(`/api/projects/${r.projectId}/members`);
+        if (res.ok) {
+          const json = await res.json();
+          setMembers(json.data ?? []);
+        }
+      } catch {
+        setMembers([]);
       }
-    } catch {
+    } else {
+      // 非メンバーはメンバー一覧 API を叩けないため空で開く (担当者は表示のみ)
       setMembers([]);
     }
     setEditingRisk(r);
@@ -91,7 +96,7 @@ export function AllRisksTable({
           {filteredRisks.map((r) => (
             <TableRow
               key={r.id}
-              className={r.canAccessProject ? 'cursor-pointer hover:bg-gray-50' : ''}
+              className="cursor-pointer hover:bg-gray-50"
               onClick={() => handleRowClick(r)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
@@ -161,6 +166,7 @@ export function AllRisksTable({
         open={editingRisk != null}
         onOpenChange={(v) => { if (!v) setEditingRisk(null); }}
         onSaved={async () => { router.refresh(); }}
+        readOnly={editingRisk != null && !editingRisk.canAccessProject}
       />
     </>
   );
