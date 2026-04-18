@@ -60,20 +60,31 @@ export default async function AllRisksPage() {
                 </Badge>
               </TableCell>
               <TableCell className="font-medium">
-                {/* 詳細リンクはメンバーのみ。非メンバーには title のみテキスト表示 */}
-                {r.canAccessProject ? (
-                  <Link
-                    href={`/projects/${r.projectId}/risks`}
-                    className="text-blue-600 hover:underline"
-                  >
-                    {r.title}
-                  </Link>
-                ) : (
-                  <span>{r.title}</span>
-                )}
+                {/* 件名はリンクしない (PR #54 以降、リンクは プロジェクト列へ移設) */}
+                <span>{r.title}</span>
               </TableCell>
               <TableCell className="text-sm text-gray-600">
-                {r.projectName ?? <span className="text-gray-400">（非公開）</span>}
+                {/*
+                  プロジェクト列の表示ロジック (PR #54):
+                    1. 非メンバー: 「（非公開）」
+                    2. メンバー + 削除済みプロジェクト: プロジェクト名 + 「(削除済)」で非リンク
+                    3. メンバー + 生存プロジェクト: プロジェクト名にリンク (概要画面へ)
+                */}
+                {r.projectName == null ? (
+                  <span className="text-gray-400">（非公開）</span>
+                ) : r.canAccessProject ? (
+                  <Link
+                    href={`/projects/${r.projectId}`}
+                    className="text-blue-600 hover:underline"
+                  >
+                    {r.projectName}
+                  </Link>
+                ) : (
+                  <span className="text-gray-500">
+                    {r.projectName}
+                    {r.projectDeleted && <span className="ml-1 text-xs text-red-500">(削除済)</span>}
+                  </span>
+                )}
               </TableCell>
               <TableCell>{PRIORITIES[r.impact as keyof typeof PRIORITIES] || r.impact}</TableCell>
               <TableCell>{PRIORITIES[r.priority as keyof typeof PRIORITIES] || r.priority}</TableCell>
