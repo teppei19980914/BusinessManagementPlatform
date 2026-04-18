@@ -27,6 +27,10 @@ export type AllRetroDTO = Omit<RetroDTO, 'comments'> & {
   canAccessProject: boolean;
   // コメントは件数と本文のみ公開、投稿者氏名は非メンバー向けにマスク
   comments: { id: string; userName: string | null; content: string; createdAt: string }[];
+  /** Req 4: 全振り返り画面で表示する追加フィールド (planSummary/actualSummary/improvements は既に RetroDTO 経由で含まれる) */
+  updatedAt: string;
+  createdByName: string | null;
+  updatedByName: string | null;
 };
 
 /**
@@ -55,8 +59,12 @@ export async function listAllRetrospectivesForViewer(
     orderBy: { conductedDate: 'desc' },
   });
 
-  // コメント投稿者名を解決 (メンバー判定に応じてマスクする)
-  const userIds = [...new Set(retros.flatMap((r) => r.comments.map((c) => c.userId)))];
+  // コメント投稿者名 + createdBy / updatedBy を解決 (マスクは row 単位でメンバー判定)
+  const userIds = [...new Set([
+    ...retros.flatMap((r) => r.comments.map((c) => c.userId)),
+    ...retros.map((r) => r.createdBy),
+    ...retros.map((r) => r.updatedBy),
+  ])];
   const users = userIds.length > 0
     ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
     : [];
@@ -79,6 +87,9 @@ export async function listAllRetrospectivesForViewer(
       improvements: r.improvements,
       state: r.state,
       createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+      createdByName: isMember ? userMap.get(r.createdBy) ?? null : null,
+      updatedByName: isMember ? userMap.get(r.updatedBy) ?? null : null,
       comments: r.comments.map((c) => ({
         id: c.id,
         userName: isMember ? userMap.get(c.userId) ?? null : null,
