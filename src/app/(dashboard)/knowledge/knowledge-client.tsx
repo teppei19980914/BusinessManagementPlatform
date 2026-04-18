@@ -105,7 +105,7 @@ export function KnowledgeClient({ initialKnowledge, initialTotal }: Props) {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">ナレッジ</h2>
+        <h2 className="text-xl font-semibold">全ナレッジ</h2>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">ナレッジ作成</DialogTrigger>
           <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
