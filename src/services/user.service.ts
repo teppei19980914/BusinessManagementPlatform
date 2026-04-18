@@ -155,6 +155,44 @@ export async function updateUserStatus(
   return toUserDTO(user);
 }
 
+/**
+ * ユーザ管理画面の行クリック編集 (PR #59 Req 3) から呼ばれる汎用更新関数。
+ * 既存の updateUserStatus / updateUserRole を内部でディスパッチして
+ * 1 リクエストで複数フィールドの変更を処理する。
+ * ロール変更時は本来の updateUserRole 経由で role_change_log が残る。
+ */
+export async function updateUser(
+  userId: string,
+  input: {
+    name?: string;
+    systemRole?: string;
+    isActive?: boolean;
+  },
+  updaterId: string,
+): Promise<UserDTO> {
+  let latest: UserDTO | null = null;
+
+  if (input.systemRole !== undefined) {
+    latest = await updateUserRole(userId, input.systemRole, updaterId);
+  }
+  if (input.isActive !== undefined) {
+    latest = await updateUserStatus(userId, input.isActive, updaterId);
+  }
+  if (input.name !== undefined) {
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { name: input.name },
+    });
+    latest = toUserDTO(user);
+  }
+  if (!latest) {
+    // 何も変更指定がなかった場合は現在値を返す
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    latest = toUserDTO(user);
+  }
+  return latest;
+}
+
 export async function updateUserRole(
   userId: string,
   newRole: string,

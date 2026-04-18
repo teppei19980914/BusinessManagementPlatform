@@ -93,8 +93,19 @@ function rangeText(start: string | null | undefined, end: string | null | undefi
 export function GanttClient({ tasks: tree, members }: Props) {
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
 
-  // 折りたたみ状態: 初期は全展開（ガントは詳細可視が基本価値）
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // 折りたたみ状態: 初期は全 WP を折りたたんだ状態で開始 (PR #59 ユーザ要求)
+  //   → 一覧性優先。必要な WP をユーザが能動的に展開する運用に
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    const ids = new Set<string>();
+    const walk = (nodes: TaskDTO[]) => {
+      for (const n of nodes) {
+        if (n.type === 'work_package') ids.add(n.id);
+        if (n.children) walk(n.children);
+      }
+    };
+    walk(tree);
+    return ids;
+  });
   const toggleCollapsed = (id: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev);

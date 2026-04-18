@@ -36,8 +36,12 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
  *     * 担当者フィルタは「自分」で固定済み (filterTreeByAssignee)
  */
 export function MyTasksClient({ projectGroups, today }: Props) {
-  // プロジェクトセクションの折りたたみ状態 (初期展開)
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  // プロジェクトセクションの折りたたみ状態
+  // 初期値: 全プロジェクトを「折りたたんだ」状態で開始 (PR #59 ユーザ要求)
+  //   → 一覧性を高め、必要なプロジェクトだけ展開する運用に
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
+    () => new Set(projectGroups.map((pg) => pg.projectId)),
+  );
   const toggleProject = (projectId: string) => {
     setCollapsedProjects((prev) => {
       const next = new Set(prev);
