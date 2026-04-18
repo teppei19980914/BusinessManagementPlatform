@@ -438,8 +438,9 @@ export async function bulkUpdateTasks(
   });
 
   // 親 WP の集計を再計算する必要があるかを判定。
-  // plannedEffort / planned/actual 日付 / status / progressRate いずれかを変更した場合は再計算対象。
-  // assigneeId / priority は集計に影響しないのでスキップ。
+  // plannedEffort / planned/actual 日付 / status / progressRate / assigneeId のいずれかを
+  // 変更した場合は再計算対象。assigneeId は PR #45 以降、親 WP の担当者集約にも影響するため
+  // 再集計トリガに含める（priority は集計値に影響しないのでスキップ）。
   const needsRecalc
     = updates.plannedEffort !== undefined
     || updates.plannedStartDate !== undefined
@@ -447,6 +448,7 @@ export async function bulkUpdateTasks(
     || updates.actualStartDate !== undefined
     || updates.actualEndDate !== undefined
     || updates.status !== undefined
+    || updates.assigneeId !== undefined
     || updates.progressRate !== undefined;
 
   if (needsRecalc && result.count > 0) {
@@ -528,6 +530,61 @@ export async function updateTaskProgress(
 /** recalculateAncestors の公開ラッパー（インポート後の再集計用） */
 async function recalculateAncestorsPublic(taskId: string): Promise<void> {
   return recalculateAncestors(taskId);
+}
+
+/**
+ * プロジェクト内の全 WP 集計値を再計算する修復ツール。
+ *
+ * 動機 (2026-04-18):
+ *   PR #45 で導入した「子の担当者が全員同一なら親 WP も同じ担当者」のボトムアップ集約は、
+ *   ACT 更新をトリガに走る recalculateAncestors 経由でしか動かないため、
+ *   PR #45 より前に作成・インポートされた既存 WP は null のまま残る。
+ *   また、異なるサブツリーに対して個別 ACT を更新しても、更新した枝の祖先しか
+ *   再計算されないため、未更新の枝の WP は古い集計値のまま。
+ *
+ *   このバックフィル関数はプロジェクト内の全 WP を深度降順（深い WP を先）で
+ *   再集計し、データを最新ロジックに揃える。
+ *
+ * 実装上の要点:
+ *   - 深度降順で処理することで、親 WP を再計算する時点で全子 WP の集計値が
+ *     既に最新状態になっていることを保証する
+ *   - recalculateAncestors は自身 + 祖先への再帰伝播を含むため、
+ *     深度降順ループでは冗長な上方伝播が発生するが、冪等なので問題ない
+ *
+ * @returns 再計算対象となった WP 数
+ */
+export async function recalculateAllProjectWps(projectId: string): Promise<number> {
+  const wps = await prisma.task.findMany({
+    where: { projectId, type: 'work_package', deletedAt: null },
+    select: { id: true, parentTaskId: true },
+  });
+  if (wps.length === 0) return 0;
+
+  // 深度マップを作成: 祖先チェーンの長さ = その WP の深度
+  const byId = new Map(wps.map((w) => [w.id, w]));
+  const depthOf = (id: string): number => {
+    let d = 0;
+    let cur: string | null | undefined = id;
+    // 最大 100 階層を上限に設定（循環参照の防波堤）
+    for (let i = 0; i < 100 && cur; i++) {
+      const w = byId.get(cur);
+      if (!w) break;
+      if (w.parentTaskId === null) break;
+      cur = w.parentTaskId;
+      d++;
+    }
+    return d;
+  };
+
+  const sorted = wps
+    .map((w) => ({ id: w.id, depth: depthOf(w.id) }))
+    .sort((a, b) => b.depth - a.depth);
+
+  for (const w of sorted) {
+    await recalculateAncestors(w.id);
+  }
+
+  return sorted.length;
 }
 
 /**

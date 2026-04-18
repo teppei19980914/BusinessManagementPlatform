@@ -644,6 +644,23 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     await reload();
   }
 
+  // --- WP 集計再計算（修復ツール） ---
+  // PR #45 より前に作成された既存 WP の担当者集約が反映されていない場合や、
+  // 別サブツリーの更新で未伝播の集計を一括で揃える。
+  async function handleRecalculate() {
+    if (!confirm('プロジェクト内の全 WP の集計値（担当者・進捗・日程・ステータス）を再計算します。タスクの内容自体は変更されません。実行しますか？')) return;
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/recalculate`, { method: 'POST' }),
+    );
+    if (!res.ok) {
+      alert('再計算に失敗しました');
+      return;
+    }
+    const json = await res.json();
+    alert(`${json.data?.recalculatedWpCount ?? 0} 件の WP を再計算しました。`);
+    await reload();
+  }
+
   // --- WBS テンプレートエクスポート (CSV) ---
   async function handleExport() {
     const body: Record<string, unknown> = {};
@@ -788,6 +805,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <h2 className="text-xl font-semibold">WBS管理</h2>
         {canEditPmTl && (
           <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRecalculate}
+            title="子ACTの担当者・進捗・日程から全WPの集計値を再計算します"
+          >
+            集計再計算
+          </Button>
           <Button variant="outline" size="sm" onClick={handleExport}>
             {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
           </Button>
