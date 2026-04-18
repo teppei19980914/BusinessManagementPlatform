@@ -22,6 +22,8 @@ export type RetroDTO = {
  */
 export type AllRetroDTO = Omit<RetroDTO, 'comments'> & {
   projectName: string | null;
+  /** プロジェクトが論理削除済みか (admin のみ識別可、非 admin には false として秘匿) */
+  projectDeleted: boolean;
   canAccessProject: boolean;
   // コメントは件数と本文のみ公開、投稿者氏名は非メンバー向けにマスク
   comments: { id: string; userName: string | null; content: string; createdAt: string }[];
@@ -48,7 +50,7 @@ export async function listAllRetrospectivesForViewer(
     where: { deletedAt: null },
     include: {
       comments: { orderBy: { createdAt: 'asc' } },
-      project: { select: { id: true, name: true } },
+      project: { select: { id: true, name: true, deletedAt: true } },
     },
     orderBy: { conductedDate: 'desc' },
   });
@@ -62,11 +64,13 @@ export async function listAllRetrospectivesForViewer(
 
   return retros.map((r) => {
     const isMember = isAdmin || memberProjectIds.has(r.projectId);
+    const projectDeleted = r.project?.deletedAt != null;
     return {
       id: r.id,
       projectId: r.projectId,
       projectName: isMember ? r.project?.name ?? null : null,
-      canAccessProject: isMember,
+      projectDeleted: isAdmin ? projectDeleted : false,
+      canAccessProject: isMember && !projectDeleted,
       conductedDate: r.conductedDate.toISOString().split('T')[0],
       planSummary: r.planSummary,
       actualSummary: r.actualSummary,

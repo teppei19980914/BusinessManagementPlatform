@@ -47,19 +47,26 @@ export default async function AllRetrospectivesPage() {
           {retros.map((r) => (
             <TableRow key={r.id}>
               <TableCell className="whitespace-nowrap font-medium">
-                {r.canAccessProject ? (
-                  <Link
-                    href={`/projects/${r.projectId}/retrospectives`}
-                    className="text-blue-600 hover:underline"
-                  >
-                    {r.conductedDate}
-                  </Link>
-                ) : (
-                  <span>{r.conductedDate}</span>
-                )}
+                {/* 実施日はリンクしない (PR #54 以降、リンクは プロジェクト列へ移設) */}
+                <span>{r.conductedDate}</span>
               </TableCell>
               <TableCell className="text-sm text-gray-600">
-                {r.projectName ?? <span className="text-gray-400">（非公開）</span>}
+                {/* プロジェクト列: 生存プロジェクトのみ /projects/[id] 概要画面へリンク */}
+                {r.projectName == null ? (
+                  <span className="text-gray-400">（非公開）</span>
+                ) : r.canAccessProject ? (
+                  <Link
+                    href={`/projects/${r.projectId}`}
+                    className="text-blue-600 hover:underline"
+                  >
+                    {r.projectName}
+                  </Link>
+                ) : (
+                  <span className="text-gray-500">
+                    {r.projectName}
+                    {r.projectDeleted && <span className="ml-1 text-xs text-red-500">(削除済)</span>}
+                  </span>
+                )}
               </TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.goodPoints || '-'}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.problems || '-'}</TableCell>

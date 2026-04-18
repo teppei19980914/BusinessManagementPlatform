@@ -95,6 +95,8 @@ export async function listRisks(projectId: string): Promise<RiskDTO[]> {
  */
 export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName'> & {
   projectName: string | null;
+  /** プロジェクトが論理削除済みか (admin のみ識別可、非 admin には null として秘匿) */
+  projectDeleted: boolean;
   canAccessProject: boolean;
   reporterName: string | null;
   assigneeName: string | null;
@@ -126,17 +128,20 @@ export async function listAllRisksForViewer(
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
-      project: { select: { id: true, name: true } },
+      project: { select: { id: true, name: true, deletedAt: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
 
   return risks.map((r) => {
     const isMember = isAdmin || memberProjectIds.has(r.projectId);
+    const projectDeleted = r.project?.deletedAt != null;
     return {
       ...toRiskDTO(r),
       projectName: isMember ? r.project?.name ?? null : null,
-      canAccessProject: isMember,
+      projectDeleted: isAdmin ? projectDeleted : false, // admin 以外には削除状態を秘匿
+      // 孤児プロジェクト (deleted) への詳細リンクは admin 以外は許可しない
+      canAccessProject: isMember && !projectDeleted,
       // 非メンバーには氏名を返さない (顧客名・見積と同等の機微情報扱い)
       reporterName: isMember ? r.reporter?.name ?? null : null,
       assigneeName: isMember ? r.assignee?.name ?? null : null,
