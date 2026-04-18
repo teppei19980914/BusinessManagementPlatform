@@ -1081,6 +1081,7 @@ const transitions: TransitionRule[] = [
 | PATCH | /api/projects/:id/tasks/bulk-update | 担当者・優先度一括更新 | admin, pm_tl |
 | POST | /api/projects/:id/tasks/export | WBSテンプレートエクスポート（JSON） | 全ロール |
 | POST | /api/projects/:id/tasks/import | WBSテンプレートインポート（JSON） | admin, pm_tl |
+| POST | /api/projects/:id/tasks/recalculate | 全WP集計再計算（修復ツール） | admin, pm_tl |
 
 #### ガントチャート
 
