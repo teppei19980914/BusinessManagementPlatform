@@ -27,6 +27,7 @@ import {
 } from '@/lib/task-tree-utils';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_STATUSES, WBS_TYPES } from '@/types';
+import { AttachmentList } from '@/components/attachments/attachment-list';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
@@ -1377,6 +1378,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   </div>
                 </section>
               )}
+
+              {/* PR #64 Phase 2: 成果物・設計書・仕様書リンク (複数) */}
+              <AttachmentList
+                entityType="task"
+                entityId={editingTask.id}
+                canEdit={canEditPmTl}
+                label="関連 URL"
+              />
 
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={closeEditDialog}>キャンセル</Button>

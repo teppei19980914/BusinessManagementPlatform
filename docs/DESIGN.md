@@ -3692,3 +3692,70 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 2. **共通化のコストが利得を上回る場合**: 据え置き可 (例: 3 行の類似コードで別々に成長する可能性が高いもの)
 3. **リファクタの副作用が大きい場合**: PR を分離し段階的に実施する。動作確認不足な変更は避ける
 4. **違反の発見時**: ユーザ要求の本線を阻害しない範囲で本 PR 中に是正、困難なものは TODO コメントと Issue として残す
+
+---
+
+## 22. 添付リンク設計 (PR #64)
+
+### 22.1 方針
+
+実ファイルを DB / Supabase Storage に**保持しない**設計とし、外部ストレージ (SharePoint / Google Drive / OneDrive / GitHub 等) の **URL 参照のみ** を格納する。
+Supabase Free (DB 500MB / Storage 1GB) の無料枠で長期運用することを最優先した判断。
+base64 化で DB に格納する案は「容量が +33% に膨張し、500MB 上限を数十ファイルで使い切る」「一覧 API が重くなる」ため採用しない。
+
+### 22.2 データモデル
+
+単一のポリモーフィック関連テーブル `attachments` に 6 エンティティ (project / task / estimate / risk / retrospective / knowledge) を集約する (DRY 原則 §21.2)。
+
+| カラム | 型 | 役割 |
+|---|---|---|
+| `id` | UUID | PK |
+| `entity_type` | VARCHAR(30) | 親エンティティ種別 |
+| `entity_id` | UUID | 親エンティティ ID |
+| `slot` | VARCHAR(30) | 'general' (複数) / 'primary' / 'source' (単数) |
+| `display_name` | VARCHAR(200) | 表示名 |
+| `url` | VARCHAR(2000) | 外部ストレージ URL (http/https のみ) |
+| `mime_hint` | VARCHAR(50)? | アイコン表示用のヒント (任意) |
+| `added_by` | UUID | 追加ユーザ (FK: users.id) |
+| `created_at / updated_at / deleted_at` | TIMESTAMPTZ | 論理削除対応 |
+
+インデックス: `(entity_type, entity_id)` と `(entity_type, entity_id, slot)`。
+FK は `added_by` のみ (エンティティ側は種別が可変のため FK を張らず `resolveProjectIds` で逆引き)。
+
+### 22.3 スロット運用
+
+| スロット | 用途 | 件数制約 | 適用エンティティ |
+|---|---|---|---|
+| `general` | 一般的な関連 URL | 複数 | 全エンティティ |
+| `primary` | 中心となる資料 1 本 | 単数 (UI 強制) | project |
+| `source` | 一次情報源 URL | 単数 (UI 強制) | knowledge |
+
+単数スロットへの POST 時、サービス層は**既存行を論理削除してから新規作成**する (置換)。履歴は `deleted_at` に残るため監査に追跡可能。
+
+### 22.4 セキュリティ
+
+- URL スキームは `http://` / `https://` のみ validator で許容
+- `javascript:` / `data:` / `file:` は validator + UI pattern 両方で拒否 (XSS / 情報漏洩対策)
+- 表示は `<a href={url} target="_blank" rel="noopener noreferrer">` を徹底 (tabnabbing 対策)
+
+### 22.5 認可
+
+- admin: 全エンティティで全操作許可
+- メンバー: 親エンティティ → Project ID を `resolveProjectIds` で導出し、`checkMembership` で判定
+- 複数プロジェクト紐付けのナレッジ: いずれか 1 つでもメンバーなら許可
+- 孤児ナレッジ (`knowledge_projects` 0 件): admin のみ操作可能
+
+### 22.6 UI コンポーネント
+
+| コンポーネント | 用途 |
+|---|---|
+| `AttachmentList` (`src/components/attachments/attachment-list.tsx`) | 複数 URL 用。リスト表示 + 追加フォーム |
+| `SingleUrlField` (`src/components/attachments/single-url-field.tsx`) | 単数 URL 用。未設定時は追加ボタン、設定済みなら編集/削除 |
+
+### 22.7 フェーズ分けと組込み状況
+
+| フェーズ | 内容 | 状態 |
+|---|---|---|
+| Phase 1 | スキーマ / validator / service / API / 共通 UI | PR #64 で実装 |
+| Phase 2 | リスク/課題・振り返り・ナレッジ・タスク・プロジェクト概要タブへの組込み | PR #64 で実装 |
+| Phase 3 | Estimate (編集ダイアログ基盤が未整備のため延期) / リンク切れチェック / Slack 通知 | 未着手 |

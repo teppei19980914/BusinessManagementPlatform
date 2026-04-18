@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
+import { AttachmentList } from '@/components/attachments/attachment-list';
 
 type RetroLike = {
   id: string;
@@ -132,6 +133,13 @@ export function RetrospectiveEditDialog({
             </div>
           ))}
           </fieldset>
+          {/* PR #64 Phase 2: 議事録・発表資料等の関連 URL */}
+          <AttachmentList
+            entityType="retrospective"
+            entityId={retro.id}
+            canEdit={!readOnly}
+            label="関連 URL"
+          />
           {!readOnly && <Button type="submit" className="w-full">保存</Button>}
         </form>
       </DialogContent>
