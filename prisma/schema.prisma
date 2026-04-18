@@ -50,6 +50,7 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   recoveryCodes           RecoveryCode[]
   passwordHistories       PasswordHistory[]
+  addedAttachments        Attachment[]       @relation("AttachmentAddedBy")
 
   @@unique([email], map: "idx_users_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
@@ -470,4 +471,31 @@ model RoleChangeLog {
   targetUser User @relation("RoleTarget", fields: [targetUserId], references: [id])
 
   @@map("role_change_logs")
+}
+
+/// 添付リンク (PR #64 Phase 1): 実ファイルは保持せず、外部ストレージの URL のみを格納する
+/// ポリモーフィック関連 (entityType + entityId) で 6 種のエンティティと連携する:
+///   project / task / estimate / risk / retrospective / knowledge
+/// slot によって「単数」スロット (primary / source 等) と「複数」スロット (general) を
+/// 同一テーブルで扱う — 単数制約は UI/サービス層で enforce する (DB は複数行を許容)。
+/// 容量最適化のため 1 レコードあたり ~400B 以内に抑え、Supabase Free (DB 500MB) の
+/// 長期運用に耐える設計 (DESIGN.md §21.2 DRY 原則に沿って共通テーブル化)。
+model Attachment {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entityType  String    @map("entity_type") @db.VarChar(30)
+  entityId    String    @map("entity_id") @db.Uuid
+  slot        String    @default("general") @db.VarChar(30)
+  displayName String    @map("display_name") @db.VarChar(200)
+  url         String    @db.VarChar(2000)
+  mimeHint    String?   @map("mime_hint") @db.VarChar(50)
+  addedBy     String    @map("added_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+
+  addedByUser User @relation("AttachmentAddedBy", fields: [addedBy], references: [id])
+
+  @@index([entityType, entityId], map: "idx_attachments_entity")
+  @@index([entityType, entityId, slot], map: "idx_attachments_slot")
+  @@map("attachments")
 }
