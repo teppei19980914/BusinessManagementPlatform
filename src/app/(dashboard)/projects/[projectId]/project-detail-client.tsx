@@ -295,9 +295,9 @@ export function ProjectDetailClient({
           {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
           <TabsTrigger value="tasks">WBS管理</TabsTrigger>
           <TabsTrigger value="gantt">ガント</TabsTrigger>
-          <TabsTrigger value="risks">リスク/課題</TabsTrigger>
-          <TabsTrigger value="retrospectives">振り返り</TabsTrigger>
-          <TabsTrigger value="knowledge">ナレッジ</TabsTrigger>
+          <TabsTrigger value="risks">リスク/課題一覧</TabsTrigger>
+          <TabsTrigger value="retrospectives">振り返り一覧</TabsTrigger>
+          <TabsTrigger value="knowledge">ナレッジ一覧</TabsTrigger>
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
             <TabsTrigger value="members">メンバー</TabsTrigger>
           )}

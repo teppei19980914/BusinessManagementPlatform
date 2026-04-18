@@ -17,7 +17,12 @@ type DashboardHeaderProps = {
 const navItems = [
   { href: '/projects', label: 'プロジェクト' },
   { href: '/my-tasks', label: 'マイタスク' },
-  { href: '/knowledge', label: 'ナレッジ' },
+  // 全プロジェクト横断で閲覧できるナレッジ資産（リスク/課題・振り返り・ナレッジ）。
+  // プロジェクト詳細タブの「○○一覧」はそのプロジェクトに紐づく一覧、最上部タブは
+  // 全プロジェクトの集約ビュー。認可は「全メンバー閲覧可」方針 (Phase B 以降で実装)。
+  { href: '/risks', label: '全リスク/課題' },
+  { href: '/retrospectives', label: '全振り返り' },
+  { href: '/knowledge', label: '全ナレッジ' },
 ];
 
 const adminNavItems = [
