@@ -9,7 +9,7 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
+import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 
 /**
  * リスク/課題の編集に必要な最小限の形状。RiskDTO / AllRiskDTO 両方と互換。
@@ -26,6 +26,8 @@ type RiskLike = {
   state: string;
   assigneeId: string | null;
   deadline: string | null;
+  visibility: string;
+  riskNature: string | null;
 };
 
 /**
@@ -59,6 +61,8 @@ export function RiskEditDialog({
     state: 'open',
     assigneeId: '',
     deadline: '',
+    visibility: 'draft',
+    riskNature: 'threat',
   });
   const [error, setError] = useState('');
   // risk が切り替わったタイミングで form を同期するための prev 値追跡。
@@ -77,6 +81,8 @@ export function RiskEditDialog({
       state: risk.state,
       assigneeId: risk.assigneeId ?? '',
       deadline: risk.deadline ?? '',
+      visibility: risk.visibility,
+      riskNature: risk.riskNature ?? 'threat',
     });
     setError('');
   }
@@ -95,8 +101,12 @@ export function RiskEditDialog({
       state: form.state,
       assigneeId: form.assigneeId || null,
       deadline: form.deadline || null,
+      visibility: form.visibility,
     };
-    if (risk.type === 'risk') body.likelihood = form.likelihood;
+    if (risk.type === 'risk') {
+      body.likelihood = form.likelihood;
+      body.riskNature = form.riskNature;
+    }
 
     const res = await withLoading(() =>
       fetch(`/api/projects/${risk.projectId}/risks/${risk.id}`, {
@@ -183,6 +193,22 @@ export function RiskEditDialog({
           <div className="space-y-2">
             <Label>期限</Label>
             <Input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>公開範囲</Label>
+              <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+            {risk.type === 'risk' && (
+              <div className="space-y-2">
+                <Label>脅威 / 好機</Label>
+                <select value={form.riskNature} onChange={(e) => setForm({ ...form, riskNature: e.target.value })} className={nativeSelectClass}>
+                  {Object.entries(RISK_NATURES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+              </div>
+            )}
           </div>
           <Button type="submit" className="w-full">保存</Button>
         </form>

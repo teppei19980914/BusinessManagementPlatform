@@ -53,7 +53,7 @@ export function KnowledgeEditDialog({
     background: '',
     content: '',
     result: '',
-    visibility: 'project',
+    visibility: 'draft',
   });
   const [error, setError] = useState('');
   // Derived State パターン: knowledge が切り替わったら form を同期

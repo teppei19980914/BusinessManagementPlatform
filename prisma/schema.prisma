@@ -294,6 +294,8 @@ model RiskIssue {
   state           String    @default("open") @db.VarChar(20)
   result          String?   @db.Text
   lessonLearned   String?   @map("lesson_learned") @db.Text
+  visibility      String    @default("draft") @db.VarChar(20) // draft | public (PR #60)
+  riskNature      String?   @map("risk_nature") @db.VarChar(20) // threat | opportunity (type=risk のみ)
   createdBy       String    @map("created_by") @db.Uuid
   updatedBy       String    @map("updated_by") @db.Uuid
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -387,6 +389,7 @@ model Retrospective {
   improvements            String    @db.Text
   knowledgeToShare        String?   @map("knowledge_to_share") @db.Text
   state                   String    @default("draft") @db.VarChar(20)
+  visibility              String    @default("draft") @db.VarChar(20) // draft | public (PR #60)
   createdBy               String    @map("created_by") @db.Uuid
   updatedBy               String    @map("updated_by") @db.Uuid
   createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz

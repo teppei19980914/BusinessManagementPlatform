@@ -12,6 +12,8 @@ export const createRetrospectiveSchema = z.object({
   riskResponseEvaluation: z.string().max(3000).optional(),
   improvements: z.string().min(1).max(3000),
   knowledgeToShare: z.string().max(3000).optional(),
+  // PR #60: 公開範囲 (draft/public)
+  visibility: z.enum(['draft', 'public']).optional(),
 });
 
 export const updateRetrospectiveSchema = createRetrospectiveSchema.partial();

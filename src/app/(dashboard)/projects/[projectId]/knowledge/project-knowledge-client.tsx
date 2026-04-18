@@ -58,7 +58,7 @@ export function ProjectKnowledgeClient({
     background: '',
     content: '',
     result: '',
-    visibility: 'project',
+    visibility: 'draft',
   };
   const [form, setForm] = useState(initialForm);
 

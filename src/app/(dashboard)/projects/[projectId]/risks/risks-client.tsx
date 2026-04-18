@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
-import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
+import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
 
@@ -26,6 +26,8 @@ type Props = {
   canEdit: boolean;
   canCreate: boolean;
   systemRole: string;
+  /** PR #60 #1: 'risk' / 'issue' どちらか固定で表示 (未指定なら従来通り両方) */
+  typeFilter?: 'risk' | 'issue';
   /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
   onReload?: () => Promise<void> | void;
 };
@@ -36,7 +38,7 @@ const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
   low: 'secondary',
 };
 
-export function RisksClient({ projectId, risks, members, canCreate, systemRole, onReload }: Props) {
+export function RisksClient({ projectId, risks, members, canCreate, systemRole, typeFilter, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
   const reload = useCallback(async () => {
@@ -50,20 +52,31 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
   const [error, setError] = useState('');
   // 行クリックで開く編集ダイアログの対象 (null = 閉じる)
   const [editingRisk, setEditingRisk] = useState<RiskDTO | null>(null);
+  const initialType = typeFilter ?? 'risk';
   const [form, setForm] = useState({
-    type: 'risk',
+    type: initialType,
     title: '',
     content: '',
     impact: 'medium',
     likelihood: 'medium',
     priority: 'medium',
     assigneeId: '',
+    visibility: 'draft',
+    riskNature: 'threat',
   });
+  const filteredRisks = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
+  const headingLabel = typeFilter === 'issue' ? '課題管理' : typeFilter === 'risk' ? 'リスク管理' : 'リスク / 課題管理';
+  const createLabel = typeFilter === 'issue' ? '課題起票' : typeFilter === 'risk' ? 'リスク起票' : '起票';
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    const body = { ...form, assigneeId: form.assigneeId || undefined, likelihood: form.type === 'risk' ? form.likelihood : undefined };
+    const body = {
+      ...form,
+      assigneeId: form.assigneeId || undefined,
+      likelihood: form.type === 'risk' ? form.likelihood : undefined,
+      riskNature: form.type === 'risk' ? form.riskNature : undefined,
+    };
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/risks`, {
         method: 'POST',
@@ -77,7 +90,17 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
       return;
     }
     setIsCreateOpen(false);
-    setForm({ type: 'risk', title: '', content: '', impact: 'medium', likelihood: 'medium', priority: 'medium', assigneeId: '' });
+    setForm({
+      type: initialType,
+      title: '',
+      content: '',
+      impact: 'medium',
+      likelihood: 'medium',
+      priority: 'medium',
+      assigneeId: '',
+      visibility: 'draft',
+      riskNature: 'threat',
+    });
     await reload();
   }
 
@@ -88,28 +111,32 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">リスク / 課題管理</h2>
+        <h2 className="text-xl font-semibold">{headingLabel}</h2>
         <div className="flex gap-2">
           {systemRole === 'admin' && (
             <Button variant="outline" onClick={handleExport}>CSV出力</Button>
           )}
           {canCreate && (
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-              <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">起票</DialogTrigger>
+              <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{createLabel}</DialogTrigger>
               <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle>リスク / 課題 起票</DialogTitle>
-                  <DialogDescription>リスクまたは課題を登録してください。</DialogDescription>
+                  <DialogTitle>{createLabel}</DialogTitle>
+                  <DialogDescription>
+                    {typeFilter === 'issue' ? '課題を登録してください。' : typeFilter === 'risk' ? 'リスクを登録してください。' : 'リスクまたは課題を登録してください。'}
+                  </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
                   {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
-                  <div className="space-y-2">
-                    <Label>種別</Label>
-                    <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className={nativeSelectClass}>
-                      <option value="risk">リスク</option>
-                      <option value="issue">課題</option>
-                    </select>
-                  </div>
+                  {!typeFilter && (
+                    <div className="space-y-2">
+                      <Label>種別</Label>
+                      <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as 'risk' | 'issue' })} className={nativeSelectClass}>
+                        <option value="risk">リスク</option>
+                        <option value="issue">課題</option>
+                      </select>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label>件名</Label>
                     <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={100} required />
@@ -147,7 +174,23 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                       {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
                     </select>
                   </div>
-                  <Button type="submit" className="w-full">起票</Button>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>公開範囲</Label>
+                      <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                        {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      </select>
+                    </div>
+                    {form.type === 'risk' && (
+                      <div className="space-y-2">
+                        <Label>脅威 / 好機</Label>
+                        <select value={form.riskNature} onChange={(e) => setForm({ ...form, riskNature: e.target.value })} className={nativeSelectClass}>
+                          {Object.entries(RISK_NATURES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  <Button type="submit" className="w-full">{createLabel}</Button>
                 </form>
               </DialogContent>
             </Dialog>
@@ -158,7 +201,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>種別</TableHead>
+            {!typeFilter && <TableHead>種別</TableHead>}
             <TableHead>件名</TableHead>
             <TableHead>影響度</TableHead>
             <TableHead>優先度</TableHead>
@@ -169,14 +212,14 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
           </TableRow>
         </TableHeader>
         <TableBody>
-          {risks.map((r) => (
+          {filteredRisks.map((r) => (
             <TableRow
               key={r.id}
               // Req 8: 行クリックで編集ダイアログを開く (canCreate = メンバー以上)
               className={canCreate ? 'cursor-pointer hover:bg-gray-50' : ''}
               onClick={canCreate ? () => setEditingRisk(r) : undefined}
             >
-              <TableCell><Badge variant="outline">{r.type === 'risk' ? 'リスク' : '課題'}</Badge></TableCell>
+              {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? 'リスク' : '課題'}</Badge></TableCell>}
               <TableCell className="font-medium">{r.title}</TableCell>
               <TableCell><Badge variant={impactColors[r.impact] || 'secondary'}>{PRIORITIES[r.impact as keyof typeof PRIORITIES]}</Badge></TableCell>
               <TableCell><Badge variant={impactColors[r.priority] || 'secondary'}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Badge></TableCell>
@@ -211,8 +254,12 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
               )}
             </TableRow>
           ))}
-          {risks.length === 0 && (
-            <TableRow><TableCell colSpan={canCreate ? 8 : 7} className="py-8 text-center text-gray-500">リスク / 課題がありません</TableCell></TableRow>
+          {filteredRisks.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={(canCreate ? 7 : 6) + (typeFilter ? 0 : 1)} className="py-8 text-center text-gray-500">
+                {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク / 課題がありません'}
+              </TableCell>
+            </TableRow>
           )}
         </TableBody>
       </Table>

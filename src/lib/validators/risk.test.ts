@@ -67,6 +67,27 @@ describe('createRiskSchema', () => {
   it('期限が有効な日付形式の場合を受け入れる', () => {
     expect(createRiskSchema.safeParse({ ...validRisk, deadline: '2026-06-30' }).success).toBe(true);
   });
+
+  // PR #60: 公開範囲とリスク脅威/好機分類
+  it('有効な公開範囲を受け入れる', () => {
+    for (const v of ['draft', 'public']) {
+      expect(createRiskSchema.safeParse({ ...validRisk, visibility: v }).success).toBe(true);
+    }
+  });
+
+  it('無効な公開範囲を拒否する', () => {
+    expect(createRiskSchema.safeParse({ ...validRisk, visibility: 'private' }).success).toBe(false);
+  });
+
+  it('有効な riskNature (脅威/好機) を受け入れる', () => {
+    for (const n of ['threat', 'opportunity']) {
+      expect(createRiskSchema.safeParse({ ...validRisk, riskNature: n }).success).toBe(true);
+    }
+  });
+
+  it('無効な riskNature を拒否する', () => {
+    expect(createRiskSchema.safeParse({ ...validRisk, riskNature: 'neutral' }).success).toBe(false);
+  });
 });
 
 describe('updateRiskSchema', () => {

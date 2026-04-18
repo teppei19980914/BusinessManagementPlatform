@@ -145,6 +145,7 @@ export function ProjectDetailClient({
         members.load();
         break;
       case 'risks':
+      case 'issues':
         risks.load();
         members.load();
         break;
@@ -339,7 +340,8 @@ export function ProjectDetailClient({
           {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
           <TabsTrigger value="tasks">WBS管理</TabsTrigger>
           <TabsTrigger value="gantt">ガント</TabsTrigger>
-          <TabsTrigger value="risks">リスク/課題一覧</TabsTrigger>
+          <TabsTrigger value="risks">リスク一覧</TabsTrigger>
+          <TabsTrigger value="issues">課題一覧</TabsTrigger>
           <TabsTrigger value="retrospectives">振り返り一覧</TabsTrigger>
           <TabsTrigger value="knowledge">ナレッジ一覧</TabsTrigger>
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
@@ -448,7 +450,7 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
-        {/* リスク/課題タブ（risks と members が必要）*/}
+        {/* リスクタブ (PR #60 #1: risk のみ表示) */}
         <TabsContent value="risks" className="mt-4">
           <LazyTabContent state={risks.state}>
             {(risksData) => (
@@ -461,6 +463,29 @@ export function ProjectDetailClient({
                     canEdit={canEdit}
                     canCreate={canCreate}
                     systemRole={systemRole}
+                    typeFilter="risk"
+                    onReload={reloadRisks}
+                  />
+                )}
+              </LazyTabContent>
+            )}
+          </LazyTabContent>
+        </TabsContent>
+
+        {/* 課題タブ (PR #60 #1: issue のみ表示) */}
+        <TabsContent value="issues" className="mt-4">
+          <LazyTabContent state={risks.state}>
+            {(risksData) => (
+              <LazyTabContent state={members.state}>
+                {(membersData) => (
+                  <RisksClient
+                    projectId={project.id}
+                    risks={risksData}
+                    members={membersData}
+                    canEdit={canEdit}
+                    canCreate={canCreate}
+                    systemRole={systemRole}
+                    typeFilter="issue"
                     onReload={reloadRisks}
                   />
                 )}
