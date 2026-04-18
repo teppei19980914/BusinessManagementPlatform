@@ -1132,6 +1132,7 @@ const transitions: TransitionRule[] = [
 | PATCH | /api/projects/:id/retrospectives/:retroId | 更新 | admin, pm_tl |
 | PATCH | /api/projects/:id/retrospectives/:retroId/confirm | 確定 | admin, pm_tl |
 | POST | /api/projects/:id/retrospectives/:retroId/comments | コメント投稿 | admin, pm_tl, member |
+| PATCH | /api/projects/:id/retrospectives/:retroId | 更新 (行クリック編集ダイアログ経由) | ProjectMember |
 | DELETE | /api/projects/:id/retrospectives/:retroId | 論理削除 | admin, pm_tl |
 | GET | /api/retrospectives | 全プロジェクト横断一覧（列: プロジェクト・実施日・計画総括・実績総括・良かった点・次回以前事項・作成/更新日時・作成/更新者。非メンバーは機微項目マスク） | 認証済み全ユーザ |
 
