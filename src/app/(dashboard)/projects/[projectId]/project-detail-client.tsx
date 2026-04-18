@@ -83,7 +83,16 @@ export function ProjectDetailClient({
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
-  const canChangeStatus = systemRole === 'admin' || projectRole === 'pm_tl';
+  // 概要タブ内ヘッダの操作ボタン権限 (PR #58):
+  //   状態変更 / 編集: 実際のプロジェクト PM/TL のみ (systemRole='admin' は除外)
+  //   削除: システム管理者のみ (pm_tl は除外)
+  //   → 運用作業 (PM/TL 責務) と プラットフォーム管理 (admin 責務) を明確に分離
+  //   注: checkMembership が admin を projectRole='pm_tl' にマップするため、
+  //       systemRole !== 'admin' で「真の pm_tl メンバー」に限定する
+  const isActualPmTl = projectRole === 'pm_tl' && systemRole !== 'admin';
+  const isSystemAdmin = systemRole === 'admin';
+  const canChangeStatus = isActualPmTl;
+  const canDeleteProject = isSystemAdmin;
   const nextStatuses = NEXT_STATUSES[project.status] || [];
 
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -248,10 +257,17 @@ export function ProjectDetailClient({
           <p className="mt-1 text-gray-600">{project.customerName}</p>
         </div>
         <div className="flex items-center gap-2">
-          {canChangeStatus && nextStatuses.length > 0 && (
+          {/*
+            概要タブ内のみ表示 (PR #58):
+              - 状態変更 (ラベルから "..." を削除): PM/TL のみ
+              - 編集: PM/TL のみ
+              - 削除: システム管理者のみ
+            activeTab === 'overview' で他タブ閲覧時には非表示化する
+          */}
+          {activeTab === 'overview' && canChangeStatus && nextStatuses.length > 0 && (
             <Select onValueChange={handleStatusChange} disabled={isChangingStatus}>
               <SelectTrigger className="w-44">
-                <SelectValue placeholder="状態変更..." />
+                <SelectValue placeholder="状態変更" />
               </SelectTrigger>
               <SelectContent>
                 {nextStatuses.map((s) => (
@@ -262,7 +278,7 @@ export function ProjectDetailClient({
               </SelectContent>
             </Select>
           )}
-          {canEdit && (
+          {activeTab === 'overview' && isActualPmTl && (
             <>
               <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
                 <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">編集</DialogTrigger>
@@ -305,8 +321,10 @@ export function ProjectDetailClient({
                   </form>
                 </DialogContent>
               </Dialog>
-              <Button variant="outline" className="text-red-600" onClick={handleDelete}>削除</Button>
             </>
+          )}
+          {activeTab === 'overview' && canDeleteProject && (
+            <Button variant="outline" className="text-red-600" onClick={handleDelete}>削除</Button>
           )}
           <Button variant="outline" onClick={() => router.push('/projects')}>
             一覧に戻る
