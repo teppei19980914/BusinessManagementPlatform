@@ -18,28 +18,42 @@ export type MembershipInfo = {
 /**
  * ユーザがプロジェクトのメンバーかどうかを検証する。
  * システム管理者は全プロジェクトにアクセス可能。
+ *
+ * 論理削除済みプロジェクトの扱い (2026-04-18 改訂):
+ *   - 非管理者: 論理削除済みプロジェクトは「存在しない」扱い (isMember: false)
+ *   - システム管理者: 論理削除済みでもアクセス可
+ *     → 親プロジェクトが削除され、関連データ (リスク/課題・振り返り・ナレッジ) が
+ *       孤児化した場合でも、admin は「全○○」画面から個別に削除/更新できる必要がある。
+ *     → この経路を閉じると、PR #52 で導入した「カスケードしない削除」後の
+ *       データ整理手段が無くなってしまう。
  */
 export async function checkMembership(
   projectId: string,
   userId: string,
   systemRole: string,
 ): Promise<MembershipInfo> {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-    select: { status: true },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { status: true, deletedAt: true },
   });
 
+  // プロジェクトレコード自体が存在しない (物理削除済み or 不正な ID) → 誰もアクセス不可
   if (!project) {
     return { isMember: false, projectRole: null, projectStatus: null };
   }
 
-  // システム管理者は全プロジェクトにアクセス可能
+  // システム管理者: 論理削除済みプロジェクトでもアクセス可 (孤児データ管理のため)
   if (systemRole === 'admin') {
     return {
       isMember: true,
       projectRole: 'pm_tl' as ProjectRole,
       projectStatus: project.status,
     };
+  }
+
+  // 非管理者: 論理削除済みプロジェクトは存在しない扱い
+  if (project.deletedAt) {
+    return { isMember: false, projectRole: null, projectStatus: project.status };
   }
 
   const member = await prisma.projectMember.findFirst({
