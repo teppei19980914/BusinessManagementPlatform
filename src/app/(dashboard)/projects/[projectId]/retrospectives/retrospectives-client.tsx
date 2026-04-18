@@ -68,10 +68,13 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
   }
 
   async function handleConfirm(retroId: string) {
-    await fetch(`/api/projects/${projectId}/retrospectives`, {
-      method: 'POST',
+    // PR #57 修正: 以前は POST /retrospectives に { action: 'confirm', retroId } を送って
+    // 400 (create schema 違反) になっていた。正しい経路である
+    // PATCH /retrospectives/[retroId] に state='confirmed' を送る。
+    await fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'confirm', retroId }),
+      body: JSON.stringify({ state: 'confirmed' }),
     });
     await reload();
   }

@@ -203,6 +203,8 @@ export async function updateRetrospective(
     qualityIssues?: string | null;
     riskResponseEvaluation?: string | null;
     knowledgeToShare?: string | null;
+    /** 'draft' | 'confirmed' 等。確定操作から同一 PATCH で受け付けるため許容 */
+    state?: string;
   },
   userId: string,
 ): Promise<void> {
@@ -218,6 +220,7 @@ export async function updateRetrospective(
   if (input.qualityIssues !== undefined) data.qualityIssues = input.qualityIssues;
   if (input.riskResponseEvaluation !== undefined) data.riskResponseEvaluation = input.riskResponseEvaluation;
   if (input.knowledgeToShare !== undefined) data.knowledgeToShare = input.knowledgeToShare;
+  if (input.state !== undefined) data.state = input.state;
 
   await prisma.retrospective.update({ where: { id: retroId }, data });
 }
