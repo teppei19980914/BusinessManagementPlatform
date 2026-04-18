@@ -59,7 +59,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
     content: '',
     impact: 'medium',
     likelihood: 'medium',
-    priority: 'medium',
+    // PR #63: 優先度は UI から撤去 (将来 impact × likelihood から自動算出予定)
     assigneeId: '',
     visibility: 'draft',
     riskNature: 'threat',
@@ -96,7 +96,6 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
       content: '',
       impact: 'medium',
       likelihood: 'medium',
-      priority: 'medium',
       assigneeId: '',
       visibility: 'draft',
       riskNature: 'threat',
@@ -128,6 +127,23 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
                   {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+                  {/* PR #63: 公開範囲 / 脅威・好機 を最上位に配置 (設定忘れ防止の視線誘導) */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>公開範囲</Label>
+                      <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                        {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      </select>
+                    </div>
+                    {form.type === 'risk' && (
+                      <div className="space-y-2">
+                        <Label>脅威 / 好機</Label>
+                        <select value={form.riskNature} onChange={(e) => setForm({ ...form, riskNature: e.target.value })} className={nativeSelectClass}>
+                          {Object.entries(RISK_NATURES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
                   {!typeFilter && (
                     <div className="space-y-2">
                       <Label>種別</Label>
@@ -145,7 +161,8 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                     <Label>内容</Label>
                     <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} rows={4} maxLength={2000} required />
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
+                  {/* PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定) */}
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>影響度</Label>
                       <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className={nativeSelectClass}>
@@ -160,12 +177,6 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                         </select>
                       </div>
                     )}
-                    <div className="space-y-2">
-                      <Label>優先度</Label>
-                      <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className={nativeSelectClass}>
-                        {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                      </select>
-                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>担当者</Label>
@@ -173,22 +184,6 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                       <option value="">未設定</option>
                       {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
                     </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>公開範囲</Label>
-                      <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
-                        {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                      </select>
-                    </div>
-                    {form.type === 'risk' && (
-                      <div className="space-y-2">
-                        <Label>脅威 / 好機</Label>
-                        <select value={form.riskNature} onChange={(e) => setForm({ ...form, riskNature: e.target.value })} className={nativeSelectClass}>
-                          {Object.entries(RISK_NATURES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                        </select>
-                      </div>
-                    )}
                   </div>
                   <Button type="submit" className="w-full">{createLabel}</Button>
                 </form>

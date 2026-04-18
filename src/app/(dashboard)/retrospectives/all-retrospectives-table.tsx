@@ -9,16 +9,7 @@ import {
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
 import type { AllRetroDTO } from '@/services/retrospective.service';
 import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
-
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${y}-${m}-${day} ${hh}:${mm}`;
-}
+import { formatDateTime } from '@/lib/format';
 
 /**
  * 全振り返りテーブル (Req 9: 行クリックで編集)。

@@ -4,6 +4,17 @@ import type { TaskDTO } from '@/services/task.service';
 export const UNASSIGNED_KEY = '__unassigned__';
 
 /**
+ * タスク状況 (TaskStatus) に対応する Badge バリアント (PR #63 共通化)。
+ * WBS / ガント / マイタスクで同じ配色を使うため一元化した。
+ */
+export const taskStatusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  not_started: 'outline',
+  in_progress: 'default',
+  completed: 'secondary',
+  on_hold: 'destructive',
+};
+
+/**
  * 担当者 (assigneeId) の選択セットに基づきタスクツリーをフィルタする。
  * - タスク自身の担当者が選択セットに含まれる: 残す
  * - 自身は非該当だが子孫が残っている: 親 WP として階層を失わないよう残す

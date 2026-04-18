@@ -7,7 +7,9 @@ export const createRiskSchema = z.object({
   cause: z.string().max(2000).optional(),
   impact: z.enum(['low', 'medium', 'high']),
   likelihood: z.enum(['low', 'medium', 'high']).optional(),
-  priority: z.enum(['low', 'medium', 'high']),
+  // PR #63: 優先度は UI から撤去。将来 impact × likelihood から自動算出予定のため optional 化。
+  // 指定なしの場合はサービス層で impact と同値にフォールバック。
+  priority: z.enum(['low', 'medium', 'high']).optional(),
   responsePolicy: z.string().max(1000).optional(),
   responseDetail: z.string().max(2000).optional(),
   assigneeId: z.string().uuid().optional(),

@@ -122,6 +122,13 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+                {/* PR #63: 公開範囲を最上位に配置 (設定忘れ防止) */}
+                <div className="space-y-2">
+                  <Label>公開範囲</Label>
+                  <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                    {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                </div>
                 <div className="space-y-2">
                   <Label>実施日</Label>
                   <Input type="date" value={form.conductedDate} onChange={(e) => setForm({ ...form, conductedDate: e.target.value })} required />
@@ -145,12 +152,6 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
                 <div className="space-y-2">
                   <Label>次回改善事項</Label>
                   <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.improvements} onChange={(e) => setForm({ ...form, improvements: e.target.value })} rows={3} maxLength={3000} required />
-                </div>
-                <div className="space-y-2">
-                  <Label>公開範囲</Label>
-                  <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
-                    {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                  </select>
                 </div>
                 <Button type="submit" className="w-full">作成</Button>
               </form>

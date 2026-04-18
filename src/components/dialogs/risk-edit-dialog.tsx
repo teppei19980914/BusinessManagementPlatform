@@ -60,7 +60,7 @@ export function RiskEditDialog({
     content: '',
     impact: 'medium',
     likelihood: 'medium',
-    priority: 'medium',
+    // PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定)
     state: 'open',
     assigneeId: '',
     deadline: '',
@@ -80,7 +80,6 @@ export function RiskEditDialog({
       content: risk.content,
       impact: risk.impact,
       likelihood: risk.likelihood ?? 'medium',
-      priority: risk.priority,
       state: risk.state,
       assigneeId: risk.assigneeId ?? '',
       deadline: risk.deadline ?? '',
@@ -96,11 +95,11 @@ export function RiskEditDialog({
     e.preventDefault();
     if (!risk) return;
     setError('');
+    // PR #63: 優先度は UI から撤去したため送信しない (既存値を維持)
     const body: Record<string, unknown> = {
       title: form.title,
       content: form.content,
       impact: form.impact,
-      priority: form.priority,
       state: form.state,
       assigneeId: form.assigneeId || null,
       deadline: form.deadline || null,
@@ -140,6 +139,23 @@ export function RiskEditDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
           <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
+          {/* PR #63: 公開範囲 / 脅威・好機 を最上位に配置 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>公開範囲</Label>
+              <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+            {risk.type === 'risk' && (
+              <div className="space-y-2">
+                <Label>脅威 / 好機</Label>
+                <select value={form.riskNature} onChange={(e) => setForm({ ...form, riskNature: e.target.value })} className={nativeSelectClass}>
+                  {Object.entries(RISK_NATURES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
           <div className="space-y-2">
             <Label>件名</Label>
             <Input
@@ -160,7 +176,8 @@ export function RiskEditDialog({
               required
             />
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          {/* PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定) */}
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>影響度</Label>
               <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className={nativeSelectClass}>
@@ -175,12 +192,6 @@ export function RiskEditDialog({
                 </select>
               </div>
             )}
-            <div className="space-y-2">
-              <Label>優先度</Label>
-              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className={nativeSelectClass}>
-                {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
-            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -200,22 +211,6 @@ export function RiskEditDialog({
           <div className="space-y-2">
             <Label>期限</Label>
             <Input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>公開範囲</Label>
-              <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
-                {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
-            </div>
-            {risk.type === 'risk' && (
-              <div className="space-y-2">
-                <Label>脅威 / 好機</Label>
-                <select value={form.riskNature} onChange={(e) => setForm({ ...form, riskNature: e.target.value })} className={nativeSelectClass}>
-                  {Object.entries(RISK_NATURES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-              </div>
-            )}
           </div>
           </fieldset>
           {!readOnly && <Button type="submit" className="w-full">保存</Button>}

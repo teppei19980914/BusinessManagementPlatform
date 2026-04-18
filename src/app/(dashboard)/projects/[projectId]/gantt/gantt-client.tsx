@@ -4,7 +4,7 @@ import { useCallback, useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
-import { filterTreeByAssignee, filterTreeByStatus, UNASSIGNED_KEY } from '@/lib/task-tree-utils';
+import { filterTreeByAssignee, filterTreeByStatus, taskStatusColors, UNASSIGNED_KEY } from '@/lib/task-tree-utils';
 import { TASK_STATUSES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -52,12 +52,8 @@ const DAY_HEADER_H = 36;
 /** チャート領域の高さ上限 — 長大な WBS でも表示域を固定し sticky が効くようにする */
 const CHART_MAX_HEIGHT = 'calc(100vh - 240px)';
 
-const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  not_started: 'outline',
-  in_progress: 'default',
-  completed: 'secondary',
-  on_hold: 'destructive',
-};
+// 旧ローカル statusColors は lib/task-tree-utils.ts の taskStatusColors に集約 (PR #63 DRY)
+const statusColors = taskStatusColors;
 
 type FlatRow = {
   task: TaskDTO;
