@@ -229,3 +229,86 @@ export async function deleteProject(projectId: string, userId: string): Promise<
     data: { deletedAt: new Date(), updatedBy: userId },
   });
 }
+
+/**
+ * プロジェクトと紐づく全データをカスケード物理削除する (2026-04-18 追加)。
+ *
+ * 対象:
+ *   - Project 自身 (物理削除)
+ *   - RiskIssue, Retrospective, RetrospectiveComment (1:N 紐付け → 全削除)
+ *   - Task, ProjectMember, Estimate 等の関連データ (全削除)
+ *   - Knowledge (N:M 紐付け):
+ *       * この projectId しか紐付けがないナレッジ → 物理削除
+ *       * 他プロジェクトとも紐付いているナレッジ → KnowledgeProject リンクのみ削除
+ *     (他プロジェクトに影響しないよう配慮)
+ *
+ * 「紐付くデータを物理削除」という UX の結果、復旧不可能。呼び出し側で必ず
+ * 確認ダイアログを挟むこと。
+ */
+export async function deleteProjectCascade(projectId: string): Promise<{
+  risks: number;
+  retrospectives: number;
+  knowledgeDeleted: number;
+  knowledgeUnlinked: number;
+}> {
+  // カスケード順序は Prisma の onDelete 指定次第だが、明示的に削除して
+  // 参照整合を破壊せず確実に掃除する。
+  const retroComments = await prisma.retrospective.findMany({
+    where: { projectId },
+    select: { id: true },
+  });
+  const retroIds = retroComments.map((r) => r.id);
+
+  // リスク/課題
+  const risksResult = await prisma.riskIssue.deleteMany({ where: { projectId } });
+  // 振り返りコメント → 振り返り本体の順で削除 (FK 制約対応)
+  if (retroIds.length > 0) {
+    await prisma.retrospectiveComment.deleteMany({ where: { retrospectiveId: { in: retroIds } } });
+  }
+  const retrosResult = await prisma.retrospective.deleteMany({ where: { projectId } });
+
+  // ナレッジ: N:M 考慮
+  // 1) この project に紐付いている knowledge を抽出
+  const linkedKnowledge = await prisma.knowledgeProject.findMany({
+    where: { projectId },
+    select: { knowledgeId: true },
+  });
+  const knowledgeIds = linkedKnowledge.map((l) => l.knowledgeId);
+
+  // 2) 各 knowledge の他プロジェクト紐付け件数を確認
+  let knowledgeDeleted = 0;
+  let knowledgeUnlinked = 0;
+  for (const kId of knowledgeIds) {
+    const linkCount = await prisma.knowledgeProject.count({ where: { knowledgeId: kId } });
+    if (linkCount <= 1) {
+      // 他に紐付けがない → 本体も物理削除
+      await prisma.knowledgeProject.deleteMany({ where: { knowledgeId: kId } });
+      await prisma.knowledge.delete({ where: { id: kId } });
+      knowledgeDeleted++;
+    } else {
+      // 他プロジェクトとも共有 → このプロジェクトとの紐付けだけ解除
+      await prisma.knowledgeProject.delete({
+        where: { knowledgeId_projectId: { knowledgeId: kId, projectId } },
+      });
+      knowledgeUnlinked++;
+    }
+  }
+
+  // タスク進捗ログ → タスク → 見積 → メンバー → プロジェクトの順
+  const tasks = await prisma.task.findMany({ where: { projectId }, select: { id: true } });
+  const taskIds = tasks.map((t) => t.id);
+  if (taskIds.length > 0) {
+    await prisma.taskProgressLog.deleteMany({ where: { taskId: { in: taskIds } } });
+  }
+  await prisma.task.deleteMany({ where: { projectId } });
+  await prisma.estimate.deleteMany({ where: { projectId } });
+  await prisma.projectMember.deleteMany({ where: { projectId } });
+  await prisma.project.delete({ where: { id: projectId } });
+
+  return {
+    risks: risksResult.count,
+    retrospectives: retrosResult.count,
+    knowledgeDeleted,
+    knowledgeUnlinked,
+  };
+}

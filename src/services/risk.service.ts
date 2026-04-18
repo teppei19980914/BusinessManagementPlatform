@@ -103,13 +103,22 @@ export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName'> & {
 /**
  * 全プロジェクトのリスク/課題を取得する (認可: ログインユーザなら誰でも可)。
  * 非メンバーの場合は projectName / 顧客名 / 担当者氏名をマスクする。
+ * システム管理者 (systemRole='admin') は全プロジェクトのメンバー相当として
+ * マスキング対象外 (projectName / 氏名すべて閲覧可 + 編集/削除権限あり)。
  */
-export async function listAllRisksForViewer(viewerUserId: string): Promise<AllRiskDTO[]> {
+export async function listAllRisksForViewer(
+  viewerUserId: string,
+  viewerSystemRole: string,
+): Promise<AllRiskDTO[]> {
+  const isAdmin = viewerSystemRole === 'admin';
   // ユーザが所属するプロジェクト ID 集合を先に取得 (非メンバー判定に使う)
-  const memberships = await prisma.projectMember.findMany({
-    where: { userId: viewerUserId },
-    select: { projectId: true },
-  });
+  // admin の場合はこの後の判定で常に isMember=true として扱う
+  const memberships = isAdmin
+    ? []
+    : await prisma.projectMember.findMany({
+      where: { userId: viewerUserId },
+      select: { projectId: true },
+    });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
   const risks = await prisma.riskIssue.findMany({
@@ -123,7 +132,7 @@ export async function listAllRisksForViewer(viewerUserId: string): Promise<AllRi
   });
 
   return risks.map((r) => {
-    const isMember = memberProjectIds.has(r.projectId);
+    const isMember = isAdmin || memberProjectIds.has(r.projectId);
     return {
       ...toRiskDTO(r),
       projectName: isMember ? r.project?.name ?? null : null,

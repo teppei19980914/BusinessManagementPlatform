@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/table';
 import { listAllRisksForViewer } from '@/services/risk.service';
 import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
+import { AdminRiskDeleteButton } from './admin-delete-button';
 
 const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
   risk: 'outline',
@@ -26,7 +27,8 @@ export default async function AllRisksPage() {
   const session = await auth();
   if (!session) redirect('/login');
 
-  const risks = await listAllRisksForViewer(session.user.id);
+  const risks = await listAllRisksForViewer(session.user.id, session.user.systemRole);
+  const isAdmin = session.user.systemRole === 'admin';
 
   return (
     <div className="space-y-6">
@@ -46,6 +48,7 @@ export default async function AllRisksPage() {
             <TableHead>状態</TableHead>
             <TableHead>担当者</TableHead>
             <TableHead>期限</TableHead>
+            {isAdmin && <TableHead className="whitespace-nowrap">操作</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -81,11 +84,20 @@ export default async function AllRisksPage() {
                 {r.assigneeName ?? <span className="text-gray-400">-</span>}
               </TableCell>
               <TableCell>{r.deadline || '-'}</TableCell>
+              {isAdmin && (
+                <TableCell>
+                  <AdminRiskDeleteButton
+                    projectId={r.projectId}
+                    riskId={r.id}
+                    label={r.title}
+                  />
+                </TableCell>
+              )}
             </TableRow>
           ))}
           {risks.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={isAdmin ? 9 : 8} className="py-8 text-center text-gray-500">
                 リスク/課題がありません
               </TableCell>
             </TableRow>

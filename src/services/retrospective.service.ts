@@ -33,11 +33,15 @@ export type AllRetroDTO = Omit<RetroDTO, 'comments'> & {
  */
 export async function listAllRetrospectivesForViewer(
   viewerUserId: string,
+  viewerSystemRole: string,
 ): Promise<AllRetroDTO[]> {
-  const memberships = await prisma.projectMember.findMany({
-    where: { userId: viewerUserId },
-    select: { projectId: true },
-  });
+  const isAdmin = viewerSystemRole === 'admin';
+  const memberships = isAdmin
+    ? []
+    : await prisma.projectMember.findMany({
+      where: { userId: viewerUserId },
+      select: { projectId: true },
+    });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
   const retros = await prisma.retrospective.findMany({
@@ -57,7 +61,7 @@ export async function listAllRetrospectivesForViewer(
   const userMap = new Map(users.map((u) => [u.id, u.name]));
 
   return retros.map((r) => {
-    const isMember = memberProjectIds.has(r.projectId);
+    const isMember = isAdmin || memberProjectIds.has(r.projectId);
     return {
       id: r.id,
       projectId: r.projectId,
@@ -161,6 +165,25 @@ export async function confirmRetrospective(retroId: string, userId: string): Pro
   await prisma.retrospective.update({
     where: { id: retroId },
     data: { state: 'confirmed', updatedBy: userId },
+  });
+}
+
+/**
+ * 振り返りを論理削除する (deletedAt をセット)。
+ * 「全振り返り」「振り返り一覧」のどちらから呼んでも同一レコードに影響する。
+ */
+export async function deleteRetrospective(retroId: string, userId: string): Promise<void> {
+  await prisma.retrospective.update({
+    where: { id: retroId },
+    data: { deletedAt: new Date(), updatedBy: userId },
+  });
+}
+
+/** 単一振り返り取得 (権限チェック用) */
+export async function getRetrospective(retroId: string): Promise<{ id: string; projectId: string } | null> {
+  return prisma.retrospective.findFirst({
+    where: { id: retroId, deletedAt: null },
+    select: { id: true, projectId: true },
   });
 }
 

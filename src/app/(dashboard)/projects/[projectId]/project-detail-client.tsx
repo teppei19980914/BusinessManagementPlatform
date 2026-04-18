@@ -195,10 +195,28 @@ export function ProjectDetailClient({
   }
 
   async function handleDelete() {
+    // 2 段階確認:
+    //   1) まずプロジェクト削除の意思確認
+    //   2) 次に「関連データ（リスク/課題・振り返り・ナレッジ）も削除するか」を問う
+    //      - OK (cascade): 関連データを物理削除
+    //      - キャンセル: 関連データは残す（全○○ 画面には残る。admin のみ管理可能）
+    //   なお、ナレッジは他プロジェクトと共有している場合は当該プロジェクトとの
+    //   紐付けのみ解除する (他プロジェクトの閲覧を壊さないため)。
     if (!confirm('このプロジェクトを削除しますか？この操作は取り消せません。')) return;
-    await withLoading(() =>
-      fetch(`/api/projects/${project.id}`, { method: 'DELETE' }),
+
+    const cascade = confirm(
+      '関連データも削除しますか？\n\n'
+      + '[OK] このプロジェクトに紐づく リスク/課題・振り返り・ナレッジ を物理削除\n'
+      + '       （ナレッジは他プロジェクトと共有している場合、紐付けのみ解除）\n'
+      + '[キャンセル] 関連データは残す\n'
+      + '       （全リスク/課題・全振り返り・全ナレッジ 画面に表示され続けます。\n'
+      + '        管理はシステム管理者のみが可能になります）',
     );
+
+    const url = cascade
+      ? `/api/projects/${project.id}?cascade=true`
+      : `/api/projects/${project.id}`;
+    await withLoading(() => fetch(url, { method: 'DELETE' }));
     router.push('/projects');
   }
 
