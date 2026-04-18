@@ -6,6 +6,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { listAllRetrospectivesForViewer } from '@/services/retrospective.service';
+import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
 
 /**
  * 全プロジェクト横断の振り返りビュー。
@@ -20,7 +21,8 @@ export default async function AllRetrospectivesPage() {
   const session = await auth();
   if (!session) redirect('/login');
 
-  const retros = await listAllRetrospectivesForViewer(session.user.id);
+  const retros = await listAllRetrospectivesForViewer(session.user.id, session.user.systemRole);
+  const isAdmin = session.user.systemRole === 'admin';
 
   return (
     <div className="space-y-6">
@@ -38,6 +40,7 @@ export default async function AllRetrospectivesPage() {
             <TableHead>課題 (抜粋)</TableHead>
             <TableHead>状態</TableHead>
             <TableHead>コメント</TableHead>
+            {isAdmin && <TableHead className="whitespace-nowrap">操作</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -66,11 +69,20 @@ export default async function AllRetrospectivesPage() {
                 </Badge>
               </TableCell>
               <TableCell>{r.comments.length} 件</TableCell>
+              {isAdmin && (
+                <TableCell>
+                  <AdminRetrospectiveDeleteButton
+                    projectId={r.projectId}
+                    retroId={r.id}
+                    label={r.conductedDate}
+                  />
+                </TableCell>
+              )}
             </TableRow>
           ))}
           {retros.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={isAdmin ? 7 : 6} className="py-8 text-center text-gray-500">
                 振り返りがありません
               </TableCell>
             </TableRow>

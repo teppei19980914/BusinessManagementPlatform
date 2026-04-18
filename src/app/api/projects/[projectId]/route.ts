@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateProjectSchema } from '@/lib/validators/project';
-import { getProject, updateProject, deleteProject } from '@/services/project.service';
+import {
+  getProject,
+  updateProject,
+  deleteProject,
+  deleteProjectCascade,
+} from '@/services/project.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
 
 export async function GET(
@@ -61,8 +66,16 @@ export async function PATCH(
   return NextResponse.json({ data: project });
 }
 
+/**
+ * プロジェクト削除。クエリパラメータ cascade=true で関連データを物理削除:
+ *   - リスク/課題、振り返り、タスク、見積、メンバー: 全削除
+ *   - ナレッジ: 他プロジェクトと共有していないものは物理削除、共有中は紐付け解除のみ
+ *
+ * cascade 省略時は従来通り論理削除のみ (データは残るが、
+ * ProjectMember が特定できず全○○ 画面からは admin のみ管理可能)。
+ */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> },
 ) {
   const user = await getAuthenticatedUser();
@@ -72,16 +85,32 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'project:delete');
   if (forbidden) return forbidden;
 
-  const before = await getProject(projectId);
-  await deleteProject(projectId, user.id);
+  const cascade = req.nextUrl.searchParams.get('cascade') === 'true';
 
+  const before = await getProject(projectId);
+
+  if (cascade) {
+    const counts = await deleteProjectCascade(projectId);
+    await recordAuditLog({
+      userId: user.id,
+      action: 'DELETE',
+      entityType: 'project',
+      entityId: projectId,
+      beforeValue: before ? sanitizeForAudit(before as unknown as Record<string, unknown>) : null,
+      afterValue: { cascade: true, ...counts },
+    });
+    return NextResponse.json({ data: { success: true, cascade: true, ...counts } });
+  }
+
+  // 従来通り論理削除
+  await deleteProject(projectId, user.id);
   await recordAuditLog({
     userId: user.id,
     action: 'DELETE',
     entityType: 'project',
     entityId: projectId,
     beforeValue: before ? sanitizeForAudit(before as unknown as Record<string, unknown>) : null,
+    afterValue: { cascade: false },
   });
-
-  return NextResponse.json({ data: { success: true } });
+  return NextResponse.json({ data: { success: true, cascade: false } });
 }

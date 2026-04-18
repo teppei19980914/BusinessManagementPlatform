@@ -1044,7 +1044,7 @@ const transitions: TransitionRule[] = [
 | POST | /api/projects | 新規作成 | admin, pm_tl |
 | GET | /api/projects/:id | 詳細取得 | プロジェクト参加者 |
 | PATCH | /api/projects/:id | 更新 | admin, pm_tl |
-| DELETE | /api/projects/:id | 論理削除 | admin, pm_tl |
+| DELETE | /api/projects/:id | 論理削除（?cascade=true で関連リスク/課題・振り返り・ナレッジを物理削除） | admin, pm_tl |
 | PATCH | /api/projects/:id/status | 状態変更 | admin, pm_tl |
 
 #### プロジェクトメンバー
@@ -1105,18 +1105,22 @@ const transitions: TransitionRule[] = [
 | PATCH | /api/projects/:id/risks/:riskId | 更新 | admin, pm_tl, 担当/起票 member |
 | DELETE | /api/projects/:id/risks/:riskId | 論理削除 | admin, pm_tl |
 | GET | /api/projects/:id/risks/export | CSV エクスポート | admin, pm_tl |
-| GET | /api/risks | 全プロジェクト横断一覧（非メンバーはプロジェクト名・担当者名・起票者名をマスク） | 認証済み全ユーザ |
+| GET | /api/risks | 全プロジェクト横断一覧（非メンバーはプロジェクト名・担当者名・起票者名をマスク / admin はマスクなし） | 認証済み全ユーザ |
 
 #### ナレッジ
 
 | メソッド | パス | 説明 | ロール |
 |---|---|---|---|
-| GET | /api/knowledge | 横断検索 | 全ロール（公開範囲制御あり） |
-| POST | /api/knowledge | 新規作成 | admin, pm_tl, member |
+| GET | /api/knowledge | 横断検索（全ナレッジ） | 全ロール（公開範囲制御あり） |
+| POST | /api/knowledge | 新規作成（プロジェクト紐付けなし） | admin, pm_tl, member |
 | GET | /api/knowledge/:id | 詳細取得 | 公開範囲に応じる |
 | PATCH | /api/knowledge/:id | 更新 | admin, pm_tl, 作成者 member |
 | DELETE | /api/knowledge/:id | 論理削除 | admin, pm_tl |
 | PATCH | /api/knowledge/:id/publish | 公開 | admin, pm_tl |
+| GET | /api/projects/:id/knowledge | プロジェクト紐付けナレッジ一覧 | ProjectMember |
+| POST | /api/projects/:id/knowledge | 作成（当該 projectId を自動紐付け） | ProjectMember |
+| PATCH | /api/projects/:id/knowledge/:knowledgeId | プロジェクト scoped 更新 | ProjectMember |
+| DELETE | /api/projects/:id/knowledge/:knowledgeId | プロジェクト scoped 論理削除 | ProjectMember |
 
 #### 振り返り
 
@@ -1128,7 +1132,8 @@ const transitions: TransitionRule[] = [
 | PATCH | /api/projects/:id/retrospectives/:retroId | 更新 | admin, pm_tl |
 | PATCH | /api/projects/:id/retrospectives/:retroId/confirm | 確定 | admin, pm_tl |
 | POST | /api/projects/:id/retrospectives/:retroId/comments | コメント投稿 | admin, pm_tl, member |
-| GET | /api/retrospectives | 全プロジェクト横断一覧（非メンバーはプロジェクト名・コメント投稿者名をマスク） | 認証済み全ユーザ |
+| DELETE | /api/projects/:id/retrospectives/:retroId | 論理削除 | admin, pm_tl |
+| GET | /api/retrospectives | 全プロジェクト横断一覧（非メンバーはプロジェクト名・コメント投稿者名をマスク / admin はマスクなし） | 認証済み全ユーザ |
 
 #### システム管理
 

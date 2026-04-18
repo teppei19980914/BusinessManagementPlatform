@@ -13,6 +13,6 @@ export async function GET() {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const retros = await listAllRetrospectivesForViewer(user.id);
+  const retros = await listAllRetrospectivesForViewer(user.id, user.systemRole);
   return NextResponse.json({ data: retros });
 }

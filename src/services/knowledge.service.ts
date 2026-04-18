@@ -141,6 +141,31 @@ export async function listKnowledge(
   return { data: knowledges.map(toKnowledgeDTO), total };
 }
 
+/**
+ * プロジェクトに紐づくナレッジのみを取得する (プロジェクト詳細「ナレッジ一覧」タブ用)。
+ *
+ * 既存 listKnowledge は全ナレッジ (visibility 制御のみ) を返すのに対し、
+ * 本関数は knowledgeProjects 中間テーブル経由で projectId 一致のもののみ返す。
+ *
+ * 認可前提: 呼び出し側 (API ルート) で checkProjectPermission('knowledge:read') を通過済み。
+ * サービス単体では追加の公開範囲制御はしない (プロジェクトメンバーは紐付くナレッジを
+ * 公開範囲によらず全て見られる想定 = 一覧/全ナレッジの連動を保つ)。
+ */
+export async function listKnowledgeByProject(projectId: string): Promise<KnowledgeDTO[]> {
+  const knowledges = await prisma.knowledge.findMany({
+    where: {
+      deletedAt: null,
+      knowledgeProjects: { some: { projectId } },
+    },
+    include: {
+      creator: { select: { name: true } },
+      knowledgeProjects: { select: { projectId: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return knowledges.map(toKnowledgeDTO);
+}
+
 export async function getKnowledge(knowledgeId: string): Promise<KnowledgeDTO | null> {
   const k = await prisma.knowledge.findFirst({
     where: { id: knowledgeId, deletedAt: null },
