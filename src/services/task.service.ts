@@ -88,6 +88,50 @@ function safeDate(d: Date | null | undefined): string | null {
 /**
  * プロジェクト内のタスク一覧をツリー構造で取得
  */
+/**
+ * 「マイタスク」画面用: 閲覧ユーザがアサインされている ACT を
+ * プロジェクト別にグルーピングして、各プロジェクト毎に WBS 階層ツリーを返す。
+ *
+ * 呼び出し順序:
+ *   1) ユーザが担当する ACT が所属するプロジェクト ID 集合を特定
+ *   2) プロジェクト名を取得 (論理削除は除外)
+ *   3) 各プロジェクトで listTasks(projectId) → filterTreeByAssignee で
+ *      担当 ACT とその祖先 WP のみ残す
+ *
+ * クエリ数は N+2 (プロジェクト数 N) で MVP 許容範囲。
+ * 1 人のユーザが多数プロジェクトに跨がる場合は将来最適化検討。
+ */
+export async function listMyTaskProjects(userId: string): Promise<{
+  projectId: string;
+  projectName: string;
+  tree: TaskDTO[];
+}[]> {
+  const assignments = await prisma.task.findMany({
+    where: { assigneeId: userId, type: 'activity', deletedAt: null },
+    select: { projectId: true },
+  });
+  const projectIds = [...new Set(assignments.map((a) => a.projectId))];
+  if (projectIds.length === 0) return [];
+
+  const projects = await prisma.project.findMany({
+    where: { id: { in: projectIds }, deletedAt: null },
+    select: { id: true, name: true },
+    orderBy: { name: 'asc' },
+  });
+
+  // filterTreeByAssignee は動的 import で循環依存を避ける (同じパッケージ内でも可読性優先)
+  const { filterTreeByAssignee } = await import('@/lib/task-tree-utils');
+
+  const results = await Promise.all(
+    projects.map(async (p) => {
+      const tree = await listTasks(p.id);
+      const filtered = filterTreeByAssignee(tree, new Set([userId]));
+      return { projectId: p.id, projectName: p.name, tree: filtered };
+    }),
+  );
+  return results;
+}
+
 export async function listTasks(projectId: string): Promise<TaskDTO[]> {
   const tasks = await prisma.task.findMany({
     where: { projectId, deletedAt: null },
