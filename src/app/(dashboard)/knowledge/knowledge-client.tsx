@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
 import { KNOWLEDGE_TYPES } from '@/types';
 import type { AllKnowledgeDTO } from '@/services/knowledge.service';
 
@@ -51,6 +52,8 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
   const router = useRouter();
   const [keyword, setKeyword] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  // Req 9: 行クリックで編集 (メンバーのみ canAccessProject=true で有効)
+  const [editingKnowledge, setEditingKnowledge] = useState<AllKnowledgeDTO | null>(null);
 
   // クライアント側フィルタ (initialKnowledge をそのまま絞り込み)
   const filtered = initialKnowledge.filter((k) => {
@@ -114,8 +117,12 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
         </TableHeader>
         <TableBody>
           {filtered.map((k) => (
-            <TableRow key={k.id}>
-              <TableCell className="text-sm">
+            <TableRow
+              key={k.id}
+              className={k.canAccessProject ? 'cursor-pointer hover:bg-gray-50' : ''}
+              onClick={k.canAccessProject ? () => setEditingKnowledge(k) : undefined}
+            >
+              <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {k.projectName == null ? (
                   <span className="text-gray-400">
                     {k.linkedProjectCount === 0 ? '（未紐付け）' : '（非公開）'}
@@ -171,6 +178,14 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
           )}
         </TableBody>
       </Table>
+
+      <KnowledgeEditDialog
+        knowledge={editingKnowledge}
+        projectId={editingKnowledge?.primaryProjectId ?? null}
+        open={editingKnowledge != null}
+        onOpenChange={(v) => { if (!v) setEditingKnowledge(null); }}
+        onSaved={async () => { router.refresh(); }}
+      />
     </div>
   );
 }

@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { LabeledSelect } from '@/components/labeled-select';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
+import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
 import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -48,6 +49,8 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
   }, [onReload, router]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
+  // 行クリックで開く編集ダイアログの対象 (null = 閉じる)
+  const [editingRisk, setEditingRisk] = useState<RiskDTO | null>(null);
   const [form, setForm] = useState({
     type: 'risk',
     title: '',
@@ -168,12 +171,18 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
         </TableHeader>
         <TableBody>
           {risks.map((r) => (
-            <TableRow key={r.id}>
+            <TableRow
+              key={r.id}
+              // Req 8: 行クリックで編集ダイアログを開く (canCreate = メンバー以上)
+              className={canCreate ? 'cursor-pointer hover:bg-gray-50' : ''}
+              onClick={canCreate ? () => setEditingRisk(r) : undefined}
+            >
               <TableCell><Badge variant="outline">{r.type === 'risk' ? 'リスク' : '課題'}</Badge></TableCell>
               <TableCell className="font-medium">{r.title}</TableCell>
               <TableCell><Badge variant={impactColors[r.impact] || 'secondary'}>{PRIORITIES[r.impact as keyof typeof PRIORITIES]}</Badge></TableCell>
               <TableCell><Badge variant={impactColors[r.priority] || 'secondary'}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Badge></TableCell>
-              <TableCell>
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                {/* 状態変更の Select は行クリックの伝播を止めて単独動作させる */}
                 <LabeledSelect
                   value={r.state}
                   onValueChange={async (v) => {
@@ -194,7 +203,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
               <TableCell>{r.assigneeName || '-'}</TableCell>
               <TableCell>{new Date(r.createdAt).toLocaleDateString('ja-JP')}</TableCell>
               {canCreate && (
-                <TableCell>
+                <TableCell onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="outline"
                     size="sm"
@@ -218,6 +227,14 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
           )}
         </TableBody>
       </Table>
+
+      <RiskEditDialog
+        risk={editingRisk}
+        members={members}
+        open={editingRisk != null}
+        onOpenChange={(v) => { if (!v) setEditingRisk(null); }}
+        onSaved={reload}
+      />
     </div>
   );
 }

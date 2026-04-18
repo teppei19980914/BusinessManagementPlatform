@@ -11,6 +11,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { Trash2 } from 'lucide-react';
+import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import type { KnowledgeDTO } from '@/services/knowledge.service';
 
@@ -48,6 +49,8 @@ export function ProjectKnowledgeClient({
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
+  // Req 8: 行クリックで編集ダイアログ
+  const [editingKnowledge, setEditingKnowledge] = useState<KnowledgeDTO | null>(null);
 
   const initialForm = {
     title: '',
@@ -197,7 +200,12 @@ export function ProjectKnowledgeClient({
       ) : (
         <div className="space-y-2">
           {knowledges.map((k) => (
-            <div key={k.id} className="rounded border p-3">
+            <div
+              key={k.id}
+              // Req 8: 行クリックで編集ダイアログ (canCreate = メンバー以上で編集可)
+              className={`rounded border p-3 ${canCreate ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+              onClick={canCreate ? () => setEditingKnowledge(k) : undefined}
+            >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -221,7 +229,7 @@ export function ProjectKnowledgeClient({
                     className="text-red-600 hover:text-red-700"
                     title="削除"
                     aria-label="削除"
-                    onClick={() => handleDelete(k.id)}
+                    onClick={(e) => { e.stopPropagation(); handleDelete(k.id); }}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -231,6 +239,14 @@ export function ProjectKnowledgeClient({
           ))}
         </div>
       )}
+
+      <KnowledgeEditDialog
+        knowledge={editingKnowledge}
+        projectId={projectId}
+        open={editingKnowledge != null}
+        onOpenChange={(v) => { if (!v) setEditingKnowledge(null); }}
+        onSaved={async () => { await onReload(); }}
+      />
     </div>
   );
 }

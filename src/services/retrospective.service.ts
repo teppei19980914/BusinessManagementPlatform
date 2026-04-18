@@ -184,6 +184,45 @@ export async function confirmRetrospective(retroId: string, userId: string): Pro
 }
 
 /**
+ * 振り返りを更新する (PR #56 Req 8/9 用)。
+ * 編集可能フィールド: 実施日、計画総括、実績総括、良かった点、問題点、
+ * 次回以前事項 (improvements)、その他の振り返り項目。
+ * state は confirmRetrospective で別管理。
+ */
+export async function updateRetrospective(
+  retroId: string,
+  input: {
+    conductedDate?: string;
+    planSummary?: string;
+    actualSummary?: string;
+    goodPoints?: string;
+    problems?: string;
+    improvements?: string;
+    estimateGapFactors?: string | null;
+    scheduleGapFactors?: string | null;
+    qualityIssues?: string | null;
+    riskResponseEvaluation?: string | null;
+    knowledgeToShare?: string | null;
+  },
+  userId: string,
+): Promise<void> {
+  const data: Record<string, unknown> = { updatedBy: userId };
+  if (input.conductedDate !== undefined) data.conductedDate = new Date(input.conductedDate);
+  if (input.planSummary !== undefined) data.planSummary = input.planSummary;
+  if (input.actualSummary !== undefined) data.actualSummary = input.actualSummary;
+  if (input.goodPoints !== undefined) data.goodPoints = input.goodPoints;
+  if (input.problems !== undefined) data.problems = input.problems;
+  if (input.improvements !== undefined) data.improvements = input.improvements;
+  if (input.estimateGapFactors !== undefined) data.estimateGapFactors = input.estimateGapFactors;
+  if (input.scheduleGapFactors !== undefined) data.scheduleGapFactors = input.scheduleGapFactors;
+  if (input.qualityIssues !== undefined) data.qualityIssues = input.qualityIssues;
+  if (input.riskResponseEvaluation !== undefined) data.riskResponseEvaluation = input.riskResponseEvaluation;
+  if (input.knowledgeToShare !== undefined) data.knowledgeToShare = input.knowledgeToShare;
+
+  await prisma.retrospective.update({ where: { id: retroId }, data });
+}
+
+/**
  * 振り返りを論理削除する (deletedAt をセット)。
  * 「全振り返り」「振り返り一覧」のどちらから呼んでも同一レコードに影響する。
  */
