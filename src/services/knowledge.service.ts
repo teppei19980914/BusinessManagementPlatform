@@ -15,6 +15,7 @@ export type KnowledgeDTO = {
   techTags: string[];
   devMethod: string | null;
   processTags: string[];
+  businessDomainTags: string[];
   visibility: string;
   createdBy: string;
   creatorName?: string;
@@ -36,6 +37,7 @@ function toKnowledgeDTO(k: {
   techTags: Prisma.JsonValue;
   devMethod: string | null;
   processTags: Prisma.JsonValue;
+  businessDomainTags: Prisma.JsonValue;
   visibility: string;
   createdBy: string;
   creator?: { name: string };
@@ -56,6 +58,7 @@ function toKnowledgeDTO(k: {
     techTags: (k.techTags as string[]) || [],
     devMethod: k.devMethod,
     processTags: (k.processTags as string[]) || [],
+    businessDomainTags: (k.businessDomainTags as string[]) || [],
     visibility: k.visibility,
     createdBy: k.createdBy,
     creatorName: k.creator?.name,
@@ -267,6 +270,7 @@ export async function createKnowledge(
       techTags: (input.techTags || []) as Prisma.InputJsonValue,
       devMethod: input.devMethod,
       processTags: (input.processTags || []) as Prisma.InputJsonValue,
+      businessDomainTags: (input.businessDomainTags || []) as Prisma.InputJsonValue,
       visibility: input.visibility,
       createdBy: userId,
       updatedBy: userId,
@@ -301,6 +305,8 @@ export async function updateKnowledge(
   if (input.techTags !== undefined) data.techTags = input.techTags as Prisma.InputJsonValue;
   if (input.devMethod !== undefined) data.devMethod = input.devMethod;
   if (input.processTags !== undefined) data.processTags = input.processTags as Prisma.InputJsonValue;
+  if (input.businessDomainTags !== undefined)
+    data.businessDomainTags = input.businessDomainTags as Prisma.InputJsonValue;
   if (input.visibility !== undefined) data.visibility = input.visibility;
 
   const k = await prisma.knowledge.update({

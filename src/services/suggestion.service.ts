@@ -52,9 +52,24 @@ export type PastIssueSuggestion = SuggestionScore & {
   sourceProjectName: string | null;
 };
 
+/**
+ * PR #65 Phase 2 (a): 過去プロジェクトの振り返りを推薦対象に追加。
+ * problems / improvements は次プロジェクトで避けたい失敗そのものなので、
+ * 読み物として提示する価値が高い。採用 (雛形複製) は行わず参照のみ。
+ */
+export type RetrospectiveSuggestion = SuggestionScore & {
+  kind: 'retrospective';
+  id: string;
+  conductedDate: string;
+  snippet: string;
+  sourceProjectId: string;
+  sourceProjectName: string | null;
+};
+
 export type SuggestionsResult = {
   knowledge: KnowledgeSuggestion[];
   pastIssues: PastIssueSuggestion[];
+  retrospectives: RetrospectiveSuggestion[];
 };
 
 const TAG_WEIGHT = 0.5;
@@ -132,7 +147,7 @@ export async function suggestForProject(
 ): Promise<SuggestionsResult> {
   const limit = options.limit ?? DEFAULT_LIMIT;
   const ctx = await loadProjectContext(projectId);
-  if (!ctx) return { knowledge: [], pastIssues: [] };
+  if (!ctx) return { knowledge: [], pastIssues: [], retrospectives: [] };
 
   // ---------- Knowledge 候補 ----------
   // visibility='public' のみ対象 (draft は作成者だけが閲覧できる想定)
@@ -150,6 +165,7 @@ export async function suggestForProject(
       content: true,
       techTags: true,
       processTags: true,
+      businessDomainTags: true,
       knowledgeProjects: { select: { projectId: true } },
     },
   });
@@ -163,6 +179,7 @@ export async function suggestForProject(
     const kTags = unifyKnowledgeTags({
       techTags: (k.techTags as string[]) ?? [],
       processTags: (k.processTags as string[]) ?? [],
+      businessDomainTags: (k.businessDomainTags as string[]) ?? [],
     });
     const tagScore = jaccard(ctx.tags, kTags);
     const textScore = kText.get(k.id) ?? 0;
@@ -229,6 +246,53 @@ export async function suggestForProject(
     };
   });
 
+  // ---------- 過去 Retrospective 候補 (PR #65 Phase 2 (a)) ----------
+  // 他プロジェクトの振り返り (confirmed) を対象。
+  // 自プロジェクトの振り返りは普段の「振り返り一覧」で見られるので除外。
+  // 振り返りはタグを持たないため text スコアのみ (Issue と同様)。
+  // 比較対象は problems + improvements に絞る (「避けたい失敗」「次に活かす学び」が中心)。
+  const retros = await prisma.retrospective.findMany({
+    where: {
+      deletedAt: null,
+      visibility: 'public',
+      NOT: { projectId },
+    },
+    select: {
+      id: true,
+      conductedDate: true,
+      problems: true,
+      improvements: true,
+      projectId: true,
+      project: { select: { name: true, deletedAt: true } },
+    },
+  });
+
+  const rText = await computeTextSimilarities(
+    ctx.text,
+    retros.map((r) => ({ id: r.id, text: `${r.problems} ${r.improvements}` })),
+  );
+
+  const retroScored: RetrospectiveSuggestion[] = retros.map((r) => {
+    const tagScore = 0;
+    const textScore = rText.get(r.id) ?? 0;
+    const score = combineScores([
+      { score: tagScore, weight: TAG_WEIGHT },
+      { score: textScore, weight: TEXT_WEIGHT },
+    ]);
+    return {
+      kind: 'retrospective' as const,
+      id: r.id,
+      conductedDate: r.conductedDate.toISOString().split('T')[0],
+      // 問題点 + 改善事項のスニペット (読み物として即座に価値が伝わる部分)
+      snippet: `【問題点】${r.problems.slice(0, 80)}... 【次回事項】${r.improvements.slice(0, 80)}...`,
+      sourceProjectId: r.projectId,
+      sourceProjectName: r.project?.deletedAt ? null : r.project?.name ?? null,
+      score,
+      tagScore,
+      textScore,
+    };
+  });
+
   // 閾値で足切り + スコア降順 + 件数上限
   const knowledge = knowledgeScored
     .filter((k) => k.score >= SCORE_THRESHOLD)
@@ -238,8 +302,12 @@ export async function suggestForProject(
     .filter((i) => i.score >= SCORE_THRESHOLD)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+  const retrospectives = retroScored
+    .filter((r) => r.score >= SCORE_THRESHOLD)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
 
-  return { knowledge, pastIssues };
+  return { knowledge, pastIssues, retrospectives };
 }
 
 /**
@@ -308,4 +376,63 @@ export async function linkKnowledgeToProject(
     data: [{ knowledgeId, projectId }],
     skipDuplicates: true,
   });
+}
+
+/**
+ * PR #65 Phase 2 (c): リスク起票ダイアログから呼ばれる、軽量の
+ * 「今書いているテキストに類似する過去課題」検索。
+ *
+ * suggestForProject と似た処理だが、以下の点で最適化:
+ *   - 呼び出し側が Project コンテキストを渡さなくていい (ユーザ入力 text を直接受け取る)
+ *   - Knowledge や Retrospective は返さない (起票中は「他に発生例はあるか」のみ必要)
+ *   - 件数上限を 5 件に絞る (起票中は画面占有を最小化したい)
+ *   - 閾値を少し高く (0.08) して weak match を除く
+ */
+export async function suggestRelatedIssuesForText(
+  inputText: string,
+  currentProjectId: string,
+): Promise<PastIssueSuggestion[]> {
+  const trimmed = inputText.trim();
+  if (trimmed.length < 10) return []; // 10 文字未満はノイズ多いので走らせない
+
+  const issues = await prisma.riskIssue.findMany({
+    where: {
+      deletedAt: null,
+      type: 'issue',
+      state: 'resolved',
+      NOT: { projectId: currentProjectId },
+    },
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      projectId: true,
+      project: { select: { name: true, deletedAt: true } },
+    },
+  });
+
+  const scores = await computeTextSimilarities(
+    trimmed,
+    issues.map((i) => ({ id: i.id, text: `${i.title} ${i.content}` })),
+  );
+
+  const scored: PastIssueSuggestion[] = issues.map((i) => {
+    const textScore = scores.get(i.id) ?? 0;
+    return {
+      kind: 'issue' as const,
+      id: i.id,
+      title: i.title,
+      snippet: i.content.slice(0, 120),
+      sourceProjectId: i.projectId,
+      sourceProjectName: i.project?.deletedAt ? null : i.project?.name ?? null,
+      score: textScore,
+      tagScore: 0,
+      textScore,
+    };
+  });
+
+  return scored
+    .filter((s) => s.score >= 0.08)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
 }

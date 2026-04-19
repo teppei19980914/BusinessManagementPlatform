@@ -38,9 +38,23 @@ type PastIssueSuggestion = {
   textScore: number;
 };
 
+// PR #65 Phase 2 (a): 過去振り返りも推薦対象。読み物として提示する (採用操作なし)。
+type RetrospectiveSuggestion = {
+  kind: 'retrospective';
+  id: string;
+  conductedDate: string;
+  snippet: string;
+  sourceProjectId: string;
+  sourceProjectName: string | null;
+  score: number;
+  tagScore: number;
+  textScore: number;
+};
+
 type SuggestionsResult = {
   knowledge: KnowledgeSuggestion[];
   pastIssues: PastIssueSuggestion[];
+  retrospectives: RetrospectiveSuggestion[];
 };
 
 type PanelState =
@@ -68,7 +82,7 @@ export function SuggestionsPanel({
     const res = await fetch(`/api/projects/${projectId}/suggestions`);
     if (!res.ok) {
       setError('提案の取得に失敗しました');
-      setState({ loaded: true, data: { knowledge: [], pastIssues: [] } });
+      setState({ loaded: true, data: { knowledge: [], pastIssues: [], retrospectives: [] } });
       return;
     }
     const json = await res.json();
@@ -106,7 +120,7 @@ export function SuggestionsPanel({
     return <p className="py-8 text-center text-sm text-gray-500">提案を計算中...</p>;
   }
 
-  const { knowledge, pastIssues } = state.data;
+  const { knowledge, pastIssues, retrospectives } = state.data;
 
   return (
     <div className="space-y-6">
@@ -210,6 +224,48 @@ export function SuggestionsPanel({
                 </li>
               );
             })}
+          </ul>
+        )}
+      </section>
+
+      {/*
+        PR #65 Phase 2 (a): 過去振り返り (retrospective) の提示。
+        problems / improvements は次プロジェクトで避けたい失敗そのもの。
+        採用操作は持たず参照のみ (出典プロジェクトへのリンクで詳細を開ける)。
+      */}
+      <section className="space-y-2">
+        <h3 className="font-semibold">過去振り返り ({retrospectives.length} 件)</h3>
+        <p className="text-xs text-gray-500">
+          過去プロジェクトの振り返り (問題点・次回事項) を参考情報として提示します。
+          同種の失敗を繰り返さないために目を通してください。
+        </p>
+        {retrospectives.length === 0 ? (
+          <p className="text-sm text-gray-500">類似する過去振り返りが見つかりませんでした。</p>
+        ) : (
+          <ul className="space-y-2">
+            {retrospectives.map((r) => (
+              <li key={r.id} className="rounded border p-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">振り返り ({r.conductedDate})</span>
+                      <Badge variant="outline" title={scoreTooltip(r)}>
+                        類似度 {(r.score * 100).toFixed(0)}%
+                      </Badge>
+                      {r.sourceProjectName && (
+                        <Link
+                          href={`/projects/${r.sourceProjectId}/retrospectives`}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
+                          出典: {r.sourceProjectName}
+                        </Link>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-600">{r.snippet}</p>
+                  </div>
+                </div>
+              </li>
+            ))}
           </ul>
         )}
       </section>

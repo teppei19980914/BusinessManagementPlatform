@@ -334,6 +334,9 @@ model Knowledge {
   techTags       Json      @default("[]") @map("tech_tags") @db.JsonB
   devMethod      String?   @map("dev_method") @db.VarChar(30)
   processTags    Json      @default("[]") @map("process_tags") @db.JsonB
+  // PR #65 Phase 2 (b): Project.businessDomainTags との対称化。
+  // 提案型サービスの Jaccard 類似度で業務ドメイン軸もマッチできるようにする。
+  businessDomainTags Json   @default("[]") @map("business_domain_tags") @db.JsonB
   visibility     String    @default("draft") @db.VarChar(20) // draft | project | company
   createdBy      String    @map("created_by") @db.Uuid
   updatedBy      String    @map("updated_by") @db.Uuid

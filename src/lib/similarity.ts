@@ -44,14 +44,19 @@ export function unifyProjectTags(project: {
 }
 
 /**
- * Knowledge の全タグ (tech + process) を 1 つの配列に統合する。
- * Project 側は業務ドメインも持つが、Knowledge にはないため業務系は交差しない。
+ * Knowledge の全タグ (tech + process + businessDomain) を 1 つの配列に統合する。
+ * PR #65 Phase 2 (b): businessDomainTags を Knowledge 側にも追加し Project と対称化。
  */
 export function unifyKnowledgeTags(knowledge: {
   techTags: readonly string[];
   processTags: readonly string[];
+  businessDomainTags: readonly string[];
 }): string[] {
-  return [...knowledge.techTags, ...knowledge.processTags];
+  return [
+    ...knowledge.techTags,
+    ...knowledge.processTags,
+    ...knowledge.businessDomainTags,
+  ];
 }
 
 /**

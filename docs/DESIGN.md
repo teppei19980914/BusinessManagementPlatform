@@ -3827,8 +3827,32 @@ migration で有効化済。`gin_trgm_ops` GIN インデックスで高速化。
 | フェーズ | 内容 | 状態 |
 |---|---|---|
 | Phase 1 | タグ交差 + pg_trgm、参考タブ + 作成後モーダル、Knowledge 紐付け + Issue 雛形複製 | PR #65 で実装 |
-| Phase 2 | リスク起票時の類似リスクサジェスト、振り返りからナレッジ化のフロー、フィードバック学習 | 未着手 |
+| Phase 2 (a) | Retrospective を推薦対象に追加 (読み物として提示、採用操作なし) | PR #65 で追加実装 |
+| Phase 2 (b) | Knowledge に businessDomainTags 追加、Project と対称化 | PR #65 で追加実装 |
+| Phase 2 (c) | リスク起票ダイアログで類似過去課題を inline 提示 (500ms debounce) | PR #65 で追加実装 |
+| Phase 2 (d) 延期 | フィードバック学習 (採用/却下履歴) — 実運用データ蓄積後に再検討 | 未着手 |
+| Phase 2 (e) 延期 | 振り返りからナレッジ化自動フロー — 責務が「蓄積」側なので別 PR | 未着手 |
 | Phase 3 | 埋め込みベクトル検索 (pgvector + OpenAI embeddings)、精度評価指標の監視 | 未着手 |
+
+### 23.10 Phase 2 追加要素の詳細 (PR #65 続編)
+
+**(a) Retrospective 推薦**
+- `suggestForProject` が返す `SuggestionsResult.retrospectives` に追加
+- テキスト類似度は `problems + improvements` 連結で計算 (振り返りの最も意味のある部分)
+- `gin_trgm_ops` インデックスを `retrospectives.problems` / `retrospectives.improvements` に付与
+- UI は `SuggestionsPanel` に読み物専用セクションとして追加、採用ボタンなし
+
+**(b) Knowledge.businessDomainTags**
+- スキーマに `business_domain_tags JSONB NOT NULL DEFAULT '[]'` 追加
+- `unifyKnowledgeTags` に反映、Jaccard の比較軸を Project と対称化
+- Knowledge 作成フォームに 3 種類のタグ入力欄 (businessDomain / tech / process) を追加
+- 既存ナレッジは空配列で起動、PATCH で後追い登録可
+
+**(c) 起票中の類似過去課題 inline 提示**
+- 専用軽量 API `POST /api/projects/:projectId/suggestions/related-issues`
+- 入力 text が 10 文字以上のときのみ、500ms debounce で問い合わせ
+- 閾値 0.08 / 上位 5 件 (メインフォームの表示スペースを圧迫しないため Phase 1 より厳しめ)
+- 過去同種課題への気付きを促す警告バナー UI
 
 ### 23.9 実装ファイル参照
 

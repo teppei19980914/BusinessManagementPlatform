@@ -57,10 +57,20 @@ describe('unifyProjectTags', () => {
 });
 
 describe('unifyKnowledgeTags', () => {
-  it('tech + process を連結', () => {
+  it('tech + process + businessDomain を連結 (PR #65 Phase 2 (b))', () => {
     expect(
-      unifyKnowledgeTags({ techTags: ['a'], processTags: ['b'] }),
-    ).toEqual(['a', 'b']);
+      unifyKnowledgeTags({
+        techTags: ['React'],
+        processTags: ['設計'],
+        businessDomainTags: ['金融'],
+      }),
+    ).toEqual(['React', '設計', '金融']);
+  });
+
+  it('全て空でも空配列を返す', () => {
+    expect(
+      unifyKnowledgeTags({ techTags: [], processTags: [], businessDomainTags: [] }),
+    ).toEqual([]);
   });
 });
 

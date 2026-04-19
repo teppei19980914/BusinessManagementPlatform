@@ -59,18 +59,38 @@ export function ProjectKnowledgeClient({
     content: '',
     result: '',
     visibility: 'draft',
+    // PR #65 Phase 2 (b): 提案精度向上のためタグ入力 (カンマ区切り)
+    businessDomainTagsInput: '',
+    techTagsInput: '',
+    processTagsInput: '',
   };
   const [form, setForm] = useState(initialForm);
+
+  // カンマ区切り文字列を string[] に正規化 (projects-client と同じ方針)
+  const parseTagsInput = (s: string): string[] =>
+    s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
 
+    const payload = {
+      title: form.title,
+      knowledgeType: form.knowledgeType,
+      background: form.background,
+      content: form.content,
+      result: form.result,
+      visibility: form.visibility,
+      businessDomainTags: parseTagsInput(form.businessDomainTagsInput),
+      techTags: parseTagsInput(form.techTagsInput),
+      processTags: parseTagsInput(form.processTagsInput),
+    };
+
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/knowledge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       }),
     );
 
@@ -185,6 +205,38 @@ export function ProjectKnowledgeClient({
                       rows={3}
                       maxLength={3000}
                       required
+                    />
+                  </div>
+                  {/*
+                    PR #65 Phase 2 (b): ナレッジのタグ入力 (カンマ区切り)。
+                    未来のプロジェクトからの類似検索に使われる重要な軸なので、
+                    作成時に入力を強く推奨する。
+                  */}
+                  <div className="space-y-2">
+                    <Label>業務ドメインタグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Input
+                      value={form.businessDomainTagsInput}
+                      onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
+                      placeholder="例: 金融, 基幹業務, 会計"
+                      maxLength={500}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>技術スタックタグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Input
+                      value={form.techTagsInput}
+                      onChange={(e) => setForm({ ...form, techTagsInput: e.target.value })}
+                      placeholder="例: React, Next.js, TypeScript"
+                      maxLength={500}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>工程タグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Input
+                      value={form.processTagsInput}
+                      onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
+                      placeholder="例: 要件定義, 設計, 開発, 試験"
+                      maxLength={500}
                     />
                   </div>
                   <Button type="submit" className="w-full">作成</Button>

@@ -24,3 +24,15 @@ CREATE INDEX IF NOT EXISTS "idx_risks_issues_title_trgm"
   ON "risks_issues" USING GIN ("title" gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS "idx_risks_issues_content_trgm"
   ON "risks_issues" USING GIN ("content" gin_trgm_ops);
+
+-- 5. PR #65 Phase 2 (b): Knowledge.businessDomainTags を追加
+-- Project.businessDomainTags と対称化し、Jaccard 類似度で業務ドメイン軸もマッチ
+ALTER TABLE "knowledges"
+  ADD COLUMN IF NOT EXISTS "business_domain_tags" JSONB NOT NULL DEFAULT '[]';
+
+-- 6. PR #65 Phase 2 (a): 過去振り返り (problems / improvements) のトライグラム GIN インデックス
+-- 新プロジェクトの purpose / background / scope と類似度計算する用途
+CREATE INDEX IF NOT EXISTS "idx_retrospectives_problems_trgm"
+  ON "retrospectives" USING GIN ("problems" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "idx_retrospectives_improvements_trgm"
+  ON "retrospectives" USING GIN ("improvements" gin_trgm_ops);
