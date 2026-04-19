@@ -68,7 +68,16 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
     devMethod: 'scratch',
     plannedStartDate: '',
     plannedEndDate: '',
+    // PR #65: 核心機能 (提案型サービス) のタグ入力。カンマ区切り文字列で受け取り、
+    // 送信時に string[] へ変換する。空要素は除外。
+    businessDomainTagsInput: '',
+    techStackTagsInput: '',
+    processTagsInput: '',
   });
+
+  // カンマ区切り文字列を string[] に正規化する (余計な空白除去・空要素除外)
+  const parseTagsInput = (s: string): string[] =>
+    s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
 
   async function handleSearch() {
     const params = new URLSearchParams();
@@ -82,11 +91,26 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
     e.preventDefault();
     setError('');
 
+    // タグは入力欄の生文字列 (form.*TagsInput) をカンマ分割して送信する
+    const payload = {
+      name: form.name,
+      customerName: form.customerName,
+      purpose: form.purpose,
+      background: form.background,
+      scope: form.scope,
+      devMethod: form.devMethod,
+      plannedStartDate: form.plannedStartDate,
+      plannedEndDate: form.plannedEndDate,
+      businessDomainTags: parseTagsInput(form.businessDomainTagsInput),
+      techStackTags: parseTagsInput(form.techStackTagsInput),
+      processTags: parseTagsInput(form.processTagsInput),
+    };
+
     const res = await withLoading(() =>
       fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       }),
     );
 
@@ -107,8 +131,12 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
       devMethod: 'scratch',
       plannedStartDate: '',
       plannedEndDate: '',
+      businessDomainTagsInput: '',
+      techStackTagsInput: '',
+      processTagsInput: '',
     });
-    router.push(`/projects/${json.data.id}`);
+    // PR #65: 新規作成直後は ?suggestions=1 を付けて遷移、詳細画面側で提案モーダルを表示
+    router.push(`/projects/${json.data.id}?suggestions=1`);
     router.refresh();
   }
 
@@ -206,6 +234,39 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
                       required
                     />
                   </div>
+                </div>
+                {/*
+                  PR #65: 提案型サービス (核心機能) のためのタグ入力。
+                  新規プロジェクトと過去ナレッジ/課題のマッチングに利用される。
+                  カンマ区切りで入力 (例: "React, Next.js, TypeScript")
+                  抜け漏れなく提案を出すため、可能な限り入力を推奨する。
+                */}
+                <div className="space-y-2">
+                  <Label>業務ドメインタグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Input
+                    value={form.businessDomainTagsInput}
+                    onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
+                    placeholder="例: 金融, 基幹業務, 会計"
+                    maxLength={500}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>技術スタックタグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Input
+                    value={form.techStackTagsInput}
+                    onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
+                    placeholder="例: React, Next.js, TypeScript, PostgreSQL"
+                    maxLength={500}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>工程タグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Input
+                    value={form.processTagsInput}
+                    onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
+                    placeholder="例: 要件定義, 設計, 開発, 試験"
+                    maxLength={500}
+                  />
                 </div>
                 <Button type="submit" className="w-full">
                   作成

@@ -14,6 +14,7 @@ export type ProjectDTO = {
   devMethod: string;
   businessDomainTags: string[];
   techStackTags: string[];
+  processTags: string[];
   plannedStartDate: string;
   plannedEndDate: string;
   status: string;
@@ -34,6 +35,7 @@ function toProjectDTO(p: {
   devMethod: string;
   businessDomainTags: Prisma.JsonValue;
   techStackTags: Prisma.JsonValue;
+  processTags: Prisma.JsonValue;
   plannedStartDate: Date;
   plannedEndDate: Date;
   status: string;
@@ -53,6 +55,7 @@ function toProjectDTO(p: {
     devMethod: p.devMethod,
     businessDomainTags: (p.businessDomainTags as string[]) || [],
     techStackTags: (p.techStackTags as string[]) || [],
+    processTags: (p.processTags as string[]) || [],
     plannedStartDate: p.plannedStartDate.toISOString().split('T')[0],
     plannedEndDate: p.plannedEndDate.toISOString().split('T')[0],
     status: p.status,
@@ -124,6 +127,7 @@ export type CreateProjectInput = {
   devMethod: string;
   businessDomainTags?: string[];
   techStackTags?: string[];
+  processTags?: string[];
   plannedStartDate: string;
   plannedEndDate: string;
   notes?: string;
@@ -144,6 +148,7 @@ export async function createProject(
       devMethod: input.devMethod,
       businessDomainTags: (input.businessDomainTags || []) as Prisma.InputJsonValue,
       techStackTags: (input.techStackTags || []) as Prisma.InputJsonValue,
+      processTags: (input.processTags || []) as Prisma.InputJsonValue,
       plannedStartDate: new Date(input.plannedStartDate),
       plannedEndDate: new Date(input.plannedEndDate),
       notes: input.notes,
@@ -183,6 +188,8 @@ export async function updateProject(
     data.businessDomainTags = input.businessDomainTags as Prisma.InputJsonValue;
   if (input.techStackTags !== undefined)
     data.techStackTags = input.techStackTags as Prisma.InputJsonValue;
+  if (input.processTags !== undefined)
+    data.processTags = input.processTags as Prisma.InputJsonValue;
   if (input.plannedStartDate !== undefined)
     data.plannedStartDate = new Date(input.plannedStartDate);
   if (input.plannedEndDate !== undefined)

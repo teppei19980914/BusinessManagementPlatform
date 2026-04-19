@@ -134,6 +134,10 @@ model Project {
   devMethod         String    @map("dev_method") @db.VarChar(30)
   businessDomainTags Json     @default("[]") @map("business_domain_tags") @db.JsonB
   techStackTags     Json      @default("[]") @map("tech_stack_tags") @db.JsonB
+  // PR #65: 新規プロジェクト作成時にナレッジ/過去課題を提案するため、
+  // Knowledge と同じ粒度の工程タグも持たせる。Jaccard 類似度 + pg_trgm
+  // テキスト類似度の併用で核心機能 (提案型サービス) を実現する。
+  processTags       Json      @default("[]") @map("process_tags") @db.JsonB
   plannedStartDate  DateTime  @map("planned_start_date") @db.Date
   plannedEndDate    DateTime  @map("planned_end_date") @db.Date
   status            String    @default("planning") @db.VarChar(20)
