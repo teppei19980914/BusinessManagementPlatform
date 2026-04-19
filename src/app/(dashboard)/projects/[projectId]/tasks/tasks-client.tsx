@@ -28,6 +28,11 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_STATUSES, WBS_TYPES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+import {
+  StagedAttachmentsInput,
+  persistStagedAttachments,
+  type StagedAttachment,
+} from '@/components/attachments/staged-attachments-input';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
@@ -827,6 +832,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     plannedEffort: 0,
   });
 
+  // PR #67: 作成時にステージする添付 URL
+  const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -858,6 +866,17 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
       return;
     }
+
+    // PR #67: 作成成功直後にステージされた添付を一括 POST
+    const json = await res.json();
+    if (stagedCreateAttachments.length > 0 && json.data?.id) {
+      await persistStagedAttachments({
+        entityType: 'task',
+        entityId: json.data.id,
+        items: stagedCreateAttachments,
+      });
+    }
+    setStagedCreateAttachments([]);
 
     setIsCreateOpen(false);
     setParentTaskId('');
@@ -985,6 +1004,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     </div>
                   </>
                 )}
+
+                {/* PR #67: 作成と同時に成果物・設計書等の関連 URL を登録可能 */}
+                <StagedAttachmentsInput
+                  value={stagedCreateAttachments}
+                  onChange={setStagedCreateAttachments}
+                />
 
                 <Button type="submit" className="w-full">
                   作成

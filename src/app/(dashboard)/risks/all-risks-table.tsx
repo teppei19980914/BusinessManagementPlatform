@@ -13,6 +13,8 @@ import type { AllRiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
 import { AdminRiskDeleteButton } from './admin-delete-button';
 import { formatDateTime } from '@/lib/format';
+import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
+import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 
 const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
   risk: 'outline',
@@ -43,6 +45,11 @@ export function AllRisksTable({
   const router = useRouter();
   const [editingRisk, setEditingRisk] = useState<AllRiskDTO | null>(null);
   const [members, setMembers] = useState<MemberDTO[]>([]);
+  // PR #67: 一覧に添付列を表示するためバッチ取得
+  const attachmentsByEntity = useBatchAttachments(
+    'risk',
+    filteredRisks.map((r) => r.id),
+  );
 
   // PR #61: 非メンバーでも行クリックで readOnly ダイアログを開けるようにする。
   // canAccessProject=true → 編集可、false → 参照専用 (readOnly)。
@@ -80,6 +87,8 @@ export function AllRisksTable({
             <TableHead className="whitespace-nowrap">作成者</TableHead>
             <TableHead className="whitespace-nowrap">更新日時</TableHead>
             <TableHead className="whitespace-nowrap">更新者</TableHead>
+            {/* PR #67: 添付リンク列 (chips) */}
+            <TableHead className="whitespace-nowrap">添付</TableHead>
             {isAdmin && <TableHead className="whitespace-nowrap">操作</TableHead>}
           </TableRow>
         </TableHeader>
@@ -130,6 +139,10 @@ export function AllRisksTable({
               <TableCell className="text-sm text-gray-600">
                 {r.updatedByName ?? <span className="text-gray-400">-</span>}
               </TableCell>
+              {/* PR #67: 添付リンク chips */}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />
+              </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <AdminRiskDeleteButton
@@ -143,7 +156,8 @@ export function AllRisksTable({
           ))}
           {filteredRisks.length === 0 && (
             <TableRow>
-              <TableCell colSpan={(isAdmin ? 12 : 11) - (typeFilter ? 1 : 0)} className="py-8 text-center text-gray-500">
+              {/* PR #67: 添付列を追加したので colSpan を +1 */}
+              <TableCell colSpan={(isAdmin ? 13 : 12) - (typeFilter ? 1 : 0)} className="py-8 text-center text-gray-500">
                 {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク/課題がありません'}
               </TableCell>
             </TableRow>

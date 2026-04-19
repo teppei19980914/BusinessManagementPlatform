@@ -11,6 +11,11 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
+import {
+  StagedAttachmentsInput,
+  persistStagedAttachments,
+  type StagedAttachment,
+} from '@/components/attachments/staged-attachments-input';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import type { RetroDTO } from '@/services/retrospective.service';
@@ -50,6 +55,9 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
     visibility: 'draft',
   });
 
+  // PR #67: 作成時にステージする添付 URL
+  const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -65,6 +73,17 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
       setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
       return;
     }
+    // PR #67: 作成成功直後にステージされた添付を一括 POST
+    const json = await res.json();
+    if (stagedCreateAttachments.length > 0 && json.data?.id) {
+      await persistStagedAttachments({
+        entityType: 'retrospective',
+        entityId: json.data.id,
+        items: stagedCreateAttachments,
+      });
+    }
+    setStagedCreateAttachments([]);
+
     setIsCreateOpen(false);
     setForm({ conductedDate: new Date().toISOString().split('T')[0], planSummary: '', actualSummary: '', goodPoints: '', problems: '', improvements: '', visibility: 'draft' });
     await reload();
@@ -153,6 +172,11 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
                   <Label>次回改善事項</Label>
                   <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.improvements} onChange={(e) => setForm({ ...form, improvements: e.target.value })} rows={3} maxLength={3000} required />
                 </div>
+                {/* PR #67: 作成と同時に議事録・発表資料等の関連 URL を登録可能 */}
+                <StagedAttachmentsInput
+                  value={stagedCreateAttachments}
+                  onChange={setStagedCreateAttachments}
+                />
                 <Button type="submit" className="w-full">作成</Button>
               </form>
             </DialogContent>
