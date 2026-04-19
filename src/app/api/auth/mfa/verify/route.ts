@@ -3,12 +3,24 @@ import { verifyTotp } from '@/services/mfa.service';
 import { prisma } from '@/lib/db';
 import { compare } from 'bcryptjs';
 import { z } from 'zod/v4';
+import { auth } from '@/lib/auth';
 
 const totpSchema = z.object({ userId: z.string().uuid(), code: z.string().length(6) });
 const recoverySchema = z.object({ userId: z.string().uuid(), recoveryCode: z.string().min(1) });
 
 export async function POST(req: NextRequest) {
+  // PR #67: セッションに紐付く userId のみを検証対象に制限し、他人の TOTP 検証を防ぐ
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
+  }
   const body = await req.json();
+  if (body?.userId && body.userId !== session.user.id) {
+    return NextResponse.json(
+      { error: { code: 'FORBIDDEN', message: 'セッションユーザと一致しません' } },
+      { status: 403 },
+    );
+  }
 
   // TOTP コード検証
   if (body.code) {

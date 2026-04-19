@@ -12,6 +12,11 @@ import {
 } from '@/components/ui/dialog';
 import { Trash2 } from 'lucide-react';
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
+import {
+  StagedAttachmentsInput,
+  persistStagedAttachments,
+  type StagedAttachment,
+} from '@/components/attachments/staged-attachments-input';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import type { KnowledgeDTO } from '@/services/knowledge.service';
 
@@ -70,6 +75,9 @@ export function ProjectKnowledgeClient({
   const parseTagsInput = (s: string): string[] =>
     s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
 
+  // PR #67: ナレッジ作成時にステージする添付 URL (general slot)
+  const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -99,6 +107,17 @@ export function ProjectKnowledgeClient({
       setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
       return;
     }
+
+    // PR #67: 作成成功直後にステージされた添付を一括 POST
+    const json = await res.json();
+    if (stagedCreateAttachments.length > 0 && json.data?.id) {
+      await persistStagedAttachments({
+        entityType: 'knowledge',
+        entityId: json.data.id,
+        items: stagedCreateAttachments,
+      });
+    }
+    setStagedCreateAttachments([]);
 
     setIsCreateOpen(false);
     setForm(initialForm);
@@ -239,6 +258,12 @@ export function ProjectKnowledgeClient({
                       maxLength={500}
                     />
                   </div>
+                  {/* PR #67: 作成と同時に参考リンク等の URL を登録可能 */}
+                  <StagedAttachmentsInput
+                    value={stagedCreateAttachments}
+                    onChange={setStagedCreateAttachments}
+                    label="参考リンク"
+                  />
                   <Button type="submit" className="w-full">作成</Button>
                 </form>
               </DialogContent>

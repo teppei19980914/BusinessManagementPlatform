@@ -34,6 +34,11 @@ import {
 import { Label } from '@/components/ui/label';
 import { PROJECT_STATUSES, DEV_METHODS } from '@/types';
 import type { ProjectDTO } from '@/services/project.service';
+import {
+  StagedAttachmentsInput,
+  persistStagedAttachments,
+  type StagedAttachment,
+} from '@/components/attachments/staged-attachments-input';
 
 type Props = {
   initialProjects: ProjectDTO[];
@@ -79,6 +84,10 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
   const parseTagsInput = (s: string): string[] =>
     s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
 
+  // PR #67: 作成ダイアログで入力された添付 URL を staging。
+  // プロジェクト作成成功後に entityId を使って一括 POST する。
+  const [stagedAttachments, setStagedAttachments] = useState<StagedAttachment[]>([]);
+
   async function handleSearch() {
     const params = new URLSearchParams();
     if (keyword) params.set('keyword', keyword);
@@ -121,6 +130,17 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
     }
 
     const json = await res.json();
+
+    // PR #67: 作成成功直後にステージされた添付を一括 POST
+    if (stagedAttachments.length > 0 && json.data?.id) {
+      await persistStagedAttachments({
+        entityType: 'project',
+        entityId: json.data.id,
+        items: stagedAttachments,
+      });
+    }
+    setStagedAttachments([]);
+
     setIsCreateOpen(false);
     setForm({
       name: '',
@@ -268,6 +288,11 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
                     maxLength={500}
                   />
                 </div>
+                {/* PR #67: 作成と同時に関連 URL を登録可能 */}
+                <StagedAttachmentsInput
+                  value={stagedAttachments}
+                  onChange={setStagedAttachments}
+                />
                 <Button type="submit" className="w-full">
                   作成
                 </Button>

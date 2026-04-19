@@ -3861,3 +3861,55 @@ migration で有効化済。`gin_trgm_ops` GIN インデックスで高速化。
 - `src/app/api/projects/[projectId]/suggestions/route.ts` — GET
 - `src/app/api/projects/[projectId]/suggestions/adopt/route.ts` — POST (採用)
 - `src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx` — 共通 UI (参考タブ + 作成後モーダル共用)
+
+---
+
+## 24. PR #67: 作成ダイアログの添付入力 + 一覧添付列 + MFA ログイン強化
+
+### 24.1 作成ダイアログの添付 URL 入力 (Task 1)
+
+既存の AttachmentList / SingleUrlField は **編集**ダイアログ専用 (entityId 必須)。
+**作成**ダイアログでは entityId が存在しないため、専用の `StagedAttachmentsInput`
+を導入し、React 内でステージした後に作成成功後のエンティティ ID で一括 POST する。
+
+| 箇所 | entityType | 採用 slot |
+|---|---|---|
+| `ProjectsClient` 新規作成 | project | general |
+| `TasksClient` 作成 (WP/ACT) | task | general |
+| `RisksClient` 起票 | risk | general |
+| `RetrospectivesClient` 作成 | retrospective | general |
+| `ProjectKnowledgeClient` 作成 | knowledge | general |
+
+実装: `src/components/attachments/staged-attachments-input.tsx` の
+`persistStagedAttachments({ entityType, entityId, items })` を作成 API 呼び出し成功直後に実行。
+部分失敗時は親エンティティを残し、呼び出し側で `{ succeeded, failed }` を受け取れる設計。
+
+### 24.2 一覧画面への添付列 (Task 2)
+
+各一覧行に紐づく添付を **chip 形式**の 1 つのセルに並べて表示 (技術的に
+「リンクの数だけ動的に追加」される)。N+1 を避けるためバッチ取得 API を新設:
+
+- `POST /api/attachments/batch` — `{ entityType, entityIds[], slot? }` で一括取得、`{ [entityId]: AttachmentDTO[] }` 返却 (O(1) lookup)
+- `useBatchAttachments(entityType, ids, slot?)` フックで UI 側からキャッシュアクセス
+- `<AttachmentsCell items={...} />` で chip 描画、`target="_blank" rel="noopener noreferrer"` 徹底
+
+導入箇所:
+- `/risks` / `/issues` (AllRisksTable)
+- `/retrospectives` (AllRetrospectivesTable)
+- `/knowledge` (KnowledgeClient)
+- `/projects/[id]/risks` / `/issues` (RisksClient 内テーブル)
+
+### 24.3 MFA ログインフロー強化 (Task 3)
+
+**問題**: MFA 有効化後もログイン時に TOTP 検証されず、パスワードのみで通過できる状態だった。
+
+**修正**:
+- `authorize` で `mfaEnabled` を返却
+- `jwt` callback が新規ログイン時 (user !== undefined) に **常に `mfaVerified=false` にリセット**。以前のセッションで検証済でも新規ログインでは再検証必須
+- `authorized` callback (middleware) が `mfaEnabled && !mfaVerified` の未検証ユーザを `/login/mfa` に redirect
+- `/login/mfa` で TOTP 検証 → `useSession().update({ mfaVerified: true })` で JWT を trigger='update' 経由で再署名
+- 再署名後、`callbackUrl` へ遷移
+
+セキュリティ補強:
+- `/api/auth/mfa/verify` の `userId` をセッションユーザと厳格比較 (他人の TOTP 検証を防止)
+- `mfaPendingPaths` (/login/mfa, /api/auth/mfa/verify, signout) のみ検証前アクセスを許容し他は全て遮断

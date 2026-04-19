@@ -24,6 +24,8 @@ import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog'
 import { KNOWLEDGE_TYPES } from '@/types';
 import type { AllKnowledgeDTO } from '@/services/knowledge.service';
 import { formatDateTime } from '@/lib/format';
+import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
+import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 
 type Props = {
   initialKnowledge: AllKnowledgeDTO[];
@@ -58,6 +60,12 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
     }
     return true;
   });
+
+  // PR #67: 添付列用のバッチ取得 (filtered 変動で再フェッチされる)
+  const attachmentsByEntity = useBatchAttachments(
+    'knowledge',
+    filtered.map((k) => k.id),
+  );
 
   return (
     <div className="space-y-6">
@@ -105,6 +113,8 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
             <TableHead className="whitespace-nowrap">作成者</TableHead>
             <TableHead className="whitespace-nowrap">更新日時</TableHead>
             <TableHead className="whitespace-nowrap">更新者</TableHead>
+            {/* PR #67: 添付リンク列 */}
+            <TableHead className="whitespace-nowrap">添付</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -159,11 +169,16 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
               <TableCell className="text-sm text-gray-600">
                 {k.updatedByName ?? <span className="text-gray-400">-</span>}
               </TableCell>
+              {/* PR #67: 添付リンク chips */}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
+              </TableCell>
             </TableRow>
           ))}
           {filtered.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} className="py-8 text-center text-gray-500">
+              {/* PR #67: 添付列 +1 */}
+              <TableCell colSpan={10} className="py-8 text-center text-gray-500">
                 ナレッジがありません
               </TableCell>
             </TableRow>

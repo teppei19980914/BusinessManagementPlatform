@@ -16,6 +16,13 @@ import {
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
+import {
+  StagedAttachmentsInput,
+  persistStagedAttachments,
+  type StagedAttachment,
+} from '@/components/attachments/staged-attachments-input';
+import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
+import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -120,6 +127,15 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
     };
   }, [form.title, form.content, isCreateOpen, projectId]);
 
+  // PR #67: 起票時にステージする添付 URL
+  const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
+
+  // PR #67: 一覧添付列用のバッチ取得
+  const attachmentsByEntity = useBatchAttachments(
+    'risk',
+    filteredRisks.map((r) => r.id),
+  );
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -141,6 +157,17 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
       setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
       return;
     }
+    // PR #67: 作成成功直後にステージされた添付を一括 POST
+    const json = await res.json();
+    if (stagedCreateAttachments.length > 0 && json.data?.id) {
+      await persistStagedAttachments({
+        entityType: 'risk',
+        entityId: json.data.id,
+        items: stagedCreateAttachments,
+      });
+    }
+    setStagedCreateAttachments([]);
+
     setIsCreateOpen(false);
     setForm({
       type: initialType,
@@ -272,6 +299,11 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                       {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
                     </select>
                   </div>
+                  {/* PR #67: 起票と同時にエビデンス・関連チケット等の URL を登録可能 */}
+                  <StagedAttachmentsInput
+                    value={stagedCreateAttachments}
+                    onChange={setStagedCreateAttachments}
+                  />
                   <Button type="submit" className="w-full">{createLabel}</Button>
                 </form>
               </DialogContent>
@@ -290,6 +322,8 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
             <TableHead>状態</TableHead>
             <TableHead>担当者</TableHead>
             <TableHead>起票日</TableHead>
+            {/* PR #67: 添付リンク列 */}
+            <TableHead>添付</TableHead>
             {canCreate && <TableHead>操作</TableHead>}
           </TableRow>
         </TableHeader>
@@ -316,6 +350,10 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
               </TableCell>
               <TableCell>{r.assigneeName || '-'}</TableCell>
               <TableCell>{new Date(r.createdAt).toLocaleDateString('ja-JP')}</TableCell>
+              {/* PR #67: 添付リンク chips */}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />
+              </TableCell>
               {canCreate && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <Button
@@ -338,7 +376,8 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
           ))}
           {filteredRisks.length === 0 && (
             <TableRow>
-              <TableCell colSpan={(canCreate ? 7 : 6) + (typeFilter ? 0 : 1)} className="py-8 text-center text-gray-500">
+              {/* PR #67: 添付列 +1 */}
+              <TableCell colSpan={(canCreate ? 8 : 7) + (typeFilter ? 0 : 1)} className="py-8 text-center text-gray-500">
                 {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク / 課題がありません'}
               </TableCell>
             </TableRow>

@@ -10,6 +10,8 @@ import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit
 import type { AllRetroDTO } from '@/services/retrospective.service';
 import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
 import { formatDateTime } from '@/lib/format';
+import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
+import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 
 /**
  * 全振り返りテーブル (Req 9: 行クリックで編集)。
@@ -23,6 +25,11 @@ export function AllRetrospectivesTable({
 }) {
   const router = useRouter();
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
+  // PR #67: 添付列用のバッチ取得
+  const attachmentsByEntity = useBatchAttachments(
+    'retrospective',
+    retros.map((r) => r.id),
+  );
 
   return (
     <>
@@ -39,6 +46,8 @@ export function AllRetrospectivesTable({
             <TableHead className="whitespace-nowrap">作成者</TableHead>
             <TableHead className="whitespace-nowrap">更新日時</TableHead>
             <TableHead className="whitespace-nowrap">更新者</TableHead>
+            {/* PR #67: 添付リンク列 */}
+            <TableHead className="whitespace-nowrap">添付</TableHead>
             {isAdmin && <TableHead className="whitespace-nowrap">操作</TableHead>}
           </TableRow>
         </TableHeader>
@@ -76,6 +85,10 @@ export function AllRetrospectivesTable({
               <TableCell className="text-sm text-gray-600">
                 {r.updatedByName ?? <span className="text-gray-400">-</span>}
               </TableCell>
+              {/* PR #67: 添付リンク chips */}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />
+              </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <AdminRetrospectiveDeleteButton
@@ -89,7 +102,8 @@ export function AllRetrospectivesTable({
           ))}
           {retros.length === 0 && (
             <TableRow>
-              <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-gray-500">
+              {/* PR #67: 添付列を +1 */}
+              <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-gray-500">
                 振り返りがありません
               </TableCell>
             </TableRow>

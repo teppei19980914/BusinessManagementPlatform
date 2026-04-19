@@ -15,6 +15,17 @@ const publicPaths = [
   '/api/health', // ヘルスチェック/ウォームアップ。外部 cron から定期 ping されるため認証不要
 ];
 
+/**
+ * PR #67: MFA 検証フロー中だけアクセスを許可するパス。
+ * /login/mfa ページ本体と、TOTP 検証 API を許可する。
+ * このパス群はセッションは必要だが mfaVerified が false でもアクセス可能。
+ */
+const mfaPendingPaths = [
+  '/login/mfa',
+  '/api/auth/mfa/verify',
+  '/api/auth/signout', // 検証中にログアウトできるように
+];
+
 export const authConfig: NextAuthConfig = {
   providers: [
     // Credentials provider の定義（authorize は auth.ts で上書き）
@@ -74,14 +85,38 @@ export const authConfig: NextAuthConfig = {
         return Response.redirect(new URL('/login', nextUrl));
       }
 
+      // PR #67: MFA 有効ユーザが TOTP 未検証で保護領域にアクセスしようとしたら
+      // /login/mfa に誘導する。検証フロー中だけ許容するパス群 (mfaPendingPaths) は
+      // 通過させ、MFA 画面自体や verify API を呼べるようにする。
+      const mfaPending
+        = auth.user.mfaEnabled === true && auth.user.mfaVerified !== true;
+      if (mfaPending) {
+        const isMfaAllowed = mfaPendingPaths.some((p) =>
+          nextUrl.pathname.startsWith(p),
+        );
+        if (!isMfaAllowed) {
+          return Response.redirect(new URL('/login/mfa', nextUrl));
+        }
+      }
+
       return true;
     },
-    jwt({ token, user }) {
+    jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
         token.systemRole = (user as unknown as { systemRole: string }).systemRole;
         token.forcePasswordChange = (user as unknown as { forcePasswordChange: boolean })
           .forcePasswordChange;
+        // PR #67: パスワード認証直後は mfaVerified を常に false にリセット。
+        // 以前のセッションで検証済みでも、新規ログインでは必ず再検証を要求する。
+        token.mfaEnabled = (user as unknown as { mfaEnabled: boolean }).mfaEnabled;
+        token.mfaVerified = false;
+      }
+      // PR #67: /login/mfa で useSession().update({ mfaVerified: true }) を
+      // 呼ぶと trigger='update' の session 渡しで TOTP 検証済を token に反映する。
+      if (trigger === 'update' && session && typeof session === 'object') {
+        const patch = session as { mfaVerified?: boolean };
+        if (patch.mfaVerified === true) token.mfaVerified = true;
       }
       return token;
     },
@@ -90,6 +125,8 @@ export const authConfig: NextAuthConfig = {
         session.user.id = token.id as string;
         session.user.systemRole = token.systemRole as string;
         session.user.forcePasswordChange = token.forcePasswordChange as boolean;
+        session.user.mfaEnabled = (token.mfaEnabled as boolean | undefined) ?? false;
+        session.user.mfaVerified = (token.mfaVerified as boolean | undefined) ?? false;
       }
       return session;
     },
