@@ -74,6 +74,10 @@ describe('unifyKnowledgeTags', () => {
   });
 });
 
+// PR #65 Phase 2 (c) の suggestRelatedIssuesForText は DB アクセスを伴うため
+// integration test レベル。ここでは純粋関数のみを対象にしている。閾値 0.08 や
+// 10 文字未満 early return の挙動はサービス層の手動動作検証で確認する。
+
 describe('combineScores', () => {
   it('重み付き平均を計算する', () => {
     expect(
