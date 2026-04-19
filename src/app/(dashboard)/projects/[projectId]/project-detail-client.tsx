@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +34,7 @@ import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
 import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
 import { MembersClient } from './members-client';
+import { SuggestionsPanel } from './suggestions/suggestions-panel';
 
 type Props = {
   project: ProjectDTO;
@@ -129,6 +130,18 @@ export function ProjectDetailClient({
   const allUsers = useLazyFetch<UserDTO[]>(`/api/admin/users`);
 
   const [activeTab, setActiveTab] = useState('overview');
+
+  // PR #65 核心機能: 新規プロジェクト作成直後に ?suggestions=1 付きで遷移してくるパス用。
+  // URL クエリを見てモーダルを開くかを決定し、モーダル閉鎖時は URL から除去する。
+  const searchParams = useSearchParams();
+  const [isSuggestionsModalOpen, setIsSuggestionsModalOpen] = useState(
+    searchParams.get('suggestions') === '1',
+  );
+  const closeSuggestionsModal = useCallback(() => {
+    setIsSuggestionsModalOpen(false);
+    // URL から ?suggestions=1 を消して再アクセスで再表示されないようにする
+    router.replace(`/projects/${project.id}`);
+  }, [router, project.id]);
 
   function handleTabChange(value: string) {
     setActiveTab(value);
@@ -346,6 +359,8 @@ export function ProjectDetailClient({
           <TabsTrigger value="issues">課題一覧</TabsTrigger>
           <TabsTrigger value="retrospectives">振り返り一覧</TabsTrigger>
           <TabsTrigger value="knowledge">ナレッジ一覧</TabsTrigger>
+          {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案 */}
+          <TabsTrigger value="suggestions">参考</TabsTrigger>
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
             <TabsTrigger value="members">メンバー</TabsTrigger>
           )}
@@ -550,6 +565,15 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
+        {/*
+          参考タブ (PR #65 核心機能): 過去プロジェクトから流用可能な
+          ナレッジ・課題を類似度スコア付きで表示し、採用操作を提供する。
+          本タブは独自の fetch (SuggestionsPanel 内) を持つため LazyTabContent 不要。
+        */}
+        <TabsContent value="suggestions" className="mt-4">
+          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} />
+        </TabsContent>
+
         {/* メンバータブ（admin/pm_tl のみ、admin なら allUsers も必要）*/}
         {(systemRole === 'admin' || projectRole === 'pm_tl') && (
           <TabsContent value="members" className="mt-4">
@@ -584,6 +608,32 @@ export function ProjectDetailClient({
           </TabsContent>
         )}
       </Tabs>
+
+      {/*
+        PR #65 核心機能: 新規プロジェクト作成直後に自動起動する提案モーダル。
+        ?suggestions=1 クエリで遷移してきたときだけ初期表示され、閉じると URL から除去される。
+        抜け漏れゼロ化の UX を実現するため、作成フローの延長として強制露出する。
+      */}
+      <Dialog
+        open={isSuggestionsModalOpen}
+        onOpenChange={(o) => { if (!o) closeSuggestionsModal(); }}
+      >
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>類似ナレッジ / 過去課題の提案</DialogTitle>
+            <DialogDescription>
+              新規プロジェクトに活用可能な過去資産を提案します。採用することで、
+              未然に防げるリスクを減らせます (後で「参考」タブからも参照可能です)。
+            </DialogDescription>
+          </DialogHeader>
+          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} />
+          <div className="mt-4 flex justify-end">
+            <Button variant="outline" onClick={closeSuggestionsModal}>
+              閉じる
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

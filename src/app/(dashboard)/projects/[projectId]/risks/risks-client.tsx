@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -67,6 +68,57 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
   const filteredRisks = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
   const headingLabel = typeFilter === 'issue' ? '課題管理' : typeFilter === 'risk' ? 'リスク管理' : 'リスク / 課題管理';
   const createLabel = typeFilter === 'issue' ? '課題起票' : typeFilter === 'risk' ? 'リスク起票' : '起票';
+
+  // PR #65 Phase 2 (c): 起票中に類似する過去課題 (他プロジェクト) を inline でサジェスト。
+  // 未然対応の気付きを起票中のユーザに与え、抜け漏れゼロ化を促す。
+  type RelatedIssue = {
+    id: string;
+    title: string;
+    snippet: string;
+    sourceProjectId: string;
+    sourceProjectName: string | null;
+    score: number;
+  };
+  const [relatedIssues, setRelatedIssues] = useState<RelatedIssue[]>([]);
+  // debounce 用のタイマー ref (再入力のたびに前のタイマーをクリア)
+  const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 外部 API (サジェスト) との同期であり react-hooks/set-state-in-effect の
+  // 例外に該当 (DESIGN.md §22 と use-session-state と同等の扱い)。
+  useEffect(() => {
+    // ダイアログが閉じているときは走らせない
+    if (!isCreateOpen) return;
+    // 文字数が少なすぎる間はノイズが多いので問い合わせない
+    const combined = `${form.title} ${form.content}`.trim();
+    if (combined.length < 10) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRelatedIssues([]);
+      return;
+    }
+    // 前回の pending タイマーをキャンセル
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
+    suggestTimerRef.current = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/projects/${projectId}/suggestions/related-issues`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: combined }),
+            },
+          );
+          if (!res.ok) return;
+          const json = await res.json();
+          setRelatedIssues(json.data ?? []);
+        } catch {
+          // ネットワーク失敗時は inline 提案なし (起票本線に影響させない)
+        }
+      })();
+    }, 500);
+    return () => {
+      if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
+    };
+  }, [form.title, form.content, isCreateOpen, projectId]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -161,6 +213,41 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                     <Label>内容</Label>
                     <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} rows={4} maxLength={2000} required />
                   </div>
+                  {/*
+                    PR #65 Phase 2 (c): 入力中に類似する過去課題を inline 提示。
+                    似た事象が過去に発生しているなら、ここで気付かせて未然対応に繋げる。
+                  */}
+                  {relatedIssues.length > 0 && (
+                    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
+                      <p className="text-xs font-semibold text-amber-900">
+                        類似する過去課題があります ({relatedIssues.length} 件)
+                        <span className="ml-1 font-normal">
+                          - 過去に発生した事象の再来かもしれません、念のためご確認ください
+                        </span>
+                      </p>
+                      <ul className="space-y-1">
+                        {relatedIssues.map((r) => (
+                          <li key={r.id} className="text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{r.title}</span>
+                              <Badge variant="outline" className="text-xs">類似度 {(r.score * 100).toFixed(0)}%</Badge>
+                              {r.sourceProjectName && (
+                                <Link
+                                  href={`/projects/${r.sourceProjectId}/issues`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:underline"
+                                >
+                                  出典: {r.sourceProjectName}
+                                </Link>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-700">{r.snippet}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {/* PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定) */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">

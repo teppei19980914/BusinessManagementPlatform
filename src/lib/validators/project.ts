@@ -10,6 +10,8 @@ export const createProjectSchema = z.object({
   devMethod: z.enum(['scratch', 'power_platform', 'package', 'other']),
   businessDomainTags: z.array(z.string()).max(50).optional(),
   techStackTags: z.array(z.string()).max(50).optional(),
+  // PR #65: 核心機能 (提案型サービス) のため工程タグを追加 (ナレッジと同じ粒度)
+  processTags: z.array(z.string()).max(50).optional(),
   plannedStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日付形式が不正です'),
   plannedEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日付形式が不正です'),
   notes: z.string().max(2000).optional(),

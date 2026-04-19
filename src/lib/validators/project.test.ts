@@ -52,6 +52,18 @@ describe('createProjectSchema', () => {
     const tags = Array.from({ length: 51 }, (_, i) => `tag${i}`);
     expect(createProjectSchema.safeParse({ ...validInput, techStackTags: tags }).success).toBe(false);
   });
+
+  // PR #65 核心機能: processTags (工程タグ) 受入 + 上限検証
+  it('processTags を受け入れる', () => {
+    expect(
+      createProjectSchema.safeParse({ ...validInput, processTags: ['要件定義', '設計'] }).success,
+    ).toBe(true);
+  });
+
+  it('processTags が 51 件の場合を拒否する', () => {
+    const tags = Array.from({ length: 51 }, (_, i) => `tag${i}`);
+    expect(createProjectSchema.safeParse({ ...validInput, processTags: tags }).success).toBe(false);
+  });
 });
 
 describe('changeStatusSchema', () => {
