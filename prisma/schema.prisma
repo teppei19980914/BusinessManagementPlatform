@@ -51,6 +51,7 @@ model User {
   recoveryCodes           RecoveryCode[]
   passwordHistories       PasswordHistory[]
   addedAttachments        Attachment[]       @relation("AttachmentAddedBy")
+  memos                   Memo[]             @relation("MemoAuthor")
 
   @@unique([email], map: "idx_users_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
@@ -505,4 +506,29 @@ model Attachment {
   @@index([entityType, entityId], map: "idx_attachments_entity")
   @@index([entityType, entityId, slot], map: "idx_attachments_slot")
   @@map("attachments")
+}
+
+/// 個人メモ (PR #70): プロジェクトに紐付かない個人の知見・作業ノートを保存する。
+/// visibility:
+///   - 'private' (既定): 作成者本人のみ閲覧可、admin も含め他者不可視
+///   - 'public' : 全ログインユーザが「全メモ」画面で閲覧可 (編集/削除は作成者のみ)
+/// タグは持たせない (業務上の知見かどうかの判断は人間で行う方針、PR #70 要件より)。
+/// 添付は PR #64 の attachments テーブルに entityType='memo' で紐付け可能。
+model Memo {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  title      String    @db.VarChar(150)
+  content    String    @db.Text
+  visibility String    @default("private") @db.VarChar(20)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz
+
+  author User @relation("MemoAuthor", fields: [userId], references: [id])
+
+  // 自分のメモ一覧 (MyMemos) での並び替えを効率化
+  @@index([userId, createdAt(sort: Desc)], map: "idx_memos_user_recent")
+  // 全メモ (公開メモ) 画面での並び替えを効率化
+  @@index([visibility, createdAt(sort: Desc)], map: "idx_memos_visibility_recent")
+  @@map("memos")
 }

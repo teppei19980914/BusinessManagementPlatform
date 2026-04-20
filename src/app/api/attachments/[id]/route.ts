@@ -4,6 +4,7 @@ import { checkMembership } from '@/lib/permissions';
 import { updateAttachmentSchema } from '@/lib/validators/attachment';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import {
+  authorizeMemoAttachment,
   deleteAttachment,
   getAttachment,
   resolveProjectIds,
@@ -19,6 +20,24 @@ async function authorizeForAttachment(
   entityType: AttachmentEntityType,
   entityId: string,
 ): Promise<NextResponse | null> {
+  // PR #70: memo は admin 特権なしの個人リソース。PATCH/DELETE は作成者のみ。
+  if (entityType === 'memo') {
+    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, 'write');
+    if (notFound) {
+      return NextResponse.json(
+        { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+        { status: 404 },
+      );
+    }
+    if (!ok) {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+        { status: 403 },
+      );
+    }
+    return null;
+  }
+
   if (user.systemRole === 'admin') return null;
 
   const projectIds = await resolveProjectIds(entityType, entityId);

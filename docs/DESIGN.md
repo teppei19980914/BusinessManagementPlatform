@@ -3974,3 +3974,72 @@ ResizableHead 共通機構ではなく**ガント固有の state + ドラッグ*
 
 各一覧画面の右上に「列幅をリセット」ボタンを配置し、1 クリックで sessionStorage から
 当該 `tableKey` のエントリを削除 (`{}` で上書き) → 各 `<ResizableHead>` が defaultWidth に戻る。
+
+---
+
+## 26. PR #70: 個人メモ機能
+
+### 26.1 位置付け
+
+既存の Knowledge はプロジェクト紐付け必須 (KnowledgeProject 経由) で共有前提のため、
+個人の一時的な作業メモ・調査ログの置き場として**重すぎた**。独立エンティティとして
+`Memo` を新設し「プロジェクトに紐付かない個人の知見置き場」を実現する。
+
+### 26.2 スキーマ
+
+```prisma
+model Memo {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  title      String    @db.VarChar(150)
+  content    String    @db.Text
+  visibility String    @default("private") @db.VarChar(20)  // 'private' | 'public'
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz
+
+  author User @relation("MemoAuthor", fields: [userId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_memos_user_recent")
+  @@index([visibility, createdAt(sort: Desc)], map: "idx_memos_visibility_recent")
+  @@map("memos")
+}
+```
+
+タグを持たせない設計判断: 業務知見判断は人間ベース、軽量 UX を優先 (PR #70 要件)。
+
+### 26.3 認可モデル
+
+**他エンティティとの根本的な違い**: memo は project スコープ**外**、admin 特権**なし**。
+
+| 操作 | 許可条件 |
+|---|---|
+| 閲覧 (list/get) | 作成者 OR `visibility='public'` |
+| 作成 | 認証済ユーザなら誰でも (自分の memo として) |
+| 編集・削除 | 作成者のみ (admin も不可) |
+
+`getMemoForViewer`: 他人の private memo は `null` を返し、呼び出し側で 404 に変換 (403 ではなく 404 で「存在自体を隠す」情報漏洩防止)。
+
+### 26.4 Attachment 統合
+
+PR #64 の polymorphic attachments 機構を `entityType='memo'` で拡張。
+
+- `resolveProjectIds('memo', ...)`: memo が存在すれば `[]` (project ID なし)、存在しなければ `null`
+- `authorizeMemoAttachment(memoId, userId, mode)`: memo 固有の認可を別関数に切り出し
+- attachments `route.ts` / `[id]/route.ts` の `authorize` は最初に entityType === 'memo' で分岐、project 経路をスキップ
+- batch API は memo の場合 entityIds を `userId+visibility` でフィルタしてから attachments を取得 (URL 漏洩防止)
+
+### 26.5 UI
+
+- ナビ: ユーザ名プルダウンに「**全メモ**」追加 (マイタスクの下、設定の上)
+- 画面 `/memos`: 一覧 + 右上「メモ作成」ボタン + 列幅リサイズ (PR #68) + 添付列 (PR #67)
+- 自分のメモは行クリックで編集ダイアログ、他人のメモは参照のみ (クリック不活性)
+- 作成ダイアログ: `StagedAttachmentsInput` で URL 添付を同時登録 (PR #67)
+
+### 26.6 フェーズ分け (将来拡張)
+
+| フェーズ | 内容 | 状態 |
+|---|---|---|
+| Phase 1 | Memo 基本 CRUD + visibility + URL 添付 | PR #70 で実装 |
+| Phase 2 | 「この Memo を Knowledge に昇格」ボタン (個人知見を社内資産に展開) | 未着手 (別 PR) |
+| Phase 3 | Memo をソースとした提案サジェスト (匿名化して PR #65 に組込) | 未着手 |

@@ -92,6 +92,15 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           >
             マイタスク
           </Link>
+          {/* PR #70: 全メモ (アカウント個人の知見置き場、public メモは他人も閲覧可) */}
+          <Link
+            href="/memos"
+            role="menuitem"
+            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            onClick={() => setOpen(false)}
+          >
+            全メモ
+          </Link>
           <Link
             href="/settings"
             role="menuitem"

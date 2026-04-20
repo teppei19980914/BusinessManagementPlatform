@@ -4,6 +4,7 @@ import { checkMembership } from '@/lib/permissions';
 import { createAttachmentSchema, ATTACHMENT_ENTITY_TYPES } from '@/lib/validators/attachment';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import {
+  authorizeMemoAttachment,
   createAttachment,
   listAttachments,
   resolveProjectIds,
@@ -27,7 +28,26 @@ async function authorize(
   user: { id: string; systemRole: string },
   entityType: AttachmentEntityType,
   entityId: string,
+  mode: 'read' | 'write' = 'write',
 ): Promise<NextResponse | null> {
+  // PR #70: memo は admin 特権なしの個人リソース。project スコープとは別経路で判定する。
+  if (entityType === 'memo') {
+    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, mode);
+    if (notFound) {
+      return NextResponse.json(
+        { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+        { status: 404 },
+      );
+    }
+    if (!ok) {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+        { status: 403 },
+      );
+    }
+    return null;
+  }
+
   if (user.systemRole === 'admin') return null;
 
   const projectIds = await resolveProjectIds(entityType, entityId);
@@ -83,7 +103,7 @@ export async function GET(req: NextRequest) {
   }
 
   const typed = entityType as AttachmentEntityType;
-  const forbidden = await authorize(user, typed, entityId);
+  const forbidden = await authorize(user, typed, entityId, 'read');
   if (forbidden) return forbidden;
 
   const data = await listAttachments(typed, entityId, slot);
@@ -107,7 +127,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const forbidden = await authorize(user, parsed.data.entityType, parsed.data.entityId);
+  const forbidden = await authorize(user, parsed.data.entityType, parsed.data.entityId, 'write');
   if (forbidden) return forbidden;
 
   const created = await createAttachment(parsed.data, user.id);
