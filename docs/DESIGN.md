@@ -4042,6 +4042,7 @@ PR #64 の polymorphic attachments 機構を `entityType='memo'` で拡張。
 |---|---|---|
 | Phase 1 | Memo 基本 CRUD + visibility + URL 添付 | PR #70 で実装 |
 | Phase 1.5 | UI を「メモ (個人管理)」と「全メモ (横断 read-only)」に分離 | PR #71 で実装 |
+| Phase 1.5b | 全日付項目に「今日」「削除」ボタンを併設 (DateFieldWithActions) | PR #71 で追加実装 |
 | Phase 2 | 「この Memo を Knowledge に昇格」ボタン (個人知見を社内資産に展開) | 未着手 (別 PR) |
 | Phase 3 | Memo をソースとした提案サジェスト (匿名化して PR #65 に組込) | 未着手 |
 
@@ -4077,3 +4078,49 @@ listPublicMemos(viewerUserId)   // /all-memos 用: 全 public メモ
 **認可は PR #70 から変更なし**:
 - 他人の private メモは `/all-memos` でも表示されない (listPublicMemos で visibility='public' のみ返す)
 - 全メモ画面からの編集試行は UI にボタンがないため発生しないが、もし直接 API を叩いても `/api/memos/:id` PATCH は作成者チェックで 404 を返す (二重防御)
+
+---
+
+## 27. PR #71: 日付項目の入力効率化 (DateFieldWithActions)
+
+### 27.1 背景
+
+ブラウザ標準の `<input type="date">` は「今日」「削除」相当の操作がカレンダーポップオーバー内部にしかない。
+ユーザはカレンダーを開いてから探す必要があり、2 ステップのオペレーションが発生して負担が大きかった。
+
+### 27.2 実装
+
+`src/components/ui/date-field-with-actions.tsx` に共通部品 `<DateFieldWithActions>` を作成。
+
+```tsx
+<DateFieldWithActions
+  value={form.plannedStartDate}
+  onChange={(v) => setForm({ ...form, plannedStartDate: v })}
+  required
+  hideClear  // 必須項目では削除ボタンを非表示
+/>
+```
+
+- 入力の**右**に「今日」ボタン (常時表示) と「削除」ボタン (未記入時 disabled)
+- **1 クリック**で今日日付セット / 空文字クリア
+- `required` / `disabled` / `hideClear` を prop で制御
+- onChange は生文字列を受け取るため既存 state setter と直接接続可能
+
+### 27.3 導入箇所 (全 11 箇所に展開)
+
+| ファイル | 項目 |
+|---|---|
+| `projects-client.tsx` | プロジェクト新規: 開始予定日 / 終了予定日 |
+| `project-detail-client.tsx` | プロジェクト編集: 開始予定日 / 終了予定日 |
+| `tasks-client.tsx` (新規 ACT) | 開始予定日 / 終了予定日 |
+| `tasks-client.tsx` (bulk edit) | 予定開始日 / 予定終了日 |
+| `tasks-client.tsx` (bulk actual) | 実績開始日 / 実績終了日 |
+| `tasks-client.tsx` (個別編集) | 予定開始日 / 予定終了日 / 実績開始日 / 実績終了日 |
+| `retrospectives-client.tsx` | 実施日 |
+| `retrospective-edit-dialog.tsx` | 実施日 |
+| `risk-edit-dialog.tsx` | 期限 |
+
+### 27.4 `hideClear` の使い分け
+
+- 必須項目 (required): 削除ボタンを隠す (`hideClear`) → 空にできないのにボタンがあると誤解を招くため
+- 任意項目: 削除ボタン表示 (空時は disabled)

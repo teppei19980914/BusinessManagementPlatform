@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
@@ -11,6 +10,7 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 
 type RetroLike = {
   id: string;
@@ -112,7 +112,7 @@ export function RetrospectiveEditDialog({
           </div>
           <div className="space-y-2">
             <Label>実施日</Label>
-            <Input type="date" value={form.conductedDate} onChange={(e) => setForm({ ...form, conductedDate: e.target.value })} required />
+            <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
           </div>
           {[
             { key: 'planSummary', label: '計画総括', rows: 3 },

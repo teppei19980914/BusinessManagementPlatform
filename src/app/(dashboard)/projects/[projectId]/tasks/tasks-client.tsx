@@ -38,6 +38,7 @@ import {
   ResizableHead,
   ResetColumnsButton,
 } from '@/components/ui/resizable-columns';
+import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
@@ -965,11 +966,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>開始予定日</Label>
-                        <Input type="date" value={form.plannedStartDate} onChange={(e) => setForm({ ...form, plannedStartDate: e.target.value })} required />
+                        <DateFieldWithActions value={form.plannedStartDate} onChange={(v) => setForm({ ...form, plannedStartDate: v })} required hideClear />
                       </div>
                       <div className="space-y-2">
                         <Label>終了予定日</Label>
-                        <Input type="date" value={form.plannedEndDate} onChange={(e) => setForm({ ...form, plannedEndDate: e.target.value })} required />
+                        <DateFieldWithActions value={form.plannedEndDate} onChange={(v) => setForm({ ...form, plannedEndDate: v })} required hideClear />
                       </div>
                     </div>
                     <div className="space-y-2">
@@ -1068,10 +1069,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, plannedStartDate: v })}
                   label="予定開始日"
                 >
-                  <Input
-                    type="date"
+                  <DateFieldWithActions
                     value={bulkEditValues.plannedStartDate}
-                    onChange={(e) => setBulkEditValues({ ...bulkEditValues, plannedStartDate: e.target.value })}
+                    onChange={(v) => setBulkEditValues({ ...bulkEditValues, plannedStartDate: v })}
                   />
                 </ApplyFieldRow>
                 <ApplyFieldRow
@@ -1079,10 +1079,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, plannedEndDate: v })}
                   label="予定終了日"
                 >
-                  <Input
-                    type="date"
+                  <DateFieldWithActions
                     value={bulkEditValues.plannedEndDate}
-                    onChange={(e) => setBulkEditValues({ ...bulkEditValues, plannedEndDate: e.target.value })}
+                    onChange={(v) => setBulkEditValues({ ...bulkEditValues, plannedEndDate: v })}
                   />
                 </ApplyFieldRow>
                 <ApplyFieldRow
@@ -1149,10 +1148,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, actualStartDate: v })}
                   label="実績開始日"
                 >
-                  <Input
-                    type="date"
+                  <DateFieldWithActions
                     value={bulkActualValues.actualStartDate}
-                    onChange={(e) => setBulkActualValues({ ...bulkActualValues, actualStartDate: e.target.value })}
+                    onChange={(v) => setBulkActualValues({ ...bulkActualValues, actualStartDate: v })}
                   />
                 </ApplyFieldRow>
                 <ApplyFieldRow
@@ -1160,10 +1158,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, actualEndDate: v })}
                   label="実績終了日"
                 >
-                  <Input
-                    type="date"
+                  <DateFieldWithActions
                     value={bulkActualValues.actualEndDate}
-                    onChange={(e) => setBulkActualValues({ ...bulkActualValues, actualEndDate: e.target.value })}
+                    onChange={(v) => setBulkActualValues({ ...bulkActualValues, actualEndDate: v })}
                   />
                 </ApplyFieldRow>
                 <Button type="submit" className="w-full">一括適用</Button>
@@ -1317,11 +1314,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-2">
                           <Label>予定開始日</Label>
-                          <Input type="date" value={editForm.plannedStartDate} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} />
+                          <DateFieldWithActions value={editForm.plannedStartDate} onChange={(v) => setEditForm({ ...editForm, plannedStartDate: v })} />
                         </div>
                         <div className="space-y-2">
                           <Label>予定終了日</Label>
-                          <Input type="date" value={editForm.plannedEndDate} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} />
+                          <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} />
                         </div>
                       </div>
                       <div className="space-y-2">
@@ -1375,22 +1372,18 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2">
                       <Label className={editingActualStartDisabled ? 'text-gray-400' : ''}>実績開始日</Label>
-                      <Input
-                        type="date"
+                      <DateFieldWithActions
                         value={editForm.actualStartDate}
-                        onChange={(e) => setEditForm({ ...editForm, actualStartDate: e.target.value })}
+                        onChange={(v) => setEditForm({ ...editForm, actualStartDate: v })}
                         disabled={editingActualStartDisabled}
-                        title={editingActualStartDisabled ? '未着手のタスクには実績開始日を入力できません' : undefined}
                       />
                     </div>
                     <div className="space-y-2">
                       <Label className={editingActualEndDisabled ? 'text-gray-400' : ''}>実績終了日</Label>
-                      <Input
-                        type="date"
+                      <DateFieldWithActions
                         value={editForm.actualEndDate}
-                        onChange={(e) => setEditForm({ ...editForm, actualEndDate: e.target.value })}
+                        onChange={(v) => setEditForm({ ...editForm, actualEndDate: v })}
                         disabled={editingActualEndDisabled}
-                        title={editingActualEndDisabled ? '完了状態のタスクのみ実績終了日を入力できます' : undefined}
                       />
                     </div>
                   </div>

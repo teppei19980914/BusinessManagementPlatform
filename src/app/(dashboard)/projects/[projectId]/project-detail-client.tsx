@@ -27,6 +27,7 @@ import type { UserDTO } from '@/services/user.service';
 import { useLazyFetch, type LazyState } from '@/lib/use-lazy-fetch';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { SingleUrlField } from '@/components/attachments/single-url-field';
+import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import { EstimatesClient } from './estimates/estimates-client';
 import { TasksClient } from './tasks/tasks-client';
 import { GanttClient } from './gantt/gantt-client';
@@ -326,11 +327,11 @@ export function ProjectDetailClient({
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>開始予定日</Label>
-                        <Input type="date" value={editForm.plannedStartDate} onChange={(e) => setEditForm({ ...editForm, plannedStartDate: e.target.value })} required />
+                        <DateFieldWithActions value={editForm.plannedStartDate} onChange={(v) => setEditForm({ ...editForm, plannedStartDate: v })} required hideClear />
                       </div>
                       <div className="space-y-2">
                         <Label>終了予定日</Label>
-                        <Input type="date" value={editForm.plannedEndDate} onChange={(e) => setEditForm({ ...editForm, plannedEndDate: e.target.value })} required />
+                        <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} required hideClear />
                       </div>
                     </div>
                     <Button type="submit" className="w-full">更新</Button>
