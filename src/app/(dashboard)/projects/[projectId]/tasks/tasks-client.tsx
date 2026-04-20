@@ -33,6 +33,11 @@ import {
   persistStagedAttachments,
   type StagedAttachment,
 } from '@/components/attachments/staged-attachments-input';
+import {
+  ResizableColumnsProvider,
+  ResizableHead,
+  ResetColumnsButton,
+} from '@/components/ui/resizable-columns';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
@@ -1212,6 +1217,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         - 日付・操作列の whitespace-nowrap は保持（「2026-」等の折返し防止）
         - 名称列のみ折返し許容（長い名前に対応）
       */}
+      <ResizableColumnsProvider tableKey="project-tasks">
+      <div className="flex justify-end pb-2">
+        <ResetColumnsButton />
+      </div>
       <div className="rounded-lg border overflow-x-auto">
         <table className="min-w-full text-xs md:text-sm">
           <thead className="bg-gray-50">
@@ -1227,13 +1236,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   />
                 </th>
               )}
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium">名称</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">担当者</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">ステータス</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">進捗&工数</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">予定期間</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">実績期間</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">操作</th>
+              <ResizableHead columnKey="name" defaultWidth={320}>名称</ResizableHead>
+              <ResizableHead columnKey="assignee" defaultWidth={140}>担当者</ResizableHead>
+              <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
+              <ResizableHead columnKey="progress" defaultWidth={140}>進捗&工数</ResizableHead>
+              <ResizableHead columnKey="plannedRange" defaultWidth={180}>予定期間</ResizableHead>
+              <ResizableHead columnKey="actualRange" defaultWidth={180}>実績期間</ResizableHead>
+              <ResizableHead columnKey="actions" defaultWidth={100}>操作</ResizableHead>
             </tr>
           </thead>
           <tbody>
@@ -1269,6 +1278,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </tbody>
         </table>
       </div>
+      </ResizableColumnsProvider>
 
       {/* 編集ダイアログ: ロールに応じて PM/TL 編集項目・実績項目を出し分ける */}
       <Dialog open={editingTask != null} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>

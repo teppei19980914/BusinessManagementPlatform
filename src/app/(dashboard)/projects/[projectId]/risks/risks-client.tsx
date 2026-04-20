@@ -9,8 +9,13 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table, TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
+import {
+  ResizableColumnsProvider,
+  ResizableHead,
+  ResetColumnsButton,
+} from '@/components/ui/resizable-columns';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
@@ -312,19 +317,23 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
         </div>
       </div>
 
+      <ResizableColumnsProvider tableKey={`project-risks-${typeFilter ?? 'all'}`}>
+        <div className="flex justify-end pb-2">
+          <ResetColumnsButton />
+        </div>
       <Table>
         <TableHeader>
           <TableRow>
-            {!typeFilter && <TableHead>種別</TableHead>}
-            <TableHead>件名</TableHead>
-            <TableHead>影響度</TableHead>
-            <TableHead>優先度</TableHead>
-            <TableHead>状態</TableHead>
-            <TableHead>担当者</TableHead>
-            <TableHead>起票日</TableHead>
+            {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>種別</ResizableHead>}
+            <ResizableHead columnKey="title" defaultWidth={240}>件名</ResizableHead>
+            <ResizableHead columnKey="impact" defaultWidth={80}>影響度</ResizableHead>
+            <ResizableHead columnKey="priority" defaultWidth={80}>優先度</ResizableHead>
+            <ResizableHead columnKey="state" defaultWidth={100}>状態</ResizableHead>
+            <ResizableHead columnKey="assignee" defaultWidth={120}>担当者</ResizableHead>
+            <ResizableHead columnKey="createdAt" defaultWidth={110}>起票日</ResizableHead>
             {/* PR #67: 添付リンク列 */}
-            <TableHead>添付</TableHead>
-            {canCreate && <TableHead>操作</TableHead>}
+            <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
+            {canCreate && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -384,6 +393,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
           )}
         </TableBody>
       </Table>
+      </ResizableColumnsProvider>
 
       <RiskEditDialog
         risk={editingRisk}
