@@ -111,12 +111,18 @@ export const authConfig: NextAuthConfig = {
         // 以前のセッションで検証済みでも、新規ログインでは必ず再検証を要求する。
         token.mfaEnabled = (user as unknown as { mfaEnabled: boolean }).mfaEnabled;
         token.mfaVerified = false;
+        // PR #72: テーマ設定も JWT に入れて layout.tsx から参照できるようにする。
+        token.themePreference = (user as unknown as { themePreference?: string }).themePreference ?? 'light';
       }
       // PR #67: /login/mfa で useSession().update({ mfaVerified: true }) を
       // 呼ぶと trigger='update' の session 渡しで TOTP 検証済を token に反映する。
+      // PR #72: 設定画面でテーマ変更時も同経路で { themePreference: '...' } を反映する。
       if (trigger === 'update' && session && typeof session === 'object') {
-        const patch = session as { mfaVerified?: boolean };
+        const patch = session as { mfaVerified?: boolean; themePreference?: string };
         if (patch.mfaVerified === true) token.mfaVerified = true;
+        if (typeof patch.themePreference === 'string') {
+          token.themePreference = patch.themePreference;
+        }
       }
       return token;
     },
@@ -127,6 +133,7 @@ export const authConfig: NextAuthConfig = {
         session.user.forcePasswordChange = token.forcePasswordChange as boolean;
         session.user.mfaEnabled = (token.mfaEnabled as boolean | undefined) ?? false;
         session.user.mfaVerified = (token.mfaVerified as boolean | undefined) ?? false;
+        session.user.themePreference = (token.themePreference as string | undefined) ?? 'light';
       }
       return session;
     },

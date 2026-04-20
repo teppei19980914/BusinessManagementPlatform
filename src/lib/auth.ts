@@ -88,6 +88,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // PR #67: MFA 有効時は毎回 TOTP 検証を要求する。
           // ログイン直後は mfaVerified=false で返却し、middleware が /login/mfa へ誘導する。
           mfaEnabled: user.mfaEnabled,
+          // PR #72: テーマ設定。layout.tsx で <html data-theme=...> に反映する。
+          themePreference: user.themePreference,
         };
       },
     }),

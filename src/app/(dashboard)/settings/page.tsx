@@ -9,13 +9,14 @@ export default async function SettingsPage() {
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { mfaEnabled: true, systemRole: true },
+    select: { mfaEnabled: true, systemRole: true, themePreference: true },
   });
 
   return (
     <SettingsClient
       mfaEnabled={user?.mfaEnabled || false}
       isAdmin={user?.systemRole === 'admin'}
+      currentTheme={user?.themePreference ?? 'light'}
     />
   );
 }

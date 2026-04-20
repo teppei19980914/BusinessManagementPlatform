@@ -2,21 +2,56 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { THEMES, toSafeThemeId, type ThemeId } from '@/types';
 
 type Props = {
   mfaEnabled: boolean;
   isAdmin: boolean;
+  /** PR #72: 現在の画面テーマ (初期選択値) */
+  currentTheme: string;
 };
 
-export function SettingsClient({ mfaEnabled, isAdmin }: Props) {
+export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { update: updateSession } = useSession();
+
+  // PR #72: テーマ設定
+  const [theme, setTheme] = useState<ThemeId>(toSafeThemeId(currentTheme));
+  const [themeError, setThemeError] = useState('');
+  const [themeSuccess, setThemeSuccess] = useState('');
+
+  async function handleThemeChange(next: ThemeId) {
+    setThemeError('');
+    setThemeSuccess('');
+    const prev = theme;
+    setTheme(next);
+    const res = await withLoading(() =>
+      fetch('/api/settings/theme', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme: next }),
+      }),
+    );
+    if (!res.ok) {
+      setTheme(prev);
+      const json = await res.json().catch(() => ({}));
+      setThemeError(json.error?.message || 'テーマの保存に失敗しました');
+      return;
+    }
+    // セッション JWT に反映 → layout.tsx 側の <html data-theme> を next refresh で更新
+    // (React の immutability ルール上、クライアントから直接 document を書き換えない)
+    await updateSession({ themePreference: next });
+    setThemeSuccess('テーマを変更しました');
+    router.refresh();
+  }
 
   // パスワード変更
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -107,6 +142,46 @@ export function SettingsClient({ mfaEnabled, isAdmin }: Props) {
     <div className="mx-auto max-w-2xl space-y-6">
       <h2 className="text-xl font-semibold">設定</h2>
 
+      {/* PR #72: テーマ設定 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">画面テーマ</CardTitle>
+          <CardDescription>
+            画面全体の配色を変更します。選択した内容はログインし直しても保持されます。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {themeError && (
+            <div className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-600">{themeError}</div>
+          )}
+          {themeSuccess && (
+            <div className="mb-3 rounded-md bg-green-50 p-3 text-sm text-green-600">{themeSuccess}</div>
+          )}
+          <div role="radiogroup" aria-label="画面テーマ" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {(Object.entries(THEMES) as [ThemeId, string][]).map(([id, label]) => {
+              const selected = id === theme;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => handleThemeChange(id)}
+                  className={[
+                    'flex items-center gap-3 rounded-md border p-3 text-left text-sm transition-colors',
+                    selected ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-600' : 'border-input hover:bg-gray-50',
+                  ].join(' ')}
+                >
+                  <ThemeSwatch themeId={id} />
+                  <span>{label}</span>
+                  {selected && <span className="ml-auto text-xs text-blue-700">選択中</span>}
+                </button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* パスワード変更 */}
       <Card>
         <CardHeader>
@@ -195,5 +270,36 @@ export function SettingsClient({ mfaEnabled, isAdmin }: Props) {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * PR #72: テーマのカラーサンプル。
+ *   各テーマ ID に応じた背景/アクセント 2 色の組み合わせをプレビュー表示する。
+ *   実際のテーマ CSS 変数とは独立した固定色 (設定画面では他テーマも参照できるよう
+ *   [data-theme="..."] コンテナ化しない)。
+ */
+function ThemeSwatch({ themeId }: { themeId: ThemeId }) {
+  const palette: Record<ThemeId, { bg: string; accent: string }> = {
+    light: { bg: '#ffffff', accent: '#111827' },
+    dark: { bg: '#111827', accent: '#e5e7eb' },
+    'pastel-blue': { bg: '#eaf3fb', accent: '#7aa8cf' },
+    'pastel-green': { bg: '#ecf5ea', accent: '#8bbf86' },
+    'pastel-yellow': { bg: '#fdf6e3', accent: '#d9b961' },
+    'pastel-red': { bg: '#fbecec', accent: '#d49393' },
+    'pop-blue': { bg: '#e0f0ff', accent: '#1d4ed8' },
+    'pop-green': { bg: '#e4fbe3', accent: '#15803d' },
+    'pop-yellow': { bg: '#fff6cc', accent: '#ca8a04' },
+    'pop-red': { bg: '#ffe4e6', accent: '#be123c' },
+  };
+  const { bg, accent } = palette[themeId];
+  return (
+    <span
+      aria-hidden
+      className="inline-flex h-8 w-12 shrink-0 overflow-hidden rounded border"
+      style={{ background: bg }}
+    >
+      <span className="h-full w-1/2" style={{ background: accent }} />
+    </span>
   );
 }

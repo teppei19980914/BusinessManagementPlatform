@@ -1,36 +1,134 @@
 'use client';
 
 /**
- * DateFieldWithActions (PR #71): 日付 input の右に「今日」「削除」ボタンを備えた共通部品。
+ * DateFieldWithActions (PR #71 初版 / PR #72 刷新):
+ *   日付フィールド本体と「今日」「削除」ボタンを横並びにした共通部品。
  *
- * 背景:
- *   ブラウザ標準の <input type="date"> はカレンダーポップオーバー内部にしか「今日」「削除」
- *   (クリア) 相当のボタンを持たない。ユーザはカレンダーを開く → ボタンを探す、の 2 ステップ
- *   が必要で操作負担が大きい。本コンポーネントは input の隣にボタンを常時露出し、
- *   1 クリックで今日日付設定 / 空文字クリアを実行できるようにする。
+ * PR #72 の変更点:
+ *   ブラウザ標準 `<input type="date">` はカレンダーポップオーバー内部に独自の
+ *   「今日」「クリア」ボタン (ベンダー依存) を持ち、CSS/JS で非表示にできない。
+ *   ユーザ要望 (PR #72 Task 1) で「カレンダー内の今日/削除は消してほしい」ため、
+ *   native input を完全に排して自作の Popover + 日付グリッドに置き換える。
  *
- * 使い方:
- *   既存の `<Input type="date" value={x} onChange={(e) => setX(e.target.value)} />` を
- *   以下に差し替えるだけ:
- *     <DateFieldWithActions value={x} onChange={setX} />
+ *   カレンダーは「月ナビゲーション + 7×6 の日付グリッド」のみで、
+ *   今日/クリアは常時外側 (右側) のボタンから行う設計に統一した。
  *
- * 互換性:
- *   - onChange は文字列を直接受け取る (onChange={setX} のように state setter を渡せる)
- *   - 空文字 '' がクリア状態を表現する (既存コードの `form.xxxDate || null` 変換と整合)
- *   - disabled / required は HTML input と同じセマンティクスで透過
+ * 使い方 (PR #71 の呼び出し側に変更なし — 後方互換):
+ *   <DateFieldWithActions value={x} onChange={setX} />
+ *   value / onChange は 'YYYY-MM-DD' 文字列 (空文字 '' がクリア状態)。
  */
 
-import type { ReactNode } from 'react';
-import { Input } from '@/components/ui/input';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import {
+  buildMonthGrid,
+  formatYMD,
+  parseYMD,
+  todayString,
+} from './date-field-helpers';
 
-/** 日付 (YYYY-MM-DD) を今日の文字列で返す。タイムゾーン差異を避けるためローカル時刻を使用。 */
-function todayString(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+
+type CalendarPanelProps = {
+  value: string;
+  onSelect: (value: string) => void;
+};
+
+/**
+ * 日付グリッド本体 (ポップオーバー内側)。「今日」「削除」ボタンは意図的に持たない
+ * (PR #72 要件: カレンダー内からそれらの機能を取り除く)。
+ */
+function CalendarPanel({ value, onSelect }: CalendarPanelProps) {
+  const parsed = parseYMD(value);
+  const initialY = parsed?.y ?? new Date().getFullYear();
+  const initialM = parsed?.m ?? new Date().getMonth() + 1;
+
+  // 表示中の年月 (ナビで動く)。選択値とは独立。
+  const [visibleY, setVisibleY] = useState(initialY);
+  const [visibleM, setVisibleM] = useState(initialM);
+
+  const grid = buildMonthGrid(visibleY, visibleM);
+  const today = todayString();
+
+  function prevMonth() {
+    if (visibleM === 1) {
+      setVisibleY(visibleY - 1);
+      setVisibleM(12);
+    } else {
+      setVisibleM(visibleM - 1);
+    }
+  }
+  function nextMonth() {
+    if (visibleM === 12) {
+      setVisibleY(visibleY + 1);
+      setVisibleM(1);
+    } else {
+      setVisibleM(visibleM + 1);
+    }
+  }
+
+  return (
+    <div className="w-[260px] rounded-md border bg-white p-2 shadow-md">
+      <div className="mb-2 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={prevMonth}
+          className="rounded px-2 py-1 text-sm hover:bg-gray-100"
+          aria-label="前の月"
+        >
+          ‹
+        </button>
+        <div className="text-sm font-medium" aria-live="polite">
+          {visibleY} 年 {visibleM} 月
+        </div>
+        <button
+          type="button"
+          onClick={nextMonth}
+          className="rounded px-2 py-1 text-sm hover:bg-gray-100"
+          aria-label="次の月"
+        >
+          ›
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 text-center text-xs text-gray-500">
+        {WEEKDAY_LABELS.map((label, i) => (
+          <div key={label} className={i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : ''}>
+            {label}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 grid grid-cols-7 gap-0.5">
+        {grid.flat().map((d, idx) => {
+          if (d === null) {
+            return <div key={idx} className="h-8" aria-hidden />;
+          }
+          const ymd = formatYMD(visibleY, visibleM, d);
+          const isSelected = ymd === value;
+          const isToday = ymd === today;
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => onSelect(ymd)}
+              className={[
+                'h-8 rounded text-sm transition-colors',
+                isSelected
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : isToday
+                    ? 'bg-blue-50 font-semibold text-blue-700 hover:bg-blue-100'
+                    : 'hover:bg-gray-100',
+              ].join(' ')}
+              aria-label={ymd}
+              aria-current={isToday ? 'date' : undefined}
+              aria-pressed={isSelected}
+            >
+              {d}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 type Props = {
@@ -54,16 +152,61 @@ export function DateFieldWithActions({
   todayLabel = '今日',
   clearLabel = '削除',
 }: Props) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 外部クリック / Escape で閉じる
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const displayText = value || '日付を選択';
+
   return (
     <div className="flex items-center gap-1">
-      <Input
-        type="date"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        required={required}
-        className="flex-1"
-      />
+      <div className="relative flex-1" ref={rootRef}>
+        <button
+          type="button"
+          onClick={() => !disabled && setOpen((v) => !v)}
+          disabled={disabled}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          data-required={required ? 'true' : undefined}
+          className={[
+            'flex h-9 w-full items-center rounded-md border border-input bg-background px-3 py-1 text-left text-sm shadow-xs transition-colors',
+            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-gray-50',
+            !value ? 'text-gray-400' : 'text-foreground',
+          ].join(' ')}
+        >
+          {displayText}
+        </button>
+        {open && (
+          <div className="absolute left-0 top-full z-50 mt-1" role="dialog" aria-label="日付選択">
+            <CalendarPanel
+              value={value}
+              onSelect={(ymd) => {
+                onChange(ymd);
+                setOpen(false);
+              }}
+            />
+          </div>
+        )}
+      </div>
       <Button
         type="button"
         variant="outline"
