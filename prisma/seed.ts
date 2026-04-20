@@ -10,15 +10,18 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
-
-const BCRYPT_COST = 12;
-const RECOVERY_CODE_COUNT = 10;
+import {
+  BCRYPT_COST,
+  RECOVERY_CODE_COUNT,
+  RECOVERY_CODE_CHARSET,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_REQUIRED_CHAR_TYPE_COUNT,
+} from '../src/config/security';
 
 function generateRecoveryCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = randomBytes(8);
   return Array.from(bytes)
-    .map((b) => chars[b % chars.length])
+    .map((b) => RECOVERY_CODE_CHARSET[b % RECOVERY_CODE_CHARSET.length])
     .join('')
     .replace(/(.{4})(.{4})/, '$1-$2');
 }
@@ -33,14 +36,14 @@ async function main() {
   }
 
   // パスワードポリシーチェック（簡易版）
-  if (password.length < 10) {
-    console.error('エラー: パスワードは10文字以上で設定してください');
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    console.error(`エラー: パスワードは${PASSWORD_MIN_LENGTH}文字以上で設定してください`);
     process.exit(1);
   }
 
   const types = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/];
-  if (types.filter((r) => r.test(password)).length < 3) {
-    console.error('エラー: パスワードは英大文字・英小文字・数字・記号のうち3種以上を含めてください');
+  if (types.filter((r) => r.test(password)).length < PASSWORD_REQUIRED_CHAR_TYPE_COUNT) {
+    console.error(`エラー: パスワードは英大文字・英小文字・数字・記号のうち${PASSWORD_REQUIRED_CHAR_TYPE_COUNT}種以上を含めてください`);
     process.exit(1);
   }
 

@@ -1,23 +1,30 @@
 import { z } from 'zod/v4';
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_REQUIRED_CHAR_TYPE_COUNT,
+  PASSWORD_MAX_CONSECUTIVE_SAME_CHARS,
+} from '@/config';
 
-// パスワードポリシー（設計書 DESIGN.md 9.4.2）
-// - 10文字以上 / 128文字以下
-// - 英大文字・英小文字・数字・記号のうち3種以上
-// - 連続同一文字4文字以上は禁止
+// パスワードポリシー（設計書 DESIGN.md §9.4.2 / 定数は src/config/security.ts）
 export const passwordSchema = z
   .string()
-  .min(10, 'パスワードは10文字以上で入力してください')
-  .max(128, 'パスワードは128文字以下で入力してください')
+  .min(PASSWORD_MIN_LENGTH, `パスワードは${PASSWORD_MIN_LENGTH}文字以上で入力してください`)
+  .max(PASSWORD_MAX_LENGTH, `パスワードは${PASSWORD_MAX_LENGTH}文字以下で入力してください`)
   .refine(
     (val) => {
       const types = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/];
-      return types.filter((r) => r.test(val)).length >= 3;
+      return types.filter((r) => r.test(val)).length >= PASSWORD_REQUIRED_CHAR_TYPE_COUNT;
     },
-    '英大文字・英小文字・数字・記号のうち3種以上を含めてください',
+    `英大文字・英小文字・数字・記号のうち${PASSWORD_REQUIRED_CHAR_TYPE_COUNT}種以上を含めてください`,
   )
   .refine(
-    (val) => !/(.)\1{3,}/.test(val),
-    '同じ文字を4文字以上連続して使用できません',
+    (val) => {
+      // 同一文字が PASSWORD_MAX_CONSECUTIVE_SAME_CHARS 文字以上連続していないか
+      const re = new RegExp(`(.)\\1{${PASSWORD_MAX_CONSECUTIVE_SAME_CHARS - 1},}`);
+      return !re.test(val);
+    },
+    `同じ文字を${PASSWORD_MAX_CONSECUTIVE_SAME_CHARS}文字以上連続して使用できません`,
   );
 
 export const loginSchema = z.object({

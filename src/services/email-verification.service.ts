@@ -5,8 +5,7 @@
 import { prisma } from '@/lib/db';
 import { getMailProvider } from '@/lib/mail';
 import { randomBytes, createHash } from 'crypto';
-
-const TOKEN_EXPIRY_HOURS = 24;
+import { EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS as TOKEN_EXPIRY_HOURS } from '@/config';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -128,14 +127,13 @@ export async function setupPassword(
   // リカバリーコード生成
   const { hash } = await import('bcryptjs');
   const { randomBytes } = await import('crypto');
-  const RECOVERY_CODE_COUNT = 10;
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const { RECOVERY_CODE_COUNT, RECOVERY_CODE_CHARSET, BCRYPT_COST } = await import('@/config');
 
   const recoveryCodes: string[] = [];
   for (let i = 0; i < RECOVERY_CODE_COUNT; i++) {
     const bytes = randomBytes(8);
     const code = Array.from(bytes)
-      .map((b) => chars[b % chars.length])
+      .map((b) => RECOVERY_CODE_CHARSET[b % RECOVERY_CODE_CHARSET.length])
       .join('')
       .replace(/(.{4})(.{4})/, '$1-$2');
     recoveryCodes.push(code);
@@ -143,7 +141,7 @@ export async function setupPassword(
 
   const recoveryCodeHashes = await Promise.all(
     recoveryCodes.map(async (code) => ({
-      codeHash: await hash(code, 12),
+      codeHash: await hash(code, BCRYPT_COST),
     })),
   );
 

@@ -4,6 +4,7 @@ import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import { recordAuthEvent } from '@/services/auth-event.service';
 import { authConfig } from './auth.config';
+import { LOGIN_FAILURE_MAX, TEMPORARY_LOCK_DURATION_MS } from '@/config';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
@@ -53,8 +54,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             failedLoginCount: newCount,
           };
 
-          if (newCount >= 5) {
-            updateData.lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+          if (newCount >= LOGIN_FAILURE_MAX) {
+            updateData.lockedUntil = new Date(Date.now() + TEMPORARY_LOCK_DURATION_MS);
             updateData.failedLoginCount = 0;
             await recordAuthEvent({ eventType: 'lock', userId: user.id, email, detail: { lockType: 'temporary' } });
           }

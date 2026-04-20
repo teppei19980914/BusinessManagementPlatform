@@ -7,10 +7,11 @@ import { prisma } from '@/lib/db';
 import { compare, hash } from 'bcryptjs';
 import { randomBytes, createHash } from 'crypto';
 import { recordAuthEvent } from './auth-event.service';
-
-const BCRYPT_COST = 12;
-const TOKEN_EXPIRY_MINUTES = 30;
-const PASSWORD_HISTORY_COUNT = 5;
+import {
+  BCRYPT_COST,
+  PASSWORD_HISTORY_COUNT,
+  PASSWORD_RESET_TOKEN_EXPIRY_MINUTES as TOKEN_EXPIRY_MINUTES,
+} from '@/config';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');

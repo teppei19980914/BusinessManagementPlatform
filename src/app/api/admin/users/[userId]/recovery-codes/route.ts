@@ -5,14 +5,12 @@ import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { recordAuditLog } from '@/services/audit.service';
 import { recordAuthEvent } from '@/services/auth-event.service';
-
-const BCRYPT_COST = 12;
+import { BCRYPT_COST, RECOVERY_CODE_CHARSET } from '@/config';
 
 function generateRecoveryCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = randomBytes(8);
   return Array.from(bytes)
-    .map((b) => chars[b % chars.length])
+    .map((b) => RECOVERY_CODE_CHARSET[b % RECOVERY_CODE_CHARSET.length])
     .join('')
     .replace(/(.{4})(.{4})/, '$1-$2');
 }

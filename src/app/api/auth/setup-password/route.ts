@@ -3,8 +3,7 @@ import { hash } from 'bcryptjs';
 import { setupPasswordSchema } from '@/lib/validators/auth';
 import { setupPassword, validateToken } from '@/services/email-verification.service';
 import { recordAuthEvent } from '@/services/auth-event.service';
-
-const BCRYPT_COST = 12;
+import { BCRYPT_COST } from '@/config';
 
 /**
  * GET: トークンの有効性を検証する（画面初期表示用）
