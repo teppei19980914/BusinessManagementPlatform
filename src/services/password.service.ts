@@ -5,9 +5,7 @@
 import { prisma } from '@/lib/db';
 import { hash, compare } from 'bcryptjs';
 import { recordAuthEvent } from './auth-event.service';
-
-const BCRYPT_COST = 12;
-const PASSWORD_HISTORY_COUNT = 5;
+import { BCRYPT_COST, PASSWORD_HISTORY_COUNT } from '@/config';
 
 /**
  * パスワードを変更する（ログイン中のユーザ自身）

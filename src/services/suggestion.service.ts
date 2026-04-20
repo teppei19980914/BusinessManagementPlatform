@@ -22,6 +22,12 @@
 
 import { prisma } from '@/lib/db';
 import { jaccard, unifyProjectTags, unifyKnowledgeTags, combineScores } from '@/lib/similarity';
+import {
+  SUGGESTION_TAG_WEIGHT as TAG_WEIGHT,
+  SUGGESTION_TEXT_WEIGHT as TEXT_WEIGHT,
+  SUGGESTION_SCORE_THRESHOLD as SCORE_THRESHOLD,
+  SUGGESTION_DEFAULT_LIMIT as DEFAULT_LIMIT,
+} from '@/config';
 
 /**
  * 類似度スコア (0〜1 + 内訳) 付きの提案エントリ。
@@ -71,13 +77,6 @@ export type SuggestionsResult = {
   pastIssues: PastIssueSuggestion[];
   retrospectives: RetrospectiveSuggestion[];
 };
-
-const TAG_WEIGHT = 0.5;
-const TEXT_WEIGHT = 0.5;
-/** 候補を最終的に残す閾値 (ノイズカット)。ユーザが見るリストに意味のない 0 付近を並べない */
-const SCORE_THRESHOLD = 0.05;
-/** 各カテゴリの最大件数。提案量が多すぎて読まれないのを防ぐ */
-const DEFAULT_LIMIT = 10;
 
 type ProjectContext = {
   id: string;

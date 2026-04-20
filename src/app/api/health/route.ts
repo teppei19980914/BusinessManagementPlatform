@@ -17,15 +17,13 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { DB_PING_TIMEOUT_MS } from '@/config';
 
 // Node Runtime 必須（Prisma + pg adapter は Edge Runtime 非対応）
 export const runtime = 'nodejs';
 
 // キャッシュ禁止（毎回 DB ping を実行する必要がある）
 export const dynamic = 'force-dynamic';
-
-// タイムアウト: 5 秒を超えたら DB 側に異常と判断
-const DB_PING_TIMEOUT_MS = 5_000;
 
 export async function GET() {
   const startedAt = Date.now();

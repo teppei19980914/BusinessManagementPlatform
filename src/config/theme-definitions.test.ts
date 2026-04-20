@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { THEME_DEFINITIONS, type ThemeTokens } from './definitions';
-import { THEMES } from '@/types';
+import { THEME_DEFINITIONS, type ThemeTokens } from './theme-definitions';
+import { THEMES } from './themes';
 
 /**
- * このテストの目的 (PR #73):
+ * このテストの目的 (PR #73 / PR #75 で src/config 配下に再配置):
  *   - 新しいテーマを `THEMES` に追加したが `THEME_DEFINITIONS` に追加し忘れた
  *   - トークンを追加したが一部テーマで値を設定し忘れた
  *   - 既存テーマに後から空文字や誤った値が混入した
@@ -11,7 +11,7 @@ import { THEMES } from '@/types';
  */
 
 // ThemeTokens の全キーを実行時検査用に列挙。
-// 参照: src/lib/themes/definitions.ts の型定義。ここでキーを列挙することで
+// 参照: src/config/theme-definitions.ts の型定義。ここでキーを列挙することで
 // 型 → 実行時両面で「どのトークンが必須か」が一箇所に揃う。
 const REQUIRED_TOKENS: (keyof ThemeTokens)[] = [
   'background', 'foreground',

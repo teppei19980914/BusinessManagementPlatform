@@ -6,25 +6,13 @@
 
 import type { NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-
-const publicPaths = [
-  '/login',
-  '/reset-password',
-  '/setup-password',
-  '/api/auth',
-  '/api/health', // ヘルスチェック/ウォームアップ。外部 cron から定期 ping されるため認証不要
-];
-
-/**
- * PR #67: MFA 検証フロー中だけアクセスを許可するパス。
- * /login/mfa ページ本体と、TOTP 検証 API を許可する。
- * このパス群はセッションは必要だが mfaVerified が false でもアクセス可能。
- */
-const mfaPendingPaths = [
-  '/login/mfa',
-  '/api/auth/mfa/verify',
-  '/api/auth/signout', // 検証中にログアウトできるように
-];
+import {
+  PUBLIC_PATHS,
+  MFA_PENDING_PATHS,
+  LOGIN_PATH,
+  MFA_LOGIN_PATH,
+  SESSION_JWT_MAX_AGE_SEC,
+} from '@/config';
 
 export const authConfig: NextAuthConfig = {
   providers: [
@@ -40,9 +28,9 @@ export const authConfig: NextAuthConfig = {
   trustHost: true,
   session: {
     strategy: 'jwt',
-    // JWT 自体の有効期限 (安全網): 24 時間
-    // ただしタブ / ブラウザを閉じた時点でセッション cookie が失われるので実質それまで
-    maxAge: 24 * 60 * 60,
+    // JWT 自体の有効期限 (安全網)。ただしタブ / ブラウザを閉じた時点で
+    // セッション cookie が失われるので実質はそれまで。
+    maxAge: SESSION_JWT_MAX_AGE_SEC,
   },
   /**
    * セッション cookie 化 (PR #59 Req 4):
@@ -70,11 +58,11 @@ export const authConfig: NextAuthConfig = {
     },
   },
   pages: {
-    signIn: '/login',
+    signIn: LOGIN_PATH,
   },
   callbacks: {
     authorized({ auth, request: { nextUrl } }) {
-      const isPublicPath = publicPaths.some((path) =>
+      const isPublicPath = PUBLIC_PATHS.some((path) =>
         nextUrl.pathname.startsWith(path),
       );
 
@@ -82,20 +70,20 @@ export const authConfig: NextAuthConfig = {
 
       const isLoggedIn = !!auth?.user;
       if (!isLoggedIn) {
-        return Response.redirect(new URL('/login', nextUrl));
+        return Response.redirect(new URL(LOGIN_PATH, nextUrl));
       }
 
       // PR #67: MFA 有効ユーザが TOTP 未検証で保護領域にアクセスしようとしたら
-      // /login/mfa に誘導する。検証フロー中だけ許容するパス群 (mfaPendingPaths) は
+      // /login/mfa に誘導する。検証フロー中だけ許容するパス群 (MFA_PENDING_PATHS) は
       // 通過させ、MFA 画面自体や verify API を呼べるようにする。
       const mfaPending
         = auth.user.mfaEnabled === true && auth.user.mfaVerified !== true;
       if (mfaPending) {
-        const isMfaAllowed = mfaPendingPaths.some((p) =>
+        const isMfaAllowed = MFA_PENDING_PATHS.some((p) =>
           nextUrl.pathname.startsWith(p),
         );
         if (!isMfaAllowed) {
-          return Response.redirect(new URL('/login/mfa', nextUrl));
+          return Response.redirect(new URL(MFA_LOGIN_PATH, nextUrl));
         }
       }
 

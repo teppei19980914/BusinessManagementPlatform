@@ -3722,13 +3722,16 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 
 以下のカテゴリは **原則として外出し必須**。
 
-| カテゴリ | 典型例 | 正規の格納先 |
+| カテゴリ | 典型例 | 正規の格納先 (PR #75 Phase 1 で `src/config/` に集約) |
 |---|---|---|
-| マスタデータ列挙 | タスク状態 / 公開範囲 / 優先度 / 脅威/好機 | `src/types/index.ts` (`TASK_STATUSES` / `VISIBILITIES` / `PRIORITIES` / `RISK_NATURES` 等) |
-| UI テーマ・配色 | 背景色 / テキスト色 / ボーダー色 / アクセント色 | `src/lib/themes/definitions.ts` (PR #73) |
-| 業務ドメインタグ・工程タグ・技術スタック | 提案型サービスで使う候補語彙 | `src/types/index.ts` もしくは専用定義モジュール |
+| マスタデータ列挙 | タスク状態 / 公開範囲 / 優先度 / 脅威/好機 | `src/config/master-data.ts` (`TASK_STATUSES` / `VISIBILITIES` / `PRIORITIES` / `RISK_NATURES` 等) |
+| UI テーマカタログ (表示名) | 画面テーマの ID と表示ラベル | `src/config/themes.ts` |
+| UI テーマ・配色の CSS 変数値 | 背景色 / テキスト色 / ボーダー色 / アクセント色 | `src/config/theme-definitions.ts` (PR #73) |
+| 業務ドメインタグ・工程タグ・技術スタック | 提案型サービスで使う候補語彙 | 専用定義モジュール (将来 `src/config/vocabulary.ts` を想定、要確認) |
 | 環境依存値 | DB 接続文字列 / API キー / URL / cron 設定 | `.env` (詳細は [OPERATION.md](./OPERATION.md) §1) |
-| 数値閾値で業務的意味があるもの | ログイン失敗ロック回数 / セッション有効時間 / パスワード最小文字数 | 設計書 §9 に明記しつつ、コード上は定数ファイルに |
+| 数値閾値で業務的意味があるもの | ログイン失敗ロック回数 / セッション有効時間 / パスワード最小文字数 | `src/config/security.ts` |
+| 認可判定用ルートパス | `/login`, `/api/auth`, MFA pending paths 等 | `src/config/routes.ts` |
+| 提案スコアリング重み・閾値 | TAG_WEIGHT / TEXT_WEIGHT / SCORE_THRESHOLD | `src/config/suggestion.ts` |
 | 画面ラベル・メッセージ文言 | 共通ボタン文言・エラーメッセージ | 原則 JSX 内は許容 (国際化対応は未着手)、ただし**同じ文言が 3 箇所以上**で使われたら共通化する |
 | 日付・数値のフォーマット規則 | YYYY-MM-DD / 小数桁数 / 通貨表記 | `src/lib/format/` 相当のユーティリティ (`formatDateTime` 等) |
 
@@ -3751,16 +3754,21 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 4. **テストで整合性を検証**: 「定義の全キーが想定通りに処理されるか」を網羅するテストを書く
 5. **変更手順をコメントで誘導**: 「値を追加するときはここと、ここと、ここを触る」の指示を冒頭コメントに
 
-#### 21.4.6 現在の遵守状況 (2026-04-21 時点)
+#### 21.4.6 現在の遵守状況 (2026-04-21 時点、PR #75 Phase 1 実施後)
 
 | 領域 | 遵守状況 | 備考 |
 |---|---|---|
-| マスタデータ列挙 | ✅ 準拠 | `src/types/index.ts` に集約済み |
-| テーマ・配色 (CSS 変数) | ✅ 準拠 | PR #73 で `src/lib/themes/definitions.ts` に集約 |
+| マスタデータ列挙 | ✅ 準拠 | `src/config/master-data.ts` に集約 (PR #75 Phase 1)。`src/types/index.ts` は後方互換の re-export |
+| テーマカタログ / 色定義 (CSS 変数) | ✅ 準拠 | `src/config/themes.ts` + `src/config/theme-definitions.ts` に集約 |
+| 認証・ロック・トークン期限 | ✅ 準拠 | `src/config/security.ts` に集約 (PR #75 Phase 1 で 4 ファイル重複解消) |
+| 認可判定用ルートパス | ✅ 準拠 | `src/config/routes.ts` に集約 (`PUBLIC_PATHS` / `MFA_PENDING_PATHS` / `LOGIN_PATH` / `MFA_LOGIN_PATH`) |
+| 提案スコアリング重み | ✅ 準拠 | `src/config/suggestion.ts` に集約 |
 | 環境依存値 | ✅ 準拠 | `.env` / `.env.example` に集約 |
-| 業務ドメインタグ・工程タグ | 🟡 部分的 | 現状は入力側で自由文字列。候補語彙の定義ファイル化は今後検討 (要確認) |
-| **Tailwind ハードコード色** (`bg-gray-50` / `text-gray-500` 等) | 🔴 **既知違反** | 232 箇所 / 30 以上のファイルで semantic token (`bg-muted` / `text-muted-foreground` 等) ではなく palette 色を直書き。PR #73 で問題識別済み。別 PR でリファクタ予定 |
-| 画面遷移パス (`/projects` 等の Link 先) | 🟡 部分的 | 定数化されていない。修正コストが低く影響範囲が限定的のため据え置き (§21.3 判断基準 2 に該当) |
+| 業務ドメインタグ・工程タグ (候補語彙) | 🟡 部分的 | 現状は入力側で自由文字列。候補語彙の定義ファイル化は今後検討 (要確認) |
+| **Tailwind ハードコード色** (`bg-gray-50` / `text-gray-500` 等) | 🔴 **既知違反** | 232 箇所 / 30 以上のファイルで semantic token (`bg-muted` / `text-muted-foreground` 等) ではなく palette 色を直書き。PR #75 Phase 2 (別作業) でリファクタ予定 |
+| ページ遷移の Link / href (`/projects` 等) | 🟡 部分的 | 認可判定では定数化済だが、通常の navigation Link は URL 文字列のまま。§21.3 判断基準 2 に従い据え置き |
+| UI ラベル・日本語文字列 | 🟡 部分的 | i18n 基盤が未整備のため JSX 内リテラルを許容。国際化が必要になった段階で一括抽出予定 |
+| コンポーネント固有のレイアウト定数 (Gantt の DAY_WIDTH 等) | 🟢 自己完結で許容 | 単一コンポーネント内のみで使用される数値 (§21.4.4 スコープ外) |
 
 #### 21.4.7 違反発見時の対応フロー
 

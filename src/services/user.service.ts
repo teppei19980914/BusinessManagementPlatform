@@ -6,8 +6,7 @@ import {
   sendVerificationEmail,
   EmailSendError,
 } from './email-verification.service';
-
-const BCRYPT_COST = 12;
+import { BCRYPT_COST } from '@/config';
 
 export type UserDTO = {
   id: string;
