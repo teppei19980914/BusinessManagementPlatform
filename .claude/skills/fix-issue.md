@@ -60,4 +60,4 @@ pnpm build
 - 仕様変更 → `SPECIFICATION.md`
 - 設計変更 → `DESIGN.md`（セキュリティ設計セクション含む）
 - 要件追加 → `REQUIREMENTS.md`
-- 運用手順変更 → `OPERATIONS.md`
+- 運用手順変更 → `OPERATION.md`

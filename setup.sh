@@ -229,7 +229,7 @@ echo "  $TARGET_DIR/.claude/settings.json"
 echo "  $TARGET_DIR/.claude/hooks/ (3 hooks)"
 echo "  $TARGET_DIR/.claude/skills/ (5 スキル)"
 echo "  $TARGET_DIR/.claude/agents/ (7 エージェント)"
-echo "  $TARGET_DIR/DESIGN.md / REQUIREMENTS.md / OPERATIONS.md (雛形)"
+echo "  $TARGET_DIR/DESIGN.md / REQUIREMENTS.md / OPERATION.md (雛形)"
 echo "  $TARGET_DIR/.github/workflows/security.yml.template"
 echo "  $TARGET_DIR/.gitignore (セキュリティパターン追記)"
 if [ "$ENABLE_GIT_AUTO" = "y" ]; then
@@ -238,7 +238,7 @@ fi
 echo ""
 echo "次のステップ:"
 echo "  1. CLAUDE.md をプロジェクトに合わせて調整"
-echo "  2. DESIGN.md / REQUIREMENTS.md / OPERATIONS.md を記入"
+echo "  2. DESIGN.md / REQUIREMENTS.md / OPERATION.md を記入"
 echo "  3. CI を有効化する場合は security.yml.template から .template を除去"
 echo "  4. gitleaks をインストール推奨: https://github.com/gitleaks/gitleaks"
 if [ "$ENABLE_GIT_AUTO" = "y" ]; then
