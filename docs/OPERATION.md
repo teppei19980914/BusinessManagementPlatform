@@ -1,0 +1,489 @@
+# たすきば Knowledge Relay - 運用手順書 (OPERATION.md)
+
+> 初めて本コードベースを触る人が **AI に頼らず一人で** 開発・デプロイ・障害対応できることを目的とした手順書。
+>
+> - 本書は **実ファイル (README.md / .env.example / prisma/migrations / .github/workflows / vercel.json / package.json)** から読み取れる事実のみ記載する。
+> - 推測で補った箇所は「**要確認**」と明記する。実環境で検証のうえ、本書を更新すること。
+> - 運用中の監視・定期実行・障害一次対応については既存の [OPERATIONS.md](./OPERATIONS.md) (複数形) を参照。本書は主に「開発環境の立ち上げとデプロイの機械的手順」を扱う。
+
+---
+
+## 目次
+
+1. [環境変数一覧](#1-環境変数一覧)
+2. [ローカル開発環境の起動手順](#2-ローカル開発環境の起動手順)
+3. [DB マイグレーション手順](#3-db-マイグレーション手順)
+4. [適用済みマイグレーション一覧](#4-適用済みマイグレーション一覧)
+5. [Vercel デプロイ手順](#5-vercel-デプロイ手順)
+6. [障害対応](#6-障害対応)
+7. [ロールバック手順](#7-ロールバック手順)
+
+---
+
+## 1. 環境変数一覧
+
+`.env.example` に定義されている全変数。ローカル開発は `cp .env.example .env` して編集する。本番 (Vercel) は Vercel ダッシュボードの Project Settings → Environment Variables に設定する。
+
+### 1.1 ポート設定
+
+| 変数名 | 既定値 | 用途 | 取得方法 |
+|---|---|---|---|
+| `APP_PORT` | `3000` | Next.js 開発サーバが待ち受けるポート | 既存プロセスと衝突時のみ変更 |
+| `DB_PORT` | `5433` | ローカル PostgreSQL (Docker) の公開ポート | 同上 (5432 は OS 既存 PG と衝突しやすいため既定で 5433) |
+
+### 1.2 データベース
+
+| 変数名 | 例 | 用途 |
+|---|---|---|
+| `DB_NAME` | `tasukiba` | ローカル DB の DB 名 |
+| `DB_USER` | `postgres` | ローカル DB のユーザ名 |
+| `DB_PASSWORD` | `postgres` | ローカル DB のパスワード |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5433/tasukiba` (ローカル) / `postgresql://postgres.[ref]:[password]@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true` (Supabase) | アプリが実行時に接続する DB。Supabase 利用時は **Pooler (ポート 6543)** を使う |
+| `DIRECT_URL` | `postgresql://postgres:postgres@localhost:5433/tasukiba` (ローカル) / `postgresql://postgres:[password]@db.[ref].supabase.co:5432/postgres` (Supabase) | Prisma が migration で使う直結 URL。Supabase 利用時は `db.[ref].supabase.co:5432` |
+
+> **なぜ 2 つ必要か**: Prisma の migration は lock を取るため pooler 経由だと動かない。アプリ実行は pooler 経由で接続数を抑える。
+
+**Supabase の接続文字列取得方法** (要確認で検証)
+
+1. Supabase ダッシュボードでプロジェクトを開く
+2. **Project Settings → Database → Connection String** を開く
+3. **Transaction mode (pooler)** の URI を `DATABASE_URL` に設定
+4. **Session mode (direct)** の URI を `DIRECT_URL` に設定
+
+### 1.3 アプリケーション
+
+| 変数名 | 例 | 用途 | 取得方法 |
+|---|---|---|---|
+| `NEXTAUTH_URL` | `http://localhost:3000` (ローカル) / `https://tasukiba.vercel.app` (本番) | NextAuth がリダイレクト先の URL 解決に使う | アプリが公開される URL |
+| `NEXTAUTH_SECRET` | (32 バイトのランダム文字列) | JWT の署名鍵 | ```openssl rand -base64 32``` で生成 |
+
+> **ローテーション時の注意**: `NEXTAUTH_SECRET` を変更すると全ユーザのセッション JWT が即時無効化され、強制的に再ログインとなる。
+
+### 1.4 メール送信
+
+| 変数名 | 値 | 用途 |
+|---|---|---|
+| `MAIL_PROVIDER` | `console` / `brevo` / `resend` / `smtp` | 送信方法の切替 (`console` は実送信せずコンソールへ出力) |
+| `MAIL_FROM` | `noreply@example.com` | 送信元アドレス (Brevo / Resend 共通) |
+| `MAIL_FROM_NAME` | `たすきば` | 送信元表示名 (Brevo のみ使用) |
+| `BREVO_API_KEY` | `xkeysib-xxxxx...` | Brevo API キー (`MAIL_PROVIDER=brevo` 時)。取得: <https://app.brevo.com/settings/keys/api>。送信元アドレスは Brevo ダッシュボードで事前検証必須 |
+| `RESEND_API_KEY` | `re_xxxxx...` | Resend API キー (`MAIL_PROVIDER=resend` 時)。取得: <https://resend.com/api-keys>。ドメイン未検証時はオーナーメール以外に送信不可 |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | (各 SMTP 業者の値) | SMTP 直接送信 (`MAIL_PROVIDER=smtp` 時) |
+
+> **.env.example のコメント** (2026-04-20 時点): Brevo が「★推奨」として明示されている (無料 300 通/日)。
+
+### 1.5 初期管理者 (シード用)
+
+| 変数名 | 値 | 用途 |
+|---|---|---|
+| `INITIAL_ADMIN_EMAIL` | `admin@example.com` | `pnpm db:seed` で作成する初期管理者のメール |
+| `INITIAL_ADMIN_PASSWORD` | **10 文字以上 + 英大文字・英小文字・数字・記号のうち 3 種以上** | 初期管理者のパスワード。初回ログイン時に強制変更 |
+
+> パスワードポリシー検証は `prisma/seed.ts` で実施している (`./prisma/seed.ts:36-45`)。条件を満たさないと seed が失敗する。
+
+### 1.6 その他
+
+| 変数名 | 既定値 | 用途 |
+|---|---|---|
+| `SEARCH_PROVIDER` | `pg_trgm` | 全文検索プロバイダ切替 (現状 pg_trgm のみ実装、要確認) |
+| `ENABLE_OPERATION_TRACE` | `false` | 操作トレースの有効化フラグ (要確認: 詳細は DESIGN.md) |
+| `CRON_SECRET` | (任意のランダム文字列) | Vercel Cron から `/api/cron/*` を叩く際の `Authorization: Bearer` で使用 (詳細は [OPERATIONS.md](./OPERATIONS.md)) |
+
+---
+
+## 2. ローカル開発環境の起動手順
+
+### 2.1 前提条件 (README より)
+
+- **Node.js 22 LTS**
+- **pnpm**
+- **Docker / Docker Compose** (ローカル PostgreSQL を立てる場合) または **Supabase アカウント**
+
+### 2.2 初回セットアップ
+
+```bash
+# 1. リポジトリを clone
+git clone <repository-url>
+cd BusinessManagementPlatform
+
+# 2. 依存パッケージをインストール
+pnpm install
+
+# 3. 環境変数を複製・編集
+cp .env.example .env
+#   → DATABASE_URL / DIRECT_URL / NEXTAUTH_SECRET / INITIAL_ADMIN_PASSWORD を設定
+
+# 4. (Supabase ではなくローカル PostgreSQL を使う場合)
+#    docker-compose.yml が同梱されているかは要確認。
+#    同梱されていない場合は Supabase を使うか、手動で PostgreSQL を起動する。
+
+# 5. Prisma Client の生成 + マイグレーション適用
+npx prisma generate
+npx prisma migrate dev
+#   → prisma/migrations/ の全 SQL が DB に順次適用される (初回は全テーブル作成)
+
+# 6. 初期管理者アカウントを作成
+pnpm db:seed
+#   → .env の INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD で管理者を作成
+#   → リカバリーコード 10 個が標準出力に表示される (二度と表示されないため控えておく)
+
+# 7. 開発サーバを起動
+pnpm dev
+```
+
+完了後、<http://localhost:3000> にアクセスしログイン。
+
+> **なぜ `pnpm db:seed` が必要か**: `prisma/seed.ts:36-45` でパスワードポリシーを検証し、初期管理者を `systemRole='admin'` + `forcePasswordChange=true` で作成する。これを飛ばすと誰もログインできない。
+
+### 2.3 2 回目以降の起動
+
+既に `pnpm install` と DB セットアップ済みの場合:
+
+```bash
+# 1. 最新コードに更新
+git pull
+
+# 2. 新規パッケージがあれば反映
+pnpm install
+
+# 3. 新規マイグレーションがあれば適用
+npx prisma migrate dev
+#   → 既に適用済みのマイグレーションはスキップされる (冪等)
+
+# 4. Prisma Client が古い場合は再生成 (schema.prisma 変更時)
+npx prisma generate
+
+# 5. 開発サーバ起動
+pnpm dev
+```
+
+> **tip**: `npx prisma migrate dev` は未適用のマイグレーションがあるかも同時に検出してくれる。
+
+### 2.4 使えるその他コマンド (package.json より)
+
+| コマンド | 内容 |
+|---|---|
+| `pnpm dev` | 開発サーバ起動 (Turbopack) |
+| `pnpm build` | 本番ビルド (`next build`) |
+| `pnpm start` | ビルド済みの本番サーバ起動 |
+| `pnpm lint` | ESLint 実行 |
+| `pnpm format` | Prettier で整形 |
+| `pnpm format:check` | Prettier チェックのみ (CI 用) |
+| `pnpm test` | Vitest 1 回実行 |
+| `pnpm test:watch` | Vitest ウォッチモード |
+| `pnpm db:seed` | 初期管理者作成 |
+| `pnpm db:reset` | **DB を全削除して再作成** (⚠ 全データ消失、ローカルのみ) |
+| `pnpm migrate:print <migration-name>` | マイグレーション SQL を標準出力 (Supabase SQL Editor 貼付用) |
+
+---
+
+## 3. DB マイグレーション手順
+
+### 3.1 ローカル開発 DB への適用
+
+```bash
+# 未適用マイグレーションがあれば全て適用
+npx prisma migrate dev
+
+# 既存 DB を完全リセットしてゼロから適用したい場合 (⚠ 全データ消失)
+pnpm db:reset
+```
+
+`prisma migrate dev` は `DIRECT_URL` を使って DB に直接接続しロックを取る。ローカルの PostgreSQL であれば問題なく動く。
+
+### 3.2 新しいマイグレーションを作る (スキーマ変更時)
+
+```bash
+# 1. prisma/schema.prisma を編集
+
+# 2. migration ファイルを生成 + ローカル DB に適用
+npx prisma migrate dev --name <変更内容を英数字で>
+#   → prisma/migrations/<timestamp>_<name>/migration.sql が生成される
+#   → 同時にローカル DB にも適用される
+
+# 3. Prisma Client を再生成 (通常 migrate dev が自動でやるが、念のため)
+npx prisma generate
+```
+
+### 3.3 Supabase 本番への適用 (⚠ 手動)
+
+**重要**: Vercel ビルドでは `prisma migrate deploy` を **実行していない**。理由 (README より):
+
+> Vercel ビルド環境は IPv4 のみで Supabase の直結 URL `db.[ref].supabase.co:5432` に到達できない。
+
+したがって本番への適用は **Supabase ダッシュボードの SQL Editor で手動** に実行する。
+
+#### 手順
+
+1. ローカルで SQL 本文を表示
+
+   ```bash
+   pnpm migrate:print <migration-name>
+   # 例: pnpm migrate:print 20260420_user_theme_preference
+   ```
+
+   もしくは GitHub 上で `prisma/migrations/<name>/migration.sql` を開き、**Raw** ボタンから全文コピー。
+
+2. Supabase ダッシュボードを開く → **SQL Editor** → 新規クエリ
+
+3. コピーした **SQL テキスト全体** を貼り付け ( **ファイルパスを貼り付けない** )
+
+   > ⚠ `prisma/migrations/.../migration.sql` とパスを貼ると `ERROR: 42601: syntax error at or near "prisma"` になる (README にも明記)。必ず中身の SQL テキストを貼る。
+
+4. **Run** (または `Ctrl+Enter`) で実行
+
+5. "Success. No rows returned" が表示されれば成功
+
+6. **RLS 警告が出た場合**: **Run without RLS** を選択 (本プロジェクトは全テーブル RLS なし運用、既存テーブルと同方針)
+
+### 3.4 自動化する場合 (README のメモより)
+
+DIRECT_URL を **Supavisor セッションモード** (`pooler.supabase.com:5432`) に変更した上で、`vercel.json` の `buildCommand` に `pnpm prisma migrate deploy` を追加すれば Vercel 上で自動適用できる。ただし現状は採用されていない (要確認で実装検討)。
+
+---
+
+## 4. 適用済みマイグレーション一覧
+
+`prisma/migrations/` 配下の全マイグレーション (作成日時順)。各 SQL の先頭コメントを元に「一言で何を変えたか」を記載する。
+
+| # | ディレクトリ名 | 変更内容 | 行数 |
+|---|---|---|---|
+| 1 | `20260415060313_init` | 初期スキーマ。users / sessions / recovery_codes / password_histories / projects / project_members / tasks / task_progress_logs / risks_issues / knowledges / knowledge_projects / task_knowledges / audit_logs / auth_event_logs / role_change_logs の **15 テーブル + 全インデックス + 全 FK** を作成 | 404 |
+| 2 | `20260415062105_add_estimates` | `estimates` テーブルを追加 (見積もり機能) | 27 |
+| 3 | `20260415063415_add_retrospectives` | `retrospectives` / `retrospective_comments` テーブルを追加 (振り返り機能) | 44 |
+| 4 | `20260415064254_add_email_verification_tokens` | `email_verification_tokens` テーブルを追加 (メール検証トークン) | 14 |
+| 5 | `20260415090704_add_password_reset_tokens` | `password_reset_tokens` テーブルを追加 (パスワードリセット用) | 14 |
+| 6 | `20260416_add_actual_dates` | `tasks` に `actual_start_date` / `actual_end_date` カラム追加 (実績日) | 3 |
+| 7 | `20260416_add_task_type_wbs_hierarchy` | `tasks.type` (`work_package` / `activity`) 追加、WP では不要な `assignee_id` / `planned_start_date` / `planned_end_date` を nullable 化、`planned_effort DEFAULT 0` | 15 |
+| 8 | `20260418_visibility_and_risk_nature` | PR #60。`risks_issues` に `visibility` / `risk_nature` 列追加、`retrospectives` に `visibility` 列追加、旧値 `project` / `company` を `public` に集約する UPDATE 文 (**要確認**: SQL 本文で `UPDATE "knowledge"` (単数) と記述されているが実テーブル名は `knowledges` (複数)。そのまま実行すると `relation "knowledge" does not exist` になる可能性あり。本番適用状況は Supabase で要確認) | 16 |
+| 9 | `20260419_attachments` | PR #64。`attachments` テーブル追加 (URL 参照型の汎用添付、`entity_type + entity_id` のポリモーフィック関連) | 33 |
+| 10 | `20260419_project_process_tags_and_suggestion` | PR #65。`projects.process_tags` 追加、**pg_trgm 拡張を有効化** (`CREATE EXTENSION IF NOT EXISTS pg_trgm`)、`knowledges.title` / `knowledges.content` / `risks_issues.title` / `risks_issues.content` / `retrospectives.problems` / `retrospectives.improvements` に GIN トライグラムインデックス、`knowledges.business_domain_tags` 追加 | 38 |
+| 11 | `20260420_memos` | PR #70。`memos` テーブル追加 (個人メモ、プロジェクト非依存) | 27 |
+| 12 | `20260420_user_theme_preference` | PR #72。`users.theme_preference VARCHAR(30) NOT NULL DEFAULT 'light'` 追加 (画面テーマ設定の永続化) | 5 |
+
+> **検証方法**: Supabase ダッシュボード → Database → Tables で各テーブルの有無 / カラム構成を目視、もしくは SQL Editor で `SELECT * FROM information_schema.columns WHERE table_name = '<テーブル名>';` を実行。
+
+---
+
+## 5. Vercel デプロイ手順
+
+### 5.1 `vercel.json` の内容 (ファイル全文)
+
+```json
+{
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm prisma generate && pnpm build",
+  "crons": [
+    {
+      "path": "/api/health",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}
+```
+
+- **buildCommand**: Prisma Client 生成 → Next.js ビルドのみ。`prisma migrate deploy` は**含まない** (§3.3 の理由による)
+- **crons**: `/api/health` を **毎日 00:00 UTC** にヒット (ウォームアップの保険。5 分間隔のウォームアップは外部 cron-job.org で別設定、詳細は [OPERATIONS.md](./OPERATIONS.md))
+
+### 5.2 通常デプロイ (スキーマ変更を含まない場合)
+
+**前提**: Vercel プロジェクトは GitHub リポジトリと接続済み (要確認: Vercel Dashboard で対象プロジェクトの Git 連携設定)。
+
+```bash
+# 1. 機能ブランチで作業しコミット
+git checkout -b feat/xxx
+# ... 編集 ...
+git add .
+git commit -m "機能追加: xxx"
+git push -u origin feat/xxx
+
+# 2. GitHub 上で Pull Request を作成
+#    → Vercel が PR ごとに Preview Deployment を自動生成
+
+# 3. PR レビュー・動作確認後、main にマージ
+#    → Vercel が main ブランチの Production Deployment を自動生成
+
+# 4. 本番 URL (https://tasukiba.vercel.app) にアクセスし動作確認
+```
+
+### 5.3 スキーマ変更を含むデプロイ
+
+手順の **順序が非常に重要**: **マイグレーション適用を先、デプロイを後** にしないと、新コードが旧スキーマのまま起動して `column X does not exist` 等のエラーになる。
+
+#### 推奨手順
+
+```bash
+# 1. 機能ブランチで開発 + ローカルマイグレーション作成
+git checkout -b feat/xxx
+# prisma/schema.prisma を編集
+npx prisma migrate dev --name xxx
+# ... アプリコード修正 ...
+git add .
+git commit -m "スキーマ変更: xxx"
+git push -u origin feat/xxx
+
+# 2. PR 作成 → レビュー
+```
+
+**マージ手順**:
+
+1. **本番 DB にマイグレーションを先に適用** (§3.3 の手順)
+   - Supabase ダッシュボード → SQL Editor → `migration.sql` 全文貼付 → Run
+   - "Success" を確認
+2. マイグレーションが列追加 (ADD COLUMN) かつ `DEFAULT` 指定があるなら、旧コードも**既存のまま動く** (ADD COLUMN は互換性あり)
+3. 本番 DB 更新後、**GitHub で PR をマージ** → Vercel が自動デプロイ
+4. デプロイ完了後、<https://tasukiba.vercel.app> にアクセスし動作確認
+
+#### 破壊的変更 (DROP / RENAME) の場合
+
+旧コードと新コードがしばらく併存することを考慮し、**2 段デプロイ** を検討:
+- PR (a): 新旧両対応のコードをマージ + マイグレーションは後回し
+- Supabase で手動マイグレーション適用
+- PR (b): 旧列への参照を削除
+
+**要確認**: 本プロジェクトでは現状、破壊的変更の手順例は未定義。初回適用時にユーザメンテナンス時間を取ることを推奨。
+
+---
+
+## 6. 障害対応
+
+### 6.1 Vercel ビルド失敗
+
+#### 症状
+- Vercel Dashboard → Deployments のステータスが **Failed**
+- "Build Command" のログにエラー
+
+#### 調査手順
+
+1. Vercel Dashboard → 該当 Deployment → **Build Logs** を開く
+2. 最後のエラー行を特定
+
+#### よくある原因と対処
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| `Cannot find module '@/generated/prisma'` | `pnpm prisma generate` が未実行 (buildCommand のどこかで失敗) | `vercel.json` の `buildCommand` が `pnpm prisma generate && pnpm build` のままか確認 |
+| `DATABASE_URL is not defined` | Vercel 環境変数未設定 | Project Settings → Environment Variables で `DATABASE_URL` / `DIRECT_URL` 等を設定。Production / Preview / Development それぞれにスコープ指定 |
+| `Type error: ...` (TypeScript) | 型エラー | ローカルで `pnpm build` を事前実行して同じエラーを再現し、コード側で修正 |
+| ESLint エラー | lint ルール違反 | ローカルで `pnpm lint` を実行して修正 |
+
+### 6.2 DB 接続失敗 (アプリ起動時)
+
+#### 症状
+- Vercel 関数ログに `PrismaClientInitializationError` や `Connection terminated unexpectedly`
+- `/settings` 等の DB 依存ページで 500 エラー
+
+#### 対処
+
+1. Vercel Dashboard → Deployment → **Runtime Logs** でエラーメッセージを特定
+2. 接続 URL の確認:
+   - `DATABASE_URL` が **Pooler URL** (`pooler.supabase.com:6543` + `?pgbouncer=true`) になっているか
+   - `DIRECT_URL` が **直結 URL** (`db.[ref].supabase.co:5432`) になっているか
+3. Supabase Dashboard → Database → **Roles** で `postgres` パスワードが変更されていないか確認 (変更時は全環境変数を更新)
+4. Supabase 側の **Project Pause**: Free プランは 1 週間アクセスがないと自動 pause される。Dashboard から **Resume** する
+
+### 6.3 マイグレーション失敗
+
+#### 症状
+- Supabase SQL Editor で `ERROR: ...` が返る
+- 本番で `column X does not exist` / `relation Y does not exist`
+
+#### 対処
+
+| エラー | 原因 | 対処 |
+|---|---|---|
+| `ERROR: 42601: syntax error at or near "prisma"` | SQL 本文ではなくファイルパスを貼付 | **ファイル内の SQL テキストを丸ごとコピー** して貼付 (README の警告参照) |
+| `ERROR: 42703: column "X" of relation "Y" does not exist` | 過去のマイグレーションが未適用 | §4 のマイグレーション一覧で未適用を特定 → 古い順に 1 件ずつ SQL Editor で実行 |
+| `ERROR: 42P01: relation "X" does not exist` | 同上、もしくはテーブル名の typo | §4 第 8 番 (`20260418_visibility_and_risk_nature`) の既知事案 (`knowledge` vs `knowledges`) は特に要注意 |
+| `ERROR: 42710: extension "pg_trgm" already exists` | 2 回目以降の適用 | `CREATE EXTENSION IF NOT EXISTS` なら無視してよい。`IF NOT EXISTS` 無しなら既に適用済みの証拠 |
+
+### 6.4 ローカル開発で `pnpm dev` 起動失敗
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| `Error: P1001: Can't reach database server` | ローカル PostgreSQL が起動していない | Docker Compose を起動、もしくは `DATABASE_URL` を Supabase のものに切替 |
+| `Error: P2021: The table ... does not exist` | マイグレーション未適用 | `npx prisma migrate dev` を実行 |
+| `next dev` 起動後 `http://localhost:3000` で 500 | `NEXTAUTH_SECRET` 未設定 | `openssl rand -base64 32` で生成して `.env` に設定 |
+
+---
+
+## 7. ロールバック手順
+
+### 7.1 Vercel の前バージョンへのロールバック (コードのみ)
+
+Vercel の **Rollback** 機能を使う。DB マイグレーションは巻き戻らない点に注意。
+
+#### 手順
+
+1. Vercel Dashboard → 対象プロジェクト → **Deployments** タブ
+2. 戻したいバージョン (緑の **Ready** バッジが付いた過去の Production) を選択
+3. 右上の **⋯** (メニュー) → **Promote to Production** (Vercel UI のバージョンにより **Instant Rollback** / **Rollback** と表記される場合あり、要確認)
+4. 即座に本番 URL が指定バージョンに切り替わる (新規ビルド不要、数秒〜数十秒)
+
+**補足** (Vercel の公式仕様):
+- 過去のデプロイは一定期間保持される
+- Rollback はコードのみ。**DB スキーマは戻らない**
+
+### 7.2 DB マイグレーションのロールバック
+
+Prisma の migrate には down マイグレーションの機能がない (`prisma migrate dev` は forward のみ)。本番でスキーマを戻すには **逆 SQL を手動で書く** 必要がある。
+
+#### 手順
+
+1. 直近適用したマイグレーションの中身を確認
+
+   ```bash
+   pnpm migrate:print <migration-name>
+   ```
+
+2. 逆操作の SQL を手で書く。例:
+   - `ADD COLUMN foo ...` → `ALTER TABLE xxx DROP COLUMN foo;`
+   - `CREATE TABLE foo (...)` → `DROP TABLE foo;`
+   - `CREATE INDEX foo ON ...` → `DROP INDEX foo;`
+   - `UPDATE ... SET x = 'A' WHERE x = 'B'` → **戻せない可能性あり** (上書き情報の記録がない限り不可逆)
+
+3. Supabase SQL Editor で実行
+
+4. `prisma/migrations/_prisma_migrations` テーブル (要確認: Prisma 7 での実テーブル名) から当該行を削除
+
+   ```sql
+   DELETE FROM "_prisma_migrations" WHERE migration_name = '<migration-name>';
+   ```
+
+5. Vercel のコードも §7.1 で対応バージョンへ戻す
+
+> ⚠ **破壊的操作** なので事前に Supabase Dashboard → Database → **Backups** で現状バックアップを取得してから実施。Supabase Free プランでも Point-in-Time Recovery (7 日) が使える (要確認)。
+
+### 7.3 全面復旧 (バックアップからのリストア)
+
+Supabase Dashboard → Database → **Backups** タブで過去のスナップショットから復旧する。要確認 (現プロジェクトで実施したことがあるか、本書では記録なし)。
+
+---
+
+## 付録 A. GitHub Actions の状況
+
+`.github/workflows/` には以下のファイルのみ存在 (2026-04-20 時点):
+
+| ファイル | ステータス |
+|---|---|
+| `security.yml.template` | **テンプレート** (拡張子 `.template` のため GitHub Actions は実行しない) |
+
+> 有効化する場合は拡張子を外して `security.yml` にリネーム。内容 (gitleaks / npm audit / Semgrep / CodeQL) の詳細はファイル冒頭のコメント参照。
+
+## 付録 B. 本書に書かれていないこと (別ドキュメント参照)
+
+| トピック | 参照先 |
+|---|---|
+| 監視・定期実行・未使用アカウント削除 cron | [docs/OPERATIONS.md](./OPERATIONS.md) |
+| アーキテクチャ・ER 図・権限設計 | [docs/DESIGN.md](./DESIGN.md) |
+| 機能仕様・画面仕様 | [docs/SPECIFICATION.md](./SPECIFICATION.md) |
+| MVP スケジュール | [docs/PLAN.md](./PLAN.md) |
+| 運用で得られた教訓 | [docs/knowledge/](./knowledge/) |
+
+---
+
+## 更新履歴
+
+| 日付 | 変更内容 | 担当 |
+|---|---|---|
+| 2026-04-20 | 初版作成。README.md / .env.example / prisma/migrations/ / .github/workflows/ / vercel.json / package.json から事実ベースで構成 | - |
