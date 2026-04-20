@@ -12,10 +12,14 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  ResizableColumnsProvider,
+  ResizableHead,
+  ResetColumnsButton,
+} from '@/components/ui/resizable-columns';
 import {
   Select,
   SelectContent,
@@ -330,15 +334,19 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
       </div>
 
       {/* 一覧テーブル */}
+      <ResizableColumnsProvider tableKey="projects">
+        <div className="flex justify-end pb-2">
+          <ResetColumnsButton />
+        </div>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>プロジェクト名</TableHead>
-            <TableHead>顧客名</TableHead>
-            <TableHead>開発方式</TableHead>
-            <TableHead>ステータス</TableHead>
-            <TableHead>開始予定日</TableHead>
-            <TableHead>終了予定日</TableHead>
+            <ResizableHead columnKey="name" defaultWidth={220}>プロジェクト名</ResizableHead>
+            <ResizableHead columnKey="customerName" defaultWidth={160}>顧客名</ResizableHead>
+            <ResizableHead columnKey="devMethod" defaultWidth={140}>開発方式</ResizableHead>
+            <ResizableHead columnKey="status" defaultWidth={110}>ステータス</ResizableHead>
+            <ResizableHead columnKey="plannedStartDate" defaultWidth={120}>開始予定日</ResizableHead>
+            <ResizableHead columnKey="plannedEndDate" defaultWidth={120}>終了予定日</ResizableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -375,6 +383,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
           )}
         </TableBody>
       </Table>
+      </ResizableColumnsProvider>
       {initialTotal > 20 && (
         <p className="text-sm text-gray-500">全 {initialTotal} 件中 20 件を表示</p>
       )}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -8,7 +8,7 @@ import { filterTreeByAssignee, filterTreeByStatus, taskStatusColors, UNASSIGNED_
 import { TASK_STATUSES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
-import { useSessionStringSet } from '@/lib/use-session-state';
+import { useSessionState, useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
 
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
@@ -43,8 +43,10 @@ const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
 /** 1日あたりの幅(px) */
 const DAY_WIDTH = 32;
-/** タスク列 (左固定) の幅(px) */
-const NAME_COL_WIDTH = 280;
+/** タスク列 (左固定) の幅(px) — ユーザが PR #68 でドラッグ変更可能 */
+const NAME_COL_DEFAULT_WIDTH = 280;
+const NAME_COL_MIN_WIDTH = 120;
+const NAME_COL_MAX_WIDTH = 800;
 /** 月ヘッダ高さ(px) */
 const MONTH_HEADER_H = 24;
 /** 日ヘッダ高さ(px) */
@@ -91,6 +93,37 @@ function rangeText(start: string | null | undefined, end: string | null | undefi
 
 export function GanttClient({ projectId, tasks: tree, members }: Props) {
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  // PR #68: ガントのタスク名列幅をユーザが調整可能にする (sessionStorage 永続)。
+  // チャート本体 (日付列) は固定 DAY_WIDTH で変更しない。
+  const [nameColWidth, setNameColWidth] = useSessionState<number>(
+    `gantt:${projectId}:name-col-width`,
+    NAME_COL_DEFAULT_WIDTH,
+  );
+  const dragStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const onNameColDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragStartRef.current = { startX: e.clientX, startWidth: nameColWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragStartRef.current) return;
+      const delta = ev.clientX - dragStartRef.current.startX;
+      const next = Math.max(
+        NAME_COL_MIN_WIDTH,
+        Math.min(NAME_COL_MAX_WIDTH, dragStartRef.current.startWidth + delta),
+      );
+      setNameColWidth(next);
+    };
+    const onUp = () => {
+      dragStartRef.current = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [nameColWidth, setNameColWidth]);
+  const resetNameColWidth = useCallback(() => {
+    setNameColWidth(NAME_COL_DEFAULT_WIDTH);
+  }, [setNameColWidth]);
 
   // 折りたたみ状態 (PR #61: sessionStorage 永続化)。
   // セマンティクス: Set に含まれる ID = 「折りたたみ中」。
@@ -244,13 +277,19 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
   );
 
   const chartWidth = totalDays * DAY_WIDTH;
-  const totalWidth = NAME_COL_WIDTH + chartWidth;
+  const totalWidth = nameColWidth + chartWidth;
 
   const hasAnyTask = tree.length > 0;
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">ガントチャート</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">ガントチャート</h2>
+        {/* PR #68: タスク名列の幅リセット (日付列は固定) */}
+        <Button variant="outline" size="sm" onClick={resetNameColWidth}>
+          タスク名列の幅をリセット
+        </Button>
+      </div>
 
       {/* フィルタ (担当者 + 状況、PR #61) */}
       <div className="flex flex-wrap items-center gap-2">
@@ -330,7 +369,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
             {/* 左上コーナー（縦横両方向 sticky のため z-30） */}
             <div
               className="sticky left-0 z-30 shrink-0 border-r bg-gray-50"
-              style={{ width: `${NAME_COL_WIDTH}px` }}
+              style={{ width: `${nameColWidth}px` }}
             />
             <div className="flex">
               {monthHeaders.map((mh, i) => (
@@ -351,10 +390,18 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
             style={{ top: `${MONTH_HEADER_H}px`, height: `${DAY_HEADER_H}px` }}
           >
             <div
-              className="sticky left-0 z-30 shrink-0 border-r bg-gray-50 px-3 text-xs font-medium leading-9"
-              style={{ width: `${NAME_COL_WIDTH}px` }}
+              className="sticky left-0 z-30 shrink-0 border-r bg-gray-50 px-3 text-xs font-medium leading-9 relative"
+              style={{ width: `${nameColWidth}px` }}
             >
               タスク名
+              {/* PR #68: タスク名列の右端ドラッグハンドル (日付列は固定) */}
+              <div
+                onMouseDown={onNameColDragStart}
+                className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-blue-300 active:bg-blue-500"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="タスク名列の幅を変更"
+              />
             </div>
             <div className="flex">
               {dayHeaders.map((dh, i) => {
@@ -385,7 +432,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
             {/* 週末・今日背景（全タスク行共通・チャート領域のみ）*/}
             <div
               className="pointer-events-none absolute top-0 bottom-0 flex"
-              style={{ left: `${NAME_COL_WIDTH}px`, width: `${chartWidth}px` }}
+              style={{ left: `${nameColWidth}px`, width: `${chartWidth}px` }}
               aria-hidden
             >
               {dayMarkers.map((dm) => (
@@ -406,6 +453,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
                 isCollapsed={isCollapsed}
                 minDate={minDate}
                 chartWidth={chartWidth}
+                nameColWidth={nameColWidth}
                 today={today}
                 onToggleCollapsed={toggleCollapsed}
               />
@@ -425,6 +473,8 @@ type GanttRowProps = {
   isCollapsed: boolean;
   minDate: string;
   chartWidth: number;
+  /** PR #68: 親から渡されるタスク名列幅 (ユーザがドラッグで変更可能) */
+  nameColWidth: number;
   today: string;
   onToggleCollapsed: (id: string) => void;
 };
@@ -435,6 +485,7 @@ function GanttRow({
   hasChildren,
   isCollapsed,
   minDate,
+  nameColWidth,
   chartWidth,
   today,
   onToggleCollapsed,
@@ -491,7 +542,7 @@ function GanttRow({
         <div
           className="sticky left-0 z-10 shrink-0 border-r bg-white px-2 py-2 transition-colors group-hover:bg-blue-50"
           style={{
-            width: `${NAME_COL_WIDTH}px`,
+            width: `${nameColWidth}px`,
             paddingLeft: `${depth * 16 + 8}px`,
           }}
         >

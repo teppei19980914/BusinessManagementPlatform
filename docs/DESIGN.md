@@ -3913,3 +3913,64 @@ migration で有効化済。`gin_trgm_ops` GIN インデックスで高速化。
 セキュリティ補強:
 - `/api/auth/mfa/verify` の `userId` をセッションユーザと厳格比較 (他人の TOTP 検証を防止)
 - `mfaPendingPaths` (/login/mfa, /api/auth/mfa/verify, signout) のみ検証前アクセスを許容し他は全て遮断
+
+---
+
+## 25. PR #68: 一覧列幅のドラッグリサイズ
+
+### 25.1 背景
+
+ガント画面や一覧画面で「タスク名」「件名」「顧客名」などの長文列が切り詰められ、
+ユーザが中身を確認できない状況が発生していた (既存の whitespace-nowrap + overflow-hidden)。
+ユーザ自身が UI 上で列幅を調整できるようにして画面構成を最適化できるようにする。
+
+### 25.2 共通機構
+
+`src/components/ui/resizable-columns.tsx` に集約 (DRY 原則 §21.2):
+
+| エクスポート | 役割 |
+|---|---|
+| `<ResizableColumnsProvider tableKey="...">` | 列幅状態を sessionStorage と同期 (`resizable-cols:<tableKey>` キー) |
+| `<ResizableHead columnKey="..." defaultWidth={...}>` | `<th>` + 右端ドラッグハンドル、セッション優先で幅決定 |
+| `<ResetColumnsButton />` | プロバイダ配下の幅をすべて消去 (デフォルトに戻る) |
+
+- 最小 40px / 最大 800px でクランプ
+- `sessionStorage` を使用 (タブ/ブラウザを閉じると破棄、既存の `useSessionState` パターンと統一)
+
+### 25.3 導入範囲
+
+| 画面 | tableKey | 備考 |
+|---|---|---|
+| `/projects` | `projects` | |
+| `/risks` / `/issues` | `all-risks` | typeFilter 別でも同一キー (同一テーブル構造) |
+| `/retrospectives` | `all-retrospectives` | |
+| `/knowledge` | `all-knowledge` | |
+| `/projects/[id]/risks` / `/issues` | `project-risks-<risk|issue|all>` | typeFilter で分岐 |
+| `/my-tasks` | `my-tasks` | 複数プロジェクトセクションが同一 Provider で幅を共有 |
+| `/projects/[id]/tasks` (WBS) | `project-tasks` | |
+| `/projects/[id]/gantt` | (専用実装) | タスク名列のみ対応、日付列は `DAY_WIDTH` 固定 |
+
+### 25.4 ガントチャート専用実装
+
+ガントは絶対位置レイアウトで `NAME_COL_WIDTH` を複数箇所から参照していたため、
+ResizableHead 共通機構ではなく**ガント固有の state + ドラッグ**を実装:
+
+- `useSessionState('gantt:<projectId>:name-col-width', 280)` で永続化
+- タスク名ヘッダ右端に絶対配置のドラッグハンドル
+- 「タスク名列の幅をリセット」ボタンを画面右上に配置
+- 日付列は固定 (ユーザ要求: 「日付列は固定で問題ない」)
+
+### 25.5 データフロー
+
+```
+ユーザがハンドルをドラッグ
+  → onMouseDown で startX/startWidth を capture
+  → document の mousemove で delta 計算 → setState
+  → useSessionState が sessionStorage を同期更新
+  → 次レンダーで th/div に style width 反映
+```
+
+### 25.6 Reset UX
+
+各一覧画面の右上に「列幅をリセット」ボタンを配置し、1 クリックで sessionStorage から
+当該 `tableKey` のエントリを削除 (`{}` で上書き) → 各 `<ResizableHead>` が defaultWidth に戻る。

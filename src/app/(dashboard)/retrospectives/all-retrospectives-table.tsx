@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table, TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
 import type { AllRetroDTO } from '@/services/retrospective.service';
@@ -12,6 +12,11 @@ import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
 import { formatDateTime } from '@/lib/format';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+import {
+  ResizableColumnsProvider,
+  ResizableHead,
+  ResetColumnsButton,
+} from '@/components/ui/resizable-columns';
 
 /**
  * 全振り返りテーブル (Req 9: 行クリックで編集)。
@@ -32,23 +37,26 @@ export function AllRetrospectivesTable({
   );
 
   return (
-    <>
+    <ResizableColumnsProvider tableKey="all-retrospectives">
+      <div className="flex justify-end pb-2">
+        <ResetColumnsButton />
+      </div>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="whitespace-nowrap">プロジェクト</TableHead>
-            <TableHead className="whitespace-nowrap">実施日</TableHead>
-            <TableHead>計画総括</TableHead>
-            <TableHead>実績総括</TableHead>
-            <TableHead>良かった点</TableHead>
-            <TableHead>次回以前事項</TableHead>
-            <TableHead className="whitespace-nowrap">作成日時</TableHead>
-            <TableHead className="whitespace-nowrap">作成者</TableHead>
-            <TableHead className="whitespace-nowrap">更新日時</TableHead>
-            <TableHead className="whitespace-nowrap">更新者</TableHead>
+            <ResizableHead columnKey="project" defaultWidth={140}>プロジェクト</ResizableHead>
+            <ResizableHead columnKey="conductedDate" defaultWidth={110}>実施日</ResizableHead>
+            <ResizableHead columnKey="planSummary" defaultWidth={180}>計画総括</ResizableHead>
+            <ResizableHead columnKey="actualSummary" defaultWidth={180}>実績総括</ResizableHead>
+            <ResizableHead columnKey="goodPoints" defaultWidth={180}>良かった点</ResizableHead>
+            <ResizableHead columnKey="improvements" defaultWidth={180}>次回以前事項</ResizableHead>
+            <ResizableHead columnKey="createdAt" defaultWidth={130}>作成日時</ResizableHead>
+            <ResizableHead columnKey="createdBy" defaultWidth={120}>作成者</ResizableHead>
+            <ResizableHead columnKey="updatedAt" defaultWidth={130}>更新日時</ResizableHead>
+            <ResizableHead columnKey="updatedBy" defaultWidth={120}>更新者</ResizableHead>
             {/* PR #67: 添付リンク列 */}
-            <TableHead className="whitespace-nowrap">添付</TableHead>
-            {isAdmin && <TableHead className="whitespace-nowrap">操作</TableHead>}
+            <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
+            {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -118,6 +126,6 @@ export function AllRetrospectivesTable({
         onSaved={async () => { router.refresh(); }}
         readOnly={editingRetro != null && !editingRetro.canAccessProject}
       />
-    </>
+    </ResizableColumnsProvider>
   );
 }

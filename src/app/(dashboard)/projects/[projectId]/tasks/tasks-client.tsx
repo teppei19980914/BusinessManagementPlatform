@@ -33,6 +33,11 @@ import {
   persistStagedAttachments,
   type StagedAttachment,
 } from '@/components/attachments/staged-attachments-input';
+import {
+  ResizableColumnsProvider,
+  ResizableHead,
+  ResetColumnsButton,
+} from '@/components/ui/resizable-columns';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
@@ -705,33 +710,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     await reload();
   }
 
-  // --- WP 集計再計算（修復ツール） ---
-  // PR #45 より前に作成された既存 WP の担当者集約が反映されていない場合や、
-  // 別サブツリーの更新で未伝播の集計を一括で揃える。
-  async function handleRecalculate() {
-    if (!confirm(
-      'プロジェクト内の全 WP の集計値（担当者・進捗・日程・ステータス）を再計算します。\n'
-      + '・タスクの内容自体は変更されません\n'
-      + '・WP 数が多い場合、数十秒かかることがあります\n\n'
-      + '実行しますか？',
-    )) return;
-    const res = await withLoading(() =>
-      fetch(`/api/projects/${projectId}/tasks/recalculate`, { method: 'POST' }),
-    );
-    if (!res.ok) {
-      alert('再計算に失敗しました。ページを再読み込みしてもう一度お試しください。');
-      return;
-    }
-    const json = await res.json();
-    const total = json.data?.totalWp ?? 0;
-    const updated = json.data?.updatedWp ?? 0;
-    alert(
-      `再計算が完了しました。\n`
-      + `・走査した WP: ${total} 件\n`
-      + `・値を更新した WP: ${updated} 件（残り ${total - updated} 件は既に最新）`,
-    );
-    await reload();
-  }
+  // PR #68: 集計再計算 handler は UI 撤去に伴い削除済み。
+  // API ルート `/api/projects/[id]/tasks/recalculate` 自体は残す
+  // (管理者がトラブルシュート時に直接叩く手段として温存)。
 
   // --- WBS テンプレートエクスポート (CSV) ---
   async function handleExport() {
@@ -890,14 +871,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <h2 className="text-xl font-semibold">WBS管理</h2>
         {canEditPmTl && (
           <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRecalculate}
-            title="子ACTの担当者・進捗・日程から全WPの集計値を再計算します"
-          >
-            集計再計算
-          </Button>
+          {/* PR #68: 集計再計算ボタンは UI から撤去 (運用上不要、必要時は admin が API 直接実行) */}
           <Button variant="outline" size="sm" onClick={handleExport}>
             {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
           </Button>
@@ -1212,6 +1186,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         - 日付・操作列の whitespace-nowrap は保持（「2026-」等の折返し防止）
         - 名称列のみ折返し許容（長い名前に対応）
       */}
+      <ResizableColumnsProvider tableKey="project-tasks">
+      <div className="flex justify-end pb-2">
+        <ResetColumnsButton />
+      </div>
       <div className="rounded-lg border overflow-x-auto">
         <table className="min-w-full text-xs md:text-sm">
           <thead className="bg-gray-50">
@@ -1227,13 +1205,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   />
                 </th>
               )}
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium">名称</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">担当者</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">ステータス</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">進捗&工数</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">予定期間</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">実績期間</th>
-              <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">操作</th>
+              <ResizableHead columnKey="name" defaultWidth={320}>名称</ResizableHead>
+              <ResizableHead columnKey="assignee" defaultWidth={140}>担当者</ResizableHead>
+              <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
+              <ResizableHead columnKey="progress" defaultWidth={140}>進捗&工数</ResizableHead>
+              <ResizableHead columnKey="plannedRange" defaultWidth={180}>予定期間</ResizableHead>
+              <ResizableHead columnKey="actualRange" defaultWidth={180}>実績期間</ResizableHead>
+              <ResizableHead columnKey="actions" defaultWidth={100}>操作</ResizableHead>
             </tr>
           </thead>
           <tbody>
@@ -1269,6 +1247,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </tbody>
         </table>
       </div>
+      </ResizableColumnsProvider>
 
       {/* 編集ダイアログ: ロールに応じて PM/TL 編集項目・実績項目を出し分ける */}
       <Dialog open={editingTask != null} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>

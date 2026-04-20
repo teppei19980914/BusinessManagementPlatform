@@ -9,6 +9,11 @@ import type { TaskDTO } from '@/services/task.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
 import { filterTreeByStatus, taskStatusColors } from '@/lib/task-tree-utils';
+import {
+  ResizableColumnsProvider,
+  ResizableHead,
+  ResetColumnsButton,
+} from '@/components/ui/resizable-columns';
 
 type ProjectGroup = {
   projectId: string;
@@ -103,10 +108,12 @@ export function MyTasksClient({ projectGroups, today }: Props) {
   }
 
   return (
+    <ResizableColumnsProvider tableKey="my-tasks">
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">マイタスク</h2>
         <div className="flex items-center gap-2">
+          <ResetColumnsButton />
           <MultiSelectFilter
             label="状況"
             options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
@@ -157,12 +164,12 @@ export function MyTasksClient({ projectGroups, today }: Props) {
               <table className="min-w-full text-xs md:text-sm">
                 <thead className="bg-white">
                   <tr>
-                    <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium">名称</th>
-                    <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">ステータス</th>
-                    <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">進捗&工数</th>
-                    <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">予定期間</th>
-                    <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">実績期間</th>
-                    <th className="px-1.5 py-1.5 md:px-3 md:py-2 text-left font-medium whitespace-nowrap">優先度</th>
+                    <ResizableHead columnKey="name" defaultWidth={300}>名称</ResizableHead>
+                    <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
+                    <ResizableHead columnKey="progress" defaultWidth={140}>進捗&工数</ResizableHead>
+                    <ResizableHead columnKey="plannedRange" defaultWidth={180}>予定期間</ResizableHead>
+                    <ResizableHead columnKey="actualRange" defaultWidth={180}>実績期間</ResizableHead>
+                    <ResizableHead columnKey="priority" defaultWidth={80}>優先度</ResizableHead>
                   </tr>
                 </thead>
                 <tbody>
@@ -183,6 +190,7 @@ export function MyTasksClient({ projectGroups, today }: Props) {
         );
       })}
     </div>
+    </ResizableColumnsProvider>
   );
 }
 
