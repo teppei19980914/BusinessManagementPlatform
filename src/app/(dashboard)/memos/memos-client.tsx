@@ -172,7 +172,7 @@ export function MemosClient({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">全メモ</h2>
+        <h2 className="text-xl font-semibold">メモ</h2>
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">{memos.length} 件</span>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -264,9 +264,8 @@ export function MemosClient({
                     {VISIBILITY_LABELS[m.visibility] ?? m.visibility}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-sm text-gray-600">
-                  {m.authorName ?? '-'}{m.isMine && <span className="ml-1 text-xs text-blue-600">(自分)</span>}
-                </TableCell>
+                {/* PR #71: /memos 画面は常に自分のメモのみ表示されるため (自分) バッジは省略 */}
+                <TableCell className="text-sm text-gray-600">{m.authorName ?? '-'}</TableCell>
                 <TableCell className="whitespace-nowrap text-sm text-gray-600">{formatDateTime(m.updatedAt)}</TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />

@@ -26,6 +26,8 @@ const navItems = [
   { href: '/issues', label: '全課題' },
   { href: '/retrospectives', label: '全振り返り' },
   { href: '/knowledge', label: '全ナレッジ' },
+  // PR #71: 公開メモの横断ビュー (個人管理はアカウントメニューの「メモ」から)
+  { href: '/all-memos', label: '全メモ' },
 ];
 
 const adminNavItems = [
@@ -92,14 +94,17 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           >
             マイタスク
           </Link>
-          {/* PR #70: 全メモ (アカウント個人の知見置き場、public メモは他人も閲覧可) */}
+          {/*
+            PR #71: ドロップダウン配下は「メモ」(個人管理画面 /memos) に改称。
+            横断の「全メモ」(/all-memos) は上部ナビに移動した。
+          */}
           <Link
             href="/memos"
             role="menuitem"
             className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
             onClick={() => setOpen(false)}
           >
-            全メモ
+            メモ
           </Link>
           <Link
             href="/settings"

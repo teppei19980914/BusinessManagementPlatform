@@ -4041,5 +4041,39 @@ PR #64 の polymorphic attachments 機構を `entityType='memo'` で拡張。
 | フェーズ | 内容 | 状態 |
 |---|---|---|
 | Phase 1 | Memo 基本 CRUD + visibility + URL 添付 | PR #70 で実装 |
+| Phase 1.5 | UI を「メモ (個人管理)」と「全メモ (横断 read-only)」に分離 | PR #71 で実装 |
 | Phase 2 | 「この Memo を Knowledge に昇格」ボタン (個人知見を社内資産に展開) | 未着手 (別 PR) |
 | Phase 3 | Memo をソースとした提案サジェスト (匿名化して PR #65 に組込) | 未着手 |
+
+### 26.7 PR #71: UI 分離の詳細
+
+旧 `/memos` (PR #70) は「自分のメモ + 他人の public メモ」を同一画面に混在表示していた。
+PR #71 で責務を明確化するため、以下の 2 画面に分離した。
+
+| 画面 | URL | 役割 | 導線 | 操作 |
+|---|---|---|---|---|
+| メモ | `/memos` | 個人管理 (自分のメモ CRUD) | ユーザ名プルダウン | 作成・編集・削除 |
+| 全メモ | `/all-memos` | 公開メモの横断閲覧 | 上部ナビ (全リスク/全課題 等と同列) | 参照のみ (read-only) |
+
+**サービス層** (`memo.service.ts`) の変更:
+
+```ts
+// PR #70 の listMemosForViewer を 2 つに分割 (PR #71)
+listMyMemos(viewerUserId)       // /memos 用: 自分のメモ (private + public)
+listPublicMemos(viewerUserId)   // /all-memos 用: 全 public メモ
+```
+
+**API 層** の変更:
+
+- `GET /api/memos?scope=mine|public` の 2 モードに対応
+- scope 未指定 → 既定 `mine` (後方互換)
+
+**UI 層** の変更:
+
+- `memos-client.tsx`: タイトルを「メモ」に変更、(自分) バッジ削除 (全件自分のため)
+- `all-memos-client.tsx`: 新設。`fieldset disabled` で全入力を read-only 化、添付も `canEdit={false}`
+- `dashboard-header.tsx`: ドロップダウンは「メモ」、ナビに「全メモ」を追加
+
+**認可は PR #70 から変更なし**:
+- 他人の private メモは `/all-memos` でも表示されない (listPublicMemos で visibility='public' のみ返す)
+- 全メモ画面からの編集試行は UI にボタンがないため発生しないが、もし直接 API を叩いても `/api/memos/:id` PATCH は作成者チェックで 404 を返す (二重防御)
