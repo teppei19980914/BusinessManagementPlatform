@@ -52,19 +52,26 @@ function toDTO(
 }
 
 /**
- * 「全メモ」画面用の一覧取得。
- * 閲覧者自身のメモ (private も含む) + 他アカウントの public メモのみ返す。
- * admin であっても他者の private は返さない (完全非公開が要件)。
+ * 「メモ」画面 (/memos) 用 — 閲覧ユーザ自身のメモのみ返す (PR #71)。
+ * private / public 問わず、自分が作成した全件。ここは編集/削除可能な個人管理画面。
  */
-export async function listMemosForViewer(viewerUserId: string): Promise<MemoDTO[]> {
+export async function listMyMemos(viewerUserId: string): Promise<MemoDTO[]> {
   const rows = await prisma.memo.findMany({
-    where: {
-      deletedAt: null,
-      OR: [
-        { userId: viewerUserId },           // 自分の全メモ (private/public)
-        { visibility: 'public' },           // 他人の public メモ
-      ],
-    },
+    where: { deletedAt: null, userId: viewerUserId },
+    include: { author: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return rows.map((m) => toDTO(m, viewerUserId));
+}
+
+/**
+ * 「全メモ」画面 (/all-memos) 用 — visibility='public' のメモを全件返す (PR #71)。
+ * 自分の公開メモも含む (自分のメモでも「公開範囲=全メモに公開」に設定したものは全員が閲覧対象)。
+ * この画面は read-only。編集/削除は個別の /memos 画面側で行う。
+ */
+export async function listPublicMemos(viewerUserId: string): Promise<MemoDTO[]> {
+  const rows = await prisma.memo.findMany({
+    where: { deletedAt: null, visibility: 'public' },
     include: { author: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });

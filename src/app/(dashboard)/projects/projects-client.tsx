@@ -38,6 +38,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { PROJECT_STATUSES, DEV_METHODS } from '@/types';
 import type { ProjectDTO } from '@/services/project.service';
+import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -242,20 +243,20 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>開始予定日</Label>
-                    <Input
-                      type="date"
+                    <DateFieldWithActions
                       value={form.plannedStartDate}
-                      onChange={(e) => setForm({ ...form, plannedStartDate: e.target.value })}
+                      onChange={(v) => setForm({ ...form, plannedStartDate: v })}
                       required
+                      hideClear
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>終了予定日</Label>
-                    <Input
-                      type="date"
+                    <DateFieldWithActions
                       value={form.plannedEndDate}
-                      onChange={(e) => setForm({ ...form, plannedEndDate: e.target.value })}
+                      onChange={(v) => setForm({ ...form, plannedEndDate: v })}
                       required
+                      hideClear
                     />
                   </div>
                 </div>

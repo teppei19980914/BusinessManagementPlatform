@@ -1,17 +1,19 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
-import { listMemosForViewer } from '@/services/memo.service';
+import { listMyMemos } from '@/services/memo.service';
 import { MemosClient } from './memos-client';
 
 /**
- * 全メモ画面 (PR #70)。
- * 自分のメモ (private/public すべて) + 他人の public メモを一覧表示する。
- * admin も含め、他人の private メモは閲覧不可 (完全非公開が要件)。
+ * メモ画面 (PR #71 で「全メモ」から「メモ (自分のみ)」に変更)。
+ * ユーザ名プルダウンからアクセスする個人専用画面。
+ *   - 自分のメモのみ (private / public 両方) を一覧表示
+ *   - 作成・編集・削除すべて可能
+ *   - visibility='public' にしたメモは `/all-memos` 画面で他ユーザからも閲覧される
  */
 export default async function MemosPage() {
   const session = await auth();
   if (!session?.user) redirect('/login');
 
-  const memos = await listMemosForViewer(session.user.id);
+  const memos = await listMyMemos(session.user.id);
   return <MemosClient memos={memos} viewerUserId={session.user.id} />;
 }

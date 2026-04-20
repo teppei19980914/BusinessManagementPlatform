@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { createMemoSchema } from '@/lib/validators/memo';
-import { createMemo, listMemosForViewer } from '@/services/memo.service';
+import { createMemo, listMyMemos, listPublicMemos } from '@/services/memo.service';
 import { recordAuditLog } from '@/services/audit.service';
 
 /**
- * GET /api/memos
- * 「全メモ」一覧: 自分の全メモ (private/public) + 他人の public メモを返す。
+ * GET /api/memos?scope=mine|public (PR #71 で分割)
+ *   - scope=mine (既定): 自分のメモのみ (private/public 両方)
+ *   - scope=public      : 全公開メモ (自分の公開メモ含む、他人のメモは public のみ)
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const data = await listMemosForViewer(user.id);
+  const scope = new URL(req.url).searchParams.get('scope') === 'public' ? 'public' : 'mine';
+  const data = scope === 'public'
+    ? await listPublicMemos(user.id)
+    : await listMyMemos(user.id);
   return NextResponse.json({ data });
 }
 

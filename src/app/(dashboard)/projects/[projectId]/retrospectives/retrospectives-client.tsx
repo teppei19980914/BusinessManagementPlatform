@@ -11,6 +11,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
+import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -150,7 +151,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
                 </div>
                 <div className="space-y-2">
                   <Label>実施日</Label>
-                  <Input type="date" value={form.conductedDate} onChange={(e) => setForm({ ...form, conductedDate: e.target.value })} required />
+                  <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
                 </div>
                 <div className="space-y-2">
                   <Label>計画総括</Label>

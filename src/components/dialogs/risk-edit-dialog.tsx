@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 
 /**
  * リスク/課題の編集に必要な最小限の形状。RiskDTO / AllRiskDTO 両方と互換。
@@ -211,7 +212,7 @@ export function RiskEditDialog({
           </div>
           <div className="space-y-2">
             <Label>期限</Label>
-            <Input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} />
+            <DateFieldWithActions value={form.deadline} onChange={(v) => setForm({ ...form, deadline: v })} />
           </div>
           </fieldset>
           {/* PR #64 Phase 2: 関連 URL (エビデンス・証跡・関連チケット等) */}
