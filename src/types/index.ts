@@ -127,3 +127,36 @@ export const EFFORT_UNITS = {
 } as const;
 
 export type EffortUnit = keyof typeof EFFORT_UNITS;
+
+/**
+ * 画面テーマ (PR #72):
+ *   ユーザが設定画面で選択する全画面テーマ。`<html data-theme="...">` に出力され、
+ *   globals.css の [data-theme="..."] セレクタで CSS 変数群が切り替わる。
+ *   'light' が既定 (従来挙動互換)。
+ *
+ * 分類:
+ *   - light / dark          : 2 段階のモノトーン基調
+ *   - pastel-*              : パステルカラー (柔らかい低彩度)
+ *   - pop-*                 : ポップカラー (高彩度・元気な印象)
+ *   - 各カラーバリアントは 青 / 緑 / 黄 / 赤 の 4 種を用意
+ */
+export const THEMES = {
+  light: 'ライトテーマ（デフォルト）',
+  dark: 'ダークテーマ',
+  'pastel-blue': 'パステル（青）',
+  'pastel-green': 'パステル（緑）',
+  'pastel-yellow': 'パステル（黄）',
+  'pastel-red': 'パステル（赤）',
+  'pop-blue': 'ポップ（青）',
+  'pop-green': 'ポップ（緑）',
+  'pop-yellow': 'ポップ（黄）',
+  'pop-red': 'ポップ（赤）',
+} as const;
+
+export type ThemeId = keyof typeof THEMES;
+
+/** 未知の文字列を安全にテーマ ID へ丸める (DB が将来値を持ちうるため)。 */
+export function toSafeThemeId(value: string | null | undefined): ThemeId {
+  if (value && value in THEMES) return value as ThemeId;
+  return 'light';
+}

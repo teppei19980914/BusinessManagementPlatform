@@ -18,6 +18,11 @@ declare module 'next-auth' {
        * パスワード認証直後は false、/login/mfa で検証成功すると true に更新される。
        */
       mfaVerified: boolean;
+      /**
+       * PR #72: 画面テーマ (THEMES のキー)。layout.tsx の <html data-theme=...> と
+       * 設定画面の初期選択で参照する。既定 'light'。
+       */
+      themePreference: string;
     };
   }
 }

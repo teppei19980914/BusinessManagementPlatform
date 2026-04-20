@@ -29,6 +29,9 @@ model User {
   mfaEnabledAt      DateTime? @map("mfa_enabled_at") @db.Timestamptz
   lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz
   forcePasswordChange Boolean @default(false) @map("force_password_change")
+  // PR #72: 画面テーマ設定。既定 'light' (ライトテーマ)。ユーザが明示的に変更した
+  // 値がセッションをまたいで永続適用されるため、sessionStorage ではなく DB 永続化する。
+  themePreference   String    @default("light") @map("theme_preference") @db.VarChar(30)
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt         DateTime? @map("deleted_at") @db.Timestamptz

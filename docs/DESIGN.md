@@ -4124,3 +4124,76 @@ listPublicMemos(viewerUserId)   // /all-memos 用: 全 public メモ
 
 - 必須項目 (required): 削除ボタンを隠す (`hideClear`) → 空にできないのにボタンがあると誤解を招くため
 - 任意項目: 削除ボタン表示 (空時は disabled)
+
+---
+
+## 28. PR #72: 自作カレンダーとテーマ設定
+
+### 28.1 カレンダー自作への置き換え (Task 1)
+
+ブラウザ標準 `<input type="date">` は、カレンダーポップオーバー内に「今日」「クリア」相当の
+ベンダー提供ボタンを持ち、CSS / JS からは非表示化できない。PR #71 で右側に外出しした
+「今日」「削除」ボタンと重複するため、ユーザ体験として冗長だった (要望: カレンダー内から
+それらを消してほしい)。
+
+対応として `DateFieldWithActions` を以下に刷新した:
+
+- `<input type="date">` を廃止し、自作の Popover + 日付グリッドに置換
+- カレンダー内は「月ナビ (‹ / ›) + 日付グリッド」のみ。今日 / クリアは**常時外側**のボタンで操作
+- API サーフェス (`value` / `onChange` / `disabled` / `required` / `hideClear` / `todayLabel` / `clearLabel`) は
+  PR #71 と完全互換 — 呼び出し側 11 箇所は変更なし
+- 純粋関数 (`parseYMD` / `formatYMD` / `buildMonthGrid` / `todayString`) を
+  `date-field-helpers.ts` に分離し、vitest でユニットテスト (9 ケース)
+
+### 28.2 テーマ設定 (Task 3)
+
+#### 28.2.1 テーマカタログ
+
+`src/types/index.ts` の `THEMES` を唯一の真実とし、以下 10 種を提供:
+
+| ID | 表示名 | 分類 |
+|---|---|---|
+| `light` | ライトテーマ（デフォルト） | 基調 |
+| `dark` | ダークテーマ | 基調 |
+| `pastel-blue` | パステル（青） | パステル (低彩度) |
+| `pastel-green` | パステル（緑） | パステル |
+| `pastel-yellow` | パステル（黄） | パステル |
+| `pastel-red` | パステル（赤） | パステル |
+| `pop-blue` | ポップ（青） | ポップ (高彩度) |
+| `pop-green` | ポップ（緑） | ポップ |
+| `pop-yellow` | ポップ（黄） | ポップ |
+| `pop-red` | ポップ（赤） | ポップ |
+
+`toSafeThemeId(unknown)` で DB / セッションから来た不正値を `light` に安全に丸めて返す
+(攻撃面を閉じる)。
+
+#### 28.2.2 永続化方式
+
+要件「セッションにかかわらず永続的に適用」に対して、sessionStorage は不適切 (タブ/ブラウザ
+閉じで失われる)。よって `users.theme_preference VARCHAR(30) NOT NULL DEFAULT 'light'` を追加
+(`prisma/migrations/20260420_user_theme_preference/migration.sql`)。
+
+- 書き込み経路: `PATCH /api/settings/theme` → Zod で `THEMES` のキー enum 検証 → `prisma.user.update` → 200
+- 読み出し経路: NextAuth の `authorize` → `jwt` token → `session.user.themePreference`
+- 反映経路: Root layout (`src/app/layout.tsx`) を `async` 化し、`<html data-theme={theme}>` を
+  サーバ側で出力 → フラッシュなし
+
+#### 28.2.3 CSS 変数切り替え
+
+`src/app/globals.css` に `[data-theme="..."]` セレクタで 9 テーマ分の CSS 変数を上書き定義。
+既存の shadcn トークン (`--background` / `--primary` / `--accent` ...) を使うコンポーネントには
+追加改修は不要で、html の `data-theme` 値の変更だけで全画面に反映される。
+
+色相 (oklch の hue 値) は blue=240 / green=150 / yellow=90 / red=20 の 4 軸で統一し、
+パステルは低彩度 (`chroma` 0.02〜0.04)、ポップは高彩度 (0.06〜0.2) を採用。
+
+#### 28.2.4 クライアントからのテーマ変更フロー
+
+設定画面 (`settings-client.tsx`) のラジオボタン型 UI で:
+
+1. `PATCH /api/settings/theme` → DB 更新
+2. `useSession().update({ themePreference })` → JWT の `token.themePreference` を更新 (再ログイン不要)
+3. `router.refresh()` → Root layout が新しい `data-theme` で再レンダリングされ全画面に反映
+
+React の immutability 方針に従い、`document.documentElement.dataset.theme` を直接
+書き換える処理は行わない (ESLint `react-hooks/immutability` に抵触するため)。
