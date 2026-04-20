@@ -135,7 +135,7 @@
 
 | PR | 対応階層 | 実装 |
 |---|---|---|
-| **PR #28**<br>サーバ凍結防止 | Function + DB コネクションの温存 | `/api/health` エンドポイント新設（DB ping 付き）、`instrumentation.ts` で起動時 `prisma.$connect()`、`vercel.json` 日次 cron、**cron-job.org による 5 分毎外部 ping**（運用手順を `OPERATIONS.md` 化）|
+| **PR #28**<br>サーバ凍結防止 | Function + DB コネクションの温存 | `/api/health` エンドポイント新設（DB ping 付き）、`instrumentation.ts` で起動時 `prisma.$connect()`、`vercel.json` 日次 cron、**cron-job.org による 5 分毎外部 ping**（運用手順を `OPERATIONS.md` 化。PR #74 で `OPERATION.md` に統合）|
 | **PR #29**<br>初期ペイロード削減 | B-05 のアーキテクチャ改修 | タブ単位の lazy fetch（`useLazyFetch` フック新設）、`page.tsx` を project + membership のみに縮小、各タブは初回表示時に `/api/projects/[id]/.../...` を呼ぶ方式へ |
 | **PR #30**<br>体感速度改善 | ルート遷移時の空白時間をゼロに | `loading.tsx` を主要 5 ルートに配置、`Skeleton` 共通コンポーネント新設、App Router の自動 Suspense 境界で SSR 処理中に骨格 UI を即時描画 |
 
@@ -186,7 +186,7 @@
 | ヘルスチェック | `/api/health/route.ts` 新設 + テスト | #28 |
 | デプロイ設定 | `vercel.json` に日次 cron 保険 | #28 |
 | UI | `components/ui/skeleton.tsx` + 5 ルートの `loading.tsx` | #30 |
-| ドキュメント | `OPERATIONS.md` 新規 + `DESIGN.md §17.6` + `KNW-002` | #25, #28 |
+| ドキュメント | `OPERATIONS.md` 新規 (PR #74 で `OPERATION.md` に統合) + `DESIGN.md §17.6` + `KNW-002` | #25, #28 |
 | 計測データ | before/現行プログラム/, after/次期プログラム/, after/コールドスタートとデータ増の影響改修/ | #26, #27, #30 |
 
 テスト件数: **216 → 219 件**（+3）、全合格を全 PR で確認。
@@ -202,7 +202,7 @@
 - cron-job.org ダッシュボードで **tasukiba ジョブ**が Enabled 状態であること
 - Last Events が連続して `200 OK` であること（失敗が続いている場合、即座に原因調査）
 - ジョブが削除された場合、**プロジェクト詳細画面の TTFB がコールドスタート時 500-1000 ms に跳ね上がる**ため早期検知が必要
-- 手順書は [`docs/OPERATIONS.md`](../../OPERATIONS.md) §3 参照
+- 手順書は [`docs/OPERATION.md`](../../OPERATION.md) §9 (cron-job.org ウォームアップ設定手順) 参照
 
 ### 6.2 警戒すべきアンチパターン（再発防止）
 
@@ -235,7 +235,7 @@
 - [`before/タスク更新処理パフォーマンス/`](./before/タスク更新処理パフォーマンス/) — タスク更新時の計測（現行）
 - [`../../knowledge/KNW-002_performance-optimization-patterns.md`](../../knowledge/KNW-002_performance-optimization-patterns.md) — アンチパターン詳細
 - [`../../DESIGN.md §17.6`](../../DESIGN.md) — 設計書反映版
-- [`../../OPERATIONS.md`](../../OPERATIONS.md) — 運用手順書（cron-job.org 設定含む）
+- [`../../OPERATION.md`](../../OPERATION.md) — 運用手順書（cron-job.org 設定含む）
 
 ---
 
