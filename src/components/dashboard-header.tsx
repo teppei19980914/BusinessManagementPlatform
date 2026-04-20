@@ -16,7 +16,8 @@ type DashboardHeaderProps = {
 
 const navItems = [
   { href: '/projects', label: 'プロジェクト' },
-  { href: '/my-tasks', label: 'マイタスク' },
+  // PR #69: マイタスクはナビから撤去し、アカウントメニュー配下に移動した
+  // (ユーザ個人専用の画面なので、共有ナビではなくアカウント文脈に寄せる)
   // 全プロジェクト横断で閲覧できるナレッジ資産（リスク/課題・振り返り・ナレッジ）。
   // プロジェクト詳細タブの「○○一覧」はそのプロジェクトに紐づく一覧、最上部タブは
   // 全プロジェクトの集約ビュー。
@@ -82,6 +83,15 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           role="menu"
           className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-md border bg-white shadow-md"
         >
+          {/* PR #69 Task 3: マイタスクはナビから撤去してこのメニューに配置 (個人専用画面) */}
+          <Link
+            href="/my-tasks"
+            role="menuitem"
+            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            onClick={() => setOpen(false)}
+          >
+            マイタスク
+          </Link>
           <Link
             href="/settings"
             role="menuitem"

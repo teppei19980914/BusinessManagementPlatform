@@ -1347,6 +1347,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                         // 整合性ルール: 未着手→両クリア、完了以外→実績終了クリア
                         if (v === 'not_started') { next.actualStartDate = ''; next.actualEndDate = ''; }
                         else if (v !== 'completed') { next.actualEndDate = ''; }
+                        // status=完了 → 進捗 100% (既存ルール、UI 側でも即反映)
+                        if (v === 'completed') { next.progressRate = 100; }
                         setEditForm(next);
                       }}
                       className={nativeSelectClass}
@@ -1356,7 +1358,19 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   </div>
                   <div className="space-y-2">
                     <Label>進捗率</Label>
-                    <NumberInput min={1} max={100} value={editForm.progressRate} onChange={(n) => setEditForm({ ...editForm, progressRate: n })} />
+                    <NumberInput
+                      min={1}
+                      max={100}
+                      value={editForm.progressRate}
+                      onChange={(n) => {
+                        // PR #69 Task 1: 進捗 100% → ステータス=完了 を UI でも即強制
+                        const next = { ...editForm, progressRate: n };
+                        if (n === 100 && editForm.status !== 'completed') {
+                          next.status = 'completed';
+                        }
+                        setEditForm(next);
+                      }}
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2">

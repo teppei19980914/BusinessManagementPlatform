@@ -319,16 +319,34 @@ export async function updateTask(
   if (input.isMilestone !== undefined) data.isMilestone = input.isMilestone;
   if (input.notes !== undefined) data.notes = input.notes;
 
-  // status / actualStartDate / actualEndDate はステータス整合性ルールに基づき一括正規化する。
+  // status / progressRate / actualStartDate / actualEndDate はステータス整合性ルールに基づき一括正規化する。
   // どれか 1 つでも変わる場合は現在値を読んで final 状態を確定し、ルール適用後に書き込む。
-  if (input.status !== undefined || input.actualStartDate !== undefined || input.actualEndDate !== undefined) {
+  if (
+    input.status !== undefined
+    || input.progressRate !== undefined
+    || input.actualStartDate !== undefined
+    || input.actualEndDate !== undefined
+  ) {
     const current = await prisma.task.findUnique({
       where: { id: taskId },
-      select: { status: true, actualStartDate: true, actualEndDate: true },
+      select: { status: true, progressRate: true, actualStartDate: true, actualEndDate: true },
     });
     if (!current) throw new Error('NOT_FOUND');
 
-    const finalStatus = input.status ?? current.status;
+    const inputStatus = input.status;
+    const inputProgress = input.progressRate;
+    // PR #69 Task 1: status と progressRate の整合性を双方向に強制する。
+    // (既存: status=completed → progress=100 / 新規: progress=100 → status=completed)
+    //
+    // 同時指定時の優先順:
+    //   - progress=100 と status!=completed を同時に受け取った場合は
+    //     「進捗 100% ならば完了」の方を優先 (業務ルールとして「100% で未完了」は矛盾するため)
+    //   - progress<100 と status=completed を同時に受け取った場合は従来通り
+    //     「status=completed → progress=100」を優先
+    let finalStatus = inputStatus ?? current.status;
+    if (inputProgress === 100 && finalStatus !== 'completed') {
+      finalStatus = 'completed';
+    }
     const providedStart
       = input.actualStartDate !== undefined
         ? (input.actualStartDate ? new Date(input.actualStartDate) : null)
@@ -431,6 +449,11 @@ export async function bulkUpdateTasks(
   // 個別タスクの現行値を壊さない（どのみち全員 completed で統一される）。
   if (updates.status === 'completed') {
     data.progressRate = 100;
+  }
+  // PR #69 Task 1: 進捗率=100 → ステータス=完了 の逆方向整合性も強制する。
+  // bulk で「全件進捗 100% にする」ような運用があった場合でも、状況欄が自動で完了に揃う。
+  if (updates.progressRate === 100 && updates.status === undefined) {
+    data.status = 'completed';
   }
 
   // status / actualStartDate / actualEndDate はステータス整合性ルールに基づき一括正規化する。
@@ -540,21 +563,24 @@ export async function updateTaskProgress(
     where: { id: taskId },
     select: { actualStartDate: true, actualEndDate: true },
   });
+
+  // PR #69 Task 1: 双方向の整合性ルール。
+  //   - status=completed → progress=100 (既存)
+  //   - progress=100 → status=completed (新規、進捗 100% が先でも完了に揃える)
+  const finalStatus = input.progressRate === 100 ? 'completed' : input.status;
   const normalized = normalizeActualDatesForStatus(
-    input.status,
+    finalStatus,
     current?.actualStartDate ?? null,
     current?.actualEndDate ?? null,
   );
-
-  // ステータス=完了 → 進捗率=100 の整合性ルール（集計前に適用）
-  const normalizedProgress = input.status === 'completed' ? 100 : input.progressRate;
+  const normalizedProgress = finalStatus === 'completed' ? 100 : input.progressRate;
 
   // タスク本体の進捗率・ステータス・実績日付を更新
   const task = await prisma.task.update({
     where: { id: taskId },
     data: {
       progressRate: normalizedProgress,
-      status: input.status,
+      status: finalStatus,
       actualStartDate: normalized.actualStartDate,
       actualEndDate: normalized.actualEndDate,
       updatedBy: userId,
