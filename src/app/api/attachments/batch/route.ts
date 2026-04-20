@@ -44,10 +44,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: {} });
   }
 
+  // PR #70: memo は admin 特権なしの個人リソースのため、閲覧可能 ID にフィルタしてから
+  // attachments を取得する (URL 漏洩防止)。
+  // 他の entityType は既存方針通り「一覧クエリで除外済み前提」でそのまま通す。
+  let filteredIds = entityIds;
+  if (entityType === 'memo') {
+    const accessibleMemos = await prisma.memo.findMany({
+      where: {
+        id: { in: entityIds },
+        deletedAt: null,
+        OR: [{ userId: user.id }, { visibility: 'public' }],
+      },
+      select: { id: true },
+    });
+    filteredIds = accessibleMemos.map((m) => m.id);
+    if (filteredIds.length === 0) {
+      return NextResponse.json({ data: {} });
+    }
+  }
+
   const rows = await prisma.attachment.findMany({
     where: {
       entityType,
-      entityId: { in: entityIds },
+      entityId: { in: filteredIds },
       slot: slot ?? undefined,
       deletedAt: null,
     },

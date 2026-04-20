@@ -212,7 +212,41 @@ export async function resolveProjectIds(
       // 紐付けプロジェクトがゼロの孤児ナレッジも許容 (admin のみ操作可能)
       return k.knowledgeProjects.map((kp) => kp.projectId);
     }
+    case 'memo': {
+      // PR #70: memo はプロジェクトに紐付かない個人エンティティなので projectIds は空。
+      // 呼び出し側は authorizeMemoAttachment で userId+visibility を別途検証する必要がある。
+      // null ではなく [] を返すのは「エンティティは存在する、が project 権限では判定不能」
+      // であることを示すため。
+      const m = await prisma.memo.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { id: true },
+      });
+      return m ? [] : null;
+    }
     default:
       return null;
   }
+}
+
+/**
+ * Memo 添付の認可判定 (PR #70)。
+ * project スコープではないため resolveProjectIds + checkMembership の共通経路に乗らない。
+ *
+ *   - read : 作成者 OR visibility='public'
+ *   - write: 作成者のみ (admin 特権なし、要件どおり)
+ */
+export async function authorizeMemoAttachment(
+  memoId: string,
+  viewerUserId: string,
+  mode: 'read' | 'write',
+): Promise<{ ok: boolean; notFound: boolean }> {
+  const memo = await prisma.memo.findFirst({
+    where: { id: memoId, deletedAt: null },
+    select: { userId: true, visibility: true },
+  });
+  if (!memo) return { ok: false, notFound: true };
+  if (mode === 'write') {
+    return { ok: memo.userId === viewerUserId, notFound: false };
+  }
+  return { ok: memo.userId === viewerUserId || memo.visibility === 'public', notFound: false };
 }

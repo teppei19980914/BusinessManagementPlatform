@@ -1698,3 +1698,62 @@ MVPでは以下のフェーズを対象とする。
 - **マイタスク**をナビから撤去し、画面右上のユーザ名プルダウンメニュー内に移動
 - プルダウン内の並び: **マイタスク** → 設定 → ログアウト
 - 意図: マイタスクはユーザ個人専用画面のため、共有ナビではなくアカウント文脈に寄せる
+
+---
+
+## 21. 個人メモ機能 (PR #70)
+
+### 21.1 目的
+
+各アカウントが業務上調査して得た知見・作業メモを保存する個人ストック。
+既存の Knowledge はプロジェクト紐付け必須で共有前提だったため、
+「**プロジェクトに紐付かない個人の知見置き場**」を新設する。
+
+### 21.2 公開範囲 (visibility)
+
+| 値 | 挙動 |
+|---|---|
+| `private` (既定) | 作成者のみ閲覧可。admin も含め他者は完全に閲覧不可 |
+| `public` | 全メモ画面に公開、全ログインユーザが閲覧可 (編集/削除は作成者のみ) |
+
+### 21.3 画面
+
+- **URL**: `/memos` (右上ユーザ名プルダウン → 全メモ)
+- **表示内容**: 自分のメモ全件 (private/public) + 他人の public メモのみ
+- **列**: タイトル / 本文 (先頭プレビュー) / 公開範囲 / 作成者 / 更新日時 / 添付 / 操作
+- **列幅**: PR #68 のリサイズ機構を適用 (tableKey='all-memos')
+
+### 21.4 操作
+
+- **作成**: 右上「メモ作成」ボタン (ダイアログ)
+- **編集/削除**: 自分のメモのみ (行クリック or 操作列ボタン)
+- **URL 添付**: PR #64 の仕組みを拡張 (entityType='memo')。作成時に staging、編集時に即 CRUD
+
+### 21.5 タグなし
+
+業務知見として有用かは人間の目で判断するため、Knowledge のような tech/process/businessDomain タグは持たせない。
+(将来 Knowledge 昇格機能で格上げ時に必要なら別 PR で追加)
+
+### 21.6 認可
+
+- **閲覧**: 作成者 OR visibility='public' のユーザ。**admin 特権なし**
+- **作成**: 認証済みユーザなら誰でも
+- **編集/削除**: 作成者のみ。**admin 特権なし**
+- 他人の private メモにアクセスしようとしても「存在しない」扱い (404) で情報漏洩を防止
+
+### 21.7 API
+
+| メソッド | パス | 認可 |
+|---|---|---|
+| GET | /api/memos | 認証済みユーザ (自分の全メモ + 他人の public を返却) |
+| POST | /api/memos | 認証済みユーザ |
+| GET | /api/memos/:id | 閲覧権限あるユーザのみ (本人 or public) |
+| PATCH | /api/memos/:id | 作成者のみ |
+| DELETE | /api/memos/:id | 作成者のみ |
+
+### 21.8 添付 (PR #64 連携)
+
+- `entityType='memo'` を ATTACHMENT_ENTITY_TYPES に追加
+- memo は project スコープ外のため、attachment の認可は project membership ではなく memo.userId + visibility で判定
+- `authorizeMemoAttachment(memoId, viewerUserId, mode)` を新設 (read/write で権限が異なる)
+- batch 取得 API は閲覧可能 memo の ID にフィルタしてから attachments を返す (URL 漏洩防止)

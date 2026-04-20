@@ -11,6 +11,8 @@ export const ATTACHMENT_ENTITY_TYPES = [
   'risk',
   'retrospective',
   'knowledge',
+  // PR #70: 個人メモにも URL 添付を許可
+  'memo',
 ] as const;
 
 export type AttachmentEntityType = (typeof ATTACHMENT_ENTITY_TYPES)[number];
