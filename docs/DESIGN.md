@@ -4197,3 +4197,90 @@ listPublicMemos(viewerUserId)   // /all-memos 用: 全 public メモ
 
 React の immutability 方針に従い、`document.documentElement.dataset.theme` を直接
 書き換える処理は行わない (ESLint `react-hooks/immutability` に抵触するため)。
+
+---
+
+## 29. PR #73: テーマ定義ファイルの一元化 + 生成パターン
+
+### 29.1 背景
+
+PR #72 では全テーマの CSS 変数を `globals.css` に直接定義していた。しかし:
+
+- 新規テーマ追加時に CSS 変数を漏らしても、実行時エラーにならず「色が一部だけ違う」
+  見た目バグとなって検出が遅れる
+- トークン追加 (例: `--warning`) 時に全テーマ × 全トークンを CSS 側で手動更新する必要があり、
+  保守コストと追加漏れリスクが累積する
+- CSS ファイルと TS の `THEMES` カタログが独立して管理されており、同期が取れているかは
+  目視頼みだった
+
+### 29.2 対応方針
+
+テーマのカラー定義を TypeScript 側 (`src/lib/themes/definitions.ts`) に集約し、
+HTML 組立時に CSS を生成して head に inline 注入する「定義 → 生成」パターンに切り替える。
+
+### 29.3 アーキテクチャ
+
+```
+src/lib/themes/
+  definitions.ts     # ThemeTokens 型 + THEME_DEFINITIONS (10 テーマ × 31 トークン)
+  generate-css.ts    # definitions → CSS 文字列の純粋関数
+  index.ts           # 公開 API (generateThemeCss / THEME_DEFINITIONS / ThemeTokens)
+  definitions.test.ts
+  generate-css.test.ts
+```
+
+**型安全性による網羅保証**:
+```ts
+export const THEME_DEFINITIONS = {
+  light: LIGHT,
+  dark: extend({ ... }),
+  // ...
+} as const satisfies Record<ThemeId, ThemeTokens>;
+```
+
+- `ThemeId` に新テーマを追加 → `Record<ThemeId, ThemeTokens>` 制約で定義漏れがビルドエラー
+- `ThemeTokens` にトークンを追加 → 全テーマで値未設定がビルドエラー
+- `satisfies` により厳密な型 (`light`, `dark`, ...) を保ったまま制約チェック
+
+**差分上書きパターン (`extend`)**:
+LIGHT をベースに、各テーマで「変更したいトークンだけ」を差分指定する。
+31 トークン × 10 テーマ = 310 行の総当たりを避け、テーマごとのデザイン意図が読みやすい。
+
+### 29.4 CSS 注入
+
+`src/app/layout.tsx` の先頭で `generateThemeCss()` を一度呼び出して文字列をキャッシュし、
+`<head><style id="tasukiba-themes">{THEME_CSS}</style></head>` で描画する。
+
+- **SSR に内包**: 初回 HTML に含まれるため FOUC なし
+- **安全性**: CSS 値 (`oklch(...)`) は静的な色トークンのみでユーザ入力を含まないが、念のため
+  React の `<style>` 子要素として文字列を渡すパターンを採用 (`<style>{string}</style>`)。
+  HTML 危険文字 (`<`, `>`, `&`) が混入していないことは `generate-css.test.ts` で検査
+- **パフォーマンス**: 文字列はモジュールロード時に 1 回生成してキャッシュ。
+  リクエストごとの再生成は発生しない
+
+### 29.5 保守の流れ
+
+**新しいテーマを追加する場合**:
+1. `src/types/index.ts` の `THEMES` に ID と表示名を追加
+2. `src/lib/themes/definitions.ts` の `THEME_DEFINITIONS` にも同じ ID を追加
+   → `satisfies` で型検査が通るまで必要トークンを埋める
+3. テスト (`definitions.test.ts`) が自動で検証
+   - THEMES と THEME_DEFINITIONS の ID 一致
+   - 全トークンが非空で存在
+   - 余計なキーが混入していない
+
+**新しいトークンを追加する場合**:
+1. `ThemeTokens` 型に key を追加 → 全 10 テーマで値を要求される (型エラー)
+2. shadcn utility として使いたい場合は `globals.css` の `@theme inline` に
+   `--color-X: var(--X);` を追記
+3. テスト (`generate-css.test.ts`) の `REQUIRED_TOKENS` 配列にキーを追加
+
+**色を変更する場合**:
+`globals.css` ではなく `src/lib/themes/definitions.ts` を編集する
+(コメントで誘導済み)。
+
+### 29.6 移行によって削除されたもの
+
+- `globals.css` の `:root` 内の色変数群 (約 25 行)
+- `globals.css` の `.dark` / `[data-theme="..."]` 9 ブロック (約 140 行)
+- 合計 165 行の CSS を約 150 行の型安全な TS に置換 (+自動網羅テスト 11 ケース)

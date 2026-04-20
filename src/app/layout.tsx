@@ -4,6 +4,12 @@ import './globals.css';
 import { AppSessionProvider } from '@/components/session-provider';
 import { auth } from '@/lib/auth';
 import { toSafeThemeId } from '@/types';
+import { generateThemeCss } from '@/lib/themes';
+
+// PR #73: テーマ CSS は TS 定義 (src/lib/themes/definitions.ts) から生成し、
+// HTML 組立時に <style> タグで head に注入する。モジュール読み込み時に一度だけ
+// 文字列化してキャッシュし、リクエストごとの再計算を避ける。
+const THEME_CSS = generateThemeCss();
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -37,6 +43,19 @@ export default async function RootLayout({
       data-theme={theme}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        {/*
+          PR #73: テーマ定義ファイル (src/lib/themes/definitions.ts) から生成した
+          CSS を head にインライン注入する。SSR 時点で配信 HTML に含まれるため
+          FOUC は発生しない。id 指定は DevTools で識別しやすくするため。
+
+          入力は静的な色値 (oklch(...)) のみでユーザ入力を含まないが、React は
+          <style> 子要素として渡した文字列を自動でテキストノード化する
+          (ChildText 扱い)。CSS 値には HTML 予約文字 (<, >, &) が含まれないため
+          エスケープの影響も受けない。
+        */}
+        <style id="tasukiba-themes">{THEME_CSS}</style>
+      </head>
       <body className="flex min-h-full flex-col">
         {/* PR #67: MFA 検証ページで useSession / update を使うため全ページで SessionProvider を有効化 */}
         <AppSessionProvider>{children}</AppSessionProvider>
