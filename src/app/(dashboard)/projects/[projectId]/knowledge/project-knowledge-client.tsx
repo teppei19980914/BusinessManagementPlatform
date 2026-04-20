@@ -141,7 +141,7 @@ export function ProjectKnowledgeClient({
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">ナレッジ一覧（{knowledges.length} 件）</h3>
         <div className="flex items-center gap-3">
-          <a href="/knowledge" className="text-sm text-blue-600 hover:underline">
+          <a href="/knowledge" className="text-sm text-info hover:underline">
             全ナレッジへ →
           </a>
           {canCreate && (
@@ -156,7 +156,7 @@ export function ProjectKnowledgeClient({
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
                   {error && (
-                    <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>
+                    <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                   )}
                   <div className="space-y-2">
                     <Label>タイトル</Label>
@@ -232,7 +232,7 @@ export function ProjectKnowledgeClient({
                     作成時に入力を強く推奨する。
                   */}
                   <div className="space-y-2">
-                    <Label>業務ドメインタグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
                     <Input
                       value={form.businessDomainTagsInput}
                       onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
@@ -241,7 +241,7 @@ export function ProjectKnowledgeClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>技術スタックタグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
                     <Input
                       value={form.techTagsInput}
                       onChange={(e) => setForm({ ...form, techTagsInput: e.target.value })}
@@ -250,7 +250,7 @@ export function ProjectKnowledgeClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>工程タグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
                     <Input
                       value={form.processTagsInput}
                       onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
@@ -273,14 +273,14 @@ export function ProjectKnowledgeClient({
       </div>
 
       {knowledges.length === 0 ? (
-        <p className="py-8 text-center text-sm text-gray-500">ナレッジがありません</p>
+        <p className="py-8 text-center text-sm text-muted-foreground">ナレッジがありません</p>
       ) : (
         <div className="space-y-2">
           {knowledges.map((k) => (
             <div
               key={k.id}
               // Req 8: 行クリックで編集ダイアログ (canCreate = メンバー以上で編集可)
-              className={`rounded border p-3 ${canCreate ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+              className={`rounded border p-3 ${canCreate ? 'cursor-pointer hover:bg-muted' : ''}`}
               onClick={canCreate ? () => setEditingKnowledge(k) : undefined}
             >
               <div className="flex items-start justify-between gap-2">
@@ -294,16 +294,16 @@ export function ProjectKnowledgeClient({
                       {VISIBILITIES[k.visibility as keyof typeof VISIBILITIES] || k.visibility}
                     </Badge>
                     {k.creatorName && (
-                      <span className="text-xs text-gray-400">作成: {k.creatorName}</span>
+                      <span className="text-xs text-muted-foreground">作成: {k.creatorName}</span>
                     )}
                   </div>
-                  <p className="mt-1 text-sm text-gray-600 line-clamp-2">{k.content}</p>
+                  <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{k.content}</p>
                 </div>
                 {canDelete && (
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    className="text-red-600 hover:text-red-700"
+                    className="text-destructive hover:text-destructive"
                     title="削除"
                     aria-label="削除"
                     onClick={(e) => { e.stopPropagation(); handleDelete(k.id); }}

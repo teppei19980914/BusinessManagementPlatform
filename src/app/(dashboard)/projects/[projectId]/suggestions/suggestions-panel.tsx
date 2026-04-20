@@ -117,27 +117,27 @@ export function SuggestionsPanel({
   }
 
   if (!state.loaded) {
-    return <p className="py-8 text-center text-sm text-gray-500">提案を計算中...</p>;
+    return <p className="py-8 text-center text-sm text-muted-foreground">提案を計算中...</p>;
   }
 
   const { knowledge, pastIssues, retrospectives } = state.data;
 
   return (
     <div className="space-y-6">
-      <div className="rounded-md bg-blue-50 p-3 text-sm text-blue-900">
+      <div className="rounded-md bg-info/10 p-3 text-sm text-info">
         <strong>核心機能 (提案型サービス):</strong>{' '}
         このプロジェクトのタグ・目的・背景・スコープと類似する過去のナレッジ・課題を
         自動で抽出しています。可能な限り採用することで、過去の資産を活用し
         未然に防げるリスクを減らせます。
       </div>
 
-      {error && <div className="rounded-md bg-red-50 p-2 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>}
 
       {/* ナレッジ提案 */}
       <section className="space-y-2">
         <h3 className="font-semibold">ナレッジ候補 ({knowledge.length} 件)</h3>
         {knowledge.length === 0 ? (
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             類似するナレッジが見つかりませんでした。タグを追加するか、タグ数を増やすと提案精度が向上します。
           </p>
         ) : (
@@ -158,7 +158,7 @@ export function SuggestionsPanel({
                           類似度 {(k.score * 100).toFixed(0)}%
                         </Badge>
                       </div>
-                      <p className="text-sm text-gray-600">{k.snippet}</p>
+                      <p className="text-sm text-muted-foreground">{k.snippet}</p>
                     </div>
                     <div className="shrink-0">
                       {isAdopted ? (
@@ -180,12 +180,12 @@ export function SuggestionsPanel({
       {/* 過去課題提案 */}
       <section className="space-y-2">
         <h3 className="font-semibold">過去課題 (雛形候補, {pastIssues.length} 件)</h3>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted-foreground">
           過去プロジェクトで解消された課題を雛形として取り込めます。
           採用すると state=&quot;未対応&quot; の新規課題として複製され、事前に備えた対応ができます。
         </p>
         {pastIssues.length === 0 ? (
-          <p className="text-sm text-gray-500">類似する過去課題が見つかりませんでした。</p>
+          <p className="text-sm text-muted-foreground">類似する過去課題が見つかりませんでした。</p>
         ) : (
           <ul className="space-y-2">
             {pastIssues.map((i) => {
@@ -203,13 +203,13 @@ export function SuggestionsPanel({
                         {i.sourceProjectName && (
                           <Link
                             href={`/projects/${i.sourceProjectId}`}
-                            className="text-xs text-blue-600 hover:underline"
+                            className="text-xs text-info hover:underline"
                           >
                             出典: {i.sourceProjectName}
                           </Link>
                         )}
                       </div>
-                      <p className="text-sm text-gray-600">{i.snippet}</p>
+                      <p className="text-sm text-muted-foreground">{i.snippet}</p>
                     </div>
                     <div className="shrink-0">
                       {isAdopted ? (
@@ -235,12 +235,12 @@ export function SuggestionsPanel({
       */}
       <section className="space-y-2">
         <h3 className="font-semibold">過去振り返り ({retrospectives.length} 件)</h3>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted-foreground">
           過去プロジェクトの振り返り (問題点・次回事項) を参考情報として提示します。
           同種の失敗を繰り返さないために目を通してください。
         </p>
         {retrospectives.length === 0 ? (
-          <p className="text-sm text-gray-500">類似する過去振り返りが見つかりませんでした。</p>
+          <p className="text-sm text-muted-foreground">類似する過去振り返りが見つかりませんでした。</p>
         ) : (
           <ul className="space-y-2">
             {retrospectives.map((r) => (
@@ -255,13 +255,13 @@ export function SuggestionsPanel({
                       {r.sourceProjectName && (
                         <Link
                           href={`/projects/${r.sourceProjectId}/retrospectives`}
-                          className="text-xs text-blue-600 hover:underline"
+                          className="text-xs text-info hover:underline"
                         >
                           出典: {r.sourceProjectName}
                         </Link>
                       )}
                     </div>
-                    <p className="text-sm text-gray-600">{r.snippet}</p>
+                    <p className="text-sm text-muted-foreground">{r.snippet}</p>
                   </div>
                 </div>
               </li>

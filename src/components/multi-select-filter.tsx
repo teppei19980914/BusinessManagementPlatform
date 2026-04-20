@@ -45,7 +45,7 @@ export function MultiSelectFilter({
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Positioner sideOffset={6} align="start" className="isolate z-50">
           <PopoverPrimitive.Popup
-            className="max-h-[60vh] w-64 overflow-y-auto rounded-lg border bg-white p-2 shadow-md ring-1 ring-black/5 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+            className="max-h-[60vh] w-64 overflow-y-auto rounded-lg border bg-card p-2 shadow-md ring-1 ring-foreground/5 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
           >
             <div className="flex gap-2 border-b pb-2">
               <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onSelectAll}>
@@ -59,7 +59,7 @@ export function MultiSelectFilter({
               {options.map((o) => (
                 <label
                   key={o.value}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50"
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted"
                 >
                   <input
                     type="checkbox"
@@ -67,7 +67,7 @@ export function MultiSelectFilter({
                     onChange={() => onToggle(o.value)}
                     className="rounded"
                   />
-                  <span className={o.muted ? 'truncate text-gray-500' : 'truncate'}>
+                  <span className={o.muted ? 'truncate text-muted-foreground' : 'truncate'}>
                     {o.label}
                   </span>
                 </label>

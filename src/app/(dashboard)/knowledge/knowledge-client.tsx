@@ -75,7 +75,7 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">全ナレッジ</h2>
-        <span className="text-sm text-gray-500">{filtered.length} 件</span>
+        <span className="text-sm text-muted-foreground">{filtered.length} 件</span>
       </div>
 
       {/* 検索・フィルタ */}
@@ -129,30 +129,30 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
           {filtered.map((k) => (
             <TableRow
               key={k.id}
-              className="cursor-pointer hover:bg-gray-50"
+              className="cursor-pointer hover:bg-muted"
               onClick={() => setEditingKnowledge(k)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {k.projectName == null ? (
-                  <span className="text-gray-400">
+                  <span className="text-muted-foreground">
                     {k.linkedProjectCount === 0 ? '（未紐付け）' : '（非公開）'}
                   </span>
                 ) : k.canAccessProject && k.primaryProjectId ? (
                   <Link
                     href={`/projects/${k.primaryProjectId}`}
-                    className="text-blue-600 hover:underline"
+                    className="text-info hover:underline"
                   >
                     {k.projectName}
                     {k.linkedProjectCount > 1 && (
-                      <span className="ml-1 text-xs text-gray-500">+{k.linkedProjectCount - 1} 他</span>
+                      <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
                     )}
                   </Link>
                 ) : (
-                  <span className="text-gray-500">
+                  <span className="text-muted-foreground">
                     {k.projectName}
-                    {k.projectDeleted && <span className="ml-1 text-xs text-red-500">(削除済)</span>}
+                    {k.projectDeleted && <span className="ml-1 text-xs text-destructive">(削除済)</span>}
                     {k.linkedProjectCount > 1 && (
-                      <span className="ml-1 text-xs text-gray-400">+{k.linkedProjectCount - 1} 他</span>
+                      <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
                     )}
                   </span>
                 )}
@@ -165,17 +165,17 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
               <TableCell className="max-w-xs truncate text-sm">{k.background || '-'}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{k.content || '-'}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{k.result || '-'}</TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-gray-600">
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                 {formatDateTime(k.createdAt)}
               </TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {k.creatorName ?? <span className="text-gray-400">-</span>}
+              <TableCell className="text-sm text-muted-foreground">
+                {k.creatorName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-gray-600">
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                 {formatDateTime(k.updatedAt)}
               </TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {k.updatedByName ?? <span className="text-gray-400">-</span>}
+              <TableCell className="text-sm text-muted-foreground">
+                {k.updatedByName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
               {/* PR #67: 添付リンク chips */}
               <TableCell onClick={(e) => e.stopPropagation()}>
@@ -186,7 +186,7 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
           {filtered.length === 0 && (
             <TableRow>
               {/* PR #67: 添付列 +1 */}
-              <TableCell colSpan={10} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
                 ナレッジがありません
               </TableCell>
             </TableRow>

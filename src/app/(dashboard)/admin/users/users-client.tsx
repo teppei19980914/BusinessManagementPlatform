@@ -118,7 +118,7 @@ export function UsersClient({ initialUsers }: Props) {
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
                   {error && (
-                    <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>
+                    <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                   )}
                   <div className="space-y-2">
                     <Label htmlFor="name">ユーザ名</Label>
@@ -172,7 +172,7 @@ export function UsersClient({ initialUsers }: Props) {
           {initialUsers.map((user) => (
             <TableRow
               key={user.id}
-              className="cursor-pointer hover:bg-gray-50"
+              className="cursor-pointer hover:bg-muted"
               onClick={() => setEditingUser(user)}
             >
               <TableCell className="font-medium">{user.name}</TableCell>
@@ -192,7 +192,7 @@ export function UsersClient({ initialUsers }: Props) {
           ))}
           {initialUsers.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                 ユーザが登録されていません
               </TableCell>
             </TableRow>

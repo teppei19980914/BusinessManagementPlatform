@@ -68,28 +68,28 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
+        className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent"
         aria-haspopup="menu"
         aria-expanded={open}
       >
         <span>{user.name}</span>
         {user.systemRole === 'admin' && (
-          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">
+          <span className="rounded bg-info/20 px-1.5 py-0.5 text-xs text-info">
             管理者
           </span>
         )}
-        <span className="text-xs text-gray-400">▾</span>
+        <span className="text-xs text-muted-foreground">▾</span>
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-md border bg-white shadow-md"
+          className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-md border bg-card shadow-md"
         >
           {/* PR #69 Task 3: マイタスクはナビから撤去してこのメニューに配置 (個人専用画面) */}
           <Link
             href="/my-tasks"
             role="menuitem"
-            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
           >
             マイタスク
@@ -101,7 +101,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           <Link
             href="/memos"
             role="menuitem"
-            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
           >
             メモ
@@ -109,7 +109,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           <Link
             href="/settings"
             role="menuitem"
-            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
           >
             設定
@@ -117,7 +117,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           <button
             type="button"
             role="menuitem"
-            className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+            className="block w-full px-4 py-2 text-left text-sm text-foreground hover:bg-accent"
             onClick={() => {
               setOpen(false);
               signOut({ callbackUrl: '/login' });
@@ -135,7 +135,7 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
   const pathname = usePathname();
 
   return (
-    <header className="border-b bg-white">
+    <header className="border-b bg-card">
       <div className="flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-6">
           <Link href="/projects" className="text-lg font-semibold">
@@ -147,8 +147,8 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-gray-100',
-                  pathname.startsWith(item.href) ? 'bg-gray-100 font-medium' : 'text-gray-600',
+                  'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
+                  pathname.startsWith(item.href) ? 'bg-accent font-medium' : 'text-muted-foreground',
                 )}
               >
                 {item.label}
@@ -160,8 +160,8 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-gray-100',
-                    pathname.startsWith(item.href) ? 'bg-gray-100 font-medium' : 'text-gray-600',
+                    'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
+                    pathname.startsWith(item.href) ? 'bg-accent font-medium' : 'text-muted-foreground',
                   )}
                 >
                   {item.label}

@@ -152,7 +152,7 @@ export function ResizableHead({
       */}
       <div
         onMouseDown={onMouseDown}
-        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-blue-300 active:bg-blue-500"
+        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-info/40 active:bg-info"
         role="separator"
         aria-orientation="vertical"
         aria-label={`列の幅を変更`}

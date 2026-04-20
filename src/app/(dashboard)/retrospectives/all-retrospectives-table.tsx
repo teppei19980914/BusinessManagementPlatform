@@ -63,20 +63,20 @@ export function AllRetrospectivesTable({
           {retros.map((r) => (
             <TableRow
               key={r.id}
-              className="cursor-pointer hover:bg-gray-50"
+              className="cursor-pointer hover:bg-muted"
               onClick={() => setEditingRetro(r)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {r.projectName == null ? (
-                  <span className="text-gray-400">（非公開）</span>
+                  <span className="text-muted-foreground">（非公開）</span>
                 ) : r.canAccessProject ? (
-                  <Link href={`/projects/${r.projectId}`} className="text-blue-600 hover:underline">
+                  <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
                     {r.projectName}
                   </Link>
                 ) : (
-                  <span className="text-gray-500">
+                  <span className="text-muted-foreground">
                     {r.projectName}
-                    {r.projectDeleted && <span className="ml-1 text-xs text-red-500">(削除済)</span>}
+                    {r.projectDeleted && <span className="ml-1 text-xs text-destructive">(削除済)</span>}
                   </span>
                 )}
               </TableCell>
@@ -85,13 +85,13 @@ export function AllRetrospectivesTable({
               <TableCell className="max-w-xs truncate text-sm">{r.actualSummary || '-'}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.goodPoints || '-'}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.improvements || '-'}</TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-gray-600">{formatDateTime(r.createdAt)}</TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {r.createdByName ?? <span className="text-gray-400">-</span>}
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.createdAt)}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {r.createdByName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-gray-600">{formatDateTime(r.updatedAt)}</TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {r.updatedByName ?? <span className="text-gray-400">-</span>}
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.updatedAt)}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {r.updatedByName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
               {/* PR #67: 添付リンク chips */}
               <TableCell onClick={(e) => e.stopPropagation()}>
@@ -111,7 +111,7 @@ export function AllRetrospectivesTable({
           {retros.length === 0 && (
             <TableRow>
               {/* PR #67: 添付列を +1 */}
-              <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-muted-foreground">
                 振り返りがありません
               </TableCell>
             </TableRow>

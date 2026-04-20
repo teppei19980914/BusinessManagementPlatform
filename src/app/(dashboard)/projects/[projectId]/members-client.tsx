@@ -111,7 +111,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
               </DialogHeader>
               <form onSubmit={handleAdd} className="space-y-4">
                 {addError && (
-                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{addError}</div>
+                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{addError}</div>
                 )}
                 <div className="space-y-2">
                   <Label>ユーザ</Label>
@@ -179,7 +179,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-red-600"
+                    className="text-destructive"
                     onClick={() => handleRemove(m.id, m.userName)}
                   >
                     解除
@@ -190,7 +190,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
           ))}
           {members.length === 0 && (
             <TableRow>
-              <TableCell colSpan={isAdmin ? 5 : 4} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={isAdmin ? 5 : 4} className="py-8 text-center text-muted-foreground">
                 メンバーが登録されていません
               </TableCell>
             </TableRow>

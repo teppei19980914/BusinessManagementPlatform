@@ -141,7 +141,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
                 <DialogDescription>プロジェクトの振り返りを記録してください。</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
-                {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+                {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
                 {/* PR #63: 公開範囲を最上位に配置 (設定忘れ防止) */}
                 <div className="space-y-2">
                   <Label>公開範囲</Label>
@@ -186,13 +186,13 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
       </div>
 
       {retros.length === 0 && (
-        <p className="py-8 text-center text-gray-500">振り返りがありません</p>
+        <p className="py-8 text-center text-muted-foreground">振り返りがありません</p>
       )}
 
       {retros.map((retro) => (
         <div
           key={retro.id}
-          className={`rounded-lg border p-6 space-y-4 ${canEdit ? 'cursor-pointer hover:bg-gray-50/50' : ''}`}
+          className={`rounded-lg border p-6 space-y-4 ${canEdit ? 'cursor-pointer hover:bg-muted/50' : ''}`}
           // Req 8: カード自体クリックで編集ダイアログ (内部ボタンは stopPropagation)
           onClick={canEdit ? () => setEditingRetro(retro) : undefined}
         >
@@ -215,7 +215,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-red-600"
+                  className="text-destructive"
                   onClick={(e) => { e.stopPropagation(); handleDelete(retro.id); }}
                 >削除</Button>
               )}
@@ -224,26 +224,26 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
 
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <h4 className="text-sm font-medium text-gray-500">良かった点</h4>
+              <h4 className="text-sm font-medium text-muted-foreground">良かった点</h4>
               <p className="mt-1 whitespace-pre-wrap text-sm">{retro.goodPoints}</p>
             </div>
             <div>
-              <h4 className="text-sm font-medium text-gray-500">問題点</h4>
+              <h4 className="text-sm font-medium text-muted-foreground">問題点</h4>
               <p className="mt-1 whitespace-pre-wrap text-sm">{retro.problems}</p>
             </div>
             <div className="md:col-span-2">
-              <h4 className="text-sm font-medium text-gray-500">次回改善事項</h4>
+              <h4 className="text-sm font-medium text-muted-foreground">次回改善事項</h4>
               <p className="mt-1 whitespace-pre-wrap text-sm">{retro.improvements}</p>
             </div>
           </div>
 
           {/* コメント (内部要素はカードクリックの伝播を止める) */}
           <div className="border-t pt-4" onClick={(e) => e.stopPropagation()}>
-            <h4 className="text-sm font-medium text-gray-500 mb-2">コメント（{retro.comments.length}件）</h4>
+            <h4 className="text-sm font-medium text-muted-foreground mb-2">コメント（{retro.comments.length}件）</h4>
             {retro.comments.map((c) => (
-              <div key={c.id} className="mb-2 rounded bg-gray-50 p-2 text-sm">
+              <div key={c.id} className="mb-2 rounded bg-muted p-2 text-sm">
                 <span className="font-medium">{c.userName}</span>
-                <span className="ml-2 text-xs text-gray-400">{new Date(c.createdAt).toLocaleString('ja-JP')}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{new Date(c.createdAt).toLocaleString('ja-JP')}</span>
                 <p className="mt-1">{c.content}</p>
               </div>
             ))}

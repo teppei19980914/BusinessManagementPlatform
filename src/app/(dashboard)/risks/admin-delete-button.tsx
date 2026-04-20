@@ -28,7 +28,7 @@ export function AdminRiskDeleteButton({
     <Button
       variant="ghost"
       size="icon-sm"
-      className="text-red-600 hover:text-red-700"
+      className="text-destructive hover:text-destructive"
       title={`「${label}」を削除 (システム管理者権限)`}
       aria-label="削除"
       onClick={async () => {

@@ -68,11 +68,11 @@ function LazyTabContent<T>({
   children: (data: T) => React.ReactNode;
 }) {
   if (state.status === 'idle' || state.status === 'loading') {
-    return <div className="py-8 text-center text-sm text-gray-500">読み込み中...</div>;
+    return <div className="py-8 text-center text-sm text-muted-foreground">読み込み中...</div>;
   }
   if (state.status === 'error') {
     return (
-      <div className="py-8 text-center text-sm text-red-500">
+      <div className="py-8 text-center text-sm text-destructive">
         読み込みに失敗しました: {state.error}
       </div>
     );
@@ -271,7 +271,7 @@ export function ProjectDetailClient({
               {PROJECT_STATUSES[project.status as keyof typeof PROJECT_STATUSES] || project.status}
             </Badge>
           </div>
-          <p className="mt-1 text-gray-600">{project.customerName}</p>
+          <p className="mt-1 text-muted-foreground">{project.customerName}</p>
         </div>
         <div className="flex items-center gap-2">
           {/*
@@ -305,7 +305,7 @@ export function ProjectDetailClient({
                     <DialogDescription>プロジェクト情報を編集してください。</DialogDescription>
                   </DialogHeader>
                   <form onSubmit={handleEdit} className="space-y-4">
-                    {editError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{editError}</div>}
+                    {editError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{editError}</div>}
                     <div className="space-y-2">
                       <Label>プロジェクト名</Label>
                       <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
@@ -341,7 +341,7 @@ export function ProjectDetailClient({
             </>
           )}
           {activeTab === 'overview' && canDeleteProject && (
-            <Button variant="outline" className="text-red-600" onClick={handleDelete}>削除</Button>
+            <Button variant="outline" className="text-destructive" onClick={handleDelete}>削除</Button>
           )}
           <Button variant="outline" onClick={() => router.push('/projects')}>
             一覧に戻る
@@ -374,34 +374,34 @@ export function ProjectDetailClient({
               <h3 className="mb-2 font-semibold">基本情報</h3>
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">開発方式</dt>
+                  <dt className="text-muted-foreground">開発方式</dt>
                   <dd>{DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">開始予定日</dt>
+                  <dt className="text-muted-foreground">開始予定日</dt>
                   <dd>{project.plannedStartDate}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">終了予定日</dt>
+                  <dt className="text-muted-foreground">終了予定日</dt>
                   <dd>{project.plannedEndDate}</dd>
                 </div>
               </dl>
             </div>
             <div className="rounded-lg border p-4">
               <h3 className="mb-2 font-semibold">目的</h3>
-              <p className="whitespace-pre-wrap text-sm text-gray-700">{project.purpose}</p>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{project.purpose}</p>
             </div>
             <div className="rounded-lg border p-4">
               <h3 className="mb-2 font-semibold">背景</h3>
-              <p className="whitespace-pre-wrap text-sm text-gray-700">{project.background}</p>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{project.background}</p>
             </div>
             <div className="rounded-lg border p-4">
               <h3 className="mb-2 font-semibold">スコープ</h3>
-              <p className="whitespace-pre-wrap text-sm text-gray-700">{project.scope}</p>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{project.scope}</p>
               {project.outOfScope && (
                 <>
                   <h3 className="mb-2 mt-4 font-semibold">スコープ外</h3>
-                  <p className="whitespace-pre-wrap text-sm text-gray-700">{project.outOfScope}</p>
+                  <p className="whitespace-pre-wrap text-sm text-foreground">{project.outOfScope}</p>
                 </>
               )}
             </div>
@@ -409,7 +409,7 @@ export function ProjectDetailClient({
           {project.notes && (
             <div className="rounded-lg border p-4">
               <h3 className="mb-2 font-semibold">備考</h3>
-              <p className="whitespace-pre-wrap text-sm text-gray-700">{project.notes}</p>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{project.notes}</p>
             </div>
           )}
 

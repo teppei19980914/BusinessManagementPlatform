@@ -86,7 +86,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold">見積もり管理</h2>
-          <p className="text-sm text-gray-500">合計工数: {totalEffort}</p>
+          <p className="text-sm text-muted-foreground">合計工数: {totalEffort}</p>
         </div>
         {canEdit && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -97,7 +97,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                 <DialogDescription>見積もり情報を入力してください。</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
-                {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+                {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
                 <div className="space-y-2">
                   <Label>見積項目名</Label>
                   <Input value={form.itemName} onChange={(e) => setForm({ ...form, itemName: e.target.value })} maxLength={100} required />
@@ -172,7 +172,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                       <Button
                         variant="outline"
                         size="sm"
-                        className="text-red-600"
+                        className="text-destructive"
                         onClick={async () => {
                           if (!confirm('この見積もりを削除しますか？')) return;
                           await withLoading(() =>
@@ -191,7 +191,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
           ))}
           {estimates.length === 0 && (
             <TableRow>
-              <TableCell colSpan={canEdit ? 6 : 5} className="py-8 text-center text-gray-500">見積もり項目がありません</TableCell>
+              <TableCell colSpan={canEdit ? 6 : 5} className="py-8 text-center text-muted-foreground">見積もり項目がありません</TableCell>
             </TableRow>
           )}
         </TableBody>

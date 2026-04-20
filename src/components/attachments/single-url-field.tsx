@@ -120,7 +120,7 @@ export function SingleUrlField({
     <div className="space-y-2">
       <Label>{label}</Label>
 
-      {error && <div className="rounded-md bg-red-50 p-2 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>}
 
       {!editing && current && (
         <div className="flex items-center gap-2 rounded border px-2 py-1 text-sm">
@@ -128,7 +128,7 @@ export function SingleUrlField({
             href={current.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 truncate text-blue-600 hover:underline"
+            className="flex-1 truncate text-info hover:underline"
             title={current.url}
           >
             {current.displayName}
@@ -151,7 +151,7 @@ export function SingleUrlField({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="text-red-600"
+                className="text-destructive"
                 onClick={handleClear}
               >
                 削除
@@ -168,13 +168,13 @@ export function SingleUrlField({
               URL を設定
             </Button>
           ) : (
-            <p className="text-sm text-gray-500">未設定</p>
+            <p className="text-sm text-muted-foreground">未設定</p>
           )}
         </>
       )}
 
       {editing && canEdit && (
-        <form onSubmit={handleSave} className="flex items-end gap-2 rounded border bg-gray-50 p-2">
+        <form onSubmit={handleSave} className="flex items-end gap-2 rounded border bg-muted p-2">
           <div className="flex-1 space-y-1">
             <Label className="text-xs">表示名</Label>
             <Input

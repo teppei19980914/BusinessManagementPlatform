@@ -56,7 +56,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">全メモ</h2>
-        <span className="text-sm text-gray-500">{memos.length} 件</span>
+        <span className="text-sm text-muted-foreground">{memos.length} 件</span>
       </div>
 
       <ResizableColumnsProvider tableKey="all-memos-readonly">
@@ -77,18 +77,18 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
             {memos.map((m) => (
               <TableRow
                 key={m.id}
-                className="cursor-pointer hover:bg-gray-50"
+                className="cursor-pointer hover:bg-muted"
                 onClick={() => setViewing(m)}
               >
                 <TableCell className="font-medium">{m.title}</TableCell>
-                <TableCell className="max-w-md truncate text-sm text-gray-700" title={m.content}>
+                <TableCell className="max-w-md truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 120)}
                 </TableCell>
-                <TableCell className="text-sm text-gray-600">
+                <TableCell className="text-sm text-muted-foreground">
                   {m.authorName ?? '-'}
-                  {m.isMine && <span className="ml-1 text-xs text-blue-600">(自分)</span>}
+                  {m.isMine && <span className="ml-1 text-xs text-info">(自分)</span>}
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-sm text-gray-600">
+                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                   {formatDateTime(m.updatedAt)}
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
@@ -98,7 +98,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
             ))}
             {memos.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-gray-500">
+                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                   公開メモがありません。
                   <span className="ml-1 text-xs">(「メモ」画面で公開範囲を「全メモに公開」にすると、このページに表示されます)</span>
                 </TableCell>

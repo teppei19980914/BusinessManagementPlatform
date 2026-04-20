@@ -89,7 +89,7 @@ function ApplyFieldRow({
         aria-label={`${label}を一括更新する`}
       />
       <div className="flex-1 space-y-1">
-        <Label className={apply ? 'text-sm' : 'text-sm text-gray-400'}>{label}</Label>
+        <Label className={apply ? 'text-sm' : 'text-sm text-muted-foreground'}>{label}</Label>
         <div className={apply ? '' : 'pointer-events-none opacity-50'}>{children}</div>
       </div>
     </div>
@@ -163,7 +163,7 @@ function TaskTreeNodeImpl({
 
   return (
     <>
-      <tr className={`border-b hover:bg-gray-50 ${isWP ? 'bg-gray-50/50' : ''}`}>
+      <tr className={`border-b hover:bg-muted ${isWP ? 'bg-muted/50' : ''}`}>
         {canEditPmTl && (
           <td className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
             <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(task.id)} className="rounded" />
@@ -175,7 +175,7 @@ function TaskTreeNodeImpl({
               <button
                 type="button"
                 onClick={() => onToggleExpanded(task.id)}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"
                 title={isCollapsed ? '展開' : '折りたたみ'}
               >
                 <span className={`text-xs transition-transform ${isCollapsed ? '' : 'rotate-90'}`}>▶</span>
@@ -188,10 +188,10 @@ function TaskTreeNodeImpl({
             </Badge>
             <span className={`${isWP ? 'font-semibold' : 'font-medium'}`}>{task.name}</span>
             {task.wbsNumber && (
-              <span className="text-xs text-gray-400">{task.wbsNumber}</span>
+              <span className="text-xs text-muted-foreground">{task.wbsNumber}</span>
             )}
             {isWP && hasChildren && isCollapsed && (
-              <span className="text-xs text-gray-400">({task.children!.length})</span>
+              <span className="text-xs text-muted-foreground">({task.children!.length})</span>
             )}
           </div>
         </td>
@@ -211,11 +211,11 @@ function TaskTreeNodeImpl({
         {/* 進捗&工数 */}
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
           <div className="flex items-center gap-1.5 md:gap-2">
-            <div className="h-2 w-10 md:w-16 rounded-full bg-gray-200">
-              <div className="h-2 rounded-full bg-blue-500" style={{ width: `${task.progressRate}%` }} />
+            <div className="h-2 w-10 md:w-16 rounded-full bg-accent">
+              <div className="h-2 rounded-full bg-info" style={{ width: `${task.progressRate}%` }} />
             </div>
             <span>{task.progressRate}%</span>
-            {effortText && <span className="text-xs text-gray-500">/ {effortText}</span>}
+            {effortText && <span className="text-xs text-muted-foreground">/ {effortText}</span>}
           </div>
         </td>
         {/* 予定期間 */}
@@ -240,7 +240,7 @@ function TaskTreeNodeImpl({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="text-red-600 hover:text-red-700"
+                className="text-destructive hover:text-destructive"
                 title="削除"
                 aria-label="削除"
                 onClick={async () => {
@@ -884,7 +884,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <DialogDescription>エクスポートした CSV ファイルを Excel 等で編集し、インポートします。担当者・進捗は初期状態で作成されます。</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleImport} className="space-y-4">
-                {importError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{importError}</div>}
+                {importError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{importError}</div>}
                 <div className="space-y-2">
                   <Label>テンプレートファイル（CSV）</Label>
                   <Input type="file" accept=".csv" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
@@ -906,7 +906,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && (
-                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>
+                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                 )}
                 <div className="space-y-2">
                   <Label>種別</Label>
@@ -948,7 +948,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <div className="space-y-2">
                       <Label>担当者</Label>
                       {members.length === 0 ? (
-                        <p className="text-sm text-red-500">メンバーが未登録です。先にメンバー管理から追加してください。</p>
+                        <p className="text-sm text-destructive">メンバーが未登録です。先にメンバー管理から追加してください。</p>
                       ) : (
                         <select
                           value={form.assigneeId}
@@ -1033,7 +1033,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       </div>
 
       {canEditPmTl && selectedIds.size > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-info/30 bg-info/10 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
           <Dialog open={isBulkEditOpen} onOpenChange={handleBulkEditOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括編集</DialogTrigger>
@@ -1046,7 +1046,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </DialogHeader>
               <form onSubmit={handleBulkEditSubmit} className="space-y-4">
                 {bulkEditError && (
-                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{bulkEditError}</div>
+                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{bulkEditError}</div>
                 )}
                 <ApplyFieldRow
                   apply={bulkEditApply.assigneeId}
@@ -1111,9 +1111,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </DialogHeader>
               <form onSubmit={handleBulkActualSubmit} className="space-y-4">
                 {bulkActualError && (
-                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{bulkActualError}</div>
+                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{bulkActualError}</div>
                 )}
-                <div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">
+                <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
                   ステータス整合性ルール: 未着手なら実績開始/終了とも自動クリア、進行中/保留なら実績終了のみ自動クリア、完了のみ両方保存されます。
                 </div>
                 <ApplyFieldRow
@@ -1167,7 +1167,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
-          <Button variant="outline" size="sm" className="text-red-600" onClick={handleBulkDelete}>一括削除</Button>
+          <Button variant="outline" size="sm" className="text-destructive" onClick={handleBulkDelete}>一括削除</Button>
           <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>選択解除</Button>
         </div>
       )}
@@ -1189,7 +1189,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       </div>
       <div className="rounded-lg border overflow-x-auto">
         <table className="min-w-full text-xs md:text-sm">
-          <thead className="bg-gray-50">
+          <thead className="bg-muted">
             <tr>
               {canEditPmTl && (
                 <th className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
@@ -1234,7 +1234,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             ))}
             {filteredTasks.length === 0 && (
               <tr>
-                <td colSpan={canEditPmTl ? 8 : 7} className="py-8 text-center text-gray-500">
+                <td colSpan={canEditPmTl ? 8 : 7} className="py-8 text-center text-muted-foreground">
                   {tasks.length === 0
                     ? 'WBS が登録されていません'
                     : '選択したフィルタ条件に該当するタスクはありません'}
@@ -1263,12 +1263,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </DialogHeader>
           {editingTask && editForm && (
             <form onSubmit={handleEditDialogSubmit} className="space-y-4">
-              {editError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{editError}</div>}
+              {editError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{editError}</div>}
 
               {/* PM/TL 編集セクション */}
               {editingCanUpdatePm && (
-                <section className="space-y-3 rounded-md border border-gray-200 p-3">
-                  <h4 className="text-sm font-medium text-gray-700">編集項目</h4>
+                <section className="space-y-3 rounded-md border border-border p-3">
+                  <h4 className="text-sm font-medium text-foreground">編集項目</h4>
                   <div className="space-y-2">
                     <Label>種別</Label>
                     <select
@@ -1332,8 +1332,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
               {/* 実績セクション（PM/TL または ACT の担当者本人のみ）*/}
               {editingCanUpdateActual && editForm.type === 'activity' && (
-                <section className="space-y-3 rounded-md border border-gray-200 p-3">
-                  <h4 className="text-sm font-medium text-gray-700">実績項目</h4>
+                <section className="space-y-3 rounded-md border border-border p-3">
+                  <h4 className="text-sm font-medium text-foreground">実績項目</h4>
                   <div className="space-y-2">
                     <Label>ステータス</Label>
                     <select
@@ -1371,7 +1371,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2">
-                      <Label className={editingActualStartDisabled ? 'text-gray-400' : ''}>実績開始日</Label>
+                      <Label className={editingActualStartDisabled ? 'text-muted-foreground' : ''}>実績開始日</Label>
                       <DateFieldWithActions
                         value={editForm.actualStartDate}
                         onChange={(v) => setEditForm({ ...editForm, actualStartDate: v })}
@@ -1379,7 +1379,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label className={editingActualEndDisabled ? 'text-gray-400' : ''}>実績終了日</Label>
+                      <Label className={editingActualEndDisabled ? 'text-muted-foreground' : ''}>実績終了日</Label>
                       <DateFieldWithActions
                         value={editForm.actualEndDate}
                         onChange={(v) => setEditForm({ ...editForm, actualEndDate: v })}

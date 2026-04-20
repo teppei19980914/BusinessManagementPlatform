@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { THEMES, toSafeThemeId, type ThemeId } from '@/types';
+import { THEME_DEFINITIONS } from '@/config';
 
 type Props = {
   mfaEnabled: boolean;
@@ -152,10 +153,10 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
         </CardHeader>
         <CardContent>
           {themeError && (
-            <div className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-600">{themeError}</div>
+            <div className="mb-3 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{themeError}</div>
           )}
           {themeSuccess && (
-            <div className="mb-3 rounded-md bg-green-50 p-3 text-sm text-green-600">{themeSuccess}</div>
+            <div className="mb-3 rounded-md bg-success/10 p-3 text-sm text-success">{themeSuccess}</div>
           )}
           <div role="radiogroup" aria-label="画面テーマ" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {(Object.entries(THEMES) as [ThemeId, string][]).map(([id, label]) => {
@@ -169,12 +170,12 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
                   onClick={() => handleThemeChange(id)}
                   className={[
                     'flex items-center gap-3 rounded-md border p-3 text-left text-sm transition-colors',
-                    selected ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-600' : 'border-input hover:bg-gray-50',
+                    selected ? 'border-info bg-info/10 ring-1 ring-info' : 'border-input hover:bg-muted',
                   ].join(' ')}
                 >
                   <ThemeSwatch themeId={id} />
                   <span>{label}</span>
-                  {selected && <span className="ml-auto text-xs text-blue-700">選択中</span>}
+                  {selected && <span className="ml-auto text-xs text-info">選択中</span>}
                 </button>
               );
             })}
@@ -190,8 +191,8 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
         </CardHeader>
         <CardContent>
           <form onSubmit={handlePasswordChange} className="space-y-4">
-            {pwError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{pwError}</div>}
-            {pwSuccess && <div className="rounded-md bg-green-50 p-3 text-sm text-green-600">{pwSuccess}</div>}
+            {pwError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{pwError}</div>}
+            {pwSuccess && <div className="rounded-md bg-success/10 p-3 text-sm text-success">{pwSuccess}</div>}
             <div className="space-y-2">
               <Label>現在のパスワード</Label>
               <Input type="password" value={pwForm.currentPassword} onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })} required />
@@ -199,7 +200,7 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
             <div className="space-y-2">
               <Label>新しいパスワード</Label>
               <Input type="password" value={pwForm.newPassword} onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })} required />
-              <p className="text-xs text-gray-500">10文字以上、英大文字・英小文字・数字・記号のうち3種以上</p>
+              <p className="text-xs text-muted-foreground">10文字以上、英大文字・英小文字・数字・記号のうち3種以上</p>
             </div>
             <div className="space-y-2">
               <Label>新しいパスワード（確認）</Label>
@@ -227,7 +228,7 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {mfaError && <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-600">{mfaError}</div>}
+          {mfaError && <div className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{mfaError}</div>}
 
           {mfaStep === 'idle' && !mfaEnabled && (
             <Button onClick={handleMfaSetup}>MFA を有効化する</Button>
@@ -238,7 +239,7 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
           )}
 
           {mfaStep === 'idle' && mfaEnabled && isAdmin && (
-            <p className="text-sm text-gray-500">管理者は MFA を無効化できません。</p>
+            <p className="text-sm text-muted-foreground">管理者は MFA を無効化できません。</p>
           )}
 
           {mfaStep === 'verify' && (
@@ -247,12 +248,12 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={qrCode} alt="QR Code" className="h-48 w-48" />
               </div>
-              <p className="text-center text-sm text-gray-500">
+              <p className="text-center text-sm text-muted-foreground">
                 認証アプリでこの QR コードをスキャンしてください。
               </p>
-              <details className="text-xs text-gray-400">
+              <details className="text-xs text-muted-foreground">
                 <summary>手動入力用のシークレットキー</summary>
-                <code className="mt-1 block rounded bg-gray-100 p-2 font-mono">{mfaSecret}</code>
+                <code className="mt-1 block rounded bg-accent p-2 font-mono">{mfaSecret}</code>
               </details>
               <form onSubmit={handleMfaEnable} className="flex gap-2">
                 <Input
@@ -274,32 +275,20 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
 }
 
 /**
- * PR #72: テーマのカラーサンプル。
- *   各テーマ ID に応じた背景/アクセント 2 色の組み合わせをプレビュー表示する。
- *   実際のテーマ CSS 変数とは独立した固定色 (設定画面では他テーマも参照できるよう
- *   [data-theme="..."] コンテナ化しない)。
+ * PR #72: テーマのカラーサンプル (PR #76 で重複ハードコード除去)。
+ *   各テーマ ID に応じた背景/基調色の組み合わせをプレビュー表示する。
+ *   設定画面では他テーマも並列参照できるよう [data-theme="..."] コンテナ化しないため、
+ *   `style` 属性で `THEME_DEFINITIONS` の値を直接展開する (テーマ定義の唯一の真実から派生)。
  */
 function ThemeSwatch({ themeId }: { themeId: ThemeId }) {
-  const palette: Record<ThemeId, { bg: string; accent: string }> = {
-    light: { bg: '#ffffff', accent: '#111827' },
-    dark: { bg: '#111827', accent: '#e5e7eb' },
-    'pastel-blue': { bg: '#eaf3fb', accent: '#7aa8cf' },
-    'pastel-green': { bg: '#ecf5ea', accent: '#8bbf86' },
-    'pastel-yellow': { bg: '#fdf6e3', accent: '#d9b961' },
-    'pastel-red': { bg: '#fbecec', accent: '#d49393' },
-    'pop-blue': { bg: '#e0f0ff', accent: '#1d4ed8' },
-    'pop-green': { bg: '#e4fbe3', accent: '#15803d' },
-    'pop-yellow': { bg: '#fff6cc', accent: '#ca8a04' },
-    'pop-red': { bg: '#ffe4e6', accent: '#be123c' },
-  };
-  const { bg, accent } = palette[themeId];
+  const tokens = THEME_DEFINITIONS[themeId];
   return (
     <span
       aria-hidden
       className="inline-flex h-8 w-12 shrink-0 overflow-hidden rounded border"
-      style={{ background: bg }}
+      style={{ background: tokens.background }}
     >
-      <span className="h-full w-1/2" style={{ background: accent }} />
+      <span className="h-full w-1/2" style={{ background: tokens.primary }} />
     </span>
   );
 }

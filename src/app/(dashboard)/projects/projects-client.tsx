@@ -179,7 +179,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && (
-                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>
+                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                 )}
                 <div className="space-y-2">
                   <Label>プロジェクト名</Label>
@@ -267,7 +267,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
                   抜け漏れなく提案を出すため、可能な限り入力を推奨する。
                 */}
                 <div className="space-y-2">
-                  <Label>業務ドメインタグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
                   <Input
                     value={form.businessDomainTagsInput}
                     onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
@@ -276,7 +276,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>技術スタックタグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
                   <Input
                     value={form.techStackTagsInput}
                     onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
@@ -285,7 +285,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>工程タグ <span className="text-xs text-gray-500">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
                   <Input
                     value={form.processTagsInput}
                     onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
@@ -356,7 +356,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
               <TableCell>
                 <Link
                   href={`/projects/${project.id}`}
-                  className="font-medium text-blue-600 hover:underline"
+                  className="font-medium text-info hover:underline"
                 >
                   {project.name}
                 </Link>
@@ -377,7 +377,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
           ))}
           {initialProjects.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                 プロジェクトがありません
               </TableCell>
             </TableRow>
@@ -386,7 +386,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
       </Table>
       </ResizableColumnsProvider>
       {initialTotal > 20 && (
-        <p className="text-sm text-gray-500">全 {initialTotal} 件中 20 件を表示</p>
+        <p className="text-sm text-muted-foreground">全 {initialTotal} 件中 20 件を表示</p>
       )}
     </div>
   );

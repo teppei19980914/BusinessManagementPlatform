@@ -71,7 +71,7 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-muted px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle>パスワードリセット</CardTitle>
@@ -83,10 +83,10 @@ export default function ResetPasswordPage() {
         </CardHeader>
         <CardContent>
           {success ? (
-            <div className="rounded-md bg-green-50 p-4 text-sm text-green-600">{success}</div>
+            <div className="rounded-md bg-success/10 p-4 text-sm text-success">{success}</div>
           ) : step === 'verify' ? (
             <form onSubmit={handleVerify} className="space-y-4">
-              {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+              {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
               <div className="space-y-2">
                 <Label>メールアドレス</Label>
                 <Input
@@ -108,13 +108,13 @@ export default function ResetPasswordPage() {
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading ? '確認中...' : '本人確認'}
               </Button>
-              <p className="text-center text-xs text-gray-500">
-                <a href="/login" className="text-blue-600 hover:underline">ログインに戻る</a>
+              <p className="text-center text-xs text-muted-foreground">
+                <a href="/login" className="text-info hover:underline">ログインに戻る</a>
               </p>
             </form>
           ) : (
             <form onSubmit={handleReset} className="space-y-4">
-              {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+              {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
               <div className="space-y-2">
                 <Label>新しいパスワード</Label>
                 <Input
@@ -123,7 +123,7 @@ export default function ResetPasswordPage() {
                   onChange={(e) => setResetForm({ ...resetForm, newPassword: e.target.value })}
                   required
                 />
-                <p className="text-xs text-gray-500">10文字以上、英大文字・英小文字・数字・記号のうち3種以上</p>
+                <p className="text-xs text-muted-foreground">10文字以上、英大文字・英小文字・数字・記号のうち3種以上</p>
               </div>
               <div className="space-y-2">
                 <Label>新しいパスワード（確認）</Label>

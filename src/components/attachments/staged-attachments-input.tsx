@@ -51,14 +51,14 @@ export function StagedAttachmentsInput({ value, onChange, label = '関連 URL' }
 
   return (
     <div className="space-y-2">
-      <Label>{label} <span className="text-xs text-gray-500">(作成後に自動で保存されます)</span></Label>
+      <Label>{label} <span className="text-xs text-muted-foreground">(作成後に自動で保存されます)</span></Label>
       {value.length === 0 && (
-        <p className="text-xs text-gray-500">添付なし</p>
+        <p className="text-xs text-muted-foreground">添付なし</p>
       )}
       {value.map((item, i) => {
         const schemeInvalid = item.url.length > 0 && !SAFE_URL_SCHEME.test(item.url);
         return (
-          <div key={i} className="flex items-end gap-2 rounded border bg-gray-50 p-2">
+          <div key={i} className="flex items-end gap-2 rounded border bg-muted p-2">
             <div className="flex-1 space-y-1">
               <Label className="text-xs">表示名</Label>
               <Input
@@ -79,14 +79,14 @@ export function StagedAttachmentsInput({ value, onChange, label = '関連 URL' }
                 pattern="https?://.*"
               />
               {schemeInvalid && (
-                <p className="text-xs text-red-600">http:// または https:// で始まる必要があります</p>
+                <p className="text-xs text-destructive">http:// または https:// で始まる必要があります</p>
               )}
             </div>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="text-red-600"
+              className="text-destructive"
               onClick={() => removeAt(i)}
             >
               削除

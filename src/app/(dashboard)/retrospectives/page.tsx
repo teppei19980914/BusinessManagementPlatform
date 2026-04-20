@@ -14,7 +14,7 @@ export default async function AllRetrospectivesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">全振り返り</h2>
-        <span className="text-sm text-gray-500">{retros.length} 件</span>
+        <span className="text-sm text-muted-foreground">{retros.length} 件</span>
       </div>
       <AllRetrospectivesTable retros={retros} isAdmin={isAdmin} />
     </div>
