@@ -1,20 +1,25 @@
 import { z } from 'zod/v4';
+import {
+  NAME_MAX_LENGTH,
+  MEDIUM_TEXT_MAX_LENGTH,
+  TAGS_MAX_COUNT,
+} from '@/config';
 
 export const createProjectSchema = z.object({
-  name: z.string().min(1, 'プロジェクト名を入力してください').max(100),
-  customerName: z.string().min(1, '顧客名を入力してください').max(100),
-  purpose: z.string().min(1, '目的を入力してください').max(2000),
-  background: z.string().min(1, '背景を入力してください').max(2000),
-  scope: z.string().min(1, 'スコープを入力してください').max(2000),
-  outOfScope: z.string().max(2000).optional(),
+  name: z.string().min(1, 'プロジェクト名を入力してください').max(NAME_MAX_LENGTH),
+  customerName: z.string().min(1, '顧客名を入力してください').max(NAME_MAX_LENGTH),
+  purpose: z.string().min(1, '目的を入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
+  background: z.string().min(1, '背景を入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
+  scope: z.string().min(1, 'スコープを入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
+  outOfScope: z.string().max(MEDIUM_TEXT_MAX_LENGTH).optional(),
   devMethod: z.enum(['scratch', 'power_platform', 'package', 'other']),
-  businessDomainTags: z.array(z.string()).max(50).optional(),
-  techStackTags: z.array(z.string()).max(50).optional(),
+  businessDomainTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
+  techStackTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
   // PR #65: 核心機能 (提案型サービス) のため工程タグを追加 (ナレッジと同じ粒度)
-  processTags: z.array(z.string()).max(50).optional(),
+  processTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
   plannedStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日付形式が不正です'),
   plannedEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日付形式が不正です'),
-  notes: z.string().max(2000).optional(),
+  notes: z.string().max(MEDIUM_TEXT_MAX_LENGTH).optional(),
 });
 
 export const updateProjectSchema = createProjectSchema.partial();

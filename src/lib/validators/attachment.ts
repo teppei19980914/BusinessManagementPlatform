@@ -1,4 +1,10 @@
 import { z } from 'zod/v4';
+import {
+  DISPLAY_NAME_MAX_LENGTH,
+  URL_MAX_LENGTH,
+  ATTACHMENT_SLOT_MAX_LENGTH,
+  ATTACHMENT_MIME_HINT_MAX_LENGTH,
+} from '@/config';
 
 /**
  * 添付リンクの親エンティティ種別 (PR #64 Phase 1)。
@@ -38,29 +44,29 @@ const SAFE_URL_SCHEME = /^https?:\/\//i;
 export const createAttachmentSchema = z.object({
   entityType: z.enum(ATTACHMENT_ENTITY_TYPES),
   entityId: z.string().uuid(),
-  slot: z.string().min(1).max(30).default('general'),
-  displayName: z.string().min(1, '表示名を入力してください').max(200),
+  slot: z.string().min(1).max(ATTACHMENT_SLOT_MAX_LENGTH).default('general'),
+  displayName: z.string().min(1, '表示名を入力してください').max(DISPLAY_NAME_MAX_LENGTH),
   url: z
     .string()
     .min(1, 'URL を入力してください')
-    .max(2000)
+    .max(URL_MAX_LENGTH)
     .refine((u) => SAFE_URL_SCHEME.test(u), {
       message: 'URL は http:// または https:// で始まる必要があります',
     }),
-  mimeHint: z.string().max(50).optional(),
+  mimeHint: z.string().max(ATTACHMENT_MIME_HINT_MAX_LENGTH).optional(),
 });
 
 export const updateAttachmentSchema = z.object({
-  displayName: z.string().min(1).max(200).optional(),
+  displayName: z.string().min(1).max(DISPLAY_NAME_MAX_LENGTH).optional(),
   url: z
     .string()
     .min(1)
-    .max(2000)
+    .max(URL_MAX_LENGTH)
     .refine((u) => SAFE_URL_SCHEME.test(u), {
       message: 'URL は http:// または https:// で始まる必要があります',
     })
     .optional(),
-  mimeHint: z.string().max(50).optional(),
+  mimeHint: z.string().max(ATTACHMENT_MIME_HINT_MAX_LENGTH).optional(),
 });
 
 export type CreateAttachmentInput = z.infer<typeof createAttachmentSchema>;

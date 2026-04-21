@@ -4,6 +4,7 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_REQUIRED_CHAR_TYPE_COUNT,
   PASSWORD_MAX_CONSECUTIVE_SAME_CHARS,
+  NAME_MAX_LENGTH,
 } from '@/config';
 
 // パスワードポリシー（設計書 DESIGN.md §9.4.2 / 定数は src/config/security.ts）
@@ -36,7 +37,7 @@ export const createUserSchema = z.object({
   name: z
     .string()
     .min(1, 'ユーザ名を入力してください')
-    .max(100, 'ユーザ名は100文字以内で入力してください'),
+    .max(NAME_MAX_LENGTH, `ユーザ名は${NAME_MAX_LENGTH}文字以内で入力してください`),
   email: z.email('有効なメールアドレスを入力してください'),
   systemRole: z.enum(['admin', 'general']),
 });

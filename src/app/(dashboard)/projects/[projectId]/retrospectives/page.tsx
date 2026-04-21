@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect, notFound } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { checkMembership } from '@/lib/permissions';
 import { listRetrospectives } from '@/services/retrospective.service';
 import { RetrospectivesClient } from './retrospectives-client';
@@ -8,7 +9,7 @@ type Props = { params: Promise<{ projectId: string }> };
 
 export default async function RetrospectivesPage({ params }: Props) {
   const session = await auth();
-  if (!session) redirect('/login');
+  if (!session) redirect(LOGIN_ROUTE);
 
   const { projectId } = await params;
   const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);

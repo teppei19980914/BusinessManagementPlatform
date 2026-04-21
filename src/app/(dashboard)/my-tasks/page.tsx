@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { listMyTaskProjects } from '@/services/task.service';
 import { MyTasksClient } from './my-tasks-client';
 
@@ -13,7 +14,7 @@ import { MyTasksClient } from './my-tasks-client';
  */
 export default async function MyTasksPage() {
   const session = await auth();
-  if (!session) redirect('/login');
+  if (!session) redirect(LOGIN_ROUTE);
 
   const projectGroups = await listMyTaskProjects(session.user.id);
   // サーバ側で算出した today (YYYY-MM-DD) を props 経由で渡し、クライアント描画で

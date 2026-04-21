@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { listAllRisksForViewer } from '@/services/risk.service';
 import { AllRisksTable } from './all-risks-table';
 
@@ -9,7 +10,7 @@ import { AllRisksTable } from './all-risks-table';
  */
 export default async function AllRisksPage() {
   const session = await auth();
-  if (!session) redirect('/login');
+  if (!session) redirect(LOGIN_ROUTE);
 
   const risks = await listAllRisksForViewer(session.user.id, session.user.systemRole);
   const isAdmin = session.user.systemRole === 'admin';

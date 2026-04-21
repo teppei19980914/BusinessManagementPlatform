@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { listAllKnowledgeForViewer } from '@/services/knowledge.service';
 import { KnowledgeClient } from './knowledge-client';
 
@@ -10,7 +11,7 @@ import { KnowledgeClient } from './knowledge-client';
  */
 export default async function KnowledgePage() {
   const session = await auth();
-  if (!session) redirect('/login');
+  if (!session) redirect(LOGIN_ROUTE);
 
   const knowledges = await listAllKnowledgeForViewer(
     session.user.id,

@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect, notFound } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { getProject } from '@/services/project.service';
 import { checkMembership } from '@/lib/permissions';
 import { ProjectDetailClient } from './project-detail-client';
@@ -20,7 +21,7 @@ type Props = {
  */
 export default async function ProjectDetailPage({ params }: Props) {
   const session = await auth();
-  if (!session) redirect('/login');
+  if (!session) redirect(LOGIN_ROUTE);
 
   const { projectId } = await params;
 

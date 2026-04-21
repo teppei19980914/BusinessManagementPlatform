@@ -3767,10 +3767,12 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 | **Tailwind パレット色** (`bg-gray-50` / `text-gray-500` / `bg-red-50` 等) | ✅ **準拠 (PR #76 Phase 2 で完了)** | 全 ~395 箇所を semantic token (`bg-muted` / `text-muted-foreground` / `bg-destructive/10` 等) に置換。新セマンティックトークン (`info` / `success` / `warning` / `milestoneMarker`) を `theme-definitions.ts` に追加し全テーマで定義 |
 | 設定画面のテーマプレビュー色 | ✅ 準拠 | hex リテラル 10 行を `THEME_DEFINITIONS` 参照に置換 (テーマ定義の真実から派生) |
 | 業務ドメインタグ・工程タグ (候補語彙) | 🟡 部分的 | 現状は入力側で自由文字列。候補語彙の定義ファイル化は今後検討 (要確認) |
-| ページ遷移の Link / href (`/projects` 等) | 🟡 部分的 | 認可判定では定数化済だが、通常の navigation Link は URL 文字列のまま。§21.3 判断基準 2 に従い据え置き |
+| ページ遷移の Link / href (`/projects` 等) | ✅ 準拠 (PR #81) | `src/config/app-routes.ts` に集約。redirect / Link / router.push の全 URL リテラルを定数 / 関数参照に移行 |
+| バリデーション数値 (Zod / JSX maxLength) | ✅ 準拠 (PR #81) | `src/config/validation.ts` に集約。Zod スキーマ (knowledge / memo / risk / project / retrospective / estimate / attachment / auth) を全て定数参照に移行 |
 | UI ラベル: 共通アクション動詞 (保存 / 削除 / キャンセル等 9 語) | ✅ 準拠 (PR #77 Phase A) | `src/i18n/messages/ja.json` の `action.*` に集約。`useTranslations('action')` / `getTranslations('action')` で参照。テストでキー集合を検査 |
-| UI ラベル: 共通フォームラベル (件名 / 内容 等) | 🟡 Phase B 予定 | 修正機会のあるたびに `field.*` 配下に段階抽出 |
-| UI ラベル: 画面固有メッセージ・本文 | 🟡 部分的 | 真の多言語化が必要になった段階で Phase D として一括抽出。当面は JSX リテラル許容 |
+| UI ラベル: 共通フォームラベル (件名 / 内容 等) | 🟡 Phase B カタログ完備 (PR #81) | `field.*` キー定義済 + テスト網羅化済。JSX 移行は使用機会のあるたびに段階実施 |
+| UI ラベル: 共通メッセージ (saveSuccess / deleteConfirm 等) | 🟡 Phase C カタログ完備 (PR #81) | `message.*` キー定義済 + テスト網羅化済。JSX 移行は使用機会のあるたびに段階実施 |
+| UI ラベル: 画面固有本文 | 🟡 部分的 | 真の多言語化が必要になった段階で Phase D として一括抽出。当面は JSX リテラル許容 |
 | コンポーネント固有のレイアウト定数 (Gantt の DAY_WIDTH 等) | 🟢 自己完結で許容 | 単一コンポーネント内のみで使用される数値 (§21.4.4 スコープ外) |
 | Tailwind utility class (`flex` / `gap-4` / `p-3` 等) | 🟢 対象外 | レイアウト・配置・サイズの class は外出し対象外 (Tailwind 設計方針に基づく) |
 | **サービス層 / API ルートのトップレベル docblock** (PR #79 Phase 1) | ✅ 準拠 | 全 18 サービス + 全 56 API ルートに役割・認可要件・監査記録・関連設計書セクションを記述。AI なしの将来運用引き継ぎを支える人間可読性確保 |

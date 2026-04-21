@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { listMyMemos } from '@/services/memo.service';
 import { MemosClient } from './memos-client';
 
@@ -12,7 +13,7 @@ import { MemosClient } from './memos-client';
  */
 export default async function MemosPage() {
   const session = await auth();
-  if (!session?.user) redirect('/login');
+  if (!session?.user) redirect(LOGIN_ROUTE);
 
   const memos = await listMyMemos(session.user.id);
   return <MemosClient memos={memos} viewerUserId={session.user.id} />;

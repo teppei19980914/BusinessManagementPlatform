@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { listPublicMemos } from '@/services/memo.service';
 import { AllMemosClient } from './all-memos-client';
 
@@ -11,7 +12,7 @@ import { AllMemosClient } from './all-memos-client';
  */
 export default async function AllMemosPage() {
   const session = await auth();
-  if (!session?.user) redirect('/login');
+  if (!session?.user) redirect(LOGIN_ROUTE);
 
   const memos = await listPublicMemos(session.user.id);
   return <AllMemosClient memos={memos} />;
