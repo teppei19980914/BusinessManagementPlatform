@@ -288,3 +288,34 @@ export const THEME_DEFINITIONS = {
     ring: 'oklch(0.55 0.2 20)',
   }),
 } as const satisfies Record<ThemeId, ThemeTokens>;
+
+/**
+ * 各テーマの `color-scheme` CSS プロパティ値 (PR #78 追加)。
+ *
+ * 役割:
+ *   ブラウザネイティブの UI 要素 (`<select>` のドロップダウンパネル、スクロールバー、
+ *   フォームコントロール既定色等) のレンダリングモードをブラウザに伝える。
+ *
+ * これを設定しないと、ダークテーマでも `<select>` の option 一覧が
+ * 「ライトモード既定の暗い文字 × ダーク背景」で表示され、選択肢が読めなくなる。
+ *
+ * 分類ルール:
+ *   - 背景輝度が高いテーマ (light / pastel / pop): `'light'`
+ *   - 背景輝度が低いテーマ (dark): `'dark'`
+ *
+ * 新しいテーマを追加する場合は本マップにも必ずエントリを追加すること。
+ * `satisfies Record<ThemeId, ...>` 制約により追加漏れがビルドエラーになる。
+ */
+export const THEME_COLOR_SCHEMES = {
+  light: 'light',
+  dark: 'dark',
+  'pastel-blue': 'light',
+  'pastel-green': 'light',
+  'pastel-yellow': 'light',
+  'pastel-red': 'light',
+  'pop-blue': 'light',
+  'pop-green': 'light',
+  'pop-yellow': 'light',
+  'pop-red': 'light',
+} as const satisfies Record<ThemeId, 'light' | 'dark'>;
+

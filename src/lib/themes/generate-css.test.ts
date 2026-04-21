@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateThemeCss, tokenToCssVarName } from './generate-css';
-import { THEME_DEFINITIONS } from './definitions';
+import { THEME_DEFINITIONS, THEME_COLOR_SCHEMES } from '@/config/theme-definitions';
 import { THEMES } from '@/types';
 
 describe('tokenToCssVarName', () => {
@@ -55,5 +55,16 @@ describe('generateThemeCss', () => {
   it('CSS に HTML 危険文字 (<, >, &) が混入していない (XSS / パーサ事故防止)', () => {
     // テーマ値の oklch(...) にこれらは含まれないはず。もし混入したら警告する。
     expect(css).not.toMatch(/[<>&]/);
+  });
+
+  it('PR #78: 全テーマで color-scheme 宣言が出力される', () => {
+    // 各テーマブロック内に `color-scheme: <value>;` が含まれていること。
+    // ブラウザネイティブの <select> ドロップダウン等のレンダリングモードを正しく伝えるため。
+    for (const [id, scheme] of Object.entries(THEME_COLOR_SCHEMES)) {
+      expect(
+        css,
+        `[data-theme="${id}"] block must contain color-scheme: ${scheme};`,
+      ).toContain(`color-scheme: ${scheme};`);
+    }
   });
 });

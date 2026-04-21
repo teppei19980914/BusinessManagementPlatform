@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { THEME_DEFINITIONS, type ThemeTokens } from './theme-definitions';
+import { THEME_DEFINITIONS, THEME_COLOR_SCHEMES, type ThemeTokens } from './theme-definitions';
 import { THEMES } from './themes';
 
 /**
@@ -65,5 +65,33 @@ describe('THEME_DEFINITIONS', () => {
     expect(THEME_DEFINITIONS.light).toBeDefined();
     expect(THEME_DEFINITIONS.light.background).toBeTruthy();
     expect(THEME_DEFINITIONS.light.foreground).toBeTruthy();
+  });
+});
+
+describe('THEME_COLOR_SCHEMES (PR #78)', () => {
+  it('THEMES の全テーマに color-scheme 値が定義されている (追加漏れ検出)', () => {
+    const catalogIds = Object.keys(THEMES).sort();
+    const schemeIds = Object.keys(THEME_COLOR_SCHEMES).sort();
+    expect(schemeIds).toEqual(catalogIds);
+  });
+
+  it('color-scheme 値は light か dark のいずれかである', () => {
+    for (const [themeId, scheme] of Object.entries(THEME_COLOR_SCHEMES)) {
+      expect(['light', 'dark']).toContain(scheme);
+      expect(scheme, `${themeId}.colorScheme is empty`).toBeTruthy();
+    }
+  });
+
+  it('dark テーマのみ dark、それ以外は全て light (背景輝度との整合性)', () => {
+    expect(THEME_COLOR_SCHEMES.dark).toBe('dark');
+    expect(THEME_COLOR_SCHEMES.light).toBe('light');
+    // pastel / pop はいずれも明るい背景なので light
+    for (const id of Object.keys(THEME_COLOR_SCHEMES)) {
+      if (id === 'dark') continue;
+      expect(
+        THEME_COLOR_SCHEMES[id as keyof typeof THEME_COLOR_SCHEMES],
+        `${id} should be 'light' (only 'dark' theme uses dark color-scheme)`,
+      ).toBe('light');
+    }
   });
 });
