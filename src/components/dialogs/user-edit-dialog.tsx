@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +28,7 @@ export function UserEditDialog({
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
 }) {
+  const t = useTranslations('action');
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
     name: '',
@@ -112,7 +114,7 @@ export function UserEditDialog({
               <option value="inactive">無効</option>
             </select>
           </div>
-          <Button type="submit" className="w-full">保存</Button>
+          <Button type="submit" className="w-full">{t('save')}</Button>
         </form>
       </DialogContent>
     </Dialog>

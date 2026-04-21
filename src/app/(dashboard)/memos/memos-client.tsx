@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -56,6 +57,7 @@ export function MemosClient({
   memos: MemoDTO[];
   viewerUserId: string;
 }) {
+  const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
   const [memos, setMemos] = useState(initialMemos);
@@ -273,8 +275,8 @@ export function MemosClient({
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   {m.isMine && (
                     <div className="flex gap-1">
-                      <Button variant="outline" size="sm" onClick={() => setEditing(m)}>編集</Button>
-                      <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>削除</Button>
+                      <Button variant="outline" size="sm" onClick={() => setEditing(m)}>{t('edit')}</Button>
+                      <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>{t('delete')}</Button>
                     </div>
                   )}
                 </TableCell>
@@ -340,7 +342,7 @@ export function MemosClient({
                 canEdit={editing.userId === viewerUserId}
                 label="参考 URL"
               />
-              <Button type="submit" className="w-full">保存</Button>
+              <Button type="submit" className="w-full">{t('save')}</Button>
             </form>
           )}
         </DialogContent>

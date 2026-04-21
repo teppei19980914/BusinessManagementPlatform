@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import { NextIntlClientProvider } from 'next-intl';
+import { getLocale, getMessages } from 'next-intl/server';
 import './globals.css';
 import { AppSessionProvider } from '@/components/session-provider';
 import { auth } from '@/lib/auth';
@@ -37,9 +39,14 @@ export default async function RootLayout({
   const session = await auth();
   const theme = toSafeThemeId(session?.user?.themePreference);
 
+  // PR #77: next-intl 統合。現状 locale='ja' 固定だが将来の多言語化に備えて
+  // getLocale() / getMessages() を経由してサーバ側で解決する。
+  const locale = await getLocale();
+  const messages = await getMessages();
+
   return (
     <html
-      lang="ja"
+      lang={locale}
       data-theme={theme}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
@@ -57,8 +64,16 @@ export default async function RootLayout({
         <style id="tasukiba-themes">{THEME_CSS}</style>
       </head>
       <body className="flex min-h-full flex-col">
-        {/* PR #67: MFA 検証ページで useSession / update を使うため全ページで SessionProvider を有効化 */}
-        <AppSessionProvider>{children}</AppSessionProvider>
+        {/*
+          PR #77: next-intl の Provider。クライアントコンポーネントから
+          useTranslations() を呼べるよう、サーバ側で解決した messages を注入する。
+          サーバコンポーネントは getTranslations() を直接使うため Provider は不要だが、
+          Provider があっても干渉しない。
+        */}
+        <NextIntlClientProvider locale={locale} messages={messages}>
+          {/* PR #67: MFA 検証ページで useSession / update を使うため全ページで SessionProvider を有効化 */}
+          <AppSessionProvider>{children}</AppSessionProvider>
+        </NextIntlClientProvider>
       </body>
     </html>
   );

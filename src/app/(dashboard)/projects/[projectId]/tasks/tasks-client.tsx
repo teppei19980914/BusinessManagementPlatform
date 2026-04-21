@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -316,6 +317,7 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
 );
 
 export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload }: Props) {
+  const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -1399,8 +1401,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               />
 
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={closeEditDialog}>キャンセル</Button>
-                <Button type="submit">保存</Button>
+                <Button type="button" variant="outline" onClick={closeEditDialog}>{t('cancel')}</Button>
+                <Button type="submit">{t('save')}</Button>
               </div>
             </form>
           )}

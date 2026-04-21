@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -39,6 +40,7 @@ export function SingleUrlField({
   label,
   defaultDisplayName = 'ドキュメント',
 }: Props) {
+  const t = useTranslations('action');
   const { withLoading } = useLoading();
   // react-hooks/set-state-in-effect 回避: loaded と current を 1 つの state にまとめる
   type CurrentState =
@@ -195,7 +197,7 @@ export function SingleUrlField({
               required
             />
           </div>
-          <Button type="submit" size="sm">保存</Button>
+          <Button type="submit" size="sm">{t('save')}</Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
             取消
           </Button>
