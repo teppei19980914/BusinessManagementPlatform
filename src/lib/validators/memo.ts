@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { TITLE_MAX_LENGTH, MEMO_CONTENT_MAX_LENGTH } from '@/config';
 
 /**
  * メモの公開範囲 (PR #70)。
@@ -13,8 +14,8 @@ export type MemoVisibility = (typeof MEMO_VISIBILITIES)[number];
  * タグは持たせない (PR #70 要件): メモは業務知見の一時置き場で、共有資産化判断は人間の目で行う。
  */
 export const createMemoSchema = z.object({
-  title: z.string().min(1, 'タイトルを入力してください').max(150),
-  content: z.string().min(1, '本文を入力してください').max(10000),
+  title: z.string().min(1, 'タイトルを入力してください').max(TITLE_MAX_LENGTH),
+  content: z.string().min(1, '本文を入力してください').max(MEMO_CONTENT_MAX_LENGTH),
   visibility: z.enum(MEMO_VISIBILITIES).default('private'),
 });
 

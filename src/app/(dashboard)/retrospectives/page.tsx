@@ -1,11 +1,12 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { listAllRetrospectivesForViewer } from '@/services/retrospective.service';
 import { AllRetrospectivesTable } from './all-retrospectives-table';
 
 export default async function AllRetrospectivesPage() {
   const session = await auth();
-  if (!session) redirect('/login');
+  if (!session) redirect(LOGIN_ROUTE);
 
   const retros = await listAllRetrospectivesForViewer(session.user.id, session.user.systemRole);
   const isAdmin = session.user.systemRole === 'admin';

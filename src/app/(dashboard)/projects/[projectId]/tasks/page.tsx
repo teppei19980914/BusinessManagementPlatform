@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect, notFound } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { checkMembership } from '@/lib/permissions';
 import { listTasks } from '@/services/task.service';
 import { listMembers } from '@/services/member.service';
@@ -11,7 +12,7 @@ type Props = {
 
 export default async function TasksPage({ params }: Props) {
   const session = await auth();
-  if (!session) redirect('/login');
+  if (!session) redirect(LOGIN_ROUTE);
 
   const { projectId } = await params;
 

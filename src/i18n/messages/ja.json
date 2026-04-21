@@ -9,5 +9,38 @@
     "close": "閉じる",
     "today": "今日",
     "clear": "クリア"
+  },
+  "field": {
+    "title": "件名",
+    "content": "内容",
+    "body": "本文",
+    "name": "名称",
+    "displayName": "表示名",
+    "purpose": "目的",
+    "background": "背景",
+    "result": "結果",
+    "assignee": "担当者",
+    "deadline": "期限",
+    "visibility": "公開範囲",
+    "kind": "種別",
+    "impact": "影響度",
+    "likelihood": "発生可能性",
+    "riskNature": "脅威 / 好機",
+    "conductedDate": "実施日",
+    "plannedEndDate": "終了予定日",
+    "currentPassword": "現在のパスワード",
+    "newPassword": "新しいパスワード",
+    "newPasswordConfirm": "新しいパスワード（確認）"
+  },
+  "message": {
+    "saveSuccess": "保存しました",
+    "saveFailed": "保存に失敗しました",
+    "deleteSuccess": "削除しました",
+    "deleteFailed": "削除に失敗しました",
+    "deleteConfirm": "本当に削除しますか？",
+    "fetchFailed": "データの取得に失敗しました",
+    "validationError": "入力内容を確認してください",
+    "noData": "データがありません",
+    "loading": "読み込み中..."
   }
 }

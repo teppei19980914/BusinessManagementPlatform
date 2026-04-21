@@ -5,6 +5,21 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import { cn } from '@/lib/utils';
+import {
+  PROJECTS_ROUTE,
+  ALL_RISKS_ROUTE,
+  ALL_ISSUES_ROUTE,
+  ALL_RETROSPECTIVES_ROUTE,
+  KNOWLEDGE_ROUTE,
+  ALL_MEMOS_ROUTE,
+  MEMOS_ROUTE,
+  MY_TASKS_ROUTE,
+  SETTINGS_ROUTE,
+  LOGIN_ROUTE,
+  ADMIN_USERS_ROUTE,
+  ADMIN_AUDIT_LOGS_ROUTE,
+  ADMIN_ROLE_CHANGES_ROUTE,
+} from '@/config';
 
 type DashboardHeaderProps = {
   user: {
@@ -15,25 +30,25 @@ type DashboardHeaderProps = {
 };
 
 const navItems = [
-  { href: '/projects', label: 'プロジェクト' },
+  { href: PROJECTS_ROUTE, label: 'プロジェクト' },
   // PR #69: マイタスクはナビから撤去し、アカウントメニュー配下に移動した
   // (ユーザ個人専用の画面なので、共有ナビではなくアカウント文脈に寄せる)
   // 全プロジェクト横断で閲覧できるナレッジ資産（リスク/課題・振り返り・ナレッジ）。
   // プロジェクト詳細タブの「○○一覧」はそのプロジェクトに紐づく一覧、最上部タブは
   // 全プロジェクトの集約ビュー。
   // PR #60 #1: 「全リスク」「全課題」を別タブに分離
-  { href: '/risks', label: '全リスク' },
-  { href: '/issues', label: '全課題' },
-  { href: '/retrospectives', label: '全振り返り' },
-  { href: '/knowledge', label: '全ナレッジ' },
+  { href: ALL_RISKS_ROUTE, label: '全リスク' },
+  { href: ALL_ISSUES_ROUTE, label: '全課題' },
+  { href: ALL_RETROSPECTIVES_ROUTE, label: '全振り返り' },
+  { href: KNOWLEDGE_ROUTE, label: '全ナレッジ' },
   // PR #71: 公開メモの横断ビュー (個人管理はアカウントメニューの「メモ」から)
-  { href: '/all-memos', label: '全メモ' },
+  { href: ALL_MEMOS_ROUTE, label: '全メモ' },
 ];
 
 const adminNavItems = [
-  { href: '/admin/users', label: 'ユーザ管理' },
-  { href: '/admin/audit-logs', label: '監査ログ' },
-  { href: '/admin/role-changes', label: '権限変更' },
+  { href: ADMIN_USERS_ROUTE, label: 'ユーザ管理' },
+  { href: ADMIN_AUDIT_LOGS_ROUTE, label: '監査ログ' },
+  { href: ADMIN_ROLE_CHANGES_ROUTE, label: '権限変更' },
 ];
 
 /**
@@ -87,7 +102,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
         >
           {/* PR #69 Task 3: マイタスクはナビから撤去してこのメニューに配置 (個人専用画面) */}
           <Link
-            href="/my-tasks"
+            href={MY_TASKS_ROUTE}
             role="menuitem"
             className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
@@ -99,7 +114,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
             横断の「全メモ」(/all-memos) は上部ナビに移動した。
           */}
           <Link
-            href="/memos"
+            href={MEMOS_ROUTE}
             role="menuitem"
             className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
@@ -107,7 +122,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
             メモ
           </Link>
           <Link
-            href="/settings"
+            href={SETTINGS_ROUTE}
             role="menuitem"
             className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
@@ -120,7 +135,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
             className="block w-full px-4 py-2 text-left text-sm text-foreground hover:bg-accent"
             onClick={() => {
               setOpen(false);
-              signOut({ callbackUrl: '/login' });
+              signOut({ callbackUrl: LOGIN_ROUTE });
             }}
           >
             ログアウト
@@ -138,7 +153,7 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
     <header className="border-b bg-card">
       <div className="flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-6">
-          <Link href="/projects" className="text-lg font-semibold">
+          <Link href={PROJECTS_ROUTE} className="text-lg font-semibold">
             たすきば
           </Link>
           <nav className="flex items-center gap-1">

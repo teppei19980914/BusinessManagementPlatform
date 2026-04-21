@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect, notFound } from 'next/navigation';
+import { LOGIN_ROUTE } from '@/config';
 import { checkMembership } from '@/lib/permissions';
 import { listRisks } from '@/services/risk.service';
 import { listMembers } from '@/services/member.service';
@@ -13,7 +14,7 @@ type Props = { params: Promise<{ projectId: string }> };
  */
 export default async function IssuesPage({ params }: Props) {
   const session = await auth();
-  if (!session) redirect('/login');
+  if (!session) redirect(LOGIN_ROUTE);
 
   const { projectId } = await params;
   const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);

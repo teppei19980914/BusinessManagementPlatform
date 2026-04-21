@@ -1,3 +1,20 @@
+/**
+ * GET  /api/projects/[projectId]/members - プロジェクトメンバー一覧取得
+ * POST /api/projects/[projectId]/members - メンバー追加 (システム管理者のみ)
+ *
+ * 役割:
+ *   メンバー管理画面の表示と新規追加。GET は WBS / リスク等の担当者
+ *   ドロップダウン用にも参照される。
+ *
+ * 認可:
+ *   - GET: project:read (担当者選択 UI のためメンバー全員に許可)
+ *   - POST: requireAdmin (権限委譲リスク回避でシステム管理者のみ)
+ *
+ * 監査: POST 時に audit_logs と role_change_logs に記録。
+ *
+ * 関連: DESIGN.md §8 (権限制御 - メンバー管理)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission, requireAdmin } from '@/lib/api-helpers';
 import { listMembers, addMember } from '@/services/member.service';

@@ -13,8 +13,10 @@
  *   - themes.ts            : テーマカタログ (画面上の表示名 + ID)
  *   - theme-definitions.ts : テーマの CSS 色トークン値
  *   - security.ts          : 認証・ロック・トークン期限等
- *   - routes.ts            : 認可判定に使うパス集合
+ *   - routes.ts            : 認可判定に使うパス集合 (middleware 用)
+ *   - app-routes.ts        : 画面遷移パス (Link / router.push 用)
  *   - suggestion.ts        : 提案型サービスの重み・閾値
+ *   - validation.ts        : Zod / JSX maxLength の文字数上限
  */
 
 export * from './master-data';
@@ -22,4 +24,6 @@ export * from './themes';
 export * from './theme-definitions';
 export * from './security';
 export * from './routes';
+export * from './app-routes';
 export * from './suggestion';
+export * from './validation';

@@ -11,6 +11,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { SYSTEM_ROLES } from '@/types';
+import { NAME_MAX_LENGTH } from '@/config';
 import type { UserDTO } from '@/services/user.service';
 
 /**
@@ -29,6 +30,7 @@ export function UserEditDialog({
   onSaved: () => Promise<void> | void;
 }) {
   const t = useTranslations('action');
+  const tField = useTranslations('field');
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
     name: '',
@@ -83,11 +85,11 @@ export function UserEditDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           <div className="space-y-2">
-            <Label>ユーザ名</Label>
+            <Label>{tField('name')}</Label>
             <Input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
-              maxLength={100}
+              maxLength={NAME_MAX_LENGTH}
               required
             />
           </div>
