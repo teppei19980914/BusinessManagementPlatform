@@ -116,7 +116,9 @@ export function MemosClient({
   }
 
   // --- 編集ダイアログ ---
-  // Derived State パターン (useEffect 不要): editing が切り替わったら form を同期
+  // PR #88: 編集ダイアログを開くたびに DB 上のデータ (editing prop) を初期表示する。
+  // 閉じた時に prevEditingId を null にリセットすることで、同一メモを再度開いた場合も
+  // 編集途中の状態ではなく DB の最新データが表示される (ユーザ期待どおり)。
   type EditFormState = { title: string; content: string; visibility: string };
   const [editForm, setEditForm] = useState<EditFormState>({
     title: '',
@@ -132,6 +134,9 @@ export function MemosClient({
       visibility: editing.visibility,
     });
     setError('');
+  }
+  if (!editing && prevEditingId !== null) {
+    setPrevEditingId(null);
   }
 
   async function handleEdit(e: React.FormEvent) {

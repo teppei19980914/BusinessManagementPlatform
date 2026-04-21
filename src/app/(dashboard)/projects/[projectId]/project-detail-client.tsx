@@ -136,6 +136,29 @@ export function ProjectDetailClient({
   });
   const [editError, setEditError] = useState('');
 
+  // PR #88: 編集ダイアログを開くたびに DB の最新データ (project prop) を初期表示する。
+  // useState は初回 mount でしか初期値を評価しないため、そのままでは router.refresh 後や
+  // 編集途中で閉じて再度開いた際に古い値が残ってしまう。onOpenChange の o=true 分岐で
+  // project の最新値を都度リセットする。
+  const openEditDialog = () => {
+    setEditForm({
+      name: project.name,
+      customerName: project.customerName,
+      purpose: project.purpose,
+      background: project.background,
+      scope: project.scope,
+      devMethod: project.devMethod,
+      plannedStartDate: project.plannedStartDate,
+      plannedEndDate: project.plannedEndDate,
+    });
+    setEditError('');
+    setIsEditOpen(true);
+  };
+  const handleEditOpenChange = (open: boolean) => {
+    if (open) openEditDialog();
+    else setIsEditOpen(false);
+  };
+
   // --- タブごとの遅延フェッチ状態 ---
   // 概要タブ以外のデータは「ユーザがそのタブを最初に開いた時」にフェッチする。
   // 2 度目以降のタブ切替時はメモリキャッシュから即座に表示する。
@@ -321,7 +344,7 @@ export function ProjectDetailClient({
           )}
           {activeTab === 'overview' && isActualPmTl && (
             <>
-              <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+              <Dialog open={isEditOpen} onOpenChange={handleEditOpenChange}>
                 <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{t('edit')}</DialogTrigger>
                 {/* PR #87 横展開: grid-cols-2 + DateFieldWithActions を含むため max-w-[min(90vw,42rem)] に揃える */}
                 <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
