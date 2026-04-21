@@ -41,8 +41,13 @@ export function UserEditDialog({
   // PR #85: ロック判定用の「今」スナップショット (render 中に Date.now() を呼べないため)
   const [nowAtMount] = useState(() => Date.now());
 
-  // Derived State パターン (useEffect 不要): user が切り替わったら form 同期
-  const [prevUserId, setPrevUserId] = useState<string | null>(user?.id ?? null);
+  // PR #88: 編集ダイアログは開くたびに DB データを初期表示する。
+  // prevUserId を null で初期化 + 閉じた時の null-reset を入れて、
+  // 以下すべての経路で resync を保証:
+  //   1) 別エンティティ A→B
+  //   2) 同一エンティティを閉じて再度開く (A→null→A)
+  //   3) 初回マウントで user が既にセットされているケース (初期値を null にしたため常に発火)
+  const [prevUserId, setPrevUserId] = useState<string | null>(null);
   if (user && user.id !== prevUserId) {
     setPrevUserId(user.id);
     setForm({
@@ -51,6 +56,10 @@ export function UserEditDialog({
       isActive: user.isActive,
     });
     setError('');
+  }
+  if (!user && prevUserId !== null) {
+    // ダイアログを閉じたら prevId を null に戻し、次回の同一 ID オープン時も resync させる
+    setPrevUserId(null);
   }
 
   if (!user) return null;
@@ -99,7 +108,7 @@ export function UserEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-[min(90vw,28rem)]">
         <DialogHeader>
           <DialogTitle>ユーザ編集</DialogTitle>
           <DialogDescription>

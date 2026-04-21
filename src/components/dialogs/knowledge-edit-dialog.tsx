@@ -63,8 +63,10 @@ export function KnowledgeEditDialog({
     visibility: 'draft',
   });
   const [error, setError] = useState('');
-  // Derived State パターン: knowledge が切り替わったら form を同期
-  const [prevKnowledgeId, setPrevKnowledgeId] = useState<string | null>(knowledge?.id ?? null);
+  // PR #88: 編集ダイアログを開くたびに DB データを初期表示する。
+  // 初期値を null + 閉じた時に null-reset → 別エンティティ切替 / 同一再オープン / 初回マウント
+  // いずれでも resync が走る。
+  const [prevKnowledgeId, setPrevKnowledgeId] = useState<string | null>(null);
   if (knowledge && knowledge.id !== prevKnowledgeId) {
     setPrevKnowledgeId(knowledge.id);
     setForm({
@@ -76,6 +78,9 @@ export function KnowledgeEditDialog({
       visibility: knowledge.visibility,
     });
     setError('');
+  }
+  if (!knowledge && prevKnowledgeId !== null) {
+    setPrevKnowledgeId(null);
   }
 
   if (!knowledge) return null;
@@ -105,7 +110,7 @@ export function KnowledgeEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{readOnly ? 'ナレッジ詳細' : 'ナレッジ編集'}</DialogTitle>
           <DialogDescription>

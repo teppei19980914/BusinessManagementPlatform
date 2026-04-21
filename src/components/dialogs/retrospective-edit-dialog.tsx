@@ -56,8 +56,10 @@ export function RetrospectiveEditDialog({
     visibility: 'draft',
   });
   const [error, setError] = useState('');
-  // Derived State パターン (useEffect 不要): retro が切り替わったら form を同期
-  const [prevRetroId, setPrevRetroId] = useState<string | null>(retro?.id ?? null);
+  // PR #88: 編集ダイアログを開くたびに DB データを初期表示する。
+  // 初期値を null + 閉じた時に null-reset → 別エンティティ切替 / 同一再オープン / 初回マウント
+  // いずれでも resync が走る。
+  const [prevRetroId, setPrevRetroId] = useState<string | null>(null);
   if (retro && retro.id !== prevRetroId) {
     setPrevRetroId(retro.id);
     setForm({
@@ -70,6 +72,9 @@ export function RetrospectiveEditDialog({
       visibility: retro.visibility,
     });
     setError('');
+  }
+  if (!retro && prevRetroId !== null) {
+    setPrevRetroId(null);
   }
 
   if (!retro) return null;
@@ -96,7 +101,7 @@ export function RetrospectiveEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(90vw,42rem)] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{readOnly ? '振り返り詳細' : '振り返り編集'}</DialogTitle>
           <DialogDescription>

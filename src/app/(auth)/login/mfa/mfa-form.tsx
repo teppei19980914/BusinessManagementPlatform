@@ -54,7 +54,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted px-4">
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">2 段階認証</CardTitle>
           <CardDescription>

@@ -117,7 +117,7 @@ export function UsersClient({ initialUsers }: Props) {
         <h2 className="text-xl font-semibold">ユーザ管理</h2>
         <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsDialogOpen(true); }}>
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規ユーザ登録</DialogTrigger>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-[min(90vw,28rem)]">
             {success ? (
               <>
                 <DialogHeader>

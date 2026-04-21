@@ -104,7 +104,7 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
           placeholder="キーワード検索 (タイトル・背景・内容・結果)"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          className="max-w-md"
+          className="max-w-[min(90vw,28rem)]"
           onKeyDown={(e) => {
             if (e.key === 'Enter') router.refresh();
           }}

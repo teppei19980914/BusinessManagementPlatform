@@ -74,7 +74,7 @@ function LoginForm() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted px-4">
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">たすきば</CardTitle>
           <CardDescription>Knowledge Relay</CardDescription>

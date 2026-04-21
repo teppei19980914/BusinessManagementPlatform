@@ -116,7 +116,9 @@ export function MemosClient({
   }
 
   // --- 編集ダイアログ ---
-  // Derived State パターン (useEffect 不要): editing が切り替わったら form を同期
+  // PR #88: 編集ダイアログを開くたびに DB 上のデータ (editing prop) を初期表示する。
+  // 閉じた時に prevEditingId を null にリセットすることで、同一メモを再度開いた場合も
+  // 編集途中の状態ではなく DB の最新データが表示される (ユーザ期待どおり)。
   type EditFormState = { title: string; content: string; visibility: string };
   const [editForm, setEditForm] = useState<EditFormState>({
     title: '',
@@ -132,6 +134,9 @@ export function MemosClient({
       visibility: editing.visibility,
     });
     setError('');
+  }
+  if (!editing && prevEditingId !== null) {
+    setPrevEditingId(null);
   }
 
   async function handleEdit(e: React.FormEvent) {
@@ -181,7 +186,7 @@ export function MemosClient({
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               メモ作成
             </DialogTrigger>
-            <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+            <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>メモ作成</DialogTitle>
                 <DialogDescription>
@@ -258,7 +263,7 @@ export function MemosClient({
                 onClick={m.isMine ? () => setEditing(m) : undefined}
               >
                 <TableCell className="font-medium">{m.title}</TableCell>
-                <TableCell className="max-w-md truncate text-sm text-foreground" title={m.content}>
+                <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 80)}
                 </TableCell>
                 <TableCell>
@@ -295,7 +300,7 @@ export function MemosClient({
 
       {/* 編集ダイアログ (自分のメモのみ開く) */}
       <Dialog open={editing != null} onOpenChange={(o) => { if (!o) setEditing(null); }}>
-        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>メモ編集</DialogTitle>
             <DialogDescription>変更内容を保存します。</DialogDescription>

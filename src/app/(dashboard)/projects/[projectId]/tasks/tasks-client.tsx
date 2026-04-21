@@ -497,7 +497,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const isEditingActivity = editingTask?.type === 'activity';
   const editingIsAssignee = editingTask?.assigneeId === userId;
   const editingCanUpdatePm = canEditPmTl; // PM/TL は「編集」系すべて可
-  const editingCanUpdateActual = canEditPmTl || (isEditingActivity && editingIsAssignee);
+  // PR #88: 実績項目は担当者本人のみ更新可能 (admin/pm_tl 含む)。
+  // 「実績」は担当者が自身の work について記録するものという業務上の原則に揃える。
+  // 従来は pm_tl も他人担当の実績を編集できたが、ユーザ要望により担当者のみに制限。
+  // 担当者以外の管理者が実績を補正したい場合は、担当者を変更してから該当担当者が
+  // 更新するか、監査ログで値を確認するフローになる。
+  const editingCanUpdateActual = isEditingActivity && editingIsAssignee;
   // 実績日付 disable 判定（PR #39 の整合性ルールに準拠）
   const editingActualStartDisabled = editForm?.status === 'not_started';
   const editingActualEndDisabled = editForm?.status !== 'completed';
@@ -921,7 +926,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </Button>
           <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>インポート</DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-[min(90vw,28rem)]">
               <DialogHeader>
                 <DialogTitle>WBS テンプレートインポート</DialogTitle>
                 <DialogDescription>エクスポートした CSV ファイルを Excel 等で編集し、インポートします。担当者・進捗は初期状態で作成されます。</DialogDescription>
@@ -939,8 +944,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger render={<Button size="sm" />}>追加</DialogTrigger>
             {/* PR #87 横展開: アクティビティ作成ダイアログも grid-cols-2 + DateFieldWithActions を
-                含むため、編集ダイアログ同様 max-w-2xl に揃えて日付項目の縦書き崩れを防ぐ。 */}
-            <DialogContent className="max-w-2xl">
+                含むため、編集ダイアログ同様 max-w-[min(90vw,42rem)] に揃えて日付項目の縦書き崩れを防ぐ。 */}
+            <DialogContent className="max-w-[min(90vw,42rem)]">
               <DialogHeader>
                 <DialogTitle>{createType === 'work_package' ? 'ワークパッケージ作成' : 'アクティビティ作成'}</DialogTitle>
                 <DialogDescription>
@@ -1084,7 +1089,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           {canEditPmTl && (
           <Dialog open={isBulkEditOpen} onOpenChange={handleBulkEditOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括編集</DialogTrigger>
-            <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
+            <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>一括編集（{selectedIds.size} 件）</DialogTitle>
                 <DialogDescription>
@@ -1150,7 +1155,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           )}
           <Dialog open={isBulkActualOpen} onOpenChange={handleBulkActualOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括実績更新</DialogTrigger>
-            <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
+            <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>一括実績更新（{selectedIds.size} 件）</DialogTitle>
                 <DialogDescription>
@@ -1298,11 +1303,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       </ResizableColumnsProvider>
 
       {/* 編集ダイアログ: ロールに応じて PM/TL 編集項目・実績項目を出し分ける */}
-      {/* PR #87: 実績項目セクションが grid-cols-2 のため max-w-xl (36rem) では日付列が
-          狭く「日付を選択」が 1 文字ずつ縦組みになる UI 崩れが起きていた。max-w-2xl (42rem)
+      {/* PR #87: 実績項目セクションが grid-cols-2 のため max-w-[min(90vw,36rem)] (36rem) では日付列が
+          狭く「日付を選択」が 1 文字ずつ縦組みになる UI 崩れが起きていた。max-w-[min(90vw,42rem)] (42rem)
           に拡大して 2 列でも十分な width を確保する。 */}
       <Dialog open={editingTask != null} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingTask?.type === 'work_package' ? 'ワークパッケージ編集' : 'アクティビティ編集'}
@@ -1365,15 +1370,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                           ))}
                         </select>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-2">
-                          <Label>予定開始日</Label>
-                          <DateFieldWithActions value={editForm.plannedStartDate} onChange={(v) => setEditForm({ ...editForm, plannedStartDate: v })} />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>予定終了日</Label>
-                          <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} />
-                        </div>
+                      {/* PR #88: 予定開始/終了日は一括編集画面と同様に 1 行ごとの
+                          縦並びに変更 (grid-cols-2 では狭い画面で日付ボタン群が
+                          flex-wrap で崩れるため)。 */}
+                      <div className="space-y-2">
+                        <Label>予定開始日</Label>
+                        <DateFieldWithActions value={editForm.plannedStartDate} onChange={(v) => setEditForm({ ...editForm, plannedStartDate: v })} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>予定終了日</Label>
+                        <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} />
                       </div>
                       <div className="space-y-2">
                         <Label>見積工数（人時）</Label>
@@ -1423,23 +1429,22 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       }}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label className={editingActualStartDisabled ? 'text-muted-foreground' : ''}>実績開始日</Label>
-                      <DateFieldWithActions
-                        value={editForm.actualStartDate}
-                        onChange={(v) => setEditForm({ ...editForm, actualStartDate: v })}
-                        disabled={editingActualStartDisabled}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className={editingActualEndDisabled ? 'text-muted-foreground' : ''}>実績終了日</Label>
-                      <DateFieldWithActions
-                        value={editForm.actualEndDate}
-                        onChange={(v) => setEditForm({ ...editForm, actualEndDate: v })}
-                        disabled={editingActualEndDisabled}
-                      />
-                    </div>
+                  {/* PR #88: 実績開始/終了日も縦並びに統一 (一括実績更新画面と同じ UX)。 */}
+                  <div className="space-y-2">
+                    <Label className={editingActualStartDisabled ? 'text-muted-foreground' : ''}>実績開始日</Label>
+                    <DateFieldWithActions
+                      value={editForm.actualStartDate}
+                      onChange={(v) => setEditForm({ ...editForm, actualStartDate: v })}
+                      disabled={editingActualStartDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className={editingActualEndDisabled ? 'text-muted-foreground' : ''}>実績終了日</Label>
+                    <DateFieldWithActions
+                      value={editForm.actualEndDate}
+                      onChange={(v) => setEditForm({ ...editForm, actualEndDate: v })}
+                      disabled={editingActualEndDisabled}
+                    />
                   </div>
                 </section>
               )}

@@ -6,14 +6,15 @@
  *   更新する (担当者 / 期限 / ステータス等)。N タスクに対して N 回 API を叩くと
  *   遅いため bulk 化したエンドポイント。
  *
- * 認可 (PR #85 で動的化):
+ * 認可 (PR #85 で動的化 / PR #88 で担当者制約を全ロールに拡大):
  *   更新内容によって要求する権限を切り替える。
  *   - 「実績系のみ」 (status / progressRate / actualStartDate / actualEndDate) の場合は
- *      `task:update_progress` で通過可 (= member ロールでも自分担当のタスクだけ一括可)
+ *      `task:update_progress` で通過可、**かつ対象タスクが全て自分担当であること**
+ *      (admin / pm_tl を含む全ロールに適用 — 業務上「実績は担当者が記録する」原則)
  *   - 「計画系を含む」 (assigneeId / priority / plannedStartDate / plannedEndDate /
  *      plannedEffort) の場合は `task:update` が必要 (= pm_tl / admin のみ)
- *   旧実装では常に `task:update` を要求していたため、member ロールは一括更新を
- *   一切使えず、WBS で自分担当タスクの進捗だけまとめて更新することが不可能だった。
+ *   旧実装 (PR #85) では member のみ担当者制約を適用し、admin / pm_tl はバイパス
+ *   していたが、個別編集画面の実績項目も担当者のみに揃える修正 (PR #88) と整合させた。
  *
  * 監査: 各タスクごとに audit_logs に before/after を記録 (recordBulkAuditLogs)。
  *
@@ -63,36 +64,35 @@ export async function PATCH(
   const forbidden = await checkProjectPermission(user, projectId, requiredAction);
   if (forbidden) return forbidden;
 
-  // member ロールが task:update_progress で通る場合は「自分担当のタスクのみ」制約を
-  // bulk 対象に適用する。admin / pm_tl は本チェックをバイパス (単体 task:update_progress
-  // を resourceOwnerId 無しで許可する現行の check-permission ロジックと揃える)。
-  if (!hasPlanEdit && user.systemRole !== 'admin') {
-    const membership = await prisma.projectMember.findFirst({
-      where: { projectId, userId: user.id },
-      select: { projectRole: true },
+  // PR #88: 実績系の一括更新は「全ロールで担当者本人のみ」の制約を適用する。
+  // 旧実装 (PR #85) では admin / pm_tl をバイパスしていたが、業務上「実績は担当者が
+  // 記録するもの」という原則に揃えるため、admin / pm_tl も他人担当タスクの実績系
+  // 一括更新はできない。個別編集ダイアログ (tasks-client.tsx editingCanUpdateActual)
+  // も同時に同じルールに変更している。
+  //
+  // 計画系 (task:update) の場合は従来どおり PM/TL 以上で自由 (アサイン変更は
+  // PM/TL の業務権限)。
+  if (!hasPlanEdit) {
+    const others = await prisma.task.findMany({
+      where: {
+        id: { in: taskIds },
+        projectId,
+        deletedAt: null,
+        // 自分が担当でないタスクを 1 件でも含むなら弾く
+        NOT: { assigneeId: user.id },
+      },
+      select: { id: true },
     });
-    if (membership?.projectRole === 'member') {
-      const others = await prisma.task.findMany({
-        where: {
-          id: { in: taskIds },
-          projectId,
-          deletedAt: null,
-          // 自分が担当でないタスクを 1 件でも含むなら弾く
-          NOT: { assigneeId: user.id },
-        },
-        select: { id: true },
-      });
-      if (others.length > 0) {
-        return NextResponse.json(
-          {
-            error: {
-              code: 'FORBIDDEN',
-              message: '一括進捗更新は自分が担当のタスクのみ対象にできます',
-            },
+    if (others.length > 0) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'FORBIDDEN',
+            message: '一括実績更新は自分が担当のタスクのみ対象にできます',
           },
-          { status: 403 },
-        );
-      }
+        },
+        { status: 403 },
+      );
     }
   }
 

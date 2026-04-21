@@ -74,11 +74,10 @@ export function RiskEditDialog({
     riskNature: 'threat',
   });
   const [error, setError] = useState('');
-  // risk が切り替わったタイミングで form を同期するための prev 値追跡。
-  // useEffect 内 setState は react-hooks/set-state-in-effect lint に抵触するため、
-  // レンダー中に prev と比較して setState する「Derived State」パターンを採用
-  // (React 公式が推奨する useEffect 不要パターン)。
-  const [prevRiskId, setPrevRiskId] = useState<string | null>(risk?.id ?? null);
+  // PR #88: 編集ダイアログを開くたびに DB データを初期表示する。
+  // prevRiskId の初期値を null にし、閉じた時に null-reset を入れることで、
+  // 別エンティティ切替 / 同一エンティティ再オープン / 初回マウントいずれでも resync が走る。
+  const [prevRiskId, setPrevRiskId] = useState<string | null>(null);
   if (risk && risk.id !== prevRiskId) {
     setPrevRiskId(risk.id);
     setForm({
@@ -93,6 +92,9 @@ export function RiskEditDialog({
       riskNature: risk.riskNature ?? 'threat',
     });
     setError('');
+  }
+  if (!risk && prevRiskId !== null) {
+    setPrevRiskId(null);
   }
 
   if (!risk) return null;
@@ -135,7 +137,7 @@ export function RiskEditDialog({
   const titleText = risk.type === 'risk' ? 'リスク' : '課題';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{readOnly ? `${titleText}詳細` : `${titleText}編集`}</DialogTitle>
           <DialogDescription>
