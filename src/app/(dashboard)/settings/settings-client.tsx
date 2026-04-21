@@ -1,5 +1,27 @@
 'use client';
 
+/**
+ * 設定画面 (アカウントメニュー → 設定) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   ログイン中ユーザの個人設定を管理する:
+ *   1. 画面テーマ (PR #72): 10 種から選択、DB に永続化されセッションを跨いで適用
+ *   2. パスワード変更 (現パスワード認証 + 新パスワードのポリシー検証 + 履歴チェック)
+ *   3. MFA 有効化 / 無効化 (PR #67、admin は無効化不可)
+ *
+ * テーマ変更フロー:
+ *   - PATCH /api/settings/theme → DB 更新
+ *   - useSession().update() で JWT を更新 → layout.tsx の <html data-theme> 即時反映
+ *   - router.refresh() で SSR を再実行 (フラッシュ防止)
+ *
+ * 認可: getAuthenticatedUser のみ。ロール条件なし (本人のみ操作可)。
+ *
+ * 関連:
+ *   - SPECIFICATION.md §22 / §23 (設定画面)
+ *   - DESIGN.md §28 / §29 (テーマシステム)
+ *   - DESIGN.md §9.5 (MFA 設計)
+ */
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';

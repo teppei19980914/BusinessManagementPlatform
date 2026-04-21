@@ -1,5 +1,24 @@
 'use client';
 
+/**
+ * プロジェクト一覧画面 (アプリのトップ相当) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   全プロジェクトの一覧表示 + 検索 (顧客名・プロジェクト名) + ステータス絞込 +
+ *   新規作成ダイアログ。各行クリックでプロジェクト詳細画面へ遷移。
+ *
+ * 表示範囲:
+ *   ログイン済ユーザは全プロジェクトを閲覧可 (詳細・編集権限はメンバーシップ依存)。
+ *
+ * 認可: ログイン済ユーザは作成 + 一覧可。詳細以降の操作は project_members で判定。
+ * API: /api/projects (GET/POST)
+ *
+ * 関連:
+ *   - SPECIFICATION.md (プロジェクト一覧 / 新規作成)
+ *   - DESIGN.md §6 (状態遷移)
+ *   - DESIGN.md §23 (核心機能 / 新規作成時の提案サジェスト連動)
+ */
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';

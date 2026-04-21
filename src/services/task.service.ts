@@ -192,14 +192,31 @@ export async function listTasks(projectId: string): Promise<TaskDTO[]> {
   return buildTree(dtos);
 }
 
+/**
+ * タスクの平坦リストを WBS 階層ツリーに組み立てる純粋関数。
+ *
+ * アルゴリズム:
+ *   1. 全タスクを id → ノード の Map に登録 (初期 children=[])
+ *   2. 各タスクの parentTaskId を辿り、親が見つかれば子配列に追加、なければルート扱い
+ *
+ * なぜ DB 側で再帰 CTE を使わないか:
+ *   - 1 プロジェクトのタスクは数百件オーダーが現実的で、1 クエリ + JS 構築で十分高速
+ *   - 再帰 CTE は Prisma で扱いづらく、保守コストが高い
+ *
+ * 注意:
+ *   - 親が deletedAt 済み等で見つからない孤児ノードはルートとして扱う (データ消失防止)
+ *   - 各ノードは元 DTO のシャローコピーで、children のみ書き換える
+ */
 export function buildTree(tasks: TaskDTO[]): TaskDTO[] {
   const map = new Map<string, TaskDTO>();
   const roots: TaskDTO[] = [];
 
+  // Step 1: 全ノードを Map に登録。新しいオブジェクトとして children=[] を持たせる。
   for (const task of tasks) {
     map.set(task.id, { ...task, children: [] });
   }
 
+  // Step 2: 親子関係を組み立て。親不在 (= 削除済 or トップレベル) はルート。
   for (const task of tasks) {
     const node = map.get(task.id)!;
     if (task.parentTaskId && map.has(task.parentTaskId)) {
@@ -249,6 +266,21 @@ export async function getTask(taskId: string): Promise<TaskDTO | null> {
   return task ? toTaskDTO(task) : null;
 }
 
+/**
+ * タスク (WP または ACT) を新規作成する。
+ *
+ * WP / ACT の差異 (PR #29 / 20260416 マイグレーション参照):
+ *   - ACT (アクティビティ): 実作業単位。assigneeId / 計画日程 / 工数 / 優先度が必須
+ *   - WP (ワークパッケージ): 集約単位。これらは null/0 で作成し、子 ACT から自動集計
+ *
+ * 副作用 (重要):
+ *   parentTaskId が指定されている (= この新タスクが既存タスクの子) 場合、
+ *   親 WP の集計値 (planned_effort / planned_start_date / planned_end_date /
+ *   progress_rate) が変わる可能性があるため、recalculateAncestors() で
+ *   先祖チェーンを根まで再計算する。
+ *
+ * 認可: 呼び出し元 API ルートで checkProjectPermission('task:create') 実施済の前提。
+ */
 export async function createTask(
   projectId: string,
   input: CreateTaskInput,
@@ -256,6 +288,8 @@ export async function createTask(
 ): Promise<TaskDTO> {
   const isActivity = input.type === 'activity';
 
+  // ACT の場合は計画値・担当を渡す。WP は集計対象なので null / 0 / false で作成。
+  // 後段の recalculateAncestors で子 ACT から正しい値が逆算されるため初期値はダミー。
   const task = await prisma.task.create({
     data: {
       projectId,
@@ -278,7 +312,7 @@ export async function createTask(
     include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
   });
 
-  // WP の場合は親の集計を更新
+  // 子追加によって親 WP の集計値が変わるため先祖を再計算 (DB 整合性の最後の砦)。
   if (task.parentTaskId) {
     await recalculateAncestors(task.parentTaskId);
   }
@@ -347,6 +381,27 @@ export function normalizeActualDatesForStatus(
   };
 }
 
+/**
+ * タスクを編集する。部分更新 (PATCH 相当) で、input に存在するフィールドのみ書き換え。
+ *
+ * 整合性ロジックの順序 (重要):
+ *   1. status / progressRate / actualStartDate / actualEndDate のいずれかが
+ *      指定された場合、現在値と input から「最終状態」を確定する
+ *   2. PR #69 の双方向ルール:
+ *      - progress=100 ⇒ status=completed (100% は必ず完了)
+ *      - status=completed ⇒ progress=100 (完了は必ず 100%)
+ *   3. status に応じて actualStartDate / actualEndDate を正規化
+ *      (未着手なら両方 null、進行中/保留なら end のみ null、完了なら両方保持)
+ *   4. DB 書き込み
+ *   5. 親 WP の集計値を再計算 (recalculateAncestors)
+ *
+ * 親変更 (parentTaskId) の特殊ケース:
+ *   旧親 / 新親の両方を再計算する必要があるため、変更前後の parentTaskId を
+ *   記録して両方を更新する。これを忘れると旧親に「もう存在しない子」の集計値が
+ *   残ってしまう。
+ *
+ * 認可: 呼び出し元 API ルートで checkProjectPermission('task:edit') 実施済の前提。
+ */
 export async function updateTask(
   taskId: string,
   input: UpdateTaskInput,
@@ -431,13 +486,27 @@ export async function updateTask(
   return toTaskDTO(task);
 }
 
+/**
+ * タスクを論理削除する (deletedAt にタイムスタンプを設定)。
+ *
+ * なぜ物理削除しないか:
+ *   削除されたタスクが残した進捗ログ (task_progress_logs) や、過去の振り返りで
+ *   参照されていた可能性があるため、関係先の整合性を維持する目的で論理削除を採用。
+ *
+ * 子タスクの扱い:
+ *   現状は親タスクの deletedAt 設定のみで、子の deletedAt は更新しない。
+ *   listTasks の WHERE deletedAt=null フィルタで親が消えたツリーは描画されないため、
+ *   実用上は問題なし (孤児ノードは buildTree でルート扱いされる)。
+ *
+ * 副作用:
+ *   親 WP が存在する場合は集計再計算 (子が消えた → 親の合計工数等が変わる)。
+ */
 export async function deleteTask(taskId: string, userId: string): Promise<void> {
   const task = await prisma.task.update({
     where: { id: taskId },
     data: { deletedAt: new Date(), updatedBy: userId },
   });
 
-  // 親ワークパッケージの集計を更新
   if (task.parentTaskId) {
     await recalculateAncestors(task.parentTaskId);
   }
@@ -583,12 +652,29 @@ export async function bulkUpdateTasks(
   return result.count;
 }
 
+/**
+ * タスクの進捗を追記する (進捗ログを 1 件追加 + タスク本体の最新値を更新)。
+ *
+ * データモデル:
+ *   - task_progress_logs: 時系列追記 (履歴)。これを集計して「進捗推移グラフ」も表示可能
+ *   - tasks 本体の progressRate / actualEffort: 最新値のキャッシュ (検索高速化のため)
+ *   両方を 1 トランザクションで更新するため一貫性は保たれる。
+ *
+ * 整合性ルール (PR #69):
+ *   進捗 100% で記録されたら status='completed' に強制更新する。
+ *   updateTask 経由ではなく直接 Prisma で更新するためここに同等ルールを再実装。
+ *
+ * 副作用:
+ *   親 WP の集計値 (進捗率の加重平均、status の自動判定等) を再計算する。
+ *
+ * 認可: 呼び出し元 API ルートで checkProjectPermission('task:update_progress') 実施済の前提。
+ */
 export async function updateTaskProgress(
   taskId: string,
   input: UpdateProgressInput,
   userId: string,
 ): Promise<void> {
-  // 進捗ログを記録
+  // 進捗ログを 1 件追記 (時系列履歴を残す)。
   await prisma.taskProgressLog.create({
     data: {
       taskId,

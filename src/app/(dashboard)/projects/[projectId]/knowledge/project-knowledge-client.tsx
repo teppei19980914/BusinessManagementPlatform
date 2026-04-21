@@ -1,5 +1,23 @@
 'use client';
 
+/**
+ * プロジェクト別ナレッジ画面 (詳細タブ配下) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   このプロジェクトに紐付いたナレッジの一覧 / 追加 / 編集 / 解除を管理する。
+ *   knowledge_projects テーブル経由の N:M 紐付けで、1 ナレッジは複数プロジェクトに
+ *   共有可能。
+ *
+ * 紐付け解除と削除の差:
+ *   - 解除: knowledge_projects から該当行のみ削除。ナレッジ本体は残る (他プロジェクトで参照可)
+ *   - 削除: ナレッジ本体を deletedAt 設定 (作成者本人 or admin のみ)
+ *
+ * 認可: canEdit prop (PM/TL 以上 or admin)。
+ * API: /api/projects/[id]/knowledge (GET/POST), /api/projects/[id]/knowledge/[knowledgeId] (DELETE for unlink)
+ *
+ * 関連: SPECIFICATION.md (プロジェクト別ナレッジ管理)
+ */
+
 import { useState } from 'react';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';

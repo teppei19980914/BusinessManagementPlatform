@@ -1,5 +1,25 @@
 'use client';
 
+/**
+ * 全ナレッジ画面 (横断表示) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   プロジェクト横断でナレッジ (knowledges) を一覧・検索・新規作成する。
+ *   visibility='public' の全件 + 自分が作成した draft が表示対象 (サービス層フィルタ)。
+ *
+ * 主な機能:
+ *   - フリーテキスト検索 (title / content の pg_trgm 類似度)
+ *   - knowledgeType / techTags / processTags / businessDomainTags でフィルタ
+ *   - 行クリックで編集ダイアログ (KnowledgeEditDialog)
+ *
+ * 認可: ログイン済ユーザなら閲覧可。編集/削除は作成者本人 or admin。
+ * API: /api/knowledge (GET/POST), /api/knowledge/[id] (PATCH/DELETE)
+ *
+ * 関連:
+ *   - SPECIFICATION.md (全ナレッジ画面)
+ *   - DESIGN.md §16 (全文検索 / pg_trgm)
+ */
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';

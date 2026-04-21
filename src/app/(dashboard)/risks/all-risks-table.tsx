@@ -1,5 +1,19 @@
 'use client';
 
+/**
+ * 全リスク / 全課題画面 (横断表示) のテーブルコンポーネント。
+ *
+ * 役割:
+ *   全プロジェクト横断で visibility='public' のリスク/課題を一覧表示する。
+ *   PR #60 #1 でリスクと課題を別タブに分離 (本コンポーネントは type を prop で受け取る)。
+ *
+ * 行クリック動作:
+ *   メンバーシップがあるプロジェクトの起票なら編集ダイアログ、
+ *   非メンバーなら参照専用 (read-only) ダイアログを開く (PR #61)。
+ *
+ * 関連: SPECIFICATION.md (全リスク・全課題画面)
+ */
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';

@@ -1,5 +1,24 @@
 'use client';
 
+/**
+ * 見積もり画面 (プロジェクト詳細タブ配下) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   見積もり明細 (1 行 = 1 作業項目) の一覧 / 追加 / 編集 / 確定 / 削除を管理する。
+ *   合計工数を画面下部に表示し、確定済み (isConfirmed=true) の明細は編集不可。
+ *
+ * 確定の意味:
+ *   見積もりは「企画フェーズ → 計画フェーズ」へのゲートで、確定後はタスク化の
+ *   ソースとなる。確定済みは履歴として残し、新規明細は別途追加する運用。
+ *
+ * 認可: canEdit prop (PM/TL 以上 or admin)。
+ * API: /api/projects/[id]/estimates (GET/POST), /api/projects/[id]/estimates/[id] (PATCH/DELETE)
+ *
+ * 関連:
+ *   - SPECIFICATION.md (見積もり画面 / 確定フロー)
+ *   - DESIGN.md §6 (状態遷移 — 見積もり確定の位置付け)
+ */
+
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';

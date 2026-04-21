@@ -1,5 +1,29 @@
 'use client';
 
+/**
+ * 振り返り画面 (プロジェクト詳細タブ配下) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   プロジェクト振り返り (KPT 風: 計画/実績総括 + 良かった点 / 課題 / 次回事項) の
+ *   一覧 / 新規作成 / 編集 / コメント追加 / 削除を管理する。
+ *
+ * 公開範囲:
+ *   visibility='draft' は作成者本人 + admin のみ、'public' は「全振り返り」横断画面に表示。
+ *
+ * コメント機能:
+ *   各振り返り配下に時系列コメントを追加可能。retrospective_comments テーブル。
+ *
+ * 認可: canEdit (作成・編集) / canComment (コメント追加) を prop で受け取る。
+ * API:
+ *   - /api/projects/[id]/retrospectives (GET/POST)
+ *   - /api/projects/[id]/retrospectives/[retroId] (PATCH/DELETE)
+ *   - /api/projects/[id]/retrospectives/[retroId]/comments (POST)
+ *
+ * 関連:
+ *   - SPECIFICATION.md (振り返り画面)
+ *   - DESIGN.md §23 (核心機能: 過去振り返りの提案連動)
+ */
+
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';

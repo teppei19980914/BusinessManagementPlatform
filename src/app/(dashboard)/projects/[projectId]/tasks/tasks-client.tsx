@@ -1,5 +1,33 @@
 'use client';
 
+/**
+ * WBS 管理画面 (本プロダクトで最複雑のクライアントコンポーネント)。
+ *
+ * 役割:
+ *   プロジェクトのタスク階層 (WP/ACT) の表示と編集。
+ *   - 階層ツリー表示 (折りたたみ可)
+ *   - 個別編集ダイアログ (WP / ACT 別フォーム)
+ *   - 一括選択 + 一括編集パネル (担当者・期限・ステータス・実績の bulk 更新)
+ *   - 進捗ログ追記
+ *   - WBS テンプレート CSV インポート / エクスポート
+ *
+ * パフォーマンス対策 (PR #25):
+ *   - TaskTreeNode を React.memo 化。props 参照安定のため useCallback / useMemo を多用
+ *   - 行 × 列の背景画像描画を共通化 (重複生成回避)
+ *
+ * ステータス整合性 (PR #69):
+ *   - 進捗 100% ↔ ステータス完了の双方向強制 (UI と API 両層で実装)
+ *   - 詳細は task.service.ts の updateTask / updateTaskProgress 参照
+ *
+ * 認可: canEdit prop (PM/TL 以上 or admin) で編集系ボタンの表示制御。
+ * API: /api/projects/[id]/tasks (一覧/作成), /api/projects/[id]/tasks/[taskId] (編集/削除),
+ *      /api/projects/[id]/tasks/bulk-update, /api/projects/[id]/tasks/[taskId]/progress
+ *
+ * 関連:
+ *   - SPECIFICATION.md (WBS 管理画面)
+ *   - DESIGN.md §15 (idx_tasks_gantt 等のインデックス) / §17 (パフォーマンス要件)
+ */
+
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';

@@ -1,5 +1,20 @@
 'use client';
 
+/**
+ * ユーザ管理画面 (システム管理者専用) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   - 全ユーザの一覧表示 (アクティブ/非アクティブ含む)
+ *   - 新規ユーザ発行ダイアログ (検証メール送信)
+ *   - 既存ユーザの編集 (氏名 / システムロール / 有効状態)
+ *   - リカバリーコード再発行
+ *
+ * 認可: ページ側 (page.tsx) で systemRole='admin' を確認済の前提。
+ * API: /api/admin/users (GET/POST), /api/admin/users/[userId] (PATCH)
+ *
+ * 関連: SPECIFICATION.md (ユーザ管理画面)
+ */
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';

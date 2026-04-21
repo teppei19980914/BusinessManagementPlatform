@@ -1,5 +1,27 @@
 'use client';
 
+/**
+ * リスク/課題画面 (プロジェクト詳細タブ配下) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   リスク (type='risk') と課題 (type='issue') を統合タブで管理する。
+ *   - 一覧表示 (フィルタ: 状態 / 優先度 / 担当者 / 公開範囲)
+ *   - 新規起票ダイアログ (RiskEditDialog)
+ *   - 行クリックで編集ダイアログ (PR #56 Req 8/9)
+ *   - CSV エクスポートボタン
+ *
+ * 公開範囲制御:
+ *   visibility='draft' は作成者本人 + admin のみ閲覧可、'public' は全ログインユーザ可。
+ *   サービス層で WHERE フィルタ済のため、UI 側は受信データをそのまま表示する。
+ *
+ * 認可: canEdit prop (PM/TL 以上 or admin) で起票/編集ボタンの表示制御。
+ * API: /api/projects/[id]/risks (GET/POST), /api/projects/[id]/risks/[riskId] (PATCH/DELETE)
+ *
+ * 関連:
+ *   - SPECIFICATION.md (リスク・課題管理)
+ *   - DESIGN.md §5 (テーブル定義: risks_issues)
+ */
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
