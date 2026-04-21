@@ -162,7 +162,7 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-[min(90vw,42rem)] space-y-6">
       <h2 className="text-xl font-semibold">設定</h2>
 
       {/* PR #72: テーマ設定 */}

@@ -88,7 +88,7 @@ function SetupPasswordForm() {
   if (isValidating) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted px-4">
-        <Card className="w-full max-w-md">
+        <Card className="w-full max-w-[min(90vw,28rem)]">
           <CardContent className="py-8 text-center text-muted-foreground">
             確認中...
           </CardContent>
@@ -100,7 +100,7 @@ function SetupPasswordForm() {
   if (tokenError) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted px-4">
-        <Card className="w-full max-w-md">
+        <Card className="w-full max-w-[min(90vw,28rem)]">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">たすきば</CardTitle>
           </CardHeader>
@@ -121,7 +121,7 @@ function SetupPasswordForm() {
   if (recoveryCodes) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted px-4">
-        <Card className="w-full max-w-md">
+        <Card className="w-full max-w-[min(90vw,28rem)]">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">パスワード設定完了</CardTitle>
             <CardDescription>
@@ -148,7 +148,7 @@ function SetupPasswordForm() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted px-4">
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">たすきば</CardTitle>
           <CardDescription>パスワードを設定してアカウントを有効化します</CardDescription>

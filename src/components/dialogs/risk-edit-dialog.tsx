@@ -135,7 +135,7 @@ export function RiskEditDialog({
   const titleText = risk.type === 'risk' ? 'リスク' : '課題';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{readOnly ? `${titleText}詳細` : `${titleText}編集`}</DialogTitle>
           <DialogDescription>

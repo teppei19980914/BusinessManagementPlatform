@@ -140,7 +140,7 @@ describe('PATCH /bulk-update — 権限判定', () => {
     expect(bulkUpdateTasks).not.toHaveBeenCalled();
   });
 
-  it('admin は自分担当チェックをバイパスする (他人担当タスクも進捗更新可)', async () => {
+  it('PR #88: admin / pm_tl も実績系一括更新では担当者チェックを受ける (他人担当を含むと 403)', async () => {
     vi.mocked(auth).mockResolvedValue({
       user: {
         id: 'admin-1',
@@ -155,7 +155,10 @@ describe('PATCH /bulk-update — 権限判定', () => {
       projectStatus: 'active',
     });
     vi.mocked(checkPermission).mockReturnValue({ allowed: true });
-    vi.mocked(bulkUpdateTasks).mockResolvedValue(2);
+    // 他人担当のタスクが 1 件でもあれば 403 (admin であっても)
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      { id: '22222222-2222-4222-8222-222222222222' },
+    ] as never);
 
     const res = await PATCH(
       makeReq({
@@ -168,8 +171,63 @@ describe('PATCH /bulk-update — 権限判定', () => {
       makeParams() as never,
     );
 
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.message).toContain('自分が担当のタスクのみ');
+  });
+
+  it('PR #88: admin も全対象タスクが自分担当なら実績系一括更新に成功する', async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: {
+        id: 'admin-1',
+        name: 'Admin',
+        email: 'a@x.co',
+        systemRole: 'admin',
+      },
+    } as never);
+    vi.mocked(checkMembership).mockResolvedValue({
+      isMember: true,
+      projectRole: 'pm_tl',
+      projectStatus: 'active',
+    });
+    vi.mocked(checkPermission).mockReturnValue({ allowed: true });
+    // 他人担当のタスクは 0 件 (全て自分担当)
+    vi.mocked(prisma.task.findMany).mockResolvedValue([]);
+    vi.mocked(bulkUpdateTasks).mockResolvedValue(1);
+
+    const res = await PATCH(
+      makeReq({
+        taskIds: ['11111111-1111-4111-8111-111111111111'],
+        status: 'completed',
+      }) as never,
+      makeParams() as never,
+    );
+
     expect(res.status).toBe(200);
-    expect(prisma.projectMember.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('PR #88: 計画系の一括更新 (assigneeId 等) は admin / pm_tl が対象関係なく可能', async () => {
+    vi.mocked(checkMembership).mockResolvedValue({
+      isMember: true,
+      projectRole: 'pm_tl',
+      projectStatus: 'active',
+    });
+    vi.mocked(checkPermission).mockReturnValue({ allowed: true });
+    vi.mocked(bulkUpdateTasks).mockResolvedValue(2);
+
+    const res = await PATCH(
+      makeReq({
+        taskIds: [
+          '11111111-1111-4111-8111-111111111111',
+          '22222222-2222-4222-8222-222222222222',
+        ],
+        // plannedEndDate は計画系なので ownership チェック適用外
+        plannedEndDate: '2026-06-30',
+      }) as never,
+      makeParams() as never,
+    );
+
+    expect(res.status).toBe(200);
     expect(prisma.task.findMany).not.toHaveBeenCalled();
   });
 

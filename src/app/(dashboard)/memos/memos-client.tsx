@@ -181,7 +181,7 @@ export function MemosClient({
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               メモ作成
             </DialogTrigger>
-            <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+            <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>メモ作成</DialogTitle>
                 <DialogDescription>
@@ -258,7 +258,7 @@ export function MemosClient({
                 onClick={m.isMine ? () => setEditing(m) : undefined}
               >
                 <TableCell className="font-medium">{m.title}</TableCell>
-                <TableCell className="max-w-md truncate text-sm text-foreground" title={m.content}>
+                <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 80)}
                 </TableCell>
                 <TableCell>
@@ -295,7 +295,7 @@ export function MemosClient({
 
       {/* 編集ダイアログ (自分のメモのみ開く) */}
       <Dialog open={editing != null} onOpenChange={(o) => { if (!o) setEditing(null); }}>
-        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>メモ編集</DialogTitle>
             <DialogDescription>変更内容を保存します。</DialogDescription>

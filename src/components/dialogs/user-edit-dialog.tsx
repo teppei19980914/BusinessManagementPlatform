@@ -99,7 +99,7 @@ export function UserEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-[min(90vw,28rem)]">
         <DialogHeader>
           <DialogTitle>ユーザ編集</DialogTitle>
           <DialogDescription>

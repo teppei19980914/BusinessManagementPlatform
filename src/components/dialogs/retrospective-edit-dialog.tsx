@@ -96,7 +96,7 @@ export function RetrospectiveEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(90vw,42rem)] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{readOnly ? '振り返り詳細' : '振り返り編集'}</DialogTitle>
           <DialogDescription>

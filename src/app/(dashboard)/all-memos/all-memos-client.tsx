@@ -81,7 +81,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
                 onClick={() => setViewing(m)}
               >
                 <TableCell className="font-medium">{m.title}</TableCell>
-                <TableCell className="max-w-md truncate text-sm text-foreground" title={m.content}>
+                <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 120)}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
@@ -110,7 +110,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
 
       {/* 詳細ダイアログ (read-only) */}
       <Dialog open={viewing != null} onOpenChange={(o) => { if (!o) setViewing(null); }}>
-        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>メモ詳細</DialogTitle>
             <DialogDescription>

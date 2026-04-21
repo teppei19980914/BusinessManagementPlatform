@@ -191,8 +191,8 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
         {isAdmin && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規プロジェクト</DialogTrigger>
-            {/* PR #87 横展開: grid-cols-2 + DateFieldWithActions を含むため max-w-2xl に揃える */}
-            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            {/* PR #87 横展開: grid-cols-2 + DateFieldWithActions を含むため max-w-[min(90vw,42rem)] に揃える */}
+            <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>新規プロジェクト作成</DialogTitle>
                 <DialogDescription>プロジェクトの基本情報を入力してください。</DialogDescription>

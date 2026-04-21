@@ -323,8 +323,8 @@ export function ProjectDetailClient({
             <>
               <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
                 <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{t('edit')}</DialogTrigger>
-                {/* PR #87 横展開: grid-cols-2 + DateFieldWithActions を含むため max-w-2xl に揃える */}
-                <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                {/* PR #87 横展開: grid-cols-2 + DateFieldWithActions を含むため max-w-[min(90vw,42rem)] に揃える */}
+                <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>プロジェクト編集</DialogTitle>
                     <DialogDescription>プロジェクト情報を編集してください。</DialogDescription>
@@ -644,7 +644,7 @@ export function ProjectDetailClient({
         open={isSuggestionsModalOpen}
         onOpenChange={(o) => { if (!o) closeSuggestionsModal(); }}
       >
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-[min(90vw,48rem)] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>類似ナレッジ / 過去課題の提案</DialogTitle>
             <DialogDescription>
