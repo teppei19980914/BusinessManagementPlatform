@@ -57,6 +57,10 @@ export function UsersClient({ initialUsers }: Props) {
   const [error, setError] = useState('');
   // PR #59 Req 3: 行クリックで編集ダイアログ
   const [editingUser, setEditingUser] = useState<UserDTO | null>(null);
+  // PR #85: ロック判定用の「今」スナップショット。
+  // Date.now() は render 中に呼べない (react-hooks/purity)。マウント時 1 回の評価で、
+  // ユーザ一覧画面を開いている間にロック表示が自動で切り替わる必要はない想定。
+  const [nowAtMount] = useState(() => Date.now());
 
   const [form, setForm] = useState({
     name: '',
@@ -182,34 +186,58 @@ export function UsersClient({ initialUsers }: Props) {
             <TableHead>メールアドレス</TableHead>
             <TableHead>ロール</TableHead>
             <TableHead>状態</TableHead>
+            {/* PR #85: ロック状態 (ログイン失敗 5 回で一時ロック、admin が永続ロック可能) */}
+            <TableHead>ロック</TableHead>
             <TableHead>作成日</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {initialUsers.map((user) => (
-            <TableRow
-              key={user.id}
-              className="cursor-pointer hover:bg-muted"
-              onClick={() => setEditingUser(user)}
-            >
-              <TableCell className="font-medium">{user.name}</TableCell>
-              <TableCell>{user.email}</TableCell>
-              <TableCell>
-                <Badge variant={user.systemRole === 'admin' ? 'default' : 'secondary'}>
-                  {SYSTEM_ROLES[user.systemRole as keyof typeof SYSTEM_ROLES] || user.systemRole}
-                </Badge>
-              </TableCell>
-              <TableCell>
-                <Badge variant={user.isActive ? 'default' : 'destructive'}>
-                  {user.isActive ? '有効' : '無効'}
-                </Badge>
-              </TableCell>
-              <TableCell>{new Date(user.createdAt).toLocaleDateString('ja-JP')}</TableCell>
-            </TableRow>
-          ))}
+          {initialUsers.map((user) => {
+            const temporaryLocked
+              = !!user.lockedUntil && new Date(user.lockedUntil).getTime() > nowAtMount;
+            return (
+              <TableRow
+                key={user.id}
+                className="cursor-pointer hover:bg-muted"
+                onClick={() => setEditingUser(user)}
+              >
+                <TableCell className="font-medium">{user.name}</TableCell>
+                <TableCell>{user.email}</TableCell>
+                <TableCell>
+                  <Badge variant={user.systemRole === 'admin' ? 'default' : 'secondary'}>
+                    {SYSTEM_ROLES[user.systemRole as keyof typeof SYSTEM_ROLES] || user.systemRole}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={user.isActive ? 'default' : 'destructive'}>
+                    {user.isActive ? '有効' : '無効'}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  {user.permanentLock ? (
+                    <Badge variant="destructive" title="管理者により永続ロック中">永続ロック</Badge>
+                  ) : temporaryLocked ? (
+                    <Badge
+                      variant="destructive"
+                      title={`解除予定: ${new Date(user.lockedUntil!).toLocaleString('ja-JP')}`}
+                    >
+                      一時ロック
+                    </Badge>
+                  ) : user.failedLoginCount > 0 ? (
+                    <Badge variant="secondary" title="ログイン失敗カウント (5 回で一時ロック)">
+                      失敗 {user.failedLoginCount}/5
+                    </Badge>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>{new Date(user.createdAt).toLocaleDateString('ja-JP')}</TableCell>
+              </TableRow>
+            );
+          })}
           {initialUsers.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+              <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                 ユーザが登録されていません
               </TableCell>
             </TableRow>

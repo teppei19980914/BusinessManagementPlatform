@@ -110,7 +110,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
 
       {/* 詳細ダイアログ (read-only) */}
       <Dialog open={viewing != null} onOpenChange={(o) => { if (!o) setViewing(null); }}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>メモ詳細</DialogTitle>
             <DialogDescription>

@@ -46,6 +46,12 @@ export type UserDTO = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  // PR #85: ログイン失敗ロック状態 (admin 画面表示用)
+  // ロック機能は src/lib/auth.ts + src/config/security.ts で既に常時稼働しているが、
+  // 情報を UserDTO に露出していなかったため admin 画面で確認できなかった。
+  failedLoginCount: number;
+  lockedUntil: string | null;
+  permanentLock: boolean;
 };
 
 function toUserDTO(user: {
@@ -56,6 +62,9 @@ function toUserDTO(user: {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+  failedLoginCount: number;
+  lockedUntil: Date | null;
+  permanentLock: boolean;
 }): UserDTO {
   return {
     id: user.id,
@@ -65,6 +74,9 @@ function toUserDTO(user: {
     isActive: user.isActive,
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
+    failedLoginCount: user.failedLoginCount,
+    lockedUntil: user.lockedUntil?.toISOString() ?? null,
+    permanentLock: user.permanentLock,
   };
 }
 

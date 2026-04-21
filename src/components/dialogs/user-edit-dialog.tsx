@@ -38,6 +38,8 @@ export function UserEditDialog({
     isActive: true,
   });
   const [error, setError] = useState('');
+  // PR #85: ロック判定用の「今」スナップショット (render 中に Date.now() を呼べないため)
+  const [nowAtMount] = useState(() => Date.now());
 
   // Derived State パターン (useEffect 不要): user が切り替わったら form 同期
   const [prevUserId, setPrevUserId] = useState<string | null>(user?.id ?? null);
@@ -72,6 +74,28 @@ export function UserEditDialog({
     await onSaved();
     onOpenChange(false);
   }
+
+  // PR #85: ロック解除 (failedLoginCount / lockedUntil / permanentLock を一括クリア)
+  async function handleUnlock() {
+    if (!user) return;
+    setError('');
+    const res = await withLoading(() =>
+      fetch(`/api/admin/users/${user.id}/unlock`, { method: 'POST' }),
+    );
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setError(json.error?.message || 'ロック解除に失敗しました');
+      return;
+    }
+    await onSaved();
+    onOpenChange(false);
+  }
+
+  // ロック表示用の状態判定 (PR #85) — nowAtMount は hook 順序の都合で上部宣言済
+  const temporaryLocked
+    = !!user.lockedUntil && new Date(user.lockedUntil).getTime() > nowAtMount;
+  const isLocked = user.permanentLock || temporaryLocked;
+  const canShowUnlockButton = isLocked || user.failedLoginCount > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -118,6 +142,36 @@ export function UserEditDialog({
           </div>
           <Button type="submit" className="w-full">{t('save')}</Button>
         </form>
+
+        {/* PR #85: ロック情報 + 解除ボタン */}
+        <div className="mt-4 space-y-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
+          <div className="font-medium">ログインロック情報</div>
+          <div className="space-y-1 text-muted-foreground">
+            <div>
+              ログイン失敗回数:{' '}
+              <span className={user.failedLoginCount > 0 ? 'text-destructive font-medium' : ''}>
+                {user.failedLoginCount} 回
+              </span>
+            </div>
+            <div>
+              一時ロック:{' '}
+              {temporaryLocked
+                ? `${new Date(user.lockedUntil!).toLocaleString('ja-JP')} まで`
+                : 'なし'}
+            </div>
+            <div>永続ロック: {user.permanentLock ? 'あり (要解除)' : 'なし'}</div>
+          </div>
+          {canShowUnlockButton && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={handleUnlock}
+            >
+              ロック解除 (失敗カウントリセット)
+            </Button>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
