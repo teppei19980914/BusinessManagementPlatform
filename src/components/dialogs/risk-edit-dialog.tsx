@@ -11,6 +11,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
+import { NAME_MAX_LENGTH, MEDIUM_TEXT_MAX_LENGTH } from '@/config';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 
@@ -58,6 +59,7 @@ export function RiskEditDialog({
   readOnly?: boolean;
 }) {
   const t = useTranslations('action');
+  const tField = useTranslations('field');
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
     title: '',
@@ -146,14 +148,14 @@ export function RiskEditDialog({
           {/* PR #63: 公開範囲 / 脅威・好機 を最上位に配置 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>公開範囲</Label>
+              <Label>{tField('visibility')}</Label>
               <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
                 {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </div>
             {risk.type === 'risk' && (
               <div className="space-y-2">
-                <Label>脅威 / 好機</Label>
+                <Label>{tField('riskNature')}</Label>
                 <select value={form.riskNature} onChange={(e) => setForm({ ...form, riskNature: e.target.value })} className={nativeSelectClass}>
                   {Object.entries(RISK_NATURES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select>
@@ -161,36 +163,36 @@ export function RiskEditDialog({
             )}
           </div>
           <div className="space-y-2">
-            <Label>件名</Label>
+            <Label>{tField('title')}</Label>
             <Input
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              maxLength={100}
+              maxLength={NAME_MAX_LENGTH}
               required
             />
           </div>
           <div className="space-y-2">
-            <Label>内容</Label>
+            <Label>{tField('content')}</Label>
             <textarea
               className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
               rows={4}
-              maxLength={2000}
+              maxLength={MEDIUM_TEXT_MAX_LENGTH}
               required
             />
           </div>
           {/* PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定) */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>影響度</Label>
+              <Label>{tField('impact')}</Label>
               <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className={nativeSelectClass}>
                 {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </div>
             {risk.type === 'risk' && (
               <div className="space-y-2">
-                <Label>発生可能性</Label>
+                <Label>{tField('likelihood')}</Label>
                 <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className={nativeSelectClass}>
                   {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select>
@@ -205,7 +207,7 @@ export function RiskEditDialog({
               </select>
             </div>
             <div className="space-y-2">
-              <Label>担当者</Label>
+              <Label>{tField('assignee')}</Label>
               <select value={form.assigneeId} onChange={(e) => setForm({ ...form, assigneeId: e.target.value })} className={nativeSelectClass}>
                 <option value="">未設定</option>
                 {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
@@ -213,7 +215,7 @@ export function RiskEditDialog({
             </div>
           </div>
           <div className="space-y-2">
-            <Label>期限</Label>
+            <Label>{tField('deadline')}</Label>
             <DateFieldWithActions value={form.deadline} onChange={(v) => setForm({ ...form, deadline: v })} />
           </div>
           </fieldset>

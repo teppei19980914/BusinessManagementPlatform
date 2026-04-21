@@ -49,15 +49,19 @@ const REQUIRED_FIELD_KEYS = [
   'newPasswordConfirm',
 ] as const;
 
-/** Phase C で必須となる message キー (PR #81 で導入)。 */
+/** Phase C で必須となる message キー (PR #81 で導入、#82 で拡張)。 */
 const REQUIRED_MESSAGE_KEYS = [
   'saveSuccess',
   'saveFailed',
+  'createFailed',
+  'updateFailed',
   'deleteSuccess',
   'deleteFailed',
   'deleteConfirm',
   'fetchFailed',
   'validationError',
+  'passwordChangeFailed',
+  'passwordChanged',
   'noData',
   'loading',
 ] as const;

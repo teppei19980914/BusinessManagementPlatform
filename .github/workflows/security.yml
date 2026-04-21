@@ -1,11 +1,18 @@
-# セキュリティスキャン用 GitHub Actions ワークフロー（テンプレート）
-# 使用時は `.template` を外して `.github/workflows/security.yml` にリネーム
+# セキュリティスキャンワークフロー (PR #82 で .template から有効化)
 #
 # 実行内容:
-#   1. gitleaks — 機密情報スキャン
-#   2. npm audit / pip-audit — 既知脆弱性スキャン
-#   3. semgrep — SAST (静的解析)
-#   4. CodeQL — 高度な SAST（必要に応じて）
+#   1. gitleaks       — 機密情報スキャン (コミット履歴に secrets が混入していないか)
+#   2. pnpm audit     — 依存パッケージの既知脆弱性スキャン
+#   3. semgrep        — SAST (静的セキュリティ解析)
+#   4. CodeQL         — 高度な SAST (GitHub 標準)
+#
+# 実行タイミング:
+#   - main への push / PR
+#   - 毎日 03:00 UTC の定期実行 (新規 CVE 検出のため)
+#
+# 注意:
+#   - semgrep は SEMGREP_APP_TOKEN secret 未設定時はスキップされる (任意連携)
+#   - gitleaks の有償ライセンス未設定時は free 版で動作 (基本検出は十分)
 
 name: Security Scan
 
@@ -15,7 +22,6 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # 毎日 03:00 UTC に定期実行
     - cron: '0 3 * * *'
 
 permissions:
@@ -39,40 +45,33 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ============================================================
-  # 2. Dependency Vulnerability Scan
+  # 2. Dependency Vulnerability Scan (pnpm audit)
   # ============================================================
-  # --- Node.js プロジェクトの場合 ---
-  npm-audit:
-    name: npm audit
+  pnpm-audit:
+    name: pnpm audit
     runs-on: ubuntu-latest
-    if: hashFiles('package-lock.json') != ''
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
-          node-version: '20'
-      - run: npm ci
-      - run: npm audit --audit-level=high
-
-  # --- Python プロジェクトの場合 ---
-  # pip-audit:
-  #   name: pip-audit
-  #   runs-on: ubuntu-latest
-  #   if: hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != ''
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-python@v5
-  #       with:
-  #         python-version: '3.12'
-  #     - run: pip install pip-audit
-  #     - run: pip-audit
+          version: 10
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Run pnpm audit
+        # high 以上の脆弱性のみ失敗扱い (low / moderate は警告レベル)
+        run: pnpm audit --audit-level=high
 
   # ============================================================
-  # 3. SAST - Semgrep
+  # 3. SAST - Semgrep (SEMGREP_APP_TOKEN 設定時のみ有効)
   # ============================================================
   semgrep:
     name: Semgrep SAST
     runs-on: ubuntu-latest
+    if: ${{ secrets.SEMGREP_APP_TOKEN != '' }}
     container:
       image: semgrep/semgrep
     steps:
@@ -90,7 +89,6 @@ jobs:
     strategy:
       matrix:
         language: ['javascript-typescript']
-        # Python の場合は ['python'] を追加
     steps:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v3

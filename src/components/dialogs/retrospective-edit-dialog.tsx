@@ -44,6 +44,7 @@ export function RetrospectiveEditDialog({
   readOnly?: boolean;
 }) {
   const t = useTranslations('action');
+  const tField = useTranslations('field');
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
     conductedDate: '',
@@ -107,13 +108,13 @@ export function RetrospectiveEditDialog({
           <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
           {/* PR #63: 公開範囲を最上位に配置 */}
           <div className="space-y-2">
-            <Label>公開範囲</Label>
+            <Label>{tField('visibility')}</Label>
             <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
               {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
           <div className="space-y-2">
-            <Label>実施日</Label>
+            <Label>{tField('conductedDate')}</Label>
             <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
           </div>
           {[
