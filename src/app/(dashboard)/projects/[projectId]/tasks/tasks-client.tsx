@@ -938,7 +938,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger render={<Button size="sm" />}>追加</DialogTrigger>
-            <DialogContent className="max-w-xl">
+            {/* PR #87 横展開: アクティビティ作成ダイアログも grid-cols-2 + DateFieldWithActions を
+                含むため、編集ダイアログ同様 max-w-2xl に揃えて日付項目の縦書き崩れを防ぐ。 */}
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>{createType === 'work_package' ? 'ワークパッケージ作成' : 'アクティビティ作成'}</DialogTitle>
                 <DialogDescription>
