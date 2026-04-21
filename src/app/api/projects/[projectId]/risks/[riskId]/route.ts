@@ -1,3 +1,14 @@
+/**
+ * GET    /api/projects/[projectId]/risks/[riskId] - 単一リスク/課題取得
+ * PATCH  /api/projects/[projectId]/risks/[riskId] - 編集
+ * DELETE /api/projects/[projectId]/risks/[riskId] - 論理削除
+ *
+ * 認可: checkProjectPermission ('risk:read' / 'risk:edit' / 'risk:delete')
+ * 監査: PATCH/DELETE 時に audit_logs に before/after を記録。
+ *
+ * 関連: DESIGN.md §8.3 (権限制御 — risk アクション)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateRiskSchema } from '@/lib/validators/risk';

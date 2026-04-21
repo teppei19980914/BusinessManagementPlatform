@@ -1,3 +1,19 @@
+/**
+ * GET  /api/projects/[id]/tasks/[taskId]/progress - 進捗ログ一覧取得
+ * POST /api/projects/[id]/tasks/[taskId]/progress - 進捗ログ追加 (進捗率/実績工数の更新)
+ *
+ * 役割:
+ *   タスクの進捗を時系列で記録する。POST 時にタスク本体の progress_rate /
+ *   actual_effort も最新値に更新。WP は集約対象のため進捗ログは持たない (ACT のみ)。
+ *
+ * 認可: checkProjectPermission ('task:read' / 'task:update_progress')
+ * 監査: POST 時に audit_logs (action=UPDATE, entityType=task) に進捗値を記録。
+ *
+ * 関連:
+ *   - DESIGN.md §5 (テーブル定義: task_progress_logs)
+ *   - PR #69 (進捗 100% ↔ 完了状態の双方向整合)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateProgressSchema } from '@/lib/validators/task';

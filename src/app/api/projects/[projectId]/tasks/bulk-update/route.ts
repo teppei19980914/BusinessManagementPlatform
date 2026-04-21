@@ -1,3 +1,19 @@
+/**
+ * PATCH /api/projects/[projectId]/tasks/bulk-update - タスク一括更新
+ *
+ * 役割:
+ *   WBS 画面のチェックボックス選択 + 一括編集パネルから複数タスクを 1 リクエストで
+ *   更新する (担当者 / 期限 / ステータス等)。N タスクに対して N 回 API を叩くと
+ *   遅いため bulk 化したエンドポイント。
+ *
+ * 認可: checkProjectPermission('task:edit')
+ * 監査: 各タスクごとに audit_logs に before/after を記録 (recordBulkAuditLogs)。
+ *
+ * 関連:
+ *   - DESIGN.md §17 (パフォーマンス要件 / N+1 回避)
+ *   - SPECIFICATION.md (WBS 一括編集パネル)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { bulkUpdateTaskSchema } from '@/lib/validators/task';

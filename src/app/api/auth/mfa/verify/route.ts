@@ -1,3 +1,22 @@
+/**
+ * POST /api/auth/mfa/verify - ログイン時 MFA 検証 (TOTP もしくはリカバリーコード)
+ *
+ * 役割:
+ *   MFA 有効ユーザがパスワード認証通過後に呼ぶエンドポイント。TOTP コードか
+ *   リカバリーコードのいずれかで検証成功すると、JWT 上の mfaVerified=true に
+ *   更新され保護領域へアクセス可能になる。リカバリーコードは使用後に失効する。
+ *
+ * 認可:
+ *   `mfaPendingPaths` (src/config/routes.ts) に含まれるため認証ミドルウェアを通過する。
+ *   ただしセッションは確立済 (パスワード認証済) でないと userId が一致しない。
+ *
+ * 監査: auth_event_logs に mfa_verified / mfa_failure / recovery_code_used を記録。
+ *
+ * 関連:
+ *   - DESIGN.md §9.5 (MFA 設計)
+ *   - PR #67 (MFA ログイン強化)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyTotp } from '@/services/mfa.service';
 import { prisma } from '@/lib/db';

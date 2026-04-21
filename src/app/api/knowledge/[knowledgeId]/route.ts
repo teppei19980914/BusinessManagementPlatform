@@ -1,3 +1,17 @@
+/**
+ * GET    /api/knowledge/[knowledgeId] - 単一ナレッジ取得
+ * PATCH  /api/knowledge/[knowledgeId] - ナレッジ編集
+ * DELETE /api/knowledge/[knowledgeId] - ナレッジ論理削除
+ *
+ * 認可:
+ *   GET: ログイン済 + visibility='public' or 作成者本人 or admin
+ *   PATCH/DELETE: 作成者本人 or admin (サービス層 updateKnowledge で再判定)
+ *
+ * 監査: PATCH/DELETE 時に audit_logs に before/after を記録。
+ *
+ * 関連: DESIGN.md §5 / §8.3 (権限制御)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { updateKnowledgeSchema } from '@/lib/validators/knowledge';

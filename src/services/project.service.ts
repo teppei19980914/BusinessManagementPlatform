@@ -1,3 +1,30 @@
+/**
+ * プロジェクトサービス (本プロダクトのトップエンティティ)
+ *
+ * 役割:
+ *   プロジェクトを CRUD し、状態遷移 (企画中 → 見積中 → 計画中 → 実行中 → 完了 →
+ *   振り返り完了 → クローズ) を管理する。リスク・タスク・見積もり・振り返りなど、
+ *   ほぼすべての業務エンティティが Project を親に持つ。
+ *
+ * 設計判断:
+ *   - 論理削除 (deletedAt) を採用。クローズ後も振り返り・ナレッジ参照のため残す。
+ *   - 状態遷移は state-machine.ts に集約。直接 status を更新する経路は禁止し、
+ *     必ず changeProjectStatus() 経由にすることで「逆戻り禁止」「飛び級禁止」を強制する。
+ *   - businessDomainTags / techStackTags / processTags はいずれも JSONB 配列。
+ *     提案型サービス (suggestion.service.ts) で過去ナレッジ/課題とのマッチングに使用。
+ *   - createdBy / updatedBy は監査の最低限。詳細な変更履歴は audit_logs に別途記録。
+ *
+ * 認可:
+ *   呼び出し元 API ルート (/api/projects/...) で checkProjectPermission または
+ *   requireAdmin を実施済みの前提。本サービスは membership / role の判定を行わない。
+ *
+ * 関連ドキュメント:
+ *   - DESIGN.md §5 (テーブル定義: projects)
+ *   - DESIGN.md §6 (プロジェクト状態遷移設計)
+ *   - DESIGN.md §8 (権限制御)
+ *   - DESIGN.md §23 (核心機能: 提案型サービスでのタグ参照)
+ */
+
 import { prisma } from '@/lib/db';
 import { canTransition } from './state-machine';
 import type { Prisma } from '@/generated/prisma/client';

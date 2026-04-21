@@ -1,3 +1,17 @@
+/**
+ * GET /api/projects/[projectId]/gantt - ガントチャート用タスク一覧取得
+ *
+ * 役割:
+ *   ガントチャート画面のデータソース。WBS ツリーを構築する必要がないため
+ *   listTasksFlat で平坦リストを返し、クライアント側で時系列描画する。
+ *
+ * 認可: checkProjectPermission('task:read')
+ *
+ * 関連:
+ *   - DESIGN.md §15 (idx_tasks_gantt インデックス)
+ *   - SPECIFICATION.md (ガントチャート画面)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { listTasksFlat } from '@/services/task.service';

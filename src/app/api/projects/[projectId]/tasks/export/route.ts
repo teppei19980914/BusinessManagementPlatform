@@ -1,6 +1,19 @@
+/**
+ * POST /api/projects/[projectId]/tasks/export - WBS テンプレートエクスポート (CSV / JSON)
+ *
+ * 役割:
+ *   現プロジェクトの WBS 構造を「次案件で再利用するテンプレート」として
+ *   ダウンロードする。エクスポートしたファイルは別プロジェクトで import-route
+ *   経由で取り込み可能。
+ *
+ * 認可: checkProjectPermission('task:create')
+ *   テンプレート流用は新規 WBS 作成相当のため create 権限を要求 (read だけでは不足)。
+ *
+ * 関連: SPECIFICATION.md (WBS テンプレート機能)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
-// エクスポートは task:create 権限（PM/TL以上）を要求
 import { exportWbsTemplate } from '@/services/task.service';
 
 export async function POST(

@@ -1,3 +1,22 @@
+/**
+ * GET  /api/attachments?entityType=...&entityId=... - 添付一覧取得
+ * POST /api/attachments - 添付追加 (URL 参照型)
+ *
+ * 役割:
+ *   ポリモーフィック添付テーブル (attachments) の汎用 CRUD。
+ *   entity_type + entity_id で 6 種のエンティティ (project / task / estimate /
+ *   risk / retrospective / knowledge / memo) と紐付き、URL のみ保持する設計
+ *   (実ファイルは外部ストレージ)。
+ *
+ * 認可:
+ *   - memo entity の場合: authorizeMemoAttachment (作成者本人 or public 限定)
+ *   - その他の entity: checkMembership (該当プロジェクトのメンバー / admin)
+ *
+ * 関連:
+ *   - DESIGN.md §22 (添付リンク設計 - ポリモーフィック関連)
+ *   - PR #64 / #70
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { checkMembership } from '@/lib/permissions';

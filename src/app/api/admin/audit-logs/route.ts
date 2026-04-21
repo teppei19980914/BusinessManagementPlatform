@@ -1,3 +1,17 @@
+/**
+ * GET /api/admin/audit-logs - 監査ログ一覧取得
+ *
+ * 役割:
+ *   システム管理者向け監査ログ閲覧画面のデータソース。entityType による絞込と
+ *   ページネーション (limit 最大 100) をサポート。
+ *
+ * 認可: requireAdmin (システム管理者のみ)
+ *
+ * 関連:
+ *   - DESIGN.md §5 (テーブル定義: audit_logs)
+ *   - SPECIFICATION.md (監査ログ画面)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';

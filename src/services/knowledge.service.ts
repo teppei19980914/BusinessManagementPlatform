@@ -1,3 +1,32 @@
+/**
+ * ナレッジサービス (本プロダクトの中核資産)
+ *
+ * 役割:
+ *   過去プロジェクトで得た「調査・検証・障害対応・教訓」等の知見を蓄積し、
+ *   次案件の見積もり/計画に再利用できる形で提供する。本プロダクトのコンセプト
+ *   「運営するほど次のプロジェクトがうまくいく」を実現する中心エンティティ。
+ *
+ * 設計判断:
+ *   - 公開範囲 (visibility) は draft / public の 2 値 (PR #60 で project/company を public に統合)
+ *     - draft  : 作成者 + admin のみ閲覧可
+ *     - public : 全ログインユーザが閲覧可
+ *   - 多対多のプロジェクト紐付け (knowledge_projects) を持つが、紐付けゼロでも独立ナレッジとして成立
+ *   - タグは 3 種類: techTags (技術) / processTags (工程) / businessDomainTags (業務ドメイン)
+ *     → 提案型サービス (suggestion.service.ts) で類似度マッチングに使用
+ *   - 全文検索のため knowledges.title / content に pg_trgm GIN インデックスを設置済 (PR #65)
+ *
+ * 認可:
+ *   呼び出し元 API ルート (src/app/api/knowledge/..., src/app/api/projects/[id]/knowledge/...)
+ *   で checkPermission('knowledge:*') を実施済みの前提。本サービスは visibility による
+ *   フィルタを行うクエリは含むが、ロール判定は行わない。
+ *
+ * 関連ドキュメント:
+ *   - DESIGN.md §5 (テーブル定義: knowledges / knowledge_projects)
+ *   - DESIGN.md §16 (全文検索設計 / pg_trgm)
+ *   - DESIGN.md §23 (核心機能: 提案型サービス)
+ *   - SPECIFICATION.md (ナレッジ一覧・編集・全ナレッジ画面)
+ */
+
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
 import type { CreateKnowledgeInput } from '@/lib/validators/knowledge';

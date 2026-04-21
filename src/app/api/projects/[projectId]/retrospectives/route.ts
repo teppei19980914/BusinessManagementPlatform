@@ -1,3 +1,13 @@
+/**
+ * GET  /api/projects/[projectId]/retrospectives - 振り返り一覧取得
+ * POST /api/projects/[projectId]/retrospectives - 振り返り新規作成
+ *
+ * 認可: checkProjectPermission ('retrospective:read' / 'retrospective:create')
+ * 監査: POST 時に audit_logs (action=CREATE, entityType=retrospective) を記録。
+ *
+ * 関連: DESIGN.md §5 (テーブル定義: retrospectives)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { createRetrospectiveSchema } from '@/lib/validators/retrospective';

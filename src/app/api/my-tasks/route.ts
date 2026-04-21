@@ -1,3 +1,18 @@
+/**
+ * GET /api/my-tasks - ログイン中ユーザの担当タスク横断一覧
+ *
+ * 役割:
+ *   マイタスク画面 (/my-tasks) のデータソース。assignee_id = 自分 のタスクを
+ *   全プロジェクト横断で集約して返す。WP は assignee_id を持たないため対象外。
+ *
+ * 認可: getAuthenticatedUser (ログイン中ユーザ本人のみ自分のタスクが見える)
+ *
+ * 関連:
+ *   - DESIGN.md §15 (idx_tasks_assignee インデックス)
+ *   - SPECIFICATION.md (マイタスク画面)
+ *   - PR #69 (マイタスク導線)
+ */
+
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';

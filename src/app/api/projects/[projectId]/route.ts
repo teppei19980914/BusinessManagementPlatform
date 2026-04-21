@@ -1,3 +1,18 @@
+/**
+ * GET    /api/projects/[projectId] - プロジェクト詳細取得
+ * PATCH  /api/projects/[projectId] - プロジェクト編集
+ * DELETE /api/projects/[projectId] - プロジェクト論理削除 (連鎖削除あり)
+ *
+ * 役割:
+ *   プロジェクト詳細画面のデータソース。DELETE は配下のタスク / リスク /
+ *   振り返り / 添付などを deleteProjectCascade で連鎖的に論理削除する。
+ *
+ * 認可: checkProjectPermission ('project:read' / 'project:edit' / 'project:delete')
+ * 監査: PATCH/DELETE 時に audit_logs に before/after を記録。
+ *
+ * 関連: DESIGN.md §8 (権限制御) / §6 (状態と削除可否)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateProjectSchema } from '@/lib/validators/project';

@@ -1,3 +1,29 @@
+/**
+ * 見積もりサービス
+ *
+ * 役割:
+ *   プロジェクトの工数見積もりを CRUD する。1 プロジェクトに複数の見積もり明細
+ *   (作業項目 / 工数 / 単位 / 根拠) を持つ構造で、企画フェーズから実行フェーズへの
+ *   移行 (見積もり確定) と、過去案件の見積もりナレッジ蓄積を支える。
+ *
+ * 設計判断:
+ *   - 論理削除 (deletedAt) を採用。確定済み見積もりは履歴として後続案件の参考に
+ *     使われるため物理削除しない。
+ *   - estimatedEffort は DB 上 Decimal(10,2) だが UI で扱いやすくするため
+ *     Number に変換して DTO に格納する (toEstimateDTO の責務)。
+ *   - 工数単位 (人時 / 人日) はマスタ定数 (`EFFORT_UNITS`) を参照して保存する。
+ *
+ * 認可:
+ *   呼び出し元の API ルート (src/app/api/projects/[projectId]/estimates/...)
+ *   側で `checkProjectPermission('estimate:*')` を実施済みの前提。
+ *   本サービスは認可チェックを再実行しない。
+ *
+ * 関連ドキュメント:
+ *   - DESIGN.md §5 (テーブル定義: estimates)
+ *   - DESIGN.md §8 (権限制御 — estimate アクション)
+ *   - SPECIFICATION.md (見積もり画面・確定フロー)
+ */
+
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
 import type { CreateEstimateInput } from '@/lib/validators/estimate';

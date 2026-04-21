@@ -1,3 +1,33 @@
+/**
+ * ユーザサービス (システム管理者向け)
+ *
+ * 役割:
+ *   システム管理者画面 (/admin/users) からのユーザ CRUD を担う。
+ *   - ユーザ新規発行 (検証メール送信込み)
+ *   - 一覧 (アクティブ/非アクティブ含む)
+ *   - 編集 (氏名 / システムロール / 有効化)
+ *   - リカバリーコード再発行
+ *
+ * 設計判断:
+ *   - 新規発行時: パスワードはユーザ自身が後から /setup-password で設定する。
+ *     ここではランダムトークン (email_verification_tokens) を発行し、
+ *     検証メール (sendVerificationEmail) で送付する。即座にパスワードを発行しない理由は
+ *     管理者がパスワードを知らない状態を保つため (内部不正防止)。
+ *   - メール送信失敗 (EmailSendError) はユーザレコードを残してエラーを投げる。
+ *     呼び出し元 API ルートで EMAIL_SEND_FAILED として 502 応答に変換する。
+ *   - 重複メール検出: Prisma の P2002 (UNIQUE 制約違反) を捕捉し
+ *     'DUPLICATE_EMAIL' Error を投げる (API 側で 409 に変換)。
+ *   - 論理削除 (deletedAt) を採用。監査ログ整合性のため物理削除しない。
+ *
+ * 認可:
+ *   呼び出し元 API ルート (/api/admin/users/...) で requireAdmin() を実施済みの前提。
+ *
+ * 関連ドキュメント:
+ *   - DESIGN.md §5 (テーブル定義: users)
+ *   - DESIGN.md §9 (セキュリティ設計 / アカウントロック / メール検証)
+ *   - SPECIFICATION.md (ユーザ管理画面 / 新規発行フロー)
+ */
+
 import { prisma } from '@/lib/db';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';

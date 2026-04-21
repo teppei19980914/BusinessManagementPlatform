@@ -1,3 +1,28 @@
+/**
+ * プロジェクトメンバーサービス
+ *
+ * 役割:
+ *   プロジェクトに対するユーザの参加 (projectMember) を CRUD する。
+ *   1 ユーザ × 1 プロジェクトに対して 1 ロール (PM/TL / メンバー / 閲覧者) を割り当て。
+ *
+ * 設計判断:
+ *   - 物理削除 (deleteMember) を採用。論理削除にすると「過去メンバー」が
+ *     リスク/タスクの assignee として参照され続けるため一貫性が悪い。
+ *     離任ユーザは別途ユーザ無効化 (isActive=false) で扱う。
+ *   - 同一ユーザが同一プロジェクトに重複参加できないよう DB に
+ *     UNIQUE 制約 (uq_pm_project_user) を設置済み。重複追加は P2002 で弾く。
+ *   - admin システムロールは projectMember に登録されていなくても
+ *     全プロジェクトに pm_tl 相当でアクセス可 (checkMembership で吸収)。
+ *
+ * 認可:
+ *   呼び出し元 API ルート (/api/projects/[projectId]/members/...) で
+ *   checkProjectPermission('member:*') を実施済みの前提。
+ *
+ * 関連ドキュメント:
+ *   - DESIGN.md §5 (テーブル定義: project_members)
+ *   - DESIGN.md §8 (権限制御 — projectRole とロール継承)
+ */
+
 import { prisma } from '@/lib/db';
 
 export type MemberDTO = {

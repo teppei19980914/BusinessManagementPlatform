@@ -1,3 +1,18 @@
+/**
+ * POST /api/auth/change-password - ログイン中ユーザによる自分のパスワード変更
+ *
+ * 役割:
+ *   ログイン中のユーザが自分のパスワードを変更する。現パスワードによる本人確認 →
+ *   新パスワードのポリシー検証 → 履歴チェック (直近 N 件と同一不可) → 更新を行う。
+ *
+ * 認可: getAuthenticatedUser (ログイン中ユーザ本人)
+ * 監査: changePassword サービス内で auth_event_logs に password_changed を記録。
+ *
+ * 関連:
+ *   - DESIGN.md §9.4 (パスワードポリシー / 履歴チェック)
+ *   - src/config/security.ts (BCRYPT_COST / PASSWORD_HISTORY_COUNT)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { changePasswordSchema } from '@/lib/validators/password';

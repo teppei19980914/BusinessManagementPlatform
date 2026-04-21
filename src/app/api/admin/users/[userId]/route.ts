@@ -1,3 +1,17 @@
+/**
+ * PATCH /api/admin/users/[userId] - ユーザ編集 (氏名 / ロール / 有効状態)
+ *
+ * 役割:
+ *   システム管理者がユーザの氏名・システムロール・isActive (有効/無効) を更新する。
+ *   isActive=false にすると当該ユーザは即時ログイン不可となる (中間状態あり)。
+ *
+ * 認可: requireAdmin (システム管理者のみ)
+ * 監査: audit_logs (action=UPDATE, entityType=user) に before/after 記録。
+ *
+ * 関連:
+ *   - DESIGN.md §9 (アカウント管理 / 無効化)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
