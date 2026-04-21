@@ -1,0 +1,66 @@
+# メイン CI ワークフロー (PR #82 で有効化):
+#
+#   PR / push 時に lint / test / build を自動実行する。
+#   Stop hook (ローカル) と同等のチェックを GitHub 側でも回し、
+#   ローカルで pnpm を実行し忘れた状態でマージされるのを防ぐ。
+#
+# 実行内容:
+#   1. ESLint (pnpm lint)
+#   2. Vitest 単体テスト (pnpm test)
+#   3. Next.js ビルド (pnpm build)
+#
+# 設計判断:
+#   - Node.js 22 LTS を使用 (README.md と整合)
+#   - pnpm 10 を使用 (package.json の packageManager 指定なしのため latest 安定版)
+#   - キャッシュ: pnpm store + .next/cache を保存し再ビルドを高速化
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Lint / Test / Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm prisma generate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test (vitest)
+        run: pnpm test
+
+      - name: Build (next build)
+        # ビルド時は実 DB 接続不要 (next build は static analysis 中心)。
+        # DATABASE_URL ダミー値で十分通る (Vercel と同じパターン)。
+        env:
+          DATABASE_URL: 'postgresql://dummy:dummy@localhost:5432/dummy'
+          DIRECT_URL: 'postgresql://dummy:dummy@localhost:5432/dummy'
+          NEXTAUTH_SECRET: 'ci_dummy_secret_for_build_only_not_for_production'
+        run: pnpm build
