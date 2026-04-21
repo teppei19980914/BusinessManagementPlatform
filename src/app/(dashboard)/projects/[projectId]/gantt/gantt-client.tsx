@@ -1,5 +1,31 @@
 'use client';
 
+/**
+ * ガントチャート画面のクライアントコンポーネント。
+ *
+ * 役割:
+ *   タスクを時系列でバー描画する。マイルストーン (ダイヤ型 / bg-milestone-marker) と
+ *   通常タスクを区別。担当者フィルタ + 完了タスク表示切替などのコントロール付き。
+ *
+ * レイアウト定数 (本ファイル冒頭で定義):
+ *   - DAY_WIDTH = 32       1 日のピクセル幅
+ *   - NAME_COL_DEFAULT_WIDTH = 280  タスク名列の初期幅 (PR #68 でドラッグ可変対応)
+ *   - MONTH_HEADER_H / DAY_HEADER_H ヘッダ行の高さ
+ *   これらは単一コンポーネント内のみで使うため §21.4.4 に従い外出し対象外。
+ *
+ * パフォーマンス (PR #25):
+ *   - 背景グリッドは行ごとではなく container 全体に 1 回だけ描画 (CSS background)
+ *   - useMemo でタスク → バー位置のマッピングをキャッシュ
+ *
+ * 認可: ページ側でメンバーシップ確認済 (read 権限)。
+ * API: /api/projects/[id]/gantt
+ *
+ * 関連:
+ *   - SPECIFICATION.md (ガントチャート画面)
+ *   - DESIGN.md §15 (idx_tasks_gantt インデックス)
+ *   - PR #68 (列幅ドラッグリサイズ)
+ */
+
 import { useCallback, useMemo, useRef } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

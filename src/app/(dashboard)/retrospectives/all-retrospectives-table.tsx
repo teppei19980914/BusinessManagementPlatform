@@ -1,5 +1,19 @@
 'use client';
 
+/**
+ * 全振り返り画面 (横断表示) のテーブルコンポーネント。
+ *
+ * 役割:
+ *   全プロジェクト横断で visibility='public' の振り返りを一覧表示する。
+ *   PMO や次担当者が「過去案件で何が起きたか」を一覧で確認できるナレッジ資産ビュー。
+ *
+ * 行クリック動作:
+ *   メンバーシップがあるプロジェクトの振り返りなら編集ダイアログ、
+ *   非メンバーなら参照専用 (read-only) ダイアログを開く (PR #61)。
+ *
+ * 関連: SPECIFICATION.md (全振り返り画面)
+ */
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';

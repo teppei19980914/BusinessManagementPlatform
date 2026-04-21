@@ -1,5 +1,23 @@
 'use client';
 
+/**
+ * メンバー管理画面 (プロジェクト詳細タブ配下) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   プロジェクトメンバー一覧 + 追加 + ロール変更 + 除外を管理する。
+ *   1 ユーザ × 1 プロジェクトに対して 1 ロール (PM/TL / メンバー / 閲覧者)。
+ *
+ * 認可:
+ *   メンバー追加 / ロール変更 / 除外は **システム管理者のみ** (権限委譲リスク回避)。
+ *   PM/TL でも他メンバーの編集はできない (member.service / API ルート側で再判定)。
+ *
+ * API: /api/projects/[id]/members (GET/POST), /api/projects/[id]/members/[memberId] (PATCH/DELETE)
+ *
+ * 関連:
+ *   - SPECIFICATION.md (メンバー管理)
+ *   - DESIGN.md §8 (権限制御 / ロール変更履歴 role_change_logs)
+ */
+
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';

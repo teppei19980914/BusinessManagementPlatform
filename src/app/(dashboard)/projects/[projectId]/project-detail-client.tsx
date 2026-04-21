@@ -1,5 +1,27 @@
 'use client';
 
+/**
+ * プロジェクト詳細画面 (タブ式構造) のクライアントコンポーネント。
+ *
+ * 役割:
+ *   1 つのプロジェクトに対する全機能のハブ。Tabs で「概要 / 見積もり / WBS /
+ *   ガント / リスク / 課題 / 振り返り / ナレッジ / メンバー」等を切り替える。
+ *
+ * 重要設計:
+ *   - 各タブの内容は lazy fetch (PR #29): タブ切替時に該当 API を初めて叩くことで
+ *     初期ロードを軽量化。ページ全体を 1 ショットで取得すると重いため。
+ *   - 状態遷移ボタン (planning → estimating → ...) はここから API を叩く。
+ *     遷移ルール違反は 409 STATE_CONFLICT を表示する。
+ *   - 編集 / 削除はメンバーシップ + ロールに応じて表示制御 (canEdit prop)。
+ *
+ * 認可: ページ側でメンバーシップ確認済。canEdit / canCreate は role に基づき決定。
+ * API: /api/projects/[id], /api/projects/[id]/status (PATCH)
+ *
+ * 関連:
+ *   - SPECIFICATION.md (プロジェクト詳細画面)
+ *   - DESIGN.md §6 (状態遷移) / §8 (権限制御) / §17 (パフォーマンス改修)
+ */
+
 import { useCallback, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';

@@ -1,5 +1,23 @@
 'use client';
 
+/**
+ * マイタスク画面 (PR #69 でナビ撤去 → アカウントメニュー配下に移動) のクライアント側。
+ *
+ * 役割:
+ *   ログイン中ユーザの担当タスクを全プロジェクト横断で集約表示する個人ビュー。
+ *   プロジェクト別グルーピング + ステータス絞込 + 各タスクから親プロジェクトへの導線あり。
+ *
+ * 表示対象:
+ *   tasks.assignee_id = 自分 のみ (WP は assignee を持たないため対象外)。
+ *
+ * 認可: 本人のタスクのみ閲覧可。他人のマイタスクは見えない。
+ * API: /api/my-tasks
+ *
+ * 関連:
+ *   - SPECIFICATION.md (マイタスク画面)
+ *   - DESIGN.md §15 (idx_tasks_assignee インデックスで高速化)
+ */
+
 import { useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';

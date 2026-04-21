@@ -231,6 +231,22 @@ export async function updateProject(
   return toProjectDTO(project);
 }
 
+/**
+ * プロジェクトの状態遷移を実行する。
+ *
+ * 重要: このサービスは status を直接更新する**唯一の経路**。updateProject() では
+ * status を更新しないため、状態遷移は必ず本関数を経由する。
+ *
+ * 遷移ルールは src/services/state-machine.ts の `canTransition` で集約管理:
+ *   - 逆戻り禁止: 「実行中 → 計画中」のような後退は許可しない
+ *   - 飛び級禁止: 必ず順序通りに進める (planning → estimating → scheduling → executing → ...)
+ *
+ * エラー:
+ *   - NOT_FOUND: プロジェクトが存在しない or 論理削除済み
+ *   - STATE_CONFLICT:<reason>: 遷移ルール違反 (理由付き)
+ *
+ * 認可: 呼び出し元 API ルートで checkProjectPermission('project:change_status') 実施済の前提。
+ */
 export async function changeProjectStatus(
   projectId: string,
   newStatus: ProjectStatus,
@@ -242,10 +258,14 @@ export async function changeProjectStatus(
 
   if (!project) throw new Error('NOT_FOUND');
 
+  // 状態遷移ルールの単一の真実 = state-machine.ts に委譲。
+  // 業務ルール変更時は state-machine.ts 1 箇所を編集すればよい。
   const currentStatus = project.status as ProjectStatus;
   const transition = canTransition(currentStatus, newStatus);
 
   if (!transition.allowed) {
+    // API ルート側で 409 STATE_CONFLICT に変換される。エラーメッセージは
+    // 'STATE_CONFLICT:' プレフィックスで判別可能。
     throw new Error(`STATE_CONFLICT:${transition.reason}`);
   }
 

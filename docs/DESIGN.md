@@ -4586,3 +4586,47 @@ mfa / password / password-reset / state-machine / suggestion` は既存内容を
   useState/useEffect への補足コメント
 
 これらは「修正機会のあるたびに段階移行」とし、本 PR では着手しない (大量 diff のリスク回避)。
+
+### 32.6 PR #80: Phase 2 + Phase 3 実施 (2026-04-21 追加)
+
+#### Phase 2 実施内容
+
+`task.service.ts` (1274 行、最複雑) の主要関数 5 つに JSDoc 形式の関数ヘッダ + inline コメントを追加:
+
+- **`buildTree`**: WBS 階層ツリー構築の純粋関数 (Map ベース 2 パス)
+- **`createTask`**: WP/ACT 区別と親 WP 集計再計算の副作用を明記
+- **`updateTask`**: PR #69 の双方向整合ルール (進捗 100% ⇔ ステータス完了) の優先順位を明記
+- **`deleteTask`**: 論理削除の理由 + 子ノードの孤児扱いを明記
+- **`updateTaskProgress`**: 進捗ログ + タスク本体最新値の同時更新と整合性ルール
+
+`project.service.ts`:
+- **`changeProjectStatus`**: state-machine.ts への委譲設計、エラーコード仕様を明記
+
+WP 集約関数 (`aggregateWpFromChildren` / `recalculateAncestors`) は既存コメントが十分詳細だったため変更なし。
+
+#### Phase 3 実施内容
+
+`src/app/(dashboard)/**/*-client.tsx` および `*-table.tsx` 計 15 ファイルにトップレベル docblock を追加:
+
+- **役割**: その画面が業務上担う責任 (1 段落)
+- **重要設計**: lazy fetch / メモ化 / 整合性ルール 等の設計判断
+- **公開範囲制御 / 認可**: 表示対象データの絞り込みと操作権限
+- **API**: 呼び出すエンドポイント
+- **関連**: SPECIFICATION.md / DESIGN.md セクション
+
+主な対象:
+`tasks-client` (本プロダクト最複雑) / `project-detail-client` / `gantt-client` /
+`risks-client` / `retrospectives-client` / `estimates-client` / `members-client` /
+`project-knowledge-client` / `settings-client` / `users-client` / `knowledge-client` /
+`my-tasks-client` / `projects-client` / `all-risks-table` / `all-retrospectives-table`
+
+#### 効果
+
+- **将来の人間引き継ぎ**: 各クライアントページが「何の画面か」「どんな設計判断があるか」を
+  ファイル先頭で読める。git blame で意図を遡る必要が減る
+- **task.service.ts**: 1274 行の中で「複雑な業務ロジック (WP 集計 / 状態整合性 / 親子伝播)」を
+  持つ関数が一目で識別可能に
+
+#### 機能影響
+
+ゼロ。コメント追加のみで全 386 テスト pass / lint clean / build 成功。
