@@ -129,6 +129,8 @@ type TaskTreeNodeProps = {
   task: TaskDTO;
   depth: number;
   canEditPmTl: boolean;
+  /** PR #87: 一括選択チェックボックスを表示してよいか (pm_tl または member ロール) */
+  canSelectForProgress: boolean;
   userId: string;
   projectId: string;
   reload: () => Promise<void> | void;
@@ -150,6 +152,7 @@ function TaskTreeNodeImpl({
   task,
   depth,
   canEditPmTl,
+  canSelectForProgress,
   userId,
   projectId,
   reload,
@@ -193,7 +196,9 @@ function TaskTreeNodeImpl({
   return (
     <>
       <tr className={`border-b hover:bg-muted ${isWP ? 'bg-muted/50' : ''}`}>
-        {canEditPmTl && (
+        {canSelectForProgress && (
+          // PR #87: member ロールも自分担当タスクの実績系一括更新ができるようチェックボックスを表示。
+          // 選択チェック時は全行表示 (member が自分担当以外を間違って選択してもサーバ側で 403 で弾かれる)。
           <td className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
             <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(task.id)} className="rounded" />
           </td>
@@ -295,6 +300,7 @@ function TaskTreeNodeImpl({
           task={child}
           depth={depth + 1}
           canEditPmTl={canEditPmTl}
+          canSelectForProgress={canSelectForProgress}
           userId={userId}
           projectId={projectId}
           reload={reload}
@@ -329,6 +335,7 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   prev.task === next.task
   && prev.depth === next.depth
   && prev.canEditPmTl === next.canEditPmTl
+  && prev.canSelectForProgress === next.canSelectForProgress
   && prev.userId === next.userId
   && prev.projectId === next.projectId
   && prev.reload === next.reload
@@ -361,6 +368,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   }, [onReload, router]);
 
   const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
+  // PR #87: member ロールでも「自分担当タスク」の実績系一括更新 (status / progressRate /
+  // actualStartDate / actualEndDate) は可能。UI 側のチェックボックス列と一括パネル自体は
+  // 表示し、操作できるボタンだけ絞り込む (pm_tl: 全機能 / member: 実績更新のみ)。
+  // 旧実装は canEditPmTl ゲートで member には何も表示していなかったため、
+  // PR #85 で緩和した API 側の権限判定が UI からは使えない状態になっていた。
+  const canSelectForProgress = canEditPmTl || projectRole === 'member';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // --- 担当者フィルタ (PR #61: sessionStorage 永続化) ---
@@ -925,7 +938,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger render={<Button size="sm" />}>追加</DialogTrigger>
-            <DialogContent className="max-w-xl">
+            {/* PR #87 横展開: アクティビティ作成ダイアログも grid-cols-2 + DateFieldWithActions を
+                含むため、編集ダイアログ同様 max-w-2xl に揃えて日付項目の縦書き崩れを防ぐ。 */}
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>{createType === 'work_package' ? 'ワークパッケージ作成' : 'アクティビティ作成'}</DialogTitle>
                 <DialogDescription>
@@ -1062,9 +1077,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         )}
       </div>
 
-      {canEditPmTl && selectedIds.size > 0 && (
+      {canSelectForProgress && selectedIds.size > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-info/30 bg-info/10 px-4 py-2">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
+          {/* PR #87: 一括編集 (計画系) と 一括削除 は pm_tl+ のみ。member には一括実績更新のみ露出。 */}
+          {canEditPmTl && (
           <Dialog open={isBulkEditOpen} onOpenChange={handleBulkEditOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括編集</DialogTrigger>
             <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
@@ -1130,6 +1147,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
+          )}
           <Dialog open={isBulkActualOpen} onOpenChange={handleBulkActualOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括実績更新</DialogTrigger>
             <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
@@ -1197,7 +1215,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
-          <Button variant="outline" size="sm" className="text-destructive" onClick={handleBulkDelete}>一括削除</Button>
+          {canEditPmTl && (
+            <Button variant="outline" size="sm" className="text-destructive" onClick={handleBulkDelete}>一括削除</Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>選択解除</Button>
         </div>
       )}
@@ -1221,7 +1241,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <table className="min-w-full text-xs md:text-sm">
           <thead className="bg-muted">
             <tr>
-              {canEditPmTl && (
+              {canSelectForProgress && (
                 <th className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
                   <input
                     type="checkbox"
@@ -1248,6 +1268,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 task={task}
                 depth={0}
                 canEditPmTl={canEditPmTl}
+                canSelectForProgress={canSelectForProgress}
                 userId={userId}
                 projectId={projectId}
                 reload={reload}
@@ -1264,7 +1285,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             ))}
             {filteredTasks.length === 0 && (
               <tr>
-                <td colSpan={canEditPmTl ? 8 : 7} className="py-8 text-center text-muted-foreground">
+                <td colSpan={canSelectForProgress ? 8 : 7} className="py-8 text-center text-muted-foreground">
                   {tasks.length === 0
                     ? 'WBS が登録されていません'
                     : '選択したフィルタ条件に該当するタスクはありません'}
@@ -1277,8 +1298,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       </ResizableColumnsProvider>
 
       {/* 編集ダイアログ: ロールに応じて PM/TL 編集項目・実績項目を出し分ける */}
+      {/* PR #87: 実績項目セクションが grid-cols-2 のため max-w-xl (36rem) では日付列が
+          狭く「日付を選択」が 1 文字ずつ縦組みになる UI 崩れが起きていた。max-w-2xl (42rem)
+          に拡大して 2 列でも十分な width を確保する。 */}
       <Dialog open={editingTask != null} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
-        <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingTask?.type === 'work_package' ? 'ワークパッケージ編集' : 'アクティビティ編集'}

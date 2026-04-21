@@ -1035,6 +1035,7 @@ const transitions: TransitionRule[] = [
 | POST | /api/auth/signin | ログイン | 不要 |
 | POST | /api/auth/signout | ログアウト | 必要 |
 | GET | /api/auth/session | セッション情報取得 | 必要 |
+| POST | /api/auth/lock-status | ロック状態参照 (SPECIFICATION.md §13.4.4、enumeration 防止済) | 不要 |
 
 #### プロジェクト
 

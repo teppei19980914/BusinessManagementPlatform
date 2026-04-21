@@ -35,13 +35,39 @@ function LoginForm() {
       redirect: false,
     });
 
-    setIsLoading(false);
-
     if (result?.error) {
-      setError('メールアドレスまたはパスワードが正しくありません');
+      // PR #87: ログイン失敗時、ロック状態だったのかパスワード誤りだったのかを
+      // 区別してメッセージを出し分ける。/api/auth/lock-status は存在しないメールでも
+      // 'none' を返すため enumeration リスクはない (既に signIn 自体が同等情報を
+      // 時間差で露出し得るのでネット差分はゼロ)。
+      const lockRes = await fetch('/api/auth/lock-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      }).catch(() => null);
+      const lock = lockRes && lockRes.ok
+        ? (await lockRes.json().catch(() => null) as
+            | { status: 'permanent_lock' }
+            | { status: 'temporary_lock'; unlockAt: string }
+            | { status: 'none' }
+            | null)
+        : null;
+
+      if (lock?.status === 'permanent_lock') {
+        setError('アカウントがロックされています。管理者に解除を依頼してください。');
+      } else if (lock?.status === 'temporary_lock') {
+        const unlockAt = new Date(lock.unlockAt);
+        setError(
+          `ログイン失敗が続いたためアカウントが一時ロックされています。${unlockAt.toLocaleString('ja-JP')} 以降に再度お試しください。`,
+        );
+      } else {
+        setError('メールアドレスまたはパスワードが正しくありません');
+      }
+      setIsLoading(false);
       return;
     }
 
+    setIsLoading(false);
     // フルページリロードで Cookie を確実に送信（Vercel 環境対応）
     window.location.href = callbackUrl;
   }
