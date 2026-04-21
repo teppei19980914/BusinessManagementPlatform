@@ -1,3 +1,18 @@
+/**
+ * GET /api/admin/role-change-logs - 権限変更履歴取得
+ *
+ * 役割:
+ *   システムロール / プロジェクトロール変更の履歴 (role_change_logs) を一覧表示。
+ *   「誰が誰のどのロールを何時いつ変更したか」を監査目的で追跡可能にする。
+ *
+ * 認可: requireAdmin (システム管理者のみ)
+ *
+ * 関連:
+ *   - DESIGN.md §5 (テーブル定義: role_change_logs)
+ *   - DESIGN.md §9 (セキュリティ設計 / 権限変更の追跡)
+ *   - SPECIFICATION.md (権限変更画面)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';

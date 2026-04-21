@@ -1,3 +1,15 @@
+/**
+ * POST /api/projects/[projectId]/retrospectives/[retroId]/comments - 振り返りコメント追加
+ *
+ * 役割:
+ *   振り返り記事に対して関係者がコメントを追加する。コメントは時系列で
+ *   振り返りエントリ配下に表示され、議論の足跡を残す。
+ *
+ * 認可: checkProjectPermission('retrospective:comment')
+ *
+ * 関連: DESIGN.md §5 (テーブル定義: retrospective_comments)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { addCommentSchema } from '@/lib/validators/retrospective';

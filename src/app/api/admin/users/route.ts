@@ -1,3 +1,26 @@
+/**
+ * GET  /api/admin/users - 全ユーザ一覧取得
+ * POST /api/admin/users - ユーザ新規発行 (検証メール送信)
+ *
+ * 役割:
+ *   システム管理者がアカウントを発行するエンドポイント。POST 時はパスワードを
+ *   設定せず検証メールを送り、受信者が /setup-password で初回パスワード設定する。
+ *
+ * 認可: requireAdmin (システム管理者のみ)
+ *
+ * 監査:
+ *   POST 成功時に audit_logs (action=CREATE, entityType=user) と
+ *   auth_event_logs (eventType=account_created) の双方に記録。
+ *
+ * エラー:
+ *   - 重複メール → 409 DUPLICATE_EMAIL
+ *   - メール送信失敗 → 502 EMAIL_SEND_FAILED (ユーザレコードは残る)
+ *
+ * 関連:
+ *   - DESIGN.md §9 (セキュリティ設計 / 新規発行フロー)
+ *   - SPECIFICATION.md (ユーザ管理画面)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { createUserSchema } from '@/lib/validators/auth';

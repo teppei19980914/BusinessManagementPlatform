@@ -1,3 +1,33 @@
+/**
+ * リスク・課題サービス
+ *
+ * 役割:
+ *   プロジェクト運営中に発生する「リスク」(risk: 将来発生し得る事象) と
+ *   「課題」(issue: 既に発生した事象) を統一テーブル risks_issues で管理する。
+ *   2 種類は type 列で区別し、UI/権限/バリデーションは共通化している。
+ *
+ * 設計判断:
+ *   - 統一テーブル: 90% の項目が共通 (タイトル / 内容 / 影響度 / 状態 / 担当 / 期限) のため
+ *     1 テーブルで管理。risk のみ likelihood / risk_nature を持ち、issue は null 許容。
+ *   - 公開範囲 (visibility, PR #60): draft / public の 2 値
+ *   - 脅威/好機分類 (riskNature, PR #60): risk の場合のみ threat / opportunity を持つ
+ *     PMBOK 第 7 版の「機会 (opportunity)」概念に対応するため
+ *   - 論理削除 (deletedAt) を採用。クローズ後も振り返りで参照するため
+ *   - title / content に pg_trgm GIN インデックス (PR #65)
+ *     → type='issue' かつ state='resolved' を「過去課題」として新案件に提案
+ *
+ * 認可:
+ *   呼び出し元 API ルート (/api/projects/[id]/risks/...) で
+ *   checkProjectPermission('risk:*' / 'issue:*') を実施済みの前提。
+ *   listRisks() の visibility フィルタは内部で適用 (作成者本人 + admin は draft も見える)。
+ *
+ * 関連ドキュメント:
+ *   - DESIGN.md §5 (テーブル定義: risks_issues)
+ *   - DESIGN.md §8 (権限制御 — risk アクション)
+ *   - DESIGN.md §23 (核心機能: 過去課題の提案)
+ *   - SPECIFICATION.md (リスク・課題管理画面 / 全リスク・全課題画面)
+ */
+
 import { prisma } from '@/lib/db';
 // Prisma types used for Decimal handling in toRiskDTO
 import type { CreateRiskInput } from '@/lib/validators/risk';

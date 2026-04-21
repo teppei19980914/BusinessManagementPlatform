@@ -1,3 +1,20 @@
+/**
+ * POST /api/auth/delete-account - アカウント自己削除 (退会)
+ *
+ * 役割:
+ *   ログイン中ユーザが自分のアカウントを削除する。パスワード再入力で本人確認後、
+ *   論理削除 (deletedAt) + isActive=false を設定。データ参照整合性維持のため、
+ *   作成済みのリスク・タスク等は削除されず作成者として残る。
+ *
+ * 認可: getAuthenticatedUser (本人のみ。パスワード再入力で本人確認)
+ * 監査:
+ *   - audit_logs (action=DELETE, entityType=user)
+ *   - auth_event_logs (eventType=account_self_deleted)
+ *
+ * 関連:
+ *   - DESIGN.md §9 (アカウント削除フロー)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';

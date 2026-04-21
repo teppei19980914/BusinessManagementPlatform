@@ -1,3 +1,18 @@
+/**
+ * GET    /api/projects/[id]/tasks/[taskId] - 単一タスク取得
+ * PATCH  /api/projects/[id]/tasks/[taskId] - タスク編集
+ * DELETE /api/projects/[id]/tasks/[taskId] - タスク論理削除
+ *
+ * 役割:
+ *   個別タスクの編集ダイアログ等のデータソース。WP の集計値 (planned_effort 等) は
+ *   ここから直接更新できず、recalculateWp 経由で再計算される。
+ *
+ * 認可: checkProjectPermission ('task:read' / 'task:edit' / 'task:delete')
+ * 監査: PATCH/DELETE 時に audit_logs に before/after を記録。
+ *
+ * 関連: DESIGN.md §8.3 (権限制御 — task アクション)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateTaskSchema } from '@/lib/validators/task';

@@ -1,3 +1,19 @@
+/**
+ * GET    /api/projects/[id]/estimates/[estimateId] - 単一見積もり取得
+ * PATCH  /api/projects/[id]/estimates/[estimateId] - 編集
+ * DELETE /api/projects/[id]/estimates/[estimateId] - 論理削除
+ * POST   /api/projects/[id]/estimates/[estimateId] (action=confirm) - 見積もり確定
+ *
+ * 役割:
+ *   見積もりは「確定 (isConfirmed=true)」を経てタスク化のソースとなる。
+ *   確定済みは編集不可 (delete のみ可能) として履歴整合性を保つ。
+ *
+ * 認可: checkProjectPermission ('estimate:read' / 'estimate:edit' / 'estimate:delete')
+ * 監査: PATCH/DELETE/CONFIRM 時に audit_logs に before/after を記録。
+ *
+ * 関連: DESIGN.md §8.3 (権限制御 — estimate アクション)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateEstimateSchema } from '@/lib/validators/estimate';

@@ -1,3 +1,25 @@
+/**
+ * POST /api/auth/reset-password - パスワードリセット (2 段階)
+ *
+ * 役割:
+ *   パスワードを忘れたユーザの自己リセットフロー (公開エンドポイント、未認証アクセス可)。
+ *   - Step 1: メールアドレス + リカバリーコードで本人確認 → リセットトークン発行
+ *   - Step 2: トークン + 新パスワードでパスワード再設定
+ *
+ *   2 段階に分けることで、リセットトークンの有効期限 (短時間) によるリスク低減と、
+ *   平文パスワードを 1 リクエストに含めない設計を両立する。
+ *
+ * 認可:
+ *   未認証アクセス可 (src/config/routes.ts の PUBLIC_PATHS に含まれる)。
+ *   本人確認はリカバリーコードのみで行うため、コード漏洩リスクに注意。
+ *
+ * 監査: auth_event_logs に password_reset_requested / password_reset_completed を記録。
+ *
+ * 関連:
+ *   - DESIGN.md §9.7 (パスワードリセット / リカバリーコード方式)
+ *   - src/config/security.ts (PASSWORD_RESET_TOKEN_EXPIRY_MINUTES)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { passwordSchema } from '@/lib/validators/auth';

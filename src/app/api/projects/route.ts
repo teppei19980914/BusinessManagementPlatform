@@ -1,3 +1,21 @@
+/**
+ * GET  /api/projects - プロジェクト一覧取得
+ * POST /api/projects - プロジェクト新規作成
+ *
+ * 役割:
+ *   プロジェクト一覧画面 (/projects) のデータソース。検索 (q) と
+ *   ステータスフィルタをサポート。POST 時は作成者を自動でメンバー (PM/TL) に登録する。
+ *
+ * 認可:
+ *   GET: ログイン済ユーザは全プロジェクト取得可。ただし visibility 制御は別途タスク
+ *        / リスク等のレベルで実施するため、プロジェクト名と概要は誰でも見える設計。
+ *   POST: ログイン済ユーザなら誰でも作成可 (作成者が自動的に PM/TL として登録される)。
+ *
+ * 監査: POST 時に audit_logs (action=CREATE, entityType=project) を記録。
+ *
+ * 関連: DESIGN.md §6 (状態遷移) / §8 (権限制御)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { createProjectSchema } from '@/lib/validators/project';

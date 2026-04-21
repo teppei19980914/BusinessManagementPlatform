@@ -1,3 +1,17 @@
+/**
+ * POST /api/auth/mfa/enable - MFA 有効化確定
+ *
+ * 役割:
+ *   /api/auth/mfa/setup でセットアップ中のユーザが認証アプリで生成した 6 桁 TOTP
+ *   コードを送信し、検証成功時に mfaEnabled=true へ確定する第 2 段階。
+ *
+ * 認可: getAuthenticatedUser (ログイン中ユーザ本人)
+ * 監査: enableMfa サービス内で auth_event_logs (eventType=mfa_enabled) を記録。
+ *
+ * 関連:
+ *   - DESIGN.md §9.5 (MFA 設計)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { enableMfa } from '@/services/mfa.service';

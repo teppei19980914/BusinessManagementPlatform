@@ -1,3 +1,52 @@
+/**
+ * タスク (WBS) サービス — 本プロダクトで最大かつ最複雑のサービス層
+ *
+ * 役割:
+ *   プロジェクトの WBS (Work Breakdown Structure) と進捗管理を担う。
+ *   - ワークパッケージ (WP) / アクティビティ (ACT) の階層構造
+ *   - 計画/実績の日程・工数
+ *   - 進捗ログ (task_progress_logs) の追記管理
+ *   - WP の値 (期間 / 工数 / 進捗率) は子 ACT から自動集計
+ *   - WBS テンプレート展開 (新規プロジェクト初期投入)
+ *   - 一括更新 (bulk update) と再計算 (recalculate) のロジック
+ *
+ * 設計判断:
+ *   - WP/ACT 区別 (PR #29 / 20260416 マイグレーション):
+ *       type='work_package' は集約用、assignee_id / 計画日程 / 工数は null 許容
+ *       type='activity' は実作業、assignee_id 必須
+ *   - WP の集計値 (planned_effort / planned_start_date / planned_end_date /
+ *     progress_rate) は子 ACT 群から計算する。手動編集を許容すると整合性が崩れるため
+ *     WP は集計対象列の直接更新を禁止し、recalculateWp() で再計算する設計。
+ *   - 進捗率と状態の双方向整合 (PR #69): progress=100% なら status='completed' を
+ *     強制 / status='completed' なら progress=100% を強制。
+ *   - 論理削除 (deletedAt) を採用。完了タスクの振り返り参照のため。
+ *   - 一覧は階層ツリー (listTasksWithTree) を 1 クエリ + メモリ上構築で返す。
+ *     N+1 を避けるため findMany() で全件取得 → JS で親子組み立て。
+ *
+ * 関数の規模:
+ *   ファイル全体 1200+ 行のため、機能別にコメントブロックで区切ってある。
+ *   主な関数群:
+ *     - DTO 変換 (toTaskDTO 等)
+ *     - 一覧取得 (listTasks / listTasksWithTree / listMyTasks)
+ *     - 単体 CRUD (createTask / updateTask / deleteTask)
+ *     - WP 集計 (recalculateWp / recalculateAllWp)
+ *     - 進捗ログ (addProgressLog)
+ *     - 一括更新 (bulkUpdateTasks / bulkUpdateActuals)
+ *     - WBS テンプレート展開 (createTasksFromTemplate)
+ *     - インポート/エクスポート (importTasksFromCsv / exportTasksToCsv)
+ *
+ * 認可:
+ *   呼び出し元 API ルート (/api/projects/[id]/tasks/...) で
+ *   checkProjectPermission('task:*') を実施済みの前提。
+ *
+ * 関連ドキュメント:
+ *   - DESIGN.md §5 (テーブル定義: tasks / task_progress_logs)
+ *   - DESIGN.md §8 (権限制御 — task アクション)
+ *   - DESIGN.md §15 (インデックス戦略 — idx_tasks_gantt 等)
+ *   - DESIGN.md §17 (パフォーマンス要件 / N+1 回避)
+ *   - SPECIFICATION.md (WBS 管理画面 / ガントチャート / マイタスク画面)
+ */
+
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
 import type { UpdateProgressInput, WbsTemplateTask } from '@/lib/validators/task';

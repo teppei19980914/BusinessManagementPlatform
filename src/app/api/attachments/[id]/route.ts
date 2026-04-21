@@ -1,3 +1,18 @@
+/**
+ * PATCH  /api/attachments/[id] - 添付編集 (表示名 / URL 等)
+ * DELETE /api/attachments/[id] - 添付論理削除
+ *
+ * 役割:
+ *   既存の添付 (attachments テーブルの 1 レコード) を編集または削除する。
+ *
+ * 認可:
+ *   - memo entity の添付: authorizeMemoAttachment (作成者本人のみ編集/削除可)
+ *   - その他 entity: checkMembership で該当プロジェクトのメンバー / admin のみ
+ *
+ * 関連:
+ *   - DESIGN.md §22 (添付リンク設計)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { checkMembership } from '@/lib/permissions';

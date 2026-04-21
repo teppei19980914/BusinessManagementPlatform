@@ -1,3 +1,22 @@
+/**
+ * GET  /api/knowledge - 全ナレッジ横断一覧 (visibility=public + 自分の draft)
+ * POST /api/knowledge - ナレッジ新規作成
+ *
+ * 役割:
+ *   プロジェクト横断のナレッジ画面 (/knowledge) のデータソース。
+ *   検索キーワード / knowledgeType / techTags / processTags でフィルタ可能。
+ *
+ * 認可:
+ *   ログイン済みユーザなら閲覧可。listKnowledge サービス内で
+ *   visibility='public' の全件 + 自分が作成した draft のみ返す。
+ *
+ * 監査: POST 時に audit_logs (action=CREATE, entityType=knowledge) を記録。
+ *
+ * 関連:
+ *   - DESIGN.md §5 (テーブル定義: knowledges)
+ *   - DESIGN.md §16 (全文検索 / pg_trgm)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { createKnowledgeSchema } from '@/lib/validators/knowledge';

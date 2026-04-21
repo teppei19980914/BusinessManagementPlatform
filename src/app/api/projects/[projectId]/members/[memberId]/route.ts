@@ -1,3 +1,19 @@
+/**
+ * PATCH  /api/projects/[id]/members/[memberId] - ロール変更 (PM/TL ↔ メンバー ↔ 閲覧者)
+ * DELETE /api/projects/[id]/members/[memberId] - メンバー除外
+ *
+ * 役割:
+ *   プロジェクトメンバーのロール変更/除外。除外は物理削除 (member.service の判断)。
+ *   ロール変更は role_change_logs にも履歴記録される。
+ *
+ * 認可: requireAdmin (システム管理者のみ。PM/TL は対象外。理由は権限委譲リスク回避)
+ * 監査:
+ *   - audit_logs (action=UPDATE/DELETE, entityType=project_member)
+ *   - role_change_logs (changeType=project_role)
+ *
+ * 関連: DESIGN.md §8 (権限制御 - ロール変更履歴)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { updateMemberRole, removeMember } from '@/services/member.service';

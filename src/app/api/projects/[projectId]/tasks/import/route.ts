@@ -1,9 +1,25 @@
+/**
+ * POST /api/projects/[projectId]/tasks/import - WBS テンプレート CSV インポート
+ *
+ * 役割:
+ *   他プロジェクトでエクスポートした WBS テンプレートを取り込み、現プロジェクトの
+ *   タスクとして一括作成する。階層 (parent_task_id) を維持しつつ ID は新規発番。
+ *
+ * 認可: checkProjectPermission('task:create')
+ * 監査: audit_logs (action=CREATE, entityType=task) を一括記録。
+ *
+ * Runtime:
+ *   Edge Runtime ではなく Node Runtime を明示。Prisma + 大きめ body の扱いを
+ *   安定化させるため (Edge では Prisma が動かない / body サイズ制限がきつい)。
+ *
+ * 関連: SPECIFICATION.md (WBS テンプレート機能 / インポートバリデーション)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { parseCsvTemplate, importWbsTemplate, validateWbsTemplate } from '@/services/task.service';
 import { recordAuditLog } from '@/services/audit.service';
 
-// WBS CSV インポートは Node Runtime を明示（Prisma + 大きめ body の扱い安定化のため）
 export const runtime = 'nodejs';
 
 export async function POST(

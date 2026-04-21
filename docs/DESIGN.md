@@ -3773,6 +3773,7 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 | UI ラベル: 画面固有メッセージ・本文 | 🟡 部分的 | 真の多言語化が必要になった段階で Phase D として一括抽出。当面は JSX リテラル許容 |
 | コンポーネント固有のレイアウト定数 (Gantt の DAY_WIDTH 等) | 🟢 自己完結で許容 | 単一コンポーネント内のみで使用される数値 (§21.4.4 スコープ外) |
 | Tailwind utility class (`flex` / `gap-4` / `p-3` 等) | 🟢 対象外 | レイアウト・配置・サイズの class は外出し対象外 (Tailwind 設計方針に基づく) |
+| **サービス層 / API ルートのトップレベル docblock** (PR #79 Phase 1) | ✅ 準拠 | 全 18 サービス + 全 56 API ルートに役割・認可要件・監査記録・関連設計書セクションを記述。AI なしの将来運用引き継ぎを支える人間可読性確保 |
 
 #### 21.4.7 違反発見時の対応フロー
 
@@ -4527,3 +4528,61 @@ export const THEME_COLOR_SCHEMES = {
 
 それぞれ `satisfies Record<ThemeId, ...>` 制約により**追加漏れがビルドエラー**になる。
 さらに `theme-definitions.test.ts` の 3 つのテストケースが「全 ID に値があるか」「light / dark のいずれかか」「dark 以外は全て light か」を実行時にも検証する。
+
+---
+
+## 32. PR #79: 人間可読性改善 — サービス層 + API ルート docblock 整備 (Phase 1)
+
+### 32.1 背景
+
+将来 AI を使わない開発者が引き継いだ場合に「コードを読んでも何が何だか分からない」状態を
+避けるため、ゼロハードコーディング原則 (§21.4) に加えて **コード可読性の最低基準** を定める。
+
+直近 (PR #70 以降) の実装は丁寧な docblock を持つが、初期実装 (PR #25 以前) のサービス
+ファイルや API ルートは「import → 関数本体」のみで、認可要件・監査記録・関連設計書
+セクションの記述が無かった。
+
+### 32.2 Phase 1 で実施した整備
+
+#### 32.2.1 サービス層 (8 ファイル + 既存 10 = 18 全ファイル準拠)
+
+各サービスのトップに以下を必ず含む docblock を追加:
+
+- **役割**: そのサービスが業務上担う責任 (1 段落)
+- **設計判断**: 論理削除 vs 物理削除、トランザクション境界、状態整合等の意思決定理由
+- **認可**: 呼び出し元 API ルートで実施済みの前提の認可チェック
+- **関連ドキュメント**: DESIGN.md / SPECIFICATION.md の該当セクション
+
+対象: `estimate / knowledge / member / project / retrospective / risk / task / user`
+(既に docblock があった `attachment / audit / auth-event / email-verification / memo /
+mfa / password / password-reset / state-machine / suggestion` は既存内容を維持)
+
+#### 32.2.2 API ルート (30 ファイル + 既存 26 = 56 全ファイル準拠)
+
+各エンドポイントのトップに以下を含む docblock を追加:
+
+- **HTTP メソッド + パス + 役割**
+- **認可**: `requireAdmin` / `checkProjectPermission('action:resource')` / 未認証可 等
+- **監査**: audit_logs / auth_event_logs / role_change_logs への記録有無
+- **関連**: DESIGN.md セクション / 関連 PR
+
+### 32.3 効果
+
+- **将来の人間引き継ぎ**: 初見の開発者がファイルを開いた時点で「何のために存在するか」「どんな
+  権限が必要か」「ログに何が残るか」が即座に分かる。git blame で意図を遡る必要が減る
+- **設計書との対応付け**: 各ファイルに DESIGN.md の参照先が明記され、コード ↔ 設計書の往復が容易
+- **横展開漏れ検出**: 新規 API ルート追加時に既存ルートと同じ docblock パターンが残っているかを
+  レビューで確認できる
+
+### 32.4 機能影響
+
+ゼロ。コメント追加のみ、ロジック・テスト挙動・bundle に変化なし。
+全 386 テスト pass / lint clean / build 成功で確認済。
+
+### 32.5 残タスク (将来 PR)
+
+- **Phase 2**: サービス層の大規模関数 (特に `task.service.ts` 1274 行) への inline コメント追加
+- **Phase 3**: クライアントページ (`src/app/(dashboard)/**/*-client.tsx`) の docblock + 複雑な
+  useState/useEffect への補足コメント
+
+これらは「修正機会のあるたびに段階移行」とし、本 PR では着手しない (大量 diff のリスク回避)。

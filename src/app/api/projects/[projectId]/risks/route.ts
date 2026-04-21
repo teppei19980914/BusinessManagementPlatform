@@ -1,3 +1,16 @@
+/**
+ * GET  /api/projects/[projectId]/risks - リスク/課題一覧取得 (type=risk|issue)
+ * POST /api/projects/[projectId]/risks - リスクまたは課題の新規起票
+ *
+ * 役割:
+ *   プロジェクト詳細画面のリスク/課題タブのデータソース。type 列で risk と issue を統合管理。
+ *
+ * 認可: checkProjectPermission ('risk:read' / 'risk:create')
+ * 監査: POST 時に audit_logs (action=CREATE, entityType=risk_issue) を記録。
+ *
+ * 関連: DESIGN.md §5 (テーブル定義: risks_issues) / §8 (権限制御)
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { createRiskSchema } from '@/lib/validators/risk';

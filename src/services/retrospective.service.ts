@@ -1,3 +1,30 @@
+/**
+ * 振り返りサービス
+ *
+ * 役割:
+ *   プロジェクト完了後の振り返り (KPT 風: 計画/実績総括 + 良かった点 / 課題 / 次回以前事項)
+ *   とコメントを CRUD する。次案件のナレッジ抽出元となる重要エンティティ。
+ *
+ * 設計判断:
+ *   - 公開範囲 (visibility) は draft / public の 2 値 (PR #60 で追加)
+ *     - draft  : 作成者 + admin のみ閲覧可
+ *     - public : 全ログインユーザが閲覧可 → 「全振り返り」横断画面に表示
+ *   - 論理削除 (deletedAt) を採用。過去案件の知見を後続に引き継ぐため物理削除しない。
+ *   - problems / improvements は pg_trgm GIN インデックス付き (PR #65)。
+ *     新プロジェクトの purpose / scope / background と類似度マッチして「過去の失敗」を
+ *     早期に提示する用途 (suggestion.service.ts 経由)。
+ *   - コメント (retrospective_comments) は別テーブルで Markdown 文字列を持つ。
+ *
+ * 認可:
+ *   呼び出し元 API ルート (/api/projects/[id]/retrospectives/...) で
+ *   checkProjectPermission を実施済みの前提。
+ *
+ * 関連ドキュメント:
+ *   - DESIGN.md §5 (テーブル定義: retrospectives / retrospective_comments)
+ *   - DESIGN.md §16 (全文検索 / pg_trgm)
+ *   - DESIGN.md §23 (核心機能: 過去振り返りの提案)
+ */
+
 import { prisma } from '@/lib/db';
 import type { CreateRetrospectiveInput } from '@/lib/validators/retrospective';
 

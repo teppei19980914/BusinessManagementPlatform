@@ -1,3 +1,17 @@
+/**
+ * PATCH /api/projects/[projectId]/status - プロジェクト状態遷移
+ *
+ * 役割:
+ *   プロジェクトのステータス (企画中 → 見積中 → ... → クローズ) を進める。
+ *   state-machine.ts の canTransition() で「逆戻り禁止」「飛び級禁止」を強制。
+ *   違反時は 409 STATE_CONFLICT を返す。
+ *
+ * 認可: checkProjectPermission('project:change_status') - PM/TL or admin のみ
+ * 監査: audit_logs (action=UPDATE, entityType=project) に before/after status を記録。
+ *
+ * 関連: DESIGN.md §6 (プロジェクト状態遷移設計) / src/services/state-machine.ts
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { changeStatusSchema } from '@/lib/validators/project';
