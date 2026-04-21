@@ -5,7 +5,11 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     user: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      findMany: vi.fn(),
       create: vi.fn(),
+      update: vi.fn(),
       delete: vi.fn(),
     },
     roleChangeLog: {
@@ -39,7 +43,13 @@ vi.mock('bcryptjs', () => ({
   hash: vi.fn((val: string) => Promise.resolve(`hashed_${val}`)),
 }));
 
-import { createUser } from './user.service';
+import {
+  createUser,
+  listUsers,
+  updateUser,
+  updateUserStatus,
+  updateUserRole,
+} from './user.service';
 import { prisma } from '@/lib/db';
 import {
   sendVerificationEmail,
@@ -144,5 +154,162 @@ describe('createUser', () => {
     await createUser(validInput, creatorId);
 
     expect(sendVerificationEmail).not.toHaveBeenCalled();
+  });
+});
+
+const baseUserRow = {
+  id: 'u-1',
+  name: 'Alice',
+  email: 'a@b.co',
+  systemRole: 'general',
+  isActive: true,
+  createdAt: new Date('2026-04-01'),
+  updatedAt: new Date('2026-04-01'),
+};
+
+describe('listUsers', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('削除済みを除外して DTO で返す', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([baseUserRow] as never);
+
+    const r = await listUsers();
+
+    expect(r[0].id).toBe('u-1');
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { deletedAt: null } }),
+    );
+  });
+});
+
+describe('updateUserStatus', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('有効化 → before=inactive / after=active の監査ログ', async () => {
+    vi.mocked(prisma.user.update).mockResolvedValue(baseUserRow as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    await updateUserStatus('u-1', true, 'admin-1');
+
+    expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          beforeRole: 'inactive',
+          afterRole: 'active',
+        }),
+      }),
+    );
+  });
+
+  it('無効化 → before=active / after=inactive', async () => {
+    vi.mocked(prisma.user.update).mockResolvedValue(baseUserRow as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    await updateUserStatus('u-1', false, 'admin-1');
+
+    expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          beforeRole: 'active',
+          afterRole: 'inactive',
+        }),
+      }),
+    );
+  });
+});
+
+describe('updateUserRole', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('自分自身のロール変更は CANNOT_CHANGE_OWN_ROLE', async () => {
+    await expect(updateUserRole('same-id', 'admin', 'same-id')).rejects.toThrow(
+      'CANNOT_CHANGE_OWN_ROLE',
+    );
+  });
+
+  it('対象ユーザ不在で NOT_FOUND', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+    await expect(updateUserRole('u-1', 'admin', 'admin-1')).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('ロール更新 + 監査ログ記録', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      ...baseUserRow,
+      systemRole: 'general',
+    } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({
+      ...baseUserRow,
+      systemRole: 'admin',
+    } as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    const r = await updateUserRole('u-1', 'admin', 'admin-1');
+
+    expect(r.systemRole).toBe('admin');
+    expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          beforeRole: 'general',
+          afterRole: 'admin',
+        }),
+      }),
+    );
+  });
+});
+
+describe('updateUser (汎用ディスパッチ)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('name のみ指定時は user.update のみ (role_change_log なし)', async () => {
+    vi.mocked(prisma.user.update).mockResolvedValue({
+      ...baseUserRow,
+      name: 'New',
+    } as never);
+
+    const r = await updateUser('u-1', { name: 'New' }, 'admin-1');
+
+    expect(r.name).toBe('New');
+    expect(prisma.roleChangeLog.create).not.toHaveBeenCalled();
+  });
+
+  it('systemRole 指定時は updateUserRole 経路', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      ...baseUserRow,
+      systemRole: 'general',
+    } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({
+      ...baseUserRow,
+      systemRole: 'admin',
+    } as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    await updateUser('u-1', { systemRole: 'admin' }, 'admin-1');
+
+    expect(prisma.roleChangeLog.create).toHaveBeenCalled();
+  });
+
+  it('isActive 指定時は updateUserStatus 経路', async () => {
+    vi.mocked(prisma.user.update).mockResolvedValue({
+      ...baseUserRow,
+      isActive: false,
+    } as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    await updateUser('u-1', { isActive: false }, 'admin-1');
+
+    expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ afterRole: 'inactive' }),
+      }),
+    );
+  });
+
+  it('空入力時は findUniqueOrThrow で現在値を返す', async () => {
+    vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue(baseUserRow as never);
+
+    const r = await updateUser('u-1', {}, 'admin-1');
+
+    expect(r.id).toBe('u-1');
+    expect(prisma.roleChangeLog.create).not.toHaveBeenCalled();
   });
 });
