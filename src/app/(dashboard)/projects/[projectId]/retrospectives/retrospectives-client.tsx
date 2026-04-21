@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +32,7 @@ type Props = {
 };
 
 export function RetrospectivesClient({ projectId, retros, canEdit, canComment, onReload }: Props) {
+  const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
   const reload = useCallback(async () => {
@@ -217,7 +219,7 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
                   size="sm"
                   className="text-destructive"
                   onClick={(e) => { e.stopPropagation(); handleDelete(retro.id); }}
-                >削除</Button>
+                >{t('delete')}</Button>
               )}
             </div>
           </div>

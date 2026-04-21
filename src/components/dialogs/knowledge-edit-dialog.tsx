@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,6 +52,7 @@ export function KnowledgeEditDialog({
   /** PR #61: 非公開プロジェクトの行クリック用 参照専用モード */
   readOnly?: boolean;
 }) {
+  const t = useTranslations('action');
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
     title: '',
@@ -180,7 +182,7 @@ export function KnowledgeEditDialog({
             canEdit={!readOnly}
             label="参考リンク"
           />
-          {!readOnly && <Button type="submit" className="w-full">保存</Button>}
+          {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>
     </Dialog>

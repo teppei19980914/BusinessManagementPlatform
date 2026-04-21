@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -84,6 +85,7 @@ export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
   canEdit, canCreate,
 }: Props) {
+  const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
@@ -298,7 +300,7 @@ export function ProjectDetailClient({
           {activeTab === 'overview' && isActualPmTl && (
             <>
               <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-                <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">編集</DialogTrigger>
+                <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{t('edit')}</DialogTrigger>
                 <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>プロジェクト編集</DialogTitle>
@@ -341,7 +343,7 @@ export function ProjectDetailClient({
             </>
           )}
           {activeTab === 'overview' && canDeleteProject && (
-            <Button variant="outline" className="text-destructive" onClick={handleDelete}>削除</Button>
+            <Button variant="outline" className="text-destructive" onClick={handleDelete}>{t('delete')}</Button>
           )}
           <Button variant="outline" onClick={() => router.push('/projects')}>
             一覧に戻る

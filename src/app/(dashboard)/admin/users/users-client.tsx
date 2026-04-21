@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +34,7 @@ type Props = {
 };
 
 export function UsersClient({ initialUsers }: Props) {
+  const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -106,7 +108,7 @@ export function UsersClient({ initialUsers }: Props) {
                     ユーザがリンクからパスワードを設定すると、アカウントが有効化されます。
                   </DialogDescription>
                 </DialogHeader>
-                <Button onClick={handleClose}>閉じる</Button>
+                <Button onClick={handleClose}>{t('close')}</Button>
               </>
             ) : (
               <>

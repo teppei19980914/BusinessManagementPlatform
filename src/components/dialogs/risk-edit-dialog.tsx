@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,6 +57,7 @@ export function RiskEditDialog({
   /** PR #61: 非公開プロジェクトの行クリック時など、参照専用で開く場合に true */
   readOnly?: boolean;
 }) {
+  const t = useTranslations('action');
   const { withLoading } = useLoading();
   const [form, setForm] = useState({
     title: '',
@@ -222,7 +224,7 @@ export function RiskEditDialog({
             canEdit={!readOnly}
             label="関連 URL"
           />
-          {!readOnly && <Button type="submit" className="w-full">保存</Button>}
+          {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>
     </Dialog>

@@ -1,0 +1,13 @@
+{
+  "action": {
+    "save": "保存",
+    "cancel": "キャンセル",
+    "delete": "削除",
+    "edit": "編集",
+    "create": "新規作成",
+    "back": "戻る",
+    "close": "閉じる",
+    "today": "今日",
+    "clear": "クリア"
+  }
+}
