@@ -400,6 +400,49 @@ GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-c
 - レポーター: `text` / `lcov` / `json` / `json-summary` (action 必須の 2 つを含む)
 - CI 実行は `main` への push / PR でトリガー (PR コメントは PR 時のみ)
 
+### 9.2 カバレッジ閾値 80% (PR #84)
+
+`vitest.config.ts` の `thresholds` で **Lines / Statements / Functions: 80%**、
+**Branches: 70%** を常時強制する。これを下回る変更は CI (`pnpm test`) が失敗し
+マージできない。
+
+**計測対象外 (coverage.exclude)** — 単体テストで検証するのが困難なため除外:
+
+| ファイル | 除外理由 |
+|---|---|
+| `src/lib/auth.config.ts` / `src/lib/auth.ts` | next-auth provider 配線 (integration test 領域) |
+| `src/lib/use-lazy-fetch.ts` / `src/lib/use-session-state.ts` | React クライアントフック (要 RTL) |
+| `src/lib/db.ts` | PrismaClient のインスタンス化のみ |
+| `src/lib/search/pg-trgm-provider.ts` | 実 PostgreSQL (pg_trgm 拡張) 接続が必要 |
+| `src/lib/mail/resend-provider.ts` | 外部メール送信 API アダプタ (本物の Resend 必要) |
+| `**/*.test.ts`, `**/*.d.ts` | テスト本体・型定義 |
+
+**閾値を下げたい場合**の運用:
+1. 原則として **テストを追加して充足させる** (除外を増やさない)
+2. どうしても単体テストで検証不可能なファイルが増えた場合のみ `coverage.exclude` に
+   追加し、Why をコメントで残す
+3. `thresholds.branches` を 70% 未満にする変更は事前に DESIGN.md で合意を取る
+
+### 9.3 Security Workflow 攻撃種別マトリクス (PR #84)
+
+[.github/workflows/security.yml](../.github/workflows/security.yml) の最後に
+`attack-matrix` job があり、GitHub Actions の **Job Summary** に以下のような
+攻撃種別マトリクスを日本語で自動出力する:
+
+| 状況 | 攻撃種別 (Attack) | 主な検証手段 |
+|:---:|---|---|
+| ✅ | 機密情報漏洩 (Secrets Exposure, CWE-798) | gitleaks |
+| ✅ | SQL インジェクション (SQL Injection, CWE-89) | Semgrep / CodeQL + Prisma ORM |
+| ✅ | 認可バイパス / IDOR (Authorization Bypass, CWE-639) | CodeQL + checkProjectPermission |
+| ... | ... | ... |
+
+- テンプレートは [.github/attack-matrix-summary.md](../.github/attack-matrix-summary.md)
+- ワークフロー側で `sed` による `@@FOO@@` プレースホルダ置換で実スキャン結果を埋め込む
+- **行を追加/編集したいとき**: `.github/attack-matrix-summary.md` を直接編集する。
+  `to_mark` / `or_mark` で使えるステータストークン (`@@GITLEAKS@@` / `@@AUDIT@@` /
+  `@@SAST@@` / `@@CODEQL@@`) は security.yml の `sed` で定義済み。新しい検証手段を
+  増やす場合は security.yml にも変数を追加する。
+
 ---
 
 ## 10. コミットとデプロイ

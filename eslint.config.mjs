@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "src/generated/**",
+    // PR #84: v8 coverage が生成する HTML レポート配下 (lcov-report/) を除外
+    "coverage/**",
   ]),
 ]);
 

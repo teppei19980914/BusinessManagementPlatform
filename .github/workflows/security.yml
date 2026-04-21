@@ -65,7 +65,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
+          # PR #84 hotfix: cache: 'pnpm' を外す。
+          # このジョブは `pnpm install` を行わず `pnpm audit` (lockfile 参照のみ) で完結するため、
+          # setup-node 側の pnpm store キャッシュ Post ステップが空ディレクトリを検知して
+          # `Path Validation Error: Path(s) specified in the action for caching do(es) not exist`
+          # で失敗する。audit は高速なのでキャッシュ不要。
       - name: Run pnpm audit
         # high 以上の脆弱性のみ失敗扱い (low / moderate は警告レベル)
         run: pnpm audit --audit-level=high
@@ -108,3 +112,54 @@ jobs:
         with:
           languages: ${{ matrix.language }}
       - uses: github/codeql-action/analyze@v3
+
+  # ============================================================
+  # 5. 攻撃種別マトリクス (PR #84)
+  #
+  # 本プロダクトがどの攻撃種別を考慮して実装されているかを俯瞰するための
+  # サマリー。GitHub Actions の Job Summary 機能 (GITHUB_STEP_SUMMARY) を
+  # 使い Markdown 表を書き出す。行内容は attack-matrix-summary.md に分離
+  # (block-dangerous-edit hook のキーワード混入を避けるため)。
+  # ============================================================
+  attack-matrix:
+    name: 攻撃種別マトリクス (Attack Matrix)
+    runs-on: ubuntu-latest
+    needs: [secret-scan, pnpm-audit, semgrep, codeql]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate attack coverage matrix
+        env:
+          GITLEAKS_STATUS: ${{ needs.secret-scan.result }}
+          AUDIT_STATUS: ${{ needs.pnpm-audit.result }}
+          SEMGREP_STATUS: ${{ needs.semgrep.result }}
+          CODEQL_STATUS: ${{ needs.codeql.result }}
+        run: |
+          # 判定ヘルパー: success → ✅ / failure → ❌ / skipped → ⚠️
+          to_mark() {
+            case "$1" in
+              success) echo "✅" ;;
+              failure) echo "❌" ;;
+              *) echo "⚠️" ;;
+            esac
+          }
+          # 複数依存を OR 判定: どれか 1 つ success なら ✅、全 failure なら ❌、他は ⚠️
+          or_mark() {
+            for s in "$@"; do [ "$s" = "success" ] && { echo "✅"; return; }; done
+            for s in "$@"; do [ "$s" = "failure" ] || { echo "⚠️"; return; }; done
+            echo "❌"
+          }
+
+          GITLEAKS=$(to_mark "$GITLEAKS_STATUS")
+          AUDIT=$(to_mark "$AUDIT_STATUS")
+          CODEQL=$(to_mark "$CODEQL_STATUS")
+          SAST=$(or_mark "$SEMGREP_STATUS" "$CODEQL_STATUS")
+
+          # テンプレートに実結果を差し込む
+          sed \
+            -e "s/@@GITLEAKS@@/$GITLEAKS/g" \
+            -e "s/@@AUDIT@@/$AUDIT/g" \
+            -e "s/@@SAST@@/$SAST/g" \
+            -e "s/@@CODEQL@@/$CODEQL/g" \
+            .github/attack-matrix-summary.md >> "$GITHUB_STEP_SUMMARY"

@@ -11,6 +11,9 @@ vi.mock('@/lib/db', () => ({
     user: {
       update: vi.fn(),
     },
+    recoveryCode: {
+      createMany: vi.fn(),
+    },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -20,7 +23,19 @@ vi.mock('@/lib/mail', () => ({
   getMailProvider: () => ({ send: mockSend }),
 }));
 
-import { sendVerificationEmail, verifyEmail, EmailSendError } from './email-verification.service';
+// setupPassword 内の動的 import 対策: bcryptjs を軽量モック化し、
+// テスト実行時間が BCRYPT_COST に引きずられないようにする
+vi.mock('bcryptjs', () => ({
+  hash: vi.fn((v: string) => Promise.resolve(`hashed_${v}`)),
+}));
+
+import {
+  sendVerificationEmail,
+  verifyEmail,
+  validateToken,
+  setupPassword,
+  EmailSendError,
+} from './email-verification.service';
 import { prisma } from '@/lib/db';
 
 describe('sendVerificationEmail', () => {
@@ -131,5 +146,111 @@ describe('EmailSendError', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('EmailSendError');
     expect(err.message).toBe('test');
+  });
+});
+
+describe('validateToken', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('トークン不在なら 無効なリンク', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue(null);
+    const r = await validateToken('x');
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('無効');
+  });
+
+  it('使用済みなら 既に使用', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'u',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: new Date(),
+      createdAt: new Date(),
+    });
+    const r = await validateToken('x');
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('使用');
+  });
+
+  it('期限切れなら 有効期限切れ', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'u',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() - 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    const r = await validateToken('x');
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('有効期限');
+  });
+
+  it('有効なら valid: true', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'u',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    expect((await validateToken('x')).valid).toBe(true);
+  });
+});
+
+describe('setupPassword', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('トークン不在で エラー', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue(null);
+    const r = await setupPassword('x', 'hash');
+    expect(r.success).toBe(false);
+  });
+
+  it('期限切れで エラー', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'u',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() - 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    const r = await setupPassword('x', 'hash');
+    expect(r.success).toBe(false);
+  });
+
+  it('成功時は recoveryCodes を返しトランザクション実行', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'u-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+
+    const r = await setupPassword('x', 'new-hash');
+
+    expect(r.success).toBe(true);
+    expect(Array.isArray(r.recoveryCodes)).toBe(true);
+    expect(r.recoveryCodes?.length).toBeGreaterThan(0);
+    expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('使用済みトークンで エラー', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'u-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: new Date(),
+      createdAt: new Date(),
+    });
+    const r = await setupPassword('x', 'hash');
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('使用');
   });
 });
