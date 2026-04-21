@@ -1,4 +1,4 @@
-# メイン CI ワークフロー (PR #82 で有効化):
+# メイン CI ワークフロー (PR #82 で有効化 / PR #83 でカバレッジ統合):
 #
 #   PR / push 時に lint / test / build を自動実行する。
 #   Stop hook (ローカル) と同等のチェックを GitHub 側でも回し、
@@ -6,13 +6,16 @@
 #
 # 実行内容:
 #   1. ESLint (pnpm lint)
-#   2. Vitest 単体テスト (pnpm test)
-#   3. Next.js ビルド (pnpm build)
+#   2. Vitest 単体テスト + カバレッジ計測 (pnpm test --coverage)
+#   3. PR コメントへカバレッジ要約を投稿 (davelosert/vitest-coverage-report-action)
+#   4. Next.js ビルド (pnpm build)
 #
 # 設計判断:
 #   - Node.js 22 LTS を使用 (README.md と整合)
 #   - pnpm 10 を使用 (package.json の packageManager 指定なしのため latest 安定版)
 #   - キャッシュ: pnpm store + .next/cache を保存し再ビルドを高速化
+#   - カバレッジは v8 プロバイダ (vitest.config.ts) + json-summary + json を出力
+#     し、action が PR コメントとして整形投稿する (外部サービス不要)。
 
 name: CI
 
@@ -24,6 +27,9 @@ on:
 
 permissions:
   contents: read
+  # PR #83: davelosert/vitest-coverage-report-action が PR コメントを投稿するため必要。
+  #         push (main) 時は PR が存在しないので no-op になる。
+  pull-requests: write
 
 jobs:
   ci:
@@ -53,8 +59,20 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Test (vitest)
-        run: pnpm test
+      - name: Test (vitest + coverage)
+        # PR #83: --coverage で v8 プロバイダが coverage-final.json / coverage-summary.json
+        # / lcov.info を coverage/ 配下に出力する。
+        # 注意: テスト失敗でも後段のカバレッジコメントを表示したいので、
+        # テスト失敗時の PR コメントは action 側が「カバレッジ未生成」と表示するだけで
+        # ジョブは fail で止まる (pnpm test の exit code が伝播する)。
+        run: pnpm test --coverage
+
+      - name: Report coverage (PR comment)
+        # PR コメントで「総計 / 変更ファイルのみ / 変更行カバレッジ」を可視化する。
+        # 公式 action (https://github.com/davelosert/vitest-coverage-report-action)。
+        # テスト失敗時 (前段 Test fail) でも可能な範囲でコメントを残したいので always()。
+        if: always() && github.event_name == 'pull_request'
+        uses: davelosert/vitest-coverage-report-action@v2
 
       - name: Build (next build)
         # ビルド時は実 DB 接続不要 (next build は static analysis 中心)。

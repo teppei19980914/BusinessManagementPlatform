@@ -12,6 +12,11 @@
 #
 # 注意:
 #   - semgrep は SEMGREP_APP_TOKEN secret 未設定時はスキップされる (任意連携)
+#     ※ PR #83: GitHub Actions の制約上、`jobs.<id>.if` 内では `secrets`
+#       コンテキストを直接参照できない (Unrecognized named-value: 'secrets'
+#       エラーになる)。このため step レベルで env 経由に落として自己スキップ
+#       させる形に変更した。
+#       参考: https://docs.github.com/en/actions/learn-github-actions/contexts#context-availability
 #   - gitleaks の有償ライセンス未設定時は free 版で動作 (基本検出は十分)
 
 name: Security Scan
@@ -71,14 +76,22 @@ jobs:
   semgrep:
     name: Semgrep SAST
     runs-on: ubuntu-latest
-    if: ${{ secrets.SEMGREP_APP_TOKEN != '' }}
     container:
       image: semgrep/semgrep
     steps:
       - uses: actions/checkout@v4
-      - run: semgrep ci --config=auto
+      - name: Run semgrep (skip when token is not set)
+        # PR #83 修正: job レベル `if: ${{ secrets.SEMGREP_APP_TOKEN != '' }}`
+        # は構文エラーになる (Unrecognized named-value: 'secrets')。
+        # step レベルに移し、env 経由で受け取った値で自己スキップさせる。
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        run: |
+          if [ -z "$SEMGREP_APP_TOKEN" ]; then
+            echo "SEMGREP_APP_TOKEN is not set. Skipping Semgrep scan."
+            exit 0
+          fi
+          semgrep ci --config=auto
 
   # ============================================================
   # 4. CodeQL (高度な SAST)
