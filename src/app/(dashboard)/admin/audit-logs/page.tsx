@@ -40,11 +40,11 @@ export default async function AuditLogsPage() {
                 </Badge>
               </TableCell>
               <TableCell className="text-sm">{log.entityType}</TableCell>
-              <TableCell className="text-xs font-mono text-gray-400">{log.entityId.slice(0, 8)}...</TableCell>
+              <TableCell className="text-xs font-mono text-muted-foreground">{log.entityId.slice(0, 8)}...</TableCell>
             </TableRow>
           ))}
           {logs.length === 0 && (
-            <TableRow><TableCell colSpan={5} className="py-8 text-center text-gray-500">監査ログがありません</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">監査ログがありません</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

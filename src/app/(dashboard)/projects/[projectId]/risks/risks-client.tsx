@@ -210,7 +210,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
-                  {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+                  {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
                   {/* PR #63: 公開範囲 / 脅威・好機 を最上位に配置 (設定忘れ防止の視線誘導) */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -250,8 +250,8 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                     似た事象が過去に発生しているなら、ここで気付かせて未然対応に繋げる。
                   */}
                   {relatedIssues.length > 0 && (
-                    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
-                      <p className="text-xs font-semibold text-amber-900">
+                    <div className="rounded-md border border-amber-300 bg-warning/10 p-3 space-y-2">
+                      <p className="text-xs font-semibold text-warning">
                         類似する過去課題があります ({relatedIssues.length} 件)
                         <span className="ml-1 font-normal">
                           - 過去に発生した事象の再来かもしれません、念のためご確認ください
@@ -268,13 +268,13 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                                   href={`/projects/${r.sourceProjectId}/issues`}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-xs text-blue-600 hover:underline"
+                                  className="text-xs text-info hover:underline"
                                 >
                                   出典: {r.sourceProjectName}
                                 </Link>
                               )}
                             </div>
-                            <p className="text-xs text-gray-700">{r.snippet}</p>
+                            <p className="text-xs text-foreground">{r.snippet}</p>
                           </li>
                         ))}
                       </ul>
@@ -341,7 +341,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
             <TableRow
               key={r.id}
               // Req 8: 行クリックで編集ダイアログを開く (canCreate = メンバー以上)
-              className={canCreate ? 'cursor-pointer hover:bg-gray-50' : ''}
+              className={canCreate ? 'cursor-pointer hover:bg-muted' : ''}
               onClick={canCreate ? () => setEditingRisk(r) : undefined}
             >
               {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? 'リスク' : '課題'}</Badge></TableCell>}
@@ -368,7 +368,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-red-600"
+                    className="text-destructive"
                     onClick={async () => {
                       if (!confirm('このリスク/課題を削除しますか？')) return;
                       await withLoading(() =>
@@ -386,7 +386,7 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
           {filteredRisks.length === 0 && (
             <TableRow>
               {/* PR #67: 添付列 +1 */}
-              <TableCell colSpan={(canCreate ? 8 : 7) + (typeFilter ? 0 : 1)} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={(canCreate ? 8 : 7) + (typeFilter ? 0 : 1)} className="py-8 text-center text-muted-foreground">
                 {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク / 課題がありません'}
               </TableCell>
             </TableRow>

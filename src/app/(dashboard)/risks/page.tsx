@@ -19,7 +19,7 @@ export default async function AllRisksPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">全リスク</h2>
-        <span className="text-sm text-gray-500">{filtered.length} 件</span>
+        <span className="text-sm text-muted-foreground">{filtered.length} 件</span>
       </div>
       <AllRisksTable risks={risks} isAdmin={isAdmin} typeFilter="risk" />
     </div>

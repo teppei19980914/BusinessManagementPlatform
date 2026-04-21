@@ -68,12 +68,12 @@ function CalendarPanel({ value, onSelect }: CalendarPanelProps) {
   }
 
   return (
-    <div className="w-[260px] rounded-md border bg-white p-2 shadow-md">
+    <div className="w-[260px] rounded-md border bg-card p-2 shadow-md">
       <div className="mb-2 flex items-center justify-between">
         <button
           type="button"
           onClick={prevMonth}
-          className="rounded px-2 py-1 text-sm hover:bg-gray-100"
+          className="rounded px-2 py-1 text-sm hover:bg-accent"
           aria-label="前の月"
         >
           ‹
@@ -84,15 +84,15 @@ function CalendarPanel({ value, onSelect }: CalendarPanelProps) {
         <button
           type="button"
           onClick={nextMonth}
-          className="rounded px-2 py-1 text-sm hover:bg-gray-100"
+          className="rounded px-2 py-1 text-sm hover:bg-accent"
           aria-label="次の月"
         >
           ›
         </button>
       </div>
-      <div className="grid grid-cols-7 gap-0.5 text-center text-xs text-gray-500">
+      <div className="grid grid-cols-7 gap-0.5 text-center text-xs text-muted-foreground">
         {WEEKDAY_LABELS.map((label, i) => (
-          <div key={label} className={i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : ''}>
+          <div key={label} className={i === 0 ? 'text-destructive' : i === 6 ? 'text-info' : ''}>
             {label}
           </div>
         ))}
@@ -113,10 +113,10 @@ function CalendarPanel({ value, onSelect }: CalendarPanelProps) {
               className={[
                 'h-8 rounded text-sm transition-colors',
                 isSelected
-                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  ? 'bg-info text-info-foreground hover:bg-info/90'
                   : isToday
-                    ? 'bg-blue-50 font-semibold text-blue-700 hover:bg-blue-100'
-                    : 'hover:bg-gray-100',
+                    ? 'bg-info/10 font-semibold text-info hover:bg-info/20'
+                    : 'hover:bg-accent',
               ].join(' ')}
               aria-label={ymd}
               aria-current={isToday ? 'date' : undefined}
@@ -189,8 +189,8 @@ export function DateFieldWithActions({
           className={[
             'flex h-9 w-full items-center rounded-md border border-input bg-background px-3 py-1 text-left text-sm shadow-xs transition-colors',
             'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-            disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-gray-50',
-            !value ? 'text-gray-400' : 'text-foreground',
+            disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-muted',
+            !value ? 'text-muted-foreground' : 'text-foreground',
           ].join(' ')}
         >
           {displayText}
@@ -223,7 +223,7 @@ export function DateFieldWithActions({
           type="button"
           variant="outline"
           size="sm"
-          className="shrink-0 px-2 text-gray-600"
+          className="shrink-0 px-2 text-muted-foreground"
           onClick={() => onChange('')}
           disabled={disabled || !value}
           title="日付をクリア"

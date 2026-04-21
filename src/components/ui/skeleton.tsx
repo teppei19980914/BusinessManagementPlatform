@@ -13,7 +13,7 @@ export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivEl
     <div
       aria-hidden
       data-slot="skeleton"
-      className={cn('animate-pulse rounded-md bg-gray-200', className)}
+      className={cn('animate-pulse rounded-md bg-accent', className)}
       {...props}
     />
   );

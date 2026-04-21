@@ -116,10 +116,10 @@ export function AttachmentList({
     <div className="space-y-2">
       <Label>{label}</Label>
 
-      {error && <div className="rounded-md bg-red-50 p-2 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>}
 
       {loaded && items.length === 0 && !canEdit && (
-        <p className="text-sm text-gray-500">添付はありません</p>
+        <p className="text-sm text-muted-foreground">添付はありません</p>
       )}
 
       {items.length > 0 && (
@@ -130,7 +130,7 @@ export function AttachmentList({
                 href={a.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 truncate text-blue-600 hover:underline"
+                className="flex-1 truncate text-info hover:underline"
                 title={a.url}
               >
                 {a.displayName}
@@ -140,7 +140,7 @@ export function AttachmentList({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="text-red-600"
+                  className="text-destructive"
                   onClick={() => handleDelete(a.id)}
                 >
                   削除
@@ -152,7 +152,7 @@ export function AttachmentList({
       )}
 
       {canEdit && (
-        <form onSubmit={handleAdd} className="flex items-end gap-2 rounded border bg-gray-50 p-2">
+        <form onSubmit={handleAdd} className="flex items-end gap-2 rounded border bg-muted p-2">
           <div className="flex-1 space-y-1">
             <Label className="text-xs">表示名</Label>
             <Input

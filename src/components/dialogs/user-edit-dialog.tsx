@@ -79,7 +79,7 @@ export function UserEditDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+          {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           <div className="space-y-2">
             <Label>ユーザ名</Label>
             <Input

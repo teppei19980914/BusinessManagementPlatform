@@ -87,9 +87,9 @@ function SetupPasswordForm() {
 
   if (isValidating) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <div className="flex min-h-screen items-center justify-center bg-muted px-4">
         <Card className="w-full max-w-md">
-          <CardContent className="py-8 text-center text-gray-500">
+          <CardContent className="py-8 text-center text-muted-foreground">
             確認中...
           </CardContent>
         </Card>
@@ -99,14 +99,14 @@ function SetupPasswordForm() {
 
   if (tokenError) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <div className="flex min-h-screen items-center justify-center bg-muted px-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">たすきば</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{tokenError}</div>
-            <p className="text-center text-sm text-gray-500">
+            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{tokenError}</div>
+            <p className="text-center text-sm text-muted-foreground">
               管理者に新しい招待メールの再送を依頼してください。
             </p>
             <Button className="w-full" onClick={() => { window.location.href = '/login'; }}>
@@ -120,17 +120,17 @@ function SetupPasswordForm() {
 
   if (recoveryCodes) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <div className="flex min-h-screen items-center justify-center bg-muted px-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">パスワード設定完了</CardTitle>
             <CardDescription>
               アカウントが有効化されました。以下のリカバリーコードを安全な場所に保管してください。
-              <strong className="block mt-1 text-red-600">このコードは再表示できません。</strong>
+              <strong className="block mt-1 text-destructive">このコードは再表示できません。</strong>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="rounded-md bg-gray-50 p-4 font-mono text-sm">
+            <div className="rounded-md bg-muted p-4 font-mono text-sm">
               {recoveryCodes.map((code, i) => (
                 <div key={i}>
                   {String(i + 1).padStart(2, ' ')}. {code}
@@ -147,7 +147,7 @@ function SetupPasswordForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-muted px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">たすきば</CardTitle>
@@ -156,7 +156,7 @@ function SetupPasswordForm() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>
+              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
             )}
             <div className="space-y-2">
               <Label htmlFor="password">パスワード</Label>
@@ -168,7 +168,7 @@ function SetupPasswordForm() {
                 required
                 autoComplete="new-password"
               />
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 10文字以上、英大文字・英小文字・数字・記号のうち3種以上
               </p>
             </div>

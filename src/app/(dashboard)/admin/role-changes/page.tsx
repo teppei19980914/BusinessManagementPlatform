@@ -43,11 +43,11 @@ export default async function RoleChangesPage() {
               <TableCell><Badge variant="secondary">{log.changeType}</Badge></TableCell>
               <TableCell className="text-sm">{log.beforeRole || '-'}</TableCell>
               <TableCell className="text-sm font-medium">{log.afterRole}</TableCell>
-              <TableCell className="text-sm text-gray-500">{log.reason || '-'}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">{log.reason || '-'}</TableCell>
             </TableRow>
           ))}
           {logs.length === 0 && (
-            <TableRow><TableCell colSpan={7} className="py-8 text-center text-gray-500">権限変更履歴がありません</TableCell></TableRow>
+            <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">権限変更履歴がありません</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

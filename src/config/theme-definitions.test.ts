@@ -21,13 +21,18 @@ const REQUIRED_TOKENS: (keyof ThemeTokens)[] = [
   'secondary', 'secondaryForeground',
   'muted', 'mutedForeground',
   'accent', 'accentForeground',
-  'destructive',
+  'destructive', 'destructiveForeground',
   'border', 'input', 'ring',
   'chart1', 'chart2', 'chart3', 'chart4', 'chart5',
   'sidebar', 'sidebarForeground',
   'sidebarPrimary', 'sidebarPrimaryForeground',
   'sidebarAccent', 'sidebarAccentForeground',
   'sidebarBorder', 'sidebarRing',
+  // PR #76 Phase 2 で追加されたセマンティック色
+  'info', 'infoForeground',
+  'success', 'successForeground',
+  'warning', 'warningForeground',
+  'milestoneMarker',
 ];
 
 describe('THEME_DEFINITIONS', () => {

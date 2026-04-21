@@ -174,7 +174,7 @@ export function MemosClient({
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">メモ</h2>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-500">{memos.length} 件</span>
+          <span className="text-sm text-muted-foreground">{memos.length} 件</span>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               メモ作成
@@ -187,7 +187,7 @@ export function MemosClient({
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
-                {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+                {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
                 <div className="space-y-2">
                   <Label>公開範囲</Label>
                   <select
@@ -252,11 +252,11 @@ export function MemosClient({
             {memos.map((m) => (
               <TableRow
                 key={m.id}
-                className={m.isMine ? 'cursor-pointer hover:bg-gray-50' : ''}
+                className={m.isMine ? 'cursor-pointer hover:bg-muted' : ''}
                 onClick={m.isMine ? () => setEditing(m) : undefined}
               >
                 <TableCell className="font-medium">{m.title}</TableCell>
-                <TableCell className="max-w-md truncate text-sm text-gray-700" title={m.content}>
+                <TableCell className="max-w-md truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 80)}
                 </TableCell>
                 <TableCell>
@@ -265,8 +265,8 @@ export function MemosClient({
                   </Badge>
                 </TableCell>
                 {/* PR #71: /memos 画面は常に自分のメモのみ表示されるため (自分) バッジは省略 */}
-                <TableCell className="text-sm text-gray-600">{m.authorName ?? '-'}</TableCell>
-                <TableCell className="whitespace-nowrap text-sm text-gray-600">{formatDateTime(m.updatedAt)}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{m.authorName ?? '-'}</TableCell>
+                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(m.updatedAt)}</TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
                 </TableCell>
@@ -274,7 +274,7 @@ export function MemosClient({
                   {m.isMine && (
                     <div className="flex gap-1">
                       <Button variant="outline" size="sm" onClick={() => setEditing(m)}>編集</Button>
-                      <Button variant="outline" size="sm" className="text-red-600" onClick={() => handleDelete(m)}>削除</Button>
+                      <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>削除</Button>
                     </div>
                   )}
                 </TableCell>
@@ -282,7 +282,7 @@ export function MemosClient({
             ))}
             {memos.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-8 text-center text-gray-500">
+                <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                   メモがありません。右上の「メモ作成」から登録してください。
                 </TableCell>
               </TableRow>
@@ -300,7 +300,7 @@ export function MemosClient({
           </DialogHeader>
           {editing && (
             <form onSubmit={handleEdit} className="space-y-4">
-              {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+              {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
               <div className="space-y-2">
                 <Label>公開範囲</Label>
                 <select

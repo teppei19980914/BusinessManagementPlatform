@@ -39,10 +39,10 @@ export function LoadingProvider({ children }: { children: React.ReactNode }) {
     <LoadingContext.Provider value={{ isLoading, startLoading, stopLoading, withLoading }}>
       {children}
       {isLoading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
-          <div className="flex items-center gap-3 rounded-lg bg-white px-6 py-4 shadow-lg">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
-            <span className="text-sm font-medium text-gray-700">処理中...</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 backdrop-blur-sm">
+          <div className="flex items-center gap-3 rounded-lg bg-card px-6 py-4 shadow-lg">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-foreground" />
+            <span className="text-sm font-medium text-foreground">処理中...</span>
           </div>
         </div>
       )}

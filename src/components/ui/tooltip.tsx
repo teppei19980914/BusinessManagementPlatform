@@ -38,7 +38,7 @@ function Tooltip({
         <TooltipPrimitive.Positioner side={side} align={align} sideOffset={6} className="isolate z-50">
           <TooltipPrimitive.Popup
             className={cn(
-              'pointer-events-none rounded-md bg-gray-900 px-2.5 py-1.5 text-xs text-white shadow-md ring-1 ring-black/10 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0',
+              'pointer-events-none rounded-md bg-foreground px-2.5 py-1.5 text-xs text-background shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0',
               className,
             )}
           >

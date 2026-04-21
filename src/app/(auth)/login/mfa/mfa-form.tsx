@@ -53,7 +53,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-muted px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">2 段階認証</CardTitle>
@@ -64,7 +64,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>
+              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
             )}
             {useRecovery ? (
               <div className="space-y-2">
@@ -99,7 +99,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
             <div className="flex justify-between text-xs">
               <button
                 type="button"
-                className="text-blue-600 hover:underline"
+                className="text-info hover:underline"
                 onClick={() => {
                   setUseRecovery(!useRecovery);
                   setError('');
@@ -109,7 +109,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
               </button>
               <button
                 type="button"
-                className="text-gray-500 hover:underline"
+                className="text-muted-foreground hover:underline"
                 onClick={handleCancel}
               >
                 ログアウト

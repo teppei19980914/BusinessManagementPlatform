@@ -102,7 +102,7 @@ export function MyTasksClient({ projectGroups, today }: Props) {
     return (
       <div className="space-y-6">
         <h2 className="text-xl font-semibold">マイタスク</h2>
-        <p className="py-8 text-center text-gray-500">担当タスクがありません</p>
+        <p className="py-8 text-center text-muted-foreground">担当タスクがありません</p>
       </div>
     );
   }
@@ -132,7 +132,7 @@ export function MyTasksClient({ projectGroups, today }: Props) {
       </div>
 
       {filteredGroups.length === 0 && (
-        <p className="py-8 text-center text-gray-500">該当するタスクがありません</p>
+        <p className="py-8 text-center text-muted-foreground">該当するタスクがありません</p>
       )}
 
       {filteredGroups.map((pg) => {
@@ -140,29 +140,29 @@ export function MyTasksClient({ projectGroups, today }: Props) {
         return (
           <div key={pg.projectId} className="rounded-lg border overflow-x-auto">
             {/* プロジェクトセクションヘッダ (クリックで開閉) */}
-            <div className="flex items-center gap-2 border-b bg-gray-50 px-3 py-2">
+            <div className="flex items-center gap-2 border-b bg-muted px-3 py-2">
               <button
                 type="button"
                 onClick={() => toggleProject(pg.projectId)}
-                className="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
+                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent"
                 aria-label={isProjectExpanded ? '折りたたみ' : '展開'}
               >
                 <span className={`text-xs transition-transform ${isProjectExpanded ? 'rotate-90' : ''}`}>▶</span>
               </button>
               <Link
                 href={`/projects/${pg.projectId}`}
-                className="font-semibold text-blue-600 hover:underline"
+                className="font-semibold text-info hover:underline"
               >
                 {pg.projectName}
               </Link>
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-muted-foreground">
                 ({countActivities(pg.tree)} 件)
               </span>
             </div>
 
             {isProjectExpanded && (
               <table className="min-w-full text-xs md:text-sm">
-                <thead className="bg-white">
+                <thead className="bg-card">
                   <tr>
                     <ResizableHead columnKey="name" defaultWidth={300}>名称</ResizableHead>
                     <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
@@ -235,7 +235,7 @@ function TaskRow({
 
   return (
     <>
-      <tr className={`border-b hover:bg-gray-50 ${isWP ? 'bg-gray-50/50' : ''} ${isDelayed ? 'bg-red-50' : ''}`}>
+      <tr className={`border-b hover:bg-muted ${isWP ? 'bg-muted/50' : ''} ${isDelayed ? 'bg-destructive/10' : ''}`}>
         <td
           className="px-1.5 py-1.5 md:px-3 md:py-2"
           style={{ paddingLeft: `${depth * 20 + 8}px` }}
@@ -245,7 +245,7 @@ function TaskRow({
               <button
                 type="button"
                 onClick={() => onToggleTask(task.id)}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"
               >
                 <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
               </button>
@@ -256,9 +256,9 @@ function TaskRow({
               {isWP ? 'WP' : 'ACT'}
             </Badge>
             <span className={isWP ? 'font-semibold' : 'font-medium'}>{task.name}</span>
-            {task.wbsNumber && <span className="text-xs text-gray-400">{task.wbsNumber}</span>}
+            {task.wbsNumber && <span className="text-xs text-muted-foreground">{task.wbsNumber}</span>}
             {isWP && hasChildren && !isExpanded && (
-              <span className="text-xs text-gray-400">({task.children!.length})</span>
+              <span className="text-xs text-muted-foreground">({task.children!.length})</span>
             )}
             {isDelayed && <Badge variant="destructive" className="ml-1 text-[10px]">遅延</Badge>}
           </div>
@@ -270,11 +270,11 @@ function TaskRow({
         </td>
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
           <div className="flex items-center gap-1.5 md:gap-2">
-            <div className="h-2 w-10 md:w-16 rounded-full bg-gray-200">
-              <div className="h-2 rounded-full bg-blue-500" style={{ width: `${task.progressRate}%` }} />
+            <div className="h-2 w-10 md:w-16 rounded-full bg-accent">
+              <div className="h-2 rounded-full bg-info" style={{ width: `${task.progressRate}%` }} />
             </div>
             <span>{task.progressRate}%</span>
-            {effortText && <span className="text-xs text-gray-500">/ {effortText}</span>}
+            {effortText && <span className="text-xs text-muted-foreground">/ {effortText}</span>}
           </div>
         </td>
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{plannedRangeText}</td>

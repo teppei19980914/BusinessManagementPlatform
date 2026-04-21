@@ -12,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <LoadingProvider>
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-muted">
         <DashboardHeader user={session.user} />
         {/*
           max-w-7xl は意図的に外している: 画面左右に大きな余白が残ったまま

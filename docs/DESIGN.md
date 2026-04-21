@@ -3754,7 +3754,7 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 4. **テストで整合性を検証**: 「定義の全キーが想定通りに処理されるか」を網羅するテストを書く
 5. **変更手順をコメントで誘導**: 「値を追加するときはここと、ここと、ここを触る」の指示を冒頭コメントに
 
-#### 21.4.6 現在の遵守状況 (2026-04-21 時点、PR #75 Phase 1 実施後)
+#### 21.4.6 現在の遵守状況 (2026-04-21 時点、PR #76 Phase 2 実施後)
 
 | 領域 | 遵守状況 | 備考 |
 |---|---|---|
@@ -3764,11 +3764,13 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 | 認可判定用ルートパス | ✅ 準拠 | `src/config/routes.ts` に集約 (`PUBLIC_PATHS` / `MFA_PENDING_PATHS` / `LOGIN_PATH` / `MFA_LOGIN_PATH`) |
 | 提案スコアリング重み | ✅ 準拠 | `src/config/suggestion.ts` に集約 |
 | 環境依存値 | ✅ 準拠 | `.env` / `.env.example` に集約 |
+| **Tailwind パレット色** (`bg-gray-50` / `text-gray-500` / `bg-red-50` 等) | ✅ **準拠 (PR #76 Phase 2 で完了)** | 全 ~395 箇所を semantic token (`bg-muted` / `text-muted-foreground` / `bg-destructive/10` 等) に置換。新セマンティックトークン (`info` / `success` / `warning` / `milestoneMarker`) を `theme-definitions.ts` に追加し全テーマで定義 |
+| 設定画面のテーマプレビュー色 | ✅ 準拠 | hex リテラル 10 行を `THEME_DEFINITIONS` 参照に置換 (テーマ定義の真実から派生) |
 | 業務ドメインタグ・工程タグ (候補語彙) | 🟡 部分的 | 現状は入力側で自由文字列。候補語彙の定義ファイル化は今後検討 (要確認) |
-| **Tailwind ハードコード色** (`bg-gray-50` / `text-gray-500` 等) | 🔴 **既知違反** | 232 箇所 / 30 以上のファイルで semantic token (`bg-muted` / `text-muted-foreground` 等) ではなく palette 色を直書き。PR #75 Phase 2 (別作業) でリファクタ予定 |
 | ページ遷移の Link / href (`/projects` 等) | 🟡 部分的 | 認可判定では定数化済だが、通常の navigation Link は URL 文字列のまま。§21.3 判断基準 2 に従い据え置き |
 | UI ラベル・日本語文字列 | 🟡 部分的 | i18n 基盤が未整備のため JSX 内リテラルを許容。国際化が必要になった段階で一括抽出予定 |
 | コンポーネント固有のレイアウト定数 (Gantt の DAY_WIDTH 等) | 🟢 自己完結で許容 | 単一コンポーネント内のみで使用される数値 (§21.4.4 スコープ外) |
+| Tailwind utility class (`flex` / `gap-4` / `p-3` 等) | 🟢 対象外 | レイアウト・配置・サイズの class は外出し対象外 (Tailwind 設計方針に基づく) |
 
 #### 21.4.7 違反発見時の対応フロー
 

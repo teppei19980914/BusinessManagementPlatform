@@ -328,23 +328,23 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
       </div>
 
       {/* 凡例（上部配置・スクロールに影響されない）*/}
-      <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
+      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <div className="flex items-center gap-1">
-          <div className="h-3 w-6 rounded bg-blue-200" /> 予定
+          <div className="h-3 w-6 rounded bg-info/30" /> 予定
         </div>
         <div className="flex items-center gap-1">
-          <div className="h-3 w-6 rounded bg-blue-500" /> 実績 (進捗)
+          <div className="h-3 w-6 rounded bg-info" /> 実績 (進捗)
         </div>
         <div className="flex items-center gap-1">
-          <div className="h-3 w-6 rounded bg-red-500" /> 遅延
+          <div className="h-3 w-6 rounded bg-destructive" /> 遅延
         </div>
         <div className="flex items-center gap-1">
-          <div className="h-3 w-3 rotate-45 bg-purple-500" /> マイルストーン
+          <div className="h-3 w-3 rotate-45 bg-milestone-marker" /> マイルストーン
         </div>
       </div>
 
       {rows.length === 0 ? (
-        <p className="py-8 text-center text-gray-500">
+        <p className="py-8 text-center text-muted-foreground">
           {hasAnyTask ? '選択した担当者に該当するタスクはありません' : 'タスクがありません'}
         </p>
       ) : (
@@ -363,19 +363,19 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
         <div style={{ width: `${totalWidth}px` }} className="relative">
           {/* ヘッダ: 月（最上段 sticky top:0） */}
           <div
-            className="sticky top-0 z-20 flex border-b bg-gray-50"
+            className="sticky top-0 z-20 flex border-b bg-muted"
             style={{ height: `${MONTH_HEADER_H}px` }}
           >
             {/* 左上コーナー（縦横両方向 sticky のため z-30） */}
             <div
-              className="sticky left-0 z-30 shrink-0 border-r bg-gray-50"
+              className="sticky left-0 z-30 shrink-0 border-r bg-muted"
               style={{ width: `${nameColWidth}px` }}
             />
             <div className="flex">
               {monthHeaders.map((mh, i) => (
                 <div
                   key={i}
-                  className="border-r px-1 text-center text-xs font-medium leading-6 text-gray-600"
+                  className="border-r px-1 text-center text-xs font-medium leading-6 text-muted-foreground"
                   style={{ width: `${mh.span * DAY_WIDTH}px` }}
                 >
                   {mh.label}
@@ -386,18 +386,18 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
 
           {/* ヘッダ: 日（2段目 sticky top:MONTH_HEADER_H） */}
           <div
-            className="sticky z-20 flex border-b bg-gray-50"
+            className="sticky z-20 flex border-b bg-muted"
             style={{ top: `${MONTH_HEADER_H}px`, height: `${DAY_HEADER_H}px` }}
           >
             <div
-              className="sticky left-0 z-30 shrink-0 border-r bg-gray-50 px-3 text-xs font-medium leading-9 relative"
+              className="sticky left-0 z-30 shrink-0 border-r bg-muted px-3 text-xs font-medium leading-9 relative"
               style={{ width: `${nameColWidth}px` }}
             >
               タスク名
               {/* PR #68: タスク名列の右端ドラッグハンドル (日付列は固定) */}
               <div
                 onMouseDown={onNameColDragStart}
-                className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-blue-300 active:bg-blue-500"
+                className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-info/40 active:bg-info"
                 role="separator"
                 aria-orientation="vertical"
                 aria-label="タスク名列の幅を変更"
@@ -412,10 +412,10 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
                     key={i}
                     className={`border-r py-1 text-center text-[10px] leading-tight ${
                       isToday
-                        ? 'bg-blue-100 font-bold text-blue-700'
+                        ? 'bg-info/20 font-bold text-info'
                         : isWeekend
-                          ? 'bg-gray-100 text-gray-400'
-                          : 'text-gray-500'
+                          ? 'bg-accent text-muted-foreground'
+                          : 'text-muted-foreground'
                     }`}
                     style={{ width: `${DAY_WIDTH}px` }}
                   >
@@ -438,7 +438,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
               {dayMarkers.map((dm) => (
                 <div
                   key={dm.index}
-                  className={`absolute top-0 bottom-0 ${dm.isToday ? 'bg-blue-50' : 'bg-gray-50'}`}
+                  className={`absolute top-0 bottom-0 ${dm.isToday ? 'bg-info/10' : 'bg-muted'}`}
                   style={{ left: `${dm.index * DAY_WIDTH}px`, width: `${DAY_WIDTH}px` }}
                 />
               ))}
@@ -530,17 +530,17 @@ function GanttRow({
     <Tooltip content={tooltipContent} side="top" align="start">
       {/*
         行ハイライト + 今日縦帯の共存戦略:
-        - ホバー背景は translucent (bg-blue-100/30) にし、背面の今日/週末オーバーレイが
+        - ホバー背景は translucent (bg-info/20/30) にし、背面の今日/週末オーバーレイが
           透けて見えるようにしている（不透明な hover 背景だと今日帯が隠れてしまう）。
         - 左側タスク列は sticky で自身の bg が必要だが、group-hover で tint を切り替え
           ハイライトを左右通しで一体感のあるものにする。
       */}
       <div
-        className={`group relative flex border-b transition-colors hover:bg-blue-100/30 ${isWP ? 'bg-gray-50/50' : ''}`}
+        className={`group relative flex border-b transition-colors hover:bg-info/20/30 ${isWP ? 'bg-muted/50' : ''}`}
       >
         {/* 左側タスク列（sticky left）*/}
         <div
-          className="sticky left-0 z-10 shrink-0 border-r bg-white px-2 py-2 transition-colors group-hover:bg-blue-50"
+          className="sticky left-0 z-10 shrink-0 border-r bg-card px-2 py-2 transition-colors group-hover:bg-info/10"
           style={{
             width: `${nameColWidth}px`,
             paddingLeft: `${depth * 16 + 8}px`,
@@ -554,7 +554,7 @@ function GanttRow({
                   e.stopPropagation();
                   onToggleCollapsed(task.id);
                 }}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-200"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"
                 title={isCollapsed ? '展開' : '折りたたみ'}
                 aria-label={isCollapsed ? '展開' : '折りたたみ'}
               >
@@ -577,16 +577,16 @@ function GanttRow({
               {task.name}
             </span>
             {task.wbsNumber && (
-              <span className="shrink-0 text-[10px] text-gray-400">{task.wbsNumber}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">{task.wbsNumber}</span>
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 pl-[26px]">
             <Badge variant={statusColors[task.status] || 'outline'} className="text-[10px] px-1 py-0">
               {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
             </Badge>
-            <span className="text-[10px] text-gray-500">{task.progressRate}%</span>
+            <span className="text-[10px] text-muted-foreground">{task.progressRate}%</span>
             {task.assigneeName && (
-              <span className="truncate text-[10px] text-gray-400">{task.assigneeName}</span>
+              <span className="truncate text-[10px] text-muted-foreground">{task.assigneeName}</span>
             )}
           </div>
         </div>
@@ -598,7 +598,7 @@ function GanttRow({
               className="absolute top-3 flex h-6 items-center justify-center"
               style={{ left: `${plannedBar.left}px`, width: `${DAY_WIDTH}px` }}
             >
-              <div className="h-3 w-3 rotate-45 bg-purple-500" />
+              <div className="h-3 w-3 rotate-45 bg-milestone-marker" />
             </div>
           ) : (
             <>
@@ -606,7 +606,7 @@ function GanttRow({
               {plannedBar && (
                 <div
                   className={`absolute top-2 h-3 rounded ${
-                    isDelayed ? 'bg-red-200' : 'bg-blue-200'
+                    isDelayed ? 'bg-destructive/30' : 'bg-info/30'
                   }`}
                   style={{ left: `${plannedBar.left}px`, width: `${plannedBar.width}px` }}
                 />
@@ -615,13 +615,13 @@ function GanttRow({
               {actualBar && (
                 <div
                   className={`absolute top-6 h-3 rounded ${
-                    isDelayed ? 'bg-red-500' : 'bg-blue-500'
+                    isDelayed ? 'bg-destructive' : 'bg-info'
                   }`}
                   style={{ left: `${actualBar.left}px`, width: `${actualBar.width}px` }}
                 >
                   {task.progressRate > 0 && task.progressRate < 100 && (
                     <div
-                      className="h-3 rounded-l bg-blue-700"
+                      className="h-3 rounded-l bg-info"
                       style={{ width: `${task.progressRate}%` }}
                     />
                   )}

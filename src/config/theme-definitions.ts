@@ -46,6 +46,7 @@ export type ThemeTokens = {
   accent: string;
   accentForeground: string;
   destructive: string;
+  destructiveForeground: string;
   // 構造
   border: string;
   input: string;
@@ -65,6 +66,20 @@ export type ThemeTokens = {
   sidebarAccentForeground: string;
   sidebarBorder: string;
   sidebarRing: string;
+  // ---------- セマンティック色 (PR #76 Phase 2 で追加) ----------
+  // 「意味」を持つ色。テーマが変わってもユーザは同じ意味として認識できる必要があるため、
+  // 全テーマで同等の色相 (赤=危険、緑=成功、青=情報、橙=警告) を維持する。
+  // 利用パターン:
+  //   - 単色面 (ボタン/バッジ等): bg-success / text-success-foreground
+  //   - 薄面 (バナー等)         : bg-success/10 + text-success
+  info: string;
+  infoForeground: string;
+  success: string;
+  successForeground: string;
+  warning: string;
+  warningForeground: string;
+  // ガントチャートのマイルストーンマーカー専用 (現状唯一の紫系利用)
+  milestoneMarker: string;
 };
 
 /**
@@ -87,6 +102,7 @@ const LIGHT: ThemeTokens = {
   accent: 'oklch(0.97 0 0)',
   accentForeground: 'oklch(0.205 0 0)',
   destructive: 'oklch(0.577 0.245 27.325)',
+  destructiveForeground: 'oklch(0.985 0 0)',
   border: 'oklch(0.922 0 0)',
   input: 'oklch(0.922 0 0)',
   ring: 'oklch(0.708 0 0)',
@@ -103,6 +119,14 @@ const LIGHT: ThemeTokens = {
   sidebarAccentForeground: 'oklch(0.205 0 0)',
   sidebarBorder: 'oklch(0.922 0 0)',
   sidebarRing: 'oklch(0.708 0 0)',
+  // セマンティック色 (全テーマで同色相を維持)
+  info: 'oklch(0.55 0.18 240)',           // 青 (旧 blue-600 相当)
+  infoForeground: 'oklch(0.99 0 0)',
+  success: 'oklch(0.55 0.16 150)',        // 緑 (旧 green-600 相当)
+  successForeground: 'oklch(0.99 0 0)',
+  warning: 'oklch(0.65 0.15 80)',         // 橙 (旧 amber-500 相当)
+  warningForeground: 'oklch(0.18 0.05 80)',
+  milestoneMarker: 'oklch(0.55 0.22 300)', // 紫 (旧 purple-500 相当)
 };
 
 /** LIGHT から差分を上書きしたテーマを作るヘルパ (DRY 化 + 差分の見通し向上)。 */
@@ -134,6 +158,7 @@ export const THEME_DEFINITIONS = {
     accent: 'oklch(0.269 0 0)',
     accentForeground: 'oklch(0.985 0 0)',
     destructive: 'oklch(0.704 0.191 22.216)',
+    destructiveForeground: 'oklch(0.985 0 0)',
     border: 'oklch(1 0 0 / 10%)',
     input: 'oklch(1 0 0 / 15%)',
     ring: 'oklch(0.556 0 0)',
@@ -145,6 +170,14 @@ export const THEME_DEFINITIONS = {
     sidebarAccentForeground: 'oklch(0.985 0 0)',
     sidebarBorder: 'oklch(1 0 0 / 10%)',
     sidebarRing: 'oklch(0.556 0 0)',
+    // セマンティック色 (ダーク向けに視認性を高めた値)
+    info: 'oklch(0.7 0.18 240)',
+    infoForeground: 'oklch(0.15 0 0)',
+    success: 'oklch(0.7 0.16 150)',
+    successForeground: 'oklch(0.15 0 0)',
+    warning: 'oklch(0.78 0.15 80)',
+    warningForeground: 'oklch(0.15 0 0)',
+    milestoneMarker: 'oklch(0.7 0.22 300)',
   }),
 
   // ---------- パステル系 (低彩度 chroma 0.02〜0.04) ----------

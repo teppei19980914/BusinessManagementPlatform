@@ -104,20 +104,20 @@ export function AllRisksTable({
           {filteredRisks.map((r) => (
             <TableRow
               key={r.id}
-              className="cursor-pointer hover:bg-gray-50"
+              className="cursor-pointer hover:bg-muted"
               onClick={() => handleRowClick(r)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {r.projectName == null ? (
-                  <span className="text-gray-400">（非公開）</span>
+                  <span className="text-muted-foreground">（非公開）</span>
                 ) : r.canAccessProject ? (
-                  <Link href={`/projects/${r.projectId}`} className="text-blue-600 hover:underline">
+                  <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
                     {r.projectName}
                   </Link>
                 ) : (
-                  <span className="text-gray-500">
+                  <span className="text-muted-foreground">
                     {r.projectName}
-                    {r.projectDeleted && <span className="ml-1 text-xs text-red-500">(削除済)</span>}
+                    {r.projectDeleted && <span className="ml-1 text-xs text-destructive">(削除済)</span>}
                   </span>
                 )}
               </TableCell>
@@ -129,8 +129,8 @@ export function AllRisksTable({
                 </TableCell>
               )}
               <TableCell className="font-medium">{r.title}</TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {r.assigneeName ?? <span className="text-gray-400">-</span>}
+              <TableCell className="text-sm text-muted-foreground">
+                {r.assigneeName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
               <TableCell>{PRIORITIES[r.impact as keyof typeof PRIORITIES] || r.impact}</TableCell>
               <TableCell>
@@ -139,13 +139,13 @@ export function AllRisksTable({
                   : '-'}
               </TableCell>
               <TableCell>{PRIORITIES[r.priority as keyof typeof PRIORITIES] || r.priority}</TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-gray-600">{formatDateTime(r.createdAt)}</TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {r.createdByName ?? <span className="text-gray-400">-</span>}
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.createdAt)}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {r.createdByName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-gray-600">{formatDateTime(r.updatedAt)}</TableCell>
-              <TableCell className="text-sm text-gray-600">
-                {r.updatedByName ?? <span className="text-gray-400">-</span>}
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.updatedAt)}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {r.updatedByName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
               {/* PR #67: 添付リンク chips */}
               <TableCell onClick={(e) => e.stopPropagation()}>
@@ -165,7 +165,7 @@ export function AllRisksTable({
           {filteredRisks.length === 0 && (
             <TableRow>
               {/* PR #67: 添付列を追加したので colSpan を +1 */}
-              <TableCell colSpan={(isAdmin ? 13 : 12) - (typeFilter ? 1 : 0)} className="py-8 text-center text-gray-500">
+              <TableCell colSpan={(isAdmin ? 13 : 12) - (typeFilter ? 1 : 0)} className="py-8 text-center text-muted-foreground">
                 {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク/課題がありません'}
               </TableCell>
             </TableRow>
