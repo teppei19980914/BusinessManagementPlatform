@@ -65,7 +65,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
+          # PR #84 hotfix: cache: 'pnpm' を外す。
+          # このジョブは `pnpm install` を行わず `pnpm audit` (lockfile 参照のみ) で完結するため、
+          # setup-node 側の pnpm store キャッシュ Post ステップが空ディレクトリを検知して
+          # `Path Validation Error: Path(s) specified in the action for caching do(es) not exist`
+          # で失敗する。audit は高速なのでキャッシュ不要。
       - name: Run pnpm audit
         # high 以上の脆弱性のみ失敗扱い (low / moderate は警告レベル)
         run: pnpm audit --audit-level=high
