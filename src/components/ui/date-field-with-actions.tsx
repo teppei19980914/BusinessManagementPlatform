@@ -177,7 +177,8 @@ export function DateFieldWithActions({
   const displayText = value || '日付を選択';
 
   return (
-    <div className="flex items-center gap-1">
+    // PR #85: gap-1 (4px) は 2 列並び時にボタンが圧迫されたので gap-2 + flex-wrap で逃がす
+    <div className="flex flex-wrap items-center gap-2">
       <div className="relative flex-1" ref={rootRef}>
         <button
           type="button"

@@ -165,6 +165,10 @@ const baseUserRow = {
   isActive: true,
   createdAt: new Date('2026-04-01'),
   updatedAt: new Date('2026-04-01'),
+  // PR #85: ロック情報 (UserDTO 拡張)
+  failedLoginCount: 0,
+  lockedUntil: null as Date | null,
+  permanentLock: false,
 };
 
 describe('listUsers', () => {

@@ -925,7 +925,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger render={<Button size="sm" />}>追加</DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>{createType === 'work_package' ? 'ワークパッケージ作成' : 'アクティビティ作成'}</DialogTitle>
                 <DialogDescription>
@@ -1067,7 +1067,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
           <Dialog open={isBulkEditOpen} onOpenChange={handleBulkEditOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括編集</DialogTrigger>
-            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+            <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>一括編集（{selectedIds.size} 件）</DialogTitle>
                 <DialogDescription>
@@ -1132,7 +1132,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </Dialog>
           <Dialog open={isBulkActualOpen} onOpenChange={handleBulkActualOpenChange}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>一括実績更新</DialogTrigger>
-            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+            <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>一括実績更新（{selectedIds.size} 件）</DialogTitle>
                 <DialogDescription>
@@ -1278,7 +1278,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
       {/* 編集ダイアログ: ロールに応じて PM/TL 編集項目・実績項目を出し分ける */}
       <Dialog open={editingTask != null} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingTask?.type === 'work_package' ? 'ワークパッケージ編集' : 'アクティビティ編集'}

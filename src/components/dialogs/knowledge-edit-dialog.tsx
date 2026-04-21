@@ -105,7 +105,7 @@ export function KnowledgeEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{readOnly ? 'ナレッジ詳細' : 'ナレッジ編集'}</DialogTitle>
           <DialogDescription>
