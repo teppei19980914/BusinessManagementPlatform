@@ -376,6 +376,11 @@ pnpm test
 # テストをウォッチモードで
 pnpm test:watch
 
+# 単体テスト + カバレッジ計測 (PR #83 で追加)
+#   coverage/coverage-summary.json / lcov.info / HTML レポート (coverage/lcov-report/index.html)
+#   を出力する。HTML を開けば行単位で未到達箇所を確認可能。
+pnpm test --coverage
+
 # Lint (eslint)
 pnpm lint
 
@@ -384,6 +389,16 @@ pnpm build
 ```
 
 **コミット前に最低限すべて通ること**。Stop hook で自動検査されます。
+
+### 9.1 CI のカバレッジレポート (PR #83)
+
+GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-coverage-report-action@v2`
+経由で **PR コメントにカバレッジ要約・変更ファイル別カバレッジ・変更行カバレッジ** を
+自動投稿する。外部サービス (Codecov 等) 連携なしで GitHub 完結。
+
+- 対象計測範囲: `src/lib/**` / `src/services/**` (`vitest.config.ts` の `coverage.include` で指定)
+- レポーター: `text` / `lcov` / `json` / `json-summary` (action 必須の 2 つを含む)
+- CI 実行は `main` への push / PR でトリガー (PR コメントは PR 時のみ)
 
 ---
 
