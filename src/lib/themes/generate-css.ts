@@ -11,7 +11,8 @@
  *      既定テーマとして機能させる (SSR 未認証ページでも light が適用される)。
  */
 
-import { THEME_DEFINITIONS, type ThemeTokens } from './definitions';
+import { THEME_DEFINITIONS, THEME_COLOR_SCHEMES, type ThemeTokens } from '@/config/theme-definitions';
+import type { ThemeId } from '@/config/themes';
 
 /** camelCase のキーを CSS カスタムプロパティ名 `--kebab-case` に変換する。 */
 export function tokenToCssVarName(camel: string): string {
@@ -45,7 +46,11 @@ export function generateThemeCss(): string {
     const selector = id === 'light'
       ? ':root,\n[data-theme="light"]'
       : `[data-theme="${id}"]`;
-    blocks.push(`${selector} {\n${tokensToLines(tokens as ThemeTokens)}\n}`);
+    // PR #78: color-scheme をテーマごとに出力。これによりブラウザネイティブの
+    // フォームコントロール (<select> ドロップダウン等) のレンダリングモードが
+    // テーマと一致し、ダーク背景に黒文字オプションが浮かない問題を防ぐ。
+    const colorSchemeLine = `  color-scheme: ${THEME_COLOR_SCHEMES[id as ThemeId]};`;
+    blocks.push(`${selector} {\n${colorSchemeLine}\n${tokensToLines(tokens as ThemeTokens)}\n}`);
   }
   return blocks.join('\n\n');
 }
