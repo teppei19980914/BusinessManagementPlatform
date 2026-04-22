@@ -82,7 +82,7 @@ function toPosix(p: string): string {
 }
 
 function collectRoutes(): string[] {
-  const apiFiles = globSync('src/app/api/**/route.ts', { cwd: ROOT });
+  const apiFiles = globSync('src/app/api/**/route.ts');
   return apiFiles
     .map(toPosix)
     .filter((f) => !f.includes('[...nextauth]'))
@@ -94,7 +94,7 @@ function collectRoutes(): string[] {
 
 function collectPages(): string[] {
   // (dashboard) / (auth) 等のグループディレクトリを除外してパスを組む
-  const pageFiles = globSync('src/app/**/page.tsx', { cwd: ROOT });
+  const pageFiles = globSync('src/app/**/page.tsx');
   return pageFiles.map((f) => {
     const rel = toPosix(f)
       .replace(/^src\/app/, '')
