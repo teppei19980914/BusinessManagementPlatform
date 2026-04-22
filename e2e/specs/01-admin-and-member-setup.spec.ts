@@ -14,12 +14,19 @@
  *   PR #C (project feature 全網羅) のスコープ。PR #B は認証/招待フローの UI 品質を担保する。
  *   Playwright の page.request はブラウザと同じ Cookie を共有するため、認証済 API 呼び出しに適合する。
  *
+ * コンテキスト共有戦略:
+ *   Playwright の既定では test ごとに新しい BrowserContext が作られセッション cookie が
+ *   リセットされる。Step 1 → 2 のように認証状態を引き継ぎたいため、本スイートでは
+ *   beforeAll で 1 つの context + page を作って describe 全体で共有する
+ *   (公式: https://playwright.dev/docs/test-parallel#serial-mode)。
+ *   Step 2b / 4 / 6b のような意図的なログアウトは sharedContext.clearCookies() で行う。
+ *
  * 並列戦略: serial (前ステップの状態を共有)、本スイートは retries=0
  *
  * カバレッジ記録: docs/E2E_COVERAGE.md に [x] でマッピング
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { RUN_ID, withRunId } from '../fixtures/run-id';
 import { waitForMail, extractSetupPasswordUrl } from '../fixtures/inbox';
 import { generateTotpCode } from '../fixtures/totp';
@@ -37,10 +44,14 @@ const MEMBER_PW = 'E2eMember!Pw_2026';
 
 const PROJECT_NAME = withRunId('E2Eプロジェクト');
 
-// ステップ間で共有する状態
+// ステップ間で共有する状態 (シナリオ実行中に書き換わる)
 let mfaSecret = '';
 let projectId = '';
 let memberUserId = '';
+
+// describe 全体で共有する browser context + page
+let sharedContext: BrowserContext;
+let sharedPage: Page;
 
 test.describe.configure({ mode: 'serial', retries: 0 });
 
@@ -55,23 +66,29 @@ test.describe.configure({ mode: 'serial', retries: 0 });
  *     起こす (PR #92 初回 CI / E2E hotfix 4 で捕捉した事例)。
  *   - URL を `**\/projects` 完全一致で待ち、load state も networkidle まで保証する。
  */
-async function waitForProjectsReady(page: import('@playwright/test').Page): Promise<void> {
+async function waitForProjectsReady(page: Page): Promise<void> {
   await page.waitForURL('**/projects', { timeout: 15_000 });
   await page.waitForLoadState('networkidle');
 }
 
 test.describe('@feature:auth:admin-flow Steps 1-6', () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ browser }) => {
     startedAt = new Date().toISOString();
     await ensureInitialAdmin(ADMIN_EMAIL, ADMIN_INITIAL_PW);
+    // 全 test で 1 つの context を共有 (Step 1 の認証状態を Step 2 以降に引き継ぐ)
+    sharedContext = await browser.newContext();
+    sharedPage = await sharedContext.newPage();
   });
 
   test.afterAll(async () => {
+    await sharedPage.close();
+    await sharedContext.close();
     await cleanupByRunId(RUN_ID);
     await disconnectDb();
   });
 
-  test('Step 1: 初期 admin でログインしてパスワードを変更する', async ({ page }) => {
+  test('Step 1: 初期 admin でログインしてパスワードを変更する', async () => {
+    const page = sharedPage;
     await page.goto('/login');
     await page.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await page.getByLabel('パスワード').fill(ADMIN_INITIAL_PW);
@@ -91,7 +108,8 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await expect(page.getByText('パスワードが変更されました')).toBeVisible({ timeout: 10_000 });
   });
 
-  test('Step 2: admin が MFA を有効化する', async ({ page }) => {
+  test('Step 2: admin が MFA を有効化する', async () => {
+    const page = sharedPage;
     await page.goto('/settings');
     await page.getByRole('button', { name: 'MFA を有効化する' }).click();
 
@@ -109,8 +127,9 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await expect(page.getByText('強制有効化 (解除不可)')).toBeVisible({ timeout: 10_000 });
   });
 
-  test('Step 2b: MFA 有効化後の再ログインで /login/mfa 検証を通過する', async ({ page, context }) => {
-    await context.clearCookies();
+  test('Step 2b: MFA 有効化後の再ログインで /login/mfa 検証を通過する', async () => {
+    const page = sharedPage;
+    await sharedContext.clearCookies();
     await page.goto('/login');
     await page.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await page.getByLabel('パスワード').fill(ADMIN_NEW_PW);
@@ -122,7 +141,8 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await waitForProjectsReady(page);
   });
 
-  test('Step 3: admin が一般ユーザを招待する (招待メール送信)', async ({ page }) => {
+  test('Step 3: admin が一般ユーザを招待する (招待メール送信)', async () => {
+    const page = sharedPage;
     await page.goto('/admin/users');
     await page.getByRole('button', { name: '新規ユーザ登録' }).click();
 
@@ -138,8 +158,9 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     expect(mail.subject).toContain('アカウントの設定');
   });
 
-  test('Step 4: 一般ユーザが招待メールからパスワードを設定する', async ({ page, context }) => {
-    await context.clearCookies();
+  test('Step 4: 一般ユーザが招待メールからパスワードを設定する', async () => {
+    const page = sharedPage;
+    await sharedContext.clearCookies();
     const mail = await waitForMail(MEMBER_EMAIL, { after: startedAt });
     const setupUrl = extractSetupPasswordUrl(mail);
 
@@ -156,9 +177,10 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await expect(page.getByText(/リカバリーコード/)).toBeVisible();
   });
 
-  test('Step 5: admin がプロジェクトを作成する (API 経由)', async ({ page, context }) => {
+  test('Step 5: admin がプロジェクトを作成する (API 経由)', async () => {
+    const page = sharedPage;
     // admin セッションを復元 (MFA 通過後)
-    await context.clearCookies();
+    await sharedContext.clearCookies();
     await page.goto('/login');
     await page.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await page.getByLabel('パスワード').fill(ADMIN_NEW_PW);
@@ -195,7 +217,8 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await expect(page.getByText(PROJECT_NAME)).toBeVisible({ timeout: 10_000 });
   });
 
-  test('Step 6a: admin がプロジェクトに一般ユーザを追加する (API 経由)', async ({ page }) => {
+  test('Step 6a: admin がプロジェクトに一般ユーザを追加する (API 経由)', async () => {
+    const page = sharedPage;
     // 対象ユーザ ID を特定 (画面経由より API で取得)
     const userListRes = await page.request.get('/api/admin/users');
     const users = (await userListRes.json()).data as Array<{ id: string; email: string }>;
@@ -212,8 +235,9 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     expect(addRes.ok()).toBeTruthy();
   });
 
-  test('Step 6b: 一般ユーザがログインしてプロジェクトを閲覧できる', async ({ page, context }) => {
-    await context.clearCookies();
+  test('Step 6b: 一般ユーザがログインしてプロジェクトを閲覧できる', async () => {
+    const page = sharedPage;
+    await sharedContext.clearCookies();
     await page.goto('/login');
     await page.getByLabel('メールアドレス').fill(MEMBER_EMAIL);
     await page.getByLabel('パスワード').fill(MEMBER_PW);
