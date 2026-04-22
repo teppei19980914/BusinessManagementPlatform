@@ -1036,6 +1036,12 @@ const transitions: TransitionRule[] = [
 | POST | /api/auth/signout | ログアウト | 必要 |
 | GET | /api/auth/session | セッション情報取得 | 必要 |
 | POST | /api/auth/lock-status | ロック状態参照 (SPECIFICATION.md §13.4.4、enumeration 防止済) | 不要 |
+| POST | /api/auth/setup-password | 初回パスワード設定 (admin は MFA シークレットも生成、PR #91) | トークン経由 (不要) |
+| POST | /api/auth/setup-mfa-initial | admin 初期セットアップの MFA 最終登録 (PR #91) | トークン経由 (不要) |
+| POST | /api/auth/mfa/setup | ログイン済ユーザが追加で MFA シークレット生成 (一般ユーザの任意有効化用) | 必要 |
+| POST | /api/auth/mfa/enable | 設定画面経由の MFA 有効化 (TOTP 検証) | 必要 |
+| POST | /api/auth/mfa/disable | MFA 無効化 (**admin は 403、PR #91**) | 必要 |
+| POST | /api/auth/mfa/verify | ログイン中の TOTP 検証 (MFA pending session) | 部分的 (MFA 未検証セッション) |
 
 #### プロジェクト
 

@@ -143,7 +143,8 @@ describe('enableMfa', () => {
 describe('disableMfa', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('MFA 関連フィールドをクリアして監査ログを残す', async () => {
+  it('一般ユーザ: MFA 関連フィールドをクリアして監査ログを残す', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ systemRole: 'general' } as never);
     vi.mocked(prisma.user.update).mockResolvedValue({} as never);
 
     await disableMfa('u1');
@@ -155,6 +156,14 @@ describe('disableMfa', () => {
     expect(recordAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({ detail: expect.objectContaining({ action: 'mfa_disabled' }) }),
     );
+  });
+
+  it('PR #91: admin は CANNOT_DISABLE_ADMIN_MFA を throw (サービス層防御)', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ systemRole: 'admin' } as never);
+
+    await expect(disableMfa('admin-1')).rejects.toThrow('CANNOT_DISABLE_ADMIN_MFA');
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(recordAuthEvent).not.toHaveBeenCalled();
   });
 });
 

@@ -32,6 +32,14 @@ export async function GET(req: NextRequest) {
 
 /**
  * POST: パスワード設定 + アカウント有効化
+ *
+ * PR #91: admin ユーザは本エンドポイントでは **有効化せず**、MFA シークレットを
+ *   生成して返す。UI は続いて MFA 登録ステップへ進み、
+ *   `/api/auth/setup-mfa-initial` で TOTP 検証成功時に初めて有効化される。
+ *
+ * 応答:
+ *   - general: { recoveryCodes }
+ *   - admin  : { recoveryCodes, requiresMfa: true, mfa: { otpauthUri, qrCodeDataUrl } }
  */
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -60,6 +68,10 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({
-    data: { recoveryCodes: result.recoveryCodes },
+    data: {
+      recoveryCodes: result.recoveryCodes,
+      requiresMfa: result.requiresMfa ?? false,
+      mfa: result.mfa,
+    },
   });
 }
