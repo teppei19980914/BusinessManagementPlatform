@@ -1,39 +1,35 @@
 /**
- * 視覚回帰テスト - ダッシュボード主要画面 (PR #95 で雛形追加、baseline 未 commit)。
+ * 視覚回帰テスト - ダッシュボード主要画面 (PR #95 雛形 → PR #96 で有効化)。
  *
- * 対象: /projects (プロジェクト一覧) / /settings (設定画面、10 テーマ対応予定)
+ * 対象: /projects / /settings / /projects/[id] 概要タブ (admin light テーマ)
  *
- * 現状: skip (baseline PNG 未生成)
+ * ベースライン運用:
+ *   - baseline PNG は `.github/workflows/e2e-visual-baseline.yml` の
+ *     workflow_dispatch で生成・自動 commit される
+ *   - 初回実行 or UI 変更時は同 workflow を手動トリガ
  *
- * 有効化手順 (次担当者向け):
- *   1. CI (Linux) の playwright image 内で `pnpm test:e2e:update-snapshots` を実行
- *      (フォント/アンチエイリアス差異を吸収するため Windows ローカルでは NG)
- *   2. 生成された `e2e/visual/dashboard-screens.spec.ts-snapshots/*.png` を git commit
- *   3. 本ファイルの `test.describe.skip` を `test.describe` に変更 → merge
- *
- * 10 テーマ × 主要画面のマトリクス拡張プラン (未実装):
- *   - /projects × 10 themes = 10 PNG
- *   - /projects/[id] 概要タブ × 10 themes = 10 PNG
- *   - /settings × 10 themes = 10 PNG
- *   合計 30 baselines。実装時は `THEMES` 定数から theme を parametrize してループ化。
- *
- * カバレッジ記録: docs/E2E_COVERAGE.md の「視覚回帰対象画面」
+ * 10 テーマ × 主要画面のマトリクス:
+ *   settings-themes.spec.ts (別ファイル) で 10 テーマ × /settings を網羅。
+ *   本ファイルは light テーマでのダッシュボード骨格検証に集中。
  */
 
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { RUN_ID } from '../fixtures/run-id';
+import { RUN_ID, withRunId } from '../fixtures/run-id';
 import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
 import { waitForProjectsReady } from '../fixtures/auth';
+import { createProjectViaApi } from '../fixtures/project';
 
 const ADMIN_EMAIL = `admin-visual-${RUN_ID}@example.com`.toLowerCase();
 const ADMIN_PW = 'E2eAdmin!Pw_2026';
+const PROJECT_NAME = withRunId('VisualProject');
 
 let sharedContext: BrowserContext;
 let sharedPage: Page;
+let projectId = '';
 
 test.describe.configure({ mode: 'serial' });
 
-test.describe.skip('@visual:dashboard ダッシュボード主要画面 (baseline 未 commit)', () => {
+test.describe('@visual:dashboard ダッシュボード主要画面', () => {
   test.beforeAll(async ({ browser }) => {
     await ensureInitialAdmin(ADMIN_EMAIL, ADMIN_PW, { forcePasswordChange: false });
 
@@ -45,6 +41,9 @@ test.describe.skip('@visual:dashboard ダッシュボード主要画面 (baselin
     await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
     await sharedPage.getByRole('button', { name: 'ログイン' }).click();
     await waitForProjectsReady(sharedPage);
+
+    const { id } = await createProjectViaApi(sharedPage, { name: PROJECT_NAME });
+    projectId = id;
   });
 
   test.afterAll(async () => {
@@ -58,7 +57,11 @@ test.describe.skip('@visual:dashboard ダッシュボード主要画面 (baselin
     const page = sharedPage;
     await page.goto('/projects');
     await page.waitForLoadState('networkidle');
-    await expect(page).toHaveScreenshot('projects-light.png', { fullPage: true });
+    // マスクで実行ごと変動する部分 (RUN_ID 由来の名前) を固定
+    await expect(page).toHaveScreenshot('projects-light.png', {
+      fullPage: true,
+      mask: [page.locator('tbody tr')],
+    });
   });
 
   test('設定画面 初期表示 (light テーマ)', async () => {
@@ -66,5 +69,16 @@ test.describe.skip('@visual:dashboard ダッシュボード主要画面 (baselin
     await page.goto('/settings');
     await page.waitForLoadState('networkidle');
     await expect(page).toHaveScreenshot('settings-light.png', { fullPage: true });
+  });
+
+  test('プロジェクト詳細 概要タブ 初期表示 (light テーマ)', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}`);
+    await page.waitForLoadState('networkidle');
+    // 見出し (RUN_ID 含むプロジェクト名) を mask。構造ベースの比較にする
+    await expect(page).toHaveScreenshot('project-detail-light.png', {
+      fullPage: true,
+      mask: [page.locator('h2').first()],
+    });
   });
 });

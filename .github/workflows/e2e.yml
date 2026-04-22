@@ -170,7 +170,8 @@ jobs:
 
             ### 🎨 視覚回帰テストで差分が出た場合
 
-            - 意図したUI変更 → ローカルで `pnpm test:e2e:update-snapshots` → git commit で baseline 更新
+            - **baseline 未生成 (初回 or 新規 PNG 追加時)** → Actions → "E2E Visual Baseline" workflow を対象ブランチで手動実行 → PNG が自動 commit される
+            - 意図したUI変更 → 同じく "E2E Visual Baseline" workflow を再実行
             - 意図しないUI変更 → コード側を修正
 
-            <sub>PR #90 で導入、PR #93 で可視化強化。`.github/workflows/e2e.yml` + `e2e/README.md` 参照</sub>
+            <sub>PR #90 で導入、PR #93 で可視化強化、PR #96 で baseline 自動生成 workflow 追加。`.github/workflows/e2e.yml` + `e2e/README.md` 参照</sub>

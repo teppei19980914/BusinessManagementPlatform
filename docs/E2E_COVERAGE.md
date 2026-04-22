@@ -4,6 +4,7 @@
 > PR #93 で Step 7 の前半 (プロジェクト詳細タブ render + ロール別表示差分 + 全横断一覧 4 画面) を追加。WBS/Gantt/Estimates の複雑 UI と各 entity の CRUD 詳細は後続 PR。
 > PR #94 で Step 8 (個人機能: /my-tasks / /memos / /all-memos / /settings テーマ変更) を追加。
 > PR #95 で Steps 9-12 (ログアウト + 削除 + 残存検証) + ダッシュボード視覚回帰雛形 (baseline 未 commit) を追加。段階導入プラン完了。
+> PR #96 で追加機能: WBS / Gantt / 見積の E2E + 視覚回帰有効化 (baseline 生成 workflow)。
 
 > このファイルは **E2E テストでカバーする機能のマニフェスト**です。
 >
@@ -31,9 +32,9 @@
 ### ダッシュボード
 - [x] `/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 作成 + Step 6b 一般ユーザ閲覧)
 - [x] `/projects/[projectId]` — e2e/specs/02-project-detail-tabs.spec.ts (PR #93 / Step 7 タブ render + ロール差分)
-- [ ] `/projects/[projectId]/estimates` — skip: 詳細 CRUD は後続 PR (タブ表示は PR #93 で render smoke 済)
-- [ ] `/projects/[projectId]/tasks` — skip: WBS ツリー CRUD は後続 PR (タブ表示は PR #93 で render smoke 済)
-- [ ] `/projects/[projectId]/gantt` — skip: ガント表示の詳細検証は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [x] `/projects/[projectId]/estimates` — e2e/specs/08-estimates.spec.ts (PR #96 / CRUD + 確定 + 削除)
+- [x] `/projects/[projectId]/tasks` — e2e/specs/06-wbs-tasks.spec.ts (PR #96 / WP + ACT API 作成 + UI 表示 + 削除)
+- [x] `/projects/[projectId]/gantt` — e2e/specs/07-gantt-timeline.spec.ts (PR #96 / 画面 render + ACT 表示 + フィルタ UI)
 - [ ] `/projects/[projectId]/risks` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
 - [ ] `/projects/[projectId]/issues` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
 - [ ] `/projects/[projectId]/retrospectives` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
@@ -83,8 +84,8 @@
 - [ ] `PATCH /api/projects/[projectId]/status` — skip: PR #C
 
 ### タスク (WBS) / ガント
-- [ ] `/api/projects/[projectId]/tasks/*` — skip: PR #C で網羅 (CRUD + bulk + progress + export/import/recalculate/tree 全て包含)
-- [ ] `/api/projects/[projectId]/gantt` — skip: PR #C
+- [x] `/api/projects/[projectId]/tasks/*` — e2e/specs/06-wbs-tasks.spec.ts (PR #96 / POST WP + ACT / DELETE は UI 経由) ※ bulk/progress/export/import/recalculate/tree は後続 PR
+- [x] `/api/projects/[projectId]/gantt` — e2e/specs/07-gantt-timeline.spec.ts (PR #96 / 画面経由で GET)
 
 ### リスク / 課題 / 振り返り / ナレッジ / サジェスト / メンバー
 - [ ] `/api/projects/[projectId]/risks/*` — skip: PR #C
@@ -105,7 +106,7 @@
 - [ ] `/api/attachments/*` — skip: 各親エンティティの spec 経由で間接カバー
 
 ### 見積
-- [ ] `/api/projects/[projectId]/estimates/*` — skip: PR #C
+- [x] `/api/projects/[projectId]/estimates/*` — e2e/specs/08-estimates.spec.ts (PR #96 / POST 作成 + 確定 + DELETE)
 
 ### 管理系
 - [x] `/api/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 POST + Step 6a GET)
@@ -129,18 +130,18 @@
 ベースライン PNG は `e2e/**__screenshots__/` に commit される。
 PR 中に baseline 更新したい場合は `pnpm test:e2e:update-snapshots` → git commit の通常フロー。
 
-- [x] `/login` — e2e/visual/auth-screens.spec.ts (baseline 未 commit、skipped)
+- [x] `/login` — e2e/visual/auth-screens.spec.ts (PR #96 有効化)
 - [x] `/reset-password` — e2e/visual/auth-screens.spec.ts (同上)
-- [x] `/projects` — e2e/visual/dashboard-screens.spec.ts (PR #95 雛形、baseline 未 commit で skipped)
-- [x] `/settings` — e2e/visual/dashboard-screens.spec.ts (PR #95 雛形、同上)
-- [ ] `/projects/[projectId]` 概要タブ — 後続 PR (dashboard-screens 拡張)
-- [ ] `/projects/[projectId]/tasks` WBS — 後続 PR
-- [ ] `/projects/[projectId]/gantt` — 後続 PR
-- [ ] `/settings` 10 テーマ切替 — 後続 PR (10 テーマ × 主要画面のマトリクス化予定)
+- [x] `/projects` — e2e/visual/dashboard-screens.spec.ts (PR #96 有効化)
+- [x] `/projects/[projectId]` 概要タブ — e2e/visual/dashboard-screens.spec.ts (PR #96)
+- [x] `/settings` — e2e/visual/dashboard-screens.spec.ts (light 単体) + e2e/visual/settings-themes.spec.ts (10 テーマ マトリクス、PR #96)
+- [ ] `/projects/[projectId]/tasks` WBS — 後続 PR (表形式なので差分検出の priority 低)
+- [ ] `/projects/[projectId]/gantt` — 後続 PR (日付依存で決定性維持が難しい)
 
-> **視覚回帰 baseline の有効化手順**: baseline PNG はフォント/アンチエイリアス差異を
-> 避けるため Linux CI 環境で生成する必要がある (開発者の Windows / macOS ローカルでは NG)。
-> 次担当者向け手順は各 `e2e/visual/*.spec.ts` 冒頭コメントに記載。
+> **視覚回帰 baseline の生成**: `.github/workflows/e2e-visual-baseline.yml` の
+> workflow_dispatch を GitHub Actions UI から対象ブランチで手動実行すると、
+> Linux CI 環境で baseline PNG が生成され、自動 commit される。
+> 詳細は [docs/DEVELOPER_GUIDE.md §9](./DEVELOPER_GUIDE.md) 参照。
 
 ---
 
