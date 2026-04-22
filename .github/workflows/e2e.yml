@@ -170,9 +170,9 @@ jobs:
 
             ### 🎨 視覚回帰テストで差分が出た場合
 
-            **baseline 未生成 (初回) の場合** — コミットメッセージに `[baseline]` を付けて push:
+            **baseline 未生成 (初回) の場合** — コミットメッセージに `[gen-visual]` を付けて push:
             ```bash
-            git commit --allow-empty -m "chore: generate visual baselines [baseline]"
+            git commit --allow-empty -m "chore: generate visual baselines [gen-visual]"
             git push
             ```
             → `E2E Visual Baseline` workflow が自動発火し PNG が自動 commit される

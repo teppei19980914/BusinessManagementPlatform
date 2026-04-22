@@ -292,7 +292,7 @@ MFA badge の 10s timeout が発生
 
 **chicken-and-egg 回避**: `workflow_dispatch` は GitHub 仕様で **default branch
 (main) にファイルが存在する**必要がある。workflow 自体を新規追加する PR (#96 等)
-では UI に表示されないため、`push` トリガ + commit message 条件 `[baseline]` で
+では UI に表示されないため、`push` トリガ + commit message 条件 `[gen-visual]` で
 発火できるよう二重化する:
 
 ```yaml
@@ -305,12 +305,12 @@ jobs:
   generate:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[baseline]')
+      contains(github.event.head_commit.message, '[gen-visual]')
 ```
 
 利用者は空コミットで発火できる:
 ```bash
-git commit --allow-empty -m "chore: generate visual baselines [baseline]"
+git commit --allow-empty -m "chore: generate visual baselines [gen-visual]"
 git push
 ```
 

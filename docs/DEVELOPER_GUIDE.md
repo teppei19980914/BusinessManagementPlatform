@@ -549,15 +549,15 @@ git 履歴に残るため監査可能)。
 
 `workflow_dispatch` は GitHub 仕様で **default branch (main) にファイルが存在する**
 必要があり、workflow 自体を新規追加する PR では UI に表示されません。回避策として、
-commit message に `[baseline]` タグを付けた push で自動発火します:
+commit message に `[gen-visual]` タグを付けた push で自動発火します:
 
 ```bash
-git commit --allow-empty -m "chore: generate visual baselines [baseline]"
+git commit --allow-empty -m "chore: generate visual baselines [gen-visual]"
 git push
 ```
 
 → GitHub Actions で "E2E Visual Baseline" ジョブが自動起動、PNG を同 branch に
-auto-commit する。push に `[baseline]` が無い限り発火しないので誤トリガしない。
+auto-commit する。push に `[gen-visual]` が無い限り発火しないので誤トリガしない。
 
 #### トリガ方法 B: Actions UI 手動実行 (workflow 本体が main にマージ済の場合)
 
