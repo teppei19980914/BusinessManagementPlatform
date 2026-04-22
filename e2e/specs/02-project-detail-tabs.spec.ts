@@ -25,6 +25,7 @@ import {
 } from '../fixtures/db';
 import { loginAsGeneral, waitForProjectsReady } from '../fixtures/auth';
 import { createProjectViaApi, addProjectMemberViaApi } from '../fixtures/project';
+import { snapshotStep } from '../fixtures/snapshot';
 
 const ADMIN_EMAIL = `admin-pr93-${RUN_ID}@example.com`.toLowerCase();
 const ADMIN_PW = 'E2eAdmin!Pw_2026';
@@ -99,6 +100,7 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     await expect(page.getByRole('tab', { name: 'ナレッジ一覧' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '参考' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'メンバー' })).toBeVisible();
+    await snapshotStep(page, 'project-detail-all-tabs-admin');
   });
 
   test('各タブをクリックするとアクティブ切替が発生する (admin)', async () => {
@@ -124,6 +126,7 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // メンバータブは固有の UI 検証: 追加済メンバーが一覧に表示される
     await page.getByRole('tab', { name: 'メンバー' }).click();
     await expect(page.getByText(MEMBER_NAME)).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'project-detail-members-tab');
   });
 
   test('general ユーザが参加プロジェクトを開くと 見積もり/メンバー タブが非表示', async () => {
@@ -144,5 +147,6 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // admin 専用のタブは表示されないこと
     await expect(page.getByRole('tab', { name: '見積もり' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'メンバー' })).toHaveCount(0);
+    await snapshotStep(page, 'project-detail-general-member-view');
   });
 });

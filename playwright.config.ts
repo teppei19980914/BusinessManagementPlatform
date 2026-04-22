@@ -48,9 +48,13 @@ export default defineConfig({
   ],
   use: {
     baseURL,
-    trace: 'retain-on-failure',
-    screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    // PR #93 hotfix 2: 人間が E2E の挙動を目視確認できるよう、成否を問わず常時記録する。
+    // trace は Playwright 最強の可視化ツール (全 action + 各ステップの screenshot +
+    // DOM/network/console タイムライン)。video とステップ後の screenshot も併記して
+    // 「CI レポートをダウンロード → 開く → 動画や trace を見る」だけで test 内容が理解できる状態を目指す。
+    trace: 'on',
+    screenshot: 'on',
+    video: 'on',
     actionTimeout: 10_000,
     navigationTimeout: 20_000,
   },

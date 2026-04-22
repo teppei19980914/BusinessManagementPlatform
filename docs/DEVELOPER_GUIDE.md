@@ -493,6 +493,25 @@ pnpm test:e2e:update-snapshots      # 視覚回帰 baseline を更新
 pnpm e2e:coverage-check
 ```
 
+#### 「何のテストをしているか」の確認方法 (PR #93 hotfix 2 で整備)
+
+1. **`e2e/README.md`** — 各 spec のシナリオを日本語で一覧化。コードを読まなくても
+   全シナリオが把握できる。新しい spec を追加したら必ず更新する。
+2. **Playwright HTML レポート** — CI の Artifact `playwright-report-<run_id>.zip` を
+   解凍し `index.html` を開く。各 test の trace viewer で各 action 毎の
+   DOM snapshot + スクリーンショット + ビデオを視覚的に追える。
+3. **節目スクリーンショット** — `test-results/steps/` 配下 (Artifact
+   `playwright-test-results-<run_id>.zip`) にラベル付きで保存される。
+   各 spec が `await snapshotStep(page, 'step-N-what-happened')` で
+   意味のある瞬間をキャプチャしている。
+4. **UI モード (ローカル)** — `pnpm test:e2e:ui` で Playwright の対話モードが起動。
+   time travel デバッガで任意時点の DOM を検査でき、成功したテストも
+   action 単位で追える。人間による目視確認に最適。
+
+PR #93 hotfix 2 で `playwright.config.ts` の `trace` / `screenshot` / `video` を
+全て `'on'` に変更し、成功・失敗を問わず記録する方針にした (Artifact 肥大化は
+14 日保持で吸収)。
+
 ### 9.5 新機能追加時の E2E カバレッジ横展開 (必須)
 
 **新しい `page.tsx` や `route.ts` を追加したら、必ず `docs/E2E_COVERAGE.md` を更新**してください。

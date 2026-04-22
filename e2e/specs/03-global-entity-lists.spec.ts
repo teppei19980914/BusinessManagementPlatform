@@ -15,6 +15,7 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { RUN_ID } from '../fixtures/run-id';
 import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
 import { waitForProjectsReady } from '../fixtures/auth';
+import { snapshotStep } from '../fixtures/snapshot';
 
 const ADMIN_EMAIL = `admin-pr93-lists-${RUN_ID}@example.com`.toLowerCase();
 const ADMIN_PW = 'E2eAdmin!Pw_2026';
@@ -49,25 +50,33 @@ test.describe('@feature:project:global-lists Step 7 全横断一覧', () => {
   test('全リスク画面 (/risks) が表示される', async () => {
     const page = sharedPage;
     await page.goto('/risks');
+    await page.waitForLoadState('networkidle');
     // page.tsx の `<h2 className="text-xl font-semibold">全リスク</h2>` は実 h2
     await expect(page.getByRole('heading', { name: '全リスク' })).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'global-risks-list');
   });
 
   test('全課題画面 (/issues) が表示される', async () => {
     const page = sharedPage;
     await page.goto('/issues');
+    await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: '全課題' })).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'global-issues-list');
   });
 
   test('全振り返り画面 (/retrospectives) が表示される', async () => {
     const page = sharedPage;
     await page.goto('/retrospectives');
+    await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: '全振り返り' })).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'global-retrospectives-list');
   });
 
   test('全ナレッジ画面 (/knowledge) が表示される', async () => {
     const page = sharedPage;
     await page.goto('/knowledge');
+    await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: '全ナレッジ' })).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'global-knowledge-list');
   });
 });
