@@ -99,23 +99,42 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     await snapshotStep(page, 'estimates-with-item');
   });
 
-  test('UI から見積を確定 → 状態バッジが「確定」に切替わる', async () => {
+  test('UI から見積を確定 → 確定/削除ボタンが消え、バッジ「確定」が残る', async () => {
     const page = sharedPage;
+
+    // PATCH 応答を click 前に予約 (waitForResponse は register が click より先に必要)。
+    // router.refresh() は fire-and-forget で click の await を経由しないため、
+    // `waitForLoadState('networkidle')` だけでは fetch flight を捕捉できず
+    // 誤って 0ms で解決する (PR #96 hotfix 5 事例)。
+    const confirmRes = page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/projects/${projectId}/estimates/`)
+        && r.request().method() === 'PATCH',
+    );
+
     const row = page.locator('tbody tr').filter({ hasText: ESTIMATE_ITEM }).first();
     await row.getByRole('button', { name: '確定' }).click();
+
+    const res = await confirmRes;
+    expect(res.ok(), `PATCH confirm failed: ${res.status()}`).toBeTruthy();
+
+    // router.refresh() 後の再レンダを待機
     await page.waitForLoadState('networkidle');
 
-    // 行内に「確定」バッジがあること (LESSONS_LEARNED §4.11 で scope)
-    await expect(
-      page.locator('tbody tr').filter({ hasText: ESTIMATE_ITEM }).first(),
-    ).toContainText('確定', { timeout: 10_000 });
-    await snapshotStep(page, 'estimates-confirmed');
+    // `toContainText('確定')` は行内の「確定」ボタン文字列にもマッチするため
+    // 確定前/後を識別できない。確定後の UI 変化は以下の 2 つで判定する:
+    //   1. 「確定」ボタンが消える (button 自体が DOM から外れる)
+    //   2. 「削除」ボタンも消える (確定済は削除不可の仕様)
+    // Badge は残るが、視覚的に「未確定」が「確定」に変わるのは snapshot で視認する。
+    const rowAfter = page.locator('tbody tr').filter({ hasText: ESTIMATE_ITEM }).first();
+    await expect(rowAfter.getByRole('button', { name: '確定' })).toHaveCount(0, {
+      timeout: 10_000,
+    });
+    await expect(rowAfter.getByRole('button', { name: '削除' })).toHaveCount(0);
+    // 「未確定」バッジが消えていること (以前の状態が完全にクリアされた確証)
+    await expect(rowAfter).not.toContainText('未確定');
 
-    // 確定済は削除不可: 削除ボタンが非表示
-    await expect(
-      page.locator('tbody tr').filter({ hasText: ESTIMATE_ITEM }).first()
-        .getByRole('button', { name: '削除' }),
-    ).toHaveCount(0);
+    await snapshotStep(page, 'estimates-confirmed');
   });
 
   test('未確定の見積は UI から削除できる (confirm 承諾)', async () => {

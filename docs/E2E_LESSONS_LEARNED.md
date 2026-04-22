@@ -324,6 +324,73 @@ await expect(page).toHaveScreenshot('x.png', {
 });
 ```
 
+### 4.17 `toContainText` はボタン/バッジの文字衝突で誤 pass する
+
+**症状**: テストは「確定」操作後に「確定」表示を確認するが、実際には確定処理が
+失敗していて状態が変わっていないのに、`toContainText('確定')` が pass してしまう。
+後続の「削除ボタンが消える」検証で初めて失敗が発覚する。
+
+**原因**: 同じ行内に以下の両方が存在:
+- 未確定時: **確定ボタン** (text='確定') + 未確定バッジ (text='未確定') + 削除ボタン
+- 確定後:   確定バッジ (text='確定') のみ
+
+`toContainText('確定')` は、ボタンの '確定' テキストでも満たされるので **確定前/後の
+両方でマッチ** してしまい、UI 状態の変化を検知できない。
+
+**対策**: 状態変化を識別できるアサーションを選ぶ:
+
+```ts
+// Bad: ボタン文字でも pass する
+await expect(row).toContainText('確定');
+
+// Good: 消失を検証 (= 状態遷移を確定できる)
+await expect(row.getByRole('button', { name: '確定' })).toHaveCount(0);
+await expect(row).not.toContainText('未確定');  // 以前の状態が消えたことを確認
+```
+
+**汎化ルール**: **同じ文字が複数要素に出る UI** (ボタン / バッジ / ラベル等に同一語彙
+がある) では、`toContainText` での状態判定は避け、**要素単位の存在/消失** で判定する。
+
+### 4.18 `router.refresh()` は fire-and-forget、click の await 経由では待てない
+
+**症状**: `router.refresh()` を呼ぶ onClick を click した直後 `waitForLoadState('networkidle')`
+が 0ms で即時解決し、その後のアサーションが reload 完了前に実行されて fail する。
+
+**原因**: Next.js App Router の `router.refresh()` は void を返す fire-and-forget API。
+呼び出し側の Promise と非連動なので `await reload()` しても reload 完了は待たない。
+
+```js
+async function handleConfirm() {
+  await fetch(...);      // これは await される
+  router.refresh();      // これは fire-and-forget
+  // → 関数終了。refresh の RSC request はまだ送信されていないかも
+}
+```
+
+クリックハンドラで `onClick={() => handleConfirm(id)}` としている場合、onClick は
+Promise を await しない (React の仕様)。Playwright の `click()` は click 事件ディスパッチ後
+ただちに返るので、fetch/refresh は background task として続く。
+この時点で `waitForLoadState('networkidle')` を呼ぶと、fetch がまだ flight 前なら
+networkidle は true として即時解決する。
+
+**対策**: click *前* に `page.waitForResponse(...)` を **Promise として予約** し、
+click 後に await する:
+
+```ts
+// Good: click 前に response を予約 → click 後に await
+const patchRes = page.waitForResponse(r =>
+  r.url().includes('/api/...') && r.request().method() === 'PATCH'
+);
+await row.getByRole('button', { name: '確定' }).click();
+const res = await patchRes;
+expect(res.ok()).toBeTruthy();
+await page.waitForLoadState('networkidle');  // refresh の RSC も含めて待機
+```
+
+**汎化**: `router.refresh()` / `router.push()` など fire-and-forget な UI 遷移を
+await したいとき、**API レスポンス待機で「その操作が完了した」証拠を掴む**のが最も
+信頼できる。`waitForLoadState` は補助で、API 待機の後に使う。
+
 ### 4.16 `title` 属性は accessible name に使われない (text content が優先)
 
 **症状**: `getByRole('button', { name: /展開|折りたたみ/ })` が 10s timeout。
