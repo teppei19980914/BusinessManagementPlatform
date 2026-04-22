@@ -32,15 +32,33 @@ let sharedPage: Page;
 
 test.describe.configure({ mode: 'serial', retries: 0 });
 
+/**
+ * LESSONS §4.21: CI で `ECONNRESET` が transient に発生するため retry を挟む。
+ * 並列 test 負荷で Next.js サーバの TCP 接続プールが一時的に逼迫すると、
+ * page.request.post が throw することがある (response ではなく network error)。
+ * code bug ではなく infra flakiness なので 1s 間隔 x 最大 3 回 retry で吸収する。
+ */
 async function createMemoViaApi(
   page: Page,
   params: { title: string; content: string; visibility: 'private' | 'public' },
 ): Promise<{ id: string }> {
-  const res = await page.request.post('/api/memos', { data: params });
-  if (!res.ok()) {
-    throw new Error(`createMemoViaApi failed: ${res.status()} ${await res.text()}`);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await page.request.post('/api/memos', { data: params });
+      if (!res.ok()) {
+        throw new Error(`createMemoViaApi failed: ${res.status()} ${await res.text()}`);
+      }
+      return (await res.json()).data;
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTransient = /ECONNRESET|ECONNREFUSED|socket hang up|Read ECONNRESET/i.test(msg);
+      if (!isTransient || attempt === 3) break;
+      await page.waitForTimeout(1000);
+    }
   }
-  return (await res.json()).data;
+  throw lastError;
 }
 
 test.describe('@feature:personal Step 8 個人機能', () => {
