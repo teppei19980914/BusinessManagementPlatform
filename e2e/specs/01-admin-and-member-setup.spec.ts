@@ -165,13 +165,16 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     const setupUrl = extractSetupPasswordUrl(mail);
 
     await page.goto(setupUrl);
-    await expect(page.getByRole('heading', { name: 'たすきば' })).toBeVisible({ timeout: 10_000 });
+    // `たすきば` / `セットアップ完了` は shadcn/ui の CardTitle (実装は <div>) で
+    // 描画されているため heading role を持たない。getByText で exact 一致させる
+    // (PR #90 hotfix 5 で /login でも同じ問題を経験、DEVELOPER_GUIDE §9.7 参照)。
+    await expect(page.getByText('たすきば', { exact: true })).toBeVisible({ timeout: 10_000 });
     await page.getByLabel('パスワード', { exact: true }).fill(MEMBER_PW);
     await page.getByLabel('パスワード（確認）').fill(MEMBER_PW);
     await page.getByRole('button', { name: 'パスワードを設定' }).click();
 
     // general は即 done (admin 強制 MFA は PR #91 で admin のみ対象)
-    await expect(page.getByRole('heading', { name: 'セットアップ完了' })).toBeVisible({
+    await expect(page.getByText('セットアップ完了', { exact: true })).toBeVisible({
       timeout: 10_000,
     });
     await expect(page.getByText(/リカバリーコード/)).toBeVisible();
