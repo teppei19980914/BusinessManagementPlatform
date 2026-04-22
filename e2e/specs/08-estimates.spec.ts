@@ -148,10 +148,21 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     await page.goto(`/projects/${projectId}/estimates`);
     await page.waitForLoadState('networkidle');
 
+    // DELETE 完了を明示的に待機 (click 前に予約)
+    const deleteRes = page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/projects/${projectId}/estimates/`)
+        && r.request().method() === 'DELETE',
+    );
     page.once('dialog', (dialog) => dialog.accept());
     const row = page.locator('tbody tr').filter({ hasText: deletableLabel }).first();
     await row.getByRole('button', { name: '削除' }).click();
-    await page.waitForLoadState('networkidle');
+    const res = await deleteRes;
+    expect(res.ok(), `DELETE failed: ${res.status()}`).toBeTruthy();
+
+    // LESSONS §4.20: 確定テストと同じく router.refresh race 回避のため page.reload
+    // で DB 真状態を強制取得 (waitForLoadState 単独では 1ms で即解決する race)。
+    await page.reload({ waitUntil: 'networkidle' });
 
     await expect(
       page.locator('tbody tr').filter({ hasText: deletableLabel }),

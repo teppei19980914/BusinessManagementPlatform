@@ -81,9 +81,22 @@ test.describe('@visual:themes 設定画面 10 テーマ マトリクス', () => 
       );
       await page.getByRole('radio', { name: uiLabel }).click();
       await themeRes;
-      await page.waitForLoadState('networkidle');
 
-      // 選択状態が反映されたことを確認してから screenshot
+      // 選択状態 (aria-checked) はクライアント側 state で即時反映されるが、
+      // **実際の配色は `<html data-theme="xxx">` 属性で決まる**。これは layout.tsx
+      // の Server Component が session から読む値で、router.refresh の RSC 再取得
+      // 完了後に初めて書き換わる。
+      // LESSONS §4.22: 視覚回帰で動的 state (テーマ等) を captured する前に、
+      // **page.reload で data-theme を確定させる**ことが必須。waitForLoadState
+      // だけでは router.refresh race で古いテーマの screenshot を取ってしまう。
+      await page.reload({ waitUntil: 'networkidle' });
+
+      // <html data-theme="xxx"> が現在のテーマに切替わっていることを確証する
+      // (視覚回帰の前提条件、ここで未適用なら screenshot 失敗確実)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme.id, {
+        timeout: 10_000,
+      });
+      // 念のため選択 radio も checked であること
       await expect(page.getByRole('radio', { name: uiLabel })).toHaveAttribute(
         'aria-checked',
         'true',
