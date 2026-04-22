@@ -44,6 +44,22 @@ let memberUserId = '';
 
 test.describe.configure({ mode: 'serial', retries: 0 });
 
+/**
+ * ログイン後のリダイレクトチェーンが完全に落ち着くまで待機する。
+ *
+ * 背景:
+ *   - login page は `window.location.href = '/'` で遷移
+ *   - ルート `/` は Next.js Server Component が `redirect('/projects')` を返す
+ *   - `waitForURL(/\/projects|\/$/)` のような緩い正規表現は途中の `/` にマッチし、
+ *     直後の `page.goto(...)` が 302 チェーン中に割り込んで `net::ERR_ABORTED` を
+ *     起こす (PR #92 初回 CI / E2E hotfix 4 で捕捉した事例)。
+ *   - URL を `**\/projects` 完全一致で待ち、load state も networkidle まで保証する。
+ */
+async function waitForProjectsReady(page: import('@playwright/test').Page): Promise<void> {
+  await page.waitForURL('**/projects', { timeout: 15_000 });
+  await page.waitForLoadState('networkidle');
+}
+
 test.describe('@feature:auth:admin-flow Steps 1-6', () => {
   test.beforeAll(async () => {
     startedAt = new Date().toISOString();
@@ -60,7 +76,7 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await page.getByLabel('パスワード').fill(ADMIN_INITIAL_PW);
     await page.getByRole('button', { name: 'ログイン' }).click();
-    await page.waitForURL(/\/projects|\/$/);
+    await waitForProjectsReady(page);
 
     await page.goto('/settings');
     await expect(page.getByRole('heading', { name: '設定' })).toBeVisible();
@@ -102,7 +118,7 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.waitForURL(/\/login\/mfa/);
     await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
     await page.getByRole('button', { name: '検証' }).click();
-    await page.waitForURL(/\/projects|\/$/, { timeout: 10_000 });
+    await waitForProjectsReady(page);
   });
 
   test('Step 3: admin が一般ユーザを招待する (招待メール送信)', async ({ page }) => {
@@ -149,7 +165,7 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.waitForURL(/\/login\/mfa/);
     await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
     await page.getByRole('button', { name: '検証' }).click();
-    await page.waitForURL(/\/projects|\/$/, { timeout: 10_000 });
+    await waitForProjectsReady(page);
 
     const today = new Date().toISOString().slice(0, 10);
     const in30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -201,9 +217,8 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.getByLabel('メールアドレス').fill(MEMBER_EMAIL);
     await page.getByLabel('パスワード').fill(MEMBER_PW);
     await page.getByRole('button', { name: 'ログイン' }).click();
-    await page.waitForURL(/\/projects|\/$/, { timeout: 10_000 });
+    await waitForProjectsReady(page);
 
-    await page.goto('/projects');
     await expect(page.getByText(PROJECT_NAME)).toBeVisible({ timeout: 10_000 });
   });
 });
