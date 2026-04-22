@@ -63,7 +63,7 @@ function existsDir(p: string): boolean {
   }
 }
 
-function globSync(pattern: string, _opts?: { cwd: string }): string[] {
+function globSync(pattern: string): string[] {
   // 本スクリプトでは 2 パターンしか使わないため簡易実装で十分
   if (pattern === 'src/app/api/**/route.ts') {
     return findFiles('src/app/api', (n) => n === 'route.ts');

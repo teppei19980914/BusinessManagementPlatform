@@ -98,6 +98,15 @@ jobs:
       - name: Build Next.js
         run: pnpm build
 
+      - name: Prepare standalone assets (PR #90 hotfix)
+        # next.config.ts の `output: 'standalone'` により `next start` が使えない。
+        # `node .next/standalone/server.js` で起動するには public/ と .next/static/ を
+        # standalone ディレクトリ配下に手動コピーする必要がある (Next.js 公式手順)。
+        # 参考: https://nextjs.org/docs/app/api-reference/next-config-js/output#automatically-copying-traced-files
+        run: |
+          cp -r public .next/standalone/
+          cp -r .next/static .next/standalone/.next/
+
       - name: Run Playwright tests
         run: pnpm test:e2e
 

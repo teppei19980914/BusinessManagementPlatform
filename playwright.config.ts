@@ -62,13 +62,19 @@ export default defineConfig({
   ],
   webServer: isCI
     ? {
-        // CI: build 済みの Next.js を start
-        command: 'pnpm start',
+        // CI: build 済みの Next.js standalone サーバを起動。
+        // next.config.ts で `output: 'standalone'` を指定しているため `pnpm start`
+        // (= `next start`) は使えず、必ず `.next/standalone/server.js` を node で起動する。
+        // 静的アセット (public/ と .next/static/) は e2e.yml の別ステップで
+        // .next/standalone/ 配下にコピー済。
+        command: 'node .next/standalone/server.js',
         url: baseURL,
         timeout: 120_000,
         reuseExistingServer: false,
         env: {
           NODE_ENV: 'production',
+          PORT,
+          HOSTNAME: '0.0.0.0',
           DATABASE_URL: process.env.DATABASE_URL || '',
           DIRECT_URL: process.env.DIRECT_URL || '',
           NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
