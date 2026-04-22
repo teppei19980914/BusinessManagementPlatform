@@ -45,6 +45,14 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // PR #90: next-intl の messages JSON は `./messages/${locale}.json` の動的 import
+  // (src/i18n/request.ts) のため、Next.js の静的トレースで発見されず standalone
+  // 出力に含まれない → SSR 時 "Cannot find module" で全ページ 500 になっていた。
+  // 明示的に include してトレース対象に含める (Next.js 公式手順)。
+  // 参考: https://nextjs.org/docs/app/api-reference/next-config-js/output
+  outputFileTracingIncludes: {
+    '/**/*': ['./src/i18n/messages/**/*'],
+  },
   async headers() {
     return [
       {
