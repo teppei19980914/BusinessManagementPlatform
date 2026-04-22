@@ -121,9 +121,24 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     expect(secret).toMatch(/^[A-Z2-7]+$/);
     mfaSecret = secret;
 
+    // API レスポンスと router.refresh の完了を明示的に待って、CI の並列実行下でも
+    // 10s 内に強制有効化バッジが出る事を安定化させる (PR #93 hotfix 1 事例)。
+    const enableRes = page.waitForResponse(
+      (r) => r.url().includes('/api/auth/mfa/enable') && r.request().method() === 'POST',
+    );
     await page.getByPlaceholder('6桁のコード').fill(generateTotpCode(mfaSecret));
     await page.getByRole('button', { name: '検証して有効化' }).click();
-    // PR #91 で admin は常に強制有効化バッジ表示
+    const response = await enableRes;
+    expect(response.ok(), `MFA enable API failed: ${response.status()}`).toBeTruthy();
+
+    // router.refresh() 後の再レンダを待つ (Server Component の再取得 + Badge 描画)
+    await page.waitForLoadState('networkidle');
+
+    // PR #91 で admin は常に強制有効化バッジ表示。
+    // 有効化成功時は「MFA を有効化する」ボタンが消えることも併せて確認する。
+    await expect(page.getByRole('button', { name: 'MFA を有効化する' })).toHaveCount(0, {
+      timeout: 10_000,
+    });
     await expect(page.getByText('強制有効化 (解除不可)')).toBeVisible({ timeout: 10_000 });
   });
 

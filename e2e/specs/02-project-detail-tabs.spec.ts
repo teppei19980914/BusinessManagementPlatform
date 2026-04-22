@@ -78,7 +78,15 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
   test('admin がプロジェクト詳細ページを開くと全タブが表示される', async () => {
     const page = sharedPage;
     await page.goto(`/projects/${projectId}`);
-    await expect(page.getByText(PROJECT_NAME, { exact: false })).toBeVisible({ timeout: 10_000 });
+    await page.waitForLoadState('networkidle');
+
+    // PR #93 hotfix 1: プロジェクト名は場合によって複数箇所に出現することがある
+    // (hydration 過渡状態や状態バッジ近傍の反復表示など)。strict mode 違反を避けるため
+    // `<h2>` 要素に限定して first() でユニーク化する。タブ一覧の可視性検証が本テストの核心で、
+    // 名称の一意性検証はここでの責務外。
+    await expect(
+      page.locator('h2').filter({ hasText: PROJECT_NAME }).first(),
+    ).toBeVisible({ timeout: 10_000 });
 
     // Radix UI Tabs は role='tab' を付与する
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
@@ -96,9 +104,10 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
   test('各タブをクリックするとアクティブ切替が発生する (admin)', async () => {
     const page = sharedPage;
     await page.goto(`/projects/${projectId}`);
+    await page.waitForLoadState('networkidle');
 
     // 概要タブは初期表示 - プロジェクト情報フィールドの一部 (顧客名) が見える
-    await expect(page.getByText('E2E 顧客')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('E2E 顧客').first()).toBeVisible({ timeout: 10_000 });
 
     // Radix UI Tabs は `data-state="active"` を活性タブに付与する。
     // これを使って「クリック後にタブが切替わったか」をフレームワーク非依存に検証する。
@@ -121,6 +130,7 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     const page = sharedPage;
     await loginAsGeneral(page, sharedContext, { email: MEMBER_EMAIL, password: MEMBER_PW });
     await page.goto(`/projects/${projectId}`);
+    await page.waitForLoadState('networkidle');
 
     // member ロールは project:read 範囲のタブのみ表示される
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
