@@ -111,8 +111,10 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // 概要タブは初期表示 - プロジェクト情報フィールドの一部 (顧客名) が見える
     await expect(page.getByText('E2E 顧客').first()).toBeVisible({ timeout: 10_000 });
 
-    // Radix UI Tabs は `data-state="active"` を活性タブに付与する。
-    // これを使って「クリック後にタブが切替わったか」をフレームワーク非依存に検証する。
+    // タブ UI は @base-ui/react (data-active="" / aria-selected="true") を使用。
+    // ライブラリ固有の data 属性ではなく、W3C ARIA 標準の aria-selected で判定する
+    // (Radix UI の data-state="active" とは異なるため、過去に Radix 想定で書いて
+    // 失敗した → PR #93 hotfix 3)。
     const tabNames = [
       '概要', '見積もり', 'WBS管理', 'ガント',
       'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考',
@@ -120,7 +122,7 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     for (const name of tabNames) {
       const tab = page.getByRole('tab', { name });
       await tab.click();
-      await expect(tab).toHaveAttribute('data-state', 'active', { timeout: 10_000 });
+      await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
     }
 
     // メンバータブは固有の UI 検証: 追加済メンバーが一覧に表示される
