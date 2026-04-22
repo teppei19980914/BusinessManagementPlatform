@@ -1,0 +1,149 @@
+# E2E + 視覚回帰テストワークフロー (PR #90 基盤)
+#
+# 実行内容:
+#   1. エフェメラル Postgres (services: postgres) を起動
+#   2. prisma migrate deploy でスキーマ適用
+#   3. Next.js ビルド
+#   4. Playwright で e2e/ 配下のシナリオ + 視覚回帰を実行
+#   5. 結果を Artifact (HTML レポート + 差分スクショ) としてアップロード
+#   6. PR コメントに pass/fail サマリとレポートリンクを投稿
+#
+# 設計判断:
+#   - Node 22 LTS / pnpm 10 (既存 ci.yml と揃える)
+#   - Postgres 16 (本番 Supabase と同版)
+#   - Chromium のみ (多ブラウザは将来追加、MVP はコスト削減優先)
+#   - retries: 2 (playwright.config.ts) で flaky 対策
+#   - 視覚回帰の baseline は e2e/**__screenshots__/ に commit、PR 中は
+#     開発者ローカルで `pnpm test:e2e:update-snapshots` → git commit で更新
+#
+# 実行タイミング:
+#   - main への push / PR
+#   - schedule (毎日 04:00 UTC) で main の回帰監視
+#
+# 関連:
+#   - playwright.config.ts
+#   - docs/E2E_COVERAGE.md (カバレッジマニフェスト)
+#   - scripts/check-e2e-coverage.ts (gap 検出、ci.yml で別途実行)
+
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 4 * * *'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  e2e:
+    name: Playwright E2E + Visual Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tasukiba_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tasukiba_e2e
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/tasukiba_e2e
+      # E2E 用の固定秘密鍵 (本番環境とは独立、CI ジョブ内でのみ有効)
+      NEXTAUTH_SECRET: e2e_only_secret_do_not_use_in_production_32chars_min!
+      # メール送信は console provider 固定 (外部送信しない)
+      MAIL_PROVIDER: console
+      CI: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm prisma generate
+
+      - name: Apply migrations to ephemeral DB
+        run: pnpm prisma migrate deploy
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build Next.js
+        run: pnpm build
+
+      - name: Prepare standalone assets (PR #90 hotfix)
+        # next.config.ts の `output: 'standalone'` により `next start` が使えない。
+        # `node .next/standalone/server.js` で起動するには public/ と .next/static/ を
+        # standalone ディレクトリ配下に手動コピーする必要がある (Next.js 公式手順)。
+        # 参考: https://nextjs.org/docs/app/api-reference/next-config-js/output#automatically-copying-traced-files
+        run: |
+          cp -r public .next/standalone/
+          cp -r .next/static .next/standalone/.next/
+
+      - name: Run Playwright tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload test-results (diff images etc)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results-${{ github.run_id }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Comment PR
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: e2e-report
+          message: |
+            ## 🎭 E2E Test Report
+
+            **Status**: ${{ job.status == 'success' && '✅ Passed' || '❌ Failed' }}
+            **Run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            ### レポート取得方法
+            1. 上記 "Run" リンクから GitHub Actions の実行詳細を開く
+            2. Artifacts セクションから `playwright-report-${{ github.run_id }}.zip` をダウンロード
+            3. 解凍して `index.html` をブラウザで開く → テスト結果 + 視覚回帰の before/after/diff 画像を確認
+
+            ### 視覚回帰テストで差分が出た場合
+            - 意図したUI変更 → ローカルで `pnpm test:e2e:update-snapshots` → git commit で baseline 更新
+            - 意図しないUI変更 → コード側を修正
+
+            <sub>PR #90 で導入、`.github/workflows/e2e.yml` 参照</sub>

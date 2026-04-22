@@ -59,6 +59,11 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: E2E coverage manifest check (PR #90)
+        # docs/E2E_COVERAGE.md に未記載の新規 page.tsx / route.ts を検出して fail。
+        # E2E 範囲の横展開漏れを構造的に防止する。
+        run: pnpm e2e:coverage-check
+
       - name: Test (vitest + coverage)
         # PR #83: --coverage で v8 プロバイダが coverage-final.json / coverage-summary.json
         # / lcov.info を coverage/ 配下に出力する。

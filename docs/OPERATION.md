@@ -246,6 +246,26 @@ npx prisma generate
 
 DIRECT_URL を **Supavisor セッションモード** (`pooler.supabase.com:5432`) に変更した上で、`vercel.json` の `buildCommand` に `pnpm prisma migrate deploy` を追加すれば Vercel 上で自動適用できる。ただし現状は採用されていない (要確認で実装検討)。
 
+### 3.5 migration ファイルを後から修正した場合 (drift 対応、PR #90 で追加)
+
+運用中に migration ファイルを編集した場合 (typo 修正 等)、本番 `_prisma_migrations` テーブルに記録されたチェックサムと乖離する。Prisma の `migrate deploy` は既に適用済みの migration を再実行しないが、`migrate status` / `migrate diff` で drift 警告が出る場合がある。
+
+**drift 解消手順** (本番 DB に SSH/CLI 接続できる場合):
+
+```bash
+# 該当 migration を "適用済み" として再登録 (ハッシュ再計算)
+pnpm prisma migrate resolve --applied <migration-name>
+# 例: pnpm prisma migrate resolve --applied 20260418_visibility_and_risk_nature
+```
+
+**実例: PR #90 での `20260418_visibility_and_risk_nature` 修正**
+
+- 元の migration: `UPDATE "knowledge"` (単数形 typo、fresh DB では `relation "knowledge" does not exist` で fail)
+- 本番 DB: PR #62 の手順どおり SQL Editor で `UPDATE "knowledges"` を手動実行済 (DB 状態は正)
+- `_prisma_migrations` テーブル: PR #60 当時のチェックサムで記録
+- PR #90 で migration file を正しい `"knowledges"` に修正 → チェックサム変化
+- 次回 `prisma migrate deploy` (もし自動化する場合) で drift 警告 → 上記 resolve コマンドで解消
+
 ---
 
 ## 4. 適用済みマイグレーション一覧

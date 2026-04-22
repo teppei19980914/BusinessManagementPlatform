@@ -55,3 +55,9 @@ id_rsa.pub
 .claude/.git-automation-setup-done
 
 /src/generated/prisma
+
+# Playwright (PR #90)
+/playwright-report
+/test-results
+/playwright/.cache
+# 注: 視覚回帰 baseline (e2e/**__screenshots__/) は commit 対象なので除外しない

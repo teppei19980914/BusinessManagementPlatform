@@ -480,6 +480,102 @@ GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-c
   `@@SAST@@` / `@@CODEQL@@`) は security.yml の `sed` で定義済み。新しい検証手段を
   増やす場合は security.yml にも変数を追加する。
 
+### 9.4 E2E テスト (PR #90 で導入)
+
+```bash
+# ローカル実行 (Next.js dev 起動済みが前提)
+pnpm dev &
+pnpm test:e2e                       # 全 specs + visual を実行
+pnpm test:e2e:ui                    # UI モードで対話的に実行
+pnpm test:e2e:update-snapshots      # 視覚回帰 baseline を更新
+
+# カバレッジ一覧の gap 検出
+pnpm e2e:coverage-check
+```
+
+### 9.5 新機能追加時の E2E カバレッジ横展開 (必須)
+
+**新しい `page.tsx` や `route.ts` を追加したら、必ず `docs/E2E_COVERAGE.md` を更新**してください。
+更新がないと `ci.yml` の `e2e:coverage-check` ステップが fail し、マージできません。
+
+更新パターン:
+```markdown
+# 完全に E2E カバー済
+- [x] `/new-feature` — e2e/specs/04-new-feature.spec.ts
+
+# 同一 PR 内ではカバーせず、後続 PR で追加予定
+- [ ] `/new-feature` — skip: PR #XX で追加予定
+
+# 意図的にカバー対象外
+- [ ] `/admin/legacy-report` — skip: read-only / 優先度低
+```
+
+### 9.6 視覚回帰のベースライン運用 (PR #90 合意)
+
+視覚回帰テスト (`e2e/visual/*.spec.ts`) の baseline PNG は `e2e/**__screenshots__/` に
+commit されています。**PR 中に baseline 更新を許容**する方針です (前提: リビジョンが
+git 履歴に残るため監査可能):
+
+1. PR で UI を変更した結果、視覚回帰が fail する
+2. ローカルで `pnpm test:e2e:update-snapshots` を実行
+3. 更新された PNG を git commit
+4. レビュアは PR diff で新旧 baseline の画像差分を確認
+5. 意図したなら承認、意図しないなら指摘
+
+baseline を上げずに fail したままマージすると main が red になり続けるので、
+**PR マージ前に必ず緑化**してください。
+
+### 9.7 E2E テスト失敗の調査手順 (PR #90 運用メモ)
+
+E2E が CI で失敗したとき、**ログの切り抜き画像だけでは原因を特定しにくい**ことが
+多々あります (minify されたスタックトレース、同時実行中のテストが出すノイズログ等)。
+以下の手順で切り分けると効率的です。
+
+#### 調査で集める情報
+
+1. **失敗テストと成功テストの対比** ← 最も強力な情報
+   - 類似シナリオの中で **一部だけ成功している** 場合、ページ自体は動作している
+   - 例: PR #90 hotfix 5 のケースでは以下で真因特定できた:
+     - test 6「不正メールでログイン失敗」 ✅ PASS (912ms)
+     - test 3「ログイン画面が表示される」 ❌ FAIL (5.7s)
+     - → 両方 `/login` を使う。test 6 が通る = ページは正常 = 原因は test 3 の
+       アサーション側 (`getByRole('heading')` が `<div>` を拾えない)
+
+2. **Playwright HTML レポートの Artifact ダウンロード** ← 画像証拠
+   - PR のチェック欄 → Actions タブ → Playwright E2E の失敗 run → Artifacts
+   - `playwright-report-<run_id>.zip` をダウンロード
+   - 解凍 → `index.html` をブラウザで開く
+   - 各テストで:
+     - 実際にキャプチャされたスクリーンショット (ページが 500 か、正常レンダリングか)
+     - trace viewer (タイムラインでどの操作で stuck したか)
+     - video (ブラウザ画面の録画、再現性確認)
+
+3. **テキストベースのログ全量**
+   - Actions UI の右上 **歯車 → View raw logs** で生ログ取得 (画像より情報多い)
+   - 画像切り抜きでは下部の詳細や前後のコンテキストが欠落しがち
+
+#### 原因切り分けで誤解しやすいログ
+
+| ログ | 意味 | 実際の原因かどうか |
+|---|---|---|
+| `[auth][error] CredentialsSignin` | next-auth `authorize()` が null を返したときの正常な内部ログ | ❌ 多くの場合ノイズ (意図的にログイン失敗を確認するテストで毎回出る) |
+| `"next start" does not work with "output: standalone"` | 警告 | ⚠️ 実害あり (`node .next/standalone/server.js` を使う必要) |
+| `Cannot find module ./messages/xxx.json` | next-intl 動的 import の標準トレース漏れ | ✅ 真因 (outputFileTracingIncludes で対応) |
+| `Type error: Expected N arguments, but got M` | TypeScript コンパイル失敗 | ✅ 真因 |
+| `waiting for getByRole...` タイムアウト | セレクタ不一致 | ✅ アサーション実装か UI 実装どちらかを直す |
+
+#### 修正方針の判断ルール
+
+E2E が fail したら、以下のどちらの原因かを見極める:
+
+1. **UI/実装に不具合がある** → ソースコードを修正
+2. **アサーションが UI 実装とズレている** → テスト側を実装に合わせる (仕様上許容される範囲で)
+
+判断基準:
+- 既存ユーザの体験として不備があるか → あれば実装修正、なければテスト修正
+- 例: `<div>` で見出し風に描画しているところに `getByRole('heading')` を当てるのは
+  アクセシビリティ観点で改善の余地はあるが、**本 E2E test の責務外** (別タスク化)
+
 ---
 
 ## 10. コミットとデプロイ
