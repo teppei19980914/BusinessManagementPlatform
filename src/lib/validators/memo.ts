@@ -5,9 +5,10 @@ import { TITLE_MAX_LENGTH, MEMO_CONTENT_MAX_LENGTH } from '@/config';
  * メモの公開範囲 (PR #70)。
  *   - 'private' (既定): 作成者のみ閲覧可
  *   - 'public'        : 全ログインユーザが「全メモ」画面で閲覧可 (編集/削除は作成者のみ)
+ *
+ * モジュール内限定。外部 API は `createMemoSchema` / `updateMemoSchema` を通じて型を公開する。
  */
-export const MEMO_VISIBILITIES = ['private', 'public'] as const;
-export type MemoVisibility = (typeof MEMO_VISIBILITIES)[number];
+const MEMO_VISIBILITIES = ['private', 'public'] as const;
 
 /**
  * メモ作成スキーマ。
