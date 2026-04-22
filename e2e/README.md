@@ -169,7 +169,11 @@ DOM を検査でき、失敗しなくても全 step が視覚的に追える。
 
 **目的**: `/settings` 画面を 10 種全テーマで順に切替えて各 PNG を比較。テーマ定義トークンの配色崩れを検知。
 
-**baseline 生成**: `.github/workflows/e2e-visual-baseline.yml` を GitHub Actions UI から対象ブランチで手動実行すると、Linux CI で PNG が生成され自動 commit される。
+**baseline 生成** (2 通り):
+- **PR 中の初回** (workflow が main 未マージの場合): `git commit --allow-empty -m "chore: generate visual baselines [baseline]"` → `git push` で workflow 自動発火
+- **main マージ後の平常運用**: Actions UI → `E2E Visual Baseline` → Run workflow → 対象 branch 選択
+
+どちらの方法でも Linux CI 環境で PNG が生成され、github-actions bot が対象 branch に auto-commit する。詳細は [DEVELOPER_GUIDE §9.6](../docs/DEVELOPER_GUIDE.md) 参照。
 
 ---
 
