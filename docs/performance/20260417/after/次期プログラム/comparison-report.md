@@ -3,7 +3,7 @@
 - 計測日: 2026-04-17
 - 対象 URL: `https://tasukiba.vercel.app/projects/5fffb178-950a-4172-aa12-cc76fb653a0b`（プロジェクト詳細画面リロード）
 - before: `08:35:08 JST` 時点 / after: `09:22:52 JST` 時点（同日・約 47 分後）
-- 元ファイル: `before/tasukiba.vercel.app.har` / `before/Trace-20260417T083528.json.gz` ⇔ `after/tasukiba.vercel.app.har` / `after/Trace-20260417T092311.json.gz`
+- 元ファイル: HAR / Trace 計測データ (生バイナリは PR #101 で削除、本 md に要約転写済み。再計測は `performance-improvement-journey.md §「計測手順」` 参照)
 
 ---
 

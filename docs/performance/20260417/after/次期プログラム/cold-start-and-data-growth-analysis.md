@@ -1,6 +1,6 @@
 # コールドスタート / データ増の根拠と恒久対策
 
-- 元となった計測: `before/` と `after/` の HAR / Trace
+- 元となった計測: HAR / Trace 計測 (生バイナリは PR #101 で削除、本 md と同階層の comparison-report.md に要約転写済み)
 - 先行レポート: [comparison-report.md](./comparison-report.md)・[bottleneck-and-fixes.md](./bottleneck-and-fixes.md)
 - 作成経緯: PR #26 のレビューコメントで「TTFB 悪化とペイロード増加の外的要因を詳細に分析し、恒久対策まで立案する」要望を受けて作成
 
