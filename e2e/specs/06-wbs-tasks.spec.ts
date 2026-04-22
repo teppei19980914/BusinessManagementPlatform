@@ -129,6 +129,10 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
     // WBS ツリーは WP を初期 collapsed 表示し、子 ACT は DOM から除外される
     // (tasks-client.tsx L297: `!isCollapsed && task.children?.map(...)`)。
     // ACT を検証する前に WP 行の展開トグル `▶` をクリックする。
+    //
+    // PR #96 hotfix 4 で tasks-client.tsx の展開ボタンに aria-label を追加
+    // (Gantt 側と一貫化)。これにより getByRole('button', { name: ... }) で拾える。
+    // 詳細は LESSONS_LEARNED §4.16 参照。
     const wpRow = page.locator('tr').filter({ hasText: WP_NAME });
     await wpRow.getByRole('button', { name: /展開|折りたたみ/ }).click();
 

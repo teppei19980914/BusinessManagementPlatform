@@ -324,6 +324,50 @@ await expect(page).toHaveScreenshot('x.png', {
 });
 ```
 
+### 4.16 `title` 属性は accessible name に使われない (text content が優先)
+
+**症状**: `getByRole('button', { name: /展開|折りたたみ/ })` が 10s timeout。
+
+**原因**: WBS の展開トグルボタンは以下の構造:
+```jsx
+<button title={isCollapsed ? '展開' : '折りたたみ'}>
+  <span>▶</span>
+</button>
+```
+
+ARIA の accessible name 算出アルゴリズムは以下の優先順位:
+1. `aria-labelledby`
+2. `aria-label`
+3. **Name from content** (subtree の text content) ← ココで `▶` が採用される
+4. `title` (3 以前が空のときのみ fallback)
+
+text content `▶` が存在するため、`title="展開"` は無視される。
+結果、button の accessible name は `▶` であり、`/展開|折りたたみ/` にマッチしない。
+
+**対策 (2 通り)**:
+
+1. **UI 側に `aria-label` を追加** (推奨、a11y 改善も兼ねる):
+   ```jsx
+   <button title={...} aria-label={...}>
+     <span>▶</span>
+   </button>
+   ```
+   → `getByRole('button', { name: ... })` で拾える。ARIA 標準に沿う。
+
+2. **テスト側で `getByTitle(...)` を使う** (UI 変更不可の場合の workaround):
+   ```ts
+   await wpRow.getByTitle(/展開|折りたたみ/).click();
+   ```
+
+**実例 (PR #96 hotfix 4)**: WBS の展開トグルは `title` のみで `aria-label` が無かった
+(Gantt 側は両方付いていた、一貫性欠如)。対策 1 で WBS 側にも `aria-label` を追加し、
+テストは `getByRole` で統一した。
+
+**判別基準**: `aria-label` / `aria-labelledby` / text content のいずれかが無ければ、
+`title` は accessible name 算出で使われない。Playwright 標準の `getByRole` は
+a11y-first の推奨 pattern なので、**UI の a11y 不足を先に直す** のが望ましい。
+テストが a11y 欠陥を自動検知する役割を持てる。
+
 ### 4.13 collapsed ツリーの子要素は DOM 自体に不在
 
 **症状**: `page.locator('tr').filter({ hasText: ACT_NAME })` が `toBeVisible` で
