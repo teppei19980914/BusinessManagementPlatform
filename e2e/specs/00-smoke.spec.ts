@@ -13,7 +13,10 @@ import { test, expect } from '@playwright/test';
 test.describe('@feature:auth:login スモーク', () => {
   test('ログイン画面が表示される', async ({ page }) => {
     await page.goto('/login');
-    await expect(page.getByRole('heading', { name: 'たすきば' })).toBeVisible();
+    // 注: ログイン画面のサービス名は shadcn CardTitle (実装は <div>) で描画しているため
+    // heading role を持たない。テストは getByText でテキスト一致を検証する。
+    // (意図的な設計。heading にしたい場合は CardTitle を h1/h2 に変更する別タスク)
+    await expect(page.getByText('たすきば', { exact: true })).toBeVisible();
     await expect(page.getByLabel('メールアドレス')).toBeVisible();
     await expect(page.getByLabel('パスワード')).toBeVisible();
   });
