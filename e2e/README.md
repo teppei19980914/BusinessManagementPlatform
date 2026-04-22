@@ -202,7 +202,7 @@ DOM を検査でき、失敗しなくても全 step が視覚的に追える。
 ## 関連ドキュメント
 
 - **[docs/TESTING_STRATEGY.md](../docs/TESTING_STRATEGY.md)** — 自動テスト + 手動テストの全体戦略 (UAT / a11y / クロスブラウザ等の人間担当領域と運用チェックリスト)
-- **[docs/E2E_LESSONS_LEARNED.md](../docs/E2E_LESSONS_LEARNED.md)** — PR #90-#96 の hotfix から得た 18 個の罠パターンと回避策 (**新 spec 書く前に必ず一読**)
+- **[docs/E2E_LESSONS_LEARNED.md](../docs/E2E_LESSONS_LEARNED.md)** — PR #90 以降の hotfix から得た 25 個の罠パターンと回避策 (§4.1〜§4.25、**新 spec 書く前に必ず一読**)
 - [docs/E2E_COVERAGE.md](../docs/E2E_COVERAGE.md) — カバレッジマニフェスト
 - [docs/DEVELOPER_GUIDE.md §9](../docs/DEVELOPER_GUIDE.md) — 実行方法 / 失敗調査手順 / spec 作成規約
 - [playwright.config.ts](../playwright.config.ts) — 設定

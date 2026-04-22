@@ -201,7 +201,7 @@ http://localhost:3000 でアクセスできます。
 | [開発者ガイド](docs/DEVELOPER_GUIDE.md) | コード改修手順・テスト実行・失敗調査・spec 作成規約 |
 | [テスト戦略](docs/TESTING_STRATEGY.md) | 自動テスト 3 層と手動テスト (UAT/a11y/クロスブラウザ等) の役割分担 |
 | [E2E カバレッジ](docs/E2E_COVERAGE.md) | 画面/API のカバレッジマニフェスト |
-| [E2E 実装で得られた知見](docs/E2E_LESSONS_LEARNED.md) | 18 個の罠パターンと回避策 |
+| [E2E 実装で得られた知見](docs/E2E_LESSONS_LEARNED.md) | 25 個の罠パターンと回避策 (§4.1〜§4.25、PR #90 以降累積) |
 | [貢献規約](CONTRIBUTING.md) | コミット/PR 規約、ブランチ運用 |
 | [ナレッジ](docs/knowledge/) | プロジェクト運営で得た知見・教訓 |
 
