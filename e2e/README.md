@@ -163,6 +163,7 @@ baseline は `e2e/**__screenshots__/` に commit。更新したい場合は `pnp
 
 ## 関連ドキュメント
 
+- **[docs/E2E_LESSONS_LEARNED.md](../docs/E2E_LESSONS_LEARNED.md)** — PR #90-#95 の 15 hotfix から得た 10 個の罠パターンと回避策 (**新 spec 書く前に必ず一読**)
 - [docs/E2E_COVERAGE.md](../docs/E2E_COVERAGE.md) — カバレッジマニフェスト
 - [docs/DEVELOPER_GUIDE.md §9](../docs/DEVELOPER_GUIDE.md) — 実行方法 / 失敗調査手順 / spec 作成規約
 - [playwright.config.ts](../playwright.config.ts) — 設定
