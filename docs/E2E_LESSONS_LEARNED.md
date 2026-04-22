@@ -288,7 +288,31 @@ MFA badge の 10s timeout が発生
 - `permissions: contents: write` が必要
 
 **重要**: 「CI を rerun」するだけでは baseline は生成されない。baseline workflow を
-**手動起動** → 自動 commit → (それをトリガに) E2E CI 自動再実行、の 2 段階。
+**起動** → 自動 commit → (それをトリガに) E2E CI 自動再実行、の 2 段階。
+
+**chicken-and-egg 回避**: `workflow_dispatch` は GitHub 仕様で **default branch
+(main) にファイルが存在する**必要がある。workflow 自体を新規追加する PR (#96 等)
+では UI に表示されないため、`push` トリガ + commit message 条件 `[baseline]` で
+発火できるよう二重化する:
+
+```yaml
+on:
+  workflow_dispatch: { inputs: {...} }
+  push:
+    branches: ['**']
+
+jobs:
+  generate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[baseline]')
+```
+
+利用者は空コミットで発火できる:
+```bash
+git commit --allow-empty -m "chore: generate visual baselines [baseline]"
+git push
+```
 
 **動的コンテンツの mask**: RUN_ID 付きデータ等の動的部分は `mask:` オプションで
 pixel 比較から除外する:

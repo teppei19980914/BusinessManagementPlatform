@@ -545,15 +545,32 @@ git 履歴に残るため監査可能)。
 **baseline 生成は Linux CI 環境で自動実行** (Windows / macOS ローカルではフォント差異で
 別 PNG になるため使わない):
 
-1. PR で UI を変更した結果、視覚回帰が fail する
-2. GitHub Actions UI → **"E2E Visual Baseline" workflow** を開く
-3. "Run workflow" → 対象 PR の branch を選んで実行
-4. 完了後、同 branch に `Update visual baselines (workflow)` commit が **bot により自動追加** される
-5. レビュアは PR diff で新旧 baseline の画像差分を確認
-6. 意図したなら承認、意図しないなら指摘
+#### トリガ方法 A: commit message タグ (PR 中の初回推奨)
+
+`workflow_dispatch` は GitHub 仕様で **default branch (main) にファイルが存在する**
+必要があり、workflow 自体を新規追加する PR では UI に表示されません。回避策として、
+commit message に `[baseline]` タグを付けた push で自動発火します:
+
+```bash
+git commit --allow-empty -m "chore: generate visual baselines [baseline]"
+git push
+```
+
+→ GitHub Actions で "E2E Visual Baseline" ジョブが自動起動、PNG を同 branch に
+auto-commit する。push に `[baseline]` が無い限り発火しないので誤トリガしない。
+
+#### トリガ方法 B: Actions UI 手動実行 (workflow 本体が main にマージ済の場合)
+
+1. GitHub Actions UI → **"E2E Visual Baseline" workflow** を開く
+2. "Run workflow" → 対象 branch を選んで実行
+3. 完了後、同 branch に `Update visual baselines (workflow)` commit が auto-commit
+
+---
+
+いずれの方法でも、完了後 E2E ワークフローが push をトリガに自動再実行されて green になります。
 
 **⚠️ 「CI を rerun する」だけでは baseline は生成されません**。
-baseline workflow の手動実行 → 自動 commit → (それをトリガに) E2E CI が自動再実行、
+baseline workflow の実行 → 自動 commit → (それをトリガに) E2E CI が自動再実行、
 という 2 段階の手順が必要です。
 
 baseline を上げずに fail したままマージすると main が red になり続けるので、

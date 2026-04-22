@@ -5,20 +5,29 @@
 #   トリガしたブランチに自動 commit する。フォント/アンチエイリアスの差異を
 #   吸収するため、Windows / macOS ローカルではなく CI で生成する方針。
 #
-# 使い方:
-#   1. GitHub Actions UI → "E2E Visual Baseline" → "Run workflow" を押下
-#   2. ブランチを選んで実行 (対象 PR の feature branch を選ぶのが通常)
-#   3. 実行完了後、同ブランチに「Update visual baselines (workflow)」の
-#      commit が追加される
-#   4. PR を再度 push すれば視覚回帰が green になる
+# 使い方 (2 通り):
 #
-# 実行タイミング (手動のみ):
-#   - 初回 baseline 生成
+# A) workflow_dispatch (main マージ後の平常運用)
+#   1. GitHub Actions UI → "E2E Visual Baseline" → "Run workflow" を押下
+#   2. ブランチを選んで実行
+#   3. 実行完了後、同ブランチに「Update visual baselines (workflow)」commit
+#   注意: workflow_dispatch は GitHub 仕様で **default branch (main) にファイルが
+#   存在する必要がある**。PR 初回 (本ファイルがまだ main 未マージ) では使えない。
+#
+# B) commit message トリガ (PR 中の初回 bootstrap 用、chicken-and-egg 回避)
+#   1. PR ブランチで空コミットを作成:
+#        git commit --allow-empty -m "chore: generate visual baselines [baseline]"
+#   2. push → 自動的に本 workflow が発火
+#   3. PNG が自動 commit される
+#   `[baseline]` を含む commit message のみ発火するため誤発火しない。
+#
+# 実行タイミング:
+#   - 初回 baseline 生成 (PR 中は B、以降は A)
 #   - UI 意図的変更後の再生成
 #   - テーマ定義 (src/config/themes.ts) 変更後
 #
 # 注意:
-#   - main には実行しない (baseline 再生成は PR レビューの通過後に限る)
+#   - main には [baseline] コミットを直接送らない (review 通過後のみ)
 #   - PR 作成者が自ブランチで実行 → commit → push 更新される
 
 name: E2E Visual Baseline
@@ -30,6 +39,11 @@ on:
         description: '対象ブランチ (既定: 現在のブランチ)'
         required: false
         type: string
+  push:
+    # PR 中の bootstrap 用: commit message に [baseline] タグが入る push で発火。
+    # 下の if で message 判定するため、全 push に対して trigger が一旦 match する。
+    branches:
+      - '**'
 
 permissions:
   contents: write  # PNG 自動 commit のため必須
@@ -38,6 +52,11 @@ permissions:
 jobs:
   generate:
     name: Generate & commit visual baselines
+    # push 起動時は commit message に [baseline] タグが含まれるときのみ実行 (誤発火防止)。
+    # workflow_dispatch は無条件実行。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[baseline]')
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
