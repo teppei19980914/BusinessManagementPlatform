@@ -276,6 +276,49 @@ MFA badge の 10s timeout が発生
 - クエリは常に prepared statement (`$1` / `ANY($1)`)
 - 値文字列連結 (`` `... ${x} ...` ``) は絶対禁止
 
+### 4.11 一覧画面の行要素は行スコープ + .first() で取る
+
+**症状**:
+```
+strict mode violation: getByText('<プロジェクト名>') resolved to 2 elements:
+  1) <a class="font-medium text-info hover:underline" href="/projects/..."> ...
+  2) <a class="font-medium text-info hover:underline" href="/projects/..."> ...
+- unexpected value "hidden"
+```
+
+**原因 (推定)**: `/projects` 一覧の `<Link>` が Next.js App Router の prefetch
+や hydration 過渡状態で **同一 href の `<a>` が 2 要素に解決される** ことがある。
+片方は `visibility:hidden` だが strict mode は fail する。ソースコード上は
+`.map()` で 1 行あたり 1 `<Link>` しか描画していないため、DOM 観察だけでは
+原因特定が難しい。§4.8 並列 CI / PR #93 hotfix 1 の `<h2>` 重複と同じ系統。
+
+**対策**: ページ全体ではなく **`tbody tr` 行内にスコープ + `.first()`** で
+一意化する。strict mode を尊重しつつ重複にも耐える。
+
+```ts
+// Bad: page 全体 → hidden な同一要素に当たって strict violation
+await expect(page.getByText(PROJECT_NAME)).toBeVisible();
+
+// Good: 行内スコープ + .first()
+await page.waitForLoadState('networkidle');
+await expect(
+  page.locator('tbody tr').filter({ hasText: PROJECT_NAME }).first(),
+).toBeVisible();
+```
+
+**汎化**: **表形式一覧で特定行の存在確認** は、この pattern (`tbody tr` scope
++ `.first()`) を **既定** にする。最初から書くとき:
+
+```ts
+// Template
+await expect(
+  page.locator('<tbody tr|li|dl|card selector>').filter({ hasText: NAME }).first(),
+).toBeVisible();
+```
+
+表の代わりに card / dl / li で描画されている場合は適切な親要素に置換する。
+重要なのは「page 全体の getByText ではなく **行境界でスコープする**」という考え方。
+
 ---
 
 ## 5. アサーション戦略
@@ -293,6 +336,7 @@ MFA badge の 10s timeout が発生
 | API 完了待機 | `page.waitForResponse(url/method 条件)` | タイミング保証 |
 | UI 再レンダ待機 | `waitForLoadState('networkidle')` | router.refresh 後の安定 |
 | 要素不在 | `toHaveCount(0, { timeout })` | 削除検証 |
+| 一覧内の特定行 | `page.locator('tbody tr').filter({ hasText: X }).first()` | prefetch/hydration 重複耐性 (§4.11) |
 | 節目の可視化 | `await snapshotStep(page, 'label')` | 人間目視用 |
 
 ---
