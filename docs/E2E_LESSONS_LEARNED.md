@@ -276,6 +276,30 @@ MFA badge の 10s timeout が発生
 - クエリは常に prepared statement (`$1` / `ANY($1)`)
 - 値文字列連結 (`` `... ${x} ...` ``) は絶対禁止
 
+### 4.12 視覚回帰の baseline 生成は Linux CI で自動化する (PR #96)
+
+**問題**: 開発者の Windows / macOS ローカルで生成した baseline PNG は、CI Linux
+環境のフォントレンダリング / アンチエイリアスと微妙に異なり、pixel 比較で毎回 fail する。
+
+**対策**:
+- `.github/workflows/e2e-visual-baseline.yml` を `workflow_dispatch` で用意
+- Linux CI 内で `playwright test --update-snapshots` を実行
+- 生成 PNG を github-actions bot が自動 commit & push
+- `permissions: contents: write` が必要
+
+**重要**: 「CI を rerun」するだけでは baseline は生成されない。baseline workflow を
+**手動起動** → 自動 commit → (それをトリガに) E2E CI 自動再実行、の 2 段階。
+
+**動的コンテンツの mask**: RUN_ID 付きデータ等の動的部分は `mask:` オプションで
+pixel 比較から除外する:
+
+```ts
+await expect(page).toHaveScreenshot('x.png', {
+  fullPage: true,
+  mask: [page.locator('tbody tr')],  // 毎回変わる部分を除外
+});
+```
+
 ### 4.11 一覧画面の行要素は行スコープ + .first() で取る
 
 **症状**:

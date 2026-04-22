@@ -536,20 +536,42 @@ PR #93 hotfix 2 で `playwright.config.ts` の `trace` / `screenshot` / `video` 
 - [ ] `/admin/legacy-report` — skip: read-only / 優先度低
 ```
 
-### 9.6 視覚回帰のベースライン運用 (PR #90 合意)
+### 9.6 視覚回帰のベースライン運用 (PR #90 合意 → PR #96 で自動化)
 
 視覚回帰テスト (`e2e/visual/*.spec.ts`) の baseline PNG は `e2e/**__screenshots__/` に
 commit されています。**PR 中に baseline 更新を許容**する方針です (前提: リビジョンが
-git 履歴に残るため監査可能):
+git 履歴に残るため監査可能)。
+
+**baseline 生成は Linux CI 環境で自動実行** (Windows / macOS ローカルではフォント差異で
+別 PNG になるため使わない):
 
 1. PR で UI を変更した結果、視覚回帰が fail する
-2. ローカルで `pnpm test:e2e:update-snapshots` を実行
-3. 更新された PNG を git commit
-4. レビュアは PR diff で新旧 baseline の画像差分を確認
-5. 意図したなら承認、意図しないなら指摘
+2. GitHub Actions UI → **"E2E Visual Baseline" workflow** を開く
+3. "Run workflow" → 対象 PR の branch を選んで実行
+4. 完了後、同 branch に `Update visual baselines (workflow)` commit が **bot により自動追加** される
+5. レビュアは PR diff で新旧 baseline の画像差分を確認
+6. 意図したなら承認、意図しないなら指摘
+
+**⚠️ 「CI を rerun する」だけでは baseline は生成されません**。
+baseline workflow の手動実行 → 自動 commit → (それをトリガに) E2E CI が自動再実行、
+という 2 段階の手順が必要です。
 
 baseline を上げずに fail したままマージすると main が red になり続けるので、
 **PR マージ前に必ず緑化**してください。
+
+#### mask テクニック (PR #96)
+
+動的に変化するコンテンツ (RUN_ID 付きのテストデータ名等) を視覚回帰対象外にするには
+`mask` オプションを使う:
+
+```ts
+await expect(page).toHaveScreenshot('projects-light.png', {
+  fullPage: true,
+  mask: [page.locator('tbody tr')],  // テーブル内容は RUN_ID 依存で毎回変わる
+});
+```
+
+mask 対象は画像上でグレーに塗りつぶされ、pixel 比較から除外される。構造比較に集中できる。
 
 ### 9.7 E2E テスト失敗の調査手順 (PR #90 運用メモ)
 
