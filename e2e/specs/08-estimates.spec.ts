@@ -118,8 +118,12 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     const res = await confirmRes;
     expect(res.ok(), `PATCH confirm failed: ${res.status()}`).toBeTruthy();
 
-    // router.refresh() 後の再レンダを待機
-    await page.waitForLoadState('networkidle');
+    // LESSONS §4.20: router.refresh() は fire-and-forget + React 描画の非決定性で
+    // waitForLoadState('networkidle') だけでは race が残る (PR #96 hotfix 5 / PR #97
+    // CI で再発確認)。確定後の UI 検証は page.reload() で DB の真の状態を強制取得する
+    // 方が信頼できる。デメリット: 「router.refresh による自動再描画」の検証は犠牲に
+    // なるが、それは React/Next.js framework の責務であり spec 08 の対象外と割り切る。
+    await page.reload({ waitUntil: 'networkidle' });
 
     // `toContainText('確定')` は行内の「確定」ボタン文字列にもマッチするため
     // 確定前/後を識別できない。確定後の UI 変化は以下の 2 つで判定する:
