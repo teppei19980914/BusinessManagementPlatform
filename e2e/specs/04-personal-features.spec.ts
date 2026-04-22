@@ -89,7 +89,10 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     await expect(page.getByRole('heading', { name: 'メモ', exact: true })).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByText(PRIVATE_MEMO_TITLE)).toBeVisible({ timeout: 10_000 });
+    // 一覧内の行要素は tbody tr + .first() でスコープ (LESSONS_LEARNED §4.11)
+    await expect(
+      page.locator('tbody tr').filter({ hasText: PRIVATE_MEMO_TITLE }).first(),
+    ).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'memos-list-with-private');
   });
 
@@ -117,7 +120,10 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     await page.goto('/all-memos');
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: '全メモ' })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(PUBLIC_MEMO_TITLE)).toBeVisible({ timeout: 10_000 });
+    // 一覧内の行要素は tbody tr + .first() でスコープ (LESSONS_LEARNED §4.11)
+    await expect(
+      page.locator('tbody tr').filter({ hasText: PUBLIC_MEMO_TITLE }).first(),
+    ).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'all-memos-with-public');
   });
 

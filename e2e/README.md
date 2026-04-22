@@ -125,17 +125,55 @@ DOM を検査でき、失敗しなくても全 step が視覚的に追える。
 | 12b | 削除済ユーザが /admin/users 一覧から消える | `step-12b-user-absent` |
 | 9 | アカウントメニューから「ログアウト」で /login へ戻る | `step-9-logged-out` |
 
-### `e2e/visual/auth-screens.spec.ts` — 視覚回帰 (認証画面、現状 skipped)
+### `e2e/specs/06-wbs-tasks.spec.ts` — WBS 管理 CRUD (PR #96)
 
-**目的**: `/login` / `/reset-password` / `/setup-password` の初期状態を baseline PNG と比較し、意図せぬ UI 崩れを検出。
+**シナリオ**: WBS ツリーの Work Package + Activity 作成 + 表示 + 削除。
 
-baseline は `e2e/**__screenshots__/` に commit。更新したい場合は `pnpm test:e2e:update-snapshots`。
+| 検証内容 | 主要な節目 snapshot |
+|---|---|
+| /tasks 画面 render + 見出し | `wbs-empty` |
+| Work Package 作成 (API) → UI ツリー表示 | `wbs-with-wp` |
+| Activity 作成 (API, WP 配下) → UI ツリー表示 | `wbs-with-wp-and-act` |
+| UI から Activity 削除 (confirm 承諾) | `wbs-after-act-delete` |
 
-### `e2e/visual/dashboard-screens.spec.ts` — 視覚回帰 (ダッシュボード、現状 skipped)
+### `e2e/specs/07-gantt-timeline.spec.ts` — ガントチャート (PR #96)
 
-**目的**: /projects / /settings 等の主要画面 × 10 テーマのマトリクス視覚回帰 (将来拡張予定)。
+**シナリオ**: /gantt 画面の render + Activity が時系列に表示される + フィルタ UI。
 
-**現状**: baseline PNG 未 commit のため skip。有効化手順は各ファイル冒頭コメント参照。
+| 検証内容 | 主要な節目 snapshot |
+|---|---|
+| /gantt 画面 render + 見出し | `gantt-rendered` |
+| 登録済 Activity 名がガント画面に表示 | (同上) |
+| 担当者 / 状況 フィルタ UI 表示 | `gantt-filters-visible` |
+
+### `e2e/specs/08-estimates.spec.ts` — 見積もり管理 CRUD (PR #96)
+
+**シナリオ**: /estimates の項目作成 + 確定 + 削除 (未確定のみ) の状態遷移。
+
+| 検証内容 | 主要な節目 snapshot |
+|---|---|
+| /estimates 画面 render + 見出し | `estimates-empty` |
+| 見積作成 (API) → UI 一覧表示 | `estimates-with-item` |
+| UI 確定 → 状態バッジ「確定」、削除ボタン非表示 | `estimates-confirmed` |
+| 未確定の UI 削除 (confirm 承諾) | `estimates-after-delete` |
+
+### `e2e/visual/auth-screens.spec.ts` — 視覚回帰 (認証画面、PR #96 有効化)
+
+**目的**: `/login` / `/reset-password` の初期状態を baseline PNG と比較。
+
+### `e2e/visual/dashboard-screens.spec.ts` — 視覚回帰 (ダッシュボード、PR #96 有効化)
+
+**目的**: `/projects` / `/settings` / `/projects/[id]` 概要タブ (light テーマ) の構造レンダリング検証。RUN_ID 依存部は mask で除外。
+
+### `e2e/visual/settings-themes.spec.ts` — 視覚回帰 (10 テーマ マトリクス、PR #96)
+
+**目的**: `/settings` 画面を 10 種全テーマで順に切替えて各 PNG を比較。テーマ定義トークンの配色崩れを検知。
+
+**baseline 生成** (2 通り):
+- **PR 中の初回** (workflow が main 未マージの場合): `git commit --allow-empty -m "chore: generate visual baselines [gen-visual]"` → `git push` で workflow 自動発火
+- **main マージ後の平常運用**: Actions UI → `E2E Visual Baseline` → Run workflow → 対象 branch 選択
+
+どちらの方法でも Linux CI 環境で PNG が生成され、github-actions bot が対象 branch に auto-commit する。詳細は [DEVELOPER_GUIDE §9.6](../docs/DEVELOPER_GUIDE.md) 参照。
 
 ---
 
@@ -163,7 +201,8 @@ baseline は `e2e/**__screenshots__/` に commit。更新したい場合は `pnp
 
 ## 関連ドキュメント
 
-- **[docs/E2E_LESSONS_LEARNED.md](../docs/E2E_LESSONS_LEARNED.md)** — PR #90-#95 の 15 hotfix から得た 10 個の罠パターンと回避策 (**新 spec 書く前に必ず一読**)
+- **[docs/TESTING_STRATEGY.md](../docs/TESTING_STRATEGY.md)** — 自動テスト + 手動テストの全体戦略 (UAT / a11y / クロスブラウザ等の人間担当領域と運用チェックリスト)
+- **[docs/E2E_LESSONS_LEARNED.md](../docs/E2E_LESSONS_LEARNED.md)** — PR #90-#96 の hotfix から得た 18 個の罠パターンと回避策 (**新 spec 書く前に必ず一読**)
 - [docs/E2E_COVERAGE.md](../docs/E2E_COVERAGE.md) — カバレッジマニフェスト
 - [docs/DEVELOPER_GUIDE.md §9](../docs/DEVELOPER_GUIDE.md) — 実行方法 / 失敗調査手順 / spec 作成規約
 - [playwright.config.ts](../playwright.config.ts) — 設定

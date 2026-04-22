@@ -211,6 +211,7 @@ function TaskTreeNodeImpl({
                 onClick={() => onToggleExpanded(task.id)}
                 className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"
                 title={isCollapsed ? '展開' : '折りたたみ'}
+                aria-label={isCollapsed ? '展開' : '折りたたみ'}
               >
                 <span className={`text-xs transition-transform ${isCollapsed ? '' : 'rotate-90'}`}>▶</span>
               </button>

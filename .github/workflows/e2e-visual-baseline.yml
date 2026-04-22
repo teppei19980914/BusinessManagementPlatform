@@ -1,0 +1,147 @@
+# 視覚回帰 baseline 生成ワークフロー (PR #96)
+#
+# 目的:
+#   Linux CI 環境 (Ubuntu + Playwright Chromium) で baseline PNG を生成し、
+#   トリガしたブランチに自動 commit する。フォント/アンチエイリアスの差異を
+#   吸収するため、Windows / macOS ローカルではなく CI で生成する方針。
+#
+# 使い方 (2 通り):
+#
+# A) workflow_dispatch (main マージ後の平常運用)
+#   1. GitHub Actions UI → "E2E Visual Baseline" → "Run workflow" を押下
+#   2. ブランチを選んで実行
+#   3. 実行完了後、同ブランチに「Update visual baselines (workflow)」commit
+#   注意: workflow_dispatch は GitHub 仕様で **default branch (main) にファイルが
+#   存在する必要がある**。PR 初回 (本ファイルがまだ main 未マージ) では使えない。
+#
+# B) commit message トリガ (PR 中の初回 bootstrap 用、chicken-and-egg 回避)
+#   1. PR ブランチで空コミットを作成:
+#        git commit --allow-empty -m "chore: generate visual baselines [gen-visual]"
+#   2. push → 自動的に本 workflow が発火
+#   3. PNG が自動 commit される
+#   `[gen-visual]` を含む commit message のみ発火するため誤発火しない。
+#
+# 実行タイミング:
+#   - 初回 baseline 生成 (PR 中は B、以降は A)
+#   - UI 意図的変更後の再生成
+#   - テーマ定義 (src/config/themes.ts) 変更後
+#
+# 注意:
+#   - main には [gen-visual] コミットを直接送らない (review 通過後のみ)
+#   - PR 作成者が自ブランチで実行 → commit → push 更新される
+
+name: E2E Visual Baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '対象ブランチ (既定: 現在のブランチ)'
+        required: false
+        type: string
+  push:
+    # PR 中の bootstrap 用: commit message に [gen-visual] タグが入る push で発火。
+    # 下の if で message 判定するため、全 push に対して trigger が一旦 match する。
+    branches:
+      - '**'
+
+permissions:
+  contents: write  # PNG 自動 commit のため必須
+  pull-requests: write
+
+jobs:
+  generate:
+    name: Generate & commit visual baselines
+    # push 起動時は commit message に [gen-visual] タグが含まれるときのみ実行 (誤発火防止)。
+    # workflow_dispatch は無条件実行。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[gen-visual]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tasukiba_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tasukiba_e2e
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/tasukiba_e2e
+      NEXTAUTH_SECRET: e2e_only_secret_do_not_use_in_production_32chars_min!
+      MAIL_PROVIDER: inbox
+      INBOX_DIR: /tmp/tasukiba-e2e-inbox
+      INITIAL_ADMIN_EMAIL: admin-e2e@example.com
+      INITIAL_ADMIN_PASSWORD: 'E2eInitial!Pw_2026'
+      CI: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+          # commit push に必要 (actions/checkout の token は fetch 専用)
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm prisma generate
+
+      - name: Apply migrations to ephemeral DB
+        run: pnpm prisma migrate deploy
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build Next.js
+        run: pnpm build
+
+      - name: Prepare standalone assets
+        run: |
+          cp -r public .next/standalone/
+          cp -r .next/static .next/standalone/.next/
+
+      - name: Run Playwright with --update-snapshots
+        run: pnpm exec playwright test e2e/visual --update-snapshots
+
+      - name: Commit & push generated baselines
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add e2e/visual
+          if git diff --cached --quiet; then
+            echo "no baseline changes"
+            exit 0
+          fi
+          git commit -m "Update visual baselines (e2e-visual-baseline workflow)"
+          git push
+
+      - name: Upload generated PNGs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines-${{ github.run_id }}
+          path: e2e/visual/**/*.png
+          retention-days: 14

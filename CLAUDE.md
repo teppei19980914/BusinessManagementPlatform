@@ -82,6 +82,7 @@
    - `SPECIFICATION.md` — 機能仕様
    - `DESIGN.md` — 設計（アーキテクチャ・データモデル等）
    - `INFRASTRUCTURE.md` — インフラ構成・環境情報
+   - `TESTING_STRATEGY.md` — 自動テスト + 手動テストの全体戦略 (PR #96 以降、UAT/a11y/クロスブラウザ等の人間担当領域)
 
 ## Claude Code レベル最適化ルール
 

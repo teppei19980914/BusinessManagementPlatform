@@ -127,7 +127,10 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
 
     // メンバータブは固有の UI 検証: 追加済メンバーが一覧に表示される
     await page.getByRole('tab', { name: 'メンバー' }).click();
-    await expect(page.getByText(MEMBER_NAME)).toBeVisible({ timeout: 10_000 });
+    // メンバー一覧も tbody tr + .first() でスコープ (LESSONS_LEARNED §4.11)
+    await expect(
+      page.locator('tbody tr').filter({ hasText: MEMBER_NAME }).first(),
+    ).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'project-detail-members-tab');
   });
 
