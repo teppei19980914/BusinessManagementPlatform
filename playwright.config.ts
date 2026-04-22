@@ -20,10 +20,20 @@
  */
 
 import { defineConfig, devices } from '@playwright/test';
+import { mkdirSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 const PORT = process.env.PORT || '3000';
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${PORT}`;
 const isCI = !!process.env.CI;
+
+// PR #92: E2E 招待メール捕捉のため inbox provider のディレクトリを用意する。
+// Playwright 側プロセスと Next.js サーバ側プロセスの双方がアクセスする。
+const INBOX_DIR = process.env.INBOX_DIR || join(tmpdir(), 'tasukiba-e2e-inbox');
+mkdirSync(INBOX_DIR, { recursive: true });
+// Playwright テスト本体が参照できるようにエクスポート (spawn 前に process.env へ反映)。
+process.env.INBOX_DIR = INBOX_DIR;
 
 export default defineConfig({
   testDir: './e2e',
@@ -78,7 +88,10 @@ export default defineConfig({
           DATABASE_URL: process.env.DATABASE_URL || '',
           DIRECT_URL: process.env.DIRECT_URL || '',
           NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
-          MAIL_PROVIDER: 'console', // E2E は console provider 固定 (外部送信しない)
+          // PR #92: 招待メール等の外部送信を避けつつ、テストから中身を検証するため
+          // inbox プロバイダを使用。INBOX_DIR 配下に 1 通 1 JSON で書き出される。
+          MAIL_PROVIDER: 'inbox',
+          INBOX_DIR,
         },
       }
     : undefined, // ローカルは開発者が pnpm dev を別途起動

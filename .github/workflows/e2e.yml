@@ -65,8 +65,13 @@ jobs:
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/tasukiba_e2e
       # E2E 用の固定秘密鍵 (本番環境とは独立、CI ジョブ内でのみ有効)
       NEXTAUTH_SECRET: e2e_only_secret_do_not_use_in_production_32chars_min!
-      # メール送信は console provider 固定 (外部送信しない)
-      MAIL_PROVIDER: console
+      # PR #92: メール送信は inbox provider。送信内容を INBOX_DIR 配下に JSON で書き出し、
+      # Playwright 側 (e2e/fixtures/inbox.ts) がトークン URL を抽出して検証する。
+      MAIL_PROVIDER: inbox
+      INBOX_DIR: /tmp/tasukiba-e2e-inbox
+      # PR #92: シナリオ Step 1 で使用する初期 admin (E2E 実行ごとに DB にシード)
+      INITIAL_ADMIN_EMAIL: admin-e2e@example.com
+      INITIAL_ADMIN_PASSWORD: 'E2eInitial!Pw_2026'
       CI: 'true'
 
     steps:

@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { createMailProvider } from './index';
 import { ConsoleMailProvider } from './console-provider';
 import { ResendMailProvider } from './resend-provider';
 import { BrevoMailProvider } from './brevo-provider';
+import { InboxMailProvider } from './inbox-provider';
 
 describe('createMailProvider', () => {
   const originalEnv = { ...process.env };
@@ -12,6 +16,7 @@ describe('createMailProvider', () => {
     delete process.env.MAIL_PROVIDER;
     delete process.env.BREVO_API_KEY;
     delete process.env.RESEND_API_KEY;
+    delete process.env.INBOX_DIR;
   });
 
   afterEach(() => {
@@ -51,6 +56,24 @@ describe('createMailProvider', () => {
 
   it('MAIL_PROVIDER=resend + RESEND_API_KEY 未設定で ConsoleMailProvider にフォールバック', () => {
     process.env.MAIL_PROVIDER = 'resend';
+    const provider = createMailProvider();
+    expect(provider).toBeInstanceOf(ConsoleMailProvider);
+  });
+
+  it('PR #92: MAIL_PROVIDER=inbox + INBOX_DIR 設定済みで InboxMailProvider を返す', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'inbox-test-'));
+    try {
+      process.env.MAIL_PROVIDER = 'inbox';
+      process.env.INBOX_DIR = dir;
+      const provider = createMailProvider();
+      expect(provider).toBeInstanceOf(InboxMailProvider);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('PR #92: MAIL_PROVIDER=inbox + INBOX_DIR 未設定で ConsoleMailProvider にフォールバック', () => {
+    process.env.MAIL_PROVIDER = 'inbox';
     const provider = createMailProvider();
     expect(provider).toBeInstanceOf(ConsoleMailProvider);
   });

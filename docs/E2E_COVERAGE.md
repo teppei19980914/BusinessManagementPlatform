@@ -1,5 +1,7 @@
 # E2E カバレッジ一覧 (PR #90 以降 継続更新)
 
+> PR #92 で Steps 1-6 (admin セットアップ + 招待 + プロジェクト作成 + メンバー login) を追加。
+
 > このファイルは **E2E テストでカバーする機能のマニフェスト**です。
 >
 > - 新しい画面 / API ルートを追加したら、**必ずこのファイルにエントリを追加**してください
@@ -18,13 +20,13 @@
 ## 画面 (pages)
 
 ### 認証系
-- [x] `/login` — e2e/specs/00-smoke.spec.ts
-- [x] `/reset-password` — e2e/visual/auth-screens.spec.ts (視覚回帰のみ、機能は PR #B で追加)
-- [ ] `/login/mfa` — skip: MFA シード生成が必要、PR #B で対応予定
-- [ ] `/setup-password` — skip: 招待メール経由のみ、PR #B で対応予定
+- [x] `/login` — e2e/specs/00-smoke.spec.ts + e2e/specs/01-admin-and-member-setup.spec.ts (MFA 有り/無しの両経路)
+- [x] `/reset-password` — e2e/visual/auth-screens.spec.ts (視覚回帰のみ、機能は PR #E 以降)
+- [x] `/login/mfa` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2b + Step 5)
+- [x] `/setup-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 4, general ユーザ招待経路)
 
 ### ダッシュボード
-- [ ] `/projects` — skip: PR #B で対応予定
+- [x] `/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 作成 + Step 6b 一般ユーザ閲覧)
 - [ ] `/projects/[projectId]` — skip: PR #C で対応予定
 - [ ] `/projects/[projectId]/estimates` — skip: PR #C
 - [ ] `/projects/[projectId]/tasks` — skip: PR #C
@@ -40,10 +42,10 @@
 - [ ] `/memos` — skip: PR #D
 - [ ] `/all-memos` — skip: PR #D
 - [ ] `/my-tasks` — skip: PR #D
-- [ ] `/settings` — skip: PR #D
+- [x] `/settings` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 1 パスワード変更 + Step 2 MFA 有効化)
 
 ### admin 専用
-- [ ] `/admin/users` — skip: PR #B (アカウント作成フローで間接的にカバー)
+- [x] `/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 招待)
 - [ ] `/admin/audit-logs` — skip: 監査ログ閲覧、read-only で優先度低
 - [ ] `/admin/role-changes` — skip: 権限変更履歴、read-only で優先度低
 
@@ -55,22 +57,23 @@
 ## API Routes
 
 ### 認証
-- [ ] `/api/auth/signin` — skip: PR #B (NextAuth 内部、smoke 範囲)
+- [x] `/api/auth/signin` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / 複数ステップで使用)
 - [ ] `/api/auth/signout` — skip: PR #D
-- [ ] `/api/auth/lock-status` — skip: PR #B
-- [ ] `/api/auth/mfa/setup` — skip: PR #B (MFA 有効化シナリオ)
-- [ ] `/api/auth/mfa/enable` — skip: PR #B
-- [ ] `/api/auth/mfa/disable` — skip: PR #B
-- [ ] `/api/auth/mfa/verify` — skip: PR #B
-- [ ] `/api/auth/reset-password` — skip: PR #B
-- [ ] `/api/auth/setup-password` — skip: PR #B
-- [ ] `/api/auth/change-password` — skip: PR #D (設定画面経由)
+- [ ] `/api/auth/lock-status` — skip: PR #E (ロック誘発シナリオは非決定的で後回し)
+- [x] `/api/auth/mfa/setup` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2)
+- [x] `/api/auth/mfa/enable` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2)
+- [ ] `/api/auth/mfa/disable` — skip: PR #D (admin は無効化不可 / 一般ユーザ経路は設定画面)
+- [x] `/api/auth/mfa/verify` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2b + Step 5 再ログイン)
+- [ ] `/api/auth/reset-password` — skip: PR #E (パスワードリセットフロー)
+- [x] `/api/auth/setup-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 4 general 経路)
+- [x] `/api/auth/change-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 1 設定画面経由)
 - [ ] `/api/auth/delete-account` — skip: PR #E (teardown セルフ削除)
-- [ ] `/api/auth/verify-email` — skip: PR #B (招待メール経由)
+- [x] `/api/auth/verify-email` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / 招待メール + setup-password で間接カバー)
+- [ ] `/api/auth/setup-mfa-initial` — skip: PR #D (admin 招待 + 初期 MFA 経路、PR #91 追加)
 
 ### プロジェクト
-- [ ] `GET /api/projects` — skip: PR #B
-- [ ] `POST /api/projects` — skip: PR #B
+- [x] `GET /api/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 + 6b 画面表示)
+- [x] `POST /api/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 API 経由)
 - [ ] `GET /api/projects/[projectId]` — skip: PR #C
 - [ ] `PATCH /api/projects/[projectId]` — skip: PR #C
 - [ ] `DELETE /api/projects/[projectId]` — skip: PR #E (teardown)
@@ -85,7 +88,7 @@
 - [ ] `/api/projects/[projectId]/retrospectives/*` — skip: PR #C
 - [ ] `/api/projects/[projectId]/knowledge/*` — skip: PR #C
 - [ ] `/api/projects/[projectId]/suggestions/*` — skip: PR #C (提案型サービス、核心機能)
-- [ ] `/api/projects/[projectId]/members/*` — skip: PR #B
+- [x] `/api/projects/[projectId]/members/*` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 6a POST, GET は画面経由)
 - [ ] `/api/risks` (全リスク) — skip: PR #C
 - [ ] `/api/retrospectives` (全振り返り) — skip: PR #C
 - [ ] `/api/knowledge` (全ナレッジ) — skip: PR #C
@@ -102,9 +105,9 @@
 - [ ] `/api/projects/[projectId]/estimates/*` — skip: PR #C
 
 ### 管理系
-- [ ] `/api/admin/users` — skip: PR #B (user 一覧/作成)
-- [ ] `/api/admin/users/[userId]` — skip: PR #B 編集 / PR #E 削除
-- [ ] `/api/admin/users/[userId]/recovery-codes` — skip: PR #B (リカバリーコード再発行)
+- [x] `/api/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 POST + Step 6a GET)
+- [ ] `/api/admin/users/[userId]` — skip: PR #D 編集 / PR #E 削除
+- [ ] `/api/admin/users/[userId]/recovery-codes` — skip: PR #D (リカバリーコード再発行)
 - [ ] `/api/admin/users/[userId]/unlock` — skip: ロック誘発が非決定的、手動テスト
 - [ ] `/api/admin/users/cleanup-inactive` — skip: 時間経過が必要、手動テスト
 - [ ] `/api/admin/audit-logs` — skip: read-only

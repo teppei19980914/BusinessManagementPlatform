@@ -576,6 +576,53 @@ E2E が fail したら、以下のどちらの原因かを見極める:
 - 例: `<div>` で見出し風に描画しているところに `getByRole('heading')` を当てるのは
   アクセシビリティ観点で改善の余地はあるが、**本 E2E test の責務外** (別タスク化)
 
+### 9.8 E2E で招待メールと MFA を扱う (PR #92)
+
+Steps 1-6 のように、**招待メールのトークン抽出**や **TOTP コード生成**を含むテストを
+書く場合は、以下の E2E fixture を使う。
+
+#### 招待メールの捕捉 (inbox provider)
+
+CI 環境では `MAIL_PROVIDER=inbox` で `InboxMailProvider` が起動し、送信内容を
+`INBOX_DIR` 配下に 1 通 1 JSON ファイルとして書き出す。Playwright 側はこの
+ディレクトリを polling して受信を待つ。
+
+```ts
+import { waitForMail, extractSetupPasswordUrl } from '../fixtures/inbox';
+
+const mail = await waitForMail('user@example.com', { after: testStartedAt });
+const setupUrl = extractSetupPasswordUrl(mail);
+await page.goto(setupUrl);
+```
+
+- `after` を渡すと、それ以前のメール (他テストの残骸) を無視できる
+- タイムアウト既定 10 秒 / 250ms 間隔 polling
+- 本番環境では `MAIL_PROVIDER` を `brevo` / `resend` / `console` にする (inbox は E2E 専用)
+
+#### TOTP コード生成
+
+アプリ本体と同じ `otplib` (`generateSync`) で生成する。**時刻跨ぎのズレを
+避けるため、呼び出し直前で生成して即 fill** する。
+
+```ts
+import { generateTotpCode } from '../fixtures/totp';
+await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
+```
+
+MFA シークレットは `/settings` 画面の「手動入力用のシークレットキー」詳細から読み取るか、
+初期セットアップフローで setup-password レスポンスの `otpauthUri` から抽出する。
+
+#### 初期 admin シード + クリーンアップ
+
+`e2e/fixtures/db.ts` の `ensureInitialAdmin(email, password)` を `beforeAll` で
+呼ぶと、対象 email のユーザを削除してから再作成する (冪等性のため)。
+`forcePasswordChange=true` / `mfaEnabled=false` / `isActive=true` で生成されるので、
+シナリオ Step 1 からそのまま流せる。
+
+`e2e/fixtures/run-id.ts` の `withRunId('label')` で実行ごとに一意な文字列が得られる。
+ユーザ email / プロジェクト名等に付与し、`afterAll` の `cleanupByRunId()` で
+prefix 一括削除するとローカル実行時の残存を防げる。
+
 ---
 
 ## 10. コミットとデプロイ
