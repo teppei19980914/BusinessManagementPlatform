@@ -118,8 +118,12 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     const res = await confirmRes;
     expect(res.ok(), `PATCH confirm failed: ${res.status()}`).toBeTruthy();
 
-    // router.refresh() 後の再レンダを待機
-    await page.waitForLoadState('networkidle');
+    // LESSONS §4.20: router.refresh() は fire-and-forget + React 描画の非決定性で
+    // waitForLoadState('networkidle') だけでは race が残る (PR #96 hotfix 5 / PR #97
+    // CI で再発確認)。確定後の UI 検証は page.reload() で DB の真の状態を強制取得する
+    // 方が信頼できる。デメリット: 「router.refresh による自動再描画」の検証は犠牲に
+    // なるが、それは React/Next.js framework の責務であり spec 08 の対象外と割り切る。
+    await page.reload({ waitUntil: 'networkidle' });
 
     // `toContainText('確定')` は行内の「確定」ボタン文字列にもマッチするため
     // 確定前/後を識別できない。確定後の UI 変化は以下の 2 つで判定する:
@@ -144,10 +148,21 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     await page.goto(`/projects/${projectId}/estimates`);
     await page.waitForLoadState('networkidle');
 
+    // DELETE 完了を明示的に待機 (click 前に予約)
+    const deleteRes = page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/projects/${projectId}/estimates/`)
+        && r.request().method() === 'DELETE',
+    );
     page.once('dialog', (dialog) => dialog.accept());
     const row = page.locator('tbody tr').filter({ hasText: deletableLabel }).first();
     await row.getByRole('button', { name: '削除' }).click();
-    await page.waitForLoadState('networkidle');
+    const res = await deleteRes;
+    expect(res.ok(), `DELETE failed: ${res.status()}`).toBeTruthy();
+
+    // LESSONS §4.20: 確定テストと同じく router.refresh race 回避のため page.reload
+    // で DB 真状態を強制取得 (waitForLoadState 単独では 1ms で即解決する race)。
+    await page.reload({ waitUntil: 'networkidle' });
 
     await expect(
       page.locator('tbody tr').filter({ hasText: deletableLabel }),
