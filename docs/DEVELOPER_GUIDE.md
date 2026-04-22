@@ -642,6 +642,24 @@ at ../src/generated/prisma/client.ts:3
 - `@updatedAt` は DB デフォルト無しなので INSERT 時に明示的に `NOW()` を入れる
 - Prisma の型情報が必要なら服務ロジック層 (`src/services/`) へ寄せ、E2E からは HTTP API 経由で呼ぶ
 
+#### pg 生 SQL を使う際のセキュリティ/パフォーマンス規約 (PR #92 hotfix 2)
+
+E2E は CI で隔離実行されるが、`cleanupByRunId` のようにユーザ提供文字列を
+`LIKE` パターンに組み込む場合は以下を徹底する:
+
+1. **入力検証**: ユーザ/呼び出し元から渡る値は正規表現で許容文字集合を制限
+   (`assertRunIdFormat` の例: `/^[A-Za-z0-9-]{6,64}$/`)。LIKE の wildcard 文字
+   (`%` / `_`) やクオート/セミコロンが混入した時点で即 throw。
+2. **Prepared statement のみ**: 値連結 (`` `... ${x} ...` ``) は絶対に使わず、
+   必ず `$1` / `ANY($1)` プレースホルダ経由で渡す。
+3. **並列化**: 相互独立な DELETE (FK 先テーブル群) は `Promise.all` で束ねて
+   ラウンドトリップを削減する。
+4. **Transaction**: 2 段階削除 (FK 先 → 親) は `BEGIN..COMMIT` でアトミック化し、
+   失敗時は `ROLLBACK` + warn ログ (best-effort クリーンアップの一貫性保持)。
+
+これらは CLAUDE.md のコミット前チェック (2. セキュリティ / 3. パフォーマンス) に
+該当するため、E2E fixture に生 SQL を追加するたびに再確認する。
+
 ---
 
 ## 10. コミットとデプロイ

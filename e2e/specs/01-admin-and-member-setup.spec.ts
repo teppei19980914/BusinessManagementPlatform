@@ -23,7 +23,7 @@ import { test, expect } from '@playwright/test';
 import { RUN_ID, withRunId } from '../fixtures/run-id';
 import { waitForMail, extractSetupPasswordUrl } from '../fixtures/inbox';
 import { generateTotpCode } from '../fixtures/totp';
-import { ensureInitialAdmin, cleanupByRunId, disconnectPrisma } from '../fixtures/db';
+import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
 
 let startedAt: string;
 
@@ -52,7 +52,7 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
 
   test.afterAll(async () => {
     await cleanupByRunId(RUN_ID);
-    await disconnectPrisma();
+    await disconnectDb();
   });
 
   test('Step 1: 初期 admin でログインしてパスワードを変更する', async ({ page }) => {

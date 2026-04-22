@@ -32,7 +32,7 @@ function getPool(): Pool {
   return _pool;
 }
 
-export async function disconnectPrisma(): Promise<void> {
+export async function disconnectDb(): Promise<void> {
   if (_pool) {
     await _pool.end();
     _pool = null;
