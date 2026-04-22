@@ -16,7 +16,13 @@ test.describe('@feature:auth:login スモーク', () => {
     // 注: ログイン画面のサービス名は shadcn CardTitle (実装は <div>) で描画しているため
     // heading role を持たない。テストは getByText でテキスト一致を検証する。
     // (意図的な設計。heading にしたい場合は CardTitle を h1/h2 に変更する別タスク)
-    await expect(page.getByText('たすきば', { exact: true })).toBeVisible();
+    //
+    // LESSONS §4.25: page.goto は "load" イベントまでしか待たず、React 19 / Next.js 16
+    // の Suspense streaming 過渡期では同一 CardTitle ノードが DOM に一瞬重複して
+    // 観測される (PR #98 CI で smoke が strict mode violation で fail、Retry #2 で
+    // settle して成功)。hydration 完了まで待ってから assertion する。
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('たすきば', { exact: true }).first()).toBeVisible();
     await expect(page.getByLabel('メールアドレス')).toBeVisible();
     await expect(page.getByLabel('パスワード')).toBeVisible();
   });

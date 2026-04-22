@@ -158,18 +158,26 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.waitForURL(/\/login\/mfa/);
     await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
 
-    // LESSONS §4.18 の汎化: click 前に verify API レスポンスを予約 → click 後に await で
-    // API 完了を確証。続いて /projects へのナビゲーションを待つ。
-    // (MFA verify → session update → location.href=/ → middleware → / → /projects
-    //  という長い非同期チェーンが高並列 CI で 15s に収まらないケースを回避)
+    // LESSONS §4.18/§4.24: MfaForm.handleSubmit は verify API の直後に
+    // `await update({ mfaVerified: true })` (= POST /api/auth/session で JWT 再発行)
+    // を呼んでから `window.location.href = callbackUrl` を発火する。
+    // verify API だけ await しても session 更新 API を待てず、waitForURL の 15s
+    // budget が session 更新時間で消費されるケースがある (PR #98 CI で観測)。
+    // 対策: 両 API を click 前に並行予約し、両方 await してから遷移待ち。
     const verifyRes = page.waitForResponse(
       (r) =>
         r.url().includes('/api/auth/mfa/verify')
         && r.request().method() === 'POST',
     );
+    const sessionRes = page.waitForResponse(
+      (r) =>
+        r.url().includes('/api/auth/session')
+        && r.request().method() === 'POST',
+    );
     await page.getByRole('button', { name: '検証' }).click();
     const res = await verifyRes;
     expect(res.ok(), `MFA verify failed: ${res.status()}`).toBeTruthy();
+    await sessionRes;
 
     await waitForProjectsReady(page);
   });
@@ -202,7 +210,10 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     // `たすきば` / `セットアップ完了` は shadcn/ui の CardTitle (実装は <div>) で
     // 描画されているため heading role を持たない。getByText で exact 一致させる
     // (PR #90 hotfix 5 で /login でも同じ問題を経験、DEVELOPER_GUIDE §9.7 参照)。
-    await expect(page.getByText('たすきば', { exact: true })).toBeVisible({ timeout: 10_000 });
+    // LESSONS §4.25: hydration 過渡で CardTitle が一時的に重複観測される CI flake を
+    // 避けるため、networkidle まで待ってから .first() で strict mode violation を回避。
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('たすきば', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
     await page.getByLabel('パスワード', { exact: true }).fill(MEMBER_PW);
     await page.getByLabel('パスワード（確認）').fill(MEMBER_PW);
     await page.getByRole('button', { name: 'パスワードを設定' }).click();
@@ -226,15 +237,22 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.waitForURL(/\/login\/mfa/);
     await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
 
-    // Step 2b と同じ理由で waitForResponse を併用 (LESSONS §4.18)
+    // Step 2b と同じ理由で verify + session 両 API を予約 (LESSONS §4.18 / §4.24)。
+    // session 更新 API の待機が欠けると 15s waitForURL を消費する CI flake が出る。
     const verifyRes = page.waitForResponse(
       (r) =>
         r.url().includes('/api/auth/mfa/verify')
         && r.request().method() === 'POST',
     );
+    const sessionRes = page.waitForResponse(
+      (r) =>
+        r.url().includes('/api/auth/session')
+        && r.request().method() === 'POST',
+    );
     await page.getByRole('button', { name: '検証' }).click();
     const mfaRes = await verifyRes;
     expect(mfaRes.ok(), `MFA verify failed: ${mfaRes.status()}`).toBeTruthy();
+    await sessionRes;
 
     await waitForProjectsReady(page);
 
