@@ -142,13 +142,35 @@ jobs:
             **Status**: ${{ job.status == 'success' && '✅ Passed' || '❌ Failed' }}
             **Run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
-            ### レポート取得方法
-            1. 上記 "Run" リンクから GitHub Actions の実行詳細を開く
-            2. Artifacts セクションから `playwright-report-${{ github.run_id }}.zip` をダウンロード
-            3. 解凍して `index.html` をブラウザで開く → テスト結果 + 視覚回帰の before/after/diff 画像を確認
+            ### 📋 テストが何をしているか (コードを読まず確認したい場合)
 
-            ### 視覚回帰テストで差分が出た場合
+            `e2e/README.md` を参照してください。各 spec のシナリオが日本語で一覧化されています。
+
+            ### 🖼️ テストの挙動を画面で確認する (Artifact 活用)
+
+            **1. 視覚的に挙動を追いたい → Playwright HTML レポート**
+
+            - `playwright-report-${{ github.run_id }}.zip` をダウンロード
+            - 解凍して `index.html` をブラウザで開く
+            - 各 test の **「View Trace」** ボタンで以下が見える:
+              - 各 action 毎の before / after DOM snapshot
+              - ステップ毎のスクリーンショット
+              - ネットワーク / コンソール ログ
+              - 実行全体のビデオ再生
+
+            **2. 節目のスクリーンショットだけ素早く見たい**
+
+            - `playwright-test-results-${{ github.run_id }}.zip` をダウンロード
+            - `steps/` 配下にラベル付き PNG が並ぶ:
+              - `step-1-password-changed.png`
+              - `step-2-mfa-qr-displayed.png`
+              - `step-2-mfa-enabled-badge.png`
+              - ...
+            - コード読みなしで「どの瞬間に何が映っていたか」を確認できます。
+
+            ### 🎨 視覚回帰テストで差分が出た場合
+
             - 意図したUI変更 → ローカルで `pnpm test:e2e:update-snapshots` → git commit で baseline 更新
             - 意図しないUI変更 → コード側を修正
 
-            <sub>PR #90 で導入、`.github/workflows/e2e.yml` 参照</sub>
+            <sub>PR #90 で導入、PR #93 で可視化強化。`.github/workflows/e2e.yml` + `e2e/README.md` 参照</sub>

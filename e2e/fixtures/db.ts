@@ -39,10 +39,18 @@ export async function disconnectDb(): Promise<void> {
   }
 }
 
+type AdminSeedOptions = {
+  /**
+   * Step 1 の「強制パスワード変更」フローをテストする場合は true。
+   * 他機能の E2E では false にして初期設定を skip できる。既定 true。
+   */
+  forcePasswordChange?: boolean;
+};
+
 /**
  * 初期 admin を作成する (既存があれば状態をリセット)。
- * - forcePasswordChange: true (Step 1 で変更を要求)
- * - mfaEnabled: false (Step 2 で有効化)
+ * - forcePasswordChange: options.forcePasswordChange に従う (既定 true)
+ * - mfaEnabled: false (Step 2 で有効化、PR #93 以降は skip 可能)
  * - isActive: true (seed と同じ)
  *
  * DELETE ではなく UPSERT にする理由:
@@ -50,7 +58,12 @@ export async function disconnectDb(): Promise<void> {
  *   recovery_codes / password_histories 等)。過去 run の関連レコードが残っていると
  *   DELETE で落ちる。UPSERT ならユーザ ID を固定したまま状態だけ初期化できる。
  */
-export async function ensureInitialAdmin(email: string, password: string): Promise<string> {
+export async function ensureInitialAdmin(
+  email: string,
+  password: string,
+  options: AdminSeedOptions = {},
+): Promise<string> {
+  const forcePasswordChange = options.forcePasswordChange ?? true;
   const pool = getPool();
   const passwordHash = await hash(password, BCRYPT_COST);
   // updated_at は Prisma @updatedAt でアプリ側更新する契約 (DB デフォルト無し)。
@@ -61,11 +74,11 @@ export async function ensureInitialAdmin(email: string, password: string): Promi
        failed_login_count, locked_until, permanent_lock,
        updated_at
      )
-     VALUES ($1, $2, $3, 'admin', true, true, false, NULL, NULL, 0, NULL, false, NOW())
+     VALUES ($1, $2, $3, 'admin', true, $4, false, NULL, NULL, 0, NULL, false, NOW())
      ON CONFLICT (email) DO UPDATE SET
        password_hash = EXCLUDED.password_hash,
        is_active = true,
-       force_password_change = true,
+       force_password_change = EXCLUDED.force_password_change,
        mfa_enabled = false,
        mfa_secret_encrypted = NULL,
        mfa_enabled_at = NULL,
@@ -74,7 +87,41 @@ export async function ensureInitialAdmin(email: string, password: string): Promi
        permanent_lock = false,
        updated_at = NOW()
      RETURNING id`,
-    ['E2E 管理者', email, passwordHash],
+    ['E2E 管理者', email, passwordHash, forcePasswordChange],
+  );
+  return res.rows[0].id as string;
+}
+
+/**
+ * 一般ユーザ (general) を直接 DB に作成する。
+ * 招待メール → setup-password フローを経由しないので、既存機能テストのセットアップに便利。
+ */
+export async function ensureGeneralUser(
+  email: string,
+  name: string,
+  password: string,
+): Promise<string> {
+  const pool = getPool();
+  const passwordHash = await hash(password, BCRYPT_COST);
+  const res = await pool.query(
+    `INSERT INTO users (
+       name, email, password_hash, system_role, is_active, force_password_change,
+       mfa_enabled, mfa_secret_encrypted, mfa_enabled_at,
+       failed_login_count, locked_until, permanent_lock,
+       updated_at
+     )
+     VALUES ($1, $2, $3, 'general', true, false, false, NULL, NULL, 0, NULL, false, NOW())
+     ON CONFLICT (email) DO UPDATE SET
+       name = EXCLUDED.name,
+       password_hash = EXCLUDED.password_hash,
+       is_active = true,
+       force_password_change = false,
+       failed_login_count = 0,
+       locked_until = NULL,
+       permanent_lock = false,
+       updated_at = NOW()
+     RETURNING id`,
+    [name, email, passwordHash],
   );
   return res.rows[0].id as string;
 }

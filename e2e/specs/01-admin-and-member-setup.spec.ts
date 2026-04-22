@@ -31,6 +31,7 @@ import { RUN_ID, withRunId } from '../fixtures/run-id';
 import { waitForMail, extractSetupPasswordUrl } from '../fixtures/inbox';
 import { generateTotpCode } from '../fixtures/totp';
 import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
+import { snapshotStep } from '../fixtures/snapshot';
 
 let startedAt: string;
 
@@ -106,12 +107,15 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await pwCard.getByLabel('新しいパスワード（確認）').fill(ADMIN_NEW_PW);
     await pwCard.getByRole('button', { name: '変更' }).click();
     await expect(page.getByText('パスワードが変更されました')).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'step-1-password-changed');
   });
 
   test('Step 2: admin が MFA を有効化する', async () => {
     const page = sharedPage;
     await page.goto('/settings');
     await page.getByRole('button', { name: 'MFA を有効化する' }).click();
+
+    await snapshotStep(page, 'step-2-mfa-qr-displayed');
 
     // 「手動入力用のシークレットキー」を開いて secret を取得
     await page.getByText('手動入力用のシークレットキー').click();
@@ -121,10 +125,26 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     expect(secret).toMatch(/^[A-Z2-7]+$/);
     mfaSecret = secret;
 
+    // API レスポンスと router.refresh の完了を明示的に待って、CI の並列実行下でも
+    // 10s 内に強制有効化バッジが出る事を安定化させる (PR #93 hotfix 1 事例)。
+    const enableRes = page.waitForResponse(
+      (r) => r.url().includes('/api/auth/mfa/enable') && r.request().method() === 'POST',
+    );
     await page.getByPlaceholder('6桁のコード').fill(generateTotpCode(mfaSecret));
     await page.getByRole('button', { name: '検証して有効化' }).click();
-    // PR #91 で admin は常に強制有効化バッジ表示
+    const response = await enableRes;
+    expect(response.ok(), `MFA enable API failed: ${response.status()}`).toBeTruthy();
+
+    // router.refresh() 後の再レンダを待つ (Server Component の再取得 + Badge 描画)
+    await page.waitForLoadState('networkidle');
+
+    // PR #91 で admin は常に強制有効化バッジ表示。
+    // 有効化成功時は「MFA を有効化する」ボタンが消えることも併せて確認する。
+    await expect(page.getByRole('button', { name: 'MFA を有効化する' })).toHaveCount(0, {
+      timeout: 10_000,
+    });
     await expect(page.getByText('強制有効化 (解除不可)')).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'step-2-mfa-enabled-badge');
   });
 
   test('Step 2b: MFA 有効化後の再ログインで /login/mfa 検証を通過する', async () => {
@@ -153,6 +173,7 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await dialog.getByRole('button', { name: '招待メールを送信' }).click();
 
     await expect(page.getByText('招待メールを送信しました')).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'step-3-invitation-sent');
 
     const mail = await waitForMail(MEMBER_EMAIL, { after: startedAt });
     expect(mail.subject).toContain('アカウントの設定');
@@ -178,6 +199,7 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
       timeout: 10_000,
     });
     await expect(page.getByText(/リカバリーコード/)).toBeVisible();
+    await snapshotStep(page, 'step-4-setup-complete');
   });
 
   test('Step 5: admin がプロジェクトを作成する (API 経由)', async () => {
@@ -218,6 +240,7 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     // 一覧画面で表示されることを確認
     await page.goto('/projects');
     await expect(page.getByText(PROJECT_NAME)).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'step-5-project-created');
   });
 
   test('Step 6a: admin がプロジェクトに一般ユーザを追加する (API 経由)', async () => {
@@ -248,5 +271,6 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await waitForProjectsReady(page);
 
     await expect(page.getByText(PROJECT_NAME)).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'step-6b-member-sees-project');
   });
 });
