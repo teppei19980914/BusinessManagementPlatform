@@ -82,10 +82,11 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await expect(page.getByRole('heading', { name: '設定' })).toBeVisible();
 
     // Label 文言重複 (パスワード変更フォーム vs MFA) を避けるため、パスワード変更カード内で scope する
+    // `（確認）` は全角括弧 (UI 実装と一致)。半角 `(確認)` とは Unicode 上別文字なので要注意。
     const pwCard = page.locator('form').filter({ hasText: '現在のパスワード' });
     await pwCard.getByLabel('現在のパスワード').fill(ADMIN_INITIAL_PW);
     await pwCard.getByLabel('新しいパスワード', { exact: true }).fill(ADMIN_NEW_PW);
-    await pwCard.getByLabel('新しいパスワード(確認)', { exact: false }).fill(ADMIN_NEW_PW);
+    await pwCard.getByLabel('新しいパスワード（確認）').fill(ADMIN_NEW_PW);
     await pwCard.getByRole('button', { name: '変更' }).click();
     await expect(page.getByText('パスワードが変更されました')).toBeVisible({ timeout: 10_000 });
   });
