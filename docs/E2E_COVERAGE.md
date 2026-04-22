@@ -3,6 +3,7 @@
 > PR #92 で Steps 1-6 (admin セットアップ + 招待 + プロジェクト作成 + メンバー login) を追加。
 > PR #93 で Step 7 の前半 (プロジェクト詳細タブ render + ロール別表示差分 + 全横断一覧 4 画面) を追加。WBS/Gantt/Estimates の複雑 UI と各 entity の CRUD 詳細は後続 PR。
 > PR #94 で Step 8 (個人機能: /my-tasks / /memos / /all-memos / /settings テーマ変更) を追加。
+> PR #95 で Steps 9-12 (ログアウト + 削除 + 残存検証) + ダッシュボード視覚回帰雛形 (baseline 未 commit) を追加。段階導入プラン完了。
 
 > このファイルは **E2E テストでカバーする機能のマニフェスト**です。
 >
@@ -60,7 +61,7 @@
 
 ### 認証
 - [x] `/api/auth/signin` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / 複数ステップで使用)
-- [ ] `/api/auth/signout` — skip: PR #D
+- [x] `/api/auth/signout` — e2e/specs/05-teardown-and-residuals.spec.ts (PR #95 / Step 9 UI ログアウト経由)
 - [ ] `/api/auth/lock-status` — skip: PR #E (ロック誘発シナリオは非決定的で後回し)
 - [x] `/api/auth/mfa/setup` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2)
 - [x] `/api/auth/mfa/enable` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2)
@@ -69,7 +70,7 @@
 - [ ] `/api/auth/reset-password` — skip: PR #E (パスワードリセットフロー)
 - [x] `/api/auth/setup-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 4 general 経路)
 - [x] `/api/auth/change-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 1 設定画面経由)
-- [ ] `/api/auth/delete-account` — skip: PR #E (teardown セルフ削除)
+- [ ] `/api/auth/delete-account` — skip: セルフ削除は UI 無く、テストには recoveryCode が必要 (招待フロー経由の general のみ保有)。PR #95 では admin による他ユーザ削除 (`/api/admin/users/[userId]` DELETE) で teardown 代替
 - [x] `/api/auth/verify-email` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / 招待メール + setup-password で間接カバー)
 - [ ] `/api/auth/setup-mfa-initial` — skip: PR #D (admin 招待 + 初期 MFA 経路、PR #91 追加)
 
@@ -78,7 +79,7 @@
 - [x] `POST /api/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 API 経由)
 - [ ] `GET /api/projects/[projectId]` — skip: PR #C
 - [ ] `PATCH /api/projects/[projectId]` — skip: PR #C
-- [ ] `DELETE /api/projects/[projectId]` — skip: PR #E (teardown)
+- [x] `DELETE /api/projects/[projectId]` — e2e/specs/05-teardown-and-residuals.spec.ts (PR #95 / Step 11 削除ダイアログ経由)
 - [ ] `PATCH /api/projects/[projectId]/status` — skip: PR #C
 
 ### タスク (WBS) / ガント
@@ -108,7 +109,7 @@
 
 ### 管理系
 - [x] `/api/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 POST + Step 6a GET)
-- [ ] `/api/admin/users/[userId]` — skip: PR #D 編集 / PR #E 削除
+- [x] `/api/admin/users/[userId]` — e2e/specs/05-teardown-and-residuals.spec.ts (PR #95 / Step 10 DELETE) ※ PATCH は別 PR
 - [ ] `/api/admin/users/[userId]/recovery-codes` — skip: PR #D (リカバリーコード再発行)
 - [ ] `/api/admin/users/[userId]/unlock` — skip: ロック誘発が非決定的、手動テスト
 - [ ] `/api/admin/users/cleanup-inactive` — skip: 時間経過が必要、手動テスト
@@ -128,13 +129,18 @@
 ベースライン PNG は `e2e/**__screenshots__/` に commit される。
 PR 中に baseline 更新したい場合は `pnpm test:e2e:update-snapshots` → git commit の通常フロー。
 
-- [x] `/login` — e2e/visual/auth-screens.spec.ts
-- [x] `/reset-password` — e2e/visual/auth-screens.spec.ts
-- [ ] `/projects` — PR #E で追加予定
-- [ ] `/projects/[projectId]` 概要タブ — PR #E
-- [ ] `/projects/[projectId]/tasks` WBS — PR #E
-- [ ] `/projects/[projectId]/gantt` — PR #E
-- [ ] `/settings` 10 テーマ切替 — PR #E (重要)
+- [x] `/login` — e2e/visual/auth-screens.spec.ts (baseline 未 commit、skipped)
+- [x] `/reset-password` — e2e/visual/auth-screens.spec.ts (同上)
+- [x] `/projects` — e2e/visual/dashboard-screens.spec.ts (PR #95 雛形、baseline 未 commit で skipped)
+- [x] `/settings` — e2e/visual/dashboard-screens.spec.ts (PR #95 雛形、同上)
+- [ ] `/projects/[projectId]` 概要タブ — 後続 PR (dashboard-screens 拡張)
+- [ ] `/projects/[projectId]/tasks` WBS — 後続 PR
+- [ ] `/projects/[projectId]/gantt` — 後続 PR
+- [ ] `/settings` 10 テーマ切替 — 後続 PR (10 テーマ × 主要画面のマトリクス化予定)
+
+> **視覚回帰 baseline の有効化手順**: baseline PNG はフォント/アンチエイリアス差異を
+> 避けるため Linux CI 環境で生成する必要がある (開発者の Windows / macOS ローカルでは NG)。
+> 次担当者向け手順は各 `e2e/visual/*.spec.ts` 冒頭コメントに記載。
 
 ---
 

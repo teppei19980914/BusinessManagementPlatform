@@ -113,11 +113,29 @@ DOM を検査でき、失敗しなくても全 step が視覚的に追える。
 
 **主要な節目 snapshot**: `global-risks-list` / `global-issues-list` / `global-retrospectives-list` / `global-knowledge-list`
 
-### `e2e/visual/auth-screens.spec.ts` — 視覚回帰 (認証画面)
+### `e2e/specs/05-teardown-and-residuals.spec.ts` — 終了処理 + 残存検証 (Steps 9-12)
+
+**シナリオ**: セッション終了・削除操作・削除後の不在確認。
+
+| Step | 検証内容 | 主要な節目 snapshot |
+|---|---|---|
+| 11 | admin がプロジェクト詳細から削除ダイアログを開き実行 | `step-11-delete-dialog-open` |
+| 12a | 削除済プロジェクトが /projects 一覧から消える | `step-12a-project-absent` |
+| 10 | admin が /admin/users 経由で一般ユーザを削除 | `step-10-user-deleted` |
+| 12b | 削除済ユーザが /admin/users 一覧から消える | `step-12b-user-absent` |
+| 9 | アカウントメニューから「ログアウト」で /login へ戻る | `step-9-logged-out` |
+
+### `e2e/visual/auth-screens.spec.ts` — 視覚回帰 (認証画面、現状 skipped)
 
 **目的**: `/login` / `/reset-password` / `/setup-password` の初期状態を baseline PNG と比較し、意図せぬ UI 崩れを検出。
 
 baseline は `e2e/**__screenshots__/` に commit。更新したい場合は `pnpm test:e2e:update-snapshots`。
+
+### `e2e/visual/dashboard-screens.spec.ts` — 視覚回帰 (ダッシュボード、現状 skipped)
+
+**目的**: /projects / /settings 等の主要画面 × 10 テーマのマトリクス視覚回帰 (将来拡張予定)。
+
+**現状**: baseline PNG 未 commit のため skip。有効化手順は各ファイル冒頭コメント参照。
 
 ---
 
