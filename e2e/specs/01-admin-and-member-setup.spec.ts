@@ -238,8 +238,14 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     expect(projectId).toMatch(/^[0-9a-f-]{36}$/);
 
     // 一覧画面で表示されることを確認
+    // PR #95 hotfix 1: /projects 一覧テーブルの <a> は prefetch/hydration の都合で
+    // 同一 href が 2 要素に解決されることがある (片方 hidden)。strict mode を避けるため
+    // tbody 配下の tr 行内でスコープ + .first() で一意化する (LESSONS_LEARNED §4.11)。
     await page.goto('/projects');
-    await expect(page.getByText(PROJECT_NAME)).toBeVisible({ timeout: 10_000 });
+    await page.waitForLoadState('networkidle');
+    await expect(
+      page.locator('tbody tr').filter({ hasText: PROJECT_NAME }).first(),
+    ).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'step-5-project-created');
   });
 
@@ -270,7 +276,10 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.getByRole('button', { name: 'ログイン' }).click();
     await waitForProjectsReady(page);
 
-    await expect(page.getByText(PROJECT_NAME)).toBeVisible({ timeout: 10_000 });
+    // Step 5 と同じく /projects 一覧の <a> 重複を scope で回避 (LESSONS_LEARNED §4.11)
+    await expect(
+      page.locator('tbody tr').filter({ hasText: PROJECT_NAME }).first(),
+    ).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'step-6b-member-sees-project');
   });
 });
