@@ -2,6 +2,7 @@ import type { MailProvider } from './mail-provider';
 import { ConsoleMailProvider } from './console-provider';
 import { ResendMailProvider } from './resend-provider';
 import { BrevoMailProvider } from './brevo-provider';
+import { InboxMailProvider } from './inbox-provider';
 
 export type { MailProvider, MailParams, MailResult } from './mail-provider';
 
@@ -24,6 +25,17 @@ export function createMailProvider(): MailProvider {
         return new ConsoleMailProvider();
       }
       return new ResendMailProvider();
+    case 'inbox': {
+      // PR #92: E2E 専用。INBOX_DIR に JSON を書き出す。本番では指定しないこと。
+      const dir = process.env.INBOX_DIR;
+      if (!dir) {
+        console.warn(
+          '[MailProvider] MAIL_PROVIDER=inbox ですが INBOX_DIR が未設定です。console にフォールバックします。',
+        );
+        return new ConsoleMailProvider();
+      }
+      return new InboxMailProvider(dir);
+    }
     case 'console':
     default:
       return new ConsoleMailProvider();

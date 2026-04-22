@@ -216,17 +216,17 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
             {pwError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{pwError}</div>}
             {pwSuccess && <div className="rounded-md bg-success/10 p-3 text-sm text-success">{pwSuccess}</div>}
             <div className="space-y-2">
-              <Label>現在のパスワード</Label>
-              <Input type="password" value={pwForm.currentPassword} onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })} required />
+              <Label htmlFor="current-password">現在のパスワード</Label>
+              <Input id="current-password" type="password" value={pwForm.currentPassword} onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })} required />
             </div>
             <div className="space-y-2">
-              <Label>新しいパスワード</Label>
-              <Input type="password" value={pwForm.newPassword} onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })} required />
+              <Label htmlFor="new-password">新しいパスワード</Label>
+              <Input id="new-password" type="password" value={pwForm.newPassword} onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })} required />
               <p className="text-xs text-muted-foreground">10文字以上、英大文字・英小文字・数字・記号のうち3種以上</p>
             </div>
             <div className="space-y-2">
-              <Label>新しいパスワード（確認）</Label>
-              <Input type="password" value={pwForm.confirmPassword} onChange={(e) => setPwForm({ ...pwForm, confirmPassword: e.target.value })} required />
+              <Label htmlFor="confirm-password">新しいパスワード（確認）</Label>
+              <Input id="confirm-password" type="password" value={pwForm.confirmPassword} onChange={(e) => setPwForm({ ...pwForm, confirmPassword: e.target.value })} required />
             </div>
             <Button type="submit">変更</Button>
           </form>
