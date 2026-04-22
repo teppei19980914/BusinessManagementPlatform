@@ -148,9 +148,17 @@ export async function deleteMemo(memoId: string, userId: string): Promise<boolea
   if (!existing) return false;
   if (existing.userId !== userId) return false;
 
-  await prisma.memo.update({
-    where: { id: memoId },
-    data: { deletedAt: new Date() },
-  });
+  // PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児データ防止)
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.memo.update({
+      where: { id: memoId },
+      data: { deletedAt: now },
+    }),
+    prisma.attachment.updateMany({
+      where: { entityType: 'memo', entityId: memoId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+  ]);
   return true;
 }

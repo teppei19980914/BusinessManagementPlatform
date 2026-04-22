@@ -1,21 +1,25 @@
 /**
- * PATCH /api/admin/users/[userId] - ユーザ編集 (氏名 / ロール / 有効状態)
+ * PATCH  /api/admin/users/[userId] - ユーザ編集 (氏名 / ロール / 有効状態)
+ * DELETE /api/admin/users/[userId] - ユーザ削除 (論理削除 + ProjectMember カスケード) (PR #89)
  *
  * 役割:
  *   システム管理者がユーザの氏名・システムロール・isActive (有効/無効) を更新する。
  *   isActive=false にすると当該ユーザは即時ログイン不可となる (中間状態あり)。
+ *   DELETE は論理削除で、deletedAt セット + ProjectMember / Session / RecoveryCode 等を
+ *   物理削除する (deleteUser 参照)。
  *
  * 認可: requireAdmin (システム管理者のみ)
- * 監査: audit_logs (action=UPDATE, entityType=user) に before/after 記録。
+ * 監査: audit_logs に before/after 記録。
  *
  * 関連:
  *   - DESIGN.md §9 (アカウント管理 / 無効化)
+ *   - user.service.ts deleteUser (削除カスケード仕様)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
-import { updateUser } from '@/services/user.service';
+import { updateUser, deleteUser } from '@/services/user.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
 
 const updateUserSchema = z.object({
@@ -62,6 +66,53 @@ export async function PATCH(
       return NextResponse.json(
         { error: { code: 'FORBIDDEN', message: '自分自身のロールは変更できません' } },
         { status: 403 },
+      );
+    }
+    throw e;
+  }
+}
+
+/**
+ * ユーザ削除 (PR #89)。
+ * 論理削除 (deletedAt セット) + ProjectMember / Session / RecoveryCode 等を物理削除。
+ * Task.assigneeId / Risk.reporterId 等の scalar 参照は残す (履歴保全)。
+ * 自分自身の削除は不可。
+ */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ userId: string }> },
+) {
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;
+  const forbiddenAdmin = requireAdmin(user);
+  if (forbiddenAdmin) return forbiddenAdmin;
+
+  const { userId } = await params;
+
+  try {
+    const result = await deleteUser(userId, user.id);
+    await recordAuditLog({
+      userId: user.id,
+      action: 'DELETE',
+      entityType: 'user',
+      entityId: userId,
+      afterValue: {
+        deletedUserId: result.deletedUserId,
+        removedMemberships: result.removedMemberships,
+      },
+    });
+    return NextResponse.json({ data: { success: true, ...result } });
+  } catch (e) {
+    if (e instanceof Error && e.message === 'CANNOT_DELETE_SELF') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '自分自身は削除できません' } },
+        { status: 403 },
+      );
+    }
+    if (e instanceof Error && e.message === 'NOT_FOUND') {
+      return NextResponse.json(
+        { error: { code: 'NOT_FOUND', message: '対象ユーザが見つかりません (既に削除済みの可能性)' } },
+        { status: 404 },
       );
     }
     throw e;

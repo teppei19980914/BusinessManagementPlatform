@@ -10,6 +10,9 @@ vi.mock('@/lib/db', () => ({
     },
     projectMember: { findMany: vi.fn() },
     user: { findMany: vi.fn() },
+    // PR #89: deleteRisk が attachment.updateMany を $transaction 内で呼ぶ
+    attachment: { updateMany: vi.fn() },
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
 

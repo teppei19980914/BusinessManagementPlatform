@@ -149,8 +149,16 @@ export async function confirmEstimate(estimateId: string, userId: string): Promi
 }
 
 export async function deleteEstimate(estimateId: string, userId: string): Promise<void> {
-  await prisma.estimate.update({
-    where: { id: estimateId },
-    data: { deletedAt: new Date(), updatedBy: userId },
-  });
+  // PR #89: 紐づく Attachment も同時に論理削除 (孤児データ防止)
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.estimate.update({
+      where: { id: estimateId },
+      data: { deletedAt: now, updatedBy: userId },
+    }),
+    prisma.attachment.updateMany({
+      where: { entityType: 'estimate', entityId: estimateId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+  ]);
 }

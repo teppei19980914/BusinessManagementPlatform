@@ -22,6 +22,11 @@ vi.mock('@/lib/db', () => ({
     recoveryCode: {
       deleteMany: vi.fn(),
     },
+    // PR #89: deleteUser が以下を物理削除する
+    projectMember: { deleteMany: vi.fn() },
+    session: { deleteMany: vi.fn() },
+    passwordResetToken: { deleteMany: vi.fn() },
+    passwordHistory: { deleteMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -49,6 +54,8 @@ import {
   updateUser,
   updateUserStatus,
   updateUserRole,
+  deleteUser,
+  cleanupInactiveUsers,
 } from './user.service';
 import { prisma } from '@/lib/db';
 import {
@@ -315,5 +322,120 @@ describe('updateUser (汎用ディスパッチ)', () => {
 
     expect(r.id).toBe('u-1');
     expect(prisma.roleChangeLog.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteUser (PR #89)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('自分自身の削除は CANNOT_DELETE_SELF', async () => {
+    await expect(deleteUser('same-id', 'same-id')).rejects.toThrow('CANNOT_DELETE_SELF');
+  });
+
+  it('対象ユーザ不在で NOT_FOUND', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+    await expect(deleteUser('u-1', 'admin-1')).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('論理削除 + ProjectMember など関連データを物理削除', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(baseUserRow as never);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue({ count: 3 } as never);
+    vi.mocked(prisma.session.deleteMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.recoveryCode.deleteMany).mockResolvedValue({ count: 10 } as never);
+    vi.mocked(prisma.emailVerificationToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordResetToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordHistory.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    const r = await deleteUser('u-1', 'admin-1');
+
+    expect(r.deletedUserId).toBe('u-1');
+    expect(r.removedMemberships).toBe(3);
+    // User 本体は deletedAt セット + isActive=false + MFA 無効化
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'u-1' },
+        data: expect.objectContaining({
+          deletedAt: expect.any(Date),
+          isActive: false,
+          mfaEnabled: false,
+          mfaSecretEncrypted: null,
+        }),
+      }),
+    );
+    // 削除ログ
+    expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ afterRole: 'deleted', reason: 'ユーザ削除' }),
+      }),
+    );
+  });
+});
+
+describe('cleanupInactiveUsers (PR #89)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('候補が 0 件なら何もしない', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    const r = await cleanupInactiveUsers('admin-1');
+
+    expect(r.deletedUserIds).toEqual([]);
+    expect(r.removedMembershipsTotal).toBe(0);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('非 admin + lastLoginAt/createdAt 閾値超えを抽出し、deleteUser 経由で論理削除', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { id: 'u-stale-1' },
+      { id: 'u-stale-2' },
+    ] as never);
+    // deleteUser が参照する findFirst
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(baseUserRow as never);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.session.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.recoveryCode.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.emailVerificationToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordResetToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordHistory.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    const r = await cleanupInactiveUsers('admin-1');
+
+    expect(r.deletedUserIds).toHaveLength(2);
+    expect(r.removedMembershipsTotal).toBe(2); // 1 + 1
+
+    // where: admin を除外 + lastLoginAt < 閾値 OR (lastLoginAt null && createdAt < 閾値)
+    const findCall = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+    expect(findCall.where.systemRole).toEqual({ not: 'admin' });
+    expect(findCall.where.isActive).toBe(true);
+    expect(findCall.where.deletedAt).toBe(null);
+  });
+
+  it('個別 deleteUser が失敗しても次のユーザ処理を継続', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { id: 'u-bad' },
+      { id: 'u-good' },
+    ] as never);
+    // 1 回目: findFirst で null → NOT_FOUND で失敗
+    // 2 回目: baseUserRow → 成功
+    vi.mocked(prisma.user.findFirst)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(baseUserRow as never);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.session.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.recoveryCode.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.emailVerificationToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordResetToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordHistory.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    const r = await cleanupInactiveUsers('admin-1');
+
+    // u-bad は失敗したので 1 件のみ成功
+    expect(r.deletedUserIds).toHaveLength(1);
   });
 });

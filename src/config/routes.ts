@@ -19,6 +19,9 @@ export const PUBLIC_PATHS = [
   '/setup-password',
   '/api/auth',
   '/api/health', // 外部 cron から定期 ping されるため認証不要
+  // PR #89: Vercel Cron から Authorization: Bearer <CRON_SECRET> で実行される。
+  // middleware のセッション検査は通過させ、route.ts 側で CRON_SECRET 検証 + admin 認証を行う。
+  '/api/admin/users/cleanup-inactive',
 ] as const;
 
 /**

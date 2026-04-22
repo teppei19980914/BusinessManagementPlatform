@@ -31,6 +31,15 @@ export const LOGIN_FAILURE_MAX = 5;
 /** 一時ロックの継続時間 (ミリ秒)。ロック後この時間経過すると自動解除。 */
 export const TEMPORARY_LOCK_DURATION_MS = 30 * 60 * 1000; // 30 分
 
+/**
+ * 非アクティブ自動削除の猶予期間 (日) — PR #89。
+ * lastLoginAt (未ログインの場合 createdAt) からこの日数を経過したアカウントは
+ * 日次 cron `/api/admin/users/cleanup-inactive` で論理削除される。
+ * ProjectMember も同時に物理削除されるため、メンバ一覧から消えた時点で
+ * 管理者が手動削除を忘れても DB 整合性は担保される。
+ */
+export const INACTIVE_USER_DELETION_DAYS = 30;
+
 // ---------- セッション (NextAuth JWT) ----------
 
 /**

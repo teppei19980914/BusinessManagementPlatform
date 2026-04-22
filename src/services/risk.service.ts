@@ -299,10 +299,18 @@ export async function updateRisk(
 }
 
 export async function deleteRisk(riskId: string, userId: string): Promise<void> {
-  await prisma.riskIssue.update({
-    where: { id: riskId },
-    data: { deletedAt: new Date(), updatedBy: userId },
-  });
+  // PR #89: 紐づく Attachment も論理削除 (UI からアクセス不可になる孤児データ防止)
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.riskIssue.update({
+      where: { id: riskId },
+      data: { deletedAt: now, updatedBy: userId },
+    }),
+    prisma.attachment.updateMany({
+      where: { entityType: 'risk', entityId: riskId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+  ]);
 }
 
 const IMPACT_LABELS: Record<string, string> = { low: '低', medium: '中', high: '高' };

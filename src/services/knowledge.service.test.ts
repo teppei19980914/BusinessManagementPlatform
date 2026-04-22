@@ -10,6 +10,9 @@ vi.mock('@/lib/db', () => ({
       count: vi.fn(),
     },
     projectMember: { findMany: vi.fn() },
+    // PR #89: deleteKnowledge が attachment.updateMany を $transaction 内で呼ぶ
+    attachment: { updateMany: vi.fn() },
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
 

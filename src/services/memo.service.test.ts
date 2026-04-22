@@ -8,6 +8,9 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    // PR #89: deleteMemo が attachment.updateMany を $transaction 内で呼ぶ
+    attachment: { updateMany: vi.fn() },
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
 

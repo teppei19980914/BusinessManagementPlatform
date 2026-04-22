@@ -267,29 +267,36 @@ export function ProjectDetailClient({
     router.refresh();
   }
 
-  async function handleDelete() {
-    // 2 段階確認:
-    //   1) まずプロジェクト削除の意思確認
-    //   2) 次に「関連データ（リスク/課題・振り返り・ナレッジ）も削除するか」を問う
-    //      - OK (cascade): 関連データを物理削除
-    //      - キャンセル: 関連データは残す（全○○ 画面には残る。admin のみ管理可能）
-    //   なお、ナレッジは他プロジェクトと共有している場合は当該プロジェクトとの
-    //   紐付けのみ解除する (他プロジェクトの閲覧を壊さないため)。
-    if (!confirm('このプロジェクトを削除しますか？この操作は取り消せません。')) return;
+  // PR #89: 細粒度カスケード削除ダイアログ (4 チェックボックス) の state
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [cascadeRisks, setCascadeRisks] = useState(false);
+  const [cascadeIssues, setCascadeIssues] = useState(false);
+  const [cascadeRetros, setCascadeRetros] = useState(false);
+  const [cascadeKnowledge, setCascadeKnowledge] = useState(false);
 
-    const cascade = confirm(
-      '関連データも削除しますか？\n\n'
-      + '[OK] このプロジェクトに紐づく リスク/課題・振り返り・ナレッジ を物理削除\n'
-      + '       （ナレッジは他プロジェクトと共有している場合、紐付けのみ解除）\n'
-      + '[キャンセル] 関連データは残す\n'
-      + '       （全リスク/課題・全振り返り・全ナレッジ 画面に表示され続けます。\n'
-      + '        管理はシステム管理者のみが可能になります）',
+  function openDeleteDialog() {
+    // 毎回 default (全 off = 資産として残す) でリセット
+    setCascadeRisks(false);
+    setCascadeIssues(false);
+    setCascadeRetros(false);
+    setCascadeKnowledge(false);
+    setIsDeleteOpen(true);
+  }
+
+  async function handleConfirmDelete() {
+    setIsDeleteOpen(false);
+    // cascade=true は常時 ON (プロジェクト本体 + 強制削除対象を処理するため)。
+    // 個別フラグは UI のチェックで上書きされる。
+    const params = new URLSearchParams({
+      cascade: 'true',
+      cascadeRisks: String(cascadeRisks),
+      cascadeIssues: String(cascadeIssues),
+      cascadeRetros: String(cascadeRetros),
+      cascadeKnowledge: String(cascadeKnowledge),
+    });
+    await withLoading(() =>
+      fetch(`/api/projects/${project.id}?${params.toString()}`, { method: 'DELETE' }),
     );
-
-    const url = cascade
-      ? `/api/projects/${project.id}?cascade=true`
-      : `/api/projects/${project.id}`;
-    await withLoading(() => fetch(url, { method: 'DELETE' }));
     router.push('/projects');
   }
 
@@ -389,7 +396,7 @@ export function ProjectDetailClient({
             </>
           )}
           {activeTab === 'overview' && canDeleteProject && (
-            <Button variant="outline" className="text-destructive" onClick={handleDelete}>{t('delete')}</Button>
+            <Button variant="outline" className="text-destructive" onClick={openDeleteDialog}>{t('delete')}</Button>
           )}
           <Button variant="outline" onClick={() => router.push('/projects')}>
             一覧に戻る
@@ -679,6 +686,80 @@ export function ProjectDetailClient({
           <div className="mt-4 flex justify-end">
             <Button variant="outline" onClick={closeSuggestionsModal}>
               閉じる
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* PR #89: プロジェクト削除 細粒度カスケード確認ダイアログ */}
+      <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+        <DialogContent className="max-w-[min(90vw,36rem)]">
+          <DialogHeader>
+            <DialogTitle>プロジェクトを削除しますか？</DialogTitle>
+            <DialogDescription>
+              この操作は取り消せません。各資産一覧 (リスク / 課題 / 振り返り / ナレッジ) は、
+              チェックを入れた項目のみ物理削除されます。チェックを入れないものは資産として
+              全○○画面に残ります。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+              <div className="mb-1 font-medium text-foreground">強制削除される項目 (選択不可)</div>
+              プロジェクト本体・概要・見積もり・WBS管理・ガント・メンバー・関連 URL
+            </div>
+            <div className="space-y-2 rounded-md border border-border p-3">
+              <div className="mb-1 text-sm font-medium">資産として扱う項目 (各一覧から削除するかチェック)</div>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={cascadeRisks}
+                  onChange={(e) => setCascadeRisks(e.target.checked)}
+                  className="mt-0.5 rounded"
+                />
+                <span>リスク一覧 (プロジェクトに紐づく「リスク」を削除)</span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={cascadeIssues}
+                  onChange={(e) => setCascadeIssues(e.target.checked)}
+                  className="mt-0.5 rounded"
+                />
+                <span>課題一覧 (プロジェクトに紐づく「課題」を削除)</span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={cascadeRetros}
+                  onChange={(e) => setCascadeRetros(e.target.checked)}
+                  className="mt-0.5 rounded"
+                />
+                <span>振り返り一覧 (プロジェクトの振り返り + コメントを削除)</span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={cascadeKnowledge}
+                  onChange={(e) => setCascadeKnowledge(e.target.checked)}
+                  className="mt-0.5 rounded"
+                />
+                <span>
+                  ナレッジ一覧 (単独紐付けのみ物理削除。他プロジェクトと共有するナレッジは
+                  紐付けだけ解除し本体は残す)
+                </span>
+              </label>
+            </div>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
+              キャンセル
+            </Button>
+            <Button
+              variant="outline"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
+              onClick={handleConfirmDelete}
+            >
+              プロジェクトを削除する
             </Button>
           </div>
         </DialogContent>

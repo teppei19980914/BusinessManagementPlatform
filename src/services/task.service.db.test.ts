@@ -18,6 +18,9 @@ vi.mock('@/lib/db', () => ({
     project: { findMany: vi.fn() },
     taskProgressLog: { create: vi.fn(), findMany: vi.fn() },
     user: { findMany: vi.fn() },
+    // PR #89: deleteTask が attachment.updateMany を $transaction 内で呼ぶ
+    attachment: { updateMany: vi.fn() },
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
 

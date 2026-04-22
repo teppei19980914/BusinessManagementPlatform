@@ -502,10 +502,18 @@ export async function updateTask(
  *   親 WP が存在する場合は集計再計算 (子が消えた → 親の合計工数等が変わる)。
  */
 export async function deleteTask(taskId: string, userId: string): Promise<void> {
-  const task = await prisma.task.update({
-    where: { id: taskId },
-    data: { deletedAt: new Date(), updatedBy: userId },
-  });
+  // PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児データ防止)
+  const now = new Date();
+  const [task] = await prisma.$transaction([
+    prisma.task.update({
+      where: { id: taskId },
+      data: { deletedAt: now, updatedBy: userId },
+    }),
+    prisma.attachment.updateMany({
+      where: { entityType: 'task', entityId: taskId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+  ]);
 
   if (task.parentTaskId) {
     await recalculateAncestors(task.parentTaskId);

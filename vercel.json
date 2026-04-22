@@ -5,6 +5,10 @@
     {
       "path": "/api/health",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/admin/users/cleanup-inactive",
+      "schedule": "0 3 * * *"
     }
   ]
 }

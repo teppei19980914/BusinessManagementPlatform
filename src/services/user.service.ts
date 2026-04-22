@@ -36,7 +36,7 @@ import {
   sendVerificationEmail,
   EmailSendError,
 } from './email-verification.service';
-import { BCRYPT_COST } from '@/config';
+import { BCRYPT_COST, INACTIVE_USER_DELETION_DAYS } from '@/config';
 
 export type UserDTO = {
   id: string;
@@ -264,4 +264,128 @@ export async function updateUserRole(
   });
 
   return toUserDTO(updated);
+}
+
+/**
+ * ユーザ削除 (PR #89) — 論理削除 + ProjectMember カスケード物理削除。
+ *
+ * 設計判断:
+ *   - User 本体は論理削除 (deletedAt セット)
+ *     理由: Task.assigneeId / RiskIssue.reporterId / Knowledge.createdBy 等
+ *     多数の scalar カラムで user.id を参照しているため、物理削除すると
+ *     監査ログや過去タスクの「誰がやった」情報が参照先エラーになる。
+ *     論理削除なら row は残り、UI 表示時は「削除済みユーザ」等でハンドリングできる。
+ *   - ProjectMember は**物理削除**
+ *     理由: ProjectMember は「現在の所属」を表すテーブル。削除済みユーザが
+ *     メンバー一覧に残ると「幽霊メンバー」になり、一括更新や権限判定でノイズ。
+ *   - Session / recoveryCode / emailVerificationToken / passwordResetToken も物理削除
+ *     理由: 再ログイン機会を完全に遮断するため。
+ *   - 自分自身の削除は禁止 (最後の admin が自分を消すと詰むケースもあるが、
+ *     単純化のため 「自分禁止」 に統一)
+ *
+ * @throws {Error} 'CANNOT_DELETE_SELF' — 自分自身を削除しようとした
+ * @throws {Error} 'NOT_FOUND'          — 対象ユーザが存在しない or 既に削除済み
+ */
+export async function deleteUser(
+  userId: string,
+  deleterId: string,
+): Promise<{ deletedUserId: string; removedMemberships: number }> {
+  if (userId === deleterId) {
+    throw new Error('CANNOT_DELETE_SELF');
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { id: userId, deletedAt: null },
+  });
+  if (!user) throw new Error('NOT_FOUND');
+
+  // ProjectMember / Session / RecoveryCode 等を物理削除 + User 本体に deletedAt セット
+  const [removedMembers] = await prisma.$transaction([
+    prisma.projectMember.deleteMany({ where: { userId } }),
+    prisma.session.deleteMany({ where: { userId } }),
+    prisma.recoveryCode.deleteMany({ where: { userId } }),
+    prisma.emailVerificationToken.deleteMany({ where: { userId } }),
+    prisma.passwordResetToken.deleteMany({ where: { userId } }),
+    prisma.passwordHistory.deleteMany({ where: { userId } }),
+    prisma.user.update({
+      where: { id: userId },
+      data: {
+        deletedAt: new Date(),
+        isActive: false,
+        // セキュリティ上の念押し: 削除後の再利用/誤ログインを防ぐため MFA も外す
+        mfaEnabled: false,
+        mfaSecretEncrypted: null,
+      },
+    }),
+    prisma.roleChangeLog.create({
+      data: {
+        changedBy: deleterId,
+        targetUserId: userId,
+        changeType: 'system_role',
+        beforeRole: user.systemRole,
+        afterRole: 'deleted',
+        reason: 'ユーザ削除',
+      },
+    }),
+  ]);
+
+  return {
+    deletedUserId: userId,
+    removedMemberships: removedMembers.count,
+  };
+}
+
+/**
+ * 非アクティブユーザの自動削除 (PR #89) — 日次 cron で実行。
+ *
+ * 条件:
+ *   - isActive = true (有効化済) であり
+ *   - deletedAt = null (まだ削除されていない) であり
+ *   - lastLoginAt < 閾値日 (未ログインの場合 createdAt < 閾値日)
+ *   - systemRole = 'admin' 以外 (admin は自動削除対象外)
+ *
+ * 理由:
+ *   - 長期不在のアカウントは攻撃面 (漏洩パスワード / 放置セッション) となる
+ *   - admin は業務継続性のため自動削除しない (手動削除のみ)
+ *   - ProjectMember も deleteUser 経由で物理削除されるため、孤児データは残らない
+ *
+ * 呼び出し側:
+ *   - `/api/admin/users/cleanup-inactive` POST (vercel.json の cron で日次起動)
+ *   - 管理画面からの手動実行 (admin ボタン)
+ */
+export async function cleanupInactiveUsers(
+  systemTriggerId: string,
+): Promise<{ deletedUserIds: string[]; removedMembershipsTotal: number }> {
+  const thresholdDate = new Date(
+    Date.now() - INACTIVE_USER_DELETION_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  // 候補抽出: 長期間ログインなし (or 一度もログインしていないかつ作成から閾値経過)
+  const candidates = await prisma.user.findMany({
+    where: {
+      isActive: true,
+      deletedAt: null,
+      systemRole: { not: 'admin' },
+      OR: [
+        { lastLoginAt: { lt: thresholdDate } },
+        { AND: [{ lastLoginAt: null }, { createdAt: { lt: thresholdDate } }] },
+      ],
+    },
+    select: { id: true },
+  });
+
+  let removedMembershipsTotal = 0;
+  const deletedUserIds: string[] = [];
+
+  for (const c of candidates) {
+    try {
+      const r = await deleteUser(c.id, systemTriggerId);
+      removedMembershipsTotal += r.removedMemberships;
+      deletedUserIds.push(r.deletedUserId);
+    } catch {
+      // 個別失敗は握りつぶし、他のユーザ削除を継続 (cron の信頼性優先)
+    }
+  }
+
+  return { deletedUserIds, removedMembershipsTotal };
 }
