@@ -13,7 +13,11 @@
     "db:reset": "prisma migrate reset",
     "migrate:print": "tsx scripts/print-migration.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:update-snapshots": "playwright test --update-snapshots",
+    "e2e:coverage-check": "tsx scripts/check-e2e-coverage.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
@@ -37,6 +41,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",

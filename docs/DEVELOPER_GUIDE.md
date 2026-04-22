@@ -480,6 +480,51 @@ GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-c
   `@@SAST@@` / `@@CODEQL@@`) は security.yml の `sed` で定義済み。新しい検証手段を
   増やす場合は security.yml にも変数を追加する。
 
+### 9.4 E2E テスト (PR #90 で導入)
+
+```bash
+# ローカル実行 (Next.js dev 起動済みが前提)
+pnpm dev &
+pnpm test:e2e                       # 全 specs + visual を実行
+pnpm test:e2e:ui                    # UI モードで対話的に実行
+pnpm test:e2e:update-snapshots      # 視覚回帰 baseline を更新
+
+# カバレッジ一覧の gap 検出
+pnpm e2e:coverage-check
+```
+
+### 9.5 新機能追加時の E2E カバレッジ横展開 (必須)
+
+**新しい `page.tsx` や `route.ts` を追加したら、必ず `docs/E2E_COVERAGE.md` を更新**してください。
+更新がないと `ci.yml` の `e2e:coverage-check` ステップが fail し、マージできません。
+
+更新パターン:
+```markdown
+# 完全に E2E カバー済
+- [x] `/new-feature` — e2e/specs/04-new-feature.spec.ts
+
+# 同一 PR 内ではカバーせず、後続 PR で追加予定
+- [ ] `/new-feature` — skip: PR #XX で追加予定
+
+# 意図的にカバー対象外
+- [ ] `/admin/legacy-report` — skip: read-only / 優先度低
+```
+
+### 9.6 視覚回帰のベースライン運用 (PR #90 合意)
+
+視覚回帰テスト (`e2e/visual/*.spec.ts`) の baseline PNG は `e2e/**__screenshots__/` に
+commit されています。**PR 中に baseline 更新を許容**する方針です (前提: リビジョンが
+git 履歴に残るため監査可能):
+
+1. PR で UI を変更した結果、視覚回帰が fail する
+2. ローカルで `pnpm test:e2e:update-snapshots` を実行
+3. 更新された PNG を git commit
+4. レビュアは PR diff で新旧 baseline の画像差分を確認
+5. 意図したなら承認、意図しないなら指摘
+
+baseline を上げずに fail したままマージすると main が red になり続けるので、
+**PR マージ前に必ず緑化**してください。
+
 ---
 
 ## 10. コミットとデプロイ
