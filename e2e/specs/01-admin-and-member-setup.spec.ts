@@ -157,7 +157,20 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
 
     await page.waitForURL(/\/login\/mfa/);
     await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
+
+    // LESSONS §4.18 の汎化: click 前に verify API レスポンスを予約 → click 後に await で
+    // API 完了を確証。続いて /projects へのナビゲーションを待つ。
+    // (MFA verify → session update → location.href=/ → middleware → / → /projects
+    //  という長い非同期チェーンが高並列 CI で 15s に収まらないケースを回避)
+    const verifyRes = page.waitForResponse(
+      (r) =>
+        r.url().includes('/api/auth/mfa/verify')
+        && r.request().method() === 'POST',
+    );
     await page.getByRole('button', { name: '検証' }).click();
+    const res = await verifyRes;
+    expect(res.ok(), `MFA verify failed: ${res.status()}`).toBeTruthy();
+
     await waitForProjectsReady(page);
   });
 
@@ -212,7 +225,17 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.getByRole('button', { name: 'ログイン' }).click();
     await page.waitForURL(/\/login\/mfa/);
     await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
+
+    // Step 2b と同じ理由で waitForResponse を併用 (LESSONS §4.18)
+    const verifyRes = page.waitForResponse(
+      (r) =>
+        r.url().includes('/api/auth/mfa/verify')
+        && r.request().method() === 'POST',
+    );
     await page.getByRole('button', { name: '検証' }).click();
+    const mfaRes = await verifyRes;
+    expect(mfaRes.ok(), `MFA verify failed: ${mfaRes.status()}`).toBeTruthy();
+
     await waitForProjectsReady(page);
 
     const today = new Date().toISOString().slice(0, 10);

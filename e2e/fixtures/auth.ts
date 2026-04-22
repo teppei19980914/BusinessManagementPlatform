@@ -39,7 +39,19 @@ export async function loginAsAdminWithMfa(
 
   await page.waitForURL(/\/login\/mfa/);
   await page.getByLabel('認証コード').fill(generateTotpCode(params.mfaSecret));
+
+  // MFA verify の click 後は「fetch verify → update session → location.href=/ →
+  // middleware → /projects」と非同期チェーンが長い。高並列 CI では waitForURL
+  // 単独では timeout するため、verify API のレスポンスを click 前に予約する
+  // (LESSONS §4.18 / §4.19 参照)。
+  const verifyRes = page.waitForResponse(
+    (r) => r.url().includes('/api/auth/mfa/verify') && r.request().method() === 'POST',
+  );
   await page.getByRole('button', { name: '検証' }).click();
+  const res = await verifyRes;
+  if (!res.ok()) {
+    throw new Error(`MFA verify failed: ${res.status()} ${await res.text()}`);
+  }
   await waitForProjectsReady(page);
 }
 
