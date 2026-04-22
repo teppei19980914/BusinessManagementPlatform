@@ -125,6 +125,13 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
 
     await page.goto(`/projects/${projectId}/tasks`);
     await page.waitForLoadState('networkidle');
+
+    // WBS ツリーは WP を初期 collapsed 表示し、子 ACT は DOM から除外される
+    // (tasks-client.tsx L297: `!isCollapsed && task.children?.map(...)`)。
+    // ACT を検証する前に WP 行の展開トグル `▶` をクリックする。
+    const wpRow = page.locator('tr').filter({ hasText: WP_NAME });
+    await wpRow.getByRole('button', { name: /展開|折りたたみ/ }).click();
+
     await expect(
       page.locator('tr').filter({ hasText: ACT_NAME }).first(),
     ).toBeVisible({ timeout: 10_000 });

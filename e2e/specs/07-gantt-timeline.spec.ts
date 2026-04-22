@@ -105,13 +105,15 @@ test.describe('@feature:project:gantt ガントチャート (PR #96)', () => {
 
   test('担当者フィルタと状況フィルタの UI コントロールが表示される', async () => {
     const page = sharedPage;
-    // MultiSelectFilter のラベル近傍にボタンがある。role='button' でフィルタトリガを確認
-    await expect(page.getByText('担当者', { exact: true }).first()).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(page.getByText('状況', { exact: true }).first()).toBeVisible({
-      timeout: 10_000,
-    });
+    // MultiSelectFilter は <Button>{label}: {allLabel or count}</Button> を render する
+    // ので、button のテキストは「担当者: 全員」等の合成文字列。
+    // exact 一致では見つからないので、部分一致 (`^担当者` で始まるボタン) で検証する。
+    await expect(
+      page.getByRole('button', { name: /^担当者[::]/ }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.getByRole('button', { name: /^状況[::]/ }),
+    ).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'gantt-filters-visible');
   });
 });

@@ -324,6 +324,75 @@ await expect(page).toHaveScreenshot('x.png', {
 });
 ```
 
+### 4.13 collapsed ツリーの子要素は DOM 自体に不在
+
+**症状**: `page.locator('tr').filter({ hasText: ACT_NAME })` が `toBeVisible` で
+「element(s) not found」でタイムアウト。
+
+**原因**: WBS ツリーは親 WP が collapsed 状態だと **子 ACT を DOM から除外する**:
+```tsx
+{!isCollapsed && task.children?.map((child) => <TaskTreeNode ... />)}
+```
+初期状態 (fresh navigation 直後) では `expandedTaskIds` が空なので全 WP が collapsed。
+
+**対策**: 子要素を検証する前に親の展開トグルをクリックする:
+```ts
+const wpRow = page.locator('tr').filter({ hasText: WP_NAME });
+await wpRow.getByRole('button', { name: /展開|折りたたみ/ }).click();
+// その後に子を検証
+await expect(page.locator('tr').filter({ hasText: ACT_NAME }).first()).toBeVisible();
+```
+
+**汎化**: 折りたたみ/開閉を持つ UI (tree / accordion / disclosure) では **親を開いてから子を検証**。
+useSessionStringSet 等で永続化される展開状態は後続 test にも引き継がれるので、1 度展開すれば OK。
+
+### 4.14 合成ラベルのボタンは exact match で取れない
+
+**症状**: `page.getByText('担当者', { exact: true })` が「element not found」。
+
+**原因**: MultiSelectFilter コンポーネントは label + 選択状態を合成してボタン表示する:
+```jsx
+<Button>{label}: {isAllSelected ? allLabel : `${selected.size} / ${options.length}`}</Button>
+```
+→ 実テキストは「担当者: 全員」「状況: 2 / 5」等。`exact: true` では label 単独と一致しない。
+
+**対策**: 正規表現で prefix match する (半角/全角コロンの両方を許容):
+```ts
+await expect(
+  page.getByRole('button', { name: /^担当者[::]/ }),
+).toBeVisible();
+```
+
+**汎化**: フィルタボタンや「○○: △△」形式のトグル/select 等は `^<label>[::]`
+正規表現で取るのが標準 pattern。
+
+### 4.15 視覚回帰での動的コンテンツは mask ではなく "除去" で対応する
+
+**症状**: `/projects` 一覧を `mask: [page.locator('tbody tr')]` で撮影しても、
+baseline と現在の行数が異なると mask 境界が一致せず **pixel diff 23%** 等で fail する。
+
+**原因**:
+1. 並列テスト環境で他 spec (spec 02, 04, 06 等) が同じ DB にデータを残存させる
+2. mask は撮影時点の DOM を基に動的に領域決定するため、**行数が違えば mask 範囲も違う**
+3. mask 外の白地領域も位置が変わり、pixel 比較で差分として検知される
+
+**対策 (3 つの選択肢)**:
+
+| 対策 | 適用場面 |
+|---|---|
+| a) 視覚回帰対象から外す | 一覧画面 (多 spec のデータが混在) |
+| b) 固定値でデータを seed | 日付・ID 等の可変要素がある詳細画面 |
+| c) 画面全体を固定サイズ element に限定 | ヘッダやフォームなど構造が動的でない |
+
+**実例 (PR #96 hotfix)**:
+- `/projects` 一覧 → 対策 a: 視覚回帰削除 (settings-themes で主視覚回帰を担保)
+- `/projects/[id]` 概要 → 対策 b: `createProjectViaApi` に固定日付
+  `{ plannedStartDate: '2026-01-01', plannedEndDate: '2026-02-01' }` を渡す
+- `/login`, `/reset-password` → 既に対策 c (データ入力前の初期状態)
+
+**教訓**: mask は「座標固定」の補助であって、「動的データの吸収」には向かない。
+動的データを撮るなら **データ側を固定化** する方が確実。
+
 ### 4.11 一覧画面の行要素は行スコープ + .first() で取る
 
 **症状**:
