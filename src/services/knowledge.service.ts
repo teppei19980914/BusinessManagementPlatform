@@ -351,8 +351,16 @@ export async function updateKnowledge(
 }
 
 export async function deleteKnowledge(knowledgeId: string, userId: string): Promise<void> {
-  await prisma.knowledge.update({
-    where: { id: knowledgeId },
-    data: { deletedAt: new Date(), updater: { connect: { id: userId } } },
-  });
+  // PR #89: 紐づく Attachment も同時に論理削除 (孤児データ防止)
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.knowledge.update({
+      where: { id: knowledgeId },
+      data: { deletedAt: now, updater: { connect: { id: userId } } },
+    }),
+    prisma.attachment.updateMany({
+      where: { entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+  ]);
 }

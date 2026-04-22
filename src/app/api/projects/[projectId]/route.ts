@@ -82,12 +82,18 @@ export async function PATCH(
 }
 
 /**
- * プロジェクト削除。クエリパラメータ cascade=true で関連データを物理削除:
- *   - リスク/課題、振り返り、タスク、見積、メンバー: 全削除
- *   - ナレッジ: 他プロジェクトと共有していないものは物理削除、共有中は紐付け解除のみ
+ * プロジェクト削除 (PR #89 で細粒度化):
  *
- * cascade 省略時は従来通り論理削除のみ (データは残るが、
- * ProjectMember が特定できず全○○ 画面からは admin のみ管理可能)。
+ * クエリパラメータ:
+ *   - cascade=true                : 関連データ物理削除モード (従来機能)
+ *   - cascadeRisks=true           : リスク一覧も物理削除 (PR #89)
+ *   - cascadeIssues=true          : 課題一覧も物理削除 (PR #89)
+ *   - cascadeRetros=true          : 振り返り一覧も物理削除 (PR #89)
+ *   - cascadeKnowledge=true       : ナレッジ一覧も物理削除 (PR #89)
+ *
+ * フラグなし (未指定 or cascade=false): 従来通り論理削除のみ。
+ * 強制削除: Project 本体 / Task / Estimate / ProjectMember / Attachment (project/task/estimate) は
+ *           cascade=true の場合は常に物理削除 (個別フラグ不要)。
  */
 export async function DELETE(
   req: NextRequest,
@@ -101,18 +107,34 @@ export async function DELETE(
   if (forbidden) return forbidden;
 
   const cascade = req.nextUrl.searchParams.get('cascade') === 'true';
+  const cascadeRisks = req.nextUrl.searchParams.get('cascadeRisks') === 'true';
+  const cascadeIssues = req.nextUrl.searchParams.get('cascadeIssues') === 'true';
+  const cascadeRetros = req.nextUrl.searchParams.get('cascadeRetros') === 'true';
+  const cascadeKnowledge = req.nextUrl.searchParams.get('cascadeKnowledge') === 'true';
 
   const before = await getProject(projectId);
 
   if (cascade) {
-    const counts = await deleteProjectCascade(projectId);
+    const counts = await deleteProjectCascade(projectId, {
+      cascadeRisks,
+      cascadeIssues,
+      cascadeRetros,
+      cascadeKnowledge,
+    });
     await recordAuditLog({
       userId: user.id,
       action: 'DELETE',
       entityType: 'project',
       entityId: projectId,
       beforeValue: before ? sanitizeForAudit(before as unknown as Record<string, unknown>) : null,
-      afterValue: { cascade: true, ...counts },
+      afterValue: {
+        cascade: true,
+        cascadeRisks,
+        cascadeIssues,
+        cascadeRetros,
+        cascadeKnowledge,
+        ...counts,
+      },
     });
     return NextResponse.json({ data: { success: true, cascade: true, ...counts } });
   }

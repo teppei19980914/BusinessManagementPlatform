@@ -100,6 +100,32 @@ export function UserEditDialog({
     onOpenChange(false);
   }
 
+  // PR #89: ユーザ削除 (論理削除 + ProjectMember 物理削除)。
+  // 2 段階 confirm (意思確認 + 影響告知) で誤操作を防ぐ。
+  async function handleDelete() {
+    if (!user) return;
+    if (!confirm(
+      `「${user.name}」(${user.email}) を削除しますか？\n\n`
+      + 'この操作でユーザは即時ログイン不可となり、全プロジェクトの\n'
+      + 'メンバー情報から削除されます。\n\n'
+      + '※ 過去のタスク担当・リスク起票等の履歴は保全されます。',
+    )) return;
+    setError('');
+    const res = await withLoading(() =>
+      fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' }),
+    );
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setError(json.error?.message || '削除に失敗しました');
+      return;
+    }
+    const json = await res.json().catch(() => ({ data: null }));
+    const removed = json?.data?.removedMemberships ?? 0;
+    alert(`削除しました (紐づくプロジェクトメンバー ${removed} 件も削除)`);
+    await onSaved();
+    onOpenChange(false);
+  }
+
   // ロック表示用の状態判定 (PR #85) — nowAtMount は hook 順序の都合で上部宣言済
   const temporaryLocked
     = !!user.lockedUntil && new Date(user.lockedUntil).getTime() > nowAtMount;
@@ -180,6 +206,23 @@ export function UserEditDialog({
               ロック解除 (失敗カウントリセット)
             </Button>
           )}
+        </div>
+
+        {/* PR #89: 削除ボタン (論理削除 + ProjectMember 物理削除) */}
+        <div className="mt-4 space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+          <div className="font-medium text-destructive">危険な操作</div>
+          <div className="space-y-1 text-xs text-muted-foreground">
+            ユーザを削除すると即時ログイン不可となり、全プロジェクトの
+            メンバー情報から削除されます。過去の作業履歴 (担当タスク・起票リスク等) は保全されます。
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full border-destructive/40 text-destructive hover:bg-destructive/10"
+            onClick={handleDelete}
+          >
+            このユーザを削除
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

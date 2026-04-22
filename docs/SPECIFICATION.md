@@ -282,6 +282,8 @@ MVPでは以下のフェーズを対象とする。
 | ユーザ管理画面 | ユーザを検索する | ○ | × | × | × |
 | ユーザ管理画面 | ユーザを有効化/無効化する | ○ | × | × | × |
 | ユーザ管理画面 | システムロールを変更する | ○ | × | × | × |
+| ユーザ管理画面 | ユーザを削除する (PR #89) | ○ | × | × | × |
+| ユーザ管理画面 | 非アクティブユーザを整理 (手動クリーンアップ、PR #89) | ○ | × | × | × |
 | プロジェクトメンバー管理画面 | 参加メンバー一覧を見る | ○ | △ | × | × |
 | プロジェクトメンバー管理画面 | プロジェクトメンバーを追加する | ○ | × | × | × |
 | プロジェクトメンバー管理画面 | プロジェクトメンバーを解除する | ○ | × | × | × |
@@ -1289,6 +1291,54 @@ MVPでは以下のフェーズを対象とする。
 | 永続ロック | アカウントがロックされています。管理者に解除を依頼してください。 |
 | 一時ロック (期限内) | ログイン失敗が続いたためアカウントが一時ロックされています。YYYY-MM-DD HH:MM 以降に再度お試しください。 |
 | それ以外 (パスワード誤り / 未存在メール 等) | メールアドレスまたはパスワードが正しくありません |
+
+#### 13.4.5 ユーザ削除とカスケード (PR #89 で実装)
+
+| 項目 | 仕様 |
+|---|---|
+| 削除トリガ | 1) 管理画面「このユーザを削除」ボタン 2) 日次 cron による自動削除 |
+| 自動削除条件 | `lastLoginAt` (未ログインの場合 `createdAt`) から 30 日経過 + systemRole='admin' 以外 |
+| 削除方式 | User 本体: **論理削除** (deletedAt セット + isActive=false + MFA 無効化) |
+| カスケード | ProjectMember / Session / RecoveryCode / EmailVerificationToken / PasswordResetToken / PasswordHistory を**物理削除** |
+| 保全対象 | Task.assigneeId / RiskIssue.reporterId / Knowledge.createdBy 等の scalar 参照は残す (履歴保全) |
+| 自己削除 | 禁止 (CANNOT_DELETE_SELF) |
+| cron 認証 | Vercel Cron + `Authorization: Bearer <CRON_SECRET>` (環境変数) |
+
+**関連**:
+- `vercel.json` の `crons` で `/api/admin/users/cleanup-inactive` を日次 03:00 UTC 実行
+- `src/config/security.ts` の `INACTIVE_USER_DELETION_DAYS` (既定 30) で閾値変更可
+
+#### 13.4.6 プロジェクト削除カスケードの細粒度制御 (PR #89)
+
+プロジェクト削除ダイアログで「どの資産を削除するか」を 4 つのチェックボックスで個別指定:
+
+| チェック項目 | 対象エンティティ |
+|---|---|
+| リスク一覧 | `riskIssue` WHERE type='risk' + 紐づく `attachment` |
+| 課題一覧 | `riskIssue` WHERE type='issue' + 紐づく `attachment` |
+| 振り返り一覧 | `retrospective` + `retrospectiveComment` + 紐づく `attachment` |
+| ナレッジ一覧 | `knowledge` (単独紐付けのみ物理削除、共有は紐付け解除のみ) + 紐づく `attachment` |
+
+チェックを入れなかった項目は物理削除されず、全○○ 画面で「親プロジェクト削除済みの孤児資産」として残る。
+
+**強制削除対象 (チェック不能、常に物理削除)**:
+プロジェクト本体 / Task + TaskProgressLog (WBS・ガント) / Estimate (見積) / ProjectMember / 上記に紐づく Attachment 全て。
+
+#### 13.4.7 Attachment カスケード削除 (PR #89)
+
+親エンティティ (project / task / estimate / risk / retrospective / knowledge / memo) を削除したとき、
+紐づく `attachment` も同時に論理削除する。UI からアクセスできない孤児 attachment が DB に残留するのを防ぐ。
+
+| 親エンティティ | 削除サービス | attachment の削除タイミング |
+|---|---|---|
+| Task | `deleteTask` | $transaction 内で同時 |
+| Estimate | `deleteEstimate` | $transaction 内で同時 |
+| Risk/Issue | `deleteRisk` | $transaction 内で同時 |
+| Retrospective | `deleteRetrospective` | $transaction 内で同時 |
+| Knowledge | `deleteKnowledge` | $transaction 内で同時 |
+| Memo | `deleteMemo` | $transaction 内で同時 |
+| Project (論理削除) | `deleteProject` | project / task / estimate 配下を同時 |
+| Project (物理カスケード) | `deleteProjectCascade` | 削除する全エンティティの attachment を物理削除 |
 
 **enumeration 対策**: `lock-status` API は存在しないメールでも `status: 'none'` を返し、
 ロックされていない既存ユーザと区別できないようにしている。ロック状態の開示は、

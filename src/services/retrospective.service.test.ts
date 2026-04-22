@@ -11,6 +11,9 @@ vi.mock('@/lib/db', () => ({
     retrospectiveComment: { create: vi.fn() },
     projectMember: { findMany: vi.fn() },
     user: { findMany: vi.fn() },
+    // PR #89: deleteRetrospective が attachment.updateMany を $transaction 内で呼ぶ
+    attachment: { updateMany: vi.fn() },
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
 

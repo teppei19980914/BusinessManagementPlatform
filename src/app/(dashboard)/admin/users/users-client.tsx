@@ -111,10 +111,35 @@ export function UsersClient({ initialUsers }: Props) {
     setForm({ name: '', email: '', systemRole: 'general' });
   }
 
+  // PR #89: 非アクティブユーザの手動クリーンアップ (vercel cron の日次実行に加え、手動でも実行可能)
+  async function handleManualCleanup() {
+    if (!confirm(
+      '最終ログインから 30 日以上経過した非アクティブユーザを一括削除します。\n'
+      + 'admin ユーザは対象外です。削除されたユーザの ProjectMember も\n'
+      + '同時に物理削除されます。実行しますか？',
+    )) return;
+    const res = await withLoading(() =>
+      fetch('/api/admin/users/cleanup-inactive', { method: 'POST' }),
+    );
+    if (!res.ok) {
+      alert('クリーンアップ実行に失敗しました');
+      return;
+    }
+    const json = await res.json().catch(() => ({ data: null }));
+    const count = json?.data?.deletedUserIds?.length ?? 0;
+    const removed = json?.data?.removedMembershipsTotal ?? 0;
+    alert(`クリーンアップ完了\n\n削除ユーザ: ${count} 件\nProjectMember 削除: ${removed} 件`);
+    router.refresh();
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">ユーザ管理</h2>
+        <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={handleManualCleanup}>
+          非アクティブユーザを整理
+        </Button>
         <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsDialogOpen(true); }}>
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規ユーザ登録</DialogTrigger>
           <DialogContent className="max-w-[min(90vw,28rem)]">
@@ -177,6 +202,7 @@ export function UsersClient({ initialUsers }: Props) {
             )}
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Table>

@@ -279,12 +279,20 @@ export async function updateRetrospective(
 /**
  * 振り返りを論理削除する (deletedAt をセット)。
  * 「全振り返り」「振り返り一覧」のどちらから呼んでも同一レコードに影響する。
+ * PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児防止)
  */
 export async function deleteRetrospective(retroId: string, userId: string): Promise<void> {
-  await prisma.retrospective.update({
-    where: { id: retroId },
-    data: { deletedAt: new Date(), updatedBy: userId },
-  });
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.retrospective.update({
+      where: { id: retroId },
+      data: { deletedAt: now, updatedBy: userId },
+    }),
+    prisma.attachment.updateMany({
+      where: { entityType: 'retrospective', entityId: retroId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+  ]);
 }
 
 /** 単一振り返り取得 (権限チェック用) */
