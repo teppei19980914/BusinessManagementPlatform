@@ -2,6 +2,7 @@
 
 > PR #92 で Steps 1-6 (admin セットアップ + 招待 + プロジェクト作成 + メンバー login) を追加。
 > PR #93 で Step 7 の前半 (プロジェクト詳細タブ render + ロール別表示差分 + 全横断一覧 4 画面) を追加。WBS/Gantt/Estimates の複雑 UI と各 entity の CRUD 詳細は後続 PR。
+> PR #94 で Step 8 (個人機能: /my-tasks / /memos / /all-memos / /settings テーマ変更) を追加。
 
 > このファイルは **E2E テストでカバーする機能のマニフェスト**です。
 >
@@ -40,10 +41,10 @@
 - [x] `/issues` (全課題) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
 - [x] `/retrospectives` (全振り返り) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
 - [x] `/knowledge` (全ナレッジ) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
-- [ ] `/memos` — skip: PR #D
-- [ ] `/all-memos` — skip: PR #D
-- [ ] `/my-tasks` — skip: PR #D
-- [x] `/settings` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 1 パスワード変更 + Step 2 MFA 有効化)
+- [x] `/memos` — e2e/specs/04-personal-features.spec.ts (PR #94 / メモ作成 API + UI 一覧 + UI 削除)
+- [x] `/all-memos` — e2e/specs/04-personal-features.spec.ts (PR #94 / 公開メモの一覧表示)
+- [x] `/my-tasks` — e2e/specs/04-personal-features.spec.ts (PR #94 / 画面 render)
+- [x] `/settings` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / パスワード変更 + MFA 有効化) + e2e/specs/04-personal-features.spec.ts (PR #94 / テーマ変更)
 
 ### admin 専用
 - [x] `/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 招待)
@@ -96,8 +97,8 @@
 - [ ] `/api/knowledge/[knowledgeId]` — skip: PR #C
 
 ### メモ
-- [ ] `/api/memos` (GET/POST) — skip: PR #D
-- [ ] `/api/memos/[id]` (PATCH/DELETE) — skip: PR #D
+- [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)
+- [x] `/api/memos/[id]` (PATCH/DELETE) — e2e/specs/04-personal-features.spec.ts (PR #94 / DELETE のみ UI 経由でカバー、PATCH は後続 PR)
 
 ### 添付
 - [ ] `/api/attachments/*` — skip: 各親エンティティの spec 経由で間接カバー
@@ -116,8 +117,8 @@
 
 ### その他
 - [x] `GET /api/health` — e2e/specs/00-smoke.spec.ts (副次的に起動確認)
-- [ ] `/api/my-tasks` — skip: PR #D (マイタスク画面)
-- [ ] `/api/settings/theme` — skip: PR #D (設定画面)
+- [x] `/api/my-tasks` — e2e/specs/04-personal-features.spec.ts (PR #94 / /my-tasks 画面経由で間接カバー)
+- [x] `/api/settings/theme` — e2e/specs/04-personal-features.spec.ts (PR #94 / テーマ変更 UI から PATCH)
 - [ ] `/api/cron/cleanup-accounts` — skip: 時間経過が必要、手動テスト
 
 ---
