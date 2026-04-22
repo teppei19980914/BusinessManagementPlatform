@@ -10,6 +10,8 @@ vi.mock('@/lib/db', () => ({
     },
     user: {
       update: vi.fn(),
+      // PR #91: setupPassword が admin 判定のために findUnique を使用
+      findUnique: vi.fn(),
     },
     recoveryCode: {
       createMany: vi.fn(),
@@ -29,14 +31,31 @@ vi.mock('bcryptjs', () => ({
   hash: vi.fn((v: string) => Promise.resolve(`hashed_${v}`)),
 }));
 
+// PR #91: admin 分岐で generateMfaSecret / qrcode を呼ぶのでモック化
+vi.mock('./mfa.service', () => ({
+  generateMfaSecret: vi.fn().mockResolvedValue({
+    secret: 'MOCKSECRET',
+    otpauthUri: 'otpauth://totp/test?secret=MOCKSECRET&issuer=tasukiba',
+  }),
+  verifyInitialTotpSecret: vi.fn(),
+}));
+
+vi.mock('qrcode', () => ({
+  default: {
+    toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,MOCK_QR'),
+  },
+}));
+
 import {
   sendVerificationEmail,
   verifyEmail,
   validateToken,
   setupPassword,
+  setupInitialMfa,
   EmailSendError,
 } from './email-verification.service';
 import { prisma } from '@/lib/db';
+import { verifyInitialTotpSecret } from './mfa.service';
 
 describe('sendVerificationEmail', () => {
   beforeEach(() => {
@@ -222,7 +241,7 @@ describe('setupPassword', () => {
     expect(r.success).toBe(false);
   });
 
-  it('成功時は recoveryCodes を返しトランザクション実行', async () => {
+  it('一般ユーザ成功時: recoveryCodes + 即時有効化 (requiresMfa=false)', async () => {
     vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
       id: 't',
       userId: 'u-1',
@@ -231,13 +250,52 @@ describe('setupPassword', () => {
       usedAt: null,
       createdAt: new Date(),
     });
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'u-1',
+      systemRole: 'general',
+    } as never);
 
     const r = await setupPassword('x', 'new-hash');
 
     expect(r.success).toBe(true);
+    expect(r.requiresMfa).toBeFalsy();
     expect(Array.isArray(r.recoveryCodes)).toBe(true);
     expect(r.recoveryCodes?.length).toBeGreaterThan(0);
+    // $transaction 内で token.usedAt 設定 + user.isActive=true + recoveryCode.createMany
     expect(prisma.$transaction).toHaveBeenCalled();
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    // 一般ユーザ用 transaction は 3 要素 (token update + user update + recoveryCode)
+    expect(Array.isArray(txCall)).toBe(true);
+    expect(txCall).toHaveLength(3);
+  });
+
+  it('PR #91 admin 成功時: requiresMfa=true + mfa データ返却 + token はまだ使用済にしない', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'admin-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'admin-1',
+      systemRole: 'admin',
+    } as never);
+
+    const r = await setupPassword('x', 'new-hash');
+
+    expect(r.success).toBe(true);
+    expect(r.requiresMfa).toBe(true);
+    expect(r.mfa).toBeDefined();
+    expect(r.mfa?.otpauthUri).toContain('otpauth://totp/');
+    expect(r.mfa?.qrCodeDataUrl).toContain('data:image/png');
+    expect(r.recoveryCodes?.length).toBeGreaterThan(0);
+
+    // admin 用 transaction は 2 要素 (user update [isActive 設定しない] + recoveryCode)
+    // token.usedAt は setupInitialMfa まで保持される
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    expect(txCall).toHaveLength(2);
   });
 
   it('使用済みトークンで エラー', async () => {
@@ -252,5 +310,109 @@ describe('setupPassword', () => {
     const r = await setupPassword('x', 'hash');
     expect(r.success).toBe(false);
     expect(r.error).toContain('使用');
+  });
+});
+
+describe('setupInitialMfa (PR #91)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('トークン不在で エラー', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue(null);
+    const r = await setupInitialMfa('x', '123456');
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('無効');
+  });
+
+  it('使用済みトークンで エラー', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'admin-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: new Date(),
+      createdAt: new Date(),
+    });
+    const r = await setupInitialMfa('x', '123456');
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('使用');
+  });
+
+  it('期限切れトークンで エラー', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'admin-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() - 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    const r = await setupInitialMfa('x', '123456');
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('有効期限');
+  });
+
+  it('MFA シークレット未設定で エラー (setupPassword 未実施)', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'admin-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'admin-1',
+      systemRole: 'admin',
+      mfaSecretEncrypted: null,
+    } as never);
+
+    const r = await setupInitialMfa('x', '123456');
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('シークレット');
+  });
+
+  it('TOTP コード不一致で エラー', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'admin-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'admin-1',
+      systemRole: 'admin',
+      mfaSecretEncrypted: 'encrypted:xxx',
+    } as never);
+    vi.mocked(verifyInitialTotpSecret).mockResolvedValue(false);
+
+    const r = await setupInitialMfa('x', '000000');
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('正しくありません');
+  });
+
+  it('成功時: token 使用済 + user.isActive=true + mfaEnabled=true を同一トランザクションで実行', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'admin-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'admin-1',
+      systemRole: 'admin',
+      mfaSecretEncrypted: 'encrypted:xxx',
+    } as never);
+    vi.mocked(verifyInitialTotpSecret).mockResolvedValue(true);
+
+    const r = await setupInitialMfa('x', '123456');
+
+    expect(r.success).toBe(true);
+    expect(prisma.$transaction).toHaveBeenCalled();
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    expect(txCall).toHaveLength(2); // token update + user update
   });
 });

@@ -92,8 +92,22 @@ export async function enableMfa(
 
 /**
  * MFA 無効化
+ *
+ * PR #91: admin (システム管理者) は MFA を無効化できない。
+ * 呼出前に API route 層でも admin チェックを行うが、サービス層でも防御多層化として拒否する。
+ *
+ * @throws {Error} 'CANNOT_DISABLE_ADMIN_MFA' — admin が対象の場合
  */
 export async function disableMfa(userId: string): Promise<void> {
+  // PR #91: admin は MFA 必須 — 無効化禁止 (サービス層防御)
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { systemRole: true },
+  });
+  if (user?.systemRole === 'admin') {
+    throw new Error('CANNOT_DISABLE_ADMIN_MFA');
+  }
+
   await prisma.user.update({
     where: { id: userId },
     data: {
@@ -118,6 +132,26 @@ export async function verifyTotp(userId: string, totpCode: string): Promise<bool
   if (!user || !user.mfaEnabled || !user.mfaSecretEncrypted) return false;
 
   const secret = decrypt(user.mfaSecretEncrypted);
+  const otplib = await getOtplib();
+  const result = otplib.verifySync({ token: totpCode, secret });
+  return result.valid;
+}
+
+/**
+ * PR #91: admin 初期セットアップ専用の TOTP 検証ヘルパー。
+ *
+ * 通常の verifyTotp() は user.mfaEnabled=true を前提にするため、
+ * 初期セットアップ中 (mfaEnabled=false, secret のみ格納済) では使えない。
+ * 本関数は **暗号化済シークレット文字列を直接受け取り** 検証するので、
+ * 呼び出し側が user row 参照を持っていれば mfaEnabled 状態と独立に検証可能。
+ *
+ * 用途: email-verification.service.ts setupInitialMfa の TOTP 検証のみ。
+ */
+export async function verifyInitialTotpSecret(
+  encryptedSecret: string,
+  totpCode: string,
+): Promise<boolean> {
+  const secret = decrypt(encryptedSecret);
   const otplib = await getOtplib();
   const result = otplib.verifySync({ token: totpCode, secret });
   return result.valid;

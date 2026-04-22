@@ -238,7 +238,10 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
         <CardHeader>
           <CardTitle className="text-lg">
             多要素認証（MFA）
-            {mfaEnabled ? (
+            {mfaEnabled && isAdmin ? (
+              // PR #91: admin は MFA 強制有効化。解除不可を明示する専用バッジ
+              <Badge className="ml-2">強制有効化 (解除不可)</Badge>
+            ) : mfaEnabled ? (
               <Badge className="ml-2">有効</Badge>
             ) : (
               <Badge variant="outline" className="ml-2">無効</Badge>
@@ -246,7 +249,7 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
           </CardTitle>
           <CardDescription>
             認証アプリ（Google Authenticator 等）を使用した二段階認証を設定できます。
-            {isAdmin && ' 管理者は MFA が必須です。'}
+            {isAdmin && ' 管理者は MFA が必須であり、本設定画面からは無効化できません (PR #91)。'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -261,7 +264,11 @@ export function SettingsClient({ mfaEnabled, isAdmin, currentTheme }: Props) {
           )}
 
           {mfaStep === 'idle' && mfaEnabled && isAdmin && (
-            <p className="text-sm text-muted-foreground">管理者は MFA を無効化できません。</p>
+            // PR #91: admin の MFA 解除ボタンは表示せず、代わりに常時案内文を表示
+            <p className="text-sm text-muted-foreground">
+              管理者アカウントは MFA が強制的に有効化されており、この画面から無効化できません。
+              認証アプリを変更したい場合は、システム管理者に新しいアカウントの発行を依頼してください。
+            </p>
           )}
 
           {mfaStep === 'verify' && (

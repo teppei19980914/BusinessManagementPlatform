@@ -100,12 +100,31 @@ export async function validateToken(
 }
 
 /**
- * トークンを検証し、パスワード設定 + リカバリーコード生成 + アカウント有効化を行う
+ * トークンを検証し、パスワード設定 + リカバリーコード生成 + アカウント有効化 (+ admin は MFA 準備) を行う。
+ *
+ * PR #91 改訂: システム管理者 (systemRole='admin') の初期セットアップフローを
+ *   2 段階化し「パスワード設定だけではアカウント有効化しない」仕様に変更。
+ *   admin は本関数でパスワード + MFA シークレット生成まで行い、後続の
+ *   `setupInitialMfa` で TOTP 検証に成功したときに初めて
+ *   isActive=true / deletedAt=null / mfaEnabled=true となる。
+ *
+ *   一般ユーザ (systemRole='general') は従来通り本関数で即時有効化。
+ *
+ * 返却値:
+ *   - general: { success, recoveryCodes }
+ *   - admin  : { success, recoveryCodes, requiresMfa: true, mfa: { otpauthUri, qrCodeDataUrl } }
+ *             (requiresMfa=true で UI 側が MFA ステップを表示する)
  */
 export async function setupPassword(
   token: string,
   passwordHash: string,
-): Promise<{ success: boolean; recoveryCodes?: string[]; error?: string }> {
+): Promise<{
+  success: boolean;
+  recoveryCodes?: string[];
+  requiresMfa?: boolean;
+  mfa?: { otpauthUri: string; qrCodeDataUrl: string };
+  error?: string;
+}> {
   const tokenHash = hashToken(token);
 
   const record = await prisma.emailVerificationToken.findFirst({
@@ -122,6 +141,14 @@ export async function setupPassword(
 
   if (record.expiresAt < new Date()) {
     return { success: false, error: '有効期限切れです。管理者に再送を依頼してください' };
+  }
+
+  // 対象ユーザを取得 (admin 分岐に使う)
+  const user = await prisma.user.findUnique({
+    where: { id: record.userId },
+  });
+  if (!user) {
+    return { success: false, error: '対象ユーザが見つかりません' };
   }
 
   // リカバリーコード生成
@@ -145,7 +172,49 @@ export async function setupPassword(
     })),
   );
 
-  // トランザクション: トークン使用済み + パスワード設定 + リカバリーコード + 有効化
+  const isAdmin = user.systemRole === 'admin';
+
+  if (isAdmin) {
+    // PR #91: admin は MFA セットアップを必須化する。
+    // パスワード保存 + MFA シークレット生成 (まだ mfaEnabled=false) + recoveryCodes 作成。
+    // **isActive / deletedAt / token.usedAt は変更しない** (後続の setupInitialMfa で
+    // TOTP 検証に成功したときに初めて一括更新)。
+    const { generateMfaSecret } = await import('./mfa.service');
+    const { default: QRCode } = await import('qrcode');
+
+    // mfaSecretEncrypted は generateMfaSecret 内で user.update される。
+    // ここで password / recoveryCodes 側の transaction を走らせる前に行うことで、
+    // いずれか失敗した場合でも孤児 secret が残るが、次回再試行で上書きされる。
+    const { otpauthUri } = await generateMfaSecret(user.id);
+    const qrCodeDataUrl = await QRCode.toDataURL(otpauthUri);
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: record.userId },
+        data: {
+          passwordHash,
+          forcePasswordChange: false,
+          // 明示的に mfaEnabled=false を保つ (念のため)
+          mfaEnabled: false,
+        },
+      }),
+      prisma.recoveryCode.createMany({
+        data: recoveryCodeHashes.map((h) => ({
+          userId: record.userId,
+          ...h,
+        })),
+      }),
+    ]);
+
+    return {
+      success: true,
+      recoveryCodes,
+      requiresMfa: true,
+      mfa: { otpauthUri, qrCodeDataUrl },
+    };
+  }
+
+  // 一般ユーザ: 従来通り即時有効化
   await prisma.$transaction([
     prisma.emailVerificationToken.update({
       where: { id: record.id },
@@ -169,6 +238,74 @@ export async function setupPassword(
   ]);
 
   return { success: true, recoveryCodes };
+}
+
+/**
+ * PR #91: admin 初期セットアップの最終段階 — TOTP 検証 + アカウント有効化。
+ *
+ * 呼出前提:
+ *   setupPassword() を admin で成功済み (mfaSecretEncrypted 設定済 / token 未使用)。
+ *   クライアントは認証アプリで生成した 6 桁 TOTP コードと token を送ってくる。
+ *
+ * 成功時の副作用:
+ *   - emailVerificationToken.usedAt = now
+ *   - user.isActive = true / deletedAt = null / mfaEnabled = true / mfaEnabledAt = now
+ *
+ * @throws {Error} 各種失敗ケースは error フィールドで返却 (throw しない)
+ */
+export async function setupInitialMfa(
+  token: string,
+  totpCode: string,
+): Promise<{ success: boolean; error?: string }> {
+  const tokenHash = hashToken(token);
+
+  const record = await prisma.emailVerificationToken.findFirst({
+    where: { tokenHash },
+  });
+  if (!record) return { success: false, error: '無効なリンクです' };
+  if (record.usedAt) return { success: false, error: '既に使用されたリンクです' };
+  if (record.expiresAt < new Date()) {
+    return { success: false, error: '有効期限切れです。管理者に再送を依頼してください' };
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: record.userId } });
+  if (!user) return { success: false, error: '対象ユーザが見つかりません' };
+  if (!user.mfaSecretEncrypted) {
+    return {
+      success: false,
+      error: 'MFA シークレットが未設定です。パスワード設定からやり直してください',
+    };
+  }
+
+  // TOTP 検証は mfa.service の decrypt + verify を再利用する。
+  // 既存 verifyTotp は mfaEnabled=true を要求するが、初期セットアップ時点では
+  // mfaEnabled=false なので専用ルーチンを呼び出す必要がある。
+  // 設計簡易化のため、mfa.service から低レベル API を export してもよいが、
+  // ここでは otplib を直接呼ぶ (暗号化キーはどちらも NEXTAUTH_SECRET 由来で揃う)。
+  const { verifyInitialTotpSecret } = await import('./mfa.service');
+  const valid = await verifyInitialTotpSecret(user.mfaSecretEncrypted, totpCode);
+  if (!valid) {
+    return { success: false, error: '6 桁のコードが正しくありません' };
+  }
+
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.emailVerificationToken.update({
+      where: { id: record.id },
+      data: { usedAt: now },
+    }),
+    prisma.user.update({
+      where: { id: record.userId },
+      data: {
+        isActive: true,
+        deletedAt: null,
+        mfaEnabled: true,
+        mfaEnabledAt: now,
+      },
+    }),
+  ]);
+
+  return { success: true };
 }
 
 /**
