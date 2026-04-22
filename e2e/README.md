@@ -90,6 +90,18 @@ DOM を検査でき、失敗しなくても全 step が視覚的に追える。
 
 **主要な節目 snapshot**: `project-detail-all-tabs-admin` / `project-detail-members-tab` / `project-detail-general-member-view`
 
+### `e2e/specs/04-personal-features.spec.ts` — 個人機能 (Step 8)
+
+**シナリオ**: ログイン中ユーザが自分の作業領域で行う基本操作。
+
+| 検証内容 | 主要な節目 snapshot |
+|---|---|
+| `/my-tasks` マイタスク画面が表示される | `my-tasks-list` |
+| `/memos` 個人メモの作成 (API) + 一覧表示 | `memos-list-with-private` |
+| 作成済みメモを UI から削除できる (confirm dialog 承諾 → 行消失) | `memos-after-delete` |
+| `/all-memos` 公開メモが全メモ画面に表示される | `all-memos-with-public` |
+| `/settings` テーマ変更 UI で radio が切替わる (`aria-checked="true"`) | `settings-theme-dark` |
+
 ### `e2e/specs/03-global-entity-lists.spec.ts` — 全横断一覧
 
 **シナリオ**: 管理者用の全横断一覧 4 画面が開ける。
