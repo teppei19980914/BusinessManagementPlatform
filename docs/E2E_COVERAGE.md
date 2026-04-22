@@ -1,6 +1,7 @@
 # E2E カバレッジ一覧 (PR #90 以降 継続更新)
 
 > PR #92 で Steps 1-6 (admin セットアップ + 招待 + プロジェクト作成 + メンバー login) を追加。
+> PR #93 で Step 7 の前半 (プロジェクト詳細タブ render + ロール別表示差分 + 全横断一覧 4 画面) を追加。WBS/Gantt/Estimates の複雑 UI と各 entity の CRUD 詳細は後続 PR。
 
 > このファイルは **E2E テストでカバーする機能のマニフェスト**です。
 >
@@ -27,18 +28,18 @@
 
 ### ダッシュボード
 - [x] `/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 作成 + Step 6b 一般ユーザ閲覧)
-- [ ] `/projects/[projectId]` — skip: PR #C で対応予定
-- [ ] `/projects/[projectId]/estimates` — skip: PR #C
-- [ ] `/projects/[projectId]/tasks` — skip: PR #C
-- [ ] `/projects/[projectId]/gantt` — skip: PR #C
-- [ ] `/projects/[projectId]/risks` — skip: PR #C
-- [ ] `/projects/[projectId]/issues` — skip: PR #C
-- [ ] `/projects/[projectId]/retrospectives` — skip: PR #C
-- [ ] `/projects/[projectId]/knowledge` — skip: PR #C
-- [ ] `/risks` (全リスク) — skip: PR #C
-- [ ] `/issues` (全課題) — skip: PR #C
-- [ ] `/retrospectives` (全振り返り) — skip: PR #C
-- [ ] `/knowledge` (全ナレッジ) — skip: PR #C
+- [x] `/projects/[projectId]` — e2e/specs/02-project-detail-tabs.spec.ts (PR #93 / Step 7 タブ render + ロール差分)
+- [ ] `/projects/[projectId]/estimates` — skip: 詳細 CRUD は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [ ] `/projects/[projectId]/tasks` — skip: WBS ツリー CRUD は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [ ] `/projects/[projectId]/gantt` — skip: ガント表示の詳細検証は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [ ] `/projects/[projectId]/risks` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [ ] `/projects/[projectId]/issues` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [ ] `/projects/[projectId]/retrospectives` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [ ] `/projects/[projectId]/knowledge` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [x] `/risks` (全リスク) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
+- [x] `/issues` (全課題) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
+- [x] `/retrospectives` (全振り返り) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
+- [x] `/knowledge` (全ナレッジ) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
 - [ ] `/memos` — skip: PR #D
 - [ ] `/all-memos` — skip: PR #D
 - [ ] `/my-tasks` — skip: PR #D
