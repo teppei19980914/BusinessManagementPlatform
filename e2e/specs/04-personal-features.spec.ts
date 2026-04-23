@@ -116,6 +116,13 @@ test.describe('@feature:personal Step 8 個人機能', () => {
 
   test('作成済みメモを UI から削除できる', async () => {
     const page = sharedPage;
+
+    // LESSONS §4.20/§4.26: 削除 click は router.refresh() の fire-and-forget と
+    // dialog 承諾非同期で race する。DELETE API を click **前**に予約 → await、
+    // 続けて page.reload で DB 真の状態を強制取得してから count 0 を assert する。
+    const deleteRes = page.waitForResponse(
+      (r) => r.url().includes('/api/memos/') && r.request().method() === 'DELETE',
+    );
     // 削除確認 dialog は window.confirm を使うので自動承諾する
     page.once('dialog', (dialog) => dialog.accept());
 
@@ -123,7 +130,12 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     const row = page.locator('tr').filter({ hasText: PRIVATE_MEMO_TITLE });
     await row.getByRole('button', { name: '削除' }).click();
 
-    await page.waitForLoadState('networkidle');
+    const res = await deleteRes;
+    expect(res.ok(), `Memo DELETE failed: ${res.status()}`).toBeTruthy();
+
+    // DB は更新済み。router.refresh() race を回避して UI を DB 真状態に強制同期。
+    await page.reload({ waitUntil: 'networkidle' });
+
     await expect(page.getByText(PRIVATE_MEMO_TITLE)).toHaveCount(0, { timeout: 10_000 });
     await snapshotStep(page, 'memos-after-delete');
   });
