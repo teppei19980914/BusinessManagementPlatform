@@ -1,0 +1,43 @@
+# Dependency Review (GitHub 公式 action)
+# https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-dependency-review
+#
+# 役割:
+#   PR で追加・更新された依存パッケージに既知脆弱性・不適切ライセンスがないかを
+#   GitHub Advisory Database と照合して PR 上にコメント+fail する。
+#
+#   security.yml の pnpm audit がリポジトリ全体をスキャンするのに対し、
+#   本 workflow は **PR で入る差分のみ** を厳密にチェックする (早期検知)。
+#
+# トリガ: pull_request (main 対象)
+#
+# 関連:
+#   - .github/workflows/security.yml — リポジトリ全体スキャン (daily)
+#   - SECURITY.md — 脆弱性対応方針
+
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # 脆弱性レベル: high 以上で fail (low/moderate は警告のみ)
+          fail-on-severity: high
+          # ライセンスポリシー (GPL / AGPL 等の strong copyleft を検知)
+          # deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, AGPL-1.0
+          # ↑ 既存依存で該当ライセンスがある場合は false positive 回避のため
+          #   Phase 2 で整備予定。一旦コメントアウトしておく。
+          comment-summary-in-pr: on-failure

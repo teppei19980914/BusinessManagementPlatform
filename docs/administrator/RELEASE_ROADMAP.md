@@ -26,47 +26,63 @@
 
 | # | 項目 | 現状 | 目標 |
 |---|---|---|---|
-| 1 | `CODEOWNERS` | 未作成 | ディレクトリごとにレビュア指定 |
-| 2 | `.github/PULL_REQUEST_TEMPLATE.md` | 未作成 | PR 作成時の必須項目を構造化 |
-| 3 | `.github/ISSUE_TEMPLATE/` | 未作成 | バグ報告 / 機能要望 / 質問の 3 テンプレ |
-| 4 | `SECURITY.md` | 未作成 | 脆弱性報告窓口 (public-facing になる前に必須) |
-| 5 | `CONTRIBUTING.md` | 既存 | プレリリース前の見直し (古い記述があれば update) |
-| 6 | `.editorconfig` | 未確認 | チームメンバーのエディタ設定統一 |
-| 7 | Branch protection rules | 未確認 | main: レビュー必須・CI green 必須・force push 禁止 |
+| 1 | `CODEOWNERS` | ✅ 作成 (PR #108) | ディレクトリごとにレビュア指定 |
+| 2 | `.github/PULL_REQUEST_TEMPLATE.md` | ✅ 作成 (PR #108) | PR 作成時の必須項目を構造化 |
+| 3 | `.github/ISSUE_TEMPLATE/` | ✅ 作成 (PR #108) | バグ報告 / 機能要望 / 質問の 3 テンプレ + config.yml で SECURITY.md 誘導 |
+| 4 | `SECURITY.md` | ✅ 既存 (PR #97) | 脆弱性報告窓口 (public-facing になる前に必須) |
+| 5 | `CONTRIBUTING.md` | 🟡 既存 (PR #108 で path 更新済、大幅見直しは Phase 2 で) | プレリリース前の見直し (古い記述があれば update) |
+| 6 | `.editorconfig` | ✅ 作成 (PR #108) | チームメンバーのエディタ設定統一 |
+| 7 | Branch protection rules | ⚠️ **GitHub UI で要設定** (下記参照) | main: レビュー必須・CI green 必須・force push 禁止 |
+
+**Branch protection rules の推奨設定** (GitHub → Settings → Branches → Add rule):
+- Branch name pattern: `main`
+- ☑ Require a pull request before merging
+- ☑ Require approvals (1 以上)
+- ☑ Require review from Code Owners
+- ☑ Require status checks to pass before merging
+  - `CI / Lint / Test / Build`
+  - `Security Scan / pnpm audit`
+  - `Dependency Review`
+  - `Playwright E2E + Visual Regression`
+- ☑ Require branches to be up to date before merging
+- ☑ Require linear history (Squash or Rebase のみ許可)
+- ☐ Allow force pushes (**無効**)
+- ☐ Allow deletions (**無効**)
 
 ### 1.2 ディレクトリ/ファイル構造
 
 | # | 項目 | 作業内容 |
 |---|---|---|
-| 1 | `docs/` 棚卸し | 10+ ファイルある。重複・古い内容があれば統廃合 (特に performance/, knowledge/ の旧レポート) |
-| 2 | `.claude/` の公開可否判断 | Claude 設定・memory seed はチーム共有すべきか個人所有かを決める |
-| 3 | ルート直下のファイル整理 | `instrumentation.ts`, `next-env.d.ts` 等の説明コメントを確認 |
-| 4 | `scripts/` 整理 | 開発補助スクリプトの役割を README に索引化 |
-| 5 | 不要コメント / TODO 棚卸し | `TODO:` / `FIXME:` をリストアップ、不要なら削除、必要なら Issue 化 |
-| 6 | `src/generated/` | Prisma 生成物。`.gitignore` に入れるか commit 続行かの判断統一 |
+| 1 | `docs/` 棚卸し | ✅ 完了 (PR #101 生バイナリ削除 / PR #107 役割別再編成) |
+| 2 | `.claude/` の公開可否判断 | 🟡 未判断 (Phase 2 で決定) |
+| 3 | ルート直下のファイル整理 | ✅ instrumentation.ts / next-env.d.ts の説明コメントは docblock あり |
+| 4 | `scripts/` 整理 | 🟡 3 スクリプト (check-e2e-coverage / cleanup-orphan-user / print-migration) で役割明確、索引化は Phase 2 で |
+| 5 | 不要コメント / TODO 棚卸し | 🟡 Phase 2 で grep 棚卸し → Issue 化 |
+| 6 | `src/generated/` | ✅ `.gitignore` 登録済 (`/src/generated/prisma`) |
 
 ### 1.3 README.md 刷新
 
-現状の README を **新規参入者視点** で読み直し、下記を明示:
-- [ ] サービス概要 (1 画面で分かる)
-- [ ] 前提環境 (Node / pnpm / Docker バージョン)
-- [ ] 3 コマンドで起動できる手順 (clone → install → dev)
-- [ ] プロジェクト構造 (ディレクトリツリー + 各役割)
-- [ ] ドキュメント索引 ([DEVELOPER_GUIDE.md](../developer/DEVELOPER_GUIDE.md), [OPERATION.md](./OPERATION.md), [TESTING_STRATEGY.md](../developer/TESTING_STRATEGY.md) 等への pointer)
-- [ ] 貢献手順 ([CONTRIBUTING.md](../../CONTRIBUTING.md) へ)
+現状の README を **新規参入者視点** で読み直し、下記を明示 (PR #107 で docs/beginner/README.md を新設し役割分担済):
+
+- [x] サービス概要 (1 画面で分かる) — ルート [README.md](../../README.md)
+- [x] 前提環境 (Node / pnpm / Docker バージョン) — [docs/beginner/README.md §1.1](../beginner/README.md)
+- [x] 3 コマンドで起動できる手順 (clone → install → dev) — [docs/beginner/README.md §1](../beginner/README.md)
+- [x] プロジェクト構造 (ディレクトリツリー + 各役割) — [docs/beginner/README.md §2.1](../beginner/README.md)
+- [x] ドキュメント索引 — [docs/README.md](../README.md) が役割別索引を担当
+- [x] 貢献手順 — [CONTRIBUTING.md](../../CONTRIBUTING.md) へ誘導
 
 ### 1.4 定期的な自動チェックの強化
 
-- [ ] `pnpm audit` を週次 cron で実行して結果を Issue 化
-- [ ] outdated dependencies を月次 cron で通知
-- [ ] カバレッジ閾値 80% (PR #84) の運用継続
-- [ ] dependency-review action を PR に追加 (GitHub 公式)
+- [x] `pnpm audit` を **日次** cron で実行 (PR #82 `security.yml`、週次より厳密)
+- [x] outdated dependencies を月次 cron で通知 (PR #108 `dependency-outdated.yml`)
+- [x] カバレッジ閾値 80% (PR #84) の運用継続
+- [x] dependency-review action を PR に追加 (PR #108 `dependency-review.yml`)
 
 ### 1.5 Phase 1 完了の定義
 
-- [ ] 新規開発者が README だけ見て 30 分以内に dev 環境立ち上げ可能
-- [ ] PR 作成時に template が自動挿入され、必須欄が空だと push が躊躇される
-- [ ] main ブランチが保護されていて直 push 不可
+- [x] 新規開発者が README だけ見て 30 分以内に dev 環境立ち上げ可能 (PR #107 で docs/beginner/README.md 整備)
+- [x] PR 作成時に template が自動挿入され、必須欄が空だと push が躊躇される (PR #108)
+- [ ] main ブランチが保護されていて直 push 不可 (**GitHub UI で設定必要 — §1.1 参照**)
 - [ ] docs/ 配下のドキュメント索引がトップ README から辿れる
 
 ---

@@ -1,0 +1,14 @@
+# Issue テンプレート選択画面の設定
+# https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+
+# blank issue (テンプレート無し) を無効化し、必ず 3 種から選ばせる
+blank_issues_enabled: false
+
+# テンプレート一覧の下に出る外部リンク
+contact_links:
+  - name: 🔒 セキュリティ脆弱性の報告 (非公開ルート)
+    url: https://github.com/teppei19980914/BusinessManagementPlatform/blob/main/SECURITY.md
+    about: 脆弱性情報は Issue では受け付けません。SECURITY.md の手順で非公開に報告してください。
+  - name: 📖 ドキュメントを先に確認する
+    url: https://github.com/teppei19980914/BusinessManagementPlatform/blob/main/docs/README.md
+    about: docs/ 配下の役割別索引です。まずこちらで該当ドキュメントを探してみてください。

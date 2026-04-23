@@ -1,0 +1,32 @@
+# EditorConfig — チームメンバー間でエディタ設定を統一するための設定
+# https://editorconfig.org/
+#
+# 本ファイルは Prettier 設定 (.prettierrc) と整合している。
+# Prettier が走らない範囲 (md / json / yml の空白保護等) を EditorConfig でカバーする。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown: 行末の半角スペース 2 つは改行を意味するので trim しない
+[*.md]
+trim_trailing_whitespace = false
+
+# Makefile はタブインデント必須
+[Makefile]
+indent_style = tab
+
+# バイナリファイル群: EditorConfig の適用外 (そのまま)
+[*.{png,jpg,jpeg,gif,ico,svg,woff,woff2,ttf,eot,pdf,zip,gz,har}]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset
