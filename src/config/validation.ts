@@ -63,9 +63,3 @@ export const ATTACHMENT_MIME_HINT_MAX_LENGTH = 50;
 
 /** タグ配列の上限 (techTags / processTags / businessDomainTags 共通)。 */
 export const TAGS_MAX_COUNT = 50;
-
-// ---------- 数値範囲 ----------
-
-/** 進捗率の最小・最大 (パーセンテージ)。 */
-export const PROGRESS_RATE_MIN = 0;
-export const PROGRESS_RATE_MAX = 100;

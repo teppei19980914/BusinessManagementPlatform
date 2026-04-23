@@ -26,6 +26,3 @@ export const RUN_ID = `e2e-${timestamp}-${pid}-${rand}`;
 export function withRunId(label: string): string {
   return `${RUN_ID}-${label}`;
 }
-
-/** 実行 ID を識別するための正規表現 (クリーンアップ用途)。 */
-export const RUN_ID_PATTERN = /^e2e-\d{8}T?\d{6}-\d+-[a-f0-9]{4}/;
