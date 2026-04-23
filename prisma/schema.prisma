@@ -163,14 +163,14 @@ model Customer {
 model Project {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name              String    @db.VarChar(100)
-  customerName      String    @map("customer_name") @db.VarChar(100)
-  // PR #111: Customer テーブルへの FK。既存 customer_name との併存期間中のため nullable。
-  // PR #111-2 (続編) で customer_name 列を削除し、customerId を NOT NULL に昇格予定。
-  // ON DELETE SET NULL: Customer 物理削除時、論理削除済み Project の customer_id が
-  // dangling にならないよう明示的 null 化する (deletedAt が null でない Project は別途
-  // deleteCustomerCascade でカスケード削除される、PR #111-2 で実装)。
-  customerId        String?   @map("customer_id") @db.Uuid
-  customer          Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  // PR #111-2: customer_name 列を廃止し Customer テーブルへの FK に完全移行。
+  // ON DELETE SET NULL: Customer 物理削除時、論理削除済み Project (deletedAt != null) の
+  // customer_id が dangling にならないよう明示的に null 化する。
+  // アクティブな Project (deletedAt = null) を抱える Customer は削除不可、
+  // もしくは deleteCustomerCascade で関連資源を一括カスケード削除してから削除する。
+  // その結果 customerId は運用上 NOT NULL を保証できる。
+  customerId        String    @map("customer_id") @db.Uuid
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: SetNull)
   purpose           String    @db.Text
   background        String    @db.Text
   scope             String    @db.Text
@@ -201,7 +201,6 @@ model Project {
   knowledgeProjects KnowledgeProject[]
 
   @@index([status], map: "idx_projects_status")
-  @@index([customerName], map: "idx_projects_customer")
   @@index([customerId], map: "idx_projects_customer_id")
   @@index([plannedStartDate, plannedEndDate], map: "idx_projects_dates")
   @@map("projects")

@@ -33,6 +33,9 @@ import type { ProjectStatus } from '@/types';
 export type ProjectDTO = {
   id: string;
   name: string;
+  // PR #111-2: customerId が真の所有項目。customerName は customer.name の派生値
+  // (UI 表示用に常に include してセットする)。
+  customerId: string;
   customerName: string;
   purpose: string;
   background: string;
@@ -51,10 +54,12 @@ export type ProjectDTO = {
   updatedAt: string;
 };
 
-function toProjectDTO(p: {
+// 一覧/詳細で prisma から取得する行の形 (include: { customer: { select: { name } } } 前提)
+type ProjectRowWithCustomer = {
   id: string;
   name: string;
-  customerName: string;
+  customerId: string;
+  customer: { name: string };
   purpose: string;
   background: string;
   scope: string;
@@ -70,11 +75,14 @@ function toProjectDTO(p: {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
-}): ProjectDTO {
+};
+
+function toProjectDTO(p: ProjectRowWithCustomer): ProjectDTO {
   return {
     id: p.id,
     name: p.name,
-    customerName: p.customerName,
+    customerId: p.customerId,
+    customerName: p.customer.name,
     purpose: p.purpose,
     background: p.background,
     scope: p.scope,
@@ -96,6 +104,8 @@ function toProjectDTO(p: {
 export type ListProjectsParams = {
   keyword?: string;
   customerName?: string;
+  // PR #111-2: 顧客詳細画面から「この顧客の active Project」一覧を取るために追加
+  customerId?: string;
   status?: string;
   page?: number;
   limit?: number;
@@ -120,13 +130,19 @@ export async function listProjects(
   if (params.status) {
     where.status = params.status;
   }
+  // PR #111-2: customerName フィルタは customer.name の relation filter に変換する。
+  // 呼び出し元 (API layer) のクエリパラメータ名は既存互換のため維持する。
   if (params.customerName) {
-    where.customerName = { contains: params.customerName, mode: 'insensitive' };
+    where.customer = { name: { contains: params.customerName, mode: 'insensitive' } };
+  }
+  // PR #111-2: 顧客詳細画面用の customerId 直接フィルタ
+  if (params.customerId) {
+    where.customerId = params.customerId;
   }
   if (params.keyword) {
     where.OR = [
       { name: { contains: params.keyword, mode: 'insensitive' } },
-      { customerName: { contains: params.keyword, mode: 'insensitive' } },
+      { customer: { name: { contains: params.keyword, mode: 'insensitive' } } },
       { purpose: { contains: params.keyword, mode: 'insensitive' } },
     ];
   }
@@ -134,6 +150,7 @@ export async function listProjects(
   const [projects, total] = await Promise.all([
     prisma.project.findMany({
       where,
+      include: { customer: { select: { name: true } } },
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
@@ -146,7 +163,7 @@ export async function listProjects(
 
 export type CreateProjectInput = {
   name: string;
-  customerName: string;
+  customerId: string;
   purpose: string;
   background: string;
   scope: string;
@@ -167,7 +184,7 @@ export async function createProject(
   const project = await prisma.project.create({
     data: {
       name: input.name,
-      customerName: input.customerName,
+      customerId: input.customerId,
       purpose: input.purpose,
       background: input.background,
       scope: input.scope,
@@ -183,6 +200,7 @@ export async function createProject(
       createdBy: userId,
       updatedBy: userId,
     },
+    include: { customer: { select: { name: true } } },
   });
 
   return toProjectDTO(project);
@@ -191,6 +209,7 @@ export async function createProject(
 export async function getProject(projectId: string): Promise<ProjectDTO | null> {
   const project = await prisma.project.findFirst({
     where: { id: projectId, deletedAt: null },
+    include: { customer: { select: { name: true } } },
   });
   return project ? toProjectDTO(project) : null;
 }
@@ -205,7 +224,10 @@ export async function updateProject(
   const data: Prisma.ProjectUpdateInput = { updatedBy: userId };
 
   if (input.name !== undefined) data.name = input.name;
-  if (input.customerName !== undefined) data.customerName = input.customerName;
+  // PR #111-2: customerId 変更時は relation の connect() 経由で切り替える。
+  if (input.customerId !== undefined) {
+    data.customer = { connect: { id: input.customerId } };
+  }
   if (input.purpose !== undefined) data.purpose = input.purpose;
   if (input.background !== undefined) data.background = input.background;
   if (input.scope !== undefined) data.scope = input.scope;
@@ -226,6 +248,7 @@ export async function updateProject(
   const project = await prisma.project.update({
     where: { id: projectId },
     data,
+    include: { customer: { select: { name: true } } },
   });
 
   return toProjectDTO(project);
@@ -272,6 +295,7 @@ export async function changeProjectStatus(
   const updated = await prisma.project.update({
     where: { id: projectId },
     data: { status: newStatus, updatedBy: userId },
+    include: { customer: { select: { name: true } } },
   });
 
   return toProjectDTO(updated);

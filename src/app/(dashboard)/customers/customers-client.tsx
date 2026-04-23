@@ -8,15 +8,15 @@
  *   - 新規顧客作成ダイアログ
  *   - 削除ボタン (active Project が 0 件の顧客のみ削除可能)
  *
- * PR #111-2 で追加予定:
- *   - 顧客詳細画面 (/customers/[id])
- *   - 編集画面 (/customers/[id]/edit)
- *   - カスケード削除ダイアログ (active Project があっても cascadeKnowledge 等のオプションで一括削除)
+ * PR #111-2 で追加:
+ *   - 顧客名クリックで詳細画面 (/customers/[id]) に遷移
+ *   - 詳細画面側で編集 + カスケード削除 (active Project があっても cascade オプションで一括削除) 対応
  *
  * 認可: ページ側 (page.tsx) で systemRole='admin' を確認済の前提。
  */
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
@@ -97,6 +97,11 @@ export function CustomersClient({ initialCustomers }: Props) {
   }
 
   async function handleDelete(customer: CustomerDTO) {
+    // PR #111-2: active Project 紐付きありの場合は詳細画面のカスケード削除ダイアログへ誘導
+    if (customer.activeProjectCount > 0) {
+      router.push(`/customers/${customer.id}`);
+      return;
+    }
     if (!window.confirm(`顧客「${customer.name}」を削除します。よろしいですか？`)) return;
 
     const res = await withLoading(() =>
@@ -215,7 +220,14 @@ export function CustomersClient({ initialCustomers }: Props) {
             )}
             {initialCustomers.map((customer) => (
               <TableRow key={customer.id}>
-                <TableCell className="font-medium">{customer.name}</TableCell>
+                <TableCell className="font-medium">
+                  <Link
+                    href={`/customers/${customer.id}`}
+                    className="text-info hover:underline"
+                  >
+                    {customer.name}
+                  </Link>
+                </TableCell>
                 <TableCell>{customer.department || '—'}</TableCell>
                 <TableCell>{customer.contactPerson || '—'}</TableCell>
                 <TableCell>{customer.contactEmail || '—'}</TableCell>
@@ -231,10 +243,9 @@ export function CustomersClient({ initialCustomers }: Props) {
                     variant="destructive"
                     size="sm"
                     onClick={() => handleDelete(customer)}
-                    disabled={customer.activeProjectCount > 0}
                     title={
                       customer.activeProjectCount > 0
-                        ? '紐付くプロジェクトがあるため削除できません (PR #111-2 でカスケード削除を提供予定)'
+                        ? '紐付くプロジェクトがあります — 詳細画面のカスケード削除をご利用ください'
                         : undefined
                     }
                   >

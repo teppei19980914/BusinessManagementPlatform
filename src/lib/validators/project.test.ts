@@ -4,7 +4,7 @@ import { createProjectSchema, changeStatusSchema } from './project';
 describe('createProjectSchema', () => {
   const validInput = {
     name: 'テストプロジェクト',
-    customerName: 'テスト株式会社',
+    customerId: '00000000-0000-4000-a000-000000000001',
     purpose: 'テスト目的',
     background: 'テスト背景',
     scope: 'テストスコープ',
@@ -19,6 +19,15 @@ describe('createProjectSchema', () => {
 
   it('プロジェクト名が空の場合を拒否する', () => {
     expect(createProjectSchema.safeParse({ ...validInput, name: '' }).success).toBe(false);
+  });
+
+  it('customerId が UUID でない場合を拒否する (PR #111-2)', () => {
+    expect(
+      createProjectSchema.safeParse({ ...validInput, customerId: 'not-a-uuid' }).success,
+    ).toBe(false);
+    expect(createProjectSchema.safeParse({ ...validInput, customerId: '' }).success).toBe(
+      false,
+    );
   });
 
   it('プロジェクト名が101文字の場合を拒否する', () => {

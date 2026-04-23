@@ -60,6 +60,8 @@ import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
 import { MembersClient } from './members-client';
 import { SuggestionsPanel } from './suggestions/suggestions-panel';
 
+type CustomerOption = { id: string; name: string };
+
 type Props = {
   project: ProjectDTO;
   projectRole: string | null;
@@ -67,6 +69,8 @@ type Props = {
   userId: string;
   canEdit: boolean;
   canCreate: boolean;
+  // PR #111-2: 編集ダイアログの顧客選択肢
+  customers: CustomerOption[];
 };
 
 const NEXT_STATUSES: Record<string, string[]> = {
@@ -105,7 +109,7 @@ function LazyTabContent<T>({
 
 export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
-  canEdit, canCreate,
+  canEdit, canCreate, customers,
 }: Props) {
   const t = useTranslations('action');
   const router = useRouter();
@@ -126,7 +130,7 @@ export function ProjectDetailClient({
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     name: project.name,
-    customerName: project.customerName,
+    customerId: project.customerId,
     purpose: project.purpose,
     background: project.background,
     scope: project.scope,
@@ -143,7 +147,7 @@ export function ProjectDetailClient({
   const openEditDialog = () => {
     setEditForm({
       name: project.name,
-      customerName: project.customerName,
+      customerId: project.customerId,
       purpose: project.purpose,
       background: project.background,
       scope: project.scope,
@@ -366,8 +370,20 @@ export function ProjectDetailClient({
                       <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
                     </div>
                     <div className="space-y-2">
-                      <Label>顧客名</Label>
-                      <Input value={editForm.customerName} onChange={(e) => setEditForm({ ...editForm, customerName: e.target.value })} required />
+                      {/* PR #111-2: 顧客は Customer マスタから選択 */}
+                      <Label>顧客</Label>
+                      <select
+                        value={editForm.customerId}
+                        onChange={(e) => setEditForm({ ...editForm, customerId: e.target.value })}
+                        className={nativeSelectClass}
+                        required
+                      >
+                        {customers.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="space-y-2">
                       <Label>目的</Label>

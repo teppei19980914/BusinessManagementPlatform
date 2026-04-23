@@ -16,6 +16,7 @@
 
 import { prisma } from '@/lib/db';
 import type { CreateCustomerInput, UpdateCustomerInput } from '@/lib/validators/customer';
+import { deleteProjectCascade } from './project.service';
 
 export type CustomerDTO = {
   id: string;
@@ -196,4 +197,75 @@ export async function deleteCustomer(
   // 物理削除。論理削除済み Project の customer_id は FK ON DELETE SET NULL で自動 null 化。
   await prisma.customer.delete({ where: { id: customerId } });
   return { ok: true };
+}
+
+/**
+ * 顧客をカスケード削除する (PR #111-2)。
+ *
+ * 紐付く active Project (deletedAt = null) を全件 `deleteProjectCascade` で物理削除し、
+ * 最後に Customer 本体を物理削除する。論理削除済 Project は `ON DELETE SET NULL` により
+ * customer_id が null 化されるだけで本体は残る (監査・振り返りのため)。
+ *
+ * 細粒度カスケードフラグ (options) は各 Project の `deleteProjectCascade` にそのまま渡す。
+ * - cascadeRisks / cascadeIssues / cascadeRetros / cascadeKnowledge は
+ *   確認ダイアログから渡される。
+ *
+ * 戻り値は削除された件数の集約 (画面でトースト表示に使う)。
+ */
+export async function deleteCustomerCascade(
+  customerId: string,
+  options: {
+    cascadeRisks?: boolean;
+    cascadeIssues?: boolean;
+    cascadeRetros?: boolean;
+    cascadeKnowledge?: boolean;
+  } = {},
+): Promise<
+  | { ok: false; reason: 'not_found' }
+  | {
+      ok: true;
+      projectsDeleted: number;
+      risksDeleted: number;
+      issuesDeleted: number;
+      retrospectivesDeleted: number;
+      knowledgeDeleted: number;
+      knowledgeUnlinked: number;
+      attachmentsDeleted: number;
+    }
+> {
+  const existing = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { id: true },
+  });
+  if (!existing) return { ok: false, reason: 'not_found' };
+
+  // active Project のみ対象 (論理削除済 Project は FK null 化のみで残す)
+  const activeProjects = await prisma.project.findMany({
+    where: { customerId, deletedAt: null },
+    select: { id: true },
+  });
+
+  const totals = {
+    projectsDeleted: 0,
+    risksDeleted: 0,
+    issuesDeleted: 0,
+    retrospectivesDeleted: 0,
+    knowledgeDeleted: 0,
+    knowledgeUnlinked: 0,
+    attachmentsDeleted: 0,
+  };
+
+  for (const p of activeProjects) {
+    const r = await deleteProjectCascade(p.id, options);
+    totals.projectsDeleted += 1;
+    totals.risksDeleted += r.risks;
+    totals.issuesDeleted += r.issues;
+    totals.retrospectivesDeleted += r.retrospectives;
+    totals.knowledgeDeleted += r.knowledgeDeleted;
+    totals.knowledgeUnlinked += r.knowledgeUnlinked;
+    totals.attachmentsDeleted += r.attachmentsDeleted;
+  }
+
+  await prisma.customer.delete({ where: { id: customerId } });
+  return { ok: true, ...totals };
 }

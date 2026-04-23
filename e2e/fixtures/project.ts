@@ -41,6 +41,9 @@ async function postWithRetry(page: Page, fn: RequestFn, label: string): Promise<
 
 export type CreateProjectParams = {
   name: string;
+  /** 明示的な FK を使いたい場合。未指定なら内部で顧客を自動作成する。 */
+  customerId?: string;
+  /** customerId 未指定時に新規作成する顧客の名前。未指定なら 'E2E 顧客'。 */
   customerName?: string;
   purpose?: string;
   background?: string;
@@ -50,6 +53,32 @@ export type CreateProjectParams = {
   plannedEndDate?: string;
 };
 
+/**
+ * 顧客を API 経由で作成する (PR #111-2)。
+ * admin ログイン済の page を前提とする。
+ */
+export async function createCustomerViaApi(
+  page: Page,
+  params: { name: string; department?: string },
+): Promise<{ id: string }> {
+  const res = await postWithRetry(
+    page,
+    () =>
+      page.request.post('/api/customers', {
+        data: {
+          name: params.name,
+          department: params.department ?? null,
+        },
+      }),
+    'createCustomerViaApi',
+  );
+  if (!res.ok()) {
+    throw new Error(`createCustomerViaApi failed: ${res.status()} ${await res.text()}`);
+  }
+  const body = await res.json();
+  return { id: body.data.id };
+}
+
 export async function createProjectViaApi(
   page: Page,
   params: CreateProjectParams,
@@ -57,13 +86,22 @@ export async function createProjectViaApi(
   const today = new Date().toISOString().slice(0, 10);
   const in30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+  // PR #111-2: Project.customerId が NOT NULL になったので、明示指定がなければ先に顧客作成する。
+  // 同一 run 内で複数 Project を作る場合、customerId 未指定なら毎回新規顧客になるが
+  // E2E テスト用には問題なし (cleanupByRunId で一括削除されるため)。
+  const customerId =
+    params.customerId ??
+    (await createCustomerViaApi(page, {
+      name: params.customerName ?? `E2E 顧客 ${params.name}`,
+    })).id;
+
   const res = await postWithRetry(
     page,
     () =>
       page.request.post('/api/projects', {
         data: {
           name: params.name,
-          customerName: params.customerName ?? 'E2E 顧客',
+          customerId,
           purpose: params.purpose ?? 'E2E テスト用プロジェクト',
           background: params.background ?? 'E2E',
           scope: params.scope ?? 'E2E',
