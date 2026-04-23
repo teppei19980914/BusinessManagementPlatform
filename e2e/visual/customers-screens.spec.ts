@@ -2,16 +2,17 @@
  * 視覚回帰テスト - 顧客管理画面 (PR #111-2)
  *
  * 対象:
- *   - /customers 一覧画面 (admin light テーマ)
- *   - /customers/[id] 詳細画面 (admin light テーマ)
+ *   - /customers/[id] 詳細画面 (admin light テーマ) のみ
  *
  * 設計判断:
- *   - RUN_ID 依存の顧客名は mask で除外して構造比較に絞る
- *   - 並列テスト環境で他 spec の顧客行が残存するのを避けるため、tbody 行は
- *     固定数 (自身が作成した 1 行) で baseline 生成が安定するよう、beforeAll
- *     で cleanup → 1 件作成する構成にしている。
- *   - ただし完全な決定化は困難 (他 spec が並列で作ると一覧に混ざる) なので、
- *     テーブル tbody 全体を mask し、ヘッダ + 空 state 枠のみを比較対象にする。
+ *   - /customers 一覧画面は **LESSONS §4.15 対策 a** に従い視覚回帰から除外。
+ *     並列テストで他 spec が作成した顧客行が残存し、tbody 行数差 → mask 領域の
+ *     座標がズレて pixel diff 20% で常時 fail するため (PR #111-2 hotfix / §4.31)。
+ *   - /customers/[id] 詳細画面は単一顧客スコープ + 紐付プロジェクト 0 件で
+ *     決定的になるため、§4.15 対策 b (データ固定) が有効。
+ *     - 顧客名 (RUN_ID 含む) は h2 mask で除外
+ *     - 紐付プロジェクト tbody は常に「ありません」空 state 1 行 → mask 不要だが
+ *       保険で mask しておく
  *
  * ベースライン運用:
  *   - baseline PNG は `.github/workflows/e2e-visual-baseline.yml` で生成・自動 commit
@@ -65,16 +66,10 @@ test.describe('@visual:customers 顧客管理画面', () => {
     await disconnectDb();
   });
 
-  test('顧客一覧画面 (light テーマ)', async () => {
-    const page = sharedPage;
-    await page.goto('/customers');
-    await page.waitForLoadState('networkidle');
-    await expect(page).toHaveScreenshot('customers-list-light.png', {
-      fullPage: true,
-      // tbody 全体を mask (並列テストで行数が不定のため)
-      mask: [page.locator('tbody')],
-    });
-  });
+  // /customers 一覧画面の視覚回帰は LESSONS §4.15 / §4.31 により対象外。
+  // 理由: 並列テストで他 spec の顧客行が DB に残存し、tbody 行数が変動するため
+  // mask 境界座標が baseline と一致せず常に pixel diff で fail する。主要な
+  // テーマ回帰は settings-themes.spec.ts の 10 テーママトリクスでカバー済。
 
   test('顧客詳細画面 (light テーマ)', async () => {
     const page = sharedPage;
