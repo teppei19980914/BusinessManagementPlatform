@@ -190,20 +190,16 @@ http://localhost:3000 でアクセスできます。
 
 ## ドキュメント
 
-| ドキュメント | 説明 |
+開発・運用保守に関わるドキュメントは **[docs/](docs/README.md)** に役割別で整理されています。
+
+| 対象 | 入口 |
 |---|---|
-| [要件定義書](docs/REQUIREMENTS.md) | プラットフォームの要件定義 |
-| [仕様書](docs/SPECIFICATION.md) | 機能仕様・画面仕様・権限マトリクス・アカウントフロー |
-| [設計書](docs/DESIGN.md) | アーキテクチャ・ER 図・テーブル定義・API・セキュリティ・インフラ |
-| [開発計画書](docs/PLAN.md) | **📌 履歴資料**: MVP 構築時 (2026-04-15 完了) の計画と実績記録。現行仕様は REQUIREMENTS / SPECIFICATION / DESIGN を参照 |
-| [リリースロードマップ](docs/RELEASE_ROADMAP.md) | 2026/05 プレリリース → 2026/06 正式リリースに向けた 3 段階計画 (MVP 完了後の未来計画) |
-| [運用手順書](docs/OPERATION.md) | 環境変数・migration・デプロイ・監視・障害対応・ロールバック |
-| [開発者ガイド](docs/DEVELOPER_GUIDE.md) | コード改修手順・テスト実行・失敗調査・spec 作成規約 |
-| [テスト戦略](docs/TESTING_STRATEGY.md) | 自動テスト 3 層と手動テスト (UAT/a11y/クロスブラウザ等) の役割分担 |
-| [E2E カバレッジ](docs/E2E_COVERAGE.md) | 画面/API のカバレッジマニフェスト |
-| [E2E 実装で得られた知見](docs/E2E_LESSONS_LEARNED.md) | 25 個の罠パターンと回避策 (§4.1〜§4.25、PR #90 以降累積) |
-| [貢献規約](CONTRIBUTING.md) | コミット/PR 規約、ブランチ運用 |
-| [ナレッジ](docs/knowledge/) | プロジェクト運営で得た知見・教訓 |
+| このサービスを初めて触る**開発者** | [docs/beginner/](docs/beginner/README.md) — 開発環境構築から初めての PR 作成までの一貫手順 |
+| **開発者** (実装・テスト担当) | [docs/developer/](docs/README.md#developer--開発者向け) — 要件 / 仕様 / 設計 / 改修ガイド / テスト戦略 |
+| **運用管理者** (デプロイ・障害対応担当) | [docs/administrator/](docs/README.md#administrator--運用管理者向け) — デプロイ / 環境変数 / migration / 障害対応 / リリース計画 |
+| 全ドキュメント索引 | [docs/README.md](docs/README.md) |
+
+コミット / PR 規約・ブランチ運用は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
 ## ライセンス
 

@@ -23,7 +23,7 @@
  *
  * 並列戦略: serial (前ステップの状態を共有)、本スイートは retries=0
  *
- * カバレッジ記録: docs/E2E_COVERAGE.md に [x] でマッピング
+ * カバレッジ記録: docs/developer/E2E_COVERAGE.md に [x] でマッピング
  */
 
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';

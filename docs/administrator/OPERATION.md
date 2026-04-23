@@ -612,11 +612,11 @@ cron-job.org の **Settings → Notifications** で以下を有効化:
 
 | トピック | 参照先 |
 |---|---|
-| アーキテクチャ・ER 図・権限設計 | [docs/DESIGN.md](./DESIGN.md) |
-| 機能仕様・画面仕様 | [docs/SPECIFICATION.md](./SPECIFICATION.md) |
-| MVP スケジュール | [docs/PLAN.md](./PLAN.md) |
-| 運用で得られた教訓 | [docs/knowledge/](./knowledge/) |
-| パフォーマンス改修記録 | [docs/performance/](./performance/) |
+| アーキテクチャ・ER 図・権限設計 | [docs/developer/DESIGN.md](../developer/DESIGN.md) |
+| 機能仕様・画面仕様 | [docs/developer/SPECIFICATION.md](../developer/SPECIFICATION.md) |
+| MVP スケジュール | [docs/developer/PLAN.md](../developer/PLAN.md) |
+| 運用で得られた教訓 | [docs/developer/knowledge/](../developer/knowledge/) |
+| パフォーマンス改修記録 | [docs/developer/performance/](../developer/performance/) |
 
 ---
 

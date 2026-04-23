@@ -12,7 +12,7 @@
  * - 副作用なし（SELECT 1 のみ、書き込み処理なし）
  * - 可能な限り高速に応答（5 秒タイムアウト）
  *
- * ref: docs/performance/20260417/after/cold-start-and-data-growth-analysis.md §4.1
+ * ref: docs/developer/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md §4.1
  */
 
 import { NextResponse } from 'next/server';

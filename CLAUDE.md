@@ -74,15 +74,16 @@
 3. **パフォーマンスチェック** — N+1禁止、不要な再描画、非同期並列化
 4. **デプロイチェック** — `pnpm lint` → `pnpm test` → `pnpm build` をローカル実行
 5. **単体テスト** — テスト数の増減を確認、旧文言の残留を検索
-6. **E2E カバレッジ横展開** (PR #90 以降) — 新規 `page.tsx` / `route.ts` を追加したら必ず `docs/E2E_COVERAGE.md` に追記する。`pnpm e2e:coverage-check` で gap 検出可、`ci.yml` でも強制
-7. **ドキュメント最新化** — 変更内容に応じて以下のドキュメントを必ず更新する
-   - `README.md` — プロジェクト概要・セットアップ手順
-   - `OPERATION.md` — 運用手順・環境変数・マイグレーション・デプロイ・監視・障害対応・ロールバック
-   - `REQUIREMENTS.md` — 要件定義
-   - `SPECIFICATION.md` — 機能仕様
-   - `DESIGN.md` — 設計（アーキテクチャ・データモデル等）
-   - `INFRASTRUCTURE.md` — インフラ構成・環境情報
-   - `TESTING_STRATEGY.md` — 自動テスト + 手動テストの全体戦略 (PR #96 以降、UAT/a11y/クロスブラウザ等の人間担当領域)
+6. **E2E カバレッジ横展開** (PR #90 以降) — 新規 `page.tsx` / `route.ts` を追加したら必ず `docs/developer/E2E_COVERAGE.md` に追記する。`pnpm e2e:coverage-check` で gap 検出可、`ci.yml` でも強制
+7. **ドキュメント最新化** — 変更内容に応じて以下のドキュメントを必ず更新する (docs/ は PR #107 以降、役割別サブディレクトリ構成)
+   - `README.md` — プロジェクト概要・セットアップ手順 (外部ユーザ向け)
+   - `docs/administrator/OPERATION.md` — 運用手順・環境変数・マイグレーション・デプロイ・監視・障害対応・ロールバック
+   - `docs/developer/REQUIREMENTS.md` — 要件定義
+   - `docs/developer/SPECIFICATION.md` — 機能仕様
+   - `docs/developer/DESIGN.md` — 設計（アーキテクチャ・データモデル等）
+   - `docs/developer/TESTING_STRATEGY.md` — 自動テスト + 手動テストの全体戦略 (PR #96 以降、UAT/a11y/クロスブラウザ等の人間担当領域)
+   - `docs/developer/DEVELOPER_GUIDE.md` — コード改修手順・テスト実行・spec 作成規約
+   - `docs/beginner/README.md` — 初見開発者向け onboarding (環境構築〜PR 作成)
 
 ## Claude Code レベル最適化ルール
 

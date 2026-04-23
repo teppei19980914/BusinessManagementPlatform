@@ -7,7 +7,7 @@
 > | 現行アプリの **要件** | [REQUIREMENTS.md](./REQUIREMENTS.md) |
 > | 現行アプリの **機能仕様** | [SPECIFICATION.md](./SPECIFICATION.md) |
 > | 現行アプリの **設計** (アーキテクチャ / データモデル等) | [DESIGN.md](./DESIGN.md) |
-> | **今後の** リリース計画 (プレリリース 2026-05 / 正式リリース 2026-06〜) | [RELEASE_ROADMAP.md](./RELEASE_ROADMAP.md) |
+> | **今後の** リリース計画 (プレリリース 2026-05 / 正式リリース 2026-06〜) | [RELEASE_ROADMAP.md](../administrator/RELEASE_ROADMAP.md) |
 > | 本文書 | **MVP 構築時 (2026-04-15 以前) の計画と実績の記録** |
 >
 > MVP 完了後の改修・機能追加では REQUIREMENTS / SPECIFICATION / DESIGN が最新の真実。
@@ -30,7 +30,7 @@ MVP を 3 フェーズに分割し、段階的にリリースする。
 - [要件定義書](./REQUIREMENTS.md)
 - [仕様書](./SPECIFICATION.md)
 - [設計書](./DESIGN.md)
-- [リリースロードマップ](./RELEASE_ROADMAP.md) — MVP 完了後のロードマップ (未来側)
+- [リリースロードマップ](../administrator/RELEASE_ROADMAP.md) — MVP 完了後のロードマップ (未来側)
 
 ---
 
@@ -367,4 +367,4 @@ gantt
 本計画書は MVP の開発スケジュールを定義したドラフトであった。
 v2.0 (2026-04-15 実績反映) 時点で MVP の全フェーズが完了し、以降は
 **履歴記録として固定**している (冒頭注記参照)。MVP 完了後のロードマップは
-[RELEASE_ROADMAP.md](./RELEASE_ROADMAP.md) に引き継がれている。
+[RELEASE_ROADMAP.md](../administrator/RELEASE_ROADMAP.md) に引き継がれている。

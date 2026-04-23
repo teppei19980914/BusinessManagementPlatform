@@ -202,7 +202,7 @@
 - cron-job.org ダッシュボードで **tasukiba ジョブ**が Enabled 状態であること
 - Last Events が連続して `200 OK` であること（失敗が続いている場合、即座に原因調査）
 - ジョブが削除された場合、**プロジェクト詳細画面の TTFB がコールドスタート時 500-1000 ms に跳ね上がる**ため早期検知が必要
-- 手順書は [`docs/OPERATION.md`](../../OPERATION.md) §9 (cron-job.org ウォームアップ設定手順) 参照
+- 手順書は [`docs/administrator/OPERATION.md`](../../../administrator/OPERATION.md) §9 (cron-job.org ウォームアップ設定手順) 参照
 
 ### 6.2 警戒すべきアンチパターン（再発防止）
 
@@ -231,7 +231,7 @@
 - [`after/次期プログラム/`](./after/次期プログラム/) — 改修 1 段階目 (PR #25) の個別分析レポート 3 本 (comparison-report / bottleneck-and-fixes / cold-start-and-data-growth-analysis)
 - [`../../knowledge/KNW-002_performance-optimization-patterns.md`](../../knowledge/KNW-002_performance-optimization-patterns.md) — アンチパターン詳細
 - [`../../DESIGN.md §17.6`](../../DESIGN.md) — 設計書反映版
-- [`../../OPERATION.md`](../../OPERATION.md) — 運用手順書（cron-job.org 設定含む）
+- [`../../../administrator/OPERATION.md`](../../../administrator/OPERATION.md) — 運用手順書（cron-job.org 設定含む）
 
 > 注: HAR / Trace 生計測バイナリおよび「タスク更新処理パフォーマンス/」配下
 > (計測未実施だった空ディレクトリ) は PR #101 で削除。計測結果の要約は上記

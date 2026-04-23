@@ -5,7 +5,7 @@
  *   CI 環境構築とブラウザ起動の疎通確認のみ。本番ロジックには踏み込まない。
  *   具体シナリオ (Steps 1-12) は後続 PR (B〜E) で追加する。
  *
- * カバレッジ記録: docs/E2E_COVERAGE.md の「ログイン画面」行にマッピング
+ * カバレッジ記録: docs/developer/E2E_COVERAGE.md の「ログイン画面」行にマッピング
  */
 
 import { test, expect } from '@playwright/test';

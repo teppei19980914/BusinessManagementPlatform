@@ -26,7 +26,7 @@ export type LazyFetch<T> = {
  * - fetch が失敗しても UI を落とさず error 状態を返す
  * - サーバは `{ data: T }` 形式の JSON を返すことを想定（プロジェクト API 共通）
  *
- * ref: docs/performance/20260417/after/cold-start-and-data-growth-analysis.md §4.2
+ * ref: docs/developer/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md §4.2
  */
 export function useLazyFetch<T>(url: string): LazyFetch<T> {
   const [state, setState] = useState<LazyState<T>>({ status: 'idle' });

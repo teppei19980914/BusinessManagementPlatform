@@ -88,7 +88,7 @@
 以下は脆弱性として受付対象外とさせていただきます:
 
 - **既知の設計上の制約** (e.g., 招待制のため外部ログインフォームが無い等、
-  [docs/DESIGN.md](./docs/DESIGN.md) に記載済みの設計判断)
+  [docs/developer/DESIGN.md](./docs/developer/DESIGN.md) に記載済みの設計判断)
 - **サードパーティ依存の脆弱性 (自動検知済)**
   - `pnpm audit` / Dependabot / CodeQL で検知されているものは既に対応中
   - ただしそれ以外の依存や、依存関係の**組み合わせによって顕在化する問題**は受付対象
@@ -113,8 +113,8 @@
 
 ## 7. 関連ドキュメント
 
-- [docs/DESIGN.md](./docs/DESIGN.md) — セキュリティ設計 (認証 / 認可 / 監査)
-- [docs/TESTING_STRATEGY.md §2.5](./docs/TESTING_STRATEGY.md) — セキュリティテストの自動化範囲と手動確認領域
+- [docs/developer/DESIGN.md](./docs/developer/DESIGN.md) — セキュリティ設計 (認証 / 認可 / 監査)
+- [docs/developer/TESTING_STRATEGY.md §2.5](./docs/developer/TESTING_STRATEGY.md) — セキュリティテストの自動化範囲と手動確認領域
 - [.github/workflows/security.yml](./.github/workflows/security.yml) — CodeQL / pnpm audit の CI 設定
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — 貢献規約 (機能改善の PR 送信先)
 

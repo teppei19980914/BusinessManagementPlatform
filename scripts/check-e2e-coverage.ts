@@ -3,7 +3,7 @@
  *
  * 目的:
  *   新しい画面 (page.tsx) や API route (route.ts) を追加したとき、
- *   docs/E2E_COVERAGE.md にエントリが欠けていれば CI で fail させる。
+ *   docs/developer/E2E_COVERAGE.md にエントリが欠けていれば CI で fail させる。
  *   機能追加 PR の標準手順として「E2E_COVERAGE.md 更新」を強制する。
  *
  * 検出ロジック:
@@ -18,7 +18,7 @@
  *   - _components / _utils 等 underscore prefix のプライベートファイル
  *
  * 出力例:
- *   ❌ 以下の新規ファイルが docs/E2E_COVERAGE.md に未記載です:
+ *   ❌ 以下の新規ファイルが docs/developer/E2E_COVERAGE.md に未記載です:
  *     - /api/projects/[projectId]/attachments (src/app/api/projects/[projectId]/attachments/route.ts)
  *     - /new-feature (src/app/(dashboard)/new-feature/page.tsx)
  *   対応: 該当エントリを追記してください (skip 理由も可)
@@ -107,7 +107,7 @@ function collectPages(): string[] {
 // ---------- 2. E2E_COVERAGE.md から抽出 ----------
 
 function extractDocumentedPaths(): Set<string> {
-  const docPath = path.join(ROOT, 'docs', 'E2E_COVERAGE.md');
+  const docPath = path.join(ROOT, 'docs', 'developer', 'E2E_COVERAGE.md');
   const content = readFileSync(docPath, 'utf-8');
   const paths = new Set<string>();
 
@@ -168,13 +168,13 @@ function main() {
     return;
   }
 
-  console.error('❌ docs/E2E_COVERAGE.md に未記載の機能があります:');
+  console.error('❌ docs/developer/E2E_COVERAGE.md に未記載の機能があります:');
   for (const m of missing.sort()) {
     console.error(`   - ${m}`);
   }
   console.error('');
   console.error('対応方法:');
-  console.error('   docs/E2E_COVERAGE.md の該当セクションにエントリを追加してください。');
+  console.error('   docs/developer/E2E_COVERAGE.md の該当セクションにエントリを追加してください。');
   console.error('   未カバーで許容する場合は `[ ] /path — skip: <理由>` の形式で記載可。');
   process.exit(1);
 }
