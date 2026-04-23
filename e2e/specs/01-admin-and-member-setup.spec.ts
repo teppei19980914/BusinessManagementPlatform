@@ -31,6 +31,7 @@ import { RUN_ID, withRunId } from '../fixtures/run-id';
 import { waitForMail, extractSetupPasswordUrl } from '../fixtures/inbox';
 import { generateTotpCode } from '../fixtures/totp';
 import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
+import { createCustomerViaApi } from '../fixtures/project';
 import { snapshotStep } from '../fixtures/snapshot';
 
 let startedAt: string;
@@ -259,10 +260,15 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     const today = new Date().toISOString().slice(0, 10);
     const in30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+    // PR #111-2: Project.customer_id が NOT NULL になったので先に顧客を作成して FK を供給する
+    const { id: customerIdForProject } = await createCustomerViaApi(page, {
+      name: withRunId('顧客'),
+    });
+
     const res = await page.request.post('/api/projects', {
       data: {
         name: PROJECT_NAME,
-        customerName: withRunId('顧客'),
+        customerId: customerIdForProject,
         purpose: 'E2E テスト用プロジェクト',
         background: 'E2E テストでカバーする基本シナリオ',
         scope: 'Step 5 範囲のみ',

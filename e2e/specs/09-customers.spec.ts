@@ -98,9 +98,11 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     await page.waitForLoadState('networkidle');
 
     await page.getByRole('button', { name: '新規顧客登録' }).click();
-    await page.getByLabel('顧客名 *').fill(CUSTOMER_NAME);
-    await page.getByLabel('部門').fill('情報システム部');
-    await page.getByLabel('担当者').fill('山田 太郎');
+    // LESSONS §4.29: 「担当者」ラベルは「担当者メール」にも部分一致するので
+    // exact:true で厳密一致させる。「顧客名 *」「部門」は念のため exact 化。
+    await page.getByLabel('顧客名 *', { exact: true }).fill(CUSTOMER_NAME);
+    await page.getByLabel('部門', { exact: true }).fill('情報システム部');
+    await page.getByLabel('担当者', { exact: true }).fill('山田 太郎');
 
     // POST /api/customers レスポンス確定を待つ
     const postResponse = page.waitForResponse(
@@ -129,7 +131,8 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
 
     // 編集ダイアログを開く
     await page.getByRole('button', { name: '編集' }).click();
-    const nameField = page.getByLabel('顧客名 *');
+    // LESSONS §4.29: exact:true で「顧客名 *」が「担当者メール」等に部分一致しないよう防御
+    const nameField = page.getByLabel('顧客名 *', { exact: true });
     await nameField.fill(CUSTOMER_NAME_EDITED);
 
     const patchResponse = page.waitForResponse(
