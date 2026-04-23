@@ -195,8 +195,8 @@ http://localhost:3000 でアクセスできます。
 | [要件定義書](docs/REQUIREMENTS.md) | プラットフォームの要件定義 |
 | [仕様書](docs/SPECIFICATION.md) | 機能仕様・画面仕様・権限マトリクス・アカウントフロー |
 | [設計書](docs/DESIGN.md) | アーキテクチャ・ER 図・テーブル定義・API・セキュリティ・インフラ |
-| [開発計画書](docs/PLAN.md) | MVP-1a / 1b / 2 のスケジュール・スコープ・リリース条件 |
-| [リリースロードマップ](docs/RELEASE_ROADMAP.md) | 2026/05 プレリリース → 2026/06 正式リリースに向けた 3 段階計画 |
+| [開発計画書](docs/PLAN.md) | **📌 履歴資料**: MVP 構築時 (2026-04-15 完了) の計画と実績記録。現行仕様は REQUIREMENTS / SPECIFICATION / DESIGN を参照 |
+| [リリースロードマップ](docs/RELEASE_ROADMAP.md) | 2026/05 プレリリース → 2026/06 正式リリースに向けた 3 段階計画 (MVP 完了後の未来計画) |
 | [運用手順書](docs/OPERATION.md) | 環境変数・migration・デプロイ・監視・障害対応・ロールバック |
 | [開発者ガイド](docs/DEVELOPER_GUIDE.md) | コード改修手順・テスト実行・失敗調査・spec 作成規約 |
 | [テスト戦略](docs/TESTING_STRATEGY.md) | 自動テスト 3 層と手動テスト (UAT/a11y/クロスブラウザ等) の役割分担 |

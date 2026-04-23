@@ -2,7 +2,7 @@
 
 - 対象: プロジェクト詳細画面 `/projects/[projectId]` のリロードが体感で遅い問題
 - 計測日: 2026-04-17
-- 計測データ: `docs/performance/20260417/before/` & `docs/performance/20260417/after/`
+- 計測データ: HAR / Trace 計測 (生バイナリは PR #101 で削除、同階層の comparison-report.md / cold-start-and-data-growth-analysis.md に要約転写済み)
 
 ---
 

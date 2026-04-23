@@ -145,13 +145,28 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
   test('Activity を UI から削除できる (confirm 承諾)', async () => {
     const page = sharedPage;
     // /tasks ページが開いている前提 (直前 test の状態)
+
+    // LESSONS §4.20/§4.26: 削除 click は router.refresh() の fire-and-forget と
+    // dialog 承諾非同期で race する。DELETE API を click **前**に予約 → await、
+    // 続けて page.reload で DB 真の状態を強制取得してから count 0 を assert する。
+    // page.once('dialog') は click より前に登録しておく必要がある (alert/confirm は同期的 + microtask)。
+    const deleteRes = page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/projects/${projectId}/tasks/`)
+        && r.request().method() === 'DELETE',
+    );
     page.once('dialog', (dialog) => dialog.accept());
 
     // 対象 ACT 行の aria-label="削除" ボタン
     const actRow = page.locator('tr').filter({ hasText: ACT_NAME });
     await actRow.getByRole('button', { name: '削除' }).click();
 
-    await page.waitForLoadState('networkidle');
+    const res = await deleteRes;
+    expect(res.ok(), `Activity DELETE failed: ${res.status()}`).toBeTruthy();
+
+    // DB は更新済み。router.refresh() race を回避して UI を DB 真状態に強制同期。
+    await page.reload({ waitUntil: 'networkidle' });
+
     await expect(page.locator('tr').filter({ hasText: ACT_NAME })).toHaveCount(0, {
       timeout: 10_000,
     });

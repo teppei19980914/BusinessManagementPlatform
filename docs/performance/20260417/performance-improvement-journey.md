@@ -3,7 +3,7 @@
 - 対象画面: プロジェクト詳細 `/projects/[projectId]`
 - 計測日: 2026-04-17
 - 比較対象: 現行プログラム → 次期プログラム → コールドスタートとデータ増の影響改修
-- 計測元データ: `before/現行プログラム/`, `after/次期プログラム/`, `after/コールドスタートとデータ増の影響改修/`
+- 計測元データ: HAR / Trace 計測 (生バイナリは PR #101 でリポジトリ容量整理のため削除、本 md および `after/次期プログラム/` 配下の分析 md 3 本に要約転写済み。再計測は本 md §「計測手順」相当の Chrome DevTools 手順で再実施可能)
 
 ---
 
@@ -187,7 +187,7 @@
 | デプロイ設定 | `vercel.json` に日次 cron 保険 | #28 |
 | UI | `components/ui/skeleton.tsx` + 5 ルートの `loading.tsx` | #30 |
 | ドキュメント | `OPERATIONS.md` 新規 (PR #74 で `OPERATION.md` に統合) + `DESIGN.md §17.6` + `KNW-002` | #25, #28 |
-| 計測データ | before/現行プログラム/, after/次期プログラム/, after/コールドスタートとデータ増の影響改修/ | #26, #27, #30 |
+| 計測データ | HAR / Trace 計測 (生バイナリは PR #101 で削除、分析 md に要約転写済み) | #26, #27, #30 |
 
 テスト件数: **216 → 219 件**（+3）、全合格を全 PR で確認。
 
@@ -228,14 +228,15 @@
 
 ## 7. 関連ドキュメント
 
-- [`before/現行プログラム/`](./before/現行プログラム/) — 改修前の計測データ
-- [`after/次期プログラム/`](./after/次期プログラム/) — 1 段階目（PR #25）の計測データ + 個別分析レポート 3 本
-- [`after/コールドスタートとデータ増の影響改修/`](./after/コールドスタートとデータ増の影響改修/) — 最終段の計測データ
-- [`after/タスク更新処理パフォーマンス/`](./after/タスク更新処理パフォーマンス/) — タスク更新時の計測（今後予定）
-- [`before/タスク更新処理パフォーマンス/`](./before/タスク更新処理パフォーマンス/) — タスク更新時の計測（現行）
+- [`after/次期プログラム/`](./after/次期プログラム/) — 改修 1 段階目 (PR #25) の個別分析レポート 3 本 (comparison-report / bottleneck-and-fixes / cold-start-and-data-growth-analysis)
 - [`../../knowledge/KNW-002_performance-optimization-patterns.md`](../../knowledge/KNW-002_performance-optimization-patterns.md) — アンチパターン詳細
 - [`../../DESIGN.md §17.6`](../../DESIGN.md) — 設計書反映版
 - [`../../OPERATION.md`](../../OPERATION.md) — 運用手順書（cron-job.org 設定含む）
+
+> 注: HAR / Trace 生計測バイナリおよび「タスク更新処理パフォーマンス/」配下
+> (計測未実施だった空ディレクトリ) は PR #101 で削除。計測結果の要約は上記
+> 分析レポート 3 本と本 md に転写済み。再計測が必要なら同手順で Chrome DevTools
+> から新規取得すること。
 
 ---
 
