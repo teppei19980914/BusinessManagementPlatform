@@ -52,6 +52,7 @@
 - [x] `/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 招待)
 - [ ] `/admin/audit-logs` — skip: 監査ログ閲覧、read-only で優先度低
 - [ ] `/admin/role-changes` — skip: 権限変更履歴、read-only で優先度低
+- [ ] `/customers` — skip: PR #111-2 で E2E + 視覚回帰を追加予定 (PR #111-1 は DB 層 + service + API + 最小 UI、テストは unit のみ)
 
 ### その他
 - [ ] `/` (ルート) — skip: プロジェクト一覧へのリダイレクト、PR #B の /projects で間接カバー
@@ -107,6 +108,10 @@
 
 ### 見積
 - [x] `/api/projects/[projectId]/estimates/*` — e2e/specs/08-estimates.spec.ts (PR #96 / POST 作成 + 確定 + DELETE)
+
+### 顧客 (PR #111)
+- [ ] `/api/customers` (GET/POST) — skip: PR #111-2 で追加予定 (PR #111-1 は unit test のみ)
+- [ ] `/api/customers/[customerId]` (GET/PATCH/DELETE) — skip: PR #111-2 で追加予定
 
 ### 管理系
 - [x] `/api/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 POST + Step 6a GET)

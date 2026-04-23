@@ -45,6 +45,56 @@ describe('TOTP (otplib) 低レベル動作', () => {
     });
     expect(uri).toContain('otpauth://totp/');
   });
+
+  it('epochTolerance=30 で前の period のコードも許容される (LESSONS §4.28)', async () => {
+    const otplib = await import('otplib');
+    const secret = otplib.generateSecret();
+
+    // 35 秒前の時刻で生成したコード (= 前の period)
+    const pastEpoch = Math.floor((Date.now() - 35 * 1000) / 1000);
+    const pastToken = otplib.generateSync({ secret, epoch: pastEpoch });
+
+    // 既定 (epochTolerance 未指定) では前 period のコードは拒否される可能性がある
+    // が、epochTolerance=30 を設定すれば ±1 window 許容で valid になる
+    const withTolerance = otplib.verifySync({
+      token: pastToken,
+      secret,
+      epochTolerance: 30,
+    });
+    expect(withTolerance.valid).toBe(true);
+  });
+
+  it('epochTolerance=30 で次の period のコードも許容される (時刻先行時)', async () => {
+    const otplib = await import('otplib');
+    const secret = otplib.generateSecret();
+
+    // 35 秒後の時刻で生成したコード (= 次の period)
+    const futureEpoch = Math.floor((Date.now() + 35 * 1000) / 1000);
+    const futureToken = otplib.generateSync({ secret, epoch: futureEpoch });
+
+    const withTolerance = otplib.verifySync({
+      token: futureToken,
+      secret,
+      epochTolerance: 30,
+    });
+    expect(withTolerance.valid).toBe(true);
+  });
+
+  it('epochTolerance=30 でも 60 秒以上離れたコードは拒否される (過剰許容防止)', async () => {
+    const otplib = await import('otplib');
+    const secret = otplib.generateSecret();
+
+    // 90 秒前の時刻で生成したコード (= 許容外)
+    const tooOldEpoch = Math.floor((Date.now() - 90 * 1000) / 1000);
+    const tooOldToken = otplib.generateSync({ secret, epoch: tooOldEpoch });
+
+    const result = otplib.verifySync({
+      token: tooOldToken,
+      secret,
+      epochTolerance: 30,
+    });
+    expect(result.valid).toBe(false);
+  });
 });
 
 describe('generateMfaSecret', () => {
