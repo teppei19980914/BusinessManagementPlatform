@@ -7,7 +7,8 @@ import {
 
 export const createProjectSchema = z.object({
   name: z.string().min(1, 'プロジェクト名を入力してください').max(NAME_MAX_LENGTH),
-  customerName: z.string().min(1, '顧客名を入力してください').max(NAME_MAX_LENGTH),
+  // PR #111-2: 顧客は Customer マスタの選択式。UUID を受け取る。
+  customerId: z.string().uuid({ message: '顧客を選択してください' }),
   purpose: z.string().min(1, '目的を入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
   background: z.string().min(1, '背景を入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
   scope: z.string().min(1, 'スコープを入力してください').max(MEDIUM_TEXT_MAX_LENGTH),

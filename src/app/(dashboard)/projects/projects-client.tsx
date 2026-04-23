@@ -64,10 +64,14 @@ import {
   type StagedAttachment,
 } from '@/components/attachments/staged-attachments-input';
 
+type CustomerOption = { id: string; name: string };
+
 type Props = {
   initialProjects: ProjectDTO[];
   initialTotal: number;
   isAdmin: boolean;
+  // PR #111-2: 新規作成ダイアログの顧客選択肢
+  customers: CustomerOption[];
 };
 
 const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -80,7 +84,12 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
   closed: 'destructive',
 };
 
-export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props) {
+export function ProjectsClient({
+  initialProjects,
+  initialTotal,
+  isAdmin,
+  customers,
+}: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
   const [keyword, setKeyword] = useState('');
@@ -90,7 +99,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
 
   const [form, setForm] = useState({
     name: '',
-    customerName: '',
+    customerId: '',
     purpose: '',
     background: '',
     scope: '',
@@ -127,7 +136,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
     // タグは入力欄の生文字列 (form.*TagsInput) をカンマ分割して送信する
     const payload = {
       name: form.name,
-      customerName: form.customerName,
+      customerId: form.customerId,
       purpose: form.purpose,
       background: form.background,
       scope: form.scope,
@@ -168,7 +177,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
     setIsCreateOpen(false);
     setForm({
       name: '',
-      customerName: '',
+      customerId: '',
       purpose: '',
       background: '',
       scope: '',
@@ -211,13 +220,32 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>顧客名</Label>
-                  <Input
-                    value={form.customerName}
-                    onChange={(e) => setForm({ ...form, customerName: e.target.value })}
-                    maxLength={100}
+                  {/* PR #111-2: 顧客は Customer マスタから選択。未登録の場合は /customers で先に作成する。 */}
+                  <Label>顧客</Label>
+                  <select
+                    value={form.customerId}
+                    onChange={(e) => setForm({ ...form, customerId: e.target.value })}
+                    className={nativeSelectClass}
                     required
-                  />
+                  >
+                    <option value="" disabled>
+                      顧客を選択してください
+                    </option>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  {customers.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      顧客が未登録です。先に
+                      <Link href="/customers" className="text-info hover:underline">
+                        顧客管理
+                      </Link>
+                      で登録してください。
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>目的</Label>
@@ -363,7 +391,7 @@ export function ProjectsClient({ initialProjects, initialTotal, isAdmin }: Props
         <TableHeader>
           <TableRow>
             <ResizableHead columnKey="name" defaultWidth={220}>プロジェクト名</ResizableHead>
-            <ResizableHead columnKey="customerName" defaultWidth={160}>顧客名</ResizableHead>
+            <ResizableHead columnKey="customer" defaultWidth={160}>顧客</ResizableHead>
             <ResizableHead columnKey="devMethod" defaultWidth={140}>開発方式</ResizableHead>
             <ResizableHead columnKey="status" defaultWidth={110}>ステータス</ResizableHead>
             <ResizableHead columnKey="plannedStartDate" defaultWidth={120}>開始予定日</ResizableHead>

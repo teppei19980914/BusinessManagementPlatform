@@ -50,8 +50,10 @@ describe('TOTP (otplib) 低レベル動作', () => {
     const otplib = await import('otplib');
     const secret = otplib.generateSecret();
 
-    // 35 秒前の時刻で生成したコード (= 前の period)
-    const pastEpoch = Math.floor((Date.now() - 35 * 1000) / 1000);
+    // ちょうど 30 秒前 (= 必ず W-1) の時刻で生成したコード。
+    // 35 秒だと now%30 ≥ 25 のとき W-2 になり ±1 window を超えて flaky だったので、
+    // 30 秒固定にして毎回 W-1 window に着地させる。
+    const pastEpoch = Math.floor(Date.now() / 1000) - 30;
     const pastToken = otplib.generateSync({ secret, epoch: pastEpoch });
 
     // 既定 (epochTolerance 未指定) では前 period のコードは拒否される可能性がある
@@ -68,8 +70,8 @@ describe('TOTP (otplib) 低レベル動作', () => {
     const otplib = await import('otplib');
     const secret = otplib.generateSecret();
 
-    // 35 秒後の時刻で生成したコード (= 次の period)
-    const futureEpoch = Math.floor((Date.now() + 35 * 1000) / 1000);
+    // ちょうど 30 秒後 (= 必ず W+1) の時刻で生成したコード。35 秒だと flaky になる。
+    const futureEpoch = Math.floor(Date.now() / 1000) + 30;
     const futureToken = otplib.generateSync({ secret, epoch: futureEpoch });
 
     const withTolerance = otplib.verifySync({

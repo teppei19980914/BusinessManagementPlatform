@@ -9,9 +9,11 @@
  *   - PATCH: audit_logs (action=UPDATE, entityType=customer) に beforeValue / afterValue 記録
  *   - DELETE: audit_logs (action=DELETE, entityType=customer) に beforeValue 記録
  *
- * 削除仕様 (PR #111-1):
- *   - active Project (deletedAt IS NULL) が 1 件でも紐付けば 409 Conflict で拒否
- *   - カスケード削除は PR #111-2 で別エンドポイント (`/api/customers/[id]/cascade`) として実装予定
+ * 削除仕様 (PR #111-2 更新):
+ *   - デフォルト (?cascade 未指定 or false): active Project 紐付きがあれば 409 Conflict
+ *   - ?cascade=true: 紐付く active Project を `deleteProjectCascade` で一括物理削除後に Customer 削除
+ *     - 追加フラグ: cascadeRisks / cascadeIssues / cascadeRetros / cascadeKnowledge
+ *       (細粒度確認ダイアログから渡される; 各 Project の deleteProjectCascade にそのまま渡る)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,6 +23,7 @@ import {
   getCustomer,
   updateCustomer,
   deleteCustomer,
+  deleteCustomerCascade,
 } from '@/services/customer.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
 
@@ -91,7 +94,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ customerId: string }> },
 ) {
   const user = await getAuthenticatedUser();
@@ -101,6 +104,45 @@ export async function DELETE(
   const { customerId } = await params;
   const before = await getCustomer(customerId);
   if (!before) return notFound();
+
+  // PR #111-2: ?cascade=true で deleteCustomerCascade 経路に切り替え
+  const { searchParams } = req.nextUrl;
+  const cascade = searchParams.get('cascade') === 'true';
+
+  if (cascade) {
+    const result = await deleteCustomerCascade(customerId, {
+      cascadeRisks: searchParams.get('cascadeRisks') === 'true',
+      cascadeIssues: searchParams.get('cascadeIssues') === 'true',
+      cascadeRetros: searchParams.get('cascadeRetros') === 'true',
+      cascadeKnowledge: searchParams.get('cascadeKnowledge') === 'true',
+    });
+    if (!result.ok && result.reason === 'not_found') return notFound();
+
+    await recordAuditLog({
+      userId: user.id,
+      action: 'DELETE',
+      entityType: 'customer',
+      entityId: customerId,
+      beforeValue: sanitizeForAudit(before as unknown as Record<string, unknown>),
+    });
+    return NextResponse.json({
+      data: {
+        id: customerId,
+        cascade: true,
+        ...(result.ok
+          ? {
+              projectsDeleted: result.projectsDeleted,
+              risksDeleted: result.risksDeleted,
+              issuesDeleted: result.issuesDeleted,
+              retrospectivesDeleted: result.retrospectivesDeleted,
+              knowledgeDeleted: result.knowledgeDeleted,
+              knowledgeUnlinked: result.knowledgeUnlinked,
+              attachmentsDeleted: result.attachmentsDeleted,
+            }
+          : {}),
+      },
+    });
+  }
 
   const result = await deleteCustomer(customerId);
 
@@ -112,7 +154,7 @@ export async function DELETE(
       {
         error: {
           code: 'CONFLICT',
-          message: `この顧客には active なプロジェクトが ${result.activeProjectCount} 件紐付いています。先にプロジェクトを削除してください (カスケード削除は PR #111-2 で提供予定)。`,
+          message: `この顧客には active なプロジェクトが ${result.activeProjectCount} 件紐付いています。カスケード削除を使うか、先に個別にプロジェクトを削除してください。`,
           activeProjectCount: result.activeProjectCount,
         },
       },

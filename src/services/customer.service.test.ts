@@ -9,7 +9,15 @@ vi.mock('@/lib/db', () => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    project: {
+      findMany: vi.fn(),
+    },
   },
+}));
+
+// PR #111-2: deleteCustomerCascade は内部で deleteProjectCascade を呼び出す
+vi.mock('./project.service', () => ({
+  deleteProjectCascade: vi.fn(),
 }));
 
 import {
@@ -18,7 +26,9 @@ import {
   createCustomer,
   updateCustomer,
   deleteCustomer,
+  deleteCustomerCascade,
 } from './customer.service';
+import { deleteProjectCascade } from './project.service';
 import { prisma } from '@/lib/db';
 
 const now = new Date('2026-04-23T10:00:00Z');
@@ -236,5 +246,88 @@ describe('deleteCustomer', () => {
     const result = await deleteCustomer('nope');
     expect(result).toEqual({ ok: false, reason: 'not_found' });
     expect(prisma.customer.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteCustomerCascade (PR #111-2)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const emptyCascadeRet = {
+    risks: 0,
+    issues: 0,
+    retrospectives: 0,
+    knowledgeDeleted: 0,
+    knowledgeUnlinked: 0,
+    attachmentsDeleted: 0,
+  };
+
+  it('存在しない顧客は not_found', async () => {
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue(null);
+    const r = await deleteCustomerCascade('nope');
+    expect(r).toEqual({ ok: false, reason: 'not_found' });
+    expect(prisma.customer.delete).not.toHaveBeenCalled();
+    expect(deleteProjectCascade).not.toHaveBeenCalled();
+  });
+
+  it('active Project なし: Customer のみ物理削除 (deleteProjectCascade 未呼び出し)', async () => {
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({ id: 'c-1' } as never);
+    vi.mocked(prisma.project.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.customer.delete).mockResolvedValue(customerRow() as never);
+
+    const r = await deleteCustomerCascade('c-1');
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.projectsDeleted).toBe(0);
+    expect(deleteProjectCascade).not.toHaveBeenCalled();
+    expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: 'c-1' } });
+  });
+
+  it('active Project 複数: すべて deleteProjectCascade で削除し件数を集約', async () => {
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({ id: 'c-1' } as never);
+    vi.mocked(prisma.project.findMany).mockResolvedValue([
+      { id: 'p-1' },
+      { id: 'p-2' },
+    ] as never);
+    vi.mocked(deleteProjectCascade)
+      .mockResolvedValueOnce({ ...emptyCascadeRet, risks: 1, attachmentsDeleted: 3 })
+      .mockResolvedValueOnce({ ...emptyCascadeRet, issues: 2, retrospectives: 1 });
+    vi.mocked(prisma.customer.delete).mockResolvedValue(customerRow() as never);
+
+    const r = await deleteCustomerCascade('c-1', {
+      cascadeRisks: true,
+      cascadeIssues: true,
+    });
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.projectsDeleted).toBe(2);
+      expect(r.risksDeleted).toBe(1);
+      expect(r.issuesDeleted).toBe(2);
+      expect(r.retrospectivesDeleted).toBe(1);
+      expect(r.attachmentsDeleted).toBe(3);
+    }
+    // 各 project に同じ options が渡されること
+    expect(deleteProjectCascade).toHaveBeenCalledTimes(2);
+    expect(deleteProjectCascade).toHaveBeenNthCalledWith(1, 'p-1', {
+      cascadeRisks: true,
+      cascadeIssues: true,
+    });
+    expect(deleteProjectCascade).toHaveBeenNthCalledWith(2, 'p-2', {
+      cascadeRisks: true,
+      cascadeIssues: true,
+    });
+    // 最後に customer を物理削除
+    expect(prisma.customer.delete).toHaveBeenCalledWith({ where: { id: 'c-1' } });
+  });
+
+  it('論理削除済 Project は対象外 (deletedAt=null でフィルタ)', async () => {
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({ id: 'c-1' } as never);
+    vi.mocked(prisma.project.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.customer.delete).mockResolvedValue(customerRow() as never);
+
+    await deleteCustomerCascade('c-1');
+
+    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    expect(call.where).toEqual(expect.objectContaining({ deletedAt: null }));
   });
 });

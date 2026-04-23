@@ -2,6 +2,7 @@ import { auth } from '@/lib/auth';
 import { redirect, notFound } from 'next/navigation';
 import { LOGIN_ROUTE } from '@/config';
 import { getProject } from '@/services/project.service';
+import { listCustomers } from '@/services/customer.service';
 import { checkMembership } from '@/lib/permissions';
 import { ProjectDetailClient } from './project-detail-client';
 
@@ -25,10 +26,12 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   const { projectId } = await params;
 
-  // 認可チェックと project 取得は並列化（互いに依存しない）
-  const [membership, project] = await Promise.all([
+  // 認可チェック・project・customers は互いに依存しないので並列取得
+  const [membership, project, customers] = await Promise.all([
     checkMembership(projectId, session.user.id, session.user.systemRole),
     getProject(projectId),
+    // PR #111-2: 編集ダイアログの顧客セレクト用マスタ
+    listCustomers(),
   ]);
 
   if (!membership.isMember) notFound();
@@ -48,6 +51,7 @@ export default async function ProjectDetailPage({ params }: Props) {
       userId={session.user.id}
       canEdit={canEdit}
       canCreate={canCreate}
+      customers={customers.map((c) => ({ id: c.id, name: c.name }))}
     />
   );
 }

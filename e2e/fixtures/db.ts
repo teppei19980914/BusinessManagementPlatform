@@ -160,16 +160,19 @@ export async function cleanupByRunId(runId: string): Promise<void> {
   const pool = getPool();
   const pattern = `%${runId}%`;
 
-  // 1) 対象 ID を解決 (users と projects は相互独立なので並列)
-  const [userRes, projRes] = await Promise.all([
+  // 1) 対象 ID を解決 (users / projects / customers は相互独立なので並列)
+  const [userRes, projRes, custRes] = await Promise.all([
     pool.query<{ id: string }>(
       'SELECT id FROM users WHERE email LIKE $1 OR name LIKE $1',
       [pattern],
     ),
     pool.query<{ id: string }>('SELECT id FROM projects WHERE name LIKE $1', [pattern]),
+    // PR #111-2: E2E fixture が自動作成する customer も掃除する
+    pool.query<{ id: string }>('SELECT id FROM customers WHERE name LIKE $1', [pattern]),
   ]);
   const userIds = userRes.rows.map((r) => r.id);
   const projectIds = projRes.rows.map((r) => r.id);
+  const customerIds = custRes.rows.map((r) => r.id);
 
   // 2) transaction で 2 段階削除 (FK 先 → 親)。クリーンアップは best-effort なので
   //    transaction 単位で失敗したらログだけ出して続行する。
@@ -177,7 +180,7 @@ export async function cleanupByRunId(runId: string): Promise<void> {
   try {
     await client.query('BEGIN');
 
-    if (userIds.length > 0 || projectIds.length > 0) {
+    if (userIds.length > 0 || projectIds.length > 0 || customerIds.length > 0) {
       // 2-a) RESTRICT FK 先を並列削除。全て独立な DELETE なので Promise.all で束ねる。
       const fkPromises: Promise<unknown>[] = [];
       if (userIds.length > 0) {
@@ -200,9 +203,14 @@ export async function cleanupByRunId(runId: string): Promise<void> {
       }
       await Promise.all(fkPromises);
 
-      // 2-b) 親テーブルを削除 (projects → users の順: users.id を参照する FK は既に消えた状態)
+      // 2-b) 親テーブルを削除 (projects → customers → users の順)
+      //   - projects は customer_id FK を持つが ON DELETE SET NULL なので順序不問
+      //   - PR #111-2: customers は project 削除後に削除 (FK 警告を避ける)
       if (projectIds.length > 0) {
         await client.query('DELETE FROM projects WHERE id = ANY($1)', [projectIds]);
+      }
+      if (customerIds.length > 0) {
+        await client.query('DELETE FROM customers WHERE id = ANY($1)', [customerIds]);
       }
       if (userIds.length > 0) {
         await client.query('DELETE FROM users WHERE id = ANY($1)', [userIds]);

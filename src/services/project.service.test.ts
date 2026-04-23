@@ -52,7 +52,9 @@ const date = (s: string) => new Date(s);
 const pRow = (o: Record<string, unknown> = {}) => ({
   id: 'p-1',
   name: 'Proj',
-  customerName: 'Cust',
+  // PR #111-2: customer_name 列廃止 → customer relation include 前提
+  customerId: 'cust-1',
+  customer: { name: 'Cust' },
   purpose: '',
   background: '',
   scope: '',
@@ -94,7 +96,7 @@ describe('listProjects', () => {
     expect(call.where.members).toEqual({ some: { userId: 'u-1' } });
   });
 
-  it('keyword でフィルタ (name/customerName/purpose の OR)', async () => {
+  it('keyword でフィルタ (name/customer.name/purpose の OR)', async () => {
     vi.mocked(prisma.project.findMany).mockResolvedValue([]);
     vi.mocked(prisma.project.count).mockResolvedValue(0);
 
@@ -102,6 +104,12 @@ describe('listProjects', () => {
 
     const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
     expect(call.where.OR).toHaveLength(3);
+    // PR #111-2: customerName 列削除後は customer relation 経由でキーワード検索
+    expect(call.where.OR).toEqual(
+      expect.arrayContaining([
+        { customer: { name: { contains: 'searchword', mode: 'insensitive' } } },
+      ]),
+    );
   });
 
   it('limit 上限 100, ページング', async () => {
@@ -115,14 +123,28 @@ describe('listProjects', () => {
     expect(call.skip).toBe(200);
   });
 
-  it('customerName パラメータは contains でフィルタ', async () => {
+  it('customerName パラメータは customer.name contains でフィルタ (PR #111-2)', async () => {
     vi.mocked(prisma.project.findMany).mockResolvedValue([]);
     vi.mocked(prisma.project.count).mockResolvedValue(0);
 
     await listProjects({ customerName: 'ACME' }, 'admin-1', 'admin');
 
     const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
-    expect(call.where.customerName).toEqual({ contains: 'ACME', mode: 'insensitive' });
+    expect(call.where.customer).toEqual({
+      name: { contains: 'ACME', mode: 'insensitive' },
+    });
+  });
+
+  it('include: customer.name を取得し DTO に載せる (PR #111-2)', async () => {
+    vi.mocked(prisma.project.findMany).mockResolvedValue([pRow()] as never);
+    vi.mocked(prisma.project.count).mockResolvedValue(1);
+
+    const result = await listProjects({}, 'admin-1', 'admin');
+
+    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    expect(call.include).toEqual({ customer: { select: { name: true } } });
+    expect(result.data[0].customerId).toBe('cust-1');
+    expect(result.data[0].customerName).toBe('Cust');
   });
 });
 
@@ -135,7 +157,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     await createProject(
       {
         name: 'x',
-        customerName: 'y',
+        customerId: 'cust-1',
         purpose: '',
         background: '',
         scope: '',
@@ -149,6 +171,17 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     const call = vi.mocked(prisma.project.create).mock.calls[0][0];
     expect(call.data.status).toBe('planning');
     expect(call.data.plannedStartDate).toBeInstanceOf(Date);
+    // PR #111-2: customerId を direct FK として保存
+    expect(call.data.customerId).toBe('cust-1');
+    expect(call.include).toEqual({ customer: { select: { name: true } } });
+  });
+
+  it('updateProject: customerId 変更は customer.connect() に変換 (PR #111-2)', async () => {
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
+    await updateProject('p-1', { customerId: 'cust-new' }, 'u-1');
+    const call = vi.mocked(prisma.project.update).mock.calls[0][0];
+    expect(call.data.customer).toEqual({ connect: { id: 'cust-new' } });
+    expect(call.include).toEqual({ customer: { select: { name: true } } });
   });
 
   it('getProject: 存在しなければ null', async () => {
