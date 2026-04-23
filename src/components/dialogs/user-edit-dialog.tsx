@@ -134,7 +134,9 @@ export function UserEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[min(90vw,28rem)]">
+      {/* PR #112: admin ダイアログは大画面で余白過多になりやすいので lg: で拡大、
+          縦の overflow は基底が吸収するのでここでは指定不要 */}
+      <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,44rem)]">
         <DialogHeader>
           <DialogTitle>ユーザ編集</DialogTitle>
           <DialogDescription>

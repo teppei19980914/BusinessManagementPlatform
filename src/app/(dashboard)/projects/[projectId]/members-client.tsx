@@ -122,7 +122,8 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               メンバー追加
             </DialogTrigger>
-            <DialogContent className="max-w-[min(90vw,28rem)]">
+            {/* PR #112: admin ダイアログは大画面で余白過多になりやすいので lg: で拡大 */}
+            <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,44rem)]">
               <DialogHeader>
                 <DialogTitle>メンバー追加</DialogTitle>
                 <DialogDescription>プロジェクトに追加するユーザとロールを選択してください。</DialogDescription>
