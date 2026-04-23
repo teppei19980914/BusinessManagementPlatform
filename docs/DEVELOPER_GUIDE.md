@@ -480,11 +480,11 @@ GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-c
   `@@SAST@@` / `@@CODEQL@@`) は security.yml の `sed` で定義済み。新しい検証手段を
   増やす場合は security.yml にも変数を追加する。
 
-### 9.3.5 E2E 実装で得られた知見 (PR #95 まとめ)
+### 9.3.5 E2E 実装で得られた知見 (PR #90 以降累積)
 
 新しい E2E spec を書く前 / CI で E2E が赤になった時は、まず
 **[docs/E2E_LESSONS_LEARNED.md](./E2E_LESSONS_LEARNED.md)** を一読する。
-PR #90-#95 の計 15 回の hotfix から得た **10 個の罠パターン** と
+PR #90 以降の hotfix から得た **25 個の罠パターン** (§4.1〜§4.25) と
 **アサーション戦略**が集約されている。
 
 ### 9.4 E2E テスト (PR #90 で導入)
