@@ -439,6 +439,82 @@ fetch が検知できなかったため。ローカル実行や他の CI run で
 §4.20 (router.refresh race → page.reload), §4.24 (MFA session + navigation race).
 §4.26 はこれら削除系への統一適用ルール。
 
+### 4.27 アセットディレクトリを空にすると CI の `cp -r public` が fail する (空ディレクトリ問題)
+
+**症状**: PR #100 (デフォルト SVG 5 件を `public/` から全削除) の Playwright E2E
+ワークフロー "Prepare standalone assets" step で fail:
+
+```
+Run cp -r public .next/standalone/
+cp: cannot stat 'public': No such file or directory
+Error: Process completed with exit code 1.
+```
+
+ビルド (`next build`) は成功、その後の **standalone 組み立て step** で `public/` が
+存在しない。ローカル開発や他 PR では通っていた `.github/workflows/e2e.yml` が、
+SVG 削除 PR だけで赤くなった。
+
+**原因**: **Git は空ディレクトリを tracked しない** 仕様:
+
+1. PR #100 で `public/` 配下のファイル 5 件をすべて削除
+2. `public/` ディレクトリ自体は local には空で残るが、**git に commit されていない**
+3. CI ランナーが fresh clone すると `public/` は存在しない
+4. `next build` は public なしでも通る (内容が無いので含めるものがない)
+5. **`cp -r public .next/standalone/` は public ディレクトリ自体の存在を要求** → fail
+
+Next.js standalone build の仕様で `public/` は standalone 出力に自動で含まれない
+ため、workflow 側で手動 `cp -r public .next/standalone/` している
+([Next.js 公式ドキュメント](https://nextjs.org/docs/app/api-reference/next-config-js/output#automatically-copying-traced-files))。
+これは一般的なプラクティスで、public にアセットがある前提。
+
+**対策** (2 通り、本プロジェクトは (1) を採用):
+
+**(1) `public/.gitkeep` で空ディレクトリを保持** ← 本プロジェクト採用
+```bash
+# アセット全削除と同時にコミットする
+touch public/.gitkeep
+git add public/.gitkeep
+git commit
+```
+- メリット: workflow は変更不要、public/ の「存在」が git で保証される
+- デメリット: 将来 public に実アセットが入ったら .gitkeep は慣例として残すか削除するか判断が必要 (Next.js 規約的にはどちらでも OK)
+
+**(2) workflow を defensive に書く**
+```yaml
+- name: Prepare standalone assets
+  run: |
+    [ -d public ] && cp -r public .next/standalone/ || true
+    cp -r .next/static .next/standalone/.next/
+```
+- メリット: public 不要なサービスでも通る
+- デメリット: 本来必要な場面で public が無いことを検知できなくなる (silent failure)
+
+**汎化ルール — アセット/バイナリディレクトリの整理 PR の鉄則**:
+
+以下のいずれかの作業をする PR では、**必ず `.gitkeep` の同時 commit を確認する**:
+
+- `public/*` 系ディレクトリ内のファイルを全削除
+- `docs/performance/*` 系の計測データディレクトリを全削除 (PR #101 事例)
+- その他、**「空になる可能性があるディレクトリ」** から最後のファイルを消す時
+
+**検出方法** (PR レビュー時):
+
+```bash
+# 削除後のディレクトリが空になっていないか確認
+git status  # ← "deleted: public/x.svg" 5 件があっても空ディレクトリは表示されない
+find <target-dir> -type f  # ← 出力が空なら .gitkeep が必要
+```
+
+ワークフローで `cp -r <dir>` しているパスを grep する手もある:
+```bash
+grep -rE "cp -r |copy-item.*-recurse" .github/workflows/
+```
+
+**関連**:
+- PR #101 で `docs/performance/20260417/before/*` と `after/タスク更新処理パフォーマンス/`
+  を全削除した際には CI 側で `cp` していなかったため問題なし (.gitkeep 不要と判断)
+- `public/` のように **build 成果物に明示 copy する** ディレクトリだけが本問題の対象
+
 ### 4.25 Suspense streaming 過渡で CardTitle が一瞬重複し strict mode violation
 
 **症状**: PR #98 CI で `e2e/specs/00-smoke.spec.ts` の
