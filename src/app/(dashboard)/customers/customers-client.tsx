@@ -123,7 +123,8 @@ export function CustomersClient({ initialCustomers }: Props) {
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
             新規顧客登録
           </DialogTrigger>
-          <DialogContent>
+          {/* PR #112: admin ダイアログの大画面余白対策 (基底で scroll 対応済) */}
+          <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,44rem)]">
             <DialogHeader>
               <DialogTitle>新規顧客登録</DialogTitle>
               <DialogDescription>

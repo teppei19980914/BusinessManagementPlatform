@@ -52,8 +52,16 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
+        // PR #112: 全ダイアログ共通の構造的対策 (ユーザ報告: admin/users の
+        // 削除ボタンが viewport 外に出る / 画面余白が広すぎる)。
+        //   - max-h-[calc(100vh-4rem)] + overflow-y-auto: コンテンツが viewport より
+        //     長くてもダイアログ内でスクロールして下部が見切れない (scroll 対応)。
+        //     caller が自前で max-h を指定していても同じ値なら無害、違う値なら caller が勝つ。
+        //   - sm:max-w-sm (= 24rem) の狭すぎる既定は廃止し、sm 以上は
+        //     min(90vw, 36rem) で default 40% 強の画面利用率に引き上げる。
+        //     より広くしたい場合は caller が className で上書きする (48rem 等)。
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100vh-4rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-[min(90vw,36rem)] data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}
