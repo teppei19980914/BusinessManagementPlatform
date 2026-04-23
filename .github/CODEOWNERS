@@ -1,0 +1,44 @@
+# CODEOWNERS — ディレクトリごとのレビュア責任範囲
+# https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# 役割:
+#   - PR が該当パスを変更したとき、自動的に指定ユーザがレビュア候補に追加される
+#   - ブランチ保護ルールで "Require review from Code Owners" を有効にすれば必須化可能
+#
+# 記法:
+#   <pattern> <owner1> <owner2> ...
+#   - pattern はディレクトリ / glob 形式
+#   - 後勝ち (下の行が優先される)
+#
+# 現状:
+#   本プロジェクトは個人所有 (teppei19980914) のため全ファイル 1 オーナー。
+#   チーム化後は以下のように役割別に分ける想定:
+#     /src/services/            @backend-team
+#     /src/app/                 @frontend-team
+#     /src/lib/auth*            @security-team
+#     /prisma/                  @backend-team @dba
+#     /docs/administrator/      @ops-team
+#     /.github/workflows/       @infra-team
+#     SECURITY.md               @security-team
+
+# デフォルト (全ファイル)
+* @teppei19980914
+
+# セキュリティ関連は特に慎重にレビューしたい領域 (将来のチーム化時に分離)
+/src/lib/auth*.ts          @teppei19980914
+/src/lib/permissions.ts    @teppei19980914
+/src/app/api/auth/         @teppei19980914
+/prisma/schema.prisma      @teppei19980914
+/prisma/migrations/        @teppei19980914
+SECURITY.md                @teppei19980914
+/.github/workflows/security.yml @teppei19980914
+
+# CI/CD / インフラ
+/.github/workflows/        @teppei19980914
+/vercel.json               @teppei19980914
+/docker-compose.yml        @teppei19980914
+
+# ドキュメント
+/docs/                     @teppei19980914
+/README.md                 @teppei19980914
+/CONTRIBUTING.md           @teppei19980914

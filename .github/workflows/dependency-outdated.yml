@@ -1,0 +1,91 @@
+# Outdated Dependencies 月次通知
+#
+# 役割:
+#   月 1 回 `pnpm outdated` を実行し、結果を GitHub Issue として自動作成する。
+#   Dependabot が patch/minor を PR 化するのに対し、本 workflow は
+#   **major update を含む全件の俯瞰** を提供する (影響の大きい更新を人間判断)。
+#
+# トリガ:
+#   - 毎月 1 日 00:00 UTC (= 09:00 JST)
+#   - 手動実行可 (workflow_dispatch)
+#
+# 出力:
+#   GitHub Issue (label: "dependencies") に outdated 一覧を body として投稿。
+#   対応不要なら Issue を close するだけで可。
+#
+# 関連:
+#   - .github/workflows/security.yml — pnpm audit による脆弱性スキャン (daily)
+#   - .github/dependabot.yml (もしあれば) — 自動 PR 生成
+
+name: Dependency Outdated Report
+
+on:
+  schedule:
+    # 毎月 1 日 00:00 UTC (09:00 JST)
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  outdated-report:
+    name: pnpm outdated report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run pnpm outdated
+        id: outdated
+        # `pnpm outdated` は outdated がある時 exit 1 なので || true で捕捉
+        # 出力は GITHUB_OUTPUT にマルチライン形式で格納
+        run: |
+          OUTPUT=$(pnpm outdated --format list || true)
+          echo "content<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const date = new Date().toISOString().slice(0, 10);
+            const content = `${{ steps.outdated.outputs.content }}`;
+            const body = [
+              `月次 outdated dependency レポート (${date})`,
+              '',
+              '## 現状',
+              '',
+              '```',
+              content.trim() || '(全依存が最新)',
+              '```',
+              '',
+              '## 対応方針',
+              '',
+              '- **patch / minor**: Dependabot PR で順次対応 (自動)',
+              '- **major**: 互換性影響を評価の上、判断して PR 化',
+              '- **不要な依存**: 削除を検討',
+              '',
+              '対応不要であれば本 Issue を close してください。',
+              '',
+              '関連: [docs/administrator/RELEASE_ROADMAP.md §1.4](../blob/main/docs/administrator/RELEASE_ROADMAP.md)',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Monthly] Outdated dependencies report (${date})`,
+              body,
+              labels: ['dependencies', 'monthly-report'],
+            });
