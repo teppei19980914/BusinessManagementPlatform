@@ -31,6 +31,26 @@ async function getOtplib() {
 }
 
 /**
+ * TOTP 検証時に許容する時刻ずれ (秒単位)。
+ *
+ * **背景**: otplib の `verifySync` は既定で `epochTolerance=0` (生成時刻と検証時刻が
+ * **同一 period 内** にないと拒否)。period=30 秒のため、TOTP コード生成 → ネットワーク往復 →
+ * サーバ検証の間に **30 秒境界を跨ぐと fail** する。これは高並列 CI 環境で発生しやすく、
+ * PR #110 の CI で MFA verify が 400 を返す現象を引き起こした (E2E spec 01 Step 5)。
+ *
+ * **対策**: `epochTolerance=30` を設定し、**前後 1 window (± 30 秒)** の時刻ずれを許容する。
+ * これは業界標準 (Google Authenticator / AWS MFA / RFC 6238 §5.2 推奨) で、セキュリティ上の
+ * 実害はない。ブルートフォース耐性は 10^6 コードの TOTP 空間で十分 (1 秒 / 1 コードの総当たりでも
+ * 11 日かかる)。
+ *
+ * **RFC 6238 §5.2 (Validation and Time-Step Size)** より抜粋:
+ *   > "We RECOMMEND that at most one time step is allowed as the network delay."
+ *
+ * 値: 30 秒 (= 1 period 分の対称許容)
+ */
+const TOTP_EPOCH_TOLERANCE_SEC = 30;
+
+/**
  * MFA 有効化ステップ1: TOTP シークレットを生成し、QR コード用の URI を返す
  */
 export async function generateMfaSecret(
@@ -69,7 +89,11 @@ export async function enableMfa(
 
   const secret = decrypt(user.mfaSecretEncrypted);
   const otplib = await getOtplib();
-  const result = otplib.verifySync({ token: totpCode, secret });
+  const result = otplib.verifySync({
+    token: totpCode,
+    secret,
+    epochTolerance: TOTP_EPOCH_TOLERANCE_SEC,
+  });
   const isValid = result.valid;
 
   if (!isValid) {
@@ -133,7 +157,11 @@ export async function verifyTotp(userId: string, totpCode: string): Promise<bool
 
   const secret = decrypt(user.mfaSecretEncrypted);
   const otplib = await getOtplib();
-  const result = otplib.verifySync({ token: totpCode, secret });
+  const result = otplib.verifySync({
+    token: totpCode,
+    secret,
+    epochTolerance: TOTP_EPOCH_TOLERANCE_SEC,
+  });
   return result.valid;
 }
 
@@ -153,6 +181,10 @@ export async function verifyInitialTotpSecret(
 ): Promise<boolean> {
   const secret = decrypt(encryptedSecret);
   const otplib = await getOtplib();
-  const result = otplib.verifySync({ token: totpCode, secret });
+  const result = otplib.verifySync({
+    token: totpCode,
+    secret,
+    epochTolerance: TOTP_EPOCH_TOLERANCE_SEC,
+  });
   return result.valid;
 }
