@@ -124,6 +124,39 @@ model PasswordHistory {
 }
 
 // ============================================================
+// Customers (PR #111)
+// ============================================================
+//
+// 顧客管理。プロジェクトは必ず顧客に紐付く (1 顧客 : N プロジェクト)。
+//
+// 運用:
+//   - システム管理者 (systemRole='admin') のみ CRUD 可能
+//   - 物理削除方針 (論理削除列を持たない、Project とは別)
+//   - 顧客削除 → 紐付く Project は既存 deleteProjectCascade で論理削除 (PR #111-2 で実装)
+//   - 物理削除時の FK 整合性は Project.customer_id の ON DELETE SET NULL で担保
+//     (論理削除済み Project も customer_id が dangling にならない)
+//
+// 設計方針: docs/developer/DESIGN.md の Customer 節参照 (PR #111-2 で追記)
+
+model Customer {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String   @db.VarChar(100)
+  department      String?  @db.VarChar(100)
+  contactPerson   String?  @map("contact_person") @db.VarChar(100)
+  contactEmail    String?  @map("contact_email") @db.VarChar(255)
+  notes           String?  @db.Text
+  createdBy       String   @map("created_by") @db.Uuid
+  updatedBy       String   @map("updated_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  projects        Project[]
+
+  @@index([name], map: "idx_customers_name")
+  @@map("customers")
+}
+
+// ============================================================
 // Projects
 // ============================================================
 
@@ -131,6 +164,13 @@ model Project {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name              String    @db.VarChar(100)
   customerName      String    @map("customer_name") @db.VarChar(100)
+  // PR #111: Customer テーブルへの FK。既存 customer_name との併存期間中のため nullable。
+  // PR #111-2 (続編) で customer_name 列を削除し、customerId を NOT NULL に昇格予定。
+  // ON DELETE SET NULL: Customer 物理削除時、論理削除済み Project の customer_id が
+  // dangling にならないよう明示的 null 化する (deletedAt が null でない Project は別途
+  // deleteCustomerCascade でカスケード削除される、PR #111-2 で実装)。
+  customerId        String?   @map("customer_id") @db.Uuid
+  customer          Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   purpose           String    @db.Text
   background        String    @db.Text
   scope             String    @db.Text
@@ -162,6 +202,7 @@ model Project {
 
   @@index([status], map: "idx_projects_status")
   @@index([customerName], map: "idx_projects_customer")
+  @@index([customerId], map: "idx_projects_customer_id")
   @@index([plannedStartDate, plannedEndDate], map: "idx_projects_dates")
   @@map("projects")
 }

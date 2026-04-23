@@ -64,6 +64,10 @@ export const ADMIN_USERS_ROUTE = '/admin/users';
 export const ADMIN_AUDIT_LOGS_ROUTE = '/admin/audit-logs';
 export const ADMIN_ROLE_CHANGES_ROUTE = '/admin/role-changes';
 
+/** 顧客管理 (PR #111)。現状 admin のみ表示 & CRUD 可能。
+ *  /admin 配下ではなくトップレベルに配置 (将来の閲覧権限拡張に備える)。 */
+export const CUSTOMERS_ROUTE = '/customers';
+
 // ---------- 動的パス (パラメータ付き) ----------
 
 /** プロジェクト詳細画面 (概要タブ)。 */

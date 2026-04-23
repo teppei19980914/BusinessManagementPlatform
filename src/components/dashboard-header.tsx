@@ -19,6 +19,7 @@ import {
   ADMIN_USERS_ROUTE,
   ADMIN_AUDIT_LOGS_ROUTE,
   ADMIN_ROLE_CHANGES_ROUTE,
+  CUSTOMERS_ROUTE,
 } from '@/config';
 
 type DashboardHeaderProps = {
@@ -46,6 +47,9 @@ const navItems = [
 ];
 
 const adminNavItems = [
+  // PR #111: 顧客管理 (現状 admin のみ閲覧・CRUD 可能。
+  // /admin 配下ではなくトップレベル /customers に配置して将来の閲覧権限拡張に備える)
+  { href: CUSTOMERS_ROUTE, label: '顧客管理' },
   { href: ADMIN_USERS_ROUTE, label: 'ユーザ管理' },
   { href: ADMIN_AUDIT_LOGS_ROUTE, label: '監査ログ' },
   { href: ADMIN_ROLE_CHANGES_ROUTE, label: '権限変更' },
