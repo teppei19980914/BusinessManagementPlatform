@@ -4,7 +4,7 @@
  * クライアントサイド遅延ロード用。内部は listTasksWithTree を呼び出す
  * （1 回の DB クエリで両形式を返す）。
  *
- * ref: docs/performance/20260417/after/cold-start-and-data-growth-analysis.md §4.2
+ * ref: docs/developer/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md §4.2
  */
 
 import { NextRequest, NextResponse } from 'next/server';

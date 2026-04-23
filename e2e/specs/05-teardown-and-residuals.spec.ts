@@ -11,7 +11,7 @@
  *   前 PR 群で確立した sharedContext + ARIA 標準アサーションを踏襲。
  *   削除系は window.confirm / window.alert を使うので page.once('dialog') で自動承諾する。
  *
- * カバレッジ記録: docs/E2E_COVERAGE.md に [x] でマッピング
+ * カバレッジ記録: docs/developer/E2E_COVERAGE.md に [x] でマッピング
  */
 
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';

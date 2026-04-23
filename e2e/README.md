@@ -173,7 +173,7 @@ DOM を検査でき、失敗しなくても全 step が視覚的に追える。
 - **PR 中の初回** (workflow が main 未マージの場合): `git commit --allow-empty -m "chore: generate visual baselines [gen-visual]"` → `git push` で workflow 自動発火
 - **main マージ後の平常運用**: Actions UI → `E2E Visual Baseline` → Run workflow → 対象 branch 選択
 
-どちらの方法でも Linux CI 環境で PNG が生成され、github-actions bot が対象 branch に auto-commit する。詳細は [DEVELOPER_GUIDE §9.6](../docs/DEVELOPER_GUIDE.md) 参照。
+どちらの方法でも Linux CI 環境で PNG が生成され、github-actions bot が対象 branch に auto-commit する。詳細は [DEVELOPER_GUIDE §9.6](../docs/developer/DEVELOPER_GUIDE.md) 参照。
 
 ---
 
@@ -184,8 +184,8 @@ DOM を検査でき、失敗しなくても全 step が視覚的に追える。
 1. spec ファイルの先頭 JSDoc に「カバー範囲」「シナリオ」を日本語で書く
 2. 主要な節目に `await snapshotStep(page, '<わかりやすいラベル>')` を入れる
 3. この `README.md` に「各 spec の検証内容」として 1 節追加
-4. `docs/E2E_COVERAGE.md` のカバレッジ一覧を `[x]` に更新
-5. `docs/DEVELOPER_GUIDE.md §9.8` の 5 項目チェックリストを再読
+4. `docs/developer/E2E_COVERAGE.md` のカバレッジ一覧を `[x]` に更新
+5. `docs/developer/DEVELOPER_GUIDE.md §9.8` の 5 項目チェックリストを再読
 
 ## 共通ヘルパー (fixture) の索引
 
@@ -201,9 +201,9 @@ DOM を検査でき、失敗しなくても全 step が視覚的に追える。
 
 ## 関連ドキュメント
 
-- **[docs/TESTING_STRATEGY.md](../docs/TESTING_STRATEGY.md)** — 自動テスト + 手動テストの全体戦略 (UAT / a11y / クロスブラウザ等の人間担当領域と運用チェックリスト)
-- **[docs/E2E_LESSONS_LEARNED.md](../docs/E2E_LESSONS_LEARNED.md)** — PR #90 以降の hotfix から得た 25 個の罠パターンと回避策 (§4.1〜§4.25、**新 spec 書く前に必ず一読**)
-- [docs/E2E_COVERAGE.md](../docs/E2E_COVERAGE.md) — カバレッジマニフェスト
-- [docs/DEVELOPER_GUIDE.md §9](../docs/DEVELOPER_GUIDE.md) — 実行方法 / 失敗調査手順 / spec 作成規約
+- **[docs/developer/TESTING_STRATEGY.md](../docs/developer/TESTING_STRATEGY.md)** — 自動テスト + 手動テストの全体戦略 (UAT / a11y / クロスブラウザ等の人間担当領域と運用チェックリスト)
+- **[docs/developer/E2E_LESSONS_LEARNED.md](../docs/developer/E2E_LESSONS_LEARNED.md)** — PR #90 以降の hotfix から得た 25 個の罠パターン (§4.1〜§4.25、**新 spec 書く前に必ず一読**)
+- [docs/developer/E2E_COVERAGE.md](../docs/developer/E2E_COVERAGE.md) — カバレッジマニフェスト
+- [docs/developer/DEVELOPER_GUIDE.md §9](../docs/developer/DEVELOPER_GUIDE.md) — 実行方法 / 失敗調査手順 / spec 作成規約
 - [playwright.config.ts](../playwright.config.ts) — 設定
 - [.github/workflows/e2e.yml](../.github/workflows/e2e.yml) — CI 設定

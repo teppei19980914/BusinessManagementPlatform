@@ -14,9 +14,9 @@
  *   - visual/ 配下は並列実行可 (独立スクショ)
  *
  * 関連:
- *   - docs/E2E_COVERAGE.md: カバレッジ一覧 (CI で gap 検出)
+ *   - docs/developer/E2E_COVERAGE.md: カバレッジ一覧 (CI で gap 検出)
  *   - .github/workflows/e2e.yml: CI 設定
- *   - docs/DEVELOPER_GUIDE.md §11: E2E 追加手順
+ *   - docs/developer/DEVELOPER_GUIDE.md §11: E2E 追加手順
  */
 
 import { defineConfig, devices } from '@playwright/test';

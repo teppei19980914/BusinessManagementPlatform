@@ -5,7 +5,7 @@
  * DB コネクション確立にかかる時間（TLS ネゴシエーション等）を前倒しする。
  *
  * 効果: 初回リクエストの TTFB を 50-150 ms 短縮（想定）
- * ref: docs/performance/20260417/after/cold-start-and-data-growth-analysis.md §4.1
+ * ref: docs/developer/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md §4.1
  *
  * 公式ドキュメント:
  * https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation

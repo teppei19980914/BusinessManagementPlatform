@@ -12,7 +12,7 @@
  *   - memo 作成は API (createMemoViaApi) で軽量化、UI は一覧/削除/閲覧を検証
  *   - テーマ変更は UI の radio ボタンクリック、保存後に aria-checked で確認
  *
- * カバレッジ記録: docs/E2E_COVERAGE.md に [x] でマッピング
+ * カバレッジ記録: docs/developer/E2E_COVERAGE.md に [x] でマッピング
  */
 
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';

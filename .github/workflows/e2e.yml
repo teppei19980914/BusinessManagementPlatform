@@ -22,7 +22,7 @@
 #
 # 関連:
 #   - playwright.config.ts
-#   - docs/E2E_COVERAGE.md (カバレッジマニフェスト)
+#   - docs/developer/E2E_COVERAGE.md (カバレッジマニフェスト)
 #   - scripts/check-e2e-coverage.ts (gap 検出、ci.yml で別途実行)
 
 name: E2E

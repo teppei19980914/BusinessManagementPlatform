@@ -5,9 +5,9 @@
 >
 > 関連:
 > - [README.md](./README.md) — プロジェクト概要
-> - [docs/DEVELOPER_GUIDE.md](./docs/DEVELOPER_GUIDE.md) — 改修・追加・削除の実務手順
-> - [docs/DESIGN.md](./docs/DESIGN.md) — 設計書 (情報源)
-> - [docs/OPERATION.md](./docs/OPERATION.md) — 運用・デプロイ手順
+> - [docs/developer/DEVELOPER_GUIDE.md](./docs/developer/DEVELOPER_GUIDE.md) — 改修・追加・削除の実務手順
+> - [docs/developer/DESIGN.md](./docs/developer/DESIGN.md) — 設計書 (情報源)
+> - [docs/administrator/OPERATION.md](./docs/administrator/OPERATION.md) — 運用・デプロイ手順
 
 ---
 
@@ -25,7 +25,7 @@
 
 ## 1. コミット前チェックリスト
 
-すべてのコミット前に以下を必ず確認してください (`docs/DEVELOPER_GUIDE.md` §9 参照)。
+すべてのコミット前に以下を必ず確認してください (`docs/developer/DEVELOPER_GUIDE.md` §9 参照)。
 
 ```bash
 pnpm lint        # 静的解析エラーゼロ
@@ -98,7 +98,7 @@ Co-Authored-By: ... (AI ペアプロ時のみ)
 ```
 プロジェクト一覧画面に状態フィルタを追加 (PR #82)
 ログイン失敗ロック回数を 5 → 3 に変更 (セキュリティ強化)
-docs/DEVELOPER_GUIDE.md を更新 (i18n 移行手順を追記)
+docs/developer/DEVELOPER_GUIDE.md を更新 (i18n 移行手順を追記)
 ```
 
 悪い例:
@@ -241,12 +241,12 @@ WIP                     # コミット対象が曖昧
 
 | 困りごと | 参照先 |
 |---|---|
-| 開発環境を立ち上げたい | [docs/OPERATION.md](./docs/OPERATION.md) §2 |
-| 新機能を追加したい | [docs/DEVELOPER_GUIDE.md](./docs/DEVELOPER_GUIDE.md) §4 |
-| テーマを追加したい | [docs/DEVELOPER_GUIDE.md](./docs/DEVELOPER_GUIDE.md) §2 |
-| DB スキーマを変更したい | [docs/DEVELOPER_GUIDE.md](./docs/DEVELOPER_GUIDE.md) §7 / [docs/OPERATION.md](./docs/OPERATION.md) §3 |
-| 設計の意図を知りたい | [docs/DESIGN.md](./docs/DESIGN.md) (4500+ 行、章立てから検索) |
-| デプロイ失敗時の対応 | [docs/OPERATION.md](./docs/OPERATION.md) §6 / §7 |
+| 開発環境を立ち上げたい | [docs/beginner/README.md](./docs/beginner/README.md) または [docs/administrator/OPERATION.md](./docs/administrator/OPERATION.md) §2 |
+| 新機能を追加したい | [docs/developer/DEVELOPER_GUIDE.md](./docs/developer/DEVELOPER_GUIDE.md) §4 |
+| テーマを追加したい | [docs/developer/DEVELOPER_GUIDE.md](./docs/developer/DEVELOPER_GUIDE.md) §2 |
+| DB スキーマを変更したい | [docs/developer/DEVELOPER_GUIDE.md](./docs/developer/DEVELOPER_GUIDE.md) §7 / [docs/administrator/OPERATION.md](./docs/administrator/OPERATION.md) §3 |
+| 設計の意図を知りたい | [docs/developer/DESIGN.md](./docs/developer/DESIGN.md) (4500+ 行、章立てから検索) |
+| デプロイ失敗時の対応 | [docs/administrator/OPERATION.md](./docs/administrator/OPERATION.md) §6 / §7 |
 | 過去の議論の経緯 | `git log` / GitHub 過去 PR (#54〜) |
 
 ---

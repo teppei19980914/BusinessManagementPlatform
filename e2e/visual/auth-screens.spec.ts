@@ -11,7 +11,7 @@
  *   - 生成後は pixel 差分 > 1% で fail (playwright.config.ts 参照)
  *   - 意図した UI 変更で fail した場合も同 workflow で再生成
  *
- * カバレッジ記録: docs/E2E_COVERAGE.md 「認証系画面 (視覚回帰)」
+ * カバレッジ記録: docs/developer/E2E_COVERAGE.md 「認証系画面 (視覚回帰)」
  */
 
 import { test, expect } from '@playwright/test';

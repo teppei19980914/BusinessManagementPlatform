@@ -5,10 +5,10 @@
 > 作業できることを目的とします。
 >
 > 関連:
-> - [README.md](../README.md) — プロジェクト概要・初回セットアップ
-> - [docs/OPERATION.md](./OPERATION.md) — デプロイ・運用・障害対応
-> - [docs/DESIGN.md](./DESIGN.md) — 詳細設計 (情報源)
-> - [docs/SPECIFICATION.md](./SPECIFICATION.md) — 機能仕様
+> - [README.md](../../README.md) — プロジェクト概要・初回セットアップ
+> - [docs/administrator/OPERATION.md](../administrator/OPERATION.md) — デプロイ・運用・障害対応
+> - [docs/developer/DESIGN.md](./DESIGN.md) — 詳細設計 (情報源)
+> - [docs/developer/SPECIFICATION.md](./SPECIFICATION.md) — 機能仕様
 
 ---
 
@@ -341,7 +341,7 @@ grep -rn "deleteFunctionName" src
 
 ## 7. DB スキーマ変更手順
 
-詳細は [docs/OPERATION.md](./OPERATION.md) §3 (DB マイグレーション手順) を参照。
+詳細は [docs/administrator/OPERATION.md](../administrator/OPERATION.md) §3 (DB マイグレーション手順) を参照。
 
 要点:
 
@@ -462,7 +462,7 @@ GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-c
 
 ### 9.3 Security Workflow 攻撃種別マトリクス (PR #84)
 
-[.github/workflows/security.yml](../.github/workflows/security.yml) の最後に
+[.github/workflows/security.yml](../../.github/workflows/security.yml) の最後に
 `attack-matrix` job があり、GitHub Actions の **Job Summary** に以下のような
 攻撃種別マトリクスを日本語で自動出力する:
 
@@ -473,7 +473,7 @@ GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-c
 | ✅ | 認可バイパス / IDOR (Authorization Bypass, CWE-639) | CodeQL + checkProjectPermission |
 | ... | ... | ... |
 
-- テンプレートは [.github/attack-matrix-summary.md](../.github/attack-matrix-summary.md)
+- テンプレートは [.github/attack-matrix-summary.md](../../.github/attack-matrix-summary.md)
 - ワークフロー側で `sed` による `@@FOO@@` プレースホルダ置換で実スキャン結果を埋め込む
 - **行を追加/編集したいとき**: `.github/attack-matrix-summary.md` を直接編集する。
   `to_mark` / `or_mark` で使えるステータストークン (`@@GITLEAKS@@` / `@@AUDIT@@` /

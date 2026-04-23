@@ -3,7 +3,7 @@
 - 作成日: 2026-04-22
 - プレリリース予定: 2026-05-01 (ホームページ上で公開、招待制のため外部 login 不可の試験運転継続)
 - 正式リリース予定: 2026-06-01
-- 関連: [docs/PLAN.md](./PLAN.md) (MVP 開発計画) / [docs/TESTING_STRATEGY.md](./TESTING_STRATEGY.md)
+- 関連: [docs/developer/PLAN.md](../developer/PLAN.md) (MVP 開発計画) / [docs/developer/TESTING_STRATEGY.md](../developer/TESTING_STRATEGY.md)
 
 ## 全体方針
 
@@ -52,8 +52,8 @@
 - [ ] 前提環境 (Node / pnpm / Docker バージョン)
 - [ ] 3 コマンドで起動できる手順 (clone → install → dev)
 - [ ] プロジェクト構造 (ディレクトリツリー + 各役割)
-- [ ] ドキュメント索引 ([DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md), [OPERATION.md](./OPERATION.md), [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) 等への pointer)
-- [ ] 貢献手順 ([CONTRIBUTING.md](../CONTRIBUTING.md) へ)
+- [ ] ドキュメント索引 ([DEVELOPER_GUIDE.md](../developer/DEVELOPER_GUIDE.md), [OPERATION.md](./OPERATION.md), [TESTING_STRATEGY.md](../developer/TESTING_STRATEGY.md) 等への pointer)
+- [ ] 貢献手順 ([CONTRIBUTING.md](../../CONTRIBUTING.md) へ)
 
 ### 1.4 定期的な自動チェックの強化
 
@@ -203,9 +203,9 @@
 
 ## 関連ドキュメント
 
-- [docs/PLAN.md](./PLAN.md) — MVP 開発計画 (本ロードマップの前提)
-- [docs/TESTING_STRATEGY.md](./TESTING_STRATEGY.md) — 自動 + 手動テスト戦略
-- [docs/OPERATION.md](./OPERATION.md) — 運用手順 (Phase 2 で拡充予定)
-- [docs/DESIGN.md](./DESIGN.md) — アーキテクチャ設計
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — 貢献規約
-- [CLAUDE.md](../CLAUDE.md) — 運用ガイド
+- [docs/developer/PLAN.md](../developer/PLAN.md) — MVP 開発計画 (本ロードマップの前提)
+- [docs/developer/TESTING_STRATEGY.md](../developer/TESTING_STRATEGY.md) — 自動 + 手動テスト戦略
+- [docs/administrator/OPERATION.md](./OPERATION.md) — 運用手順 (Phase 2 で拡充予定)
+- [docs/developer/DESIGN.md](../developer/DESIGN.md) — アーキテクチャ設計
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) — 貢献規約
+- [CLAUDE.md](../../CLAUDE.md) — 運用ガイド
