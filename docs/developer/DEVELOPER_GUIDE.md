@@ -1081,6 +1081,34 @@ APP_DEFAULT_TIMEZONE=America/New_York
 APP_DEFAULT_LOCALE=en-US
 ```
 
+### 10.9 設定画面にセクションを追加するときの CI 連鎖 fail パターン (PR #119 で得た知見)
+
+`settings-client.tsx` に新しい Card セクションを追加したり、`src/app/api/settings/*`
+配下に route.ts を新設したりする場合、以下の **2 つの CI チェックが同時に fail** する。
+両方まとめて対処しないとマージできないので手順化する。
+
+**症状**:
+1. `E2E coverage manifest check` — 新規 `route.ts` が `E2E_COVERAGE.md` に未記載
+2. 視覚回帰 (`e2e/visual/dashboard-screens.spec.ts` / `settings-themes.spec.ts`) —
+   設定画面の高さが変わって baseline PNG と不一致
+
+**対処手順**:
+
+1. `docs/developer/E2E_COVERAGE.md` の「API Routes > その他」セクションに新規 route を追記
+   (即 E2E でカバーしないなら `[ ] /api/settings/xxx — skip: <理由>` の形式)
+2. `pnpm e2e:coverage-check` をローカル実行して green 確認
+3. `[gen-visual]` タグ付き commit を push して baseline を CI で再生成:
+   ```bash
+   git commit --allow-empty -m "chore: regenerate visual baselines for settings section [gen-visual]"
+   git push
+   ```
+4. "E2E Visual Baseline" workflow 完了後、自動 commit が push され E2E ワークフローが緑化する
+
+**なぜ両方同時に必要か**: `E2E coverage manifest check` が先に fail すると
+`Test (vitest + coverage)` が skip → `coverage-summary.json` 不在で
+`Report coverage` も連鎖 fail (§9.5.1 の PR #115 知見と同パターン)。
+視覚回帰 fail は独立だが、UI 変更を伴う PR では必ず同時に発生する。
+
 ---
 
 ## 付録 A. 設計原則のリマインダ
@@ -1111,3 +1139,4 @@ APP_DEFAULT_LOCALE=en-US
 | 2026-04-24 | §10.7 追加 (PR #117)。日時描画ルール / ハイドレーション不一致防止ガイド |
 | 2026-04-24 | §10.8 追加 + §10.7 更新 (PR #118)。TZ/locale の 3 段階フォールバック / env 上書き / format ヘルパのオプション化 |
 | 2026-04-24 | §10.8 拡充 (PR #119)。`useFormatters()` / `getServerFormatters()` + 設定画面 UI + `/api/settings/i18n` の整備完了 |
+| 2026-04-24 | §10.9 追加 (PR #119 hotfix)。設定画面に Card 追加時の CI 連鎖 fail (coverage manifest + 視覚回帰) 対処手順 |
