@@ -104,7 +104,8 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     });
     await page.goto('/memos');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: 'メモ', exact: true })).toBeVisible({
+    // 2026-04-24: 見出しを「メモ」→「メモ一覧」に改称 (dashboard-header の命名統一と揃える)
+    await expect(page.getByRole('heading', { name: 'メモ一覧', exact: true })).toBeVisible({
       timeout: 10_000,
     });
     // 一覧内の行要素は tbody tr + .first() でスコープ (LESSONS_LEARNED §4.11)
