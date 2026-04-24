@@ -78,11 +78,35 @@ export default defineConfig({
     //   - 必要に応じて `testIgnore` で PC 専用 spec を除外 (初期は全部実行で網羅性を取る)。
     //   - mobile 用の視覚回帰 baseline は `*-chromium-mobile-linux.png` として別ファイル化される。
     //   - ベースラインは PR 作成後 `[gen-visual]` で生成 (詳細 DEVELOPER_GUIDE §9.6)。
+    //
+    // PR #128 hotfix: devices['iPhone 13'] は defaultBrowserType='webkit' を内包するため、
+    // そのまま spread すると Playwright は WebKit エンジンで起動しようとする。CI では
+    // `playwright install --with-deps chromium` で chromium のみインストールしているため、
+    // WebKit バイナリ欠如で 16 件一斉起動エラー (browserType.launch: Executable doesn't exist
+    // at .../webkit-XXXX/pw_run.sh) を起こした (E2E_LESSONS_LEARNED §4.35)。
+    // プロジェクト名が示す通り chromium エンジンで mobile emulation させるため、
+    // defaultBrowserType を 'chromium' に上書きする。userAgent/viewport/isMobile/hasTouch 等の
+    // iPhone 13 エミュレーション設定は維持される。
     {
       name: 'chromium-mobile',
       use: {
         ...devices['iPhone 13'],
+        defaultBrowserType: 'chromium',
       },
+      // PR #128 hotfix 2: 01-admin-and-member-setup.spec.ts は **共有 admin ユーザ (admin-e2e@example.com)
+      // を mutate する auth bootstrap シナリオ** (パスワード変更 / MFA 有効化 / ユーザ招待)。
+      // chromium と chromium-mobile が並列 worker で走ると、双方の beforeAll が
+      // `ensureInitialAdmin()` で admin を UPSERT (password = INITIAL へリセット) し、
+      // 一方の mid-run 状態を他方が破壊する (例: chromium Step 2 で enable した MFA を
+      // chromium-mobile beforeAll が mfa_enabled=false に戻す)。
+      // → chromium-mobile Step 1 の password change が「element(s) not found」で fail。
+      //
+      // 01 は **auth 配線の自動化** を担う spec であり mobile UX 固有の検証価値は薄いため、
+      // chromium project のみで実行する。他 spec (02-09) は RUN_ID でユーザを分離しているか
+      // 状態共有が read-only のため chromium-mobile でも正常に pass する (CI 実測済)。
+      //
+      // 詳細: E2E_LESSONS_LEARNED §4.36
+      testIgnore: [/01-admin-and-member-setup\.spec\.ts/],
     },
   ],
   webServer: isCI
