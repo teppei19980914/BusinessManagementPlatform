@@ -29,6 +29,8 @@ import { Badge } from '@/components/ui/badge';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 // PR #126: 顧客件数が増える想定のため SearchableSelect を使用
 import { SearchableSelect } from '@/components/ui/searchable-select';
+// fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
+import { parseTagsInput } from '@/lib/parse-tags';
 import {
   Table,
   TableBody,
@@ -115,9 +117,8 @@ export function ProjectsClient({
     processTagsInput: '',
   });
 
-  // カンマ区切り文字列を string[] に正規化する (余計な空白除去・空要素除外)
-  const parseTagsInput = (s: string): string[] =>
-    s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
+  // fix/project-create-customer-validation: 重複定義を `@/lib/parse-tags` に集約。
+  // 半角カンマ `,` に加え全角読点 `、` (日本語入力中に自然に混ざる) も区切りとして受容する。
 
   // PR #67: 作成ダイアログで入力された添付 URL を staging。
   // プロジェクト作成成功後に entityId を使って一括 POST する。
@@ -134,6 +135,15 @@ export function ProjectsClient({
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+
+    // クライアント側で事前バリデーション (HTML5 `required` で拾えない SearchableSelect 用)。
+    // 空 customerId で POST すると API は Zod UUID 検証で 400 を返し、その 400 がブラウザの
+    // Network/Console に出力されてしまう (fetch は 4xx でも throw しないがブラウザは必ず表示)。
+    // 本サービスのエラー情報最小化方針に反するため、サーバに届く前に弾いて UI 上のみで通知する。
+    if (!form.customerId) {
+      setError('顧客を選択してください');
+      return;
+    }
 
     // タグは入力欄の生文字列 (form.*TagsInput) をカンマ分割して送信する
     const payload = {
@@ -213,8 +223,11 @@ export function ProjectsClient({
                   <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                 )}
                 <div className="space-y-2">
-                  <Label>プロジェクト名</Label>
+                  {/* fix/project-create-customer-validation: htmlFor/id で a11y リンク付与
+                      (screen reader 読み上げ + Playwright getByLabel が解決可能に) */}
+                  <Label htmlFor="project-create-name">プロジェクト名</Label>
                   <Input
+                    id="project-create-name"
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                     maxLength={100}
@@ -244,8 +257,9 @@ export function ProjectsClient({
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label>目的</Label>
+                  <Label htmlFor="project-create-purpose">目的</Label>
                   <textarea
+                    id="project-create-purpose"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={form.purpose}
                     onChange={(e) => setForm({ ...form, purpose: e.target.value })}
@@ -255,8 +269,9 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>背景</Label>
+                  <Label htmlFor="project-create-background">背景</Label>
                   <textarea
+                    id="project-create-background"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={form.background}
                     onChange={(e) => setForm({ ...form, background: e.target.value })}
@@ -266,8 +281,9 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>スコープ</Label>
+                  <Label htmlFor="project-create-scope">スコープ</Label>
                   <textarea
+                    id="project-create-scope"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={form.scope}
                     onChange={(e) => setForm({ ...form, scope: e.target.value })}
@@ -277,8 +293,8 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>開発方式</Label>
-                  <select value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
+                  <Label htmlFor="project-create-devmethod">開発方式</Label>
+                  <select id="project-create-devmethod" value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
                     {Object.entries(DEV_METHODS).map(([key, label]) => (
                       <option key={key} value={key}>{label}</option>
                     ))}
@@ -311,8 +327,9 @@ export function ProjectsClient({
                   抜け漏れなく提案を出すため、可能な限り入力を推奨する。
                 */}
                 <div className="space-y-2">
-                  <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label htmlFor="project-create-business-domain-tags">業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                   <Input
+                    id="project-create-business-domain-tags"
                     value={form.businessDomainTagsInput}
                     onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
                     placeholder="例: 金融, 基幹業務, 会計"
@@ -320,8 +337,9 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label htmlFor="project-create-tech-stack-tags">技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                   <Input
+                    id="project-create-tech-stack-tags"
                     value={form.techStackTagsInput}
                     onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
                     placeholder="例: React, Next.js, TypeScript, PostgreSQL"
@@ -329,8 +347,9 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label htmlFor="project-create-process-tags">工程タグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                   <Input
+                    id="project-create-process-tags"
                     value={form.processTagsInput}
                     onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
                     placeholder="例: 要件定義, 設計, 開発, 試験"

@@ -30,6 +30,8 @@ import {
 } from '@/components/ui/dialog';
 import { Trash2 } from 'lucide-react';
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
+// fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
+import { parseTagsInput } from '@/lib/parse-tags';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -91,9 +93,7 @@ export function ProjectKnowledgeClient({
   };
   const [form, setForm] = useState(initialForm);
 
-  // カンマ区切り文字列を string[] に正規化 (projects-client と同じ方針)
-  const parseTagsInput = (s: string): string[] =>
-    s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
+  // fix/project-create-customer-validation: 重複定義を `@/lib/parse-tags` に集約 (全角読点対応)
 
   // PR #67: ナレッジ作成時にステージする添付 URL (general slot)
   const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
@@ -249,7 +249,7 @@ export function ProjectKnowledgeClient({
                     作成時に入力を強く推奨する。
                   */}
                   <div className="space-y-2">
-                    <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                     <Input
                       value={form.businessDomainTagsInput}
                       onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
@@ -258,7 +258,7 @@ export function ProjectKnowledgeClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                     <Input
                       value={form.techTagsInput}
                       onChange={(e) => setForm({ ...form, techTagsInput: e.target.value })}
@@ -267,7 +267,7 @@ export function ProjectKnowledgeClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                    <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                     <Input
                       value={form.processTagsInput}
                       onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
