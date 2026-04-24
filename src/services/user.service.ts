@@ -52,6 +52,9 @@ export type UserDTO = {
   failedLoginCount: number;
   lockedUntil: string | null;
   permanentLock: boolean;
+  // PR #116: MFA verify 専用のロック状態 (パスワードロックとは別系統)
+  mfaFailedCount: number;
+  mfaLockedUntil: string | null;
 };
 
 function toUserDTO(user: {
@@ -65,6 +68,8 @@ function toUserDTO(user: {
   failedLoginCount: number;
   lockedUntil: Date | null;
   permanentLock: boolean;
+  mfaFailedCount: number;
+  mfaLockedUntil: Date | null;
 }): UserDTO {
   return {
     id: user.id,
@@ -77,6 +82,8 @@ function toUserDTO(user: {
     failedLoginCount: user.failedLoginCount,
     lockedUntil: user.lockedUntil?.toISOString() ?? null,
     permanentLock: user.permanentLock,
+    mfaFailedCount: user.mfaFailedCount,
+    mfaLockedUntil: user.mfaLockedUntil?.toISOString() ?? null,
   };
 }
 

@@ -27,6 +27,12 @@ model User {
   mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
   mfaSecretEncrypted String?  @map("mfa_secret_encrypted") @db.VarChar(255)
   mfaEnabledAt      DateTime? @map("mfa_enabled_at") @db.Timestamptz
+  // PR #116 (2026-04-24): MFA verify 総当たり対策。パスワードロックとは別系統。
+  //   - 3 回連続失敗で 30 分ロック (mfaLockedUntil に解除時刻をセット)
+  //   - 正しい TOTP or recovery code 入力で 0 にリセット
+  //   - 恒久ロックは設けない (recovery code 経路で自己解除可能なため)
+  mfaFailedCount    Int       @default(0) @map("mfa_failed_count")
+  mfaLockedUntil    DateTime? @map("mfa_locked_until") @db.Timestamptz
   lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz
   forcePasswordChange Boolean @default(false) @map("force_password_change")
   // PR #72: 画面テーマ設定。既定 'light' (ライトテーマ)。ユーザが明示的に変更した
