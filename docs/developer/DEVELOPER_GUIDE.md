@@ -985,6 +985,40 @@ build 失敗する。
 **対策**: コンフリクト解消後 (特にエンドポイント削除を含む場合) は必ず
 `rm -rf .next` で キャッシュを消してから build する。
 
+### 10.7 日時描画ルール — ハイドレーション不一致の防止 (PR #117 で得た知見)
+
+クライアントコンポーネントで `new Date(x).toLocaleString('ja-JP')` や
+`d.getFullYear()` 等の **runtime TZ に依存する API** を使うと、React hydration
+mismatch (`#418 Minified hydration failed because the server rendered text
+didn't match the client`) が発生する。
+
+**原因**: Next.js の Server Component → Client Component ハイドレーション時、
+サーバは UTC (Vercel/Docker 等) でレンダリングし、クライアントは JST で再計算する。
+`toLocaleString` / `getHours()` 等は実行環境の TZ を使うため、両者で文字列が
+異なり、React が「マウント時の DOM が SSR 出力と一致しない」と判定する。
+
+**ルール**:
+
+- クライアントコンポーネントで日時を描画するときは必ず `src/lib/format.ts` の
+  ヘルパを使う:
+  - `formatDate(iso)` → `YYYY/MM/DD`
+  - `formatDateTime(iso)` → `YYYY-MM-DD HH:MM`
+  - `formatDateTimeFull(iso)` → `YYYY/MM/DD HH:MM` (ツールチップ等)
+- サーバコンポーネント (`page.tsx` 等) でも、環境差を避けるため同じヘルパを使う
+- 禁止 API: `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString` /
+  `getFullYear()` / `getMonth()` / `getDate()` / `getHours()` / `getMinutes()`
+  (いずれも runtime TZ 依存)
+
+**実装の裏側**: ヘルパは `Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', ... })`
+をモジュールスコープで 1 回だけ構築し、全環境で常に JST の同じ文字列を返す。
+テストは `src/lib/format.test.ts` (8 ケース) で UTC→JST 変換と TZ 独立性を検証。
+
+**チェック**: 新規ファイル追加時は以下で漏れ検査できる:
+
+```bash
+rg -n "toLocaleDateString|toLocaleString|toLocaleTimeString|getFullYear\(\)|getMonth\(\)|getDate\(\)|getHours\(\)|getMinutes\(\)" src/
+```
+
 ---
 
 ## 付録 A. 設計原則のリマインダ
@@ -1012,3 +1046,4 @@ build 失敗する。
 | 日付 | 内容 |
 |---|---|
 | 2026-04-21 | 初版作成 (PR #81)。`src/config/` 構造 / テーマ追加手順 / 機能 CRUD 手順 / i18n / テスト / デプロイを集約 |
+| 2026-04-24 | §10.7 追加 (PR #117)。日時描画ルール / ハイドレーション不一致防止ガイド |

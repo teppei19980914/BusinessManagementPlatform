@@ -37,6 +37,8 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { PROJECT_ROLES } from '@/types';
 import type { MemberDTO } from '@/services/member.service';
 import type { UserDTO } from '@/services/user.service';
+// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
+import { formatDate } from '@/lib/format';
 
 type Props = {
   projectId: string;
@@ -192,7 +194,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
                   </Badge>
                 )}
               </TableCell>
-              <TableCell>{new Date(m.createdAt).toLocaleDateString('ja-JP')}</TableCell>
+              <TableCell>{formatDate(m.createdAt)}</TableCell>
               {isAdmin && (
                 <TableCell>
                   <Button

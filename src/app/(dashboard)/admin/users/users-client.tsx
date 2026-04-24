@@ -43,6 +43,8 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { UserEditDialog } from '@/components/dialogs/user-edit-dialog';
 import { SYSTEM_ROLES } from '@/types';
 import type { UserDTO } from '@/services/user.service';
+// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
+import { formatDate, formatDateTimeFull } from '@/lib/format';
 
 type Props = {
   initialUsers: UserDTO[];
@@ -247,7 +249,7 @@ export function UsersClient({ initialUsers }: Props) {
                   label: '一時ロック (パスワード)',
                   title:
                     `原因: パスワード連続失敗 (${user.failedLoginCount}/5)\n`
-                    + `解除予定: ${new Date(user.lockedUntil!).toLocaleString('ja-JP')}\n`
+                    + `解除予定: ${formatDateTimeFull(user.lockedUntil!)}\n`
                     + `解除手段: 時間経過 / admin 手動解除`,
                 };
               }
@@ -257,7 +259,7 @@ export function UsersClient({ initialUsers }: Props) {
                   label: '一時ロック (MFA)',
                   title:
                     `原因: MFA コード連続失敗 (3/3 回)\n`
-                    + `解除予定: ${new Date(user.mfaLockedUntil!).toLocaleString('ja-JP')}\n`
+                    + `解除予定: ${formatDateTimeFull(user.mfaLockedUntil!)}\n`
                     + `解除手段: 時間経過 / リカバリーコード入力 / admin 手動解除`,
                 };
               }
@@ -305,7 +307,7 @@ export function UsersClient({ initialUsers }: Props) {
                     <span className="text-xs text-muted-foreground">—</span>
                   )}
                 </TableCell>
-                <TableCell>{new Date(user.createdAt).toLocaleDateString('ja-JP')}</TableCell>
+                <TableCell>{formatDate(user.createdAt)}</TableCell>
               </TableRow>
             );
           })}

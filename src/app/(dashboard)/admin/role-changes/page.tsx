@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+// PR #117: JST 固定タイムゾーン描画 (runtime TZ に依存しない一貫表記)
+import { formatDateTimeFull } from '@/lib/format';
 
 export default async function RoleChangesPage() {
   const session = await auth();
@@ -37,7 +39,7 @@ export default async function RoleChangesPage() {
         <TableBody>
           {logs.map((log) => (
             <TableRow key={log.id}>
-              <TableCell className="text-sm">{new Date(log.createdAt).toLocaleString('ja-JP')}</TableCell>
+              <TableCell className="text-sm">{formatDateTimeFull(log.createdAt.toISOString())}</TableCell>
               <TableCell className="text-sm">{log.changer.name}</TableCell>
               <TableCell className="text-sm">{log.targetUser.name}</TableCell>
               <TableCell><Badge variant="secondary">{log.changeType}</Badge></TableCell>

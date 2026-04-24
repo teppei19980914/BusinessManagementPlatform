@@ -53,6 +53,8 @@ import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
+// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
+import { formatDate } from '@/lib/format';
 
 type Props = {
   projectId: string;
@@ -388,7 +390,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 </Badge>
               </TableCell>
               <TableCell>{r.assigneeName || '-'}</TableCell>
-              <TableCell>{new Date(r.createdAt).toLocaleDateString('ja-JP')}</TableCell>
+              <TableCell>{formatDate(r.createdAt)}</TableCell>
               {/* PR #67: 添付リンク chips */}
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />

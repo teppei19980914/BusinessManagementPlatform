@@ -45,6 +45,8 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import type { RetroDTO } from '@/services/retrospective.service';
+// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
+import { formatDateTimeFull } from '@/lib/format';
 
 type Props = {
   projectId: string;
@@ -276,7 +278,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
             {retro.comments.map((c) => (
               <div key={c.id} className="mb-2 rounded bg-muted p-2 text-sm">
                 <span className="font-medium">{c.userName}</span>
-                <span className="ml-2 text-xs text-muted-foreground">{new Date(c.createdAt).toLocaleString('ja-JP')}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{formatDateTimeFull(c.createdAt)}</span>
                 <p className="mt-1">{c.content}</p>
               </div>
             ))}
