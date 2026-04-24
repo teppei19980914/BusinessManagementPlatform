@@ -78,10 +78,20 @@ export default defineConfig({
     //   - 必要に応じて `testIgnore` で PC 専用 spec を除外 (初期は全部実行で網羅性を取る)。
     //   - mobile 用の視覚回帰 baseline は `*-chromium-mobile-linux.png` として別ファイル化される。
     //   - ベースラインは PR 作成後 `[gen-visual]` で生成 (詳細 DEVELOPER_GUIDE §9.6)。
+    //
+    // PR #128 hotfix: devices['iPhone 13'] は defaultBrowserType='webkit' を内包するため、
+    // そのまま spread すると Playwright は WebKit エンジンで起動しようとする。CI では
+    // `playwright install --with-deps chromium` で chromium のみインストールしているため、
+    // WebKit バイナリ欠如で 16 件一斉起動エラー (browserType.launch: Executable doesn't exist
+    // at .../webkit-XXXX/pw_run.sh) を起こした (E2E_LESSONS_LEARNED §4.35)。
+    // プロジェクト名が示す通り chromium エンジンで mobile emulation させるため、
+    // defaultBrowserType を 'chromium' に上書きする。userAgent/viewport/isMobile/hasTouch 等の
+    // iPhone 13 エミュレーション設定は維持される。
     {
       name: 'chromium-mobile',
       use: {
         ...devices['iPhone 13'],
+        defaultBrowserType: 'chromium',
       },
     },
   ],
