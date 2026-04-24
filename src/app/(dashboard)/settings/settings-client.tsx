@@ -33,7 +33,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { THEMES, toSafeThemeId, type ThemeId } from '@/types';
-import { THEME_DEFINITIONS, SUPPORTED_LOCALES, DEFAULT_TIMEZONE, DEFAULT_LOCALE } from '@/config';
+import { THEME_DEFINITIONS, SUPPORTED_LOCALES, SELECTABLE_LOCALES, DEFAULT_TIMEZONE, DEFAULT_LOCALE } from '@/config';
 
 type Props = {
   mfaEnabled: boolean;
@@ -293,10 +293,21 @@ export function SettingsClient({
                 className={nativeSelectClass}
               >
                 <option value="">システム既定を使用 ({DEFAULT_LOCALE})</option>
-                {Object.entries(SUPPORTED_LOCALES).map(([key, label]) => (
-                  <option key={key} value={key}>{label}（{key}）</option>
-                ))}
+                {Object.entries(SUPPORTED_LOCALES).map(([key, label]) => {
+                  // PR #120: SELECTABLE_LOCALES=false のロケールは表示するが選択不可。
+                  //   「将来対応予定」を利用者に示しつつ、翻訳未完の値で UI を壊さないための措置。
+                  //   多層防御として API (validators/i18n.ts) でも 400 拒否される。
+                  const selectable = SELECTABLE_LOCALES[key as keyof typeof SELECTABLE_LOCALES];
+                  return (
+                    <option key={key} value={key} disabled={!selectable}>
+                      {label}（{key}）{!selectable && ' ※準備中'}
+                    </option>
+                  );
+                })}
               </select>
+              <p className="text-xs text-muted-foreground">
+                ※「準備中」のロケールは後続対応で翻訳完了後に選択可能になります。
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="i18n-tz">タイムゾーン</Label>
