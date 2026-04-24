@@ -46,10 +46,15 @@ const navItems = [
   { href: ALL_MEMOS_ROUTE, label: '全メモ' },
 ];
 
-const adminNavItems = [
-  // PR #111: 顧客管理 (現状 admin のみ閲覧・CRUD 可能。
-  // /admin 配下ではなくトップレベル /customers に配置して将来の閲覧権限拡張に備える)
+// PR #111: 顧客管理は概念的にプロジェクトの「親」なのでナビ最左 (プロジェクトの 1 つ左)
+// に置く。admin 専用だが /admin 配下ではなくトップレベル /customers に配置して
+// 将来の閲覧権限拡張に備える。他の admin 系メニュー (ユーザ管理/監査ログ/権限変更) は
+// 運用管理寄りなので末尾にまとめて残す。
+const leadingAdminNavItems = [
   { href: CUSTOMERS_ROUTE, label: '顧客管理' },
+];
+
+const adminNavItems = [
   { href: ADMIN_USERS_ROUTE, label: 'ユーザ管理' },
   { href: ADMIN_AUDIT_LOGS_ROUTE, label: '監査ログ' },
   { href: ADMIN_ROLE_CHANGES_ROUTE, label: '権限変更' },
@@ -162,6 +167,20 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
             たすきば
           </Link>
           <nav className="flex items-center gap-1">
+            {/* admin の場合のみ先頭に「顧客管理」 (プロジェクトより左) */}
+            {user.systemRole === 'admin' &&
+              leadingAdminNavItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
+                    pathname.startsWith(item.href) ? 'bg-accent font-medium' : 'text-muted-foreground',
+                  )}
+                >
+                  {item.label}
+                </Link>
+              ))}
             {navItems.map((item) => (
               <Link
                 key={item.href}
