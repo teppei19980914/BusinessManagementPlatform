@@ -1,9 +1,39 @@
 'use client';
 
+/**
+ * ダッシュボード共通ヘッダ (PR #127 で 3 分類ハイブリッドナビに再構築)。
+ *
+ * 構成:
+ *   - 広い画面 (lg:+ 1024px~): 全ナビ項目をフラット表示 (従来踏襲)
+ *   - 狭い画面 (lg: 未満): 「プロジェクト」「資産」「システム管理者」の 3 分類プルダウン
+ *
+ * 分類 (PR #127):
+ *   - プロジェクト: 全プロジェクト / 全顧客管理 (admin のみ)
+ *     - 全見積もり / 全 WBS は未実装 (routes 不在)、実装時にここへ追加
+ *   - 資産: 全リスク / 全課題 / 全振り返り / 全ナレッジ / 全メモ
+ *   - システム管理者 (admin のみ): ユーザ管理 / 監査ログ / 権限変更
+ *
+ * アクティブ表示:
+ *   - フラットモード: 現在のページを bg-accent + font-medium で強調 (従来)
+ *   - プルダウンモード:
+ *     - 親タブは配下のどれかが現在のページなら bg-accent
+ *     - プルダウン内の子項目も現在のページなら bg-accent
+ *
+ * セキュリティ / 認可:
+ *   - adminOnly: true の項目は session.user.systemRole === 'admin' のみレンダ
+ *   - サーバ側 API でも認可判定されるため UI 側の非表示だけを前提にはしない (多層防御)
+ *
+ * 関連:
+ *   - SPECIFICATION.md §11 (ナビゲーション)
+ *   - DEVELOPER_GUIDE.md §5.x (UI 改修手順)
+ */
+
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
+import { Menu } from '@base-ui/react/menu';
+import { ChevronDownIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   PROJECTS_ROUTE,
@@ -30,40 +60,76 @@ type DashboardHeaderProps = {
   };
 };
 
-const navItems = [
-  { href: PROJECTS_ROUTE, label: 'プロジェクト' },
-  // PR #69: マイタスクはナビから撤去し、アカウントメニュー配下に移動した
-  // (ユーザ個人専用の画面なので、共有ナビではなくアカウント文脈に寄せる)
-  // 全プロジェクト横断で閲覧できるナレッジ資産（リスク/課題・振り返り・ナレッジ）。
-  // プロジェクト詳細タブの「○○一覧」はそのプロジェクトに紐づく一覧、最上部タブは
-  // 全プロジェクトの集約ビュー。
-  // PR #60 #1: 「全リスク」「全課題」を別タブに分離
-  { href: ALL_RISKS_ROUTE, label: '全リスク' },
-  { href: ALL_ISSUES_ROUTE, label: '全課題' },
-  { href: ALL_RETROSPECTIVES_ROUTE, label: '全振り返り' },
-  { href: KNOWLEDGE_ROUTE, label: '全ナレッジ' },
-  // PR #71: 公開メモの横断ビュー (個人管理はアカウントメニューの「メモ」から)
-  { href: ALL_MEMOS_ROUTE, label: '全メモ' },
+type NavItem = {
+  href: string;
+  label: string;
+  /** true なら systemRole='admin' のみに表示 (PR #127) */
+  adminOnly?: boolean;
+};
+
+type NavGroup = {
+  label: string;
+  /** グループ全体を admin のみに表示 (例: システム管理者タブ) */
+  adminOnly?: boolean;
+  items: NavItem[];
+};
+
+// PR #127: 3 分類ナビ構造
+//   TODO (DEVELOPER_GUIDE §11 に記載): 全見積もり / 全 WBS 横断画面を実装したら
+//   プロジェクトタブ配下に追加する (routes 未定義のため現時点は該当項目を含めない)
+const navGroups: NavGroup[] = [
+  {
+    label: 'プロジェクト',
+    items: [
+      { href: PROJECTS_ROUTE, label: '全プロジェクト' },
+      { href: CUSTOMERS_ROUTE, label: '全顧客管理', adminOnly: true },
+    ],
+  },
+  {
+    label: '資産',
+    items: [
+      { href: ALL_RISKS_ROUTE, label: '全リスク' },
+      { href: ALL_ISSUES_ROUTE, label: '全課題' },
+      { href: ALL_RETROSPECTIVES_ROUTE, label: '全振り返り' },
+      { href: KNOWLEDGE_ROUTE, label: '全ナレッジ' },
+      { href: ALL_MEMOS_ROUTE, label: '全メモ' },
+    ],
+  },
+  {
+    label: 'システム管理者',
+    adminOnly: true,
+    items: [
+      { href: ADMIN_USERS_ROUTE, label: 'ユーザ管理' },
+      { href: ADMIN_AUDIT_LOGS_ROUTE, label: '監査ログ' },
+      { href: ADMIN_ROLE_CHANGES_ROUTE, label: '権限変更' },
+    ],
+  },
 ];
 
-// PR #111: 顧客管理は概念的にプロジェクトの「親」なのでナビ最左 (プロジェクトの 1 つ左)
-// に置く。admin 専用だが /admin 配下ではなくトップレベル /customers に配置して
-// 将来の閲覧権限拡張に備える。他の admin 系メニュー (ユーザ管理/監査ログ/権限変更) は
-// 運用管理寄りなので末尾にまとめて残す。
-const leadingAdminNavItems = [
-  { href: CUSTOMERS_ROUTE, label: '顧客管理' },
-];
+/** 指定 item がユーザに表示可能か (adminOnly を考慮) */
+function isVisibleItem(item: NavItem, isAdmin: boolean): boolean {
+  return !item.adminOnly || isAdmin;
+}
 
-const adminNavItems = [
-  { href: ADMIN_USERS_ROUTE, label: 'ユーザ管理' },
-  { href: ADMIN_AUDIT_LOGS_ROUTE, label: '監査ログ' },
-  { href: ADMIN_ROLE_CHANGES_ROUTE, label: '権限変更' },
-];
+/** 指定グループがユーザに表示可能か (adminOnly または表示可能 item が 0 件なら非表示) */
+function isVisibleGroup(group: NavGroup, isAdmin: boolean): boolean {
+  if (group.adminOnly && !isAdmin) return false;
+  return group.items.some((it) => isVisibleItem(it, isAdmin));
+}
+
+/** 指定 pathname が group 内のどれかの item にマッチするか (親タブのアクティブ判定用) */
+function isGroupActive(group: NavGroup, pathname: string, isAdmin: boolean): boolean {
+  return group.items.some(
+    (it) => isVisibleItem(it, isAdmin) && pathname.startsWith(it.href),
+  );
+}
 
 /**
  * アカウントメニュー (PR #59 Req 6):
  *   画面右上のアカウント名をクリックすると「設定」「ログアウト」が
  *   プルダウンで表示される。外部クリック / Escape で閉じる。
+ *
+ *   PR #127 では既存実装を踏襲 (ナビ再構築スコープ外)。
  */
 function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
   const [open, setOpen] = useState(false);
@@ -109,7 +175,6 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           role="menu"
           className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-md border bg-card shadow-md"
         >
-          {/* PR #69 Task 3: マイタスクはナビから撤去してこのメニューに配置 (個人専用画面) */}
           <Link
             href={MY_TASKS_ROUTE}
             role="menuitem"
@@ -118,11 +183,6 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           >
             マイタスク
           </Link>
-          {/*
-            PR #71: ドロップダウン配下は「メモ」(個人管理画面 /memos) に改称。
-            横断の「全メモ」(/all-memos) は上部ナビに移動した。
-            2026-04-24: 他の一覧系メニューと命名を揃えて「メモ一覧」に改称。
-          */}
           <Link
             href={MEMOS_ROUTE}
             role="menuitem"
@@ -156,8 +216,84 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
   );
 }
 
+/** lg: 以上のフラットナビ用の個別リンク */
+function FlatNavLink({ item, pathname }: { item: NavItem; pathname: string }) {
+  const active = pathname.startsWith(item.href);
+  return (
+    <Link
+      href={item.href}
+      className={cn(
+        'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
+        active ? 'bg-accent font-medium' : 'text-muted-foreground',
+      )}
+    >
+      {item.label}
+    </Link>
+  );
+}
+
+/** lg: 未満の 3 分類プルダウンナビ用のグループ */
+function GroupMenu({
+  group,
+  pathname,
+  isAdmin,
+}: {
+  group: NavGroup;
+  pathname: string;
+  isAdmin: boolean;
+}) {
+  const groupActive = isGroupActive(group, pathname, isAdmin);
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        className={cn(
+          'flex items-center gap-1 rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
+          groupActive ? 'bg-accent font-medium' : 'text-muted-foreground',
+        )}
+      >
+        <span>{group.label}</span>
+        <ChevronDownIcon className="size-3.5" />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner sideOffset={4} className="isolate z-50">
+          <Menu.Popup
+            className={cn(
+              'min-w-[180px] origin-(--transform-origin) rounded-md border bg-card text-card-foreground shadow-md',
+              'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95',
+              'data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+            )}
+          >
+            {group.items
+              .filter((item) => isVisibleItem(item, isAdmin))
+              .map((item) => {
+                const active = pathname.startsWith(item.href);
+                return (
+                  <Menu.Item
+                    key={item.href}
+                    render={
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          'block px-4 py-2 text-sm transition-colors hover:bg-accent',
+                          active ? 'bg-accent font-medium' : 'text-foreground',
+                        )}
+                      />
+                    }
+                  >
+                    {item.label}
+                  </Menu.Item>
+                );
+              })}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
 export function DashboardHeader({ user }: DashboardHeaderProps) {
   const pathname = usePathname();
+  const isAdmin = user.systemRole === 'admin';
 
   return (
     <header className="border-b bg-card">
@@ -166,46 +302,32 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
           <Link href={PROJECTS_ROUTE} className="text-lg font-semibold">
             たすきば
           </Link>
-          <nav className="flex items-center gap-1">
-            {/* admin の場合のみ先頭に「顧客管理」 (プロジェクトより左) */}
-            {user.systemRole === 'admin' &&
-              leadingAdminNavItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
-                    pathname.startsWith(item.href) ? 'bg-accent font-medium' : 'text-muted-foreground',
-                  )}
-                >
-                  {item.label}
-                </Link>
-              ))}
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
-                  pathname.startsWith(item.href) ? 'bg-accent font-medium' : 'text-muted-foreground',
-                )}
-              >
-                {item.label}
-              </Link>
-            ))}
-            {user.systemRole === 'admin' &&
-              adminNavItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
-                    pathname.startsWith(item.href) ? 'bg-accent font-medium' : 'text-muted-foreground',
-                  )}
-                >
-                  {item.label}
-                </Link>
-              ))}
+
+          {/* PR #127: lg: 以上はフラット表示 (全項目横並び、従来挙動) */}
+          <nav className="hidden items-center gap-1 lg:flex">
+            {navGroups.map((group) => {
+              if (!isVisibleGroup(group, isAdmin)) return null;
+              return group.items
+                .filter((item) => isVisibleItem(item, isAdmin))
+                .map((item) => (
+                  <FlatNavLink key={item.href} item={item} pathname={pathname} />
+                ));
+            })}
+          </nav>
+
+          {/* PR #127: lg: 未満は 3 分類プルダウン */}
+          <nav className="flex items-center gap-1 lg:hidden">
+            {navGroups.map((group) => {
+              if (!isVisibleGroup(group, isAdmin)) return null;
+              return (
+                <GroupMenu
+                  key={group.label}
+                  group={group}
+                  pathname={pathname}
+                  isAdmin={isAdmin}
+                />
+              );
+            })}
           </nav>
         </div>
         <AccountMenu user={user} />
