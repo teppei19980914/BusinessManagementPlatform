@@ -68,7 +68,7 @@ function CalendarPanel({ value, onSelect }: CalendarPanelProps) {
   }
 
   return (
-    <div className="w-[260px] rounded-md border bg-card p-2 shadow-md">
+    <div className="w-[min(90vw,260px)] rounded-md border bg-card p-2 shadow-md">{/* PR #128: 320px 端末等での画面外はみ出し回避 (viewport 幅の 90% 上限) */}
       <div className="mb-2 flex items-center justify-between">
         <button
           type="button"

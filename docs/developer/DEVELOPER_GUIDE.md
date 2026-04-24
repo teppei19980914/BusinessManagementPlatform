@@ -370,6 +370,66 @@ const openEditDialog = () => {
 - `react-hooks/set-state-in-effect` lint ルールに抵触する
 - Derived State は React 公式推奨パターン (https://react.dev/learn/you-might-not-need-an-effect)
 
+### 5.9 レスポンシブ実装パターン (PR #128 で整理)
+
+**設計原則** (ユーザ要件、変更禁止):
+- **PC UX は絶対に落とさない** (メイン作業環境)
+- **スマホ UX を最大限向上** (PC UX を損なわない範囲で)
+- タブレットは最低優先 (現状の responsive で許容)
+
+**対象 breakpoint**:
+
+| 範囲 | 対応 |
+|---|---|
+| 〜639px (縦向きスマホ) | 🔴 最優先対応 |
+| 640〜767px (`sm:` 横向きスマホ) | 🟡 中 |
+| 768〜1023px (`md:` タブレット) | 🟢 低 |
+| 1024px+ (`lg:` PC) | ✅ **既存維持** |
+
+**必須パターン**:
+
+| パターン | 適用箇所 | 例 |
+|---|---|---|
+| **固定幅の `min-w-[Xpx]` / `w-[Xpx]`** で X > 380px | ポップオーバー / カード / モーダル | `max-w-[min(90vw,Xpx)]` に変更 |
+| **多列テーブル** (≥5 列) | 横断一覧画面 | `<ResponsiveTable>` を使用 (md: で table、未満でカード) |
+| **Dialog** | 全モーダル | `max-w-[min(90vw,Xrem)]` (既に全適用済、PR #112) |
+| **Grid** | カラム配置 | `grid-cols-1 md:grid-cols-2` / `md:grid-cols-3` 等 breakpoint 明示 |
+
+**`<ResponsiveTable>` の使い方** (PR #128 新設):
+
+```tsx
+import { ResponsiveTable } from '@/components/ui/responsive-table';
+
+<ResponsiveTable
+  items={risks}
+  getRowKey={(r) => r.id}
+  onRowClick={(r) => openDialog(r)}
+  columns={[
+    { key: 'title', label: '件名', primary: true, render: (r) => r.title },
+    { key: 'assignee', label: '担当者', render: (r) => r.assigneeName },
+    { key: 'status', label: 'ステータス', render: (r) => <Badge>{r.status}</Badge> },
+  ]}
+  emptyText="データがありません"
+  aria-label="リスク一覧"
+/>
+```
+
+- `primary: true` の列: カードモードのタイトル位置に太字で表示 (1 列のみ推奨)
+- `hiddenOnCard: true`: テーブルには表示、カードには非表示 (詳細列の省略用)
+- PC (md:+) は従来通り `<table>` レンダ、スマホは各行が `<Card>` に変換される
+- SSR で両 DOM を出力、CSS (`hidden md:block` / `md:hidden`) で切替 → CLS ゼロ、チラつきなし
+
+**禁止事項**:
+- `window.innerWidth` で JS 判定しない (SSR mismatch の原因、CLS も発生)
+- PC UX を犠牲にするスマホ最適化 (「PC では使いにくいがスマホには便利」は NG)
+
+**段階的 PR 計画** (`docs/developer/RESPONSIVE_AUDIT.md` 参照):
+- PR #128 (本 PR): 監査 + 基盤 (`ResponsiveTable`) + 即時修正 1 件 + Playwright mobile project
+- PR #128a: P1 テーブル (`/projects`, `/projects/[id]/tasks`)
+- PR #128b: P2 横断一覧 (`/risks`, `/issues`, `/retrospectives`, `/knowledge`)
+- PR #128c: P3 admin / 低優先 (`/all-memos`, `/admin/*`, `/customers`)
+- PR #128d: fine-tune (text-xs / padding / タップ領域)
+
 ---
 
 ## 6. 機能削除の手順
@@ -1329,3 +1389,6 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §11 追加 (PR #122)。後続対応 (TODO) 一覧を集約 (入力層 TZ / PAT 動作確認 / en-US 英訳 / SWC removeConsole / 期限付き PAT ローテーション等) |
 | 2026-04-24 | §5.8 追加 (PR #126)。Select と SearchableSelect の使い分け (件数が増える可能性のあるエンティティ系は SearchableSelect、固定少数は既存 Select) |
 | 2026-04-24 | §11.2 T-15/T-16 追加 (PR #127)。ナビ 3 分類ハイブリッド化に合わせ、全見積もり / 全 WBS 横断画面の実装時にプロジェクト プルダウンへ追加する TODO を登録 |
+| 2026-04-24 | §5.9 追加 (PR #128)。レスポンシブ実装パターン (ResponsiveTable 基盤 + 設計原則 + 段階 PR 計画)。詳細監査は docs/developer/RESPONSIVE_AUDIT.md を参照 |
+| 2026-04-24 | §10.5 再発事例追記 (PR #128 hotfix)。DEVELOPER_GUIDE の更新履歴テーブルで origin/main に PR #126/#127 が追加され、PR #128 の追記と末尾コンフリクト。PR 番号順 (#126 → #127 → #128) で結合する形で解消 (§10.5 テンプレ通りのリゾルブで 2 例目) |
+| 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
