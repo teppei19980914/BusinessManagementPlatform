@@ -120,8 +120,15 @@ export function SearchableSelect({
           className,
         )}
       />
+      {/*
+        PR #126 hotfix: Trigger は装飾目的 (pointer-events-none) で Input と並置されるが、
+        Input と同じラベル文字列を含む aria-label にすると getByLabel 系のテストで
+        strict mode violation を起こす (§4.34)。
+        役割自体が Input のアクションを視覚化する副次要素のため、aria-label は固定の
+        「候補を開く」に統一して Input の aria-label と衝突しないようにする。
+      */}
       <Combobox.Trigger
-        aria-label={ariaLabel ? `${ariaLabel} (展開)` : '展開'}
+        aria-label="候補を開く"
         className="pointer-events-none absolute"
       >
         <ChevronDownIcon className="size-4 text-muted-foreground" />
