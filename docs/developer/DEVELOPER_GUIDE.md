@@ -1305,6 +1305,73 @@ git push
   `git merge origin/main` で追従させる
 - 長期 stacked PR では「末尾追記 3 行」を見越した rebase コミュニケーションを取る
 
+#### Stacked PR で base に hotfix を当てた場合の sub-PR への伝播 (PR #128 → #129 で得た知見)
+
+**背景**: 要望項目 7 のレスポンシブ対応は stacked PR (`#128` base → `#128a` `/projects`
+→ `#128a-2` WBS → `#128b` 横断一覧 → `#128c` admin → `#128d` fine-tune) で進めている。
+
+**症状**: `#128` base に hotfix を 4 回 commit (WebKit エンジン override / main merge /
+`testIgnore` / mobile baseline 自動生成) した後、`#128a` (= PR #129) の CI を確認すると
+**`#128` 初回と同じ WebKit 起動エラー 5 件** で fail していた。
+
+**原因**: `#128a` branch は `#128` の **初回コミット (0490185)** から分岐しており、
+以降に `#128` へ足した 4 件の hotfix を継承していない。stacked PR は後続が
+自動追従しないため、base 更新分は各 sub-PR で明示的に取り込む必要がある。
+
+**解消**: `#128a` で `git merge origin/feat/pr128-responsive-audit` 実行。
+auto-merge が全ファイル成立 (PR #128a の `/projects` モバイルカード実装は、main 由来
+SearchableSelect 追加と同一ファイル `projects-client.tsx` を触るが別範囲のため衝突なし)。
+
+**予防・運用ルール**:
+1. stacked PR の **base (上流) に hotfix を commit したら即座に下流全部に merge を流す**。
+   上流の CI が green になった時点で sub-PR の CI も再走させるために必要。
+2. sub-PR の CI が fail していて、かつ base (上流) の同 workflow も同時期に fail して
+   いた場合、**まず上流の fix 伝播漏れを疑う**。下流固有のバグ調査より先に rebase/merge
+   を試す方が安い。
+3. stacked PR の commit は意図的に 1 本化しておくと、base merge 時の衝突対処が容易
+   (#128a の 4870b74 のように 1 コミット/PR に寄せる)。
+4. Mobile baseline PNG のような **workflow が自動生成してコミットしたファイル** も
+   base に溜まっていく。sub-PR rebase 時に大量の新規 PNG ファイルが一括で降ってくるが
+   正常動作 (衝突にならない、単に `new file` として追加される)。
+
+**再発事例 3 例目 (PR #130 = PR #128a-2 hotfix)**: PR #129 への hotfix 取り込み後、
+PR #130 (`feat/pr128a-2-wbs-mobile`) も同じ E2E Visual Baseline の WebKit エラーで
+fail。PR #130 は PR #129 の **初回コミット 4870b74** から分岐しており、PR #129 が
+後から追加した merge commits (`f096b8d` + `fadcdfe`) を引き継いでいなかった。
+同じく `git merge origin/feat/pr128a-p1-tables-card` の 1 コマンドで auto-merge 成立
+(conflict 0 件、`projects-client.tsx` の WBS 改修 / mobile card / SearchableSelect
+3 系統が同一ファイルを触るが別範囲なので衝突せず)。stacked PR 長さが n 段なら
+hotfix 伝播もそのぶん n-1 回必要 = 本例では **#128 base → #128a(#129) → #128a-2(#130)**
+の 2 段伝播となった。
+
+**再発事例 4 例目 (PR #131 = PR #128b hotfix)**: 3 段目。PR #131
+(`feat/pr128b-p2-cross-list`, P2 横断一覧モバイルカード化) は PR #130 の初回
+コミットから分岐しており、PR #130 が後で取り込んだ hotfix を継承していなかった。
+`git merge origin/feat/pr128a-2-wbs-mobile` で auto-merge 成立。
+
+**再発事例 5 例目 + 6 例目 (PR #132 / #133 hotfix)**: 4 段目 / 5 段目。
+同パターンが **5 PR 連続** (#129 → #130 → #131 → #132 → #133) で再発し、
+それぞれ `git merge` 1 コマンドで解消。
+
+**運用ルールとして確定 (5 例以上の連続再発が根拠)**:
+1. stacked chain を運用する PR では **base ブランチへ hotfix が push されたら
+   即座に全 sub-PR へ順送り merge を流す** (下流ほど新しい変更を含むため、
+   上流から下流の向きが正しい)。
+2. 手動運用は 4 段を超えると伝播忘れが多発するため、**自動化スクリプト**
+   (各 sub-PR branch をチェックアウト → `git merge origin/<上流>` → push) を
+   整備すべき。現状は手動 + チェックリスト運用。
+3. sub-PR を作る際は **初回コミット直前に base の最新 HEAD に rebase しておく**
+   ことで以降の伝播回数を最小化できる (本件の PR #128 スタックは全 sub-PR が
+   一斉に #128 初期状態 0490185 から分岐していたため伝播コストが連鎖した)。
+
+**補足 (2026-04-24, docs/stacked-pr-propagation-lessons で追加)**:
+本セクションは PR #128 stack hotfix 対応で得た知見だが、sub-PR (#129〜#133) が
+**squash-merge** されたため、hotfix 伝播で追加した §10.5 の追記内容が main に
+取り込まれなかった。一般論として **「sub-PR が squash-merge 運用の場合、sub-PR
+のマージ後に追加した docs コミットは別 PR で main へ取り込む必要がある」** と
+いうメタ教訓もある (merge commit 運用なら自動継承されるが、squash-merge では
+最初の squash 時点のスナップショットしか残らないため)。
+
 ### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
 
 Next.js は開発時 `.next/dev/types/validator.ts` にルートハンドラの型情報を
@@ -1543,3 +1610,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §5.10 新設 (fix/project-create-customer-validation)。フォーム送信前の事前バリデーション (エラー情報最小化方針)。HTML5 `required` で拾えない `SearchableSelect` 必須項目は `handleXxx` 先頭で事前 validation + `setError` + `return` し、無効値 POST が 400 を返してブラウザ Console にエラー情報を露出させる経路を断つ |
 | 2026-04-24 | §5.10.1 / §5.10.2 追加 (fix/project-create-customer-validation 追補)。§5.10.1: Base UI Combobox で `{value, label}` を items に渡すと onValueChange はオブジェクトで emit される (string 限定の type guard で選択イベントが握り潰されていた)。§5.10.2: タグ入力の全角読点「、」対応 + 共通関数 `@/lib/parse-tags.ts` 集約 (projects / knowledge の重複を解消) |
 | 2026-04-24 | §5.10.1.5 追加 (fix/project-create-customer-validation E2E hotfix)。`<Label>` + `<Input>` に htmlFor/id ペアを必ず付ける規約。欠落すると (1) screen reader 読み上げ不可 (2) Playwright `getByLabel` が timeout の 2 つが同時に壊れる (E2E §4.3 の再発事例)。projects-client の全入力フィールドに id を付与 |
+| 2026-04-24 | §10.5 サブセクション + 再発事例 3〜6 例目 + 運用ルール 3 項を追加 (docs/stacked-pr-propagation-lessons)。PR #128 stack hotfix 対応で得た「Stacked PR で base に hotfix を当てた場合の sub-PR への伝播」パターンの集約。sub-PR (#129〜#133) が squash-merge されたため後続 docs 追記が main に取り込まれず残存していた分を本 PR でまとめて拾い上げる。メタ教訓 (squash-merge 運用下では後付け docs コミットは別 PR で main へ取り込む必要) も併せて明文化 |
