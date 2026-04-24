@@ -628,6 +628,30 @@ baseline workflow の実行 → 自動 commit → (それをトリガに) E2E CI
 baseline を上げずに fail したままマージすると main が red になり続けるので、
 **PR マージ前に必ず緑化**してください。
 
+#### ⚠️ 罠: `GITHUB_TOKEN` による auto-commit は次の workflow を起動しない (PR #119 で遭遇)
+
+baseline workflow の auto-commit (`Update visual baselines (workflow)` コミット)
+は既定の `GITHUB_TOKEN` で push されるため、**GitHub 仕様により後続 workflow を
+トリガしない** (無限ループ防止の仕様。[公式ドキュメント](https://docs.github.com/en/actions/security-guides/automatic-token-authentication#using-the-github_token-in-a-workflow)):
+
+> When you use the repository's GITHUB_TOKEN to perform tasks, events triggered
+> by the GITHUB_TOKEN will not create a new workflow run.
+
+**症状**: PR UI の required checks が延々と "Expected — Waiting for status to
+be reported" のまま変化しない。`gh run list --commit <auto-commit-SHA>` が空配列を返す。
+
+**対処**: 開発者の credentials (GITHUB_TOKEN ではない) で空コミットを push して CI を再起動する:
+
+```bash
+git pull --ff-only                                              # baseline auto-commit を取得
+git commit --allow-empty -m "chore: retrigger CI after baseline update"
+git push
+```
+
+**恒久対策候補** (PR #119 以降で検討): workflow 側で PAT (`secrets.CI_TRIGGER_PAT`) を
+使って push する / baseline push 後に `gh workflow run` で後続を明示起動する。
+PAT 管理コストと相談で決める。
+
 #### mask テクニック (PR #96)
 
 動的に変化するコンテンツ (RUN_ID 付きのテストデータ名等) を視覚回帰対象外にするには
@@ -1140,3 +1164,4 @@ APP_DEFAULT_LOCALE=en-US
 | 2026-04-24 | §10.8 追加 + §10.7 更新 (PR #118)。TZ/locale の 3 段階フォールバック / env 上書き / format ヘルパのオプション化 |
 | 2026-04-24 | §10.8 拡充 (PR #119)。`useFormatters()` / `getServerFormatters()` + 設定画面 UI + `/api/settings/i18n` の整備完了 |
 | 2026-04-24 | §10.9 追加 (PR #119 hotfix)。設定画面に Card 追加時の CI 連鎖 fail (coverage manifest + 視覚回帰) 対処手順 |
+| 2026-04-24 | §9.6 罠追記 (PR #119 hotfix 2)。GITHUB_TOKEN による auto-commit は次の workflow を起動しない問題と回避手順 |
