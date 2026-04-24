@@ -179,7 +179,7 @@ export function MemosClient({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">メモ</h2>
+        <h2 className="text-xl font-semibold">メモ一覧</h2>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{memos.length} 件</span>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>

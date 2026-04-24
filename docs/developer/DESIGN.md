@@ -1281,10 +1281,38 @@ function checkPermission(
 | メンバー管理 | 全操作 | 一覧閲覧のみ | 不可 | 不可 |
 | 見積もり | 全操作 | 全操作 | 不可 | 不可 |
 | タスク管理 | 全操作 | 全操作 | 自分タスクの進捗更新のみ | 閲覧のみ |
-| リスク・課題 | 全操作 | 全操作 | 起票 + 自分担当分の編集 | 閲覧のみ |
-| ナレッジ | 全操作 | 全操作 | 下書き作成 + 自分下書き編集 | 閲覧のみ |
-| 振り返り | 全操作 | 作成・編集・確定 | コメント投稿のみ | 閲覧のみ |
+| リスク・課題 / ナレッジ / 振り返り (2026-04-24 改修) | 参照 + 削除 (全○○ から管理削除のみ) | 作成 + **自分起票分の編集/削除** | 作成 + **自分起票分の編集/削除** | 閲覧のみ |
+| メモ | 自分の全メモ (個人資産) | 自分の全メモ | 自分の全メモ | 自分の全メモ |
 | システム管理 | 全操作 | 不可 | 不可 | 不可 |
+
+### 8.3.1 リスク/課題/振り返り/ナレッジ の権限詳細 (2026-04-24 改修)
+
+4 エンティティ共通で以下の方針。メモは個人資産なので対象外。
+
+| 操作 | 全○○ 画面 | ○○一覧 画面 (プロジェクト詳細タブ) |
+|---|---|---|
+| 一覧参照 | 非 admin: `visibility='public'` のみ<br>admin: draft 含め全件 | 同左 |
+| 個別参照 (view) | public: 全員 OK<br>draft: 作成者本人 + admin のみ | 同左 |
+| 作成 | — (画面から不可) | **実際の ProjectMember** (`pm_tl` / `member`) のみ<br>admin でも非メンバーなら不可 |
+| 編集 | — (画面から不可、全員 read-only) | **作成者本人のみ**<br>admin でも他人の記事は編集不可 |
+| 削除 | **admin のみ** (管理削除、全リスク/課題/振り返り/ナレッジ画面から) | **作成者本人のみ** (admin は全○○ 経由で削除) |
+
+**実装ポイント**:
+- `lib/permissions/membership.ts#getActualProjectRole` で admin 短絡なしの実メンバー判定を提供
+- `lib/api-helpers.ts#requireActualProjectMember` で API POST ルートの作成制約を強制
+- service 層の `updateX` は「作成者と一致しなければ FORBIDDEN」で enforce
+- service 層の `deleteX` は「作成者 OR admin」で enforce
+- `getX(id, viewerUserId?, viewerSystemRole?)` は認可引数付きで draft 秘匿 (他人の draft は null 返却 = 存在しない扱い)
+- UI 層 (各 `○○-client.tsx`) では `currentUserId` + `createdBy` / `reporterId` で isOwner 判定し、編集/削除ボタンを出し分け
+
+### 8.3.2 メモ (Memo) の独立方針
+
+- プロジェクト非紐付け、完全に個人資産
+- CRUD は常に **自分のメモのみ** 可能 (role 判定は不要)
+- 他人のメモは「全メモ」画面で `visibility='public'` のみ閲覧可 (read-only)
+- **ユーザ削除時のカスケード物理削除**: `deleteUser` で `memo.deleteMany({ where: { userId } })` を
+  `$transaction` に含める。振り返り/ナレッジ等「組織の資産」を残す方針と対照的に、メモは
+  退職者分を残す意味がないためカスケード削除で掃除する (2026-04-24)
 
 ---
 

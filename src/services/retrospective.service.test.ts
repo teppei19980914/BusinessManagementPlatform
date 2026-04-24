@@ -64,17 +64,15 @@ describe('listRetrospectives', () => {
     expect(call.where).not.toHaveProperty('OR');
   });
 
-  it('非 admin は public + 自身の draft', async () => {
+  it('非 admin は public のみ (2026-04-24: 自分の draft も一覧除外)', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
     await listRetrospectives('p-1', 'u-1', 'general');
 
     const call = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
-    expect(call.where.OR).toEqual([
-      { visibility: 'public' },
-      { visibility: 'draft', createdBy: 'u-1' },
-    ]);
+    expect(call.where.visibility).toBe('public');
+    expect(call.where).not.toHaveProperty('OR');
   });
 
   it('コメント userName は user.findMany で一括解決', async () => {
@@ -154,6 +152,18 @@ describe('listAllRetrospectivesForViewer', () => {
     expect(r[0].projectDeleted).toBe(true);
     expect(r[0].canAccessProject).toBe(false);
   });
+
+  it('2026-04-24: 非 admin の visibility フィルタは public のみ (draft 除外)', async () => {
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    await listAllRetrospectivesForViewer('u-1', 'general');
+
+    const call = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
+    expect(call.where.visibility).toBe('public');
+    expect(call.where).not.toHaveProperty('OR');
+  });
 });
 
 describe('createRetrospective', () => {
@@ -190,7 +200,25 @@ describe('createRetrospective', () => {
 describe('updateRetrospective', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('指定フィールドのみ data に積む', async () => {
+  it('存在しなければ NOT_FOUND', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(null);
+    await expect(updateRetrospective('x', { planSummary: 'n' }, 'u-1')).rejects.toThrow(
+      'NOT_FOUND',
+    );
+  });
+
+  it('作成者以外 (admin でも) は FORBIDDEN', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(updateRetrospective('ret-1', { planSummary: 'n' }, 'u-other')).rejects.toThrow(
+      'FORBIDDEN',
+    );
+    await expect(updateRetrospective('ret-1', { planSummary: 'n' }, 'admin-x')).rejects.toThrow(
+      'FORBIDDEN',
+    );
+  });
+
+  it('作成者本人なら指定フィールドのみ data に積む', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
     await updateRetrospective('ret-1', { planSummary: 'new' }, 'u-1');
 
@@ -199,6 +227,7 @@ describe('updateRetrospective', () => {
   });
 
   it('conductedDate は Date に変換', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
     await updateRetrospective('ret-1', { conductedDate: '2026-05-01' }, 'u-1');
 
@@ -221,9 +250,16 @@ describe('confirmRetrospective / deleteRetrospective', () => {
     );
   });
 
-  it('delete: deletedAt セット', async () => {
+  it('delete 存在しなければ NOT_FOUND', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(null);
+    await expect(deleteRetrospective('x', 'u-1', 'general')).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('delete 作成者本人は削除 OK', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
-    await deleteRetrospective('ret-1', 'u-1');
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+    await deleteRetrospective('ret-1', 'u-1', 'general');
 
     expect(prisma.retrospective.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -231,22 +267,60 @@ describe('confirmRetrospective / deleteRetrospective', () => {
       }),
     );
   });
+
+  it('delete admin は他人の振り返りも削除可 (管理削除)', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+    await deleteRetrospective('ret-1', 'admin-x', 'admin');
+    expect(prisma.retrospective.update).toHaveBeenCalled();
+  });
+
+  it('delete 非 admin の第三者は FORBIDDEN', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(deleteRetrospective('ret-1', 'u-other', 'general')).rejects.toThrow(
+      'FORBIDDEN',
+    );
+  });
 });
 
 describe('getRetrospective / addComment', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('getRetrospective: 論理削除済みを除外', async () => {
+  it('getRetrospective: 論理削除済みを除外 + 認可引数なしは生行', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
       id: 'ret-1',
       projectId: 'p-1',
+      createdBy: 'u-1',
+      visibility: 'draft',
     } as never);
 
     const r = await getRetrospective('ret-1');
     expect(r?.id).toBe('ret-1');
-    expect(prisma.retrospective.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'ret-1', deletedAt: null } }),
-    );
+  });
+
+  it('getRetrospective: public は誰でも参照可', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      id: 'ret-1',
+      projectId: 'p-1',
+      createdBy: 'u-1',
+      visibility: 'public',
+    } as never);
+
+    const r = await getRetrospective('ret-1', 'u-other', 'general');
+    expect(r?.id).toBe('ret-1');
+  });
+
+  it('getRetrospective: draft は作成者/admin 以外なら null', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      id: 'ret-1',
+      projectId: 'p-1',
+      createdBy: 'u-1',
+      visibility: 'draft',
+    } as never);
+
+    const r = await getRetrospective('ret-1', 'u-other', 'general');
+    expect(r).toBe(null);
   });
 
   it('addComment: コメント作成', async () => {

@@ -3,9 +3,10 @@
  * PATCH  /api/knowledge/[knowledgeId] - ナレッジ編集
  * DELETE /api/knowledge/[knowledgeId] - ナレッジ論理削除
  *
- * 認可:
- *   GET: ログイン済 + visibility='public' or 作成者本人 or admin
- *   PATCH/DELETE: 作成者本人 or admin (サービス層 updateKnowledge で再判定)
+ * 認可 (2026-04-24 改修):
+ *   GET: public はログイン済全員。draft は作成者本人 + admin のみ。
+ *   PATCH: **作成者本人のみ** (admin でも他人のは不可)。サービス層で enforce。
+ *   DELETE: 作成者本人 OR admin (全ナレッジ画面からの管理削除)。サービス層で enforce。
  *
  * 監査: PATCH/DELETE 時に audit_logs に before/after を記録。
  *
@@ -26,23 +27,14 @@ export async function GET(
   if (user instanceof NextResponse) return user;
 
   const { knowledgeId } = await params;
-  const knowledge = await getKnowledge(knowledgeId);
+  // 2026-04-24: service 層で public/draft 判定 (他人の draft は null)
+  const knowledge = await getKnowledge(knowledgeId, user.id, user.systemRole);
 
   if (!knowledge) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
       { status: 404 },
     );
-  }
-
-  // 公開範囲チェック
-  if (user.systemRole !== 'admin') {
-    if (knowledge.visibility === 'draft' && knowledge.createdBy !== user.id) {
-      return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
-        { status: 403 },
-      );
-    }
   }
 
   return NextResponse.json({ data: knowledge });
@@ -56,6 +48,7 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
 
   const { knowledgeId } = await params;
+  // 内部呼び出し (認可オフ) で生行を取得してから service 層で判定させる
   const existing = await getKnowledge(knowledgeId);
 
   if (!existing) {
@@ -63,16 +56,6 @@ export async function PATCH(
       { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
       { status: 404 },
     );
-  }
-
-  // 編集権限: admin は全て、pm_tl は全て、member は自分の下書きのみ
-  if (user.systemRole !== 'admin') {
-    if (existing.createdBy !== user.id) {
-      return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '自分が作成したナレッジのみ編集できます' } },
-        { status: 403 },
-      );
-    }
   }
 
   const body = await req.json();
@@ -84,7 +67,22 @@ export async function PATCH(
     );
   }
 
-  const knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id);
+  let knowledge;
+  try {
+    knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'FORBIDDEN') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '作成者本人のみ編集できます' } },
+        { status: 403 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     userId: user.id,
@@ -105,14 +103,6 @@ export async function DELETE(
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  // 削除は admin, pm_tl のみ
-  if (user.systemRole !== 'admin') {
-    return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
-      { status: 403 },
-    );
-  }
-
   const { knowledgeId } = await params;
   const existing = await getKnowledge(knowledgeId);
 
@@ -123,7 +113,22 @@ export async function DELETE(
     );
   }
 
-  await deleteKnowledge(knowledgeId, user.id);
+  // 2026-04-24: 削除は作成者本人 OR admin (service 層で enforce)。
+  try {
+    await deleteKnowledge(knowledgeId, user.id, user.systemRole);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'FORBIDDEN') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '作成者本人または管理者のみ削除できます' } },
+        { status: 403 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     userId: user.id,

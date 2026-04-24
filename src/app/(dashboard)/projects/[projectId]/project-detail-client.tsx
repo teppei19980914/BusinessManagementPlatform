@@ -69,6 +69,8 @@ type Props = {
   userId: string;
   canEdit: boolean;
   canCreate: boolean;
+  /** 2026-04-24: リスク/課題/振り返り/ナレッジ 一覧 向けの create 可否 (admin 短絡なし) */
+  canCreateOwnedList: boolean;
   // PR #111-2: 編集ダイアログの顧客選択肢
   customers: CustomerOption[];
 };
@@ -109,7 +111,7 @@ function LazyTabContent<T>({
 
 export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
-  canEdit, canCreate, customers,
+  canEdit, canCreate, canCreateOwnedList, customers,
 }: Props) {
   const t = useTranslations('action');
   const router = useRouter();
@@ -568,8 +570,8 @@ export function ProjectDetailClient({
                     projectId={project.id}
                     risks={risksData}
                     members={membersData}
-                    canEdit={canEdit}
-                    canCreate={canCreate}
+                    canCreate={canCreateOwnedList}
+                    currentUserId={userId}
                     systemRole={systemRole}
                     typeFilter="risk"
                     onReload={reloadRisks}
@@ -590,8 +592,8 @@ export function ProjectDetailClient({
                     projectId={project.id}
                     risks={risksData}
                     members={membersData}
-                    canEdit={canEdit}
-                    canCreate={canCreate}
+                    canCreate={canCreateOwnedList}
+                    currentUserId={userId}
                     systemRole={systemRole}
                     typeFilter="issue"
                     onReload={reloadRisks}
@@ -609,8 +611,9 @@ export function ProjectDetailClient({
               <RetrospectivesClient
                 projectId={project.id}
                 retros={data}
-                canEdit={canEdit}
+                canCreate={canCreateOwnedList}
                 canComment={canCreate}
+                currentUserId={userId}
                 onReload={reloadRetros}
               />
             )}
@@ -629,8 +632,8 @@ export function ProjectDetailClient({
               <ProjectKnowledgeClient
                 projectId={project.id}
                 knowledges={result}
-                canCreate={canCreate}
-                canDelete={canEdit}
+                canCreate={canCreateOwnedList}
+                currentUserId={userId}
                 onReload={reloadKnowledges}
               />
             )}

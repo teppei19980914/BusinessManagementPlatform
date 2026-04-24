@@ -54,7 +54,23 @@ export async function PATCH(
     );
   }
 
-  const knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id);
+  let knowledge;
+  try {
+    // 2026-04-24: 作成者本人のみ編集可 (admin でも他人は不可)。service 層で enforce。
+    knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'FORBIDDEN') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '作成者本人のみ編集できます' } },
+        { status: 403 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     userId: user.id,
@@ -93,7 +109,22 @@ export async function DELETE(
     );
   }
 
-  await deleteKnowledge(knowledgeId, user.id);
+  try {
+    // 2026-04-24: 削除は作成者本人 OR admin (service 層で enforce)。
+    await deleteKnowledge(knowledgeId, user.id, user.systemRole);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'FORBIDDEN') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '作成者本人または管理者のみ削除できます' } },
+        { status: 403 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     userId: user.id,

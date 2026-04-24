@@ -33,7 +33,8 @@ import {
 } from '@/components/ui/resizable-columns';
 
 /**
- * 全振り返りテーブル (Req 9: 行クリックで編集)。
+ * 全振り返りテーブル (2026-04-24: 全員読み取り専用に変更)。
+ * 編集はプロジェクト内「振り返り一覧」から作成者本人のみ。admin は管理削除のみ可。
  */
 export function AllRetrospectivesTable({
   retros,
@@ -138,7 +139,8 @@ export function AllRetrospectivesTable({
         open={editingRetro != null}
         onOpenChange={(v) => { if (!v) setEditingRetro(null); }}
         onSaved={async () => { router.refresh(); }}
-        readOnly={editingRetro != null && !editingRetro.canAccessProject}
+        // 2026-04-24: 全振り返りは編集不可 (読み取り専用)。編集は ○○一覧 経由。
+        readOnly={true}
       />
     </ResizableColumnsProvider>
   );

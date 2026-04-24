@@ -41,14 +41,15 @@ const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
 };
 
 /**
- * 全リスク/課題テーブル (Req 9: 行クリックで編集ポップアップ)。
+ * 全リスク/課題テーブル (2026-04-24 改修: 全員読み取り専用)。
  *
  * 行クリック挙動:
- *   - canAccessProject=true (ProjectMember または admin): 編集ダイアログを開く
- *   - canAccessProject=false (非メンバー): クリック不活性 (DTO マスキング済)
+ *   - 常に **read-only ダイアログ** で詳細を開く (編集不可)
+ *   - 編集はプロジェクト内「リスク/課題一覧」画面から作成者本人のみ実施
+ *   - 削除は admin のみ可 (テーブル右側の専用ボタン経由、全リスク/全課題からの管理削除用)
  *
- * 編集に必要な members 情報は全プロジェクト分は持ちえないため、初期値は空リストで
- * 開始し、編集ダイアログを開いた瞬間に projectId から取得する遅延フェッチ戦略。
+ * 参考ダイアログに必要な members 情報は全プロジェクト分は持ちえないため、初期値は空リストで
+ * 開始し、行クリック時に projectId から取得する遅延フェッチ戦略。
  */
 export function AllRisksTable({
   risks,
@@ -70,8 +71,9 @@ export function AllRisksTable({
     filteredRisks.map((r) => r.id),
   );
 
-  // PR #61: 非メンバーでも行クリックで readOnly ダイアログを開けるようにする。
-  // canAccessProject=true → 編集可、false → 参照専用 (readOnly)。
+  // 2026-04-24: 全リスク/全課題は全員 read-only (編集は ○○一覧 から作成者のみ)。
+  // 参考のため担当者名を表示するので、canAccessProject=true のメンバーならメンバー一覧を
+  // 取得して表示補完、非メンバーは担当者名のみ表示で済ませる。
   async function handleRowClick(r: AllRiskDTO) {
     if (r.canAccessProject) {
       try {
@@ -84,7 +86,6 @@ export function AllRisksTable({
         setMembers([]);
       }
     } else {
-      // 非メンバーはメンバー一覧 API を叩けないため空で開く (担当者は表示のみ)
       setMembers([]);
     }
     setEditingRisk(r);
@@ -193,7 +194,8 @@ export function AllRisksTable({
         open={editingRisk != null}
         onOpenChange={(v) => { if (!v) setEditingRisk(null); }}
         onSaved={async () => { router.refresh(); }}
-        readOnly={editingRisk != null && !editingRisk.canAccessProject}
+        // 2026-04-24: 全リスク/全課題は編集不可 (読み取り専用)。編集は ○○一覧 経由。
+        readOnly={true}
       />
     </ResizableColumnsProvider>
   );

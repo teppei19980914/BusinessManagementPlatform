@@ -27,6 +27,26 @@ export type MembershipInfo = {
  *     → この経路を閉じると、PR #52 で導入した「カスケードしない削除」後の
  *       データ整理手段が無くなってしまう。
  */
+/**
+ * ユーザの **実際の** ProjectMember row からプロジェクトロールを取得する
+ * (admin 短絡なし)。
+ *
+ * 2026-04-24 追加: 各「○○一覧」画面での作成ボタン表示判定用。
+ * admin であっても project_members に row が無ければ null を返す。
+ *
+ * @returns 'pm_tl' | 'member' | 'viewer' | null (未所属)
+ */
+export async function getActualProjectRole(
+  projectId: string,
+  userId: string,
+): Promise<ProjectRole | null> {
+  const member = await prisma.projectMember.findFirst({
+    where: { projectId, userId },
+    select: { projectRole: true },
+  });
+  return (member?.projectRole as ProjectRole | undefined) ?? null;
+}
+
 export async function checkMembership(
   projectId: string,
   userId: string,

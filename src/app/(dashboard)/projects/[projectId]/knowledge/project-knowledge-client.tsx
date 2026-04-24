@@ -41,8 +41,10 @@ import type { KnowledgeDTO } from '@/services/knowledge.service';
 type Props = {
   projectId: string;
   knowledges: KnowledgeDTO[];
+  /** 2026-04-24: 作成ボタンの表示可否 (実際の ProjectMember の pm_tl/member のみ true) */
   canCreate: boolean;
-  canDelete: boolean;
+  /** 2026-04-24: 作成者本人判定 (k.createdBy === currentUserId で編集/削除許可) */
+  currentUserId: string;
   onReload: () => Promise<void> | void;
 };
 
@@ -66,7 +68,7 @@ export function ProjectKnowledgeClient({
   projectId,
   knowledges,
   canCreate,
-  canDelete,
+  currentUserId,
   onReload,
 }: Props) {
   const { withLoading } = useLoading();
@@ -294,12 +296,15 @@ export function ProjectKnowledgeClient({
         <p className="py-8 text-center text-sm text-muted-foreground">ナレッジがありません</p>
       ) : (
         <div className="space-y-2">
-          {knowledges.map((k) => (
+          {knowledges.map((k) => {
+            // 2026-04-24: 作成者本人のみ編集/削除可 (admin は全ナレッジから)
+            const isOwner = k.createdBy === currentUserId;
+            return (
             <div
               key={k.id}
-              // Req 8: 行クリックで編集ダイアログ (canCreate = メンバー以上で編集可)
-              className={`rounded border p-3 ${canCreate ? 'cursor-pointer hover:bg-muted' : ''}`}
-              onClick={canCreate ? () => setEditingKnowledge(k) : undefined}
+              // 2026-04-24: 行クリック編集は作成者本人のみ active
+              className={`rounded border p-3 ${isOwner ? 'cursor-pointer hover:bg-muted' : ''}`}
+              onClick={isOwner ? () => setEditingKnowledge(k) : undefined}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
@@ -317,7 +322,7 @@ export function ProjectKnowledgeClient({
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{k.content}</p>
                 </div>
-                {canDelete && (
+                {isOwner && (
                   <Button
                     variant="ghost"
                     size="icon-sm"
@@ -331,7 +336,8 @@ export function ProjectKnowledgeClient({
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

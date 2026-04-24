@@ -24,7 +24,8 @@ export async function GET(
   const { projectId, riskId } = await params;
   const forbidden = await checkProjectPermission(user, projectId, 'risk:read');
   if (forbidden) return forbidden;
-  const risk = await getRisk(riskId);
+  // 2026-04-24: draft は作成者/admin のみ参照可。他人の draft は null が返る。
+  const risk = await getRisk(riskId, user.id, user.systemRole);
   if (!risk || risk.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
@@ -39,6 +40,7 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
   const { projectId, riskId } = await params;
 
+  // 2026-04-24: 内部呼び出し (既存検証) は認可引数なしで取得。FORBIDDEN 判定は service 層で実施。
   const existing = await getRisk(riskId);
   if (!existing || existing.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
@@ -56,7 +58,22 @@ export async function PATCH(
     );
   }
 
-  const risk = await updateRisk(riskId, parsed.data, user.id);
+  let risk;
+  try {
+    risk = await updateRisk(riskId, parsed.data, user.id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'FORBIDDEN') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '作成者本人のみ編集できます' } },
+        { status: 403 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
   await recordAuditLog({
     userId: user.id,
     action: 'UPDATE',
@@ -75,13 +92,29 @@ export async function DELETE(
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
   const { projectId, riskId } = await params;
-  const forbidden = await checkProjectPermission(user, projectId, 'risk:delete');
+  // 2026-04-24: ProjectMember 基準の permission は read 確認のみに使用 (admin は常に通過)。
+  //             作成者本人 or admin の判定は service 層で厳格に実施する。
+  const forbidden = await checkProjectPermission(user, projectId, 'risk:read');
   if (forbidden) return forbidden;
   const existing = await getRisk(riskId);
   if (!existing || existing.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
-  await deleteRisk(riskId, user.id);
+  try {
+    await deleteRisk(riskId, user.id, user.systemRole);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'FORBIDDEN') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '作成者本人または管理者のみ削除できます' } },
+        { status: 403 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
   await recordAuditLog({
     userId: user.id,
     action: 'DELETE',
