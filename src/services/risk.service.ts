@@ -9,17 +9,20 @@
  * 設計判断:
  *   - 統一テーブル: 90% の項目が共通 (タイトル / 内容 / 影響度 / 状態 / 担当 / 期限) のため
  *     1 テーブルで管理。risk のみ likelihood / risk_nature を持ち、issue は null 許容。
- *   - 公開範囲 (visibility, PR #60): draft / public の 2 値
+ *   - 公開範囲 (visibility): draft / public の 2 値
  *   - 脅威/好機分類 (riskNature, PR #60): risk の場合のみ threat / opportunity を持つ
  *     PMBOK 第 7 版の「機会 (opportunity)」概念に対応するため
  *   - 論理削除 (deletedAt) を採用。クローズ後も振り返りで参照するため
  *   - title / content に pg_trgm GIN インデックス (PR #65)
  *     → type='issue' かつ state='resolved' を「過去課題」として新案件に提案
  *
- * 認可:
- *   呼び出し元 API ルート (/api/projects/[id]/risks/...) で
- *   checkProjectPermission('risk:*' / 'issue:*') を実施済みの前提。
- *   listRisks() の visibility フィルタは内部で適用 (作成者本人 + admin は draft も見える)。
+ * 認可 (2026-04-24 改修):
+ *   - 参照: 非 admin は visibility='public' のみ一覧表示、draft は他人のものは存在しない扱い。
+ *           admin は 全一覧 + 個別参照とも draft 含め全件閲覧可。
+ *   - 編集: **作成者 (reporterId) 本人のみ**。admin であっても他人のリスク/課題は編集不可
+ *           (管理業務は削除のみに限定する方針)。
+ *   - 削除: 作成者本人 OR admin。admin は 全リスク/全課題 からの管理削除を想定。
+ *   - 作成: 呼出元 API ルートで ProjectMember チェック済 (admin も非メンバーなら不可)。
  *
  * 関連ドキュメント:
  *   - DESIGN.md §5 (テーブル定義: risks_issues)
@@ -113,14 +116,13 @@ function toRiskDTO(r: {
 
 export async function listRisks(
   projectId: string,
-  viewerUserId: string,
+  _viewerUserId: string,
   viewerSystemRole: string,
 ): Promise<RiskDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
-  // PR #60: 非 admin は public + 自身の draft (起票者) のみ
-  const visibilityWhere = isAdmin
-    ? {}
-    : { OR: [{ visibility: 'public' }, { visibility: 'draft', reporterId: viewerUserId }] };
+  // 2026-04-24: 非 admin は一覧に draft を一切含めない (自分の draft も一覧には出さない方針)。
+  // draft の個別参照は getRisk が作成者本人/admin のみ許可する。
+  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
 
   const risks = await prisma.riskIssue.findMany({
     where: { projectId, deletedAt: null, ...visibilityWhere },
@@ -174,10 +176,8 @@ export async function listAllRisksForViewer(
     });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
-  // PR #60: 非 admin は public + 自身の draft のみ
-  const visibilityWhere = isAdmin
-    ? {}
-    : { OR: [{ visibility: 'public' }, { visibility: 'draft', reporterId: viewerUserId }] };
+  // 2026-04-24: 非 admin は public のみ。admin は draft も表示 (管理削除のため)。
+  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
 
   const risks = await prisma.riskIssue.findMany({
     where: { deletedAt: null, ...visibilityWhere },
@@ -215,7 +215,19 @@ export async function listAllRisksForViewer(
   });
 }
 
-export async function getRisk(riskId: string): Promise<RiskDTO | null> {
+/**
+ * 単一リスク/課題を取得する。
+ *
+ * 2026-04-24: draft は **作成者本人 + admin のみ** 参照可。他人の draft は null を返す
+ * (情報漏洩を避けるため「存在しない」と同等に扱う、NOT_FOUND と区別しない)。
+ * viewerUserId / viewerSystemRole を省略した場合は認可判定をスキップし生データを返す
+ * (サーバ内部で cascade 削除の対象確認等に使う、人間の UI 経由には使わないこと)。
+ */
+export async function getRisk(
+  riskId: string,
+  viewerUserId?: string,
+  viewerSystemRole?: string,
+): Promise<RiskDTO | null> {
   const r = await prisma.riskIssue.findFirst({
     where: { id: riskId, deletedAt: null },
     include: {
@@ -223,7 +235,19 @@ export async function getRisk(riskId: string): Promise<RiskDTO | null> {
       assignee: { select: { name: true } },
     },
   });
-  return r ? toRiskDTO(r) : null;
+  if (!r) return null;
+
+  // 認可オフの内部呼び出し (viewerUserId 未指定) はそのまま返す
+  if (viewerUserId === undefined) return toRiskDTO(r);
+
+  if (r.visibility === 'public') return toRiskDTO(r);
+
+  // draft: 作成者本人 or admin のみ参照可
+  const isCreator = r.reporterId === viewerUserId;
+  const isAdmin = viewerSystemRole === 'admin';
+  if (isCreator || isAdmin) return toRiskDTO(r);
+
+  return null;
 }
 
 export async function createRisk(
@@ -260,6 +284,15 @@ export async function createRisk(
   return toRiskDTO(r);
 }
 
+/**
+ * リスク/課題を更新する。
+ *
+ * 2026-04-24: **作成者 (reporterId) 本人のみ許可**。admin であっても他人のリスク/課題は
+ * 編集不可 (管理業務は削除のみに限定する方針)。該当なしは FORBIDDEN を投げる。
+ *
+ * @throws {Error} 'NOT_FOUND' — リスク/課題が存在しない or 論理削除済み
+ * @throws {Error} 'FORBIDDEN' — 呼出ユーザが作成者ではない
+ */
 export async function updateRisk(
   riskId: string,
   input: Partial<CreateRiskInput> & {
@@ -269,6 +302,13 @@ export async function updateRisk(
   },
   userId: string,
 ): Promise<RiskDTO> {
+  const existing = await prisma.riskIssue.findFirst({
+    where: { id: riskId, deletedAt: null },
+    select: { reporterId: true },
+  });
+  if (!existing) throw new Error('NOT_FOUND');
+  if (existing.reporterId !== userId) throw new Error('FORBIDDEN');
+
   const data: Record<string, unknown> = { updatedBy: userId };
 
   if (input.title !== undefined) data.title = input.title;
@@ -298,7 +338,29 @@ export async function updateRisk(
   return toRiskDTO(r);
 }
 
-export async function deleteRisk(riskId: string, userId: string): Promise<void> {
+/**
+ * リスク/課題を論理削除する。
+ *
+ * 2026-04-24: 作成者本人 OR admin のみ許可。admin は「全リスク / 全課題」画面から
+ * 管理削除できるユースケースを想定。
+ *
+ * @throws {Error} 'NOT_FOUND' — リスク/課題が存在しない or 既に削除済み
+ * @throws {Error} 'FORBIDDEN' — 作成者でなく admin でもない
+ */
+export async function deleteRisk(
+  riskId: string,
+  userId: string,
+  systemRole: string,
+): Promise<void> {
+  const existing = await prisma.riskIssue.findFirst({
+    where: { id: riskId, deletedAt: null },
+    select: { reporterId: true },
+  });
+  if (!existing) throw new Error('NOT_FOUND');
+  const isCreator = existing.reporterId === userId;
+  const isAdmin = systemRole === 'admin';
+  if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
+
   // PR #89: 紐づく Attachment も論理削除 (UI からアクセス不可になる孤児データ防止)
   const now = new Date();
   await prisma.$transaction([

@@ -12,7 +12,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
+import {
+  getAuthenticatedUser,
+  checkProjectPermission,
+  requireActualProjectMember,
+} from '@/lib/api-helpers';
 import { createRiskSchema } from '@/lib/validators/risk';
 import { listRisks, createRisk } from '@/services/risk.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
@@ -40,6 +44,10 @@ export async function POST(
   if (user instanceof NextResponse) return user;
 
   const { projectId } = await params;
+  // 2026-04-24: 作成は実際の ProjectMember のみ許可 (admin 短絡は使わない)。
+  //             同時にメンバーシップ経由のプロジェクト状態/ロールチェックも残す。
+  const memberOnly = await requireActualProjectMember(user, projectId);
+  if (memberOnly) return memberOnly;
   const forbidden = await checkProjectPermission(user, projectId, 'risk:create');
   if (forbidden) return forbidden;
 

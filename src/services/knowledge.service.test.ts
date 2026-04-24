@@ -65,28 +65,26 @@ describe('listKnowledge', () => {
     expect(call.where).not.toHaveProperty('OR');
   });
 
-  it('非 admin は public + 自身の draft のみ', async () => {
+  it('非 admin は public のみ (2026-04-24: 自分の draft も除外)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
     await listKnowledge({}, 'u-1', 'general');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(call.where.OR).toEqual([
-      { visibility: 'public' },
-      { visibility: 'draft', createdBy: 'u-1' },
-    ]);
+    expect(call.where.visibility).toBe('public');
+    expect(call.where).not.toHaveProperty('OR');
   });
 
-  it('keyword 指定 + 公開範囲フィルタは AND で組まれる', async () => {
+  it('keyword 指定時は OR で title/content 検索 (公開範囲は visibility スカラで別適用)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
     await listKnowledge({ keyword: 'bug' }, 'u-1', 'general');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(call.where.AND).toHaveLength(2);
-    expect(call.where).not.toHaveProperty('OR');
+    expect(call.where.OR).toHaveLength(2);
+    expect(call.where.visibility).toBe('public');
   });
 
   it('knowledgeType / visibility パラメータが where に反映される', async () => {
@@ -161,6 +159,17 @@ describe('listAllKnowledgeForViewer', () => {
     expect(r[0].primaryProjectId).toBe(null);
     expect(r[0].canAccessProject).toBe(false);
   });
+
+  it('2026-04-24: 非 admin の visibility フィルタは public のみ', async () => {
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+
+    await listAllKnowledgeForViewer('u-1', 'general');
+
+    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(call.where.visibility).toBe('public');
+    expect(call.where).not.toHaveProperty('OR');
+  });
 });
 
 describe('listKnowledgeByProject / getKnowledge', () => {
@@ -178,10 +187,29 @@ describe('listKnowledgeByProject / getKnowledge', () => {
     expect(await getKnowledge('x')).toBe(null);
   });
 
-  it('getKnowledge: 存在すれば DTO', async () => {
-    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(kRow() as never);
+  it('getKnowledge: 認可引数なしは生データ (内部用)', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      kRow({ visibility: 'draft', createdBy: 'someone' }) as never,
+    );
     const r = await getKnowledge('k-1');
     expect(r?.id).toBe('k-1');
+  });
+
+  it('getKnowledge: public は誰でも参照可', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      kRow({ visibility: 'public' }) as never,
+    );
+    const r = await getKnowledge('k-1', 'u-other', 'general');
+    expect(r?.id).toBe('k-1');
+  });
+
+  it('getKnowledge: draft は作成者本人/admin のみ参照可', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      kRow({ visibility: 'draft', createdBy: 'u-1' }) as never,
+    );
+    expect((await getKnowledge('k-1', 'u-1', 'general'))?.id).toBe('k-1');
+    expect((await getKnowledge('k-1', 'admin-x', 'admin'))?.id).toBe('k-1');
+    expect(await getKnowledge('k-1', 'u-other', 'general')).toBe(null);
   });
 });
 
@@ -239,7 +267,19 @@ describe('createKnowledge', () => {
 describe('updateKnowledge / deleteKnowledge', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('updateKnowledge: 指定フィールドのみ', async () => {
+  it('updateKnowledge: 存在しなければ NOT_FOUND', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(null);
+    await expect(updateKnowledge('x', { title: 'n' }, 'u-1')).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('updateKnowledge: 作成者以外 (admin でも) は FORBIDDEN', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(updateKnowledge('k-1', { title: 'n' }, 'u-other')).rejects.toThrow('FORBIDDEN');
+    await expect(updateKnowledge('k-1', { title: 'n' }, 'admin-x')).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('updateKnowledge: 作成者本人なら指定フィールドのみ', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
     await updateKnowledge('k-1', { title: 'new' }, 'u-1');
 
@@ -248,14 +288,34 @@ describe('updateKnowledge / deleteKnowledge', () => {
     expect(call.data.content).toBeUndefined();
   });
 
-  it('deleteKnowledge: deletedAt セット', async () => {
+  it('deleteKnowledge: 存在しなければ NOT_FOUND', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(null);
+    await expect(deleteKnowledge('x', 'u-1', 'general')).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('deleteKnowledge: 作成者本人は deletedAt セット', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.knowledge.update).mockResolvedValue({} as never);
-    await deleteKnowledge('k-1', 'u-1');
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+    await deleteKnowledge('k-1', 'u-1', 'general');
 
     expect(prisma.knowledge.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ deletedAt: expect.any(Date) }),
       }),
     );
+  });
+
+  it('deleteKnowledge: admin は他人のナレッジも削除可', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.knowledge.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+    await deleteKnowledge('k-1', 'admin-x', 'admin');
+    expect(prisma.knowledge.update).toHaveBeenCalled();
+  });
+
+  it('deleteKnowledge: 非 admin の第三者は FORBIDDEN', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(deleteKnowledge('k-1', 'u-other', 'general')).rejects.toThrow('FORBIDDEN');
   });
 });

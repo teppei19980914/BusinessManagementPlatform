@@ -15,10 +15,14 @@
  *     → 提案型サービス (suggestion.service.ts) で類似度マッチングに使用
  *   - 全文検索のため knowledges.title / content に pg_trgm GIN インデックスを設置済 (PR #65)
  *
- * 認可:
- *   呼び出し元 API ルート (src/app/api/knowledge/..., src/app/api/projects/[id]/knowledge/...)
- *   で checkPermission('knowledge:*') を実施済みの前提。本サービスは visibility による
- *   フィルタを行うクエリは含むが、ロール判定は行わない。
+ * 認可 (2026-04-24 改修):
+ *   - 参照: 非 admin は visibility='public' のみ一覧表示、draft は他人のものは存在しない扱い。
+ *           admin は 全一覧 + 個別参照とも draft 含め全件閲覧可。
+ *   - 編集: **作成者 (createdBy) 本人のみ**。admin であっても他人のナレッジは編集不可。
+ *   - 削除: 作成者本人 OR admin。admin は 全ナレッジ からの管理削除を想定。
+ *   - 作成: 呼出元 API ルートで ProjectMember チェック済 (admin も非メンバーなら不可)。
+ *           ただしプロジェクト紐付けなしの全社ナレッジ作成は POST /api/knowledge で
+ *           認証ユーザ全員に許可する (個人資産的な用途)。
  *
  * 関連ドキュメント:
  *   - DESIGN.md §5 (テーブル定義: knowledges / knowledge_projects)
@@ -121,14 +125,11 @@ export async function listKnowledge(
 
   const where: Prisma.KnowledgeWhereInput = { deletedAt: null };
 
-  // 公開範囲制御 (PR #60 で 2 値体系に刷新):
-  //   - public: 全ログインユーザ閲覧可
-  //   - draft : 作成者 + admin のみ
+  // 2026-04-24: 非 admin は一覧に draft を一切含めない (自分の draft も除外)。
+  // draft の個別参照は getKnowledge が作成者本人/admin のみ許可する。
+  void userId; // 旧実装で OR 句の一部に使っていた参照を削除
   if (systemRole !== 'admin') {
-    where.OR = [
-      { visibility: 'public' },
-      { visibility: 'draft', createdBy: userId },
-    ];
+    where.visibility = 'public';
   }
 
   if (params.knowledgeType) {
@@ -138,17 +139,10 @@ export async function listKnowledge(
     where.visibility = params.visibility;
   }
   if (params.keyword) {
-    const keywordFilter = [
+    where.OR = [
       { title: { contains: params.keyword, mode: 'insensitive' as const } },
       { content: { contains: params.keyword, mode: 'insensitive' as const } },
     ];
-    if (where.OR) {
-      // 公開範囲フィルタと AND で組み合わせ
-      where.AND = [{ OR: where.OR }, { OR: keywordFilter }];
-      delete where.OR;
-    } else {
-      where.OR = keywordFilter;
-    }
   }
 
   const [knowledges, total] = await Promise.all([
@@ -202,11 +196,8 @@ export async function listAllKnowledgeForViewer(
 
   const where: Prisma.KnowledgeWhereInput = { deletedAt: null };
   if (!isAdmin) {
-    // PR #60: 2 値体系 (public / draft)
-    where.OR = [
-      { visibility: 'public' },
-      { visibility: 'draft', createdBy: viewerUserId },
-    ];
+    // 2026-04-24: 非 admin は public のみ (自分の draft も一覧除外)
+    where.visibility = 'public';
   }
 
   const knowledges = await prisma.knowledge.findMany({
@@ -271,7 +262,18 @@ export async function listKnowledgeByProject(projectId: string): Promise<Knowled
   return knowledges.map(toKnowledgeDTO);
 }
 
-export async function getKnowledge(knowledgeId: string): Promise<KnowledgeDTO | null> {
+/**
+ * 単一ナレッジを取得する。
+ *
+ * 2026-04-24: draft は作成者 + admin のみ参照可。他人の draft は null を返す
+ * (情報漏洩防止)。viewerUserId / viewerSystemRole を省略した内部呼び出しは
+ * 公開範囲によらず生行を返す (cascade 削除等の運用確認用)。
+ */
+export async function getKnowledge(
+  knowledgeId: string,
+  viewerUserId?: string,
+  viewerSystemRole?: string,
+): Promise<KnowledgeDTO | null> {
   const k = await prisma.knowledge.findFirst({
     where: { id: knowledgeId, deletedAt: null },
     include: {
@@ -279,7 +281,16 @@ export async function getKnowledge(knowledgeId: string): Promise<KnowledgeDTO | 
       knowledgeProjects: { select: { projectId: true } },
     },
   });
-  return k ? toKnowledgeDTO(k) : null;
+  if (!k) return null;
+
+  if (viewerUserId === undefined) return toKnowledgeDTO(k);
+
+  if (k.visibility === 'public') return toKnowledgeDTO(k);
+
+  const isCreator = k.createdBy === viewerUserId;
+  const isAdmin = viewerSystemRole === 'admin';
+  if (isCreator || isAdmin) return toKnowledgeDTO(k);
+  return null;
 }
 
 export async function createKnowledge(
@@ -316,11 +327,27 @@ export async function createKnowledge(
   return toKnowledgeDTO(k);
 }
 
+/**
+ * ナレッジを更新する。
+ *
+ * 2026-04-24: **作成者 (createdBy) 本人のみ許可**。admin であっても他人のナレッジは
+ * 編集不可 (管理業務は削除のみ)。
+ *
+ * @throws {Error} 'NOT_FOUND' — ナレッジが存在しない or 論理削除済み
+ * @throws {Error} 'FORBIDDEN' — 呼出ユーザが作成者ではない
+ */
 export async function updateKnowledge(
   knowledgeId: string,
   input: Partial<CreateKnowledgeInput>,
   userId: string,
 ): Promise<KnowledgeDTO> {
+  const existing = await prisma.knowledge.findFirst({
+    where: { id: knowledgeId, deletedAt: null },
+    select: { createdBy: true },
+  });
+  if (!existing) throw new Error('NOT_FOUND');
+  if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
+
   const data: Prisma.KnowledgeUpdateInput = { updater: { connect: { id: userId } } };
 
   if (input.title !== undefined) data.title = input.title;
@@ -350,7 +377,29 @@ export async function updateKnowledge(
   return toKnowledgeDTO(k);
 }
 
-export async function deleteKnowledge(knowledgeId: string, userId: string): Promise<void> {
+/**
+ * ナレッジを論理削除する。
+ *
+ * 2026-04-24: 作成者本人 OR admin のみ許可。admin は「全ナレッジ」画面からの
+ * 管理削除を想定。
+ *
+ * @throws {Error} 'NOT_FOUND' — ナレッジが存在しない or 既に削除済み
+ * @throws {Error} 'FORBIDDEN' — 作成者でなく admin でもない
+ */
+export async function deleteKnowledge(
+  knowledgeId: string,
+  userId: string,
+  systemRole: string,
+): Promise<void> {
+  const existing = await prisma.knowledge.findFirst({
+    where: { id: knowledgeId, deletedAt: null },
+    select: { createdBy: true },
+  });
+  if (!existing) throw new Error('NOT_FOUND');
+  const isCreator = existing.createdBy === userId;
+  const isAdmin = systemRole === 'admin';
+  if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
+
   // PR #89: 紐づく Attachment も同時に論理削除 (孤児データ防止)
   const now = new Date();
   await prisma.$transaction([

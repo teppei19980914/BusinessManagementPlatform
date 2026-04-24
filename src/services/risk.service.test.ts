@@ -75,14 +75,12 @@ describe('listRisks', () => {
     expect(call.where).not.toHaveProperty('OR');
   });
 
-  it('非 admin は public + 自身の draft のみ (OR 条件)', async () => {
+  it('非 admin は public のみ (2026-04-24: 自分の draft も一覧から除外)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
     await listRisks('p-1', 'u-1', 'general');
     const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(call.where.OR).toEqual([
-      { visibility: 'public' },
-      { visibility: 'draft', reporterId: 'u-1' },
-    ]);
+    expect(call.where.visibility).toBe('public');
+    expect(call.where).not.toHaveProperty('OR');
   });
 });
 
@@ -130,6 +128,28 @@ describe('listAllRisksForViewer', () => {
     expect(r[0].projectDeleted).toBe(true);
     expect(r[0].canAccessProject).toBe(false); // deleted なのでリンク不可
   });
+
+  it('2026-04-24: 非 admin の visibility フィルタは public のみ (draft 除外)', async () => {
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    await listAllRisksForViewer('u-1', 'general');
+
+    const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    expect(call.where.visibility).toBe('public');
+    expect(call.where).not.toHaveProperty('OR');
+  });
+
+  it('2026-04-24: admin は visibility フィルタなし (draft 含め全件)', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    await listAllRisksForViewer('admin-1', 'admin');
+
+    const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    expect(call.where).not.toHaveProperty('visibility');
+  });
 });
 
 describe('getRisk', () => {
@@ -140,10 +160,44 @@ describe('getRisk', () => {
     expect(await getRisk('x')).toBe(null);
   });
 
-  it('存在すれば DTO', async () => {
-    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(rRow() as never);
+  it('認可引数なしなら visibility 問わず生 DTO を返す (内部呼び出し用)', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      rRow({ visibility: 'draft', reporterId: 'someone-else' }) as never,
+    );
     const r = await getRisk('r-1');
     expect(r?.id).toBe('r-1');
+  });
+
+  it('public なら誰でも参照可', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      rRow({ visibility: 'public' }) as never,
+    );
+    const r = await getRisk('r-1', 'u-other', 'general');
+    expect(r?.id).toBe('r-1');
+  });
+
+  it('draft は作成者本人なら参照可', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      rRow({ visibility: 'draft', reporterId: 'u-1' }) as never,
+    );
+    const r = await getRisk('r-1', 'u-1', 'general');
+    expect(r?.id).toBe('r-1');
+  });
+
+  it('draft は admin なら参照可', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      rRow({ visibility: 'draft', reporterId: 'u-1' }) as never,
+    );
+    const r = await getRisk('r-1', 'admin-x', 'admin');
+    expect(r?.id).toBe('r-1');
+  });
+
+  it('draft は他人 (作成者でも admin でもない) なら null を返す', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      rRow({ visibility: 'draft', reporterId: 'u-1' }) as never,
+    );
+    const r = await getRisk('r-1', 'u-other', 'general');
+    expect(r).toBe(null);
   });
 });
 
@@ -228,7 +282,22 @@ describe('createRisk', () => {
 describe('updateRisk', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('指定フィールドのみ data に積む', async () => {
+  it('存在しなければ NOT_FOUND', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
+    await expect(updateRisk('x', { title: 'new' }, 'u-1')).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('作成者以外 (admin でも) は FORBIDDEN', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-1' } as never,
+    );
+    await expect(updateRisk('r-1', { title: 'new' }, 'u-other')).rejects.toThrow('FORBIDDEN');
+    // admin であっても他人のリスクは編集不可
+    await expect(updateRisk('r-1', { title: 'new' }, 'admin-x')).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('作成者本人なら指定フィールドのみ data に積む', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
     vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
 
     await updateRisk('r-1', { title: 'new', state: 'resolved' }, 'u-1');
@@ -241,6 +310,7 @@ describe('updateRisk', () => {
   });
 
   it('deadline 文字列を Date に変換する', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
     vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
 
     await updateRisk('r-1', { deadline: '2026-06-01' }, 'u-1');
@@ -253,15 +323,37 @@ describe('updateRisk', () => {
 describe('deleteRisk', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('deletedAt をセット (論理削除)', async () => {
-    vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
+  it('存在しなければ NOT_FOUND', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
+    await expect(deleteRisk('x', 'u-1', 'general')).rejects.toThrow('NOT_FOUND');
+  });
 
-    await deleteRisk('r-1', 'u-1');
+  it('作成者本人は削除できる', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    await deleteRisk('r-1', 'u-1', 'general');
 
     expect(prisma.riskIssue.update).toHaveBeenCalledWith({
       where: { id: 'r-1' },
       data: { deletedAt: expect.any(Date), updatedBy: 'u-1' },
     });
+  });
+
+  it('admin は他人のリスクも削除できる (全リスク画面からの管理削除)', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    await deleteRisk('r-1', 'admin-x', 'admin');
+
+    expect(prisma.riskIssue.update).toHaveBeenCalled();
+  });
+
+  it('非 admin の第三者は FORBIDDEN', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    await expect(deleteRisk('r-1', 'u-other', 'general')).rejects.toThrow('FORBIDDEN');
   });
 });
 

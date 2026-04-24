@@ -15,9 +15,13 @@
  *     早期に提示する用途 (suggestion.service.ts 経由)。
  *   - コメント (retrospective_comments) は別テーブルで Markdown 文字列を持つ。
  *
- * 認可:
- *   呼び出し元 API ルート (/api/projects/[id]/retrospectives/...) で
- *   checkProjectPermission を実施済みの前提。
+ * 認可 (2026-04-24 改修):
+ *   - 参照: 非 admin は visibility='public' のみ一覧表示、draft は他人のものは存在しない扱い。
+ *           admin は 全一覧 + 個別参照とも draft 含め全件閲覧可。
+ *   - 編集: **作成者 (createdBy) 本人のみ**。admin であっても他人の振り返りは編集不可
+ *           (管理業務は削除のみに限定する方針)。
+ *   - 削除: 作成者本人 OR admin。admin は 全振り返り からの管理削除を想定。
+ *   - 作成: 呼出元 API ルートで ProjectMember チェック済 (admin も非メンバーなら不可)。
  *
  * 関連ドキュメント:
  *   - DESIGN.md §5 (テーブル定義: retrospectives / retrospective_comments)
@@ -79,10 +83,9 @@ export async function listAllRetrospectivesForViewer(
     });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
-  // PR #60: 公開範囲制御 (admin 以外は public + 自身の draft のみ)
-  const visibilityWhere = isAdmin
-    ? {}
-    : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
+  // 2026-04-24: 非 admin は public のみ。admin は draft も表示 (管理削除のため)。
+  void viewerUserId; // 以前は自分の draft OR 条件に使っていた参照を整理
+  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
 
   const retros = await prisma.retrospective.findMany({
     where: { deletedAt: null, ...visibilityWhere },
@@ -137,14 +140,13 @@ export async function listAllRetrospectivesForViewer(
 
 export async function listRetrospectives(
   projectId: string,
-  viewerUserId: string,
+  _viewerUserId: string,
   viewerSystemRole: string,
 ): Promise<RetroDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
-  // PR #60: 非 admin は public + 自身の draft のみ
-  const visibilityWhere = isAdmin
-    ? {}
-    : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
+  // 2026-04-24: 非 admin は一覧に draft を一切含めない (自分の draft も除外)。
+  // draft の個別参照は getRetrospective が作成者本人/admin のみ許可する。
+  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
 
   const retros = await prisma.retrospective.findMany({
     where: { projectId, deletedAt: null, ...visibilityWhere },
@@ -232,10 +234,13 @@ export async function confirmRetrospective(retroId: string, userId: string): Pro
 }
 
 /**
- * 振り返りを更新する (PR #56 Req 8/9 用)。
- * 編集可能フィールド: 実施日、計画総括、実績総括、良かった点、問題点、
- * 次回以前事項 (improvements)、その他の振り返り項目。
- * state は confirmRetrospective で別管理。
+ * 振り返りを更新する。
+ *
+ * 2026-04-24: **作成者 (createdBy) 本人のみ許可**。admin であっても他人の振り返りは
+ * 編集不可 (管理業務は削除のみ)。
+ *
+ * @throws {Error} 'NOT_FOUND' — 振り返りが存在しない or 論理削除済み
+ * @throws {Error} 'FORBIDDEN' — 呼出ユーザが作成者ではない
  */
 export async function updateRetrospective(
   retroId: string,
@@ -258,6 +263,13 @@ export async function updateRetrospective(
   },
   userId: string,
 ): Promise<void> {
+  const existing = await prisma.retrospective.findFirst({
+    where: { id: retroId, deletedAt: null },
+    select: { createdBy: true },
+  });
+  if (!existing) throw new Error('NOT_FOUND');
+  if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
+
   const data: Record<string, unknown> = { updatedBy: userId };
   if (input.conductedDate !== undefined) data.conductedDate = new Date(input.conductedDate);
   if (input.planSummary !== undefined) data.planSummary = input.planSummary;
@@ -278,10 +290,27 @@ export async function updateRetrospective(
 
 /**
  * 振り返りを論理削除する (deletedAt をセット)。
- * 「全振り返り」「振り返り一覧」のどちらから呼んでも同一レコードに影響する。
- * PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児防止)
+ *
+ * 2026-04-24: 作成者本人 OR admin のみ許可。admin は「全振り返り」画面からの
+ * 管理削除を想定。
+ *
+ * @throws {Error} 'NOT_FOUND' — 振り返りが存在しない or 既に削除済み
+ * @throws {Error} 'FORBIDDEN' — 作成者でなく admin でもない
  */
-export async function deleteRetrospective(retroId: string, userId: string): Promise<void> {
+export async function deleteRetrospective(
+  retroId: string,
+  userId: string,
+  systemRole: string,
+): Promise<void> {
+  const existing = await prisma.retrospective.findFirst({
+    where: { id: retroId, deletedAt: null },
+    select: { createdBy: true },
+  });
+  if (!existing) throw new Error('NOT_FOUND');
+  const isCreator = existing.createdBy === userId;
+  const isAdmin = systemRole === 'admin';
+  if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
+
   const now = new Date();
   await prisma.$transaction([
     prisma.retrospective.update({
@@ -295,12 +324,30 @@ export async function deleteRetrospective(retroId: string, userId: string): Prom
   ]);
 }
 
-/** 単一振り返り取得 (権限チェック用) */
-export async function getRetrospective(retroId: string): Promise<{ id: string; projectId: string } | null> {
-  return prisma.retrospective.findFirst({
+/**
+ * 単一振り返り取得 (権限チェック用)。
+ *
+ * 2026-04-24: viewerUserId / viewerSystemRole 渡した場合は visibility 判定を行い、
+ * 他人の draft を閲覧しようとすると null を返す (公開範囲 draft は作成者/admin のみ)。
+ * 未指定の場合は API route 層で ownerId/projectId を確認する用途として生行を返す。
+ */
+export async function getRetrospective(
+  retroId: string,
+  viewerUserId?: string,
+  viewerSystemRole?: string,
+): Promise<{ id: string; projectId: string; createdBy: string; visibility: string } | null> {
+  const r = await prisma.retrospective.findFirst({
     where: { id: retroId, deletedAt: null },
-    select: { id: true, projectId: true },
+    select: { id: true, projectId: true, createdBy: true, visibility: true },
   });
+  if (!r) return null;
+  if (viewerUserId === undefined) return r;
+
+  if (r.visibility === 'public') return r;
+  const isCreator = r.createdBy === viewerUserId;
+  const isAdmin = viewerSystemRole === 'admin';
+  if (isCreator || isAdmin) return r;
+  return null;
 }
 
 export async function addComment(

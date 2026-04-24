@@ -8,9 +8,10 @@ import {
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
 
 /**
- * 振り返り更新 (PR #56 Req 8/9)。
- * 認可: ProjectMember (admin は全プロジェクトでメンバー相当)。
- * 編集可能フィールドは updateRetrospective の input 型を参照。
+ * 振り返り更新。
+ *
+ * 2026-04-24: 認可は **作成者本人のみ**。admin であっても他人の振り返りは編集不可。
+ * (管理業務は削除のみに限定する方針)
  */
 export async function PATCH(
   req: NextRequest,
@@ -29,14 +30,26 @@ export async function PATCH(
     );
   }
 
-  // 振り返り編集は project メンバー全員に許可 (project:update 権限を流用)
-  const forbidden = await checkProjectPermission(user, projectId, 'project:update');
+  // プロジェクトアクセス自体は担保 (閉域プロジェクト状態などの制約を維持)
+  const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
 
   const body = await req.json();
-  // zod バリデーションは作成時 schema の部分適用。MVP では型チェックのみで
-  // フィールドのホワイトリストを service 側に委任する。
-  await updateRetrospective(retroId, body, user.id);
+  try {
+    await updateRetrospective(retroId, body, user.id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'FORBIDDEN') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '作成者本人のみ編集できます' } },
+        { status: 403 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     userId: user.id,
@@ -51,12 +64,9 @@ export async function PATCH(
 }
 
 /**
- * 振り返り削除エンドポイント (2026-04-18 追加)。
+ * 振り返り削除エンドポイント。
  *
- * 認可:
- *   - project:delete 権限を持つロール (admin / pm_tl) のみ削除可
- *   - admin は checkMembership で全プロジェクトへのアクセス権を持つため
- *     「全振り返り」画面からでも削除可能
+ * 2026-04-24: 認可は **作成者本人 OR admin**。admin は「全振り返り」からの管理削除を想定。
  */
 export async function DELETE(
   _req: NextRequest,
@@ -75,11 +85,24 @@ export async function DELETE(
     );
   }
 
-  // 振り返りの削除は project:delete 相当 (レビュー結果を破棄する操作のため pm_tl 以上)
-  const forbidden = await checkProjectPermission(user, projectId, 'project:delete');
+  const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
 
-  await deleteRetrospective(retroId, user.id);
+  try {
+    await deleteRetrospective(retroId, user.id, user.systemRole);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'FORBIDDEN') {
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: '作成者本人または管理者のみ削除できます' } },
+        { status: 403 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
   await recordAuditLog({
     userId: user.id,
     action: 'DELETE',
