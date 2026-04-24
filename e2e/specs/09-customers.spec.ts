@@ -186,11 +186,19 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     await page.waitForLoadState('networkidle');
     await page.getByRole('button', { name: '新規プロジェクト' }).click();
 
-    // 顧客フィールドが select になっていること (input[type=text] ではない)
-    const customerSelect = page.locator('select').filter({
-      has: page.locator(`option:has-text("${CUSTOMER_FOR_CASCADE}")`),
-    }).first();
-    await expect(customerSelect).toBeVisible({ timeout: 10_000 });
+    // 顧客フィールドが「選択式」になっていること (input[type=text] の自由入力ではない)。
+    // PR #126 で native <select> を Base UI Combobox (`SearchableSelect`) に置換したため、
+    // locator('select') + option では検出できない。label + role="option" で
+    // 「ドロップダウンに選択肢が存在する」ことを検証する (PR #126 より前の意図と同等)。
+    // 詳細: docs/developer/E2E_LESSONS_LEARNED.md §4.32
+    const customerField = page.getByLabel('顧客');
+    await expect(customerField).toBeVisible({ timeout: 10_000 });
+
+    // Combobox を展開 → 作成済み顧客が候補 (role="option") として含まれること
+    await customerField.click();
+    await expect(
+      page.getByRole('option', { name: CUSTOMER_FOR_CASCADE }),
+    ).toBeVisible({ timeout: 5_000 });
 
     // ダイアログを閉じる (作成は API で行うので UI からは送信しない)
     await page.keyboard.press('Escape');

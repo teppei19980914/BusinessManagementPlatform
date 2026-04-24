@@ -1511,6 +1511,56 @@ await expect(
 表の代わりに card / dl / li で描画されている場合は適切な親要素に置換する。
 重要なのは「page 全体の getByText ではなく **行境界でスコープする**」という考え方。
 
+### 4.34 native `<select>` を Combobox に置換したら E2E ロケータも追従必須 (PR #126 で遭遇)
+
+#### 症状
+
+PR #126 で「件数が増える可能性のある Select」を Base UI Combobox (`SearchableSelect` コンポーネント) に置換。`/projects` の顧客選択がこれに該当したが、`e2e/specs/09-customers.spec.ts` の **Step 6** で以下の locator が `element(s) not found` で fail:
+
+```ts
+// PR #126 以前の locator (native <select> 前提)
+const customerSelect = page.locator('select').filter({
+  has: page.locator(`option:has-text("${CUSTOMER_FOR_CASCADE}")`),
+}).first();
+await expect(customerSelect).toBeVisible({ timeout: 10_000 });
+```
+
+#### 原因
+
+Base UI Combobox は `<select>` ではなく `<input role="combobox">` + 展開時の `<div role="listbox">` + `<div role="option">` に render される。`locator('select')` は HTML タグ名マッチなので Combobox には一致しない。
+
+#### 修正 (正しい locator 戦略)
+
+テストの**意図**は「自由入力ではなく選択式であること」+「作成済 item が候補に含まれること」。実装詳細 (`<select>` vs Combobox) に依存しない ARIA ベースの locator に変更:
+
+```ts
+// 修正後: label + role="option" で実装非依存に検証
+const customerField = page.getByLabel('顧客');
+await expect(customerField).toBeVisible({ timeout: 10_000 });
+
+// Combobox を展開 → 候補が表示される
+await customerField.click();
+await expect(
+  page.getByRole('option', { name: CUSTOMER_FOR_CASCADE }),
+).toBeVisible({ timeout: 5_000 });
+```
+
+#### 教訓
+
+1. **UI コンポーネント置換時は E2E spec を同 PR でチェック**: PR #126 マージ前に `/projects` 関連 E2E (09-customers.spec.ts Step 6) を touch し、新 UI に合わせた locator 更新を同 PR 内でやるべきだった。CI が並列 PR 順で流れると発覚が遅れる。
+2. **ロケータは実装詳細に依存しない ARIA ベースが堅牢**: `locator('select')` → `getByLabel('顧客')` + `getByRole('option', ...)` にすることで、将来 Combobox → 別 UI に変わっても test は生存する可能性が高い。PR #126 が来た時点で慌てず追従できる。
+3. **`<select>` + `<option>` パターンは脆弱**: 今後 native `<select>` を使う箇所でも、E2E では label / role ベースを原則とし、HTML タグ前提 locator は禁止的に扱う。
+
+#### 横展開チェック
+
+本事象を踏まえ、`locator('select')` を他の spec で使っていないか定期的に grep:
+
+```bash
+rg -n "locator\\('select'\\)" e2e/
+```
+
+2026-04-24 時点: 09-customers.spec.ts のみ検出 (本 PR で修正)。他 spec は既に label / role ベース or native `<select>` の locator を使っていないため影響なし。
+
 ---
 
 ## 5. アサーション戦略
