@@ -93,6 +93,20 @@ export default defineConfig({
         ...devices['iPhone 13'],
         defaultBrowserType: 'chromium',
       },
+      // PR #128 hotfix 2: 01-admin-and-member-setup.spec.ts は **共有 admin ユーザ (admin-e2e@example.com)
+      // を mutate する auth bootstrap シナリオ** (パスワード変更 / MFA 有効化 / ユーザ招待)。
+      // chromium と chromium-mobile が並列 worker で走ると、双方の beforeAll が
+      // `ensureInitialAdmin()` で admin を UPSERT (password = INITIAL へリセット) し、
+      // 一方の mid-run 状態を他方が破壊する (例: chromium Step 2 で enable した MFA を
+      // chromium-mobile beforeAll が mfa_enabled=false に戻す)。
+      // → chromium-mobile Step 1 の password change が「element(s) not found」で fail。
+      //
+      // 01 は **auth 配線の自動化** を担う spec であり mobile UX 固有の検証価値は薄いため、
+      // chromium project のみで実行する。他 spec (02-09) は RUN_ID でユーザを分離しているか
+      // 状態共有が read-only のため chromium-mobile でも正常に pass する (CI 実測済)。
+      //
+      // 詳細: E2E_LESSONS_LEARNED §4.36
+      testIgnore: [/01-admin-and-member-setup\.spec\.ts/],
     },
   ],
   webServer: isCI
