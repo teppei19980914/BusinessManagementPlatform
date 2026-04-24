@@ -27,6 +27,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
+// PR #126: 顧客件数が増える想定のため SearchableSelect を使用
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import {
   Table,
   TableBody,
@@ -220,23 +222,17 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  {/* PR #111-2: 顧客は Customer マスタから選択。未登録の場合は /customers で先に作成する。 */}
-                  <Label>顧客</Label>
-                  <select
+                  {/* PR #111-2: 顧客は Customer マスタから選択。未登録の場合は /customers で先に作成する。
+                      PR #126: 顧客件数が増える想定のため SearchableSelect を使用 (viewport 比で検索欄を動的表示) */}
+                  <Label htmlFor="project-create-customer">顧客</Label>
+                  <SearchableSelect
+                    id="project-create-customer"
                     value={form.customerId}
-                    onChange={(e) => setForm({ ...form, customerId: e.target.value })}
-                    className={nativeSelectClass}
-                    required
-                  >
-                    <option value="" disabled>
-                      顧客を選択してください
-                    </option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                    onValueChange={(v) => setForm({ ...form, customerId: v })}
+                    options={customers.map((c) => ({ value: c.id, label: c.name }))}
+                    placeholder="顧客を選択してください"
+                    aria-label="顧客選択"
+                  />
                   {customers.length === 0 && (
                     <p className="text-xs text-muted-foreground">
                       顧客が未登録です。先に
