@@ -494,6 +494,60 @@ async function handleCreate(e: React.FormEvent) {
    (`page.on('request', ...)` でカウント、空 validation 後に `expect(counter).toBe(false)`)。
 4. **新しい必須コントロールを採用したら本表と §5.10 本文の対象表を更新する**。
 
+### 5.10.1 Base UI Combobox で `{ value, label }` オブジェクトを items に渡す際の罠 (fix/project-create-customer-validation で発覚)
+
+`SearchableSelect` の中身は `@base-ui/react/combobox`。 Combobox.Root の `items` に
+`{ value: string; label: string }[]` を渡すと、Base UI は以下の挙動になる:
+
+- **表示**: `itemToStringLabel` 自動検出により `label` が input に表示される (OK)
+- **submission**: `itemToStringValue` 自動検出により `value` がフォーム送信値になる (OK)
+- **`onValueChange` の引数**: **オブジェクト全体 (`{ value, label }`) が渡る** (注意)
+
+つまり `Combobox.Root.onValueChange={(v) => ...}` の `v` は string ではなく object である。
+旧実装の `if (typeof v === 'string') onValueChange(v)` では object が弾かれて
+parent state が更新されず、**ユーザがクリックしても選択状態にならない** 症状になる。
+併せて `value` prop も string ではなく `items` と同じ shape (object) を渡す必要があり、
+親コンポーネントが string id で state 管理したい場合は options から逆引きする
+(`options.find((o) => o.value === value) ?? null`) のが正しい。
+
+```tsx
+// NG (旧実装): object を弾いてしまうため選択イベントが伝播しない
+onValueChange={(v) => {
+  if (typeof v === 'string') onValueChange(v);
+}}
+
+// OK: object / string / null (clear) を網羅
+onValueChange={(v) => {
+  if (v === null || v === undefined) return onValueChange('');
+  if (typeof v === 'string') return onValueChange(v);
+  if (typeof v === 'object' && 'value' in v && typeof v.value === 'string') {
+    return onValueChange(v.value);
+  }
+}}
+```
+
+一次ソース: [@base-ui/react ComboboxRoot.d.ts L34-L42](../../node_modules/@base-ui/react/combobox/root/ComboboxRoot.d.ts) の
+`itemToStringLabel` / `itemToStringValue` JSDoc。Value 型の推論から onValueChange は
+`Value` (= object) で emit されるため、auto-detect は **表示/submission 用のヘルパであり
+onValueChange の型までは変換しない**。
+
+### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
+
+`業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
+`@/lib/parse-tags.ts#parseTagsInput` で正規化する。受容する区切り文字:
+
+- `,` (U+002C, 半角カンマ)
+- `、` (U+3001, 読点 / Japanese ideographic comma)
+- 前後空白は trim、空要素は除去
+
+日本語入力モードのまま `基幹、会計` と読点区切りで入れるのが自然なため、半角カンマ
+限定だと実質「タグ 1 件」扱いになる UX 破綻が起きていた (提案精度に直結)。
+意図的に対象外とした区切り:
+
+- `;` / `/` / `\n` — 単語内に含まれる可能性 (例: `React 18.3/Next 16`) があり誤分割リスク
+
+placeholder 文言も「カンマ区切り」→「カンマ or 読点「、」で区切り」に更新済。
+
 ---
 
 ## 6. 機能削除の手順
@@ -1457,3 +1511,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §10.5 再発事例追記 (PR #128 hotfix)。DEVELOPER_GUIDE の更新履歴テーブルで origin/main に PR #126/#127 が追加され、PR #128 の追記と末尾コンフリクト。PR 番号順 (#126 → #127 → #128) で結合する形で解消 (§10.5 テンプレ通りのリゾルブで 2 例目) |
 | 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
 | 2026-04-24 | §5.10 新設 (fix/project-create-customer-validation)。フォーム送信前の事前バリデーション (エラー情報最小化方針)。HTML5 `required` で拾えない `SearchableSelect` 必須項目は `handleXxx` 先頭で事前 validation + `setError` + `return` し、無効値 POST が 400 を返してブラウザ Console にエラー情報を露出させる経路を断つ |
+| 2026-04-24 | §5.10.1 / §5.10.2 追加 (fix/project-create-customer-validation 追補)。§5.10.1: Base UI Combobox で `{value, label}` を items に渡すと onValueChange はオブジェクトで emit される (string 限定の type guard で選択イベントが握り潰されていた)。§5.10.2: タグ入力の全角読点「、」対応 + 共通関数 `@/lib/parse-tags.ts` 集約 (projects / knowledge の重複を解消) |

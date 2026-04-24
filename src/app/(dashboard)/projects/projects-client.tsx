@@ -29,6 +29,8 @@ import { Badge } from '@/components/ui/badge';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 // PR #126: 顧客件数が増える想定のため SearchableSelect を使用
 import { SearchableSelect } from '@/components/ui/searchable-select';
+// fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
+import { parseTagsInput } from '@/lib/parse-tags';
 import {
   Table,
   TableBody,
@@ -115,9 +117,8 @@ export function ProjectsClient({
     processTagsInput: '',
   });
 
-  // カンマ区切り文字列を string[] に正規化する (余計な空白除去・空要素除外)
-  const parseTagsInput = (s: string): string[] =>
-    s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
+  // fix/project-create-customer-validation: 重複定義を `@/lib/parse-tags` に集約。
+  // 半角カンマ `,` に加え全角読点 `、` (日本語入力中に自然に混ざる) も区切りとして受容する。
 
   // PR #67: 作成ダイアログで入力された添付 URL を staging。
   // プロジェクト作成成功後に entityId を使って一括 POST する。
@@ -320,7 +321,7 @@ export function ProjectsClient({
                   抜け漏れなく提案を出すため、可能な限り入力を推奨する。
                 */}
                 <div className="space-y-2">
-                  <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                   <Input
                     value={form.businessDomainTagsInput}
                     onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
@@ -329,7 +330,7 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                   <Input
                     value={form.techStackTagsInput}
                     onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
@@ -338,7 +339,7 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ区切り、提案精度向上のため推奨)</span></Label>
+                  <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
                   <Input
                     value={form.processTagsInput}
                     onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}

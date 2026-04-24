@@ -94,12 +94,37 @@ export function SearchableSelect({
 
   const searchVisible = options.length > threshold;
 
+  // fix/project-create-customer-validation: options を `{ value, label }` オブジェクトで
+  // 渡すと Base UI は Item の value もオブジェクトと解釈し、**onValueChange にもオブジェクトが
+  // 渡る** (ComboboxRoot.d.ts の `itemToStringLabel/itemToStringValue` の説明: auto-detect は
+  // 表示/submission 用であり、onValueChange の型までは文字列化しない)。
+  // 旧実装では `if (typeof v === 'string')` で object を弾いていたため、選択しても parent の
+  // value が更新されず「顧客が選択できない」症状となっていた。`{ value, label }` shape 前提で
+  // object から `.value` を取り出して文字列化する。null は clear 相当なので空文字を emit する。
+  // 併せて controlled `value` も Base UI は Value 型 (= object) を期待するが、親は id 文字列で
+  // 状態管理したいので options から逆引きして渡す (未選択 = 空文字時は null で未選択扱い)。
+  const selectedOption = React.useMemo(
+    () => options.find((o) => o.value === value) ?? null,
+    [options, value],
+  );
+
   return (
     <Combobox.Root
       items={options}
-      value={value}
+      value={selectedOption}
       onValueChange={(v) => {
-        if (typeof v === 'string') onValueChange(v);
+        if (v === null || v === undefined) {
+          onValueChange('');
+          return;
+        }
+        if (typeof v === 'string') {
+          onValueChange(v);
+          return;
+        }
+        if (typeof v === 'object' && 'value' in v && typeof v.value === 'string') {
+          onValueChange(v.value);
+          return;
+        }
       }}
       disabled={disabled}
       // label / value の key から item を解決 (options が { value, label } 形式なので自動認識)
