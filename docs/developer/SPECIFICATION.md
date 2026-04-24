@@ -1536,6 +1536,36 @@ PR #111-2 で `Project.customer_name` を廃止して `customer_id` FK に完全
 - サービス層 `disableMfa()` が `CANNOT_DISABLE_ADMIN_MFA` を throw (サービスガード)
 - → 3 層の防御で admin が MFA 解除する経路を完全遮断
 
+#### 13.8.3 MFA verify ブルートフォース防御 (PR #116 / 2026-04-24)
+
+パスワード認証通過後の MFA TOTP 入力にもロック機構を組み込む。
+
+| 項目 | 仕様 |
+|---|---|
+| 閾値 | **3 回** 連続失敗 (パスワードロックの 5 回より厳しめ。TOTP 空間の総当たり耐性を強化) |
+| ロック期間 | **30 分** (パスワードロックと同じ) |
+| 永続ロック | **設けない** — recovery code による自己解除が可能なため、「admin 介入なしで永遠にログイン不可」状態を生む必要がない |
+| DB 列 | `users.mfa_failed_count` / `users.mfa_locked_until` (PR #116 追加、パスワード系 `failed_login_count` / `locked_until` とは別系統) |
+| HTTP 応答 | ロック中の `/api/auth/mfa/verify` は **429 Too Many Requests** + `{error.code: 'MFA_LOCKED', error.lockedUntil: <ISO8601>}` |
+| 監査ログ | `auth_event_logs` に `eventType='lock', detail.lockType='mfa_temporary'` を記録 |
+
+**解除経路**:
+
+| 経路 | 条件 | 効果 |
+|---|---|---|
+| 時間経過 | `mfa_locked_until < now()` | 自動解除、次回 verify でカウンタも 0 にリセット |
+| リカバリーコード入力 | `/api/auth/mfa/verify` に `body.recoveryCode` を送って 1 回だけ有効 | 即座にロック解除 + `mfa_failed_count = 0` |
+| admin 手動解除 | `/api/admin/users/[id]/unlock` (既存) | パスワードロックと同時に MFA ロックもリセット |
+
+**カウンタの挙動**:
+- 正解 TOTP / recovery code 入力 → `mfa_failed_count = 0` にリセット
+- 失敗 → increment
+- 閾値到達 (3 回目の失敗) → `mfa_locked_until = now + 30min` セット + `mfa_failed_count = 0` にリセット (次ロックサイクル準備)
+
+**admin 画面表示** (/admin/users):
+- パスワードロック / MFA ロック / 永続ロック / 失敗カウント を 1 列「認証ロック」に集約
+- tooltip で原因・解除予定・解除手段を表示 (A 案採用、DESIGN §9.4 参照)
+
 ### 13.9 プロフィール更新
 
 #### ユーザ自身による更新

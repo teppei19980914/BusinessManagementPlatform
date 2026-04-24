@@ -18,7 +18,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyTotp } from '@/services/mfa.service';
+import {
+  verifyTotp,
+  resetMfaLockOnRecoveryCodeUse,
+  MfaLockedError,
+} from '@/services/mfa.service';
 import { prisma } from '@/lib/db';
 import { compare } from 'bcryptjs';
 import { z } from 'zod/v4';
@@ -48,7 +52,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 });
     }
 
-    const isValid = await verifyTotp(parsed.data.userId, parsed.data.code);
+    // PR #116: ロック中は即 429 / 失敗カウント閾値到達時も 429
+    let isValid = false;
+    try {
+      isValid = await verifyTotp(parsed.data.userId, parsed.data.code);
+    } catch (e) {
+      if (e instanceof MfaLockedError) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'MFA_LOCKED',
+              message: '認証コードの連続失敗によりロックされています',
+              lockedUntil: e.lockedUntil.toISOString(),
+            },
+          },
+          { status: 429 },
+        );
+      }
+      throw e;
+    }
     if (!isValid) {
       return NextResponse.json(
         { error: { code: 'VALIDATION_ERROR', message: 'コードが正しくありません' } },
@@ -66,6 +88,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 });
     }
 
+    // PR #116: MFA ロック中でも recovery code 経路は通す (ロック解除の自己救済手段)
     const codes = await prisma.recoveryCode.findMany({
       where: { userId: parsed.data.userId, usedAt: null },
     });
@@ -74,6 +97,8 @@ export async function POST(req: NextRequest) {
       const isMatch = await compare(parsed.data.recoveryCode, code.codeHash);
       if (isMatch) {
         await prisma.recoveryCode.update({ where: { id: code.id }, data: { usedAt: new Date() } });
+        // PR #116: recovery code 使用成功で MFA ロック・失敗カウントを同時にリセット
+        await resetMfaLockOnRecoveryCodeUse(parsed.data.userId);
         return NextResponse.json({ data: { success: true } });
       }
     }

@@ -51,6 +51,29 @@ async function getOtplib() {
 const TOTP_EPOCH_TOLERANCE_SEC = 30;
 
 /**
+ * MFA verify 専用のレート制限設定 (PR #116 / 2026-04-24)。
+ *
+ * パスワードロック (`failedLoginCount` / `lockedUntil`) とは **別系統** で管理する理由:
+ *   - 失敗原因 (パスワード / MFA) を分けて admin 画面で可視化するため
+ *   - recovery code による解除は **MFA ロックのみ** が対象であるべきだから
+ *     (パスワード側で間違えてロックされた人が recovery code で解除できてしまう矛盾を避ける)
+ *
+ * 閾値: 3 回 (パスワードの 5 回より厳しく、TOTP ブルートフォース耐性を確保)
+ * ロック期間: 30 分 (パスワードロックと同じ)
+ * 恒久ロック: **設けない** — recovery code で自己解除可能な経路があるため、
+ *   「永遠にログインできない」状態を admin 介入なしで生む必要はない。
+ */
+export const MFA_FAIL_LIMIT = 3;
+export const MFA_LOCK_DURATION_MS = 30 * 60 * 1000;
+
+export class MfaLockedError extends Error {
+  constructor(public lockedUntil: Date) {
+    super('MFA_LOCKED');
+    this.name = 'MfaLockedError';
+  }
+}
+
+/**
  * MFA 有効化ステップ1: TOTP シークレットを生成し、QR コード用の URI を返す
  */
 export async function generateMfaSecret(
@@ -156,11 +179,26 @@ export async function disableMfa(userId: string): Promise<void> {
 }
 
 /**
- * TOTP コード検証（ログイン時）
+ * TOTP コード検証（ログイン時）。
+ *
+ * PR #116 (2026-04-24): レート制限機構を組み込み。
+ *   - 現在 mfaLockedUntil が未来 → `MfaLockedError` を throw
+ *   - 検証成功 → `mfaFailedCount = 0`, `mfaLockedUntil = null` にリセット
+ *   - 検証失敗 → `mfaFailedCount` increment。MFA_FAIL_LIMIT に達したら
+ *     `mfaLockedUntil = now + 30min` にロック
+ *
+ * MFA 未有効化ユーザに対しては false を返すのみ (カウンタ変更なし)。
+ *
+ * @throws {MfaLockedError} ロック中にアクセスがあった場合 (route 層で 429 に変換)
  */
 export async function verifyTotp(userId: string, totpCode: string): Promise<boolean> {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user || !user.mfaEnabled || !user.mfaSecretEncrypted) return false;
+
+  // ロック期間中: 即座に拒否 (TOTP 検証処理自体を走らせない)
+  if (user.mfaLockedUntil && user.mfaLockedUntil.getTime() > Date.now()) {
+    throw new MfaLockedError(user.mfaLockedUntil);
+  }
 
   const secret = decrypt(user.mfaSecretEncrypted);
   const otplib = await getOtplib();
@@ -169,7 +207,72 @@ export async function verifyTotp(userId: string, totpCode: string): Promise<bool
     secret,
     epochTolerance: TOTP_EPOCH_TOLERANCE_SEC,
   });
-  return result.valid;
+
+  if (result.valid) {
+    // 成功: カウンタ + ロック状態をクリア (過去にカウントが溜まっていた場合も)
+    if (user.mfaFailedCount > 0 || user.mfaLockedUntil) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { mfaFailedCount: 0, mfaLockedUntil: null },
+      });
+    }
+    return true;
+  }
+
+  // 失敗: カウンタ increment + 閾値到達なら lockedUntil セット
+  const newCount = user.mfaFailedCount + 1;
+  const shouldLock = newCount >= MFA_FAIL_LIMIT;
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      mfaFailedCount: shouldLock ? 0 : newCount, // ロック時は 0 に戻し「次ロック」のための新サイクル開始
+      mfaLockedUntil: shouldLock ? new Date(Date.now() + MFA_LOCK_DURATION_MS) : undefined,
+    },
+  });
+
+  if (shouldLock) {
+    await recordAuthEvent({
+      eventType: 'lock',
+      userId,
+      detail: {
+        lockType: 'mfa_temporary',
+        reason: 'mfa_failure_threshold_exceeded',
+        threshold: MFA_FAIL_LIMIT,
+        lockDurationMinutes: MFA_LOCK_DURATION_MS / 60 / 1000,
+      },
+    });
+    // ロック成立後は、本回の失敗呼び出しに対しても即座に lockError を throw して
+    // 呼出側 UI で「ロックされました」を明示する
+    throw new MfaLockedError(new Date(Date.now() + MFA_LOCK_DURATION_MS));
+  }
+
+  return false;
+}
+
+/**
+ * recovery code 使用成功時に MFA 失敗カウント + ロックをリセットする (PR #116)。
+ *
+ * verify route が `body.recoveryCode` 経路で成功した場合に呼ぶ。TOTP 正解時と
+ * 同じ扱い (カウンタ 0、lockedUntil null)。
+ */
+export async function resetMfaLockOnRecoveryCodeUse(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { mfaFailedCount: 0, mfaLockedUntil: null },
+  });
+}
+
+/**
+ * admin による MFA ロック手動解除 (PR #116)。
+ *
+ * `/api/admin/users/[userId]/unlock` から MFA 系統も解除できるよう追加。
+ * 既存の `failedLoginCount` / `lockedUntil` 系統には影響しない。
+ */
+export async function unlockMfaByAdmin(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { mfaFailedCount: 0, mfaLockedUntil: null },
+  });
 }
 
 /**

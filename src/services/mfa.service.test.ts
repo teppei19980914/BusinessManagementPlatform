@@ -15,6 +15,11 @@ import {
   enableMfa,
   disableMfa,
   verifyTotp,
+  resetMfaLockOnRecoveryCodeUse,
+  unlockMfaByAdmin,
+  MfaLockedError,
+  MFA_FAIL_LIMIT,
+  MFA_LOCK_DURATION_MS,
 } from './mfa.service';
 import { prisma } from '@/lib/db';
 import { recordAuthEvent } from './auth-event.service';
@@ -290,5 +295,160 @@ describe('verifyTotp', () => {
     } as never);
 
     expect(await verifyTotp('u1', '000000')).toBe(false);
+  });
+});
+
+describe('PR #116: MFA ロック機構 (verifyTotp / resetMfaLockOnRecoveryCodeUse / unlockMfaByAdmin)', () => {
+  // 共通のシークレット準備 (毎ケース実行前にリセット)
+  let savedEncrypted = '';
+  let validCode = '';
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    // 初回 generateMfaSecret で暗号化されたシークレットを得る
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: 'u1',
+      email: 'a@b.co',
+    } as never);
+    vi.mocked(prisma.user.update).mockImplementationOnce(async (args) => {
+      savedEncrypted = (args.data as { mfaSecretEncrypted: string }).mfaSecretEncrypted;
+      return {} as never;
+    });
+    const gen = await generateMfaSecret('u1');
+    const otplib = await import('otplib');
+    validCode = otplib.generateSync({ secret: gen.secret });
+    // beforeEach で消費した call history をクリアし、本体アサーション側の
+    // call-count 検査 (update が X 回呼ばれる等) を安全化する
+    vi.mocked(prisma.user.update).mockClear();
+    vi.mocked(prisma.user.findUnique).mockClear();
+    vi.mocked(recordAuthEvent).mockClear();
+  });
+
+  it('ロック中は verifyTotp が MfaLockedError を throw (TOTP 検証をスキップ)', async () => {
+    const futureTime = new Date(Date.now() + 10 * 60 * 1000); // 10 分後
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      mfaEnabled: true,
+      mfaSecretEncrypted: savedEncrypted,
+      mfaFailedCount: 0,
+      mfaLockedUntil: futureTime,
+    } as never);
+
+    await expect(verifyTotp('u1', validCode)).rejects.toThrow(MfaLockedError);
+    // TOTP 検証用の update は呼ばれない (早期 throw で副作用なし)
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('過去の lockedUntil はロック解除済みとして通常検証に進む', async () => {
+    const pastTime = new Date(Date.now() - 10 * 60 * 1000); // 10 分前
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      mfaEnabled: true,
+      mfaSecretEncrypted: savedEncrypted,
+      mfaFailedCount: 0,
+      mfaLockedUntil: pastTime,
+    } as never);
+
+    const r = await verifyTotp('u1', validCode);
+    expect(r).toBe(true);
+  });
+
+  it('正解 TOTP で mfaFailedCount と mfaLockedUntil を 0 / null にリセット (既存値があれば)', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      mfaEnabled: true,
+      mfaSecretEncrypted: savedEncrypted,
+      mfaFailedCount: 2,
+      mfaLockedUntil: null,
+    } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+
+    const r = await verifyTotp('u1', validCode);
+    expect(r).toBe(true);
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { mfaFailedCount: 0, mfaLockedUntil: null },
+      }),
+    );
+  });
+
+  it('正解 TOTP でも既存カウントがゼロなら update をスキップ (書込み削減)', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      mfaEnabled: true,
+      mfaSecretEncrypted: savedEncrypted,
+      mfaFailedCount: 0,
+      mfaLockedUntil: null,
+    } as never);
+
+    const r = await verifyTotp('u1', validCode);
+    expect(r).toBe(true);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('誤 TOTP で mfaFailedCount を +1 (閾値未達)', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      mfaEnabled: true,
+      mfaSecretEncrypted: savedEncrypted,
+      mfaFailedCount: 0,
+      mfaLockedUntil: null,
+    } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+
+    const r = await verifyTotp('u1', '000000');
+    expect(r).toBe(false);
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ mfaFailedCount: 1, mfaLockedUntil: undefined }),
+      }),
+    );
+  });
+
+  it(`誤 TOTP 連続 ${MFA_FAIL_LIMIT} 回目で lockedUntil をセット + MfaLockedError を throw + auth_event 記録`, async () => {
+    // 既に 2 回失敗済、今回 3 回目 = 閾値到達
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      mfaEnabled: true,
+      mfaSecretEncrypted: savedEncrypted,
+      mfaFailedCount: MFA_FAIL_LIMIT - 1,
+      mfaLockedUntil: null,
+    } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+
+    await expect(verifyTotp('u1', '000000')).rejects.toThrow(MfaLockedError);
+
+    // update で lockedUntil が 30 分後に設定される
+    const call = vi.mocked(prisma.user.update).mock.calls[0][0];
+    const data = call.data as { mfaFailedCount: number; mfaLockedUntil: Date };
+    expect(data.mfaFailedCount).toBe(0); // 閾値到達で新サイクル開始のため 0 に戻す
+    expect(data.mfaLockedUntil).toBeInstanceOf(Date);
+    expect(data.mfaLockedUntil.getTime()).toBeGreaterThan(Date.now() + MFA_LOCK_DURATION_MS - 1000);
+
+    // 監査ログ
+    expect(recordAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'lock',
+        userId: 'u1',
+        detail: expect.objectContaining({
+          lockType: 'mfa_temporary',
+          reason: 'mfa_failure_threshold_exceeded',
+        }),
+      }),
+    );
+  });
+
+  it('resetMfaLockOnRecoveryCodeUse: カウンタ + lockedUntil を一括リセット', async () => {
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    await resetMfaLockOnRecoveryCodeUse('u1');
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: { mfaFailedCount: 0, mfaLockedUntil: null },
+    });
+  });
+
+  it('unlockMfaByAdmin: カウンタ + lockedUntil を一括リセット', async () => {
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    await unlockMfaByAdmin('u1');
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: { mfaFailedCount: 0, mfaLockedUntil: null },
+    });
   });
 });

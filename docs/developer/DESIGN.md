@@ -1419,18 +1419,46 @@ function checkPermission(
 
 #### 9.4.3 アカウントロックポリシー
 
+本プロダクトは **2 系統** のロックを持つ (PR #116 以降):
+
+##### パスワードロック (従来)
+
 | 項目 | 値 |
 |---|---|
-| ロック条件 | 10 分以内に 5 回のログイン失敗 |
+| ロック条件 | 10 分以内に **5 回** のログイン失敗 |
 | ロック期間 | 30 分間の一時ロック |
-| 恒久ロック | 一時ロック 3 回で管理者解除が必要な恒久ロック |
-| ロック解除 | システム管理者が手動解除 |
-| 通知 | ロック発生時に対象ユーザのメールアドレスに通知（将来実装） |
+| 恒久ロック | 一時ロック **3 回** で管理者解除が必要な恒久ロック |
+| ロック解除 | 時間経過 (一時のみ) / システム管理者が手動解除 |
 
-データモデル追加（users テーブル）:
-- `failed_login_count` INTEGER DEFAULT 0
-- `locked_until` TIMESTAMPTZ NULL
-- `permanent_lock` BOOLEAN DEFAULT false
+##### MFA ロック (PR #116 新設)
+
+| 項目 | 値 |
+|---|---|
+| ロック条件 | **3 回** 連続の MFA TOTP 失敗 (パスワードより厳しめ) |
+| ロック期間 | 30 分間の一時ロック |
+| 恒久ロック | **設けない** (recovery code で自己解除可能なため) |
+| ロック解除 | 時間経過 / **recovery code 入力** / システム管理者が手動解除 |
+| HTTP 応答 | `/api/auth/mfa/verify` が **429** + `{code: 'MFA_LOCKED', lockedUntil: ISO8601}` を返す |
+
+データモデル (users テーブル):
+
+| 系統 | 列名 |
+|---|---|
+| パスワードロック | `failed_login_count INTEGER DEFAULT 0` / `locked_until TIMESTAMPTZ NULL` / `permanent_lock BOOLEAN DEFAULT false` |
+| MFA ロック (PR #116) | `mfa_failed_count INTEGER DEFAULT 0` / `mfa_locked_until TIMESTAMPTZ NULL` |
+
+**分離する設計判断**:
+- ロック原因 (パスワード / MFA) を admin 画面で個別に可視化
+- recovery code による解除対象を **MFA ロックのみ** に限定 (パスワード側で間違えた人が recovery code で解除する矛盾を防ぐ)
+
+**admin 画面の表示 (PR #116)**:
+- `/admin/users` の「認証ロック」列 1 つに両系統の情報を集約
+- Badge のラベルで原因を区別 (例: `一時ロック (パスワード)` / `一時ロック (MFA)` / `PW 失敗 3/5` / `MFA 失敗 2/3`)
+- tooltip で解除予定 / 解除手段 / 失敗回数の詳細を表示 (A 案)
+
+**手動解除 (admin)**:
+- `/api/admin/users/[userId]/unlock` は **パスワードロックと MFA ロックを同時に** リセット
+- 「admin の介入時点でクリーンなアカウント状態に戻す」方針
 
 #### 9.4.4 セッション管理
 
