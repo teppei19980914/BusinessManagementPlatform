@@ -3,9 +3,11 @@ import {
   DEFAULT_TIMEZONE,
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
+  SELECTABLE_LOCALES,
   resolveTimezone,
   resolveLocale,
   isSupportedLocale,
+  isSelectableLocale,
   isValidTimezone,
 } from './i18n';
 
@@ -69,6 +71,35 @@ describe('isSupportedLocale', () => {
     expect(isSupportedLocale(null)).toBe(false);
     expect(isSupportedLocale(undefined)).toBe(false);
     expect(isSupportedLocale(123)).toBe(false);
+  });
+});
+
+describe('SELECTABLE_LOCALES / isSelectableLocale (PR #120)', () => {
+  it('SUPPORTED_LOCALES の全キーに対して true/false が定義されている', () => {
+    for (const key of Object.keys(SUPPORTED_LOCALES)) {
+      expect(typeof SELECTABLE_LOCALES[key as keyof typeof SELECTABLE_LOCALES]).toBe('boolean');
+    }
+  });
+
+  it('ja-JP は選択可', () => {
+    expect(SELECTABLE_LOCALES['ja-JP']).toBe(true);
+    expect(isSelectableLocale('ja-JP')).toBe(true);
+  });
+
+  it('en-US は選択不可 (後続 PR で翻訳完了後に有効化予定)', () => {
+    expect(SELECTABLE_LOCALES['en-US']).toBe(false);
+    expect(isSelectableLocale('en-US')).toBe(false);
+  });
+
+  it('SUPPORTED_LOCALES に含まれない値は false', () => {
+    expect(isSelectableLocale('de-DE')).toBe(false);
+    expect(isSelectableLocale('')).toBe(false);
+    expect(isSelectableLocale(null)).toBe(false);
+    expect(isSelectableLocale(undefined)).toBe(false);
+  });
+
+  it('isSupportedLocale は en-US も true を返す (format 層は過去値を許容する設計)', () => {
+    expect(isSupportedLocale('en-US')).toBe(true);
   });
 });
 

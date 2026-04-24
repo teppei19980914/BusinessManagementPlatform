@@ -53,20 +53,26 @@ describe('PATCH /api/settings/i18n', () => {
     expect(res.status).toBe(401);
   });
 
-  it('有効な TZ + locale で DB 更新 + 200', async () => {
+  it('有効な TZ + 選択可能 locale で DB 更新 + 200', async () => {
     vi.mocked(prisma.user.update).mockResolvedValue({
       timezone: 'America/New_York',
-      locale: 'en-US',
+      locale: 'ja-JP',
     } as never);
-    const res = await PATCH(makeReq({ timezone: 'America/New_York', locale: 'en-US' }) as never);
+    const res = await PATCH(makeReq({ timezone: 'America/New_York', locale: 'ja-JP' }) as never);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.data).toEqual({ timezone: 'America/New_York', locale: 'en-US' });
+    expect(body.data).toEqual({ timezone: 'America/New_York', locale: 'ja-JP' });
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: 'user-1' },
-      data: { timezone: 'America/New_York', locale: 'en-US' },
+      data: { timezone: 'America/New_York', locale: 'ja-JP' },
       select: { timezone: true, locale: true },
     });
+  });
+
+  it('PR #120: SELECTABLE_LOCALES=false な en-US は 400 で拒否 (UI disabled の迂回防止)', async () => {
+    const res = await PATCH(makeReq({ locale: 'en-US' }) as never);
+    expect(res.status).toBe(400);
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it('未知 TZ を拒否する (400, DB 更新しない)', async () => {

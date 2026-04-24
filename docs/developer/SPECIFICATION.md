@@ -2065,14 +2065,18 @@ admin ログイン時のナビ並びは左から順に:
 - クライアントからの任意文字列による CSS 注入・データ汚染を防ぐ
 - セッション JWT 上のテーマ値を layout 表示前に `toSafeThemeId()` で丸める (二重防御)
 
-## 24. 言語・タイムゾーン設定 (PR #118/#119 追加)
+## 24. 言語・タイムゾーン設定 (PR #118/#119/#120 追加)
 
 ### 24.1 設定画面での選択肢
 
 **設定 → 言語・タイムゾーン**に 2 つのセレクトボックスを配置:
 
 - **言語**: `SUPPORTED_LOCALES` (`src/config/i18n.ts`) のキー + 「システム既定を使用」
-  - 現在サポート: `ja-JP` / `en-US` (後続 PR でメッセージカタログを拡充)
+  - 現在 **選択可能** (`SELECTABLE_LOCALES=true`): `ja-JP` のみ
+  - 表示するが **選択不可** (`SELECTABLE_LOCALES=false`): `en-US` (※準備中、PR #120 で制御)
+    - UI: `<option disabled>` + 「※準備中」表記
+    - API: `isSelectableLocale` で 400 拒否 (UI 迂回 / curl 直叩き防止)
+  - 後続 PR で `src/i18n/messages/en-US.json` + UI 文字列抽出 + 英訳が完了次第、`SELECTABLE_LOCALES['en-US']` を true に切り替えて選択可にする
 - **タイムゾーン**: `Intl.supportedValuesOf('timeZone')` で動的生成した IANA 名一覧 + 「システム既定を使用」
   - ブラウザ非対応時は代表値 (UTC, Asia/Tokyo, America/New_York 等) の fallback
 
@@ -2100,6 +2104,9 @@ admin ログイン時のナビ並びは左から順に:
 
 - API サーバは以下のみ受理 (400 VALIDATION_ERROR で拒否):
   - `timezone`: `Intl.DateTimeFormat` が受理する IANA 名、または `null`
-  - `locale`: `SUPPORTED_LOCALES` のキー、または `null`
-- 任意文字列による DB 汚染 / 未整備ロケールへの誘導を防ぐ
+  - `locale`: **`SELECTABLE_LOCALES=true` のキー** (PR #120 で厳格化)、または `null`
+    - `SUPPORTED_LOCALES` に含まれていても `SELECTABLE_LOCALES=false` (例 `en-US`) は拒否
+    - 既に DB に `en-US` が入っている可能性は無いが、将来的にロケールを削除する場合も
+      `isSupportedLocale` はフォールバックが effect せず `resolveLocale` は FALLBACK ロケールに戻る設計
+- 任意文字列による DB 汚染 / 未整備ロケールへの誘導を防ぐ (UI disabled との多層防御)
 - 本人のみ更新可 (`/api/settings/i18n` は `getAuthenticatedUser` のみ要件、他ユーザ設定は触れない)

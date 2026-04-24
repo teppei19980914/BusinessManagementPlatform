@@ -1105,6 +1105,27 @@ APP_DEFAULT_TIMEZONE=America/New_York
 APP_DEFAULT_LOCALE=en-US
 ```
 
+**ロケールを段階的に提供するパターン (PR #120 で導入)**:
+
+メッセージカタログ未整備のロケールを UI に出したいが誤選択を防ぎたい場合、
+`src/config/i18n.ts` の `SELECTABLE_LOCALES` マップを使う:
+
+```ts
+// UI には出すが選択不可にしたい場合
+export const SUPPORTED_LOCALES = { 'ja-JP': '日本語', 'en-US': 'English' } as const;
+export const SELECTABLE_LOCALES = {
+  'ja-JP': true,   // 選択可
+  'en-US': false,  // 表示するが disabled (翻訳未完)
+} as const;
+```
+
+- UI 層: `<option disabled={!SELECTABLE_LOCALES[key]}>` + 「※準備中」表記
+- API 層: `isSelectableLocale(value)` で 400 拒否 (curl 直叩き等の迂回防止)
+- format 層: `isSupportedLocale` は true のまま返す (過去に書き込まれた値を壊さない)
+
+翻訳完了 PR で該当キーの `SELECTABLE_LOCALES` を `true` に切り替えると、
+カタログ側も紐付いて一斉に有効化される。
+
 ### 10.9 設定画面にセクションを追加するときの CI 連鎖 fail パターン (PR #119 で得た知見)
 
 `settings-client.tsx` に新しい Card セクションを追加したり、`src/app/api/settings/*`
@@ -1165,3 +1186,4 @@ APP_DEFAULT_LOCALE=en-US
 | 2026-04-24 | §10.8 拡充 (PR #119)。`useFormatters()` / `getServerFormatters()` + 設定画面 UI + `/api/settings/i18n` の整備完了 |
 | 2026-04-24 | §10.9 追加 (PR #119 hotfix)。設定画面に Card 追加時の CI 連鎖 fail (coverage manifest + 視覚回帰) 対処手順 |
 | 2026-04-24 | §9.6 罠追記 (PR #119 hotfix 2)。GITHUB_TOKEN による auto-commit は次の workflow を起動しない問題と回避手順 |
+| 2026-04-24 | §10.8 追記 (PR #120)。`SELECTABLE_LOCALES` による段階的ロケール提供パターン (翻訳未完ロケールを UI に出すが disabled + API 拒否) |

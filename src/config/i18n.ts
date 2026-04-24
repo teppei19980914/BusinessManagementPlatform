@@ -70,8 +70,11 @@ export function resolveLocale(userLocale: string | null | undefined): string {
 
 /**
  * サポート対象ロケール一覧。
- * UI (設定画面) のセレクトボックスで使用する。
- * 追加時は `src/i18n/messages/<locale>.json` のメッセージカタログも追加すること。
+ * UI (設定画面) のセレクトボックスの **表示候補** として使用する。
+ * ここに載っていても `SELECTABLE_LOCALES` が false なら UI では disabled 表示となる。
+ *
+ * 追加時は `src/i18n/messages/<locale>.json` のメッセージカタログも追加し、
+ * `SELECTABLE_LOCALES` を true に切り替える。
  */
 export const SUPPORTED_LOCALES = {
   'ja-JP': '日本語',
@@ -81,10 +84,35 @@ export const SUPPORTED_LOCALES = {
 export type SupportedLocale = keyof typeof SUPPORTED_LOCALES;
 
 /**
- * 与えられた値が SUPPORTED_LOCALES に含まれるかを判定する (DB 汚染防止ガード)。
+ * PR #120: UI で実際に **選択可能** なロケールのフラグ。
+ *
+ * なぜ SUPPORTED_LOCALES と別に持つか:
+ *   - 英語対応は後続 PR でメッセージカタログ (`src/i18n/messages/en-US.json`) と
+ *     全ハードコード日本語の抽出が完了するまで真の切替はできない
+ *   - しかし UI に選択肢として出しておくと「将来対応予定」が利用者に伝わる
+ *   - 誤選択を防ぐため UI 側は disabled 表示、API 側も 400 で拒否 (多層防御)
+ *
+ * 翻訳完了 PR で該当ロケールの値を true に切り替える。
+ */
+export const SELECTABLE_LOCALES: Readonly<Record<SupportedLocale, boolean>> = {
+  'ja-JP': true,
+  'en-US': false,
+} as const;
+
+/**
+ * 与えられた値が SUPPORTED_LOCALES に含まれるかを判定する。
+ * format.ts のフォールバック解決などに使われる (過去に設定されていた値を許容する用途)。
  */
 export function isSupportedLocale(value: unknown): value is SupportedLocale {
   return typeof value === 'string' && value in SUPPORTED_LOCALES;
+}
+
+/**
+ * PR #120: 与えられた値が **現時点で選択可能** なロケールかを判定する (API 入力バリデータ用)。
+ * `SUPPORTED_LOCALES` のキーのうち `SELECTABLE_LOCALES[key] === true` なものに限る。
+ */
+export function isSelectableLocale(value: unknown): value is SupportedLocale {
+  return isSupportedLocale(value) && SELECTABLE_LOCALES[value] === true;
 }
 
 /**
