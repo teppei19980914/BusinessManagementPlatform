@@ -46,6 +46,7 @@ model User {
   updatedKnowledges    Knowledge[]         @relation("KnowledgeUpdater")
   auditLogs            AuditLog[]
   authEventLogs        AuthEventLog[]
+  systemErrorLogs      SystemErrorLog[]
   roleChangesPerformed RoleChangeLog[]     @relation("RoleChanger")
   roleChangesReceived  RoleChangeLog[]     @relation("RoleTarget")
   sessions                Session[]
@@ -505,6 +506,36 @@ model AuthEventLog {
   @@index([userId, createdAt(sort: Desc)], map: "idx_auth_events_user")
   @@index([eventType, createdAt(sort: Desc)], map: "idx_auth_events_type")
   @@map("auth_event_logs")
+}
+
+/// PR #115 (2026-04-24): 内部エラー / クライアントエラーを蓄積するテーブル。
+///
+/// 設計思想 (DESIGN.md §9.8.5):
+///   - ブラウザの Console や Server console に機密情報 (スタック、設定、SQL 内部情報等) を出さず、
+///     必ず本テーブルに保存してから、ユーザには固定文言「内部エラーが発生しました」を返す。
+///   - AuditLog は userId NOT NULL で pre-auth エラーを記録できないため、
+///     AuthEventLog と同じ「nullable userId + JSON detail」パターンで分離した姉妹テーブル。
+///   - severity で重要度を分類 (info / warn / error / fatal)。
+///   - source で発生箇所カテゴリを記録 (server / client / cron 等)。
+///   - context に IP / request path / 任意メタデータを JSON で持たせる。
+model SystemErrorLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  severity  String   @db.VarChar(10) // 'info' | 'warn' | 'error' | 'fatal'
+  source    String   @db.VarChar(30) // 'server' | 'client' | 'cron' | 'mail' | etc.
+  message   String   @db.Text
+  stack     String?  @db.Text
+  userId    String?  @map("user_id") @db.Uuid
+  requestId String?  @map("request_id") @db.VarChar(64)
+  context   Json?    @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([severity, createdAt(sort: Desc)], map: "idx_system_errors_severity")
+  @@index([source, createdAt(sort: Desc)], map: "idx_system_errors_source")
+  @@index([userId, createdAt(sort: Desc)], map: "idx_system_errors_user")
+  @@index([createdAt(sort: Desc)], map: "idx_system_errors_date")
+  @@map("system_error_logs")
 }
 
 model RoleChangeLog {
