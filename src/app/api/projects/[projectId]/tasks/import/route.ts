@@ -112,6 +112,7 @@ export async function POST(
     }
     // PR #115 (2026-04-24): console.* 廃止。system_error_logs に保存してユーザには
     // 固定文言「内部エラーが発生しました」のみ返す (機密情報を Network / Console にも出さない)。
+    // PR #114 の console.error 版の上位互換 (Server ログ経由の機密情報漏洩を根絶)。
     await logUnknownError('server', e, {
       userId: user.id,
       context: { path: 'POST /api/projects/[id]/tasks/import', stage: 'import-execute' },

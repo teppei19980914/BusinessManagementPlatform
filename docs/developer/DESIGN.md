@@ -1696,7 +1696,7 @@ Console にも画面にも出さず、必ず DB (system_error_logs) に保存す
 
 | 重大度 | ID | 箇所 | 問題 | 対策 |
 |---|---|---|---|---|
-| High | H-1 | `/api/cron/cleanup-accounts` | `CRON_SECRET` 未設定時に短絡評価で認証バイパス → 外部から匿名 POST で全ユーザ論理削除・匿名化実行可能 | **PR #115 でエンドポイント自体を削除** (vercel.json の cron 登録は `/api/admin/users/cleanup-inactive` のみで、本エンドポイントはデッドコードだった)。PR #114 の短絡修正と合わせて多層防御 |
+| High | H-1 | `/api/cron/cleanup-accounts` | `CRON_SECRET` 未設定時に短絡評価で認証バイパス → 外部から匿名 POST で全ユーザ論理削除・匿名化実行可能 | PR #114: `if (!cronSecret \|\| authHeader !== ...)` に改修して常に 401 → **PR #115: エンドポイント自体を削除** (vercel.json の cron 登録は `/api/admin/users/cleanup-inactive` のみでデッドコードと判明)。多層防御が結果として完成 |
 | High | H-2 | `/api/projects/[id]/tasks/import` | 500 エラー body に Prisma `e.message` を含め返し、スキーマ/制約名/衝突値が Network タブで漏洩 | 固定文言のみ返却、詳細は `console.error` のみ |
 | Medium | M-1 | `next.config.ts` | `X-Powered-By: Next.js` ヘッダ送出 (既知脆弱性絞り込みに悪用可) | `poweredByHeader: false` 明示 |
 | Medium | M-2 | `/api/knowledge` POST | 非メンバーが `projectIds` 指定で他プロジェクトにナレッジを注入可能 (PR #113 新権限方針と不整合) | projectIds 各項に対し `prisma.projectMember.findFirst` で確認、1 つでも非メンバーなら 403 |

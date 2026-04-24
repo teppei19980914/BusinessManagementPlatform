@@ -127,6 +127,18 @@ describe('generateMfaSecret', () => {
       }),
     );
   });
+
+  it('PR #114 L-2: mfaEnabled=true のユーザは ALREADY_ENABLED を throw', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'u1',
+      email: 'a@b.co',
+      mfaEnabled: true,
+    } as never);
+
+    await expect(generateMfaSecret('u1')).rejects.toThrow('ALREADY_ENABLED');
+    // シークレット再生成は行わない (情報漏洩防止)
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('enableMfa', () => {

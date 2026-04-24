@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { prisma } from '@/lib/db';
 import { createKnowledgeSchema } from '@/lib/validators/knowledge';
 import { listKnowledge, createKnowledge } from '@/services/knowledge.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
@@ -54,8 +55,11 @@ export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  // admin, pm_tl, member が作成可（viewer は不可）
-  // ここではログイン済みなら作成可（権限チェックはプロジェクトスコープで行うのがメイン）
+  // 2026-04-24 セキュリティ監査 (M-2): 本エンドポイントは「全社横断ナレッジ」作成経路だが、
+  // projectIds で紐付くプロジェクトが指定された場合、そのプロジェクトに非メンバーが
+  // 勝手にナレッジを注入できる経路になっていた。プロジェクト紐付きならば全 projectIds に
+  // ついて実際の ProjectMember であることを要求する (PR #113 で確立した
+  // 「作成は ProjectMember のみ」方針の横展開)。
 
   const body = await req.json();
   const parsed = createKnowledgeSchema.safeParse(body);
@@ -64,6 +68,27 @@ export async function POST(req: NextRequest) {
       { error: { code: 'VALIDATION_ERROR', details: parsed.error.issues } },
       { status: 400 },
     );
+  }
+
+  const projectIds = parsed.data.projectIds ?? [];
+  if (projectIds.length > 0) {
+    const memberships = await prisma.projectMember.findMany({
+      where: { userId: user.id, projectId: { in: projectIds } },
+      select: { projectId: true },
+    });
+    const memberSet = new Set(memberships.map((m) => m.projectId));
+    const nonMemberIds = projectIds.filter((pid) => !memberSet.has(pid));
+    if (nonMemberIds.length > 0) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'FORBIDDEN',
+            message: 'メンバーでないプロジェクトにナレッジを紐付けることはできません',
+          },
+        },
+        { status: 403 },
+      );
+    }
   }
 
   const knowledge = await createKnowledge(parsed.data, user.id);
