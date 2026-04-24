@@ -1645,6 +1645,50 @@ function toUserDTO(user: User): UserDTO {
 | セッション ID | 先頭 8 文字のみ表示 |
 | リクエストボディ | password フィールドを [REDACTED] に置換 |
 
+### 9.8.5 エラー情報の機密化方針 (2026-04-24 / PR #115)
+
+#### 原則
+
+**「機密情報を含み得るエラー詳細 (スタック、設定値、SQL 構造、環境変数値) は
+Console にも画面にも出さず、必ず DB (system_error_logs) に保存する。
+ユーザには固定文言『内部エラーが発生しました』のみを表示する。」**
+
+本プロダクトで扱うエラーは以下 2 種類に大別される:
+
+| 種別 | 発生源 | 記録経路 | ユーザに見せるもの |
+|---|---|---|---|
+| サーバ側内部エラー | API route の未捕捉例外 / cron バッチ / メールプロバイダ失敗 | `recordError` / `withErrorHandler` 経由で `system_error_logs` | HTTP 500 + 固定文言 |
+| クライアント側エラー | React render error / unhandled Promise rejection | `global-error.tsx` / `error.tsx` → POST `/api/client-errors` → `system_error_logs` | エラーバウンダリ UI (固定文言) |
+| ビジネスエラー (想定内) | 403 / 404 / 409 / validation 400 等 | 通常の NextResponse で返却 | エラーコード + 業務上のわかりやすい文言 |
+
+#### 実装コンポーネント
+
+- **`src/services/error-log.service.ts`** — `recordError(input)` / `logUnknownError(source, error, extras?)`。DB 書込失敗は silent (再帰ログ防止)
+- **`src/lib/api-error-handler.ts#withErrorHandler`** — API route を wrap。throw された時点で DB 記録 + 固定 500 応答
+- **`src/app/global-error.tsx`** — root layout レベルのエラーバウンダリ
+- **`src/app/(dashboard)/error.tsx`** — dashboard セグメントのエラーバウンダリ
+- **`src/app/api/client-errors/route.ts`** — クライアントエラー受信エンドポイント
+- **`system_error_logs` テーブル** (`prisma/migrations/20260424_system_error_logs`) — severity / source / message / stack / userId / requestId / context (JSONB) / createdAt
+
+#### 強制機構
+
+- **eslint `no-console` rule** (`eslint.config.mjs`): src/ 配下 (テスト除く) で `console.*` を **error** として扱う。recordError 経由のみ許可。
+- **SystemErrorLog の FK は ON DELETE SET NULL** (`userId`): ユーザ削除時もログは残り続ける (監査証跡)
+
+#### 運用
+
+- Supabase SQL Editor で migration 適用:
+  ```sql
+  -- prisma/migrations/20260424_system_error_logs/migration.sql の内容を実行
+  CREATE TABLE system_error_logs (...);
+  CREATE INDEX idx_system_errors_severity ON system_error_logs (...);
+  -- 他 3 index
+  ```
+- 運用時は `SELECT * FROM system_error_logs WHERE severity IN ('error','fatal') ORDER BY created_at DESC LIMIT 100;` 等で異常を監視
+- **長期的ロードマップ**: システムエラーログ量がある水準を超えたら外部監視 (Sentry 等) を検討。MVP 段階では DB 内蓄積で十分
+
+---
+
 ### 9.8.4 セキュリティ監査 (2026-04-24 / PR #114)
 
 ブラウザ開発者ツールの Network / Console タブから機密情報・クレデンシャル情報が漏洩しないことを確認するため、
@@ -1652,7 +1696,7 @@ function toUserDTO(user: User): UserDTO {
 
 | 重大度 | ID | 箇所 | 問題 | 対策 |
 |---|---|---|---|---|
-| High | H-1 | `/api/cron/cleanup-accounts` | `CRON_SECRET` 未設定時に短絡評価で認証バイパス → 外部から匿名 POST で全ユーザ論理削除・匿名化実行可能 | `if (!cronSecret \|\| authHeader !== ...)` に改修。未設定時は常に 401 |
+| High | H-1 | `/api/cron/cleanup-accounts` | `CRON_SECRET` 未設定時に短絡評価で認証バイパス → 外部から匿名 POST で全ユーザ論理削除・匿名化実行可能 | PR #114: `if (!cronSecret \|\| authHeader !== ...)` に改修して常に 401 → **PR #115: エンドポイント自体を削除** (vercel.json の cron 登録は `/api/admin/users/cleanup-inactive` のみでデッドコードと判明)。多層防御が結果として完成 |
 | High | H-2 | `/api/projects/[id]/tasks/import` | 500 エラー body に Prisma `e.message` を含め返し、スキーマ/制約名/衝突値が Network タブで漏洩 | 固定文言のみ返却、詳細は `console.error` のみ |
 | Medium | M-1 | `next.config.ts` | `X-Powered-By: Next.js` ヘッダ送出 (既知脆弱性絞り込みに悪用可) | `poweredByHeader: false` 明示 |
 | Medium | M-2 | `/api/knowledge` POST | 非メンバーが `projectIds` 指定で他プロジェクトにナレッジを注入可能 (PR #113 新権限方針と不整合) | projectIds 各項に対し `prisma.projectMember.findFirst` で確認、1 つでも非メンバーなら 403 |

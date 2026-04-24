@@ -13,9 +13,14 @@ import type { AttachmentDTO } from '@/services/attachment.service';
  * 個別に `/api/attachments?entityType=&entityId=` を N 回叩くと N+1 になるため、
  * エンティティ ID の配列を受けて一括で取り出す。
  *
- * 認可方針 (Phase 1): ログインユーザなら全件返す (非メンバーのエンティティは既に
- * サーバ側の一覧クエリで除外されている前提)。将来、エンティティ種別ごとに厳密に
- * 権限判定したい場合は本関数でメンバーシップを確認する。
+ * 認可方針 (PR #115 / 2026-04-24 改修):
+ *   - 旧「Phase 1: ログインユーザなら全件返す」方針は、URL を推測すれば他プロジェクトの
+ *     添付 URL 一覧を取得できる IDOR 経路になっていた。2 巡目監査 C-1 で検出。
+ *   - 全 entityType について **アクセス権を個別確認** してから attachment を返す:
+ *       - memo : 自分の memo or visibility='public'
+ *       - 他 6 種 (project/task/estimate/risk/retrospective/knowledge):
+ *           親エンティティの projectId を解決 → 自分がメンバーのプロジェクトのものだけ通す。
+ *           admin は全プロジェクトを通過 (checkMembership と同じ短絡)。
  *
  * レスポンス: Map 形式 ({ [entityId]: AttachmentDTO[] }) で返し、UI 側の
  * lookup を O(1) にする。
@@ -44,10 +49,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: {} });
   }
 
-  // PR #70: memo は admin 特権なしの個人リソースのため、閲覧可能 ID にフィルタしてから
-  // attachments を取得する (URL 漏洩防止)。
-  // 他の entityType は既存方針通り「一覧クエリで除外済み前提」でそのまま通す。
-  let filteredIds = entityIds;
+  // PR #115 (2026-04-24 2 巡目監査 C-1): 全 entityType について閲覧可能性を確認してから
+  // attachment を返す。旧実装では memo 以外「一覧クエリで除外済み前提」としていたが、
+  // 攻撃者が UUID を推測して他プロジェクトの添付 URL を取得できる IDOR 経路だった。
+  const isAdmin = user.systemRole === 'admin';
+  let filteredIds: string[];
+
   if (entityType === 'memo') {
     const accessibleMemos = await prisma.memo.findMany({
       where: {
@@ -58,9 +65,112 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     });
     filteredIds = accessibleMemos.map((m) => m.id);
-    if (filteredIds.length === 0) {
+  } else if (isAdmin) {
+    // admin は全プロジェクトにアクセス可能なので絞り込み不要
+    filteredIds = entityIds;
+  } else {
+    // 自分がメンバーのプロジェクト ID 集合を先に取得
+    const memberships = await prisma.projectMember.findMany({
+      where: { userId: user.id },
+      select: { projectId: true },
+    });
+    const memberProjectIds = new Set(memberships.map((m) => m.projectId));
+
+    // entityType ごとに親 projectId を引き、member のものだけ通す
+    let rows: Array<{ id: string; projectId: string }> = [];
+    if (entityType === 'project') {
+      // project の添付は project 自体が親なので entityId === projectId
+      rows = entityIds.map((id) => ({ id, projectId: id }));
+    } else if (entityType === 'task') {
+      rows = await prisma.task.findMany({
+        where: { id: { in: entityIds } },
+        select: { id: true, projectId: true },
+      });
+    } else if (entityType === 'estimate') {
+      rows = await prisma.estimate.findMany({
+        where: { id: { in: entityIds } },
+        select: { id: true, projectId: true },
+      });
+    } else if (entityType === 'risk') {
+      rows = await prisma.riskIssue.findMany({
+        where: { id: { in: entityIds } },
+        select: { id: true, projectId: true },
+      });
+    } else if (entityType === 'retrospective') {
+      rows = await prisma.retrospective.findMany({
+        where: { id: { in: entityIds } },
+        select: { id: true, projectId: true },
+      });
+    } else if (entityType === 'knowledge') {
+      // knowledge は N:M なので、いずれか 1 つでもメンバーのプロジェクトに紐付いていれば OK
+      const links = await prisma.knowledgeProject.findMany({
+        where: { knowledgeId: { in: entityIds } },
+        select: { knowledgeId: true, projectId: true },
+      });
+      const accessibleKnowledgeIds = new Set<string>();
+      for (const link of links) {
+        if (memberProjectIds.has(link.projectId)) {
+          accessibleKnowledgeIds.add(link.knowledgeId);
+        }
+      }
+      // さらに「プロジェクト紐付けゼロで visibility=public」なナレッジは全ログインユーザが見える
+      const publicOrphanKnowledges = await prisma.knowledge.findMany({
+        where: {
+          id: { in: entityIds },
+          visibility: 'public',
+          knowledgeProjects: { none: {} },
+        },
+        select: { id: true },
+      });
+      for (const k of publicOrphanKnowledges) accessibleKnowledgeIds.add(k.id);
+      filteredIds = Array.from(accessibleKnowledgeIds);
+      // skip 下の rows-based フィルタ
+      if (filteredIds.length === 0) {
+        return NextResponse.json({ data: {} });
+      }
+      // knowledge は早期 return で返す
+      const rowsK = await prisma.attachment.findMany({
+        where: {
+          entityType,
+          entityId: { in: filteredIds },
+          slot: slot ?? undefined,
+          deletedAt: null,
+        },
+        include: { addedByUser: { select: { name: true } } },
+        orderBy: [{ slot: 'asc' }, { createdAt: 'asc' }],
+      });
+      const byEntityK: Record<string, AttachmentDTO[]> = {};
+      for (const r of rowsK) {
+        const dto: AttachmentDTO = {
+          id: r.id,
+          entityType: r.entityType,
+          entityId: r.entityId,
+          slot: r.slot,
+          displayName: r.displayName,
+          url: r.url,
+          mimeHint: r.mimeHint,
+          addedBy: r.addedBy,
+          addedByName: r.addedByUser?.name ?? null,
+          createdAt: r.createdAt.toISOString(),
+          updatedAt: r.updatedAt.toISOString(),
+        };
+        if (!byEntityK[r.entityId]) byEntityK[r.entityId] = [];
+        byEntityK[r.entityId].push(dto);
+      }
+      return NextResponse.json({ data: byEntityK });
+    } else {
+      // 未知の entityType (Zod で弾かれる想定だが保険)
+      filteredIds = [];
       return NextResponse.json({ data: {} });
     }
+
+    filteredIds = rows
+      .filter((r) => memberProjectIds.has(r.projectId))
+      .map((r) => r.id);
+  }
+
+  if (filteredIds.length === 0) {
+    return NextResponse.json({ data: {} });
   }
 
   const rows = await prisma.attachment.findMany({

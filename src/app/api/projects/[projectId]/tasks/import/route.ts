@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { parseCsvTemplate, importWbsTemplate, validateWbsTemplate } from '@/services/task.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { logUnknownError } from '@/services/error-log.service';
 
 export const runtime = 'nodejs';
 
@@ -55,7 +56,10 @@ export async function POST(
       csvText = await req.text();
     }
   } catch (e) {
-    console.error('[wbs-import] body parse error', e);
+    await logUnknownError('server', e, {
+      userId: user.id,
+      context: { path: 'POST /api/projects/[id]/tasks/import', stage: 'body-parse' },
+    });
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: 'リクエストボディを読み取れませんでした' } },
       { status: 400 },
@@ -106,13 +110,15 @@ export async function POST(
         { status: 400 },
       );
     }
-    // PR #114 (2026-04-24 セキュリティ監査): Prisma の ValidationError / KnownRequestError は
-    // 内部カラム名・制約名を含んだメッセージを返すため、body に混入させると Network タブ経由で
-    // スキーマ構造が漏れる。以下は server log にのみ詳細を出力し、レスポンスは固定文言に統一。
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('WBS import error:', errorMessage, e instanceof Error ? e.stack : undefined);
+    // PR #115 (2026-04-24): console.* 廃止。system_error_logs に保存してユーザには
+    // 固定文言「内部エラーが発生しました」のみ返す (機密情報を Network / Console にも出さない)。
+    // PR #114 の console.error 版の上位互換 (Server ログ経由の機密情報漏洩を根絶)。
+    await logUnknownError('server', e, {
+      userId: user.id,
+      context: { path: 'POST /api/projects/[id]/tasks/import', stage: 'import-execute' },
+    });
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'インポート処理中にエラーが発生しました' } },
+      { error: { code: 'INTERNAL_ERROR', message: '内部エラーが発生しました' } },
       { status: 500 },
     );
   }

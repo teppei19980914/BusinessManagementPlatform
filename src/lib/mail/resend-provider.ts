@@ -1,5 +1,11 @@
 import type { MailProvider, MailParams, MailResult } from './mail-provider';
+import { recordError, logUnknownError } from '@/services/error-log.service';
 
+/**
+ * PR #115 (2026-04-24): 旧実装は console.warn / console.error / console.log を直接使っていたが、
+ * 機密情報 (API key の有無、送信先メール、エラー詳細) が Console に出るため、
+ * 全て system_error_logs 経由に切替。
+ */
 export class ResendMailProvider implements MailProvider {
   private apiKey: string;
   private from: string;
@@ -9,13 +15,21 @@ export class ResendMailProvider implements MailProvider {
     this.from = process.env.MAIL_FROM || 'onboarding@resend.dev';
 
     if (!this.apiKey) {
-      console.warn('[ResendMailProvider] RESEND_API_KEY が未設定です。メール送信は失敗します。');
+      void recordError({
+        severity: 'warn',
+        source: 'mail',
+        message: '[ResendMailProvider] RESEND_API_KEY が未設定です',
+      });
     }
   }
 
   async send(params: MailParams): Promise<MailResult> {
     if (!this.apiKey) {
-      console.error('[ResendMailProvider] RESEND_API_KEY が未設定のためメール送信をスキップしました。');
+      await recordError({
+        severity: 'error',
+        source: 'mail',
+        message: '[ResendMailProvider] RESEND_API_KEY が未設定のためスキップ',
+      });
       return { success: false, error: 'RESEND_API_KEY is not configured' };
     }
 
@@ -37,15 +51,27 @@ export class ResendMailProvider implements MailProvider {
 
       if (!res.ok) {
         const errorText = await res.text();
-        console.error(`[ResendMailProvider] 送信失敗 (${res.status}): ${errorText}`);
+        await recordError({
+          severity: 'error',
+          source: 'mail',
+          message: `[ResendMailProvider] 送信失敗 (${res.status})`,
+          context: { status: res.status, responseText: errorText.slice(0, 500) },
+        });
         return { success: false, error: errorText };
       }
 
       const data = await res.json();
-      console.log(`[ResendMailProvider] 送信成功: ${data.id} → ${params.to}`);
+      await recordError({
+        severity: 'info',
+        source: 'mail',
+        message: '[ResendMailProvider] 送信成功',
+        context: { messageId: data.id, to: params.to },
+      });
       return { success: true, messageId: data.id };
     } catch (e) {
-      console.error('[ResendMailProvider] 送信エラー:', e);
+      await logUnknownError('mail', e, {
+        context: { provider: 'resend', to: params.to },
+      });
       return { success: false, error: String(e) };
     }
   }

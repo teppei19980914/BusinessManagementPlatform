@@ -1,9 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
-import { ConsoleMailProvider } from './console-provider';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-describe('ConsoleMailProvider', () => {
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    systemErrorLog: { create: vi.fn() },
+  },
+}));
+
+import { ConsoleMailProvider } from './console-provider';
+import { prisma } from '@/lib/db';
+
+describe('ConsoleMailProvider (PR #115: DB 記録に移行)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.systemErrorLog.create).mockResolvedValue({} as never);
+  });
+
   it('send は常に success: true を返し、messageId を含む', async () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const provider = new ConsoleMailProvider();
 
     const result = await provider.send({
@@ -14,23 +26,27 @@ describe('ConsoleMailProvider', () => {
 
     expect(result.success).toBe(true);
     expect(result.messageId).toMatch(/^console-\d+$/);
-    expect(spy).toHaveBeenCalled();
-
-    spy.mockRestore();
+    // PR #115: console ではなく systemErrorLog に保存される
+    expect(prisma.systemErrorLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          severity: 'info',
+          source: 'mail',
+          message: expect.stringContaining('ConsoleMailProvider'),
+        }),
+      }),
+    );
   });
 
-  it('長い HTML は 200 文字で切り詰めて出力する', async () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  it('長い HTML は 200 文字で切り詰めて DB に保存する', async () => {
     const provider = new ConsoleMailProvider();
     const longHtml = 'x'.repeat(500);
 
     await provider.send({ to: 'a@b.co', subject: 's', html: longHtml });
 
-    const logs = spy.mock.calls.map((c) => c.join(' ')).join('\n');
-    // 500 文字全部は出力されない (200 文字 + ...)
-    expect(logs).not.toContain('x'.repeat(500));
-    expect(logs).toContain('...');
-
-    spy.mockRestore();
+    const call = vi.mocked(prisma.systemErrorLog.create).mock.calls[0][0];
+    const context = (call.data as { context: { htmlPreview: string } }).context;
+    expect(context.htmlPreview.length).toBeLessThanOrEqual(200);
+    expect(context.htmlPreview).not.toContain('x'.repeat(500));
   });
 });

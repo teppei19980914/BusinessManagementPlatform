@@ -1,8 +1,11 @@
 import type { MailProvider, MailParams, MailResult } from './mail-provider';
+import { recordError, logUnknownError } from '@/services/error-log.service';
 
 /**
  * Brevo（旧Sendinblue）トランザクションメール送信プロバイダ
  * 公式API: https://developers.brevo.com/docs/send-a-transactional-email
+ *
+ * PR #115 (2026-04-24): console.* を全て system_error_logs に切替。
  */
 export class BrevoMailProvider implements MailProvider {
   private apiKey: string;
@@ -15,15 +18,21 @@ export class BrevoMailProvider implements MailProvider {
     this.senderName = process.env.MAIL_FROM_NAME || 'たすきば';
 
     if (!this.apiKey) {
-      console.warn('[BrevoMailProvider] BREVO_API_KEY が未設定です。メール送信は失敗します。');
+      void recordError({
+        severity: 'warn',
+        source: 'mail',
+        message: '[BrevoMailProvider] BREVO_API_KEY が未設定です',
+      });
     }
   }
 
   async send(params: MailParams): Promise<MailResult> {
     if (!this.apiKey) {
-      console.error(
-        '[BrevoMailProvider] BREVO_API_KEY が未設定のためメール送信をスキップしました。',
-      );
+      await recordError({
+        severity: 'error',
+        source: 'mail',
+        message: '[BrevoMailProvider] BREVO_API_KEY が未設定のためスキップ',
+      });
       return { success: false, error: 'BREVO_API_KEY is not configured' };
     }
 
@@ -45,15 +54,27 @@ export class BrevoMailProvider implements MailProvider {
 
       if (!res.ok) {
         const errorText = await res.text();
-        console.error(`[BrevoMailProvider] 送信失敗 (${res.status}): ${errorText}`);
+        await recordError({
+          severity: 'error',
+          source: 'mail',
+          message: `[BrevoMailProvider] 送信失敗 (${res.status})`,
+          context: { status: res.status, responseText: errorText.slice(0, 500) },
+        });
         return { success: false, error: errorText };
       }
 
       const data = await res.json();
-      console.log(`[BrevoMailProvider] 送信成功: ${data.messageId} → ${params.to}`);
+      await recordError({
+        severity: 'info',
+        source: 'mail',
+        message: '[BrevoMailProvider] 送信成功',
+        context: { messageId: data.messageId, to: params.to },
+      });
       return { success: true, messageId: data.messageId };
     } catch (e) {
-      console.error('[BrevoMailProvider] 送信エラー:', e);
+      await logUnknownError('mail', e, {
+        context: { provider: 'brevo', to: params.to },
+      });
       return { success: false, error: String(e) };
     }
   }

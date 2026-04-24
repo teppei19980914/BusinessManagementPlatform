@@ -553,7 +553,7 @@ PR #93 hotfix 2 で `playwright.config.ts` の `trace` / `screenshot` / `video` 
 
 ### 9.5 新機能追加時の E2E カバレッジ横展開 (必須)
 
-**新しい `page.tsx` や `route.ts` を追加したら、必ず `docs/E2E_COVERAGE.md` を更新**してください。
+**新しい `page.tsx` や `route.ts` を追加したら、必ず `docs/developer/E2E_COVERAGE.md` を更新**してください。
 更新がないと `ci.yml` の `e2e:coverage-check` ステップが fail し、マージできません。
 
 更新パターン:
@@ -567,6 +567,26 @@ PR #93 hotfix 2 で `playwright.config.ts` の `trace` / `screenshot` / `video` 
 # 意図的にカバー対象外
 - [ ] `/admin/legacy-report` — skip: read-only / 優先度低
 ```
+
+#### 9.5.1 漏れた場合の CI 連鎖 fail パターン (PR #115 で得た知見)
+
+`E2E coverage manifest check` が fail すると、**後続の `Test (vitest + coverage)` ステップが
+skip され、`coverage/coverage-summary.json` が生成されない**。その結果
+`Report coverage (PR comment)` ステップが `if: always()` で走るものの、
+`coverage-summary.json` が不在で ENOENT エラーとなり **2 ステップが赤で表示される**。
+
+見かけの症状:
+- Actions 一覧で `E2E coverage manifest check` と `Report coverage` の 2 ステップが ✗
+- `Report coverage` の log に `Error: ENOENT: no such file or directory, open '.../coverage-summary.json'`
+
+**真因は 1 つ**: `E2E_COVERAGE.md` に新規 `route.ts` / `page.tsx` の記載漏れ。
+manifest を修正するだけで 2 つの赤ランプが同時に解消する (Report coverage は副次症状)。
+
+デバッグ時のコツ:
+1. **まず Actions 一覧の最初の ✗ を見る** — 後続の fail は大体その連鎖症状
+2. `pnpm e2e:coverage-check` をローカルで実行して同じエラーが出るか確認
+3. `script/check-e2e-coverage.ts` の出力にある「未記載の機能」を手動で `E2E_COVERAGE.md`
+   に追記 (`[x]` / `[ ] skip: <理由>` のどちらかを選ぶ)
 
 ### 9.6 視覚回帰のベースライン運用 (PR #90 合意 → PR #96 で自動化)
 
@@ -896,6 +916,74 @@ PR 本文には以下を含めると後の引き継ぎがスムーズです:
    (詳細: OPERATION.md §3)
 3. Vercel が `main` ブランチを自動デプロイ
 4. 本番 URL で動作確認
+
+### 10.5 並行 PR でコンフリクトが出た場合の解消手順 (PR #115 で得た知見)
+
+複数 PR が同時進行中に **同一ファイルを触る** と、先にマージされた PR の内容が
+後続 PR ベースに存在せず GitHub UI で "This branch has conflicts" 表示が出る。
+本プロジェクトでは daily branch + feature PR 並走運用のため発生しやすい。
+
+#### 典型パターン (PR #115 実例)
+
+- PR #114 (security hardening) がマージされた後、PR #115 (error log 基盤) が
+  コンフリクト表示。衝突したファイル:
+  1. `src/app/api/cron/cleanup-accounts/route.ts` — PR #114 が修正、PR #115 が削除 (modify/delete conflict)
+  2. `src/app/api/projects/[projectId]/tasks/import/route.ts` — 両 PR が同一 catch 句を編集 (content conflict)
+  3. `docs/developer/DESIGN.md` — 両 PR が §9.8 配下に新サブ節追加 (隣接挿入で誤検知)
+
+#### 解消手順 (CLI で実施)
+
+```bash
+# 1. PR ブランチに戻り、最新 main を取得
+git checkout feat/pr-xxx-...
+git fetch origin main
+
+# 2. main をマージ (rebase でも可)
+git merge origin/main
+# → CONFLICT (content) や CONFLICT (modify/delete) が出る
+
+# 3. 各ファイルの解消方針を決める
+#    - content conflict (<<<<<< / ====== / >>>>>>): エディタで手動統合
+#      → 「先行 PR の意図」と「本 PR の意図」を両方活かす (両方 keep が基本)
+#    - modify/delete conflict: ファイル自体の存続を決める
+#      → git rm <path> で削除側確定、または戻して修正版を残す
+
+# 4. 解消したら add → commit (merge commit)
+git add <解決済ファイル>
+git commit -m "Merge main into feat/pr-xxx: 先行 PR #NNN とのコンフリクト解消"
+
+# 5. lint / test / build で回帰確認
+pnpm lint && pnpm test --run && pnpm build
+
+# 6. push
+git push
+```
+
+#### 解消時の判断基準
+
+| 衝突パターン | 判断 |
+|---|---|
+| 同じバグ修正を両 PR で実装 (意図同じ) | **後続 PR (上位互換) の実装を採用**、先行 PR 実装は削除 |
+| 別々の機能追加 (隣接挿入) | **両方 keep**、マーカーだけ除去 |
+| 片方が削除、もう片方が修正 | **削除側が意図的なら削除確定** (git rm)、そうでないなら復元 + 修正統合 |
+| ドキュメントの表/セクション追加 | **両方 keep**、章番号は時系列順で整理 |
+
+#### 予防策
+
+- PR を小さく保つ (1 PR = 1 コンセプト)
+- 長期 PR は定期的に `git merge origin/main` で main 追従
+- 同じファイルを複数 PR で触る場合は PR の先後を事前に合意し、後続は先行マージ後に rebase
+
+### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
+
+Next.js は開発時 `.next/dev/types/validator.ts` にルートハンドラの型情報を
+キャッシュする。**ファイル削除を伴うマージ**後にそのまま `pnpm build` すると、
+削除済みの `.next/dev/types/validator.ts` が消滅した route (例:
+`/api/cron/cleanup-accounts/route.js`) を import しようとして型エラーで
+build 失敗する。
+
+**対策**: コンフリクト解消後 (特にエンドポイント削除を含む場合) は必ず
+`rm -rf .next` で キャッシュを消してから build する。
 
 ---
 
