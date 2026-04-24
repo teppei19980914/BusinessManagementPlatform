@@ -553,7 +553,7 @@ PR #93 hotfix 2 で `playwright.config.ts` の `trace` / `screenshot` / `video` 
 
 ### 9.5 新機能追加時の E2E カバレッジ横展開 (必須)
 
-**新しい `page.tsx` や `route.ts` を追加したら、必ず `docs/E2E_COVERAGE.md` を更新**してください。
+**新しい `page.tsx` や `route.ts` を追加したら、必ず `docs/developer/E2E_COVERAGE.md` を更新**してください。
 更新がないと `ci.yml` の `e2e:coverage-check` ステップが fail し、マージできません。
 
 更新パターン:
@@ -567,6 +567,26 @@ PR #93 hotfix 2 で `playwright.config.ts` の `trace` / `screenshot` / `video` 
 # 意図的にカバー対象外
 - [ ] `/admin/legacy-report` — skip: read-only / 優先度低
 ```
+
+#### 9.5.1 漏れた場合の CI 連鎖 fail パターン (PR #115 で得た知見)
+
+`E2E coverage manifest check` が fail すると、**後続の `Test (vitest + coverage)` ステップが
+skip され、`coverage/coverage-summary.json` が生成されない**。その結果
+`Report coverage (PR comment)` ステップが `if: always()` で走るものの、
+`coverage-summary.json` が不在で ENOENT エラーとなり **2 ステップが赤で表示される**。
+
+見かけの症状:
+- Actions 一覧で `E2E coverage manifest check` と `Report coverage` の 2 ステップが ✗
+- `Report coverage` の log に `Error: ENOENT: no such file or directory, open '.../coverage-summary.json'`
+
+**真因は 1 つ**: `E2E_COVERAGE.md` に新規 `route.ts` / `page.tsx` の記載漏れ。
+manifest を修正するだけで 2 つの赤ランプが同時に解消する (Report coverage は副次症状)。
+
+デバッグ時のコツ:
+1. **まず Actions 一覧の最初の ✗ を見る** — 後続の fail は大体その連鎖症状
+2. `pnpm e2e:coverage-check` をローカルで実行して同じエラーが出るか確認
+3. `script/check-e2e-coverage.ts` の出力にある「未記載の機能」を手動で `E2E_COVERAGE.md`
+   に追記 (`[x]` / `[ ] skip: <理由>` のどちらかを選ぶ)
 
 ### 9.6 視覚回帰のベースライン運用 (PR #90 合意 → PR #96 で自動化)
 
