@@ -112,7 +112,9 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     const res = await postResponse;
     expect(res.ok(), `POST /api/customers failed: ${res.status()}`).toBeTruthy();
 
-    await page.waitForLoadState('networkidle');
+    // LESSONS §4.20 / §4.33: customers-client.tsx の handleCreate は POST 成功後
+    // router.refresh() を fire-and-forget で呼ぶ。page.reload で DB 真状態を取得。
+    await page.reload({ waitUntil: 'networkidle' });
     await expect(
       page.locator('tbody tr').filter({ hasText: CUSTOMER_NAME }).first(),
     ).toBeVisible({ timeout: 10_000 });
@@ -156,13 +158,19 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     await page.goto('/customers');
     await page.waitForLoadState('networkidle');
 
-    // window.confirm を許可
+    // window.confirm を許可 + DELETE API を click 前に予約 (§4.20/§4.33)
     page.once('dialog', (d) => d.accept());
+    const deleteRes = page.waitForResponse(
+      (r) => r.url().includes('/api/customers/') && r.request().method() === 'DELETE',
+    );
 
     const row = page.locator('tbody tr').filter({ hasText: CUSTOMER_NAME_EDITED }).first();
     await row.getByRole('button', { name: '削除' }).click();
+    const delRes = await deleteRes;
+    expect(delRes.ok(), `DELETE /api/customers failed: ${delRes.status()}`).toBeTruthy();
 
-    await page.waitForLoadState('networkidle');
+    // LESSONS §4.20 / §4.33: 削除後 router.refresh() fire-and-forget race を page.reload で回避
+    await page.reload({ waitUntil: 'networkidle' });
     await expect(
       page.locator('tbody tr').filter({ hasText: CUSTOMER_NAME_EDITED }),
     ).toHaveCount(0, { timeout: 10_000 });

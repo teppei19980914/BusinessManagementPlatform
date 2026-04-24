@@ -45,6 +45,9 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // PR #114 (2026-04-24 セキュリティ監査): X-Powered-By: Next.js ヘッダを抑止。
+  // フレームワーク情報を外部に漏らさない (既知脆弱性の絞り込みに悪用される経路を閉じる)。
+  poweredByHeader: false,
   // PR #90: next-intl の messages JSON は `./messages/${locale}.json` の動的 import
   // (src/i18n/request.ts) のため、Next.js の静的トレースで発見されず standalone
   // 出力に含まれない → SSR 時 "Cannot find module" で全ページ 500 になっていた。

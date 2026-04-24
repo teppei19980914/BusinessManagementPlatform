@@ -5,13 +5,22 @@
  *   振り返り記事に対して関係者がコメントを追加する。コメントは時系列で
  *   振り返りエントリ配下に表示され、議論の足跡を残す。
  *
- * 認可: checkProjectPermission('retrospective:comment')
+ * 認可 (2026-04-24 修正 L-3):
+ *   - プロジェクトのメンバーシップ必須 (viewer も含む基本読み取り権は checkProjectPermission で担保)
+ *   - **投稿自体は実際の ProjectMember の pm_tl / member のみ** (viewer は書き込み不可)。
+ *     UI 側で `canComment = projectRole === 'pm_tl' || 'member'` で制御しているが、
+ *     API 経由の直接 POST を含めて同じ境界を enforce する。
  *
- * 関連: DESIGN.md §5 (テーブル定義: retrospective_comments)
+ * 関連: DESIGN.md §5 (テーブル定義: retrospective_comments) / §8.3 (権限マトリクス)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
+import {
+  getAuthenticatedUser,
+  checkProjectPermission,
+  requireActualProjectMember,
+} from '@/lib/api-helpers';
+import { prisma } from '@/lib/db';
 import { addCommentSchema } from '@/lib/validators/retrospective';
 import { addComment } from '@/services/retrospective.service';
 
@@ -24,6 +33,20 @@ export async function POST(
   const { projectId, retroId } = await params;
   const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
+
+  // PR #114 (L-3): viewer ロールは書き込み不可。admin 短絡なしの実メンバーで projectRole 判定。
+  const memberOnly = await requireActualProjectMember(user, projectId);
+  if (memberOnly) return memberOnly;
+  const member = await prisma.projectMember.findFirst({
+    where: { projectId, userId: user.id },
+    select: { projectRole: true },
+  });
+  if (!member || member.projectRole === 'viewer') {
+    return NextResponse.json(
+      { error: { code: 'FORBIDDEN', message: 'コメント投稿権限がありません (viewer 不可)' } },
+      { status: 403 },
+    );
+  }
 
   const body = await req.json();
   const parsed = addCommentSchema.safeParse(body);

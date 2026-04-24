@@ -106,10 +106,13 @@ export async function POST(
         { status: 400 },
       );
     }
+    // PR #114 (2026-04-24 セキュリティ監査): Prisma の ValidationError / KnownRequestError は
+    // 内部カラム名・制約名を含んだメッセージを返すため、body に混入させると Network タブ経由で
+    // スキーマ構造が漏れる。以下は server log にのみ詳細を出力し、レスポンスは固定文言に統一。
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('WBS import error:', errorMessage);
+    console.error('WBS import error:', errorMessage, e instanceof Error ? e.stack : undefined);
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: `インポート処理中にエラーが発生しました: ${errorMessage}` } },
+      { error: { code: 'INTERNAL_ERROR', message: 'インポート処理中にエラーが発生しました' } },
       { status: 500 },
     );
   }

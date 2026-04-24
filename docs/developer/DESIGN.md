@@ -1645,6 +1645,45 @@ function toUserDTO(user: User): UserDTO {
 | セッション ID | 先頭 8 文字のみ表示 |
 | リクエストボディ | password フィールドを [REDACTED] に置換 |
 
+### 9.8.4 セキュリティ監査 (2026-04-24 / PR #114)
+
+ブラウザ開発者ツールの Network / Console タブから機密情報・クレデンシャル情報が漏洩しないことを確認するため、
+全 API ルート / service / config / DTO を網羅監査した。以下に検出事項とミティゲーションを記録する。
+
+| 重大度 | ID | 箇所 | 問題 | 対策 |
+|---|---|---|---|---|
+| High | H-1 | `/api/cron/cleanup-accounts` | `CRON_SECRET` 未設定時に短絡評価で認証バイパス → 外部から匿名 POST で全ユーザ論理削除・匿名化実行可能 | `if (!cronSecret \|\| authHeader !== ...)` に改修。未設定時は常に 401 |
+| High | H-2 | `/api/projects/[id]/tasks/import` | 500 エラー body に Prisma `e.message` を含め返し、スキーマ/制約名/衝突値が Network タブで漏洩 | 固定文言のみ返却、詳細は `console.error` のみ |
+| Medium | M-1 | `next.config.ts` | `X-Powered-By: Next.js` ヘッダ送出 (既知脆弱性絞り込みに悪用可) | `poweredByHeader: false` 明示 |
+| Medium | M-2 | `/api/knowledge` POST | 非メンバーが `projectIds` 指定で他プロジェクトにナレッジを注入可能 (PR #113 新権限方針と不整合) | projectIds 各項に対し `prisma.projectMember.findFirst` で確認、1 つでも非メンバーなら 403 |
+| Low | L-2 | `/api/auth/mfa/setup` | 有効化済ユーザも何度でも POST できシークレット平文が再取得可 | `generateMfaSecret` 冒頭で `mfaEnabled=true` なら `ALREADY_ENABLED` を throw、route は 409 |
+| Low | L-3 | `/api/projects/[id]/retrospectives/[retroId]/comments` | docstring は `retrospective:comment` 指定、実装は `project:read` で viewer も書ける | `requireActualProjectMember` + `projectRole !== 'viewer'` で書き込み制限 |
+
+#### 問題なし確認済項目 (監査対象として明示的にチェックし安全性を確認)
+
+- **User DTO** (`toUserDTO`): `passwordHash` / `mfaSecretEncrypted` / `mfaEnabled` / 生成トークンは含まない
+- **NextAuth session callback**: `id/systemRole/forcePasswordChange/mfaEnabled/mfaVerified/themePreference` のみコピー、JWT 自体はレスポンス body に出さず HttpOnly Cookie 経由
+- **MFA verify**: レスポンスは `{success:true}` のみ
+- **Recovery codes**: 初回平文返却のみ、以降は bcrypt ハッシュ。参照 GET エンドポイントなし
+- **`sanitizeForAudit`**: `passwordHash` / `mfaSecretEncrypted` を `[REDACTED]` 置換
+- **`NEXT_PUBLIC_*` の機密漏洩**: ソース内実参照ゼロ (Grep 全域確認済)
+- **Client component (`'use client'`) 内 `process.env` 参照**: ゼロ (server-only 境界維持)
+- **IDOR**: 他人の private memo / draft は `findFirst` 後 visibility / createdBy で fold、404 相当で秘匿 (403 と区別しないことで存在有無も漏らさない)
+
+#### 継続観察項目 (今回は修正見送り、次回以降のレビューで優先)
+
+- **`mfaSecretEncrypted` の暗号鍵**: `NEXTAUTH_SECRET` の先頭 32 bytes 流用 (JWT 署名鍵と同一系統)。
+  単一鍵漏洩で MFA シークレットも復号される設計上の tight coupling。
+  MVP 後に `MFA_ENCRYPTION_KEY` を独立 env 化 + KMS 管理へ移行予定 (ロードマップ Phase 2)
+- **`/api/admin/audit-logs` / `role-change-logs`**: admin にのみ他ユーザの email を返却。
+  要件によっては部分マスクに変更。運用ルールを OPERATION.md で明記
+- **振り返りコメント本文**: 非メンバーでも `visibility='public'` なら閲覧可。
+  組織判断で「業務詳細を含むので members のみ」にするか、`visibility` を 3 値化する余地あり
+- **SSRF via Attachment URL**: URL 型添付の preview 機能があれば `169.254.169.254` 等内部アドレスに
+  アクセス可能になる可能性。現状 preview は未実装だが、将来実装時は URL 安全性検証が必要
+
+---
+
 ### 9.9 CORS ポリシー
 
 **原則**: ワイルドカード（`*`）は使用禁止。`NEXTAUTH_URL` に設定されたオリジンのみ許可する。

@@ -22,10 +22,29 @@ export async function POST() {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const { secret, otpauthUri } = await generateMfaSecret(user.id);
-  const qrCodeDataUrl = await QRCode.toDataURL(otpauthUri);
-
-  return NextResponse.json({
-    data: { secret, qrCodeDataUrl },
-  });
+  try {
+    const { secret, otpauthUri } = await generateMfaSecret(user.id);
+    const qrCodeDataUrl = await QRCode.toDataURL(otpauthUri);
+    return NextResponse.json({
+      data: { secret, qrCodeDataUrl },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // PR #114: 既に有効化済は 409 で拒否 (シークレット再取得経路を閉じる)
+    if (msg === 'ALREADY_ENABLED') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'ALREADY_ENABLED',
+            message: 'MFA は既に有効化されています。再設定する場合は一度無効化してください',
+          },
+        },
+        { status: 409 },
+      );
+    }
+    if (msg === 'NOT_FOUND') {
+      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    throw e;
+  }
 }

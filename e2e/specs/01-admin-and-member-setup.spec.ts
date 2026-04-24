@@ -136,8 +136,11 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     const response = await enableRes;
     expect(response.ok(), `MFA enable API failed: ${response.status()}`).toBeTruthy();
 
-    // router.refresh() 後の再レンダを待つ (Server Component の再取得 + Badge 描画)
-    await page.waitForLoadState('networkidle');
+    // LESSONS §4.20 / §4.33: settings-client.tsx の handleMfaEnable は fetch 成功後
+    // `router.refresh()` を fire-and-forget で呼ぶため、waitForLoadState('networkidle')
+    // だけでは RSC fetch が始まる前に 0ms で解決し、UI 再レンダが間に合わないケースが
+    // あった (PR #114 CI で顕在化)。`page.reload()` で DB の真状態を強制取得する。
+    await page.reload({ waitUntil: 'networkidle' });
 
     // PR #91 で admin は常に強制有効化バッジ表示。
     // 有効化成功時は「MFA を有効化する」ボタンが消えることも併せて確認する。
