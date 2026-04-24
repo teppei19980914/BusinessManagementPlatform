@@ -1,7 +1,7 @@
 import { auth } from '@/lib/auth';
 import { redirect, notFound } from 'next/navigation';
 import { LOGIN_ROUTE } from '@/config';
-import { checkMembership } from '@/lib/permissions';
+import { checkMembership, getActualProjectRole } from '@/lib/permissions';
 import { listRisks } from '@/services/risk.service';
 import { listMembers } from '@/services/member.service';
 import { RisksClient } from '../risks/risks-client';
@@ -20,10 +20,13 @@ export default async function IssuesPage({ params }: Props) {
   const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
   if (!membership.isMember) notFound();
 
-  const [risks, members] = await Promise.all([
+  const [risks, members, actualRole] = await Promise.all([
     listRisks(projectId, session.user.id, session.user.systemRole),
     listMembers(projectId),
+    // 2026-04-24: 実際の ProjectMember 判定。admin 短絡なし。
+    getActualProjectRole(projectId, session.user.id),
   ]);
+  const canCreate = actualRole === 'pm_tl' || actualRole === 'member';
 
   return (
     <RisksClient
@@ -31,8 +34,8 @@ export default async function IssuesPage({ params }: Props) {
       risks={risks}
       members={members}
       typeFilter="issue"
-      canEdit={session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl'}
-      canCreate={session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl' || membership.projectRole === 'member'}
+      canCreate={canCreate}
+      currentUserId={session.user.id}
       systemRole={session.user.systemRole}
     />
   );

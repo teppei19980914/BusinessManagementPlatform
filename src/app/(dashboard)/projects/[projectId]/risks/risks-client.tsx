@@ -58,8 +58,10 @@ type Props = {
   projectId: string;
   risks: RiskDTO[];
   members: MemberDTO[];
-  canEdit: boolean;
+  /** 2026-04-24: 起票ボタンの表示可否 (実際の ProjectMember の pm_tl/member のみ true) */
   canCreate: boolean;
+  /** 2026-04-24: 作成者本人判定に使用 (reporterId === currentUserId で編集/削除許可) */
+  currentUserId: string;
   systemRole: string;
   /** PR #60 #1: 'risk' / 'issue' どちらか固定で表示 (未指定なら従来通り両方) */
   typeFilter?: 'risk' | 'issue';
@@ -73,7 +75,7 @@ const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
   low: 'secondary',
 };
 
-export function RisksClient({ projectId, risks, members, canCreate, systemRole, typeFilter, onReload }: Props) {
+export function RisksClient({ projectId, risks, members, canCreate, currentUserId, systemRole, typeFilter, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
   const reload = useCallback(async () => {
@@ -355,16 +357,22 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
             <ResizableHead columnKey="createdAt" defaultWidth={110}>起票日</ResizableHead>
             {/* PR #67: 添付リンク列 */}
             <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-            {canCreate && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
+            {/* 2026-04-24: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す */}
+            {filteredRisks.some((x) => x.reporterId === currentUserId) && (
+              <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filteredRisks.map((r) => (
+          {filteredRisks.map((r) => {
+            const isOwner = r.reporterId === currentUserId;
+            const canRowEdit = isOwner; // 2026-04-24: 編集は作成者本人のみ
+            return (
             <TableRow
               key={r.id}
-              // Req 8: 行クリックで編集ダイアログを開く (canCreate = メンバー以上)
-              className={canCreate ? 'cursor-pointer hover:bg-muted' : ''}
-              onClick={canCreate ? () => setEditingRisk(r) : undefined}
+              // 2026-04-24: 行クリックで編集ダイアログ (作成者本人のみ active)
+              className={canRowEdit ? 'cursor-pointer hover:bg-muted' : ''}
+              onClick={canRowEdit ? () => setEditingRisk(r) : undefined}
             >
               {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? 'リスク' : '課題'}</Badge></TableCell>}
               <TableCell className="font-medium">{r.title}</TableCell>
@@ -385,7 +393,8 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />
               </TableCell>
-              {canCreate && (
+              {/* 2026-04-24: 削除ボタンは作成者本人のみ (admin は全○○ から別経路) */}
+              {isOwner && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="outline"
@@ -404,11 +413,18 @@ export function RisksClient({ projectId, risks, members, canCreate, systemRole, 
                 </TableCell>
               )}
             </TableRow>
-          ))}
+            );
+          })}
           {filteredRisks.length === 0 && (
             <TableRow>
-              {/* PR #67: 添付列 +1 */}
-              <TableCell colSpan={(canCreate ? 8 : 7) + (typeFilter ? 0 : 1)} className="py-8 text-center text-muted-foreground">
+              {/* PR #67: 添付列 +1、2026-04-24: actions 列は自分の行があるときのみ +1 */}
+              <TableCell
+                colSpan={
+                  (filteredRisks.some((x) => x.reporterId === currentUserId) ? 8 : 7)
+                  + (typeFilter ? 0 : 1)
+                }
+                className="py-8 text-center text-muted-foreground"
+              >
                 {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク / 課題がありません'}
               </TableCell>
             </TableRow>

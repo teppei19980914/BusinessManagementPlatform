@@ -44,6 +44,8 @@ export type RetroDTO = {
   state: string;
   // PR #60: 公開範囲 (draft / public)
   visibility: string;
+  /** 2026-04-24: UI 側で「自分が作成者か」を判定するために DTO に含める */
+  createdBy: string;
   createdAt: string;
   comments: { id: string; userName: string; content: string; createdAt: string }[];
 };
@@ -124,6 +126,7 @@ export async function listAllRetrospectivesForViewer(
       improvements: r.improvements,
       state: r.state,
       visibility: r.visibility,
+      createdBy: r.createdBy,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
       createdByName: isMember ? userMap.get(r.createdBy) ?? null : null,
@@ -176,6 +179,7 @@ export async function listRetrospectives(
     improvements: r.improvements,
     state: r.state,
     visibility: r.visibility,
+    createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
     comments: r.comments.map((c) => ({
       id: c.id,
@@ -221,6 +225,7 @@ export async function createRetrospective(
     improvements: r.improvements,
     state: r.state,
     visibility: r.visibility,
+    createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
     comments: [],
   };

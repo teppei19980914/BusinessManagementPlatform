@@ -49,13 +49,17 @@ import type { RetroDTO } from '@/services/retrospective.service';
 type Props = {
   projectId: string;
   retros: RetroDTO[];
-  canEdit: boolean;
+  /** 2026-04-24: 振り返り作成ボタンの表示可否 (実際の ProjectMember の pm_tl/member のみ true) */
+  canCreate: boolean;
+  /** コメント投稿可否 (ProjectMember ならコメント可) */
   canComment: boolean;
+  /** 作成者本人判定用 (createdBy === currentUserId で編集/削除許可) */
+  currentUserId: string;
   /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
   onReload?: () => Promise<void> | void;
 };
 
-export function RetrospectivesClient({ projectId, retros, canEdit, canComment, onReload }: Props) {
+export function RetrospectivesClient({ projectId, retros, canCreate, canComment, currentUserId, onReload }: Props) {
   const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
@@ -157,8 +161,8 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">振り返り</h2>
-        {canEdit && (
+        <h2 className="text-xl font-semibold">振り返り一覧</h2>
+        {canCreate && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">振り返り作成</DialogTrigger>
             <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
@@ -215,12 +219,15 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
         <p className="py-8 text-center text-muted-foreground">振り返りがありません</p>
       )}
 
-      {retros.map((retro) => (
+      {retros.map((retro) => {
+        // 2026-04-24: 作成者本人のみ編集/確定/削除可
+        const isOwner = retro.createdBy === currentUserId;
+        return (
         <div
           key={retro.id}
-          className={`rounded-lg border p-6 space-y-4 ${canEdit ? 'cursor-pointer hover:bg-muted/50' : ''}`}
-          // Req 8: カード自体クリックで編集ダイアログ (内部ボタンは stopPropagation)
-          onClick={canEdit ? () => setEditingRetro(retro) : undefined}
+          className={`rounded-lg border p-6 space-y-4 ${isOwner ? 'cursor-pointer hover:bg-muted/50' : ''}`}
+          // 2026-04-24: カードクリック編集は作成者本人のみ active (admin は全振り返りから削除)
+          onClick={isOwner ? () => setEditingRetro(retro) : undefined}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -230,14 +237,14 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
               </Badge>
             </div>
             <div className="flex items-center gap-2">
-              {canEdit && retro.state !== 'confirmed' && (
+              {isOwner && retro.state !== 'confirmed' && (
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={(e) => { e.stopPropagation(); handleConfirm(retro.id); }}
                 >確定</Button>
               )}
-              {canEdit && (
+              {isOwner && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -286,7 +293,8 @@ export function RetrospectivesClient({ projectId, retros, canEdit, canComment, o
             )}
           </div>
         </div>
-      ))}
+        );
+      })}
 
       <RetrospectiveEditDialog
         retro={editingRetro}

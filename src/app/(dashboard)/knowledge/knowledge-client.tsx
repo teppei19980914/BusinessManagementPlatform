@@ -50,6 +50,8 @@ import {
   ResizableHead,
   ResetColumnsButton,
 } from '@/components/ui/resizable-columns';
+// 2026-04-24: 全ナレッジから admin が管理削除するボタン
+import { AdminKnowledgeDeleteButton } from './admin-delete-button';
 
 type Props = {
   initialKnowledge: AllKnowledgeDTO[];
@@ -66,11 +68,12 @@ type Props = {
  * 件数が増えたらサーバ検索に切替を検討)。
  */
 
-export function KnowledgeClient({ initialKnowledge }: Props) {
+export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
   const router = useRouter();
+  const isAdmin = systemRole === 'admin';
   const [keyword, setKeyword] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  // Req 9: 行クリックで編集 (メンバーのみ canAccessProject=true で有効)
+  // 2026-04-24: 全ナレッジは全員 read-only。行クリックで参照のみ (編集はプロジェクト内一覧から)。
   const [editingKnowledge, setEditingKnowledge] = useState<AllKnowledgeDTO | null>(null);
 
   // クライアント側フィルタ (initialKnowledge をそのまま絞り込み)
@@ -143,6 +146,8 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
             <ResizableHead columnKey="updatedBy" defaultWidth={120}>更新者</ResizableHead>
             {/* PR #67: 添付リンク列 */}
             <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
+            {/* 2026-04-24: admin の管理削除ボタン列 */}
+            {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -201,12 +206,18 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
               </TableCell>
+              {/* 2026-04-24: 全ナレッジからの管理削除 (admin only) */}
+              {isAdmin && (
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <AdminKnowledgeDeleteButton knowledgeId={k.id} label={k.title} />
+                </TableCell>
+              )}
             </TableRow>
           ))}
           {filtered.length === 0 && (
             <TableRow>
-              {/* PR #67: 添付列 +1 */}
-              <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
+              {/* PR #67: 添付列 +1、2026-04-24: admin 時のみ +1 */}
+              <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-muted-foreground">
                 ナレッジがありません
               </TableCell>
             </TableRow>
@@ -221,7 +232,8 @@ export function KnowledgeClient({ initialKnowledge }: Props) {
         open={editingKnowledge != null}
         onOpenChange={(v) => { if (!v) setEditingKnowledge(null); }}
         onSaved={async () => { router.refresh(); }}
-        readOnly={editingKnowledge != null && !editingKnowledge.canAccessProject}
+        // 2026-04-24: 全ナレッジは編集不可 (読み取り専用)。編集は ○○一覧 経由。
+        readOnly={true}
       />
     </div>
   );
