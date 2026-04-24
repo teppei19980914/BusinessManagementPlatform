@@ -2064,3 +2064,42 @@ admin ログイン時のナビ並びは左から順に:
 - API サーバは `THEMES` 定数に含まれるキー以外を拒否 (400 VALIDATION_ERROR)
 - クライアントからの任意文字列による CSS 注入・データ汚染を防ぐ
 - セッション JWT 上のテーマ値を layout 表示前に `toSafeThemeId()` で丸める (二重防御)
+
+## 24. 言語・タイムゾーン設定 (PR #118/#119 追加)
+
+### 24.1 設定画面での選択肢
+
+**設定 → 言語・タイムゾーン**に 2 つのセレクトボックスを配置:
+
+- **言語**: `SUPPORTED_LOCALES` (`src/config/i18n.ts`) のキー + 「システム既定を使用」
+  - 現在サポート: `ja-JP` / `en-US` (後続 PR でメッセージカタログを拡充)
+- **タイムゾーン**: `Intl.supportedValuesOf('timeZone')` で動的生成した IANA 名一覧 + 「システム既定を使用」
+  - ブラウザ非対応時は代表値 (UTC, Asia/Tokyo, America/New_York 等) の fallback
+
+### 24.2 既定値と永続化
+
+- 既定は両方とも「システム既定を使用」(= null 保存) → `src/config/i18n.ts` の `DEFAULT_TIMEZONE` / `DEFAULT_LOCALE` (env で上書き可) が適用
+- ユーザが変更した値は `users.timezone` / `users.locale` に保存 (PR #118 マイグレーション済)
+- null へ戻すことも可能 (UI 上「システム既定を使用」を選択)
+
+### 24.3 反映タイミング
+
+1. 設定画面で選択 → 「保存」押下
+2. `PATCH /api/settings/i18n` で DB 更新
+3. `useSession().update({ timezone, locale })` で JWT 再発行
+4. `router.refresh()` でサーバコンポーネント再描画 + `useFormatters()` が新値を反映
+5. 全画面の日時表記が即時切り替わる (`2026/04/24 09:00` → `04/24/2026 00:00` 等)
+
+### 24.4 データ格納方針
+
+- **DB**: 常に UTC (`timestamptz`) で格納 / API 入出力は ISO 8601 UTC (`...Z`)
+- **描画**: `formatDate` / `formatDateTime` / `formatDateTimeFull` ヘルパ経由で描画時に解決
+- **入力**: 現時点はユーザ TZ で解釈する実装 (date-picker 入力時) は **未整備** (PR #121 予定)
+
+### 24.5 セキュリティ
+
+- API サーバは以下のみ受理 (400 VALIDATION_ERROR で拒否):
+  - `timezone`: `Intl.DateTimeFormat` が受理する IANA 名、または `null`
+  - `locale`: `SUPPORTED_LOCALES` のキー、または `null`
+- 任意文字列による DB 汚染 / 未整備ロケールへの誘導を防ぐ
+- 本人のみ更新可 (`/api/settings/i18n` は `getAuthenticatedUser` のみ要件、他ユーザ設定は触れない)

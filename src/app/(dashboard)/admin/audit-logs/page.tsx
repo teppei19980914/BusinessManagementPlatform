@@ -5,12 +5,14 @@ import { Badge } from '@/components/ui/badge';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-// PR #117: JST 固定タイムゾーン描画 (runtime TZ に依存しない一貫表記)
-import { formatDateTimeFull } from '@/lib/format';
+// PR #117 → PR #119: session 連携フォーマッタ (ユーザ個別 TZ/locale を反映)
+import { getServerFormatters } from '@/lib/server-formatters';
 
 export default async function AuditLogsPage() {
   const session = await auth();
   if (!session || session.user.systemRole !== 'admin') redirect('/');
+
+  const { formatDateTimeFull } = await getServerFormatters();
 
   const logs = await prisma.auditLog.findMany({
     include: { user: { select: { name: true } } },

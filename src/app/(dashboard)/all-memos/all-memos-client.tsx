@@ -37,7 +37,8 @@ import {
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
-import { formatDateTime } from '@/lib/format';
+// PR #119: session 連携フォーマッタ
+import { useFormatters } from '@/lib/use-formatters';
 import type { MemoDTO } from '@/services/memo.service';
 
 // /memos と同じラベルを使う (DRY)
@@ -47,6 +48,8 @@ const VISIBILITY_LABELS: Record<string, string> = {
 };
 
 export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
+  // PR #119: session 連携フォーマッタ
+  const { formatDateTime } = useFormatters();
   const [viewing, setViewing] = useState<MemoDTO | null>(null);
 
   // 添付列用バッチ取得 (PR #67)

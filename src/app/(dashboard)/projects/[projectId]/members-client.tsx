@@ -37,8 +37,8 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { PROJECT_ROLES } from '@/types';
 import type { MemberDTO } from '@/services/member.service';
 import type { UserDTO } from '@/services/user.service';
-// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
-import { formatDate } from '@/lib/format';
+// PR #117 → PR #119: session 連携フォーマッタ
+import { useFormatters } from '@/lib/use-formatters';
 
 type Props = {
   projectId: string;
@@ -52,6 +52,8 @@ type Props = {
 export function MembersClient({ projectId, members, allUsers, isAdmin, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  // PR #119: session 連携フォーマッタ
+  const { formatDate } = useFormatters();
   const reload = useCallback(async () => {
     if (onReload) {
       await onReload();

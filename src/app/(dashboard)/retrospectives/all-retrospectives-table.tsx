@@ -23,7 +23,8 @@ import {
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
 import type { AllRetroDTO } from '@/services/retrospective.service';
 import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
-import { formatDateTime } from '@/lib/format';
+// PR #119: session 連携フォーマッタ
+import { useFormatters } from '@/lib/use-formatters';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import {
@@ -44,6 +45,8 @@ export function AllRetrospectivesTable({
   isAdmin: boolean;
 }) {
   const router = useRouter();
+  // PR #119: session 連携フォーマッタ
+  const { formatDateTime } = useFormatters();
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
   // PR #67: 添付列用のバッチ取得
   const attachmentsByEntity = useBatchAttachments(

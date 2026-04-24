@@ -628,6 +628,30 @@ baseline workflow の実行 → 自動 commit → (それをトリガに) E2E CI
 baseline を上げずに fail したままマージすると main が red になり続けるので、
 **PR マージ前に必ず緑化**してください。
 
+#### ⚠️ 罠: `GITHUB_TOKEN` による auto-commit は次の workflow を起動しない (PR #119 で遭遇)
+
+baseline workflow の auto-commit (`Update visual baselines (workflow)` コミット)
+は既定の `GITHUB_TOKEN` で push されるため、**GitHub 仕様により後続 workflow を
+トリガしない** (無限ループ防止の仕様。[公式ドキュメント](https://docs.github.com/en/actions/security-guides/automatic-token-authentication#using-the-github_token-in-a-workflow)):
+
+> When you use the repository's GITHUB_TOKEN to perform tasks, events triggered
+> by the GITHUB_TOKEN will not create a new workflow run.
+
+**症状**: PR UI の required checks が延々と "Expected — Waiting for status to
+be reported" のまま変化しない。`gh run list --commit <auto-commit-SHA>` が空配列を返す。
+
+**対処**: 開発者の credentials (GITHUB_TOKEN ではない) で空コミットを push して CI を再起動する:
+
+```bash
+git pull --ff-only                                              # baseline auto-commit を取得
+git commit --allow-empty -m "chore: retrigger CI after baseline update"
+git push
+```
+
+**恒久対策候補** (PR #119 以降で検討): workflow 側で PAT (`secrets.CI_TRIGGER_PAT`) を
+使って push する / baseline push 後に `gh workflow run` で後続を明示起動する。
+PAT 管理コストと相談で決める。
+
 #### mask テクニック (PR #96)
 
 動的に変化するコンテンツ (RUN_ID 付きのテストデータ名等) を視覚回帰対象外にするには
@@ -1037,19 +1061,38 @@ JST ハードコード (PR #117) を設定可能化。
 環境変数 (APP_DEFAULT_TIMEZONE / APP_DEFAULT_LOCALE) ← オンプレ / クラウド環境ごとに指定
 ```
 
-**使い方**:
+**使い方** (PR #119 で整備済、通常こちらを使う):
+
+```tsx
+// クライアントコンポーネント: useFormatters フック
+'use client';
+import { useFormatters } from '@/lib/use-formatters';
+export function MyClient() {
+  const { formatDate, formatDateTime, formatDateTimeFull } = useFormatters();
+  return <span>{formatDate(iso)}</span>;
+}
+
+// サーバコンポーネント: getServerFormatters 関数
+import { getServerFormatters } from '@/lib/server-formatters';
+export default async function MyPage() {
+  const { formatDateTimeFull } = await getServerFormatters();
+  return <td>{formatDateTimeFull(log.createdAt.toISOString())}</td>;
+}
+```
+
+**低レベル API** (特殊ケース、通常は上記を使う):
 
 ```ts
-// (1) 引数なし = システムデフォルト (config の FALLBACK or env) で描画
+import { formatDate } from '@/lib/format';
+// (1) 引数なし = システムデフォルト (login page 等 session が無い場所で使用)
 formatDate(iso)
-
-// (2) ユーザ設定を反映 (推奨) — null は自動でシステムデフォルトにフォールバック
-formatDate(iso, { timeZone: session.user.timezone, locale: session.user.locale })
+// (2) 明示的 TZ/locale 指定 (テスト・固定表示等)
+formatDate(iso, { timeZone: 'UTC', locale: 'ja-JP' })
 ```
 
 **SSR/CSR 一貫性**: `session.user.timezone` / `session.user.locale` は JWT に格納され、
-サーバコンポーネントと "use client" の両方から同じ値を参照できるため、
-`formatDate(iso, opts)` の出力が両環境で一致する = ハイドレーション安全。
+`<SessionProvider session={session}>` (PR #119 で設定) により第 1 クライアントレンダリングで確定値が参照可能。
+サーバとクライアント両方で同じ値を使うためハイドレーション安全。
 
 **DB 格納方針**: DB の `timestamptz` は常に UTC で保存・交換する (Postgres 仕様通り)。
 描画時のみ TZ 解決を行う。API 境界も ISO 8601 UTC (`...Z` サフィックス) で統一。
@@ -1061,6 +1104,34 @@ formatDate(iso, { timeZone: session.user.timezone, locale: session.user.locale }
 APP_DEFAULT_TIMEZONE=America/New_York
 APP_DEFAULT_LOCALE=en-US
 ```
+
+### 10.9 設定画面にセクションを追加するときの CI 連鎖 fail パターン (PR #119 で得た知見)
+
+`settings-client.tsx` に新しい Card セクションを追加したり、`src/app/api/settings/*`
+配下に route.ts を新設したりする場合、以下の **2 つの CI チェックが同時に fail** する。
+両方まとめて対処しないとマージできないので手順化する。
+
+**症状**:
+1. `E2E coverage manifest check` — 新規 `route.ts` が `E2E_COVERAGE.md` に未記載
+2. 視覚回帰 (`e2e/visual/dashboard-screens.spec.ts` / `settings-themes.spec.ts`) —
+   設定画面の高さが変わって baseline PNG と不一致
+
+**対処手順**:
+
+1. `docs/developer/E2E_COVERAGE.md` の「API Routes > その他」セクションに新規 route を追記
+   (即 E2E でカバーしないなら `[ ] /api/settings/xxx — skip: <理由>` の形式)
+2. `pnpm e2e:coverage-check` をローカル実行して green 確認
+3. `[gen-visual]` タグ付き commit を push して baseline を CI で再生成:
+   ```bash
+   git commit --allow-empty -m "chore: regenerate visual baselines for settings section [gen-visual]"
+   git push
+   ```
+4. "E2E Visual Baseline" workflow 完了後、自動 commit が push され E2E ワークフローが緑化する
+
+**なぜ両方同時に必要か**: `E2E coverage manifest check` が先に fail すると
+`Test (vitest + coverage)` が skip → `coverage-summary.json` 不在で
+`Report coverage` も連鎖 fail (§9.5.1 の PR #115 知見と同パターン)。
+視覚回帰 fail は独立だが、UI 変更を伴う PR では必ず同時に発生する。
 
 ---
 
@@ -1091,3 +1162,6 @@ APP_DEFAULT_LOCALE=en-US
 | 2026-04-21 | 初版作成 (PR #81)。`src/config/` 構造 / テーマ追加手順 / 機能 CRUD 手順 / i18n / テスト / デプロイを集約 |
 | 2026-04-24 | §10.7 追加 (PR #117)。日時描画ルール / ハイドレーション不一致防止ガイド |
 | 2026-04-24 | §10.8 追加 + §10.7 更新 (PR #118)。TZ/locale の 3 段階フォールバック / env 上書き / format ヘルパのオプション化 |
+| 2026-04-24 | §10.8 拡充 (PR #119)。`useFormatters()` / `getServerFormatters()` + 設定画面 UI + `/api/settings/i18n` の整備完了 |
+| 2026-04-24 | §10.9 追加 (PR #119 hotfix)。設定画面に Card 追加時の CI 連鎖 fail (coverage manifest + 視覚回帰) 対処手順 |
+| 2026-04-24 | §9.6 罠追記 (PR #119 hotfix 2)。GITHUB_TOKEN による auto-commit は次の workflow を起動しない問題と回避手順 |

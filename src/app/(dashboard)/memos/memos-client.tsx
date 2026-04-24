@@ -42,7 +42,8 @@ import {
 } from '@/components/attachments/staged-attachments-input';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
-import { formatDateTime } from '@/lib/format';
+// PR #119: session 連携フォーマッタ
+import { useFormatters } from '@/lib/use-formatters';
 import type { MemoDTO } from '@/services/memo.service';
 
 const VISIBILITY_LABELS: Record<string, string> = {
@@ -60,6 +61,8 @@ export function MemosClient({
   const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
+  // PR #119: session 連携フォーマッタ
+  const { formatDateTime } = useFormatters();
   const [memos, setMemos] = useState(initialMemos);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editing, setEditing] = useState<MemoDTO | null>(null);

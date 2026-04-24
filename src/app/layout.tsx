@@ -71,8 +71,12 @@ export default async function RootLayout({
           Provider があっても干渉しない。
         */}
         <NextIntlClientProvider locale={locale} messages={messages}>
-          {/* PR #67: MFA 検証ページで useSession / update を使うため全ページで SessionProvider を有効化 */}
-          <AppSessionProvider>{children}</AppSessionProvider>
+          {/*
+            PR #67: MFA 検証ページで useSession / update を使うため全ページで SessionProvider を有効化
+            PR #119: session を初期値として渡す。`useFormatters()` 等が第 1 レンダリングで
+            確定値を参照できるようにする (ハイドレーション安全)。
+          */}
+          <AppSessionProvider session={session}>{children}</AppSessionProvider>
         </NextIntlClientProvider>
       </body>
     </html>

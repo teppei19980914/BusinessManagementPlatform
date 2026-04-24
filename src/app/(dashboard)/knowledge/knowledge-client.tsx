@@ -42,7 +42,8 @@ import {
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
 import { KNOWLEDGE_TYPES } from '@/types';
 import type { AllKnowledgeDTO } from '@/services/knowledge.service';
-import { formatDateTime } from '@/lib/format';
+// PR #119: session 連携フォーマッタ
+import { useFormatters } from '@/lib/use-formatters';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import {
@@ -70,6 +71,8 @@ type Props = {
 
 export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
   const router = useRouter();
+  // PR #119: session 連携フォーマッタ
+  const { formatDateTime } = useFormatters();
   const isAdmin = systemRole === 'admin';
   const [keyword, setKeyword] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
