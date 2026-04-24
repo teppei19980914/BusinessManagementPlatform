@@ -180,3 +180,19 @@ md 未満でカード表示、md 以上で従来テーブル:
 | 日付 | 内容 |
 |---|---|
 | 2026-04-24 | 初版作成 (PR #128)。85 ファイル監査、8 テーブル特定、段階 PR 分割計画 (#128a-d) |
+| 2026-04-24 | PR #128a 完了: `/projects` 並列カードビュー |
+| 2026-04-24 | PR #128a-2 完了: WBS `/projects/[id]/tasks` 階層字下げカード (PC UX 完全保全) |
+| 2026-04-24 | PR #128b 完了: P2 横断 4 画面 (`/risks` / `/issues` / `/retrospectives` / `/knowledge`) |
+| 2026-04-24 | PR #128c 完了: P3 admin 5 画面 (`/all-memos` / `/admin/users` / `/admin/audit-logs` / `/admin/role-changes` / `/customers`)。`/admin/users` は `getLockBadgeProps` 外出しの純粋リファクタ同梱 |
+| 2026-04-24 | PR #128d 完了: fine-tune。MFA TOTP 入力 (`settings/settings-client.tsx`) に `inputMode="numeric"` / `pattern` / digit filter 統一、リカバリーコード 2 箇所 (`login/mfa/mfa-form.tsx`, `reset-password/page.tsx`) に `autoCapitalize="characters"` / `autoCorrect="off"` / `spellCheck={false}` 追加。その他 fine-tune 項目 (text-xs 64 箇所 / text-xl レスポンシブ化 / padding) は監査時点で影響低と判定済のためスコープ外。必要になれば将来個別 PR で対応。 |
+
+---
+
+## 全対応完了 (2026-04-24)
+
+**モバイル対応状況**: 全主要画面 (P1 / P2 / P3) のカード化完了、入力属性の最適化完了。
+
+今後の TODO:
+- モバイル視覚回帰 baseline 生成 (`[gen-visual]` で CI 生成)
+- E2E mobile project (PR #128 で追加) での回帰テスト実地確認
+- 将来発見された非レスポンシブ箇所は本書に追記 + 個別 PR で対応
