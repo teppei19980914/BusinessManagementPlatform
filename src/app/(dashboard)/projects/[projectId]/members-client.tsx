@@ -34,6 +34,8 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
+// PR #126: 件数が多くなる想定 (組織成長に追従) の Select には SearchableSelect を使う
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { PROJECT_ROLES } from '@/types';
 import type { MemberDTO } from '@/services/member.service';
 import type { UserDTO } from '@/services/user.service';
@@ -137,13 +139,20 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
                   <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{addError}</div>
                 )}
                 <div className="space-y-2">
-                  <Label>ユーザ</Label>
-                  <select value={addForm.userId} onChange={(e) => setAddForm({ ...addForm, userId: e.target.value })} className={nativeSelectClass} required>
-                    <option value="">ユーザを選択...</option>
-                    {availableUsers.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name}（{u.email}）</option>
-                    ))}
-                  </select>
+                  <Label htmlFor="member-add-user">ユーザ</Label>
+                  {/* PR #126: 組織成長で候補が増える想定のため SearchableSelect を採用
+                      (viewport 比で検索欄の表示有無を動的判定) */}
+                  <SearchableSelect
+                    id="member-add-user"
+                    value={addForm.userId}
+                    onValueChange={(v) => setAddForm({ ...addForm, userId: v })}
+                    options={availableUsers.map((u) => ({
+                      value: u.id,
+                      label: `${u.name}（${u.email}）`,
+                    }))}
+                    placeholder="ユーザを選択..."
+                    aria-label="ユーザ選択"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>プロジェクトロール</Label>

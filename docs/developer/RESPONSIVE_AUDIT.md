@@ -114,7 +114,10 @@
 ```ts
 projects: [
   { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-  { name: 'chromium-mobile', use: { ...devices['iPhone 13'] } },  // 390x844
+  // chromium-mobile は Chromium エンジンで iPhone 13 をエミュレート。
+  // devices['iPhone 13'] は defaultBrowserType='webkit' を内包するため必ず override する
+  // (E2E_LESSONS_LEARNED §4.35: CI の playwright install chromium 限定と整合を取る)。
+  { name: 'chromium-mobile', use: { ...devices['iPhone 13'], defaultBrowserType: 'chromium' } },  // 390x844
   // tablet は優先度低のため初期は省略
 ],
 ```
