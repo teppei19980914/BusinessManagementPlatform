@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
+import { formatDateTimeFull } from '@/lib/format';
 
 export default function LoginPage() {
   return (
@@ -56,9 +58,9 @@ function LoginForm() {
       if (lock?.status === 'permanent_lock') {
         setError('アカウントがロックされています。管理者に解除を依頼してください。');
       } else if (lock?.status === 'temporary_lock') {
-        const unlockAt = new Date(lock.unlockAt);
+        // PR #117: JST 固定フォーマットで表示 (環境依存せず常に同じ表記)
         setError(
-          `ログイン失敗が続いたためアカウントが一時ロックされています。${unlockAt.toLocaleString('ja-JP')} 以降に再度お試しください。`,
+          `ログイン失敗が続いたためアカウントが一時ロックされています。${formatDateTimeFull(lock.unlockAt)} 以降に再度お試しください。`,
         );
       } else {
         setError('メールアドレスまたはパスワードが正しくありません');

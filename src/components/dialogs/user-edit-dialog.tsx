@@ -13,6 +13,8 @@ import {
 import { SYSTEM_ROLES } from '@/types';
 import { NAME_MAX_LENGTH } from '@/config';
 import type { UserDTO } from '@/services/user.service';
+// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
+import { formatDateTimeFull } from '@/lib/format';
 
 /**
  * ユーザ編集ダイアログ (PR #59 Req 3)。
@@ -193,7 +195,7 @@ export function UserEditDialog({
             <div>
               一時ロック:{' '}
               {temporaryLocked
-                ? `${new Date(user.lockedUntil!).toLocaleString('ja-JP')} まで`
+                ? `${formatDateTimeFull(user.lockedUntil!)} まで`
                 : 'なし'}
             </div>
             <div>永続ロック: {user.permanentLock ? 'あり (要解除)' : 'なし'}</div>
