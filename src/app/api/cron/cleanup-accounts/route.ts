@@ -11,11 +11,13 @@ import { prisma } from '@/lib/db';
 import { recordAuthEvent } from '@/services/auth-event.service';
 
 export async function POST(req: NextRequest) {
-  // 簡易認証（Cron Secret）
+  // PR #114 (2026-04-24 セキュリティ監査): CRON_SECRET が未設定の場合でも
+  // 必ず 401 を返す (旧実装は `if (cronSecret && …)` の短絡で未設定時に認証バイパス
+  // 可能だった — Network タブ経由で全ユーザの論理削除・匿名化が外部から匿名 POST できた)。
   const authHeader = req.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
   }
 
   const now = new Date();

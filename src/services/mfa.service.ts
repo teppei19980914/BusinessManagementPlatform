@@ -59,6 +59,13 @@ export async function generateMfaSecret(
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new Error('NOT_FOUND');
 
+  // PR #114 (2026-04-24 セキュリティ監査 L-2): 既に MFA 有効化済のユーザが再度 setup を
+  // 叩けるとシークレット平文が再取得でき、ブラウザ Network 経由で現行 MFA 秘密情報が
+  // 抜き取れる。以降の有効化フローは「解除 → 再 setup」の順序を強制する。
+  if (user.mfaEnabled) {
+    throw new Error('ALREADY_ENABLED');
+  }
+
   const otplib = await getOtplib();
   const secret = otplib.generateSecret();
   const otpauthUri = otplib.generateURI({
