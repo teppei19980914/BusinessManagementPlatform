@@ -278,6 +278,11 @@ export async function updateUserRole(
  *   - ProjectMember は**物理削除**
  *     理由: ProjectMember は「現在の所属」を表すテーブル。削除済みユーザが
  *     メンバー一覧に残ると「幽霊メンバー」になり、一括更新や権限判定でノイズ。
+ *   - **Memo は物理削除 (2026-04-24 追加)**
+ *     理由: メモは完全に個人資産で、作成者が退職したら残す意味がない。
+ *     RiskIssue / Retrospective / Knowledge が「組織の資産」として残すのと対照的に、
+ *     Memo はプロジェクト紐付けも持たない私的メモなので、ユーザ削除と同時に
+ *     カスケード物理削除する。
  *   - Session / recoveryCode / emailVerificationToken / passwordResetToken も物理削除
  *     理由: 再ログイン機会を完全に遮断するため。
  *   - 自分自身の削除は禁止 (最後の admin が自分を消すと詰むケースもあるが、
@@ -307,6 +312,8 @@ export async function deleteUser(
     prisma.emailVerificationToken.deleteMany({ where: { userId } }),
     prisma.passwordResetToken.deleteMany({ where: { userId } }),
     prisma.passwordHistory.deleteMany({ where: { userId } }),
+    // 2026-04-24: Memo は個人資産なのでユーザ削除と同時にカスケード物理削除
+    prisma.memo.deleteMany({ where: { userId } }),
     prisma.user.update({
       where: { id: userId },
       data: {

@@ -27,6 +27,8 @@ vi.mock('@/lib/db', () => ({
     session: { deleteMany: vi.fn() },
     passwordResetToken: { deleteMany: vi.fn() },
     passwordHistory: { deleteMany: vi.fn() },
+    // 2026-04-24: deleteUser が Memo もカスケード物理削除する
+    memo: { deleteMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -345,6 +347,7 @@ describe('deleteUser (PR #89)', () => {
     vi.mocked(prisma.emailVerificationToken.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.passwordResetToken.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.passwordHistory.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.memo.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.user.update).mockResolvedValue({} as never);
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
 
@@ -370,6 +373,25 @@ describe('deleteUser (PR #89)', () => {
         data: expect.objectContaining({ afterRole: 'deleted', reason: 'ユーザ削除' }),
       }),
     );
+  });
+
+  it('2026-04-24: Memo は対象ユーザの全件をカスケード物理削除する', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(baseUserRow as never);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.session.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.recoveryCode.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.emailVerificationToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordResetToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordHistory.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.memo.deleteMany).mockResolvedValue({ count: 5 } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    await deleteUser('u-1', 'admin-1');
+
+    // Memo.deleteMany が userId=u-1 で 1 回呼ばれたこと
+    expect(prisma.memo.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u-1' } });
+    expect(prisma.memo.deleteMany).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -399,6 +421,7 @@ describe('cleanupInactiveUsers (PR #89)', () => {
     vi.mocked(prisma.emailVerificationToken.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.passwordResetToken.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.passwordHistory.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.memo.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.user.update).mockResolvedValue({} as never);
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
 

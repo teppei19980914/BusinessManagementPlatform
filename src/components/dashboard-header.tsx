@@ -116,6 +116,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           {/*
             PR #71: ドロップダウン配下は「メモ」(個人管理画面 /memos) に改称。
             横断の「全メモ」(/all-memos) は上部ナビに移動した。
+            2026-04-24: 他の一覧系メニューと命名を揃えて「メモ一覧」に改称。
           */}
           <Link
             href={MEMOS_ROUTE}
@@ -123,7 +124,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
             className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
           >
-            メモ
+            メモ一覧
           </Link>
           <Link
             href={SETTINGS_ROUTE}
