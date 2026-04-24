@@ -50,6 +50,69 @@ type Props = {
   initialUsers: UserDTO[];
 };
 
+/**
+ * PR #128c: 認証ロックバッジの props を算出する (PC テーブル / モバイルカード両方で共用)。
+ * 優先度: 永続 > パスワード一時 > MFA 一時 > パスワード失敗カウント > MFA 失敗カウント > null
+ * PR #85 / PR #116 の元ロジックをそのまま関数化したもの (挙動変更なし)。
+ */
+type LockBadgeProps = {
+  variant: 'default' | 'destructive' | 'secondary' | 'outline';
+  label: string;
+  title: string;
+};
+function getLockBadgeProps(
+  user: UserDTO,
+  nowAtMount: number,
+  formatDateTimeFull: (iso: string) => string,
+): LockBadgeProps | null {
+  const pwTemporaryLocked
+    = !!user.lockedUntil && new Date(user.lockedUntil).getTime() > nowAtMount;
+  const mfaTemporaryLocked
+    = !!user.mfaLockedUntil && new Date(user.mfaLockedUntil).getTime() > nowAtMount;
+  if (user.permanentLock) {
+    return {
+      variant: 'destructive',
+      label: '永続ロック',
+      title: '管理者により永続ロック中 (admin の手動解除のみ可)',
+    };
+  }
+  if (pwTemporaryLocked) {
+    return {
+      variant: 'destructive',
+      label: '一時ロック (パスワード)',
+      title:
+        `原因: パスワード連続失敗 (${user.failedLoginCount}/5)\n`
+        + `解除予定: ${formatDateTimeFull(user.lockedUntil!)}\n`
+        + `解除手段: 時間経過 / admin 手動解除`,
+    };
+  }
+  if (mfaTemporaryLocked) {
+    return {
+      variant: 'destructive',
+      label: '一時ロック (MFA)',
+      title:
+        `原因: MFA コード連続失敗 (3/3 回)\n`
+        + `解除予定: ${formatDateTimeFull(user.mfaLockedUntil!)}\n`
+        + `解除手段: 時間経過 / リカバリーコード入力 / admin 手動解除`,
+    };
+  }
+  if (user.failedLoginCount > 0) {
+    return {
+      variant: 'secondary',
+      label: `PW 失敗 ${user.failedLoginCount}/5`,
+      title: `ログインパスワード失敗カウント (5 回で 30 分一時ロック)`,
+    };
+  }
+  if (user.mfaFailedCount > 0) {
+    return {
+      variant: 'secondary',
+      label: `MFA 失敗 ${user.mfaFailedCount}/3`,
+      title: `MFA コード失敗カウント (3 回で 30 分一時ロック)`,
+    };
+  }
+  return null;
+}
+
 export function UsersClient({ initialUsers }: Props) {
   const t = useTranslations('action');
   const router = useRouter();
@@ -210,118 +273,122 @@ export function UsersClient({ initialUsers }: Props) {
         </div>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>ユーザ名</TableHead>
-            <TableHead>メールアドレス</TableHead>
-            <TableHead>ロール</TableHead>
-            <TableHead>状態</TableHead>
-            {/*
-              PR #85 / PR #116: 認証ロック状態
-              - パスワード失敗ロック: failedLoginCount 5 回で一時ロック (30 分) / 3 回目で permanentLock
-              - MFA 失敗ロック (PR #116): mfaFailedCount 3 回で一時ロック (30 分) / recovery code で自己解除可
-              - 1 列集約: tooltip で内訳 (原因・解除予定・失敗回数) を表示
-            */}
-            <TableHead>認証ロック</TableHead>
-            <TableHead>作成日</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {initialUsers.map((user) => {
-            const pwTemporaryLocked
-              = !!user.lockedUntil && new Date(user.lockedUntil).getTime() > nowAtMount;
-            // PR #116: MFA ロック (パスワードロックとは別系統)
-            const mfaTemporaryLocked
-              = !!user.mfaLockedUntil && new Date(user.mfaLockedUntil).getTime() > nowAtMount;
+      {/* PR #128c: PC は既存テーブル、モバイルはカード形式。lockBadgeProps は両ビューで共有 helper (getLockBadgeProps) を使用。 */}
+      {/* PC (md+): 既存テーブル */}
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>ユーザ名</TableHead>
+              <TableHead>メールアドレス</TableHead>
+              <TableHead>ロール</TableHead>
+              <TableHead>状態</TableHead>
+              {/*
+                PR #85 / PR #116: 認証ロック状態
+                - パスワード失敗ロック: failedLoginCount 5 回で一時ロック (30 分) / 3 回目で permanentLock
+                - MFA 失敗ロック (PR #116): mfaFailedCount 3 回で一時ロック (30 分) / recovery code で自己解除可
+                - 1 列集約: tooltip で内訳 (原因・解除予定・失敗回数) を表示
+              */}
+              <TableHead>認証ロック</TableHead>
+              <TableHead>作成日</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {initialUsers.map((user) => {
+              const lockBadgeProps = getLockBadgeProps(user, nowAtMount, formatDateTimeFull);
+              return (
+                <TableRow
+                  key={user.id}
+                  className="cursor-pointer hover:bg-muted"
+                  onClick={() => setEditingUser(user)}
+                >
+                  <TableCell className="font-medium">{user.name}</TableCell>
+                  <TableCell>{user.email}</TableCell>
+                  <TableCell>
+                    <Badge variant={user.systemRole === 'admin' ? 'default' : 'secondary'}>
+                      {SYSTEM_ROLES[user.systemRole as keyof typeof SYSTEM_ROLES] || user.systemRole}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={user.isActive ? 'default' : 'destructive'}>
+                      {user.isActive ? '有効' : '無効'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {lockBadgeProps ? (
+                      <Badge variant={lockBadgeProps.variant} title={lockBadgeProps.title}>
+                        {lockBadgeProps.label}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>{formatDate(user.createdAt)}</TableCell>
+                </TableRow>
+              );
+            })}
+            {initialUsers.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                  ユーザが登録されていません
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
-            // PR #116 A 案: tooltip に全情報を集約。表示優先度:
-            //   永続 > パスワード一時 > MFA 一時 > パスワード失敗カウント > MFA 失敗カウント > —
-            const lockBadgeProps = (() => {
-              if (user.permanentLock) {
-                return {
-                  variant: 'destructive' as const,
-                  label: '永続ロック',
-                  title: '管理者により永続ロック中 (admin の手動解除のみ可)',
-                };
-              }
-              if (pwTemporaryLocked) {
-                return {
-                  variant: 'destructive' as const,
-                  label: '一時ロック (パスワード)',
-                  title:
-                    `原因: パスワード連続失敗 (${user.failedLoginCount}/5)\n`
-                    + `解除予定: ${formatDateTimeFull(user.lockedUntil!)}\n`
-                    + `解除手段: 時間経過 / admin 手動解除`,
-                };
-              }
-              if (mfaTemporaryLocked) {
-                return {
-                  variant: 'destructive' as const,
-                  label: '一時ロック (MFA)',
-                  title:
-                    `原因: MFA コード連続失敗 (3/3 回)\n`
-                    + `解除予定: ${formatDateTimeFull(user.mfaLockedUntil!)}\n`
-                    + `解除手段: 時間経過 / リカバリーコード入力 / admin 手動解除`,
-                };
-              }
-              if (user.failedLoginCount > 0) {
-                return {
-                  variant: 'secondary' as const,
-                  label: `PW 失敗 ${user.failedLoginCount}/5`,
-                  title: `ログインパスワード失敗カウント (5 回で 30 分一時ロック)`,
-                };
-              }
-              if (user.mfaFailedCount > 0) {
-                return {
-                  variant: 'secondary' as const,
-                  label: `MFA 失敗 ${user.mfaFailedCount}/3`,
-                  title: `MFA コード失敗カウント (3 回で 30 分一時ロック)`,
-                };
-              }
-              return null;
-            })();
-
+      {/* モバイル (md 未満): カード形式 */}
+      <div className="space-y-2 md:hidden" role="list" aria-label="ユーザ一覧">
+        {initialUsers.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">ユーザが登録されていません</p>
+        ) : (
+          initialUsers.map((user) => {
+            const lockBadgeProps = getLockBadgeProps(user, nowAtMount, formatDateTimeFull);
             return (
-              <TableRow
+              <div
                 key={user.id}
-                className="cursor-pointer hover:bg-muted"
+                role="listitem"
                 onClick={() => setEditingUser(user)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setEditingUser(user);
+                  }
+                }}
+                tabIndex={0}
+                className="cursor-pointer rounded-md border bg-card p-3 text-sm transition-colors hover:bg-muted"
               >
-                <TableCell className="font-medium">{user.name}</TableCell>
-                <TableCell>{user.email}</TableCell>
-                <TableCell>
-                  <Badge variant={user.systemRole === 'admin' ? 'default' : 'secondary'}>
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium">{user.name}</span>
+                  <Badge variant={user.systemRole === 'admin' ? 'default' : 'secondary'} className="text-[10px]">
                     {SYSTEM_ROLES[user.systemRole as keyof typeof SYSTEM_ROLES] || user.systemRole}
                   </Badge>
-                </TableCell>
-                <TableCell>
-                  <Badge variant={user.isActive ? 'default' : 'destructive'}>
+                  <Badge variant={user.isActive ? 'default' : 'destructive'} className="text-[10px]">
                     {user.isActive ? '有効' : '無効'}
                   </Badge>
-                </TableCell>
-                <TableCell>
-                  {lockBadgeProps ? (
-                    <Badge variant={lockBadgeProps.variant} title={lockBadgeProps.title}>
-                      {lockBadgeProps.label}
-                    </Badge>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-                <TableCell>{formatDate(user.createdAt)}</TableCell>
-              </TableRow>
+                </div>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                  <dt className="text-xs text-muted-foreground">メール</dt>
+                  <dd className="text-xs break-all">{user.email}</dd>
+                  <dt className="text-xs text-muted-foreground">認証ロック</dt>
+                  <dd>
+                    {lockBadgeProps ? (
+                      <Badge variant={lockBadgeProps.variant} title={lockBadgeProps.title} className="text-[10px]">
+                        {lockBadgeProps.label}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </dd>
+                  <dt className="text-xs text-muted-foreground">作成日</dt>
+                  <dd className="text-xs">{formatDate(user.createdAt)}</dd>
+                </dl>
+              </div>
             );
-          })}
-          {initialUsers.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                ユーザが登録されていません
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          })
+        )}
+      </div>
 
       <UserEditDialog
         user={editingUser}
