@@ -36,6 +36,8 @@ import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionState, useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
+// PR #125: 日本の祝日を Gantt ヘッダ / 背景に反映 (土日と同等の視覚扱い + 祝日名ツールチップ)
+import { getJapaneseHoliday } from '@/lib/jp-holidays';
 
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
@@ -279,26 +281,39 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
   }, [minDate, totalDays]);
 
   const dayHeaders = useMemo(() => {
-    const headers: { date: string; day: number; dayOfWeek: number }[] = [];
+    const headers: {
+      date: string;
+      day: number;
+      dayOfWeek: number;
+      // PR #125: 祝日なら名称 (例 '元日', 'こどもの日')、そうでなければ null
+      holidayName: string | null;
+    }[] = [];
     const start = new Date(minDate);
     for (let i = 0; i < totalDays; i++) {
       const d = new Date(start);
       d.setDate(d.getDate() + i);
-      headers.push({ date: formatDate(d), day: d.getDate(), dayOfWeek: d.getDay() });
+      headers.push({
+        date: formatDate(d),
+        day: d.getDate(),
+        dayOfWeek: d.getDay(),
+        holidayName: getJapaneseHoliday(d),
+      });
     }
     return headers;
   }, [minDate, totalDays]);
 
-  // 週末・今日の縦帯（行背景用・全行共通で 1 枚のオーバーレイ）
+  // 週末・祝日・今日の縦帯（行背景用・全行共通で 1 枚のオーバーレイ）
+  // PR #125: 祝日も週末と同じ扱いで背景着色 + ヘッダ側で祝日名ツールチップ
   const dayMarkers = useMemo(
     () =>
       dayHeaders
         .map((dh, index) => ({
           index,
           isWeekend: dh.dayOfWeek === 0 || dh.dayOfWeek === 6,
+          isHoliday: dh.holidayName !== null,
           isToday: dh.date === today,
         }))
-        .filter((m) => m.isWeekend || m.isToday),
+        .filter((m) => m.isWeekend || m.isHoliday || m.isToday),
     [dayHeaders, today],
   );
 
@@ -433,13 +448,17 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
               {dayHeaders.map((dh, i) => {
                 const isWeekend = dh.dayOfWeek === 0 || dh.dayOfWeek === 6;
                 const isToday = dh.date === today;
+                // PR #125: 祝日は土日と同じ背景扱い。祝日名は title 属性で tooltip 表示
+                const isHoliday = dh.holidayName !== null;
                 return (
                   <div
                     key={i}
+                    // title で祝日名をネイティブ tooltip 表示 (hover でマウスオーバー検出)
+                    title={dh.holidayName ?? undefined}
                     className={`border-r py-1 text-center text-[10px] leading-tight ${
                       isToday
                         ? 'bg-info/20 font-bold text-info'
-                        : isWeekend
+                        : isHoliday || isWeekend
                           ? 'bg-accent text-muted-foreground'
                           : 'text-muted-foreground'
                     }`}
@@ -455,7 +474,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
 
           {/* ボディ: 各タスク行 */}
           <div className="relative">
-            {/* 週末・今日背景（全タスク行共通・チャート領域のみ）*/}
+            {/* 週末・祝日 (PR #125) ・今日背景（全タスク行共通・チャート領域のみ）*/}
             <div
               className="pointer-events-none absolute top-0 bottom-0 flex"
               style={{ left: `${nameColWidth}px`, width: `${chartWidth}px` }}
