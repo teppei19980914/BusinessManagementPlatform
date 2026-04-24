@@ -130,104 +130,178 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
         </Select>
       </div>
 
-      {/* 一覧 (Req 4 列構成) */}
-      <ResizableColumnsProvider tableKey="all-knowledge">
-        <div className="flex justify-end pb-2">
-          <ResetColumnsButton />
-        </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <ResizableHead columnKey="project" defaultWidth={140}>プロジェクト</ResizableHead>
-            <ResizableHead columnKey="type" defaultWidth={100}>種別</ResizableHead>
-            <ResizableHead columnKey="background" defaultWidth={200}>背景</ResizableHead>
-            <ResizableHead columnKey="content" defaultWidth={200}>内容</ResizableHead>
-            <ResizableHead columnKey="result" defaultWidth={200}>結果</ResizableHead>
-            <ResizableHead columnKey="createdAt" defaultWidth={130}>作成日時</ResizableHead>
-            <ResizableHead columnKey="createdBy" defaultWidth={120}>作成者</ResizableHead>
-            <ResizableHead columnKey="updatedAt" defaultWidth={130}>更新日時</ResizableHead>
-            <ResizableHead columnKey="updatedBy" defaultWidth={120}>更新者</ResizableHead>
-            {/* PR #67: 添付リンク列 */}
-            <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-            {/* 2026-04-24: admin の管理削除ボタン列 */}
-            {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {filtered.map((k) => (
-            <TableRow
+      {/* 一覧 (Req 4 列構成) — PR #128b: PC は既存テーブル、モバイルはカード形式 */}
+      <div className="hidden md:block">
+        <ResizableColumnsProvider tableKey="all-knowledge">
+          <div className="flex justify-end pb-2">
+            <ResetColumnsButton />
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <ResizableHead columnKey="project" defaultWidth={140}>プロジェクト</ResizableHead>
+                <ResizableHead columnKey="type" defaultWidth={100}>種別</ResizableHead>
+                <ResizableHead columnKey="background" defaultWidth={200}>背景</ResizableHead>
+                <ResizableHead columnKey="content" defaultWidth={200}>内容</ResizableHead>
+                <ResizableHead columnKey="result" defaultWidth={200}>結果</ResizableHead>
+                <ResizableHead columnKey="createdAt" defaultWidth={130}>作成日時</ResizableHead>
+                <ResizableHead columnKey="createdBy" defaultWidth={120}>作成者</ResizableHead>
+                <ResizableHead columnKey="updatedAt" defaultWidth={130}>更新日時</ResizableHead>
+                <ResizableHead columnKey="updatedBy" defaultWidth={120}>更新者</ResizableHead>
+                {/* PR #67: 添付リンク列 */}
+                <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
+                {/* 2026-04-24: admin の管理削除ボタン列 */}
+                {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((k) => (
+                <TableRow
+                  key={k.id}
+                  className="cursor-pointer hover:bg-muted"
+                  onClick={() => setEditingKnowledge(k)}
+                >
+                  <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
+                    {k.projectName == null ? (
+                      <span className="text-muted-foreground">
+                        {k.linkedProjectCount === 0 ? '（未紐付け）' : '（非公開）'}
+                      </span>
+                    ) : k.canAccessProject && k.primaryProjectId ? (
+                      <Link
+                        href={`/projects/${k.primaryProjectId}`}
+                        className="text-info hover:underline"
+                      >
+                        {k.projectName}
+                        {k.linkedProjectCount > 1 && (
+                          <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
+                        )}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {k.projectName}
+                        {k.projectDeleted && <span className="ml-1 text-xs text-destructive">(削除済)</span>}
+                        {k.linkedProjectCount > 1 && (
+                          <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
+                        )}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">
+                      {KNOWLEDGE_TYPES[k.knowledgeType as keyof typeof KNOWLEDGE_TYPES] || k.knowledgeType}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="max-w-xs truncate text-sm">{k.background || '-'}</TableCell>
+                  <TableCell className="max-w-xs truncate text-sm">{k.content || '-'}</TableCell>
+                  <TableCell className="max-w-xs truncate text-sm">{k.result || '-'}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                    {formatDateTime(k.createdAt)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {k.creatorName ?? <span className="text-muted-foreground">-</span>}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                    {formatDateTime(k.updatedAt)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {k.updatedByName ?? <span className="text-muted-foreground">-</span>}
+                  </TableCell>
+                  {/* PR #67: 添付リンク chips */}
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
+                  </TableCell>
+                  {/* 2026-04-24: 全ナレッジからの管理削除 (admin only) */}
+                  {isAdmin && (
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <AdminKnowledgeDeleteButton knowledgeId={k.id} label={k.title} />
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+              {filtered.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-muted-foreground">
+                    ナレッジがありません
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </ResizableColumnsProvider>
+      </div>
+
+      {/* PR #128b: モバイル (md 未満) カード表示 */}
+      <div className="space-y-2 md:hidden" role="list" aria-label="ナレッジ一覧">
+        {filtered.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">ナレッジがありません</p>
+        ) : (
+          filtered.map((k) => (
+            <div
               key={k.id}
-              className="cursor-pointer hover:bg-muted"
+              role="listitem"
               onClick={() => setEditingKnowledge(k)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setEditingKnowledge(k);
+                }
+              }}
+              tabIndex={0}
+              className="cursor-pointer rounded-md border bg-card p-3 text-sm transition-colors hover:bg-muted"
             >
-              <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
-                {k.projectName == null ? (
-                  <span className="text-muted-foreground">
-                    {k.linkedProjectCount === 0 ? '（未紐付け）' : '（非公開）'}
-                  </span>
-                ) : k.canAccessProject && k.primaryProjectId ? (
-                  <Link
-                    href={`/projects/${k.primaryProjectId}`}
-                    className="text-info hover:underline"
-                  >
-                    {k.projectName}
-                    {k.linkedProjectCount > 1 && (
-                      <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
-                    )}
-                  </Link>
-                ) : (
-                  <span className="text-muted-foreground">
-                    {k.projectName}
-                    {k.projectDeleted && <span className="ml-1 text-xs text-destructive">(削除済)</span>}
-                    {k.linkedProjectCount > 1 && (
-                      <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
-                    )}
-                  </span>
-                )}
-              </TableCell>
-              <TableCell>
-                <Badge variant="secondary">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="text-[10px]">
                   {KNOWLEDGE_TYPES[k.knowledgeType as keyof typeof KNOWLEDGE_TYPES] || k.knowledgeType}
                 </Badge>
-              </TableCell>
-              <TableCell className="max-w-xs truncate text-sm">{k.background || '-'}</TableCell>
-              <TableCell className="max-w-xs truncate text-sm">{k.content || '-'}</TableCell>
-              <TableCell className="max-w-xs truncate text-sm">{k.result || '-'}</TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                {formatDateTime(k.createdAt)}
-              </TableCell>
-              <TableCell className="text-sm text-muted-foreground">
-                {k.creatorName ?? <span className="text-muted-foreground">-</span>}
-              </TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                {formatDateTime(k.updatedAt)}
-              </TableCell>
-              <TableCell className="text-sm text-muted-foreground">
-                {k.updatedByName ?? <span className="text-muted-foreground">-</span>}
-              </TableCell>
-              {/* PR #67: 添付リンク chips */}
-              <TableCell onClick={(e) => e.stopPropagation()}>
-                <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
-              </TableCell>
-              {/* 2026-04-24: 全ナレッジからの管理削除 (admin only) */}
-              {isAdmin && (
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AdminKnowledgeDeleteButton knowledgeId={k.id} label={k.title} />
-                </TableCell>
+                <span className="font-medium">{k.title}</span>
+              </div>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                <dt className="text-xs text-muted-foreground">プロジェクト</dt>
+                <dd className="text-xs" onClick={(e) => e.stopPropagation()}>
+                  {k.projectName == null ? (
+                    <span className="text-muted-foreground">
+                      {k.linkedProjectCount === 0 ? '（未紐付け）' : '（非公開）'}
+                    </span>
+                  ) : k.canAccessProject && k.primaryProjectId ? (
+                    <Link href={`/projects/${k.primaryProjectId}`} className="text-info hover:underline">
+                      {k.projectName}
+                      {k.linkedProjectCount > 1 && (
+                        <span className="ml-1 text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
+                      )}
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      {k.projectName}
+                      {k.projectDeleted && <span className="ml-1 text-destructive">(削除済)</span>}
+                      {k.linkedProjectCount > 1 && (
+                        <span className="ml-1">+{k.linkedProjectCount - 1} 他</span>
+                      )}
+                    </span>
+                  )}
+                </dd>
+                {k.background && (<><dt className="text-xs text-muted-foreground">背景</dt><dd className="text-xs line-clamp-2">{k.background}</dd></>)}
+                {k.content && (<><dt className="text-xs text-muted-foreground">内容</dt><dd className="text-xs line-clamp-2">{k.content}</dd></>)}
+                {k.result && (<><dt className="text-xs text-muted-foreground">結果</dt><dd className="text-xs line-clamp-2">{k.result}</dd></>)}
+                <dt className="text-xs text-muted-foreground">更新</dt>
+                <dd className="text-xs text-muted-foreground">
+                  {formatDateTime(k.updatedAt)}
+                  {k.updatedByName && ` by ${k.updatedByName}`}
+                </dd>
+              </dl>
+              {(attachmentsByEntity[k.id]?.length ?? 0) > 0 && (
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
+                </div>
               )}
-            </TableRow>
-          ))}
-          {filtered.length === 0 && (
-            <TableRow>
-              {/* PR #67: 添付列 +1、2026-04-24: admin 時のみ +1 */}
-              <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-muted-foreground">
-                ナレッジがありません
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
-      </ResizableColumnsProvider>
+              {isAdmin && (
+                <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>
+                  <AdminKnowledgeDeleteButton knowledgeId={k.id} label={k.title} />
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
 
       <KnowledgeEditDialog
         knowledge={editingKnowledge}
