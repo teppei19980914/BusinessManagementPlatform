@@ -181,6 +181,13 @@ a11y の欠陥 ≒ E2E で getByLabel が使えない。
 ペアで付ける (アクセシビリティ改善と E2E 両立)。PR #92 hotfix 5 で
 settings-client.tsx の password フォームを実装修正。
 
+**再発事例 (fix/project-create-customer-validation, PR #134)**:
+projects-client.tsx の新規作成ダイアログで `<Label>プロジェクト名</Label>` + `<Input>` が
+htmlFor/id 未付与のまま残存。新規追加した Step 6b の E2E が `getByLabel('プロジェクト名')` で
+timeout し両 project (chromium / chromium-mobile) で同時 fail。全入力フィールドに
+`project-create-{field}` 規則で id を付与して解消。新規フォームは **§5.10.1.5 の規約** に
+従うこと (DEVELOPER_GUIDE.md 参照)。
+
 ### 4.4 全角/半角括弧の Unicode 完全一致
 
 **症状**: `getByLabel('...(確認)')` が見つからない。UI は `（確認）` で全角。

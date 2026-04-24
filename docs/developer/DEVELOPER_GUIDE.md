@@ -531,6 +531,36 @@ onValueChange={(v) => {
 `Value` (= object) で emit されるため、auto-detect は **表示/submission 用のヘルパであり
 onValueChange の型までは変換しない**。
 
+### 5.10.1.5 `<Label>` と `<Input>` の `htmlFor`/`id` ペア必須 (a11y + E2E の両立、fix/project-create-customer-validation 補足)
+
+shadcn/ui の `<Label>` は内部で `<label>` を素の形で描画する (FormField 等の文脈提供は無し)。
+**`htmlFor` 無しの `<Label>` は `<Input>` / `<textarea>` / `<select>` と ARIA 関連付けされず**、
+以下の 2 つが同時に壊れる:
+
+1. **スクリーンリーダー読み上げ**: fieldset 名 / フィールド名が読まれない
+2. **Playwright `getByLabel`**: input 要素に辿り着けず 10s timeout
+
+既知の罠 §4.3 「`getByLabel` は ARIA リンクが無いと動かない」の再発であり、
+projects-client の `顧客` (PR #111-2 で htmlFor 付与) 以外のフィールドがすべて未対応だった
+ため E2E Step 6b の `getByLabel('プロジェクト名').fill(...)` が timeout していた。
+
+**規約**: 新規フォームで `<Label>` を使う場合、**必ず htmlFor + id のペアを付与** する。
+id の naming convention は `{screen}-{action}-{field}` (例: `project-create-name`)。
+
+```tsx
+// NG: 見た目は同じだが a11y も E2E も壊れる
+<Label>プロジェクト名</Label>
+<Input value={form.name} ... />
+
+// OK
+<Label htmlFor="project-create-name">プロジェクト名</Label>
+<Input id="project-create-name" value={form.name} ... />
+```
+
+※ shadcn/ui が FormField パターンを入れていない理由は単純に未導入なだけ。将来的に
+`react-hook-form` + shadcn FormField 導入時は自動関連付けされるため、この規約は
+手動レイヤでの代替策。
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1512,3 +1542,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
 | 2026-04-24 | §5.10 新設 (fix/project-create-customer-validation)。フォーム送信前の事前バリデーション (エラー情報最小化方針)。HTML5 `required` で拾えない `SearchableSelect` 必須項目は `handleXxx` 先頭で事前 validation + `setError` + `return` し、無効値 POST が 400 を返してブラウザ Console にエラー情報を露出させる経路を断つ |
 | 2026-04-24 | §5.10.1 / §5.10.2 追加 (fix/project-create-customer-validation 追補)。§5.10.1: Base UI Combobox で `{value, label}` を items に渡すと onValueChange はオブジェクトで emit される (string 限定の type guard で選択イベントが握り潰されていた)。§5.10.2: タグ入力の全角読点「、」対応 + 共通関数 `@/lib/parse-tags.ts` 集約 (projects / knowledge の重複を解消) |
+| 2026-04-24 | §5.10.1.5 追加 (fix/project-create-customer-validation E2E hotfix)。`<Label>` + `<Input>` に htmlFor/id ペアを必ず付ける規約。欠落すると (1) screen reader 読み上げ不可 (2) Playwright `getByLabel` が timeout の 2 つが同時に壊れる (E2E §4.3 の再発事例)。projects-client の全入力フィールドに id を付与 |
