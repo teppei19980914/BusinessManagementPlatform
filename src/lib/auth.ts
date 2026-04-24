@@ -91,6 +91,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           mfaEnabled: user.mfaEnabled,
           // PR #72: テーマ設定。layout.tsx で <html data-theme=...> に反映する。
           themePreference: user.themePreference,
+          // PR #118: i18n 設定 (null = システムデフォルトを使う)。
+          // 描画時は resolveTimezone/resolveLocale でフォールバック込みで解決する。
+          timezone: user.timezone,
+          locale: user.locale,
         };
       },
     }),

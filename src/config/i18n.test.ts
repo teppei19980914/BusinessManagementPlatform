@@ -1,0 +1,90 @@
+import { describe, it, expect } from 'vitest';
+import {
+  DEFAULT_TIMEZONE,
+  DEFAULT_LOCALE,
+  SUPPORTED_LOCALES,
+  resolveTimezone,
+  resolveLocale,
+  isSupportedLocale,
+  isValidTimezone,
+} from './i18n';
+
+/**
+ * PR #118 (2026-04-24): i18n 設定の 3 段階フォールバックを検証。
+ * 注: env による上書きは module 初期化時に評価されるため、ここでは resolveXxx
+ * の **ユーザ→システム** のフォールバック (env→FALLBACK は未テスト) を中心に検証。
+ */
+
+describe('DEFAULT_TIMEZONE / DEFAULT_LOCALE', () => {
+  it('非空文字列である', () => {
+    expect(DEFAULT_TIMEZONE.length).toBeGreaterThan(0);
+    expect(DEFAULT_LOCALE.length).toBeGreaterThan(0);
+  });
+
+  it('Intl.DateTimeFormat が受理できる値である', () => {
+    expect(() => new Intl.DateTimeFormat(DEFAULT_LOCALE, { timeZone: DEFAULT_TIMEZONE })).not.toThrow();
+  });
+});
+
+describe('resolveTimezone', () => {
+  it('ユーザ値が指定されていればそれを使う', () => {
+    expect(resolveTimezone('America/New_York')).toBe('America/New_York');
+  });
+
+  it('null / undefined / 空文字列 / 空白のみは DEFAULT_TIMEZONE にフォールバック', () => {
+    expect(resolveTimezone(null)).toBe(DEFAULT_TIMEZONE);
+    expect(resolveTimezone(undefined)).toBe(DEFAULT_TIMEZONE);
+    expect(resolveTimezone('')).toBe(DEFAULT_TIMEZONE);
+    expect(resolveTimezone('   ')).toBe(DEFAULT_TIMEZONE);
+  });
+
+  it('前後の空白を除去した値が有効ならそれを採用する', () => {
+    expect(resolveTimezone('  Asia/Tokyo  ')).toBe('Asia/Tokyo');
+  });
+});
+
+describe('resolveLocale', () => {
+  it('ユーザ値が指定されていればそれを使う', () => {
+    expect(resolveLocale('en-US')).toBe('en-US');
+  });
+
+  it('null / undefined / 空文字列 / 空白のみは DEFAULT_LOCALE にフォールバック', () => {
+    expect(resolveLocale(null)).toBe(DEFAULT_LOCALE);
+    expect(resolveLocale(undefined)).toBe(DEFAULT_LOCALE);
+    expect(resolveLocale('')).toBe(DEFAULT_LOCALE);
+    expect(resolveLocale('   ')).toBe(DEFAULT_LOCALE);
+  });
+});
+
+describe('isSupportedLocale', () => {
+  it('SUPPORTED_LOCALES のキーを受理する', () => {
+    for (const key of Object.keys(SUPPORTED_LOCALES)) {
+      expect(isSupportedLocale(key)).toBe(true);
+    }
+  });
+
+  it('未対応値は false', () => {
+    expect(isSupportedLocale('de-DE')).toBe(false);
+    expect(isSupportedLocale('')).toBe(false);
+    expect(isSupportedLocale(null)).toBe(false);
+    expect(isSupportedLocale(undefined)).toBe(false);
+    expect(isSupportedLocale(123)).toBe(false);
+  });
+});
+
+describe('isValidTimezone', () => {
+  it('IANA タイムゾーンを受理する', () => {
+    expect(isValidTimezone('Asia/Tokyo')).toBe(true);
+    expect(isValidTimezone('America/New_York')).toBe(true);
+    expect(isValidTimezone('UTC')).toBe(true);
+  });
+
+  it('未知の値 / 空文字列 / 非文字列は false', () => {
+    expect(isValidTimezone('Not/A_Zone')).toBe(false);
+    expect(isValidTimezone('')).toBe(false);
+    expect(isValidTimezone('   ')).toBe(false);
+    expect(isValidTimezone(null)).toBe(false);
+    expect(isValidTimezone(undefined)).toBe(false);
+    expect(isValidTimezone(42)).toBe(false);
+  });
+});

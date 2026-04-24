@@ -17,6 +17,7 @@
  *   - app-routes.ts        : 画面遷移パス (Link / router.push 用)
  *   - suggestion.ts        : 提案型サービスの重み・閾値
  *   - validation.ts        : Zod / JSX maxLength の文字数上限
+ *   - i18n.ts              : タイムゾーン・ロケールの既定値 + 3 段階フォールバック (PR #118)
  */
 
 export * from './master-data';
@@ -27,3 +28,4 @@ export * from './routes';
 export * from './app-routes';
 export * from './suggestion';
 export * from './validation';
+export * from './i18n';

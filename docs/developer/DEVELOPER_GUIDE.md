@@ -1009,14 +1009,57 @@ didn't match the client`) が発生する。
   `getFullYear()` / `getMonth()` / `getDate()` / `getHours()` / `getMinutes()`
   (いずれも runtime TZ 依存)
 
-**実装の裏側**: ヘルパは `Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', ... })`
-をモジュールスコープで 1 回だけ構築し、全環境で常に JST の同じ文字列を返す。
-テストは `src/lib/format.test.ts` (8 ケース) で UTC→JST 変換と TZ 独立性を検証。
+**実装の裏側** (PR #118 で i18n 化): ヘルパは `Intl.DateTimeFormat(locale, { timeZone, ... })`
+を (locale, tz) の組ごとにキャッシュして使い回す。
+サーバ/クライアントが同じ timezone/locale を渡す限りハイドレーション安全。
+
+テストは `src/lib/format.test.ts` / `src/config/i18n.test.ts` で
+UTC→JST 変換 / runtime TZ 独立性 / オプション指定 / フォールバック動作を検証。
 
 **チェック**: 新規ファイル追加時は以下で漏れ検査できる:
 
 ```bash
 rg -n "toLocaleDateString|toLocaleString|toLocaleTimeString|getFullYear\(\)|getMonth\(\)|getDate\(\)|getHours\(\)|getMinutes\(\)" src/
+```
+
+### 10.8 タイムゾーン / ロケールの 3 段階フォールバック (PR #118)
+
+**背景**: 日本国内限定から将来的にローカル/オンプレ/クラウド多拠点展開を視野に入れ、
+JST ハードコード (PR #117) を設定可能化。
+
+**解決順序** (`src/config/i18n.ts` の `resolveTimezone()` / `resolveLocale()` 実装):
+
+```
+ユーザ個別設定 (User.timezone / User.locale)     ← 設定画面で変更 (PR #119 予定)
+  ↓ (null / 空文字列なら)
+システムデフォルト (src/config/i18n.ts の FALLBACK) ← リポジトリ同梱の既定値 (Asia/Tokyo / ja-JP)
+  ↓ (env が設定されていれば上書き)
+環境変数 (APP_DEFAULT_TIMEZONE / APP_DEFAULT_LOCALE) ← オンプレ / クラウド環境ごとに指定
+```
+
+**使い方**:
+
+```ts
+// (1) 引数なし = システムデフォルト (config の FALLBACK or env) で描画
+formatDate(iso)
+
+// (2) ユーザ設定を反映 (推奨) — null は自動でシステムデフォルトにフォールバック
+formatDate(iso, { timeZone: session.user.timezone, locale: session.user.locale })
+```
+
+**SSR/CSR 一貫性**: `session.user.timezone` / `session.user.locale` は JWT に格納され、
+サーバコンポーネントと "use client" の両方から同じ値を参照できるため、
+`formatDate(iso, opts)` の出力が両環境で一致する = ハイドレーション安全。
+
+**DB 格納方針**: DB の `timestamptz` は常に UTC で保存・交換する (Postgres 仕様通り)。
+描画時のみ TZ 解決を行う。API 境界も ISO 8601 UTC (`...Z` サフィックス) で統一。
+
+**env 設定例** (オンプレ展開で米国東部を既定にしたい場合):
+
+```bash
+# .env.production
+APP_DEFAULT_TIMEZONE=America/New_York
+APP_DEFAULT_LOCALE=en-US
 ```
 
 ---
@@ -1047,3 +1090,4 @@ rg -n "toLocaleDateString|toLocaleString|toLocaleTimeString|getFullYear\(\)|getM
 |---|---|
 | 2026-04-21 | 初版作成 (PR #81)。`src/config/` 構造 / テーマ追加手順 / 機能 CRUD 手順 / i18n / テスト / デプロイを集約 |
 | 2026-04-24 | §10.7 追加 (PR #117)。日時描画ルール / ハイドレーション不一致防止ガイド |
+| 2026-04-24 | §10.8 追加 + §10.7 更新 (PR #118)。TZ/locale の 3 段階フォールバック / env 上書き / format ヘルパのオプション化 |
