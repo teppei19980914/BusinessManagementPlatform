@@ -408,11 +408,15 @@ export function SettingsClient({
                 <code className="mt-1 block rounded bg-accent p-2 font-mono">{mfaSecret}</code>
               </details>
               <form onSubmit={handleMfaEnable} className="flex gap-2">
+                {/* PR #128d: モバイルで数字キーパッド表示 + 認証アプリ / SMS の自動入力を促す */}
                 <Input
                   value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
                   placeholder="6桁のコード"
                   maxLength={6}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="one-time-code"
                   className="w-32"
                   required
                 />

@@ -69,11 +69,16 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
             {useRecovery ? (
               <div className="space-y-2">
                 <Label htmlFor="recoveryCode">リカバリーコード</Label>
+                {/* PR #128d: リカバリーコードは大文字英数字 (config/security.ts の RECOVERY_CODE_CHARSET)。
+                    モバイル入力時の自動変換 (小文字化 / 自動校正 / 辞書変換) を無効化して誤入力を防ぐ。 */}
                 <Input
                   id="recoveryCode"
                   value={recoveryCode}
                   onChange={(e) => setRecoveryCode(e.target.value)}
                   autoComplete="one-time-code"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
                   required
                 />
               </div>

@@ -98,10 +98,14 @@ export default function ResetPasswordPage() {
               </div>
               <div className="space-y-2">
                 <Label>リカバリーコード</Label>
+                {/* PR #128d: モバイル入力時の自動変換を無効化 (大文字英数字のリカバリーコードを正確に入力させる) */}
                 <Input
                   value={verifyForm.recoveryCode}
                   onChange={(e) => setVerifyForm({ ...verifyForm, recoveryCode: e.target.value })}
                   placeholder="XXXX-XXXX"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
                   required
                 />
               </div>
