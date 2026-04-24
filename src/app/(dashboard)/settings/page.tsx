@@ -10,7 +10,14 @@ export default async function SettingsPage() {
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { mfaEnabled: true, systemRole: true, themePreference: true },
+    select: {
+      mfaEnabled: true,
+      systemRole: true,
+      themePreference: true,
+      // PR #119: i18n 設定の初期値として渡す (null = システム既定継承)
+      timezone: true,
+      locale: true,
+    },
   });
 
   return (
@@ -18,6 +25,8 @@ export default async function SettingsPage() {
       mfaEnabled={user?.mfaEnabled || false}
       isAdmin={user?.systemRole === 'admin'}
       currentTheme={user?.themePreference ?? 'light'}
+      currentTimezone={user?.timezone ?? null}
+      currentLocale={user?.locale ?? null}
     />
   );
 }

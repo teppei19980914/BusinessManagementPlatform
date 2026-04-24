@@ -43,8 +43,8 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { UserEditDialog } from '@/components/dialogs/user-edit-dialog';
 import { SYSTEM_ROLES } from '@/types';
 import type { UserDTO } from '@/services/user.service';
-// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
-import { formatDate, formatDateTimeFull } from '@/lib/format';
+// PR #117 → PR #119: session 連携フォーマッタ (TZ/locale はユーザ設定を反映)
+import { useFormatters } from '@/lib/use-formatters';
 
 type Props = {
   initialUsers: UserDTO[];
@@ -54,6 +54,8 @@ export function UsersClient({ initialUsers }: Props) {
   const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
+  // PR #119: session 連携フォーマッタ
+  const { formatDate, formatDateTimeFull } = useFormatters();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');

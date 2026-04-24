@@ -13,8 +13,8 @@ import {
 import { SYSTEM_ROLES } from '@/types';
 import { NAME_MAX_LENGTH } from '@/config';
 import type { UserDTO } from '@/services/user.service';
-// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
-import { formatDateTimeFull } from '@/lib/format';
+// PR #117 → PR #119: session 連携フォーマッタ (TZ/locale はユーザ設定を反映)
+import { useFormatters } from '@/lib/use-formatters';
 
 /**
  * ユーザ編集ダイアログ (PR #59 Req 3)。
@@ -34,6 +34,8 @@ export function UserEditDialog({
   const t = useTranslations('action');
   const tField = useTranslations('field');
   const { withLoading } = useLoading();
+  // PR #119: session 連携フォーマッタ
+  const { formatDateTimeFull } = useFormatters();
   const [form, setForm] = useState({
     name: '',
     systemRole: 'general' as 'admin' | 'general',

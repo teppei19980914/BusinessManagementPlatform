@@ -45,8 +45,8 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import type { RetroDTO } from '@/services/retrospective.service';
-// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
-import { formatDateTimeFull } from '@/lib/format';
+// PR #117 → PR #119: session 連携フォーマッタ
+import { useFormatters } from '@/lib/use-formatters';
 
 type Props = {
   projectId: string;
@@ -65,6 +65,8 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
   const t = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
+  // PR #119: session 連携フォーマッタ
+  const { formatDateTimeFull } = useFormatters();
   const reload = useCallback(async () => {
     if (onReload) {
       await onReload();

@@ -26,7 +26,8 @@ import { PRIORITIES } from '@/types';
 import type { AllRiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
 import { AdminRiskDeleteButton } from './admin-delete-button';
-import { formatDateTime } from '@/lib/format';
+// PR #119: session 連携フォーマッタ
+import { useFormatters } from '@/lib/use-formatters';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import {
@@ -63,6 +64,8 @@ export function AllRisksTable({
 }) {
   const filteredRisks = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
   const router = useRouter();
+  // PR #119: session 連携フォーマッタ
+  const { formatDateTime } = useFormatters();
   const [editingRisk, setEditingRisk] = useState<AllRiskDTO | null>(null);
   const [members, setMembers] = useState<MemberDTO[]>([]);
   // PR #67: 一覧に添付列を表示するためバッチ取得

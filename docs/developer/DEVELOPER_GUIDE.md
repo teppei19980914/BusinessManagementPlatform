@@ -1037,19 +1037,38 @@ JST ハードコード (PR #117) を設定可能化。
 環境変数 (APP_DEFAULT_TIMEZONE / APP_DEFAULT_LOCALE) ← オンプレ / クラウド環境ごとに指定
 ```
 
-**使い方**:
+**使い方** (PR #119 で整備済、通常こちらを使う):
+
+```tsx
+// クライアントコンポーネント: useFormatters フック
+'use client';
+import { useFormatters } from '@/lib/use-formatters';
+export function MyClient() {
+  const { formatDate, formatDateTime, formatDateTimeFull } = useFormatters();
+  return <span>{formatDate(iso)}</span>;
+}
+
+// サーバコンポーネント: getServerFormatters 関数
+import { getServerFormatters } from '@/lib/server-formatters';
+export default async function MyPage() {
+  const { formatDateTimeFull } = await getServerFormatters();
+  return <td>{formatDateTimeFull(log.createdAt.toISOString())}</td>;
+}
+```
+
+**低レベル API** (特殊ケース、通常は上記を使う):
 
 ```ts
-// (1) 引数なし = システムデフォルト (config の FALLBACK or env) で描画
+import { formatDate } from '@/lib/format';
+// (1) 引数なし = システムデフォルト (login page 等 session が無い場所で使用)
 formatDate(iso)
-
-// (2) ユーザ設定を反映 (推奨) — null は自動でシステムデフォルトにフォールバック
-formatDate(iso, { timeZone: session.user.timezone, locale: session.user.locale })
+// (2) 明示的 TZ/locale 指定 (テスト・固定表示等)
+formatDate(iso, { timeZone: 'UTC', locale: 'ja-JP' })
 ```
 
 **SSR/CSR 一貫性**: `session.user.timezone` / `session.user.locale` は JWT に格納され、
-サーバコンポーネントと "use client" の両方から同じ値を参照できるため、
-`formatDate(iso, opts)` の出力が両環境で一致する = ハイドレーション安全。
+`<SessionProvider session={session}>` (PR #119 で設定) により第 1 クライアントレンダリングで確定値が参照可能。
+サーバとクライアント両方で同じ値を使うためハイドレーション安全。
 
 **DB 格納方針**: DB の `timestamptz` は常に UTC で保存・交換する (Postgres 仕様通り)。
 描画時のみ TZ 解決を行う。API 境界も ISO 8601 UTC (`...Z` サフィックス) で統一。
@@ -1091,3 +1110,4 @@ APP_DEFAULT_LOCALE=en-US
 | 2026-04-21 | 初版作成 (PR #81)。`src/config/` 構造 / テーマ追加手順 / 機能 CRUD 手順 / i18n / テスト / デプロイを集約 |
 | 2026-04-24 | §10.7 追加 (PR #117)。日時描画ルール / ハイドレーション不一致防止ガイド |
 | 2026-04-24 | §10.8 追加 + §10.7 更新 (PR #118)。TZ/locale の 3 段階フォールバック / env 上書き / format ヘルパのオプション化 |
+| 2026-04-24 | §10.8 拡充 (PR #119)。`useFormatters()` / `getServerFormatters()` + 設定画面 UI + `/api/settings/i18n` の整備完了 |

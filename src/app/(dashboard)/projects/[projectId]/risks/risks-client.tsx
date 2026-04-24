@@ -53,8 +53,8 @@ import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
-// PR #117: JST 固定タイムゾーン描画 (ハイドレーション安全)
-import { formatDate } from '@/lib/format';
+// PR #117 → PR #119: session 連携フォーマッタ
+import { useFormatters } from '@/lib/use-formatters';
 
 type Props = {
   projectId: string;
@@ -80,6 +80,8 @@ const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
 export function RisksClient({ projectId, risks, members, canCreate, currentUserId, systemRole, typeFilter, onReload }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  // PR #119: session 連携フォーマッタ
+  const { formatDate } = useFormatters();
   const reload = useCallback(async () => {
     if (onReload) {
       await onReload();
