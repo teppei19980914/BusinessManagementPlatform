@@ -70,14 +70,18 @@
 
 | 変数名 | 値 | 用途 |
 |---|---|---|
-| `MAIL_PROVIDER` | `console` / `brevo` / `resend` / `smtp` | 送信方法の切替 (`console` は実送信せずコンソールへ出力) |
+| `MAIL_PROVIDER` | `console` / `brevo` / `resend` / `inbox` | 送信方法の切替 (`console` は実送信せずコンソールへ出力、`inbox` は E2E 専用でファイル出力) |
 | `MAIL_FROM` | `noreply@example.com` | 送信元アドレス (Brevo / Resend 共通) |
 | `MAIL_FROM_NAME` | `たすきば` | 送信元表示名 (Brevo のみ使用) |
-| `BREVO_API_KEY` | `xkeysib-xxxxx...` | Brevo API キー (`MAIL_PROVIDER=brevo` 時)。取得: <https://app.brevo.com/settings/keys/api>。送信元アドレスは Brevo ダッシュボードで事前検証必須 |
-| `RESEND_API_KEY` | `re_xxxxx...` | Resend API キー (`MAIL_PROVIDER=resend` 時)。取得: <https://resend.com/api-keys>。ドメイン未検証時はオーナーメール以外に送信不可 |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | (各 SMTP 業者の値) | SMTP 直接送信 (`MAIL_PROVIDER=smtp` 時) |
+| `BREVO_API_KEY` | `xkeysib-xxxxx...` | Brevo API キー (`MAIL_PROVIDER=brevo` 時、**本番既定**)。取得: <https://app.brevo.com/settings/keys/api>。送信元アドレスは Brevo ダッシュボードで事前検証必須 |
+| `RESEND_API_KEY` | `re_xxxxx...` | Resend API キー (`MAIL_PROVIDER=resend` 時、代替選択肢)。取得: <https://resend.com/api-keys>。ドメイン未検証時はオーナーメール以外に送信不可 |
+| `INBOX_DIR` | `/tmp/tasukiba-e2e-inbox` | 送信内容の JSON 書き出し先 (`MAIL_PROVIDER=inbox` 時、E2E 専用、本番では使わない) |
 
-> **.env.example のコメント** (2026-04-20 時点): Brevo が「★推奨」として明示されている (無料 300 通/日)。
+> **本番推奨**: `brevo` (無料 300 通/日、`.env.example` で ★推奨 明示)
+>
+> **注**: 過去ドキュメントに `MAIL_PROVIDER=smtp` + `SMTP_HOST/PORT/USER/PASS` の記載があったが、
+> 現行コードの `createMailProvider()` (`src/lib/mail/index.ts`) は `smtp` ケースを持たない。
+> 指定した場合 `default` 分岐で `console` にフォールバックする (横展開漏れのため PR #123 で docs から削除)。
 
 ### 1.5 初期管理者 (シード用)
 

@@ -64,7 +64,7 @@
 | 認証 | NextAuth.js (Auth.js) 5 |
 | MFA | otplib（TOTP / RFC 6238） |
 | 全文検索 | pg_trgm（PostgreSQL 標準拡張） |
-| メール送信 | Resend / SMTP（MailProvider 抽象化で切替可能） |
+| メール送信 | Brevo（MailProvider 抽象化で複数プロバイダ対応、console/inbox は開発・E2E 用） |
 | テスト | Vitest |
 
 ## アーキテクチャ
@@ -73,7 +73,7 @@
 graph TD
     Browser[ブラウザ] -->|HTTPS| Vercel[Vercel / Next.js]
     Vercel -->|Pooler| Supabase[Supabase PostgreSQL]
-    Vercel -->|API| Resend[Resend メール送信]
+    Vercel -->|API| Brevo[Brevo メール送信]
 
     subgraph Vercel
         MW[Middleware 認証] --> RH[Route Handlers]
@@ -90,71 +90,9 @@ graph TD
 |---|---|---|
 | アプリケーション | Vercel Hobby | $0 |
 | データベース | Supabase Free | $0 |
-| メール送信 | Resend Free | $0 |
+| メール送信 | Brevo Free | $0（300 通/日） |
 
-#### スキーマ変更時の手順 (重要)
-
-Vercel ビルドでは `prisma migrate deploy` を実行していない（Vercel ビルド環境は IPv4 のみで
-Supabase の直結 URL `db.[ref].supabase.co:5432` に到達できないため）。
-スキーマ変更を含むコードをマージする際は以下を手動で実施する:
-
-1. ローカルから `prisma migrate dev` で `prisma/migrations/` に新規マイグレーションを作成
-2. PR マージ後、Supabase ダッシュボードの SQL Editor で当該 `migration.sql` を実行
-3. 次回デプロイ後にアプリが正常起動することを確認
-
-自動化したい場合は DIRECT_URL を Supavisor セッションモード
-(`pooler.supabase.com:5432`) に変更した上で、`vercel.json` の `buildCommand` に
-`pnpm prisma migrate deploy` を追加する。
-
-#### 既知の手動適用待ちマイグレーション
-
-> [!WARNING]
-> **ファイルパスを貼り付けるのではなく、ファイル内の SQL 文全体をコピー＆ペーストして実行してください。**
-> 例: `prisma/migrations/.../migration.sql` と入力すると
-> `ERROR: 42601: syntax error at or near "prisma"` になります。
-> 下表の「SQL 全文」リンクから各マイグレーションの中身を開き、SQL テキストを Supabase SQL Editor に貼り付けてください。
-
-| マイグレーション | 追加内容 | PR | SQL 全文 |
-|---|---|---|---|
-| `20260418_visibility_and_risk_nature` | risks_issues / retrospectives に visibility 列、risks_issues に risk_nature 列、knowledge.visibility の旧値 (project/company) を public に集約 | #60 | [migration.sql](prisma/migrations/20260418_visibility_and_risk_nature/migration.sql) |
-| `20260419_attachments` | 汎用添付リンクテーブル attachments (URL 参照型、entity_type + entity_id のポリモーフィック関連、DESIGN.md §22) | #64 | [migration.sql](prisma/migrations/20260419_attachments/migration.sql) |
-| `20260419_project_process_tags_and_suggestion` | projects.process_tags 追加 + pg_trgm 拡張有効化 + knowledges / risks_issues / retrospectives のトライグラム GIN インデックス + knowledges.business_domain_tags (Phase 2 で追加) (核心機能「提案型サービス」, DESIGN.md §23) | #65 | [migration.sql](prisma/migrations/20260419_project_process_tags_and_suggestion/migration.sql) |
-| `20260420_memos` | 個人メモテーブル `memos` (プロジェクトに紐付かない個人知見置き場、visibility=private/public の 2 段階、attachments は entityType='memo' で紐付け、SPECIFICATION.md §21) | #70 | [migration.sql](prisma/migrations/20260420_memos/migration.sql) |
-
-##### 手順
-
-1. 上表の「SQL 全文」リンクをクリックし、GitHub 上で `migration.sql` の中身を開く
-2. ファイル右上の **Raw** ボタンを押すか、画面全体を選択して **Ctrl+C** で SQL テキストをコピー
-3. Supabase ダッシュボード → **SQL Editor** → 新規クエリ
-4. コピーしたテキストを貼り付け → **Run** (または `Ctrl+Enter`)
-5. 結果ペインに "Success. No rows returned" が表示されれば成功
-6. `RLS` 警告が出た場合は **Run without RLS** を選択 (本プロジェクトは全テーブル RLS なし運用、既存テーブルと同じ方針)
-
-##### ローカルから確認する場合
-
-SQL の中身を確認したい場合は、以下のコマンドで内容を表示できます (ペースト内容の事前確認用):
-
-```bash
-# macOS / Linux
-cat prisma/migrations/20260419_project_process_tags_and_suggestion/migration.sql
-
-# Windows (PowerShell)
-Get-Content prisma/migrations/20260419_project_process_tags_and_suggestion/migration.sql
-
-# pnpm (クロスプラットフォーム)
-pnpm migrate:print 20260419_project_process_tags_and_suggestion
-```
-
-### 外部配布
-
-.zip パッケージとして配布。外部ユーザが自前の環境で構築・運用可能。
-
-| デプロイ形態 | 対応状況 |
-|---|---|
-| PC（ローカル） | Docker Compose で一式起動 |
-| オンプレミス | Nginx + Docker Compose（HTTPS 対応） |
-| クラウド（コンテナ） | AWS ECS / Azure App Service |
-| クラウド（サーバレス） | AWS Lambda / Azure Functions |
+デプロイ手順・スキーマ変更時の運用・適用済みマイグレーション一覧は [docs/administrator/OPERATION.md](docs/administrator/OPERATION.md) を参照してください。
 
 ## セットアップ
 

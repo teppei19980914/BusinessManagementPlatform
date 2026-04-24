@@ -1,4 +1,4 @@
-# たすきば Knowledge Relay MVP 設計書
+﻿# たすきば Knowledge Relay MVP 設計書
 
 - 作成日: 2026-04-14
 - 版数: Draft v0.1
@@ -2325,663 +2325,19 @@ users テーブルへのカラム追加:
 
 ## 10. インフラ構成
 
-### 10.0 デプロイ方針と外部配布
+### 10.0 デプロイ方針 (PR #123 で整理)
 
-#### 10.0.1 想定デプロイ形態
+本システムは **自社運用 (Vercel + Supabase) 一本** で運用する (2026-04-24 時点)。
 
-本システムは以下の 3 形態でのデプロイを想定する。
-
-| 形態 | 対象 | 構成 |
-|---|---|---|
-| **ローカル（PC）** | 個人・小規模チーム | Docker Compose で PC 上に一式起動 |
-| **オンプレミス** | 社内サーバ保有の組織 | 物理/仮想サーバに Docker または直接デプロイ |
-| **クラウド** | クラウド利用の組織 | Vercel + Supabase、AWS、Azure 等 |
-
-#### 10.0.2 配布形態
-
-アプリケーションを .zip パッケージとして配布し、外部ユーザが自前の環境で構築・運用する。
-
-```
-tasukiba-vX.X.X.zip
-  src/                     # アプリケーションコード
-  prisma/                  # スキーマ + マイグレーション
-  docker-compose.yml       # アプリ + PostgreSQL 一式起動
-  docker-compose.prod.yml  # 本番向け構成
-  Dockerfile               # アプリのコンテナイメージ
-  .env.example             # 環境変数テンプレート
-  package.json
-  SETUP.md                 # セットアップ手順（外部ユーザ向け）
-  LICENSE
-```
-
-#### 10.0.3 セットアップ方法（2方式）
-
-外部ユーザの環境に応じて、Docker 方式と非 Docker 方式の 2 つを提供する。
-
-| 方式 | 対象ユーザ | 必要なもの |
-|---|---|---|
-| **方式A: Docker** | Docker 導入済み or 新規導入可能 | Docker + Docker Compose |
-| **方式B: 非 Docker** | Docker を使わない or 使えない | Node.js 22 + PostgreSQL 16 |
-
-##### 方式A: Docker によるセットアップ
-
-```bash
-# 1. 展開
-unzip tasukiba-vX.X.X.zip && cd tasukiba
-
-# 2. 環境変数設定
-cp .env.example .env
-# .env を編集（ポート番号、パスワード等）
-
-# 3. 起動（アプリ + DB が一括で起動）
-docker compose up -d
-
-# 4. マイグレーション + 初期管理者作成
-docker compose exec app pnpm prisma migrate deploy
-docker compose exec app pnpm db:seed
-
-# 5. アクセス → http://localhost:${APP_PORT}
-```
-
-##### 方式B: 非 Docker によるセットアップ
-
-```bash
-# 前提: Node.js 22 + pnpm + PostgreSQL 16 がインストール済み
-
-# 1. 展開
-unzip tasukiba-vX.X.X.zip && cd tasukiba
-
-# 2. 依存パッケージインストール
-pnpm install
-
-# 3. 環境変数設定
-cp .env.example .env
-# .env を編集（DATABASE_URL に既存の PostgreSQL 接続先を設定）
-
-# 4. マイグレーション + 初期管理者作成
-pnpm prisma migrate deploy
-pnpm db:seed
-
-# 5. ビルド + 起動
-pnpm build
-pnpm start
-
-# 6. アクセス → http://localhost:${APP_PORT}
-```
-
-#### 10.0.4 Docker Compose 設計（既存環境との衝突回避）
-
-Docker 運用中のユーザの既存環境に影響を与えないよう、以下の対策を設計する。
-
-##### 衝突回避の設計方針
-
-| 問題 | 対策 |
+| 項目 | 状態 |
 |---|---|
-| ポート競合（3000, 5432 が使用中） | 全ポートを環境変数で変更可能にする |
-| コンテナ名の衝突 | プロジェクト名プレフィックス（tasukiba-）を自動付与 |
-| ボリューム名の衝突 | プロジェクト名プレフィックスで名前空間を分離 |
-| ネットワーク名の衝突 | 専用ネットワーク（tasukiba-network）を作成 |
-
-##### docker-compose.yml
-
-```yaml
-# docker-compose.yml
-# 全ポート・認証情報は .env で変更可能
-# 既存 Docker 環境との衝突を回避する設計
-
-name: tasukiba  # プロジェクト名（コンテナ・ボリューム・ネットワークのプレフィックス）
-
-services:
-  app:
-    build: .
-    container_name: tasukiba-app
-    ports:
-      - "${APP_PORT:-3000}:3000"
-    env_file: .env
-    environment:
-      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@tasukiba-db:5432/${DB_NAME:-tasukiba}
-      - DIRECT_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@tasukiba-db:5432/${DB_NAME:-tasukiba}
-      - NEXTAUTH_URL=http://localhost:${APP_PORT:-3000}
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - tasukiba-network
-    restart: unless-stopped
-
-  db:
-    image: postgres:16-alpine
-    container_name: tasukiba-db
-    ports:
-      - "${DB_PORT:-5433}:5432"
-    volumes:
-      - tasukiba-pgdata:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_DB=${DB_NAME:-tasukiba}
-      - POSTGRES_USER=${DB_USER:-postgres}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - tasukiba-network
-    restart: unless-stopped
-
-volumes:
-  tasukiba-pgdata:
-    name: tasukiba-pgdata
-
-networks:
-  tasukiba-network:
-    name: tasukiba-network
-```
-
-##### 衝突回避のポイント
-
-| 設計 | 説明 |
-|---|---|
-| `name: tasukiba` | Docker Compose プロジェクト名。全リソースに `tasukiba-` プレフィックスが付与される |
-| `container_name: tasukiba-app / tasukiba-db` | 明示的な名前で他プロジェクトと衝突しない |
-| `APP_PORT:-3000` | アプリポート。デフォルト 3000。競合時は .env で変更 |
-| `DB_PORT:-5433` | **DB 外部ポートはデフォルト 5433**（5432 は既存 PostgreSQL と競合しやすいため回避） |
-| `tasukiba-pgdata` | 名前付きボリュームで他プロジェクトのデータと分離 |
-| `tasukiba-network` | 専用ネットワークで他コンテナから分離 |
-| `restart: unless-stopped` | PC 再起動時に自動復旧 |
-
-##### .env.example（Docker 用の設定項目）
-
-```bash
-# === ポート設定（既存環境と競合する場合に変更） ===
-APP_PORT=3000
-DB_PORT=5433
-
-# === データベース設定 ===
-DB_NAME=tasukiba
-DB_USER=postgres
-DB_PASSWORD=     # 必須: 強力なパスワードを設定
-
-# === アプリケーション設定 ===
-NEXTAUTH_SECRET= # 必須: openssl rand -base64 32 で生成
-NEXTAUTH_URL=http://localhost:3000
-
-# === メール設定 ===
-MAIL_PROVIDER=console  # console / brevo / resend / smtp
-MAIL_FROM=noreply@example.com
-MAIL_FROM_NAME=たすきば
-# Brevo の場合（推奨）
-BREVO_API_KEY=
-# Resend の場合
-RESEND_API_KEY=
-# SMTP の場合
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USER=
-SMTP_PASS=
-
-# === 初期管理者（シード用） ===
-INITIAL_ADMIN_EMAIL=admin@example.com
-INITIAL_ADMIN_PASSWORD= # 必須: パスワードポリシー準拠
-
-# === オプション ===
-SEARCH_PROVIDER=pg_trgm
-ENABLE_OPERATION_TRACE=false
-```
-
-#### 10.0.5 可搬性を維持するための実装ルール
-
-| ルール | 理由 |
-|---|---|
-| Supabase 固有の API・機能を使用しない | 外部ユーザは素の PostgreSQL を使う |
-| PostgreSQL 標準機能のみ使用（pg_trgm 等の標準 contrib は可） | DB の可搬性を確保 |
-| 全ての外部サービス接続を環境変数で設定可能にする | 環境ごとに接続先が異なる |
-| 全ポートを環境変数で変更可能にする | 既存環境とのポート競合を回避 |
-| メール送信は MailProvider インターフェースで抽象化 | Brevo / Resend / SMTP / コンソール出力を切替可能 |
-| Next.js は standalone モードでビルド | Docker イメージのサイズ最適化 + Vercel 非依存 |
-| 静的ファイルの CDN 依存なし | オフライン環境でも動作可能 |
-| Docker Compose のリソースにプロジェクト名プレフィックスを付与 | 既存コンテナ・ボリューム・ネットワークとの衝突回避 |
-
-#### 10.0.6 メール送信の環境別対応
-
-| 環境 | プロバイダ | 設定 |
-|---|---|---|
-| 開発（ローカル） | ConsoleMailProvider | メール送信せずコンソール出力 |
-| 自社運用（クラウド） | BrevoMailProvider | BREVO_API_KEY で設定（推奨） |
-| 自社運用（クラウド） | ResendMailProvider | RESEND_API_KEY で設定（要ドメイン検証） |
-| 外部配布（PC/オンプレ） | SmtpMailProvider | SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS で設定 |
-
-環境変数 `MAIL_PROVIDER` で切替:
-
-| 値 | プロバイダ | 備考 |
-|---|---|---|
-| console（デフォルト） | コンソール出力 | 開発・テスト向け |
-| brevo（推奨） | Brevo API | 無料: 300通/日、任意宛先送信可 |
-| resend | Resend API | 無料: 3,000通/月、要ドメイン検証 |
-| smtp | SMTP 直接送信 | オンプレ向け |
-
-#### 10.0.7 オンプレミス環境の追加構成
-
-ローカル PC 構成に加え、オンプレミス（物理サーバ）環境では以下が必要となる。
-
-##### 構成図
-
-```
-社内ネットワーク
-  |
-  | HTTPS (443)
-  v
-┌─────────────────────────────────────────────────┐
-│  物理サーバ                                       │
-│                                                  │
-│  ┌────────────────────────────────────────────┐  │
-│  │  Docker Compose (name: tasukiba)           │  │
-│  │                                            │  │
-│  │  ┌──────────────┐                          │  │
-│  │  │  nginx        │ :443 (HTTPS)            │  │
-│  │  │  リバースプロキシ│ :80 (HTTP → 443転送)   │  │
-│  │  └──────┬───────┘                          │  │
-│  │         | :3000 (内部通信)                   │  │
-│  │  ┌──────┴───────┐  ┌────────────────────┐  │  │
-│  │  │  app          │  │  db                │  │  │
-│  │  │  Next.js      │──│  PostgreSQL 16     │  │  │
-│  │  │  Port: 3000   │  │  Port: 5432 (内部) │  │  │
-│  │  └──────────────┘  └────────────────────┘  │  │
-│  │                                            │  │
-│  └────────────────────────────────────────────┘  │
-│                                                  │
-│  ファイアウォール: 443 のみ外部公開               │
-└─────────────────────────────────────────────────┘
-```
-
-##### docker-compose.onprem.yml（オンプレミス用オーバーライド）
-
-PC 向けの docker-compose.yml に加え、オンプレミス用のオーバーライドファイルを提供する。
-
-```yaml
-# docker-compose.onprem.yml
-# 使い方: docker compose -f docker-compose.yml -f docker-compose.onprem.yml up -d
-
-services:
-  nginx:
-    image: nginx:alpine
-    container_name: tasukiba-nginx
-    ports:
-      - "${HTTPS_PORT:-443}:443"
-      - "${HTTP_PORT:-80}:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
-    depends_on:
-      - app
-    networks:
-      - tasukiba-network
-    restart: unless-stopped
-
-  app:
-    ports: !reset []
-    # Nginx 経由でのみアクセス。外部にポートを公開しない
-
-  db:
-    ports: !reset []
-    # DB ポートも外部に公開しない（コンテナ間通信のみ）
-```
-
-##### Nginx 設定
-
-```
-# nginx/nginx.conf
-events { worker_connections 1024; }
-
-http {
-    # HTTP → HTTPS リダイレクト
-    server {
-        listen 80;
-        server_name _;
-        return 301 https://$host$request_uri;
-    }
-
-    # HTTPS
-    server {
-        listen 443 ssl;
-        server_name _;
-
-        ssl_certificate     /etc/nginx/certs/server.crt;
-        ssl_certificate_key /etc/nginx/certs/server.key;
-        ssl_protocols       TLSv1.2 TLSv1.3;
-
-        # セキュリティヘッダ
-        add_header X-Content-Type-Options nosniff;
-        add_header X-Frame-Options DENY;
-        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains";
-
-        # リクエストサイズ制限
-        client_max_body_size 1m;
-
-        location / {
-            proxy_pass http://tasukiba-app:3000;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-    }
-}
-```
-
-##### SSL 証明書の選択肢
-
-| 方式 | 用途 | 手順 |
-|---|---|---|
-| **自己署名証明書** | 社内限定利用（ブラウザに警告が表示される） | openssl で生成し nginx/certs/ に配置 |
-| **社内 CA 証明書** | 社内 CA がある場合（警告なし） | 社内 CA から発行してもらい配置 |
-| **Let's Encrypt** | サーバが外部公開されている場合 | certbot で自動取得・更新 |
-
-自己署名証明書の生成手順:
-
-```bash
-mkdir -p nginx/certs
-openssl req -x509 -nodes -days 365 \
-  -newkey rsa:2048 \
-  -keyout nginx/certs/server.key \
-  -out nginx/certs/server.crt \
-  -subj "/CN=tasukiba.local"
-```
-
-##### オンプレミスの起動手順
-
-```bash
-# 1. 展開
-unzip tasukiba-vX.X.X.zip && cd tasukiba
-
-# 2. 環境変数設定
-cp .env.example .env
-# .env を編集
-# NEXTAUTH_URL=https://tasukiba.internal.example.com（サーバのアドレス）
-
-# 3. SSL 証明書を配置
-# nginx/certs/server.crt と server.key を配置
-
-# 4. 起動（オンプレミス構成）
-docker compose -f docker-compose.yml -f docker-compose.onprem.yml up -d
-
-# 5. マイグレーション + シード
-docker compose exec app pnpm prisma migrate deploy
-docker compose exec app pnpm db:seed
-
-# 6. アクセス → https://tasukiba.internal.example.com
-```
-
-##### ファイアウォール設定
-
-| ポート | 方向 | 許可範囲 | 目的 |
-|---|---|---|---|
-| 443 (HTTPS) | Inbound | 社内ネットワーク | ユーザアクセス |
-| 80 (HTTP) | Inbound | 社内ネットワーク | HTTPS リダイレクト用 |
-| 3000 | - | **公開しない** | Nginx → App の内部通信 |
-| 5432 | - | **公開しない** | App → DB の内部通信 |
-| 22 (SSH) | Inbound | 管理者端末のみ | サーバ管理 |
-
-##### バックアップ
-
-| 対象 | 方式 | 頻度 | 保持期間 |
-|---|---|---|---|
-| PostgreSQL データ | docker compose exec db pg_dump で取得 | 日次 | 30 日 |
-| .env ファイル | 手動バックアップ | 設定変更時 | 世代管理 |
-| SSL 証明書 | 手動バックアップ | 更新時 | 世代管理 |
-| Docker ボリューム | docker volume のバックアップは不要（pg_dump で十分） | - | - |
-
-バックアップスクリプト例:
-
-```bash
-#!/bin/bash
-# backup.sh - 日次バックアップ（cron で実行）
-BACKUP_DIR="/path/to/backup"
-DATE=$(date +%Y%m%d)
-
-# PostgreSQL ダンプ
-docker compose exec -T db pg_dump -U postgres tasukiba \
-  > "${BACKUP_DIR}/tasukiba_${DATE}.sql"
-
-# 30日以上前のバックアップを削除
-find "${BACKUP_DIR}" -name "tasukiba_*.sql" -mtime +30 -delete
-```
-
-##### 最小システム要件
-
-| 項目 | 最小 | 推奨 |
-|---|---|---|
-| CPU | 2 コア | 4 コア |
-| メモリ | 2 GB | 4 GB |
-| ディスク | 10 GB | 20 GB |
-| OS | Linux (Ubuntu 22.04+, RHEL 8+) / Windows Server 2019+ | Linux 推奨 |
-| Docker | 24.0+ | 最新安定版 |
-| Docker Compose | v2.20+ | 最新安定版 |
-| ネットワーク | 社内 LAN | - |
-
-##### オンプレミス用追加環境変数
-
-| 変数名 | 説明 | デフォルト |
-|---|---|---|
-| HTTPS_PORT | HTTPS 公開ポート | 443 |
-| HTTP_PORT | HTTP 公開ポート（リダイレクト用） | 80 |
-
-##### 配布パッケージの構成（オンプレミス対応後）
-
-```
-tasukiba-vX.X.X.zip
-  src/
-  prisma/
-  docker-compose.yml            # PC 向け（基本構成）
-  docker-compose.onprem.yml     # オンプレミス追加構成
-  Dockerfile
-  nginx/
-    nginx.conf                  # リバースプロキシ設定
-    certs/                      # SSL 証明書の配置先（空）
-  .env.example
-  backup.sh                     # バックアップスクリプト
-  package.json
-  SETUP.md                      # セットアップ手順
-  LICENSE
-```
-
-#### 10.0.8 クラウド環境の構成
-
-外部ユーザが AWS または Azure でデプロイする場合の構成パターンを定義する。
-コンテナ方式とサーバレス方式の 2 パターンを提供する。
-
-##### 構成パターン一覧
-
-| パターン | AWS | Azure | 特徴 | 月額目安 |
-|---|---|---|---|---|
-| **A: コンテナ方式** | ECS Fargate + RDS | App Service + Azure DB for PostgreSQL | Docker イメージをそのまま利用。オンプレと同じ運用感 | $30〜80 |
-| **B: サーバレス方式** | Lambda (via SST) + Aurora Serverless v2 | Functions + Azure DB for PostgreSQL Flexible (Burstable) | 使った分だけ課金。低トラフィック時にコスト最小 | $10〜40 |
-
-##### パターン A: コンテナ方式
-
-**AWS 構成**
-
-```
-ユーザ (HTTPS)
-  |
-  v
-ALB (Application Load Balancer)
-  - SSL 終端
-  - ヘルスチェック
-  |
-  v
-ECS Fargate
-  - tasukiba-app コンテナ
-  - Dockerfile をそのまま使用
-  - 環境変数は Secrets Manager / Parameter Store から取得
-  |
-  v
-RDS PostgreSQL 16
-  - db.t4g.micro（Free Tier 対象: 12ヶ月無料）
-  - 自動バックアップ（7日間保持）
-  - Multi-AZ なし（コスト優先）
-```
-
-| コンポーネント | AWS サービス | スペック | 月額目安 |
-|---|---|---|---|
-| ロードバランサー | ALB | - | ~$16 |
-| アプリケーション | ECS Fargate | 0.25 vCPU / 0.5 GB | ~$10 |
-| データベース | RDS PostgreSQL | db.t4g.micro (Free Tier) | $0（初年度）/ ~$15 |
-| シークレット管理 | Secrets Manager | - | ~$1 |
-| コンテナレジストリ | ECR | - | ~$1 |
-| **合計** | | | **~$28（初年度）/ ~$43** |
-
-**Azure 構成**
-
-```
-ユーザ (HTTPS)
-  |
-  v
-Application Gateway / Front Door
-  - SSL 終端
-  |
-  v
-App Service (Linux)
-  - Docker コンテナデプロイ
-  - B1 プラン
-  |
-  v
-Azure Database for PostgreSQL Flexible Server
-  - Burstable B1ms
-  - 自動バックアップ（7日間保持）
-```
-
-| コンポーネント | Azure サービス | スペック | 月額目安 |
-|---|---|---|---|
-| アプリケーション | App Service (Linux B1) | 1 vCPU / 1.75 GB | ~$13 |
-| データベース | Azure DB for PostgreSQL (B1ms) | 1 vCPU / 2 GB | ~$25 |
-| SSL | App Service 付属 | - | $0 |
-| **合計** | | | **~$38** |
-
-**コンテナ方式のデプロイ手順（概要）**
-
-```bash
-# AWS の場合
-# 1. ECR にイメージをプッシュ
-docker build -t tasukiba .
-docker tag tasukiba:latest <account>.dkr.ecr.<region>.amazonaws.com/tasukiba:latest
-docker push <account>.dkr.ecr.<region>.amazonaws.com/tasukiba:latest
-
-# 2. ECS タスク定義で環境変数を設定（Secrets Manager 参照）
-# 3. ECS サービスを作成
-# 4. RDS に対してマイグレーション実行
-#    ローカルから DATABASE_URL を RDS に向けて実行
-pnpm prisma migrate deploy
-pnpm db:seed
-```
-
-```bash
-# Azure の場合
-# 1. App Service にコンテナデプロイ
-az webapp create --resource-group <rg> --plan <plan> \
-  --name tasukiba --deployment-container-image-name <image>
-
-# 2. Azure DB for PostgreSQL を作成
-# 3. App Service の環境変数を設定
-# 4. マイグレーション + シード実行
-```
-
-##### パターン B: サーバレス方式
-
-**AWS サーバレス構成**
-
-```
-ユーザ (HTTPS)
-  |
-  v
-CloudFront (CDN)
-  - 静的アセット配信
-  - SSL 終端
-  |
-  v
-API Gateway / Lambda (via SST or OpenNext)
-  - Next.js standalone を Lambda にデプロイ
-  - SST (Serverless Stack) または OpenNext で変換
-  - コールドスタート: ~1-2秒（初回アクセス時）
-  |
-  v
-Aurora Serverless v2 (PostgreSQL 互換)
-  - 0.5 ACU〜（使用量に応じて自動スケール）
-  - 未使用時は最小 ACU で待機
-  - 自動バックアップ
-```
-
-| コンポーネント | AWS サービス | 課金方式 | 月額目安（低トラフィック） |
-|---|---|---|---|
-| CDN | CloudFront | リクエスト数 | ~$1 |
-| API + 実行 | API Gateway + Lambda | リクエスト数 + 実行時間 | ~$1〜5 |
-| データベース | Aurora Serverless v2 | ACU 使用量 | ~$10〜30 |
-| シークレット管理 | Secrets Manager | - | ~$1 |
-| **合計** | | | **~$13〜37** |
-
-**Azure サーバレス構成**
-
-```
-ユーザ (HTTPS)
-  |
-  v
-Azure Static Web Apps / Front Door
-  - 静的アセット配信
-  - SSL 終端
-  |
-  v
-Azure Functions (Node.js)
-  - Next.js を Azure Functions Adapter でデプロイ
-  - 従量課金プラン
-  |
-  v
-Azure Database for PostgreSQL Flexible Server (Burstable)
-  - B1ms
-  - 自動バックアップ
-```
-
-| コンポーネント | Azure サービス | 課金方式 | 月額目安（低トラフィック） |
-|---|---|---|---|
-| 静的配信 | Static Web Apps (Free) | - | $0 |
-| API + 実行 | Functions (従量課金) | 実行数 + 実行時間 | ~$1〜5 |
-| データベース | Azure DB for PostgreSQL (B1ms) | 固定 | ~$25 |
-| **合計** | | | **~$26〜30** |
-
-##### サーバレス方式の注意事項
-
-| 注意点 | 影響 | 対策 |
-|---|---|---|
-| **コールドスタート** | 初回アクセスが 1〜2 秒遅延 | Provisioned Concurrency（AWS）で緩和可能（コスト増） |
-| **DB 接続数** | Lambda は同時実行ごとに接続を消費 | Prisma Data Proxy または RDS Proxy で接続プーリング |
-| **セッション管理** | Lambda はステートレス | DB セッション（現在の設計）で対応済み |
-| **Cron バッチ** | Lambda 単体では定期実行できない | EventBridge (AWS) / Timer Trigger (Azure) で実行 |
-| **デプロイ複雑度** | SST / OpenNext / Azure Adapter の学習コスト | セットアップガイドで手順を提供 |
-
-##### パターン選択ガイド
-
-| 判断基準 | コンテナ方式（A） | サーバレス方式（B） |
-|---|---|---|
-| チーム規模 | 10 名以上で常時利用 | 10 名以下、利用頻度にムラがある |
-| コスト優先度 | 月額固定で予測しやすい | 低トラフィック時にコスト最小化したい |
-| 運用スキル | Docker / ECS / App Service の経験あり | サーバレスの経験あり |
-| レスポンス | 常に高速 | コールドスタートを許容できる |
-| オンプレからの移行 | Docker イメージをそのまま使える | 追加のデプロイ設定が必要 |
-
-**推奨**: 初めてクラウドにデプロイするユーザには**コンテナ方式（A）**を推奨する。Docker Compose で動作確認した構成をそのままクラウドに持ち込めるため、学習コストが低い。
-
-##### 可搬性の確認（全デプロイ形態の対応状況）
-
-| 実装ルール | PC | オンプレ | クラウド(コンテナ) | クラウド(サーバレス) |
-|---|---|---|---|---|
-| Supabase 非依存 | ○ | ○ | ○ | ○ |
-| PostgreSQL 標準のみ | ○ | ○ | ○ | ○（Aurora 互換） |
-| 環境変数で全設定 | ○ | ○ | ○ | ○ |
-| MailProvider 抽象化 | ○ | ○ | ○ | ○ |
-| standalone ビルド | ○ | ○ | ○ | ○（Lambda 変換） |
-| CDN 非依存 | ○ | ○ | ○ | ○（CDN は任意） |
-| DB セッション | ○ | ○ | ○ | ○（ステートレス対応済） |
-| ポート変更可能 | ○ | ○ | -（LB で制御） | -（API Gateway で制御） |
-| Docker Compose | ○ | ○ | △（ECS 変換） | ×（SST/OpenNext） |
+| デプロイ形態 | Vercel + Supabase のみ (§10.2 参照) |
+| 外部配布 (.zip / Docker / オンプレ / AWS / Azure 等) | **現時点で非対応**、体制・構成未整備のため記載を削除。将来的な必要性を鑑みて再検討する |
+| 開発環境 | ローカル PostgreSQL (Docker) or Supabase 接続、詳細は §10.1 |
+
+過去に docs 内に Docker Compose / オンプレミス / AWS / Azure 等の外部配布方針を記載していたが、
+体制・構成が整備されていないため誤認を避ける目的で PR #123 で削除した。再導入する場合は
+git 履歴から過去記述を参照できる。
 
 ### 10.1 開発環境構成図
 
@@ -3088,32 +2444,31 @@ Azure Database for PostgreSQL Flexible Server (Burstable)
 
 ### 10.4 環境変数一覧
 
-自社利用（Supabase）と外部配布（Docker / 直接インストール）で設定値が異なる。
-
-#### 共通
+> 詳細は [`docs/administrator/OPERATION.md §1`](../administrator/OPERATION.md#1-環境変数一覧) に集約。本節は概要のみ。
 
 | 変数名 | 説明 | 例 |
 |---|---|---|
-| DATABASE_URL | PostgreSQL 接続文字列 | （下記の環境別を参照） |
-| DIRECT_URL | 直接接続文字列（マイグレーション用） | （下記の環境別を参照） |
-| NEXTAUTH_URL | アプリケーション URL | http://localhost:3000 |
+| DATABASE_URL | PostgreSQL 接続文字列 (Supabase pooler) | postgresql://...:6543/postgres?pgbouncer=true |
+| DIRECT_URL | 直接接続文字列 (migration 用) | postgresql://...:5432/postgres |
+| NEXTAUTH_URL | アプリケーション URL | http://localhost:3000 or Vercel URL |
 | NEXTAUTH_SECRET | NextAuth 暗号化キー | ランダム文字列（32文字以上） |
 | NODE_ENV | 実行環境 | development / production |
-| MAIL_PROVIDER | メール送信プロバイダ | console（デフォルト）/ brevo / resend / smtp |
-| BREVO_API_KEY | Brevo API キー（MAIL_PROVIDER=brevo 時） | xkeysib-xxxxxxxxxx |
+| MAIL_PROVIDER | メール送信プロバイダ | console（デフォルト）/ brevo（本番推奨）/ resend（代替）/ inbox（E2E 専用） |
+| BREVO_API_KEY | Brevo API キー（MAIL_PROVIDER=brevo 時、本番既定） | xkeysib-xxxxxxxxxx |
 | MAIL_FROM_NAME | メール送信元表示名（Brevo のみ） | たすきば |
-| RESEND_API_KEY | Resend API キー（MAIL_PROVIDER=resend 時） | re_xxxxxxxxxx |
-| SMTP_HOST | SMTP ホスト（MAIL_PROVIDER=smtp 時） | smtp.example.com |
-| SMTP_PORT | SMTP ポート | 587 |
-| SMTP_USER | SMTP ユーザ名 | user@example.com |
-| SMTP_PASS | SMTP パスワード | （パスワード） |
+| RESEND_API_KEY | Resend API キー（MAIL_PROVIDER=resend 時、代替選択肢） | re_xxxxxxxxxx |
 | MAIL_FROM | メール送信元アドレス | noreply@example.com |
 | INITIAL_ADMIN_EMAIL | 初期管理者メールアドレス（シード用） | admin@example.com |
 | INITIAL_ADMIN_PASSWORD | 初期管理者パスワード（シード用） | （ポリシー準拠のパスワード） |
 | SEARCH_PROVIDER | 検索プロバイダ | pg_trgm（デフォルト） |
 | ENABLE_OPERATION_TRACE | 操作トレースログの有効/無効 | false（初期）/ true（本格運用時） |
+| APP_DEFAULT_TIMEZONE / APP_DEFAULT_LOCALE | i18n 既定値 (PR #118) | Asia/Tokyo / ja-JP |
 
-#### Docker 配布時のみ
+> **注**: `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` の記載を PR #123 で削除。
+> 過去 docs に記載されていたが、`src/lib/mail/index.ts` の `createMailProvider()` に `smtp`
+> ケースが存在せず (実装未提供)、指定しても console フォールバックになるため誤認回避。
+
+#### ローカル開発時のみ (Docker Compose)
 
 | 変数名 | 説明 | デフォルト |
 |---|---|---|
@@ -3123,20 +2478,14 @@ Azure Database for PostgreSQL Flexible Server (Burstable)
 | DB_USER | データベースユーザ | postgres |
 | DB_PASSWORD | データベースパスワード | （必須設定） |
 
-#### オンプレミス構成時のみ
-
-| 変数名 | 説明 | デフォルト |
-|---|---|---|
-| HTTPS_PORT | HTTPS 公開ポート | 443 |
-| HTTP_PORT | HTTP 公開ポート（リダイレクト用） | 80 |
-
 #### 環境別の DATABASE_URL / DIRECT_URL
 
 | 環境 | DATABASE_URL | DIRECT_URL |
 |---|---|---|
-| 自社（Supabase） | Pooler 経由 (ポート 6543, ?pgbouncer=true) | 直接接続 (ポート 5432) |
-| Docker 配布 | postgresql://DB_USER:DB_PASSWORD@tasukiba-db:5432/DB_NAME | DATABASE_URL と同一 |
-| 非 Docker 配布 | ユーザの PostgreSQL 接続先 | DATABASE_URL と同一 |
+| 自社 (Supabase、本番) | Pooler 経由 (ポート 6543, ?pgbouncer=true) | 直接接続 (ポート 5432) |
+| ローカル開発 (Docker) | postgresql://postgres:postgres@localhost:5433/tasukiba | DATABASE_URL と同一 |
+
+> **注**: Docker 配布 / 非 Docker 配布 / オンプレミス構成は PR #123 で記載削除 (体制・構成未整備、§10.0 参照)。
 
 ---
 
@@ -3748,24 +3097,26 @@ export class BrevoMailProvider implements MailProvider {
 }
 
 // lib/mail/resend-provider.ts（代替: 要ドメイン検証）
-// lib/mail/smtp-provider.ts（外部配布用: PC/オンプレ向け）
 // lib/mail/console-provider.ts（開発環境用: コンソール出力）
+// lib/mail/inbox-provider.ts（E2E テスト専用: ファイル出力）
 ```
 
 ```typescript
 // lib/mail/index.ts
-// 環境変数 MAIL_PROVIDER で切替（10.0.5 参照）
+// 環境変数 MAIL_PROVIDER で切替
 export function createMailProvider(): MailProvider {
   const provider = process.env.MAIL_PROVIDER || 'console';
   switch (provider) {
-    case 'brevo': return new BrevoMailProvider();
-    case 'resend': return new ResendMailProvider();
-    case 'smtp': return new SmtpMailProvider();
+    case 'brevo': return new BrevoMailProvider();  // 本番推奨
+    case 'resend': return new ResendMailProvider();  // 代替選択肢
+    case 'inbox': return new InboxMailProvider(process.env.INBOX_DIR);  // E2E
     case 'console':
     default: return new ConsoleMailProvider();
   }
 }
 ```
+
+> **注**: PR #123 で `smtp` ケース記載を削除 (実装未提供で指定時 console fallback、docs 債務清算)。
 
 ### 18.3 メールテンプレート一覧
 
