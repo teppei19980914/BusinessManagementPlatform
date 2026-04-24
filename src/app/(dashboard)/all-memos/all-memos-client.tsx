@@ -62,54 +62,100 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
         <span className="text-sm text-muted-foreground">{memos.length} 件</span>
       </div>
 
-      <ResizableColumnsProvider tableKey="all-memos-readonly">
-        <div className="flex justify-end pb-2">
-          <ResetColumnsButton />
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <ResizableHead columnKey="title" defaultWidth={220}>タイトル</ResizableHead>
-              <ResizableHead columnKey="content" defaultWidth={360}>本文</ResizableHead>
-              <ResizableHead columnKey="author" defaultWidth={140}>作成者</ResizableHead>
-              <ResizableHead columnKey="updatedAt" defaultWidth={140}>更新日時</ResizableHead>
-              <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {memos.map((m) => (
-              <TableRow
-                key={m.id}
-                className="cursor-pointer hover:bg-muted"
-                onClick={() => setViewing(m)}
-              >
-                <TableCell className="font-medium">{m.title}</TableCell>
-                <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
-                  {m.content.slice(0, 120)}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {m.authorName ?? '-'}
-                  {m.isMine && <span className="ml-1 text-xs text-info">(自分)</span>}
-                </TableCell>
-                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                  {formatDateTime(m.updatedAt)}
-                </TableCell>
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
-                </TableCell>
-              </TableRow>
-            ))}
-            {memos.length === 0 && (
+      {/* PR #128c: PC は既存テーブル、モバイルはカード */}
+      <div className="hidden md:block">
+        <ResizableColumnsProvider tableKey="all-memos-readonly">
+          <div className="flex justify-end pb-2">
+            <ResetColumnsButton />
+          </div>
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  公開メモがありません。
-                  <span className="ml-1 text-xs">(「メモ」画面で公開範囲を「全メモに公開」にすると、このページに表示されます)</span>
-                </TableCell>
+                <ResizableHead columnKey="title" defaultWidth={220}>タイトル</ResizableHead>
+                <ResizableHead columnKey="content" defaultWidth={360}>本文</ResizableHead>
+                <ResizableHead columnKey="author" defaultWidth={140}>作成者</ResizableHead>
+                <ResizableHead columnKey="updatedAt" defaultWidth={140}>更新日時</ResizableHead>
+                <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </ResizableColumnsProvider>
+            </TableHeader>
+            <TableBody>
+              {memos.map((m) => (
+                <TableRow
+                  key={m.id}
+                  className="cursor-pointer hover:bg-muted"
+                  onClick={() => setViewing(m)}
+                >
+                  <TableCell className="font-medium">{m.title}</TableCell>
+                  <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
+                    {m.content.slice(0, 120)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {m.authorName ?? '-'}
+                    {m.isMine && <span className="ml-1 text-xs text-info">(自分)</span>}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                    {formatDateTime(m.updatedAt)}
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
+                  </TableCell>
+                </TableRow>
+              ))}
+              {memos.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                    公開メモがありません。
+                    <span className="ml-1 text-xs">(「メモ」画面で公開範囲を「全メモに公開」にすると、このページに表示されます)</span>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </ResizableColumnsProvider>
+      </div>
+
+      {/* PR #128c: モバイルカードビュー */}
+      <div className="space-y-2 md:hidden" role="list" aria-label="全メモ一覧">
+        {memos.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            公開メモがありません。
+            <span className="ml-1 text-xs">(「メモ」画面で公開範囲を「全メモに公開」にすると表示されます)</span>
+          </p>
+        ) : (
+          memos.map((m) => (
+            <div
+              key={m.id}
+              role="listitem"
+              onClick={() => setViewing(m)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setViewing(m);
+                }
+              }}
+              tabIndex={0}
+              className="cursor-pointer rounded-md border bg-card p-3 text-sm transition-colors hover:bg-muted"
+            >
+              <div className="mb-2 flex items-center gap-2">
+                <span className="font-medium">{m.title}</span>
+                {m.isMine && <span className="text-xs text-info">(自分)</span>}
+              </div>
+              <p className="line-clamp-3 text-xs text-foreground">{m.content}</p>
+              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                <dt className="text-xs text-muted-foreground">作成者</dt>
+                <dd className="text-xs">{m.authorName ?? '-'}</dd>
+                <dt className="text-xs text-muted-foreground">更新</dt>
+                <dd className="text-xs text-muted-foreground">{formatDateTime(m.updatedAt)}</dd>
+              </dl>
+              {(attachmentsByEntity[m.id]?.length ?? 0) > 0 && (
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
 
       {/* 詳細ダイアログ (read-only) */}
       <Dialog open={viewing != null} onOpenChange={(o) => { if (!o) setViewing(null); }}>

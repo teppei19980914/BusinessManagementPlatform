@@ -199,7 +199,8 @@ export function CustomersClient({ initialCustomers }: Props) {
         </Dialog>
       </div>
 
-      <div className="rounded-md border">
+      {/* PR #128c: PC は既存テーブル、モバイルはカード */}
+      <div className="hidden rounded-md border md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -257,6 +258,53 @@ export function CustomersClient({ initialCustomers }: Props) {
             ))}
           </TableBody>
         </Table>
+      </div>
+
+      {/* モバイル (md 未満): カード */}
+      <div className="space-y-2 md:hidden" role="list" aria-label="顧客一覧">
+        {initialCustomers.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">顧客が登録されていません</p>
+        ) : (
+          initialCustomers.map((customer) => (
+            <div key={customer.id} role="listitem" className="rounded-md border bg-card p-3 text-sm">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <Link
+                  href={`/customers/${customer.id}`}
+                  className="flex-1 font-medium text-info hover:underline"
+                >
+                  {customer.name}
+                </Link>
+                {customer.activeProjectCount > 0 ? (
+                  <Badge variant="secondary" className="text-[10px]">{customer.activeProjectCount} 件</Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">0 件</span>
+                )}
+              </div>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                <dt className="text-xs text-muted-foreground">部門</dt>
+                <dd className="text-xs">{customer.department || '—'}</dd>
+                <dt className="text-xs text-muted-foreground">担当者</dt>
+                <dd className="text-xs">{customer.contactPerson || '—'}</dd>
+                <dt className="text-xs text-muted-foreground">メール</dt>
+                <dd className="text-xs break-all">{customer.contactEmail || '—'}</dd>
+              </dl>
+              <div className="mt-2 flex justify-end">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => handleDelete(customer)}
+                  title={
+                    customer.activeProjectCount > 0
+                      ? '紐付くプロジェクトがあります — 詳細画面のカスケード削除をご利用ください'
+                      : undefined
+                  }
+                >
+                  削除
+                </Button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
