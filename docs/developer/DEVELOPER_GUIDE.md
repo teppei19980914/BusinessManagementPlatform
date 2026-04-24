@@ -1196,6 +1196,14 @@ fail。PR #130 は PR #129 の **初回コミット 4870b74** から分岐して
 hotfix 伝播もそのぶん n-1 回必要 = 本例では **#128 base → #128a(#129) → #128a-2(#130)**
 の 2 段伝播となった。
 
+**再発事例 4 例目 (PR #131 = PR #128b hotfix)**: 3 段目。PR #131
+(`feat/pr128b-p2-cross-list`, P2 横断一覧モバイルカード化) は PR #130 の初回
+コミットから分岐しており、PR #130 が後で取り込んだ hotfix を継承していなかった。
+`git merge origin/feat/pr128a-2-wbs-mobile` で auto-merge 成立。同パターンが
+**3 PR 連続で再発** しており、stacked chain を運用する場合は **base に push した
+瞬間に下流へ順送りで merge を伝播する自動化** (または少なくともチェックリスト
+運用) を検討する価値あり。現状は手動対応で運用する。
+
 ### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
 
 Next.js は開発時 `.next/dev/types/validator.ts` にルートハンドラの型情報を
@@ -1433,3 +1441,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
 | 2026-04-24 | §10.5 サブセクション追加 (PR #129 hotfix = PR #128a hotfix)。Stacked PR で base に hotfix を当てた場合の sub-PR への伝播ルール (4 項目)。sub-PR は上流自動追従しないため base が green 化した時点で即 merge を流す必要があり、下流 CI fail は viewport 問題より base 伝播漏れを先に疑うべし |
 | 2026-04-24 | §10.5 再発事例 3 例目 (PR #130 hotfix = PR #128a-2 hotfix)。stacked 2 段目 (PR #128 base → #128a → #128a-2) での伝播漏れ。上流 #128a の hotfix commits を `git merge origin/feat/pr128a-p1-tables-card` で取り込み auto-merge 成立、conflict 0。同じ経路で PR #131 / #132 / #133 にも順次適用が必要 |
+| 2026-04-24 | §10.5 再発事例 4 例目 (PR #131 hotfix = PR #128b hotfix)。stacked 3 段目。同パターンが **3 PR 連続** で再発したため、本文に「base push と同時に下流順送り merge を自動化するのが望ましい」旨を追記 |
