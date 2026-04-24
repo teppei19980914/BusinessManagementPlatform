@@ -382,57 +382,100 @@ export function ProjectsClient({
         </Button>
       </div>
 
-      {/* 一覧テーブル */}
-      <ResizableColumnsProvider tableKey="projects">
-        <div className="flex justify-end pb-2">
-          <ResetColumnsButton />
-        </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <ResizableHead columnKey="name" defaultWidth={220}>プロジェクト名</ResizableHead>
-            <ResizableHead columnKey="customer" defaultWidth={160}>顧客</ResizableHead>
-            <ResizableHead columnKey="devMethod" defaultWidth={140}>開発方式</ResizableHead>
-            <ResizableHead columnKey="status" defaultWidth={110}>ステータス</ResizableHead>
-            <ResizableHead columnKey="plannedStartDate" defaultWidth={120}>開始予定日</ResizableHead>
-            <ResizableHead columnKey="plannedEndDate" defaultWidth={120}>終了予定日</ResizableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {initialProjects.map((project) => (
-            <TableRow key={project.id}>
-              <TableCell>
-                <Link
-                  href={`/projects/${project.id}`}
-                  className="font-medium text-info hover:underline"
-                >
-                  {project.name}
-                </Link>
-              </TableCell>
-              <TableCell>{project.customerName}</TableCell>
-              <TableCell>
-                {DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}
-              </TableCell>
-              <TableCell>
+      {/*
+        PR #128a: PC (md+) は既存の ResizableTable (列幅ドラッグ可能) を維持、
+        モバイル (md 未満) は並列でカード表示。PC UX は一切変更していない。
+      */}
+      <div className="hidden md:block">
+        <ResizableColumnsProvider tableKey="projects">
+          <div className="flex justify-end pb-2">
+            <ResetColumnsButton />
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <ResizableHead columnKey="name" defaultWidth={220}>プロジェクト名</ResizableHead>
+                <ResizableHead columnKey="customer" defaultWidth={160}>顧客</ResizableHead>
+                <ResizableHead columnKey="devMethod" defaultWidth={140}>開発方式</ResizableHead>
+                <ResizableHead columnKey="status" defaultWidth={110}>ステータス</ResizableHead>
+                <ResizableHead columnKey="plannedStartDate" defaultWidth={120}>開始予定日</ResizableHead>
+                <ResizableHead columnKey="plannedEndDate" defaultWidth={120}>終了予定日</ResizableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {initialProjects.map((project) => (
+                <TableRow key={project.id}>
+                  <TableCell>
+                    <Link
+                      href={`/projects/${project.id}`}
+                      className="font-medium text-info hover:underline"
+                    >
+                      {project.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{project.customerName}</TableCell>
+                  <TableCell>
+                    {DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={statusColors[project.status] || 'secondary'}>
+                      {PROJECT_STATUSES[project.status as keyof typeof PROJECT_STATUSES] ||
+                        project.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{project.plannedStartDate}</TableCell>
+                  <TableCell>{project.plannedEndDate}</TableCell>
+                </TableRow>
+              ))}
+              {initialProjects.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                    プロジェクトがありません
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </ResizableColumnsProvider>
+      </div>
+
+      {/* PR #128a: モバイル (md 未満) 専用のカードビュー */}
+      <div className="space-y-2 md:hidden" role="list" aria-label="プロジェクト一覧">
+        {initialProjects.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            プロジェクトがありません
+          </p>
+        ) : (
+          initialProjects.map((project) => (
+            <Link
+              key={project.id}
+              href={`/projects/${project.id}`}
+              role="listitem"
+              className="block rounded-md border bg-card p-3 text-sm transition-colors hover:bg-muted"
+            >
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <span className="flex-1 font-medium text-info">{project.name}</span>
                 <Badge variant={statusColors[project.status] || 'secondary'}>
                   {PROJECT_STATUSES[project.status as keyof typeof PROJECT_STATUSES] ||
                     project.status}
                 </Badge>
-              </TableCell>
-              <TableCell>{project.plannedStartDate}</TableCell>
-              <TableCell>{project.plannedEndDate}</TableCell>
-            </TableRow>
-          ))}
-          {initialProjects.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                プロジェクトがありません
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
-      </ResizableColumnsProvider>
+              </div>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                <dt className="text-xs text-muted-foreground">顧客</dt>
+                <dd className="text-foreground">{project.customerName || '-'}</dd>
+                <dt className="text-xs text-muted-foreground">開発方式</dt>
+                <dd className="text-foreground">
+                  {DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}
+                </dd>
+                <dt className="text-xs text-muted-foreground">期間</dt>
+                <dd className="text-foreground">
+                  {project.plannedStartDate || '-'} 〜 {project.plannedEndDate || '-'}
+                </dd>
+              </dl>
+            </Link>
+          ))
+        )}
+      </div>
       {initialTotal > 20 && (
         <p className="text-sm text-muted-foreground">全 {initialTotal} 件中 20 件を表示</p>
       )}
