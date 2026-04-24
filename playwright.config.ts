@@ -73,6 +73,17 @@ export default defineConfig({
         viewport: { width: 1440, height: 900 },
       },
     },
+    // PR #128: モバイルビューポート (iPhone 13 相当 390x844) での E2E プロジェクト。
+    //   - 既定では specs/ / visual/ 両方が両 project で実行されるため CI 時間は増加する。
+    //   - 必要に応じて `testIgnore` で PC 専用 spec を除外 (初期は全部実行で網羅性を取る)。
+    //   - mobile 用の視覚回帰 baseline は `*-chromium-mobile-linux.png` として別ファイル化される。
+    //   - ベースラインは PR 作成後 `[gen-visual]` で生成 (詳細 DEVELOPER_GUIDE §9.6)。
+    {
+      name: 'chromium-mobile',
+      use: {
+        ...devices['iPhone 13'],
+      },
+    },
   ],
   webServer: isCI
     ? {
