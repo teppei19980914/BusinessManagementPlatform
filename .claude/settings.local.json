@@ -5,7 +5,9 @@
       "Bash(cp \"C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-ClaudeCodeTemplate/memory/\"*.md c:/Users/SF02512/GitHub/Private/ClaudeCodeTemplate/.claude/memory-seed/)",
       "WebFetch(domain:www.brevo.com)",
       "WebFetch(domain:developers.brevo.com)",
-      "WebFetch(domain:help.brevo.com)"
+      "WebFetch(domain:help.brevo.com)",
+      "Skill(schedule)",
+      "Skill(schedule:*)"
     ]
   }
 }

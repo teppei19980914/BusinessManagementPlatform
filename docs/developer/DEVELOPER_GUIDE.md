@@ -24,6 +24,7 @@
 8. [UI ラベルの追加手順 (i18n)](#8-ui-ラベルの追加手順-i18n)
 9. [テスト・lint・build の実行](#9-テストlintbuild-の実行)
 10. [コミットとデプロイ](#10-コミットとデプロイ)
+11. [後続対応 (TODO) 一覧](#11-後続対応-todo-一覧-pr-122-で追加) (PR #122 追加)
 
 ---
 
@@ -1207,6 +1208,42 @@ export const SELECTABLE_LOCALES = {
 
 ---
 
+## 11. 後続対応 (TODO) 一覧 (PR #122 で追加)
+
+> セッション内で暫定合意された未着手・延期項目を失念しないよう、本セクションに集約する。
+> 着手時は該当行を削除、完了時は該当 PR 番号を記載して残すこと。
+
+### 11.1 未着手 (優先度: 中)
+
+| # | 項目 | 背景 / 詳細 | 起票元 |
+|---|---|---|---|
+| T-01 | 入力層の TZ 統合 (date-picker / date-field 系) | PR #118-#119 で描画層は `session.user.timezone` 反映済だが、`date-field-helpers.ts` / `date-field-with-actions.tsx` / `gantt-client.tsx` 等の **入力** では `new Date()` / `.getFullYear()` 等のブラウザ runtime TZ 依存 API を使用中。海外ユーザが 2026-04-24 と入力した際の UTC 変換が TZ 依存になる可能性。date-fns-tz 導入 or 軽量自前変換で解消予定 | PR #118-#119 時点で PR #121 予定 → CI 恒久対策と入れ替わりで未着手 |
+| T-02 | PAT 動作確認 (`CI_TRIGGER_PAT`) | PR #121 で導入した PAT fallback が次回の baseline 更新時に正しく動作し、CI 自動再起動が効くか実地確認 | PR #121 マージ時、ユーザ指示「今後の開発で様子を見る」 |
+
+### 11.2 低優先 (長期案件)
+
+| # | 項目 | 背景 / 詳細 | 起票元 |
+|---|---|---|---|
+| T-10 | UI 文字列の英訳 (en-US 有効化) | 現在 `en-US` は `SELECTABLE_LOCALES=false` で UI disabled (PR #120)。実有効化には `src/i18n/messages/en-US.json` 新設 + 全 .tsx のハードコード日本語抽出 + 翻訳 + `src/i18n/request.ts` を `session.user.locale` 連携 + `SELECTABLE_LOCALES['en-US']` を true 化、の順で実施 | PR #120 時点、ユーザ指示「優先度低、後続対応」 |
+| T-11 | 本番 build での `console.*` 自動削除 (SWC `removeConsole`) | `next.config.ts` に `compiler: { removeConsole: { exclude: ['error', 'warn'] } }` 追加で可。現状 ESLint の `no-console` でソース混入は防げているが、本番バンドルでも保険として削除したい | PR #122 時点、SPECIFICATION §25.5 で限界として明示 |
+| T-12 | ソースマップ本番非公開の明示宣言 | 現状 Next.js の既定動作で本番ソースマップは生成されないが、`productionBrowserSourceMaps: false` を `next.config.ts` に明示宣言しておくと将来の誤変更防止になる | PR #122 時点 |
+| T-13 | `/api/settings/i18n` の E2E 実カバー | PR #119 で `[ ] skip` で manifest 登録済。単体テスト 8 ケースで主要観点はカバー済だが、設定画面からの反映確認は未 E2E | PR #119 時点 |
+| T-14 | `system_error_logs` の自動削除バッチ | 1 ヶ月経過ログの退避 or 物理削除を cron で自動化 (OPERATION §13.1 で言及) | PR #122 時点 |
+
+### 11.3 期限付き (管理必須)
+
+| # | 項目 | 期限 | 内容 |
+|---|---|---|---|
+| T-20 | `CI_TRIGGER_PAT` ローテーション | **2027/04/24 失効** | 期限 30 日前を目安に fine-grained PAT 再発行 (repo: `BusinessManagementPlatform` only, `Contents: Read and write`, 1 年期限) → Repo Settings → Secrets の `CI_TRIGGER_PAT` を上書き。失効しても fallback で GITHUB_TOKEN に戻るだけで壊れないが、baseline auto-commit 後の CI 自動再起動が効かなくなる (§9.6 参照)。PR #121 時点で `/schedule` による自動リマインド Agent 登録は保留 |
+
+### 運用ルール
+
+- 新規発見の TODO は対応 PR を切る前に本セクションへ記入
+- 着手 PR で「T-XX 完了 (PR #XXX)」を commit message に含める
+- 半期に 1 回、本セクションの棚卸しを行い不要化した項目を削除
+
+---
+
 ## 付録 A. 設計原則のリマインダ
 
 - **§21.4 ゼロハードコーディング**: 業務的意味を持つ値は `src/config/` に外出し
@@ -1240,3 +1277,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §10.8 追記 (PR #120)。`SELECTABLE_LOCALES` による段階的ロケール提供パターン (翻訳未完ロケールを UI に出すが disabled + API 拒否) |
 | 2026-04-24 | §9.6 拡充 (PR #120)。GITHUB_TOKEN 罠の手動再起動手順を確定版として明示 + 恒久対策 4 選択肢の比較表 + 推奨案 (PAT) |
 | 2026-04-24 | §9.6 恒久対策実装 (PR #121)。`e2e-visual-baseline.yml` に PAT fallback 構文を導入。`CI_TRIGGER_PAT` secret を登録すれば baseline auto-commit 後の CI 再起動が自動化される (登録前は従来通り手動再起動、fallback により壊れない) |
+| 2026-04-24 | §11 追加 (PR #122)。後続対応 (TODO) 一覧を集約 (入力層 TZ / PAT 動作確認 / en-US 英訳 / SWC removeConsole / 期限付き PAT ローテーション等) |

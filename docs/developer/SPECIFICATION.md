@@ -2110,3 +2110,71 @@ admin ログイン時のナビ並びは左から順に:
       `isSupportedLocale` はフォールバックが effect せず `resolveLocale` は FALLBACK ロケールに戻る設計
 - 任意文字列による DB 汚染 / 未整備ロケールへの誘導を防ぐ (UI disabled との多層防御)
 - 本人のみ更新可 (`/api/settings/i18n` は `getAuthenticatedUser` のみ要件、他ユーザ設定は触れない)
+
+## 25. セキュリティ実装の全体像 (多層防御) (PR #122 で整理)
+
+> **用語**: 以下「漏洩面の最小化」とは、Web アプリケーションとして**技術的に到達可能な範囲で
+> 機密情報が UI / DevTools / ログに表出する経路を減らす** ことを指す。HTTP 仕様上ユーザ自身が
+> DevTools Network タブで自分宛 API レスポンスを確認する行為等、ブラウザの仕様で防止不可能な
+> 表出は対象外 (RFC 7540 / W3C 仕様等)。「完全制御」と誤認しないための明示。
+
+### 25.1 機密情報の漏洩面最小化 (PR #115 以降)
+
+| 対策 | 実装箇所 | 備考 |
+|---|---|---|
+| `console.*` 抑制 (lint) | `eslint.config.mjs` の `no-console` ルール (`src/` 対象) | 本番 build での自動削除 (SWC `removeConsole`) は未導入 (将来オプション) |
+| JWT の httpOnly cookie 化 | `src/lib/auth.config.ts` の `cookies.sessionToken.options.httpOnly=true` + 本番で `secure=true` | JavaScript から session token にアクセス不可 |
+| API レスポンスの DTO サニタイズ | `toUserDTO()` 等で `passwordHash` / `mfaSecretEncrypted` 等を除外 | Network タブで API レスポンスを見られても機密値は含まれない |
+| React の生 HTML 埋め込み API 不使用 | 該当 prop を使わず JSX 構造のみで描画 (grep 0 件) | XSS 耐性を標準化 |
+| エラー詳細の DB 隔離 | `system_error_logs` テーブル (PR #115) | 画面には「内部エラーが発生しました」等の固定文言のみ表示 |
+
+**本節の明示的な限界**:
+- Network タブ: ログインユーザ自身が自分宛 API レスポンス (プロジェクト / 顧客 / タスク等) を閲覧するのは設計上正常。**他ユーザデータの閲覧は API 認可ロジック (PROJECT_ROLES / sytemRole) により遮断済**
+- Application タブ: cookie は httpOnly で JS から読めないが、DevTools からは見える (ブラウザ仕様)
+- Sources タブ: 本番バンドルは minified だがロジックは読めば判別可能 (ソースマップは本番では生成しない既定)
+
+### 25.2 エラー記録の統一化 (PR #115)
+
+全エラーを `system_error_logs` テーブルに記録し、画面・console への機密情報露出を抑制:
+
+| カテゴリ | 捕捉経路 | DB 記録内容 | ユーザ表示 |
+|---|---|---|---|
+| サーバエラー | `withErrorHandler` で API route を包む | message (≤4KB) + stack (≤16KB) + userId | 500 + 固定メッセージ |
+| クライアントエラー | `error.tsx` / `global-error.tsx` + `POST /api/client-errors` | 同上 | 画面上「内部エラーが発生しました」+ 再試行ボタン |
+| Cron / mail 系 | 各ジョブ内で `recordError()` 呼び出し | 同上 | N/A (バックグラウンド) |
+
+- 失敗時は **silent fail** (DB 書込失敗がユーザ操作を阻害しない設計)
+- admin は `/admin/audit-logs` → (将来) 専用 system_error_logs 画面で閲覧予定 (現状は DB 直参照)
+
+### 25.3 エラー検知性 (ユーザ向け通知)
+
+- Error boundary (`error.tsx` / `global-error.tsx`) で実装
+- 表示は **固定文言「内部エラーが発生しました」** + 再試行ボタン (stack trace を画面に出さない)
+- API バリデーションエラー等の業務的なエラーは通常通り詳細メッセージを返し、UI で toast / inline 表示
+
+### 25.4 MFA ロック機構 (PR #116)
+
+| 項目 | 値 / 実装 |
+|---|---|
+| 閾値 | 3 回連続失敗 |
+| ロック期間 | 30 分 |
+| ロック時 API 応答 | 429 + `MFA_LOCKED` コード |
+| UI 表示 | admin/users 画面でツールチップ形式で解除予定時刻 JST 表示 |
+| 解除経路 (3 つ) | (1) 正しい TOTP 入力、(2) recovery code 使用 (`resetMfaLockOnRecoveryCodeUse`)、(3) admin 手動解除 (`unlockMfaByAdmin`) |
+| パスワードロックとの分離 | `mfaFailedCount` / `mfaLockedUntil` は `failedLoginCount` / `lockedUntil` と別カラム (混在防止) |
+| 恒久ロック | **なし** (recovery code で自己解除可能な設計) |
+
+### 25.5 セキュリティ観点の到達状況と限界
+
+**達成済**:
+- OWASP Top 10 対策の主要項目 (認証 / 認可 / 暗号化 / CSRF / XSS / ログイン試行制限)
+- 機密情報の画面・console 露出抑制
+- エラー情報の DB 集約と固定文言表示の分離
+- MFA のブルートフォース対策
+
+**本番運用時の限界 (意図的な未対応)**:
+- DevTools の Network / Storage / Sources タブ自体は技術的に塞げない (ブラウザ仕様)
+- 本番ビルド時の `console.*` 自動削除 (SWC `removeConsole`) は導入余地あり (将来対応)
+- ソースマップの本番 CDN 配信抑止は既定動作に依存 (明示宣言は将来対応)
+
+現行体制で MVP 〜 小規模本番運用には十分な堅牢性を確保。追加強化は `DEVELOPER_GUIDE §11 後続対応 (TODO) 一覧` (PR #122) 参照。
