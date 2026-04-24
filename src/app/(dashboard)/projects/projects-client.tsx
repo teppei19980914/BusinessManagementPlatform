@@ -135,6 +135,15 @@ export function ProjectsClient({
     e.preventDefault();
     setError('');
 
+    // クライアント側で事前バリデーション (HTML5 `required` で拾えない SearchableSelect 用)。
+    // 空 customerId で POST すると API は Zod UUID 検証で 400 を返し、その 400 がブラウザの
+    // Network/Console に出力されてしまう (fetch は 4xx でも throw しないがブラウザは必ず表示)。
+    // 本サービスのエラー情報最小化方針に反するため、サーバに届く前に弾いて UI 上のみで通知する。
+    if (!form.customerId) {
+      setError('顧客を選択してください');
+      return;
+    }
+
     // タグは入力欄の生文字列 (form.*TagsInput) をカンマ分割して送信する
     const payload = {
       name: form.name,

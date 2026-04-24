@@ -430,6 +430,70 @@ import { ResponsiveTable } from '@/components/ui/responsive-table';
 - PR #128c: P3 admin / 低優先 (`/all-memos`, `/admin/*`, `/customers`)
 - PR #128d: fine-tune (text-xs / padding / タップ領域)
 
+### 5.10 フォーム送信前の事前バリデーション (エラー情報最小化方針) (fix/project-create-customer-validation で整理)
+
+**背景 (本サービスの設計原則)**:
+このサービスは「**ユーザ/攻撃者に内部情報を与えない**」方針で、エラーは
+サーバ側ログに記録しブラウザ側には最小限の UI メッセージしか出さない。
+しかし HTTP 400 レスポンス自体はブラウザの Network/Console が自動で表示するため、
+**validation で 400 を返すたびにエラー情報が意図せず Console に出力** される。
+
+**原因パターン**:
+
+1. HTML5 `<input required>` で拾えないフィールド (Combobox / SearchableSelect /
+   カスタム Select 等) で必須入力チェックが抜ける
+2. 空文字や無効値のまま `fetch()` で POST が飛ぶ
+3. サーバ Zod schema で UUID / enum / min(1) 等が弾き 400 を返す
+4. ブラウザが 400 を Console に出力 → 「エラー情報を出さない」方針違反
+
+**修正パターン**: `async function handleCreate/handleAdd/handleSubmit(...)` の
+**先頭でクライアント側事前バリデーション** を行い、該当時は `setError(...)` + `return`
+で POST を抑止する。
+
+```tsx
+async function handleCreate(e: React.FormEvent) {
+  e.preventDefault();
+  setError('');
+
+  // HTML5 required で拾えない SearchableSelect 用の事前バリデーション。
+  // 空のまま POST すると API が 400 を返し、ブラウザ Console にエラーが出てしまう。
+  if (!form.customerId) {
+    setError('顧客を選択してください');
+    return;
+  }
+
+  const res = await fetch('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
+  // ...
+}
+```
+
+**対象となるコントロール (2026-04-24 時点)**:
+
+| コントロール | HTML5 required 有効 | 事前 validation 必要 |
+|---|---|---|
+| `<Input required>` / `<textarea required>` | ✅ 自動 | 不要 |
+| `<select required>` (native) | ✅ 自動 | 不要 (default 値がある場合は特に) |
+| `SearchableSelect` (Base UI Combobox 基盤) | ❌ HTML5 非対応 | **必須** |
+| `DateFieldWithActions` (required prop) | 🟡 内部 input で有効、ただし UI 文言は独自 | 通常不要、場合により |
+| `Select` (shadcn/ui / Radix) | ❌ HTML5 非対応 | 必須 (required にしたい場合) |
+
+**先例 (既存コードに埋まっている参考実装)**:
+
+- [members-client.tsx `handleAdd`](../../src/app/(dashboard)/projects/[projectId]/members-client.tsx) :
+  `if (!addForm.userId) { setAddError('ユーザを選択してください'); return; }`
+- [projects-client.tsx `handleCreate`](../../src/app/(dashboard)/projects/projects-client.tsx) :
+  `if (!form.customerId) { setError('顧客を選択してください'); return; }` (本 fix)
+
+**汎化ルール**:
+
+1. **SearchableSelect / Base UI Combobox / カスタム Select を「必須項目」として
+   扱う場合は必ず `handleXxx` 先頭で事前 validation を書く**。
+2. **UI メッセージ文言は サーバ Zod schema の `message` と揃える** (一致していれば
+   ユーザにとって「Cloud/ローカルどちらで検証されても同じ文言」になり体験が破綻しない)。
+3. **E2E 回帰テストで POST が飛ばないことまで assert する**
+   (`page.on('request', ...)` でカウント、空 validation 後に `expect(counter).toBe(false)`)。
+4. **新しい必須コントロールを採用したら本表と §5.10 本文の対象表を更新する**。
+
 ---
 
 ## 6. 機能削除の手順
@@ -1392,3 +1456,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §5.9 追加 (PR #128)。レスポンシブ実装パターン (ResponsiveTable 基盤 + 設計原則 + 段階 PR 計画)。詳細監査は docs/developer/RESPONSIVE_AUDIT.md を参照 |
 | 2026-04-24 | §10.5 再発事例追記 (PR #128 hotfix)。DEVELOPER_GUIDE の更新履歴テーブルで origin/main に PR #126/#127 が追加され、PR #128 の追記と末尾コンフリクト。PR 番号順 (#126 → #127 → #128) で結合する形で解消 (§10.5 テンプレ通りのリゾルブで 2 例目) |
 | 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
+| 2026-04-24 | §5.10 新設 (fix/project-create-customer-validation)。フォーム送信前の事前バリデーション (エラー情報最小化方針)。HTML5 `required` で拾えない `SearchableSelect` 必須項目は `handleXxx` 先頭で事前 validation + `setError` + `return` し、無効値 POST が 400 を返してブラウザ Console にエラー情報を露出させる経路を断つ |
