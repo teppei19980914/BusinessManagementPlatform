@@ -1589,6 +1589,89 @@ await expect(
 表の代わりに card / dl / li で描画されている場合は適切な親要素に置換する。
 重要なのは「page 全体の getByText ではなく **行境界でスコープする**」という考え方。
 
+### 4.34 native `<select>` を Combobox に置換したら E2E ロケータも追従必須 (PR #126 で遭遇)
+
+#### 症状
+
+PR #126 で「件数が増える可能性のある Select」を Base UI Combobox (`SearchableSelect` コンポーネント) に置換。`/projects` の顧客選択がこれに該当したが、`e2e/specs/09-customers.spec.ts` の **Step 6** で以下の locator が `element(s) not found` で fail:
+
+```ts
+// PR #126 以前の locator (native <select> 前提)
+const customerSelect = page.locator('select').filter({
+  has: page.locator(`option:has-text("${CUSTOMER_FOR_CASCADE}")`),
+}).first();
+await expect(customerSelect).toBeVisible({ timeout: 10_000 });
+```
+
+#### 原因
+
+Base UI Combobox は `<select>` ではなく `<input role="combobox">` + 展開時の `<div role="listbox">` + `<div role="option">` に render される。`locator('select')` は HTML タグ名マッチなので Combobox には一致しない。
+
+#### 修正 (正しい locator 戦略)
+
+テストの**意図**は「自由入力ではなく選択式であること」+「作成済 item が候補に含まれること」。実装詳細 (`<select>` vs Combobox) に依存しない ARIA ベースの locator に変更:
+
+```ts
+// 最終修正: role="combobox" + name regex で Input のみを一意特定
+const customerField = page.getByRole('combobox', { name: /顧客/ });
+await expect(customerField).toBeVisible({ timeout: 10_000 });
+
+// Combobox を展開 → 候補が表示される
+await customerField.click();
+await expect(
+  page.getByRole('option', { name: CUSTOMER_FOR_CASCADE }),
+).toBeVisible({ timeout: 5_000 });
+```
+
+#### ⚠️ 試行錯誤メモ: `getByLabel('顧客')` は strict mode violation で使えない
+
+初回修正で `getByLabel('顧客')` を使ったが再度 fail。Base UI Combobox は以下 2 要素を emit する:
+
+1. `<input role="combobox" aria-label="顧客選択">` — 実入力要素
+2. `<button aria-expanded=... aria-label="顧客選択（展開）">` — 装飾的な ▼ トリガー
+
+`getByLabel()` は `<label htmlFor>` と **`aria-label` の両方で substring マッチ** するため、上記 2 要素を同時に拾って strict mode violation になる。
+
+**正しい戦略**:
+
+| 手段 | 結果 |
+|---|---|
+| `getByLabel('顧客')` | ❌ 2 要素マッチ (input aria-label + trigger aria-label) |
+| `getByLabel('顧客', { exact: true })` | △ `<label>顧客</label>` のみヒットするが fragile (将来 aria-label 変更で壊れうる) |
+| **`getByRole('combobox', { name: /顧客/ })`** | ✅ `role="combobox"` は Input のみが持つため一意特定 (推奨) |
+| `page.locator('#project-create-customer')` | ✅ ID 固定で一意。ただし実装詳細に依存 |
+
+`getByRole('combobox')` は Base UI Combobox の ARIA 設計 (Input のみが combobox role) を利用して、**実装詳細に依存せず Input を一意に取る** ので最も堅牢。
+
+#### コンポーネント側の予防策 (本 PR で実施)
+
+`SearchableSelect` の Trigger の aria-label を Input の aria-label と衝突しない固定値 (`"候補を開く"`) に変更。これで `getByLabel(ariaLabel)` でも strict mode violation が起きなくなり、**将来別の spec で同じ罠を踏まない**。
+
+```diff
+ <Combobox.Trigger
+-  aria-label={ariaLabel ? `${ariaLabel} (展開)` : '展開'}
++  aria-label="候補を開く"
+   className="pointer-events-none absolute"
+ >
+```
+
+#### 教訓
+
+1. **UI コンポーネント置換時は E2E spec を同 PR でチェック**: PR #126 マージ前に `/projects` 関連 E2E (09-customers.spec.ts Step 6) を touch し、新 UI に合わせた locator 更新を同 PR 内でやるべきだった。CI が並列 PR 順で流れると発覚が遅れる。
+2. **ロケータは実装詳細に依存しない ARIA ベースが堅牢**: `locator('select')` → `getByRole('combobox', ...)` + `getByRole('option', ...)` にすることで、将来 UI が変わっても test が生存する。
+3. **`<select>` + `<option>` パターンは脆弱**: 今後 native `<select>` を使う箇所でも、E2E では role / name ベースを原則とする。
+4. **複合コンポーネントの `aria-label` 衝突に注意** (新知見): Combobox のように 1 フィールドで複数要素を emit する UI では、それぞれの aria-label に同じ文字列を含めると `getByLabel` / `getByRole` の name match が strict violation になる。**role が同じ複数要素に同じ name を付けない / 装飾要素には固定の役割名 (例: 「候補を開く」) を付ける**。
+
+#### 横展開チェック
+
+本事象を踏まえ、`locator('select')` を他の spec で使っていないか定期的に grep:
+
+```bash
+rg -n "locator\\('select'\\)" e2e/
+```
+
+2026-04-24 時点: 09-customers.spec.ts のみ検出 (本 PR で修正)。他 spec は既に label / role ベース or native `<select>` の locator を使っていないため影響なし。
+
 ---
 
 ## 5. アサーション戦略
