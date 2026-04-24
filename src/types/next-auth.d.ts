@@ -23,6 +23,18 @@ declare module 'next-auth' {
        * 設定画面の初期選択で参照する。既定 'light'。
        */
       themePreference: string;
+      /**
+       * PR #118: 個別タイムゾーン (IANA 名、例 'Asia/Tokyo')。
+       * null はシステムデフォルト (config/i18n.ts) を使う意味。
+       * 描画時は `resolveTimezone(session.user.timezone)` で解決する。
+       */
+      timezone: string | null;
+      /**
+       * PR #118: 個別ロケール (BCP 47、例 'ja-JP')。
+       * null はシステムデフォルトを使う意味。
+       * 描画時は `resolveLocale(session.user.locale)` で解決する。
+       */
+      locale: string | null;
     };
   }
 }

@@ -38,6 +38,12 @@ model User {
   // PR #72: 画面テーマ設定。既定 'light' (ライトテーマ)。ユーザが明示的に変更した
   // 値がセッションをまたいで永続適用されるため、sessionStorage ではなく DB 永続化する。
   themePreference   String    @default("light") @map("theme_preference") @db.VarChar(30)
+  // PR #118: 個別タイムゾーン (IANA 名、例 'Asia/Tokyo'/'America/New_York')。
+  //   null の場合はシステムデフォルト (env APP_DEFAULT_TIMEZONE or config/i18n.ts) を使用。
+  //   DB は常に UTC で格納し、描画時にこの値を Intl.DateTimeFormat に渡す方針。
+  timezone          String?   @map("timezone") @db.VarChar(60)
+  // PR #118: 個別ロケール (BCP 47、例 'ja-JP'/'en-US')。null はシステムデフォルト。
+  locale            String?   @map("locale") @db.VarChar(10)
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt         DateTime? @map("deleted_at") @db.Timestamptz

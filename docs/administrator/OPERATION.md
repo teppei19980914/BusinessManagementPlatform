@@ -95,6 +95,26 @@
 | `ENABLE_OPERATION_TRACE` | `false` | 操作トレースの有効化フラグ (要確認: 詳細は DESIGN.md) |
 | `CRON_SECRET` | (任意のランダム文字列) | Vercel Cron から `/api/admin/users/cleanup-inactive` 等を叩く際の `Authorization: Bearer` で使用。**未設定の場合 cron は実行されない** (手動実行は admin ログインで可能)。PR #89 で 30 日非アクティブユーザの自動削除に使用。 |
 
+### 1.7 i18n (タイムゾーン / ロケール既定値) — PR #118 追加
+
+| 変数名 | 既定値 (未設定時) | 用途 |
+|---|---|---|
+| `APP_DEFAULT_TIMEZONE` | `Asia/Tokyo` | システム全体のデフォルトタイムゾーン (IANA 名)。ユーザ個別設定 (`User.timezone`) が未設定の全ユーザに適用される。オンプレミス / クラウド拠点ごとに設定する想定 (例: `America/New_York`, `Europe/London`, `UTC`)。 |
+| `APP_DEFAULT_LOCALE` | `ja-JP` | システム全体のデフォルトロケール (BCP 47)。対応は `src/config/i18n.ts` の `SUPPORTED_LOCALES` を参照。新規ロケール追加には `src/i18n/messages/<locale>.json` (PR #120 予定) も必要。 |
+
+**設計意図**: DB は常に UTC で格納し (`timestamptz`)、描画時にタイムゾーンを解決する方針。
+3 段階フォールバック: **ユーザ個別設定 → システムデフォルト (env) → FALLBACK (config)**。
+
+**設定例** (米国東部拠点でのオンプレ展開):
+
+```bash
+# .env.production
+APP_DEFAULT_TIMEZONE=America/New_York
+APP_DEFAULT_LOCALE=en-US
+```
+
+詳細は [developer/DEVELOPER_GUIDE.md §10.8](../developer/DEVELOPER_GUIDE.md#108-タイムゾーン--ロケールの-3-段階フォールバック-pr-118) 参照。
+
 ---
 
 ## 2. ローカル開発環境の起動手順

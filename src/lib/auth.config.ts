@@ -101,15 +101,33 @@ export const authConfig: NextAuthConfig = {
         token.mfaVerified = false;
         // PR #72: テーマ設定も JWT に入れて layout.tsx から参照できるようにする。
         token.themePreference = (user as unknown as { themePreference?: string }).themePreference ?? 'light';
+        // PR #118: i18n 設定も JWT に入れて SSR/CSR 共通で TZ/locale 解決できるようにする。
+        //   null は「システムデフォルト使用」の意味。描画側で resolveTimezone/resolveLocale を通す。
+        token.timezone = (user as unknown as { timezone?: string | null }).timezone ?? null;
+        token.locale = (user as unknown as { locale?: string | null }).locale ?? null;
       }
       // PR #67: /login/mfa で useSession().update({ mfaVerified: true }) を
       // 呼ぶと trigger='update' の session 渡しで TOTP 検証済を token に反映する。
       // PR #72: 設定画面でテーマ変更時も同経路で { themePreference: '...' } を反映する。
+      // PR #118: 設定画面で TZ / locale を変更時も同じ経路で反映 (null 指定でシステム既定に戻せる)。
       if (trigger === 'update' && session && typeof session === 'object') {
-        const patch = session as { mfaVerified?: boolean; themePreference?: string };
+        const patch = session as {
+          mfaVerified?: boolean;
+          themePreference?: string;
+          timezone?: string | null;
+          locale?: string | null;
+        };
         if (patch.mfaVerified === true) token.mfaVerified = true;
         if (typeof patch.themePreference === 'string') {
           token.themePreference = patch.themePreference;
+        }
+        // timezone/locale は null を明示して「システム既定に戻す」が可能なので
+        // in 演算子でキー存在を確認する。
+        if ('timezone' in patch) {
+          token.timezone = patch.timezone ?? null;
+        }
+        if ('locale' in patch) {
+          token.locale = patch.locale ?? null;
         }
       }
       return token;
@@ -122,6 +140,9 @@ export const authConfig: NextAuthConfig = {
         session.user.mfaEnabled = (token.mfaEnabled as boolean | undefined) ?? false;
         session.user.mfaVerified = (token.mfaVerified as boolean | undefined) ?? false;
         session.user.themePreference = (token.themePreference as string | undefined) ?? 'light';
+        // PR #118: null 許容 (システムデフォルト意) のまま公開する。
+        session.user.timezone = (token.timezone as string | null | undefined) ?? null;
+        session.user.locale = (token.locale as string | null | undefined) ?? null;
       }
       return session;
     },
