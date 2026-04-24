@@ -160,13 +160,10 @@ export function ProjectKnowledgeClient({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">ナレッジ一覧（{knowledges.length} 件）</h3>
-        <div className="flex items-center gap-3">
-          <a href="/knowledge" className="text-sm text-info hover:underline">
-            全ナレッジへ →
-          </a>
-          {canCreate && (
-            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-              <DialogTrigger render={<Button size="sm" />}>ナレッジ作成</DialogTrigger>
+        {canCreate && (
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            {/* PR #124: 他「○○一覧」(risks / retrospectives) と同サイズ (px-4 py-2) に統一 */}
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">ナレッジ作成</DialogTrigger>
               <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>ナレッジ作成</DialogTitle>
@@ -289,7 +286,6 @@ export function ProjectKnowledgeClient({
               </DialogContent>
             </Dialog>
           )}
-        </div>
       </div>
 
       {knowledges.length === 0 ? (

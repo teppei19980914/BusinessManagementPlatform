@@ -43,11 +43,15 @@ export const INACTIVE_USER_DELETION_DAYS = 30;
 // ---------- セッション (NextAuth JWT) ----------
 
 /**
- * JWT 自体の有効期限 (安全網、秒)。
- * ただし cookie は maxAge を指定しないセッション cookie 運用なので、
- * 実質はブラウザ/タブを閉じた時点で失われる。この値は最長の上限として機能。
+ * JWT 自体の有効期限 (秒)。NextAuth の session.maxAge に渡すため、
+ * **アクセスが無い状態が継続した場合の強制ログアウトまでの時間** として機能する
+ * (NextAuth JWT 戦略は各リクエストで token を再署名する sliding 挙動 = アイドル時間上限)。
+ *
+ * PR #124 (2026-04-24): 24 時間 → 9 時間 に短縮。
+ *   日本の通常就業時間 (8 時間 + 休憩 1 時間 = 9 時間) を超えて無操作なら強制ログアウト。
+ *   cookie は maxAge 未指定のセッション cookie 運用のため、ブラウザ/タブを閉じた時点でも失効する。
  */
-export const SESSION_JWT_MAX_AGE_SEC = 24 * 60 * 60; // 24 時間
+export const SESSION_JWT_MAX_AGE_SEC = 9 * 60 * 60; // 9 時間 (就業時間 + 休憩)
 
 // ---------- ワンタイムトークン ----------
 
