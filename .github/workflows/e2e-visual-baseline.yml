@@ -89,8 +89,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch || github.ref }}
-          # commit push に必要 (actions/checkout の token は fetch 専用)
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # commit push に必要 (actions/checkout の token は fetch 専用)。
+          # PR #121: fallback 構文で PAT 優先 / 未登録なら GITHUB_TOKEN にフォールバック。
+          #   - CI_TRIGGER_PAT 登録時 (推奨): auto-commit 後に CI が正しく再起動される
+          #     (GITHUB_TOKEN 仕様で後続 workflow が起動しない罠を回避)
+          #   - CI_TRIGGER_PAT 未登録時: 既存動作 (GITHUB_TOKEN で push、手動再起動が必要)
+          #   詳細は docs/developer/DEVELOPER_GUIDE.md §9.6 参照
+          token: ${{ secrets.CI_TRIGGER_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

@@ -669,17 +669,39 @@ gh run list --commit $(git rev-parse origin/$(git branch --show-current)) --limi
 
 空配列 (`[]`) が返ったら手動再起動が必要。1 件以上返れば正常に実行中 or 完了済。
 
-##### 恒久対策の選択肢 (要判断)
+##### 恒久対策: PAT fallback 構文 (PR #121 で実装済み)
 
-| 選択肢 | 実装方法 | メリット | デメリット |
-|---|---|---|---|
-| **A. PAT 導入** ⭐推奨 | 1. fine-grained PAT 発行 (`contents: write`) → `secrets.CI_TRIGGER_PAT` に登録<br>2. `e2e-visual-baseline.yml:93` の `secrets.GITHUB_TOKEN` を `secrets.CI_TRIGGER_PAT` に差し替え | ワンライナー変更で自動解決。PR #121 以降の手動手順 0 | PAT 期限切れ (fine-grained で最長 1 年) / 発行者個人紐付き / 万一漏洩リスク |
-| **B. workflow_dispatch 連鎖** | 1. `ci.yml` / `e2e.yml` に `workflow_dispatch:` トリガ追加<br>2. baseline workflow 末尾に `gh workflow run ci.yml --ref ${{ github.ref_name }}` を追加 | PAT 不要 (GITHUB_TOKEN で OK)。鍵管理コスト 0 | **要検証**: workflow_dispatch 起動の check run が PR の required checks に紐付くか (`pull_request` event 外で起動した check が branch protection の要件を満たすか) |
-| **C. GitHub App** | App 作成 + インストール + `actions/create-github-app-token` で token 生成 | 個人非依存、権限細粒度 | セットアップ工数大、MVP 段階では過剰 |
-| **D. 現状維持** | 何もしない | 変更 0 | baseline 更新ごとに手動再起動 (PR #119 / #120 で既に 2 回発生) |
+PR #121 で `.github/workflows/e2e-visual-baseline.yml` に以下の fallback 構文を採用:
 
-**推奨**: **A (PAT)** を短期対処、長期的に C (GitHub App) を検討。
-B は check run の紐付き検証が必要で実運用リスクがあるため非推奨。
+```yaml
+token: ${{ secrets.CI_TRIGGER_PAT || secrets.GITHUB_TOKEN }}
+```
+
+- `CI_TRIGGER_PAT` が secrets に **登録されていれば** → PAT で push → **後続 CI が自動再起動** (GITHUB_TOKEN の罠回避)
+- 未登録なら → 空文字列扱いで `||` により `GITHUB_TOKEN` にフォールバック → 従来動作維持 (手動再起動が必要)
+
+**PAT 登録手順** (ユーザ側で 1 回のみ):
+
+1. GitHub → Settings → Developer settings → **Personal access tokens → Fine-grained tokens → Generate new token**
+2. 設定:
+   - Repository access: `teppei19980914/BusinessManagementPlatform` のみ
+   - Permissions: **Contents: Read and write**
+   - Expiration: 最長 1 年 (fine-grained の上限)
+3. Repo → Settings → Secrets and variables → Actions → Repository secrets → **`CI_TRIGGER_PAT`** として登録
+4. 次回以降の `[gen-visual]` push で自動再起動される
+
+**期限管理**: PAT の expiration 30 日前を目安に再発行 + secret 上書き。失効したら fallback で GITHUB_TOKEN に戻るだけ (壊れない)。
+
+**検討済の他選択肢** (PR #121 時点で不採用):
+
+| 選択肢 | 状態 | 理由 |
+|---|---|---|
+| **B. workflow_dispatch 連鎖** | 不採用 | workflow_dispatch 起動の check run が PR の required checks に紐付くか実運用検証リスクあり |
+| **C. GitHub App** | 将来検討 | 個人非依存だがセットアップ工数大。MVP 段階では PAT で十分 |
+| **D. 現状維持** | 不採用 (旧案) | baseline 更新ごとに手動再起動。PR #119 / #120 で 2 回連続発生 |
+
+IDE 警告 `Context access might be invalid: CI_TRIGGER_PAT` は secrets 未登録時に出るが、
+fallback 構文で保護されているため **実害なし**。登録すれば警告も消える。
 
 #### mask テクニック (PR #96)
 
@@ -1217,3 +1239,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §9.6 罠追記 (PR #119 hotfix 2)。GITHUB_TOKEN による auto-commit は次の workflow を起動しない問題と回避手順 |
 | 2026-04-24 | §10.8 追記 (PR #120)。`SELECTABLE_LOCALES` による段階的ロケール提供パターン (翻訳未完ロケールを UI に出すが disabled + API 拒否) |
 | 2026-04-24 | §9.6 拡充 (PR #120)。GITHUB_TOKEN 罠の手動再起動手順を確定版として明示 + 恒久対策 4 選択肢の比較表 + 推奨案 (PAT) |
+| 2026-04-24 | §9.6 恒久対策実装 (PR #121)。`e2e-visual-baseline.yml` に PAT fallback 構文を導入。`CI_TRIGGER_PAT` secret を登録すれば baseline auto-commit 後の CI 再起動が自動化される (登録前は従来通り手動再起動、fallback により壊れない) |
