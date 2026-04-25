@@ -161,20 +161,21 @@ export async function listProjects(
   return { data: projects.map(toProjectDTO), total };
 }
 
+// null は明示クリア用 (validator schema で .nullable() 済、§5.12)
 export type CreateProjectInput = {
   name: string;
   customerId: string;
   purpose: string;
   background: string;
   scope: string;
-  outOfScope?: string;
+  outOfScope?: string | null;
   devMethod: string;
   businessDomainTags?: string[];
   techStackTags?: string[];
   processTags?: string[];
   plannedStartDate: string;
   plannedEndDate: string;
-  notes?: string;
+  notes?: string | null;
 };
 
 export async function createProject(

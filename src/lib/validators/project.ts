@@ -12,7 +12,8 @@ export const createProjectSchema = z.object({
   purpose: z.string().min(1, '目的を入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
   background: z.string().min(1, '背景を入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
   scope: z.string().min(1, 'スコープを入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
-  outOfScope: z.string().max(MEDIUM_TEXT_MAX_LENGTH).optional(),
+  // feat/account-lock-and-ui-consistency 後 hotfix: DB nullable 列は .nullable() 必須 (§5.12)
+  outOfScope: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
   devMethod: z.enum(['scratch', 'power_platform', 'package', 'other']),
   businessDomainTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
   techStackTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
@@ -20,7 +21,7 @@ export const createProjectSchema = z.object({
   processTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
   plannedStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日付形式が不正です'),
   plannedEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日付形式が不正です'),
-  notes: z.string().max(MEDIUM_TEXT_MAX_LENGTH).optional(),
+  notes: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
 });
 
 export const updateProjectSchema = createProjectSchema.partial();

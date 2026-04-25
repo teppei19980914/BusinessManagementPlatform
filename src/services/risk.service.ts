@@ -298,8 +298,9 @@ export async function updateRisk(
   riskId: string,
   input: Partial<CreateRiskInput> & {
     state?: string;
-    result?: string;
-    lessonLearned?: string;
+    // null は明示クリア用 (validator schema で .nullable() 済、§5.12)
+    result?: string | null;
+    lessonLearned?: string | null;
   },
   userId: string,
 ): Promise<RiskDTO> {
@@ -321,7 +322,8 @@ export async function updateRisk(
   if (input.responsePolicy !== undefined) data.responsePolicy = input.responsePolicy;
   if (input.responseDetail !== undefined) data.responseDetail = input.responseDetail;
   if (input.assigneeId !== undefined) data.assigneeId = input.assigneeId;
-  if (input.deadline !== undefined) data.deadline = new Date(input.deadline);
+  // null は明示的にクリア (担当者削除と同様)、`new Date(null)` で 1970 epoch に化けるのを防ぐ
+  if (input.deadline !== undefined) data.deadline = input.deadline === null ? null : new Date(input.deadline);
   if (input.state !== undefined) data.state = input.state;
   if (input.result !== undefined) data.result = input.result;
   if (input.lessonLearned !== undefined) data.lessonLearned = input.lessonLearned;
