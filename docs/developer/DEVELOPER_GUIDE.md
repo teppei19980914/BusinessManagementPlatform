@@ -1363,6 +1363,14 @@ hotfix 伝播もそのぶん n-1 回必要 = 本例では **#128 base → #128a(
 3. sub-PR を作る際は **初回コミット直前に base の最新 HEAD に rebase しておく**
    ことで以降の伝播回数を最小化できる (本件の PR #128 スタックは全 sub-PR が
    一斉に #128 初期状態 0490185 から分岐していたため伝播コストが連鎖した)。
+4. **並走 docs PR の場合、後発 PR は先に main にマージされる予定の PR 内容を
+   事前に把握し sub-section header の重複追加を避ける** (本件の PR #136 で
+   遭遇 = §10.5 末尾追記罠 4 例目)。具体的には:
+   - 後発 PR を作る前に **gh pr list --state open** で並走中の docs 系 PR を確認
+   - 同一セクションを触る場合は **後発 PR の本文を「差分のみ」に絞る**
+     (header / 既存 sub-section の重複を避け、新規追加分だけを含める)
+   - 結果として後発 PR がコンフリクトしても **conflict 解消はゼロ削除のみ**
+     (新規追加行の保持) で済むようになる
 
 **補足 (2026-04-24, docs/stacked-pr-propagation-lessons で追加)**:
 本セクションは PR #128 stack hotfix 対応で得た知見だが、sub-PR (#129〜#133) が
@@ -1607,7 +1615,10 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §5.9 追加 (PR #128)。レスポンシブ実装パターン (ResponsiveTable 基盤 + 設計原則 + 段階 PR 計画)。詳細監査は docs/developer/RESPONSIVE_AUDIT.md を参照 |
 | 2026-04-24 | §10.5 再発事例追記 (PR #128 hotfix)。DEVELOPER_GUIDE の更新履歴テーブルで origin/main に PR #126/#127 が追加され、PR #128 の追記と末尾コンフリクト。PR 番号順 (#126 → #127 → #128) で結合する形で解消 (§10.5 テンプレ通りのリゾルブで 2 例目) |
 | 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
+| 2026-04-24 | §10.5 サブセクション追加 (PR #129 hotfix = PR #128a hotfix)。Stacked PR で base に hotfix を当てた場合の sub-PR への伝播ルール (4 項目)。sub-PR は上流自動追従しないため base が green 化した時点で即 merge を流す必要があり、下流 CI fail は viewport 問題より base 伝播漏れを先に疑うべし |
 | 2026-04-24 | §5.10 新設 (fix/project-create-customer-validation)。フォーム送信前の事前バリデーション (エラー情報最小化方針)。HTML5 `required` で拾えない `SearchableSelect` 必須項目は `handleXxx` 先頭で事前 validation + `setError` + `return` し、無効値 POST が 400 を返してブラウザ Console にエラー情報を露出させる経路を断つ |
 | 2026-04-24 | §5.10.1 / §5.10.2 追加 (fix/project-create-customer-validation 追補)。§5.10.1: Base UI Combobox で `{value, label}` を items に渡すと onValueChange はオブジェクトで emit される (string 限定の type guard で選択イベントが握り潰されていた)。§5.10.2: タグ入力の全角読点「、」対応 + 共通関数 `@/lib/parse-tags.ts` 集約 (projects / knowledge の重複を解消) |
 | 2026-04-24 | §5.10.1.5 追加 (fix/project-create-customer-validation E2E hotfix)。`<Label>` + `<Input>` に htmlFor/id ペアを必ず付ける規約。欠落すると (1) screen reader 読み上げ不可 (2) Playwright `getByLabel` が timeout の 2 つが同時に壊れる (E2E §4.3 の再発事例)。projects-client の全入力フィールドに id を付与 |
-| 2026-04-24 | §10.5 サブセクション + 再発事例 3〜6 例目 + 運用ルール 3 項を追加 (docs/stacked-pr-propagation-lessons)。PR #128 stack hotfix 対応で得た「Stacked PR で base に hotfix を当てた場合の sub-PR への伝播」パターンの集約。sub-PR (#129〜#133) が squash-merge されたため後続 docs 追記が main に取り込まれず残存していた分を本 PR でまとめて拾い上げる。メタ教訓 (squash-merge 運用下では後付け docs コミットは別 PR で main へ取り込む必要) も併せて明文化 |
+| 2026-04-24 | §10.5 末尾追記コンフリクト 3 例目 (PR #135 conflict resolve)。HEAD の §10.5 サブセクション追加行と origin/main の PR #134 系 3 行が更新履歴末尾で衝突 → 時系列 (PR #129 hotfix の docs commit 22:00 → PR #134 の docs commit 22:12-22:40) に従って HEAD 行を先に残し、main 由来 3 行をその直後に並べて解消。§10.5 既知パターン「末尾追記が多発する罠」3 例目として再記録 |
+| 2026-04-25 | §10.5 再発事例 3〜6 例目 + 運用ルール 3 項 + メタ教訓 (squash-merge 取りこぼし) を追加 (docs/stacked-pr-propagation-lessons)。sub-PR (#129〜#133) が squash-merge されたため hotfix 伝播で追記した §10.5 内容が main に届かなかった分を本 PR で集約。§10.5 sub-section header 自体は PR #135 経由で先に main へマージ済のため重複を回避し本 PR は **再発事例 3〜6 + 運用ルール + メタ教訓のみ** を追加 |
+| 2026-04-25 | §10.5 末尾追記コンフリクト **4 例目** (PR #136 conflict resolve)。HEAD (PR #136 の再発事例 3〜6 + 運用ルール + メタ教訓本文) と origin/main (PR #135 マージ後の §10.5 サブセクション header + PR #135 conflict resolve 行) が末尾衝突。**§10.5 既知パターン 4 例目**。本 conflict 自体が「短期間に末尾追記が連鎖する」パターンの再現で、同パターン 1 PR で 2 回 (PR #135 と PR #136) 発生したため**運用ルール 4 項目「並走 docs PR の場合、後発 PR は先に main にマージされる予定の PR 内容を事前に把握し sub-section header の重複追加を避ける」**を追記 |
