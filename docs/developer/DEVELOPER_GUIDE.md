@@ -561,6 +561,75 @@ id の naming convention は `{screen}-{action}-{field}` (例: `project-create-n
 `react-hook-form` + shadcn FormField 導入時は自動関連付けされるため、この規約は
 手動レイヤでの代替策。
 
+### 5.11 編集ダイアログの save 後 close 順序とリスト列の表示漏れ (feat/account-lock-and-ui-consistency, item 6/7)
+
+#### 症状
+
+ユーザ報告:
+- (1) 編集ダイアログで保存しても自動で閉じず、手動で閉じる必要がある (体感)
+- (2) 編集画面で公開範囲 (visibility) を変更し更新したが画面上データが更新されていない
+
+#### 原因
+
+**(1) close 順序問題**:
+旧実装の編集ダイアログは PATCH 成功後 `await onSaved()` (= 親の reload) を完了させて
+から `onOpenChange(false)` で閉じていた。reload は API 再 fetch + state 更新 + 再描画
+を含むため数百 ms のラグが発生し、ユーザには「ダイアログが閉じない」ように見える。
+
+create ダイアログは `setIsCreateOpen(false)` を先に呼んでから reload を裏で走らせる
+ため即座に閉じる。**両者の挙動が非対称** だった。
+
+**(2) リスト列の表示漏れ**:
+PATCH は成功し DB の visibility は更新されるが、project-level の **risks 一覧** /
+**retrospectives 一覧** に visibility 列/バッジが存在しなかったため、ユーザは
+「変更が反映されていない」と認識していた。
+
+実際に表示済だったのは:
+- ✓ memos-client.tsx (公開範囲列あり)
+- ✓ project-knowledge-client.tsx (visibility badge あり)
+
+漏れていたのは:
+- ✗ risks-client.tsx (列なし)
+- ✗ retrospectives-client.tsx (state 表示はあるが visibility 表示なし、概念混同を誘発)
+
+#### 修正
+
+**(1)**: 4 編集ダイアログ (`risk-edit-dialog.tsx` / `knowledge-edit-dialog.tsx` /
+`retrospective-edit-dialog.tsx` / `user-edit-dialog.tsx`) を以下に統一:
+
+```ts
+// 旧 (遅い)
+await onSaved();
+onOpenChange(false);
+
+// 新 (即時 close + 裏で reload)
+onOpenChange(false);
+void onSaved();
+```
+
+`void` 演算子で fire-and-forget を明示。reload 失敗時の通知は親側で必要なら追加する
+(現状は router.refresh / lazy-fetch の error state で UI に出る)。
+
+**(2)**: risks-client.tsx に `公開範囲` 列を追加 (Badge)、retrospectives-client.tsx の
+state badge 横に「公開: ○○」バッジを追加。
+
+#### 汎化ルール
+
+1. **編集ダイアログの save 後は「close 先 / reload 後」が原則**。await reload してから
+   close は UX が破綻する。新規 dialog 実装時は本パターンを踏襲。
+2. **編集可能なフィールドはリスト/カードに必ず表示する**。編集だけできて表示できない
+   フィールドは「変更が反映されない」誤認を生む。フィールド追加時 (visibility のように
+   後から増えた属性) は **編集 UI と表示 UI を必ずペアで実装** する。
+3. **横展開の確認スクリプト**: `editXxxDialog` で扱うフィールド一覧と各 list/card 表示
+   フィールド一覧の差分を grep で取り、漏れを検出する。今回の漏れは**新規エンティティ
+   (visibility) 追加時に list に同期していなかった** ことが原因。
+
+#### 関連
+
+- 「全○○」横断ビューでは draft を除外 (item 5、PR 同梱) — 一覧表示の整合性を保つ
+- 並走 item 1 (アカウントロック) とは独立した修正だが、同 PR で UI consistency を
+  まとめて改善する
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1636,3 +1705,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-25 | §10.5 末尾追記コンフリクト **4 例目** (PR #136 conflict resolve)。HEAD (PR #136 の再発事例 3〜6 + 運用ルール + メタ教訓本文) と origin/main (PR #135 マージ後の §10.5 サブセクション header + PR #135 conflict resolve 行) が末尾衝突。**§10.5 既知パターン 4 例目**。本 conflict 自体が「短期間に末尾追記が連鎖する」パターンの再現で、同パターン 1 PR で 2 回 (PR #135 と PR #136) 発生したため**運用ルール 4 項目「並走 docs PR の場合、後発 PR は先に main にマージされる予定の PR 内容を事前に把握し sub-section header の重複追加を避ける」**を追記 |
 | 2026-04-25 | §10.5 末尾追記コンフリクト **5 例目** (PR #137 conflict resolve)。`feat/pr128a-p1-tables-card` (PR #128a-2 WBS の親階層) は §10.5 再発事例 3 例目を独自追加していたが、main 側で PR #136 が同事例を網羅的に取り込み済のため重複行が発生。HEAD 1 行 (PR #130 hotfix の単独追記) を drop し main の 6 行をそのまま採用 + 本 conflict resolve 行 (5 例目) を末尾追加。**5 例目で「stacked PR の sub-PR 自体が docs を抱えている場合、PR #136 のような後追い集約 PR がマージされた瞬間に当該 sub-PR の docs が必ず重複コンフリクトを起こす」教訓が追加判明** — sub-PR は docs を持たず、知見集約は別途専用 PR (PR #136 形式) に切り出すのが望ましいとの運用方針を §10.5 運用ルール 5 項目として下記本文に追記 |
 | 2026-04-25 | E2E_LESSONS_LEARNED §4.37 新設 (PR #137 E2E hotfix)。PC テーブル前提の `06-wbs-tasks.spec.ts` が PR #128a-2 のモバイルカードビュー導入後、chromium-mobile project で `locator('tr')` の hidden 判定により fail。`<tr>` は DOM に存在するが親 `<div className="hidden md:block">` の display:none で hidden 状態になる。`testIgnore` で 06 spec を chromium-mobile から除外 (mobile UX は視覚回帰で別途検証する住み分け)。viewport 切替で 2 系統 DOM を出し分ける画面は (A) testIgnore (B) viewport-agnostic locator (C) role="listitem" + helper の 3 択を §4.37 で整理 |
+| 2026-04-25 | アカウント自動削除→ロック切替 + UI 一貫性改善 (feat/account-lock-and-ui-consistency)。**item 1**: 30 日無アクティブ自動削除 (`cleanupInactiveUsers`) を **isActive=false ロック** (`lockInactiveUsers`) に変更し、ナレッジ参照のためアカウント情報を残しつつログインのみ封じる。endpoint / 設定名 rename。**item 5**: 「全○○」横断リストから draft を完全除外 (admin もシステム整合性のため public 限定、draft 管理はプロジェクト個別画面に集約)。**item 6 (§5.11)**: 編集ダイアログの save 後 `await onSaved() → close` を `close → void onSaved()` に統一し create と挙動一致化、reload 待ちで生じる「閉じない」体感を解消。**item 7 (§5.11)**: project-level risks/retrospectives 一覧に visibility 表示を追加 (knowledge/memo は既存)、編集後の即時反映を可視化 |

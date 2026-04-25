@@ -85,12 +85,12 @@ export async function listAllRetrospectivesForViewer(
     });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
-  // 2026-04-24: 非 admin は public のみ。admin は draft も表示 (管理削除のため)。
-  void viewerUserId; // 以前は自分の draft OR 条件に使っていた参照を整理
-  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
-
+  // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
+  // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
+  // admin が draft を管理削除したい場合はプロジェクト個別画面から行う。
+  void viewerUserId; // 以前は自分の draft OR 条件に使っていた参照を整理 (PR #61)
   const retros = await prisma.retrospective.findMany({
-    where: { deletedAt: null, ...visibilityWhere },
+    where: { deletedAt: null, visibility: 'public' },
     include: {
       comments: { orderBy: { createdAt: 'asc' } },
       project: { select: { id: true, name: true, deletedAt: true } },

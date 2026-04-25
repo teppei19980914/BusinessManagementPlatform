@@ -1175,7 +1175,7 @@ const transitions: TransitionRule[] = [
 | PATCH | /api/admin/users/:userId | ユーザ更新 | admin |
 | DELETE | /api/admin/users/:userId | ユーザ削除 (論理削除 + ProjectMember 物理カスケード、PR #89) | admin |
 | POST | /api/admin/users/:userId/unlock | ロック解除 (PR #85) | admin |
-| POST | /api/admin/users/cleanup-inactive | 非アクティブユーザ一括削除 (PR #89、日次 cron + 手動) | admin or Vercel Cron |
+| POST | /api/admin/users/lock-inactive | 非アクティブユーザ一括ロック (PR #89 で導入、feat/account-lock で **論理削除 → ロック (isActive=false)** に方針変更、日次 cron + 手動) | admin or Vercel Cron |
 | PATCH | /api/admin/users/:userId/role | ロール変更 | admin |
 | PATCH | /api/admin/users/:userId/status | 有効/無効切替 | admin |
 | GET | /api/admin/audit-logs | 監査ログ一覧 | admin |

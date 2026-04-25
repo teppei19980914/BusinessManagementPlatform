@@ -1392,21 +1392,26 @@ PR #111-2 で `Project.customer_name` を廃止して `customer_id` FK に完全
 | 一時ロック (期限内) | ログイン失敗が続いたためアカウントが一時ロックされています。YYYY-MM-DD HH:MM 以降に再度お試しください。 |
 | それ以外 (パスワード誤り / 未存在メール 等) | メールアドレスまたはパスワードが正しくありません |
 
-#### 13.4.5 ユーザ削除とカスケード (PR #89 で実装)
+#### 13.4.5 ユーザ削除とカスケード (PR #89 で実装、feat/account-lock で 30 日経過時の挙動を変更)
 
 | 項目 | 仕様 |
 |---|---|
-| 削除トリガ | 1) 管理画面「このユーザを削除」ボタン 2) 日次 cron による自動削除 |
-| 自動削除条件 | `lastLoginAt` (未ログインの場合 `createdAt`) から 30 日経過 + systemRole='admin' 以外 |
-| 削除方式 | User 本体: **論理削除** (deletedAt セット + isActive=false + MFA 無効化) |
-| カスケード | ProjectMember / Session / RecoveryCode / EmailVerificationToken / PasswordResetToken / PasswordHistory を**物理削除** |
+| 手動削除トリガ | 管理画面「このユーザを削除」ボタン |
+| 手動削除方式 | User 本体: **論理削除** (deletedAt セット + isActive=false + MFA 無効化) |
+| 手動削除カスケード | ProjectMember / Session / RecoveryCode / EmailVerificationToken / PasswordResetToken / PasswordHistory を**物理削除** |
+| **自動ロックトリガ** (feat/account-lock 改修) | 日次 cron による 30 日無アクティブの自動 **ロック** (旧仕様: 自動削除) |
+| 自動ロック条件 | `lastLoginAt` (未ログインの場合 `createdAt`) から 30 日経過 + systemRole='admin' 以外 |
+| **自動ロック方式** | `isActive=false` のみ更新 (deletedAt 未セット、ProjectMember も維持) |
+| 自動ロック解除 | `/admin/users` で当該ユーザを編集 → 有効化トグルを ON → 保存 |
+| 設計意図 | 過去ナレッジ等の **作成者表示** はアカウントが残っていないと「(削除済)」になるため、長期不在ユーザでもアカウント情報を保持する。一方、攻撃面 (漏洩パスワード / 放置セッション) を縮小するため **ログインだけは封じる** |
 | 保全対象 | Task.assigneeId / RiskIssue.reporterId / Knowledge.createdBy 等の scalar 参照は残す (履歴保全) |
 | 自己削除 | 禁止 (CANNOT_DELETE_SELF) |
 | cron 認証 | Vercel Cron + `Authorization: Bearer <CRON_SECRET>` (環境変数) |
 
 **関連**:
-- `vercel.json` の `crons` で `/api/admin/users/cleanup-inactive` を日次 03:00 UTC 実行
-- `src/config/security.ts` の `INACTIVE_USER_DELETION_DAYS` (既定 30) で閾値変更可
+- `vercel.json` の `crons` で `/api/admin/users/lock-inactive` を日次 03:00 UTC 実行 (旧名 `cleanup-inactive`、feat/account-lock で改名)
+- `src/config/security.ts` の `INACTIVE_USER_LOCK_DAYS` (既定 30、旧名 `INACTIVE_USER_DELETION_DAYS`) で閾値変更可
+- 監査ログ: `audit_log` に action='UPDATE' / entityType='user' / after.reason='30 日無アクティブ自動ロック' で記録
 
 #### 13.4.6 プロジェクト削除カスケードの細粒度制御 (PR #89)
 

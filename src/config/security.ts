@@ -32,13 +32,22 @@ export const LOGIN_FAILURE_MAX = 5;
 export const TEMPORARY_LOCK_DURATION_MS = 30 * 60 * 1000; // 30 分
 
 /**
- * 非アクティブ自動削除の猶予期間 (日) — PR #89。
+ * 非アクティブ自動ロックの猶予期間 (日) — PR #89 で導入、feat/account-lock 改修で
+ * **論理削除 → ロック (isActive=false)** に方針変更。
+ *
+ * 設計意図 (折衷):
+ *   - 直近プロジェクトに参画していなくても、過去のナレッジ/課題/振り返り等を
+ *     **作成者として参照** できるよう、アカウントを残す
+ *   - 一方で長期不在アカウントは攻撃面 (漏洩パスワード / 放置セッション) になる
+ *     ため、**ログインだけは封じる** (isActive=false でログイン不可)
+ *   - 必要時はシステム管理者が `/admin/users` から isActive をトグルして解除
+ *
  * lastLoginAt (未ログインの場合 createdAt) からこの日数を経過したアカウントは
- * 日次 cron `/api/admin/users/cleanup-inactive` で論理削除される。
- * ProjectMember も同時に物理削除されるため、メンバ一覧から消えた時点で
- * 管理者が手動削除を忘れても DB 整合性は担保される。
+ * 日次 cron `/api/admin/users/lock-inactive` で **isActive=false** に更新される。
+ * 論理削除 (deletedAt セット) は **発生しない** ため、ProjectMember / 作成データの
+ * 参照は維持される。
  */
-export const INACTIVE_USER_DELETION_DAYS = 30;
+export const INACTIVE_USER_LOCK_DAYS = 30;
 
 // ---------- セッション (NextAuth JWT) ----------
 

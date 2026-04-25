@@ -176,11 +176,12 @@ export async function listAllRisksForViewer(
     });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
-  // 2026-04-24: 非 admin は public のみ。admin は draft も表示 (管理削除のため)。
-  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
-
+  // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
+  // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
+  // admin が draft を管理削除したい場合はプロジェクト個別画面の○○一覧から行う。
+  // isAdmin は projectName / 担当者名のマスキング解除にのみ使う (フィルタには使わない)。
   const risks = await prisma.riskIssue.findMany({
-    where: { deletedAt: null, ...visibilityWhere },
+    where: { deletedAt: null, visibility: 'public' },
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },

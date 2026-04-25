@@ -95,8 +95,10 @@ export function RetrospectiveEditDialog({
       setError(json.error?.message || '更新に失敗しました');
       return;
     }
-    await onSaved();
+    // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
+    // 即座に閉じてから reload を裏で走らせる (旧実装は reload await で遅く感じた)。
     onOpenChange(false);
+    void onSaved();
   }
 
   return (

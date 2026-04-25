@@ -153,16 +153,25 @@ describe('listAllRetrospectivesForViewer', () => {
     expect(r[0].canAccessProject).toBe(false);
   });
 
-  it('2026-04-24: 非 admin の visibility フィルタは public のみ (draft 除外)', async () => {
+  it('2026-04-25: visibility フィルタは admin/非 admin 共に public 固定 (全○○ には draft を含めない)', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
+    // 非 admin
     await listAllRetrospectivesForViewer('u-1', 'general');
+    const generalCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
+    expect(generalCall.where.visibility).toBe('public');
+    expect(generalCall.where).not.toHaveProperty('OR');
 
-    const call = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
-    expect(call.where.visibility).toBe('public');
-    expect(call.where).not.toHaveProperty('OR');
+    vi.clearAllMocks();
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    // admin (旧仕様では visibility 制約なしだったが要件変更で admin も public 固定)
+    await listAllRetrospectivesForViewer('admin-1', 'admin');
+    const adminCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
+    expect(adminCall.where.visibility).toBe('public');
   });
 });
 

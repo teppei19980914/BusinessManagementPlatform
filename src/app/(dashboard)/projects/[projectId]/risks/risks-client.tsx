@@ -357,6 +357,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             <ResizableHead columnKey="impact" defaultWidth={80}>影響度</ResizableHead>
             <ResizableHead columnKey="priority" defaultWidth={80}>優先度</ResizableHead>
             <ResizableHead columnKey="state" defaultWidth={100}>状態</ResizableHead>
+            {/* feat/account-lock-and-ui-consistency: 公開範囲列を追加。編集ダイアログで
+                visibility を変更しても一覧に表示されず「画面上データが更新されていない」
+                ように見える bug の解消 (knowledge/memo は既存で表示済、risk/retro が漏れ) */}
+            <ResizableHead columnKey="visibility" defaultWidth={90}>公開範囲</ResizableHead>
             <ResizableHead columnKey="assignee" defaultWidth={120}>担当者</ResizableHead>
             <ResizableHead columnKey="createdAt" defaultWidth={110}>起票日</ResizableHead>
             {/* PR #67: 添付リンク列 */}
@@ -389,6 +393,12 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 */}
                 <Badge variant="outline">
                   {RISK_ISSUE_STATES[r.state as keyof typeof RISK_ISSUE_STATES] || r.state}
+                </Badge>
+              </TableCell>
+              {/* feat/account-lock-and-ui-consistency: 公開範囲表示 (編集後の即時反映確認用) */}
+              <TableCell>
+                <Badge variant={r.visibility === 'public' ? 'default' : 'outline'}>
+                  {VISIBILITIES[r.visibility as keyof typeof VISIBILITIES] || r.visibility}
                 </Badge>
               </TableCell>
               <TableCell>{r.assigneeName || '-'}</TableCell>
