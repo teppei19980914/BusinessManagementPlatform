@@ -208,6 +208,56 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('Step 6b: 顧客未選択のまま submit しても 400 を出さず UI でのみエラー通知する (fix/project-create-customer-validation)', async () => {
+    const page = adminPage;
+    // 他 test 由来のダイアログ開きを毎回確実に閉じるため再ロードから始める
+    await page.goto('/projects');
+    await page.waitForLoadState('networkidle');
+
+    // POST /api/projects が飛んでいないことを確認するための記録フック。
+    // 旧実装では空 customerId でも POST されて 400 が戻り、ブラウザ Console にエラーが
+    // 出力されてしまっていた (エラー情報最小化方針違反)。本 fix は handleCreate の先頭で
+    // customerId 空チェックし、事前に setError + return する。
+    let postProjectsFired = false;
+    const recordPost = (req: import('@playwright/test').Request) => {
+      if (req.url().endsWith('/api/projects') && req.method() === 'POST') {
+        postProjectsFired = true;
+      }
+    };
+    page.on('request', recordPost);
+
+    try {
+      await page.getByRole('button', { name: '新規プロジェクト' }).click();
+
+      // HTML5 `required` を満たすため customerId 以外の必須フィールドを全部埋める。
+      // (required field が 1 つでも空だと form.onSubmit が発火せず handleCreate に到達しないため、
+      //  本 fix の「事前 return による POST 抑止」経路が走らない)
+      await page.getByLabel('プロジェクト名').fill(withRunId('顧客未選択 PJ'));
+      await page.getByLabel('目的').fill('顧客未選択でも 400 を出さないことを確認');
+      await page.getByLabel('背景').fill('E2E fix verification');
+      await page.getByLabel('スコープ').fill('validation only');
+      // DateFieldWithActions の「今日」クイック設定ボタンで 2 フィールドとも埋める
+      await page.getByRole('button', { name: '今日' }).first().click();
+      await page.getByRole('button', { name: '今日' }).nth(1).click();
+
+      // 顧客を意図的に未選択のまま 作成 クリック
+      await page.getByRole('button', { name: '作成' }).click();
+
+      // (1) UI には「顧客を選択してください」が表示される
+      await expect(page.getByText('顧客を選択してください').first()).toBeVisible({
+        timeout: 5_000,
+      });
+      // (2) POST /api/projects は飛んでいない (事前 return で抑止されている)
+      // 軽いバッファ待機: 飛ぶならここまでに飛ぶ
+      await page.waitForTimeout(500);
+      expect(postProjectsFired, 'POST /api/projects should be suppressed when customerId is empty').toBe(false);
+    } finally {
+      page.off('request', recordPost);
+      // 後続 test のためダイアログを閉じる
+      await page.keyboard.press('Escape');
+    }
+  });
+
   test('Step 7: active Project 紐付きあり顧客は詳細画面のカスケード削除で消せる', async () => {
     const page = adminPage;
 
