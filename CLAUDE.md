@@ -61,6 +61,28 @@
 - `main` / `master` / `develop` / `release/*` / `hotfix/*` への直接コミットは保護（auto-commit.sh が拒否）
 - 自動化を無効化したい場合は `.claude/.git-automation-config` を削除
 
+## 知識駆動開発 (KDD) フロー — 全タスク必須
+
+過去の事象・罠・解決パターンを **次の開発で必ず再利用** することで品質保証を継続向上させる。
+詳細手順は各 Skill を参照。
+
+| Step | 何をする | 仕組み |
+|---|---|---|
+| 1 | 開発着手 (要件・タスク定義) | 通常通り |
+| 2 | **既存ナレッジ参照** (実装前に必須) | `/recall <topic>` skill で `DEVELOPER_GUIDE.md §5/§10` + `E2E_LESSONS_LEARNED.md §4` から関連事例を抽出。**横展開すべき先例があれば即適用** (例: htmlFor/id ペア、editDialog の close→reload 順、SearchableSelect の事前 validation 等) |
+| 3 | 実装 | step 2 で抽出したナレッジを必ず適用。「同じ罠を再現させない」を最優先 |
+| 4 | **実装中の新ナレッジ追記** | `/knowledge-add` skill で発見した罠・パターンを `DEVELOPER_GUIDE.md` または `E2E_LESSONS_LEARNED.md` に追記 |
+| 5 | コミット & プッシュ | `pnpm lint && pnpm tsc --noEmit && pnpm test` を必ず通してから (lint だけでは Vercel build を救えない: §5.11.1) |
+| 6 | **CI / E2E / Vercel エラー対応** | 失敗ログを基に修正、調査と修正で得たナレッジは `/knowledge-add` で必ず追記 |
+| 7 | **定期 MECE 整理** | `/knowledge-organize` skill で重複・古いナレッジを統合・削除。週次 or PR 5 件ごとを目安 |
+
+**遵守の原則**:
+
+- **Step 2 を飛ばさない**: 「ちょっとした修正」でも `/recall` する。同じ罠の連鎖が §10.5 末尾追記コンフリクトの 5 例目まで続いた経験から学ぶ
+- **新規ナレッジは即追記**: 「PR にまとめてから」ではなく **発見時点で追記**。記憶は揮発する
+- **重複は許さない**: 同じ事象を 2 箇所に書かない。整理時に統合する (`/knowledge-organize`)
+- **前提が変わったら updatedAt と再発事例の連番を必ず付ける** (§10.5 の方式)
+
 ## コミット前チェック（毎回必須）
 
 実装完了後、コミット前に以下を必ず実施する。詳細手順は各スキルを参照。
