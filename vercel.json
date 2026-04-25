@@ -7,7 +7,7 @@
       "schedule": "0 0 * * *"
     },
     {
-      "path": "/api/admin/users/cleanup-inactive",
+      "path": "/api/admin/users/lock-inactive",
       "schedule": "0 3 * * *"
     }
   ]

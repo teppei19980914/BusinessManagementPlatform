@@ -119,7 +119,7 @@
 - [x] `/api/admin/users/[userId]` — e2e/specs/05-teardown-and-residuals.spec.ts (PR #95 / Step 10 DELETE) ※ PATCH は別 PR
 - [ ] `/api/admin/users/[userId]/recovery-codes` — skip: PR #D (リカバリーコード再発行)
 - [ ] `/api/admin/users/[userId]/unlock` — skip: ロック誘発が非決定的、手動テスト
-- [ ] `/api/admin/users/cleanup-inactive` — skip: 時間経過が必要、手動テスト
+- [ ] `/api/admin/users/lock-inactive` — skip: 時間経過 (30 日以上) が必要、手動テスト (旧 `/api/admin/users/cleanup-inactive`、feat/account-lock で改名 + 論理削除→ロック挙動変更)
 - [ ] `/api/admin/audit-logs` — skip: read-only
 - [ ] `/api/admin/role-change-logs` — skip: read-only
 
@@ -128,7 +128,7 @@
 - [x] `/api/my-tasks` — e2e/specs/04-personal-features.spec.ts (PR #94 / /my-tasks 画面経由で間接カバー)
 - [x] `/api/settings/theme` — e2e/specs/04-personal-features.spec.ts (PR #94 / テーマ変更 UI から PATCH)
 - [ ] `/api/settings/i18n` — skip: PR #119 で新設。バリデーション / 認可 / 部分更新 / null 戻しは単体テスト `src/app/api/settings/i18n/route.test.ts` (8 ケース) で担保済。UI 側の反映確認は後続 PR #121 (date-picker TZ 統合) と合わせて E2E 化予定
-- [x] `/api/cron/cleanup-accounts` — **削除済 (PR #115)**。`/api/admin/users/cleanup-inactive` に一本化
+- [x] `/api/cron/cleanup-accounts` — **削除済 (PR #115)**。`/api/admin/users/lock-inactive` (旧名 cleanup-inactive) に一本化
 - [ ] `/api/client-errors` — skip: クライアント error boundary 経由の log 送信エンドポイント (PR #115)。ログ送信の失敗はユーザ操作に影響しない (silent fail) 設計で、E2E で再現させる value が低い。単体テストで schema validation + DB 書込を担保
 
 ---

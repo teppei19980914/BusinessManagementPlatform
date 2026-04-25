@@ -84,8 +84,9 @@ export function UserEditDialog({
       setError(json.error?.message || '更新に失敗しました');
       return;
     }
-    await onSaved();
+    // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
+    void onSaved();
   }
 
   // PR #85: ロック解除 (failedLoginCount / lockedUntil / permanentLock を一括クリア)
@@ -100,8 +101,9 @@ export function UserEditDialog({
       setError(json.error?.message || 'ロック解除に失敗しました');
       return;
     }
-    await onSaved();
+    // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
+    void onSaved();
   }
 
   // PR #89: ユーザ削除 (論理削除 + ProjectMember 物理削除)。
@@ -126,8 +128,9 @@ export function UserEditDialog({
     const json = await res.json().catch(() => ({ data: null }));
     const removed = json?.data?.removedMemberships ?? 0;
     alert(`削除しました (紐づくプロジェクトメンバー ${removed} 件も削除)`);
-    await onSaved();
+    // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
+    void onSaved();
   }
 
   // ロック表示用の状態判定 (PR #85) — nowAtMount は hook 順序の都合で上部宣言済

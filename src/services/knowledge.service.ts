@@ -194,11 +194,11 @@ export async function listAllKnowledgeForViewer(
     });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
-  const where: Prisma.KnowledgeWhereInput = { deletedAt: null };
-  if (!isAdmin) {
-    // 2026-04-24: 非 admin は public のみ (自分の draft も一覧除外)
-    where.visibility = 'public';
-  }
+  // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
+  // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
+  // admin が draft を管理削除したい場合はプロジェクト個別画面 (/projects/[id]/knowledge) から行う。
+  // isAdmin は projectName / 作成者氏名のマスキング解除にのみ使う (フィルタには使わない)。
+  const where: Prisma.KnowledgeWhereInput = { deletedAt: null, visibility: 'public' };
 
   const knowledges = await prisma.knowledge.findMany({
     where,

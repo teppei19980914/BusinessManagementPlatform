@@ -115,24 +115,28 @@ export function UsersClient({ initialUsers }: Props) {
     setForm({ name: '', email: '', systemRole: 'general' });
   }
 
-  // PR #89: 非アクティブユーザの手動クリーンアップ (vercel cron の日次実行に加え、手動でも実行可能)
-  async function handleManualCleanup() {
+  // PR #89: 非アクティブユーザの手動ロック (vercel cron の日次実行に加え、手動でも実行可能)。
+  // feat/account-lock 改修: 旧 (論理削除) → 新 (isActive=false ロック) へ方針変更。
+  // 過去ナレッジ等の作成者表示を維持しつつ、ログインだけ封じる折衷。復帰は admin が
+  // 当該ユーザ行の編集ダイアログから isActive をトグル。
+  async function handleManualLockInactive() {
     if (!confirm(
-      '最終ログインから 30 日以上経過した非アクティブユーザを一括削除します。\n'
-      + 'admin ユーザは対象外です。削除されたユーザの ProjectMember も\n'
-      + '同時に物理削除されます。実行しますか？',
+      '最終ログインから 30 日以上経過した非アクティブユーザを一括ロックします。\n'
+      + 'admin ユーザは対象外です。アカウント自体は残るためナレッジ等の\n'
+      + '作成者表示は維持されますが、ログインは不可になります (isActive=false)。\n'
+      + '解除は本画面の各ユーザ行の編集から有効状態をトグルしてください。\n'
+      + '実行しますか？',
     )) return;
     const res = await withLoading(() =>
-      fetch('/api/admin/users/cleanup-inactive', { method: 'POST' }),
+      fetch('/api/admin/users/lock-inactive', { method: 'POST' }),
     );
     if (!res.ok) {
-      alert('クリーンアップ実行に失敗しました');
+      alert('ロック実行に失敗しました');
       return;
     }
     const json = await res.json().catch(() => ({ data: null }));
-    const count = json?.data?.deletedUserIds?.length ?? 0;
-    const removed = json?.data?.removedMembershipsTotal ?? 0;
-    alert(`クリーンアップ完了\n\n削除ユーザ: ${count} 件\nProjectMember 削除: ${removed} 件`);
+    const count = json?.data?.lockedUserIds?.length ?? 0;
+    alert(`ロック完了\n\n対象ユーザ: ${count} 件 (isActive=false に更新済)`);
     router.refresh();
   }
 
@@ -141,8 +145,8 @@ export function UsersClient({ initialUsers }: Props) {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">ユーザ管理</h2>
         <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={handleManualCleanup}>
-          非アクティブユーザを整理
+        <Button variant="outline" size="sm" onClick={handleManualLockInactive}>
+          非アクティブユーザをロック
         </Button>
         <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsDialogOpen(true); }}>
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規ユーザ登録</DialogTrigger>

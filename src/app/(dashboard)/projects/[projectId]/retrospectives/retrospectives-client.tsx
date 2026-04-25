@@ -239,6 +239,13 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
               <Badge variant={retro.state === 'confirmed' ? 'default' : 'outline'}>
                 {retro.state === 'confirmed' ? '確定' : '下書き'}
               </Badge>
+              {/* feat/account-lock-and-ui-consistency: 公開範囲バッジを追加。
+                  編集ダイアログで visibility を変更しても一覧に表示されず「画面上データが
+                  更新されていない」ように見える bug の解消。state とは別概念なので
+                  「公開: ○○」のラベル付きで明示。 */}
+              <Badge variant={retro.visibility === 'public' ? 'default' : 'outline'}>
+                公開: {VISIBILITIES[retro.visibility as keyof typeof VISIBILITIES] || retro.visibility}
+              </Badge>
             </div>
             <div className="flex items-center gap-2">
               {isOwner && retro.state !== 'confirmed' && (
