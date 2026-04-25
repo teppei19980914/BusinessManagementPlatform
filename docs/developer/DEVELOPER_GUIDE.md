@@ -1305,6 +1305,35 @@ git push
   `git merge origin/main` で追従させる
 - 長期 stacked PR では「末尾追記 3 行」を見越した rebase コミュニケーションを取る
 
+#### Stacked PR で base に hotfix を当てた場合の sub-PR への伝播 (PR #128 → #129 で得た知見)
+
+**背景**: 要望項目 7 のレスポンシブ対応は stacked PR (`#128` base → `#128a` `/projects`
+→ `#128a-2` WBS → `#128b` 横断一覧 → `#128c` admin → `#128d` fine-tune) で進めている。
+
+**症状**: `#128` base に hotfix を 4 回 commit (WebKit エンジン override / main merge /
+`testIgnore` / mobile baseline 自動生成) した後、`#128a` (= PR #129) の CI を確認すると
+**`#128` 初回と同じ WebKit 起動エラー 5 件** で fail していた。
+
+**原因**: `#128a` branch は `#128` の **初回コミット (0490185)** から分岐しており、
+以降に `#128` へ足した 4 件の hotfix を継承していない。stacked PR は後続が
+自動追従しないため、base 更新分は各 sub-PR で明示的に取り込む必要がある。
+
+**解消**: `#128a` で `git merge origin/feat/pr128-responsive-audit` 実行。
+auto-merge が全ファイル成立 (PR #128a の `/projects` モバイルカード実装は、main 由来
+SearchableSelect 追加と同一ファイル `projects-client.tsx` を触るが別範囲のため衝突なし)。
+
+**予防・運用ルール**:
+1. stacked PR の **base (上流) に hotfix を commit したら即座に下流全部に merge を流す**。
+   上流の CI が green になった時点で sub-PR の CI も再走させるために必要。
+2. sub-PR の CI が fail していて、かつ base (上流) の同 workflow も同時期に fail して
+   いた場合、**まず上流の fix 伝播漏れを疑う**。下流固有のバグ調査より先に rebase/merge
+   を試す方が安い。
+3. stacked PR の commit は意図的に 1 本化しておくと、base merge 時の衝突対処が容易
+   (#128a の 4870b74 のように 1 コミット/PR に寄せる)。
+4. Mobile baseline PNG のような **workflow が自動生成してコミットしたファイル** も
+   base に溜まっていく。sub-PR rebase 時に大量の新規 PNG ファイルが一括で降ってくるが
+   正常動作 (衝突にならない、単に `new file` として追加される)。
+
 ### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
 
 Next.js は開発時 `.next/dev/types/validator.ts` にルートハンドラの型情報を
@@ -1540,6 +1569,8 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §5.9 追加 (PR #128)。レスポンシブ実装パターン (ResponsiveTable 基盤 + 設計原則 + 段階 PR 計画)。詳細監査は docs/developer/RESPONSIVE_AUDIT.md を参照 |
 | 2026-04-24 | §10.5 再発事例追記 (PR #128 hotfix)。DEVELOPER_GUIDE の更新履歴テーブルで origin/main に PR #126/#127 が追加され、PR #128 の追記と末尾コンフリクト。PR 番号順 (#126 → #127 → #128) で結合する形で解消 (§10.5 テンプレ通りのリゾルブで 2 例目) |
 | 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
+| 2026-04-24 | §10.5 サブセクション追加 (PR #129 hotfix = PR #128a hotfix)。Stacked PR で base に hotfix を当てた場合の sub-PR への伝播ルール (4 項目)。sub-PR は上流自動追従しないため base が green 化した時点で即 merge を流す必要があり、下流 CI fail は viewport 問題より base 伝播漏れを先に疑うべし |
 | 2026-04-24 | §5.10 新設 (fix/project-create-customer-validation)。フォーム送信前の事前バリデーション (エラー情報最小化方針)。HTML5 `required` で拾えない `SearchableSelect` 必須項目は `handleXxx` 先頭で事前 validation + `setError` + `return` し、無効値 POST が 400 を返してブラウザ Console にエラー情報を露出させる経路を断つ |
 | 2026-04-24 | §5.10.1 / §5.10.2 追加 (fix/project-create-customer-validation 追補)。§5.10.1: Base UI Combobox で `{value, label}` を items に渡すと onValueChange はオブジェクトで emit される (string 限定の type guard で選択イベントが握り潰されていた)。§5.10.2: タグ入力の全角読点「、」対応 + 共通関数 `@/lib/parse-tags.ts` 集約 (projects / knowledge の重複を解消) |
 | 2026-04-24 | §5.10.1.5 追加 (fix/project-create-customer-validation E2E hotfix)。`<Label>` + `<Input>` に htmlFor/id ペアを必ず付ける規約。欠落すると (1) screen reader 読み上げ不可 (2) Playwright `getByLabel` が timeout の 2 つが同時に壊れる (E2E §4.3 の再発事例)。projects-client の全入力フィールドに id を付与 |
+| 2026-04-24 | §10.5 末尾追記コンフリクト 3 例目 (PR #135 conflict resolve)。HEAD の §10.5 サブセクション追加行と origin/main の PR #134 系 3 行が更新履歴末尾で衝突 → 時系列 (PR #129 hotfix の docs commit 22:00 → PR #134 の docs commit 22:12-22:40) に従って HEAD 行を先に残し、main 由来 3 行をその直後に並べて解消。§10.5 既知パターン「末尾追記が多発する罠」3 例目として再記録 |
