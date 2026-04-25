@@ -414,8 +414,8 @@ export async function lockInactiveUsers(
         action: 'UPDATE',
         entityType: 'user',
         entityId: c.id,
-        before: sanitizeForAudit({ isActive: true }),
-        after: sanitizeForAudit({ isActive: false, reason: '30 日無アクティブ自動ロック' }),
+        beforeValue: sanitizeForAudit({ isActive: true }),
+        afterValue: sanitizeForAudit({ isActive: false, reason: '30 日無アクティブ自動ロック' }),
       });
       lockedUserIds.push(c.id);
     } catch {

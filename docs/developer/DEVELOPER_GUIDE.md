@@ -666,6 +666,24 @@ and 'updatedBy' does not exist in type '(...UserUpdateInput...)'.
 
 - §10.6 `.next` キャッシュ問題: ローカル build で `cleanup-inactive` の参照残存エラーが出る。Vercel はクリーンビルドのため影響なし。ローカルで検証する場合は `rm -rf .next` してから `pnpm build`。
 
+#### 再発事例 2 例目 (PR #138 hotfix のさらに hotfix, 同 PR で 2 連続)
+
+§5.11.1 で「commit 前に `pnpm tsc --noEmit` を回すルール」を追記したにもかかわらず、
+直後の hotfix commit (`updatedBy` 削除) でその検証を省略 → `recordAuditLog` の引数名
+を `before` / `after` (実際は `beforeValue` / `afterValue`) と取り違えた **別の型エラー** で
+GitHub Actions の `Lint / Test / Build` job が再度 fail。
+
+**追加教訓**:
+
+1. **「修正」commit でも tsc --noEmit を必ず回す**。型エラーは 1 commit の中に
+   複数潜在することがある (今回は同じ関数内に 2 つ別種の型違反が共存)。
+2. **API シグネチャを使う前に必ず型定義を確認**。`recordAuditLog` の引数を記憶ベースで
+   書くと historical な引数名 (before/after) と現状のシグネチャ (beforeValue/afterValue)
+   がズレる。`Read` でサービスの型定義を見るのが安い。
+3. **`pnpm lint` のみでの「OK」報告は不正確**。本ガイドのテンプレ報告で `pnpm lint`
+   clean のみを根拠に「検証完了」と書くのを禁止し、必ず `pnpm tsc --noEmit` の結果を
+   併記する運用に改める。
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1743,3 +1761,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-25 | E2E_LESSONS_LEARNED §4.37 新設 (PR #137 E2E hotfix)。PC テーブル前提の `06-wbs-tasks.spec.ts` が PR #128a-2 のモバイルカードビュー導入後、chromium-mobile project で `locator('tr')` の hidden 判定により fail。`<tr>` は DOM に存在するが親 `<div className="hidden md:block">` の display:none で hidden 状態になる。`testIgnore` で 06 spec を chromium-mobile から除外 (mobile UX は視覚回帰で別途検証する住み分け)。viewport 切替で 2 系統 DOM を出し分ける画面は (A) testIgnore (B) viewport-agnostic locator (C) role="listitem" + helper の 3 択を §4.37 で整理 |
 | 2026-04-25 | アカウント自動削除→ロック切替 + UI 一貫性改善 (feat/account-lock-and-ui-consistency)。**item 1**: 30 日無アクティブ自動削除 (`cleanupInactiveUsers`) を **isActive=false ロック** (`lockInactiveUsers`) に変更し、ナレッジ参照のためアカウント情報を残しつつログインのみ封じる。endpoint / 設定名 rename。**item 5**: 「全○○」横断リストから draft を完全除外 (admin もシステム整合性のため public 限定、draft 管理はプロジェクト個別画面に集約)。**item 6 (§5.11)**: 編集ダイアログの save 後 `await onSaved() → close` を `close → void onSaved()` に統一し create と挙動一致化、reload 待ちで生じる「閉じない」体感を解消。**item 7 (§5.11)**: project-level risks/retrospectives 一覧に visibility 表示を追加 (knowledge/memo は既存)、編集後の即時反映を可視化 |
 | 2026-04-25 | §5.11.1 新設 (PR #138 Vercel build hotfix)。`prisma.user.update` に `updatedBy: systemTriggerId` を渡したら Vercel `next build` の型チェックで fail。User モデルは意図的に updatedBy 列を持たない設計 (self-referential 回避) で、他エンティティ流儀の借用が schema 不整合を起こした。`pnpm lint` は型チェックなしのためローカルでは気付けず、`pnpm tsc --noEmit` を commit 前に回すルールを追記 |
+| 2026-04-25 | §5.11.1 再発事例 2 例目 (PR #138 hotfix の hotfix)。前回の教訓 (commit 前 tsc) を直後 commit で守らず、`recordAuditLog` の引数名を `before/after` (実際は `beforeValue/afterValue`) と取り違えた別種の型エラーで CI / E2E が再 fail。**「修正」commit でも tsc --noEmit を必ず回す + API シグネチャは記憶ベースでなく Read で確認 + `pnpm lint` clean のみを根拠にした「検証完了」報告を禁止** という追加運用ルールを追記 |
