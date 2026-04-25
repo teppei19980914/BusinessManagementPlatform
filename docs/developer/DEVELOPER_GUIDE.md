@@ -1371,6 +1371,18 @@ hotfix 伝播もそのぶん n-1 回必要 = 本例では **#128 base → #128a(
      (header / 既存 sub-section の重複を避け、新規追加分だけを含める)
    - 結果として後発 PR がコンフリクトしても **conflict 解消はゼロ削除のみ**
      (新規追加行の保持) で済むようになる
+5. **stacked sub-PR は docs を抱えない、知見集約は別途専用 docs PR に切り出す**
+   (本件の PR #137 で遭遇 = §10.5 末尾追記罠 5 例目)。stacked PR の sub-PR
+   (`feat/pr128a-p1-tables-card` 等) が独自に §10.5 再発事例を docs に追記
+   していると、main 側で集約 PR (PR #136 形式) が先にマージされた瞬間、
+   sub-PR の docs 追記分は確実に重複コンフリクトを起こす。
+   - sub-PR の commit message には知見を残しても良いが、**docs ファイルへの
+     追記は集約 PR に一本化**する
+   - 集約 PR を後発で出す場合は本ルール 4 項目の「差分のみ追記」と組み合わせ、
+     sub-PR との衝突点を最小化する
+   - PR #137 で実証された通り、5 PR 連続再発した stacked chain では sub-PR
+     5 本ぶん全てに同じ docs 追記が紛れ込んでいる確率が高く、main 取り込み時
+     に **n-1 回**の同種 conflict が連鎖する
 
 **補足 (2026-04-24, docs/stacked-pr-propagation-lessons で追加)**:
 本セクションは PR #128 stack hotfix 対応で得た知見だが、sub-PR (#129〜#133) が
@@ -1622,3 +1634,5 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §10.5 末尾追記コンフリクト 3 例目 (PR #135 conflict resolve)。HEAD の §10.5 サブセクション追加行と origin/main の PR #134 系 3 行が更新履歴末尾で衝突 → 時系列 (PR #129 hotfix の docs commit 22:00 → PR #134 の docs commit 22:12-22:40) に従って HEAD 行を先に残し、main 由来 3 行をその直後に並べて解消。§10.5 既知パターン「末尾追記が多発する罠」3 例目として再記録 |
 | 2026-04-25 | §10.5 再発事例 3〜6 例目 + 運用ルール 3 項 + メタ教訓 (squash-merge 取りこぼし) を追加 (docs/stacked-pr-propagation-lessons)。sub-PR (#129〜#133) が squash-merge されたため hotfix 伝播で追記した §10.5 内容が main に届かなかった分を本 PR で集約。§10.5 sub-section header 自体は PR #135 経由で先に main へマージ済のため重複を回避し本 PR は **再発事例 3〜6 + 運用ルール + メタ教訓のみ** を追加 |
 | 2026-04-25 | §10.5 末尾追記コンフリクト **4 例目** (PR #136 conflict resolve)。HEAD (PR #136 の再発事例 3〜6 + 運用ルール + メタ教訓本文) と origin/main (PR #135 マージ後の §10.5 サブセクション header + PR #135 conflict resolve 行) が末尾衝突。**§10.5 既知パターン 4 例目**。本 conflict 自体が「短期間に末尾追記が連鎖する」パターンの再現で、同パターン 1 PR で 2 回 (PR #135 と PR #136) 発生したため**運用ルール 4 項目「並走 docs PR の場合、後発 PR は先に main にマージされる予定の PR 内容を事前に把握し sub-section header の重複追加を避ける」**を追記 |
+| 2026-04-25 | §10.5 末尾追記コンフリクト **5 例目** (PR #137 conflict resolve)。`feat/pr128a-p1-tables-card` (PR #128a-2 WBS の親階層) は §10.5 再発事例 3 例目を独自追加していたが、main 側で PR #136 が同事例を網羅的に取り込み済のため重複行が発生。HEAD 1 行 (PR #130 hotfix の単独追記) を drop し main の 6 行をそのまま採用 + 本 conflict resolve 行 (5 例目) を末尾追加。**5 例目で「stacked PR の sub-PR 自体が docs を抱えている場合、PR #136 のような後追い集約 PR がマージされた瞬間に当該 sub-PR の docs が必ず重複コンフリクトを起こす」教訓が追加判明** — sub-PR は docs を持たず、知見集約は別途専用 PR (PR #136 形式) に切り出すのが望ましいとの運用方針を §10.5 運用ルール 5 項目として下記本文に追記 |
+| 2026-04-25 | E2E_LESSONS_LEARNED §4.37 新設 (PR #137 E2E hotfix)。PC テーブル前提の `06-wbs-tasks.spec.ts` が PR #128a-2 のモバイルカードビュー導入後、chromium-mobile project で `locator('tr')` の hidden 判定により fail。`<tr>` は DOM に存在するが親 `<div className="hidden md:block">` の display:none で hidden 状態になる。`testIgnore` で 06 spec を chromium-mobile から除外 (mobile UX は視覚回帰で別途検証する住み分け)。viewport 切替で 2 系統 DOM を出し分ける画面は (A) testIgnore (B) viewport-agnostic locator (C) role="listitem" + helper の 3 択を §4.37 で整理 |

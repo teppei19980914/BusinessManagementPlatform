@@ -352,6 +352,179 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   && prev.onToggleExpanded === next.onToggleExpanded,
 );
 
+/**
+ * TaskMobileCard — モバイル (md 未満) で WBS 階層を表現するカード形式コンポーネント (PR #128a-2)。
+ *
+ * 設計方針 (ユーザ合意済):
+ *   - (A) 階層+字下げ: depth に応じて左余白を増やし、階層構造を視覚的に保つ
+ *   - Expand/collapse は PC と同じ state を共有
+ *   - 編集ボタンは PC と同じ onEditClick (既存ダイアログに誘導、新規実装なし)
+ *   - 一括選択 (checkbox) は PC のみ (canSelectForProgress と、mobile で非表示)
+ *   - 削除は PC と同じ DELETE API を叩く
+ *
+ * PC UX は一切変更なし (既存 TaskTreeNode / table を md:block で保持)。
+ */
+function TaskMobileCardImpl({
+  task,
+  depth,
+  canEditPmTl,
+  userId,
+  projectId,
+  reload,
+  onLoading,
+  members,
+  parentOptions,
+  onEditClick,
+  expandedTaskIds,
+  onToggleExpanded,
+}: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect'>) {
+  const isWP = task.type === 'work_package';
+  const hasChildren = task.children && task.children.length > 0;
+  const isCollapsed = isWP && hasChildren ? !expandedTaskIds.has(task.id) : false;
+  const isAssignee = task.assigneeId === userId;
+  const canMemberEdit = !isWP && isAssignee;
+  const canOpenEdit = canEditPmTl || canMemberEdit;
+  const plannedRangeText = (() => {
+    if (!task.plannedStartDate && !task.plannedEndDate) return '-';
+    return `${task.plannedStartDate || '（未）'} 〜 ${task.plannedEndDate || '（未）'}`;
+  })();
+  const actualRangeText = (() => {
+    if (!task.actualStartDate && !task.actualEndDate) return '-';
+    return `${task.actualStartDate || '（未）'} 〜 ${task.actualEndDate || '（未）'}`;
+  })();
+  const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
+  void parentOptions;
+  void members;
+
+  // 階層字下げ: depth * 12px、max 48px (4 階層以降は同じ余白で見切れを防止)
+  const indent = Math.min(depth, 4) * 12;
+
+  return (
+    <>
+      <div
+        className={`rounded-md border p-3 text-sm ${isWP ? 'bg-muted/50' : 'bg-card'}`}
+        style={{ marginLeft: `${indent}px` }}
+      >
+        <div className="flex items-start gap-2">
+          {isWP && hasChildren ? (
+            <button
+              type="button"
+              onClick={() => onToggleExpanded(task.id)}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"
+              title={isCollapsed ? '展開' : '折りたたみ'}
+              aria-label={isCollapsed ? '展開' : '折りたたみ'}
+            >
+              <span className={`text-xs transition-transform ${isCollapsed ? '' : 'rotate-90'}`}>▶</span>
+            </button>
+          ) : (
+            <span className="w-6 shrink-0" />
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant={isWP ? 'default' : 'outline'} className="text-[10px] px-1.5 py-0">
+                {isWP ? 'WP' : 'ACT'}
+              </Badge>
+              <span className={`${isWP ? 'font-semibold' : 'font-medium'}`}>{task.name}</span>
+              {task.wbsNumber && (
+                <span className="text-xs text-muted-foreground">{task.wbsNumber}</span>
+              )}
+              {isWP && hasChildren && isCollapsed && (
+                <span className="text-xs text-muted-foreground">({task.children!.length})</span>
+              )}
+            </div>
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+              <dt className="text-xs text-muted-foreground">担当者</dt>
+              <dd>{task.assigneeName || '-'}</dd>
+              <dt className="text-xs text-muted-foreground">ステータス</dt>
+              <dd>
+                <Badge variant={statusColors[task.status] || 'outline'} className="text-[10px]">
+                  {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
+                </Badge>
+              </dd>
+              <dt className="text-xs text-muted-foreground">進捗</dt>
+              <dd className="flex items-center gap-1.5">
+                <div className="h-2 w-16 rounded-full bg-accent">
+                  <div className="h-2 rounded-full bg-info" style={{ width: `${task.progressRate}%` }} />
+                </div>
+                <span>{task.progressRate}%</span>
+                {effortText && <span className="text-xs text-muted-foreground">/ {effortText}</span>}
+              </dd>
+              <dt className="text-xs text-muted-foreground">予定</dt>
+              <dd className="text-xs">{plannedRangeText}</dd>
+              <dt className="text-xs text-muted-foreground">実績</dt>
+              <dd className="text-xs">{actualRangeText}</dd>
+            </dl>
+          </div>
+          <div className="flex flex-col gap-1">
+            {canOpenEdit && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => onEditClick(task)}
+                title="編集"
+                aria-label="編集"
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+            )}
+            {canEditPmTl && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-destructive hover:text-destructive"
+                title="削除"
+                aria-label="削除"
+                onClick={async () => {
+                  const label = isWP ? 'ワークパッケージ' : 'アクティビティ';
+                  if (!confirm(`この${label}を削除しますか？`)) return;
+                  await onLoading(() =>
+                    fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
+                  );
+                  await reload();
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+      {!isCollapsed && task.children?.map((child) => (
+        <TaskMobileCard
+          key={child.id}
+          task={child}
+          depth={depth + 1}
+          canEditPmTl={canEditPmTl}
+          userId={userId}
+          projectId={projectId}
+          reload={reload}
+          onLoading={onLoading}
+          members={members}
+          parentOptions={parentOptions}
+          onEditClick={onEditClick}
+          expandedTaskIds={expandedTaskIds}
+          onToggleExpanded={onToggleExpanded}
+        />
+      ))}
+    </>
+  );
+}
+
+const TaskMobileCard = memo(TaskMobileCardImpl, (prev, next) =>
+  prev.task === next.task
+  && prev.depth === next.depth
+  && prev.canEditPmTl === next.canEditPmTl
+  && prev.userId === next.userId
+  && prev.projectId === next.projectId
+  && prev.reload === next.reload
+  && prev.onLoading === next.onLoading
+  && prev.members === next.members
+  && prev.parentOptions === next.parentOptions
+  && prev.onEditClick === next.onEditClick
+  && prev.expandedTaskIds === next.expandedTaskIds
+  && prev.onToggleExpanded === next.onToggleExpanded,
+);
+
 export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload }: Props) {
   const t = useTranslations('action');
   const router = useRouter();
@@ -1047,44 +1220,61 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         )}
       </div>
 
-      {/* フィルタ (担当者 + 状況、PR #61) */}
-      <div className="flex flex-wrap items-center gap-2">
-        <MultiSelectFilter
-          label="担当者"
-          options={[
-            ...members.map((m) => ({ value: m.userId, label: m.userName })),
-            { value: UNASSIGNED_KEY, label: '（未アサイン）', muted: true },
-          ]}
-          selected={assigneeFilter}
-          onToggle={toggleAssignee}
-          onSelectAll={selectAllAssignees}
-          onClearAll={clearAllAssignees}
-          isAllSelected={isAllAssigneesSelected}
-          allLabel="全員"
-        />
-        <MultiSelectFilter
-          label="状況"
-          options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
-          selected={statusFilter}
-          onToggle={toggleStatus}
-          onSelectAll={selectAllStatuses}
-          onClearAll={clearAllStatuses}
-          isAllSelected={isAllStatusesSelected}
-        />
-        {(!isAllAssigneesSelected || !isAllStatusesSelected) && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => { selectAllAssignees(); selectAllStatuses(); }}
-          >
-            フィルタ解除
-          </Button>
-        )}
-      </div>
+      {/*
+        フィルタ (担当者 + 状況、PR #61)
+        PR #128a-2: モバイル (md 未満) では details/summary で折りたたみ可能にし、
+        画面スペースを節約。PC (md+) は従来通り常時展開。
+      */}
+      <details className="group md:open:" open={false}>
+        <summary className="flex cursor-pointer items-center gap-2 rounded-md border border-input bg-card px-3 py-2 text-sm md:hidden">
+          <span className="flex-1 font-medium">フィルタ / ソート</span>
+          <span className="text-xs text-muted-foreground group-open:hidden">タップで展開</span>
+          <span className="text-xs text-muted-foreground hidden group-open:inline">タップで折りたたみ</span>
+        </summary>
+        {/*
+          md+ では details 挙動ではなく常時表示にしたいので、展開状態に関わらず md:flex で上書き。
+          `md:!block` で display を再付与し、summary は md+ で非表示にする。
+        */}
+        <div className="mt-2 flex flex-wrap items-center gap-2 md:mt-0 md:flex">
+          <MultiSelectFilter
+            label="担当者"
+            options={[
+              ...members.map((m) => ({ value: m.userId, label: m.userName })),
+              { value: UNASSIGNED_KEY, label: '（未アサイン）', muted: true },
+            ]}
+            selected={assigneeFilter}
+            onToggle={toggleAssignee}
+            onSelectAll={selectAllAssignees}
+            onClearAll={clearAllAssignees}
+            isAllSelected={isAllAssigneesSelected}
+            allLabel="全員"
+          />
+          <MultiSelectFilter
+            label="状況"
+            options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
+            selected={statusFilter}
+            onToggle={toggleStatus}
+            onSelectAll={selectAllStatuses}
+            onClearAll={clearAllStatuses}
+            isAllSelected={isAllStatusesSelected}
+          />
+          {(!isAllAssigneesSelected || !isAllStatusesSelected) && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => { selectAllAssignees(); selectAllStatuses(); }}
+            >
+              フィルタ解除
+            </Button>
+          )}
+        </div>
+      </details>
 
+      {/* PR #128a-2: 一括操作バーはモバイル未提供 (md:flex で PC のみ表示)。
+          モバイルではそもそもチェックボックス列を非表示にしているため、ここに来ても操作できない。 */}
       {canSelectForProgress && selectedIds.size > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-info/30 bg-info/10 px-4 py-2">
+        <div className="hidden flex-wrap items-center gap-3 rounded-lg border border-info/30 bg-info/10 px-4 py-2 md:flex">
           <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
           {/* PR #87: 一括編集 (計画系) と 一括削除 は pm_tl+ のみ。member には一括実績更新のみ露出。 */}
           {canEditPmTl && (
@@ -1239,69 +1429,103 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         - 日付・操作列の whitespace-nowrap は保持（「2026-」等の折返し防止）
         - 名称列のみ折返し許容（長い名前に対応）
       */}
-      <ResizableColumnsProvider tableKey="project-tasks">
-      <div className="flex justify-end pb-2">
-        <ResetColumnsButton />
-      </div>
-      <div className="rounded-lg border overflow-x-auto">
-        <table className="min-w-full text-xs md:text-sm">
-          <thead className="bg-muted">
-            <tr>
-              {canSelectForProgress && (
-                <th className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
-                  <input
-                    type="checkbox"
-                    checked={isAllSelected}
-                    onChange={toggleSelectAll}
-                    className="rounded"
-                    title="全選択"
+      {/* PR #128a-2: PC (md+) は既存 Table + ResizableColumnsProvider を維持 (PC UX 変更なし) */}
+      <div className="hidden md:block">
+        <ResizableColumnsProvider tableKey="project-tasks">
+          <div className="flex justify-end pb-2">
+            <ResetColumnsButton />
+          </div>
+          <div className="rounded-lg border overflow-x-auto">
+            <table className="min-w-full text-xs md:text-sm">
+              <thead className="bg-muted">
+                <tr>
+                  {canSelectForProgress && (
+                    <th className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
+                      <input
+                        type="checkbox"
+                        checked={isAllSelected}
+                        onChange={toggleSelectAll}
+                        className="rounded"
+                        title="全選択"
+                      />
+                    </th>
+                  )}
+                  <ResizableHead columnKey="name" defaultWidth={320}>名称</ResizableHead>
+                  <ResizableHead columnKey="assignee" defaultWidth={140}>担当者</ResizableHead>
+                  <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
+                  <ResizableHead columnKey="progress" defaultWidth={140}>進捗&工数</ResizableHead>
+                  <ResizableHead columnKey="plannedRange" defaultWidth={180}>予定期間</ResizableHead>
+                  <ResizableHead columnKey="actualRange" defaultWidth={180}>実績期間</ResizableHead>
+                  <ResizableHead columnKey="actions" defaultWidth={100}>操作</ResizableHead>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTasks.map((task) => (
+                  <TaskTreeNode
+                    key={task.id}
+                    task={task}
+                    depth={0}
+                    canEditPmTl={canEditPmTl}
+                    canSelectForProgress={canSelectForProgress}
+                    userId={userId}
+                    projectId={projectId}
+                    reload={reload}
+                    onLoading={withLoading}
+                    isSelected={selectedIds.has(task.id)}
+                    selectedIds={selectedIds}
+                    onToggleSelect={toggleSelect}
+                    members={members}
+                    parentOptions={parentOptions}
+                    onEditClick={openEditDialog}
+                    expandedTaskIds={expandedTaskIds}
+                    onToggleExpanded={toggleExpanded}
                   />
-                </th>
-              )}
-              <ResizableHead columnKey="name" defaultWidth={320}>名称</ResizableHead>
-              <ResizableHead columnKey="assignee" defaultWidth={140}>担当者</ResizableHead>
-              <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
-              <ResizableHead columnKey="progress" defaultWidth={140}>進捗&工数</ResizableHead>
-              <ResizableHead columnKey="plannedRange" defaultWidth={180}>予定期間</ResizableHead>
-              <ResizableHead columnKey="actualRange" defaultWidth={180}>実績期間</ResizableHead>
-              <ResizableHead columnKey="actions" defaultWidth={100}>操作</ResizableHead>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredTasks.map((task) => (
-              <TaskTreeNode
-                key={task.id}
-                task={task}
-                depth={0}
-                canEditPmTl={canEditPmTl}
-                canSelectForProgress={canSelectForProgress}
-                userId={userId}
-                projectId={projectId}
-                reload={reload}
-                onLoading={withLoading}
-                isSelected={selectedIds.has(task.id)}
-                selectedIds={selectedIds}
-                onToggleSelect={toggleSelect}
-                members={members}
-                parentOptions={parentOptions}
-                onEditClick={openEditDialog}
-                expandedTaskIds={expandedTaskIds}
-                onToggleExpanded={toggleExpanded}
-              />
-            ))}
-            {filteredTasks.length === 0 && (
-              <tr>
-                <td colSpan={canSelectForProgress ? 8 : 7} className="py-8 text-center text-muted-foreground">
-                  {tasks.length === 0
-                    ? 'WBS が登録されていません'
-                    : '選択したフィルタ条件に該当するタスクはありません'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                ))}
+                {filteredTasks.length === 0 && (
+                  <tr>
+                    <td colSpan={canSelectForProgress ? 8 : 7} className="py-8 text-center text-muted-foreground">
+                      {tasks.length === 0
+                        ? 'WBS が登録されていません'
+                        : '選択したフィルタ条件に該当するタスクはありません'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </ResizableColumnsProvider>
       </div>
-      </ResizableColumnsProvider>
+
+      {/* PR #128a-2: モバイル (md 未満) 専用のカード形式 WBS ビュー
+          階層は marginLeft で字下げ表示、Expand/Collapse は PC と同じ state を共有、
+          編集は既存ダイアログに誘導 (新規実装なし)。一括選択 / bulk update / ショートカットは提供しない。 */}
+      <div className="space-y-2 md:hidden" role="list" aria-label="WBS タスク一覧">
+        {filteredTasks.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            {tasks.length === 0
+              ? 'WBS が登録されていません'
+              : '選択したフィルタ条件に該当するタスクはありません'}
+          </p>
+        ) : (
+          filteredTasks.map((task) => (
+            <TaskMobileCard
+              key={task.id}
+              task={task}
+              depth={0}
+              canEditPmTl={canEditPmTl}
+              userId={userId}
+              projectId={projectId}
+              reload={reload}
+              onLoading={withLoading}
+              members={members}
+              parentOptions={parentOptions}
+              onEditClick={openEditDialog}
+              expandedTaskIds={expandedTaskIds}
+              onToggleExpanded={toggleExpanded}
+            />
+          ))
+        )}
+      </div>
 
       {/* 編集ダイアログ: ロールに応じて PM/TL 編集項目・実績項目を出し分ける */}
       {/* PR #87: 実績項目セクションが grid-cols-2 のため max-w-[min(90vw,36rem)] (36rem) では日付列が

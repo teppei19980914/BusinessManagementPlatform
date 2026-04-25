@@ -105,8 +105,22 @@ export default defineConfig({
       // chromium project のみで実行する。他 spec (02-09) は RUN_ID でユーザを分離しているか
       // 状態共有が read-only のため chromium-mobile でも正常に pass する (CI 実測済)。
       //
-      // 詳細: E2E_LESSONS_LEARNED §4.36
-      testIgnore: [/01-admin-and-member-setup\.spec\.ts/],
+      // PR #137 hotfix: 06-wbs-tasks.spec.ts は **PC テーブル前提**で書かれた WBS 機能 spec。
+      // PR #128a-2 でモバイル時はカードビュー (`md:hidden` / `hidden md:block` 切替) に
+      // 描画が変わったため、`locator('tr')` セレクタが mobile viewport では `<tr>` を
+      // hidden 判定し `expect(...).toBeVisible()` が timeout する。
+      //
+      // 06 spec の機能ロジック (CRUD / 展開 / 削除) は同じ handler を経由するため、
+      // chromium project (PC) で機能担保 + chromium-mobile では視覚回帰でカードビューを
+      // 別途検証するのが住み分け。06 を mobile project で完全動作させるには `<tr>` ⇄
+      // `[role="listitem"]` 切替の helper か、TaskMobileCard への role="listitem" 追加 +
+      // テスト全面リファクタが必要 = 別 PR スコープ。
+      //
+      // 詳細: E2E_LESSONS_LEARNED §4.36 / §4.37
+      testIgnore: [
+        /01-admin-and-member-setup\.spec\.ts/,
+        /06-wbs-tasks\.spec\.ts/,
+      ],
     },
   ],
   webServer: isCI
