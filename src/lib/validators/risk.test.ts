@@ -113,4 +113,43 @@ describe('updateRiskSchema', () => {
       lessonLearned: '早期検知が重要',
     }).success).toBe(true);
   });
+
+  // §5.12 回帰防止: nullable 列に null を送ると 400 になっていた問題
+  describe('§5.12: nullable 列は null を受理する (PR #138 後 hotfix の回帰防止)', () => {
+    it('updateRiskSchema: assigneeId=null は受理する (担当者クリア)', () => {
+      const r = updateRiskSchema.safeParse({ assigneeId: null });
+      expect(r.success, JSON.stringify(r)).toBe(true);
+    });
+
+    it('updateRiskSchema: deadline=null は受理する (期日クリア)', () => {
+      const r = updateRiskSchema.safeParse({ deadline: null });
+      expect(r.success, JSON.stringify(r)).toBe(true);
+    });
+
+    it('updateRiskSchema: 全 nullable 列を null で送れる (visibility 編集時のフルペイロード相当)', () => {
+      const r = updateRiskSchema.safeParse({
+        title: 'テスト',
+        content: '内容',
+        impact: 'high',
+        state: 'open',
+        visibility: 'public',
+        assigneeId: null,
+        deadline: null,
+        cause: null,
+        likelihood: null,
+        responsePolicy: null,
+        responseDetail: null,
+        riskNature: null,
+        result: null,
+        lessonLearned: null,
+      });
+      expect(r.success, JSON.stringify(r)).toBe(true);
+    });
+
+    it('updateRiskSchema: assigneeId=空文字 は拒否する (uuid バリデーション)', () => {
+      // empty string は uuid format ではないので reject (期待動作)
+      const r = updateRiskSchema.safeParse({ assigneeId: '' });
+      expect(r.success).toBe(false);
+    });
+  });
 });

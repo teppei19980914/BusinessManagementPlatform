@@ -13,8 +13,9 @@ export const createEstimateSchema = z.object({
   estimatedEffort: z.number().positive('見積工数は正の数で入力してください'),
   effortUnit: z.enum(['person_hour', 'person_day']),
   rationale: z.string().min(1, '見積根拠を入力してください').max(LONG_TEXT_MAX_LENGTH),
-  preconditions: z.string().max(MEDIUM_TEXT_MAX_LENGTH).optional(),
-  notes: z.string().max(NOTES_MAX_LENGTH).optional(),
+  // feat/account-lock-and-ui-consistency 後 hotfix: DB nullable 列は .nullable() 必須 (§5.12)
+  preconditions: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
+  notes: z.string().max(NOTES_MAX_LENGTH).nullable().optional(),
 });
 
 export const updateEstimateSchema = createEstimateSchema.partial();

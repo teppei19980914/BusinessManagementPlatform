@@ -684,6 +684,113 @@ GitHub Actions の `Lint / Test / Build` job が再度 fail。
    clean のみを根拠に「検証完了」と書くのを禁止し、必ず `pnpm tsc --noEmit` の結果を
    併記する運用に改める。
 
+### 5.12 DB nullable 列の Zod schema は `.nullable().optional()` 必須 (PR #138 後 hotfix)
+
+#### 症状
+
+リスクの編集ダイアログから公開範囲を draft → public に変更しても保存されず、
+ブラウザ Console + UI に以下のエラー:
+
+```
+PATCH /api/projects/:pid/risks/:rid 400 (Bad Request)
+Invalid input: expected string, received null
+```
+
+UI 上もエラー文言が表示され、ユーザは「公開範囲が編集できない」と認識した。
+ブラウザ Console への 400 露出は **エラー情報最小化方針** にも違反 (§5.10)。
+
+#### 根本原因
+
+Zod の `.optional()` は **`undefined` のみ受理し `null` は拒否** する。
+しかし `risk-edit-dialog.tsx` は値が空のとき以下のように送信:
+
+```ts
+body: JSON.stringify({
+  ...
+  assigneeId: form.assigneeId || null,   // 空欄なら null
+  deadline: form.deadline || null,        // 空欄なら null
+  ...
+})
+```
+
+DB 側 `RiskIssue.assigneeId String?` / `deadline DateTime?` は **nullable** であり、
+ユーザが担当者や期日を「クリアして空に戻す」のは正当な操作。null を Zod が拒否
+した結果、200 で完了するはずの編集が **400 で失敗**していた。
+
+具体的なトリガ条件:
+- 元のレコードで該当列が null (例: 担当者未設定の risk)
+- 編集ダイアログを開く → form が `assigneeId: ''` で初期化
+- 任意のフィールド (visibility 等) を編集 → submit
+- body に `assigneeId: null` が含まれて送信 → 400
+
+#### 修正
+
+##### (1) Zod schema: nullable 列に `.nullable().optional()` を必須化
+
+```ts
+// NG (旧)
+assigneeId: z.string().uuid().optional(),
+deadline: z.string().regex(...).optional(),
+
+// OK (新)
+assigneeId: z.string().uuid().nullable().optional(),
+deadline: z.string().regex(...).nullable().optional(),
+```
+
+`.nullable().optional()` で `string | null | undefined` 全てを受理。`.nullish()`
+は同等の shorthand (zod v4 で利用可) だが、本プロジェクトは可読性優先で
+`.nullable().optional()` を採用。
+
+##### (2) Service 層: `new Date(null)` epoch 化を防ぐ
+
+```ts
+// NG: input.deadline === null のとき new Date(null) → 1970-01-01
+if (input.deadline !== undefined) data.deadline = new Date(input.deadline);
+
+// OK: null は明示パススルー
+if (input.deadline !== undefined)
+  data.deadline = input.deadline === null ? null : new Date(input.deadline);
+```
+
+##### (3) Service signature: 入力型に `| null` を追加
+
+`Partial<CreateXxxInput> & { result?: string }` のように個別拡張している場合、
+`| null` を明示しないと TypeScript が拒否 (CreateXxxInput 側に nullable を反映済の前提)。
+
+#### 横展開済 (本 PR で全 validator 対応済)
+
+| validator | 修正対象フィールド |
+|---|---|
+| `risk.ts` | cause / likelihood / responsePolicy / responseDetail / **assigneeId** / **deadline** / riskNature / result / lessonLearned |
+| `knowledge.ts` | conclusion / recommendation / reusability / devMethod |
+| `retrospective.ts` | estimateGapFactors / scheduleGapFactors / qualityIssues / riskResponseEvaluation / knowledgeToShare |
+| `project.ts` | outOfScope / notes |
+| `estimate.ts` | preconditions / notes |
+| `customer.ts` | (元から対応済) department / contactPerson / contactEmail / notes |
+| `task.ts` | (元から `updateTaskSchema` / `bulkUpdateTaskSchema` は対応済) |
+
+#### 汎化ルール
+
+1. **Prisma schema の `String?` / `DateTime?` 等 (nullable) に対応する Zod field は
+   必ず `.nullable().optional()`** とする。`.optional()` 単独は禁止。
+2. **編集 dialog で `value || null` パターンが書ける = nullable な値である** ことの
+   宣言。validator 側で受け入れる準備が必須。
+3. **service 層で `new Date()` / `parseInt()` 等のパース関数に値を渡すときは
+   null を明示的に分岐**。`new Date(null)` は 1970 epoch、`parseInt(null)` は NaN
+   といった silent corruption を防ぐ。
+4. **schema 追加・変更時は dialog body の payload と突き合わせ**。
+   - 検出方法 grep:
+     ```bash
+     grep -rnE "form\.\w+ \|\| null|: \w+ \|\| null" src/components/dialogs src/app
+     ```
+   - 各ヒットに対して validator の該当 field が `.nullable()` を含むか確認
+
+#### 関連
+
+- §5.10 (フォーム送信前の事前バリデーション) — 別軸の同種問題 (空文字 → 400)
+- §5.11 (編集ダイアログの save→close 順序 + リスト列の表示漏れ) — UI 一貫性
+- §5.11.1 (User updatedBy / 型エラー検証ルール) — Vercel build 検知の重要性
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1762,3 +1869,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-25 | アカウント自動削除→ロック切替 + UI 一貫性改善 (feat/account-lock-and-ui-consistency)。**item 1**: 30 日無アクティブ自動削除 (`cleanupInactiveUsers`) を **isActive=false ロック** (`lockInactiveUsers`) に変更し、ナレッジ参照のためアカウント情報を残しつつログインのみ封じる。endpoint / 設定名 rename。**item 5**: 「全○○」横断リストから draft を完全除外 (admin もシステム整合性のため public 限定、draft 管理はプロジェクト個別画面に集約)。**item 6 (§5.11)**: 編集ダイアログの save 後 `await onSaved() → close` を `close → void onSaved()` に統一し create と挙動一致化、reload 待ちで生じる「閉じない」体感を解消。**item 7 (§5.11)**: project-level risks/retrospectives 一覧に visibility 表示を追加 (knowledge/memo は既存)、編集後の即時反映を可視化 |
 | 2026-04-25 | §5.11.1 新設 (PR #138 Vercel build hotfix)。`prisma.user.update` に `updatedBy: systemTriggerId` を渡したら Vercel `next build` の型チェックで fail。User モデルは意図的に updatedBy 列を持たない設計 (self-referential 回避) で、他エンティティ流儀の借用が schema 不整合を起こした。`pnpm lint` は型チェックなしのためローカルでは気付けず、`pnpm tsc --noEmit` を commit 前に回すルールを追記 |
 | 2026-04-25 | §5.11.1 再発事例 2 例目 (PR #138 hotfix の hotfix)。前回の教訓 (commit 前 tsc) を直後 commit で守らず、`recordAuditLog` の引数名を `before/after` (実際は `beforeValue/afterValue`) と取り違えた別種の型エラーで CI / E2E が再 fail。**「修正」commit でも tsc --noEmit を必ず回す + API シグネチャは記憶ベースでなく Read で確認 + `pnpm lint` clean のみを根拠にした「検証完了」報告を禁止** という追加運用ルールを追記 |
+| 2026-04-25 | §5.12 新設 (PR #138 後 hotfix)。Zod の `.optional()` は `null` を拒否するため、DB nullable 列に対する schema は **`.nullable().optional()` 必須**。risk-edit-dialog の visibility 編集時に「Invalid input: expected string, received null」400 が発生していた根本原因。risk/knowledge/retro/project/estimate validator を全て横展開修正、回帰防止の単体テスト追加 (assigneeId=null / deadline=null 受理、空文字は依然拒否)。service 層の `new Date(null)` epoch 化バグも併せて修正 |
