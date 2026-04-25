@@ -401,13 +401,14 @@ export async function lockInactiveUsers(
 
   for (const c of candidates) {
     try {
-      // isActive=false に更新 (論理削除はしない)。updatedBy は cron 起動時に取得した admin の id。
+      // isActive=false に更新 (論理削除はしない)。
+      // User モデルは updatedBy 列を持たない設計 (self-referential 回避)。
+      // ロック実行者の追跡は audit_log の userId=systemTriggerId で行う。
       await prisma.user.update({
         where: { id: c.id },
-        data: { isActive: false, updatedBy: systemTriggerId },
+        data: { isActive: false },
       });
       // 監査ログ: 削除 (DELETE) ではなく更新 (UPDATE) として記録
-      // 詳細は audit.service.ts の使用箇所を参照
       await recordAuditLog({
         userId: systemTriggerId,
         action: 'UPDATE',
