@@ -151,6 +151,108 @@ describe('suggestForProject', () => {
     const r = await suggestForProject('p-1');
     expect(r.knowledge).toHaveLength(0);
   });
+
+  // PR #140 後 改修: Issue / Retrospective が親 Project のタグを proxy として使うことの確認
+  it('Issue / Retrospective は親 Project のタグで tagScore を計算する (Knowledge と同等の tag-aware)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'finance app',
+      background: '',
+      scope: '',
+      // 入力 ctx のタグ
+      businessDomainTags: ['fintech', 'banking'],
+      techStackTags: ['react'],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+
+    // Issue: 親 Project が同じドメインタグを持つ → tagScore > 0
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      {
+        id: 'i-fintech',
+        title: 'auth bug',
+        content: 'about login',
+        projectId: 'p-2',
+        project: {
+          name: 'Other Fintech',
+          deletedAt: null,
+          businessDomainTags: ['fintech', 'banking'],
+          techStackTags: ['react'],
+          processTags: [],
+        },
+      },
+    ] as never);
+
+    // Retro: 親 Project がドメインタグ部分一致 → tagScore > 0
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      {
+        id: 'r-fintech',
+        conductedDate: new Date('2026-01-01'),
+        problems: 'X',
+        improvements: 'Y',
+        projectId: 'p-3',
+        project: {
+          name: 'Another Fintech',
+          deletedAt: null,
+          businessDomainTags: ['fintech'],
+          techStackTags: [],
+          processTags: [],
+        },
+      },
+    ] as never);
+
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { id: 'i-fintech', score: 0.5 },
+      { id: 'r-fintech', score: 0.5 },
+    ] as never);
+
+    const r = await suggestForProject('p-1');
+
+    // tagScore は Issue / Retro 共に 0 でなく > 0 (親 Project タグの jaccard)
+    // 旧実装は tagScore=0 固定だったので、>0 になること自体が parity 達成の証拠。
+    // - Issue は project tags 完全一致 (3 タグ全部) → jaccard = 3/3 = 1.0
+    // - Retro は project tags 部分一致 (1/3 タグ) → jaccard = 1/3 ≈ 0.333
+    expect(r.pastIssues[0].tagScore).toBeCloseTo(1.0, 5);
+    expect(r.retrospectives[0].tagScore).toBeCloseTo(1 / 3, 5);
+
+    // 同じ textScore=0.5 でも tagScore が乗ることで final score が text 単独より大きい
+    expect(r.pastIssues[0].score).toBeGreaterThan(r.pastIssues[0].textScore);
+  });
+
+  it('親 Project のタグが空なら Issue / Retrospective の tagScore は 0 (regression: 旧挙動と互換)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'x',
+      background: '',
+      scope: '',
+      businessDomainTags: ['fintech'],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      {
+        id: 'i-no-tags',
+        title: 't',
+        content: 'c',
+        projectId: 'p-2',
+        project: {
+          name: 'Untagged',
+          deletedAt: null,
+          businessDomainTags: [],
+          techStackTags: [],
+          processTags: [],
+        },
+      },
+    ] as never);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { id: 'i-no-tags', score: 0.5 },
+    ] as never);
+
+    const r = await suggestForProject('p-1');
+    expect(r.pastIssues[0].tagScore).toBe(0);
+  });
 });
 
 describe('adoptPastIssueAsTemplate', () => {

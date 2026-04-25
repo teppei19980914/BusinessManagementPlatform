@@ -4,19 +4,24 @@
  * 本サービスはこのプロダクトの核心機能である
  * 「過去の資源を未来のプロジェクトに活用する」を実現するための推薦エンジン。
  *
- * 対象: 入力プロジェクト (新規 or 既存) に対して、過去の
- *   - Knowledge (全公開かつ自プロジェクト未紐付けのもの)
- *   - 過去の Issue (type='issue' かつ state='resolved', 他プロジェクトのもの)
- * を類似度スコア付きで返す。
+ * 対象: 入力プロジェクト (新規 or 既存) に対して、以下を類似度スコア付きで返す:
+ *   - Knowledge: 全公開ナレッジ (自プロジェクト紐付け済みは alreadyLinked=true で印)
+ *   - 過去 Issue: type='issue' かつ state='resolved'、他プロジェクトのもの
+ *   - 過去 Retrospective: visibility='public'、他プロジェクトのもの
  *
- * 類似度は以下の重み付き平均:
+ * 類似度は以下の重み付き平均 (3 種共通):
  *   - タグ交差 (Jaccard 係数): Project のタグ ↔ 対象のタグ
+ *     - Knowledge: Knowledge 自身の techTags+processTags+businessDomainTags
+ *     - Issue / Retrospective: **親 Project のタグを proxy** として使用
+ *       (Issue / Retro 自体は DB タグ列を持たないが、親 Project のドメインタグが
+ *        意味的に妥当な近似となる。PR #140 後改修で Knowledge と同等の tag-aware に統一)
  *   - テキスト類似度 (pg_trgm similarity): Project の purpose+scope+background ↔
- *       対象の title+content
+ *       対象の text (Knowledge: title+content, Issue: title+content,
+ *       Retro: problems+improvements に限定)
  *
- * 重み (Phase 1 の既定値):
- *   - タグ: 0.5
- *   - テキスト: 0.5
+ * 重み (config/suggestion.ts):
+ *   - タグ: SUGGESTION_TAG_WEIGHT
+ *   - テキスト: SUGGESTION_TEXT_WEIGHT
  *   将来 UI 側で再調整可能にする余地がある。
  */
 
@@ -203,6 +208,12 @@ export async function suggestForProject(
   // 他プロジェクトの解消済み issue を対象。
   // 同プロジェクトの未解消 issue は普段の「課題一覧」で見られるので除外。
   // リスクは不確実性で発生していないため対象外 (核心機能 UX 設計より)。
+  //
+  // タグスコア (PR #140 後 改修):
+  //   Issue 自体は DB にタグ列を持たないが、**親 Project のタグを proxy** として
+  //   利用することで Knowledge と同等の tag-aware なマッチングを実現する。
+  //   semantic な妥当性: 「同じドメイン (e.g. fintech) のプロジェクトで起きた issue は
+  //   別ドメインの issue より関連性が高い」。schema 変更不要。
   const issues = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
@@ -215,7 +226,16 @@ export async function suggestForProject(
       title: true,
       content: true,
       projectId: true,
-      project: { select: { name: true, deletedAt: true } },
+      project: {
+        select: {
+          name: true,
+          deletedAt: true,
+          // tagScore 計算用: 親 Project のタグを proxy として使用
+          businessDomainTags: true,
+          techStackTags: true,
+          processTags: true,
+        },
+      },
     },
   });
 
@@ -225,8 +245,13 @@ export async function suggestForProject(
   );
 
   const issueScored: PastIssueSuggestion[] = issues.map((i) => {
-    // Issue はタグ列を持たないため text スコアのみで判定する
-    const tagScore = 0;
+    // 親 Project のタグを Issue 自身のタグとみなす (PR #140 後 改修)
+    const issueProjectTags = unifyProjectTags({
+      businessDomainTags: (i.project?.businessDomainTags as string[]) ?? [],
+      techStackTags: (i.project?.techStackTags as string[]) ?? [],
+      processTags: (i.project?.processTags as string[]) ?? [],
+    });
+    const tagScore = jaccard(ctx.tags, issueProjectTags);
     const textScore = iText.get(i.id) ?? 0;
     const score = combineScores([
       { score: tagScore, weight: TAG_WEIGHT },
@@ -248,8 +273,11 @@ export async function suggestForProject(
   // ---------- 過去 Retrospective 候補 (PR #65 Phase 2 (a)) ----------
   // 他プロジェクトの振り返り (confirmed) を対象。
   // 自プロジェクトの振り返りは普段の「振り返り一覧」で見られるので除外。
-  // 振り返りはタグを持たないため text スコアのみ (Issue と同様)。
   // 比較対象は problems + improvements に絞る (「避けたい失敗」「次に活かす学び」が中心)。
+  //
+  // タグスコア (PR #140 後 改修):
+  //   Retrospective 自体は DB にタグ列を持たないが、Issue と同じく **親 Project の
+  //   タグを proxy** として使う。Knowledge と同等の tag-aware マッチングに統一。
   const retros = await prisma.retrospective.findMany({
     where: {
       deletedAt: null,
@@ -262,7 +290,16 @@ export async function suggestForProject(
       problems: true,
       improvements: true,
       projectId: true,
-      project: { select: { name: true, deletedAt: true } },
+      project: {
+        select: {
+          name: true,
+          deletedAt: true,
+          // tagScore 計算用: 親 Project のタグを proxy として使用
+          businessDomainTags: true,
+          techStackTags: true,
+          processTags: true,
+        },
+      },
     },
   });
 
@@ -272,7 +309,12 @@ export async function suggestForProject(
   );
 
   const retroScored: RetrospectiveSuggestion[] = retros.map((r) => {
-    const tagScore = 0;
+    const retroProjectTags = unifyProjectTags({
+      businessDomainTags: (r.project?.businessDomainTags as string[]) ?? [],
+      techStackTags: (r.project?.techStackTags as string[]) ?? [],
+      processTags: (r.project?.processTags as string[]) ?? [],
+    });
+    const tagScore = jaccard(ctx.tags, retroProjectTags);
     const textScore = rText.get(r.id) ?? 0;
     const score = combineScores([
       { score: tagScore, weight: TAG_WEIGHT },

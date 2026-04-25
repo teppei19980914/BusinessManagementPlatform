@@ -791,6 +791,85 @@ if (input.deadline !== undefined)
 - §5.11 (編集ダイアログの save→close 順序 + リスト列の表示漏れ) — UI 一貫性
 - §5.11.1 (User updatedBy / 型エラー検証ルール) — Vercel build 検知の重要性
 
+### 5.13 過去 Issue / Retrospective の提案ロジックを Knowledge と同等の tag-aware に統一 (fix/suggestion-tag-parity)
+
+#### 症状
+
+「参考」タブ (新規作成後の提案モーダル + プロジェクト詳細「参考」タブ) で、過去
+ナレッジには tag-based マッチングが効くが、**過去 Issue / 過去 Retrospective には
+tag マッチングが効かず text 類似度のみ**で判定されていた。
+
+`suggestion.service.ts` 内のコメントには「Issue はタグ列を持たないため text スコア
+のみで判定する」と意図的な設計として書かれていたが、結果として:
+
+- Issue / Retro の score は **常に textScore × TEXT_WEIGHT** (TAG_WEIGHT 部分は 0)
+- 同じテキスト類似度でも Knowledge より低スコアになり、SCORE_THRESHOLD で
+  filter されやすい不利な扱い
+- ユーザの期待 (「ナレッジ候補と同様に提案される」) を満たしていない
+
+#### 根本原因
+
+DB schema 上 `RiskIssue` と `Retrospective` には独自タグ列が存在しない (Knowledge
+だけが `techTags` / `processTags` / `businessDomainTags` を持つ)。一方 **両者とも
+`projectId` を持ち、親 Project にはタグ列がある**。本来は親 Project のタグを proxy
+として使うのが意味的に妥当 (「同ドメインのプロジェクトで起きた Issue/Retro は別
+ドメインのものより関連性が高い」) だが、その実装が抜けていた。
+
+#### 修正
+
+`suggestion.service.ts` で以下を変更:
+
+```ts
+// 旧: タグ無視 (常に 0)
+const tagScore = 0;
+
+// 新: 親 Project のタグを proxy として使う (Knowledge と同等の tag-aware)
+const issueProjectTags = unifyProjectTags({
+  businessDomainTags: (i.project?.businessDomainTags as string[]) ?? [],
+  techStackTags: (i.project?.techStackTags as string[]) ?? [],
+  processTags: (i.project?.processTags as string[]) ?? [],
+});
+const tagScore = jaccard(ctx.tags, issueProjectTags);
+```
+
+Prisma クエリの `select` 句に `project.businessDomainTags` 等を追加。schema 変更
+不要、migration 不要。Retrospective も同等の改修。
+
+#### 統一後の動作
+
+| カテゴリ | tagScore 計算 | textScore 計算 |
+|---|---|---|
+| Knowledge | Knowledge 自身の techTags+processTags+businessDomainTags | title + content |
+| Issue | **親 Project の businessDomainTags+techStackTags+processTags** | title + content |
+| Retrospective | **親 Project の businessDomainTags+techStackTags+processTags** | problems + improvements (限定) |
+
+Retrospective の text 限定は「避けたい失敗 / 次に活かす学び」の核心部分にフォーカス
+する意図的な設計 (本改修対象外、現状維持)。
+
+#### 汎化ルール
+
+1. **「○○ A は B と同等」を確認する場合は、スコアリング全要素を表化** して比較する。
+   片方の要素 (tagScore など) がゼロ固定だと「同等」を主張できない。
+2. **DB に直接列がなくても親エンティティから proxy 取得**できるなら、まず schema 変更
+   なしの経路を検討する。本件は Project が tag を持っていたため migration 回避。
+3. **新カテゴリを suggestion に追加するときは scoring の対称性をチェック**。「タグなし
+   だから text のみ」と短絡せず、proxy 候補の有無を必ず検討する。
+
+#### 回帰防止テスト
+
+`src/services/suggestion.service.test.ts` に 2 ケース追加:
+
+- 「Issue / Retrospective は親 Project のタグで tagScore を計算する」
+  - Issue: 親 Project tag 完全一致 → tagScore=1.0、final score > textScore
+  - Retro: 親 Project tag 部分一致 (1/3) → tagScore≈0.333
+- 「親 Project のタグが空なら Issue / Retrospective の tagScore は 0 (regression: 旧挙動と互換)」
+
+#### 関連
+
+- §5.12 (DB nullable 列の Zod schema) — 別軸の suggestion 関連修正
+- DESIGN.md §23 (核心機能 / 提案型サービス)
+- `src/lib/similarity.ts` の `jaccard` / `unifyProjectTags` (本改修で再利用)
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1870,3 +1949,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-25 | §5.11.1 新設 (PR #138 Vercel build hotfix)。`prisma.user.update` に `updatedBy: systemTriggerId` を渡したら Vercel `next build` の型チェックで fail。User モデルは意図的に updatedBy 列を持たない設計 (self-referential 回避) で、他エンティティ流儀の借用が schema 不整合を起こした。`pnpm lint` は型チェックなしのためローカルでは気付けず、`pnpm tsc --noEmit` を commit 前に回すルールを追記 |
 | 2026-04-25 | §5.11.1 再発事例 2 例目 (PR #138 hotfix の hotfix)。前回の教訓 (commit 前 tsc) を直後 commit で守らず、`recordAuditLog` の引数名を `before/after` (実際は `beforeValue/afterValue`) と取り違えた別種の型エラーで CI / E2E が再 fail。**「修正」commit でも tsc --noEmit を必ず回す + API シグネチャは記憶ベースでなく Read で確認 + `pnpm lint` clean のみを根拠にした「検証完了」報告を禁止** という追加運用ルールを追記 |
 | 2026-04-25 | §5.12 新設 (PR #138 後 hotfix)。Zod の `.optional()` は `null` を拒否するため、DB nullable 列に対する schema は **`.nullable().optional()` 必須**。risk-edit-dialog の visibility 編集時に「Invalid input: expected string, received null」400 が発生していた根本原因。risk/knowledge/retro/project/estimate validator を全て横展開修正、回帰防止の単体テスト追加 (assigneeId=null / deadline=null 受理、空文字は依然拒否)。service 層の `new Date(null)` epoch 化バグも併せて修正 |
+| 2026-04-25 | §5.13 新設 (fix/suggestion-tag-parity)。「参考」タブの過去 Issue / 過去 Retrospective が **tagScore=0 固定** でナレッジと同等の tag-aware マッチングが効いていなかった問題。両者は DB に独自タグ列を持たないが、**親 Project のタグを proxy** として `jaccard` 計算に使う改修で Knowledge と挙動統一。schema 変更・migration 不要。回帰防止 unit test 2 件追加 |
