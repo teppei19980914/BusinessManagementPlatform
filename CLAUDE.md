@@ -74,7 +74,7 @@
 | 4 | **実装中の新ナレッジ追記** | `/knowledge-add` skill で発見した罠・パターンを `DEVELOPER_GUIDE.md` または `E2E_LESSONS_LEARNED.md` に追記 |
 | 5 | コミット & プッシュ | `pnpm lint && pnpm tsc --noEmit && pnpm test` を必ず通してから (lint だけでは Vercel build を救えない: §5.11.1) |
 | 6 | **CI / E2E / Vercel エラー対応** | 失敗ログを基に修正、調査と修正で得たナレッジは `/knowledge-add` で必ず追記 |
-| 7 | **定期 MECE 整理** | `/knowledge-organize` skill で重複・古いナレッジを統合・削除。週次 or PR 5 件ごとを目安 |
+| 7 | **PR マージごとの MECE 整理** | `/knowledge-organize` skill で重複・古いナレッジを統合・削除。SessionStart hook (`session-start-knowledge-check.sh`) が **前回セッション以降に main へマージされた PR を検出** し、1 件以上あれば本セッション中に実行を提案する |
 
 **遵守の原則**:
 

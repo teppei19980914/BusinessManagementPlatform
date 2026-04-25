@@ -10,9 +10,23 @@ KDD (知識駆動開発) フローの Step 7。ナレッジが増えると重複
 
 ## 実行タイミング
 
-- **週次 (推奨)**: 毎週金曜午後など固定タイミング
-- **PR 5 件ごと**: PR 番号が 5 増えたら実行
-- **章立てが見にくくなったと感じたら**: 主観的な閾値だが重要
+- **PR マージごと (デフォルト)**: SessionStart hook (`session-start-knowledge-check.sh`) が前回
+  セッション以降に main へマージされた PR を検出し、1 件以上あれば自動的に提案する
+- **手動 (明示呼び出し)**: 章立てが見にくくなったと感じたら / 大規模リファクタの直後など、
+  hook の自動提案を待たずに `/knowledge-organize` を呼ぶ
+- **週次 / PR N 件ごと等の追加リズム**: 必要に応じて `/schedule` skill で routine 化可能
+
+## 自動提案の仕組み
+
+`SessionStart` hook が起動時に以下を実行:
+
+1. `.claude/.last-knowledge-check-sha` (gitignore 済) に保存された前回 main HEAD と比較
+2. `git log <last>..origin/main --merges` でマージコミット数を取得
+3. 加えて squash-merge を `\(#NN\)$` パターンで検出
+4. 合計 1 件以上 → 「N 件の PR がマージされました。`/knowledge-organize` の実行を推奨」を出力
+5. mark file を現在の main HEAD で更新
+
+これにより「PR がマージされたが整理を忘れる」事態を恒久的に防止する。
 
 ## 監査観点 (MECE)
 

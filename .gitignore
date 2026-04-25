@@ -53,6 +53,8 @@ secrets.yml
 id_rsa
 id_rsa.pub
 .claude/.git-automation-setup-done
+.claude/.last-knowledge-check-sha
+.claude/scheduled_tasks.lock
 
 /src/generated/prisma
 
