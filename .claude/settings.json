@@ -12,6 +12,10 @@
           {
             "type": "command",
             "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/session-start-git.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/session-start-knowledge-check.sh\""
           }
         ]
       }
