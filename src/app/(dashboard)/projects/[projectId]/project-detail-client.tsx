@@ -53,7 +53,6 @@ import { SingleUrlField } from '@/components/attachments/single-url-field';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import { EstimatesClient } from './estimates/estimates-client';
 import { TasksClient } from './tasks/tasks-client';
-import { GanttClient } from './gantt/gantt-client';
 import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
 import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
@@ -476,8 +475,8 @@ export function ProjectDetailClient({
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview">概要</TabsTrigger>
           {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
+          {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止し WBS 管理タブ内に統合 */}
           <TabsTrigger value="tasks">WBS管理</TabsTrigger>
-          <TabsTrigger value="gantt">ガント</TabsTrigger>
           <TabsTrigger value="risks">リスク一覧</TabsTrigger>
           <TabsTrigger value="issues">課題一覧</TabsTrigger>
           <TabsTrigger value="retrospectives">振り返り一覧</TabsTrigger>
@@ -674,22 +673,8 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
-        {/* ガントチャートタブ（tree を渡して階層構造を描画・WP 折りたたみ + 担当者フィルタ対応）*/}
-        <TabsContent value="gantt" className="mt-4">
-          <LazyTabContent state={tasks.state}>
-            {(tasksData) => (
-              <LazyTabContent state={members.state}>
-                {(membersData) => (
-                  <GanttClient
-                    projectId={project.id}
-                    tasks={tasksData.tree}
-                    members={membersData}
-                  />
-                )}
-              </LazyTabContent>
-            )}
-          </LazyTabContent>
-        </TabsContent>
+        {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止。
+            WBS タブ (TasksClient) 内のトグルボタンで Gantt 表示を切替える設計に移行。 */}
 
         {/* リスクタブ (PR #60 #1: risk のみ表示) */}
         <TabsContent value="risks" className="mt-4">

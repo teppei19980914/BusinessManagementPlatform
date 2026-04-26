@@ -18,7 +18,7 @@
  *   - DESIGN.md §15 (idx_tasks_assignee インデックスで高速化)
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,8 @@ import {
   ResizableHead,
   ResetColumnsButton,
 } from '@/components/ui/resizable-columns';
+// feat/gantt-tab-restructure (PR-C item 7): マイタスクに横断 Gantt 表示
+import { GanttClient } from '@/app/(dashboard)/projects/[projectId]/gantt/gantt-client';
 
 type ProjectGroup = {
   projectId: string;
@@ -43,6 +45,9 @@ type Props = {
   projectGroups: ProjectGroup[];
   /** サーバ側で算出した本日日付 (YYYY-MM-DD)。遅延判定のハイドレーション安全化に使用 */
   today: string;
+  /** feat/gantt-tab-restructure (PR-C item 7): Gantt 表示時の担当者フィルタ初期値 */
+  currentUserId: string;
+  currentUserName: string;
 };
 
 // 旧ローカル statusColors は lib/task-tree-utils.ts の taskStatusColors に集約 (PR #63 DRY)
@@ -58,7 +63,23 @@ const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_ST
  *   - プロジェクト / WP の展開状態は sessionStorage で保持 (同一タブ内で永続)
  *   - 状況 (task status) の複数選択フィルタを追加 (デフォルト全選択)
  */
-export function MyTasksClient({ projectGroups, today }: Props) {
+export function MyTasksClient({ projectGroups, today, currentUserId, currentUserName }: Props) {
+  // feat/gantt-tab-restructure (PR-C item 7): Gantt 表示トグル
+  const [showGantt, setShowGantt] = useState(false);
+  // GanttClient は members props (担当者フィルタ用) を受け取るため、自分のみの 1 件配列を作る。
+  // MemberDTO の型を満たすため id / userEmail / createdAt はダミー値で埋める (filter 表示にしか
+  // 使われない)。
+  const ganttMembers = useMemo(
+    () => [{
+      id: 'me',
+      userId: currentUserId,
+      userName: currentUserName,
+      userEmail: '',
+      projectRole: 'member',
+      createdAt: '',
+    }],
+    [currentUserId, currentUserName],
+  );
   // 展開状態は「expanded ID の Set」で表現する (空=すべて折りたたみ)。
   // セッション内で明示的に展開した項目だけが残り、新規セッションでは空に戻る。
   const [expandedProjects, setExpandedProjects] = useSessionStringSet(
@@ -131,6 +152,10 @@ export function MyTasksClient({ projectGroups, today }: Props) {
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">マイタスク</h2>
         <div className="flex items-center gap-2">
+          {/* feat/gantt-tab-restructure (PR-C item 7): 横断 Gantt 表示トグル */}
+          <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>
+            {showGantt ? 'ガントを閉じる' : 'ガントチャートを表示'}
+          </Button>
           <ResetColumnsButton />
           <MultiSelectFilter
             label="状況"
@@ -148,6 +173,25 @@ export function MyTasksClient({ projectGroups, today }: Props) {
           )}
         </div>
       </div>
+
+      {/* feat/gantt-tab-restructure (PR-C item 7): 横断 Gantt 表示エリア。
+          複数プロジェクトを縦に並べる (各 GanttClient は単一プロジェクトに対応するため、
+          プロジェクト単位で順次描画する)。 */}
+      {showGantt && (
+        <div className="space-y-4">
+          {filteredGroups.map((pg) => (
+            <div key={`gantt-${pg.projectId}`} className="rounded-lg border p-2">
+              <Link
+                href={`/projects/${pg.projectId}`}
+                className="mb-2 inline-block text-sm font-semibold text-info hover:underline"
+              >
+                {pg.projectName}
+              </Link>
+              <GanttClient projectId={pg.projectId} tasks={pg.tree} members={ganttMembers} />
+            </div>
+          ))}
+        </div>
+      )}
 
       {filteredGroups.length === 0 && (
         <p className="py-8 text-center text-muted-foreground">該当するタスクがありません</p>
