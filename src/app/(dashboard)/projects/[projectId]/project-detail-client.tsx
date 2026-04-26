@@ -335,17 +335,22 @@ export function ProjectDetailClient({
           </div>
           <p className="mt-1 text-muted-foreground">{project.customerName}</p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* fix/quick-ux hotfix: PR-A で admin に状態変更 Select が出るようになった結果、
+            mobile (390px) で flex 子要素 (Select w-44 + 編集 + 削除) が幅不足で重なり、
+            削除ボタンが intercept されて E2E (05-teardown Step 11 chromium-mobile) が click
+            timeout で fail。flex-wrap 許容 + Select 幅を mobile 短縮 (w-36) で解消。
+            PC (md+) では従来通り w-44 の幅を維持。 */}
+        <div className="flex flex-wrap items-center gap-2 justify-end">
           {/*
             概要タブ内のみ表示 (PR #58):
-              - 状態変更 (ラベルから "..." を削除): PM/TL のみ
-              - 編集: PM/TL のみ
+              - 状態変更 (ラベルから "..." を削除): PM/TL or admin (PR-A で緩和)
+              - 編集: PM/TL or admin (PR-A で緩和)
               - 削除: システム管理者のみ
             activeTab === 'overview' で他タブ閲覧時には非表示化する
           */}
           {activeTab === 'overview' && canChangeStatus && nextStatuses.length > 0 && (
             <Select onValueChange={handleStatusChange} disabled={isChangingStatus}>
-              <SelectTrigger className="w-44">
+              <SelectTrigger className="w-36 md:w-44">
                 <SelectValue placeholder="状態変更" />
               </SelectTrigger>
               <SelectContent>
