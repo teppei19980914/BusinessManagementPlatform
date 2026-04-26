@@ -870,6 +870,81 @@ Retrospective の text 限定は「避けたい失敗 / 次に活かす学び」
 - DESIGN.md §23 (核心機能 / 提案型サービス)
 - `src/lib/similarity.ts` の `jaccard` / `unifyProjectTags` (本改修で再利用)
 
+### 5.15 UI 要素の表示条件を緩和したら mobile viewport で overlap して E2E click が intercept される (fix/quick-ux PR #143 hotfix)
+
+#### 症状
+
+PR #143 (PR-A) の E2E が chromium-mobile project で 2 件 fail:
+
+1. `05-teardown Step 11 (admin プロジェクト削除)`: `TimeoutError: locator.click 10s exceeded`
+   - Playwright のエラーログに `<span>状態変更</span> from <button data-slot="select-trigger">
+     subtree intercepts pointer events`
+2. `dashboard-screens visual: プロジェクト詳細 概要タブ`: `toHaveScreenshot mismatch`
+
+#### 根本原因
+
+PR #143 で `canChangeStatus = isActualPmTl || isSystemAdmin` に緩和し、admin にも
+状態変更 Select (`w-44 = 176px`) が表示されるようになった。ヘッダ右側の flex
+コンテナ:
+
+```tsx
+<div className="flex items-center gap-2">    // ← gap-2 / flex-wrap なし
+  {canChangeStatus && <Select className="w-44">状態変更</Select>}  // 176px
+  {(isActualPmTl || isSystemAdmin) && <Button>編集</Button>}        // ~64px
+  {canDeleteProject && <Button>削除</Button>}                       // ~64px
+</div>
+```
+
+幅合計 ≒ 304px + gap でほぼ 320px。chromium-mobile (390px) viewport では
+ヘッダ左側のプロジェクト名/顧客名と並ぶと幅不足で、**flex-wrap がないため要素が
+横方向に押し出されて重なり**、Playwright の click が「subtree intercepts pointer
+events」で失敗する。
+
+PC (1440px) では幅が十分なため発症せず、admin が状態変更を持たない以前の状態
+では Select が表示されないため発症しなかった (PR #143 由来の新パターン)。
+
+#### 修正
+
+```tsx
+// 旧
+<div className="flex items-center gap-2">
+  ...
+  <SelectTrigger className="w-44">
+
+// 新
+<div className="flex flex-wrap items-center gap-2 justify-end">
+  ...
+  <SelectTrigger className="w-36 md:w-44">  // mobile 144px / PC 176px
+```
+
+- `flex-wrap`: 幅不足時に折り返し → overlap 解消
+- `justify-end`: wrap 後も右寄せキープ
+- Select 幅 mobile 縮小 (w-44 → w-36): 折り返しの発生頻度を軽減
+
+合わせて `[gen-visual]` で `*-chromium-mobile-linux.png` baseline を新レイアウトで
+再生成。
+
+#### 汎化ルール
+
+1. **権限・条件分岐で UI 要素の表示有無を変える PR では、表示が増える側のケースで
+   mobile レイアウトを必ず確認する**。要素 1 つの追加でも mobile では総幅オーバー
+   で overlap する (visible だが click できない) ケースが発生する。
+2. **flex コンテナで複数の操作要素を並べる場合は `flex-wrap` を入れておく**。
+   将来の要素追加に対する保険として、見た目の影響なく overlap を予防できる。
+3. **`w-NN` (絶対幅) を使う Select / ボタンは `w-NN md:w-MM` で mobile / PC を
+   別指定**。`w-44` のような 176px 級の幅は mobile 390px の半分弱を占有するため
+   要素が並ばない。
+4. **権限緩和系 PR が E2E (chromium-mobile) で fail した場合、最初に疑うのは
+   レイアウト overlap**。Playwright のログに「subtree intercepts pointer events」が
+   出ていれば即座にこのパターン。viewport 幅に対する要素合計幅を計算する。
+
+#### 関連
+
+- §4.37 (E2E_LESSONS_LEARNED): chromium-mobile project の testIgnore とは別軸の
+  「mobile viewport 固有の click 失敗」パターン
+- §5.9 (レスポンシブ実装パターン): hidden md:block / md:hidden の DOM 二重化と
+  異なり、本件は同一 DOM 内のレイアウト overlap
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1950,3 +2025,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-25 | §5.11.1 再発事例 2 例目 (PR #138 hotfix の hotfix)。前回の教訓 (commit 前 tsc) を直後 commit で守らず、`recordAuditLog` の引数名を `before/after` (実際は `beforeValue/afterValue`) と取り違えた別種の型エラーで CI / E2E が再 fail。**「修正」commit でも tsc --noEmit を必ず回す + API シグネチャは記憶ベースでなく Read で確認 + `pnpm lint` clean のみを根拠にした「検証完了」報告を禁止** という追加運用ルールを追記 |
 | 2026-04-25 | §5.12 新設 (PR #138 後 hotfix)。Zod の `.optional()` は `null` を拒否するため、DB nullable 列に対する schema は **`.nullable().optional()` 必須**。risk-edit-dialog の visibility 編集時に「Invalid input: expected string, received null」400 が発生していた根本原因。risk/knowledge/retro/project/estimate validator を全て横展開修正、回帰防止の単体テスト追加 (assigneeId=null / deadline=null 受理、空文字は依然拒否)。service 層の `new Date(null)` epoch 化バグも併せて修正 |
 | 2026-04-25 | §5.13 新設 (fix/suggestion-tag-parity)。「参考」タブの過去 Issue / 過去 Retrospective が **tagScore=0 固定** でナレッジと同等の tag-aware マッチングが効いていなかった問題。両者は DB に独自タグ列を持たないが、**親 Project のタグを proxy** として `jaccard` 計算に使う改修で Knowledge と挙動統一。schema 変更・migration 不要。回帰防止 unit test 2 件追加 |
+| 2026-04-26 | §5.15 新設 + KDD 仕組み強化 (fix/quick-ux PR #143 E2E hotfix)。**症状**: admin 状態変更プルダウン表示緩和で chromium-mobile が flex overlap → click intercept で fail。**修正**: flex-wrap + Select 幅 mobile 縮小。**仕組み穴塞ぎ**: 当初 commit message にしか書かず docs 追記漏れ → ユーザ指摘で発覚。CLAUDE.md KDD 原則に「commit message ≠ 常設ナレッジ」「対象範囲はテスト失敗だけでない」を追加、Stop hook prompt に **項目 6「ナレッジ追記チェック (KDD Step 4/6)」** を新設し漏れを構造的に防止 |
