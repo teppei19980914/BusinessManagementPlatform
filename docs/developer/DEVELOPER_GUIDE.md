@@ -561,6 +561,315 @@ id の naming convention は `{screen}-{action}-{field}` (例: `project-create-n
 `react-hook-form` + shadcn FormField 導入時は自動関連付けされるため、この規約は
 手動レイヤでの代替策。
 
+### 5.11 編集ダイアログの save 後 close 順序とリスト列の表示漏れ (feat/account-lock-and-ui-consistency, item 6/7)
+
+#### 症状
+
+ユーザ報告:
+- (1) 編集ダイアログで保存しても自動で閉じず、手動で閉じる必要がある (体感)
+- (2) 編集画面で公開範囲 (visibility) を変更し更新したが画面上データが更新されていない
+
+#### 原因
+
+**(1) close 順序問題**:
+旧実装の編集ダイアログは PATCH 成功後 `await onSaved()` (= 親の reload) を完了させて
+から `onOpenChange(false)` で閉じていた。reload は API 再 fetch + state 更新 + 再描画
+を含むため数百 ms のラグが発生し、ユーザには「ダイアログが閉じない」ように見える。
+
+create ダイアログは `setIsCreateOpen(false)` を先に呼んでから reload を裏で走らせる
+ため即座に閉じる。**両者の挙動が非対称** だった。
+
+**(2) リスト列の表示漏れ**:
+PATCH は成功し DB の visibility は更新されるが、project-level の **risks 一覧** /
+**retrospectives 一覧** に visibility 列/バッジが存在しなかったため、ユーザは
+「変更が反映されていない」と認識していた。
+
+実際に表示済だったのは:
+- ✓ memos-client.tsx (公開範囲列あり)
+- ✓ project-knowledge-client.tsx (visibility badge あり)
+
+漏れていたのは:
+- ✗ risks-client.tsx (列なし)
+- ✗ retrospectives-client.tsx (state 表示はあるが visibility 表示なし、概念混同を誘発)
+
+#### 修正
+
+**(1)**: 4 編集ダイアログ (`risk-edit-dialog.tsx` / `knowledge-edit-dialog.tsx` /
+`retrospective-edit-dialog.tsx` / `user-edit-dialog.tsx`) を以下に統一:
+
+```ts
+// 旧 (遅い)
+await onSaved();
+onOpenChange(false);
+
+// 新 (即時 close + 裏で reload)
+onOpenChange(false);
+void onSaved();
+```
+
+`void` 演算子で fire-and-forget を明示。reload 失敗時の通知は親側で必要なら追加する
+(現状は router.refresh / lazy-fetch の error state で UI に出る)。
+
+**(2)**: risks-client.tsx に `公開範囲` 列を追加 (Badge)、retrospectives-client.tsx の
+state badge 横に「公開: ○○」バッジを追加。
+
+#### 汎化ルール
+
+1. **編集ダイアログの save 後は「close 先 / reload 後」が原則**。await reload してから
+   close は UX が破綻する。新規 dialog 実装時は本パターンを踏襲。
+2. **編集可能なフィールドはリスト/カードに必ず表示する**。編集だけできて表示できない
+   フィールドは「変更が反映されない」誤認を生む。フィールド追加時 (visibility のように
+   後から増えた属性) は **編集 UI と表示 UI を必ずペアで実装** する。
+3. **横展開の確認スクリプト**: `editXxxDialog` で扱うフィールド一覧と各 list/card 表示
+   フィールド一覧の差分を grep で取り、漏れを検出する。今回の漏れは**新規エンティティ
+   (visibility) 追加時に list に同期していなかった** ことが原因。
+
+#### 関連
+
+- 「全○○」横断ビューでは draft を除外 (item 5、PR 同梱) — 一覧表示の整合性を保つ
+- 並走 item 1 (アカウントロック) とは独立した修正だが、同 PR で UI consistency を
+  まとめて改善する
+
+### 5.11.1 User モデルだけは `updatedBy` カラムを持たない設計 (Vercel build 失敗で再発見, PR #138 hotfix)
+
+#### 症状
+
+PR #138 で `lockInactiveUsers` を実装中、`prisma.user.update({ data: { isActive: false, updatedBy: systemTriggerId } })` と他エンティティ流儀で書いたところ Vercel build が以下で失敗:
+
+```
+./src/services/user.service.ts:407:34
+Type error: Object literal may only specify known properties,
+and 'updatedBy' does not exist in type '(...UserUpdateInput...)'.
+```
+
+`pnpm lint` は型チェックを行わないため検知できず、Vercel の `next build` (TypeScript チェック含む) で初めて落ちる。
+
+#### 原因
+
+`prisma/schema.prisma` の **User モデルは意図的に `updatedBy` / `createdBy` を持たない**。
+他の業務エンティティ (Project / Task / Risk / Knowledge / Retrospective / Estimate / Memo 等) は全て持つが、User は self-referential になるため除外されている (User 自身が created/updated する側であり「ユーザを更新したユーザ」を持つと FK 循環参照リスク + 削除時のカスケード設計が複雑化)。
+
+`user.service.ts` 内の他 `prisma.user.update` 呼び出し (4 箇所) も全て `updatedBy` を渡していない (`data: { isActive }` 等のみ)。**1 箇所だけ流儀外で混入** していた。
+
+#### 修正
+
+`data: { isActive: false, updatedBy: systemTriggerId }` から `updatedBy` を削除。
+ロック実行者の追跡は **audit_log の userId フィールド** で行う (元から記録済)。
+
+#### 汎化ルール
+
+1. **User モデルへの update は updatedBy を渡さない**。schema 上に列がない (Prisma 型に存在しない) ため TypeScript が拒否する。
+2. **Vercel build = ローカル `pnpm lint` の上位検証**。lint clean でも `next build` の TypeScript チェックで落ちることがある。**コミット前に `pnpm tsc --noEmit` を回す** か、PR 作成後 Vercel ビルドの結果を必ず確認する。
+3. **prisma model の差異に依存する操作を書く時は schema を先に確認**。「他のサービスでこう書いてるから同じで OK」の流儀借用は schema 不整合の温床。
+
+#### 関連
+
+- §10.6 `.next` キャッシュ問題: ローカル build で `cleanup-inactive` の参照残存エラーが出る。Vercel はクリーンビルドのため影響なし。ローカルで検証する場合は `rm -rf .next` してから `pnpm build`。
+
+#### 再発事例 2 例目 (PR #138 hotfix のさらに hotfix, 同 PR で 2 連続)
+
+§5.11.1 で「commit 前に `pnpm tsc --noEmit` を回すルール」を追記したにもかかわらず、
+直後の hotfix commit (`updatedBy` 削除) でその検証を省略 → `recordAuditLog` の引数名
+を `before` / `after` (実際は `beforeValue` / `afterValue`) と取り違えた **別の型エラー** で
+GitHub Actions の `Lint / Test / Build` job が再度 fail。
+
+**追加教訓**:
+
+1. **「修正」commit でも tsc --noEmit を必ず回す**。型エラーは 1 commit の中に
+   複数潜在することがある (今回は同じ関数内に 2 つ別種の型違反が共存)。
+2. **API シグネチャを使う前に必ず型定義を確認**。`recordAuditLog` の引数を記憶ベースで
+   書くと historical な引数名 (before/after) と現状のシグネチャ (beforeValue/afterValue)
+   がズレる。`Read` でサービスの型定義を見るのが安い。
+3. **`pnpm lint` のみでの「OK」報告は不正確**。本ガイドのテンプレ報告で `pnpm lint`
+   clean のみを根拠に「検証完了」と書くのを禁止し、必ず `pnpm tsc --noEmit` の結果を
+   併記する運用に改める。
+
+### 5.12 DB nullable 列の Zod schema は `.nullable().optional()` 必須 (PR #138 後 hotfix)
+
+#### 症状
+
+リスクの編集ダイアログから公開範囲を draft → public に変更しても保存されず、
+ブラウザ Console + UI に以下のエラー:
+
+```
+PATCH /api/projects/:pid/risks/:rid 400 (Bad Request)
+Invalid input: expected string, received null
+```
+
+UI 上もエラー文言が表示され、ユーザは「公開範囲が編集できない」と認識した。
+ブラウザ Console への 400 露出は **エラー情報最小化方針** にも違反 (§5.10)。
+
+#### 根本原因
+
+Zod の `.optional()` は **`undefined` のみ受理し `null` は拒否** する。
+しかし `risk-edit-dialog.tsx` は値が空のとき以下のように送信:
+
+```ts
+body: JSON.stringify({
+  ...
+  assigneeId: form.assigneeId || null,   // 空欄なら null
+  deadline: form.deadline || null,        // 空欄なら null
+  ...
+})
+```
+
+DB 側 `RiskIssue.assigneeId String?` / `deadline DateTime?` は **nullable** であり、
+ユーザが担当者や期日を「クリアして空に戻す」のは正当な操作。null を Zod が拒否
+した結果、200 で完了するはずの編集が **400 で失敗**していた。
+
+具体的なトリガ条件:
+- 元のレコードで該当列が null (例: 担当者未設定の risk)
+- 編集ダイアログを開く → form が `assigneeId: ''` で初期化
+- 任意のフィールド (visibility 等) を編集 → submit
+- body に `assigneeId: null` が含まれて送信 → 400
+
+#### 修正
+
+##### (1) Zod schema: nullable 列に `.nullable().optional()` を必須化
+
+```ts
+// NG (旧)
+assigneeId: z.string().uuid().optional(),
+deadline: z.string().regex(...).optional(),
+
+// OK (新)
+assigneeId: z.string().uuid().nullable().optional(),
+deadline: z.string().regex(...).nullable().optional(),
+```
+
+`.nullable().optional()` で `string | null | undefined` 全てを受理。`.nullish()`
+は同等の shorthand (zod v4 で利用可) だが、本プロジェクトは可読性優先で
+`.nullable().optional()` を採用。
+
+##### (2) Service 層: `new Date(null)` epoch 化を防ぐ
+
+```ts
+// NG: input.deadline === null のとき new Date(null) → 1970-01-01
+if (input.deadline !== undefined) data.deadline = new Date(input.deadline);
+
+// OK: null は明示パススルー
+if (input.deadline !== undefined)
+  data.deadline = input.deadline === null ? null : new Date(input.deadline);
+```
+
+##### (3) Service signature: 入力型に `| null` を追加
+
+`Partial<CreateXxxInput> & { result?: string }` のように個別拡張している場合、
+`| null` を明示しないと TypeScript が拒否 (CreateXxxInput 側に nullable を反映済の前提)。
+
+#### 横展開済 (本 PR で全 validator 対応済)
+
+| validator | 修正対象フィールド |
+|---|---|
+| `risk.ts` | cause / likelihood / responsePolicy / responseDetail / **assigneeId** / **deadline** / riskNature / result / lessonLearned |
+| `knowledge.ts` | conclusion / recommendation / reusability / devMethod |
+| `retrospective.ts` | estimateGapFactors / scheduleGapFactors / qualityIssues / riskResponseEvaluation / knowledgeToShare |
+| `project.ts` | outOfScope / notes |
+| `estimate.ts` | preconditions / notes |
+| `customer.ts` | (元から対応済) department / contactPerson / contactEmail / notes |
+| `task.ts` | (元から `updateTaskSchema` / `bulkUpdateTaskSchema` は対応済) |
+
+#### 汎化ルール
+
+1. **Prisma schema の `String?` / `DateTime?` 等 (nullable) に対応する Zod field は
+   必ず `.nullable().optional()`** とする。`.optional()` 単独は禁止。
+2. **編集 dialog で `value || null` パターンが書ける = nullable な値である** ことの
+   宣言。validator 側で受け入れる準備が必須。
+3. **service 層で `new Date()` / `parseInt()` 等のパース関数に値を渡すときは
+   null を明示的に分岐**。`new Date(null)` は 1970 epoch、`parseInt(null)` は NaN
+   といった silent corruption を防ぐ。
+4. **schema 追加・変更時は dialog body の payload と突き合わせ**。
+   - 検出方法 grep:
+     ```bash
+     grep -rnE "form\.\w+ \|\| null|: \w+ \|\| null" src/components/dialogs src/app
+     ```
+   - 各ヒットに対して validator の該当 field が `.nullable()` を含むか確認
+
+#### 関連
+
+- §5.10 (フォーム送信前の事前バリデーション) — 別軸の同種問題 (空文字 → 400)
+- §5.11 (編集ダイアログの save→close 順序 + リスト列の表示漏れ) — UI 一貫性
+- §5.11.1 (User updatedBy / 型エラー検証ルール) — Vercel build 検知の重要性
+
+### 5.13 過去 Issue / Retrospective の提案ロジックを Knowledge と同等の tag-aware に統一 (fix/suggestion-tag-parity)
+
+#### 症状
+
+「参考」タブ (新規作成後の提案モーダル + プロジェクト詳細「参考」タブ) で、過去
+ナレッジには tag-based マッチングが効くが、**過去 Issue / 過去 Retrospective には
+tag マッチングが効かず text 類似度のみ**で判定されていた。
+
+`suggestion.service.ts` 内のコメントには「Issue はタグ列を持たないため text スコア
+のみで判定する」と意図的な設計として書かれていたが、結果として:
+
+- Issue / Retro の score は **常に textScore × TEXT_WEIGHT** (TAG_WEIGHT 部分は 0)
+- 同じテキスト類似度でも Knowledge より低スコアになり、SCORE_THRESHOLD で
+  filter されやすい不利な扱い
+- ユーザの期待 (「ナレッジ候補と同様に提案される」) を満たしていない
+
+#### 根本原因
+
+DB schema 上 `RiskIssue` と `Retrospective` には独自タグ列が存在しない (Knowledge
+だけが `techTags` / `processTags` / `businessDomainTags` を持つ)。一方 **両者とも
+`projectId` を持ち、親 Project にはタグ列がある**。本来は親 Project のタグを proxy
+として使うのが意味的に妥当 (「同ドメインのプロジェクトで起きた Issue/Retro は別
+ドメインのものより関連性が高い」) だが、その実装が抜けていた。
+
+#### 修正
+
+`suggestion.service.ts` で以下を変更:
+
+```ts
+// 旧: タグ無視 (常に 0)
+const tagScore = 0;
+
+// 新: 親 Project のタグを proxy として使う (Knowledge と同等の tag-aware)
+const issueProjectTags = unifyProjectTags({
+  businessDomainTags: (i.project?.businessDomainTags as string[]) ?? [],
+  techStackTags: (i.project?.techStackTags as string[]) ?? [],
+  processTags: (i.project?.processTags as string[]) ?? [],
+});
+const tagScore = jaccard(ctx.tags, issueProjectTags);
+```
+
+Prisma クエリの `select` 句に `project.businessDomainTags` 等を追加。schema 変更
+不要、migration 不要。Retrospective も同等の改修。
+
+#### 統一後の動作
+
+| カテゴリ | tagScore 計算 | textScore 計算 |
+|---|---|---|
+| Knowledge | Knowledge 自身の techTags+processTags+businessDomainTags | title + content |
+| Issue | **親 Project の businessDomainTags+techStackTags+processTags** | title + content |
+| Retrospective | **親 Project の businessDomainTags+techStackTags+processTags** | problems + improvements (限定) |
+
+Retrospective の text 限定は「避けたい失敗 / 次に活かす学び」の核心部分にフォーカス
+する意図的な設計 (本改修対象外、現状維持)。
+
+#### 汎化ルール
+
+1. **「○○ A は B と同等」を確認する場合は、スコアリング全要素を表化** して比較する。
+   片方の要素 (tagScore など) がゼロ固定だと「同等」を主張できない。
+2. **DB に直接列がなくても親エンティティから proxy 取得**できるなら、まず schema 変更
+   なしの経路を検討する。本件は Project が tag を持っていたため migration 回避。
+3. **新カテゴリを suggestion に追加するときは scoring の対称性をチェック**。「タグなし
+   だから text のみ」と短絡せず、proxy 候補の有無を必ず検討する。
+
+#### 回帰防止テスト
+
+`src/services/suggestion.service.test.ts` に 2 ケース追加:
+
+- 「Issue / Retrospective は親 Project のタグで tagScore を計算する」
+  - Issue: 親 Project tag 完全一致 → tagScore=1.0、final score > textScore
+  - Retro: 親 Project tag 部分一致 (1/3) → tagScore≈0.333
+- 「親 Project のタグが空なら Issue / Retrospective の tagScore は 0 (regression: 旧挙動と互換)」
+
+#### 関連
+
+- §5.12 (DB nullable 列の Zod schema) — 別軸の suggestion 関連修正
+- DESIGN.md §23 (核心機能 / 提案型サービス)
+- `src/lib/similarity.ts` の `jaccard` / `unifyProjectTags` (本改修で再利用)
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1305,6 +1614,93 @@ git push
   `git merge origin/main` で追従させる
 - 長期 stacked PR では「末尾追記 3 行」を見越した rebase コミュニケーションを取る
 
+#### Stacked PR で base に hotfix を当てた場合の sub-PR への伝播 (PR #128 → #129 で得た知見)
+
+**背景**: 要望項目 7 のレスポンシブ対応は stacked PR (`#128` base → `#128a` `/projects`
+→ `#128a-2` WBS → `#128b` 横断一覧 → `#128c` admin → `#128d` fine-tune) で進めている。
+
+**症状**: `#128` base に hotfix を 4 回 commit (WebKit エンジン override / main merge /
+`testIgnore` / mobile baseline 自動生成) した後、`#128a` (= PR #129) の CI を確認すると
+**`#128` 初回と同じ WebKit 起動エラー 5 件** で fail していた。
+
+**原因**: `#128a` branch は `#128` の **初回コミット (0490185)** から分岐しており、
+以降に `#128` へ足した 4 件の hotfix を継承していない。stacked PR は後続が
+自動追従しないため、base 更新分は各 sub-PR で明示的に取り込む必要がある。
+
+**解消**: `#128a` で `git merge origin/feat/pr128-responsive-audit` 実行。
+auto-merge が全ファイル成立 (PR #128a の `/projects` モバイルカード実装は、main 由来
+SearchableSelect 追加と同一ファイル `projects-client.tsx` を触るが別範囲のため衝突なし)。
+
+**予防・運用ルール**:
+1. stacked PR の **base (上流) に hotfix を commit したら即座に下流全部に merge を流す**。
+   上流の CI が green になった時点で sub-PR の CI も再走させるために必要。
+2. sub-PR の CI が fail していて、かつ base (上流) の同 workflow も同時期に fail して
+   いた場合、**まず上流の fix 伝播漏れを疑う**。下流固有のバグ調査より先に rebase/merge
+   を試す方が安い。
+3. stacked PR の commit は意図的に 1 本化しておくと、base merge 時の衝突対処が容易
+   (#128a の 4870b74 のように 1 コミット/PR に寄せる)。
+4. Mobile baseline PNG のような **workflow が自動生成してコミットしたファイル** も
+   base に溜まっていく。sub-PR rebase 時に大量の新規 PNG ファイルが一括で降ってくるが
+   正常動作 (衝突にならない、単に `new file` として追加される)。
+
+**再発事例 3 例目 (PR #130 = PR #128a-2 hotfix)**: PR #129 への hotfix 取り込み後、
+PR #130 (`feat/pr128a-2-wbs-mobile`) も同じ E2E Visual Baseline の WebKit エラーで
+fail。PR #130 は PR #129 の **初回コミット 4870b74** から分岐しており、PR #129 が
+後から追加した merge commits (`f096b8d` + `fadcdfe`) を引き継いでいなかった。
+同じく `git merge origin/feat/pr128a-p1-tables-card` の 1 コマンドで auto-merge 成立
+(conflict 0 件、`projects-client.tsx` の WBS 改修 / mobile card / SearchableSelect
+3 系統が同一ファイルを触るが別範囲なので衝突せず)。stacked PR 長さが n 段なら
+hotfix 伝播もそのぶん n-1 回必要 = 本例では **#128 base → #128a(#129) → #128a-2(#130)**
+の 2 段伝播となった。
+
+**再発事例 4 例目 (PR #131 = PR #128b hotfix)**: 3 段目。PR #131
+(`feat/pr128b-p2-cross-list`, P2 横断一覧モバイルカード化) は PR #130 の初回
+コミットから分岐しており、PR #130 が後で取り込んだ hotfix を継承していなかった。
+`git merge origin/feat/pr128a-2-wbs-mobile` で auto-merge 成立。
+
+**再発事例 5 例目 + 6 例目 (PR #132 / #133 hotfix)**: 4 段目 / 5 段目。
+同パターンが **5 PR 連続** (#129 → #130 → #131 → #132 → #133) で再発し、
+それぞれ `git merge` 1 コマンドで解消。
+
+**運用ルールとして確定 (5 例以上の連続再発が根拠)**:
+1. stacked chain を運用する PR では **base ブランチへ hotfix が push されたら
+   即座に全 sub-PR へ順送り merge を流す** (下流ほど新しい変更を含むため、
+   上流から下流の向きが正しい)。
+2. 手動運用は 4 段を超えると伝播忘れが多発するため、**自動化スクリプト**
+   (各 sub-PR branch をチェックアウト → `git merge origin/<上流>` → push) を
+   整備すべき。現状は手動 + チェックリスト運用。
+3. sub-PR を作る際は **初回コミット直前に base の最新 HEAD に rebase しておく**
+   ことで以降の伝播回数を最小化できる (本件の PR #128 スタックは全 sub-PR が
+   一斉に #128 初期状態 0490185 から分岐していたため伝播コストが連鎖した)。
+4. **並走 docs PR の場合、後発 PR は先に main にマージされる予定の PR 内容を
+   事前に把握し sub-section header の重複追加を避ける** (本件の PR #136 で
+   遭遇 = §10.5 末尾追記罠 4 例目)。具体的には:
+   - 後発 PR を作る前に **gh pr list --state open** で並走中の docs 系 PR を確認
+   - 同一セクションを触る場合は **後発 PR の本文を「差分のみ」に絞る**
+     (header / 既存 sub-section の重複を避け、新規追加分だけを含める)
+   - 結果として後発 PR がコンフリクトしても **conflict 解消はゼロ削除のみ**
+     (新規追加行の保持) で済むようになる
+5. **stacked sub-PR は docs を抱えない、知見集約は別途専用 docs PR に切り出す**
+   (本件の PR #137 で遭遇 = §10.5 末尾追記罠 5 例目)。stacked PR の sub-PR
+   (`feat/pr128a-p1-tables-card` 等) が独自に §10.5 再発事例を docs に追記
+   していると、main 側で集約 PR (PR #136 形式) が先にマージされた瞬間、
+   sub-PR の docs 追記分は確実に重複コンフリクトを起こす。
+   - sub-PR の commit message には知見を残しても良いが、**docs ファイルへの
+     追記は集約 PR に一本化**する
+   - 集約 PR を後発で出す場合は本ルール 4 項目の「差分のみ追記」と組み合わせ、
+     sub-PR との衝突点を最小化する
+   - PR #137 で実証された通り、5 PR 連続再発した stacked chain では sub-PR
+     5 本ぶん全てに同じ docs 追記が紛れ込んでいる確率が高く、main 取り込み時
+     に **n-1 回**の同種 conflict が連鎖する
+
+**補足 (2026-04-24, docs/stacked-pr-propagation-lessons で追加)**:
+本セクションは PR #128 stack hotfix 対応で得た知見だが、sub-PR (#129〜#133) が
+**squash-merge** されたため、hotfix 伝播で追加した §10.5 の追記内容が main に
+取り込まれなかった。一般論として **「sub-PR が squash-merge 運用の場合、sub-PR
+のマージ後に追加した docs コミットは別 PR で main へ取り込む必要がある」** と
+いうメタ教訓もある (merge commit 運用なら自動継承されるが、squash-merge では
+最初の squash 時点のスナップショットしか残らないため)。
+
 ### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
 
 Next.js は開発時 `.next/dev/types/validator.ts` にルートハンドラの型情報を
@@ -1540,6 +1936,17 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-24 | §5.9 追加 (PR #128)。レスポンシブ実装パターン (ResponsiveTable 基盤 + 設計原則 + 段階 PR 計画)。詳細監査は docs/developer/RESPONSIVE_AUDIT.md を参照 |
 | 2026-04-24 | §10.5 再発事例追記 (PR #128 hotfix)。DEVELOPER_GUIDE の更新履歴テーブルで origin/main に PR #126/#127 が追加され、PR #128 の追記と末尾コンフリクト。PR 番号順 (#126 → #127 → #128) で結合する形で解消 (§10.5 テンプレ通りのリゾルブで 2 例目) |
 | 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
+| 2026-04-24 | §10.5 サブセクション追加 (PR #129 hotfix = PR #128a hotfix)。Stacked PR で base に hotfix を当てた場合の sub-PR への伝播ルール (4 項目)。sub-PR は上流自動追従しないため base が green 化した時点で即 merge を流す必要があり、下流 CI fail は viewport 問題より base 伝播漏れを先に疑うべし |
 | 2026-04-24 | §5.10 新設 (fix/project-create-customer-validation)。フォーム送信前の事前バリデーション (エラー情報最小化方針)。HTML5 `required` で拾えない `SearchableSelect` 必須項目は `handleXxx` 先頭で事前 validation + `setError` + `return` し、無効値 POST が 400 を返してブラウザ Console にエラー情報を露出させる経路を断つ |
 | 2026-04-24 | §5.10.1 / §5.10.2 追加 (fix/project-create-customer-validation 追補)。§5.10.1: Base UI Combobox で `{value, label}` を items に渡すと onValueChange はオブジェクトで emit される (string 限定の type guard で選択イベントが握り潰されていた)。§5.10.2: タグ入力の全角読点「、」対応 + 共通関数 `@/lib/parse-tags.ts` 集約 (projects / knowledge の重複を解消) |
 | 2026-04-24 | §5.10.1.5 追加 (fix/project-create-customer-validation E2E hotfix)。`<Label>` + `<Input>` に htmlFor/id ペアを必ず付ける規約。欠落すると (1) screen reader 読み上げ不可 (2) Playwright `getByLabel` が timeout の 2 つが同時に壊れる (E2E §4.3 の再発事例)。projects-client の全入力フィールドに id を付与 |
+| 2026-04-24 | §10.5 末尾追記コンフリクト 3 例目 (PR #135 conflict resolve)。HEAD の §10.5 サブセクション追加行と origin/main の PR #134 系 3 行が更新履歴末尾で衝突 → 時系列 (PR #129 hotfix の docs commit 22:00 → PR #134 の docs commit 22:12-22:40) に従って HEAD 行を先に残し、main 由来 3 行をその直後に並べて解消。§10.5 既知パターン「末尾追記が多発する罠」3 例目として再記録 |
+| 2026-04-25 | §10.5 再発事例 3〜6 例目 + 運用ルール 3 項 + メタ教訓 (squash-merge 取りこぼし) を追加 (docs/stacked-pr-propagation-lessons)。sub-PR (#129〜#133) が squash-merge されたため hotfix 伝播で追記した §10.5 内容が main に届かなかった分を本 PR で集約。§10.5 sub-section header 自体は PR #135 経由で先に main へマージ済のため重複を回避し本 PR は **再発事例 3〜6 + 運用ルール + メタ教訓のみ** を追加 |
+| 2026-04-25 | §10.5 末尾追記コンフリクト **4 例目** (PR #136 conflict resolve)。HEAD (PR #136 の再発事例 3〜6 + 運用ルール + メタ教訓本文) と origin/main (PR #135 マージ後の §10.5 サブセクション header + PR #135 conflict resolve 行) が末尾衝突。**§10.5 既知パターン 4 例目**。本 conflict 自体が「短期間に末尾追記が連鎖する」パターンの再現で、同パターン 1 PR で 2 回 (PR #135 と PR #136) 発生したため**運用ルール 4 項目「並走 docs PR の場合、後発 PR は先に main にマージされる予定の PR 内容を事前に把握し sub-section header の重複追加を避ける」**を追記 |
+| 2026-04-25 | §10.5 末尾追記コンフリクト **5 例目** (PR #137 conflict resolve)。`feat/pr128a-p1-tables-card` (PR #128a-2 WBS の親階層) は §10.5 再発事例 3 例目を独自追加していたが、main 側で PR #136 が同事例を網羅的に取り込み済のため重複行が発生。HEAD 1 行 (PR #130 hotfix の単独追記) を drop し main の 6 行をそのまま採用 + 本 conflict resolve 行 (5 例目) を末尾追加。**5 例目で「stacked PR の sub-PR 自体が docs を抱えている場合、PR #136 のような後追い集約 PR がマージされた瞬間に当該 sub-PR の docs が必ず重複コンフリクトを起こす」教訓が追加判明** — sub-PR は docs を持たず、知見集約は別途専用 PR (PR #136 形式) に切り出すのが望ましいとの運用方針を §10.5 運用ルール 5 項目として下記本文に追記 |
+| 2026-04-25 | E2E_LESSONS_LEARNED §4.37 新設 (PR #137 E2E hotfix)。PC テーブル前提の `06-wbs-tasks.spec.ts` が PR #128a-2 のモバイルカードビュー導入後、chromium-mobile project で `locator('tr')` の hidden 判定により fail。`<tr>` は DOM に存在するが親 `<div className="hidden md:block">` の display:none で hidden 状態になる。`testIgnore` で 06 spec を chromium-mobile から除外 (mobile UX は視覚回帰で別途検証する住み分け)。viewport 切替で 2 系統 DOM を出し分ける画面は (A) testIgnore (B) viewport-agnostic locator (C) role="listitem" + helper の 3 択を §4.37 で整理 |
+| 2026-04-25 | アカウント自動削除→ロック切替 + UI 一貫性改善 (feat/account-lock-and-ui-consistency)。**item 1**: 30 日無アクティブ自動削除 (`cleanupInactiveUsers`) を **isActive=false ロック** (`lockInactiveUsers`) に変更し、ナレッジ参照のためアカウント情報を残しつつログインのみ封じる。endpoint / 設定名 rename。**item 5**: 「全○○」横断リストから draft を完全除外 (admin もシステム整合性のため public 限定、draft 管理はプロジェクト個別画面に集約)。**item 6 (§5.11)**: 編集ダイアログの save 後 `await onSaved() → close` を `close → void onSaved()` に統一し create と挙動一致化、reload 待ちで生じる「閉じない」体感を解消。**item 7 (§5.11)**: project-level risks/retrospectives 一覧に visibility 表示を追加 (knowledge/memo は既存)、編集後の即時反映を可視化 |
+| 2026-04-25 | §5.11.1 新設 (PR #138 Vercel build hotfix)。`prisma.user.update` に `updatedBy: systemTriggerId` を渡したら Vercel `next build` の型チェックで fail。User モデルは意図的に updatedBy 列を持たない設計 (self-referential 回避) で、他エンティティ流儀の借用が schema 不整合を起こした。`pnpm lint` は型チェックなしのためローカルでは気付けず、`pnpm tsc --noEmit` を commit 前に回すルールを追記 |
+| 2026-04-25 | §5.11.1 再発事例 2 例目 (PR #138 hotfix の hotfix)。前回の教訓 (commit 前 tsc) を直後 commit で守らず、`recordAuditLog` の引数名を `before/after` (実際は `beforeValue/afterValue`) と取り違えた別種の型エラーで CI / E2E が再 fail。**「修正」commit でも tsc --noEmit を必ず回す + API シグネチャは記憶ベースでなく Read で確認 + `pnpm lint` clean のみを根拠にした「検証完了」報告を禁止** という追加運用ルールを追記 |
+| 2026-04-25 | §5.12 新設 (PR #138 後 hotfix)。Zod の `.optional()` は `null` を拒否するため、DB nullable 列に対する schema は **`.nullable().optional()` 必須**。risk-edit-dialog の visibility 編集時に「Invalid input: expected string, received null」400 が発生していた根本原因。risk/knowledge/retro/project/estimate validator を全て横展開修正、回帰防止の単体テスト追加 (assigneeId=null / deadline=null 受理、空文字は依然拒否)。service 層の `new Date(null)` epoch 化バグも併せて修正 |
+| 2026-04-25 | §5.13 新設 (fix/suggestion-tag-parity)。「参考」タブの過去 Issue / 過去 Retrospective が **tagScore=0 固定** でナレッジと同等の tag-aware マッチングが効いていなかった問題。両者は DB に独自タグ列を持たないが、**親 Project のタグを proxy** として `jaccard` 計算に使う改修で Knowledge と挙動統一。schema 変更・migration 不要。回帰防止 unit test 2 件追加 |

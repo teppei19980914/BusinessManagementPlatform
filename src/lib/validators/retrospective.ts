@@ -7,12 +7,15 @@ export const createRetrospectiveSchema = z.object({
   actualSummary: z.string().min(1).max(MEDIUM_TEXT_MAX_LENGTH),
   goodPoints: z.string().min(1).max(LONG_TEXT_MAX_LENGTH),
   problems: z.string().min(1).max(LONG_TEXT_MAX_LENGTH),
-  estimateGapFactors: z.string().max(LONG_TEXT_MAX_LENGTH).optional(),
-  scheduleGapFactors: z.string().max(LONG_TEXT_MAX_LENGTH).optional(),
-  qualityIssues: z.string().max(LONG_TEXT_MAX_LENGTH).optional(),
-  riskResponseEvaluation: z.string().max(LONG_TEXT_MAX_LENGTH).optional(),
+  // feat/account-lock-and-ui-consistency 後 hotfix:
+  // DB schema (Retrospective) で nullable な列は `.nullable().optional()` とする
+  // (詳細は DEVELOPER_GUIDE §5.12)
+  estimateGapFactors: z.string().max(LONG_TEXT_MAX_LENGTH).nullable().optional(),
+  scheduleGapFactors: z.string().max(LONG_TEXT_MAX_LENGTH).nullable().optional(),
+  qualityIssues: z.string().max(LONG_TEXT_MAX_LENGTH).nullable().optional(),
+  riskResponseEvaluation: z.string().max(LONG_TEXT_MAX_LENGTH).nullable().optional(),
   improvements: z.string().min(1).max(LONG_TEXT_MAX_LENGTH),
-  knowledgeToShare: z.string().max(LONG_TEXT_MAX_LENGTH).optional(),
+  knowledgeToShare: z.string().max(LONG_TEXT_MAX_LENGTH).nullable().optional(),
   // PR #60: 公開範囲 (draft/public)
   visibility: z.enum(['draft', 'public']).optional(),
 });

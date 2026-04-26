@@ -129,26 +129,26 @@ describe('listAllRisksForViewer', () => {
     expect(r[0].canAccessProject).toBe(false); // deleted なのでリンク不可
   });
 
-  it('2026-04-24: 非 admin の visibility フィルタは public のみ (draft 除外)', async () => {
+  it('2026-04-25: visibility フィルタは admin/非 admin 共に public 固定 (全○○ には draft を含めない)', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
+    // 非 admin
     await listAllRisksForViewer('u-1', 'general');
+    const generalCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    expect(generalCall.where.visibility).toBe('public');
+    expect(generalCall.where).not.toHaveProperty('OR');
 
-    const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(call.where.visibility).toBe('public');
-    expect(call.where).not.toHaveProperty('OR');
-  });
-
-  it('2026-04-24: admin は visibility フィルタなし (draft 含め全件)', async () => {
+    vi.clearAllMocks();
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
+    // admin (旧仕様: visibility 制約なし → 要件変更で admin も public 固定。
+    // admin が draft を管理削除したい場合はプロジェクト個別画面から行う)
     await listAllRisksForViewer('admin-1', 'admin');
-
-    const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(call.where).not.toHaveProperty('visibility');
+    const adminCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    expect(adminCall.where.visibility).toBe('public');
   });
 });
 

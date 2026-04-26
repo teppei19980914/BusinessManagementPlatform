@@ -36,7 +36,8 @@ import {
   sendVerificationEmail,
   EmailSendError,
 } from './email-verification.service';
-import { BCRYPT_COST, INACTIVE_USER_DELETION_DAYS } from '@/config';
+import { BCRYPT_COST, INACTIVE_USER_LOCK_DAYS } from '@/config';
+import { recordAuditLog, sanitizeForAudit } from './audit.service';
 
 export type UserDTO = {
   id: string;
@@ -350,28 +351,36 @@ export async function deleteUser(
 }
 
 /**
- * 非アクティブユーザの自動削除 (PR #89) — 日次 cron で実行。
+ * 非アクティブユーザの自動ロック (PR #89 で導入、feat/account-lock で論理削除 → ロック化に方針変更)。
+ * 日次 cron で実行され、長期不在アカウントの **ログインだけを封じる** (アカウント自体は残す)。
  *
  * 条件:
- *   - isActive = true (有効化済) であり
- *   - deletedAt = null (まだ削除されていない) であり
+ *   - isActive = true (現在有効化済) であり
+ *   - deletedAt = null (まだ手動削除されていない) であり
  *   - lastLoginAt < 閾値日 (未ログインの場合 createdAt < 閾値日)
- *   - systemRole = 'admin' 以外 (admin は自動削除対象外)
+ *   - systemRole = 'admin' 以外 (admin は自動ロック対象外、業務継続性のため)
  *
- * 理由:
- *   - 長期不在のアカウントは攻撃面 (漏洩パスワード / 放置セッション) となる
- *   - admin は業務継続性のため自動削除しない (手動削除のみ)
- *   - ProjectMember も deleteUser 経由で物理削除されるため、孤児データは残らない
+ * 設計意図 (折衷):
+ *   - ナレッジ参照: 過去のナレッジ/課題/振り返り等の **作成者表示** はアカウントが
+ *     残っていないと「(削除済)」になる。長期不在ユーザでもアカウント情報は保持する
+ *   - セキュリティ: 漏洩パスワード / 放置セッションの攻撃面を縮小するため、
+ *     ログインは封じる (isActive=false)
+ *   - 復帰: 必要時はシステム管理者が `/admin/users` で isActive をトグルして解除
  *
  * 呼び出し側:
- *   - `/api/admin/users/cleanup-inactive` POST (vercel.json の cron で日次起動)
+ *   - `/api/admin/users/lock-inactive` POST (vercel.json の cron で日次起動)
  *   - 管理画面からの手動実行 (admin ボタン)
+ *
+ * 監査ログ:
+ *   - action='UPDATE' / entityType='user' / entityId=<対象 user.id>
+ *   - reason="30 日無アクティブ自動ロック" を含む
+ *   - 物理削除を伴わないため ProjectMember は維持される (孤児データは元から発生しない)
  */
-export async function cleanupInactiveUsers(
+export async function lockInactiveUsers(
   systemTriggerId: string,
-): Promise<{ deletedUserIds: string[]; removedMembershipsTotal: number }> {
+): Promise<{ lockedUserIds: string[] }> {
   const thresholdDate = new Date(
-    Date.now() - INACTIVE_USER_DELETION_DAYS * 24 * 60 * 60 * 1000,
+    Date.now() - INACTIVE_USER_LOCK_DAYS * 24 * 60 * 60 * 1000,
   );
 
   // 候補抽出: 長期間ログインなし (or 一度もログインしていないかつ作成から閾値経過)
@@ -385,21 +394,34 @@ export async function cleanupInactiveUsers(
         { AND: [{ lastLoginAt: null }, { createdAt: { lt: thresholdDate } }] },
       ],
     },
-    select: { id: true },
+    select: { id: true, name: true, email: true },
   });
 
-  let removedMembershipsTotal = 0;
-  const deletedUserIds: string[] = [];
+  const lockedUserIds: string[] = [];
 
   for (const c of candidates) {
     try {
-      const r = await deleteUser(c.id, systemTriggerId);
-      removedMembershipsTotal += r.removedMemberships;
-      deletedUserIds.push(r.deletedUserId);
+      // isActive=false に更新 (論理削除はしない)。
+      // User モデルは updatedBy 列を持たない設計 (self-referential 回避)。
+      // ロック実行者の追跡は audit_log の userId=systemTriggerId で行う。
+      await prisma.user.update({
+        where: { id: c.id },
+        data: { isActive: false },
+      });
+      // 監査ログ: 削除 (DELETE) ではなく更新 (UPDATE) として記録
+      await recordAuditLog({
+        userId: systemTriggerId,
+        action: 'UPDATE',
+        entityType: 'user',
+        entityId: c.id,
+        beforeValue: sanitizeForAudit({ isActive: true }),
+        afterValue: sanitizeForAudit({ isActive: false, reason: '30 日無アクティブ自動ロック' }),
+      });
+      lockedUserIds.push(c.id);
     } catch {
-      // 個別失敗は握りつぶし、他のユーザ削除を継続 (cron の信頼性優先)
+      // 個別失敗は握りつぶし、他のユーザロックを継続 (cron の信頼性優先)
     }
   }
 
-  return { deletedUserIds, removedMembershipsTotal };
+  return { lockedUserIds };
 }

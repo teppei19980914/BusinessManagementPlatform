@@ -130,8 +130,11 @@ export function RiskEditDialog({
       setError(json.error?.message || json.error?.details?.[0]?.message || '更新に失敗しました');
       return;
     }
-    await onSaved();
+    // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
+    // 旧実装: await onSaved() → onOpenChange(false) — reload 完了を待つため遅く感じる
+    // 新実装: onOpenChange(false) → onSaved() (fire-and-forget) — 即座に閉じて裏で reload
     onOpenChange(false);
+    void onSaved();
   }
 
   const titleText = risk.type === 'risk' ? 'リスク' : '課題';

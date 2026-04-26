@@ -176,11 +176,12 @@ export async function listAllRisksForViewer(
     });
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
-  // 2026-04-24: 非 admin は public のみ。admin は draft も表示 (管理削除のため)。
-  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
-
+  // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
+  // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
+  // admin が draft を管理削除したい場合はプロジェクト個別画面の○○一覧から行う。
+  // isAdmin は projectName / 担当者名のマスキング解除にのみ使う (フィルタには使わない)。
   const risks = await prisma.riskIssue.findMany({
-    where: { deletedAt: null, ...visibilityWhere },
+    where: { deletedAt: null, visibility: 'public' },
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
@@ -297,8 +298,9 @@ export async function updateRisk(
   riskId: string,
   input: Partial<CreateRiskInput> & {
     state?: string;
-    result?: string;
-    lessonLearned?: string;
+    // null は明示クリア用 (validator schema で .nullable() 済、§5.12)
+    result?: string | null;
+    lessonLearned?: string | null;
   },
   userId: string,
 ): Promise<RiskDTO> {
@@ -320,7 +322,8 @@ export async function updateRisk(
   if (input.responsePolicy !== undefined) data.responsePolicy = input.responsePolicy;
   if (input.responseDetail !== undefined) data.responseDetail = input.responseDetail;
   if (input.assigneeId !== undefined) data.assigneeId = input.assigneeId;
-  if (input.deadline !== undefined) data.deadline = new Date(input.deadline);
+  // null は明示的にクリア (担当者削除と同様)、`new Date(null)` で 1970 epoch に化けるのを防ぐ
+  if (input.deadline !== undefined) data.deadline = input.deadline === null ? null : new Date(input.deadline);
   if (input.state !== undefined) data.state = input.state;
   if (input.result !== undefined) data.result = input.result;
   if (input.lessonLearned !== undefined) data.lessonLearned = input.lessonLearned;
