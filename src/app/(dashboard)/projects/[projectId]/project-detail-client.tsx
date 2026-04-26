@@ -129,6 +129,9 @@ export function ProjectDetailClient({
   const canDeleteProject = isSystemAdmin;
   const nextStatuses = NEXT_STATUSES[project.status] || [];
 
+  // feat/overview-tab-detail (PR-B item 3+4): 編集 dialog を 11 フィールド全て編集可能に拡張。
+  // タグ入力はカンマ区切り文字列で扱い (parseTagsInput を /lib/parse-tags から流用)、
+  // submit 時に string[] に変換する。
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     name: project.name,
@@ -139,6 +142,9 @@ export function ProjectDetailClient({
     devMethod: project.devMethod,
     plannedStartDate: project.plannedStartDate,
     plannedEndDate: project.plannedEndDate,
+    businessDomainTagsInput: project.businessDomainTags.join(', '),
+    techStackTagsInput: project.techStackTags.join(', '),
+    processTagsInput: project.processTags.join(', '),
   });
   const [editError, setEditError] = useState('');
 
@@ -156,6 +162,9 @@ export function ProjectDetailClient({
       devMethod: project.devMethod,
       plannedStartDate: project.plannedStartDate,
       plannedEndDate: project.plannedEndDate,
+      businessDomainTagsInput: project.businessDomainTags.join(', '),
+      techStackTagsInput: project.techStackTags.join(', '),
+      processTagsInput: project.processTags.join(', '),
     });
     setEditError('');
     setIsEditOpen(true);
@@ -257,11 +266,22 @@ export function ProjectDetailClient({
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
     setEditError('');
+    // feat/overview-tab-detail (PR-B): タグ入力欄 (CSV/読点区切り) を string[] に変換して送信。
+    // parseTagsInput は projects-client.tsx と同じ規約 (DEVELOPER_GUIDE §5.10.2 全角読点も受容)。
+    const parseTagsInput = (s: string): string[] =>
+      s.split(/[,、]/).map((t) => t.trim()).filter((t) => t.length > 0);
+    const { businessDomainTagsInput, techStackTagsInput, processTagsInput, ...rest } = editForm;
+    const body = {
+      ...rest,
+      businessDomainTags: parseTagsInput(businessDomainTagsInput),
+      techStackTags: parseTagsInput(techStackTagsInput),
+      processTags: parseTagsInput(processTagsInput),
+    };
     const res = await withLoading(() =>
       fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify(body),
       }),
     );
     if (!res.ok) {
@@ -391,6 +411,15 @@ export function ProjectDetailClient({
                       <Label>目的</Label>
                       <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.purpose} onChange={(e) => setEditForm({ ...editForm, purpose: e.target.value })} rows={3} required />
                     </div>
+                    {/* feat/overview-tab-detail (PR-B): 背景 / スコープも編集可能に追加 (旧仕様は欠落していた) */}
+                    <div className="space-y-2">
+                      <Label>背景</Label>
+                      <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.background} onChange={(e) => setEditForm({ ...editForm, background: e.target.value })} rows={3} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>スコープ</Label>
+                      <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.scope} onChange={(e) => setEditForm({ ...editForm, scope: e.target.value })} rows={3} required />
+                    </div>
                     <div className="space-y-2">
                       <Label>開発方式</Label>
                       <select value={editForm.devMethod} onChange={(e) => setEditForm({ ...editForm, devMethod: e.target.value })} className={nativeSelectClass}>
@@ -406,6 +435,19 @@ export function ProjectDetailClient({
                         <Label>終了予定日</Label>
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} required hideClear />
                       </div>
+                    </div>
+                    {/* feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2) */}
+                    <div className="space-y-2">
+                      <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
+                      <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder="例: 金融, 基幹業務, 会計" maxLength={500} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
+                      <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder="例: React, Next.js, TypeScript" maxLength={500} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
+                      <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder="例: 要件定義, 設計, 開発" maxLength={500} />
                     </div>
                     <Button type="submit" className="w-full">更新</Button>
                   </form>
@@ -440,12 +482,27 @@ export function ProjectDetailClient({
           )}
         </TabsList>
 
-        {/* 概要タブ（サーバで既に取得済みの project のみ表示、fetch 不要）*/}
+        {/* 概要タブ（サーバで既に取得済みの project のみ表示、fetch 不要）
+            feat/overview-tab-detail (PR-B item 3+4): 作成時 11 フィールド全表示 + click-to-edit。
+            isActualPmTl が true のセクションは hover でハイライトし、click で編集 dialog を開く。
+            (admin 許可は PR-A 側のスコープなので、本 PR では isActualPmTl ベース) */}
         <TabsContent value="overview" className="mt-4 space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">基本情報</h3>
               <dl className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">プロジェクト名</dt>
+                  <dd className="font-medium">{project.name}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">顧客</dt>
+                  <dd>{project.customerName}</dd>
+                </div>
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">開発方式</dt>
                   <dd>{DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}</dd>
@@ -460,15 +517,27 @@ export function ProjectDetailClient({
                 </div>
               </dl>
             </div>
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">目的</h3>
               <p className="whitespace-pre-wrap text-sm text-foreground">{project.purpose}</p>
             </div>
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">背景</h3>
               <p className="whitespace-pre-wrap text-sm text-foreground">{project.background}</p>
             </div>
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">スコープ</h3>
               <p className="whitespace-pre-wrap text-sm text-foreground">{project.scope}</p>
               {project.outOfScope && (
@@ -479,8 +548,63 @@ export function ProjectDetailClient({
               )}
             </div>
           </div>
+          {/* feat/overview-tab-detail (PR-B item 3): 業務ドメイン/技術スタック/工程の 3 タグセクション (新設) */}
+          <div className="grid gap-6 md:grid-cols-3">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
+              <h3 className="mb-2 font-semibold">業務ドメインタグ</h3>
+              {project.businessDomainTags.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {project.businessDomainTags.map((t) => (
+                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">未設定</p>
+              )}
+            </div>
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
+              <h3 className="mb-2 font-semibold">技術スタックタグ</h3>
+              {project.techStackTags.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {project.techStackTags.map((t) => (
+                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">未設定</p>
+              )}
+            </div>
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
+              <h3 className="mb-2 font-semibold">工程タグ</h3>
+              {project.processTags.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {project.processTags.map((t) => (
+                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">未設定</p>
+              )}
+            </div>
+          </div>
           {project.notes && (
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">備考</h3>
               <p className="whitespace-pre-wrap text-sm text-foreground">{project.notes}</p>
             </div>
