@@ -68,6 +68,7 @@ model User {
   passwordHistories       PasswordHistory[]
   addedAttachments        Attachment[]       @relation("AttachmentAddedBy")
   memos                   Memo[]             @relation("MemoAuthor")
+  stakeholderRecords      Stakeholder[]      @relation("StakeholderUser")
 
   @@unique([email], map: "idx_users_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
@@ -212,6 +213,7 @@ model Project {
   risksIssues       RiskIssue[]
   retrospectives    Retrospective[]
   knowledgeProjects KnowledgeProject[]
+  stakeholders      Stakeholder[]
 
   @@index([status], map: "idx_projects_status")
   @@index([customerId], map: "idx_projects_customer_id")
@@ -372,6 +374,54 @@ model RiskIssue {
   @@index([state, priority], map: "idx_risks_state")
   @@index([assigneeId], map: "idx_risks_assignee")
   @@map("risks_issues")
+}
+
+// ============================================================
+// Stakeholder Management (PMBOK 13)
+// feat/stakeholder-management:
+//   プロジェクトに関与する全関係者を管理する。Mendelow Power/Interest grid (1-5 段階) +
+//   姿勢 (賛成/中立/反対) + Engagement Gap (現在 vs 望ましい) の PMBOK 準拠フル仕様。
+//   userId は内部メンバー用 (nullable)。null なら外部関係者 (顧客役員、規制機関等)。
+//   可視性は service 層で PM/TL + admin に限定 (人物評を含むため)。
+// ============================================================
+
+model Stakeholder {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String    @map("project_id") @db.Uuid
+  // 内部メンバーとの紐付け (任意)。null なら外部関係者。
+  // ON DELETE SET NULL: User 物理削除時にステークホルダー記録は残す (人物評・履歴の保全)。
+  userId            String?   @map("user_id") @db.Uuid
+  // 表示用氏名: 内部紐付け時も独立した列を持つ (User.name とは別の通称・敬称付き表記を許容)
+  name              String    @db.VarChar(100)
+  organization      String?   @db.VarChar(100) // 所属組織 (例: 顧客企画部、規制機関名)
+  role              String?   @db.VarChar(100) // 役職 (例: 部長、CTO)
+  contactInfo       String?   @map("contact_info") @db.Text // 連絡先メモ
+  // PMBOK Power/Interest grid: 1-5 段階で格納 (UI 4 象限分類は閾値 >= 4 で計算)
+  influence         Int       @db.SmallInt // 影響度 1=最低 / 5=最高
+  interest          Int       @db.SmallInt // 関心度 1=最低 / 5=最高
+  // 姿勢 (賛成/中立/反対): 同じ象限でも対応戦略が変わるため
+  attitude          String    @db.VarChar(20) // supportive | neutral | opposing
+  // PMBOK 13.1.2 Engagement Assessment Matrix (5 段階)
+  currentEngagement String    @map("current_engagement") @db.VarChar(20) // unaware|resistant|neutral|supportive|leading
+  desiredEngagement String    @map("desired_engagement") @db.VarChar(20)
+  // 自由記述: 人となり / 考え方 / 接し方のコツ
+  personality       String?   @db.Text
+  // 検索/分類タグ (例: ["技術志向", "数字派"])
+  tags              Json      @default("[]") @db.JsonB
+  // 戦略・対応方針 (具体的アクション)
+  strategy          String?   @db.Text
+  createdBy         String    @map("created_by") @db.Uuid
+  updatedBy         String    @map("updated_by") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz
+
+  project Project @relation(fields: [projectId], references: [id])
+  user    User?   @relation("StakeholderUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([projectId], map: "idx_stakeholders_project")
+  @@index([userId], map: "idx_stakeholders_user")
+  @@map("stakeholders")
 }
 
 // ============================================================

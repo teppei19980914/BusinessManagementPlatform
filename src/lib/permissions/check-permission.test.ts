@@ -195,4 +195,49 @@ describe('checkPermission', () => {
       expect(checkPermission('task:create', c).allowed).toBe(false);
     });
   });
+
+  // feat/stakeholder-management: ステークホルダーは PM/TL + admin のみ閲覧・編集可
+  describe('ステークホルダー管理 (PMBOK 13)', () => {
+    it('admin は全 CRUD 可', () => {
+      const c = ctx({ systemRole: 'admin' });
+      expect(checkPermission('stakeholder:read', c).allowed).toBe(true);
+      expect(checkPermission('stakeholder:create', c).allowed).toBe(true);
+      expect(checkPermission('stakeholder:update', c).allowed).toBe(true);
+      expect(checkPermission('stakeholder:delete', c).allowed).toBe(true);
+    });
+
+    it('pm_tl は全 CRUD 可', () => {
+      const c = ctx({ projectRole: 'pm_tl' });
+      expect(checkPermission('stakeholder:read', c).allowed).toBe(true);
+      expect(checkPermission('stakeholder:create', c).allowed).toBe(true);
+      expect(checkPermission('stakeholder:update', c).allowed).toBe(true);
+      expect(checkPermission('stakeholder:delete', c).allowed).toBe(true);
+    });
+
+    it('member は閲覧含め全て拒否 (個人情報・人物評の保護)', () => {
+      const c = ctx({ projectRole: 'member' });
+      expect(checkPermission('stakeholder:read', c).allowed).toBe(false);
+      expect(checkPermission('stakeholder:create', c).allowed).toBe(false);
+      expect(checkPermission('stakeholder:update', c).allowed).toBe(false);
+      expect(checkPermission('stakeholder:delete', c).allowed).toBe(false);
+    });
+
+    it('viewer も全て拒否', () => {
+      const c = ctx({ projectRole: 'viewer' });
+      expect(checkPermission('stakeholder:read', c).allowed).toBe(false);
+      expect(checkPermission('stakeholder:create', c).allowed).toBe(false);
+    });
+
+    it('未所属ロールは全て拒否', () => {
+      const c = ctx({ projectRole: null });
+      expect(checkPermission('stakeholder:read', c).allowed).toBe(false);
+    });
+
+    it('closed 状態でも参照のみ可 (振り返り資料の保全)', () => {
+      const c = ctx({ projectRole: 'pm_tl', projectStatus: 'closed' });
+      expect(checkPermission('stakeholder:read', c).allowed).toBe(true);
+      expect(checkPermission('stakeholder:update', c).allowed).toBe(false);
+      expect(checkPermission('stakeholder:delete', c).allowed).toBe(false);
+    });
+  });
 });

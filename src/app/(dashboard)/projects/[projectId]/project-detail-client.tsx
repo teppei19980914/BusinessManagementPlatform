@@ -58,6 +58,9 @@ import { RetrospectivesClient } from './retrospectives/retrospectives-client';
 import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
 import { MembersClient } from './members-client';
 import { SuggestionsPanel } from './suggestions/suggestions-panel';
+// feat/stakeholder-management: PM/TL + admin のみ閲覧可。lazy fetch でタブ初表示時に取得。
+import { StakeholdersClient } from './stakeholders/stakeholders-client';
+import type { StakeholderDTO } from '@/services/stakeholder.service';
 
 type CustomerOption = { id: string; name: string };
 
@@ -192,6 +195,8 @@ export function ProjectDetailClient({
   // ため、一方での CRUD がもう一方に即座に反映される (連動)。
   const knowledges = useLazyFetch<KnowledgeDTO[]>(`/api/projects/${project.id}/knowledge`);
   const allUsers = useLazyFetch<UserDTO[]>(`/api/admin/users`);
+  // feat/stakeholder-management: ステークホルダー一覧 (PM/TL + admin のみ取得・表示)
+  const stakeholders = useLazyFetch<StakeholderDTO[]>(`/api/projects/${project.id}/stakeholders`);
 
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -238,6 +243,11 @@ export function ProjectDetailClient({
         members.load();
         if (systemRole === 'admin') allUsers.load();
         break;
+      case 'stakeholders':
+        // 内部メンバー紐付けプルダウン用に members も取得
+        stakeholders.load();
+        members.load();
+        break;
       default:
         break;
     }
@@ -263,6 +273,10 @@ export function ProjectDetailClient({
   const reloadKnowledges = useCallback(async () => {
     await knowledges.load(true);
   }, [knowledges]);
+  // feat/stakeholder-management: CRUD 直後に呼ぶ再取得ハンドラ
+  const reloadStakeholders = useCallback(async () => {
+    await stakeholders.load(true);
+  }, [stakeholders]);
 
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
@@ -485,6 +499,11 @@ export function ProjectDetailClient({
           <TabsTrigger value="suggestions">参考</TabsTrigger>
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
             <TabsTrigger value="members">メンバー</TabsTrigger>
+          )}
+          {/* feat/stakeholder-management: ステークホルダー管理 (PMBOK 13)。
+              個人情報・人物評を含むため PM/TL + admin のみ表示・閲覧可。 */}
+          {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+            <TabsTrigger value="stakeholders">ステークホルダー</TabsTrigger>
           )}
         </TabsList>
 
@@ -795,6 +814,27 @@ export function ProjectDetailClient({
                   />
                 );
               }}
+            </LazyTabContent>
+          </TabsContent>
+        )}
+
+        {/* feat/stakeholder-management: ステークホルダー管理タブ (PM/TL + admin のみ)。
+            内部メンバー紐付けプルダウンに members を使うため、両 lazy fetch をネストする。 */}
+        {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+          <TabsContent value="stakeholders" className="mt-4">
+            <LazyTabContent state={stakeholders.state}>
+              {(stakeholdersData) => (
+                <LazyTabContent state={members.state}>
+                  {(membersData) => (
+                    <StakeholdersClient
+                      projectId={project.id}
+                      stakeholders={stakeholdersData}
+                      members={membersData}
+                      onReload={reloadStakeholders}
+                    />
+                  )}
+                </LazyTabContent>
+              )}
             </LazyTabContent>
           </TabsContent>
         )}

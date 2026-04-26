@@ -138,3 +138,101 @@ export const EFFORT_UNITS = {
 } as const;
 
 export type EffortUnit = keyof typeof EFFORT_UNITS;
+
+// ============================================================
+// Stakeholder Management (PMBOK 13)
+// ============================================================
+
+/**
+ * ステークホルダーの姿勢 (Attitude / Stance)。
+ *   - supportive: 賛成 (推進派、味方)
+ *   - neutral   : 中立 (態度未表明 / 状況依存)
+ *   - opposing  : 反対 (抵抗勢力)
+ *
+ * 同じ Power/Interest 象限でも姿勢で対応戦略が変わる:
+ *   例: 「影響大 × 関心大 × 賛成」=主要パートナー、「同 × 反対」=最警戒。
+ */
+export const STAKEHOLDER_ATTITUDES = {
+  supportive: '賛成',
+  neutral: '中立',
+  opposing: '反対',
+} as const;
+
+export type StakeholderAttitude = keyof typeof STAKEHOLDER_ATTITUDES;
+
+/**
+ * ステークホルダーのエンゲージメント水準 (PMBOK 13.1.2 Engagement Assessment Matrix)。
+ *
+ * 「現在のエンゲージメント (current)」と「望ましいエンゲージメント (desired)」を
+ * 個別に持たせ、Gap がある人 = 能動的働きかけが必要な人として PM が抽出できる。
+ *
+ *   - unaware   : プロジェクトを認識していない
+ *   - resistant : 抵抗的 (変化に反対)
+ *   - neutral   : 中立 (賛否どちらでもない)
+ *   - supportive: 支持的 (賛成しているが受動的)
+ *   - leading   : 主導的 (能動的に推進している)
+ */
+export const STAKEHOLDER_ENGAGEMENTS = {
+  unaware: '認識していない',
+  resistant: '抵抗的',
+  neutral: '中立',
+  supportive: '支持的',
+  leading: '主導的',
+} as const;
+
+export type StakeholderEngagement = keyof typeof STAKEHOLDER_ENGAGEMENTS;
+
+const ENGAGEMENT_ORDER: StakeholderEngagement[] = [
+  'unaware', 'resistant', 'neutral', 'supportive', 'leading',
+];
+
+/**
+ * Engagement Gap を整数で返す (desired - current)。
+ *   正の値: 強める方向の働きかけが必要 (例: neutral→supportive で gap=+1)
+ *   負の値: 抑える方向 (例: leading→supportive で gap=-1)
+ *   ゼロ  : 望ましい状態にある
+ */
+export function calcEngagementGap(
+  current: StakeholderEngagement,
+  desired: StakeholderEngagement,
+): number {
+  return ENGAGEMENT_ORDER.indexOf(desired) - ENGAGEMENT_ORDER.indexOf(current);
+}
+
+/**
+ * Power/Interest grid の 4 象限 (Mendelow's Matrix, PMBOK 13)。
+ *   - manage_closely : 影響大 × 関心大 — 密接に連携 (Manage Closely)
+ *   - keep_satisfied : 影響大 × 関心小 — 満足させておく (Keep Satisfied)
+ *   - keep_informed  : 影響小 × 関心大 — 常に情報を伝える (Keep Informed)
+ *   - monitor        : 影響小 × 関心小 — モニタリング (Monitor)
+ */
+export const STAKEHOLDER_QUADRANTS = {
+  manage_closely: '密接に連携',
+  keep_satisfied: '満足させておく',
+  keep_informed: '常に情報を伝える',
+  monitor: 'モニタリング',
+} as const;
+
+export type StakeholderQuadrant = keyof typeof STAKEHOLDER_QUADRANTS;
+
+/**
+ * 影響度 / 関心度 (1-5) から Power/Interest grid の象限を分類する。
+ * 閾値: >= 4 を「大」、それ以外を「小」とする (中央値 3 は「小」寄り扱い)。
+ */
+export function classifyStakeholderQuadrant(
+  influence: number,
+  interest: number,
+): StakeholderQuadrant {
+  const highInfluence = influence >= 4;
+  const highInterest = interest >= 4;
+  if (highInfluence && highInterest) return 'manage_closely';
+  if (highInfluence && !highInterest) return 'keep_satisfied';
+  if (!highInfluence && highInterest) return 'keep_informed';
+  return 'monitor';
+}
+
+/**
+ * 影響度 / 関心度の許容範囲 (1-5)。validator と UI 双方が参照する。
+ */
+export const STAKEHOLDER_LEVEL_MIN = 1;
+export const STAKEHOLDER_LEVEL_MAX = 5;
