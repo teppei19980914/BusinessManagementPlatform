@@ -255,7 +255,7 @@ export function MemosClient({
               <ResizableHead columnKey="author" defaultWidth={120}>作成者</ResizableHead>
               <ResizableHead columnKey="updatedAt" defaultWidth={140}>更新日時</ResizableHead>
               <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-              <ResizableHead columnKey="actions" defaultWidth={120}>操作</ResizableHead>
+              <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -280,12 +280,11 @@ export function MemosClient({
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
                 </TableCell>
+                {/* fix/quick-ux item 5: 編集は行クリックで実行 (line 266 の onClick={setEditing(m)})。
+                    旧仕様では「編集」ボタンが冗長だったため削除し、削除のみアクション列に残す。 */}
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   {m.isMine && (
-                    <div className="flex gap-1">
-                      <Button variant="outline" size="sm" onClick={() => setEditing(m)}>{t('edit')}</Button>
-                      <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>{t('delete')}</Button>
-                    </div>
+                    <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>{t('delete')}</Button>
                   )}
                 </TableCell>
               </TableRow>
