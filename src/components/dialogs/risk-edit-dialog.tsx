@@ -224,13 +224,21 @@ export function RiskEditDialog({
             <DateFieldWithActions value={form.deadline} onChange={(v) => setForm({ ...form, deadline: v })} />
           </div>
           </fieldset>
-          {/* PR #64 Phase 2: 関連 URL (エビデンス・証跡・関連チケット等) */}
-          <AttachmentList
-            entityType="risk"
-            entityId={risk.id}
-            canEdit={!readOnly}
-            label="関連 URL"
-          />
+          {/* PR #64 Phase 2: 関連 URL (エビデンス・証跡・関連チケット等)。
+              fix/attachment-list-non-member-403: readOnly モード (= 全リスク/全課題等の
+              横断ビューから開いた場合) は非メンバーが多数を占めるため、添付 fetch を行うと
+              `/api/attachments?entityType=risk&...` が 403 を返してブラウザ Console に
+              エラーが出力される (§5.10 エラー情報最小化方針違反)。読み取り権限緩和は
+              future work、現状は readOnly 時に AttachmentList 自体を非表示にする。
+              プロジェクト個別画面 (readOnly=false 経路) では従来通り表示・編集可。 */}
+          {!readOnly && (
+            <AttachmentList
+              entityType="risk"
+              entityId={risk.id}
+              canEdit
+              label="関連 URL"
+            />
+          )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>
