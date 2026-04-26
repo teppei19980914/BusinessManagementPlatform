@@ -1030,7 +1030,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   const [form, setForm] = useState({
     name: '',
-    assigneeId: '',
+    // fix/quick-ux item 8: デフォルト担当者=自分。プルダウンで変更可。
+    assigneeId: userId,
     plannedStartDate: '',
     plannedEndDate: '',
     plannedEffort: 0,
@@ -1084,7 +1085,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     setIsCreateOpen(false);
     setParentTaskId('');
-    setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
+    // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット
+    setForm({ name: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
     await reload();
   }
 

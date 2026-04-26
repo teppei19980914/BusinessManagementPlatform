@@ -117,15 +117,17 @@ export function ProjectDetailClient({
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
-  // 概要タブ内ヘッダの操作ボタン権限 (PR #58):
-  //   状態変更 / 編集: 実際のプロジェクト PM/TL のみ (systemRole='admin' は除外)
-  //   削除: システム管理者のみ (pm_tl は除外)
-  //   → 運用作業 (PM/TL 責務) と プラットフォーム管理 (admin 責務) を明確に分離
-  //   注: checkMembership が admin を projectRole='pm_tl' にマップするため、
-  //       systemRole !== 'admin' で「真の pm_tl メンバー」に限定する
+  // 概要タブ内ヘッダの操作ボタン権限 (PR #58 → fix/quick-ux item 1 で改修):
+  //   状態変更 / 編集: 実際のプロジェクト PM/TL **または** システム管理者
+  //   削除: システム管理者のみ (pm_tl は除外、プラットフォーム管理責務の分離は維持)
+  //
+  //   2026-04-26 ユーザ報告「状態変更プルダウンがなくなった」を受けて、admin も
+  //   状態変更できるよう緩和。元の設計 (PM/TL のみ) は運用責務分離の意図だったが、
+  //   admin が代行できないと運用が詰まるケースが多発したため。
+  //   注: checkMembership が admin を projectRole='pm_tl' にマップする挙動は維持。
   const isActualPmTl = projectRole === 'pm_tl' && systemRole !== 'admin';
   const isSystemAdmin = systemRole === 'admin';
-  const canChangeStatus = isActualPmTl;
+  const canChangeStatus = isActualPmTl || isSystemAdmin;
   const canDeleteProject = isSystemAdmin;
   const nextStatuses = NEXT_STATUSES[project.status] || [];
 
@@ -355,7 +357,7 @@ export function ProjectDetailClient({
               </SelectContent>
             </Select>
           )}
-          {activeTab === 'overview' && isActualPmTl && (
+          {activeTab === 'overview' && (isActualPmTl || isSystemAdmin) && (
             <>
               <Dialog open={isEditOpen} onOpenChange={handleEditOpenChange}>
                 <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{t('edit')}</DialogTrigger>
