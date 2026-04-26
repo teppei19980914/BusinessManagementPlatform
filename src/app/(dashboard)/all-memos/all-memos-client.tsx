@@ -39,6 +39,8 @@ import { useBatchAttachments } from '@/components/attachments/use-batch-attachme
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 // PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
+// feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
+import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 import type { MemoDTO } from '@/services/memo.service';
 
 // /memos と同じラベルを使う (DRY)
@@ -51,6 +53,8 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
   // PR #119: session 連携フォーマッタ
   const { formatDateTime } = useFormatters();
   const [viewing, setViewing] = useState<MemoDTO | null>(null);
+  // feat/dialog-fullscreen-toggle: 詳細 dialog の全画面トグル (read-only でも文字量多い場合あり)
+  const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
 
   // 添付列用バッチ取得 (PR #67)
   const attachmentsByEntity = useBatchAttachments('memo', memos.map((m) => m.id));
@@ -113,9 +117,12 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
 
       {/* 詳細ダイアログ (read-only) */}
       <Dialog open={viewing != null} onOpenChange={(o) => { if (!o) setViewing(null); }}>
-        <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
+        <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${fullscreenClassName}`}>
           <DialogHeader>
-            <DialogTitle>メモ詳細</DialogTitle>
+            <div className="flex items-center justify-between gap-2">
+              <DialogTitle>メモ詳細</DialogTitle>
+              <FullscreenToggle />
+            </div>
             <DialogDescription>
               参照専用です。編集は作成者のメモ画面でのみ可能です。
             </DialogDescription>

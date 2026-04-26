@@ -44,6 +44,8 @@ import { useBatchAttachments } from '@/components/attachments/use-batch-attachme
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 // PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
+// feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
+import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 import type { MemoDTO } from '@/services/memo.service';
 
 const VISIBILITY_LABELS: Record<string, string> = {
@@ -67,6 +69,9 @@ export function MemosClient({
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editing, setEditing] = useState<MemoDTO | null>(null);
   const [error, setError] = useState('');
+  // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。create / edit で別 state を持たせる。
+  const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle } = useDialogFullscreen();
+  const { fullscreenClassName: editFsClassName, FullscreenToggle: EditFullscreenToggle } = useDialogFullscreen();
 
   const reload = useCallback(async () => {
     const res = await fetch('/api/memos');
@@ -189,9 +194,12 @@ export function MemosClient({
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               メモ作成
             </DialogTrigger>
-            <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
+            <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${createFsClassName}`}>
               <DialogHeader>
-                <DialogTitle>メモ作成</DialogTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <DialogTitle>メモ作成</DialogTitle>
+                  <CreateFullscreenToggle />
+                </div>
                 <DialogDescription>
                   既定は「自分のみ」(非公開)。「全メモに公開」を選ぶと他アカウントも閲覧可能になります。
                 </DialogDescription>
@@ -302,9 +310,12 @@ export function MemosClient({
 
       {/* 編集ダイアログ (自分のメモのみ開く) */}
       <Dialog open={editing != null} onOpenChange={(o) => { if (!o) setEditing(null); }}>
-        <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
+        <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${editFsClassName}`}>
           <DialogHeader>
-            <DialogTitle>メモ編集</DialogTitle>
+            <div className="flex items-center justify-between gap-2">
+              <DialogTitle>メモ編集</DialogTitle>
+              <EditFullscreenToggle />
+            </div>
             <DialogDescription>変更内容を保存します。</DialogDescription>
           </DialogHeader>
           {editing && (
