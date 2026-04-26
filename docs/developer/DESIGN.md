@@ -812,6 +812,44 @@ User ──< project_members >── Project
 - `idx_risks_project` (project_id, type, WHERE deleted_at IS NULL)
 - `idx_risks_priority` (priority, state, WHERE deleted_at IS NULL)
 
+### 5.7b stakeholders（ステークホルダー / feat/stakeholder-management で新設、PMBOK 13）
+
+| カラム名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|
+| id | UUID | NO | gen_random_uuid() | 主キー |
+| project_id | UUID | NO | - | FK: projects.id |
+| user_id | UUID | YES | NULL | FK: users.id (ON DELETE SET NULL)。内部メンバー紐付け、null=外部関係者 |
+| name | VARCHAR(100) | NO | - | 表示用氏名 (敬称付き表記許容、User.name とは別系列) |
+| organization | VARCHAR(100) | YES | NULL | 所属組織 (例: 顧客企画部、規制機関名) |
+| role | VARCHAR(100) | YES | NULL | 役職 (例: 部長、CTO) |
+| contact_info | TEXT | YES | NULL | 連絡先メモ (1000文字以内) |
+| influence | SMALLINT | NO | - | 影響度 1-5 (DB CHECK 制約あり) |
+| interest | SMALLINT | NO | - | 関心度 1-5 (DB CHECK 制約あり) |
+| attitude | VARCHAR(20) | NO | - | 姿勢: supportive / neutral / opposing |
+| current_engagement | VARCHAR(20) | NO | - | 現在のエンゲージメント (PMBOK 13.1.2 5 段階) |
+| desired_engagement | VARCHAR(20) | NO | - | 望ましいエンゲージメント (5 段階) |
+| personality | TEXT | YES | NULL | 人となり / 考え方 (自由記述、2000文字以内) |
+| tags | JSONB | NO | '[]' | 検索/分類タグ (string[]) |
+| strategy | TEXT | YES | NULL | 対応戦略 / 具体的アクション (2000文字以内) |
+| created_by | UUID | NO | - | FK: users.id |
+| updated_by | UUID | NO | - | FK: users.id |
+| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
+| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
+| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+
+**インデックス**:
+- `idx_stakeholders_project` (project_id)
+- `idx_stakeholders_user` (user_id)
+
+**設計判断**:
+- 内部 (内部メンバー) と外部 (顧客役員、規制機関等) を 1 テーブルで管理。
+  user_id を nullable FK にし、内部の場合のみ User 紐付け。
+- ON DELETE SET NULL: User 物理削除時もステークホルダー記録は残す (人物評の保全)。
+- influence / interest は 1-5 段階で生値保持。UI は閾値 >= 4 で 4 象限分類するが、
+  生値を保持することで将来 5x5 ヒートマップにも丸められる。
+- 可視性は service 層認可で PM/TL + admin に限定。member 以下にはタブ自体を非表示。
+  個人情報・人物評を含むため、認可境界を厳格に保つ (DB レベルでは制約しない、§8 参照)。
+
 ### 5.8 knowledges（ナレッジ）
 
 | カラム名 | 型 | NULL | デフォルト | 説明 |

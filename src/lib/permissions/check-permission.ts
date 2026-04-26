@@ -49,6 +49,12 @@ export type Action =
   // メンバー管理
   | 'member:read'
   | 'member:manage'
+  // ステークホルダー管理 (PMBOK 13)
+  // 可視性: PM/TL + admin のみ。個人情報・人物評を含むため member 以下には公開しない。
+  | 'stakeholder:read'
+  | 'stakeholder:create'
+  | 'stakeholder:update'
+  | 'stakeholder:delete'
   // ユーザ管理
   | 'admin:users'
   | 'admin:audit_logs';
@@ -61,6 +67,8 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     'knowledge:create', 'knowledge:read', 'knowledge:update', 'knowledge:delete', 'knowledge:publish',
     'risk:create', 'risk:read', 'risk:update', 'risk:delete',
     'member:read', 'member:manage',
+    // ステークホルダー: admin は全プロジェクト全 CRUD 可
+    'stakeholder:read', 'stakeholder:create', 'stakeholder:update', 'stakeholder:delete',
     'admin:users', 'admin:audit_logs',
   ]),
   pm_tl: new Set([
@@ -69,29 +77,35 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     'knowledge:create', 'knowledge:read', 'knowledge:update', 'knowledge:delete', 'knowledge:publish',
     'risk:create', 'risk:read', 'risk:update', 'risk:delete',
     'member:read',
+    // ステークホルダー: PM/TL のみ全 CRUD 可 (人物評を含むため member 以下は閲覧不可)
+    'stakeholder:read', 'stakeholder:create', 'stakeholder:update', 'stakeholder:delete',
   ]),
   member: new Set([
     'project:read',
     'task:read', 'task:update_progress',
     'knowledge:create', 'knowledge:read', 'knowledge:update',
     'risk:create', 'risk:read', 'risk:update',
+    // ステークホルダー: member は閲覧不可 (個人情報保護)
   ]),
   viewer: new Set([
     'project:read',
     'task:read',
     'knowledge:read',
     'risk:read',
+    // ステークホルダー: viewer も閲覧不可
   ]),
 };
 
 // プロジェクト状態別の許可アクション
 const STATE_RESTRICTIONS: Partial<Record<ProjectStatus, Set<Action>>> = {
-  closed: new Set(['project:read', 'task:read', 'knowledge:read', 'risk:read']),
+  closed: new Set(['project:read', 'task:read', 'knowledge:read', 'risk:read', 'stakeholder:read']),
   retrospected: new Set([
     'project:read', 'project:change_status',
     'task:read',
     'knowledge:read', 'knowledge:update',
     'risk:read',
+    // 振り返り完了後もステークホルダーは参照のみ可 (教訓の保全)
+    'stakeholder:read',
   ]),
 };
 
