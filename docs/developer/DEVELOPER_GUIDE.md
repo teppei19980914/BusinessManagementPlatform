@@ -942,6 +942,81 @@ mount 直後に GET /api/attachments を発火** する。
 - §5.10 (エラー情報最小化方針) — 同じ「Console に余分な 4xx を出さない」観点
 - DESIGN.md §22.5 (添付リンク認可設計)
 
+### 5.15 UI 要素の表示条件を緩和したら mobile viewport で overlap して E2E click が intercept される (fix/quick-ux PR #143 hotfix)
+
+#### 症状
+
+PR #143 (PR-A) の E2E が chromium-mobile project で 2 件 fail:
+
+1. `05-teardown Step 11 (admin プロジェクト削除)`: `TimeoutError: locator.click 10s exceeded`
+   - Playwright のエラーログに `<span>状態変更</span> from <button data-slot="select-trigger">
+     subtree intercepts pointer events`
+2. `dashboard-screens visual: プロジェクト詳細 概要タブ`: `toHaveScreenshot mismatch`
+
+#### 根本原因
+
+PR #143 で `canChangeStatus = isActualPmTl || isSystemAdmin` に緩和し、admin にも
+状態変更 Select (`w-44 = 176px`) が表示されるようになった。ヘッダ右側の flex
+コンテナ:
+
+```tsx
+<div className="flex items-center gap-2">    // ← gap-2 / flex-wrap なし
+  {canChangeStatus && <Select className="w-44">状態変更</Select>}  // 176px
+  {(isActualPmTl || isSystemAdmin) && <Button>編集</Button>}        // ~64px
+  {canDeleteProject && <Button>削除</Button>}                       // ~64px
+</div>
+```
+
+幅合計 ≒ 304px + gap でほぼ 320px。chromium-mobile (390px) viewport では
+ヘッダ左側のプロジェクト名/顧客名と並ぶと幅不足で、**flex-wrap がないため要素が
+横方向に押し出されて重なり**、Playwright の click が「subtree intercepts pointer
+events」で失敗する。
+
+PC (1440px) では幅が十分なため発症せず、admin が状態変更を持たない以前の状態
+では Select が表示されないため発症しなかった (PR #143 由来の新パターン)。
+
+#### 修正
+
+```tsx
+// 旧
+<div className="flex items-center gap-2">
+  ...
+  <SelectTrigger className="w-44">
+
+// 新
+<div className="flex flex-wrap items-center gap-2 justify-end">
+  ...
+  <SelectTrigger className="w-36 md:w-44">  // mobile 144px / PC 176px
+```
+
+- `flex-wrap`: 幅不足時に折り返し → overlap 解消
+- `justify-end`: wrap 後も右寄せキープ
+- Select 幅 mobile 縮小 (w-44 → w-36): 折り返しの発生頻度を軽減
+
+合わせて `[gen-visual]` で `*-chromium-mobile-linux.png` baseline を新レイアウトで
+再生成。
+
+#### 汎化ルール
+
+1. **権限・条件分岐で UI 要素の表示有無を変える PR では、表示が増える側のケースで
+   mobile レイアウトを必ず確認する**。要素 1 つの追加でも mobile では総幅オーバー
+   で overlap する (visible だが click できない) ケースが発生する。
+2. **flex コンテナで複数の操作要素を並べる場合は `flex-wrap` を入れておく**。
+   将来の要素追加に対する保険として、見た目の影響なく overlap を予防できる。
+3. **`w-NN` (絶対幅) を使う Select / ボタンは `w-NN md:w-MM` で mobile / PC を
+   別指定**。`w-44` のような 176px 級の幅は mobile 390px の半分弱を占有するため
+   要素が並ばない。
+4. **権限緩和系 PR が E2E (chromium-mobile) で fail した場合、最初に疑うのは
+   レイアウト overlap**。Playwright のログに「subtree intercepts pointer events」が
+   出ていれば即座にこのパターン。viewport 幅に対する要素合計幅を計算する。
+
+#### 関連
+
+- §4.37 (E2E_LESSONS_LEARNED): chromium-mobile project の testIgnore とは別軸の
+  「mobile viewport 固有の click 失敗」パターン
+- §5.9 (レスポンシブ実装パターン): hidden md:block / md:hidden の DOM 二重化と
+  異なり、本件は同一 DOM 内のレイアウト overlap
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1382,6 +1457,38 @@ Q2. 変更は意図通り (仕様を満たす) か?
 - shadcn/ui のバージョンアップや Tailwind 設定変更などで **全テーマの配色が微ズレ** する場合あり
 - `[gen-visual]` で一括再生成 → PR diff で全 PNG の差分をレビュアが一通り確認
 - 事前に事前共有 (スクショを Slack 等で) しておくとレビュー負担が軽い
+
+#### 「最初の push に `[gen-visual]` を含める」運用ルール (PR #143 / PR #144 連続漏れ事例より)
+
+UI レイアウト変更を含む PR では **最初の commit message に `[gen-visual]` を含める**
+ことで E2E 失敗 → hotfix → 再 push の 1 サイクルを節約できる。
+
+**判定条件 (どれかに該当したら最初から含める)**:
+- 既存の jsx 構造 (要素追加 / 順序変更 / className 変更) に手を入れた
+- 権限分岐や条件レンダリングを変えた (新しい UI 要素が表示される側のケースを生む)
+- shadcn/ui コンポーネントを追加・差し替えた
+
+**漏れた場合の連鎖**:
+1. PR push → E2E が visual mismatch で fail (3〜5 分浪費)
+2. 「あ、baseline 古いままだった」と気付く
+3. 空 commit `[gen-visual]` を push → baseline workflow 再走 (~3 分)
+4. baseline auto-commit → E2E 再走 (~5 分)
+
+事例:
+- **PR #143**: admin に状態変更 Select が新規表示 → 概要タブ baseline ズレ
+- **PR #144**: 概要タブを 11 フィールド + 3 タグ列追加 → 同上 baseline ズレ
+
+両者とも「最初から `[gen-visual]` を含めれば 1 サイクルで完了」だったが、
+後追い対応で 2 サイクル消費した。
+
+**判断のフローチャート**:
+
+```
+新規 PR を作成する直前 →
+  Q: jsx の構造変更 / className 変更 / 権限緩和 / コンポーネント追加 のいずれかをしたか?
+  YES → 最初の commit message に [gen-visual] を含める
+  NO  → 含めない (誤発火を防ぐ意図、文書/test のみの PR では baseline 不変)
+```
 
 ### 9.7 E2E テスト失敗の調査手順 (PR #90 運用メモ)
 
@@ -1942,6 +2049,7 @@ export const SELECTABLE_LOCALES = {
 |---|---|---|---|
 | T-01 | 入力層の TZ 統合 (date-picker / date-field 系) | PR #118-#119 で描画層は `session.user.timezone` 反映済だが、`date-field-helpers.ts` / `date-field-with-actions.tsx` / `gantt-client.tsx` 等の **入力** では `new Date()` / `.getFullYear()` 等のブラウザ runtime TZ 依存 API を使用中。海外ユーザが 2026-04-24 と入力した際の UTC 変換が TZ 依存になる可能性。date-fns-tz 導入 or 軽量自前変換で解消予定 | PR #118-#119 時点で PR #121 予定 → CI 恒久対策と入れ替わりで未着手 |
 | T-02 | PAT 動作確認 (`CI_TRIGGER_PAT`) | PR #121 で導入した PAT fallback が次回の baseline 更新時に正しく動作し、CI 自動再起動が効くか実地確認 | PR #121 マージ時、ユーザ指示「今後の開発で様子を見る」 |
+| T-03 | **【最重要 / 外部展開前必須】** 提案エンジン (suggestion) のヒット率向上 — 仕様 + 設計を詰める | 本サービスの**核心機能 + セールス上の差別化要素**。外部ユーザに刺さるかを左右する最大の要素。現状の課題: ①重み一律 0.5/0.5 でタグなしデータが不利 (final score 半減)、②text 入力の auto-tagging が未実装 (タグ未入力プロジェクトは jaccard=0 固定)、③シノニム / 表記ゆれ吸収なし、④TF-IDF 等の識別力評価なし (汎用語ノイズ)。検討候補: (A) vocab-matching auto-tag (依存ゼロ、語彙メンテ要) / (B) kuromoji.js 形態素解析 (npm 依存 +10MB 辞書 + コールドスタート影響) / (C) LLM-based 抽出 (Claude API、月数 $、品質最高) / (D) pgvector embedding 検索 (意味マッチ、本格改修)。**期限: 2026 年 5 月 (来月)** の外部ユーザ展開準備で仕様 + 設計を詰める | 2026-04-26 ユーザ明言「サービスの核心であり、外部展開時の中心機能」「弱いとサービスが刺さらない」 |
 
 ### 11.2 低優先 (長期案件)
 
@@ -2023,3 +2131,4 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-25 | §5.12 新設 (PR #138 後 hotfix)。Zod の `.optional()` は `null` を拒否するため、DB nullable 列に対する schema は **`.nullable().optional()` 必須**。risk-edit-dialog の visibility 編集時に「Invalid input: expected string, received null」400 が発生していた根本原因。risk/knowledge/retro/project/estimate validator を全て横展開修正、回帰防止の単体テスト追加 (assigneeId=null / deadline=null 受理、空文字は依然拒否)。service 層の `new Date(null)` epoch 化バグも併せて修正 |
 | 2026-04-25 | §5.13 新設 (fix/suggestion-tag-parity)。「参考」タブの過去 Issue / 過去 Retrospective が **tagScore=0 固定** でナレッジと同等の tag-aware マッチングが効いていなかった問題。両者は DB に独自タグ列を持たないが、**親 Project のタグを proxy** として `jaccard` 計算に使う改修で Knowledge と挙動統一。schema 変更・migration 不要。回帰防止 unit test 2 件追加 |
 | 2026-04-26 | §5.14 新設 (fix/attachment-list-non-member-403)。非メンバーが「全リスク」一覧から行クリックでリスク詳細を開くと `/api/attachments?entityType=risk&...` が 403 を返し Console に露出 (§5.10 違反)。risk/retrospective/knowledge の 3 dialog で `<AttachmentList>` / `<SingleUrlField>` を **`{!readOnly && ...}` で gating** し、readOnly 時は mount せず fetch も発火させない構造に変更。汎化ルール「edit dialog に readOnly があるなら fetch する子 component は必ず gating」を §5.14 で明文化 |
+| 2026-04-26 | §5.15 新設 + KDD 仕組み強化 (fix/quick-ux PR #143 E2E hotfix)。**症状**: admin 状態変更プルダウン表示緩和で chromium-mobile が flex overlap → click intercept で fail。**修正**: flex-wrap + Select 幅 mobile 縮小。**仕組み穴塞ぎ**: 当初 commit message にしか書かず docs 追記漏れ → ユーザ指摘で発覚。CLAUDE.md KDD 原則に「commit message ≠ 常設ナレッジ」「対象範囲はテスト失敗だけでない」を追加、Stop hook prompt に **項目 6「ナレッジ追記チェック (KDD Step 4/6)」** を新設し漏れを構造的に防止 |
