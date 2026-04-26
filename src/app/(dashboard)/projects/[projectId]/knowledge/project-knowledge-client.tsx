@@ -39,6 +39,8 @@ import {
 } from '@/components/attachments/staged-attachments-input';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import type { KnowledgeDTO } from '@/services/knowledge.service';
+// feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
+import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 
 type Props = {
   projectId: string;
@@ -78,6 +80,8 @@ export function ProjectKnowledgeClient({
   const [error, setError] = useState('');
   // Req 8: 行クリックで編集ダイアログ
   const [editingKnowledge, setEditingKnowledge] = useState<KnowledgeDTO | null>(null);
+  // feat/dialog-fullscreen-toggle: ナレッジ作成 dialog の全画面トグル
+  const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle } = useDialogFullscreen();
 
   const initialForm = {
     title: '',
@@ -164,9 +168,12 @@ export function ProjectKnowledgeClient({
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             {/* PR #124: 他「○○一覧」(risks / retrospectives) と同サイズ (px-4 py-2) に統一 */}
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">ナレッジ作成</DialogTrigger>
-              <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
+              <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto ${createFsClassName}`}>
                 <DialogHeader>
-                  <DialogTitle>ナレッジ作成</DialogTitle>
+                  <div className="flex items-center justify-between gap-2">
+                    <DialogTitle>ナレッジ作成</DialogTitle>
+                    <CreateFullscreenToggle />
+                  </div>
                   <DialogDescription>
                     このプロジェクトに紐づけて登録されます。「全ナレッジ」にも自動で反映されます。
                   </DialogDescription>
