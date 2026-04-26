@@ -712,6 +712,68 @@ grep -rn "name: \"<旧ラベル>\", exact: true" e2e/
 
 ---
 
+### 4.38 タブ / ナビ構造を変える PR では `getByRole('tab', { name: ... })` 系 spec も同 PR で見直す (PR #145 で遭遇)
+
+**症状**: PR #145 (feat/gantt-tab-restructure) で「ガント」タブを WBS 管理タブ内のトグル
+に統合し UI から廃止 → CI の `02-project-detail-tabs.spec.ts` が fail:
+
+```
+Error: expect(locator).toBeVisible() failed
+Locator: getByRole('tab', { name: 'ガント' })
+Expected: visible
+Error: element(s) not found
+   94 |     await expect(page.getByRole('tab', { name: '見積もり' })).toBeVisible();
+   95 |     await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
+>  96 |     await expect(page.getByRole('tab', { name: 'ガント' })).toBeVisible();
+```
+
+タブ廃止 spec の更新が PR から漏れたため、本来削除すべき assertion がそのまま残った。
+
+**原因**: §4.32 (UI ラベル変更時の漏れ) と同じ構造の罠だが、対象が「ラベル」ではなく
+「タブ自体の存在」。ProjectDetailClient から `<TabsTrigger value="gantt">ガント</TabsTrigger>`
+を削除した時に、e2e spec 内の以下 3 種類の参照を更新し忘れた:
+
+1. `expect(getByRole('tab', { name: 'ガント' })).toBeVisible()` (廃止タブの可視性確認)
+2. `tabNames = ['概要', '見積もり', 'WBS管理', 'ガント', ...]` 配列内の固定文字列
+3. general user 用の同種 assertion (権限差分テストでも同じタブ確認が走る)
+
+**対策 — タブ / ナビ構造変更 PR の横展開チェックリスト**:
+
+```bash
+# 1. 廃止タブを参照する spec を検出
+grep -rn "name: '<廃止タブ名>'" e2e/specs/
+grep -rn "name: \"<廃止タブ名>\"" e2e/specs/
+# 2. タブ名の配列リテラル参照 (tabNames = [...]) も忘れずチェック
+grep -rn "<廃止タブ名>" e2e/specs/
+```
+
+**汎化ルール**:
+
+1. **タブ廃止時は `toBeVisible()` → `toHaveCount(0)` に置換** する (削除よりも「廃止された
+   ことの証跡を spec として残す」方が、後の誤回帰時に意図がわかる)
+2. **タブ名の配列リテラルから当該要素を削除**。`for ...of tabNames` ループを書いている
+   spec があれば、削除しないと存在しないタブに対して click する fail が起きる
+3. **権限差分テストも同時に確認**: admin 用と general 用で同じタブ確認が複数 spec に分散
+   している場合があるため、1 箇所修正で満足せず grep で全箇所洗い出す
+4. **URL 直アクセスのテスト** (`/projects/[id]/gantt` 等) はナビ削除しても通るので、
+   敢えて残せばリグレッション検知になる (PR #145 の 07-gantt-timeline.spec.ts は維持)
+
+**§4.32 との違い**:
+- §4.32: ラベル文字列の変更 (`'メモ' → 'メモ一覧'`)
+- §4.38: 要素自体の存在/非存在 (`<TabsTrigger>` の追加/削除)
+
+両者とも「UI 構造を変える PR では spec も同 PR で更新」が原則。
+
+**適用箇所** (PR #145 hotfix):
+- `e2e/specs/02-project-detail-tabs.spec.ts:96`: `toBeVisible()` → `toHaveCount(0)` に変更
+- 同 spec line 119: `tabNames` 配列から `'ガント'` を削除
+- 同 spec line 146: general user 用 assertion に `toHaveCount(0)` を追加
+
+**関連**: §4.32 (ラベル変更時の漏れ) / §5.16 (DEVELOPER_GUIDE) / DEVELOPER_GUIDE §5.7
+(タブ構造の設計判断).
+
+---
+
 ### 4.31 `[gen-visual]` で baseline を生成しても並列 CI と条件が違って一覧画面は再 fail する
 
 **症状**: PR #111-2 で新規追加した `e2e/visual/customers-screens.spec.ts` の

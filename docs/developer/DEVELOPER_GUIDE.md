@@ -870,6 +870,235 @@ Retrospective の text 限定は「避けたい失敗 / 次に活かす学び」
 - DESIGN.md §23 (核心機能 / 提案型サービス)
 - `src/lib/similarity.ts` の `jaccard` / `unifyProjectTags` (本改修で再利用)
 
+### 5.14 readOnly な edit dialog から fetch する子コンポーネントは認可漏洩 (403 Console エラー) を起こす (fix/attachment-list-non-member-403)
+
+#### 症状
+
+非メンバーが「全リスク」一覧から行クリックでリスク詳細を開くと、画面上に
+「添付の取得に失敗しました」、ブラウザ Console に以下のエラー:
+
+```
+api/attachments?entityType=risk&entityId=...&slot=general
+Failed to load resource: the server responded with a status of 403 ()
+```
+
+§5.10 のエラー情報最小化方針に違反 (Console / Network panel に内部 API の 403 が
+公開される)。
+
+#### 根本原因
+
+`risk-edit-dialog.tsx` / `retrospective-edit-dialog.tsx` / `knowledge-edit-dialog.tsx`
+は `readOnly` prop を受け取り form 領域は disable できる設計だが、子の
+`<AttachmentList>` / `<SingleUrlField>` は **readOnly に関わらず常に mount され、
+mount 直後に GET /api/attachments を発火** する。
+
+- /api/attachments の認可は **非 admin の非メンバーは 403** (§22 添付リンク設計)
+- 「全リスク」横断ビューは readOnly=true で開かれる: メンバー以外も risk を見られる設計
+- 結果: 非メンバーが横断ビュー → リスク詳細 readOnly 開く → 403 → Console エラー
+
+#### 修正
+
+3 dialog 全てで attachment 系子コンポーネントを **`{!readOnly && (...)}` で gating**:
+
+```tsx
+// NG: 常に fetch して非メンバーは 403
+<AttachmentList entityType="risk" entityId={risk.id} canEdit={!readOnly} ... />
+
+// OK: readOnly なら mount せず fetch も行わない
+{!readOnly && (
+  <AttachmentList entityType="risk" entityId={risk.id} canEdit ... />
+)}
+```
+
+これにより:
+- メンバー (プロジェクト個別画面、readOnly=false) → 従来通り表示・編集可
+- 非メンバー (横断ビュー、readOnly=true) → AttachmentList 非表示、API 呼ばれず 403 ゼロ
+
+#### 横展開チェック
+
+`AttachmentList` / `SingleUrlField` を使う箇所をすべて確認:
+
+| 使用箇所 | readOnly 経路 | 対応 |
+|---|---|---|
+| risk-edit-dialog | あり (全リスク横断) | ✓ 本 PR で修正 |
+| retrospective-edit-dialog | あり (全振り返り横断) | ✓ 本 PR で修正 |
+| knowledge-edit-dialog | あり (全ナレッジ横断) | ✓ 本 PR で修正 (SingleUrlField 含む) |
+| project-detail-client (概要タブ) | なし (プロジェクト個別) | 対応不要 |
+| memos-client | 自分のメモのみ表示 | 対応不要 |
+
+#### 汎化ルール
+
+1. **edit dialog に `readOnly` prop がある場合、子の fetch する component は
+   `{!readOnly && ...}` で gating する**。fetch そのものを起こさないことが重要
+   (try/catch で握り潰すだけだと Network/Console には 403 が残る)。
+2. **「権限不足の場合に 403 を返す API」を画面に常時 mount しない**。コンポーネントが
+   `useEffect` / `useCallback` で fetch するパターンは 認可境界の漏洩源になる。
+3. **将来「非メンバーも添付を read できる」緩和** が必要なら、`/api/attachments`
+   route の `authorize(... 'read')` 分岐に visibility=public 添付の許可を追加する
+   (本 PR スコープ外、§22 の認可設計と合わせて再検討)。
+
+#### 関連
+
+- §5.10 (エラー情報最小化方針) — 同じ「Console に余分な 4xx を出さない」観点
+- DESIGN.md §22.5 (添付リンク認可設計)
+
+### 5.15 UI 要素の表示条件を緩和したら mobile viewport で overlap して E2E click が intercept される (fix/quick-ux PR #143 hotfix)
+
+#### 症状
+
+PR #143 (PR-A) の E2E が chromium-mobile project で 2 件 fail:
+
+1. `05-teardown Step 11 (admin プロジェクト削除)`: `TimeoutError: locator.click 10s exceeded`
+   - Playwright のエラーログに `<span>状態変更</span> from <button data-slot="select-trigger">
+     subtree intercepts pointer events`
+2. `dashboard-screens visual: プロジェクト詳細 概要タブ`: `toHaveScreenshot mismatch`
+
+#### 根本原因
+
+PR #143 で `canChangeStatus = isActualPmTl || isSystemAdmin` に緩和し、admin にも
+状態変更 Select (`w-44 = 176px`) が表示されるようになった。ヘッダ右側の flex
+コンテナ:
+
+```tsx
+<div className="flex items-center gap-2">    // ← gap-2 / flex-wrap なし
+  {canChangeStatus && <Select className="w-44">状態変更</Select>}  // 176px
+  {(isActualPmTl || isSystemAdmin) && <Button>編集</Button>}        // ~64px
+  {canDeleteProject && <Button>削除</Button>}                       // ~64px
+</div>
+```
+
+幅合計 ≒ 304px + gap でほぼ 320px。chromium-mobile (390px) viewport では
+ヘッダ左側のプロジェクト名/顧客名と並ぶと幅不足で、**flex-wrap がないため要素が
+横方向に押し出されて重なり**、Playwright の click が「subtree intercepts pointer
+events」で失敗する。
+
+PC (1440px) では幅が十分なため発症せず、admin が状態変更を持たない以前の状態
+では Select が表示されないため発症しなかった (PR #143 由来の新パターン)。
+
+#### 修正
+
+```tsx
+// 旧
+<div className="flex items-center gap-2">
+  ...
+  <SelectTrigger className="w-44">
+
+// 新
+<div className="flex flex-wrap items-center gap-2 justify-end">
+  ...
+  <SelectTrigger className="w-36 md:w-44">  // mobile 144px / PC 176px
+```
+
+- `flex-wrap`: 幅不足時に折り返し → overlap 解消
+- `justify-end`: wrap 後も右寄せキープ
+- Select 幅 mobile 縮小 (w-44 → w-36): 折り返しの発生頻度を軽減
+
+合わせて `[gen-visual]` で `*-chromium-mobile-linux.png` baseline を新レイアウトで
+再生成。
+
+#### 汎化ルール
+
+1. **権限・条件分岐で UI 要素の表示有無を変える PR では、表示が増える側のケースで
+   mobile レイアウトを必ず確認する**。要素 1 つの追加でも mobile では総幅オーバー
+   で overlap する (visible だが click できない) ケースが発生する。
+2. **flex コンテナで複数の操作要素を並べる場合は `flex-wrap` を入れておく**。
+   将来の要素追加に対する保険として、見た目の影響なく overlap を予防できる。
+3. **`w-NN` (絶対幅) を使う Select / ボタンは `w-NN md:w-MM` で mobile / PC を
+   別指定**。`w-44` のような 176px 級の幅は mobile 390px の半分弱を占有するため
+   要素が並ばない。
+4. **権限緩和系 PR が E2E (chromium-mobile) で fail した場合、最初に疑うのは
+   レイアウト overlap**。Playwright のログに「subtree intercepts pointer events」が
+   出ていれば即座にこのパターン。viewport 幅に対する要素合計幅を計算する。
+
+#### 関連
+
+- §4.37 (E2E_LESSONS_LEARNED): chromium-mobile project の testIgnore とは別軸の
+  「mobile viewport 固有の click 失敗」パターン
+- §5.9 (レスポンシブ実装パターン): hidden md:block / md:hidden の DOM 二重化と
+  異なり、本件は同一 DOM 内のレイアウト overlap
+
+### 5.16 ダイアログ全画面トグル (90vw × 90vh) — useDialogFullscreen (feat/dialog-fullscreen-toggle)
+
+#### 背景
+
+リスク / 課題 / 振り返り / ナレッジ / メモの 編集・作成 dialog は文字量が多くなる
+ケースがあり、既定の `max-w-[min(90vw,36rem)]` (PC で 576px 上限) では狭く感じる
+声があった。dialog 上部右側に「全画面」トグルボタンを置き、ON のとき 90vw × 90vh
+(どの画面でも 90%) に拡大する設計に統一する。
+
+#### 設計判断
+
+- **state は dialog ごとにローカル**: sessionStorage に永続化しない。開き直すと
+  既定 (通常表示) に戻る。複数 dialog (例: メモ画面の create + edit) が同時に
+  存在する場合は、それぞれ独立した hook 呼び出しで個別に制御する
+- **`!important` (`!`) 修飾子**: shadcn/ui Dialog の base class
+  (`sm:max-w-[min(90vw,36rem)]`) を上書きするため `!w-[90vw] !max-w-[90vw]
+  !h-[90vh] !max-h-[90vh]` を使う。`max-w` だけでなく `w` も指定しないと幅が
+  狭いままになる
+- **mobile / PC 区別なし**: 「どの画面でも 90%」という要求仕様を貫く。
+  vw/vh 単位なので screen size 自動追従
+
+#### 実装パターン
+
+`@/components/ui/use-dialog-fullscreen.tsx` の hook を呼び出して、返り値の
+`fullscreenClassName` を `<DialogContent>` の className に追記、`<FullscreenToggle />`
+を `<DialogTitle>` の右隣に並べる。
+
+```tsx
+import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+
+const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
+
+<DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto ${fullscreenClassName}`}>
+  <DialogHeader>
+    <div className="flex items-center justify-between gap-2">
+      <DialogTitle>...</DialogTitle>
+      <FullscreenToggle />
+    </div>
+    <DialogDescription>...</DialogDescription>
+  </DialogHeader>
+  ...
+```
+
+#### 同一コンポーネント内で 2 つ以上の dialog がある場合
+
+`memos-client.tsx` のように作成 dialog と編集 dialog を同居させる場合、それぞれ
+独立した state が必要なので **destructure rename を使う**:
+
+```tsx
+const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle }
+  = useDialogFullscreen();
+const { fullscreenClassName: editFsClassName, FullscreenToggle: EditFullscreenToggle }
+  = useDialogFullscreen();
+```
+
+JSX タグ名が大文字始まりで component として解釈されるよう、destructure 時の rename
+で `XxxFullscreenToggle` (PascalCase) に揃える。lowercase 開始の変数名から dot 記法
+で参照する形 (`<createFs.FullscreenToggle />`) は技術的には動くが、destructure rename
+の方が読みやすく安全。
+
+#### 適用済 dialog (9 箇所)
+
+- `src/components/dialogs/risk-edit-dialog.tsx` (リスク・課題 編集)
+- `src/components/dialogs/retrospective-edit-dialog.tsx` (振り返り 編集)
+- `src/components/dialogs/knowledge-edit-dialog.tsx` (ナレッジ 編集)
+- `src/app/(dashboard)/memos/memos-client.tsx` (メモ 作成 + 編集 → 2 hook 呼び出し)
+- `src/app/(dashboard)/projects/[projectId]/risks/risks-client.tsx` (リスク・課題 起票)
+- `src/app/(dashboard)/projects/[projectId]/retrospectives/retrospectives-client.tsx` (振り返り 作成)
+- `src/app/(dashboard)/projects/[projectId]/knowledge/project-knowledge-client.tsx` (ナレッジ 作成)
+- `src/app/(dashboard)/all-memos/all-memos-client.tsx` (公開メモ 詳細 read-only)
+
+#### 横展開ガイド
+
+新規に文字量が多い編集・作成 dialog を追加する場合、本 hook を使って FullscreenToggle
+を組み込むことを推奨する。dialog 上に大きい textarea や複数 textarea を持つ画面が
+対象。短いダイアログ (確認ダイアログ等) には不要。
+
+#### 関連
+
+- §5.7 (ダイアログサイズ・スクロール規約): 既定の max-w/max-h は維持し、本機能は
+  「ユーザの能動操作で一時的に拡大する」追加レイヤとして共存
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -1310,6 +1539,38 @@ Q2. 変更は意図通り (仕様を満たす) か?
 - shadcn/ui のバージョンアップや Tailwind 設定変更などで **全テーマの配色が微ズレ** する場合あり
 - `[gen-visual]` で一括再生成 → PR diff で全 PNG の差分をレビュアが一通り確認
 - 事前に事前共有 (スクショを Slack 等で) しておくとレビュー負担が軽い
+
+#### 「最初の push に `[gen-visual]` を含める」運用ルール (PR #143 / PR #144 連続漏れ事例より)
+
+UI レイアウト変更を含む PR では **最初の commit message に `[gen-visual]` を含める**
+ことで E2E 失敗 → hotfix → 再 push の 1 サイクルを節約できる。
+
+**判定条件 (どれかに該当したら最初から含める)**:
+- 既存の jsx 構造 (要素追加 / 順序変更 / className 変更) に手を入れた
+- 権限分岐や条件レンダリングを変えた (新しい UI 要素が表示される側のケースを生む)
+- shadcn/ui コンポーネントを追加・差し替えた
+
+**漏れた場合の連鎖**:
+1. PR push → E2E が visual mismatch で fail (3〜5 分浪費)
+2. 「あ、baseline 古いままだった」と気付く
+3. 空 commit `[gen-visual]` を push → baseline workflow 再走 (~3 分)
+4. baseline auto-commit → E2E 再走 (~5 分)
+
+事例:
+- **PR #143**: admin に状態変更 Select が新規表示 → 概要タブ baseline ズレ
+- **PR #144**: 概要タブを 11 フィールド + 3 タグ列追加 → 同上 baseline ズレ
+
+両者とも「最初から `[gen-visual]` を含めれば 1 サイクルで完了」だったが、
+後追い対応で 2 サイクル消費した。
+
+**判断のフローチャート**:
+
+```
+新規 PR を作成する直前 →
+  Q: jsx の構造変更 / className 変更 / 権限緩和 / コンポーネント追加 のいずれかをしたか?
+  YES → 最初の commit message に [gen-visual] を含める
+  NO  → 含めない (誤発火を防ぐ意図、文書/test のみの PR では baseline 不変)
+```
 
 ### 9.7 E2E テスト失敗の調査手順 (PR #90 運用メモ)
 
@@ -1951,3 +2212,5 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-25 | §5.11.1 再発事例 2 例目 (PR #138 hotfix の hotfix)。前回の教訓 (commit 前 tsc) を直後 commit で守らず、`recordAuditLog` の引数名を `before/after` (実際は `beforeValue/afterValue`) と取り違えた別種の型エラーで CI / E2E が再 fail。**「修正」commit でも tsc --noEmit を必ず回す + API シグネチャは記憶ベースでなく Read で確認 + `pnpm lint` clean のみを根拠にした「検証完了」報告を禁止** という追加運用ルールを追記 |
 | 2026-04-25 | §5.12 新設 (PR #138 後 hotfix)。Zod の `.optional()` は `null` を拒否するため、DB nullable 列に対する schema は **`.nullable().optional()` 必須**。risk-edit-dialog の visibility 編集時に「Invalid input: expected string, received null」400 が発生していた根本原因。risk/knowledge/retro/project/estimate validator を全て横展開修正、回帰防止の単体テスト追加 (assigneeId=null / deadline=null 受理、空文字は依然拒否)。service 層の `new Date(null)` epoch 化バグも併せて修正 |
 | 2026-04-25 | §5.13 新設 (fix/suggestion-tag-parity)。「参考」タブの過去 Issue / 過去 Retrospective が **tagScore=0 固定** でナレッジと同等の tag-aware マッチングが効いていなかった問題。両者は DB に独自タグ列を持たないが、**親 Project のタグを proxy** として `jaccard` 計算に使う改修で Knowledge と挙動統一。schema 変更・migration 不要。回帰防止 unit test 2 件追加 |
+| 2026-04-26 | §5.14 新設 (fix/attachment-list-non-member-403)。非メンバーが「全リスク」一覧から行クリックでリスク詳細を開くと `/api/attachments?entityType=risk&...` が 403 を返し Console に露出 (§5.10 違反)。risk/retrospective/knowledge の 3 dialog で `<AttachmentList>` / `<SingleUrlField>` を **`{!readOnly && ...}` で gating** し、readOnly 時は mount せず fetch も発火させない構造に変更。汎化ルール「edit dialog に readOnly があるなら fetch する子 component は必ず gating」を §5.14 で明文化 |
+| 2026-04-26 | §5.15 新設 + KDD 仕組み強化 (fix/quick-ux PR #143 E2E hotfix)。**症状**: admin 状態変更プルダウン表示緩和で chromium-mobile が flex overlap → click intercept で fail。**修正**: flex-wrap + Select 幅 mobile 縮小。**仕組み穴塞ぎ**: 当初 commit message にしか書かず docs 追記漏れ → ユーザ指摘で発覚。CLAUDE.md KDD 原則に「commit message ≠ 常設ナレッジ」「対象範囲はテスト失敗だけでない」を追加、Stop hook prompt に **項目 6「ナレッジ追記チェック (KDD Step 4/6)」** を新設し漏れを構造的に防止 |

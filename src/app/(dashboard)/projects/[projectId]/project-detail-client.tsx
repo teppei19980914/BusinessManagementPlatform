@@ -53,7 +53,6 @@ import { SingleUrlField } from '@/components/attachments/single-url-field';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import { EstimatesClient } from './estimates/estimates-client';
 import { TasksClient } from './tasks/tasks-client';
-import { GanttClient } from './gantt/gantt-client';
 import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
 import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
@@ -120,18 +119,23 @@ export function ProjectDetailClient({
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
-  // 概要タブ内ヘッダの操作ボタン権限 (PR #58):
-  //   状態変更 / 編集: 実際のプロジェクト PM/TL のみ (systemRole='admin' は除外)
-  //   削除: システム管理者のみ (pm_tl は除外)
-  //   → 運用作業 (PM/TL 責務) と プラットフォーム管理 (admin 責務) を明確に分離
-  //   注: checkMembership が admin を projectRole='pm_tl' にマップするため、
-  //       systemRole !== 'admin' で「真の pm_tl メンバー」に限定する
+  // 概要タブ内ヘッダの操作ボタン権限 (PR #58 → fix/quick-ux item 1 で改修):
+  //   状態変更 / 編集: 実際のプロジェクト PM/TL **または** システム管理者
+  //   削除: システム管理者のみ (pm_tl は除外、プラットフォーム管理責務の分離は維持)
+  //
+  //   2026-04-26 ユーザ報告「状態変更プルダウンがなくなった」を受けて、admin も
+  //   状態変更できるよう緩和。元の設計 (PM/TL のみ) は運用責務分離の意図だったが、
+  //   admin が代行できないと運用が詰まるケースが多発したため。
+  //   注: checkMembership が admin を projectRole='pm_tl' にマップする挙動は維持。
   const isActualPmTl = projectRole === 'pm_tl' && systemRole !== 'admin';
   const isSystemAdmin = systemRole === 'admin';
-  const canChangeStatus = isActualPmTl;
+  const canChangeStatus = isActualPmTl || isSystemAdmin;
   const canDeleteProject = isSystemAdmin;
   const nextStatuses = NEXT_STATUSES[project.status] || [];
 
+  // feat/overview-tab-detail (PR-B item 3+4): 編集 dialog を 11 フィールド全て編集可能に拡張。
+  // タグ入力はカンマ区切り文字列で扱い (parseTagsInput を /lib/parse-tags から流用)、
+  // submit 時に string[] に変換する。
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     name: project.name,
@@ -142,6 +146,9 @@ export function ProjectDetailClient({
     devMethod: project.devMethod,
     plannedStartDate: project.plannedStartDate,
     plannedEndDate: project.plannedEndDate,
+    businessDomainTagsInput: project.businessDomainTags.join(', '),
+    techStackTagsInput: project.techStackTags.join(', '),
+    processTagsInput: project.processTags.join(', '),
   });
   const [editError, setEditError] = useState('');
 
@@ -159,6 +166,9 @@ export function ProjectDetailClient({
       devMethod: project.devMethod,
       plannedStartDate: project.plannedStartDate,
       plannedEndDate: project.plannedEndDate,
+      businessDomainTagsInput: project.businessDomainTags.join(', '),
+      techStackTagsInput: project.techStackTags.join(', '),
+      processTagsInput: project.processTags.join(', '),
     });
     setEditError('');
     setIsEditOpen(true);
@@ -271,11 +281,22 @@ export function ProjectDetailClient({
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
     setEditError('');
+    // feat/overview-tab-detail (PR-B): タグ入力欄 (CSV/読点区切り) を string[] に変換して送信。
+    // parseTagsInput は projects-client.tsx と同じ規約 (DEVELOPER_GUIDE §5.10.2 全角読点も受容)。
+    const parseTagsInput = (s: string): string[] =>
+      s.split(/[,、]/).map((t) => t.trim()).filter((t) => t.length > 0);
+    const { businessDomainTagsInput, techStackTagsInput, processTagsInput, ...rest } = editForm;
+    const body = {
+      ...rest,
+      businessDomainTags: parseTagsInput(businessDomainTagsInput),
+      techStackTags: parseTagsInput(techStackTagsInput),
+      processTags: parseTagsInput(processTagsInput),
+    };
     const res = await withLoading(() =>
       fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify(body),
       }),
     );
     if (!res.ok) {
@@ -347,17 +368,22 @@ export function ProjectDetailClient({
           </div>
           <p className="mt-1 text-muted-foreground">{project.customerName}</p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* fix/quick-ux hotfix: PR-A で admin に状態変更 Select が出るようになった結果、
+            mobile (390px) で flex 子要素 (Select w-44 + 編集 + 削除) が幅不足で重なり、
+            削除ボタンが intercept されて E2E (05-teardown Step 11 chromium-mobile) が click
+            timeout で fail。flex-wrap 許容 + Select 幅を mobile 短縮 (w-36) で解消。
+            PC (md+) では従来通り w-44 の幅を維持。 */}
+        <div className="flex flex-wrap items-center gap-2 justify-end">
           {/*
             概要タブ内のみ表示 (PR #58):
-              - 状態変更 (ラベルから "..." を削除): PM/TL のみ
-              - 編集: PM/TL のみ
+              - 状態変更 (ラベルから "..." を削除): PM/TL or admin (PR-A で緩和)
+              - 編集: PM/TL or admin (PR-A で緩和)
               - 削除: システム管理者のみ
             activeTab === 'overview' で他タブ閲覧時には非表示化する
           */}
           {activeTab === 'overview' && canChangeStatus && nextStatuses.length > 0 && (
             <Select onValueChange={handleStatusChange} disabled={isChangingStatus}>
-              <SelectTrigger className="w-44">
+              <SelectTrigger className="w-36 md:w-44">
                 <SelectValue placeholder="状態変更" />
               </SelectTrigger>
               <SelectContent>
@@ -369,7 +395,7 @@ export function ProjectDetailClient({
               </SelectContent>
             </Select>
           )}
-          {activeTab === 'overview' && isActualPmTl && (
+          {activeTab === 'overview' && (isActualPmTl || isSystemAdmin) && (
             <>
               <Dialog open={isEditOpen} onOpenChange={handleEditOpenChange}>
                 <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{t('edit')}</DialogTrigger>
@@ -405,6 +431,15 @@ export function ProjectDetailClient({
                       <Label>目的</Label>
                       <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.purpose} onChange={(e) => setEditForm({ ...editForm, purpose: e.target.value })} rows={3} required />
                     </div>
+                    {/* feat/overview-tab-detail (PR-B): 背景 / スコープも編集可能に追加 (旧仕様は欠落していた) */}
+                    <div className="space-y-2">
+                      <Label>背景</Label>
+                      <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.background} onChange={(e) => setEditForm({ ...editForm, background: e.target.value })} rows={3} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>スコープ</Label>
+                      <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.scope} onChange={(e) => setEditForm({ ...editForm, scope: e.target.value })} rows={3} required />
+                    </div>
                     <div className="space-y-2">
                       <Label>開発方式</Label>
                       <select value={editForm.devMethod} onChange={(e) => setEditForm({ ...editForm, devMethod: e.target.value })} className={nativeSelectClass}>
@@ -420,6 +455,19 @@ export function ProjectDetailClient({
                         <Label>終了予定日</Label>
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} required hideClear />
                       </div>
+                    </div>
+                    {/* feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2) */}
+                    <div className="space-y-2">
+                      <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
+                      <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder="例: 金融, 基幹業務, 会計" maxLength={500} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
+                      <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder="例: React, Next.js, TypeScript" maxLength={500} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
+                      <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder="例: 要件定義, 設計, 開発" maxLength={500} />
                     </div>
                     <Button type="submit" className="w-full">更新</Button>
                   </form>
@@ -441,8 +489,8 @@ export function ProjectDetailClient({
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview">概要</TabsTrigger>
           {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
+          {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止し WBS 管理タブ内に統合 */}
           <TabsTrigger value="tasks">WBS管理</TabsTrigger>
-          <TabsTrigger value="gantt">ガント</TabsTrigger>
           <TabsTrigger value="risks">リスク一覧</TabsTrigger>
           <TabsTrigger value="issues">課題一覧</TabsTrigger>
           <TabsTrigger value="retrospectives">振り返り一覧</TabsTrigger>
@@ -459,12 +507,27 @@ export function ProjectDetailClient({
           )}
         </TabsList>
 
-        {/* 概要タブ（サーバで既に取得済みの project のみ表示、fetch 不要）*/}
+        {/* 概要タブ（サーバで既に取得済みの project のみ表示、fetch 不要）
+            feat/overview-tab-detail (PR-B item 3+4): 作成時 11 フィールド全表示 + click-to-edit。
+            isActualPmTl が true のセクションは hover でハイライトし、click で編集 dialog を開く。
+            (admin 許可は PR-A 側のスコープなので、本 PR では isActualPmTl ベース) */}
         <TabsContent value="overview" className="mt-4 space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">基本情報</h3>
               <dl className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">プロジェクト名</dt>
+                  <dd className="font-medium">{project.name}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">顧客</dt>
+                  <dd>{project.customerName}</dd>
+                </div>
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">開発方式</dt>
                   <dd>{DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}</dd>
@@ -479,15 +542,27 @@ export function ProjectDetailClient({
                 </div>
               </dl>
             </div>
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">目的</h3>
               <p className="whitespace-pre-wrap text-sm text-foreground">{project.purpose}</p>
             </div>
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">背景</h3>
               <p className="whitespace-pre-wrap text-sm text-foreground">{project.background}</p>
             </div>
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">スコープ</h3>
               <p className="whitespace-pre-wrap text-sm text-foreground">{project.scope}</p>
               {project.outOfScope && (
@@ -498,8 +573,63 @@ export function ProjectDetailClient({
               )}
             </div>
           </div>
+          {/* feat/overview-tab-detail (PR-B item 3): 業務ドメイン/技術スタック/工程の 3 タグセクション (新設) */}
+          <div className="grid gap-6 md:grid-cols-3">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
+              <h3 className="mb-2 font-semibold">業務ドメインタグ</h3>
+              {project.businessDomainTags.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {project.businessDomainTags.map((t) => (
+                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">未設定</p>
+              )}
+            </div>
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
+              <h3 className="mb-2 font-semibold">技術スタックタグ</h3>
+              {project.techStackTags.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {project.techStackTags.map((t) => (
+                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">未設定</p>
+              )}
+            </div>
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
+              <h3 className="mb-2 font-semibold">工程タグ</h3>
+              {project.processTags.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {project.processTags.map((t) => (
+                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">未設定</p>
+              )}
+            </div>
+          </div>
           {project.notes && (
-            <div className="rounded-lg border p-4">
+            <div
+              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
+              onClick={isActualPmTl ? openEditDialog : undefined}
+              title={isActualPmTl ? 'クリックで編集' : undefined}
+            >
               <h3 className="mb-2 font-semibold">備考</h3>
               <p className="whitespace-pre-wrap text-sm text-foreground">{project.notes}</p>
             </div>
@@ -562,22 +692,8 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
-        {/* ガントチャートタブ（tree を渡して階層構造を描画・WP 折りたたみ + 担当者フィルタ対応）*/}
-        <TabsContent value="gantt" className="mt-4">
-          <LazyTabContent state={tasks.state}>
-            {(tasksData) => (
-              <LazyTabContent state={members.state}>
-                {(membersData) => (
-                  <GanttClient
-                    projectId={project.id}
-                    tasks={tasksData.tree}
-                    members={membersData}
-                  />
-                )}
-              </LazyTabContent>
-            )}
-          </LazyTabContent>
-        </TabsContent>
+        {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止。
+            WBS タブ (TasksClient) 内のトグルボタンで Gantt 表示を切替える設計に移行。 */}
 
         {/* リスクタブ (PR #60 #1: risk のみ表示) */}
         <TabsContent value="risks" className="mt-4">
