@@ -870,6 +870,78 @@ Retrospective の text 限定は「避けたい失敗 / 次に活かす学び」
 - DESIGN.md §23 (核心機能 / 提案型サービス)
 - `src/lib/similarity.ts` の `jaccard` / `unifyProjectTags` (本改修で再利用)
 
+### 5.14 readOnly な edit dialog から fetch する子コンポーネントは認可漏洩 (403 Console エラー) を起こす (fix/attachment-list-non-member-403)
+
+#### 症状
+
+非メンバーが「全リスク」一覧から行クリックでリスク詳細を開くと、画面上に
+「添付の取得に失敗しました」、ブラウザ Console に以下のエラー:
+
+```
+api/attachments?entityType=risk&entityId=...&slot=general
+Failed to load resource: the server responded with a status of 403 ()
+```
+
+§5.10 のエラー情報最小化方針に違反 (Console / Network panel に内部 API の 403 が
+公開される)。
+
+#### 根本原因
+
+`risk-edit-dialog.tsx` / `retrospective-edit-dialog.tsx` / `knowledge-edit-dialog.tsx`
+は `readOnly` prop を受け取り form 領域は disable できる設計だが、子の
+`<AttachmentList>` / `<SingleUrlField>` は **readOnly に関わらず常に mount され、
+mount 直後に GET /api/attachments を発火** する。
+
+- /api/attachments の認可は **非 admin の非メンバーは 403** (§22 添付リンク設計)
+- 「全リスク」横断ビューは readOnly=true で開かれる: メンバー以外も risk を見られる設計
+- 結果: 非メンバーが横断ビュー → リスク詳細 readOnly 開く → 403 → Console エラー
+
+#### 修正
+
+3 dialog 全てで attachment 系子コンポーネントを **`{!readOnly && (...)}` で gating**:
+
+```tsx
+// NG: 常に fetch して非メンバーは 403
+<AttachmentList entityType="risk" entityId={risk.id} canEdit={!readOnly} ... />
+
+// OK: readOnly なら mount せず fetch も行わない
+{!readOnly && (
+  <AttachmentList entityType="risk" entityId={risk.id} canEdit ... />
+)}
+```
+
+これにより:
+- メンバー (プロジェクト個別画面、readOnly=false) → 従来通り表示・編集可
+- 非メンバー (横断ビュー、readOnly=true) → AttachmentList 非表示、API 呼ばれず 403 ゼロ
+
+#### 横展開チェック
+
+`AttachmentList` / `SingleUrlField` を使う箇所をすべて確認:
+
+| 使用箇所 | readOnly 経路 | 対応 |
+|---|---|---|
+| risk-edit-dialog | あり (全リスク横断) | ✓ 本 PR で修正 |
+| retrospective-edit-dialog | あり (全振り返り横断) | ✓ 本 PR で修正 |
+| knowledge-edit-dialog | あり (全ナレッジ横断) | ✓ 本 PR で修正 (SingleUrlField 含む) |
+| project-detail-client (概要タブ) | なし (プロジェクト個別) | 対応不要 |
+| memos-client | 自分のメモのみ表示 | 対応不要 |
+
+#### 汎化ルール
+
+1. **edit dialog に `readOnly` prop がある場合、子の fetch する component は
+   `{!readOnly && ...}` で gating する**。fetch そのものを起こさないことが重要
+   (try/catch で握り潰すだけだと Network/Console には 403 が残る)。
+2. **「権限不足の場合に 403 を返す API」を画面に常時 mount しない**。コンポーネントが
+   `useEffect` / `useCallback` で fetch するパターンは 認可境界の漏洩源になる。
+3. **将来「非メンバーも添付を read できる」緩和** が必要なら、`/api/attachments`
+   route の `authorize(... 'read')` 分岐に visibility=public 添付の許可を追加する
+   (本 PR スコープ外、§22 の認可設計と合わせて再検討)。
+
+#### 関連
+
+- §5.10 (エラー情報最小化方針) — 同じ「Console に余分な 4xx を出さない」観点
+- DESIGN.md §22.5 (添付リンク認可設計)
+
 ### 5.15 UI 要素の表示条件を緩和したら mobile viewport で overlap して E2E click が intercept される (fix/quick-ux PR #143 hotfix)
 
 #### 症状
@@ -2058,4 +2130,5 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-25 | §5.11.1 再発事例 2 例目 (PR #138 hotfix の hotfix)。前回の教訓 (commit 前 tsc) を直後 commit で守らず、`recordAuditLog` の引数名を `before/after` (実際は `beforeValue/afterValue`) と取り違えた別種の型エラーで CI / E2E が再 fail。**「修正」commit でも tsc --noEmit を必ず回す + API シグネチャは記憶ベースでなく Read で確認 + `pnpm lint` clean のみを根拠にした「検証完了」報告を禁止** という追加運用ルールを追記 |
 | 2026-04-25 | §5.12 新設 (PR #138 後 hotfix)。Zod の `.optional()` は `null` を拒否するため、DB nullable 列に対する schema は **`.nullable().optional()` 必須**。risk-edit-dialog の visibility 編集時に「Invalid input: expected string, received null」400 が発生していた根本原因。risk/knowledge/retro/project/estimate validator を全て横展開修正、回帰防止の単体テスト追加 (assigneeId=null / deadline=null 受理、空文字は依然拒否)。service 層の `new Date(null)` epoch 化バグも併せて修正 |
 | 2026-04-25 | §5.13 新設 (fix/suggestion-tag-parity)。「参考」タブの過去 Issue / 過去 Retrospective が **tagScore=0 固定** でナレッジと同等の tag-aware マッチングが効いていなかった問題。両者は DB に独自タグ列を持たないが、**親 Project のタグを proxy** として `jaccard` 計算に使う改修で Knowledge と挙動統一。schema 変更・migration 不要。回帰防止 unit test 2 件追加 |
+| 2026-04-26 | §5.14 新設 (fix/attachment-list-non-member-403)。非メンバーが「全リスク」一覧から行クリックでリスク詳細を開くと `/api/attachments?entityType=risk&...` が 403 を返し Console に露出 (§5.10 違反)。risk/retrospective/knowledge の 3 dialog で `<AttachmentList>` / `<SingleUrlField>` を **`{!readOnly && ...}` で gating** し、readOnly 時は mount せず fetch も発火させない構造に変更。汎化ルール「edit dialog に readOnly があるなら fetch する子 component は必ず gating」を §5.14 で明文化 |
 | 2026-04-26 | §5.15 新設 + KDD 仕組み強化 (fix/quick-ux PR #143 E2E hotfix)。**症状**: admin 状態変更プルダウン表示緩和で chromium-mobile が flex overlap → click intercept で fail。**修正**: flex-wrap + Select 幅 mobile 縮小。**仕組み穴塞ぎ**: 当初 commit message にしか書かず docs 追記漏れ → ユーザ指摘で発覚。CLAUDE.md KDD 原則に「commit message ≠ 常設ナレッジ」「対象範囲はテスト失敗だけでない」を追加、Stop hook prompt に **項目 6「ナレッジ追記チェック (KDD Step 4/6)」** を新設し漏れを構造的に防止 |

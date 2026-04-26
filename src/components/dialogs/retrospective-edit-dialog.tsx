@@ -143,13 +143,17 @@ export function RetrospectiveEditDialog({
             </div>
           ))}
           </fieldset>
-          {/* PR #64 Phase 2: 議事録・発表資料等の関連 URL */}
-          <AttachmentList
-            entityType="retrospective"
-            entityId={retro.id}
-            canEdit={!readOnly}
-            label="関連 URL"
-          />
+          {/* PR #64 Phase 2: 議事録・発表資料等の関連 URL。
+              fix/attachment-list-non-member-403: readOnly モード時は非メンバーが多数のため
+              attachment fetch で 403 が出る (§5.10 違反)。readOnly では非表示にする。 */}
+          {!readOnly && (
+            <AttachmentList
+              entityType="retrospective"
+              entityId={retro.id}
+              canEdit
+              label="関連 URL"
+            />
+          )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>
