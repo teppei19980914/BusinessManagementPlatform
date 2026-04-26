@@ -181,21 +181,28 @@ export function KnowledgeEditDialog({
             />
           </div>
           </fieldset>
-          {/* PR #64 Phase 2: 一次情報源 URL (単数) + 参考リンク (複数) */}
-          <SingleUrlField
-            entityType="knowledge"
-            entityId={knowledge.id}
-            slot="source"
-            canEdit={!readOnly}
-            label="一次情報源 URL"
-            defaultDisplayName="公式ドキュメント"
-          />
-          <AttachmentList
-            entityType="knowledge"
-            entityId={knowledge.id}
-            canEdit={!readOnly}
-            label="参考リンク"
-          />
+          {/* PR #64 Phase 2: 一次情報源 URL (単数) + 参考リンク (複数)。
+              fix/attachment-list-non-member-403: readOnly モード時は非メンバーが多数のため
+              attachment fetch で 403 が出る (§5.10 違反)。readOnly では非表示にする。
+              SingleUrlField も同じ /api/attachments を叩くため同じ理由で非表示。 */}
+          {!readOnly && (
+            <>
+              <SingleUrlField
+                entityType="knowledge"
+                entityId={knowledge.id}
+                slot="source"
+                canEdit
+                label="一次情報源 URL"
+                defaultDisplayName="公式ドキュメント"
+              />
+              <AttachmentList
+                entityType="knowledge"
+                entityId={knowledge.id}
+                canEdit
+                label="参考リンク"
+              />
+            </>
+          )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>
