@@ -117,15 +117,17 @@ export function ProjectDetailClient({
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
-  // 概要タブ内ヘッダの操作ボタン権限 (PR #58):
-  //   状態変更 / 編集: 実際のプロジェクト PM/TL のみ (systemRole='admin' は除外)
-  //   削除: システム管理者のみ (pm_tl は除外)
-  //   → 運用作業 (PM/TL 責務) と プラットフォーム管理 (admin 責務) を明確に分離
-  //   注: checkMembership が admin を projectRole='pm_tl' にマップするため、
-  //       systemRole !== 'admin' で「真の pm_tl メンバー」に限定する
+  // 概要タブ内ヘッダの操作ボタン権限 (PR #58 → fix/quick-ux item 1 で改修):
+  //   状態変更 / 編集: 実際のプロジェクト PM/TL **または** システム管理者
+  //   削除: システム管理者のみ (pm_tl は除外、プラットフォーム管理責務の分離は維持)
+  //
+  //   2026-04-26 ユーザ報告「状態変更プルダウンがなくなった」を受けて、admin も
+  //   状態変更できるよう緩和。元の設計 (PM/TL のみ) は運用責務分離の意図だったが、
+  //   admin が代行できないと運用が詰まるケースが多発したため。
+  //   注: checkMembership が admin を projectRole='pm_tl' にマップする挙動は維持。
   const isActualPmTl = projectRole === 'pm_tl' && systemRole !== 'admin';
   const isSystemAdmin = systemRole === 'admin';
-  const canChangeStatus = isActualPmTl;
+  const canChangeStatus = isActualPmTl || isSystemAdmin;
   const canDeleteProject = isSystemAdmin;
   const nextStatuses = NEXT_STATUSES[project.status] || [];
 
@@ -333,17 +335,22 @@ export function ProjectDetailClient({
           </div>
           <p className="mt-1 text-muted-foreground">{project.customerName}</p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* fix/quick-ux hotfix: PR-A で admin に状態変更 Select が出るようになった結果、
+            mobile (390px) で flex 子要素 (Select w-44 + 編集 + 削除) が幅不足で重なり、
+            削除ボタンが intercept されて E2E (05-teardown Step 11 chromium-mobile) が click
+            timeout で fail。flex-wrap 許容 + Select 幅を mobile 短縮 (w-36) で解消。
+            PC (md+) では従来通り w-44 の幅を維持。 */}
+        <div className="flex flex-wrap items-center gap-2 justify-end">
           {/*
             概要タブ内のみ表示 (PR #58):
-              - 状態変更 (ラベルから "..." を削除): PM/TL のみ
-              - 編集: PM/TL のみ
+              - 状態変更 (ラベルから "..." を削除): PM/TL or admin (PR-A で緩和)
+              - 編集: PM/TL or admin (PR-A で緩和)
               - 削除: システム管理者のみ
             activeTab === 'overview' で他タブ閲覧時には非表示化する
           */}
           {activeTab === 'overview' && canChangeStatus && nextStatuses.length > 0 && (
             <Select onValueChange={handleStatusChange} disabled={isChangingStatus}>
-              <SelectTrigger className="w-44">
+              <SelectTrigger className="w-36 md:w-44">
                 <SelectValue placeholder="状態変更" />
               </SelectTrigger>
               <SelectContent>
@@ -355,7 +362,7 @@ export function ProjectDetailClient({
               </SelectContent>
             </Select>
           )}
-          {activeTab === 'overview' && isActualPmTl && (
+          {activeTab === 'overview' && (isActualPmTl || isSystemAdmin) && (
             <>
               <Dialog open={isEditOpen} onOpenChange={handleEditOpenChange}>
                 <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{t('edit')}</DialogTrigger>
