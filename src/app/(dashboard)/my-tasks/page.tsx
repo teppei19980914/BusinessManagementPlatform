@@ -22,5 +22,14 @@ export default async function MyTasksPage() {
   // React error #418 ハイドレーションミスマッチ対策)。
   const today = new Date().toISOString().split('T')[0];
 
-  return <MyTasksClient projectGroups={projectGroups} today={today} />;
+  // feat/gantt-tab-restructure (PR-C item 7): Gantt 表示で担当者フィルタの初期値に
+  // 自分が選ばれている必要があるため、currentUserId と userName を Gantt 用に渡す。
+  return (
+    <MyTasksClient
+      projectGroups={projectGroups}
+      today={today}
+      currentUserId={session.user.id}
+      currentUserName={session.user.name ?? 'me'}
+    />
+  );
 }

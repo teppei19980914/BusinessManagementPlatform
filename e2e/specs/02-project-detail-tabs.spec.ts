@@ -6,9 +6,12 @@
  *   表示されること。admin と project member (general) で権限差分の要点を検証する。
  *
  * 対象タブ (Tabs: Radix UI, role='tab' / role='tabpanel'):
- *   概要 / 見積もり (admin のみ) / WBS管理 / ガント /
+ *   概要 / 見積もり (admin のみ) / WBS管理 /
  *   リスク一覧 / 課題一覧 / 振り返り一覧 / ナレッジ一覧 /
  *   参考 / メンバー (admin/pm_tl のみ)
+ *
+ * feat/gantt-tab-restructure (PR-C item 6): ガント専用タブは WBS 管理タブ内の
+ * 「ガントチャートを表示」トグルに統合され、独立した role='tab' は存在しない。
  *
  * CRUD 検証ではなく render smoke に絞る (CRUD は後続 PR)。
  *
@@ -93,7 +96,8 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '見積もり' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'ガント' })).toBeVisible();
+    // feat/gantt-tab-restructure (PR-C item 6): ガント専用タブは WBS 管理タブ内に統合
+    await expect(page.getByRole('tab', { name: 'ガント' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
@@ -115,8 +119,9 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // ライブラリ固有の data 属性ではなく、W3C ARIA 標準の aria-selected で判定する
     // (Radix UI の data-state="active" とは異なるため、過去に Radix 想定で書いて
     // 失敗した → PR #93 hotfix 3)。
+    // feat/gantt-tab-restructure (PR-C item 6): ガントタブは WBS 管理タブ内のトグルに統合済
     const tabNames = [
-      '概要', '見積もり', 'WBS管理', 'ガント',
+      '概要', '見積もり', 'WBS管理',
       'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考',
     ];
     for (const name of tabNames) {
@@ -143,7 +148,6 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // member ロールは project:read 範囲のタブのみ表示される
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'ガント' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
@@ -152,6 +156,8 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // admin 専用のタブは表示されないこと
     await expect(page.getByRole('tab', { name: '見積もり' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'メンバー' })).toHaveCount(0);
+    // feat/gantt-tab-restructure (PR-C item 6): ガント専用タブは廃止 (WBS 管理タブ内に統合)
+    await expect(page.getByRole('tab', { name: 'ガント' })).toHaveCount(0);
     await snapshotStep(page, 'project-detail-general-member-view');
   });
 });

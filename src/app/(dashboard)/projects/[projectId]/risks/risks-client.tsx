@@ -101,7 +101,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     impact: 'medium',
     likelihood: 'medium',
     // PR #63: 優先度は UI から撤去 (将来 impact × likelihood から自動算出予定)
-    assigneeId: '',
+    // fix/quick-ux item 8: デフォルト担当者=自分 (起票者本人)。プルダウンで変更可。
+    assigneeId: currentUserId,
     visibility: 'draft',
     riskNature: 'threat',
   });
@@ -208,7 +209,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       content: '',
       impact: 'medium',
       likelihood: 'medium',
-      assigneeId: '',
+      // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット (上の create 初期値と整合)
+      assigneeId: currentUserId,
       visibility: 'draft',
       riskNature: 'threat',
     });
