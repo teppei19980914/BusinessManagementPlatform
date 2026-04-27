@@ -1638,8 +1638,75 @@ GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-c
 
 新しい E2E spec を書く前 / CI で E2E が赤になった時は、まず
 **[docs/E2E_LESSONS_LEARNED.md](./E2E_LESSONS_LEARNED.md)** を一読する。
-PR #90 以降の hotfix から得た **25 個の罠パターン** (§4.1〜§4.25) と
+PR #90 以降の hotfix から得た **40 個超の罠パターン** (§4.1〜§4.40) と
 **アサーション戦略**が集約されている。
+
+### 9.3.6 Click 後の navigation 完了待機: 3 つの race パターンと使い分け (PR #154 で整理)
+
+E2E spec で「click → URL 遷移 → 遷移後 DOM を expect」という流れを書くとき、
+**click() の resolve タイミングと UI 遷移完了タイミングの race** に踏み込みやすい。
+本プロジェクトでは PR #114 / #144 / #154 で踏み抜いた 3 つの race パターンが整理されている。
+それぞれ性質が異なるため**修正方法も異なる**。新規 spec を書くときは下記マトリクスで
+適切なパターンを選ぶこと。
+
+| # | パターン | 症状 | 原因 | 修正方法 | 関連 LESSONS |
+|---|---|---|---|---|---|
+| 1 | **router.refresh() race** | mutation 後の一覧再取得が間に合わず古い行が残る | `router.refresh()` は **fire-and-forget** で await できない | mutation 完了後に `await page.reload({ waitUntil: 'networkidle' })` で確定 | §4.20 / §4.33 |
+| 2 | **長い click chain race** | API mutation を伴う click の後に複数 await が連なって不安定 | 各 await の間に Server Action / refetch が走り、状態が漂流 | click 前に `page.waitForResponse(...)` を**予約**してから click → response を await | §4.19 |
+| 3 | **Next.js Link click race** | `getByRole('link').click()` 直後の `waitForLoadState('networkidle')` が **0ms で即 resolve** し、navigation 未開始の古いページで expect が timeout | client-side navigation は **イベントループ非同期** のため click() resolve 直後はまだ network 層に request が出ていない | `Promise.all([page.waitForURL(/regex/), link.click()])` で navigation 完了を確実に anchor | §4.40 (PR #154) |
+
+**判別フロー** (どのパターンか見分けるための質問):
+
+```text
+Q1: その click は URL 遷移を起こすか?
+  YES → Q2 へ
+  NO (= 同一 URL の状態変化のみ) → ① router.refresh race を疑う
+
+Q2: 遷移は <Link> による client-side navigation か (vs <a href> や form submit)?
+  YES → ③ Next.js Link click race パターン
+  NO  → 通常の navigation。waitForLoadState で十分なことが多い
+
+Q3: click 後に複数の API 呼び出しを伴う複雑な flow か?
+  YES → ② 長い click chain race も併発しうる。waitForResponse で API ごとに区切る
+```
+
+**コード例**:
+
+```ts
+// ❌ アンチパターン (3 つすべての race を踏みうる)
+await page.getByRole('link', { name: '...' }).first().click();
+await page.waitForLoadState('networkidle');  // 0ms 即 resolve のリスク
+await expect(page.getByRole('heading', { name: '...' })).toBeVisible();
+
+// ✅ Pattern 3 (Link click race を回避)
+await Promise.all([
+  page.waitForURL(/\/customers\/[a-f0-9-]+/),
+  page.getByRole('link', { name: '...' }).first().click(),
+]);
+await expect(page.getByRole('heading', { name: '...' })).toBeVisible();
+
+// ✅ Pattern 2 (API 経由 mutation の後に DOM 検証)
+const apiResponse = page.waitForResponse(
+  (r) => r.url().endsWith('/api/customers') && r.request().method() === 'POST',
+);
+await page.getByRole('button', { name: '登録' }).click();
+await apiResponse;
+await page.reload({ waitUntil: 'networkidle' });  // Pattern 1 (router.refresh) もケア
+await expect(page.locator('tbody tr').filter({ hasText: '...' })).toBeVisible();
+```
+
+**新規 spec 作成時のチェックリスト**:
+
+- [ ] click() が URL 遷移を起こすなら **`Promise.all([waitForURL, click])`** を使う (Pattern 3)
+- [ ] mutation 系 click は **`waitForResponse`** で API 完了を anchor (Pattern 2)
+- [ ] mutation 後に画面再描画を期待するなら **`page.reload`** で router.refresh race を確定 (Pattern 1)
+- [ ] `waitForLoadState('networkidle')` 単独使用は **0ms 即 resolve のリスク** がある
+       (currently in-flight = 0 を満たすだけで navigation 完了を保証しない) → 補助手段として使う
+
+**関連**:
+- [E2E_LESSONS_LEARNED.md §4.20](./E2E_LESSONS_LEARNED.md) — router.refresh race の詳細
+- [E2E_LESSONS_LEARNED.md §4.19](./E2E_LESSONS_LEARNED.md) — 長い click chain race の詳細
+- [E2E_LESSONS_LEARNED.md §4.40](./E2E_LESSONS_LEARNED.md) — Link click race の詳細 (PR #154)
 
 ### 9.4 E2E テスト (PR #90 で導入)
 
