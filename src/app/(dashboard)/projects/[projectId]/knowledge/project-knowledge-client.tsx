@@ -41,6 +41,8 @@ import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import type { KnowledgeDTO } from '@/services/knowledge.service';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+// feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog のため previousValue なし)
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 
 type Props = {
   projectId: string;
@@ -219,10 +221,9 @@ export function ProjectKnowledgeClient({
                   </div>
                   <div className="space-y-2">
                     <Label>背景</Label>
-                    <textarea
-                      className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    <MarkdownTextarea
                       value={form.background}
-                      onChange={(e) => setForm({ ...form, background: e.target.value })}
+                      onChange={(v) => setForm({ ...form, background: v })}
                       rows={3}
                       maxLength={2000}
                       required
@@ -230,10 +231,9 @@ export function ProjectKnowledgeClient({
                   </div>
                   <div className="space-y-2">
                     <Label>内容</Label>
-                    <textarea
-                      className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    <MarkdownTextarea
                       value={form.content}
-                      onChange={(e) => setForm({ ...form, content: e.target.value })}
+                      onChange={(v) => setForm({ ...form, content: v })}
                       rows={5}
                       maxLength={5000}
                       required
@@ -241,10 +241,9 @@ export function ProjectKnowledgeClient({
                   </div>
                   <div className="space-y-2">
                     <Label>結果</Label>
-                    <textarea
-                      className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    <MarkdownTextarea
                       value={form.result}
-                      onChange={(e) => setForm({ ...form, result: e.target.value })}
+                      onChange={(v) => setForm({ ...form, result: v })}
                       rows={3}
                       maxLength={3000}
                       required

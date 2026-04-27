@@ -46,6 +46,8 @@ import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { useFormatters } from '@/lib/use-formatters';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+// feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import type { MemoDTO } from '@/services/memo.service';
 
 const VISIBILITY_LABELS: Record<string, string> = {
@@ -229,10 +231,9 @@ export function MemosClient({
                 </div>
                 <div className="space-y-2">
                   <Label>本文</Label>
-                  <textarea
-                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  <MarkdownTextarea
                     value={createForm.content}
-                    onChange={(e) => setCreateForm({ ...createForm, content: e.target.value })}
+                    onChange={(v) => setCreateForm({ ...createForm, content: v })}
                     rows={8}
                     maxLength={10000}
                     required
@@ -344,10 +345,10 @@ export function MemosClient({
               </div>
               <div className="space-y-2">
                 <Label>本文</Label>
-                <textarea
-                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                <MarkdownTextarea
                   value={editForm.content}
-                  onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+                  onChange={(v) => setEditForm({ ...editForm, content: v })}
+                  previousValue={editing.content}
                   rows={8}
                   maxLength={10000}
                   required

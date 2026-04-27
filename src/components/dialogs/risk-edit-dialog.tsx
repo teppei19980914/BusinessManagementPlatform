@@ -16,6 +16,8 @@ import { AttachmentList } from '@/components/attachments/attachment-list';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+// feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 
 /**
  * リスク/課題の編集に必要な最小限の形状。RiskDTO / AllRiskDTO 両方と互換。
@@ -185,10 +187,10 @@ export function RiskEditDialog({
           </div>
           <div className="space-y-2">
             <Label>{tField('content')}</Label>
-            <textarea
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            <MarkdownTextarea
               value={form.content}
-              onChange={(e) => setForm({ ...form, content: e.target.value })}
+              onChange={(v) => setForm({ ...form, content: v })}
+              previousValue={risk.content}
               rows={4}
               maxLength={MEDIUM_TEXT_MAX_LENGTH}
               required

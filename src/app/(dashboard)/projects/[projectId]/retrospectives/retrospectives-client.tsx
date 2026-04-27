@@ -49,6 +49,8 @@ import type { RetroDTO } from '@/services/retrospective.service';
 import { useFormatters } from '@/lib/use-formatters';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+// feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog のため previousValue なし)
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 
 type Props = {
   projectId: string;
@@ -196,23 +198,23 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
                 </div>
                 <div className="space-y-2">
                   <Label>計画総括</Label>
-                  <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.planSummary} onChange={(e) => setForm({ ...form, planSummary: e.target.value })} rows={3} maxLength={2000} required />
+                  <MarkdownTextarea value={form.planSummary} onChange={(v) => setForm({ ...form, planSummary: v })} rows={3} maxLength={2000} required />
                 </div>
                 <div className="space-y-2">
                   <Label>実績総括</Label>
-                  <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.actualSummary} onChange={(e) => setForm({ ...form, actualSummary: e.target.value })} rows={3} maxLength={2000} required />
+                  <MarkdownTextarea value={form.actualSummary} onChange={(v) => setForm({ ...form, actualSummary: v })} rows={3} maxLength={2000} required />
                 </div>
                 <div className="space-y-2">
                   <Label>良かった点</Label>
-                  <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.goodPoints} onChange={(e) => setForm({ ...form, goodPoints: e.target.value })} rows={3} maxLength={3000} required />
+                  <MarkdownTextarea value={form.goodPoints} onChange={(v) => setForm({ ...form, goodPoints: v })} rows={3} maxLength={3000} required />
                 </div>
                 <div className="space-y-2">
                   <Label>問題点</Label>
-                  <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.problems} onChange={(e) => setForm({ ...form, problems: e.target.value })} rows={3} maxLength={3000} required />
+                  <MarkdownTextarea value={form.problems} onChange={(v) => setForm({ ...form, problems: v })} rows={3} maxLength={3000} required />
                 </div>
                 <div className="space-y-2">
                   <Label>次回改善事項</Label>
-                  <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.improvements} onChange={(e) => setForm({ ...form, improvements: e.target.value })} rows={3} maxLength={3000} required />
+                  <MarkdownTextarea value={form.improvements} onChange={(v) => setForm({ ...form, improvements: v })} rows={3} maxLength={3000} required />
                 </div>
                 {/* PR #67: 作成と同時に議事録・発表資料等の関連 URL を登録可能 */}
                 <StagedAttachmentsInput

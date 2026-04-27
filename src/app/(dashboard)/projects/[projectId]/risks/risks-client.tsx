@@ -57,6 +57,8 @@ import type { MemberDTO } from '@/services/member.service';
 import { useFormatters } from '@/lib/use-formatters';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+// feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog なので previousValue なし)
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 
 type Props = {
   projectId: string;
@@ -280,7 +282,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   </div>
                   <div className="space-y-2">
                     <Label>内容</Label>
-                    <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} rows={4} maxLength={2000} required />
+                    <MarkdownTextarea value={form.content} onChange={(v) => setForm({ ...form, content: v })} rows={4} maxLength={2000} required />
                   </div>
                   {/*
                     PR #65 Phase 2 (c): 入力中に類似する過去課題を inline 提示。

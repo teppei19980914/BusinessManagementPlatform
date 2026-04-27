@@ -61,6 +61,8 @@ import { SuggestionsPanel } from './suggestions/suggestions-panel';
 // feat/stakeholder-management: PM/TL + admin のみ閲覧可。lazy fetch でタブ初表示時に取得。
 import { StakeholdersClient } from './stakeholders/stakeholders-client';
 import type { StakeholderDTO } from '@/services/stakeholder.service';
+// feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
+import { MarkdownTextarea, MarkdownDisplay } from '@/components/ui/markdown-textarea';
 
 type CustomerOption = { id: string; name: string };
 
@@ -429,16 +431,16 @@ export function ProjectDetailClient({
                     </div>
                     <div className="space-y-2">
                       <Label>目的</Label>
-                      <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.purpose} onChange={(e) => setEditForm({ ...editForm, purpose: e.target.value })} rows={3} required />
+                      <MarkdownTextarea value={editForm.purpose} onChange={(v) => setEditForm({ ...editForm, purpose: v })} previousValue={project.purpose} rows={3} required />
                     </div>
                     {/* feat/overview-tab-detail (PR-B): 背景 / スコープも編集可能に追加 (旧仕様は欠落していた) */}
                     <div className="space-y-2">
                       <Label>背景</Label>
-                      <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.background} onChange={(e) => setEditForm({ ...editForm, background: e.target.value })} rows={3} required />
+                      <MarkdownTextarea value={editForm.background} onChange={(v) => setEditForm({ ...editForm, background: v })} previousValue={project.background} rows={3} required />
                     </div>
                     <div className="space-y-2">
                       <Label>スコープ</Label>
-                      <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={editForm.scope} onChange={(e) => setEditForm({ ...editForm, scope: e.target.value })} rows={3} required />
+                      <MarkdownTextarea value={editForm.scope} onChange={(v) => setEditForm({ ...editForm, scope: v })} previousValue={project.scope} rows={3} required />
                     </div>
                     <div className="space-y-2">
                       <Label>開発方式</Label>
@@ -554,7 +556,9 @@ export function ProjectDetailClient({
               title={isActualPmTl ? 'クリックで編集' : undefined}
             >
               <h3 className="mb-2 font-semibold">目的</h3>
-              <p className="whitespace-pre-wrap text-sm text-foreground">{project.purpose}</p>
+              <div className="text-sm text-foreground">
+                <MarkdownDisplay value={project.purpose} />
+              </div>
             </div>
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
@@ -562,7 +566,9 @@ export function ProjectDetailClient({
               title={isActualPmTl ? 'クリックで編集' : undefined}
             >
               <h3 className="mb-2 font-semibold">背景</h3>
-              <p className="whitespace-pre-wrap text-sm text-foreground">{project.background}</p>
+              <div className="text-sm text-foreground">
+                <MarkdownDisplay value={project.background} />
+              </div>
             </div>
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
@@ -570,11 +576,15 @@ export function ProjectDetailClient({
               title={isActualPmTl ? 'クリックで編集' : undefined}
             >
               <h3 className="mb-2 font-semibold">スコープ</h3>
-              <p className="whitespace-pre-wrap text-sm text-foreground">{project.scope}</p>
+              <div className="text-sm text-foreground">
+                <MarkdownDisplay value={project.scope} />
+              </div>
               {project.outOfScope && (
                 <>
                   <h3 className="mb-2 mt-4 font-semibold">スコープ外</h3>
-                  <p className="whitespace-pre-wrap text-sm text-foreground">{project.outOfScope}</p>
+                  <div className="text-sm text-foreground">
+                    <MarkdownDisplay value={project.outOfScope} />
+                  </div>
                 </>
               )}
             </div>
@@ -637,7 +647,9 @@ export function ProjectDetailClient({
               title={isActualPmTl ? 'クリックで編集' : undefined}
             >
               <h3 className="mb-2 font-semibold">備考</h3>
-              <p className="whitespace-pre-wrap text-sm text-foreground">{project.notes}</p>
+              <div className="text-sm text-foreground">
+                <MarkdownDisplay value={project.notes} />
+              </div>
             </div>
           )}
 
