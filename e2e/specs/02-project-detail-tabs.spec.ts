@@ -81,6 +81,10 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
 
   test('admin がプロジェクト詳細ページを開くと全タブが表示される', async () => {
     const page = sharedPage;
+    // PR #167: lg- viewport では「リスク一覧/課題一覧/振り返り一覧/ナレッジ一覧/参考」が
+    // 「資産」プルダウン (Menu.Trigger) に集約される。chromium-mobile project では
+    // 個別 TabsTrigger は hidden lg:inline-flex で非表示なので、資産プルダウンの visible で代替検証する。
+    const isMobile = test.info().project.name === 'chromium-mobile';
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
 
@@ -92,23 +96,33 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
       page.locator('h2').filter({ hasText: PROJECT_NAME }).first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    // Radix UI Tabs は role='tab' を付与する
+    // 全 viewport で visible な共通タブ
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '見積もり' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
     // feat/gantt-tab-restructure (PR-C item 6): ガント専用タブは WBS 管理タブ内に統合
     await expect(page.getByRole('tab', { name: 'ガント' })).toHaveCount(0);
-    await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'ナレッジ一覧' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '参考' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'メンバー' })).toBeVisible();
+
+    if (isMobile) {
+      // PR #167 mobile: 資産プルダウンが visible (個別 TabsTrigger は hidden)
+      await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
+    } else {
+      // PC viewport: 個別タブが visible
+      await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'ナレッジ一覧' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: '参考' })).toBeVisible();
+    }
     await snapshotStep(page, 'project-detail-all-tabs-admin');
   });
 
   test('各タブをクリックするとアクティブ切替が発生する (admin)', async () => {
     const page = sharedPage;
+    // PR #167: lg- viewport では「資産」プルダウン経由で配下タブを選択する経路に変わる。
+    // 個別 TabsTrigger は hidden lg:inline-flex で click intercepted。
+    const isMobile = test.info().project.name === 'chromium-mobile';
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
 
@@ -120,14 +134,30 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // (Radix UI の data-state="active" とは異なるため、過去に Radix 想定で書いて
     // 失敗した → PR #93 hotfix 3)。
     // feat/gantt-tab-restructure (PR-C item 6): ガントタブは WBS 管理タブ内のトグルに統合済
-    const tabNames = [
-      '概要', '見積もり', 'WBS管理',
-      'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考',
-    ];
-    for (const name of tabNames) {
+    // PR #167: viewport 別に経路を分岐。
+    const directlyClickableTabs = isMobile
+      ? ['概要', '見積もり', 'WBS管理']
+      : ['概要', '見積もり', 'WBS管理', 'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
+    for (const name of directlyClickableTabs) {
       const tab = page.getByRole('tab', { name });
       await tab.click();
       await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+    }
+
+    if (isMobile) {
+      // PR #167 mobile: 資産プルダウン経由で配下タブを選択
+      const assetTabsViaMenu = ['リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
+      for (const name of assetTabsViaMenu) {
+        await page.getByRole('button', { name: '資産メニューを開く' }).click();
+        await page.getByRole('menuitem', { name }).click();
+        // PR #167 hotfix 2: 資産タブ群は `hidden lg:inline-flex` で mobile では display:none。
+        // Playwright の `getByRole` は a11y tree を参照するため display:none 要素を「element not found」
+        // で除外する (CI で 1 度目に踏んだ罠)。一方 `page.locator('[role="tab"]')` は CSS セレクタなので
+        // display:none 要素も取得でき、`toHaveAttribute` は DOM 属性チェックなので可視性を要求しない。
+        // → CSS セレクタ + filter(hasText) で hidden tab の aria-selected を検証する。
+        const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
+        await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+      }
     }
 
     // メンバータブは固有の UI 検証: 追加済メンバーが一覧に表示される
@@ -141,6 +171,8 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
 
   test('general ユーザが参加プロジェクトを開くと 見積もり/メンバー タブが非表示', async () => {
     const page = sharedPage;
+    // PR #167: lg- viewport は資産プルダウン経由になる
+    const isMobile = test.info().project.name === 'chromium-mobile';
     await loginAsGeneral(page, sharedContext, { email: MEMBER_EMAIL, password: MEMBER_PW });
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
@@ -148,10 +180,15 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // member ロールは project:read 範囲のタブのみ表示される
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'ナレッジ一覧' })).toBeVisible();
+    if (isMobile) {
+      // PR #167 mobile: 資産プルダウン visible (個別タブは hidden)
+      await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
+    } else {
+      await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'ナレッジ一覧' })).toBeVisible();
+    }
 
     // admin 専用のタブは表示されないこと
     await expect(page.getByRole('tab', { name: '見積もり' })).toHaveCount(0);

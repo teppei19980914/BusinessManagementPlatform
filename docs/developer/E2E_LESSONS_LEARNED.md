@@ -774,6 +774,134 @@ grep -rn "<廃止タブ名>" e2e/specs/
 
 ---
 
+### 4.42 レスポンシブで集約された UI 要素は viewport 別に E2E 経路を分岐する (PR #167 chromium-mobile で遭遇)
+
+**症状**: PR #167 で `<TabsTrigger value="risks" className="hidden lg:inline-flex">リスク一覧</TabsTrigger>`
+等の TabsTrigger に `hidden lg:inline-flex` を付けて lg- viewport で「資産」プルダウンに集約したところ、
+`02-project-detail-tabs.spec.ts` の chromium-mobile project が以下で失敗:
+
+```
+Error: expect(locator).toBeVisible() failed
+Expected: visible
+Error: element(s) not found
+```
+
+`page.getByRole('tab', { name: 'リスク一覧' })` は DOM に存在するが
+`display: none` (= `hidden` クラス) で hidden 判定 → `toBeVisible()` 失敗。
+同様に click() 系も intercepted エラーになる。
+
+**根本原因**: PR #128a-2 (`§4.37` 参照) の WBS テーブル → カードビュー切替と同パターン。
+**1 つの DOM 要素を CSS で出し分ける** レスポンシブ実装は、E2E 側で viewport を考慮した
+経路分岐を必要とする。
+
+**解消パターン (3 択)**:
+
+1. **`testIgnore` で chromium-mobile から除外** (§4.36 / §4.37 で採用):
+   - メリット: 修正コスト最小
+   - デメリット: mobile UX のカバレッジ喪失
+2. **`test.info().project.name` で経路分岐** (本件 PR #167 で採用):
+   - メリット: PC/Mobile 両方の UX を 1 spec で検証
+   - デメリット: spec が分岐で複雑化
+3. **viewport-agnostic locator 設計** (`role="listitem"` + helper):
+   - メリット: spec が viewport を意識しなくて済む
+   - デメリット: コンポーネント側の改修が必要
+
+**選定基準**:
+- mobile UX が **ほぼ同じ機能** で UI 形式だけ違う場合 → **2** (経路分岐) が筋
+- mobile では **触らない仕様** (PR #128a-2 の WBS bulk update 等) → **1** (testIgnore) で OK
+- 新規実装で先行できるなら → **3** (locator 設計) が長期的に楽
+
+**本件 (PR #167) の経路分岐サンプル**:
+
+```ts
+test('admin がプロジェクト詳細ページを開くと全タブが表示される', async () => {
+  const isMobile = test.info().project.name === 'chromium-mobile';
+  // ...
+  if (isMobile) {
+    // 資産プルダウンが visible (個別タブは hidden)
+    await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
+  } else {
+    // PC: 個別タブが visible
+    await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
+    // ...
+  }
+});
+
+test('各タブをクリック', async () => {
+  const isMobile = test.info().project.name === 'chromium-mobile';
+  // PC では直接 click、mobile では Menu.Trigger → Menu.Item の 2 段階
+  if (isMobile) {
+    await page.getByRole('button', { name: '資産メニューを開く' }).click();
+    await page.getByRole('menuitem', { name: 'リスク一覧' }).click();
+    // PR #167 hotfix 2: 後段の検証は getByRole ではなく CSS セレクタを使う (下記 §4.42.1 参照)
+    await expect(page.locator('[role="tab"]').filter({ hasText: 'リスク一覧' }).first())
+      .toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+  } else {
+    await page.getByRole('tab', { name: 'リスク一覧' }).click();
+    await expect(page.getByRole('tab', { name: 'リスク一覧' }))
+      .toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+  }
+});
+```
+
+#### 4.42.1 `display:none` 要素は a11y tree から除外され `getByRole` で見つからない (PR #167 hotfix 2 で発覚)
+
+**症状**: 上記 §4.42 の経路分岐を入れた直後の CI でさらに同 spec が以下で fail:
+
+```
+Error: expect(locator).toHaveAttribute(expected) failed
+Locator: getByRole('tab', { name: 'リスク一覧' })
+Error: element(s) not found
+```
+
+**根本原因**: ARIA 仕様で `display: none` (= Tailwind `hidden`) の要素は **accessibility tree から除外**
+される。Playwright の `page.getByRole(...)` は a11y tree を参照するので「element(s) not found」になる。
+一方、CSS セレクタ (`page.locator('[role="tab"]')`) は DOM 構造を参照するため hidden 要素も取得でき、
+`toHaveAttribute` は属性チェックのみで可視性を要求しない。
+
+**解消パターン**: hidden 要素の **状態属性検証** (aria-selected, aria-expanded 等) は CSS セレクタで:
+
+```ts
+// ❌ NG: hidden 要素は a11y tree にないので element(s) not found
+await expect(page.getByRole('tab', { name: 'リスク一覧' }))
+  .toHaveAttribute('aria-selected', 'true');
+
+// ✅ OK: CSS セレクタは hidden 要素も取得、toHaveAttribute は可視性不問
+await expect(page.locator('[role="tab"]').filter({ hasText: 'リスク一覧' }).first())
+  .toHaveAttribute('aria-selected', 'true');
+```
+
+**判断基準**:
+
+- **可視性が検証対象** (`toBeVisible()` / `click()`) → `getByRole` を使う (a11y tree が正解)
+- **状態属性のみ検証** (`toHaveAttribute` / `toHaveClass`) で hidden な可能性がある要素 → CSS セレクタ
+- **トリガー操作** (click 等) は visible 経路で行う必要があるため、レスポンシブ集約 UI では
+  「操作 = visible 経路」「結果検証 = CSS セレクタ」の組み合わせになる
+
+**汎化ルール (§4.42 への追加)**:
+
+4. レスポンシブで `hidden lg:*` を当てた tab/button の **状態属性** を E2E で検証する場合、
+   `getByRole` ではなく `page.locator('[role="..."]').filter({ hasText: name })` を使う
+5. `getByRole` の戻り値が「element(s) not found」になったら、対象が `display:none` の可能性を疑う
+
+**汎化ルール**:
+
+1. **レスポンシブで CSS hidden する UI 要素** を実装したら、対応する E2E 経路を必ず確認
+2. **`hidden lg:inline-flex` 等の variant** を導入する PR では、E2E spec を viewport 対応に
+   修正することを **同 PR 内で完結** させる (別 PR にすると CI 赤が一時的に残る)
+3. PR #167 の場合、本来は実装と同時に E2E 経路分岐を入れるべきだった
+   → 今後は実装段階で `test.info().project.name` 分岐の追加を忘れない
+4. (§4.42.1 から昇格) hidden 要素の状態属性検証は `getByRole` ではなく CSS セレクタを使う
+5. (§4.42.1 から昇格) `getByRole` で element(s) not found になったら display:none を疑う
+
+**関連**:
+- §4.36 (chromium-mobile testIgnore パターン)
+- §4.37 (1 DOM 要素 vs 2 系統 DOM のレスポンシブ設計)
+- §4.42.1 (hidden 要素の状態属性検証は CSS セレクタ)
+- DEVELOPER_GUIDE §5.24 (TabsList のレスポンシブ集約パターン)
+
+---
+
 ### 4.41 存在しない Tailwind variant (例: `md:open:`) を書いても build は通ってしまう罠 (PR #128a-2 で混入、fix/wbs-filter-regression で発覚)
 
 **症状**: WBS タスク画面でフィルタ (担当者 / 状況) ボタンが PC viewport で表示されない。

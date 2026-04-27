@@ -64,6 +64,10 @@ import {
   persistStagedAttachments,
   type StagedAttachment,
 } from '@/components/attachments/staged-attachments-input';
+// PR #168: WBS 一覧で添付を表示するためのバッチ取得 + Cell コンポーネント
+import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
+import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+import type { AttachmentDTO } from '@/services/attachment.service';
 import {
   ResizableColumnsProvider,
   ResizableHead,
@@ -152,6 +156,8 @@ type TaskTreeNodeProps = {
   onToggleExpanded: (taskId: string) => void;
   /** feat/wbs-overwrite-import: ID 列を表示するか (CSV 整合確認用) */
   showIdColumn: boolean;
+  /** PR #168: バッチ取得した添付 (entityId → AttachmentDTO 配列)。一覧の添付列で表示する */
+  attachmentsByEntity: Record<string, AttachmentDTO[]>;
 };
 
 function TaskTreeNodeImpl({
@@ -172,6 +178,7 @@ function TaskTreeNodeImpl({
   expandedTaskIds,
   onToggleExpanded,
   showIdColumn,
+  attachmentsByEntity,
 }: TaskTreeNodeProps) {
   // 表示値は task prop を直接参照する。
   // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
@@ -281,6 +288,10 @@ function TaskTreeNodeImpl({
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{plannedRangeText}</td>
         {/* 実績期間 */}
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{actualRangeText}</td>
+        {/* PR #168: 添付列 (タスク添付の chips 表示)。他エンティティ一覧と同パターン */}
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2" onClick={(e) => e.stopPropagation()}>
+          <AttachmentsCell items={attachmentsByEntity[task.id] ?? []} />
+        </td>
         {/* 操作 */}
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
           <div className="flex gap-1">
@@ -339,6 +350,7 @@ function TaskTreeNodeImpl({
           expandedTaskIds={expandedTaskIds}
           onToggleExpanded={onToggleExpanded}
           showIdColumn={showIdColumn}
+          attachmentsByEntity={attachmentsByEntity}
         />
       ))}
     </>
@@ -376,7 +388,10 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   && prev.expandedTaskIds === next.expandedTaskIds
   && prev.onToggleExpanded === next.onToggleExpanded
   // feat/wbs-overwrite-import: ID 列トグル変化時に全ノード再描画
-  && prev.showIdColumn === next.showIdColumn,
+  && prev.showIdColumn === next.showIdColumn
+  // PR #168: 添付バッチ取得結果が変わったら再描画 (object identity 比較で十分、
+  // useBatchAttachments が ids 変動時に新オブジェクトを返す)
+  && prev.attachmentsByEntity === next.attachmentsByEntity,
 );
 
 /**
@@ -404,6 +419,7 @@ function TaskMobileCardImpl({
   onEditClick,
   expandedTaskIds,
   onToggleExpanded,
+  attachmentsByEntity,
 }: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect' | 'showIdColumn'>) {
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
@@ -480,6 +496,9 @@ function TaskMobileCardImpl({
               <dd className="text-xs">{plannedRangeText}</dd>
               <dt className="text-xs text-muted-foreground">実績</dt>
               <dd className="text-xs">{actualRangeText}</dd>
+              {/* PR #168: 添付 chips (mobile card は 1 行で chip 列) */}
+              <dt className="text-xs text-muted-foreground">添付</dt>
+              <dd className="text-xs"><AttachmentsCell items={attachmentsByEntity[task.id] ?? []} /></dd>
             </dl>
           </div>
           <div className="flex flex-col gap-1">
@@ -531,6 +550,7 @@ function TaskMobileCardImpl({
           onEditClick={onEditClick}
           expandedTaskIds={expandedTaskIds}
           onToggleExpanded={onToggleExpanded}
+          attachmentsByEntity={attachmentsByEntity}
         />
       ))}
     </>
@@ -549,7 +569,9 @@ const TaskMobileCard = memo(TaskMobileCardImpl, (prev, next) =>
   && prev.parentOptions === next.parentOptions
   && prev.onEditClick === next.onEditClick
   && prev.expandedTaskIds === next.expandedTaskIds
-  && prev.onToggleExpanded === next.onToggleExpanded,
+  && prev.onToggleExpanded === next.onToggleExpanded
+  // PR #168: 添付バッチ取得結果が変わったら再描画
+  && prev.attachmentsByEntity === next.attachmentsByEntity,
 );
 
 export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload }: Props) {
@@ -762,6 +784,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const allTaskIds = useMemo(() => collectAllIds(filteredTasks), [filteredTasks]);
 
   const isAllSelected = allTaskIds.length > 0 && allTaskIds.every((id) => selectedIds.has(id));
+
+  // PR #168: WBS 一覧の添付列。filteredTasks ツリー全タスクの添付を 1 クエリでバッチ取得。
+  // 他エンティティ一覧 (risks-client / project-knowledge-client / memos-client 等) と同パターン。
+  const attachmentsByEntity = useBatchAttachments('task', allTaskIds);
 
   function toggleSelectAll() {
     if (isAllSelected) {
@@ -1563,6 +1589,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   <ResizableHead columnKey="progress" defaultWidth={140}>進捗&工数</ResizableHead>
                   <ResizableHead columnKey="plannedRange" defaultWidth={180}>予定期間</ResizableHead>
                   <ResizableHead columnKey="actualRange" defaultWidth={180}>実績期間</ResizableHead>
+                  {/* PR #168: 添付列 */}
+                  <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
                   <ResizableHead columnKey="actions" defaultWidth={100}>操作</ResizableHead>
                 </tr>
               </thead>
@@ -1587,11 +1615,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     expandedTaskIds={expandedTaskIds}
                     onToggleExpanded={toggleExpanded}
                     showIdColumn={showIdColumn}
+                    attachmentsByEntity={attachmentsByEntity}
                   />
                 ))}
                 {filteredTasks.length === 0 && (
                   <tr>
-                    <td colSpan={(canSelectForProgress ? 8 : 7) + (showIdColumn ? 1 : 0)} className="py-8 text-center text-muted-foreground">
+                    {/* PR #168: 添付列追加に伴い colSpan +1 */}
+                    <td colSpan={(canSelectForProgress ? 9 : 8) + (showIdColumn ? 1 : 0)} className="py-8 text-center text-muted-foreground">
                       {tasks.length === 0
                         ? 'WBS が登録されていません'
                         : '選択したフィルタ条件に該当するタスクはありません'}
@@ -1630,6 +1660,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               onEditClick={openEditDialog}
               expandedTaskIds={expandedTaskIds}
               onToggleExpanded={toggleExpanded}
+              attachmentsByEntity={attachmentsByEntity}
             />
           ))
         )}

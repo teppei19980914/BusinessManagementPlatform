@@ -45,6 +45,9 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import type { RetroDTO } from '@/services/retrospective.service';
+// PR #168: 一覧画面に添付列を表示 (横展開)
+import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
+import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 // PR #117 → PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
@@ -137,6 +140,9 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
     : [];
   const allRetrosSelected
     = selectableRetroIds.length > 0 && selectableRetroIds.every((id) => selectedIds.has(id));
+
+  // PR #168: 添付バッチ取得 (他エンティティ一覧と同パターン)
+  const attachmentsByEntity = useBatchAttachments('retrospective', filteredRetros.map((r) => r.id));
 
   function toggleOneRetro(id: string) {
     setSelectedIds((prev) => {
@@ -376,6 +382,11 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
             <div className="md:col-span-2">
               <h4 className="text-sm font-medium text-muted-foreground">次回改善事項</h4>
               <p className="mt-1 whitespace-pre-wrap text-sm">{retro.improvements}</p>
+            </div>
+            {/* PR #168: 添付 chips (他エンティティ一覧と同パターン) */}
+            <div className="md:col-span-2" onClick={(e) => e.stopPropagation()}>
+              <h4 className="mb-1 text-sm font-medium text-muted-foreground">添付</h4>
+              <AttachmentsCell items={attachmentsByEntity[retro.id] ?? []} />
             </div>
           </div>
 
