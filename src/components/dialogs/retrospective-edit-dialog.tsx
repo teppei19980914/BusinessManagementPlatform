@@ -133,6 +133,7 @@ export function RetrospectiveEditDialog({
             <Label>{tField('conductedDate')}</Label>
             <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
           </div>
+          {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 */}
           {([
             { key: 'planSummary', label: '計画総括', rows: 3 },
             { key: 'actualSummary', label: '実績総括', rows: 3 },
@@ -141,7 +142,7 @@ export function RetrospectiveEditDialog({
             { key: 'improvements', label: '次回以前事項', rows: 3 },
           ] as const).map(({ key, label, rows }) => (
             <div key={key} className="space-y-2">
-              <Label>{label}</Label>
+              <Label>{label} <span className="text-xs text-muted-foreground">(任意)</span></Label>
               <MarkdownTextarea
                 value={form[key]}
                 onChange={(v) => setForm({ ...form, [key]: v })}

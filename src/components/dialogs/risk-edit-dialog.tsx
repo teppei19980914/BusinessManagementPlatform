@@ -186,14 +186,14 @@ export function RiskEditDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>{tField('content')}</Label>
+            <Label>{tField('content')} <span className="text-xs text-muted-foreground">(任意)</span></Label>
+            {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も内容は任意 */}
             <MarkdownTextarea
               value={form.content}
               onChange={(v) => setForm({ ...form, content: v })}
               previousValue={risk.content}
               rows={4}
               maxLength={MEDIUM_TEXT_MAX_LENGTH}
-              required
             />
           </div>
           {/* PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定) */}

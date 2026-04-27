@@ -135,7 +135,9 @@ describe('listAllKnowledgeForViewer', () => {
     expect(r[0].linkedProjectCount).toBe(1);
   });
 
-  it('非メンバーは projectName をマスク', async () => {
+  // fix/cross-list-non-member-columns (2026-04-27): 非メンバーでも更新者・作成者の
+  // 氏名は公開する仕様に変更 (横断ナレッジ共有の促進)。projectName のみマスク維持。
+  it('非メンバーは projectName のみマスク、氏名は公開 (2026-04-27 仕様変更)', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
       {
@@ -148,8 +150,8 @@ describe('listAllKnowledgeForViewer', () => {
     ] as never);
 
     const r = await listAllKnowledgeForViewer('u-99', 'general');
-    expect(r[0].projectName).toBe(null);
-    expect(r[0].updatedByName).toBe(null);
+    expect(r[0].projectName).toBe(null); // プロジェクト名は機微扱い維持
+    expect(r[0].updatedByName).toBe('Up'); // 氏名は公開
     expect(r[0].canAccessProject).toBe(false);
   });
 

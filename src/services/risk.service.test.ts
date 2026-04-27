@@ -7,6 +7,8 @@ vi.mock('@/lib/db', () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      // PR #161: bulkUpdateRisksFromCrossList で使用
+      updateMany: vi.fn(),
     },
     projectMember: { findMany: vi.fn() },
     user: { findMany: vi.fn() },
@@ -23,6 +25,7 @@ import {
   createRisk,
   updateRisk,
   deleteRisk,
+  bulkUpdateRisksFromCrossList,
   risksToCSV,
   type RiskDTO,
 } from './risk.service';
@@ -102,17 +105,26 @@ describe('listAllRisksForViewer', () => {
     expect(r[0].canAccessProject).toBe(true);
   });
 
-  it('非 admin & 非メンバーは projectName / 氏名をマスク', async () => {
+  // fix/cross-list-non-member-columns (2026-04-27): 非メンバーでも担当者・起票者・
+  // 作成者・更新者の氏名は公開する仕様に変更 (横断ビュー = visibility='public' 行の
+  // ナレッジ共有を促進する目的)。projectName のみ機微情報扱いを維持。
+  it('非 admin & 非メンバーは projectName のみマスク、氏名は公開 (2026-04-27 仕様変更)', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
       { ...rRow(), project: { id: 'p-1', name: 'PJ A', deletedAt: null } },
     ] as never);
-    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { id: 'u-1', name: 'Alice' },
+      { id: 'u-2', name: 'Bob' },
+    ] as never);
 
     const r = await listAllRisksForViewer('u-99', 'general');
 
-    expect(r[0].projectName).toBe(null);
-    expect(r[0].reporterName).toBe(null);
+    expect(r[0].projectName).toBe(null); // プロジェクト名は引き続き機微扱い
+    expect(r[0].reporterName).toBe('Alice'); // 氏名は公開 (rRow().reporter.name)
+    expect(r[0].assigneeName).toBe('Bob');   // rRow().assignee.name
+    expect(r[0].createdByName).toBe('Alice'); // userMap 経由
+    expect(r[0].updatedByName).toBe('Alice');
     expect(r[0].canAccessProject).toBe(false);
     expect(r[0].projectDeleted).toBe(false); // admin 以外には秘匿
   });
@@ -406,5 +418,97 @@ describe('risksToCSV', () => {
     const csv = risksToCSV([base({ impact: 'high', state: 'resolved' })]);
     expect(csv).toContain('高');
     expect(csv).toContain('解消');
+  });
+});
+
+// PR #161 (feat/cross-list-bulk-update): 「全リスク / 全課題」横断ビューからの一括更新。
+// 単発 updateRisk の reporter-only 認可を踏襲しつつ、updateMany で 1 クエリ化。
+// 他人のレコードを ids に混ぜても silently skip される ことを保証する。
+describe('bulkUpdateRisksFromCrossList', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('ids が空配列なら updateMany を呼ばずに 0 件で返す', async () => {
+    const r = await bulkUpdateRisksFromCrossList([], { state: 'resolved' }, 'u-1');
+    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
+    expect(prisma.riskIssue.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reporter 本人のレコードのみ updateMany される (他人の混入は skip)', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      { id: 'r-1', reporterId: 'u-1' },
+      { id: 'r-2', reporterId: 'u-1' },
+      { id: 'r-3', reporterId: 'u-OTHER' }, // 他人
+    ] as never);
+    vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 2 } as never);
+
+    const r = await bulkUpdateRisksFromCrossList(
+      ['r-1', 'r-2', 'r-3'],
+      { state: 'resolved' },
+      'u-1',
+    );
+
+    expect(r.updatedIds).toEqual(['r-1', 'r-2']);
+    expect(r.skippedNotOwned).toBe(1);
+    expect(r.skippedNotFound).toBe(0);
+
+    const updateCall = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0];
+    // r-3 (他人作成) は where から除外されている
+    expect(updateCall.where).toEqual({ id: { in: ['r-1', 'r-2'] } });
+    expect(updateCall.data).toEqual({ updatedBy: 'u-1', state: 'resolved' });
+  });
+
+  it('存在しない / 削除済の id は skippedNotFound にカウント', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      { id: 'r-1', reporterId: 'u-1' },
+    ] as never);
+    vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateRisksFromCrossList(['r-1', 'r-MISSING'], { state: 'in_progress' }, 'u-1');
+    expect(r.updatedIds).toEqual(['r-1']);
+    expect(r.skippedNotFound).toBe(1);
+  });
+
+  it('全件が他人作成なら updateMany を呼ばない', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      { id: 'r-1', reporterId: 'u-OTHER' },
+    ] as never);
+    const r = await bulkUpdateRisksFromCrossList(['r-1'], { state: 'resolved' }, 'u-1');
+    expect(r.updatedIds).toEqual([]);
+    expect(r.skippedNotOwned).toBe(1);
+    expect(prisma.riskIssue.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('patch.assigneeId=null は data に { assigneeId: null } として渡る (担当者クリア)', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      { id: 'r-1', reporterId: 'u-1' },
+    ] as never);
+    vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await bulkUpdateRisksFromCrossList(['r-1'], { assigneeId: null }, 'u-1');
+    const data = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0].data;
+    expect(data).toEqual({ updatedBy: 'u-1', assigneeId: null });
+  });
+
+  it('patch.deadline=null は data に { deadline: null } として渡る (1970 epoch 化を回避)', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      { id: 'r-1', reporterId: 'u-1' },
+    ] as never);
+    vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await bulkUpdateRisksFromCrossList(['r-1'], { deadline: null }, 'u-1');
+    const data = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0].data;
+    expect(data.deadline).toBe(null);
+  });
+
+  it('patch.deadline=YYYY-MM-DD は Date オブジェクトに変換される', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      { id: 'r-1', reporterId: 'u-1' },
+    ] as never);
+    vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await bulkUpdateRisksFromCrossList(['r-1'], { deadline: '2026-12-31' }, 'u-1');
+    const data = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0].data;
+    expect(data.deadline).toBeInstanceOf(Date);
+    expect((data.deadline as Date).toISOString()).toContain('2026-12-31');
   });
 });

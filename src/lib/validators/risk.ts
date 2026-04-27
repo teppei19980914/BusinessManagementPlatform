@@ -14,7 +14,9 @@ import {
 export const createRiskSchema = z.object({
   type: z.enum(['risk', 'issue']),
   title: z.string().min(1, '件名を入力してください').max(NAME_MAX_LENGTH),
-  content: z.string().min(1, '内容を入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
+  // refactor/list-create-content-optional (2026-04-27 ユーザ要望 #6):
+  // 件名は必須維持、内容は任意化 (空文字許容)。
+  content: z.string().max(MEDIUM_TEXT_MAX_LENGTH),
   cause: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
   impact: z.enum(['low', 'medium', 'high']),
   likelihood: z.enum(['low', 'medium', 'high']).nullable().optional(),
