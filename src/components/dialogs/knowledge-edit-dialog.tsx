@@ -15,6 +15,8 @@ import { AttachmentList } from '@/components/attachments/attachment-list';
 import { SingleUrlField } from '@/components/attachments/single-url-field';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+// feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 
 type KnowledgeLike = {
   id: string;
@@ -149,10 +151,10 @@ export function KnowledgeEditDialog({
           </div>
           <div className="space-y-2">
             <Label>背景</Label>
-            <textarea
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            <MarkdownTextarea
               value={form.background}
-              onChange={(e) => setForm({ ...form, background: e.target.value })}
+              onChange={(v) => setForm({ ...form, background: v })}
+              previousValue={knowledge.background}
               rows={3}
               maxLength={2000}
               required
@@ -160,10 +162,10 @@ export function KnowledgeEditDialog({
           </div>
           <div className="space-y-2">
             <Label>内容</Label>
-            <textarea
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            <MarkdownTextarea
               value={form.content}
-              onChange={(e) => setForm({ ...form, content: e.target.value })}
+              onChange={(v) => setForm({ ...form, content: v })}
+              previousValue={knowledge.content}
               rows={5}
               maxLength={5000}
               required
@@ -171,10 +173,10 @@ export function KnowledgeEditDialog({
           </div>
           <div className="space-y-2">
             <Label>結果</Label>
-            <textarea
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            <MarkdownTextarea
               value={form.result}
-              onChange={(e) => setForm({ ...form, result: e.target.value })}
+              onChange={(v) => setForm({ ...form, result: v })}
+              previousValue={knowledge.result}
               rows={3}
               maxLength={3000}
               required

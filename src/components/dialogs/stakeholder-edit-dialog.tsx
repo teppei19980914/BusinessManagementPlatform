@@ -24,6 +24,8 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+// feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import { parseTagsInput } from '@/lib/parse-tags';
 import {
   STAKEHOLDER_ATTITUDES,
@@ -242,10 +244,10 @@ export function StakeholderEditDialog({
 
           <div className="space-y-2">
             <Label>連絡先メモ</Label>
-            <textarea
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            <MarkdownTextarea
               value={form.contactInfo}
-              onChange={(e) => setForm({ ...form, contactInfo: e.target.value })}
+              onChange={(v) => setForm({ ...form, contactInfo: v })}
+              previousValue={isEdit ? (stakeholder?.contactInfo ?? '') : undefined}
               rows={2}
               maxLength={1000}
             />
@@ -328,10 +330,10 @@ export function StakeholderEditDialog({
           {/* 人となり / タグ / 対応戦略 */}
           <div className="space-y-2">
             <Label>人となり / 考え方 (自由記述)</Label>
-            <textarea
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            <MarkdownTextarea
               value={form.personality}
-              onChange={(e) => setForm({ ...form, personality: e.target.value })}
+              onChange={(v) => setForm({ ...form, personality: v })}
+              previousValue={isEdit ? (stakeholder?.personality ?? '') : undefined}
               rows={4}
               maxLength={2000}
               placeholder="例: 数字で語ると納得しやすい / 議論より資料を読む派 / 決裁前に必ず Slack で根回し"
@@ -350,10 +352,10 @@ export function StakeholderEditDialog({
 
           <div className="space-y-2">
             <Label>対応戦略 (具体的アクション)</Label>
-            <textarea
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            <MarkdownTextarea
               value={form.strategy}
-              onChange={(e) => setForm({ ...form, strategy: e.target.value })}
+              onChange={(v) => setForm({ ...form, strategy: v })}
+              previousValue={isEdit ? (stakeholder?.strategy ?? '') : undefined}
               rows={3}
               maxLength={2000}
               placeholder="例: 月 1 で 30 分の 1on1 / 月次レポートに KPI サマリ添付 / 重要意思決定は事前に Slack で打診"

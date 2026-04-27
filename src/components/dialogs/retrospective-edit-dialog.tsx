@@ -14,6 +14,8 @@ import { AttachmentList } from '@/components/attachments/attachment-list';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+// feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 
 type RetroLike = {
   id: string;
@@ -131,19 +133,19 @@ export function RetrospectiveEditDialog({
             <Label>{tField('conductedDate')}</Label>
             <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
           </div>
-          {[
+          {([
             { key: 'planSummary', label: '計画総括', rows: 3 },
             { key: 'actualSummary', label: '実績総括', rows: 3 },
             { key: 'goodPoints', label: '良かった点', rows: 3 },
             { key: 'problems', label: '課題', rows: 3 },
             { key: 'improvements', label: '次回以前事項', rows: 3 },
-          ].map(({ key, label, rows }) => (
+          ] as const).map(({ key, label, rows }) => (
             <div key={key} className="space-y-2">
               <Label>{label}</Label>
-              <textarea
-                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                value={form[key as keyof typeof form]}
-                onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+              <MarkdownTextarea
+                value={form[key]}
+                onChange={(v) => setForm({ ...form, [key]: v })}
+                previousValue={retro[key]}
                 rows={rows}
                 maxLength={3000}
               />

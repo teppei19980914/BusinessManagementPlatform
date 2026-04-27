@@ -41,6 +41,8 @@ import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { useFormatters } from '@/lib/use-formatters';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
+// feat/markdown-textarea: 読み取り専用ビューでも Markdown 形式を解釈して表示
+import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import type { MemoDTO } from '@/services/memo.service';
 
 // /memos と同じラベルを使う (DRY)
@@ -145,12 +147,9 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
                 </div>
                 <div className="space-y-2">
                   <Label>本文</Label>
-                  <textarea
-                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={viewing.content}
-                    rows={8}
-                    readOnly
-                  />
+                  <div className="rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[12rem]">
+                    <MarkdownDisplay value={viewing.content} />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>更新日時</Label>
