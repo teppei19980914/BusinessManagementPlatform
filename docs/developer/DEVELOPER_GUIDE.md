@@ -3152,12 +3152,113 @@ HEAD/origin 共に削除し、機械的に並べるだけで解決 (内容判断
    - 機械的に解消できるかの判断基準: **2 ブロックの内容が完全に独立** (同一 entity / 同一
      service / 同一 sub-section を触っていない) なら機械解消で OK
 
+   **8a. 番号予約衝突の繰り上げ手順 (PR #171 で実適用、3 PR 並走に拡張)**:
+
+   N 件の先行 PR (PR #167/#168 で §5.24/§5.25 を取得) と並走していた後発 PR (PR #171 が
+   §5.24 を予約) が衝突した場合、後発 PR は **N 段繰り上げ** (§5.24 → §5.26) する。
+   その際、以下を **必ず一括更新**:
+
+   ```bash
+   # 1. セクション header の番号 (`### 5.24` → `### 5.26`)
+   # 2. body 内の self-reference (`本 §5.24` 等を全置換)
+   #    → grep で漏れチェック:
+   grep -n "§5\.24\|本セクション" docs/developer/DEVELOPER_GUIDE.md  # 該当 section 範囲のみ
+   # 3. 関連リンク (「関連」サブセクション内の `§5.24 (本 PR)` 等)
+   # 4. 更新履歴テーブルの追記行 (`§5.24 新設 (...)` → `§5.26 新設 (...)`)
+   # 5. 他セクションからの forward-reference (もしあれば)
+   ```
+
+   **冒頭に「section 番号メモ」コメントを残す**: 後から経緯を辿れるよう、繰り上げた
+   セクションの冒頭 (h3 直下) に `> **section 番号メモ**: 当初 §5.NN として執筆したが、
+   PR #XXX が先にマージされ §5.NN を取得したため §5.MM に繰り上げた。` を 1〜2 行で記載する。
+
+   **判定基準**: 先行 PR が main にマージされた時点で predecessor の section 番号は
+   **確定**。後発 PR の rebase/merge 時に **次に空いている番号** に振り直す
+   (run-time での衝突回避ではなく、merge resolve のタイミングで決定する)。
+
 **汎化された予防策 (累積版)**:
 - **PR 起票時に section 番号を予約**: PR description / commit message に「§5.NN を予約」
   と明記し、並走中の PR description を `gh pr list --state open` で確認して衝突を予防
 - **末尾追記型のコンフリクトはほぼ確実に出る前提で運用**: 解消コストは低い (機械並べ替え)
   ので、衝突を恐れて並走を止める必要はない。むしろ「衝突しても解消は機械的」という
   共通理解で並走を許容するのが現実的
+
+#### 再発事例 10 例目 (PR #170 orphan recovery, 2026-04-27): stacked PR の base が main 以外の場合の落とし穴
+
+**症状**: PR #170 (i18n Phase C-1 認証系) は GitHub 上「MERGED」表示で `mergeCommit.oid`
+も存在 (6a88075) するが、**main の first-parent linear history に含まれない**。結果、
+PR #170 の変更 (auth セクション 50 行 / 認証画面 4 ファイルの i18n 化 / DEVELOPER_GUIDE
+§10.10.1) が main から **完全に欠落**。検出は Phase C-2 着手時に
+`git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件となって発覚。
+
+**根本原因**: PR #170 は `base = feat/i18n-foundation` (PR #169 の branch) で起票
+された stacked PR。`gh pr view 170 --json baseRefName` の結果も `feat/i18n-foundation`。
+
+時系列 (UTC):
+1. 09:28:50 — PR #169 が main にマージ (base=main、正常)
+2. 09:29:08 — PR #170 が **`feat/i18n-foundation` 側へマージ** (base=feat/i18n-foundation)
+
+**ここが落とし穴**: PR #169 が main にマージされた瞬間、`feat/i18n-foundation` ブランチは
+論理的に「不要」になるが GitHub は branch を自動削除しない (merge 後も残る)。
+PR #170 はその「孤児ブランチ」へマージされ、main には伝播しない。
+
+GitHub の挙動:
+- PR #170 の状態: `state=MERGED`, `mergedAt=09:29:08Z` (✅)
+- merge commit (6a88075) は存在 (✅)
+- ただし merge 先は **`feat/i18n-foundation`** (PR #170 の元 base)
+- main には反映されない (PR #169 マージ時点で stacked chain は切断済)
+
+**確認方法**:
+```bash
+# 1. PR の base を確認
+gh pr view 170 --json baseRefName,mergeCommit
+#   → baseRefName が "main" 以外なら orphan リスクあり
+
+# 2. main の first-parent history に merge commit があるか
+git log --first-parent origin/main | grep <merge_commit_oid>
+#   → 出てこなければ orphan 確定
+
+# 3. 各ファイルが main に取り込まれているか
+git show origin/main:<重要ファイル> | grep <PR で追加した識別子>
+```
+
+**Recovery 手順** (本 PR で実行):
+```bash
+# 1. main からリカバリーブランチを切る
+git checkout main && git checkout -b fix/<PR>-recovery
+
+# 2. orphan PR の元コミット (merge commit ではなく feature commits) を順に cherry-pick
+git log --oneline origin/main..origin/<PR_branch>
+git cherry-pick <commit1> <commit2> ...
+
+# 3. lint/test/build → push → 新規 PR (base=main) を起票
+```
+
+**予防ルール (運用ルール 9 として確定)**:
+9. **stacked PR を起票するときは「base が main か」を必ず確認**:
+   - 上流 PR (PR #169) の動向を見守りながら作業する場合は stacked にしてもよいが、
+     **上流が main にマージされた瞬間に下流 PR の base を main に切り替える** ことを
+     ルール化する (gh CLI: `gh pr edit <下流> --base main`)
+   - 切替を忘れると本件のように「PR は merged 表示なのに main に届いていない」
+     という見えない regression が発生する
+   - **GitHub UI 経由のマージ時はマージ画面で base を確認**: 「Merge into XXX」の
+     XXX が "main" でなければ alert
+   - **CI/CD と CODEOWNERS では検出できない**: regression は静かに進行するため、
+     依存する後続 PR (本件の Phase C-2) で初めて発覚する。**自動検出は困難**で、
+     起票時の base 設定が最後の砦
+   - **Stop hook 補強**: 並走 PR が複数ある場合、Stop hook で
+     `gh pr list --json number,baseRefName` を出力させ base が "main" 以外の PR を警告
+     する仕組みも検討余地あり (TODO)
+
+**§10.5 既存サブセクションとの関係**:
+- 既存「Stacked PR で base に hotfix を当てた場合の sub-PR への伝播」(再発 3-6 例目)
+  と関連するが、症状が異なる:
+  - 既存: 上流に追加された hotfix が下流に流れない (CI fail で検出可能)
+  - **10 例目 (本件)**: 上流マージ時点で **下流 PR が orphan 化** (CI は通る、merged 表示も出る、
+    main に届いていないことだけが問題 = 検出が難しい)
+- 既存の運用ルール 1「stacked PR の base に hotfix を commit したら即座に下流全部へ
+  順送り merge を流す」とは独立。本件は **「下流 PR の base を main に切替える」** という
+  別操作が必要
 
 ### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
 
@@ -3314,6 +3415,89 @@ export const SELECTABLE_LOCALES = {
 `Test (vitest + coverage)` が skip → `coverage-summary.json` 不在で
 `Report coverage` も連鎖 fail (§9.5.1 の PR #115 知見と同パターン)。
 視覚回帰 fail は独立だが、UI 変更を伴う PR では必ず同時に発生する。
+
+### 10.10.1 i18n Phase C 翻訳実施時の罠と運用知見 (PR #170 / feat/i18n-phase-c-1-auth で得た知見)
+
+#### 罠 1: 抽出スクリプトはコメント内日本語も拾う
+
+`scripts/i18n-extract-hardcoded-ja.ts` は **シングル/ダブルクオート + JSX text node** を
+網羅抽出する。一方、コメント (`// ...` / `/* ... */`) 内の日本語は事前に `stripComments`
+で除去するが、**抽出後に grep で確認するときはコメントが含まれる**。
+
+- **対策**: 翻訳完了確認時は抽出スクリプト経由で 0 件確認 (コメント除去済) を採用、
+  生 grep `[ぁ-ゖァ-ヺ一-鿿]` ではなく
+  `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts | grep <folder>` で確認する
+
+#### 罠 2: useEffect の依存配列に t() を含める必要がある
+
+`useTranslations` で取得した `t` は **render ごとに新しい識別子** になる。
+useEffect 内で `t('xxx')` を呼ぶ場合、`t` を依存配列に含めないと React Hook の
+exhaustive-deps lint warning が出る。
+
+- **対策**: `useEffect(() => { setError(t('foo')); }, [token, t]);` のように `t` を含める。
+  next-intl の `useTranslations` は同一キーで安定した参照を返すため、過剰な再 render は起きない
+
+#### 罠 3: ICU MessageFormat の動的値は文字列連結よりも安全
+
+旧:
+```ts
+setError(`ログイン失敗が続いたため${formatDateTimeFull(unlockAt)} 以降に...`);
+```
+
+新:
+```ts
+setError(t('temporaryLock', { unlockAt: formatDateTimeFull(unlockAt) }));
+```
+
+- **理由**: 翻訳者が文型を入れ替えやすい (英語と日本語で語順が異なる)、テスト時に
+  プレースホルダ部分を動的に置換しやすい
+
+#### 罠 4: section 間でキーを重複定義しない (単一源泉性) — PR #170 hotfix
+
+`field.newPassword` / `field.newPasswordConfirm` が既に存在するのに、認証画面用に
+`auth.newPassword` / `auth.newPasswordConfirm` を **同じ意味で重複追加** してしまった。
+Stop hook §6 (i18n key 単一源泉チェック) で検出。
+
+- **対策**: 既存 `field.*` / `action.*` / `message.*` セクションに同名キーがある場合、
+  そちらを再利用する。複数 section から取りたい場合は **`useTranslations` を複数取得**:
+  ```tsx
+  const t = useTranslations('auth');
+  const tField = useTranslations('field');
+  // ...
+  <Label>{tField('newPassword')}</Label>
+  ```
+- **追加前 grep**: 新規キー追加時は `grep -n '"<keyName>"' src/i18n/messages/ja.json` で
+  別 section に同名が無いか確認 (キー名衝突 ≒ 意味重複の可能性大)
+- **判断基準**: 画面横断で再利用される **フォーム項目名** は `field.*`、**ボタン文言** は
+  `action.*`、**メッセージ** は `message.*`、画面固有のヒント・タイトルは `<screen>.*`
+
+#### Phase C 各 PR の進め方 (PR-1 認証系で確立)
+
+1. **対象ファイル特定**: `grep -E "^src.app..auth." docs/developer/i18n-extraction-2026-04-27.txt`
+   で機能領域内のハードコード一覧を抽出
+2. **キー設計**: 画面横断で再利用可能なキー (`email`, `password` 等) は共通化、
+   画面固有のメッセージは画面プレフィックス (`reset`, `setup` 等) で命名
+3. **両 JSON 同時更新**: ja.json と en-US.json に必ず同じキーを追加 (片方欠落で
+   フォールバック)
+4. **`useTranslations('auth')` を import**: 各 .tsx の関数本体先頭で `const t = useTranslations('section')` を取得
+5. **置換**: ハードコード文字列を `t('key')` に。三項演算子の両分岐 (例: `step === 'verify' ? 'A' : 'B'`)
+   も忘れず両方置換
+6. **進捗確認**: PR 後に抽出スクリプト再実行し、対象フォルダのヒット数が 0 になったことを確認
+7. **検証**: `pnpm lint` / `pnpm test` / `pnpm build` 全 pass
+
+#### Phase C の stacked PR 運用
+
+各 Phase C-N は **前段 (Phase B = PR #169) または前 Phase C にスタック** する。
+- **base ブランチ指定**: `gh pr create --base feat/i18n-foundation` のように直前のブランチを base に
+- **マージ順序**: PR #169 (Phase B) → PR #170 (C-1 認証) → PR #171 (C-2) ... の順
+- **base 切替**: 上流 PR がマージされたら、下流 PR の base を `main` に切り替えてマージ
+
+#### 関連
+
+- §10.10 (元規約)
+- §11.1 T-06 (Phase C 進捗管理)
+- `scripts/i18n-extract-hardcoded-ja.ts`
+- `docs/developer/i18n-extraction-2026-04-27.txt` (Phase B 起点の抽出結果)
 
 ### 10.10 i18n 翻訳作業の規約 (PR #169 / feat/i18n-foundation)
 
@@ -3482,3 +3666,6 @@ export const SELECTABLE_LOCALES = {
 | 2026-04-26 | §5.15 新設 + KDD 仕組み強化 (fix/quick-ux PR #143 E2E hotfix)。**症状**: admin 状態変更プルダウン表示緩和で chromium-mobile が flex overlap → click intercept で fail。**修正**: flex-wrap + Select 幅 mobile 縮小。**仕組み穴塞ぎ**: 当初 commit message にしか書かず docs 追記漏れ → ユーザ指摘で発覚。CLAUDE.md KDD 原則に「commit message ≠ 常設ナレッジ」「対象範囲はテスト失敗だけでない」を追加、Stop hook prompt に **項目 6「ナレッジ追記チェック (KDD Step 4/6)」** を新設し漏れを構造的に防止 |
 | 2026-04-27 | §10.5 再発事例 9 例目 + 運用ルール 8 を追記 (PR #168 conflict resolve)。独立並走 PR (PR #167 タブ集約 / PR #168 添付一覧) が DEVELOPER_GUIDE.md の §5 末尾と §11.1 TODO 表の同位置に同時追記してコンフリクト発生。8 例目までの「意図統合型」(同一 service 関数を別観点で編集) と異なり、9 例目は**完全独立な機能**が単に末尾位置で衝突した「機械並列型」。番号順 (§5.24 → §5.25 / T-04 → T-05) で両方残す機械解消で OK と確定。運用ルール 8「完全独立 PR の docs コンフリクトは機械解消で良い」を追加し、衝突を恐れて並走を止める必要はないと明文化 |
 | 2026-04-27 | §5.26 新設 (PR #171 / feat/date-field-clear-rename)。日付入力の共通部品 `<DateFieldWithActions>` の default `clearLabel` を「削除」→「クリア」に統一 (削除という語は破壊的アクションと紛らわしい)、加えて risks-client.tsx bulk edit dialog が唯一 `<Input type="date">` を生で使っていた箇所を共通部品に置換。これで単発編集 / 一括編集の操作 UX が一貫する。**規約 (§5.26)**: 「同一機能 = 同一部品」を明文化し、`type="date"` を新規導入する PR は §5.26 の grep 点検 + 本セクションへの例外追記を必須化。共通部品流用を徹底することで「削除→クリア」のような文言変更が default prop 1 行で全画面に伝播する自己治癒性を担保。ユーザフィードバック「同じ機能を有する者は同じ部品を流用してください、これにより横展開漏れを徹底的に減らせます」を恒久ルール化。**section 番号変遷**: 当初 §5.24 として執筆 → PR #167/#168 が main 先行マージで §5.24/§5.25 を取得 → §5.26 に繰り上げ (§10.5 9 例目「機械並列型」適用、運用ルール 8 通りの機械解消) |
+| 2026-04-27 | §10.5 運用ルール 8a を追記 (Stop hook 補正、PR #168/#169/#171 conflict resolve の累積知見 / PR #172)。「番号予約衝突の繰り上げ手順」を独立サブルール化。N 件先行 PR との並走では **N 段繰り上げ** が必要であり、その際に更新すべき箇所 (header / self-reference / 関連リンク / 更新履歴 / forward-reference) を grep 例つき 5 項目チェックリストで明文化。冒頭の「section 番号メモ」コメント運用も標準化。本セッションで PR #168 (運用ルール 8 新設) → PR #169 (機械解消 1 例) → PR #171 (繰り上げ 1 例) と 3 段階に分かれて記録された知見を 1 箇所に集約 |
+| 2026-04-27 | §10.5 再発事例 10 例目 + 運用ルール 9 を追記 (PR #170 orphan recovery / PR #173)。PR #170 (Phase C-1 認証 i18n) は base=feat/i18n-foundation で起票された stacked PR で、PR #169 が main にマージされた直後に **base が孤児化** → PR #170 の merge commit (6a88075) は `feat/i18n-foundation` 側に残るのみで main の first-parent history に含まれない orphan 状態となった。**GitHub UI は MERGED 表示 + mergeCommit OID も持つため発覚が遅れる**点が極めて危険で、Phase C-2 着手時の grep `git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件で初めて検出。CI fail を伴わず merged 表示も出るため自動検出は困難。Recovery は origin/main から新規 branch を切って元 PR の 3 commits (73b6a4b → 526c2fc → 981ef5d) を順次 cherry-pick。運用ルール 9「stacked PR の上流が main マージされたら下流の base を main に切替える (`gh pr edit <PR> --base main`)」と「GitHub UI のマージ画面で base 確認を徹底」を §10.5 に新設 |
+| 2026-04-27 | §10.5 9 例目 4 回目再発 (PR #172 / PR #173 conflict resolve)。PR #172 (運用ルール 8a) と PR #173 (10 例目 + 運用ルール 9) の更新履歴行が末尾位置で衝突 → 番号順 (8a → 10 例目) で両方残す機械解消。1 セッション中に §10.5 9 例目が 4 回適用された (#168 / #169 / #171 / #173) が、**運用ルール 8 通り毎回機械解消で済むことが実証**され、並走 PR を恐れる必要がないことが再確認された |
