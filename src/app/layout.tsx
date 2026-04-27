@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { NextIntlClientProvider } from 'next-intl';
-import { getLocale, getMessages } from 'next-intl/server';
+import { getLocale, getMessages, getTranslations } from 'next-intl/server';
 import './globals.css';
 import { AppSessionProvider } from '@/components/session-provider';
 import { auth } from '@/lib/auth';
@@ -23,10 +23,15 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 });
 
-export const metadata: Metadata = {
-  title: 'たすきば Knowledge Relay',
-  description: '知見を残す。判断をつなぐ。プロジェクトを強くする。',
-};
+// PR #175 Phase C-final: locale 連動の metadata。`getTranslations()` は
+// SSR 時に next-intl の locale (auth().user.locale or system default) を解決済。
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('app');
+  return {
+    title: t('metaTitle'),
+    description: t('metaDescription'),
+  };
+}
 
 export default async function RootLayout({
   children,

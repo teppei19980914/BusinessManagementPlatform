@@ -21,6 +21,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import {
   Table, TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -44,6 +45,7 @@ export function AllRetrospectivesTable({
   isAdmin: boolean;
 }) {
   const router = useRouter();
+  const tRetro = useTranslations('retro');
   const { formatDateTime } = useFormatters();
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
   const attachmentsByEntity = useBatchAttachments(
@@ -59,18 +61,18 @@ export function AllRetrospectivesTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <ResizableHead columnKey="project" defaultWidth={140}>プロジェクト</ResizableHead>
-            <ResizableHead columnKey="conductedDate" defaultWidth={110}>実施日</ResizableHead>
-            <ResizableHead columnKey="planSummary" defaultWidth={180}>計画総括</ResizableHead>
-            <ResizableHead columnKey="actualSummary" defaultWidth={180}>実績総括</ResizableHead>
-            <ResizableHead columnKey="goodPoints" defaultWidth={180}>良かった点</ResizableHead>
-            <ResizableHead columnKey="improvements" defaultWidth={180}>次回以前事項</ResizableHead>
-            <ResizableHead columnKey="createdAt" defaultWidth={130}>作成日時</ResizableHead>
-            <ResizableHead columnKey="createdBy" defaultWidth={120}>作成者</ResizableHead>
-            <ResizableHead columnKey="updatedAt" defaultWidth={130}>更新日時</ResizableHead>
-            <ResizableHead columnKey="updatedBy" defaultWidth={120}>更新者</ResizableHead>
-            <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-            {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
+            <ResizableHead columnKey="project" defaultWidth={140}>{tRetro('project')}</ResizableHead>
+            <ResizableHead columnKey="conductedDate" defaultWidth={110}>{tRetro('conductedDate')}</ResizableHead>
+            <ResizableHead columnKey="planSummary" defaultWidth={180}>{tRetro('planSummary')}</ResizableHead>
+            <ResizableHead columnKey="actualSummary" defaultWidth={180}>{tRetro('actualSummary')}</ResizableHead>
+            <ResizableHead columnKey="goodPoints" defaultWidth={180}>{tRetro('goodPoints')}</ResizableHead>
+            <ResizableHead columnKey="improvements" defaultWidth={180}>{tRetro('improvementsTable')}</ResizableHead>
+            <ResizableHead columnKey="createdAt" defaultWidth={130}>{tRetro('createdAt')}</ResizableHead>
+            <ResizableHead columnKey="createdBy" defaultWidth={120}>{tRetro('createdBy')}</ResizableHead>
+            <ResizableHead columnKey="updatedAt" defaultWidth={130}>{tRetro('updatedAt')}</ResizableHead>
+            <ResizableHead columnKey="updatedBy" defaultWidth={120}>{tRetro('updatedBy')}</ResizableHead>
+            <ResizableHead columnKey="attachments" defaultWidth={200}>{tRetro('attachment')}</ResizableHead>
+            {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tRetro('actions')}</ResizableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -82,7 +84,7 @@ export function AllRetrospectivesTable({
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {r.projectName == null ? (
-                  <span className="text-muted-foreground">（非公開）</span>
+                  <span className="text-muted-foreground">{tRetro('private')}</span>
                 ) : r.canAccessProject ? (
                   <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
                     {r.projectName}
@@ -90,7 +92,7 @@ export function AllRetrospectivesTable({
                 ) : (
                   <span className="text-muted-foreground">
                     {r.projectName}
-                    {r.projectDeleted && <span className="ml-1 text-xs text-destructive">(削除済)</span>}
+                    {r.projectDeleted && <span className="ml-1 text-xs text-destructive">{tRetro('deleted')}</span>}
                   </span>
                 )}
               </TableCell>
@@ -124,7 +126,7 @@ export function AllRetrospectivesTable({
           {retros.length === 0 && (
             <TableRow>
               <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-muted-foreground">
-                振り返りがありません
+                {tRetro('noneInList')}
               </TableCell>
             </TableRow>
           )}

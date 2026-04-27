@@ -28,6 +28,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from './button';
 
 export type UseDialogFullscreenResult = {
@@ -39,6 +40,7 @@ export type UseDialogFullscreenResult = {
 };
 
 export function useDialogFullscreen(): UseDialogFullscreenResult {
+  const t = useTranslations('common');
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // `!` (Tailwind important 修飾子) で base / caller 側の max-w-[min(...)] や max-h を上書き。
@@ -54,9 +56,9 @@ export function useDialogFullscreen(): UseDialogFullscreenResult {
       size="sm"
       className="h-7 shrink-0 px-2 text-xs"
       onClick={() => setIsFullscreen((v) => !v)}
-      aria-label={isFullscreen ? '通常表示に戻す' : '全画面表示にする'}
+      aria-label={isFullscreen ? t('normalViewAria') : t('fullscreenAria')}
     >
-      {isFullscreen ? '通常表示' : '全画面'}
+      {isFullscreen ? t('normalView') : t('fullscreen')}
     </Button>
   );
 

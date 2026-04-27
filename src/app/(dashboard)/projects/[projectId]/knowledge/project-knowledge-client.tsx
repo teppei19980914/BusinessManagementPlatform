@@ -19,6 +19,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,10 +54,13 @@ import {
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
 
-const KNOWLEDGE_VISIBILITY_OPTIONS = [
-  { value: 'draft', label: '下書き (公開取り下げ)' },
-  { value: 'public', label: '公開' },
-];
+// NOTE: i18n labels are resolved inside the component (translations require a hook context).
+function buildKnowledgeVisibilityOptions(t: (key: string) => string) {
+  return [
+    { value: 'draft', label: t('visibilityDraftLabel') },
+    { value: 'public', label: t('visibilityPublicLabel') },
+  ];
+}
 
 type Props = {
   projectId: string;
@@ -91,6 +95,8 @@ export function ProjectKnowledgeClient({
   currentUserId,
   onReload,
 }: Props) {
+  const tKnowledge = useTranslations('knowledge');
+  const KNOWLEDGE_VISIBILITY_OPTIONS = buildKnowledgeVisibilityOptions(tKnowledge);
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
@@ -183,7 +189,7 @@ export function ProjectKnowledgeClient({
 
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || tKnowledge('createFailed'));
       return;
     }
 
@@ -204,12 +210,12 @@ export function ProjectKnowledgeClient({
   }
 
   async function handleDelete(knowledgeId: string) {
-    if (!confirm('このナレッジを削除しますか？')) return;
+    if (!confirm(tKnowledge('deleteConfirm'))) return;
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/knowledge/${knowledgeId}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert('削除に失敗しました');
+      alert(tKnowledge('deleteFailed'));
       return;
     }
     await onReload();
@@ -226,24 +232,24 @@ export function ProjectKnowledgeClient({
         selectedIds={selectedIds}
         onSelectionClear={() => setSelectedIds(new Set())}
         visibilityOptions={KNOWLEDGE_VISIBILITY_OPTIONS}
-        entityLabel="ナレッジ"
+        entityLabel={tKnowledge('title')}
         onApplied={async () => { await onReload(); }}
       />
 
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">ナレッジ一覧（{filteredKnowledges.length} 件）</h3>
+        <h3 className="font-semibold">{tKnowledge('title')}（{tKnowledge('countUnit', { count: filteredKnowledges.length })}）</h3>
         {canCreate && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             {/* PR #124: 他「○○一覧」(risks / retrospectives) と同サイズ (px-4 py-2) に統一 */}
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">ナレッジ作成</DialogTrigger>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{tKnowledge('createTitle')}</DialogTrigger>
               <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto ${createFsClassName}`}>
                 <DialogHeader>
                   <div className="flex items-center justify-between gap-2">
-                    <DialogTitle>ナレッジ作成</DialogTitle>
+                    <DialogTitle>{tKnowledge('createTitle')}</DialogTitle>
                     <CreateFullscreenToggle />
                   </div>
                   <DialogDescription>
-                    このプロジェクトに紐づけて登録されます。「全ナレッジ」にも自動で反映されます。
+                    {tKnowledge('createDescription')}
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
@@ -251,7 +257,7 @@ export function ProjectKnowledgeClient({
                     <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                   )}
                   <div className="space-y-2">
-                    <Label>タイトル</Label>
+                    <Label>{tKnowledge('fieldTitle')}</Label>
                     <Input
                       value={form.title}
                       onChange={(e) => setForm({ ...form, title: e.target.value })}
@@ -261,7 +267,7 @@ export function ProjectKnowledgeClient({
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>種別</Label>
+                      <Label>{tKnowledge('kind')}</Label>
                       <select
                         value={form.knowledgeType}
                         onChange={(e) => setForm({ ...form, knowledgeType: e.target.value })}
@@ -273,7 +279,7 @@ export function ProjectKnowledgeClient({
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <Label>公開範囲</Label>
+                      <Label>{tKnowledge('visibility')}</Label>
                       <select
                         value={form.visibility}
                         onChange={(e) => setForm({ ...form, visibility: e.target.value })}
@@ -287,7 +293,7 @@ export function ProjectKnowledgeClient({
                   </div>
                   {/* refactor/list-create-content-optional (2026-04-27 #6): タイトル必須、3 セクションは任意 */}
                   <div className="space-y-2">
-                    <Label>背景 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                    <Label>{tKnowledge('background')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
                     <MarkdownTextarea
                       value={form.background}
                       onChange={(v) => setForm({ ...form, background: v })}
@@ -296,7 +302,7 @@ export function ProjectKnowledgeClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>内容 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                    <Label>{tKnowledge('content')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
                     <MarkdownTextarea
                       value={form.content}
                       onChange={(v) => setForm({ ...form, content: v })}
@@ -305,7 +311,7 @@ export function ProjectKnowledgeClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>結果 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                    <Label>{tKnowledge('result')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
                     <MarkdownTextarea
                       value={form.result}
                       onChange={(v) => setForm({ ...form, result: v })}
@@ -325,9 +331,9 @@ export function ProjectKnowledgeClient({
                   <StagedAttachmentsInput
                     value={stagedCreateAttachments}
                     onChange={setStagedCreateAttachments}
-                    label="参考リンク"
+                    label={tKnowledge('referenceLinks')}
                   />
-                  <Button type="submit" className="w-full">作成</Button>
+                  <Button type="submit" className="w-full">{tKnowledge('create')}</Button>
                 </form>
               </DialogContent>
             </Dialog>
@@ -342,14 +348,14 @@ export function ProjectKnowledgeClient({
             disabled={selectableKnowledgeIds.length === 0}
             onChange={toggleAllKnowledge}
             className="rounded"
-            aria-label="表示中の編集可能ナレッジを全選択"
+            aria-label={tKnowledge('selectAllOwn')}
           />
-          表示中の自分作成ナレッジを全選択 ({selectableKnowledgeIds.length} 件)
+          {tKnowledge('selectAllOwn')} ({tKnowledge('countUnit', { count: selectableKnowledgeIds.length })})
         </div>
       )}
 
       {filteredKnowledges.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">ナレッジがありません</p>
+        <p className="py-8 text-center text-sm text-muted-foreground">{tKnowledge('noneInList')}</p>
       ) : (
         <div className="space-y-2">
           {filteredKnowledges.map((k) => {
@@ -368,7 +374,7 @@ export function ProjectKnowledgeClient({
                     {filterApplied && isOwner && (
                       <input
                         type="checkbox"
-                        aria-label={`${k.title} を一括編集対象に追加`}
+                        aria-label={tKnowledge('addToBulkEdit', { title: k.title })}
                         checked={selectedIds.has(k.id)}
                         onChange={(e) => { e.stopPropagation(); toggleOneKnowledge(k.id); }}
                         onClick={(e) => e.stopPropagation()}
@@ -397,8 +403,8 @@ export function ProjectKnowledgeClient({
                     variant="ghost"
                     size="icon-sm"
                     className="text-destructive hover:text-destructive"
-                    title="削除"
-                    aria-label="削除"
+                    title={tKnowledge('deleteAria')}
+                    aria-label={tKnowledge('deleteAria')}
                     onClick={(e) => { e.stopPropagation(); handleDelete(k.id); }}
                   >
                     <Trash2 className="h-4 w-4" />

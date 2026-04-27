@@ -51,7 +51,8 @@ type Props = {
 };
 
 export function UsersClient({ initialUsers }: Props) {
-  const t = useTranslations('action');
+  const tAction = useTranslations('action');
+  const t = useTranslations('admin.users');
   const router = useRouter();
   const { withLoading } = useLoading();
   // PR #119: session 連携フォーマッタ
@@ -89,17 +90,13 @@ export function UsersClient({ initialUsers }: Props) {
     if (!res.ok) {
       const code = json.error?.code;
       if (code === 'DUPLICATE_EMAIL') {
-        setError('このメールアドレスは既に登録されています。別のメールアドレスを使用してください。');
+        setError(t('duplicateEmail'));
       } else if (code === 'EMAIL_SEND_FAILED') {
-        setError(
-          '招待メールの送信に失敗しました。メールアドレスに誤りがないか確認し、再度お試しください。',
-        );
+        setError(t('invitationSendFailed'));
       } else if (code === 'VALIDATION_ERROR') {
-        setError(
-          json.error?.details?.[0]?.message || '入力内容に不備があります。確認してください。',
-        );
+        setError(json.error?.details?.[0]?.message || t('validationError'));
       } else {
-        setError(json.error?.message || '登録に失敗しました。しばらくしてから再度お試しください。');
+        setError(json.error?.message || t('registrationFailed'));
       }
       return;
     }
@@ -120,55 +117,48 @@ export function UsersClient({ initialUsers }: Props) {
   // 過去ナレッジ等の作成者表示を維持しつつ、ログインだけ封じる折衷。復帰は admin が
   // 当該ユーザ行の編集ダイアログから isActive をトグル。
   async function handleManualLockInactive() {
-    if (!confirm(
-      '最終ログインから 30 日以上経過した非アクティブユーザを一括ロックします。\n'
-      + 'admin ユーザは対象外です。アカウント自体は残るためナレッジ等の\n'
-      + '作成者表示は維持されますが、ログインは不可になります (isActive=false)。\n'
-      + '解除は本画面の各ユーザ行の編集から有効状態をトグルしてください。\n'
-      + '実行しますか？',
-    )) return;
+    if (!confirm(t('lockInactiveConfirm'))) return;
     const res = await withLoading(() =>
       fetch('/api/admin/users/lock-inactive', { method: 'POST' }),
     );
     if (!res.ok) {
-      alert('ロック実行に失敗しました');
+      alert(t('lockInactiveFailed'));
       return;
     }
     const json = await res.json().catch(() => ({ data: null }));
     const count = json?.data?.lockedUserIds?.length ?? 0;
-    alert(`ロック完了\n\n対象ユーザ: ${count} 件 (isActive=false に更新済)`);
+    alert(t('lockInactiveDone', { count }));
     router.refresh();
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">ユーザ管理</h2>
+        <h2 className="text-xl font-semibold">{t('title')}</h2>
         <div className="flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={handleManualLockInactive}>
-          非アクティブユーザをロック
+          {t('lockInactive')}
         </Button>
         <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsDialogOpen(true); }}>
-          <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規ユーザ登録</DialogTrigger>
+          <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{t('createUser')}</DialogTrigger>
           {/* PR #112: 大画面での余白過多対策 (基底で scroll 対応済) */}
           <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,44rem)]">
             {success ? (
               <>
                 <DialogHeader>
-                  <DialogTitle>招待メールを送信しました</DialogTitle>
+                  <DialogTitle>{t('invitationSent')}</DialogTitle>
                   <DialogDescription>
-                    {form.email} にパスワード設定用のリンクを送信しました。
-                    ユーザがリンクからパスワードを設定すると、アカウントが有効化されます。
+                    {t('invitationSentBody', { email: form.email })}
                   </DialogDescription>
                 </DialogHeader>
-                <Button onClick={handleClose}>{t('close')}</Button>
+                <Button onClick={handleClose}>{tAction('close')}</Button>
               </>
             ) : (
               <>
                 <DialogHeader>
-                  <DialogTitle>新規ユーザ登録</DialogTitle>
+                  <DialogTitle>{t('createUser')}</DialogTitle>
                   <DialogDescription>
-                    ユーザ情報を入力してください。登録後、パスワード設定用の招待メールが送信されます。
+                    {t('createUserDescription')}
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
@@ -176,7 +166,7 @@ export function UsersClient({ initialUsers }: Props) {
                     <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                   )}
                   <div className="space-y-2">
-                    <Label htmlFor="name">ユーザ名</Label>
+                    <Label htmlFor="name">{t('fieldUserName')}</Label>
                     <Input
                       id="name"
                       value={form.name}
@@ -186,7 +176,7 @@ export function UsersClient({ initialUsers }: Props) {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="email">メールアドレス</Label>
+                    <Label htmlFor="email">{t('fieldEmail')}</Label>
                     <Input
                       id="email"
                       type="email"
@@ -196,7 +186,7 @@ export function UsersClient({ initialUsers }: Props) {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="role">システムロール</Label>
+                    <Label htmlFor="role">{t('fieldSystemRole')}</Label>
                     <select value={form.systemRole} onChange={(e) => setForm({ ...form, systemRole: e.target.value as 'admin' | 'general' })} className={nativeSelectClass}>
                       {Object.entries(SYSTEM_ROLES).map(([key, label]) => (
                         <option key={key} value={key}>{label}</option>
@@ -204,7 +194,7 @@ export function UsersClient({ initialUsers }: Props) {
                     </select>
                   </div>
                   <Button type="submit" className="w-full">
-                    招待メールを送信
+                    {t('sendInvitation')}
                   </Button>
                 </form>
               </>
@@ -217,18 +207,18 @@ export function UsersClient({ initialUsers }: Props) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>ユーザ名</TableHead>
-            <TableHead>メールアドレス</TableHead>
-            <TableHead>ロール</TableHead>
-            <TableHead>状態</TableHead>
+            <TableHead>{t('fieldUserName')}</TableHead>
+            <TableHead>{t('fieldEmail')}</TableHead>
+            <TableHead>{t('columnRole')}</TableHead>
+            <TableHead>{t('columnStatus')}</TableHead>
             {/*
               PR #85 / PR #116: 認証ロック状態
               - パスワード失敗ロック: failedLoginCount 5 回で一時ロック (30 分) / 3 回目で permanentLock
               - MFA 失敗ロック (PR #116): mfaFailedCount 3 回で一時ロック (30 分) / recovery code で自己解除可
               - 1 列集約: tooltip で内訳 (原因・解除予定・失敗回数) を表示
             */}
-            <TableHead>認証ロック</TableHead>
-            <TableHead>作成日</TableHead>
+            <TableHead>{t('columnAuthLock')}</TableHead>
+            <TableHead>{t('columnCreatedAt')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -245,42 +235,41 @@ export function UsersClient({ initialUsers }: Props) {
               if (user.permanentLock) {
                 return {
                   variant: 'destructive' as const,
-                  label: '永続ロック',
-                  title: '管理者により永続ロック中 (admin の手動解除のみ可)',
+                  label: t('permanentLock'),
+                  title: t('permanentLockTitle'),
                 };
               }
               if (pwTemporaryLocked) {
                 return {
                   variant: 'destructive' as const,
-                  label: '一時ロック (パスワード)',
-                  title:
-                    `原因: パスワード連続失敗 (${user.failedLoginCount}/5)\n`
-                    + `解除予定: ${formatDateTimeFull(user.lockedUntil!)}\n`
-                    + `解除手段: 時間経過 / admin 手動解除`,
+                  label: t('temporaryLockPassword'),
+                  title: t('temporaryLockPasswordTitle', {
+                    count: user.failedLoginCount,
+                    unlockAt: formatDateTimeFull(user.lockedUntil!),
+                  }),
                 };
               }
               if (mfaTemporaryLocked) {
                 return {
                   variant: 'destructive' as const,
-                  label: '一時ロック (MFA)',
-                  title:
-                    `原因: MFA コード連続失敗 (3/3 回)\n`
-                    + `解除予定: ${formatDateTimeFull(user.mfaLockedUntil!)}\n`
-                    + `解除手段: 時間経過 / リカバリーコード入力 / admin 手動解除`,
+                  label: t('temporaryLockMfa'),
+                  title: t('temporaryLockMfaTitle', {
+                    unlockAt: formatDateTimeFull(user.mfaLockedUntil!),
+                  }),
                 };
               }
               if (user.failedLoginCount > 0) {
                 return {
                   variant: 'secondary' as const,
-                  label: `PW 失敗 ${user.failedLoginCount}/5`,
-                  title: `ログインパスワード失敗カウント (5 回で 30 分一時ロック)`,
+                  label: t('pwFailedBadge', { count: user.failedLoginCount }),
+                  title: t('pwFailedBadgeTitle'),
                 };
               }
               if (user.mfaFailedCount > 0) {
                 return {
                   variant: 'secondary' as const,
-                  label: `MFA 失敗 ${user.mfaFailedCount}/3`,
-                  title: `MFA コード失敗カウント (3 回で 30 分一時ロック)`,
+                  label: t('mfaFailedBadge', { count: user.mfaFailedCount }),
+                  title: t('mfaFailedBadgeTitle'),
                 };
               }
               return null;
@@ -301,7 +290,7 @@ export function UsersClient({ initialUsers }: Props) {
                 </TableCell>
                 <TableCell>
                   <Badge variant={user.isActive ? 'default' : 'destructive'}>
-                    {user.isActive ? '有効' : '無効'}
+                    {user.isActive ? t('statusActive') : t('statusInactive')}
                   </Badge>
                 </TableCell>
                 <TableCell>
@@ -320,7 +309,7 @@ export function UsersClient({ initialUsers }: Props) {
           {initialUsers.length === 0 && (
             <TableRow>
               <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                ユーザが登録されていません
+                {t('noUsers')}
               </TableCell>
             </TableRow>
           )}

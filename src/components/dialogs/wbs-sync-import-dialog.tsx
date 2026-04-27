@@ -19,6 +19,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -62,11 +63,11 @@ type SyncDiffResult = {
   globalErrors: string[];
 };
 
-const ACTION_LABEL: Record<SyncDiffRow['action'], string> = {
-  CREATE: '追加',
-  UPDATE: '更新',
-  NO_CHANGE: '変更なし',
-  REMOVE_CANDIDATE: '削除候補',
+const ACTION_LABEL_KEY: Record<SyncDiffRow['action'], string> = {
+  CREATE: 'actionCreate',
+  UPDATE: 'actionUpdate',
+  NO_CHANGE: 'actionNoChange',
+  REMOVE_CANDIDATE: 'actionRemoveCandidate',
 };
 
 const ACTION_BADGE: Record<SyncDiffRow['action'], 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -87,6 +88,8 @@ export function WbsSyncImportDialog({
   onOpenChange: (v: boolean) => void;
   onImported: () => Promise<void> | void;
 }) {
+  const t = useTranslations('wbs.syncImport');
+  const tAction = useTranslations('action');
   const { withLoading } = useLoading();
   const [step, setStep] = useState<'select' | 'preview'>('select');
   const [file, setFile] = useState<File | null>(null);
@@ -111,7 +114,7 @@ export function WbsSyncImportDialog({
     e.preventDefault();
     setError('');
     if (!file) {
-      setError('ファイルを選択してください');
+      setError(t('fileRequired'));
       return;
     }
 
@@ -126,7 +129,7 @@ export function WbsSyncImportDialog({
     );
 
     if (!res.ok) {
-      let message = 'プレビュー生成に失敗しました';
+      let message = t('previewFailed');
       try {
         const json = await res.json();
         message = json.error?.message || message;
@@ -158,7 +161,7 @@ export function WbsSyncImportDialog({
     );
 
     if (!res.ok) {
-      let message = 'インポートに失敗しました';
+      let message = t('importFailed');
       try {
         const json = await res.json();
         message = json.error?.message || message;
@@ -172,7 +175,11 @@ export function WbsSyncImportDialog({
     const json = await res.json();
     handleClose();
     await onImported();
-    alert(`インポート完了: 追加 ${json.data.added} / 更新 ${json.data.updated} / 削除 ${json.data.removed}`);
+    alert(t('importComplete', {
+      added: json.data.added,
+      updated: json.data.updated,
+      removed: json.data.removed,
+    }));
   }
 
   // 進捗あり削除候補が存在し、かつ removeMode='delete' の場合は確定不可
@@ -189,11 +196,10 @@ export function WbsSyncImportDialog({
       <DialogContent className="max-w-[min(95vw,64rem)] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            WBS 上書きインポート {step === 'preview' && '(プレビュー)'}
+            {t('title')} {step === 'preview' && t('previewSuffix')}
           </DialogTitle>
           <DialogDescription>
-            CSV を読み込んで既存 WBS と差分を表示し、確認後に実行します。
-            進捗・実績データは保全 (CSV 上は read-only) されます。
+            {t('description')}
           </DialogDescription>
         </DialogHeader>
 
@@ -204,22 +210,21 @@ export function WbsSyncImportDialog({
         {step === 'select' && (
           <form onSubmit={handlePreview} className="space-y-4">
             <div className="space-y-2">
-              <Label>CSV ファイル</Label>
+              <Label>{t('csvFile')}</Label>
               <Input
                 type="file"
                 accept=".csv"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
               <p className="text-xs text-muted-foreground">
-                17 列フォーマット (ID + 階層 + 計画 + 進捗系 read-only)。
-                先に「WBS をエクスポート (上書き用)」でダウンロードした CSV を Excel で編集してご利用ください。
+                {t('csvFormatHint')}
               </p>
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={handleClose}>
-                キャンセル
+                {tAction('cancel')}
               </Button>
-              <Button type="submit">プレビュー生成</Button>
+              <Button type="submit">{t('previewGenerate')}</Button>
             </div>
           </form>
         )}
@@ -229,7 +234,7 @@ export function WbsSyncImportDialog({
             {/* グローバルエラー */}
             {preview.globalErrors.length > 0 && (
               <div className="rounded-md border border-destructive bg-destructive/10 p-3 text-sm">
-                <div className="mb-1 font-semibold text-destructive">エラー</div>
+                <div className="mb-1 font-semibold text-destructive">{t('errors')}</div>
                 <ul className="list-disc pl-5 text-destructive">
                   {preview.globalErrors.map((e, i) => <li key={i}>{e}</li>)}
                 </ul>
@@ -238,17 +243,17 @@ export function WbsSyncImportDialog({
 
             {/* サマリ */}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-              <SummaryCard label="追加" value={preview.summary.added} variant="default" />
-              <SummaryCard label="更新" value={preview.summary.updated} variant="secondary" />
-              <SummaryCard label="削除候補" value={preview.summary.removed} variant="destructive" />
-              <SummaryCard label="ブロッカー" value={preview.summary.blockedErrors} variant="destructive" />
-              <SummaryCard label="警告" value={preview.summary.warnings} variant="outline" />
+              <SummaryCard label={t('summaryAdded')} value={preview.summary.added} variant="default" />
+              <SummaryCard label={t('summaryUpdated')} value={preview.summary.updated} variant="secondary" />
+              <SummaryCard label={t('summaryRemoveCandidate')} value={preview.summary.removed} variant="destructive" />
+              <SummaryCard label={t('summaryBlocker')} value={preview.summary.blockedErrors} variant="destructive" />
+              <SummaryCard label={t('summaryWarning')} value={preview.summary.warnings} variant="outline" />
             </div>
 
             {/* 削除候補ハイライト */}
             {preview.summary.removed > 0 && (
               <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2">
-                <div className="text-sm font-semibold">削除候補 ({preview.summary.removed} 件)</div>
+                <div className="text-sm font-semibold">{t('removeCandidatesTitle', { count: preview.summary.removed })}</div>
                 <ul className="space-y-1 text-sm">
                   {preview.rows
                     .filter((r) => r.action === 'REMOVE_CANDIDATE')
@@ -259,7 +264,7 @@ export function WbsSyncImportDialog({
                       >
                         {r.hasProgress && '⚠ '}
                         「{r.name}」
-                        {r.hasProgress && ' (進捗あり、削除モード=delete ではブロックされます)'}
+                        {r.hasProgress && t('removeCandidateBlockedSuffix')}
                       </li>
                     ))}
                 </ul>
@@ -268,37 +273,37 @@ export function WbsSyncImportDialog({
 
             {/* 削除モード選択 */}
             <div className="space-y-2">
-              <Label>削除候補の扱い</Label>
+              <Label>{t('removeModeLabel')}</Label>
               <div className="flex flex-col gap-1 text-sm">
                 <RadioOption
                   checked={removeMode === 'keep'}
                   onChange={() => setRemoveMode('keep')}
-                  label="保持: CSV にないタスクはそのまま残す (推奨)"
+                  label={t('removeModeKeep')}
                 />
                 <RadioOption
                   checked={removeMode === 'warn'}
                   onChange={() => setRemoveMode('warn')}
-                  label="警告のみ: 削除候補を表示し、本実行では削除しない"
+                  label={t('removeModeWarn')}
                 />
                 <RadioOption
                   checked={removeMode === 'delete'}
                   onChange={() => setRemoveMode('delete')}
-                  label="削除: CSV にないタスクを論理削除 (進捗ありはブロックされ実行不可)"
+                  label={t('removeModeDelete')}
                 />
               </div>
             </div>
 
             {/* 行ごとの差分テーブル */}
             <div className="space-y-2">
-              <Label>差分一覧 ({preview.rows.length} 行)</Label>
+              <Label>{t('diffListLabel', { count: preview.rows.length })}</Label>
               <div className="max-h-[40vh] overflow-y-auto rounded-md border border-input">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-muted">
                     <tr>
-                      <th className="px-2 py-1 text-left">CSV 行</th>
-                      <th className="px-2 py-1 text-left">操作</th>
-                      <th className="px-2 py-1 text-left">名称</th>
-                      <th className="px-2 py-1 text-left">変更/警告</th>
+                      <th className="px-2 py-1 text-left">{t('columnCsvRow')}</th>
+                      <th className="px-2 py-1 text-left">{t('columnAction')}</th>
+                      <th className="px-2 py-1 text-left">{t('columnName')}</th>
+                      <th className="px-2 py-1 text-left">{t('columnChangeWarning')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -315,7 +320,7 @@ export function WbsSyncImportDialog({
                       >
                         <td className="px-2 py-1 align-top">{r.csvRow ?? '-'}</td>
                         <td className="px-2 py-1 align-top">
-                          <Badge variant={ACTION_BADGE[r.action]}>{ACTION_LABEL[r.action]}</Badge>
+                          <Badge variant={ACTION_BADGE[r.action]}>{t(ACTION_LABEL_KEY[r.action])}</Badge>
                         </td>
                         <td className="px-2 py-1 align-top">{r.name}</td>
                         <td className="px-2 py-1 align-top text-xs">
@@ -327,7 +332,7 @@ export function WbsSyncImportDialog({
                           ))}
                           {r.fieldChanges?.map((fc, i) => (
                             <div key={`fc-${i}`} className="text-muted-foreground">
-                              {fc.field}: {String(fc.before ?? '(空)')} → {String(fc.after ?? '(空)')}
+                              {fc.field}: {String(fc.before ?? t('fieldEmpty'))} → {String(fc.after ?? t('fieldEmpty'))}
                             </div>
                           ))}
                         </td>
@@ -340,20 +345,20 @@ export function WbsSyncImportDialog({
 
             {!canExecute && (
               <div className="rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive">
-                ブロッカーがあるため確定実行できません。CSV を修正してプレビューをやり直してください。
+                {t('blockerNotice')}
               </div>
             )}
 
             <div className="flex justify-between gap-2">
               <Button type="button" variant="outline" onClick={() => setStep('select')}>
-                ← ファイル選択に戻る
+                {t('backToFileSelect')}
               </Button>
               <div className="flex gap-2">
                 <Button type="button" variant="outline" onClick={handleClose}>
-                  キャンセル
+                  {tAction('cancel')}
                 </Button>
                 <Button type="button" onClick={handleExecute} disabled={!canExecute}>
-                  確定実行
+                  {t('execute')}
                 </Button>
               </div>
             </div>

@@ -27,6 +27,7 @@
  */
 
 import { useCallback, useMemo, useRef } from 'react';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -67,7 +68,15 @@ function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
 }
 
-const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'] as const;
+const DAY_LABEL_KEYS = [
+  'dayLabelSun',
+  'dayLabelMon',
+  'dayLabelTue',
+  'dayLabelWed',
+  'dayLabelThu',
+  'dayLabelFri',
+  'dayLabelSat',
+] as const;
 
 /** 1日あたりの幅(px) */
 const DAY_WIDTH = 32;
@@ -113,13 +122,21 @@ function flattenForGantt(
   return out;
 }
 
-/** 日付レンジ文字列（未設定は "-"）*/
-function rangeText(start: string | null | undefined, end: string | null | undefined): string {
+/**
+ * 日付レンジ文字列（未設定は "-"）
+ * unsetLabel は i18n 化された「(未)」相当のローカライズ済み文字列を渡す。
+ */
+function rangeText(
+  start: string | null | undefined,
+  end: string | null | undefined,
+  unsetLabel: string,
+): string {
   if (!start && !end) return '-';
-  return `${start || '（未）'} 〜 ${end || '（未）'}`;
+  return `${start || unsetLabel} 〜 ${end || unsetLabel}`;
 }
 
 export function GanttClient({ projectId, tasks: tree, members }: Props) {
+  const t = useTranslations('gantt');
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   // PR #68: ガントのタスク名列幅をユーザが調整可能にする (sessionStorage 永続)。
@@ -270,7 +287,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
       const m = d.getMonth();
       const y = d.getFullYear();
       if (m !== currentMonth || y !== currentYear) {
-        headers.push({ label: `${y}/${m + 1}月`, span: 1 });
+        headers.push({ label: t('monthHeader', { year: y, month: m + 1 }), span: 1 });
         currentMonth = m;
         currentYear = y;
       } else {
@@ -278,14 +295,14 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
       }
     }
     return headers;
-  }, [minDate, totalDays]);
+  }, [minDate, totalDays, t]);
 
   const dayHeaders = useMemo(() => {
     const headers: {
       date: string;
       day: number;
       dayOfWeek: number;
-      // PR #125: 祝日なら名称 (例 '元日', 'こどもの日')、そうでなければ null
+      // PR #125: 祝日なら名称、そうでなければ null
       holidayName: string | null;
     }[] = [];
     const start = new Date(minDate);
@@ -325,30 +342,30 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">ガントチャート</h2>
+        <h2 className="text-xl font-semibold">{t('pageTitle')}</h2>
         {/* PR #68: タスク名列の幅リセット (日付列は固定) */}
         <Button variant="outline" size="sm" onClick={resetNameColWidth}>
-          タスク名列の幅をリセット
+          {t('resetNameColWidth')}
         </Button>
       </div>
 
       {/* フィルタ (担当者 + 状況、PR #61) */}
       <div className="flex flex-wrap items-center gap-2">
         <MultiSelectFilter
-          label="担当者"
+          label={t('assignee')}
           options={[
             ...members.map((m) => ({ value: m.userId, label: m.userName })),
-            { value: UNASSIGNED_KEY, label: '（未アサイン）', muted: true },
+            { value: UNASSIGNED_KEY, label: t('unassigned'), muted: true },
           ]}
           selected={assigneeFilter}
           onToggle={toggleAssignee}
           onSelectAll={selectAllAssignees}
           onClearAll={clearAllAssignees}
           isAllSelected={isAllAssigneesSelected}
-          allLabel="全員"
+          allLabel={t('allAssignees')}
         />
         <MultiSelectFilter
-          label="状況"
+          label={t('status')}
           options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
           selected={statusFilter}
           onToggle={toggleStatus}
@@ -363,7 +380,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
             size="sm"
             onClick={() => { selectAllAssignees(); selectAllStatuses(); }}
           >
-            フィルタ解除
+            {t('filterClear')}
           </Button>
         )}
       </div>
@@ -371,22 +388,22 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
       {/* 凡例（上部配置・スクロールに影響されない）*/}
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <div className="flex items-center gap-1">
-          <div className="h-3 w-6 rounded bg-info/30" /> 予定
+          <div className="h-3 w-6 rounded bg-info/30" /> {t('legendPlanned')}
         </div>
         <div className="flex items-center gap-1">
-          <div className="h-3 w-6 rounded bg-info" /> 実績 (進捗)
+          <div className="h-3 w-6 rounded bg-info" /> {t('legendActual')}
         </div>
         <div className="flex items-center gap-1">
-          <div className="h-3 w-6 rounded bg-destructive" /> 遅延
+          <div className="h-3 w-6 rounded bg-destructive" /> {t('legendDelayed')}
         </div>
         <div className="flex items-center gap-1">
-          <div className="h-3 w-3 rotate-45 bg-milestone-marker" /> マイルストーン
+          <div className="h-3 w-3 rotate-45 bg-milestone-marker" /> {t('legendMilestone')}
         </div>
       </div>
 
       {rows.length === 0 ? (
         <p className="py-8 text-center text-muted-foreground">
-          {hasAnyTask ? '選択した担当者に該当するタスクはありません' : 'タスクがありません'}
+          {hasAnyTask ? t('noTasksFiltered') : t('noTasks')}
         </p>
       ) : (
       /*
@@ -434,14 +451,14 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
               className="sticky left-0 z-30 shrink-0 border-r bg-muted px-3 text-xs font-medium leading-9 relative"
               style={{ width: `${nameColWidth}px` }}
             >
-              タスク名
+              {t('taskNameColumn')}
               {/* PR #68: タスク名列の右端ドラッグハンドル (日付列は固定) */}
               <div
                 onMouseDown={onNameColDragStart}
                 className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-info/40 active:bg-info"
                 role="separator"
                 aria-orientation="vertical"
-                aria-label="タスク名列の幅を変更"
+                aria-label={t('nameColResizeAria')}
               />
             </div>
             <div className="flex">
@@ -465,7 +482,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
                     style={{ width: `${DAY_WIDTH}px` }}
                   >
                     <div>{dh.day}</div>
-                    <div>{DAY_LABELS[dh.dayOfWeek]}</div>
+                    <div>{t(DAY_LABEL_KEYS[dh.dayOfWeek])}</div>
                   </div>
                 );
               })}
@@ -535,6 +552,8 @@ function GanttRow({
   today,
   onToggleCollapsed,
 }: GanttRowProps) {
+  const t = useTranslations('gantt');
+  const unsetLabel = t('unsetShort');
   const isWP = task.type === 'work_package';
   const hasPlanned = !!task.plannedStartDate && !!task.plannedEndDate;
   const hasActualStart = !!task.actualStartDate;
@@ -565,9 +584,9 @@ function GanttRow({
   // 進捗は左列に出ているため重複表示しない）
   const tooltipContent = (
     <div className="space-y-0.5">
-      <div>工数: {task.plannedEffort > 0 ? `${task.plannedEffort}h` : '-'}</div>
-      <div>予定: {rangeText(task.plannedStartDate, task.plannedEndDate)}</div>
-      <div>実績: {rangeText(task.actualStartDate, task.actualEndDate)}</div>
+      <div>{t('tooltipEffort', { value: task.plannedEffort > 0 ? `${task.plannedEffort}h` : '-' })}</div>
+      <div>{t('tooltipPlanned', { value: rangeText(task.plannedStartDate, task.plannedEndDate, unsetLabel) })}</div>
+      <div>{t('tooltipActual', { value: rangeText(task.actualStartDate, task.actualEndDate, unsetLabel) })}</div>
     </div>
   );
 
@@ -600,8 +619,8 @@ function GanttRow({
                   onToggleCollapsed(task.id);
                 }}
                 className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"
-                title={isCollapsed ? '展開' : '折りたたみ'}
-                aria-label={isCollapsed ? '展開' : '折りたたみ'}
+                title={isCollapsed ? t('expand') : t('collapse')}
+                aria-label={isCollapsed ? t('expand') : t('collapse')}
               >
                 <span
                   className={`text-xs transition-transform ${isCollapsed ? '' : 'rotate-90'}`}

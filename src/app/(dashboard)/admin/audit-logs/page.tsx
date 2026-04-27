@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/db';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -12,6 +13,7 @@ export default async function AuditLogsPage() {
   const session = await auth();
   if (!session || session.user.systemRole !== 'admin') redirect('/');
 
+  const t = await getTranslations('admin.auditLogs');
   const { formatDateTimeFull } = await getServerFormatters();
 
   const logs = await prisma.auditLog.findMany({
@@ -22,15 +24,15 @@ export default async function AuditLogsPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold">監査ログ</h2>
+      <h2 className="text-xl font-semibold">{t('title')}</h2>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>日時</TableHead>
-            <TableHead>操作者</TableHead>
-            <TableHead>操作</TableHead>
-            <TableHead>対象</TableHead>
-            <TableHead>対象ID</TableHead>
+            <TableHead>{t('columnDateTime')}</TableHead>
+            <TableHead>{t('columnOperator')}</TableHead>
+            <TableHead>{t('columnAction')}</TableHead>
+            <TableHead>{t('columnTarget')}</TableHead>
+            <TableHead>{t('columnTargetId')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -48,7 +50,7 @@ export default async function AuditLogsPage() {
             </TableRow>
           ))}
           {logs.length === 0 && (
-            <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">監査ログがありません</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">{t('noLogs')}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

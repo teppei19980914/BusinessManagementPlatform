@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { checkMembership } from '@/lib/permissions';
 import { createAttachmentSchema, ATTACHMENT_ENTITY_TYPES } from '@/lib/validators/attachment';
@@ -49,18 +50,19 @@ async function authorize(
   entityId: string,
   mode: 'read' | 'write' = 'write',
 ): Promise<NextResponse | null> {
+  const t = await getTranslations('message');
   // PR #70: memo は admin 特権なしの個人リソース。project スコープとは別経路で判定する。
   if (entityType === 'memo') {
     const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, mode);
     if (notFound) {
       return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+        { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
         { status: 404 },
       );
     }
     if (!ok) {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+        { error: { code: 'FORBIDDEN', message: t('forbidden') } },
         { status: 403 },
       );
     }
@@ -72,14 +74,14 @@ async function authorize(
   const projectIds = await resolveProjectIds(entityType, entityId);
   if (projectIds === null) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
   if (projectIds.length === 0) {
     // 孤児ナレッジ等は admin 以外不可
     return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+      { error: { code: 'FORBIDDEN', message: t('forbidden') } },
       { status: 403 },
     );
   }
@@ -90,7 +92,7 @@ async function authorize(
     if (membership.isMember) return null;
   }
   return NextResponse.json(
-    { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+    { error: { code: 'FORBIDDEN', message: t('forbidden') } },
     { status: 403 },
   );
 }
@@ -108,15 +110,16 @@ export async function GET(req: NextRequest) {
   const entityId = url.searchParams.get('entityId');
   const slot = url.searchParams.get('slot') ?? undefined;
 
+  const t = await getTranslations('message');
   if (!entityType || !entityId) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'entityType と entityId は必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('attachmentEntityRequired') } },
       { status: 400 },
     );
   }
   if (!ATTACHMENT_ENTITY_TYPES.includes(entityType as AttachmentEntityType)) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'entityType が不正です' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('attachmentEntityInvalid') } },
       { status: 400 },
     );
   }

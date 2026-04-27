@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { Skeleton } from '@/components/ui/skeleton';
 
 /**
@@ -10,7 +11,18 @@ import { Skeleton } from '@/components/ui/skeleton';
  * 内容表示後もタブ切替時の個別フェッチは ProjectDetailClient 内の
  * LazyTabContent に委譲される（二段構え）。
  */
-export default function ProjectDetailLoading() {
+export default async function ProjectDetailLoading() {
+  const t = await getTranslations('common');
+  const tabLabels = [
+    t('tabOverview'),
+    t('tabEstimates'),
+    t('tabTasks'),
+    t('tabGantt'),
+    t('tabRisksIssues'),
+    t('tabRetrospectives'),
+    t('tabKnowledge'),
+    t('tabMembers'),
+  ];
   return (
     <div className="space-y-6">
       {/* ヘッダー: タイトル + ステータスバッジ + アクションボタン */}
@@ -31,7 +43,7 @@ export default function ProjectDetailLoading() {
 
       {/* タブリスト骨格 */}
       <div className="flex flex-wrap gap-2">
-        {['概要', '見積もり', 'WBS管理', 'ガント', 'リスク/課題一覧', '振り返り一覧', 'ナレッジ一覧', 'メンバー'].map((label) => (
+        {tabLabels.map((label) => (
           <div
             key={label}
             className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground"

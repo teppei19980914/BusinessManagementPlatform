@@ -86,9 +86,9 @@ describe('SELECTABLE_LOCALES / isSelectableLocale (PR #120)', () => {
     expect(isSelectableLocale('ja-JP')).toBe(true);
   });
 
-  it('en-US は選択不可 (後続 PR で翻訳完了後に有効化予定)', () => {
-    expect(SELECTABLE_LOCALES['en-US']).toBe(false);
-    expect(isSelectableLocale('en-US')).toBe(false);
+  it('en-US は選択可 (PR #175 Phase C 翻訳完了で有効化)', () => {
+    expect(SELECTABLE_LOCALES['en-US']).toBe(true);
+    expect(isSelectableLocale('en-US')).toBe(true);
   });
 
   it('SUPPORTED_LOCALES に含まれない値は false', () => {

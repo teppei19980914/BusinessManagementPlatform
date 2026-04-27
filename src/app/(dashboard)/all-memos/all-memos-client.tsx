@@ -20,6 +20,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,12 +47,13 @@ import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import type { MemoDTO } from '@/services/memo.service';
 
-const VISIBILITY_LABELS: Record<string, string> = {
-  private: '自分のみ',
-  public: '全メモに公開',
-};
-
 export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
+  const tField = useTranslations('field');
+  const tMemo = useTranslations('memo');
+  const VISIBILITY_LABELS: Record<string, string> = {
+    private: tMemo('visibilityPrivate'),
+    public: tMemo('visibilityPublic'),
+  };
   const { formatDateTime } = useFormatters();
   const [viewing, setViewing] = useState<MemoDTO | null>(null);
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
@@ -61,8 +63,8 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">全メモ</h2>
-        <span className="text-sm text-muted-foreground">{memos.length} 件</span>
+        <h2 className="text-xl font-semibold">{tMemo('allTitle')}</h2>
+        <span className="text-sm text-muted-foreground">{tMemo('count', { count: memos.length })}</span>
       </div>
 
       <ResizableColumnsProvider tableKey="all-memos-readonly">
@@ -72,11 +74,11 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
         <Table>
           <TableHeader>
             <TableRow>
-              <ResizableHead columnKey="title" defaultWidth={220}>タイトル</ResizableHead>
-              <ResizableHead columnKey="content" defaultWidth={360}>本文</ResizableHead>
-              <ResizableHead columnKey="author" defaultWidth={140}>作成者</ResizableHead>
-              <ResizableHead columnKey="updatedAt" defaultWidth={140}>更新日時</ResizableHead>
-              <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
+              <ResizableHead columnKey="title" defaultWidth={220}>{tField('title')}</ResizableHead>
+              <ResizableHead columnKey="content" defaultWidth={360}>{tField('body')}</ResizableHead>
+              <ResizableHead columnKey="author" defaultWidth={140}>{tMemo('colAuthor')}</ResizableHead>
+              <ResizableHead columnKey="updatedAt" defaultWidth={140}>{tMemo('colUpdatedAt')}</ResizableHead>
+              <ResizableHead columnKey="attachments" defaultWidth={200}>{tMemo('colAttachments')}</ResizableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -92,7 +94,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {m.authorName ?? '-'}
-                  {m.isMine && <span className="ml-1 text-xs text-info">(自分)</span>}
+                  {m.isMine && <span className="ml-1 text-xs text-info">{tMemo('mineSuffix')}</span>}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                   {formatDateTime(m.updatedAt)}
@@ -105,8 +107,8 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
             {memos.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  公開メモがありません。
-                  <span className="ml-1 text-xs">(「メモ」画面で公開範囲を「全メモに公開」にすると、このページに表示されます)</span>
+                  {tMemo('emptyPublic')}
+                  <span className="ml-1 text-xs">{tMemo('emptyPublicHint')}</span>
                 </TableCell>
               </TableRow>
             )}
@@ -119,48 +121,48 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
         <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${fullscreenClassName}`}>
           <DialogHeader>
             <div className="flex items-center justify-between gap-2">
-              <DialogTitle>メモ詳細</DialogTitle>
+              <DialogTitle>{tMemo('detail')}</DialogTitle>
               <FullscreenToggle />
             </div>
             <DialogDescription>
-              参照専用です。編集は作成者のメモ画面でのみ可能です。
+              {tMemo('detailDescription')}
             </DialogDescription>
           </DialogHeader>
           {viewing && (
             <div className="space-y-4">
               <fieldset disabled className="space-y-4 disabled:opacity-90">
                 <div className="space-y-2">
-                  <Label>公開範囲</Label>
+                  <Label>{tField('visibility')}</Label>
                   <Input value={VISIBILITY_LABELS[viewing.visibility] ?? viewing.visibility} readOnly />
                 </div>
                 <div className="space-y-2">
-                  <Label>作成者</Label>
+                  <Label>{tMemo('colAuthor')}</Label>
                   <Input value={viewing.authorName ?? '-'} readOnly />
                 </div>
                 <div className="space-y-2">
-                  <Label>タイトル</Label>
+                  <Label>{tField('title')}</Label>
                   <Input value={viewing.title} readOnly />
                 </div>
                 <div className="space-y-2">
-                  <Label>本文</Label>
+                  <Label>{tField('body')}</Label>
                   <div className="rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[12rem]">
                     <MarkdownDisplay value={viewing.content} />
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>更新日時</Label>
+                  <Label>{tMemo('colUpdatedAt')}</Label>
                   <Input value={formatDateTime(viewing.updatedAt)} readOnly />
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline">作成: {formatDateTime(viewing.createdAt)}</Badge>
-                  {viewing.isMine && <Badge>自分のメモ</Badge>}
+                  <Badge variant="outline">{tMemo('createdAt', { date: formatDateTime(viewing.createdAt) })}</Badge>
+                  {viewing.isMine && <Badge>{tMemo('mineBadge')}</Badge>}
                 </div>
               </fieldset>
               <AttachmentList
                 entityType="memo"
                 entityId={viewing.id}
                 canEdit={false}
-                label="参考 URL"
+                label={tMemo('referenceUrl')}
               />
             </div>
           )}

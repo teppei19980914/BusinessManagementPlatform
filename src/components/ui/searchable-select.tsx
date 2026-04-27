@@ -27,6 +27,7 @@
  */
 
 import * as React from 'react';
+import { useTranslations } from 'next-intl';
 import { Combobox } from '@base-ui/react/combobox';
 import { ChevronDownIcon, CheckIcon, SearchIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -82,6 +83,7 @@ export function SearchableSelect({
   'aria-label': ariaLabel,
   className,
 }: SearchableSelectProps) {
+  const t = useTranslations('common');
   // SSR 安全: 初回は FALLBACK で判定、mount 後に viewport 実測値で再計算
   const [threshold, setThreshold] = React.useState<number>(FALLBACK_THRESHOLD);
 
@@ -153,7 +155,7 @@ export function SearchableSelect({
         「候補を開く」に統一して Input の aria-label と衝突しないようにする。
       */}
       <Combobox.Trigger
-        aria-label="候補を開く"
+        aria-label={t('openCandidates')}
         className="pointer-events-none absolute"
       >
         <ChevronDownIcon className="size-4 text-muted-foreground" />
@@ -179,7 +181,7 @@ export function SearchableSelect({
                   ただし Base UI では input 1 個のみが filter トリガーになるため、
                   ここは視覚的な案内に留め、実入力はトリガー input 側で受ける設計にする。
                 */}
-                <span className="text-xs text-muted-foreground">上の入力欄で絞り込めます</span>
+                <span className="text-xs text-muted-foreground">{t('searchHint')}</span>
               </div>
             )}
             <Combobox.List className="p-1">
@@ -208,7 +210,7 @@ export function SearchableSelect({
               )}
             </Combobox.List>
             <Combobox.Empty className="px-3 py-4 text-center text-sm text-muted-foreground">
-              該当なし
+              {t('noMatch')}
             </Combobox.Empty>
           </Combobox.Popup>
         </Combobox.Positioner>

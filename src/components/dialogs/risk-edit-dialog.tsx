@@ -64,6 +64,7 @@ export function RiskEditDialog({
 }) {
   const t = useTranslations('action');
   const tField = useTranslations('field');
+  const tRisk = useTranslations('risk');
   const { withLoading } = useLoading();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。state は dialog ローカル。
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
@@ -133,7 +134,7 @@ export function RiskEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || '更新に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || tRisk('updateFailed'));
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
@@ -143,17 +144,19 @@ export function RiskEditDialog({
     void onSaved();
   }
 
-  const titleText = risk.type === 'risk' ? 'リスク' : '課題';
+  const dialogTitle = readOnly
+    ? (risk.type === 'risk' ? tRisk('detailRisk') : tRisk('detailIssue'))
+    : (risk.type === 'risk' ? tRisk('editRisk') : tRisk('editIssue'));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
           <div className="flex items-center justify-between gap-2">
-            <DialogTitle>{readOnly ? `${titleText}詳細` : `${titleText}編集`}</DialogTitle>
+            <DialogTitle>{dialogTitle}</DialogTitle>
             <FullscreenToggle />
           </div>
           <DialogDescription>
-            {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
+            {readOnly ? tRisk('readOnlyHint') : tRisk('saveHint')}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -186,7 +189,7 @@ export function RiskEditDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>{tField('content')} <span className="text-xs text-muted-foreground">(任意)</span></Label>
+            <Label>{tField('content')} <span className="text-xs text-muted-foreground">{tRisk('optional')}</span></Label>
             {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も内容は任意 */}
             <MarkdownTextarea
               value={form.content}
@@ -215,7 +218,7 @@ export function RiskEditDialog({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>状態</Label>
+              <Label>{tRisk('state')}</Label>
               <select value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} className={nativeSelectClass}>
                 {Object.entries(RISK_ISSUE_STATES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
@@ -223,7 +226,7 @@ export function RiskEditDialog({
             <div className="space-y-2">
               <Label>{tField('assignee')}</Label>
               <select value={form.assigneeId} onChange={(e) => setForm({ ...form, assigneeId: e.target.value })} className={nativeSelectClass}>
-                <option value="">未設定</option>
+                <option value="">{tRisk('notSet')}</option>
                 {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
               </select>
             </div>
@@ -245,7 +248,7 @@ export function RiskEditDialog({
               entityType="risk"
               entityId={risk.id}
               canEdit
-              label="関連 URL"
+              label={tRisk('relatedUrl')}
             />
           )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}

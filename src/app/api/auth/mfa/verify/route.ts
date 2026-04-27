@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import {
   verifyTotp,
   resetMfaLockOnRecoveryCodeUse,
@@ -32,6 +33,7 @@ const totpSchema = z.object({ userId: z.string().uuid(), code: z.string().length
 const recoverySchema = z.object({ userId: z.string().uuid(), recoveryCode: z.string().min(1) });
 
 export async function POST(req: NextRequest) {
+  const t = await getTranslations('message');
   // PR #67: セッションに紐付く userId のみを検証対象に制限し、他人の TOTP 検証を防ぐ
   const session = await auth();
   if (!session?.user?.id) {
@@ -40,7 +42,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   if (body?.userId && body.userId !== session.user.id) {
     return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: 'セッションユーザと一致しません' } },
+      { error: { code: 'FORBIDDEN', message: t('mfaSessionMismatch') } },
       { status: 403 },
     );
   }
@@ -62,7 +64,7 @@ export async function POST(req: NextRequest) {
           {
             error: {
               code: 'MFA_LOCKED',
-              message: '認証コードの連続失敗によりロックされています',
+              message: t('mfaLockedDueToFailures'),
               lockedUntil: e.lockedUntil.toISOString(),
             },
           },
@@ -73,7 +75,7 @@ export async function POST(req: NextRequest) {
     }
     if (!isValid) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: 'コードが正しくありません' } },
+        { error: { code: 'VALIDATION_ERROR', message: t('mfaCodeInvalid') } },
         { status: 400 },
       );
     }
@@ -104,7 +106,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'リカバリーコードが正しくありません' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('mfaRecoveryCodeInvalid') } },
       { status: 400 },
     );
   }

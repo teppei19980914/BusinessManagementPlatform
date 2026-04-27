@@ -20,6 +20,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { TASK_STATUSES, PRIORITIES } from '@/types';
@@ -64,6 +65,7 @@ const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_ST
  *   - 状況 (task status) の複数選択フィルタを追加 (デフォルト全選択)
  */
 export function MyTasksClient({ projectGroups, today, currentUserId, currentUserName }: Props) {
+  const tMyTask = useTranslations('myTask');
   // feat/gantt-tab-restructure (PR-C item 7): Gantt 表示トグル
   const [showGantt, setShowGantt] = useState(false);
   // GanttClient は members props (担当者フィルタ用) を受け取るため、自分のみの 1 件配列を作る。
@@ -140,8 +142,8 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
   if (projectGroups.length === 0) {
     return (
       <div className="space-y-6">
-        <h2 className="text-xl font-semibold">マイタスク</h2>
-        <p className="py-8 text-center text-muted-foreground">担当タスクがありません</p>
+        <h2 className="text-xl font-semibold">{tMyTask('title')}</h2>
+        <p className="py-8 text-center text-muted-foreground">{tMyTask('noAssigned')}</p>
       </div>
     );
   }
@@ -150,15 +152,15 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
     <ResizableColumnsProvider tableKey="my-tasks">
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">マイタスク</h2>
+        <h2 className="text-xl font-semibold">{tMyTask('title')}</h2>
         <div className="flex items-center gap-2">
           {/* feat/gantt-tab-restructure (PR-C item 7): 横断 Gantt 表示トグル */}
           <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>
-            {showGantt ? 'ガントを閉じる' : 'ガントチャートを表示'}
+            {showGantt ? tMyTask('hideGantt') : tMyTask('showGantt')}
           </Button>
           <ResetColumnsButton />
           <MultiSelectFilter
-            label="状況"
+            label={tMyTask('statusFilter')}
             options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
             selected={selectedStatuses}
             onToggle={toggleStatus}
@@ -168,7 +170,7 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
           />
           {!isAllStatusesSelected && (
             <Button type="button" variant="ghost" size="sm" onClick={selectAllStatuses}>
-              フィルタ解除
+              {tMyTask('clearFilter')}
             </Button>
           )}
         </div>
@@ -194,7 +196,7 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
       )}
 
       {filteredGroups.length === 0 && (
-        <p className="py-8 text-center text-muted-foreground">該当するタスクがありません</p>
+        <p className="py-8 text-center text-muted-foreground">{tMyTask('noMatch')}</p>
       )}
 
       {filteredGroups.map((pg) => {
@@ -207,7 +209,7 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
                 type="button"
                 onClick={() => toggleProject(pg.projectId)}
                 className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent"
-                aria-label={isProjectExpanded ? '折りたたみ' : '展開'}
+                aria-label={isProjectExpanded ? tMyTask('collapse') : tMyTask('expand')}
               >
                 <span className={`text-xs transition-transform ${isProjectExpanded ? 'rotate-90' : ''}`}>▶</span>
               </button>
@@ -218,7 +220,7 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
                 {pg.projectName}
               </Link>
               <span className="text-xs text-muted-foreground">
-                ({countActivities(pg.tree)} 件)
+                {tMyTask('count', { count: countActivities(pg.tree) })}
               </span>
             </div>
 
@@ -226,12 +228,12 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
               <table className="min-w-full text-xs md:text-sm">
                 <thead className="bg-card">
                   <tr>
-                    <ResizableHead columnKey="name" defaultWidth={300}>名称</ResizableHead>
-                    <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
-                    <ResizableHead columnKey="progress" defaultWidth={140}>進捗&工数</ResizableHead>
-                    <ResizableHead columnKey="plannedRange" defaultWidth={180}>予定期間</ResizableHead>
-                    <ResizableHead columnKey="actualRange" defaultWidth={180}>実績期間</ResizableHead>
-                    <ResizableHead columnKey="priority" defaultWidth={80}>優先度</ResizableHead>
+                    <ResizableHead columnKey="name" defaultWidth={300}>{tMyTask('colName')}</ResizableHead>
+                    <ResizableHead columnKey="status" defaultWidth={100}>{tMyTask('colStatus')}</ResizableHead>
+                    <ResizableHead columnKey="progress" defaultWidth={140}>{tMyTask('colProgressEffort')}</ResizableHead>
+                    <ResizableHead columnKey="plannedRange" defaultWidth={180}>{tMyTask('colPlannedRange')}</ResizableHead>
+                    <ResizableHead columnKey="actualRange" defaultWidth={180}>{tMyTask('colActualRange')}</ResizableHead>
+                    <ResizableHead columnKey="priority" defaultWidth={80}>{tMyTask('colPriority')}</ResizableHead>
                   </tr>
                 </thead>
                 <tbody>
@@ -273,18 +275,20 @@ function TaskRow({
   expandedTasks: Set<string>;
   onToggleTask: (id: string) => void;
 }) {
+  const tMyTask = useTranslations('myTask');
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
   // WP のみ折りたたみ対象。ACT は常に展開表示。
   const isExpanded = !isWP || !hasChildren || expandedTasks.has(task.id);
 
+  const unsetLabel = tMyTask('unset');
   const plannedRangeText = (() => {
     if (!task.plannedStartDate && !task.plannedEndDate) return '-';
-    return `${task.plannedStartDate || '（未）'} 〜 ${task.plannedEndDate || '（未）'}`;
+    return `${task.plannedStartDate || unsetLabel} 〜 ${task.plannedEndDate || unsetLabel}`;
   })();
   const actualRangeText = (() => {
     if (!task.actualStartDate && !task.actualEndDate) return '-';
-    return `${task.actualStartDate || '（未）'} 〜 ${task.actualEndDate || '（未）'}`;
+    return `${task.actualStartDate || unsetLabel} 〜 ${task.actualEndDate || unsetLabel}`;
   })();
   const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
 
@@ -322,7 +326,7 @@ function TaskRow({
             {isWP && hasChildren && !isExpanded && (
               <span className="text-xs text-muted-foreground">({task.children!.length})</span>
             )}
-            {isDelayed && <Badge variant="destructive" className="ml-1 text-[10px]">遅延</Badge>}
+            {isDelayed && <Badge variant="destructive" className="ml-1 text-[10px]">{tMyTask('delayed')}</Badge>}
           </div>
         </td>
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">

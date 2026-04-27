@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { updateKnowledgeSchema } from '@/lib/validators/knowledge';
 import { getKnowledge, updateKnowledge, deleteKnowledge } from '@/services/knowledge.service';
@@ -27,12 +28,13 @@ export async function GET(
   if (user instanceof NextResponse) return user;
 
   const { knowledgeId } = await params;
+  const t = await getTranslations('message');
   // 2026-04-24: service 層で public/draft 判定 (他人の draft は null)
   const knowledge = await getKnowledge(knowledgeId, user.id, user.systemRole);
 
   if (!knowledge) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -48,12 +50,13 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
 
   const { knowledgeId } = await params;
+  const t = await getTranslations('message');
   // 内部呼び出し (認可オフ) で生行を取得してから service 層で判定させる
   const existing = await getKnowledge(knowledgeId);
 
   if (!existing) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -74,7 +77,7 @@ export async function PATCH(
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '作成者本人のみ編集できます' } },
+        { error: { code: 'FORBIDDEN', message: t('creatorOnlyEdit') } },
         { status: 403 },
       );
     }
@@ -104,11 +107,12 @@ export async function DELETE(
   if (user instanceof NextResponse) return user;
 
   const { knowledgeId } = await params;
+  const t = await getTranslations('message');
   const existing = await getKnowledge(knowledgeId);
 
   if (!existing) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -120,7 +124,7 @@ export async function DELETE(
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '作成者本人または管理者のみ削除できます' } },
+        { error: { code: 'FORBIDDEN', message: t('creatorOrAdminOnlyDelete') } },
         { status: 403 },
       );
     }

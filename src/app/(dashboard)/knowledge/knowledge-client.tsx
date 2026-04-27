@@ -28,6 +28,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -64,6 +65,7 @@ type Props = {
 
 export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
   const router = useRouter();
+  const tKnowledge = useTranslations('knowledge');
   const { formatDateTime } = useFormatters();
   const isAdmin = systemRole === 'admin';
   const [keyword, setKeyword] = useState('');
@@ -89,13 +91,13 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">全ナレッジ</h2>
-        <span className="text-sm text-muted-foreground">{filtered.length} 件</span>
+        <h2 className="text-xl font-semibold">{tKnowledge('headingAll')}</h2>
+        <span className="text-sm text-muted-foreground">{tKnowledge('countUnit', { count: filtered.length })}</span>
       </div>
 
       <div className="flex gap-4">
         <Input
-          placeholder="キーワード検索 (タイトル・背景・内容・結果)"
+          placeholder={tKnowledge('searchPlaceholder')}
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           className="max-w-[min(90vw,28rem)]"
@@ -105,10 +107,10 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
         />
         <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter((v ?? '__all__') === '__all__' ? '' : (v ?? ''))}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="全種別" />
+            <SelectValue placeholder={tKnowledge('all')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__all__">全種別</SelectItem>
+            <SelectItem value="__all__">{tKnowledge('all')}</SelectItem>
             {Object.entries(KNOWLEDGE_TYPES).map(([key, label]) => (
               <SelectItem key={key} value={key}>{label}</SelectItem>
             ))}
@@ -123,17 +125,17 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
         <Table>
           <TableHeader>
             <TableRow>
-              <ResizableHead columnKey="project" defaultWidth={140}>プロジェクト</ResizableHead>
-              <ResizableHead columnKey="type" defaultWidth={100}>種別</ResizableHead>
-              <ResizableHead columnKey="background" defaultWidth={200}>背景</ResizableHead>
-              <ResizableHead columnKey="content" defaultWidth={200}>内容</ResizableHead>
-              <ResizableHead columnKey="result" defaultWidth={200}>結果</ResizableHead>
-              <ResizableHead columnKey="createdAt" defaultWidth={130}>作成日時</ResizableHead>
-              <ResizableHead columnKey="createdBy" defaultWidth={120}>作成者</ResizableHead>
-              <ResizableHead columnKey="updatedAt" defaultWidth={130}>更新日時</ResizableHead>
-              <ResizableHead columnKey="updatedBy" defaultWidth={120}>更新者</ResizableHead>
-              <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-              {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
+              <ResizableHead columnKey="project" defaultWidth={140}>{tKnowledge('project')}</ResizableHead>
+              <ResizableHead columnKey="type" defaultWidth={100}>{tKnowledge('kind')}</ResizableHead>
+              <ResizableHead columnKey="background" defaultWidth={200}>{tKnowledge('background')}</ResizableHead>
+              <ResizableHead columnKey="content" defaultWidth={200}>{tKnowledge('content')}</ResizableHead>
+              <ResizableHead columnKey="result" defaultWidth={200}>{tKnowledge('result')}</ResizableHead>
+              <ResizableHead columnKey="createdAt" defaultWidth={130}>{tKnowledge('createdAt')}</ResizableHead>
+              <ResizableHead columnKey="createdBy" defaultWidth={120}>{tKnowledge('createdBy')}</ResizableHead>
+              <ResizableHead columnKey="updatedAt" defaultWidth={130}>{tKnowledge('updatedAt')}</ResizableHead>
+              <ResizableHead columnKey="updatedBy" defaultWidth={120}>{tKnowledge('updatedBy')}</ResizableHead>
+              <ResizableHead columnKey="attachments" defaultWidth={200}>{tKnowledge('attachment')}</ResizableHead>
+              {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tKnowledge('actions')}</ResizableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -146,7 +148,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
                 <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                   {k.projectName == null ? (
                     <span className="text-muted-foreground">
-                      {k.linkedProjectCount === 0 ? '（未紐付け）' : '（非公開）'}
+                      {k.linkedProjectCount === 0 ? tKnowledge('notLinked') : tKnowledge('private')}
                     </span>
                   ) : k.canAccessProject && k.primaryProjectId ? (
                     <Link
@@ -161,7 +163,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
                   ) : (
                     <span className="text-muted-foreground">
                       {k.projectName}
-                      {k.projectDeleted && <span className="ml-1 text-xs text-destructive">(削除済)</span>}
+                      {k.projectDeleted && <span className="ml-1 text-xs text-destructive">{tKnowledge('deleted')}</span>}
                       {k.linkedProjectCount > 1 && (
                         <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
                       )}
@@ -201,7 +203,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
             {filtered.length === 0 && (
               <TableRow>
                 <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-muted-foreground">
-                  ナレッジがありません
+                  {tKnowledge('noneInList')}
                 </TableCell>
               </TableRow>
             )}

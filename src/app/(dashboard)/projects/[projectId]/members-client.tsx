@@ -20,6 +20,7 @@
 
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -53,6 +54,7 @@ type Props = {
 
 export function MembersClient({ projectId, members, allUsers, isAdmin, onReload }: Props) {
   const router = useRouter();
+  const t = useTranslations('member');
   const { withLoading } = useLoading();
   // PR #119: session 連携フォーマッタ
   const { formatDate } = useFormatters();
@@ -75,7 +77,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
     e.preventDefault();
     setAddError('');
     if (!addForm.userId) {
-      setAddError('ユーザを選択してください');
+      setAddError(t('userRequired'));
       return;
     }
 
@@ -89,7 +91,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
 
     if (!res.ok) {
       const json = await res.json();
-      setAddError(json.error?.message || 'メンバー追加に失敗しました');
+      setAddError(json.error?.message || t('addFailed'));
       return;
     }
 
@@ -110,7 +112,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
   }
 
   async function handleRemove(memberId: string, userName: string) {
-    if (!confirm(`${userName} をプロジェクトメンバーから解除しますか？`)) return;
+    if (!confirm(t('removeConfirm', { userName }))) return;
     await withLoading(() =>
       fetch(`/api/projects/${projectId}/members/${memberId}`, {
         method: 'DELETE',
@@ -122,24 +124,24 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">メンバー一覧（{members.length}名）</h3>
+        <h3 className="font-semibold">{t('listHeading', { count: members.length })}</h3>
         {isAdmin && (
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
-              メンバー追加
+              {t('addButton')}
             </DialogTrigger>
             {/* PR #112: admin ダイアログは大画面で余白過多になりやすいので lg: で拡大 */}
             <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,44rem)]">
               <DialogHeader>
-                <DialogTitle>メンバー追加</DialogTitle>
-                <DialogDescription>プロジェクトに追加するユーザとロールを選択してください。</DialogDescription>
+                <DialogTitle>{t('addDialogTitle')}</DialogTitle>
+                <DialogDescription>{t('addDialogDescription')}</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleAdd} className="space-y-4">
                 {addError && (
                   <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{addError}</div>
                 )}
                 <div className="space-y-2">
-                  <Label htmlFor="member-add-user">ユーザ</Label>
+                  <Label htmlFor="member-add-user">{t('userLabel')}</Label>
                   {/* PR #126: 組織成長で候補が増える想定のため SearchableSelect を採用
                       (viewport 比で検索欄の表示有無を動的判定) */}
                   <SearchableSelect
@@ -148,21 +150,21 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
                     onValueChange={(v) => setAddForm({ ...addForm, userId: v })}
                     options={availableUsers.map((u) => ({
                       value: u.id,
-                      label: `${u.name}（${u.email}）`,
+                      label: t('userOptionLabel', { name: u.name, email: u.email }),
                     }))}
-                    placeholder="ユーザを選択..."
-                    aria-label="ユーザ選択"
+                    placeholder={t('userPlaceholder')}
+                    aria-label={t('userAriaLabel')}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>プロジェクトロール</Label>
+                  <Label>{t('projectRoleLabel')}</Label>
                   <select value={addForm.projectRole} onChange={(e) => setAddForm({ ...addForm, projectRole: e.target.value })} className={nativeSelectClass}>
                     {Object.entries(PROJECT_ROLES).map(([key, label]) => (
                       <option key={key} value={key}>{label}</option>
                     ))}
                   </select>
                 </div>
-                <Button type="submit" className="w-full">追加</Button>
+                <Button type="submit" className="w-full">{t('addSubmit')}</Button>
               </form>
             </DialogContent>
           </Dialog>
@@ -172,11 +174,11 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>ユーザ名</TableHead>
-            <TableHead>メールアドレス</TableHead>
-            <TableHead>ロール</TableHead>
-            <TableHead>追加日</TableHead>
-            {isAdmin && <TableHead className="w-24">操作</TableHead>}
+            <TableHead>{t('colUserName')}</TableHead>
+            <TableHead>{t('colEmail')}</TableHead>
+            <TableHead>{t('colRole')}</TableHead>
+            <TableHead>{t('colAddedAt')}</TableHead>
+            {isAdmin && <TableHead className="w-24">{t('colActions')}</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -214,7 +216,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
                     className="text-destructive"
                     onClick={() => handleRemove(m.id, m.userName)}
                   >
-                    解除
+                    {t('removeButton')}
                   </Button>
                 </TableCell>
               )}
@@ -223,7 +225,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
           {members.length === 0 && (
             <TableRow>
               <TableCell colSpan={isAdmin ? 5 : 4} className="py-8 text-center text-muted-foreground">
-                メンバーが登録されていません
+                {t('listEmpty')}
               </TableCell>
             </TableRow>
           )}

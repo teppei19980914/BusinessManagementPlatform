@@ -25,6 +25,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -63,6 +64,7 @@ export function MarkdownTextarea({
   disabled,
   className,
 }: MarkdownTextareaProps) {
+  const t = useTranslations('common');
   const [showPreview, setShowPreview] = useState(false);
   // 差分は previousValue が与えられているときのみ意味があるので、無いときはトグル自体を非表示
   const hasPrevious = typeof previousValue === 'string';
@@ -89,7 +91,7 @@ export function MarkdownTextarea({
           disabled={disabled}
         >
           <Eye className="size-3" />
-          プレビュー
+          {t('preview')}
         </Button>
         {hasPrevious && (
           <Button
@@ -99,11 +101,11 @@ export function MarkdownTextarea({
             className="h-7 px-2 text-xs"
             onClick={() => setShowDiff((v) => !v)}
             disabled={disabled || !hasChanges}
-            title={hasChanges ? '既存内容との差分を表示' : '変更がありません'}
+            title={hasChanges ? t('diffShowTooltip') : t('diffNoChangeTooltip')}
           >
             <GitCompareArrows className="size-3" />
-            差分
-            {hasChanges && <span className="ml-1 text-[10px] opacity-70">(変更あり)</span>}
+            {t('diff')}
+            {hasChanges && <span className="ml-1 text-[10px] opacity-70">{t('diffChangedSuffix')}</span>}
           </Button>
         )}
       </div>
@@ -124,7 +126,7 @@ export function MarkdownTextarea({
           <div
             className="rounded-md border border-input bg-muted/30 px-3 py-2 text-sm overflow-auto"
             style={{ minHeight: `${rows * 1.5}rem` }}
-            aria-label="プレビュー"
+            aria-label={t('preview')}
           >
             <PreviewContent value={value} />
           </div>
@@ -134,15 +136,15 @@ export function MarkdownTextarea({
       {/* 差分パネル (previousValue があり、かつトグル ON のとき) */}
       {showDiff && changes && (
         <div className="rounded-md border border-input bg-muted/20 p-3 space-y-2">
-          <div className="text-xs font-semibold text-muted-foreground">既存内容との差分</div>
+          <div className="text-xs font-semibold text-muted-foreground">{t('diffSectionTitle')}</div>
           <div className="grid gap-3 md:grid-cols-2">
             <DiffPane
-              label="既存内容 (削除箇所を取消線)"
+              label={t('diffPaneBeforeLabel')}
               chunks={extractBeforeChunks(changes)}
               side="before"
             />
             <DiffPane
-              label="変更後 (追加箇所を強調)"
+              label={t('diffPaneAfterLabel')}
               chunks={extractAfterChunks(changes)}
               side="after"
             />
@@ -158,8 +160,9 @@ export function MarkdownTextarea({
  * whitespace-pre-wrap でプレーン表示。
  */
 function PreviewContent({ value }: { value: string }) {
+  const t = useTranslations('common');
   if (!value || value.trim().length === 0) {
-    return <span className="text-xs text-muted-foreground italic">(プレビュー)</span>;
+    return <span className="text-xs text-muted-foreground italic">{t('previewParenthesized')}</span>;
   }
   return <MarkdownDisplay value={value} />;
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import {
   deleteRetrospective,
@@ -21,11 +22,12 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
 
   const { projectId, retroId } = await params;
+  const t = await getTranslations('message');
 
   const existing = await getRetrospective(retroId);
   if (!existing || existing.projectId !== projectId) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -41,7 +43,7 @@ export async function PATCH(
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '作成者本人のみ編集できます' } },
+        { error: { code: 'FORBIDDEN', message: t('creatorOnlyEdit') } },
         { status: 403 },
       );
     }
@@ -76,11 +78,12 @@ export async function DELETE(
   if (user instanceof NextResponse) return user;
 
   const { projectId, retroId } = await params;
+  const t = await getTranslations('message');
 
   const existing = await getRetrospective(retroId);
   if (!existing || existing.projectId !== projectId) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -94,7 +97,7 @@ export async function DELETE(
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '作成者本人または管理者のみ削除できます' } },
+        { error: { code: 'FORBIDDEN', message: t('creatorOrAdminOnlyDelete') } },
         { status: 403 },
       );
     }

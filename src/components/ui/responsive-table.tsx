@@ -41,6 +41,7 @@
  */
 
 import * as React from 'react';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 
 export type ResponsiveTableColumn<T> = {
@@ -81,10 +82,12 @@ export function ResponsiveTable<T>({
   columns,
   getRowKey,
   onRowClick,
-  emptyText = 'データがありません',
+  emptyText,
   className,
   'aria-label': ariaLabel,
 }: ResponsiveTableProps<T>) {
+  const tMessage = useTranslations('message');
+  const resolvedEmptyText = emptyText ?? tMessage('noData');
   const clickable = !!onRowClick;
   const cardColumns = columns.filter((c) => !c.hiddenOnCard);
   const primaryCol = cardColumns.find((c) => c.primary);
@@ -117,7 +120,7 @@ export function ResponsiveTable<T>({
                   colSpan={columns.length}
                   className="py-8 text-center text-muted-foreground"
                 >
-                  {emptyText}
+                  {resolvedEmptyText}
                 </td>
               </tr>
             ) : (
@@ -152,7 +155,7 @@ export function ResponsiveTable<T>({
         aria-label={ariaLabel}
       >
         {items.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">{emptyText}</p>
+          <p className="py-8 text-center text-sm text-muted-foreground">{resolvedEmptyText}</p>
         ) : (
           <div className="space-y-2">
             {items.map((item) => (

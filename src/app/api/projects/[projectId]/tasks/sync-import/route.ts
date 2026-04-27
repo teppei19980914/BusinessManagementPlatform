@@ -21,6 +21,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import {
   parseSyncImportCsv,
@@ -48,6 +49,8 @@ export async function POST(
   const deleteForbidden = await checkProjectPermission(user, projectId, 'task:delete');
   if (deleteForbidden) return deleteForbidden;
 
+  const t = await getTranslations('message');
+
   // dryRun フラグ
   const url = new URL(req.url);
   const isDryRun = url.searchParams.get('dryRun') === '1';
@@ -60,7 +63,7 @@ export async function POST(
     const file = formData.get('file');
     if (!(file instanceof File)) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: 'file フィールドにファイルを指定してください' } },
+        { error: { code: 'VALIDATION_ERROR', message: t('fileFieldRequired') } },
         { status: 400 },
       );
     }
@@ -75,7 +78,7 @@ export async function POST(
           {
             error: {
               code: 'VALIDATION_ERROR',
-              message: 'removeMode は keep / warn / delete のいずれかで指定してください',
+              message: t('removeModeInvalid'),
             },
           },
           { status: 400 },
@@ -88,7 +91,7 @@ export async function POST(
       context: { path: 'POST /api/projects/[id]/tasks/sync-import', stage: 'body-parse', isDryRun },
     });
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'リクエストボディを読み取れませんでした' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('requestBodyUnreadable') } },
       { status: 400 },
     );
   }
@@ -97,7 +100,7 @@ export async function POST(
   csvText = csvText.replace(/^﻿/, '').trim();
   if (!csvText) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'CSV データが空です' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('csvDataEmptyAlt') } },
       { status: 400 },
     );
   }
@@ -153,7 +156,7 @@ export async function POST(
       context: { path: 'POST /api/projects/[id]/tasks/sync-import', stage: 'apply', removeMode },
     });
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: '内部エラーが発生しました' } },
+      { error: { code: 'INTERNAL_ERROR', message: t('internalError') } },
       { status: 500 },
     );
   }

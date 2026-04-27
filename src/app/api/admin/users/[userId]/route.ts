@@ -17,6 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { z } from 'zod/v4';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { updateUser, deleteUser } from '@/services/user.service';
@@ -42,6 +43,7 @@ export async function PATCH(
   if (forbiddenAdmin) return forbiddenAdmin;
 
   const { userId } = await params;
+  const t = await getTranslations('message');
   const body = await req.json();
   const parsed = updateUserSchema.safeParse(body);
   if (!parsed.success) {
@@ -64,7 +66,7 @@ export async function PATCH(
   } catch (e) {
     if (e instanceof Error && e.message === 'CANNOT_CHANGE_OWN_ROLE') {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '自分自身のロールは変更できません' } },
+        { error: { code: 'FORBIDDEN', message: t('cannotChangeOwnRole') } },
         { status: 403 },
       );
     }
@@ -88,6 +90,7 @@ export async function DELETE(
   if (forbiddenAdmin) return forbiddenAdmin;
 
   const { userId } = await params;
+  const t = await getTranslations('message');
 
   try {
     const result = await deleteUser(userId, user.id);
@@ -105,13 +108,13 @@ export async function DELETE(
   } catch (e) {
     if (e instanceof Error && e.message === 'CANNOT_DELETE_SELF') {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '自分自身は削除できません' } },
+        { error: { code: 'FORBIDDEN', message: t('cannotDeleteSelf') } },
         { status: 403 },
       );
     }
     if (e instanceof Error && e.message === 'NOT_FOUND') {
       return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: '対象ユーザが見つかりません (既に削除済みの可能性)' } },
+        { error: { code: 'NOT_FOUND', message: t('userNotFoundOrDeleted') } },
         { status: 404 },
       );
     }

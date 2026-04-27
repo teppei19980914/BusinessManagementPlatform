@@ -96,7 +96,7 @@ export type SupportedLocale = keyof typeof SUPPORTED_LOCALES;
  */
 export const SELECTABLE_LOCALES: Readonly<Record<SupportedLocale, boolean>> = {
   'ja-JP': true,
-  'en-US': false,
+  'en-US': true, // Phase C 完了 (PR #175): 全画面の i18n 化 + en-US カタログ整備により有効化
 } as const;
 
 /**
