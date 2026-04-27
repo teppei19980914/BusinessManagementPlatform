@@ -33,6 +33,9 @@ const REQUIRED_TOKENS: (keyof ThemeTokens)[] = [
   'success', 'successForeground',
   'warning', 'warningForeground',
   'milestoneMarker',
+  // feat/markdown-textarea-fixes で追加された差分ハイライト色
+  'diffAddBg', 'diffAddFg',
+  'diffRemoveBg', 'diffRemoveFg',
 ];
 
 describe('THEME_DEFINITIONS', () => {

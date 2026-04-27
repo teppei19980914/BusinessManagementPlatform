@@ -80,6 +80,16 @@ export type ThemeTokens = {
   warningForeground: string;
   // ガントチャートのマイルストーンマーカー専用 (現状唯一の紫系利用)
   milestoneMarker: string;
+  // ---------- 差分ハイライト色 (feat/markdown-textarea-fixes で追加) ----------
+  // MarkdownTextarea / MarkdownDisplay の差分パネルで使用。
+  // セマンティック色 (success / destructive) は塗りつぶし時のコントラストが
+  // テーマによって不足するため、テーマ別に「目立つ色」を独立定義する。
+  //   diffAddBg / diffAddFg     : 追加 (新側) ハイライト
+  //   diffRemoveBg / diffRemoveFg: 削除 (旧側) ハイライト + 取消線
+  diffAddBg: string;
+  diffAddFg: string;
+  diffRemoveBg: string;
+  diffRemoveFg: string;
 };
 
 /**
@@ -127,6 +137,11 @@ const LIGHT: ThemeTokens = {
   warning: 'oklch(0.65 0.15 80)',         // 橙 (旧 amber-500 相当)
   warningForeground: 'oklch(0.18 0.05 80)',
   milestoneMarker: 'oklch(0.55 0.22 300)', // 紫 (旧 purple-500 相当)
+  // 差分ハイライト (light: 緑塗りつぶし=追加、赤塗りつぶし=削除、いずれも前景は白)
+  diffAddBg: 'oklch(0.55 0.16 150)',
+  diffAddFg: 'oklch(0.99 0 0)',
+  diffRemoveBg: 'oklch(0.6 0.2 27)',
+  diffRemoveFg: 'oklch(0.99 0 0)',
 };
 
 /** LIGHT から差分を上書きしたテーマを作るヘルパ (DRY 化 + 差分の見通し向上)。 */
@@ -177,6 +192,12 @@ export const THEME_DEFINITIONS = {
     successForeground: 'oklch(0.15 0 0)',
     warning: 'oklch(0.78 0.15 80)',
     warningForeground: 'oklch(0.15 0 0)',
+    // ダーク背景での視認性を最大化: 追加=黄色塗りつぶし、削除=明るい赤塗りつぶし
+    // (どちらも前景は黒に近い濃色で高コントラスト)
+    diffAddBg: 'oklch(0.85 0.18 90)',     // 鮮やかな黄
+    diffAddFg: 'oklch(0.15 0 0)',
+    diffRemoveBg: 'oklch(0.7 0.22 27)',    // 明るい赤
+    diffRemoveFg: 'oklch(0.15 0 0)',
     milestoneMarker: 'oklch(0.7 0.22 300)',
   }),
 
