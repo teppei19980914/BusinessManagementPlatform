@@ -230,13 +230,13 @@ export function MemosClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>本文</Label>
+                  <Label>本文 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  {/* refactor/list-create-content-optional (2026-04-27 #6): タイトル必須、本文は任意 */}
                   <MarkdownTextarea
                     value={createForm.content}
                     onChange={(v) => setCreateForm({ ...createForm, content: v })}
                     rows={8}
                     maxLength={10000}
-                    required
                   />
                 </div>
                 <StagedAttachmentsInput
@@ -344,14 +344,14 @@ export function MemosClient({
                 />
               </div>
               <div className="space-y-2">
-                <Label>本文</Label>
+                <Label>本文 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も本文は任意 */}
                 <MarkdownTextarea
                   value={editForm.content}
                   onChange={(v) => setEditForm({ ...editForm, content: v })}
                   previousValue={editing.content}
                   rows={8}
                   maxLength={10000}
-                  required
                 />
               </div>
               {/* URL 添付 (編集時は既存の AttachmentList で追加/削除可能) */}

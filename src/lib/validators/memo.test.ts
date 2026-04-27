@@ -34,8 +34,9 @@ describe('createMemoSchema', () => {
     expect(createMemoSchema.safeParse({ ...valid, title: 'a'.repeat(151) }).success).toBe(false);
   });
 
-  it('空本文を拒否', () => {
-    expect(createMemoSchema.safeParse({ ...valid, content: '' }).success).toBe(false);
+  // refactor/list-create-content-optional (2026-04-27 #6): 本文は任意化、空文字許容
+  it('空本文を許容 (2026-04-27 仕様変更: 本文は任意)', () => {
+    expect(createMemoSchema.safeParse({ ...valid, content: '' }).success).toBe(true);
   });
 
   it('本文 10001 文字を拒否', () => {

@@ -1298,6 +1298,112 @@ UI 側は Tailwind ユーティリティ \`bg-diff-add-bg text-diff-add-fg\` を
   と組み合わせると UX が向上する
 - §5.7 (ダイアログサイズ・スクロール規約): 同様にテーマ非依存の構造規約
 
+### 5.19 横断ビュー (全リスク / 全課題 / 全振り返り / 全ナレッジ) における可視性レイヤの整理 (fix/cross-list-non-member-columns)
+
+#### 背景と仕様確定
+
+「全○○」横断ビューは **visibility='public' のもののみを表示する** 設計 (PR #60)。
+そのため、「行が見える」状態 = 「その行は公開されたもの」と等価。
+
+可視性レイヤを以下のように再整理した (2026-04-27 確定):
+
+| 列 / 情報 | 旧仕様 (PR #55) | 新仕様 (本 PR) | 理由 |
+|---|---|---|---|
+| プロジェクト名 (projectName) | 非メンバーには null | **据置: 非メンバーには null** | 案件名は顧客名類似の機微情報、引き続き機微扱い |
+| 担当者氏名 (assigneeName) | 非メンバーには null | **公開** | 行が公開されている以上、誰がアサインされているかは共有価値あり |
+| 起票者氏名 (reporterName) | 非メンバーには null | **公開** | 同上 |
+| 作成者氏名 (createdByName) | 非メンバーには null | **公開** | 同上 |
+| 更新者氏名 (updatedByName) | 非メンバーには null | **公開** | 同上 |
+| 添付 (attachment 一覧) | 非メンバーには空配列 | **visibility='public' なら公開** | 添付は entity の付随情報、行が公開なら添付も公開する設計 |
+| projectDeleted フラグ | admin のみ | **据置: admin のみ** | 削除状態は管理情報 |
+
+#### 実装変更点
+
+##### service 層 (3 ファイル)
+
+`isMember ? name : null` 三項演算子を **削除** し、氏名を直接公開:
+
+```ts
+// 旧
+reporterName: isMember ? r.reporter?.name ?? null : null,
+assigneeName: isMember ? r.assignee?.name ?? null : null,
+createdByName: isMember ? userNameById.get(r.createdBy) ?? null : null,
+updatedByName: isMember ? userNameById.get(r.updatedBy) ?? null : null,
+
+// 新
+reporterName: r.reporter?.name ?? null,
+assigneeName: r.assignee?.name ?? null,
+createdByName: userNameById.get(r.createdBy) ?? null,
+updatedByName: userNameById.get(r.updatedBy) ?? null,
+```
+
+projectName 行の `isMember` gate は据置。
+
+##### attachments batch route
+
+非メンバーでも `visibility='public'` の risk / retrospective に対しては attachment を返す:
+
+```ts
+} else if (entityType === 'risk') {
+  const all = await prisma.riskIssue.findMany({
+    where: { id: { in: entityIds } },
+    select: { id: true, projectId: true, visibility: true },
+  });
+  rows = all
+    .filter((x) => x.visibility === 'public' || memberProjectIds.has(x.projectId))
+    .map((x) => ({
+      id: x.id,
+      // 後段の memberProjectIds.has() 判定を通すため、public なものは
+      // ダミー projectId に置換し memberProjectIds 集合に同値を追加する
+      projectId: x.visibility === 'public' ? '__public__' : x.projectId,
+    }));
+  memberProjectIds.add('__public__');
+}
+```
+
+knowledge は既に「`visibility=public` なら non-member でも閲覧可」を実装済 (PR #115)。
+
+#### 回帰防止
+
+##### (A) service 単体テストの仕様明示
+
+`risk.service.test.ts` / `knowledge.service.test.ts` の「非メンバー」ケースを
+新仕様に合わせて更新。テスト名にも「2026-04-27 仕様変更」と明記し、将来の
+仕様逆戻り (再 mask) を検知可能に:
+
+```ts
+it('非 admin & 非メンバーは projectName のみマスク、氏名は公開 (2026-04-27 仕様変更)', async () => {
+  // ...
+  expect(r[0].projectName).toBe(null); // プロジェクト名は機微情報扱い維持
+  expect(r[0].reporterName).toBe('Alice'); // 氏名は公開
+  expect(r[0].assigneeName).toBe('Bob');
+  expect(r[0].createdByName).toBe('Alice');
+  expect(r[0].updatedByName).toBe('Alice');
+});
+```
+
+##### (B) DEVELOPER_GUIDE による設計方針の明文化
+
+本セクション (§5.19) で「横断ビューでは行が見える = 公開、関連情報も公開」原則を
+明文化。将来「氏名を再 mask」の改修 PR が来たら本セクションへの参照で
+**仕様意図を確認** できる。
+
+#### 横展開ルール
+
+新規に「全○○ 横断ビュー」を追加する場合の DTO 設計指針:
+
+1. **行表示の前提**: visibility='public' フィルタを WHERE で適用済か確認
+2. **氏名系**: 非メンバーにもそのまま公開 (mask しない)
+3. **プロジェクト名**: `isMember ? name : null` で機微扱い継続
+4. **添付**: parent の visibility='public' を含めて batch route の許可条件に追加
+5. **削除状態**: admin のみ可視
+
+#### 関連
+
+- DESIGN.md §22 (添付リンク認可設計) — `visibility='public'` で公開するパターンの基本ルール
+- §5.14 (readOnly な edit dialog の認可漏洩) — UI 側で fetch を抑止するパターン
+- DEVELOPER_GUIDE §5.10 (エラー情報最小化方針) — 非メンバーに 403 を出さないため UI で gating
+
 ### 5.18 WBS 上書きインポート (Sync by ID) 実装パターン (feat/wbs-overwrite-import)
 
 #### 背景

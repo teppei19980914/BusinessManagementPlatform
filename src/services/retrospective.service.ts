@@ -129,11 +129,14 @@ export async function listAllRetrospectivesForViewer(
       createdBy: r.createdBy,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
-      createdByName: isMember ? userMap.get(r.createdBy) ?? null : null,
-      updatedByName: isMember ? userMap.get(r.updatedBy) ?? null : null,
+      // fix/cross-list-non-member-columns (2026-04-27): 横断ビューの行自体が
+      // visibility='public' で公開されている以上、関係者の氏名は表示してナレッジ共有を促進する。
+      // プロジェクト名は機微情報扱いを維持 (上記 projectName 行で isMember gate 残置)。
+      createdByName: userMap.get(r.createdBy) ?? null,
+      updatedByName: userMap.get(r.updatedBy) ?? null,
       comments: r.comments.map((c) => ({
         id: c.id,
-        userName: isMember ? userMap.get(c.userId) ?? null : null,
+        userName: userMap.get(c.userId) ?? null,
         content: c.content,
         createdAt: c.createdAt.toISOString(),
       })),

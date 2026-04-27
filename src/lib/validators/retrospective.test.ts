@@ -19,8 +19,9 @@ describe('createRetrospectiveSchema', () => {
     expect(createRetrospectiveSchema.safeParse({ ...validInput, conductedDate: '2026/04/15' }).success).toBe(false);
   });
 
-  it('計画総括が空の場合を拒否する', () => {
-    expect(createRetrospectiveSchema.safeParse({ ...validInput, planSummary: '' }).success).toBe(false);
+  // refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは任意化
+  it('計画総括が空でも許容する (2026-04-27 仕様変更: セクションは任意)', () => {
+    expect(createRetrospectiveSchema.safeParse({ ...validInput, planSummary: '' }).success).toBe(true);
   });
 
   it('良かった点が3001文字の場合を拒否する', () => {

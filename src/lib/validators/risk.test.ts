@@ -35,8 +35,9 @@ describe('createRiskSchema', () => {
     expect(createRiskSchema.safeParse({ ...validRisk, title: 'a'.repeat(101) }).success).toBe(false);
   });
 
-  it('内容が空の場合を拒否する', () => {
-    expect(createRiskSchema.safeParse({ ...validRisk, content: '' }).success).toBe(false);
+  // refactor/list-create-content-optional (2026-04-27 #6): 内容は任意化
+  it('内容が空でも許容する (2026-04-27 仕様変更: 件名は必須、内容は任意)', () => {
+    expect(createRiskSchema.safeParse({ ...validRisk, content: '' }).success).toBe(true);
   });
 
   it('内容が2001文字の場合を拒否する', () => {

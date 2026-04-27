@@ -149,37 +149,35 @@ export function KnowledgeEditDialog({
               </select>
             </div>
           </div>
+          {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も背景/内容/結果は任意 */}
           <div className="space-y-2">
-            <Label>背景</Label>
+            <Label>背景 <span className="text-xs text-muted-foreground">(任意)</span></Label>
             <MarkdownTextarea
               value={form.background}
               onChange={(v) => setForm({ ...form, background: v })}
               previousValue={knowledge.background}
               rows={3}
               maxLength={2000}
-              required
             />
           </div>
           <div className="space-y-2">
-            <Label>内容</Label>
+            <Label>内容 <span className="text-xs text-muted-foreground">(任意)</span></Label>
             <MarkdownTextarea
               value={form.content}
               onChange={(v) => setForm({ ...form, content: v })}
               previousValue={knowledge.content}
               rows={5}
               maxLength={5000}
-              required
             />
           </div>
           <div className="space-y-2">
-            <Label>結果</Label>
+            <Label>結果 <span className="text-xs text-muted-foreground">(任意)</span></Label>
             <MarkdownTextarea
               value={form.result}
               onChange={(v) => setForm({ ...form, result: v })}
               previousValue={knowledge.result}
               rows={3}
               maxLength={3000}
-              required
             />
           </div>
           </fieldset>
