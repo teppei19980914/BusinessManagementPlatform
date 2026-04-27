@@ -47,6 +47,8 @@ import { VISIBILITIES } from '@/types';
 import type { RetroDTO } from '@/services/retrospective.service';
 // PR #117 → PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
+// feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
+import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 
 type Props = {
   projectId: string;
@@ -79,6 +81,8 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
   const [error, setError] = useState('');
   // 行 (カード) クリックで開く編集ダイアログ (PR #56 Req 8)
   const [editingRetro, setEditingRetro] = useState<RetroDTO | null>(null);
+  // feat/dialog-fullscreen-toggle: 振り返り作成 dialog の全画面トグル
+  const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle } = useDialogFullscreen();
 
   const [form, setForm] = useState({
     conductedDate: new Date().toISOString().split('T')[0],
@@ -169,9 +173,12 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
         {canCreate && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">振り返り作成</DialogTrigger>
-            <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
+            <DialogContent className={`max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto ${createFsClassName}`}>
               <DialogHeader>
-                <DialogTitle>振り返り作成</DialogTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <DialogTitle>振り返り作成</DialogTitle>
+                  <CreateFullscreenToggle />
+                </div>
                 <DialogDescription>プロジェクトの振り返りを記録してください。</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">

@@ -39,6 +39,7 @@
 - [ ] `/projects/[projectId]/issues` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
 - [ ] `/projects/[projectId]/retrospectives` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
 - [ ] `/projects/[projectId]/knowledge` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
+- [ ] `/projects/[projectId]/stakeholders` — skip: feat/stakeholder-management で新設、CRUD 詳細 + PM/TL 限定タブ表示の E2E は後続 PR (タブ自体は project-detail-client 内でレンダリング、独立 page.tsx は持たない)
 - [x] `/risks` (全リスク) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
 - [x] `/issues` (全課題) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
 - [x] `/retrospectives` (全振り返り) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
@@ -88,6 +89,9 @@
 ### タスク (WBS) / ガント
 - [x] `/api/projects/[projectId]/tasks/*` — e2e/specs/06-wbs-tasks.spec.ts (PR #96 / POST WP + ACT / DELETE は UI 経由) ※ bulk/progress/export/import/recalculate/tree は後続 PR
 - [x] `/api/projects/[projectId]/gantt` — e2e/specs/07-gantt-timeline.spec.ts (PR #96 / 画面経由で GET)
+
+### ステークホルダー (PMBOK 13 / feat/stakeholder-management)
+- [ ] `/api/projects/[projectId]/stakeholders/*` — skip: PM/TL + admin 限定。CRUD 単体テストは src/services/stakeholder.service.test.ts で対応 (E2E は後続 PR)
 
 ### リスク / 課題 / 振り返り / ナレッジ / サジェスト / メンバー
 - [ ] `/api/projects/[projectId]/risks/*` — skip: PR #C

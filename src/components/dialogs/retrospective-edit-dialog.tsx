@@ -12,6 +12,8 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
+// feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
+import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 
 type RetroLike = {
   id: string;
@@ -46,6 +48,8 @@ export function RetrospectiveEditDialog({
   const t = useTranslations('action');
   const tField = useTranslations('field');
   const { withLoading } = useLoading();
+  // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
+  const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
     conductedDate: '',
     planSummary: '',
@@ -103,9 +107,12 @@ export function RetrospectiveEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[min(90vw,42rem)] max-h-[85vh] overflow-y-auto">
+      <DialogContent className={`max-w-[min(90vw,42rem)] max-h-[85vh] overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
-          <DialogTitle>{readOnly ? '振り返り詳細' : '振り返り編集'}</DialogTitle>
+          <div className="flex items-center justify-between gap-2">
+            <DialogTitle>{readOnly ? '振り返り詳細' : '振り返り編集'}</DialogTitle>
+            <FullscreenToggle />
+          </div>
           <DialogDescription>
             {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
           </DialogDescription>
@@ -143,13 +150,17 @@ export function RetrospectiveEditDialog({
             </div>
           ))}
           </fieldset>
-          {/* PR #64 Phase 2: 議事録・発表資料等の関連 URL */}
-          <AttachmentList
-            entityType="retrospective"
-            entityId={retro.id}
-            canEdit={!readOnly}
-            label="関連 URL"
-          />
+          {/* PR #64 Phase 2: 議事録・発表資料等の関連 URL。
+              fix/attachment-list-non-member-403: readOnly モード時は非メンバーが多数のため
+              attachment fetch で 403 が出る (§5.10 違反)。readOnly では非表示にする。 */}
+          {!readOnly && (
+            <AttachmentList
+              entityType="retrospective"
+              entityId={retro.id}
+              canEdit
+              label="関連 URL"
+            />
+          )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>

@@ -72,6 +72,8 @@ import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
+// feat/gantt-tab-restructure (PR-C item 6): Gantt 表示は専用タブから WBS タブ内のトグルへ移行
+import { GanttClient } from '../gantt/gantt-client';
 
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
@@ -531,6 +533,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
+  // feat/gantt-tab-restructure (PR-C item 6): WBS タブ内で Gantt を切り替え表示する state
+  const [showGantt, setShowGantt] = useState(false);
 
   // 親から渡された遅延フェッチ再取得ハンドラ。未指定時は router.refresh() にフォールバック。
   const reload = useCallback(async () => {
@@ -1030,7 +1034,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   const [form, setForm] = useState({
     name: '',
-    assigneeId: '',
+    // fix/quick-ux item 8: デフォルト担当者=自分。プルダウンで変更可。
+    assigneeId: userId,
     plannedStartDate: '',
     plannedEndDate: '',
     plannedEffort: 0,
@@ -1084,7 +1089,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     setIsCreateOpen(false);
     setParentTaskId('');
-    setForm({ name: '', assigneeId: '', plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
+    // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット
+    setForm({ name: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
     await reload();
   }
 
@@ -1092,8 +1098,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">WBS管理</h2>
+        <div className="flex gap-2">
+        {/* feat/gantt-tab-restructure (PR-C item 6): ガント表示トグル (全ユーザに開放、WBS タブ統合) */}
+        <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>
+          {showGantt ? 'ガントを閉じる' : 'ガントチャートを表示'}
+        </Button>
         {canEditPmTl && (
-          <div className="flex gap-2">
+          <>
           {/* PR #68: 集計再計算ボタンは UI から撤去 (運用上不要、必要時は admin が API 直接実行) */}
           <Button variant="outline" size="sm" onClick={handleExport}>
             {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
@@ -1216,9 +1227,18 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
-          </div>
+          </>
         )}
+        </div>
       </div>
+
+      {/* feat/gantt-tab-restructure (PR-C item 6): ガント表示エリア (toggle で開閉)。
+          tasks (tree) と members は本コンポーネントが既に保持しているため再 fetch 不要。 */}
+      {showGantt && (
+        <div className="rounded-lg border p-2">
+          <GanttClient projectId={projectId} tasks={tasks} members={members} />
+        </div>
+      )}
 
       {/*
         フィルタ (担当者 + 状況、PR #61)

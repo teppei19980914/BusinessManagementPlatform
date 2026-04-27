@@ -13,6 +13,8 @@ import {
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { SingleUrlField } from '@/components/attachments/single-url-field';
+// feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
+import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 
 type KnowledgeLike = {
   id: string;
@@ -54,6 +56,8 @@ export function KnowledgeEditDialog({
 }) {
   const t = useTranslations('action');
   const { withLoading } = useLoading();
+  // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
+  const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
     title: '',
     knowledgeType: 'research',
@@ -112,9 +116,12 @@ export function KnowledgeEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto">
+      <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
-          <DialogTitle>{readOnly ? 'ナレッジ詳細' : 'ナレッジ編集'}</DialogTitle>
+          <div className="flex items-center justify-between gap-2">
+            <DialogTitle>{readOnly ? 'ナレッジ詳細' : 'ナレッジ編集'}</DialogTitle>
+            <FullscreenToggle />
+          </div>
           <DialogDescription>
             {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
           </DialogDescription>
@@ -174,21 +181,28 @@ export function KnowledgeEditDialog({
             />
           </div>
           </fieldset>
-          {/* PR #64 Phase 2: 一次情報源 URL (単数) + 参考リンク (複数) */}
-          <SingleUrlField
-            entityType="knowledge"
-            entityId={knowledge.id}
-            slot="source"
-            canEdit={!readOnly}
-            label="一次情報源 URL"
-            defaultDisplayName="公式ドキュメント"
-          />
-          <AttachmentList
-            entityType="knowledge"
-            entityId={knowledge.id}
-            canEdit={!readOnly}
-            label="参考リンク"
-          />
+          {/* PR #64 Phase 2: 一次情報源 URL (単数) + 参考リンク (複数)。
+              fix/attachment-list-non-member-403: readOnly モード時は非メンバーが多数のため
+              attachment fetch で 403 が出る (§5.10 違反)。readOnly では非表示にする。
+              SingleUrlField も同じ /api/attachments を叩くため同じ理由で非表示。 */}
+          {!readOnly && (
+            <>
+              <SingleUrlField
+                entityType="knowledge"
+                entityId={knowledge.id}
+                slot="source"
+                canEdit
+                label="一次情報源 URL"
+                defaultDisplayName="公式ドキュメント"
+              />
+              <AttachmentList
+                entityType="knowledge"
+                entityId={knowledge.id}
+                canEdit
+                label="参考リンク"
+              />
+            </>
+          )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>

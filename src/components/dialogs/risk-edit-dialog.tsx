@@ -14,6 +14,8 @@ import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/typ
 import { NAME_MAX_LENGTH, MEDIUM_TEXT_MAX_LENGTH } from '@/config';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
+// feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
+import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 
 /**
  * リスク/課題の編集に必要な最小限の形状。RiskDTO / AllRiskDTO 両方と互換。
@@ -61,6 +63,8 @@ export function RiskEditDialog({
   const t = useTranslations('action');
   const tField = useTranslations('field');
   const { withLoading } = useLoading();
+  // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。state は dialog ローカル。
+  const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
     title: '',
     content: '',
@@ -140,9 +144,12 @@ export function RiskEditDialog({
   const titleText = risk.type === 'risk' ? 'リスク' : '課題';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
+      <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
-          <DialogTitle>{readOnly ? `${titleText}詳細` : `${titleText}編集`}</DialogTitle>
+          <div className="flex items-center justify-between gap-2">
+            <DialogTitle>{readOnly ? `${titleText}詳細` : `${titleText}編集`}</DialogTitle>
+            <FullscreenToggle />
+          </div>
           <DialogDescription>
             {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
           </DialogDescription>
@@ -224,13 +231,21 @@ export function RiskEditDialog({
             <DateFieldWithActions value={form.deadline} onChange={(v) => setForm({ ...form, deadline: v })} />
           </div>
           </fieldset>
-          {/* PR #64 Phase 2: 関連 URL (エビデンス・証跡・関連チケット等) */}
-          <AttachmentList
-            entityType="risk"
-            entityId={risk.id}
-            canEdit={!readOnly}
-            label="関連 URL"
-          />
+          {/* PR #64 Phase 2: 関連 URL (エビデンス・証跡・関連チケット等)。
+              fix/attachment-list-non-member-403: readOnly モード (= 全リスク/全課題等の
+              横断ビューから開いた場合) は非メンバーが多数を占めるため、添付 fetch を行うと
+              `/api/attachments?entityType=risk&...` が 403 を返してブラウザ Console に
+              エラーが出力される (§5.10 エラー情報最小化方針違反)。読み取り権限緩和は
+              future work、現状は readOnly 時に AttachmentList 自体を非表示にする。
+              プロジェクト個別画面 (readOnly=false 経路) では従来通り表示・編集可。 */}
+          {!readOnly && (
+            <AttachmentList
+              entityType="risk"
+              entityId={risk.id}
+              canEdit
+              label="関連 URL"
+            />
+          )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>
