@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -84,6 +85,9 @@ const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
 
 export function RisksClient({ projectId, risks, members, canCreate, currentUserId, systemRole, typeFilter, onReload }: Props) {
   const router = useRouter();
+  const tRisk = useTranslations('risk');
+  const tAction = useTranslations('action');
+  const tField = useTranslations('field');
   const { withLoading } = useLoading();
   // PR #119: session 連携フォーマッタ
   const { formatDate } = useFormatters();
@@ -139,8 +143,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     }
     return xs;
   }, [risks, typeFilter, bulkFilter]);
-  const headingLabel = typeFilter === 'issue' ? '課題管理' : typeFilter === 'risk' ? 'リスク管理' : 'リスク / 課題管理';
-  const createLabel = typeFilter === 'issue' ? '課題起票' : typeFilter === 'risk' ? 'リスク起票' : '起票';
+  const headingLabel = typeFilter === 'issue' ? tRisk('headingIssue') : typeFilter === 'risk' ? tRisk('headingRisk') : tRisk('headingBoth');
+  const createLabel = typeFilter === 'issue' ? tRisk('createIssue') : typeFilter === 'risk' ? tRisk('createRisk') : tRisk('createBoth');
 
   // PR #65 Phase 2 (c): 起票中に類似する過去課題 (他プロジェクト) を inline でサジェスト。
   // 未然対応の気付きを起票中のユーザに与え、抜け漏れゼロ化を促す。
@@ -245,7 +249,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     if (bulkApply.assigneeId) patch.assigneeId = bulkAssigneeClear ? null : (bulkValues.assigneeId || null);
     if (bulkApply.deadline) patch.deadline = bulkDeadlineClear ? null : (bulkValues.deadline || null);
     if (Object.keys(patch).length === 0) {
-      setBulkError('更新する項目を 1 つ以上指定してください');
+      setBulkError(tRisk('bulkUpdateRequireOne'));
       return;
     }
     const res = await withLoading(() =>
@@ -267,7 +271,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      setBulkError(j?.message || j?.error || '一括更新に失敗しました');
+      setBulkError(j?.message || j?.error || tRisk('bulkUpdateFailed'));
       return;
     }
     setBulkOpen(false);
@@ -293,7 +297,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     );
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || tRisk('createFailed'));
       return;
     }
     // PR #67: 作成成功直後にステージされた添付を一括 POST
@@ -332,7 +336,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         <h2 className="text-xl font-semibold">{headingLabel}</h2>
         <div className="flex gap-2">
           {systemRole === 'admin' && (
-            <Button variant="outline" onClick={handleExport}>CSV出力</Button>
+            <Button variant="outline" onClick={handleExport}>{tRisk('csvExport')}</Button>
           )}
           {canCreate && (
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -344,7 +348,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                     <CreateFullscreenToggle />
                   </div>
                   <DialogDescription>
-                    {typeFilter === 'issue' ? '課題を登録してください。' : typeFilter === 'risk' ? 'リスクを登録してください。' : 'リスクまたは課題を登録してください。'}
+                    {typeFilter === 'issue' ? tRisk('createDescriptionIssue') : typeFilter === 'risk' ? tRisk('createDescriptionRisk') : tRisk('createDescriptionBoth')}
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreate} className="space-y-4">
@@ -352,14 +356,14 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   {/* PR #63: 公開範囲 / 脅威・好機 を最上位に配置 (設定忘れ防止の視線誘導) */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>公開範囲</Label>
+                      <Label>{tRisk('visibility')}</Label>
                       <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
                         {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select>
                     </div>
                     {form.type === 'risk' && (
                       <div className="space-y-2">
-                        <Label>脅威 / 好機</Label>
+                        <Label>{tRisk('threatOpportunity')}</Label>
                         <select value={form.riskNature} onChange={(e) => setForm({ ...form, riskNature: e.target.value })} className={nativeSelectClass}>
                           {Object.entries(RISK_NATURES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                         </select>
@@ -368,19 +372,19 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   </div>
                   {!typeFilter && (
                     <div className="space-y-2">
-                      <Label>種別</Label>
+                      <Label>{tRisk('kind')}</Label>
                       <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as 'risk' | 'issue' })} className={nativeSelectClass}>
-                        <option value="risk">リスク</option>
-                        <option value="issue">課題</option>
+                        <option value="risk">{tRisk('labelRisk')}</option>
+                        <option value="issue">{tRisk('labelIssue')}</option>
                       </select>
                     </div>
                   )}
                   <div className="space-y-2">
-                    <Label>件名</Label>
+                    <Label>{tRisk('subject')}</Label>
                     <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={100} required />
                   </div>
                   <div className="space-y-2">
-                    <Label>内容 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                    <Label>{tField('content')} <span className="text-xs text-muted-foreground">{tRisk('optional')}</span></Label>
                     {/* refactor/list-create-content-optional (2026-04-27 #6): 件名必須、内容は任意 */}
                     <MarkdownTextarea value={form.content} onChange={(v) => setForm({ ...form, content: v })} rows={4} maxLength={2000} />
                   </div>
@@ -422,14 +426,14 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   {/* PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定) */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>影響度</Label>
+                      <Label>{tRisk('impact')}</Label>
                       <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className={nativeSelectClass}>
                         {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select>
                     </div>
                     {form.type === 'risk' && (
                       <div className="space-y-2">
-                        <Label>発生可能性</Label>
+                        <Label>{tRisk('likelihood')}</Label>
                         <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className={nativeSelectClass}>
                           {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                         </select>
@@ -437,9 +441,9 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label>担当者</Label>
+                    <Label>{tRisk('assignee')}</Label>
                     <select value={form.assigneeId} onChange={(e) => setForm({ ...form, assigneeId: e.target.value })} className={nativeSelectClass}>
-                      <option value="">未設定</option>
+                      <option value="">{tRisk('notSet')}</option>
                       {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
                     </select>
                   </div>
@@ -459,43 +463,43 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       {/* PR #165: フィルター UI (bulk 編集の二重防御に必須、一覧の絞り込みにも有用) */}
       <div className="rounded-md border bg-muted/30 p-3">
         <div className="mb-2 flex items-center gap-2">
-          <span className="text-sm font-medium">フィルター</span>
+          <span className="text-sm font-medium">{tRisk('filter')}</span>
           {!filterApplied && (
-            <span className="text-xs text-muted-foreground">(一括編集には何らかのフィルター適用が必要です)</span>
+            <span className="text-xs text-muted-foreground">{tRisk('filterRequiredHint')}</span>
           )}
         </div>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
           <div>
-            <Label htmlFor={`risk-filter-state-${typeFilter ?? 'all'}`} className="text-xs">状態</Label>
+            <Label htmlFor={`risk-filter-state-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('state')}</Label>
             <select
               id={`risk-filter-state-${typeFilter ?? 'all'}`}
               value={bulkFilter.state}
               onChange={(e) => setBulkFilter((f) => ({ ...f, state: e.target.value }))}
               className={nativeSelectClass}
             >
-              <option value="">すべて</option>
+              <option value="">{tRisk('all')}</option>
               {Object.entries(RISK_ISSUE_STATES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
           <div>
-            <Label htmlFor={`risk-filter-impact-${typeFilter ?? 'all'}`} className="text-xs">影響度</Label>
+            <Label htmlFor={`risk-filter-impact-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('impact')}</Label>
             <select
               id={`risk-filter-impact-${typeFilter ?? 'all'}`}
               value={bulkFilter.impact}
               onChange={(e) => setBulkFilter((f) => ({ ...f, impact: e.target.value }))}
               className={nativeSelectClass}
             >
-              <option value="">すべて</option>
+              <option value="">{tRisk('all')}</option>
               {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
           <div className="md:col-span-2">
-            <Label htmlFor={`risk-filter-keyword-${typeFilter ?? 'all'}`} className="text-xs">キーワード (件名・内容)</Label>
+            <Label htmlFor={`risk-filter-keyword-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('keyword')}</Label>
             <Input
               id={`risk-filter-keyword-${typeFilter ?? 'all'}`}
               value={bulkFilter.keyword}
               onChange={(e) => setBulkFilter((f) => ({ ...f, keyword: e.target.value }))}
-              placeholder="例: ログイン"
+              placeholder={tRisk('keywordPlaceholder')}
             />
           </div>
           <div className="md:col-span-4">
@@ -506,7 +510,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 onChange={(e) => setBulkFilter((f) => ({ ...f, mineOnly: e.target.checked }))}
                 className="rounded"
               />
-              自分が起票したもののみ
+              {tRisk('mineOnly')}
             </label>
           </div>
         </div>
@@ -545,7 +549,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
               <ResizableHead columnKey="select" defaultWidth={36}>
                 <input
                   type="checkbox"
-                  aria-label="表示中の編集可能行を全選択"
+                  aria-label={tRisk('selectAllEditable')}
                   checked={allSelectableSelected}
                   disabled={selectableIds.length === 0}
                   onChange={toggleAllIds}
@@ -553,22 +557,22 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 />
               </ResizableHead>
             )}
-            {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>種別</ResizableHead>}
-            <ResizableHead columnKey="title" defaultWidth={240}>件名</ResizableHead>
-            <ResizableHead columnKey="impact" defaultWidth={80}>影響度</ResizableHead>
-            <ResizableHead columnKey="priority" defaultWidth={80}>優先度</ResizableHead>
-            <ResizableHead columnKey="state" defaultWidth={100}>状態</ResizableHead>
+            {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>{tRisk('kind')}</ResizableHead>}
+            <ResizableHead columnKey="title" defaultWidth={240}>{tRisk('subject')}</ResizableHead>
+            <ResizableHead columnKey="impact" defaultWidth={80}>{tRisk('impact')}</ResizableHead>
+            <ResizableHead columnKey="priority" defaultWidth={80}>{tRisk('priority')}</ResizableHead>
+            <ResizableHead columnKey="state" defaultWidth={100}>{tRisk('state')}</ResizableHead>
             {/* feat/account-lock-and-ui-consistency: 公開範囲列を追加。編集ダイアログで
                 visibility を変更しても一覧に表示されず「画面上データが更新されていない」
                 ように見える bug の解消 (knowledge/memo は既存で表示済、risk/retro が漏れ) */}
-            <ResizableHead columnKey="visibility" defaultWidth={90}>公開範囲</ResizableHead>
-            <ResizableHead columnKey="assignee" defaultWidth={120}>担当者</ResizableHead>
-            <ResizableHead columnKey="createdAt" defaultWidth={110}>起票日</ResizableHead>
+            <ResizableHead columnKey="visibility" defaultWidth={90}>{tRisk('visibility')}</ResizableHead>
+            <ResizableHead columnKey="assignee" defaultWidth={120}>{tRisk('assignee')}</ResizableHead>
+            <ResizableHead columnKey="createdAt" defaultWidth={110}>{tRisk('reportedAt')}</ResizableHead>
             {/* PR #67: 添付リンク列 */}
-            <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
+            <ResizableHead columnKey="attachments" defaultWidth={200}>{tRisk('attachment')}</ResizableHead>
             {/* 2026-04-24: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す */}
             {filteredRisks.some((x) => x.reporterId === currentUserId) && (
-              <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>
+              <ResizableHead columnKey="actions" defaultWidth={80}>{tRisk('actions')}</ResizableHead>
             )}
           </TableRow>
         </TableHeader>
@@ -588,17 +592,17 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   {r.viewerIsCreator ? (
                     <input
                       type="checkbox"
-                      aria-label={`${r.title} を一括編集対象に追加`}
+                      aria-label={tRisk('addToBulkEdit', { title: r.title })}
                       checked={selectedIds.has(r.id)}
                       onChange={() => toggleOneId(r.id)}
                       className="rounded"
                     />
                   ) : (
-                    <span className="text-xs text-muted-foreground" title="自分が起票したものではないため一括編集できません">-</span>
+                    <span className="text-xs text-muted-foreground" title={tRisk('rowNotEditableByOthers')}>-</span>
                   )}
                 </TableCell>
               )}
-              {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? 'リスク' : '課題'}</Badge></TableCell>}
+              {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? tRisk('labelRisk') : tRisk('labelIssue')}</Badge></TableCell>}
               <TableCell className="font-medium">{r.title}</TableCell>
               <TableCell><Badge variant={impactColors[r.impact] || 'secondary'}>{PRIORITIES[r.impact as keyof typeof PRIORITIES]}</Badge></TableCell>
               <TableCell><Badge variant={impactColors[r.priority] || 'secondary'}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Badge></TableCell>
@@ -631,14 +635,14 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                     size="sm"
                     className="text-destructive"
                     onClick={async () => {
-                      if (!confirm('このリスク/課題を削除しますか？')) return;
+                      if (!confirm(tRisk('deleteConfirm'))) return;
                       await withLoading(() =>
                         fetch(`/api/projects/${projectId}/risks/${r.id}`, { method: 'DELETE' }),
                       );
                       await reload();
                     }}
                   >
-                    削除
+                    {tRisk('delete')}
                   </Button>
                 </TableCell>
               )}
@@ -656,7 +660,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 }
                 className="py-8 text-center text-muted-foreground"
               >
-                {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク / 課題がありません'}
+                {typeFilter === 'issue' ? tRisk('noneIssue') : typeFilter === 'risk' ? tRisk('noneRisk') : tRisk('noneBothSpace')}
               </TableCell>
             </TableRow>
           )}
@@ -690,10 +694,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 checked={bulkApply.state}
                 onChange={(e) => setBulkApply((a) => ({ ...a, state: e.target.checked }))}
                 className="mt-2 rounded"
-                aria-label="状態を一括更新する"
+                aria-label={tRisk('bulkApplyState')}
               />
               <div className="flex-1 space-y-1">
-                <Label className="text-sm">状態</Label>
+                <Label className="text-sm">{tRisk('state')}</Label>
                 <div className={bulkApply.state ? '' : 'pointer-events-none opacity-50'}>
                   <select
                     value={bulkValues.state}
@@ -712,10 +716,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 checked={bulkApply.assigneeId}
                 onChange={(e) => setBulkApply((a) => ({ ...a, assigneeId: e.target.checked }))}
                 className="mt-2 rounded"
-                aria-label="担当者を一括更新する"
+                aria-label={tRisk('bulkApplyAssignee')}
               />
               <div className="flex-1 space-y-1">
-                <Label className="text-sm">担当者</Label>
+                <Label className="text-sm">{tRisk('assignee')}</Label>
                 <div className={bulkApply.assigneeId ? 'space-y-1' : 'pointer-events-none space-y-1 opacity-50'}>
                   <select
                     value={bulkValues.assigneeId}
@@ -723,7 +727,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                     onChange={(e) => setBulkValues((b) => ({ ...b, assigneeId: e.target.value }))}
                     className={nativeSelectClass}
                   >
-                    <option value="">未設定 (担当者なし)</option>
+                    <option value="">{tRisk('notSetWithoutAssignee')}</option>
                     {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
                   </select>
                   <label className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -745,10 +749,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 checked={bulkApply.deadline}
                 onChange={(e) => setBulkApply((a) => ({ ...a, deadline: e.target.checked }))}
                 className="mt-2 rounded"
-                aria-label="期限を一括更新する"
+                aria-label={tRisk('bulkApplyDeadline')}
               />
               <div className="flex-1 space-y-1">
-                <Label className="text-sm">期限</Label>
+                <Label className="text-sm">{tRisk('deadline')}</Label>
                 <div className={bulkApply.deadline ? 'space-y-1' : 'pointer-events-none space-y-1 opacity-50'}>
                   {/* feat/date-field-clear-rename: 単発編集 dialog (RiskEditDialog) と同じ DateFieldWithActions を流用し
                       「今日」「クリア」ボタンを必ず提供する (画面横断の操作一貫性 + 横展開漏れ防止) */}
@@ -778,8 +782,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
           )}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setBulkOpen(false)}>キャンセル</Button>
-            <Button onClick={submitBulk}>適用</Button>
+            <Button variant="outline" onClick={() => setBulkOpen(false)}>{tAction('cancel')}</Button>
+            <Button onClick={submitBulk}>{tRisk('apply')}</Button>
           </div>
         </DialogContent>
       </Dialog>

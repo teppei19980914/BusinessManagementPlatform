@@ -57,16 +57,6 @@ import {
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
 
-const MEMO_VISIBILITY_OPTIONS = [
-  { value: 'private', label: '自分のみ (公開取り下げ)' },
-  { value: 'public', label: '全メモに公開' },
-];
-
-const VISIBILITY_LABELS: Record<string, string> = {
-  private: '自分のみ',
-  public: '全メモに公開',
-};
-
 export function MemosClient({
   memos: initialMemos,
   viewerUserId,
@@ -74,7 +64,20 @@ export function MemosClient({
   memos: MemoDTO[];
   viewerUserId: string;
 }) {
-  const t = useTranslations('action');
+  const tAction = useTranslations('action');
+  const tField = useTranslations('field');
+  const tMessage = useTranslations('message');
+  const tMemo = useTranslations('memo');
+
+  const MEMO_VISIBILITY_OPTIONS = [
+    { value: 'private', label: tMemo('visibilityPrivateWithdraw') },
+    { value: 'public', label: tMemo('visibilityPublic') },
+  ];
+
+  const VISIBILITY_LABELS: Record<string, string> = {
+    private: tMemo('visibilityPrivate'),
+    public: tMemo('visibilityPublic'),
+  };
   const router = useRouter();
   const { withLoading } = useLoading();
   // PR #119: session 連携フォーマッタ
@@ -154,7 +157,7 @@ export function MemosClient({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || tMessage('createFailed'));
       return;
     }
     const json = await res.json();
@@ -209,7 +212,7 @@ export function MemosClient({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || '更新に失敗しました');
+      setError(json.error?.message || tMessage('updateFailed'));
       return;
     }
     setEditing(null);
@@ -217,12 +220,12 @@ export function MemosClient({
   }
 
   async function handleDelete(memo: MemoDTO) {
-    if (!confirm(`「${memo.title}」を削除しますか？`)) return;
+    if (!confirm(tMemo('deleteConfirm', { title: memo.title }))) return;
     const res = await withLoading(() =>
       fetch(`/api/memos/${memo.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert('削除に失敗しました');
+      alert(tMessage('deleteFailed'));
       return;
     }
     await reload();
@@ -244,32 +247,32 @@ export function MemosClient({
         selectedIds={selectedIds}
         onSelectionClear={() => setSelectedIds(new Set())}
         visibilityOptions={MEMO_VISIBILITY_OPTIONS}
-        entityLabel="メモ"
+        entityLabel={tMemo('entityLabel')}
         onApplied={async () => { await reload(); }}
       />
 
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">メモ一覧</h2>
+        <h2 className="text-xl font-semibold">{tMemo('listTitle')}</h2>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">{filteredMemos.length} 件</span>
+          <span className="text-sm text-muted-foreground">{tMemo('count', { count: filteredMemos.length })}</span>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
-              メモ作成
+              {tMemo('create')}
             </DialogTrigger>
             <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${createFsClassName}`}>
               <DialogHeader>
                 <div className="flex items-center justify-between gap-2">
-                  <DialogTitle>メモ作成</DialogTitle>
+                  <DialogTitle>{tMemo('create')}</DialogTitle>
                   <CreateFullscreenToggle />
                 </div>
                 <DialogDescription>
-                  既定は「自分のみ」(非公開)。「全メモに公開」を選ぶと他アカウントも閲覧可能になります。
+                  {tMemo('createDescription')}
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
                 <div className="space-y-2">
-                  <Label>公開範囲</Label>
+                  <Label>{tField('visibility')}</Label>
                   <select
                     value={createForm.visibility}
                     onChange={(e) => setCreateForm({ ...createForm, visibility: e.target.value })}
@@ -281,7 +284,7 @@ export function MemosClient({
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>タイトル</Label>
+                  <Label>{tField('title')}</Label>
                   <Input
                     value={createForm.title}
                     onChange={(e) => setCreateForm({ ...createForm, title: e.target.value })}
@@ -290,7 +293,7 @@ export function MemosClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>本文 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <Label>{tField('body')} <span className="text-xs text-muted-foreground">{tMemo('contentOptional')}</span></Label>
                   {/* refactor/list-create-content-optional (2026-04-27 #6): タイトル必須、本文は任意 */}
                   <MarkdownTextarea
                     value={createForm.content}
@@ -302,9 +305,9 @@ export function MemosClient({
                 <StagedAttachmentsInput
                   value={stagedCreateAttachments}
                   onChange={setStagedCreateAttachments}
-                  label="参考 URL"
+                  label={tMemo('referenceUrl')}
                 />
-                <Button type="submit" className="w-full">作成</Button>
+                <Button type="submit" className="w-full">{tAction('create')}</Button>
               </form>
             </DialogContent>
           </Dialog>
@@ -322,7 +325,7 @@ export function MemosClient({
                 <ResizableHead columnKey="select" defaultWidth={36}>
                   <input
                     type="checkbox"
-                    aria-label="表示中の編集可能行を全選択"
+                    aria-label={tMemo('selectAllEditable')}
                     checked={allSelectableSelected}
                     disabled={selectableIds.length === 0}
                     onChange={toggleAllMemos}
@@ -330,13 +333,13 @@ export function MemosClient({
                   />
                 </ResizableHead>
               )}
-              <ResizableHead columnKey="title" defaultWidth={220}>タイトル</ResizableHead>
-              <ResizableHead columnKey="content" defaultWidth={300}>本文</ResizableHead>
-              <ResizableHead columnKey="visibility" defaultWidth={110}>公開範囲</ResizableHead>
-              <ResizableHead columnKey="author" defaultWidth={120}>作成者</ResizableHead>
-              <ResizableHead columnKey="updatedAt" defaultWidth={140}>更新日時</ResizableHead>
-              <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-              <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>
+              <ResizableHead columnKey="title" defaultWidth={220}>{tField('title')}</ResizableHead>
+              <ResizableHead columnKey="content" defaultWidth={300}>{tField('body')}</ResizableHead>
+              <ResizableHead columnKey="visibility" defaultWidth={110}>{tField('visibility')}</ResizableHead>
+              <ResizableHead columnKey="author" defaultWidth={120}>{tMemo('colAuthor')}</ResizableHead>
+              <ResizableHead columnKey="updatedAt" defaultWidth={140}>{tMemo('colUpdatedAt')}</ResizableHead>
+              <ResizableHead columnKey="attachments" defaultWidth={200}>{tMemo('colAttachments')}</ResizableHead>
+              <ResizableHead columnKey="actions" defaultWidth={80}>{tMemo('colActions')}</ResizableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -351,7 +354,7 @@ export function MemosClient({
                     {m.isMine ? (
                       <input
                         type="checkbox"
-                        aria-label={`${m.title} を一括編集対象に追加`}
+                        aria-label={tMemo('bulkSelectLabel', { title: m.title })}
                         checked={selectedIds.has(m.id)}
                         onChange={() => toggleOneMemo(m.id)}
                         className="rounded"
@@ -380,7 +383,7 @@ export function MemosClient({
                     旧仕様では「編集」ボタンが冗長だったため削除し、削除のみアクション列に残す。 */}
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   {m.isMine && (
-                    <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>{t('delete')}</Button>
+                    <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>{tAction('delete')}</Button>
                   )}
                 </TableCell>
               </TableRow>
@@ -388,7 +391,7 @@ export function MemosClient({
             {filteredMemos.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7 + (filterApplied ? 1 : 0)} className="py-8 text-center text-muted-foreground">
-                  メモがありません。右上の「メモ作成」から登録してください。
+                  {tMemo('empty')}
                 </TableCell>
               </TableRow>
             )}
@@ -401,16 +404,16 @@ export function MemosClient({
         <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${editFsClassName}`}>
           <DialogHeader>
             <div className="flex items-center justify-between gap-2">
-              <DialogTitle>メモ編集</DialogTitle>
+              <DialogTitle>{tMemo('edit')}</DialogTitle>
               <EditFullscreenToggle />
             </div>
-            <DialogDescription>変更内容を保存します。</DialogDescription>
+            <DialogDescription>{tMemo('editDescription')}</DialogDescription>
           </DialogHeader>
           {editing && (
             <form onSubmit={handleEdit} className="space-y-4">
               {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
               <div className="space-y-2">
-                <Label>公開範囲</Label>
+                <Label>{tField('visibility')}</Label>
                 <select
                   value={editForm.visibility}
                   onChange={(e) => setEditForm({ ...editForm, visibility: e.target.value })}
@@ -422,7 +425,7 @@ export function MemosClient({
                 </select>
               </div>
               <div className="space-y-2">
-                <Label>タイトル</Label>
+                <Label>{tField('title')}</Label>
                 <Input
                   value={editForm.title}
                   onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
@@ -431,7 +434,7 @@ export function MemosClient({
                 />
               </div>
               <div className="space-y-2">
-                <Label>本文 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                <Label>{tField('body')} <span className="text-xs text-muted-foreground">{tMemo('contentOptional')}</span></Label>
                 {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も本文は任意 */}
                 <MarkdownTextarea
                   value={editForm.content}
@@ -446,9 +449,9 @@ export function MemosClient({
                 entityType="memo"
                 entityId={editing.id}
                 canEdit={editing.userId === viewerUserId}
-                label="参考 URL"
+                label={tMemo('referenceUrl')}
               />
-              <Button type="submit" className="w-full">{t('save')}</Button>
+              <Button type="submit" className="w-full">{tAction('save')}</Button>
             </form>
           )}
         </DialogContent>

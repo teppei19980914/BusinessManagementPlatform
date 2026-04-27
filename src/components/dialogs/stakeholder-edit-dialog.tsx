@@ -92,7 +92,8 @@ export function StakeholderEditDialog({
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
 }) {
-  const t = useTranslations('action');
+  const tAction = useTranslations('action');
+  const t = useTranslations('stakeholder');
   const { withLoading } = useLoading();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
@@ -165,7 +166,7 @@ export function StakeholderEditDialog({
       setError(
         json.error?.message
           || json.error?.details?.[0]?.message
-          || (isEdit ? '更新に失敗しました' : '登録に失敗しました'),
+          || (isEdit ? t('updateFailed') : t('registerFailed')),
       );
       return;
     }
@@ -179,9 +180,9 @@ export function StakeholderEditDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[min(90vw,42rem)] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'ステークホルダー編集' : 'ステークホルダー新規登録'}</DialogTitle>
+          <DialogTitle>{isEdit ? t('editTitle') : t('createTitle')}</DialogTitle>
           <DialogDescription>
-            PMBOK 13 準拠: 影響度 / 関心度 / 姿勢 / エンゲージメント水準を記録し、対応戦略を整理します。
+            {t('dialogDescription')}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -191,7 +192,7 @@ export function StakeholderEditDialog({
 
           {/* 内部メンバー紐付け */}
           <div className="space-y-2">
-            <Label>内部メンバー紐付け</Label>
+            <Label>{t('internalMemberLink')}</Label>
             <select
               value={form.userId}
               onChange={(e) => {
@@ -206,7 +207,7 @@ export function StakeholderEditDialog({
               }}
               className={nativeSelectClass}
             >
-              <option value="">外部関係者 (内部紐付けなし)</option>
+              <option value="">{t('externalParty')}</option>
               {members.map((m) => (
                 <option key={m.userId} value={m.userId}>{m.userName}</option>
               ))}
@@ -215,7 +216,7 @@ export function StakeholderEditDialog({
 
           {/* 氏名 / 所属 / 役職 */}
           <div className="space-y-2">
-            <Label>氏名</Label>
+            <Label>{t('fieldName')}</Label>
             <Input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -225,7 +226,7 @@ export function StakeholderEditDialog({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>所属組織</Label>
+              <Label>{t('fieldOrganization')}</Label>
               <Input
                 value={form.organization}
                 onChange={(e) => setForm({ ...form, organization: e.target.value })}
@@ -233,7 +234,7 @@ export function StakeholderEditDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label>役職</Label>
+              <Label>{t('fieldRole')}</Label>
               <Input
                 value={form.role}
                 onChange={(e) => setForm({ ...form, role: e.target.value })}
@@ -243,7 +244,7 @@ export function StakeholderEditDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>連絡先メモ</Label>
+            <Label>{t('fieldContactInfo')}</Label>
             <MarkdownTextarea
               value={form.contactInfo}
               onChange={(v) => setForm({ ...form, contactInfo: v })}
@@ -256,7 +257,7 @@ export function StakeholderEditDialog({
           {/* Power/Interest grid */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>影響度 (1-5)</Label>
+              <Label>{t('fieldInfluence')}</Label>
               <select
                 value={form.influence}
                 onChange={(e) => setForm({ ...form, influence: Number(e.target.value) })}
@@ -268,7 +269,7 @@ export function StakeholderEditDialog({
               </select>
             </div>
             <div className="space-y-2">
-              <Label>関心度 (1-5)</Label>
+              <Label>{t('fieldInterest')}</Label>
               <select
                 value={form.interest}
                 onChange={(e) => setForm({ ...form, interest: Number(e.target.value) })}
@@ -283,7 +284,7 @@ export function StakeholderEditDialog({
 
           {/* 姿勢 */}
           <div className="space-y-2">
-            <Label>姿勢</Label>
+            <Label>{t('fieldAttitude')}</Label>
             <select
               value={form.attitude}
               onChange={(e) => setForm({ ...form, attitude: e.target.value as StakeholderAttitude })}
@@ -298,7 +299,7 @@ export function StakeholderEditDialog({
           {/* Engagement Gap */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>現在のエンゲージメント</Label>
+              <Label>{t('fieldCurrentEngagement')}</Label>
               <select
                 value={form.currentEngagement}
                 onChange={(e) =>
@@ -312,7 +313,7 @@ export function StakeholderEditDialog({
               </select>
             </div>
             <div className="space-y-2">
-              <Label>望ましいエンゲージメント</Label>
+              <Label>{t('fieldDesiredEngagement')}</Label>
               <select
                 value={form.desiredEngagement}
                 onChange={(e) =>
@@ -329,40 +330,40 @@ export function StakeholderEditDialog({
 
           {/* 人となり / タグ / 対応戦略 */}
           <div className="space-y-2">
-            <Label>人となり / 考え方 (自由記述)</Label>
+            <Label>{t('fieldPersonality')}</Label>
             <MarkdownTextarea
               value={form.personality}
               onChange={(v) => setForm({ ...form, personality: v })}
               previousValue={isEdit ? (stakeholder?.personality ?? '') : undefined}
               rows={4}
               maxLength={2000}
-              placeholder="例: 数字で語ると納得しやすい / 議論より資料を読む派 / 決裁前に必ず Slack で根回し"
+              placeholder={t('personalityPlaceholder')}
             />
           </div>
 
           <div className="space-y-2">
-            <Label>タグ (カンマ / 読点区切り)</Label>
+            <Label>{t('fieldTags')}</Label>
             <Input
               value={form.tagsInput}
               onChange={(e) => setForm({ ...form, tagsInput: e.target.value })}
-              placeholder="例: 技術志向, 数字派, 早朝型"
+              placeholder={t('tagsPlaceholder')}
               maxLength={200}
             />
           </div>
 
           <div className="space-y-2">
-            <Label>対応戦略 (具体的アクション)</Label>
+            <Label>{t('fieldStrategy')}</Label>
             <MarkdownTextarea
               value={form.strategy}
               onChange={(v) => setForm({ ...form, strategy: v })}
               previousValue={isEdit ? (stakeholder?.strategy ?? '') : undefined}
               rows={3}
               maxLength={2000}
-              placeholder="例: 月 1 で 30 分の 1on1 / 月次レポートに KPI サマリ添付 / 重要意思決定は事前に Slack で打診"
+              placeholder={t('strategyPlaceholder')}
             />
           </div>
 
-          <Button type="submit" className="w-full">{isEdit ? t('save') : '登録'}</Button>
+          <Button type="submit" className="w-full">{isEdit ? tAction('save') : t('submitRegister')}</Button>
         </form>
       </DialogContent>
     </Dialog>

@@ -23,6 +23,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import {
   buildMonthGrid,
@@ -30,8 +31,6 @@ import {
   parseYMD,
   todayString,
 } from './date-field-helpers';
-
-const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 
 type CalendarPanelProps = {
   value: string;
@@ -43,6 +42,17 @@ type CalendarPanelProps = {
  * (PR #72 要件: カレンダー内からそれらの機能を取り除く)。
  */
 function CalendarPanel({ value, onSelect }: CalendarPanelProps) {
+  const t = useTranslations('common');
+  const weekdayLabels = [
+    t('weekdaySun'),
+    t('weekdayMon'),
+    t('weekdayTue'),
+    t('weekdayWed'),
+    t('weekdayThu'),
+    t('weekdayFri'),
+    t('weekdaySat'),
+  ];
+
   const parsed = parseYMD(value);
   const initialY = parsed?.y ?? new Date().getFullYear();
   const initialM = parsed?.m ?? new Date().getMonth() + 1;
@@ -78,24 +88,24 @@ function CalendarPanel({ value, onSelect }: CalendarPanelProps) {
           type="button"
           onClick={prevMonth}
           className="rounded px-2 py-1 text-sm hover:bg-accent"
-          aria-label="前の月"
+          aria-label={t('prevMonth')}
         >
           ‹
         </button>
         <div className="text-sm font-medium" aria-live="polite">
-          {visibleY} 年 {visibleM} 月
+          {t('yearMonth', { year: visibleY, month: visibleM })}
         </div>
         <button
           type="button"
           onClick={nextMonth}
           className="rounded px-2 py-1 text-sm hover:bg-accent"
-          aria-label="次の月"
+          aria-label={t('nextMonth')}
         >
           ›
         </button>
       </div>
       <div className="grid grid-cols-7 gap-0.5 text-center text-xs text-muted-foreground">
-        {WEEKDAY_LABELS.map((label, i) => (
+        {weekdayLabels.map((label, i) => (
           <div key={label} className={i === 0 ? 'text-destructive' : i === 6 ? 'text-info' : ''}>
             {label}
           </div>
@@ -156,6 +166,7 @@ export function DateFieldWithActions({
   todayLabel = '今日',
   clearLabel = 'クリア',
 }: Props) {
+  const t = useTranslations('common');
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -178,7 +189,7 @@ export function DateFieldWithActions({
     };
   }, [open]);
 
-  const displayText = value || '日付を選択';
+  const displayText = value || t('selectDate');
 
   return (
     // PR #85: gap-1 (4px) は 2 列並び時にボタンが圧迫されたので gap-2 + flex-wrap で逃がす
@@ -201,7 +212,7 @@ export function DateFieldWithActions({
           {displayText}
         </button>
         {open && (
-          <div className="absolute left-0 top-full z-50 mt-1" role="dialog" aria-label="日付選択">
+          <div className="absolute left-0 top-full z-50 mt-1" role="dialog" aria-label={t('datePicker')}>
             <CalendarPanel
               value={value}
               onSelect={(ymd) => {
@@ -219,7 +230,7 @@ export function DateFieldWithActions({
         className="shrink-0 px-2"
         onClick={() => onChange(todayString())}
         disabled={disabled}
-        title="今日の日付を設定"
+        title={t('setTodayDate')}
       >
         {todayLabel}
       </Button>
@@ -231,7 +242,7 @@ export function DateFieldWithActions({
           className="shrink-0 px-2 text-muted-foreground"
           onClick={() => onChange('')}
           disabled={disabled || !value}
-          title="日付をクリア"
+          title={t('clearDate')}
         >
           {clearLabel}
         </Button>

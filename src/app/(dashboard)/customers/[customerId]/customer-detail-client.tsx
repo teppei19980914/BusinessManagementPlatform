@@ -17,6 +17,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -56,6 +57,9 @@ type Props = {
 
 export function CustomerDetailClient({ customer, projects }: Props) {
   const router = useRouter();
+  const t = useTranslations('customer');
+  const tAction = useTranslations('action');
+  const tProject = useTranslations('project');
   const { withLoading } = useLoading();
 
   // --- 編集ダイアログ ---
@@ -99,7 +103,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setEditError(json.error?.message || '更新に失敗しました');
+      setEditError(json.error?.message || t('editFailed'));
       return;
     }
     setIsEditOpen(false);
@@ -136,7 +140,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      window.alert(json.error?.message || '削除に失敗しました');
+      window.alert(json.error?.message || t('deleteFailed'));
       return;
     }
     router.push('/customers');
@@ -149,21 +153,21 @@ export function CustomerDetailClient({ customer, projects }: Props) {
         <div>
           <p className="text-sm text-muted-foreground">
             <Link href="/customers" className="hover:underline">
-              顧客管理
+              {t('listTitle')}
             </Link>
-            {' / '}顧客詳細
+            {' / '}{t('detailBreadcrumb')}
           </p>
           <h2 className="mt-1 text-2xl font-semibold">{customer.name}</h2>
         </div>
         <div className="flex items-center gap-2">
           <Dialog open={isEditOpen} onOpenChange={(o) => (o ? openEdit() : setIsEditOpen(false))}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">
-              編集
+              {tAction('edit')}
             </DialogTrigger>
             <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>顧客情報編集</DialogTitle>
-                <DialogDescription>顧客情報を更新します。</DialogDescription>
+                <DialogTitle>{t('editDialogTitle')}</DialogTitle>
+                <DialogDescription>{t('editDialogDescription')}</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleEdit} className="space-y-4">
                 {editError && (
@@ -172,7 +176,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                   </div>
                 )}
                 <div className="space-y-2">
-                  <Label htmlFor="edit-name">顧客名 *</Label>
+                  <Label htmlFor="edit-name">{t('fieldNameRequired')}</Label>
                   <Input
                     id="edit-name"
                     value={editForm.name}
@@ -182,7 +186,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-department">部門</Label>
+                  <Label htmlFor="edit-department">{t('fieldDepartment')}</Label>
                   <Input
                     id="edit-department"
                     value={editForm.department}
@@ -191,7 +195,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-contact-person">担当者</Label>
+                  <Label htmlFor="edit-contact-person">{t('fieldContactPerson')}</Label>
                   <Input
                     id="edit-contact-person"
                     value={editForm.contactPerson}
@@ -202,7 +206,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-contact-email">担当者メール</Label>
+                  <Label htmlFor="edit-contact-email">{t('fieldContactEmail')}</Label>
                   <Input
                     id="edit-contact-email"
                     type="email"
@@ -214,7 +218,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-notes">備考</Label>
+                  <Label htmlFor="edit-notes">{t('fieldNotes')}</Label>
                   <textarea
                     id="edit-notes"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -230,9 +234,9 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                     variant="outline"
                     onClick={() => setIsEditOpen(false)}
                   >
-                    キャンセル
+                    {tAction('cancel')}
                   </Button>
-                  <Button type="submit">更新</Button>
+                  <Button type="submit">{t('editSubmit')}</Button>
                 </div>
               </form>
             </DialogContent>
@@ -242,23 +246,23 @@ export function CustomerDetailClient({ customer, projects }: Props) {
               className="inline-flex shrink-0 items-center justify-center rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/90"
               onClick={openDelete}
             >
-              削除
+              {tAction('delete')}
             </DialogTrigger>
             <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>顧客削除</DialogTitle>
+                <DialogTitle>{t('deleteDialogTitle')}</DialogTitle>
                 <DialogDescription>
-                  顧客「{customer.name}」を物理削除します。この操作は取り消せません。
+                  {t('deleteDialogDescription', { name: customer.name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 {customer.activeProjectCount > 0 ? (
                   <>
                     <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
-                      この顧客には active なプロジェクトが
+                      {t('deleteCascadeWarningPrefix')}
                       <strong className="mx-1">{customer.activeProjectCount}</strong>
-                      件紐付いています。削除を実行すると、紐付くプロジェクト本体・WBS・見積・メンバー・添付は
-                      <strong>常に</strong>物理削除されます。以下は任意で選択してください。
+                      {t('deleteCascadeWarningSuffix')}
+                      <strong>{t('deleteCascadeWarningEmphasis')}</strong>{t('deleteCascadeWarningTail')}
                     </div>
                     <div className="space-y-2 rounded-md border p-3">
                       <label className="flex items-center gap-2 text-sm">
@@ -267,7 +271,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                           checked={cascadeRisks}
                           onChange={(e) => setCascadeRisks(e.target.checked)}
                         />
-                        リスクも削除する
+                        {t('deleteCascadeRisks')}
                       </label>
                       <label className="flex items-center gap-2 text-sm">
                         <input
@@ -275,7 +279,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                           checked={cascadeIssues}
                           onChange={(e) => setCascadeIssues(e.target.checked)}
                         />
-                        課題も削除する
+                        {t('deleteCascadeIssues')}
                       </label>
                       <label className="flex items-center gap-2 text-sm">
                         <input
@@ -283,7 +287,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                           checked={cascadeRetros}
                           onChange={(e) => setCascadeRetros(e.target.checked)}
                         />
-                        振り返り (コメント含む) も削除する
+                        {t('deleteCascadeRetros')}
                       </label>
                       <label className="flex items-center gap-2 text-sm">
                         <input
@@ -291,13 +295,13 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                           checked={cascadeKnowledge}
                           onChange={(e) => setCascadeKnowledge(e.target.checked)}
                         />
-                        ナレッジも削除する (他プロジェクト共有分は紐付け解除のみ)
+                        {t('deleteCascadeKnowledge')}
                       </label>
                     </div>
                   </>
                 ) : (
                   <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                    紐付く active プロジェクトはありません。顧客情報のみ削除されます。
+                    {t('deleteNoCascadeMessage')}
                   </div>
                 )}
                 <div className="flex justify-end gap-2">
@@ -306,14 +310,14 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                     variant="outline"
                     onClick={() => setIsDeleteOpen(false)}
                   >
-                    キャンセル
+                    {tAction('cancel')}
                   </Button>
                   <Button
                     type="button"
                     variant="destructive"
                     onClick={handleConfirmDelete}
                   >
-                    削除する
+                    {t('deleteSubmit')}
                   </Button>
                 </div>
               </div>
@@ -326,15 +330,15 @@ export function CustomerDetailClient({ customer, projects }: Props) {
       <div className="rounded-md border p-4">
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <dt className="text-xs font-medium text-muted-foreground">部門</dt>
+            <dt className="text-xs font-medium text-muted-foreground">{t('fieldDepartment')}</dt>
             <dd className="mt-1 text-sm">{customer.department || '—'}</dd>
           </div>
           <div>
-            <dt className="text-xs font-medium text-muted-foreground">担当者</dt>
+            <dt className="text-xs font-medium text-muted-foreground">{t('fieldContactPerson')}</dt>
             <dd className="mt-1 text-sm">{customer.contactPerson || '—'}</dd>
           </div>
           <div>
-            <dt className="text-xs font-medium text-muted-foreground">担当者メール</dt>
+            <dt className="text-xs font-medium text-muted-foreground">{t('fieldContactEmail')}</dt>
             <dd className="mt-1 text-sm">
               {customer.contactEmail ? (
                 <a
@@ -349,17 +353,17 @@ export function CustomerDetailClient({ customer, projects }: Props) {
             </dd>
           </div>
           <div>
-            <dt className="text-xs font-medium text-muted-foreground">紐付 active プロジェクト</dt>
+            <dt className="text-xs font-medium text-muted-foreground">{t('infoActiveProjectCount')}</dt>
             <dd className="mt-1 text-sm">
               {customer.activeProjectCount > 0 ? (
-                <Badge variant="secondary">{customer.activeProjectCount} 件</Badge>
+                <Badge variant="secondary">{t('projectCount', { count: customer.activeProjectCount })}</Badge>
               ) : (
-                '0 件'
+                t('projectCount', { count: 0 })
               )}
             </dd>
           </div>
           <div className="sm:col-span-2">
-            <dt className="text-xs font-medium text-muted-foreground">備考</dt>
+            <dt className="text-xs font-medium text-muted-foreground">{t('fieldNotes')}</dt>
             <dd className="mt-1 whitespace-pre-wrap text-sm">{customer.notes || '—'}</dd>
           </div>
         </dl>
@@ -367,22 +371,22 @@ export function CustomerDetailClient({ customer, projects }: Props) {
 
       {/* 紐付プロジェクト一覧 */}
       <div>
-        <h3 className="mb-2 text-lg font-semibold">紐付プロジェクト</h3>
+        <h3 className="mb-2 text-lg font-semibold">{t('relatedProjectsHeading')}</h3>
         <div className="rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>プロジェクト名</TableHead>
-                <TableHead>ステータス</TableHead>
-                <TableHead>開始予定日</TableHead>
-                <TableHead>終了予定日</TableHead>
+                <TableHead>{tProject('fieldName')}</TableHead>
+                <TableHead>{tProject('fieldStatus')}</TableHead>
+                <TableHead>{tProject('fieldPlannedStartDate')}</TableHead>
+                <TableHead>{tProject('fieldPlannedEndDate')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {projects.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center text-muted-foreground">
-                    この顧客に紐付く active なプロジェクトはありません
+                    {t('relatedProjectsEmpty')}
                   </TableCell>
                 </TableRow>
               )}

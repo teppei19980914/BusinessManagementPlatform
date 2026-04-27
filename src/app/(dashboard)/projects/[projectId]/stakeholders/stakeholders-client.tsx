@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
@@ -44,19 +45,19 @@ const ATTITUDE_BADGE_VARIANT: Record<string, 'default' | 'secondary' | 'destruct
   opposing: 'destructive',
 };
 
-const QUADRANT_DESCRIPTIONS: Record<StakeholderQuadrant, string> = {
-  manage_closely: '影響大 × 関心大: 密接に連携し満足させる (定期 1on1 / 重要意思決定への参加)',
-  keep_satisfied: '影響大 × 関心小: 満足させておく (方向性に影響しない範囲で必要十分な情報提供)',
-  keep_informed: '影響小 × 関心大: 常に情報を伝える (現場意見の聴取で問題早期発見)',
-  monitor: '影響小 × 関心小: モニタリング (必要最小限のコミュニケーション)',
-};
-
 const QUADRANT_ORDER: StakeholderQuadrant[] = [
   'manage_closely',
   'keep_satisfied',
   'keep_informed',
   'monitor',
 ];
+
+const QUADRANT_DESCRIPTION_KEYS: Record<StakeholderQuadrant, string> = {
+  manage_closely: 'quadrantManageCloselyDescription',
+  keep_satisfied: 'quadrantKeepSatisfiedDescription',
+  keep_informed: 'quadrantKeepInformedDescription',
+  monitor: 'quadrantMonitorDescription',
+};
 
 const QUADRANT_BG: Record<StakeholderQuadrant, string> = {
   manage_closely: 'bg-destructive/10 border-destructive/40',
@@ -73,6 +74,8 @@ type Props = {
 };
 
 export function StakeholdersClient({ projectId, stakeholders, members, onReload }: Props) {
+  const t = useTranslations('stakeholder');
+  const tAction = useTranslations('action');
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editing, setEditing] = useState<StakeholderDTO | null>(null);
@@ -93,12 +96,12 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
   const gapCount = stakeholders.filter((s) => s.engagementGap !== 0).length;
 
   async function handleDelete(s: StakeholderDTO) {
-    if (!confirm(`「${s.name}」をステークホルダー一覧から削除しますか？`)) return;
+    if (!confirm(t('deleteConfirm', { name: s.name }))) return;
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/stakeholders/${s.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert('削除に失敗しました');
+      alert(t('deleteFailed'));
       return;
     }
     await reload();
@@ -108,12 +111,12 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold">ステークホルダー管理簿</h2>
+          <h2 className="text-xl font-semibold">{t('title')}</h2>
           <p className="text-xs text-muted-foreground">
-            {stakeholders.length} 件
+            {t('countSummary', { count: stakeholders.length })}
             {gapCount > 0 && (
               <span className="ml-2 text-warning">
-                / エンゲージメント Gap あり: {gapCount} 件 (能動的な働きかけ推奨)
+                {t('engagementGapWarning', { count: gapCount })}
               </span>
             )}
           </p>
@@ -122,7 +125,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
           onClick={() => setIsCreateOpen(true)}
           className="shrink-0"
         >
-          新規登録
+          {t('register')}
         </Button>
       </div>
 
@@ -135,9 +138,11 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
           >
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-sm font-semibold">{STAKEHOLDER_QUADRANTS[q]}</h3>
-              <span className="text-xs text-muted-foreground">{byQuadrant[q].length} 名</span>
+              <span className="text-xs text-muted-foreground">
+                {t('memberCountUnit', { count: byQuadrant[q].length })}
+              </span>
             </div>
-            <p className="mb-2 text-xs text-muted-foreground">{QUADRANT_DESCRIPTIONS[q]}</p>
+            <p className="mb-2 text-xs text-muted-foreground">{t(QUADRANT_DESCRIPTION_KEYS[q])}</p>
             <ul className="space-y-1">
               {byQuadrant[q].map((s) => (
                 <li key={s.id} className="flex items-center gap-2 text-sm">
@@ -162,7 +167,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
                 </li>
               ))}
               {byQuadrant[q].length === 0 && (
-                <li className="text-xs text-muted-foreground">該当者なし</li>
+                <li className="text-xs text-muted-foreground">{t('noMembers')}</li>
               )}
             </ul>
           </div>
@@ -177,15 +182,15 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
         <Table>
           <TableHeader>
             <TableRow>
-              <ResizableHead columnKey="name" defaultWidth={160}>氏名</ResizableHead>
-              <ResizableHead columnKey="organization" defaultWidth={140}>所属</ResizableHead>
-              <ResizableHead columnKey="role" defaultWidth={100}>役職</ResizableHead>
-              <ResizableHead columnKey="influence" defaultWidth={70}>影響度</ResizableHead>
-              <ResizableHead columnKey="interest" defaultWidth={70}>関心度</ResizableHead>
-              <ResizableHead columnKey="attitude" defaultWidth={70}>姿勢</ResizableHead>
-              <ResizableHead columnKey="engagement" defaultWidth={140}>現在 → 望ましい</ResizableHead>
-              <ResizableHead columnKey="gap" defaultWidth={60}>Gap</ResizableHead>
-              <ResizableHead columnKey="actions" defaultWidth={70}>操作</ResizableHead>
+              <ResizableHead columnKey="name" defaultWidth={160}>{t('columnName')}</ResizableHead>
+              <ResizableHead columnKey="organization" defaultWidth={140}>{t('columnOrganization')}</ResizableHead>
+              <ResizableHead columnKey="role" defaultWidth={100}>{t('columnRole')}</ResizableHead>
+              <ResizableHead columnKey="influence" defaultWidth={70}>{t('columnInfluence')}</ResizableHead>
+              <ResizableHead columnKey="interest" defaultWidth={70}>{t('columnInterest')}</ResizableHead>
+              <ResizableHead columnKey="attitude" defaultWidth={70}>{t('columnAttitude')}</ResizableHead>
+              <ResizableHead columnKey="engagement" defaultWidth={140}>{t('columnEngagement')}</ResizableHead>
+              <ResizableHead columnKey="gap" defaultWidth={60}>{t('columnGap')}</ResizableHead>
+              <ResizableHead columnKey="actions" defaultWidth={70}>{t('columnActions')}</ResizableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -198,7 +203,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
                 <TableCell className="font-medium">
                   {s.name}
                   {s.userId && (
-                    <span className="ml-1 text-xs text-info">(内部)</span>
+                    <span className="ml-1 text-xs text-info">{t('internalLabel')}</span>
                   )}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
@@ -233,7 +238,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
                     className="text-destructive"
                     onClick={() => handleDelete(s)}
                   >
-                    削除
+                    {tAction('delete')}
                   </Button>
                 </TableCell>
               </TableRow>
@@ -241,7 +246,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
             {stakeholders.length === 0 && (
               <TableRow>
                 <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
-                  ステークホルダーがまだ登録されていません。右上の「新規登録」から追加してください。
+                  {t('noStakeholders')}
                 </TableCell>
               </TableRow>
             )}

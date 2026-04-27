@@ -62,10 +62,13 @@ import {
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
 
-const RETRO_VISIBILITY_OPTIONS = [
-  { value: 'draft', label: '下書き (公開取り下げ)' },
-  { value: 'public', label: '公開' },
-];
+// NOTE: i18n labels are resolved inside the component (translations require a hook context).
+function buildRetroVisibilityOptions(t: (key: string) => string) {
+  return [
+    { value: 'draft', label: t('visibilityDraftLabel') },
+    { value: 'public', label: t('visibilityPublicLabel') },
+  ];
+}
 
 type Props = {
   projectId: string;
@@ -82,6 +85,8 @@ type Props = {
 
 export function RetrospectivesClient({ projectId, retros, canCreate, canComment, currentUserId, onReload }: Props) {
   const t = useTranslations('action');
+  const tRetro = useTranslations('retro');
+  const RETRO_VISIBILITY_OPTIONS = buildRetroVisibilityOptions(tRetro);
   const router = useRouter();
   const { withLoading } = useLoading();
   // PR #119: session 連携フォーマッタ
@@ -168,7 +173,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
     );
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || tRetro('createFailed'));
       return;
     }
     // PR #67: 作成成功直後にステージされた添付を一括 POST
@@ -202,12 +207,12 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
   async function handleDelete(retroId: string) {
     // PR #59: 振り返りリストからの削除 UI を追加 (リスク/課題・ナレッジと同様の DRY 化)。
     // 実 API は PR #52 で新設済の DELETE /api/projects/:pid/retrospectives/:retroId を使用。
-    if (!confirm('この振り返りを削除しますか？')) return;
+    if (!confirm(tRetro('deleteConfirm'))) return;
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert('削除に失敗しました');
+      alert(tRetro('deleteFailed'));
       return;
     }
     await reload();
@@ -228,50 +233,50 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">振り返り一覧</h2>
+        <h2 className="text-xl font-semibold">{tRetro('headingList')}</h2>
         {canCreate && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">振り返り作成</DialogTrigger>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{tRetro('createTitle')}</DialogTrigger>
             <DialogContent className={`max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto ${createFsClassName}`}>
               <DialogHeader>
                 <div className="flex items-center justify-between gap-2">
-                  <DialogTitle>振り返り作成</DialogTitle>
+                  <DialogTitle>{tRetro('createTitle')}</DialogTitle>
                   <CreateFullscreenToggle />
                 </div>
-                <DialogDescription>プロジェクトの振り返りを記録してください。</DialogDescription>
+                <DialogDescription>{tRetro('createDescription')}</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
                 {/* PR #63: 公開範囲を最上位に配置 (設定忘れ防止) */}
                 <div className="space-y-2">
-                  <Label>公開範囲</Label>
+                  <Label>{tRetro('visibility')}</Label>
                   <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
                     {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>実施日</Label>
+                  <Label>{tRetro('conductedDate')}</Label>
                   <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
                 </div>
                 {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 (実施日のみ必須) */}
                 <div className="space-y-2">
-                  <Label>計画総括 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <Label>{tRetro('planSummary')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
                   <MarkdownTextarea value={form.planSummary} onChange={(v) => setForm({ ...form, planSummary: v })} rows={3} maxLength={2000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>実績総括 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <Label>{tRetro('actualSummary')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
                   <MarkdownTextarea value={form.actualSummary} onChange={(v) => setForm({ ...form, actualSummary: v })} rows={3} maxLength={2000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>良かった点 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <Label>{tRetro('goodPoints')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
                   <MarkdownTextarea value={form.goodPoints} onChange={(v) => setForm({ ...form, goodPoints: v })} rows={3} maxLength={3000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>問題点 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <Label>{tRetro('problems')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
                   <MarkdownTextarea value={form.problems} onChange={(v) => setForm({ ...form, problems: v })} rows={3} maxLength={3000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>次回改善事項 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <Label>{tRetro('improvements')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
                   <MarkdownTextarea value={form.improvements} onChange={(v) => setForm({ ...form, improvements: v })} rows={3} maxLength={3000} />
                 </div>
                 {/* PR #67: 作成と同時に議事録・発表資料等の関連 URL を登録可能 */}
@@ -279,7 +284,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
                   value={stagedCreateAttachments}
                   onChange={setStagedCreateAttachments}
                 />
-                <Button type="submit" className="w-full">作成</Button>
+                <Button type="submit" className="w-full">{tRetro('create')}</Button>
               </form>
             </DialogContent>
           </Dialog>
@@ -295,7 +300,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
         selectedIds={selectedIds}
         onSelectionClear={() => setSelectedIds(new Set())}
         visibilityOptions={RETRO_VISIBILITY_OPTIONS}
-        entityLabel="振り返り"
+        entityLabel={tRetro('title')}
         onApplied={async () => { await reload(); }}
       />
 
@@ -307,14 +312,14 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
             disabled={selectableRetroIds.length === 0}
             onChange={toggleAllRetros}
             className="rounded"
-            aria-label="表示中の編集可能振り返りを全選択"
+            aria-label={tRetro('selectAllOwn')}
           />
-          表示中の自分作成振り返りを全選択 ({selectableRetroIds.length} 件)
+          {tRetro('selectAllOwn')} ({selectableRetroIds.length})
         </div>
       )}
 
       {filteredRetros.length === 0 && (
-        <p className="py-8 text-center text-muted-foreground">振り返りがありません</p>
+        <p className="py-8 text-center text-muted-foreground">{tRetro('noneInList')}</p>
       )}
 
       {filteredRetros.map((retro) => {
@@ -339,9 +344,9 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
                   className="rounded"
                 />
               )}
-              <h3 className="font-semibold">振り返り（{retro.conductedDate}）</h3>
+              <h3 className="font-semibold">{tRetro('title')}（{retro.conductedDate}）</h3>
               <Badge variant={retro.state === 'confirmed' ? 'default' : 'outline'}>
-                {retro.state === 'confirmed' ? '確定' : '下書き'}
+                {retro.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}
               </Badge>
               {/* feat/account-lock-and-ui-consistency: 公開範囲バッジを追加。
                   編集ダイアログで visibility を変更しても一覧に表示されず「画面上データが
@@ -357,7 +362,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
                   variant="outline"
                   size="sm"
                   onClick={(e) => { e.stopPropagation(); handleConfirm(retro.id); }}
-                >確定</Button>
+                >{tRetro('confirmAction')}</Button>
               )}
               {isOwner && (
                 <Button
@@ -372,20 +377,20 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
 
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <h4 className="text-sm font-medium text-muted-foreground">良かった点</h4>
+              <h4 className="text-sm font-medium text-muted-foreground">{tRetro('goodPoints')}</h4>
               <p className="mt-1 whitespace-pre-wrap text-sm">{retro.goodPoints}</p>
             </div>
             <div>
-              <h4 className="text-sm font-medium text-muted-foreground">問題点</h4>
+              <h4 className="text-sm font-medium text-muted-foreground">{tRetro('problems')}</h4>
               <p className="mt-1 whitespace-pre-wrap text-sm">{retro.problems}</p>
             </div>
             <div className="md:col-span-2">
-              <h4 className="text-sm font-medium text-muted-foreground">次回改善事項</h4>
+              <h4 className="text-sm font-medium text-muted-foreground">{tRetro('improvements')}</h4>
               <p className="mt-1 whitespace-pre-wrap text-sm">{retro.improvements}</p>
             </div>
             {/* PR #168: 添付 chips (他エンティティ一覧と同パターン) */}
             <div className="md:col-span-2" onClick={(e) => e.stopPropagation()}>
-              <h4 className="mb-1 text-sm font-medium text-muted-foreground">添付</h4>
+              <h4 className="mb-1 text-sm font-medium text-muted-foreground">{tRetro('attachment')}</h4>
               <AttachmentsCell items={attachmentsByEntity[retro.id] ?? []} />
             </div>
           </div>
@@ -403,12 +408,12 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
             {canComment && (
               <div className="flex gap-2 mt-2">
                 <Input
-                  placeholder="コメントを入力..."
+                  placeholder={tRetro('commentPlaceholder')}
                   value={commentText[retro.id] || ''}
                   onChange={(e) => setCommentText({ ...commentText, [retro.id]: e.target.value })}
                   onKeyDown={(e) => e.key === 'Enter' && handleComment(retro.id)}
                 />
-                <Button variant="outline" size="sm" onClick={() => handleComment(retro.id)}>投稿</Button>
+                <Button variant="outline" size="sm" onClick={() => handleComment(retro.id)}>{tRetro('post')}</Button>
               </div>
             )}
           </div>

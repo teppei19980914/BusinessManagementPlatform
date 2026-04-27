@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/db';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -12,6 +13,7 @@ export default async function RoleChangesPage() {
   const session = await auth();
   if (!session || session.user.systemRole !== 'admin') redirect('/');
 
+  const t = await getTranslations('admin.roleChanges');
   const { formatDateTimeFull } = await getServerFormatters();
 
   const logs = await prisma.roleChangeLog.findMany({
@@ -25,17 +27,17 @@ export default async function RoleChangesPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold">権限変更履歴</h2>
+      <h2 className="text-xl font-semibold">{t('title')}</h2>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>日時</TableHead>
-            <TableHead>変更者</TableHead>
-            <TableHead>対象ユーザ</TableHead>
-            <TableHead>種別</TableHead>
-            <TableHead>変更前</TableHead>
-            <TableHead>変更後</TableHead>
-            <TableHead>理由</TableHead>
+            <TableHead>{t('columnDateTime')}</TableHead>
+            <TableHead>{t('columnChanger')}</TableHead>
+            <TableHead>{t('columnTargetUser')}</TableHead>
+            <TableHead>{t('columnChangeType')}</TableHead>
+            <TableHead>{t('columnBeforeRole')}</TableHead>
+            <TableHead>{t('columnAfterRole')}</TableHead>
+            <TableHead>{t('columnReason')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -51,7 +53,7 @@ export default async function RoleChangesPage() {
             </TableRow>
           ))}
           {logs.length === 0 && (
-            <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">権限変更履歴がありません</TableCell></TableRow>
+            <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">{t('noLogs')}</TableCell></TableRow>
           )}
         </TableBody>
       </Table>

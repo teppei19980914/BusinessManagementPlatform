@@ -49,6 +49,7 @@ export function RetrospectiveEditDialog({
 }) {
   const t = useTranslations('action');
   const tField = useTranslations('field');
+  const tRetro = useTranslations('retro');
   const { withLoading } = useLoading();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
@@ -98,7 +99,7 @@ export function RetrospectiveEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || '更新に失敗しました');
+      setError(json.error?.message || tRetro('updateFailed'));
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
@@ -112,11 +113,11 @@ export function RetrospectiveEditDialog({
       <DialogContent className={`max-w-[min(90vw,42rem)] max-h-[85vh] overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
           <div className="flex items-center justify-between gap-2">
-            <DialogTitle>{readOnly ? '振り返り詳細' : '振り返り編集'}</DialogTitle>
+            <DialogTitle>{readOnly ? tRetro('detailTitle') : tRetro('editTitle')}</DialogTitle>
             <FullscreenToggle />
           </div>
           <DialogDescription>
-            {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
+            {readOnly ? tRetro('readOnlyHint') : tRetro('saveHint')}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -135,14 +136,14 @@ export function RetrospectiveEditDialog({
           </div>
           {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 */}
           {([
-            { key: 'planSummary', label: '計画総括', rows: 3 },
-            { key: 'actualSummary', label: '実績総括', rows: 3 },
-            { key: 'goodPoints', label: '良かった点', rows: 3 },
-            { key: 'problems', label: '課題', rows: 3 },
-            { key: 'improvements', label: '次回以前事項', rows: 3 },
+            { key: 'planSummary', label: tRetro('planSummary'), rows: 3 },
+            { key: 'actualSummary', label: tRetro('actualSummary'), rows: 3 },
+            { key: 'goodPoints', label: tRetro('goodPoints'), rows: 3 },
+            { key: 'problems', label: tRetro('issuesSection'), rows: 3 },
+            { key: 'improvements', label: tRetro('improvementsTable'), rows: 3 },
           ] as const).map(({ key, label, rows }) => (
             <div key={key} className="space-y-2">
-              <Label>{label} <span className="text-xs text-muted-foreground">(任意)</span></Label>
+              <Label>{label} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
               <MarkdownTextarea
                 value={form[key]}
                 onChange={(v) => setForm({ ...form, [key]: v })}
@@ -161,7 +162,7 @@ export function RetrospectiveEditDialog({
               entityType="retrospective"
               entityId={retro.id}
               canEdit
-              label="関連 URL"
+              label={tRetro('relatedUrl')}
             />
           )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}

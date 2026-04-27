@@ -57,6 +57,7 @@ export function KnowledgeEditDialog({
   readOnly?: boolean;
 }) {
   const t = useTranslations('action');
+  const tKnowledge = useTranslations('knowledge');
   const { withLoading } = useLoading();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
@@ -107,7 +108,7 @@ export function KnowledgeEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || '更新に失敗しました');
+      setError(json.error?.message || tKnowledge('updateFailed'));
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
@@ -121,29 +122,29 @@ export function KnowledgeEditDialog({
       <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
           <div className="flex items-center justify-between gap-2">
-            <DialogTitle>{readOnly ? 'ナレッジ詳細' : 'ナレッジ編集'}</DialogTitle>
+            <DialogTitle>{readOnly ? tKnowledge('detailTitle') : tKnowledge('editTitle')}</DialogTitle>
             <FullscreenToggle />
           </div>
           <DialogDescription>
-            {readOnly ? '参照専用です (プロジェクト非メンバーのため編集不可)。' : '変更内容を保存します。'}
+            {readOnly ? tKnowledge('readOnlyHint') : tKnowledge('saveHint')}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
           <div className="space-y-2">
-            <Label>タイトル</Label>
+            <Label>{tKnowledge('fieldTitle')}</Label>
             <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={150} required />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>種別</Label>
+              <Label>{tKnowledge('kind')}</Label>
               <select value={form.knowledgeType} onChange={(e) => setForm({ ...form, knowledgeType: e.target.value })} className={nativeSelectClass}>
                 {Object.entries(KNOWLEDGE_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </div>
             <div className="space-y-2">
-              <Label>公開範囲</Label>
+              <Label>{tKnowledge('visibility')}</Label>
               <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
                 {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
@@ -151,7 +152,7 @@ export function KnowledgeEditDialog({
           </div>
           {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も背景/内容/結果は任意 */}
           <div className="space-y-2">
-            <Label>背景 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+            <Label>{tKnowledge('background')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
             <MarkdownTextarea
               value={form.background}
               onChange={(v) => setForm({ ...form, background: v })}
@@ -161,7 +162,7 @@ export function KnowledgeEditDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>内容 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+            <Label>{tKnowledge('content')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
             <MarkdownTextarea
               value={form.content}
               onChange={(v) => setForm({ ...form, content: v })}
@@ -171,7 +172,7 @@ export function KnowledgeEditDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>結果 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+            <Label>{tKnowledge('result')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
             <MarkdownTextarea
               value={form.result}
               onChange={(v) => setForm({ ...form, result: v })}
@@ -192,14 +193,14 @@ export function KnowledgeEditDialog({
                 entityId={knowledge.id}
                 slot="source"
                 canEdit
-                label="一次情報源 URL"
-                defaultDisplayName="公式ドキュメント"
+                label={tKnowledge('primarySourceUrl')}
+                defaultDisplayName={tKnowledge('officialDoc')}
               />
               <AttachmentList
                 entityType="knowledge"
                 entityId={knowledge.id}
                 canEdit
-                label="参考リンク"
+                label={tKnowledge('referenceLinks')}
               />
             </>
           )}

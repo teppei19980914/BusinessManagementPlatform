@@ -23,6 +23,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import {
   Table, TableBody, TableCell, TableHeader, TableRow,
@@ -58,6 +59,7 @@ export function AllRisksTable({
 }) {
   const filteredRisks = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
   const router = useRouter();
+  const tRisk = useTranslations('risk');
   const { formatDateTime } = useFormatters();
   const [editingRisk, setEditingRisk] = useState<AllRiskDTO | null>(null);
   const [members, setMembers] = useState<MemberDTO[]>([]);
@@ -93,19 +95,19 @@ export function AllRisksTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <ResizableHead columnKey="project" defaultWidth={140}>プロジェクト</ResizableHead>
-            {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>種別</ResizableHead>}
-            <ResizableHead columnKey="title" defaultWidth={220}>件名</ResizableHead>
-            <ResizableHead columnKey="assignee" defaultWidth={120}>担当者</ResizableHead>
-            <ResizableHead columnKey="impact" defaultWidth={80}>影響度</ResizableHead>
-            <ResizableHead columnKey="likelihood" defaultWidth={100}>発生可能性</ResizableHead>
-            <ResizableHead columnKey="priority" defaultWidth={80}>優先度</ResizableHead>
-            <ResizableHead columnKey="createdAt" defaultWidth={130}>作成日時</ResizableHead>
-            <ResizableHead columnKey="createdBy" defaultWidth={120}>作成者</ResizableHead>
-            <ResizableHead columnKey="updatedAt" defaultWidth={130}>更新日時</ResizableHead>
-            <ResizableHead columnKey="updatedBy" defaultWidth={120}>更新者</ResizableHead>
-            <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-            {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
+            <ResizableHead columnKey="project" defaultWidth={140}>{tRisk('project')}</ResizableHead>
+            {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>{tRisk('kind')}</ResizableHead>}
+            <ResizableHead columnKey="title" defaultWidth={220}>{tRisk('subject')}</ResizableHead>
+            <ResizableHead columnKey="assignee" defaultWidth={120}>{tRisk('assignee')}</ResizableHead>
+            <ResizableHead columnKey="impact" defaultWidth={80}>{tRisk('impact')}</ResizableHead>
+            <ResizableHead columnKey="likelihood" defaultWidth={100}>{tRisk('likelihood')}</ResizableHead>
+            <ResizableHead columnKey="priority" defaultWidth={80}>{tRisk('priority')}</ResizableHead>
+            <ResizableHead columnKey="createdAt" defaultWidth={130}>{tRisk('createdAt')}</ResizableHead>
+            <ResizableHead columnKey="createdBy" defaultWidth={120}>{tRisk('createdBy')}</ResizableHead>
+            <ResizableHead columnKey="updatedAt" defaultWidth={130}>{tRisk('updatedAt')}</ResizableHead>
+            <ResizableHead columnKey="updatedBy" defaultWidth={120}>{tRisk('updatedBy')}</ResizableHead>
+            <ResizableHead columnKey="attachments" defaultWidth={200}>{tRisk('attachment')}</ResizableHead>
+            {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tRisk('actions')}</ResizableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -117,7 +119,7 @@ export function AllRisksTable({
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {r.projectName == null ? (
-                  <span className="text-muted-foreground">（非公開）</span>
+                  <span className="text-muted-foreground">{tRisk('private')}</span>
                 ) : r.canAccessProject ? (
                   <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
                     {r.projectName}
@@ -125,14 +127,14 @@ export function AllRisksTable({
                 ) : (
                   <span className="text-muted-foreground">
                     {r.projectName}
-                    {r.projectDeleted && <span className="ml-1 text-xs text-destructive">(削除済)</span>}
+                    {r.projectDeleted && <span className="ml-1 text-xs text-destructive">{tRisk('deleted')}</span>}
                   </span>
                 )}
               </TableCell>
               {!typeFilter && (
                 <TableCell>
                   <Badge variant={typeColors[r.type] || 'outline'}>
-                    {r.type === 'risk' ? 'リスク' : '課題'}
+                    {r.type === 'risk' ? tRisk('labelRisk') : tRisk('labelIssue')}
                   </Badge>
                 </TableCell>
               )}
@@ -172,7 +174,7 @@ export function AllRisksTable({
           {filteredRisks.length === 0 && (
             <TableRow>
               <TableCell colSpan={(isAdmin ? 13 : 12) - (typeFilter ? 1 : 0)} className="py-8 text-center text-muted-foreground">
-                {typeFilter === 'issue' ? '課題がありません' : typeFilter === 'risk' ? 'リスクがありません' : 'リスク/課題がありません'}
+                {typeFilter === 'issue' ? tRisk('noneIssue') : typeFilter === 'risk' ? tRisk('noneRisk') : tRisk('noneBothSlash')}
               </TableCell>
             </TableRow>
           )}

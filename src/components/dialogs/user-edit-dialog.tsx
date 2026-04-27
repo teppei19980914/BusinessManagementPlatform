@@ -31,8 +31,9 @@ export function UserEditDialog({
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
 }) {
-  const t = useTranslations('action');
+  const tAction = useTranslations('action');
   const tField = useTranslations('field');
+  const t = useTranslations('admin.userEdit');
   const { withLoading } = useLoading();
   // PR #119: session 連携フォーマッタ
   const { formatDateTimeFull } = useFormatters();
@@ -81,7 +82,7 @@ export function UserEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || '更新に失敗しました');
+      setError(json.error?.message || t('updateFailed'));
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
@@ -98,7 +99,7 @@ export function UserEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || 'ロック解除に失敗しました');
+      setError(json.error?.message || t('unlockFailed'));
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
@@ -110,24 +111,19 @@ export function UserEditDialog({
   // 2 段階 confirm (意思確認 + 影響告知) で誤操作を防ぐ。
   async function handleDelete() {
     if (!user) return;
-    if (!confirm(
-      `「${user.name}」(${user.email}) を削除しますか？\n\n`
-      + 'この操作でユーザは即時ログイン不可となり、全プロジェクトの\n'
-      + 'メンバー情報から削除されます。\n\n'
-      + '※ 過去のタスク担当・リスク起票等の履歴は保全されます。',
-    )) return;
+    if (!confirm(t('deleteConfirm', { name: user.name, email: user.email }))) return;
     setError('');
     const res = await withLoading(() =>
       fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || '削除に失敗しました');
+      setError(json.error?.message || t('deleteFailed'));
       return;
     }
     const json = await res.json().catch(() => ({ data: null }));
     const removed = json?.data?.removedMemberships ?? 0;
-    alert(`削除しました (紐づくプロジェクトメンバー ${removed} 件も削除)`);
+    alert(t('deleteDone', { count: removed }));
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
     void onSaved();
@@ -145,9 +141,9 @@ export function UserEditDialog({
           縦の overflow は基底が吸収するのでここでは指定不要 */}
       <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,44rem)]">
         <DialogHeader>
-          <DialogTitle>ユーザ編集</DialogTitle>
+          <DialogTitle>{t('title')}</DialogTitle>
           <DialogDescription>
-            {user.email} の情報を編集します。
+            {t('description', { email: user.email })}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -162,7 +158,7 @@ export function UserEditDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>システムロール</Label>
+            <Label>{t('fieldSystemRole')}</Label>
             <select
               value={form.systemRole}
               onChange={(e) => setForm({ ...form, systemRole: e.target.value as 'admin' | 'general' })}
@@ -174,36 +170,39 @@ export function UserEditDialog({
             </select>
           </div>
           <div className="space-y-2">
-            <Label>アカウント状態</Label>
+            <Label>{t('fieldAccountStatus')}</Label>
             <select
               value={form.isActive ? 'active' : 'inactive'}
               onChange={(e) => setForm({ ...form, isActive: e.target.value === 'active' })}
               className={nativeSelectClass}
             >
-              <option value="active">有効</option>
-              <option value="inactive">無効</option>
+              <option value="active">{t('statusActive')}</option>
+              <option value="inactive">{t('statusInactive')}</option>
             </select>
           </div>
-          <Button type="submit" className="w-full">{t('save')}</Button>
+          <Button type="submit" className="w-full">{tAction('save')}</Button>
         </form>
 
         {/* PR #85: ロック情報 + 解除ボタン */}
         <div className="mt-4 space-y-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-          <div className="font-medium">ログインロック情報</div>
+          <div className="font-medium">{t('lockSectionTitle')}</div>
           <div className="space-y-1 text-muted-foreground">
             <div>
-              ログイン失敗回数:{' '}
+              {t('loginFailedCount')}{' '}
               <span className={user.failedLoginCount > 0 ? 'text-destructive font-medium' : ''}>
-                {user.failedLoginCount} 回
+                {t('failedCountUnit', { count: user.failedLoginCount })}
               </span>
             </div>
             <div>
-              一時ロック:{' '}
+              {t('temporaryLockLabel')}{' '}
               {temporaryLocked
-                ? `${formatDateTimeFull(user.lockedUntil!)} まで`
-                : 'なし'}
+                ? t('temporaryLockValue', { unlockAt: formatDateTimeFull(user.lockedUntil!) })
+                : t('temporaryLockNone')}
             </div>
-            <div>永続ロック: {user.permanentLock ? 'あり (要解除)' : 'なし'}</div>
+            <div>
+              {t('permanentLockLabel')}{' '}
+              {user.permanentLock ? t('permanentLockYes') : t('permanentLockNo')}
+            </div>
           </div>
           {canShowUnlockButton && (
             <Button
@@ -212,17 +211,16 @@ export function UserEditDialog({
               className="w-full"
               onClick={handleUnlock}
             >
-              ロック解除 (失敗カウントリセット)
+              {t('unlockButton')}
             </Button>
           )}
         </div>
 
         {/* PR #89: 削除ボタン (論理削除 + ProjectMember 物理削除) */}
         <div className="mt-4 space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
-          <div className="font-medium text-destructive">危険な操作</div>
+          <div className="font-medium text-destructive">{t('dangerZoneTitle')}</div>
           <div className="space-y-1 text-xs text-muted-foreground">
-            ユーザを削除すると即時ログイン不可となり、全プロジェクトの
-            メンバー情報から削除されます。過去の作業履歴 (担当タスク・起票リスク等) は保全されます。
+            {t('dangerZoneDescription')}
           </div>
           <Button
             type="button"
@@ -230,7 +228,7 @@ export function UserEditDialog({
             className="w-full border-destructive/40 text-destructive hover:bg-destructive/10"
             onClick={handleDelete}
           >
-            このユーザを削除
+            {t('deleteButton')}
           </Button>
         </div>
       </DialogContent>

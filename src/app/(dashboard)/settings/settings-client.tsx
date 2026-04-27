@@ -25,6 +25,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,6 +57,11 @@ export function SettingsClient({
   const router = useRouter();
   const { withLoading } = useLoading();
   const { update: updateSession } = useSession();
+  const tSetting = useTranslations('setting');
+  const tField = useTranslations('field');
+  const tAuth = useTranslations('auth');
+  const tAction = useTranslations('action');
+  const tMessage = useTranslations('message');
 
   // PR #72: テーマ設定
   const [theme, setTheme] = useState<ThemeId>(toSafeThemeId(currentTheme));
@@ -100,12 +106,12 @@ export function SettingsClient({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setI18nError(json.error?.message || '設定の保存に失敗しました');
+      setI18nError(json.error?.message || tSetting('i18nSaveFailed'));
       return;
     }
     // JWT 反映 (次のレンダリング以降、全 useFormatters が新値を使う)
     await updateSession({ timezone: body.timezone, locale: body.locale });
-    setI18nSuccess('保存しました');
+    setI18nSuccess(tSetting('i18nSaved'));
     // 既存描画 (特にサーバコンポーネント) を再計算して即時反映
     router.refresh();
   }
@@ -125,13 +131,13 @@ export function SettingsClient({
     if (!res.ok) {
       setTheme(prev);
       const json = await res.json().catch(() => ({}));
-      setThemeError(json.error?.message || 'テーマの保存に失敗しました');
+      setThemeError(json.error?.message || tSetting('themeSaveFailed'));
       return;
     }
     // セッション JWT に反映 → layout.tsx 側の <html data-theme> を next refresh で更新
     // (React の immutability ルール上、クライアントから直接 document を書き換えない)
     await updateSession({ themePreference: next });
-    setThemeSuccess('テーマを変更しました');
+    setThemeSuccess(tSetting('themeChanged'));
     router.refresh();
   }
 
@@ -153,7 +159,7 @@ export function SettingsClient({
     setPwSuccess('');
 
     if (pwForm.newPassword !== pwForm.confirmPassword) {
-      setPwError('パスワードが一致しません');
+      setPwError(tAuth('passwordMismatch'));
       return;
     }
 
@@ -167,11 +173,11 @@ export function SettingsClient({
 
     const json = await res.json();
     if (!res.ok) {
-      setPwError(json.error?.message || 'パスワードの変更に失敗しました');
+      setPwError(json.error?.message || tMessage('passwordChangeFailed'));
       return;
     }
 
-    setPwSuccess('パスワードが変更されました');
+    setPwSuccess(tMessage('passwordChanged'));
     setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
   }
 
@@ -182,7 +188,7 @@ export function SettingsClient({
     );
     const json = await res.json();
     if (!res.ok) {
-      setMfaError(json.error?.message || 'MFA の設定に失敗しました');
+      setMfaError(json.error?.message || tSetting('mfaSetupFailed'));
       return;
     }
     setQrCode(json.data.qrCodeDataUrl);
@@ -204,7 +210,7 @@ export function SettingsClient({
 
     const json = await res.json();
     if (!res.ok) {
-      setMfaError(json.error?.message || 'コードの検証に失敗しました');
+      setMfaError(json.error?.message || tSetting('mfaCodeVerifyFailed'));
       return;
     }
 
@@ -222,14 +228,14 @@ export function SettingsClient({
 
   return (
     <div className="mx-auto max-w-[min(90vw,42rem)] space-y-6">
-      <h2 className="text-xl font-semibold">設定</h2>
+      <h2 className="text-xl font-semibold">{tSetting('title')}</h2>
 
       {/* PR #72: テーマ設定 */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">画面テーマ</CardTitle>
+          <CardTitle className="text-lg">{tSetting('themeTitle')}</CardTitle>
           <CardDescription>
-            画面全体の配色を変更します。選択した内容はログインし直しても保持されます。
+            {tSetting('themeDescription')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -239,7 +245,7 @@ export function SettingsClient({
           {themeSuccess && (
             <div className="mb-3 rounded-md bg-success/10 p-3 text-sm text-success">{themeSuccess}</div>
           )}
-          <div role="radiogroup" aria-label="画面テーマ" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div role="radiogroup" aria-label={tSetting('themeTitle')} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {(Object.entries(THEMES) as [ThemeId, string][]).map(([id, label]) => {
               const selected = id === theme;
               return (
@@ -256,7 +262,7 @@ export function SettingsClient({
                 >
                   <ThemeSwatch themeId={id} />
                   <span>{label}</span>
-                  {selected && <span className="ml-auto text-xs text-info">選択中</span>}
+                  {selected && <span className="ml-auto text-xs text-info">{tSetting('themeSelected')}</span>}
                 </button>
               );
             })}
@@ -267,10 +273,9 @@ export function SettingsClient({
       {/* PR #119: 言語・タイムゾーン設定 */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">言語・タイムゾーン</CardTitle>
+          <CardTitle className="text-lg">{tSetting('i18nTitle')}</CardTitle>
           <CardDescription>
-            日時の表示形式を決めます。未選択 (システム既定) の場合はシステム全体の既定値
-            (環境変数または設定ファイル) が使われます。現在のシステム既定:
+            {tSetting('i18nDescription')}
             <span className="ml-1 font-mono text-xs">{DEFAULT_TIMEZONE}</span>
             {' / '}
             <span className="font-mono text-xs">{DEFAULT_LOCALE}</span>
@@ -285,14 +290,14 @@ export function SettingsClient({
           )}
           <form onSubmit={handleI18nSave} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="i18n-locale">言語</Label>
+              <Label htmlFor="i18n-locale">{tSetting('language')}</Label>
               <select
                 id="i18n-locale"
                 value={localeValue}
                 onChange={(e) => setLocaleValue(e.target.value)}
                 className={nativeSelectClass}
               >
-                <option value="">システム既定を使用 ({DEFAULT_LOCALE})</option>
+                <option value="">{tSetting('useSystemDefault', { value: DEFAULT_LOCALE })}</option>
                 {Object.entries(SUPPORTED_LOCALES).map(([key, label]) => {
                   // PR #120: SELECTABLE_LOCALES=false のロケールは表示するが選択不可。
                   //   「将来対応予定」を利用者に示しつつ、翻訳未完の値で UI を壊さないための措置。
@@ -300,30 +305,30 @@ export function SettingsClient({
                   const selectable = SELECTABLE_LOCALES[key as keyof typeof SELECTABLE_LOCALES];
                   return (
                     <option key={key} value={key} disabled={!selectable}>
-                      {label}（{key}）{!selectable && ' ※準備中'}
+                      {tSetting('localeOption', { label, key })}{!selectable && tSetting('localePreparing')}
                     </option>
                   );
                 })}
               </select>
               <p className="text-xs text-muted-foreground">
-                ※「準備中」のロケールは後続対応で翻訳完了後に選択可能になります。
+                {tSetting('localePreparingHint')}
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="i18n-tz">タイムゾーン</Label>
+              <Label htmlFor="i18n-tz">{tSetting('timezone')}</Label>
               <select
                 id="i18n-tz"
                 value={tzValue}
                 onChange={(e) => setTzValue(e.target.value)}
                 className={nativeSelectClass}
               >
-                <option value="">システム既定を使用 ({DEFAULT_TIMEZONE})</option>
+                <option value="">{tSetting('useSystemDefault', { value: DEFAULT_TIMEZONE })}</option>
                 {tzOptions.map((tz) => (
                   <option key={tz} value={tz}>{tz}</option>
                 ))}
               </select>
             </div>
-            <Button type="submit">保存</Button>
+            <Button type="submit">{tAction('save')}</Button>
           </form>
         </CardContent>
       </Card>
@@ -331,27 +336,27 @@ export function SettingsClient({
       {/* パスワード変更 */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">パスワード変更</CardTitle>
-          <CardDescription>現在のパスワードと新しいパスワードを入力してください。</CardDescription>
+          <CardTitle className="text-lg">{tSetting('passwordChangeTitle')}</CardTitle>
+          <CardDescription>{tSetting('passwordChangeDescription')}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handlePasswordChange} className="space-y-4">
             {pwError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{pwError}</div>}
             {pwSuccess && <div className="rounded-md bg-success/10 p-3 text-sm text-success">{pwSuccess}</div>}
             <div className="space-y-2">
-              <Label htmlFor="current-password">現在のパスワード</Label>
+              <Label htmlFor="current-password">{tField('currentPassword')}</Label>
               <Input id="current-password" type="password" value={pwForm.currentPassword} onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })} required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="new-password">新しいパスワード</Label>
+              <Label htmlFor="new-password">{tField('newPassword')}</Label>
               <Input id="new-password" type="password" value={pwForm.newPassword} onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })} required />
-              <p className="text-xs text-muted-foreground">10文字以上、英大文字・英小文字・数字・記号のうち3種以上</p>
+              <p className="text-xs text-muted-foreground">{tAuth('passwordHint')}</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="confirm-password">新しいパスワード（確認）</Label>
+              <Label htmlFor="confirm-password">{tField('newPasswordConfirm')}</Label>
               <Input id="confirm-password" type="password" value={pwForm.confirmPassword} onChange={(e) => setPwForm({ ...pwForm, confirmPassword: e.target.value })} required />
             </div>
-            <Button type="submit">変更</Button>
+            <Button type="submit">{tSetting('submitChange')}</Button>
           </form>
         </CardContent>
       </Card>
@@ -360,37 +365,36 @@ export function SettingsClient({
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">
-            多要素認証（MFA）
+            {tSetting('mfaTitle')}
             {mfaEnabled && isAdmin ? (
               // PR #91: admin は MFA 強制有効化。解除不可を明示する専用バッジ
-              <Badge className="ml-2">強制有効化 (解除不可)</Badge>
+              <Badge className="ml-2">{tSetting('mfaForcedBadge')}</Badge>
             ) : mfaEnabled ? (
-              <Badge className="ml-2">有効</Badge>
+              <Badge className="ml-2">{tSetting('mfaEnabledBadge')}</Badge>
             ) : (
-              <Badge variant="outline" className="ml-2">無効</Badge>
+              <Badge variant="outline" className="ml-2">{tSetting('mfaDisabledBadge')}</Badge>
             )}
           </CardTitle>
           <CardDescription>
-            認証アプリ（Google Authenticator 等）を使用した二段階認証を設定できます。
-            {isAdmin && ' 管理者は MFA が必須であり、本設定画面からは無効化できません (PR #91)。'}
+            {tSetting('mfaDescription')}
+            {isAdmin && tSetting('mfaAdminNote')}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {mfaError && <div className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{mfaError}</div>}
 
           {mfaStep === 'idle' && !mfaEnabled && (
-            <Button onClick={handleMfaSetup}>MFA を有効化する</Button>
+            <Button onClick={handleMfaSetup}>{tSetting('mfaEnableButton')}</Button>
           )}
 
           {mfaStep === 'idle' && mfaEnabled && !isAdmin && (
-            <Button variant="destructive" onClick={handleMfaDisable}>MFA を無効化する</Button>
+            <Button variant="destructive" onClick={handleMfaDisable}>{tSetting('mfaDisableButton')}</Button>
           )}
 
           {mfaStep === 'idle' && mfaEnabled && isAdmin && (
             // PR #91: admin の MFA 解除ボタンは表示せず、代わりに常時案内文を表示
             <p className="text-sm text-muted-foreground">
-              管理者アカウントは MFA が強制的に有効化されており、この画面から無効化できません。
-              認証アプリを変更したい場合は、システム管理者に新しいアカウントの発行を依頼してください。
+              {tSetting('mfaAdminLockedNote')}
             </p>
           )}
 
@@ -401,22 +405,22 @@ export function SettingsClient({
                 <img src={qrCode} alt="QR Code" className="h-48 w-48" />
               </div>
               <p className="text-center text-sm text-muted-foreground">
-                認証アプリでこの QR コードをスキャンしてください。
+                {tSetting('mfaScanHint')}
               </p>
               <details className="text-xs text-muted-foreground">
-                <summary>手動入力用のシークレットキー</summary>
+                <summary>{tSetting('mfaManualSecret')}</summary>
                 <code className="mt-1 block rounded bg-accent p-2 font-mono">{mfaSecret}</code>
               </details>
               <form onSubmit={handleMfaEnable} className="flex gap-2">
                 <Input
                   value={totpCode}
                   onChange={(e) => setTotpCode(e.target.value)}
-                  placeholder="6桁のコード"
+                  placeholder={tSetting('mfaCodePlaceholder')}
                   maxLength={6}
                   className="w-32"
                   required
                 />
-                <Button type="submit">検証して有効化</Button>
+                <Button type="submit">{tSetting('mfaVerifyAndEnable')}</Button>
               </form>
             </div>
           )}
