@@ -13,7 +13,8 @@
  * コメント機能:
  *   各振り返り配下に時系列コメントを追加可能。retrospective_comments テーブル。
  *
- * 認可: canEdit (作成・編集) / canComment (コメント追加) を prop で受け取る。
+ * 認可: canCreate (作成) / 自分作成判定 (編集・削除) を prop で受け取る。
+ *       コメント機能は項目 10 で UI 非表示化、API/DB/service は温存。
  * API:
  *   - /api/projects/[id]/retrospectives (GET/POST)
  *   - /api/projects/[id]/retrospectives/[retroId] (PATCH/DELETE)
