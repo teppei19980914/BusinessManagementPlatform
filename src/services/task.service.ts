@@ -740,8 +740,11 @@ export async function updateTaskProgress(
  * ワークパッケージの集計値（工数・進捗率・日付・ステータス）を子から再計算し更新する。
  * 祖先に向かって再帰的に伝播する。
  */
-/** recalculateAncestors の公開ラッパー（インポート後の再集計用） */
-async function recalculateAncestorsPublic(taskId: string): Promise<void> {
+/**
+ * recalculateAncestors の公開ラッパー（インポート後の再集計用）。
+ * feat/wbs-overwrite-import: sync-import 用にも呼び出すため export する。
+ */
+export async function recalculateAncestorsPublic(taskId: string): Promise<void> {
   return recalculateAncestors(taskId);
 }
 
@@ -1084,11 +1087,32 @@ export async function getProgressLogs(taskId: string): Promise<ProgressLogDTO[]>
   }));
 }
 
-/** CSV ヘッダー定義 */
+/** CSV ヘッダー定義 (旧テンプレート: 別プロジェクトへの雛形流用用、10 列) */
 const CSV_HEADERS = [
   'レベル', '種別', '名称', 'WBS番号', '予定開始日', '予定終了日',
   '見積工数', '優先度', 'マイルストーン', '備考',
 ] as const;
+
+/**
+ * CSV ヘッダー定義 (新形式 sync: 同一プロジェクトの上書き編集用、17 列)
+ * feat/wbs-overwrite-import: 列構成は DESIGN.md §33.3 準拠。
+ *   1.  ID                       — 突合キー (空欄=新規作成)
+ *   2-3. レベル / 種別             — 階層
+ *   4-12. 計画情報                 — UPDATE 反映対象
+ *   13-17. 進捗系 (read-only 注記)  — import 時無視
+ */
+export const CSV_HEADERS_SYNC = [
+  'ID', 'レベル', '種別', '名称', 'WBS番号', '担当者氏名',
+  '予定開始日', '予定終了日', '見積工数', '優先度', 'マイルストーン', '備考',
+  'ステータス ※read-only (import 時無視)',
+  '進捗率 ※read-only (import 時無視)',
+  '実績工数 ※read-only (import 時無視)',
+  '実績開始日 ※read-only (import 時無視)',
+  '実績終了日 ※read-only (import 時無視)',
+] as const;
+
+/** WBS export モード */
+export type WbsExportMode = 'template' | 'sync';
 
 /** CSV フィールドをエスケープ（ダブルクォート） */
 function escapeCsvField(value: string | null | undefined): string {
@@ -1133,12 +1157,19 @@ export function parseCsvLine(line: string): string[] {
 }
 
 /**
- * WBS テンプレートを CSV 形式でエクスポート。
- * 階層は「レベル」列（1始まり）と行の並び順で表現。
+ * WBS を CSV 形式でエクスポート。
+ *
+ * モード:
+ *   - 'template' (既定、後方互換): 旧 10 列フォーマット。担当者/進捗はリセット、別プロジェクトへの雛形流用向け
+ *   - 'sync' (feat/wbs-overwrite-import): 新 17 列フォーマット。ID / 担当者氏名 / 進捗系
+ *     を含み、同一プロジェクト内の上書きインポート (Sync by ID) で往復編集する用途
+ *
+ * 階層は「レベル」列 (1 始まり) と行の並び順で表現。
  */
 export async function exportWbsTemplate(
   projectId: string,
   taskIds?: string[],
+  mode: WbsExportMode = 'template',
 ): Promise<string> {
   const where: Prisma.TaskWhereInput = { projectId, deletedAt: null };
   if (taskIds && taskIds.length > 0) {
@@ -1147,7 +1178,11 @@ export async function exportWbsTemplate(
 
   const tasks = await prisma.task.findMany({
     where,
-    include: { childTasks: { where: { deletedAt: null }, select: { id: true } } },
+    include: {
+      childTasks: { where: { deletedAt: null }, select: { id: true } },
+      // sync モードで担当者氏名出力に使う。template モードでもコスト微増のみのため常時 include。
+      assignee: { select: { name: true } },
+    },
     orderBy: [{ plannedStartDate: 'asc' }, { createdAt: 'asc' }],
   });
 
@@ -1198,6 +1233,39 @@ export async function exportWbsTemplate(
   }
 
   // CSV 生成
+  if (mode === 'sync') {
+    const lines = [CSV_HEADERS_SYNC.join(',')];
+    for (const { level, task: t } of rows) {
+      const line = [
+        t.id,
+        String(level),
+        t.type === 'work_package' ? 'WP' : 'ACT',
+        escapeCsvField(t.name),
+        escapeCsvField(t.wbsNumber),
+        // 担当者氏名 (内部メンバー紐付けがあれば表示)
+        escapeCsvField(t.assignee?.name ?? null),
+        safeDate(t.plannedStartDate) ?? '',
+        safeDate(t.plannedEndDate) ?? '',
+        String(Number(t.plannedEffort)),
+        t.priority ?? '',
+        t.isMilestone ? '○' : '',
+        escapeCsvField(t.notes),
+        // 進捗系 (read-only 参考情報、import 時は無視される)
+        t.status,
+        String(t.progressRate),
+        // 実績工数は currently DB に列なし。progress_logs の最新値があるが、列追加は別 PR の範囲。
+        // 暫定で空欄を出力 (BOM-safe)。
+        '',
+        safeDate(t.actualStartDate) ?? '',
+        safeDate(t.actualEndDate) ?? '',
+      ].join(',');
+      lines.push(line);
+    }
+    // BOM 付きで返す (Excel 対応)
+    return '﻿' + lines.join('\n');
+  }
+
+  // template モード (既存形式)
   const csvLines = [CSV_HEADERS.join(',')];
   for (const { level, task: t } of rows) {
     const line = [
