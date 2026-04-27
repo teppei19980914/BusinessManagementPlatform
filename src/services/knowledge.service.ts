@@ -231,8 +231,11 @@ export async function listAllKnowledgeForViewer(
       projectDeleted: isAdmin ? projectDeleted : false,
       canAccessProject: isMember && !projectDeleted && primaryProjectId != null,
       linkedProjectCount: k.knowledgeProjects.length,
-      updatedByName: isMember ? k.updater?.name ?? null : null,
-      creatorName: isMember ? k.creator?.name : undefined,
+      // fix/cross-list-non-member-columns (2026-04-27): 横断「全ナレッジ」は visibility='public'
+      // のものだけ表示しているため、作成者・更新者の氏名は公開してナレッジ共有を促進する。
+      // projectName は機微情報扱いを維持 (上記 isMember gate)。
+      updatedByName: k.updater?.name ?? null,
+      creatorName: k.creator?.name,
     };
   });
 }

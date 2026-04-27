@@ -774,6 +774,72 @@ grep -rn "<廃止タブ名>" e2e/specs/
 
 ---
 
+### 4.41 存在しない Tailwind variant (例: `md:open:`) を書いても build は通ってしまう罠 (PR #128a-2 で混入、fix/wbs-filter-regression で発覚)
+
+**症状**: WBS タスク画面でフィルタ (担当者 / 状況) ボタンが PC viewport で表示されない。
+モバイル対応 PR #128a-2 のレビューも CI も pass していたため気付かれなかった。
+
+**根本原因**:
+
+```tsx
+<details className="group md:open:" open={false}>
+```
+
+`md:open:` という Tailwind 修飾子は **存在しない** (Tailwind 4 にも `open` variant は無い、
+`[&[open]]` の arbitrary variant が正解)。しかし:
+- Tailwind の JIT は **未知のクラスをサイレントに無視** (`md:open:` はクラスマッチに失敗)
+- TypeScript / ESLint は「文字列としての className」を検査しない
+- **build / lint / unit test 全部 pass** してしまう
+
+意図は「PC 常時開、モバイル折りたたみ」だったが、`<details open={false}>` のまま PC で
+折りたたまれて表示されなくなり、子要素の `md:flex` が効いていても親が display:none で
+隠す結果に。
+
+**修正パターン**: 怪しい Tailwind 修飾子は使わず、React state で開閉を制御:
+
+```tsx
+const [isFilterMobileOpen, setIsFilterMobileOpen] = useState(false);
+
+<button
+  type="button"
+  className="md:hidden ..."
+  onClick={() => setIsFilterMobileOpen(v => !v)}
+  aria-expanded={isFilterMobileOpen}
+>
+  フィルタ / ソート
+</button>
+<div className={`md:!flex ${isFilterMobileOpen ? 'flex' : 'hidden'}`}>
+  ...フィルタ要素...
+</div>
+```
+
+`md:!flex` (`!` = important) で PC は **常時 flex 表示**、モバイルは state で開閉。
+
+**回帰防止 (本件の対策)**:
+
+E2E spec で「PC viewport でフィルタボタンが見える」を assertion 化した
+(`06-wbs-tasks.spec.ts` の最初の test に追加)。可視性チェックは構造的破壊を検知できる。
+
+**横展開ルール**:
+
+- **「壊れた className」CI 検知の限界を認識する**: Tailwind / lint / TypeScript の
+  どれも壊れた modifier を検知しない。**画面が壊れる UI 変更は E2E で render 確認** する
+  のが唯一の保険。新規 UI 機能を追加した時は、最低限「主要要素が画面に見えるか」の
+  smoke E2E を 1 件足す。
+- **不審な Tailwind 修飾子を見たら必ず疑う**: `md:open:` のように `:` が末尾に来る /
+  存在しない variant 名 / 区切り文字の typo (`md--open` 等) は、JIT がサイレントに
+  無視するため build が通ってしまう。code review 時にあえて grep で
+  ピックアップする習慣をつける。
+- **`<details>` で「PC 常時開」を試みない**: HTML `<details>` の `open` 属性は HTML 仕様で、
+  CSS / Tailwind だけで「PC のときだけ open」を実現する手段がない (CSS は属性を変更
+  できない)。React state による条件分岐の方が確実。
+
+**関連**:
+- §4.37 (chromium-mobile testIgnore + 視覚回帰でカードビューを別途検証)
+- DEVELOPER_GUIDE §5.9 (レスポンシブ実装パターン)
+
+---
+
 ### 4.40 Next.js Link `click() + waitForLoadState('networkidle')` の race (PR #154 chromium-mobile で遭遇)
 
 **症状**: `09-customers.spec.ts` Step 4 が chromium-mobile project で fail (chromium PC は pass):
