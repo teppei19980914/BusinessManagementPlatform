@@ -1618,6 +1618,120 @@ const knowledges = await prisma.knowledge.findMany({
 - DESIGN.md §23.2 (除外条件) / SPECIFICATION.md §16.2 — 仕様文言を本実装に追従
 - `src/services/suggestion.service.ts` の `suggestForProject` (PR #160 で完成形)
 
+### 5.21 横断ビューで「フィルター必須」型の一括更新を実装するパターン (PR #161 / feat/cross-list-bulk-update)
+
+#### 背景・要件
+
+「全リスク / 全課題」のような **複数プロジェクト横断ビュー** に一括更新機能を載せる場合、
+特有の危険性として「フィルターをかけずに全件選択 → 全件更新」の事故がある。
+ユーザ要望: 「フィルターをかけずに行うと一括選択した時の対象がやけに広くなるので、
+危険性を排除するため、必ずフィルターをかけることを必須としてください」。
+
+#### 実装パターン (二重防御)
+
+**(A) UI 側: フィルター適用前は bulk UI 自体を出さない**
+
+```tsx
+const filterApplied = isAnyFilterApplied(filter, Boolean(typeFilter));
+// フィルター未適用なら checkbox 列もツールバーも描画しない
+{filterApplied && <BulkSelectToolbar /* ... */ />}
+{filterApplied && <CheckboxColumn /* ... */ />}
+```
+
+タブ選択 (例: 「全リスク」/「全課題」) は **暗黙のフィルター** としてカウントする
+(ユーザは既にタブを選んだ時点で「種別」で絞り込んでいる)。
+
+**(B) サーバ側: filterFingerprint 必須化で API 直叩きを防ぐ**
+
+```ts
+// validator schema (zod)
+filterFingerprint: z.object({
+  type: z.enum(['risk', 'issue']).optional(),
+  state: z.enum([...]).optional(),
+  // ...
+})
+
+// API ルート
+if (!isFilterApplied(parsed.data.filterFingerprint)) {
+  return 400 with { error: 'FILTER_REQUIRED' };
+}
+```
+
+UI のチェックボックス無効化だけでは JS を改変するだけで bypass できる。
+**サーバ側でも判定**して二重防御する。
+
+#### 認可: 「reporter 本人のみ」を per-row 判定 + silent skip
+
+横断ビューでは ids[] に他人作成のレコードが混在し得る。単純に
+`where: { id: { in: ids } }` で updateMany すると **他人のレコードまで巻き込まれる**。
+
+```ts
+// 1 クエリで reporter を取得し、本人分だけに絞る
+const targets = await prisma.riskIssue.findMany({
+  where: { id: { in: ids }, deletedAt: null },
+  select: { id: true, reporterId: true },
+});
+const ownedIds = targets.filter((t) => t.reporterId === viewerUserId).map((t) => t.id);
+await prisma.riskIssue.updateMany({ where: { id: { in: ownedIds } }, data });
+return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
+```
+
+UI 側でも viewerIsCreator=false の行は checkbox 自体を出さないが、
+**サーバ側でも per-row 判定** することで「checkbox を JS で出した」攻撃を防ぐ。
+admin であっても他人のレコードは更新しない (delete のみ admin 特権、という既存方針と一致)。
+
+#### `viewerIsCreator` を DTO に持たせる
+
+横断ビューの DTO (例: `AllRiskDTO`) に `viewerIsCreator: boolean` を追加し、
+list 時の reporter 比較結果を返す。reporterId そのものをクライアントに expose
+すると個人特定 ID が漏れるので、boolean 一発で済ませる方が責務分離になる。
+
+#### patch 項目の選定
+
+- **採用**: state / assigneeId / deadline (選択肢/期限。誤更新リスクが低い)
+- **不採用**: title / content (自由文を一括置換する UX は壊れやすい)
+- **不採用**: visibility (機微情報を一括公開する事故リスク、個別 review が必要)
+
+#### nullable patch 値の扱い (§5.12 と同方針)
+
+```ts
+if (patch.deadline !== undefined) {
+  // null は明示クリア (担当者を外す/期限を外す)、`new Date(null)` で 1970 epoch 化を防ぐ
+  data.deadline = patch.deadline === null ? null : new Date(patch.deadline);
+}
+```
+
+`undefined` = patch しない / `null` = クリア / 値あり = 設定。
+
+#### 結果返却: silent skip の数を含める
+
+```ts
+return { updatedIds, skippedNotOwned, skippedNotFound };
+```
+
+UI 側で「N 件更新 (M 件は権限なくスキップ)」のような透明性を出せる。
+全件 error にすると 1 件混入で全滅するので silent skip にする。
+
+#### 汎化ルール
+
+1. **横断ビューの bulk は「フィルター必須」を UI + API 両方で強制**: 二重防御。
+2. **権限は per-row 判定 + silent skip**: 全 rollback だと 1 件混入で全滅する。
+3. **patch 対象は「選択肢/数値/期限」のみ**: 自由文の bulk は単発編集に絞る。
+4. **viewerIsCreator のような boolean 派生フィールドを DTO に持たせる**: ID 直接 expose を避け責務を service 層に閉じる。
+
+#### 回帰防止テスト
+
+- `src/lib/validators/risk-bulk.test.ts`: schema 全パス、`isFilterApplied` 全分岐
+- `src/services/risk.service.test.ts`: 他人混入 silent skip、null 明示クリア、Date 変換
+- `src/app/api/risks/bulk/route.test.ts`: 401/400/200 + FILTER_REQUIRED エラー
+
+#### 関連
+
+- §5.12 (nullable Zod スキーマ) — patch null 受理の基底ルール
+- §5.13 (Issue/Retro tag-aware parity) — 横断/集約パターン
+- §5.20 (PR #160 / 提案リスト DB 除外) — 同じく「DB 側 where で除外する」設計指針
+- DESIGN.md §17 (パフォーマンス / N+1 回避) — updateMany 1 クエリ採用の根拠
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
@@ -2547,6 +2661,35 @@ hotfix 伝播もそのぶん n-1 回必要 = 本例では **#128 base → #128a(
 のマージ後に追加した docs コミットは別 PR で main へ取り込む必要がある」** と
 いうメタ教訓もある (merge commit 運用なら自動継承されるが、squash-merge では
 最初の squash 時点のスナップショットしか残らないため)。
+
+**再発事例 7 例目 (PR #161 conflict resolve, 2026-04-27)**:
+PR #161 (feat/cross-list-bulk-update) は main から枝分かれ後、並走していた
+PR #156-#160 が先に **5 件連続マージ** され、PR #161 をマージする時点で 2 種類の
+コンフリクトが発生:
+1. **`src/services/risk.service.ts`**: PR #157 (cross-list-non-member-columns) が
+   `listAllRisksForViewer` の **同じ行** で「非メンバーへの氏名マスク撤廃」を実施。
+   PR #161 は同関数の同じ場所に `viewerIsCreator: r.reporterId === viewerUserId` を
+   追加しており、両方の修正が同一 return オブジェクトに集中して衝突。
+   **解消方針**: main の「氏名マスク撤廃」を採用 (確定方針) + PR #161 の
+   `viewerIsCreator` を維持 (両立可能、責務が直交している)。
+2. **`docs/developer/DEVELOPER_GUIDE.md`**: PR #160 が §5.20 を、PR #161 が §5.21 を
+   **§5.10.2 の直前** という同じ位置に追加 → 末尾追記コンフリクト。
+   **解消方針**: 番号順 (§5.20 → §5.21) に並べて両方残し、§5.21 の関連リンクから
+   §5.20 (同じく「DB 側 where で除外」設計指針) を参照する形で結合。
+
+**根本原因**: PR #161 を 2026-04-27 朝の 6 PR 一気出しの先頭で作成 (#156→#161 の
+順) したため、後発 PR が先にマージされる順序入れ替わりで衝突が発生。複数の独立 PR を
+並走で出す場合、各 PR の **影響ファイル** を事前にマトリクス化し、衝突確率の高い
+PR (同 entity / 同 service / 同 docs section) は逐次マージの順序合意を取ってから
+作成するのが望ましい。今回は影響範囲が幸い独立しており衝突解消は機械的だったが、
+PR #157 と PR #161 がどちらも risk.service.ts の同じ関数を触ったのは設計上の
+近さの問題で、片方マージ後の rebase で合流させる順序にすべきだった。
+
+**運用ルール 6 として確定**:
+6. **同 entity/同 service/同 docs section を触る並走 PR は逐次運用**: 影響範囲が
+   重なる PR を並列で出さない。先に出した PR のマージ後に rebase して 2 本目を出す。
+   それが難しければ、後発 PR の作成前に **影響ファイルマトリクス** で衝突確率を
+   見積もり、衝突確実なら先発 PR のマージを待つ。
 
 ### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
 
