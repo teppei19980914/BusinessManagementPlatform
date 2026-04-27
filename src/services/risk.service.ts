@@ -207,11 +207,16 @@ export async function listAllRisksForViewer(
       projectDeleted: isAdmin ? projectDeleted : false, // admin 以外には削除状態を秘匿
       // 孤児プロジェクト (deleted) への詳細リンクは admin 以外は許可しない
       canAccessProject: isMember && !projectDeleted,
-      // 非メンバーには氏名を返さない (顧客名・見積と同等の機微情報扱い)
-      reporterName: isMember ? r.reporter?.name ?? null : null,
-      assigneeName: isMember ? r.assignee?.name ?? null : null,
-      createdByName: isMember ? userNameById.get(r.createdBy) ?? null : null,
-      updatedByName: isMember ? userNameById.get(r.updatedBy) ?? null : null,
+      // fix/cross-list-non-member-columns (2026-04-27 ユーザ要望):
+      //   旧仕様 (PR #55): 非メンバーには氏名を null にして 顧客情報相当の機微扱い。
+      //   新仕様: 「全リスク/全課題」は visibility='public' のものだけ表示する横断ビューであり、
+      //   行自体が公開されている以上、担当者・起票者・作成者・更新者の氏名は公開して
+      //   アサイン状況を把握できる方がナレッジ共有上有用。プロジェクト名は引き続き
+      //   非メンバーにマスクする (案件名は機微情報扱いを維持)。
+      reporterName: r.reporter?.name ?? null,
+      assigneeName: r.assignee?.name ?? null,
+      createdByName: userNameById.get(r.createdBy) ?? null,
+      updatedByName: userNameById.get(r.updatedBy) ?? null,
     };
   });
 }
