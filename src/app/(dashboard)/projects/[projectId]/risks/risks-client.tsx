@@ -42,6 +42,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
+import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
 import {
   StagedAttachmentsInput,
@@ -749,11 +750,12 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
               <div className="flex-1 space-y-1">
                 <Label className="text-sm">期限</Label>
                 <div className={bulkApply.deadline ? 'space-y-1' : 'pointer-events-none space-y-1 opacity-50'}>
-                  <Input
-                    type="date"
+                  {/* feat/date-field-clear-rename: 単発編集 dialog (RiskEditDialog) と同じ DateFieldWithActions を流用し
+                      「今日」「クリア」ボタンを必ず提供する (画面横断の操作一貫性 + 横展開漏れ防止) */}
+                  <DateFieldWithActions
                     value={bulkValues.deadline}
+                    onChange={(v) => setBulkValues((b) => ({ ...b, deadline: v }))}
                     disabled={bulkDeadlineClear}
-                    onChange={(e) => setBulkValues((b) => ({ ...b, deadline: e.target.value }))}
                   />
                   <label className="flex items-center gap-1 text-xs text-muted-foreground">
                     <input

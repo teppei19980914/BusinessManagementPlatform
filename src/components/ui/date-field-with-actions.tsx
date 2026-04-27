@@ -1,13 +1,13 @@
 'use client';
 
 /**
- * DateFieldWithActions (PR #71 初版 / PR #72 刷新):
- *   日付フィールド本体と「今日」「削除」ボタンを横並びにした共通部品。
+ * DateFieldWithActions (PR #71 初版 / PR #72 刷新 / clear-label-rename で文言統一):
+ *   日付フィールド本体と「今日」「クリア」ボタンを横並びにした共通部品。
  *
  * PR #72 の変更点:
  *   ブラウザ標準 `<input type="date">` はカレンダーポップオーバー内部に独自の
  *   「今日」「クリア」ボタン (ベンダー依存) を持ち、CSS/JS で非表示にできない。
- *   ユーザ要望 (PR #72 Task 1) で「カレンダー内の今日/削除は消してほしい」ため、
+ *   ユーザ要望 (PR #72 Task 1) で「カレンダー内の今日/クリアは消してほしい」ため、
  *   native input を完全に排して自作の Popover + 日付グリッドに置き換える。
  *
  *   カレンダーは「月ナビゲーション + 7×6 の日付グリッド」のみで、
@@ -16,6 +16,10 @@
  * 使い方 (PR #71 の呼び出し側に変更なし — 後方互換):
  *   <DateFieldWithActions value={x} onChange={setX} />
  *   value / onChange は 'YYYY-MM-DD' 文字列 (空文字 '' がクリア状態)。
+ *
+ * 文言 (clear-label-rename):
+ *   削除ボタンは「クリア」表記に統一 (削除という語は破壊的アクション/論理削除と紛らわしい)。
+ *   クリアの実体は値を空文字 '' に戻すだけで、データは消えない。
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -35,7 +39,7 @@ type CalendarPanelProps = {
 };
 
 /**
- * 日付グリッド本体 (ポップオーバー内側)。「今日」「削除」ボタンは意図的に持たない
+ * 日付グリッド本体 (ポップオーバー内側)。「今日」「クリア」ボタンは意図的に持たない
  * (PR #72 要件: カレンダー内からそれらの機能を取り除く)。
  */
 function CalendarPanel({ value, onSelect }: CalendarPanelProps) {
@@ -136,7 +140,7 @@ type Props = {
   onChange: (value: string) => void;
   disabled?: boolean;
   required?: boolean;
-  /** 削除ボタンを非表示にしたい場合 (required の場面など) */
+  /** クリアボタンを非表示にしたい場合 (required の場面など) */
   hideClear?: boolean;
   /** 今日ボタンの title 属性カスタマイズ用 (アクセシビリティ) */
   todayLabel?: ReactNode;
@@ -150,7 +154,7 @@ export function DateFieldWithActions({
   required,
   hideClear,
   todayLabel = '今日',
-  clearLabel = '削除',
+  clearLabel = 'クリア',
 }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
