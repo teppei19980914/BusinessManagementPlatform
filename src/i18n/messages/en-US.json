@@ -51,8 +51,6 @@
     "appName": "Tasukiba",
     "email": "Email",
     "password": "Password",
-    "newPassword": "New Password",
-    "newPasswordConfirm": "New Password (Confirm)",
     "passwordHint": "At least 10 characters with 3 or more of: uppercase, lowercase, digits, symbols",
     "recoveryCode": "Recovery Code",
     "verificationCode": "Verification Code",

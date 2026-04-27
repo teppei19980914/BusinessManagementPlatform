@@ -51,8 +51,6 @@
     "appName": "たすきば",
     "email": "メールアドレス",
     "password": "パスワード",
-    "newPassword": "新しいパスワード",
-    "newPasswordConfirm": "新しいパスワード（確認）",
     "passwordHint": "10文字以上、英大文字・英小文字・数字・記号のうち3種以上",
     "recoveryCode": "リカバリーコード",
     "verificationCode": "認証コード",
