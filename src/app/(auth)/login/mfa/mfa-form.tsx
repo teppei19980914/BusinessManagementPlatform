@@ -9,12 +9,14 @@
 
 import { useState } from 'react';
 import { useSession, signOut } from 'next-auth/react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: string }) {
+  const t = useTranslations('auth');
   const { update } = useSession();
   const [code, setCode] = useState('');
   const [recoveryCode, setRecoveryCode] = useState('');
@@ -36,7 +38,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setError(json.error?.message || 'コードが正しくありません');
+        setError(json.error?.message || t('mfaInvalidCode'));
         return;
       }
       // JWT を mfaVerified=true で再発行 (auth.config.ts jwt callback の trigger='update' 経由)
@@ -56,9 +58,9 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
     <div className="flex min-h-screen items-center justify-center bg-muted px-4">
       <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">2 段階認証</CardTitle>
+          <CardTitle className="text-2xl">{t('mfaTitle')}</CardTitle>
           <CardDescription>
-            認証アプリに表示された 6 桁のコードを入力してください
+            {t('mfaCodeHint')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -68,7 +70,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
             )}
             {useRecovery ? (
               <div className="space-y-2">
-                <Label htmlFor="recoveryCode">リカバリーコード</Label>
+                <Label htmlFor="recoveryCode">{t('recoveryCode')}</Label>
                 <Input
                   id="recoveryCode"
                   value={recoveryCode}
@@ -79,7 +81,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
               </div>
             ) : (
               <div className="space-y-2">
-                <Label htmlFor="code">認証コード</Label>
+                <Label htmlFor="code">{t('verificationCode')}</Label>
                 <Input
                   id="code"
                   inputMode="numeric"
@@ -94,7 +96,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
               </div>
             )}
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? '検証中...' : '検証'}
+              {isLoading ? t('mfaVerifying') : t('mfaVerify')}
             </Button>
             <div className="flex justify-between text-xs">
               <button
@@ -105,14 +107,14 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
                   setError('');
                 }}
               >
-                {useRecovery ? '認証コードを使う' : 'リカバリーコードを使う'}
+                {useRecovery ? t('mfaUseAuthCode') : t('mfaUseRecoveryCode')}
               </button>
               <button
                 type="button"
                 className="text-muted-foreground hover:underline"
                 onClick={handleCancel}
               >
-                ログアウト
+                {t('signOut')}
               </button>
             </div>
           </form>
