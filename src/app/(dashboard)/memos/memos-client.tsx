@@ -9,7 +9,7 @@
  * - 列幅リサイズ (PR #68) + 添付列 (PR #67) のパターンを踏襲
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
@@ -49,6 +49,18 @@ import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import type { MemoDTO } from '@/services/memo.service';
+// PR #165: 個人「メモ一覧」での一括 visibility 変更機能 (cross-list /all-memos から移し替え)
+import {
+  CrossListBulkVisibilityToolbar,
+  EMPTY_FILTER,
+  isCrossListFilterActive,
+  type CrossListFilterState,
+} from '@/components/cross-list-bulk-visibility-toolbar';
+
+const MEMO_VISIBILITY_OPTIONS = [
+  { value: 'private', label: '自分のみ (公開取り下げ)' },
+  { value: 'public', label: '全メモに公開' },
+];
 
 const VISIBILITY_LABELS: Record<string, string> = {
   private: '自分のみ',
@@ -84,8 +96,43 @@ export function MemosClient({
     router.refresh();
   }, [router]);
 
+  // PR #165: 個人「メモ一覧」での一括 visibility 変更
+  // フィルター適用時のみ checkbox 列とツールバー表示。Memo は元から isMine=true のものだけ
+  // 編集できるため、checkbox は isMine=true 行のみ active。
+  const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const filterApplied = isCrossListFilterActive(bulkFilter);
+
+  const filteredMemos = useMemo(() => {
+    let xs = memos;
+    if (bulkFilter.mineOnly) xs = xs.filter((m) => m.isMine);
+    if (bulkFilter.keyword.trim()) {
+      const kw = bulkFilter.keyword.trim().toLowerCase();
+      xs = xs.filter((m) => m.title.toLowerCase().includes(kw) || m.content.toLowerCase().includes(kw));
+    }
+    return xs;
+  }, [memos, bulkFilter]);
+
+  const selectableIds = filterApplied
+    ? filteredMemos.filter((m) => m.isMine).map((m) => m.id)
+    : [];
+  const allSelectableSelected
+    = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+
+  function toggleOneMemo(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllMemos() {
+    setSelectedIds(allSelectableSelected ? new Set() : new Set(selectableIds));
+  }
+
   // 添付列用バッチ取得 (PR #67 パターン)
-  const attachmentsByEntity = useBatchAttachments('memo', memos.map((m) => m.id));
+  const attachmentsByEntity = useBatchAttachments('memo', filteredMemos.map((m) => m.id));
 
   // --- 作成ダイアログ ---
   const [createForm, setCreateForm] = useState({
@@ -188,10 +235,23 @@ export function MemosClient({
 
   return (
     <div className="space-y-6">
+      {/* PR #165: 個人「メモ一覧」での一括 visibility 変更 */}
+      <CrossListBulkVisibilityToolbar
+        endpoint="/api/memos/bulk"
+        formIdPrefix="memos-personal"
+        filter={bulkFilter}
+        onFilterChange={setBulkFilter}
+        selectedIds={selectedIds}
+        onSelectionClear={() => setSelectedIds(new Set())}
+        visibilityOptions={MEMO_VISIBILITY_OPTIONS}
+        entityLabel="メモ"
+        onApplied={async () => { await reload(); }}
+      />
+
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">メモ一覧</h2>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">{memos.length} 件</span>
+          <span className="text-sm text-muted-foreground">{filteredMemos.length} 件</span>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               メモ作成
@@ -258,6 +318,18 @@ export function MemosClient({
         <Table>
           <TableHeader>
             <TableRow>
+              {filterApplied && (
+                <ResizableHead columnKey="select" defaultWidth={36}>
+                  <input
+                    type="checkbox"
+                    aria-label="表示中の編集可能行を全選択"
+                    checked={allSelectableSelected}
+                    disabled={selectableIds.length === 0}
+                    onChange={toggleAllMemos}
+                    className="rounded"
+                  />
+                </ResizableHead>
+              )}
               <ResizableHead columnKey="title" defaultWidth={220}>タイトル</ResizableHead>
               <ResizableHead columnKey="content" defaultWidth={300}>本文</ResizableHead>
               <ResizableHead columnKey="visibility" defaultWidth={110}>公開範囲</ResizableHead>
@@ -268,12 +340,27 @@ export function MemosClient({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {memos.map((m) => (
+            {filteredMemos.map((m) => (
               <TableRow
                 key={m.id}
                 className={m.isMine ? 'cursor-pointer hover:bg-muted' : ''}
                 onClick={m.isMine ? () => setEditing(m) : undefined}
               >
+                {filterApplied && (
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    {m.isMine ? (
+                      <input
+                        type="checkbox"
+                        aria-label={`${m.title} を一括編集対象に追加`}
+                        checked={selectedIds.has(m.id)}
+                        onChange={() => toggleOneMemo(m.id)}
+                        className="rounded"
+                      />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell className="font-medium">{m.title}</TableCell>
                 <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 80)}
@@ -298,9 +385,9 @@ export function MemosClient({
                 </TableCell>
               </TableRow>
             ))}
-            {memos.length === 0 && (
+            {filteredMemos.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={7 + (filterApplied ? 1 : 0)} className="py-8 text-center text-muted-foreground">
                   メモがありません。右上の「メモ作成」から登録してください。
                 </TableCell>
               </TableRow>
