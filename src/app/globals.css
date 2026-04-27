@@ -35,6 +35,11 @@
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-milestone-marker: var(--milestone-marker);
+  /* feat/markdown-textarea-fixes: 差分ハイライト色 (テーマ別に塗りつぶし色を最適化) */
+  --color-diff-add-bg: var(--diff-add-bg);
+  --color-diff-add-fg: var(--diff-add-fg);
+  --color-diff-remove-bg: var(--diff-remove-bg);
+  --color-diff-remove-fg: var(--diff-remove-fg);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);

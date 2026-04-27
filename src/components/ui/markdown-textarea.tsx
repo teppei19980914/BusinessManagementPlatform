@@ -165,6 +165,89 @@ function PreviewContent({ value }: { value: string }) {
 }
 
 /**
+ * react-markdown の各要素に明示的な Tailwind クラスを当てるためのコンポーネント
+ * オーバーライド (feat/markdown-textarea-fixes)。
+ *
+ * 経緯:
+ *   `prose` クラス (Tailwind Typography プラグイン) は当プロジェクトで未導入のため、
+ *   見出し / リスト / コードブロック等の視覚的差別化が効かなかった。プラグイン追加は
+ *   依存・ビルドサイズ増のため、必要要素にだけ explicit class を当てる方針を採用。
+ *
+ *   全テーマで一貫した「見出しは大きく / コードは monospace + 灰背景 / 引用は左罫線」
+ *   になるよう、テーマ非依存のテキストサイズ + テーマトークン色 (border, muted) を使う。
+ */
+const MARKDOWN_COMPONENTS = {
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <h1 className="mt-3 mb-2 text-xl font-bold border-b border-border pb-1">{children}</h1>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <h2 className="mt-3 mb-2 text-lg font-bold border-b border-border pb-0.5">{children}</h2>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <h3 className="mt-2 mb-1 text-base font-bold">{children}</h3>
+  ),
+  h4: ({ children }: { children?: React.ReactNode }) => (
+    <h4 className="mt-2 mb-1 text-sm font-bold">{children}</h4>
+  ),
+  h5: ({ children }: { children?: React.ReactNode }) => (
+    <h5 className="mt-2 mb-1 text-sm font-semibold">{children}</h5>
+  ),
+  h6: ({ children }: { children?: React.ReactNode }) => (
+    <h6 className="mt-2 mb-1 text-xs font-semibold uppercase tracking-wide">{children}</h6>
+  ),
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="my-1 leading-relaxed">{children}</p>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="my-1 ml-5 list-disc space-y-0.5">{children}</ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="my-1 ml-5 list-decimal space-y-0.5">{children}</ol>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => <li className="leading-snug">{children}</li>,
+  blockquote: ({ children }: { children?: React.ReactNode }) => (
+    <blockquote className="my-2 border-l-4 border-border pl-3 text-muted-foreground italic">
+      {children}
+    </blockquote>
+  ),
+  code: ({ inline, children }: { inline?: boolean; children?: React.ReactNode }) =>
+    inline ? (
+      <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">{children}</code>
+    ) : (
+      <code className="block font-mono text-[0.9em]">{children}</code>
+    ),
+  pre: ({ children }: { children?: React.ReactNode }) => (
+    <pre className="my-2 overflow-x-auto rounded-md bg-muted p-2 text-xs">{children}</pre>
+  ),
+  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-info underline hover:no-underline"
+    >
+      {children}
+    </a>
+  ),
+  hr: () => <hr className="my-3 border-border" />,
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="my-2 overflow-x-auto">
+      <table className="border-collapse border border-border text-xs">{children}</table>
+    </div>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="border border-border bg-muted px-2 py-1 text-left font-semibold">{children}</th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="border border-border px-2 py-1">{children}</td>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-bold">{children}</strong>
+  ),
+  em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
+};
+
+/**
  * 読み取り専用ビューで Markdown 形式のテキストを描画する。
  * 「テキストはテキストのまま、Markdown は Markdown プレビュー」のロジックを
  * read-only display にも揃えるために共有コンポーネントとして export。
@@ -172,12 +255,16 @@ function PreviewContent({ value }: { value: string }) {
  * 使用箇所:
  *   - MarkdownTextarea のプレビューパネル (内部)
  *   - all-memos の詳細 dialog (read-only ビュー)
+ *   - project-detail の概要タブ (purpose / background / scope / outOfScope / notes)
  */
 export function MarkdownDisplay({ value, className }: { value: string; className?: string }) {
   if (isMarkdown(value)) {
     return (
-      <div className={`prose prose-sm max-w-none dark:prose-invert ${className ?? ''}`}>
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+      <div className={`text-sm ${className ?? ''}`}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkBreaks]}
+          components={MARKDOWN_COMPONENTS}
+        >
           {value}
         </ReactMarkdown>
       </div>
@@ -188,7 +275,15 @@ export function MarkdownDisplay({ value, className }: { value: string; className
 
 /**
  * 差分の片側 (旧 or 新) を表示。語単位の chunks を span でレンダリングし、
- * 追加 (added) は緑背景、削除 (removed) は赤背景 + 取消線。
+ * 追加 (added) / 削除 (removed) ともテーマ別に最適化された塗りつぶし色でハイライト。
+ *
+ * 色定義 (theme-definitions.ts):
+ *   - light テーマ: 追加=緑塗りつぶし白文字、削除=赤塗りつぶし白文字
+ *   - dark テーマ : 追加=黄塗りつぶし黒文字、削除=明るい赤塗りつぶし黒文字
+ *   - その他テーマ: 既定 (light) の色を継承
+ *
+ * 「20% 透過」では暗い背景でコントラスト不足のため、塗りつぶし + 高コントラスト
+ * 前景色を使う設計に統一 (feat/markdown-textarea-fixes、ユーザ指摘 2)。
  */
 function DiffPane({
   label,
@@ -208,7 +303,7 @@ function DiffPane({
             return (
               <span
                 key={i}
-                className="bg-success/20 text-success-foreground"
+                className="bg-diff-add-bg text-diff-add-fg rounded px-0.5"
               >
                 {c.value}
               </span>
@@ -218,7 +313,7 @@ function DiffPane({
             return (
               <span
                 key={i}
-                className="bg-destructive/20 text-destructive line-through"
+                className="bg-diff-remove-bg text-diff-remove-fg line-through rounded px-0.5"
               >
                 {c.value}
               </span>

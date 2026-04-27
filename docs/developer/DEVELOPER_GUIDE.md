@@ -1207,10 +1207,96 @@ const MARKDOWN_PATTERNS = [
 - 画像アップロード対応 (現在は外部 URL のみ可)
 - 入力中のリアルタイム文字数カウント表示
 
+#### 落とし穴と対策 (PR #154 で発覚した横展開ナレッジ)
+
+##### 1. `prose` クラスは Tailwind Typography プラグイン依存
+
+react-markdown のレンダリング出力に \`className="prose prose-sm dark:prose-invert"\`
+を当てるだけでは、**当プロジェクトでは何も効かない**。\`@tailwindcss/typography\`
+プラグインが未導入のため、これらのクラスは無効化される (PR #154 でユーザ指摘により発覚)。
+
+**対策**: typography プラグイン追加で依存・ビルドサイズを増やすのではなく、
+react-markdown の \`components\` prop で **要素ごとに明示的な Tailwind クラス**
+(text-xl font-bold border-b border-border 等) を設定する方針を採用。
+
+```tsx
+const MARKDOWN_COMPONENTS = {
+  h1: ({ children }) => (
+    <h1 className="mt-3 mb-2 text-xl font-bold border-b border-border pb-1">{children}</h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="mt-3 mb-2 text-lg font-bold border-b border-border pb-0.5">{children}</h2>
+  ),
+  // h3-h6, ul, ol, li, blockquote, code, pre, a, hr, table, th, td, strong, em
+};
+
+<ReactMarkdown components={MARKDOWN_COMPONENTS}>{value}</ReactMarkdown>
+```
+
+**横展開の保証**: \`MarkdownDisplay\` / \`MarkdownTextarea\` は全画面で **共通コンポーネント
+1 箇所** (`src/components/ui/markdown-textarea.tsx`) を経由するため、ここを更新すれば
+全 39 利用箇所 (knowledge / risk / retro / memo / stakeholder / project / all-memos) が
+自動的に同じスタイルを得る。並行する \`ReactMarkdown\` 直接呼び出しを書かないこと
+(\`grep -rn "react-markdown\\|ReactMarkdown" src/\` で 0 件であることを保つ)。
+
+##### 2. 差分ハイライトは「20% 透過」ではダーク背景で見えない
+
+PR #152 初期実装の \`bg-success/20\` (緑 20% 透過) はダークテーマで視認性不足。
+**塗りつぶし + 高コントラスト前景色** に変更する必要があった (PR #154 で修正)。
+
+**対策**: 専用 CSS 変数 (\`--diff-add-bg\` / \`--diff-add-fg\` / \`--diff-remove-bg\` /
+\`--diff-remove-fg\`) を **テーマ別に定義** し、テーマトークン経由で配色を切替:
+
+```ts
+// theme-definitions.ts
+export type ThemeTokens = {
+  // ...既存トークン
+  diffAddBg: string;
+  diffAddFg: string;
+  diffRemoveBg: string;
+  diffRemoveFg: string;
+};
+
+const LIGHT: ThemeTokens = {
+  // 追加=緑塗りつぶし白文字、削除=赤塗りつぶし白文字
+  diffAddBg: 'oklch(0.55 0.16 150)',
+  diffAddFg: 'oklch(0.99 0 0)',
+  diffRemoveBg: 'oklch(0.6 0.2 27)',
+  diffRemoveFg: 'oklch(0.99 0 0)',
+};
+
+// dark テーマでは ユーザ指摘どおり 黄色塗りつぶし黒文字
+THEME_DEFINITIONS.dark = extend({
+  diffAddBg: 'oklch(0.85 0.18 90)',
+  diffAddFg: 'oklch(0.15 0 0)',
+  diffRemoveBg: 'oklch(0.7 0.22 27)',
+  diffRemoveFg: 'oklch(0.15 0 0)',
+});
+```
+
+UI 側は Tailwind ユーティリティ \`bg-diff-add-bg text-diff-add-fg\` を使うだけ。
+ハードコード色を避けることで全テーマで一貫した「目立つ色」を保証できる。
+
+##### 3. 新トークンを追加したら REQUIRED_TOKENS テストも同時更新が必須
+
+\`theme-definitions.test.ts\` の \`REQUIRED_TOKENS\` リストは「全テーマがこれらを必ず
+持つ」ことを実行時に検証する網羅性チェック。新トークンを \`ThemeTokens\` に追加して
+\`REQUIRED_TOKENS\` を忘れると **テストは pass する** (`expected` 側に新キーがないため)
+が「実行時に存在しないキーが追加された」を検知できなくなる。
+
+**運用ルール**: \`ThemeTokens\` 拡張時は **3 ファイル同時編集**:
+1. \`src/config/theme-definitions.ts\` の interface + LIGHT 既定値 + 各テーマ上書き
+2. \`src/config/theme-definitions.test.ts\` の \`REQUIRED_TOKENS\` リスト追記
+3. \`src/app/globals.css\` の \`@theme\` ブロックに \`--color-xxx: var(--xxx);\` 追加
+
+3 を忘れると Tailwind の \`bg-xxx\` ユーティリティが効かない (CSS が生成されない)。
+2 を忘れると新トークンの欠落を実行時テストで検知できない。
+
 #### 関連
 
 - §5.16 (全画面トグル): 入力欄 + プレビューを並べると幅を要するため、全画面トグル
   と組み合わせると UX が向上する
+- §5.7 (ダイアログサイズ・スクロール規約): 同様にテーマ非依存の構造規約
 
 ### 5.18 WBS 上書きインポート (Sync by ID) 実装パターン (feat/wbs-overwrite-import)
 

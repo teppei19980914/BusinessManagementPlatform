@@ -774,6 +774,66 @@ grep -rn "<廃止タブ名>" e2e/specs/
 
 ---
 
+### 4.40 Next.js Link `click() + waitForLoadState('networkidle')` の race (PR #154 chromium-mobile で遭遇)
+
+**症状**: `09-customers.spec.ts` Step 4 が chromium-mobile project で fail (chromium PC は pass):
+
+```
+Error: expect(locator).toBeVisible() failed
+Locator: getByRole('heading', { name: 'e2e-202604270202055-5136-a2bc-PR111 顧客' })
+Expected: visible
+Timeout: 10000ms
+```
+
+trace の steps:
+- Click getByRole('link') | dur: **54ms**
+- Wait for load state "networkidle" | dur: **0ms** ← 即返却 (即時 idle 判定)
+- Expect "toBeVisible" heading | dur: 10014ms (timeout)
+
+**根本原因**: Next.js Link の `click()` は **client-side navigation** を起動するが、
+これは内部的にイベントループに乗せるため、click() resolve 直後にはまだ network 層に
+何の request も出ていない。直後に呼ぶ `page.waitForLoadState('networkidle')` は
+「現在 in-flight が 0 件 = idle」と判定して **0ms で即 resolve** する。
+結果、まだ navigation が始まっていない古いページに対して expect heading が走り、
+heading が永遠に出てこない (= timeout)。
+
+PC viewport では Vercel Preview のレスポンスが速く、navigation が click 完了直前に
+始まることが多く偶然 race を回避できることが多い。chromium-mobile (= iPhone 13
+emulation) は CPU throttle + viewport 計算負荷で僅かにイベントループ遅延が増え、
+race を踏みやすくなる。
+
+**修正パターン**: `Promise.all([waitForURL, click])` で navigation を確実に anchor:
+
+```ts
+// NG: 0ms で即 resolve する race あり
+await page.getByRole('link', { name: ... }).first().click();
+await page.waitForLoadState('networkidle');
+await expect(page.getByRole('heading', { name: ... })).toBeVisible({ timeout: 10_000 });
+
+// OK: waitForURL を click と同時に投入 (navigation 完了を確実に待つ)
+await Promise.all([
+  page.waitForURL(/\/customers\/[a-f0-9-]+/),
+  page.getByRole('link', { name: ... }).first().click(),
+]);
+await page.waitForLoadState('networkidle');
+await expect(page.getByRole('heading', { name: ... })).toBeVisible({ timeout: 10_000 });
+```
+
+**§4.20 / §4.19 との区別**:
+- §4.20: `router.refresh()` の race (re-fetch + re-render の遅延、`page.reload()` で確定)
+- §4.19: 長い非同期チェーン経由の click (API response 予約で区切る)
+- §4.40 (本件): **Next.js Link client-side navigation** の race (waitForURL で確実に anchor)
+
+**横展開ルール**:
+新規 spec で `getByRole('link', ...).click()` を書く場合、後続が「URL 遷移後の DOM」を
+期待するなら **常に `Promise.all([waitForURL, click])` で書く**。`waitForLoadState`
+単独は「現在 idle なら即 resolve」の意味であり、navigation 開始を待つ保証がない。
+
+**関連**: §4.20 (router.refresh race) / §4.19 (長い click chain) /
+docs/developer/DEVELOPER_GUIDE.md §10.5 (CI race パターン集)
+
+---
+
 ### 4.39 新規マイグレーションを含む PR は E2E pass でも本番 DB に未適用なら 500 になる (構造的ギャップ、PR #149 で遭遇)
 
 **症状**: PR #149 (ステークホルダー管理機能) を main にマージし Vercel の本番デプロイ完了後、
