@@ -1937,6 +1937,40 @@ grep -rn 'DateFieldWithActions' src/app src/components
 `type="date"` がヒットしたら、そのファイルは原則 **`<DateFieldWithActions>` への置換が必須**。
 例外 (どうしてもネイティブが必要) は本 §5.24 にケース追記して可視化する。
 
+#### `<DateFieldWithActions>` の使用シーン (現時点の caller 一覧)
+
+PR #171 マージ時点で本部品を採用している画面 (default `clearLabel='クリア'` 経由で文言伝播):
+
+| 画面 / ファイル | 用途 | 備考 |
+|---|---|---|
+| `src/components/dialogs/risk-edit-dialog.tsx` | リスク/課題の `deadline` (期限) 単発編集 | `clearLabel` default 依存 |
+| `src/components/dialogs/retrospective-edit-dialog.tsx` | 振り返りの `conductedDate` (実施日) | `hideClear` (required) |
+| `src/app/(dashboard)/projects/projects-client.tsx` | プロジェクト新規作成の `plannedStartDate` / `plannedEndDate` | `required hideClear` |
+| `src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx` | プロジェクト編集の予定日 2 項目 | `required hideClear` |
+| `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx` | Activity 作成/編集 + bulk edit (予定/実績日 各 2 項目 × 2 dialog) | bulk edit caller も含む |
+| `src/app/(dashboard)/projects/[projectId]/retrospectives/retrospectives-client.tsx` | リスト画面内 dialog | `required hideClear` |
+| `src/app/(dashboard)/projects/[projectId]/risks/risks-client.tsx` | bulk edit の `deadline` (PR #171 で追加) | 単発編集と同部品を流用 |
+
+#### 「削除」→「クリア」全画面伝播の仕組み (PR #171 で確立)
+
+```ts
+// src/components/ui/date-field-with-actions.tsx
+export function DateFieldWithActions({
+  // ...
+  clearLabel = 'クリア',  // ← この 1 行修正だけで全 caller に伝播
+}: Props) { ... }
+```
+
+- **caller 側で `clearLabel` を上書きしている箇所はゼロ** (PR #171 で grep 確認済):
+  ```bash
+  grep -rn "clearLabel=" src/  # → 該当なし (default 依存のみ)
+  ```
+- **必要なら個別に上書き可能**: `<DateFieldWithActions clearLabel="リセット" />` のように
+  prop で override できるが、原則は default に従う (UX 一貫性)
+- **これが「自己治癒性」の実例**: 文言変更 1 行で全画面が追従する。逆に bulk edit が
+  生 `<Input type="date">` だった頃は、ここが取り残されて横展開漏れを起こした
+  (PR #171 で発覚)。
+
 #### 関連
 
 - §5.8 (Select と SearchableSelect の使い分け) — 同類の「画面を跨ぐ部品流用」規約
