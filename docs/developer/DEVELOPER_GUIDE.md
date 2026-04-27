@@ -3159,6 +3159,83 @@ HEAD/origin 共に削除し、機械的に並べるだけで解決 (内容判断
   ので、衝突を恐れて並走を止める必要はない。むしろ「衝突しても解消は機械的」という
   共通理解で並走を許容するのが現実的
 
+#### 再発事例 10 例目 (PR #170 orphan recovery, 2026-04-27): stacked PR の base が main 以外の場合の落とし穴
+
+**症状**: PR #170 (i18n Phase C-1 認証系) は GitHub 上「MERGED」表示で `mergeCommit.oid`
+も存在 (6a88075) するが、**main の first-parent linear history に含まれない**。結果、
+PR #170 の変更 (auth セクション 50 行 / 認証画面 4 ファイルの i18n 化 / DEVELOPER_GUIDE
+§10.10.1) が main から **完全に欠落**。検出は Phase C-2 着手時に
+`git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件となって発覚。
+
+**根本原因**: PR #170 は `base = feat/i18n-foundation` (PR #169 の branch) で起票
+された stacked PR。`gh pr view 170 --json baseRefName` の結果も `feat/i18n-foundation`。
+
+時系列 (UTC):
+1. 09:28:50 — PR #169 が main にマージ (base=main、正常)
+2. 09:29:08 — PR #170 が **`feat/i18n-foundation` 側へマージ** (base=feat/i18n-foundation)
+
+**ここが落とし穴**: PR #169 が main にマージされた瞬間、`feat/i18n-foundation` ブランチは
+論理的に「不要」になるが GitHub は branch を自動削除しない (merge 後も残る)。
+PR #170 はその「孤児ブランチ」へマージされ、main には伝播しない。
+
+GitHub の挙動:
+- PR #170 の状態: `state=MERGED`, `mergedAt=09:29:08Z` (✅)
+- merge commit (6a88075) は存在 (✅)
+- ただし merge 先は **`feat/i18n-foundation`** (PR #170 の元 base)
+- main には反映されない (PR #169 マージ時点で stacked chain は切断済)
+
+**確認方法**:
+```bash
+# 1. PR の base を確認
+gh pr view 170 --json baseRefName,mergeCommit
+#   → baseRefName が "main" 以外なら orphan リスクあり
+
+# 2. main の first-parent history に merge commit があるか
+git log --first-parent origin/main | grep <merge_commit_oid>
+#   → 出てこなければ orphan 確定
+
+# 3. 各ファイルが main に取り込まれているか
+git show origin/main:<重要ファイル> | grep <PR で追加した識別子>
+```
+
+**Recovery 手順** (本 PR で実行):
+```bash
+# 1. main からリカバリーブランチを切る
+git checkout main && git checkout -b fix/<PR>-recovery
+
+# 2. orphan PR の元コミット (merge commit ではなく feature commits) を順に cherry-pick
+git log --oneline origin/main..origin/<PR_branch>
+git cherry-pick <commit1> <commit2> ...
+
+# 3. lint/test/build → push → 新規 PR (base=main) を起票
+```
+
+**予防ルール (運用ルール 9 として確定)**:
+9. **stacked PR を起票するときは「base が main か」を必ず確認**:
+   - 上流 PR (PR #169) の動向を見守りながら作業する場合は stacked にしてもよいが、
+     **上流が main にマージされた瞬間に下流 PR の base を main に切り替える** ことを
+     ルール化する (gh CLI: `gh pr edit <下流> --base main`)
+   - 切替を忘れると本件のように「PR は merged 表示なのに main に届いていない」
+     という見えない regression が発生する
+   - **GitHub UI 経由のマージ時はマージ画面で base を確認**: 「Merge into XXX」の
+     XXX が "main" でなければ alert
+   - **CI/CD と CODEOWNERS では検出できない**: regression は静かに進行するため、
+     依存する後続 PR (本件の Phase C-2) で初めて発覚する。**自動検出は困難**で、
+     起票時の base 設定が最後の砦
+   - **Stop hook 補強**: 並走 PR が複数ある場合、Stop hook で
+     `gh pr list --json number,baseRefName` を出力させ base が "main" 以外の PR を警告
+     する仕組みも検討余地あり (TODO)
+
+**§10.5 既存サブセクションとの関係**:
+- 既存「Stacked PR で base に hotfix を当てた場合の sub-PR への伝播」(再発 3-6 例目)
+  と関連するが、症状が異なる:
+  - 既存: 上流に追加された hotfix が下流に流れない (CI fail で検出可能)
+  - **10 例目 (本件)**: 上流マージ時点で **下流 PR が orphan 化** (CI は通る、merged 表示も出る、
+    main に届いていないことだけが問題 = 検出が難しい)
+- 既存の運用ルール 1「stacked PR の base に hotfix を commit したら即座に下流全部へ
+  順送り merge を流す」とは独立。本件は **「下流 PR の base を main に切替える」** という
+  別操作が必要
+
 ### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
 
 Next.js は開発時 `.next/dev/types/validator.ts` にルートハンドラの型情報を
@@ -3565,3 +3642,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-26 | §5.15 新設 + KDD 仕組み強化 (fix/quick-ux PR #143 E2E hotfix)。**症状**: admin 状態変更プルダウン表示緩和で chromium-mobile が flex overlap → click intercept で fail。**修正**: flex-wrap + Select 幅 mobile 縮小。**仕組み穴塞ぎ**: 当初 commit message にしか書かず docs 追記漏れ → ユーザ指摘で発覚。CLAUDE.md KDD 原則に「commit message ≠ 常設ナレッジ」「対象範囲はテスト失敗だけでない」を追加、Stop hook prompt に **項目 6「ナレッジ追記チェック (KDD Step 4/6)」** を新設し漏れを構造的に防止 |
 | 2026-04-27 | §10.5 再発事例 9 例目 + 運用ルール 8 を追記 (PR #168 conflict resolve)。独立並走 PR (PR #167 タブ集約 / PR #168 添付一覧) が DEVELOPER_GUIDE.md の §5 末尾と §11.1 TODO 表の同位置に同時追記してコンフリクト発生。8 例目までの「意図統合型」(同一 service 関数を別観点で編集) と異なり、9 例目は**完全独立な機能**が単に末尾位置で衝突した「機械並列型」。番号順 (§5.24 → §5.25 / T-04 → T-05) で両方残す機械解消で OK と確定。運用ルール 8「完全独立 PR の docs コンフリクトは機械解消で良い」を追加し、衝突を恐れて並走を止める必要はないと明文化 |
 | 2026-04-27 | §5.26 新設 (PR #171 / feat/date-field-clear-rename)。日付入力の共通部品 `<DateFieldWithActions>` の default `clearLabel` を「削除」→「クリア」に統一 (削除という語は破壊的アクションと紛らわしい)、加えて risks-client.tsx bulk edit dialog が唯一 `<Input type="date">` を生で使っていた箇所を共通部品に置換。これで単発編集 / 一括編集の操作 UX が一貫する。**規約 (§5.26)**: 「同一機能 = 同一部品」を明文化し、`type="date"` を新規導入する PR は §5.26 の grep 点検 + 本セクションへの例外追記を必須化。共通部品流用を徹底することで「削除→クリア」のような文言変更が default prop 1 行で全画面に伝播する自己治癒性を担保。ユーザフィードバック「同じ機能を有する者は同じ部品を流用してください、これにより横展開漏れを徹底的に減らせます」を恒久ルール化。**section 番号変遷**: 当初 §5.24 として執筆 → PR #167/#168 が main 先行マージで §5.24/§5.25 を取得 → §5.26 に繰り上げ (§10.5 9 例目「機械並列型」適用、運用ルール 8 通りの機械解消) |
+| 2026-04-27 | §10.5 再発事例 10 例目 + 運用ルール 9 を追記 (PR #170 orphan recovery / PR #173)。PR #170 (Phase C-1 認証 i18n) は base=feat/i18n-foundation で起票された stacked PR で、PR #169 が main にマージされた直後に **base が孤児化** → PR #170 の merge commit (6a88075) は `feat/i18n-foundation` 側に残るのみで main の first-parent history に含まれない orphan 状態となった。**GitHub UI は MERGED 表示 + mergeCommit OID も持つため発覚が遅れる**点が極めて危険で、Phase C-2 着手時の grep `git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件で初めて検出。CI fail を伴わず merged 表示も出るため自動検出は困難。Recovery は origin/main から新規 branch を切って元 PR の 3 commits (73b6a4b → 526c2fc → 981ef5d) を順次 cherry-pick。運用ルール 9「stacked PR の上流が main マージされたら下流の base を main に切替える (`gh pr edit <PR> --base main`)」と「GitHub UI のマージ画面で base 確認を徹底」を §10.5 に新設 |
