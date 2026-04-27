@@ -8,7 +8,49 @@
     "back": "Back",
     "close": "Close",
     "today": "Today",
-    "clear": "Clear"
+    "clear": "Clear",
+    "add": "Add"
+  },
+  "nav": {
+    "groupProjects": "Projects",
+    "groupAssets": "Assets",
+    "groupAdmin": "System Admin",
+    "allProjects": "All Projects",
+    "allCustomers": "All Customers",
+    "allRisks": "All Risks",
+    "allIssues": "All Issues",
+    "allRetrospectives": "All Retrospectives",
+    "allKnowledge": "All Knowledge",
+    "allMemos": "All Memos",
+    "adminUsers": "Users",
+    "adminAuditLogs": "Audit Logs",
+    "adminRoleChanges": "Role Changes",
+    "adminBadge": "Admin",
+    "myTasks": "My Tasks",
+    "memos": "Memos",
+    "settings": "Settings"
+  },
+  "attachment": {
+    "relatedUrl": "Related URLs",
+    "document": "Document",
+    "fetchFailed": "Failed to fetch attachments",
+    "addFailed": "Failed to add",
+    "saveFailed": "Failed to save",
+    "deleteConfirm": "Delete this attachment?",
+    "deleteUrlConfirm": "Delete this URL?",
+    "deleteFailed": "Failed to delete",
+    "noAttachments": "No attachments",
+    "displayName": "Display Name",
+    "exampleSpec": "e.g. Specification",
+    "stagedHint": "(automatically saved on creation)",
+    "stagedNone": "No attachments",
+    "urlInvalidScheme": "Must start with http:// or https://",
+    "notSet": "Not set",
+    "setUrl": "Set URL",
+    "addUrl": "+ Add URL"
+  },
+  "common": {
+    "loading": "Loading..."
   },
   "field": {
     "title": "Title",

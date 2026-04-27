@@ -28,7 +28,7 @@ type Props = {
   canEdit: boolean;
   /** 見出しラベル (例: '一次情報源 URL') */
   label: string;
-  /** 表示名のデフォルト (例: 'ドキュメント')。ユーザは編集可能 */
+  /** 表示名のデフォルト。省略時は attachment.document を使用 */
   defaultDisplayName?: string;
 };
 
@@ -38,17 +38,19 @@ export function SingleUrlField({
   slot,
   canEdit,
   label,
-  defaultDisplayName = 'ドキュメント',
+  defaultDisplayName,
 }: Props) {
-  const t = useTranslations('action');
+  const tAction = useTranslations('action');
+  const tAttach = useTranslations('attachment');
   const { withLoading } = useLoading();
+  const resolvedDefaultDisplayName = defaultDisplayName ?? tAttach('document');
   // react-hooks/set-state-in-effect 回避: loaded と current を 1 つの state にまとめる
   type CurrentState =
     | { loaded: false }
     | { loaded: true; current: AttachmentDTO | null };
   const [state, setState] = useState<CurrentState>({ loaded: false });
   const [editing, setEditing] = useState(false);
-  const [displayName, setDisplayName] = useState(defaultDisplayName);
+  const [displayName, setDisplayName] = useState(resolvedDefaultDisplayName);
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
 
@@ -57,7 +59,7 @@ export function SingleUrlField({
       `/api/attachments?entityType=${entityType}&entityId=${entityId}&slot=${slot}`,
     );
     if (!res.ok) {
-      setError('添付の取得に失敗しました');
+      setError(tAttach('fetchFailed'));
       setState({ loaded: true, current: null });
       return;
     }
@@ -65,7 +67,7 @@ export function SingleUrlField({
     const first = (json.data ?? [])[0] as AttachmentDTO | undefined;
     setState({ loaded: true, current: first ?? null });
     setError('');
-  }, [entityType, entityId, slot]);
+  }, [entityType, entityId, slot, tAttach]);
 
   // 初回 mount 時と entity 変更時に単数スロット添付をサーバから同期取得する。
   // これは外部システム (API) との同期であり react-hooks/set-state-in-effect の
@@ -89,30 +91,30 @@ export function SingleUrlField({
           entityType,
           entityId,
           slot,
-          displayName: displayName || defaultDisplayName,
+          displayName: displayName || resolvedDefaultDisplayName,
           url,
         }),
       }),
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || '保存に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || tAttach('saveFailed'));
       return;
     }
     setEditing(false);
-    setDisplayName(defaultDisplayName);
+    setDisplayName(resolvedDefaultDisplayName);
     setUrl('');
     await reload();
   }
 
   async function handleClear() {
     if (!current) return;
-    if (!confirm('この URL を削除しますか？')) return;
+    if (!confirm(tAttach('deleteUrlConfirm'))) return;
     const res = await withLoading(() =>
       fetch(`/api/attachments/${current.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      setError('削除に失敗しました');
+      setError(tAttach('deleteFailed'));
       return;
     }
     await reload();
@@ -147,7 +149,7 @@ export function SingleUrlField({
                   setEditing(true);
                 }}
               >
-                編集
+                {tAction('edit')}
               </Button>
               <Button
                 type="button"
@@ -156,7 +158,7 @@ export function SingleUrlField({
                 className="text-destructive"
                 onClick={handleClear}
               >
-                削除
+                {tAction('delete')}
               </Button>
             </>
           )}
@@ -167,10 +169,10 @@ export function SingleUrlField({
         <>
           {canEdit ? (
             <Button type="button" variant="outline" size="sm" onClick={() => setEditing(true)}>
-              URL を設定
+              {tAttach('setUrl')}
             </Button>
           ) : (
-            <p className="text-sm text-muted-foreground">未設定</p>
+            <p className="text-sm text-muted-foreground">{tAttach('notSet')}</p>
           )}
         </>
       )}
@@ -178,7 +180,7 @@ export function SingleUrlField({
       {editing && canEdit && (
         <form onSubmit={handleSave} className="flex items-end gap-2 rounded border bg-muted p-2">
           <div className="flex-1 space-y-1">
-            <Label className="text-xs">表示名</Label>
+            <Label className="text-xs">{tAttach('displayName')}</Label>
             <Input
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
@@ -197,9 +199,9 @@ export function SingleUrlField({
               required
             />
           </div>
-          <Button type="submit" size="sm">{t('save')}</Button>
+          <Button type="submit" size="sm">{tAction('save')}</Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
-            取消
+            {tAction('cancel')}
           </Button>
         </form>
       )}

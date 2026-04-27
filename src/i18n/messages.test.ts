@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import jaMessages from './messages/ja.json';
 
-/** Phase A で必須となる action キー (PR #77 で導入)。 */
+/** Phase A で必須となる action キー (PR #77 で導入、Phase C-2 で 'add' 追加)。 */
 const REQUIRED_ACTION_KEYS = [
   'save',
   'cancel',
@@ -23,6 +23,7 @@ const REQUIRED_ACTION_KEYS = [
   'close',
   'today',
   'clear',
+  'add',
 ] as const;
 
 /** Phase B で必須となる field キー (PR #81 で導入)。 */

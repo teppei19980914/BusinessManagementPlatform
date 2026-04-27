@@ -19,6 +19,7 @@
  *   - 失敗分だけ親に返し、ユーザに「一部添付の保存に失敗しました」と伝える
  */
 
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -38,7 +39,10 @@ type Props = {
 /** URL スキームのクライアント側簡易検査 (サーバ側 validator とロジックを揃える) */
 const SAFE_URL_SCHEME = /^https?:\/\//i;
 
-export function StagedAttachmentsInput({ value, onChange, label = '関連 URL' }: Props) {
+export function StagedAttachmentsInput({ value, onChange, label }: Props) {
+  const t = useTranslations('attachment');
+  const tAction = useTranslations('action');
+  const resolvedLabel = label ?? t('relatedUrl');
   function addEmpty() {
     onChange([...value, { displayName: '', url: '' }]);
   }
@@ -51,20 +55,20 @@ export function StagedAttachmentsInput({ value, onChange, label = '関連 URL' }
 
   return (
     <div className="space-y-2">
-      <Label>{label} <span className="text-xs text-muted-foreground">(作成後に自動で保存されます)</span></Label>
+      <Label>{resolvedLabel} <span className="text-xs text-muted-foreground">{t('stagedHint')}</span></Label>
       {value.length === 0 && (
-        <p className="text-xs text-muted-foreground">添付なし</p>
+        <p className="text-xs text-muted-foreground">{t('stagedNone')}</p>
       )}
       {value.map((item, i) => {
         const schemeInvalid = item.url.length > 0 && !SAFE_URL_SCHEME.test(item.url);
         return (
           <div key={i} className="flex items-end gap-2 rounded border bg-muted p-2">
             <div className="flex-1 space-y-1">
-              <Label className="text-xs">表示名</Label>
+              <Label className="text-xs">{t('displayName')}</Label>
               <Input
                 value={item.displayName}
                 onChange={(e) => updateAt(i, { displayName: e.target.value })}
-                placeholder="例: 設計書"
+                placeholder={t('exampleSpec')}
                 maxLength={200}
               />
             </div>
@@ -79,7 +83,7 @@ export function StagedAttachmentsInput({ value, onChange, label = '関連 URL' }
                 pattern="https?://.*"
               />
               {schemeInvalid && (
-                <p className="text-xs text-destructive">http:// または https:// で始まる必要があります</p>
+                <p className="text-xs text-destructive">{t('urlInvalidScheme')}</p>
               )}
             </div>
             <Button
@@ -89,13 +93,13 @@ export function StagedAttachmentsInput({ value, onChange, label = '関連 URL' }
               className="text-destructive"
               onClick={() => removeAt(i)}
             >
-              削除
+              {tAction('delete')}
             </Button>
           </div>
         );
       })}
       <Button type="button" variant="outline" size="sm" onClick={addEmpty}>
-        + URL を追加
+        {t('addUrl')}
       </Button>
     </div>
   );
