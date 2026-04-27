@@ -21,6 +21,7 @@
 
 import { Suspense, useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +44,7 @@ type MfaData = {
 };
 
 function SetupPasswordForm() {
+  const t = useTranslations('auth');
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
 
@@ -70,7 +72,7 @@ function SetupPasswordForm() {
 
   useEffect(() => {
     if (!token) {
-      setTokenError('無効なリンクです');
+      setTokenError(t('invalidLink'));
       setIsValidating(false);
       return;
     }
@@ -83,19 +85,19 @@ function SetupPasswordForm() {
         }
       })
       .catch(() => {
-        setTokenError('トークンの検証に失敗しました');
+        setTokenError(t('tokenVerifyFailed'));
       })
       .finally(() => {
         setIsValidating(false);
       });
-  }, [token]);
+  }, [token, t]);
 
   async function handlePasswordSubmit(e: React.FormEvent) {
     e.preventDefault();
     setPwError('');
 
     if (password !== confirmPassword) {
-      setPwError('パスワードが一致しません');
+      setPwError(t('passwordMismatch'));
       return;
     }
 
@@ -114,7 +116,7 @@ function SetupPasswordForm() {
         setPwError(
           json.error?.details?.[0]?.message
             || json.error?.message
-            || 'パスワードの設定に失敗しました',
+            || t('passwordSetFailed'),
         );
         return;
       }
@@ -131,7 +133,7 @@ function SetupPasswordForm() {
         setStep('done');
       }
     } catch {
-      setPwError('エラーが発生しました。しばらくしてから再度お試しください。');
+      setPwError(t('errorRetry'));
     } finally {
       setPwLoading(false);
     }
@@ -153,7 +155,7 @@ function SetupPasswordForm() {
 
       if (!res.ok) {
         setMfaError(
-          json.error?.message || 'MFA 登録に失敗しました。コードを確認して再度お試しください。',
+          json.error?.message || t('mfaRegisterFailed'),
         );
         return;
       }
@@ -161,7 +163,7 @@ function SetupPasswordForm() {
       // 成功: リカバリーコード表示画面へ (recoveryCodes は step=password で保持済)
       setStep('done');
     } catch {
-      setMfaError('エラーが発生しました。しばらくしてから再度お試しください。');
+      setMfaError(t('errorRetry'));
     } finally {
       setMfaLoading(false);
     }
@@ -174,7 +176,7 @@ function SetupPasswordForm() {
       <Screen>
         <Card className="w-full max-w-[min(90vw,28rem)]">
           <CardContent className="py-8 text-center text-muted-foreground">
-            確認中...
+            {t('verifying')}
           </CardContent>
         </Card>
       </Screen>
@@ -186,15 +188,15 @@ function SetupPasswordForm() {
       <Screen>
         <Card className="w-full max-w-[min(90vw,28rem)]">
           <CardHeader className="text-center">
-            <CardTitle className="text-2xl">たすきば</CardTitle>
+            <CardTitle className="text-2xl">{t('appName')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{tokenError}</div>
             <p className="text-center text-sm text-muted-foreground">
-              管理者に新しい招待メールの再送を依頼してください。
+              {t('tokenInvalidContact')}
             </p>
             <Button className="w-full" onClick={() => { window.location.href = '/login'; }}>
-              ログイン画面へ
+              {t('toLoginScreen')}
             </Button>
           </CardContent>
         </Card>
@@ -207,10 +209,10 @@ function SetupPasswordForm() {
       <Screen>
         <Card className="w-full max-w-[min(90vw,28rem)]">
           <CardHeader className="text-center">
-            <CardTitle className="text-2xl">セットアップ完了</CardTitle>
+            <CardTitle className="text-2xl">{t('setupComplete')}</CardTitle>
             <CardDescription>
-              アカウントが有効化されました。以下のリカバリーコードを安全な場所に保管してください。
-              <strong className="block mt-1 text-destructive">このコードは再表示できません。</strong>
+              {t('setupCompleteHint')}
+              <strong className="block mt-1 text-destructive">{t('recoveryCodeOnce')}</strong>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -222,7 +224,7 @@ function SetupPasswordForm() {
               ))}
             </div>
             <Button className="w-full" onClick={() => { window.location.href = '/login'; }}>
-              ログイン画面へ
+              {t('toLoginScreen')}
             </Button>
           </CardContent>
         </Card>
@@ -235,11 +237,9 @@ function SetupPasswordForm() {
       <Screen>
         <Card className="w-full max-w-[min(90vw,28rem)]">
           <CardHeader className="text-center">
-            <CardTitle className="text-2xl">多要素認証の設定</CardTitle>
+            <CardTitle className="text-2xl">{t('mfaSetupTitle')}</CardTitle>
             <CardDescription>
-              システム管理者アカウントは多要素認証 (MFA) が必須です。
-              下の QR コードを認証アプリ (Google Authenticator 等) で読み取り、
-              表示された 6 桁のコードを入力してアカウントを有効化してください。
+              {t('mfaSetupHint')}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -247,14 +247,14 @@ function SetupPasswordForm() {
               <div className="flex justify-center rounded-md border border-input bg-background p-4">
                 <Image
                   src={mfaData.qrCodeDataUrl}
-                  alt="MFA QR コード"
+                  alt={t('mfaQrCode')}
                   width={200}
                   height={200}
                   unoptimized
                 />
               </div>
               <details className="text-xs text-muted-foreground">
-                <summary className="cursor-pointer">QR コードを読み取れない場合 (シークレット手動入力)</summary>
+                <summary className="cursor-pointer">{t('mfaSecretManual')}</summary>
                 <div className="mt-2 break-all rounded-md bg-muted p-2 font-mono">
                   {mfaData.otpauthUri}
                 </div>
@@ -264,7 +264,7 @@ function SetupPasswordForm() {
                   <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{mfaError}</div>
                 )}
                 <div className="space-y-2">
-                  <Label htmlFor="totp">6 桁のコード</Label>
+                  <Label htmlFor="totp">{t('sixDigitCode')}</Label>
                   <Input
                     id="totp"
                     type="text"
@@ -278,12 +278,11 @@ function SetupPasswordForm() {
                   />
                 </div>
                 <Button type="submit" className="w-full" disabled={mfaLoading || totpCode.length !== 6}>
-                  {mfaLoading ? '有効化中...' : '多要素認証を有効化してアカウントを有効化'}
+                  {mfaLoading ? t('mfaActivating') : t('mfaActivate')}
                 </Button>
               </form>
               <p className="text-xs text-muted-foreground">
-                ※ この画面を閉じても、トークンの有効期限内であれば再度同じリンクから
-                このステップに戻れます (パスワードは既に保存されています)。
+                {t('mfaSetupNote')}
               </p>
             </div>
           </CardContent>
@@ -297,8 +296,8 @@ function SetupPasswordForm() {
     <Screen>
       <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">たすきば</CardTitle>
-          <CardDescription>パスワードを設定してアカウントを有効化します</CardDescription>
+          <CardTitle className="text-2xl">{t('appName')}</CardTitle>
+          <CardDescription>{t('setupSubtitle')}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
@@ -306,7 +305,7 @@ function SetupPasswordForm() {
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{pwError}</div>
             )}
             <div className="space-y-2">
-              <Label htmlFor="password">パスワード</Label>
+              <Label htmlFor="password">{t('password')}</Label>
               <Input
                 id="password"
                 type="password"
@@ -316,11 +315,11 @@ function SetupPasswordForm() {
                 autoComplete="new-password"
               />
               <p className="text-xs text-muted-foreground">
-                10文字以上、英大文字・英小文字・数字・記号のうち3種以上
+                {t('passwordHint')}
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="confirmPassword">パスワード（確認）</Label>
+              <Label htmlFor="confirmPassword">{t('passwordConfirm')}</Label>
               <Input
                 id="confirmPassword"
                 type="password"
@@ -331,7 +330,7 @@ function SetupPasswordForm() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={pwLoading}>
-              {pwLoading ? '設定中...' : 'パスワードを設定'}
+              {pwLoading ? t('settingPassword') : t('setPassword')}
             </Button>
           </form>
         </CardContent>

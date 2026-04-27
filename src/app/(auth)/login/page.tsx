@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,6 +20,7 @@ export default function LoginPage() {
 }
 
 function LoginForm() {
+  const t = useTranslations('auth');
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/';
   const [email, setEmail] = useState('');
@@ -56,14 +58,12 @@ function LoginForm() {
         : null;
 
       if (lock?.status === 'permanent_lock') {
-        setError('アカウントがロックされています。管理者に解除を依頼してください。');
+        setError(t('accountLocked'));
       } else if (lock?.status === 'temporary_lock') {
         // PR #117: JST 固定フォーマットで表示 (環境依存せず常に同じ表記)
-        setError(
-          `ログイン失敗が続いたためアカウントが一時ロックされています。${formatDateTimeFull(lock.unlockAt)} 以降に再度お試しください。`,
-        );
+        setError(t('temporaryLock', { unlockAt: formatDateTimeFull(lock.unlockAt) }));
       } else {
-        setError('メールアドレスまたはパスワードが正しくありません');
+        setError(t('invalidCredentials'));
       }
       setIsLoading(false);
       return;
@@ -78,7 +78,7 @@ function LoginForm() {
     <div className="flex min-h-screen items-center justify-center bg-muted px-4">
       <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">たすきば</CardTitle>
+          <CardTitle className="text-2xl">{t('appName')}</CardTitle>
           <CardDescription>Knowledge Relay</CardDescription>
         </CardHeader>
         <CardContent>
@@ -87,7 +87,7 @@ function LoginForm() {
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
             )}
             <div className="space-y-2">
-              <Label htmlFor="email">メールアドレス</Label>
+              <Label htmlFor="email">{t('email')}</Label>
               <Input
                 id="email"
                 type="email"
@@ -99,7 +99,7 @@ function LoginForm() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">パスワード</Label>
+              <Label htmlFor="password">{t('password')}</Label>
               <Input
                 id="password"
                 type="password"
@@ -110,11 +110,11 @@ function LoginForm() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? 'ログイン中...' : 'ログイン'}
+              {isLoading ? t('loginInProgress') : t('loginButton')}
             </Button>
             <p className="text-center text-xs text-muted-foreground">
               <a href="/reset-password" className="text-info hover:underline">
-                パスワードをお忘れですか？
+                {t('forgotPassword')}
               </a>
             </p>
           </form>
