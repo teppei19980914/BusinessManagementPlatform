@@ -18,6 +18,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -63,6 +64,8 @@ const emptyForm: FormState = {
 
 export function CustomersClient({ initialCustomers }: Props) {
   const router = useRouter();
+  const t = useTranslations('customer');
+  const tAction = useTranslations('action');
   const { withLoading } = useLoading();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -87,7 +90,7 @@ export function CustomersClient({ initialCustomers }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || '顧客の作成に失敗しました');
+      setError(json.error?.message || t('createFailed'));
       return;
     }
 
@@ -102,14 +105,14 @@ export function CustomersClient({ initialCustomers }: Props) {
       router.push(`/customers/${customer.id}`);
       return;
     }
-    if (!window.confirm(`顧客「${customer.name}」を削除します。よろしいですか？`)) return;
+    if (!window.confirm(t('deleteConfirm', { name: customer.name }))) return;
 
     const res = await withLoading(() =>
       fetch(`/api/customers/${customer.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      window.alert(json.error?.message || '顧客の削除に失敗しました');
+      window.alert(json.error?.message || t('deleteFailed'));
       return;
     }
     router.refresh();
@@ -118,17 +121,17 @@ export function CustomersClient({ initialCustomers }: Props) {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">顧客管理</h2>
+        <h2 className="text-xl font-semibold">{t('listTitle')}</h2>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
-            新規顧客登録
+            {t('createButton')}
           </DialogTrigger>
           {/* PR #112: admin ダイアログの大画面余白対策 (基底で scroll 対応済) */}
           <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,44rem)]">
             <DialogHeader>
-              <DialogTitle>新規顧客登録</DialogTitle>
+              <DialogTitle>{t('createDialogTitle')}</DialogTitle>
               <DialogDescription>
-                顧客情報を入力してください。顧客名のみ必須です。
+                {t('createDialogDescription')}
               </DialogDescription>
             </DialogHeader>
 
@@ -140,7 +143,7 @@ export function CustomersClient({ initialCustomers }: Props) {
 
             <form onSubmit={handleCreate} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="customer-name">顧客名 *</Label>
+                <Label htmlFor="customer-name">{t('fieldNameRequired')}</Label>
                 <Input
                   id="customer-name"
                   value={form.name}
@@ -150,7 +153,7 @@ export function CustomersClient({ initialCustomers }: Props) {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="customer-department">部門</Label>
+                <Label htmlFor="customer-department">{t('fieldDepartment')}</Label>
                 <Input
                   id="customer-department"
                   value={form.department}
@@ -159,7 +162,7 @@ export function CustomersClient({ initialCustomers }: Props) {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="customer-contact-person">担当者</Label>
+                <Label htmlFor="customer-contact-person">{t('fieldContactPerson')}</Label>
                 <Input
                   id="customer-contact-person"
                   value={form.contactPerson}
@@ -168,7 +171,7 @@ export function CustomersClient({ initialCustomers }: Props) {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="customer-contact-email">担当者メール</Label>
+                <Label htmlFor="customer-contact-email">{t('fieldContactEmail')}</Label>
                 <Input
                   id="customer-contact-email"
                   type="email"
@@ -178,7 +181,7 @@ export function CustomersClient({ initialCustomers }: Props) {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="customer-notes">備考</Label>
+                <Label htmlFor="customer-notes">{t('fieldNotes')}</Label>
                 <textarea
                   id="customer-notes"
                   className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -190,9 +193,9 @@ export function CustomersClient({ initialCustomers }: Props) {
               </div>
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
-                  キャンセル
+                  {tAction('cancel')}
                 </Button>
-                <Button type="submit">登録</Button>
+                <Button type="submit">{t('createSubmit')}</Button>
               </div>
             </form>
           </DialogContent>
@@ -203,19 +206,19 @@ export function CustomersClient({ initialCustomers }: Props) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>顧客名</TableHead>
-              <TableHead>部門</TableHead>
-              <TableHead>担当者</TableHead>
-              <TableHead>メール</TableHead>
-              <TableHead>紐付プロジェクト</TableHead>
-              <TableHead className="text-right">操作</TableHead>
+              <TableHead>{t('fieldName')}</TableHead>
+              <TableHead>{t('fieldDepartment')}</TableHead>
+              <TableHead>{t('fieldContactPerson')}</TableHead>
+              <TableHead>{t('fieldEmail')}</TableHead>
+              <TableHead>{t('fieldRelatedProjects')}</TableHead>
+              <TableHead className="text-right">{t('fieldActions')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {initialCustomers.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground">
-                  顧客が登録されていません
+                  {t('listEmpty')}
                 </TableCell>
               </TableRow>
             )}
@@ -234,9 +237,9 @@ export function CustomersClient({ initialCustomers }: Props) {
                 <TableCell>{customer.contactEmail || '—'}</TableCell>
                 <TableCell>
                   {customer.activeProjectCount > 0 ? (
-                    <Badge variant="secondary">{customer.activeProjectCount} 件</Badge>
+                    <Badge variant="secondary">{t('projectCount', { count: customer.activeProjectCount })}</Badge>
                   ) : (
-                    <span className="text-muted-foreground">0 件</span>
+                    <span className="text-muted-foreground">{t('projectCount', { count: 0 })}</span>
                   )}
                 </TableCell>
                 <TableCell className="text-right">
@@ -246,11 +249,11 @@ export function CustomersClient({ initialCustomers }: Props) {
                     onClick={() => handleDelete(customer)}
                     title={
                       customer.activeProjectCount > 0
-                        ? '紐付くプロジェクトがあります — 詳細画面のカスケード削除をご利用ください'
+                        ? t('deleteBlockedTooltip')
                         : undefined
                     }
                   >
-                    削除
+                    {tAction('delete')}
                   </Button>
                 </TableCell>
               </TableRow>

@@ -103,13 +103,14 @@ function LazyTabContent<T>({
   state: LazyState<T>;
   children: (data: T) => React.ReactNode;
 }) {
+  const t = useTranslations('project');
   if (state.status === 'idle' || state.status === 'loading') {
-    return <div className="py-8 text-center text-sm text-muted-foreground">読み込み中...</div>;
+    return <div className="py-8 text-center text-sm text-muted-foreground">{t('overviewLoading')}</div>;
   }
   if (state.status === 'error') {
     return (
       <div className="py-8 text-center text-sm text-destructive">
-        読み込みに失敗しました: {state.error}
+        {t('overviewLoadFailed', { error: state.error })}
       </div>
     );
   }
@@ -120,7 +121,8 @@ export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
   canEdit, canCreate, canCreateOwnedList, customers,
 }: Props) {
-  const t = useTranslations('action');
+  const t = useTranslations('project');
+  const tAction = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
@@ -306,7 +308,7 @@ export function ProjectDetailClient({
     );
     if (!res.ok) {
       const json = await res.json();
-      setEditError(json.error?.message || '更新に失敗しました');
+      setEditError(json.error?.message || t('updateFailed'));
       return;
     }
     setIsEditOpen(false);
@@ -389,7 +391,7 @@ export function ProjectDetailClient({
           {activeTab === 'overview' && canChangeStatus && nextStatuses.length > 0 && (
             <Select onValueChange={handleStatusChange} disabled={isChangingStatus}>
               <SelectTrigger className="w-36 md:w-44">
-                <SelectValue placeholder="状態変更" />
+                <SelectValue placeholder={t('statusChangePlaceholder')} />
               </SelectTrigger>
               <SelectContent>
                 {nextStatuses.map((s) => (
@@ -403,22 +405,22 @@ export function ProjectDetailClient({
           {activeTab === 'overview' && (isActualPmTl || isSystemAdmin) && (
             <>
               <Dialog open={isEditOpen} onOpenChange={handleEditOpenChange}>
-                <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{t('edit')}</DialogTrigger>
+                <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{tAction('edit')}</DialogTrigger>
                 {/* PR #87 横展開: grid-cols-2 + DateFieldWithActions を含むため max-w-[min(90vw,42rem)] に揃える */}
                 <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
                   <DialogHeader>
-                    <DialogTitle>プロジェクト編集</DialogTitle>
-                    <DialogDescription>プロジェクト情報を編集してください。</DialogDescription>
+                    <DialogTitle>{t('editDialogTitle')}</DialogTitle>
+                    <DialogDescription>{t('editDialogDescription')}</DialogDescription>
                   </DialogHeader>
                   <form onSubmit={handleEdit} className="space-y-4">
                     {editError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{editError}</div>}
                     <div className="space-y-2">
-                      <Label>プロジェクト名</Label>
+                      <Label>{t('fieldName')}</Label>
                       <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
                     </div>
                     <div className="space-y-2">
                       {/* PR #111-2: 顧客は Customer マスタから選択 */}
-                      <Label>顧客</Label>
+                      <Label>{t('fieldCustomer')}</Label>
                       <select
                         value={editForm.customerId}
                         onChange={(e) => setEditForm({ ...editForm, customerId: e.target.value })}
@@ -433,58 +435,58 @@ export function ProjectDetailClient({
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <Label>目的</Label>
+                      <Label>{t('fieldPurpose')}</Label>
                       <MarkdownTextarea value={editForm.purpose} onChange={(v) => setEditForm({ ...editForm, purpose: v })} previousValue={project.purpose} rows={3} required />
                     </div>
                     {/* feat/overview-tab-detail (PR-B): 背景 / スコープも編集可能に追加 (旧仕様は欠落していた) */}
                     <div className="space-y-2">
-                      <Label>背景</Label>
+                      <Label>{t('fieldBackground')}</Label>
                       <MarkdownTextarea value={editForm.background} onChange={(v) => setEditForm({ ...editForm, background: v })} previousValue={project.background} rows={3} required />
                     </div>
                     <div className="space-y-2">
-                      <Label>スコープ</Label>
+                      <Label>{t('fieldScope')}</Label>
                       <MarkdownTextarea value={editForm.scope} onChange={(v) => setEditForm({ ...editForm, scope: v })} previousValue={project.scope} rows={3} required />
                     </div>
                     <div className="space-y-2">
-                      <Label>開発方式</Label>
+                      <Label>{t('fieldDevMethod')}</Label>
                       <select value={editForm.devMethod} onChange={(e) => setEditForm({ ...editForm, devMethod: e.target.value })} className={nativeSelectClass}>
                         {Object.entries(DEV_METHODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>開始予定日</Label>
+                        <Label>{t('fieldPlannedStartDate')}</Label>
                         <DateFieldWithActions value={editForm.plannedStartDate} onChange={(v) => setEditForm({ ...editForm, plannedStartDate: v })} required hideClear />
                       </div>
                       <div className="space-y-2">
-                        <Label>終了予定日</Label>
+                        <Label>{t('fieldPlannedEndDate')}</Label>
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} required hideClear />
                       </div>
                     </div>
                     {/* feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2) */}
                     <div className="space-y-2">
-                      <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
-                      <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder="例: 金融, 基幹業務, 会計" maxLength={500} />
+                      <Label>{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                      <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder={t('tagPlaceholderBusinessDomain')} maxLength={500} />
                     </div>
                     <div className="space-y-2">
-                      <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
-                      <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder="例: React, Next.js, TypeScript" maxLength={500} />
+                      <Label>{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                      <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder={t('tagPlaceholderTechStack')} maxLength={500} />
                     </div>
                     <div className="space-y-2">
-                      <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り)</span></Label>
-                      <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder="例: 要件定義, 設計, 開発" maxLength={500} />
+                      <Label>{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                      <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder={t('tagPlaceholderProcess')} maxLength={500} />
                     </div>
-                    <Button type="submit" className="w-full">更新</Button>
+                    <Button type="submit" className="w-full">{t('editSubmit')}</Button>
                   </form>
                 </DialogContent>
               </Dialog>
             </>
           )}
           {activeTab === 'overview' && canDeleteProject && (
-            <Button variant="outline" className="text-destructive" onClick={openDeleteDialog}>{t('delete')}</Button>
+            <Button variant="outline" className="text-destructive" onClick={openDeleteDialog}>{tAction('delete')}</Button>
           )}
           <Button variant="outline" onClick={() => router.push('/projects')}>
-            一覧に戻る
+            {t('backToList')}
           </Button>
         </div>
       </div>
@@ -498,10 +500,10 @@ export function ProjectDetailClient({
           - [&>*]:flex-none: 子 TabsTrigger の `flex-1` を打ち消しコンテンツ幅にする
         */}
         <TabsList className="h-auto flex-wrap [&>*]:flex-none">
-          <TabsTrigger value="overview">概要</TabsTrigger>
-          {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
+          <TabsTrigger value="overview">{t('tabOverview')}</TabsTrigger>
+          {canEdit && <TabsTrigger value="estimates">{t('tabEstimates')}</TabsTrigger>}
           {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止し WBS 管理タブ内に統合 */}
-          <TabsTrigger value="tasks">WBS管理</TabsTrigger>
+          <TabsTrigger value="tasks">{t('tabTasks')}</TabsTrigger>
           {/*
             PR #167 (feat/asset-tab-responsive-mobile):
             画面幅 lg+ では各「○○一覧」を従来通り独立タブとして表示、
@@ -510,12 +512,12 @@ export function ProjectDetailClient({
             dashboard-header.tsx の 3 分類プルダウン pattern と同じ仕組み。
           */}
           {/* PC 表示: 個別タブ (lg+) */}
-          <TabsTrigger value="risks" className="hidden lg:inline-flex">リスク一覧</TabsTrigger>
-          <TabsTrigger value="issues" className="hidden lg:inline-flex">課題一覧</TabsTrigger>
-          <TabsTrigger value="retrospectives" className="hidden lg:inline-flex">振り返り一覧</TabsTrigger>
-          <TabsTrigger value="knowledge" className="hidden lg:inline-flex">ナレッジ一覧</TabsTrigger>
+          <TabsTrigger value="risks" className="hidden lg:inline-flex">{t('tabRisks')}</TabsTrigger>
+          <TabsTrigger value="issues" className="hidden lg:inline-flex">{t('tabIssues')}</TabsTrigger>
+          <TabsTrigger value="retrospectives" className="hidden lg:inline-flex">{t('tabRetrospectives')}</TabsTrigger>
+          <TabsTrigger value="knowledge" className="hidden lg:inline-flex">{t('tabKnowledge')}</TabsTrigger>
           {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案 */}
-          <TabsTrigger value="suggestions" className="hidden lg:inline-flex">参考</TabsTrigger>
+          <TabsTrigger value="suggestions" className="hidden lg:inline-flex">{t('tabSuggestions')}</TabsTrigger>
           {/* Mobile 表示: 資産プルダウン (lg-)。配下の値が active なら親も active 表示。 */}
           <Menu.Root>
             <Menu.Trigger
@@ -525,9 +527,9 @@ export function ProjectDetailClient({
                   ? 'bg-background font-medium shadow-sm text-foreground'
                   : 'text-muted-foreground',
               )}
-              aria-label="資産メニューを開く"
+              aria-label={t('assetsMenuAria')}
             >
-              <span>資産</span>
+              <span>{t('assetsMenuLabel')}</span>
               <ChevronDownIcon className="size-3.5" />
             </Menu.Trigger>
             <Menu.Portal>
@@ -540,11 +542,11 @@ export function ProjectDetailClient({
                   )}
                 >
                   {[
-                    { value: 'risks', label: 'リスク一覧' },
-                    { value: 'issues', label: '課題一覧' },
-                    { value: 'retrospectives', label: '振り返り一覧' },
-                    { value: 'knowledge', label: 'ナレッジ一覧' },
-                    { value: 'suggestions', label: '参考' },
+                    { value: 'risks', label: t('tabRisks') },
+                    { value: 'issues', label: t('tabIssues') },
+                    { value: 'retrospectives', label: t('tabRetrospectives') },
+                    { value: 'knowledge', label: t('tabKnowledge') },
+                    { value: 'suggestions', label: t('tabSuggestions') },
                   ].map((opt) => (
                     <Menu.Item
                       key={opt.value}
@@ -562,12 +564,12 @@ export function ProjectDetailClient({
             </Menu.Portal>
           </Menu.Root>
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
-            <TabsTrigger value="members">メンバー</TabsTrigger>
+            <TabsTrigger value="members">{t('tabMembers')}</TabsTrigger>
           )}
           {/* feat/stakeholder-management: ステークホルダー管理 (PMBOK 13)。
               個人情報・人物評を含むため PM/TL + admin のみ表示・閲覧可。 */}
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
-            <TabsTrigger value="stakeholders">ステークホルダー</TabsTrigger>
+            <TabsTrigger value="stakeholders">{t('tabStakeholders')}</TabsTrigger>
           )}
         </TabsList>
 
@@ -580,28 +582,28 @@ export function ProjectDetailClient({
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
               onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? 'クリックで編集' : undefined}
+              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
             >
-              <h3 className="mb-2 font-semibold">基本情報</h3>
+              <h3 className="mb-2 font-semibold">{t('overviewBasicInfo')}</h3>
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">プロジェクト名</dt>
+                  <dt className="text-muted-foreground">{t('fieldName')}</dt>
                   <dd className="font-medium">{project.name}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">顧客</dt>
+                  <dt className="text-muted-foreground">{t('fieldCustomer')}</dt>
                   <dd>{project.customerName}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">開発方式</dt>
+                  <dt className="text-muted-foreground">{t('fieldDevMethod')}</dt>
                   <dd>{DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">開始予定日</dt>
+                  <dt className="text-muted-foreground">{t('fieldPlannedStartDate')}</dt>
                   <dd>{project.plannedStartDate}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">終了予定日</dt>
+                  <dt className="text-muted-foreground">{t('fieldPlannedEndDate')}</dt>
                   <dd>{project.plannedEndDate}</dd>
                 </div>
               </dl>
@@ -609,9 +611,9 @@ export function ProjectDetailClient({
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
               onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? 'クリックで編集' : undefined}
+              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
             >
-              <h3 className="mb-2 font-semibold">目的</h3>
+              <h3 className="mb-2 font-semibold">{t('fieldPurpose')}</h3>
               <div className="text-sm text-foreground">
                 <MarkdownDisplay value={project.purpose} />
               </div>
@@ -619,9 +621,9 @@ export function ProjectDetailClient({
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
               onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? 'クリックで編集' : undefined}
+              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
             >
-              <h3 className="mb-2 font-semibold">背景</h3>
+              <h3 className="mb-2 font-semibold">{t('fieldBackground')}</h3>
               <div className="text-sm text-foreground">
                 <MarkdownDisplay value={project.background} />
               </div>
@@ -629,15 +631,15 @@ export function ProjectDetailClient({
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
               onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? 'クリックで編集' : undefined}
+              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
             >
-              <h3 className="mb-2 font-semibold">スコープ</h3>
+              <h3 className="mb-2 font-semibold">{t('fieldScope')}</h3>
               <div className="text-sm text-foreground">
                 <MarkdownDisplay value={project.scope} />
               </div>
               {project.outOfScope && (
                 <>
-                  <h3 className="mb-2 mt-4 font-semibold">スコープ外</h3>
+                  <h3 className="mb-2 mt-4 font-semibold">{t('fieldOutOfScope')}</h3>
                   <div className="text-sm text-foreground">
                     <MarkdownDisplay value={project.outOfScope} />
                   </div>
@@ -650,49 +652,49 @@ export function ProjectDetailClient({
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
               onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? 'クリックで編集' : undefined}
+              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
             >
-              <h3 className="mb-2 font-semibold">業務ドメインタグ</h3>
+              <h3 className="mb-2 font-semibold">{t('fieldBusinessDomainTags')}</h3>
               {project.businessDomainTags.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
-                  {project.businessDomainTags.map((t) => (
-                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  {project.businessDomainTags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground">未設定</p>
+                <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
               )}
             </div>
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
               onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? 'クリックで編集' : undefined}
+              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
             >
-              <h3 className="mb-2 font-semibold">技術スタックタグ</h3>
+              <h3 className="mb-2 font-semibold">{t('fieldTechStackTags')}</h3>
               {project.techStackTags.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
-                  {project.techStackTags.map((t) => (
-                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  {project.techStackTags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground">未設定</p>
+                <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
               )}
             </div>
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
               onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? 'クリックで編集' : undefined}
+              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
             >
-              <h3 className="mb-2 font-semibold">工程タグ</h3>
+              <h3 className="mb-2 font-semibold">{t('fieldProcessTags')}</h3>
               {project.processTags.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
-                  {project.processTags.map((t) => (
-                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                  {project.processTags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground">未設定</p>
+                <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
               )}
             </div>
           </div>
@@ -700,9 +702,9 @@ export function ProjectDetailClient({
             <div
               className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
               onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? 'クリックで編集' : undefined}
+              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
             >
-              <h3 className="mb-2 font-semibold">備考</h3>
+              <h3 className="mb-2 font-semibold">{t('fieldNotes')}</h3>
               <div className="text-sm text-foreground">
                 <MarkdownDisplay value={project.notes} />
               </div>
@@ -711,20 +713,20 @@ export function ProjectDetailClient({
 
           {/* PR #64 Phase 2: プロジェクト関連 URL (メインドキュメント 1 本 + 参考資料 複数) */}
           <div className="rounded-lg border p-4 space-y-4">
-            <h3 className="font-semibold">関連 URL</h3>
+            <h3 className="font-semibold">{t('relatedUrlSection')}</h3>
             <SingleUrlField
               entityType="project"
               entityId={project.id}
               slot="primary"
               canEdit={canEdit}
-              label="メイン資料"
-              defaultDisplayName="提案書 / 見積根拠"
+              label={t('relatedUrlMainLabel')}
+              defaultDisplayName={t('relatedUrlMainDefault')}
             />
             <AttachmentList
               entityType="project"
               entityId={project.id}
               canEdit={canEdit}
-              label="その他の関連 URL"
+              label={t('relatedUrlOthers')}
             />
           </div>
         </TabsContent>
@@ -925,16 +927,15 @@ export function ProjectDetailClient({
       >
         <DialogContent className="max-w-[min(90vw,48rem)] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>類似ナレッジ / 過去課題の提案</DialogTitle>
+            <DialogTitle>{t('suggestionsModalTitle')}</DialogTitle>
             <DialogDescription>
-              新規プロジェクトに活用可能な過去資産を提案します。採用することで、
-              未然に防げるリスクを減らせます (後で「参考」タブからも参照可能です)。
+              {t('suggestionsModalDescription')}
             </DialogDescription>
           </DialogHeader>
           <SuggestionsPanel projectId={project.id} canAdopt={canCreate} />
           <div className="mt-4 flex justify-end">
             <Button variant="outline" onClick={closeSuggestionsModal}>
-              閉じる
+              {tAction('close')}
             </Button>
           </div>
         </DialogContent>
@@ -944,20 +945,18 @@ export function ProjectDetailClient({
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
         <DialogContent className="max-w-[min(90vw,36rem)]">
           <DialogHeader>
-            <DialogTitle>プロジェクトを削除しますか？</DialogTitle>
+            <DialogTitle>{t('deleteDialogTitle')}</DialogTitle>
             <DialogDescription>
-              この操作は取り消せません。各資産一覧 (リスク / 課題 / 振り返り / ナレッジ) は、
-              チェックを入れた項目のみ物理削除されます。チェックを入れないものは資産として
-              全○○画面に残ります。
+              {t('deleteDialogDescription')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-              <div className="mb-1 font-medium text-foreground">強制削除される項目 (選択不可)</div>
-              プロジェクト本体・概要・見積もり・WBS管理・ガント・メンバー・関連 URL
+              <div className="mb-1 font-medium text-foreground">{t('deleteForcedHeading')}</div>
+              {t('deleteForcedItems')}
             </div>
             <div className="space-y-2 rounded-md border border-border p-3">
-              <div className="mb-1 text-sm font-medium">資産として扱う項目 (各一覧から削除するかチェック)</div>
+              <div className="mb-1 text-sm font-medium">{t('deleteCascadeHeading')}</div>
               <label className="flex items-start gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -965,7 +964,7 @@ export function ProjectDetailClient({
                   onChange={(e) => setCascadeRisks(e.target.checked)}
                   className="mt-0.5 rounded"
                 />
-                <span>リスク一覧 (プロジェクトに紐づく「リスク」を削除)</span>
+                <span>{t('deleteCascadeRisks')}</span>
               </label>
               <label className="flex items-start gap-2 text-sm">
                 <input
@@ -974,7 +973,7 @@ export function ProjectDetailClient({
                   onChange={(e) => setCascadeIssues(e.target.checked)}
                   className="mt-0.5 rounded"
                 />
-                <span>課題一覧 (プロジェクトに紐づく「課題」を削除)</span>
+                <span>{t('deleteCascadeIssues')}</span>
               </label>
               <label className="flex items-start gap-2 text-sm">
                 <input
@@ -983,7 +982,7 @@ export function ProjectDetailClient({
                   onChange={(e) => setCascadeRetros(e.target.checked)}
                   className="mt-0.5 rounded"
                 />
-                <span>振り返り一覧 (プロジェクトの振り返り + コメントを削除)</span>
+                <span>{t('deleteCascadeRetros')}</span>
               </label>
               <label className="flex items-start gap-2 text-sm">
                 <input
@@ -993,22 +992,21 @@ export function ProjectDetailClient({
                   className="mt-0.5 rounded"
                 />
                 <span>
-                  ナレッジ一覧 (単独紐付けのみ物理削除。他プロジェクトと共有するナレッジは
-                  紐付けだけ解除し本体は残す)
+                  {t('deleteCascadeKnowledge')}
                 </span>
               </label>
             </div>
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
-              キャンセル
+              {tAction('cancel')}
             </Button>
             <Button
               variant="outline"
               className="border-destructive/40 text-destructive hover:bg-destructive/10"
               onClick={handleConfirmDelete}
             >
-              プロジェクトを削除する
+              {t('deleteConfirmButton')}
             </Button>
           </div>
         </DialogContent>

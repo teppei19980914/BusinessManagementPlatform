@@ -22,6 +22,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -95,6 +96,7 @@ export function ProjectsClient({
   customers,
 }: Props) {
   const router = useRouter();
+  const t = useTranslations('project');
   const { withLoading } = useLoading();
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -141,7 +143,7 @@ export function ProjectsClient({
     // Network/Console に出力されてしまう (fetch は 4xx でも throw しないがブラウザは必ず表示)。
     // 本サービスのエラー情報最小化方針に反するため、サーバに届く前に弾いて UI 上のみで通知する。
     if (!form.customerId) {
-      setError('顧客を選択してください');
+      setError(t('customerSelectError'));
       return;
     }
 
@@ -170,7 +172,7 @@ export function ProjectsClient({
 
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || t('createFailed'));
       return;
     }
 
@@ -208,15 +210,15 @@ export function ProjectsClient({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">プロジェクト一覧</h2>
+        <h2 className="text-xl font-semibold">{t('listTitle')}</h2>
         {isAdmin && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">新規プロジェクト</DialogTrigger>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{t('createButton')}</DialogTrigger>
             {/* PR #87 横展開: grid-cols-2 + DateFieldWithActions を含むため max-w-[min(90vw,42rem)] に揃える */}
             <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>新規プロジェクト作成</DialogTitle>
-                <DialogDescription>プロジェクトの基本情報を入力してください。</DialogDescription>
+                <DialogTitle>{t('createDialogTitle')}</DialogTitle>
+                <DialogDescription>{t('createDialogDescription')}</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && (
@@ -225,7 +227,7 @@ export function ProjectsClient({
                 <div className="space-y-2">
                   {/* fix/project-create-customer-validation: htmlFor/id で a11y リンク付与
                       (screen reader 読み上げ + Playwright getByLabel が解決可能に) */}
-                  <Label htmlFor="project-create-name">プロジェクト名</Label>
+                  <Label htmlFor="project-create-name">{t('fieldName')}</Label>
                   <Input
                     id="project-create-name"
                     value={form.name}
@@ -237,27 +239,27 @@ export function ProjectsClient({
                 <div className="space-y-2">
                   {/* PR #111-2: 顧客は Customer マスタから選択。未登録の場合は /customers で先に作成する。
                       PR #126: 顧客件数が増える想定のため SearchableSelect を使用 (viewport 比で検索欄を動的表示) */}
-                  <Label htmlFor="project-create-customer">顧客</Label>
+                  <Label htmlFor="project-create-customer">{t('fieldCustomer')}</Label>
                   <SearchableSelect
                     id="project-create-customer"
                     value={form.customerId}
                     onValueChange={(v) => setForm({ ...form, customerId: v })}
                     options={customers.map((c) => ({ value: c.id, label: c.name }))}
-                    placeholder="顧客を選択してください"
-                    aria-label="顧客選択"
+                    placeholder={t('customerSelectPlaceholder')}
+                    aria-label={t('customerSelectAriaLabel')}
                   />
                   {customers.length === 0 && (
                     <p className="text-xs text-muted-foreground">
-                      顧客が未登録です。先に
+                      {t('customerEmptyHintPrefix')}
                       <Link href="/customers" className="text-info hover:underline">
-                        顧客管理
+                        {t('customerEmptyHintLink')}
                       </Link>
-                      で登録してください。
+                      {t('customerEmptyHintSuffix')}
                     </p>
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="project-create-purpose">目的</Label>
+                  <Label htmlFor="project-create-purpose">{t('fieldPurpose')}</Label>
                   <textarea
                     id="project-create-purpose"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -269,7 +271,7 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="project-create-background">背景</Label>
+                  <Label htmlFor="project-create-background">{t('fieldBackground')}</Label>
                   <textarea
                     id="project-create-background"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -281,7 +283,7 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="project-create-scope">スコープ</Label>
+                  <Label htmlFor="project-create-scope">{t('fieldScope')}</Label>
                   <textarea
                     id="project-create-scope"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -293,7 +295,7 @@ export function ProjectsClient({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="project-create-devmethod">開発方式</Label>
+                  <Label htmlFor="project-create-devmethod">{t('fieldDevMethod')}</Label>
                   <select id="project-create-devmethod" value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
                     {Object.entries(DEV_METHODS).map(([key, label]) => (
                       <option key={key} value={key}>{label}</option>
@@ -302,7 +304,7 @@ export function ProjectsClient({
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>開始予定日</Label>
+                    <Label>{t('fieldPlannedStartDate')}</Label>
                     <DateFieldWithActions
                       value={form.plannedStartDate}
                       onChange={(v) => setForm({ ...form, plannedStartDate: v })}
@@ -311,7 +313,7 @@ export function ProjectsClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>終了予定日</Label>
+                    <Label>{t('fieldPlannedEndDate')}</Label>
                     <DateFieldWithActions
                       value={form.plannedEndDate}
                       onChange={(v) => setForm({ ...form, plannedEndDate: v })}
@@ -327,32 +329,32 @@ export function ProjectsClient({
                   抜け漏れなく提案を出すため、可能な限り入力を推奨する。
                 */}
                 <div className="space-y-2">
-                  <Label htmlFor="project-create-business-domain-tags">業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
+                  <Label htmlFor="project-create-business-domain-tags">{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
                   <Input
                     id="project-create-business-domain-tags"
                     value={form.businessDomainTagsInput}
                     onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
-                    placeholder="例: 金融, 基幹業務, 会計"
+                    placeholder={t('tagPlaceholderBusinessDomain')}
                     maxLength={500}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="project-create-tech-stack-tags">技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
+                  <Label htmlFor="project-create-tech-stack-tags">{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
                   <Input
                     id="project-create-tech-stack-tags"
                     value={form.techStackTagsInput}
                     onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
-                    placeholder="例: React, Next.js, TypeScript, PostgreSQL"
+                    placeholder={t('tagPlaceholderTechStackFull')}
                     maxLength={500}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="project-create-process-tags">工程タグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
+                  <Label htmlFor="project-create-process-tags">{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
                   <Input
                     id="project-create-process-tags"
                     value={form.processTagsInput}
                     onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
-                    placeholder="例: 要件定義, 設計, 開発, 試験"
+                    placeholder={t('tagPlaceholderProcessFull')}
                     maxLength={500}
                   />
                 </div>
@@ -362,7 +364,7 @@ export function ProjectsClient({
                   onChange={setStagedAttachments}
                 />
                 <Button type="submit" className="w-full">
-                  作成
+                  {t('createSubmit')}
                 </Button>
               </form>
             </DialogContent>
@@ -373,7 +375,7 @@ export function ProjectsClient({
       {/* 検索・フィルタ */}
       <div className="flex gap-4">
         <Input
-          placeholder="キーワード検索..."
+          placeholder={t('searchPlaceholder')}
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           className="max-w-xs"
@@ -381,10 +383,10 @@ export function ProjectsClient({
         />
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? '')}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="全ステータス" />
+            <SelectValue placeholder={t('statusFilterAll')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">全ステータス</SelectItem>
+            <SelectItem value="">{t('statusFilterAll')}</SelectItem>
             {Object.entries(PROJECT_STATUSES).map(([key, label]) => (
               <SelectItem key={key} value={key}>
                 {label}
@@ -393,7 +395,7 @@ export function ProjectsClient({
           </SelectContent>
         </Select>
         <Button variant="outline" onClick={handleSearch}>
-          検索
+          {t('searchButton')}
         </Button>
       </div>
 
@@ -409,12 +411,12 @@ export function ProjectsClient({
           <Table>
             <TableHeader>
               <TableRow>
-                <ResizableHead columnKey="name" defaultWidth={220}>プロジェクト名</ResizableHead>
-                <ResizableHead columnKey="customer" defaultWidth={160}>顧客</ResizableHead>
-                <ResizableHead columnKey="devMethod" defaultWidth={140}>開発方式</ResizableHead>
-                <ResizableHead columnKey="status" defaultWidth={110}>ステータス</ResizableHead>
-                <ResizableHead columnKey="plannedStartDate" defaultWidth={120}>開始予定日</ResizableHead>
-                <ResizableHead columnKey="plannedEndDate" defaultWidth={120}>終了予定日</ResizableHead>
+                <ResizableHead columnKey="name" defaultWidth={220}>{t('fieldName')}</ResizableHead>
+                <ResizableHead columnKey="customer" defaultWidth={160}>{t('fieldCustomer')}</ResizableHead>
+                <ResizableHead columnKey="devMethod" defaultWidth={140}>{t('fieldDevMethod')}</ResizableHead>
+                <ResizableHead columnKey="status" defaultWidth={110}>{t('fieldStatus')}</ResizableHead>
+                <ResizableHead columnKey="plannedStartDate" defaultWidth={120}>{t('fieldPlannedStartDate')}</ResizableHead>
+                <ResizableHead columnKey="plannedEndDate" defaultWidth={120}>{t('fieldPlannedEndDate')}</ResizableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -445,7 +447,7 @@ export function ProjectsClient({
               {initialProjects.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    プロジェクトがありません
+                    {t('listEmpty')}
                   </TableCell>
                 </TableRow>
               )}
@@ -455,10 +457,10 @@ export function ProjectsClient({
       </div>
 
       {/* PR #128a: モバイル (md 未満) 専用のカードビュー */}
-      <div className="space-y-2 md:hidden" role="list" aria-label="プロジェクト一覧">
+      <div className="space-y-2 md:hidden" role="list" aria-label={t('listTitle')}>
         {initialProjects.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            プロジェクトがありません
+            {t('listEmpty')}
           </p>
         ) : (
           initialProjects.map((project) => (
@@ -476,13 +478,13 @@ export function ProjectsClient({
                 </Badge>
               </div>
               <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                <dt className="text-xs text-muted-foreground">顧客</dt>
+                <dt className="text-xs text-muted-foreground">{t('fieldCustomer')}</dt>
                 <dd className="text-foreground">{project.customerName || '-'}</dd>
-                <dt className="text-xs text-muted-foreground">開発方式</dt>
+                <dt className="text-xs text-muted-foreground">{t('fieldDevMethod')}</dt>
                 <dd className="text-foreground">
                   {DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}
                 </dd>
-                <dt className="text-xs text-muted-foreground">期間</dt>
+                <dt className="text-xs text-muted-foreground">{t('fieldPeriod')}</dt>
                 <dd className="text-foreground">
                   {project.plannedStartDate || '-'} 〜 {project.plannedEndDate || '-'}
                 </dd>
@@ -492,7 +494,7 @@ export function ProjectsClient({
         )}
       </div>
       {initialTotal > 20 && (
-        <p className="text-sm text-muted-foreground">全 {initialTotal} 件中 20 件を表示</p>
+        <p className="text-sm text-muted-foreground">{t('totalCountHint', { total: initialTotal, shown: 20 })}</p>
       )}
     </div>
   );
