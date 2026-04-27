@@ -174,8 +174,7 @@ export type AllKnowledgeDTO = KnowledgeDTO & {
   canAccessProject: boolean;
   linkedProjectCount: number;
   updatedByName: string | null;
-  /** PR #162: 横断ビュー一括 visibility 編集の対象判定。viewer が作成者本人なら true。 */
-  viewerIsCreator: boolean;
+  // PR #165: 全ナレッジ画面は read-only に戻したので viewerIsCreator は不要 (project list 側で持つ)
 };
 
 /**
@@ -238,8 +237,7 @@ export async function listAllKnowledgeForViewer(
       // projectName は機微情報扱いを維持 (上記 isMember gate)。
       updatedByName: k.updater?.name ?? null,
       creatorName: k.creator?.name,
-      // PR #162: 横断ビュー一括 visibility 編集の対象判定。viewer が作成者本人なら true。
-      viewerIsCreator: k.createdBy === viewerUserId,
+      // PR #165: viewerIsCreator は全ナレッジでは不要 (read-only)、project list 側 KnowledgeDTO で個別判定。
     };
   });
 }
@@ -422,19 +420,29 @@ export async function deleteKnowledge(
 }
 
 /**
- * 「全ナレッジ」横断ビューからの **visibility 一括更新** (PR #162 / Phase 2)。
+ * プロジェクト「ナレッジ一覧」からの **visibility 一括更新** (PR #165 で project-scoped 化、
+ * 元実装は PR #162 cross-list 用)。
+ * Knowledge は多対多 (knowledgeProjects 中間テーブル) でプロジェクトに紐付くので、
+ * **where に `knowledgeProjects: { some: { projectId } }` を加え、当該プロジェクトに
+ * 紐付いているナレッジのみを対象にする**。
  * PR #161 (Risk/Issue) と同じ二重防御: per-row createdBy 判定 + silent skip。
  * admin であっても他人のナレッジは更新しない。
  */
-export async function bulkUpdateKnowledgeVisibilityFromCrossList(
+export async function bulkUpdateKnowledgeVisibilityFromList(
+  projectId: string,
   ids: string[],
   visibility: 'draft' | 'public',
   viewerUserId: string,
 ): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
   if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
 
+  // PR #165: project-scoped。当該プロジェクトに紐付くナレッジのみ対象 (多対多 中間テーブル経由)
   const targets = await prisma.knowledge.findMany({
-    where: { id: { in: ids }, deletedAt: null },
+    where: {
+      id: { in: ids },
+      deletedAt: null,
+      knowledgeProjects: { some: { projectId } },
+    },
     select: { id: true, createdBy: true },
   });
   const skippedNotFound = ids.length - targets.length;

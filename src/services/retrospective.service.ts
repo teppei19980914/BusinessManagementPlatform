@@ -66,8 +66,7 @@ export type AllRetroDTO = Omit<RetroDTO, 'comments'> & {
   updatedAt: string;
   createdByName: string | null;
   updatedByName: string | null;
-  /** PR #162: 横断ビュー一括 visibility 編集の対象判定。viewer が作成者本人なら true。 */
-  viewerIsCreator: boolean;
+  // PR #165: 全振り返り画面は read-only に戻したので viewerIsCreator は不要 (project list 側で持つ)
 };
 
 /**
@@ -90,7 +89,7 @@ export async function listAllRetrospectivesForViewer(
   // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面から行う。
-  // PR #162: viewerUserId は viewerIsCreator (一括編集対象判定) で使用するため void しない
+  // PR #165: viewerIsCreator は project-list 側に移したので、本関数では viewerUserId を memberships 取得のみで使用。
   const retros = await prisma.retrospective.findMany({
     where: { deletedAt: null, visibility: 'public' },
     include: {
@@ -142,7 +141,6 @@ export async function listAllRetrospectivesForViewer(
         content: c.content,
         createdAt: c.createdAt.toISOString(),
       })),
-      viewerIsCreator: r.createdBy === viewerUserId,
     };
   });
 }
@@ -336,19 +334,22 @@ export async function deleteRetrospective(
 }
 
 /**
- * 「全振り返り」横断ビューからの **visibility 一括更新** (PR #162 / Phase 2)。
- * PR #161 (Risk/Issue) と同じ二重防御パターン: per-row createdBy 判定 + silent skip。
+ * プロジェクト「振り返り一覧」からの **visibility 一括更新** (PR #165 で project-scoped 化、
+ * 元実装は PR #162 cross-list 用)。
+ * PR #161 (Risk/Issue) と同じ二重防御パターン: where に projectId 追加 + per-row createdBy 判定 + silent skip。
  * admin であっても他人のレコードは更新しない (delete のみ admin 特権の既存方針と整合)。
  */
-export async function bulkUpdateRetrospectivesVisibilityFromCrossList(
+export async function bulkUpdateRetrospectivesVisibilityFromList(
+  projectId: string,
   ids: string[],
   visibility: 'draft' | 'public',
   viewerUserId: string,
 ): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
   if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
 
+  // PR #165: where に projectId 追加 (他プロジェクトの行が ids に混ざってもサーバ側で除外)
   const targets = await prisma.retrospective.findMany({
-    where: { id: { in: ids }, deletedAt: null },
+    where: { id: { in: ids }, projectId, deletedAt: null },
     select: { id: true, createdBy: true },
   });
   const skippedNotFound = ids.length - targets.length;

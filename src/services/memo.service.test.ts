@@ -7,7 +7,7 @@ vi.mock('@/lib/db', () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
-      // PR #162: bulkUpdateMemosVisibilityFromCrossList が呼ぶ
+      // PR #162 / PR #165: bulkUpdateMemosVisibilityFromList が呼ぶ
       updateMany: vi.fn(),
     },
     // PR #89: deleteMemo が attachment.updateMany を $transaction 内で呼ぶ
@@ -23,7 +23,7 @@ import {
   createMemo,
   updateMemo,
   deleteMemo,
-  bulkUpdateMemosVisibilityFromCrossList,
+  bulkUpdateMemosVisibilityFromList,
 } from './memo.service';
 import { prisma } from '@/lib/db';
 
@@ -195,12 +195,13 @@ describe('deleteMemo', () => {
   });
 });
 
-// PR #162 Phase 2: 横断ビューからの一括 visibility 更新。Memo は private/public 値域。
-describe('bulkUpdateMemosVisibilityFromCrossList', () => {
+// PR #162 → PR #165 で個人「メモ一覧」(/memos) に移し替え。Memo は personal scope (project に紐付かない)。
+// path は維持 (/api/memos/bulk) なので route.test.ts の修正は最小限。
+describe('bulkUpdateMemosVisibilityFromList', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ids 空 → updateMany 呼ばず 0 件', async () => {
-    const r = await bulkUpdateMemosVisibilityFromCrossList([], 'private', 'u-1');
+    const r = await bulkUpdateMemosVisibilityFromList([], 'private', 'u-1');
     expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
     expect(prisma.memo.updateMany).not.toHaveBeenCalled();
   });
@@ -212,7 +213,7 @@ describe('bulkUpdateMemosVisibilityFromCrossList', () => {
     ] as never);
     vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    const r = await bulkUpdateMemosVisibilityFromCrossList(['memo-1', 'memo-2'], 'private', 'u-1');
+    const r = await bulkUpdateMemosVisibilityFromList(['memo-1', 'memo-2'], 'private', 'u-1');
 
     expect(r.updatedIds).toEqual(['memo-1']);
     expect(r.skippedNotOwned).toBe(1);
@@ -229,7 +230,7 @@ describe('bulkUpdateMemosVisibilityFromCrossList', () => {
     ] as never);
     vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    const r = await bulkUpdateMemosVisibilityFromCrossList(['memo-1'], 'public', 'u-1');
+    const r = await bulkUpdateMemosVisibilityFromList(['memo-1'], 'public', 'u-1');
     expect(r.updatedIds).toEqual(['memo-1']);
     expect(vi.mocked(prisma.memo.updateMany).mock.calls[0][0].data).toEqual({ visibility: 'public' });
   });

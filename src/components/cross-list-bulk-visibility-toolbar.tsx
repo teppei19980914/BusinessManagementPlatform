@@ -41,8 +41,13 @@ export function isCrossListFilterActive(f: CrossListFilterState): boolean {
 }
 
 type Props = {
-  /** API ルート末尾までを `/api/<endpointPath>/bulk` の `<endpointPath>` 部分で渡す */
-  endpointPath: 'retrospectives' | 'knowledge' | 'memos';
+  /**
+   * PATCH 一括更新 API のフルパス (PR #165: project-scoped に対応するため文字列受け取りに変更)。
+   * 例: `/api/projects/${projectId}/retrospectives/bulk` / `/api/projects/${projectId}/knowledge/bulk` / `/api/memos/bulk`
+   */
+  endpoint: string;
+  /** id 識別子 (各 form input id 等で使う一意キー、`endpointPath` から代替) */
+  formIdPrefix: string;
   /** 現在のフィルター状態 (state は呼び出し側で持つ) */
   filter: CrossListFilterState;
   onFilterChange: (next: CrossListFilterState) => void;
@@ -51,14 +56,15 @@ type Props = {
   onSelectionClear: () => void;
   /** visibility 値域 (entity 別)。例: ['draft','public'] / ['private','public'] */
   visibilityOptions: { value: string; label: string }[];
-  /** 「全○○一覧」の和名 (例: 「全振り返り」) */
+  /** 「○○一覧」の和名 (例: 「振り返り」) */
   entityLabel: string;
   /** Dialog 送信成功後にテーブルを reload する */
   onApplied: () => void | Promise<void>;
 };
 
 export function CrossListBulkVisibilityToolbar({
-  endpointPath,
+  endpoint,
+  formIdPrefix,
   filter,
   onFilterChange,
   selectedIds,
@@ -79,7 +85,7 @@ export function CrossListBulkVisibilityToolbar({
     if (selectedIds.size === 0 || !bulkVisibility) return;
 
     const res = await withLoading(() =>
-      fetch(`/api/${endpointPath}/bulk`, {
+      fetch(endpoint, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -116,9 +122,9 @@ export function CrossListBulkVisibilityToolbar({
         </div>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
           <div className="md:col-span-2">
-            <Label htmlFor={`${endpointPath}-filter-keyword`} className="text-xs">キーワード</Label>
+            <Label htmlFor={`${formIdPrefix}-filter-keyword`} className="text-xs">キーワード</Label>
             <Input
-              id={`${endpointPath}-filter-keyword`}
+              id={`${formIdPrefix}-filter-keyword`}
               value={filter.keyword}
               onChange={(e) => onFilterChange({ ...filter, keyword: e.target.value })}
               placeholder="件名・内容に含まれる文字列"

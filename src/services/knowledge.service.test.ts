@@ -8,7 +8,7 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
       count: vi.fn(),
-      // PR #162: bulkUpdateKnowledgeVisibilityFromCrossList が呼ぶ
+      // PR #162 / PR #165: bulkUpdateKnowledgeVisibilityFromList が呼ぶ
       updateMany: vi.fn(),
     },
     projectMember: { findMany: vi.fn() },
@@ -26,7 +26,7 @@ import {
   createKnowledge,
   updateKnowledge,
   deleteKnowledge,
-  bulkUpdateKnowledgeVisibilityFromCrossList,
+  bulkUpdateKnowledgeVisibilityFromList,
 } from './knowledge.service';
 import { prisma } from '@/lib/db';
 
@@ -333,12 +333,12 @@ describe('updateKnowledge / deleteKnowledge', () => {
   });
 });
 
-// PR #162 Phase 2: 横断ビューからの一括 visibility 更新。PR #161 と同パターン。
-describe('bulkUpdateKnowledgeVisibilityFromCrossList', () => {
+// PR #162 → PR #165 で project-scoped に。プロジェクト「ナレッジ一覧」からの一括 visibility 更新。
+describe('bulkUpdateKnowledgeVisibilityFromList', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ids 空 → updateMany 呼ばず 0 件', async () => {
-    const r = await bulkUpdateKnowledgeVisibilityFromCrossList([], 'draft', 'u-1');
+    const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', [], 'draft', 'u-1');
     expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
     expect(prisma.knowledge.updateMany).not.toHaveBeenCalled();
   });
@@ -350,10 +350,18 @@ describe('bulkUpdateKnowledgeVisibilityFromCrossList', () => {
     ] as never);
     vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    const r = await bulkUpdateKnowledgeVisibilityFromCrossList(['k-1', 'k-2'], 'draft', 'u-1');
+    const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', ['k-1', 'k-2'], 'draft', 'u-1');
 
     expect(r.updatedIds).toEqual(['k-1']);
     expect(r.skippedNotOwned).toBe(1);
+
+    // PR #165: findMany の where に knowledgeProjects.some.projectId が含まれることを確認 (多対多)
+    const findCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(findCall.where).toEqual({
+      id: { in: ['k-1', 'k-2'] },
+      deletedAt: null,
+      knowledgeProjects: { some: { projectId: 'p-1' } },
+    });
 
     const call = vi.mocked(prisma.knowledge.updateMany).mock.calls[0][0];
     // updateMany は scalar updatedBy のみ受理する (relation connect 構文不可)
