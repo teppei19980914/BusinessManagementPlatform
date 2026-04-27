@@ -21,6 +21,7 @@
 
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -47,6 +48,7 @@ type Props = {
 
 export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Props) {
   const router = useRouter();
+  const t = useTranslations('estimate');
   const { withLoading } = useLoading();
 
   const reload = useCallback(async () => {
@@ -79,7 +81,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
     );
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || t('createFailed'));
       return;
     }
     setIsCreateOpen(false);
@@ -104,32 +106,32 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold">見積もり管理</h2>
-          <p className="text-sm text-muted-foreground">合計工数: {totalEffort}</p>
+          <h2 className="text-xl font-semibold">{t('pageTitle')}</h2>
+          <p className="text-sm text-muted-foreground">{t('totalEffort', { value: totalEffort })}</p>
         </div>
         {canEdit && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">見積もり追加</DialogTrigger>
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{t('addItem')}</DialogTrigger>
             <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>見積もり項目追加</DialogTitle>
-                <DialogDescription>見積もり情報を入力してください。</DialogDescription>
+                <DialogTitle>{t('addDialogTitle')}</DialogTitle>
+                <DialogDescription>{t('addDialogDescription')}</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
                 <div className="space-y-2">
-                  <Label>見積項目名</Label>
+                  <Label>{t('itemName')}</Label>
                   <Input value={form.itemName} onChange={(e) => setForm({ ...form, itemName: e.target.value })} maxLength={100} required />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>区分</Label>
+                    <Label>{t('category')}</Label>
                     <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={nativeSelectClass}>
                       {Object.entries(TASK_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <Label>開発方式</Label>
+                    <Label>{t('devMethod')}</Label>
                     <select value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
                       {Object.entries(DEV_METHODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select>
@@ -137,21 +139,21 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>見積工数</Label>
+                    <Label>{t('estimatedEffort')}</Label>
                     <NumberInput min={1} step={0.5} value={form.estimatedEffort} onChange={(n) => setForm({ ...form, estimatedEffort: n })} required />
                   </div>
                   <div className="space-y-2">
-                    <Label>単位</Label>
+                    <Label>{t('unit')}</Label>
                     <select value={form.effortUnit} onChange={(e) => setForm({ ...form, effortUnit: e.target.value })} className={nativeSelectClass}>
                       {Object.entries(EFFORT_UNITS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select>
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>見積根拠</Label>
+                  <Label>{t('rationale')}</Label>
                   <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.rationale} onChange={(e) => setForm({ ...form, rationale: e.target.value })} rows={4} maxLength={3000} required />
                 </div>
-                <Button type="submit" className="w-full">追加</Button>
+                <Button type="submit" className="w-full">{t('add')}</Button>
               </form>
             </DialogContent>
           </Dialog>
@@ -161,12 +163,12 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>項目名</TableHead>
-            <TableHead>区分</TableHead>
-            <TableHead>工数</TableHead>
-            <TableHead>根拠（要約）</TableHead>
-            <TableHead>状態</TableHead>
-            {canEdit && <TableHead>操作</TableHead>}
+            <TableHead>{t('columnItemName')}</TableHead>
+            <TableHead>{t('columnCategory')}</TableHead>
+            <TableHead>{t('columnEffort')}</TableHead>
+            <TableHead>{t('columnRationale')}</TableHead>
+            <TableHead>{t('columnState')}</TableHead>
+            {canEdit && <TableHead>{t('columnActions')}</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -178,14 +180,14 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
               <TableCell className="max-w-xs truncate">{e.rationale}</TableCell>
               <TableCell>
                 <Badge variant={e.isConfirmed ? 'default' : 'outline'}>
-                  {e.isConfirmed ? '確定' : '未確定'}
+                  {e.isConfirmed ? t('stateConfirmed') : t('stateUnconfirmed')}
                 </Badge>
               </TableCell>
               {canEdit && (
                 <TableCell>
                   <div className="flex gap-1">
                     {!e.isConfirmed && (
-                      <Button variant="outline" size="sm" onClick={() => handleConfirm(e.id)}>確定</Button>
+                      <Button variant="outline" size="sm" onClick={() => handleConfirm(e.id)}>{t('confirm')}</Button>
                     )}
                     {!e.isConfirmed && (
                       <Button
@@ -193,14 +195,14 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                         size="sm"
                         className="text-destructive"
                         onClick={async () => {
-                          if (!confirm('この見積もりを削除しますか？')) return;
+                          if (!confirm(t('deleteConfirm'))) return;
                           await withLoading(() =>
                             fetch(`/api/projects/${projectId}/estimates/${e.id}`, { method: 'DELETE' }),
                           );
                           await reload();
                         }}
                       >
-                        削除
+                        {t('delete')}
                       </Button>
                     )}
                   </div>
@@ -210,7 +212,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
           ))}
           {estimates.length === 0 && (
             <TableRow>
-              <TableCell colSpan={canEdit ? 6 : 5} className="py-8 text-center text-muted-foreground">見積もり項目がありません</TableCell>
+              <TableCell colSpan={canEdit ? 6 : 5} className="py-8 text-center text-muted-foreground">{t('noItems')}</TableCell>
             </TableRow>
           )}
         </TableBody>

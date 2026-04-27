@@ -116,6 +116,7 @@ function ApplyFieldRow({
   label: string;
   children: React.ReactNode;
 }) {
+  const t = useTranslations('wbs');
   return (
     <div className="flex items-start gap-2">
       <input
@@ -123,7 +124,7 @@ function ApplyFieldRow({
         checked={apply}
         onChange={(e) => onApplyChange(e.target.checked)}
         className="mt-2 rounded"
-        aria-label={`${label}を一括更新する`}
+        aria-label={t('bulkApplyToggleAria', { label })}
       />
       <div className="flex-1 space-y-1">
         <Label className={apply ? 'text-sm' : 'text-sm text-muted-foreground'}>{label}</Label>
@@ -183,6 +184,8 @@ function TaskTreeNodeImpl({
   // 表示値は task prop を直接参照する。
   // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
   // CRUD 後の reload + stale-while-revalidate（PR #33）で UI が追従する。
+  const t = useTranslations('wbs');
+  const unsetLabel = t('unsetShort');
 
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
@@ -193,14 +196,14 @@ function TaskTreeNodeImpl({
   // メンバー編集: 担当者のみ（ACT限定）
   const canMemberEdit = !isWP && isAssignee;
   const canOpenEdit = canEditPmTl || canMemberEdit;
-  // 予定期間 / 実績期間の表示テキスト（片方しかない場合は "(未)" を反対側に挿入）
+  // 予定期間 / 実績期間の表示テキスト（片方しかない場合は unsetLabel を反対側に挿入）
   const plannedRangeText = (() => {
     if (!task.plannedStartDate && !task.plannedEndDate) return '-';
-    return `${task.plannedStartDate || '（未）'} 〜 ${task.plannedEndDate || '（未）'}`;
+    return `${task.plannedStartDate || unsetLabel} 〜 ${task.plannedEndDate || unsetLabel}`;
   })();
   const actualRangeText = (() => {
     if (!task.actualStartDate && !task.actualEndDate) return '-';
-    return `${task.actualStartDate || '（未）'} 〜 ${task.actualEndDate || '（未）'}`;
+    return `${task.actualStartDate || unsetLabel} 〜 ${task.actualEndDate || unsetLabel}`;
   })();
   // 進捗&工数の表示: ACT は 進捗% / 工数h、WP は進捗%のみ（工数は子から集計済を表示）
   const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
@@ -228,7 +231,7 @@ function TaskTreeNodeImpl({
                 window.getSelection()?.removeAllRanges();
                 window.getSelection()?.addRange(r);
               }}
-              title="クリックで全選択 (Ctrl+C でコピー)"
+              title={t('idCopyHint')}
             >
               {task.id}
             </code>
@@ -241,8 +244,8 @@ function TaskTreeNodeImpl({
                 type="button"
                 onClick={() => onToggleExpanded(task.id)}
                 className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"
-                title={isCollapsed ? '展開' : '折りたたみ'}
-                aria-label={isCollapsed ? '展開' : '折りたたみ'}
+                title={isCollapsed ? t('expand') : t('collapse')}
+                aria-label={isCollapsed ? t('expand') : t('collapse')}
               >
                 <span className={`text-xs transition-transform ${isCollapsed ? '' : 'rotate-90'}`}>▶</span>
               </button>
@@ -300,8 +303,8 @@ function TaskTreeNodeImpl({
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => onEditClick(task)}
-                title="編集"
-                aria-label="編集"
+                title={t('edit')}
+                aria-label={t('edit')}
               >
                 <Pencil className="h-4 w-4" />
               </Button>
@@ -311,11 +314,10 @@ function TaskTreeNodeImpl({
                 variant="ghost"
                 size="icon-sm"
                 className="text-destructive hover:text-destructive"
-                title="削除"
-                aria-label="削除"
+                title={t('delete')}
+                aria-label={t('delete')}
                 onClick={async () => {
-                  const label = isWP ? 'ワークパッケージ' : 'アクティビティ';
-                  if (!confirm(`この${label}を削除しますか？`)) return;
+                  if (!confirm(isWP ? t('deleteConfirmWp') : t('deleteConfirmActivity'))) return;
                   await onLoading(() =>
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
@@ -421,6 +423,8 @@ function TaskMobileCardImpl({
   onToggleExpanded,
   attachmentsByEntity,
 }: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect' | 'showIdColumn'>) {
+  const t = useTranslations('wbs');
+  const unsetLabel = t('unsetShort');
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
   const isCollapsed = isWP && hasChildren ? !expandedTaskIds.has(task.id) : false;
@@ -429,11 +433,11 @@ function TaskMobileCardImpl({
   const canOpenEdit = canEditPmTl || canMemberEdit;
   const plannedRangeText = (() => {
     if (!task.plannedStartDate && !task.plannedEndDate) return '-';
-    return `${task.plannedStartDate || '（未）'} 〜 ${task.plannedEndDate || '（未）'}`;
+    return `${task.plannedStartDate || unsetLabel} 〜 ${task.plannedEndDate || unsetLabel}`;
   })();
   const actualRangeText = (() => {
     if (!task.actualStartDate && !task.actualEndDate) return '-';
-    return `${task.actualStartDate || '（未）'} 〜 ${task.actualEndDate || '（未）'}`;
+    return `${task.actualStartDate || unsetLabel} 〜 ${task.actualEndDate || unsetLabel}`;
   })();
   const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
   void parentOptions;
@@ -454,8 +458,8 @@ function TaskMobileCardImpl({
               type="button"
               onClick={() => onToggleExpanded(task.id)}
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"
-              title={isCollapsed ? '展開' : '折りたたみ'}
-              aria-label={isCollapsed ? '展開' : '折りたたみ'}
+              title={isCollapsed ? t('expand') : t('collapse')}
+              aria-label={isCollapsed ? t('expand') : t('collapse')}
             >
               <span className={`text-xs transition-transform ${isCollapsed ? '' : 'rotate-90'}`}>▶</span>
             </button>
@@ -476,15 +480,15 @@ function TaskMobileCardImpl({
               )}
             </div>
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-              <dt className="text-xs text-muted-foreground">担当者</dt>
+              <dt className="text-xs text-muted-foreground">{t('columnAssignee')}</dt>
               <dd>{task.assigneeName || '-'}</dd>
-              <dt className="text-xs text-muted-foreground">ステータス</dt>
+              <dt className="text-xs text-muted-foreground">{t('columnStatus')}</dt>
               <dd>
                 <Badge variant={statusColors[task.status] || 'outline'} className="text-[10px]">
                   {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
                 </Badge>
               </dd>
-              <dt className="text-xs text-muted-foreground">進捗</dt>
+              <dt className="text-xs text-muted-foreground">{t('columnProgress')}</dt>
               <dd className="flex items-center gap-1.5">
                 <div className="h-2 w-16 rounded-full bg-accent">
                   <div className="h-2 rounded-full bg-info" style={{ width: `${task.progressRate}%` }} />
@@ -492,12 +496,12 @@ function TaskMobileCardImpl({
                 <span>{task.progressRate}%</span>
                 {effortText && <span className="text-xs text-muted-foreground">/ {effortText}</span>}
               </dd>
-              <dt className="text-xs text-muted-foreground">予定</dt>
+              <dt className="text-xs text-muted-foreground">{t('columnPlanned')}</dt>
               <dd className="text-xs">{plannedRangeText}</dd>
-              <dt className="text-xs text-muted-foreground">実績</dt>
+              <dt className="text-xs text-muted-foreground">{t('columnActual')}</dt>
               <dd className="text-xs">{actualRangeText}</dd>
               {/* PR #168: 添付 chips (mobile card は 1 行で chip 列) */}
-              <dt className="text-xs text-muted-foreground">添付</dt>
+              <dt className="text-xs text-muted-foreground">{t('columnAttachments')}</dt>
               <dd className="text-xs"><AttachmentsCell items={attachmentsByEntity[task.id] ?? []} /></dd>
             </dl>
           </div>
@@ -507,8 +511,8 @@ function TaskMobileCardImpl({
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => onEditClick(task)}
-                title="編集"
-                aria-label="編集"
+                title={t('edit')}
+                aria-label={t('edit')}
               >
                 <Pencil className="h-4 w-4" />
               </Button>
@@ -518,11 +522,10 @@ function TaskMobileCardImpl({
                 variant="ghost"
                 size="icon-sm"
                 className="text-destructive hover:text-destructive"
-                title="削除"
-                aria-label="削除"
+                title={t('delete')}
+                aria-label={t('delete')}
                 onClick={async () => {
-                  const label = isWP ? 'ワークパッケージ' : 'アクティビティ';
-                  if (!confirm(`この${label}を削除しますか？`)) return;
+                  if (!confirm(isWP ? t('deleteConfirmWp') : t('deleteConfirmActivity'))) return;
                   await onLoading(() =>
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
@@ -575,7 +578,9 @@ const TaskMobileCard = memo(TaskMobileCardImpl, (prev, next) =>
 );
 
 export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload }: Props) {
-  const t = useTranslations('action');
+  const tAction = useTranslations('action');
+  const tAttachment = useTranslations('attachment');
+  const t = useTranslations('wbs');
   const router = useRouter();
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -768,7 +773,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       }),
     );
     if (!res.ok) {
-      let message = '更新に失敗しました';
+      let message = t('updateFailed');
       try {
         const json = await res.json();
         message = json.error?.message || json.error?.details?.[0]?.message || message;
@@ -920,7 +925,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
-    if (!confirm(`${selectedIds.size} 件を一括削除しますか？`)) return;
+    if (!confirm(t('bulkDeleteConfirm', { count: selectedIds.size }))) return;
     for (const id of selectedIds) {
       await withLoading(() =>
         fetch(`/api/projects/${projectId}/tasks/${id}`, { method: 'DELETE' }),
@@ -932,8 +937,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   /** 一括更新 API を叩く共通関数。`updates` には apply=true のフィールドのみ入っている想定 */
   async function postBulkUpdate(updates: Record<string, unknown>): Promise<string | null> {
-    if (selectedIds.size === 0) return '対象タスクがありません';
-    if (Object.keys(updates).length === 0) return '更新項目を1つ以上選択してください';
+    if (selectedIds.size === 0) return t('noTargetTasks');
+    if (Object.keys(updates).length === 0) return t('selectAtLeastOneField');
 
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/tasks/bulk-update`, {
@@ -944,7 +949,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      return json.error?.message || json.error?.details?.[0]?.message || '一括更新に失敗しました';
+      return json.error?.message || json.error?.details?.[0]?.message || t('bulkUpdateFailed');
     }
     return null;
   }
@@ -1057,7 +1062,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   async function handleImport(e: React.FormEvent) {
     e.preventDefault();
     setImportError('');
-    if (!importFile) { setImportError('ファイルを選択してください'); return; }
+    if (!importFile) { setImportError(t('fileRequired')); return; }
 
     // 多くの環境で挙動が安定する multipart/form-data で送信。
     // （以前の `text/csv` 生 body は Vercel 側のルーティング / edge 層で
@@ -1076,7 +1081,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     if (!res.ok) {
       // サーバから JSON エラーレスポンスが返らない場合（接続切断等）にも
       // ユーザに原因を提示できるよう text() でフォールバックする
-      let message = 'インポートに失敗しました';
+      let message = t('importFailed');
       try {
         const json = await res.json();
         message = json.error?.message || json.error?.details?.[0]?.message || message;
@@ -1153,7 +1158,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || '作成に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || t('createFailed'));
       return;
     }
 
@@ -1178,63 +1183,63 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">WBS管理</h2>
+        <h2 className="text-xl font-semibold">{t('pageTitle')}</h2>
         <div className="flex gap-2">
         {/* feat/gantt-tab-restructure (PR-C item 6): ガント表示トグル (全ユーザに開放、WBS タブ統合) */}
         <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>
-          {showGantt ? 'ガントを閉じる' : 'ガントチャートを表示'}
+          {showGantt ? t('hideGantt') : t('showGantt')}
         </Button>
         {/* feat/wbs-overwrite-import: 一覧画面に ID 列を表示するトグル (CSV 整合確認用、既定 OFF) */}
         <Button
           variant={showIdColumn ? 'default' : 'outline'}
           size="sm"
           onClick={() => setShowIdColumn((v) => !v)}
-          title="CSV エクスポート/インポートの ID 整合確認用"
+          title={t('idToggleTooltip')}
         >
-          {showIdColumn ? 'IDを隠す' : 'IDを表示'}
+          {showIdColumn ? t('hideId') : t('showId')}
         </Button>
         {canEditPmTl && (
           <>
           {/* PR #68: 集計再計算ボタンは UI から撤去 (運用上不要、必要時は admin が API 直接実行) */}
           <Button variant="outline" size="sm" onClick={handleExport}>
-            {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
+            {selectedIds.size > 0 ? t('exportWithCount', { count: selectedIds.size }) : t('export')}
           </Button>
           {/* feat/wbs-overwrite-import: 上書き編集用 export (17 列、ID + 担当者 + 進捗系) */}
           <Button variant="outline" size="sm" onClick={handleSyncExport}>
-            WBSをエクスポート(上書き用)
+            {t('syncExport')}
           </Button>
           {/* feat/wbs-overwrite-import: 上書きインポート (Sync by ID + dry-run プレビュー) */}
           <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
-            WBSを上書きインポート
+            {t('syncImportButton')}
           </Button>
           <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
-            <DialogTrigger render={<Button variant="outline" size="sm" />}>インポート</DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>{t('import')}</DialogTrigger>
             <DialogContent className="max-w-[min(90vw,28rem)]">
               <DialogHeader>
-                <DialogTitle>WBS テンプレートインポート</DialogTitle>
-                <DialogDescription>エクスポートした CSV ファイルを Excel 等で編集し、インポートします。担当者・進捗は初期状態で作成されます。</DialogDescription>
+                <DialogTitle>{t('importDialogTitle')}</DialogTitle>
+                <DialogDescription>{t('importDialogDescription')}</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleImport} className="space-y-4">
                 {importError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{importError}</div>}
                 <div className="space-y-2">
-                  <Label>テンプレートファイル（CSV）</Label>
+                  <Label>{t('templateFile')}</Label>
                   <Input type="file" accept=".csv" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
                 </div>
-                <Button type="submit" className="w-full">インポート実行</Button>
+                <Button type="submit" className="w-full">{t('importExecute')}</Button>
               </form>
             </DialogContent>
           </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger render={<Button size="sm" />}>追加</DialogTrigger>
+            <DialogTrigger render={<Button size="sm" />}>{tAction('add')}</DialogTrigger>
             {/* PR #87 横展開: アクティビティ作成ダイアログも grid-cols-2 + DateFieldWithActions を
                 含むため、編集ダイアログ同様 max-w-[min(90vw,42rem)] に揃えて日付項目の縦書き崩れを防ぐ。 */}
             <DialogContent className="max-w-[min(90vw,42rem)]">
               <DialogHeader>
-                <DialogTitle>{createType === 'work_package' ? 'ワークパッケージ作成' : 'アクティビティ作成'}</DialogTitle>
+                <DialogTitle>{createType === 'work_package' ? t('createWorkPackageTitle') : t('createActivityTitle')}</DialogTitle>
                 <DialogDescription>
                   {createType === 'work_package'
-                    ? 'WBS の構造ノードを作成します。工数・日程は子要素から自動集計されます。'
-                    : '実作業を登録します。担当者・日程・工数を入力してください。'}
+                    ? t('createWorkPackageDescription')
+                    : t('createActivityDescription')}
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
@@ -1242,7 +1247,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                 )}
                 <div className="space-y-2">
-                  <Label>種別</Label>
+                  <Label>{t('type')}</Label>
                   <select
                     value={createType}
                     onChange={(e) => setCreateType(e.target.value as 'work_package' | 'activity')}
@@ -1254,20 +1259,20 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>親ワークパッケージ</Label>
+                  <Label>{t('parentWorkPackage')}</Label>
                   <select
                     value={parentTaskId}
                     onChange={(e) => setParentTaskId(e.target.value)}
                     className={nativeSelectClass}
                   >
-                    <option value="">なし（最上位に配置）</option>
+                    <option value="">{t('noParentTopLevel')}</option>
                     {parentOptions.map((p) => (
                       <option key={p.id} value={p.id}>{p.label}</option>
                     ))}
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>名称</Label>
+                  <Label>{t('columnName')}</Label>
                   <Input
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -1279,9 +1284,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 {createType === 'activity' && (
                   <>
                     <div className="space-y-2">
-                      <Label>担当者</Label>
+                      <Label>{t('columnAssignee')}</Label>
                       {members.length === 0 ? (
-                        <p className="text-sm text-destructive">メンバーが未登録です。先にメンバー管理から追加してください。</p>
+                        <p className="text-sm text-destructive">{t('noMembersWarning')}</p>
                       ) : (
                         <select
                           value={form.assigneeId}
@@ -1289,7 +1294,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                           className={nativeSelectClass}
                           required
                         >
-                          <option value="">選択...</option>
+                          <option value="">{t('selectPlaceholder')}</option>
                           {members.map((m) => (
                             <option key={m.userId} value={m.userId}>{m.userName}</option>
                           ))}
@@ -1298,16 +1303,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>開始予定日</Label>
+                        <Label>{t('plannedStartDate')}</Label>
                         <DateFieldWithActions value={form.plannedStartDate} onChange={(v) => setForm({ ...form, plannedStartDate: v })} required hideClear />
                       </div>
                       <div className="space-y-2">
-                        <Label>終了予定日</Label>
+                        <Label>{t('plannedEndDate')}</Label>
                         <DateFieldWithActions value={form.plannedEndDate} onChange={(v) => setForm({ ...form, plannedEndDate: v })} required hideClear />
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label>予定工数（人時）</Label>
+                      <Label>{t('plannedEffort')}</Label>
                       <NumberInput min={1} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
                     </div>
                   </>
@@ -1320,7 +1325,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 />
 
                 <Button type="submit" className="w-full">
-                  作成
+                  {tAction('create')}
                 </Button>
               </form>
             </DialogContent>
@@ -1353,9 +1358,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           onClick={() => setIsFilterMobileOpen((v) => !v)}
           aria-expanded={isFilterMobileOpen}
         >
-          <span className="flex-1 text-left font-medium">フィルタ / ソート</span>
+          <span className="flex-1 text-left font-medium">{t('filterSort')}</span>
           <span className="text-xs text-muted-foreground">
-            {isFilterMobileOpen ? 'タップで折りたたみ' : 'タップで展開'}
+            {isFilterMobileOpen ? t('tapToCollapse') : t('tapToExpand')}
           </span>
         </button>
         {/* mobile では state、md+ では常時 flex 表示 (md:!flex で強制上書き) */}
@@ -1366,20 +1371,20 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           data-testid="wbs-filter-controls"
         >
           <MultiSelectFilter
-            label="担当者"
+            label={t('columnAssignee')}
             options={[
               ...members.map((m) => ({ value: m.userId, label: m.userName })),
-              { value: UNASSIGNED_KEY, label: '（未アサイン）', muted: true },
+              { value: UNASSIGNED_KEY, label: t('unassigned'), muted: true },
             ]}
             selected={assigneeFilter}
             onToggle={toggleAssignee}
             onSelectAll={selectAllAssignees}
             onClearAll={clearAllAssignees}
             isAllSelected={isAllAssigneesSelected}
-            allLabel="全員"
+            allLabel={t('allAssignees')}
           />
           <MultiSelectFilter
-            label="状況"
+            label={t('status')}
             options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
             selected={statusFilter}
             onToggle={toggleStatus}
@@ -1394,7 +1399,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               size="sm"
               onClick={() => { selectAllAssignees(); selectAllStatuses(); }}
             >
-              フィルタ解除
+              {t('filterClear')}
             </Button>
           )}
         </div>
@@ -1404,16 +1409,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           モバイルではそもそもチェックボックス列を非表示にしているため、ここに来ても操作できない。 */}
       {canSelectForProgress && selectedIds.size > 0 && (
         <div className="hidden flex-wrap items-center gap-3 rounded-lg border border-info/30 bg-info/10 px-4 py-2 md:flex">
-          <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
+          <span className="text-sm font-medium">{t('selectedCount', { count: selectedIds.size })}</span>
           {/* PR #87: 一括編集 (計画系) と 一括削除 は pm_tl+ のみ。member には一括実績更新のみ露出。 */}
           {canEditPmTl && (
           <Dialog open={isBulkEditOpen} onOpenChange={handleBulkEditOpenChange}>
-            <DialogTrigger render={<Button variant="outline" size="sm" />}>一括編集</DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>{t('bulkEdit')}</DialogTrigger>
             <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>一括編集（{selectedIds.size} 件）</DialogTitle>
+                <DialogTitle>{t('bulkEditTitle', { count: selectedIds.size })}</DialogTitle>
                 <DialogDescription>
-                  適用する項目にチェックを入れて値を入力してください。WP は対象外（アクティビティのみ更新されます）。
+                  {t('bulkEditDescription')}
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleBulkEditSubmit} className="space-y-4">
@@ -1423,14 +1428,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <ApplyFieldRow
                   apply={bulkEditApply.assigneeId}
                   onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, assigneeId: v })}
-                  label="担当者"
+                  label={t('columnAssignee')}
                 >
                   <select
                     value={bulkEditValues.assigneeId}
                     onChange={(e) => setBulkEditValues({ ...bulkEditValues, assigneeId: e.target.value })}
                     className={nativeSelectClass}
                   >
-                    <option value="">未設定</option>
+                    <option value="">{t('notSet')}</option>
                     {members.map((m) => (
                       <option key={m.userId} value={m.userId}>{m.userName}</option>
                     ))}
@@ -1439,7 +1444,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <ApplyFieldRow
                   apply={bulkEditApply.plannedStartDate}
                   onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, plannedStartDate: v })}
-                  label="予定開始日"
+                  label={t('plannedStartDateBulk')}
                 >
                   <DateFieldWithActions
                     value={bulkEditValues.plannedStartDate}
@@ -1449,7 +1454,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <ApplyFieldRow
                   apply={bulkEditApply.plannedEndDate}
                   onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, plannedEndDate: v })}
-                  label="予定終了日"
+                  label={t('plannedEndDateBulk')}
                 >
                   <DateFieldWithActions
                     value={bulkEditValues.plannedEndDate}
@@ -1459,7 +1464,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <ApplyFieldRow
                   apply={bulkEditApply.plannedEffort}
                   onApplyChange={(v) => setBulkEditApply({ ...bulkEditApply, plannedEffort: v })}
-                  label="予定工数（人時）"
+                  label={t('plannedEffort')}
                 >
                   <NumberInput
                     min={1}
@@ -1468,18 +1473,18 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     onChange={(n) => setBulkEditValues({ ...bulkEditValues, plannedEffort: n })}
                   />
                 </ApplyFieldRow>
-                <Button type="submit" className="w-full">一括適用</Button>
+                <Button type="submit" className="w-full">{t('bulkApply')}</Button>
               </form>
             </DialogContent>
           </Dialog>
           )}
           <Dialog open={isBulkActualOpen} onOpenChange={handleBulkActualOpenChange}>
-            <DialogTrigger render={<Button variant="outline" size="sm" />}>一括実績更新</DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" size="sm" />}>{t('bulkActualUpdate')}</DialogTrigger>
             <DialogContent className="max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>一括実績更新（{selectedIds.size} 件）</DialogTitle>
+                <DialogTitle>{t('bulkActualTitle', { count: selectedIds.size })}</DialogTitle>
                 <DialogDescription>
-                  適用する項目にチェックを入れて値を入力してください。WP は対象外（アクティビティのみ更新されます）。
+                  {t('bulkActualDescription')}
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleBulkActualSubmit} className="space-y-4">
@@ -1487,12 +1492,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{bulkActualError}</div>
                 )}
                 <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-                  ステータス整合性ルール: 未着手なら実績開始/終了とも自動クリア、進行中/保留なら実績終了のみ自動クリア、完了のみ両方保存されます。
+                  {t('statusConsistencyHint')}
                 </div>
                 <ApplyFieldRow
                   apply={bulkActualApply.status}
                   onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, status: v })}
-                  label="ステータス"
+                  label={t('statusLabel')}
                 >
                   <select
                     value={bulkActualValues.status}
@@ -1507,7 +1512,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <ApplyFieldRow
                   apply={bulkActualApply.progressRate}
                   onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, progressRate: v })}
-                  label="進捗率（%）"
+                  label={t('progressRatePercent')}
                 >
                   <NumberInput
                     min={1}
@@ -1519,7 +1524,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <ApplyFieldRow
                   apply={bulkActualApply.actualStartDate}
                   onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, actualStartDate: v })}
-                  label="実績開始日"
+                  label={t('actualStartDate')}
                 >
                   <DateFieldWithActions
                     value={bulkActualValues.actualStartDate}
@@ -1529,21 +1534,21 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <ApplyFieldRow
                   apply={bulkActualApply.actualEndDate}
                   onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, actualEndDate: v })}
-                  label="実績終了日"
+                  label={t('actualEndDate')}
                 >
                   <DateFieldWithActions
                     value={bulkActualValues.actualEndDate}
                     onChange={(v) => setBulkActualValues({ ...bulkActualValues, actualEndDate: v })}
                   />
                 </ApplyFieldRow>
-                <Button type="submit" className="w-full">一括適用</Button>
+                <Button type="submit" className="w-full">{t('bulkApply')}</Button>
               </form>
             </DialogContent>
           </Dialog>
           {canEditPmTl && (
-            <Button variant="outline" size="sm" className="text-destructive" onClick={handleBulkDelete}>一括削除</Button>
+            <Button variant="outline" size="sm" className="text-destructive" onClick={handleBulkDelete}>{t('bulkDelete')}</Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>選択解除</Button>
+          <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>{t('deselectAll')}</Button>
         </div>
       )}
 
@@ -1575,7 +1580,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                         checked={isAllSelected}
                         onChange={toggleSelectAll}
                         className="rounded"
-                        title="全選択"
+                        title={t('selectAll')}
                       />
                     </th>
                   )}
@@ -1583,15 +1588,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   {showIdColumn && (
                     <ResizableHead columnKey="id" defaultWidth={300}>ID</ResizableHead>
                   )}
-                  <ResizableHead columnKey="name" defaultWidth={320}>名称</ResizableHead>
-                  <ResizableHead columnKey="assignee" defaultWidth={140}>担当者</ResizableHead>
-                  <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
-                  <ResizableHead columnKey="progress" defaultWidth={140}>進捗&工数</ResizableHead>
-                  <ResizableHead columnKey="plannedRange" defaultWidth={180}>予定期間</ResizableHead>
-                  <ResizableHead columnKey="actualRange" defaultWidth={180}>実績期間</ResizableHead>
+                  <ResizableHead columnKey="name" defaultWidth={320}>{t('columnName')}</ResizableHead>
+                  <ResizableHead columnKey="assignee" defaultWidth={140}>{t('columnAssignee')}</ResizableHead>
+                  <ResizableHead columnKey="status" defaultWidth={100}>{t('columnStatus')}</ResizableHead>
+                  <ResizableHead columnKey="progress" defaultWidth={140}>{t('columnProgressEffort')}</ResizableHead>
+                  <ResizableHead columnKey="plannedRange" defaultWidth={180}>{t('columnPlannedRange')}</ResizableHead>
+                  <ResizableHead columnKey="actualRange" defaultWidth={180}>{t('columnActualRange')}</ResizableHead>
                   {/* PR #168: 添付列 */}
-                  <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
-                  <ResizableHead columnKey="actions" defaultWidth={100}>操作</ResizableHead>
+                  <ResizableHead columnKey="attachments" defaultWidth={200}>{t('columnAttachments')}</ResizableHead>
+                  <ResizableHead columnKey="actions" defaultWidth={100}>{t('columnActions')}</ResizableHead>
                 </tr>
               </thead>
               <tbody>
@@ -1623,8 +1628,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     {/* PR #168: 添付列追加に伴い colSpan +1 */}
                     <td colSpan={(canSelectForProgress ? 9 : 8) + (showIdColumn ? 1 : 0)} className="py-8 text-center text-muted-foreground">
                       {tasks.length === 0
-                        ? 'WBS が登録されていません'
-                        : '選択したフィルタ条件に該当するタスクはありません'}
+                        ? t('noTasks')
+                        : t('noFilteredTasks')}
                     </td>
                   </tr>
                 )}
@@ -1637,12 +1642,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       {/* PR #128a-2: モバイル (md 未満) 専用のカード形式 WBS ビュー
           階層は marginLeft で字下げ表示、Expand/Collapse は PC と同じ state を共有、
           編集は既存ダイアログに誘導 (新規実装なし)。一括選択 / bulk update / ショートカットは提供しない。 */}
-      <div className="space-y-2 md:hidden" role="list" aria-label="WBS タスク一覧">
+      <div className="space-y-2 md:hidden" role="list" aria-label={t('mobileListAria')}>
         {filteredTasks.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             {tasks.length === 0
-              ? 'WBS が登録されていません'
-              : '選択したフィルタ条件に該当するタスクはありません'}
+              ? t('noTasks')
+              : t('noFilteredTasks')}
           </p>
         ) : (
           filteredTasks.map((task) => (
@@ -1674,14 +1679,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <DialogContent className="max-w-[min(90vw,42rem)] max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {editingTask?.type === 'work_package' ? 'ワークパッケージ編集' : 'アクティビティ編集'}
+              {editingTask?.type === 'work_package' ? t('editWorkPackageTitle') : t('editActivityTitle')}
             </DialogTitle>
             <DialogDescription>
               {editingCanUpdatePm && editingCanUpdateActual
-                ? '編集項目と実績項目を同時に更新できます。'
+                ? t('editDescriptionBoth')
                 : editingCanUpdatePm
-                ? 'タスクの基本情報を編集します。'
-                : '実績（ステータス・進捗率・実績日付）を更新します。'}
+                ? t('editDescriptionPm')
+                : t('editDescriptionActual')}
             </DialogDescription>
           </DialogHeader>
           {editingTask && editForm && (
@@ -1691,9 +1696,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               {/* PM/TL 編集セクション */}
               {editingCanUpdatePm && (
                 <section className="space-y-3 rounded-md border border-border p-3">
-                  <h4 className="text-sm font-medium text-foreground">編集項目</h4>
+                  <h4 className="text-sm font-medium text-foreground">{t('editSectionPm')}</h4>
                   <div className="space-y-2">
-                    <Label>種別</Label>
+                    <Label>{t('type')}</Label>
                     <select
                       value={editForm.type}
                       onChange={(e) => setEditForm({ ...editForm, type: e.target.value as 'work_package' | 'activity' })}
@@ -1703,32 +1708,32 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <Label>親WP</Label>
+                    <Label>{t('parentWp')}</Label>
                     <select
                       value={editForm.parentTaskId}
                       onChange={(e) => setEditForm({ ...editForm, parentTaskId: e.target.value })}
                       className={nativeSelectClass}
                     >
-                      <option value="">なし（最上位に配置）</option>
+                      <option value="">{t('noParentTopLevel')}</option>
                       {parentOptions.filter((p) => p.id !== editingTask.id).map((p) => (
                         <option key={p.id} value={p.id}>{p.label}</option>
                       ))}
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <Label>名称</Label>
+                    <Label>{t('columnName')}</Label>
                     <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
                   </div>
                   {editForm.type === 'activity' && (
                     <>
                       <div className="space-y-2">
-                        <Label>担当者</Label>
+                        <Label>{t('columnAssignee')}</Label>
                         <select
                           value={editForm.assigneeId}
                           onChange={(e) => setEditForm({ ...editForm, assigneeId: e.target.value })}
                           className={nativeSelectClass}
                         >
-                          <option value="">未設定</option>
+                          <option value="">{t('notSet')}</option>
                           {members.map((m) => (
                             <option key={m.userId} value={m.userId}>{m.userName}</option>
                           ))}
@@ -1738,15 +1743,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                           縦並びに変更 (grid-cols-2 では狭い画面で日付ボタン群が
                           flex-wrap で崩れるため)。 */}
                       <div className="space-y-2">
-                        <Label>予定開始日</Label>
+                        <Label>{t('plannedStartDate')}</Label>
                         <DateFieldWithActions value={editForm.plannedStartDate} onChange={(v) => setEditForm({ ...editForm, plannedStartDate: v })} />
                       </div>
                       <div className="space-y-2">
-                        <Label>予定終了日</Label>
+                        <Label>{t('plannedEndDate')}</Label>
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} />
                       </div>
                       <div className="space-y-2">
-                        <Label>見積工数（人時）</Label>
+                        <Label>{t('estimatedEffort')}</Label>
                         <NumberInput min={1} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
                       </div>
                     </>
@@ -1757,9 +1762,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               {/* 実績セクション（PM/TL または ACT の担当者本人のみ）*/}
               {editingCanUpdateActual && editForm.type === 'activity' && (
                 <section className="space-y-3 rounded-md border border-border p-3">
-                  <h4 className="text-sm font-medium text-foreground">実績項目</h4>
+                  <h4 className="text-sm font-medium text-foreground">{t('editSectionActual')}</h4>
                   <div className="space-y-2">
-                    <Label>ステータス</Label>
+                    <Label>{t('statusLabel')}</Label>
                     <select
                       value={editForm.status}
                       onChange={(e) => {
@@ -1778,7 +1783,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <Label>進捗率</Label>
+                    <Label>{t('progressRate')}</Label>
                     <NumberInput
                       min={1}
                       max={100}
@@ -1795,7 +1800,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   </div>
                   {/* PR #88: 実績開始/終了日も縦並びに統一 (一括実績更新画面と同じ UX)。 */}
                   <div className="space-y-2">
-                    <Label className={editingActualStartDisabled ? 'text-muted-foreground' : ''}>実績開始日</Label>
+                    <Label className={editingActualStartDisabled ? 'text-muted-foreground' : ''}>{t('actualStartDate')}</Label>
                     <DateFieldWithActions
                       value={editForm.actualStartDate}
                       onChange={(v) => setEditForm({ ...editForm, actualStartDate: v })}
@@ -1803,7 +1808,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className={editingActualEndDisabled ? 'text-muted-foreground' : ''}>実績終了日</Label>
+                    <Label className={editingActualEndDisabled ? 'text-muted-foreground' : ''}>{t('actualEndDate')}</Label>
                     <DateFieldWithActions
                       value={editForm.actualEndDate}
                       onChange={(v) => setEditForm({ ...editForm, actualEndDate: v })}
@@ -1818,12 +1823,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 entityType="task"
                 entityId={editingTask.id}
                 canEdit={canEditPmTl}
-                label="関連 URL"
+                label={tAttachment('relatedUrl')}
               />
 
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={closeEditDialog}>{t('cancel')}</Button>
-                <Button type="submit">{t('save')}</Button>
+                <Button type="button" variant="outline" onClick={closeEditDialog}>{tAction('cancel')}</Button>
+                <Button type="submit">{tAction('save')}</Button>
               </div>
             </form>
           )}
