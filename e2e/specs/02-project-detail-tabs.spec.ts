@@ -150,8 +150,13 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
       for (const name of assetTabsViaMenu) {
         await page.getByRole('button', { name: '資産メニューを開く' }).click();
         await page.getByRole('menuitem', { name }).click();
-        // プルダウン経由で選択した結果、対応する tab が aria-selected=true になる
-        await expect(page.getByRole('tab', { name })).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+        // PR #167 hotfix 2: 資産タブ群は `hidden lg:inline-flex` で mobile では display:none。
+        // Playwright の `getByRole` は a11y tree を参照するため display:none 要素を「element not found」
+        // で除外する (CI で 1 度目に踏んだ罠)。一方 `page.locator('[role="tab"]')` は CSS セレクタなので
+        // display:none 要素も取得でき、`toHaveAttribute` は DOM 属性チェックなので可視性を要求しない。
+        // → CSS セレクタ + filter(hasText) で hidden tab の aria-selected を検証する。
+        const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
+        await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
       }
     }
 

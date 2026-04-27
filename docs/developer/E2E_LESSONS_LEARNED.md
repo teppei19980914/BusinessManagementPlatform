@@ -833,14 +833,56 @@ test('各タブをクリック', async () => {
   if (isMobile) {
     await page.getByRole('button', { name: '資産メニューを開く' }).click();
     await page.getByRole('menuitem', { name: 'リスク一覧' }).click();
+    // PR #167 hotfix 2: 後段の検証は getByRole ではなく CSS セレクタを使う (下記 §4.42.1 参照)
+    await expect(page.locator('[role="tab"]').filter({ hasText: 'リスク一覧' }).first())
+      .toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
   } else {
     await page.getByRole('tab', { name: 'リスク一覧' }).click();
+    await expect(page.getByRole('tab', { name: 'リスク一覧' }))
+      .toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
   }
-  // 結果は両 viewport 共通: aria-selected=true
-  await expect(page.getByRole('tab', { name: 'リスク一覧' }))
-    .toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
 });
 ```
+
+#### 4.42.1 `display:none` 要素は a11y tree から除外され `getByRole` で見つからない (PR #167 hotfix 2 で発覚)
+
+**症状**: 上記 §4.42 の経路分岐を入れた直後の CI でさらに同 spec が以下で fail:
+
+```
+Error: expect(locator).toHaveAttribute(expected) failed
+Locator: getByRole('tab', { name: 'リスク一覧' })
+Error: element(s) not found
+```
+
+**根本原因**: ARIA 仕様で `display: none` (= Tailwind `hidden`) の要素は **accessibility tree から除外**
+される。Playwright の `page.getByRole(...)` は a11y tree を参照するので「element(s) not found」になる。
+一方、CSS セレクタ (`page.locator('[role="tab"]')`) は DOM 構造を参照するため hidden 要素も取得でき、
+`toHaveAttribute` は属性チェックのみで可視性を要求しない。
+
+**解消パターン**: hidden 要素の **状態属性検証** (aria-selected, aria-expanded 等) は CSS セレクタで:
+
+```ts
+// ❌ NG: hidden 要素は a11y tree にないので element(s) not found
+await expect(page.getByRole('tab', { name: 'リスク一覧' }))
+  .toHaveAttribute('aria-selected', 'true');
+
+// ✅ OK: CSS セレクタは hidden 要素も取得、toHaveAttribute は可視性不問
+await expect(page.locator('[role="tab"]').filter({ hasText: 'リスク一覧' }).first())
+  .toHaveAttribute('aria-selected', 'true');
+```
+
+**判断基準**:
+
+- **可視性が検証対象** (`toBeVisible()` / `click()`) → `getByRole` を使う (a11y tree が正解)
+- **状態属性のみ検証** (`toHaveAttribute` / `toHaveClass`) で hidden な可能性がある要素 → CSS セレクタ
+- **トリガー操作** (click 等) は visible 経路で行う必要があるため、レスポンシブ集約 UI では
+  「操作 = visible 経路」「結果検証 = CSS セレクタ」の組み合わせになる
+
+**汎化ルール (§4.42 への追加)**:
+
+4. レスポンシブで `hidden lg:*` を当てた tab/button の **状態属性** を E2E で検証する場合、
+   `getByRole` ではなく `page.locator('[role="..."]').filter({ hasText: name })` を使う
+5. `getByRole` の戻り値が「element(s) not found」になったら、対象が `display:none` の可能性を疑う
 
 **汎化ルール**:
 
@@ -849,10 +891,13 @@ test('各タブをクリック', async () => {
    修正することを **同 PR 内で完結** させる (別 PR にすると CI 赤が一時的に残る)
 3. PR #167 の場合、本来は実装と同時に E2E 経路分岐を入れるべきだった
    → 今後は実装段階で `test.info().project.name` 分岐の追加を忘れない
+4. (§4.42.1 から昇格) hidden 要素の状態属性検証は `getByRole` ではなく CSS セレクタを使う
+5. (§4.42.1 から昇格) `getByRole` で element(s) not found になったら display:none を疑う
 
 **関連**:
 - §4.36 (chromium-mobile testIgnore パターン)
 - §4.37 (1 DOM 要素 vs 2 系統 DOM のレスポンシブ設計)
+- §4.42.1 (hidden 要素の状態属性検証は CSS セレクタ)
 - DEVELOPER_GUIDE §5.24 (TabsList のレスポンシブ集約パターン)
 
 ---
