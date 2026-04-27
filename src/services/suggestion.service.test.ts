@@ -49,7 +49,6 @@ describe('suggestForProject', () => {
         techTags: ['next'],
         processTags: ['agile'],
         businessDomainTags: ['finance'],
-        knowledgeProjects: [{ projectId: 'p-1' }],
       },
     ] as never);
 
@@ -84,7 +83,6 @@ describe('suggestForProject', () => {
     const r = await suggestForProject('p-1');
 
     expect(r.knowledge[0].id).toBe('k-1');
-    expect(r.knowledge[0].alreadyLinked).toBe(true);
     expect(r.pastIssues[0].id).toBe('i-1');
     expect(r.pastIssues[0].sourceProjectName).toBe('Other PJ');
     expect(r.retrospectives[0].id).toBe('r-1');
@@ -139,7 +137,6 @@ describe('suggestForProject', () => {
         techTags: [],
         processTags: [],
         businessDomainTags: [],
-        knowledgeProjects: [],
       },
     ] as never);
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
@@ -217,6 +214,73 @@ describe('suggestForProject', () => {
 
     // 同じ textScore=0.5 でも tagScore が乗ることで final score が text 単独より大きい
     expect(r.pastIssues[0].score).toBeGreaterThan(r.pastIssues[0].textScore);
+  });
+
+  // PR #160 (fix/suggestion-exclude-self-project):
+  // 自プロジェクトに紐付け済の Knowledge は提案候補から **完全除外** する。
+  // 旧仕様 (alreadyLinked=true で印付け) では「参考」タブに自分が作ったナレッジが
+  // 並ぶため UX 上ノイズになっていた。Issue / Retrospective が `NOT: { projectId }` で
+  // 自プロジェクト除外しているのと parity を取った。
+  it('自プロジェクトに紐付け済の Knowledge は where 節で除外する (PR #160)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'x',
+      background: '',
+      scope: '',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
+
+    await suggestForProject('p-1');
+
+    // findMany の where 句に NOT: { knowledgeProjects: { some: { projectId: 'p-1' } } } が
+    // 含まれているかを検証 (regression防止: alreadyLinked 戻し対策)
+    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(call?.where).toEqual({
+      deletedAt: null,
+      visibility: 'public',
+      NOT: {
+        knowledgeProjects: { some: { projectId: 'p-1' } },
+      },
+    });
+  });
+
+  // PR #160: KnowledgeSuggestion 型から alreadyLinked が削除されたことの確認
+  // (UI 側の SuggestionsPanel もこのフィールドを参照しないようになった)
+  it('KnowledgeSuggestion DTO に alreadyLinked フィールドは含まれない (PR #160)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'finance',
+      background: '',
+      scope: '',
+      businessDomainTags: ['finance'],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      {
+        id: 'k-1',
+        title: 'title',
+        knowledgeType: 'lesson',
+        content: 'about finance',
+        techTags: [],
+        processTags: [],
+        businessDomainTags: ['finance'],
+      },
+    ] as never);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { id: 'k-1', score: 0.5 },
+    ] as never);
+
+    const r = await suggestForProject('p-1');
+    expect(r.knowledge[0]).not.toHaveProperty('alreadyLinked');
   });
 
   it('親 Project のタグが空なら Issue / Retrospective の tagScore は 0 (regression: 旧挙動と互換)', async () => {

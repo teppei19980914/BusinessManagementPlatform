@@ -23,7 +23,6 @@ type KnowledgeSuggestion = {
   score: number;
   tagScore: number;
   textScore: number;
-  alreadyLinked: boolean;
 };
 
 type PastIssueSuggestion = {
@@ -144,7 +143,9 @@ export function SuggestionsPanel({
           <ul className="space-y-2">
             {knowledge.map((k) => {
               const adoptedKey = `knowledge:${k.id}`;
-              const isAdopted = k.alreadyLinked || adopted.has(adoptedKey);
+              // PR #160: 自プロジェクト紐付け済みナレッジは API 側で除外されるため、
+              // ここでの alreadyLinked 分岐は不要 (採用直後に表示する「紐付け済」のみ adopted で管理)
+              const isAdopted = adopted.has(adoptedKey);
               return (
                 <li key={k.id} className="rounded border p-3">
                   <div className="flex items-start gap-3">
