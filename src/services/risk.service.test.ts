@@ -105,17 +105,26 @@ describe('listAllRisksForViewer', () => {
     expect(r[0].canAccessProject).toBe(true);
   });
 
-  it('非 admin & 非メンバーは projectName / 氏名をマスク', async () => {
+  // fix/cross-list-non-member-columns (2026-04-27): 非メンバーでも担当者・起票者・
+  // 作成者・更新者の氏名は公開する仕様に変更 (横断ビュー = visibility='public' 行の
+  // ナレッジ共有を促進する目的)。projectName のみ機微情報扱いを維持。
+  it('非 admin & 非メンバーは projectName のみマスク、氏名は公開 (2026-04-27 仕様変更)', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
       { ...rRow(), project: { id: 'p-1', name: 'PJ A', deletedAt: null } },
     ] as never);
-    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { id: 'u-1', name: 'Alice' },
+      { id: 'u-2', name: 'Bob' },
+    ] as never);
 
     const r = await listAllRisksForViewer('u-99', 'general');
 
-    expect(r[0].projectName).toBe(null);
-    expect(r[0].reporterName).toBe(null);
+    expect(r[0].projectName).toBe(null); // プロジェクト名は引き続き機微扱い
+    expect(r[0].reporterName).toBe('Alice'); // 氏名は公開 (rRow().reporter.name)
+    expect(r[0].assigneeName).toBe('Bob');   // rRow().assignee.name
+    expect(r[0].createdByName).toBe('Alice'); // userMap 経由
+    expect(r[0].updatedByName).toBe('Alice');
     expect(r[0].canAccessProject).toBe(false);
     expect(r[0].projectDeleted).toBe(false); // admin 以外には秘匿
   });

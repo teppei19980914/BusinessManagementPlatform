@@ -281,8 +281,9 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                     <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={100} required />
                   </div>
                   <div className="space-y-2">
-                    <Label>内容</Label>
-                    <MarkdownTextarea value={form.content} onChange={(v) => setForm({ ...form, content: v })} rows={4} maxLength={2000} required />
+                    <Label>内容 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                    {/* refactor/list-create-content-optional (2026-04-27 #6): 件名必須、内容は任意 */}
+                    <MarkdownTextarea value={form.content} onChange={(v) => setForm({ ...form, content: v })} rows={4} maxLength={2000} />
                   </div>
                   {/*
                     PR #65 Phase 2 (c): 入力中に類似する過去課題を inline 提示。

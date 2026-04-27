@@ -31,7 +31,6 @@ import {
 import { Trash2 } from 'lucide-react';
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
 // fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
-import { parseTagsInput } from '@/lib/parse-tags';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -85,6 +84,9 @@ export function ProjectKnowledgeClient({
   // feat/dialog-fullscreen-toggle: ナレッジ作成 dialog の全画面トグル
   const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle } = useDialogFullscreen();
 
+  // refactor/knowledge-tags-removal-temp (2026-04-27): 3 タグ入力 UI を一時撤去。
+  // 本格的な提案エンジン改修は 2026-05 で実施予定。それまでは空配列で送信し、
+  // 既存ナレッジの既存タグは温存する (DB 側のフィールドは残置)。
   const initialForm = {
     title: '',
     knowledgeType: 'research',
@@ -92,14 +94,8 @@ export function ProjectKnowledgeClient({
     content: '',
     result: '',
     visibility: 'draft',
-    // PR #65 Phase 2 (b): 提案精度向上のためタグ入力 (カンマ区切り)
-    businessDomainTagsInput: '',
-    techTagsInput: '',
-    processTagsInput: '',
   };
   const [form, setForm] = useState(initialForm);
-
-  // fix/project-create-customer-validation: 重複定義を `@/lib/parse-tags` に集約 (全角読点対応)
 
   // PR #67: ナレッジ作成時にステージする添付 URL (general slot)
   const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
@@ -115,9 +111,10 @@ export function ProjectKnowledgeClient({
       content: form.content,
       result: form.result,
       visibility: form.visibility,
-      businessDomainTags: parseTagsInput(form.businessDomainTagsInput),
-      techTags: parseTagsInput(form.techTagsInput),
-      processTags: parseTagsInput(form.processTagsInput),
+      // refactor/knowledge-tags-removal-temp: タグ入力を撤去したため空配列を送信
+      businessDomainTags: [],
+      techTags: [],
+      processTags: [],
     };
 
     const res = await withLoading(() =>
@@ -219,68 +216,42 @@ export function ProjectKnowledgeClient({
                       </select>
                     </div>
                   </div>
+                  {/* refactor/list-create-content-optional (2026-04-27 #6): タイトル必須、3 セクションは任意 */}
                   <div className="space-y-2">
-                    <Label>背景</Label>
+                    <Label>背景 <span className="text-xs text-muted-foreground">(任意)</span></Label>
                     <MarkdownTextarea
                       value={form.background}
                       onChange={(v) => setForm({ ...form, background: v })}
                       rows={3}
                       maxLength={2000}
-                      required
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>内容</Label>
+                    <Label>内容 <span className="text-xs text-muted-foreground">(任意)</span></Label>
                     <MarkdownTextarea
                       value={form.content}
                       onChange={(v) => setForm({ ...form, content: v })}
                       rows={5}
                       maxLength={5000}
-                      required
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>結果</Label>
+                    <Label>結果 <span className="text-xs text-muted-foreground">(任意)</span></Label>
                     <MarkdownTextarea
                       value={form.result}
                       onChange={(v) => setForm({ ...form, result: v })}
                       rows={3}
                       maxLength={3000}
-                      required
                     />
                   </div>
                   {/*
-                    PR #65 Phase 2 (b): ナレッジのタグ入力 (カンマ区切り)。
-                    未来のプロジェクトからの類似検索に使われる重要な軸なので、
-                    作成時に入力を強く推奨する。
+                    refactor/knowledge-tags-removal-temp (2026-04-27 ユーザ要望 #3):
+                    業務ドメインタグ / 技術スタックタグ / 工程タグの 3 入力を一時撤去。
+                    本格的な提案エンジン改修は 2026-05 に実施予定 (memory: project_suggestion_engine_priority)。
+                    DB 列 (knowledges.business_domain_tags / tech_tags / process_tags) と
+                    service 層 (parseTagsInput) は据置で温存し、UI のみ削除する暫定措置。
+                    既存ナレッジの既存タグはそのまま読み取り可、新規作成時は空配列で保存される。
                   */}
-                  <div className="space-y-2">
-                    <Label>業務ドメインタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
-                    <Input
-                      value={form.businessDomainTagsInput}
-                      onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
-                      placeholder="例: 金融, 基幹業務, 会計"
-                      maxLength={500}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>技術スタックタグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
-                    <Input
-                      value={form.techTagsInput}
-                      onChange={(e) => setForm({ ...form, techTagsInput: e.target.value })}
-                      placeholder="例: React, Next.js, TypeScript"
-                      maxLength={500}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>工程タグ <span className="text-xs text-muted-foreground">(カンマ or 読点「、」で区切り、提案精度向上のため推奨)</span></Label>
-                    <Input
-                      value={form.processTagsInput}
-                      onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
-                      placeholder="例: 要件定義, 設計, 開発, 試験"
-                      maxLength={500}
-                    />
-                  </div>
                   {/* PR #67: 作成と同時に参考リンク等の URL を登録可能 */}
                   <StagedAttachmentsInput
                     value={stagedCreateAttachments}
