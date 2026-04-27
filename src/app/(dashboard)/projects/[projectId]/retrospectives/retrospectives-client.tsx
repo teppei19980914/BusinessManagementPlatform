@@ -5,7 +5,7 @@
  *
  * 役割:
  *   プロジェクト振り返り (KPT 風: 計画/実績総括 + 良かった点 / 課題 / 次回事項) の
- *   一覧 / 新規作成 / 編集 / コメント追加 / 削除を管理する。
+ *   一覧 / 新規作成 / 編集 / 削除を管理する (項目 10: コメント機能は UI 非表示化、API は残置)。
  *
  * 公開範囲:
  *   visibility='draft' は作成者本人 + admin のみ、'public' は「全振り返り」横断画面に表示。
@@ -30,7 +30,6 @@ import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
@@ -48,8 +47,6 @@ import type { RetroDTO } from '@/services/retrospective.service';
 // PR #168: 一覧画面に添付列を表示 (横展開)
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
-// PR #117 → PR #119: session 連携フォーマッタ
-import { useFormatters } from '@/lib/use-formatters';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog のため previousValue なし)
@@ -75,22 +72,18 @@ type Props = {
   retros: RetroDTO[];
   /** 2026-04-24: 振り返り作成ボタンの表示可否 (実際の ProjectMember の pm_tl/member のみ true) */
   canCreate: boolean;
-  /** コメント投稿可否 (ProjectMember ならコメント可) */
-  canComment: boolean;
   /** 作成者本人判定用 (createdBy === currentUserId で編集/削除許可) */
   currentUserId: string;
   /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
   onReload?: () => Promise<void> | void;
 };
 
-export function RetrospectivesClient({ projectId, retros, canCreate, canComment, currentUserId, onReload }: Props) {
+export function RetrospectivesClient({ projectId, retros, canCreate, currentUserId, onReload }: Props) {
   const t = useTranslations('action');
   const tRetro = useTranslations('retro');
   const RETRO_VISIBILITY_OPTIONS = buildRetroVisibilityOptions(tRetro);
   const router = useRouter();
   const { withLoading } = useLoading();
-  // PR #119: session 連携フォーマッタ
-  const { formatDateTimeFull } = useFormatters();
   const reload = useCallback(async () => {
     if (onReload) {
       await onReload();
@@ -99,7 +92,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
     }
   }, [onReload, router]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [commentText, setCommentText] = useState<Record<string, string>>({});
+  // 項目 10: コメント機能 UI 非表示化に伴い state 削除。API は残置。
   const [error, setError] = useState('');
   // 行 (カード) クリックで開く編集ダイアログ (PR #56 Req 8)
   const [editingRetro, setEditingRetro] = useState<RetroDTO | null>(null);
@@ -218,17 +211,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
     await reload();
   }
 
-  async function handleComment(retroId: string) {
-    const content = commentText[retroId];
-    if (!content?.trim()) return;
-    await fetch(`/api/projects/${projectId}/retrospectives/${retroId}/comments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    setCommentText({ ...commentText, [retroId]: '' });
-    await reload();
-  }
+  // 項目 10: handleComment は UI 非表示化に伴い削除。API endpoint は残置。
 
   return (
     <div className="space-y-6">
@@ -395,28 +378,13 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
             </div>
           </div>
 
-          {/* コメント (内部要素はカードクリックの伝播を止める) */}
-          <div className="border-t pt-4" onClick={(e) => e.stopPropagation()}>
-            <h4 className="text-sm font-medium text-muted-foreground mb-2">コメント（{retro.comments.length}件）</h4>
-            {retro.comments.map((c) => (
-              <div key={c.id} className="mb-2 rounded bg-muted p-2 text-sm">
-                <span className="font-medium">{c.userName}</span>
-                <span className="ml-2 text-xs text-muted-foreground">{formatDateTimeFull(c.createdAt)}</span>
-                <p className="mt-1">{c.content}</p>
-              </div>
-            ))}
-            {canComment && (
-              <div className="flex gap-2 mt-2">
-                <Input
-                  placeholder={tRetro('commentPlaceholder')}
-                  value={commentText[retro.id] || ''}
-                  onChange={(e) => setCommentText({ ...commentText, [retro.id]: e.target.value })}
-                  onKeyDown={(e) => e.key === 'Enter' && handleComment(retro.id)}
-                />
-                <Button variant="outline" size="sm" onClick={() => handleComment(retro.id)}>{tRetro('post')}</Button>
-              </div>
-            )}
-          </div>
+          {/*
+            項目 10: 振り返りのコメント機能は現状非表示。
+            将来計画: 各「○○一覧」(リスク/課題/振り返り/ナレッジ) で横ぐしのコメント機能を実装し、
+            コメント時に通知が飛ぶ仕組みを導入予定 (PR-α 段階では UI 削除のみ、API/DB/service は温存)。
+            対応する API: POST /api/projects/[id]/retrospectives/[retroId]/comments は残置。
+            DTO の retro.comments は無視 (計算済だが UI で参照しない)。
+          */}
         </div>
         );
       })}
