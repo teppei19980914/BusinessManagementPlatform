@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,7 +29,7 @@ type Props = {
   slot?: string;
   /** 追加・編集・削除の操作を許可するか */
   canEdit: boolean;
-  /** 見出しラベル (例: '関連ドキュメント') */
+  /** 見出しラベル (省略時は attachment.relatedUrl を使用) */
   label?: string;
 };
 
@@ -37,9 +38,12 @@ export function AttachmentList({
   entityId,
   slot = 'general',
   canEdit,
-  label = '関連 URL',
+  label,
 }: Props) {
+  const t = useTranslations('attachment');
+  const tAction = useTranslations('action');
   const { withLoading } = useLoading();
+  const resolvedLabel = label ?? t('relatedUrl');
   // loaded=false の間は空一覧メッセージを出さないため、1 つの state にまとめる
   // (react-hooks/set-state-in-effect 回避: effect 内の setState を 1 回に集約)
   type ListState =
@@ -54,14 +58,14 @@ export function AttachmentList({
     const url = `/api/attachments?entityType=${entityType}&entityId=${entityId}&slot=${slot}`;
     const res = await fetch(url);
     if (!res.ok) {
-      setError('添付の取得に失敗しました');
+      setError(t('fetchFailed'));
       setListState({ loaded: true, items: [] });
       return;
     }
     const json = await res.json();
     setListState({ loaded: true, items: json.data ?? [] });
     setError('');
-  }, [entityType, entityId, slot]);
+  }, [entityType, entityId, slot, t]);
 
   // 初回 mount 時と entity 変更時に添付一覧をサーバから同期取得する。
   // これは外部システム (API) との同期であり react-hooks/set-state-in-effect の
@@ -92,7 +96,7 @@ export function AttachmentList({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || '追加に失敗しました');
+      setError(json.error?.message || json.error?.details?.[0]?.message || t('addFailed'));
       return;
     }
     setNewDisplayName('');
@@ -101,12 +105,12 @@ export function AttachmentList({
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('この添付を削除しますか？')) return;
+    if (!confirm(t('deleteConfirm'))) return;
     const res = await withLoading(() =>
       fetch(`/api/attachments/${id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      setError('削除に失敗しました');
+      setError(t('deleteFailed'));
       return;
     }
     await reload();
@@ -114,12 +118,12 @@ export function AttachmentList({
 
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
+      <Label>{resolvedLabel}</Label>
 
       {error && <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>}
 
       {loaded && items.length === 0 && !canEdit && (
-        <p className="text-sm text-muted-foreground">添付はありません</p>
+        <p className="text-sm text-muted-foreground">{t('noAttachments')}</p>
       )}
 
       {items.length > 0 && (
@@ -143,7 +147,7 @@ export function AttachmentList({
                   className="text-destructive"
                   onClick={() => handleDelete(a.id)}
                 >
-                  削除
+                  {tAction('delete')}
                 </Button>
               )}
             </li>
@@ -154,11 +158,11 @@ export function AttachmentList({
       {canEdit && (
         <form onSubmit={handleAdd} className="flex items-end gap-2 rounded border bg-muted p-2">
           <div className="flex-1 space-y-1">
-            <Label className="text-xs">表示名</Label>
+            <Label className="text-xs">{t('displayName')}</Label>
             <Input
               value={newDisplayName}
               onChange={(e) => setNewDisplayName(e.target.value)}
-              placeholder="例: 設計書"
+              placeholder={t('exampleSpec')}
               maxLength={200}
               required
             />
@@ -175,7 +179,7 @@ export function AttachmentList({
               required
             />
           </div>
-          <Button type="submit" size="sm">追加</Button>
+          <Button type="submit" size="sm">{tAction('add')}</Button>
         </form>
       )}
     </div>

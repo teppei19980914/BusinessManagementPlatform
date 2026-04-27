@@ -28,10 +28,11 @@
  *   - DEVELOPER_GUIDE.md §5.x (UI 改修手順)
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
+import { useTranslations } from 'next-intl';
 import { Menu } from '@base-ui/react/menu';
 import { ChevronDownIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -74,34 +75,41 @@ type NavGroup = {
   items: NavItem[];
 };
 
-// PR #127: 3 分類ナビ構造
+// PR #127: 3 分類ナビ構造 (Phase C-2 i18n: ラベルは t() で動的解決するため
+// useMemo で component 内に移動。設定スキーマは config として残す)
 //   TODO (DEVELOPER_GUIDE §11 に記載): 全見積もり / 全 WBS 横断画面を実装したら
 //   プロジェクトタブ配下に追加する (routes 未定義のため現時点は該当項目を含めない)
-const navGroups: NavGroup[] = [
+type NavGroupConfig = {
+  labelKey: string;
+  adminOnly?: boolean;
+  items: { href: string; labelKey: string; adminOnly?: boolean }[];
+};
+
+const navGroupsConfig: NavGroupConfig[] = [
   {
-    label: 'プロジェクト',
+    labelKey: 'groupProjects',
     items: [
-      { href: PROJECTS_ROUTE, label: '全プロジェクト' },
-      { href: CUSTOMERS_ROUTE, label: '全顧客管理', adminOnly: true },
+      { href: PROJECTS_ROUTE, labelKey: 'allProjects' },
+      { href: CUSTOMERS_ROUTE, labelKey: 'allCustomers', adminOnly: true },
     ],
   },
   {
-    label: '資産',
+    labelKey: 'groupAssets',
     items: [
-      { href: ALL_RISKS_ROUTE, label: '全リスク' },
-      { href: ALL_ISSUES_ROUTE, label: '全課題' },
-      { href: ALL_RETROSPECTIVES_ROUTE, label: '全振り返り' },
-      { href: KNOWLEDGE_ROUTE, label: '全ナレッジ' },
-      { href: ALL_MEMOS_ROUTE, label: '全メモ' },
+      { href: ALL_RISKS_ROUTE, labelKey: 'allRisks' },
+      { href: ALL_ISSUES_ROUTE, labelKey: 'allIssues' },
+      { href: ALL_RETROSPECTIVES_ROUTE, labelKey: 'allRetrospectives' },
+      { href: KNOWLEDGE_ROUTE, labelKey: 'allKnowledge' },
+      { href: ALL_MEMOS_ROUTE, labelKey: 'allMemos' },
     ],
   },
   {
-    label: 'システム管理者',
+    labelKey: 'groupAdmin',
     adminOnly: true,
     items: [
-      { href: ADMIN_USERS_ROUTE, label: 'ユーザ管理' },
-      { href: ADMIN_AUDIT_LOGS_ROUTE, label: '監査ログ' },
-      { href: ADMIN_ROLE_CHANGES_ROUTE, label: '権限変更' },
+      { href: ADMIN_USERS_ROUTE, labelKey: 'adminUsers' },
+      { href: ADMIN_AUDIT_LOGS_ROUTE, labelKey: 'adminAuditLogs' },
+      { href: ADMIN_ROLE_CHANGES_ROUTE, labelKey: 'adminRoleChanges' },
     ],
   },
 ];
@@ -132,6 +140,8 @@ function isGroupActive(group: NavGroup, pathname: string, isAdmin: boolean): boo
  *   PR #127 では既存実装を踏襲 (ナビ再構築スコープ外)。
  */
 function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
+  const tNav = useTranslations('nav');
+  const tAuth = useTranslations('auth');
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -165,7 +175,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
         <span>{user.name}</span>
         {user.systemRole === 'admin' && (
           <span className="rounded bg-info/20 px-1.5 py-0.5 text-xs text-info">
-            管理者
+            {tNav('adminBadge')}
           </span>
         )}
         <span className="text-xs text-muted-foreground">▾</span>
@@ -181,7 +191,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
             className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
           >
-            マイタスク
+            {tNav('myTasks')}
           </Link>
           <Link
             href={MEMOS_ROUTE}
@@ -189,7 +199,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
             className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
           >
-            メモ一覧
+            {tNav('memos')}
           </Link>
           <Link
             href={SETTINGS_ROUTE}
@@ -197,7 +207,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
             className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
             onClick={() => setOpen(false)}
           >
-            設定
+            {tNav('settings')}
           </Link>
           <button
             type="button"
@@ -208,7 +218,7 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
               signOut({ callbackUrl: LOGIN_ROUTE });
             }}
           >
-            ログアウト
+            {tAuth('signOut')}
           </button>
         </div>
       )}
@@ -293,14 +303,32 @@ function GroupMenu({
 
 export function DashboardHeader({ user }: DashboardHeaderProps) {
   const pathname = usePathname();
+  const tNav = useTranslations('nav');
+  const tAuth = useTranslations('auth');
   const isAdmin = user.systemRole === 'admin';
+
+  // Phase C-2: ラベルキーを t() で解決して NavGroup[] を組み立てる。
+  // sub-component (FlatNavLink / GroupMenu) は localized 済の `label` を受け取るだけ。
+  const navGroups: NavGroup[] = useMemo(
+    () =>
+      navGroupsConfig.map((g) => ({
+        label: tNav(g.labelKey),
+        adminOnly: g.adminOnly,
+        items: g.items.map((it) => ({
+          href: it.href,
+          label: tNav(it.labelKey),
+          adminOnly: it.adminOnly,
+        })),
+      })),
+    [tNav],
+  );
 
   return (
     <header className="border-b bg-card">
       <div className="flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-6">
           <Link href={PROJECTS_ROUTE} className="text-lg font-semibold">
-            たすきば
+            {tAuth('appName')}
           </Link>
 
           {/* PR #127: lg: 以上はフラット表示 (全項目横並び、従来挙動) */}

@@ -8,7 +8,49 @@
     "back": "戻る",
     "close": "閉じる",
     "today": "今日",
-    "clear": "クリア"
+    "clear": "クリア",
+    "add": "追加"
+  },
+  "nav": {
+    "groupProjects": "プロジェクト",
+    "groupAssets": "資産",
+    "groupAdmin": "システム管理者",
+    "allProjects": "全プロジェクト",
+    "allCustomers": "全顧客管理",
+    "allRisks": "全リスク",
+    "allIssues": "全課題",
+    "allRetrospectives": "全振り返り",
+    "allKnowledge": "全ナレッジ",
+    "allMemos": "全メモ",
+    "adminUsers": "ユーザ管理",
+    "adminAuditLogs": "監査ログ",
+    "adminRoleChanges": "権限変更",
+    "adminBadge": "管理者",
+    "myTasks": "マイタスク",
+    "memos": "メモ一覧",
+    "settings": "設定"
+  },
+  "attachment": {
+    "relatedUrl": "関連 URL",
+    "document": "ドキュメント",
+    "fetchFailed": "添付の取得に失敗しました",
+    "addFailed": "追加に失敗しました",
+    "saveFailed": "保存に失敗しました",
+    "deleteConfirm": "この添付を削除しますか？",
+    "deleteUrlConfirm": "この URL を削除しますか？",
+    "deleteFailed": "削除に失敗しました",
+    "noAttachments": "添付はありません",
+    "displayName": "表示名",
+    "exampleSpec": "例: 設計書",
+    "stagedHint": "(作成後に自動で保存されます)",
+    "stagedNone": "添付なし",
+    "urlInvalidScheme": "http:// または https:// で始まる必要があります",
+    "notSet": "未設定",
+    "setUrl": "URL を設定",
+    "addUrl": "+ URL を追加"
+  },
+  "common": {
+    "loading": "処理中..."
   },
   "field": {
     "title": "件名",
