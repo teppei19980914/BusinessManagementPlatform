@@ -125,7 +125,15 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     await page.goto('/customers');
     await page.waitForLoadState('networkidle');
 
-    await page.getByRole('link', { name: CUSTOMER_NAME }).first().click();
+    // LESSONS §4.19/§4.20 (chromium-mobile race): Next.js Link の click 直後に
+    // waitForLoadState('networkidle') を呼ぶと、navigation がまだ network 層に
+    // 出ていないタイミングで「すでに idle」と判定され (0ms 即返却)、その後の
+    // expect が古いページに対して timeout する race が chromium-mobile で再現した。
+    // Promise.all で waitForURL を click と同時に投入し、navigation 完了を確実に待つ。
+    await Promise.all([
+      page.waitForURL(/\/customers\/[a-f0-9-]+/),
+      page.getByRole('link', { name: CUSTOMER_NAME }).first().click(),
+    ]);
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: CUSTOMER_NAME })).toBeVisible({
       timeout: 10_000,
