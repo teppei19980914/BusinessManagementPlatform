@@ -16,7 +16,9 @@ const MEMO_VISIBILITIES = ['private', 'public'] as const;
  */
 export const createMemoSchema = z.object({
   title: z.string().min(1, 'タイトルを入力してください').max(TITLE_MAX_LENGTH),
-  content: z.string().min(1, '本文を入力してください').max(MEMO_CONTENT_MAX_LENGTH),
+  // refactor/list-create-content-optional (2026-04-27 ユーザ要望 #6):
+  // タイトルは必須維持、本文は任意化 (空文字許容)。
+  content: z.string().max(MEMO_CONTENT_MAX_LENGTH),
   visibility: z.enum(MEMO_VISIBILITIES).default('private'),
 });
 

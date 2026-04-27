@@ -196,25 +196,26 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
                   <Label>実施日</Label>
                   <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
                 </div>
+                {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 (実施日のみ必須) */}
                 <div className="space-y-2">
-                  <Label>計画総括</Label>
-                  <MarkdownTextarea value={form.planSummary} onChange={(v) => setForm({ ...form, planSummary: v })} rows={3} maxLength={2000} required />
+                  <Label>計画総括 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <MarkdownTextarea value={form.planSummary} onChange={(v) => setForm({ ...form, planSummary: v })} rows={3} maxLength={2000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>実績総括</Label>
-                  <MarkdownTextarea value={form.actualSummary} onChange={(v) => setForm({ ...form, actualSummary: v })} rows={3} maxLength={2000} required />
+                  <Label>実績総括 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <MarkdownTextarea value={form.actualSummary} onChange={(v) => setForm({ ...form, actualSummary: v })} rows={3} maxLength={2000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>良かった点</Label>
-                  <MarkdownTextarea value={form.goodPoints} onChange={(v) => setForm({ ...form, goodPoints: v })} rows={3} maxLength={3000} required />
+                  <Label>良かった点 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <MarkdownTextarea value={form.goodPoints} onChange={(v) => setForm({ ...form, goodPoints: v })} rows={3} maxLength={3000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>問題点</Label>
-                  <MarkdownTextarea value={form.problems} onChange={(v) => setForm({ ...form, problems: v })} rows={3} maxLength={3000} required />
+                  <Label>問題点 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <MarkdownTextarea value={form.problems} onChange={(v) => setForm({ ...form, problems: v })} rows={3} maxLength={3000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>次回改善事項</Label>
-                  <MarkdownTextarea value={form.improvements} onChange={(v) => setForm({ ...form, improvements: v })} rows={3} maxLength={3000} required />
+                  <Label>次回改善事項 <span className="text-xs text-muted-foreground">(任意)</span></Label>
+                  <MarkdownTextarea value={form.improvements} onChange={(v) => setForm({ ...form, improvements: v })} rows={3} maxLength={3000} />
                 </div>
                 {/* PR #67: 作成と同時に議事録・発表資料等の関連 URL を登録可能 */}
                 <StagedAttachmentsInput

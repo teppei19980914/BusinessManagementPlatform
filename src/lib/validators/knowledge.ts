@@ -18,9 +18,11 @@ export const createKnowledgeSchema = z.object({
     'best_practice',
     'other',
   ]),
-  background: z.string().min(1, '背景を入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
-  content: z.string().min(1, '内容を入力してください').max(KNOWLEDGE_CONTENT_MAX_LENGTH),
-  result: z.string().min(1, '結果を入力してください').max(LONG_TEXT_MAX_LENGTH),
+  // refactor/list-create-content-optional (2026-04-27 ユーザ要望 #6):
+  // タイトルは必須維持、背景/内容/結果は任意化 (空文字許容)。
+  background: z.string().max(MEDIUM_TEXT_MAX_LENGTH),
+  content: z.string().max(KNOWLEDGE_CONTENT_MAX_LENGTH),
+  result: z.string().max(LONG_TEXT_MAX_LENGTH),
   // feat/account-lock-and-ui-consistency 後 hotfix:
   // DB schema (Knowledge) で nullable な列は `.nullable().optional()` とする
   // (編集 dialog で空に戻すと null 送信されるため。詳細は DEVELOPER_GUIDE §5.12)
