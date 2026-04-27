@@ -51,6 +51,18 @@ import { useFormatters } from '@/lib/use-formatters';
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog のため previousValue なし)
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
+// PR #165: project-level「振り返り一覧」での一括 visibility 変更 (cross-list /retrospectives から移し替え)
+import {
+  CrossListBulkVisibilityToolbar,
+  EMPTY_FILTER,
+  isCrossListFilterActive,
+  type CrossListFilterState,
+} from '@/components/cross-list-bulk-visibility-toolbar';
+
+const RETRO_VISIBILITY_OPTIONS = [
+  { value: 'draft', label: '下書き (公開取り下げ)' },
+  { value: 'public', label: '公開' },
+];
 
 type Props = {
   projectId: string;
@@ -98,6 +110,45 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
 
   // PR #67: 作成時にステージする添付 URL
   const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
+
+  // PR #165: project-level「振り返り一覧」での一括 visibility 変更
+  const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const filterApplied = isCrossListFilterActive(bulkFilter);
+
+  const filteredRetros = (() => {
+    let xs = retros;
+    if (bulkFilter.mineOnly) xs = xs.filter((r) => r.createdBy === currentUserId);
+    if (bulkFilter.keyword.trim()) {
+      const kw = bulkFilter.keyword.trim().toLowerCase();
+      xs = xs.filter((r) =>
+        r.planSummary.toLowerCase().includes(kw)
+        || r.actualSummary.toLowerCase().includes(kw)
+        || r.goodPoints.toLowerCase().includes(kw)
+        || r.problems.toLowerCase().includes(kw)
+        || r.improvements.toLowerCase().includes(kw),
+      );
+    }
+    return xs;
+  })();
+
+  const selectableRetroIds = filterApplied
+    ? filteredRetros.filter((r) => r.createdBy === currentUserId).map((r) => r.id)
+    : [];
+  const allRetrosSelected
+    = selectableRetroIds.length > 0 && selectableRetroIds.every((id) => selectedIds.has(id));
+
+  function toggleOneRetro(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllRetros() {
+    setSelectedIds(allRetrosSelected ? new Set() : new Set(selectableRetroIds));
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -229,11 +280,38 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
         )}
       </div>
 
-      {retros.length === 0 && (
+      {/* PR #165: project-level「振り返り一覧」での一括 visibility 変更 */}
+      <CrossListBulkVisibilityToolbar
+        endpoint={`/api/projects/${projectId}/retrospectives/bulk`}
+        formIdPrefix={`project-retros-${projectId}`}
+        filter={bulkFilter}
+        onFilterChange={setBulkFilter}
+        selectedIds={selectedIds}
+        onSelectionClear={() => setSelectedIds(new Set())}
+        visibilityOptions={RETRO_VISIBILITY_OPTIONS}
+        entityLabel="振り返り"
+        onApplied={async () => { await reload(); }}
+      />
+
+      {filterApplied && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={allRetrosSelected}
+            disabled={selectableRetroIds.length === 0}
+            onChange={toggleAllRetros}
+            className="rounded"
+            aria-label="表示中の編集可能振り返りを全選択"
+          />
+          表示中の自分作成振り返りを全選択 ({selectableRetroIds.length} 件)
+        </div>
+      )}
+
+      {filteredRetros.length === 0 && (
         <p className="py-8 text-center text-muted-foreground">振り返りがありません</p>
       )}
 
-      {retros.map((retro) => {
+      {filteredRetros.map((retro) => {
         // 2026-04-24: 作成者本人のみ編集/確定/削除可
         const isOwner = retro.createdBy === currentUserId;
         return (
@@ -245,6 +323,16 @@ export function RetrospectivesClient({ projectId, retros, canCreate, canComment,
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
+              {filterApplied && isOwner && (
+                <input
+                  type="checkbox"
+                  aria-label={`振り返り (${retro.conductedDate}) を一括編集対象に追加`}
+                  checked={selectedIds.has(retro.id)}
+                  onChange={(e) => { e.stopPropagation(); toggleOneRetro(retro.id); }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="rounded"
+                />
+              )}
               <h3 className="font-semibold">振り返り（{retro.conductedDate}）</h3>
               <Badge variant={retro.state === 'confirmed' ? 'default' : 'outline'}>
                 {retro.state === 'confirmed' ? '確定' : '下書き'}

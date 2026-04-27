@@ -60,6 +60,9 @@ export type RiskDTO = {
   riskNature: string | null;
   createdAt: string;
   updatedAt: string;
+  /** PR #165: プロジェクト「リスク/課題一覧」での一括編集対象判定。viewer が作成者本人なら true。
+   * undefined の場合は viewerUserId を渡さなかった内部呼び出し経路 (cascade 削除確認等)。 */
+  viewerIsCreator?: boolean;
 };
 
 function toRiskDTO(r: {
@@ -116,7 +119,7 @@ function toRiskDTO(r: {
 
 export async function listRisks(
   projectId: string,
-  _viewerUserId: string,
+  viewerUserId: string,
   viewerSystemRole: string,
 ): Promise<RiskDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
@@ -132,7 +135,8 @@ export async function listRisks(
     },
     orderBy: { createdAt: 'desc' },
   });
-  return risks.map(toRiskDTO);
+  // PR #165: プロジェクト「リスク/課題一覧」での一括編集対象判定。viewerIsCreator を DTO に乗せる。
+  return risks.map((r) => ({ ...toRiskDTO(r), viewerIsCreator: r.reporterId === viewerUserId }));
 }
 
 /**
@@ -142,7 +146,7 @@ export async function listRisks(
  *   - 非メンバー: projectName / 顧客情報を一律マスク + canAccessProject=false
  * 担当者名 / 起票者名も「非メンバーには氏名非公開」とする (顧客情報に準ずる機微情報)
  */
-export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName'> & {
+export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName' | 'viewerIsCreator'> & {
   projectName: string | null;
   /** プロジェクトが論理削除済みか (admin のみ識別可、非 admin には null として秘匿) */
   projectDeleted: boolean;
@@ -153,9 +157,7 @@ export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName'> & {
   createdByName: string | null;
   /** 更新者氏名 (非メンバーにはマスク) */
   updatedByName: string | null;
-  /** PR #161: 横断ビューでの一括編集対象判定。viewer が作成者本人なら true。
-   * 「全○○一覧」一括更新で、編集権限の無いレコードは選択不可にするため。 */
-  viewerIsCreator: boolean;
+  // PR #165: 全○○一覧は read-only に戻し、viewerIsCreator は不要 (project list で持つ)
 };
 
 /**
@@ -220,8 +222,6 @@ export async function listAllRisksForViewer(
       assigneeName: r.assignee?.name ?? null,
       createdByName: userNameById.get(r.createdBy) ?? null,
       updatedByName: userNameById.get(r.updatedBy) ?? null,
-      // PR #161: 横断ビュー一括編集の対象判定。viewer が作成者本人なら true。
-      viewerIsCreator: r.reporterId === viewerUserId,
     };
   });
 }
@@ -352,22 +352,24 @@ export async function updateRisk(
 }
 
 /**
- * 「全リスク / 全課題」横断ビューからの **一括更新** (PR #161 / feat/cross-list-bulk-update)。
+ * プロジェクト「リスク/課題一覧」からの **一括更新** (PR #165 / refactor/bulk-update-to-project-list で
+ * cross-list から project-scoped に移し替え。元実装は PR #161 / feat/cross-list-bulk-update)。
  *
  * 設計判断:
+ *   - **scope は projectId に限定**: where に projectId を加え、他プロジェクトのレコードを
+ *     ids に混ぜても触れない (PR #165 で cross-list 廃止に伴い導入)。
  *   - 編集権限は単発 update と同じ「**reporter (作成者) 本人のみ**」(2026-04-24 の方針を踏襲)。
  *     viewer 自身が作成していないレコードは silently skip し、結果に skippedNotOwned カウントを返す。
  *     行が混在しても update は **reporter 本人分だけが反映** されるため、誤更新の事故が起きない。
  *   - admin であっても他人のレコードは更新しない (admin の管理操作は削除に限定する既存方針と一致)。
  *   - 全件更新の事故防止: 呼出側 (API 層) で「フィルター 1 つ以上の適用」を必須化する。
- *     本サービス層は ids[] で受け取るので、空配列なら 0 件 update で正常終了する。
- *   - patch は state / assigneeId / deadline の 3 項目に限定。横断ビューで意味があるのはこの 3 つで、
- *     文字列項目 (title / content) を一括置換する UX は壊れやすいため意図的に除外。
+ *   - patch は state / assigneeId / deadline の 3 項目に限定 (自由文の一括置換は UX が壊れやすい)。
  *
  * @returns updatedIds: 実際に更新した ID 配列 / skippedNotOwned: 作成者違いで skip した数 /
- *          skippedNotFound: 存在しない or 既に削除済の数
+ *          skippedNotFound: 存在しない or 既に削除済 or 別プロジェクトの数
  */
-export async function bulkUpdateRisksFromCrossList(
+export async function bulkUpdateRisksFromList(
+  projectId: string,
   ids: string[],
   patch: {
     state?: string;
@@ -379,8 +381,9 @@ export async function bulkUpdateRisksFromCrossList(
   if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
 
   // 一度のクエリで対象を取得し、所有権を行ごとに判定 (N+1 回避)
+  // PR #165: where に projectId を加え、他プロジェクトのレコードは skippedNotFound 扱いにする
   const targets = await prisma.riskIssue.findMany({
-    where: { id: { in: ids }, deletedAt: null },
+    where: { id: { in: ids }, projectId, deletedAt: null },
     select: { id: true, reporterId: true },
   });
   const found = new Set(targets.map((t) => t.id));

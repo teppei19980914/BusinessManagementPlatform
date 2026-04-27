@@ -42,6 +42,18 @@ import type { KnowledgeDTO } from '@/services/knowledge.service';
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog のため previousValue なし)
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
+// PR #165: project-level「ナレッジ一覧」での一括 visibility 変更 (cross-list /knowledge から移し替え)
+import {
+  CrossListBulkVisibilityToolbar,
+  EMPTY_FILTER,
+  isCrossListFilterActive,
+  type CrossListFilterState,
+} from '@/components/cross-list-bulk-visibility-toolbar';
+
+const KNOWLEDGE_VISIBILITY_OPTIONS = [
+  { value: 'draft', label: '下書き (公開取り下げ)' },
+  { value: 'public', label: '公開' },
+];
 
 type Props = {
   projectId: string;
@@ -83,6 +95,44 @@ export function ProjectKnowledgeClient({
   const [editingKnowledge, setEditingKnowledge] = useState<KnowledgeDTO | null>(null);
   // feat/dialog-fullscreen-toggle: ナレッジ作成 dialog の全画面トグル
   const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle } = useDialogFullscreen();
+
+  // PR #165: 一括 visibility 変更
+  const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const filterApplied = isCrossListFilterActive(bulkFilter);
+
+  const filteredKnowledges = (() => {
+    let xs = knowledges;
+    if (bulkFilter.mineOnly) xs = xs.filter((k) => k.createdBy === currentUserId);
+    if (bulkFilter.keyword.trim()) {
+      const kw = bulkFilter.keyword.trim().toLowerCase();
+      xs = xs.filter((k) =>
+        k.title.toLowerCase().includes(kw)
+        || k.background.toLowerCase().includes(kw)
+        || k.content.toLowerCase().includes(kw)
+        || k.result.toLowerCase().includes(kw),
+      );
+    }
+    return xs;
+  })();
+
+  const selectableKnowledgeIds = filterApplied
+    ? filteredKnowledges.filter((k) => k.createdBy === currentUserId).map((k) => k.id)
+    : [];
+  const allKnowledgeSelected
+    = selectableKnowledgeIds.length > 0 && selectableKnowledgeIds.every((id) => selectedIds.has(id));
+
+  function toggleOneKnowledge(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllKnowledge() {
+    setSelectedIds(allKnowledgeSelected ? new Set() : new Set(selectableKnowledgeIds));
+  }
 
   // refactor/knowledge-tags-removal-temp (2026-04-27): 3 タグ入力 UI を一時撤去。
   // 本格的な提案エンジン改修は 2026-05 で実施予定。それまでは空配列で送信し、
@@ -161,8 +211,21 @@ export function ProjectKnowledgeClient({
 
   return (
     <div className="space-y-4">
+      {/* PR #165: project-level「ナレッジ一覧」での一括 visibility 変更 */}
+      <CrossListBulkVisibilityToolbar
+        endpoint={`/api/projects/${projectId}/knowledge/bulk`}
+        formIdPrefix={`project-knowledge-${projectId}`}
+        filter={bulkFilter}
+        onFilterChange={setBulkFilter}
+        selectedIds={selectedIds}
+        onSelectionClear={() => setSelectedIds(new Set())}
+        visibilityOptions={KNOWLEDGE_VISIBILITY_OPTIONS}
+        entityLabel="ナレッジ"
+        onApplied={async () => { await onReload(); }}
+      />
+
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">ナレッジ一覧（{knowledges.length} 件）</h3>
+        <h3 className="font-semibold">ナレッジ一覧（{filteredKnowledges.length} 件）</h3>
         {canCreate && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             {/* PR #124: 他「○○一覧」(risks / retrospectives) と同サイズ (px-4 py-2) に統一 */}
@@ -265,11 +328,25 @@ export function ProjectKnowledgeClient({
           )}
       </div>
 
-      {knowledges.length === 0 ? (
+      {filterApplied && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={allKnowledgeSelected}
+            disabled={selectableKnowledgeIds.length === 0}
+            onChange={toggleAllKnowledge}
+            className="rounded"
+            aria-label="表示中の編集可能ナレッジを全選択"
+          />
+          表示中の自分作成ナレッジを全選択 ({selectableKnowledgeIds.length} 件)
+        </div>
+      )}
+
+      {filteredKnowledges.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">ナレッジがありません</p>
       ) : (
         <div className="space-y-2">
-          {knowledges.map((k) => {
+          {filteredKnowledges.map((k) => {
             // 2026-04-24: 作成者本人のみ編集/削除可 (admin は全ナレッジから)
             const isOwner = k.createdBy === currentUserId;
             return (
@@ -282,6 +359,16 @@ export function ProjectKnowledgeClient({
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2">
+                    {filterApplied && isOwner && (
+                      <input
+                        type="checkbox"
+                        aria-label={`${k.title} を一括編集対象に追加`}
+                        checked={selectedIds.has(k.id)}
+                        onChange={(e) => { e.stopPropagation(); toggleOneKnowledge(k.id); }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="rounded"
+                      />
+                    )}
                     <span className="font-medium">{k.title}</span>
                     <Badge variant="secondary" className="text-xs">
                       {KNOWLEDGE_TYPES[k.knowledgeType as keyof typeof KNOWLEDGE_TYPES] || k.knowledgeType}

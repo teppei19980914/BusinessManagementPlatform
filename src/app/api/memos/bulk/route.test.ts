@@ -6,12 +6,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/auth', () => ({ auth: vi.fn() }));
 vi.mock('@/services/memo.service', () => ({
-  bulkUpdateMemosVisibilityFromCrossList: vi.fn(),
+  bulkUpdateMemosVisibilityFromList: vi.fn(),
 }));
 
 import { PATCH } from './route';
 import { auth } from '@/lib/auth';
-import { bulkUpdateMemosVisibilityFromCrossList } from '@/services/memo.service';
+import { bulkUpdateMemosVisibilityFromList } from '@/services/memo.service';
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -52,7 +52,7 @@ describe('PATCH /api/memos/bulk', () => {
   });
 
   it('正常系: visibility=private で「全メモから取り下げ」', async () => {
-    vi.mocked(bulkUpdateMemosVisibilityFromCrossList).mockResolvedValue({
+    vi.mocked(bulkUpdateMemosVisibilityFromList).mockResolvedValue({
       updatedIds: [VALID_UUID], skippedNotOwned: 0, skippedNotFound: 0,
     });
     const res = await PATCH(makeReq({
@@ -61,7 +61,7 @@ describe('PATCH /api/memos/bulk', () => {
       visibility: 'private',
     }) as never);
     expect(res.status).toBe(200);
-    expect(bulkUpdateMemosVisibilityFromCrossList).toHaveBeenCalledWith(
+    expect(bulkUpdateMemosVisibilityFromList).toHaveBeenCalledWith(
       [VALID_UUID], 'private', 'u-1',
     );
   });

@@ -141,11 +141,13 @@ export async function updateMemo(
 }
 
 /**
- * 「全メモ」横断ビューからの **visibility 一括更新** (PR #162 / Phase 2)。
+ * 個人「メモ一覧」(/memos) からの **visibility 一括更新** (PR #165 で /memos に移し替え、
+ * 元実装は PR #162 /all-memos cross-list 用)。
+ * Memo は project に紐付かない個人ノートなので scope は **viewerUserId 自身のメモのみ**。
  * Memo は visibility 値域が `private` / `public`。
  * 編集権限は元から作成者本人のみ (admin 特権なし) なので per-row userId 判定で同じ。
  */
-export async function bulkUpdateMemosVisibilityFromCrossList(
+export async function bulkUpdateMemosVisibilityFromList(
   ids: string[],
   visibility: 'private' | 'public',
   viewerUserId: string,

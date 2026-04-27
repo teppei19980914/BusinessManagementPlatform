@@ -22,7 +22,7 @@
  *   - DESIGN.md §5 (テーブル定義: risks_issues)
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLoading } from '@/components/loading-overlay';
@@ -112,7 +112,32 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     visibility: 'draft',
     riskNature: 'threat',
   });
-  const filteredRisks = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
+  // PR #165: プロジェクト「リスク/課題一覧」での一括更新機能 (旧 cross-list 版から移し替え)
+  // フィルター適用時のみ checkbox 列とツールバーが現れ、作成者本人の行のみ選択可。
+  // 「フィルター必須」を UI + API 両方で強制する二重防御 (DEVELOPER_GUIDE §5.21)。
+  const [bulkFilter, setBulkFilter] = useState<{
+    state: string; // '' = 未指定
+    impact: string;
+    keyword: string;
+    mineOnly: boolean;
+  }>({ state: '', impact: '', keyword: '', mineOnly: false });
+  const filterApplied = Boolean(
+    bulkFilter.state || bulkFilter.impact || bulkFilter.mineOnly
+    || (bulkFilter.keyword && bulkFilter.keyword.trim().length > 0)
+    || typeFilter, // typeFilter (risk/issue タブ) は暗黙のフィルター
+  );
+
+  const filteredRisks = useMemo(() => {
+    let xs = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
+    if (bulkFilter.state) xs = xs.filter((r) => r.state === bulkFilter.state);
+    if (bulkFilter.impact) xs = xs.filter((r) => r.impact === bulkFilter.impact);
+    if (bulkFilter.mineOnly) xs = xs.filter((r) => r.viewerIsCreator === true);
+    if (bulkFilter.keyword.trim()) {
+      const kw = bulkFilter.keyword.trim().toLowerCase();
+      xs = xs.filter((r) => r.title.toLowerCase().includes(kw) || r.content.toLowerCase().includes(kw));
+    }
+    return xs;
+  }, [risks, typeFilter, bulkFilter]);
   const headingLabel = typeFilter === 'issue' ? '課題管理' : typeFilter === 'risk' ? 'リスク管理' : 'リスク / 課題管理';
   const createLabel = typeFilter === 'issue' ? '課題起票' : typeFilter === 'risk' ? 'リスク起票' : '起票';
 
@@ -175,6 +200,79 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     'risk',
     filteredRisks.map((r) => r.id),
   );
+
+  // PR #165: 一括選択 + 一括編集ダイアログ
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selectableIds = filterApplied
+    ? filteredRisks.filter((r) => r.viewerIsCreator === true).map((r) => r.id)
+    : [];
+  const allSelectableSelected
+    = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+
+  function toggleOneId(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllIds() {
+    setSelectedIds(allSelectableSelected ? new Set() : new Set(selectableIds));
+  }
+
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkApply, setBulkApply] = useState({ state: false, assigneeId: false, deadline: false });
+  const [bulkValues, setBulkValues] = useState({ state: 'open', assigneeId: '', deadline: '' });
+  const [bulkAssigneeClear, setBulkAssigneeClear] = useState(false);
+  const [bulkDeadlineClear, setBulkDeadlineClear] = useState(false);
+  const [bulkError, setBulkError] = useState('');
+
+  function openBulk() {
+    setBulkApply({ state: false, assigneeId: false, deadline: false });
+    setBulkValues({ state: 'open', assigneeId: '', deadline: '' });
+    setBulkAssigneeClear(false);
+    setBulkDeadlineClear(false);
+    setBulkError('');
+    setBulkOpen(true);
+  }
+
+  async function submitBulk() {
+    setBulkError('');
+    const patch: Record<string, string | null | undefined> = {};
+    if (bulkApply.state) patch.state = bulkValues.state;
+    if (bulkApply.assigneeId) patch.assigneeId = bulkAssigneeClear ? null : (bulkValues.assigneeId || null);
+    if (bulkApply.deadline) patch.deadline = bulkDeadlineClear ? null : (bulkValues.deadline || null);
+    if (Object.keys(patch).length === 0) {
+      setBulkError('更新する項目を 1 つ以上指定してください');
+      return;
+    }
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/risks/bulk`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: Array.from(selectedIds),
+          filterFingerprint: {
+            type: typeFilter,
+            state: bulkFilter.state || undefined,
+            impact: bulkFilter.impact || undefined,
+            mineOnly: bulkFilter.mineOnly || undefined,
+            keyword: bulkFilter.keyword.trim() || undefined,
+          },
+          patch,
+        }),
+      }),
+    );
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setBulkError(j?.message || j?.error || '一括更新に失敗しました');
+      return;
+    }
+    setBulkOpen(false);
+    setSelectedIds(new Set());
+    await reload();
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -357,6 +455,84 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         </div>
       </div>
 
+      {/* PR #165: フィルター UI (bulk 編集の二重防御に必須、一覧の絞り込みにも有用) */}
+      <div className="rounded-md border bg-muted/30 p-3">
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-sm font-medium">フィルター</span>
+          {!filterApplied && (
+            <span className="text-xs text-muted-foreground">(一括編集には何らかのフィルター適用が必要です)</span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+          <div>
+            <Label htmlFor={`risk-filter-state-${typeFilter ?? 'all'}`} className="text-xs">状態</Label>
+            <select
+              id={`risk-filter-state-${typeFilter ?? 'all'}`}
+              value={bulkFilter.state}
+              onChange={(e) => setBulkFilter((f) => ({ ...f, state: e.target.value }))}
+              className={nativeSelectClass}
+            >
+              <option value="">すべて</option>
+              {Object.entries(RISK_ISSUE_STATES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor={`risk-filter-impact-${typeFilter ?? 'all'}`} className="text-xs">影響度</Label>
+            <select
+              id={`risk-filter-impact-${typeFilter ?? 'all'}`}
+              value={bulkFilter.impact}
+              onChange={(e) => setBulkFilter((f) => ({ ...f, impact: e.target.value }))}
+              className={nativeSelectClass}
+            >
+              <option value="">すべて</option>
+              {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <Label htmlFor={`risk-filter-keyword-${typeFilter ?? 'all'}`} className="text-xs">キーワード (件名・内容)</Label>
+            <Input
+              id={`risk-filter-keyword-${typeFilter ?? 'all'}`}
+              value={bulkFilter.keyword}
+              onChange={(e) => setBulkFilter((f) => ({ ...f, keyword: e.target.value }))}
+              placeholder="例: ログイン"
+            />
+          </div>
+          <div className="md:col-span-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={bulkFilter.mineOnly}
+                onChange={(e) => setBulkFilter((f) => ({ ...f, mineOnly: e.target.checked }))}
+                className="rounded"
+              />
+              自分が起票したもののみ
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* PR #165: 一括選択ツールバー (フィルター適用時のみ表示) */}
+      {filterApplied && (
+        <div className="flex items-center justify-between gap-2 py-2">
+          <div className="text-sm text-muted-foreground">
+            一括編集対象 (自分が起票): {selectableIds.length} 件 / 選択中: {selectedIds.size} 件
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSelectedIds(new Set())}
+              disabled={selectedIds.size === 0}
+            >
+              選択解除
+            </Button>
+            <Button size="sm" onClick={openBulk} disabled={selectedIds.size === 0}>
+              一括編集 ({selectedIds.size})
+            </Button>
+          </div>
+        </div>
+      )}
+
       <ResizableColumnsProvider tableKey={`project-risks-${typeFilter ?? 'all'}`}>
         <div className="flex justify-end pb-2">
           <ResetColumnsButton />
@@ -364,6 +540,18 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       <Table>
         <TableHeader>
           <TableRow>
+            {filterApplied && (
+              <ResizableHead columnKey="select" defaultWidth={36}>
+                <input
+                  type="checkbox"
+                  aria-label="表示中の編集可能行を全選択"
+                  checked={allSelectableSelected}
+                  disabled={selectableIds.length === 0}
+                  onChange={toggleAllIds}
+                  className="rounded"
+                />
+              </ResizableHead>
+            )}
             {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>種別</ResizableHead>}
             <ResizableHead columnKey="title" defaultWidth={240}>件名</ResizableHead>
             <ResizableHead columnKey="impact" defaultWidth={80}>影響度</ResizableHead>
@@ -394,6 +582,21 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
               className={canRowEdit ? 'cursor-pointer hover:bg-muted' : ''}
               onClick={canRowEdit ? () => setEditingRisk(r) : undefined}
             >
+              {filterApplied && (
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  {r.viewerIsCreator ? (
+                    <input
+                      type="checkbox"
+                      aria-label={`${r.title} を一括編集対象に追加`}
+                      checked={selectedIds.has(r.id)}
+                      onChange={() => toggleOneId(r.id)}
+                      className="rounded"
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground" title="自分が起票したものではないため一括編集できません">-</span>
+                  )}
+                </TableCell>
+              )}
               {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? 'リスク' : '課題'}</Badge></TableCell>}
               <TableCell className="font-medium">{r.title}</TableCell>
               <TableCell><Badge variant={impactColors[r.impact] || 'secondary'}>{PRIORITIES[r.impact as keyof typeof PRIORITIES]}</Badge></TableCell>
@@ -443,11 +646,12 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
           })}
           {filteredRisks.length === 0 && (
             <TableRow>
-              {/* PR #67: 添付列 +1、2026-04-24: actions 列は自分の行があるときのみ +1 */}
+              {/* PR #67: 添付列 +1、2026-04-24: actions 列は自分の行があるときのみ +1、PR #165: filterApplied 時 select 列 +1 */}
               <TableCell
                 colSpan={
                   (filteredRisks.some((x) => x.reporterId === currentUserId) ? 8 : 7)
                   + (typeFilter ? 0 : 1)
+                  + (filterApplied ? 1 : 0)
                 }
                 className="py-8 text-center text-muted-foreground"
               >
@@ -466,6 +670,117 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         onOpenChange={(v) => { if (!v) setEditingRisk(null); }}
         onSaved={reload}
       />
+
+      {/* PR #165: 一括編集ダイアログ */}
+      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>一括編集 ({selectedIds.size} 件)</DialogTitle>
+            <DialogDescription>
+              チェックを入れた項目だけが対象に適用されます。
+              他人が起票した行はサーバ側で自動的に除外されます。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={bulkApply.state}
+                onChange={(e) => setBulkApply((a) => ({ ...a, state: e.target.checked }))}
+                className="mt-2 rounded"
+                aria-label="状態を一括更新する"
+              />
+              <div className="flex-1 space-y-1">
+                <Label className="text-sm">状態</Label>
+                <div className={bulkApply.state ? '' : 'pointer-events-none opacity-50'}>
+                  <select
+                    value={bulkValues.state}
+                    onChange={(e) => setBulkValues((b) => ({ ...b, state: e.target.value }))}
+                    className={nativeSelectClass}
+                  >
+                    {Object.entries(RISK_ISSUE_STATES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={bulkApply.assigneeId}
+                onChange={(e) => setBulkApply((a) => ({ ...a, assigneeId: e.target.checked }))}
+                className="mt-2 rounded"
+                aria-label="担当者を一括更新する"
+              />
+              <div className="flex-1 space-y-1">
+                <Label className="text-sm">担当者</Label>
+                <div className={bulkApply.assigneeId ? 'space-y-1' : 'pointer-events-none space-y-1 opacity-50'}>
+                  <select
+                    value={bulkValues.assigneeId}
+                    disabled={bulkAssigneeClear}
+                    onChange={(e) => setBulkValues((b) => ({ ...b, assigneeId: e.target.value }))}
+                    className={nativeSelectClass}
+                  >
+                    <option value="">未設定 (担当者なし)</option>
+                    {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
+                  </select>
+                  <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={bulkAssigneeClear}
+                      onChange={(e) => setBulkAssigneeClear(e.target.checked)}
+                      className="rounded"
+                    />
+                    担当者をクリア (未割り当てに戻す)
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={bulkApply.deadline}
+                onChange={(e) => setBulkApply((a) => ({ ...a, deadline: e.target.checked }))}
+                className="mt-2 rounded"
+                aria-label="期限を一括更新する"
+              />
+              <div className="flex-1 space-y-1">
+                <Label className="text-sm">期限</Label>
+                <div className={bulkApply.deadline ? 'space-y-1' : 'pointer-events-none space-y-1 opacity-50'}>
+                  <Input
+                    type="date"
+                    value={bulkValues.deadline}
+                    disabled={bulkDeadlineClear}
+                    onChange={(e) => setBulkValues((b) => ({ ...b, deadline: e.target.value }))}
+                  />
+                  <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={bulkDeadlineClear}
+                      onChange={(e) => setBulkDeadlineClear(e.target.checked)}
+                      className="rounded"
+                    />
+                    期限をクリア
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {bulkError && (
+            <div className="mt-3 rounded-md bg-destructive/10 p-2 text-sm text-destructive">
+              {bulkError}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setBulkOpen(false)}>キャンセル</Button>
+            <Button onClick={submitBulk}>適用</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
