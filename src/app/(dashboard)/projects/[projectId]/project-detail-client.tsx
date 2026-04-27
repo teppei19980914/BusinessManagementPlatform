@@ -486,7 +486,13 @@ export function ProjectDetailClient({
 
       {/* タブ - 全機能をタブ内に直接埋め込み */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="flex-wrap">
+        {/*
+          fix/stakeholder-hotfix: タブ多数 + 狭い viewport で 1 タブだけ次行に折り返した際、
+          基底 TabsTrigger の `flex-1` により単独タブが 100% 幅に伸びる不具合を解消。
+          - h-auto         : 基底 `h-8` を解除し複数行レイアウトを許可
+          - [&>*]:flex-none: 子 TabsTrigger の `flex-1` を打ち消しコンテンツ幅にする
+        */}
+        <TabsList className="h-auto flex-wrap [&>*]:flex-none">
           <TabsTrigger value="overview">概要</TabsTrigger>
           {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
           {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止し WBS 管理タブ内に統合 */}

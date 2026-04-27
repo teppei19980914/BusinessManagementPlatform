@@ -315,8 +315,16 @@ pnpm prisma migrate resolve --applied <migration-name>
 | 10 | `20260419_project_process_tags_and_suggestion` | PR #65。`projects.process_tags` 追加、**pg_trgm 拡張を有効化** (`CREATE EXTENSION IF NOT EXISTS pg_trgm`)、`knowledges.title` / `knowledges.content` / `risks_issues.title` / `risks_issues.content` / `retrospectives.problems` / `retrospectives.improvements` に GIN トライグラムインデックス、`knowledges.business_domain_tags` 追加 | 38 |
 | 11 | `20260420_memos` | PR #70。`memos` テーブル追加 (個人メモ、プロジェクト非依存) | 27 |
 | 12 | `20260420_user_theme_preference` | PR #72。`users.theme_preference VARCHAR(30) NOT NULL DEFAULT 'light'` 追加 (画面テーマ設定の永続化) | 5 |
+| 13 | `20260423_customers` | PR #111-1。`customers` テーブル追加 (顧客マスタ) + `projects.customer_id` 追加 (NULL 許可で互換期間) | - |
+| 14 | `20260424_drop_project_customer_name` | PR #111-2。`projects.customer_name` 廃止、`customer_id` を NOT NULL 化 | - |
+| 15 | `20260424_mfa_lock_columns` | PR #116。`users.mfa_failed_count` / `mfa_locked_until` 追加 (MFA verify ロック) | - |
+| 16 | `20260424_system_error_logs` | PR #115。`system_error_logs` テーブル追加 (内部エラーの構造化保存) | - |
+| 17 | `20260424_user_i18n_preferences` | PR #118。`users.timezone` / `locale` 追加 (個別 i18n 設定) | - |
+| 18 | `20260427_stakeholders` | **PR #149**。`stakeholders` テーブル追加 (ステークホルダー管理、PMBOK 13)。1-5 段階の CHECK 制約 + ON DELETE SET NULL FK + JSONB tags | 70 |
 
 > **検証方法**: Supabase ダッシュボード → Database → Tables で各テーブルの有無 / カラム構成を目視、もしくは SQL Editor で `SELECT * FROM information_schema.columns WHERE table_name = '<テーブル名>';` を実行。
+
+> **⚠ 適用漏れ事例 (2026-04-27)**: PR #149 マージ後、`prisma/migrations/20260427_stakeholders/migration.sql` を Supabase 本番に適用し忘れ、本番のステークホルダータブで `relation "public.stakeholders" does not exist` (Prisma `P2021`) が発生した。**E2E テストはテスト DB に対して走り、テスト DB は CI セットアップで自動マイグレートされるため、本番 DB との drift は構造的に検知できない**。**新規マイグレーションを含む PR をマージしたら、本セクションのリストに追記しつつ §3.3 の手順で本番に手動適用するルールを徹底すること。** (関連: docs/developer/E2E_LESSONS_LEARNED.md §4.39)
 
 ---
 

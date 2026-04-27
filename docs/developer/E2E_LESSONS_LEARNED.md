@@ -774,6 +774,67 @@ grep -rn "<廃止タブ名>" e2e/specs/
 
 ---
 
+### 4.39 新規マイグレーションを含む PR は E2E pass でも本番 DB に未適用なら 500 になる (構造的ギャップ、PR #149 で遭遇)
+
+**症状**: PR #149 (ステークホルダー管理機能) を main にマージし Vercel の本番デプロイ完了後、
+プロジェクト詳細「ステークホルダー」タブを開くと 500 Internal Server Error。Server log:
+
+```
+Error [PrismaClientKnownRequestError]: Invalid `prisma.stakeholder.findMany()` invocation:
+The table `public.stakeholders` does not exist in the current database.
+code: 'P2021'
+```
+
+CI 上は E2E + 全 821 テスト pass。production build も成功してマージされていた。
+
+**根本原因**: 構造的なギャップで、E2E では原理的に検知不可:
+
+| 環境 | スキーマ適用方法 |
+|---|---|
+| ローカル開発 | `npx prisma migrate dev` で手動適用 (開発者の責務) |
+| **CI E2E テスト DB** | CI セットアップで `prisma migrate deploy` を **自動実行** |
+| **本番 Supabase DB** | `vercel.json` の buildCommand に migrate を **含めない** ため **手動適用** が必須 (OPERATION.md §3.3) |
+
+→ E2E は「テスト DB にマイグレーション済」を前提に走るため、コード上「新規テーブル X を
+参照するが本番 DB に X が無い」パターンは通り抜ける。本番デプロイ後にユーザが画面を
+開いた時点で初めて発覚する。
+
+**なぜ Vercel buildCommand に migrate を入れていないか** (OPERATION.md §3.3):
+- Vercel ビルド環境は IPv4 のみで Supabase 直結 URL `db.[ref].supabase.co:5432` に到達不可
+- DIRECT_URL を Supavisor セッションモード (`pooler.supabase.com:5432`) に切替えれば
+  自動化可能だが、現状は採用していない (本件をきっかけに再検討の価値あり)
+
+**当面の対策 (運用ルール強化)**:
+
+1. **新規 migration を含む PR をマージしたら必ず**:
+   - OPERATION.md §4 の「適用済みマイグレーション一覧」に追記
+   - Supabase ダッシュボード → SQL Editor で `prisma/migrations/<name>/migration.sql` を
+     手動実行 (§3.3 の手順)
+2. **マージ後の確認**: 本番 URL で新機能の画面を 1 度開き、500 が出ないことを
+   目視確認。テストでは検知できないため人間の最終ゲート。
+3. **migration を新設する PR の説明欄**: マージ後の運用作業 (Supabase SQL 適用 +
+   OPERATION.md 追記) を必ず Test plan / Post-merge checklist セクションに明記する。
+
+**将来的な構造的解消候補** (将来 PR):
+
+- (a) Vercel buildCommand に `prisma migrate deploy` 追加 (DIRECT_URL を pooler 5432
+  に切替えてから)
+- (b) post-deploy smoke test workflow: 本番 URL に対して critical な API endpoints を
+  1 リクエストずつ叩いて HTTP 200 を確認する CI ジョブ
+- (c) GitHub Actions の `on: push to main` で Supabase に直接 `psql` で migrate を
+  流す (secrets に DIRECT_URL を保持)
+
+**E2E と本番の違いを認識する観点ルール**:
+
+E2E pass = コードロジックは正しい (テスト DB スキーマと一致)。
+**E2E pass ≠ 本番動作保証**。スキーマ依存の機能を追加した PR は **必ず人間が本番で
+1 度動作確認する** ことを徹底する。
+
+**関連**: OPERATION.md §3.3 (Supabase 本番への適用手順) / OPERATION.md §4 (適用済み
+マイグレーション一覧) / OPERATION.md §3.4 (自動化案、未採用)
+
+---
+
 ### 4.31 `[gen-visual]` で baseline を生成しても並列 CI と条件が違って一覧画面は再 fail する
 
 **症状**: PR #111-2 で新規追加した `e2e/visual/customers-screens.spec.ts` の
