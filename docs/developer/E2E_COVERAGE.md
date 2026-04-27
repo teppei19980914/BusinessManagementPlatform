@@ -101,17 +101,17 @@
 - [ ] `/api/projects/[projectId]/suggestions/*` — skip: PR #C (提案型サービス、核心機能)
 - [x] `/api/projects/[projectId]/members/*` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 6a POST, GET は画面経由)
 - [ ] `/api/risks` (全リスク) — skip: PR #C
-- [ ] `/api/risks/bulk` (PATCH 一括更新, PR #161) — skip: unit test (route.test.ts) で代替、E2E は `/risks` 画面操作経由で別 PR で追加予定
+- [x] `/api/risks/bulk` (PATCH 一括更新, PR #161) — e2e/specs/10-cross-list-bulk-update.spec.ts (FILTER_REQUIRED 二重防御 + 200 構造検証)
 - [ ] `/api/retrospectives` (全振り返り) — skip: PR #C
-- [ ] `/api/retrospectives/bulk` (PATCH 一括 visibility, PR #162) — skip: unit test (route.test.ts) で代替、E2E は別 PR
+- [x] `/api/retrospectives/bulk` (PATCH 一括 visibility, PR #162) — e2e/specs/10-cross-list-bulk-update.spec.ts
 - [ ] `/api/knowledge` (全ナレッジ) — skip: PR #C
 - [ ] `/api/knowledge/[knowledgeId]` — skip: PR #C
-- [ ] `/api/knowledge/bulk` (PATCH 一括 visibility, PR #162) — skip: unit test (route.test.ts) で代替、E2E は別 PR
+- [x] `/api/knowledge/bulk` (PATCH 一括 visibility, PR #162) — e2e/specs/10-cross-list-bulk-update.spec.ts
 
 ### メモ
 - [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)
 - [x] `/api/memos/[id]` (PATCH/DELETE) — e2e/specs/04-personal-features.spec.ts (PR #94 / DELETE のみ UI 経由でカバー、PATCH は後続 PR)
-- [ ] `/api/memos/bulk` (PATCH 一括 visibility, PR #162) — skip: unit test (route.test.ts) で代替、E2E は別 PR
+- [x] `/api/memos/bulk` (PATCH 一括 visibility, PR #162) — e2e/specs/10-cross-list-bulk-update.spec.ts
 
 ### 添付
 - [ ] `/api/attachments/*` — skip: 各親エンティティの spec 経由で間接カバー
