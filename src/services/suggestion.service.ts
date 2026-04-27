@@ -5,7 +5,9 @@
  * 「過去の資源を未来のプロジェクトに活用する」を実現するための推薦エンジン。
  *
  * 対象: 入力プロジェクト (新規 or 既存) に対して、以下を類似度スコア付きで返す:
- *   - Knowledge: 全公開ナレッジ (自プロジェクト紐付け済みは alreadyLinked=true で印)
+ *   - Knowledge: 公開ナレッジのうち **入力プロジェクトに未紐付け** のもののみ
+ *     (自プロジェクトで作成・紐付け済のナレッジは「参考」として提示する意味がないので除外。
+ *      PR #160 で alreadyLinked フラグ運用から完全除外に切替)
  *   - 過去 Issue: type='issue' かつ state='resolved'、他プロジェクトのもの
  *   - 過去 Retrospective: visibility='public'、他プロジェクトのもの
  *
@@ -50,8 +52,6 @@ export type KnowledgeSuggestion = SuggestionScore & {
   title: string;
   knowledgeType: string;
   snippet: string;
-  // 既に入力プロジェクトに紐付け済かどうか (UI で「追加」vs「紐付け済」を出し分け)
-  alreadyLinked: boolean;
 };
 
 export type PastIssueSuggestion = SuggestionScore & {
@@ -155,12 +155,16 @@ export async function suggestForProject(
 
   // ---------- Knowledge 候補 ----------
   // visibility='public' のみ対象 (draft は作成者だけが閲覧できる想定)
-  // 論理削除除外 + 既に紐付け済のナレッジは「alreadyLinked=true」で返すが除外はしない
-  // (UI で "紐付け済" バッジを出せると便利なため)
+  // 論理削除除外 + 入力プロジェクトに紐付け済のナレッジは候補から **除外**
+  // (PR #160: 自プロジェクトで作成・紐付け済の内容を「参考」として提示しても価値がない)
+  // 過去 Issue / Retrospective も同じく `NOT: { projectId }` で自プロジェクトを除外している。
   const knowledges = await prisma.knowledge.findMany({
     where: {
       deletedAt: null,
       visibility: 'public',
+      NOT: {
+        knowledgeProjects: { some: { projectId } },
+      },
     },
     select: {
       id: true,
@@ -170,7 +174,6 @@ export async function suggestForProject(
       techTags: true,
       processTags: true,
       businessDomainTags: true,
-      knowledgeProjects: { select: { projectId: true } },
     },
   });
 
@@ -200,7 +203,6 @@ export async function suggestForProject(
       score,
       tagScore,
       textScore,
-      alreadyLinked: k.knowledgeProjects.some((kp) => kp.projectId === projectId),
     };
   });
 

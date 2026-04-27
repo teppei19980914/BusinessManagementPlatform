@@ -1890,7 +1890,7 @@ PR #111-2 で `Project.customer_name` を廃止して `customer_id` FK に完全
 
 | 資産 | 絞り込み | 理由 |
 |---|---|---|
-| ナレッジ (Knowledge) | `visibility='public'` | 全社共有済の知見のみ候補化 |
+| ナレッジ (Knowledge) | `visibility='public'` + **自プロジェクト未紐付け** (PR #160) | 全社共有済の知見のみ候補化。自プロジェクトに紐付け済のナレッジは「参考」として並べる意味がない (Issue/Retrospective と parity) |
 | 過去の課題 (Issue) | `type='issue'` + `state='resolved'` + 他プロジェクト | リスクは未発生のため除外、解消済課題のみ過去資産として扱う |
 
 ### 16.3 画面・操作
@@ -1904,7 +1904,7 @@ PR #111-2 で `Project.customer_name` を廃止して `customer_id` FK に完全
 
 | 対象 | ボタン | 挙動 |
 |---|---|---|
-| Knowledge | 「このプロジェクトに紐付け」 | `knowledge_projects` に中間レコード追加。両画面で即座に「紐付け済」バッジ表示 |
+| Knowledge | 「このプロジェクトに紐付け」 | `knowledge_projects` に中間レコード追加。採用直後はその場で「紐付け済」バッジに切替、再フェッチ時は提案候補から除外される (PR #160) |
 | 過去 Issue | 「雛形として採用」 | 新規 Issue を type='issue' / state='未対応' / visibility='下書き' で複製。起票者は採用者に差し替え、`result`・`lessonLearned` は継承しない |
 
 ### 16.5 権限
