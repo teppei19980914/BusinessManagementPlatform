@@ -1,6 +1,7 @@
 'use client';
 
 import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 
 export type MultiSelectOption = {
@@ -35,12 +36,14 @@ export function MultiSelectFilter({
   onSelectAll,
   onClearAll,
   isAllSelected,
-  allLabel = '全て',
+  allLabel,
 }: Props) {
+  const t = useTranslations('common');
+  const resolvedAllLabel = allLabel ?? t('all');
   return (
     <PopoverPrimitive.Root>
       <PopoverPrimitive.Trigger render={<Button variant="outline" size="sm" />}>
-        {label}: {isAllSelected ? allLabel : `${selected.size} / ${options.length}`}
+        {label}: {isAllSelected ? resolvedAllLabel : `${selected.size} / ${options.length}`}
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Positioner sideOffset={6} align="start" className="isolate z-50">

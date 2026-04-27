@@ -18,6 +18,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -73,6 +74,8 @@ export function CrossListBulkVisibilityToolbar({
   entityLabel,
   onApplied,
 }: Props) {
+  const t = useTranslations('bulkVisibility');
+  const tAction = useTranslations('action');
   const { withLoading } = useLoading();
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkVisibility, setBulkVisibility] = useState<string>(visibilityOptions[0]?.value ?? '');
@@ -100,7 +103,7 @@ export function CrossListBulkVisibilityToolbar({
     );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      setError(j?.message || j?.error || '一括更新に失敗しました');
+      setError(j?.message || j?.error || t('bulkUpdateFailed'));
       return;
     }
     setBulkOpen(false);
@@ -113,21 +116,21 @@ export function CrossListBulkVisibilityToolbar({
       {/* フィルター UI */}
       <div className="rounded-md border bg-muted/30 p-3">
         <div className="mb-2 flex items-center gap-2">
-          <span className="text-sm font-medium">フィルター</span>
+          <span className="text-sm font-medium">{t('filterTitle')}</span>
           {!filterApplied && (
             <span className="text-xs text-muted-foreground">
-              (一括編集には何らかのフィルター適用が必要です)
+              {t('filterRequiredHint')}
             </span>
           )}
         </div>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
           <div className="md:col-span-2">
-            <Label htmlFor={`${formIdPrefix}-filter-keyword`} className="text-xs">キーワード</Label>
+            <Label htmlFor={`${formIdPrefix}-filter-keyword`} className="text-xs">{t('keywordLabel')}</Label>
             <Input
               id={`${formIdPrefix}-filter-keyword`}
               value={filter.keyword}
               onChange={(e) => onFilterChange({ ...filter, keyword: e.target.value })}
-              placeholder="件名・内容に含まれる文字列"
+              placeholder={t('keywordPlaceholder')}
             />
           </div>
           <div className="flex items-end">
@@ -138,7 +141,7 @@ export function CrossListBulkVisibilityToolbar({
                 onChange={(e) => onFilterChange({ ...filter, mineOnly: e.target.checked })}
                 className="rounded"
               />
-              自分が作成したもののみ
+              {t('mineOnly')}
             </label>
           </div>
         </div>
@@ -148,7 +151,7 @@ export function CrossListBulkVisibilityToolbar({
       {filterApplied && (
         <div className="flex items-center justify-between gap-2 py-2">
           <div className="text-sm text-muted-foreground">
-            選択中: {selectedIds.size} 件
+            {t('selectedCount', { count: selectedIds.size })}
           </div>
           <div className="flex gap-2">
             <Button
@@ -157,14 +160,14 @@ export function CrossListBulkVisibilityToolbar({
               onClick={onSelectionClear}
               disabled={selectedIds.size === 0}
             >
-              選択解除
+              {t('deselectAll')}
             </Button>
             <Button
               size="sm"
               onClick={() => { setBulkVisibility(visibilityOptions[0]?.value ?? ''); setError(''); setBulkOpen(true); }}
               disabled={selectedIds.size === 0}
             >
-              一括編集 ({selectedIds.size})
+              {t('bulkEditWithCount', { count: selectedIds.size })}
             </Button>
           </div>
         </div>
@@ -173,15 +176,14 @@ export function CrossListBulkVisibilityToolbar({
       <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{entityLabel}の公開範囲を一括変更 ({selectedIds.size} 件)</DialogTitle>
+            <DialogTitle>{t('dialogTitle', { entityLabel, count: selectedIds.size })}</DialogTitle>
             <DialogDescription>
-              選択した行のうち「自分が作成したもの」のみ更新されます。
-              他人が作成した行はサーバ側で自動的に除外されます。
+              {t('dialogDescription')}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-2">
-            <Label className="text-sm">公開範囲</Label>
+            <Label className="text-sm">{t('visibilityLabel')}</Label>
             <Select
               value={bulkVisibility}
               onValueChange={(v) => { if (v) setBulkVisibility(v); }}
@@ -202,8 +204,8 @@ export function CrossListBulkVisibilityToolbar({
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkOpen(false)}>キャンセル</Button>
-            <Button onClick={submit}>適用</Button>
+            <Button variant="outline" onClick={() => setBulkOpen(false)}>{tAction('cancel')}</Button>
+            <Button onClick={submit}>{t('apply')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

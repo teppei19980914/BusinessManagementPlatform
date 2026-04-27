@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -60,10 +61,6 @@ type PanelState =
   | { loaded: false }
   | { loaded: true; data: SuggestionsResult };
 
-function scoreTooltip(s: { tagScore: number; textScore: number }): string {
-  return `タグ類似度 ${(s.tagScore * 100).toFixed(0)}% / テキスト類似度 ${(s.textScore * 100).toFixed(0)}%`;
-}
-
 export function SuggestionsPanel({
   projectId,
   canAdopt,
@@ -71,23 +68,33 @@ export function SuggestionsPanel({
   projectId: string;
   canAdopt: boolean;
 }) {
+  const t = useTranslations('suggestion');
   const { withLoading } = useLoading();
   const [state, setState] = useState<PanelState>({ loaded: false });
   const [error, setError] = useState('');
   // 採用済の ID を記録し UI を「採用済」表示に切り替える (再フェッチ不要化)
   const [adopted, setAdopted] = useState<Set<string>>(new Set());
 
+  const scoreTooltip = useCallback(
+    (s: { tagScore: number; textScore: number }): string =>
+      t('scoreTooltip', {
+        tagPercent: (s.tagScore * 100).toFixed(0),
+        textPercent: (s.textScore * 100).toFixed(0),
+      }),
+    [t],
+  );
+
   const reload = useCallback(async () => {
     const res = await fetch(`/api/projects/${projectId}/suggestions`);
     if (!res.ok) {
-      setError('提案の取得に失敗しました');
+      setError(t('fetchFailed'));
       setState({ loaded: true, data: { knowledge: [], pastIssues: [], retrospectives: [] } });
       return;
     }
     const json = await res.json();
     setState({ loaded: true, data: json.data as SuggestionsResult });
     setError('');
-  }, [projectId]);
+  }, [projectId, t]);
 
   // 外部 API 同期のため react-hooks/set-state-in-effect の例外に該当 (DESIGN.md §22)
   useEffect(() => {
@@ -105,7 +112,7 @@ export function SuggestionsPanel({
       }),
     );
     if (!res.ok) {
-      setError('採用に失敗しました');
+      setError(t('adoptFailed'));
       return;
     }
     setAdopted((prev) => {
@@ -116,7 +123,7 @@ export function SuggestionsPanel({
   }
 
   if (!state.loaded) {
-    return <p className="py-8 text-center text-sm text-muted-foreground">提案を計算中...</p>;
+    return <p className="py-8 text-center text-sm text-muted-foreground">{t('calculating')}</p>;
   }
 
   const { knowledge, pastIssues, retrospectives } = state.data;
@@ -124,20 +131,18 @@ export function SuggestionsPanel({
   return (
     <div className="space-y-6">
       <div className="rounded-md bg-info/10 p-3 text-sm text-info">
-        <strong>核心機能 (提案型サービス):</strong>{' '}
-        このプロジェクトのタグ・目的・背景・スコープと類似する過去のナレッジ・課題を
-        自動で抽出しています。可能な限り採用することで、過去の資産を活用し
-        未然に防げるリスクを減らせます。
+        <strong>{t('coreFeaturePrefix')}</strong>{' '}
+        {t('coreFeatureDescription')}
       </div>
 
       {error && <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>}
 
       {/* ナレッジ提案 */}
       <section className="space-y-2">
-        <h3 className="font-semibold">ナレッジ候補 ({knowledge.length} 件)</h3>
+        <h3 className="font-semibold">{t('knowledgeSectionTitle', { count: knowledge.length })}</h3>
         {knowledge.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            類似するナレッジが見つかりませんでした。タグを追加するか、タグ数を増やすと提案精度が向上します。
+            {t('knowledgeNoMatch')}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -156,17 +161,17 @@ export function SuggestionsPanel({
                         </Badge>
                         <span className="font-medium">{k.title}</span>
                         <Badge variant="outline" title={scoreTooltip(k)}>
-                          類似度 {(k.score * 100).toFixed(0)}%
+                          {t('similarityBadge', { percent: (k.score * 100).toFixed(0) })}
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">{k.snippet}</p>
                     </div>
                     <div className="shrink-0">
                       {isAdopted ? (
-                        <Badge>紐付け済</Badge>
+                        <Badge>{t('knowledgeAdoptedBadge')}</Badge>
                       ) : canAdopt ? (
                         <Button size="sm" onClick={() => handleAdopt('knowledge', k.id)}>
-                          このプロジェクトに紐付け
+                          {t('knowledgeAdoptButton')}
                         </Button>
                       ) : null}
                     </div>
@@ -180,13 +185,12 @@ export function SuggestionsPanel({
 
       {/* 過去課題提案 */}
       <section className="space-y-2">
-        <h3 className="font-semibold">過去課題 (雛形候補, {pastIssues.length} 件)</h3>
+        <h3 className="font-semibold">{t('pastIssuesSectionTitle', { count: pastIssues.length })}</h3>
         <p className="text-xs text-muted-foreground">
-          過去プロジェクトで解消された課題を雛形として取り込めます。
-          採用すると state=&quot;未対応&quot; の新規課題として複製され、事前に備えた対応ができます。
+          {t('pastIssuesDescription')}
         </p>
         {pastIssues.length === 0 ? (
-          <p className="text-sm text-muted-foreground">類似する過去課題が見つかりませんでした。</p>
+          <p className="text-sm text-muted-foreground">{t('pastIssuesNoMatch')}</p>
         ) : (
           <ul className="space-y-2">
             {pastIssues.map((i) => {
@@ -199,14 +203,14 @@ export function SuggestionsPanel({
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{i.title}</span>
                         <Badge variant="outline" title={scoreTooltip(i)}>
-                          類似度 {(i.score * 100).toFixed(0)}%
+                          {t('similarityBadge', { percent: (i.score * 100).toFixed(0) })}
                         </Badge>
                         {i.sourceProjectName && (
                           <Link
                             href={`/projects/${i.sourceProjectId}`}
                             className="text-xs text-info hover:underline"
                           >
-                            出典: {i.sourceProjectName}
+                            {t('sourceProjectLink', { name: i.sourceProjectName })}
                           </Link>
                         )}
                       </div>
@@ -214,10 +218,10 @@ export function SuggestionsPanel({
                     </div>
                     <div className="shrink-0">
                       {isAdopted ? (
-                        <Badge>採用済</Badge>
+                        <Badge>{t('pastIssuesAdoptedBadge')}</Badge>
                       ) : canAdopt ? (
                         <Button size="sm" onClick={() => handleAdopt('issue', i.id)}>
-                          雛形として採用
+                          {t('pastIssuesAdoptButton')}
                         </Button>
                       ) : null}
                     </div>
@@ -235,13 +239,12 @@ export function SuggestionsPanel({
         採用操作は持たず参照のみ (出典プロジェクトへのリンクで詳細を開ける)。
       */}
       <section className="space-y-2">
-        <h3 className="font-semibold">過去振り返り ({retrospectives.length} 件)</h3>
+        <h3 className="font-semibold">{t('retrospectivesSectionTitle', { count: retrospectives.length })}</h3>
         <p className="text-xs text-muted-foreground">
-          過去プロジェクトの振り返り (問題点・次回事項) を参考情報として提示します。
-          同種の失敗を繰り返さないために目を通してください。
+          {t('retrospectivesDescription')}
         </p>
         {retrospectives.length === 0 ? (
-          <p className="text-sm text-muted-foreground">類似する過去振り返りが見つかりませんでした。</p>
+          <p className="text-sm text-muted-foreground">{t('retrospectivesNoMatch')}</p>
         ) : (
           <ul className="space-y-2">
             {retrospectives.map((r) => (
@@ -249,16 +252,16 @@ export function SuggestionsPanel({
                 <div className="flex items-start gap-3">
                   <div className="flex-1 space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">振り返り ({r.conductedDate})</span>
+                      <span className="font-medium">{t('retrospectiveItemTitle', { date: r.conductedDate })}</span>
                       <Badge variant="outline" title={scoreTooltip(r)}>
-                        類似度 {(r.score * 100).toFixed(0)}%
+                        {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
                       </Badge>
                       {r.sourceProjectName && (
                         <Link
                           href={`/projects/${r.sourceProjectId}/retrospectives`}
                           className="text-xs text-info hover:underline"
                         >
-                          出典: {r.sourceProjectName}
+                          {t('sourceProjectLink', { name: r.sourceProjectName })}
                         </Link>
                       )}
                     </div>

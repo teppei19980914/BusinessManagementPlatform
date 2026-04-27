@@ -34,6 +34,7 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { useSessionState } from '@/lib/use-session-state';
 
@@ -53,8 +54,10 @@ const ColumnContext = createContext<ColumnContextValue | null>(null);
 function useColumnContext(): ColumnContextValue {
   const ctx = useContext(ColumnContext);
   if (!ctx) {
+    // Developer-facing assertion: thrown only when ResizableHead/ResetColumnsButton
+    // are used outside ResizableColumnsProvider. Not user-visible at runtime.
     throw new Error(
-      'ResizableHead / ResetColumnsButton は ResizableColumnsProvider の内部で使用してください',
+      'ResizableHead / ResetColumnsButton must be used inside <ResizableColumnsProvider>',
     );
   }
   return ctx;
@@ -167,16 +170,17 @@ export function ResizableHead({
  * ラップする工夫が必要 (通常は Provider 内のヘッダ近くに置く)。
  */
 export function ResetColumnsButton({
-  label = '列幅をリセット',
+  label,
   className,
 }: {
   label?: string;
   className?: string;
 }) {
   const { reset } = useColumnContext();
+  const t = useTranslations('common');
   return (
     <Button variant="outline" size="sm" onClick={reset} className={className}>
-      {label}
+      {label ?? t('resetColumnWidths')}
     </Button>
   );
 }

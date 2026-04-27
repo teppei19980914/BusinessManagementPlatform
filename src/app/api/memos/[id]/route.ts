@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { updateMemoSchema } from '@/lib/validators/memo';
 import { deleteMemo, getMemoForViewer, updateMemo } from '@/services/memo.service';
@@ -16,10 +17,11 @@ export async function GET(
   if (user instanceof NextResponse) return user;
 
   const { id } = await params;
+  const t = await getTranslations('message');
   const memo = await getMemoForViewer(id, user.id);
   if (!memo) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -37,6 +39,7 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
 
   const { id } = await params;
+  const t = await getTranslations('message');
   const body = await req.json().catch(() => ({}));
   const parsed = updateMemoSchema.safeParse(body);
   if (!parsed.success) {
@@ -50,7 +53,7 @@ export async function PATCH(
   if (!updated) {
     // 他人のメモ or 存在しない → 404 (情報漏洩防止のため 403 でなく 404)
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -74,10 +77,11 @@ export async function DELETE(
   if (user instanceof NextResponse) return user;
 
   const { id } = await params;
+  const t = await getTranslations('message');
   const ok = await deleteMemo(id, user.id);
   if (!ok) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateKnowledgeSchema } from '@/lib/validators/knowledge';
 import { getKnowledge, updateKnowledge, deleteKnowledge } from '@/services/knowledge.service';
@@ -30,17 +31,18 @@ export async function PATCH(
   const forbidden = await checkProjectPermission(user, projectId, 'knowledge:update');
   if (forbidden) return forbidden;
 
+  const t = await getTranslations('message');
   const existing = await getKnowledge(knowledgeId);
   if (!existing) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
   // この projectId に紐づくナレッジのみ対象
   if (!existing.projectIds?.includes(projectId)) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: 'このプロジェクトに紐づくナレッジではありません' } },
+      { error: { code: 'NOT_FOUND', message: t('knowledgeNotInProject') } },
       { status: 404 },
     );
   }
@@ -62,7 +64,7 @@ export async function PATCH(
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '作成者本人のみ編集できます' } },
+        { error: { code: 'FORBIDDEN', message: t('creatorOnlyEdit') } },
         { status: 403 },
       );
     }
@@ -95,16 +97,17 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'knowledge:delete');
   if (forbidden) return forbidden;
 
+  const t = await getTranslations('message');
   const existing = await getKnowledge(knowledgeId);
   if (!existing) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
   if (!existing.projectIds?.includes(projectId)) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: 'このプロジェクトに紐づくナレッジではありません' } },
+      { error: { code: 'NOT_FOUND', message: t('knowledgeNotInProject') } },
       { status: 404 },
     );
   }
@@ -116,7 +119,7 @@ export async function DELETE(
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '作成者本人または管理者のみ削除できます' } },
+        { error: { code: 'FORBIDDEN', message: t('creatorOrAdminOnlyDelete') } },
         { status: 403 },
       );
     }

@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateTaskSchema } from '@/lib/validators/task';
 import { getTask, updateTask, deleteTask } from '@/services/task.service';
@@ -30,10 +31,11 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'task:read');
   if (forbidden) return forbidden;
 
+  const t = await getTranslations('message');
   const task = await getTask(taskId);
   if (!task || task.projectId !== projectId) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -49,6 +51,7 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
 
   const { projectId, taskId } = await params;
+  const t = await getTranslations('message');
 
   const body = await req.json();
   const parsed = updateTaskSchema.safeParse(body);
@@ -62,7 +65,7 @@ export async function PATCH(
   const before = await getTask(taskId);
   if (!before || before.projectId !== projectId) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -129,10 +132,11 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'task:delete');
   if (forbidden) return forbidden;
 
+  const t = await getTranslations('message');
   const before = await getTask(taskId);
   if (!before || before.projectId !== projectId) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }

@@ -69,10 +69,14 @@ describe('PATCH /api/settings/i18n', () => {
     });
   });
 
-  it('PR #120: SELECTABLE_LOCALES=false な en-US は 400 で拒否 (UI disabled の迂回防止)', async () => {
+  it('PR #175: en-US は Phase C 翻訳完了で受理される (200) → DB の locale が en-US で更新される', async () => {
     const res = await PATCH(makeReq({ locale: 'en-US' }) as never);
-    expect(res.status).toBe(400);
-    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      data: { locale: 'en-US' },
+      select: { timezone: true, locale: true },
+    });
   });
 
   it('未知 TZ を拒否する (400, DB 更新しない)', async () => {

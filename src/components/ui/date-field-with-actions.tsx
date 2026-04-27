@@ -163,10 +163,11 @@ export function DateFieldWithActions({
   disabled,
   required,
   hideClear,
-  todayLabel = '今日',
-  clearLabel = 'クリア',
+  todayLabel,
+  clearLabel,
 }: Props) {
   const t = useTranslations('common');
+  const tAction = useTranslations('action');
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -232,7 +233,7 @@ export function DateFieldWithActions({
         disabled={disabled}
         title={t('setTodayDate')}
       >
-        {todayLabel}
+        {todayLabel ?? tAction('today')}
       </Button>
       {!hideClear && (
         <Button
@@ -244,7 +245,7 @@ export function DateFieldWithActions({
           disabled={disabled || !value}
           title={t('clearDate')}
         >
-          {clearLabel}
+          {clearLabel ?? tAction('clear')}
         </Button>
       )}
     </div>

@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { checkMembership } from '@/lib/permissions';
 import { updateAttachmentSchema } from '@/lib/validators/attachment';
@@ -35,18 +36,19 @@ async function authorizeForAttachment(
   entityType: AttachmentEntityType,
   entityId: string,
 ): Promise<NextResponse | null> {
+  const t = await getTranslations('message');
   // PR #70: memo は admin 特権なしの個人リソース。PATCH/DELETE は作成者のみ。
   if (entityType === 'memo') {
     const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, 'write');
     if (notFound) {
       return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+        { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
         { status: 404 },
       );
     }
     if (!ok) {
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+        { error: { code: 'FORBIDDEN', message: t('forbidden') } },
         { status: 403 },
       );
     }
@@ -58,13 +60,13 @@ async function authorizeForAttachment(
   const projectIds = await resolveProjectIds(entityType, entityId);
   if (projectIds === null) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
   if (projectIds.length === 0) {
     return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+      { error: { code: 'FORBIDDEN', message: t('forbidden') } },
       { status: 403 },
     );
   }
@@ -73,7 +75,7 @@ async function authorizeForAttachment(
     if (membership.isMember) return null;
   }
   return NextResponse.json(
-    { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+    { error: { code: 'FORBIDDEN', message: t('forbidden') } },
     { status: 403 },
   );
 }
@@ -86,10 +88,11 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
 
   const { id } = await params;
+  const t = await getTranslations('message');
   const existing = await getAttachment(id);
   if (!existing) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -130,10 +133,11 @@ export async function DELETE(
   if (user instanceof NextResponse) return user;
 
   const { id } = await params;
+  const t = await getTranslations('message');
   const existing = await getAttachment(id);
   if (!existing) {
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }

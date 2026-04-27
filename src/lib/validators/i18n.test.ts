@@ -38,9 +38,9 @@ describe('updateI18nSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('PR #120: SUPPORTED_LOCALES に載っていても SELECTABLE_LOCALES=false な locale (en-US) を拒否する', () => {
+  it('PR #175: en-US は Phase C 翻訳完了で SELECTABLE_LOCALES=true となり受理される', () => {
     const result = updateI18nSchema.safeParse({ locale: 'en-US' });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('空文字列の timezone を拒否する', () => {

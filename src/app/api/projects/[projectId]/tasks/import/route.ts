@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { parseCsvTemplate, importWbsTemplate, validateWbsTemplate } from '@/services/task.service';
 import { recordAuditLog } from '@/services/audit.service';
@@ -34,6 +35,8 @@ export async function POST(
   const forbidden = await checkProjectPermission(user, projectId, 'task:create');
   if (forbidden) return forbidden;
 
+  const t = await getTranslations('message');
+
   // multipart/form-data から CSV ファイルを取り出す。
   // 旧実装は text/csv 生 body を req.text() で受けていたが、Vercel edge 層で
   // ERR_CONNECTION_RESET を誘発するケースが確認されたため FormData に変更。
@@ -46,7 +49,7 @@ export async function POST(
       const file = formData.get('file');
       if (!(file instanceof File)) {
         return NextResponse.json(
-          { error: { code: 'VALIDATION_ERROR', message: 'file フィールドにファイルを指定してください' } },
+          { error: { code: 'VALIDATION_ERROR', message: t('fileFieldRequired') } },
           { status: 400 },
         );
       }
@@ -61,7 +64,7 @@ export async function POST(
       context: { path: 'POST /api/projects/[id]/tasks/import', stage: 'body-parse' },
     });
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'リクエストボディを読み取れませんでした' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('requestBodyUnreadable') } },
       { status: 400 },
     );
   }
@@ -70,7 +73,7 @@ export async function POST(
   csvText = csvText.replace(/^\uFEFF/, '').trim();
   if (!csvText) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'CSVデータが空です' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('csvDataEmpty') } },
       { status: 400 },
     );
   }
@@ -79,13 +82,13 @@ export async function POST(
   const templateTasks = parseCsvTemplate(csvText);
   if (templateTasks.length === 0) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'インポート可能なタスクがありません。ヘッダー行と1件以上のデータ行が必要です' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('noImportableTasks') } },
       { status: 400 },
     );
   }
   if (templateTasks.length > 500) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'テンプレートは500件までです' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('templateLimit') } },
       { status: 400 },
     );
   }
@@ -118,7 +121,7 @@ export async function POST(
       context: { path: 'POST /api/projects/[id]/tasks/import', stage: 'import-execute' },
     });
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: '内部エラーが発生しました' } },
+      { error: { code: 'INTERNAL_ERROR', message: t('internalError') } },
       { status: 500 },
     );
   }
