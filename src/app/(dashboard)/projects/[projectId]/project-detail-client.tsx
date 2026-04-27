@@ -25,6 +25,9 @@
 import { useCallback, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { Menu } from '@base-ui/react/menu';
+import { ChevronDownIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -499,12 +502,65 @@ export function ProjectDetailClient({
           {canEdit && <TabsTrigger value="estimates">見積もり</TabsTrigger>}
           {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止し WBS 管理タブ内に統合 */}
           <TabsTrigger value="tasks">WBS管理</TabsTrigger>
-          <TabsTrigger value="risks">リスク一覧</TabsTrigger>
-          <TabsTrigger value="issues">課題一覧</TabsTrigger>
-          <TabsTrigger value="retrospectives">振り返り一覧</TabsTrigger>
-          <TabsTrigger value="knowledge">ナレッジ一覧</TabsTrigger>
+          {/*
+            PR #167 (feat/asset-tab-responsive-mobile):
+            画面幅 lg+ では各「○○一覧」を従来通り独立タブとして表示、
+            画面幅 lg- (1024px 未満) では「資産 ▼」プルダウン 1 つに集約する
+            (ナビ全体: 概要 / 見積もり / WBS管理 / 資産▼ / メンバー / ステークホルダー)。
+            dashboard-header.tsx の 3 分類プルダウン pattern と同じ仕組み。
+          */}
+          {/* PC 表示: 個別タブ (lg+) */}
+          <TabsTrigger value="risks" className="hidden lg:inline-flex">リスク一覧</TabsTrigger>
+          <TabsTrigger value="issues" className="hidden lg:inline-flex">課題一覧</TabsTrigger>
+          <TabsTrigger value="retrospectives" className="hidden lg:inline-flex">振り返り一覧</TabsTrigger>
+          <TabsTrigger value="knowledge" className="hidden lg:inline-flex">ナレッジ一覧</TabsTrigger>
           {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案 */}
-          <TabsTrigger value="suggestions">参考</TabsTrigger>
+          <TabsTrigger value="suggestions" className="hidden lg:inline-flex">参考</TabsTrigger>
+          {/* Mobile 表示: 資産プルダウン (lg-)。配下の値が active なら親も active 表示。 */}
+          <Menu.Root>
+            <Menu.Trigger
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md px-3 py-1 text-sm transition-colors hover:bg-accent lg:hidden',
+                ['risks', 'issues', 'retrospectives', 'knowledge', 'suggestions'].includes(activeTab)
+                  ? 'bg-background font-medium shadow-sm text-foreground'
+                  : 'text-muted-foreground',
+              )}
+              aria-label="資産メニューを開く"
+            >
+              <span>資産</span>
+              <ChevronDownIcon className="size-3.5" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner sideOffset={4} className="isolate z-50">
+                <Menu.Popup
+                  className={cn(
+                    'min-w-[180px] origin-(--transform-origin) rounded-md border bg-card text-card-foreground shadow-md',
+                    'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95',
+                    'data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+                  )}
+                >
+                  {[
+                    { value: 'risks', label: 'リスク一覧' },
+                    { value: 'issues', label: '課題一覧' },
+                    { value: 'retrospectives', label: '振り返り一覧' },
+                    { value: 'knowledge', label: 'ナレッジ一覧' },
+                    { value: 'suggestions', label: '参考' },
+                  ].map((opt) => (
+                    <Menu.Item
+                      key={opt.value}
+                      onClick={() => handleTabChange(opt.value)}
+                      className={cn(
+                        'block w-full cursor-pointer px-4 py-2 text-left text-sm transition-colors hover:bg-accent',
+                        activeTab === opt.value ? 'bg-accent font-medium' : 'text-foreground',
+                      )}
+                    >
+                      {opt.label}
+                    </Menu.Item>
+                  ))}
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
             <TabsTrigger value="members">メンバー</TabsTrigger>
           )}

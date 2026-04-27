@@ -38,6 +38,9 @@ import {
 } from '@/components/attachments/staged-attachments-input';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import type { KnowledgeDTO } from '@/services/knowledge.service';
+// PR #168: 一覧画面に添付列を表示 (横展開)
+import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
+import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog のため previousValue なし)
@@ -121,6 +124,9 @@ export function ProjectKnowledgeClient({
     : [];
   const allKnowledgeSelected
     = selectableKnowledgeIds.length > 0 && selectableKnowledgeIds.every((id) => selectedIds.has(id));
+
+  // PR #168: 添付バッチ取得 (他エンティティ一覧と同パターン)
+  const attachmentsByEntity = useBatchAttachments('knowledge', filteredKnowledges.map((k) => k.id));
 
   function toggleOneKnowledge(id: string) {
     setSelectedIds((prev) => {
@@ -381,6 +387,10 @@ export function ProjectKnowledgeClient({
                     )}
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{k.content}</p>
+                  {/* PR #168: 添付 chips (他エンティティ一覧と同パターン) */}
+                  <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                    <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
+                  </div>
                 </div>
                 {isOwner && (
                   <Button
