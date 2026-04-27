@@ -3027,6 +3027,72 @@ export const SELECTABLE_LOCALES = {
 `Report coverage` も連鎖 fail (§9.5.1 の PR #115 知見と同パターン)。
 視覚回帰 fail は独立だが、UI 変更を伴う PR では必ず同時に発生する。
 
+### 10.10 i18n 翻訳作業の規約 (PR #169 / feat/i18n-foundation)
+
+#### 全体像 (3 段階の現在地)
+
+| 段階 | 内容 | 現状 |
+|---|---|---|
+| **Phase A** (PR #77) | `next-intl` 導入、ja.json に最小キー (action / field / message) 集約 | 済 (50 行のみ) |
+| **Phase B** (PR #169 = 本セクションの起源) | en-US.json 雛形、request.ts の session.user.locale 連携、抽出スクリプト | 済 |
+| **Phase C** (§11 T-06 = 別 PR) | 1069 箇所のハードコード日本語を全件 ja.json + en-US.json に移行、SELECTABLE_LOCALES.en-US = true | 未着手 (Phase B 後) |
+
+#### Phase B (PR #169) で確立した基盤
+
+1. **`src/i18n/messages/en-US.json`** — `ja.json` と同構造の英訳カタログ (action / field / message セクション、計 50 行)
+2. **`src/i18n/request.ts`** — `auth().user.locale` を取得し `resolveLocale()` で BCP 47 解決、
+   `messages/{ja,en-US}.json` を動的 import。
+3. **`scripts/i18n-extract-hardcoded-ja.ts`** — `src/app/` + `src/components/` 配下から
+   日本語文字列をハードコードしている箇所を全件抽出 (シングル/ダブルクオート + JSX text node)
+4. **`docs/developer/i18n-extraction-2026-04-27.txt`** — 上記抽出スクリプトの実行結果。
+   総ヒット **1069 箇所** / ユニーク文字列 **621 種**
+
+#### Phase C 着手時の手順 (§11 T-06)
+
+1. `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts > docs/developer/i18n-extraction-<date>.txt` で再生成
+2. **頻出文字列上位** から順にキー化 (例: 「対象が見つかりません」23 件 → `message.notFound`)
+3. **キー命名規約**:
+   - **action.*** : ボタン/動詞 (save / delete / cancel / submit)
+   - **field.*** : フォーム項目ラベル (title / content / assignee)
+   - **message.*** : ユーザ向けメッセージ (saveSuccess / deleteFailed / loading)
+   - **page.<route>.*** : 画面固有のラベル (page.projects.create.title 等)
+4. **ja.json + en-US.json を同時更新** (キー追加は両方必須、片方だけだとフォールバックされる)
+5. **置換**: 該当 .tsx の文字列を `t('action.save')` に置換 (`useTranslations('action').then(t => t('save'))`)
+6. **動作確認**: 設定画面で言語を English に変更 → 該当画面が英語表示されることを確認
+7. **完了基準**: `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts | grep "総ヒット数: 0"` ≒ 残ヒット数が
+   翻訳対象外文言 (ログメッセージ、Markdown placeholder の例示など) のみになるまで進める
+8. **最終ステップ**: `src/config/i18n.ts` の `SELECTABLE_LOCALES['en-US']` を `true` に切替、
+   設定画面の言語選択肢から英語を選べるようにして release
+
+#### 進め方の推奨 (1 PR = 1 機能領域)
+
+1069 箇所を 1 PR で全置換するのはレビュー負荷が大きすぎるため、**機能領域 (画面群) ごとに分割** する:
+
+- **PR-1**: 認証系 (login / mfa / setup-password / reset-password) ≈ 50 箇所
+- **PR-2**: ダッシュボード共通 (dashboard-header / loading-overlay / 各メニュー) ≈ 80 箇所
+- **PR-3**: プロジェクト系 (project-detail-client / risks / issues / retros / knowledge / wbs) ≈ 400 箇所
+- **PR-4**: 個人機能 (memos / settings / my-tasks) ≈ 100 箇所
+- **PR-5**: 管理系 (admin/users / customers / audit-logs) ≈ 200 箇所
+- **PR-6**: 残り + SELECTABLE_LOCALES.en-US = true 切替
+
+各 PR は単独でマージ可能 (ja のみ運用は維持される)。すべて完了 = SELECTABLE_LOCALES 切替で公開。
+
+#### 汎化ルール
+
+1. **新規 .tsx 追加時は最初から `useTranslations` を使う**: 後付けで置換するより着手段階で
+   キー化する方がコスト低
+2. **動的文字列 (`${count} 件`) は ICU MessageFormat**: `next-intl` は ICU 構文をサポート。
+   `t('foo', { count })` で `{count, plural, one{# 件} other{# 件}}` 形式を使う
+3. **DB 由来の文字列は翻訳しない**: ユーザ入力データ (タスク名、コメント本文等) は元言語で
+   表示する。UI ラベル/メッセージのみ翻訳対象
+
+#### 関連
+
+- DESIGN.md §21.4.5 (UI ラベル外出しと next-intl 導入指針)
+- src/config/i18n.ts (`SUPPORTED_LOCALES` / `SELECTABLE_LOCALES` / `resolveLocale`)
+- §11 T-06 (en-US 本格翻訳、6 サブ PR で段階展開)
+- §11 T-10 (en-US 有効化、本セクションで Phase B 完了を反映)
+
 ---
 
 ## 11. 後続対応 (TODO) 一覧 (PR #122 で追加)
@@ -3041,12 +3107,13 @@ export const SELECTABLE_LOCALES = {
 | T-01 | 入力層の TZ 統合 (date-picker / date-field 系) | PR #118-#119 で描画層は `session.user.timezone` 反映済だが、`date-field-helpers.ts` / `date-field-with-actions.tsx` / `gantt-client.tsx` 等の **入力** では `new Date()` / `.getFullYear()` 等のブラウザ runtime TZ 依存 API を使用中。海外ユーザが 2026-04-24 と入力した際の UTC 変換が TZ 依存になる可能性。date-fns-tz 導入 or 軽量自前変換で解消予定 | PR #118-#119 時点で PR #121 予定 → CI 恒久対策と入れ替わりで未着手 |
 | T-02 | PAT 動作確認 (`CI_TRIGGER_PAT`) | PR #121 で導入した PAT fallback が次回の baseline 更新時に正しく動作し、CI 自動再起動が効くか実地確認 | PR #121 マージ時、ユーザ指示「今後の開発で様子を見る」 |
 | T-03 | **【最重要 / 外部展開前必須】** 提案エンジン (suggestion) のヒット率向上 — 仕様 + 設計を詰める | 本サービスの**核心機能 + セールス上の差別化要素**。外部ユーザに刺さるかを左右する最大の要素。現状の課題: ①重み一律 0.5/0.5 でタグなしデータが不利 (final score 半減)、②text 入力の auto-tagging が未実装 (タグ未入力プロジェクトは jaccard=0 固定)、③シノニム / 表記ゆれ吸収なし、④TF-IDF 等の識別力評価なし (汎用語ノイズ)。検討候補: (A) vocab-matching auto-tag (依存ゼロ、語彙メンテ要) / (B) kuromoji.js 形態素解析 (npm 依存 +10MB 辞書 + コールドスタート影響) / (C) LLM-based 抽出 (Claude API、月数 $、品質最高) / (D) pgvector embedding 検索 (意味マッチ、本格改修)。**期限: 2026 年 5 月 (来月)** の外部ユーザ展開準備で仕様 + 設計を詰める | 2026-04-26 ユーザ明言「サービスの核心であり、外部展開時の中心機能」「弱いとサービスが刺さらない」 |
+| T-06 | **【外部公開直前必須】** en-US 本格翻訳 (6 サブ PR で段階展開) | PR #169 で Phase B (基盤 + 抽出スクリプト) 完了。`docs/developer/i18n-extraction-2026-04-27.txt` に **1069 箇所 / 621 種** のハードコード日本語をリスト化済。Phase C として §10.10 の段階分割案 (PR-1 認証 / PR-2 ダッシュボード共通 / PR-3 プロジェクト系 / PR-4 個人機能 / PR-5 管理系 / PR-6 残り + SELECTABLE_LOCALES 有効化) で進める。**完了基準**: `SELECTABLE_LOCALES['en-US'] = true` 切替後に設定画面で en-US を選択 → 全画面英語表示確認 | 2026-04-27 ユーザ要望「完全な多言語対応 / 言語が英語だった時は画面上のラベル名などはすべて英語で表示」。1 PR で 1069 箇所を翻訳すると品質低下 + レビュー負担過大のため C 案 (基盤 + 段階展開) で合意 |
 
 ### 11.2 低優先 (長期案件)
 
 | # | 項目 | 背景 / 詳細 | 起票元 |
 |---|---|---|---|
-| T-10 | UI 文字列の英訳 (en-US 有効化) | 現在 `en-US` は `SELECTABLE_LOCALES=false` で UI disabled (PR #120)。実有効化には `src/i18n/messages/en-US.json` 新設 + 全 .tsx のハードコード日本語抽出 + 翻訳 + `src/i18n/request.ts` を `session.user.locale` 連携 + `SELECTABLE_LOCALES['en-US']` を true 化、の順で実施 | PR #120 時点、ユーザ指示「優先度低、後続対応」 |
+| T-10 | ~~UI 文字列の英訳 (en-US 有効化)~~ → **PR #169 で Phase B 完了 (en-US.json 雛形 + request.ts session 連携 + 抽出スクリプト)。本格翻訳は §11.1 T-06 に昇格して進捗管理** | PR #120 時点で記録、PR #169 (2026-04-27) で基盤完了に伴い T-06 へ昇格・本項は履歴として残置 |
 | T-11 | 本番 build での `console.*` 自動削除 (SWC `removeConsole`) | `next.config.ts` に `compiler: { removeConsole: { exclude: ['error', 'warn'] } }` 追加で可。現状 ESLint の `no-console` でソース混入は防げているが、本番バンドルでも保険として削除したい | PR #122 時点、SPECIFICATION §25.5 で限界として明示 |
 | T-12 | ソースマップ本番非公開の明示宣言 | 現状 Next.js の既定動作で本番ソースマップは生成されないが、`productionBrowserSourceMaps: false` を `next.config.ts` に明示宣言しておくと将来の誤変更防止になる | PR #122 時点 |
 | T-13 | `/api/settings/i18n` の E2E 実カバー | PR #119 で `[ ] skip` で manifest 登録済。単体テスト 8 ケースで主要観点はカバー済だが、設定画面からの反映確認は未 E2E | PR #119 時点 |

@@ -1,0 +1,50 @@
+{
+  "action": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "back": "Back",
+    "close": "Close",
+    "today": "Today",
+    "clear": "Clear"
+  },
+  "field": {
+    "title": "Title",
+    "content": "Content",
+    "body": "Body",
+    "name": "Name",
+    "displayName": "Display Name",
+    "purpose": "Purpose",
+    "background": "Background",
+    "result": "Result",
+    "assignee": "Assignee",
+    "deadline": "Deadline",
+    "visibility": "Visibility",
+    "kind": "Type",
+    "impact": "Impact",
+    "likelihood": "Likelihood",
+    "riskNature": "Threat / Opportunity",
+    "conductedDate": "Conducted Date",
+    "plannedEndDate": "Planned End Date",
+    "currentPassword": "Current Password",
+    "newPassword": "New Password",
+    "newPasswordConfirm": "New Password (Confirm)"
+  },
+  "message": {
+    "saveSuccess": "Saved",
+    "saveFailed": "Failed to save",
+    "createFailed": "Failed to create",
+    "updateFailed": "Failed to update",
+    "deleteSuccess": "Deleted",
+    "deleteFailed": "Failed to delete",
+    "deleteConfirm": "Are you sure you want to delete?",
+    "fetchFailed": "Failed to fetch data",
+    "validationError": "Please check your input",
+    "passwordChangeFailed": "Failed to change password",
+    "passwordChanged": "Password changed",
+    "noData": "No data",
+    "loading": "Loading..."
+  }
+}
