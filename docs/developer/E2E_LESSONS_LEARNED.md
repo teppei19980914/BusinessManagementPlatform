@@ -774,6 +774,89 @@ grep -rn "<廃止タブ名>" e2e/specs/
 
 ---
 
+### 4.42 レスポンシブで集約された UI 要素は viewport 別に E2E 経路を分岐する (PR #167 chromium-mobile で遭遇)
+
+**症状**: PR #167 で `<TabsTrigger value="risks" className="hidden lg:inline-flex">リスク一覧</TabsTrigger>`
+等の TabsTrigger に `hidden lg:inline-flex` を付けて lg- viewport で「資産」プルダウンに集約したところ、
+`02-project-detail-tabs.spec.ts` の chromium-mobile project が以下で失敗:
+
+```
+Error: expect(locator).toBeVisible() failed
+Expected: visible
+Error: element(s) not found
+```
+
+`page.getByRole('tab', { name: 'リスク一覧' })` は DOM に存在するが
+`display: none` (= `hidden` クラス) で hidden 判定 → `toBeVisible()` 失敗。
+同様に click() 系も intercepted エラーになる。
+
+**根本原因**: PR #128a-2 (`§4.37` 参照) の WBS テーブル → カードビュー切替と同パターン。
+**1 つの DOM 要素を CSS で出し分ける** レスポンシブ実装は、E2E 側で viewport を考慮した
+経路分岐を必要とする。
+
+**解消パターン (3 択)**:
+
+1. **`testIgnore` で chromium-mobile から除外** (§4.36 / §4.37 で採用):
+   - メリット: 修正コスト最小
+   - デメリット: mobile UX のカバレッジ喪失
+2. **`test.info().project.name` で経路分岐** (本件 PR #167 で採用):
+   - メリット: PC/Mobile 両方の UX を 1 spec で検証
+   - デメリット: spec が分岐で複雑化
+3. **viewport-agnostic locator 設計** (`role="listitem"` + helper):
+   - メリット: spec が viewport を意識しなくて済む
+   - デメリット: コンポーネント側の改修が必要
+
+**選定基準**:
+- mobile UX が **ほぼ同じ機能** で UI 形式だけ違う場合 → **2** (経路分岐) が筋
+- mobile では **触らない仕様** (PR #128a-2 の WBS bulk update 等) → **1** (testIgnore) で OK
+- 新規実装で先行できるなら → **3** (locator 設計) が長期的に楽
+
+**本件 (PR #167) の経路分岐サンプル**:
+
+```ts
+test('admin がプロジェクト詳細ページを開くと全タブが表示される', async () => {
+  const isMobile = test.info().project.name === 'chromium-mobile';
+  // ...
+  if (isMobile) {
+    // 資産プルダウンが visible (個別タブは hidden)
+    await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
+  } else {
+    // PC: 個別タブが visible
+    await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
+    // ...
+  }
+});
+
+test('各タブをクリック', async () => {
+  const isMobile = test.info().project.name === 'chromium-mobile';
+  // PC では直接 click、mobile では Menu.Trigger → Menu.Item の 2 段階
+  if (isMobile) {
+    await page.getByRole('button', { name: '資産メニューを開く' }).click();
+    await page.getByRole('menuitem', { name: 'リスク一覧' }).click();
+  } else {
+    await page.getByRole('tab', { name: 'リスク一覧' }).click();
+  }
+  // 結果は両 viewport 共通: aria-selected=true
+  await expect(page.getByRole('tab', { name: 'リスク一覧' }))
+    .toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+});
+```
+
+**汎化ルール**:
+
+1. **レスポンシブで CSS hidden する UI 要素** を実装したら、対応する E2E 経路を必ず確認
+2. **`hidden lg:inline-flex` 等の variant** を導入する PR では、E2E spec を viewport 対応に
+   修正することを **同 PR 内で完結** させる (別 PR にすると CI 赤が一時的に残る)
+3. PR #167 の場合、本来は実装と同時に E2E 経路分岐を入れるべきだった
+   → 今後は実装段階で `test.info().project.name` 分岐の追加を忘れない
+
+**関連**:
+- §4.36 (chromium-mobile testIgnore パターン)
+- §4.37 (1 DOM 要素 vs 2 系統 DOM のレスポンシブ設計)
+- DEVELOPER_GUIDE §5.24 (TabsList のレスポンシブ集約パターン)
+
+---
+
 ### 4.41 存在しない Tailwind variant (例: `md:open:`) を書いても build は通ってしまう罠 (PR #128a-2 で混入、fix/wbs-filter-regression で発覚)
 
 **症状**: WBS タスク画面でフィルタ (担当者 / 状況) ボタンが PC viewport で表示されない。
