@@ -3260,6 +3260,112 @@ git cherry-pick <commit1> <commit2> ...
   順送り merge を流す」とは独立。本件は **「下流 PR の base を main に切替える」** という
   別操作が必要
 
+### 10.5.1 並列 worktree agents による大規模一括翻訳パターン (PR #175 で確立)
+
+#### 背景
+
+Phase C 残作業 (~933 hits / 30+ ファイル) を 1 PR に統合するという要件があり、単一 agent
+での serial 処理ではコンテキスト枯渇のリスクが高かった。**isolated worktree** で 5 agents を
+並列実行することで、各 agent が独立したファイル群を担当できる構成を取った。
+
+#### 実装パターン
+
+```ts
+// 各 agent には固有の namespace prefix を割り当て、ja.json/en-US.json への追記が衝突しないようにする
+Agent A (worktree): project / customer / member  (~169 hits)
+Agent B (worktree): wbs / gantt / estimate       (~204 hits)
+Agent C (worktree): risk / retro / knowledge     (~207 hits)
+Agent D (worktree): memo / myTask / setting      (~103 hits)
+Agent E (worktree): admin / stakeholder / UI     (~120 hits)
+```
+
+各 agent は:
+1. 担当ファイルを Read
+2. ja.json + en-US.json に **自分の namespace の root section** のみ追加
+3. 担当 .tsx を t() 呼び出しに置換
+4. 抽出スクリプトで自ファイルの残ヒット 0 件確認
+5. worktree branch に commit
+
+orchestrator (主 agent) は agents 完了後:
+1. 各 worktree branch を fetch
+2. 順次 merge — JSON は section 単位で独立追加なので機械解消可
+3. 全体検証 (lint / test / build) + extraction script で全体残数確認
+4. SELECTABLE_LOCALES 切替
+
+#### 落とし穴 1: worktree の `.next/` ビルド成果物が ESLint で誤検出される
+
+各 agent worktree で `pnpm build` を実行すると `.next/build/chunks/*.js`
+等の生成 JS が大量に作られる。これらは `node_modules/` ではなく `.next/`
+配下なので **ESLint の ignore patterns に含まれていない場合がある**。
+
+PR #175 では merge 後の最終 lint で:
+```
+✖ 58529 problems (2844 errors, 55685 warnings)
+```
+が出て初見ではプロジェクト本体の問題と誤認した。実態は **agent worktrees の
+`.next/build/chunks/*.js`** (`require()` / `@ts-ignore` / `module = ...`
+等の bundler 出力) を ESLint が走査していただけ。
+
+**解消手順**:
+```bash
+# 1. worktree を git 管理から外す
+for wt in $(git worktree list --porcelain | grep "^worktree" | awk '{print $2}' | grep "agent-"); do
+  git worktree remove -f -f "$wt"
+done
+
+# 2. branch を削除
+git branch | grep worktree-agent | xargs -r git branch -D
+
+# 3. ディレクトリを物理削除 (Windows は long-path 問題が出るので PowerShell)
+# bash:
+#   rm -rf .claude/worktrees/agent-*
+# PowerShell (Windows long-path):
+#   Get-ChildItem ".claude\worktrees" -Directory | ForEach-Object {
+#     Remove-Item "\\?\$($_.FullName)" -Recurse -Force
+#   }
+
+# 4. lint 再実行 → clean になる
+pnpm lint
+```
+
+**汎化ルール**:
+- 並列 agents パターンを終了するときは **必ず worktree directory も物理削除**する
+  (git worktree remove だけでは Windows で「Filename too long」が残ることがある)
+- ESLint config の ignore patterns に `**/.next/**` を **明示**しておく
+  (Next.js プロジェクトでは事実上必須)
+
+#### 落とし穴 2: `pg` symlink 破損 → `pnpm install --force` で復旧
+
+worktree 削除と並行して `node_modules/.pnpm/@prisma+adapter-pg@*/node_modules/pg/`
+の symlink が壊れ、`pnpm test` で:
+```
+Error: Cannot find package 'pg/index.js' imported from @prisma/adapter-pg/dist/index.mjs
+```
+が発生。`pnpm install` (lockfile up to date) では復旧せず、`pnpm install --force`
+で全 symlink 再生成して復旧した。
+
+**汎化ルール**:
+- worktree を多用したセッション後に node_modules のリンク破損が起きうる
+- `pnpm install` で「Already up to date」と出ても症状が残るなら `--force` を試す
+
+#### 落とし穴 3: agent commit 後の未コミット残作業
+
+各 agent は worktree 内で commit + push (worktree branch) するが、orchestrator が
+最終 merge する際に「agent F (residual cleanup) が完了したが未コミット」のような
+中間状態が working tree に残る。これに気付かず lint/test を回すと既存の test 失敗が
+新規由来と誤認しやすい。
+
+**汎化ルール**:
+- セッション再開時 (resume) は最初に `git status --short` + `git stash list` を
+  確認し、未コミット変更が agent 残作業か確認する
+- agent 残作業の commit message は明示的に `(residual cleanup)` 等の suffix を
+  付け、後から判別しやすくする
+
+#### 関連
+- §10.5 (PR-conflict patterns) — orchestrator が複数 worktree を merge する際の参考
+- §10.6 (.next キャッシュ) — worktree でも同じ .next 罠が踏まれる
+- `scripts/i18n-extract-hardcoded-ja.ts` — 進捗計測スクリプト (PR #169)
+
 ### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
 
 Next.js は開発時 `.next/dev/types/validator.ts` にルートハンドラの型情報を
@@ -3581,7 +3687,8 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | T-03 | **【最重要 / 外部展開前必須】** 提案エンジン (suggestion) のヒット率向上 — 仕様 + 設計を詰める | 本サービスの**核心機能 + セールス上の差別化要素**。外部ユーザに刺さるかを左右する最大の要素。現状の課題: ①重み一律 0.5/0.5 でタグなしデータが不利 (final score 半減)、②text 入力の auto-tagging が未実装 (タグ未入力プロジェクトは jaccard=0 固定)、③シノニム / 表記ゆれ吸収なし、④TF-IDF 等の識別力評価なし (汎用語ノイズ)。検討候補: (A) vocab-matching auto-tag (依存ゼロ、語彙メンテ要) / (B) kuromoji.js 形態素解析 (npm 依存 +10MB 辞書 + コールドスタート影響) / (C) LLM-based 抽出 (Claude API、月数 $、品質最高) / (D) pgvector embedding 検索 (意味マッチ、本格改修)。**期限: 2026 年 5 月 (来月)** の外部ユーザ展開準備で仕様 + 設計を詰める | 2026-04-26 ユーザ明言「サービスの核心であり、外部展開時の中心機能」「弱いとサービスが刺さらない」 |
 | T-04 | **【外部公開直前必須】** 視覚回帰テスト カバレッジ拡大 (現状 4 spec → 主要画面全体 + cross-browser + a11y) | **現状把握** (PR #95-#96 で導入済): `e2e/visual/` に 4 spec (auth-screens / customers-screens / dashboard-screens / settings-themes 10 テーマ) が CI 自動実行中、baseline 更新は `[gen-visual]` commit 自動化済 (`.github/workflows/e2e-visual-baseline.yml`)。**外部公開直前タスクとして拡大すべき範囲**: ① project 詳細タブ (WBS / ガント / リスク / 課題 / 振り返り / ナレッジ / ステークホルダー) の baseline 取得 — 現状 `E2E_COVERAGE.md:38-42` で `[ ]` skip、② mobile viewport (`*-chromium-mobile-linux.png`) の baseline 拡充 (PR #128 カードビュー導入分の網羅)、③ クロスブラウザ追加 (Firefox / WebKit) — 現状 chromium のみ、④ a11y 自動テスト導入 (`@axe-core/playwright`) で WCAG 違反を CI 検出。④ の導入後は CI に accessibility ゲートを追加。**着手タイミング**: UI 確定 (= 主要機能凍結) 後に一括実施。UI 変更が頻繁なうちに baseline を取ると `[gen-visual]` 再生成コストが膨張するため | 2026-04-27 ユーザ問合せ「視覚回帰テストはどうなっているか / 公開直前で有効化する認識か」に対する回答として確定。既存 4 spec は既に有効、本 T-04 は **カバレッジ拡大とクロスブラウザ + a11y** が論点 |
 | T-05 | Estimate (見積もり) に添付 URL 登録 UI を追加 + 一覧表示 | API 経路 (`/api/attachments/batch` の `entityType === 'estimate'` 分岐) は対応済だが、**UI 経由の添付登録手段が無い**ため事実上未使用。`estimates-client.tsx` に `<StagedAttachmentsInput>` (作成時) + 編集 dialog 内の `<AttachmentList>` を追加し、見積一覧にも `useBatchAttachments('estimate', ...)` + `<AttachmentsCell>` を追加すれば他エンティティと parity が揃う。PR #168 で添付対応 entity 全体の一覧表示状態を網羅 grep し、estimate のみ「API 対応済 + UI 未対応」のギャップが判明 | 2026-04-27 PR #168 横展開調査時、ユーザ要望「添付できるものに関しては、一覧画面上に表示されているか影響調査し横展開を徹底」に部分対応。estimate の UI は別 PR で対応する宣言 |
-| T-06 | **【外部公開直前必須】** en-US 本格翻訳 (6 サブ PR で段階展開) | PR #169 で Phase B (基盤 + 抽出スクリプト) 完了。`docs/developer/i18n-extraction-2026-04-27.txt` に **1069 箇所 / 621 種** のハードコード日本語をリスト化済。Phase C として §10.10 の段階分割案 (PR-1 認証 / PR-2 ダッシュボード共通 / PR-3 プロジェクト系 / PR-4 個人機能 / PR-5 管理系 / PR-6 残り + SELECTABLE_LOCALES 有効化) で進める。**完了基準**: `SELECTABLE_LOCALES['en-US'] = true` 切替後に設定画面で en-US を選択 → 全画面英語表示確認 | 2026-04-27 ユーザ要望「完全な多言語対応 / 言語が英語だった時は画面上のラベル名などはすべて英語で表示」。1 PR で 1069 箇所を翻訳すると品質低下 + レビュー負担過大のため C 案 (基盤 + 段階展開) で合意 |
+| T-06 | ~~**【外部公開直前必須】** en-US 本格翻訳~~ → **PR #170/#173/#174/#175 で大半完了 (~933 hits / 30+ ファイル / 24 sections / ~813 keys × 2 locales)。`SELECTABLE_LOCALES['en-US']=true` 切替済**。残り T-17 で対応 | PR #169 → #175 で実施。完了 |
+| T-17 | en-US 残 sweep (~104 hits / 完成度向上) | PR #175 マージ時点で抽出スクリプト残ヒット 約 104 件。内訳: (a) test ファイル `it('...')` 説明文 ~56 件 (ユーザ非表示、翻訳不要)、(b) API route の `throw new Error(...)` ~30 件 (エラー時のみ HTTP body に露出、UX 影響小)、(c) ユーザ可視の軽微な漏れ十数件 (「全リスク」「全課題」「全振り返り」が page heading 等 1 箇所ずつ、`削除` / `削除に失敗しました` 数箇所、admin/audit-logs などの新画面)。**着手手順**: `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` で残ヒットを再抽出 → ユーザ可視を優先で sweep → API error message を t() 化 → test 文言は据え置き or 規約化。各 commit 後に同スクリプトで残数を計測 | 2026-04-28 ユーザ要望「残りの英語化対応は今度実施するのでプランに追加」 |
 
 ### 11.2 低優先 (長期案件)
 
@@ -3669,3 +3776,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-27 | §10.5 運用ルール 8a を追記 (Stop hook 補正、PR #168/#169/#171 conflict resolve の累積知見 / PR #172)。「番号予約衝突の繰り上げ手順」を独立サブルール化。N 件先行 PR との並走では **N 段繰り上げ** が必要であり、その際に更新すべき箇所 (header / self-reference / 関連リンク / 更新履歴 / forward-reference) を grep 例つき 5 項目チェックリストで明文化。冒頭の「section 番号メモ」コメント運用も標準化。本セッションで PR #168 (運用ルール 8 新設) → PR #169 (機械解消 1 例) → PR #171 (繰り上げ 1 例) と 3 段階に分かれて記録された知見を 1 箇所に集約 |
 | 2026-04-27 | §10.5 再発事例 10 例目 + 運用ルール 9 を追記 (PR #170 orphan recovery / PR #173)。PR #170 (Phase C-1 認証 i18n) は base=feat/i18n-foundation で起票された stacked PR で、PR #169 が main にマージされた直後に **base が孤児化** → PR #170 の merge commit (6a88075) は `feat/i18n-foundation` 側に残るのみで main の first-parent history に含まれない orphan 状態となった。**GitHub UI は MERGED 表示 + mergeCommit OID も持つため発覚が遅れる**点が極めて危険で、Phase C-2 着手時の grep `git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件で初めて検出。CI fail を伴わず merged 表示も出るため自動検出は困難。Recovery は origin/main から新規 branch を切って元 PR の 3 commits (73b6a4b → 526c2fc → 981ef5d) を順次 cherry-pick。運用ルール 9「stacked PR の上流が main マージされたら下流の base を main に切替える (`gh pr edit <PR> --base main`)」と「GitHub UI のマージ画面で base 確認を徹底」を §10.5 に新設 |
 | 2026-04-27 | §10.5 9 例目 4 回目再発 (PR #172 / PR #173 conflict resolve)。PR #172 (運用ルール 8a) と PR #173 (10 例目 + 運用ルール 9) の更新履歴行が末尾位置で衝突 → 番号順 (8a → 10 例目) で両方残す機械解消。1 セッション中に §10.5 9 例目が 4 回適用された (#168 / #169 / #171 / #173) が、**運用ルール 8 通り毎回機械解消で済むことが実証**され、並走 PR を恐れる必要がないことが再確認された |
+| 2026-04-28 | §10.5.1 新設 (PR #175 / feat/i18n-phase-c-final)。**並列 worktree agents による大規模一括翻訳パターン**を確立。Phase C 残 ~933 hits を 5 isolated worktree agents に分担 (project / wbs / risk / memo / admin) し、各 namespace を独立追加することで JSON 衝突を回避。**3 つの落とし穴**を §10.5.1 に明文化: (1) worktree の `.next/` ビルド成果物が ESLint で誤検出 (58529 problems の偽陽性、git worktree remove + 物理削除 + ESLint ignore で解消)、(2) `pg` symlink 破損 (`pnpm install --force` で復旧)、(3) agent 残作業 (residual cleanup) のセッション越境管理。§11 T-17 として残 ~104 hits の sweep を計画化 (test 文言 / API error message / 軽微な漏れ) |
