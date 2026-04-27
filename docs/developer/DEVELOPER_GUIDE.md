@@ -3152,6 +3152,30 @@ HEAD/origin 共に削除し、機械的に並べるだけで解決 (内容判断
    - 機械的に解消できるかの判断基準: **2 ブロックの内容が完全に独立** (同一 entity / 同一
      service / 同一 sub-section を触っていない) なら機械解消で OK
 
+   **8a. 番号予約衝突の繰り上げ手順 (PR #171 で実適用、3 PR 並走に拡張)**:
+
+   N 件の先行 PR (PR #167/#168 で §5.24/§5.25 を取得) と並走していた後発 PR (PR #171 が
+   §5.24 を予約) が衝突した場合、後発 PR は **N 段繰り上げ** (§5.24 → §5.26) する。
+   その際、以下を **必ず一括更新**:
+
+   ```bash
+   # 1. セクション header の番号 (`### 5.24` → `### 5.26`)
+   # 2. body 内の self-reference (`本 §5.24` 等を全置換)
+   #    → grep で漏れチェック:
+   grep -n "§5\.24\|本セクション" docs/developer/DEVELOPER_GUIDE.md  # 該当 section 範囲のみ
+   # 3. 関連リンク (「関連」サブセクション内の `§5.24 (本 PR)` 等)
+   # 4. 更新履歴テーブルの追記行 (`§5.24 新設 (...)` → `§5.26 新設 (...)`)
+   # 5. 他セクションからの forward-reference (もしあれば)
+   ```
+
+   **冒頭に「section 番号メモ」コメントを残す**: 後から経緯を辿れるよう、繰り上げた
+   セクションの冒頭 (h3 直下) に `> **section 番号メモ**: 当初 §5.NN として執筆したが、
+   PR #XXX が先にマージされ §5.NN を取得したため §5.MM に繰り上げた。` を 1〜2 行で記載する。
+
+   **判定基準**: 先行 PR が main にマージされた時点で predecessor の section 番号は
+   **確定**。後発 PR の rebase/merge 時に **次に空いている番号** に振り直す
+   (run-time での衝突回避ではなく、merge resolve のタイミングで決定する)。
+
 **汎化された予防策 (累積版)**:
 - **PR 起票時に section 番号を予約**: PR description / commit message に「§5.NN を予約」
   と明記し、並走中の PR description を `gh pr list --state open` で確認して衝突を予防
@@ -3642,4 +3666,6 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-26 | §5.15 新設 + KDD 仕組み強化 (fix/quick-ux PR #143 E2E hotfix)。**症状**: admin 状態変更プルダウン表示緩和で chromium-mobile が flex overlap → click intercept で fail。**修正**: flex-wrap + Select 幅 mobile 縮小。**仕組み穴塞ぎ**: 当初 commit message にしか書かず docs 追記漏れ → ユーザ指摘で発覚。CLAUDE.md KDD 原則に「commit message ≠ 常設ナレッジ」「対象範囲はテスト失敗だけでない」を追加、Stop hook prompt に **項目 6「ナレッジ追記チェック (KDD Step 4/6)」** を新設し漏れを構造的に防止 |
 | 2026-04-27 | §10.5 再発事例 9 例目 + 運用ルール 8 を追記 (PR #168 conflict resolve)。独立並走 PR (PR #167 タブ集約 / PR #168 添付一覧) が DEVELOPER_GUIDE.md の §5 末尾と §11.1 TODO 表の同位置に同時追記してコンフリクト発生。8 例目までの「意図統合型」(同一 service 関数を別観点で編集) と異なり、9 例目は**完全独立な機能**が単に末尾位置で衝突した「機械並列型」。番号順 (§5.24 → §5.25 / T-04 → T-05) で両方残す機械解消で OK と確定。運用ルール 8「完全独立 PR の docs コンフリクトは機械解消で良い」を追加し、衝突を恐れて並走を止める必要はないと明文化 |
 | 2026-04-27 | §5.26 新設 (PR #171 / feat/date-field-clear-rename)。日付入力の共通部品 `<DateFieldWithActions>` の default `clearLabel` を「削除」→「クリア」に統一 (削除という語は破壊的アクションと紛らわしい)、加えて risks-client.tsx bulk edit dialog が唯一 `<Input type="date">` を生で使っていた箇所を共通部品に置換。これで単発編集 / 一括編集の操作 UX が一貫する。**規約 (§5.26)**: 「同一機能 = 同一部品」を明文化し、`type="date"` を新規導入する PR は §5.26 の grep 点検 + 本セクションへの例外追記を必須化。共通部品流用を徹底することで「削除→クリア」のような文言変更が default prop 1 行で全画面に伝播する自己治癒性を担保。ユーザフィードバック「同じ機能を有する者は同じ部品を流用してください、これにより横展開漏れを徹底的に減らせます」を恒久ルール化。**section 番号変遷**: 当初 §5.24 として執筆 → PR #167/#168 が main 先行マージで §5.24/§5.25 を取得 → §5.26 に繰り上げ (§10.5 9 例目「機械並列型」適用、運用ルール 8 通りの機械解消) |
+| 2026-04-27 | §10.5 運用ルール 8a を追記 (Stop hook 補正、PR #168/#169/#171 conflict resolve の累積知見 / PR #172)。「番号予約衝突の繰り上げ手順」を独立サブルール化。N 件先行 PR との並走では **N 段繰り上げ** が必要であり、その際に更新すべき箇所 (header / self-reference / 関連リンク / 更新履歴 / forward-reference) を grep 例つき 5 項目チェックリストで明文化。冒頭の「section 番号メモ」コメント運用も標準化。本セッションで PR #168 (運用ルール 8 新設) → PR #169 (機械解消 1 例) → PR #171 (繰り上げ 1 例) と 3 段階に分かれて記録された知見を 1 箇所に集約 |
 | 2026-04-27 | §10.5 再発事例 10 例目 + 運用ルール 9 を追記 (PR #170 orphan recovery / PR #173)。PR #170 (Phase C-1 認証 i18n) は base=feat/i18n-foundation で起票された stacked PR で、PR #169 が main にマージされた直後に **base が孤児化** → PR #170 の merge commit (6a88075) は `feat/i18n-foundation` 側に残るのみで main の first-parent history に含まれない orphan 状態となった。**GitHub UI は MERGED 表示 + mergeCommit OID も持つため発覚が遅れる**点が極めて危険で、Phase C-2 着手時の grep `git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件で初めて検出。CI fail を伴わず merged 表示も出るため自動検出は困難。Recovery は origin/main から新規 branch を切って元 PR の 3 commits (73b6a4b → 526c2fc → 981ef5d) を順次 cherry-pick。運用ルール 9「stacked PR の上流が main マージされたら下流の base を main に切替える (`gh pr edit <PR> --base main`)」と「GitHub UI のマージ画面で base 確認を徹底」を §10.5 に新設 |
+| 2026-04-27 | §10.5 9 例目 4 回目再発 (PR #172 / PR #173 conflict resolve)。PR #172 (運用ルール 8a) と PR #173 (10 例目 + 運用ルール 9) の更新履歴行が末尾位置で衝突 → 番号順 (8a → 10 例目) で両方残す機械解消。1 セッション中に §10.5 9 例目が 4 回適用された (#168 / #169 / #171 / #173) が、**運用ルール 8 通り毎回機械解消で済むことが実証**され、並走 PR を恐れる必要がないことが再確認された |
