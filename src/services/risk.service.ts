@@ -153,6 +153,9 @@ export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName'> & {
   createdByName: string | null;
   /** 更新者氏名 (非メンバーにはマスク) */
   updatedByName: string | null;
+  /** PR #161: 横断ビューでの一括編集対象判定。viewer が作成者本人なら true。
+   * 「全○○一覧」一括更新で、編集権限の無いレコードは選択不可にするため。 */
+  viewerIsCreator: boolean;
 };
 
 /**
@@ -212,6 +215,7 @@ export async function listAllRisksForViewer(
       assigneeName: isMember ? r.assignee?.name ?? null : null,
       createdByName: isMember ? userNameById.get(r.createdBy) ?? null : null,
       updatedByName: isMember ? userNameById.get(r.updatedBy) ?? null : null,
+      viewerIsCreator: r.reporterId === viewerUserId,
     };
   });
 }
@@ -339,6 +343,64 @@ export async function updateRisk(
     },
   });
   return toRiskDTO(r);
+}
+
+/**
+ * 「全リスク / 全課題」横断ビューからの **一括更新** (PR #161 / feat/cross-list-bulk-update)。
+ *
+ * 設計判断:
+ *   - 編集権限は単発 update と同じ「**reporter (作成者) 本人のみ**」(2026-04-24 の方針を踏襲)。
+ *     viewer 自身が作成していないレコードは silently skip し、結果に skippedNotOwned カウントを返す。
+ *     行が混在しても update は **reporter 本人分だけが反映** されるため、誤更新の事故が起きない。
+ *   - admin であっても他人のレコードは更新しない (admin の管理操作は削除に限定する既存方針と一致)。
+ *   - 全件更新の事故防止: 呼出側 (API 層) で「フィルター 1 つ以上の適用」を必須化する。
+ *     本サービス層は ids[] で受け取るので、空配列なら 0 件 update で正常終了する。
+ *   - patch は state / assigneeId / deadline の 3 項目に限定。横断ビューで意味があるのはこの 3 つで、
+ *     文字列項目 (title / content) を一括置換する UX は壊れやすいため意図的に除外。
+ *
+ * @returns updatedIds: 実際に更新した ID 配列 / skippedNotOwned: 作成者違いで skip した数 /
+ *          skippedNotFound: 存在しない or 既に削除済の数
+ */
+export async function bulkUpdateRisksFromCrossList(
+  ids: string[],
+  patch: {
+    state?: string;
+    assigneeId?: string | null;
+    deadline?: string | null;
+  },
+  viewerUserId: string,
+): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
+  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+
+  // 一度のクエリで対象を取得し、所有権を行ごとに判定 (N+1 回避)
+  const targets = await prisma.riskIssue.findMany({
+    where: { id: { in: ids }, deletedAt: null },
+    select: { id: true, reporterId: true },
+  });
+  const found = new Set(targets.map((t) => t.id));
+  const skippedNotFound = ids.length - found.size;
+  const ownedIds = targets.filter((t) => t.reporterId === viewerUserId).map((t) => t.id);
+  const skippedNotOwned = targets.length - ownedIds.length;
+
+  if (ownedIds.length === 0) {
+    return { updatedIds: [], skippedNotOwned, skippedNotFound };
+  }
+
+  // updateRisk と同じく、undefined のキーは patch しない (false 値や null との区別を維持)
+  const data: Record<string, unknown> = { updatedBy: viewerUserId };
+  if (patch.state !== undefined) data.state = patch.state;
+  if (patch.assigneeId !== undefined) data.assigneeId = patch.assigneeId;
+  if (patch.deadline !== undefined) {
+    // null 明示クリアは保持、`new Date(null)` (1970 epoch) を防ぐ (updateRisk §5.12 と同方針)
+    data.deadline = patch.deadline === null ? null : new Date(patch.deadline);
+  }
+
+  await prisma.riskIssue.updateMany({
+    where: { id: { in: ownedIds } },
+    data,
+  });
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
 }
 
 /**
