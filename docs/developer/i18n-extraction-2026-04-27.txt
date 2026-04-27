@@ -1,0 +1,1107 @@
+# i18n 抽出結果
+# 総ヒット数: 1069
+# ユニーク文字列数: 621
+# 対象ファイル: src\app, src\components
+
+## 頻出文字列 (上位 30)
+    23× 対象が見つかりません
+    16× (任意)
+    15× 担当者
+    14× （未）
+    12× 操作
+    11× 削除に失敗しました
+    10× 公開範囲
+    10× 削除
+     9× 種別
+     9× 更新に失敗しました
+     9× この操作を実行する権限がありません
+     8× クリックで編集
+     8× 未設定
+     7× タイトル
+     7× ステータス
+     7× 作成に失敗しました
+     7× 折りたたみ
+     7× 展開
+     6× 状態
+     6× 作成者
+     6× 更新日時
+     6× 添付
+     6× 開始予定日
+     6× 終了予定日
+     6× 背景
+     6× 開発方式
+     6× 追加
+     6× 関連 URL
+     5× メールアドレス
+     5× 本文
+
+## 全ヒット (ファイル:行:列  文字列)
+src\app\(auth)\login\mfa\mfa-form.tsx:34:41	コードが正しくありません
+src\app\(auth)\login\mfa\mfa-form.tsx:54:42	2 段階認証
+src\app\(auth)\login\mfa\mfa-form.tsx:66:46	リカバリーコード
+src\app\(auth)\login\mfa\mfa-form.tsx:77:38	認証コード
+src\app\(auth)\login\mfa\mfa-form.tsx:92:28	検証中...
+src\app\(auth)\login\mfa\mfa-form.tsx:92:39	検証
+src\app\(auth)\login\mfa\mfa-form.tsx:103:32	認証コードを使う
+src\app\(auth)\login\mfa\mfa-form.tsx:103:45	リカバリーコードを使う
+src\app\(auth)\login\page.tsx:59:18	アカウントがロックされています。管理者に解除を依頼してください。
+src\app\(auth)\login\page.tsx:66:18	メールアドレスまたはパスワードが正しくありません
+src\app\(auth)\login\page.tsx:81:42	たすきば
+src\app\(auth)\login\page.tsx:90:37	メールアドレス
+src\app\(auth)\login\page.tsx:102:40	パスワード
+src\app\(auth)\login\page.tsx:113:28	ログイン中...
+src\app\(auth)\login\page.tsx:113:41	ログイン
+src\app\(auth)\reset-password\page.tsx:36:39	認証に失敗しました
+src\app\(auth)\reset-password\page.tsx:49:16	パスワードが一致しません
+src\app\(auth)\reset-password\page.tsx:65:39	パスワードの変更に失敗しました
+src\app\(auth)\reset-password\page.tsx:69:16	パスワードが変更されました。新しいパスワードでログインしてください。
+src\app\(auth)\reset-password\page.tsx:77:21	パスワードリセット
+src\app\(auth)\reset-password\page.tsx:80:17	メールアドレスとリカバリーコードを入力してください
+src\app\(auth)\reset-password\page.tsx:81:17	新しいパスワードを入力してください
+src\app\(auth)\reset-password\page.tsx:91:23	メールアドレス
+src\app\(auth)\reset-password\page.tsx:100:23	リカバリーコード
+src\app\(auth)\reset-password\page.tsx:109:30	確認中...
+src\app\(auth)\reset-password\page.tsx:109:41	本人確認
+src\app\(auth)\reset-password\page.tsx:112:71	ログインに戻る
+src\app\(auth)\reset-password\page.tsx:119:23	新しいパスワード
+src\app\(auth)\reset-password\page.tsx:126:61	10文字以上、英大文字・英小文字・数字・記号のうち3種以上
+src\app\(auth)\reset-password\page.tsx:129:23	新しいパスワード（確認）
+src\app\(auth)\reset-password\page.tsx:138:30	変更中...
+src\app\(auth)\reset-password\page.tsx:138:41	パスワード変更
+src\app\(auth)\setup-password\page.tsx:56:21	無効なリンクです
+src\app\(auth)\setup-password\page.tsx:69:23	トークンの検証に失敗しました
+src\app\(auth)\setup-password\page.tsx:81:18	パスワードが一致しません
+src\app\(auth)\setup-password\page.tsx:100:16	パスワードの設定に失敗しました
+src\app\(auth)\setup-password\page.tsx:117:18	エラーが発生しました。しばらくしてから再度お試しください。
+src\app\(auth)\setup-password\page.tsx:139:34	MFA 登録に失敗しました。コードを確認して再度お試しください。
+src\app\(auth)\setup-password\page.tsx:147:19	エラーが発生しました。しばらくしてから再度お試しください。
+src\app\(auth)\setup-password\page.tsx:172:44	たすきば
+src\app\(auth)\setup-password\page.tsx:193:44	セットアップ完了
+src\app\(auth)\setup-password\page.tsx:196:62	このコードは再表示できません。
+src\app\(auth)\setup-password\page.tsx:221:44	多要素認証の設定
+src\app\(auth)\setup-password\page.tsx:233:23	MFA QR コード
+src\app\(auth)\setup-password\page.tsx:240:52	QR コードを読み取れない場合 (シークレット手動入力)
+src\app\(auth)\setup-password\page.tsx:250:40	6 桁のコード
+src\app\(auth)\setup-password\page.tsx:264:33	有効化中...
+src\app\(auth)\setup-password\page.tsx:264:45	多要素認証を有効化してアカウントを有効化
+src\app\(auth)\setup-password\page.tsx:283:42	たすきば
+src\app\(auth)\setup-password\page.tsx:284:27	パスワードを設定してアカウントを有効化します
+src\app\(auth)\setup-password\page.tsx:292:40	パスワード
+src\app\(auth)\setup-password\page.tsx:306:47	パスワード（確認）
+src\app\(auth)\setup-password\page.tsx:317:28	設定中...
+src\app\(auth)\setup-password\page.tsx:317:39	パスワードを設定
+src\app\(dashboard)\admin\audit-logs\page.tsx:25:44	監査ログ
+src\app\(dashboard)\admin\audit-logs\page.tsx:29:23	日時
+src\app\(dashboard)\admin\audit-logs\page.tsx:30:23	操作者
+src\app\(dashboard)\admin\audit-logs\page.tsx:31:23	操作
+src\app\(dashboard)\admin\audit-logs\page.tsx:32:23	対象
+src\app\(dashboard)\admin\audit-logs\page.tsx:33:23	対象ID
+src\app\(dashboard)\admin\audit-logs\page.tsx:51:96	監査ログがありません
+src\app\(dashboard)\admin\role-changes\page.tsx:28:44	権限変更履歴
+src\app\(dashboard)\admin\role-changes\page.tsx:32:23	日時
+src\app\(dashboard)\admin\role-changes\page.tsx:33:23	変更者
+src\app\(dashboard)\admin\role-changes\page.tsx:34:23	対象ユーザ
+src\app\(dashboard)\admin\role-changes\page.tsx:35:23	種別
+src\app\(dashboard)\admin\role-changes\page.tsx:36:23	変更前
+src\app\(dashboard)\admin\role-changes\page.tsx:37:23	変更後
+src\app\(dashboard)\admin\role-changes\page.tsx:38:23	理由
+src\app\(dashboard)\admin\role-changes\page.tsx:54:96	権限変更履歴がありません
+src\app\(dashboard)\admin\users\users-client.tsx:79:18	このメールアドレスは既に登録されています。別のメールアドレスを使用してください。
+src\app\(dashboard)\admin\users\users-client.tsx:82:11	招待メールの送信に失敗しました。メールアドレスに誤りがないか確認し、再度お試しください。
+src\app\(dashboard)\admin\users\users-client.tsx:86:48	入力内容に不備があります。確認してください。
+src\app\(dashboard)\admin\users\users-client.tsx:89:41	登録に失敗しました。しばらくしてから再度お試しください。
+src\app\(dashboard)\admin\users\users-client.tsx:111:7	最終ログインから 30 日以上経過した非アクティブユーザを一括ロックします。\n
+src\app\(dashboard)\admin\users\users-client.tsx:112:9	admin ユーザは対象外です。アカウント自体は残るためナレッジ等の\n
+src\app\(dashboard)\admin\users\users-client.tsx:113:9	作成者表示は維持されますが、ログインは不可になります (isActive=false)。\n
+src\app\(dashboard)\admin\users\users-client.tsx:114:9	解除は本画面の各ユーザ行の編集から有効状態をトグルしてください。\n
+src\app\(dashboard)\admin\users\users-client.tsx:115:9	実行しますか？
+src\app\(dashboard)\admin\users\users-client.tsx:121:13	ロック実行に失敗しました
+src\app\(dashboard)\admin\users\users-client.tsx:133:46	ユーザ管理
+src\app\(dashboard)\admin\users\users-client.tsx:139:192	新規ユーザ登録
+src\app\(dashboard)\admin\users\users-client.tsx:145:31	招待メールを送信しました
+src\app\(dashboard)\admin\users\users-client.tsx:156:31	新規ユーザ登録
+src\app\(dashboard)\admin\users\users-client.tsx:166:42	ユーザ名
+src\app\(dashboard)\admin\users\users-client.tsx:176:43	メールアドレス
+src\app\(dashboard)\admin\users\users-client.tsx:186:42	システムロール
+src\app\(dashboard)\admin\users\users-client.tsx:207:23	ユーザ名
+src\app\(dashboard)\admin\users\users-client.tsx:208:23	メールアドレス
+src\app\(dashboard)\admin\users\users-client.tsx:209:23	ロール
+src\app\(dashboard)\admin\users\users-client.tsx:210:23	状態
+src\app\(dashboard)\admin\users\users-client.tsx:212:23	認証ロック
+src\app\(dashboard)\admin\users\users-client.tsx:213:23	作成日
+src\app\(dashboard)\admin\users\users-client.tsx:230:26	永続ロック
+src\app\(dashboard)\admin\users\users-client.tsx:231:26	管理者により永続ロック中 (admin の手動解除のみ可)
+src\app\(dashboard)\admin\users\users-client.tsx:237:26	一時ロック (パスワード)
+src\app\(dashboard)\admin\users\users-client.tsx:247:26	一時ロック (MFA)
+src\app\(dashboard)\admin\users\users-client.tsx:286:38	有効
+src\app\(dashboard)\admin\users\users-client.tsx:286:45	無効
+src\app\(dashboard)\all-memos\all-memos-client.tsx:33:12	自分のみ
+src\app\(dashboard)\all-memos\all-memos-client.tsx:34:11	全メモに公開
+src\app\(dashboard)\all-memos\all-memos-client.tsx:47:46	全メモ
+src\app\(dashboard)\all-memos\all-memos-client.tsx:58:66	タイトル
+src\app\(dashboard)\all-memos\all-memos-client.tsx:59:68	本文
+src\app\(dashboard)\all-memos\all-memos-client.tsx:60:67	作成者
+src\app\(dashboard)\all-memos\all-memos-client.tsx:61:70	更新日時
+src\app\(dashboard)\all-memos\all-memos-client.tsx:62:72	添付
+src\app\(dashboard)\all-memos\all-memos-client.tsx:78:72	(自分)
+src\app\(dashboard)\all-memos\all-memos-client.tsx:92:49	(「メモ」画面で公開範囲を「全メモに公開」にすると、このページに表示されます)
+src\app\(dashboard)\all-memos\all-memos-client.tsx:105:27	メモ詳細
+src\app\(dashboard)\all-memos\all-memos-client.tsx:116:25	公開範囲
+src\app\(dashboard)\all-memos\all-memos-client.tsx:120:25	作成者
+src\app\(dashboard)\all-memos\all-memos-client.tsx:124:25	タイトル
+src\app\(dashboard)\all-memos\all-memos-client.tsx:128:25	本文
+src\app\(dashboard)\all-memos\all-memos-client.tsx:134:25	更新日時
+src\app\(dashboard)\all-memos\all-memos-client.tsx:139:44	自分のメモ
+src\app\(dashboard)\all-memos\all-memos-client.tsx:146:23	参考 URL
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:90:43	更新に失敗しました
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:127:43	削除に失敗しました
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:153:29	顧客情報編集
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:154:35	顧客情報を更新します。
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:163:45	顧客名 *
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:173:51	部門
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:182:55	担当者
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:193:54	担当者メール
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:205:46	備考
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:223:40	更新
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:237:29	顧客削除
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:249:30	常に
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:317:70	部門
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:321:70	担当者
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:325:70	担当者メール
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:340:70	紐付 active プロジェクト
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:345:17	0 件
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:350:70	備考
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:358:51	紐付プロジェクト
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:363:27	プロジェクト名
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:364:27	ステータス
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:365:27	開始予定日
+src\app\(dashboard)\customers\[customerId]\customer-detail-client.tsx:366:27	終了予定日
+src\app\(dashboard)\customers\customers-client.tsx:77:39	顧客の作成に失敗しました
+src\app\(dashboard)\customers\customers-client.tsx:99:43	顧客の削除に失敗しました
+src\app\(dashboard)\customers\customers-client.tsx:108:46	顧客管理
+src\app\(dashboard)\customers\customers-client.tsx:116:27	新規顧客登録
+src\app\(dashboard)\customers\customers-client.tsx:130:47	顧客名 *
+src\app\(dashboard)\customers\customers-client.tsx:140:53	部門
+src\app\(dashboard)\customers\customers-client.tsx:149:57	担当者
+src\app\(dashboard)\customers\customers-client.tsx:158:56	担当者メール
+src\app\(dashboard)\customers\customers-client.tsx:168:48	備考
+src\app\(dashboard)\customers\customers-client.tsx:182:38	登録
+src\app\(dashboard)\customers\customers-client.tsx:193:25	顧客名
+src\app\(dashboard)\customers\customers-client.tsx:194:25	部門
+src\app\(dashboard)\customers\customers-client.tsx:195:25	担当者
+src\app\(dashboard)\customers\customers-client.tsx:196:25	メール
+src\app\(dashboard)\customers\customers-client.tsx:197:25	紐付プロジェクト
+src\app\(dashboard)\customers\customers-client.tsx:198:48	操作
+src\app\(dashboard)\customers\customers-client.tsx:226:60	0 件
+src\app\(dashboard)\customers\customers-client.tsx:236:27	紐付くプロジェクトがあります — 詳細画面のカスケード削除をご利用ください
+src\app\(dashboard)\error.tsx:33:44	内部エラーが発生しました
+src\app\(dashboard)\issues\page.tsx:19:46	全課題
+src\app\(dashboard)\knowledge\admin-delete-button.tsx:24:18	削除
+src\app\(dashboard)\knowledge\admin-delete-button.tsx:31:17	削除に失敗しました
+src\app\(dashboard)\knowledge\knowledge-client.tsx:69:46	全ナレッジ
+src\app\(dashboard)\knowledge\knowledge-client.tsx:75:23	キーワード検索 (タイトル・背景・内容・結果)
+src\app\(dashboard)\knowledge\knowledge-client.tsx:85:38	全種別
+src\app\(dashboard)\knowledge\knowledge-client.tsx:88:40	全種別
+src\app\(dashboard)\knowledge\knowledge-client.tsx:103:68	プロジェクト
+src\app\(dashboard)\knowledge\knowledge-client.tsx:104:65	種別
+src\app\(dashboard)\knowledge\knowledge-client.tsx:105:71	背景
+src\app\(dashboard)\knowledge\knowledge-client.tsx:106:68	内容
+src\app\(dashboard)\knowledge\knowledge-client.tsx:107:67	結果
+src\app\(dashboard)\knowledge\knowledge-client.tsx:108:70	作成日時
+src\app\(dashboard)\knowledge\knowledge-client.tsx:109:70	作成者
+src\app\(dashboard)\knowledge\knowledge-client.tsx:110:70	更新日時
+src\app\(dashboard)\knowledge\knowledge-client.tsx:111:70	更新者
+src\app\(dashboard)\knowledge\knowledge-client.tsx:112:72	添付
+src\app\(dashboard)\knowledge\knowledge-client.tsx:113:79	操作
+src\app\(dashboard)\knowledge\knowledge-client.tsx:126:53	（未紐付け）
+src\app\(dashboard)\knowledge\knowledge-client.tsx:126:64	（非公開）
+src\app\(dashboard)\knowledge\knowledge-client.tsx:141:91	(削除済)
+src\app\(dashboard)\memos\memos-client.tsx:54:30	自分のみ (公開取り下げ)
+src\app\(dashboard)\memos\memos-client.tsx:55:29	全メモに公開
+src\app\(dashboard)\memos\memos-client.tsx:59:12	自分のみ
+src\app\(dashboard)\memos\memos-client.tsx:60:11	全メモに公開
+src\app\(dashboard)\memos\memos-client.tsx:150:76	作成に失敗しました
+src\app\(dashboard)\memos\memos-client.tsx:205:39	更新に失敗しました
+src\app\(dashboard)\memos\memos-client.tsx:218:13	削除に失敗しました
+src\app\(dashboard)\memos\memos-client.tsx:240:21	メモ
+src\app\(dashboard)\memos\memos-client.tsx:245:46	メモ一覧
+src\app\(dashboard)\memos\memos-client.tsx:255:31	メモ作成
+src\app\(dashboard)\memos\memos-client.tsx:265:25	公開範囲
+src\app\(dashboard)\memos\memos-client.tsx:277:25	タイトル
+src\app\(dashboard)\memos\memos-client.tsx:286:25	本文
+src\app\(dashboard)\memos\memos-client.tsx:286:76	(任意)
+src\app\(dashboard)\memos\memos-client.tsx:298:25	参考 URL
+src\app\(dashboard)\memos\memos-client.tsx:300:57	作成
+src\app\(dashboard)\memos\memos-client.tsx:318:32	表示中の編集可能行を全選択
+src\app\(dashboard)\memos\memos-client.tsx:326:66	タイトル
+src\app\(dashboard)\memos\memos-client.tsx:327:68	本文
+src\app\(dashboard)\memos\memos-client.tsx:328:71	公開範囲
+src\app\(dashboard)\memos\memos-client.tsx:329:67	作成者
+src\app\(dashboard)\memos\memos-client.tsx:330:70	更新日時
+src\app\(dashboard)\memos\memos-client.tsx:331:72	添付
+src\app\(dashboard)\memos\memos-client.tsx:332:67	操作
+src\app\(dashboard)\memos\memos-client.tsx:396:27	メモ編集
+src\app\(dashboard)\memos\memos-client.tsx:399:31	変更内容を保存します。
+src\app\(dashboard)\memos\memos-client.tsx:405:23	公開範囲
+src\app\(dashboard)\memos\memos-client.tsx:417:23	タイトル
+src\app\(dashboard)\memos\memos-client.tsx:426:23	本文
+src\app\(dashboard)\memos\memos-client.tsx:426:74	(任意)
+src\app\(dashboard)\memos\memos-client.tsx:441:23	参考 URL
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:120:46	マイタスク
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:121:62	担当タスクがありません
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:130:46	マイタスク
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:134:26	ガントを閉じる
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:134:38	ガントチャートを表示
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:138:19	状況
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:172:62	該当するタスクがありません
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:185:49	折りたたみ
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:185:59	展開
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:204:71	名称
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:205:73	ステータス
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:206:75	進捗&工数
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:207:79	予定期間
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:208:78	実績期間
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:209:74	優先度
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:255:40	（未）
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:255:74	（未）
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:259:39	（未）
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:259:72	（未）
+src\app\(dashboard)\my-tasks\my-tasks-client.tsx:297:84	遅延
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:65:76	作成に失敗しました
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:90:48	見積もり管理
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:95:194	見積もり追加
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:98:29	見積もり項目追加
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:99:35	見積もり情報を入力してください。
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:104:25	見積項目名
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:109:27	区分
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:115:27	開発方式
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:123:27	見積工数
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:127:27	単位
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:134:25	見積根拠
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:137:57	追加
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:147:23	項目名
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:148:23	区分
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:149:23	工数
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:150:23	根拠（要約）
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:151:23	状態
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:152:35	操作
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:164:36	確定
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:164:43	未確定
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:171:94	確定
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:179:40	この見積もりを削除しますか？
+src\app\(dashboard)\projects\[projectId]\estimates\estimates-client.tsx:196:102	見積もり項目がありません
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:44:21	日
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:44:26	月
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:44:31	火
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:44:36	水
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:44:41	木
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:44:46	金
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:44:51	土
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:90:22	（未）
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:90:40	（未）
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:259:29	元日
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:259:35	こどもの日
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:299:46	ガントチャート
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:309:17	担当者
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:312:45	（未アサイン）
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:319:20	全員
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:322:17	状況
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:360:25	選択した担当者に該当するタスクはありません
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:360:51	タスクがありません
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:408:28	タスク名列の幅を変更
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:561:38	展開
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:561:45	折りたたみ
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:562:43	展開
+src\app\(dashboard)\projects\[projectId]\gantt\gantt-client.tsx:562:50	折りたたみ
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:38:28	下書き (公開取り下げ)
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:39:29	公開
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:155:76	作成に失敗しました
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:176:18	このナレッジを削除しますか？
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:181:13	削除に失敗しました
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:198:21	ナレッジ
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:207:194	ナレッジ作成
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:211:33	ナレッジ作成
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:223:27	タイトル
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:233:29	種別
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:245:29	公開範囲
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:259:27	背景
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:259:78	(任意)
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:268:27	内容
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:268:78	(任意)
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:277:27	結果
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:277:78	(任意)
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:290:27	参考リンク
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:292:59	作成
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:307:24	表示中の編集可能ナレッジを全選択
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:314:70	ナレッジがありません
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:358:27	削除
+src\app\(dashboard)\projects\[projectId]\knowledge\project-knowledge-client.tsx:359:32	削除
+src\app\(dashboard)\projects\[projectId]\loading.tsx:25:11	概要
+src\app\(dashboard)\projects\[projectId]\loading.tsx:25:17	見積もり
+src\app\(dashboard)\projects\[projectId]\loading.tsx:25:25	WBS管理
+src\app\(dashboard)\projects\[projectId]\loading.tsx:25:34	ガント
+src\app\(dashboard)\projects\[projectId]\loading.tsx:25:41	リスク/課題一覧
+src\app\(dashboard)\projects\[projectId]\loading.tsx:25:53	振り返り一覧
+src\app\(dashboard)\projects\[projectId]\loading.tsx:25:63	ナレッジ一覧
+src\app\(dashboard)\projects\[projectId]\loading.tsx:25:73	メンバー
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:62:19	ユーザを選択してください
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:76:42	メンバー追加に失敗しました
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:118:29	メンバー追加
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:119:35	プロジェクトに追加するユーザとロールを選択してください。
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:126:51	ユーザ
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:136:33	ユーザを選択...
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:137:32	ユーザ選択
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:141:25	プロジェクトロール
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:148:57	追加
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:158:23	ユーザ名
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:159:23	メールアドレス
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:160:23	ロール
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:161:23	追加日
+src\app\(dashboard)\projects\[projectId]\members-client.tsx:162:52	操作
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:81:75	読み込み中...
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:283:43	更新に失敗しました
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:356:42	状態変更
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:374:33	プロジェクト編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:375:39	プロジェクト情報を編集してください。
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:380:29	プロジェクト名
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:385:29	顧客
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:400:29	目的
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:405:29	背景
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:409:29	スコープ
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:413:29	開発方式
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:420:31	開始予定日
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:424:31	終了予定日
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:430:29	業務ドメインタグ
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:430:86	(カンマ or 読点「、」で区切り)
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:431:171	例: 金融, 基幹業務, 会計
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:434:29	技術スタックタグ
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:434:86	(カンマ or 読点「、」で区切り)
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:435:161	例: React, Next.js, TypeScript
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:438:29	工程タグ
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:438:82	(カンマ or 読点「、」で区切り)
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:439:157	例: 要件定義, 設計, 開発
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:441:61	更新
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:460:40	概要
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:461:53	見積もり
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:463:37	WBS管理
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:464:37	リスク一覧
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:465:38	課題一覧
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:466:46	振り返り一覧
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:467:41	ナレッジ一覧
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:469:43	参考
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:471:41	メンバー
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:475:46	ステークホルダー
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:485:37	クリックで編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:487:49	基本情報
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:490:56	プロジェクト名
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:494:56	顧客
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:498:56	開発方式
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:502:56	開始予定日
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:506:56	終了予定日
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:514:37	クリックで編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:516:49	目的
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:524:37	クリックで編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:526:49	背景
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:534:37	クリックで編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:536:49	スコープ
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:542:58	スコープ外
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:555:37	クリックで編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:557:49	業務ドメインタグ
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:565:61	未設定
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:571:37	クリックで編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:573:49	技術スタックタグ
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:581:61	未設定
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:587:37	クリックで編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:589:49	工程タグ
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:597:61	未設定
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:605:37	クリックで編集
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:607:49	備考
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:616:42	関連 URL
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:622:21	メイン資料
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:623:34	提案書 / 見積根拠
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:629:21	その他の関連 URL
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:815:25	類似ナレッジ / 過去課題の提案
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:834:25	プロジェクトを削除しますか？
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:843:64	強制削除される項目 (選択不可)
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:847:56	資産として扱う項目 (各一覧から削除するかチェック)
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:855:22	リスク一覧 (プロジェクトに紐づく「リスク」を削除)
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:864:22	課題一覧 (プロジェクトに紐づく「課題」を削除)
+src\app\(dashboard)\projects\[projectId]\project-detail-client.tsx:873:22	振り返り一覧 (プロジェクトの振り返り + コメントを削除)
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:41:28	下書き (公開取り下げ)
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:42:29	公開
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:143:76	作成に失敗しました
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:177:18	この振り返りを削除しますか？
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:182:13	削除に失敗しました
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:203:46	振り返り一覧
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:206:194	振り返り作成
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:210:31	振り返り作成
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:213:35	プロジェクトの振り返りを記録してください。
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:219:25	公開範囲
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:225:25	実施日
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:230:25	計画総括
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:230:78	(任意)
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:234:25	実績総括
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:234:78	(任意)
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:238:25	良かった点
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:238:79	(任意)
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:242:25	問題点
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:242:77	(任意)
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:246:25	次回改善事項
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:246:80	(任意)
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:254:57	作成
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:270:21	振り返り
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:282:24	表示中の編集可能振り返りを全選択
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:289:62	振り返りがありません
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:316:48	確定
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:316:55	下書き
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:329:17	確定
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:344:72	良かった点
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:348:72	問題点
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:352:72	次回改善事項
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:370:31	コメントを入力...
+src\app\(dashboard)\projects\[projectId]\retrospectives\retrospectives-client.tsx:375:92	投稿
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:121:49	課題管理
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:121:82	リスク管理
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:121:92	リスク / 課題管理
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:122:48	課題起票
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:122:81	リスク起票
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:122:91	起票
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:227:20	更新する項目を 1 つ以上指定してください
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:249:46	一括更新に失敗しました
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:275:76	作成に失敗しました
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:314:61	CSV出力
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:326:47	課題を登録してください。
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:326:88	リスクを登録してください。
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:326:106	リスクまたは課題を登録してください。
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:334:29	公開範囲
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:341:31	脅威 / 好機
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:350:29	種別
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:352:45	リスク
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:353:46	課題
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:358:27	件名
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:362:27	内容
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:362:78	(任意)
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:401:29	影響度
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:408:31	発生可能性
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:416:27	担当者
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:418:39	未設定
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:438:48	フィルター
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:440:60	(一括編集には何らかのフィルター適用が必要です)
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:445:92	状態
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:452:31	すべて
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:457:93	影響度
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:464:31	すべて
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:469:94	キーワード (件名・内容)
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:474:27	例: ログイン
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:524:30	表示中の編集可能行を全選択
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:532:78	種別
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:533:64	件名
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:534:64	影響度
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:535:66	優先度
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:536:64	状態
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:538:68	公開範囲
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:539:67	担当者
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:540:68	起票日
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:542:70	添付
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:545:67	操作
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:571:75	自分が起票したものではないため一括編集できません
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:575:88	リスク
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:575:96	課題
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:605:36	このリスク/課題を削除しますか？
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:630:43	課題がありません
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:630:80	リスクがありません
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:630:94	リスク / 課題がありません
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:664:28	状態を一括更新する
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:667:43	状態
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:686:28	担当者を一括更新する
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:689:43	担当者
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:697:37	未設定 (担当者なし)
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:719:28	期限を一括更新する
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:722:43	期限
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:751:73	キャンセル
+src\app\(dashboard)\projects\[projectId]\risks\risks-client.tsx:752:41	適用
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:34:19	影響大 × 関心大: 密接に連携し満足させる (定期 1on1 / 重要意思決定への参加)
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:35:19	影響大 × 関心小: 満足させておく (方向性に影響しない範囲で必要十分な情報提供)
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:36:18	影響小 × 関心大: 常に情報を伝える (現場意見の聴取で問題早期発見)
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:37:12	影響小 × 関心小: モニタリング (必要最小限のコミュニケーション)
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:87:13	削除に失敗しました
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:97:48	ステークホルダー管理簿
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:151:62	該当者なし
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:166:65	氏名
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:167:73	所属
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:168:65	役職
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:169:69	影響度
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:170:68	関心度
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:171:68	姿勢
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:172:71	現在 → 望ましい
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:174:67	操作
+src\app\(dashboard)\projects\[projectId]\stakeholders\stakeholders-client.tsx:187:61	(内部)
+src\app\(dashboard)\projects\[projectId]\suggestions\suggestions-panel.tsx:78:16	提案の取得に失敗しました
+src\app\(dashboard)\projects\[projectId]\suggestions\suggestions-panel.tsx:103:16	採用に失敗しました
+src\app\(dashboard)\projects\[projectId]\suggestions\suggestions-panel.tsx:114:73	提案を計算中...
+src\app\(dashboard)\projects\[projectId]\suggestions\suggestions-panel.tsx:122:16	核心機能 (提案型サービス):
+src\app\(dashboard)\projects\[projectId]\suggestions\suggestions-panel.tsx:161:31	紐付け済
+src\app\(dashboard)\projects\[projectId]\suggestions\suggestions-panel.tsx:184:55	類似する過去課題が見つかりませんでした。
+src\app\(dashboard)\projects\[projectId]\suggestions\suggestions-panel.tsx:212:31	採用済
+src\app\(dashboard)\projects\[projectId]\suggestions\suggestions-panel.tsx:235:55	類似する過去振り返りが見つかりませんでした。
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:156:35	(未)
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:159:40	（未）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:159:74	（未）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:163:39	（未）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:163:72	（未）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:191:21	クリックで全選択 (Ctrl+C でコピー)
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:204:38	展開
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:204:45	折りたたみ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:205:43	展開
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:205:50	折りたたみ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:253:23	編集
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:254:28	編集
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:264:23	削除
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:265:28	削除
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:267:40	ワークパッケージ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:267:53	アクティビティ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:354:40	（未）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:354:74	（未）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:358:39	（未）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:358:72	（未）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:379:36	展開
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:379:43	折りたたみ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:380:41	展開
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:380:48	折りたたみ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:401:60	担当者
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:403:60	ステータス
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:409:60	進捗
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:417:60	予定
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:419:60	実績
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:429:23	編集
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:430:28	編集
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:440:23	削除
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:441:28	削除
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:443:40	ワークパッケージ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:443:53	アクティビティ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:687:21	更新に失敗しました
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:839:40	対象タスクがありません
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:840:51	更新項目を1つ以上選択してください
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:851:74	一括更新に失敗しました
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:964:39	ファイルを選択してください
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:983:21	インポートに失敗しました
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1060:76	作成に失敗しました
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1085:46	WBS管理
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1089:24	ガントを閉じる
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1089:36	ガントチャートを表示
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1096:17	CSV エクスポート/インポートの ID 整合確認用
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1098:27	IDを隠す
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1098:37	IDを表示
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1104:70	エクスポート
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1115:75	インポート
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1118:29	WBS テンプレートインポート
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1119:35	エクスポートした CSV ファイルを Excel 等で編集し、インポートします。担当者・進捗は初期状態で作成されます。
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1124:25	テンプレートファイル（CSV）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1127:57	インポート実行
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1132:57	追加
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1136:63	ワークパッケージ作成
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1136:78	アクティビティ作成
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1139:23	WBS の構造ノードを作成します。工数・日程は子要素から自動集計されます。
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1140:23	実作業を登録します。担当者・日程・工数を入力してください。
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1148:25	種別
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1160:25	親ワークパッケージ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1166:37	なし（最上位に配置）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1173:25	名称
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1185:29	担当者
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1187:64	メンバーが未登録です。先にメンバー管理から追加してください。
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1195:43	選択...
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1204:31	開始予定日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1208:31	終了予定日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1213:29	予定工数（人時）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1251:57	フィルタ / ソート
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1253:35	タップで折りたたみ
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1253:49	タップで展開
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1264:19	担当者
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1267:47	（未アサイン）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1274:22	全員
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1277:19	状況
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1305:75	一括編集
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1320:25	担当者
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1327:37	未設定
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1336:25	予定開始日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1346:25	予定終了日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1356:25	予定工数（人時）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1365:57	一括適用
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1371:75	一括実績更新
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1389:25	ステータス
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1404:25	進捗率（%）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1416:25	実績開始日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1426:25	実績終了日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1433:57	一括適用
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1438:104	一括削除
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1440:88	選択解除
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1462:31	全選択
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1470:69	名称
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1471:73	担当者
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1472:71	ステータス
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1473:73	進捗&工数
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1474:77	予定期間
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1475:76	実績期間
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1476:72	操作
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1506:27	WBS が登録されていません
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1507:27	選択したフィルタ条件に該当するタスクはありません
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1518:67	WBS タスク一覧
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1522:17	WBS が登録されていません
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1523:17	選択したフィルタ条件に該当するタスクはありません
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1552:55	ワークパッケージ編集
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1552:70	アクティビティ編集
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1556:19	編集項目と実績項目を同時に更新できます。
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1558:19	タスクの基本情報を編集します。
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1559:19	実績（ステータス・進捗率・実績日付）を更新します。
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1569:70	編集項目
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1571:27	種別
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1581:27	親WP
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1587:39	なし（最上位に配置）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1594:27	名称
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1600:31	担当者
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1606:43	未設定
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1614:31	予定開始日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1618:31	予定終了日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1622:31	見積工数（人時）
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1633:70	実績項目
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1635:27	ステータス
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1654:27	進捗率
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1671:97	実績開始日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1679:95	実績終了日
+src\app\(dashboard)\projects\[projectId]\tasks\tasks-client.tsx:1694:23	関連 URL
+src\app\(dashboard)\projects\projects-client.tsx:127:16	顧客を選択してください
+src\app\(dashboard)\projects\projects-client.tsx:156:76	作成に失敗しました
+src\app\(dashboard)\projects\projects-client.tsx:194:46	プロジェクト一覧
+src\app\(dashboard)\projects\projects-client.tsx:197:194	新規プロジェクト
+src\app\(dashboard)\projects\projects-client.tsx:201:29	新規プロジェクト作成
+src\app\(dashboard)\projects\projects-client.tsx:202:35	プロジェクトの基本情報を入力してください。
+src\app\(dashboard)\projects\projects-client.tsx:210:55	プロジェクト名
+src\app\(dashboard)\projects\projects-client.tsx:221:59	顧客
+src\app\(dashboard)\projects\projects-client.tsx:227:33	顧客を選択してください
+src\app\(dashboard)\projects\projects-client.tsx:228:32	顧客選択
+src\app\(dashboard)\projects\projects-client.tsx:241:58	目的
+src\app\(dashboard)\projects\projects-client.tsx:253:61	背景
+src\app\(dashboard)\projects\projects-client.tsx:265:56	スコープ
+src\app\(dashboard)\projects\projects-client.tsx:277:60	開発方式
+src\app\(dashboard)\projects\projects-client.tsx:286:27	開始予定日
+src\app\(dashboard)\projects\projects-client.tsx:295:27	終了予定日
+src\app\(dashboard)\projects\projects-client.tsx:306:71	業務ドメインタグ
+src\app\(dashboard)\projects\projects-client.tsx:306:128	(カンマ or 読点「、」で区切り、提案精度向上のため推奨)
+src\app\(dashboard)\projects\projects-client.tsx:311:33	例: 金融, 基幹業務, 会計
+src\app\(dashboard)\projects\projects-client.tsx:316:66	技術スタックタグ
+src\app\(dashboard)\projects\projects-client.tsx:316:123	(カンマ or 読点「、」で区切り、提案精度向上のため推奨)
+src\app\(dashboard)\projects\projects-client.tsx:321:33	例: React, Next.js, TypeScript, PostgreSQL
+src\app\(dashboard)\projects\projects-client.tsx:326:63	工程タグ
+src\app\(dashboard)\projects\projects-client.tsx:326:116	(カンマ or 読点「、」で区切り、提案精度向上のため推奨)
+src\app\(dashboard)\projects\projects-client.tsx:331:33	例: 要件定義, 設計, 開発, 試験
+src\app\(dashboard)\projects\projects-client.tsx:352:23	キーワード検索...
+src\app\(dashboard)\projects\projects-client.tsx:360:38	全ステータス
+src\app\(dashboard)\projects\projects-client.tsx:363:33	全ステータス
+src\app\(dashboard)\projects\projects-client.tsx:385:67	プロジェクト名
+src\app\(dashboard)\projects\projects-client.tsx:386:71	顧客
+src\app\(dashboard)\projects\projects-client.tsx:387:72	開発方式
+src\app\(dashboard)\projects\projects-client.tsx:388:69	ステータス
+src\app\(dashboard)\projects\projects-client.tsx:389:79	開始予定日
+src\app\(dashboard)\projects\projects-client.tsx:390:77	終了予定日
+src\app\(dashboard)\projects\projects-client.tsx:431:67	プロジェクト一覧
+src\app\(dashboard)\projects\projects-client.tsx:452:62	顧客
+src\app\(dashboard)\projects\projects-client.tsx:454:62	開発方式
+src\app\(dashboard)\projects\projects-client.tsx:458:62	期間
+src\app\(dashboard)\retrospectives\admin-delete-button.tsx:26:18	削除
+src\app\(dashboard)\retrospectives\admin-delete-button.tsx:33:17	削除に失敗しました
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:46:66	プロジェクト
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:47:72	実施日
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:48:70	計画総括
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:49:72	実績総括
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:50:69	良かった点
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:51:71	次回以前事項
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:52:68	作成日時
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:53:68	作成者
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:54:68	更新日時
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:55:68	更新者
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:56:70	添付
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:57:77	操作
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:69:58	（非公開）
+src\app\(dashboard)\retrospectives\all-retrospectives-table.tsx:77:89	(削除済)
+src\app\(dashboard)\retrospectives\page.tsx:17:46	全振り返り
+src\app\(dashboard)\risks\admin-delete-button.tsx:26:18	削除
+src\app\(dashboard)\risks\admin-delete-button.tsx:33:17	削除に失敗しました
+src\app\(dashboard)\risks\all-risks-table.tsx:78:66	プロジェクト
+src\app\(dashboard)\risks\all-risks-table.tsx:79:78	種別
+src\app\(dashboard)\risks\all-risks-table.tsx:80:64	件名
+src\app\(dashboard)\risks\all-risks-table.tsx:81:67	担当者
+src\app\(dashboard)\risks\all-risks-table.tsx:82:64	影響度
+src\app\(dashboard)\risks\all-risks-table.tsx:83:69	発生可能性
+src\app\(dashboard)\risks\all-risks-table.tsx:84:66	優先度
+src\app\(dashboard)\risks\all-risks-table.tsx:85:68	作成日時
+src\app\(dashboard)\risks\all-risks-table.tsx:86:68	作成者
+src\app\(dashboard)\risks\all-risks-table.tsx:87:68	更新日時
+src\app\(dashboard)\risks\all-risks-table.tsx:88:68	更新者
+src\app\(dashboard)\risks\all-risks-table.tsx:89:70	添付
+src\app\(dashboard)\risks\all-risks-table.tsx:90:77	操作
+src\app\(dashboard)\risks\all-risks-table.tsx:102:58	（非公開）
+src\app\(dashboard)\risks\all-risks-table.tsx:110:89	(削除済)
+src\app\(dashboard)\risks\all-risks-table.tsx:117:42	リスク
+src\app\(dashboard)\risks\all-risks-table.tsx:117:50	課題
+src\app\(dashboard)\risks\all-risks-table.tsx:157:43	課題がありません
+src\app\(dashboard)\risks\all-risks-table.tsx:157:80	リスクがありません
+src\app\(dashboard)\risks\all-risks-table.tsx:157:94	リスク/課題がありません
+src\app\(dashboard)\risks\page.tsx:19:46	全リスク
+src\app\(dashboard)\settings\settings-client.tsx:83:43	設定の保存に失敗しました
+src\app\(dashboard)\settings\settings-client.tsx:88:20	保存しました
+src\app\(dashboard)\settings\settings-client.tsx:108:44	テーマの保存に失敗しました
+src\app\(dashboard)\settings\settings-client.tsx:114:21	テーマを変更しました
+src\app\(dashboard)\settings\settings-client.tsx:136:18	パスワードが一致しません
+src\app\(dashboard)\settings\settings-client.tsx:150:41	パスワードの変更に失敗しました
+src\app\(dashboard)\settings\settings-client.tsx:154:18	パスワードが変更されました
+src\app\(dashboard)\settings\settings-client.tsx:165:42	MFA の設定に失敗しました
+src\app\(dashboard)\settings\settings-client.tsx:187:42	コードの検証に失敗しました
+src\app\(dashboard)\settings\settings-client.tsx:205:44	設定
+src\app\(dashboard)\settings\settings-client.tsx:210:41	画面テーマ
+src\app\(dashboard)\settings\settings-client.tsx:222:45	画面テーマ
+src\app\(dashboard)\settings\settings-client.tsx:239:75	選択中
+src\app\(dashboard)\settings\settings-client.tsx:250:41	言語・タイムゾーン
+src\app\(dashboard)\settings\settings-client.tsx:268:43	言語
+src\app\(dashboard)\settings\settings-client.tsx:283:53	 ※準備中
+src\app\(dashboard)\settings\settings-client.tsx:293:39	タイムゾーン
+src\app\(dashboard)\settings\settings-client.tsx:306:34	保存
+src\app\(dashboard)\settings\settings-client.tsx:314:41	パスワード変更
+src\app\(dashboard)\settings\settings-client.tsx:315:27	現在のパスワードと新しいパスワードを入力してください。
+src\app\(dashboard)\settings\settings-client.tsx:322:48	現在のパスワード
+src\app\(dashboard)\settings\settings-client.tsx:326:44	新しいパスワード
+src\app\(dashboard)\settings\settings-client.tsx:328:59	10文字以上、英大文字・英小文字・数字・記号のうち3種以上
+src\app\(dashboard)\settings\settings-client.tsx:331:48	新しいパスワード（確認）
+src\app\(dashboard)\settings\settings-client.tsx:334:34	変更
+src\app\(dashboard)\settings\settings-client.tsx:346:38	強制有効化 (解除不可)
+src\app\(dashboard)\settings\settings-client.tsx:348:38	有効
+src\app\(dashboard)\settings\settings-client.tsx:350:56	無効
+src\app\(dashboard)\settings\settings-client.tsx:355:25	 管理者は MFA が必須であり、本設定画面からは無効化できません (PR #91)。
+src\app\(dashboard)\settings\settings-client.tsx:362:45	MFA を有効化する
+src\app\(dashboard)\settings\settings-client.tsx:366:69	MFA を無効化する
+src\app\(dashboard)\settings\settings-client.tsx:387:25	手動入力用のシークレットキー
+src\app\(dashboard)\settings\settings-client.tsx:394:31	6桁のコード
+src\app\(dashboard)\settings\settings-client.tsx:399:38	検証して有効化
+src\app\api\admin\users\[userId]\route.ts:48:48	自分自身のロールは変更できません
+src\app\api\admin\users\[userId]\route.ts:84:48	自分自身は削除できません
+src\app\api\admin\users\[userId]\route.ts:90:48	対象ユーザが見つかりません (既に削除済みの可能性)
+src\app\api\admin\users\lock-inactive\route.ts:28:47	admin ユーザが存在しないため cron 実行不可
+src\app\api\admin\users\route.ts:64:24	このメールアドレスは既に登録されています
+src\app\api\admin\users\route.ts:76:17	検証メールの送信に失敗しました。メールアドレスを確認するか、しばらくしてから再度お試しください。
+src\app\api\attachments\[id]\route.ts:28:48	対象が見つかりません
+src\app\api\attachments\[id]\route.ts:34:48	この操作を実行する権限がありません
+src\app\api\attachments\[id]\route.ts:46:46	対象が見つかりません
+src\app\api\attachments\[id]\route.ts:52:46	この操作を実行する権限がありません
+src\app\api\attachments\[id]\route.ts:61:44	この操作を実行する権限がありません
+src\app\api\attachments\[id]\route.ts:77:46	対象が見つかりません
+src\app\api\attachments\[id]\route.ts:121:46	対象が見つかりません
+src\app\api\attachments\route.ts:28:48	対象が見つかりません
+src\app\api\attachments\route.ts:34:48	この操作を実行する権限がありません
+src\app\api\attachments\route.ts:46:46	対象が見つかりません
+src\app\api\attachments\route.ts:53:46	この操作を実行する権限がありません
+src\app\api\attachments\route.ts:64:44	この操作を実行する権限がありません
+src\app\api\attachments\route.ts:81:53	entityType と entityId は必須です
+src\app\api\attachments\route.ts:87:53	entityType が不正です
+src\app\api\auth\delete-account\route.ts:38:53	パスワードが正しくありません
+src\app\api\auth\delete-account\route.ts:60:53	リカバリーコードが正しくありません
+src\app\api\auth\lock-status\route.test.ts:24:6	バリデーション失敗 (email 形式不正) は status=none を返す
+src\app\api\auth\lock-status\route.test.ts:31:6	JSON 欠落でも status=none を返す (500 にしない)
+src\app\api\auth\lock-status\route.test.ts:42:6	存在しないメールアドレスは status=none を返す (enumeration 防止)
+src\app\api\auth\lock-status\route.test.ts:49:6	ロックされていない既存ユーザは status=none を返す
+src\app\api\auth\lock-status\route.test.ts:59:6	永続ロック中は status=permanent_lock
+src\app\api\auth\lock-status\route.test.ts:69:6	一時ロック (期限内) は status=temporary_lock + unlockAt (ISO)
+src\app\api\auth\lock-status\route.test.ts:81:6	一時ロック期限が過ぎていれば status=none
+src\app\api\auth\lock-status\route.test.ts:91:6	永続ロックが一時ロックより優先される
+src\app\api\auth\mfa\disable\route.ts:14:46	管理者は MFA を無効化できません
+src\app\api\auth\mfa\enable\route.ts:18:53	6桁のコードを入力してください
+src\app\api\auth\mfa\setup\route.ts:26:22	MFA は既に有効化されています。再設定する場合は一度無効化してください
+src\app\api\auth\mfa\verify\route.ts:26:46	セッションユーザと一致しません
+src\app\api\auth\mfa\verify\route.ts:48:24	認証コードの連続失敗によりロックされています
+src\app\api\auth\mfa\verify\route.ts:59:55	コードが正しくありません
+src\app\api\auth\mfa\verify\route.ts:90:53	リカバリーコードが正しくありません
+src\app\api\auth\reset-password\route.ts:66:51	不正なリクエストです
+src\app\api\auth\setup-mfa-initial\route.ts:18:53	6 桁のコードを入力してください
+src\app\api\auth\setup-password\route.ts:14:50	無効なリンクです
+src\app\api\customers\[customerId]\route.ts:16:44	この操作を実行する権限がありません
+src\app\api\customers\[customerId]\route.ts:23:44	顧客が見つかりません
+src\app\api\customers\route.ts:11:44	この操作を実行する権限がありません
+src\app\api\health\route.test.ts:20:6	DB 応答 ok → HTTP 200・status=ok・db=ok
+src\app\api\health\route.test.ts:31:6	DB エラー → HTTP 503・status=degraded・db=error（副作用で落ちない）
+src\app\api\health\route.test.ts:40:6	応答に機密情報（スタックトレース・接続文字列等）が含まれない
+src\app\api\knowledge\[knowledgeId]\route.ts:22:46	対象が見つかりません
+src\app\api\knowledge\[knowledgeId]\route.ts:43:46	対象が見つかりません
+src\app\api\knowledge\[knowledgeId]\route.ts:64:48	作成者本人のみ編集できます
+src\app\api\knowledge\[knowledgeId]\route.ts:98:46	対象が見つかりません
+src\app\api\knowledge\[knowledgeId]\route.ts:110:48	作成者本人または管理者のみ削除できます
+src\app\api\knowledge\route.ts:69:22	メンバーでないプロジェクトにナレッジを紐付けることはできません
+src\app\api\memos\[id]\route.ts:19:46	対象が見つかりません
+src\app\api\memos\[id]\route.ts:48:46	対象が見つかりません
+src\app\api\memos\[id]\route.ts:73:46	対象が見つかりません
+src\app\api\memos\bulk\route.test.ts:31:6	Memo は visibility="draft" を拒否する (private/public のみ)
+src\app\api\memos\bulk\route.test.ts:40:6	filterFingerprint 空 → 400 FILTER_REQUIRED
+src\app\api\memos\bulk\route.test.ts:51:6	正常系: visibility=private で「全メモから取り下げ」
+src\app\api\memos\bulk\route.ts:31:44	フィルターを 1 つ以上適用してください (全件更新の事故防止)
+src\app\api\projects\[projectId]\estimates\[estimateId]\route.ts:70:51	確定済みの見積もりは編集できません
+src\app\api\projects\[projectId]\knowledge\[knowledgeId]\route.ts:22:46	対象が見つかりません
+src\app\api\projects\[projectId]\knowledge\[knowledgeId]\route.ts:29:46	このプロジェクトに紐づくナレッジではありません
+src\app\api\projects\[projectId]\knowledge\[knowledgeId]\route.ts:51:48	作成者本人のみ編集できます
+src\app\api\projects\[projectId]\knowledge\[knowledgeId]\route.ts:87:46	対象が見つかりません
+src\app\api\projects\[projectId]\knowledge\[knowledgeId]\route.ts:93:46	このプロジェクトに紐づくナレッジではありません
+src\app\api\projects\[projectId]\knowledge\[knowledgeId]\route.ts:105:48	作成者本人または管理者のみ削除できます
+src\app\api\projects\[projectId]\knowledge\bulk\route.ts:39:44	フィルターを 1 つ以上適用してください (全件更新の事故防止)
+src\app\api\projects\[projectId]\members\[memberId]\route.ts:48:48	メンバーが見つかりません
+src\app\api\projects\[projectId]\members\[memberId]\route.ts:82:48	メンバーが見つかりません
+src\app\api\projects\[projectId]\members\route.ts:72:50	ユーザが見つかりません
+src\app\api\projects\[projectId]\members\route.ts:78:57	既にメンバーに追加されています
+src\app\api\projects\[projectId]\retrospectives\[retroId]\comments\route.ts:32:46	コメント投稿権限がありません (viewer 不可)
+src\app\api\projects\[projectId]\retrospectives\[retroId]\route.ts:23:46	対象が見つかりません
+src\app\api\projects\[projectId]\retrospectives\[retroId]\route.ts:39:48	作成者本人のみ編集できます
+src\app\api\projects\[projectId]\retrospectives\[retroId]\route.ts:74:46	対象が見つかりません
+src\app\api\projects\[projectId]\retrospectives\[retroId]\route.ts:88:48	作成者本人または管理者のみ削除できます
+src\app\api\projects\[projectId]\retrospectives\bulk\route.ts:40:44	フィルターを 1 つ以上適用してください (全件更新の事故防止)
+src\app\api\projects\[projectId]\risks\[riskId]\route.ts:59:48	作成者本人のみ編集できます
+src\app\api\projects\[projectId]\risks\[riskId]\route.ts:100:48	作成者本人または管理者のみ削除できます
+src\app\api\projects\[projectId]\risks\bulk\route.ts:38:44	フィルターを 1 つ以上適用してください (全件更新の事故防止)
+src\app\api\projects\[projectId]\route.ts:28:46	対象が見つかりません
+src\app\api\projects\[projectId]\status\route.ts:47:50	対象が見つかりません
+src\app\api\projects\[projectId]\tasks\[taskId]\progress\route.ts:23:46	対象が見つかりません
+src\app\api\projects\[projectId]\tasks\[taskId]\progress\route.ts:44:46	対象が見つかりません
+src\app\api\projects\[projectId]\tasks\[taskId]\route.ts:23:46	対象が見つかりません
+src\app\api\projects\[projectId]\tasks\[taskId]\route.ts:52:46	対象が見つかりません
+src\app\api\projects\[projectId]\tasks\[taskId]\route.ts:122:46	対象が見つかりません
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:54:10	PATCH /bulk-update — 権限判定
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:55:6	計画系 (plannedEndDate) を含むと task:update を要求する
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:76:6	実績系のみ (progressRate) は task:update_progress を要求する
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:104:6	member が他人担当のタスクを含めて進捗更新しようとすると 403
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:136:6	PR #88: admin / pm_tl も実績系一括更新では担当者チェックを受ける (他人担当を含むと 403)
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:169:42	自分が担当のタスクのみ
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:172:6	PR #88: admin も全対象タスクが自分担当なら実績系一括更新に成功する
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:202:6	PR #88: 計画系の一括更新 (assigneeId 等) は admin / pm_tl が対象関係なく可能
+src\app\api\projects\[projectId]\tasks\bulk-update\route.test.ts:227:6	バリデーション失敗時は 400
+src\app\api\projects\[projectId]\tasks\bulk-update\route.ts:67:22	一括実績更新は自分が担当のタスクのみ対象にできます
+src\app\api\projects\[projectId]\tasks\bulk-update\route.ts:81:55	指定された担当者はプロジェクトメンバーではありません
+src\app\api\projects\[projectId]\tasks\import\route.ts:34:57	file フィールドにファイルを指定してください
+src\app\api\projects\[projectId]\tasks\import\route.ts:49:53	リクエストボディを読み取れませんでした
+src\app\api\projects\[projectId]\tasks\import\route.ts:58:53	CSVデータが空です
+src\app\api\projects\[projectId]\tasks\import\route.ts:67:53	インポート可能なタスクがありません。ヘッダー行と1件以上のデータ行が必要です
+src\app\api\projects\[projectId]\tasks\import\route.ts:73:53	テンプレートは500件までです
+src\app\api\projects\[projectId]\tasks\import\route.ts:106:51	内部エラーが発生しました
+src\app\api\projects\[projectId]\tasks\sync-import\route.ts:43:55	file フィールドにファイルを指定してください
+src\app\api\projects\[projectId]\tasks\sync-import\route.ts:58:24	removeMode は keep / warn / delete のいずれかで指定してください
+src\app\api\projects\[projectId]\tasks\sync-import\route.ts:71:53	リクエストボディを読み取れませんでした
+src\app\api\projects\[projectId]\tasks\sync-import\route.ts:80:53	CSV データが空です
+src\app\api\projects\[projectId]\tasks\sync-import\route.ts:136:51	内部エラーが発生しました
+src\app\api\projects\[projectId]\tasks\tree\route.test.ts:29:6	認証・認可を通過すると listTasksWithTree の結果を返す
+src\app\api\projects\[projectId]\tasks\tree\route.test.ts:50:6	未認証なら認証ヘルパーの 401 レスポンスをそのまま返す
+src\app\api\projects\[projectId]\tasks\tree\route.test.ts:60:6	プロジェクト非メンバーなら権限ヘルパーの 403/404 をそのまま返す（DB には問い合わせない）
+src\app\api\projects\route.ts:46:46	この操作を実行する権限がありません
+src\app\api\settings\i18n\route.test.ts:38:6	未認証は 401
+src\app\api\settings\i18n\route.test.ts:46:6	有効な TZ + 選択可能 locale で DB 更新 + 200
+src\app\api\settings\i18n\route.test.ts:62:6	PR #120: SELECTABLE_LOCALES=false な en-US は 400 で拒否 (UI disabled の迂回防止)
+src\app\api\settings\i18n\route.test.ts:68:6	未知 TZ を拒否する (400, DB 更新しない)
+src\app\api\settings\i18n\route.test.ts:74:6	未対応 locale を拒否する (400)
+src\app\api\settings\i18n\route.test.ts:80:6	null 指定でシステム既定に戻す
+src\app\api\settings\i18n\route.test.ts:94:6	部分更新: timezone のみ指定 (locale は変更されない)
+src\app\api\settings\i18n\route.test.ts:108:6	空オブジェクトは no-op で現在値を返す
+src\app\api\settings\i18n\route.test.ts:120:6	不正 JSON でも 400 (500 にしない)
+src\app\layout.tsx:27:10	たすきば Knowledge Relay
+src\app\layout.tsx:28:16	知見を残す。判断をつなぐ。プロジェクトを強くする。
+src\components\attachments\attachment-list.tsx:29:11	関連 URL
+src\components\attachments\attachment-list.tsx:46:16	添付の取得に失敗しました
+src\components\attachments\attachment-list.tsx:84:76	追加に失敗しました
+src\components\attachments\attachment-list.tsx:93:18	この添付を削除しますか？
+src\components\attachments\attachment-list.tsx:98:16	削除に失敗しました
+src\components\attachments\attachment-list.tsx:111:53	添付はありません
+src\components\attachments\attachment-list.tsx:146:39	表示名
+src\components\attachments\attachment-list.tsx:150:27	例: 設計書
+src\components\attachments\attachment-list.tsx:167:42	追加
+src\components\attachments\single-url-field.tsx:32:24	ドキュメント
+src\components\attachments\single-url-field.tsx:51:16	添付の取得に失敗しました
+src\components\attachments\single-url-field.tsx:90:76	保存に失敗しました
+src\components\attachments\single-url-field.tsx:101:18	この URL を削除しますか？
+src\components\attachments\single-url-field.tsx:106:16	削除に失敗しました
+src\components\attachments\single-url-field.tsx:164:57	未設定
+src\components\attachments\single-url-field.tsx:172:39	表示名
+src\components\attachments\staged-attachments-input.tsx:24:67	関連 URL
+src\components\attachments\staged-attachments-input.tsx:37:69	(作成後に自動で保存されます)
+src\components\attachments\staged-attachments-input.tsx:39:53	添付なし
+src\components\attachments\staged-attachments-input.tsx:46:41	表示名
+src\components\attachments\staged-attachments-input.tsx:50:29	例: 設計書
+src\components\attachments\staged-attachments-input.tsx:65:56	http:// または https:// で始まる必要があります
+src\components\cross-list-bulk-visibility-toolbar.tsx:85:42	一括更新に失敗しました
+src\components\cross-list-bulk-visibility-toolbar.tsx:98:48	フィルター
+src\components\cross-list-bulk-visibility-toolbar.tsx:107:82	キーワード
+src\components\cross-list-bulk-visibility-toolbar.tsx:112:27	件名・内容に含まれる文字列
+src\components\cross-list-bulk-visibility-toolbar.tsx:166:39	公開範囲
+src\components\cross-list-bulk-visibility-toolbar.tsx:187:73	キャンセル
+src\components\cross-list-bulk-visibility-toolbar.tsx:188:37	適用
+src\components\dashboard-header.tsx:56:12	プロジェクト
+src\components\dashboard-header.tsx:58:38	全プロジェクト
+src\components\dashboard-header.tsx:59:39	全顧客管理
+src\components\dashboard-header.tsx:63:12	資産
+src\components\dashboard-header.tsx:65:39	全リスク
+src\components\dashboard-header.tsx:66:40	全課題
+src\components\dashboard-header.tsx:67:48	全振り返り
+src\components\dashboard-header.tsx:68:39	全ナレッジ
+src\components\dashboard-header.tsx:69:39	全メモ
+src\components\dashboard-header.tsx:73:12	システム管理者
+src\components\dashboard-header.tsx:76:41	ユーザ管理
+src\components\dashboard-header.tsx:77:46	監査ログ
+src\components\dashboard-header.tsx:78:48	権限変更
+src\components\dialogs\knowledge-edit-dialog.tsx:102:39	更新に失敗しました
+src\components\dialogs\knowledge-edit-dialog.tsx:116:38	ナレッジ詳細
+src\components\dialogs\knowledge-edit-dialog.tsx:116:49	ナレッジ編集
+src\components\dialogs\knowledge-edit-dialog.tsx:120:25	参照専用です (プロジェクト非メンバーのため編集不可)。
+src\components\dialogs\knowledge-edit-dialog.tsx:120:58	変更内容を保存します。
+src\components\dialogs\knowledge-edit-dialog.tsx:127:19	タイトル
+src\components\dialogs\knowledge-edit-dialog.tsx:132:21	種別
+src\components\dialogs\knowledge-edit-dialog.tsx:138:21	公開範囲
+src\components\dialogs\knowledge-edit-dialog.tsx:146:19	背景
+src\components\dialogs\knowledge-edit-dialog.tsx:146:70	(任意)
+src\components\dialogs\knowledge-edit-dialog.tsx:156:19	内容
+src\components\dialogs\knowledge-edit-dialog.tsx:156:70	(任意)
+src\components\dialogs\knowledge-edit-dialog.tsx:166:19	結果
+src\components\dialogs\knowledge-edit-dialog.tsx:166:70	(任意)
+src\components\dialogs\knowledge-edit-dialog.tsx:184:23	一次情報源 URL
+src\components\dialogs\knowledge-edit-dialog.tsx:185:36	公式ドキュメント
+src\components\dialogs\knowledge-edit-dialog.tsx:191:23	参考リンク
+src\components\dialogs\retrospective-edit-dialog.tsx:98:39	更新に失敗しました
+src\components\dialogs\retrospective-edit-dialog.tsx:112:38	振り返り詳細
+src\components\dialogs\retrospective-edit-dialog.tsx:112:49	振り返り編集
+src\components\dialogs\retrospective-edit-dialog.tsx:116:25	参照専用です (プロジェクト非メンバーのため編集不可)。
+src\components\dialogs\retrospective-edit-dialog.tsx:116:58	変更内容を保存します。
+src\components\dialogs\retrospective-edit-dialog.tsx:135:42	計画総括
+src\components\dialogs\retrospective-edit-dialog.tsx:136:44	実績総括
+src\components\dialogs\retrospective-edit-dialog.tsx:137:41	良かった点
+src\components\dialogs\retrospective-edit-dialog.tsx:138:39	課題
+src\components\dialogs\retrospective-edit-dialog.tsx:139:43	次回以前事項
+src\components\dialogs\retrospective-edit-dialog.tsx:142:77	(任意)
+src\components\dialogs\retrospective-edit-dialog.tsx:159:21	関連 URL
+src\components\dialogs\risk-edit-dialog.tsx:127:76	更新に失敗しました
+src\components\dialogs\risk-edit-dialog.tsx:137:44	リスク
+src\components\dialogs\risk-edit-dialog.tsx:137:52	課題
+src\components\dialogs\risk-edit-dialog.tsx:147:25	参照専用です (プロジェクト非メンバーのため編集不可)。
+src\components\dialogs\risk-edit-dialog.tsx:147:58	変更内容を保存します。
+src\components\dialogs\risk-edit-dialog.tsx:180:87	(任意)
+src\components\dialogs\risk-edit-dialog.tsx:209:21	状態
+src\components\dialogs\risk-edit-dialog.tsx:217:33	未設定
+src\components\dialogs\risk-edit-dialog.tsx:233:21	関連 URL
+src\components\dialogs\stakeholder-edit-dialog.tsx:156:24	更新に失敗しました
+src\components\dialogs\stakeholder-edit-dialog.tsx:156:38	登録に失敗しました
+src\components\dialogs\stakeholder-edit-dialog.tsx:170:34	ステークホルダー編集
+src\components\dialogs\stakeholder-edit-dialog.tsx:170:49	ステークホルダー新規登録
+src\components\dialogs\stakeholder-edit-dialog.tsx:182:19	内部メンバー紐付け
+src\components\dialogs\stakeholder-edit-dialog.tsx:197:31	外部関係者 (内部紐付けなし)
+src\components\dialogs\stakeholder-edit-dialog.tsx:206:19	氏名
+src\components\dialogs\stakeholder-edit-dialog.tsx:216:21	所属組織
+src\components\dialogs\stakeholder-edit-dialog.tsx:224:21	役職
+src\components\dialogs\stakeholder-edit-dialog.tsx:234:19	連絡先メモ
+src\components\dialogs\stakeholder-edit-dialog.tsx:247:21	影響度 (1-5)
+src\components\dialogs\stakeholder-edit-dialog.tsx:259:21	関心度 (1-5)
+src\components\dialogs\stakeholder-edit-dialog.tsx:274:19	姿勢
+src\components\dialogs\stakeholder-edit-dialog.tsx:289:21	現在のエンゲージメント
+src\components\dialogs\stakeholder-edit-dialog.tsx:303:21	望ましいエンゲージメント
+src\components\dialogs\stakeholder-edit-dialog.tsx:320:19	人となり / 考え方 (自由記述)
+src\components\dialogs\stakeholder-edit-dialog.tsx:327:27	例: 数字で語ると納得しやすい / 議論より資料を読む派 / 決裁前に必ず Slack で根回し
+src\components\dialogs\stakeholder-edit-dialog.tsx:332:19	タグ (カンマ / 読点区切り)
+src\components\dialogs\stakeholder-edit-dialog.tsx:336:27	例: 技術志向, 数字派, 早朝型
+src\components\dialogs\stakeholder-edit-dialog.tsx:342:19	対応戦略 (具体的アクション)
+src\components\dialogs\stakeholder-edit-dialog.tsx:349:27	例: 月 1 で 30 分の 1on1 / 月次レポートに KPI サマリ添付 / 重要意思決定は事前に Slack で打診
+src\components\dialogs\stakeholder-edit-dialog.tsx:353:74	登録
+src\components\dialogs\user-edit-dialog.tsx:81:39	更新に失敗しました
+src\components\dialogs\user-edit-dialog.tsx:98:39	ロック解除に失敗しました
+src\components\dialogs\user-edit-dialog.tsx:112:9	この操作でユーザは即時ログイン不可となり、全プロジェクトの\n
+src\components\dialogs\user-edit-dialog.tsx:113:9	メンバー情報から削除されます。\n\n
+src\components\dialogs\user-edit-dialog.tsx:114:9	※ 過去のタスク担当・リスク起票等の履歴は保全されます。
+src\components\dialogs\user-edit-dialog.tsx:122:39	削除に失敗しました
+src\components\dialogs\user-edit-dialog.tsx:144:23	ユーザ編集
+src\components\dialogs\user-edit-dialog.tsx:161:19	システムロール
+src\components\dialogs\user-edit-dialog.tsx:173:19	アカウント状態
+src\components\dialogs\user-edit-dialog.tsx:179:37	有効
+src\components\dialogs\user-edit-dialog.tsx:180:39	無効
+src\components\dialogs\user-edit-dialog.tsx:188:39	ログインロック情報
+src\components\dialogs\user-edit-dialog.tsx:200:19	なし
+src\components\dialogs\user-edit-dialog.tsx:202:47	あり (要解除)
+src\components\dialogs\user-edit-dialog.tsx:202:60	なし
+src\components\dialogs\user-edit-dialog.tsx:218:56	危険な操作
+src\components\dialogs\wbs-sync-import-dialog.tsx:50:11	追加
+src\components\dialogs\wbs-sync-import-dialog.tsx:51:11	更新
+src\components\dialogs\wbs-sync-import-dialog.tsx:52:14	変更なし
+src\components\dialogs\wbs-sync-import-dialog.tsx:53:21	削除候補
+src\components\dialogs\wbs-sync-import-dialog.tsx:98:16	ファイルを選択してください
+src\components\dialogs\wbs-sync-import-dialog.tsx:113:21	プレビュー生成に失敗しました
+src\components\dialogs\wbs-sync-import-dialog.tsx:145:21	インポートに失敗しました
+src\components\dialogs\wbs-sync-import-dialog.tsx:176:49	(プレビュー)
+src\components\dialogs\wbs-sync-import-dialog.tsx:191:21	CSV ファイル
+src\components\dialogs\wbs-sync-import-dialog.tsx:206:36	プレビュー生成
+src\components\dialogs\wbs-sync-import-dialog.tsx:216:69	エラー
+src\components\dialogs\wbs-sync-import-dialog.tsx:225:34	追加
+src\components\dialogs\wbs-sync-import-dialog.tsx:226:34	更新
+src\components\dialogs\wbs-sync-import-dialog.tsx:227:34	削除候補
+src\components\dialogs\wbs-sync-import-dialog.tsx:228:34	ブロッカー
+src\components\dialogs\wbs-sync-import-dialog.tsx:229:34	警告
+src\components\dialogs\wbs-sync-import-dialog.tsx:246:43	 (進捗あり、削除モード=delete ではブロックされます)
+src\components\dialogs\wbs-sync-import-dialog.tsx:255:21	削除候補の扱い
+src\components\dialogs\wbs-sync-import-dialog.tsx:260:25	保持: CSV にないタスクはそのまま残す (推奨)
+src\components\dialogs\wbs-sync-import-dialog.tsx:265:25	警告のみ: 削除候補を表示し、本実行では削除しない
+src\components\dialogs\wbs-sync-import-dialog.tsx:270:25	削除: CSV にないタスクを論理削除 (進捗ありはブロックされ実行不可)
+src\components\dialogs\wbs-sync-import-dialog.tsx:282:58	CSV 行
+src\components\dialogs\wbs-sync-import-dialog.tsx:283:58	操作
+src\components\dialogs\wbs-sync-import-dialog.tsx:284:58	名称
+src\components\dialogs\wbs-sync-import-dialog.tsx:285:58	変更/警告
+src\components\dialogs\wbs-sync-import-dialog.tsx:314:64	(空)
+src\components\dialogs\wbs-sync-import-dialog.tsx:314:94	(空)
+src\components\loading-overlay.tsx:45:66	処理中...
+src\components\multi-select-filter.tsx:35:14	全て
+src\components\ui\date-field-helpers.test.ts:10:6	与えられた Date をローカル時刻ベースで YYYY-MM-DD に整形する
+src\components\ui\date-field-helpers.test.ts:16:6	引数省略時も YYYY-MM-DD 形式 (10 文字) を返す
+src\components\ui\date-field-helpers.test.ts:23:6	正常な YYYY-MM-DD をパースする
+src\components\ui\date-field-helpers.test.ts:29:6	不正な形式は null を返す (XSS / 意図せぬ入力のガード)
+src\components\ui\date-field-helpers.test.ts:37:6	範囲外の月/日は null を返す
+src\components\ui\date-field-helpers.test.ts:46:6	ゼロパディング込みで YYYY-MM-DD を組み立てる
+src\components\ui\date-field-helpers.test.ts:54:6	2026 年 4 月 (1 日=水曜) の 1 行目は [日,月,火 が null, 水=1, 木=2, 金=3, 土=4] になる
+src\components\ui\date-field-helpers.test.ts:59:6	すべての行が 7 セルであり、総日数が正しい
+src\components\ui\date-field-helpers.test.ts:68:6	2026 年 2 月 (28 日) / 2024 年 2 月 (閏年 29 日) の日数差が正しく反映される
+src\components\ui\date-field-helpers.test.ts:75:6	月初が日曜の月 (2026 年 3 月 1 日=日) は 1 行目が [1, 2, 3, 4, 5, 6, 7] になる
+src\components\ui\date-field-with-actions.tsx:14:25	日
+src\components\ui\date-field-with-actions.tsx:14:30	月
+src\components\ui\date-field-with-actions.tsx:14:35	火
+src\components\ui\date-field-with-actions.tsx:14:40	水
+src\components\ui\date-field-with-actions.tsx:14:45	木
+src\components\ui\date-field-with-actions.tsx:14:50	金
+src\components\ui\date-field-with-actions.tsx:14:55	土
+src\components\ui\date-field-with-actions.tsx:58:22	前の月
+src\components\ui\date-field-with-actions.tsx:69:22	次の月
+src\components\ui\date-field-with-actions.tsx:133:16	今日
+src\components\ui\date-field-with-actions.tsx:134:16	削除
+src\components\ui\date-field-with-actions.tsx:158:32	日付を選択
+src\components\ui\date-field-with-actions.tsx:181:88	日付選択
+src\components\ui\date-field-with-actions.tsx:199:15	今日の日付を設定
+src\components\ui\date-field-with-actions.tsx:211:17	日付をクリア
+src\components\ui\markdown-textarea.tsx:80:33	既存内容との差分を表示
+src\components\ui\markdown-textarea.tsx:80:49	変更がありません
+src\components\ui\markdown-textarea.tsx:84:73	(変更あり)
+src\components\ui\markdown-textarea.tsx:105:24	プレビュー
+src\components\ui\markdown-textarea.tsx:115:71	既存内容との差分
+src\components\ui\markdown-textarea.tsx:118:21	既存内容 (削除箇所を取消線)
+src\components\ui\markdown-textarea.tsx:123:21	変更後 (追加箇所を強調)
+src\components\ui\markdown-textarea.tsx:137:66	(プレビュー)
+src\components\ui\number-input.test.ts:5:6	min 以上の数値は文字列化して返す
+src\components\ui\number-input.test.ts:12:6	min 未満の値は空文字を返す（「0 が消えない」バグの解消）
+src\components\ui\number-input.test.ts:18:6	NaN / Infinity は空文字を返す
+src\components\ui\number-input.test.ts:24:6	min=0 の場合、0 は有効値として扱い "0" を返す
+src\components\ui\number-input.test.ts:32:6	有効な数値テキスト（>= min）はその値と文字列を返す
+src\components\ui\number-input.test.ts:38:6	空文字は無効値扱いで value=0・display=空 を返す
+src\components\ui\number-input.test.ts:42:6	非数値テキストは無効値扱いで value=0・display=空 を返す（要件: 非数値 → 0 に再描画）
+src\components\ui\number-input.test.ts:48:6	min 未満の値（0 以下）は無効値扱いで value=0・display=空 を返す（要件: 0 以下 → 0 に再描画）
+src\components\ui\number-input.test.ts:54:6	max を超える値は max に丸める
+src\components\ui\number-input.test.ts:59:6	前後空白つきテキストも Number() の慣習通り処理される
+src\components\ui\number-input.test.ts:63:6	min=0 の場合、0 は有効値として通る
+src\components\ui\resizable-columns.tsx:33:7	ResizableHead / ResetColumnsButton は ResizableColumnsProvider の内部で使用してください
+src\components\ui\resizable-columns.tsx:129:11	列幅をリセット
+src\components\ui\responsive-table.tsx:43:15	データがありません
+src\components\ui\searchable-select.tsx:123:20	候補を開く
+src\components\ui\searchable-select.tsx:143:64	上の入力欄で絞り込めます
+src\components\ui\use-dialog-fullscreen.tsx:32:34	通常表示に戻す
+src\components\ui\use-dialog-fullscreen.tsx:32:46	全画面表示にする
+src\components\ui\use-dialog-fullscreen.tsx:34:23	通常表示
+src\components\ui\use-dialog-fullscreen.tsx:34:32	全画面
