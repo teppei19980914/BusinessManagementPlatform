@@ -7,6 +7,8 @@ vi.mock('@/lib/db', () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      // PR #162: bulkUpdateMemosVisibilityFromCrossList が呼ぶ
+      updateMany: vi.fn(),
     },
     // PR #89: deleteMemo が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
@@ -21,6 +23,7 @@ import {
   createMemo,
   updateMemo,
   deleteMemo,
+  bulkUpdateMemosVisibilityFromCrossList,
 } from './memo.service';
 import { prisma } from '@/lib/db';
 
@@ -189,5 +192,45 @@ describe('deleteMemo', () => {
         data: { deletedAt: expect.any(Date) },
       }),
     );
+  });
+});
+
+// PR #162 Phase 2: 横断ビューからの一括 visibility 更新。Memo は private/public 値域。
+describe('bulkUpdateMemosVisibilityFromCrossList', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('ids 空 → updateMany 呼ばず 0 件', async () => {
+    const r = await bulkUpdateMemosVisibilityFromCrossList([], 'private', 'u-1');
+    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
+    expect(prisma.memo.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('userId 本人のみ updateMany される (他人混入は silent skip)', async () => {
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([
+      { id: 'memo-1', userId: 'u-1' },
+      { id: 'memo-2', userId: 'u-OTHER' },
+    ] as never);
+    vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateMemosVisibilityFromCrossList(['memo-1', 'memo-2'], 'private', 'u-1');
+
+    expect(r.updatedIds).toEqual(['memo-1']);
+    expect(r.skippedNotOwned).toBe(1);
+
+    const call = vi.mocked(prisma.memo.updateMany).mock.calls[0][0];
+    expect(call.data).toEqual({ visibility: 'private' });
+    // Memo は updatedBy 列を持たない (作成者本人のみ編集する設計、admin 特権なし)
+    expect(call.data).not.toHaveProperty('updatedBy');
+  });
+
+  it('Memo は visibility="public" も受理 (private→public の bulk 公開)', async () => {
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([
+      { id: 'memo-1', userId: 'u-1' },
+    ] as never);
+    vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateMemosVisibilityFromCrossList(['memo-1'], 'public', 'u-1');
+    expect(r.updatedIds).toEqual(['memo-1']);
+    expect(vi.mocked(prisma.memo.updateMany).mock.calls[0][0].data).toEqual({ visibility: 'public' });
   });
 });

@@ -103,12 +103,15 @@
 - [ ] `/api/risks` (全リスク) — skip: PR #C
 - [ ] `/api/risks/bulk` (PATCH 一括更新, PR #161) — skip: unit test (route.test.ts) で代替、E2E は `/risks` 画面操作経由で別 PR で追加予定
 - [ ] `/api/retrospectives` (全振り返り) — skip: PR #C
+- [ ] `/api/retrospectives/bulk` (PATCH 一括 visibility, PR #162) — skip: unit test (route.test.ts) で代替、E2E は別 PR
 - [ ] `/api/knowledge` (全ナレッジ) — skip: PR #C
 - [ ] `/api/knowledge/[knowledgeId]` — skip: PR #C
+- [ ] `/api/knowledge/bulk` (PATCH 一括 visibility, PR #162) — skip: unit test (route.test.ts) で代替、E2E は別 PR
 
 ### メモ
 - [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)
 - [x] `/api/memos/[id]` (PATCH/DELETE) — e2e/specs/04-personal-features.spec.ts (PR #94 / DELETE のみ UI 経由でカバー、PATCH は後続 PR)
+- [ ] `/api/memos/bulk` (PATCH 一括 visibility, PR #162) — skip: unit test (route.test.ts) で代替、E2E は別 PR
 
 ### 添付
 - [ ] `/api/attachments/*` — skip: 各親エンティティの spec 経由で間接カバー

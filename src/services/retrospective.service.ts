@@ -66,6 +66,8 @@ export type AllRetroDTO = Omit<RetroDTO, 'comments'> & {
   updatedAt: string;
   createdByName: string | null;
   updatedByName: string | null;
+  /** PR #162: 横断ビュー一括 visibility 編集の対象判定。viewer が作成者本人なら true。 */
+  viewerIsCreator: boolean;
 };
 
 /**
@@ -88,7 +90,7 @@ export async function listAllRetrospectivesForViewer(
   // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面から行う。
-  void viewerUserId; // 以前は自分の draft OR 条件に使っていた参照を整理 (PR #61)
+  // PR #162: viewerUserId は viewerIsCreator (一括編集対象判定) で使用するため void しない
   const retros = await prisma.retrospective.findMany({
     where: { deletedAt: null, visibility: 'public' },
     include: {
@@ -140,6 +142,7 @@ export async function listAllRetrospectivesForViewer(
         content: c.content,
         createdAt: c.createdAt.toISOString(),
       })),
+      viewerIsCreator: r.createdBy === viewerUserId,
     };
   });
 }
@@ -330,6 +333,38 @@ export async function deleteRetrospective(
       data: { deletedAt: now },
     }),
   ]);
+}
+
+/**
+ * 「全振り返り」横断ビューからの **visibility 一括更新** (PR #162 / Phase 2)。
+ * PR #161 (Risk/Issue) と同じ二重防御パターン: per-row createdBy 判定 + silent skip。
+ * admin であっても他人のレコードは更新しない (delete のみ admin 特権の既存方針と整合)。
+ */
+export async function bulkUpdateRetrospectivesVisibilityFromCrossList(
+  ids: string[],
+  visibility: 'draft' | 'public',
+  viewerUserId: string,
+): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
+  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+
+  const targets = await prisma.retrospective.findMany({
+    where: { id: { in: ids }, deletedAt: null },
+    select: { id: true, createdBy: true },
+  });
+  const skippedNotFound = ids.length - targets.length;
+  const ownedIds = targets.filter((t) => t.createdBy === viewerUserId).map((t) => t.id);
+  const skippedNotOwned = targets.length - ownedIds.length;
+
+  if (ownedIds.length === 0) {
+    return { updatedIds: [], skippedNotOwned, skippedNotFound };
+  }
+
+  await prisma.retrospective.updateMany({
+    where: { id: { in: ownedIds } },
+    data: { visibility, updatedBy: viewerUserId },
+  });
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
 }
 
 /**

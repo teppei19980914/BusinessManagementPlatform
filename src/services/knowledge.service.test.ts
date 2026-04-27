@@ -8,6 +8,8 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
       count: vi.fn(),
+      // PR #162: bulkUpdateKnowledgeVisibilityFromCrossList が呼ぶ
+      updateMany: vi.fn(),
     },
     projectMember: { findMany: vi.fn() },
     // PR #89: deleteKnowledge が attachment.updateMany を $transaction 内で呼ぶ
@@ -24,6 +26,7 @@ import {
   createKnowledge,
   updateKnowledge,
   deleteKnowledge,
+  bulkUpdateKnowledgeVisibilityFromCrossList,
 } from './knowledge.service';
 import { prisma } from '@/lib/db';
 
@@ -327,5 +330,33 @@ describe('updateKnowledge / deleteKnowledge', () => {
   it('deleteKnowledge: 非 admin の第三者は FORBIDDEN', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     await expect(deleteKnowledge('k-1', 'u-other', 'general')).rejects.toThrow('FORBIDDEN');
+  });
+});
+
+// PR #162 Phase 2: 横断ビューからの一括 visibility 更新。PR #161 と同パターン。
+describe('bulkUpdateKnowledgeVisibilityFromCrossList', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('ids 空 → updateMany 呼ばず 0 件', async () => {
+    const r = await bulkUpdateKnowledgeVisibilityFromCrossList([], 'draft', 'u-1');
+    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
+    expect(prisma.knowledge.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('createdBy 本人のみ updateMany される (他人混入は silent skip)', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      { id: 'k-1', createdBy: 'u-1' },
+      { id: 'k-2', createdBy: 'u-OTHER' },
+    ] as never);
+    vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateKnowledgeVisibilityFromCrossList(['k-1', 'k-2'], 'draft', 'u-1');
+
+    expect(r.updatedIds).toEqual(['k-1']);
+    expect(r.skippedNotOwned).toBe(1);
+
+    const call = vi.mocked(prisma.knowledge.updateMany).mock.calls[0][0];
+    // updateMany は scalar updatedBy のみ受理する (relation connect 構文不可)
+    expect(call.data).toEqual({ visibility: 'draft', updatedBy: 'u-1' });
   });
 });

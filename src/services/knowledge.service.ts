@@ -174,6 +174,8 @@ export type AllKnowledgeDTO = KnowledgeDTO & {
   canAccessProject: boolean;
   linkedProjectCount: number;
   updatedByName: string | null;
+  /** PR #162: 横断ビュー一括 visibility 編集の対象判定。viewer が作成者本人なら true。 */
+  viewerIsCreator: boolean;
 };
 
 /**
@@ -231,11 +233,13 @@ export async function listAllKnowledgeForViewer(
       projectDeleted: isAdmin ? projectDeleted : false,
       canAccessProject: isMember && !projectDeleted && primaryProjectId != null,
       linkedProjectCount: k.knowledgeProjects.length,
-      // fix/cross-list-non-member-columns (2026-04-27): 横断「全ナレッジ」は visibility='public'
+      // fix/cross-list-non-member-columns (PR #157, 2026-04-27): 横断「全ナレッジ」は visibility='public'
       // のものだけ表示しているため、作成者・更新者の氏名は公開してナレッジ共有を促進する。
       // projectName は機微情報扱いを維持 (上記 isMember gate)。
       updatedByName: k.updater?.name ?? null,
       creatorName: k.creator?.name,
+      // PR #162: 横断ビュー一括 visibility 編集の対象判定。viewer が作成者本人なら true。
+      viewerIsCreator: k.createdBy === viewerUserId,
     };
   });
 }
@@ -415,4 +419,38 @@ export async function deleteKnowledge(
       data: { deletedAt: now },
     }),
   ]);
+}
+
+/**
+ * 「全ナレッジ」横断ビューからの **visibility 一括更新** (PR #162 / Phase 2)。
+ * PR #161 (Risk/Issue) と同じ二重防御: per-row createdBy 判定 + silent skip。
+ * admin であっても他人のナレッジは更新しない。
+ */
+export async function bulkUpdateKnowledgeVisibilityFromCrossList(
+  ids: string[],
+  visibility: 'draft' | 'public',
+  viewerUserId: string,
+): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
+  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+
+  const targets = await prisma.knowledge.findMany({
+    where: { id: { in: ids }, deletedAt: null },
+    select: { id: true, createdBy: true },
+  });
+  const skippedNotFound = ids.length - targets.length;
+  const ownedIds = targets.filter((t) => t.createdBy === viewerUserId).map((t) => t.id);
+  const skippedNotOwned = targets.length - ownedIds.length;
+
+  if (ownedIds.length === 0) {
+    return { updatedIds: [], skippedNotOwned, skippedNotFound };
+  }
+
+  // updateMany は relation connect 構文を受け付けないため scalar `updatedBy` を直接セットする
+  // (単発 updateKnowledge の `updater: { connect }` 経路とは別経路、§5.21 と同方針)
+  await prisma.knowledge.updateMany({
+    where: { id: { in: ownedIds } },
+    data: { visibility, updatedBy: viewerUserId },
+  });
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
 }
