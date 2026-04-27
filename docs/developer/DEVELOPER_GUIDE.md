@@ -3351,6 +3351,25 @@ setError(t('temporaryLock', { unlockAt: formatDateTimeFull(unlockAt) }));
 - **理由**: 翻訳者が文型を入れ替えやすい (英語と日本語で語順が異なる)、テスト時に
   プレースホルダ部分を動的に置換しやすい
 
+#### 罠 4: section 間でキーを重複定義しない (単一源泉性) — PR #170 hotfix
+
+`field.newPassword` / `field.newPasswordConfirm` が既に存在するのに、認証画面用に
+`auth.newPassword` / `auth.newPasswordConfirm` を **同じ意味で重複追加** してしまった。
+Stop hook §6 (i18n key 単一源泉チェック) で検出。
+
+- **対策**: 既存 `field.*` / `action.*` / `message.*` セクションに同名キーがある場合、
+  そちらを再利用する。複数 section から取りたい場合は **`useTranslations` を複数取得**:
+  ```tsx
+  const t = useTranslations('auth');
+  const tField = useTranslations('field');
+  // ...
+  <Label>{tField('newPassword')}</Label>
+  ```
+- **追加前 grep**: 新規キー追加時は `grep -n '"<keyName>"' src/i18n/messages/ja.json` で
+  別 section に同名が無いか確認 (キー名衝突 ≒ 意味重複の可能性大)
+- **判断基準**: 画面横断で再利用される **フォーム項目名** は `field.*`、**ボタン文言** は
+  `action.*`、**メッセージ** は `message.*`、画面固有のヒント・タイトルは `<screen>.*`
+
 #### Phase C 各 PR の進め方 (PR-1 認証系で確立)
 
 1. **対象ファイル特定**: `grep -E "^src.app..auth." docs/developer/i18n-extraction-2026-04-27.txt`

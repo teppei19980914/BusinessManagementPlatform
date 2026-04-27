@@ -10,6 +10,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 
 export default function ResetPasswordPage() {
   const t = useTranslations('auth');
+  // PR #170 hotfix: 共通フィールド名 (newPassword / newPasswordConfirm) は field scope を使う。
+  // auth scope に同名キーを重複定義するのは i18n キーの単一源泉性を破る (Stop hook §10.10.1 で検出)。
+  const tField = useTranslations('field');
   const router = useRouter();
   const [step, setStep] = useState<'verify' | 'reset'>('verify');
   const [resetToken, setResetToken] = useState('');
@@ -116,7 +119,7 @@ export default function ResetPasswordPage() {
             <form onSubmit={handleReset} className="space-y-4">
               {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
               <div className="space-y-2">
-                <Label>{t('newPassword')}</Label>
+                <Label>{tField('newPassword')}</Label>
                 <Input
                   type="password"
                   value={resetForm.newPassword}
@@ -126,7 +129,7 @@ export default function ResetPasswordPage() {
                 <p className="text-xs text-muted-foreground">{t('passwordHint')}</p>
               </div>
               <div className="space-y-2">
-                <Label>{t('newPasswordConfirm')}</Label>
+                <Label>{tField('newPasswordConfirm')}</Label>
                 <Input
                   type="password"
                   value={resetForm.confirmPassword}
