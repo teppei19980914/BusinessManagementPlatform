@@ -3315,6 +3315,70 @@ export const SELECTABLE_LOCALES = {
 `Report coverage` も連鎖 fail (§9.5.1 の PR #115 知見と同パターン)。
 視覚回帰 fail は独立だが、UI 変更を伴う PR では必ず同時に発生する。
 
+### 10.10.1 i18n Phase C 翻訳実施時の罠と運用知見 (PR #170 / feat/i18n-phase-c-1-auth で得た知見)
+
+#### 罠 1: 抽出スクリプトはコメント内日本語も拾う
+
+`scripts/i18n-extract-hardcoded-ja.ts` は **シングル/ダブルクオート + JSX text node** を
+網羅抽出する。一方、コメント (`// ...` / `/* ... */`) 内の日本語は事前に `stripComments`
+で除去するが、**抽出後に grep で確認するときはコメントが含まれる**。
+
+- **対策**: 翻訳完了確認時は抽出スクリプト経由で 0 件確認 (コメント除去済) を採用、
+  生 grep `[ぁ-ゖァ-ヺ一-鿿]` ではなく
+  `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts | grep <folder>` で確認する
+
+#### 罠 2: useEffect の依存配列に t() を含める必要がある
+
+`useTranslations` で取得した `t` は **render ごとに新しい識別子** になる。
+useEffect 内で `t('xxx')` を呼ぶ場合、`t` を依存配列に含めないと React Hook の
+exhaustive-deps lint warning が出る。
+
+- **対策**: `useEffect(() => { setError(t('foo')); }, [token, t]);` のように `t` を含める。
+  next-intl の `useTranslations` は同一キーで安定した参照を返すため、過剰な再 render は起きない
+
+#### 罠 3: ICU MessageFormat の動的値は文字列連結よりも安全
+
+旧:
+```ts
+setError(`ログイン失敗が続いたため${formatDateTimeFull(unlockAt)} 以降に...`);
+```
+
+新:
+```ts
+setError(t('temporaryLock', { unlockAt: formatDateTimeFull(unlockAt) }));
+```
+
+- **理由**: 翻訳者が文型を入れ替えやすい (英語と日本語で語順が異なる)、テスト時に
+  プレースホルダ部分を動的に置換しやすい
+
+#### Phase C 各 PR の進め方 (PR-1 認証系で確立)
+
+1. **対象ファイル特定**: `grep -E "^src.app..auth." docs/developer/i18n-extraction-2026-04-27.txt`
+   で機能領域内のハードコード一覧を抽出
+2. **キー設計**: 画面横断で再利用可能なキー (`email`, `password` 等) は共通化、
+   画面固有のメッセージは画面プレフィックス (`reset`, `setup` 等) で命名
+3. **両 JSON 同時更新**: ja.json と en-US.json に必ず同じキーを追加 (片方欠落で
+   フォールバック)
+4. **`useTranslations('auth')` を import**: 各 .tsx の関数本体先頭で `const t = useTranslations('section')` を取得
+5. **置換**: ハードコード文字列を `t('key')` に。三項演算子の両分岐 (例: `step === 'verify' ? 'A' : 'B'`)
+   も忘れず両方置換
+6. **進捗確認**: PR 後に抽出スクリプト再実行し、対象フォルダのヒット数が 0 になったことを確認
+7. **検証**: `pnpm lint` / `pnpm test` / `pnpm build` 全 pass
+
+#### Phase C の stacked PR 運用
+
+各 Phase C-N は **前段 (Phase B = PR #169) または前 Phase C にスタック** する。
+- **base ブランチ指定**: `gh pr create --base feat/i18n-foundation` のように直前のブランチを base に
+- **マージ順序**: PR #169 (Phase B) → PR #170 (C-1 認証) → PR #171 (C-2) ... の順
+- **base 切替**: 上流 PR がマージされたら、下流 PR の base を `main` に切り替えてマージ
+
+#### 関連
+
+- §10.10 (元規約)
+- §11.1 T-06 (Phase C 進捗管理)
+- `scripts/i18n-extract-hardcoded-ja.ts`
+- `docs/developer/i18n-extraction-2026-04-27.txt` (Phase B 起点の抽出結果)
+
 ### 10.10 i18n 翻訳作業の規約 (PR #169 / feat/i18n-foundation)
 
 #### 全体像 (3 段階の現在地)
