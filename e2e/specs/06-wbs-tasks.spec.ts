@@ -85,6 +85,29 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
     await snapshotStep(page, 'wbs-empty');
   });
 
+  /**
+   * fix/wbs-filter-regression: PR #128a-2 のモバイル対応で `<details className="md:open:">`
+   * という壊れた Tailwind 記述を入れたため、PC でフィルタ (担当者 + 状況) が常時折りたたまれて
+   * 表示されない degression が発生していた。再発防止として PC viewport で
+   * フィルタ要素の可視性をチェックする回帰テストを追加。
+   *
+   * チェック内容:
+   *   - 担当者ラベルの MultiSelectFilter ボタンが PC viewport で見える
+   *   - 状況ラベルの MultiSelectFilter ボタンが PC viewport で見える
+   *
+   * モバイル (chromium-mobile) では本 spec が testIgnore 対象 (E2E_LESSONS_LEARNED §4.37)
+   * のため PC のみで実行される。
+   */
+  test('WBS フィルタ (担当者 / 状況) が PC viewport で常時表示される (regression: PR #128a-2 で破壊された PC 表示)', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}/tasks`);
+    await page.waitForLoadState('networkidle');
+    // MultiSelectFilter は <button>{label}: ...</button> を render するため、
+    // ボタンの accessible name を「担当者:」「状況:」prefix で部分一致させる
+    await expect(page.getByRole('button', { name: /^担当者:/ })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /^状況:/ })).toBeVisible({ timeout: 10_000 });
+  });
+
   test('Work Package を API で作成 → UI ツリーに表示される', async () => {
     const page = sharedPage;
     const res = await page.request.post(`/api/projects/${projectId}/tasks`, {

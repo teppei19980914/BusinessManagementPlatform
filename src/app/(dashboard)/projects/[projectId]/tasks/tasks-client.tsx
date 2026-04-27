@@ -560,6 +560,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const [error, setError] = useState('');
   // feat/gantt-tab-restructure (PR-C item 6): WBS タブ内で Gantt を切り替え表示する state
   const [showGantt, setShowGantt] = useState(false);
+  // fix/wbs-filter-regression: モバイル時のフィルタ折りたたみ state (md+ では常時開)
+  const [isFilterMobileOpen, setIsFilterMobileOpen] = useState(false);
 
   // 親から渡された遅延フェッチ再取得ハンドラ。未指定時は router.refresh() にフォールバック。
   const reload = useCallback(async () => {
@@ -1312,20 +1314,31 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
       {/*
         フィルタ (担当者 + 状況、PR #61)
-        PR #128a-2: モバイル (md 未満) では details/summary で折りたたみ可能にし、
-        画面スペースを節約。PC (md+) は従来通り常時展開。
+        モバイル (md 未満) では React state で折りたたみ可能、PC (md+) では常時展開。
+        旧実装 (PR #128a-2) で `<details className="md:open:">` という壊れた Tailwind
+        ユーティリティ (md:open: は存在しない) で「PC 常時展開」を試みていたため、
+        実際には PC でもフィルタが折りたたまれて表示されない degression が発生していた。
+        fix/wbs-filter-regression: state-driven 折りたたみ + `md:!block` で PC 常時展開を確定。
       */}
-      <details className="group md:open:" open={false}>
-        <summary className="flex cursor-pointer items-center gap-2 rounded-md border border-input bg-card px-3 py-2 text-sm md:hidden">
-          <span className="flex-1 font-medium">フィルタ / ソート</span>
-          <span className="text-xs text-muted-foreground group-open:hidden">タップで展開</span>
-          <span className="text-xs text-muted-foreground hidden group-open:inline">タップで折りたたみ</span>
-        </summary>
-        {/*
-          md+ では details 挙動ではなく常時表示にしたいので、展開状態に関わらず md:flex で上書き。
-          `md:!block` で display を再付与し、summary は md+ で非表示にする。
-        */}
-        <div className="mt-2 flex flex-wrap items-center gap-2 md:mt-0 md:flex">
+      <div data-testid="wbs-filter-container">
+        <button
+          type="button"
+          className="flex w-full cursor-pointer items-center gap-2 rounded-md border border-input bg-card px-3 py-2 text-sm md:hidden"
+          onClick={() => setIsFilterMobileOpen((v) => !v)}
+          aria-expanded={isFilterMobileOpen}
+        >
+          <span className="flex-1 text-left font-medium">フィルタ / ソート</span>
+          <span className="text-xs text-muted-foreground">
+            {isFilterMobileOpen ? 'タップで折りたたみ' : 'タップで展開'}
+          </span>
+        </button>
+        {/* mobile では state、md+ では常時 flex 表示 (md:!flex で強制上書き) */}
+        <div
+          className={`mt-2 flex-wrap items-center gap-2 md:mt-0 md:!flex ${
+            isFilterMobileOpen ? 'flex' : 'hidden'
+          }`}
+          data-testid="wbs-filter-controls"
+        >
           <MultiSelectFilter
             label="担当者"
             options={[
@@ -1359,7 +1372,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             </Button>
           )}
         </div>
-      </details>
+      </div>
 
       {/* PR #128a-2: 一括操作バーはモバイル未提供 (md:flex で PC のみ表示)。
           モバイルではそもそもチェックボックス列を非表示にしているため、ここに来ても操作できない。 */}
