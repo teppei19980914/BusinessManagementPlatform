@@ -53,11 +53,23 @@ import {
 } from '@/components/ui/resizable-columns';
 // 2026-04-24: 全ナレッジから admin が管理削除するボタン
 import { AdminKnowledgeDeleteButton } from './admin-delete-button';
+// PR #162: 横断ビュー一括 visibility 編集ツールバー
+import {
+  CrossListBulkVisibilityToolbar,
+  EMPTY_FILTER,
+  isCrossListFilterActive,
+  type CrossListFilterState,
+} from '@/components/cross-list-bulk-visibility-toolbar';
 
 type Props = {
   initialKnowledge: AllKnowledgeDTO[];
   systemRole: string;
 };
+
+const VISIBILITY_OPTIONS = [
+  { value: 'draft', label: '下書き (公開取り下げ)' },
+  { value: 'public', label: '公開' },
+];
 
 /**
  * 全ナレッジ画面 (Req 4 列構成: PR #55)。
@@ -79,17 +91,43 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
   // 2026-04-24: 全ナレッジは全員 read-only。行クリックで参照のみ (編集はプロジェクト内一覧から)。
   const [editingKnowledge, setEditingKnowledge] = useState<AllKnowledgeDTO | null>(null);
 
+  // PR #162: 横断ビュー一括 visibility 編集
+  // bulk toolbar の keyword + mineOnly が新規フィルター。typeFilter は既存からの引き継ぎ。
+  const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const filterApplied = isCrossListFilterActive(bulkFilter) || Boolean(typeFilter);
+
   // クライアント側フィルタ (initialKnowledge をそのまま絞り込み)
   const filtered = initialKnowledge.filter((k) => {
     if (typeFilter && k.knowledgeType !== typeFilter) return false;
-    if (keyword) {
-      const kw = keyword.toLowerCase();
+    if (bulkFilter.mineOnly && !k.viewerIsCreator) return false;
+    // 旧 keyword input と toolbar の keyword は両方使える (どちらかにヒットすれば表示)
+    const kws = [keyword, bulkFilter.keyword].filter(Boolean).map((s) => s.toLowerCase());
+    for (const kw of kws) {
       const hit = [k.title, k.background, k.content, k.result]
         .some((v) => v.toLowerCase().includes(kw));
       if (!hit) return false;
     }
     return true;
   });
+
+  const selectableIds = filterApplied
+    ? filtered.filter((k) => k.viewerIsCreator).map((k) => k.id)
+    : [];
+  const allSelectableSelected
+    = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+
+  function toggleOne(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelectedIds(allSelectableSelected ? new Set() : new Set(selectableIds));
+  }
 
   // PR #67: 添付列用のバッチ取得 (filtered 変動で再フェッチされる)
   const attachmentsByEntity = useBatchAttachments(
@@ -115,12 +153,12 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
             if (e.key === 'Enter') router.refresh();
           }}
         />
-        <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v ?? '')}>
+        <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter((v ?? '__all__') === '__all__' ? '' : (v ?? ''))}>
           <SelectTrigger className="w-40">
             <SelectValue placeholder="全種別" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">全種別</SelectItem>
+            <SelectItem value="__all__">全種別</SelectItem>
             {Object.entries(KNOWLEDGE_TYPES).map(([key, label]) => (
               <SelectItem key={key} value={key}>
                 {label}
@@ -130,6 +168,18 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
         </Select>
       </div>
 
+      {/* PR #162: 横断ビュー一括 visibility 編集 (フィルター必須) */}
+      <CrossListBulkVisibilityToolbar
+        endpointPath="knowledge"
+        filter={bulkFilter}
+        onFilterChange={setBulkFilter}
+        selectedIds={selectedIds}
+        onSelectionClear={() => setSelectedIds(new Set())}
+        visibilityOptions={VISIBILITY_OPTIONS}
+        entityLabel="ナレッジ"
+        onApplied={async () => { router.refresh(); }}
+      />
+
       {/* 一覧 (Req 4 列構成) */}
       <ResizableColumnsProvider tableKey="all-knowledge">
         <div className="flex justify-end pb-2">
@@ -138,6 +188,18 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
       <Table>
         <TableHeader>
           <TableRow>
+            {filterApplied && (
+              <ResizableHead columnKey="select" defaultWidth={36}>
+                <input
+                  type="checkbox"
+                  aria-label="表示中の編集可能行を全選択"
+                  checked={allSelectableSelected}
+                  disabled={selectableIds.length === 0}
+                  onChange={toggleAll}
+                  className="rounded"
+                />
+              </ResizableHead>
+            )}
             <ResizableHead columnKey="project" defaultWidth={140}>プロジェクト</ResizableHead>
             <ResizableHead columnKey="type" defaultWidth={100}>種別</ResizableHead>
             <ResizableHead columnKey="background" defaultWidth={200}>背景</ResizableHead>
@@ -160,6 +222,21 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
               className="cursor-pointer hover:bg-muted"
               onClick={() => setEditingKnowledge(k)}
             >
+              {filterApplied && (
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  {k.viewerIsCreator ? (
+                    <input
+                      type="checkbox"
+                      aria-label={`${k.title} を一括編集対象に追加`}
+                      checked={selectedIds.has(k.id)}
+                      onChange={() => toggleOne(k.id)}
+                      className="rounded"
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground" title="自分が作成したものではないため一括編集できません">-</span>
+                  )}
+                </TableCell>
+              )}
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {k.projectName == null ? (
                   <span className="text-muted-foreground">
@@ -219,8 +296,11 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
           ))}
           {filtered.length === 0 && (
             <TableRow>
-              {/* PR #67: 添付列 +1、2026-04-24: admin 時のみ +1 */}
-              <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-muted-foreground">
+              {/* PR #67: 添付列 +1、2026-04-24: admin 時のみ +1、PR #162: filterApplied 時 select 列 +1 */}
+              <TableCell
+                colSpan={(isAdmin ? 11 : 10) + (filterApplied ? 1 : 0)}
+                className="py-8 text-center text-muted-foreground"
+              >
                 ナレッジがありません
               </TableCell>
             </TableRow>

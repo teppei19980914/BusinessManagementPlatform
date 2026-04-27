@@ -8,13 +8,16 @@
  *   PMO や次担当者が「過去案件で何が起きたか」を一覧で確認できるナレッジ資産ビュー。
  *
  * 行クリック動作:
- *   メンバーシップがあるプロジェクトの振り返りなら編集ダイアログ、
- *   非メンバーなら参照専用 (read-only) ダイアログを開く (PR #61)。
+ *   常に **read-only ダイアログ** で詳細を開く (編集はプロジェクト個別画面経由)。
  *
- * 関連: SPECIFICATION.md (全振り返り画面)
+ * PR #162 (Phase 2) 追加:
+ *   - フィルター UI (キーワード / 自分作成のみ) と一括 visibility 編集を CrossListBulkVisibilityToolbar 経由で提供
+ *   - フィルター適用時のみ checkbox 列を表示し、viewerIsCreator=true の行のみ編集可
+ *
+ * 関連: SPECIFICATION.md (全振り返り画面)、DEVELOPER_GUIDE §5.21
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -23,7 +26,6 @@ import {
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
 import type { AllRetroDTO } from '@/services/retrospective.service';
 import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
-// PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
@@ -32,11 +34,18 @@ import {
   ResizableHead,
   ResetColumnsButton,
 } from '@/components/ui/resizable-columns';
+import {
+  CrossListBulkVisibilityToolbar,
+  EMPTY_FILTER,
+  isCrossListFilterActive,
+  type CrossListFilterState,
+} from '@/components/cross-list-bulk-visibility-toolbar';
 
-/**
- * 全振り返りテーブル (2026-04-24: 全員読み取り専用に変更)。
- * 編集はプロジェクト内「振り返り一覧」から作成者本人のみ。admin は管理削除のみ可。
- */
+const VISIBILITY_OPTIONS = [
+  { value: 'draft', label: '下書き (公開取り下げ)' },
+  { value: 'public', label: '公開' },
+];
+
 export function AllRetrospectivesTable({
   retros,
   isAdmin,
@@ -45,23 +54,83 @@ export function AllRetrospectivesTable({
   isAdmin: boolean;
 }) {
   const router = useRouter();
-  // PR #119: session 連携フォーマッタ
   const { formatDateTime } = useFormatters();
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
-  // PR #67: 添付列用のバッチ取得
+
+  // PR #162: フィルター + 一括選択
+  const [filter, setFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const filterApplied = isCrossListFilterActive(filter);
+
+  const filteredRetros = useMemo(() => {
+    let xs = retros;
+    if (filter.mineOnly) xs = xs.filter((r) => r.viewerIsCreator);
+    if (filter.keyword.trim()) {
+      const kw = filter.keyword.trim().toLowerCase();
+      xs = xs.filter((r) =>
+        (r.planSummary ?? '').toLowerCase().includes(kw)
+        || (r.actualSummary ?? '').toLowerCase().includes(kw)
+        || (r.goodPoints ?? '').toLowerCase().includes(kw)
+        || (r.improvements ?? '').toLowerCase().includes(kw),
+      );
+    }
+    return xs;
+  }, [retros, filter]);
+
   const attachmentsByEntity = useBatchAttachments(
     'retrospective',
-    retros.map((r) => r.id),
+    filteredRetros.map((r) => r.id),
   );
+
+  const selectableIds = filterApplied
+    ? filteredRetros.filter((r) => r.viewerIsCreator).map((r) => r.id)
+    : [];
+  const allSelectableSelected
+    = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+
+  function toggleOne(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelectedIds(allSelectableSelected ? new Set() : new Set(selectableIds));
+  }
 
   return (
     <ResizableColumnsProvider tableKey="all-retrospectives">
+      <CrossListBulkVisibilityToolbar
+        endpointPath="retrospectives"
+        filter={filter}
+        onFilterChange={setFilter}
+        selectedIds={selectedIds}
+        onSelectionClear={() => setSelectedIds(new Set())}
+        visibilityOptions={VISIBILITY_OPTIONS}
+        entityLabel="振り返り"
+        onApplied={async () => { router.refresh(); }}
+      />
+
       <div className="flex justify-end pb-2">
         <ResetColumnsButton />
       </div>
       <Table>
         <TableHeader>
           <TableRow>
+            {filterApplied && (
+              <ResizableHead columnKey="select" defaultWidth={36}>
+                <input
+                  type="checkbox"
+                  aria-label="表示中の編集可能行を全選択"
+                  checked={allSelectableSelected}
+                  disabled={selectableIds.length === 0}
+                  onChange={toggleAll}
+                  className="rounded"
+                />
+              </ResizableHead>
+            )}
             <ResizableHead columnKey="project" defaultWidth={140}>プロジェクト</ResizableHead>
             <ResizableHead columnKey="conductedDate" defaultWidth={110}>実施日</ResizableHead>
             <ResizableHead columnKey="planSummary" defaultWidth={180}>計画総括</ResizableHead>
@@ -72,18 +141,32 @@ export function AllRetrospectivesTable({
             <ResizableHead columnKey="createdBy" defaultWidth={120}>作成者</ResizableHead>
             <ResizableHead columnKey="updatedAt" defaultWidth={130}>更新日時</ResizableHead>
             <ResizableHead columnKey="updatedBy" defaultWidth={120}>更新者</ResizableHead>
-            {/* PR #67: 添付リンク列 */}
             <ResizableHead columnKey="attachments" defaultWidth={200}>添付</ResizableHead>
             {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>操作</ResizableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {retros.map((r) => (
+          {filteredRetros.map((r) => (
             <TableRow
               key={r.id}
               className="cursor-pointer hover:bg-muted"
               onClick={() => setEditingRetro(r)}
             >
+              {filterApplied && (
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  {r.viewerIsCreator ? (
+                    <input
+                      type="checkbox"
+                      aria-label={`${r.conductedDate} を一括編集対象に追加`}
+                      checked={selectedIds.has(r.id)}
+                      onChange={() => toggleOne(r.id)}
+                      className="rounded"
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground" title="自分が作成したものではないため一括編集できません">-</span>
+                  )}
+                </TableCell>
+              )}
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                 {r.projectName == null ? (
                   <span className="text-muted-foreground">（非公開）</span>
@@ -111,7 +194,6 @@ export function AllRetrospectivesTable({
               <TableCell className="text-sm text-muted-foreground">
                 {r.updatedByName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
-              {/* PR #67: 添付リンク chips */}
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />
               </TableCell>
@@ -126,10 +208,12 @@ export function AllRetrospectivesTable({
               )}
             </TableRow>
           ))}
-          {retros.length === 0 && (
+          {filteredRetros.length === 0 && (
             <TableRow>
-              {/* PR #67: 添付列を +1 */}
-              <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-muted-foreground">
+              <TableCell
+                colSpan={(isAdmin ? 12 : 11) + (filterApplied ? 1 : 0)}
+                className="py-8 text-center text-muted-foreground"
+              >
                 振り返りがありません
               </TableCell>
             </TableRow>
@@ -142,7 +226,6 @@ export function AllRetrospectivesTable({
         open={editingRetro != null}
         onOpenChange={(v) => { if (!v) setEditingRetro(null); }}
         onSaved={async () => { router.refresh(); }}
-        // 2026-04-24: 全振り返りは編集不可 (読み取り専用)。編集は ○○一覧 経由。
         readOnly={true}
       />
     </ResizableColumnsProvider>

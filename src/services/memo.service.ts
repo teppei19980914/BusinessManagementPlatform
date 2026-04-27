@@ -140,6 +140,38 @@ export async function updateMemo(
   return toDTO(updated, userId);
 }
 
+/**
+ * 「全メモ」横断ビューからの **visibility 一括更新** (PR #162 / Phase 2)。
+ * Memo は visibility 値域が `private` / `public`。
+ * 編集権限は元から作成者本人のみ (admin 特権なし) なので per-row userId 判定で同じ。
+ */
+export async function bulkUpdateMemosVisibilityFromCrossList(
+  ids: string[],
+  visibility: 'private' | 'public',
+  viewerUserId: string,
+): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
+  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+
+  const targets = await prisma.memo.findMany({
+    where: { id: { in: ids }, deletedAt: null },
+    select: { id: true, userId: true },
+  });
+  const skippedNotFound = ids.length - targets.length;
+  const ownedIds = targets.filter((t) => t.userId === viewerUserId).map((t) => t.id);
+  const skippedNotOwned = targets.length - ownedIds.length;
+
+  if (ownedIds.length === 0) {
+    return { updatedIds: [], skippedNotOwned, skippedNotFound };
+  }
+
+  await prisma.memo.updateMany({
+    where: { id: { in: ownedIds } },
+    data: { visibility },
+  });
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
+}
+
 export async function deleteMemo(memoId: string, userId: string): Promise<boolean> {
   const existing = await prisma.memo.findFirst({
     where: { id: memoId, deletedAt: null },

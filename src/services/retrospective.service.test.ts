@@ -7,6 +7,8 @@ vi.mock('@/lib/db', () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      // PR #162: bulkUpdateRetrospectivesVisibilityFromCrossList が呼ぶ
+      updateMany: vi.fn(),
     },
     retrospectiveComment: { create: vi.fn() },
     projectMember: { findMany: vi.fn() },
@@ -26,6 +28,7 @@ import {
   deleteRetrospective,
   getRetrospective,
   addComment,
+  bulkUpdateRetrospectivesVisibilityFromCrossList,
 } from './retrospective.service';
 import { prisma } from '@/lib/db';
 
@@ -339,5 +342,60 @@ describe('getRetrospective / addComment', () => {
     expect(prisma.retrospectiveComment.create).toHaveBeenCalledWith({
       data: { retrospectiveId: 'ret-1', userId: 'u-1', content: 'hello' },
     });
+  });
+});
+
+// PR #162 Phase 2: 横断ビューからの一括 visibility 更新。PR #161 と同パターン (per-row 認可 + silent skip)。
+describe('bulkUpdateRetrospectivesVisibilityFromCrossList', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('ids が空配列なら updateMany を呼ばずに 0 件で返す', async () => {
+    const r = await bulkUpdateRetrospectivesVisibilityFromCrossList([], 'draft', 'u-1');
+    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
+    expect(prisma.retrospective.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('createdBy 本人のレコードのみ updateMany される (他人混入は silent skip)', async () => {
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      { id: 'ret-1', createdBy: 'u-1' },
+      { id: 'ret-2', createdBy: 'u-OTHER' }, // 他人
+      { id: 'ret-3', createdBy: 'u-1' },
+    ] as never);
+    vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 2 } as never);
+
+    const r = await bulkUpdateRetrospectivesVisibilityFromCrossList(
+      ['ret-1', 'ret-2', 'ret-3'],
+      'draft',
+      'u-1',
+    );
+
+    expect(r.updatedIds).toEqual(['ret-1', 'ret-3']);
+    expect(r.skippedNotOwned).toBe(1);
+    expect(r.skippedNotFound).toBe(0);
+
+    const call = vi.mocked(prisma.retrospective.updateMany).mock.calls[0][0];
+    expect(call.where).toEqual({ id: { in: ['ret-1', 'ret-3'] } });
+    expect(call.data).toEqual({ visibility: 'draft', updatedBy: 'u-1' });
+  });
+
+  it('存在しない id は skippedNotFound にカウント', async () => {
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      { id: 'ret-1', createdBy: 'u-1' },
+    ] as never);
+    vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateRetrospectivesVisibilityFromCrossList(['ret-1', 'ret-MISSING'], 'public', 'u-1');
+    expect(r.skippedNotFound).toBe(1);
+    expect(r.updatedIds).toEqual(['ret-1']);
+  });
+
+  it('全件他人なら updateMany を呼ばない', async () => {
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      { id: 'ret-1', createdBy: 'u-OTHER' },
+    ] as never);
+    const r = await bulkUpdateRetrospectivesVisibilityFromCrossList(['ret-1'], 'draft', 'u-1');
+    expect(r.updatedIds).toEqual([]);
+    expect(r.skippedNotOwned).toBe(1);
+    expect(prisma.retrospective.updateMany).not.toHaveBeenCalled();
   });
 });
