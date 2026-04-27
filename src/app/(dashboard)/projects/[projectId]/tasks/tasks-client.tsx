@@ -57,6 +57,8 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_STATUSES, WBS_TYPES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+// feat/wbs-overwrite-import: WBS 上書きインポート (Sync by ID) ダイアログ
+import { WbsSyncImportDialog } from '@/components/dialogs/wbs-sync-import-dialog';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -148,6 +150,8 @@ type TaskTreeNodeProps = {
   expandedTaskIds: Set<string>;
   /** PR #61: WP 展開トグル。子に伝播する */
   onToggleExpanded: (taskId: string) => void;
+  /** feat/wbs-overwrite-import: ID 列を表示するか (CSV 整合確認用) */
+  showIdColumn: boolean;
 };
 
 function TaskTreeNodeImpl({
@@ -167,6 +171,7 @@ function TaskTreeNodeImpl({
   onEditClick,
   expandedTaskIds,
   onToggleExpanded,
+  showIdColumn,
 }: TaskTreeNodeProps) {
   // 表示値は task prop を直接参照する。
   // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
@@ -203,6 +208,23 @@ function TaskTreeNodeImpl({
           // 選択チェック時は全行表示 (member が自分担当以外を間違って選択してもサーバ側で 403 で弾かれる)。
           <td className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
             <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(task.id)} className="rounded" />
+          </td>
+        )}
+        {/* feat/wbs-overwrite-import: ID 列 (CSV 整合確認用、トグル ON のときのみ) */}
+        {showIdColumn && (
+          <td className="px-1.5 py-1.5 md:px-2 md:py-2 font-mono text-xs text-muted-foreground">
+            <code
+              className="cursor-pointer hover:text-foreground"
+              onClick={(e) => {
+                const r = document.createRange();
+                r.selectNodeContents(e.currentTarget);
+                window.getSelection()?.removeAllRanges();
+                window.getSelection()?.addRange(r);
+              }}
+              title="クリックで全選択 (Ctrl+C でコピー)"
+            >
+              {task.id}
+            </code>
           </td>
         )}
         <td className="px-1.5 py-1.5 md:px-3 md:py-2" style={{ paddingLeft: `${depth * 20 + 8}px` }}>
@@ -316,6 +338,7 @@ function TaskTreeNodeImpl({
           onEditClick={onEditClick}
           expandedTaskIds={expandedTaskIds}
           onToggleExpanded={onToggleExpanded}
+          showIdColumn={showIdColumn}
         />
       ))}
     </>
@@ -351,7 +374,9 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   && prev.onEditClick === next.onEditClick
   // PR #61: 展開状態の変化は全ノードの再描画が必要 (子孫が折りたたみ/展開されうるため)
   && prev.expandedTaskIds === next.expandedTaskIds
-  && prev.onToggleExpanded === next.onToggleExpanded,
+  && prev.onToggleExpanded === next.onToggleExpanded
+  // feat/wbs-overwrite-import: ID 列トグル変化時に全ノード再描画
+  && prev.showIdColumn === next.showIdColumn,
 );
 
 /**
@@ -379,7 +404,7 @@ function TaskMobileCardImpl({
   onEditClick,
   expandedTaskIds,
   onToggleExpanded,
-}: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect'>) {
+}: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect' | 'showIdColumn'>) {
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
   const isCollapsed = isWP && hasChildren ? !expandedTaskIds.has(task.id) : false;
@@ -968,6 +993,34 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     URL.revokeObjectURL(url);
   }
 
+  // feat/wbs-overwrite-import: WBS 上書き用エクスポート (17 列、ID + 担当者氏名 + 進捗系)
+  async function handleSyncExport() {
+    const body: Record<string, unknown> = { mode: 'sync' };
+    if (selectedIds.size > 0) body.taskIds = [...selectedIds];
+
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    if (!res.ok) return;
+    const csvText = await res.text();
+    // sync モードはサーバ側で BOM 付きで返すため再付与しない
+    const blob = new Blob([csvText], { type: 'text/csv; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wbs-sync-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // feat/wbs-overwrite-import: ID 表示トグル + 上書きインポートダイアログ state
+  const [showIdColumn, setShowIdColumn] = useState(false);
+  const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
+
   // --- WBS テンプレートインポート (CSV) ---
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -1103,11 +1156,28 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>
           {showGantt ? 'ガントを閉じる' : 'ガントチャートを表示'}
         </Button>
+        {/* feat/wbs-overwrite-import: 一覧画面に ID 列を表示するトグル (CSV 整合確認用、既定 OFF) */}
+        <Button
+          variant={showIdColumn ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setShowIdColumn((v) => !v)}
+          title="CSV エクスポート/インポートの ID 整合確認用"
+        >
+          {showIdColumn ? 'IDを隠す' : 'IDを表示'}
+        </Button>
         {canEditPmTl && (
           <>
           {/* PR #68: 集計再計算ボタンは UI から撤去 (運用上不要、必要時は admin が API 直接実行) */}
           <Button variant="outline" size="sm" onClick={handleExport}>
             {selectedIds.size > 0 ? `エクスポート(${selectedIds.size}件)` : 'エクスポート'}
+          </Button>
+          {/* feat/wbs-overwrite-import: 上書き編集用 export (17 列、ID + 担当者 + 進捗系) */}
+          <Button variant="outline" size="sm" onClick={handleSyncExport}>
+            WBSをエクスポート(上書き用)
+          </Button>
+          {/* feat/wbs-overwrite-import: 上書きインポート (Sync by ID + dry-run プレビュー) */}
+          <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
+            WBSを上書きインポート
           </Button>
           <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
             <DialogTrigger render={<Button variant="outline" size="sm" />}>インポート</DialogTrigger>
@@ -1470,6 +1540,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       />
                     </th>
                   )}
+                  {/* feat/wbs-overwrite-import: ID 列はトグル ON のときのみ表示 (CSV 整合確認用) */}
+                  {showIdColumn && (
+                    <ResizableHead columnKey="id" defaultWidth={300}>ID</ResizableHead>
+                  )}
                   <ResizableHead columnKey="name" defaultWidth={320}>名称</ResizableHead>
                   <ResizableHead columnKey="assignee" defaultWidth={140}>担当者</ResizableHead>
                   <ResizableHead columnKey="status" defaultWidth={100}>ステータス</ResizableHead>
@@ -1499,11 +1573,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     onEditClick={openEditDialog}
                     expandedTaskIds={expandedTaskIds}
                     onToggleExpanded={toggleExpanded}
+                    showIdColumn={showIdColumn}
                   />
                 ))}
                 {filteredTasks.length === 0 && (
                   <tr>
-                    <td colSpan={canSelectForProgress ? 8 : 7} className="py-8 text-center text-muted-foreground">
+                    <td colSpan={(canSelectForProgress ? 8 : 7) + (showIdColumn ? 1 : 0)} className="py-8 text-center text-muted-foreground">
                       {tasks.length === 0
                         ? 'WBS が登録されていません'
                         : '選択したフィルタ条件に該当するタスクはありません'}
@@ -1710,6 +1785,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           )}
         </DialogContent>
       </Dialog>
+
+      {/* feat/wbs-overwrite-import: WBS 上書きインポート ダイアログ */}
+      <WbsSyncImportDialog
+        projectId={projectId}
+        open={isSyncImportOpen}
+        onOpenChange={setIsSyncImportOpen}
+        onImported={reload}
+      />
     </div>
   );
 }

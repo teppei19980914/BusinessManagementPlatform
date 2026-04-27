@@ -1212,6 +1212,152 @@ const MARKDOWN_PATTERNS = [
 - §5.16 (全画面トグル): 入力欄 + プレビューを並べると幅を要するため、全画面トグル
   と組み合わせると UX が向上する
 
+### 5.18 WBS 上書きインポート (Sync by ID) 実装パターン (feat/wbs-overwrite-import)
+
+#### 背景
+
+旧テンプレートインポート (`/tasks/import`) は **別プロジェクトへの WBS 雛形流用** 用途で
+常に新規 ID で全件 INSERT する。同一プロジェクト内の WBS を「export → Excel 編集 →
+re-import」の往復編集サイクルで管理するニーズに応える新フロー。
+
+詳細設計は **DESIGN.md §33** 参照。本セクションは実装上の判断記録。
+
+#### ファイル構成
+
+| 役割 | ファイル |
+|---|---|
+| Service (ロジック層) | `src/services/task-sync-import.service.ts` |
+| 既存 task.service への追加 | `exportWbsTemplate` に `mode='template'\|'sync'` 引数、`recalculateAncestorsPublic` を export |
+| Validator (列挙のみ) | `src/lib/validators/task-sync-import.ts` |
+| API route (preview + execute) | `src/app/api/projects/[id]/tasks/sync-import/route.ts` |
+| API route (export 拡張) | `src/app/api/projects/[id]/tasks/export/route.ts` (`mode='sync'` 受け取り) |
+| UI dialog | `src/components/dialogs/wbs-sync-import-dialog.tsx` |
+| UI 統合 | `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx` (ID 表示トグル + 2 ボタン) |
+
+#### 設計上の判断
+
+1. **新サービスファイルへの分離**: 既存 task.service.ts は 1400 行超で密度が高く、CSV
+   parse / 3-way diff / rollback を含む 700 行規模の追加は別ファイルが管理性高い。旧
+   `parseCsvLine` / `recalculateAncestorsPublic` は task.service から import。
+
+2. **17 列 CSV と 10 列 CSV の共存**: `exportWbsTemplate(projectId, taskIds, mode)` の
+   3 引数めで分岐。後方互換のため `mode` 既定は `'template'`。
+   API route 側も `body.mode` で判定し権限を切替 (`task:create` vs `task:update`)。
+
+3. **dry-run と本実行の同一エンドポイント**: `?dryRun=1` クエリで分岐。`computeSyncDiff`
+   は副作用なしで純粋に diff を返し、`applySyncImport` が内部で **`computeSyncDiff` を
+   再呼び出し** して再 validation する (CSV 改竄や DB 状態変動への保険)。
+
+4. **ロールバック方式**: PgBouncer 制約で `prisma.$transaction` 不可のため、
+   `applySyncImport` 開始時に該当プロジェクトの全タスクをメモリに snapshot し、
+   try/catch でエラー時に `rollbackToSnapshot` を呼ぶ。
+   - CREATE 済 → 物理削除
+   - UPDATE 済 → snapshot から全列復元
+   - DELETE 済 (deletedAt セット) → `deletedAt: null` で undelete
+
+5. **WP↔ACT 切替の禁止**: dry-run 時に blocker として弾く。type 変更は WP の集計や
+   ACT の必須項目 (assignee 等) と整合しないため、**手動の削除→新規作成** を促す。
+
+6. **進捗・実績の保全**: CSV 13-17 列は read-only 注記をヘッダーに付与し、import 時は
+   無視。DB と異なる値が CSV に書かれていれば warning だけ出す。`progressRate` /
+   `actualStartDate` / `actualEndDate` / `status` は触らない。
+
+7. **削除モード 3 段階**: dry-run プレビューで `keep` / `warn` / `delete` をユーザ選択。
+   `delete` で進捗を持つタスクが削除候補に含まれる場合は `IMPORT_REMOVE_BLOCKED` で
+   拒否し、誤削除を予防。
+
+8. **担当者氏名 lookup**: `ProjectMember` から `user.name` で一意 lookup。氏名重複時は
+   blocker (`複数該当` メッセージ)。CSV では UUID ではなく **氏名で運用** (Excel 編集
+   時に人間が判断しやすいため)。
+
+9. **ID 表示トグルの永続化なし**: タスク一覧の「IDを表示」ボタンは React state ローカル
+   保持 (sessionStorage 等への永続化なし)。普段は使わない列なので。
+
+#### 落とし穴と対策 (横展開ナレッジ)
+
+本 PR で踏み込んだ実装上の罠と、将来同様の課題に直面したときに参照する解決策。
+
+1. **PgBouncer 環境で `prisma.$transaction` が使えない問題への対処**
+
+   Vercel + Supabase pooler (現在の本番構成) では Prisma の `$transaction` が動かない。
+   既存の `importWbsTemplate` も逐次 create + エラー時 createdIds 物理削除でロールバック
+   している。本 PR の `applySyncImport` はそれを拡張し、CREATE/UPDATE/DELETE 混在の
+   失敗時復元に対応した:
+
+   ```ts
+   // 1. 開始時に対象プロジェクトの全タスクをメモリに snapshot
+   const snapshot = await prisma.task.findMany({ where: { projectId, deletedAt: null } });
+   try {
+     // 2. CREATE / UPDATE / soft-delete を逐次実行
+     // ...
+   } catch (e) {
+     // 3. 失敗時: createdIds を物理削除、updatedIds を snapshot から全列復元、softDeletedIds を undelete
+     await rollbackToSnapshot(snapshot, /* ... */);
+     throw e;
+   }
+   ```
+
+   **適用条件**: PgBouncer 環境かつ「複数テーブル / 複数 CRUD オペレーションに跨る原子性」
+   が必要なバルク処理。**注意点**: 大規模プロジェクト (1000+ レコード) では snapshot 保持の
+   メモリ圧が問題になり得る。本 PR はそれが現実化する前 (上限 500 件) で対処不要だが、
+   1000+ になる将来機能では「分割実行 + 部分ロールバック」を別途検討する必要あり (将来 PR 候補)。
+
+2. **既存 RPC / service 関数に引数を追加するときの後方互換と型安定**
+
+   `exportWbsTemplate(projectId, taskIds?, mode?)` のように既定値付きで第 3 引数を
+   足すと、既存呼出側 (route / UI) は変更不要で動き続ける一方、**新規呼出は必ず明示的に**
+   `mode` を渡すべき (既定値依存は呼出意図を曖昧にする)。
+
+   実装パターン:
+   ```ts
+   // service 側
+   export type WbsExportMode = 'template' | 'sync';
+   export async function exportWbsTemplate(
+     projectId: string,
+     taskIds?: string[],
+     mode: WbsExportMode = 'template',  // 既定値で旧呼出を通す
+   ): Promise<string> { ... }
+
+   // 新規呼出側 (本 PR の sync export route)
+   const csv = await exportWbsTemplate(projectId, taskIds, 'sync'); // 明示
+
+   // API route で body から取り出すときも narrowing で型安全に
+   const mode: WbsExportMode = body?.mode === 'sync' ? 'sync' : 'template';
+   ```
+
+   **避けるべきパターン**: `mode: string` のような広い型で受けて service 側で if 分岐
+   (= 列挙の網羅性チェックが効かない)。enum 型 + narrowing で渡す。
+
+3. **CSV パースは構文エラーに寛容、validation は後段に集約**
+
+   `parseSyncImportCsv` は列数不足の行を `continue` でスキップ、優先度や種別が想定外なら
+   `null` / 既定値にフォールバックする (壊れにくい設計)。一方で **業務ルール検証**
+   (ID 不在 / WP↔ACT 切替 / 担当者不在 / 親不在 等) は **`computeSyncDiff` 側に集約** し、
+   行ごとの `errors` / `warnings` として返す。
+
+   この分離の利点:
+   - parse 段で例外を投げないため、UI 側で「CSV が壊れていて読めません」エラーが出ない
+     (ユーザが直したい行ごとの問題が個別表示される)
+   - validation はテスト可能な純粋関数になり、Mock prisma で全パターン網羅できる
+   - グローバル問題 (ヘッダー不正、500 件超等) は `globalErrors` に集約し、行レベルとは
+     別のチャンネルで返す
+
+   **横展開先**: 顧客 CSV 取り込み / 一括ユーザ招待 等、CSV 入力を伴う他機能でも同じ
+   構造を取ると UX が一貫する。
+
+#### スコープ外 (将来 PR 候補)
+
+- 列名のヘッダーゆらぎ吸収 (例: 「ID」と「id」の同一視)
+- Undo (実行後の取り消し: audit_log の beforeValue から復元する管理機能)
+- 進捗系列も書き戻し可能にする上級モード
+- 実績工数列の export 値 (現在は空欄)
+- 複数プロジェクト跨ぎの一括 sync
+
+#### 関連
+
+- DESIGN.md §33 (WBS 上書きインポート設計)
+- SPECIFICATION.md §10 (CSV 列詳細・dry-run UX・エラー分類)
+
 ### 5.10.2 タグ入力区切り: 全角読点「、」も受容する (fix/project-create-customer-validation)
 
 `業務ドメインタグ` / `技術スタックタグ` / `工程タグ` 等のフリーテキスト入力は
