@@ -2341,6 +2341,26 @@ git push
    `[gen-visual]` 1 commit で両 viewport 分の baseline が再生成されるので、別々に対応する必要なし。
    逆に「片方だけ」が fail する場合は viewport 固有の bug の可能性が高い (responsive layout など)。
 
+#### ケーススタディ (本ナレッジ確立過程の実例 2 件)
+
+本ナレッジは 1 PR 中に異なる原因で 2 回適用され、診断手順の有効性が検証された。
+
+| 事例 | PR | 影響 spec | サイズ差 | 原因分類 | 解決 |
+|---|---|---|---|---|---|
+| 1 | #178 (PR-β) | project-detail-light.png | 1440×**900→927** (+27px height) | **期待された変化** (新フィールド `contractType` 行追加 = `<dl>` 1 行分) | `[gen-visual]` で baseline 再生成 |
+| 2 | #179 (PR-γ) | project-detail-light + customer-detail-light (chromium-mobile) | **414→413px width** (-1px) | **環境差 / rounding 変動** (PR-γ branch では当該画面を未編集、PR-β の baseline 再生成後の rebase 経路差) | 同 (`[gen-visual]`) |
+
+**判断基準の検証**:
+- 事例 1 (+27px): 「dl 1 行分の妥当な差」→ 期待された変化と判定 → 即 `[gen-visual]` で確実解消
+- 事例 2 (-1px width): 「1-2px 程度 = flaky / rounding」→ 該当画面の code 変更が PR-γ になく
+  対象 dialog/component を PR-γ で触っていないことが grep で確認できた → 環境差と判定 → `[gen-visual]` で吸収
+
+**branch 跨ぎの落とし穴 (本ケースで実際に踏んだ)**:
+PR-γ branch で `[gen-visual]` empty commit を打とうとしたら、
+誤って **PR-β branch 上で `git commit` を実行** していた (terminal がそのときの cwd 直下、
+`branch --show-current` で気付かず) → push 後に `git reset --hard HEAD~1 && git push --force-with-lease`
+で取り消し → 正しい branch で再 commit。**毎回 `git branch --show-current` で確認する習慣化が必須**。
+
 #### 関連
 
 - DEVELOPER_GUIDE §9.6 (視覚回帰ベースライン運用、自動再生成手順)
