@@ -123,8 +123,9 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
 
   return (
     <div className="space-y-4">
+      {/* Phase A 要件 6: h3 タブタイトル削除 (タブ名と重複のため)。件数のみ右寄せで維持。 */}
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">{t('listHeading', { count: members.length })}</h3>
+        <span className="text-sm text-muted-foreground">{t('countOnly', { count: members.length })}</span>
         {isAdmin && (
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
@@ -188,12 +189,16 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
               <TableCell>{m.userEmail}</TableCell>
               <TableCell>
                 {isAdmin ? (
+                  // Phase A 要件 9: ロールトグルの選択後表示が内部名 (manager/member 等) になる問題を修正。
+                  //   SelectValue の children render 関数で PROJECT_ROLES から表示名にマップする。
                   <Select
                     value={m.projectRole}
                     onValueChange={(v) => v && handleRoleChange(m.id, v)}
                   >
                     <SelectTrigger className="w-32">
-                      <SelectValue />
+                      <SelectValue>
+                        {(value) => PROJECT_ROLES[value as keyof typeof PROJECT_ROLES] || value}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {Object.entries(PROJECT_ROLES).map(([key, label]) => (

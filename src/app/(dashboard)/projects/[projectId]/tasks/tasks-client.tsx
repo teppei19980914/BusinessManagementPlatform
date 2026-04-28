@@ -1111,8 +1111,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{t('pageTitle')}</h2>
+      {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
+      <div className="flex items-center justify-end">
         <div className="flex gap-2">
         {/* feat/gantt-tab-restructure (PR-C item 6): ガント表示トグル (全ユーザに開放、WBS タブ統合) */}
         <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>

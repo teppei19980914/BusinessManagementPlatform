@@ -341,8 +341,8 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{t('pageTitle')}</h2>
+      {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
+      <div className="flex items-center justify-end">
         {/* PR #68: タスク名列の幅リセット (日付列は固定) */}
         <Button variant="outline" size="sm" onClick={resetNameColWidth}>
           {t('resetNameColWidth')}

@@ -146,7 +146,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     }
     return xs;
   }, [risks, typeFilter, bulkFilter]);
-  const headingLabel = typeFilter === 'issue' ? tRisk('headingIssue') : typeFilter === 'risk' ? tRisk('headingRisk') : tRisk('headingBoth');
+  // Phase A 要件 6 で h2 ヘディング削除に伴い headingLabel は未使用化、削除して lint clean に。
   const createLabel = typeFilter === 'issue' ? tRisk('createIssue') : typeFilter === 'risk' ? tRisk('createRisk') : tRisk('createBoth');
 
   // PR #65 Phase 2 (c): 起票中に類似する過去課題 (他プロジェクト) を inline でサジェスト。
@@ -343,8 +343,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{headingLabel}</h2>
+      {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
+      <div className="flex items-center justify-end">
         <div className="flex gap-2">
           {systemRole === 'admin' && (
             <Button variant="outline" onClick={handleExport}>{tRisk('csvExport')}</Button>

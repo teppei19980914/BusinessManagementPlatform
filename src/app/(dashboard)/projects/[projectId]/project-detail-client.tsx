@@ -393,9 +393,15 @@ export function ProjectDetailClient({
             activeTab === 'overview' で他タブ閲覧時には非表示化する
           */}
           {activeTab === 'overview' && canChangeStatus && nextStatuses.length > 0 && (
-            <Select onValueChange={handleStatusChange} disabled={isChangingStatus}>
+            // Phase A 要件 8: 「状態変更」Select はアクション型 (選択即実行) のため、
+            //   value="" で常時 placeholder を表示し、選択後に内部名 (raw value) が
+            //   残らないように制御する。SelectValue children に表示名マッピングを指定し、
+            //   万一の即時表示でも PROJECT_STATUSES の表示名が出るよう二重化。
+            <Select value="" onValueChange={handleStatusChange} disabled={isChangingStatus}>
               <SelectTrigger className="w-36 md:w-44">
-                <SelectValue placeholder={t('statusChangePlaceholder')} />
+                <SelectValue placeholder={t('statusChangePlaceholder')}>
+                  {(value) => (value ? PROJECT_STATUSES[value as keyof typeof PROJECT_STATUSES] || value : t('statusChangePlaceholder'))}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {nextStatuses.map((s) => (

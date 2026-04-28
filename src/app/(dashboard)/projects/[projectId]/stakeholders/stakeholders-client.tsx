@@ -109,18 +109,16 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
 
   return (
     <div className="space-y-6">
+      {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため)。件数 + 警告サマリは維持。 */}
       <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold">{t('title')}</h2>
-          <p className="text-xs text-muted-foreground">
-            {t('countSummary', { count: stakeholders.length })}
-            {gapCount > 0 && (
-              <span className="ml-2 text-warning">
-                {t('engagementGapWarning', { count: gapCount })}
-              </span>
-            )}
-          </p>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          {t('countSummary', { count: stakeholders.length })}
+          {gapCount > 0 && (
+            <span className="ml-2 text-warning">
+              {t('engagementGapWarning', { count: gapCount })}
+            </span>
+          )}
+        </p>
         <Button
           onClick={() => setIsCreateOpen(true)}
           className="shrink-0"

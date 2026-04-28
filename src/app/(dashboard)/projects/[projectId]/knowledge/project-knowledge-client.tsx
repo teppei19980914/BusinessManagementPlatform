@@ -239,8 +239,9 @@ export function ProjectKnowledgeClient({
         onApplied={async () => { await onReload(); }}
       />
 
+      {/* Phase A 要件 6: h3 タブタイトル削除 (タブ名と重複のため)。件数表示は右寄せで維持。 */}
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">{tKnowledge('title')}（{tKnowledge('countUnit', { count: filteredKnowledges.length })}）</h3>
+        <span className="text-sm text-muted-foreground">{tKnowledge('countUnit', { count: filteredKnowledges.length })}</span>
         <div className="flex gap-2">
         {/* T-22 Phase 22c: sync-import (往復編集) */}
         {canCreate && (

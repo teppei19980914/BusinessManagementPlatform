@@ -214,8 +214,8 @@ export function ProjectsClient({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{t('listTitle')}</h2>
+      {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
+      <div className="flex items-center justify-end">
         {isAdmin && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{t('createButton')}</DialogTrigger>

@@ -341,15 +341,8 @@ export function StakeholderEditDialog({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label>{t('fieldTags')}</Label>
-            <Input
-              value={form.tagsInput}
-              onChange={(e) => setForm({ ...form, tagsInput: e.target.value })}
-              placeholder={t('tagsPlaceholder')}
-              maxLength={200}
-            />
-          </div>
+          {/* Phase A 要件 10: ステークホルダーのタグ入力 UI 削除 (設定の必要性なし)。
+              内部 form.tagsInput は API 互換のため空文字で残置 (将来再有効化 or T-XX で完全削除可)。 */}
 
           <div className="space-y-2">
             <Label>{t('fieldStrategy')}</Label>

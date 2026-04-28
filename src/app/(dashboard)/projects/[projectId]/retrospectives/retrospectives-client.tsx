@@ -219,8 +219,8 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{tRetro('headingList')}</h2>
+      {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
+      <div className="flex items-center justify-end">
         <div className="flex gap-2">
         {/* T-22 Phase 22b: sync-import (往復編集) */}
         {canCreate && (
