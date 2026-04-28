@@ -190,6 +190,8 @@ model Project {
   scope             String    @db.Text
   outOfScope        String?   @map("out_of_scope") @db.Text
   devMethod         String    @map("dev_method") @db.VarChar(30)
+  // 項目 14 (PR-β): 契約形態 (準委任 / 請負 / SES / そのほか)。既存 Project は null 許容で後付け。
+  contractType      String?   @map("contract_type") @db.VarChar(30)
   businessDomainTags Json     @default("[]") @map("business_domain_tags") @db.JsonB
   techStackTags     Json      @default("[]") @map("tech_stack_tags") @db.JsonB
   // PR #65: 新規プロジェクト作成時にナレッジ/過去課題を提案するため、

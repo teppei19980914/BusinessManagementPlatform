@@ -20,14 +20,12 @@ export default async function RetrospectivesPage({ params }: Props) {
     getActualProjectRole(projectId, session.user.id),
   ]);
   const canCreate = actualRole === 'pm_tl' || actualRole === 'member';
-  const canComment = membership.projectRole === 'pm_tl' || membership.projectRole === 'member';
 
   return (
     <RetrospectivesClient
       projectId={projectId}
       retros={retros}
       canCreate={canCreate}
-      canComment={canComment}
       currentUserId={session.user.id}
     />
   );

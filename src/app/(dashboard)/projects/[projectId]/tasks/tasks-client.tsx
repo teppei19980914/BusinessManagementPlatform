@@ -999,8 +999,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // API ルート `/api/projects/[id]/tasks/recalculate` 自体は残す
   // (管理者がトラブルシュート時に直接叩く手段として温存)。
 
-  // --- WBS テンプレートエクスポート (CSV) ---
-  async function handleExport() {
+  // PR-ζ / 項目 15: 旧 handleExport は UI 撤去に伴い削除済 (sync mode に一本化)。
+  //   API `/api/projects/[id]/tasks/export` (mode 未指定 = template モード) は互換のため残置。
+  //   将来的には sync mode に統一し、template mode は廃止予定 (§11 T-19)。
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  async function _handleExport_unused() {
     const body: Record<string, unknown> = {};
     if (selectedIds.size > 0) body.taskIds = [...selectedIds];
 
@@ -1054,7 +1057,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const [showIdColumn, setShowIdColumn] = useState(false);
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
 
-  // --- WBS テンプレートインポート (CSV) ---
+  // PR-ζ / 項目 15: 旧「インポート」ダイアログ state は UI 撤去に伴い未使用。
+  //   sync-import-dialog に一本化済 (ID 有無で新規/更新分岐)。
+  //   API ルート `/api/projects/[id]/tasks/import` 自体は互換のため残置 (§11 T-19 で削除候補)。
+  /* eslint-disable @typescript-eslint/no-unused-vars */
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importError, setImportError] = useState('');
@@ -1097,6 +1103,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setImportFile(null);
     await reload();
   }
+  /* eslint-enable @typescript-eslint/no-unused-vars */
 
   const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
   const [parentTaskId, setParentTaskId] = useState('');
@@ -1200,35 +1207,25 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         </Button>
         {canEditPmTl && (
           <>
-          {/* PR #68: 集計再計算ボタンは UI から撤去 (運用上不要、必要時は admin が API 直接実行) */}
-          <Button variant="outline" size="sm" onClick={handleExport}>
+          {/*
+            PR-ζ / 項目 15: WBS のエクスポート/インポート ボタンを 2 ボタンに統合 (旧 4 ボタン → 2 ボタン)。
+            - 旧「エクスポート」(handleExport, 6 列、新規作成専用) → UI から撤去
+            - 旧「WBSをエクスポート(上書き用)」(handleSyncExport, 17 列) → 「エクスポート」にリネームして一本化
+            - 旧「インポート」(/tasks/import, 新規作成専用) → UI から撤去
+            - 旧「WBSを上書きインポート」(sync-import dialog) → 「インポート」にリネームして一本化
+            sync-import は ID 有無で 新規作成/既存更新 を分岐する dry-run + preview 機能を持つため、
+            項目 15 仕様 (ID 未入力=新規, ID あり=更新) と概ね整合。
+            完全な「6 列のみ出力」仕様は service 層・sync-import の入力スキーマ変更が必要なため
+            §11 T-19 で follow-up。
+            旧 handleExport / handleImport / /api/tasks/export?mode=default / /api/tasks/import は
+            互換のため API 残置 (将来削除候補)。
+          */}
+          <Button variant="outline" size="sm" onClick={handleSyncExport}>
             {selectedIds.size > 0 ? t('exportWithCount', { count: selectedIds.size }) : t('export')}
           </Button>
-          {/* feat/wbs-overwrite-import: 上書き編集用 export (17 列、ID + 担当者 + 進捗系) */}
-          <Button variant="outline" size="sm" onClick={handleSyncExport}>
-            {t('syncExport')}
-          </Button>
-          {/* feat/wbs-overwrite-import: 上書きインポート (Sync by ID + dry-run プレビュー) */}
           <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
-            {t('syncImportButton')}
+            {t('import')}
           </Button>
-          <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
-            <DialogTrigger render={<Button variant="outline" size="sm" />}>{t('import')}</DialogTrigger>
-            <DialogContent className="max-w-[min(90vw,28rem)]">
-              <DialogHeader>
-                <DialogTitle>{t('importDialogTitle')}</DialogTitle>
-                <DialogDescription>{t('importDialogDescription')}</DialogDescription>
-              </DialogHeader>
-              <form onSubmit={handleImport} className="space-y-4">
-                {importError && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{importError}</div>}
-                <div className="space-y-2">
-                  <Label>{t('templateFile')}</Label>
-                  <Input type="file" accept=".csv" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
-                </div>
-                <Button type="submit" className="w-full">{t('importExecute')}</Button>
-              </form>
-            </DialogContent>
-          </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger render={<Button size="sm" />}>{tAction('add')}</DialogTrigger>
             {/* PR #87 横展開: アクティビティ作成ダイアログも grid-cols-2 + DateFieldWithActions を

@@ -2127,6 +2127,171 @@ export function DateFieldWithActions({
 - §10.5 9 例目 (本セクションが §5.24 → §5.26 に繰り上がった conflict resolve の経緯)
 - `src/components/ui/date-field-with-actions.tsx` — 当該共通部品
 
+### 5.27 機能 deferral パターン: UI のみ削除、DB/API/service は温存 (PR #177 / 項目 10)
+
+#### 背景
+
+「将来再設計予定だが現時点では UI を出したくない機能」を扱うとき、機能を完全削除すると
+将来再有効化のコストが大きくなる。一方 UI を温存すると未完成機能が公開される。
+
+PR #177 (項目 10) で振り返りコメント機能を「将来 cross-list 横ぐしに再設計予定」のため
+**現時点では UI のみ非表示化、DB/API/service は温存** という選択をした。これは §6 (機能削除)
+とは異なる、**deferral (延期)** の専用パターン。
+
+#### パターン適用判断基準
+
+UI 削除のみ (deferral) を選ぶ条件:
+1. **将来再有効化が確定的** (TODO に登録済 or §11 に記載)
+2. **UI 削除でデータ損失が起きない** (DB / API は触らないため既存データは無傷)
+3. **API 直接呼び出しが残っても害がない** (認可は API 側で enforce 済)
+4. **再有効化コストが高い** (DB schema 復元 / migration / 認可ロジック復元)
+
+これらが揃わない場合は §6 (完全削除) を採用する。
+
+#### 実施手順
+
+```
+1. UI: 該当 JSX block を削除 (将来計画コメントを残す)
+2. UI: 関連 state / handler を削除 (commentText, handleComment 等)
+3. UI: prop 型から該当フィールドを削除し、caller 側も更新 (canComment 等)
+4. import 整理: unused import を削除 (Input, useFormatters 等)
+5. **温存**: API endpoint / service / DB schema は触らない
+6. **コメント追記**: API endpoint の冒頭に「項目 X で UI 非表示化、API は将来再利用予定」と記載
+7. §11 TODO に再有効化タスクを登録
+```
+
+#### grep 横展開チェックリスト
+
+UI 削除完了後、以下を実行して残存ゼロを確認:
+
+```bash
+grep -rn "<削除した変数/関数名>" src/ --include='*.ts' --include='*.tsx'
+# 該当ヒット = JSDoc コメント / API endpoint コメント のみなら OK (UI コードに残存していないこと)
+```
+
+JSDoc コメントに残った参照は **削除した文脈に応じて更新** (削除したことを明記、または「将来再利用」と記載)。
+
+#### PR #177 の例
+
+- **削除した UI**: 振り返りコメント (h4 + 一覧 + 入力フォーム) + state (`commentText`) + handler (`handleComment`) + prop (`canComment`)
+- **温存**: `POST /api/projects/[id]/retrospectives/[retroId]/comments` + `retro.comments` DTO + DB の `retrospective_comments` テーブル
+- **§11 TODO**: T-18 (cross-list 横ぐしコメント + 通知システム) として登録予定
+
+#### 関連
+
+- §6 (機能削除の手順) — 完全削除との対比
+- §11.1 T-18 (cross-list comment 再設計の TODO 起点)
+- §10.5 (deferral 経緯を追跡可能にする更新履歴管理)
+
+### 5.28 Prisma migration の UPDATE 文を書くときは init migration で列存在を grep する (PR #178 E2E P3018 hotfix)
+
+#### 症状
+
+PR-β (#178) の E2E が以下で失敗:
+
+```
+Error: P3018
+Migration name: 20260428_project_dev_method_rename_and_contract_type
+Database error code: 42703
+Database error: ERROR: column "dev_method" does not exist
+Position: ... UPDATE "knowledge_projects" SET "dev_method" = 'low_code_no_code' ...
+```
+
+#### 根本原因
+
+migration の `UPDATE "knowledge_projects" SET "dev_method" = ...` で **テーブル名を誤認**。
+
+- **誤認した経路**: schema.prisma の line 442 で `Knowledge` モデル (= `knowledges` テーブル) の
+  末尾フィールドとして `devMethod String? @map("dev_method")` を見たが、隣に
+  `KnowledgeProject` モデル (= `knowledge_projects` テーブル) があるため、
+  どちらが `dev_method` を持つのか脳内変換でミスした
+- **実体**: `knowledges` テーブルが `dev_method` を持ち、`knowledge_projects` は単なる多対多の
+  関連テーブル (id / knowledge_id / project_id のみ)
+
+#### 教訓 (汎化ルール)
+
+**migration の UPDATE / ALTER / DROP 文を書く前に、必ず init migration の `CREATE TABLE`
+で対象列の存在を確認**する。schema.prisma の model 名から table 名を脳内変換するのは
+事故の元 (本件: KnowledgeProject ≠ Knowledge、ProjectMember ≠ Project 等)。
+
+#### 確認手順 (commit 前のセルフチェック)
+
+```bash
+# 例: knowledge_projects テーブルに dev_method 列があるか確認
+grep -B 2 -A 15 'CREATE TABLE "knowledge_projects"' prisma/migrations/*/migration.sql
+
+# CREATE TABLE のスニペットを見て対象列が無ければ migration の table 名が間違っている可能性
+```
+
+別の確実な方法 (推奨): **本番に近いローカル DB で `pnpm prisma migrate dev` を一度走らせる**。
+Prisma が dry-run 段階で SQL を実行するため、column 不在エラーは即座に検出できる。
+CI を待ってから直すと iteration が遅い。
+
+#### grep 横展開チェック (本件の同パターン残存確認)
+
+```bash
+# init migration で関連 (多対多) テーブルとそうでないテーブルを区別:
+grep -E "^CREATE TABLE \"\w+_\w+s?\"" prisma/migrations/20260415060313_init/migration.sql
+
+# 関連テーブル候補: knowledge_projects / project_members / task_knowledges / ...
+# これらは scalar カラムを持たないことが多いので、UPDATE の対象にしない原則
+```
+
+#### 関連
+
+- prisma/migrations/20260428_project_dev_method_rename_and_contract_type/migration.sql — 本件 hotfix
+- §5.11.1 (User schema 借用ミス) — schema.prisma の脳内変換ミス系の類似事例
+- §11 T-21 (永続ロック実装 — 同様の schema migration を伴う、本教訓を活用すべき)
+
+### 5.29 PR-η: 永続ロック未実装バグの発見 (項目 16 調査結果)
+
+#### 検証対象 (ユーザ要望、項目 16)
+
+> アカウントの管理画面上に表示されるログインロック情報セクションの数字は正しく集計されるのか検証してください。
+
+#### 検証結果
+
+| 項目 | 実装 | 詳細 |
+|---|---|---|
+| `failedLoginCount` インクリメント | ✅ | `src/lib/auth.ts:52` |
+| `lockedUntil` 一時ロック (5 回失敗で 30 分) | ✅ | `src/lib/auth.ts:58` |
+| `lockedUntil` ログイン成功時リセット | ✅ | `src/lib/auth.ts:76` |
+| **`permanentLock` 永続ロック設定** | ❌ **未実装 (バグ)** | grep でも `permanentLock: true` を設定する箇所が無い |
+| MFA 系 (PR #116) | ✅ | 別系統で正常動作 |
+
+#### 不整合の具体内容
+
+- `users-client.tsx:216` のコメント「failedLoginCount 5 回で一時ロック (30 分) / 3 回目で permanentLock」
+  の **後半が実装伴わず**
+- 結果: 一時ロック → 解除 → 再失敗 → また一時ロック の無限ループ。永続化されない
+- `user-edit-dialog.tsx:186` の「永続ロック: あり/なし」UI は **常に なし** を表示
+
+#### 修正方針 (T-21 として §11 登録、選択肢 A 推奨)
+
+1. schema に `temporaryLockCount` (Int, default 0) を追加
+2. 一時ロック発生時にインクリメント
+3. `>= 3` で `permanentLock = true` をセット
+
+選択肢 B (auth_event_logs から動的集計) は認証パスのオーバヘッドが増えるため非推奨。
+
+#### grep による発見手順 (汎化)
+
+「実装が伴わない可能性のあるコメント」を見つけるための grep:
+
+```bash
+# UI コードのコメントで言及されているフラグが実際に true 化されている箇所を確認
+grep -rnE "permanentLock\s*[:=]\s*true|permanentLock:\s*true" src/ --include='*.ts' --include='*.tsx' | grep -v ".test."
+# ヒットが select clause (読み取り) のみで write 経路が無ければバグ
+```
+
+これは「コメントと実装の同期確認」の標準パターンとして §5.x で運用ルール化候補。
+
+#### 関連
+
+- §11 T-21 (永続ロック実装) — 本調査結果の修正タスク
+- DESIGN.md §8 (権限制御) — 仕様文書の更新も必要 (実装と乖離している)
+- src/lib/auth.ts:52-66 — 現在の一時ロック実装 (改修対象)
+
 ---
 
 ## 6. 機能削除の手順
@@ -3689,6 +3854,9 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | T-05 | Estimate (見積もり) に添付 URL 登録 UI を追加 + 一覧表示 | API 経路 (`/api/attachments/batch` の `entityType === 'estimate'` 分岐) は対応済だが、**UI 経由の添付登録手段が無い**ため事実上未使用。`estimates-client.tsx` に `<StagedAttachmentsInput>` (作成時) + 編集 dialog 内の `<AttachmentList>` を追加し、見積一覧にも `useBatchAttachments('estimate', ...)` + `<AttachmentsCell>` を追加すれば他エンティティと parity が揃う。PR #168 で添付対応 entity 全体の一覧表示状態を網羅 grep し、estimate のみ「API 対応済 + UI 未対応」のギャップが判明 | 2026-04-27 PR #168 横展開調査時、ユーザ要望「添付できるものに関しては、一覧画面上に表示されているか影響調査し横展開を徹底」に部分対応。estimate の UI は別 PR で対応する宣言 |
 | T-06 | ~~**【外部公開直前必須】** en-US 本格翻訳~~ → **PR #170/#173/#174/#175 で大半完了 (~933 hits / 30+ ファイル / 24 sections / ~813 keys × 2 locales)。`SELECTABLE_LOCALES['en-US']=true` 切替済**。残り T-17 で対応 | PR #169 → #175 で実施。完了 |
 | T-17 | en-US 残 sweep (~104 hits / 完成度向上) | PR #175 マージ時点で抽出スクリプト残ヒット 約 104 件。内訳: (a) test ファイル `it('...')` 説明文 ~56 件 (ユーザ非表示、翻訳不要)、(b) API route の `throw new Error(...)` ~30 件 (エラー時のみ HTTP body に露出、UX 影響小)、(c) ユーザ可視の軽微な漏れ十数件 (「全リスク」「全課題」「全振り返り」が page heading 等 1 箇所ずつ、`削除` / `削除に失敗しました` 数箇所、admin/audit-logs などの新画面)。**着手手順**: `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` で残ヒットを再抽出 → ユーザ可視を優先で sweep → API error message を t() 化 → test 文言は据え置き or 規約化。各 commit 後に同スクリプトで残数を計測 | 2026-04-28 ユーザ要望「残りの英語化対応は今度実施するのでプランに追加」 |
+| T-18 | **【UX 統一 / 後続】** Cross-list 横ぐしコメント機能 + 通知システム | PR #177 で振り返りコメント UI を非表示化したが、API/DB/service は温存中。再有効化時の方針: 振り返り固有の inline コメントではなく、**全 entity 横断で統一仕様**「リスク/課題/振り返り/ナレッジ + メモに対して関係者がコメント可能、コメント時に対象 entity の作成者 / 担当者に通知 (in-app + email)」を実装する。**設計検討項目**: (1) 単一 `comments` テーブル + `entity_type` / `entity_id` 多態的参照 vs 既存 `retrospective_comments` を踏襲, (2) 通知 channel 設計 (Notification entity + 未読管理), (3) UI: 各 ○○ 詳細画面の右パネル / カード内 inline / 全リスト画面横ぐしビューのいずれを最終形にするか。**着手目安**: 各 entity 仕様 (T-04 視覚回帰 / T-15/T-16 横断画面など) が揃った後 | 2026-04-28 ユーザ要望「振り返りのコメント機能は今後強化する予定 / 各○○一覧で横ぐしに実現したい / コメントがされたら通知される仕組み」を踏まえ、PR #177 で UI 非表示化と同時に T-18 として登録 |
+| T-19 | WBS エクスポート/インポート schema 整合化 (PR-ζ follow-up) | PR-ζ (#181) で UI を 4→2 ボタンに統合した際、ロジック側は handleSyncExport (17 列出力) を流用したため、ユーザ仕様 (項目 15) の「ID, 種別, タスク名, 予定開始日, 予定終了日, 予定工数」の **6 列のみ** にする部分は未対応。**実施内容**: (1) `/api/projects/[id]/tasks/export` の sync mode を 6 列出力に絞る、(2) sync-import の入力 schema も 6 列受理に変更、(3) 旧 template mode (handleExport / `/tasks/import`) を service 層から完全削除、(4) 互換のため温存していた eslint-disable 領域を削除。**着手目安**: PR-ζ マージ後に手動 UI 確認で「2 ボタン化が機能している」ことを確認してから着手 | 2026-04-28 PR-ζ で UI 統合のみ実施、schema 整合は分離 |
+| T-21 | アカウント永続ロック実装 (PR-η 調査結果のバグ修正) | PR-η (項目 16) 調査で発覚: コメント「3 回目で permanentLock」(users-client.tsx) と実装 (auth.ts) が乖離しており、**現在は永続ロック発火経路が無い** (§5.29 参照)。**実装方針 (§5.29 で選定済の選択肢 A)**: schema に `temporaryLockCount` (Int, default 0) を追加 → 一時ロック発生時にインクリメント → `>= 3` で `permanentLock=true`。**migration**: 既存ユーザのカウンタは 0 始まり (運用上問題なし)。**test**: 1 回失敗→4 回失敗→5 回目で一時ロック (count=1) / 30 分後 5 回失敗→count=2 / さらに 5 回→count=3 で permanent_lock=true、の連鎖を E2E で再現 | 2026-04-28 PR-η 調査結果、ユーザ要望「ロック情報の数字検証」 |
 | T-22 | **【重要】** 「○○一覧」へのインポート/エクスポート機能の本格実装 (項目 1) | ユーザ要望: 各「○○一覧」(risks/issues/retros/knowledge/memos) でデータの **エクスポート (登録済みデータの外だし) と インポート (新規作成 + 既存更新、削除なし)** をサポート。**現状**: risks のみ export 既存 (`/api/projects/[id]/risks/export`)、tasks (WBS) は PR-ζ (#181) で UI 統合済の sync-import あり。残り 4 entity (retros/knowledge/memos + risks の import) は未実装。**設計原則**: (1)「○○一覧」のみ対象、「全○○」は対象外 (ユーザ要望)、(2) 削除禁止 — ID 未指定=新規、ID あり=更新のみ、(3) WBS の sync-import パターン (dry-run + preview + apply の 3 段階) を踏襲、(4) §5.26 「共通部品流用」に従い `<EntitySyncImportDialog>` を `src/components/dialogs/entity-sync-import-dialog.tsx` に新設して 5 entity 共通化、(5) CSV format は編集 dialog の入力項目 (例: risk なら type/title/content/impact/likelihood/visibility/...) を完全網羅。**実装手順**: ① 共通 dialog component → ② risks の import API + UI → ③ retrospectives/knowledge/memos に export endpoint + import endpoint + UI ボタン → ④ 各 entity で E2E 1 ケース (export → 編集 → import → 反映確認) | 2026-04-28 ユーザ要望「インポート/エクスポート機能を追加」、PR-ε で設計のみ実施し実装は本 T-22 で別途 |
 
 ### 11.2 低優先 (長期案件)
@@ -3778,3 +3946,6 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-27 | §10.5 再発事例 10 例目 + 運用ルール 9 を追記 (PR #170 orphan recovery / PR #173)。PR #170 (Phase C-1 認証 i18n) は base=feat/i18n-foundation で起票された stacked PR で、PR #169 が main にマージされた直後に **base が孤児化** → PR #170 の merge commit (6a88075) は `feat/i18n-foundation` 側に残るのみで main の first-parent history に含まれない orphan 状態となった。**GitHub UI は MERGED 表示 + mergeCommit OID も持つため発覚が遅れる**点が極めて危険で、Phase C-2 着手時の grep `git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件で初めて検出。CI fail を伴わず merged 表示も出るため自動検出は困難。Recovery は origin/main から新規 branch を切って元 PR の 3 commits (73b6a4b → 526c2fc → 981ef5d) を順次 cherry-pick。運用ルール 9「stacked PR の上流が main マージされたら下流の base を main に切替える (`gh pr edit <PR> --base main`)」と「GitHub UI のマージ画面で base 確認を徹底」を §10.5 に新設 |
 | 2026-04-27 | §10.5 9 例目 4 回目再発 (PR #172 / PR #173 conflict resolve)。PR #172 (運用ルール 8a) と PR #173 (10 例目 + 運用ルール 9) の更新履歴行が末尾位置で衝突 → 番号順 (8a → 10 例目) で両方残す機械解消。1 セッション中に §10.5 9 例目が 4 回適用された (#168 / #169 / #171 / #173) が、**運用ルール 8 通り毎回機械解消で済むことが実証**され、並走 PR を恐れる必要がないことが再確認された |
 | 2026-04-28 | §10.5.1 新設 (PR #175 / feat/i18n-phase-c-final)。**並列 worktree agents による大規模一括翻訳パターン**を確立。Phase C 残 ~933 hits を 5 isolated worktree agents に分担 (project / wbs / risk / memo / admin) し、各 namespace を独立追加することで JSON 衝突を回避。**3 つの落とし穴**を §10.5.1 に明文化: (1) worktree の `.next/` ビルド成果物が ESLint で誤検出 (58529 problems の偽陽性、git worktree remove + 物理削除 + ESLint ignore で解消)、(2) `pg` symlink 破損 (`pnpm install --force` で復旧)、(3) agent 残作業 (residual cleanup) のセッション越境管理。§11 T-17 として残 ~104 hits の sweep を計画化 (test 文言 / API error message / 軽微な漏れ) |
+| 2026-04-28 | §5.27 新設 + §11 T-18 登録 (PR #177 / chore/hide-retro-comment-and-memo-filter)。**機能 deferral パターン**「UI のみ削除、DB/API/service は温存」を §6 (完全削除) と並ぶ独立パターンとして明文化。PR #177 で振り返りコメント機能を本パターンで非表示化 (将来 T-18 cross-list 横ぐし再設計予定)。適用判断基準 4 項目 (再有効化確定 / データ無傷 / API 直接呼び出し OK / 再有効化コスト高) と、UI 削除 → state 削除 → prop 整理 → import 整理 → 温存 → コメント追記 → §11 TODO 登録 の 7 step 手順を明示。grep 横展開チェックでは「JSDoc / API endpoint comment は削除した文脈で更新する」運用も合わせて規定 |
+| 2026-04-28 | §5.28 新設 (PR #178 E2E hotfix / fix(migration-β))。**Prisma migration の UPDATE/ALTER/DROP 文を書く前に init migration の CREATE TABLE で対象列の存在を grep する** 規約を明文化。本件 hotfix では `UPDATE "knowledge_projects" SET "dev_method"` と書いていたが `dev_method` 列は `knowledges` テーブルに存在 (knowledge_projects は多対多関連テーブル)。schema.prisma の model 名から table 名を脳内変換するのは事故の元 (KnowledgeProject ≠ Knowledge)。確認手順 (init migration grep + ローカル `prisma migrate dev`) を運用ルール化、CI を待たずに検出する手順を提示。関連: §5.11.1 (schema 借用ミス) / §11 T-21 (永続ロック migration で本教訓を活用) |
+| 2026-04-28 | §5.29 新設 + §11 T-21 登録 (PR #182 / investigation/lock-stats-verification)。**永続ロック未実装バグの発見**: ユーザ要望「アカウントロック情報の数字検証」(項目 16) で auth.ts を grep した結果、`permanentLock=true` を設定する経路がコードベース全体に存在しないことを確認。コメント (users-client.tsx:216) と実装の乖離。修正方針として `temporaryLockCount` 列追加 + 3 回到達で永続化 (選択肢 A、認証パス overhead 最小) を §5.29 で選定。一般化教訓として「UI コメントで言及されたフラグが実際に true 化される経路が存在するか grep で検証」する運用ルールを併記 |

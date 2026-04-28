@@ -52,7 +52,7 @@ import {
 } from '@/components/attachments/staged-attachments-input';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
-import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
+import { PRIORITIES, IMPACT_LEVELS, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
 // PR #117 → PR #119: session 連携フォーマッタ
@@ -120,14 +120,16 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
   // PR #165: プロジェクト「リスク/課題一覧」での一括更新機能 (旧 cross-list 版から移し替え)
   // フィルター適用時のみ checkbox 列とツールバーが現れ、作成者本人の行のみ選択可。
   // 「フィルター必須」を UI + API 両方で強制する二重防御 (DEVELOPER_GUIDE §5.21)。
+  // PR-γ / 項目 4 + 9: フィルタは impact (影響度/重要度) ではなく priority (優先度) で行う。
+  // 一覧表示も priority のみで、最終判断は priority で行うため。
   const [bulkFilter, setBulkFilter] = useState<{
     state: string; // '' = 未指定
-    impact: string;
+    priority: string;
     keyword: string;
     mineOnly: boolean;
-  }>({ state: '', impact: '', keyword: '', mineOnly: false });
+  }>({ state: '', priority: '', keyword: '', mineOnly: false });
   const filterApplied = Boolean(
-    bulkFilter.state || bulkFilter.impact || bulkFilter.mineOnly
+    bulkFilter.state || bulkFilter.priority || bulkFilter.mineOnly
     || (bulkFilter.keyword && bulkFilter.keyword.trim().length > 0)
     || typeFilter, // typeFilter (risk/issue タブ) は暗黙のフィルター
   );
@@ -135,7 +137,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
   const filteredRisks = useMemo(() => {
     let xs = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
     if (bulkFilter.state) xs = xs.filter((r) => r.state === bulkFilter.state);
-    if (bulkFilter.impact) xs = xs.filter((r) => r.impact === bulkFilter.impact);
+    if (bulkFilter.priority) xs = xs.filter((r) => r.priority === bulkFilter.priority);
     if (bulkFilter.mineOnly) xs = xs.filter((r) => r.viewerIsCreator === true);
     if (bulkFilter.keyword.trim()) {
       const kw = bulkFilter.keyword.trim().toLowerCase();
@@ -261,7 +263,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
           filterFingerprint: {
             type: typeFilter,
             state: bulkFilter.state || undefined,
-            impact: bulkFilter.impact || undefined,
+            priority: bulkFilter.priority || undefined,
             mineOnly: bulkFilter.mineOnly || undefined,
             keyword: bulkFilter.keyword.trim() || undefined,
           },
@@ -423,22 +425,23 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                       </ul>
                     </div>
                   )}
-                  {/* PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定) */}
+                  {/*
+                    PR-γ / 項目 5/6: type=issue では impact→重要度 / likelihood→緊急度 にラベル切替。
+                    priority は service 層で computePriority() により自動算出 (UI 入力不可)。
+                  */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>{tRisk('impact')}</Label>
+                      <Label>{form.type === 'issue' ? tRisk('importance') : tRisk('impact')}</Label>
                       <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className={nativeSelectClass}>
-                        {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        {Object.entries(IMPACT_LEVELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select>
                     </div>
-                    {form.type === 'risk' && (
-                      <div className="space-y-2">
-                        <Label>{tRisk('likelihood')}</Label>
-                        <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className={nativeSelectClass}>
-                          {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                        </select>
-                      </div>
-                    )}
+                    <div className="space-y-2">
+                      <Label>{form.type === 'issue' ? tRisk('urgency') : tRisk('likelihood')}</Label>
+                      <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className={nativeSelectClass}>
+                        {Object.entries(IMPACT_LEVELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      </select>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>{tRisk('assignee')}</Label>
@@ -482,11 +485,12 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             </select>
           </div>
           <div>
-            <Label htmlFor={`risk-filter-impact-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('impact')}</Label>
+            {/* PR-γ / 項目 4 + 9: フィルタは impact (影響度/重要度) ではなく priority (優先度) で */}
+            <Label htmlFor={`risk-filter-priority-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('priority')}</Label>
             <select
-              id={`risk-filter-impact-${typeFilter ?? 'all'}`}
-              value={bulkFilter.impact}
-              onChange={(e) => setBulkFilter((f) => ({ ...f, impact: e.target.value }))}
+              id={`risk-filter-priority-${typeFilter ?? 'all'}`}
+              value={bulkFilter.priority}
+              onChange={(e) => setBulkFilter((f) => ({ ...f, priority: e.target.value }))}
               className={nativeSelectClass}
             >
               <option value="">{tRisk('all')}</option>
@@ -559,7 +563,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             )}
             {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>{tRisk('kind')}</ResizableHead>}
             <ResizableHead columnKey="title" defaultWidth={240}>{tRisk('subject')}</ResizableHead>
-            <ResizableHead columnKey="impact" defaultWidth={80}>{tRisk('impact')}</ResizableHead>
+            {/* PR-γ / 項目 3 + 8: 影響度/重要度カラムは非表示。詳細は編集 dialog で確認。 */}
             <ResizableHead columnKey="priority" defaultWidth={80}>{tRisk('priority')}</ResizableHead>
             <ResizableHead columnKey="state" defaultWidth={100}>{tRisk('state')}</ResizableHead>
             {/* feat/account-lock-and-ui-consistency: 公開範囲列を追加。編集ダイアログで
@@ -604,7 +608,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
               )}
               {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? tRisk('labelRisk') : tRisk('labelIssue')}</Badge></TableCell>}
               <TableCell className="font-medium">{r.title}</TableCell>
-              <TableCell><Badge variant={impactColors[r.impact] || 'secondary'}>{PRIORITIES[r.impact as keyof typeof PRIORITIES]}</Badge></TableCell>
+              {/* PR-γ: 影響度/重要度セルは非表示 (一覧は priority のみ) */}
               <TableCell><Badge variant={impactColors[r.priority] || 'secondary'}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Badge></TableCell>
               <TableCell>
                 {/*
