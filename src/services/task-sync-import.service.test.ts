@@ -10,9 +10,6 @@ vi.mock('@/lib/db', () => ({
       updateMany: vi.fn(),
       deleteMany: vi.fn(),
     },
-    projectMember: {
-      findMany: vi.fn(),
-    },
   },
 }));
 
@@ -32,21 +29,23 @@ import {
 } from './task-sync-import.service';
 import { prisma } from '@/lib/db';
 
+// T-19 で 7 列に削減: ID / 種別 / 名称 / レベル / 予定開始日 / 予定終了日 / 予定工数
+const HEADER_7 = 'ID,種別,名称,レベル,予定開始日,予定終了日,予定工数';
+
 // ============================================================
-// parseSyncImportCsv
+// parseSyncImportCsv (T-19, 7 列)
 // ============================================================
 
-describe('parseSyncImportCsv', () => {
+describe('parseSyncImportCsv (T-19)', () => {
   it('ヘッダーのみは空配列を返す', () => {
-    const csv = 'ID,レベル,種別,名称,WBS番号,担当者氏名,予定開始日,予定終了日,見積工数,優先度,マイルストーン,備考,ステータス,進捗率,実績工数,実績開始日,実績終了日';
-    expect(parseSyncImportCsv(csv)).toEqual([]);
+    expect(parseSyncImportCsv(HEADER_7)).toEqual([]);
   });
 
   it('ID あり行は id を文字列で持ち、空欄は null になる', () => {
     const csv = [
-      'ID,レベル,種別,名称,WBS番号,担当者氏名,予定開始日,予定終了日,見積工数,優先度,マイルストーン,備考,ステータス,進捗率,実績工数,実績開始日,実績終了日',
-      'abc-123,1,WP,設計,1.0,,,,0,,,メモ,not_started,0,,,',
-      ',2,ACT,要件ヒアリング,1.1,Alice,2026-05-01,2026-05-10,5,medium,,,not_started,0,,,',
+      HEADER_7,
+      'abc-123,WP,設計,1,,,0',
+      ',ACT,要件ヒアリング,2,2026-05-01,2026-05-10,5',
     ].join('\n');
 
     const rows = parseSyncImportCsv(csv);
@@ -54,49 +53,50 @@ describe('parseSyncImportCsv', () => {
     expect(rows[0].id).toBe('abc-123');
     expect(rows[0].type).toBe('work_package');
     expect(rows[0].name).toBe('設計');
+    expect(rows[0].level).toBe(1);
     expect(rows[1].id).toBe(null);
     expect(rows[1].type).toBe('activity');
-    expect(rows[1].assigneeName).toBe('Alice');
+    expect(rows[1].name).toBe('要件ヒアリング');
+    expect(rows[1].level).toBe(2);
+    expect(rows[1].plannedStartDate).toBe('2026-05-01');
+    expect(rows[1].plannedEndDate).toBe('2026-05-10');
     expect(rows[1].plannedEffort).toBe(5);
-    expect(rows[1].priority).toBe('medium');
   });
 
   it('BOM 付きでも先頭文字を読み飛ばしてパースできる', () => {
     const bom = '﻿';
-    const csv = bom + [
-      'ID,レベル,種別,名称,WBS番号,担当者氏名,予定開始日,予定終了日,見積工数,優先度,マイルストーン,備考,ステータス,進捗率,実績工数,実績開始日,実績終了日',
-      ',1,WP,A,,,,,0,,,,,0,,,',
-    ].join('\n');
-
+    const csv = bom + [HEADER_7, ',WP,A,1,,,0'].join('\n');
     const rows = parseSyncImportCsv(csv);
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe('A');
   });
 
-  it('マイルストーン列は ○ のとき true', () => {
-    const csv = [
-      'ID,レベル,種別,名称,WBS番号,担当者氏名,予定開始日,予定終了日,見積工数,優先度,マイルストーン,備考,ステータス,進捗率,実績工数,実績開始日,実績終了日',
-      ',2,ACT,リリース,,,2026-06-01,2026-06-01,0,high,○,,not_started,0,,,',
-    ].join('\n');
+  it('予定工数が空欄なら null', () => {
+    const csv = [HEADER_7, ',WP,A,1,,,'].join('\n');
     const rows = parseSyncImportCsv(csv);
-    expect(rows[0].isMilestone).toBe(true);
+    expect(rows[0].plannedEffort).toBe(null);
   });
 
-  it('優先度は low/medium/high 以外なら null', () => {
-    const csv = [
-      'ID,レベル,種別,名称,WBS番号,担当者氏名,予定開始日,予定終了日,見積工数,優先度,マイルストーン,備考,ステータス,進捗率,実績工数,実績開始日,実績終了日',
-      ',2,ACT,X,,,,,0,xyz,,,,0,,,',
-    ].join('\n');
-    expect(parseSyncImportCsv(csv)[0].priority).toBe(null);
+  it('レベルが数値変換できない行はスキップされる', () => {
+    const csv = [HEADER_7, ',WP,有効,1,,,0', ',WP,無効,abc,,,0'].join('\n');
+    const rows = parseSyncImportCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('有効');
+  });
+
+  it('名称が空欄の行はスキップされる', () => {
+    const csv = [HEADER_7, ',WP,,1,,,0', ',WP,有効,1,,,0'].join('\n');
+    const rows = parseSyncImportCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('有効');
   });
 });
 
 // ============================================================
-// computeSyncDiff
+// computeSyncDiff (T-19, 7 列)
 // ============================================================
 
 const projectId = 'proj-1';
-const userA = { id: 'u-A', name: 'Alice' };
 
 const baseDbTask = {
   id: 'db-1',
@@ -129,28 +129,18 @@ function csvRow(overrides: Record<string, unknown> = {}) {
     level: 1,
     type: 'work_package',
     name: '設計',
-    wbsNumber: null,
-    assigneeName: null,
     plannedStartDate: null,
     plannedEndDate: null,
     plannedEffort: null,
-    priority: null,
-    isMilestone: false,
-    notes: null,
-    csvStatus: null,
-    csvProgressRate: null,
-    csvActualStartDate: null,
-    csvActualEndDate: null,
     ...overrides,
   } as Parameters<typeof computeSyncDiff>[1][number];
 }
 
-describe('computeSyncDiff', () => {
+describe('computeSyncDiff (T-19)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('空の CSV はグローバルエラー + canExecute=false', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, []);
     expect(r.canExecute).toBe(false);
@@ -159,7 +149,6 @@ describe('computeSyncDiff', () => {
 
   it('500 件超は globalError', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
     const rows = Array.from({ length: 501 }, (_, i) => csvRow({ tempRowIndex: i + 2, name: `t${i}` }));
     const r = await computeSyncDiff(projectId, rows);
     expect(r.canExecute).toBe(false);
@@ -168,7 +157,6 @@ describe('computeSyncDiff', () => {
 
   it('ID 空欄 + DB に同名タスクなし → CREATE 扱い (エラーなし)', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [csvRow({ name: '新規タスク' })]);
     expect(r.canExecute).toBe(true);
@@ -179,7 +167,6 @@ describe('computeSyncDiff', () => {
 
   it('ID 空欄 + DB に同名タスクあり → blocker (誤コピー検知)', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([baseDbTask] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [csvRow({ name: '設計' })]);
     expect(r.canExecute).toBe(false);
@@ -188,10 +175,9 @@ describe('computeSyncDiff', () => {
 
   it('ID 一致 → UPDATE、変更がなければ NO_CHANGE', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([baseDbTask] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [
-      csvRow({ id: 'db-1', name: '設計', wbsNumber: '1.0' }),
+      csvRow({ id: 'db-1', name: '設計' }),
     ]);
     expect(r.canExecute).toBe(true);
     expect(r.rows[0].action).toBe('NO_CHANGE');
@@ -199,7 +185,6 @@ describe('computeSyncDiff', () => {
 
   it('ID 一致 + 名称変更 → UPDATE + fieldChanges', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([baseDbTask] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [
       csvRow({ id: 'db-1', name: '設計フェーズ' }),
@@ -211,7 +196,6 @@ describe('computeSyncDiff', () => {
 
   it('ID が DB に存在しない → blocker', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [csvRow({ id: 'unknown-id', name: 'X' })]);
     expect(r.canExecute).toBe(false);
@@ -220,7 +204,6 @@ describe('computeSyncDiff', () => {
 
   it('WP↔ACT 切替は blocker', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([baseDbTask] as never); // 既存は WP
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [
       csvRow({ id: 'db-1', name: '設計', type: 'activity' }),
@@ -229,39 +212,8 @@ describe('computeSyncDiff', () => {
     expect(r.rows[0].errors?.some((e) => e.includes('種別'))).toBe(true);
   });
 
-  it('担当者氏名がメンバー外 → blocker', async () => {
-    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([
-      { user: userA, projectId, userId: 'u-A', projectRole: 'member', assignedBy: 'x', id: 'pm-1', createdAt: new Date(), updatedAt: new Date() },
-    ] as never);
-
-    const r = await computeSyncDiff(projectId, [
-      csvRow({ name: 'X', type: 'activity', level: 2, assigneeName: 'Charlie' }),
-    ]);
-    // 親不在 + 担当者不在の 2 つの blocker が出る
-    expect(r.canExecute).toBe(false);
-    expect(r.rows[0].errors?.some((e) => e.includes('担当者 "Charlie"'))).toBe(true);
-  });
-
-  it('担当者氏名が同名 2 名 → blocker (一意 lookup できない)', async () => {
-    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([
-      { user: { id: 'u-1', name: 'Alice' }, projectId, userId: 'u-1', projectRole: 'member', assignedBy: 'x', id: 'pm-1', createdAt: new Date(), updatedAt: new Date() },
-      { user: { id: 'u-2', name: 'Alice' }, projectId, userId: 'u-2', projectRole: 'member', assignedBy: 'x', id: 'pm-2', createdAt: new Date(), updatedAt: new Date() },
-    ] as never);
-
-    const r = await computeSyncDiff(projectId, [
-      // 親 WP
-      csvRow({ name: '親', type: 'work_package', level: 1, tempRowIndex: 2 }),
-      csvRow({ name: 'X', type: 'activity', level: 2, assigneeName: 'Alice', tempRowIndex: 3 }),
-    ]);
-    expect(r.canExecute).toBe(false);
-    expect(r.rows[1].errors?.some((e) => e.includes('複数該当'))).toBe(true);
-  });
-
   it('CSV 内 ID 重複は blocker', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([baseDbTask, { ...baseDbTask, id: 'db-2', name: '別' }] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [
       csvRow({ id: 'db-1', name: '設計', tempRowIndex: 2 }),
@@ -276,7 +228,6 @@ describe('computeSyncDiff', () => {
       baseDbTask,
       { ...baseDbTask, id: 'db-2', name: 'もう必要ないタスク', progressRate: 0, actualStartDate: null },
     ] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [
       csvRow({ id: 'db-1', name: '設計' }),
@@ -292,7 +243,6 @@ describe('computeSyncDiff', () => {
       baseDbTask,
       { ...baseDbTask, id: 'db-2', name: '進捗あり', progressRate: 50, actualStartDate: new Date() },
     ] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(projectId, [
       csvRow({ id: 'db-1', name: '設計' }),
@@ -300,19 +250,5 @@ describe('computeSyncDiff', () => {
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(true);
     expect(removeRow?.warningLevel).toBe('ERROR');
-  });
-
-  it('進捗系列の差分は warning に出る (blocker にはならない)', async () => {
-    vi.mocked(prisma.task.findMany).mockResolvedValue([
-      { ...baseDbTask, status: 'in_progress', progressRate: 30 },
-    ] as never);
-    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
-
-    const r = await computeSyncDiff(projectId, [
-      csvRow({ id: 'db-1', name: '設計', csvStatus: 'completed', csvProgressRate: 100 }),
-    ]);
-    expect(r.canExecute).toBe(true);
-    expect(r.rows[0].warnings?.some((w) => w.includes('ステータス'))).toBe(true);
-    expect(r.rows[0].warnings?.some((w) => w.includes('進捗率'))).toBe(true);
   });
 });

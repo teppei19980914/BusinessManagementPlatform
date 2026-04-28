@@ -38,7 +38,7 @@ import {
   createTask,
   deleteTask,
   getProgressLogs,
-  exportWbsTemplate,
+  exportWbs,
   updateTask,
   updateTaskProgress,
   bulkUpdateTasks,
@@ -278,18 +278,20 @@ describe('getProgressLogs', () => {
   });
 });
 
-describe('exportWbsTemplate', () => {
+describe('exportWbs (T-19, 7 列)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('空プロジェクトはヘッダー行のみ', async () => {
+  it('空プロジェクトは BOM + ヘッダー行のみ', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([]);
 
-    const csv = await exportWbsTemplate('p-1');
-    expect(csv).toContain('レベル');
+    const csv = await exportWbs('p-1');
+    // BOM 付き UTF-8 + 7 列ヘッダー
+    expect(csv.startsWith('﻿')).toBe(true);
+    expect(csv).toContain('ID,種別,名称,レベル,予定開始日,予定終了日,予定工数');
     expect(csv.split('\n')).toHaveLength(1); // ヘッダーのみ
   });
 
-  it('階層構造を深さ優先で出力 + CSV ヘッダー + 種別表示 (WP / ACT)', async () => {
+  it('階層構造を深さ優先で 7 列出力する (T-19: ID/種別/名称/レベル/開始/終了/工数)', async () => {
     const wp = {
       id: 'wp-1',
       projectId: 'p-1',
@@ -304,7 +306,6 @@ describe('exportWbsTemplate', () => {
       isMilestone: false,
       notes: null,
       createdAt: now,
-      childTasks: [],
     };
     const act = {
       ...wp,
@@ -318,23 +319,26 @@ describe('exportWbsTemplate', () => {
     };
     vi.mocked(prisma.task.findMany).mockResolvedValue([wp, act] as never);
 
-    const csv = await exportWbsTemplate('p-1');
+    const csv = await exportWbs('p-1');
 
     const lines = csv.split('\n');
-    expect(lines[0]).toContain('レベル');
-    expect(lines[1]).toContain('WP');
-    expect(lines[2]).toContain('ACT');
-    // 親 WP はレベル 1, 子 ACT はレベル 2
-    expect(lines[1].startsWith('1,')).toBe(true);
-    expect(lines[2].startsWith('2,')).toBe(true);
+    // ヘッダー (BOM 含む)
+    expect(lines[0]).toContain('ID,種別,名称,レベル');
+    // 1 行目: WP, level=1
+    expect(lines[1]).toContain('wp-1,WP,WP 1,1,');
+    // 2 行目: ACT, level=2
+    expect(lines[2]).toContain('act-1,ACT,ACT 1,2,');
+    // 各行 7 カラムある (= カンマ 6 個)
+    expect(lines[1].split(',').length).toBe(7);
+    expect(lines[2].split(',').length).toBe(7);
   });
 
   it('taskIds 指定時は where.id.in に反映', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([]);
-    await exportWbsTemplate('p-1', ['t-a', 't-b']);
+    await exportWbs('p-1', ['t-a', 't-b']);
 
-    const call = vi.mocked(prisma.task.findMany).mock.calls[0][0];
-    expect(call.where.id).toEqual({ in: ['t-a', 't-b'] });
+    const call = vi.mocked(prisma.task.findMany).mock.calls[0]?.[0];
+    expect(call?.where?.id).toEqual({ in: ['t-a', 't-b'] });
   });
 });
 
