@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { changeStatusSchema } from '@/lib/validators/project';
 import { getProject, changeProjectStatus } from '@/services/project.service';
@@ -55,8 +56,9 @@ export async function PATCH(
   } catch (e) {
     if (e instanceof Error) {
       if (e.message === 'NOT_FOUND') {
+        const t = await getTranslations('message');
         return NextResponse.json(
-          { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+          { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
           { status: 404 },
         );
       }

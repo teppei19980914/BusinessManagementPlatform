@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';
 import { compare } from 'bcryptjs';
@@ -31,6 +32,8 @@ const deleteSchema = z.object({
 export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
+
+  const t = await getTranslations('message');
 
   const body = await req.json();
   const parsed = deleteSchema.safeParse(body);
@@ -50,7 +53,7 @@ export async function POST(req: NextRequest) {
   const isValidPassword = await compare(parsed.data.password, dbUser.passwordHash);
   if (!isValidPassword) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'パスワードが正しくありません' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('wrongPassword') } },
       { status: 400 },
     );
   }
@@ -72,7 +75,7 @@ export async function POST(req: NextRequest) {
 
   if (!matched) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'リカバリーコードが正しくありません' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('wrongRecoveryCode') } },
       { status: 400 },
     );
   }

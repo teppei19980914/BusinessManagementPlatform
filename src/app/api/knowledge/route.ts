@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';
 import { createKnowledgeSchema } from '@/lib/validators/knowledge';
@@ -79,11 +80,12 @@ export async function POST(req: NextRequest) {
     const memberSet = new Set(memberships.map((m) => m.projectId));
     const nonMemberIds = projectIds.filter((pid) => !memberSet.has(pid));
     if (nonMemberIds.length > 0) {
+      const t = await getTranslations('message');
       return NextResponse.json(
         {
           error: {
             code: 'FORBIDDEN',
-            message: 'メンバーでないプロジェクトにナレッジを紐付けることはできません',
+            message: t('notProjectMemberKnowledge'),
           },
         },
         { status: 403 },

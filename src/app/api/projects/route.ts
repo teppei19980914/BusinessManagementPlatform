@@ -17,6 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { createProjectSchema } from '@/lib/validators/project';
 import { listProjects, createProject } from '@/services/project.service';
@@ -58,8 +59,9 @@ export async function POST(req: NextRequest) {
     // 一般ユーザでも PM/TL ロールを持っていればプロジェクト作成可能
     // ただし、ここではシステムロールで判断（プロジェクトスコープ外の操作のため）
     // MVP-1a では admin のみに制限
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+      { error: { code: 'FORBIDDEN', message: t('forbidden') } },
       { status: 403 },
     );
   }

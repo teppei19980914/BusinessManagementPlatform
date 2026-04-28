@@ -14,6 +14,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { generateMfaSecret } from '@/services/mfa.service';
 import * as QRCode from 'qrcode';
@@ -32,11 +33,12 @@ export async function POST() {
     const msg = e instanceof Error ? e.message : String(e);
     // PR #114: 既に有効化済は 409 で拒否 (シークレット再取得経路を閉じる)
     if (msg === 'ALREADY_ENABLED') {
+      const t = await getTranslations('message');
       return NextResponse.json(
         {
           error: {
             code: 'ALREADY_ENABLED',
-            message: 'MFA は既に有効化されています。再設定する場合は一度無効化してください',
+            message: t('mfaAlreadyEnabled'),
           },
         },
         { status: 409 },

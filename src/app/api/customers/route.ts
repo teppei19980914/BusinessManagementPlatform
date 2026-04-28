@@ -12,14 +12,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { createCustomerSchema } from '@/lib/validators/customer';
 import { listCustomers, createCustomer } from '@/services/customer.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
 
-function forbidden(): NextResponse {
+async function forbidden(): Promise<NextResponse> {
+  const t = await getTranslations('message');
   return NextResponse.json(
-    { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+    { error: { code: 'FORBIDDEN', message: t('forbidden') } },
     { status: 403 },
   );
 }
@@ -27,7 +29,7 @@ function forbidden(): NextResponse {
 export async function GET() {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
-  if (user.systemRole !== 'admin') return forbidden();
+  if (user.systemRole !== 'admin') return await forbidden();
 
   const data = await listCustomers();
   return NextResponse.json({ data });
@@ -36,7 +38,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
-  if (user.systemRole !== 'admin') return forbidden();
+  if (user.systemRole !== 'admin') return await forbidden();
 
   const body = await req.json();
   const parsed = createCustomerSchema.safeParse(body);

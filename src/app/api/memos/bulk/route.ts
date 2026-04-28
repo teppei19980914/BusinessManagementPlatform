@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { bulkUpdateMemosVisibilityFromList } from '@/services/memo.service';
 import {
@@ -43,8 +44,9 @@ export async function PATCH(req: NextRequest) {
   }
 
   if (!isCrossListFilterApplied(parsed.data.filterFingerprint)) {
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: 'FILTER_REQUIRED', message: 'フィルターを 1 つ以上適用してください (全件更新の事故防止)' },
+      { error: 'FILTER_REQUIRED', message: t('filterRequiredForBulk') },
       { status: 400 },
     );
   }

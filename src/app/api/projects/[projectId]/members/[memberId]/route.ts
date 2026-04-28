@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { updateMemberRole, removeMember } from '@/services/member.service';
 import { recordAuditLog } from '@/services/audit.service';
@@ -58,8 +59,9 @@ export async function PATCH(
     return NextResponse.json({ data: member });
   } catch (e) {
     if (e instanceof Error && e.message === 'NOT_FOUND') {
+      const t = await getTranslations('message');
       return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: 'メンバーが見つかりません' } },
+        { error: { code: 'NOT_FOUND', message: t('memberNotFound') } },
         { status: 404 },
       );
     }
@@ -92,8 +94,9 @@ export async function DELETE(
     return NextResponse.json({ data: { success: true } });
   } catch (e) {
     if (e instanceof Error && e.message === 'NOT_FOUND') {
+      const t = await getTranslations('message');
       return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: 'メンバーが見つかりません' } },
+        { error: { code: 'NOT_FOUND', message: t('memberNotFound') } },
         { status: 404 },
       );
     }

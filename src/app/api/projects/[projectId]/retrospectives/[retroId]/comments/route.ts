@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import {
   getAuthenticatedUser,
   checkProjectPermission,
@@ -42,8 +43,9 @@ export async function POST(
     select: { projectRole: true },
   });
   if (!member || member.projectRole === 'viewer') {
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: 'コメント投稿権限がありません (viewer 不可)' } },
+      { error: { code: 'FORBIDDEN', message: t('noCommentPermission') } },
       { status: 403 },
     );
   }

@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateRiskSchema } from '@/lib/validators/risk';
 import { getRisk, updateRisk, deleteRisk } from '@/services/risk.service';
@@ -64,8 +65,9 @@ export async function PATCH(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
+      const t = await getTranslations('message');
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '作成者本人のみ編集できます' } },
+        { error: { code: 'FORBIDDEN', message: t('creatorOnlyEdit') } },
         { status: 403 },
       );
     }
@@ -105,8 +107,9 @@ export async function DELETE(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
+      const t = await getTranslations('message');
       return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: '作成者本人または管理者のみ削除できます' } },
+        { error: { code: 'FORBIDDEN', message: t('creatorOrAdminOnlyDelete') } },
         { status: 403 },
       );
     }

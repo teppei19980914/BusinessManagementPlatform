@@ -27,6 +27,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { lockInactiveUsers } from '@/services/user.service';
 import { recordAuditLog } from '@/services/audit.service';
@@ -56,8 +57,9 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     });
     if (!firstAdmin) {
+      const t = await getTranslations('message');
       return NextResponse.json(
-        { error: { code: 'NO_ADMIN', message: 'admin ユーザが存在しないため cron 実行不可' } },
+        { error: { code: 'NO_ADMIN', message: t('adminUserNotFoundCron') } },
         { status: 500 },
       );
     }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { hash } from 'bcryptjs';
 import { setupPasswordSchema } from '@/lib/validators/auth';
 import { setupPassword, validateToken } from '@/services/email-verification.service';
@@ -12,8 +13,9 @@ export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get('token');
 
   if (!token) {
+    const tAuth = await getTranslations('auth');
     return NextResponse.json(
-      { error: { code: 'INVALID_TOKEN', message: '無効なリンクです' } },
+      { error: { code: 'INVALID_TOKEN', message: tAuth('invalidLink') } },
       { status: 400 },
     );
   }

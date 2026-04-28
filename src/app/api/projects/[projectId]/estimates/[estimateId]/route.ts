@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateEstimateSchema } from '@/lib/validators/estimate';
 import { getEstimate, updateEstimate, confirmEstimate, deleteEstimate } from '@/services/estimate.service';
@@ -80,8 +81,9 @@ export async function PATCH(
   }
 
   if (existing.isConfirmed) {
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'STATE_CONFLICT', message: '確定済みの見積もりは編集できません' } },
+      { error: { code: 'STATE_CONFLICT', message: t('cannotEditFixedEstimate') } },
       { status: 409 },
     );
   }

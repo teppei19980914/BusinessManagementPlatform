@@ -21,6 +21,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { z } from 'zod/v4';
 import { passwordSchema } from '@/lib/validators/auth';
 import { verifyAndIssueResetToken, resetPassword } from '@/services/password-reset.service';
@@ -82,8 +83,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: { success: true } });
   }
 
+  const t = await getTranslations('message');
   return NextResponse.json(
-    { error: { code: 'VALIDATION_ERROR', message: '不正なリクエストです' } },
+    { error: { code: 'VALIDATION_ERROR', message: t('invalidRequest') } },
     { status: 400 },
   );
 }

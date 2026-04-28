@@ -22,6 +22,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { createUserSchema } from '@/lib/validators/auth';
 import { listUsers, createUser } from '@/services/user.service';
@@ -78,23 +79,24 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     if (e instanceof Error) {
       if (e.message === 'DUPLICATE_EMAIL') {
+        const tAdmin = await getTranslations('admin.users');
         return NextResponse.json(
           {
             error: {
               code: 'DUPLICATE_EMAIL',
-              message: 'このメールアドレスは既に登録されています',
+              message: tAdmin('duplicateEmail'),
             },
           },
           { status: 409 },
         );
       }
       if (e.message === 'EMAIL_SEND_FAILED') {
+        const tAdmin = await getTranslations('admin.users');
         return NextResponse.json(
           {
             error: {
               code: 'EMAIL_SEND_FAILED',
-              message:
-                '検証メールの送信に失敗しました。メールアドレスを確認するか、しばらくしてから再度お試しください。',
+              message: tAdmin('invitationSendFailed'),
             },
           },
           { status: 502 },

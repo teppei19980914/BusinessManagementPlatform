@@ -17,6 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { updateCustomerSchema } from '@/lib/validators/customer';
 import {
@@ -27,16 +28,18 @@ import {
 } from '@/services/customer.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
 
-function forbidden(): NextResponse {
+async function forbidden(): Promise<NextResponse> {
+  const t = await getTranslations('message');
   return NextResponse.json(
-    { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
+    { error: { code: 'FORBIDDEN', message: t('forbidden') } },
     { status: 403 },
   );
 }
 
-function notFound(): NextResponse {
+async function notFound(): Promise<NextResponse> {
+  const t = await getTranslations('message');
   return NextResponse.json(
-    { error: { code: 'NOT_FOUND', message: '顧客が見つかりません' } },
+    { error: { code: 'NOT_FOUND', message: t('customerNotFound') } },
     { status: 404 },
   );
 }
@@ -47,11 +50,11 @@ export async function GET(
 ) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
-  if (user.systemRole !== 'admin') return forbidden();
+  if (user.systemRole !== 'admin') return await forbidden();
 
   const { customerId } = await params;
   const customer = await getCustomer(customerId);
-  if (!customer) return notFound();
+  if (!customer) return await notFound();
 
   return NextResponse.json({ data: customer });
 }
@@ -62,7 +65,7 @@ export async function PATCH(
 ) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
-  if (user.systemRole !== 'admin') return forbidden();
+  if (user.systemRole !== 'admin') return await forbidden();
 
   const { customerId } = await params;
 
@@ -76,10 +79,10 @@ export async function PATCH(
   }
 
   const before = await getCustomer(customerId);
-  if (!before) return notFound();
+  if (!before) return await notFound();
 
   const updated = await updateCustomer(customerId, parsed.data, user.id);
-  if (!updated) return notFound();
+  if (!updated) return await notFound();
 
   await recordAuditLog({
     userId: user.id,
@@ -99,11 +102,11 @@ export async function DELETE(
 ) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
-  if (user.systemRole !== 'admin') return forbidden();
+  if (user.systemRole !== 'admin') return await forbidden();
 
   const { customerId } = await params;
   const before = await getCustomer(customerId);
-  if (!before) return notFound();
+  if (!before) return await notFound();
 
   // PR #111-2: ?cascade=true で deleteCustomerCascade 経路に切り替え
   const { searchParams } = req.nextUrl;
@@ -116,7 +119,7 @@ export async function DELETE(
       cascadeRetros: searchParams.get('cascadeRetros') === 'true',
       cascadeKnowledge: searchParams.get('cascadeKnowledge') === 'true',
     });
-    if (!result.ok && result.reason === 'not_found') return notFound();
+    if (!result.ok && result.reason === 'not_found') return await notFound();
 
     await recordAuditLog({
       userId: user.id,
@@ -147,7 +150,7 @@ export async function DELETE(
   const result = await deleteCustomer(customerId);
 
   if (!result.ok && result.reason === 'not_found') {
-    return notFound();
+    return await notFound();
   }
   if (!result.ok && result.reason === 'has_active_projects') {
     return NextResponse.json(

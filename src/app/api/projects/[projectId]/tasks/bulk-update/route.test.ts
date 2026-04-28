@@ -173,7 +173,8 @@ describe('PATCH /bulk-update — 権限判定', () => {
 
     expect(res.status).toBe(403);
     const body = await res.json();
-    expect(body.error.message).toContain('自分が担当のタスクのみ');
+    // T-17 Group 2: メッセージは i18n 経由 (vitest.setup.ts のスタブで key 名がそのまま返る)
+    expect(body.error.message).toBe('bulkProgressOwnTasksOnly');
   });
 
   it('PR #88: admin も全対象タスクが自分担当なら実績系一括更新に成功する', async () => {
