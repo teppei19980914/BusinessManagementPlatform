@@ -61,6 +61,12 @@ type Props = {
   entityLabel: string;
   /** Dialog 送信成功後にテーブルを reload する */
   onApplied: () => void | Promise<void>;
+  /**
+   * 「自分が作成したもののみ」チェックボックスを非表示にしたい場合に true。
+   * メモ一覧 (memos-client.tsx) のように、表示対象が元から自分作成中心で
+   * mineOnly フィルターが冗長になる画面で使う。
+   */
+  hideMineOnlyFilter?: boolean;
 };
 
 export function CrossListBulkVisibilityToolbar({
@@ -73,6 +79,7 @@ export function CrossListBulkVisibilityToolbar({
   visibilityOptions,
   entityLabel,
   onApplied,
+  hideMineOnlyFilter = false,
 }: Props) {
   const t = useTranslations('bulkVisibility');
   const tAction = useTranslations('action');
@@ -123,8 +130,8 @@ export function CrossListBulkVisibilityToolbar({
             </span>
           )}
         </div>
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-          <div className="md:col-span-2">
+        <div className={hideMineOnlyFilter ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-1 gap-2 md:grid-cols-3'}>
+          <div className={hideMineOnlyFilter ? '' : 'md:col-span-2'}>
             <Label htmlFor={`${formIdPrefix}-filter-keyword`} className="text-xs">{t('keywordLabel')}</Label>
             <Input
               id={`${formIdPrefix}-filter-keyword`}
@@ -133,17 +140,19 @@ export function CrossListBulkVisibilityToolbar({
               placeholder={t('keywordPlaceholder')}
             />
           </div>
-          <div className="flex items-end">
-            <label className="flex items-center gap-2 pb-2 text-sm">
-              <input
-                type="checkbox"
-                checked={filter.mineOnly}
-                onChange={(e) => onFilterChange({ ...filter, mineOnly: e.target.checked })}
-                className="rounded"
-              />
-              {t('mineOnly')}
-            </label>
-          </div>
+          {!hideMineOnlyFilter && (
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 pb-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={filter.mineOnly}
+                  onChange={(e) => onFilterChange({ ...filter, mineOnly: e.target.checked })}
+                  className="rounded"
+                />
+                {t('mineOnly')}
+              </label>
+            </div>
+          )}
         </div>
       </div>
 

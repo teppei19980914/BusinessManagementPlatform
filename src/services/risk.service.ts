@@ -34,6 +34,41 @@
 import { prisma } from '@/lib/db';
 // Prisma types used for Decimal handling in toRiskDTO
 import type { CreateRiskInput } from '@/lib/validators/risk';
+import type { Priority } from '@/types';
+
+/**
+ * PR-γ / 項目 2 + 7: priority を impact × likelihood から自動算出する。
+ *
+ * UI / API 経由で priority を直接指定することはできない (常に本関数で算出)。
+ * 'medium' は 'high' 寄り扱い (高側に寄せる安全側評価)。
+ *
+ * リスク (type='risk'): impact=影響度 / likelihood=発生可能性 — 発生確率重視
+ *   high/high → high, low/high → medium, high/low → low, low/low → minimal
+ *
+ * 課題 (type='issue'): impact=重要度 / likelihood=緊急度 — 重要度重視
+ *   high/high → high, high/low → medium, low/high → low, low/low → minimal
+ */
+export function computePriority(
+  type: string,
+  impact: string,
+  likelihood: string,
+): Priority {
+  const isHigh = (v: string): boolean => v === 'high' || v === 'medium';
+  const iHigh = isHigh(impact);
+  const lHigh = isHigh(likelihood);
+
+  if (type === 'risk') {
+    if (iHigh && lHigh) return 'high';
+    if (!iHigh && lHigh) return 'medium';
+    if (iHigh && !lHigh) return 'low';
+    return 'minimal';
+  }
+  // issue: 重要度 (impact) を緊急度 (likelihood) より重視
+  if (iHigh && lHigh) return 'high';
+  if (iHigh && !lHigh) return 'medium';
+  if (!iHigh && lHigh) return 'low';
+  return 'minimal';
+}
 
 export type RiskDTO = {
   id: string;
@@ -275,8 +310,9 @@ export async function createRisk(
       cause: input.cause,
       impact: input.impact,
       likelihood: input.likelihood,
-      // PR #63: 優先度を UI から撤去。暫定で影響度を流用 (将来 impact × likelihood で自動算出予定)。
-      priority: input.priority ?? input.impact,
+      // PR-γ / 項目 2/7: priority は impact × likelihood から service 層で自動算出。
+      // UI から直接指定不可 (input.priority は無視)。
+      priority: computePriority(input.type, input.impact, input.likelihood ?? 'low'),
       responsePolicy: input.responsePolicy,
       responseDetail: input.responseDetail,
       reporterId: userId,
@@ -326,9 +362,20 @@ export async function updateRisk(
   if (input.title !== undefined) data.title = input.title;
   if (input.content !== undefined) data.content = input.content;
   if (input.cause !== undefined) data.cause = input.cause;
+  // PR-γ: impact / likelihood が変わるたびに priority を再計算する。
+  // priority は **input から直接受け取らず**、常に (impact, likelihood, type) から算出。
   if (input.impact !== undefined) data.impact = input.impact;
   if (input.likelihood !== undefined) data.likelihood = input.likelihood;
-  if (input.priority !== undefined) data.priority = input.priority;
+  if (input.impact !== undefined || input.likelihood !== undefined) {
+    // 既存値とマージして再計算
+    const existingForPriority = await prisma.riskIssue.findUniqueOrThrow({
+      where: { id: riskId },
+      select: { type: true, impact: true, likelihood: true },
+    });
+    const newImpact = (input.impact ?? existingForPriority.impact) as string;
+    const newLikelihood = (input.likelihood ?? existingForPriority.likelihood ?? 'low') as string;
+    data.priority = computePriority(existingForPriority.type, newImpact, newLikelihood);
+  }
   if (input.responsePolicy !== undefined) data.responsePolicy = input.responsePolicy;
   if (input.responseDetail !== undefined) data.responseDetail = input.responseDetail;
   if (input.assigneeId !== undefined) data.assigneeId = input.assigneeId;

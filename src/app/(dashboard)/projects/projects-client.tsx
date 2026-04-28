@@ -60,7 +60,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { PROJECT_STATUSES, DEV_METHODS } from '@/types';
+import { PROJECT_STATUSES, DEV_METHODS, CONTRACT_TYPES } from '@/types';
 import type { ProjectDTO } from '@/services/project.service';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import {
@@ -110,6 +110,8 @@ export function ProjectsClient({
     background: '',
     scope: '',
     devMethod: 'scratch',
+    // PR-β / 項目 14: 契約形態 (新設、新規作成時は空 = 後で編集して設定)
+    contractType: '' as '' | 'quasi_mandate' | 'lump_sum' | 'ses' | 'other',
     plannedStartDate: '',
     plannedEndDate: '',
     // PR #65: 核心機能 (提案型サービス) のタグ入力。カンマ区切り文字列で受け取り、
@@ -155,6 +157,8 @@ export function ProjectsClient({
       background: form.background,
       scope: form.scope,
       devMethod: form.devMethod,
+      // PR-β / 項目 14: 契約形態 (空文字は null で送信、validator は nullable)
+      contractType: form.contractType || null,
       plannedStartDate: form.plannedStartDate,
       plannedEndDate: form.plannedEndDate,
       businessDomainTags: parseTagsInput(form.businessDomainTagsInput),
@@ -196,6 +200,7 @@ export function ProjectsClient({
       background: '',
       scope: '',
       devMethod: 'scratch',
+      contractType: '' as '' | 'quasi_mandate' | 'lump_sum' | 'ses' | 'other',
       plannedStartDate: '',
       plannedEndDate: '',
       businessDomainTagsInput: '',
@@ -294,13 +299,30 @@ export function ProjectsClient({
                     required
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="project-create-devmethod">{t('fieldDevMethod')}</Label>
-                  <select id="project-create-devmethod" value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
-                    {Object.entries(DEV_METHODS).map(([key, label]) => (
-                      <option key={key} value={key}>{label}</option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="project-create-devmethod">{t('fieldDevMethod')}</Label>
+                    <select id="project-create-devmethod" value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
+                      {Object.entries(DEV_METHODS).map(([key, label]) => (
+                        <option key={key} value={key}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    {/* PR-β / 項目 14: 契約形態 (新設、未選択は空文字 → null 送信) */}
+                    <Label htmlFor="project-create-contracttype">{t('fieldContractType')}</Label>
+                    <select
+                      id="project-create-contracttype"
+                      value={form.contractType}
+                      onChange={(e) => setForm({ ...form, contractType: e.target.value as typeof form.contractType })}
+                      className={nativeSelectClass}
+                    >
+                      <option value="">{t('contractTypeUnset')}</option>
+                      {Object.entries(CONTRACT_TYPES).map(([key, label]) => (
+                        <option key={key} value={key}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
