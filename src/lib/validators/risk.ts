@@ -20,9 +20,9 @@ export const createRiskSchema = z.object({
   cause: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
   impact: z.enum(['low', 'medium', 'high']),
   likelihood: z.enum(['low', 'medium', 'high']).nullable().optional(),
-  // PR #63: 優先度は UI から撤去。将来 impact × likelihood から自動算出予定のため optional 化。
-  // 指定なしの場合はサービス層で impact と同値にフォールバック。
-  priority: z.enum(['low', 'medium', 'high']).optional(),
+  // PR-γ / 項目 2/7: priority は service 層 computePriority() で自動算出される。
+  // input から指定された場合は無視 (overwrite)。値域は 4 値 (PRIORITIES と一致)。
+  priority: z.enum(['high', 'medium', 'low', 'minimal']).optional(),
   responsePolicy: z.string().max(NOTES_MAX_LENGTH).nullable().optional(),
   responseDetail: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
   // assigneeId / deadline は編集 dialog で空に戻すと null 送信される (DB schema nullable)

@@ -18,10 +18,12 @@
  * 関連: SPECIFICATION.md (全振り返り画面)
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Table, TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -48,13 +50,41 @@ export function AllRetrospectivesTable({
   const tRetro = useTranslations('retro');
   const { formatDateTime } = useFormatters();
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
+
+  // PR-δ / 項目 12: 全振り返りに検索 (keyword) フィルタを追加。
+  // 振り返り画面 (RetrospectivesClient) と同様にキーワードで本文/良かった点/改善点を絞り込み。
+  const [filter, setFilter] = useState({ keyword: '' });
+
+  const filteredRetros = useMemo(() => {
+    if (!filter.keyword.trim()) return retros;
+    const kw = filter.keyword.trim().toLowerCase();
+    return retros.filter((r) =>
+      (r.planSummary ?? '').toLowerCase().includes(kw)
+      || (r.actualSummary ?? '').toLowerCase().includes(kw)
+      || (r.goodPoints ?? '').toLowerCase().includes(kw)
+      || (r.improvements ?? '').toLowerCase().includes(kw),
+    );
+  }, [retros, filter]);
+
   const attachmentsByEntity = useBatchAttachments(
     'retrospective',
-    retros.map((r) => r.id),
+    filteredRetros.map((r) => r.id),
   );
 
   return (
     <ResizableColumnsProvider tableKey="all-retrospectives">
+      {/* PR-δ / 項目 12: 検索フィルタ (○○一覧と同 UX に揃える) */}
+      <div className="rounded-md border bg-muted/30 p-3 mb-3">
+        <div>
+          <Label htmlFor="all-retros-filter-keyword" className="text-xs">{tRetro('keyword')}</Label>
+          <Input
+            id="all-retros-filter-keyword"
+            value={filter.keyword}
+            onChange={(e) => setFilter({ keyword: e.target.value })}
+            placeholder={tRetro('keywordPlaceholder')}
+          />
+        </div>
+      </div>
       <div className="flex justify-end pb-2">
         <ResetColumnsButton />
       </div>
@@ -76,7 +106,7 @@ export function AllRetrospectivesTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {retros.map((r) => (
+          {filteredRetros.map((r) => (
             <TableRow
               key={r.id}
               className="cursor-pointer hover:bg-muted"
@@ -123,7 +153,7 @@ export function AllRetrospectivesTable({
               )}
             </TableRow>
           ))}
-          {retros.length === 0 && (
+          {filteredRetros.length === 0 && (
             <TableRow>
               <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-muted-foreground">
                 {tRetro('noneInList')}
