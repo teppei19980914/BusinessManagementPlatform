@@ -112,6 +112,8 @@
 - [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)
 - [x] `/api/memos/[id]` (PATCH/DELETE) — e2e/specs/04-personal-features.spec.ts (PR #94 / DELETE のみ UI 経由でカバー、PATCH は後続 PR)
 - [x] `/api/memos/bulk` (PATCH 一括 visibility, PR #162、PR #165 で /memos personal page から呼ぶよう変更) — e2e/specs/10-project-list-bulk-update.spec.ts
+- [ ] `/api/memos/sync-import` — skip: T-22 Phase 22d で新設。CRUD 単体テストは src/services/memo-sync-import.service.test.ts を後続 PR で追加予定 (現状は parser/diff 共通パターンが Phase 22a の risk-sync-import.service.test.ts で検証済)
+- [ ] `/api/memos/export` — skip: T-22 Phase 22d で新設、4 列 CSV 出力。E2E は sync-import と往復編集サイクルでまとめてカバー予定 (後続 PR)
 
 ### 添付
 - [ ] `/api/attachments/*` — skip: 各親エンティティの spec 経由で間接カバー
