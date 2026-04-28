@@ -5,16 +5,14 @@
  *
  * 共通仕様:
  *   - 上部にフィルター入力 (キーワード + 「自分作成のみ」チェック) を配置。
- *     PR #161 と同じ二重防御方針: フィルター 1 つも適用していない場合は
- *     **bulk 選択列・ツールバー自体を表示しない** (UI 改変による誤操作を防ぐ)。
- *   - filterApplied 時のみ checkbox 列を表示し、`viewerIsCreator=true` の行のみ
- *     チェック有効。bulk 編集ボタンで visibility 切替ダイアログを開く。
+ *     **Phase C 要件 18 (2026-04-28)**: フィルター必須要件は撤廃。フィルター有無に
+ *     関わらず checkbox 列とツールバーを常時表示し、任意の複数行に対する一括編集を許可。
+ *   - checkbox 列は `viewerIsCreator=true` の行のみチェック有効 (per-row 認可)。
+ *     bulk 編集ボタンで visibility 切替ダイアログを開く。
  *   - 送信時はサーバの `/api/<entity>/bulk` PATCH を呼ぶ (entity は呼び出し側が指定)。
  *
  * 認可:
  *   - 編集権限はサーバ側で per-row 検証 (silent skip)。本コンポーネントは UI 防御のみ。
- *
- * 関連: DEVELOPER_GUIDE §5.21 (PR #161 で確立した二重防御パターン)
  */
 
 import { useState } from 'react';
@@ -36,10 +34,6 @@ export type CrossListFilterState = {
 };
 
 export const EMPTY_FILTER: CrossListFilterState = { keyword: '', mineOnly: false };
-
-export function isCrossListFilterActive(f: CrossListFilterState): boolean {
-  return Boolean(f.mineOnly || f.keyword.trim().length > 0);
-}
 
 type Props = {
   /**
@@ -88,8 +82,6 @@ export function CrossListBulkVisibilityToolbar({
   const [bulkVisibility, setBulkVisibility] = useState<string>(visibilityOptions[0]?.value ?? '');
   const [error, setError] = useState('');
 
-  const filterApplied = isCrossListFilterActive(filter);
-
   async function submit() {
     setError('');
     if (selectedIds.size === 0 || !bulkVisibility) return;
@@ -124,11 +116,6 @@ export function CrossListBulkVisibilityToolbar({
       <div className="rounded-md border bg-muted/30 p-3">
         <div className="mb-2 flex items-center gap-2">
           <span className="text-sm font-medium">{t('filterTitle')}</span>
-          {!filterApplied && (
-            <span className="text-xs text-muted-foreground">
-              {t('filterRequiredHint')}
-            </span>
-          )}
         </div>
         <div className={hideMineOnlyFilter ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-1 gap-2 md:grid-cols-3'}>
           <div className={hideMineOnlyFilter ? '' : 'md:col-span-2'}>
@@ -156,31 +143,29 @@ export function CrossListBulkVisibilityToolbar({
         </div>
       </div>
 
-      {/* 一括編集ツールバー (フィルター適用時のみ) */}
-      {filterApplied && (
-        <div className="flex items-center justify-between gap-2 py-2">
-          <div className="text-sm text-muted-foreground">
-            {t('selectedCount', { count: selectedIds.size })}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onSelectionClear}
-              disabled={selectedIds.size === 0}
-            >
-              {t('deselectAll')}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => { setBulkVisibility(visibilityOptions[0]?.value ?? ''); setError(''); setBulkOpen(true); }}
-              disabled={selectedIds.size === 0}
-            >
-              {t('bulkEditWithCount', { count: selectedIds.size })}
-            </Button>
-          </div>
+      {/* 一括編集ツールバー (Phase C 要件 18: フィルター有無に関わらず常時表示) */}
+      <div className="flex items-center justify-between gap-2 py-2">
+        <div className="text-sm text-muted-foreground">
+          {t('selectedCount', { count: selectedIds.size })}
         </div>
-      )}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onSelectionClear}
+            disabled={selectedIds.size === 0}
+          >
+            {t('deselectAll')}
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => { setBulkVisibility(visibilityOptions[0]?.value ?? ''); setError(''); setBulkOpen(true); }}
+            disabled={selectedIds.size === 0}
+          >
+            {t('bulkEditWithCount', { count: selectedIds.size })}
+          </Button>
+        </div>
+      </div>
 
       <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent>

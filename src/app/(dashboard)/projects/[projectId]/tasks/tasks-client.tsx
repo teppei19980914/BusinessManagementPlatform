@@ -1230,7 +1230,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     </div>
                     <div className="space-y-2">
                       <Label>{t('plannedEffort')}</Label>
-                      <NumberInput min={1} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
+                      <NumberInput min={0.5} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
                     </div>
                   </>
                 )}
@@ -1384,7 +1384,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   label={t('plannedEffort')}
                 >
                   <NumberInput
-                    min={1}
+                    min={0.5}
                     step={0.5}
                     value={bulkEditValues.plannedEffort}
                     onChange={(n) => setBulkEditValues({ ...bulkEditValues, plannedEffort: n })}
@@ -1669,7 +1669,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       </div>
                       <div className="space-y-2">
                         <Label>{t('estimatedEffort')}</Label>
-                        <NumberInput min={1} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
+                        <NumberInput min={0.5} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
                       </div>
                     </>
                   )}

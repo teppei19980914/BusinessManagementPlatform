@@ -30,6 +30,7 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
+import { matchesAnyKeyword } from '@/lib/text-search';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import {
@@ -57,7 +58,6 @@ import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import {
   CrossListBulkVisibilityToolbar,
   EMPTY_FILTER,
-  isCrossListFilterActive,
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
 
@@ -116,30 +116,32 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
   // PR #67: 作成時にステージする添付 URL
   const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
 
-  // PR #165: project-level「振り返り一覧」での一括 visibility 変更
+  // PR #165 + Phase C 要件 18 (2026-04-28): project-level「振り返り一覧」での一括 visibility 変更。
+  // フィルター必須要件は撤廃し、checkbox 列とツールバーは常時表示。
   const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const filterApplied = isCrossListFilterActive(bulkFilter);
 
   const filteredRetros = (() => {
     let xs = retros;
     if (bulkFilter.mineOnly) xs = xs.filter((r) => r.createdBy === currentUserId);
     if (bulkFilter.keyword.trim()) {
-      const kw = bulkFilter.keyword.trim().toLowerCase();
+      // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
       xs = xs.filter((r) =>
-        r.planSummary.toLowerCase().includes(kw)
-        || r.actualSummary.toLowerCase().includes(kw)
-        || r.goodPoints.toLowerCase().includes(kw)
-        || r.problems.toLowerCase().includes(kw)
-        || r.improvements.toLowerCase().includes(kw),
+        matchesAnyKeyword(bulkFilter.keyword, [
+          r.planSummary,
+          r.actualSummary,
+          r.goodPoints,
+          r.problems,
+          r.improvements,
+        ]),
       );
     }
     return xs;
   })();
 
-  const selectableRetroIds = filterApplied
-    ? filteredRetros.filter((r) => r.createdBy === currentUserId).map((r) => r.id)
-    : [];
+  const selectableRetroIds = filteredRetros
+    .filter((r) => r.createdBy === currentUserId)
+    .map((r) => r.id);
   const allRetrosSelected
     = selectableRetroIds.length > 0 && selectableRetroIds.every((id) => selectedIds.has(id));
 
@@ -313,19 +315,17 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
         onApplied={async () => { await reload(); }}
       />
 
-      {filterApplied && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={allRetrosSelected}
-            disabled={selectableRetroIds.length === 0}
-            onChange={toggleAllRetros}
-            className="rounded"
-            aria-label={tRetro('selectAllOwn')}
-          />
-          {tRetro('selectAllOwn')} ({selectableRetroIds.length})
-        </div>
-      )}
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={allRetrosSelected}
+          disabled={selectableRetroIds.length === 0}
+          onChange={toggleAllRetros}
+          className="rounded"
+          aria-label={tRetro('selectAllOwn')}
+        />
+        {tRetro('selectAllOwn')} ({selectableRetroIds.length})
+      </div>
 
       {filteredRetros.length === 0 && (
         <p className="py-8 text-center text-muted-foreground">{tRetro('noneInList')}</p>
@@ -344,7 +344,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {filterApplied && isOwner && (
+              {isOwner && (
                 <input
                   type="checkbox"
                   aria-label={`振り返り (${retro.conductedDate}) を一括編集対象に追加`}

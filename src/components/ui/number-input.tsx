@@ -86,10 +86,16 @@ export function NumberInput({
     if (value !== result.value) onChange(result.value);
   }
 
+  // Phase C 要件 21 (2026-04-28): step が 1 未満 (0.5 等の小数 step) の場合は
+  //   inputMode='decimal' で小数点キー付きキーパッドを出す (iOS 対応)。
+  //   step 未指定 / 1 以上の場合は従来通り 'numeric' (整数キーパッド)。
+  const inputModeValue: 'numeric' | 'decimal'
+    = step != null && step < 1 ? 'decimal' : 'numeric';
+
   return (
     <Input
       type="number"
-      inputMode="numeric"
+      inputMode={inputModeValue}
       value={display}
       onChange={handleChange}
       onBlur={handleBlur}

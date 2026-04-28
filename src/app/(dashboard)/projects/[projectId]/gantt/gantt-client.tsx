@@ -320,17 +320,18 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
   }, [minDate, totalDays]);
 
   // 週末・祝日・今日の縦帯（行背景用・全行共通で 1 枚のオーバーレイ）
-  // PR #125: 祝日も週末と同じ扱いで背景着色 + ヘッダ側で祝日名ツールチップ
+  // PR #125 + Phase C 要件 16/17 (2026-04-28): 土曜=青、日曜・祝日=赤、今日=情報色 で色分け。
   const dayMarkers = useMemo(
     () =>
       dayHeaders
         .map((dh, index) => ({
           index,
-          isWeekend: dh.dayOfWeek === 0 || dh.dayOfWeek === 6,
+          isSaturday: dh.dayOfWeek === 6,
+          isSunday: dh.dayOfWeek === 0,
           isHoliday: dh.holidayName !== null,
           isToday: dh.date === today,
         }))
-        .filter((m) => m.isWeekend || m.isHoliday || m.isToday),
+        .filter((m) => m.isSaturday || m.isSunday || m.isHoliday || m.isToday),
     [dayHeaders, today],
   );
 
@@ -463,22 +464,26 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
             </div>
             <div className="flex">
               {dayHeaders.map((dh, i) => {
-                const isWeekend = dh.dayOfWeek === 0 || dh.dayOfWeek === 6;
+                const isSaturday = dh.dayOfWeek === 6;
+                const isSunday = dh.dayOfWeek === 0;
                 const isToday = dh.date === today;
-                // PR #125: 祝日は土日と同じ背景扱い。祝日名は title 属性で tooltip 表示
+                // PR #125 + Phase C 要件 16 (2026-04-28): 祝日は日曜と同じ赤色扱い。
+                //   祝日名は title 属性で tooltip 表示。
                 const isHoliday = dh.holidayName !== null;
+                // Phase C 要件 17 (2026-04-28): 土曜は青、日曜・祝日は赤に色分け
+                const dayClass = isToday
+                  ? 'bg-info/20 font-bold text-info'
+                  : isSunday || isHoliday
+                    ? 'bg-destructive/5 text-destructive'
+                    : isSaturday
+                      ? 'bg-info/5 text-info'
+                      : 'text-muted-foreground';
                 return (
                   <div
                     key={i}
                     // title で祝日名をネイティブ tooltip 表示 (hover でマウスオーバー検出)
                     title={dh.holidayName ?? undefined}
-                    className={`border-r py-1 text-center text-[10px] leading-tight ${
-                      isToday
-                        ? 'bg-info/20 font-bold text-info'
-                        : isHoliday || isWeekend
-                          ? 'bg-accent text-muted-foreground'
-                          : 'text-muted-foreground'
-                    }`}
+                    className={`border-r py-1 text-center text-[10px] leading-tight ${dayClass}`}
                     style={{ width: `${DAY_WIDTH}px` }}
                   >
                     <div>{dh.day}</div>
@@ -497,13 +502,23 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
               style={{ left: `${nameColWidth}px`, width: `${chartWidth}px` }}
               aria-hidden
             >
-              {dayMarkers.map((dm) => (
-                <div
-                  key={dm.index}
-                  className={`absolute top-0 bottom-0 ${dm.isToday ? 'bg-info/10' : 'bg-muted'}`}
-                  style={{ left: `${dm.index * DAY_WIDTH}px`, width: `${DAY_WIDTH}px` }}
-                />
-              ))}
+              {dayMarkers.map((dm) => {
+                // 優先順: today > 日曜・祝日 > 土曜
+                const bgClass = dm.isToday
+                  ? 'bg-info/10'
+                  : dm.isSunday || dm.isHoliday
+                    ? 'bg-destructive/5'
+                    : dm.isSaturday
+                      ? 'bg-info/5'
+                      : 'bg-muted';
+                return (
+                  <div
+                    key={dm.index}
+                    className={`absolute top-0 bottom-0 ${bgClass}`}
+                    style={{ left: `${dm.index * DAY_WIDTH}px`, width: `${DAY_WIDTH}px` }}
+                  />
+                );
+              })}
             </div>
 
             {rows.map(({ task, depth, hasChildren, isCollapsed }) => (

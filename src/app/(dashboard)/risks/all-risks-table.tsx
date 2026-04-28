@@ -37,6 +37,7 @@ import type { AllRiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
 import { AdminRiskDeleteButton } from './admin-delete-button';
 import { useFormatters } from '@/lib/use-formatters';
+import { matchesAnyKeyword } from '@/lib/text-search';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import {
@@ -75,12 +76,14 @@ export function AllRisksTable({
     if (filter.state) xs = xs.filter((r) => r.state === filter.state);
     if (filter.priority) xs = xs.filter((r) => r.priority === filter.priority);
     if (filter.keyword.trim()) {
-      const kw = filter.keyword.trim().toLowerCase();
+      // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
       xs = xs.filter((r) =>
-        r.title.toLowerCase().includes(kw)
-        || r.content.toLowerCase().includes(kw)
-        || (r.assigneeName ?? '').toLowerCase().includes(kw)
-        || (r.reporterName ?? '').toLowerCase().includes(kw),
+        matchesAnyKeyword(filter.keyword, [
+          r.title,
+          r.content,
+          r.assigneeName,
+          r.reporterName,
+        ]),
       );
     }
     return xs;

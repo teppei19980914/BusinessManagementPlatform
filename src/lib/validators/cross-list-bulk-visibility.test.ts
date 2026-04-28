@@ -3,7 +3,6 @@ import {
   bulkUpdateRetrospectiveVisibilitySchema,
   bulkUpdateKnowledgeVisibilitySchema,
   bulkUpdateMemoVisibilitySchema,
-  isCrossListFilterApplied,
 } from './cross-list-bulk-visibility';
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
@@ -56,25 +55,26 @@ describe('bulkUpdateMemoVisibilitySchema', () => {
   });
 });
 
-describe('isCrossListFilterApplied', () => {
-  it('全項目空なら false', () => {
-    expect(isCrossListFilterApplied({})).toBe(false);
+describe('filterFingerprint は任意項目', () => {
+  // Phase C 要件 18 (2026-04-28): フィルター必須要件は撤廃。
+  // schema は filterFingerprint の値の有無を検証しない (空オブジェクトでも通る)。
+  it('filterFingerprint が空オブジェクトでも schema 検証は成功', () => {
+    expect(
+      bulkUpdateMemoVisibilitySchema.safeParse({
+        ids: [VALID_UUID],
+        filterFingerprint: {},
+        visibility: 'public',
+      }).success,
+    ).toBe(true);
   });
 
-  it('keyword 指定 (trim 後 1 文字以上) で true', () => {
-    expect(isCrossListFilterApplied({ keyword: 'a' })).toBe(true);
-    expect(isCrossListFilterApplied({ keyword: ' a ' })).toBe(true);
-  });
-
-  it('keyword が空白のみなら false (trim 後 0 文字)', () => {
-    expect(isCrossListFilterApplied({ keyword: '   ' })).toBe(false);
-  });
-
-  it('mineOnly=true なら true (「自分作成のみ」は意図的なフィルター)', () => {
-    expect(isCrossListFilterApplied({ mineOnly: true })).toBe(true);
-  });
-
-  it('mineOnly=false 単独では false (UI 初期状態と同じ)', () => {
-    expect(isCrossListFilterApplied({ mineOnly: false })).toBe(false);
+  it('filterFingerprint に keyword/mineOnly があっても通る (UI 表示用)', () => {
+    expect(
+      bulkUpdateMemoVisibilitySchema.safeParse({
+        ids: [VALID_UUID],
+        filterFingerprint: { keyword: 'foo', mineOnly: true },
+        visibility: 'public',
+      }).success,
+    ).toBe(true);
   });
 });

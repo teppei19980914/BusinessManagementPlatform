@@ -49,6 +49,7 @@ import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog'
 import { KNOWLEDGE_TYPES } from '@/types';
 import type { AllKnowledgeDTO } from '@/services/knowledge.service';
 import { useFormatters } from '@/lib/use-formatters';
+import { matchesAnyKeyword } from '@/lib/text-search';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import {
@@ -74,12 +75,8 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
 
   const filtered = initialKnowledge.filter((k) => {
     if (typeFilter && k.knowledgeType !== typeFilter) return false;
-    if (keyword) {
-      const lc = keyword.toLowerCase();
-      const hit = [k.title, k.background, k.content, k.result]
-        .some((v) => v.toLowerCase().includes(lc));
-      if (!hit) return false;
-    }
+    // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
+    if (!matchesAnyKeyword(keyword, [k.title, k.background, k.content, k.result])) return false;
     return true;
   });
 

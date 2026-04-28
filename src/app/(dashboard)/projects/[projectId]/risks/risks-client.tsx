@@ -58,6 +58,8 @@ import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
 // PR #117 → PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
+// Phase C 要件 19: キーワード OR 検索ヘルパ
+import { matchesAnyKeyword } from '@/lib/text-search';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog なので previousValue なし)
@@ -129,11 +131,6 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     keyword: string;
     mineOnly: boolean;
   }>({ state: '', priority: '', keyword: '', mineOnly: false });
-  const filterApplied = Boolean(
-    bulkFilter.state || bulkFilter.priority || bulkFilter.mineOnly
-    || (bulkFilter.keyword && bulkFilter.keyword.trim().length > 0)
-    || typeFilter, // typeFilter (risk/issue タブ) は暗黙のフィルター
-  );
 
   const filteredRisks = useMemo(() => {
     let xs = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
@@ -141,8 +138,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     if (bulkFilter.priority) xs = xs.filter((r) => r.priority === bulkFilter.priority);
     if (bulkFilter.mineOnly) xs = xs.filter((r) => r.viewerIsCreator === true);
     if (bulkFilter.keyword.trim()) {
-      const kw = bulkFilter.keyword.trim().toLowerCase();
-      xs = xs.filter((r) => r.title.toLowerCase().includes(kw) || r.content.toLowerCase().includes(kw));
+      // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索 (matchesAnyKeyword)
+      xs = xs.filter((r) => matchesAnyKeyword(bulkFilter.keyword, [r.title, r.content]));
     }
     return xs;
   }, [risks, typeFilter, bulkFilter]);
@@ -211,9 +208,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
 
   // PR #165: 一括選択 + 一括編集ダイアログ
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const selectableIds = filterApplied
-    ? filteredRisks.filter((r) => r.viewerIsCreator === true).map((r) => r.id)
-    : [];
+  // Phase C 要件 18 (2026-04-28): フィルター有無に関わらず、自分が起票した行は常に選択可能。
+  const selectableIds = filteredRisks.filter((r) => r.viewerIsCreator === true).map((r) => r.id);
   const allSelectableSelected
     = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
 
@@ -479,13 +475,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         </div>
       </div>
 
-      {/* PR #165: フィルター UI (bulk 編集の二重防御に必須、一覧の絞り込みにも有用) */}
+      {/* PR #165: フィルター UI (Phase C 要件 18 で「フィルター必須」は撤廃、絞り込み補助のみ) */}
       <div className="rounded-md border bg-muted/30 p-3">
         <div className="mb-2 flex items-center gap-2">
           <span className="text-sm font-medium">{tRisk('filter')}</span>
-          {!filterApplied && (
-            <span className="text-xs text-muted-foreground">{tRisk('filterRequiredHint')}</span>
-          )}
         </div>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
           <div>
@@ -536,27 +529,26 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         </div>
       </div>
 
-      {/* PR #165: 一括選択ツールバー (フィルター適用時のみ表示) */}
-      {filterApplied && (
-        <div className="flex items-center justify-between gap-2 py-2">
-          <div className="text-sm text-muted-foreground">
-            一括編集対象 (自分が起票): {selectableIds.length} 件 / 選択中: {selectedIds.size} 件
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setSelectedIds(new Set())}
-              disabled={selectedIds.size === 0}
-            >
-              選択解除
-            </Button>
-            <Button size="sm" onClick={openBulk} disabled={selectedIds.size === 0}>
-              一括編集 ({selectedIds.size})
-            </Button>
-          </div>
+      {/* PR #165 + Phase C 要件 18 (2026-04-28): 一括選択ツールバー。フィルター有無に
+          関わらず常時表示し、任意の複数行に対する一括編集を許可する。 */}
+      <div className="flex items-center justify-between gap-2 py-2">
+        <div className="text-sm text-muted-foreground">
+          一括編集対象 (自分が起票): {selectableIds.length} 件 / 選択中: {selectedIds.size} 件
         </div>
-      )}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSelectedIds(new Set())}
+            disabled={selectedIds.size === 0}
+          >
+            選択解除
+          </Button>
+          <Button size="sm" onClick={openBulk} disabled={selectedIds.size === 0}>
+            一括編集 ({selectedIds.size})
+          </Button>
+        </div>
+      </div>
 
       <ResizableColumnsProvider tableKey={`project-risks-${typeFilter ?? 'all'}`}>
         <div className="flex justify-end pb-2">
@@ -565,18 +557,16 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       <Table>
         <TableHeader>
           <TableRow>
-            {filterApplied && (
-              <ResizableHead columnKey="select" defaultWidth={36}>
-                <input
-                  type="checkbox"
-                  aria-label={tRisk('selectAllEditable')}
-                  checked={allSelectableSelected}
-                  disabled={selectableIds.length === 0}
-                  onChange={toggleAllIds}
-                  className="rounded"
-                />
-              </ResizableHead>
-            )}
+            <ResizableHead columnKey="select" defaultWidth={36}>
+              <input
+                type="checkbox"
+                aria-label={tRisk('selectAllEditable')}
+                checked={allSelectableSelected}
+                disabled={selectableIds.length === 0}
+                onChange={toggleAllIds}
+                className="rounded"
+              />
+            </ResizableHead>
             {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>{tRisk('kind')}</ResizableHead>}
             <ResizableHead columnKey="title" defaultWidth={240}>{tRisk('subject')}</ResizableHead>
             {/* PR-γ / 項目 3 + 8: 影響度/重要度カラムは非表示。詳細は編集 dialog で確認。 */}
@@ -608,21 +598,19 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
               className="cursor-pointer hover:bg-muted"
               onClick={() => setEditingRisk(r)}
             >
-              {filterApplied && (
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  {r.viewerIsCreator ? (
-                    <input
-                      type="checkbox"
-                      aria-label={tRisk('addToBulkEdit', { title: r.title })}
-                      checked={selectedIds.has(r.id)}
-                      onChange={() => toggleOneId(r.id)}
-                      className="rounded"
-                    />
-                  ) : (
-                    <span className="text-xs text-muted-foreground" title={tRisk('rowNotEditableByOthers')}>-</span>
-                  )}
-                </TableCell>
-              )}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                {r.viewerIsCreator ? (
+                  <input
+                    type="checkbox"
+                    aria-label={tRisk('addToBulkEdit', { title: r.title })}
+                    checked={selectedIds.has(r.id)}
+                    onChange={() => toggleOneId(r.id)}
+                    className="rounded"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground" title={tRisk('rowNotEditableByOthers')}>-</span>
+                )}
+              </TableCell>
               {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? tRisk('labelRisk') : tRisk('labelIssue')}</Badge></TableCell>}
               <TableCell className="font-medium">{r.title}</TableCell>
               {/* PR-γ: 影響度/重要度セルは非表示 (一覧は priority のみ) */}
@@ -672,12 +660,12 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
           })}
           {filteredRisks.length === 0 && (
             <TableRow>
-              {/* PR #67: 添付列 +1、2026-04-24: actions 列は自分の行があるときのみ +1、PR #165: filterApplied 時 select 列 +1 */}
+              {/* PR #67: 添付列 +1、2026-04-24: actions 列は自分の行があるときのみ +1、
+                  Phase C 要件 18: select 列は常時表示で +1 */}
               <TableCell
                 colSpan={
-                  (filteredRisks.some((x) => x.reporterId === currentUserId) ? 8 : 7)
+                  (filteredRisks.some((x) => x.reporterId === currentUserId) ? 9 : 8)
                   + (typeFilter ? 0 : 1)
-                  + (filterApplied ? 1 : 0)
                 }
                 className="py-8 text-center text-muted-foreground"
               >

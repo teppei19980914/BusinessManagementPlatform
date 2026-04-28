@@ -40,15 +40,18 @@ describe('PATCH /api/memos/bulk', () => {
     expect(res.status).toBe(400);
   });
 
-  it('filterFingerprint 空 → 400 FILTER_REQUIRED', async () => {
+  // Phase C 要件 18 (2026-04-28): filterFingerprint 空 でも 200 を返す。
+  // フィルター必須要件は撤廃され、per-row 作成者判定 + ids 上限で多層防御。
+  it('filterFingerprint 空でも 200 (Phase C 要件 18 でフィルター必須は撤廃)', async () => {
+    vi.mocked(bulkUpdateMemosVisibilityFromList).mockResolvedValue({
+      updatedIds: [VALID_UUID], skippedNotOwned: 0, skippedNotFound: 0,
+    });
     const res = await PATCH(makeReq({
       ids: [VALID_UUID],
       filterFingerprint: {},
       visibility: 'private',
     }) as never);
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe('FILTER_REQUIRED');
+    expect(res.status).toBe(200);
   });
 
   it('正常系: visibility=private で「全メモから取り下げ」', async () => {
