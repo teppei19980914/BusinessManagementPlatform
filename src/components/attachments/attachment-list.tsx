@@ -78,9 +78,19 @@ export function AttachmentList({
   const items = listState.loaded ? listState.items : [];
   const loaded = listState.loaded;
 
-  async function handleAdd(e: React.FormEvent) {
-    e.preventDefault();
+  // Phase B 要件 4 (2026-04-28): 編集 dialog 内 (= 外側 form 内) で添付追加ボタンを
+  //   押すと、外側の編集 form が submit されてしまうバグ修正。原因は HTML の
+  //   nested forms 禁止仕様: 内部 <form> は parser が無効化し、type="submit"
+  //   ボタンが外側 form の submit を発火する。
+  //
+  //   修正: 内部 <form onSubmit> をやめて <div> + <Button type="button" onClick>
+  //   に変更し、Enter キーでの誤 submit と外側 form 巻き込みを完全遮断する。
+  async function handleAdd() {
     setError('');
+    if (!newDisplayName.trim() || !newUrl.trim()) {
+      setError(t('addFailed'));
+      return;
+    }
     const res = await withLoading(() =>
       fetch('/api/attachments', {
         method: 'POST',
@@ -156,7 +166,17 @@ export function AttachmentList({
       )}
 
       {canEdit && (
-        <form onSubmit={handleAdd} className="flex items-end gap-2 rounded border bg-muted p-2">
+        // Phase B 要件 4: nested form 回避のため <div> + onKeyDown で Enter 制御
+        <div
+          className="flex items-end gap-2 rounded border bg-muted p-2"
+          onKeyDown={(e) => {
+            // Enter で外側 form の submit を発火させない (Enter を「追加」ボタンに割当)
+            if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
+              e.preventDefault();
+              void handleAdd();
+            }
+          }}
+        >
           <div className="flex-1 space-y-1">
             <Label className="text-xs">{t('displayName')}</Label>
             <Input
@@ -164,7 +184,6 @@ export function AttachmentList({
               onChange={(e) => setNewDisplayName(e.target.value)}
               placeholder={t('exampleSpec')}
               maxLength={200}
-              required
             />
           </div>
           <div className="flex-[2] space-y-1">
@@ -176,11 +195,12 @@ export function AttachmentList({
               placeholder="https://..."
               maxLength={2000}
               pattern="https?://.*"
-              required
             />
           </div>
-          <Button type="submit" size="sm">{tAction('add')}</Button>
-        </form>
+          <Button type="button" size="sm" onClick={() => void handleAdd()}>
+            {tAction('add')}
+          </Button>
+        </div>
       )}
     </div>
   );

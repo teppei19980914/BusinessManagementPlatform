@@ -1000,7 +1000,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // (管理者がトラブルシュート時に直接叩く手段として温存)。
 
   // T-19: WBS エクスポート (7 列 = ID/種別/名称/レベル/予定開始日/予定終了日/予定工数)。
-  //   サーバ側で BOM 付き UTF-8 を返すため client では再付与しない。
+  // Phase B 要件 20 (2026-04-28): 日本語文字化けバグ修正。
+  //   サーバ側で BOM 付き UTF-8 を返すが、`res.text()` は WHATWG Fetch 仕様により
+  //   先頭の BOM を **strip して返す** ため、client 側で `'﻿' + csvText` として
+  //   BOM を再付与する必要がある。これがないと Excel が Shift_JIS と誤解釈し
+  //   日本語が文字化けする。
   async function handleWbsExport() {
     const body: Record<string, unknown> = {};
     if (selectedIds.size > 0) body.taskIds = [...selectedIds];
@@ -1014,7 +1018,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     );
     if (!res.ok) return;
     const csvText = await res.text();
-    const blob = new Blob([csvText], { type: 'text/csv; charset=utf-8' });
+    // BOM を再付与 (res.text() で strip されるため)
+    const blob = new Blob(['﻿' + csvText], { type: 'text/csv; charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

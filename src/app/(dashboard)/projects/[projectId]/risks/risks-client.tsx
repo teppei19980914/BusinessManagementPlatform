@@ -599,13 +599,14 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         <TableBody>
           {filteredRisks.map((r) => {
             const isOwner = r.reporterId === currentUserId;
-            const canRowEdit = isOwner; // 2026-04-24: 編集は作成者本人のみ
+            // Phase B 要件 5 (2026-04-28): 行クリックで dialog を開く動作は **全員** で active 化
+            //   (詳細閲覧の用途を含む)。編集権限は dialog 内で `readOnly={!isOwner}` により分岐し、
+            //   非作成者は readOnly モードで詳細表示のみ可能。
             return (
             <TableRow
               key={r.id}
-              // 2026-04-24: 行クリックで編集ダイアログ (作成者本人のみ active)
-              className={canRowEdit ? 'cursor-pointer hover:bg-muted' : ''}
-              onClick={canRowEdit ? () => setEditingRisk(r) : undefined}
+              className="cursor-pointer hover:bg-muted"
+              onClick={() => setEditingRisk(r)}
             >
               {filterApplied && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
@@ -688,12 +689,19 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       </Table>
       </ResizableColumnsProvider>
 
+      {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。
+          systemRole='admin' は他人作成でも編集可能 (既存仕様維持)。 */}
       <RiskEditDialog
         risk={editingRisk}
         members={members}
         open={editingRisk != null}
         onOpenChange={(v) => { if (!v) setEditingRisk(null); }}
         onSaved={reload}
+        readOnly={
+          editingRisk != null
+          && editingRisk.reporterId !== currentUserId
+          && systemRole !== 'admin'
+        }
       />
 
       {/* PR #165: 一括編集ダイアログ */}

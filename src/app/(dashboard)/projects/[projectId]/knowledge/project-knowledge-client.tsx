@@ -385,14 +385,14 @@ export function ProjectKnowledgeClient({
       ) : (
         <div className="space-y-2">
           {filteredKnowledges.map((k) => {
-            // 2026-04-24: 作成者本人のみ編集/削除可 (admin は全ナレッジから)
             const isOwner = k.createdBy === currentUserId;
             return (
             <div
               key={k.id}
-              // 2026-04-24: 行クリック編集は作成者本人のみ active
-              className={`rounded border p-3 ${isOwner ? 'cursor-pointer hover:bg-muted' : ''}`}
-              onClick={isOwner ? () => setEditingKnowledge(k) : undefined}
+              // Phase B 要件 5 (2026-04-28): カードクリックで dialog を開く動作は全員で active 化。
+              //   詳細閲覧目的を含み、編集可否は dialog の readOnly prop で分岐する。
+              className="rounded border p-3 cursor-pointer hover:bg-muted"
+              onClick={() => setEditingKnowledge(k)}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
@@ -443,12 +443,14 @@ export function ProjectKnowledgeClient({
         </div>
       )}
 
+      {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。 */}
       <KnowledgeEditDialog
         knowledge={editingKnowledge}
         projectId={projectId}
         open={editingKnowledge != null}
         onOpenChange={(v) => { if (!v) setEditingKnowledge(null); }}
         onSaved={async () => { await onReload(); }}
+        readOnly={editingKnowledge != null && editingKnowledge.createdBy !== currentUserId}
       />
     </div>
   );
