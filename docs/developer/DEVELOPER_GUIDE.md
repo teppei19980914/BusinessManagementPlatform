@@ -2611,6 +2611,143 @@ expect(body.error.message).toBe('bulkProgressOwnTasksOnly');
 - §10.5.1 (並列 worktree agents パターン、大量 i18n 化の作業並列化と相性良)
 - vitest.setup.ts / vitest.config.ts (実装位置)
 
+### 5.34 アクション型 Select の選択後表示 (`SelectValue` children render 関数 + `value=""`、Phase A で確立)
+
+#### 背景
+
+@base-ui/react の `<Select>` は `value` が **未指定 (uncontrolled)** だと、`onValueChange`
+で API 呼び出しした後にも内部で選択値を保持してしまい、`<Select.Value>` が **内部 key
+名 (例: `'manager'`、`'planning'`)** をそのまま表示してしまう問題がある。
+
+これは「アクション型 Select」(選択 = サーバ更新の即実行、選択値を state として
+保持しない) で頻繁に発生する。Phase A (2026-04-28) で プロジェクト状態 / メンバー
+ロール / ナレッジ種別フィルタの 3 箇所で同じ症状を修正した。
+
+#### 標準パターン (2 系統)
+
+##### 系統 A: アクション型 Select (選択 = 即サーバ更新、value を保持しない)
+
+**典型例**: 「状態変更」プルダウン、「ロール変更」プルダウン
+
+```tsx
+// ❌ Bad: uncontrolled、選択後に内部 key 名が露出
+<Select onValueChange={handleStatusChange}>
+  <SelectTrigger>
+    <SelectValue placeholder={t('placeholder')} />
+  </SelectTrigger>
+  ...
+</Select>
+
+// ✅ Good: value="" で常時 placeholder + render 関数で表示名フォールバック
+<Select value="" onValueChange={handleStatusChange}>
+  <SelectTrigger>
+    <SelectValue placeholder={t('placeholder')}>
+      {(value) => (value
+        ? PROJECT_STATUSES[value as keyof typeof PROJECT_STATUSES] || value
+        : t('placeholder'))}
+    </SelectValue>
+  </SelectTrigger>
+  ...
+</Select>
+```
+
+`value=""` で常に placeholder が表示され、render 関数は二重防御として表示名にフォールバック。
+
+##### 系統 B: コントロール型 Select (state と双方向バインド)
+
+**典型例**: フィルタ Select、編集 dialog 内の項目選択
+
+```tsx
+// ❌ Bad: SelectValue が内部 key 名を表示
+<Select value={typeFilter} onValueChange={setTypeFilter}>
+  <SelectTrigger>
+    <SelectValue placeholder={t('all')} />
+  </SelectTrigger>
+  ...
+</Select>
+
+// ✅ Good: render 関数で必ず表示名にマップ
+<Select value={typeFilter || '__all__'} onValueChange={setTypeFilter}>
+  <SelectTrigger>
+    <SelectValue placeholder={t('all')}>
+      {(value) => {
+        if (!value || value === '__all__') return t('all');
+        return KNOWLEDGE_TYPES[value as keyof typeof KNOWLEDGE_TYPES] || value;
+      }}
+    </SelectValue>
+  </SelectTrigger>
+  ...
+</Select>
+```
+
+#### 横展開チェックリスト (master-data の enum を Select で扱う全箇所)
+
+```bash
+# 1. <SelectValue> を使っている全箇所を抽出
+grep -rnE "<SelectValue\\s*/?>" src/app src/components --include='*.tsx'
+
+# 2. 上記のうち render 関数 (children) を持たないものを特定
+#    (false positive: edit dialog 内の text フィールドは表示名問題が起きないが、
+#     master-data enum を扱うものは要対応)
+
+# 3. 同一 master-data (PROJECT_STATUSES / PROJECT_ROLES / KNOWLEDGE_TYPES /
+#    DEV_METHODS / IMPACT_LEVELS / 等) を Select で表示する箇所は全て render 関数を要設定
+```
+
+#### 規約 (`<SelectValue>` を使う PR で必ずやる)
+
+1. **render 関数を必ず設定**: 内部 key 名露出のリスクを設計レベルで遮断
+2. **アクション型なら `value=""` を併用**: 二重防御
+3. **`render(value) => label` の lookup は O(1)**: master-data 静的オブジェクト
+   (`PROJECT_STATUSES[value]` 等) を参照、ループ禁止
+4. **i18n 切り替えで自動追従**: master-data の Japanese label が直接埋め込まれて
+   いるため、en-US 切り替えは別途 §8 (UI ラベル追加手順) に従う必要あり。
+   将来的には master-data も翻訳 key に統一する候補 (T-XX)
+5. **PR レビュー観点**: `<SelectValue` の追加/変更があれば render 関数の有無を必ず確認
+
+#### アンチパターン
+
+##### A1. children を関数として渡さず、固定 ReactNode で渡す
+
+```tsx
+// ❌ value 引数を受け取れない、表示名マッピング不可能
+<SelectValue>{KNOWLEDGE_TYPES.research}</SelectValue>
+```
+
+##### A2. アクション型で `value` 未指定 + `defaultValue` も未指定
+
+```tsx
+// ❌ 選択後に内部 key 名が trigger に残り続ける
+<Select onValueChange={handleAction}>
+```
+
+##### A3. master-data から外れた値で render 関数が undefined にフォールバック
+
+```tsx
+// ❌ value || value のフォールバックなしだと undefined が出る
+<SelectValue>
+  {(value) => KNOWLEDGE_TYPES[value]}
+</SelectValue>
+
+// ✅ || value で内部 key 名へのフォールバックを保つ
+<SelectValue>
+  {(value) => KNOWLEDGE_TYPES[value] || value}
+</SelectValue>
+```
+
+##### A4. SelectValue children を controlled value と矛盾させる
+
+state が `value="research"` でも render 関数が `'verification'` を返すなど、
+内部 state と表示の食い違いを生む手書きロジックは避ける。
+
+#### 関連
+
+- §5.31 (枠数固定要件のアクション充足) — 表示と内部 state の整合性確保レイヤ
+- @base-ui/react Select.Value 公式ドキュメント — `children` は `(value: any) => ReactNode`
+- src/config/master-data.ts — 表示名マッピングの単一源泉
+- Phase A 適用例: project-detail-client (state 変更) / members-client (ロール変更) /
+  knowledge-client (種別フィルタ)
+
 ---
 
 ## 6. 機能削除の手順
@@ -4282,3 +4419,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-28 | §5.32 新設 (T-22 教訓 KDD 化、Stop hook 補正)。**複数 entity 横展開時の段階的汎用化パターン**を運用ルール化。T-22 (5 entity sync-import) で確立した「先行 1 entity (Phase A) で汎用 component の prop API 設計まで含めた完成形を作り、後続 N-1 entity (Phase B〜) は機械流用 (~300 行 / 30 分 / entity)」パターンを §5.32 として独立セクション化。実証数値 (4 entity / ~3,240 行 / 個別実装 ~4,400 行から 26% 圧縮) + 適用判断基準 + アンチパターン (Phase A 専用実装による Breaking change リスク) を網羅。§5.26 (共通部品流用) の戦略的拡張、§5.31 (アクション充足) との組み合わせで横展開前後の検証層を完備 |
 | 2026-04-28 | §5.33 新設 (T-17 Group 2 教訓 KDD 化、Stop hook 補正)。**API route の server-side i18n + vitest 共通モック** パターンを運用ルール化。T-17 Group 2 (2026-04-28) で 24 API route × 16 i18n keys を一括 i18n 化した際に確立した「`getTranslations(namespace)` 標準パターン + `vitest.setup.ts` での `next-intl/server` 共通スタブ」を §5.33 として独立セクション化。横展開時の 6 step 手順 + 4 アンチパターン (個別 mock 重複 / top-level await 浪費 / locale 片方漏れ / sync helper の await 伝播漏れ) を明文化。`pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` の残ヒット 0 達成 (test 説明文を除く) で「ユーザ可視ハードコード = 0」を運用維持可能に |
 | 2026-04-28 | §11.2 T-24 新設: **`audit_logs` の自動アーカイブ/削除バッチ** (容量対策)。Supabase Free tier 容量確認 (現在 15 MB / 500 MB = 2.97%) の結果、audit_logs が DB 内最大テーブル (1.2 MB) と判明。ユーザ操作に比例して線形増加するため将来の容量圧迫を予防する目的で T-24 起票。T-14 (system_error_logs 自動削除) と同パターン、外部公開前の実装を想定。**容量データの記録**: 上位テーブルは audit_logs (1.2 MB) / knowledges (568 kB、内 index 480 kB は pg_trgm 全文検索) / risks_issues (392 kB) / tasks (280 kB) で、knowledges は本体 40 kB に対し index が 12 倍と特異な構造を持つ |
+| 2026-04-28 | §5.34 新設 (Phase A 教訓 KDD 化、Stop hook 補正)。**アクション型 Select の選択後表示** 問題を運用ルール化。@base-ui/react `<Select>` で `value` 未指定 (uncontrolled) のとき、`onValueChange` で API 即時実行した後に内部 key 名 (例: `'manager'`、`'planning'`) が trigger に露出する症状を Phase A で 3 箇所 (プロジェクト状態 / メンバーロール / ナレッジ種別) 修正。標準パターンを **系統 A (アクション型 Select、`value=""` + render 関数で二重防御)** と **系統 B (コントロール型 Select、render 関数のみ)** の 2 系統に整理し、`SelectValue children` を `(value) => label` 関数で必ず表示名マップする規約を §5.34 として明文化。横展開対象は `master-data` (PROJECT_STATUSES / PROJECT_ROLES / KNOWLEDGE_TYPES / DEV_METHODS / IMPACT_LEVELS) を扱う全 Select。アンチパターン 4 種 (固定 ReactNode 渡し / value 未指定 / undefined フォールバックなし / state と表示矛盾) を併記 |
