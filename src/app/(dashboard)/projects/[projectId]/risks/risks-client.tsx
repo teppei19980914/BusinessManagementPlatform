@@ -28,6 +28,7 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
+import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -332,6 +333,14 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     window.open(`/api/projects/${projectId}/risks/export`, '_blank');
   }
 
+  // T-22 Phase 22a: sync-import 用の 16 列 export (編集 dialog 完全網羅 format)
+  async function handleSyncExport() {
+    window.open(`/api/projects/${projectId}/risks/export?mode=sync`, '_blank');
+  }
+
+  // T-22 Phase 22a: 上書きインポート (sync-import) ダイアログ表示
+  const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -339,6 +348,13 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         <div className="flex gap-2">
           {systemRole === 'admin' && (
             <Button variant="outline" onClick={handleExport}>{tRisk('csvExport')}</Button>
+          )}
+          {/* T-22 Phase 22a: sync-import (往復編集) 用の export + import ボタン。canEdit (PM/TL + admin) のみ表示 */}
+          {canCreate && (
+            <>
+              <Button variant="outline" onClick={handleSyncExport}>{tRisk('syncExport')}</Button>
+              <Button variant="outline" onClick={() => setIsSyncImportOpen(true)}>{tRisk('syncImportButton')}</Button>
+            </>
           )}
           {canCreate && (
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -791,6 +807,15 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* T-22 Phase 22a: 上書きインポート (sync-import) ダイアログ */}
+      <EntitySyncImportDialog
+        apiBasePath={`/api/projects/${projectId}/risks/sync-import`}
+        i18nNamespace="risk.syncImport"
+        open={isSyncImportOpen}
+        onOpenChange={setIsSyncImportOpen}
+        onImported={async () => { await reload(); }}
+      />
     </div>
   );
 }
