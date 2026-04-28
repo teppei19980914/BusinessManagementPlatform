@@ -53,6 +53,8 @@ export type UserDTO = {
   failedLoginCount: number;
   lockedUntil: string | null;
   permanentLock: boolean;
+  // T-21 (2026-04-28): 一時ロック累積カウンタ。PERMANENT_LOCK_THRESHOLD 到達で permanentLock=true。
+  temporaryLockCount: number;
   // PR #116: MFA verify 専用のロック状態 (パスワードロックとは別系統)
   mfaFailedCount: number;
   mfaLockedUntil: string | null;
@@ -69,6 +71,7 @@ function toUserDTO(user: {
   failedLoginCount: number;
   lockedUntil: Date | null;
   permanentLock: boolean;
+  temporaryLockCount: number;
   mfaFailedCount: number;
   mfaLockedUntil: Date | null;
 }): UserDTO {
@@ -83,6 +86,7 @@ function toUserDTO(user: {
     failedLoginCount: user.failedLoginCount,
     lockedUntil: user.lockedUntil?.toISOString() ?? null,
     permanentLock: user.permanentLock,
+    temporaryLockCount: user.temporaryLockCount,
     mfaFailedCount: user.mfaFailedCount,
     mfaLockedUntil: user.mfaLockedUntil?.toISOString() ?? null,
   };

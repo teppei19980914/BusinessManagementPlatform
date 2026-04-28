@@ -212,11 +212,10 @@ export function UsersClient({ initialUsers }: Props) {
             <TableHead>{t('columnRole')}</TableHead>
             <TableHead>{t('columnStatus')}</TableHead>
             {/*
-              PR #85 / PR #116: 認証ロック状態
+              PR #85 / PR #116 / T-21: 認証ロック状態
               - パスワード失敗ロック: failedLoginCount 5 回で一時ロック (30 分)
-                ⚠️ 旧コメントには「3 回目で permanentLock」とあったが PR-η 調査で
-                  実装されていないバグ判明 (§5.28)。永続ロック化は §11 T-20 で実装予定。
-                  現状は永続ロック発火経路なし、一時ロックを延々繰り返す挙動になっている。
+              - 永続ロック (T-21 / 2026-04-28 実装): 一時ロックが PERMANENT_LOCK_THRESHOLD 回 (= 3 回)
+                発生で permanentLock=true。解除は admin 編集ダイアログから手動 (ユーザの正規復帰確認後)
               - MFA 失敗ロック (PR #116): mfaFailedCount 3 回で一時ロック (30 分) / recovery code で自己解除可
               - 1 列集約: tooltip で内訳 (原因・解除予定・失敗回数) を表示
             */}
