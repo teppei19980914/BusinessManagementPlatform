@@ -4,35 +4,27 @@ import { z } from 'zod/v4';
  * 「全○○一覧」横断ビューからの **visibility 一括更新** schema (PR #162 / Phase 2)。
  *
  * 設計方針:
- *   - PR #161 (Risk/Issue 用) と同じ二重防御パターンを踏襲。filterFingerprint を
- *     必須化し、UI/API 両方で「フィルター無し全件更新」を防ぐ。
  *   - visibility の取りうる値は entity ごとに異なる:
  *       Retrospective / Knowledge: 'draft' / 'public'
  *       Memo                     : 'private' / 'public'
  *     → entity ごとに 3 つの schema を export し、enum で値域を限定する。
  *   - patch 対象は visibility 1 項目のみ (Phase 2 の対象範囲)。
  *     status / state / 担当者などはエンティティ間で意味が違うので Phase 2 では出さない。
+ *
+ * 履歴:
+ *   - Phase C 要件 18 (2026-04-28): フィルター必須は撤廃 (UI/API ともに任意)。
+ *     filterFingerprint は schema 互換維持のため残すが、サーバ側で値の検証はしない。
+ *     per-row 作成者判定 (silent skip) + ids 上限 500 で誤更新を防ぐ多層防御に集約。
  */
 
 const filterFingerprintSchema = z.object({
-  // 件名/タイトルに含まれる検索キーワード
+  // 件名/タイトルに含まれる検索キーワード (UI 側で表示用に保持)
   keyword: z.string().optional(),
   // 自分作成のみフィルター適用 (UI 側のチェックボックス)
   mineOnly: z.boolean().optional(),
 });
 
 export type CrossListBulkFilterFingerprint = z.infer<typeof filterFingerprintSchema>;
-
-/**
- * filterFingerprint が「実質的にフィルター適用あり」かを判定する。
- * trim 後 0 文字の keyword はカウントしない (空白だけの保険を防ぐ)。
- */
-export function isCrossListFilterApplied(f: CrossListBulkFilterFingerprint): boolean {
-  return Boolean(
-    f.mineOnly === true
-    || (f.keyword && f.keyword.trim().length > 0),
-  );
-}
 
 const idsSchema = z
   .array(z.string().uuid())

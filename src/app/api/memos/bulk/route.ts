@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { bulkUpdateMemosVisibilityFromList } from '@/services/memo.service';
-import {
-  bulkUpdateMemoVisibilitySchema,
-  isCrossListFilterApplied,
-} from '@/lib/validators/cross-list-bulk-visibility';
+import { bulkUpdateMemoVisibilitySchema } from '@/lib/validators/cross-list-bulk-visibility';
 
 /**
  * 個人「メモ一覧」(/memos) からの一括 visibility 更新 (PR #165 で /memos に移し替え、
@@ -14,15 +10,12 @@ import {
  * Memo は project に紐付かない個人ノートで、編集権限は元から作成者本人のみ。
  * scope は viewerUserId 自身のメモのみ (path は /api/memos/bulk のまま personal scope)。
  *
- * 注: validator ファイル名 (cross-list-bulk-visibility.ts) と関数名 (isCrossListFilterApplied)
- * は元のまま流用する。本来はリネーム候補だが、Memo の場合は cross-list ではなく
- * personal-list 用途のため命名が誤解を招く。後続 PR でリネームを検討。
- *
  * Memo は visibility 値域が `private` / `public` (DB schema) なので
  * 共通 schema は entity 別の enum に分かれている。
  *
  * 認可: 認証済みユーザならアクセス可、サービス層で per-row 作成者判定 + silent skip。
- * 安全策: filterFingerprint が空なら 400 FILTER_REQUIRED で拒否。
+ * 安全策 (Phase C 要件 18): フィルター必須は撤廃。schema 側 patch 全省略禁止 +
+ * per-row 作成者判定 + ids 上限で多層防御。
  */
 export async function PATCH(req: NextRequest) {
   const user = await getAuthenticatedUser();
@@ -39,14 +32,6 @@ export async function PATCH(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json(
       { error: 'VALIDATION_ERROR', details: parsed.error.format() },
-      { status: 400 },
-    );
-  }
-
-  if (!isCrossListFilterApplied(parsed.data.filterFingerprint)) {
-    const t = await getTranslations('message');
-    return NextResponse.json(
-      { error: 'FILTER_REQUIRED', message: t('filterRequiredForBulk') },
       { status: 400 },
     );
   }

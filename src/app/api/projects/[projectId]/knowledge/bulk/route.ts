@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { bulkUpdateKnowledgeVisibilityFromList } from '@/services/knowledge.service';
-import {
-  bulkUpdateKnowledgeVisibilitySchema,
-  isCrossListFilterApplied,
-} from '@/lib/validators/cross-list-bulk-visibility';
+import { bulkUpdateKnowledgeVisibilitySchema } from '@/lib/validators/cross-list-bulk-visibility';
 
 /**
  * プロジェクト「ナレッジ一覧」からの一括 visibility 更新エンドポイント (PR #165 で
@@ -17,7 +13,7 @@ import {
  *   - Knowledge は多対多なのでサービス層 where に `knowledgeProjects: { some: { projectId } }`
  *     を加え、当該プロジェクトに紐付くナレッジのみを対象にする。
  *
- * 安全策: filterFingerprint が空なら 400 FILTER_REQUIRED で拒否、ids 上限 500。
+ * 安全策 (Phase C 要件 18): フィルター必須は撤廃。ids 上限 500 + per-row 作成者判定で多層防御。
  */
 export async function PATCH(
   req: NextRequest,
@@ -42,14 +38,6 @@ export async function PATCH(
   if (!parsed.success) {
     return NextResponse.json(
       { error: 'VALIDATION_ERROR', details: parsed.error.format() },
-      { status: 400 },
-    );
-  }
-
-  if (!isCrossListFilterApplied(parsed.data.filterFingerprint)) {
-    const t = await getTranslations('message');
-    return NextResponse.json(
-      { error: 'FILTER_REQUIRED', message: t('filterRequiredForBulk') },
       { status: 400 },
     );
   }

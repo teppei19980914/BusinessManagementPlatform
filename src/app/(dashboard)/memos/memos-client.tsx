@@ -45,6 +45,7 @@ import { useBatchAttachments } from '@/components/attachments/use-batch-attachme
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 // PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
+import { matchesAnyKeyword } from '@/lib/text-search';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
@@ -54,7 +55,6 @@ import type { MemoDTO } from '@/services/memo.service';
 import {
   CrossListBulkVisibilityToolbar,
   EMPTY_FILTER,
-  isCrossListFilterActive,
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
 
@@ -102,26 +102,23 @@ export function MemosClient({
     router.refresh();
   }, [router]);
 
-  // PR #165: 個人「メモ一覧」での一括 visibility 変更
-  // フィルター適用時のみ checkbox 列とツールバー表示。Memo は元から isMine=true のものだけ
-  // 編集できるため、checkbox は isMine=true 行のみ active。
+  // PR #165 + Phase C 要件 18 (2026-04-28): 個人「メモ一覧」での一括 visibility 変更。
+  // フィルター必須要件は撤廃し、checkbox 列とツールバーは常時表示。Memo は元から
+  // isMine=true のものだけ編集できるため、checkbox は isMine=true 行のみ active。
   const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const filterApplied = isCrossListFilterActive(bulkFilter);
 
   const filteredMemos = useMemo(() => {
     let xs = memos;
     if (bulkFilter.mineOnly) xs = xs.filter((m) => m.isMine);
     if (bulkFilter.keyword.trim()) {
-      const kw = bulkFilter.keyword.trim().toLowerCase();
-      xs = xs.filter((m) => m.title.toLowerCase().includes(kw) || m.content.toLowerCase().includes(kw));
+      // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
+      xs = xs.filter((m) => matchesAnyKeyword(bulkFilter.keyword, [m.title, m.content]));
     }
     return xs;
   }, [memos, bulkFilter]);
 
-  const selectableIds = filterApplied
-    ? filteredMemos.filter((m) => m.isMine).map((m) => m.id)
-    : [];
+  const selectableIds = filteredMemos.filter((m) => m.isMine).map((m) => m.id);
   const allSelectableSelected
     = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
 
@@ -333,18 +330,16 @@ export function MemosClient({
         <Table>
           <TableHeader>
             <TableRow>
-              {filterApplied && (
-                <ResizableHead columnKey="select" defaultWidth={36}>
-                  <input
-                    type="checkbox"
-                    aria-label={tMemo('selectAllEditable')}
-                    checked={allSelectableSelected}
-                    disabled={selectableIds.length === 0}
-                    onChange={toggleAllMemos}
-                    className="rounded"
-                  />
-                </ResizableHead>
-              )}
+              <ResizableHead columnKey="select" defaultWidth={36}>
+                <input
+                  type="checkbox"
+                  aria-label={tMemo('selectAllEditable')}
+                  checked={allSelectableSelected}
+                  disabled={selectableIds.length === 0}
+                  onChange={toggleAllMemos}
+                  className="rounded"
+                />
+              </ResizableHead>
               <ResizableHead columnKey="title" defaultWidth={220}>{tField('title')}</ResizableHead>
               <ResizableHead columnKey="content" defaultWidth={300}>{tField('body')}</ResizableHead>
               <ResizableHead columnKey="visibility" defaultWidth={110}>{tField('visibility')}</ResizableHead>
@@ -361,21 +356,19 @@ export function MemosClient({
                 className={m.isMine ? 'cursor-pointer hover:bg-muted' : ''}
                 onClick={m.isMine ? () => setEditing(m) : undefined}
               >
-                {filterApplied && (
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    {m.isMine ? (
-                      <input
-                        type="checkbox"
-                        aria-label={tMemo('bulkSelectLabel', { title: m.title })}
-                        checked={selectedIds.has(m.id)}
-                        onChange={() => toggleOneMemo(m.id)}
-                        className="rounded"
-                      />
-                    ) : (
-                      <span className="text-xs text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                )}
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  {m.isMine ? (
+                    <input
+                      type="checkbox"
+                      aria-label={tMemo('bulkSelectLabel', { title: m.title })}
+                      checked={selectedIds.has(m.id)}
+                      onChange={() => toggleOneMemo(m.id)}
+                      className="rounded"
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">-</span>
+                  )}
+                </TableCell>
                 <TableCell className="font-medium">{m.title}</TableCell>
                 <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 80)}
@@ -402,7 +395,7 @@ export function MemosClient({
             ))}
             {filteredMemos.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7 + (filterApplied ? 1 : 0)} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                   {tMemo('empty')}
                 </TableCell>
               </TableRow>

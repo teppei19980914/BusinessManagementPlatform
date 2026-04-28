@@ -30,6 +30,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { Trash2 } from 'lucide-react';
+import { matchesAnyKeyword } from '@/lib/text-search';
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
 import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 // fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
@@ -51,7 +52,6 @@ import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import {
   CrossListBulkVisibilityToolbar,
   EMPTY_FILTER,
-  isCrossListFilterActive,
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
 
@@ -108,29 +108,26 @@ export function ProjectKnowledgeClient({
   // feat/dialog-fullscreen-toggle: ナレッジ作成 dialog の全画面トグル
   const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle } = useDialogFullscreen();
 
-  // PR #165: 一括 visibility 変更
+  // PR #165 + Phase C 要件 18 (2026-04-28): 一括 visibility 変更。
+  // フィルター必須要件は撤廃し、checkbox 列とツールバーは常時表示。
   const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const filterApplied = isCrossListFilterActive(bulkFilter);
 
   const filteredKnowledges = (() => {
     let xs = knowledges;
     if (bulkFilter.mineOnly) xs = xs.filter((k) => k.createdBy === currentUserId);
     if (bulkFilter.keyword.trim()) {
-      const kw = bulkFilter.keyword.trim().toLowerCase();
+      // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
       xs = xs.filter((k) =>
-        k.title.toLowerCase().includes(kw)
-        || k.background.toLowerCase().includes(kw)
-        || k.content.toLowerCase().includes(kw)
-        || k.result.toLowerCase().includes(kw),
+        matchesAnyKeyword(bulkFilter.keyword, [k.title, k.background, k.content, k.result]),
       );
     }
     return xs;
   })();
 
-  const selectableKnowledgeIds = filterApplied
-    ? filteredKnowledges.filter((k) => k.createdBy === currentUserId).map((k) => k.id)
-    : [];
+  const selectableKnowledgeIds = filteredKnowledges
+    .filter((k) => k.createdBy === currentUserId)
+    .map((k) => k.id);
   const allKnowledgeSelected
     = selectableKnowledgeIds.length > 0 && selectableKnowledgeIds.every((id) => selectedIds.has(id));
 
@@ -366,19 +363,17 @@ export function ProjectKnowledgeClient({
         onImported={async () => { await onReload(); }}
       />
 
-      {filterApplied && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={allKnowledgeSelected}
-            disabled={selectableKnowledgeIds.length === 0}
-            onChange={toggleAllKnowledge}
-            className="rounded"
-            aria-label={tKnowledge('selectAllOwn')}
-          />
-          {tKnowledge('selectAllOwn')} ({tKnowledge('countUnit', { count: selectableKnowledgeIds.length })})
-        </div>
-      )}
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={allKnowledgeSelected}
+          disabled={selectableKnowledgeIds.length === 0}
+          onChange={toggleAllKnowledge}
+          className="rounded"
+          aria-label={tKnowledge('selectAllOwn')}
+        />
+        {tKnowledge('selectAllOwn')} ({tKnowledge('countUnit', { count: selectableKnowledgeIds.length })})
+      </div>
 
       {filteredKnowledges.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{tKnowledge('noneInList')}</p>
@@ -397,7 +392,7 @@ export function ProjectKnowledgeClient({
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    {filterApplied && isOwner && (
+                    {isOwner && (
                       <input
                         type="checkbox"
                         aria-label={tKnowledge('addToBulkEdit', { title: k.title })}

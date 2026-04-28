@@ -31,6 +31,7 @@ import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit
 import type { AllRetroDTO } from '@/services/retrospective.service';
 import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
 import { useFormatters } from '@/lib/use-formatters';
+import { matchesAnyKeyword } from '@/lib/text-search';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import {
@@ -57,12 +58,14 @@ export function AllRetrospectivesTable({
 
   const filteredRetros = useMemo(() => {
     if (!filter.keyword.trim()) return retros;
-    const kw = filter.keyword.trim().toLowerCase();
+    // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
     return retros.filter((r) =>
-      (r.planSummary ?? '').toLowerCase().includes(kw)
-      || (r.actualSummary ?? '').toLowerCase().includes(kw)
-      || (r.goodPoints ?? '').toLowerCase().includes(kw)
-      || (r.improvements ?? '').toLowerCase().includes(kw),
+      matchesAnyKeyword(filter.keyword, [
+        r.planSummary,
+        r.actualSummary,
+        r.goodPoints,
+        r.improvements,
+      ]),
     );
   }, [retros, filter]);
 

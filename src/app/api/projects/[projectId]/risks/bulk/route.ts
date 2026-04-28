@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { bulkUpdateRisksFromList } from '@/services/risk.service';
-import { bulkUpdateRisksSchema, isFilterApplied } from '@/lib/validators/risk-bulk';
+import { bulkUpdateRisksSchema } from '@/lib/validators/risk-bulk';
 
 /**
  * プロジェクト「リスク/課題一覧」からの一括更新エンドポイント (PR #165 で
@@ -14,13 +13,12 @@ import { bulkUpdateRisksSchema, isFilterApplied } from '@/lib/validators/risk-bu
  *   - per-row の reporter 一致判定はサービス層 (`bulkUpdateRisksFromList`) で実施し、
  *     他人作成のレコードは silently skip する (admin であっても他人のリスクは更新不可)。
  *
- * 安全策:
- *   1. **フィルター必須**: filterFingerprint に何も指定が無い場合は 400 で拒否
- *      (UI チェックボックスを外して全件選択 → 全件 update の事故を防ぐ二重防御)
- *   2. **patch 全省略禁止**: validator schema 側で no-op patch を 400
- *   3. **ids 上限 500**: 1 リクエストで暴走しないよう絞る
- *   4. **projectId scope**: where 句に projectId を含めるため、ids に他プロジェクトの
+ * 安全策 (Phase C 要件 18 で「フィルター必須」は撤廃):
+ *   1. **patch 全省略禁止**: validator schema 側で no-op patch を 400
+ *   2. **ids 上限 500**: 1 リクエストで暴走しないよう絞る
+ *   3. **projectId scope**: where 句に projectId を含めるため、ids に他プロジェクトの
  *      レコードが混ざってもサービス層で skippedNotFound 扱い (= 触れない)
+ *   4. **per-row authorization**: reporter 一致しない行はサービス層で silently skip
  */
 export async function PATCH(
   req: NextRequest,
@@ -47,14 +45,6 @@ export async function PATCH(
   if (!parsed.success) {
     return NextResponse.json(
       { error: 'VALIDATION_ERROR', details: parsed.error.format() },
-      { status: 400 },
-    );
-  }
-
-  if (!isFilterApplied(parsed.data.filterFingerprint)) {
-    const t = await getTranslations('message');
-    return NextResponse.json(
-      { error: 'FILTER_REQUIRED', message: t('filterRequiredForBulk') },
       { status: 400 },
     );
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bulkUpdateRisksSchema, isFilterApplied } from './risk-bulk';
+import { bulkUpdateRisksSchema } from './risk-bulk';
 
 describe('bulkUpdateRisksSchema', () => {
   const baseValid = {
@@ -51,32 +51,15 @@ describe('bulkUpdateRisksSchema', () => {
   });
 });
 
-describe('isFilterApplied', () => {
-  it('全項目空なら false (= フィルター無し、全件更新の事故防止に使う)', () => {
-    expect(isFilterApplied({})).toBe(false);
-  });
-
-  it('type 指定 (タブ選択) のみで true (タブは暗黙のフィルターとしてカウント)', () => {
-    expect(isFilterApplied({ type: 'risk' })).toBe(true);
-  });
-
-  it('state 指定で true', () => {
-    expect(isFilterApplied({ state: 'open' })).toBe(true);
-  });
-
-  it('impact 指定で true', () => {
-    expect(isFilterApplied({ impact: 'high' })).toBe(true);
-  });
-
-  it('assigneeId 指定で true', () => {
-    expect(isFilterApplied({ assigneeId: '550e8400-e29b-41d4-a716-446655440000' })).toBe(true);
-  });
-
-  it('keyword が空白のみなら false (= trim 後 0 文字)', () => {
-    expect(isFilterApplied({ keyword: '   ' })).toBe(false);
-  });
-
-  it('keyword が trim 後 1 文字以上なら true', () => {
-    expect(isFilterApplied({ keyword: ' a ' })).toBe(true);
+describe('filterFingerprint は任意項目', () => {
+  // Phase C 要件 18 (2026-04-28): フィルター必須要件は撤廃。
+  // schema は filterFingerprint の値の有無を検証しない (空オブジェクトでも通る)。
+  it('filterFingerprint が空オブジェクトでも schema 検証は成功', () => {
+    const r = bulkUpdateRisksSchema.safeParse({
+      ids: ['550e8400-e29b-41d4-a716-446655440000'],
+      filterFingerprint: {},
+      patch: { state: 'in_progress' },
+    });
+    expect(r.success).toBe(true);
   });
 });
