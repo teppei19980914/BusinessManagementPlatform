@@ -419,6 +419,8 @@
     "fieldName": "Project Name",
     "fieldCustomer": "Customer",
     "fieldDevMethod": "Development Method",
+    "fieldContractType": "Contract Type",
+    "contractTypeUnset": "Not Set",
     "fieldStatus": "Status",
     "fieldPlannedStartDate": "Planned Start Date",
     "fieldPlannedEndDate": "Planned End Date",

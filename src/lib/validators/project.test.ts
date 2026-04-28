@@ -42,10 +42,22 @@ describe('createProjectSchema', () => {
     expect(createProjectSchema.safeParse({ ...validInput, devMethod: 'agile' }).success).toBe(false);
   });
 
-  it('有効な開発方式を全て受け入れる', () => {
-    for (const method of ['scratch', 'power_platform', 'package', 'other']) {
+  it('有効な開発方式を全て受け入れる (PR-β: power_platform → low_code_no_code リネーム)', () => {
+    for (const method of ['scratch', 'low_code_no_code', 'package', 'other']) {
       expect(createProjectSchema.safeParse({ ...validInput, devMethod: method }).success).toBe(true);
     }
+  });
+
+  it('PR-β / 項目 14: 有効な契約形態を全て受け入れる (null/undefined もOK)', () => {
+    for (const contractType of ['quasi_mandate', 'lump_sum', 'ses', 'other']) {
+      expect(createProjectSchema.safeParse({ ...validInput, contractType }).success).toBe(true);
+    }
+    expect(createProjectSchema.safeParse({ ...validInput, contractType: null }).success).toBe(true);
+    expect(createProjectSchema.safeParse({ ...validInput }).success).toBe(true); // undefined
+  });
+
+  it('PR-β / 項目 14: 無効な契約形態を拒否する', () => {
+    expect(createProjectSchema.safeParse({ ...validInput, contractType: 'unknown' }).success).toBe(false);
   });
 
   it('不正な日付形式を拒否する', () => {

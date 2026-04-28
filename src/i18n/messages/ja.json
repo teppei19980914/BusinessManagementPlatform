@@ -419,6 +419,8 @@
     "fieldName": "プロジェクト名",
     "fieldCustomer": "顧客",
     "fieldDevMethod": "開発方式",
+    "fieldContractType": "契約形態",
+    "contractTypeUnset": "未設定",
     "fieldStatus": "ステータス",
     "fieldPlannedStartDate": "開始予定日",
     "fieldPlannedEndDate": "終了予定日",

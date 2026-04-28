@@ -41,7 +41,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
-import { PROJECT_STATUSES, DEV_METHODS } from '@/types';
+import { PROJECT_STATUSES, DEV_METHODS, CONTRACT_TYPES } from '@/types';
 import type { ProjectDTO } from '@/services/project.service';
 import type { EstimateDTO } from '@/services/estimate.service';
 import type { TaskDTO } from '@/services/task.service';
@@ -151,6 +151,7 @@ export function ProjectDetailClient({
     background: project.background,
     scope: project.scope,
     devMethod: project.devMethod,
+    contractType: project.contractType ?? '',
     plannedStartDate: project.plannedStartDate,
     plannedEndDate: project.plannedEndDate,
     businessDomainTagsInput: project.businessDomainTags.join(', '),
@@ -171,6 +172,7 @@ export function ProjectDetailClient({
       background: project.background,
       scope: project.scope,
       devMethod: project.devMethod,
+      contractType: project.contractType ?? '',
       plannedStartDate: project.plannedStartDate,
       plannedEndDate: project.plannedEndDate,
       businessDomainTagsInput: project.businessDomainTags.join(', '),
@@ -292,9 +294,11 @@ export function ProjectDetailClient({
     // parseTagsInput は projects-client.tsx と同じ規約 (DEVELOPER_GUIDE §5.10.2 全角読点も受容)。
     const parseTagsInput = (s: string): string[] =>
       s.split(/[,、]/).map((t) => t.trim()).filter((t) => t.length > 0);
-    const { businessDomainTagsInput, techStackTagsInput, processTagsInput, ...rest } = editForm;
+    const { businessDomainTagsInput, techStackTagsInput, processTagsInput, contractType, ...rest } = editForm;
     const body = {
       ...rest,
+      // PR-β / 項目 14: 契約形態 (空文字は null で送信、validator は nullable)
+      contractType: contractType || null,
       businessDomainTags: parseTagsInput(businessDomainTagsInput),
       techStackTags: parseTagsInput(techStackTagsInput),
       processTags: parseTagsInput(processTagsInput),
@@ -447,11 +451,25 @@ export function ProjectDetailClient({
                       <Label>{t('fieldScope')}</Label>
                       <MarkdownTextarea value={editForm.scope} onChange={(v) => setEditForm({ ...editForm, scope: v })} previousValue={project.scope} rows={3} required />
                     </div>
-                    <div className="space-y-2">
-                      <Label>{t('fieldDevMethod')}</Label>
-                      <select value={editForm.devMethod} onChange={(e) => setEditForm({ ...editForm, devMethod: e.target.value })} className={nativeSelectClass}>
-                        {Object.entries(DEV_METHODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                      </select>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>{t('fieldDevMethod')}</Label>
+                        <select value={editForm.devMethod} onChange={(e) => setEditForm({ ...editForm, devMethod: e.target.value })} className={nativeSelectClass}>
+                          {Object.entries(DEV_METHODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        {/* PR-β / 項目 14: 契約形態 (新設、未選択は空文字 → null 送信) */}
+                        <Label>{t('fieldContractType')}</Label>
+                        <select
+                          value={editForm.contractType}
+                          onChange={(e) => setEditForm({ ...editForm, contractType: e.target.value })}
+                          className={nativeSelectClass}
+                        >
+                          <option value="">{t('contractTypeUnset')}</option>
+                          {Object.entries(CONTRACT_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -597,6 +615,15 @@ export function ProjectDetailClient({
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">{t('fieldDevMethod')}</dt>
                   <dd>{DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}</dd>
+                </div>
+                <div className="flex justify-between">
+                  {/* PR-β / 項目 14: 契約形態 (未設定は ─ 表示) */}
+                  <dt className="text-muted-foreground">{t('fieldContractType')}</dt>
+                  <dd>
+                    {project.contractType
+                      ? (CONTRACT_TYPES[project.contractType as keyof typeof CONTRACT_TYPES] || project.contractType)
+                      : '—'}
+                  </dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">{t('fieldPlannedStartDate')}</dt>

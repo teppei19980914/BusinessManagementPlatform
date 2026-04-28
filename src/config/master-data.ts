@@ -12,14 +12,42 @@
  * 値を追加するときは本ファイル 1 箇所を編集すれば、型検査で呼び出し側の網羅性を担保できる。
  */
 
+/**
+ * 開発方式 (PR-β / 項目 13 で 4 値に整理):
+ *   - scratch        : スクラッチ開発
+ *   - low_code_no_code: ローコード/ノーコード開発 (旧 power_platform をリネーム + 概念拡張)
+ *   - package        : パッケージ開発 (旧「パッケージ導入」を「開発」に統一)
+ *   - other          : そのほか
+ *
+ * 既存データは migration `20260428_dev_method_low_code_rename` で
+ * 'power_platform' → 'low_code_no_code' に一括変換。
+ */
 export const DEV_METHODS = {
   scratch: 'スクラッチ開発',
-  power_platform: 'PowerPlatform',
-  package: 'パッケージ導入',
-  other: 'その他',
+  low_code_no_code: 'ローコード/ノーコード開発',
+  package: 'パッケージ開発',
+  other: 'そのほか',
 } as const;
 
 export type DevMethod = keyof typeof DEV_METHODS;
+
+/**
+ * 契約形態 (PR-β / 項目 14 で新設):
+ *   - quasi_mandate : 準委任 (準委任契約)
+ *   - lump_sum      : 請負 (請負契約)
+ *   - ses           : SES
+ *   - other         : そのほか
+ *
+ * Project は新設項目のため null 許容 (既存プロジェクトは未設定)。
+ */
+export const CONTRACT_TYPES = {
+  quasi_mandate: '準委任',
+  lump_sum: '請負',
+  ses: 'SES',
+  other: 'そのほか',
+} as const;
+
+export type ContractType = keyof typeof CONTRACT_TYPES;
 
 export const TASK_CATEGORIES = {
   requirements: '要件定義',

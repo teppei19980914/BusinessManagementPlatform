@@ -2183,6 +2183,115 @@ JSDoc コメントに残った参照は **削除した文脈に応じて更新**
 - §11.1 T-18 (cross-list comment 再設計の TODO 起点)
 - §10.5 (deferral 経緯を追跡可能にする更新履歴管理)
 
+### 5.28 Prisma migration の UPDATE 文を書くときは init migration で列存在を grep する (PR #178 E2E P3018 hotfix)
+
+#### 症状
+
+PR-β (#178) の E2E が以下で失敗:
+
+```
+Error: P3018
+Migration name: 20260428_project_dev_method_rename_and_contract_type
+Database error code: 42703
+Database error: ERROR: column "dev_method" does not exist
+Position: ... UPDATE "knowledge_projects" SET "dev_method" = 'low_code_no_code' ...
+```
+
+#### 根本原因
+
+migration の `UPDATE "knowledge_projects" SET "dev_method" = ...` で **テーブル名を誤認**。
+
+- **誤認した経路**: schema.prisma の line 442 で `Knowledge` モデル (= `knowledges` テーブル) の
+  末尾フィールドとして `devMethod String? @map("dev_method")` を見たが、隣に
+  `KnowledgeProject` モデル (= `knowledge_projects` テーブル) があるため、
+  どちらが `dev_method` を持つのか脳内変換でミスした
+- **実体**: `knowledges` テーブルが `dev_method` を持ち、`knowledge_projects` は単なる多対多の
+  関連テーブル (id / knowledge_id / project_id のみ)
+
+#### 教訓 (汎化ルール)
+
+**migration の UPDATE / ALTER / DROP 文を書く前に、必ず init migration の `CREATE TABLE`
+で対象列の存在を確認**する。schema.prisma の model 名から table 名を脳内変換するのは
+事故の元 (本件: KnowledgeProject ≠ Knowledge、ProjectMember ≠ Project 等)。
+
+#### 確認手順 (commit 前のセルフチェック)
+
+```bash
+# 例: knowledge_projects テーブルに dev_method 列があるか確認
+grep -B 2 -A 15 'CREATE TABLE "knowledge_projects"' prisma/migrations/*/migration.sql
+
+# CREATE TABLE のスニペットを見て対象列が無ければ migration の table 名が間違っている可能性
+```
+
+別の確実な方法 (推奨): **本番に近いローカル DB で `pnpm prisma migrate dev` を一度走らせる**。
+Prisma が dry-run 段階で SQL を実行するため、column 不在エラーは即座に検出できる。
+CI を待ってから直すと iteration が遅い。
+
+#### grep 横展開チェック (本件の同パターン残存確認)
+
+```bash
+# init migration で関連 (多対多) テーブルとそうでないテーブルを区別:
+grep -E "^CREATE TABLE \"\w+_\w+s?\"" prisma/migrations/20260415060313_init/migration.sql
+
+# 関連テーブル候補: knowledge_projects / project_members / task_knowledges / ...
+# これらは scalar カラムを持たないことが多いので、UPDATE の対象にしない原則
+```
+
+#### 関連
+
+- prisma/migrations/20260428_project_dev_method_rename_and_contract_type/migration.sql — 本件 hotfix
+- §5.11.1 (User schema 借用ミス) — schema.prisma の脳内変換ミス系の類似事例
+- §11 T-21 (永続ロック実装 — 同様の schema migration を伴う、本教訓を活用すべき)
+
+### 5.29 PR-η: 永続ロック未実装バグの発見 (項目 16 調査結果)
+
+#### 検証対象 (ユーザ要望、項目 16)
+
+> アカウントの管理画面上に表示されるログインロック情報セクションの数字は正しく集計されるのか検証してください。
+
+#### 検証結果
+
+| 項目 | 実装 | 詳細 |
+|---|---|---|
+| `failedLoginCount` インクリメント | ✅ | `src/lib/auth.ts:52` |
+| `lockedUntil` 一時ロック (5 回失敗で 30 分) | ✅ | `src/lib/auth.ts:58` |
+| `lockedUntil` ログイン成功時リセット | ✅ | `src/lib/auth.ts:76` |
+| **`permanentLock` 永続ロック設定** | ❌ **未実装 (バグ)** | grep でも `permanentLock: true` を設定する箇所が無い |
+| MFA 系 (PR #116) | ✅ | 別系統で正常動作 |
+
+#### 不整合の具体内容
+
+- `users-client.tsx:216` のコメント「failedLoginCount 5 回で一時ロック (30 分) / 3 回目で permanentLock」
+  の **後半が実装伴わず**
+- 結果: 一時ロック → 解除 → 再失敗 → また一時ロック の無限ループ。永続化されない
+- `user-edit-dialog.tsx:186` の「永続ロック: あり/なし」UI は **常に なし** を表示
+
+#### 修正方針 (T-21 として §11 登録、選択肢 A 推奨)
+
+1. schema に `temporaryLockCount` (Int, default 0) を追加
+2. 一時ロック発生時にインクリメント
+3. `>= 3` で `permanentLock = true` をセット
+
+選択肢 B (auth_event_logs から動的集計) は認証パスのオーバヘッドが増えるため非推奨。
+
+#### grep による発見手順 (汎化)
+
+「実装が伴わない可能性のあるコメント」を見つけるための grep:
+
+```bash
+# UI コードのコメントで言及されているフラグが実際に true 化されている箇所を確認
+grep -rnE "permanentLock\s*[:=]\s*true|permanentLock:\s*true" src/ --include='*.ts' --include='*.tsx' | grep -v ".test."
+# ヒットが select clause (読み取り) のみで write 経路が無ければバグ
+```
+
+これは「コメントと実装の同期確認」の標準パターンとして §5.x で運用ルール化候補。
+
+#### 関連
+
+- §11 T-21 (永続ロック実装) — 本調査結果の修正タスク
+- DESIGN.md §8 (権限制御) — 仕様文書の更新も必要 (実装と乖離している)
+- src/lib/auth.ts:52-66 — 現在の一時ロック実装 (改修対象)
+
 ---
 
 ## 6. 機能削除の手順
@@ -3835,3 +3944,5 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-27 | §10.5 9 例目 4 回目再発 (PR #172 / PR #173 conflict resolve)。PR #172 (運用ルール 8a) と PR #173 (10 例目 + 運用ルール 9) の更新履歴行が末尾位置で衝突 → 番号順 (8a → 10 例目) で両方残す機械解消。1 セッション中に §10.5 9 例目が 4 回適用された (#168 / #169 / #171 / #173) が、**運用ルール 8 通り毎回機械解消で済むことが実証**され、並走 PR を恐れる必要がないことが再確認された |
 | 2026-04-28 | §10.5.1 新設 (PR #175 / feat/i18n-phase-c-final)。**並列 worktree agents による大規模一括翻訳パターン**を確立。Phase C 残 ~933 hits を 5 isolated worktree agents に分担 (project / wbs / risk / memo / admin) し、各 namespace を独立追加することで JSON 衝突を回避。**3 つの落とし穴**を §10.5.1 に明文化: (1) worktree の `.next/` ビルド成果物が ESLint で誤検出 (58529 problems の偽陽性、git worktree remove + 物理削除 + ESLint ignore で解消)、(2) `pg` symlink 破損 (`pnpm install --force` で復旧)、(3) agent 残作業 (residual cleanup) のセッション越境管理。§11 T-17 として残 ~104 hits の sweep を計画化 (test 文言 / API error message / 軽微な漏れ) |
 | 2026-04-28 | §5.27 新設 + §11 T-18 登録 (PR #177 / chore/hide-retro-comment-and-memo-filter)。**機能 deferral パターン**「UI のみ削除、DB/API/service は温存」を §6 (完全削除) と並ぶ独立パターンとして明文化。PR #177 で振り返りコメント機能を本パターンで非表示化 (将来 T-18 cross-list 横ぐし再設計予定)。適用判断基準 4 項目 (再有効化確定 / データ無傷 / API 直接呼び出し OK / 再有効化コスト高) と、UI 削除 → state 削除 → prop 整理 → import 整理 → 温存 → コメント追記 → §11 TODO 登録 の 7 step 手順を明示。grep 横展開チェックでは「JSDoc / API endpoint comment は削除した文脈で更新する」運用も合わせて規定 |
+| 2026-04-28 | §5.28 新設 (PR #178 E2E hotfix / fix(migration-β))。**Prisma migration の UPDATE/ALTER/DROP 文を書く前に init migration の CREATE TABLE で対象列の存在を grep する** 規約を明文化。本件 hotfix では `UPDATE "knowledge_projects" SET "dev_method"` と書いていたが `dev_method` 列は `knowledges` テーブルに存在 (knowledge_projects は多対多関連テーブル)。schema.prisma の model 名から table 名を脳内変換するのは事故の元 (KnowledgeProject ≠ Knowledge)。確認手順 (init migration grep + ローカル `prisma migrate dev`) を運用ルール化、CI を待たずに検出する手順を提示。関連: §5.11.1 (schema 借用ミス) / §11 T-21 (永続ロック migration で本教訓を活用) |
+| 2026-04-28 | §5.29 新設 + §11 T-21 登録 (PR #182 / investigation/lock-stats-verification)。**永続ロック未実装バグの発見**: ユーザ要望「アカウントロック情報の数字検証」(項目 16) で auth.ts を grep した結果、`permanentLock=true` を設定する経路がコードベース全体に存在しないことを確認。コメント (users-client.tsx:216) と実装の乖離。修正方針として `temporaryLockCount` 列追加 + 3 回到達で永続化 (選択肢 A、認証パス overhead 最小) を §5.29 で選定。一般化教訓として「UI コメントで言及されたフラグが実際に true 化される経路が存在するか grep で検証」する運用ルールを併記 |
