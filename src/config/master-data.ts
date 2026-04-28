@@ -73,13 +73,46 @@ export const TASK_STATUSES = {
 
 export type TaskStatus = keyof typeof TASK_STATUSES;
 
+/**
+ * 優先度 (PR-γ で 4 値に拡張、項目 2/7):
+ *   - high   : 高
+ *   - medium : 中
+ *   - low    : 低
+ *   - minimal: 最低 (新設)
+ *
+ * リスク/課題の priority は **service 層で impact × likelihood から自動算出** される
+ * (UI で直接指定不可)。詳細は src/services/risk.service.ts の computePriority()。
+ *
+ * 算出マトリクス (impact 'low' or 'high'/'medium' を 'high' 扱い、likelihood も同様):
+ *   - リスク (impact=影響度 / likelihood=発生可能性) — 発生確率重視:
+ *     high/high → high, low/high → medium, high/low → low, low/low → minimal
+ *   - 課題 (impact=重要度 / likelihood=緊急度) — 重要度重視:
+ *     high/high → high, high/low → medium, low/high → low, low/low → minimal
+ */
 export const PRIORITIES = {
-  low: '低',
-  medium: '中',
   high: '高',
+  medium: '中',
+  low: '低',
+  minimal: '最低',
 } as const;
 
 export type Priority = keyof typeof PRIORITIES;
+
+/**
+ * 影響度 (impact) / 発生可能性 (likelihood) / 重要度 / 緊急度の入力値域 (PR-γ)。
+ *
+ * PRIORITIES (4 値) と分離した理由: priority は impact × likelihood から自動算出される
+ * 「結果」、impact/likelihood は人が直接入力する「原因」で、minimal を入力肢に出すと
+ * UI が分かりづらくなるため。algorithmic に minimal は impact/likelihood の組合せでしか
+ * 発生しない (両方 'low' のとき)。
+ */
+export const IMPACT_LEVELS = {
+  high: '高',
+  medium: '中',
+  low: '低',
+} as const;
+
+export type ImpactLevel = keyof typeof IMPACT_LEVELS;
 
 export const RISK_ISSUE_STATES = {
   open: '未対応',

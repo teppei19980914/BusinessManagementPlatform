@@ -270,7 +270,7 @@ describe('createRisk', () => {
     expect(call.data.riskNature).toBe(null);
   });
 
-  it('priority 未指定時は impact を流用 (PR #63)', async () => {
+  it('PR-γ: priority は impact × likelihood から自動算出される (risk: 影響度高+発生確率低 → low)', async () => {
     vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow() as never);
     await createRisk(
       'p-1',
@@ -287,7 +287,43 @@ describe('createRisk', () => {
       'u-1',
     );
     const call = vi.mocked(prisma.riskIssue.create).mock.calls[0][0];
-    expect(call.data.priority).toBe('high');
+    expect(call.data.priority).toBe('low');
+  });
+
+  it('PR-γ: risk 高/高 → high', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow() as never);
+    await createRisk('p-1', {
+      type: 'risk', title: 't', content: 'c', impact: 'high', likelihood: 'high',
+      assigneeId: null, deadline: null, visibility: 'draft',
+    } as never, 'u-1');
+    expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('high');
+  });
+
+  it('PR-γ: risk 低/低 → minimal', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow() as never);
+    await createRisk('p-1', {
+      type: 'risk', title: 't', content: 'c', impact: 'low', likelihood: 'low',
+      assigneeId: null, deadline: null, visibility: 'draft',
+    } as never, 'u-1');
+    expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('minimal');
+  });
+
+  it('PR-γ: issue 重要度高/緊急度低 → medium (重要度重視)', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow() as never);
+    await createRisk('p-1', {
+      type: 'issue', title: 't', content: 'c', impact: 'high', likelihood: 'low',
+      assigneeId: null, deadline: null, visibility: 'draft',
+    } as never, 'u-1');
+    expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('medium');
+  });
+
+  it('PR-γ: issue 重要度低/緊急度高 → low (重要度重視: risk と逆転)', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow() as never);
+    await createRisk('p-1', {
+      type: 'issue', title: 't', content: 'c', impact: 'low', likelihood: 'high',
+      assigneeId: null, deadline: null, visibility: 'draft',
+    } as never, 'u-1');
+    expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('low');
   });
 });
 
