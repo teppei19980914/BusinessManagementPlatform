@@ -2127,6 +2127,51 @@ export function DateFieldWithActions({
 - §10.5 9 例目 (本セクションが §5.24 → §5.26 に繰り上がった conflict resolve の経緯)
 - `src/components/ui/date-field-with-actions.tsx` — 当該共通部品
 
+### 5.28 アカウントロック実装の現状把握 (PR-η / 項目 16 調査結果)
+
+#### 検証対象
+
+ユーザ要望「アカウント管理画面のロック情報セクションの集計が正しいか検証」に基づき、
+`failedLoginCount` / `lockedUntil` / `permanentLock` の更新ロジックを調査。
+
+#### 検証結果
+
+| 項目 | 実装状況 | 詳細 |
+|---|---|---|
+| `failedLoginCount` インクリメント | ✅ **正しく動作** | `src/lib/auth.ts:52` でパスワード不一致時に `+1`。一時ロック発生時 (5 回到達時) に `0` リセット |
+| `lockedUntil` 一時ロック設定 | ✅ **正しく動作** | `src/lib/auth.ts:58` で `LOGIN_FAILURE_MAX (=5)` 到達時、`Date.now() + TEMPORARY_LOCK_DURATION_MS (=30 分)` をセット |
+| `lockedUntil` 解除 | ✅ **正しく動作** | ログイン成功時に `null` へリセット (`auth.ts:76`) |
+| `permanentLock` 永続ロック設定 | ❌ **未実装 (バグ)** | **コードベース全体を grep しても `permanentLock: true` を設定する箇所が無い**。コメント (users-client.tsx:216) には「3 回目で permanentLock」とあるが実装が伴っていない。一時ロック発生 → 解除 → 再失敗 5 回 → また一時ロック という無限ループ状態 |
+| `mfaFailedCount` / `mfaLockedUntil` (MFA 系) | ✅ 別系統で動作 | PR #116 で実装済 (3 回失敗で 30 分一時ロック)、こちらは正常 |
+
+#### 発覚した不整合
+
+- **コメント vs 実装の乖離**: `users-client.tsx:216` の説明「failedLoginCount 5 回で一時ロック (30 分) / 3 回目で permanentLock」のうち、後半「3 回目で permanentLock」が実装されていない
+- **UI 表示**: ロック情報セクション (user-edit-dialog.tsx:186) の「永続ロック: なし/あり」は **常に `なし`** を表示し続ける状態 (admin が手動で DB を直接更新しない限り `permanentLock=true` にならない)
+- **`recordAuthEvent({ eventType: 'lock', ... lockType: 'temporary' })` (auth.ts:60) の `lockType` パラメータは 'temporary' しか発火されない** (永続化経路が無いため)
+
+#### 修正方針 (T-21 として §11 登録)
+
+**選択肢 A**: 一時ロックの累計回数で永続化
+- 新カラム `temporaryLockCount` (Int, default 0) を schema に追加
+- 一時ロック発生時にインクリメント、`>= 3` で `permanentLock=true` をセット
+- メリット: 仕様通り、「3 回目で永続ロック」が明確
+- デメリット: schema migration が必要 + 既存ユーザのカウンタは 0 から始まる (運用上問題なし)
+
+**選択肢 B**: 短期間内の一時ロック多発で永続化
+- `lockedUntil` の履歴を `auth_event_logs` から 30 日以内で集計し、3 回以上で permanent
+- メリット: schema 変更不要
+- デメリット: 認証時の集計クエリが増える
+
+**推奨**: **選択肢 A** (シンプル、ログイン処理のオーバヘッド最小)
+
+#### 関連
+
+- §11 T-21 (永続ロック実装) — 本調査の修正タスク
+- DESIGN.md §8 (権限制御 / ロック仕様) — 仕様文書の更新も必要
+- src/lib/auth.ts:52-66 — 現在の一時ロックロジック (改修対象)
+- src/components/dialogs/user-edit-dialog.tsx:186-217 — ロック情報セクション (実装後は永続ロック表示が機能する)
+
 ---
 
 ## 6. 機能削除の手順
@@ -3689,6 +3734,8 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | T-05 | Estimate (見積もり) に添付 URL 登録 UI を追加 + 一覧表示 | API 経路 (`/api/attachments/batch` の `entityType === 'estimate'` 分岐) は対応済だが、**UI 経由の添付登録手段が無い**ため事実上未使用。`estimates-client.tsx` に `<StagedAttachmentsInput>` (作成時) + 編集 dialog 内の `<AttachmentList>` を追加し、見積一覧にも `useBatchAttachments('estimate', ...)` + `<AttachmentsCell>` を追加すれば他エンティティと parity が揃う。PR #168 で添付対応 entity 全体の一覧表示状態を網羅 grep し、estimate のみ「API 対応済 + UI 未対応」のギャップが判明 | 2026-04-27 PR #168 横展開調査時、ユーザ要望「添付できるものに関しては、一覧画面上に表示されているか影響調査し横展開を徹底」に部分対応。estimate の UI は別 PR で対応する宣言 |
 | T-06 | ~~**【外部公開直前必須】** en-US 本格翻訳~~ → **PR #170/#173/#174/#175 で大半完了 (~933 hits / 30+ ファイル / 24 sections / ~813 keys × 2 locales)。`SELECTABLE_LOCALES['en-US']=true` 切替済**。残り T-17 で対応 | PR #169 → #175 で実施。完了 |
 | T-17 | en-US 残 sweep (~104 hits / 完成度向上) | PR #175 マージ時点で抽出スクリプト残ヒット 約 104 件。内訳: (a) test ファイル `it('...')` 説明文 ~56 件 (ユーザ非表示、翻訳不要)、(b) API route の `throw new Error(...)` ~30 件 (エラー時のみ HTTP body に露出、UX 影響小)、(c) ユーザ可視の軽微な漏れ十数件 (「全リスク」「全課題」「全振り返り」が page heading 等 1 箇所ずつ、`削除` / `削除に失敗しました` 数箇所、admin/audit-logs などの新画面)。**着手手順**: `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` で残ヒットを再抽出 → ユーザ可視を優先で sweep → API error message を t() 化 → test 文言は据え置き or 規約化。各 commit 後に同スクリプトで残数を計測 | 2026-04-28 ユーザ要望「残りの英語化対応は今度実施するのでプランに追加」 |
+| T-19 | WBS エクスポート/インポート schema 整合化 (PR-ζ follow-up) | PR-ζ (#181) で UI を 4→2 ボタンに統合した際、ロジック側は handleSyncExport (17 列出力) を流用したため、ユーザ仕様 (項目 15) の「ID, 種別, タスク名, 予定開始日, 予定終了日, 予定工数」の **6 列のみ** にする部分は未対応。**実施内容**: (1) `/api/projects/[id]/tasks/export` の sync mode を 6 列出力に絞る、(2) sync-import の入力 schema も 6 列受理に変更、(3) 旧 template mode (handleExport / `/tasks/import`) を service 層から完全削除、(4) 互換のため温存していた eslint-disable 領域を削除。**着手目安**: PR-ζ マージ後に手動 UI 確認で「2 ボタン化が機能している」ことを確認してから着手 | 2026-04-28 PR-ζ で UI 統合のみ実施、schema 整合は分離 |
+| T-21 | アカウント永続ロック実装 (PR-η 調査結果のバグ修正) | PR-η (項目 16) 調査で発覚: コメント「3 回目で permanentLock」(users-client.tsx) と実装 (auth.ts) が乖離しており、**現在は永続ロック発火経路が無い** (§5.28 参照)。**実装方針 (§5.28 で選定済の選択肢 A)**: schema に `temporaryLockCount` (Int, default 0) を追加 → 一時ロック発生時にインクリメント → `>= 3` で `permanentLock=true`。**migration**: 既存ユーザのカウンタは 0 始まり (運用上問題なし)。**test**: 1 回失敗→4 回失敗→5 回目で一時ロック (count=1) / 30 分後 5 回失敗→count=2 / さらに 5 回→count=3 で permanent_lock=true、の連鎖を E2E で再現 | 2026-04-28 PR-η 調査結果、ユーザ要望「ロック情報の数字検証」 |
 
 ### 11.2 低優先 (長期案件)
 
