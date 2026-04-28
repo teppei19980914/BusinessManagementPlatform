@@ -850,7 +850,6 @@ export function ProjectDetailClient({
                 projectId={project.id}
                 retros={data}
                 canCreate={canCreateOwnedList}
-                canComment={canCreate}
                 currentUserId={userId}
                 onReload={reloadRetros}
               />
