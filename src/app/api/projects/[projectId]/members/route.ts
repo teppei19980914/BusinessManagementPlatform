@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission, requireAdmin } from '@/lib/api-helpers';
 import { listMembers, addMember } from '@/services/member.service';
 import { recordAuditLog } from '@/services/audit.service';
@@ -83,14 +84,16 @@ export async function POST(
   } catch (e) {
     if (e instanceof Error) {
       if (e.message === 'USER_NOT_FOUND') {
+        const t = await getTranslations('message');
         return NextResponse.json(
-          { error: { code: 'NOT_FOUND', message: 'ユーザが見つかりません' } },
+          { error: { code: 'NOT_FOUND', message: t('userNotFound') } },
           { status: 404 },
         );
       }
       if (e.message === 'ALREADY_MEMBER') {
+        const t = await getTranslations('message');
         return NextResponse.json(
-          { error: { code: 'VALIDATION_ERROR', message: '既にメンバーに追加されています' } },
+          { error: { code: 'VALIDATION_ERROR', message: t('alreadyMember') } },
           { status: 409 },
         );
       }

@@ -7,7 +7,8 @@
       "WebFetch(domain:developers.brevo.com)",
       "WebFetch(domain:help.brevo.com)",
       "Skill(schedule)",
-      "Skill(schedule:*)"
+      "Skill(schedule:*)",
+      "WebFetch(domain:supabase.com)"
     ]
   }
 }

@@ -25,6 +25,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { bulkUpdateTaskSchema } from '@/lib/validators/task';
 import { bulkUpdateTasks } from '@/services/task.service';
@@ -84,11 +85,12 @@ export async function PATCH(
       select: { id: true },
     });
     if (others.length > 0) {
+      const t = await getTranslations('message');
       return NextResponse.json(
         {
           error: {
             code: 'FORBIDDEN',
-            message: '一括実績更新は自分が担当のタスクのみ対象にできます',
+            message: t('bulkProgressOwnTasksOnly'),
           },
         },
         { status: 403 },
@@ -101,8 +103,9 @@ export async function PATCH(
     count = await bulkUpdateTasks(projectId, taskIds, updates, user.id);
   } catch (e) {
     if (e instanceof Error && e.message === 'ASSIGNEE_NOT_MEMBER') {
+      const t = await getTranslations('message');
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: '指定された担当者はプロジェクトメンバーではありません' } },
+        { error: { code: 'VALIDATION_ERROR', message: t('invalidAssigneeMember') } },
         { status: 400 },
       );
     }

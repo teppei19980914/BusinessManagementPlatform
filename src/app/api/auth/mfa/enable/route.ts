@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { enableMfa } from '@/services/mfa.service';
 import { z } from 'zod/v4';
@@ -26,8 +27,9 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: '6桁のコードを入力してください' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('mfaCodeRequired') } },
       { status: 400 },
     );
   }

@@ -2507,6 +2507,110 @@ T-22 (5 entity の sync-import 機能) で確立: 先行 1 entity を「**汎用
 - §11 T-22 (本パターンの起点・実証 5 entity)
 - T-22 commits 19fa9bd (Phase 22a) / 2081e88 (22b) / 20f548b (22c) / 73afd2d (22d)
 
+### 5.33 API route の server-side i18n + vitest 共通モック (T-17 Group 2 で確立)
+
+#### 背景
+
+API route が返すエラー message も i18n 化する必要がある (`Accept-Language` 等の
+ロケール切替時に英語表示される)。next-intl では server context で
+`getTranslations(namespace)` を呼ぶが、**vitest 環境では
+「`getTranslations` is not supported in Client Components」** で失敗する。
+
+T-17 Group 2 (2026-04-28) で 24 API route × 16 i18n keys を一括 i18n 化した経験から、
+**vitest.setup.ts 共通モック** + **route 側の標準パターン** を §5.33 として規約化する。
+
+#### route の i18n 化パターン (標準)
+
+```ts
+// src/app/api/.../route.ts
+import { NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';   // ← 追加
+
+export async function POST() {
+  // ... バリデーション
+  if (errorCondition) {
+    const t = await getTranslations('message');       // ← エラー時のみ取得
+    return NextResponse.json(
+      { error: { code: 'XXX', message: t('keyName') } },
+      { status: 400 },
+    );
+  }
+}
+```
+
+ポイント:
+
+| 項目 | 規約 |
+|---|---|
+| `import` 位置 | `next/server` の直下に配置 (順序を統一) |
+| `t` 取得タイミング | エラー分岐内で local に `await getTranslations(...)` (関数 top-level で取らない、未使用時のオーバヘッドを避ける) |
+| 既存 namespace の活用 | `message` (汎用) / `admin.users` (admin 系) など、文脈に合うものを選ぶ |
+| 新規 key 追加 | `ja.json` と `en-US.json` の **両方** に追加 (片方漏れは i18n test で検知) |
+| 共通 helper の async 化 | `function forbidden()` 等を `async function forbidden()` にすると caller 側に `await` が必要、忘れると Promise が response として返り 500 |
+
+#### vitest 共通モック (vitest.setup.ts)
+
+```ts
+// vitest.setup.ts (T-17 Group 2 で新設)
+import { vi } from 'vitest';
+
+vi.mock('next-intl/server', () => ({
+  getTranslations: async () => (key: string) => key,
+}));
+```
+
+```ts
+// vitest.config.ts
+test: {
+  setupFiles: ['./vitest.setup.ts'],   // ← 全 test に自動適用
+  // ...
+}
+```
+
+これにより:
+
+- 全 test で `getTranslations` が「key 名そのまま返す」スタブで動作
+- 個別 test に `vi.mock('next-intl/server', ...)` を書く必要なし
+- メッセージ検証は **`expect(body.error.message).toBe('keyName')`** スタイルになる
+  (具体メッセージを検証したい場合は個別 test で上書きモック可能)
+
+#### test 期待値の書き換え規約
+
+i18n 化前のテストは具体メッセージを `toContain('自分が担当のタスクのみ')` のように
+検証していた。i18n 化後は **key 名そのまま検証** に変更:
+
+```ts
+// Before (i18n 化前)
+expect(body.error.message).toContain('自分が担当のタスクのみ');
+
+// After (i18n 化 + vitest setup スタブ前提)
+expect(body.error.message).toBe('bulkProgressOwnTasksOnly');
+```
+
+#### 横展開時の手順 (将来 i18n 対応する route で適用)
+
+1. ja.json / en-US.json の `message` namespace に新規 key を追加 (両 locale 必須)
+2. route ファイルに `import { getTranslations } from 'next-intl/server';` を追加
+3. エラー分岐内で `const t = await getTranslations('message');`
+4. メッセージ部分を `t('keyName')` で置換
+5. 該当 test の期待値を key 名検証に変更 (vitest.setup.ts のスタブが自動適用)
+6. `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` で残ヒット 0 件確認
+
+#### アンチパターン
+
+| 失敗パターン | 結末 |
+|---|---|
+| 各 test に個別 `vi.mock('next-intl/server', ...)` を書く | 重複コード + 追加忘れによる CI 失敗の連鎖 |
+| `getTranslations` を関数 top で 1 回取得 | 早期 return path も無駄に async になり、未使用時オーバヘッド |
+| ja.json のみ追加 (en-US 漏れ) | en-US 切替時に `[Missing message]` 表示 |
+| 共通 helper を sync のまま `getTranslations` を呼ぶ | 「await の伝播漏れ」エラーで 500 (非同期化忘れの罠) |
+
+#### 関連
+
+- §11 T-17 (本パターンの起点)
+- §10.5.1 (並列 worktree agents パターン、大量 i18n 化の作業並列化と相性良)
+- vitest.setup.ts / vitest.config.ts (実装位置)
+
 ---
 
 ## 6. 機能削除の手順
@@ -4084,6 +4188,7 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | T-12 | ソースマップ本番非公開の明示宣言 | 現状 Next.js の既定動作で本番ソースマップは生成されないが、`productionBrowserSourceMaps: false` を `next.config.ts` に明示宣言しておくと将来の誤変更防止になる | PR #122 時点 |
 | T-13 | `/api/settings/i18n` の E2E 実カバー | PR #119 で `[ ] skip` で manifest 登録済。単体テスト 8 ケースで主要観点はカバー済だが、設定画面からの反映確認は未 E2E | PR #119 時点 |
 | T-14 | `system_error_logs` の自動削除バッチ | 1 ヶ月経過ログの退避 or 物理削除を cron で自動化 (OPERATION §13.1 で言及) | PR #122 時点 |
+| T-24 | **`audit_logs` の自動アーカイブ/削除バッチ** (容量対策) | 2026-04-28 時点で audit_logs は **1.2 MB と DB 内最大テーブル** (Free tier 500 MB の 0.24% を単独で消費)。ユーザ操作回数に比例して **線形増加** するため、放置すると将来的に容量を圧迫する。**実装内容**: (1) Vercel Cron で日次実行する `/api/admin/audit-logs/cleanup` 新設、(2) 経過期間 (例: 1 年) を超えた audit_logs を物理削除、(3) 法定保存期間が必要な場合は archive 先 (S3 / 別 DB) に退避してから削除、(4) `OPERATION.md §13` に運用手順を追記。**T-14 と同パターン** (system_error_logs 自動削除と一体化検討)。**着手目安**: 外部公開時 (= ユーザ増のタイミング) までに実装。現状容量は Free tier の 2.97% (15 MB / 500 MB) で急務ではないが、external user の audit log が積み上がる前に仕組み化しておくのが現実的 | 2026-04-28 ユーザ要望「audit_logs の自動アーカイブ/削除バッチをプランに登録」、容量確認の結果 audit_logs が最大であることを受けて起票 |
 | T-15 | 全見積もり 横断画面 (`/estimates`) | プロジェクト横断で見積を一覧・比較する画面。route 実装後、ナビ「プロジェクト」プルダウンに追加 (SPECIFICATION §20.4) | PR #127 時点 |
 | T-16 | 全 WBS 横断画面 (`/wbs`) | プロジェクト横断で WBS (タスク階層) を俯瞰する画面。同上 | PR #127 時点 |
 
@@ -4175,3 +4280,5 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-28 | /knowledge-organize 整理: 「変更時の漏れ防止 3 兄弟」の正規定義を §5.30 末尾に表化 (長男§5.28 / 次男§5.30 / 三男§4.44)、§5.31 の関連リンクを「**仕様検証時の欠落防止**」レベルとして 3 兄弟と区別する記述に整合化、§5.28 関連の「§11 T-21」を完了マーク + 本教訓活用事実への参照に更新。整理しすぎない原則を尊重し再発事例シリーズや PR 番号引用は維持 |
 | 2026-04-28 | §11 T-22 完了 (「○○一覧」インポート/エクスポート全 4 entity)。Phase 22a (risks 16 列) で汎用 `EntitySyncImportDialog` component を確立し、Phase 22b (retrospectives 13 列) / 22c (knowledge 14 列、tags はセミコロン区切り) / 22d (memos 4 列、user-scoped) は **完全機械流用** で実装。Phase 22a の汎用化により 22b/c/d は約 300 行 / 30 分 / Phase で完了 (Phase 分割の正解パターン)。**汎用化の効果**: 4 entity 個別実装 (~4,400 行) を Phase 22a (~1,100 行) + 22b/c/d (~900 行 × 3) で計 ~3,800 行に削減 (~14% 圧縮)。**教訓 (KDD)**: 複数 entity 横展開時は先行 1 entity を「**汎用 component の prop API 設計まで含めた完成形**」で実装することで、後続 entity は機械流用が成立する。先行 entity を「専用実装」で済ませると後続が「コピー&置換」になり保守性が落ちる |
 | 2026-04-28 | §5.32 新設 (T-22 教訓 KDD 化、Stop hook 補正)。**複数 entity 横展開時の段階的汎用化パターン**を運用ルール化。T-22 (5 entity sync-import) で確立した「先行 1 entity (Phase A) で汎用 component の prop API 設計まで含めた完成形を作り、後続 N-1 entity (Phase B〜) は機械流用 (~300 行 / 30 分 / entity)」パターンを §5.32 として独立セクション化。実証数値 (4 entity / ~3,240 行 / 個別実装 ~4,400 行から 26% 圧縮) + 適用判断基準 + アンチパターン (Phase A 専用実装による Breaking change リスク) を網羅。§5.26 (共通部品流用) の戦略的拡張、§5.31 (アクション充足) との組み合わせで横展開前後の検証層を完備 |
+| 2026-04-28 | §5.33 新設 (T-17 Group 2 教訓 KDD 化、Stop hook 補正)。**API route の server-side i18n + vitest 共通モック** パターンを運用ルール化。T-17 Group 2 (2026-04-28) で 24 API route × 16 i18n keys を一括 i18n 化した際に確立した「`getTranslations(namespace)` 標準パターン + `vitest.setup.ts` での `next-intl/server` 共通スタブ」を §5.33 として独立セクション化。横展開時の 6 step 手順 + 4 アンチパターン (個別 mock 重複 / top-level await 浪費 / locale 片方漏れ / sync helper の await 伝播漏れ) を明文化。`pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` の残ヒット 0 達成 (test 説明文を除く) で「ユーザ可視ハードコード = 0」を運用維持可能に |
+| 2026-04-28 | §11.2 T-24 新設: **`audit_logs` の自動アーカイブ/削除バッチ** (容量対策)。Supabase Free tier 容量確認 (現在 15 MB / 500 MB = 2.97%) の結果、audit_logs が DB 内最大テーブル (1.2 MB) と判明。ユーザ操作に比例して線形増加するため将来の容量圧迫を予防する目的で T-24 起票。T-14 (system_error_logs 自動削除) と同パターン、外部公開前の実装を想定。**容量データの記録**: 上位テーブルは audit_logs (1.2 MB) / knowledges (568 kB、内 index 480 kB は pg_trgm 全文検索) / risks_issues (392 kB) / tasks (280 kB) で、knowledges は本体 40 kB に対し index が 12 倍と特異な構造を持つ |

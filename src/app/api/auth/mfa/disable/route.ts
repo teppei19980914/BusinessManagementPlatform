@@ -14,6 +14,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { disableMfa } from '@/services/mfa.service';
 
@@ -23,8 +24,9 @@ export async function POST() {
 
   // 管理者は MFA を無効化できない
   if (user.systemRole === 'admin') {
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: '管理者は MFA を無効化できません' } },
+      { error: { code: 'FORBIDDEN', message: t('cannotDisableAdminMfa') } },
       { status: 403 },
     );
   }

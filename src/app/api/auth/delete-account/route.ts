@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';
 import { compare } from 'bcryptjs';
@@ -49,8 +50,10 @@ export async function POST(req: NextRequest) {
 
   const isValidPassword = await compare(parsed.data.password, dbUser.passwordHash);
   if (!isValidPassword) {
+    // §5.33: t は使用するエラー分岐内で local 取得 (top-level だと validation 失敗時に無駄な await)
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'パスワードが正しくありません' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('wrongPassword') } },
       { status: 400 },
     );
   }
@@ -71,8 +74,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (!matched) {
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'リカバリーコードが正しくありません' } },
+      { error: { code: 'VALIDATION_ERROR', message: t('wrongRecoveryCode') } },
       { status: 400 },
     );
   }

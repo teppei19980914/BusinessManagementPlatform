@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateProgressSchema } from '@/lib/validators/task';
 import { getTask, updateTaskProgress, getProgressLogs } from '@/services/task.service';
@@ -33,8 +34,9 @@ export async function GET(
 
   const task = await getTask(taskId);
   if (!task || task.projectId !== projectId) {
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
@@ -54,8 +56,9 @@ export async function POST(
 
   const task = await getTask(taskId);
   if (!task || task.projectId !== projectId) {
+    const t = await getTranslations('message');
     return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
