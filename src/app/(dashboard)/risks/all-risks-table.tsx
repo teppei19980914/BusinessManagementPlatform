@@ -20,16 +20,19 @@
  * 関連: SPECIFICATION.md (全リスク・全課題画面)
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
 import {
   Table, TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
-import { PRIORITIES } from '@/types';
+import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES } from '@/types';
 import type { AllRiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
 import { AdminRiskDeleteButton } from './admin-delete-button';
@@ -57,12 +60,32 @@ export function AllRisksTable({
   /** PR #60 #1: 'risk' / 'issue' で絞り込み (未指定なら両方表示) */
   typeFilter?: 'risk' | 'issue';
 }) {
-  const filteredRisks = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
   const router = useRouter();
   const tRisk = useTranslations('risk');
   const { formatDateTime } = useFormatters();
   const [editingRisk, setEditingRisk] = useState<AllRiskDTO | null>(null);
   const [members, setMembers] = useState<MemberDTO[]>([]);
+
+  // PR-δ / 項目 12: 全リスク/全課題に検索 (keyword) + state/priority フィルタを追加。
+  // ○○一覧と同等の絞り込み機能を「全○○」にも横展開し、「同じ意味の画面は同じ機能」を実現。
+  const [filter, setFilter] = useState({ keyword: '', state: '', priority: '' });
+
+  const filteredRisks = useMemo(() => {
+    let xs = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
+    if (filter.state) xs = xs.filter((r) => r.state === filter.state);
+    if (filter.priority) xs = xs.filter((r) => r.priority === filter.priority);
+    if (filter.keyword.trim()) {
+      const kw = filter.keyword.trim().toLowerCase();
+      xs = xs.filter((r) =>
+        r.title.toLowerCase().includes(kw)
+        || r.content.toLowerCase().includes(kw)
+        || (r.assigneeName ?? '').toLowerCase().includes(kw)
+        || (r.reporterName ?? '').toLowerCase().includes(kw),
+      );
+    }
+    return xs;
+  }, [risks, typeFilter, filter]);
+
   const attachmentsByEntity = useBatchAttachments(
     'risk',
     filteredRisks.map((r) => r.id),
@@ -89,6 +112,44 @@ export function AllRisksTable({
 
   return (
     <ResizableColumnsProvider tableKey="all-risks">
+      {/* PR-δ / 項目 12: 検索 + フィルタ (○○一覧と同 UX に揃える) */}
+      <div className="rounded-md border bg-muted/30 p-3 mb-3">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+          <div className="md:col-span-2">
+            <Label htmlFor={`all-risks-filter-keyword-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('keyword')}</Label>
+            <Input
+              id={`all-risks-filter-keyword-${typeFilter ?? 'all'}`}
+              value={filter.keyword}
+              onChange={(e) => setFilter((f) => ({ ...f, keyword: e.target.value }))}
+              placeholder={tRisk('keywordPlaceholder')}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`all-risks-filter-state-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('state')}</Label>
+            <select
+              id={`all-risks-filter-state-${typeFilter ?? 'all'}`}
+              value={filter.state}
+              onChange={(e) => setFilter((f) => ({ ...f, state: e.target.value }))}
+              className={nativeSelectClass}
+            >
+              <option value="">{tRisk('all')}</option>
+              {Object.entries(RISK_ISSUE_STATES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor={`all-risks-filter-priority-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('priority')}</Label>
+            <select
+              id={`all-risks-filter-priority-${typeFilter ?? 'all'}`}
+              value={filter.priority}
+              onChange={(e) => setFilter((f) => ({ ...f, priority: e.target.value }))}
+              className={nativeSelectClass}
+            >
+              <option value="">{tRisk('all')}</option>
+              {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
       <div className="flex justify-end pb-2">
         <ResetColumnsButton />
       </div>
@@ -98,10 +159,11 @@ export function AllRisksTable({
             <ResizableHead columnKey="project" defaultWidth={140}>{tRisk('project')}</ResizableHead>
             {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>{tRisk('kind')}</ResizableHead>}
             <ResizableHead columnKey="title" defaultWidth={220}>{tRisk('subject')}</ResizableHead>
-            <ResizableHead columnKey="assignee" defaultWidth={120}>{tRisk('assignee')}</ResizableHead>
-            <ResizableHead columnKey="impact" defaultWidth={80}>{tRisk('impact')}</ResizableHead>
-            <ResizableHead columnKey="likelihood" defaultWidth={100}>{tRisk('likelihood')}</ResizableHead>
+            {/* PR-δ / 項目 11: ○○一覧と同じ priority カラムを表示 (impact/likelihood は非表示、PR-γ 整合) */}
             <ResizableHead columnKey="priority" defaultWidth={80}>{tRisk('priority')}</ResizableHead>
+            <ResizableHead columnKey="state" defaultWidth={100}>{tRisk('state')}</ResizableHead>
+            <ResizableHead columnKey="visibility" defaultWidth={90}>{tRisk('visibility')}</ResizableHead>
+            <ResizableHead columnKey="assignee" defaultWidth={120}>{tRisk('assignee')}</ResizableHead>
             <ResizableHead columnKey="createdAt" defaultWidth={130}>{tRisk('createdAt')}</ResizableHead>
             <ResizableHead columnKey="createdBy" defaultWidth={120}>{tRisk('createdBy')}</ResizableHead>
             <ResizableHead columnKey="updatedAt" defaultWidth={130}>{tRisk('updatedAt')}</ResizableHead>
@@ -139,16 +201,19 @@ export function AllRisksTable({
                 </TableCell>
               )}
               <TableCell className="font-medium">{r.title}</TableCell>
+              {/* PR-δ / 項目 11: priority / state / visibility / assignee の順 (○○一覧と同列配置) */}
+              <TableCell>{PRIORITIES[r.priority as keyof typeof PRIORITIES] || r.priority}</TableCell>
+              <TableCell>
+                <Badge variant="outline">
+                  {RISK_ISSUE_STATES[r.state as keyof typeof RISK_ISSUE_STATES] || r.state}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-sm">
+                {VISIBILITIES[r.visibility as keyof typeof VISIBILITIES] || r.visibility}
+              </TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {r.assigneeName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
-              <TableCell>{PRIORITIES[r.impact as keyof typeof PRIORITIES] || r.impact}</TableCell>
-              <TableCell>
-                {r.likelihood
-                  ? PRIORITIES[r.likelihood as keyof typeof PRIORITIES] || r.likelihood
-                  : '-'}
-              </TableCell>
-              <TableCell>{PRIORITIES[r.priority as keyof typeof PRIORITIES] || r.priority}</TableCell>
               <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.createdAt)}</TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {r.createdByName ?? <span className="text-muted-foreground">-</span>}
@@ -173,7 +238,9 @@ export function AllRisksTable({
           ))}
           {filteredRisks.length === 0 && (
             <TableRow>
-              <TableCell colSpan={(isAdmin ? 13 : 12) - (typeFilter ? 1 : 0)} className="py-8 text-center text-muted-foreground">
+              {/* PR-δ: カラム数変更 (impact/likelihood 削除 → state/visibility 追加で +1, -2 = 最終的に -1)。
+                  base = isAdmin ? 12 : 11、typeFilter 時はさらに -1。*/}
+              <TableCell colSpan={(isAdmin ? 12 : 11) - (typeFilter ? 1 : 0)} className="py-8 text-center text-muted-foreground">
                 {typeFilter === 'issue' ? tRisk('noneIssue') : typeFilter === 'risk' ? tRisk('noneRisk') : tRisk('noneBothSlash')}
               </TableCell>
             </TableRow>

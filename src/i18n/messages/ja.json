@@ -647,6 +647,8 @@
     "confirmAction": "確定",
     "draftBadge": "下書き",
     "noneInList": "振り返りがありません",
+    "keyword": "キーワード",
+    "keywordPlaceholder": "本文・改善点に含まれる文字列",
     "selectAllOwn": "表示中の編集可能振り返りを全選択",
     "commentPlaceholder": "コメントを入力...",
     "post": "投稿",

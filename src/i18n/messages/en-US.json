@@ -647,6 +647,8 @@
     "confirmAction": "Confirm",
     "draftBadge": "Draft",
     "noneInList": "No retrospectives",
+    "keyword": "Keyword",
+    "keywordPlaceholder": "Search in body / improvements",
     "selectAllOwn": "Select all editable retrospectives in view",
     "commentPlaceholder": "Enter a comment...",
     "post": "Post",
