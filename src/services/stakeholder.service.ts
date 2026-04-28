@@ -28,8 +28,11 @@ import { prisma } from '@/lib/db';
 import {
   classifyStakeholderQuadrant,
   calcEngagementGap,
+  deriveStakeholderPriority,
+  STAKEHOLDER_PRIORITY_ORDER,
   type StakeholderAttitude,
   type StakeholderEngagement,
+  type StakeholderPriority,
   type StakeholderQuadrant,
 } from '@/config/master-data';
 import type {
@@ -56,6 +59,12 @@ export type StakeholderDTO = {
   engagementGap: number;
   /** Power/Interest grid 4 象限 (UI バッジ表示・ソート用) */
   quadrant: StakeholderQuadrant;
+  /**
+   * Phase D 要件 11/12 (2026-04-28): 自動分類された優先度 (high/medium/low)。
+   * `deriveStakeholderPriority(influence, interest)` で計算され、create/update 時に
+   * サービス層でカラムに保存する。クライアント側のフィルタ/ソートはこの値を使う。
+   */
+  priority: StakeholderPriority;
   personality: string | null;
   tags: string[];
   strategy: string | null;
@@ -77,6 +86,8 @@ type StakeholderRow = {
   attitude: string;
   currentEngagement: string;
   desiredEngagement: string;
+  // Phase D 要件 11/12 (2026-04-28): 優先度カラム
+  priority: string;
   personality: string | null;
   tags: unknown; // Prisma Json
   strategy: string | null;
@@ -88,6 +99,7 @@ function toStakeholderDTO(s: StakeholderRow): StakeholderDTO {
   const attitude = s.attitude as StakeholderAttitude;
   const current = s.currentEngagement as StakeholderEngagement;
   const desired = s.desiredEngagement as StakeholderEngagement;
+  const priority = s.priority as StakeholderPriority;
   // tags は JsonB なので unknown 型。配列以外が入っていれば空配列にフォールバック。
   const tags = Array.isArray(s.tags)
     ? (s.tags as unknown[]).filter((t): t is string => typeof t === 'string')
@@ -108,6 +120,7 @@ function toStakeholderDTO(s: StakeholderRow): StakeholderDTO {
     desiredEngagement: desired,
     engagementGap: calcEngagementGap(current, desired),
     quadrant: classifyStakeholderQuadrant(s.influence, s.interest),
+    priority,
     personality: s.personality,
     tags,
     strategy: s.strategy,
@@ -120,7 +133,16 @@ function toStakeholderDTO(s: StakeholderRow): StakeholderDTO {
  * プロジェクトのステークホルダー一覧を取得する。
  *
  * 認可は呼出側 (API route) で `stakeholder:read` を確認済の前提。
- * ソート: 影響度 desc → 関心度 desc (重要度上位を先頭に)。
+ *
+ * ソート (Phase D 要件 12, 2026-04-28):
+ *   1. priority asc (high → medium → low) — 優先度の高いものを先頭
+ *   2. influence desc / interest desc — 同優先度内では旧来の重要度順
+ *   3. createdAt desc
+ *
+ * priority は varchar 文字列なので Prisma の orderBy では辞書順しか得られない。
+ * 1 プロジェクトのステークホルダー件数は数十程度と小さいため、Prisma で
+ * influence/interest/createdAt の順に取得した後 in-memory で priority 並び替えする
+ * (DB index は filter 用途のみ有効)。
  */
 export async function listStakeholders(projectId: string): Promise<StakeholderDTO[]> {
   const rows = await prisma.stakeholder.findMany({
@@ -132,7 +154,14 @@ export async function listStakeholders(projectId: string): Promise<StakeholderDT
       { createdAt: 'desc' },
     ],
   });
-  return rows.map(toStakeholderDTO);
+  const dtos = rows.map(toStakeholderDTO);
+  // priority asc (high → medium → low) で安定ソート (元順序を維持)
+  dtos.sort(
+    (a, b) =>
+      STAKEHOLDER_PRIORITY_ORDER.indexOf(a.priority)
+      - STAKEHOLDER_PRIORITY_ORDER.indexOf(b.priority),
+  );
+  return dtos;
 }
 
 /**
@@ -153,6 +182,8 @@ export async function createStakeholder(
   input: CreateStakeholderInput,
   userId: string,
 ): Promise<StakeholderDTO> {
+  // Phase D 要件 11 (2026-04-28): influence × interest から priority を自動分類して保存。
+  const priority = deriveStakeholderPriority(input.influence, input.interest);
   const row = await prisma.stakeholder.create({
     data: {
       projectId,
@@ -166,6 +197,7 @@ export async function createStakeholder(
       attitude: input.attitude,
       currentEngagement: input.currentEngagement,
       desiredEngagement: input.desiredEngagement,
+      priority,
       personality: input.personality ?? null,
       tags: input.tags ?? [],
       strategy: input.strategy ?? null,
@@ -191,9 +223,10 @@ export async function updateStakeholder(
   input: UpdateStakeholderInput,
   userId: string,
 ): Promise<StakeholderDTO> {
+  // Phase D 要件 11: priority 再計算には現値の influence/interest が必要なので select しておく。
   const existing = await prisma.stakeholder.findFirst({
     where: { id: stakeholderId, deletedAt: null },
-    select: { id: true },
+    select: { id: true, influence: true, interest: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
 
@@ -211,6 +244,14 @@ export async function updateStakeholder(
   if (input.personality !== undefined) data.personality = input.personality;
   if (input.tags !== undefined) data.tags = input.tags;
   if (input.strategy !== undefined) data.strategy = input.strategy;
+
+  // Phase D 要件 11: influence または interest が変化した場合 priority を再計算。
+  // 片方だけの patch でも残り片方は existing から補って derive する。
+  if (input.influence !== undefined || input.interest !== undefined) {
+    const nextInfluence = input.influence ?? existing.influence;
+    const nextInterest = input.interest ?? existing.interest;
+    data.priority = deriveStakeholderPriority(nextInfluence, nextInterest);
+  }
 
   const row = await prisma.stakeholder.update({
     where: { id: stakeholderId },

@@ -3115,6 +3115,67 @@ const dayClass = isToday
 - 修正例: feat/ux-improvements-batch3 (Phase C 要件 16/17, 2026-04-28)
 - `src/app/(dashboard)/projects/[projectId]/gantt/gantt-client.tsx`
 
+### 5.40 派生カラムをサービス層で永続化するパターン (Phase D 要件 11 で確立)
+
+#### 背景
+
+ステークホルダーに優先度 (high/medium/low) を持たせる要件が発生。優先度は
+PMBOK Power/Interest grid の 4 象限から **自動分類** された値であり、UI の
+ソート/フィルタで使う。実装上の選択肢は 2 つ:
+
+| 案 | メリット | デメリット |
+|---|---|---|
+| (A) DTO 化時に都度計算 (永続化しない) | スキーマ変更不要、依存元の influence/interest と必ず整合 | DB index が使えず、サーバ側 filter/orderBy 不可。N 件の DTO 化計算が常に走る |
+| (B) DB に永続化 + create/update で再計算 | DB index/orderBy が使える、API 側 filter が直書きできる | influence/interest 変更時の再計算漏れリスク (整合性は service 層責務) |
+
+#### 採用: (B) 永続化 + サービス層で再計算
+
+理由: (1) 一覧の filter/sort で実用的な検索性能を出す、(2) 値域が変わった時の
+backfill を migration で書ける (UPDATE … SET priority = CASE …) ため、既存データの
+整合性を確保できる。(A) の場合 schema 移行不要で軽いが、UI の filter は完全クライアント
+側になり、件数が増えると重くなる懸念がある。
+
+#### 実装の要点 (派生カラムの整合性ガード)
+
+1. **派生関数を 1 箇所に集中**: `src/config/master-data.ts` の `deriveStakeholderPriority`
+   が単一の真実 (single source of truth)。サービス層と migration 双方が同じ式を実装。
+   - migration の SQL `CASE WHEN influence>=4 AND interest>=4 …` は TS 関数と等価
+   - 閾値や象限定義を変えるときは **TS 関数 + migration のみ修正**、それ以外は触らない
+2. **create 時は常に derive**: 入力に priority フィールドを許さず、`influence × interest`
+   から計算した値を保存する。
+3. **update 時は依存元変更時のみ再計算**:
+   ```ts
+   if (input.influence !== undefined || input.interest !== undefined) {
+     const nextI = input.influence ?? existing.influence;
+     const nextN = input.interest  ?? existing.interest;
+     data.priority = deriveStakeholderPriority(nextI, nextN);
+   }
+   ```
+   片方だけの patch でも残り片方は existing から取得して derive する (ここを書き忘れると
+   priority が依存元と乖離するバグになる)。
+4. **migration で既存データを backfill**: 新カラム追加時は default 値だけでは不十分。
+   `UPDATE` 文で全行を再計算してから index を張る (`20260429_stakeholder_priority`)。
+
+#### 横展開チェックリスト (派生カラムを増やすときに確認)
+
+- [ ] 派生関数を `src/config/master-data.ts` 等に **1 箇所だけ** 定義し、TS と migration の
+      両方が同じ式を実装しているか
+- [ ] create サービスで入力 (validator) に派生フィールドを **載せていない** (= ユーザが
+      override できない)
+- [ ] update サービスで「依存元のいずれかが undefined でない」場合に派生を再計算しているか
+- [ ] update サービスで existing からの fallback (片方の patch でも残りで derive 可能) を
+      実装したか
+- [ ] migration で全行 backfill した上で必要なら index を張ったか
+- [ ] DTO 型に派生フィールドを含め、UI/API が消費できるよう公開したか
+
+#### 関連
+
+- `src/config/master-data.ts` (deriveStakeholderPriority + classifyStakeholderQuadrant)
+- `src/services/stakeholder.service.ts` (create/update での再計算)
+- `prisma/migrations/20260429_stakeholder_priority/migration.sql` (backfill + index)
+- `src/services/stakeholder.service.test.ts` (priority 自動分類 + 再計算ケース)
+- 修正例: feat/ux-improvements-batch4 (Phase D 要件 11/12, 2026-04-28)
+
 ---
 
 ## 6. 機能削除の手順

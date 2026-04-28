@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyStakeholderQuadrant,
   calcEngagementGap,
+  deriveStakeholderPriority,
 } from './master-data';
 
 describe('classifyStakeholderQuadrant (Mendelow Power/Interest grid)', () => {
@@ -44,5 +45,29 @@ describe('calcEngagementGap (PMBOK 13.1.2)', () => {
   it('負の値: 抑える方向 (例: 過剰主導 → 支持的)', () => {
     expect(calcEngagementGap('leading', 'supportive')).toBe(-1);
     expect(calcEngagementGap('leading', 'unaware')).toBe(-4);
+  });
+});
+
+// Phase D 要件 11/12 (2026-04-28): 優先度 (high/medium/low) は Mendelow 4 象限から
+// 自動分類する。manage_closely → high、monitor → low、それ以外 → medium。
+describe('deriveStakeholderPriority (Phase D)', () => {
+  it('manage_closely (大×大) → high', () => {
+    expect(deriveStakeholderPriority(5, 5)).toBe('high');
+    expect(deriveStakeholderPriority(4, 4)).toBe('high');
+  });
+
+  it('keep_satisfied (大×小) → medium', () => {
+    expect(deriveStakeholderPriority(5, 1)).toBe('medium');
+    expect(deriveStakeholderPriority(4, 3)).toBe('medium');
+  });
+
+  it('keep_informed (小×大) → medium', () => {
+    expect(deriveStakeholderPriority(1, 5)).toBe('medium');
+    expect(deriveStakeholderPriority(3, 4)).toBe('medium');
+  });
+
+  it('monitor (小×小) → low (中央値 3 は low 寄り)', () => {
+    expect(deriveStakeholderPriority(3, 3)).toBe('low');
+    expect(deriveStakeholderPriority(1, 1)).toBe('low');
   });
 });
