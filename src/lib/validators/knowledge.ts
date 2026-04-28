@@ -30,7 +30,9 @@ export const createKnowledgeSchema = z.object({
   recommendation: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
   reusability: z.enum(['low', 'medium', 'high']).nullable().optional(),
   techTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
-  devMethod: z.enum(['scratch', 'power_platform', 'package', 'other']).nullable().optional(),
+  // PR-β / 項目 13 横展開: master-data.ts の DEV_METHODS と整合
+  // (旧 'power_platform' は migration で 'low_code_no_code' に一括変換済)
+  devMethod: z.enum(['scratch', 'low_code_no_code', 'package', 'other']).nullable().optional(),
   processTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
   // PR #65 Phase 2 (b): Project.businessDomainTags と対称化し提案精度を上げる
   businessDomainTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
