@@ -2468,6 +2468,113 @@ LIMIT 20;
 - DEVELOPER_GUIDE §5.30 (master-data 値変更時の validator 横展開) — 本件と並ぶ「変更時の横展開漏れ防止」3 兄弟
 - 本件の起点: PR #184 (feat/project-detail-fields, projects.contract_type 列追加)
 
+### 4.45 UI 構造変更 (h2/h3 削除) で連鎖する E2E spec の `getByRole('heading')` 連鎖失敗 (PR #187 Phase A で遭遇)
+
+#### 症状
+
+UI 改善で「タブ画面のページタイトル h2 はナビタブ名と重複するため削除」する
+ような修正をすると、Playwright E2E spec で `page.getByRole('heading', { name: '全リスク' })`
+を期待していたテストが **連鎖的に失敗** する。
+
+PR #187 Phase A (要件 6) で 15 画面の h2/h3 を削除した結果:
+
+```
+✘ 03-global-entity-lists.spec.ts (4 test) - 全リスク/全課題/全振り返り/全ナレッジ
+✘ 04-personal-features.spec.ts:144     - 全メモ
+✘ 06-wbs-tasks.spec.ts:80               - WBS管理
+✘ 07-gantt-timeline.spec.ts:92          - ガントチャート
+✘ 08-estimates.spec.ts:83               - 見積もり管理
+✘ 09-customers.spec.ts:89               - 顧客管理
+```
+
+→ **計 7 spec が一斉に失敗**。実装側 PR を提出すると CI で初めて検出される
+高頻度なパターン。
+
+#### 根本原因
+
+E2E spec が「ページタイトル h2」を **render 検証の代用** として使っていた。
+実装側の自然な UI 改善 (タイトル重複削除など) で h2 が消えると spec が壊れる。
+
+`getByRole('heading')` は構造的脆弱性を持つ:
+- ページタイトル/タブタイトル/カード見出し/dialog タイトルが同じ `heading` role に集約されてしまい、
+  「ページが render されたかどうか」を heading で検証するのは **過剰結合**
+- 開発者が「タイトル重複削除」のような UI 微調整をしても spec が壊れる
+
+#### 対処パターン (3 系統)
+
+##### パターン 1: テーブル UI のページ → `table` 要素
+
+「全○○一覧」「メンバー一覧」などテーブルが本体のページ:
+
+```ts
+// ❌ Bad: タイトル h2/h3 に依存
+await expect(page.getByRole('heading', { name: '全リスク' })).toBeVisible();
+
+// ✅ Good: テーブルが render されたことで「ページ render 完了」を判定
+await expect(page.locator('table')).toBeVisible({ timeout: 10_000 });
+```
+
+##### パターン 2: 機能タブのページ → タブ固有のボタン/コントロール
+
+「ガント」「WBS」「見積」など、タブ固有の操作要素を持つ:
+
+```ts
+// ❌ Bad
+await expect(page.getByRole('heading', { name: 'WBS管理' })).toBeVisible();
+
+// ✅ Good (WBS タブ固有の「ガントチャートを表示」ボタン)
+await expect(page.getByRole('button', { name: 'ガントチャートを表示' })).toBeVisible();
+```
+
+##### パターン 3: 表示専用タブ → タブ固有のテキスト/構造
+
+タブ固有の表示ラベル (例: 見積タブの「合計工数:」):
+
+```ts
+// ❌ Bad
+await expect(page.getByRole('heading', { name: '見積もり管理' })).toBeVisible();
+
+// ✅ Good (見積タブ固有の表示)
+await expect(page.getByText(/^合計工数:/)).toBeVisible();
+```
+
+#### 横展開チェック (新規 spec を書くときのルール)
+
+```bash
+# 1. spec で getByRole('heading') を使っている箇所を全列挙
+grep -rnE "getByRole\(['\"]heading['\"]" e2e --include='*.ts'
+
+# 2. 結果のうち、対象が「ページタイトル h2/h3」なら他要素に置換候補
+#    対象が「dialog title」「カード見出し」なら維持で OK
+```
+
+判別の目安:
+
+| 対象 | spec 維持の可否 |
+|---|---|
+| ページタイトル h2/h3 (タブ名と被るもの) | ❌ 連鎖失敗源、テーブル/ボタン/テキストに置換 |
+| Dialog タイトル (`<DialogTitle>`) | ✅ Dialog の存在自体が機能なので維持可 |
+| カード内見出し (個別データの h3) | ✅ 個別データの一意性確保なので維持可 |
+| 顧客名 / プロジェクト名のような実データ heading | ✅ 動的生成なので削除されない、維持可 |
+
+#### 規約 (E2E spec を書く/レビューする時に必ずやる)
+
+1. **新規 spec で `getByRole('heading')` を使うとき**: そのページが「タイトル
+   h2 削除リスクを持つ」ものか確認。タブ画面の page heading は今後削除されうる
+   ため、避けて他要素を選ぶ
+2. **既存 spec で h2 検証している箇所**: UI 改善 PR を出す前に「ページタイトル
+   h2 を消したら、どの spec が落ちるか」を grep で事前把握する
+3. **render 確認は「機能が触れる状態か」を測る**: 静的タイトルでなく、
+   ユーザが実際に操作する要素 (テーブル / ボタン / フィルタ) を選ぶと長期的に堅牢
+4. **commit message に明記**: UI から h2 を消す PR は commit message に
+   「E2E spec への影響あり」を必ず記載 (E2E 実行待ちで気付く前に査読者がチェック)
+
+#### 関連
+
+- DEVELOPER_GUIDE §5.34 (アクション型 Select の選択後表示問題、Phase A で確立) — UI 改善時に同時に発生した別系統の連鎖
+- 本件の起点: PR #187 (Phase A 要件 6: タブ画面 h2 削除)
+- 修正例: PR #187 fix commit (43c22ac) — 7 spec を 6 spec ファイル渡って一括修正
+
 ---
 
 ## 8. 未解決課題 (将来 PR 候補)
