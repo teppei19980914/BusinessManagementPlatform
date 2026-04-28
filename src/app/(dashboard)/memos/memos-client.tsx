@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -84,6 +85,8 @@ export function MemosClient({
   const { formatDateTime } = useFormatters();
   const [memos, setMemos] = useState(initialMemos);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  // T-22 Phase 22d: 上書きインポート (sync-import) ダイアログ
+  const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
   const [editing, setEditing] = useState<MemoDTO | null>(null);
   const [error, setError] = useState('');
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。create / edit で別 state を持たせる。
@@ -257,6 +260,13 @@ export function MemosClient({
         <h2 className="text-xl font-semibold">{tMemo('listTitle')}</h2>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{tMemo('count', { count: filteredMemos.length })}</span>
+          {/* T-22 Phase 22d: sync-import (往復編集) — 自分のメモのみ */}
+          <Button variant="outline" size="sm" onClick={() => window.open('/api/memos/export', '_blank')}>
+            {tMemo('syncExport')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
+            {tMemo('syncImportButton')}
+          </Button>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               {tMemo('create')}
@@ -458,6 +468,15 @@ export function MemosClient({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* T-22 Phase 22d: 上書きインポート (sync-import) ダイアログ */}
+      <EntitySyncImportDialog
+        apiBasePath="/api/memos/sync-import"
+        i18nNamespace="memo.syncImport"
+        open={isSyncImportOpen}
+        onOpenChange={setIsSyncImportOpen}
+        onImported={async () => { await reload(); }}
+      />
     </div>
   );
 }

@@ -999,11 +999,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // API ルート `/api/projects/[id]/tasks/recalculate` 自体は残す
   // (管理者がトラブルシュート時に直接叩く手段として温存)。
 
-  // PR-ζ / 項目 15: 旧 handleExport は UI 撤去に伴い削除済 (sync mode に一本化)。
-  //   API `/api/projects/[id]/tasks/export` (mode 未指定 = template モード) は互換のため残置。
-  //   将来的には sync mode に統一し、template mode は廃止予定 (§11 T-19)。
-  /* eslint-disable @typescript-eslint/no-unused-vars */
-  async function _handleExport_unused() {
+  // T-19: WBS エクスポート (7 列 = ID/種別/名称/レベル/予定開始日/予定終了日/予定工数)。
+  //   サーバ側で BOM 付き UTF-8 を返すため client では再付与しない。
+  async function handleWbsExport() {
     const body: Record<string, unknown> = {};
     if (selectedIds.size > 0) body.taskIds = [...selectedIds];
 
@@ -1014,41 +1012,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         body: JSON.stringify(body),
       }),
     );
-
-    if (!res.ok) return;
-
-    const csvText = await res.text();
-    // BOM 付き UTF-8 で Excel 対応
-    const bom = '\uFEFF';
-    const blob = new Blob([bom + csvText], { type: 'text/csv; charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `wbs-template-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  // feat/wbs-overwrite-import: WBS 上書き用エクスポート (17 列、ID + 担当者氏名 + 進捗系)
-  async function handleSyncExport() {
-    const body: Record<string, unknown> = { mode: 'sync' };
-    if (selectedIds.size > 0) body.taskIds = [...selectedIds];
-
-    const res = await withLoading(() =>
-      fetch(`/api/projects/${projectId}/tasks/export`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      }),
-    );
     if (!res.ok) return;
     const csvText = await res.text();
-    // sync モードはサーバ側で BOM 付きで返すため再付与しない
     const blob = new Blob([csvText], { type: 'text/csv; charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `wbs-sync-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `wbs-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -1056,54 +1026,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // feat/wbs-overwrite-import: ID 表示トグル + 上書きインポートダイアログ state
   const [showIdColumn, setShowIdColumn] = useState(false);
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
-
-  // PR-ζ / 項目 15: 旧「インポート」ダイアログ state は UI 撤去に伴い未使用。
-  //   sync-import-dialog に一本化済 (ID 有無で新規/更新分岐)。
-  //   API ルート `/api/projects/[id]/tasks/import` 自体は互換のため残置 (§11 T-19 で削除候補)。
-  /* eslint-disable @typescript-eslint/no-unused-vars */
-  const [isImportOpen, setIsImportOpen] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importError, setImportError] = useState('');
-
-  async function handleImport(e: React.FormEvent) {
-    e.preventDefault();
-    setImportError('');
-    if (!importFile) { setImportError(t('fileRequired')); return; }
-
-    // 多くの環境で挙動が安定する multipart/form-data で送信。
-    // （以前の `text/csv` 生 body は Vercel 側のルーティング / edge 層で
-    //   ERR_CONNECTION_RESET を誘発するケースが観測されたため）
-    const formData = new FormData();
-    formData.append('file', importFile);
-
-    const res = await withLoading(() =>
-      fetch(`/api/projects/${projectId}/tasks/import`, {
-        method: 'POST',
-        // Content-Type は boundary 付きで自動設定されるため明示しない
-        body: formData,
-      }),
-    );
-
-    if (!res.ok) {
-      // サーバから JSON エラーレスポンスが返らない場合（接続切断等）にも
-      // ユーザに原因を提示できるよう text() でフォールバックする
-      let message = t('importFailed');
-      try {
-        const json = await res.json();
-        message = json.error?.message || json.error?.details?.[0]?.message || message;
-      } catch {
-        const text = await res.text().catch(() => '');
-        if (text) message = text.slice(0, 200);
-      }
-      setImportError(message);
-      return;
-    }
-
-    setIsImportOpen(false);
-    setImportFile(null);
-    await reload();
-  }
-  /* eslint-enable @typescript-eslint/no-unused-vars */
 
   const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
   const [parentTaskId, setParentTaskId] = useState('');
@@ -1208,19 +1130,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         {canEditPmTl && (
           <>
           {/*
-            PR-ζ / 項目 15: WBS のエクスポート/インポート ボタンを 2 ボタンに統合 (旧 4 ボタン → 2 ボタン)。
-            - 旧「エクスポート」(handleExport, 6 列、新規作成専用) → UI から撤去
-            - 旧「WBSをエクスポート(上書き用)」(handleSyncExport, 17 列) → 「エクスポート」にリネームして一本化
-            - 旧「インポート」(/tasks/import, 新規作成専用) → UI から撤去
-            - 旧「WBSを上書きインポート」(sync-import dialog) → 「インポート」にリネームして一本化
-            sync-import は ID 有無で 新規作成/既存更新 を分岐する dry-run + preview 機能を持つため、
-            項目 15 仕様 (ID 未入力=新規, ID あり=更新) と概ね整合。
-            完全な「6 列のみ出力」仕様は service 層・sync-import の入力スキーマ変更が必要なため
-            §11 T-19 で follow-up。
-            旧 handleExport / handleImport / /api/tasks/export?mode=default / /api/tasks/import は
-            互換のため API 残置 (将来削除候補)。
+            T-19 (PR-ζ follow-up): WBS のエクスポート/インポート ボタンを 2 ボタン構成で完成。
+            - エクスポート: 7 列 (ID/種別/名称/レベル/予定開始日/予定終了日/予定工数) を CSV 出力
+            - インポート: sync-import dialog で ID 有無により新規/更新を自動分岐 (dry-run + preview)
+            担当者 / 優先度 / マイルストーン / 備考 / WBS 番号 / 進捗系列は CSV では扱わず UI 個別編集に集約。
           */}
-          <Button variant="outline" size="sm" onClick={handleSyncExport}>
+          <Button variant="outline" size="sm" onClick={handleWbsExport}>
             {selectedIds.size > 0 ? t('exportWithCount', { count: selectedIds.size }) : t('export')}
           </Button>
           <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>

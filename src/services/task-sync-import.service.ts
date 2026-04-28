@@ -29,7 +29,15 @@ import { parseCsvLine, recalculateAncestorsPublic } from './task.service';
 // 型定義
 // ============================================================
 
-/** CSV から解析した 1 行 (17 列に対応)。tempRowIndex は CSV 上の元の行番号 (1 始まり)。 */
+/**
+ * CSV から解析した 1 行 (T-19 で 7 列に削減)。tempRowIndex は CSV 上の元の行番号 (1 始まり)。
+ *
+ * 列構成 (WBS_CSV_HEADERS と同じ):
+ *   ID / 種別 / 名称 / レベル / 予定開始日 / 予定終了日 / 予定工数
+ *
+ * 担当者 / 優先度 / マイルストーン / 備考 / WBS 番号 / 進捗系列は CSV 経由で扱わない。
+ * (CSV 編集の用途を「計画調整」に絞り、それ以外は UI 個別編集に集約)
+ */
 export type SyncImportRow = {
   tempRowIndex: number;
   /** ID 列の値。空欄なら null (= 新規作成扱い)。 */
@@ -37,20 +45,9 @@ export type SyncImportRow = {
   level: number;
   type: 'work_package' | 'activity';
   name: string;
-  wbsNumber: string | null;
-  /** 担当者氏名。空欄なら null。サービス層で ProjectMember と一意 lookup する。 */
-  assigneeName: string | null;
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   plannedEffort: number | null;
-  priority: 'low' | 'medium' | 'high' | null;
-  isMilestone: boolean;
-  notes: string | null;
-  // 以下は read-only 参考情報。validation で DB と異なれば warning に含める。
-  csvStatus: string | null;
-  csvProgressRate: number | null;
-  csvActualStartDate: string | null;
-  csvActualEndDate: string | null;
 };
 
 export type SyncDiffAction = 'CREATE' | 'UPDATE' | 'NO_CHANGE' | 'REMOVE_CANDIDATE';
@@ -104,9 +101,10 @@ export type RemoveMode = 'keep' | 'warn' | 'delete';
 // ============================================================
 
 /**
- * 17 列 CSV を解析して SyncImportRow[] を返す。
+ * 7 列 CSV を解析して SyncImportRow[] を返す (T-19 で 17 列から削減)。
  *
  * - 1 行目はヘッダー。スキップする。
+ * - 列順: ID / 種別 / 名称 / レベル / 予定開始日 / 予定終了日 / 予定工数
  * - 列数チェックは緩め (短い行はスキップ、長い行は余分列を無視) で実用優先。
  * - 厳格 validation は computeSyncDiff 側で行う。
  */
@@ -121,7 +119,7 @@ export function parseSyncImportCsv(csvText: string): SyncImportRow[] {
 
   for (let i = 0; i < dataLines.length; i++) {
     const fields = parseCsvLine(dataLines[i]);
-    // ID + レベル + 種別 + 名称 (= 4 列) は最低限必要
+    // ID + 種別 + 名称 + レベル (= 4 列) は最低限必要
     if (fields.length < 4) continue;
 
     const csvRowIndex = i + 2; // ヘッダー行 + 0 始まり補正
@@ -129,37 +127,19 @@ export function parseSyncImportCsv(csvText: string): SyncImportRow[] {
     const idRaw = (fields[0] ?? '').trim();
     const id = idRaw.length > 0 ? idRaw : null;
 
-    const level = parseInt(fields[1], 10);
-    if (isNaN(level) || level < 1) continue;
-
-    const typeRaw = (fields[2] ?? '').trim();
+    const typeRaw = (fields[1] ?? '').trim();
     const type = typeRaw === 'WP' ? 'work_package' : 'activity';
 
-    const name = (fields[3] ?? '').trim();
+    const name = (fields[2] ?? '').trim();
     if (!name) continue;
 
-    const wbsNumber = (fields[4] ?? '').trim() || null;
-    const assigneeName = (fields[5] ?? '').trim() || null;
-    const plannedStartDate = (fields[6] ?? '').trim() || null;
-    const plannedEndDate = (fields[7] ?? '').trim() || null;
-    const plannedEffortStr = (fields[8] ?? '').trim();
-    const plannedEffort = plannedEffortStr ? parseFloat(plannedEffortStr) : null;
-    const priorityRaw = (fields[9] ?? '').trim();
-    const priority = (['low', 'medium', 'high'].includes(priorityRaw) ? priorityRaw : null) as
-      | 'low'
-      | 'medium'
-      | 'high'
-      | null;
-    const isMilestone = (fields[10] ?? '').trim() === '○';
-    const notes = (fields[11] ?? '').trim() || null;
+    const level = parseInt(fields[3], 10);
+    if (isNaN(level) || level < 1) continue;
 
-    // 進捗系 (read-only、無視するが warning 用に保持)
-    const csvStatus = (fields[12] ?? '').trim() || null;
-    const csvProgressStr = (fields[13] ?? '').trim();
-    const csvProgressRate = csvProgressStr ? parseInt(csvProgressStr, 10) : null;
-    // 実績工数列 (14) は本 PR 範囲外なので無視
-    const csvActualStartDate = (fields[15] ?? '').trim() || null;
-    const csvActualEndDate = (fields[16] ?? '').trim() || null;
+    const plannedStartDate = (fields[4] ?? '').trim() || null;
+    const plannedEndDate = (fields[5] ?? '').trim() || null;
+    const plannedEffortStr = (fields[6] ?? '').trim();
+    const plannedEffort = plannedEffortStr ? parseFloat(plannedEffortStr) : null;
 
     rows.push({
       tempRowIndex: csvRowIndex,
@@ -167,18 +147,9 @@ export function parseSyncImportCsv(csvText: string): SyncImportRow[] {
       level,
       type,
       name,
-      wbsNumber,
-      assigneeName,
       plannedStartDate,
       plannedEndDate,
       plannedEffort: plannedEffort != null && !isNaN(plannedEffort) ? plannedEffort : null,
-      priority,
-      isMilestone,
-      notes,
-      csvStatus,
-      csvProgressRate: csvProgressRate != null && !isNaN(csvProgressRate) ? csvProgressRate : null,
-      csvActualStartDate,
-      csvActualEndDate,
     });
   }
 
@@ -231,7 +202,6 @@ function dateOnlyStr(d: Date | null): string | null {
  *   - 親不在 (level=N の親が直前のスタックに無い)
  *   - WP↔ACT 切替 (既存 type と CSV type の不一致)
  *   - ID 不一致だが名称一致 (誤コピー検知)
- *   - 担当者氏名がプロジェクトメンバーに無し or 複数該当
  *   - CSV 内 ID 重複 / 同階層名称重複
  *   - DB に存在しない ID を指定 (typo 等)
  */
@@ -258,39 +228,33 @@ export async function computeSyncDiff(
     return result;
   }
 
-  // DB 既存タスク + プロジェクトメンバーを取得
-  const [existingTasks, members] = await Promise.all([
-    prisma.task.findMany({
-      where: { projectId, deletedAt: null },
-      select: {
-        id: true,
-        projectId: true,
-        parentTaskId: true,
-        type: true,
-        wbsNumber: true,
-        name: true,
-        description: true,
-        category: true,
-        assigneeId: true,
-        plannedStartDate: true,
-        plannedEndDate: true,
-        actualStartDate: true,
-        actualEndDate: true,
-        plannedEffort: true,
-        priority: true,
-        status: true,
-        progressRate: true,
-        isMilestone: true,
-        notes: true,
-        createdBy: true,
-        updatedBy: true,
-      },
-    }),
-    prisma.projectMember.findMany({
-      where: { projectId },
-      include: { user: { select: { id: true, name: true } } },
-    }),
-  ]);
+  // DB 既存タスクを取得 (T-19: 担当者は CSV で扱わないので member lookup 不要)
+  const existingTasks = await prisma.task.findMany({
+    where: { projectId, deletedAt: null },
+    select: {
+      id: true,
+      projectId: true,
+      parentTaskId: true,
+      type: true,
+      wbsNumber: true,
+      name: true,
+      description: true,
+      category: true,
+      assigneeId: true,
+      plannedStartDate: true,
+      plannedEndDate: true,
+      actualStartDate: true,
+      actualEndDate: true,
+      plannedEffort: true,
+      priority: true,
+      status: true,
+      progressRate: true,
+      isMilestone: true,
+      notes: true,
+      createdBy: true,
+      updatedBy: true,
+    },
+  });
 
   const existingById = new Map(existingTasks.map((t) => [t.id, t as DbTaskSnapshot]));
   const existingByName = new Map<string, DbTaskSnapshot[]>();
@@ -298,15 +262,6 @@ export async function computeSyncDiff(
     const arr = existingByName.get(t.name) ?? [];
     arr.push(t as DbTaskSnapshot);
     existingByName.set(t.name, arr);
-  }
-
-  // 担当者氏名 → userId 辞書 (氏名重複時は配列で保持)
-  const membersByName = new Map<string, { id: string; name: string }[]>();
-  for (const m of members) {
-    if (!m.user) continue;
-    const arr = membersByName.get(m.user.name) ?? [];
-    arr.push({ id: m.user.id, name: m.user.name });
-    membersByName.set(m.user.name, arr);
   }
 
   // CSV 内の ID 重複検知
@@ -376,19 +331,6 @@ export async function computeSyncDiff(
       errors.push(`同階層・同名のタスクが CSV 内に複数あります`);
     }
 
-    // 担当者 lookup (ACT のみ採用、WP は assignee 不要)
-    let resolvedAssigneeId: string | null = null;
-    if (row.assigneeName && row.type === 'activity') {
-      const candidates = membersByName.get(row.assigneeName);
-      if (!candidates || candidates.length === 0) {
-        errors.push(`担当者 "${row.assigneeName}" がプロジェクトメンバーに見つかりません`);
-      } else if (candidates.length > 1) {
-        errors.push(`担当者 "${row.assigneeName}" がプロジェクトメンバー内で複数該当します`);
-      } else {
-        resolvedAssigneeId = candidates[0].id;
-      }
-    }
-
     // ID 突合
     let action: SyncDiffAction = 'CREATE';
     let dbTask: DbTaskSnapshot | undefined;
@@ -420,10 +362,9 @@ export async function computeSyncDiff(
       }
     }
 
-    // UPDATE 時の field changes 計算
+    // UPDATE 時の field changes 計算 (T-19: 7 列のみ比較)
     if (action === 'UPDATE' && dbTask) {
       compareField(fieldChanges, 'name', dbTask.name, row.name);
-      compareField(fieldChanges, 'wbsNumber', dbTask.wbsNumber, row.wbsNumber);
       // 親変更検知 (parentDbId は CSV 構造から復元)
       if ((dbTask.parentTaskId ?? null) !== (parentDbId ?? null)) {
         fieldChanges.push({
@@ -432,9 +373,8 @@ export async function computeSyncDiff(
           after: parentDbId,
         });
       }
-      // 計画情報 (ACT のみ採用)
+      // 計画情報 (ACT のみ反映)
       if (row.type === 'activity') {
-        compareField(fieldChanges, 'assigneeId', dbTask.assigneeId, resolvedAssigneeId);
         compareField(
           fieldChanges,
           'plannedStartDate',
@@ -452,21 +392,6 @@ export async function computeSyncDiff(
           'plannedEffort',
           Number(dbTask.plannedEffort),
           row.plannedEffort ?? Number(dbTask.plannedEffort),
-        );
-        compareField(fieldChanges, 'priority', dbTask.priority, row.priority);
-        compareField(fieldChanges, 'isMilestone', dbTask.isMilestone, row.isMilestone);
-      }
-      compareField(fieldChanges, 'notes', dbTask.notes, row.notes);
-
-      // 進捗系 read-only 警告
-      if (row.csvStatus && row.csvStatus !== dbTask.status) {
-        warnings.push(
-          `ステータスが DB と異なります (CSV: "${row.csvStatus}" / DB: "${dbTask.status}") — 進捗系列は import で無視されます`,
-        );
-      }
-      if (row.csvProgressRate != null && row.csvProgressRate !== dbTask.progressRate) {
-        warnings.push(
-          `進捗率が DB と異なります (CSV: ${row.csvProgressRate} / DB: ${dbTask.progressRate}) — import で無視されます`,
         );
       }
     }
@@ -619,17 +544,9 @@ export async function applySyncImport(
   const parentStackById = new Map<number, { tempId: string; csvId: string | null }>();
 
   try {
-    // members lookup (担当者氏名→userId)
-    const members = await prisma.projectMember.findMany({
-      where: { projectId },
-      include: { user: { select: { id: true, name: true } } },
-    });
-    const membersByName = new Map<string, string>();
-    for (const m of members) {
-      if (m.user) membersByName.set(m.user.name, m.user.id);
-    }
-
     // CSV を level 順に処理 (親→子の順、computeSyncDiff と同じ走査)
+    // T-19: 担当者 / 優先度 / マイルストーン / 備考 / WBS 番号は CSV で扱わない。
+    //   UPDATE 時は DB 既存値を保持、CREATE 時はデフォルト値を設定。
     for (let i = 0; i < csvRows.length; i++) {
       const row = csvRows[i];
       const tempId = `csv_${row.tempRowIndex}`;
@@ -650,41 +567,42 @@ export async function applySyncImport(
       }
 
       const isActivity = row.type === 'activity';
-      const resolvedAssigneeId = row.assigneeName ? membersByName.get(row.assigneeName) ?? null : null;
-
-      const planData = {
-        projectId,
-        parentTaskId,
-        type: row.type,
-        wbsNumber: row.wbsNumber,
-        name: row.name,
-        category: 'other',
-        assigneeId: isActivity ? resolvedAssigneeId : null,
-        plannedStartDate: isActivity && row.plannedStartDate ? new Date(row.plannedStartDate) : null,
-        plannedEndDate: isActivity && row.plannedEndDate ? new Date(row.plannedEndDate) : null,
-        plannedEffort: isActivity ? (row.plannedEffort ?? 0) : 0,
-        priority: isActivity ? (row.priority ?? 'medium') : null,
-        isMilestone: isActivity ? row.isMilestone : false,
-        notes: row.notes,
-        updatedBy: userId,
-      };
 
       if (row.id) {
-        // UPDATE: CSV 由来の計画情報のみ更新 (進捗系は触らない)
-        await prisma.task.update({
-          where: { id: row.id },
-          data: planData,
-        });
+        // UPDATE: 7 列分のみ更新 (担当者/優先度等は DB 既存値を保持)
+        const updateData: Record<string, unknown> = {
+          parentTaskId,
+          type: row.type,
+          name: row.name,
+          updatedBy: userId,
+        };
+        if (isActivity) {
+          updateData.plannedStartDate = row.plannedStartDate ? new Date(row.plannedStartDate) : null;
+          updateData.plannedEndDate = row.plannedEndDate ? new Date(row.plannedEndDate) : null;
+          updateData.plannedEffort = row.plannedEffort ?? 0;
+        }
+        await prisma.task.update({ where: { id: row.id }, data: updateData });
         updatedIds.push(row.id);
         tempIdToDbId.set(tempId, row.id);
       } else {
-        // CREATE: 進捗初期値で作成
+        // CREATE: 7 列 + デフォルト値で作成 (担当者/優先度/マイルストーン/備考は UI で個別設定)
         const created = await prisma.task.create({
           data: {
-            ...planData,
+            projectId,
+            parentTaskId,
+            type: row.type,
+            name: row.name,
+            category: 'other',
+            assigneeId: null,
+            plannedStartDate: isActivity && row.plannedStartDate ? new Date(row.plannedStartDate) : null,
+            plannedEndDate: isActivity && row.plannedEndDate ? new Date(row.plannedEndDate) : null,
+            plannedEffort: isActivity ? (row.plannedEffort ?? 0) : 0,
+            priority: isActivity ? 'medium' : null,
+            isMilestone: false,
             status: 'not_started',
             progressRate: 0,
             createdBy: userId,
+            updatedBy: userId,
           },
         });
         createdIds.push(created.id);

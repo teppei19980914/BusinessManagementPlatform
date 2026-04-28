@@ -115,28 +115,8 @@ export const bulkUpdateTaskSchema = z
     { message: '更新項目を1つ以上指定してください' },
   );
 
-/** WBS テンプレートのタスク1件分 */
-const wbsTemplateTaskSchema = z.object({
-  tempId: z.string().min(1),
-  parentTempId: z.string().optional().nullable(),
-  type: z.enum(['work_package', 'activity']),
-  wbsNumber: z.string().max(50).optional().nullable(),
-  name: z.string().min(1).max(100),
-  description: z.string().max(2000).optional().nullable(),
-  assigneeId: z.string().uuid().optional().nullable(),
-  plannedStartDate: z.string().regex(dateRegex).optional().nullable(),
-  plannedEndDate: z.string().regex(dateRegex).optional().nullable(),
-  plannedEffort: z.number().min(0).optional(),
-  priority: z.enum(['low', 'medium', 'high']).optional().nullable(),
-  isMilestone: z.boolean().optional(),
-  notes: z.string().max(1000).optional().nullable(),
-});
-
-export const wbsTemplateSchema = z.object({
-  tasks: z.array(wbsTemplateTaskSchema).min(1, 'タスクが1件以上必要です').max(500, 'テンプレートは500件までです'),
-});
-
-export type WbsTemplateTask = z.infer<typeof wbsTemplateTaskSchema>;
+// (T-19 で削除) wbsTemplateTaskSchema / wbsTemplateSchema / WbsTemplateTask は
+// 旧 10 列テンプレートインポートで使用していた schema。sync-import (7 列) に一本化したため不要。
 
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateProgressInput = z.infer<typeof updateProgressSchema>;

@@ -32,6 +32,15 @@ export const LOGIN_FAILURE_MAX = 5;
 export const TEMPORARY_LOCK_DURATION_MS = 30 * 60 * 1000; // 30 分
 
 /**
+ * 永続ロックに移行する一時ロック発生回数 (T-21 / DEVELOPER_GUIDE §5.29)。
+ *
+ * 一時ロックが N 回発生したら permanentLock=true をセットしログイン不可とする。
+ * (一時ロックを N 回 ≒ 5*N 回連続のパスワード失敗 ≒ 総当たり攻撃の確度が高い)
+ * permanentLock 解除は管理者が user-edit-dialog から手動で行う。
+ */
+export const PERMANENT_LOCK_THRESHOLD = 3;
+
+/**
  * 非アクティブ自動ロックの猶予期間 (日) — PR #89 で導入、feat/account-lock 改修で
  * **論理削除 → ロック (isActive=false)** に方針変更。
  *

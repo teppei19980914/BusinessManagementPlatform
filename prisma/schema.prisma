@@ -23,6 +23,11 @@ model User {
   isActive          Boolean   @default(true) @map("is_active")
   failedLoginCount  Int       @default(0) @map("failed_login_count")
   lockedUntil       DateTime? @map("locked_until") @db.Timestamptz
+  // T-21 (2026-04-28): 一時ロック発生回数の累積カウンタ。
+  //   permanentLock 発火経路の起点 (5.29 選択肢 A)。
+  //   閾値到達 (PERMANENT_LOCK_THRESHOLD=3) で permanentLock=true にセット。
+  //   ログイン成功時に 0 にリセット (一時ロックを乗り越えて成功した = 正規ユーザの可能性)。
+  temporaryLockCount Int      @default(0) @map("temporary_lock_count")
   permanentLock     Boolean   @default(false) @map("permanent_lock")
   mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
   mfaSecretEncrypted String?  @map("mfa_secret_encrypted") @db.VarChar(255)

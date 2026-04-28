@@ -109,14 +109,19 @@ describe('changePassword', () => {
 describe('unlockAccount', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('ロック情報をクリアして監査ログに account_reactivated を残す', async () => {
+  it('ロック情報をクリアして監査ログに account_reactivated を残す (T-21: temporaryLockCount もリセット)', async () => {
     vi.mocked(prisma.user.update).mockResolvedValue({} as never);
 
     await unlockAccount('u1', 'admin-1');
 
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: 'u1' },
-      data: { failedLoginCount: 0, lockedUntil: null, permanentLock: false },
+      data: {
+        failedLoginCount: 0,
+        lockedUntil: null,
+        permanentLock: false,
+        temporaryLockCount: 0,
+      },
     });
     expect(recordAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({

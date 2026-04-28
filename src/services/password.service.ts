@@ -74,6 +74,9 @@ export async function changePassword(
 
 /**
  * 管理者によるアカウントロック解除
+ *
+ * T-21 (2026-04-28): 永続ロック実装に伴い、temporaryLockCount もリセットする。
+ *   解除直後の再ログイン失敗で即座に永続ロック再発生してしまうのを防ぐため。
  */
 export async function unlockAccount(
   userId: string,
@@ -85,6 +88,7 @@ export async function unlockAccount(
       failedLoginCount: 0,
       lockedUntil: null,
       permanentLock: false,
+      temporaryLockCount: 0,
     },
   });
 

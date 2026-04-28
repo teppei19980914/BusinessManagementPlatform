@@ -4,7 +4,7 @@ import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import { recordAuthEvent } from '@/services/auth-event.service';
 import { authConfig } from './auth.config';
-import { LOGIN_FAILURE_MAX, TEMPORARY_LOCK_DURATION_MS } from '@/config';
+import { LOGIN_FAILURE_MAX, TEMPORARY_LOCK_DURATION_MS, PERMANENT_LOCK_THRESHOLD } from '@/config';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
@@ -55,9 +55,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           };
 
           if (newCount >= LOGIN_FAILURE_MAX) {
+            // 一時ロック発生: failedLoginCount をリセットし lockedUntil をセット。
+            // T-21: 一時ロック累積カウンタもインクリメントし、閾値到達なら永続ロックに昇格。
             updateData.lockedUntil = new Date(Date.now() + TEMPORARY_LOCK_DURATION_MS);
             updateData.failedLoginCount = 0;
-            await recordAuthEvent({ eventType: 'lock', userId: user.id, email, detail: { lockType: 'temporary' } });
+            const newTemporaryLockCount = user.temporaryLockCount + 1;
+            updateData.temporaryLockCount = newTemporaryLockCount;
+            if (newTemporaryLockCount >= PERMANENT_LOCK_THRESHOLD) {
+              updateData.permanentLock = true;
+              await recordAuthEvent({ eventType: 'lock', userId: user.id, email, detail: { lockType: 'permanent', temporaryLockCount: newTemporaryLockCount } });
+            } else {
+              await recordAuthEvent({ eventType: 'lock', userId: user.id, email, detail: { lockType: 'temporary', temporaryLockCount: newTemporaryLockCount } });
+            }
           }
 
           await prisma.user.update({
@@ -69,11 +78,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return null;
         }
 
+        // ログイン成功: 失敗系カウンタを全てリセット。
+        // T-21: temporaryLockCount もリセット (一時ロックを乗り越えて成功 = 正規ユーザの可能性が高い)。
         await prisma.user.update({
           where: { id: user.id },
           data: {
             failedLoginCount: 0,
             lockedUntil: null,
+            temporaryLockCount: 0,
             lastLoginAt: new Date(),
           },
         });

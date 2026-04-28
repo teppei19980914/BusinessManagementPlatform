@@ -49,7 +49,7 @@
 
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
-import type { UpdateProgressInput, WbsTemplateTask } from '@/lib/validators/task';
+import type { UpdateProgressInput } from '@/lib/validators/task';
 import type { z } from 'zod/v4';
 import type { createTaskSchema, updateTaskSchema } from '@/lib/validators/task';
 
@@ -1087,32 +1087,24 @@ export async function getProgressLogs(taskId: string): Promise<ProgressLogDTO[]>
   }));
 }
 
-/** CSV ヘッダー定義 (旧テンプレート: 別プロジェクトへの雛形流用用、10 列) */
-const CSV_HEADERS = [
-  'レベル', '種別', '名称', 'WBS番号', '予定開始日', '予定終了日',
-  '見積工数', '優先度', 'マイルストーン', '備考',
-] as const;
-
 /**
- * CSV ヘッダー定義 (新形式 sync: 同一プロジェクトの上書き編集用、17 列)
- * feat/wbs-overwrite-import: 列構成は DESIGN.md §33.3 準拠。
- *   1.  ID                       — 突合キー (空欄=新規作成)
- *   2-3. レベル / 種別             — 階層
- *   4-12. 計画情報                 — UPDATE 反映対象
- *   13-17. 進捗系 (read-only 注記)  — import 時無視
+ * WBS CSV ヘッダー定義 (T-19 で 7 列に集約、PR-ζ の 17 列から削減)
+ *
+ * 列構成 (項目 15 仕様 + level 1 列):
+ *   1. ID         — 突合キー (空欄=新規作成、既存=UPDATE)
+ *   2. 種別        — WP / ACT
+ *   3. 名称        — タスク名
+ *   4. レベル       — 階層位置 (1 始まり、行順と組み合わせて parent 解決)
+ *   5. 予定開始日   — ACT のみ反映、WP は空欄
+ *   6. 予定終了日   — 同上
+ *   7. 予定工数     — 同上
+ *
+ * 担当者 / 優先度 / マイルストーン / 備考 / WBS 番号 / 進捗系列は CSV 経由で扱わず、
+ * UI 側から個別編集する運用に集約 (CSV 編集を「計画調整」用途に限定)。
  */
-export const CSV_HEADERS_SYNC = [
-  'ID', 'レベル', '種別', '名称', 'WBS番号', '担当者氏名',
-  '予定開始日', '予定終了日', '見積工数', '優先度', 'マイルストーン', '備考',
-  'ステータス ※read-only (import 時無視)',
-  '進捗率 ※read-only (import 時無視)',
-  '実績工数 ※read-only (import 時無視)',
-  '実績開始日 ※read-only (import 時無視)',
-  '実績終了日 ※read-only (import 時無視)',
+export const WBS_CSV_HEADERS = [
+  'ID', '種別', '名称', 'レベル', '予定開始日', '予定終了日', '予定工数',
 ] as const;
-
-/** WBS export モード */
-export type WbsExportMode = 'template' | 'sync';
 
 /** CSV フィールドをエスケープ（ダブルクォート） */
 function escapeCsvField(value: string | null | undefined): string {
@@ -1157,19 +1149,18 @@ export function parseCsvLine(line: string): string[] {
 }
 
 /**
- * WBS を CSV 形式でエクスポート。
+ * WBS を 7 列 CSV でエクスポート (T-19 で 17 列から削減)。
  *
- * モード:
- *   - 'template' (既定、後方互換): 旧 10 列フォーマット。担当者/進捗はリセット、別プロジェクトへの雛形流用向け
- *   - 'sync' (feat/wbs-overwrite-import): 新 17 列フォーマット。ID / 担当者氏名 / 進捗系
- *     を含み、同一プロジェクト内の上書きインポート (Sync by ID) で往復編集する用途
+ * 列構成:
+ *   ID / 種別 / 名称 / レベル / 予定開始日 / 予定終了日 / 予定工数
  *
  * 階層は「レベル」列 (1 始まり) と行の並び順で表現。
+ * 担当者 / 優先度 / マイルストーン / 備考 / WBS 番号 / 進捗系列は出力しない
+ * (CSV 編集の用途を「計画調整」に絞る)。
  */
-export async function exportWbsTemplate(
+export async function exportWbs(
   projectId: string,
   taskIds?: string[],
-  mode: WbsExportMode = 'template',
 ): Promise<string> {
   const where: Prisma.TaskWhereInput = { projectId, deletedAt: null };
   if (taskIds && taskIds.length > 0) {
@@ -1178,18 +1169,11 @@ export async function exportWbsTemplate(
 
   const tasks = await prisma.task.findMany({
     where,
-    include: {
-      childTasks: { where: { deletedAt: null }, select: { id: true } },
-      // sync モードで担当者氏名出力に使う。template モードでもコスト微増のみのため常時 include。
-      assignee: { select: { name: true } },
-    },
     orderBy: [{ plannedStartDate: 'asc' }, { createdAt: 'asc' }],
   });
 
-  // タスクIDセット（子の探索用）
   const taskIdSet = new Set(tasks.map((t) => t.id));
 
-  // 各タスクの深さを計算
   function calcLevel(task: typeof tasks[0]): number {
     let level = 1;
     let currentParentId = task.parentTaskId;
@@ -1202,7 +1186,6 @@ export async function exportWbsTemplate(
     return level;
   }
 
-  // 深さ優先でツリー順に並べ替え
   type FlatRow = { level: number; task: typeof tasks[0] };
   const rows: FlatRow[] = [];
   const visited = new Set<string>();
@@ -1223,7 +1206,6 @@ export async function exportWbsTemplate(
     }
   }
 
-  // ルート（親がないか、親が対象外）から開始
   const rootTasks = tasks.filter((t) => !t.parentTaskId || !taskIdSet.has(t.parentTaskId));
   for (const root of rootTasks) {
     if (visited.has(root.id)) continue;
@@ -1232,254 +1214,20 @@ export async function exportWbsTemplate(
     walkTree(root.id);
   }
 
-  // CSV 生成
-  if (mode === 'sync') {
-    const lines = [CSV_HEADERS_SYNC.join(',')];
-    for (const { level, task: t } of rows) {
-      const line = [
-        t.id,
-        String(level),
-        t.type === 'work_package' ? 'WP' : 'ACT',
-        escapeCsvField(t.name),
-        escapeCsvField(t.wbsNumber),
-        // 担当者氏名 (内部メンバー紐付けがあれば表示)
-        escapeCsvField(t.assignee?.name ?? null),
-        safeDate(t.plannedStartDate) ?? '',
-        safeDate(t.plannedEndDate) ?? '',
-        String(Number(t.plannedEffort)),
-        t.priority ?? '',
-        t.isMilestone ? '○' : '',
-        escapeCsvField(t.notes),
-        // 進捗系 (read-only 参考情報、import 時は無視される)
-        t.status,
-        String(t.progressRate),
-        // 実績工数は currently DB に列なし。progress_logs の最新値があるが、列追加は別 PR の範囲。
-        // 暫定で空欄を出力 (BOM-safe)。
-        '',
-        safeDate(t.actualStartDate) ?? '',
-        safeDate(t.actualEndDate) ?? '',
-      ].join(',');
-      lines.push(line);
-    }
-    // BOM 付きで返す (Excel 対応)
-    return '﻿' + lines.join('\n');
-  }
-
-  // template モード (既存形式)
-  const csvLines = [CSV_HEADERS.join(',')];
+  const lines = [WBS_CSV_HEADERS.join(',')];
   for (const { level, task: t } of rows) {
     const line = [
-      String(level),
+      t.id,
       t.type === 'work_package' ? 'WP' : 'ACT',
       escapeCsvField(t.name),
-      escapeCsvField(t.wbsNumber),
+      String(level),
       safeDate(t.plannedStartDate) ?? '',
       safeDate(t.plannedEndDate) ?? '',
       String(Number(t.plannedEffort)),
-      t.priority ?? '',
-      t.isMilestone ? '○' : '',
-      escapeCsvField(t.notes),
     ].join(',');
-    csvLines.push(line);
+    lines.push(line);
   }
-
-  return csvLines.join('\n');
-}
-
-/**
- * CSV テキストを解析してインポート用データに変換。
- * レベル列と行順序から親子関係を復元する。
- */
-export function parseCsvTemplate(csvText: string): WbsTemplateTask[] {
-  // BOM を除去
-  const cleanText = csvText.replace(/^\uFEFF/, '');
-  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return []; // ヘッダーのみ
-
-  // ヘッダー行をスキップ
-  const dataLines = lines.slice(1);
-
-  const tasks: WbsTemplateTask[] = [];
-  // レベルごとの直近の tempId を管理するスタック
-  const parentStack: string[] = []; // index = level-1
-
-  for (let i = 0; i < dataLines.length; i++) {
-    const fields = parseCsvLine(dataLines[i]);
-    if (fields.length < 3) continue; // 最低限レベル・種別・名称が必要
-
-    const level = parseInt(fields[0], 10);
-    if (isNaN(level) || level < 1) continue;
-
-    const typeRaw = fields[1]?.trim();
-    const type = typeRaw === 'WP' ? 'work_package' : 'activity';
-    const name = fields[2]?.trim();
-    if (!name) continue;
-
-    const tempId = `csv_${i + 1}`;
-
-    // 親の決定: レベル N の親は直近のレベル N-1
-    let parentTempId: string | null = null;
-    if (level > 1 && parentStack.length >= level - 1) {
-      parentTempId = parentStack[level - 2];
-    }
-
-    // スタック更新
-    parentStack[level - 1] = tempId;
-    // 深いレベルのスタックをクリア
-    parentStack.length = level;
-
-    tasks.push({
-      tempId,
-      parentTempId,
-      type: type as 'work_package' | 'activity',
-      wbsNumber: fields[3]?.trim() || null,
-      name,
-      plannedStartDate: fields[4]?.trim() || null,
-      plannedEndDate: fields[5]?.trim() || null,
-      plannedEffort: fields[6] ? parseFloat(fields[6]) || 0 : undefined,
-      priority: (['low', 'medium', 'high'].includes(fields[7]?.trim()) ? fields[7].trim() : null) as 'low' | 'medium' | 'high' | null,
-      isMilestone: fields[8]?.trim() === '○',
-      notes: fields[9]?.trim() || null,
-    });
-  }
-
-  return tasks;
-}
-
-/**
- * WBS テンプレートをインポート前にバリデーションする。
- * エラーがある場合は理由を配列で返す。
- */
-export function validateWbsTemplate(templateTasks: WbsTemplateTask[]): string[] {
-  const errors: string[] = [];
-  const tempIds = new Set(templateTasks.map((t) => t.tempId));
-
-  // tempId の重複チェック
-  if (tempIds.size !== templateTasks.length) {
-    errors.push('tempId が重複しています');
-  }
-
-  // 親参照の整合性チェック
-  for (const t of templateTasks) {
-    if (t.parentTempId && !tempIds.has(t.parentTempId)) {
-      errors.push(`タスク "${t.name}" (${t.tempId}) の親 "${t.parentTempId}" がテンプレート内に存在しません`);
-    }
-  }
-
-  // 循環参照チェック
-  for (const t of templateTasks) {
-    const visited = new Set<string>();
-    let current: string | null | undefined = t.tempId;
-    while (current) {
-      if (visited.has(current)) {
-        errors.push(`タスク "${t.name}" (${t.tempId}) に循環参照があります`);
-        break;
-      }
-      visited.add(current);
-      const parent = templateTasks.find((p) => p.tempId === current);
-      current = parent?.parentTempId;
-    }
-  }
-
-  // アクティビティの親がワークパッケージであるかチェック
-  for (const t of templateTasks) {
-    if (t.parentTempId) {
-      const parent = templateTasks.find((p) => p.tempId === t.parentTempId);
-      if (parent && parent.type !== 'work_package') {
-        errors.push(`タスク "${t.name}" (${t.tempId}) の親 "${parent.name}" はワークパッケージではありません`);
-      }
-    }
-  }
-
-  return errors;
-}
-
-/**
- * WBS テンプレートをインポート。
- * tempId / parentTempId で階層構造を再構築する。
- * バリデーションエラー時は例外をスロー、DB操作はトランザクションでロールバック。
- */
-export async function importWbsTemplate(
-  projectId: string,
-  templateTasks: WbsTemplateTask[],
-  userId: string,
-): Promise<number> {
-  if (templateTasks.length === 0) return 0;
-
-  // 事前バリデーション
-  const validationErrors = validateWbsTemplate(templateTasks);
-  if (validationErrors.length > 0) {
-    throw new Error(`IMPORT_VALIDATION_ERROR:${validationErrors.join('; ')}`);
-  }
-
-  // 深度順にソート（parentTempId がないものを先に処理）
-  const depthMap = new Map<string, number>();
-  function calcDepth(tempId: string): number {
-    if (depthMap.has(tempId)) return depthMap.get(tempId)!;
-    const task = templateTasks.find((t) => t.tempId === tempId);
-    if (!task?.parentTempId) { depthMap.set(tempId, 0); return 0; }
-    const d = calcDepth(task.parentTempId) + 1;
-    depthMap.set(tempId, d);
-    return d;
-  }
-  templateTasks.forEach((t) => calcDepth(t.tempId));
-
-  const sorted = [...templateTasks].sort(
-    (a, b) => (depthMap.get(a.tempId) ?? 0) - (depthMap.get(b.tempId) ?? 0),
-  );
-
-  // 逐次作成（PgBouncer 環境では $transaction が使えないため）
-  // エラー時は作成済みタスクを物理削除してロールバック（データ残存なし）
-  const idMap = new Map<string, string>();
-  const createdIds: string[] = [];
-
-  try {
-    for (const t of sorted) {
-      const parentId = t.parentTempId ? idMap.get(t.parentTempId) ?? null : null;
-      const isActivity = t.type === 'activity';
-
-      const created = await prisma.task.create({
-        data: {
-          projectId,
-          parentTaskId: parentId,
-          type: t.type,
-          wbsNumber: t.wbsNumber ?? null,
-          name: t.name,
-          description: t.description ?? null,
-          category: 'other',
-          assigneeId: isActivity ? (t.assigneeId ?? null) : null,
-          plannedStartDate: isActivity && t.plannedStartDate ? new Date(t.plannedStartDate) : null,
-          plannedEndDate: isActivity && t.plannedEndDate ? new Date(t.plannedEndDate) : null,
-          plannedEffort: isActivity ? (t.plannedEffort ?? 0) : 0,
-          priority: isActivity ? (t.priority ?? 'medium') : null,
-          isMilestone: isActivity ? (t.isMilestone ?? false) : false,
-          notes: t.notes ?? null,
-          status: 'not_started',
-          progressRate: 0,
-          createdBy: userId,
-          updatedBy: userId,
-        },
-      });
-
-      idMap.set(t.tempId, created.id);
-      createdIds.push(created.id);
-    }
-  } catch (e) {
-    // エラー時: 作成済みタスクを物理削除してロールバック
-    if (createdIds.length > 0) {
-      await prisma.task.deleteMany({
-        where: { id: { in: createdIds } },
-      });
-    }
-    throw e;
-  }
-
-  // WP の集計を更新
-  const wpIds = sorted.filter((t) => t.type === 'work_package').map((t) => idMap.get(t.tempId)!);
-  for (const wpId of wpIds.reverse()) {
-    await recalculateAncestorsPublic(wpId);
-  }
-
-  return idMap.size;
+  // BOM 付きで返す (Excel 対応)
+  return '﻿' + lines.join('\n');
 }
 

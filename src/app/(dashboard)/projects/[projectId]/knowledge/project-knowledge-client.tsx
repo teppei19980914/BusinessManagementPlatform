@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dialog';
 import { Trash2 } from 'lucide-react';
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
+import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 // fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
 import {
   StagedAttachmentsInput,
@@ -99,6 +100,8 @@ export function ProjectKnowledgeClient({
   const KNOWLEDGE_VISIBILITY_OPTIONS = buildKnowledgeVisibilityOptions(tKnowledge);
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  // T-22 Phase 22c: 上書きインポート (sync-import) ダイアログ
+  const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
   const [error, setError] = useState('');
   // Req 8: 行クリックで編集ダイアログ
   const [editingKnowledge, setEditingKnowledge] = useState<KnowledgeDTO | null>(null);
@@ -238,6 +241,18 @@ export function ProjectKnowledgeClient({
 
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">{tKnowledge('title')}（{tKnowledge('countUnit', { count: filteredKnowledges.length })}）</h3>
+        <div className="flex gap-2">
+        {/* T-22 Phase 22c: sync-import (往復編集) */}
+        {canCreate && (
+          <>
+            <Button variant="outline" size="sm" onClick={() => window.open(`/api/projects/${projectId}/knowledge/export?mode=sync`, '_blank')}>
+              {tKnowledge('syncExport')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
+              {tKnowledge('syncImportButton')}
+            </Button>
+          </>
+        )}
         {canCreate && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             {/* PR #124: 他「○○一覧」(risks / retrospectives) と同サイズ (px-4 py-2) に統一 */}
@@ -338,7 +353,17 @@ export function ProjectKnowledgeClient({
               </DialogContent>
             </Dialog>
           )}
+        </div>
       </div>
+
+      {/* T-22 Phase 22c: 上書きインポート (sync-import) ダイアログ */}
+      <EntitySyncImportDialog
+        apiBasePath={`/api/projects/${projectId}/knowledge/sync-import`}
+        i18nNamespace="knowledge.syncImport"
+        open={isSyncImportOpen}
+        onOpenChange={setIsSyncImportOpen}
+        onImported={async () => { await onReload(); }}
+      />
 
       {filterApplied && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">

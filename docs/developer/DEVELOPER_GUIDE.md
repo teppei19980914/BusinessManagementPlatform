@@ -2241,7 +2241,7 @@ grep -E "^CREATE TABLE \"\w+_\w+s?\"" prisma/migrations/20260415060313_init/migr
 
 - prisma/migrations/20260428_project_dev_method_rename_and_contract_type/migration.sql — 本件 hotfix
 - §5.11.1 (User schema 借用ミス) — schema.prisma の脳内変換ミス系の類似事例
-- §11 T-21 (永続ロック実装 — 同様の schema migration を伴う、本教訓を活用すべき)
+- §11 T-21 (完了 / 2026-04-28 — 本教訓を活用して migration `20260428_user_temporary_lock_count` を作成、ALTER TABLE 単純 1 行で table 名取り違えなし)
 
 ### 5.29 PR-η: 永続ロック未実装バグの発見 (項目 16 調査結果)
 
@@ -2351,12 +2351,161 @@ validator はそれを `z.enum(Object.keys(DEV_METHODS) as [keyof typeof DEV_MET
 参照する形にすれば、master-data.ts 1 箇所変更で全 validator が自動追従する (= type-safe な
 single source of truth 化)。
 
-#### 関連
+#### 関連 (「変更時の漏れ防止 3 兄弟」)
 
-- §5.28 (Prisma migration の UPDATE 検証ルール) — 同類の「変更時の横展開漏れ」防止
+§5.28 (migration 文法漏れ) / §5.30 (validator 漏れ) / §4.44 (migration 適用漏れ) は
+いずれも「**ある変更を加えたときに関連箇所の更新を忘れて事故が起きる**」パターンを
+防ぐ KDD で、**「変更時の漏れ防止 3 兄弟」** と総称する:
+
+| 兄弟 | 場所 | 漏れ対象 | 起点 |
+|---|---|---|---|
+| 長男 | §5.28 | migration SQL 文の **table 名** 漏れ | PR #178 (P3018) |
+| 次男 | §5.30 (本セクション) | master-data 変更時の **validator** 漏れ | PR-β hotfix |
+| 三男 | E2E §4.44 | PR マージ後の **migration 適用** 漏れ | PR #184 (P2022) |
+
+§5.31 (枠数固定要件のアクション充足) は別レベル「**仕様検証時の欠落防止**」(着手前) で、
+3 兄弟は「変更時の漏れ防止」(着手後 〜 マージ後) と区別する。
+
+#### その他関連
+
 - §5.10 (フォーム送信前の事前バリデーション) — validator の役割
 - src/config/master-data.ts — 列挙値の単一源泉
 - PR-β hotfix commits (54e38a0, 3850432) — 本ナレッジの起点
+
+### 5.31 枠数固定要件のアクション充足チェック (T-19 で確立)
+
+#### 背景
+
+ユーザ要件で「N 列のみ」「N フィールドのみ」のように **枠数固定** で来た場合、
+そのスキーマで **CRUD 全アクションが満たせるか** を実装着手前に検証する習慣が必要。
+T-19 (WBS export/import 7 列化) で、当初要件「6 列のみ」だったが ID 空欄行の
+新規作成で parent (階層位置) が解決不能 = CREATE アクションが破綻すると
+判明し、`level` 1 列追加して 7 列に確定する仕様微調整が発生した。
+
+#### 検証チェックリスト (枠数固定要件で実装着手前に必須)
+
+| 観点 | 確認内容 |
+|---|---|
+| **CREATE** | 新規作成行 (= ID/PK 空欄) でレコードを生成可能か。階層構造 / 外部キー / 必須属性は枠内で表現できるか |
+| **UPDATE** | 既存レコードの ID 突合で更新可能か。突合キー (ID 等) が枠に含まれているか |
+| **DELETE** | 削除モード (CSV 行から消える = 削除候補) を要件に含むか。含む場合、ID なしで「DB 既存」と「枠内 CSV」の差分が取れるか |
+| **構造の保持** | 階層 / 親子関係 / 並び順 が必要なら、それを表現する列が枠内にあるか |
+| **同名重複の検知** | level + 名称 / 種別 + 名称 等の組み合わせで CSV 内重複を判定可能か |
+
+#### T-19 適用例
+
+| 列構成 | CREATE | UPDATE | DELETE | 階層 | 結論 |
+|---|:---:|:---:|:---:|:---:|---|
+| 案 A: 6 列 (ID/種別/名称/開始/終了/工数) | ❌ (parent 解決不能) | ✅ | ✅ (ID 突合) | ❌ | **要件破綻** |
+| 案 B: 7 列 (+ level) | ✅ | ✅ | ✅ | ✅ (level スタック) | **採用** |
+| 案 C: 7 列 (+ parentId) | ✅ (UUID) | ✅ | ✅ | ✅ | 案 B より Excel 編集性で劣る |
+
+着手前に上記マトリクスを記述するだけで、案 A の致命欠陥が事前検出可能だった。
+
+#### 規約 (枠数固定要件で実装着手前に必ずやる)
+
+1. **要件起票時に CRUD マトリクスを引く** (上記テンプレート)
+2. **欠落アクションがあればユーザに仕様調整を提案** (列追加 / アクション削除のいずれかを選択)
+3. **層構造を伴う entity は階層表現の列が必須** (level / parentId / wbsNumber 等)
+4. **設計微調整は §11 の TODO entry に「仕様微調整」として記録** (ユーザ承認後に実装着手)
+5. **commit message で「当初要件 N 列 → 仕様微調整で M 列確定」と明記** (将来のレビューで経緯追跡可能化)
+
+#### 一般化 (枠数固定の他パターン)
+
+- 「フィールド N 個のみ」(form) でも同じ: バリデーション / 関連 entity の参照 / 表示 で枠が足りるか
+- 「ボタン N 個のみ」(UI 統合) でも同じ: 主要操作 (作成 / 編集 / 削除 / インポート / エクスポート) を満たせるか
+- 「画面 N ページのみ」(IA) でも同じ: ユーザの主要ジャーニー全部が枠内に収まるか
+
+#### 関連 (本セクションは「**仕様検証時の欠落防止**」レベル、§5.28/§5.30/§4.44 とは別レベル)
+
+- §11 T-19 (本ナレッジの起点)
+- §5.28 / §5.30 / E2E §4.44 (「**変更時の漏れ防止 3 兄弟**」、本セクションとレベルが異なる) — 詳細は §5.30 末尾参照
+- §10.5.1 (並列 worktree agents パターン) — 仕様分割の方法論
+
+レベル区別:
+
+| レベル | 該当ナレッジ | タイミング |
+|---|---|---|
+| **仕様検証時の欠落防止** (本 §5.31) | アクション充足チェック | 実装着手 **前** |
+| **変更時の漏れ防止 3 兄弟** | §5.28 / §5.30 / §4.44 | 変更を加えた **直後 〜 マージ後** |
+
+### 5.32 複数 entity 横展開時の段階的汎用化パターン (T-22 で確立)
+
+#### 背景
+
+複数 entity に同種機能 (CRUD、import/export、検索 filter 等) を実装する場合、
+個別に実装すると **重複コードが entity 数に比例** し保守性が落ちる。
+§5.26「共通部品流用」の戦略的拡張として、**Phase 分割による段階的汎用化** を本セクションで規約化する。
+
+T-22 (5 entity の sync-import 機能) で確立: 先行 1 entity を「**汎用 component
+の prop API 設計まで含めた完成形**」で実装することで、後続 N-1 entity が
+**機械流用** (~300 行 / 30 分 / entity) で完結することが定量的に実証された。
+
+#### 数値実績 (T-22 全 4 entity)
+
+| Phase | entity | 規模 | 内容 |
+|---|---|---|---|
+| 22a | risks | ~1,100 行 | service + 汎用 `EntitySyncImportDialog` 確立 + UI + i18n + test |
+| 22b | retrospectives | ~700 行 | service + API route + UI 5 行 + i18n |
+| 22c | knowledge | ~740 行 | 同上 (tags はセミコロン区切り) |
+| 22d | memos | ~700 行 | 同上 (user-scoped、project 紐付けなし) |
+| **計** | 4 entity | **~3,240 行** | 個別実装試算 ~4,400 行 → **~26% 圧縮** |
+
+汎用化の中核は `<EntitySyncImportDialog apiBasePath i18nNamespace>` の
+**prop API 設計**。Phase 22a 時点で「entity 種別を 2 つの prop で抽象化」
+する判断が、後続 3 entity の機械流用を可能にした。
+
+#### パターン適用フロー
+
+| Step | 内容 |
+|---|---|
+| **1. 横展開対象の確定** | entity 数 ≥ 3 で本パターン適用判断。各 entity の構造の差異を §5.31 アクション充足マトリクスで事前検証 |
+| **2. Phase 分割設計** | 先行 1 entity (Phase A) + 後続 N-1 entity (Phase B〜) に分割。各 Phase は独立 PR とする |
+| **3. Phase A 実装** | service / API / **汎用 component** / UI / i18n / test を完成形で実装。汎用 component の **prop API 設計** に最大の注意を払う (entity 種別を 2-3 個の prop で表現できるか) |
+| **4. Phase A レビュー** | 「次 entity がコピー&置換にならないか」を観点にレビュー (専用実装にとどまっていないかの検証) |
+| **5. Phase B〜 機械流用** | 後続 entity は service の列パース定義 + i18n キー一式 + UI への 5-10 行追加のみ。**汎用 component には触れない** |
+| **6. §11 への完了マーク + 数値記録** | 圧縮率 / Phase 別行数 / Phase A の汎用化判断 を更新履歴に残す |
+
+#### 適用判断基準
+
+| 状況 | 適用 | 代替案 |
+|---|---|---|
+| entity 数 ≥ 3 + 構造類似 | ✅ 本パターン | — |
+| entity 数 = 2 | △ 効果限定的 | 共通 helper 関数のみ抽出 (§5.26) |
+| 各 entity の構造が極端に異なる | ❌ | 個別実装 |
+| 1 entity のみ | ❌ | 通常の専用実装 |
+
+#### アンチパターン (避けるべき実装順序)
+
+| 失敗パターン | 結末 |
+|---|---|
+| Phase A を「専用実装」で済ませる | Phase B〜 が「コピー&置換」になり保守性低下 (1 箇所修正が N 箇所に波及) |
+| Phase A の prop API を「最低限」に絞る | 後続で必ず prop 追加 → 既存 entity の component 再修正 (Breaking change) |
+| 全 entity 一括実装 | レビュー困難、テスト網羅性低下、汎用化判断が後付けになる |
+
+#### T-22 適用の具体例 (汎用 component prop 設計)
+
+```tsx
+// ❌ アンチパターン: entity 種別ごとに専用 component
+<RiskSyncImportDialog projectId={...} />
+<RetrospectiveSyncImportDialog projectId={...} />
+// 各 component が ~400 行、列定義以外はほぼ重複
+
+// ✅ T-22 で採用: 2 つの prop で抽象化
+<EntitySyncImportDialog
+  apiBasePath={`/api/projects/${projectId}/risks/sync-import`}
+  i18nNamespace="risk.syncImport"
+  open={...} onOpenChange={...} onImported={...}
+/>
+// Component 1 件のみ (~410 行)、後続 entity は 5 行の wiring で完結
+```
+
+#### 関連
+
+- §5.26 (共通部品流用、本パターンの基盤原則)
+- §5.31 (枠数固定要件のアクション充足、横展開前の事前検証として組み合わせる)
+- §11 T-22 (本パターンの起点・実証 5 entity)
+- T-22 commits 19fa9bd (Phase 22a) / 2081e88 (22b) / 20f548b (22c) / 73afd2d (22d)
 
 ---
 
@@ -3919,11 +4068,12 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | T-04 | **【外部公開直前必須】** 視覚回帰テスト カバレッジ拡大 (現状 4 spec → 主要画面全体 + cross-browser + a11y) | **現状把握** (PR #95-#96 で導入済): `e2e/visual/` に 4 spec (auth-screens / customers-screens / dashboard-screens / settings-themes 10 テーマ) が CI 自動実行中、baseline 更新は `[gen-visual]` commit 自動化済 (`.github/workflows/e2e-visual-baseline.yml`)。**外部公開直前タスクとして拡大すべき範囲**: ① project 詳細タブ (WBS / ガント / リスク / 課題 / 振り返り / ナレッジ / ステークホルダー) の baseline 取得 — 現状 `E2E_COVERAGE.md:38-42` で `[ ]` skip、② mobile viewport (`*-chromium-mobile-linux.png`) の baseline 拡充 (PR #128 カードビュー導入分の網羅)、③ クロスブラウザ追加 (Firefox / WebKit) — 現状 chromium のみ、④ a11y 自動テスト導入 (`@axe-core/playwright`) で WCAG 違反を CI 検出。④ の導入後は CI に accessibility ゲートを追加。**着手タイミング**: UI 確定 (= 主要機能凍結) 後に一括実施。UI 変更が頻繁なうちに baseline を取ると `[gen-visual]` 再生成コストが膨張するため | 2026-04-27 ユーザ問合せ「視覚回帰テストはどうなっているか / 公開直前で有効化する認識か」に対する回答として確定。既存 4 spec は既に有効、本 T-04 は **カバレッジ拡大とクロスブラウザ + a11y** が論点 |
 | T-05 | Estimate (見積もり) に添付 URL 登録 UI を追加 + 一覧表示 | API 経路 (`/api/attachments/batch` の `entityType === 'estimate'` 分岐) は対応済だが、**UI 経由の添付登録手段が無い**ため事実上未使用。`estimates-client.tsx` に `<StagedAttachmentsInput>` (作成時) + 編集 dialog 内の `<AttachmentList>` を追加し、見積一覧にも `useBatchAttachments('estimate', ...)` + `<AttachmentsCell>` を追加すれば他エンティティと parity が揃う。PR #168 で添付対応 entity 全体の一覧表示状態を網羅 grep し、estimate のみ「API 対応済 + UI 未対応」のギャップが判明 | 2026-04-27 PR #168 横展開調査時、ユーザ要望「添付できるものに関しては、一覧画面上に表示されているか影響調査し横展開を徹底」に部分対応。estimate の UI は別 PR で対応する宣言 |
 | T-06 | ~~**【外部公開直前必須】** en-US 本格翻訳~~ → **PR #170/#173/#174/#175 で大半完了 (~933 hits / 30+ ファイル / 24 sections / ~813 keys × 2 locales)。`SELECTABLE_LOCALES['en-US']=true` 切替済**。残り T-17 で対応 | PR #169 → #175 で実施。完了 |
-| T-17 | en-US 残 sweep (~104 hits / 完成度向上) | PR #175 マージ時点で抽出スクリプト残ヒット 約 104 件。内訳: (a) test ファイル `it('...')` 説明文 ~56 件 (ユーザ非表示、翻訳不要)、(b) API route の `throw new Error(...)` ~30 件 (エラー時のみ HTTP body に露出、UX 影響小)、(c) ユーザ可視の軽微な漏れ十数件 (「全リスク」「全課題」「全振り返り」が page heading 等 1 箇所ずつ、`削除` / `削除に失敗しました` 数箇所、admin/audit-logs などの新画面)。**着手手順**: `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` で残ヒットを再抽出 → ユーザ可視を優先で sweep → API error message を t() 化 → test 文言は据え置き or 規約化。各 commit 後に同スクリプトで残数を計測 | 2026-04-28 ユーザ要望「残りの英語化対応は今度実施するのでプランに追加」 |
+| T-17 | en-US 残 sweep — **Group 1 (ユーザ可視) 完了 / Group 2 (API error) 継続** | **2026-04-28 (本 PR) で Group 1 完了**: 全リスク/課題/振り返り page.tsx の見出し + 件数表記、admin-delete-button.tsx (3 entity) の title/aria-label/confirm/error、error.tsx の内部エラー文言、を全て t() 化 (`common.itemCount` / `common.internalError` / `common.adminDelete*` 等の共通キー追加)。**残**: API route の `throw new Error(...)` 約 30 件 (エラー時のみ HTTP body に露出、UX 影響小)、`/admin/audit-logs` 等の管理者画面文言 (一部)、個別 route の MFA / 認証エラー文言。**Group 2 着手指針**: 共通エラー (「対象が見つかりません」4 件 / 「フィルターを 1 つ以上適用」4 件 / 「権限がありません」3 件) を共通 message key に集約 → 各 route で t() 化。test ファイルの `it('...')` 説明文 ~56 件は翻訳不要 (ユーザ非表示) のため対象外 | 2026-04-28 ユーザ要望「残りの英語化対応は今度実施」、Group 1 完了は本 PR |
 | T-18 | **【UX 統一 / 後続】** Cross-list 横ぐしコメント機能 + 通知システム | PR #177 で振り返りコメント UI を非表示化したが、API/DB/service は温存中。再有効化時の方針: 振り返り固有の inline コメントではなく、**全 entity 横断で統一仕様**「リスク/課題/振り返り/ナレッジ + メモに対して関係者がコメント可能、コメント時に対象 entity の作成者 / 担当者に通知 (in-app + email)」を実装する。**設計検討項目**: (1) 単一 `comments` テーブル + `entity_type` / `entity_id` 多態的参照 vs 既存 `retrospective_comments` を踏襲, (2) 通知 channel 設計 (Notification entity + 未読管理), (3) UI: 各 ○○ 詳細画面の右パネル / カード内 inline / 全リスト画面横ぐしビューのいずれを最終形にするか。**着手目安**: 各 entity 仕様 (T-04 視覚回帰 / T-15/T-16 横断画面など) が揃った後 | 2026-04-28 ユーザ要望「振り返りのコメント機能は今後強化する予定 / 各○○一覧で横ぐしに実現したい / コメントがされたら通知される仕組み」を踏まえ、PR #177 で UI 非表示化と同時に T-18 として登録 |
-| T-19 | WBS エクスポート/インポート schema 整合化 (PR-ζ follow-up) | PR-ζ (#181) で UI を 4→2 ボタンに統合した際、ロジック側は handleSyncExport (17 列出力) を流用したため、ユーザ仕様 (項目 15) の「ID, 種別, タスク名, 予定開始日, 予定終了日, 予定工数」の **6 列のみ** にする部分は未対応。**実施内容**: (1) `/api/projects/[id]/tasks/export` の sync mode を 6 列出力に絞る、(2) sync-import の入力 schema も 6 列受理に変更、(3) 旧 template mode (handleExport / `/tasks/import`) を service 層から完全削除、(4) 互換のため温存していた eslint-disable 領域を削除。**着手目安**: PR-ζ マージ後に手動 UI 確認で「2 ボタン化が機能している」ことを確認してから着手 | 2026-04-28 PR-ζ で UI 統合のみ実施、schema 整合は分離 |
-| T-21 | アカウント永続ロック実装 (PR-η 調査結果のバグ修正) | PR-η (項目 16) 調査で発覚: コメント「3 回目で permanentLock」(users-client.tsx) と実装 (auth.ts) が乖離しており、**現在は永続ロック発火経路が無い** (§5.29 参照)。**実装方針 (§5.29 で選定済の選択肢 A)**: schema に `temporaryLockCount` (Int, default 0) を追加 → 一時ロック発生時にインクリメント → `>= 3` で `permanentLock=true`。**migration**: 既存ユーザのカウンタは 0 始まり (運用上問題なし)。**test**: 1 回失敗→4 回失敗→5 回目で一時ロック (count=1) / 30 分後 5 回失敗→count=2 / さらに 5 回→count=3 で permanent_lock=true、の連鎖を E2E で再現 | 2026-04-28 PR-η 調査結果、ユーザ要望「ロック情報の数字検証」 |
-| T-22 | **【重要】** 「○○一覧」へのインポート/エクスポート機能の本格実装 (項目 1) | ユーザ要望: 各「○○一覧」(risks/issues/retros/knowledge/memos) でデータの **エクスポート (登録済みデータの外だし) と インポート (新規作成 + 既存更新、削除なし)** をサポート。**現状**: risks のみ export 既存 (`/api/projects/[id]/risks/export`)、tasks (WBS) は PR-ζ (#181) で UI 統合済の sync-import あり。残り 4 entity (retros/knowledge/memos + risks の import) は未実装。**設計原則**: (1)「○○一覧」のみ対象、「全○○」は対象外 (ユーザ要望)、(2) 削除禁止 — ID 未指定=新規、ID あり=更新のみ、(3) WBS の sync-import パターン (dry-run + preview + apply の 3 段階) を踏襲、(4) §5.26 「共通部品流用」に従い `<EntitySyncImportDialog>` を `src/components/dialogs/entity-sync-import-dialog.tsx` に新設して 5 entity 共通化、(5) CSV format は編集 dialog の入力項目 (例: risk なら type/title/content/impact/likelihood/visibility/...) を完全網羅。**実装手順**: ① 共通 dialog component → ② risks の import API + UI → ③ retrospectives/knowledge/memos に export endpoint + import endpoint + UI ボタン → ④ 各 entity で E2E 1 ケース (export → 編集 → import → 反映確認) | 2026-04-28 ユーザ要望「インポート/エクスポート機能を追加」、PR-ε で設計のみ実施し実装は本 T-22 で別途 |
+| ~~T-19~~ | ~~WBS エクスポート/インポート schema 整合化 (PR-ζ follow-up)~~ → **完了** (2026-04-28、本 PR)。**仕様微調整**: 当初「6 列」だったが、ID 空欄の新規作成行で階層位置 (parent) が解決できないことが判明したため `level` 1 列を追加し **7 列** で確定 (ID/種別/名称/レベル/予定開始日/予定終了日/予定工数)。担当者/優先度/マイルストーン/備考/WBS 番号/進捗系列は CSV 経由で扱わず UI 個別編集に集約する運用に変更。実装内容: (1) `task.service.ts` の `exportWbs` を 7 列出力 + BOM 付き UTF-8 に統一、(2) `task-sync-import.service.ts` の `parseSyncImportCsv` / `computeSyncDiff` / `applySyncImport` を 7 列対応に refactor (担当者 lookup と進捗系警告を廃止)、(3) 旧 template mode (`exportWbsTemplate(mode='template')` / `parseCsvTemplate` / `validateWbsTemplate` / `importWbsTemplate` / `/api/tasks/import` route / `wbsTemplateSchema`) を完全削除、(4) tasks-client.tsx の `_handleExport_unused` と eslint-disable 領域を削除し `handleWbsExport` に集約 | 2026-04-28 PR-ζ で UI 統合のみ実施、schema 整合は本 PR で完了 |
+| ~~T-21~~ | ~~アカウント永続ロック実装 (PR-η 調査結果のバグ修正)~~ → **完了** (2026-04-28、本 PR)。§5.29 選択肢 A に従い実装。**変更点**: (1) schema に `temporaryLockCount Int default(0)` 列追加 + migration `20260428_user_temporary_lock_count`、(2) `src/config/security.ts` に `PERMANENT_LOCK_THRESHOLD = 3` 定数追加、(3) `auth.ts`: 一時ロック発生時に `temporaryLockCount` インクリメント、`>= 3` で `permanentLock=true` 自動セット、ログイン成功時には `temporaryLockCount` も 0 にリセット、(4) `unlockAccount` (admin 解除) でも `temporaryLockCount=0` を含める、(5) UserDTO に `temporaryLockCount` 露出 (admin 画面の検証用)、(6) UI コメントを実装と同期、(7) auth_event_logs の `lock` イベント detail に `lockType: 'temporary' \| 'permanent'` + `temporaryLockCount` を記録。**本番適用**: Supabase SQL Editor で `pnpm migrate:print 20260428_user_temporary_lock_count` の SQL を手動実行 (E2E §4.44 教訓適用) | 2026-04-28 PR-η 調査結果、ユーザ要望「ロック情報の数字検証」 |
+| ~~T-22~~ | ~~**【重要 / Phase 22a/b/c/d 分割】** 「○○一覧」へのインポート/エクスポート機能の本格実装 (項目 1)~~ → **完了** (2026-04-28、本セッション)。Phase 22a/b/c/d 全実装。**新設**: `src/components/dialogs/entity-sync-import-dialog.tsx` (汎用 component、apiBasePath / i18nNamespace を prop で受ける) + 各 entity の `*-sync-import.service.ts` 4 件 + sync-import / export route 8 件。**列構成**: risks 16 列 / retrospectives 13 列 / knowledge 14 列 (tags 系はセミコロン区切り) / memos 4 列。memos のみ user-scoped (project 紐付けなし、self only 認可)。Phase 22a で確立した汎用 component を 22b/c/d で **完全機械流用**。**規模**: 全体 ~3,800 insertions | 2026-04-28 ユーザ要望「インポート/エクスポート機能を追加」。本日 §5.31 で枠数固定要件の事前検証を確立し T-22 設計を強化、Phase 22a の汎用 component 化により 22b/c/d は機械流用で実装完了 |
+| T-23 | **【期限: 2026-05 中】** Dependabot 全自動化 (脆弱性修正の PR 自動生成 + patch 自動マージ) | **背景**: 2026-04-28 PR #184 マージ後の `git push` で「3 moderate vulnerabilities (postcss / hono / @hono/node-server)」が GitHub から通知。現状は通知のみで **PR 自動生成・自動マージは未設定**。**実装内容**: (1) `.github/dependabot.yml` 新設で npm パッケージ更新 PR を週次自動生成、patch update は単一 PR にグルーピング、(2) `.github/workflows/dependabot-auto-merge.yml` 新設で **patch update のみ CI green 後に auto-merge** (minor/major は手動レビュー継続)、(3) branch protection で CI 必須を改めて確認、(4) 試験運用: 最初 1 週間は PR 自動生成のみで品質確認、問題なければ auto-merge を有効化。**自動化で防げる範囲**: GitHub Advisory DB 登録済の既知脆弱性 (大半のケース)。**防げない範囲**: 0-day / supply chain attack (別途 `npm audit signatures` 等で補完)。**期限根拠**: 現状の 3 moderate は緊急性なしだが (postcss は build-time 限定、hono 系は未使用 transitive)、放置すると蓄積するため 5 月内に仕組み化 | 2026-04-28 ユーザ指示「セキュリティアラート対応は 5 月中に実施しプランに追記」 |
 
 ### 11.2 低優先 (長期案件)
 
@@ -4016,3 +4166,12 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-28 | §5.28 新設 (PR #178 E2E hotfix / fix(migration-β))。**Prisma migration の UPDATE/ALTER/DROP 文を書く前に init migration の CREATE TABLE で対象列の存在を grep する** 規約を明文化。本件 hotfix では `UPDATE "knowledge_projects" SET "dev_method"` と書いていたが `dev_method` 列は `knowledges` テーブルに存在 (knowledge_projects は多対多関連テーブル)。schema.prisma の model 名から table 名を脳内変換するのは事故の元 (KnowledgeProject ≠ Knowledge)。確認手順 (init migration grep + ローカル `prisma migrate dev`) を運用ルール化、CI を待たずに検出する手順を提示。関連: §5.11.1 (schema 借用ミス) / §11 T-21 (永続ロック migration で本教訓を活用) |
 | 2026-04-28 | §5.29 新設 + §11 T-21 登録 (PR #182 / investigation/lock-stats-verification)。**永続ロック未実装バグの発見**: ユーザ要望「アカウントロック情報の数字検証」(項目 16) で auth.ts を grep した結果、`permanentLock=true` を設定する経路がコードベース全体に存在しないことを確認。コメント (users-client.tsx:216) と実装の乖離。修正方針として `temporaryLockCount` 列追加 + 3 回到達で永続化 (選択肢 A、認証パス overhead 最小) を §5.29 で選定。一般化教訓として「UI コメントで言及されたフラグが実際に true 化される経路が存在するか grep で検証」する運用ルールを併記 |
 | 2026-04-28 | §5.30 新設 (PR #178 / PR-β hotfix / Stop hook 横断監査)。**master-data.ts 値変更時の validator 横展開チェックリスト**を確立。PR-β で `DEV_METHODS` の `power_platform` → `low_code_no_code` リネームを実施した際、`validators/project.ts` は更新したが `validators/estimate.ts` と `validators/knowledge.ts` の z.enum が旧値のまま残存し、API request 400 エラーになる状態だった (Stop hook 横断監査で発覚 → 即修正)。チェックリスト: (1) enum 名で validator 全検索、(2) 旧値文字列を grep、(3) test での旧値使用も検出、(4) UI render 箇所も確認。**恒久対策**として「master-data.ts を z.enum の source として直接 export 化」を提案 (将来の type-safe 化候補)。E2E §4.43 と §5.28 (migration UPDATE 検証) と並ぶ「変更時の横展開漏れ防止」3 兄弟が出揃った |
+| 2026-04-28 | §10.5 9 例目「機械並列型」**本セッション内 7 回適用 = ルーチン化完了** (PR #168/#169/#171/#173/#182/#183 + main↔dev/2026-04-28 merge)。最初は「珍しいパターン」として記録した 9 例目が、1 セッション内に独立並走 PR 6 件 + 当日 dev branch ↔ main 同期 1 件で計 7 回発生。**運用ルール 8「機械並列型は番号順に並べ替えるだけで解消可能」が完全に実証された**: 7 件すべて Stop hook 補正で深い設計判断なしに機械解消で済み、conflict 恐れず並走 PR を許容する運用が現実的に機能することが定量的に証明された。**累積教訓**: (1) 並走 PR を恐れて発展速度を落とす必要なし、(2) §10.5 で機械解消手順を整備しておけば「conflict は単なる作業」になる、(3) 「内容重複型」(PR #182 で発見) の新パターンが 1 件混在したが、これも HEAD ブロック削除で機械解消可能、(4) PR マージ後の `git pull --no-rebase` でも同じ機械解消ルールが適用できる (当日 dev branch ↔ main 同期パターンも 9 例目に含まれる) |
+| 2026-04-28 | E2E §4.44 新設 (PR #184 マージ直後の本番 P2022 障害)。**Vercel deploy 成功 + CI green でも本番が落ちる migration 未適用パターン**を常設化。本プロジェクトは Supabase IPv4 制約で `prisma migrate deploy` を Vercel build に組み込めず、SQL Editor 手動実行運用 (OPERATION §3.3)。PR #184 で `projects.contract_type` 列追加 migration の手動適用を失念 → 本番全画面で `P2022 ColumnNotFound`。検出フロー (Vercel runtime logs を error level で grep → P2022 / column 名 → migration 特定)、復旧手順 (`pnpm migrate:print` → SQL Editor 貼付)、適用状況確認クエリ (`SELECT FROM _prisma_migrations`)、5 つの落とし穴 (CI 検出不可 / 全画面波及 / カラム名は snake_case / 順序依存 / 二重実行禁止) を §4.44 にまとめた。§5.28 (migration UPDATE 検証) / §5.30 (validator 横展開) / §4.44 (PR マージ後 migration 適用) の **「変更時の漏れ防止」3 兄弟が出揃った** (validator 漏れ / migration 文法漏れ / migration 適用漏れ) |
+| 2026-04-28 | §11 T-19 完了 (WBS export/import 7 列化、PR-ζ follow-up)。**仕様微調整**: 当初要件「6 列のみ」に対し「ID 空欄行の新規作成で parent 解決不能」が判明、`level` 1 列を追加した **7 列** で確定 (ID/種別/名称/レベル/予定開始日/予定終了日/予定工数)。担当者/優先度/マイルストーン/備考/WBS 番号/進捗系列は CSV 非対応化、UI 個別編集に集約する運用に。**削除コード**: `exportWbsTemplate` (template mode 分岐含む) / `parseCsvTemplate` / `validateWbsTemplate` / `importWbsTemplate` / `wbsTemplateSchema` / `WbsTemplateTask` 型 / `/api/projects/[id]/tasks/import` route / `_handleExport_unused` 関数 + eslint-disable 領域。**新設**: `exportWbs` (7 列、BOM 付き UTF-8)、`WBS_CSV_HEADERS` 定数。**教訓 (KDD)**: 仕様起票時には階層構造を表す必要に気付きにくい。「枠数固定」(6 列など) で要件が来たときは **アクション 3 種 (CREATE/UPDATE/DELETE) 全てを満たせるか** を実装着手前に検証する習慣化が必要 → 本 KDD として §10.5 系の運用ルールに将来追加候補 |
+| 2026-04-28 | §11 T-21 完了 (永続ロック実装、PR-η バグ修正、§5.29 選択肢 A)。schema に `temporaryLockCount` 列追加 + `auth.ts` で一時ロック発生時に +1、`PERMANENT_LOCK_THRESHOLD=3` 到達で `permanentLock=true` 自動セット。ログイン成功時 + admin による `unlockAccount` 時には `temporaryLockCount=0` にリセット (前者は正規ユーザ復帰、後者は admin 確認後の再ログインを想定)。auth_event_logs の `lock` イベントに `lockType: 'temporary' \| 'permanent'` + 累積回数を detail で記録し追跡可能化。**本番適用**: migration `20260428_user_temporary_lock_count` を Supabase SQL Editor で手動実行が必要 (`ALTER TABLE users ADD COLUMN temporary_lock_count INTEGER NOT NULL DEFAULT 0;`)。E2E §4.44 教訓 (PR マージ後 migration 適用忘れ) の予防として commit message + 本 PR description に明記 |
+| 2026-04-28 | §5.31 新設 (T-19 の教訓 KDD 化、Stop hook 補正)。**枠数固定要件のアクション充足チェック**を運用ルール化。当初要件「6 列のみ」だった T-19 で「ID 空欄行の新規作成で parent 解決不能」が判明し `level` 1 列追加して 7 列確定する仕様微調整が発生した経験から、**枠数固定要件は CRUD マトリクス (CREATE/UPDATE/DELETE/階層保持/同名重複検知) を実装着手前に引く** ことを規約化。一般化として「フィールド N 個のみ」(form) /「ボタン N 個のみ」(UI 統合) /「画面 N ページのみ」(IA) でも同じパターンを適用。§5.28 / §5.30 / §4.44 の「変更時の漏れ防止 3 兄弟」と並ぶ「**仕様検証時の欠落防止**」ナレッジとして §5.31 を独立セクション化 |
+| 2026-04-28 | §11 T-22 を Phase 22a/22b/22c/22d に詳細仕様分解 (Stop hook 補正による設計強化)。本セッションで規模 (~1,100 行 × 4 entity) を再評価し、Phase 22a (risks の sync-import 単体 + 共通基盤確立) を **1 PR スコープに分離**、22b/22c/22d は機械的横展開タスクとして §11 に記録。Risk CSV 16 列の列構成 (ID/type/title/content/cause/impact/likelihood/responsePolicy/responseDetail/assigneeName/deadline/state/result/lessonLearned/visibility/riskNature) を §5.31 アクション充足マトリクスで事前検証済。**教訓**: 大規模タスク (1,000+ 行規模) は Phase 分割を §11 に明示することで、品質維持しつつ 1 PR ごとに安定したマージが可能になる。Phase 数 = entity 数 + 1 (基盤 phase) を原則化候補 |
+| 2026-04-28 | /knowledge-organize 整理: 「変更時の漏れ防止 3 兄弟」の正規定義を §5.30 末尾に表化 (長男§5.28 / 次男§5.30 / 三男§4.44)、§5.31 の関連リンクを「**仕様検証時の欠落防止**」レベルとして 3 兄弟と区別する記述に整合化、§5.28 関連の「§11 T-21」を完了マーク + 本教訓活用事実への参照に更新。整理しすぎない原則を尊重し再発事例シリーズや PR 番号引用は維持 |
+| 2026-04-28 | §11 T-22 完了 (「○○一覧」インポート/エクスポート全 4 entity)。Phase 22a (risks 16 列) で汎用 `EntitySyncImportDialog` component を確立し、Phase 22b (retrospectives 13 列) / 22c (knowledge 14 列、tags はセミコロン区切り) / 22d (memos 4 列、user-scoped) は **完全機械流用** で実装。Phase 22a の汎用化により 22b/c/d は約 300 行 / 30 分 / Phase で完了 (Phase 分割の正解パターン)。**汎用化の効果**: 4 entity 個別実装 (~4,400 行) を Phase 22a (~1,100 行) + 22b/c/d (~900 行 × 3) で計 ~3,800 行に削減 (~14% 圧縮)。**教訓 (KDD)**: 複数 entity 横展開時は先行 1 entity を「**汎用 component の prop API 設計まで含めた完成形**」で実装することで、後続 entity は機械流用が成立する。先行 entity を「専用実装」で済ませると後続が「コピー&置換」になり保守性が落ちる |
+| 2026-04-28 | §5.32 新設 (T-22 教訓 KDD 化、Stop hook 補正)。**複数 entity 横展開時の段階的汎用化パターン**を運用ルール化。T-22 (5 entity sync-import) で確立した「先行 1 entity (Phase A) で汎用 component の prop API 設計まで含めた完成形を作り、後続 N-1 entity (Phase B〜) は機械流用 (~300 行 / 30 分 / entity)」パターンを §5.32 として独立セクション化。実証数値 (4 entity / ~3,240 行 / 個別実装 ~4,400 行から 26% 圧縮) + 適用判断基準 + アンチパターン (Phase A 専用実装による Breaking change リスク) を網羅。§5.26 (共通部品流用) の戦略的拡張、§5.31 (アクション充足) との組み合わせで横展開前後の検証層を完備 |

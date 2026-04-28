@@ -90,6 +90,7 @@ describe('createUser', () => {
       failedLoginCount: 0,
       lockedUntil: null,
       permanentLock: false,
+      temporaryLockCount: 0,
       mfaEnabled: false,
       mfaSecretEncrypted: null,
       mfaEnabledAt: null,
@@ -98,7 +99,7 @@ describe('createUser', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
       deletedAt: new Date(),
-    });
+    } as never);
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
     vi.mocked(sendVerificationEmail).mockResolvedValue();
   });
@@ -176,10 +177,11 @@ const baseUserRow = {
   isActive: true,
   createdAt: new Date('2026-04-01'),
   updatedAt: new Date('2026-04-01'),
-  // PR #85: ロック情報 (UserDTO 拡張)
+  // PR #85 / T-21: ロック情報 (UserDTO 拡張)
   failedLoginCount: 0,
   lockedUntil: null as Date | null,
   permanentLock: false,
+  temporaryLockCount: 0,
 };
 
 describe('listUsers', () => {
