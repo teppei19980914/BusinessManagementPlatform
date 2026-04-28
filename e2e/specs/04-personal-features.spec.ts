@@ -150,7 +150,9 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     });
     await page.goto('/all-memos');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: '全メモ' })).toBeVisible({ timeout: 10_000 });
+    // Phase A 要件 6 (2026-04-28): 「全メモ」h2 タイトル削除に伴い、
+    //   テーブル可視性で render 検証する形に変更。
+    await expect(page.locator('table')).toBeVisible({ timeout: 10_000 });
     // 一覧内の行要素は tbody tr + .first() でスコープ (LESSONS_LEARNED §4.11)
     await expect(
       page.locator('tbody tr').filter({ hasText: PUBLIC_MEMO_TITLE }).first(),

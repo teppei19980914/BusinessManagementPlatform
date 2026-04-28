@@ -90,8 +90,8 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{tKnowledge('headingAll')}</h2>
+      {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
+      <div className="flex justify-end">
         <span className="text-sm text-muted-foreground">{tKnowledge('countUnit', { count: filtered.length })}</span>
       </div>
 
@@ -105,9 +105,16 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
             if (e.key === 'Enter') router.refresh();
           }}
         />
+        {/* Phase A 要件 15: 種別フィルタの選択後表示が内部名になる問題を修正。
+            SelectValue の children render 関数で KNOWLEDGE_TYPES から表示名にマップする。 */}
         <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter((v ?? '__all__') === '__all__' ? '' : (v ?? ''))}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder={tKnowledge('all')} />
+            <SelectValue placeholder={tKnowledge('all')}>
+              {(value) => {
+                if (!value || value === '__all__') return tKnowledge('all');
+                return KNOWLEDGE_TYPES[value as keyof typeof KNOWLEDGE_TYPES] || value;
+              }}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">{tKnowledge('all')}</SelectItem>

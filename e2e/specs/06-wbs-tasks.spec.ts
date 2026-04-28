@@ -77,11 +77,13 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
     await disconnectDb();
   });
 
-  test('/tasks 画面が render され、WBS管理 見出しが表示される', async () => {
+  test('/tasks 画面が render される (タブ active 確認)', async () => {
     const page = sharedPage;
     await page.goto(`/projects/${projectId}/tasks`);
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: 'WBS管理' })).toBeVisible({ timeout: 10_000 });
+    // Phase A 要件 6 (2026-04-28): WBS管理 h2 タイトル削除に伴い、
+    //   タブナビの「ガント表示」ボタン (WBS タブ固有) で render 検証する形に変更。
+    await expect(page.getByRole('button', { name: 'ガントチャートを表示' })).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'wbs-empty');
   });
 

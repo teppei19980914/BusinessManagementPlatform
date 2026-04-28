@@ -104,11 +104,9 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
 
   return (
     <div className="space-y-6">
+      {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため)。合計工数表示は維持。 */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">{t('pageTitle')}</h2>
-          <p className="text-sm text-muted-foreground">{t('totalEffort', { value: totalEffort })}</p>
-        </div>
+        <p className="text-sm text-muted-foreground">{t('totalEffort', { value: totalEffort })}</p>
         {canEdit && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{t('addItem')}</DialogTrigger>

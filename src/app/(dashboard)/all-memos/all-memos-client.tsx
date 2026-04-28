@@ -62,8 +62,8 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{tMemo('allTitle')}</h2>
+      {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
+      <div className="flex justify-end">
         <span className="text-sm text-muted-foreground">{tMemo('count', { count: memos.length })}</span>
       </div>
 

@@ -76,13 +76,13 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     await disconnectDb();
   });
 
-  test('/estimates 画面が render され、見積もり管理 見出しが表示される', async () => {
+  test('/estimates 画面が render される (合計工数表示確認)', async () => {
     const page = sharedPage;
     await page.goto(`/projects/${projectId}/estimates`);
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: '見積もり管理' })).toBeVisible({
-      timeout: 10_000,
-    });
+    // Phase A 要件 6 (2026-04-28): 「見積もり管理」h2 タイトル削除に伴い、
+    //   見積タブ固有の「合計工数:」表示で render 検証する形に変更。
+    await expect(page.getByText(/^合計工数:/)).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'estimates-empty');
   });
 
