@@ -14,7 +14,10 @@ export const createProjectSchema = z.object({
   scope: z.string().min(1, 'スコープを入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
   // feat/account-lock-and-ui-consistency 後 hotfix: DB nullable 列は .nullable() 必須 (§5.12)
   outOfScope: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
-  devMethod: z.enum(['scratch', 'power_platform', 'package', 'other']),
+  // PR-β / 項目 13: 'power_platform' → 'low_code_no_code' にリネーム + 概念拡張
+  devMethod: z.enum(['scratch', 'low_code_no_code', 'package', 'other']),
+  // PR-β / 項目 14: 契約形態 (新設、既存プロジェクトは null 許容)
+  contractType: z.enum(['quasi_mandate', 'lump_sum', 'ses', 'other']).nullable().optional(),
   businessDomainTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
   techStackTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
   // PR #65: 核心機能 (提案型サービス) のため工程タグを追加 (ナレッジと同じ粒度)

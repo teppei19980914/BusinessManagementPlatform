@@ -8,8 +8,8 @@
  * 認可 (2026-04-24 修正 L-3):
  *   - プロジェクトのメンバーシップ必須 (viewer も含む基本読み取り権は checkProjectPermission で担保)
  *   - **投稿自体は実際の ProjectMember の pm_tl / member のみ** (viewer は書き込み不可)。
- *     UI 側で `canComment = projectRole === 'pm_tl' || 'member'` で制御しているが、
- *     API 経由の直接 POST を含めて同じ境界を enforce する。
+ *     項目 10 (PR-α) で UI は非表示化済 (将来 cross-list 横ぐし実装で再利用予定)。
+ *     UI を経由しない直接 POST も含めて API 側で境界を enforce する。
  *
  * 関連: DESIGN.md §5 (テーブル定義: retrospective_comments) / §8.3 (権限マトリクス)
  */
