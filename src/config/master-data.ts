@@ -297,3 +297,39 @@ export function classifyStakeholderQuadrant(
  */
 export const STAKEHOLDER_LEVEL_MIN = 1;
 export const STAKEHOLDER_LEVEL_MAX = 5;
+
+/**
+ * Phase D 要件 11/12 (2026-04-28): ステークホルダー優先度。
+ * Power/Interest grid (Mendelow's Matrix) から自動分類する 3 段階ラベル。
+ *   - high   : manage_closely (影響大 × 関心大) — 最重要、密接連携
+ *   - medium : keep_satisfied / keep_informed   — 中位、状況に応じた働きかけ
+ *   - low    : monitor (影響小 × 関心小)         — モニタリングのみ
+ *
+ * 一覧では high → medium → low の順で表示し、UI で優先度フィルタ/ソートを提供する。
+ */
+export const STAKEHOLDER_PRIORITIES = {
+  high: '高',
+  medium: '中',
+  low: '低',
+} as const;
+
+export type StakeholderPriority = keyof typeof STAKEHOLDER_PRIORITIES;
+
+/** 並び順用のインデックス (high が最上位)。in-memory ソートで使用。 */
+export const STAKEHOLDER_PRIORITY_ORDER: StakeholderPriority[] = ['high', 'medium', 'low'];
+
+/**
+ * 影響度 / 関心度から PMBOK Power/Interest grid 4 象限経由で priority を自動分類する。
+ *   manage_closely (大×大) → high
+ *   keep_satisfied (大×小) / keep_informed (小×大) → medium
+ *   monitor (小×小) → low
+ */
+export function deriveStakeholderPriority(
+  influence: number,
+  interest: number,
+): StakeholderPriority {
+  const quadrant = classifyStakeholderQuadrant(influence, interest);
+  if (quadrant === 'manage_closely') return 'high';
+  if (quadrant === 'monitor') return 'low';
+  return 'medium';
+}

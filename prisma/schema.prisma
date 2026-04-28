@@ -411,6 +411,10 @@ model Stakeholder {
   // PMBOK 13.1.2 Engagement Assessment Matrix (5 段階)
   currentEngagement String    @map("current_engagement") @db.VarChar(20) // unaware|resistant|neutral|supportive|leading
   desiredEngagement String    @map("desired_engagement") @db.VarChar(20)
+  // Phase D 要件 11/12 (2026-04-28): Power/Interest grid から自動分類する優先度
+  // (high|medium|low)。サービス層で influence × interest から deriveStakeholderPriority
+  // により計算してから保存する。一覧の sort/filter UI で利用。
+  priority          String    @default("medium") @db.VarChar(10)
   // 自由記述: 人となり / 考え方 / 接し方のコツ
   personality       String?   @db.Text
   // 検索/分類タグ (例: ["技術志向", "数字派"])
@@ -428,6 +432,8 @@ model Stakeholder {
 
   @@index([projectId], map: "idx_stakeholders_project")
   @@index([userId], map: "idx_stakeholders_user")
+  // Phase D 要件 12: 優先度フィルタの絞り込みに利用
+  @@index([priority], map: "idx_stakeholders_priority")
   @@map("stakeholders")
 }
 

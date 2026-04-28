@@ -33,9 +33,14 @@ import { StakeholderEditDialog } from '@/components/dialogs/stakeholder-edit-dia
 import {
   STAKEHOLDER_ATTITUDES,
   STAKEHOLDER_ENGAGEMENTS,
+  STAKEHOLDER_PRIORITIES,
+  STAKEHOLDER_PRIORITY_ORDER,
   STAKEHOLDER_QUADRANTS,
+  type StakeholderPriority,
   type StakeholderQuadrant,
 } from '@/config/master-data';
+import { nativeSelectClass } from '@/components/ui/native-select-style';
+import { Label } from '@/components/ui/label';
 import type { StakeholderDTO } from '@/services/stakeholder.service';
 import type { MemberDTO } from '@/services/member.service';
 
@@ -66,6 +71,16 @@ const QUADRANT_BG: Record<StakeholderQuadrant, string> = {
   monitor: 'bg-muted/50 border-muted-foreground/20',
 };
 
+// Phase D 要件 11/12 (2026-04-28): 優先度バッジの色分け。
+//   high   = destructive (赤): 最重要、密接連携
+//   medium = warning (橙): 状況に応じた働きかけ
+//   low    = secondary (灰): モニタリングのみ
+const PRIORITY_BADGE_VARIANT: Record<StakeholderPriority, 'destructive' | 'default' | 'secondary'> = {
+  high: 'destructive',
+  medium: 'default',
+  low: 'secondary',
+};
+
 type Props = {
   projectId: string;
   stakeholders: StakeholderDTO[];
@@ -79,12 +94,15 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
   const { withLoading } = useLoading();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editing, setEditing] = useState<StakeholderDTO | null>(null);
+  // Phase D 要件 12 (2026-04-28): 優先度フィルタ ('' = 全件、'high'|'medium'|'low' = 該当のみ)
+  const [priorityFilter, setPriorityFilter] = useState<'' | StakeholderPriority>('');
 
   const reload = useCallback(async () => {
     await onReload();
   }, [onReload]);
 
-  // 4 象限ごとにグルーピング (matrix 描画用)
+  // 4 象限ごとにグルーピング (matrix 描画用)。Power/Interest grid は priority と独立に
+  // 全体を見渡せる必要があるため、フィルタの影響を受けない。
   const byQuadrant: Record<StakeholderQuadrant, StakeholderDTO[]> = {
     manage_closely: [],
     keep_satisfied: [],
@@ -92,6 +110,11 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
     monitor: [],
   };
   for (const s of stakeholders) byQuadrant[s.quadrant].push(s);
+
+  // 一覧テーブル側のみ priority filter を適用 (サービス層で priority asc ソート済)
+  const filteredStakeholders = priorityFilter
+    ? stakeholders.filter((s) => s.priority === priorityFilter)
+    : stakeholders;
 
   const gapCount = stakeholders.filter((s) => s.engagementGap !== 0).length;
 
@@ -172,6 +195,26 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
         ))}
       </div>
 
+      {/* Phase D 要件 12 (2026-04-28): 優先度フィルタ */}
+      <div className="flex items-end gap-2">
+        <div>
+          <Label htmlFor="stakeholder-priority-filter" className="text-xs">
+            {t('columnPriority')}
+          </Label>
+          <select
+            id="stakeholder-priority-filter"
+            value={priorityFilter}
+            onChange={(e) => setPriorityFilter(e.target.value as '' | StakeholderPriority)}
+            className={nativeSelectClass}
+          >
+            <option value="">{t('priorityFilterAll')}</option>
+            {STAKEHOLDER_PRIORITY_ORDER.map((p) => (
+              <option key={p} value={p}>{STAKEHOLDER_PRIORITIES[p]}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       {/* 一覧テーブル */}
       <ResizableColumnsProvider tableKey="project-stakeholders">
         <div className="flex justify-end pb-2">
@@ -180,6 +223,8 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
         <Table>
           <TableHeader>
             <TableRow>
+              {/* Phase D 要件 11/12: 優先度列を最左に配置 (一覧上部 = 高優先度) */}
+              <ResizableHead columnKey="priority" defaultWidth={70}>{t('columnPriority')}</ResizableHead>
               <ResizableHead columnKey="name" defaultWidth={160}>{t('columnName')}</ResizableHead>
               <ResizableHead columnKey="organization" defaultWidth={140}>{t('columnOrganization')}</ResizableHead>
               <ResizableHead columnKey="role" defaultWidth={100}>{t('columnRole')}</ResizableHead>
@@ -192,12 +237,17 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
             </TableRow>
           </TableHeader>
           <TableBody>
-            {stakeholders.map((s) => (
+            {filteredStakeholders.map((s) => (
               <TableRow
                 key={s.id}
                 className="cursor-pointer hover:bg-muted"
                 onClick={() => setEditing(s)}
               >
+                <TableCell>
+                  <Badge variant={PRIORITY_BADGE_VARIANT[s.priority]}>
+                    {STAKEHOLDER_PRIORITIES[s.priority]}
+                  </Badge>
+                </TableCell>
                 <TableCell className="font-medium">
                   {s.name}
                   {s.userId && (
@@ -241,10 +291,11 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
                 </TableCell>
               </TableRow>
             ))}
-            {stakeholders.length === 0 && (
+            {filteredStakeholders.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
-                  {t('noStakeholders')}
+                {/* Phase D 要件 11: priority 列追加で colSpan を 9 → 10 に */}
+                <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
+                  {priorityFilter ? t('noStakeholdersForFilter') : t('noStakeholders')}
                 </TableCell>
               </TableRow>
             )}
