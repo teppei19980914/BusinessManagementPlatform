@@ -2292,6 +2292,72 @@ grep -rnE "permanentLock\s*[:=]\s*true|permanentLock:\s*true" src/ --include='*.
 - DESIGN.md §8 (権限制御) — 仕様文書の更新も必要 (実装と乖離している)
 - src/lib/auth.ts:52-66 — 現在の一時ロック実装 (改修対象)
 
+### 5.30 master-data.ts の enum 値を変更するときの横展開チェックリスト (PR-β hotfix で確立)
+
+#### 背景
+
+`src/config/master-data.ts` は業務概念の列挙値の単一源泉として運用されているが、
+**Zod validator (src/lib/validators/) は別ファイル群** に enum を別途定義している。
+`master-data.ts` の値を変更したとき validator 側の更新を忘れると、
+**DB は新値、UI は新値、API request validator は旧値** という不整合が発生し、
+ユーザ操作が 400 エラーで弾かれる。
+
+#### 実例 (PR-β hotfix, 2026-04-28)
+
+PR-β で `DEV_METHODS` の `'power_platform'` → `'low_code_no_code'` リネームを実施したとき:
+
+| 場所 | 更新済? | 状態 |
+|---|---|---|
+| `src/config/master-data.ts` (DEV_METHODS) | ✅ | 4 値新仕様 |
+| Prisma migration (UPDATE 既存データ) | ✅ | 'low_code_no_code' に変換 |
+| `src/lib/validators/project.ts` (createProjectSchema) | ✅ | 新値 enum |
+| `src/lib/validators/estimate.ts` (createEstimateSchema) | ❌ **漏れ** | 旧値 'power_platform' のまま |
+| `src/lib/validators/knowledge.ts` (createKnowledgeSchema) | ❌ **漏れ** | 旧値 'power_platform' のまま |
+
+結果: estimate / knowledge エンティティの API が新値受理せず 400 エラー。
+Stop hook の横断監査で発覚し PR-β hotfix で修正。
+
+#### 横展開チェックリスト (master-data.ts 値変更時に必ず実行)
+
+```bash
+# 1. 変更対象 enum を使う validator を全検索
+ENUM_NAME="DEV_METHODS"  # 例
+LOWERCASE_FIELD="devMethod"
+grep -rn "$LOWERCASE_FIELD" src/lib/validators/ --include='*.ts'
+
+# 2. 旧値を直接 hardcode している箇所を検出 (validator 内の z.enum)
+OLD_VALUE="power_platform"  # 例
+grep -rn "$OLD_VALUE" src/lib/validators/ --include='*.ts'
+
+# 3. test ファイルでも旧値使用を検出 (false positive 含む)
+grep -rn "$OLD_VALUE" src/ --include='*.test.ts'
+
+# 4. UI 側 (Object.entries(MASTER_CONST)) の renderer 確認
+grep -rn "Object\.entries\($ENUM_NAME\)" src/app src/components --include='*.tsx'
+```
+
+#### 規約 (master-data 値変更 PR で必ずやる)
+
+1. **master-data.ts の値を変更したら、必ず上記チェックリストを実行**
+2. **変更対象 enum を使う validator を全件 update** (関連 entity 全部、漏れなく)
+3. **migration の UPDATE 文も全関連テーブルを網羅** (§5.28 の table 名検証ルールも併用)
+4. **test ファイルの enum 使用箇所も grep して同期**
+5. **commit message に「validator N 件横展開済」と明記** してレビュー時の確認を促す
+
+#### 恒久対策 (将来の改善案)
+
+`master-data.ts` の `DEV_METHODS` 等を **Zod の z.enum source** として直接 export し、
+validator はそれを `z.enum(Object.keys(DEV_METHODS) as [keyof typeof DEV_METHODS, ...])` で
+参照する形にすれば、master-data.ts 1 箇所変更で全 validator が自動追従する (= type-safe な
+single source of truth 化)。
+
+#### 関連
+
+- §5.28 (Prisma migration の UPDATE 検証ルール) — 同類の「変更時の横展開漏れ」防止
+- §5.10 (フォーム送信前の事前バリデーション) — validator の役割
+- src/config/master-data.ts — 列挙値の単一源泉
+- PR-β hotfix commits (54e38a0, 3850432) — 本ナレッジの起点
+
 ---
 
 ## 6. 機能削除の手順
@@ -3949,4 +4015,5 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-28 | §5.27 新設 + §11 T-18 登録 (PR #177 / chore/hide-retro-comment-and-memo-filter)。**機能 deferral パターン**「UI のみ削除、DB/API/service は温存」を §6 (完全削除) と並ぶ独立パターンとして明文化。PR #177 で振り返りコメント機能を本パターンで非表示化 (将来 T-18 cross-list 横ぐし再設計予定)。適用判断基準 4 項目 (再有効化確定 / データ無傷 / API 直接呼び出し OK / 再有効化コスト高) と、UI 削除 → state 削除 → prop 整理 → import 整理 → 温存 → コメント追記 → §11 TODO 登録 の 7 step 手順を明示。grep 横展開チェックでは「JSDoc / API endpoint comment は削除した文脈で更新する」運用も合わせて規定 |
 | 2026-04-28 | §5.28 新設 (PR #178 E2E hotfix / fix(migration-β))。**Prisma migration の UPDATE/ALTER/DROP 文を書く前に init migration の CREATE TABLE で対象列の存在を grep する** 規約を明文化。本件 hotfix では `UPDATE "knowledge_projects" SET "dev_method"` と書いていたが `dev_method` 列は `knowledges` テーブルに存在 (knowledge_projects は多対多関連テーブル)。schema.prisma の model 名から table 名を脳内変換するのは事故の元 (KnowledgeProject ≠ Knowledge)。確認手順 (init migration grep + ローカル `prisma migrate dev`) を運用ルール化、CI を待たずに検出する手順を提示。関連: §5.11.1 (schema 借用ミス) / §11 T-21 (永続ロック migration で本教訓を活用) |
 | 2026-04-28 | §5.29 新設 + §11 T-21 登録 (PR #182 / investigation/lock-stats-verification)。**永続ロック未実装バグの発見**: ユーザ要望「アカウントロック情報の数字検証」(項目 16) で auth.ts を grep した結果、`permanentLock=true` を設定する経路がコードベース全体に存在しないことを確認。コメント (users-client.tsx:216) と実装の乖離。修正方針として `temporaryLockCount` 列追加 + 3 回到達で永続化 (選択肢 A、認証パス overhead 最小) を §5.29 で選定。一般化教訓として「UI コメントで言及されたフラグが実際に true 化される経路が存在するか grep で検証」する運用ルールを併記 |
-| 2026-04-28 | §10.5 9 例目「機械並列型」**本セッション内 6 回適用 = ルーチン化完了** (PR #168/#169/#171/#173/#182/#183 conflict resolve 全件)。最初は「珍しいパターン」として記録した 9 例目が、1 セッション内に独立並走 PR 6 件で連続発生。**運用ルール 8「機械並列型は番号順に並べ替えるだけで解消可能」が完全に実証された**: 6 件すべて Stop hook 補正で深い設計判断なしに機械解消で済み、conflict 恐れず並走 PR を許容する運用が現実的に機能することが定量的に証明された。**累積教訓**: (1) 並走 PR を恐れて発展速度を落とす必要なし、(2) §10.5 で機械解消手順を整備しておけば「conflict は単なる作業」になる、(3) 「内容重複型」(PR #182 で発見) の新パターンが 1 件混在したが、これも HEAD ブロック削除で機械解消可能。本セッションは「並走 PR ☓ docs 共有」の運用パターンを 6 例で完全検証した記念回として記録 |
+| 2026-04-28 | §5.30 新設 (PR #178 / PR-β hotfix / Stop hook 横断監査)。**master-data.ts 値変更時の validator 横展開チェックリスト**を確立。PR-β で `DEV_METHODS` の `power_platform` → `low_code_no_code` リネームを実施した際、`validators/project.ts` は更新したが `validators/estimate.ts` と `validators/knowledge.ts` の z.enum が旧値のまま残存し、API request 400 エラーになる状態だった (Stop hook 横断監査で発覚 → 即修正)。チェックリスト: (1) enum 名で validator 全検索、(2) 旧値文字列を grep、(3) test での旧値使用も検出、(4) UI render 箇所も確認。**恒久対策**として「master-data.ts を z.enum の source として直接 export 化」を提案 (将来の type-safe 化候補)。E2E §4.43 と §5.28 (migration UPDATE 検証) と並ぶ「変更時の横展開漏れ防止」3 兄弟が出揃った |
+| 2026-04-28 | §10.5 9 例目「機械並列型」**本セッション内 7 回適用 = ルーチン化完了** (PR #168/#169/#171/#173/#182/#183 + main↔dev/2026-04-28 merge)。最初は「珍しいパターン」として記録した 9 例目が、1 セッション内に独立並走 PR 6 件 + 当日 dev branch ↔ main 同期 1 件で計 7 回発生。**運用ルール 8「機械並列型は番号順に並べ替えるだけで解消可能」が完全に実証された**: 7 件すべて Stop hook 補正で深い設計判断なしに機械解消で済み、conflict 恐れず並走 PR を許容する運用が現実的に機能することが定量的に証明された。**累積教訓**: (1) 並走 PR を恐れて発展速度を落とす必要なし、(2) §10.5 で機械解消手順を整備しておけば「conflict は単なる作業」になる、(3) 「内容重複型」(PR #182 で発見) の新パターンが 1 件混在したが、これも HEAD ブロック削除で機械解消可能、(4) PR マージ後の `git pull --no-rebase` でも同じ機械解消ルールが適用できる (当日 dev branch ↔ main 同期パターンも 9 例目に含まれる) |
