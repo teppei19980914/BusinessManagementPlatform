@@ -85,11 +85,13 @@ test.describe('@feature:project:gantt ガントチャート (PR #96)', () => {
     await disconnectDb();
   });
 
-  test('/gantt 画面が render され、ガントチャート見出しが表示される', async () => {
+  test('/gantt 画面が render される (ガントタブ固有要素確認)', async () => {
     const page = sharedPage;
     await page.goto(`/projects/${projectId}/gantt`);
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: 'ガントチャート' })).toBeVisible({
+    // Phase A 要件 6 (2026-04-28): ガントチャート h2 タイトル削除に伴い、
+    //   ガントタブ固有の「タスク名列の幅をリセット」ボタンで render 検証する形に変更。
+    await expect(page.getByRole('button', { name: 'タスク名列の幅をリセット' })).toBeVisible({
       timeout: 10_000,
     });
     await snapshotStep(page, 'gantt-rendered');

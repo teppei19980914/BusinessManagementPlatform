@@ -86,7 +86,9 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     const page = adminPage;
     await page.goto('/customers');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: '顧客管理' })).toBeVisible({
+    // Phase A 要件 6 (2026-04-28): 「顧客管理」h2 タイトル削除に伴い、
+    //   顧客追加ボタン (admin が /customers にアクセスしたときの確実な要素) で render 検証。
+    await expect(page.getByRole('button', { name: '新規顧客登録' })).toBeVisible({
       timeout: 10_000,
     });
     await snapshotStep(page, 'customers-list-initial');
