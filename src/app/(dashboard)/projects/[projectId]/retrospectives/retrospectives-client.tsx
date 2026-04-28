@@ -337,9 +337,10 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
         return (
         <div
           key={retro.id}
-          className={`rounded-lg border p-6 space-y-4 ${isOwner ? 'cursor-pointer hover:bg-muted/50' : ''}`}
-          // 2026-04-24: カードクリック編集は作成者本人のみ active (admin は全振り返りから削除)
-          onClick={isOwner ? () => setEditingRetro(retro) : undefined}
+          className="rounded-lg border p-6 space-y-4 cursor-pointer hover:bg-muted/50"
+          // Phase B 要件 5 (2026-04-28): カードクリックで dialog を開く動作は全員で active 化。
+          //   詳細閲覧目的を含み、編集可否は dialog の readOnly prop で分岐する。
+          onClick={() => setEditingRetro(retro)}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -415,11 +416,13 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
         );
       })}
 
+      {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。 */}
       <RetrospectiveEditDialog
         retro={editingRetro}
         open={editingRetro != null}
         onOpenChange={(v) => { if (!v) setEditingRetro(null); }}
         onSaved={reload}
+        readOnly={editingRetro != null && editingRetro.createdBy !== currentUserId}
       />
     </div>
   );

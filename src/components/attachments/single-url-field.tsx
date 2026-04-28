@@ -80,8 +80,9 @@ export function SingleUrlField({
   const loaded = state.loaded;
   const current = state.loaded ? state.current : null;
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
+  // Phase B 要件 4 (2026-04-28): nested form 回避のため引数なし化。
+  //   呼出側で void handleSave() として呼ぶ (button onClick から)。
+  async function handleSave() {
     setError('');
     const res = await withLoading(() =>
       fetch('/api/attachments', {
@@ -178,7 +179,16 @@ export function SingleUrlField({
       )}
 
       {editing && canEdit && (
-        <form onSubmit={handleSave} className="flex items-end gap-2 rounded border bg-muted p-2">
+        // Phase B 要件 4 (2026-04-28): nested form 回避 (外側 form の submit を発火しないよう)
+        <div
+          className="flex items-end gap-2 rounded border bg-muted p-2"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
+              e.preventDefault();
+              void handleSave();
+            }
+          }}
+        >
           <div className="flex-1 space-y-1">
             <Label className="text-xs">{tAttach('displayName')}</Label>
             <Input
@@ -196,14 +206,13 @@ export function SingleUrlField({
               placeholder="https://..."
               maxLength={2000}
               pattern="https?://.*"
-              required
             />
           </div>
-          <Button type="submit" size="sm">{tAction('save')}</Button>
+          <Button type="button" size="sm" onClick={() => void handleSave()}>{tAction('save')}</Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
             {tAction('cancel')}
           </Button>
-        </form>
+        </div>
       )}
     </div>
   );
