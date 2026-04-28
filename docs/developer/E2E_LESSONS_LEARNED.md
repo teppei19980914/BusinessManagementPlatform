@@ -2276,6 +2276,77 @@ AI 駆動から人間駆動への段階移行方針に沿い、以下を整備:
 これにより、この文書を読めば **新規参入者が hotfix マラソンを再演することなく
 次の spec を書ける** 状態を目指している。
 
+### 4.43 視覚回帰 baseline mismatch の診断・修正フロー (PR #178 で遭遇)
+
+#### 症状
+
+CI で visual regression test が下記エラーで fail:
+
+```
+Expected an image 1440px by 900px, received 1440px by 927px.
+Snapshot: project-detail-light.png
+```
+
+`Expected an image` という文言は **viewport size 不一致** を意味し、UI に画面高さ/幅を
+変える変更 (新フィールド追加 / セクション展開 / レスポンシブ要素追加) が入ったときに発生する。
+diff の pixel 数比較ではなく **画像サイズ** が一致しないため、retry してもパスしない。
+
+#### 診断手順
+
+1. **エラーメッセージのサイズ差分を確認**:
+   - `Expected ... by 900px, received ... by 927px` → 27px = `<dl>` 行 1 つ分などの妥当な差なら **期待された変化**
+   - 差が 1-2px 程度 → flaky / アンチエイリアスの誤検出 → retry 戦略
+   - 差が 100px 超 → 重大な layout 崩れの可能性、code 側の bug を疑う
+2. **同一画像で chromium / chromium-mobile 両方が fail しているか確認**:
+   ```bash
+   gh run view <run-id> --log-failed | grep -E "Expected an image|Snapshot:" | sort -u
+   ```
+   両方なら baseline 全体の更新で解消、片方なら viewport 別の特殊事情を調査
+3. **影響範囲特定**: `Snapshot: <name>.png` を git で grep して該当 spec を確認
+   - 1 spec のみ影響なら最小スコープで baseline 更新
+   - 複数 spec 影響なら code 変更が広すぎる可能性、scope 縮小を検討
+
+#### 修正フロー (期待された変化の場合)
+
+```bash
+# 1. 「期待された変化」と確認できたら、`[gen-visual]` タグ付き empty commit を push:
+git commit --allow-empty -m "chore: regenerate visual baselines for <reason> [gen-visual]"
+git push
+
+# 2. .github/workflows/e2e-visual-baseline.yml が発火し、
+#    新しい viewport で baseline を再生成して同 branch に
+#    "Update visual baselines (e2e-visual-baseline workflow)" commit を自動追加
+# 3. 次の通常 E2E run で baseline と一致 → pass
+```
+
+#### 落とし穴
+
+1. **間違ったブランチへの push に注意**:
+   `[gen-visual]` empty commit は branch context に依存する。
+   PR #178 で本ナレッジを記録した際、PR-γ branch に居る状態で `git commit` してしまい
+   PR-γ branch に baseline 再生成 commit が誤って入った経験あり。
+   `git branch --show-current` で必ず確認してから commit する。
+   誤 push した場合は `git reset --hard HEAD~1 && git push --force-with-lease` で取り消せる
+   (force-push は **自分の作業 branch のみ**、main / 他人の branch では絶対に使わない)。
+
+2. **`[gen-visual]` タグ無し commit message では発火しない**:
+   workflow は `contains(github.event.head_commit.message, '[gen-visual]')` で条件判定。
+   タイポ (例: `[regen-visual]`) や全角括弧では発火しない。
+
+3. **Linux CI でしか baseline 生成不可**:
+   フォント/レンダリング差異のため Windows/macOS ローカルでは生成しても CI では mismatch する。
+   `[gen-visual]` を含む CI workflow に依存するのが正解 (DEVELOPER_GUIDE §9.6 参照)。
+
+4. **chromium / chromium-mobile 両方が同じ画面で fail する場合**:
+   `[gen-visual]` 1 commit で両 viewport 分の baseline が再生成されるので、別々に対応する必要なし。
+   逆に「片方だけ」が fail する場合は viewport 固有の bug の可能性が高い (responsive layout など)。
+
+#### 関連
+
+- DEVELOPER_GUIDE §9.6 (視覚回帰ベースライン運用、自動再生成手順)
+- `.github/workflows/e2e-visual-baseline.yml` (PR #96 で導入された自動化 workflow)
+- §4.35 / §4.36 (chromium-mobile 固有の罠 — 画面サイズと別系統)
+
 ---
 
 ## 8. 未解決課題 (将来 PR 候補)
