@@ -33,8 +33,6 @@ export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const t = await getTranslations('message');
-
   const body = await req.json();
   const parsed = deleteSchema.safeParse(body);
   if (!parsed.success) {
@@ -52,6 +50,8 @@ export async function POST(req: NextRequest) {
 
   const isValidPassword = await compare(parsed.data.password, dbUser.passwordHash);
   if (!isValidPassword) {
+    // §5.33: t は使用するエラー分岐内で local 取得 (top-level だと validation 失敗時に無駄な await)
+    const t = await getTranslations('message');
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: t('wrongPassword') } },
       { status: 400 },
@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!matched) {
+    const t = await getTranslations('message');
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: t('wrongRecoveryCode') } },
       { status: 400 },
