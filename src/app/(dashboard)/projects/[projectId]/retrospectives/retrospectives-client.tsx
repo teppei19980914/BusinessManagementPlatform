@@ -36,6 +36,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
+import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import {
   StagedAttachmentsInput,
@@ -93,6 +94,8 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
     }
   }, [onReload, router]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  // T-22 Phase 22b: 上書きインポート (sync-import) ダイアログ
+  const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
   // 項目 10: コメント機能 UI 非表示化に伴い state 削除。API は残置。
   const [error, setError] = useState('');
   // 行 (カード) クリックで開く編集ダイアログ (PR #56 Req 8)
@@ -218,6 +221,18 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">{tRetro('headingList')}</h2>
+        <div className="flex gap-2">
+        {/* T-22 Phase 22b: sync-import (往復編集) */}
+        {canCreate && (
+          <>
+            <Button variant="outline" onClick={() => window.open(`/api/projects/${projectId}/retrospectives/export?mode=sync`, '_blank')}>
+              {tRetro('syncExport')}
+            </Button>
+            <Button variant="outline" onClick={() => setIsSyncImportOpen(true)}>
+              {tRetro('syncImportButton')}
+            </Button>
+          </>
+        )}
         {canCreate && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{tRetro('createTitle')}</DialogTrigger>
@@ -273,7 +288,17 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
             </DialogContent>
           </Dialog>
         )}
+        </div>
       </div>
+
+      {/* T-22 Phase 22b: 上書きインポート (sync-import) ダイアログ */}
+      <EntitySyncImportDialog
+        apiBasePath={`/api/projects/${projectId}/retrospectives/sync-import`}
+        i18nNamespace="retro.syncImport"
+        open={isSyncImportOpen}
+        onOpenChange={setIsSyncImportOpen}
+        onImported={async () => { await reload(); }}
+      />
 
       {/* PR #165: project-level「振り返り一覧」での一括 visibility 変更 */}
       <CrossListBulkVisibilityToolbar
