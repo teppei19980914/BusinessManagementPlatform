@@ -2367,6 +2367,107 @@ PR-γ branch で `[gen-visual]` empty commit を打とうとしたら、
 - `.github/workflows/e2e-visual-baseline.yml` (PR #96 で導入された自動化 workflow)
 - §4.35 / §4.36 (chromium-mobile 固有の罠 — 画面サイズと別系統)
 
+### 4.44 PR マージ後の Prisma migration 未適用による本番 P2022 エラー (PR #184 で遭遇)
+
+#### 症状
+
+PR マージ → Vercel deploy 成功 → ユーザがアクセス → 全画面で「内部エラーが発生しました」。
+Vercel runtime logs で:
+
+```
+Error [PrismaClientKnownRequestError]: Invalid `prisma.project.findFirst()` invocation:
+The column `projects.contract_type` does not exist in the current database.
+code: 'P2022'
+meta: { modelName: 'Project', driverAdapterError: ColumnNotFound }
+```
+
+#### 根本原因
+
+本プロジェクトは **Vercel build で `prisma migrate deploy` を実行しない** 運用 (Supabase 直結 URL が
+IPv4-only で Vercel build 環境から到達不能なため)。Migration の本番適用は **Supabase ダッシュボードの
+SQL Editor から手動実行** することが [OPERATION.md §3.3](../administrator/OPERATION.md) で規約化されている。
+
+PR レビュー / マージ時に migration の手動適用を **失念** すると、
+
+- Vercel: 新コード (Prisma Client は新スキーマ知っている) をデプロイ
+- 本番 DB: 旧スキーマのまま
+
+という乖離状態に陥り、最初の DB アクセスで `P2022 ColumnNotFound` で全画面 500 エラー。
+**CI green / Vercel build green でも本番が落ちる** 唯一に近い経路。
+
+#### 検出フロー
+
+1. **症状確認**: 全画面で内部エラー → 局所バグではなく DB レイヤの可能性
+2. **Vercel runtime logs を search**: error level でフィルタ。
+   `PrismaClientKnownRequestError` / `code: 'P2022'` / `does not exist` を grep
+3. **エラーメッセージから原因列を特定**: `column "projects.<col_name>" does not exist`
+4. **該当 migration を特定**: `grep -l "<col_name>" prisma/migrations/*/migration.sql`
+
+#### 復旧手順 (緊急)
+
+```bash
+# 1. ローカルで該当 migration の SQL 本文を表示
+pnpm migrate:print <migration-name>
+# 例: pnpm migrate:print 20260428_project_dev_method_rename_and_contract_type
+
+# 2. Supabase ダッシュボード → SQL Editor → New query
+# 3. 表示された SQL テキスト全体を貼り付け (パスを貼らない、§3.3 の罠)
+# 4. Run (Ctrl+Enter)
+# 5. "Success. No rows returned" を確認
+# 6. 本番画面の再試行ボタンで動作確認
+```
+
+#### 適用状況の確認クエリ
+
+未適用 migration を特定するには Supabase で:
+
+```sql
+SELECT migration_name, applied_steps_count, finished_at, rolled_back_at
+FROM "_prisma_migrations"
+ORDER BY started_at DESC
+LIMIT 20;
+```
+
+ローカルの `ls prisma/migrations/` と突き合わせて、本番にない行を順次手動適用。
+
+#### 落とし穴
+
+1. **CI green でも本番が落ちる**:
+   migration drift は CI で検出できない (CI DB は migration 全適用済の new DB)。
+   Vercel build も `prisma generate` のみで `migrate deploy` は走らない。
+   **マージ前の最終チェックリストに「migration を含む PR は本番適用 todo を別途確認」を入れる**
+
+2. **エラーが全画面に波及する**:
+   `app/(dashboard)/layout.tsx` 等で session/権限取得のため Prisma を呼ぶ場合、
+   **新列を 1 つでも欠くと dashboard 全体が落ちる**。1 endpoint だけの障害ではない
+
+3. **error message の column 名は ASCII**:
+   logs では `projects.contract_type` 等の半角で出るので、grep で migration を探すときは
+   **カラム名 (snake_case) で検索** する。Prisma の field 名 (camelCase の `contractType`) ではない
+
+4. **migration 順序依存**:
+   未適用が複数ある場合、依存関係 (例: 列追加後に UPDATE) を踏まえ migration 名の昇順で実行する。
+   `_prisma_migrations` の `migration_name` 順がそれに該当
+
+5. **適用済を再実行すると ALTER TABLE は ERROR**:
+   `ADD COLUMN` 等は 2 回目で `column already exists` エラー。
+   復旧時は **必ず `_prisma_migrations` で適用状況を確認してから** 実行する
+
+#### 予防策 (運用ルール化候補、本セッションでは保留)
+
+- PR テンプレートに「migration 含む変更か / 含む場合は本番適用責任者と日時」のチェックボックス追加
+- マージ後の Vercel deploy 通知 → 関連 migration の手動適用 → 動作確認、を defined runbook 化
+- 自動化案 (OPERATION §3.4): `DIRECT_URL` を Supavisor セッションモードに切替 + `vercel.json` の
+  `buildCommand` に `pnpm prisma migrate deploy` 追加 (現状は IPv4 制約で見送り、要再検討)
+
+#### 関連
+
+- OPERATION.md §3.3 (Supabase 本番への migration 適用手順)
+- OPERATION.md §3.4 (自動化する場合の前提)
+- DEVELOPER_GUIDE §5.28 (Prisma migration の UPDATE/ALTER 文の事前検証ルール)
+- DEVELOPER_GUIDE §5.30 (master-data 値変更時の validator 横展開) — 本件と並ぶ「変更時の横展開漏れ防止」3 兄弟
+- 本件の起点: PR #184 (feat/project-detail-fields, projects.contract_type 列追加)
+
 ---
 
 ## 8. 未解決課題 (将来 PR 候補)
