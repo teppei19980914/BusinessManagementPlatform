@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
@@ -23,20 +24,22 @@ export function AdminRetrospectiveDeleteButton({
 }) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const tAction = useTranslations('action');
+  const tCommon = useTranslations('common');
   return (
     <Button
       variant="ghost"
       size="icon-sm"
       className="text-destructive hover:text-destructive"
-      title={`「${label}」を削除 (システム管理者権限)`}
-      aria-label="削除"
+      title={tCommon('adminDeleteTitle', { label })}
+      aria-label={tAction('delete')}
       onClick={async () => {
-        if (!confirm(`実施日 ${label} の振り返りを削除しますか？`)) return;
+        if (!confirm(tCommon('adminDeleteConfirmRetrospective', { date: label }))) return;
         const res = await withLoading(() =>
           fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, { method: 'DELETE' }),
         );
         if (!res.ok) {
-          alert('削除に失敗しました');
+          alert(tCommon('deleteFailed'));
           return;
         }
         router.refresh();

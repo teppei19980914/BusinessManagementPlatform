@@ -14,6 +14,7 @@
  */
 
 import { useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 
 export default function DashboardError({
@@ -23,6 +24,7 @@ export default function DashboardError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const tCommon = useTranslations('common');
   useEffect(() => {
     void fetch('/api/client-errors', {
       method: 'POST',
@@ -41,13 +43,12 @@ export default function DashboardError({
 
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 p-6 text-center">
-      <h2 className="text-xl font-semibold">内部エラーが発生しました</h2>
+      <h2 className="text-xl font-semibold">{tCommon('internalError')}</h2>
       <p className="max-w-md text-sm text-muted-foreground">
-        ご迷惑をおかけしております。しばらく時間をおいて再度お試しください。
-        解決しない場合はシステム管理者にお問い合わせください。
+        {tCommon('dashboardErrorBody')}
       </p>
       <Button type="button" variant="outline" onClick={reset}>
-        再試行
+        {tCommon('retry')}
       </Button>
     </div>
   );

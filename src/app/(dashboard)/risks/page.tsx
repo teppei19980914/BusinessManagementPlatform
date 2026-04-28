@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { LOGIN_ROUTE } from '@/config';
 import { listAllRisksForViewer } from '@/services/risk.service';
 import { AllRisksTable } from './all-risks-table';
@@ -12,6 +13,8 @@ export default async function AllRisksPage() {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
 
+  const tNav = await getTranslations('nav');
+  const tCommon = await getTranslations('common');
   const risks = await listAllRisksForViewer(session.user.id, session.user.systemRole);
   const isAdmin = session.user.systemRole === 'admin';
   const filtered = risks.filter((r) => r.type === 'risk');
@@ -19,8 +22,8 @@ export default async function AllRisksPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">全リスク</h2>
-        <span className="text-sm text-muted-foreground">{filtered.length} 件</span>
+        <h2 className="text-xl font-semibold">{tNav('allRisks')}</h2>
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filtered.length })}</span>
       </div>
       <AllRisksTable risks={risks} isAdmin={isAdmin} typeFilter="risk" />
     </div>
