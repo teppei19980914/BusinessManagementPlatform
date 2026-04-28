@@ -42,6 +42,8 @@ export type ProjectDTO = {
   scope: string;
   outOfScope: string | null;
   devMethod: string;
+  // PR-β / 項目 14: 契約形態 (新設、既存プロジェクトは null)
+  contractType: string | null;
   businessDomainTags: string[];
   techStackTags: string[];
   processTags: string[];
@@ -65,6 +67,7 @@ type ProjectRowWithCustomer = {
   scope: string;
   outOfScope: string | null;
   devMethod: string;
+  contractType: string | null;
   businessDomainTags: Prisma.JsonValue;
   techStackTags: Prisma.JsonValue;
   processTags: Prisma.JsonValue;
@@ -88,6 +91,7 @@ function toProjectDTO(p: ProjectRowWithCustomer): ProjectDTO {
     scope: p.scope,
     outOfScope: p.outOfScope,
     devMethod: p.devMethod,
+    contractType: p.contractType,
     businessDomainTags: (p.businessDomainTags as string[]) || [],
     techStackTags: (p.techStackTags as string[]) || [],
     processTags: (p.processTags as string[]) || [],
@@ -170,6 +174,8 @@ export type CreateProjectInput = {
   scope: string;
   outOfScope?: string | null;
   devMethod: string;
+  // PR-β / 項目 14: 契約形態 (新設、null 許容)
+  contractType?: string | null;
   businessDomainTags?: string[];
   techStackTags?: string[];
   processTags?: string[];
@@ -191,6 +197,7 @@ export async function createProject(
       scope: input.scope,
       outOfScope: input.outOfScope,
       devMethod: input.devMethod,
+      contractType: input.contractType ?? null,
       businessDomainTags: (input.businessDomainTags || []) as Prisma.InputJsonValue,
       techStackTags: (input.techStackTags || []) as Prisma.InputJsonValue,
       processTags: (input.processTags || []) as Prisma.InputJsonValue,
@@ -234,6 +241,7 @@ export async function updateProject(
   if (input.scope !== undefined) data.scope = input.scope;
   if (input.outOfScope !== undefined) data.outOfScope = input.outOfScope;
   if (input.devMethod !== undefined) data.devMethod = input.devMethod;
+  if (input.contractType !== undefined) data.contractType = input.contractType;
   if (input.businessDomainTags !== undefined)
     data.businessDomainTags = input.businessDomainTags as Prisma.InputJsonValue;
   if (input.techStackTags !== undefined)

@@ -12,14 +12,42 @@
  * 値を追加するときは本ファイル 1 箇所を編集すれば、型検査で呼び出し側の網羅性を担保できる。
  */
 
+/**
+ * 開発方式 (PR-β / 項目 13 で 4 値に整理):
+ *   - scratch        : スクラッチ開発
+ *   - low_code_no_code: ローコード/ノーコード開発 (旧 power_platform をリネーム + 概念拡張)
+ *   - package        : パッケージ開発 (旧「パッケージ導入」を「開発」に統一)
+ *   - other          : そのほか
+ *
+ * 既存データは migration `20260428_dev_method_low_code_rename` で
+ * 'power_platform' → 'low_code_no_code' に一括変換。
+ */
 export const DEV_METHODS = {
   scratch: 'スクラッチ開発',
-  power_platform: 'PowerPlatform',
-  package: 'パッケージ導入',
-  other: 'その他',
+  low_code_no_code: 'ローコード/ノーコード開発',
+  package: 'パッケージ開発',
+  other: 'そのほか',
 } as const;
 
 export type DevMethod = keyof typeof DEV_METHODS;
+
+/**
+ * 契約形態 (PR-β / 項目 14 で新設):
+ *   - quasi_mandate : 準委任 (準委任契約)
+ *   - lump_sum      : 請負 (請負契約)
+ *   - ses           : SES
+ *   - other         : そのほか
+ *
+ * Project は新設項目のため null 許容 (既存プロジェクトは未設定)。
+ */
+export const CONTRACT_TYPES = {
+  quasi_mandate: '準委任',
+  lump_sum: '請負',
+  ses: 'SES',
+  other: 'そのほか',
+} as const;
+
+export type ContractType = keyof typeof CONTRACT_TYPES;
 
 export const TASK_CATEGORIES = {
   requirements: '要件定義',
@@ -73,13 +101,46 @@ export const TASK_STATUSES = {
 
 export type TaskStatus = keyof typeof TASK_STATUSES;
 
+/**
+ * 優先度 (PR-γ で 4 値に拡張、項目 2/7):
+ *   - high   : 高
+ *   - medium : 中
+ *   - low    : 低
+ *   - minimal: 最低 (新設)
+ *
+ * リスク/課題の priority は **service 層で impact × likelihood から自動算出** される
+ * (UI で直接指定不可)。詳細は src/services/risk.service.ts の computePriority()。
+ *
+ * 算出マトリクス (impact 'low' or 'high'/'medium' を 'high' 扱い、likelihood も同様):
+ *   - リスク (impact=影響度 / likelihood=発生可能性) — 発生確率重視:
+ *     high/high → high, low/high → medium, high/low → low, low/low → minimal
+ *   - 課題 (impact=重要度 / likelihood=緊急度) — 重要度重視:
+ *     high/high → high, high/low → medium, low/high → low, low/low → minimal
+ */
 export const PRIORITIES = {
-  low: '低',
-  medium: '中',
   high: '高',
+  medium: '中',
+  low: '低',
+  minimal: '最低',
 } as const;
 
 export type Priority = keyof typeof PRIORITIES;
+
+/**
+ * 影響度 (impact) / 発生可能性 (likelihood) / 重要度 / 緊急度の入力値域 (PR-γ)。
+ *
+ * PRIORITIES (4 値) と分離した理由: priority は impact × likelihood から自動算出される
+ * 「結果」、impact/likelihood は人が直接入力する「原因」で、minimal を入力肢に出すと
+ * UI が分かりづらくなるため。algorithmic に minimal は impact/likelihood の組合せでしか
+ * 発生しない (両方 'low' のとき)。
+ */
+export const IMPACT_LEVELS = {
+  high: '高',
+  medium: '中',
+  low: '低',
+} as const;
+
+export type ImpactLevel = keyof typeof IMPACT_LEVELS;
 
 export const RISK_ISSUE_STATES = {
   open: '未対応',
