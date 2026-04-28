@@ -10,7 +10,7 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
+import { IMPACT_LEVELS, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import { NAME_MAX_LENGTH, MEDIUM_TEXT_MAX_LENGTH } from '@/config';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
@@ -199,22 +199,24 @@ export function RiskEditDialog({
               maxLength={MEDIUM_TEXT_MAX_LENGTH}
             />
           </div>
-          {/* PR #63: 優先度は UI から撤去 (将来 impact × likelihood で自動算出予定) */}
+          {/*
+            PR-γ / 項目 5/6: type=issue では impact ラベルを「重要度」、likelihood ラベルを「緊急度」に。
+            DB 列は同じ (impact / likelihood) のままで、UI label のみ type 別に出し分け。
+            priority は API 側 computePriority() で自動算出される (UI から直接編集不可)。
+          */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>{tField('impact')}</Label>
+              <Label>{risk.type === 'issue' ? tField('importance') : tField('impact')}</Label>
               <select value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} className={nativeSelectClass}>
-                {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {Object.entries(IMPACT_LEVELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </div>
-            {risk.type === 'risk' && (
-              <div className="space-y-2">
-                <Label>{tField('likelihood')}</Label>
-                <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className={nativeSelectClass}>
-                  {Object.entries(PRIORITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-              </div>
-            )}
+            <div className="space-y-2">
+              <Label>{risk.type === 'issue' ? tField('urgency') : tField('likelihood')}</Label>
+              <select value={form.likelihood} onChange={(e) => setForm({ ...form, likelihood: e.target.value })} className={nativeSelectClass}>
+                {Object.entries(IMPACT_LEVELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
