@@ -2358,6 +2358,57 @@ single source of truth 化)。
 - src/config/master-data.ts — 列挙値の単一源泉
 - PR-β hotfix commits (54e38a0, 3850432) — 本ナレッジの起点
 
+### 5.31 枠数固定要件のアクション充足チェック (T-19 で確立)
+
+#### 背景
+
+ユーザ要件で「N 列のみ」「N フィールドのみ」のように **枠数固定** で来た場合、
+そのスキーマで **CRUD 全アクションが満たせるか** を実装着手前に検証する習慣が必要。
+T-19 (WBS export/import 7 列化) で、当初要件「6 列のみ」だったが ID 空欄行の
+新規作成で parent (階層位置) が解決不能 = CREATE アクションが破綻すると
+判明し、`level` 1 列追加して 7 列に確定する仕様微調整が発生した。
+
+#### 検証チェックリスト (枠数固定要件で実装着手前に必須)
+
+| 観点 | 確認内容 |
+|---|---|
+| **CREATE** | 新規作成行 (= ID/PK 空欄) でレコードを生成可能か。階層構造 / 外部キー / 必須属性は枠内で表現できるか |
+| **UPDATE** | 既存レコードの ID 突合で更新可能か。突合キー (ID 等) が枠に含まれているか |
+| **DELETE** | 削除モード (CSV 行から消える = 削除候補) を要件に含むか。含む場合、ID なしで「DB 既存」と「枠内 CSV」の差分が取れるか |
+| **構造の保持** | 階層 / 親子関係 / 並び順 が必要なら、それを表現する列が枠内にあるか |
+| **同名重複の検知** | level + 名称 / 種別 + 名称 等の組み合わせで CSV 内重複を判定可能か |
+
+#### T-19 適用例
+
+| 列構成 | CREATE | UPDATE | DELETE | 階層 | 結論 |
+|---|:---:|:---:|:---:|:---:|---|
+| 案 A: 6 列 (ID/種別/名称/開始/終了/工数) | ❌ (parent 解決不能) | ✅ | ✅ (ID 突合) | ❌ | **要件破綻** |
+| 案 B: 7 列 (+ level) | ✅ | ✅ | ✅ | ✅ (level スタック) | **採用** |
+| 案 C: 7 列 (+ parentId) | ✅ (UUID) | ✅ | ✅ | ✅ | 案 B より Excel 編集性で劣る |
+
+着手前に上記マトリクスを記述するだけで、案 A の致命欠陥が事前検出可能だった。
+
+#### 規約 (枠数固定要件で実装着手前に必ずやる)
+
+1. **要件起票時に CRUD マトリクスを引く** (上記テンプレート)
+2. **欠落アクションがあればユーザに仕様調整を提案** (列追加 / アクション削除のいずれかを選択)
+3. **層構造を伴う entity は階層表現の列が必須** (level / parentId / wbsNumber 等)
+4. **設計微調整は §11 の TODO entry に「仕様微調整」として記録** (ユーザ承認後に実装着手)
+5. **commit message で「当初要件 N 列 → 仕様微調整で M 列確定」と明記** (将来のレビューで経緯追跡可能化)
+
+#### 一般化 (枠数固定の他パターン)
+
+- 「フィールド N 個のみ」(form) でも同じ: バリデーション / 関連 entity の参照 / 表示 で枠が足りるか
+- 「ボタン N 個のみ」(UI 統合) でも同じ: 主要操作 (作成 / 編集 / 削除 / インポート / エクスポート) を満たせるか
+- 「画面 N ページのみ」(IA) でも同じ: ユーザの主要ジャーニー全部が枠内に収まるか
+
+#### 関連
+
+- §11 T-19 (本ナレッジの起点)
+- §5.30 (master-data 値変更時の横展開) — 同じく「変更時の漏れ防止」3 兄弟の 1 つ
+- §5.28 (Prisma migration UPDATE 検証) — 同 3 兄弟の 1 つ
+- §10.5.1 (並列 worktree agents パターン) — 仕様分割の方法論
+
 ---
 
 ## 6. 機能削除の手順
@@ -4021,3 +4072,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-28 | E2E §4.44 新設 (PR #184 マージ直後の本番 P2022 障害)。**Vercel deploy 成功 + CI green でも本番が落ちる migration 未適用パターン**を常設化。本プロジェクトは Supabase IPv4 制約で `prisma migrate deploy` を Vercel build に組み込めず、SQL Editor 手動実行運用 (OPERATION §3.3)。PR #184 で `projects.contract_type` 列追加 migration の手動適用を失念 → 本番全画面で `P2022 ColumnNotFound`。検出フロー (Vercel runtime logs を error level で grep → P2022 / column 名 → migration 特定)、復旧手順 (`pnpm migrate:print` → SQL Editor 貼付)、適用状況確認クエリ (`SELECT FROM _prisma_migrations`)、5 つの落とし穴 (CI 検出不可 / 全画面波及 / カラム名は snake_case / 順序依存 / 二重実行禁止) を §4.44 にまとめた。§5.28 (migration UPDATE 検証) / §5.30 (validator 横展開) / §4.44 (PR マージ後 migration 適用) の **「変更時の漏れ防止」3 兄弟が出揃った** (validator 漏れ / migration 文法漏れ / migration 適用漏れ) |
 | 2026-04-28 | §11 T-19 完了 (WBS export/import 7 列化、PR-ζ follow-up)。**仕様微調整**: 当初要件「6 列のみ」に対し「ID 空欄行の新規作成で parent 解決不能」が判明、`level` 1 列を追加した **7 列** で確定 (ID/種別/名称/レベル/予定開始日/予定終了日/予定工数)。担当者/優先度/マイルストーン/備考/WBS 番号/進捗系列は CSV 非対応化、UI 個別編集に集約する運用に。**削除コード**: `exportWbsTemplate` (template mode 分岐含む) / `parseCsvTemplate` / `validateWbsTemplate` / `importWbsTemplate` / `wbsTemplateSchema` / `WbsTemplateTask` 型 / `/api/projects/[id]/tasks/import` route / `_handleExport_unused` 関数 + eslint-disable 領域。**新設**: `exportWbs` (7 列、BOM 付き UTF-8)、`WBS_CSV_HEADERS` 定数。**教訓 (KDD)**: 仕様起票時には階層構造を表す必要に気付きにくい。「枠数固定」(6 列など) で要件が来たときは **アクション 3 種 (CREATE/UPDATE/DELETE) 全てを満たせるか** を実装着手前に検証する習慣化が必要 → 本 KDD として §10.5 系の運用ルールに将来追加候補 |
 | 2026-04-28 | §11 T-21 完了 (永続ロック実装、PR-η バグ修正、§5.29 選択肢 A)。schema に `temporaryLockCount` 列追加 + `auth.ts` で一時ロック発生時に +1、`PERMANENT_LOCK_THRESHOLD=3` 到達で `permanentLock=true` 自動セット。ログイン成功時 + admin による `unlockAccount` 時には `temporaryLockCount=0` にリセット (前者は正規ユーザ復帰、後者は admin 確認後の再ログインを想定)。auth_event_logs の `lock` イベントに `lockType: 'temporary' \| 'permanent'` + 累積回数を detail で記録し追跡可能化。**本番適用**: migration `20260428_user_temporary_lock_count` を Supabase SQL Editor で手動実行が必要 (`ALTER TABLE users ADD COLUMN temporary_lock_count INTEGER NOT NULL DEFAULT 0;`)。E2E §4.44 教訓 (PR マージ後 migration 適用忘れ) の予防として commit message + 本 PR description に明記 |
+| 2026-04-28 | §5.31 新設 (T-19 の教訓 KDD 化、Stop hook 補正)。**枠数固定要件のアクション充足チェック**を運用ルール化。当初要件「6 列のみ」だった T-19 で「ID 空欄行の新規作成で parent 解決不能」が判明し `level` 1 列追加して 7 列確定する仕様微調整が発生した経験から、**枠数固定要件は CRUD マトリクス (CREATE/UPDATE/DELETE/階層保持/同名重複検知) を実装着手前に引く** ことを規約化。一般化として「フィールド N 個のみ」(form) /「ボタン N 個のみ」(UI 統合) /「画面 N ページのみ」(IA) でも同じパターンを適用。§5.28 / §5.30 / §4.44 の「変更時の漏れ防止 3 兄弟」と並ぶ「**仕様検証時の欠落防止**」ナレッジとして §5.31 を独立セクション化 |
