@@ -9,7 +9,9 @@ import {
 export const createEstimateSchema = z.object({
   itemName: z.string().min(1, '見積項目名を入力してください').max(NAME_MAX_LENGTH),
   category: z.enum(['requirements', 'design', 'development', 'testing', 'other']),
-  devMethod: z.enum(['scratch', 'power_platform', 'package', 'other']),
+  // PR-β / 項目 13 横展開: master-data.ts の DEV_METHODS と整合
+  // (旧 'power_platform' は migration で 'low_code_no_code' に一括変換済)
+  devMethod: z.enum(['scratch', 'low_code_no_code', 'package', 'other']),
   estimatedEffort: z.number().positive('見積工数は正の数で入力してください'),
   effortUnit: z.enum(['person_hour', 'person_day']),
   rationale: z.string().min(1, '見積根拠を入力してください').max(LONG_TEXT_MAX_LENGTH),
