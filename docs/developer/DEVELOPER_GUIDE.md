@@ -2127,6 +2127,62 @@ export function DateFieldWithActions({
 - §10.5 9 例目 (本セクションが §5.24 → §5.26 に繰り上がった conflict resolve の経緯)
 - `src/components/ui/date-field-with-actions.tsx` — 当該共通部品
 
+### 5.27 機能 deferral パターン: UI のみ削除、DB/API/service は温存 (PR #177 / 項目 10)
+
+#### 背景
+
+「将来再設計予定だが現時点では UI を出したくない機能」を扱うとき、機能を完全削除すると
+将来再有効化のコストが大きくなる。一方 UI を温存すると未完成機能が公開される。
+
+PR #177 (項目 10) で振り返りコメント機能を「将来 cross-list 横ぐしに再設計予定」のため
+**現時点では UI のみ非表示化、DB/API/service は温存** という選択をした。これは §6 (機能削除)
+とは異なる、**deferral (延期)** の専用パターン。
+
+#### パターン適用判断基準
+
+UI 削除のみ (deferral) を選ぶ条件:
+1. **将来再有効化が確定的** (TODO に登録済 or §11 に記載)
+2. **UI 削除でデータ損失が起きない** (DB / API は触らないため既存データは無傷)
+3. **API 直接呼び出しが残っても害がない** (認可は API 側で enforce 済)
+4. **再有効化コストが高い** (DB schema 復元 / migration / 認可ロジック復元)
+
+これらが揃わない場合は §6 (完全削除) を採用する。
+
+#### 実施手順
+
+```
+1. UI: 該当 JSX block を削除 (将来計画コメントを残す)
+2. UI: 関連 state / handler を削除 (commentText, handleComment 等)
+3. UI: prop 型から該当フィールドを削除し、caller 側も更新 (canComment 等)
+4. import 整理: unused import を削除 (Input, useFormatters 等)
+5. **温存**: API endpoint / service / DB schema は触らない
+6. **コメント追記**: API endpoint の冒頭に「項目 X で UI 非表示化、API は将来再利用予定」と記載
+7. §11 TODO に再有効化タスクを登録
+```
+
+#### grep 横展開チェックリスト
+
+UI 削除完了後、以下を実行して残存ゼロを確認:
+
+```bash
+grep -rn "<削除した変数/関数名>" src/ --include='*.ts' --include='*.tsx'
+# 該当ヒット = JSDoc コメント / API endpoint コメント のみなら OK (UI コードに残存していないこと)
+```
+
+JSDoc コメントに残った参照は **削除した文脈に応じて更新** (削除したことを明記、または「将来再利用」と記載)。
+
+#### PR #177 の例
+
+- **削除した UI**: 振り返りコメント (h4 + 一覧 + 入力フォーム) + state (`commentText`) + handler (`handleComment`) + prop (`canComment`)
+- **温存**: `POST /api/projects/[id]/retrospectives/[retroId]/comments` + `retro.comments` DTO + DB の `retrospective_comments` テーブル
+- **§11 TODO**: T-18 (cross-list 横ぐしコメント + 通知システム) として登録予定
+
+#### 関連
+
+- §6 (機能削除の手順) — 完全削除との対比
+- §11.1 T-18 (cross-list comment 再設計の TODO 起点)
+- §10.5 (deferral 経緯を追跡可能にする更新履歴管理)
+
 ---
 
 ## 6. 機能削除の手順
@@ -3689,6 +3745,7 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | T-05 | Estimate (見積もり) に添付 URL 登録 UI を追加 + 一覧表示 | API 経路 (`/api/attachments/batch` の `entityType === 'estimate'` 分岐) は対応済だが、**UI 経由の添付登録手段が無い**ため事実上未使用。`estimates-client.tsx` に `<StagedAttachmentsInput>` (作成時) + 編集 dialog 内の `<AttachmentList>` を追加し、見積一覧にも `useBatchAttachments('estimate', ...)` + `<AttachmentsCell>` を追加すれば他エンティティと parity が揃う。PR #168 で添付対応 entity 全体の一覧表示状態を網羅 grep し、estimate のみ「API 対応済 + UI 未対応」のギャップが判明 | 2026-04-27 PR #168 横展開調査時、ユーザ要望「添付できるものに関しては、一覧画面上に表示されているか影響調査し横展開を徹底」に部分対応。estimate の UI は別 PR で対応する宣言 |
 | T-06 | ~~**【外部公開直前必須】** en-US 本格翻訳~~ → **PR #170/#173/#174/#175 で大半完了 (~933 hits / 30+ ファイル / 24 sections / ~813 keys × 2 locales)。`SELECTABLE_LOCALES['en-US']=true` 切替済**。残り T-17 で対応 | PR #169 → #175 で実施。完了 |
 | T-17 | en-US 残 sweep (~104 hits / 完成度向上) | PR #175 マージ時点で抽出スクリプト残ヒット 約 104 件。内訳: (a) test ファイル `it('...')` 説明文 ~56 件 (ユーザ非表示、翻訳不要)、(b) API route の `throw new Error(...)` ~30 件 (エラー時のみ HTTP body に露出、UX 影響小)、(c) ユーザ可視の軽微な漏れ十数件 (「全リスク」「全課題」「全振り返り」が page heading 等 1 箇所ずつ、`削除` / `削除に失敗しました` 数箇所、admin/audit-logs などの新画面)。**着手手順**: `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` で残ヒットを再抽出 → ユーザ可視を優先で sweep → API error message を t() 化 → test 文言は据え置き or 規約化。各 commit 後に同スクリプトで残数を計測 | 2026-04-28 ユーザ要望「残りの英語化対応は今度実施するのでプランに追加」 |
+| T-18 | **【UX 統一 / 後続】** Cross-list 横ぐしコメント機能 + 通知システム | PR #177 で振り返りコメント UI を非表示化したが、API/DB/service は温存中。再有効化時の方針: 振り返り固有の inline コメントではなく、**全 entity 横断で統一仕様**「リスク/課題/振り返り/ナレッジ + メモに対して関係者がコメント可能、コメント時に対象 entity の作成者 / 担当者に通知 (in-app + email)」を実装する。**設計検討項目**: (1) 単一 `comments` テーブル + `entity_type` / `entity_id` 多態的参照 vs 既存 `retrospective_comments` を踏襲, (2) 通知 channel 設計 (Notification entity + 未読管理), (3) UI: 各 ○○ 詳細画面の右パネル / カード内 inline / 全リスト画面横ぐしビューのいずれを最終形にするか。**着手目安**: 各 entity 仕様 (T-04 視覚回帰 / T-15/T-16 横断画面など) が揃った後 | 2026-04-28 ユーザ要望「振り返りのコメント機能は今後強化する予定 / 各○○一覧で横ぐしに実現したい / コメントがされたら通知される仕組み」を踏まえ、PR #177 で UI 非表示化と同時に T-18 として登録 |
 
 ### 11.2 低優先 (長期案件)
 
@@ -3777,3 +3834,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-27 | §10.5 再発事例 10 例目 + 運用ルール 9 を追記 (PR #170 orphan recovery / PR #173)。PR #170 (Phase C-1 認証 i18n) は base=feat/i18n-foundation で起票された stacked PR で、PR #169 が main にマージされた直後に **base が孤児化** → PR #170 の merge commit (6a88075) は `feat/i18n-foundation` 側に残るのみで main の first-parent history に含まれない orphan 状態となった。**GitHub UI は MERGED 表示 + mergeCommit OID も持つため発覚が遅れる**点が極めて危険で、Phase C-2 着手時の grep `git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件で初めて検出。CI fail を伴わず merged 表示も出るため自動検出は困難。Recovery は origin/main から新規 branch を切って元 PR の 3 commits (73b6a4b → 526c2fc → 981ef5d) を順次 cherry-pick。運用ルール 9「stacked PR の上流が main マージされたら下流の base を main に切替える (`gh pr edit <PR> --base main`)」と「GitHub UI のマージ画面で base 確認を徹底」を §10.5 に新設 |
 | 2026-04-27 | §10.5 9 例目 4 回目再発 (PR #172 / PR #173 conflict resolve)。PR #172 (運用ルール 8a) と PR #173 (10 例目 + 運用ルール 9) の更新履歴行が末尾位置で衝突 → 番号順 (8a → 10 例目) で両方残す機械解消。1 セッション中に §10.5 9 例目が 4 回適用された (#168 / #169 / #171 / #173) が、**運用ルール 8 通り毎回機械解消で済むことが実証**され、並走 PR を恐れる必要がないことが再確認された |
 | 2026-04-28 | §10.5.1 新設 (PR #175 / feat/i18n-phase-c-final)。**並列 worktree agents による大規模一括翻訳パターン**を確立。Phase C 残 ~933 hits を 5 isolated worktree agents に分担 (project / wbs / risk / memo / admin) し、各 namespace を独立追加することで JSON 衝突を回避。**3 つの落とし穴**を §10.5.1 に明文化: (1) worktree の `.next/` ビルド成果物が ESLint で誤検出 (58529 problems の偽陽性、git worktree remove + 物理削除 + ESLint ignore で解消)、(2) `pg` symlink 破損 (`pnpm install --force` で復旧)、(3) agent 残作業 (residual cleanup) のセッション越境管理。§11 T-17 として残 ~104 hits の sweep を計画化 (test 文言 / API error message / 軽微な漏れ) |
+| 2026-04-28 | §5.27 新設 + §11 T-18 登録 (PR #177 / chore/hide-retro-comment-and-memo-filter)。**機能 deferral パターン**「UI のみ削除、DB/API/service は温存」を §6 (完全削除) と並ぶ独立パターンとして明文化。PR #177 で振り返りコメント機能を本パターンで非表示化 (将来 T-18 cross-list 横ぐし再設計予定)。適用判断基準 4 項目 (再有効化確定 / データ無傷 / API 直接呼び出し OK / 再有効化コスト高) と、UI 削除 → state 削除 → prop 整理 → import 整理 → 温存 → コメント追記 → §11 TODO 登録 の 7 step 手順を明示。grep 横展開チェックでは「JSDoc / API endpoint comment は削除した文脈で更新する」運用も合わせて規定 |

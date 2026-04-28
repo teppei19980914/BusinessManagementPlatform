@@ -249,6 +249,8 @@ export function MemosClient({
         visibilityOptions={MEMO_VISIBILITY_OPTIONS}
         entityLabel={tMemo('entityLabel')}
         onApplied={async () => { await reload(); }}
+        // メモ一覧は対象が自分作成のみ編集可能なため、mineOnly フィルターは冗長 (項目 17)
+        hideMineOnlyFilter
       />
 
       <div className="flex items-center justify-between">
