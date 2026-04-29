@@ -11,8 +11,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
-import { AttachmentList } from '@/components/attachments/attachment-list';
-import { SingleUrlField } from '@/components/attachments/single-url-field';
+import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
@@ -182,28 +181,18 @@ export function KnowledgeEditDialog({
             />
           </div>
           </fieldset>
-          {/* PR #64 Phase 2: 一次情報源 URL (単数) + 参考リンク (複数)。
-              fix/attachment-list-non-member-403: readOnly モード時は非メンバーが多数のため
-              attachment fetch で 403 が出る (§5.10 違反)。readOnly では非表示にする。
-              SingleUrlField も同じ /api/attachments を叩くため同じ理由で非表示。 */}
-          {!readOnly && (
-            <>
-              <SingleUrlField
-                entityType="knowledge"
-                entityId={knowledge.id}
-                slot="source"
-                canEdit
-                label={tKnowledge('primarySourceUrl')}
-                defaultDisplayName={tKnowledge('officialDoc')}
-              />
-              <AttachmentList
-                entityType="knowledge"
-                entityId={knowledge.id}
-                canEdit
-                label={tKnowledge('referenceLinks')}
-              />
-            </>
-          )}
+          {/* Phase E 共通化: DialogAttachmentSection に集約 (旧来は SingleUrlField +
+              AttachmentList を inline で並べていた。readOnly 時の §5.10 非表示も内部処理) */}
+          <DialogAttachmentSection
+            entityType="knowledge"
+            entityId={knowledge.id}
+            readOnly={readOnly}
+            source={{
+              label: tKnowledge('primarySourceUrl'),
+              defaultDisplayName: tKnowledge('officialDoc'),
+            }}
+            mainLabel={tKnowledge('referenceLinks')}
+          />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>

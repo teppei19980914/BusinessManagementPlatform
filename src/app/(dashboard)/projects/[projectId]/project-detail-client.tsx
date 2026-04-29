@@ -23,6 +23,8 @@
  */
 
 import { useCallback, useState } from 'react';
+// Phase E 要件 1〜3 (2026-04-29): 共通クリッカブルカード部品
+import { ClickableCard } from '@/components/common/clickable-row';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Menu } from '@base-ui/react/menu';
@@ -603,10 +605,12 @@ export function ProjectDetailClient({
             (admin 許可は PR-A 側のスコープなので、本 PR では isActualPmTl ベース) */}
         <TabsContent value="overview" className="mt-4 space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
-            <div
-              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-              onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
+            <ClickableCard
+              active={isActualPmTl}
+              subtle
+              className="rounded-lg border p-4"
+              onClick={openEditDialog}
+              title={t('overviewClickToEdit')}
             >
               <h3 className="mb-2 font-semibold">{t('overviewBasicInfo')}</h3>
               <dl className="space-y-2 text-sm">
@@ -640,31 +644,37 @@ export function ProjectDetailClient({
                   <dd>{project.plannedEndDate}</dd>
                 </div>
               </dl>
-            </div>
-            <div
-              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-              onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
+            </ClickableCard>
+            <ClickableCard
+              active={isActualPmTl}
+              subtle
+              className="rounded-lg border p-4"
+              onClick={openEditDialog}
+              title={t('overviewClickToEdit')}
             >
               <h3 className="mb-2 font-semibold">{t('fieldPurpose')}</h3>
               <div className="text-sm text-foreground">
                 <MarkdownDisplay value={project.purpose} />
               </div>
-            </div>
-            <div
-              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-              onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
+            </ClickableCard>
+            <ClickableCard
+              active={isActualPmTl}
+              subtle
+              className="rounded-lg border p-4"
+              onClick={openEditDialog}
+              title={t('overviewClickToEdit')}
             >
               <h3 className="mb-2 font-semibold">{t('fieldBackground')}</h3>
               <div className="text-sm text-foreground">
                 <MarkdownDisplay value={project.background} />
               </div>
-            </div>
-            <div
-              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-              onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
+            </ClickableCard>
+            <ClickableCard
+              active={isActualPmTl}
+              subtle
+              className="rounded-lg border p-4"
+              onClick={openEditDialog}
+              title={t('overviewClickToEdit')}
             >
               <h3 className="mb-2 font-semibold">{t('fieldScope')}</h3>
               <div className="text-sm text-foreground">
@@ -678,14 +688,16 @@ export function ProjectDetailClient({
                   </div>
                 </>
               )}
-            </div>
+            </ClickableCard>
           </div>
           {/* feat/overview-tab-detail (PR-B item 3): 業務ドメイン/技術スタック/工程の 3 タグセクション (新設) */}
           <div className="grid gap-6 md:grid-cols-3">
-            <div
-              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-              onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
+            <ClickableCard
+              active={isActualPmTl}
+              subtle
+              className="rounded-lg border p-4"
+              onClick={openEditDialog}
+              title={t('overviewClickToEdit')}
             >
               <h3 className="mb-2 font-semibold">{t('fieldBusinessDomainTags')}</h3>
               {project.businessDomainTags.length > 0 ? (
@@ -697,11 +709,13 @@ export function ProjectDetailClient({
               ) : (
                 <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
               )}
-            </div>
-            <div
-              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-              onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
+            </ClickableCard>
+            <ClickableCard
+              active={isActualPmTl}
+              subtle
+              className="rounded-lg border p-4"
+              onClick={openEditDialog}
+              title={t('overviewClickToEdit')}
             >
               <h3 className="mb-2 font-semibold">{t('fieldTechStackTags')}</h3>
               {project.techStackTags.length > 0 ? (
@@ -713,11 +727,13 @@ export function ProjectDetailClient({
               ) : (
                 <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
               )}
-            </div>
-            <div
-              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-              onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
+            </ClickableCard>
+            <ClickableCard
+              active={isActualPmTl}
+              subtle
+              className="rounded-lg border p-4"
+              onClick={openEditDialog}
+              title={t('overviewClickToEdit')}
             >
               <h3 className="mb-2 font-semibold">{t('fieldProcessTags')}</h3>
               {project.processTags.length > 0 ? (
@@ -729,19 +745,21 @@ export function ProjectDetailClient({
               ) : (
                 <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
               )}
-            </div>
+            </ClickableCard>
           </div>
           {project.notes && (
-            <div
-              className={`rounded-lg border p-4 ${isActualPmTl ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-              onClick={isActualPmTl ? openEditDialog : undefined}
-              title={isActualPmTl ? t('overviewClickToEdit') : undefined}
+            <ClickableCard
+              active={isActualPmTl}
+              subtle
+              className="rounded-lg border p-4"
+              onClick={openEditDialog}
+              title={t('overviewClickToEdit')}
             >
               <h3 className="mb-2 font-semibold">{t('fieldNotes')}</h3>
               <div className="text-sm text-foreground">
                 <MarkdownDisplay value={project.notes} />
               </div>
-            </div>
+            </ClickableCard>
           )}
 
           {/* PR #64 Phase 2: プロジェクト関連 URL (メインドキュメント 1 本 + 参考資料 複数) */}

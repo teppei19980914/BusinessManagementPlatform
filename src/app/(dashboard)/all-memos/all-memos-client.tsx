@@ -32,13 +32,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  Table, TableBody, TableCell, TableHeader, TableRow,
+  TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
-import {
-  ResizableColumnsProvider,
-  ResizableHead,
-  ResetColumnsButton,
-} from '@/components/ui/resizable-columns';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
@@ -46,6 +43,8 @@ import { useFormatters } from '@/lib/use-formatters';
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import type { MemoDTO } from '@/services/memo.service';
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
+import { ClickableRow } from '@/components/common/clickable-row';
 
 export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
   const tField = useTranslations('field');
@@ -67,11 +66,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
         <span className="text-sm text-muted-foreground">{tMemo('count', { count: memos.length })}</span>
       </div>
 
-      <ResizableColumnsProvider tableKey="all-memos-readonly">
-        <div className="flex justify-end pb-2">
-          <ResetColumnsButton />
-        </div>
-        <Table>
+      <ResizableTableShell tableKey="all-memos-readonly">
           <TableHeader>
             <TableRow>
               <ResizableHead columnKey="title" defaultWidth={220}>{tField('title')}</ResizableHead>
@@ -83,9 +78,8 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
           </TableHeader>
           <TableBody>
             {memos.map((m) => (
-              <TableRow
+              <ClickableRow
                 key={m.id}
-                className="cursor-pointer hover:bg-muted"
                 onClick={() => setViewing(m)}
               >
                 <TableCell className="font-medium">{m.title}</TableCell>
@@ -102,7 +96,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
                 </TableCell>
-              </TableRow>
+              </ClickableRow>
             ))}
             {memos.length === 0 && (
               <TableRow>
@@ -113,8 +107,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
               </TableRow>
             )}
           </TableBody>
-        </Table>
-      </ResizableColumnsProvider>
+      </ResizableTableShell>
 
       {/* 詳細ダイアログ (read-only) */}
       <Dialog open={viewing != null} onOpenChange={(o) => { if (!o) setViewing(null); }}>

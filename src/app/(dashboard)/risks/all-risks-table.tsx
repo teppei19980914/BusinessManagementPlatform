@@ -29,7 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import {
-  Table, TableBody, TableCell, TableHeader, TableRow,
+  TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
 import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES } from '@/types';
@@ -38,13 +38,13 @@ import type { MemberDTO } from '@/services/member.service';
 import { AdminRiskDeleteButton } from './admin-delete-button';
 import { useFormatters } from '@/lib/use-formatters';
 import { matchesAnyKeyword } from '@/lib/text-search';
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック + フィルタバー部品
+import { ClickableRow } from '@/components/common/clickable-row';
+import { FilterBar } from '@/components/common/filter-bar';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
-import {
-  ResizableColumnsProvider,
-  ResizableHead,
-  ResetColumnsButton,
-} from '@/components/ui/resizable-columns';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 
 const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
   risk: 'outline',
@@ -114,9 +114,9 @@ export function AllRisksTable({
   }
 
   return (
-    <ResizableColumnsProvider tableKey="all-risks">
+    <>
       {/* PR-δ / 項目 12: 検索 + フィルタ (○○一覧と同 UX に揃える) */}
-      <div className="rounded-md border bg-muted/30 p-3 mb-3">
+      <FilterBar className="mb-3">
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
           <div className="md:col-span-2">
             <Label htmlFor={`all-risks-filter-keyword-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('keyword')}</Label>
@@ -152,11 +152,8 @@ export function AllRisksTable({
             </select>
           </div>
         </div>
-      </div>
-      <div className="flex justify-end pb-2">
-        <ResetColumnsButton />
-      </div>
-      <Table>
+      </FilterBar>
+      <ResizableTableShell tableKey="all-risks">
         <TableHeader>
           <TableRow>
             <ResizableHead columnKey="project" defaultWidth={140}>{tRisk('project')}</ResizableHead>
@@ -177,9 +174,8 @@ export function AllRisksTable({
         </TableHeader>
         <TableBody>
           {filteredRisks.map((r) => (
-            <TableRow
+            <ClickableRow
               key={r.id}
-              className="cursor-pointer hover:bg-muted"
               onClick={() => handleRowClick(r)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
@@ -237,7 +233,7 @@ export function AllRisksTable({
                   />
                 </TableCell>
               )}
-            </TableRow>
+            </ClickableRow>
           ))}
           {filteredRisks.length === 0 && (
             <TableRow>
@@ -249,7 +245,7 @@ export function AllRisksTable({
             </TableRow>
           )}
         </TableBody>
-      </Table>
+      </ResizableTableShell>
 
       <RiskEditDialog
         risk={editingRisk}
@@ -260,6 +256,6 @@ export function AllRisksTable({
         // 2026-04-24 + PR #165: 全リスク/全課題は編集不可 (読み取り専用)。編集は ○○一覧 経由。
         readOnly={true}
       />
-    </ResizableColumnsProvider>
+    </>
   );
 }

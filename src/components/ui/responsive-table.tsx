@@ -43,6 +43,8 @@
 import * as React from 'react';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
+// Phase E (2026-04-29): hover 表現を共通定数で統一 (cursor-pointer hover:bg-muted)
+import { CLICKABLE_HOVER_CLASS } from '@/components/common/clickable-row';
 
 export type ResponsiveTableColumn<T> = {
   /** 列の識別子 (React key 用、consumer 側で固定文字列) */
@@ -129,7 +131,7 @@ export function ResponsiveTable<T>({
                   key={getRowKey(item)}
                   className={cn(
                     'border-b transition-colors',
-                    clickable && 'cursor-pointer hover:bg-muted',
+                    clickable && CLICKABLE_HOVER_CLASS,
                   )}
                   onClick={clickable ? () => onRowClick!(item) : undefined}
                 >
