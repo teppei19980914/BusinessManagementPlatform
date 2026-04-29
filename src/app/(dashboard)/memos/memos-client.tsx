@@ -14,7 +14,6 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,14 +26,11 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
-  Table, TableBody, TableCell, TableHeader, TableRow,
+  TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
-import {
-  ResizableColumnsProvider,
-  ResizableHead,
-  ResetColumnsButton,
-} from '@/components/ui/resizable-columns';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import {
   StagedAttachmentsInput,
@@ -46,6 +42,10 @@ import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 // PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
 import { matchesAnyKeyword } from '@/lib/text-search';
+// Phase E 要件 1〜3 (2026-04-29): 共通バッジ + 行クリック + 一括選択部品
+import { VisibilityBadge } from '@/components/common/visibility-badge';
+import { ClickableRow } from '@/components/common/clickable-row';
+import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
@@ -323,21 +323,15 @@ export function MemosClient({
         </div>
       </div>
 
-      <ResizableColumnsProvider tableKey="all-memos">
-        <div className="flex justify-end pb-2">
-          <ResetColumnsButton />
-        </div>
-        <Table>
+      <ResizableTableShell tableKey="all-memos">
           <TableHeader>
             <TableRow>
               <ResizableHead columnKey="select" defaultWidth={36}>
-                <input
-                  type="checkbox"
-                  aria-label={tMemo('selectAllEditable')}
-                  checked={allSelectableSelected}
-                  disabled={selectableIds.length === 0}
-                  onChange={toggleAllMemos}
-                  className="rounded"
+                <BulkSelectHeader
+                  allSelected={allSelectableSelected}
+                  totalSelectable={selectableIds.length}
+                  onToggleAll={toggleAllMemos}
+                  ariaLabel={tMemo('selectAllEditable')}
                 />
               </ResizableHead>
               <ResizableHead columnKey="title" defaultWidth={220}>{tField('title')}</ResizableHead>
@@ -351,32 +345,28 @@ export function MemosClient({
           </TableHeader>
           <TableBody>
             {filteredMemos.map((m) => (
-              <TableRow
+              <ClickableRow
                 key={m.id}
-                className={m.isMine ? 'cursor-pointer hover:bg-muted' : ''}
-                onClick={m.isMine ? () => setEditing(m) : undefined}
+                active={m.isMine}
+                onClick={() => setEditing(m)}
               >
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  {m.isMine ? (
-                    <input
-                      type="checkbox"
-                      aria-label={tMemo('bulkSelectLabel', { title: m.title })}
-                      checked={selectedIds.has(m.id)}
-                      onChange={() => toggleOneMemo(m.id)}
-                      className="rounded"
-                    />
-                  ) : (
-                    <span className="text-xs text-muted-foreground">-</span>
-                  )}
+                  <BulkSelectCell
+                    canSelect={m.isMine}
+                    selected={selectedIds.has(m.id)}
+                    onToggle={() => toggleOneMemo(m.id)}
+                    ariaLabel={tMemo('bulkSelectLabel', { title: m.title })}
+                  />
                 </TableCell>
                 <TableCell className="font-medium">{m.title}</TableCell>
                 <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 80)}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={m.visibility === 'public' ? 'default' : 'outline'}>
-                    {VISIBILITY_LABELS[m.visibility] ?? m.visibility}
-                  </Badge>
+                  <VisibilityBadge
+                    visibility={m.visibility}
+                    label={VISIBILITY_LABELS[m.visibility] ?? m.visibility}
+                  />
                 </TableCell>
                 {/* PR #71: /memos 画面は常に自分のメモのみ表示されるため (自分) バッジは省略 */}
                 <TableCell className="text-sm text-muted-foreground">{m.authorName ?? '-'}</TableCell>
@@ -391,7 +381,7 @@ export function MemosClient({
                     <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>{tAction('delete')}</Button>
                   )}
                 </TableCell>
-              </TableRow>
+              </ClickableRow>
             ))}
             {filteredMemos.length === 0 && (
               <TableRow>
@@ -401,8 +391,7 @@ export function MemosClient({
               </TableRow>
             )}
           </TableBody>
-        </Table>
-      </ResizableColumnsProvider>
+      </ResizableTableShell>
 
       {/* 編集ダイアログ (自分のメモのみ開く) */}
       <Dialog open={editing != null} onOpenChange={(o) => { if (!o) setEditing(null); }}>

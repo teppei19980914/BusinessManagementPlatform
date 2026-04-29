@@ -31,6 +31,10 @@ import {
 } from '@/components/ui/dialog';
 import { Trash2 } from 'lucide-react';
 import { matchesAnyKeyword } from '@/lib/text-search';
+// Phase E 要件 1〜3 (2026-04-29): 共通バッジ + クリッカブルカード + 一括選択部品
+import { VisibilityBadge } from '@/components/common/visibility-badge';
+import { ClickableCard } from '@/components/common/clickable-row';
+import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
 import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 // fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
@@ -73,11 +77,6 @@ type Props = {
   onReload: () => Promise<void> | void;
 };
 
-const visibilityColors: Record<string, 'default' | 'secondary' | 'outline'> = {
-  draft: 'outline',
-  project: 'secondary',
-  company: 'default',
-};
 
 /**
  * プロジェクト詳細「ナレッジ一覧」タブのクライアントコンポーネント。
@@ -364,13 +363,11 @@ export function ProjectKnowledgeClient({
       />
 
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <input
-          type="checkbox"
-          checked={allKnowledgeSelected}
-          disabled={selectableKnowledgeIds.length === 0}
-          onChange={toggleAllKnowledge}
-          className="rounded"
-          aria-label={tKnowledge('selectAllOwn')}
+        <BulkSelectHeader
+          allSelected={allKnowledgeSelected}
+          totalSelectable={selectableKnowledgeIds.length}
+          onToggleAll={toggleAllKnowledge}
+          ariaLabel={tKnowledge('selectAllOwn')}
         />
         {tKnowledge('selectAllOwn')} ({tKnowledge('countUnit', { count: selectableKnowledgeIds.length })})
       </div>
@@ -382,33 +379,34 @@ export function ProjectKnowledgeClient({
           {filteredKnowledges.map((k) => {
             const isOwner = k.createdBy === currentUserId;
             return (
-            <div
+            <ClickableCard
               key={k.id}
-              // Phase B 要件 5 (2026-04-28): カードクリックで dialog を開く動作は全員で active 化。
-              //   詳細閲覧目的を含み、編集可否は dialog の readOnly prop で分岐する。
-              className="rounded border p-3 cursor-pointer hover:bg-muted"
+              // Phase B 要件 5 (2026-04-28) + Phase E 共通化: カードクリックで dialog を開く
+              //   動作は全員で active 化。詳細閲覧目的を含み、編集可否は dialog の readOnly prop
+              //   で分岐する。hover 強度はテーブル行と同じ (subtle 不指定)。
+              className="rounded border p-3"
               onClick={() => setEditingKnowledge(k)}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    {isOwner && (
-                      <input
-                        type="checkbox"
-                        aria-label={tKnowledge('addToBulkEdit', { title: k.title })}
-                        checked={selectedIds.has(k.id)}
-                        onChange={(e) => { e.stopPropagation(); toggleOneKnowledge(k.id); }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="rounded"
-                      />
-                    )}
+                    <BulkSelectCell
+                      canSelect={isOwner}
+                      hidePlaceholderWhenDisabled
+                      stopPropagation
+                      selected={selectedIds.has(k.id)}
+                      onToggle={() => toggleOneKnowledge(k.id)}
+                      ariaLabel={tKnowledge('addToBulkEdit', { title: k.title })}
+                    />
                     <span className="font-medium">{k.title}</span>
                     <Badge variant="secondary" className="text-xs">
                       {KNOWLEDGE_TYPES[k.knowledgeType as keyof typeof KNOWLEDGE_TYPES] || k.knowledgeType}
                     </Badge>
-                    <Badge variant={visibilityColors[k.visibility] || 'outline'} className="text-xs">
-                      {VISIBILITIES[k.visibility as keyof typeof VISIBILITIES] || k.visibility}
-                    </Badge>
+                    <VisibilityBadge
+                      visibility={k.visibility}
+                      label={VISIBILITIES[k.visibility as keyof typeof VISIBILITIES] || k.visibility}
+                      className="text-xs"
+                    />
                     {k.creatorName && (
                       <span className="text-xs text-muted-foreground">作成: {k.creatorName}</span>
                     )}
@@ -432,7 +430,7 @@ export function ProjectKnowledgeClient({
                   </Button>
                 )}
               </div>
-            </div>
+            </ClickableCard>
             );
           })}
         </div>

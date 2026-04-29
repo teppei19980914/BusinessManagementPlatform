@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
-import { AttachmentList } from '@/components/attachments/attachment-list';
+import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
@@ -154,17 +154,13 @@ export function RetrospectiveEditDialog({
             </div>
           ))}
           </fieldset>
-          {/* PR #64 Phase 2: 議事録・発表資料等の関連 URL。
-              fix/attachment-list-non-member-403: readOnly モード時は非メンバーが多数のため
-              attachment fetch で 403 が出る (§5.10 違反)。readOnly では非表示にする。 */}
-          {!readOnly && (
-            <AttachmentList
-              entityType="retrospective"
-              entityId={retro.id}
-              canEdit
-              label={tRetro('relatedUrl')}
-            />
-          )}
+          {/* Phase E 共通化: DialogAttachmentSection に集約。readOnly 非表示は §5.10 由来 */}
+          <DialogAttachmentSection
+            entityType="retrospective"
+            entityId={retro.id}
+            readOnly={readOnly}
+            mainLabel={tRetro('relatedUrl')}
+          />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>

@@ -1480,7 +1480,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         - 日付・操作列の whitespace-nowrap は保持（「2026-」等の折返し防止）
         - 名称列のみ折返し許容（長い名前に対応）
       */}
-      {/* PR #128a-2: PC (md+) は既存 Table + ResizableColumnsProvider を維持 (PC UX 変更なし) */}
+      {/* PR #128a-2: PC (md+) は既存 Table + ResizableColumnsProvider を維持 (PC UX 変更なし)
+          Phase E (2026-04-29): tasks-client は WBS 用に native `<table>` (shadcn `<Table>` 不使用)
+          のため共通 ResizableTableShell の対象外。Provider + ResetColumnsButton は直接記述する。 */}
       <div className="hidden md:block">
         <ResizableColumnsProvider tableKey="project-tasks">
           <div className="flex justify-end pb-2">
