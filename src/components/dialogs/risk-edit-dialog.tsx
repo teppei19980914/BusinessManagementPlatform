@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { IMPACT_LEVELS, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import { NAME_MAX_LENGTH, MEDIUM_TEXT_MAX_LENGTH } from '@/config';
-import { AttachmentList } from '@/components/attachments/attachment-list';
+import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
@@ -238,21 +238,13 @@ export function RiskEditDialog({
             <DateFieldWithActions value={form.deadline} onChange={(v) => setForm({ ...form, deadline: v })} />
           </div>
           </fieldset>
-          {/* PR #64 Phase 2: 関連 URL (エビデンス・証跡・関連チケット等)。
-              fix/attachment-list-non-member-403: readOnly モード (= 全リスク/全課題等の
-              横断ビューから開いた場合) は非メンバーが多数を占めるため、添付 fetch を行うと
-              `/api/attachments?entityType=risk&...` が 403 を返してブラウザ Console に
-              エラーが出力される (§5.10 エラー情報最小化方針違反)。読み取り権限緩和は
-              future work、現状は readOnly 時に AttachmentList 自体を非表示にする。
-              プロジェクト個別画面 (readOnly=false 経路) では従来通り表示・編集可。 */}
-          {!readOnly && (
-            <AttachmentList
-              entityType="risk"
-              entityId={risk.id}
-              canEdit
-              label={tRisk('relatedUrl')}
-            />
-          )}
+          {/* Phase E 共通化: DialogAttachmentSection に集約。readOnly 非表示は §5.10 由来 */}
+          <DialogAttachmentSection
+            entityType="risk"
+            entityId={risk.id}
+            readOnly={readOnly}
+            mainLabel={tRisk('relatedUrl')}
+          />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
         </form>
       </DialogContent>

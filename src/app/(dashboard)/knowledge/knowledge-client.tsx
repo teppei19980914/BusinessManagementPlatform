@@ -32,7 +32,6 @@ import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -50,13 +49,12 @@ import { KNOWLEDGE_TYPES } from '@/types';
 import type { AllKnowledgeDTO } from '@/services/knowledge.service';
 import { useFormatters } from '@/lib/use-formatters';
 import { matchesAnyKeyword } from '@/lib/text-search';
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
+import { ClickableRow } from '@/components/common/clickable-row';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
-import {
-  ResizableColumnsProvider,
-  ResizableHead,
-  ResetColumnsButton,
-} from '@/components/ui/resizable-columns';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { AdminKnowledgeDeleteButton } from './admin-delete-button';
 
 type Props = {
@@ -122,11 +120,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
         </Select>
       </div>
 
-      <ResizableColumnsProvider tableKey="all-knowledge">
-        <div className="flex justify-end pb-2">
-          <ResetColumnsButton />
-        </div>
-        <Table>
+      <ResizableTableShell tableKey="all-knowledge">
           <TableHeader>
             <TableRow>
               <ResizableHead columnKey="project" defaultWidth={140}>{tKnowledge('project')}</ResizableHead>
@@ -144,9 +138,8 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
           </TableHeader>
           <TableBody>
             {filtered.map((k) => (
-              <TableRow
+              <ClickableRow
                 key={k.id}
-                className="cursor-pointer hover:bg-muted"
                 onClick={() => setEditingKnowledge(k)}
               >
                 <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
@@ -202,7 +195,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
                     <AdminKnowledgeDeleteButton knowledgeId={k.id} label={k.title} />
                   </TableCell>
                 )}
-              </TableRow>
+              </ClickableRow>
             ))}
             {filtered.length === 0 && (
               <TableRow>
@@ -212,8 +205,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
               </TableRow>
             )}
           </TableBody>
-        </Table>
-      </ResizableColumnsProvider>
+      </ResizableTableShell>
 
       <KnowledgeEditDialog
         knowledge={editingKnowledge}

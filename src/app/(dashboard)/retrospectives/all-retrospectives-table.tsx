@@ -25,20 +25,20 @@ import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Table, TableBody, TableCell, TableHeader, TableRow,
+  TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
 import type { AllRetroDTO } from '@/services/retrospective.service';
 import { AdminRetrospectiveDeleteButton } from './admin-delete-button';
 import { useFormatters } from '@/lib/use-formatters';
 import { matchesAnyKeyword } from '@/lib/text-search';
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック + フィルタバー部品
+import { ClickableRow } from '@/components/common/clickable-row';
+import { FilterBar } from '@/components/common/filter-bar';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
-import {
-  ResizableColumnsProvider,
-  ResizableHead,
-  ResetColumnsButton,
-} from '@/components/ui/resizable-columns';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 
 export function AllRetrospectivesTable({
   retros,
@@ -75,9 +75,9 @@ export function AllRetrospectivesTable({
   );
 
   return (
-    <ResizableColumnsProvider tableKey="all-retrospectives">
+    <>
       {/* PR-δ / 項目 12: 検索フィルタ (○○一覧と同 UX に揃える) */}
-      <div className="rounded-md border bg-muted/30 p-3 mb-3">
+      <FilterBar className="mb-3">
         <div>
           <Label htmlFor="all-retros-filter-keyword" className="text-xs">{tRetro('keyword')}</Label>
           <Input
@@ -87,11 +87,8 @@ export function AllRetrospectivesTable({
             placeholder={tRetro('keywordPlaceholder')}
           />
         </div>
-      </div>
-      <div className="flex justify-end pb-2">
-        <ResetColumnsButton />
-      </div>
-      <Table>
+      </FilterBar>
+      <ResizableTableShell tableKey="all-retrospectives">
         <TableHeader>
           <TableRow>
             <ResizableHead columnKey="project" defaultWidth={140}>{tRetro('project')}</ResizableHead>
@@ -110,9 +107,8 @@ export function AllRetrospectivesTable({
         </TableHeader>
         <TableBody>
           {filteredRetros.map((r) => (
-            <TableRow
+            <ClickableRow
               key={r.id}
-              className="cursor-pointer hover:bg-muted"
               onClick={() => setEditingRetro(r)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
@@ -154,7 +150,7 @@ export function AllRetrospectivesTable({
                   />
                 </TableCell>
               )}
-            </TableRow>
+            </ClickableRow>
           ))}
           {filteredRetros.length === 0 && (
             <TableRow>
@@ -164,7 +160,7 @@ export function AllRetrospectivesTable({
             </TableRow>
           )}
         </TableBody>
-      </Table>
+      </ResizableTableShell>
 
       <RetrospectiveEditDialog
         retro={editingRetro}
@@ -174,6 +170,6 @@ export function AllRetrospectivesTable({
         // 2026-04-24 + PR #165: 全振り返りは編集不可 (読み取り専用)。編集は ○○一覧 経由。
         readOnly={true}
       />
-    </ResizableColumnsProvider>
+    </>
   );
 }

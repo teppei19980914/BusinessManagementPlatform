@@ -27,6 +27,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { useLoading } from '@/components/loading-overlay';
+// Phase E 要件 1〜3 (2026-04-29): フィルタバー shell 部品
+import { FilterBar } from '@/components/common/filter-bar';
 
 export type CrossListFilterState = {
   keyword: string;
@@ -112,11 +114,8 @@ export function CrossListBulkVisibilityToolbar({
 
   return (
     <>
-      {/* フィルター UI */}
-      <div className="rounded-md border bg-muted/30 p-3">
-        <div className="mb-2 flex items-center gap-2">
-          <span className="text-sm font-medium">{t('filterTitle')}</span>
-        </div>
+      {/* フィルター UI (Phase E 共通化: FilterBar shell に集約) */}
+      <FilterBar title={t('filterTitle')}>
         <div className={hideMineOnlyFilter ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-1 gap-2 md:grid-cols-3'}>
           <div className={hideMineOnlyFilter ? '' : 'md:col-span-2'}>
             <Label htmlFor={`${formIdPrefix}-filter-keyword`} className="text-xs">{t('keywordLabel')}</Label>
@@ -141,7 +140,7 @@ export function CrossListBulkVisibilityToolbar({
             </div>
           )}
         </div>
-      </div>
+      </FilterBar>
 
       {/* 一括編集ツールバー (Phase C 要件 18: フィルター有無に関わらず常時表示) */}
       <div className="flex items-center justify-between gap-2 py-2">

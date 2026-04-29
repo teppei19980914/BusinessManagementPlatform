@@ -31,6 +31,10 @@ import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { Button } from '@/components/ui/button';
 import { matchesAnyKeyword } from '@/lib/text-search';
+// Phase E 要件 1〜3 (2026-04-29): 共通バッジ + クリッカブルカード + 一括選択部品
+import { VisibilityBadge } from '@/components/common/visibility-badge';
+import { ClickableCard } from '@/components/common/clickable-row';
+import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import {
@@ -316,13 +320,11 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
       />
 
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <input
-          type="checkbox"
-          checked={allRetrosSelected}
-          disabled={selectableRetroIds.length === 0}
-          onChange={toggleAllRetros}
-          className="rounded"
-          aria-label={tRetro('selectAllOwn')}
+        <BulkSelectHeader
+          allSelected={allRetrosSelected}
+          totalSelectable={selectableRetroIds.length}
+          onToggleAll={toggleAllRetros}
+          ariaLabel={tRetro('selectAllOwn')}
         />
         {tRetro('selectAllOwn')} ({selectableRetroIds.length})
       </div>
@@ -335,25 +337,24 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
         // 2026-04-24: 作成者本人のみ編集/確定/削除可
         const isOwner = retro.createdBy === currentUserId;
         return (
-        <div
+        <ClickableCard
           key={retro.id}
-          className="rounded-lg border p-6 space-y-4 cursor-pointer hover:bg-muted/50"
-          // Phase B 要件 5 (2026-04-28): カードクリックで dialog を開く動作は全員で active 化。
-          //   詳細閲覧目的を含み、編集可否は dialog の readOnly prop で分岐する。
+          // Phase B 要件 5 + Phase E 共通化: カードクリックで dialog を開く (全員 active)。
+          //   subtle で transition + 半透明 hover (大きいカード向けの落ち着いた表現)。
+          subtle
+          className="rounded-lg border p-6 space-y-4"
           onClick={() => setEditingRetro(retro)}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {isOwner && (
-                <input
-                  type="checkbox"
-                  aria-label={`振り返り (${retro.conductedDate}) を一括編集対象に追加`}
-                  checked={selectedIds.has(retro.id)}
-                  onChange={(e) => { e.stopPropagation(); toggleOneRetro(retro.id); }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="rounded"
-                />
-              )}
+              <BulkSelectCell
+                canSelect={isOwner}
+                hidePlaceholderWhenDisabled
+                stopPropagation
+                selected={selectedIds.has(retro.id)}
+                onToggle={() => toggleOneRetro(retro.id)}
+                ariaLabel={`振り返り (${retro.conductedDate}) を一括編集対象に追加`}
+              />
               <h3 className="font-semibold">{tRetro('title')}（{retro.conductedDate}）</h3>
               <Badge variant={retro.state === 'confirmed' ? 'default' : 'outline'}>
                 {retro.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}
@@ -362,9 +363,11 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
                   編集ダイアログで visibility を変更しても一覧に表示されず「画面上データが
                   更新されていない」ように見える bug の解消。state とは別概念なので
                   「公開: ○○」のラベル付きで明示。 */}
-              <Badge variant={retro.visibility === 'public' ? 'default' : 'outline'}>
-                公開: {VISIBILITIES[retro.visibility as keyof typeof VISIBILITIES] || retro.visibility}
-              </Badge>
+              <VisibilityBadge
+                visibility={retro.visibility}
+                label={VISIBILITIES[retro.visibility as keyof typeof VISIBILITIES] || retro.visibility}
+                prefix="公開: "
+              />
             </div>
             <div className="flex items-center gap-2">
               {isOwner && retro.state !== 'confirmed' && (
@@ -412,7 +415,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
             対応する API: POST /api/projects/[id]/retrospectives/[retroId]/comments は残置。
             DTO の retro.comments は無視 (計算済だが UI で参照しない)。
           */}
-        </div>
+        </ClickableCard>
         );
       })}
 

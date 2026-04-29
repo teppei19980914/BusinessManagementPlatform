@@ -22,13 +22,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
 import {
-  Table, TableBody, TableCell, TableHeader, TableRow,
+  TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
-import {
-  ResizableColumnsProvider,
-  ResizableHead,
-  ResetColumnsButton,
-} from '@/components/ui/resizable-columns';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { StakeholderEditDialog } from '@/components/dialogs/stakeholder-edit-dialog';
 import {
   STAKEHOLDER_ATTITUDES,
@@ -41,6 +38,8 @@ import {
 } from '@/config/master-data';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { Label } from '@/components/ui/label';
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
+import { ClickableRow } from '@/components/common/clickable-row';
 import type { StakeholderDTO } from '@/services/stakeholder.service';
 import type { MemberDTO } from '@/services/member.service';
 
@@ -216,11 +215,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
       </div>
 
       {/* 一覧テーブル */}
-      <ResizableColumnsProvider tableKey="project-stakeholders">
-        <div className="flex justify-end pb-2">
-          <ResetColumnsButton />
-        </div>
-        <Table>
+      <ResizableTableShell tableKey="project-stakeholders">
           <TableHeader>
             <TableRow>
               {/* Phase D 要件 11/12: 優先度列を最左に配置 (一覧上部 = 高優先度) */}
@@ -238,9 +233,8 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
           </TableHeader>
           <TableBody>
             {filteredStakeholders.map((s) => (
-              <TableRow
+              <ClickableRow
                 key={s.id}
-                className="cursor-pointer hover:bg-muted"
                 onClick={() => setEditing(s)}
               >
                 <TableCell>
@@ -289,7 +283,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
                     {tAction('delete')}
                   </Button>
                 </TableCell>
-              </TableRow>
+              </ClickableRow>
             ))}
             {filteredStakeholders.length === 0 && (
               <TableRow>
@@ -300,8 +294,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
               </TableRow>
             )}
           </TableBody>
-        </Table>
-      </ResizableColumnsProvider>
+      </ResizableTableShell>
 
       <StakeholderEditDialog
         projectId={projectId}

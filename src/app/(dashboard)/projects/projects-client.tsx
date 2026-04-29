@@ -33,17 +33,13 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 // fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
 import { parseTagsInput } from '@/lib/parse-tags';
 import {
-  Table,
   TableBody,
   TableCell,
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  ResizableColumnsProvider,
-  ResizableHead,
-  ResetColumnsButton,
-} from '@/components/ui/resizable-columns';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import {
   Select,
   SelectContent,
@@ -426,11 +422,7 @@ export function ProjectsClient({
         モバイル (md 未満) は並列でカード表示。PC UX は一切変更していない。
       */}
       <div className="hidden md:block">
-        <ResizableColumnsProvider tableKey="projects">
-          <div className="flex justify-end pb-2">
-            <ResetColumnsButton />
-          </div>
-          <Table>
+        <ResizableTableShell tableKey="projects">
             <TableHeader>
               <TableRow>
                 <ResizableHead columnKey="name" defaultWidth={220}>{t('fieldName')}</ResizableHead>
@@ -474,8 +466,7 @@ export function ProjectsClient({
                 </TableRow>
               )}
             </TableBody>
-          </Table>
-        </ResizableColumnsProvider>
+        </ResizableTableShell>
       </div>
 
       {/* PR #128a: モバイル (md 未満) 専用のカードビュー */}

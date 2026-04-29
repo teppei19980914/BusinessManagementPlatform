@@ -39,6 +39,8 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
+import { ClickableRow } from '@/components/common/clickable-row';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { UserEditDialog } from '@/components/dialogs/user-edit-dialog';
 import { SYSTEM_ROLES } from '@/types';
@@ -278,9 +280,8 @@ export function UsersClient({ initialUsers }: Props) {
             })();
 
             return (
-              <TableRow
+              <ClickableRow
                 key={user.id}
-                className="cursor-pointer hover:bg-muted"
                 onClick={() => setEditingUser(user)}
               >
                 <TableCell className="font-medium">{user.name}</TableCell>
@@ -305,7 +306,7 @@ export function UsersClient({ initialUsers }: Props) {
                   )}
                 </TableCell>
                 <TableCell>{formatDate(user.createdAt)}</TableCell>
-              </TableRow>
+              </ClickableRow>
             );
           })}
           {initialUsers.length === 0 && (

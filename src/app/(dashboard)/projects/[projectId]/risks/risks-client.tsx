@@ -33,13 +33,10 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Table, TableBody, TableCell, TableHeader, TableRow,
+  TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
-import {
-  ResizableColumnsProvider,
-  ResizableHead,
-  ResetColumnsButton,
-} from '@/components/ui/resizable-columns';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
@@ -60,6 +57,11 @@ import type { MemberDTO } from '@/services/member.service';
 import { useFormatters } from '@/lib/use-formatters';
 // Phase C 要件 19: キーワード OR 検索ヘルパ
 import { matchesAnyKeyword } from '@/lib/text-search';
+// Phase E 要件 1〜3 (2026-04-29): 共通バッジ + 行クリック + フィルタバー + 一括選択部品
+import { VisibilityBadge } from '@/components/common/visibility-badge';
+import { ClickableRow } from '@/components/common/clickable-row';
+import { FilterBar } from '@/components/common/filter-bar';
+import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog なので previousValue なし)
@@ -475,11 +477,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         </div>
       </div>
 
-      {/* PR #165: フィルター UI (Phase C 要件 18 で「フィルター必須」は撤廃、絞り込み補助のみ) */}
-      <div className="rounded-md border bg-muted/30 p-3">
-        <div className="mb-2 flex items-center gap-2">
-          <span className="text-sm font-medium">{tRisk('filter')}</span>
-        </div>
+      {/* PR #165 + Phase E 共通化: フィルター UI (filter は撤廃済、絞り込み補助のみ) */}
+      <FilterBar title={tRisk('filter')}>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
           <div>
             <Label htmlFor={`risk-filter-state-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('state')}</Label>
@@ -527,7 +526,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             </label>
           </div>
         </div>
-      </div>
+      </FilterBar>
 
       {/* PR #165 + Phase C 要件 18 (2026-04-28): 一括選択ツールバー。フィルター有無に
           関わらず常時表示し、任意の複数行に対する一括編集を許可する。 */}
@@ -550,21 +549,15 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         </div>
       </div>
 
-      <ResizableColumnsProvider tableKey={`project-risks-${typeFilter ?? 'all'}`}>
-        <div className="flex justify-end pb-2">
-          <ResetColumnsButton />
-        </div>
-      <Table>
+      <ResizableTableShell tableKey={`project-risks-${typeFilter ?? 'all'}`}>
         <TableHeader>
           <TableRow>
             <ResizableHead columnKey="select" defaultWidth={36}>
-              <input
-                type="checkbox"
-                aria-label={tRisk('selectAllEditable')}
-                checked={allSelectableSelected}
-                disabled={selectableIds.length === 0}
-                onChange={toggleAllIds}
-                className="rounded"
+              <BulkSelectHeader
+                allSelected={allSelectableSelected}
+                totalSelectable={selectableIds.length}
+                onToggleAll={toggleAllIds}
+                ariaLabel={tRisk('selectAllEditable')}
               />
             </ResizableHead>
             {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>{tRisk('kind')}</ResizableHead>}
@@ -593,23 +586,18 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             //   (詳細閲覧の用途を含む)。編集権限は dialog 内で `readOnly={!isOwner}` により分岐し、
             //   非作成者は readOnly モードで詳細表示のみ可能。
             return (
-            <TableRow
+            <ClickableRow
               key={r.id}
-              className="cursor-pointer hover:bg-muted"
               onClick={() => setEditingRisk(r)}
             >
               <TableCell onClick={(e) => e.stopPropagation()}>
-                {r.viewerIsCreator ? (
-                  <input
-                    type="checkbox"
-                    aria-label={tRisk('addToBulkEdit', { title: r.title })}
-                    checked={selectedIds.has(r.id)}
-                    onChange={() => toggleOneId(r.id)}
-                    className="rounded"
-                  />
-                ) : (
-                  <span className="text-xs text-muted-foreground" title={tRisk('rowNotEditableByOthers')}>-</span>
-                )}
+                <BulkSelectCell
+                  canSelect={r.viewerIsCreator === true}
+                  selected={selectedIds.has(r.id)}
+                  onToggle={() => toggleOneId(r.id)}
+                  ariaLabel={tRisk('addToBulkEdit', { title: r.title })}
+                  notSelectableTitle={tRisk('rowNotEditableByOthers')}
+                />
               </TableCell>
               {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? tRisk('labelRisk') : tRisk('labelIssue')}</Badge></TableCell>}
               <TableCell className="font-medium">{r.title}</TableCell>
@@ -626,9 +614,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
               </TableCell>
               {/* feat/account-lock-and-ui-consistency: 公開範囲表示 (編集後の即時反映確認用) */}
               <TableCell>
-                <Badge variant={r.visibility === 'public' ? 'default' : 'outline'}>
-                  {VISIBILITIES[r.visibility as keyof typeof VISIBILITIES] || r.visibility}
-                </Badge>
+                <VisibilityBadge
+                  visibility={r.visibility}
+                  label={VISIBILITIES[r.visibility as keyof typeof VISIBILITIES] || r.visibility}
+                />
               </TableCell>
               <TableCell>{r.assigneeName || '-'}</TableCell>
               <TableCell>{formatDate(r.createdAt)}</TableCell>
@@ -655,7 +644,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   </Button>
                 </TableCell>
               )}
-            </TableRow>
+            </ClickableRow>
             );
           })}
           {filteredRisks.length === 0 && (
@@ -674,8 +663,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             </TableRow>
           )}
         </TableBody>
-      </Table>
-      </ResizableColumnsProvider>
+      </ResizableTableShell>
 
       {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。
           systemRole='admin' は他人作成でも編集可能 (既存仕様維持)。 */}
