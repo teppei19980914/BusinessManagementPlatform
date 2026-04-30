@@ -3716,6 +3716,72 @@ DROP TABLE retrospective_comments;
 - 旧専用テーブル経歴: `RetrospectiveComment` (PR-α 段階で UI 削除済 → PR #199 で廃止 + 統合)
 - 修正例: `prisma/migrations/20260430_unified_comments/migration.sql` (data migration の参考実装)
 
+### 5.50 「draft デフォルト × 一覧で draft 除外」の self-invisible トラップ (2026-04-30 ユーザ報告で発覚 / 修正方針 ユーザ承認待ち)
+
+#### 罠の正体
+
+ユーザが「○○一覧」から起票 → 成功 Toast 表示 → **だが一覧に出ない / エラーも出ない**
+という UX バグ。原因は **2 箇所の設計が個別には正しいが組み合わさると user-hostile** になる:
+
+1. **起票フォームのデフォルト**: `visibility: 'draft'` (機微検討中の事項を即公開しないための保護)
+2. **一覧サービスの非 admin フィルタ**: `visibility: 'public'` のみ表示
+   (2026-04-24 設計判断: 「自分の draft も一覧には出さない方針」)
+
+PR #194 で **成功 Toast 通知が導入される前** は「画面が変わらない = 何も起きていない」と
+ユーザが誤解せず再操作することで自然に問題が顕在化していたが、Toast で **「成功した」と
+明示** されるようになり、「Toast あり / 一覧に無い / エラー無し」の三重沈黙で混乱を招く。
+
+#### 影響範囲 (visibility カラムを持つ 4 entity すべて該当)
+
+| 一覧 | 起票デフォルト | 非 admin 一覧 where 句 | 該当ファイル |
+|---|---|---|---|
+| `/projects/[id]/risks` (リスク) | `'draft'` | `visibility: 'public'` のみ | `src/services/risk.service.ts:163` |
+| `/projects/[id]/issues` (課題) | `'draft'` | 同上 (RisksClient 共通) | 同上 |
+| `/projects/[id]/retrospectives` (振り返り) | `'draft'` | `visibility: 'public'` のみ | `src/services/retrospective.service.ts:150` |
+| `/projects/[id]/knowledge` (ナレッジ) | `'draft'` | `visibility: 'public'` のみ | `src/services/knowledge.service.ts:132` |
+
+`tasks` / `stakeholders` / `customers` は **visibility カラムを持たない** のため影響なし。
+
+#### 検出ヒューリスティック (将来の同種事象を早期発見するため)
+
+「**作成成功 Toast が出るが一覧に反映されない**」報告を受けたら:
+
+1. `grep -rn "visibility:\s*'draft'" src/app/(dashboard)/` で起票デフォルトを確認
+2. 該当 service の `listXxx()` で `visibility: 'public'` 固定 where が **同じ entity に存在するか** 確認
+3. 両方に該当する場合は本トラップ確定
+
+#### 修正方針 (3 案、ユーザ承認待ち / 確定したら追記)
+
+| 案 | 概要 | 設計影響 | 工数感 |
+|---|---|---|---|
+| **A 推奨** | 一覧 where を `OR [{visibility:'public'}, {visibility:'draft', createdBy: viewer}]` に変更 + UI に「下書き」バッジ追加 | 「他人の draft は隠す」原則維持 | 4 service + 4 一覧 UI |
+| B | 起票デフォルトを `'public'` に変更 | 「draft で機微情報を保護」設計を弱める | 4 ファイル × 1 行 |
+| C | Toast に「下書き保存。下書きフィルタで確認可」ヒント文言 + 各一覧に「下書きを表示」トグル追加 | 設計不変、UI 補強のみ | Toast 4 + フィルタ UI 4 |
+
+**選定指針**: A 案は「自分のものは見える / 他人のものは見えない」の自然な期待に合致し、
+2026-04-24 設計意図 (他人の draft 隠蔽) も保てる。バッジ追加で「下書き状態」も明示できる。
+B は最小だがうっかり公開リスクあり。C は設計不変だが UI が煩雑。
+
+#### 抽出したルール (今後の同種運用)
+
+- [ ] **「起票フォームの初期値」と「一覧の where 句」は必ずセットで設計する** —
+      「draft 保護したい」と「自分のは見せたい」を別個に決めると本トラップが生まれる
+- [ ] **成功 Toast を導入する前に「reload 後の表示が初期 visibility で見えるか」を確認** —
+      Toast 導入 (PR #194) 前は「画面が変わらない」で自然に再操作する余地があったが、
+      Toast で成功明示すると「成功 + 一覧未反映」の沈黙状態が UX 破綻を招く
+- [ ] **`createdBy === viewerUserId` の OR 条件は service 層の頻出パターン** として標準化 —
+      「自分のものは visibility に関わらず見える」ルールは task / risk / retrospective /
+      knowledge / memo すべてで再利用可能 (本 PR で 4 箇所横展開予定)
+- [ ] **検出ヒューリスティック** (上述) を本セクションに残し、同種事象が報告されたら
+      まず本セクションを参照する
+
+#### 関連
+
+- §5.41 (「○○一覧」共通 UI 部品の抽出規約 — 本トラップは 4 entity で同形に発生)
+- §5.44 (Toast 通知パターン — Toast 導入が本トラップの「沈黙発覚」契機)
+- §5.36 (dialog の readOnly 分岐 — 「自分のもの判定」(`createdBy === viewerUserId`) の応用先)
+- 修正例: 採用案決定後に追記 (現状ユーザ承認待ち)
+
 ---
 
 ## 6. 機能削除の手順
