@@ -27,6 +27,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useState,
   type ReactNode,
 } from 'react';
@@ -81,8 +82,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [showToast],
   );
 
+  // Context value を useMemo で stable 化。これがないと toast 追加/消去で
+  // ToastProvider が re-render する度に value object literal が新規生成され、
+  // useToast() を消費する 25+ 箇所 (TaskTreeNode の memo を含む) が
+  // 不要 re-render する。showSuccess/showError は useCallback で stable なので
+  // value 全体も stable にできる。
+  const value = useMemo(
+    () => ({ showSuccess, showError }),
+    [showSuccess, showError],
+  );
+
   return (
-    <ToastContext.Provider value={{ showSuccess, showError }}>
+    <ToastContext.Provider value={value}>
       {children}
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
     </ToastContext.Provider>

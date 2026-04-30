@@ -10,8 +10,9 @@
  *   リスク一覧 / 課題一覧 / 振り返り一覧 / ナレッジ一覧 /
  *   参考 / メンバー (admin/pm_tl のみ)
  *
- * feat/gantt-tab-restructure (PR-C item 6): ガント専用タブは WBS 管理タブ内の
- * 「ガントチャートを表示」トグルに統合され、独立した role='tab' は存在しない。
+ * 2026-04-30 (Task 1): ガントチャートは「WBS管理」と並ぶ独立タブとして再復活
+ *   (PC は role='tab'、Mobile は「進捗管理 ▼」プルダウン)。旧 feat/gantt-tab-restructure
+ *   (PR-C item 6) で WBS タブ内のトグルボタンに集約していた経緯は解消。
  *
  * CRUD 検証ではなく render smoke に絞る (CRUD は後続 PR)。
  *
