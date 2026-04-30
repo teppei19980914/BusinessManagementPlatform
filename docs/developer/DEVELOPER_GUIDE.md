@@ -3674,7 +3674,7 @@ admin は常に介入可 (誤投稿 / 不適切コメントの管理削除)。
 
 - `<CommentSection>` コンポーネントを **`<fieldset disabled={readOnly}>` の外側** に配置。
   これにより全○○ の readOnly モードでもコメント投稿フォームは有効化される。
-- 既存の `DialogAttachmentSection` の §5.10 由来「readOnly 時に非表示」とは挙動が異なる
+- 既存の `DialogAttachmentSection` の §5.14 由来「readOnly 時に非表示」とは挙動が異なる
   ことに注意 (attachment は member 必須 → 非表示、comment は誰でも可 → 常時表示)。
 - **nested form 禁止**: PR #64 Phase B 要件 4 で確立した「外側 `<form>` 内に `<form>` を入れない」
   ルールを適用。CommentSection 内のボタンは全て `type="button"`、textarea は Ctrl/Meta+Enter で投稿。
@@ -3701,7 +3701,7 @@ DROP TABLE retrospective_comments;
 - [ ] **エンティティ別の認可ポリシーは判別ユニオンで返す**: bool フラグや null/[] の意味に依存
       させず、`{ kind: 'open' | 'project-scoped' | 'admin-only' | 'not-found' }` のように **意味を型に書く**
 - [ ] **dialog の readOnly と新セクションの可視性は要件で決まる**: attachment は readOnly→非表示、
-      comment は readOnly→投稿可。**§5.10 を機械的に踏襲しない** (要件側を必ず確認)
+      comment は readOnly→投稿可。**§5.14 を機械的に踏襲しない** (要件側を必ず確認)
 - [ ] **旧専用テーブルは現役 PR で `comments`/`Attachment` 等の polymorphic 系に統合**: 「廃止予定」
       で残すと将来の整合確保コストが増える (本 PR ではちょうど好機があったため統合)
 - [ ] **CommentSection のような新規共通部品は最初から `data-testid` を持たせる**: 後付けで
@@ -3709,9 +3709,12 @@ DROP TABLE retrospective_comments;
 
 #### 関連
 
+- §5.14 (readOnly な edit dialog の fetch gating — 本件は **同パターンを取らない反例**: comment は readOnly でも投稿可)
+- §5.35 (dialog 内 component の nested form 回避 — CommentSection もこの規約に従い type="button" + onKeyDown)
+- §5.36 (dialog の readOnly 分岐パターン — fieldset disabled の外配置はこの設計の延長)
 - §5.41 (○○一覧 共通 UI 部品の抽出規約 — 本件と同じ「7 entity 同形 UI」パターン)
 - §5.42 (migration 含む PR は本番手動適用必須)
-- §5.10 (DialogAttachmentSection の readOnly 非表示 — 本件は同パターンを取らない反例)
+- E2E_LESSONS_LEARNED §4.49 (本件の配線時の罠 — readOnly 振る舞いの要件決定 / 認可判別ユニオンの罠)
 - DESIGN.md §5.10 (comments テーブル定義)
 - 旧専用テーブル経歴: `RetrospectiveComment` (PR-α 段階で UI 削除済 → PR #199 で廃止 + 統合)
 - 修正例: `prisma/migrations/20260430_unified_comments/migration.sql` (data migration の参考実装)
@@ -5398,3 +5401,6 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-30 | E2E §4.46 / §4.47 新設 (PR #194 hotfix)。**§4.46: Toast 文言と既存 UI 文言の部分マッチで strict mode violation** ── ToastProvider 導入で showSuccess の長文 (「ユーザを登録し、招待メールを送信しました」) が dialog title (「招待メールを送信しました」) を内包し、`getByText` の既定部分マッチで 2 elements にヒット → strict mode 違反。Toast 導入時の grep 予防、scope+role での 1 要素絞り、エンティティ名で一意化、Toast viewport の `role="region"` で意識的分離、の 4 ルールを記載。**§4.47: responsive で既存タブに hidden lg:inline-flex 付与で spec viewport 別分岐必須** ── Task 1 で WBS管理 タブを responsive 化した際、mobile でも `toBeVisible()` を要求していた既存テストが一斉 fail。さらに `toHaveCount(0)` の「ガント」が新タブ「ガントチャート」と部分マッチして fail。教訓として、PR #167 「資産プルダウン」を model にする方針、`{ exact: true }` 推奨、タブ追加 PR の動作確認 checklist 4 項目を成文化 |
 | 2026-04-30 | §5.46 新設 (PR #196 feat/security-check-script)。**外部提供スクリプトの導入と既存 skill 統合パターン** ── ユーザから外部開発の security-check.ts (CWE 静的解析) + skill 定義 .md を受領。「既存定義に盛り込む」指示に従い、新規 .claude/skills/security-check.md は作らず、CLAUDE.md §2 セキュリティチェックに第 5 層 (静的スキャン)、threat-model.md に Mode A (STRIDE 実装前) + Mode B (静的スキャン 実装後) の 2 モード構成として統合。抽出したルール 6 項目: (1) 外部提供は verbatim 配置 (2) 既存 skill 拡張を新規より優先 (3) 自動生成は .gitignore (4) 出力先 README.md は実行方法 1 セクション (5) CLAUDE.md は 1 行サマリ + skill link (6) 初回スキャン結果を PR description に記録。本 PR 初回スキャンは 9 Finding (CRITICAL 2/HIGH 4/MEDIUM 2/LOW 1, score 30/100) |
 | 2026-04-30 | §5.47 新設 (PR #197 docs/security-check-pr-workflow)。**PR 作成ワークフローへの security-check 統合と score 90+ 維持戦略** ── PR #196 で導入したツールに「いつ実行するか」を定める運用を確立。**全 PR 作成時必須の 5 ステップ** (① 既存レポート削除 → ② tsx 実行 → ③ score < 90 なら修正ループ → ④ PR 作成 → ⑤ コメントでスコア投稿) を threat-model.md Mode B-1 として定義。CLAUDE.md §2 第 5 層に「PR 作成のたびに必須実行」を明記。設計判断: CI gate ではなく Claude フロー側に組み込んだ理由 (修正まで含めるため)、HTML 直貼りでなく Markdown サマリ + ローカル案内に絞る理由 (GitHub の制限)、score 90 の意味 (HIGH 全消し + MEDIUM 1 件まで)、残存 Finding を PR コメントで記録することで reviewer が退行検知できる仕組み。スクリプト本体のメンテ (Mode B-2) は 1 check 関数 = 1 PR、CWE/OWASP リンク必須、トリガー 4 種 (CWE Top 25 更新 / インシデント / 新ライブラリ / 横展開判断) を成文化 |
+| 2026-04-30 | §5.48 / E2E §4.48 新設 (PR #198 feat/security-bringup-90)。**セキュリティスコア 30 → 94 ブリングアップ + CI Gate 化 (>= 90)** ── PR #197 で運用を skill 化したものの実スコアは 30/100 で運用に乗らない状態 + ユーザ要望「閾値 90 で deploy ブロック化」「デグレ禁止」に応える。F-01/F-03 (callbackUrl CWE-601) は `sanitizeCallbackUrl` 新設 + 受け取り時 + redirect 直前の両側 sanitize、F-04 (SameSite=Lax) は Credentials-only で OAuth 無のため Strict 化、F-05 (CWE-307) は in-memory rate-limit (5min/10req) を 3 公開 endpoint に適用、F-06 (MFA 暗号鍵) は dual-key migration 必要のため accept-list せず別 PR 留保、F-07 (CSP unsafe-inline) は accept-list で受容。`scripts/security-check.ts` に `--min-score=N` フラグ + `.github/workflows/security.yml` に `security-score-gate` job 追加 (score < 閾値で fail)。E2E §4.48 では (1) callback URL 両側 sanitize、(2) endpoint 別 rate-limit key、(3) Vercel multi-instance 上の in-memory 制限の 3 つの実装パターンと罠を記録 |
+| 2026-04-30 | §5.49 / E2E §4.49 新設 (PR #199 feat/entity-comments)。**ポリモーフィックコメント機能 (7 entity 横断)** ── 編集 dialog にコメントセクション追加 + 旧 `RetrospectiveComment` 専用テーブルを `Comment` (entity_type + entity_id) に統合 (data migration あり)。Attachment と同形の polymorphic 設計を踏襲、認可は判別ユニオン `{ kind: 'open' \| 'project-scoped' \| 'admin-only' \| 'not-found' }` で entity 別に切替 (issue/risk/retro/knowledge は誰でも、task/stakeholder は member、customer は admin)。E2E §4.49 では「§5.14 を機械的に踏襲しない (readOnly 振る舞いは要件で決まる)」「コードコメント内の `§NN` 参照を機械的にコピーすると stale ref が伝染」「data migration は `BEGIN ... COMMIT` で件数照合 + ROLLBACK 退路を必須化」の 3 罠を記録 |
+| 2026-04-30 | /knowledge-organize 監査整理 (PR #199 後)。**§5.10 → §5.14 stale ref 一括修正** ── §5.10 (フォーム送信前の事前バリデーション) と §5.14 (readOnly な edit dialog の fetch gating / fix/attachment-list-non-member-403) は別概念だが、コードコメント 4 箇所 (`dialog-attachment-section.tsx`, `knowledge/retrospective/risk-edit-dialog.tsx`) で `§5.10 由来「readOnly 非表示」` と stale 化していた。PR #199 §5.49 執筆時にこのコメントから機械的にコピーしてしまい DEVELOPER_GUIDE 内 3 箇所にも伝染。本整理で全 7 箇所を `§5.14` に統一 + §5.49 の関連セクションリストに §5.14/§5.35/§5.36/§4.49 を明示 (横展開漏れを防ぐ相互参照) |
