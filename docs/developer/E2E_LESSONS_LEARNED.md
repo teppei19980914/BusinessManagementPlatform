@@ -2575,6 +2575,114 @@ grep -rnE "getByRole\(['\"]heading['\"]" e2e --include='*.ts'
 - 本件の起点: PR #187 (Phase A 要件 6: タブ画面 h2 削除)
 - 修正例: PR #187 fix commit (43c22ac) — 7 spec を 6 spec ファイル渡って一括修正
 
+### 4.46 Toast 文言と既存 UI 文言の部分マッチで strict mode violation (PR #194 で遭遇)
+
+#### 症状
+
+PR #194 で `<ToastProvider>` を導入し成功時に `showSuccess('ユーザを登録し、招待メールを送信しました')` を呼ぶよう変更。すると spec 01 Step 3 が失敗:
+
+```
+Error: strict mode violation: getByText('招待メールを送信しました') resolved to 2 elements:
+  1) <h2>招待メールを送信しました</h2>  ← dialog title (既存)
+  2) <span>ユーザを登録し、招待メールを送信しました</span>  ← Toast (新規)
+```
+
+旧テスト:
+```ts
+await dialog.getByRole('button', { name: '招待メールを送信' }).click();
+await expect(page.getByText('招待メールを送信しました')).toBeVisible({ timeout: 10_000 });
+```
+
+`getByText` は既定で **大小文字非依存・部分マッチ**のため、Toast の長文が dialog title を内包すると 2 elements にヒット → strict mode 違反で失敗する。
+
+#### 教訓・恒久ルール
+
+1. **Toast 導入時は spec 全体を grep してメッセージ文字列の重複を予防する**:
+
+   ```bash
+   # Toast の文字列が既存 spec の text locator と被らないか確認
+   grep -rn "getByText\|getByRole.*name:" e2e/ | grep -F "<Toast 文言の特徴的部分>"
+   ```
+
+2. **新規 spec ではいきなり `getByText` を避け、scope + role で 1 要素に絞る**:
+
+   ```ts
+   // ❌ アンチパターン: page スコープで getByText
+   await expect(page.getByText('〜しました')).toBeVisible();
+
+   // ✅ 推奨: dialog/section scope + getByRole で意味ベース
+   await expect(
+     dialog.getByRole('heading', { name: '〜しました' }),
+   ).toBeVisible();
+   ```
+
+3. **Toast メッセージはエンティティ名を含めて一意化する** (DEVELOPER_GUIDE §5.44 でも規約化):
+   - ❌ `'削除しました'` (他箇所と重複しがち)
+   - ✅ `'メモを削除しました'` / `'リスクを削除しました'`
+
+4. **Toast 自体に `role="status"` 等を付けて role ベースで分離可能にする**:
+   `ToastProvider` の viewport は `role="region" aria-live="polite"` (既に設定済)。テスト側で
+   `page.getByRole('region', { name: '通知' }).getByText(...)` のように Toast を意識的に
+   除外/限定できる。
+
+#### 関連
+
+- DEVELOPER_GUIDE §5.44 (Toast 通知パターン) — メッセージ文字列の規約
+- 修正例: PR #194 commit `8a7e70f` (`dialog.getByRole('heading', ...)` への変更)
+
+### 4.47 responsive で既存タブに `hidden lg:inline-flex` を付与すると既存 spec が viewport 別に分岐必須 (PR #194 Task 1 で遭遇)
+
+#### 症状
+
+PR #194 Task 1 で「WBS管理」タブをガントチャートと並ぶ独立タブ化、PC/Mobile responsive 化のため
+`hidden lg:inline-flex` を付与した。**それ以前は無条件に visible** だったため、既存テストは
+`getByRole('tab', { name: 'WBS管理' }).toBeVisible()` を mobile でも要求していた → mobile で
+display:none になり test が一斉に fail。
+
+旧テスト:
+```ts
+await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible(); // mobile で fail
+```
+
+加えて、新たに「ガントチャート」タブを追加したことで:
+```ts
+await expect(page.getByRole('tab', { name: 'ガント' })).toHaveCount(0);
+```
+
+の **「ガント」が新タブ「ガントチャート」と部分マッチ** して `toHaveCount(0)` が `1` になる罠も発生。
+
+#### 教訓・恒久ルール
+
+1. **既存タブに `hidden lg:inline-flex` を付与する PR では spec 02 を必ず viewport 別に分岐**:
+   - mobile (`chromium-mobile` project): プルダウンの aria-label ボタンで visibility 検証
+   - PC (`chromium` project): 個別 TabsTrigger の visibility 検証
+
+2. **PR #167 の「資産プルダウン」と同パターンの追加では既存 spec を model に**:
+   `02-project-detail-tabs.spec.ts` の `isMobile` 分岐 (`['概要', '見積もり', 'WBS管理']` mobile direct list 等) は
+   PR #167 で確立した先例。新たに responsive 化する際は **同 spec の同セクションをコピー & 必要部分のみ
+   修正**するのが正解 (新たに mobile 用ロジックを書き起こすのは差分が大きく漏れやすい)。
+
+3. **`getByRole('tab', { name: 'X' }).toHaveCount(0)` は `exact: true` 推奨**:
+   - 新タブで `'X'` を内包する文言が追加されると壊れる
+   - `{ name: 'ガント', exact: true }` なら `'ガントチャート'` には match しない
+   - ただし「'ガント' で始まるすべてのタブを禁止」したい意図なら exact なしで残すべき (今回は exact false で意味が変わったので削除した)
+
+4. **タブ追加 PR の checklist に「responsive 分岐 spec 確認」を含める**:
+
+   ```markdown
+   ## 動作確認 (responsive 化を伴う場合)
+   - [ ] PC viewport で新タブが visible (chromium project)
+   - [ ] Mobile viewport で対応プルダウンに集約 (chromium-mobile project)
+   - [ ] 既存タブの visibility アサーションが viewport 別に分岐されている
+   - [ ] `toHaveCount(0)` の name が新タブと部分マッチしないか確認
+   ```
+
+#### 関連
+
+- §4.45 (h2 削除で連鎖する `getByRole('heading')` 失敗) — 同じく UI 構造変更で spec 連鎖の例
+- DEVELOPER_GUIDE §5.43 (Gantt independent tab + responsive プルダウン) — 本件の機能側
+- 修正例: PR #194 commit `8a7e70f` (spec 02 全 3 test を viewport 別分岐)
+
 ---
 
 ## 8. 未解決課題 (将来 PR 候補)
