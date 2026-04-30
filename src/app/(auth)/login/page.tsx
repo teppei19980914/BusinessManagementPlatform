@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { sanitizeCallbackUrl } from '@/lib/url-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,7 +23,9 @@ export default function LoginPage() {
 function LoginForm() {
   const t = useTranslations('auth');
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/';
+  // PR #198: CWE-601 オープンリダイレクト対策。外部 URL / スキーマ相対 URL は拒否し、
+  //   同一オリジンパスのみ許可する (詳細は src/lib/url-utils.ts)。
+  const callbackUrl = sanitizeCallbackUrl(searchParams.get('callbackUrl'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -70,8 +73,11 @@ function LoginForm() {
     }
 
     setIsLoading(false);
-    // フルページリロードで Cookie を確実に送信（Vercel 環境対応）
-    window.location.href = callbackUrl;
+    // フルページリロードで Cookie を確実に送信（Vercel 環境対応）。
+    // PR #198: 二重に sanitize する (defense in depth)。callbackUrl は受け取り時点でも
+    //   sanitize 済みだが、将来コードの近接箇所で外部由来の文字列が再代入されても
+    //   オープンリダイレクトに退行しないよう、リダイレクト直前にも検証する。
+    window.location.href = sanitizeCallbackUrl(callbackUrl);
   }
 
   return (

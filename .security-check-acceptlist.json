@@ -1,0 +1,23 @@
+{
+  "_comment": "scripts/security-check.ts が検出した Finding のうち、設計判断として受容している事項。score 計算から除外される代わりに、レポート末尾に「受容済み」として記録される。新規追加時は必ず reason / owner / until を埋める。",
+  "accepted": [
+    {
+      "matcher": {
+        "category": "DEP",
+        "titleContains": "next-auth"
+      },
+      "reason": "next-auth v5 は 2026-04-30 時点で stable 未リリース。NextAuth.js の公式案内通り beta を採用 (https://authjs.dev/getting-started/migrating-to-v5)。stable 公開後は速やかに移行。次回見直し: 月次 dependabot レビュー時。",
+      "until": "2026-12-31",
+      "owner": "teppei19980914"
+    },
+    {
+      "matcher": {
+        "category": "CSP",
+        "titleContains": "unsafe-inline"
+      },
+      "reason": "Next.js 16 + next-intl v4.x は SSR 時のクライアントハイドレーションでインラインスクリプト/スタイルを多数注入する。本番完全な nonce-based CSP に移行するには middleware.ts でリクエスト毎に nonce を生成し、Next.js の <Script> / <style> 全箇所に nonce を伝播させる大規模改修が必要 (公式 docs: https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy)。本対応は別 PR に分離。X-Frame-Options=DENY + frame-ancestors='none' で clickjacking 防御は維持済。",
+      "until": "2026-12-31",
+      "owner": "teppei19980914"
+    }
+  ]
+}

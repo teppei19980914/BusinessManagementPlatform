@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
+import { sanitizeCallbackUrl } from '@/lib/url-utils';
 import { MfaForm } from './mfa-form';
 
 /**
@@ -18,7 +19,9 @@ type Props = {
 };
 
 export default async function MfaPage({ searchParams }: Props) {
-  const { callbackUrl = '/' } = await searchParams;
+  const raw = await searchParams;
+  // PR #198: CWE-601 対策。外部 URL / スキーマ相対 URL は拒否し、`/` にフォールバック。
+  const callbackUrl = sanitizeCallbackUrl(raw.callbackUrl);
   const session = await auth();
 
   // 未ログインは /login へ

@@ -23,12 +23,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { prisma } from '@/lib/db';
+// PR #198: 公開エンドポイントでメール存在列挙を狙う大量リクエストを抑制 (CWE-307)
+import { applyRateLimit } from '@/lib/rate-limit';
 
 const requestSchema = z.object({
   email: z.string().email(),
 });
 
 export async function POST(req: NextRequest) {
+  const limited = applyRateLimit(req, { key: 'lock-status' });
+  if (limited) return limited;
+
   const body = await req.json().catch(() => null);
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {

@@ -55,13 +55,19 @@ interface Finding {
 // ユーティリティ
 // ─────────────────────────────────────────────
 
+/**
+ * 除外ディレクトリ (PR #198 で追加):
+ *   - generated: Prisma Client 等の自動生成コード (手動編集対象外、ノイズ source)
+ */
+const EXCLUDED_DIRS = new Set(['node_modules', '.next', 'generated']);
+
 function findFiles(dir: string, predicate: (name: string) => boolean): string[] {
   const result: string[] = [];
   const abs = path.resolve(ROOT, dir);
   if (!existsSync(abs)) return result;
   function walk(current: string) {
     for (const entry of readdirSync(current)) {
-      if (entry.startsWith('.') || entry === 'node_modules' || entry === '.next') continue;
+      if (entry.startsWith('.') || EXCLUDED_DIRS.has(entry)) continue;
       const full = path.join(current, entry);
       const stat = statSync(full);
       if (stat.isDirectory()) walk(full);
@@ -90,13 +96,93 @@ function relPath(p: string): string {
 }
 
 // ─────────────────────────────────────────────
+// Accept-list (PR #198 で追加)
+// ─────────────────────────────────────────────
+//
+// 検出対象だが「設計判断として受容している」事項を `.security-check-acceptlist.json`
+// で管理する。例: next-auth の安定版が出るまで beta を採用、next-intl の制約で
+// CSP unsafe-inline を一時許容、等。
+//
+// 形式:
+// {
+//   "accepted": [
+//     {
+//       "matcher": { "category": "DEP", "titleContains": "next-auth" },
+//       "reason": "...",
+//       "until": "2026-12-31",  // 任意の見直し期限
+//       "owner": "..."
+//     }
+//   ]
+// }
+
+interface AcceptListEntry {
+  matcher: {
+    category?: string;
+    titleContains?: string;
+    file?: string;
+  };
+  reason: string;
+  until?: string;
+  owner?: string;
+}
+
+interface AcceptListConfig {
+  accepted: AcceptListEntry[];
+}
+
+let acceptListCache: AcceptListConfig | null = null;
+
+function loadAcceptList(): AcceptListConfig {
+  if (acceptListCache) return acceptListCache;
+  const filePath = path.join(ROOT, '.security-check-acceptlist.json');
+  if (!existsSync(filePath)) {
+    acceptListCache = { accepted: [] };
+    return acceptListCache;
+  }
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    acceptListCache = JSON.parse(raw) as AcceptListConfig;
+    return acceptListCache;
+  } catch {
+    acceptListCache = { accepted: [] };
+    return acceptListCache;
+  }
+}
+
+function isAccepted(f: Omit<Finding, 'id'>): boolean {
+  const cfg = loadAcceptList();
+  return cfg.accepted.some((entry) => {
+    const m = entry.matcher;
+    if (m.category && m.category !== f.category) return false;
+    if (m.titleContains && !f.title.includes(m.titleContains)) return false;
+    if (m.file && f.file !== m.file) return false;
+    return true;
+  });
+}
+
+// ─────────────────────────────────────────────
 // チェック関数群
 // ─────────────────────────────────────────────
 
 const findings: Finding[] = [];
+const acceptedFindings: Array<Omit<Finding, 'id'> & { acceptReason: string }> = [];
 let findingCounter = 1;
 
 function addFinding(f: Omit<Finding, 'id'>) {
+  // accept-list に該当する場合は score 減点せず、別配列に記録する
+  // (レポートには「受容済み」として表示し、人間レビュー対象から外す)
+  if (isAccepted(f)) {
+    const cfg = loadAcceptList();
+    const matched = cfg.accepted.find((entry) => {
+      const m = entry.matcher;
+      if (m.category && m.category !== f.category) return false;
+      if (m.titleContains && !f.title.includes(m.titleContains)) return false;
+      if (m.file && f.file !== m.file) return false;
+      return true;
+    });
+    acceptedFindings.push({ ...f, acceptReason: matched?.reason ?? '(受容理由未記載)' });
+    return;
+  }
   findings.push({ id: `F-${String(findingCounter++).padStart(2, '0')}`, ...f });
 }
 
@@ -500,12 +586,28 @@ footer{padding:16px 40px;border-top:1px solid #1e2330;font-family:monospace;font
     <div class="cnt"><div class="n" style="color:#60a5fa">${sevCount('MEDIUM')}</div><div class="l">MEDIUM</div></div>
     <div class="cnt"><div class="n" style="color:#34d399">${sevCount('LOW')}</div><div class="l">LOW</div></div>
     <div class="cnt"><div class="n" style="color:#94a3b8">${findings.length}</div><div class="l">TOTAL</div></div>
+    <div class="cnt"><div class="n" style="color:#94a3b8">${acceptedFindings.length}</div><div class="l">ACCEPTED</div></div>
   </div>
 </div>
 <div class="section">
   <h2>// 検出項目</h2>
   ${findings.length === 0 ? '<p style="color:#34d399">✓ 検出された問題はありません</p>' : findingCards}
 </div>
+${acceptedFindings.length > 0 ? `<div class="section">
+  <h2>// 受容済み (Accept-list、score 計算対象外)</h2>
+  ${acceptedFindings.map((f, i) => `
+    <div class="finding" style="border-left:3px solid #94a3b8;opacity:0.75">
+      <div class="finding-head">
+        <span class="badge" style="background:rgba(148,163,184,0.12);color:#94a3b8">ACCEPTED</span>
+        <span class="fid">A-${String(i + 1).padStart(2, '0')}</span>
+        <span class="cat">${f.category}</span>
+        <strong class="ftitle">${f.title}</strong>
+      </div>
+      ${f.file ? `<div class="floc">📄 ${f.file}${f.line ? ` (L${f.line})` : ''}</div>` : ''}
+      <p class="fdesc">${f.description}</p>
+      <div class="fix"><strong>📝 受容理由</strong><p>${f.acceptReason}</p></div>
+    </div>`).join('')}
+</div>` : ''}
 <footer>
   <span>docs/security/security-report.html</span>
   <span>${REPORT_DATE} — たすきば自動セキュリティチェック</span>
@@ -587,6 +689,24 @@ ${f.testRequired ?? '修正内容に応じたユニットテストまたは E2E 
 ${priorityFindings.length > 0 ? `# ⚠️ 優先対応 (CRITICAL / HIGH)\n${priorityFindings.map(taskBlock).join('\n')}` : '# ✅ CRITICAL / HIGH は検出されませんでした\n'}
 
 ${otherFindings.length > 0 ? `# 📋 通常対応 (MEDIUM / LOW)\n${otherFindings.map(taskBlock).join('\n')}` : ''}
+
+${acceptedFindings.length > 0 ? `# 📝 受容済み (Accept-list、score 計算対象外)
+
+以下は \`.security-check-acceptlist.json\` で **設計判断として受容** している事項です。修正不要ですが、定期的な見直し対象として記録します。
+
+${acceptedFindings.map((f, i) => `## A-${String(i + 1).padStart(2, '0')}: ${f.title}
+
+**Severity (元)**: ${f.severity}
+**Category**: ${f.category}
+${f.file ? `**File**: \`${f.file}\`${f.line ? ` (line ${f.line})` : ''}` : ''}
+
+### 受容理由
+${f.acceptReason}
+
+### 元の問題説明
+${f.description}
+
+---`).join('\n')}` : ''}
 `.trim();
 }
 
@@ -627,7 +747,30 @@ console.log(`  CRITICAL : ${findings.filter(f=>f.severity==='CRITICAL').length}`
 console.log(`  HIGH     : ${findings.filter(f=>f.severity==='HIGH').length}`);
 console.log(`  MEDIUM   : ${findings.filter(f=>f.severity==='MEDIUM').length}`);
 console.log(`  LOW      : ${findings.filter(f=>f.severity==='LOW').length}`);
+console.log(`  ACCEPTED : ${acceptedFindings.length}`);
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log(`\n📄 レポート    : docs/security/security-report.html`);
 console.log(`📋 タスクシート: docs/security/SECURITY-TASKS.md`);
+
+// PR #198: Deploy ゲート用の最小スコア閾値チェック
+//   `tsx scripts/security-check.ts --min-score=90` で CI から呼び出すと
+//   score < 閾値 のとき exit 1。CI / pre-deploy gate で利用する。
+//   閾値未指定 (引数なし) のときは従来通り exit 0 (レポート生成のみ)。
+const minScoreArg = process.argv.find((a) => a.startsWith('--min-score='));
+if (minScoreArg) {
+  const threshold = Number(minScoreArg.split('=')[1]);
+  if (Number.isFinite(threshold)) {
+    if (score < threshold) {
+      console.error(
+        `\n❌ セキュリティスコア ${score}/100 が閾値 ${threshold} を下回っています。デプロイをブロックします。`,
+      );
+      console.error(
+        '   docs/security/SECURITY-TASKS.md の優先対応項目を解消してから再実行してください。',
+      );
+      process.exit(1);
+    }
+    console.log(`\n✅ セキュリティスコア ${score}/100 ≥ 閾値 ${threshold} — デプロイゲート通過`);
+  }
+}
+
 console.log('\n✅ セキュリティチェック完了\n');

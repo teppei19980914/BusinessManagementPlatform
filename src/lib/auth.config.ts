@@ -50,7 +50,12 @@ export const authConfig: NextAuthConfig = {
           : 'authjs.session-token',
       options: {
         httpOnly: true,
-        sameSite: 'lax',
+        // PR #198 (2026-04-30): 'lax' → 'strict' に強化 (CWE-1275 対策)。
+        //   本サービスは Credentials provider のみで OAuth/SSO のクロスサイトコールバック
+        //   が無く、メール内リンクからのトップレベル遷移 (パスワード再設定 / 招待) は
+        //   遷移先で別途認証フローを通すため、'strict' でも UX 影響なし。
+        //   外部サイトからのトップレベル GET 遷移後でも認証が維持される必要がない。
+        sameSite: 'strict',
         path: '/',
         secure: process.env.NODE_ENV === 'production',
         // maxAge を指定しない → セッション cookie (タブ/ブラウザ閉じで失効)
