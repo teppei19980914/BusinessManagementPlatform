@@ -3421,6 +3421,53 @@ toast 出すため対象外
 - `src/app/(dashboard)/layout.tsx` (LoadingProvider 内に ToastProvider を mount)
 - 修正例: feat/ux-improvements-batch6 (2026-04-30)
 
+### 5.45 既存スキーマカラムを UI のみで活かす任意入力フィールドの追加パターン (2026-04-30 で確立)
+
+#### 背景
+
+「ACT (Activity) に作業内容欄を追加したい」要望を受けたとき、調査で
+**`Task.description` (Text, nullable, max 2000) は既に schema/validator/service/DTO に
+全て揃っていた**ことが判明。migration / service / DTO 変更は不要、UI 4 箇所
+(create form state / create body / edit form type+init+body / 両 dialog の textarea)
+だけ追加すれば成立した。
+
+「未使用カラムが既にある」というケースは、リリース時に予防的に切ったカラムや
+過去 PR で追加されたまま UI に露出していないものなど散見される。同種要望が来た
+ときに schema に列を増やす前にまず**既存カラムを grep で探す**べき。
+
+#### 横展開チェックリスト (UI のみで完結する任意入力フィールドを追加するとき)
+
+- [ ] `prisma/schema.prisma` で当該 entity に類似カラムがないか確認 (description /
+      notes / content / detail / memo 等の汎用名)
+- [ ] あれば validator / service / DTO で受理されているか確認 (今回は全て揃っていた)
+- [ ] **任意項目の create/update 規約**:
+  - create: 空文字なら `body` から省略 (`...(form.description.trim() ? { description: form.description.trim() } : {})`)
+  - update: 空文字は `null` で送り **明示クリア** (validator 側で nullable() 必須)
+- [ ] **type 別 UI 分岐**: WBS のように `type==='activity'` でのみ表示する場合、
+      create form / edit form の **両方** で同条件 gating する (片方漏れ注意)
+- [ ] form state の reset 関数 (`setForm({...})`) に新フィールドを忘れず含める
+- [ ] i18n: ラベル / placeholder / hint の 3 セットを ja/en-US 両方に追加
+      (任意項目は hint で「WP は不要」等の補足を入れると UX が上がる)
+- [ ] **CSV export/import 連動**: 必要であれば本 PR と分離 (`docs/developer/...` の
+      CSV 仕様書 / sync-import test と一緒に変更が必要なため)。本 PR で対象外なら
+      PR description に「CSV 反映は対象外」と明記
+- [ ] **一括編集連動**: 必要であれば bulk-update validator + bulk dialog の両方を
+      更新。任意項目は通常一括編集に含めない方が UX が良い (見つけにくいため)
+
+#### アンチパターン (避けるべき)
+
+- ❌ 既存カラムを確認せず migration を追加する: drift / 重複カラムリスク
+- ❌ create で空文字をそのまま `body.description = ''` で送る: validator が空文字を
+      max(2000) で通すため null と区別できなくなる (今回は trim() で省略)
+- ❌ edit で空文字をそのまま送る: validator の `.nullable()` を活かせず、
+      「空文字 = 未指定」と「空文字 = 明示クリア」が区別できない
+
+#### 関連
+
+- `src/lib/validators/task.ts` (createActivitySchema / updateTaskSchema 共に description を含む既存定義)
+- `src/services/task.service.ts` (description は既に DTO + create + update で受理済み)
+- 修正例: feat/ux-improvements-batch6 commit `21471cb` (2026-04-30, ACT 作業内容欄)
+
 ---
 
 ## 6. 機能削除の手順
@@ -5099,3 +5146,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-28 | §5.35 / §5.36 新設 (Phase B 教訓 KDD 化、Stop hook 補正)。**§5.35: dialog 内 component の nested form 回避** ── HTML 仕様で nested forms は parser が無効化するため、内部 `<form onSubmit>` の type=submit ボタンが外側 dialog form を発火する罠を Phase B 要件 4 で発覚 (添付リンク追加 → dialog 閉じる症状)。`<div>` + `type="button"` + `onKeyDown` で Enter キー処理を自前実装するパターンを規約化。アンチパターン 3 種 (内部 form / type 未指定 / stopPropagation で済ませる) を併記。**§5.36: dialog の readOnly 分岐パターン** ── 一覧で全員 row click 可、dialog 内で `readOnly={!isOwner}` で詳細/編集を分岐するパターンを Phase B 要件 5 で確立。`fieldset disabled` 一括非活性化 + submit ボタンの `!readOnly` ガード + タイトル分岐 + サービス層での再判定 (§5.10) を含む 5 ポイント標準化 |
 | 2026-04-29 | §5.42 新設 (PR #190 Phase D 本番反映漏れ事故の KDD 化、Stop hook 補正)。**migration を含む PR は本番手動適用が必須** ── PR #190 (`20260429_stakeholder_priority`) を main マージ後、本番ステークホルダー画面が `P2022 ColumnNotFound` で 500 エラーに。原因: Vercel が IPv4 のみで Supabase 直結 URL に到達できないため `prisma migrate deploy` を実行しない (OPERATION.md §3.3) → SQL Editor 手動適用が必要だが、PR description にチェックリストを書かなかったため開発者が「マージ＝本番反映完了」と誤認。再発防止として **migration を伴う PR には固定フォーマットの「本番反映チェックリスト」セクションを description に必ず含める** ことを §5.42 として規約化。順序は **マージ前** に SQL Editor で適用 (Vercel 自動デプロイがコード反映だけ走り DB 不整合になる構造を防ぐ)。横展開チェックリスト 5 項目 + 自動化検討 (Supavisor + buildCommand) も併記 |
 | 2026-04-30 | §5.43 / §5.44 新設 (feat/ux-improvements-batch6)。**§5.43: ガントチャート independent tab 化 + responsive プルダウン** ── 旧 feat/gantt-tab-restructure (PR-C item 6) で WBS タブ内のトグルボタンに集約していた Gantt を独立タブ化。PC (lg+) では「WBS管理」「ガントチャート」を独立タブで並べ、Mobile (lg-) では「進捗管理 ▼」プルダウンに集約。「資産プルダウン」(PR #167) と同じ仕組みを再利用、`tabGantt` / `progressMenuLabel` / `progressMenuAria` を i18n 追加。**§5.44: リクエスト成功/失敗の Toast 通知パターン** ── 旧来は setError() ローカル state + alert() のみで成功フィードバックが無かった問題を解消。`<ToastProvider>` を新設、dashboard layout の LoadingProvider 内に mount。`useToast()` の `showSuccess` / `showError` を全 CRUD 呼び出し (dialog 7 + client 13 + shared 5 = 計 25 ファイル) に横展開。設計判断: 新規ライブラリ追加なし (sonner 等不採用)、メッセージ文字列は呼出側で直書き (i18n 経由しない、複合キー乱立を防ぐ)、setError() inline 表示と toast を併用 (役割分担)。横展開チェックリスト 8 項目 + 採用パターン 25 ファイル一覧を §5.44 末尾に明示 |
+| 2026-04-30 | §5.45 新設 (feat/ux-improvements-batch6 追加コミット 21471cb)。**既存スキーマカラムを UI のみで活かす任意入力フィールドの追加パターン** ── ユーザ要望「ACT に作業内容欄を追加」を受け、`Task.description` (Text, nullable, max 2000) が既に schema/validator/service/DTO に全て揃っていたことを発見。migration 不要で UI 4 箇所追加 (create form state / create body / edit form type+init+body / 両 dialog の textarea) だけで成立した経緯を KDD 化。横展開チェックリスト 8 項目 (schema grep / 任意項目の create-省略/update-null 規約 / type 別 UI 分岐 / i18n hint / CSV/bulk 連動) + アンチパターン 3 種 (空文字を validator に通す / create と edit で空文字の意味が混在) を併記。**「migration を追加する前に既存カラムを grep する」**を unwritten rule から成文化 |
