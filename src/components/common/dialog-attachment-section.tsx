@@ -7,7 +7,7 @@
  * `{!readOnly && (<><SingleUrlField source/><AttachmentList general/></>)}` の構造が
  * 3 つの dialog (knowledge / retrospective / risk) で同じ shape で繰り返されていた。
  *
- * **readOnly 非表示の理由**: §5.10 (`fix/attachment-list-non-member-403`) で確立した
+ * **readOnly 非表示の理由**: §5.14 (`fix/attachment-list-non-member-403`) で確立した
  * パターン。dialog を非作成者が開く場合 (Phase B 要件 5)、AttachmentList 内部の
  * `/api/attachments?entityType=...` GET で 403 が返るため readOnly 時は描画しない。
  *

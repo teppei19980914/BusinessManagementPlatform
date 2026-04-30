@@ -189,7 +189,7 @@ export function KnowledgeEditDialog({
           </div>
           </fieldset>
           {/* Phase E 共通化: DialogAttachmentSection に集約 (旧来は SingleUrlField +
-              AttachmentList を inline で並べていた。readOnly 時の §5.10 非表示も内部処理) */}
+              AttachmentList を inline で並べていた。readOnly 時の §5.14 非表示も内部処理) */}
           <DialogAttachmentSection
             entityType="knowledge"
             entityId={knowledge.id}
