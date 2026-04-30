@@ -3468,6 +3468,49 @@ toast 出すため対象外
 - `src/services/task.service.ts` (description は既に DTO + create + update で受理済み)
 - 修正例: feat/ux-improvements-batch6 commit `21471cb` (2026-04-30, ACT 作業内容欄)
 
+### 5.46 外部提供スクリプトの導入と既存 skill 統合パターン (PR #196 で確立)
+
+#### 背景
+
+ユーザから外部で開発した `security-check.ts` (CWE 観点静的解析ツール) と
+`security-check-skill.md` (skill 定義) の 2 ファイルを受領。
+
+「skill 定義は **既存定義（セキュリティチェック）に盛り込む形で**」という指示があり、
+`.claude/skills/security-check.md` を新規作成する素朴アプローチは取らず、既存資産に統合した。
+
+#### 採用した統合方針
+
+1. **スクリプト本体**: `scripts/security-check.ts` に **verbatim** 配置 (ユーザ提供物の改変は別 PR)
+2. **skill 定義の取り込み先 1**: `CLAUDE.md` §2 セキュリティチェック (4 層多層防御)
+   - 第 5 層「静的スキャン (Script)」を **1 行サマリ** で追加 (CLAUDE.md 150 行制限)
+   - 詳細手順は次の skill ファイルに委譲する形のリンク
+3. **skill 定義の取り込み先 2**: `.claude/skills/threat-model.md` (既存セキュリティ skill)
+   - description を「STRIDE + 静的スキャン」に拡張
+   - 既存内容を「Mode A: STRIDE 実装前」、新規追加分を「Mode B: 既存コード静的スキャン 実装後」として **2 モード構成**に再編
+   - Mode A/B の補完関係 (B Finding を A 表に逆流) を明記
+4. **生成物の扱い**: `docs/security/security-report.html` / `SECURITY-TASKS.md` は **`.gitignore` で除外**
+   (毎回再生成 + 時刻入りで commit 差分が無意味)
+5. **出力ディレクトリ**: `docs/security/README.md` に実行方法のみ簡潔に書き、skill 文書との二重管理を避ける
+
+#### 抽出したルール (今後の同種導入で適用)
+
+- [ ] 外部提供スクリプトは **verbatim 配置**、改変が必要なら本 PR から分離する
+- [ ] 新しい skill ファイルを作成する前に **既存 skill (`threat-model.md` 等) を拡張できないか** 検討する
+  - 拡張のメリット: CLAUDE.md / skill 一覧の見通しが良い、関連概念の合体で発見性が上がる
+  - 新規のメリット: 単一責任、命名検索しやすい (該当ない場合のみ採用)
+- [ ] 自動生成ファイル (時刻入りレポート / 統計 / cache) は **必ず `.gitignore`**
+- [ ] 出力先ディレクトリには `README.md` を置き、**実行方法 1 セクションのみ** 書く (skill との重複は厳禁)
+- [ ] CLAUDE.md への追記は **1 行サマリ + skill リンク** に留める (150 行制限)
+- [ ] 初回スキャン結果は PR description に記録 (本 PR の場合: 9 Finding / score 30/100)
+
+#### 関連
+
+- `scripts/security-check.ts` (本ツール本体)
+- `docs/security/README.md` (出力先 + 実行方法)
+- `.claude/skills/threat-model.md` Mode B (skill 定義本体)
+- `CLAUDE.md` §2 (5 層多層防御の参照ポイント)
+- 修正例: feat/security-check-script (PR #196, 2026-04-30)
+
 ---
 
 ## 6. 機能削除の手順
@@ -5148,3 +5191,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-30 | §5.43 / §5.44 新設 (feat/ux-improvements-batch6)。**§5.43: ガントチャート independent tab 化 + responsive プルダウン** ── 旧 feat/gantt-tab-restructure (PR-C item 6) で WBS タブ内のトグルボタンに集約していた Gantt を独立タブ化。PC (lg+) では「WBS管理」「ガントチャート」を独立タブで並べ、Mobile (lg-) では「進捗管理 ▼」プルダウンに集約。「資産プルダウン」(PR #167) と同じ仕組みを再利用、`tabGantt` / `progressMenuLabel` / `progressMenuAria` を i18n 追加。**§5.44: リクエスト成功/失敗の Toast 通知パターン** ── 旧来は setError() ローカル state + alert() のみで成功フィードバックが無かった問題を解消。`<ToastProvider>` を新設、dashboard layout の LoadingProvider 内に mount。`useToast()` の `showSuccess` / `showError` を全 CRUD 呼び出し (dialog 7 + client 13 + shared 5 = 計 25 ファイル) に横展開。設計判断: 新規ライブラリ追加なし (sonner 等不採用)、メッセージ文字列は呼出側で直書き (i18n 経由しない、複合キー乱立を防ぐ)、setError() inline 表示と toast を併用 (役割分担)。横展開チェックリスト 8 項目 + 採用パターン 25 ファイル一覧を §5.44 末尾に明示 |
 | 2026-04-30 | §5.45 新設 (feat/ux-improvements-batch6 追加コミット 21471cb)。**既存スキーマカラムを UI のみで活かす任意入力フィールドの追加パターン** ── ユーザ要望「ACT に作業内容欄を追加」を受け、`Task.description` (Text, nullable, max 2000) が既に schema/validator/service/DTO に全て揃っていたことを発見。migration 不要で UI 4 箇所追加 (create form state / create body / edit form type+init+body / 両 dialog の textarea) だけで成立した経緯を KDD 化。横展開チェックリスト 8 項目 (schema grep / 任意項目の create-省略/update-null 規約 / type 別 UI 分岐 / i18n hint / CSV/bulk 連動) + アンチパターン 3 種 (空文字を validator に通す / create と edit で空文字の意味が混在) を併記。**「migration を追加する前に既存カラムを grep する」**を unwritten rule から成文化 |
 | 2026-04-30 | E2E §4.46 / §4.47 新設 (PR #194 hotfix)。**§4.46: Toast 文言と既存 UI 文言の部分マッチで strict mode violation** ── ToastProvider 導入で showSuccess の長文 (「ユーザを登録し、招待メールを送信しました」) が dialog title (「招待メールを送信しました」) を内包し、`getByText` の既定部分マッチで 2 elements にヒット → strict mode 違反。Toast 導入時の grep 予防、scope+role での 1 要素絞り、エンティティ名で一意化、Toast viewport の `role="region"` で意識的分離、の 4 ルールを記載。**§4.47: responsive で既存タブに hidden lg:inline-flex 付与で spec viewport 別分岐必須** ── Task 1 で WBS管理 タブを responsive 化した際、mobile でも `toBeVisible()` を要求していた既存テストが一斉 fail。さらに `toHaveCount(0)` の「ガント」が新タブ「ガントチャート」と部分マッチして fail。教訓として、PR #167 「資産プルダウン」を model にする方針、`{ exact: true }` 推奨、タブ追加 PR の動作確認 checklist 4 項目を成文化 |
+| 2026-04-30 | §5.46 新設 (PR #196 feat/security-check-script)。**外部提供スクリプトの導入と既存 skill 統合パターン** ── ユーザから外部開発の security-check.ts (CWE 静的解析) + skill 定義 .md を受領。「既存定義に盛り込む」指示に従い、新規 .claude/skills/security-check.md は作らず、CLAUDE.md §2 セキュリティチェックに第 5 層 (静的スキャン)、threat-model.md に Mode A (STRIDE 実装前) + Mode B (静的スキャン 実装後) の 2 モード構成として統合。抽出したルール 6 項目: (1) 外部提供は verbatim 配置 (2) 既存 skill 拡張を新規より優先 (3) 自動生成は .gitignore (4) 出力先 README.md は実行方法 1 セクション (5) CLAUDE.md は 1 行サマリ + skill link (6) 初回スキャン結果を PR description に記録。本 PR 初回スキャンは 9 Finding (CRITICAL 2/HIGH 4/MEDIUM 2/LOW 1, score 30/100) |
