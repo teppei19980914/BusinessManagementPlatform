@@ -17,7 +17,9 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:update-snapshots": "playwright test --update-snapshots",
-    "e2e:coverage-check": "tsx scripts/check-e2e-coverage.ts"
+    "e2e:coverage-check": "tsx scripts/check-e2e-coverage.ts",
+    "security:check": "tsx scripts/security-check.ts",
+    "security:gate": "tsx scripts/security-check.ts --min-score=90"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",

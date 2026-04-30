@@ -25,6 +25,8 @@ import { getTranslations } from 'next-intl/server';
 import { z } from 'zod/v4';
 import { passwordSchema } from '@/lib/validators/auth';
 import { verifyAndIssueResetToken, resetPassword } from '@/services/password-reset.service';
+// PR #198: 公開認証エンドポイントのブルートフォース防御 (CWE-307)
+import { applyRateLimit } from '@/lib/rate-limit';
 
 const verifySchema = z.object({
   email: z.email(),
@@ -37,6 +39,10 @@ const resetSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  // PR #198: 同一 IP からのブルートフォース防御 (CWE-307)。閾値超過は 429 を返す。
+  const limited = applyRateLimit(req, { key: 'reset-password' });
+  if (limited) return limited;
+
   const body = await req.json();
 
   // ステップ1: メール + リカバリーコードで本人確認

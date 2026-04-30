@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { sanitizeCallbackUrl } from '@/lib/url-utils';
 
 export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: string }) {
   const t = useTranslations('auth');
@@ -43,8 +44,9 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
       }
       // JWT を mfaVerified=true で再発行 (auth.config.ts jwt callback の trigger='update' 経由)
       await update({ mfaVerified: true });
-      // フルページリロードで最新 cookie を確実に送る (ログインと同じパターン)
-      window.location.href = callbackUrl;
+      // フルページリロードで最新 cookie を確実に送る (ログインと同じパターン)。
+      // PR #198: callbackUrl は CWE-601 対策で sanitize してから遷移する。
+      window.location.href = sanitizeCallbackUrl(callbackUrl);
     } finally {
       setIsLoading(false);
     }
