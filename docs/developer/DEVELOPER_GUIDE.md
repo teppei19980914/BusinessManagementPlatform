@@ -3716,6 +3716,64 @@ DROP TABLE retrospective_comments;
 - 旧専用テーブル経歴: `RetrospectiveComment` (PR-α 段階で UI 削除済 → PR #199 で廃止 + 統合)
 - 修正例: `prisma/migrations/20260430_unified_comments/migration.sql` (data migration の参考実装)
 
+### 5.50 Stop hook の重処理 / prompt 型を skill 化して開発速度を回復 (2026-05-01)
+
+#### 背景・症状
+
+`.claude/settings.json` の `Stop` hooks に以下 4 つが登録されており、**Claude が応答するたび** 毎回発火していた:
+
+1. `secret-scan.sh` (軽量、機密漏洩防止) — 数秒
+2. **`pnpm lint && pnpm test`** — **約 24 秒** (lint 13.9 s + test 9.95 s)
+3. `auto-commit.sh` (dev/YYYY-MM-DD ブランチ + 変更ありの guard 済) — 即時
+4. **`type: "prompt"` の 6 観点チェック (横展開 / セキュリティ / パフォーマンス / テスト / ドキュメント / KDD)** — LLM 1 往復消費
+
+##### 起きた問題
+
+質問応答や調査だけのターンでも毎回 24 秒 + LLM 1 往復が浪費される。さらに **prompt 型 hook は LLM 応答後に Stop が再発火** するため、6 観点チェック要求が毎ターン再注入され、ループ的に再表示されて実装が一切進まないターンが発生 (15 ターン以上の例あり)。
+
+#### 採用した修正
+
+**Stop hook を `secret-scan` + `auto-commit` のみに削減**し、品質ゲートは `/quality-check` skill (`.claude/skills/quality-check.md`) に集約:
+
+| 修正項目 | Before | After |
+|---|---|---|
+| `Stop` hook の commands | 3 + prompt 1 = 4 ステップ | **secret-scan + auto-commit の 2 ステップ** |
+| ターン毎の追加待ち時間 | 約 24 秒 + LLM 1 往復 | **<1 秒** |
+| `pnpm lint && pnpm test` | Stop 毎ターン | **`/quality-check` skill で実装完了時のみ** |
+| 6 観点チェック | Stop prompt で毎ターン LLM 再注入 | **`/quality-check` skill 内 Step 2 として明示実行時のみ** |
+
+##### 「仕組みを崩さない」ための保証
+
+- 6 観点チェック / lint / test の **内容は完全維持** (skill 側に丸ごと移行)
+- `secret-scan` は Stop に残し、機密漏洩は常時防御
+- `auto-commit.sh` の test 実行は内部で維持 (commit 前の安全網は機能継続)
+- CI side (`.github/workflows/security.yml` の `security-score-gate` PR #198) でも品質ゲートが二重防御として機能
+
+##### 新フロー (2026-05-01 以降)
+
+```
+[Claude が実装する]
+  ├─ コード変更 ── PostToolUse の prettier 自動整形 (継続)
+  ├─ 実装が一区切り ── /quality-check skill (新設) で lint + test + 6 観点
+  └─ Claude 応答終了 ── Stop hook: secret-scan + auto-commit (軽量のみ)
+```
+
+#### 抽出したルール (今後の hook 設計)
+
+- [ ] **`type: "prompt"` を Stop hook に登録しない**: 応答ごとに LLM 再注入が起きるため、ターン消費が発散する。条件分岐が必要なチェックは skill or PostToolUse + command 出力で行う
+- [ ] **重い処理 (>5 秒) を Stop hook に置かない**: ユーザの自然な会話 (質問・調査) でも毎回課金される。実装完了タイミング限定で skill 化
+- [ ] **「自動でやってほしい」と「毎ターン強制」は別物**: 自動化したい意図は理解できるが、Stop は応答頻度に等しい発火回数。**PR 単位 / コミット単位の品質ゲートは skill or CI に置く** のが正解
+- [ ] **改修時はバックアップを残す**: `.claude/settings.json.backup-YYYYMMDD_HHMMSS` を作成 (元に戻せる安全網)
+- [ ] **CLAUDE.md の運用フロー記述を skill 構成と同期**: hook 改修時に CLAUDE.md「開発中」セクションも併せて更新する (今回 §運用フロー / §知識駆動開発 の 2 箇所を更新)
+
+#### 関連
+
+- `.claude/skills/quality-check.md` (本改修で新設、6 観点 + lint + test の集約 skill)
+- `.claude/settings.json` (Stop hooks を 2 step に削減)
+- `.claude/settings.json.backup-20260501_*` (改修前バックアップ、元に戻したい時の参照)
+- CLAUDE.md §運用フロー (新フローを反映済)
+- E2E_LESSONS_LEARNED §4.49 / §5.49 (本改修と同じ「重実行を毎ターン強制しない」原則の前例)
+
 ---
 
 ## 6. 機能削除の手順
@@ -5398,3 +5456,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-30 | E2E §4.46 / §4.47 新設 (PR #194 hotfix)。**§4.46: Toast 文言と既存 UI 文言の部分マッチで strict mode violation** ── ToastProvider 導入で showSuccess の長文 (「ユーザを登録し、招待メールを送信しました」) が dialog title (「招待メールを送信しました」) を内包し、`getByText` の既定部分マッチで 2 elements にヒット → strict mode 違反。Toast 導入時の grep 予防、scope+role での 1 要素絞り、エンティティ名で一意化、Toast viewport の `role="region"` で意識的分離、の 4 ルールを記載。**§4.47: responsive で既存タブに hidden lg:inline-flex 付与で spec viewport 別分岐必須** ── Task 1 で WBS管理 タブを responsive 化した際、mobile でも `toBeVisible()` を要求していた既存テストが一斉 fail。さらに `toHaveCount(0)` の「ガント」が新タブ「ガントチャート」と部分マッチして fail。教訓として、PR #167 「資産プルダウン」を model にする方針、`{ exact: true }` 推奨、タブ追加 PR の動作確認 checklist 4 項目を成文化 |
 | 2026-04-30 | §5.46 新設 (PR #196 feat/security-check-script)。**外部提供スクリプトの導入と既存 skill 統合パターン** ── ユーザから外部開発の security-check.ts (CWE 静的解析) + skill 定義 .md を受領。「既存定義に盛り込む」指示に従い、新規 .claude/skills/security-check.md は作らず、CLAUDE.md §2 セキュリティチェックに第 5 層 (静的スキャン)、threat-model.md に Mode A (STRIDE 実装前) + Mode B (静的スキャン 実装後) の 2 モード構成として統合。抽出したルール 6 項目: (1) 外部提供は verbatim 配置 (2) 既存 skill 拡張を新規より優先 (3) 自動生成は .gitignore (4) 出力先 README.md は実行方法 1 セクション (5) CLAUDE.md は 1 行サマリ + skill link (6) 初回スキャン結果を PR description に記録。本 PR 初回スキャンは 9 Finding (CRITICAL 2/HIGH 4/MEDIUM 2/LOW 1, score 30/100) |
 | 2026-04-30 | §5.47 新設 (PR #197 docs/security-check-pr-workflow)。**PR 作成ワークフローへの security-check 統合と score 90+ 維持戦略** ── PR #196 で導入したツールに「いつ実行するか」を定める運用を確立。**全 PR 作成時必須の 5 ステップ** (① 既存レポート削除 → ② tsx 実行 → ③ score < 90 なら修正ループ → ④ PR 作成 → ⑤ コメントでスコア投稿) を threat-model.md Mode B-1 として定義。CLAUDE.md §2 第 5 層に「PR 作成のたびに必須実行」を明記。設計判断: CI gate ではなく Claude フロー側に組み込んだ理由 (修正まで含めるため)、HTML 直貼りでなく Markdown サマリ + ローカル案内に絞る理由 (GitHub の制限)、score 90 の意味 (HIGH 全消し + MEDIUM 1 件まで)、残存 Finding を PR コメントで記録することで reviewer が退行検知できる仕組み。スクリプト本体のメンテ (Mode B-2) は 1 check 関数 = 1 PR、CWE/OWASP リンク必須、トリガー 4 種 (CWE Top 25 更新 / インシデント / 新ライブラリ / 横展開判断) を成文化 |
+| 2026-05-01 | §5.50 新設 (Stop hook 重処理 + prompt 型を skill 化)。**開発速度回復** ── `.claude/settings.json` の Stop hook に `pnpm lint && pnpm test` (24 秒) と `type: "prompt"` の 6 観点チェックが登録されており、Claude が応答するたび毎回発火 → 質問応答や調査のみのターンでも 24 秒 + LLM 1 往復浪費。さらに prompt 型は応答後に Stop が再発火するため 6 観点チェック要求がループ的に再注入され、15 ターン以上実装が進まない事態発生。修正: lint+test+6 観点を `.claude/skills/quality-check.md` に分離、Stop は `secret-scan` + `auto-commit` の軽量 2 step のみに削減。仕組み (内容) は維持し、発火タイミングのみ「毎ターン」→「実装完了時」に変更。抽出ルール: (1) Stop hook に prompt 型を登録しない (応答ごと再注入で発散) (2) 重処理 (>5 秒) を Stop に置かない (3) 「自動化」と「毎ターン強制」は別物、PR/コミット単位は skill or CI へ |

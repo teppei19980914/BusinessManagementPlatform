@@ -45,8 +45,11 @@
 
 ### 開発中
 1. Claude Code が要件取り込み + テスト追加
-2. Stop Hook で `secret-scan` → 静的解析 → テスト → **テスト成功時のみ自動 commit & push**
-3. テスト失敗時はコミットせず、原因調査・修正後に再試行
+2. **実装が一区切りついたら `/quality-check` skill を実行** (lint + test + 6 観点チェック一括)
+3. Stop Hook で `secret-scan` → **テスト成功時のみ自動 commit & push** (lint/test 自体は /quality-check 側で実施済の前提)
+4. テスト失敗時はコミットせず、原因調査・修正後に再試行
+
+> **2026-05-01 改修**: Stop hook から `pnpm lint && pnpm test` (24 秒) と prompt-type 6 観点チェックを **`/quality-check` skill に分離**。応答ターンごとの重実行を解消し、開発速度を回復 (旧仕様は質問応答のみのターンでも 24 秒 + LLM 1 往復浪費)。詳細は DEVELOPER_GUIDE §5.50 を参照。
 
 ### マージ
 - 開発者が GitHub 上で PR をマージ（手動）
@@ -84,7 +87,7 @@
 - **対象範囲は「テスト失敗」だけでない**: 罠 / 落とし穴 / 新しい実装パターン / 横展開発見 / 「次回も同じ作業をしそう」と感じた手順 — すべて Step 4 / 6 のナレッジ追記対象
 - **重複は許さない**: 同じ事象を 2 箇所に書かない。整理時に統合する (`/knowledge-organize`)
 - **前提が変わったら updatedAt と再発事例の連番を必ず付ける** (§10.5 の方式)
-- **Stop hook の最終チェック項目 6** で「ナレッジ追記済か」を毎回確認 (`.claude/settings.json` Stop prompt 参照、settings 改修済)
+- **`/quality-check` skill 実行時の項目 6** で「ナレッジ追記済か」を確認 (旧仕様の Stop prompt は応答ごと再発火で開発速度を著しく低下させたため 2026-05-01 に skill 化)
 
 ## コミット前チェック（毎回必須）
 
