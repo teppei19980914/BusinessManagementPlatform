@@ -697,6 +697,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     type: 'work_package' | 'activity';
     parentTaskId: string;
     name: string;
+    /** 2026-04-30: ACT のみ表示・編集可。WP は使わない (子から集約) */
+    description: string;
     assigneeId: string;
     plannedStartDate: string;
     plannedEndDate: string;
@@ -710,6 +712,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     type: task.type as 'work_package' | 'activity',
     parentTaskId: task.parentTaskId ?? '',
     name: task.name,
+    description: task.description ?? '',
     assigneeId: task.assigneeId ?? '',
     plannedStartDate: task.plannedStartDate ?? '',
     plannedEndDate: task.plannedEndDate ?? '',
@@ -764,6 +767,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         body.plannedStartDate = editForm.plannedStartDate || null;
         body.plannedEndDate = editForm.plannedEndDate || null;
         body.plannedEffort = editForm.plannedEffort;
+        // 2026-04-30: ACT のみ description を更新。空文字は null (明示クリア) として送る。
+        body.description = editForm.description.trim() ? editForm.description.trim() : null;
       }
     }
     // 実績系（PM/TL または担当者本人）
@@ -1083,6 +1088,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   const [form, setForm] = useState({
     name: '',
+    // 2026-04-30: ACT のみ表示する作業内容欄。WP は子から集約されるため不要。
+    description: '',
     // fix/quick-ux item 8: デフォルト担当者=自分。プルダウンで変更可。
     assigneeId: userId,
     plannedStartDate: '',
@@ -1098,6 +1105,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setError('');
 
     // PR #63: UI から「優先度」を撤去。サーバ側バリデータは optional 扱いのため省略で OK。
+    // 2026-04-30: ACT のみ description を送信 (空文字は省略)。WP は子から集約のため不要。
     const base = createType === 'work_package'
       ? { type: 'work_package', name: form.name }
       : {
@@ -1107,6 +1115,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           plannedStartDate: form.plannedStartDate,
           plannedEndDate: form.plannedEndDate,
           plannedEffort: form.plannedEffort,
+          ...(form.description.trim() ? { description: form.description.trim() } : {}),
         };
 
     const body = parentTaskId ? { ...base, parentTaskId } : base;
@@ -1141,7 +1150,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setIsCreateOpen(false);
     setParentTaskId('');
     // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット
-    setForm({ name: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
+    setForm({ name: '', description: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
     showSuccess(createType === 'work_package' ? 'WPを作成しました' : 'アクティビティを作成しました');
     await reload();
   }
@@ -1261,6 +1270,19 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <div className="space-y-2">
                       <Label>{t('plannedEffort')}</Label>
                       <NumberInput min={0.5} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
+                    </div>
+                    {/* 2026-04-30: ACT 作業内容。何をするかを具体的に記述する欄 (任意) */}
+                    <div className="space-y-2">
+                      <Label htmlFor="task-create-description">{t('description')}</Label>
+                      <textarea
+                        id="task-create-description"
+                        value={form.description}
+                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        placeholder={t('descriptionPlaceholder')}
+                        maxLength={2000}
+                        rows={4}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      />
                     </div>
                   </>
                 )}
@@ -1697,6 +1719,19 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <div className="space-y-2">
                         <Label>{t('estimatedEffort')}</Label>
                         <NumberInput min={0.5} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
+                      </div>
+                      {/* 2026-04-30: ACT 作業内容 (任意)。何をするかを具体的に記述する欄 */}
+                      <div className="space-y-2">
+                        <Label htmlFor="task-edit-description">{t('description')}</Label>
+                        <textarea
+                          id="task-edit-description"
+                          value={editForm.description}
+                          onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                          placeholder={t('descriptionPlaceholder')}
+                          maxLength={2000}
+                          rows={4}
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
                       </div>
                     </>
                   )}
