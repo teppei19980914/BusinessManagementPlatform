@@ -17,6 +17,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -95,6 +96,7 @@ export function StakeholderEditDialog({
   const tAction = useTranslations('action');
   const t = useTranslations('stakeholder');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [error, setError] = useState('');
@@ -163,16 +165,17 @@ export function StakeholderEditDialog({
 
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(
-        json.error?.message
-          || json.error?.details?.[0]?.message
-          || (isEdit ? t('updateFailed') : t('registerFailed')),
-      );
+      const msg = json.error?.message
+        || json.error?.details?.[0]?.message
+        || (isEdit ? t('updateFailed') : t('registerFailed'));
+      setError(msg);
+      showError(isEdit ? 'ステークホルダーの更新に失敗しました' : 'ステークホルダーの登録に失敗しました');
       return;
     }
 
     // feat/account-lock-and-ui-consistency: 即座に閉じてから reload を裏で走らせる
     onOpenChange(false);
+    showSuccess(isEdit ? 'ステークホルダーを更新しました' : 'ステークホルダーを登録しました');
     void onSaved();
   }
 

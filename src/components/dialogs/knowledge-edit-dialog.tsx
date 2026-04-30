@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -58,6 +59,7 @@ export function KnowledgeEditDialog({
   const t = useTranslations('action');
   const tKnowledge = useTranslations('knowledge');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
@@ -107,12 +109,15 @@ export function KnowledgeEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || tKnowledge('updateFailed'));
+      const msg = json.error?.message || tKnowledge('updateFailed');
+      setError(msg);
+      showError('ナレッジの更新に失敗しました');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
     // 即座に閉じてから reload を裏で走らせる (旧実装は reload await で遅く感じた)。
     onOpenChange(false);
+    showSuccess('ナレッジを更新しました');
     void onSaved();
   }
 

@@ -31,6 +31,7 @@ import { Menu } from '@base-ui/react/menu';
 import { ChevronDownIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -58,6 +59,7 @@ import { SingleUrlField } from '@/components/attachments/single-url-field';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import { EstimatesClient } from './estimates/estimates-client';
 import { TasksClient } from './tasks/tasks-client';
+import { GanttClient } from './gantt/gantt-client';
 import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
 import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
@@ -127,6 +129,7 @@ export function ProjectDetailClient({
   const tAction = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   // 概要タブ内ヘッダの操作ボタン権限 (PR #58 → fix/quick-ux item 1 で改修):
   //   状態変更 / 編集: 実際のプロジェクト PM/TL **または** システム管理者
@@ -314,10 +317,13 @@ export function ProjectDetailClient({
     );
     if (!res.ok) {
       const json = await res.json();
-      setEditError(json.error?.message || t('updateFailed'));
+      const msg = json.error?.message || t('updateFailed');
+      setEditError(msg);
+      showError('プロジェクトの更新に失敗しました');
       return;
     }
     setIsEditOpen(false);
+    showSuccess('プロジェクトを更新しました');
     router.refresh();
   }
 
@@ -348,9 +354,14 @@ export function ProjectDetailClient({
       cascadeRetros: String(cascadeRetros),
       cascadeKnowledge: String(cascadeKnowledge),
     });
-    await withLoading(() =>
+    const res = await withLoading(() =>
       fetch(`/api/projects/${project.id}?${params.toString()}`, { method: 'DELETE' }),
     );
+    if (!res.ok) {
+      showError('プロジェクトの削除に失敗しました');
+      return;
+    }
+    showSuccess('プロジェクトを削除しました');
     router.push('/projects');
   }
 
@@ -365,7 +376,12 @@ export function ProjectDetailClient({
       }),
     );
     setIsChangingStatus(false);
-    if (res.ok) router.refresh();
+    if (res.ok) {
+      showSuccess('プロジェクトの状態を更新しました');
+      router.refresh();
+    } else {
+      showError('プロジェクトの状態更新に失敗しました');
+    }
   }
 
   return (
@@ -528,8 +544,57 @@ export function ProjectDetailClient({
         <TabsList className="h-auto flex-wrap [&>*]:flex-none">
           <TabsTrigger value="overview">{t('tabOverview')}</TabsTrigger>
           {canEdit && <TabsTrigger value="estimates">{t('tabEstimates')}</TabsTrigger>}
-          {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止し WBS 管理タブ内に統合 */}
-          <TabsTrigger value="tasks">{t('tabTasks')}</TabsTrigger>
+          {/*
+            2026-04-30 (Task 1): ガントチャートを WBS タブ内ボタンから独立タブ化。
+            「○○一覧」(資産プルダウン) と同じ responsive 方式:
+              - PC (lg+): 「WBS管理」「ガントチャート」を独立タブとして表示
+              - Mobile (lg-): 「進捗管理 ▼」プルダウンに WBS / ガントチャートを集約
+          */}
+          {/* PC 表示: 個別タブ (lg+) */}
+          <TabsTrigger value="tasks" className="hidden lg:inline-flex">{t('tabTasks')}</TabsTrigger>
+          <TabsTrigger value="gantt" className="hidden lg:inline-flex">{t('tabGantt')}</TabsTrigger>
+          {/* Mobile 表示: 進捗管理プルダウン (lg-)。配下の値が active なら親も active 表示。 */}
+          <Menu.Root>
+            <Menu.Trigger
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md px-3 py-1 text-sm transition-colors hover:bg-accent lg:hidden',
+                ['tasks', 'gantt'].includes(activeTab)
+                  ? 'bg-background font-medium shadow-sm text-foreground'
+                  : 'text-muted-foreground',
+              )}
+              aria-label={t('progressMenuAria')}
+            >
+              <span>{t('progressMenuLabel')}</span>
+              <ChevronDownIcon className="size-3.5" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner sideOffset={4} className="isolate z-50">
+                <Menu.Popup
+                  className={cn(
+                    'min-w-[180px] origin-(--transform-origin) rounded-md border bg-card text-card-foreground shadow-md',
+                    'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95',
+                    'data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+                  )}
+                >
+                  {[
+                    { value: 'tasks', label: t('tabTasks') },
+                    { value: 'gantt', label: t('tabGantt') },
+                  ].map((opt) => (
+                    <Menu.Item
+                      key={opt.value}
+                      onClick={() => handleTabChange(opt.value)}
+                      className={cn(
+                        'block w-full cursor-pointer px-4 py-2 text-left text-sm transition-colors hover:bg-accent',
+                        activeTab === opt.value ? 'bg-accent font-medium' : 'text-foreground',
+                      )}
+                    >
+                      {opt.label}
+                    </Menu.Item>
+                  ))}
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
           {/*
             PR #167 (feat/asset-tab-responsive-mobile):
             画面幅 lg+ では各「○○一覧」を従来通り独立タブとして表示、
@@ -819,8 +884,23 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
-        {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止。
-            WBS タブ (TasksClient) 内のトグルボタンで Gantt 表示を切替える設計に移行。 */}
+        {/* 2026-04-30 (Task 1): ガントチャートを独立タブとして復活。
+            WBS と同じ tasks tree + members を使うため lazy fetch も同じ load() を共用。 */}
+        <TabsContent value="gantt" className="mt-4">
+          <LazyTabContent state={tasks.state}>
+            {(tasksData) => (
+              <LazyTabContent state={members.state}>
+                {(membersData) => (
+                  <GanttClient
+                    projectId={project.id}
+                    tasks={tasksData.tree}
+                    members={membersData}
+                  />
+                )}
+              </LazyTabContent>
+            )}
+          </LazyTabContent>
+        </TabsContent>
 
         {/* リスクタブ (PR #60 #1: risk のみ表示) */}
         <TabsContent value="risks" className="mt-4">

@@ -27,6 +27,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -94,6 +95,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
   const tAction = useTranslations('action');
   const tField = useTranslations('field');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDate } = useFormatters();
   const reload = useCallback(async () => {
@@ -272,11 +274,15 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      setBulkError(j?.message || j?.error || tRisk('bulkUpdateFailed'));
+      const msg = j?.message || j?.error || tRisk('bulkUpdateFailed');
+      setBulkError(msg);
+      showError(typeFilter === 'issue' ? '課題の一括更新に失敗しました' : 'リスクの一括更新に失敗しました');
       return;
     }
+    const total = selectedIds.size;
     setBulkOpen(false);
     setSelectedIds(new Set());
+    showSuccess(`${total} 件の${typeFilter === 'issue' ? '課題' : 'リスク'}を一括更新しました`);
     await reload();
   }
 
@@ -298,7 +304,9 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     );
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || tRisk('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || tRisk('createFailed');
+      setError(msg);
+      showError(form.type === 'risk' ? 'リスクの起票に失敗しました' : '課題の起票に失敗しました');
       return;
     }
     // PR #67: 作成成功直後にステージされた添付を一括 POST
@@ -313,6 +321,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     setStagedCreateAttachments([]);
 
     setIsCreateOpen(false);
+    showSuccess(form.type === 'risk' ? 'リスクを起票しました' : '課題を起票しました');
     setForm({
       type: initialType,
       title: '',
@@ -634,9 +643,14 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                     className="text-destructive"
                     onClick={async () => {
                       if (!confirm(tRisk('deleteConfirm'))) return;
-                      await withLoading(() =>
+                      const res = await withLoading(() =>
                         fetch(`/api/projects/${projectId}/risks/${r.id}`, { method: 'DELETE' }),
                       );
+                      if (!res.ok) {
+                        showError(r.type === 'risk' ? 'リスクの削除に失敗しました' : '課題の削除に失敗しました');
+                        return;
+                      }
+                      showSuccess(r.type === 'risk' ? 'リスクを削除しました' : '課題を削除しました');
                       await reload();
                     }}
                   >

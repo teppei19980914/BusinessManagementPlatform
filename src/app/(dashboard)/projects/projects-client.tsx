@@ -24,6 +24,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -94,6 +95,7 @@ export function ProjectsClient({
   const router = useRouter();
   const t = useTranslations('project');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -172,11 +174,14 @@ export function ProjectsClient({
 
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || t('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || t('createFailed');
+      setError(msg);
+      showError('プロジェクトの作成に失敗しました');
       return;
     }
 
     const json = await res.json();
+    showSuccess('プロジェクトを作成しました');
 
     // PR #67: 作成成功直後にステージされた添付を一括 POST
     if (stagedAttachments.length > 0 && json.data?.id) {

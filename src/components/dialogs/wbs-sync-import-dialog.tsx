@@ -32,6 +32,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 
 type RemoveMode = 'keep' | 'warn' | 'delete';
 
@@ -91,6 +92,7 @@ export function WbsSyncImportDialog({
   const t = useTranslations('wbs.syncImport');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [step, setStep] = useState<'select' | 'preview'>('select');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<SyncDiffResult | null>(null);
@@ -169,11 +171,13 @@ export function WbsSyncImportDialog({
         /* noop */
       }
       setError(message);
+      showError('WBS の上書きインポートに失敗しました');
       return;
     }
 
     const json = await res.json();
     handleClose();
+    showSuccess('WBS を上書きインポートしました');
     await onImported();
     alert(t('importComplete', {
       added: json.data.added,

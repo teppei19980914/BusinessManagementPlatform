@@ -21,6 +21,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -98,6 +99,7 @@ export function ProjectKnowledgeClient({
   const tKnowledge = useTranslations('knowledge');
   const KNOWLEDGE_VISIBILITY_OPTIONS = buildKnowledgeVisibilityOptions(tKnowledge);
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   // T-22 Phase 22c: 上書きインポート (sync-import) ダイアログ
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
@@ -188,7 +190,9 @@ export function ProjectKnowledgeClient({
 
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || tKnowledge('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || tKnowledge('createFailed');
+      setError(msg);
+      showError('ナレッジの作成に失敗しました');
       return;
     }
 
@@ -205,6 +209,7 @@ export function ProjectKnowledgeClient({
 
     setIsCreateOpen(false);
     setForm(initialForm);
+    showSuccess('ナレッジを作成しました');
     await onReload();
   }
 
@@ -214,9 +219,10 @@ export function ProjectKnowledgeClient({
       fetch(`/api/projects/${projectId}/knowledge/${knowledgeId}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert(tKnowledge('deleteFailed'));
+      showError('ナレッジの削除に失敗しました');
       return;
     }
+    showSuccess('ナレッジを削除しました');
     await onReload();
   }
 

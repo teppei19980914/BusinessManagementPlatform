@@ -32,6 +32,7 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -78,9 +79,6 @@ import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
-// feat/gantt-tab-restructure (PR-C item 6): Gantt 表示は専用タブから WBS タブ内のトグルへ移行
-import { GanttClient } from '../gantt/gantt-client';
-
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
 type Props = {
@@ -185,6 +183,7 @@ function TaskTreeNodeImpl({
   // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
   // CRUD 後の reload + stale-while-revalidate（PR #33）で UI が追従する。
   const t = useTranslations('wbs');
+  const { showSuccess, showError } = useToast();
   const unsetLabel = t('unsetShort');
 
   const isWP = task.type === 'work_package';
@@ -318,9 +317,14 @@ function TaskTreeNodeImpl({
                 aria-label={t('delete')}
                 onClick={async () => {
                   if (!confirm(isWP ? t('deleteConfirmWp') : t('deleteConfirmActivity'))) return;
-                  await onLoading(() =>
+                  const res = await onLoading(() =>
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
+                  if (!res.ok) {
+                    showError(isWP ? 'WPの削除に失敗しました' : 'アクティビティの削除に失敗しました');
+                    return;
+                  }
+                  showSuccess(isWP ? 'WPを削除しました' : 'アクティビティを削除しました');
                   await reload();
                 }}
               >
@@ -424,6 +428,7 @@ function TaskMobileCardImpl({
   attachmentsByEntity,
 }: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect' | 'showIdColumn'>) {
   const t = useTranslations('wbs');
+  const { showSuccess, showError } = useToast();
   const unsetLabel = t('unsetShort');
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
@@ -526,9 +531,14 @@ function TaskMobileCardImpl({
                 aria-label={t('delete')}
                 onClick={async () => {
                   if (!confirm(isWP ? t('deleteConfirmWp') : t('deleteConfirmActivity'))) return;
-                  await onLoading(() =>
+                  const res = await onLoading(() =>
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
+                  if (!res.ok) {
+                    showError(isWP ? 'WPの削除に失敗しました' : 'アクティビティの削除に失敗しました');
+                    return;
+                  }
+                  showSuccess(isWP ? 'WPを削除しました' : 'アクティビティを削除しました');
                   await reload();
                 }}
               >
@@ -583,10 +593,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const t = useTranslations('wbs');
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
-  // feat/gantt-tab-restructure (PR-C item 6): WBS タブ内で Gantt を切り替え表示する state
-  const [showGantt, setShowGantt] = useState(false);
   // fix/wbs-filter-regression: モバイル時のフィルタ折りたたみ state (md+ では常時開)
   const [isFilterMobileOpen, setIsFilterMobileOpen] = useState(false);
 
@@ -688,6 +697,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     type: 'work_package' | 'activity';
     parentTaskId: string;
     name: string;
+    /** 2026-04-30: ACT のみ表示・編集可。WP は使わない (子から集約) */
+    description: string;
     assigneeId: string;
     plannedStartDate: string;
     plannedEndDate: string;
@@ -701,6 +712,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     type: task.type as 'work_package' | 'activity',
     parentTaskId: task.parentTaskId ?? '',
     name: task.name,
+    description: task.description ?? '',
     assigneeId: task.assigneeId ?? '',
     plannedStartDate: task.plannedStartDate ?? '',
     plannedEndDate: task.plannedEndDate ?? '',
@@ -755,6 +767,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         body.plannedStartDate = editForm.plannedStartDate || null;
         body.plannedEndDate = editForm.plannedEndDate || null;
         body.plannedEffort = editForm.plannedEffort;
+        // 2026-04-30: ACT のみ description を更新。空文字は null (明示クリア) として送る。
+        body.description = editForm.description.trim() ? editForm.description.trim() : null;
       }
     }
     // 実績系（PM/TL または担当者本人）
@@ -779,9 +793,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         message = json.error?.message || json.error?.details?.[0]?.message || message;
       } catch {}
       setEditError(message);
+      showError('タスクの更新に失敗しました');
       return;
     }
     closeEditDialog();
+    showSuccess('タスクを更新しました');
     await reload();
   }
 
@@ -926,12 +942,20 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
     if (!confirm(t('bulkDeleteConfirm', { count: selectedIds.size }))) return;
+    let failed = 0;
+    const total = selectedIds.size;
     for (const id of selectedIds) {
-      await withLoading(() =>
+      const res = await withLoading(() =>
         fetch(`/api/projects/${projectId}/tasks/${id}`, { method: 'DELETE' }),
       );
+      if (!res.ok) failed += 1;
     }
     setSelectedIds(new Set());
+    if (failed > 0) {
+      showError(`${failed} 件のタスク削除に失敗しました (${total} 件中)`);
+    } else {
+      showSuccess(`${total} 件のタスクを削除しました`);
+    }
     await reload();
   }
 
@@ -963,13 +987,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     if (bulkEditApply.plannedEndDate) updates.plannedEndDate = bulkEditValues.plannedEndDate || null;
     if (bulkEditApply.plannedEffort) updates.plannedEffort = bulkEditValues.plannedEffort;
 
+    const total = selectedIds.size;
     const err = await postBulkUpdate(updates);
     if (err) {
       setBulkEditError(err);
+      showError('タスクの一括更新 (計画) に失敗しました');
       return;
     }
     setIsBulkEditOpen(false);
     setSelectedIds(new Set());
+    showSuccess(`${total} 件のタスクの計画を一括更新しました`);
     // ※ apply / values の明示リセットは不要。次回開く際に onOpenChange→
     //    handleBulkEditOpenChange(true) が必ずリセットを行うため。
     await reload();
@@ -984,13 +1011,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     if (bulkActualApply.actualStartDate) updates.actualStartDate = bulkActualValues.actualStartDate || null;
     if (bulkActualApply.actualEndDate) updates.actualEndDate = bulkActualValues.actualEndDate || null;
 
+    const total = selectedIds.size;
     const err = await postBulkUpdate(updates);
     if (err) {
       setBulkActualError(err);
+      showError('タスクの一括更新 (実績) に失敗しました');
       return;
     }
     setIsBulkActualOpen(false);
     setSelectedIds(new Set());
+    showSuccess(`${total} 件のタスクの実績を一括更新しました`);
     // ※ 同上。リセットは onOpenChange 経由
     await reload();
   }
@@ -1016,7 +1046,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         body: JSON.stringify(body),
       }),
     );
-    if (!res.ok) return;
+    if (!res.ok) {
+      showError('WBS のエクスポートに失敗しました');
+      return;
+    }
     const csvText = await res.text();
     // BOM を再付与 (res.text() で strip されるため)
     const blob = new Blob(['﻿' + csvText], { type: 'text/csv; charset=utf-8' });
@@ -1026,6 +1059,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     a.download = `wbs-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    showSuccess('WBS をエクスポートしました');
   }
 
   // feat/wbs-overwrite-import: ID 表示トグル + 上書きインポートダイアログ state
@@ -1054,6 +1088,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   const [form, setForm] = useState({
     name: '',
+    // 2026-04-30: ACT のみ表示する作業内容欄。WP は子から集約されるため不要。
+    description: '',
     // fix/quick-ux item 8: デフォルト担当者=自分。プルダウンで変更可。
     assigneeId: userId,
     plannedStartDate: '',
@@ -1069,6 +1105,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setError('');
 
     // PR #63: UI から「優先度」を撤去。サーバ側バリデータは optional 扱いのため省略で OK。
+    // 2026-04-30: ACT のみ description を送信 (空文字は省略)。WP は子から集約のため不要。
     const base = createType === 'work_package'
       ? { type: 'work_package', name: form.name }
       : {
@@ -1078,6 +1115,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           plannedStartDate: form.plannedStartDate,
           plannedEndDate: form.plannedEndDate,
           plannedEffort: form.plannedEffort,
+          ...(form.description.trim() ? { description: form.description.trim() } : {}),
         };
 
     const body = parentTaskId ? { ...base, parentTaskId } : base;
@@ -1092,7 +1130,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || t('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || t('createFailed');
+      setError(msg);
+      showError(createType === 'work_package' ? 'WPの作成に失敗しました' : 'アクティビティの作成に失敗しました');
       return;
     }
 
@@ -1110,7 +1150,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setIsCreateOpen(false);
     setParentTaskId('');
     // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット
-    setForm({ name: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
+    setForm({ name: '', description: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
+    showSuccess(createType === 'work_package' ? 'WPを作成しました' : 'アクティビティを作成しました');
     await reload();
   }
 
@@ -1119,10 +1160,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
       <div className="flex items-center justify-end">
         <div className="flex gap-2">
-        {/* feat/gantt-tab-restructure (PR-C item 6): ガント表示トグル (全ユーザに開放、WBS タブ統合) */}
-        <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>
-          {showGantt ? t('hideGantt') : t('showGantt')}
-        </Button>
+        {/* 2026-04-30 (Task 1): ガント表示トグルを削除し、ガントチャートは独立タブ
+            ('gantt' tab) として project-detail-client 側で render する設計に移行。 */}
         {/* feat/wbs-overwrite-import: 一覧画面に ID 列を表示するトグル (CSV 整合確認用、既定 OFF) */}
         <Button
           variant={showIdColumn ? 'default' : 'outline'}
@@ -1232,6 +1271,19 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <Label>{t('plannedEffort')}</Label>
                       <NumberInput min={0.5} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
                     </div>
+                    {/* 2026-04-30: ACT 作業内容。何をするかを具体的に記述する欄 (任意) */}
+                    <div className="space-y-2">
+                      <Label htmlFor="task-create-description">{t('description')}</Label>
+                      <textarea
+                        id="task-create-description"
+                        value={form.description}
+                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        placeholder={t('descriptionPlaceholder')}
+                        maxLength={2000}
+                        rows={4}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      />
+                    </div>
                   </>
                 )}
 
@@ -1252,13 +1304,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         </div>
       </div>
 
-      {/* feat/gantt-tab-restructure (PR-C item 6): ガント表示エリア (toggle で開閉)。
-          tasks (tree) と members は本コンポーネントが既に保持しているため再 fetch 不要。 */}
-      {showGantt && (
-        <div className="rounded-lg border p-2">
-          <GanttClient projectId={projectId} tasks={tasks} members={members} />
-        </div>
-      )}
+      {/* 2026-04-30 (Task 1): ガント表示は独立タブに移行したため本タブ内では描画しない。
+          詳細は project-detail-client.tsx の TabsContent value="gantt" を参照。 */}
 
       {/*
         フィルタ (担当者 + 状況、PR #61)
@@ -1672,6 +1719,19 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <div className="space-y-2">
                         <Label>{t('estimatedEffort')}</Label>
                         <NumberInput min={0.5} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
+                      </div>
+                      {/* 2026-04-30: ACT 作業内容 (任意)。何をするかを具体的に記述する欄 */}
+                      <div className="space-y-2">
+                        <Label htmlFor="task-edit-description">{t('description')}</Label>
+                        <textarea
+                          id="task-edit-description"
+                          value={editForm.description}
+                          onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                          placeholder={t('descriptionPlaceholder')}
+                          maxLength={2000}
+                          rows={4}
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
                       </div>
                     </>
                   )}

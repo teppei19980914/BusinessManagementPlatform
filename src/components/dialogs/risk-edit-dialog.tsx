@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -66,6 +67,7 @@ export function RiskEditDialog({
   const tField = useTranslations('field');
   const tRisk = useTranslations('risk');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。state は dialog ローカル。
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
@@ -134,13 +136,16 @@ export function RiskEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || tRisk('updateFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || tRisk('updateFailed');
+      setError(msg);
+      showError(risk.type === 'risk' ? 'リスクの更新に失敗しました' : '課題の更新に失敗しました');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
     // 旧実装: await onSaved() → onOpenChange(false) — reload 完了を待つため遅く感じる
     // 新実装: onOpenChange(false) → onSaved() (fire-and-forget) — 即座に閉じて裏で reload
     onOpenChange(false);
+    showSuccess(risk.type === 'risk' ? 'リスクを更新しました' : '課題を更新しました');
     void onSaved();
   }
 
