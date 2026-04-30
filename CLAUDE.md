@@ -95,6 +95,7 @@
    - **自動ブロック (Hooks)**: 危険API (`eval`/`innerHTML`/`dangerouslySetInnerHTML`/動的`exec`)、機密ファイル (`.env`/`*.pem`/`*.key`) への編集、機密情報の混入を自動検知
    - **観点別レビュー (Agents)**: `auth-reviewer` / `injection-reviewer` / `xss-reviewer` / `secret-reviewer` / `dependency-reviewer` を**並列実行**
    - **設計段階 (Skill)**: 新機能実装前に `/threat-model` で STRIDE 分析を必須化
+   - **静的スキャン (Script)**: `pnpm tsx scripts/security-check.ts` で CWE 観点 (DEP/AUTH/RATE/CRYPTO/CSP/INJECT/LEAK/SECRET) の自動レポート + 修正タスクシート (`docs/security/SECURITY-TASKS.md`) を生成。手順は `/threat-model` skill の「既存コードの静的スキャン」セクション参照
    - **セキュリティテスト必須**: 認可境界、不正入力（SQLi/XSS payload）、認証バイパス試行のテストを追加
 3. **パフォーマンスチェック** — N+1禁止、不要な再描画、非同期並列化
 4. **デプロイチェック** — `pnpm lint` → `pnpm test` → `pnpm build` をローカル実行

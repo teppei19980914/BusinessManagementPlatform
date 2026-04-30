@@ -63,3 +63,8 @@ id_rsa.pub
 /test-results
 /playwright/.cache
 # 注: 視覚回帰 baseline (e2e/**__screenshots__/) は commit 対象なので除外しない
+
+# Security check の自動生成レポート (毎回再生成される時刻入りのため commit しない)
+# 実行: pnpm tsx scripts/security-check.ts → docs/security/ に出力
+/docs/security/security-report.html
+/docs/security/SECURITY-TASKS.md
