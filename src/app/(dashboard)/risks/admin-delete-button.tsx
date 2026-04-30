@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 
 /**
  * 全リスク/課題画面で admin 向けに表示する削除ボタン。
@@ -25,6 +26,7 @@ export function AdminRiskDeleteButton({
 }) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const tAction = useTranslations('action');
   const tCommon = useTranslations('common');
   return (
@@ -40,9 +42,10 @@ export function AdminRiskDeleteButton({
           fetch(`/api/projects/${projectId}/risks/${riskId}`, { method: 'DELETE' }),
         );
         if (!res.ok) {
-          alert(tCommon('deleteFailed'));
+          showError('リスク/課題の削除に失敗しました');
           return;
         }
+        showSuccess('リスク/課題を削除しました');
         router.refresh();
       }}
     >

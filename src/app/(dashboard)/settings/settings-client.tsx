@@ -27,6 +27,7 @@ import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -56,6 +57,7 @@ export function SettingsClient({
 }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const { update: updateSession } = useSession();
   const tSetting = useTranslations('setting');
   const tField = useTranslations('field');
@@ -106,12 +108,15 @@ export function SettingsClient({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setI18nError(json.error?.message || tSetting('i18nSaveFailed'));
+      const msg = json.error?.message || tSetting('i18nSaveFailed');
+      setI18nError(msg);
+      showError('言語・タイムゾーン設定の保存に失敗しました');
       return;
     }
     // JWT 反映 (次のレンダリング以降、全 useFormatters が新値を使う)
     await updateSession({ timezone: body.timezone, locale: body.locale });
     setI18nSuccess(tSetting('i18nSaved'));
+    showSuccess('言語・タイムゾーン設定を保存しました');
     // 既存描画 (特にサーバコンポーネント) を再計算して即時反映
     router.refresh();
   }
@@ -131,13 +136,16 @@ export function SettingsClient({
     if (!res.ok) {
       setTheme(prev);
       const json = await res.json().catch(() => ({}));
-      setThemeError(json.error?.message || tSetting('themeSaveFailed'));
+      const msg = json.error?.message || tSetting('themeSaveFailed');
+      setThemeError(msg);
+      showError('テーマ設定の保存に失敗しました');
       return;
     }
     // セッション JWT に反映 → layout.tsx 側の <html data-theme> を next refresh で更新
     // (React の immutability ルール上、クライアントから直接 document を書き換えない)
     await updateSession({ themePreference: next });
     setThemeSuccess(tSetting('themeChanged'));
+    showSuccess('テーマ設定を保存しました');
     router.refresh();
   }
 
@@ -173,11 +181,14 @@ export function SettingsClient({
 
     const json = await res.json();
     if (!res.ok) {
-      setPwError(json.error?.message || tMessage('passwordChangeFailed'));
+      const msg = json.error?.message || tMessage('passwordChangeFailed');
+      setPwError(msg);
+      showError('パスワードの変更に失敗しました');
       return;
     }
 
     setPwSuccess(tMessage('passwordChanged'));
+    showSuccess('パスワードを変更しました');
     setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
   }
 
@@ -210,12 +221,15 @@ export function SettingsClient({
 
     const json = await res.json();
     if (!res.ok) {
-      setMfaError(json.error?.message || tSetting('mfaCodeVerifyFailed'));
+      const msg = json.error?.message || tSetting('mfaCodeVerifyFailed');
+      setMfaError(msg);
+      showError('MFA の有効化に失敗しました');
       return;
     }
 
     setMfaStep('idle');
     setTotpCode('');
+    showSuccess('MFA を有効化しました');
     router.refresh();
   }
 
@@ -223,7 +237,12 @@ export function SettingsClient({
     const res = await withLoading(() =>
       fetch('/api/auth/mfa/disable', { method: 'POST' }),
     );
-    if (res.ok) router.refresh();
+    if (res.ok) {
+      showSuccess('MFA を無効化しました');
+      router.refresh();
+    } else {
+      showError('MFA の無効化に失敗しました');
+    }
   }
 
   return (

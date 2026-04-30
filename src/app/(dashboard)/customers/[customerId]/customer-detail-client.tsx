@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -61,6 +62,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
   const tAction = useTranslations('action');
   const tProject = useTranslations('project');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
 
   // --- 編集ダイアログ ---
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -103,10 +105,13 @@ export function CustomerDetailClient({ customer, projects }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setEditError(json.error?.message || t('editFailed'));
+      const msg = json.error?.message || t('editFailed');
+      setEditError(msg);
+      showError('顧客の更新に失敗しました');
       return;
     }
     setIsEditOpen(false);
+    showSuccess('顧客を更新しました');
     router.refresh();
   }
 
@@ -140,9 +145,12 @@ export function CustomerDetailClient({ customer, projects }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      window.alert(json.error?.message || t('deleteFailed'));
+      const msg = json.error?.message || t('deleteFailed');
+      window.alert(msg);
+      showError('顧客の削除に失敗しました');
       return;
     }
+    showSuccess('顧客を削除しました');
     router.push('/customers');
   }
 

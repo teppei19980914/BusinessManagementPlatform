@@ -22,6 +22,7 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -56,6 +57,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
   const router = useRouter();
   const t = useTranslations('member');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDate } = useFormatters();
   const reload = useCallback(async () => {
@@ -91,33 +93,46 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
 
     if (!res.ok) {
       const json = await res.json();
-      setAddError(json.error?.message || t('addFailed'));
+      const msg = json.error?.message || t('addFailed');
+      setAddError(msg);
+      showError('メンバーの追加に失敗しました');
       return;
     }
 
     setIsAddOpen(false);
     setAddForm({ userId: '', projectRole: 'member' });
+    showSuccess('メンバーを追加しました');
     await reload();
   }
 
   async function handleRoleChange(memberId: string, newRole: string) {
-    await withLoading(() =>
+    const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/members/${memberId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectRole: newRole }),
       }),
     );
+    if (!res.ok) {
+      showError('メンバーロールの更新に失敗しました');
+      return;
+    }
+    showSuccess('メンバーロールを更新しました');
     await reload();
   }
 
   async function handleRemove(memberId: string, userName: string) {
     if (!confirm(t('removeConfirm', { userName }))) return;
-    await withLoading(() =>
+    const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/members/${memberId}`, {
         method: 'DELETE',
       }),
     );
+    if (!res.ok) {
+      showError('メンバーの削除に失敗しました');
+      return;
+    }
+    showSuccess('メンバーを削除しました');
     await reload();
   }
 

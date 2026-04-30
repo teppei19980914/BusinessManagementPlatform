@@ -19,6 +19,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -57,6 +58,7 @@ export function UsersClient({ initialUsers }: Props) {
   const t = useTranslations('admin.users');
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDate, formatDateTimeFull } = useFormatters();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -100,10 +102,12 @@ export function UsersClient({ initialUsers }: Props) {
       } else {
         setError(json.error?.message || t('registrationFailed'));
       }
+      showError('ユーザの登録に失敗しました');
       return;
     }
 
     setSuccess(true);
+    showSuccess('ユーザを登録し、招待メールを送信しました');
     router.refresh();
   }
 
@@ -124,12 +128,12 @@ export function UsersClient({ initialUsers }: Props) {
       fetch('/api/admin/users/lock-inactive', { method: 'POST' }),
     );
     if (!res.ok) {
-      alert(t('lockInactiveFailed'));
+      showError('非アクティブユーザの手動ロックに失敗しました');
       return;
     }
     const json = await res.json().catch(() => ({ data: null }));
     const count = json?.data?.lockedUserIds?.length ?? 0;
-    alert(t('lockInactiveDone', { count }));
+    showSuccess(`非アクティブユーザ ${count} 件をロックしました`);
     router.refresh();
   }
 

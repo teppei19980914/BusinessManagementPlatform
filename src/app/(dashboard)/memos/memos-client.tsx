@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -81,6 +82,7 @@ export function MemosClient({
   };
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDateTime } = useFormatters();
   const [memos, setMemos] = useState(initialMemos);
@@ -157,7 +159,9 @@ export function MemosClient({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || tMessage('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || tMessage('createFailed');
+      setError(msg);
+      showError('メモの作成に失敗しました');
       return;
     }
     const json = await res.json();
@@ -172,6 +176,7 @@ export function MemosClient({
     setStagedCreateAttachments([]);
     setCreateForm({ title: '', content: '', visibility: 'private' });
     setIsCreateOpen(false);
+    showSuccess('メモを作成しました');
     await reload();
   }
 
@@ -212,10 +217,13 @@ export function MemosClient({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || tMessage('updateFailed'));
+      const msg = json.error?.message || tMessage('updateFailed');
+      setError(msg);
+      showError('メモの更新に失敗しました');
       return;
     }
     setEditing(null);
+    showSuccess('メモを更新しました');
     await reload();
   }
 
@@ -225,9 +233,10 @@ export function MemosClient({
       fetch(`/api/memos/${memo.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert(tMessage('deleteFailed'));
+      showError('メモの削除に失敗しました');
       return;
     }
+    showSuccess('メモを削除しました');
     await reload();
   }
 

@@ -3291,6 +3291,136 @@ Vercel ビルド時に自動適用される。**現時点では未採用**だが
 - `scripts/print-migration.ts` (`pnpm migrate:print <name>` で SQL を stdout 出力)
 - 事故事例: 2026-04-29 PR #190 マージ後の P2022 (本 §5.42 の起点)
 
+### 5.43 ガントチャートの independent tab 化 + responsive プルダウン (2026-04-30 で確立)
+
+直前の `feat/gantt-tab-restructure` (PR-C item 6) で WBS タブ内のトグルボタンに
+集約していた Gantt を、ユーザ要望「○○一覧と同様に幅が広い時はタブ、狭い時は
+プルダウン」に従って独立タブ化 + responsive 切替に再編。
+
+#### 採用パターン (project-detail-client.tsx)
+
+PC (lg+) では「WBS管理」「ガントチャート」を独立タブで並べ、Mobile (lg-) では
+「進捗管理 ▼」プルダウンで集約する。「資産プルダウン」(リスク/課題/振り返り/
+ナレッジ/参考) と同じ仕組みを再利用 (PR #167 / `dashboard-header.tsx` の 3 分類
+プルダウン)。
+
+```tsx
+{/* PC: 個別タブ */}
+<TabsTrigger value="tasks" className="hidden lg:inline-flex">{t('tabTasks')}</TabsTrigger>
+<TabsTrigger value="gantt" className="hidden lg:inline-flex">{t('tabGantt')}</TabsTrigger>
+
+{/* Mobile: 進捗管理プルダウン */}
+<Menu.Root>
+  <Menu.Trigger className="... lg:hidden">
+    <span>{t('progressMenuLabel')}</span><ChevronDownIcon />
+  </Menu.Trigger>
+  <Menu.Portal>
+    <Menu.Positioner>
+      <Menu.Popup>
+        <Menu.Item onClick={() => handleTabChange('tasks')}>WBS管理</Menu.Item>
+        <Menu.Item onClick={() => handleTabChange('gantt')}>ガントチャート</Menu.Item>
+      </Menu.Popup>
+    </Menu.Positioner>
+  </Menu.Portal>
+</Menu.Root>
+```
+
+#### 設計判断
+
+- WBS と Gantt は **同じ tasks tree + members** を使うため、`<LazyTabContent state={tasks.state}>`
+  を 2 回ネストして両タブで共有する (重複 fetch なし)。
+- TasksClient 側の `showGantt` state は不要になったため削除。`<GanttClient>` は
+  project-detail-client の `<TabsContent value="gantt">` で直接 render。
+- `t('progressMenuLabel')` / `t('progressMenuAria')` を新設 (project namespace)。
+
+#### 関連
+
+- `src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx` (タブ + プルダウン UI)
+- `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx` (showGantt 削除)
+- `src/i18n/messages/{ja,en-US}.json` の `tabGantt` / `progressMenuLabel` / `progressMenuAria`
+- 既存パターン参照: §5.41 (○○一覧の責任プルダウン) / `dashboard-header.tsx` の `assetsMenuLabel`
+- 修正例: feat/ux-improvements-batch6 Task 1 (2026-04-30)
+
+### 5.44 リクエスト成功/失敗の Toast 通知パターン (2026-04-30 で確立)
+
+#### 背景
+
+ユーザ要望: 「リクエスト成功時、成功メッセージ表示。画面下部に成功可否によって
+メッセージを表示します。緑色の帯で「{操作内容}が成功しました」、赤色の帯で
+「{操作内容}が失敗しました」。メッセージ内容は人間が理解できる内容を表示」。
+
+従来は `setError(...)` でローカル state にエラー文言を出すか `alert(...)` で
+ブラウザネイティブダイアログを使用しており、**成功時のフィードバックが無かった**
+(ユーザが操作完了を判断できず重複送信や不安につながる)。
+
+#### 採用パターン: 共通 ToastProvider + useToast()
+
+`src/components/toast-provider.tsx` を新設、dashboard layout に mount。
+全 CRUD 呼び出しで以下の 3 行を追加することで対応:
+
+```tsx
+import { useToast } from '@/components/toast-provider';
+
+const { showSuccess, showError } = useToast();
+
+const res = await withLoading(() => fetch(url, { method: 'POST', ... }));
+if (!res.ok) {
+  setError(...);  // 既存の dialog 内インライン表示 (ローカル state) は維持
+  showError('XX の作成に失敗しました');  // ★ 追加: 画面下部に赤帯通知
+  return;
+}
+showSuccess('XX を作成しました');  // ★ 追加: 画面下部に緑帯通知
+```
+
+#### 設計判断
+
+1. **新規ライブラリ追加なし**: sonner / react-toastify などは導入せず、
+   LoadingProvider と同じ Context パターンで自前実装 (依存最小化)。
+2. **メッセージ文字列は呼出側で決める**: i18n キーに集約せず call site で直書き。
+   理由: メッセージは「{エンティティ名}を{動作}しました」型で文脈ごとに微妙に
+   異なる (例: 「リスクの起票」vs「課題の起票」、「WPの作成」vs「アクティビティの
+   作成」)。i18n を経由すると複合キーが乱立して保守性が下がる。
+3. **既存 setError() / alert() を併用**: dialog 内のフォーム validation エラー
+   表示 (赤帯はあくまで「リクエスト失敗」を表現するもの) はローカル state で
+   inline 表示する従来パターンを維持。toast は 4 秒で自動ディスミス、ローカル
+   inline は dialog を閉じるか再送信まで残る。
+4. **showError と setError は **同時呼び出し****: dialog 内に詳細を出しつつ、画面下部にも
+   要約を出すことで「dialog を閉じても気づける」一覧 → toast、「修正に必要な詳細を
+   見たい」→ inline、と役割を分担。
+
+#### 横展開チェックリスト (新規 CRUD 呼び出しを追加するときに確認)
+
+- [ ] `useToast()` を import し `showSuccess` / `showError` を使う
+- [ ] `if (!res.ok)` 分岐で `showError('〜に失敗しました')` を呼ぶ
+- [ ] 成功直後に `showSuccess('〜しました')` を呼ぶ (form reset / dialog close 後でも可)
+- [ ] メッセージは「主語+動作」を明示 (例: NG `'削除しました'` / OK `'メモを削除しました'`)
+- [ ] エンティティが文脈で変わる場合は変数化 (例: `risk.type === 'risk' ? 'リスク' : '課題'`)
+- [ ] 一括処理は件数を含める (例: `${total} 件のタスクを削除しました`)
+- [ ] auth フロー (ログイン/パスワードリセット) は ToastProvider 未 mount のため対象外
+- [ ] エラーページ (error.tsx / global-error.tsx) も対象外 (既にエラー UI が出ている)
+
+#### 横展開実績 (2026-04-30 時点)
+
+dialog (7): `knowledge-edit-dialog` / `risk-edit-dialog` / `retrospective-edit-dialog` /
+`stakeholder-edit-dialog` / `user-edit-dialog` / `wbs-sync-import-dialog` /
+`entity-sync-import-dialog`
+
+client (13): `tasks-client` (TaskTreeNode + TaskMobileCard 内部含む) / `memos-client` /
+`customers-client` / `customer-detail-client` / `projects-client` / `project-detail-client` /
+`estimates-client` / `members-client` / `risks-client` / `retrospectives-client` /
+`project-knowledge-client` / `stakeholders-client` / `admin/users-client` /
+`settings-client` / `suggestions-panel`
+
+shared (5): `attachment-list` / `single-url-field` / `cross-list-bulk-visibility-toolbar` /
+`admin-delete-button` (3 entity) / `staged-attachments-input` は呼出側で create 後に
+toast 出すため対象外
+
+#### 関連
+
+- `src/components/toast-provider.tsx` (Context + viewport + 自動ディスミス)
+- `src/app/(dashboard)/layout.tsx` (LoadingProvider 内に ToastProvider を mount)
+- 修正例: feat/ux-improvements-batch6 (2026-04-30)
+
 ---
 
 ## 6. 機能削除の手順
@@ -4968,3 +5098,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-28 | Phase B (要件 4/5/14/20) 着手 / §11 T-25 新設 (要件 14 調査タスク)。Phase B では (要件 4) 編集 dialog 内の `<AttachmentList>` の nested form bug を修正 (HTML が nested forms を許容しないため内部 form の type=submit が外側 form を発火、外側 dialog の保存が走り「リンク追加 → 別画面遷移」と症状化していた)、(要件 5) 「○○一覧」「全○○」全画面で行/カードクリック時に dialog を全員に表示 (非作成者は readOnly モードで詳細閲覧、作成者は編集可)、(要件 20) WBS エクスポートの BOM が `res.text()` で strip される WHATWG Fetch 仕様による文字化けを `'﻿' + csvText` 再付与で修正、を実装。要件 14 (全顧客管理 target=_blank) は再現箇所がコード内に存在せず Phase B では保留し T-25 として詳細調査タスク化 |
 | 2026-04-28 | §5.35 / §5.36 新設 (Phase B 教訓 KDD 化、Stop hook 補正)。**§5.35: dialog 内 component の nested form 回避** ── HTML 仕様で nested forms は parser が無効化するため、内部 `<form onSubmit>` の type=submit ボタンが外側 dialog form を発火する罠を Phase B 要件 4 で発覚 (添付リンク追加 → dialog 閉じる症状)。`<div>` + `type="button"` + `onKeyDown` で Enter キー処理を自前実装するパターンを規約化。アンチパターン 3 種 (内部 form / type 未指定 / stopPropagation で済ませる) を併記。**§5.36: dialog の readOnly 分岐パターン** ── 一覧で全員 row click 可、dialog 内で `readOnly={!isOwner}` で詳細/編集を分岐するパターンを Phase B 要件 5 で確立。`fieldset disabled` 一括非活性化 + submit ボタンの `!readOnly` ガード + タイトル分岐 + サービス層での再判定 (§5.10) を含む 5 ポイント標準化 |
 | 2026-04-29 | §5.42 新設 (PR #190 Phase D 本番反映漏れ事故の KDD 化、Stop hook 補正)。**migration を含む PR は本番手動適用が必須** ── PR #190 (`20260429_stakeholder_priority`) を main マージ後、本番ステークホルダー画面が `P2022 ColumnNotFound` で 500 エラーに。原因: Vercel が IPv4 のみで Supabase 直結 URL に到達できないため `prisma migrate deploy` を実行しない (OPERATION.md §3.3) → SQL Editor 手動適用が必要だが、PR description にチェックリストを書かなかったため開発者が「マージ＝本番反映完了」と誤認。再発防止として **migration を伴う PR には固定フォーマットの「本番反映チェックリスト」セクションを description に必ず含める** ことを §5.42 として規約化。順序は **マージ前** に SQL Editor で適用 (Vercel 自動デプロイがコード反映だけ走り DB 不整合になる構造を防ぐ)。横展開チェックリスト 5 項目 + 自動化検討 (Supavisor + buildCommand) も併記 |
+| 2026-04-30 | §5.43 / §5.44 新設 (feat/ux-improvements-batch6)。**§5.43: ガントチャート independent tab 化 + responsive プルダウン** ── 旧 feat/gantt-tab-restructure (PR-C item 6) で WBS タブ内のトグルボタンに集約していた Gantt を独立タブ化。PC (lg+) では「WBS管理」「ガントチャート」を独立タブで並べ、Mobile (lg-) では「進捗管理 ▼」プルダウンに集約。「資産プルダウン」(PR #167) と同じ仕組みを再利用、`tabGantt` / `progressMenuLabel` / `progressMenuAria` を i18n 追加。**§5.44: リクエスト成功/失敗の Toast 通知パターン** ── 旧来は setError() ローカル state + alert() のみで成功フィードバックが無かった問題を解消。`<ToastProvider>` を新設、dashboard layout の LoadingProvider 内に mount。`useToast()` の `showSuccess` / `showError` を全 CRUD 呼び出し (dialog 7 + client 13 + shared 5 = 計 25 ファイル) に横展開。設計判断: 新規ライブラリ追加なし (sonner 等不採用)、メッセージ文字列は呼出側で直書き (i18n 経由しない、複合キー乱立を防ぐ)、setError() inline 表示と toast を併用 (役割分担)。横展開チェックリスト 8 項目 + 採用パターン 25 ファイル一覧を §5.44 末尾に明示 |

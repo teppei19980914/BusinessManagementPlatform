@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import type { AttachmentDTO } from '@/services/attachment.service';
 
@@ -43,6 +44,7 @@ export function AttachmentList({
   const t = useTranslations('attachment');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const resolvedLabel = label ?? t('relatedUrl');
   // loaded=false の間は空一覧メッセージを出さないため、1 つの state にまとめる
   // (react-hooks/set-state-in-effect 回避: effect 内の setState を 1 回に集約)
@@ -106,11 +108,14 @@ export function AttachmentList({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || t('addFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || t('addFailed');
+      setError(msg);
+      showError('リンクの追加に失敗しました');
       return;
     }
     setNewDisplayName('');
     setNewUrl('');
+    showSuccess('リンクを追加しました');
     await reload();
   }
 
@@ -121,8 +126,10 @@ export function AttachmentList({
     );
     if (!res.ok) {
       setError(t('deleteFailed'));
+      showError('リンクの削除に失敗しました');
       return;
     }
+    showSuccess('リンクを削除しました');
     await reload();
   }
 

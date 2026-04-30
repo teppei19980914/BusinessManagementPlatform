@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 
 /**
  * 全ナレッジ画面で admin 向けに表示する削除ボタン (2026-04-24 新設)。
@@ -22,6 +23,7 @@ export function AdminKnowledgeDeleteButton({
 }) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const tAction = useTranslations('action');
   const tCommon = useTranslations('common');
   return (
@@ -37,9 +39,10 @@ export function AdminKnowledgeDeleteButton({
           fetch(`/api/knowledge/${knowledgeId}`, { method: 'DELETE' }),
         );
         if (!res.ok) {
-          alert(tCommon('deleteFailed'));
+          showError('ナレッジの削除に失敗しました');
           return;
         }
+        showSuccess('ナレッジを削除しました');
         router.refresh();
       }}
     >

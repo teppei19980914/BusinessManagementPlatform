@@ -21,6 +21,7 @@ import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import {
   TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -91,6 +92,7 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
   const t = useTranslations('stakeholder');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editing, setEditing] = useState<StakeholderDTO | null>(null);
   // Phase D 要件 12 (2026-04-28): 優先度フィルタ ('' = 全件、'high'|'medium'|'low' = 該当のみ)
@@ -123,9 +125,10 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
       fetch(`/api/projects/${projectId}/stakeholders/${s.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert(t('deleteFailed'));
+      showError('ステークホルダーの削除に失敗しました');
       return;
     }
+    showSuccess('ステークホルダーを削除しました');
     await reload();
   }
 

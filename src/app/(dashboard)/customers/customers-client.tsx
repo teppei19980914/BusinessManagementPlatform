@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -67,6 +68,7 @@ export function CustomersClient({ initialCustomers }: Props) {
   const t = useTranslations('customer');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [error, setError] = useState('');
@@ -90,12 +92,15 @@ export function CustomersClient({ initialCustomers }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || t('createFailed'));
+      const msg = json.error?.message || t('createFailed');
+      setError(msg);
+      showError('顧客の登録に失敗しました');
       return;
     }
 
     setIsDialogOpen(false);
     setForm(emptyForm);
+    showSuccess('顧客を登録しました');
     router.refresh();
   }
 
@@ -112,9 +117,12 @@ export function CustomersClient({ initialCustomers }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      window.alert(json.error?.message || t('deleteFailed'));
+      const msg = json.error?.message || t('deleteFailed');
+      window.alert(msg);
+      showError('顧客の削除に失敗しました');
       return;
     }
+    showSuccess('顧客を削除しました');
     router.refresh();
   }
 
