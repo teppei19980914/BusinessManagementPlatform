@@ -431,12 +431,15 @@ erDiagram
         timestamp deleted_at
     }
 
-    retrospective_comments {
+    comments {
         uuid id PK
-        uuid retrospective_id FK
+        varchar entity_type
+        uuid entity_id
         uuid user_id FK
         text content
         timestamp created_at
+        timestamp updated_at
+        timestamp deleted_at
     }
 
     decisions {
@@ -511,7 +514,8 @@ erDiagram
     users ||--o{ task_progress_logs : "updates"
     projects ||--o{ risks_issues : "has"
     projects ||--o{ retrospectives : "has"
-    retrospectives ||--o{ retrospective_comments : "has"
+    %% PR #199: comments は polymorphic (entity_type + entity_id)。FK は持たないため
+    %%   ER 図上では「持つ」リレーションを表現せず単独テーブルとして配置。
     projects ||--o{ decisions : "has"
     projects ||--o{ change_requests : "has"
     users ||--o{ audit_logs : "performs"
@@ -902,15 +906,35 @@ User ──< project_members >── Project
 | updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
 
-### 5.10 retrospective_comments（振り返りコメント）
+### 5.10 comments（コメント / PR #199 で polymorphic 統合）
+
+PR #199 で旧 `retrospective_comments` を統合し、attachments と同じ polymorphic 設計
+(entity_type + entity_id) に変更。7 エンティティ (issue / task / risk / retrospective /
+knowledge / customer / stakeholder) で 1 テーブル共通。
 
 | カラム名 | 型 | NULL | デフォルト | 説明 |
 |---|---|---|---|---|
 | id | UUID | NO | gen_random_uuid() | 主キー |
-| retrospective_id | UUID | NO | - | FK: retrospectives.id |
-| user_id | UUID | NO | - | FK: users.id |
-| content | TEXT | NO | - | コメント内容 |
+| entity_type | VARCHAR(30) | NO | - | 親エンティティ種別 (`issue` / `task` / `risk` / `retrospective` / `knowledge` / `customer` / `stakeholder`) |
+| entity_id | UUID | NO | - | 親エンティティの id (FK は持たない: 削除時整合はアプリ層で担保) |
+| user_id | UUID | NO | - | FK: users.id (投稿者) |
+| content | TEXT | NO | - | コメント内容 (1〜2000 文字、サーバ側 trim 後検証) |
 | created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
+| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 (`@updatedAt` で自動。createdAt と異なれば「編集済」判定) |
+| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除時刻 (admin / 投稿者本人で削除可) |
+
+**インデックス**: `idx_comments_entity (entity_type, entity_id, deleted_at)` — 表示クエリの主索引。
+
+**認可ポリシー**:
+- 投稿 / 閲覧:
+  - issue / risk / retrospective / knowledge: 認証済ユーザは誰でも (project member 非メンバーも可)
+  - task / stakeholder: project member or admin
+  - customer: admin only
+- 編集 / 削除: 投稿者本人 OR システム管理者
+
+**Migration ノート**: `prisma/migrations/20260430_unified_comments/migration.sql` で
+旧 `retrospective_comments` の全行を `entity_type='retrospective'` で `comments` に
+INSERT 後、旧テーブルを DROP する。
 
 ### 5.11 decisions（意思決定）
 

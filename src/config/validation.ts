@@ -48,6 +48,13 @@ export const KNOWLEDGE_CONTENT_MAX_LENGTH = 5000;
 /** Memo 本文の上限 (個人ノート、相対的に長文を許容)。 */
 export const MEMO_CONTENT_MAX_LENGTH = 10000;
 
+/**
+ * コメント本文の上限 (PR #199)。
+ * MVP は議論用の中規模テキストとして 2000 文字に揃える (MEDIUM_TEXT_MAX_LENGTH と同値だが、
+ * 業務的意味が異なるため独立定数とする)。
+ */
+export const COMMENT_CONTENT_MAX_LENGTH = 2000;
+
 // ---------- URL / 添付関連 ----------
 
 /** 添付 URL の上限 (DB は VARCHAR(2000) で揃える)。 */

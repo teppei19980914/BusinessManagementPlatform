@@ -25,8 +25,7 @@ export const createRetrospectiveSchema = z.object({
 
 export const updateRetrospectiveSchema = createRetrospectiveSchema.partial();
 
-export const addCommentSchema = z.object({
-  content: z.string().min(1, 'コメントを入力してください').max(MEDIUM_TEXT_MAX_LENGTH),
-});
+// PR #199: コメントは polymorphic comments テーブルへ移行。
+//   schema は src/lib/validators/comment.ts (createCommentSchema / updateCommentSchema) へ移管。
 
 export type CreateRetrospectiveInput = z.infer<typeof createRetrospectiveSchema>;

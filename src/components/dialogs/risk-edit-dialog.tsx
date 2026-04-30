@@ -14,6 +14,8 @@ import {
 import { IMPACT_LEVELS, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import { NAME_MAX_LENGTH, MEDIUM_TEXT_MAX_LENGTH } from '@/config';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// PR #199: コメントセクション (entityType は risk.type='risk'|'issue' に追従)
+import { CommentSection } from '@/components/comments/comment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
@@ -251,6 +253,11 @@ export function RiskEditDialog({
             mainLabel={tRisk('relatedUrl')}
           />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
+          {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
+          <CommentSection
+            entityType={risk.type === 'issue' ? 'issue' : 'risk'}
+            entityId={risk.id}
+          />
         </form>
       </DialogContent>
     </Dialog>

@@ -13,7 +13,9 @@
  *   - problems / improvements は pg_trgm GIN インデックス付き (PR #65)。
  *     新プロジェクトの purpose / scope / background と類似度マッチして「過去の失敗」を
  *     早期に提示する用途 (suggestion.service.ts 経由)。
- *   - コメント (retrospective_comments) は別テーブルで Markdown 文字列を持つ。
+ *   - **コメントは PR #199 で polymorphic な `comments` テーブル (entityType='retrospective')
+ *     に統合**。本サービスはコメント関連 API/DTO を持たず、UI から直接 `/api/comments`
+ *     を呼ぶ。旧 `retrospective_comments` テーブルは migration で `comments` に移行済。
  *
  * 認可 (2026-04-24 改修):
  *   - 参照: 非 admin は visibility='public' のみ一覧表示、draft は他人のものは存在しない扱い。
@@ -24,7 +26,7 @@
  *   - 作成: 呼出元 API ルートで ProjectMember チェック済 (admin も非メンバーなら不可)。
  *
  * 関連ドキュメント:
- *   - DESIGN.md §5 (テーブル定義: retrospectives / retrospective_comments)
+ *   - DESIGN.md §5 (テーブル定義: retrospectives) / コメント機能節 (PR #199)
  *   - DESIGN.md §16 (全文検索 / pg_trgm)
  *   - DESIGN.md §23 (核心機能: 過去振り返りの提案)
  */
@@ -47,21 +49,21 @@ export type RetroDTO = {
   /** 2026-04-24: UI 側で「自分が作成者か」を判定するために DTO に含める */
   createdBy: string;
   createdAt: string;
-  comments: { id: string; userName: string; content: string; createdAt: string }[];
+  // PR #199: コメントは polymorphic comments テーブルへ移管。本 DTO には含めない。
+  //   UI 側は edit dialog 内の <CommentSection> が /api/comments?entityType=retrospective
+  //   経由で直接取得する。
 };
 
 /**
  * 「全振り返り」ビュー用 DTO。
  * 閲覧ユーザが紐づくプロジェクトの ProjectMember か否かで情報量を切り替える。
- * 非メンバー: projectName マスク / canAccessProject=false / コメント投稿者名マスク
+ * 非メンバー: projectName マスク / canAccessProject=false。
  */
-export type AllRetroDTO = Omit<RetroDTO, 'comments'> & {
+export type AllRetroDTO = RetroDTO & {
   projectName: string | null;
   /** プロジェクトが論理削除済みか (admin のみ識別可、非 admin には false として秘匿) */
   projectDeleted: boolean;
   canAccessProject: boolean;
-  // コメントは件数と本文のみ公開、投稿者氏名は非メンバー向けにマスク
-  comments: { id: string; userName: string | null; content: string; createdAt: string }[];
   /** Req 4: 全振り返り画面で表示する追加フィールド (planSummary/actualSummary/improvements は既に RetroDTO 経由で含まれる) */
   updatedAt: string;
   createdByName: string | null;
@@ -93,15 +95,13 @@ export async function listAllRetrospectivesForViewer(
   const retros = await prisma.retrospective.findMany({
     where: { deletedAt: null, visibility: 'public' },
     include: {
-      comments: { orderBy: { createdAt: 'asc' } },
       project: { select: { id: true, name: true, deletedAt: true } },
     },
     orderBy: { conductedDate: 'desc' },
   });
 
-  // コメント投稿者名 + createdBy / updatedBy を解決 (マスクは row 単位でメンバー判定)
+  // createdBy / updatedBy のユーザ名を解決 (PR #199: コメントは別経路 /api/comments で取得)
   const userIds = [...new Set([
-    ...retros.flatMap((r) => r.comments.map((c) => c.userId)),
     ...retros.map((r) => r.createdBy),
     ...retros.map((r) => r.updatedBy),
   ])];
@@ -135,12 +135,6 @@ export async function listAllRetrospectivesForViewer(
       // プロジェクト名は機微情報扱いを維持 (上記 projectName 行で isMember gate 残置)。
       createdByName: userMap.get(r.createdBy) ?? null,
       updatedByName: userMap.get(r.updatedBy) ?? null,
-      comments: r.comments.map((c) => ({
-        id: c.id,
-        userName: userMap.get(c.userId) ?? null,
-        content: c.content,
-        createdAt: c.createdAt.toISOString(),
-      })),
     };
   });
 }
@@ -155,22 +149,12 @@ export async function listRetrospectives(
   // draft の個別参照は getRetrospective が作成者本人/admin のみ許可する。
   const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
 
+  // PR #199: コメントは polymorphic comments テーブル経由 (/api/comments) で取得するため
+  //   include: { comments: ... } は不要。retro 本体だけ load する。
   const retros = await prisma.retrospective.findMany({
     where: { projectId, deletedAt: null, ...visibilityWhere },
-    include: {
-      comments: {
-        orderBy: { createdAt: 'asc' },
-      },
-    },
     orderBy: { conductedDate: 'desc' },
   });
-
-  // コメントのユーザ名を取得
-  const userIds = [...new Set(retros.flatMap((r) => r.comments.map((c) => c.userId)))];
-  const users = userIds.length > 0
-    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
-    : [];
-  const userMap = new Map(users.map((u) => [u.id, u.name]));
 
   return retros.map((r) => ({
     id: r.id,
@@ -185,12 +169,6 @@ export async function listRetrospectives(
     visibility: r.visibility,
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
-    comments: r.comments.map((c) => ({
-      id: c.id,
-      userName: userMap.get(c.userId) || '不明',
-      content: c.content,
-      createdAt: c.createdAt.toISOString(),
-    })),
   }));
 }
 
@@ -231,7 +209,6 @@ export async function createRetrospective(
     visibility: r.visibility,
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
-    comments: [],
   };
 }
 
@@ -394,12 +371,4 @@ export async function getRetrospective(
   return null;
 }
 
-export async function addComment(
-  retroId: string,
-  content: string,
-  userId: string,
-): Promise<void> {
-  await prisma.retrospectiveComment.create({
-    data: { retrospectiveId: retroId, userId, content },
-  });
-}
+// PR #199: addComment は削除。polymorphic comments テーブルへ移行 (`/api/comments`)。

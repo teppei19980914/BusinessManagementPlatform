@@ -30,6 +30,27 @@
     "memos": "Memos",
     "settings": "Settings"
   },
+  "comment": {
+    "section": "Comments",
+    "placeholder": "Write a comment",
+    "post": "Post",
+    "edit": "Edit",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "edited": "(edited)",
+    "noComments": "No comments yet",
+    "deleteConfirm": "Delete this comment?",
+    "fetchFailed": "Failed to fetch comments",
+    "postFailed": "Failed to post comment",
+    "saveFailed": "Failed to save comment",
+    "deleteFailed": "Failed to delete comment",
+    "postSuccess": "Comment posted",
+    "saveSuccess": "Comment updated",
+    "deleteSuccess": "Comment deleted",
+    "tooLong": "Comment is too long",
+    "empty": "Please enter a comment"
+  },
   "attachment": {
     "relatedUrl": "Related URLs",
     "document": "Document",

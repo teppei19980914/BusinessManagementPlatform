@@ -469,8 +469,10 @@ export async function deleteProjectCascade(
         where: { entityType: 'retrospective', entityId: { in: retroIds } },
       });
       attachmentsDeleted += attRes.count;
-      await prisma.retrospectiveComment.deleteMany({
-        where: { retrospectiveId: { in: retroIds } },
+      // PR #199: 旧 retrospective_comments は polymorphic comments に統合済。
+      //   retrospective 削除時は entityType='retrospective' のコメントも一括削除する。
+      await prisma.comment.deleteMany({
+        where: { entityType: 'retrospective', entityId: { in: retroIds } },
       });
       const delRes = await prisma.retrospective.deleteMany({
         where: { id: { in: retroIds } },

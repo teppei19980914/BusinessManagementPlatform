@@ -10,7 +10,7 @@ vi.mock('@/lib/db', () => ({
       // PR #162 / PR #165: bulkUpdateRetrospectivesVisibilityFromList が呼ぶ
       updateMany: vi.fn(),
     },
-    retrospectiveComment: { create: vi.fn() },
+    // PR #199: retrospectiveComment は polymorphic comments テーブルに統合済 → mock 不要
     projectMember: { findMany: vi.fn() },
     user: { findMany: vi.fn() },
     // PR #89: deleteRetrospective が attachment.updateMany を $transaction 内で呼ぶ
@@ -27,7 +27,7 @@ import {
   confirmRetrospective,
   deleteRetrospective,
   getRetrospective,
-  addComment,
+  // PR #199: addComment は削除 (polymorphic comments テーブルへ移行)
   bulkUpdateRetrospectivesVisibilityFromList,
 } from './retrospective.service';
 import { prisma } from '@/lib/db';
@@ -50,7 +50,7 @@ const retRow = (o: Record<string, unknown> = {}) => ({
   updatedBy: 'u-1',
   createdAt: now,
   updatedAt: now,
-  comments: [],
+  // PR #199: comments は polymorphic comments テーブルへ移行 (DTO に含まれない)
   ...o,
 });
 
@@ -78,39 +78,9 @@ describe('listRetrospectives', () => {
     expect(call.where).not.toHaveProperty('OR');
   });
 
-  it('コメント userName は user.findMany で一括解決', async () => {
-    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
-      retRow({
-        comments: [
-          { id: 'c1', userId: 'u-2', content: 'hi', createdAt: now },
-          { id: 'c2', userId: 'u-3', content: 'yo', createdAt: now },
-        ],
-      }),
-    ] as never);
-    vi.mocked(prisma.user.findMany).mockResolvedValue([
-      { id: 'u-2', name: 'Bob' },
-      { id: 'u-3', name: 'Carol' },
-    ] as never);
-
-    const r = await listRetrospectives('p-1', 'admin-1', 'admin');
-
-    expect(r[0].comments[0].userName).toBe('Bob');
-    expect(r[0].comments[1].userName).toBe('Carol');
-    expect(prisma.user.findMany).toHaveBeenCalledOnce();
-  });
-
-  it('ユーザが見つからないコメントは 不明', async () => {
-    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
-      retRow({
-        comments: [{ id: 'c1', userId: 'u-missing', content: 'x', createdAt: now }],
-      }),
-    ] as never);
-    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
-
-    const r = await listRetrospectives('p-1', 'admin-1', 'admin');
-
-    expect(r[0].comments[0].userName).toBe('不明');
-  });
+  // PR #199: コメント関連の userName 解決テストは削除。コメントは
+  //   polymorphic `comments` テーブル + `/api/comments` 経路に移行したため、
+  //   retrospective.service の責務外。
 });
 
 describe('listAllRetrospectivesForViewer', () => {
@@ -296,7 +266,7 @@ describe('confirmRetrospective / deleteRetrospective', () => {
   });
 });
 
-describe('getRetrospective / addComment', () => {
+describe('getRetrospective', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('getRetrospective: 論理削除済みを除外 + 認可引数なしは生行', async () => {
@@ -335,14 +305,8 @@ describe('getRetrospective / addComment', () => {
     expect(r).toBe(null);
   });
 
-  it('addComment: コメント作成', async () => {
-    vi.mocked(prisma.retrospectiveComment.create).mockResolvedValue({} as never);
-    await addComment('ret-1', 'hello', 'u-1');
-
-    expect(prisma.retrospectiveComment.create).toHaveBeenCalledWith({
-      data: { retrospectiveId: 'ret-1', userId: 'u-1', content: 'hello' },
-    });
-  });
+  // PR #199: addComment テストは削除 (関数自体が削除されたため)。
+  //   polymorphic comments の単体テストは src/services/comment.service.test.ts に新設。
 });
 
 // PR #162 → PR #165 で project-scoped に。プロジェクト「振り返り一覧」からの一括 visibility 更新。

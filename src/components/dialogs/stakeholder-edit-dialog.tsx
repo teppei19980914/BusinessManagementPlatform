@@ -28,6 +28,8 @@ import {
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import { parseTagsInput } from '@/lib/parse-tags';
+// PR #199: コメントセクション (新規作成時は entityId 未確定なので非表示)
+import { CommentSection } from '@/components/comments/comment-section';
 import {
   STAKEHOLDER_ATTITUDES,
   STAKEHOLDER_ENGAGEMENTS,
@@ -360,6 +362,10 @@ export function StakeholderEditDialog({
           </div>
 
           <Button type="submit" className="w-full">{isEdit ? tAction('save') : t('submitRegister')}</Button>
+          {/* PR #199: コメント。新規作成時は entityId 未確定なので非表示。 */}
+          {isEdit && stakeholder && (
+            <CommentSection entityType="stakeholder" entityId={stakeholder.id} />
+          )}
         </form>
       </DialogContent>
     </Dialog>

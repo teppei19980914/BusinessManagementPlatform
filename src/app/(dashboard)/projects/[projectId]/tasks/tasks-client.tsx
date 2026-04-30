@@ -58,6 +58,8 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_STATUSES, WBS_TYPES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+// PR #199: コメントセクション (タスク編集 dialog)
+import { CommentSection } from '@/components/comments/comment-section';
 // feat/wbs-overwrite-import: WBS 上書きインポート (Sync by ID) ダイアログ
 import { WbsSyncImportDialog } from '@/components/dialogs/wbs-sync-import-dialog';
 import {
@@ -1809,6 +1811,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <Button type="button" variant="outline" onClick={closeEditDialog}>{tAction('cancel')}</Button>
                 <Button type="submit">{tAction('save')}</Button>
               </div>
+
+              {/* PR #199: コメント。プロジェクトメンバー必須 (task は project-scoped)。
+                  外側 form の submit を防ぐため CommentSection 内部で type="button" 徹底 */}
+              <CommentSection entityType="task" entityId={editingTask.id} />
             </form>
           )}
         </DialogContent>
