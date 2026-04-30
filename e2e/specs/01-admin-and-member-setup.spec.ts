@@ -197,7 +197,12 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     // systemRole は default='general' のまま
     await dialog.getByRole('button', { name: '招待メールを送信' }).click();
 
-    await expect(page.getByText('招待メールを送信しました')).toBeVisible({ timeout: 10_000 });
+    // 2026-04-30: ToastProvider 導入で Toast「ユーザを登録し、招待メールを送信しました」も
+    //   表示されるため `getByText('招待メールを送信しました')` が strict mode 違反になる。
+    //   dialog 内の見出し (h2/role=heading) に scope して 1 要素に絞る。
+    await expect(
+      dialog.getByRole('heading', { name: '招待メールを送信しました' }),
+    ).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'step-3-invitation-sent');
 
     const mail = await waitForMail(MEMBER_EMAIL, { after: startedAt });
