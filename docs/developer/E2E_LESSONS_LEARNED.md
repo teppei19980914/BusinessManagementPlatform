@@ -2685,6 +2685,100 @@ await expect(page.getByRole('tab', { name: 'ガント' })).toHaveCount(0);
 
 ---
 
+### 4.48 セキュリティスコア 90+ ゲート化における実装パターンと落とし穴 (PR #198 で確立)
+
+#### 1. callbackUrl は **受け取り時 + redirect 直前** の両側で sanitize する (defense-in-depth)
+
+##### 罠の正体
+
+`useSearchParams().get('callbackUrl')` の戻り値を **変数定義時にだけ** sanitize しても、その後コードが書き換わって近接箇所で再代入されると **静かにオープンリダイレクトに退行する**。実例: 当初 `const callbackUrl = sanitizeCallbackUrl(...)` 1 箇所で済ませていたが、`scripts/security-check.ts` の検出器が `window.location.href = callbackUrl` の **literal pattern** を見て HIGH を吐き続けた。「変数は安全」と人間は読めるが、**機械的検査は信用しない**ことに価値がある。
+
+##### 採用したパターン (両側 sanitize)
+
+```ts
+// 受け取り時 (変数定義)
+const callbackUrl = sanitizeCallbackUrl(searchParams.get('callbackUrl'));
+// ... 中間で他の処理 ...
+// redirect 直前で再度通す (sanitize は冪等)
+window.location.href = sanitizeCallbackUrl(callbackUrl);
+```
+
+`sanitizeCallbackUrl` は **冪等 (idempotent)**:
+- 入力が同一オリジンパス (`/path`) → そのまま返す
+- 外部 URL / `//evil` / `\\evil\share` / `javascript:` → fallback `/`
+
+二重コストはほぼゼロで、近接コードの将来変更に対しても**機械的に安全**を維持できる。
+
+##### 横展開すべき箇所 (本 PR で対応)
+
+- `src/app/(auth)/login/page.tsx` (受け取り + redirect)
+- `src/app/(auth)/login/mfa/page.tsx` (受け取り)
+- `src/app/(auth)/login/mfa/mfa-form.tsx` (redirect)
+
+##### 検出スクリプトの位置付け
+
+`scripts/security-check.ts` は **「変数の出所が常に sanitize 済か」を辿らない**(static analysis ではないため)。これは弱点ではなく、**「機械が読める形」で書く強制力** として機能する。redirect 直前の `sanitizeCallbackUrl()` は単なる安全網であると同時に、**「ここは検証済」という機械可読のマーカー** でもある。
+
+#### 2. Rate-limit の `key` は **endpoint 別に分離** する
+
+##### 罠の正体
+
+`applyRateLimit(req, { key: 'auth' })` のように **共通キー** を使うと、`/api/auth/lock-status` を 10 回叩いた IP が `/api/auth/reset-password` を試行できなくなる。攻撃シナリオでは寧ろ**前者で意図的にバケットを満たして後者を遮断する DoS** に化ける。
+
+##### 採用したパターン (endpoint 別キー)
+
+| Endpoint | key |
+|---|---|
+| `/api/auth/reset-password` (POST) | `'reset-password'` |
+| `/api/auth/setup-password` (POST) | `'setup-password'` |
+| `/api/auth/setup-password` (GET token validate) | `'setup-password-validate'` |
+| `/api/auth/lock-status` | `'lock-status'` |
+
+bucket key は内部で `${key}:${ip}` に組み立てられるので、**同一 IP でも経路ごとに独立カウンタ**になる。GET / POST のような **意味の異なる試行も別キーに割る** (上記 setup-password は GET=validate / POST=submit で分離)。
+
+##### Test 担保
+
+`src/lib/rate-limit.test.ts` の **「別 key は別バケット」** ケースで担保。新しい endpoint を追加するときは **同じ pattern の test を 1 件足す**。
+
+#### 3. Vercel serverless の **in-memory rate-limit は instance 数 multiplier 効果がある**
+
+##### 罠の正体
+
+`new Map<string, BucketEntry>()` を module スコープで持つ簡易 rate-limit は、**Vercel の function instance ごとに別 Map** になる。最大 N instance 並行で攻撃側が均等に分散できる場合、**実効上限は (max × N)** に増えてしまう。これは「分散レート制限」ではなく「instance-local rate-limit」である。
+
+##### 採用した立場 (defense-in-depth の 1 層として運用)
+
+- **完全な制限ではないことを doc コメントに明記** (`src/lib/rate-limit.ts` 冒頭) — 将来読み手が「分散済」と誤認しないため
+- **典型攻撃 (1 IP burst が単一 instance に集中)** には十分有効、攻撃コストを上げる目的としては機能する
+- 完全な分散レート制限が必要になった時点で **Upstash Redis + `@upstash/ratelimit`** に置換する方針 (T-XX 候補) を doc コメントに記載
+
+##### 落とし穴一覧 (将来移行時の checklist)
+
+- [ ] cold start で Map が初期化される → 攻撃者にとっては予測困難な「リセット」になり一概に弱点ではないが、**正常ユーザにも window が早期に切れて UX 改善側に倒れる** (悪くない副作用)
+- [ ] `gcExpired()` を sweep 不在で呼ぶと Map がメモリリーク化する → bucket 数 1000 超でのみ走る lazy GC 採用
+- [ ] `x-forwarded-for` は `'client, proxy1, proxy2'` の **先頭 (真の client)** を取る (`split(',')[0].trim()`)。proxy 列の最後を取るとプロキシ IP が単一 bucket に集約されて全員巻き添えになる
+- [ ] テストでは `vi.useFakeTimers()` + `_resetRateLimitBucketsForTest()` で window 経過を確定的に動かす
+
+#### 4. Score gate (CI) の閾値計算は **カテゴリ × 重大度** で重複排除する
+
+スクリプト内の `calcScore()` は **同一 (category, severity) 組** を 1 回だけ減点する。例: 同一 `INJECT × CRITICAL` が 5 ファイルで検出されても CRITICAL の 20 点減点は 1 回だけ。これにより:
+
+- 多重カウントで score が極端に下がる現象を回避 (false-too-low)
+- **新規カテゴリの finding 1 件** で score が大きく動く → CI gate 通過 / 不通過の境界がはっきりする
+
+横展開の罠: 既に検出済カテゴリに別問題が潜んでいてもスコアに現れない。**HTML レポートと SECURITY-TASKS.md は全件列挙する** ことで、score が高くてもファイル別レビューは可能にしている。
+
+#### 関連
+
+- DEVELOPER_GUIDE §5.46 (security-check.ts 導入)
+- DEVELOPER_GUIDE §5.47 (PR 作成ワークフローへの組込み)
+- DEVELOPER_GUIDE §5.48 (本 PR #198 での 30 → 94 ブリングアップ全体像)
+- `src/lib/url-utils.ts` / `src/lib/rate-limit.ts` (実装)
+- `.security-check-acceptlist.json` (受容項目の単一ソース)
+- 修正例: PR #198 (2026-04-30, score 30 → 94 + CI gate 化)
+
+---
+
 ## 8. 未解決課題 (将来 PR 候補)
 
 | 項目 | 理由 |
