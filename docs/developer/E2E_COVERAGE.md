@@ -118,6 +118,10 @@
 ### 添付
 - [ ] `/api/attachments/*` — skip: 各親エンティティの spec 経由で間接カバー
 
+### コメント (PR #199)
+- [ ] `/api/comments` (GET/POST) — skip: MVP は単体テスト (`src/services/comment.service.test.ts` + `src/lib/validators/comment.test.ts`) でカバー、E2E は各 entity の編集 dialog spec 経由で後続 PR
+- [ ] `/api/comments/[id]` (PATCH/DELETE) — skip: 同上 (投稿者本人/admin 認可は単体テストで担保)
+
 ### 見積
 - [x] `/api/projects/[projectId]/estimates/*` — e2e/specs/08-estimates.spec.ts (PR #96 / POST 作成 + 確定 + DELETE)
 

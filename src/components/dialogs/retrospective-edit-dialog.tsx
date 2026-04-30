@@ -12,6 +12,8 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// PR #199: コメントセクション (旧 retrospective_comments を polymorphic comments テーブルに統合)
+import { CommentSection } from '@/components/comments/comment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
@@ -167,6 +169,8 @@ export function RetrospectiveEditDialog({
             mainLabel={tRetro('relatedUrl')}
           />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
+          {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
+          <CommentSection entityType="retrospective" entityId={retro.id} />
         </form>
       </DialogContent>
     </Dialog>

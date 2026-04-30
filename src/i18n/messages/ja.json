@@ -30,6 +30,27 @@
     "memos": "メモ一覧",
     "settings": "設定"
   },
+  "comment": {
+    "section": "コメント",
+    "placeholder": "コメントを入力",
+    "post": "投稿",
+    "edit": "編集",
+    "delete": "削除",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "edited": "(編集済)",
+    "noComments": "まだコメントはありません",
+    "deleteConfirm": "このコメントを削除しますか？",
+    "fetchFailed": "コメントの取得に失敗しました",
+    "postFailed": "コメントの投稿に失敗しました",
+    "saveFailed": "コメントの保存に失敗しました",
+    "deleteFailed": "コメントの削除に失敗しました",
+    "postSuccess": "コメントを投稿しました",
+    "saveSuccess": "コメントを更新しました",
+    "deleteSuccess": "コメントを削除しました",
+    "tooLong": "コメントが長すぎます",
+    "empty": "コメントを入力してください"
+  },
   "attachment": {
     "relatedUrl": "関連 URL",
     "document": "ドキュメント",

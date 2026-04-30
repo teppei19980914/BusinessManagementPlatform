@@ -12,7 +12,7 @@ vi.mock('@/lib/db', () => ({
     },
     riskIssue: { findMany: vi.fn(), deleteMany: vi.fn() },
     retrospective: { findMany: vi.fn(), deleteMany: vi.fn() },
-    retrospectiveComment: { deleteMany: vi.fn() },
+    comment: { deleteMany: vi.fn() },
     knowledgeProject: {
       findMany: vi.fn(),
       count: vi.fn(),
@@ -320,12 +320,12 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
       { id: 'ret-1' },
     ] as never);
     vi.mocked(prisma.retrospective.deleteMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(prisma.retrospectiveComment.deleteMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.comment.deleteMany).mockResolvedValue({ count: 2 } as never);
 
     const r = await deleteProjectCascade('p-1', { cascadeRetros: true });
 
     expect(r.retrospectives).toBe(1);
-    expect(prisma.retrospectiveComment.deleteMany).toHaveBeenCalled();
+    expect(prisma.comment.deleteMany).toHaveBeenCalled();
   });
 
   it('cascadeKnowledge=true: 他プロジェクト共有のナレッジは unlink (本体残存)', async () => {
@@ -374,7 +374,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
       .mockResolvedValueOnce({ count: 2 } as never);
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([{ id: 'ret-1' }] as never);
     vi.mocked(prisma.retrospective.deleteMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(prisma.retrospectiveComment.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.comment.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([]);
 
     const r = await deleteProjectCascade('p-1', {

@@ -42,6 +42,8 @@ import {
 } from '@/components/ui/table';
 import { PROJECT_STATUSES } from '@/types';
 import type { CustomerDTO } from '@/services/customer.service';
+// PR #199: コメントセクション (顧客は admin 専用エンティティ)
+import { CommentSection } from '@/components/comments/comment-section';
 
 type ProjectSummary = {
   id: string;
@@ -246,6 +248,8 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                   </Button>
                   <Button type="submit">{t('editSubmit')}</Button>
                 </div>
+                {/* PR #199: コメント。admin 限定エンティティのため admin 同士の注記用途。 */}
+                <CommentSection entityType="customer" entityId={customer.id} />
               </form>
             </DialogContent>
           </Dialog>

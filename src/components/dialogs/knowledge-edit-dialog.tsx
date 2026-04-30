@@ -13,6 +13,8 @@ import {
 } from '@/components/ui/dialog';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// PR #199: コメントセクション
+import { CommentSection } from '@/components/comments/comment-section';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
@@ -199,6 +201,8 @@ export function KnowledgeEditDialog({
             mainLabel={tKnowledge('referenceLinks')}
           />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
+          {/* PR #199: コメント。readOnly でも投稿可 (fieldset 外配置)。 */}
+          <CommentSection entityType="knowledge" entityId={knowledge.id} />
         </form>
       </DialogContent>
     </Dialog>

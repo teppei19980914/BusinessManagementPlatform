@@ -420,11 +420,9 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
           </div>
 
           {/*
-            項目 10: 振り返りのコメント機能は現状非表示。
-            将来計画: 各「○○一覧」(リスク/課題/振り返り/ナレッジ) で横ぐしのコメント機能を実装し、
-            コメント時に通知が飛ぶ仕組みを導入予定 (PR-α 段階では UI 削除のみ、API/DB/service は温存)。
-            対応する API: POST /api/projects/[id]/retrospectives/[retroId]/comments は残置。
-            DTO の retro.comments は無視 (計算済だが UI で参照しない)。
+            PR #199: 振り返りのコメント機能は polymorphic <CommentSection> に統合。
+            一覧画面に列を追加せず、編集 dialog (RetrospectiveEditDialog) 内に表示する。
+            旧 RetrospectiveComment テーブル / 旧 API は削除済み。
           */}
         </ClickableCard>
         );
