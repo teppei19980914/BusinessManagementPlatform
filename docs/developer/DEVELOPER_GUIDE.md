@@ -3511,6 +3511,65 @@ toast 出すため対象外
 - `CLAUDE.md` §2 (5 層多層防御の参照ポイント)
 - 修正例: feat/security-check-script (PR #196, 2026-04-30)
 
+### 5.47 PR 作成ワークフローへの security-check 統合と score 90+ 維持戦略 (PR #197 で確立)
+
+#### 背景・狙い
+
+PR #196 で `scripts/security-check.ts` を導入したが、**「いつ実行するか」が定まっていなかった**ため運用が回らない懸念があった。
+ユーザ要望: 「**開発のたびに最新の脆弱性 / 攻撃手法情報を取得し、それらを 90% という高いスコアでサービスに盛り込み、退行ない状態を維持し続けたい**」。
+
+これに応えるため、**全 PR 作成時に必須実行する 5 ステップワークフロー** を `.claude/skills/threat-model.md` Mode B-1 として定義した。
+
+#### 採用した 5 ステップワークフロー
+
+1. **既存レポート削除** (`rm -f docs/security/{SECURITY-TASKS.md,security-report.html}`) — 古いスナップショット混在防止
+2. **scan 実行** (`pnpm tsx scripts/security-check.ts`)
+3. **score 判定**
+   - score >= 90: 修正不要、Step 4 へ
+   - score < 90: SECURITY-TASKS.md を読み CRITICAL/HIGH 順に修正 → テスト追加 → 横展開 grep → re-scan → score >= 90 まで loop
+4. **PR 作成** (`gh pr create`)
+5. **PR コメントにスコアレポートを投稿** (`gh pr comment` で score / counts / 残存 Finding サマリを Markdown で)
+
+詳細は `.claude/skills/threat-model.md` Mode B-1 セクション参照。
+
+#### 設計判断 (なぜこの形か)
+
+1. **GitHub Actions/CI ではなく Claude のフロー側に組み込んだ理由**:
+   - `pnpm audit` は registry 通信が要 → CI 環境で安定実行できる
+   - しかし「修正までする」のは Claude の責務 (CI は検出のみ)
+   - 一旦 skill 化して回し、慣れた段階で CI gate に昇格する 2 段階で展開
+2. **HTML を PR コメントに直接貼らない**: GitHub PR コメントは HTML 描画が部分的、また 65k 文字制限あり。**Markdown サマリ + ローカル実行案内**に絞る
+3. **score 90 の意味**: 100 - 重大度別減点 × カテゴリ重複排除。HIGH 1 件で 88、MEDIUM 1 件は 94 → 「HIGH を全消し + MEDIUM 1 件まで許容」を意図する閾値
+4. **score >= 90 でも残存 Finding は記録**: PR コメントに残すことで、reviewer が過去 PR と比較して退行を検知できる (本要望の中核)
+
+#### スクリプト本体の継続更新 (Mode B-2)
+
+「最新の脆弱性 / 攻撃手法情報」の自動取得は **`pnpm audit` (CVE DB) 経由のみ完全自動化**。CWE パターン検出は手動更新が必須。
+
+トリガー:
+- CWE Top 25 / OWASP Top 10 更新時 (年 1 回)
+- インシデント発生時 (再発防止)
+- 新ライブラリ導入時 (固有罠の検出追加)
+- Claude が修正中に「同パターン横展開チェックすべき」と判断した時
+
+各トリガーで `scripts/security-check.ts` に `checkXxx()` 関数を 1 件追加 = 1 PR の方針。
+
+#### 抽出したルール (今後の同種運用)
+
+- [ ] **PR 作成前に必ず Mode B-1 の 5 ステップを完走**
+- [ ] **score < 90 の状態で PR を出さない** (修正してから出す、スコア退行 PR は reject 想定)
+- [ ] PR description / コメントには **その PR 起点の score** を必ず明記
+- [ ] スクリプト改変 PR (Mode B-2) は **1 check function = 1 PR** + CWE/OWASP リンク必須
+- [ ] **`SECURITY-TASKS.md` を git に commit しない** (時刻入りで差分ノイズ + 過去スコアは PR コメントから参照)
+
+#### 関連
+
+- `.claude/skills/threat-model.md` Mode B-1 / Mode B-2 (本ワークフローの詳細手順)
+- `CLAUDE.md` §2 (5 層多層防御に「PR 作成のたびに必須実行」を明記)
+- §5.46 (前提となるツール導入経緯)
+- 修正例: docs/security-check-pr-workflow (PR #197, 2026-04-30)
+- 後続: 初回ブリングアップ (score 30 → 90+) は別 PR で実施予定
+
 ---
 
 ## 6. 機能削除の手順
@@ -5192,3 +5251,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-30 | §5.45 新設 (feat/ux-improvements-batch6 追加コミット 21471cb)。**既存スキーマカラムを UI のみで活かす任意入力フィールドの追加パターン** ── ユーザ要望「ACT に作業内容欄を追加」を受け、`Task.description` (Text, nullable, max 2000) が既に schema/validator/service/DTO に全て揃っていたことを発見。migration 不要で UI 4 箇所追加 (create form state / create body / edit form type+init+body / 両 dialog の textarea) だけで成立した経緯を KDD 化。横展開チェックリスト 8 項目 (schema grep / 任意項目の create-省略/update-null 規約 / type 別 UI 分岐 / i18n hint / CSV/bulk 連動) + アンチパターン 3 種 (空文字を validator に通す / create と edit で空文字の意味が混在) を併記。**「migration を追加する前に既存カラムを grep する」**を unwritten rule から成文化 |
 | 2026-04-30 | E2E §4.46 / §4.47 新設 (PR #194 hotfix)。**§4.46: Toast 文言と既存 UI 文言の部分マッチで strict mode violation** ── ToastProvider 導入で showSuccess の長文 (「ユーザを登録し、招待メールを送信しました」) が dialog title (「招待メールを送信しました」) を内包し、`getByText` の既定部分マッチで 2 elements にヒット → strict mode 違反。Toast 導入時の grep 予防、scope+role での 1 要素絞り、エンティティ名で一意化、Toast viewport の `role="region"` で意識的分離、の 4 ルールを記載。**§4.47: responsive で既存タブに hidden lg:inline-flex 付与で spec viewport 別分岐必須** ── Task 1 で WBS管理 タブを responsive 化した際、mobile でも `toBeVisible()` を要求していた既存テストが一斉 fail。さらに `toHaveCount(0)` の「ガント」が新タブ「ガントチャート」と部分マッチして fail。教訓として、PR #167 「資産プルダウン」を model にする方針、`{ exact: true }` 推奨、タブ追加 PR の動作確認 checklist 4 項目を成文化 |
 | 2026-04-30 | §5.46 新設 (PR #196 feat/security-check-script)。**外部提供スクリプトの導入と既存 skill 統合パターン** ── ユーザから外部開発の security-check.ts (CWE 静的解析) + skill 定義 .md を受領。「既存定義に盛り込む」指示に従い、新規 .claude/skills/security-check.md は作らず、CLAUDE.md §2 セキュリティチェックに第 5 層 (静的スキャン)、threat-model.md に Mode A (STRIDE 実装前) + Mode B (静的スキャン 実装後) の 2 モード構成として統合。抽出したルール 6 項目: (1) 外部提供は verbatim 配置 (2) 既存 skill 拡張を新規より優先 (3) 自動生成は .gitignore (4) 出力先 README.md は実行方法 1 セクション (5) CLAUDE.md は 1 行サマリ + skill link (6) 初回スキャン結果を PR description に記録。本 PR 初回スキャンは 9 Finding (CRITICAL 2/HIGH 4/MEDIUM 2/LOW 1, score 30/100) |
+| 2026-04-30 | §5.47 新設 (PR #197 docs/security-check-pr-workflow)。**PR 作成ワークフローへの security-check 統合と score 90+ 維持戦略** ── PR #196 で導入したツールに「いつ実行するか」を定める運用を確立。**全 PR 作成時必須の 5 ステップ** (① 既存レポート削除 → ② tsx 実行 → ③ score < 90 なら修正ループ → ④ PR 作成 → ⑤ コメントでスコア投稿) を threat-model.md Mode B-1 として定義。CLAUDE.md §2 第 5 層に「PR 作成のたびに必須実行」を明記。設計判断: CI gate ではなく Claude フロー側に組み込んだ理由 (修正まで含めるため)、HTML 直貼りでなく Markdown サマリ + ローカル案内に絞る理由 (GitHub の制限)、score 90 の意味 (HIGH 全消し + MEDIUM 1 件まで)、残存 Finding を PR コメントで記録することで reviewer が退行検知できる仕組み。スクリプト本体のメンテ (Mode B-2) は 1 check 関数 = 1 PR、CWE/OWASP リンク必須、トリガー 4 種 (CWE Top 25 更新 / インシデント / 新ライブラリ / 横展開判断) を成文化 |
