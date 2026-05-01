@@ -75,6 +75,7 @@ model User {
   memos                   Memo[]                   @relation("MemoAuthor")
   stakeholderRecords      Stakeholder[]            @relation("StakeholderUser")
   authoredComments        Comment[]                @relation("CommentAuthor")
+  notifications           Notification[]           @relation("NotificationRecipient")
 
   @@unique([email], map: "idx_users_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
@@ -667,6 +668,41 @@ model Comment {
 
   @@index([entityType, entityId, deletedAt], map: "idx_comments_entity")
   @@map("comments")
+}
+
+/// 通知 (PR feat/notifications-mvp): アプリ内のベル UI に表示するエンドユーザ向けメッセージ。
+/// 設計方針:
+///   - **アプリ内通知のみ** (メール / push 通知は対象外)
+///   - **polymorphic 連携** (entity_type + entity_id) で将来コメント mention 等に拡張可能
+///   - **dedupeKey** で同じトリガが 1 日 1 回しか発火しないよう保証 (例: 同タスクの開始通知が
+///     同日に複数回作られない)
+///   - 既読 (readAt が NULL でない) かつ 30 日経過したものは cron で物理削除
+///   - 受信者 (userId) は単一。複数ユーザに同時通知する場合は service 層でループ生成する
+///
+/// MVP の type:
+///   - 'task_start_due' : ACT の予定開始日当日 (status='not_started')
+///   - 'task_end_due'   : ACT の予定終了日当日 (status≠'completed')
+/// 将来:
+///   - 'comment_mention': コメント本文の @username で言及
+model Notification {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  type       String    @db.VarChar(40)
+  entityType String    @map("entity_type") @db.VarChar(30)
+  entityId   String    @map("entity_id") @db.Uuid
+  title      String    @db.VarChar(200)
+  link       String    @db.VarChar(500)
+  /// 重複抑止用キー (例: `task_start_due:${taskId}:${YYYY-MM-DD}`)。
+  /// UNIQUE 制約で 2 重生成を DB レベルで弾く (cron が時間内に 2 回呼ばれても安全)。
+  dedupeKey  String    @map("dedupe_key") @db.VarChar(200)
+  readAt     DateTime? @map("read_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation("NotificationRecipient", fields: [userId], references: [id])
+
+  @@unique([dedupeKey], map: "idx_notifications_dedupe")
+  @@index([userId, readAt, createdAt(sort: Desc)], map: "idx_notifications_user_unread")
+  @@map("notifications")
 }
 
 /// 個人メモ (PR #70): プロジェクトに紐付かない個人の知見・作業ノートを保存する。
