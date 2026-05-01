@@ -2777,6 +2777,100 @@ bucket key は内部で `${key}:${ip}` に組み立てられるので、**同一
 - `.security-check-acceptlist.json` (受容項目の単一ソース)
 - 修正例: PR #198 (2026-04-30, score 30 → 94 + CI gate 化)
 
+### 4.49 ポリモーフィック共通部品を新エンティティに配線するときの罠 (PR #199 で確立)
+
+DEVELOPER_GUIDE §5.49 が「**実装パターン側 (踏襲できる polymorphic 設計)**」を扱うのに対し、
+本セクションは **配線時の罠 (要件確認漏れ・先例の機械的コピー)** を扱う。役割分担。
+
+#### 1. 既存 polymorphic 部品の `readOnly` 振る舞いを **機械的にコピーしない**
+
+##### 罠の正体
+
+`DialogAttachmentSection` は `readOnly` 時に **セクション全体を非表示** (§5.14 由来 — 非メンバーが
+全○○ から開いたとき `/api/attachments` GET が 403 になり Console エラーが出るため)。
+`CommentSection` を新設するときも同じ位置に配置するため、つい同じ振る舞い (readOnly→非表示)
+にしたくなる。
+
+しかし PR #199 の Q4 要件は **「全○○ では非 ProjectMember もコメント可」**。`readOnly` でも
+コメントセクションは表示・投稿可能でなければ要件違反。**§5.14 はあくまで attachment の
+認可制約 (member 必須) に由来する非表示** であり、認可ポリシーが違う新部品では**機械的に
+踏襲してはいけない**。
+
+##### 採用したパターン
+
+`CommentSection` は `<fieldset disabled={readOnly}>` の **外側** に配置する (form の編集領域は
+非活性化されるが、コメント領域は常に有効)。サーバ側は `entityType` ごとに認可ポリシーを
+切り替えて、open / project-scoped / admin-only を区別する。
+
+```tsx
+<fieldset disabled={readOnly}>
+  {/* form 本体は readOnly で disabled */}
+</fieldset>
+{!readOnly && <Button type="submit">{t('save')}</Button>}
+{/* CommentSection は fieldset の外。readOnly でも常に有効 */}
+<CommentSection entityType="issue" entityId={issue.id} />
+```
+
+##### 横展開チェック (新部品配線時)
+
+- [ ] 配置位置を決める前に「**この部品は readOnly 時にどうあるべきか**」を要件で確認
+      (attachment と同じ非表示なのか、comment のように常時表示なのか)
+- [ ] 既存 dialog のコメントに「§5.14 由来」と書かれていても**コピーしない** — それは
+      attachment 固有のルール
+- [ ] 認可ポリシーが entity ごとに違う場合は **判別ユニオン** で型に書く
+      (`{ kind: 'open' | 'project-scoped' | 'admin-only' | 'not-found' }`)
+
+#### 2. 既存コードの `§NN` 相互参照を機械的にコピーすると **stale ref を増やす**
+
+##### 罠の正体
+
+`dialog-attachment-section.tsx` のコメントに「§5.10 由来」と書かれていたが、これは過去の
+章番号変動で stale 化した参照 (現状の正解は **§5.14**)。PR #199 で §5.49 を執筆中に
+このコメントから「§5.10 由来」をコピーしてしまい、**ドキュメント側にも同じ stale ref が
+3 箇所伝染**した (`docs/developer/DEVELOPER_GUIDE.md` §5.49 内)。
+
+##### 横展開チェック
+
+- [ ] **`§NN` を含むコードコメント / docs の文言をコピーするときは、必ず §NN 先を読み直す** —
+      章番号は時とともに変動するため、執筆当時の参照が現状でも正しいとは限らない
+- [ ] `/knowledge-organize` 監査時に「`§NN` 文字列で grep → 各リンク先のセクション内容と
+      一致するか」を機械チェック対象にする (DEVELOPER_GUIDE §10.5 末尾追記コンフリクトと
+      同じ「コピー時に裏取りせず」の罠)
+- [ ] 文章だけでなく**コードコメント内の `§NN`** も grep 対象に含める (PR #199 で 4 ファイルが
+      stale)
+
+#### 3. 旧専用テーブルを新 polymorphic に統合する migration は **件数確認 + ROLLBACK 退路** を必須にする
+
+##### 採用した手順 (本番適用フロー)
+
+`§5.42` (migration 本番手動適用ルール) に追加で、**data migration を伴う場合は以下の 4 段階**
+を `psql` 内 `BEGIN ... COMMIT` で囲んで実施する:
+
+1. **事前確認**: `SELECT COUNT(*) FROM 旧テーブル;` でスナップショット件数を控える
+2. **DDL + INSERT**: 新テーブル作成 → `INSERT INTO ... SELECT FROM 旧テーブル`
+3. **件数照合**: `old_count = new_count` を `SELECT` で確認 (異なれば即 `ROLLBACK;`)
+4. **DROP**: 旧テーブル削除 → `COMMIT;`
+
+PostgreSQL は DDL もトランザクション可なので、Step 3 で異常を検知したら DROP 前に
+`ROLLBACK;` で完全復元できる。本 PR #199 のマイグレーション SQL がこのパターンの参考実装。
+
+##### 落とし穴
+
+- [ ] `BEGIN` を忘れて DDL を auto-commit すると、INSERT 失敗時に新テーブルだけ残り中途半端
+      な状態になる
+- [ ] ロールバック SQL も**事前に書いておく** — 適用後に問題が出てから書き始めると焦る
+      (PR #199 では PR description にロールバック手順を併記)
+- [ ] `updated_at` カラムを新設するときは **既存 `created_at` を入れて「未編集」状態を保つ**
+      (適用直後に「編集済」表示にならないため)
+
+#### 関連
+
+- DEVELOPER_GUIDE §5.49 (本件の実装パターン側 — polymorphic 設計の踏襲、認可判別ユニオン)
+- §5.14 (readOnly な edit dialog の fetch gating — 本件は機械的に踏襲しない反例)
+- §5.35 (nested form 回避 — CommentSection も同規約に準拠)
+- DEVELOPER_GUIDE §5.42 (migration 本番手動適用ルール — 本件はそれ + data migration の作法)
+- 修正例: PR #199 (2026-04-30, polymorphic comment 統合)
+
 ---
 
 ## 8. 未解決課題 (将来 PR 候補)
