@@ -103,7 +103,8 @@ export async function getComment(commentId: string): Promise<CommentDTO | null> 
 }
 
 /**
- * コメント本文を更新する。認可は呼び出し側で投稿者本人 or admin を確認している前提。
+ * コメント本文を更新する。
+ * 2026-05-01 仕様: 認可は呼び出し側で **投稿者本人のみ** を確認 (admin 不可)。
  * updatedAt は @updatedAt で自動更新される。
  */
 export async function updateComment(
@@ -119,7 +120,8 @@ export async function updateComment(
 }
 
 /**
- * コメントを論理削除する。認可は呼び出し側で投稿者本人 or admin を確認している前提。
+ * コメントを論理削除する。
+ * 2026-05-01 仕様: 認可は呼び出し側で **投稿者本人のみ** を確認 (admin の救済は外した)。
  */
 export async function deleteComment(commentId: string): Promise<void> {
   await prisma.comment.update({
@@ -129,19 +131,24 @@ export async function deleteComment(commentId: string): Promise<void> {
 }
 
 /**
- * 親エンティティの存在を検証し、project スコープなら projectIds を返す。
- * - null: エンティティが存在しない (404)
- * - []: project に属さない (customer 等) — 全 auth user 可視のとき空配列
- * - [pid, ...]: 紐付くプロジェクト (member check 用)
+ * 親エンティティの存在を検証し、認可判定に必要な情報を返す。
  *
- * 'admin-only' を返すパスは Customer のみ。Customer はプロジェクトに属さず /customers
- * 画面が admin 専用のため、コメントも admin 限定にする。
+ * 2026-05-01 (PR fix/visibility-auth-matrix): visibility 連動の認可仕様に合わせて
+ *   `kind: 'open'` を `kind: 'public-or-draft'` (visibility + creatorId 付き) に分割。
+ *   route 層で mode=read/write を区別して、draft の場合は作成者本人のみ書き込み許可
+ *   (admin は read のみ可) に絞る。
+ *
+ * - not-found: エンティティが存在しない (404)
+ * - public-or-draft: visibility と creatorId を返し、route 層が認可判定する
+ *   (issue / risk / retrospective / knowledge)
+ * - project-scoped: project member 必須 (task / stakeholder)
+ * - admin-only: Customer (admin 専用エンティティ)
  */
 export type EntityResolveResult =
   | { kind: 'not-found' }
-  | { kind: 'open' } // 認証済ユーザなら誰でも (issue/risk/retrospective/knowledge — 全○○ あり)
-  | { kind: 'project-scoped'; projectIds: string[] } // project member 必須 (task/stakeholder)
-  | { kind: 'admin-only' }; // customer
+  | { kind: 'public-or-draft'; visibility: 'public' | 'draft'; creatorId: string }
+  | { kind: 'project-scoped'; projectIds: string[] }
+  | { kind: 'admin-only' };
 
 export async function resolveEntityForComment(
   entityType: CommentEntityType,
@@ -151,25 +158,44 @@ export async function resolveEntityForComment(
     case 'issue':
     case 'risk': {
       // issue / risk は同一 RiskIssue モデル (type discriminator で区別)
+      // 作成者は reporterId
       const r = await prisma.riskIssue.findFirst({
         where: { id: entityId, deletedAt: null },
-        select: { id: true },
+        select: { visibility: true, reporterId: true },
       });
-      return r ? { kind: 'open' } : { kind: 'not-found' };
+      return r
+        ? {
+          kind: 'public-or-draft',
+          visibility: r.visibility as 'public' | 'draft',
+          creatorId: r.reporterId,
+        }
+        : { kind: 'not-found' };
     }
     case 'retrospective': {
       const retro = await prisma.retrospective.findFirst({
         where: { id: entityId, deletedAt: null },
-        select: { id: true },
+        select: { visibility: true, createdBy: true },
       });
-      return retro ? { kind: 'open' } : { kind: 'not-found' };
+      return retro
+        ? {
+          kind: 'public-or-draft',
+          visibility: retro.visibility as 'public' | 'draft',
+          creatorId: retro.createdBy,
+        }
+        : { kind: 'not-found' };
     }
     case 'knowledge': {
       const k = await prisma.knowledge.findFirst({
         where: { id: entityId, deletedAt: null },
-        select: { id: true },
+        select: { visibility: true, createdBy: true },
       });
-      return k ? { kind: 'open' } : { kind: 'not-found' };
+      return k
+        ? {
+          kind: 'public-or-draft',
+          visibility: k.visibility as 'public' | 'draft',
+          creatorId: k.createdBy,
+        }
+        : { kind: 'not-found' };
     }
     case 'task': {
       // Task は project-scoped (top-level /tasks 画面なし、/my-tasks は filter のみ)
@@ -200,4 +226,18 @@ export async function resolveEntityForComment(
       return c ? { kind: 'admin-only' } : { kind: 'not-found' };
     }
   }
+}
+
+/**
+ * 指定 entityType / entityId / userId に紐づく **同 entity の有効コメント** を一括 soft-delete する。
+ * entity 削除時の cascade に呼ぶ (各 service 層の delete から呼び出し)。
+ */
+export async function softDeleteCommentsForEntity(
+  entityType: CommentEntityType,
+  entityId: string,
+): Promise<void> {
+  await prisma.comment.updateMany({
+    where: { entityType, entityId, deletedAt: null },
+    data: { deletedAt: new Date() },
+  });
 }

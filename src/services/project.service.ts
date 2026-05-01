@@ -429,6 +429,10 @@ export async function deleteProjectCascade(
         where: { entityType: 'risk', entityId: { in: riskIds } },
       });
       attachmentsDeleted += attRes.count;
+      // PR fix/visibility-auth-matrix (2026-05-01): comments も cascade 物理削除 (§5.51)
+      await prisma.comment.deleteMany({
+        where: { entityType: 'risk', entityId: { in: riskIds } },
+      });
       const delRes = await prisma.riskIssue.deleteMany({
         where: { id: { in: riskIds } },
       });
@@ -449,6 +453,10 @@ export async function deleteProjectCascade(
         where: { entityType: 'risk', entityId: { in: issueIds } },
       });
       attachmentsDeleted += attRes.count;
+      // PR fix/visibility-auth-matrix: comments も cascade 物理削除 (§5.51)
+      await prisma.comment.deleteMany({
+        where: { entityType: 'issue', entityId: { in: issueIds } },
+      });
       const delRes = await prisma.riskIssue.deleteMany({
         where: { id: { in: issueIds } },
       });
@@ -493,11 +501,15 @@ export async function deleteProjectCascade(
         where: { knowledgeId: kId },
       });
       if (linkCount <= 1) {
-        // 他に紐付けがない → 本体 + attachment を物理削除
+        // 他に紐付けがない → 本体 + attachment + comment を物理削除
         const attRes = await prisma.attachment.deleteMany({
           where: { entityType: 'knowledge', entityId: kId },
         });
         attachmentsDeleted += attRes.count;
+        // PR fix/visibility-auth-matrix: comments も cascade 物理削除 (§5.51)
+        await prisma.comment.deleteMany({
+          where: { entityType: 'knowledge', entityId: kId },
+        });
         await prisma.knowledgeProject.deleteMany({ where: { knowledgeId: kId } });
         await prisma.knowledge.delete({ where: { id: kId } });
         knowledgeDeleted++;
@@ -518,6 +530,10 @@ export async function deleteProjectCascade(
       where: { entityType: 'task', entityId: { in: taskIds } },
     });
     attachmentsDeleted += attTaskRes.count;
+    // PR fix/visibility-auth-matrix: task comments も cascade 物理削除 (§5.51)
+    await prisma.comment.deleteMany({
+      where: { entityType: 'task', entityId: { in: taskIds } },
+    });
   }
   if (estimateIds.length > 0) {
     const attEstRes = await prisma.attachment.deleteMany({

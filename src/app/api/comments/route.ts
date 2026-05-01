@@ -43,12 +43,19 @@ import { recordAuditLog } from '@/services/audit.service';
  * 親エンティティの存在確認 + 認可。リクエストユーザが当該 entity に対して
  * **コメントの読み書きを行う権利** を持つかを判定する。
  *
+ * 2026-05-01 (PR fix/visibility-auth-matrix): visibility を持つ entity (issue / risk /
+ * retrospective / knowledge) で `mode='read' | 'write'` を区別。draft entity は:
+ *   - read: 作成者本人 OR admin
+ *   - write (投稿): 作成者本人のみ (admin は read だけで投稿不可)
+ * public は read/write とも認証済全アカウント可。
+ *
  * 戻り値: NextResponse (拒否時) or null (許可)。
  */
 async function authorizeForComment(
   user: { id: string; systemRole: string },
   entityType: CommentEntityType,
   entityId: string,
+  mode: 'read' | 'write',
 ): Promise<NextResponse | null> {
   const t = await getTranslations('message');
   const result = await resolveEntityForComment(entityType, entityId);
@@ -60,23 +67,31 @@ async function authorizeForComment(
     );
   }
 
-  // admin は常に許可 (孤児データ管理 / customer / 全エンティティ救済)
-  if (user.systemRole === 'admin') return null;
-
   if (result.kind === 'admin-only') {
-    // customer: admin 以外拒否
+    // customer: admin 以外拒否 (read / write 共通)
+    if (user.systemRole === 'admin') return null;
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: t('forbidden') } },
       { status: 403 },
     );
   }
 
-  if (result.kind === 'open') {
-    // 全○○ ありエンティティ (issue/risk/retrospective/knowledge): 認証済ユーザは誰でも可 (要件 Q4)
-    return null;
+  if (result.kind === 'public-or-draft') {
+    // public: 認証済全アカウントが read/write 可
+    if (result.visibility === 'public') return null;
+    // draft: read は作成者本人 OR admin、write (投稿) は作成者本人のみ
+    const isCreator = user.id === result.creatorId;
+    const isAdmin = user.systemRole === 'admin';
+    if (mode === 'read' && (isCreator || isAdmin)) return null;
+    if (mode === 'write' && isCreator) return null;
+    return NextResponse.json(
+      { error: { code: 'FORBIDDEN', message: t('forbidden') } },
+      { status: 403 },
+    );
   }
 
-  // project-scoped (task/stakeholder): project member 必須
+  // project-scoped (task/stakeholder): project member or admin
+  if (user.systemRole === 'admin') return null;
   for (const pid of result.projectIds) {
     const m = await checkMembership(pid, user.id, user.systemRole);
     if (m.isMember) return null;
@@ -114,7 +129,7 @@ export async function GET(req: NextRequest) {
   }
 
   const typed = entityType as CommentEntityType;
-  const forbidden = await authorizeForComment(user, typed, entityId);
+  const forbidden = await authorizeForComment(user, typed, entityId, 'read');
   if (forbidden) return forbidden;
 
   const data = await listComments(typed, entityId);
@@ -142,6 +157,7 @@ export async function POST(req: NextRequest) {
     user,
     parsed.data.entityType,
     parsed.data.entityId,
+    'write',
   );
   if (forbidden) return forbidden;
 

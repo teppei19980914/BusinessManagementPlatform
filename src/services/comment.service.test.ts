@@ -7,6 +7,7 @@ vi.mock('@/lib/db', () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     riskIssue: { findFirst: vi.fn() },
     retrospective: { findFirst: vi.fn() },
@@ -24,6 +25,7 @@ import {
   updateComment,
   deleteComment,
   resolveEntityForComment,
+  softDeleteCommentsForEntity,
 } from './comment.service';
 import { prisma } from '@/lib/db';
 
@@ -131,31 +133,39 @@ describe('getComment / updateComment / deleteComment', () => {
   });
 });
 
-describe('resolveEntityForComment', () => {
+describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('issue: 存在すれば open', async () => {
-    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ id: 'r-1' } as never);
+  it('issue (public): public-or-draft + visibility=public + creatorId', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      visibility: 'public', reporterId: 'u-1',
+    } as never);
     const r = await resolveEntityForComment('issue', 'r-1');
-    expect(r).toEqual({ kind: 'open' });
+    expect(r).toEqual({ kind: 'public-or-draft', visibility: 'public', creatorId: 'u-1' });
   });
 
-  it('risk: 存在すれば open (issue と同モデル)', async () => {
-    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ id: 'r-1' } as never);
+  it('risk (draft): public-or-draft + visibility=draft + creatorId', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      visibility: 'draft', reporterId: 'u-1',
+    } as never);
     const r = await resolveEntityForComment('risk', 'r-1');
-    expect(r).toEqual({ kind: 'open' });
+    expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-1' });
   });
 
-  it('retrospective: 存在すれば open', async () => {
-    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ id: 'rt-1' } as never);
+  it('retrospective (public): visibility + createdBy で creatorId 解決', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      visibility: 'public', createdBy: 'u-2',
+    } as never);
     const r = await resolveEntityForComment('retrospective', 'rt-1');
-    expect(r).toEqual({ kind: 'open' });
+    expect(r).toEqual({ kind: 'public-or-draft', visibility: 'public', creatorId: 'u-2' });
   });
 
-  it('knowledge: 存在すれば open', async () => {
-    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ id: 'k-1' } as never);
+  it('knowledge (draft): public-or-draft + visibility=draft + creatorId', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      visibility: 'draft', createdBy: 'u-3',
+    } as never);
     const r = await resolveEntityForComment('knowledge', 'k-1');
-    expect(r).toEqual({ kind: 'open' });
+    expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-3' });
   });
 
   it('task: 存在すれば project-scoped (projectId 解決)', async () => {
@@ -184,5 +194,17 @@ describe('resolveEntityForComment', () => {
     expect(await resolveEntityForComment('issue', 'x')).toEqual({ kind: 'not-found' });
     expect(await resolveEntityForComment('task', 'x')).toEqual({ kind: 'not-found' });
     expect(await resolveEntityForComment('customer', 'x')).toEqual({ kind: 'not-found' });
+  });
+});
+
+describe('softDeleteCommentsForEntity (cascade 用)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('指定 entity に紐づく有効コメントを一括 soft-delete', async () => {
+    vi.mocked(prisma.comment.updateMany).mockResolvedValue({ count: 2 } as never);
+    await softDeleteCommentsForEntity('issue', 'r-1');
+    const call = vi.mocked(prisma.comment.updateMany).mock.calls[0][0]!;
+    expect(call.where).toMatchObject({ entityType: 'issue', entityId: 'r-1', deletedAt: null });
+    expect(call.data.deletedAt).toBeInstanceOf(Date);
   });
 });

@@ -3777,6 +3777,82 @@ DROP TABLE retrospective_comments;
 - CLAUDE.md §運用フロー (新フローを反映済)
 - E2E_LESSONS_LEARNED §4.49 / §5.49 (本改修と同じ「重実行を毎ターン強制しない」原則の前例)
 
+### 5.51 公開範囲 (visibility) と認可マトリクスの統合 (PR fix/visibility-auth-matrix, 2026-05-01)
+
+#### 背景・症状
+
+ユーザが「課題一覧」から課題を**起票**したところ、Toast「課題を起票しました」は表示されたが**画面上一覧に反映されず**、Console エラーもない状態が発生。調査の結果、視覚的バグは一覧の filter ロジックの **設計選択ミス** だった。
+
+##### 旧設計の問題
+
+| 動作 | 旧仕様 |
+|---|---|
+| 起票時のデフォルト visibility | `'draft'` (慎重な公開を促す意図) |
+| 「○○一覧」の表示 filter | 非 admin: `visibility='public'` のみ (**自分の draft も除外**) |
+| 結果 | 自分が作った draft は **どこからも視認できない** (個別 URL を覚えていれば直接アクセス可だが、UI 上の導線なし) |
+
+旧仕様コメント: 「2026-04-24: 自分の draft も一覧には出さない方針」 — 設計判断としては記録されていたが、Toast PR (#194) で「成功通知 + 一覧未反映」のミスマッチが目立つようになり、UX バグとして顕在化した。
+
+#### 新設計 — 認可マトリクスを「経路で分けず」OR で統合
+
+ユーザ確定スペックを API レベルで OR 統合した認可マトリクス:
+
+##### Entity 認可 (visibility あり: issue / risk / retrospective / knowledge)
+
+| 操作 | 認可式 |
+|---|---|
+| 一覧表示 (project-scoped) | `visibility='public'` OR (`visibility='draft'` AND createdBy=自分) OR admin |
+| 一覧表示 (cross-list 「全○○」) | `visibility='public'` のみ (現状維持) |
+| 個別参照 (GET) | public OR createdBy=自分 OR admin |
+| 更新 | createdBy=自分 のみ (**admin 不可**) |
+| 削除 | createdBy=自分 OR admin (admin は cross-list の「ゴミデータ削除」用) |
+
+##### Comment 認可 (entity の visibility に連動)
+
+| entity 状態 | コメント参照 | コメント投稿 |
+|---|---|---|
+| visibility='public' (issue/risk/retro/knowledge) | 認証済全アカウント | 認証済全アカウント |
+| visibility='draft' (issue/risk/retro/knowledge) | **作成者本人 + admin** (admin は read のみ) | **作成者本人のみ** (admin は投稿不可) |
+| task / stakeholder | project member or admin | 同左 |
+| customer | admin のみ | admin のみ |
+
+##### Comment 編集/削除
+
+| 操作 | 認可式 |
+|---|---|
+| 編集 (PATCH) | コメント投稿者本人のみ (**admin も不可**、PR #199 から仕様変更) |
+| 削除 (DELETE) | コメント投稿者本人のみ |
+| Cascade (entity 削除) | entity 側の delete service が `prisma.comment.updateMany({...deletedAt})` で連動 soft-delete |
+
+#### 実装変更点
+
+| カテゴリ | ファイル | 変更内容 |
+|---|---|---|
+| list filter | `risk.service.ts` / `retrospective.service.ts` / `knowledge.service.ts` | where 句に `OR [{ public }, { draft, createdBy=viewer }]` を追加 |
+| 個別 entity 削除 | 上記 + `task.service.ts` / `stakeholder.service.ts` / `customer.service.ts` | $transaction に `prisma.comment.updateMany({entityType, entityId, deletedAt:null})` を追加 (cascade soft-delete) |
+| project 全体削除 | `project.service.ts` `deleteProjectCascade` | risk / issue / knowledge / task の cascade 物理削除に `prisma.comment.deleteMany` を追加 (retrospective は PR #199 で対応済) |
+| comment 認可 (route) | `/api/comments/route.ts` | `authorizeForComment(user, entityType, entityId, mode)` に `mode='read'\|'write'` を追加。public-or-draft では visibility と creatorId を見て分岐 |
+| comment 認可 (resolve) | `comment.service.ts` `resolveEntityForComment` | 戻り値型 `{kind:'open'}` → `{kind:'public-or-draft', visibility, creatorId}` に変更 (判別ユニオン拡張) |
+| comment 編集/削除 | `/api/comments/[id]/route.ts` `canMutate` | `systemRole === 'admin'` の救済を削除、投稿者本人のみに |
+| Comment 個別 cascade ヘルパ | `comment.service.ts` `softDeleteCommentsForEntity` | 新規エクスポート (将来の追加 entity でも再利用可) |
+
+#### 抽出したルール (今後の同種設計)
+
+- [ ] **list filter で「自分のもの」を必ず可視に** — 自分が起票したのに画面に出ないのは UX バグ。可視範囲は **「自分のもの + 他人で公開されているもの」** が常識的 default
+- [ ] **「○○一覧」と「全○○」は経路ではなく viewer の権限と entity の状態で分岐** — UI 経路で API を分けると認可が二重に分散して保守不能になる
+- [ ] **判別ユニオンを拡張するときは新しい discriminator 値を追加** (`'open'` → `'public-or-draft'`) — bool フラグ追加でなく型に意味を書く (PR #199 §5.49 の延長)
+- [ ] **admin 救済は entity に対しては「削除のみ」、コメント本文に対しては「無し」**: コメントは投稿者の個人的発言なので admin が編集/削除する正当性が弱い。誤投稿は entity ごと cascade で消す仕組みに委ねる
+- [ ] **cascade soft-delete は entity の $transaction に並列で並べる** — `attachment.updateMany` / `comment.updateMany` を同 transaction に置けば atomic に削除できる
+- [ ] **deletedAt=null フィルタはコメント検索の主索引と一致** (`idx_comments_entity (entity_type, entity_id, deleted_at)`) — cascade 後の一覧 query は自動で空になる
+
+#### 関連
+
+- PR #199 §5.49 (polymorphic comment + 判別ユニオン認可の前例)
+- §5.41 (○○一覧 共通 UI 部品の抽出規約)
+- E2E_LESSONS_LEARNED §4.50 (本仕様で確立した「list filter で自己起票が見えなくなるアンチパターン」の罠)
+- DESIGN.md §5.10 (comments テーブル定義 + 認可マトリクス追記)
+- 修正例: `src/services/comment.service.ts` `resolveEntityForComment` (visibility 連動の判別ユニオン)
+
 ---
 
 ## 6. 機能削除の手順
@@ -5463,3 +5539,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-30 | §5.49 / E2E §4.49 新設 (PR #199 feat/entity-comments)。**ポリモーフィックコメント機能 (7 entity 横断)** ── 編集 dialog にコメントセクション追加 + 旧 `RetrospectiveComment` 専用テーブルを `Comment` (entity_type + entity_id) に統合 (data migration あり)。Attachment と同形の polymorphic 設計を踏襲、認可は判別ユニオン `{ kind: 'open' \| 'project-scoped' \| 'admin-only' \| 'not-found' }` で entity 別に切替 (issue/risk/retro/knowledge は誰でも、task/stakeholder は member、customer は admin)。E2E §4.49 では「§5.14 を機械的に踏襲しない (readOnly 振る舞いは要件で決まる)」「コードコメント内の `§NN` 参照を機械的にコピーすると stale ref が伝染」「data migration は `BEGIN ... COMMIT` で件数照合 + ROLLBACK 退路を必須化」の 3 罠を記録 |
 | 2026-04-30 | /knowledge-organize 監査整理 (PR #199 後)。**§5.10 → §5.14 stale ref 一括修正** ── §5.10 (フォーム送信前の事前バリデーション) と §5.14 (readOnly な edit dialog の fetch gating / fix/attachment-list-non-member-403) は別概念だが、コードコメント 4 箇所 (`dialog-attachment-section.tsx`, `knowledge/retrospective/risk-edit-dialog.tsx`) で `§5.10 由来「readOnly 非表示」` と stale 化していた。PR #199 §5.49 執筆時にこのコメントから機械的にコピーしてしまい DEVELOPER_GUIDE 内 3 箇所にも伝染。本整理で全 7 箇所を `§5.14` に統一 + §5.49 の関連セクションリストに §5.14/§5.35/§5.36/§4.49 を明示 (横展開漏れを防ぐ相互参照) |
 | 2026-05-01 | §5.50 新設 (PR #201 fix/stop-hook-speedup)。**Stop hook 重処理 + prompt 型を skill 化、開発速度回復** ── `.claude/settings.json` の Stop hook に `pnpm lint && pnpm test` (24 秒) と `type: "prompt"` の 6 観点チェックが登録されており、Claude が応答するたび毎回発火 → 質問応答や調査のみのターンでも 24 秒 + LLM 1 往復浪費。さらに prompt 型は応答後に Stop が再発火するため 6 観点チェック要求がループ的に再注入され、15 ターン以上実装が進まない事態発生。修正: lint+test+6 観点を `.claude/skills/quality-check.md` に分離、Stop は `secret-scan` + `auto-commit` の軽量 2 step のみに削減。仕組み (内容) は維持し、発火タイミングのみ「毎ターン」→「実装完了時」に変更。抽出ルール: (1) Stop hook に prompt 型を登録しない (応答ごと再注入で発散) (2) 重処理 (>5 秒) を Stop に置かない (3) 「自動化」と「毎ターン強制」は別物、PR/コミット単位は skill or CI へ |
+| 2026-05-01 | §5.51 / E2E §4.50 新設 (PR fix/visibility-auth-matrix)。**公開範囲 visibility と認可マトリクスの統合 + 自己 draft 可視化** ── ユーザが「課題一覧」から起票した際、Toast「課題を起票しました」は出るが画面上一覧に出ず Console エラーもない UX バグ発生。原因は旧 list filter が「自分の draft も一覧から除外」する設計で、Toast 導入 (PR #194) と組み合わさって顕在化。修正: list service (risk/retro/knowledge) の where 句に `OR [{public}, {draft AND createdBy=viewer}]` 追加、comment 認可 (route) に visibility + mode 連動の判別ユニオン拡張、entity 個別 delete に `prisma.comment.updateMany` cascade soft-delete を追加 (6 service)、project cascade delete にも risk/issue/knowledge/task の comment 物理削除を追加。コメント編集/削除認可は admin 救済を外し投稿者本人のみに変更。新規認可テスト 24 件 (1020 → 1044)、UI は既存 `<VisibilityBadge>` (Phase E §5.41) で draft/public を視覚区別。E2E §4.50 では「Toast 導入後の必修チェックリスト」「list filter で自己起票が見えなくなるアンチパターン」を罠として記録 |
