@@ -1397,6 +1397,39 @@ function checkPermission(
   組み合わせて認可判定する判別ユニオン拡張パターン
 - `comment.service.ts#softDeleteCommentsForEntity` が cascade 用の共通ヘルパ (新規 entity 追加時の再利用先)
 
+### 8.3.4 コメント @mention 機能の認可詳細 (PR feat/comment-mentions / 2026-05-01)
+
+| entityType | 許容 mention kind |
+|---|---|
+| issue / risk / retrospective / knowledge | 全 kind: `user` / `all` / `project_member` / `role_pm_tl` / `role_general` / `role_viewer` / `assignee` |
+| task / stakeholder | project スコープのみ: `user` / `project_member` / `role_pm_tl` / `role_general` / `role_viewer` / `assignee` (`all` 不可) |
+| customer | `user` のみ (admin only entity) |
+
+**UI 経路 (context) 別のタブ表示**:
+
+| URL 経路 | context | 表示する group タブ |
+|---|---|---|
+| `/projects/[id]/tasks` | `wbs` | project_member / role_* / assignee (all なし) |
+| `/projects/[id]/...` (上記以外) | `project_list` | 全 kind (entity が許容するもの) |
+| `/risks` `/issues` `/retrospectives` `/knowledge` 等 | `cross_list` | all / assignee のみ |
+
+**配信フロー**:
+1. POST /api/comments で mentions[] を受信
+2. validateMentionsForEntity で entityType と突合 (Q3 二重防御)
+3. Comment + Mention レコード作成
+4. 各 mention を expandMention で userId[] に展開
+5. recipients から自分自身を除外 (Q5)
+6. Notification を一括 createMany (dedupeKey UNIQUE で 2 重通知防止)
+
+**編集時 (Q2)**:
+- 旧 / 新 mentions を `mentionKey = '{kind}:{targetUserId ?? ""}'` で diff
+- added の mention のみ通知生成、removed は DB 削除のみ (通知なし)
+
+**実装ポイント**:
+- `mention.service.ts#getAllowedMentionKinds` が entityType → 許容 kind の単一ソース (UI / server で共有)
+- `expandMention` は kind ごとの DB クエリで動的展開、グループメンションは保存時点で確定せず配信時に解決
+- `generateMentionNotifications` は dedupeKey UNIQUE 制約で同一 (commentId, userId) の 2 重通知を DB レベルで弾く
+
 ### 8.3.3 通知 (Notification) 機能の認可詳細 (PR feat/notifications-mvp / 2026-05-01)
 
 | 操作 | 認可 |

@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { COMMENT_CONTENT_MAX_LENGTH } from '@/config';
+import { mentionInputSchema } from './mention';
 
 /**
  * コメントの親エンティティ種別 (PR #199)。
@@ -30,6 +31,7 @@ export type CommentEntityType = (typeof COMMENT_ENTITY_TYPES)[number];
 /**
  * コメント新規作成スキーマ。
  * content は trim 後 1 文字以上、上限 COMMENT_CONTENT_MAX_LENGTH (2000)。
+ * mentions は省略可、最大 50 件 (PR feat/comment-mentions、Q3 サーバ側 validate は service 層で entity と突合)。
  */
 export const createCommentSchema = z.object({
   entityType: z.enum(COMMENT_ENTITY_TYPES),
@@ -39,15 +41,17 @@ export const createCommentSchema = z.object({
     .trim()
     .min(1, 'コメントを入力してください')
     .max(COMMENT_CONTENT_MAX_LENGTH),
+  mentions: z.array(mentionInputSchema).max(50).default([]),
 });
 
-/** コメント編集スキーマ (content のみ更新可)。 */
+/** コメント編集スキーマ (content / mentions 共更新可)。 */
 export const updateCommentSchema = z.object({
   content: z
     .string()
     .trim()
     .min(1, 'コメントを入力してください')
     .max(COMMENT_CONTENT_MAX_LENGTH),
+  mentions: z.array(mentionInputSchema).max(50).optional(),
 });
 
 export type CreateCommentInput = z.infer<typeof createCommentSchema>;

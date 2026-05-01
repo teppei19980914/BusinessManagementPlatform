@@ -4120,6 +4120,104 @@ WebSocket / SSE は Vercel serverless でコスト面で不向きのため polli
 - 修正例: `src/services/notification.service.ts` `todayInJst` / `generateDailyNotifications`
 - 関連 PR: #199 (polymorphic Comment) / `lock-inactive` cron (認可パターン)
 
+### 5.55 コメントの @mention 機能 (PR feat/comment-mentions, 2026-05-01)
+
+PR #205 (通知 MVP) で確立した polymorphic Notification 基盤の上に、**コメント本文の @mention** を追加。完全アプリ内通知のため追加コストは無し。
+ユーザ要件 (Q1〜Q5):
+- Q1: @ トリガ補完 UI (Slack/GitHub 風)
+- Q2: 編集時は **追加分のみ** 通知 (削除分は何もしない)
+- Q3: WBS で「全アカウント」をメンションしようとしても UI で隠す + サーバ側でも validation
+- Q4: グループメンション `@all` 等は token のまま、配信時に展開
+- Q5: 自分自身を mention しても通知しない
+
+#### 採用したパターン
+
+##### 1. Mention テーブル + Comment との cascade 削除
+
+```prisma
+model Mention {
+  id, commentId (CASCADE delete), kind, targetUserId?, createdAt
+  @@index([commentId])
+}
+```
+
+mention は **コメントと一蓮托生** (コメント削除で物理削除) のため `onDelete: Cascade` を設定。
+
+##### 2. kind 判別ユニオン (PR #199 §5.49 と同パターン)
+
+```ts
+type MentionKind = 'user' | 'all' | 'project_member'
+                 | 'role_pm_tl' | 'role_general' | 'role_viewer'
+                 | 'assignee';
+```
+
+`kind='user'` のみ `targetUserId` 必須、それ以外は配信時に動的展開。
+
+##### 3. entityType 別の許容 kind (Q3 サーバ側 enforce)
+
+| entity | 許容 kind |
+|---|---|
+| issue / risk / retrospective / knowledge | 全 kind (all 含む) |
+| task / stakeholder | all 以外 (project スコープのため) |
+| customer | user のみ (admin 専用エンティティ) |
+
+UI 側でも同マトリクスでタブを出し分けるが、サーバ側で **二重防御** で必ず enforce する。
+
+##### 4. context 概念の導入 (UI 経路ヒント)
+
+「○○一覧」と「全○○」は同じ entity に対する access path が違うだけ。サーバ側 validation はもとから entityType ベースで OK だが、**UI のタブ表示は経路で変える** ためクライアントが `context` パラメータを送る:
+
+```ts
+function detectMentionContext(pathname: string): 'wbs' | 'project_list' | 'cross_list' {
+  if (/^\/projects\/[^/]+\/tasks/.test(pathname)) return 'wbs';
+  if (/^\/projects\/[^/]+/.test(pathname)) return 'project_list';
+  return 'cross_list';
+}
+```
+
+候補 API 側で context フィルタを追加掛けする (cross_list なら `all` / `assignee` のみ等)。
+
+##### 5. 配信フロー (即時、cron 経由しない)
+
+```
+[ユーザがコメント投稿]
+  └─ POST /api/comments (mentions[] を含む)
+        ├─ サーバ側 validateMentionsForEntity (Q3 二重防御)
+        ├─ Comment 作成
+        ├─ Mention 一括 createMany
+        └─ generateMentionNotifications で expandMention → recipient set 化 → Notification createMany (skipDuplicates)
+              ※ dedupeKey = `comment_mention:${commentId}:${userId}` で 2 重通知防止
+              ※ 投稿者本人 (Q5) は recipients から除外
+```
+
+##### 6. 編集時の差分処理 (Q2)
+
+`mentionKey = ${kind}:${targetUserId ?? ''}` で同一性判定し、`diffMentions` で added/removedIds を算出。`updateComment` は added の通知のみ生成、removed は DB から削除するだけで通知なし。
+
+##### 7. UI: @ トリガ補完 (Q1)
+
+- カーソル直前の `@partial` を Unicode 対応正規表現 (`/(?:^|\s)@([\p{L}\p{N}_-]*)$/u`) で検出 (日本語名対応)
+- debounced fetch (250ms) で `/api/mention-candidates`
+- 候補クリック → `@partial` を `@<label> ` で置換 + mentions 配列に push
+- group メンション (`@all` 等) と user メンション (`@<name>`) を同 dropdown に並べる
+
+#### 抽出したルール (今後の同種拡張)
+
+- [ ] **kind 判別ユニオンを拡張するときは `MENTION_KINDS` enum と `getAllowedMentionKinds` の両方を更新**: 単一箇所追加で型安全
+- [ ] **server / UI で同じ許容マトリクスを enforce** (二重防御): UI のタブ隠蔽だけだと CLI / 直接 POST で抜けられる
+- [ ] **dedupeKey は `comment_mention:${commentId}:${userId}` 形式**: 同一コメントに同一ユーザの 2 重通知を DB UNIQUE で弾く
+- [ ] **Q5 自分宛除外は service 層で実施**: route 層で漏らすと将来別経路 (例: cron 配信) で抜ける
+- [ ] **編集時は追加分のみ通知** (Q2): 削除分の通知は意味がない (受信側で消えても通知が残ると混乱)
+- [ ] **context は UI ヒント、サーバ側は entityType ベース**: ○○一覧 / 全○○ の区別は path だけ、entity は同じ。サーバ側 validation を context 依存にすると security hole になる
+
+#### 関連
+
+- §5.49 (polymorphic Comment + 判別ユニオン認可 — 本件は同パターンの mention 拡張)
+- §5.54 (PR #205 通知 MVP — 本件は通知の trigger 追加形式)
+- §5.51 (visibility 認可マトリクス — 本件 Q3 の WBS 制約と同源)
+- DESIGN.md §8.3.4 (mention 認可マトリクス)
+- 修正例: `src/services/mention.service.ts` (kind 展開 + diff + 通知生成)
+
 ---
 
 ## 6. 機能削除の手順
@@ -5810,3 +5908,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-05-01 | §5.52 / E2E §4.51 新設 (PR fix/attachments-batch-400)。**バッチ API の lenient validation 設計 + 構造化エラーログ** ── ユーザレポート「`/api/attachments/batch` で StatusCode:400 が Vercel log に出続けている」。原因は旧 route が `entityIds: z.array(z.string().uuid())` で 1 件でも非 UUID が混じるとバッチ全体を 400 で破棄する all-or-nothing 設計 + サーバ側に拒否 context を残していなかったため、status code のみで再現条件特定が不可能だった。修正: entityType / slot は厳格、entityIds は lenient (非 UUID は filter で除外、有効分のみ 200 返却)、validation 失敗時は `recordError` で system_error_logs に context (entityType の typeof / entityIds 件数 / Zod issues) を構造化記録。クライアント側 `useBatchAttachments` でも UUID 事前 filter を追加し二重防御。新規 9 件のテスト (1044 → 1053)。抽出ルール: (1) ベストエフォート系バッチ API は body lenient + 失敗黙殺で 200 (2) header / body の validation 厳しさを分離 (3) `console.*` 禁止 → `recordError` で構造化 DB ログ (4) クライアント側でも同正規表現で事前 filter |
 | 2026-05-01 | §5.53 新設 (PR feat/sticky-table-headers)。**一覧テーブルの Excel 風ヘッダー固定** ── 「○○一覧」「全○○」全画面で縦スクロール時に `<thead>` を viewport 上端に固定する UX 要望。共通 `<TableHeader>` コンポーネント 1 箇所に `sticky top-0 z-10 bg-card [&>tr>th]:bg-card` を追加するだけで 17+ 一覧画面に自動伝播 (DRY 原則)。`<TableHeader>` を経由しない raw `<thead>` 3 箇所 (`my-tasks-client` / `tasks-client` WBS / `responsive-table`) は個別対応。設計判断: (1) ページ全体スクロール基準で sticky → DashboardHeader (非 sticky) スクロールアウト後に thead が上端取る挙動 (2) `bg-card` 二重指定で古いブラウザ対応 (3) z-10 で Dialog/Toast/dropdown (z-50) より下に固定。抽出ルール: (a) 共通 UI 1 箇所修正で N 画面に伝播させる (b) sticky element には必ず bg を入れる (透過すると下行が透ける) (c) `<TableHeader>` を経由しない raw thead の grep を再発防止に運用 |
 | 2026-05-01 | §5.54 新設 (PR feat/notifications-mvp)。**アプリ内通知機能 MVP (完全無料、外部 push なし)** ── ベル UI を DashboardHeader に追加 + ACT の予定日リマインダ 2 種を Vercel Cron で日次生成 (JST 7:00 = UTC 22:00)。polymorphic Notification テーブル (Comment と同形)、`dedupeKey` UNIQUE で同日 2 重発火を DB レベルで弾く、partial index 2 本 (idx_tasks_planned_start_due / idx_tasks_planned_end_due) で flat query を高速化し WBS 階層 traversal を完全回避。`todayInJst()` ヘルパで cron の UTC ↔ JST 境界処理を service 層に閉じ込め、単体テストで UTC 14:59/15:00 境界を検証。既読 + 30 日経過の物理削除を同 cron に組み込み容量管理。UI polling は open 30 秒 / closed 5 分。新規テスト 29 件 (1053 → 1082)。抽出ルール: (1) 新 type 追加は validators の `NOTIFICATION_TYPES` 1 箇所 (2) dedupeKey は `{type}:{entityId}:{YYYY-MM-DD}` 形式を継承 (3) cron は flat query + partial index、階層探索を回避 (4) TZ 境界は `todayInJst` 経由、テストで 14:59/15:00 必須 (5) cron 認可は `CRON_SECRET` 未設定で fail-closed |
+| 2026-05-01 | §5.55 新設 (PR feat/comment-mentions)。**コメント @mention 機能 (完全無料、即時通知)** ── PR #205 の Notification 基盤上に追加。Mention テーブルを新設 (kind 判別ユニオン: user/all/project_member/role_*/assignee)、Comment との `onDelete: Cascade`。entityType 別の許容 kind マトリクスを `getAllowedMentionKinds` でサーバ側強制 (Q3 二重防御): WBS では all 不可、customer は user のみ。UI は @ トリガで `/api/mention-candidates` 候補表示 (Slack/GitHub 風)、`context` パラメータ ('wbs' / 'project_list' / 'cross_list') で UI 側のタブ絞り込み。配信は即時 (cron 経由せず POST 直後に Notification createMany)、`dedupeKey=comment_mention:{commentId}:{userId}` で 2 重通知防止、Q5 自分宛除外。Q2 採用で編集時は added のみ通知、removed は通知なし。新規テスト 33 件 (1082 → 1115)。抽出ルール: (1) kind 判別ユニオン拡張は `MENTION_KINDS` + `getAllowedMentionKinds` 1 箇所 (2) UI / server で同許容マトリクス二重防御 (3) context は UI ヒント、server は entityType ベースの validation (4) 編集時の通知は added のみ (5) 自分宛除外は service 層で実施 |

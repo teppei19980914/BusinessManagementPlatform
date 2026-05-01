@@ -20,12 +20,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { updateCommentSchema } from '@/lib/validators/comment';
+import type { CommentEntityType } from '@/lib/validators/comment';
 import {
   deleteComment,
   getComment,
   updateComment,
 } from '@/services/comment.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { validateMentionsForEntity } from '@/services/mention.service';
+import { buildEntityCommentLink } from '@/lib/entity-link';
 
 async function notFound() {
   const t = await getTranslations('message');
@@ -76,7 +79,21 @@ export async function PATCH(
     );
   }
 
-  const updated = await updateComment(id, parsed.data.content);
+  // PR feat/comment-mentions: 編集時の mention diff (追加分のみ通知)
+  const mentions = parsed.data.mentions;
+  if (mentions && mentions.length > 0) {
+    const v = validateMentionsForEntity(existing.entityType as CommentEntityType, mentions);
+    if (!v.ok) {
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: v.reason } },
+        { status: 400 },
+      );
+    }
+  }
+  const link = mentions
+    ? await buildEntityCommentLink(existing.entityType as CommentEntityType, existing.entityId)
+    : '';
+  const updated = await updateComment(id, parsed.data.content, mentions, user.name, link);
 
   await recordAuditLog({
     userId: user.id,

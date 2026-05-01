@@ -76,6 +76,7 @@ model User {
   stakeholderRecords      Stakeholder[]            @relation("StakeholderUser")
   authoredComments        Comment[]                @relation("CommentAuthor")
   notifications           Notification[]           @relation("NotificationRecipient")
+  receivedMentions        Mention[]                @relation("MentionTarget")
 
   @@unique([email], map: "idx_users_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
@@ -664,10 +665,36 @@ model Comment {
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt  DateTime? @map("deleted_at") @db.Timestamptz
 
-  user User @relation("CommentAuthor", fields: [userId], references: [id])
+  user     User      @relation("CommentAuthor", fields: [userId], references: [id])
+  mentions Mention[]
 
   @@index([entityType, entityId, deletedAt], map: "idx_comments_entity")
   @@map("comments")
+}
+
+/// メンション (PR feat/comment-mentions): コメント本文中の `@username` / `@all` 等を
+/// 構造化データとして保存し、通知配信のソースになる。
+///
+/// 設計方針:
+///   - **kind の判別ユニオン**: 'user' (個別) / 'all' / 'project_member' / 'role_*' / 'assignee'
+///     - kind='user' のみ targetUserId を持つ (個別指定)
+///     - その他 (グループメンション) は targetUserId=null、配信時に動的に展開
+///   - **コメント削除で cascade 物理削除** (`onDelete: Cascade`):
+///     - コメントが消えたメンションは意味を持たないため、データ整合性のため自動削除
+///   - **編集時の差分処理**: 旧 mention と新 mention を kind+targetUserId で diff し、
+///     **追加分のみ通知** を生成 (Q2 採用)。削除分は何もしない。
+model Mention {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  commentId    String   @map("comment_id") @db.Uuid
+  kind         String   @db.VarChar(40)
+  targetUserId String?  @map("target_user_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  comment    Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  targetUser User?   @relation("MentionTarget", fields: [targetUserId], references: [id])
+
+  @@index([commentId], map: "idx_mentions_comment")
+  @@map("mentions")
 }
 
 /// 通知 (PR feat/notifications-mvp): アプリ内のベル UI に表示するエンドユーザ向けメッセージ。

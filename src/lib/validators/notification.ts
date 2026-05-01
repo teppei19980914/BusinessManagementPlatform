@@ -9,13 +9,20 @@ import { z } from 'zod/v4';
 export const NOTIFICATION_TYPES = [
   'task_start_due', // ACT の予定開始日当日 (status='not_started')
   'task_end_due', // ACT の予定終了日当日 (status≠'completed')
-  // 'comment_mention' (将来)
+  'comment_mention', // コメント本文の @username で言及 (PR feat/comment-mentions)
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
 export const NOTIFICATION_ENTITY_TYPES = [
-  'task', // MVP は task のみ。将来 issue/risk/retrospective/knowledge 等に展開予定
+  'task',
+  // PR feat/comment-mentions: コメント mention 通知では entity は task 以外も対象
+  'issue',
+  'risk',
+  'retrospective',
+  'knowledge',
+  'stakeholder',
+  'customer',
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];

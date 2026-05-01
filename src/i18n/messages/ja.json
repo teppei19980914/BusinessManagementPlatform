@@ -43,7 +43,8 @@
   },
   "comment": {
     "section": "コメント",
-    "placeholder": "コメントを入力",
+    "placeholder": "コメントを入力 (@ でメンション)",
+    "mentionsCount": "{count} 件のメンション",
     "post": "投稿",
     "edit": "編集",
     "delete": "削除",
