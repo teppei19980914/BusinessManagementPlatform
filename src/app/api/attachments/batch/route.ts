@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { ATTACHMENT_ENTITY_TYPES } from '@/lib/validators/attachment';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import type { AttachmentDTO } from '@/services/attachment.service';
+import { recordError } from '@/services/error-log.service';
 
 /**
  * POST /api/attachments/batch
@@ -22,29 +23,74 @@ import type { AttachmentDTO } from '@/services/attachment.service';
  *           親エンティティの projectId を解決 → 自分がメンバーのプロジェクトのものだけ通す。
  *           admin は全プロジェクトを通過 (checkMembership と同じ短絡)。
  *
+ * 緩和ルール (2026-05-01 fix/attachments-batch-400):
+ *   旧版では entityIds に **1 つでも非 UUID** が混じると `400 VALIDATION_ERROR` で
+ *   バッチ全体を破棄していた。一覧画面では添付列が表示できないだけでなく、
+ *   ユーザに具体的な原因が見えない 400 エラーが Vercel log に出続ける状態になっていた。
+ *   バッチ取得は「ベストエフォート」セマンティクスが妥当なため、無効 ID は静かに
+ *   フィルタして有効 ID のみ処理 + 200 返却する設計に変更。validation 失敗時は
+ *   **`recordError(system_error_logs)` で実フィールドを記録** (no-console ルール準拠)
+ *   して将来のデバッグを容易にする。
+ *
  * レスポンス: Map 形式 ({ [entityId]: AttachmentDTO[] }) で返し、UI 側の
- * lookup を O(1) にする。
+ * lookup を O(1) にする。無効 ID 分のキーは含まれない (空 Map と同じ扱い)。
  */
 
-const bodySchema = z.object({
+// entityType / slot は厳格に validate (これらは UI 側で固定値、ミスマッチは即時エラーで OK)。
+// entityIds は緩和扱い: 配列以外なら空配列扱い、配列内の非 UUID は filter で除外。
+const headerSchema = z.object({
   entityType: z.enum(ATTACHMENT_ENTITY_TYPES),
-  entityIds: z.array(z.string().uuid()).max(500), // 1 リクエストの上限
   slot: z.string().max(30).optional(),
 });
+
+// UUID v1-v8 の RFC 4122 準拠正規表現 (zod v4 z.string().uuid() と同等)。
+//   8-4-4-4-12 hex、3rd group の先頭 1 桁が version (1-8)、4th group の先頭 1 桁が variant (8/9/a/b)
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 
 export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
   const body = await req.json().catch(() => ({}));
-  const parsed = bodySchema.safeParse(body);
-  if (!parsed.success) {
+  const headerParsed = headerSchema.safeParse(body);
+  if (!headerParsed.success) {
+    // entityType / slot のような UI 固定フィールドが想定外 = 開発側のバグ。
+    // 詳細を system_error_logs に記録 (entityIds 配列の中身は伏せる、容量肥大化防止)。
+    void recordError({
+      severity: 'warn',
+      source: 'server',
+      message: '[attachments/batch] header validation failed',
+      userId: user.id,
+      context: {
+        entityType: typeof body.entityType === 'string' ? body.entityType : `(${typeof body.entityType})`,
+        slot: typeof body.slot === 'string' ? body.slot : '(absent)',
+        entityIdsCount: Array.isArray(body.entityIds) ? body.entityIds.length : 0,
+        issues: headerParsed.error.issues,
+      },
+    });
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', details: parsed.error.issues } },
+      { error: { code: 'VALIDATION_ERROR', details: headerParsed.error.issues } },
       { status: 400 },
     );
   }
-  const { entityType, entityIds, slot } = parsed.data;
+  const { entityType, slot } = headerParsed.data;
+
+  // entityIds: lenient — 配列以外 → 空、UUID でない要素 → filter (黙って除外)
+  const rawIds = Array.isArray(body.entityIds) ? (body.entityIds as unknown[]) : [];
+  const entityIds = rawIds
+    .filter((id): id is string => typeof id === 'string' && UUID_RE.test(id))
+    .slice(0, 500);
+  if (rawIds.length !== entityIds.length) {
+    // フィルタが発動した = 呼出側が想定外の ID を含めて送ってきたシグナル。
+    // info レベルで system_error_logs に記録 (頻発する場合は呼出側を修正する)。
+    void recordError({
+      severity: 'info',
+      source: 'server',
+      message: `[attachments/batch] filtered ${rawIds.length - entityIds.length}/${rawIds.length} invalid entityIds`,
+      userId: user.id,
+      context: { entityType, validCount: entityIds.length, rejectedCount: rawIds.length - entityIds.length },
+    });
+  }
   if (entityIds.length === 0) {
     return NextResponse.json({ data: {} });
   }

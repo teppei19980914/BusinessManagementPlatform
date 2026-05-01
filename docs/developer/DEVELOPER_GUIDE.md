@@ -3853,6 +3853,93 @@ DROP TABLE retrospective_comments;
 - DESIGN.md §5.10 (comments テーブル定義 + 認可マトリクス追記)
 - 修正例: `src/services/comment.service.ts` `resolveEntityForComment` (visibility 連動の判別ユニオン)
 
+### 5.52 バッチ API の lenient validation 設計 (PR fix/attachments-batch-400, 2026-05-01)
+
+#### 背景・症状
+
+ユーザレポート: 「何かデータを更新しようとしたとき、Vercel ログに `/api/attachments/batch` で StatusCode:400 が出力された」。
+原因不明のまま log だけが流れ、具体的な拒否理由は記録されていなかった。
+
+#### 旧設計の問題
+
+```ts
+// 旧: bodySchema で entityIds 全件に z.string().uuid() を要求
+const bodySchema = z.object({
+  entityType: z.enum(ATTACHMENT_ENTITY_TYPES),
+  entityIds: z.array(z.string().uuid()).max(500),
+  slot: z.string().max(30).optional(),
+});
+const parsed = bodySchema.safeParse(body);
+if (!parsed.success) {
+  return NextResponse.json({ error: ... }, { status: 400 });
+}
+```
+
+問題点:
+
+1. **All-or-nothing 失敗**: entityIds に **1 つでも非 UUID** が混じると **バッチ全体が 400 で破棄**。
+   一覧画面では正常な行の添付列も表示できなくなる
+2. **拒否理由が log に残らない**: Vercel log は status code のみで、どの field が rejected か不明
+3. **UI 側の誘発要因**: 起票直後の optimistic UI / staging ID / 空文字 / null など、
+   一時的な non-UUID 値が混じる可能性が複数経路で存在する
+
+#### 新設計 — 「lenient body + 厳格 header + 構造化エラーログ」
+
+```ts
+// header (entityType / slot) は厳格 — UI 固定値、ミスマッチは即 400 で OK
+const headerSchema = z.object({
+  entityType: z.enum(ATTACHMENT_ENTITY_TYPES),
+  slot: z.string().max(30).optional(),
+});
+
+// entityIds は lenient — 配列でない / 非 UUID 要素は filter して有効分のみ処理
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+const rawIds = Array.isArray(body.entityIds) ? body.entityIds : [];
+const entityIds = rawIds.filter((id) => typeof id === 'string' && UUID_RE.test(id)).slice(0, 500);
+
+if (rawIds.length !== entityIds.length) {
+  void recordError({ severity: 'info', source: 'server', message: 'filtered N/M invalid', ... });
+}
+```
+
+##### 採用したパターンの 3 軸
+
+| 軸 | 採用 | 理由 |
+|---|---|---|
+| **header / body の validation 厳しさを分離** | header 厳格 + body lenient | UI 固定値 (entityType) は契約として厳格。動的データ (entityIds) は環境要因で揺れる |
+| **lenient フィルタは黙って切り捨てて 200** | yes | バッチ API は「ベストエフォート」セマンティクス。一部失敗で全体を破棄しない |
+| **拒否は `recordError` で system_error_logs に構造化記録** | yes | `console.*` は no-console rule で禁止 + Vercel log は status のみ。DB に context 付きで残せば後追い分析可能 |
+
+##### クライアント側でも同じ UUID 正規表現で事前フィルタ
+
+`src/components/attachments/use-batch-attachments.ts`:
+
+```ts
+const validIds = useMemo(
+  () => entityIds.filter((id) => typeof id === 'string' && UUID_RE.test(id)),
+  [entityIds],
+);
+```
+
+二重防御 (clean defense): クライアント側でも事前 filter することで、無駄な 400 ラウンドトリップを減らし、Vercel log のノイズも減らす。サーバ側は最終防壁として fallback を残す。
+
+#### 抽出したルール (今後の同種 API)
+
+- [ ] **「ベストエフォート」セマンティクスの API は body を lenient に**: 配列受信系 API は 1 件失敗で全体破棄しない。1 件失敗 → filter で除外 + ログ + 続行
+- [ ] **header (固定値) は厳格 / body (動的データ) は lenient** という validation 二層構造を default にする
+- [ ] **`console.*` を直接使わず `recordError` で system_error_logs に書く** (no-console rule + 構造化検索可能)
+- [ ] **クライアント側でも事前 filter** (`useMemo` + 正規表現) で無駄なラウンドトリップを減らす
+- [ ] **UUID 正規表現は server / client で同じ定数を使う** (将来的には `src/lib/validators/uuid.ts` 等に共通化候補 — 本 PR では route + hook の 2 箇所、3 箇所目が出たら抽出)
+- [ ] **lenient フィルタの発動は info ログで残す**: 頻発する場合は呼出側のバグなので可視化しないと原因不明のまま放置される
+
+#### 関連
+
+- §5.51 (visibility 認可マトリクス — 同じく list 系 API の堅牢性パターン)
+- DESIGN.md §22 / `src/services/error-log.service.ts` (`recordError` の使い方)
+- E2E_LESSONS_LEARNED §4.51 (本件の Vercel log 解析の罠 / status code のみで原因不明だった経緯)
+- 修正例: `src/app/api/attachments/batch/route.ts` (lenient + recordError パターンの参考実装)
+- 関連 PR: #67 (本 API の初出) / #115 (IDOR 対策の認可強化)
+
 ---
 
 ## 6. 機能削除の手順
@@ -5540,3 +5627,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-04-30 | /knowledge-organize 監査整理 (PR #199 後)。**§5.10 → §5.14 stale ref 一括修正** ── §5.10 (フォーム送信前の事前バリデーション) と §5.14 (readOnly な edit dialog の fetch gating / fix/attachment-list-non-member-403) は別概念だが、コードコメント 4 箇所 (`dialog-attachment-section.tsx`, `knowledge/retrospective/risk-edit-dialog.tsx`) で `§5.10 由来「readOnly 非表示」` と stale 化していた。PR #199 §5.49 執筆時にこのコメントから機械的にコピーしてしまい DEVELOPER_GUIDE 内 3 箇所にも伝染。本整理で全 7 箇所を `§5.14` に統一 + §5.49 の関連セクションリストに §5.14/§5.35/§5.36/§4.49 を明示 (横展開漏れを防ぐ相互参照) |
 | 2026-05-01 | §5.50 新設 (PR #201 fix/stop-hook-speedup)。**Stop hook 重処理 + prompt 型を skill 化、開発速度回復** ── `.claude/settings.json` の Stop hook に `pnpm lint && pnpm test` (24 秒) と `type: "prompt"` の 6 観点チェックが登録されており、Claude が応答するたび毎回発火 → 質問応答や調査のみのターンでも 24 秒 + LLM 1 往復浪費。さらに prompt 型は応答後に Stop が再発火するため 6 観点チェック要求がループ的に再注入され、15 ターン以上実装が進まない事態発生。修正: lint+test+6 観点を `.claude/skills/quality-check.md` に分離、Stop は `secret-scan` + `auto-commit` の軽量 2 step のみに削減。仕組み (内容) は維持し、発火タイミングのみ「毎ターン」→「実装完了時」に変更。抽出ルール: (1) Stop hook に prompt 型を登録しない (応答ごと再注入で発散) (2) 重処理 (>5 秒) を Stop に置かない (3) 「自動化」と「毎ターン強制」は別物、PR/コミット単位は skill or CI へ |
 | 2026-05-01 | §5.51 / E2E §4.50 新設 (PR fix/visibility-auth-matrix)。**公開範囲 visibility と認可マトリクスの統合 + 自己 draft 可視化** ── ユーザが「課題一覧」から起票した際、Toast「課題を起票しました」は出るが画面上一覧に出ず Console エラーもない UX バグ発生。原因は旧 list filter が「自分の draft も一覧から除外」する設計で、Toast 導入 (PR #194) と組み合わさって顕在化。修正: list service (risk/retro/knowledge) の where 句に `OR [{public}, {draft AND createdBy=viewer}]` 追加、comment 認可 (route) に visibility + mode 連動の判別ユニオン拡張、entity 個別 delete に `prisma.comment.updateMany` cascade soft-delete を追加 (6 service)、project cascade delete にも risk/issue/knowledge/task の comment 物理削除を追加。コメント編集/削除認可は admin 救済を外し投稿者本人のみに変更。新規認可テスト 24 件 (1020 → 1044)、UI は既存 `<VisibilityBadge>` (Phase E §5.41) で draft/public を視覚区別。E2E §4.50 では「Toast 導入後の必修チェックリスト」「list filter で自己起票が見えなくなるアンチパターン」を罠として記録 |
+| 2026-05-01 | §5.52 / E2E §4.51 新設 (PR fix/attachments-batch-400)。**バッチ API の lenient validation 設計 + 構造化エラーログ** ── ユーザレポート「`/api/attachments/batch` で StatusCode:400 が Vercel log に出続けている」。原因は旧 route が `entityIds: z.array(z.string().uuid())` で 1 件でも非 UUID が混じるとバッチ全体を 400 で破棄する all-or-nothing 設計 + サーバ側に拒否 context を残していなかったため、status code のみで再現条件特定が不可能だった。修正: entityType / slot は厳格、entityIds は lenient (非 UUID は filter で除外、有効分のみ 200 返却)、validation 失敗時は `recordError` で system_error_logs に context (entityType の typeof / entityIds 件数 / Zod issues) を構造化記録。クライアント側 `useBatchAttachments` でも UUID 事前 filter を追加し二重防御。新規 9 件のテスト (1044 → 1053)。抽出ルール: (1) ベストエフォート系バッチ API は body lenient + 失敗黙殺で 200 (2) header / body の validation 厳しさを分離 (3) `console.*` 禁止 → `recordError` で構造化 DB ログ (4) クライアント側でも同正規表現で事前 filter |
