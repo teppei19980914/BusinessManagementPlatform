@@ -4442,6 +4442,101 @@ export type SortState = SortEntry[]; // index 0 が最優先
 - 修正例: `src/lib/multi-sort.ts` (純関数 + 25 件のテスト) / `src/components/sort/*` (UI 部品)
 - 横展開先: `all-risks-table.tsx` / `all-retrospectives-table.tsx` / `knowledge-client.tsx` / `all-memos-client.tsx` / `risks-client.tsx` / `stakeholders-client.tsx` / `memos-client.tsx` / `my-tasks-client.tsx` / `projects-client.tsx` / `customers-client.tsx` / `admin/users-client.tsx` / `admin/audit-logs/audit-logs-table.tsx` / `admin/role-changes/role-changes-table.tsx`
 
+### 5.59 通知 deep link を「全○○」auto-open + entity 別メンション認可の細粒化 (PR feat/notification-edit-dialog, 2026-05-01)
+
+#### 背景・要件
+
+PR #205 (通知 MVP) + PR #207 (mention) で通知 link は **`/projects/[id]/...?xxxId=...`** (project 個別画面) を生成していたが、以下 2 つの問題が判明:
+
+1. **mention 受信者が project member 以外でも届く** (kind='user' / 'all') ため、リンククリック時に `/projects/[id]/risks` の `notFound` 認可で 403/404 になり、mention に応答できない
+2. **target query (`?riskId=...`) はどの画面でも消費されず**、list ページに着地するだけで dialog が auto-open しない (PR #205 が link 形式だけ用意し dialog 自動 open は実装漏れだった)
+
+ユーザ要望:
+> メンションによる通知をクリックすると、メンションがされた編集画面が直接開かれるようにロジックを修正
+> Customer はシステム管理者のみ、Stakeholder は PM/PL のみ、WBS は ProjectMember のみメンション可能に
+
+#### 採用したパターン
+
+##### entity 別の到達戦略 (cross-list 寄せ vs project-page + 認可制限)
+
+| entity | 通知 link | 到達戦略 | mention 認可 |
+|---|---|---|---|
+| risk / issue / retrospective / knowledge | **`/risks?riskId=`** 等 cross-list | 全○○ で auto-open (visibility=public のみ閲覧可、誰でもアクセスできる) | 認証済全員 (現状維持) |
+| task | `/projects/[id]/tasks?taskId=` | project 個別画面 | **ProjectMember のみ** (新設) |
+| stakeholder | `/projects/[id]/stakeholders?...` | project 個別画面 | **PM/TL のみ** (新設) |
+| customer | `/customers/[id]` | admin 専用画面 | **admin のみ** (現状維持を確認) |
+
+**設計の対称性**: mention 認可で書ける人 = mention 通知の to が必ずアクセスできる人、を担保することで「届かない通知」が原理的に発生しない。
+
+##### `useAutoOpenDialog` 共通フック
+
+各「全○○」画面で `?xxxId=...` を読み取って dialog を 1 度だけ open する共通ロジックを `src/components/common/use-auto-open-dialog.ts` に集約:
+
+```ts
+useAutoOpenDialog<AllRiskDTO>({
+  queryKey: 'riskId',
+  items: risks,
+  onOpen: (r) => void handleRowClick(r),
+});
+```
+
+仕様:
+- mount 時に query 取得 → items から id 一致行検索 → onOpen 呼出
+- 開いた後は URL から該当 query を削除 (`router.replace`)、戻るボタンで再 open しない
+- `triggeredRef` で 1 度きり動作を担保 (filter / sort 変動で再発火しない)
+
+##### `EntityResolveResult` への `requiredRole` 追加
+
+`comment.service.ts` の `kind: 'project-scoped'` に **`requiredRole: 'any' | 'pm_tl'`** を追加して route 層で:
+
+```ts
+for (const pid of result.projectIds) {
+  const m = await checkMembership(pid, user.id, user.systemRole);
+  if (!m.isMember) continue;
+  if (result.requiredRole === 'pm_tl' && m.projectRole !== 'pm_tl') continue;
+  return null;
+}
+```
+
+stakeholder は `requiredRole: 'pm_tl'`、task は `requiredRole: 'any'` を返す。admin は entity 種別に関わらず常に通る (super-user)。
+
+##### CommentSection の `canPost` prop (防衛的パターン)
+
+ページ/タブ表示の制御だけでは UI 二重防御が崩れた時に取り返せないため、CommentSection 自体にも `canPost?: boolean` prop を追加 (default true)。現在は呼出側全てが既に page/tab レベルで制御済のため未使用だが、将来 dialog を共有する画面が増えた場合の保険として残す。
+
+#### 設計判断のポイント
+
+1. **「全○○」寄せの妥当性**: mention で「誰でも対象になり得る」 entity (risk/issue/retro/knowledge) は、必然的に「誰でも閲覧可」の cross-list ページに着地させる必要がある。entity 自体の visibility は `public` のみ全○○ 表示なので、draft 投稿への mention は draft 作成者本人にしか届かない (これも対称的)
+2. **task/stakeholder は project page を維持**: mention 認可を ProjectMember / PM/TL に絞ることで、mention 通知 to は必ず project 個別画面にアクセス可能。「全○○」を作る必要がない (= データが project 内のみで意味を持つので cross-list が概念的に存在しない)
+3. **stakeholder の requiredRole 採用根拠**: ステークホルダ管理は計画責任者 (PM/TL) の業務領域。一般メンバーは閲覧のみで議論には参加しない (DESIGN.md 上の RACI)。mention 機能を開放すると意図しないコメント発生源が増えてノイズになる
+4. **`useSearchParams` ではなく専用フック化した理由**: 各 list ページで微妙に違う「item を探す → dialog open → URL クリーンアップ」を 1 箇所に集約することで、将来 N+1 ヒット (遅延 fetch / 複数 entity 混在) 拡張時に一括変更可能
+
+#### 抽出したルール (今後の同種 UI)
+
+- [ ] **mention 通知の to は必ず該当画面にアクセスできる**: mention 認可で「投稿可能な人」= 「to を受け取り得る人」が完全に project / role / admin スコープに含まれることを設計時に確認する
+- [ ] **link 構築 (entity-link.ts) と認可 (route layer) は対の設計**: link を変更したら認可マトリクスを再確認、認可を変更したら link を再確認
+- [ ] **deep link は受信者が絶対にアクセスできる URL を返す**: 「項目が見つからない時は list ページに fallback」「list ページ自体は誰でも見える」が deep link の基本要件
+- [ ] **auto-open は 1 度きり**: filter / sort 変動で再発火しないよう `useRef` でガード、開いたら URL クリーンアップで再 open を防ぐ
+- [ ] **UI gating は防衛的パターンとして prop 化しておく**: 現在使ってなくても将来の経路拡張で必要になる可能性が高い、コストはほぼゼロ
+- [ ] **page/tab レベルと API レベルの二重防御**: UI 制御を変えただけでは抜けられる経路 (URL 直打ち / 直接 fetch / 開発者ツール) が必ず残るため、両方で同じマトリクスを enforce する
+
+#### 既知の制約 / 後続対応
+
+- **`/projects/[id]/stakeholders/page.tsx` が存在しない**: stakeholder mention の deep link は形式上 `/projects/[id]/stakeholders?stakeholderId=...` だが現状 404。stakeholder dialog はプロジェクト詳細画面のタブからのみ到達可能。新規 mention 認可 (PM/TL のみ) では tab 自体が PM/TL + admin にしか出ないため実害は小さいが、URL 直打ちでは 404 になる。後続 PR で page.tsx 切り出し or `/projects/[id]?tab=stakeholders&stakeholderId=...` 形式への切替を検討
+- **task の auto-open 未実装**: `/projects/[id]/tasks?taskId=...` の URL 自体は機能するが、tasks-client は WBS 階層描画のため auto-open ロジックが list 系と異なる。後続 PR で対応
+
+#### 関連
+
+- §5.54 (PR #205 通知 MVP — 本件は link 形式の修正)
+- §5.56 (PR #207 mention — 本件と密接、認可マトリクスを更新)
+- §5.51 (visibility 認可マトリクス — 本件と同源、`requiredRole` 設計のベース)
+- DESIGN.md §22 (polymorphic comment / mention)
+- 修正例:
+  - `src/lib/entity-link.ts` (link 構築)
+  - `src/components/common/use-auto-open-dialog.ts` (新設、共通フック)
+  - `src/services/comment.service.ts` `EntityResolveResult.requiredRole` (型拡張)
+  - `src/app/api/comments/route.ts` `authorizeForComment` (PM/TL 判定追加)
+
 ## 6. 機能削除の手順
 
 ### Step 1: 影響範囲の確認
