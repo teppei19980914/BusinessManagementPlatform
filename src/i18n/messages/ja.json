@@ -86,6 +86,13 @@
     "metaTitle": "たすきば Knowledge Relay",
     "metaDescription": "知見を残す。判断をつなぐ。プロジェクトを強くする。"
   },
+  "sort": {
+    "asc": "昇順",
+    "desc": "降順",
+    "clear": "クリア",
+    "priority": "優先度",
+    "clickToSort": "クリックでソート"
+  },
   "common": {
     "loading": "処理中...",
     "all": "全て",

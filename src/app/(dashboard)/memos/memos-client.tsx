@@ -31,6 +31,9 @@ import {
 } from '@/components/ui/table';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { ResizableHead } from '@/components/ui/resizable-columns';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import {
@@ -58,6 +61,18 @@ import {
   EMPTY_FILTER,
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
+
+// PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
+function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'title': return m.title;
+    case 'content': return m.content;
+    case 'visibility': return m.visibility;
+    case 'author': return m.authorName ?? '';
+    case 'updatedAt': return m.updatedAt;
+    default: return null;
+  }
+}
 
 export function MemosClient({
   memos: initialMemos,
@@ -109,16 +124,18 @@ export function MemosClient({
   // isMine=true のものだけ編集できるため、checkbox は isMine=true 行のみ active。
   const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
+  const { sortState, setSortColumn } = useMultiSort('sort:memos');
 
   const filteredMemos = useMemo(() => {
-    let xs = memos;
+    let xs: MemoDTO[] = memos;
     if (bulkFilter.mineOnly) xs = xs.filter((m) => m.isMine);
     if (bulkFilter.keyword.trim()) {
       // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
       xs = xs.filter((m) => matchesAnyKeyword(bulkFilter.keyword, [m.title, m.content]));
     }
-    return xs;
-  }, [memos, bulkFilter]);
+    return multiSort(xs, sortState, getMemoSortValue);
+  }, [memos, bulkFilter, sortState]);
 
   const selectableIds = filteredMemos.filter((m) => m.isMine).map((m) => m.id);
   const allSelectableSelected
@@ -343,11 +360,11 @@ export function MemosClient({
                   ariaLabel={tMemo('selectAllEditable')}
                 />
               </ResizableHead>
-              <ResizableHead columnKey="title" defaultWidth={220}>{tField('title')}</ResizableHead>
-              <ResizableHead columnKey="content" defaultWidth={300}>{tField('body')}</ResizableHead>
-              <ResizableHead columnKey="visibility" defaultWidth={110}>{tField('visibility')}</ResizableHead>
-              <ResizableHead columnKey="author" defaultWidth={120}>{tMemo('colAuthor')}</ResizableHead>
-              <ResizableHead columnKey="updatedAt" defaultWidth={140}>{tMemo('colUpdatedAt')}</ResizableHead>
+              <SortableResizableHead columnKey="title" defaultWidth={220} label={tField('title')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="content" defaultWidth={300} label={tField('body')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="visibility" defaultWidth={110} label={tField('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="author" defaultWidth={120} label={tMemo('colAuthor')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="updatedAt" defaultWidth={140} label={tMemo('colUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
               <ResizableHead columnKey="attachments" defaultWidth={200}>{tMemo('colAttachments')}</ResizableHead>
               <ResizableHead columnKey="actions" defaultWidth={80}>{tMemo('colActions')}</ResizableHead>
             </TableRow>

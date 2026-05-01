@@ -4367,6 +4367,81 @@ function matchesAnyKeyword(query, fields): boolean {
 - Phase C 要件 19 (空白区切り OR 検索 — 本件 Task 3 の前身)
 - 修正例: `src/lib/text-search.ts` (negation 拡張)
 
+### 5.58 一覧画面のカラムソート機能 横展開 (PR feat/sortable-columns, 2026-05-01)
+
+#### 背景・要件
+
+ユーザ要望: 「○○一覧」「全○○」全画面で **列ヘッダクリックでソート** したい。WBS (タスク階層) は階層構造があるため対象外。Q4-1〜Q4-5 で確定した仕様:
+
+- Q4-1: WBS は対象外 (階層を崩さないため)
+- Q4-2: チェックボックス・操作・添付列を除く全列ソート可
+- Q4-3: 永続化は `sessionStorage` (タブを閉じるまで保持、ユーザ間で共有しない)
+- Q4-4: 既定ソートは既存の `orderBy` (例: `createdAt DESC`) を保つ
+- Q4-5: バッジ表示で複数列の優先度を可視化 (↑¹ ↓²)
+
+#### 採用したパターン
+
+##### 3 層構造の責務分離
+
+| 層 | ファイル | 責務 |
+|---|---|---|
+| 純関数 | `src/lib/multi-sort.ts` | `applySort` / `getColumnSort` / `multiSort` の比較ロジック (テスト容易) |
+| state hook | `src/components/sort/use-multi-sort.ts` | sessionStorage への load/save + `setSortColumn` |
+| UI 部品 | `src/components/sort/sortable-header.tsx` | 列ヘッダ内のドロップダウン (昇順/降順/クリア) + バッジ表示 |
+| 統合 | `src/components/sort/sortable-resizable-head.tsx` | `ResizableHead` + `SortableHeader` のショートカット (`columnKey` 重複指定を回避) |
+
+##### `SortState` 配列が「優先度順」を表現
+
+```ts
+export type SortEntry = { columnKey: string; direction: 'asc' | 'desc' };
+export type SortState = SortEntry[]; // index 0 が最優先
+```
+
+`applySort` は:
+- 既存列の方向変更 → in-place 更新 (優先度維持)
+- 新規列追加 → 末尾に追加 (低優先度)
+- `clear` → 配列から除外
+
+これによりユーザが「最初に title asc、次に priority desc」を選んだ順がそのままソート優先度になる (Q4-5 仕様)。
+
+##### 値の比較規則 (`compareValues`)
+
+- `null / undefined / 空文字` は **direction に関わらず末尾**: 昇順でも降順でも空欄は最下段に置く方が UX が安定。
+- 数値 / Date / boolean はそれぞれ自然比較。
+- 文字列は `localeCompare('ja', { numeric: true, sensitivity: 'base' })` で日本語混在 + 数字混在 (foo2 < foo10) を自然順に。
+
+##### 横展開の手順 (12 画面)
+
+1. **`ResizableHead` を使う一覧 (9 画面)**: `<SortableResizableHead columnKey=... defaultWidth=... label=... sortState=... onSortChange=... />` に置換。`attachments` / `actions` / `select` (チェックボックス) 列は **そのまま `ResizableHead`** で残す (sort 対象外)。
+2. **plain `TableHead` を使う一覧 (customers / admin/users)**: `<TableHead><SortableHeader ... /></TableHead>` パターン。
+3. **server component の一覧 (admin/audit-logs / admin/role-changes)**: テーブル部分を client component (`*-table.tsx`) に切り出して page.tsx は server fetch + 整形 → client component に渡す。`formatDateTimeFull` は session TZ 参照で server 側でしか動かないので **整形済 string と ISO 文字列を両方渡す** (display 用と sort 用を分離)。
+4. **WBS (`tasks-client.tsx`)**: 対象外 (Q4-1)。階層構造が崩れるため。
+5. **`getXxxSortValue(row, columnKey)` を一覧ごとに定義**: switch case で columnKey → row 値の getter を書く。null フィールドは `?? ''` で正規化 (compareValues が末尾に並べる)。
+
+##### 不可視のハマりどころ
+
+- **`ResizableHead` の `overflow-hidden` 削除**: `SortableHeader` のドロップダウン (絶対配置) が th 外側にはみ出す必要があるため、`resizable-columns.tsx` の th 外側 `overflow-hidden` を削除した。テキスト truncation は子の `<div className="truncate pr-2">` で完結するので不要。
+- **storageKey の一意性**: `sort:all-risks` と `sort:project-risks` は別キー。`typeFilter` で risk/issue タブを分けている画面 (all-risks-table) は `sort:all-risks:${typeFilter}` のように suffix を付与し、タブごとに独立させる。
+- **`useMemo` の依存に `sortState` を必ず追加**: filter useMemo で `multiSort(xs, sortState, ...)` を呼ぶなら `sortState` を deps に入れないと再ソートされない。
+- **`my-tasks-client.tsx` の階層**: 各 `pg.tree` の **top-level** だけソートし `children` の順序は維持する (子タスクの順序を崩すと WBS の意味が壊れる)。
+
+#### 抽出したルール (今後の同種 UI)
+
+- [ ] **新規一覧画面追加時は 5 ステップで sort を組み込む**: ① import 3 行 ② `getXxxSortValue` 定義 ③ `useMultiSort('sort:UNIQUE-KEY')` ④ 描画前に `multiSort()` ⑤ 各 sortable header を `SortableResizableHead` (または `<TableHead><SortableHeader/>`) に置換
+- [ ] **「ソート不可」列を見極める**: チェックボックス / 添付一覧 / 操作ボタン列はソート不可、明示的に従来の `ResizableHead` のまま残す
+- [ ] **server component の一覧を sort 対応する場合は client 切り出し**: 整形済 string と ISO 文字列を両方渡す pattern (display と sort の分離)
+- [ ] **null/空文字は常に末尾**: direction で反転しない (UX 一貫性)
+- [ ] **WBS など階層型一覧は対象外**: 子要素の順序を崩すと意味が壊れる
+- [ ] **storageKey は画面固有 + 必要ならサブキー**: タブ切替で sort 状態を独立させたい場合は `sort:all-risks:risk` / `sort:all-risks:issue` のように suffix
+
+#### 関連
+
+- §5.41 (○○一覧 共通 UI 部品の抽出規約 — 本件も同パターン)
+- §5.53 (PR #204 sticky thead — 本件と同じく N 画面横展開パターン)
+- DESIGN.md §3.3 (DRY 原則)
+- 修正例: `src/lib/multi-sort.ts` (純関数 + 25 件のテスト) / `src/components/sort/*` (UI 部品)
+- 横展開先: `all-risks-table.tsx` / `all-retrospectives-table.tsx` / `knowledge-client.tsx` / `all-memos-client.tsx` / `risks-client.tsx` / `stakeholders-client.tsx` / `memos-client.tsx` / `my-tasks-client.tsx` / `projects-client.tsx` / `customers-client.tsx` / `admin/users-client.tsx` / `admin/audit-logs/audit-logs-table.tsx` / `admin/role-changes/role-changes-table.tsx`
+
 ## 6. 機能削除の手順
 
 ### Step 1: 影響範囲の確認

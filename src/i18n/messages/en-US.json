@@ -86,6 +86,13 @@
     "metaTitle": "Tasukiba Knowledge Relay",
     "metaDescription": "Capture knowledge. Connect decisions. Strengthen projects."
   },
+  "sort": {
+    "asc": "Ascending",
+    "desc": "Descending",
+    "clear": "Clear",
+    "priority": "Priority",
+    "clickToSort": "Click to sort"
+  },
   "common": {
     "loading": "Loading...",
     "all": "All",

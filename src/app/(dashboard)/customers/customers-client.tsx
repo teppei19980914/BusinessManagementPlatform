@@ -42,10 +42,24 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { CustomerDTO } from '@/services/customer.service';
+import { SortableHeader } from '@/components/sort/sortable-header';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 
 type Props = {
   initialCustomers: CustomerDTO[];
 };
+
+function getCustomerSortValue(c: CustomerDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'name': return c.name;
+    case 'department': return c.department ?? '';
+    case 'contactPerson': return c.contactPerson ?? '';
+    case 'email': return c.contactEmail ?? '';
+    case 'projects': return c.activeProjectCount;
+    default: return null;
+  }
+}
 
 type FormState = {
   name: string;
@@ -72,6 +86,10 @@ export function CustomersClient({ initialCustomers }: Props) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [error, setError] = useState('');
+
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
+  const { sortState, setSortColumn } = useMultiSort('sort:customers');
+  const sortedCustomers = multiSort(initialCustomers, sortState, getCustomerSortValue);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -214,23 +232,33 @@ export function CustomersClient({ initialCustomers }: Props) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>{t('fieldName')}</TableHead>
-              <TableHead>{t('fieldDepartment')}</TableHead>
-              <TableHead>{t('fieldContactPerson')}</TableHead>
-              <TableHead>{t('fieldEmail')}</TableHead>
-              <TableHead>{t('fieldRelatedProjects')}</TableHead>
+              <TableHead>
+                <SortableHeader columnKey="name" label={t('fieldName')} sortState={sortState} onSortChange={setSortColumn} />
+              </TableHead>
+              <TableHead>
+                <SortableHeader columnKey="department" label={t('fieldDepartment')} sortState={sortState} onSortChange={setSortColumn} />
+              </TableHead>
+              <TableHead>
+                <SortableHeader columnKey="contactPerson" label={t('fieldContactPerson')} sortState={sortState} onSortChange={setSortColumn} />
+              </TableHead>
+              <TableHead>
+                <SortableHeader columnKey="email" label={t('fieldEmail')} sortState={sortState} onSortChange={setSortColumn} />
+              </TableHead>
+              <TableHead>
+                <SortableHeader columnKey="projects" label={t('fieldRelatedProjects')} sortState={sortState} onSortChange={setSortColumn} />
+              </TableHead>
               <TableHead className="text-right">{t('fieldActions')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {initialCustomers.length === 0 && (
+            {sortedCustomers.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground">
                   {t('listEmpty')}
                 </TableCell>
               </TableRow>
             )}
-            {initialCustomers.map((customer) => (
+            {sortedCustomers.map((customer) => (
               <TableRow key={customer.id}>
                 <TableCell className="font-medium">
                   <Link

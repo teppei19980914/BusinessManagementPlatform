@@ -39,6 +39,25 @@ import { useBatchAttachments } from '@/components/attachments/use-batch-attachme
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
+
+function getRetroSortValue(r: AllRetroDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'project': return r.projectName ?? '';
+    case 'conductedDate': return r.conductedDate;
+    case 'planSummary': return r.planSummary;
+    case 'actualSummary': return r.actualSummary;
+    case 'goodPoints': return r.goodPoints;
+    case 'improvements': return r.improvements;
+    case 'createdAt': return r.createdAt;
+    case 'createdBy': return r.createdByName ?? '';
+    case 'updatedAt': return r.updatedAt;
+    case 'updatedBy': return r.updatedByName ?? '';
+    default: return null;
+  }
+}
 
 export function AllRetrospectivesTable({
   retros,
@@ -56,18 +75,24 @@ export function AllRetrospectivesTable({
   // 振り返り画面 (RetrospectivesClient) と同様にキーワードで本文/良かった点/改善点を絞り込み。
   const [filter, setFilter] = useState({ keyword: '' });
 
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
+  const { sortState, setSortColumn } = useMultiSort('sort:all-retrospectives');
+
   const filteredRetros = useMemo(() => {
-    if (!filter.keyword.trim()) return retros;
-    // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
-    return retros.filter((r) =>
-      matchesAnyKeyword(filter.keyword, [
-        r.planSummary,
-        r.actualSummary,
-        r.goodPoints,
-        r.improvements,
-      ]),
-    );
-  }, [retros, filter]);
+    let xs = retros;
+    if (filter.keyword.trim()) {
+      // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
+      xs = xs.filter((r) =>
+        matchesAnyKeyword(filter.keyword, [
+          r.planSummary,
+          r.actualSummary,
+          r.goodPoints,
+          r.improvements,
+        ]),
+      );
+    }
+    return multiSort(xs, sortState, getRetroSortValue);
+  }, [retros, filter, sortState]);
 
   const attachmentsByEntity = useBatchAttachments(
     'retrospective',
@@ -91,16 +116,16 @@ export function AllRetrospectivesTable({
       <ResizableTableShell tableKey="all-retrospectives">
         <TableHeader>
           <TableRow>
-            <ResizableHead columnKey="project" defaultWidth={140}>{tRetro('project')}</ResizableHead>
-            <ResizableHead columnKey="conductedDate" defaultWidth={110}>{tRetro('conductedDate')}</ResizableHead>
-            <ResizableHead columnKey="planSummary" defaultWidth={180}>{tRetro('planSummary')}</ResizableHead>
-            <ResizableHead columnKey="actualSummary" defaultWidth={180}>{tRetro('actualSummary')}</ResizableHead>
-            <ResizableHead columnKey="goodPoints" defaultWidth={180}>{tRetro('goodPoints')}</ResizableHead>
-            <ResizableHead columnKey="improvements" defaultWidth={180}>{tRetro('improvementsTable')}</ResizableHead>
-            <ResizableHead columnKey="createdAt" defaultWidth={130}>{tRetro('createdAt')}</ResizableHead>
-            <ResizableHead columnKey="createdBy" defaultWidth={120}>{tRetro('createdBy')}</ResizableHead>
-            <ResizableHead columnKey="updatedAt" defaultWidth={130}>{tRetro('updatedAt')}</ResizableHead>
-            <ResizableHead columnKey="updatedBy" defaultWidth={120}>{tRetro('updatedBy')}</ResizableHead>
+            <SortableResizableHead columnKey="project" defaultWidth={140} label={tRetro('project')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="conductedDate" defaultWidth={110} label={tRetro('conductedDate')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="planSummary" defaultWidth={180} label={tRetro('planSummary')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="actualSummary" defaultWidth={180} label={tRetro('actualSummary')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="goodPoints" defaultWidth={180} label={tRetro('goodPoints')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="improvements" defaultWidth={180} label={tRetro('improvementsTable')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRetro('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tRetro('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedBy" defaultWidth={120} label={tRetro('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
             <ResizableHead columnKey="attachments" defaultWidth={200}>{tRetro('attachment')}</ResizableHead>
             {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tRetro('actions')}</ResizableHead>}
           </TableRow>

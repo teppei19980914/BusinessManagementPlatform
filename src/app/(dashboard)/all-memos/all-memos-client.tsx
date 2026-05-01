@@ -36,6 +36,9 @@ import {
 } from '@/components/ui/table';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
@@ -45,6 +48,16 @@ import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import type { MemoDTO } from '@/services/memo.service';
 // Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
 import { ClickableRow } from '@/components/common/clickable-row';
+
+function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'title': return m.title;
+    case 'content': return m.content;
+    case 'author': return m.authorName ?? '';
+    case 'updatedAt': return m.updatedAt;
+    default: return null;
+  }
+}
 
 export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
   const tField = useTranslations('field');
@@ -57,7 +70,11 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
   const [viewing, setViewing] = useState<MemoDTO | null>(null);
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
 
-  const attachmentsByEntity = useBatchAttachments('memo', memos.map((m) => m.id));
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
+  const { sortState, setSortColumn } = useMultiSort('sort:all-memos');
+  const sortedMemos = multiSort(memos, sortState, getMemoSortValue);
+
+  const attachmentsByEntity = useBatchAttachments('memo', sortedMemos.map((m) => m.id));
 
   return (
     <div className="space-y-6">
@@ -69,15 +86,15 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
       <ResizableTableShell tableKey="all-memos-readonly">
           <TableHeader>
             <TableRow>
-              <ResizableHead columnKey="title" defaultWidth={220}>{tField('title')}</ResizableHead>
-              <ResizableHead columnKey="content" defaultWidth={360}>{tField('body')}</ResizableHead>
-              <ResizableHead columnKey="author" defaultWidth={140}>{tMemo('colAuthor')}</ResizableHead>
-              <ResizableHead columnKey="updatedAt" defaultWidth={140}>{tMemo('colUpdatedAt')}</ResizableHead>
+              <SortableResizableHead columnKey="title" defaultWidth={220} label={tField('title')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="content" defaultWidth={360} label={tField('body')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="author" defaultWidth={140} label={tMemo('colAuthor')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="updatedAt" defaultWidth={140} label={tMemo('colUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
               <ResizableHead columnKey="attachments" defaultWidth={200}>{tMemo('colAttachments')}</ResizableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {memos.map((m) => (
+            {sortedMemos.map((m) => (
               <ClickableRow
                 key={m.id}
                 onClick={() => setViewing(m)}
@@ -98,7 +115,7 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
                 </TableCell>
               </ClickableRow>
             ))}
-            {memos.length === 0 && (
+            {sortedMemos.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                   {tMemo('emptyPublic')}
