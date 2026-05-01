@@ -55,7 +55,25 @@ import { useBatchAttachments } from '@/components/attachments/use-batch-attachme
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 import { AdminKnowledgeDeleteButton } from './admin-delete-button';
+
+function getKnowledgeSortValue(k: AllKnowledgeDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'project': return k.projectName ?? '';
+    case 'type': return k.knowledgeType;
+    case 'background': return k.background;
+    case 'content': return k.content;
+    case 'result': return k.result;
+    case 'createdAt': return k.createdAt;
+    case 'createdBy': return k.creatorName ?? '';
+    case 'updatedAt': return k.updatedAt;
+    case 'updatedBy': return k.updatedByName ?? '';
+    default: return null;
+  }
+}
 
 type Props = {
   initialKnowledge: AllKnowledgeDTO[];
@@ -71,12 +89,16 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
   const [typeFilter, setTypeFilter] = useState('');
   const [editingKnowledge, setEditingKnowledge] = useState<AllKnowledgeDTO | null>(null);
 
-  const filtered = initialKnowledge.filter((k) => {
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
+  const { sortState, setSortColumn } = useMultiSort('sort:all-knowledge');
+
+  const baseFiltered = initialKnowledge.filter((k) => {
     if (typeFilter && k.knowledgeType !== typeFilter) return false;
     // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
     if (!matchesAnyKeyword(keyword, [k.title, k.background, k.content, k.result])) return false;
     return true;
   });
+  const filtered = multiSort(baseFiltered, sortState, getKnowledgeSortValue);
 
   const attachmentsByEntity = useBatchAttachments(
     'knowledge',
@@ -123,15 +145,15 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
       <ResizableTableShell tableKey="all-knowledge">
           <TableHeader>
             <TableRow>
-              <ResizableHead columnKey="project" defaultWidth={140}>{tKnowledge('project')}</ResizableHead>
-              <ResizableHead columnKey="type" defaultWidth={100}>{tKnowledge('kind')}</ResizableHead>
-              <ResizableHead columnKey="background" defaultWidth={200}>{tKnowledge('background')}</ResizableHead>
-              <ResizableHead columnKey="content" defaultWidth={200}>{tKnowledge('content')}</ResizableHead>
-              <ResizableHead columnKey="result" defaultWidth={200}>{tKnowledge('result')}</ResizableHead>
-              <ResizableHead columnKey="createdAt" defaultWidth={130}>{tKnowledge('createdAt')}</ResizableHead>
-              <ResizableHead columnKey="createdBy" defaultWidth={120}>{tKnowledge('createdBy')}</ResizableHead>
-              <ResizableHead columnKey="updatedAt" defaultWidth={130}>{tKnowledge('updatedAt')}</ResizableHead>
-              <ResizableHead columnKey="updatedBy" defaultWidth={120}>{tKnowledge('updatedBy')}</ResizableHead>
+              <SortableResizableHead columnKey="project" defaultWidth={140} label={tKnowledge('project')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="type" defaultWidth={100} label={tKnowledge('kind')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="background" defaultWidth={200} label={tKnowledge('background')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="content" defaultWidth={200} label={tKnowledge('content')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="result" defaultWidth={200} label={tKnowledge('result')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tKnowledge('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tKnowledge('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tKnowledge('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="updatedBy" defaultWidth={120} label={tKnowledge('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
               <ResizableHead columnKey="attachments" defaultWidth={200}>{tKnowledge('attachment')}</ResizableHead>
               {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tKnowledge('actions')}</ResizableHead>}
             </TableRow>

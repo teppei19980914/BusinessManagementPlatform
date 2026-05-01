@@ -45,11 +45,32 @@ import { useBatchAttachments } from '@/components/attachments/use-batch-attachme
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 
 const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
   risk: 'outline',
   issue: 'destructive',
 };
+
+// PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
+function getRiskSortValue(r: AllRiskDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'project': return r.projectName ?? '';
+    case 'type': return r.type;
+    case 'title': return r.title;
+    case 'priority': return r.priority;
+    case 'state': return r.state;
+    case 'visibility': return r.visibility;
+    case 'assignee': return r.assigneeName ?? '';
+    case 'createdAt': return r.createdAt;
+    case 'createdBy': return r.createdByName ?? '';
+    case 'updatedAt': return r.updatedAt;
+    case 'updatedBy': return r.updatedByName ?? '';
+    default: return null;
+  }
+}
 
 export function AllRisksTable({
   risks,
@@ -71,6 +92,12 @@ export function AllRisksTable({
   // ○○一覧と同等の絞り込み機能を「全○○」にも横展開し、「同じ意味の画面は同じ機能」を実現。
   const [filter, setFilter] = useState({ keyword: '', state: '', priority: '' });
 
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
+  // typeFilter ごとに保存先を分けて、リスク/課題タブでソート設定を独立させる。
+  const { sortState, setSortColumn } = useMultiSort(
+    `sort:all-risks${typeFilter ? `:${typeFilter}` : ''}`,
+  );
+
   const filteredRisks = useMemo(() => {
     let xs = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
     if (filter.state) xs = xs.filter((r) => r.state === filter.state);
@@ -86,8 +113,8 @@ export function AllRisksTable({
         ]),
       );
     }
-    return xs;
-  }, [risks, typeFilter, filter]);
+    return multiSort(xs, sortState, getRiskSortValue);
+  }, [risks, typeFilter, filter, sortState]);
 
   const attachmentsByEntity = useBatchAttachments(
     'risk',
@@ -156,18 +183,18 @@ export function AllRisksTable({
       <ResizableTableShell tableKey="all-risks">
         <TableHeader>
           <TableRow>
-            <ResizableHead columnKey="project" defaultWidth={140}>{tRisk('project')}</ResizableHead>
-            {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>{tRisk('kind')}</ResizableHead>}
-            <ResizableHead columnKey="title" defaultWidth={220}>{tRisk('subject')}</ResizableHead>
+            <SortableResizableHead columnKey="project" defaultWidth={140} label={tRisk('project')} sortState={sortState} onSortChange={setSortColumn} />
+            {!typeFilter && <SortableResizableHead columnKey="type" defaultWidth={80} label={tRisk('kind')} sortState={sortState} onSortChange={setSortColumn} />}
+            <SortableResizableHead columnKey="title" defaultWidth={220} label={tRisk('subject')} sortState={sortState} onSortChange={setSortColumn} />
             {/* PR-δ / 項目 11: ○○一覧と同じ priority カラムを表示 (impact/likelihood は非表示、PR-γ 整合) */}
-            <ResizableHead columnKey="priority" defaultWidth={80}>{tRisk('priority')}</ResizableHead>
-            <ResizableHead columnKey="state" defaultWidth={100}>{tRisk('state')}</ResizableHead>
-            <ResizableHead columnKey="visibility" defaultWidth={90}>{tRisk('visibility')}</ResizableHead>
-            <ResizableHead columnKey="assignee" defaultWidth={120}>{tRisk('assignee')}</ResizableHead>
-            <ResizableHead columnKey="createdAt" defaultWidth={130}>{tRisk('createdAt')}</ResizableHead>
-            <ResizableHead columnKey="createdBy" defaultWidth={120}>{tRisk('createdBy')}</ResizableHead>
-            <ResizableHead columnKey="updatedAt" defaultWidth={130}>{tRisk('updatedAt')}</ResizableHead>
-            <ResizableHead columnKey="updatedBy" defaultWidth={120}>{tRisk('updatedBy')}</ResizableHead>
+            <SortableResizableHead columnKey="priority" defaultWidth={80} label={tRisk('priority')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="state" defaultWidth={100} label={tRisk('state')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="visibility" defaultWidth={90} label={tRisk('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="assignee" defaultWidth={120} label={tRisk('assignee')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tRisk('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRisk('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tRisk('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedBy" defaultWidth={120} label={tRisk('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
             <ResizableHead columnKey="attachments" defaultWidth={200}>{tRisk('attachment')}</ResizableHead>
             {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tRisk('actions')}</ResizableHead>}
           </TableRow>

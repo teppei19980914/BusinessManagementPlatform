@@ -37,6 +37,9 @@ import {
   TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { ResizableHead } from '@/components/ui/resizable-columns';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
@@ -89,6 +92,20 @@ const impactColors: Record<string, 'default' | 'secondary' | 'destructive'> = {
   low: 'secondary',
 };
 
+// PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
+function getProjectRiskSortValue(r: RiskDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'type': return r.type;
+    case 'title': return r.title;
+    case 'priority': return r.priority;
+    case 'state': return r.state;
+    case 'visibility': return r.visibility;
+    case 'assignee': return r.assigneeName ?? '';
+    case 'createdAt': return r.createdAt;
+    default: return null;
+  }
+}
+
 export function RisksClient({ projectId, risks, members, canCreate, currentUserId, systemRole, typeFilter, onReload }: Props) {
   const router = useRouter();
   const tRisk = useTranslations('risk');
@@ -136,6 +153,9 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     mineOnly: boolean;
   }>({ state: '', priority: '', keyword: '', mineOnly: false });
 
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
+  const { sortState, setSortColumn } = useMultiSort('sort:project-risks');
+
   const filteredRisks = useMemo(() => {
     let xs = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
     if (bulkFilter.state) xs = xs.filter((r) => r.state === bulkFilter.state);
@@ -145,8 +165,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索 (matchesAnyKeyword)
       xs = xs.filter((r) => matchesAnyKeyword(bulkFilter.keyword, [r.title, r.content]));
     }
-    return xs;
-  }, [risks, typeFilter, bulkFilter]);
+    return multiSort(xs, sortState, getProjectRiskSortValue);
+  }, [risks, typeFilter, bulkFilter, sortState]);
   // Phase A 要件 6 で h2 ヘディング削除に伴い headingLabel は未使用化、削除して lint clean に。
   const createLabel = typeFilter === 'issue' ? tRisk('createIssue') : typeFilter === 'risk' ? tRisk('createRisk') : tRisk('createBoth');
 
@@ -569,17 +589,17 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                 ariaLabel={tRisk('selectAllEditable')}
               />
             </ResizableHead>
-            {!typeFilter && <ResizableHead columnKey="type" defaultWidth={80}>{tRisk('kind')}</ResizableHead>}
-            <ResizableHead columnKey="title" defaultWidth={240}>{tRisk('subject')}</ResizableHead>
+            {!typeFilter && <SortableResizableHead columnKey="type" defaultWidth={80} label={tRisk('kind')} sortState={sortState} onSortChange={setSortColumn} />}
+            <SortableResizableHead columnKey="title" defaultWidth={240} label={tRisk('subject')} sortState={sortState} onSortChange={setSortColumn} />
             {/* PR-γ / 項目 3 + 8: 影響度/重要度カラムは非表示。詳細は編集 dialog で確認。 */}
-            <ResizableHead columnKey="priority" defaultWidth={80}>{tRisk('priority')}</ResizableHead>
-            <ResizableHead columnKey="state" defaultWidth={100}>{tRisk('state')}</ResizableHead>
+            <SortableResizableHead columnKey="priority" defaultWidth={80} label={tRisk('priority')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="state" defaultWidth={100} label={tRisk('state')} sortState={sortState} onSortChange={setSortColumn} />
             {/* feat/account-lock-and-ui-consistency: 公開範囲列を追加。編集ダイアログで
                 visibility を変更しても一覧に表示されず「画面上データが更新されていない」
                 ように見える bug の解消 (knowledge/memo は既存で表示済、risk/retro が漏れ) */}
-            <ResizableHead columnKey="visibility" defaultWidth={90}>{tRisk('visibility')}</ResizableHead>
-            <ResizableHead columnKey="assignee" defaultWidth={120}>{tRisk('assignee')}</ResizableHead>
-            <ResizableHead columnKey="createdAt" defaultWidth={110}>{tRisk('reportedAt')}</ResizableHead>
+            <SortableResizableHead columnKey="visibility" defaultWidth={90} label={tRisk('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="assignee" defaultWidth={120} label={tRisk('assignee')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={110} label={tRisk('reportedAt')} sortState={sortState} onSortChange={setSortColumn} />
             {/* PR #67: 添付リンク列 */}
             <ResizableHead columnKey="attachments" defaultWidth={200}>{tRisk('attachment')}</ResizableHead>
             {/* 2026-04-24: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す */}
