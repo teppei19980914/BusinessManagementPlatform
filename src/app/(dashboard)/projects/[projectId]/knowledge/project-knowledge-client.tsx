@@ -241,17 +241,18 @@ export function ProjectKnowledgeClient({
         onApplied={async () => { await onReload(); }}
       />
 
-      {/* Phase A 要件 6: h3 タブタイトル削除 (タブ名と重複のため)。件数表示は右寄せで維持。 */}
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">{tKnowledge('countUnit', { count: filteredKnowledges.length })}</span>
+      {/* PR fix/list-export-and-filter (2026-05-01): 他「○○一覧」(risks / retrospectives 等)
+          と UI を揃えるため、justify-end (ボタン右寄せのみ) + size 既定 (sm 不使用) に統一。
+          countUnit 表示は他一覧では出していないため本行から削除。 */}
+      <div className="flex items-center justify-end">
         <div className="flex gap-2">
         {/* T-22 Phase 22c: sync-import (往復編集) */}
         {canCreate && (
           <>
-            <Button variant="outline" size="sm" onClick={() => window.open(`/api/projects/${projectId}/knowledge/export?mode=sync`, '_blank')}>
+            <Button variant="outline" onClick={() => window.open(`/api/projects/${projectId}/knowledge/export?mode=sync`, '_blank')}>
               {tKnowledge('syncExport')}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
+            <Button variant="outline" onClick={() => setIsSyncImportOpen(true)}>
               {tKnowledge('syncImportButton')}
             </Button>
           </>

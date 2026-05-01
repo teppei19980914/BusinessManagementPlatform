@@ -4299,6 +4299,74 @@ function detectMentionContext(pathname: string): 'wbs' | 'project_list' | 'cross
 - DESIGN.md §8.3.4 (mention 認可マトリクス)
 - 修正例: `src/services/mention.service.ts` (kind 展開 + diff + 通知生成)
 
+### 5.57 一覧画面 UX クリーンアップ + テキストフィルタの否定条件 (PR fix/list-export-and-filter, 2026-05-01)
+
+ユーザレポート 3 件を 1 PR で対応:
+
+#### Task 1: エクスポートボタンのラベル統一
+
+旧仕様で 5 entity (task / risk / retro / knowledge / memo) の `syncExport` キーがバラバラに「上書き用 N 列」のような実装詳細を含んでいた。**一律「エクスポート」に統一**。csvFormatHint の参照テキストも合わせて更新。
+
+旧:
+```json
+{ "syncExport": "WBSをエクスポート(上書き用)" }
+{ "syncExport": "エクスポート (上書き用 16 列)" }
+```
+
+新: 全て `"syncExport": "エクスポート"`
+
+#### Task 2: ナレッジ一覧のボタン位置を他一覧と揃える
+
+ナレッジ一覧だけ:
+- `justify-between` で count 表示 (`{N} 件`) が左、ボタン群が右
+- ボタンが `size="sm"` で他より小さい
+
+他一覧 (risks / retrospectives 等) はすべて `justify-end` + ボタン既定サイズ。**ナレッジを他一覧パターンに揃える** ことで一貫性回復。`countUnit` 表示は他一覧では持っていなかったので削除 (UI 簡素化、件数は一括選択ツールバーで間接的に確認可)。
+
+#### Task 3: テキストフィルタに否定条件追加 (`-` プレフィックス)
+
+旧仕様 (`splitKeywordTokens` + `matchesAnyKeyword`):
+- 「ログイン エラー」 → 「ログイン」 OR 「エラー」を含むレコード
+
+新仕様 (Google 検索風):
+- 「重要 -完了」 → 「重要」を含み、「完了」を含まない レコード
+- 「-完了」 → 「完了」を含まない レコード (negative-only)
+- 「重要 緊急 -完了 -キャンセル」 → (重要 OR 緊急) AND NOT (完了 OR キャンセル)
+
+実装 (新関数 `splitPositiveNegativeTokens`):
+
+```ts
+// `-` プレフィックスで positive / negative に分離
+function splitPositiveNegativeTokens(query: string): { positive: string[]; negative: string[] } {
+  const tokens = splitKeywordTokens(query);
+  // ... `-foo` → negative に追加 (先頭の `-` を除去)
+  // 単独の `-` は無視
+}
+
+function matchesAnyKeyword(query, fields): boolean {
+  const { positive, negative } = splitPositiveNegativeTokens(query);
+  // 1. 空クエリ → true
+  // 2. negative がいずれかの field にヒット → false (除外)
+  // 3. positive 無し → 通過
+  // 4. positive のいずれかが field にヒット → true (OR)
+}
+```
+
+`matchesAnyKeyword` の関数名は backward-compat のため保持。既存 callers は変更不要。新規テスト 10 件で positive-only / negative-only / 混在 / 複数 negative を網羅。
+
+#### 抽出したルール
+
+- [ ] **i18n キーの値に「実装詳細」を漏らさない**: 「上書き用 16 列」のような列数や用途は実装変動で陳腐化する。ラベルは UX 上の役割 (「エクスポート」) だけにする
+- [ ] **○○一覧の UI 共通化を保つ**: `flex justify-end` + ボタン既定サイズ + count 非表示 が他一覧パターン。新規一覧追加時は同パターンを踏襲する (DRY 原則 / §5.41 の延長)
+- [ ] **検索の拡張は「Google 検索風」が UX 学習コスト最小**: 既存ユーザの直感に合う syntax (`-` 否定 / 空白 OR) を採用、独自 syntax を作らない
+- [ ] **Backward-compat を保ちつつ新仕様を加える時は関数名を据え置く**: `matchesAnyKeyword` は名前は OR を示唆するが、negation 拡張も含む。callers の影響ゼロを優先
+
+#### 関連
+
+- §5.41 (○○一覧 共通 UI 部品の抽出規約 — 本件 Task 2 の根拠)
+- Phase C 要件 19 (空白区切り OR 検索 — 本件 Task 3 の前身)
+- 修正例: `src/lib/text-search.ts` (negation 拡張)
+
 ### 5.58 一覧画面のカラムソート機能 横展開 (PR feat/sortable-columns, 2026-05-01)
 
 #### 背景・要件
@@ -6064,3 +6132,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-05-01 | §5.54 新設 (PR feat/notifications-mvp)。**アプリ内通知機能 MVP (完全無料、外部 push なし)** ── ベル UI を DashboardHeader に追加 + ACT の予定日リマインダ 2 種を Vercel Cron で日次生成 (JST 7:00 = UTC 22:00)。polymorphic Notification テーブル (Comment と同形)、`dedupeKey` UNIQUE で同日 2 重発火を DB レベルで弾く、partial index 2 本 (idx_tasks_planned_start_due / idx_tasks_planned_end_due) で flat query を高速化し WBS 階層 traversal を完全回避。`todayInJst()` ヘルパで cron の UTC ↔ JST 境界処理を service 層に閉じ込め、単体テストで UTC 14:59/15:00 境界を検証。既読 + 30 日経過の物理削除を同 cron に組み込み容量管理。UI polling は open 30 秒 / closed 5 分。新規テスト 29 件 (1053 → 1082)。抽出ルール: (1) 新 type 追加は validators の `NOTIFICATION_TYPES` 1 箇所 (2) dedupeKey は `{type}:{entityId}:{YYYY-MM-DD}` 形式を継承 (3) cron は flat query + partial index、階層探索を回避 (4) TZ 境界は `todayInJst` 経由、テストで 14:59/15:00 必須 (5) cron 認可は `CRON_SECRET` 未設定で fail-closed |
 | 2026-05-01 | §5.55 新設 (PR fix/sticky-and-readonly-links)。**sticky thead が効かない hotfix + 全○○ で参考リンク非表示の hotfix** ── PR #204 で sticky thead を共通 Table に追加したが、wrapper の `overflow-x-auto` が CSS 仕様上 (`visible→auto` 変換) 両軸スクロールコンテナ化し、wrapper には max-height がないため sticky が無効化されていた。修正: wrapper に `max-h-[calc(100vh-12rem)] overflow-auto` を追加し真の縦スクロールコンテナ化、Excel 風のテーブル領域内スクロール挙動に変更。WBS の raw thead wrapper も同パターンで修正。同時修正として `DialogAttachmentSection` が §5.14 由来の `if(readOnly) return null` で全○○ から添付リンクを完全非表示にしていた問題も解消 (`canEdit={!readOnly}` で読取専用表示に変更)。§5.14 の元来理由 (非メンバー 403) は 2026-04-27 fix/cross-list-non-member-columns で解消済だったが、防御コードだけが残置していた。抽出ルール: (1) 片軸 overflow-auto に max-h を必ず併記 (2) sticky 効かない時は親 scrolling ancestor を疑う (3) 過去の防御コードは前提変化時に再評価 (4) readOnly は data 編集のみを止め、表示まで止めない設計が正しい |
 | 2026-05-01 | §5.56 新設 (PR feat/comment-mentions)。**コメント @mention 機能 (完全無料、即時通知)** ── PR #205 の Notification 基盤上に追加。Mention テーブルを新設 (kind 判別ユニオン: user/all/project_member/role_*/assignee)、Comment との `onDelete: Cascade`。entityType 別の許容 kind マトリクスを `getAllowedMentionKinds` でサーバ側強制 (Q3 二重防御): WBS では all 不可、customer は user のみ。UI は @ トリガで `/api/mention-candidates` 候補表示 (Slack/GitHub 風)、`context` パラメータ ('wbs' / 'project_list' / 'cross_list') で UI 側のタブ絞り込み。配信は即時 (cron 経由せず POST 直後に Notification createMany)、`dedupeKey=comment_mention:{commentId}:{userId}` で 2 重通知防止、Q5 自分宛除外。Q2 採用で編集時は added のみ通知、removed は通知なし。新規テスト 33 件 (1082 → 1115)。抽出ルール: (1) kind 判別ユニオン拡張は `MENTION_KINDS` + `getAllowedMentionKinds` 1 箇所 (2) UI / server で同許容マトリクス二重防御 (3) context は UI ヒント、server は entityType ベースの validation (4) 編集時の通知は added のみ (5) 自分宛除外は service 層で実施 |
+| 2026-05-01 | §5.57 新設 (PR fix/list-export-and-filter)。**一覧画面 UX クリーンアップ + テキストフィルタ否定条件** ── ユーザレポート 3 件を 1 PR で対応。Task 1: エクスポートボタンのラベル統一 (5 entity の `syncExport` を「上書き用 N 列」等の実装詳細を含む表記から一律「エクスポート」に、csvFormatHint 参照テキストも更新)。Task 2: ナレッジ一覧のボタン位置を他一覧と揃える (`justify-between`+countUnit 表示+`size="sm"` → `justify-end`+count 非表示+既定サイズ)。Task 3: text-search に否定条件 `-` プレフィックスを追加 (Google 検索風、`重要 -完了` で「重要を含み完了を含まない」、`-完了` で除外のみ)。`splitPositiveNegativeTokens` を新設、`matchesAnyKeyword` 関数名は backward-compat 維持。新規テスト 10 件 (1115 → 1125)。抽出ルール: (1) i18n キーに実装詳細 (列数等) を漏らさない (2) ○○一覧の UI 共通化 (`justify-end`+既定サイズ) を保つ (3) 検索拡張は Google 検索風 syntax で学習コスト最小化 (4) backward-compat 維持しつつ拡張する関数は名前据え置き |
