@@ -14,6 +14,8 @@ vi.mock('@/lib/db', () => ({
     projectMember: { findMany: vi.fn() },
     // PR #89: deleteKnowledge が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
+    // PR fix/visibility-auth-matrix: deleteKnowledge も comment cascade
+    comment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -58,39 +60,49 @@ const kRow = (o: Record<string, unknown> = {}) => ({
 describe('listKnowledge', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('admin は visibility フィルタなしで全件を見られる', async () => {
+  it('admin は権限フィルタ無しで全件 (deletedAt のみ AND の中)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
     await listKnowledge({}, 'admin-1', 'admin');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(call.where).not.toHaveProperty('OR');
+    expect(call.where.AND).toEqual([{ deletedAt: null }]);
   });
 
-  it('非 admin は public のみ (2026-04-24: 自分の draft も除外)', async () => {
+  it('非 admin は public + 自分の draft (2026-05-01 仕様変更)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
     await listKnowledge({}, 'u-1', 'general');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(call.where.visibility).toBe('public');
-    expect(call.where).not.toHaveProperty('OR');
+    expect(call.where.AND).toContainEqual({ deletedAt: null });
+    expect(call.where.AND).toContainEqual({
+      OR: [
+        { visibility: 'public' },
+        { visibility: 'draft', createdBy: 'u-1' },
+      ],
+    });
   });
 
-  it('keyword 指定時は OR で title/content 検索 (公開範囲は visibility スカラで別適用)', async () => {
+  it('keyword 指定時は AND 配列に title/content の OR が追加される (権限 OR と独立)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
     await listKnowledge({ keyword: 'bug' }, 'u-1', 'general');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(call.where.OR).toHaveLength(2);
-    expect(call.where.visibility).toBe('public');
+    // 権限 OR と keyword OR の 2 つが AND の中に並ぶ
+    const andClauses = call.where.AND as Array<{ OR?: unknown[] }>;
+    const ors = andClauses.filter((c) => Array.isArray(c.OR));
+    expect(ors).toHaveLength(2);
+    // keyword OR は title/content (権限 OR は visibility のみで title を含まない)
+    const keywordOr = ors.find((c) => JSON.stringify(c.OR).includes('title'));
+    expect(keywordOr?.OR).toHaveLength(2);
   });
 
-  it('knowledgeType / visibility パラメータが where に反映される', async () => {
+  it('knowledgeType / visibility パラメータが AND に反映される', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
@@ -100,8 +112,8 @@ describe('listKnowledge', () => {
       'admin',
     );
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(call.where.knowledgeType).toBe('pattern');
-    expect(call.where.visibility).toBe('public');
+    expect(call.where.AND).toContainEqual({ knowledgeType: 'pattern' });
+    expect(call.where.AND).toContainEqual({ visibility: 'public' });
   });
 
   it('ページング: limit 上限は 100', async () => {

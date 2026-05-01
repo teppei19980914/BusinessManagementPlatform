@@ -141,13 +141,17 @@ export async function listAllRetrospectivesForViewer(
 
 export async function listRetrospectives(
   projectId: string,
-  _viewerUserId: string,
+  viewerUserId: string,
   viewerSystemRole: string,
 ): Promise<RetroDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
-  // 2026-04-24: 非 admin は一覧に draft を一切含めない (自分の draft も除外)。
-  // draft の個別参照は getRetrospective が作成者本人/admin のみ許可する。
-  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
+  // 2026-05-01 (PR fix/visibility-auth-matrix): 「自分の draft は一覧に表示する」方針に変更。
+  //   旧仕様 (2026-04-24): 非 admin は draft 一切除外 → 自分の起票を視認できず混乱した。
+  //   新仕様: public + 自分の draft + (admin は他人の draft も) を表示。
+  //   一覧 UI 側で「下書き」バッジを付与する (DEVELOPER_GUIDE §5.51)。
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
 
   // PR #199: コメントは polymorphic comments テーブル経由 (/api/comments) で取得するため
   //   include: { comments: ... } は不要。retro 本体だけ load する。
@@ -298,12 +302,17 @@ export async function deleteRetrospective(
   if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
 
   const now = new Date();
+  // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)
   await prisma.$transaction([
     prisma.retrospective.update({
       where: { id: retroId },
       data: { deletedAt: now, updatedBy: userId },
     }),
     prisma.attachment.updateMany({
+      where: { entityType: 'retrospective', entityId: retroId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
       where: { entityType: 'retrospective', entityId: retroId, deletedAt: null },
       data: { deletedAt: now },
     }),

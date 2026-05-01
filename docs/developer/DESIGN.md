@@ -1348,25 +1348,54 @@ function checkPermission(
 | メモ | 自分の全メモ (個人資産) | 自分の全メモ | 自分の全メモ | 自分の全メモ |
 | システム管理 | 全操作 | 不可 | 不可 | 不可 |
 
-### 8.3.1 リスク/課題/振り返り/ナレッジ の権限詳細 (2026-04-24 改修)
+### 8.3.1 リスク/課題/振り返り/ナレッジ の権限詳細 (2026-05-01 改修 / 旧 2026-04-24)
 
 4 エンティティ共通で以下の方針。メモは個人資産なので対象外。
 
 | 操作 | 全○○ 画面 | ○○一覧 画面 (プロジェクト詳細タブ) |
 |---|---|---|
-| 一覧参照 | 非 admin: `visibility='public'` のみ<br>admin: draft 含め全件 | 同左 |
+| 一覧参照 | `visibility='public'` のみ (admin / 非 admin 共通) | **public + 自分の draft** (非 admin)<br>admin: draft 含め全件 |
 | 個別参照 (view) | public: 全員 OK<br>draft: 作成者本人 + admin のみ | 同左 |
 | 作成 | — (画面から不可) | **実際の ProjectMember** (`pm_tl` / `member`) のみ<br>admin でも非メンバーなら不可 |
 | 編集 | — (画面から不可、全員 read-only) | **作成者本人のみ**<br>admin でも他人の記事は編集不可 |
 | 削除 | **admin のみ** (管理削除、全リスク/課題/振り返り/ナレッジ画面から) | **作成者本人のみ** (admin は全○○ 経由で削除) |
 
+**2026-05-01 変更点 (PR fix/visibility-auth-matrix)**: 「○○一覧」で **自分の draft が表示されるように** filter を緩和
+(`OR [{public}, {draft AND createdBy=自分}]`)。旧仕様 (2026-04-24「自分の draft も一覧から除外」) はユーザが
+自分の起票を視認できず、Toast 通知 (PR #194) と組み合わさって「成功メッセージは出るが画面に出ない」UX バグを発生させた。
+詳細は DEVELOPER_GUIDE §5.51 / E2E_LESSONS_LEARNED §4.50 参照。
+
 **実装ポイント**:
 - `lib/permissions/membership.ts#getActualProjectRole` で admin 短絡なしの実メンバー判定を提供
 - `lib/api-helpers.ts#requireActualProjectMember` で API POST ルートの作成制約を強制
+- service 層の `listX` (project-scoped) は **`OR [{public}, {draft AND createdBy=viewer}]`** で自己 draft を含める
 - service 層の `updateX` は「作成者と一致しなければ FORBIDDEN」で enforce
 - service 層の `deleteX` は「作成者 OR admin」で enforce
+- service 層の `deleteX` は entity 削除時に **`prisma.comment.updateMany` で同 entity のコメントも cascade soft-delete**
 - `getX(id, viewerUserId?, viewerSystemRole?)` は認可引数付きで draft 秘匿 (他人の draft は null 返却 = 存在しない扱い)
 - UI 層 (各 `○○-client.tsx`) では `currentUserId` + `createdBy` / `reporterId` で isOwner 判定し、編集/削除ボタンを出し分け
+- UI 層 では `<VisibilityBadge>` で draft / public を視覚的に区別 (一覧で混在表示するため)
+
+### 8.3.2 コメント機能の認可詳細 (PR #199 / 2026-05-01 PR fix/visibility-auth-matrix)
+
+エンティティ別のコメント参照/投稿/編集/削除権限。entity の visibility と連動する設計:
+
+| entity | コメント参照 | コメント投稿 | コメント編集/削除 |
+|---|---|---|---|
+| issue / risk / retrospective / knowledge (visibility='public') | 認証済全アカウント | 認証済全アカウント | 投稿者本人のみ |
+| issue / risk / retrospective / knowledge (visibility='draft') | 作成者本人 + admin (admin は read のみ) | 作成者本人のみ (admin 不可) | 投稿者本人のみ |
+| task | project member or admin | 同左 | 投稿者本人のみ |
+| stakeholder | project member or admin | 同左 | 投稿者本人のみ |
+| customer | admin のみ | admin のみ | 投稿者本人のみ |
+
+**カスケード削除**: 親 entity が削除されたら、当該 entity に紐づくコメントも自動で soft-delete される
+(各 service の `deleteX` 関数で `prisma.comment.updateMany({entityType, entityId, deletedAt:null}, {deletedAt:now})` を
+同 transaction に含める方式)。`deleteProjectCascade` は物理削除のため `prisma.comment.deleteMany` を使用。
+
+**実装ポイント**:
+- `comment.service.ts#resolveEntityForComment` が entity の visibility と creatorId を返し、route 層で mode (read/write) と
+  組み合わせて認可判定する判別ユニオン拡張パターン
+- `comment.service.ts#softDeleteCommentsForEntity` が cascade 用の共通ヘルパ (新規 entity 追加時の再利用先)
 
 ### 8.3.2 メモ (Memo) の独立方針
 

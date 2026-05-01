@@ -2871,6 +2871,59 @@ PostgreSQL は DDL もトランザクション可なので、Step 3 で異常を
 - DEVELOPER_GUIDE §5.42 (migration 本番手動適用ルール — 本件はそれ + data migration の作法)
 - 修正例: PR #199 (2026-04-30, polymorphic comment 統合)
 
+### 4.50 list filter が「自己起票」を見せない設計のアンチパターン (PR fix/visibility-auth-matrix で確立)
+
+DEVELOPER_GUIDE §5.51 が「**実装パターン側 (新仕様の認可マトリクス)**」を扱うのに対し、本セクションは
+**設計選択がもたらした UX バグの罠** を扱う。
+
+#### 罠の正体
+
+「draft / public」のような可視性管理を入れたとき、list filter の default が:
+
+```ts
+// 旧仕様 (NG)
+const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
+```
+
+になっていると、**起票者本人が自分の draft を一覧上で見つけられない** 状態になる。
+Toast による成功通知 (PR #194) で「投稿は成功した」と分かるのに、画面上は変化なく、
+さらに **エラーログも出ない** ため、ユーザは原因不明の混乱に陥る。本件はユーザレポート
+「画面上は課題起票の成功メッセージが表示されましたが、画面上課題が表示されませんでした」で発覚。
+
+旧コメントには「2026-04-24: 自分の draft も一覧には出さない方針」と書いてあったが、
+当時 Toast 通知が無かったので **「投稿が成功したのか分からない」状態自体が無かった**。
+Toast 導入で隠れていた問題が顕在化した形。
+
+#### 横展開チェック (新規 / 既存の visibility / state 系フィールドで)
+
+- [ ] list service の where 句で「自分が作成したものは visibility / state に関係なく見える」を default に
+- [ ] それを満たさない例外的な list (例: 監査ログの自分ぶん非表示) は **理由をコード comment に明記** + KDD に記録
+- [ ] entity 編集後に Toast を出す UI 改修をするときは、**「Toast の文言と一覧の見た目が連動するか」** を必ず手動確認する (本件はこのテストが無かった)
+- [ ] visibility / state default が `'draft'` / `'open'` / `'pending'` 等の「未公開」状態のとき、その list filter で **自己分は別ロジックで見せる** ことを必須条件として確認
+
+#### Toast 導入時の必修チェックリスト
+
+PR #194 (ToastProvider) の挙動を継承する将来の改修では:
+
+1. CRUD 各操作後に `showSuccess('〜しました')` を呼んだら、**直後の reload で対象データが UI に出るか手動確認**
+2. もし出ない場合、原因が以下のどれかを切り分ける:
+   - reload 自体が走っていない (PR #194 の `reload()` 漏れ)
+   - reload は走るが API GET の filter で除外されている (本件)
+   - GET は通るが UI 側の renderConditional で hide されている
+3. 切り分け方法: ブラウザ devtools Network タブで `GET /api/risks` の response を開き、新規 entity が含まれているかを確認
+
+#### 過去の関連事例 (今後同じパターンを取らないため)
+
+- **PR #194**: `reload()` の呼び忘れで Toast 後 UI 未反映 (この時はデータ自体は GET に来ていた)
+- **本件 (fix/visibility-auth-matrix)**: API filter で除外されて UI に来なかった (GET response に新規 entity が含まれていなかった)
+- 共通点: いずれも「Toast 出るのに画面が更新されない」UX → **Toast 導入後の必修チェックリスト** で予防
+
+#### 関連
+
+- DEVELOPER_GUIDE §5.51 (本件の実装パターン側 — 認可マトリクスの統合)
+- §4.46 (Toast 文言と UI 文言の strict mode 衝突 — Toast 導入時の前例)
+- 修正例: PR fix/visibility-auth-matrix (2026-05-01, 課題一覧の自己 draft 可視化 + 認可マトリクス整理)
+
 ---
 
 ## 8. 未解決課題 (将来 PR 候補)

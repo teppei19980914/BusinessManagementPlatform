@@ -20,6 +20,8 @@ vi.mock('@/lib/db', () => ({
     user: { findMany: vi.fn() },
     // PR #89: deleteTask が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
+    // PR fix/visibility-auth-matrix: deleteTask も comment cascade
+    comment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));

@@ -15,6 +15,8 @@ vi.mock('@/lib/db', () => ({
     user: { findMany: vi.fn() },
     // PR #89: deleteRetrospective が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
+    // PR fix/visibility-auth-matrix: deleteRetrospective も comment cascade
+    comment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -67,15 +69,18 @@ describe('listRetrospectives', () => {
     expect(call.where).not.toHaveProperty('OR');
   });
 
-  it('非 admin は public のみ (2026-04-24: 自分の draft も一覧除外)', async () => {
+  it('非 admin は public + 自分の draft (2026-05-01 仕様変更)', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
     await listRetrospectives('p-1', 'u-1', 'general');
 
     const call = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
-    expect(call.where.visibility).toBe('public');
-    expect(call.where).not.toHaveProperty('OR');
+    expect(call.where.OR).toEqual([
+      { visibility: 'public' },
+      { visibility: 'draft', createdBy: 'u-1' },
+    ]);
+    expect(call.where).not.toHaveProperty('visibility');
   });
 
   // PR #199: コメント関連の userName 解決テストは削除。コメントは
