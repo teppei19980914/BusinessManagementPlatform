@@ -10,6 +10,7 @@ vi.mock('./db', () => ({
     knowledge: { findFirst: vi.fn() },
     stakeholder: { findFirst: vi.fn() },
     customer: { findFirst: vi.fn() },
+    memo: { findFirst: vi.fn() },
   },
 }));
 
@@ -86,6 +87,21 @@ describe('buildEntityCommentLink', () => {
     it('customer: /customers/[id] に直接遷移 (admin only ページ)', async () => {
       const link = await buildEntityCommentLink('customer', 'c-1');
       expect(link).toBe('/customers/c-1');
+    });
+  });
+
+  // PR #213: memo にコメント機能 + 通知 deep link 追加
+  describe('memo (cross-list)', () => {
+    it('memo: /all-memos?memoId=... に遷移 (全メモ画面で auto-open)', async () => {
+      vi.mocked(prisma.memo.findFirst).mockResolvedValue({ id: 'm-1' } as never);
+      const link = await buildEntityCommentLink('memo', 'm-1');
+      expect(link).toBe('/all-memos?memoId=m-1');
+    });
+
+    it('memo が削除済なら fallback /all-memos', async () => {
+      vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
+      const link = await buildEntityCommentLink('memo', 'deleted-m');
+      expect(link).toBe('/all-memos');
     });
   });
 });

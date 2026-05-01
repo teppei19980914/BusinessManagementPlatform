@@ -11,9 +11,12 @@
  *   旧仕様: readOnly なら `return null` でセクションごと非表示。
  *           これにより「全○○」(cross-list の readOnly dialog) で参考リンクが見えなかった。
  *   新仕様: readOnly でも `canEdit={false}` で **読み取り専用表示** (リンク一覧は見える、
- *           追加/編集/削除 UI のみ非表示)。`/api/attachments` GET は public な entity に
- *           対しては fix/cross-list-non-member-columns (2026-04-27) で非メンバー閲覧可
- *           として開放済のため、403 で詰まる経路は既に解消されている。
+ *           追加/編集/削除 UI のみ非表示)。
+ *
+ * 2026-05-01 (PR #213 hotfix): `/api/attachments` GET の認可を visibility-aware に拡張。
+ *   batch route は 2026-04-27 (fix/cross-list-non-member-columns) で公開対応済だったが、
+ *   singular GET は対応漏れで非メンバーは引き続き 403 を踏んでいた (Vercel runtime log で発覚)。
+ *   public な risk/retrospective/knowledge の添付は誰でも閲覧可とする経路を追加し対称化。
  *
  * 受け付けるスロット:
  *   - source (任意): SingleUrlField を slot='source' で挿入。一次情報源 URL 用 (Knowledge)。

@@ -27,6 +27,7 @@ import {
   deleteAttachment,
   resolveProjectIds,
   authorizeMemoAttachment,
+  getEntityVisibility,
 } from './attachment.service';
 import { prisma } from '@/lib/db';
 
@@ -266,5 +267,66 @@ describe('authorizeMemoAttachment', () => {
     } as never);
     expect((await authorizeMemoAttachment('m1', 'u2', 'read')).ok).toBe(false);
     expect((await authorizeMemoAttachment('m1', 'u1', 'read')).ok).toBe(true);
+  });
+});
+
+// PR #213 (2026-05-01): /api/attachments の visibility-aware 認可で使う helper のテスト
+describe('getEntityVisibility', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('risk (public): visibility と reporterId を返す', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      visibility: 'public',
+      reporterId: 'u-1',
+    } as never);
+    expect(await getEntityVisibility('risk', 'r1')).toEqual({
+      visibility: 'public',
+      creatorId: 'u-1',
+    });
+  });
+
+  it('risk (draft): visibility と reporterId を返す', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      visibility: 'draft',
+      reporterId: 'u-2',
+    } as never);
+    expect(await getEntityVisibility('risk', 'r1')).toEqual({
+      visibility: 'draft',
+      creatorId: 'u-2',
+    });
+  });
+
+  it('retrospective: visibility と createdBy を返す', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      visibility: 'public',
+      createdBy: 'u-3',
+    } as never);
+    expect(await getEntityVisibility('retrospective', 'retro-1')).toEqual({
+      visibility: 'public',
+      creatorId: 'u-3',
+    });
+  });
+
+  it('knowledge: visibility と createdBy を返す', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      visibility: 'draft',
+      createdBy: 'u-4',
+    } as never);
+    expect(await getEntityVisibility('knowledge', 'k1')).toEqual({
+      visibility: 'draft',
+      creatorId: 'u-4',
+    });
+  });
+
+  it('risk が削除済なら not-found', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
+    expect(await getEntityVisibility('risk', 'deleted')).toBe('not-found');
+  });
+
+  it('project / task / estimate / memo は null (visibility 概念なし)', async () => {
+    expect(await getEntityVisibility('project', 'p1')).toBeNull();
+    expect(await getEntityVisibility('task', 't1')).toBeNull();
+    expect(await getEntityVisibility('estimate', 'e1')).toBeNull();
+    expect(await getEntityVisibility('memo', 'm1')).toBeNull();
   });
 });

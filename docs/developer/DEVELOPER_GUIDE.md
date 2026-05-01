@@ -4667,6 +4667,85 @@ PR #207 (mention) 〜 PR #211 の間、`entity-link.ts` は knowledge / stakehol
 - §11 T-14 / T-24 (Notification / audit_logs の自動削除バッチ — 整備されれば本互換レイヤーも将来不要に)
 - 修正例: `src/app/(dashboard)/projects/[projectId]/{knowledge,stakeholders}/page.tsx` (redirect-only)
 
+### 5.61 /api/attachments の visibility-aware 認可 + memo にコメント機能を追加 (PR #213, 2026-05-01)
+
+#### 背景
+
+ユーザレポート 2 件:
+1. **「全振り返り」一覧画面で作成者ではないユーザが編集 dialog を開くと `/api/attachments` GET が 403** (Vercel runtime log で観測)
+2. **全メモにはコメント機能がない** ので他「全○○」と同様に追加してほしい
+
+調査結果、両者は **DialogAttachmentSection コメントの「fix/cross-list-non-member-columns で開放済」が嘘** だった (batch endpoint のみ修正で singular GET は対応漏れ)、および **memo は PR #199 でポリモーフィック comment 対象外になっていた** ことが原因。
+
+#### Task 2: `/api/attachments` の 403 を visibility-aware 認可で解消 (regression fix)
+
+**症状**: cross-list 画面 (`/risks` `/retrospectives` `/knowledge`) から非 project member が public な entity の readOnly dialog を開くと、`<AttachmentList>` が `GET /api/attachments?entityType=...&entityId=...` を発火して 403 (Console エラー)。
+
+**根本原因**:
+- batch endpoint (`/api/attachments/batch`) は `fix/cross-list-non-member-columns` (2026-04-27) で `visibility='public'` の risk/retrospective/knowledge を非メンバーに開放済
+- **しかし singular endpoint (`/api/attachments?entityType=...`) は対応漏れ** で project member 必須のまま
+- DialogAttachmentSection の docstring は「開放済」と記載されていたが事実と乖離 (「動くと思っていたら動いていなかった」典型)
+
+**修正**:
+- `attachment.service.ts` に `getEntityVisibility(entityType, entityId)` ヘルパー追加 (visibility 概念を持つ risk/retrospective/knowledge のみ visibility + creatorId を返す。それ以外は null)
+- `route.ts` の `authorize()` を mode 別に分岐:
+  - `read` mode + visibility='public' → 認証済全員可 (project member 不要)
+  - `read` mode + visibility='draft' → 作成者本人のみ (admin はトップで通過)
+  - `write` mode → project member 必須 (visibility 関係なく、書き込みは厳格)
+  - `read` mode で visibility 概念なし (project/task/estimate) → project member 必須 (現状維持)
+
+batch route と singular route の認可ロジックが完全に対称化。
+
+#### Task 1: memo にコメント機能を追加
+
+**設計判断**:
+- memo は user-scoped (project 紐付けなし) なので、knowledge と同じ `kind: 'public-or-draft'` を再利用 (visibility-based 認可)
+- mention 許容 kind は `['user', 'all']` (`project_member` / `role_*` / `assignee` は memo に概念がないため不可)
+- 通知 link は `/all-memos?memoId=...` (cross-list、auto-open)
+
+**実装した拡張ポイント** (5 箇所):
+| ファイル | 変更内容 |
+|---|---|
+| `src/lib/validators/comment.ts` | `COMMENT_ENTITY_TYPES` に `'memo'` 追加 (7→8) |
+| `src/lib/validators/mention.ts` | `getAllowedMentionKinds('memo')` で `['user', 'all']` を返す case 追加 |
+| `src/services/comment.service.ts` | `resolveEntityForComment('memo')` で `kind: 'public-or-draft'` を返す case 追加 |
+| `src/services/mention.service.ts` | `getMentionContext('memo')` で `{projectId: null, assigneeId: null}` を返す case 追加 |
+| `src/lib/entity-link.ts` | `buildEntityCommentLink('memo')` で `/all-memos?memoId=...` を返す case 追加 |
+
+**UI 統合** (2 箇所):
+- `all-memos-client.tsx`: 詳細 dialog に `<CommentSection entityType="memo" entityId={...} />` 追加 + `useAutoOpenDialog` で `?memoId=...` から auto-open
+- `memos-client.tsx` (個人メモ): 編集 dialog に同様の `<CommentSection>` 追加
+
+memo へのコメント認可は `kind: 'public-or-draft'` を流用するため `comment-section.tsx` / `route.ts` 側の追加変更は不要。
+
+#### 設計判断のポイント
+
+1. **batch と singular の認可は対称化が大原則**: 同じ entity への異なる ENDPOINT は同じ認可マトリクスでなければならない。片方だけ緩和すると本件のような「動くはずが動かない」UX が出る
+2. **`getEntityVisibility` を attachment.service と comment.service で別実装にした理由**: comment 側は `creatorId` の比較、attachment 側は `creatorId` でも比較するが、責務が異なるため重複は許容。1 関数に統合すると AttachmentEntityType と CommentEntityType の差 (memo は両方 / customer は comment のみ / project/estimate は attachment のみ) で型分岐が複雑化する
+3. **memo の mention kind を `['user', 'all']` に絞った理由**: memo は user-scoped で project 概念がないため、`project_member` / `role_*` / `assignee` の mention は意味的に不可能。validator で弾くことで誤った UI 露出を防ぐ
+4. **DialogAttachmentSection の docstring 修正**: 「fix/cross-list-non-member-columns で開放済」という嘘の記述を実態に合わせて修正。docstring が正しいと思い込んで詳細調査をスキップしていた、本件の遅延要因でもある
+
+#### 抽出したルール
+
+- [ ] **batch endpoint と singular endpoint の認可は必ず対称化**: 横展開チェックを CI/Lint で強化することが望ましい (将来の TODO)
+- [ ] **docstring の主張を実装で検証する**: 「○○で対応済」のようなコメントを書く際は、実装にテストで担保があるか確認。テスト無しで docstring を信用してはいけない
+- [ ] **新しい comment 対象 entity の追加は 5 拡張ポイント パターン**: `COMMENT_ENTITY_TYPES` / `getAllowedMentionKinds` / `resolveEntityForComment` / `getMentionContext` / `buildEntityCommentLink` の 5 箇所を更新する。漏れがあると「コメントは投稿できるが mention できない」「mention できるが通知 link が壊れる」など UX 不整合
+- [ ] **visibility-based 認可は `kind: 'public-or-draft'` で統一**: 新しい entity を追加するとき、既存の visibility-aware kind を流用すれば認可ロジックが自動で適用される (DRY)
+- [ ] **Vercel runtime log の 403 急増は週次で監視**: `responseStatusCode:403` を grep し、特定 endpoint で急増していたら認可マトリクスの抜けを疑う
+
+#### 関連
+
+- §5.59 / §5.60 (本件の前段、通知 deep link 系の改修)
+- §5.51 (visibility-aware 認可マトリクスの根拠 — 本件は同パターンを attachment にも適用)
+- §5.14 (`/api/attachments?entityType=risk` 403 の旧 hotfix。`{!readOnly && ...}` で gating したが本件で発覚した通り読み取りパスは依然として 403 を踏んでいた、本 PR が完全解消)
+- 修正例:
+  - `src/services/attachment.service.ts` (`getEntityVisibility` 新設)
+  - `src/app/api/attachments/route.ts` (`authorize()` の visibility 分岐)
+  - `src/lib/validators/{comment,mention}.ts` (memo enum 追加)
+  - `src/services/{comment,mention}.service.ts` (memo case 追加)
+  - `src/lib/entity-link.ts` (memo 通知 link)
+  - `src/app/(dashboard)/{all-memos,memos}/...client.tsx` (`<CommentSection>` 統合)
+
 ## 6. 機能削除の手順
 
 ### Step 1: 影響範囲の確認
