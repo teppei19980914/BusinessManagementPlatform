@@ -42,6 +42,7 @@ import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
+import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 
 function getRetroSortValue(r: AllRetroDTO, columnKey: string): unknown {
   switch (columnKey) {
@@ -98,6 +99,13 @@ export function AllRetrospectivesTable({
     'retrospective',
     filteredRetros.map((r) => r.id),
   );
+
+  // PR feat/notification-edit-dialog: mention 通知 link `?retroId=...` から auto-open。
+  useAutoOpenDialog<AllRetroDTO>({
+    queryKey: 'retroId',
+    items: retros,
+    onOpen: (r) => setEditingRetro(r),
+  });
 
   return (
     <>

@@ -92,11 +92,15 @@ async function authorizeForComment(
     );
   }
 
-  // project-scoped (task/stakeholder): project member or admin
+  // project-scoped (task: 全 project member / stakeholder: PM/TL のみ)
+  // 2026-05-01: stakeholder の requiredRole='pm_tl' を導入。ステークホルダ管理は
+  //   計画責任者の業務であり、一般メンバーは書き込み不可。
   if (user.systemRole === 'admin') return null;
   for (const pid of result.projectIds) {
     const m = await checkMembership(pid, user.id, user.systemRole);
-    if (m.isMember) return null;
+    if (!m.isMember) continue;
+    if (result.requiredRole === 'pm_tl' && m.projectRole !== 'pm_tl') continue;
+    return null;
   }
   return NextResponse.json(
     { error: { code: 'FORBIDDEN', message: t('forbidden') } },

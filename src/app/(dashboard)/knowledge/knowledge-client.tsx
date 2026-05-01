@@ -58,6 +58,7 @@ import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
+import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 import { AdminKnowledgeDeleteButton } from './admin-delete-button';
 
 function getKnowledgeSortValue(k: AllKnowledgeDTO, columnKey: string): unknown {
@@ -104,6 +105,13 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
     'knowledge',
     filtered.map((k) => k.id),
   );
+
+  // PR feat/notification-edit-dialog: mention 通知 link `?knowledgeId=...` から auto-open。
+  useAutoOpenDialog<AllKnowledgeDTO>({
+    queryKey: 'knowledgeId',
+    items: initialKnowledge,
+    onOpen: (k) => setEditingKnowledge(k),
+  });
 
   return (
     <div className="space-y-6">

@@ -4,10 +4,12 @@
  * 設計方針:
  *   - ポリモーフィック関連 (entity_type + entity_id) で 7 種のエンティティ
  *     (issue/task/risk/retrospective/knowledge/customer/stakeholder) に紐づく。
- *   - 認可:
- *     - 投稿 / 閲覧: 認証済ユーザは誰でも (project member 非メンバーも可、要件 Q4)
- *       ただしエンティティ存在確認は行う (存在しない id への comment 防止)。
- *     - 編集 / 削除: 投稿者本人 OR システム管理者 (要件 Q5)
+ *   - 認可 (entity 別、2026-05-01 PR feat/notification-edit-dialog で細粒化):
+ *     - issue / risk / retrospective / knowledge: 認証済ユーザ全員 (要件 Q4、cross-list で誰でも閲覧/投稿可)
+ *     - task: ProjectMember (or admin) のみ
+ *     - stakeholder: PM/TL (or admin) のみ — ステークホルダ管理は計画責任者の業務領域
+ *     - customer: admin のみ — admin 専用エンティティ
+ *     ※ 編集 / 削除: 投稿者本人のみ (admin 救済なし、要件 Q5)
  *   - 削除: soft-delete (deletedAt) — 監査要件 + 編集履歴保持
  *   - 並び順: 新しい順 (createdAt DESC) — 要件 Q6
  *
@@ -217,12 +219,14 @@ export async function deleteComment(commentId: string): Promise<void> {
  * - public-or-draft: visibility と creatorId を返し、route 層が認可判定する
  *   (issue / risk / retrospective / knowledge)
  * - project-scoped: project member 必須 (task / stakeholder)
+ *   - requiredRole='pm_tl' 指定時は PM/TL ロールのみ許可 (stakeholder)
+ *   - requiredRole='any' (or 未指定) は全 project member 許可 (task)
  * - admin-only: Customer (admin 専用エンティティ)
  */
 export type EntityResolveResult =
   | { kind: 'not-found' }
   | { kind: 'public-or-draft'; visibility: 'public' | 'draft'; creatorId: string }
-  | { kind: 'project-scoped'; projectIds: string[] }
+  | { kind: 'project-scoped'; projectIds: string[]; requiredRole: 'any' | 'pm_tl' }
   | { kind: 'admin-only' };
 
 export async function resolveEntityForComment(
@@ -273,23 +277,24 @@ export async function resolveEntityForComment(
         : { kind: 'not-found' };
     }
     case 'task': {
-      // Task は project-scoped (top-level /tasks 画面なし、/my-tasks は filter のみ)
+      // Task は project-scoped、ProjectMember 全員にメンション/コメント許可 (要件 2026-05-01)
       const t = await prisma.task.findFirst({
         where: { id: entityId, deletedAt: null },
         select: { projectId: true },
       });
       return t
-        ? { kind: 'project-scoped', projectIds: [t.projectId] }
+        ? { kind: 'project-scoped', projectIds: [t.projectId], requiredRole: 'any' }
         : { kind: 'not-found' };
     }
     case 'stakeholder': {
-      // Stakeholder は project-scoped (top-level 画面なし)
+      // Stakeholder は project-scoped、PM/TL のみメンション/コメント許可 (要件 2026-05-01)
+      // ステークホルダ管理は計画責任者の業務領域のため、一般メンバーには書き込み権限を渡さない。
       const s = await prisma.stakeholder.findFirst({
         where: { id: entityId, deletedAt: null },
         select: { projectId: true },
       });
       return s
-        ? { kind: 'project-scoped', projectIds: [s.projectId] }
+        ? { kind: 'project-scoped', projectIds: [s.projectId], requiredRole: 'pm_tl' }
         : { kind: 'not-found' };
     }
     case 'customer': {

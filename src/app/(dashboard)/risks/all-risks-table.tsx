@@ -48,6 +48,7 @@ import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
+import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 
 const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
   risk: 'outline',
@@ -120,6 +121,15 @@ export function AllRisksTable({
     'risk',
     filteredRisks.map((r) => r.id),
   );
+
+  // PR feat/notification-edit-dialog (2026-05-01): mention 通知 link `?riskId=...` から auto-open。
+  // typeFilter で絞られたあとの risks (全件 risks ではなく filteredRisks 後の表示対象) を渡す。
+  // 通知側 entity-link.ts は /risks?riskId=... or /issues?riskId=... を生成、本画面が両方対応。
+  useAutoOpenDialog<AllRiskDTO>({
+    queryKey: 'riskId',
+    items: risks,
+    onOpen: (r) => void handleRowClick(r),
+  });
 
   // 2026-04-24: 全リスク/全課題は全員 read-only。行クリックで参照ダイアログを開く。
   // canAccessProject=true のメンバーならメンバー一覧を取得して担当者表示を補完、非メンバーはスキップ。
