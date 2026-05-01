@@ -1397,6 +1397,35 @@ function checkPermission(
   組み合わせて認可判定する判別ユニオン拡張パターン
 - `comment.service.ts#softDeleteCommentsForEntity` が cascade 用の共通ヘルパ (新規 entity 追加時の再利用先)
 
+### 8.3.3 通知 (Notification) 機能の認可詳細 (PR feat/notifications-mvp / 2026-05-01)
+
+| 操作 | 認可 |
+|---|---|
+| 一覧取得 (`GET /api/notifications`) | 認証済ユーザの **自分宛のみ** (userId フィルタ強制) |
+| 既読/未読切替 (`PATCH /api/notifications/[id]`) | 通知の `userId` が呼出ユーザと一致する場合のみ (admin も他人の通知は不可、CWE-639 IDOR 対策) |
+| 一括既読 (`POST /api/notifications/mark-all-read`) | 自分宛の未読のみが対象、他人に影響しない |
+| Cron (`POST /api/cron/daily-notifications`) | `Authorization: Bearer ${CRON_SECRET}` のみ。`CRON_SECRET` 未設定で fail-closed (401) |
+
+**通知生成フロー** (毎日 JST 7:00 / UTC 22:00 cron 実行):
+
+1. ACT (`type='activity'`) で `status='not_started'` AND `plannedStartDate=今日 (JST)` AND `assigneeId IS NOT NULL` → **開始通知** を assignee に作成
+2. 同 ACT で `status≠'completed'` AND `plannedEndDate=今日 (JST)` AND `assigneeId IS NOT NULL` → **終了通知** を assignee に作成
+3. 既読 + `readAt > 30日` の通知を物理削除 (容量管理)
+
+**重複抑止**: `dedupeKey = '{type}:{taskId}:{YYYY-MM-DD}'` を UNIQUE 制約で DB レベルに弾く。
+cron が同日に複数回呼ばれても安全 (`createMany skipDuplicates: true`)。
+
+**パフォーマンス**: WBS 階層 traversal を完全回避するため、partial index 2 本を migration で追加:
+
+```sql
+CREATE INDEX idx_tasks_planned_start_due ON tasks (planned_start_date)
+  WHERE deleted_at IS NULL AND type='activity'
+    AND assignee_id IS NOT NULL AND status='not_started';
+CREATE INDEX idx_tasks_planned_end_due ON tasks (planned_end_date)
+  WHERE deleted_at IS NULL AND type='activity'
+    AND assignee_id IS NOT NULL AND status<>'completed';
+```
+
 ### 8.3.2 メモ (Memo) の独立方針
 
 - プロジェクト非紐付け、完全に個人資産

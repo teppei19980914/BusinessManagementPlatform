@@ -4020,6 +4020,106 @@ grep -rn "<thead" src/app src/components | grep -v "test\." | grep -v "sticky"
 - 修正例: `src/components/ui/table.tsx` (共通部品 1 箇所修正、全 17+ 画面に伝播)
 - 関連 raw thead: `my-tasks-client.tsx` / `tasks-client.tsx` / `responsive-table.tsx`
 
+### 5.54 アプリ内通知機能 (in-app notifications) の MVP 実装 (PR feat/notifications-mvp, 2026-05-01)
+
+#### 背景・要件
+
+ユーザ要望: 画面右上 (アカウント名の左) に通知ベルを設置。完全無料 (アプリ内のみ、メール/push 不使用)。MVP は ACT の予定日リマインダ 2 種:
+
+- **開始通知**: ACT で `status='not_started'` AND `plannedStartDate=today (JST)` AND `assigneeId IS NOT NULL`
+- **終了通知**: ACT で `status≠'completed'` AND `plannedEndDate=today (JST)` AND `assigneeId IS NOT NULL`
+
+将来 @mention 等への拡張余地ありの polymorphic 設計。
+
+#### 採用したパターン
+
+##### 1. polymorphic な `Notification` テーブル (Comment / Attachment と同形)
+
+```prisma
+model Notification {
+  id, userId, type, entityType, entityId, title, link, dedupeKey, readAt, createdAt
+  @@unique([dedupeKey])
+  @@index([userId, readAt, createdAt(sort: Desc)])
+}
+```
+
+`type` (例: `task_start_due`) と `entityType` (例: `task`) の 2 軸で polymorphic 拡張可。
+`dedupeKey` の UNIQUE 制約で「同タスク × 同種別 × 同日」の 2 重生成を **DB レベルで** 弾く。
+
+##### 2. flat query + partial index で全タスク seq scan 回避
+
+cron が叩く query は階層 traversal 不要 (ACT のみ対象):
+
+```ts
+prisma.task.findMany({
+  where: {
+    type: 'activity', deletedAt: null, assigneeId: { not: null },
+    status: 'not_started', plannedStartDate: today,  // 開始通知
+  },
+});
+```
+
+ユーザの「**WBS の階層構造で再帰探索しないように細心の注意**」要望に対応するため、partial index 2 本を追加:
+
+```sql
+CREATE INDEX idx_tasks_planned_start_due ON tasks (planned_start_date)
+  WHERE deleted_at IS NULL AND type = 'activity'
+    AND assignee_id IS NOT NULL AND status = 'not_started';
+
+CREATE INDEX idx_tasks_planned_end_due ON tasks (planned_end_date)
+  WHERE deleted_at IS NULL AND type = 'activity'
+    AND assignee_id IS NOT NULL AND status <> 'completed';
+```
+
+partial index は **WHERE 条件に合致するレコードだけ** インデックス化するため、ACT 以外や担当者 null は
+インデックスに入らず、サイズが本体の 1/3 以下に抑えられる。1 日の対象タスク数 (数十〜数百) を index range scan で
+直接拾えるので、表サイズが N 万行に増えても query 時間は ms 単位で固定。
+
+##### 3. JST 境界の TZ 処理
+
+cron は UTC 動作 (`0 22 * * *` = JST 翌日 7:00) のため、`new Date()` をそのまま使うと「UTC の今日」になり 2026-05-02 を期待しているのに 2026-05-01 を取得する事故が起きる。
+
+**`todayInJst(now: Date)` ヘルパ** を notification.service に新設し、UTC → JST のオフセット (+9h) を適用してから date 部分のみ抽出:
+
+```ts
+export function todayInJst(now = new Date()): Date {
+  const jstMillis = now.getTime() + 9 * 60 * 60 * 1000;
+  const jst = new Date(jstMillis);
+  return new Date(Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate()));
+}
+```
+
+単体テストで境界 (UTC 14:59 / 15:00) を検証して退行を防ぐ。
+
+##### 4. cron 認可は `Bearer ${CRON_SECRET}` 統一
+
+既存 `lock-inactive` cron と同方式。`process.env.CRON_SECRET` 未設定時は **fail-closed** (401) で即時拒否、運用ミスで認証経路が無防備になることを防ぐ。
+
+##### 5. UI: ベル UI の polling 戦略
+
+- 開いている間: **30 秒** polling (リアクティブ性を確保)
+- 閉じている間: **5 分** polling (バッテリー / Vercel function 実行時間配慮)
+
+WebSocket / SSE は Vercel serverless でコスト面で不向きのため polling で十分判断。
+
+#### 抽出したルール (今後の通知系拡張)
+
+- [ ] **新通知 type を追加するときは validators/notification.ts の `NOTIFICATION_TYPES` に追記**: 型安全に拡張する単一箇所
+- [ ] **dedupeKey の形式は `{type}:{entityId}:{YYYY-MM-DD}` 等で時間粒度を必ず含める**: 同一トリガが同日に 2 回作られないよう DB UNIQUE で弾く設計を継承
+- [ ] **cron 関連は flat query + partial index** で seq scan を避ける: WBS 階層探索を必要としない設計に分解
+- [ ] **TZ 境界は `todayInJst` を経由**: cron が UTC 動作する事実を service 関数で吸収、テストで境界 (14:59/15:00) を必ず検証
+- [ ] **cron 認可は `CRON_SECRET` 未設定で fail-closed**: 運用ミスでオープン状態にならないよう、existence チェック → 一致チェックの順
+- [ ] **UI polling は open 状態で 30 秒、閉じている間 5 分** がベース指針 (リアクティブ性 vs コスト)
+
+#### 関連
+
+- §5.49 (polymorphic Comment テーブル — 本件と同パターン)
+- §5.42 (migration 本番手動適用ルール — 本件もこれに従う)
+- DESIGN.md §通知 (認可マトリクス + cron schedule)
+- OPERATION.md §cron (CRON_SECRET 設定手順、JST 7:00 実行)
+- 修正例: `src/services/notification.service.ts` `todayInJst` / `generateDailyNotifications`
+- 関連 PR: #199 (polymorphic Comment) / `lock-inactive` cron (認可パターン)
+
 ---
 
 ## 6. 機能削除の手順
@@ -5709,3 +5809,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-05-01 | §5.51 / E2E §4.50 新設 (PR fix/visibility-auth-matrix)。**公開範囲 visibility と認可マトリクスの統合 + 自己 draft 可視化** ── ユーザが「課題一覧」から起票した際、Toast「課題を起票しました」は出るが画面上一覧に出ず Console エラーもない UX バグ発生。原因は旧 list filter が「自分の draft も一覧から除外」する設計で、Toast 導入 (PR #194) と組み合わさって顕在化。修正: list service (risk/retro/knowledge) の where 句に `OR [{public}, {draft AND createdBy=viewer}]` 追加、comment 認可 (route) に visibility + mode 連動の判別ユニオン拡張、entity 個別 delete に `prisma.comment.updateMany` cascade soft-delete を追加 (6 service)、project cascade delete にも risk/issue/knowledge/task の comment 物理削除を追加。コメント編集/削除認可は admin 救済を外し投稿者本人のみに変更。新規認可テスト 24 件 (1020 → 1044)、UI は既存 `<VisibilityBadge>` (Phase E §5.41) で draft/public を視覚区別。E2E §4.50 では「Toast 導入後の必修チェックリスト」「list filter で自己起票が見えなくなるアンチパターン」を罠として記録 |
 | 2026-05-01 | §5.52 / E2E §4.51 新設 (PR fix/attachments-batch-400)。**バッチ API の lenient validation 設計 + 構造化エラーログ** ── ユーザレポート「`/api/attachments/batch` で StatusCode:400 が Vercel log に出続けている」。原因は旧 route が `entityIds: z.array(z.string().uuid())` で 1 件でも非 UUID が混じるとバッチ全体を 400 で破棄する all-or-nothing 設計 + サーバ側に拒否 context を残していなかったため、status code のみで再現条件特定が不可能だった。修正: entityType / slot は厳格、entityIds は lenient (非 UUID は filter で除外、有効分のみ 200 返却)、validation 失敗時は `recordError` で system_error_logs に context (entityType の typeof / entityIds 件数 / Zod issues) を構造化記録。クライアント側 `useBatchAttachments` でも UUID 事前 filter を追加し二重防御。新規 9 件のテスト (1044 → 1053)。抽出ルール: (1) ベストエフォート系バッチ API は body lenient + 失敗黙殺で 200 (2) header / body の validation 厳しさを分離 (3) `console.*` 禁止 → `recordError` で構造化 DB ログ (4) クライアント側でも同正規表現で事前 filter |
 | 2026-05-01 | §5.53 新設 (PR feat/sticky-table-headers)。**一覧テーブルの Excel 風ヘッダー固定** ── 「○○一覧」「全○○」全画面で縦スクロール時に `<thead>` を viewport 上端に固定する UX 要望。共通 `<TableHeader>` コンポーネント 1 箇所に `sticky top-0 z-10 bg-card [&>tr>th]:bg-card` を追加するだけで 17+ 一覧画面に自動伝播 (DRY 原則)。`<TableHeader>` を経由しない raw `<thead>` 3 箇所 (`my-tasks-client` / `tasks-client` WBS / `responsive-table`) は個別対応。設計判断: (1) ページ全体スクロール基準で sticky → DashboardHeader (非 sticky) スクロールアウト後に thead が上端取る挙動 (2) `bg-card` 二重指定で古いブラウザ対応 (3) z-10 で Dialog/Toast/dropdown (z-50) より下に固定。抽出ルール: (a) 共通 UI 1 箇所修正で N 画面に伝播させる (b) sticky element には必ず bg を入れる (透過すると下行が透ける) (c) `<TableHeader>` を経由しない raw thead の grep を再発防止に運用 |
+| 2026-05-01 | §5.54 新設 (PR feat/notifications-mvp)。**アプリ内通知機能 MVP (完全無料、外部 push なし)** ── ベル UI を DashboardHeader に追加 + ACT の予定日リマインダ 2 種を Vercel Cron で日次生成 (JST 7:00 = UTC 22:00)。polymorphic Notification テーブル (Comment と同形)、`dedupeKey` UNIQUE で同日 2 重発火を DB レベルで弾く、partial index 2 本 (idx_tasks_planned_start_due / idx_tasks_planned_end_due) で flat query を高速化し WBS 階層 traversal を完全回避。`todayInJst()` ヘルパで cron の UTC ↔ JST 境界処理を service 層に閉じ込め、単体テストで UTC 14:59/15:00 境界を検証。既読 + 30 日経過の物理削除を同 cron に組み込み容量管理。UI polling は open 30 秒 / closed 5 分。新規テスト 29 件 (1053 → 1082)。抽出ルール: (1) 新 type 追加は validators の `NOTIFICATION_TYPES` 1 箇所 (2) dedupeKey は `{type}:{entityId}:{YYYY-MM-DD}` 形式を継承 (3) cron は flat query + partial index、階層探索を回避 (4) TZ 境界は `todayInJst` 経由、テストで 14:59/15:00 必須 (5) cron 認可は `CRON_SECRET` 未設定で fail-closed |

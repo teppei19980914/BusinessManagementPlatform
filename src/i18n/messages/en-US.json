@@ -30,6 +30,17 @@
     "memos": "Memos",
     "settings": "Settings"
   },
+  "notification": {
+    "title": "Notifications",
+    "ariaLabel": "Notifications",
+    "empty": "No notifications",
+    "markAllAsRead": "Mark all as read",
+    "loading": "Loading…",
+    "fetchFailed": "Failed to fetch notifications",
+    "markFailed": "Failed to update notification",
+    "deleteFailed": "Failed to delete notification",
+    "unreadBadge": "{count} unread notifications"
+  },
   "comment": {
     "section": "Comments",
     "placeholder": "Write a comment",

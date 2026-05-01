@@ -30,6 +30,17 @@
     "memos": "メモ一覧",
     "settings": "設定"
   },
+  "notification": {
+    "title": "通知",
+    "ariaLabel": "通知",
+    "empty": "通知はありません",
+    "markAllAsRead": "すべて既読",
+    "loading": "読み込み中…",
+    "fetchFailed": "通知の取得に失敗しました",
+    "markFailed": "通知の更新に失敗しました",
+    "deleteFailed": "通知の削除に失敗しました",
+    "unreadBadge": "{count} 件の未読通知"
+  },
   "comment": {
     "section": "コメント",
     "placeholder": "コメントを入力",

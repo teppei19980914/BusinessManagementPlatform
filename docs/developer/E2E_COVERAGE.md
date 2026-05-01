@@ -122,6 +122,12 @@
 - [ ] `/api/comments` (GET/POST) — skip: MVP は単体テスト (`src/services/comment.service.test.ts` + `src/lib/validators/comment.test.ts`) でカバー、E2E は各 entity の編集 dialog spec 経由で後続 PR
 - [ ] `/api/comments/[id]` (PATCH/DELETE) — skip: 同上 (投稿者本人/admin 認可は単体テストで担保)
 
+### 通知 (PR feat/notifications-mvp)
+- [ ] `/api/notifications` (GET) — skip: MVP は単体テスト (`src/services/notification.service.test.ts` + `src/app/api/notifications/route.test.ts`) でカバー
+- [ ] `/api/notifications/[id]` (PATCH) — skip: 単体テストで認可マトリクス (本人/他人/admin/404) を網羅
+- [ ] `/api/notifications/mark-all-read` (POST) — skip: service テストで一括既読を検証
+- [ ] `/api/cron/daily-notifications` (POST) — skip: cron 認可 + dedupeKey + JST 境界の単体テストで担保
+
 ### 見積
 - [x] `/api/projects/[projectId]/estimates/*` — e2e/specs/08-estimates.spec.ts (PR #96 / POST 作成 + 確定 + DELETE)
 
