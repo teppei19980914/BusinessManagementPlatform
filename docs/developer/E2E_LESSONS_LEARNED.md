@@ -2924,6 +2924,51 @@ PR #194 (ToastProvider) の挙動を継承する将来の改修では:
 - §4.46 (Toast 文言と UI 文言の strict mode 衝突 — Toast 導入時の前例)
 - 修正例: PR fix/visibility-auth-matrix (2026-05-01, 課題一覧の自己 draft 可視化 + 認可マトリクス整理)
 
+### 4.51 Vercel log の status code だけ見て原因特定する罠 (PR fix/attachments-batch-400 で遭遇)
+
+#### 罠の正体
+
+ユーザレポート: `POST /api/attachments/batch` で `StatusCode:400` が出ている。Vercel log には:
+
+```
+{"requestId":"...","requestPath":"/api/attachments/batch","responseStatusCode":400,...}
+```
+
+としか書いていない。**body のどのフィールドが rejected されたか不明**で、再現条件も特定できない状態。
+旧 route 実装は Zod の `safeParse` 失敗時に `400 + error.issues` を NextResponse で返していたが、
+**サーバ側のログには何も書いていなかった** ため、ユーザがブラウザの Network タブを開かない限り
+原因不明のまま log だけが流れる。
+
+#### 教訓
+
+- [ ] **`return NextResponse.json({ error }, { status: 400 })` の前に必ず構造化ログを残す**:
+      `recordError({ severity, source, message, context })` で system_error_logs に書く。
+      Vercel log は status code のみ、Network タブ response body は client-side 限定なので、
+      サーバ側で context (どの field が rejected された / 想定外の値が何だったか) を残さないと
+      productive なデバッグが不可能
+- [ ] **想定外の値を log するとき型情報を含める**: `typeof body.entityType === 'string' ? body.entityType : '(' + typeof body.entityType + ')'`
+      のように **string なら値、それ以外なら typeof** を出すパターン。値が `undefined` / `null` の
+      ケースを区別可能にする (両者の混同で再現条件を間違えやすい)
+- [ ] **再現困難な validation 失敗は production を「観察可能」にする** — ユーザに依頼するのは
+      最終手段。サーバ側で 1 ヶ月分くらいログを蓄積しておけば、再発時点で context を query で抽出可能
+
+#### 横展開チェック (validation 失敗ハンドラ全般)
+
+```bash
+# 構造化ログなしの 400 / 422 return パターンを検出
+grep -rn "status: 400\|status: 422" src/app/api/ | xargs grep -L "recordError\|logUnknownError"
+```
+
+検出された箇所は **`recordError` で context (受信した値の type / 主要 field の値) を記録** する形に
+リファクタする。validation の context はログ容量を圧迫しないので積極的に書いてよい (entityIds 配列の
+中身全てを log するのは NG だが、長さや問題種別は OK)。
+
+#### 関連
+
+- DEVELOPER_GUIDE §5.52 (本件の実装パターン側 — lenient validation + recordError パターン)
+- `src/services/error-log.service.ts` (recordError API)
+- 修正例: PR fix/attachments-batch-400 (2026-05-01)
+
 ---
 
 ## 8. 未解決課題 (将来 PR 候補)
