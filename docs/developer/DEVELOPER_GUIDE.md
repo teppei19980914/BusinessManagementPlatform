@@ -3940,6 +3940,86 @@ const validIds = useMemo(
 - 修正例: `src/app/api/attachments/batch/route.ts` (lenient + recordError パターンの参考実装)
 - 関連 PR: #67 (本 API の初出) / #115 (IDOR 対策の認可強化)
 
+### 5.53 一覧テーブルの sticky thead 横展開パターン (PR feat/sticky-table-headers, 2026-05-01)
+
+#### 背景・要件
+
+「○○一覧」「全○○」全画面で **Excel 風のヘッダー固定** を実現する要望。縦スクロール時に
+`<thead>` の列ヘッダーが viewport 上端に貼り付き、データ行のみがスクロールする UX。
+
+#### 採用したパターン
+
+##### 1 箇所修正で全画面に伝播 (DRY 原則)
+
+**共通 `<TableHeader>` コンポーネント** (`src/components/ui/table.tsx`) を 1 箇所修正するだけで、
+これを使用する全 17+ 一覧画面に sticky 動作が自動的に伝播する。`cn()` (clsx + tailwind-merge)
+を経由しているため、呼び出し側で `className` 上書きしても安全に共存。
+
+```tsx
+function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
+  return (
+    <thead
+      className={cn(
+        // sticky top-0: viewport 上端に固定
+        // bg-card: 下行が透けないため必須
+        // [&>tr>th]:bg-card: 一部ブラウザで thead 単独 bg が効かない場合の二重指定
+        // z-10: dropdown / Toast / Dialog overlay (z-50) より下、行内の他要素より上
+        "sticky top-0 z-10 bg-card [&>tr>th]:bg-card [&_tr]:border-b",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+```
+
+##### 2. raw `<thead>` を使う特殊画面の横展開
+
+`<TableHeader>` を経由せず raw HTML `<thead>` を使う 3 箇所も個別に修正:
+
+| ファイル | 場所 | 理由 |
+|---|---|---|
+| `app/(dashboard)/my-tasks/my-tasks-client.tsx` | `/my-tasks` (個人タスク一覧) | 独自 layout で raw thead |
+| `app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx` | WBS 一覧 | 既存 `bg-muted` を維持 |
+| `components/ui/responsive-table.tsx` | `ResponsiveTable` 共通部品 | md+ 用テーブル DOM の thead |
+
+##### 3. 横展開チェック方法 (再発防止)
+
+```bash
+# raw thead が新規追加されていないか確認
+grep -rn "<thead" src/app src/components | grep -v "test\." | grep -v "sticky"
+```
+
+検出結果が空であれば横展開漏れなし。新規追加時は **`<TableHeader>` を使うか、sticky クラスを明示** する。
+
+#### 設計判断のポイント
+
+1. **ページ全体スクロール vs 内部スクロール**: 既存設計はページ全体スクロール (`<main>` に max-h なし)。
+   sticky は viewport 基準で動作 → DashboardHeader (非 sticky) がスクロールアウトしたあとに
+   thead が viewport 上端を取る挙動。Excel に近い。
+2. **`overflow-x-auto` との両立**: 共通 `Table` の wrapper は `overflow-x-auto` を持つが、
+   実装上はモダンブラウザで sticky と両立する (Chrome 91+/Firefox 59+/Safari 14+)。
+3. **bg 二重指定の理由**: 一部古いブラウザ (Safari 13 以前等) で thead 単独の background が
+   効かないバグへの保険。`[&>tr>th]:bg-card` を併記して各 th セルにも背景色を設定。
+4. **z-10 の選定**: Dialog overlay / Toast / dropdown は z-50 で動くため、それより下に固定。
+   行内のリンクや tooltip より上にする。
+
+#### 抽出したルール (今後の同種 UI)
+
+- [ ] **共通 UI コンポーネントを 1 箇所修正で N 画面に伝播させる** が最優先 — raw HTML を使う
+      特殊画面は個別対応で残務化、grep で再発防止
+- [ ] **sticky element には必ず bg を入れる**: 透過すると「下行が透けてヘッダーが読めない」事故
+- [ ] **z-index は既存の z-50 (Dialog/Toast) より低い値で固定** (z-10 推奨): モーダル系 UI に
+      ヘッダーが被ると操作不能になる
+- [ ] **`<TableHeader>` を経由しない raw `<thead>` の grep を CI 候補に**: 新規追加時の漏れ検出
+
+#### 関連
+
+- §5.41 (○○一覧 共通 UI 部品の抽出規約)
+- DESIGN.md §3.3 (DRY 原則)
+- 修正例: `src/components/ui/table.tsx` (共通部品 1 箇所修正、全 17+ 画面に伝播)
+- 関連 raw thead: `my-tasks-client.tsx` / `tasks-client.tsx` / `responsive-table.tsx`
+
 ---
 
 ## 6. 機能削除の手順
@@ -5628,3 +5708,4 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-05-01 | §5.50 新設 (PR #201 fix/stop-hook-speedup)。**Stop hook 重処理 + prompt 型を skill 化、開発速度回復** ── `.claude/settings.json` の Stop hook に `pnpm lint && pnpm test` (24 秒) と `type: "prompt"` の 6 観点チェックが登録されており、Claude が応答するたび毎回発火 → 質問応答や調査のみのターンでも 24 秒 + LLM 1 往復浪費。さらに prompt 型は応答後に Stop が再発火するため 6 観点チェック要求がループ的に再注入され、15 ターン以上実装が進まない事態発生。修正: lint+test+6 観点を `.claude/skills/quality-check.md` に分離、Stop は `secret-scan` + `auto-commit` の軽量 2 step のみに削減。仕組み (内容) は維持し、発火タイミングのみ「毎ターン」→「実装完了時」に変更。抽出ルール: (1) Stop hook に prompt 型を登録しない (応答ごと再注入で発散) (2) 重処理 (>5 秒) を Stop に置かない (3) 「自動化」と「毎ターン強制」は別物、PR/コミット単位は skill or CI へ |
 | 2026-05-01 | §5.51 / E2E §4.50 新設 (PR fix/visibility-auth-matrix)。**公開範囲 visibility と認可マトリクスの統合 + 自己 draft 可視化** ── ユーザが「課題一覧」から起票した際、Toast「課題を起票しました」は出るが画面上一覧に出ず Console エラーもない UX バグ発生。原因は旧 list filter が「自分の draft も一覧から除外」する設計で、Toast 導入 (PR #194) と組み合わさって顕在化。修正: list service (risk/retro/knowledge) の where 句に `OR [{public}, {draft AND createdBy=viewer}]` 追加、comment 認可 (route) に visibility + mode 連動の判別ユニオン拡張、entity 個別 delete に `prisma.comment.updateMany` cascade soft-delete を追加 (6 service)、project cascade delete にも risk/issue/knowledge/task の comment 物理削除を追加。コメント編集/削除認可は admin 救済を外し投稿者本人のみに変更。新規認可テスト 24 件 (1020 → 1044)、UI は既存 `<VisibilityBadge>` (Phase E §5.41) で draft/public を視覚区別。E2E §4.50 では「Toast 導入後の必修チェックリスト」「list filter で自己起票が見えなくなるアンチパターン」を罠として記録 |
 | 2026-05-01 | §5.52 / E2E §4.51 新設 (PR fix/attachments-batch-400)。**バッチ API の lenient validation 設計 + 構造化エラーログ** ── ユーザレポート「`/api/attachments/batch` で StatusCode:400 が Vercel log に出続けている」。原因は旧 route が `entityIds: z.array(z.string().uuid())` で 1 件でも非 UUID が混じるとバッチ全体を 400 で破棄する all-or-nothing 設計 + サーバ側に拒否 context を残していなかったため、status code のみで再現条件特定が不可能だった。修正: entityType / slot は厳格、entityIds は lenient (非 UUID は filter で除外、有効分のみ 200 返却)、validation 失敗時は `recordError` で system_error_logs に context (entityType の typeof / entityIds 件数 / Zod issues) を構造化記録。クライアント側 `useBatchAttachments` でも UUID 事前 filter を追加し二重防御。新規 9 件のテスト (1044 → 1053)。抽出ルール: (1) ベストエフォート系バッチ API は body lenient + 失敗黙殺で 200 (2) header / body の validation 厳しさを分離 (3) `console.*` 禁止 → `recordError` で構造化 DB ログ (4) クライアント側でも同正規表現で事前 filter |
+| 2026-05-01 | §5.53 新設 (PR feat/sticky-table-headers)。**一覧テーブルの Excel 風ヘッダー固定** ── 「○○一覧」「全○○」全画面で縦スクロール時に `<thead>` を viewport 上端に固定する UX 要望。共通 `<TableHeader>` コンポーネント 1 箇所に `sticky top-0 z-10 bg-card [&>tr>th]:bg-card` を追加するだけで 17+ 一覧画面に自動伝播 (DRY 原則)。`<TableHeader>` を経由しない raw `<thead>` 3 箇所 (`my-tasks-client` / `tasks-client` WBS / `responsive-table`) は個別対応。設計判断: (1) ページ全体スクロール基準で sticky → DashboardHeader (非 sticky) スクロールアウト後に thead が上端取る挙動 (2) `bg-card` 二重指定で古いブラウザ対応 (3) z-10 で Dialog/Toast/dropdown (z-50) より下に固定。抽出ルール: (a) 共通 UI 1 箇所修正で N 画面に伝播させる (b) sticky element には必ず bg を入れる (透過すると下行が透ける) (c) `<TableHeader>` を経由しない raw thead の grep を再発防止に運用 |

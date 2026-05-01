@@ -1539,7 +1539,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           </div>
           <div className="rounded-lg border overflow-x-auto">
             <table className="min-w-full text-xs md:text-sm">
-              <thead className="bg-muted">
+              {/* PR feat/sticky-table-headers: WBS 一覧の Excel 風ヘッダー固定 (§5.53)。
+                  `<TableHeader>` を経由しない raw thead で `bg-muted` を維持。 */}
+              <thead className="sticky top-0 z-10 bg-muted [&>tr>th]:bg-muted">
                 <tr>
                   {canSelectForProgress && (
                     <th className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
