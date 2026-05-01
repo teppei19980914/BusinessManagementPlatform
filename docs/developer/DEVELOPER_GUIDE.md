@@ -4636,6 +4636,37 @@ if (isPlainOperation && plainCommentScope === 'public') return null; // task の
   - `src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx` (`?tab=` 読み + initial fetch)
   - `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx` (`?taskId=` auto-open + 祖先展開)
 
+#### 追補: DB 上の旧通知 link 互換レイヤー (Vercel runtime log で発覚した本番障害対応)
+
+**症状**:
+PR #211 マージ直後 (2026-05-01T06:12) 〜 数分後の Vercel runtime log で `GET /projects/<pid>/knowledge` への **404 アクセスが多発**。ユーザ報告「メンション通知から該当ナレッジに遷移したときにエラー」と整合。
+
+**根本原因**:
+PR #207 (mention) 〜 PR #211 の間、`entity-link.ts` は knowledge / stakeholder 通知 link に `/projects/[id]/knowledge?knowledgeId=...` 形式を生成していたが、**該当 page.tsx が存在しないため恒常的に 404** だった。PR #211 で新規 link は cross-list 形式 (`/knowledge?knowledgeId=...`) に変更済だが、**既に DB に保存された Notification.link は旧 URL のまま残存** していた。Notification は cron 自動削除がまだ未整備のため、DB に長期間残る。
+
+**対応**:
+旧 URL を恒久救済する **互換ルート (redirect-only page.tsx) を 2 本追加**:
+
+```
+/projects/[id]/knowledge/page.tsx     → redirect to /knowledge?knowledgeId=<query>
+/projects/[id]/stakeholders/page.tsx  → redirect to /projects/[id]?tab=stakeholders&stakeholderId=<query>
+```
+
+実装は `next/navigation` の `redirect()` を使った server component 数行のみ。認可は redirect 先で再判定される (cross-list は public のみ閲覧可、project page は ProjectMember/admin 必須)。
+
+**抽出した教訓 (新規ルール)**:
+
+- [ ] **link 構築ロジック変更時は DB 上の永続化済 link データも考慮する**: `entity-link.ts` のような link generator を変更したとき、古い link が DB に残るケース (Notification / Email / Audit ログ等) は必ず棚卸しし、互換レイヤー (redirect) または backfill migration のいずれかで救済する
+- [ ] **`page.tsx` 不在 URL を link generator が生成していないか CI/Lint で検出**: `entity-link.ts` のテストで「生成された URL が `app/` ディレクトリ構造と整合する」ことを assert する単体テストを追加するのが理想。または `pnpm tsx scripts/check-link-routes.ts` 的なヘルパー
+- [ ] **本番 deploy 後 30 分は Vercel runtime log を grep する**: `level:error` だけでなく `responseStatusCode:404` の急増もチェック対象。link generator 変更時は特に
+- [ ] **redirect-only page は最小実装で OK**: 認可ロジック / data fetch は不要、`redirect(newUrl)` を呼ぶだけ。本ルートを通過した後 redirect 先で標準の認可が動くため二重防御の心配なし
+
+#### 関連 (互換レイヤー)
+
+- E2E_LESSONS_LEARNED §4.44 (PR マージ後 migration 適用忘れ — 本件と同類「DB と code が乖離する罠」)
+- §11 T-14 / T-24 (Notification / audit_logs の自動削除バッチ — 整備されれば本互換レイヤーも将来不要に)
+- 修正例: `src/app/(dashboard)/projects/[projectId]/{knowledge,stakeholders}/page.tsx` (redirect-only)
+
 ## 6. 機能削除の手順
 
 ### Step 1: 影響範囲の確認
