@@ -4746,6 +4746,87 @@ memo へのコメント認可は `kind: 'public-or-draft'` を流用するため
   - `src/lib/entity-link.ts` (memo 通知 link)
   - `src/app/(dashboard)/{all-memos,memos}/...client.tsx` (`<CommentSection>` 統合)
 
+### 5.62 提案エンジン v2 の設計議論と意思決定ログ (T-03 設計フェーズ, 2026-05-01)
+
+本セクションは、提案エンジン v2 (T-03) の設計フェーズで行われた約 5 時間にわたる対話的設計議論の意思決定を、後から再現可能な形で記録する。実装は明日 (5月2日) から着手予定であり、本記録は実装中の判断根拠として、また将来の振り返りで「なぜこの設計を選んだか」を辿るための一次資料となる。
+
+#### 議論の出発点
+
+本サービスのリポジトリには PR #65 で実装された提案エンジン v1 が存在し、`pg_trgm` による文字 n-gram 類似度とユーザ手動入力タグの Jaccard 係数を半々の重みで合成してスコアを算出していた。これは外部依存なし・追加コストなしという美徳がある一方で、文章の意味的な近さを捉えられず、新規ユーザほど提案精度の低さを体験するという根本的な弱点を抱えていた。これを T-03 として課題登録しており、本リリース戦略において「外部展開前必須」と位置付けていた。
+
+ユーザは本機能を「サービスの核心機能であり、世の中のタスク管理アプリにはない独自の機能で、最大の差別化ポイント」と明確に位置付け、「多少コストがかかっても大幅に検索性能が向上するのであれば検討材料としたい」と方針を示した。この姿勢が議論の前提となり、ゼロコスト運用に縛られず、外部 LLM API への継続的な金銭コストを許容する設計に踏み出すことになった。
+
+#### 技術選択肢の比較 (議論の核心)
+
+4 つの選択肢を比較した。語彙辞書を手書きする方式 (A) は、辞書メンテが永続的負債となるため不採用。形態素解析 (kuromoji.js) (B) は、Vercel Edge との相性が悪く、辞書ロードでコールドスタートが悪化するため不採用。LLM ベース (C) は推論精度が極めて高い一方でコストとレイテンシのトレードオフがある。Embedding ベース (D) は安価かつ高速で意味類似が捉えられる。
+
+最終的に **「D を主軸に C を載せる」3 段階構成** を採用した。これは Notion / Linear / Slack などの主要 SaaS のセマンティック検索が採用するデファクト構成であり、本サービスがこのトレースをすることに技術的・事業的な妥当性が高いと判断した。
+
+#### コスト試算と事業判断
+
+3 段階構成のランニングコストを、ユーザ規模別 (1 / 5 / 10 / 25 / 50 / 100 人) に試算した結果、Haiku 構成で 100 人規模で月 1,400 円、Sonnet 構成で月 4,000〜5,000 円と算定した。書き込み時の embedding 生成コストは無視できるレベルで、コストの大半は提案表示時の LLM Re-ranking で発生する。この試算をユーザは「月数千円なら核心機能への投資として十分許容できる」と判断し、本格運用前提の設計に進めることを決定した。
+
+Haiku と Sonnet の差は単価 3 倍だが、実体験上の差は「並び替え精度はほぼ同じで、説明文の質が劇的に違う」と分析した。これに基づき、「**初期は Haiku で開始、ユーザフィードバックで Sonnet 化を判断**」という段階移行戦略を採用した。
+
+#### 事業戦略との統合
+
+ユーザから「OSS として基本無料で展開、データ蓄積で価値を実感させ、Sonnet 化の Pro プラン課金で UX を最大化する」というシナリオが提示された。これは Notion / Linear / Figma / Sentry / Plausible が歩んだ典型的な OSS-with-managed-cloud モデルで、本サービスの差別化と完全に整合することを確認した。
+
+主要な合意事項として、コードベース全体を **AGPL ライセンス** で公開する (競合 SaaS の商用クローン阻止)、`User.subscription_tier` カラムによる **論理コンテナ分離** で Free/Pro を切り替える、無料ユーザの体験を「劣化版」ではなく「十分なベースライン」として設計する、初期データとして資格試験事例や著名な法則の独自要約を投入してコールドスタート問題を緩和する、を確定した。
+
+#### 悪用防止の最重要視
+
+ユーザの強い指示「**この機能は運用コストが発生するうえ、悪用されると経済破綻を引き起こす可能性が高い。手を抜いてはいけない**」を最重要事項として受け止め、**5 層悪用防止アーキテクチャ** を設計した。シークレット保護 / 認証強化 / ユーザ単位レート制限 + トークン上限 / プロンプトインジェクション対策 / workspace 上限の 5 層で、各層は独立して機能し、ある層が破られても他の層で被害を抑え込む構造とする。
+
+特に注目すべきは、**Anthropic workspace の月間予算ハード上限** が「最終的な経済的損失の天井」を決定するという観察である。これを想定使用量の 1.5〜2 倍 ($30 = 約 4500 円) に設定することで、上記 4 層がすべて破られても損失は $30 に制限される。
+
+コミット履歴の API キー漏洩調査も実施し、727 コミット全履歴に対して Anthropic / OpenAI / Voyage / GitHub PAT / AWS / JWT 等の典型パターンで網羅的検査を行い、**実際のシークレット混入は 1 件もないことを確認** した。これは `.gitignore` を最初から適切に設定する習慣が貫かれていた結果であり、出発点として極めて健全な状態にある。
+
+#### 主要な意思決定の記録
+
+第一に、**LLM プロバイダは Anthropic Claude を採用**。本サービスが Claude Code で開発されており API key 管理が既存、日本語精度が高く、prompt caching でコスト最適化可能、の 3 点を根拠とする。
+
+第二に、**Embedding プロバイダは Voyage AI の voyage-3-lite を第一候補、OpenAI text-embedding-3-small を代替候補**。Voyage は Anthropic 推奨で API 形式が OpenAI 互換。
+
+第三に、**ベクトル DB は Supabase pgvector 拡張を採用**。既存 Postgres に閉じることで追加サービスを増やさない。
+
+第四に、**初期実装の LLM モデルは Haiku 一本**。Sonnet 化はバージョンアップで Pro プランの提供時に行う。
+
+第五に、**Phase 3 (LLM Re-ranking) は 6月1日リリースから外す**。Phase 2 までで核心的な差別化体験は成立し、Phase 3 は後続でリリースした方が「進化し続けるアプリ」というシグナル効果がある。
+
+第六に、**ユーザ単位月間トークン上限は Free 10万 / Pro 100万** で開始、運用しながら調整。
+
+第七に、**監視・異常検知は v1 で最小実装、観測ダッシュボード UI は v1.x で追加**。Phase 3c の `/admin/observability` の一部として組み込む。
+
+#### 実装着手前のチェックリスト
+
+明日からの実装着手前に、以下の準備を完了しておく必要がある。
+
+設計ドキュメントの執筆は本 PR (`docs/suggestion-engine-spec`) で完了する。SUGGESTION_ENGINE_PLAN.md / REQUIREMENTS.md §13 / SPECIFICATION.md §26 / DESIGN.md §34 / SUGGESTION_ENGINE_THREAT_MODEL.md がすべて整備されたことを確認。
+
+Anthropic workspace の月間予算ハード上限 ($30) と通知設定はリリース前 (5月末) に必ず実施。Voyage AI も同様の上限設定を実施。
+
+git pre-commit hook (Husky / lefthook + gitleaks) の整備は PR #2 (経済的安全性の基盤実装) で実施。GitHub Push Protection の有効化は repo settings UI から admin 操作で実施。
+
+Upstash Redis の Vercel 連携は PR #2 のタイミングで Vercel ダッシュボードから有効化。無料 tier (10K commands/day) で開始し、必要に応じて拡大する。
+
+#### 抽出したルール
+
+- [ ] **核心機能の設計は「ユーザにとっての価値」と「悪用された場合のリスク」を同等に重視**: 本機能の設計議論で 6:4 の比率で悪用防止に時間を割いた。これが正しい配分であり、後から痛い目を見ない設計を作る基本姿勢
+- [ ] **OSS 公開する機能は「コードを読まれている前提」で防御を設計**: プロンプトの内容が公開される、攻撃手法が研究される、ことを前提に多層防御を組む
+- [ ] **段階的リリースは「ユーザに進化し続けるシグナル」を送る武器**: 一度に全部リリースせず、リリース後の継続的な機能追加でユーザに「成長するアプリ」と感じてもらう設計判断は SaaS リテンションに大きく寄与する
+- [ ] **コスト試算は「ユーザ像 × 規模」のマトリクスで考える**: ライト / ミディアム / ヘビーの 3 ユーザ像に分解し、人数規模別の月額試算を出すことで、事業判断のための具体的な根拠が得られる
+- [ ] **5 層防御の最後の砦は workspace 月間ハード上限**: アプリ層・認証層・rate limit 層・プロンプト層をすべて破られても、最終的に外部 API 側の予算上限で必ず止まる、という設計を持つことが致命的損失を防ぐ
+
+#### 関連ドキュメント
+
+- 実装計画: [SUGGESTION_ENGINE_PLAN.md](./SUGGESTION_ENGINE_PLAN.md)
+- 要件定義: [REQUIREMENTS.md §13](./REQUIREMENTS.md)
+- 機能仕様: [SPECIFICATION.md §26](./SPECIFICATION.md)
+- 技術設計: [DESIGN.md §34](./DESIGN.md)
+- 脅威モデル: [docs/security/SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)
+- リリース計画: [RELEASE_ROADMAP.md §2.6](../administrator/RELEASE_ROADMAP.md)
+
 ## 6. 機能削除の手順
 
 ### Step 1: 影響範囲の確認
@@ -6301,7 +6382,7 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 |---|---|---|---|
 | T-01 | 入力層の TZ 統合 (date-picker / date-field 系) | PR #118-#119 で描画層は `session.user.timezone` 反映済だが、`date-field-helpers.ts` / `date-field-with-actions.tsx` / `gantt-client.tsx` 等の **入力** では `new Date()` / `.getFullYear()` 等のブラウザ runtime TZ 依存 API を使用中。海外ユーザが 2026-04-24 と入力した際の UTC 変換が TZ 依存になる可能性。date-fns-tz 導入 or 軽量自前変換で解消予定 | PR #118-#119 時点で PR #121 予定 → CI 恒久対策と入れ替わりで未着手 |
 | T-02 | PAT 動作確認 (`CI_TRIGGER_PAT`) | PR #121 で導入した PAT fallback が次回の baseline 更新時に正しく動作し、CI 自動再起動が効くか実地確認 | PR #121 マージ時、ユーザ指示「今後の開発で様子を見る」 |
-| T-03 | **【最重要 / 外部展開前必須】** 提案エンジン (suggestion) のヒット率向上 — 仕様 + 設計を詰める | 本サービスの**核心機能 + セールス上の差別化要素**。外部ユーザに刺さるかを左右する最大の要素。現状の課題: ①重み一律 0.5/0.5 でタグなしデータが不利 (final score 半減)、②text 入力の auto-tagging が未実装 (タグ未入力プロジェクトは jaccard=0 固定)、③シノニム / 表記ゆれ吸収なし、④TF-IDF 等の識別力評価なし (汎用語ノイズ)。検討候補: (A) vocab-matching auto-tag (依存ゼロ、語彙メンテ要) / (B) kuromoji.js 形態素解析 (npm 依存 +10MB 辞書 + コールドスタート影響) / (C) LLM-based 抽出 (Claude API、月数 $、品質最高) / (D) pgvector embedding 検索 (意味マッチ、本格改修)。**期限: 2026 年 5 月 (来月)** の外部ユーザ展開準備で仕様 + 設計を詰める | 2026-04-26 ユーザ明言「サービスの核心であり、外部展開時の中心機能」「弱いとサービスが刺さらない」 |
+| ~~T-03~~ | ~~**【最重要 / 外部展開前必須】** 提案エンジン (suggestion) のヒット率向上 — 仕様 + 設計を詰める~~ → **設計完了 (2026-05-01)、実装着手 (2026-05-02〜)、6月1日リリース予定**。詳細は [SUGGESTION_ENGINE_PLAN.md](./SUGGESTION_ENGINE_PLAN.md) / [REQUIREMENTS.md §13](./REQUIREMENTS.md) / [DESIGN.md §34](./DESIGN.md) / [SPECIFICATION.md §26](./SPECIFICATION.md) / 設計議論の経緯は [§5.62](#562-提案エンジン-v2-の設計議論と意思決定ログ-t-03-設計フェーズ-2026-05-01) | 2026-04-26 ユーザ明言「サービスの核心であり、外部展開時の中心機能」「弱いとサービスが刺さらない」 |
 | T-04 | **【外部公開直前必須】** 視覚回帰テスト カバレッジ拡大 (現状 4 spec → 主要画面全体 + cross-browser + a11y) | **現状把握** (PR #95-#96 で導入済): `e2e/visual/` に 4 spec (auth-screens / customers-screens / dashboard-screens / settings-themes 10 テーマ) が CI 自動実行中、baseline 更新は `[gen-visual]` commit 自動化済 (`.github/workflows/e2e-visual-baseline.yml`)。**外部公開直前タスクとして拡大すべき範囲**: ① project 詳細タブ (WBS / ガント / リスク / 課題 / 振り返り / ナレッジ / ステークホルダー) の baseline 取得 — 現状 `E2E_COVERAGE.md:38-42` で `[ ]` skip、② mobile viewport (`*-chromium-mobile-linux.png`) の baseline 拡充 (PR #128 カードビュー導入分の網羅)、③ クロスブラウザ追加 (Firefox / WebKit) — 現状 chromium のみ、④ a11y 自動テスト導入 (`@axe-core/playwright`) で WCAG 違反を CI 検出。④ の導入後は CI に accessibility ゲートを追加。**着手タイミング**: UI 確定 (= 主要機能凍結) 後に一括実施。UI 変更が頻繁なうちに baseline を取ると `[gen-visual]` 再生成コストが膨張するため | 2026-04-27 ユーザ問合せ「視覚回帰テストはどうなっているか / 公開直前で有効化する認識か」に対する回答として確定。既存 4 spec は既に有効、本 T-04 は **カバレッジ拡大とクロスブラウザ + a11y** が論点 |
 | T-05 | Estimate (見積もり) に添付 URL 登録 UI を追加 + 一覧表示 | API 経路 (`/api/attachments/batch` の `entityType === 'estimate'` 分岐) は対応済だが、**UI 経由の添付登録手段が無い**ため事実上未使用。`estimates-client.tsx` に `<StagedAttachmentsInput>` (作成時) + 編集 dialog 内の `<AttachmentList>` を追加し、見積一覧にも `useBatchAttachments('estimate', ...)` + `<AttachmentsCell>` を追加すれば他エンティティと parity が揃う。PR #168 で添付対応 entity 全体の一覧表示状態を網羅 grep し、estimate のみ「API 対応済 + UI 未対応」のギャップが判明 | 2026-04-27 PR #168 横展開調査時、ユーザ要望「添付できるものに関しては、一覧画面上に表示されているか影響調査し横展開を徹底」に部分対応。estimate の UI は別 PR で対応する宣言 |
 | T-06 | ~~**【外部公開直前必須】** en-US 本格翻訳~~ → **PR #170/#173/#174/#175 で大半完了 (~933 hits / 30+ ファイル / 24 sections / ~813 keys × 2 locales)。`SELECTABLE_LOCALES['en-US']=true` 切替済**。残り T-17 で対応 | PR #169 → #175 で実施。完了 |
