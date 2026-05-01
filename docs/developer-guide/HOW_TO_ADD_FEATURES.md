@@ -1,0 +1,304 @@
+# 機能追加手順 (Developer Guide)
+
+本ドキュメントは、新しい画面・機能・テーマカラー・マスタデータの追加手順を集約する (DEVELOPER_GUIDE.md §1〜§4)。既存機能の改修パターンや過去の罠は [../knowledge/](../knowledge/) を参照。
+
+---
+
+## 1. `src/config/` ディレクトリ案内
+
+> **設計原則**: 業務的意味を持つ値はプログラム内にハードコードせず、すべて `src/config/` に集約する (DESIGN.md §21.4 ゼロハードコーディング原則)。
+
+### 1.1 ファイル一覧
+
+| ファイル | 役割 | 主な定数・関数 |
+|---|---|---|
+| `master-data.ts` | 業務概念の列挙 | `TASK_STATUSES` / `VISIBILITIES` / `PRIORITIES` / `RISK_NATURES` / `SYSTEM_ROLES` / `PROJECT_ROLES` 等 |
+| `themes.ts` | テーマカタログ | `THEMES` (10 種) / `toSafeThemeId()` |
+| `theme-definitions.ts` | テーマ色定義 | `THEME_DEFINITIONS` (CSS 色トークン) / `THEME_COLOR_SCHEMES` (light/dark) |
+| `security.ts` | 認証・セキュリティ定数 | `BCRYPT_COST` / `LOGIN_FAILURE_MAX` / `PASSWORD_MIN_LENGTH` / 各トークン期限 |
+| `routes.ts` | 認可判定用パス | `PUBLIC_PATHS` / `MFA_PENDING_PATHS` / `LOGIN_PATH` |
+| `app-routes.ts` | 画面遷移パス | `PROJECTS_ROUTE` / `MY_TASKS_ROUTE` / `projectDetail(id)` 等 |
+| `suggestion.ts` | 提案型サービス調整値 | `SUGGESTION_TAG_WEIGHT` / `SUGGESTION_SCORE_THRESHOLD` |
+| `validation.ts` | 入力上限値 | `TITLE_MAX_LENGTH` / `MEDIUM_TEXT_MAX_LENGTH` / `TAGS_MAX_COUNT` |
+| `index.ts` | 公開エントリ | 上記すべてを再エクスポート (`import { X } from '@/config'`) |
+
+### 1.2 値を変更したいとき
+
+ほとんどの場合、`src/config/` 配下の該当ファイル 1 行を編集すれば、
+プログラム全体に反映されます。例:
+
+| やりたいこと | 編集するファイル |
+|---|---|
+| ログイン失敗ロック回数を 3 回に変更 | `security.ts` の `LOGIN_FAILURE_MAX` |
+| プロジェクト名の最大文字数を 50 に変更 | `validation.ts` の `NAME_MAX_LENGTH` |
+| 提案サービスの閾値を 0.1 に変更 | `suggestion.ts` の `SUGGESTION_SCORE_THRESHOLD` |
+| ダークテーマの背景を真っ黒に変更 | `theme-definitions.ts` の `dark.background` |
+| ログイン画面の URL を `/signin` に変更 | `routes.ts` の `LOGIN_PATH` + `app-routes.ts` の `LOGIN_ROUTE` |
+
+---
+
+## 2. テーマカラーの追加・変更手順
+
+### 2.1 既存テーマの色を変更したい場合
+
+1. `src/config/theme-definitions.ts` を開く
+2. 対象テーマ (例: `dark`) の `extend({...})` 内で変更したい token を編集
+   ```ts
+   dark: extend({
+     background: 'oklch(0.10 0 0)',   // ← この値を変更
+     foreground: 'oklch(0.99 0 0)',
+     ...
+   }),
+   ```
+3. テスト実行 (`pnpm test`) で `theme-definitions.test.ts` が pass するか確認
+4. `pnpm dev` で起動して目視確認 (設定画面 → 画面テーマ → dark に切替)
+
+### 2.2 新しいテーマを追加したい場合
+
+例: `'cyber-pink'` という新テーマを追加するケース。
+
+#### Step 1: テーマカタログに登録
+
+`src/config/themes.ts`:
+```ts
+export const THEMES = {
+  light: 'ライトテーマ（デフォルト）',
+  dark: 'ダークテーマ',
+  // ... 既存 ...
+  'cyber-pink': 'サイバーピンク',  // ← 追加
+} as const;
+```
+
+#### Step 2: 色トークンを定義
+
+`src/config/theme-definitions.ts` の `THEME_DEFINITIONS` に追加:
+```ts
+'cyber-pink': extend({
+  background: 'oklch(0.95 0.08 350)',
+  primary: 'oklch(0.55 0.20 350)',
+  primaryForeground: 'oklch(0.99 0 0)',
+  // ... 必要な差分のみ。指定しない token は LIGHT から継承
+}),
+```
+
+> **重要**: `satisfies Record<ThemeId, ThemeTokens>` 制約により、追加漏れがあれば `pnpm build` がエラーになります。
+
+#### Step 3: color-scheme を指定
+
+同じファイルの `THEME_COLOR_SCHEMES` にも追加:
+```ts
+export const THEME_COLOR_SCHEMES = {
+  // ... 既存 ...
+  'cyber-pink': 'light',  // 背景が明るいので 'light'
+} as const satisfies Record<ThemeId, 'light' | 'dark'>;
+```
+
+#### Step 4: 動作確認
+
+```bash
+pnpm test     # theme-definitions.test.ts が新テーマを検証
+pnpm build    # 型エラーがないか
+pnpm dev      # 設定画面で切替
+```
+
+---
+
+## 3. マスタデータ列挙 (ステータス等) の追加手順
+
+例: `TASK_STATUSES` に `'review'` (レビュー中) を追加するケース。
+
+### Step 1: 定義に追加
+
+`src/config/master-data.ts`:
+```ts
+export const TASK_STATUSES = {
+  not_started: '未着手',
+  in_progress: '進行中',
+  review: 'レビュー中',  // ← 追加
+  completed: '完了',
+  on_hold: '保留',
+} as const;
+```
+
+### Step 2: DB バリデーションを更新
+
+`src/lib/validators/task.ts` 等で `z.enum(...)` を使っている箇所があれば、
+新しい値を追加します。
+
+### Step 3: ロジック影響を確認
+
+新ステータスがあることで業務ロジックに影響が出るか検討:
+- 進捗率との整合性 (`task.service.ts` の `normalizeProgressForStatus`)
+- WP の状態自動判定 (`aggregateWpFromChildren`)
+- フィルタ UI のデフォルト選択肢
+
+### Step 4: マイグレーション (DB に既存値で投入されている場合)
+
+新しい値を既存レコードに使いたい場合は migration を作成:
+```bash
+npx prisma migrate dev --name add_task_status_review
+```
+
+---
+
+## 4. 新しい画面・機能の追加手順
+
+例: 「コメント機能を全エンティティに追加する」のような大型機能追加の場合。
+
+### Step 1: 設計書に章を追加
+
+`docs/DESIGN.md` に新セクションを追加し、以下を明記:
+- なぜ必要か (背景)
+- データモデル (テーブル定義 / マイグレーション計画)
+- API 仕様
+- 画面仕様 (UI モック・遷移)
+- 認可ルール
+- セキュリティ考慮事項
+
+### Step 2: DB マイグレーション作成
+
+```bash
+# prisma/schema.prisma を編集してテーブル追加
+npx prisma migrate dev --name add_comments
+```
+
+詳細は本書 §7 (DB スキーマ変更手順)。
+
+### Step 3: 型 + バリデータ作成
+
+| ファイル | 内容 |
+|---|---|
+| `src/lib/validators/comment.ts` | Zod スキーマ (`createCommentSchema` 等) |
+| 新規型 (DTO) は service ファイル内で `export type CommentDTO` として宣言 |
+
+### Step 4: サービス層実装
+
+`src/services/comment.service.ts` を作成:
+- ファイル先頭に **必ず docblock** を書く (役割 / 設計判断 / 認可 / 関連設計書)
+  → 既存の `memo.service.ts` 等を参考に
+- CRUD 関数: `listComments` / `getComment` / `createComment` / `updateComment` / `deleteComment`
+- 認可は呼び出し元 API ルートに任せる方針
+
+### Step 5: API ルート実装
+
+`src/app/api/comments/route.ts` 等を作成:
+- ファイル先頭に **必ず docblock** を書く (HTTP メソッド / 認可 / 監査 / 関連設計書)
+- 認可: `getAuthenticatedUser` + `checkProjectPermission` または `requireAdmin`
+- 監査: 変更系操作は `recordAuditLog` を呼ぶ
+
+### Step 6: UI 実装
+
+| ファイル | 内容 |
+|---|---|
+| `src/app/(dashboard)/.../comments/page.tsx` | サーバコンポーネント (auth 確認 + 初期データ取得) |
+| `src/app/(dashboard)/.../comments/comments-client.tsx` | クライアントコンポーネント |
+| ファイル先頭に **必ず docblock** を書く (役割 / 設計 / 認可 / API / 関連) |
+
+### Step 7: i18n ラベル追加 (必要なら)
+
+新画面で使うラベルを `src/i18n/messages/ja.json` に追加 (詳細は §8)。
+
+### Step 8: テスト
+
+- サービスの単体テスト: `src/services/comment.service.test.ts`
+- バリデータの単体テスト: `src/lib/validators/comment.test.ts`
+- メッセージカタログテストが新キーを検出: `src/i18n/messages.test.ts` 内の `REQUIRED_*_KEYS` に追加
+
+### Step 9: ドキュメント更新
+
+- `docs/DESIGN.md` の該当章
+- `docs/SPECIFICATION.md` の機能仕様
+- `README.md` の機能一覧 (大型機能の場合)
+
+### Step 10: lint / test / build → コミット → PR
+
+詳細は §9, §10。
+
+---
+
+
+## §6. 機能削除の手順
+
+## 6. 機能削除の手順
+
+### Step 1: 影響範囲の確認
+
+```bash
+# 削除対象の関数 / API ルートが使われている箇所を網羅
+grep -rn "deleteFunctionName" src
+```
+
+### Step 2: 順序立てた削除
+
+1. **UI 側**: 削除対象機能を呼び出している画面を修正 (リンク削除 / ボタン非表示)
+2. **API ルート**: `src/app/api/.../route.ts` を削除
+3. **サービス層**: 該当関数を削除
+4. **バリデータ / 型**: 該当スキーマと型を削除
+5. **DB マイグレーション** (テーブル / カラム削除を伴う場合): 別 migration
+   ```bash
+   npx prisma migrate dev --name drop_xxx
+   ```
+6. **テスト**: 削除した関数のテストを削除
+7. **ドキュメント**: DESIGN.md / SPECIFICATION.md から該当記述を削除
+
+### Step 3: 監査ログの保護
+
+ユーザの過去操作の監査ログ (`audit_logs.entityType` 等) で該当エンティティが
+参照されている可能性があります。**監査記録は削除しない**でください
+(将来トレース不能になるため)。
+
+---
+
+
+## §8. UI ラベルの追加手順 (i18n)
+
+## 8. UI ラベルの追加手順 (i18n)
+
+### 8.1 既存カテゴリへの追加 (Phase A/B/C 範囲)
+
+`src/i18n/messages/ja.json` に追加:
+```json
+{
+  "action": {
+    "save": "保存",
+    "submit": "送信"  // ← 追加
+  }
+}
+```
+
+`src/i18n/messages.test.ts` の `REQUIRED_*_KEYS` 配列にもキーを追加して、
+将来の追加漏れを CI で検出できるようにします。
+
+JSX 側の使い方:
+```tsx
+'use client';
+import { useTranslations } from 'next-intl';
+
+function MyComponent() {
+  const t = useTranslations('action');
+  return <Button>{t('submit')}</Button>;
+}
+```
+
+### 8.2 サーバコンポーネントでの使い方
+
+```tsx
+import { getTranslations } from 'next-intl/server';
+
+export default async function Page() {
+  const t = await getTranslations('action');
+  return <h1>{t('submit')}</h1>;
+}
+```
+
+### 8.3 移行ステータス
+
+| Phase | 範囲 | 状態 |
+|---|---|---|
+| A | アクション動詞 9 語 (保存/削除/キャンセル等) | ✅ 完了 (PR #77) |
+| B | フォームラベル (件名/内容/担当者等) | 🟡 カタログ完備、JSX 移行は段階的 (PR #81 で 1 サンプル実施) |
+| C | 共通メッセージ (saveSuccess/deleteConfirm 等) | 🟡 カタログ完備、JSX 移行は使用機会のあるたびに段階移行 |
+| D | 画面固有文言 | 多言語化が必要になった段階で一括抽出予定 |
+
+---
+
