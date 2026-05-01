@@ -161,7 +161,10 @@
 #### 6月1日リリース (v1) で投入
 
 - [ ] **マルチテナント基盤**: Tenant テーブル新設、全業務エンティティへの tenantId 追加、default-tenant への migration、認可境界の徹底
-- [ ] **テナント単位のコスト管理**: subscription_tier / current_month_token_usage / monthly_token_limit / suggestionDailyLLMCalls を Tenant テーブルに配置、Vercel Cron での月初・日次リセット
+- [ ] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant テーブルに `plan` ('beginner' | 'expert' | 'pro') / `currentMonthApiCallCount` / `currentMonthApiCostJpy` / `monthlyBudgetCapJpy` / `beginnerMonthlyCallLimit` (default 100) / `beginnerMaxSeats` (default 5) / `pricePerCallHaiku` (default ¥10) / `pricePerCallSonnet` (default ¥30) / `scheduledPlanChangeAt` / `scheduledNextPlan` を配置
+- [ ] **ApiCallLog テーブル**: 各 API 呼び出しを (timestamp, tenantId, userId, featureUnit, modelName, costJpy, latencyMs, requestId) で記録 — 課金根拠データ
+- [ ] **`withMeteredLLM()` ミドルウェア**: 短期 rate limit + プラン判定 + Beginner 月間上限チェック + 予算上限チェック + LLM 呼び出し + カウンタ更新を統合
+- [ ] **月初リセットバッチ**: Vercel Cron で `currentMonthApiCallCount` / `currentMonthApiCostJpy` をリセット、`scheduledPlanChangeAt` 到達テナントのプラン適用
 - [ ] **Phase 1**: LLM (Claude Haiku) による自動タグ抽出
 - [ ] **Phase 2**: pgvector + Voyage AI Embedding による意味検索 (テナント内に閉じる)
 - [ ] **初期データ**: 資格試験事例・著名な法則を独自要約したナレッジ 30〜100 件 (default-tenant 投入 + テナント別シーディング機構)

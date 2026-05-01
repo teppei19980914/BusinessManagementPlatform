@@ -4741,3 +4741,108 @@ Supabase Free プランの主要な制約は、データベースサイズ (500M
 移行時の主な作業は、環境変数の再設定、Docker image の構築、CI/CD パイプラインの再構築 (GitHub Actions → AWS / Azure)、監視・ログの再設定 (Vercel Analytics → CloudWatch / Application Insights) である。実工数は 1〜2 週間と見込む。
 
 これらは将来の判断材料として記録するが、v1 リリース時点ではすべて Vercel + Supabase で運用する。本格的な事業拡大段階で判断する。
+
+### 34.14 課金モデル: 3 プラン構成と従量課金 (per-API-call) の確定版
+
+§34.11.4〜§34.12 でテナント単位のコスト管理を扱ったが、**最終的な課金モデルを 3 プラン + 従量課金 (per-API-call)** で確定する。これは「ユーザ数を基準にすると集計直前の意図的なユーザ削除で誤魔化される脆弱性」「アクセスユーザ数を基準にすると未使用ユーザ分のコストが運用者の損失になる構造」の両方を回避し、純粋に「使った分だけ払う」という公平性と「お得感」を両立させる設計判断である。
+
+#### 34.14.1 3 プランの構造
+
+**Beginner プラン** は **無料の試験運用プラン** で、最大 5 席までの席数制限を持ち、Claude Haiku で動作する。月間 100 回までの API 呼び出しが可能で、超過時は提案機能が縮退モード (Phase 2 の embedding ベース並びのみ、説明文なし) に切り替わる。これは小〜中規模プロジェクトでの試用と、上位プランへのアップセル誘導の入り口として機能する。Beginner の制約は「無料を維持しつつ運用者のコスト上限を担保する」という両立を実現する。
+
+**Expert プラン** は **席数無制限の従量課金プラン** で、Claude Haiku で動作する。1 回の API 呼び出しごとに ¥10 が課金され、月間使用量に上限はない (= 使った分だけ請求される)。主に中〜大規模チームで日常的に提案機能を使うユーザを想定する。
+
+**Pro プラン** は **席数無制限の従量課金プラン** で、Claude Sonnet で動作する。1 回の API 呼び出しごとに ¥30 が課金される。Sonnet による深い説明文付きの提案を享受でき、PMO や経営層など「助言の質」を重視するユーザに向けた最上位プランである。
+
+価格は初期値であり、実運用データを見ながら段階的に調整する想定。Tenant テーブルの設定値として外出しし、運用中の柔軟な変更を可能にする。
+
+#### 34.14.2 「1 回の API 呼び出し」の定義 (課金単位)
+
+per-API-call の「1 回」は **ユーザに見える機能単位** で定義する。内部的に複数の LLM / Embedding API 呼び出しが走っても、ユーザから見て 1 つの操作として認識される単位を 1 回としてカウントする。具体的には以下を 1 回とする。
+
+新規プロジェクト作成時の自動タグ抽出 + 初回提案生成は、内部的に Phase 1 の自動タグ抽出 (LLM 1 呼び出し) + content_embedding 生成 (Embedding 1 呼び出し) + Phase 2 検索 (LLM なし) + Phase 3 re-ranking (LLM 1 呼び出し) が走るが、これらをまとめて **1 回** とカウントする。同一プロジェクトの提案画面を再表示する場合、キャッシュヒット時は 0 回、キャッシュ無効後の再生成は 1 回とカウントする。リスク起票時の類似 issue サジェストは 1 回。コメント投稿時の mention 候補補完は通常 0 回 (LLM 不使用)、mention に LLM が関与する将来機能では 1 回。
+
+**embedding 生成 (= データ作成・更新時のバックグラウンド処理) は課金対象外** とする。これはユーザに見えない処理であり、データ蓄積のインセンティブを削がないためである。embedding コストは無視できるレベル (1 件あたり 0.001 円) で、運用者が吸収する。
+
+この定義により、ユーザは「自分がクリックした操作 ≒ 課金額」と直感的に予測でき、メーターを気にせず機能を使える。一方、Phase 3 のキャッシュヒット率向上などの内部最適化を進めても、ユーザの請求額には影響しない。
+
+#### 34.14.3 データモデルの確定
+
+§34.11.2 で示した Tenant テーブルの設計を、課金モデル確定版に更新する。
+
+```
+model Tenant {
+  id                       String   @id
+  slug                     String   @unique
+  name                     String
+  plan                     String   @default("beginner")  // 'beginner' | 'expert' | 'pro'
+  currentMonthApiCallCount Int      @default(0)
+  currentMonthApiCostJpy   Int      @default(0)
+  monthlyBudgetCapJpy      Int?                            // ユーザ自己設定の月次予算上限
+  beginnerMonthlyCallLimit Int      @default(100)          // Beginner プランの月間上限 (default 100、admin 調整可)
+  beginnerMaxSeats         Int      @default(5)            // Beginner プランの席数上限 (default 5、admin 調整可)
+  pricePerCallHaiku        Int      @default(10)           // 円
+  pricePerCallSonnet       Int      @default(30)           // 円
+  lastResetAt              DateTime?
+  createdAt                DateTime @default(now())
+  deletedAt                DateTime?
+
+  users        User[]
+  apiCallLogs  ApiCallLog[]
+  // ... 他の業務エンティティ
+}
+```
+
+`subscription_tier` という名称は廃止し、より明確な `plan` に統一する。`current_month_token_usage` も `currentMonthApiCallCount` (回数) と `currentMonthApiCostJpy` (円換算額) の 2 軸で管理する。月間トークン上限の概念は撤廃し、Beginner は回数上限、Expert/Pro は無制限 (従量課金) とする。
+
+新規テーブル `ApiCallLog` を追加する。これは個別の API 呼び出しを記録する完全な監査ログで、`(timestamp, tenantId, userId, featureUnit, modelName, llmInputTokens, llmOutputTokens, embeddingTokens, costJpy, latencyMs, requestId)` を保存する。`featureUnit` は「new-project-suggestion」「project-suggestion-refresh」「risk-creation-suggest」のような機能単位の識別子で、ユーザに見える単位と内部処理の対応を追跡可能にする。これは課金の根拠データとして法的にも重要で、ユーザクレーム対応の根拠となる。
+
+#### 34.14.4 Beginner プランの月間上限の挙動
+
+Beginner プランは月間 100 回の API 呼び出し上限に達した時点で、その月の残期間中は **提案機能が縮退モード** に切り替わる。具体的には、Phase 1 の自動タグ抽出は失敗 → 既存手動タグ入力にフォールバック、Phase 3 の re-ranking はスキップ → Phase 2 の embedding ベース並びのみ表示、という動作になる。embedding ベース並びは LLM を使わないため上限に関わらず利用でき、検索精度の根幹は維持される。
+
+ユーザには明示的に「今月の AI 詳細解析の上限に達しました。来月 1 日にリセットされます。Expert / Pro プランへのアップグレードで上限なくご利用いただけます」というメッセージを表示し、アップグレード導線を強化する。これは「無料で価値を体験 → 限界を感じる → アップグレード」という SaaS の典型的な funnel である。
+
+月初リセットは Vercel Cron で日次に動作するバッチが、`lastResetAt` が前月以前のテナントを検出して `currentMonthApiCallCount = 0` にリセットする。リセット時刻は UTC 月初の 00:00 (= JST 09:00) で、これはユーザの利用パターンと反対のため運用上の影響が小さい。
+
+#### 34.14.5 月次予算上限の自己設定機能
+
+ユーザ (テナント管理者) は自テナントの設定画面から、月次予算上限を **自分で設定** できる。例: 「Expert プランで月最大 ¥10,000 まで」と設定すると、その金額に達した時点で Beginner と同じ縮退モードに自動切替される。これは pure metered billing の最大の弱点である **「請求額の予測不可能性」** を解消する仕組みで、Stripe / Twilio など主要な従量課金 SaaS が採用する標準パターンである。
+
+実装は `Tenant.monthlyBudgetCapJpy` に保存し、API 呼び出し前のミドルウェアで `currentMonthApiCostJpy + 次の呼び出しの予測コスト > monthlyBudgetCapJpy` をチェックして、超過する場合は縮退モードに切り替える。`monthlyBudgetCapJpy` が `NULL` の場合は上限なし (= 純粋な従量課金) として動作する。
+
+UI 上は「予算 ¥10,000 のうち、今月 ¥3,200 を使用 (32%)」のような可視化を行い、ユーザが現在地と予算をいつでも確認できるようにする (詳細は §34.14.7 で詳述)。
+
+#### 34.14.6 プラン変更フローと制御ロジック
+
+テナント管理者は自テナントのシステム管理者設定画面からプランを変更できる。変更フローは方向によって異なる挙動とする。
+
+**Beginner → Expert / Pro へのアップグレード** は、決済情報の登録 (Stripe 連携、v1.x で実装) と同時に **即時有効化** する。アップグレード後の API 呼び出しから新プランの料金体系で課金される。これは「もっと使いたい」というユーザの意欲を即座に満たす設計で、待たせる理由がない。
+
+**Expert ↔ Pro の切替 (LLM モデル変更)** は **即時反映** する。技術的には `Tenant.plan` を見て分岐する 1 行の変更で、次の API 呼び出しから対応モデル (Haiku / Sonnet) に切り替わる。当月の使用分は切替前後それぞれの単価で集計され、月次請求書で内訳表示する。
+
+**Expert / Pro → Beginner へのダウングレード** には **システム側で必ず制御を加える**。第一に、現在の席数が Beginner 上限 (5 席) を超えている場合、ダウングレードは **拒否** され、ユーザに「6 席以上を Beginner にダウングレードできません。先に席数を 5 以下に減らしてください」という警告が表示される。これを画面上で強制し、admin が API を直接叩いてもサーバ側で拒否する二重防御とする。第二に、ダウングレード適用は **当月末まで現プラン継続、翌月 1 日から Beginner 適用** とする。これは月の途中ダウングレードによる課金回避 (= 月末ぎりぎりにダウングレードして当月分を 0 円にする) を防ぐ仕組みで、実装上は `Tenant.plan` ではなく `Tenant.scheduledPlanChangeAt` と `Tenant.scheduledNextPlan` のような遅延適用フィールドで実現する。
+
+ユーザには「ダウングレードはこの月の月末から適用されます。当月分の従量課金は通常通り発生します」という注意事項を、変更操作の前段で **明示的に確認させる** UI を必須とする。
+
+#### 34.14.7 リアルタイム使用量ダッシュボード
+
+ユーザ (テナント管理者) は自テナントの設定画面から、リアルタイムの使用状況ダッシュボードを閲覧できる。表示する情報は以下の 4 つのレイヤーで構成する。
+
+第一に **当月のサマリー** で、今月の API 呼び出し回数、課金額、予算 (設定されていれば) との比較、を 1 行で表示する。例: 「今月の使用状況: 320 回 / ¥3,200 (予算 ¥10,000 の 32%)」。
+
+第二に **プラン情報と席数** で、現在のプラン名、席数 (Beginner なら N/5、Expert/Pro なら無制限)、Beginner なら月間上限残量 (例: 「残 25 回 / 100 回」)、を表示する。
+
+第三に **日次の使用推移グラフ** で、当月の日別 API 呼び出し回数と費用を簡易な棒グラフで可視化する。これは突発的な使用量増加 (= 異常パターン) をユーザ自身が発見できる窓口となる。
+
+第四に **機能別の内訳** で、「新規プロジェクト時の提案: N 回」「提案画面の再表示: M 回」「リスク起票時の関連 issue 検索: K 回」のように、`featureUnit` 単位で集計したテーブルを表示する。これによりユーザは「どの機能で多く使っているか」を理解し、利用パターンを最適化できる。
+
+これらは v1.x で完全実装する想定だが、**データ蓄積は v1 から開始する**。Tenant テーブルの集計フィールドと `ApiCallLog` テーブルを v1 から運用し、UI は v1.x で追加することで、UI 公開時点で過去 1 ヶ月分の履歴がすでに表示できる状態となる。
+
+#### 34.14.8 v1 と v1.x の実装範囲
+
+**v1 (6月1日) で実装する範囲** は **データモデルと内部ロジック** に絞る。Tenant テーブルへの `plan`、`currentMonthApiCallCount`、`currentMonthApiCostJpy`、`monthlyBudgetCapJpy`、`beginnerMonthlyCallLimit`、`pricePerCallHaiku`、`pricePerCallSonnet` カラムの追加、ApiCallLog テーブルの新設、API 呼び出し直前にプランと使用量をチェックして適切に課金 / 縮退するミドルウェアロジック、Beginner プランの月間上限チェック、Vercel Cron による月初リセットバッチ、を含む。v1 時点ではすべてのテナント (実質 default-tenant のみ) は Beginner プラン扱いで稼働し、Expert / Pro への切替は admin が DB を直接更新する運用となる。ユーザ向け UI は v1 では公開しない。
+
+**v1.x で実装する範囲** は **UI と Stripe 連携** で、テナント管理者設定画面 (プラン情報表示・変更ボタン・予算上限自己設定・リアルタイムダッシュボード)、Stripe との連携 (Subscription with Metered Billing、月末自動請求)、ダウングレード時の警告 UI と席数制約チェック、Webhook 経由のプラン状態同期、を順次追加する。
+
+Stripe の Metered Billing は本ユースケースに完全に適合する機能で、各 API 呼び出し時に Stripe にイベント送信 (`stripe.subscriptionItems.createUsageRecord`) するだけで、月末に自動で請求額が確定し、ユーザに請求書が送られる。実装パターンが業界標準なので、トラブルシューティングも容易である。

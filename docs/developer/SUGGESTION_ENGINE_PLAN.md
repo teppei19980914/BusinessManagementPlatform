@@ -81,13 +81,19 @@ Phase 2 で得た上位 20 件の候補を Claude に渡し、ユーザの新規
 
 具体的には、新規 `Tenant` テーブルの作成と、`User` および全業務エンティティ (Project / Knowledge / RiskIssue / Retrospective / Memo / Customer / Stakeholder / Comment / Mention / Notification / Attachment / SystemErrorLog) への `tenantId` カラム追加を含む。既存データを `default-tenant` という単一テナントに収容する migration を作成し、ダウンタイムなしで安全に適用する。
 
-`Tenant` テーブルには `subscription_tier`、`current_month_token_usage`、`monthly_token_limit`、`last_token_reset_at`、`suggestionDailyLLMCalls`、`trial_ends_at` のカラムを配置する (元々 User に置く予定だったが、契約=テナント単位の原則に合わせてテナントに配置)。月間使用量を増減・確認する純関数 `incrementTokenUsage()` `getTenantUsageStatus()` を整備し、Vercel Cron による月初・日次リセットジョブを実装する。
+`Tenant` テーブルには **3 プラン構成 + 従量課金 (per-API-call) の確定モデル** に基づき、以下のカラムを配置する: `plan` ('beginner' | 'expert' | 'pro')、`currentMonthApiCallCount` (今月の API 呼び出し回数)、`currentMonthApiCostJpy` (今月の課金額・円)、`monthlyBudgetCapJpy` (ユーザ自己設定の月次予算上限、NULL=無制限)、`beginnerMonthlyCallLimit` (Beginner プランの月間上限、default 100)、`beginnerMaxSeats` (Beginner プランの席数上限、default 5)、`pricePerCallHaiku` (default 10)、`pricePerCallSonnet` (default 30)、`scheduledPlanChangeAt` / `scheduledNextPlan` (ダウングレード遅延適用用)。当初予定していた `subscription_tier` / `current_month_token_usage` / `monthly_token_limit` 等のカラムは廃止。
+
+新規テーブル `ApiCallLog` を追加し、各 API 呼び出しを (timestamp, tenantId, userId, featureUnit, modelName, llmInputTokens, llmOutputTokens, embeddingTokens, costJpy, latencyMs, requestId) で記録する。`featureUnit` は「new-project-suggestion」「project-suggestion-refresh」「risk-creation-suggest」のような機能単位の識別子で、ユーザに見える 1 操作と内部処理の対応を追跡する。これは課金の根拠データとして法的に重要となる。
+
+API 呼び出し前のミドルウェア `withMeteredLLM()` を実装する。このミドルウェアは以下を順に実行する: (1) Upstash Redis での短期 rate limit (1 ユーザ / 1 分 / 10 回、1 ユーザ / 1 時間 / 60 回)、(2) Tenant の plan を取得、(3) Beginner プランの場合は `currentMonthApiCallCount >= beginnerMonthlyCallLimit` をチェックして超過なら縮退モード返却、(4) `monthlyBudgetCapJpy` が設定されている場合は予測コスト超過をチェックして超過なら縮退モード返却、(5) LLM 呼び出し実行、(6) 成功時に `currentMonthApiCallCount` と `currentMonthApiCostJpy` をインクリメント + ApiCallLog に記録。これら 6 ステップを共通ミドルウェアに集約することで、漏れを防ぐ。
 
 すべての API ルートに対して、リクエストユーザの `tenantId` と操作対象データの `tenantId` が一致することを検証する標準パターンを導入する。`@/lib/permissions.ts` に `requireSameTenant(user, entity)` ユーティリティを新設し、認可ロジックの入り口として機能させる。NextAuth.js の session に `tenantId` を含めるよう拡張する。middleware で URL パスからテナント slug を解決するヘルパー (v1 では default-tenant に固定、v1.x で動的解決) を準備する。
 
-Upstash Redis を Vercel ダッシュボードから有効化し、`@upstash/ratelimit` パッケージを導入する。LLM 呼び出しを行う将来の API ルートで使用する共通ミドルウェア `withLLMRateLimit()` を実装する。これは Upstash Redis での短期 rate limit、テナント単位の月間トークン上限チェック、テナント単位の日次 LLM 呼び出しキャップ、を 1 ミドルウェアで統合する。
+Vercel Cron で月初リセットバッチを動作させ、`lastResetAt` が前月以前のテナントを検出して `currentMonthApiCallCount = 0` / `currentMonthApiCostJpy = 0` にリセットする。同 Cron で `scheduledPlanChangeAt` が当日以前のテナントを検出してプラン適用 (Expert/Pro → Beginner ダウングレードの翌月適用) を実行する。
 
-所要見込み 5〜7 日 (当初の 3〜4 日からテナント基盤分が増加)。本 PR は規模が大きく、既存機能への影響範囲も広いため、慎重なレビューと段階的なテストが必要である。
+Upstash Redis を Vercel ダッシュボードから有効化し、`@upstash/ratelimit` パッケージを導入する。
+
+所要見込み 5〜7 日 (当初の 3〜4 日からテナント基盤と課金モデル分が増加)。本 PR は規模が大きく、既存機能への影響範囲も広いため、慎重なレビューと段階的なテストが必要である。v1 時点では UI を公開せず、すべてのテナント (実質 default-tenant のみ) は Beginner プラン扱いで稼働する。
 
 ### PR #3: Phase 1 (LLM 自動タグ抽出)
 
