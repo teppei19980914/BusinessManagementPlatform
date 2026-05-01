@@ -26,7 +26,19 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
+      // 2026-05-01 (PR feat/sticky-table-headers): Excel 風のヘッダー固定化。
+      //   - `sticky top-0`: 縦スクロール時にヘッダー行を viewport 上端 (DashboardHeader が
+      //     非 sticky なので、スクロールすると DashboardHeader が消えた後の上端) に固定。
+      //   - `bg-card`: 下の行が透けないため必須 (sticky element に背景色がないと裏が透ける)。
+      //   - `z-10`: dropdown (z-50) / Toast (z-50) / Dialog overlay (z-50) より下に固定。
+      //     行内の元々ある要素 (リンク等) より上にする目的。
+      //   - `[&>tr>th]:bg-card`: 一部ブラウザで thead 自体への bg-card が効かない場合の保険。
+      //     th セルにも背景色を入れる二重指定。
+      //   - 既存の `[&_tr]:border-b` は維持 (1px の区切り線)。
+      className={cn(
+        "sticky top-0 z-10 bg-card [&>tr>th]:bg-card [&_tr]:border-b",
+        className,
+      )}
       {...props}
     />
   )

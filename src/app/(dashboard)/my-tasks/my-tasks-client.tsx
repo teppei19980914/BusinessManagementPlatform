@@ -226,7 +226,9 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
 
             {isProjectExpanded && (
               <table className="min-w-full text-xs md:text-sm">
-                <thead className="bg-card">
+                {/* PR feat/sticky-table-headers: Excel 風ヘッダー固定 (§5.53)。
+                    `<TableHeader>` を経由しない raw thead なので個別指定が必要。 */}
+                <thead className="sticky top-0 z-10 bg-card [&>tr>th]:bg-card">
                   <tr>
                     <ResizableHead columnKey="name" defaultWidth={300}>{tMyTask('colName')}</ResizableHead>
                     <ResizableHead columnKey="status" defaultWidth={100}>{tMyTask('colStatus')}</ResizableHead>
