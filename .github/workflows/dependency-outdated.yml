@@ -79,7 +79,7 @@ jobs:
               '',
               '対応不要であれば本 Issue を close してください。',
               '',
-              '関連: [docs/administrator/RELEASE_ROADMAP.md §1.4](../blob/main/docs/administrator/RELEASE_ROADMAP.md)',
+              '関連: [docs/roadmap/RELEASE_ROADMAP.md §1.4](../blob/main/docs/roadmap/RELEASE_ROADMAP.md)',
             ].join('\n');
 
             await github.rest.issues.create({
