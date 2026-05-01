@@ -117,6 +117,15 @@ export async function getMentionContext(
       });
       return c ? { projectId: null, assigneeId: null } : null;
     }
+    case 'memo': {
+      // PR #213: memo は user-scoped (project 紐付けなし)。kind='all'/'user' のみ展開で
+      // 'project_member' / 'role_*' / 'assignee' は概念がない (mention validator で弾く)。
+      const m = await prisma.memo.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { id: true },
+      });
+      return m ? { projectId: null, assigneeId: null } : null;
+    }
   }
 }
 

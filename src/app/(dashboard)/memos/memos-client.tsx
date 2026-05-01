@@ -36,6 +36,8 @@ import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+// PR #213 (2026-05-01): 個人メモ画面にもコメント機能を追加
+import { CommentSection } from '@/components/comments/comment-section';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -472,6 +474,12 @@ export function MemosClient({
                 label={tMemo('referenceUrl')}
               />
               <Button type="submit" className="w-full">{tAction('save')}</Button>
+              {/* PR #213: 個人メモにもコメント機能 (全メモと同 UX)。form の外に配置することで
+                  保存ボタンと干渉しない。public memo は他人もコメント可、draft は本人のみ。 */}
+              <CommentSection
+                entityType="memo"
+                entityId={editing.id}
+              />
             </form>
           )}
         </DialogContent>

@@ -83,5 +83,10 @@ export function getAllowedMentionKinds(
     case 'customer':
       // admin only entity、個別 user のみ (admin 同士の指定)
       return new Set<MentionKind>(['user']);
+    case 'memo':
+      // memo は user-scoped (project 紐付けなし)。knowledge と同じく cross-list で公開可能だが
+      // project_member / role_* / assignee は memo に概念がないため不可。
+      // PR #213 で追加 (visibility-based の認可は comment.service.ts で enforce)。
+      return new Set<MentionKind>(['user', 'all']);
   }
 }

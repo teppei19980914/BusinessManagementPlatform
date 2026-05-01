@@ -15,6 +15,7 @@ vi.mock('@/lib/db', () => ({
     task: { findFirst: vi.fn() },
     stakeholder: { findFirst: vi.fn() },
     customer: { findFirst: vi.fn() },
+    memo: { findFirst: vi.fn() },
   },
 }));
 
@@ -196,6 +197,28 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     vi.mocked(prisma.customer.findFirst).mockResolvedValue({ id: 'cus-1' } as never);
     const r = await resolveEntityForComment('customer', 'cus-1');
     expect(r).toEqual({ kind: 'admin-only' });
+  });
+
+  // PR #213: memo にコメント機能追加 (visibility-based 認可)
+  it('memo (public): public-or-draft 扱い (誰でもコメント可)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      visibility: 'public', userId: 'u-1',
+    } as never);
+    const r = await resolveEntityForComment('memo', 'm-1');
+    expect(r).toEqual({ kind: 'public-or-draft', visibility: 'public', creatorId: 'u-1' });
+  });
+
+  it('memo (draft): public-or-draft 扱い (作成者のみコメント可)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      visibility: 'draft', userId: 'u-2',
+    } as never);
+    const r = await resolveEntityForComment('memo', 'm-1');
+    expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-2' });
+  });
+
+  it('memo: 不在なら not-found', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
+    expect(await resolveEntityForComment('memo', 'x')).toEqual({ kind: 'not-found' });
   });
 
   it('not-found: 各種で id が無効ならば not-found', async () => {

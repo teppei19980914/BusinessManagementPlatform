@@ -49,13 +49,25 @@ describe('createCommentSchema', () => {
   });
 
   it('entityType は enum 外を拒否', () => {
+    // PR #213 で memo がコメント対象に追加されたため、未知の値で検証
     expect(
       createCommentSchema.safeParse({
-        entityType: 'memo', // memo は対象外 (Comment 機能は 7 entity 限定)
+        entityType: 'unknown_entity',
         entityId: validUuid,
         content: 'x',
       }).success,
     ).toBe(false);
+  });
+
+  // PR #213: memo は新規追加されたコメント対象、受け入れられること
+  it('entityType=memo は受理される (PR #213)', () => {
+    expect(
+      createCommentSchema.safeParse({
+        entityType: 'memo',
+        entityId: validUuid,
+        content: 'a comment on a public memo',
+      }).success,
+    ).toBe(true);
   });
 
   it('entityId は uuid 形式を要求', () => {

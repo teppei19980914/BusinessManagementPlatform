@@ -48,6 +48,9 @@ import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import type { MemoDTO } from '@/services/memo.service';
 // Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
 import { ClickableRow } from '@/components/common/clickable-row';
+// PR #213 (2026-05-01): 全メモにもコメント機能 + 通知 deep link auto-open を追加
+import { CommentSection } from '@/components/comments/comment-section';
+import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 
 function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
   switch (columnKey) {
@@ -75,6 +78,13 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
   const sortedMemos = multiSort(memos, sortState, getMemoSortValue);
 
   const attachmentsByEntity = useBatchAttachments('memo', sortedMemos.map((m) => m.id));
+
+  // PR #213: mention 通知 link `?memoId=...` から auto-open。
+  useAutoOpenDialog<MemoDTO>({
+    queryKey: 'memoId',
+    items: memos,
+    onOpen: (m) => setViewing(m),
+  });
 
   return (
     <div className="space-y-6">
@@ -173,6 +183,13 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
                 entityId={viewing.id}
                 canEdit={false}
                 label={tMemo('referenceUrl')}
+              />
+              {/* PR #213: コメント機能を追加 (他「全○○」と同じ UX、CommentSection は fieldset 外に配置)。
+                  認可は API 側で visibility-aware に判定される (public memo は誰でも投稿可、
+                  draft memo は作成者本人のみ)。 */}
+              <CommentSection
+                entityType="memo"
+                entityId={viewing.id}
               />
             </div>
           )}

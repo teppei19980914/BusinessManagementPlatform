@@ -26,6 +26,7 @@ import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import {
   authorizeMemoAttachment,
   createAttachment,
+  getEntityVisibility,
   listAttachments,
   resolveProjectIds,
 } from '@/services/attachment.service';
@@ -35,14 +36,16 @@ import { recordAuditLog } from '@/services/audit.service';
  * 親エンティティ → プロジェクト群を解決したうえで、
  * 指定されたアクセス種別 (read/write) の権限を判定する共通認可ユーティリティ。
  *
- * 認可ルール (Phase 1):
+ * 認可ルール:
  *   - admin: 常に許可
- *   - メンバー (projectMember にレコード有): read/write 両方許可
- *   - 非メンバー: 拒否
- *   - 孤児ナレッジ (紐付けプロジェクト 0 件): admin のみ許可
- *
- * 将来的に「read は projectMember 不要 (公開ナレッジは誰でも見られる)」のような
- * 緩和が必要になった場合は、mode に応じた条件分岐をここに追加する。
+ *   - **read on visibility='public' entity (risk/retrospective/knowledge)**: 認証済全員可
+ *     (PR #213 / 2026-05-01: 「全○○」の readOnly dialog から非メンバーが添付一覧を取得する経路を救済。
+ *      batch route の fix/cross-list-non-member-columns (2026-04-27) と整合。
+ *      旧仕様は singular GET も project member 必須で、非メンバーは 403 を踏んでいた)
+ *   - read on visibility='draft' entity: 作成者本人 OR admin (admin はトップで通過済)
+ *   - write: project member 必須 (visibility に関わらず)
+ *   - 非メンバー (write): 拒否
+ *   - 孤児ナレッジ (紐付けプロジェクト 0 件): admin のみ操作可
  */
 async function authorize(
   user: { id: string; systemRole: string },
@@ -71,6 +74,32 @@ async function authorize(
 
   if (user.systemRole === 'admin') return null;
 
+  // PR #213 / 2026-05-01: visibility-aware read 認可。
+  //   public な risk/retrospective/knowledge の添付は cross-list 画面で非メンバーが
+  //   見るのが正常動線 (read-only dialog から AttachmentList が GET する)。
+  //   write 時は引き続き project member 必須 (visibility 関係なく)。
+  if (mode === 'read') {
+    const visInfo = await getEntityVisibility(entityType, entityId);
+    if (visInfo === 'not-found') {
+      return NextResponse.json(
+        { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
+        { status: 404 },
+      );
+    }
+    if (visInfo !== null) {
+      // visibility を持つ entity (risk/retrospective/knowledge)
+      if (visInfo.visibility === 'public') return null; // 認証済全員可
+      // draft: 作成者本人のみ (admin は上で通過済)
+      if (visInfo.creatorId === user.id) return null;
+      return NextResponse.json(
+        { error: { code: 'FORBIDDEN', message: t('forbidden') } },
+        { status: 403 },
+      );
+    }
+    // visibility 概念なし (project/task/estimate) は下の project member 経路へ fall-through
+  }
+
+  // project member 経路 (write 全般 + read on project/task/estimate)
   const projectIds = await resolveProjectIds(entityType, entityId);
   if (projectIds === null) {
     return NextResponse.json(

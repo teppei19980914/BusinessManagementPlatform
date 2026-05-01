@@ -328,6 +328,23 @@ export async function resolveEntityForComment(
       });
       return c ? { kind: 'admin-only' } : { kind: 'not-found' };
     }
+    case 'memo': {
+      // PR #213: memo にもコメント機能を追加。memo は project に紐付かない user-scoped entity
+      // のため、visibility (public/draft) のみで認可する: knowledge と同じ public-or-draft kind を流用。
+      // - public memo: 認証済全員可 (read/write 共通)
+      // - draft memo: 作成者本人のみ (admin は read のみ)
+      const m = await prisma.memo.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { visibility: true, userId: true },
+      });
+      return m
+        ? {
+          kind: 'public-or-draft',
+          visibility: m.visibility as 'public' | 'draft',
+          creatorId: m.userId,
+        }
+        : { kind: 'not-found' };
+    }
   }
 }
 

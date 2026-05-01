@@ -87,5 +87,15 @@ export async function buildEntityCommentLink(
       // mention は admin 限定 (route 層で enforce)、admin only ページに直接遷移。
       return `/customers/${entityId}`;
     }
+    case 'memo': {
+      // PR #213: memo の通知 link は /all-memos?memoId=... に遷移し、cross-list 画面で
+      // dialog auto-open。memo は user-scoped で project member 概念がないため、cross-list が
+      // 唯一の到達手段 (個人 /memos は自分のメモ専用、他人のメモ閲覧には全メモが必要)。
+      const m = await prisma.memo.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { id: true },
+      });
+      return m ? `/all-memos?memoId=${entityId}` : '/all-memos';
+    }
   }
 }
