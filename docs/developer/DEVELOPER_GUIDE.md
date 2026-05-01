@@ -4120,7 +4120,88 @@ WebSocket / SSE は Vercel serverless でコスト面で不向きのため polli
 - 修正例: `src/services/notification.service.ts` `todayInJst` / `generateDailyNotifications`
 - 関連 PR: #199 (polymorphic Comment) / `lock-inactive` cron (認可パターン)
 
-### 5.55 コメントの @mention 機能 (PR feat/comment-mentions, 2026-05-01)
+### 5.55 sticky thead と readOnly 添付セクションの hotfix (PR fix/sticky-and-readonly-links, 2026-05-01)
+
+PR #204 (sticky table headers) で「ヘッダーが固定されない」報告 + 全○○ 編集 dialog で「参考リンクが見えない」報告が同時に上がり、両方を 1 PR で修正した。共通因子は **「PR #204 の sticky 設計が不完全だった」+「PR #199 で確立した §5.14 readOnly 非表示パターンを cross-list で機械的に踏襲しすぎていた」**。
+
+#### 症状 1: sticky thead が効かない
+
+PR #204 では共通 `<TableHeader>` に `sticky top-0 bg-card` を追加したが、**親 wrapper が `overflow-x-auto` を持つため scrolling 動作しない** 構造だった。
+
+##### 根本原因 (CSS 仕様の罠)
+
+`overflow-x: auto` (片軸指定) は、CSS 仕様上 **両軸ともスクロールコンテナ化** する ([MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/overflow#description) "if overflow is mixed (one auto, one visible) then visible behaves as auto")。
+
+つまり共通 Table の wrapper:
+```tsx
+<div className="relative w-full overflow-x-auto">  ← 両軸 auto 扱い、scrolling container
+  <table>
+    <thead className="sticky top-0">  ← wrapper に対して sticky
+```
+
+→ 1) wrapper はスクロールコンテナ。2) wrapper には `max-height` が無いので **垂直方向にスクロールしない**。3) sticky thead は「スクロールしない wrapper」に対して固定 → 何も起きない。4) ページ自体がスクロールすると wrapper ごと流れていく → thead も流れる。
+
+##### 修正
+
+wrapper に `max-h-[calc(100vh-12rem)]` + `overflow-auto` を追加し **真の縦スクロールコンテナ化**:
+
+```tsx
+<div className="relative w-full max-h-[calc(100vh-12rem)] overflow-auto">
+  <table>
+    <thead className="sticky top-0 z-10 bg-card"> ← wrapper 内で正常 sticky
+```
+
+`12rem` の根拠: DashboardHeader (3.5rem) + main padding (3rem) + 余白 (5.5rem)。テーブル外側のフィルタ/見出し領域はそのままページ内で残るが、テーブル領域内ではデータ行のみがスクロール、thead は固定 = **Excel 風 UX**。
+
+WBS 一覧 (`tasks-client.tsx`) の raw `<thead>` 親 wrapper も同パターンで `max-h` を追加。my-tasks / responsive-table は `overflow` wrapper を持たないため fix 不要。
+
+#### 症状 2: 全○○ 編集 dialog で 参考リンク が見えない
+
+##### 根本原因 (§5.14 を機械的に踏襲)
+
+`DialogAttachmentSection` は §5.14 (`fix/attachment-list-non-member-403`) で確立した「readOnly なら `return null`」パターンに従っていた:
+
+```tsx
+if (readOnly) return null;  // ← 旧仕様
+```
+
+§5.14 の元来の理由: 非メンバーが全○○ から開いた dialog で `/api/attachments` が 403 を返し Console エラー。だが **2026-04-27 (`fix/cross-list-non-member-columns`) で全○○ public エンティティの添付閲覧は非メンバーでも許可済** で、403 経路は既に解消されていた。にもかかわらず DialogAttachmentSection の return-null パターンだけが残置 = **stale な防御コードがユーザに見せるべき情報を隠していた**。
+
+##### 修正
+
+`canEdit={!readOnly}` に変更:
+
+```tsx
+// 新仕様
+const canEdit = !readOnly;
+return (
+  <>
+    {source && <SingleUrlField canEdit={canEdit} ... />}
+    <AttachmentList canEdit={canEdit} ... />
+  </>
+);
+```
+
+`AttachmentList` / `SingleUrlField` は `canEdit={false}` で **読み取り専用表示** (リンク一覧は見える、追加/編集/削除 UI のみ非表示) を既にサポートしていたため、props を反転させるだけで対応完了。
+
+#### 抽出したルール (再発防止)
+
+- [ ] **`overflow-{x|y}-auto` を片軸だけ指定するときは `max-h` も合わせて設定**: 仕様上 visible→auto 変換が起きてもう片軸もスクロールコンテナになるため、sticky を中に置くなら必ず max-h で実スクロールを発生させる
+- [ ] **「sticky が効かない」を見たら最初に親 wrapper の overflow / max-height を疑う**: CSS sticky の "scrolling ancestor" 解決ロジックは仕様が複雑、開発者ツールで動作中の scroll-clipping 親要素を確認する習慣をつける
+- [ ] **過去の防御コード (return null / stub 等) が **依然有効か定期的に再評価**: 今回の §5.14 のように、根本原因が解消された後も防御コードだけ残ると、副作用で別のユーザ体験を壊す
+- [ ] **「○○一覧と全○○で同じ dialog を再利用するときは readOnly の振る舞いを必ず確認**: data 編集と参考リンク表示は別軸の権限。readOnly は data 編集のみを止めるべきで、表示まで止めない設計が正しい (§5.49 でも同じ判断、E2E §4.49 1 番目の罠と同根)
+
+#### 関連
+
+- §5.14 (`fix/attachment-list-non-member-403` — 旧仕様の根拠、本 PR で前提が変わった)
+- §5.49 / E2E §4.49 1 (readOnly を機械的に踏襲しない、本件は同じ系統の問題)
+- §5.53 (PR #204 sticky thead — 本 PR で修正対象になった旧版)
+- §5.41 (○○一覧 共通 UI 部品の抽出規約 — DRY 原則: 1 箇所修正で全画面伝播)
+- 修正例: `src/components/ui/table.tsx` / `src/components/common/dialog-attachment-section.tsx`
+
+---
+
+### 5.56 コメントの @mention 機能 (PR feat/comment-mentions, 2026-05-01)
 
 PR #205 (通知 MVP) で確立した polymorphic Notification 基盤の上に、**コメント本文の @mention** を追加。完全アプリ内通知のため追加コストは無し。
 ユーザ要件 (Q1〜Q5):
@@ -4217,8 +4298,6 @@ function detectMentionContext(pathname: string): 'wbs' | 'project_list' | 'cross
 - §5.51 (visibility 認可マトリクス — 本件 Q3 の WBS 制約と同源)
 - DESIGN.md §8.3.4 (mention 認可マトリクス)
 - 修正例: `src/services/mention.service.ts` (kind 展開 + diff + 通知生成)
-
----
 
 ## 6. 機能削除の手順
 
@@ -5908,4 +5987,5 @@ Stop hook §6 (i18n key 単一源泉チェック) で検出。
 | 2026-05-01 | §5.52 / E2E §4.51 新設 (PR fix/attachments-batch-400)。**バッチ API の lenient validation 設計 + 構造化エラーログ** ── ユーザレポート「`/api/attachments/batch` で StatusCode:400 が Vercel log に出続けている」。原因は旧 route が `entityIds: z.array(z.string().uuid())` で 1 件でも非 UUID が混じるとバッチ全体を 400 で破棄する all-or-nothing 設計 + サーバ側に拒否 context を残していなかったため、status code のみで再現条件特定が不可能だった。修正: entityType / slot は厳格、entityIds は lenient (非 UUID は filter で除外、有効分のみ 200 返却)、validation 失敗時は `recordError` で system_error_logs に context (entityType の typeof / entityIds 件数 / Zod issues) を構造化記録。クライアント側 `useBatchAttachments` でも UUID 事前 filter を追加し二重防御。新規 9 件のテスト (1044 → 1053)。抽出ルール: (1) ベストエフォート系バッチ API は body lenient + 失敗黙殺で 200 (2) header / body の validation 厳しさを分離 (3) `console.*` 禁止 → `recordError` で構造化 DB ログ (4) クライアント側でも同正規表現で事前 filter |
 | 2026-05-01 | §5.53 新設 (PR feat/sticky-table-headers)。**一覧テーブルの Excel 風ヘッダー固定** ── 「○○一覧」「全○○」全画面で縦スクロール時に `<thead>` を viewport 上端に固定する UX 要望。共通 `<TableHeader>` コンポーネント 1 箇所に `sticky top-0 z-10 bg-card [&>tr>th]:bg-card` を追加するだけで 17+ 一覧画面に自動伝播 (DRY 原則)。`<TableHeader>` を経由しない raw `<thead>` 3 箇所 (`my-tasks-client` / `tasks-client` WBS / `responsive-table`) は個別対応。設計判断: (1) ページ全体スクロール基準で sticky → DashboardHeader (非 sticky) スクロールアウト後に thead が上端取る挙動 (2) `bg-card` 二重指定で古いブラウザ対応 (3) z-10 で Dialog/Toast/dropdown (z-50) より下に固定。抽出ルール: (a) 共通 UI 1 箇所修正で N 画面に伝播させる (b) sticky element には必ず bg を入れる (透過すると下行が透ける) (c) `<TableHeader>` を経由しない raw thead の grep を再発防止に運用 |
 | 2026-05-01 | §5.54 新設 (PR feat/notifications-mvp)。**アプリ内通知機能 MVP (完全無料、外部 push なし)** ── ベル UI を DashboardHeader に追加 + ACT の予定日リマインダ 2 種を Vercel Cron で日次生成 (JST 7:00 = UTC 22:00)。polymorphic Notification テーブル (Comment と同形)、`dedupeKey` UNIQUE で同日 2 重発火を DB レベルで弾く、partial index 2 本 (idx_tasks_planned_start_due / idx_tasks_planned_end_due) で flat query を高速化し WBS 階層 traversal を完全回避。`todayInJst()` ヘルパで cron の UTC ↔ JST 境界処理を service 層に閉じ込め、単体テストで UTC 14:59/15:00 境界を検証。既読 + 30 日経過の物理削除を同 cron に組み込み容量管理。UI polling は open 30 秒 / closed 5 分。新規テスト 29 件 (1053 → 1082)。抽出ルール: (1) 新 type 追加は validators の `NOTIFICATION_TYPES` 1 箇所 (2) dedupeKey は `{type}:{entityId}:{YYYY-MM-DD}` 形式を継承 (3) cron は flat query + partial index、階層探索を回避 (4) TZ 境界は `todayInJst` 経由、テストで 14:59/15:00 必須 (5) cron 認可は `CRON_SECRET` 未設定で fail-closed |
-| 2026-05-01 | §5.55 新設 (PR feat/comment-mentions)。**コメント @mention 機能 (完全無料、即時通知)** ── PR #205 の Notification 基盤上に追加。Mention テーブルを新設 (kind 判別ユニオン: user/all/project_member/role_*/assignee)、Comment との `onDelete: Cascade`。entityType 別の許容 kind マトリクスを `getAllowedMentionKinds` でサーバ側強制 (Q3 二重防御): WBS では all 不可、customer は user のみ。UI は @ トリガで `/api/mention-candidates` 候補表示 (Slack/GitHub 風)、`context` パラメータ ('wbs' / 'project_list' / 'cross_list') で UI 側のタブ絞り込み。配信は即時 (cron 経由せず POST 直後に Notification createMany)、`dedupeKey=comment_mention:{commentId}:{userId}` で 2 重通知防止、Q5 自分宛除外。Q2 採用で編集時は added のみ通知、removed は通知なし。新規テスト 33 件 (1082 → 1115)。抽出ルール: (1) kind 判別ユニオン拡張は `MENTION_KINDS` + `getAllowedMentionKinds` 1 箇所 (2) UI / server で同許容マトリクス二重防御 (3) context は UI ヒント、server は entityType ベースの validation (4) 編集時の通知は added のみ (5) 自分宛除外は service 層で実施 |
+| 2026-05-01 | §5.55 新設 (PR fix/sticky-and-readonly-links)。**sticky thead が効かない hotfix + 全○○ で参考リンク非表示の hotfix** ── PR #204 で sticky thead を共通 Table に追加したが、wrapper の `overflow-x-auto` が CSS 仕様上 (`visible→auto` 変換) 両軸スクロールコンテナ化し、wrapper には max-height がないため sticky が無効化されていた。修正: wrapper に `max-h-[calc(100vh-12rem)] overflow-auto` を追加し真の縦スクロールコンテナ化、Excel 風のテーブル領域内スクロール挙動に変更。WBS の raw thead wrapper も同パターンで修正。同時修正として `DialogAttachmentSection` が §5.14 由来の `if(readOnly) return null` で全○○ から添付リンクを完全非表示にしていた問題も解消 (`canEdit={!readOnly}` で読取専用表示に変更)。§5.14 の元来理由 (非メンバー 403) は 2026-04-27 fix/cross-list-non-member-columns で解消済だったが、防御コードだけが残置していた。抽出ルール: (1) 片軸 overflow-auto に max-h を必ず併記 (2) sticky 効かない時は親 scrolling ancestor を疑う (3) 過去の防御コードは前提変化時に再評価 (4) readOnly は data 編集のみを止め、表示まで止めない設計が正しい |
+| 2026-05-01 | §5.56 新設 (PR feat/comment-mentions)。**コメント @mention 機能 (完全無料、即時通知)** ── PR #205 の Notification 基盤上に追加。Mention テーブルを新設 (kind 判別ユニオン: user/all/project_member/role_*/assignee)、Comment との `onDelete: Cascade`。entityType 別の許容 kind マトリクスを `getAllowedMentionKinds` でサーバ側強制 (Q3 二重防御): WBS では all 不可、customer は user のみ。UI は @ トリガで `/api/mention-candidates` 候補表示 (Slack/GitHub 風)、`context` パラメータ ('wbs' / 'project_list' / 'cross_list') で UI 側のタブ絞り込み。配信は即時 (cron 経由せず POST 直後に Notification createMany)、`dedupeKey=comment_mention:{commentId}:{userId}` で 2 重通知防止、Q5 自分宛除外。Q2 採用で編集時は added のみ通知、removed は通知なし。新規テスト 33 件 (1082 → 1115)。抽出ルール: (1) kind 判別ユニオン拡張は `MENTION_KINDS` + `getAllowedMentionKinds` 1 箇所 (2) UI / server で同許容マトリクス二重防御 (3) context は UI ヒント、server は entityType ベースの validation (4) 編集時の通知は added のみ (5) 自分宛除外は service 層で実施 |
