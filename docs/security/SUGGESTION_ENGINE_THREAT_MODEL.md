@@ -145,3 +145,45 @@ PR #8 (統合テスト + リリース準備) で、`/threat-model` skill Mode B-
 ご要望に基づき、本機能の異常検知は将来のサービス内ダッシュボードと統合できる設計とする。詳細は [DESIGN.md §34](../developer/DESIGN.md) の監視設計セクションを参照。
 
 短期 (v1) では Vercel Cron による日次バッチで集計し admin にメール通知する最小実装を行い、中期 (v2 以降) で `/admin/observability/llm` ダッシュボードとして可視化する。これは [RELEASE_ROADMAP.md](../administrator/RELEASE_ROADMAP.md) Phase 3c の `/admin/observability` の一部として組み込まれる予定である。
+
+---
+
+## マルチテナント前提での追加脅威分析
+
+外部公開後の本サービスはマルチテナント SaaS として運用されるため ([DESIGN.md §34.11](../developer/DESIGN.md))、テナント間の認可境界に関する脅威を追加で分析する。
+
+### MT-1: テナント間データ漏洩 (Information Disclosure)
+
+**脅威**: テナント A のユーザが、SQL クエリの WHERE 句に `tenantId` 条件が漏れている経路を発見し、テナント B のデータを読み取ってしまう。これはマルチテナント SaaS で最も致命的な脆弱性類型であり、発覚すれば信頼回復が極めて困難となる。たとえば、ある API ルートが `prisma.knowledge.findMany({ where: { visibility: 'public' } })` のように tenantId フィルタを忘れて実装された場合、テナント A のユーザがテナント B の public knowledge を閲覧できてしまう。
+
+**対策の多層化**: 第一に、**すべての DB クエリに `tenantId` フィルタを必ず含める** ことを設計ルールとして DEVELOPER_GUIDE §5.62 に明記し、コードレビューで必ず確認する。第二に、**`@/lib/permissions.ts` の `requireSameTenant(user, entity)` ユーティリティ** を全 API ルートの最初の行で呼び出すことを標準パターンとし、認可を漏らさない仕組みとする。第三に、**統合テストで「テナント境界越境攻撃」を必ず再現** する。具体的には、テナント A のユーザが認証済セッションで、テナント B のリソース ID を URL に直接打ち込んだ場合に 404 が返ることを E2E でテストする。第四に、**将来の防衛線として PostgreSQL Row-Level Security (RLS) 導入** を v1.x 以降で検討する。RLS は DB レベルでテナント境界を強制するため、アプリケーション層のバグがあっても最終的に DB が拒否する。v1 では RLS を導入しないが、テーブル構造は RLS 化を見据えて設計する (`tenantId` カラムを最初に配置する等)。
+
+### MT-2: テナント認可境界のバイパス (Elevation of Privilege)
+
+**脅威**: 攻撃者が `User.tenantId` を改ざんすることで、自分を別テナントに「移動」させ、そのテナントのデータにアクセスする。あるいは、ID 推測攻撃で他テナントのリソース ID を把握し、URL 直接アクセスでデータを取得しようとする。
+
+**対策**: 第一に、**`User.tenantId` は admin 専用の管理画面でのみ変更可能** とし、一般ユーザの操作経路では絶対に変更されない設計とする。`tenantId` の変更履歴は `tenant_change_log` テーブル (subscription_tier_change_log と類似の監査ログ) に記録する。第二に、**リソース ID の推測攻撃を防ぐため、すべての主キーは UUIDv4** で生成し、連番 ID は使わない (これは現状すでに実装されている)。第三に、**API ルートでは「リソースの存在確認 + tenantId 一致確認」を 1 つのクエリで行う** パターンを徹底する。具体的には `prisma.knowledge.findFirst({ where: { id: knowledgeId, tenantId: user.tenantId } })` のように、リソース ID と tenantId をクエリの WHERE 句に同時に含める。これにより「リソースが存在するが、別テナントに属している」場合に 404 を返し、リソースの存在自体を漏らさない (Information Disclosure 防止と兼ねる)。
+
+### MT-3: テナント削除時のデータ漏れ (Information Disclosure)
+
+**脅威**: テナント削除操作時に、何らかのテーブルでカスケード削除が漏れて、削除されたテナントのデータが孤児レコードとして残存してしまう。後の DB スキャンで「削除済テナントのナレッジ」が発見される可能性がある。
+
+**対策**: テナント削除は **専用の `deleteTenant(tenantId)` 関数を経由し、すべての関連テーブルを順序立てて削除する** 設計とする。削除順序は外部キー制約を考慮し、子テーブルから順に削除する (Comment → Mention → Notification → Attachment → Knowledge → Project → User → Tenant のような順序)。Prisma の `onDelete: Cascade` を schema 定義に明示し、Postgres 側でも参照整合性を保つ。テナント削除後、定期的に `tenantId` が orphan な (削除済み tenant ID を持つ) レコードを scan するメンテナンスバッチを Vercel Cron で動作させ、孤児レコードを検出したら admin に通知する。
+
+### MT-4: テナント単位コスト追跡の改ざん (Tampering)
+
+**脅威**: 攻撃者が `Tenant.current_month_token_usage` を直接 0 にリセットする経路を見つければ、無制限に LLM を使い続けられてしまう。これは T-1 と同類だが、テナント単位なので影響範囲が拡大する (テナント内の全ユーザが恩恵を受ける)。
+
+**対策**: T-1 と同じ方針で、**`current_month_token_usage` の更新は専用関数 `incrementTenantTokenUsage()` 経由でのみ行う**。`token_usage_audit` テーブルには `tenant_id` を含め、テナント単位の毎日のスナップショットを記録する。月初リセットを行う Vercel Cron は固定 tenant 一覧をループする方式で実装し、外部から「リセット API」のようなエンドポイントは公開しない。
+
+### MT-5: 初期シードデータを通じたテナント間情報漏洩 (Information Disclosure)
+
+**脅威**: 初期シードデータがすべてのテナントに同じ内容で投入されるが、何らかのバグで「テナント A 用に書き換えられたシードナレッジ」がテナント B に流れ込む。あるいは、テナント間でナレッジを共有する仕組みが将来的に追加された場合、認可境界が破られる。
+
+**対策**: 第一に、**シードデータは clone される時点で tenantId を当該テナントに固定** し、その後一切共有しない。第二に、シード後のナレッジは通常の Knowledge と同等に扱われ、tenantId フィルタの対象になる。第三に、将来のテナント間共有機能 (もし実装するなら) は **明示的な opt-in と監査ログ** を必須とする設計とし、暗黙的な共有経路を作らない。
+
+### MT-6: Pro プラン契約状態の不正改ざん (Elevation of Privilege)
+
+**脅威**: 攻撃者が `Tenant.subscriptionTier` を `'free'` から `'pro'` に書き換え、課金なしで Pro 機能 (Sonnet 出力等) を享受する。
+
+**対策**: T-2 (subscription_tier 改ざん) のテナント版として同じ防御を適用する。`Tenant.subscriptionTier` の更新は **Stripe webhook 経由のみ** (v1.x で実装) または admin 専用エンドポイント経由でのみ可能とする。Stripe webhook 受信時はシグネチャ検証を必須とする。変更履歴は `subscription_tier_change_log` に記録し、不審な変更を admin が監査できるようにする。
