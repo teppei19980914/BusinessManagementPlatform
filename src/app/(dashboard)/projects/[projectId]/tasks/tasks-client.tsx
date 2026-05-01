@@ -1537,7 +1537,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           <div className="flex justify-end pb-2">
             <ResetColumnsButton />
           </div>
-          <div className="rounded-lg border overflow-x-auto">
+          {/* PR fix/sticky-and-readonly-links (2026-05-01): wrapper に max-h を追加し、
+              真の縦スクロールコンテナ化することで sticky thead が機能するようにする。
+              旧 (PR #204) は overflow-x-auto のみで vertical scroll を発生させない構造だったため、
+              sticky thead が無効化されていた (詳細: §5.55 / 共通 Table コンポーネントと同パターン)。 */}
+          <div className="rounded-lg border max-h-[calc(100vh-12rem)] overflow-auto">
             <table className="min-w-full text-xs md:text-sm">
               {/* PR feat/sticky-table-headers: WBS 一覧の Excel 風ヘッダー固定 (§5.53)。
                   `<TableHeader>` を経由しない raw thead で `bg-muted` を維持。 */}
