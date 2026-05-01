@@ -18,6 +18,11 @@
 
 import { prisma } from '@/lib/db';
 import type { CommentEntityType } from '@/lib/validators/comment';
+import type { MentionInput } from '@/lib/validators/mention';
+import {
+  diffMentions,
+  generateMentionNotifications,
+} from './mention.service';
 
 export type CommentDTO = {
   id: string;
@@ -73,10 +78,19 @@ export async function listComments(
 
 /**
  * コメントを作成する。entity 存在確認は呼び出し側 (route layer) の認可ステップで実施済の前提。
+ *
+ * mentions は省略可。指定された場合:
+ *   1. Mention レコードを一括作成
+ *   2. メンション対象 user に Notification (type='comment_mention') を一括生成 (Q5: 自分宛は除外)
+ *
+ * mention の kind 妥当性 (entity 別の許容 kind) は呼出側で `validateMentionsForEntity` 済の前提。
  */
 export async function createComment(
   input: { entityType: CommentEntityType; entityId: string; content: string },
   userId: string,
+  mentions: MentionInput[] = [],
+  mentionerName: string | null = null,
+  link: string = '',
 ): Promise<CommentDTO> {
   const created = await prisma.comment.create({
     data: {
@@ -87,6 +101,27 @@ export async function createComment(
     },
     include: { user: { select: { name: true } } },
   });
+
+  if (mentions.length > 0) {
+    // Mention レコード作成
+    await prisma.mention.createMany({
+      data: mentions.map((m) => ({
+        commentId: created.id,
+        kind: m.kind,
+        targetUserId: m.targetUserId ?? null,
+      })),
+    });
+    // 通知一括生成 (Q5 自分宛除外、dedupe は DB UNIQUE で担保)
+    await generateMentionNotifications({
+      commentId: created.id,
+      comment: { entityType: input.entityType, entityId: input.entityId },
+      mentions,
+      mentionerId: userId,
+      mentionerName: mentionerName ?? created.user?.name ?? null,
+      link,
+    });
+  }
+
   return toDTO(created);
 }
 
@@ -106,16 +141,56 @@ export async function getComment(commentId: string): Promise<CommentDTO | null> 
  * コメント本文を更新する。
  * 2026-05-01 仕様: 認可は呼び出し側で **投稿者本人のみ** を確認 (admin 不可)。
  * updatedAt は @updatedAt で自動更新される。
+ *
+ * mentions が undefined のときは mention は触らない (互換)。配列が渡された場合は:
+ *   - 旧 mention との diff を計算 (Q2: 追加分のみ通知、削除分は何もしない)
+ *   - 削除分の Mention レコードを deleteMany
+ *   - 追加分の Mention レコードを createMany + Notification 生成
  */
 export async function updateComment(
   commentId: string,
   content: string,
+  mentions?: MentionInput[],
+  mentionerName: string | null = null,
+  link: string = '',
 ): Promise<CommentDTO> {
   const updated = await prisma.comment.update({
     where: { id: commentId },
     data: { content },
     include: { user: { select: { name: true } } },
   });
+
+  if (mentions !== undefined) {
+    // 旧 mentions 取得
+    const old = await prisma.mention.findMany({
+      where: { commentId },
+      select: { id: true, kind: true, targetUserId: true },
+    });
+    const { added, removedIds } = diffMentions(old, mentions);
+
+    if (removedIds.length > 0) {
+      await prisma.mention.deleteMany({ where: { id: { in: removedIds } } });
+    }
+    if (added.length > 0) {
+      await prisma.mention.createMany({
+        data: added.map((m) => ({
+          commentId,
+          kind: m.kind,
+          targetUserId: m.targetUserId ?? null,
+        })),
+      });
+      // Q2 採用: 追加分のみ通知 (削除分は何もしない)
+      await generateMentionNotifications({
+        commentId,
+        comment: { entityType: updated.entityType as CommentEntityType, entityId: updated.entityId },
+        mentions: added,
+        mentionerId: updated.userId,
+        mentionerName: mentionerName ?? updated.user?.name ?? null,
+        link,
+      });
+    }
+  }
+
   return toDTO(updated);
 }
 

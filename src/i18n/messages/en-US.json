@@ -43,7 +43,8 @@
   },
   "comment": {
     "section": "Comments",
-    "placeholder": "Write a comment",
+    "placeholder": "Write a comment (@ to mention)",
+    "mentionsCount": "{count} mention(s)",
     "post": "Post",
     "edit": "Edit",
     "delete": "Delete",

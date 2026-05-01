@@ -38,6 +38,8 @@ import {
   resolveEntityForComment,
 } from '@/services/comment.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { validateMentionsForEntity } from '@/services/mention.service';
+import { buildEntityCommentLink } from '@/lib/entity-link';
 
 /**
  * 親エンティティの存在確認 + 認可。リクエストユーザが当該 entity に対して
@@ -161,7 +163,27 @@ export async function POST(req: NextRequest) {
   );
   if (forbidden) return forbidden;
 
-  const created = await createComment(parsed.data, user.id);
+  // PR feat/comment-mentions: mention の kind 妥当性をサーバ側でも検証 (Q3 二重防御)
+  const mentions = parsed.data.mentions ?? [];
+  if (mentions.length > 0) {
+    const v = validateMentionsForEntity(parsed.data.entityType, mentions);
+    if (!v.ok) {
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: v.reason } },
+        { status: 400 },
+      );
+    }
+  }
+
+  // 通知 link の生成 (entity の編集 dialog を開く URL)
+  const link = await buildEntityCommentLink(parsed.data.entityType, parsed.data.entityId);
+  const created = await createComment(
+    parsed.data,
+    user.id,
+    mentions,
+    user.name ?? null,
+    link,
+  );
 
   await recordAuditLog({
     userId: user.id,

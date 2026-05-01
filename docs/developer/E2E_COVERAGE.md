@@ -128,6 +128,10 @@
 - [ ] `/api/notifications/mark-all-read` (POST) — skip: service テストで一括既読を検証
 - [ ] `/api/cron/daily-notifications` (POST) — skip: cron 認可 + dedupeKey + JST 境界の単体テストで担保
 
+### メンション (PR feat/comment-mentions)
+- [ ] `/api/mention-candidates` (GET) — skip: 単体テスト (`src/app/api/mention-candidates/route.test.ts`) で context (project_list / cross_list / wbs) 別の groups 絞り込み + entityType 別 user 抽出を網羅
+- [ ] `/api/comments` (POST、mention 付き) — skip: 既存 `comment.service.test.ts` + 新 `mention.service.test.ts` で kind 展開 / 通知生成 / 自分宛除外 (Q5) / dedupe を網羅
+
 ### 見積
 - [x] `/api/projects/[projectId]/estimates/*` — e2e/specs/08-estimates.spec.ts (PR #96 / POST 作成 + 確定 + DELETE)
 
