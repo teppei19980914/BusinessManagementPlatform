@@ -29,6 +29,7 @@ import { ResizableHead } from '@/components/ui/resizable-columns';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
+import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { StakeholderEditDialog } from '@/components/dialogs/stakeholder-edit-dialog';
 import {
@@ -107,7 +108,12 @@ type Props = {
   onReload: () => Promise<void> | void;
 };
 
-export function StakeholdersClient({ projectId, stakeholders, members, onReload }: Props) {
+export function StakeholdersClient({
+  projectId,
+  stakeholders,
+  members,
+  onReload,
+}: Props) {
   const t = useTranslations('stakeholder');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
@@ -118,6 +124,16 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
   const [priorityFilter, setPriorityFilter] = useState<'' | StakeholderPriority>('');
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
   const { sortState, setSortColumn } = useMultiSort('sort:project-stakeholders');
+
+  // PR feat/notification-deep-link-completion (2026-05-01): 通知 deep link
+  // (`?tab=stakeholders&stakeholderId=...`) から着地した際、URL の stakeholderId を読み取って
+  // dialog を 1 度だけ auto-open する。useAutoOpenDialog 内部で URL クリーンアップ済 (再発火しない)。
+  // initialOpenStakeholderId prop は ssr 互換性のための受け取り口で、実際の URL parse は hook 内。
+  useAutoOpenDialog<StakeholderDTO>({
+    queryKey: 'stakeholderId',
+    items: stakeholders,
+    onOpen: (s) => setEditing(s),
+  });
 
   const reload = useCallback(async () => {
     await onReload();

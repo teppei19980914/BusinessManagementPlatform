@@ -90,3 +90,47 @@ export function collectSelfAndDescendantIds(nodes: TaskDTO[], targetId: string):
   }
   return [];
 }
+
+/**
+ * 指定 ID のノードに到達するまでの **祖先 (parent → grandparent → ...) の ID 配列** を返す。
+ * 自身は含まない。見つからなければ空配列。
+ *
+ * 用途: 通知 deep link で `?taskId=xxx` を踏んだ際、該当タスクが折りたたみ階層内に
+ *      隠れている場合に親 WP を全展開して可視にする (PR feat/notification-deep-link-completion)。
+ *
+ * 例:
+ *   tree: [{ id: 'root', children: [{ id: 'mid', children: [{ id: 'leaf' }] }] }]
+ *   findAncestorIds(tree, 'leaf') → ['root', 'mid']
+ *   findAncestorIds(tree, 'root') → []           (祖先なし)
+ *   findAncestorIds(tree, 'unknown') → []        (見つからない)
+ */
+export function findAncestorIds(nodes: TaskDTO[], targetId: string): string[] {
+  function walk(currentNodes: TaskDTO[], path: string[]): string[] | null {
+    for (const node of currentNodes) {
+      if (node.id === targetId) {
+        return path; // path は親祖先のみ (自身を除く)
+      }
+      if (node.children && node.children.length > 0) {
+        const found = walk(node.children, [...path, node.id]);
+        if (found !== null) return found;
+      }
+    }
+    return null;
+  }
+  return walk(nodes, []) ?? [];
+}
+
+/**
+ * ツリー構造から `id` で再帰的にタスクを探す。
+ * tasks-client.tsx の `tasks: TaskDTO[]` (root 配列、各 root の `children` で階層) で使う。
+ */
+export function findTaskInTree(nodes: TaskDTO[], targetId: string): TaskDTO | null {
+  for (const node of nodes) {
+    if (node.id === targetId) return node;
+    if (node.children) {
+      const found = findTaskInTree(node.children, targetId);
+      if (found) return found;
+    }
+  }
+  return null;
+}

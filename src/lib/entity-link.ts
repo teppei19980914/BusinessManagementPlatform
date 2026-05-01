@@ -12,7 +12,9 @@
  *   - retrospective : /retrospectives?retroId={entityId}       (全振り返り画面で auto-open)
  *   - knowledge     : /knowledge?knowledgeId={entityId}        (全ナレッジ画面で auto-open)
  *   - task          : /projects/{projectId}/tasks?taskId={id}  (mention は ProjectMember 限定なので個別画面で OK)
- *   - stakeholder   : /projects/{projectId}/stakeholders?...   (mention は PM/TL 限定なので個別画面で OK)
+ *   - stakeholder   : /projects/{projectId}?tab=stakeholders&stakeholderId={id}
+ *                       (project 詳細画面の tab 切替 + dialog auto-open。
+ *                        専用 page.tsx を作らず project-detail-client が tab 切替で対応)
  *   - customer      : /customers/{entityId}                    (mention は admin 限定なので admin 画面で OK)
  *
  * entity が削除済の場合は cross-list ページのみ (query param なし) を返す。
@@ -69,13 +71,16 @@ export async function buildEntityCommentLink(
       return k ? `/knowledge?knowledgeId=${entityId}` : '/knowledge';
     }
     case 'stakeholder': {
-      // mention は PM/TL 限定 (route 層で enforce) なので project 個別画面に遷移する。
+      // mention は PM/TL 限定 (route 層で enforce)。
+      // /projects/{id}/stakeholders/page.tsx は存在しない (stakeholder UI はプロジェクト詳細画面の
+      // タブとして実装) ため、`?tab=stakeholders&stakeholderId=...` で tab 切替 + dialog auto-open
+      // を project-detail-client で行う (PR feat/notification-deep-link-completion / 2026-05-01)。
       const s = await prisma.stakeholder.findFirst({
         where: { id: entityId, deletedAt: null },
         select: { projectId: true },
       });
       return s
-        ? `/projects/${s.projectId}/stakeholders?stakeholderId=${entityId}`
+        ? `/projects/${s.projectId}?tab=stakeholders&stakeholderId=${entityId}`
         : '/projects';
     }
     case 'customer': {

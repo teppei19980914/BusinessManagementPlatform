@@ -61,10 +61,12 @@ describe('buildEntityCommentLink', () => {
       expect(link).toBe('/projects/p-1/tasks?taskId=t-1');
     });
 
-    it('stakeholder: /projects/[id]/stakeholders?stakeholderId=... (PM/TL のみメンション可)', async () => {
+    it('stakeholder: /projects/[id]?tab=stakeholders&stakeholderId=... (project 詳細画面の tab 切替 + auto-open)', async () => {
+      // 2026-05-01 PR feat/notification-deep-link-completion: stakeholder 専用 page.tsx 未存在のため
+      // tab パラメータで project-detail-client 経由で開く形式に変更。
       vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
       const link = await buildEntityCommentLink('stakeholder', 's-1');
-      expect(link).toBe('/projects/p-1/stakeholders?stakeholderId=s-1');
+      expect(link).toBe('/projects/p-1?tab=stakeholders&stakeholderId=s-1');
     });
 
     it('task が削除済なら fallback /my-tasks', async () => {

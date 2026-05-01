@@ -168,17 +168,28 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-3' });
   });
 
-  it('task: 存在すれば project-scoped (requiredRole=any、全 ProjectMember 許可)', async () => {
+  it('task: 存在すれば project-scoped (mention は ProjectMember、plain コメントは全員可)', async () => {
+    // PR feat/notification-deep-link-completion (2026-05-01): task の plain コメントは緩和。
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
     const r = await resolveEntityForComment('task', 't-1');
-    expect(r).toEqual({ kind: 'project-scoped', projectIds: ['p-1'], requiredRole: 'any' });
+    expect(r).toEqual({
+      kind: 'project-scoped',
+      projectIds: ['p-1'],
+      mentionRequiredRole: 'any',
+      plainCommentScope: 'public',
+    });
   });
 
-  it('stakeholder: 存在すれば project-scoped (requiredRole=pm_tl、PM/TL のみ許可)', async () => {
+  it('stakeholder: 存在すれば project-scoped (mention/plain ともに PM/TL のみ)', async () => {
     // PR feat/notification-edit-dialog (2026-05-01): stakeholder は PM/TL 限定。
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
     const r = await resolveEntityForComment('stakeholder', 's-1');
-    expect(r).toEqual({ kind: 'project-scoped', projectIds: ['p-1'], requiredRole: 'pm_tl' });
+    expect(r).toEqual({
+      kind: 'project-scoped',
+      projectIds: ['p-1'],
+      mentionRequiredRole: 'pm_tl',
+      plainCommentScope: 'project-member',
+    });
   });
 
   it('customer: 存在すれば admin-only', async () => {

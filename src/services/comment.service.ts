@@ -4,10 +4,12 @@
  * 設計方針:
  *   - ポリモーフィック関連 (entity_type + entity_id) で 7 種のエンティティ
  *     (issue/task/risk/retrospective/knowledge/customer/stakeholder) に紐づく。
- *   - 認可 (entity 別、2026-05-01 PR feat/notification-edit-dialog で細粒化):
- *     - issue / risk / retrospective / knowledge: 認証済ユーザ全員 (要件 Q4、cross-list で誰でも閲覧/投稿可)
- *     - task: ProjectMember (or admin) のみ
- *     - stakeholder: PM/TL (or admin) のみ — ステークホルダ管理は計画責任者の業務領域
+ *   - 認可 (entity 別、2026-05-01 PR feat/notification-deep-link-completion で再々細粒化):
+ *     - issue / risk / retrospective / knowledge: 認証済ユーザ全員 (Q4、cross-list で誰でも閲覧/投稿可)
+ *     - task: コメント投稿は認証済全員可 / **mention 含む場合のみ ProjectMember (or admin)** (新要件)
+ *       理由: WBS タスクは「自分のタスクではないがコメントだけ残したい」ニーズがある (例: PMO や
+ *       他チームのレビュアー)。一方 mention はタスク責任者の関係者ネットワーク内で完結させたい。
+ *     - stakeholder: PM/TL (or admin) のみ (mention の有無に関わらず) — 計画責任者の業務領域
  *     - customer: admin のみ — admin 専用エンティティ
  *     ※ 編集 / 削除: 投稿者本人のみ (admin 救済なし、要件 Q5)
  *   - 削除: soft-delete (deletedAt) — 監査要件 + 編集履歴保持
@@ -218,15 +220,24 @@ export async function deleteComment(commentId: string): Promise<void> {
  * - not-found: エンティティが存在しない (404)
  * - public-or-draft: visibility と creatorId を返し、route 層が認可判定する
  *   (issue / risk / retrospective / knowledge)
- * - project-scoped: project member 必須 (task / stakeholder)
- *   - requiredRole='pm_tl' 指定時は PM/TL ロールのみ許可 (stakeholder)
- *   - requiredRole='any' (or 未指定) は全 project member 許可 (task)
+ * - project-scoped: project member 関連の認可
+ *   - mentionRequiredRole: mention 含むコメント投稿時の必須 project ロール
+ *     - 'any' = 全 project member (or admin) 許可 (task の mention)
+ *     - 'pm_tl' = PM/TL (or admin) のみ許可 (stakeholder の mention)
+ *   - plainCommentScope: mention なしコメント投稿時のスコープ
+ *     - 'public' = 認証済ユーザ全員可 (task の plain コメント)
+ *     - 'project-member' = mentionRequiredRole と同じ制限を適用 (stakeholder)
  * - admin-only: Customer (admin 専用エンティティ)
  */
 export type EntityResolveResult =
   | { kind: 'not-found' }
   | { kind: 'public-or-draft'; visibility: 'public' | 'draft'; creatorId: string }
-  | { kind: 'project-scoped'; projectIds: string[]; requiredRole: 'any' | 'pm_tl' }
+  | {
+    kind: 'project-scoped';
+    projectIds: string[];
+    mentionRequiredRole: 'any' | 'pm_tl';
+    plainCommentScope: 'public' | 'project-member';
+  }
   | { kind: 'admin-only' };
 
 export async function resolveEntityForComment(
@@ -277,24 +288,36 @@ export async function resolveEntityForComment(
         : { kind: 'not-found' };
     }
     case 'task': {
-      // Task は project-scoped、ProjectMember 全員にメンション/コメント許可 (要件 2026-05-01)
+      // Task: コメント投稿は認証済全員、mention 含む場合のみ ProjectMember (要件 2026-05-01)。
+      // PMO や他チームレビュアーが「自分のタスクではないがコメントを残したい」ケースを許容しつつ、
+      // mention で project 外の人に通知が飛ぶことは防ぐ (mention 受信者は必ず project member)。
       const t = await prisma.task.findFirst({
         where: { id: entityId, deletedAt: null },
         select: { projectId: true },
       });
       return t
-        ? { kind: 'project-scoped', projectIds: [t.projectId], requiredRole: 'any' }
+        ? {
+          kind: 'project-scoped',
+          projectIds: [t.projectId],
+          mentionRequiredRole: 'any',
+          plainCommentScope: 'public',
+        }
         : { kind: 'not-found' };
     }
     case 'stakeholder': {
-      // Stakeholder は project-scoped、PM/TL のみメンション/コメント許可 (要件 2026-05-01)
+      // Stakeholder: PM/TL のみメンション/コメント許可 (mention 有無に関わらず)。
       // ステークホルダ管理は計画責任者の業務領域のため、一般メンバーには書き込み権限を渡さない。
       const s = await prisma.stakeholder.findFirst({
         where: { id: entityId, deletedAt: null },
         select: { projectId: true },
       });
       return s
-        ? { kind: 'project-scoped', projectIds: [s.projectId], requiredRole: 'pm_tl' }
+        ? {
+          kind: 'project-scoped',
+          projectIds: [s.projectId],
+          mentionRequiredRole: 'pm_tl',
+          plainCommentScope: 'project-member',
+        }
         : { kind: 'not-found' };
     }
     case 'customer': {

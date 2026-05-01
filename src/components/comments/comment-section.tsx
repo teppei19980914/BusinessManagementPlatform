@@ -254,7 +254,6 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
   const { showSuccess, showError } = useToast();
   const session = useSession();
   const currentUserId = session.data?.user?.id;
-  const isAdmin = session.data?.user?.systemRole === 'admin';
   const pathname = usePathname();
   const mentionContext = detectMentionContext(pathname ?? '');
 
@@ -365,8 +364,16 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
     await reload();
   }
 
+  /**
+   * 編集 / 削除ボタンの表示判定。
+   *
+   * 2026-05-01 PR feat/notification-deep-link-completion: **投稿者本人のみ表示** に厳格化
+   *   (旧仕様は admin も表示していたが、API 側は §5.51 で既に admin 救済を外しており UI が不整合だった)。
+   *   admin がボタンを押しても 403 を返すだけだったため UI を API に合わせる方向で揃える。
+   *   admin が他人コメントを操作したい場合は entity ごとカスケード削除に委ねる (§5.51 既定方針)。
+   */
   function canMutate(c: CommentDTO): boolean {
-    return isAdmin || c.userId === currentUserId;
+    return c.userId === currentUserId;
   }
 
   return (
