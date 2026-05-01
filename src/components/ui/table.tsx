@@ -11,8 +11,20 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   //   wrapper 側に overflow-x-auto を置くことで、テーブルのはみ出しは wrapper 内に
   //   閉じ込められ、page-level の横スクロールやヘッダずれを防ぐ。
   //   はみ出しが無い場合はスクロールバーも出ないので、通常閲覧時の UX は維持。
+  //
+  // 2026-05-01 (PR fix/sticky-and-readonly-links): sticky thead 修正。
+  //   旧 (PR #204) は wrapper に max-height がなく、CSS 仕様上 `overflow-x: auto` が両軸の
+  //   スクロールコンテナを作る (visible→auto 変換) ため、sticky thead が wrapper に
+  //   対して固定 → wrapper は実際にはスクロールしないので何も起きない、という症状だった。
+  //   修正: `max-h-[calc(100vh-12rem)] overflow-auto` で wrapper を真の縦スクロールコンテナ化。
+  //   結果: テーブル領域内をスクロールすると thead が固定、データ行のみ流れる Excel 風 UX。
+  //   max-h は DashboardHeader (3.5rem) + main padding (3rem) + 余白の概算で 12rem 確保。
+  //   テーブル外側のフィルター/見出し領域はそのままページ内で残る。
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div
+      data-slot="table-container"
+      className="relative w-full max-h-[calc(100vh-12rem)] overflow-auto"
+    >
       <table
         data-slot="table"
         className={cn("w-full caption-bottom text-xs md:text-sm", className)}
