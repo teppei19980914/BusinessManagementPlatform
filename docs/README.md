@@ -15,6 +15,7 @@
 | [knowledge/](./knowledge/) | ナレッジ・教訓集 | KDD (Knowledge-Driven Development) エントリ、過去の失敗事例と解決パターン |
 | [roadmap/](./roadmap/) | ロードマップ・計画書 | リリース計画、提案エンジン v2 計画、過去の MVP 計画記録 |
 | [security/](./security/) | セキュリティ設計・運用 | 脅威モデル、セキュリティタスク、セキュリティ運用手順 |
+| [vision/](./vision/) | 思想・価値観 (抽象論) | 開発者本人の動機・目指す世界観・大切にする価値観・長期展望。意思決定のコンパス |
 | [beginner/](./beginner/) | 初心者向けガイド | 新規参入開発者向けセットアップガイド |
 | [archive/](./archive/) | アーカイブ (旧構造) | 2026-05-02 以前の単一巨大ドキュメント群 (DEVELOPER_GUIDE / DESIGN / SPECIFICATION / REQUIREMENTS など)。新規追記はせず、参考用に保全 |
 
@@ -28,6 +29,7 @@
 - テスト: [test/STRATEGY.md](./test/STRATEGY.md) / [test/E2E_LESSONS.md](./test/E2E_LESSONS.md)
 - 開発者向け: [developer-guide/HOW_TO_ADD_FEATURES.md](./developer-guide/HOW_TO_ADD_FEATURES.md)
 - ナレッジ: [knowledge/README.md](./knowledge/README.md) (索引)
+- 思想・価値観 (なぜ作るのか): [vision/README.md](./vision/README.md)
 
 ## ドキュメント分割の経緯
 
