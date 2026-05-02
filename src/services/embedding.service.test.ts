@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    $executeRawUnsafe: vi.fn(),
-    $queryRawUnsafe: vi.fn(),
+    // PR #4 (CI セキュリティスコア対応): tagged template 版に切替
+    $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -298,11 +299,20 @@ describe('generateEmbedding - 縮退伝播 / 失敗', () => {
   });
 });
 
+/**
+ * tagged template の args[0] (TemplateStringsArray) を 1 つの文字列に連結する helper。
+ * SQL 構造アサーションに使用 (parametrized 値は除外される)。
+ */
+function joinTemplateStrings(call: unknown[]): string {
+  const parts = call[0] as ReadonlyArray<string>;
+  return parts.join('?');
+}
+
 describe('persistEmbedding', () => {
-  it('white-list 外のテーブル名は throw', async () => {
+  it('未知のテーブル名 (型エラー回避でランタイム強制) は exhaustive switch で throw', async () => {
     await expect(
       persistEmbedding(
-        // @ts-expect-error: invalid table for testing
+        // @ts-expect-error: invalid table for testing (TS union 違反を強制)
         'evil_table',
         'r1',
         TENANT_A,
@@ -317,28 +327,46 @@ describe('persistEmbedding', () => {
     ).rejects.toThrow(/length/);
   });
 
-  it('正常時は $executeRawUnsafe を呼び、テナント境界 + cast を含む SQL', async () => {
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
+  it('正常時は $executeRaw を tagged template で呼び、テナント境界 + cast を含む SQL', async () => {
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
     const e = makeFakeEmbedding();
 
     const updated = await persistEmbedding('projects', 'r1', TENANT_A, e);
 
     expect(updated).toBe(1);
-    expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(1);
-    const [sql, vectorText, rowId, tenantId] = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0]!;
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+
+    const call = vi.mocked(prisma.$executeRaw).mock.calls[0]!;
+    const sql = joinTemplateStrings(call);
     expect(sql).toContain('UPDATE "projects"');
     expect(sql).toContain('content_embedding');
-    expect(sql).toContain('$1::vector');
-    expect(sql).toContain('tenant_id = $3::uuid');
+    expect(sql).toContain('::vector');
+    expect(sql).toContain('tenant_id =');
+
+    // 補間値は args[1..] に順に渡る (vectorText, rowId, tenantId)
+    const [, vectorText, rowId, tenantId] = call;
     expect(typeof vectorText).toBe('string');
     expect(vectorText as string).toMatch(/^\[.*\]$/); // pgvector text 形式
     expect(rowId).toBe('r1');
     expect(tenantId).toBe(TENANT_A);
   });
+
+  it('5 つのテーブル各々で正しい UPDATE SQL が生成される (横展開検証)', async () => {
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+    const e = makeFakeEmbedding();
+    const tables = ['projects', 'knowledges', 'risks_issues', 'retrospectives', 'memos'] as const;
+
+    for (const table of tables) {
+      vi.mocked(prisma.$executeRaw).mockClear();
+      await persistEmbedding(table, 'r1', TENANT_A, e);
+      const sql = joinTemplateStrings(vi.mocked(prisma.$executeRaw).mock.calls[0]!);
+      expect(sql).toContain(`UPDATE "${table}"`);
+    }
+  });
 });
 
 describe('searchSimilar', () => {
-  it('white-list 外のテーブル名は throw', async () => {
+  it('未知のテーブル名は exhaustive switch で throw', async () => {
     await expect(
       searchSimilar({
         // @ts-expect-error: invalid table for testing
@@ -360,7 +388,7 @@ describe('searchSimilar', () => {
   });
 
   it('SQL に tenant_id / deleted_at / content_embedding IS NOT NULL の境界条件が含まれる', async () => {
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
 
     await searchSimilar({
       table: 'knowledges',
@@ -368,9 +396,9 @@ describe('searchSimilar', () => {
       tenantId: TENANT_A,
     });
 
-    const [sql] = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0]!;
+    const sql = joinTemplateStrings(vi.mocked(prisma.$queryRaw).mock.calls[0]!);
     expect(sql).toContain('FROM "knowledges"');
-    expect(sql).toContain('tenant_id'); // tenantId 境界
+    expect(sql).toContain('"tenant_id" ='); // tenantId 境界
     expect(sql).toContain('"deleted_at" IS NULL'); // soft-delete フィルタ
     expect(sql).toContain('"content_embedding" IS NOT NULL'); // NULL 除外
     expect(sql).toContain('<=>'); // cosine distance 演算子
@@ -379,7 +407,7 @@ describe('searchSimilar', () => {
   it('結果を score 降順で返却 (cosine_distance を score に変換)', async () => {
     // pgvector の <=> は 0=同一 / 2=正反対。score は 1 - distance/2 で 1.0=同一
     // モックは事前に変換後の score を返す体裁
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
       { id: 'k1', score: 0.95 },
       { id: 'k2', score: 0.7 },
       { id: 'k3', score: 0.3 },
@@ -397,7 +425,7 @@ describe('searchSimilar', () => {
   });
 
   it('minScore で下限フィルタ', async () => {
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
       { id: 'k1', score: 0.95 },
       { id: 'k2', score: 0.7 },
       { id: 'k3', score: 0.3 },
@@ -414,8 +442,8 @@ describe('searchSimilar', () => {
     expect(results.every((r) => r.score >= 0.5)).toBe(true);
   });
 
-  it('excludeIds 指定時は SQL に id <> ALL($4) 句が追加され、4 引数で渡される', async () => {
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([]);
+  it('excludeIds 指定時は SQL に id <> ALL(...) 句が含まれ、配列が bind される', async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
 
     await searchSimilar({
       table: 'projects',
@@ -424,16 +452,16 @@ describe('searchSimilar', () => {
       excludeIds: ['p-self'],
     });
 
-    const args = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0]!;
-    const sql = args[0] as string;
-    expect(sql).toContain('id <> ALL($4::uuid[])');
-    // bind 値は順に: vectorText, tenantId, limit, excludeIds
-    expect(args).toHaveLength(5); // sql + 4 params
-    expect(args[4]).toEqual(['p-self']);
+    const call = vi.mocked(prisma.$queryRaw).mock.calls[0]!;
+    const sql = joinTemplateStrings(call);
+    expect(sql).toContain('id <> ALL(');
+    expect(sql).toContain('::uuid[]');
+    // 補間値の中に excludeIds 配列が含まれる
+    expect(call.slice(1)).toContainEqual(['p-self']);
   });
 
-  it('excludeIds なしなら SQL に <> ALL は含まれず、3 引数で渡される', async () => {
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([]);
+  it('excludeIds なしなら SQL に <> ALL は含まれない', async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
 
     await searchSimilar({
       table: 'projects',
@@ -441,9 +469,23 @@ describe('searchSimilar', () => {
       tenantId: TENANT_A,
     });
 
-    const args = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0]!;
-    const sql = args[0] as string;
+    const sql = joinTemplateStrings(vi.mocked(prisma.$queryRaw).mock.calls[0]!);
     expect(sql).not.toContain('<> ALL');
-    expect(args).toHaveLength(4); // sql + 3 params
+  });
+
+  it('5 つのテーブル各々で正しい SELECT SQL が生成される (横展開検証)', async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+    const tables = ['projects', 'knowledges', 'risks_issues', 'retrospectives', 'memos'] as const;
+
+    for (const table of tables) {
+      vi.mocked(prisma.$queryRaw).mockClear();
+      await searchSimilar({
+        table,
+        queryEmbedding: makeFakeEmbedding(),
+        tenantId: TENANT_A,
+      });
+      const sql = joinTemplateStrings(vi.mocked(prisma.$queryRaw).mock.calls[0]!);
+      expect(sql).toContain(`FROM "${table}"`);
+    }
   });
 });

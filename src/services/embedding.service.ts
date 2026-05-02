@@ -10,8 +10,10 @@
  *
  *   - **生成**: 入力 text を MAX_INPUT_CHARS で truncate し、Voyage API で 1024 次元ベクトルへ変換。
  *   - **保存**: Prisma 経由で `Unsupported("vector(1024)")` カラムを直接 update できないため、
- *     `$executeRawUnsafe` で型 cast (text → vector) しつつ書き込む。SQL injection を避けるため
- *     ベクトルは数値配列を `[1.234,...]` 形式の文字列に整形して bind する。
+ *     tagged template の生 SQL (parametrized binding) で型 cast (text → vector) しつつ書き込む。
+ *     SQL injection 対策として、テーブル名は TypeScript union + exhaustive switch で静的固定し、
+ *     値はすべて自動 parametrized binding。ベクトルは数値配列を `[1.234,...]` 形式の
+ *     文字列に整形して bind する。
  *   - **検索**: `<=>` 演算子 (cosine distance、0=同一 / 2=反対) を使い ORDER BY で上位 N を取得。
  *     Score への変換は `1 - distance / 2` で 0.0-1.0 の similarity に正規化。
  *   - **テナント境界**: `WHERE tenant_id = $tenantId AND deleted_at IS NULL` を必須付与。
@@ -85,21 +87,17 @@ export interface SimilarityHit {
   score: number;
 }
 
-/** 検索対象テーブル名のホワイトリスト (SQL injection 対策で固定値のみ許可)。 */
+/**
+ * 検索対象テーブル名 (SQL injection 対策で TypeScript union 型として静的固定)。
+ * persistEmbedding / searchSimilar はこの union を exhaustive switch で分岐し、
+ * SQL 文中の identifier (テーブル名) を動的補間しない設計。
+ */
 export type EmbeddingSearchTable =
   | 'projects'
   | 'knowledges'
   | 'risks_issues'
   | 'retrospectives'
   | 'memos';
-
-const ALLOWED_TABLES: ReadonlyArray<EmbeddingSearchTable> = [
-  'projects',
-  'knowledges',
-  'risks_issues',
-  'retrospectives',
-  'memos',
-];
 
 // ================================================================
 // 内部定数
@@ -194,8 +192,12 @@ export async function generateEmbedding(
  * 既存行の content_embedding カラムを更新する。
  *
  * Prisma の `Unsupported("vector(1024)")` 型は `update()` で直接書けないため、
- * `$executeRawUnsafe` で text → vector cast を行う。テーブル名は ホワイトリスト 検証で
- * SQL injection を防ぎ、ベクトル値は parametrized binding で渡す。
+ * `$executeRaw` のタグ付きテンプレートリテラルで text → vector cast を行う。
+ *
+ * **SQL injection 対策**:
+ *   - テーブル名は TypeScript の union 型 + exhaustive switch で **静的に固定**
+ *     し、動的な identifier 補間を完全に排除する (= injection 経路ゼロ)。
+ *   - 値はタグ付きテンプレートで自動 parametrized binding ($1 / $2 / $3)。
  *
  * @returns 更新行数 (0 なら id 不在 or テナント不一致 = サイレント失敗)
  */
@@ -205,9 +207,6 @@ export async function persistEmbedding(
   tenantId: string,
   embedding: number[],
 ): Promise<number> {
-  if (!ALLOWED_TABLES.includes(table)) {
-    throw new Error(`Invalid table for embedding: ${table}`);
-  }
   if (embedding.length !== EMBEDDING_DIMENSIONS) {
     throw new Error(
       `embedding length ${embedding.length} != ${EMBEDDING_DIMENSIONS}`,
@@ -217,14 +216,40 @@ export async function persistEmbedding(
   // ベクトルを '[1.234,5.678,...]' 形式の文字列に整形 (pgvector text 入力形式)
   const vectorText = `[${embedding.join(',')}]`;
 
-  // テーブル名は white-list 検証済のため identifier として安全にスニペット化可。
-  // 値は $1 / $2 / $3 で parametrized bind。
-  return prisma.$executeRawUnsafe(
-    `UPDATE "${table}" SET "content_embedding" = $1::vector WHERE id = $2::uuid AND tenant_id = $3::uuid`,
-    vectorText,
-    rowId,
-    tenantId,
-  );
+  // テーブル名は TypeScript union で静的固定。switch で exhaustive にし、
+  // 動的な identifier 補間を完全に排除 (SQL injection リスクゼロ)。
+  switch (table) {
+    case 'projects':
+      return prisma.$executeRaw`
+        UPDATE "projects" SET "content_embedding" = ${vectorText}::vector
+        WHERE id = ${rowId}::uuid AND tenant_id = ${tenantId}::uuid
+      `;
+    case 'knowledges':
+      return prisma.$executeRaw`
+        UPDATE "knowledges" SET "content_embedding" = ${vectorText}::vector
+        WHERE id = ${rowId}::uuid AND tenant_id = ${tenantId}::uuid
+      `;
+    case 'risks_issues':
+      return prisma.$executeRaw`
+        UPDATE "risks_issues" SET "content_embedding" = ${vectorText}::vector
+        WHERE id = ${rowId}::uuid AND tenant_id = ${tenantId}::uuid
+      `;
+    case 'retrospectives':
+      return prisma.$executeRaw`
+        UPDATE "retrospectives" SET "content_embedding" = ${vectorText}::vector
+        WHERE id = ${rowId}::uuid AND tenant_id = ${tenantId}::uuid
+      `;
+    case 'memos':
+      return prisma.$executeRaw`
+        UPDATE "memos" SET "content_embedding" = ${vectorText}::vector
+        WHERE id = ${rowId}::uuid AND tenant_id = ${tenantId}::uuid
+      `;
+    default: {
+      // exhaustive check: TypeScript union 全 case 網羅を強制 (将来 table 拡張時の漏れ検知)
+      const _exhaustive: never = table;
+      throw new Error(`Invalid table for embedding: ${String(_exhaustive)}`);
+    }
+  }
 }
 
 // ================================================================
@@ -254,14 +279,15 @@ export interface SearchSimilarOptions {
  * - テナント境界 + soft-delete フィルタを必須付与
  * - content_embedding IS NULL の行は除外
  *
+ * **SQL injection 対策**:
+ *   - テーブル名は TypeScript union + exhaustive switch で静的固定
+ *   - 動的 identifier 補間を完全排除、すべての値は tagged template の自動 parametrized binding
+ *
  * @returns score 降順の SimilarityHit[]
  */
 export async function searchSimilar(
   options: SearchSimilarOptions,
 ): Promise<SimilarityHit[]> {
-  if (!ALLOWED_TABLES.includes(options.table)) {
-    throw new Error(`Invalid table for similarity search: ${options.table}`);
-  }
   if (options.queryEmbedding.length !== EMBEDDING_DIMENSIONS) {
     throw new Error(
       `query embedding length ${options.queryEmbedding.length} != ${EMBEDDING_DIMENSIONS}`,
@@ -272,40 +298,137 @@ export async function searchSimilar(
   const minScore = options.minScore ?? 0.0;
   const vectorText = `[${options.queryEmbedding.join(',')}]`;
   const excludeIds = options.excludeIds ?? [];
+  const hasExcludes = excludeIds.length > 0;
 
-  // 除外句は配列を JSON として bind し PostgreSQL 側で `!= ANY(...)` で展開。
-  // 個数 0 のときは TRUE で no-op。
-  const excludeClause =
-    excludeIds.length > 0 ? 'AND id <> ALL($4::uuid[])' : '';
-
-  const sql = `
-    SELECT
-      id::text AS id,
-      1 - (("content_embedding" <=> $1::vector) / 2) AS score
-    FROM "${options.table}"
-    WHERE
-      "content_embedding" IS NOT NULL
-      AND "tenant_id" = $2::uuid
-      AND "deleted_at" IS NULL
-      ${excludeClause}
-    ORDER BY "content_embedding" <=> $1::vector
-    LIMIT $3
-  `;
-
-  const rows = excludeIds.length > 0
-    ? await prisma.$queryRawUnsafe<Array<{ id: string; score: number }>>(
-      sql,
-      vectorText,
-      options.tenantId,
-      limit,
-      excludeIds,
-    )
-    : await prisma.$queryRawUnsafe<Array<{ id: string; score: number }>>(
-      sql,
-      vectorText,
-      options.tenantId,
-      limit,
-    );
+  // テーブル名は TypeScript union で静的固定。switch で exhaustive にする。
+  // excludeIds の有無で 2 経路に分岐 (タグ付きテンプレートでは条件付き SQL 断片の挿入ができないため)。
+  let rows: Array<{ id: string; score: number }>;
+  switch (options.table) {
+    case 'projects':
+      rows = hasExcludes
+        ? await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "projects"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+            AND id <> ALL(${excludeIds}::uuid[])
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `
+        : await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "projects"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `;
+      break;
+    case 'knowledges':
+      rows = hasExcludes
+        ? await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "knowledges"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+            AND id <> ALL(${excludeIds}::uuid[])
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `
+        : await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "knowledges"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `;
+      break;
+    case 'risks_issues':
+      rows = hasExcludes
+        ? await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "risks_issues"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+            AND id <> ALL(${excludeIds}::uuid[])
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `
+        : await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "risks_issues"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `;
+      break;
+    case 'retrospectives':
+      rows = hasExcludes
+        ? await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "retrospectives"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+            AND id <> ALL(${excludeIds}::uuid[])
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `
+        : await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "retrospectives"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `;
+      break;
+    case 'memos':
+      rows = hasExcludes
+        ? await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "memos"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+            AND id <> ALL(${excludeIds}::uuid[])
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `
+        : await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+          SELECT id::text AS id,
+                 1 - (("content_embedding" <=> ${vectorText}::vector) / 2) AS score
+          FROM "memos"
+          WHERE "content_embedding" IS NOT NULL
+            AND "tenant_id" = ${options.tenantId}::uuid
+            AND "deleted_at" IS NULL
+          ORDER BY "content_embedding" <=> ${vectorText}::vector
+          LIMIT ${limit}
+        `;
+      break;
+    default: {
+      const _exhaustive: never = options.table;
+      throw new Error(`Invalid table for similarity search: ${String(_exhaustive)}`);
+    }
+  }
 
   return rows
     .map((r) => ({ id: r.id, score: Number(r.score) }))
