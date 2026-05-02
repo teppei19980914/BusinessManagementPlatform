@@ -29,6 +29,7 @@ describe('GET /api/projects/[projectId]/tasks/tree', () => {
   it('認証・認可を通過すると listTasksWithTree の結果を返す', async () => {
     mockedGetAuthenticatedUser.mockResolvedValueOnce({
       id: 'u1',
+      tenantId: '00000000-0000-0000-0000-000000000001',
       name: 'A',
       email: 'a@example.com',
       systemRole: 'general',
@@ -60,6 +61,7 @@ describe('GET /api/projects/[projectId]/tasks/tree', () => {
   it('プロジェクト非メンバーなら権限ヘルパーの 403/404 をそのまま返す（DB には問い合わせない）', async () => {
     mockedGetAuthenticatedUser.mockResolvedValueOnce({
       id: 'u1',
+      tenantId: '00000000-0000-0000-0000-000000000001',
       name: 'A',
       email: 'a@example.com',
       systemRole: 'general',
