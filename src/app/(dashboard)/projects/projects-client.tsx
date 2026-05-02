@@ -365,40 +365,48 @@ export function ProjectsClient({
                 </div>
                 {/*
                   PR #65: 提案型サービス (核心機能) のためのタグ入力。
-                  新規プロジェクトと過去ナレッジ/課題のマッチングに利用される。
-                  カンマ区切りで入力 (例: "React, Next.js, TypeScript")
-                  抜け漏れなく提案を出すため、可能な限り入力を推奨する。
+                  PR #4 (T-03): 任意入力に変更 + アコーディオン折りたたみで負担軽減。
+                    LLM 自動タグ抽出 (PR #220 / #223) が空欄を保存後に自動補完するため、
+                    手動入力は「自分のドメイン知識を反映したい場合」のみ推奨。
                 */}
-                <div className="space-y-2">
-                  <Label htmlFor="project-create-business-domain-tags">{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                  <Input
-                    id="project-create-business-domain-tags"
-                    value={form.businessDomainTagsInput}
-                    onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
-                    placeholder={t('tagPlaceholderBusinessDomain')}
-                    maxLength={500}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="project-create-tech-stack-tags">{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                  <Input
-                    id="project-create-tech-stack-tags"
-                    value={form.techStackTagsInput}
-                    onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
-                    placeholder={t('tagPlaceholderTechStackFull')}
-                    maxLength={500}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="project-create-process-tags">{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                  <Input
-                    id="project-create-process-tags"
-                    value={form.processTagsInput}
-                    onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
-                    placeholder={t('tagPlaceholderProcessFull')}
-                    maxLength={500}
-                  />
-                </div>
+                <details className="rounded-md border bg-muted/30 p-3 space-y-2">
+                  <summary className="cursor-pointer select-none text-sm font-medium">
+                    {t('tagsAccordionTitle')}
+                  </summary>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {t('tagsAccordionGuidance')}
+                  </p>
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="project-create-business-domain-tags">{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
+                    <Input
+                      id="project-create-business-domain-tags"
+                      value={form.businessDomainTagsInput}
+                      onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
+                      placeholder={t('tagPlaceholderBusinessDomain')}
+                      maxLength={500}
+                    />
+                  </div>
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="project-create-tech-stack-tags">{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
+                    <Input
+                      id="project-create-tech-stack-tags"
+                      value={form.techStackTagsInput}
+                      onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
+                      placeholder={t('tagPlaceholderTechStackFull')}
+                      maxLength={500}
+                    />
+                  </div>
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="project-create-process-tags">{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
+                    <Input
+                      id="project-create-process-tags"
+                      value={form.processTagsInput}
+                      onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
+                      placeholder={t('tagPlaceholderProcessFull')}
+                      maxLength={500}
+                    />
+                  </div>
+                </details>
                 {/* PR #67: 作成と同時に関連 URL を登録可能 */}
                 <StagedAttachmentsInput
                   value={stagedAttachments}

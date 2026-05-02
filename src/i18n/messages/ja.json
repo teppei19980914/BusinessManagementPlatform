@@ -501,6 +501,8 @@
     "fieldPeriod": "期間",
     "tagSeparatorHint": "(カンマ or 読点「、」で区切り)",
     "tagSeparatorHintSuggestion": "(カンマ or 読点「、」で区切り、提案精度向上のため推奨)",
+    "tagsAccordionTitle": "タグ (任意・推奨)",
+    "tagsAccordionGuidance": "タグの設定は任意ですが、設定しておくと提案機能や検索機能の精度が向上します (空欄でも保存後に自動補完されます)。複数タグを設定しておくほど、関連する過去ナレッジ・課題が見つけやすくなります。",
     "tagPlaceholderBusinessDomain": "例: 金融, 基幹業務, 会計",
     "tagPlaceholderTechStack": "例: React, Next.js, TypeScript",
     "tagPlaceholderTechStackFull": "例: React, Next.js, TypeScript, PostgreSQL",
