@@ -528,19 +528,30 @@ export function ProjectDetailClient({
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} required hideClear />
                       </div>
                     </div>
-                    {/* feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2) */}
-                    <div className="space-y-2">
-                      <Label>{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder={t('tagPlaceholderBusinessDomain')} maxLength={500} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder={t('tagPlaceholderTechStack')} maxLength={500} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder={t('tagPlaceholderProcess')} maxLength={500} />
-                    </div>
+                    {/*
+                      feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2)
+                      PR #4 (T-03): 任意入力 + アコーディオン折りたたみ。LLM 自動補完が空欄を保存後に補完。
+                    */}
+                    <details className="rounded-md border bg-muted/30 p-3 space-y-2">
+                      <summary className="cursor-pointer select-none text-sm font-medium">
+                        {t('tagsAccordionTitle')}
+                      </summary>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {t('tagsAccordionGuidance')}
+                      </p>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder={t('tagPlaceholderBusinessDomain')} maxLength={500} />
+                      </div>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder={t('tagPlaceholderTechStack')} maxLength={500} />
+                      </div>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder={t('tagPlaceholderProcess')} maxLength={500} />
+                      </div>
+                    </details>
                     <Button type="submit" className="w-full">{t('editSubmit')}</Button>
                   </form>
                 </DialogContent>

@@ -2,12 +2,20 @@
 // 設計書: docs/design/DATA_MODEL.md / docs/design/SUGGESTION_ENGINE.md
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  // PR #4 (T-03 Phase 2): pgvector の vector 型を Prisma が認識できないため、
+  // Unsupported("vector(1024)") として宣言。Prisma Client では `unknown` 型として扱われ、
+  // 直接 read/write するには $queryRaw を使う。
+  // 詳細: https://www.prisma.io/docs/orm/prisma-schema/data-model/unsupported-database-features
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  // PR #4 (T-03 Phase 2): pgvector 拡張を Prisma に明示。
+  // migration では `CREATE EXTENSION IF NOT EXISTS vector;` を実行する。
+  extensions = [vector]
 }
 
 // ============================================================
@@ -291,6 +299,10 @@ model Project {
   plannedEndDate     DateTime  @map("planned_end_date") @db.Date
   status             String    @default("planning") @db.VarChar(20)
   notes              String?   @db.Text
+  // PR #4 (T-03 Phase 2): purpose / background / scope を結合した text の Voyage AI
+  //   embedding (1024 次元、voyage-4-lite)。Cosine Similarity による意味検索の基盤。
+  //   生成失敗時 NULL を許容 (本体 INSERT/UPDATE は成功させる fail-safe)。
+  contentEmbedding   Unsupported("vector(1024)")? @map("content_embedding")
   createdBy          String    @map("created_by") @db.Uuid
   updatedBy          String    @map("updated_by") @db.Uuid
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -455,6 +467,8 @@ model RiskIssue {
   lessonLearned  String?   @map("lesson_learned") @db.Text
   visibility     String    @default("draft") @db.VarChar(20) // draft | public (PR #60)
   riskNature     String?   @map("risk_nature") @db.VarChar(20) // threat | opportunity (type=risk のみ)
+  // PR #4 (T-03 Phase 2): title + content + cause + lessonLearned 等を結合した text の embedding
+  contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
   createdBy      String    @map("created_by") @db.Uuid
   updatedBy      String    @map("updated_by") @db.Uuid
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -556,6 +570,8 @@ model Knowledge {
   // 提案型サービスの Jaccard 類似度で業務ドメイン軸もマッチできるようにする。
   businessDomainTags Json      @default("[]") @map("business_domain_tags") @db.JsonB
   visibility         String    @default("draft") @db.VarChar(20) // draft | project | company
+  // PR #4 (T-03 Phase 2): title + background + content + result + conclusion を結合した text の embedding
+  contentEmbedding   Unsupported("vector(1024)")? @map("content_embedding")
   createdBy          String    @map("created_by") @db.Uuid
   updatedBy          String    @map("updated_by") @db.Uuid
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -620,6 +636,8 @@ model Retrospective {
   knowledgeToShare       String?   @map("knowledge_to_share") @db.Text
   state                  String    @default("draft") @db.VarChar(20)
   visibility             String    @default("draft") @db.VarChar(20) // draft | public (PR #60)
+  // PR #4 (T-03 Phase 2): planSummary + actualSummary + goodPoints + improvements 等を結合した text の embedding
+  contentEmbedding       Unsupported("vector(1024)")? @map("content_embedding")
   createdBy              String    @map("created_by") @db.Uuid
   updatedBy              String    @map("updated_by") @db.Uuid
   createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -867,6 +885,8 @@ model Memo {
   title      String    @db.VarChar(150)
   content    String    @db.Text
   visibility String    @default("private") @db.VarChar(20)
+  // PR #4 (T-03 Phase 2): title + content を結合した text の embedding
+  contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt  DateTime? @map("deleted_at") @db.Timestamptz

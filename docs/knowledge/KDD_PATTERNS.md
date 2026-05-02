@@ -4552,7 +4552,7 @@ Haiku と Sonnet の差は単価 3 倍だが、実体験上の差は「並び替
 
 第一に、**LLM プロバイダは Anthropic Claude を採用**。本サービスが Claude Code で開発されており API key 管理が既存、日本語精度が高く、prompt caching でコスト最適化可能、の 3 点を根拠とする。
 
-第二に、**Embedding プロバイダは Voyage AI の voyage-3-lite を第一候補、OpenAI text-embedding-3-small を代替候補**。Voyage は Anthropic 推奨で API 形式が OpenAI 互換。
+第二に、**Embedding プロバイダは Voyage AI の voyage-4-lite (1024 次元) を第一候補、OpenAI text-embedding-3-small を代替候補**。Voyage は Anthropic 推奨で API 形式が OpenAI 互換。**voyage-4-lite は 200M トークンが無料** で v1 規模では無料運用可。当初検討した voyage-3-lite は 2026 年時点で旧世代化し無料枠が失効したため 4 系に切替 (PR #4 で更新)。
 
 第三に、**ベクトル DB は Supabase pgvector 拡張を採用**。既存 Postgres に閉じることで追加サービスを増やさない。
 

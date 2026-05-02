@@ -501,6 +501,8 @@
     "fieldPeriod": "Period",
     "tagSeparatorHint": "(separated by commas or 「、」)",
     "tagSeparatorHintSuggestion": "(separated by commas or 「、」, recommended for better suggestions)",
+    "tagsAccordionTitle": "Tags (optional, recommended)",
+    "tagsAccordionGuidance": "Tags are optional, but setting them improves suggestion and search accuracy (auto-filled on save if left blank). The more tags you set, the easier it is to find related past knowledge and issues.",
     "tagPlaceholderBusinessDomain": "e.g. Finance, Core Business, Accounting",
     "tagPlaceholderTechStack": "e.g. React, Next.js, TypeScript",
     "tagPlaceholderTechStackFull": "e.g. React, Next.js, TypeScript, PostgreSQL",
