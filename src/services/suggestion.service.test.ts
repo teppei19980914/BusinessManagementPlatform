@@ -212,8 +212,190 @@ describe('suggestForProject', () => {
     expect(r.pastIssues[0].tagScore).toBeCloseTo(1.0, 5);
     expect(r.retrospectives[0].tagScore).toBeCloseTo(1 / 3, 5);
 
-    // 同じ textScore=0.5 でも tagScore が乗ることで final score が text 単独より大きい
-    expect(r.pastIssues[0].score).toBeGreaterThan(r.pastIssues[0].textScore);
+    // PR #5-b: 3 軸合成 (tag 0.3 / text 0.2 / embedding 0.5)。embedding は本テストで
+    //   project.content_embedding が NULL のため 0、tagScore + textScore のみ寄与。
+    //   Issue: 0.3 * 1.0 + 0.2 * 0.5 + 0.5 * 0 = 0.4
+    //   Retro: 0.3 * (1/3) + 0.2 * 0.5 + 0.5 * 0 = 0.2
+    expect(r.pastIssues[0].score).toBeCloseTo(0.4, 5);
+    expect(r.retrospectives[0].score).toBeCloseTo(0.2, 5);
+    // tagScore=0 の旧実装は 0.2 * 0.5 = 0.1 だった → tagScore が確かに寄与している
+    expect(r.pastIssues[0].score).toBeGreaterThan(0.1);
+  });
+
+  // ========================================================
+  // PR #5-b (T-03 Phase 2): embedding 軸スコアの統合テスト
+  // ========================================================
+
+  it('Project に embedding がある場合、embedding 軸スコアが 3 軸合成に寄与する', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'EC sites',
+      background: '',
+      scope: '',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      {
+        id: 'k-1',
+        title: 't',
+        knowledgeType: 'lesson',
+        content: 'c',
+        techTags: [],
+        processTags: [],
+        businessDomainTags: [],
+      },
+    ] as never);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+
+    // $queryRaw 呼び出しの順序:
+    //   1. loadProjectContext: SELECT content_embedding → [{embedding: '[0.1,...]'}]
+    //   2. computeTextSimilarities (knowledge): → [{id, score}]
+    //   3. computeEmbeddingSimilarities (knowledges): → [{id, score}]
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([{ embedding: '[0.1,0.2]' }] as never)
+      .mockResolvedValueOnce([{ id: 'k-1', score: 0.4 }] as never)
+      .mockResolvedValueOnce([{ id: 'k-1', score: 0.9 }] as never);
+
+    const r = await suggestForProject('p-1');
+
+    expect(r.knowledge).toHaveLength(1);
+    const k = r.knowledge[0];
+    expect(k.tagScore).toBe(0); // タグなし
+    expect(k.textScore).toBeCloseTo(0.4, 5);
+    expect(k.embeddingScore).toBeCloseTo(0.9, 5);
+    // 3 軸合成: 0.3 * 0 + 0.2 * 0.4 + 0.5 * 0.9 = 0 + 0.08 + 0.45 = 0.53
+    expect(k.score).toBeCloseTo(0.53, 5);
+  });
+
+  it('Project に embedding がない場合、embedding 軸は 0 で 2 軸縮退モード', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'p',
+      background: '',
+      scope: '',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      {
+        id: 'k-1',
+        title: 't',
+        knowledgeType: 'lesson',
+        content: 'c',
+        techTags: [],
+        processTags: [],
+        businessDomainTags: [],
+      },
+    ] as never);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+
+    // 1. loadProjectContext: 空配列 (= embedding 未生成)
+    // 2. computeTextSimilarities (knowledge): → [{id, score}]
+    // (computeEmbeddingSimilarities は呼ばれない: embeddingText=null で early return)
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([{ id: 'k-1', score: 0.5 }] as never);
+
+    const r = await suggestForProject('p-1');
+
+    const k = r.knowledge[0];
+    expect(k.embeddingScore).toBe(0);
+    // 2 軸縮退: 0.3 * 0 + 0.2 * 0.5 + 0.5 * 0 = 0.1 (= score = textScore * TEXT_WEIGHT)
+    expect(k.score).toBeCloseTo(0.1, 5);
+  });
+
+  it('候補側の embedding が NULL なら embeddingScore=0 (該当 id が結果セットに含まれない)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'p',
+      background: '',
+      scope: '',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      {
+        id: 'k-with-emb',
+        title: 'has emb',
+        knowledgeType: 'lesson',
+        content: 'c',
+        techTags: [],
+        processTags: [],
+        businessDomainTags: [],
+      },
+      {
+        id: 'k-no-emb',
+        title: 'no emb',
+        knowledgeType: 'lesson',
+        content: 'c',
+        techTags: [],
+        processTags: [],
+        businessDomainTags: [],
+      },
+    ] as never);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+
+    // 1. project content_embedding あり
+    // 2. text similarity: 両方 0.5
+    // 3. embedding similarity: k-with-emb のみ (k-no-emb は WHERE content_embedding IS NOT NULL で除外)
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([{ embedding: '[0.1,0.2]' }] as never)
+      .mockResolvedValueOnce([
+        { id: 'k-with-emb', score: 0.5 },
+        { id: 'k-no-emb', score: 0.5 },
+      ] as never)
+      .mockResolvedValueOnce([{ id: 'k-with-emb', score: 0.8 }] as never);
+
+    const r = await suggestForProject('p-1');
+
+    // score 降順で並ぶので k-with-emb が先頭
+    expect(r.knowledge[0].id).toBe('k-with-emb');
+    expect(r.knowledge[0].embeddingScore).toBeCloseTo(0.8, 5);
+    expect(r.knowledge[1].id).toBe('k-no-emb');
+    expect(r.knowledge[1].embeddingScore).toBe(0); // 除外されてスコア 0
+    // k-with-emb の方が高スコア (embedding 寄与で差がつく)
+    expect(r.knowledge[0].score).toBeGreaterThan(r.knowledge[1].score);
+  });
+
+  it('SuggestionScore 型に embeddingScore が含まれる', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'p',
+      background: '',
+      scope: '',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      {
+        id: 'k-1',
+        title: 't',
+        knowledgeType: 'l',
+        content: 'c',
+        techTags: [],
+        processTags: [],
+        businessDomainTags: [],
+      },
+    ] as never);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([{ id: 'k-1', score: 1.0 }] as never);
+
+    const r = await suggestForProject('p-1');
+
+    // 型レベルでも runtime レベルでも embeddingScore フィールドが存在する
+    expect(r.knowledge[0]).toHaveProperty('embeddingScore');
+    expect(typeof r.knowledge[0].embeddingScore).toBe('number');
   });
 
   // PR #160 (fix/suggestion-exclude-self-project):

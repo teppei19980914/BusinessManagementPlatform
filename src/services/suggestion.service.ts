@@ -1,5 +1,5 @@
 /**
- * 提案型サービス (PR #65 核心機能)
+ * 提案型サービス (PR #65 核心機能、PR #5-b で 3 軸合成に拡張)
  *
  * 本サービスはこのプロダクトの核心機能である
  * 「過去の資源を未来のプロジェクトに活用する」を実現するための推薦エンジン。
@@ -11,20 +11,24 @@
  *   - 過去 Issue: type='issue' かつ state='resolved'、他プロジェクトのもの
  *   - 過去 Retrospective: visibility='public'、他プロジェクトのもの
  *
- * 類似度は以下の重み付き平均 (3 種共通):
- *   - タグ交差 (Jaccard 係数): Project のタグ ↔ 対象のタグ
+ * 類似度は **3 軸の重み付き平均** (PR #5-b / T-03 Phase 2):
+ *   - タグ交差 (Jaccard 係数、重み 0.3): Project のタグ ↔ 対象のタグ
  *     - Knowledge: Knowledge 自身の techTags+processTags+businessDomainTags
  *     - Issue / Retrospective: **親 Project のタグを proxy** として使用
  *       (Issue / Retro 自体は DB タグ列を持たないが、親 Project のドメインタグが
  *        意味的に妥当な近似となる。PR #140 後改修で Knowledge と同等の tag-aware に統一)
- *   - テキスト類似度 (pg_trgm similarity): Project の purpose+scope+background ↔
+ *   - テキスト類似度 (pg_trgm similarity、重み 0.2): Project の purpose+scope+background ↔
  *       対象の text (Knowledge: title+content, Issue: title+content,
  *       Retro: problems+improvements に限定)
+ *   - **embedding 意味類似度** (Voyage AI voyage-4-lite Cosine Similarity、重み 0.5):
+ *       PR #5-b で導入。タグ表記ゆれ・シノニムの問題を意味的に解決。
+ *       embedding が NULL の候補は score=0 として計算される (→ 自動的に 2 軸縮退)。
  *
  * 重み (config/suggestion.ts):
- *   - タグ: SUGGESTION_TAG_WEIGHT
- *   - テキスト: SUGGESTION_TEXT_WEIGHT
- *   将来 UI 側で再調整可能にする余地がある。
+ *   - SUGGESTION_TAG_WEIGHT       = 0.3
+ *   - SUGGESTION_TEXT_WEIGHT      = 0.2
+ *   - SUGGESTION_EMBEDDING_WEIGHT = 0.5
+ *   合計 1.0。将来 UI 側で再調整可能にする余地がある。
  */
 
 import { prisma } from '@/lib/db';
@@ -32,18 +36,22 @@ import { jaccard, unifyProjectTags, unifyKnowledgeTags, combineScores } from '@/
 import {
   SUGGESTION_TAG_WEIGHT as TAG_WEIGHT,
   SUGGESTION_TEXT_WEIGHT as TEXT_WEIGHT,
+  SUGGESTION_EMBEDDING_WEIGHT as EMBEDDING_WEIGHT,
   SUGGESTION_SCORE_THRESHOLD as SCORE_THRESHOLD,
   SUGGESTION_DEFAULT_LIMIT as DEFAULT_LIMIT,
 } from '@/config';
 
 /**
  * 類似度スコア (0〜1 + 内訳) 付きの提案エントリ。
- * UI では `score` 降順で表示し、`tagScore` / `textScore` を tooltip 等で理由表示できる。
+ * UI では `score` 降順で表示し、`tagScore` / `textScore` / `embeddingScore` を
+ * tooltip 等で理由表示できる。embedding が未生成の候補は embeddingScore=0。
  */
 export type SuggestionScore = {
   score: number;
   tagScore: number;
   textScore: number;
+  /** PR #5-b (T-03 Phase 2): embedding 意味類似度。0=直交 / 1=完全一致。 */
+  embeddingScore: number;
 };
 
 export type KnowledgeSuggestion = SuggestionScore & {
@@ -87,6 +95,12 @@ type ProjectContext = {
   id: string;
   tags: string[];
   text: string;
+  /**
+   * PR #5-b (T-03 Phase 2): pgvector の `[1.234,...]` 文字列形式で取得した embedding。
+   *   生成済なら content_embedding をそのまま使用、未生成 (NULL) なら null。
+   *   null の場合は embedding 軸スコア = 0 で 2 軸縮退モード。
+   */
+  embeddingText: string | null;
 };
 
 async function loadProjectContext(projectId: string): Promise<ProjectContext | null> {
@@ -109,7 +123,79 @@ async function loadProjectContext(projectId: string): Promise<ProjectContext | n
     processTags: (p.processTags as string[]) ?? [],
   });
   const text = [p.purpose, p.background, p.scope].filter(Boolean).join(' ');
-  return { id: p.id, tags, text };
+
+  // PR #5-b: content_embedding は Unsupported 型で findFirst の select に書けないため、
+  // 別 query で取得 (NULL 許容、無ければ embedding スコア 0 で計算)。
+  // ::text キャストで pgvector の `[1.234,...]` 形式を string として読み取る。
+  const embRows = await prisma.$queryRaw<Array<{ embedding: string | null }>>`
+    SELECT "content_embedding"::text AS embedding
+    FROM "projects"
+    WHERE id = ${projectId}::uuid
+    LIMIT 1
+  `;
+  const embeddingText = embRows[0]?.embedding ?? null;
+
+  return { id: p.id, tags, text, embeddingText };
+}
+
+/**
+ * PR #5-b (T-03 Phase 2): pgvector で候補 ids 群の embedding 類似度を 1 クエリで取得する。
+ *
+ * - クエリ embedding (queryEmbeddingText) と各候補の content_embedding の Cosine Similarity
+ * - score = 1 - distance / 2 で 0.0〜1.0 に正規化 (1.0=完全一致)
+ * - content_embedding が NULL の候補は結果に含まれない (= 呼び出し側で score=0 扱い)
+ *
+ * テーブル名は TypeScript union + exhaustive switch で SQL injection リスクを排除
+ * (PR #224 と同じパターン)。
+ */
+type EmbeddingSimilarityTable = 'knowledges' | 'risks_issues' | 'retrospectives';
+
+async function computeEmbeddingSimilarities(
+  queryEmbeddingText: string | null,
+  table: EmbeddingSimilarityTable,
+  ids: string[],
+): Promise<Map<string, number>> {
+  const scores = new Map<string, number>();
+  if (queryEmbeddingText == null || ids.length === 0) return scores;
+
+  let rows: Array<{ id: string; score: number }>;
+  switch (table) {
+    case 'knowledges':
+      rows = await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+        SELECT id::text AS id,
+               1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
+        FROM "knowledges"
+        WHERE id = ANY(${ids}::uuid[])
+          AND "content_embedding" IS NOT NULL
+      `;
+      break;
+    case 'risks_issues':
+      rows = await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+        SELECT id::text AS id,
+               1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
+        FROM "risks_issues"
+        WHERE id = ANY(${ids}::uuid[])
+          AND "content_embedding" IS NOT NULL
+      `;
+      break;
+    case 'retrospectives':
+      rows = await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+        SELECT id::text AS id,
+               1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
+        FROM "retrospectives"
+        WHERE id = ANY(${ids}::uuid[])
+          AND "content_embedding" IS NOT NULL
+      `;
+      break;
+    default: {
+      const _exhaustive: never = table;
+      throw new Error(`Invalid table for embedding similarity: ${String(_exhaustive)}`);
+    }
+  }
+  for (const r of rows) {
+    scores.set(r.id, Number(r.score));
+  }
+  return scores;
 }
 
 /**
@@ -181,6 +267,12 @@ export async function suggestForProject(
     ctx.text,
     knowledges.map((k) => ({ id: k.id, text: `${k.title} ${k.content}` })),
   );
+  // PR #5-b: embedding 軸スコア (Knowledge 候補)
+  const kEmb = await computeEmbeddingSimilarities(
+    ctx.embeddingText,
+    'knowledges',
+    knowledges.map((k) => k.id),
+  );
 
   const knowledgeScored: KnowledgeSuggestion[] = knowledges.map((k) => {
     const kTags = unifyKnowledgeTags({
@@ -190,9 +282,11 @@ export async function suggestForProject(
     });
     const tagScore = jaccard(ctx.tags, kTags);
     const textScore = kText.get(k.id) ?? 0;
+    const embeddingScore = kEmb.get(k.id) ?? 0;
     const score = combineScores([
       { score: tagScore, weight: TAG_WEIGHT },
       { score: textScore, weight: TEXT_WEIGHT },
+      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
     ]);
     return {
       kind: 'knowledge' as const,
@@ -203,6 +297,7 @@ export async function suggestForProject(
       score,
       tagScore,
       textScore,
+      embeddingScore,
     };
   });
 
@@ -245,6 +340,12 @@ export async function suggestForProject(
     ctx.text,
     issues.map((i) => ({ id: i.id, text: `${i.title} ${i.content}` })),
   );
+  // PR #5-b: embedding 軸スコア (RiskIssue 候補)
+  const iEmb = await computeEmbeddingSimilarities(
+    ctx.embeddingText,
+    'risks_issues',
+    issues.map((i) => i.id),
+  );
 
   const issueScored: PastIssueSuggestion[] = issues.map((i) => {
     // 親 Project のタグを Issue 自身のタグとみなす (PR #140 後 改修)
@@ -255,9 +356,11 @@ export async function suggestForProject(
     });
     const tagScore = jaccard(ctx.tags, issueProjectTags);
     const textScore = iText.get(i.id) ?? 0;
+    const embeddingScore = iEmb.get(i.id) ?? 0;
     const score = combineScores([
       { score: tagScore, weight: TAG_WEIGHT },
       { score: textScore, weight: TEXT_WEIGHT },
+      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
     ]);
     return {
       kind: 'issue' as const,
@@ -269,6 +372,7 @@ export async function suggestForProject(
       score,
       tagScore,
       textScore,
+      embeddingScore,
     };
   });
 
@@ -309,6 +413,12 @@ export async function suggestForProject(
     ctx.text,
     retros.map((r) => ({ id: r.id, text: `${r.problems} ${r.improvements}` })),
   );
+  // PR #5-b: embedding 軸スコア (Retrospective 候補)
+  const rEmb = await computeEmbeddingSimilarities(
+    ctx.embeddingText,
+    'retrospectives',
+    retros.map((r) => r.id),
+  );
 
   const retroScored: RetrospectiveSuggestion[] = retros.map((r) => {
     const retroProjectTags = unifyProjectTags({
@@ -318,9 +428,11 @@ export async function suggestForProject(
     });
     const tagScore = jaccard(ctx.tags, retroProjectTags);
     const textScore = rText.get(r.id) ?? 0;
+    const embeddingScore = rEmb.get(r.id) ?? 0;
     const score = combineScores([
       { score: tagScore, weight: TAG_WEIGHT },
       { score: textScore, weight: TEXT_WEIGHT },
+      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
     ]);
     return {
       kind: 'retrospective' as const,
@@ -333,6 +445,7 @@ export async function suggestForProject(
       score,
       tagScore,
       textScore,
+      embeddingScore,
     };
   });
 
@@ -459,6 +572,10 @@ export async function suggestRelatedIssuesForText(
     issues.map((i) => ({ id: i.id, text: `${i.title} ${i.content}` })),
   );
 
+  // PR #5-b (T-03 Phase 2): inline 軽量サジェストでは embedding 化を見送り。
+  //   理由: 500ms debounce + 起票中の連続入力で 1 リクエスト毎に LLM 呼び出しを発生させると、
+  //   レイテンシ・コスト両面で UX を圧迫する。pg_trgm の text 類似度で十分実用的。
+  //   embedding 軸スコアは 0 で型互換のみ確保。
   const scored: PastIssueSuggestion[] = issues.map((i) => {
     const textScore = scores.get(i.id) ?? 0;
     return {
@@ -471,6 +588,7 @@ export async function suggestRelatedIssuesForText(
       score: textScore,
       tagScore: 0,
       textScore,
+      embeddingScore: 0,
     };
   });
 
