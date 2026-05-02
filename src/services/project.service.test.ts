@@ -46,6 +46,23 @@ vi.mock('./auto-tag.service', () => ({
   }),
 }));
 
+// PR #5 (T-03 Phase 2): createProject / updateProject から呼ばれる embedding をモック。
+// 既定では「rate_limited で何もせず終了」モードにし、各テストで上書き可能。
+// embedding 自体は project.service の本体動作 (本体 INSERT/UPDATE) に影響しない fail-safe 設計のため、
+// テストでは generate と persist の呼び出し有無のみ検証する。
+vi.mock('./embedding.service', () => ({
+  generateEmbedding: vi.fn().mockResolvedValue({
+    ok: false,
+    reason: 'rate_limited',
+    message: 'default mock — テストごとに上書きする',
+  }),
+  persistEmbedding: vi.fn().mockResolvedValue(1),
+}));
+
+vi.mock('./error-log.service', () => ({
+  recordError: vi.fn(),
+}));
+
 import {
   listProjects,
   createProject,
@@ -58,6 +75,8 @@ import {
 import { prisma } from '@/lib/db';
 import { canTransition } from './state-machine';
 import { extractAutoTags } from './auto-tag.service';
+import { generateEmbedding, persistEmbedding } from './embedding.service';
+import { recordError } from './error-log.service';
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -460,6 +479,205 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(extractAutoTags).not.toHaveBeenCalled();
     // update 自体は実行 (Prisma 側で NOT_FOUND として throw する別経路)
     expect(prisma.project.update).toHaveBeenCalled();
+  });
+
+  // ========================================================
+  // PR #5 (T-03 Phase 2): embedding 生成フックの統合テスト
+  // ========================================================
+
+  it('createProject: embedding 生成成功時、persistEmbedding が呼ばれる', async () => {
+    vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+    vi.mocked(generateEmbedding).mockResolvedValueOnce({
+      ok: true,
+      embedding: new Array(1024).fill(0.5),
+      costJpy: 0,
+      requestId: 'req-emb-1',
+    });
+
+    await createProject(
+      {
+        name: 'x',
+        customerId: 'cust-1',
+        purpose: 'EC サイト構築',
+        background: '既存システムの刷新',
+        scope: 'フロント + 管理画面',
+        devMethod: 'agile',
+        plannedStartDate: '2026-04-01',
+        plannedEndDate: '2026-12-31',
+      },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    // generateEmbedding が project-embedding featureUnit で呼ばれる
+    expect(generateEmbedding).toHaveBeenCalledTimes(1);
+    const embedCall = vi.mocked(generateEmbedding).mock.calls[0]![0];
+    expect(embedCall.featureUnit).toBe('project-embedding');
+    expect(embedCall.tenantId).toBe(TEST_TENANT_ID);
+    expect(embedCall.userId).toBe('u-1');
+    // text は purpose + background + scope を改行結合
+    expect(embedCall.text).toContain('EC サイト構築');
+    expect(embedCall.text).toContain('既存システムの刷新');
+    expect(embedCall.text).toContain('フロント + 管理画面');
+
+    // 成功時は persistEmbedding が呼ばれる
+    expect(persistEmbedding).toHaveBeenCalledTimes(1);
+    expect(persistEmbedding).toHaveBeenCalledWith(
+      'projects',
+      'p-1',
+      TEST_TENANT_ID,
+      expect.arrayContaining([0.5]),
+    );
+  });
+
+  it('createProject: embedding 生成失敗時 (rate_limited 等) は recordError + 本体続行 (fail-safe)', async () => {
+    vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+    vi.mocked(generateEmbedding).mockResolvedValueOnce({
+      ok: false,
+      reason: 'rate_limited',
+      message: 'rate',
+    });
+
+    await createProject(
+      {
+        name: 'x',
+        customerId: 'cust-1',
+        purpose: 'p',
+        background: 'b',
+        scope: 's',
+        devMethod: 'waterfall',
+        plannedStartDate: '2026-04-01',
+        plannedEndDate: '2026-12-31',
+      },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    // persistEmbedding は呼ばれない
+    expect(persistEmbedding).not.toHaveBeenCalled();
+    // 失敗ログが warn 重要度で記録される
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'warn',
+        source: 'server',
+        context: expect.objectContaining({
+          kind: 'project_embedding_failure',
+          projectId: 'p-1',
+          reason: 'rate_limited',
+        }),
+      }),
+    );
+    // プロジェクト作成自体は成功する (本体 create は呼ばれた)
+    expect(prisma.project.create).toHaveBeenCalled();
+  });
+
+  it('createProject: text が全て空文字なら embedding 呼び出しなし (LLM 課金回避)', async () => {
+    vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+
+    await createProject(
+      {
+        name: 'x',
+        customerId: 'cust-1',
+        purpose: '',
+        background: '',
+        scope: '',
+        devMethod: 'waterfall',
+        plannedStartDate: '2026-04-01',
+        plannedEndDate: '2026-12-31',
+      },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    expect(generateEmbedding).not.toHaveBeenCalled();
+    expect(persistEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('createProject: persistEmbedding が throw しても本体作成は成功 (recordError + 続行)', async () => {
+    vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+    vi.mocked(generateEmbedding).mockResolvedValueOnce({
+      ok: true,
+      embedding: new Array(1024).fill(0.1),
+      costJpy: 0,
+      requestId: 'req-emb-1',
+    });
+    vi.mocked(persistEmbedding).mockRejectedValueOnce(new Error('DB connection lost'));
+
+    // 本体は throw せず通常通り完了
+    await expect(
+      createProject(
+        {
+          name: 'x',
+          customerId: 'cust-1',
+          purpose: 'p',
+          background: 'b',
+          scope: 's',
+          devMethod: 'waterfall',
+          plannedStartDate: '2026-04-01',
+          plannedEndDate: '2026-12-31',
+        },
+        'u-1',
+        TEST_TENANT_ID,
+      ),
+    ).resolves.toBeDefined();
+
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        context: expect.objectContaining({
+          kind: 'project_embedding_persist_failure',
+        }),
+      }),
+    );
+  });
+
+  it('updateProject: text 変更なしなら embedding 呼び出しなし (LLM 課金回避)', async () => {
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
+
+    await updateProject('p-1', { name: 'new name' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateEmbedding).not.toHaveBeenCalled();
+    expect(persistEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('updateProject: text 変更時、embedding を再生成 + persist する', async () => {
+    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+      purpose: 'old',
+      background: 'old bg',
+      scope: 'old sc',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
+    vi.mocked(generateEmbedding).mockResolvedValueOnce({
+      ok: true,
+      embedding: new Array(1024).fill(0.7),
+      costJpy: 0,
+      requestId: 'req-emb-update',
+    });
+
+    await updateProject(
+      'p-1',
+      { purpose: 'NEW PURPOSE' },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    // generateEmbedding に新しい purpose + 現行 background/scope が渡される
+    expect(generateEmbedding).toHaveBeenCalled();
+    const embedCall = vi.mocked(generateEmbedding).mock.calls[0]![0];
+    expect(embedCall.text).toContain('NEW PURPOSE');
+    expect(embedCall.text).toContain('old bg');
+    expect(embedCall.text).toContain('old sc');
+
+    // persistEmbedding が当該 projectId + tenantId で呼ばれる
+    expect(persistEmbedding).toHaveBeenCalledWith(
+      'projects',
+      'p-1',
+      TEST_TENANT_ID,
+      expect.arrayContaining([0.7]),
+    );
   });
 
   it('deleteProject: deletedAt セット (論理削除)', async () => {
