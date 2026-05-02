@@ -26,6 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logUnknownError, type ErrorSource } from '@/services/error-log.service';
 import { auth } from '@/lib/auth';
+import { TenantBoundaryError } from '@/lib/permissions/tenant';
 
 type RouteHandler = (
   req: NextRequest,
@@ -59,6 +60,33 @@ export function withErrorHandler(
       }
 
       const url = new URL(req.url);
+
+      // PR #2-b (T-03): テナント境界違反は「想定された認可エラー」として 403 に変換。
+      //   通常の 500 と異なり stack を保存する必要はないが、cross-tenant attack の試行を
+      //   検出するため 'warn' で system_error_logs に記録する (admin が異常検知に使用)。
+      //   ユーザへの応答は機密情報を含めない固定文言 (tenantId 等は出さない)。
+      if (error instanceof TenantBoundaryError) {
+        await logUnknownError('server', error, {
+          userId,
+          severity: 'warn',
+          context: {
+            path: url.pathname,
+            method: req.method,
+            queryKeys: Array.from(url.searchParams.keys()),
+            kind: 'tenant_boundary_violation',
+          },
+        });
+        return NextResponse.json(
+          {
+            error: {
+              code: 'FORBIDDEN',
+              message: 'この操作を実行する権限がありません',
+            },
+          },
+          { status: 403 },
+        );
+      }
+
       await logUnknownError(source, error, {
         userId,
         context: {
