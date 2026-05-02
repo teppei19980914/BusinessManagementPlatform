@@ -28,6 +28,8 @@
 import { prisma } from '@/lib/db';
 import { canTransition } from './state-machine';
 import { extractAutoTags } from './auto-tag.service';
+import { generateEmbedding, persistEmbedding } from './embedding.service';
+import { recordError } from './error-log.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { ProjectStatus } from '@/types';
 
@@ -232,6 +234,15 @@ export async function createProject(
     include: { customer: { select: { name: true } } },
   });
 
+  // PR #5 (T-03 Phase 2): purpose / background / scope を結合した text の embedding を
+  //   非同期に生成 + 保存。失敗時はサイレントに content_embedding=NULL のまま続行 (fail-safe)。
+  //   生成中の例外で本体 INSERT がロールバックされないよう、create() の **後** に呼ぶ。
+  await generateAndPersistProjectEmbedding(project.id, tenantId, userId, {
+    purpose: input.purpose,
+    background: input.background,
+    scope: input.scope,
+  });
+
   return toProjectDTO(project);
 }
 
@@ -260,6 +271,11 @@ export async function updateProject(
     input.scope !== undefined;
 
   let mergedAutoTags: AutoTagAxes | null = null;
+  // PR #5 (T-03 Phase 2): text 変更時は embedding も再生成する。実テキストは
+  //   下記の resolved* に確定するため、後段で `generateAndPersistProjectEmbedding` に渡す。
+  let resolvedPurpose: string | null = null;
+  let resolvedBackground: string | null = null;
+  let resolvedScope: string | null = null;
   if (textFieldsChanging) {
     // 変更されない text フィールドは現行値を採用するため、現行 row を取得。
     const current = await prisma.project.findUnique({
@@ -274,10 +290,13 @@ export async function updateProject(
       },
     });
     if (current != null) {
+      resolvedPurpose = input.purpose ?? current.purpose;
+      resolvedBackground = input.background ?? current.background;
+      resolvedScope = input.scope ?? current.scope;
       const autoTagResult = await extractAutoTags({
-        purpose: input.purpose ?? current.purpose,
-        background: input.background ?? current.background,
-        scope: input.scope ?? current.scope,
+        purpose: resolvedPurpose,
+        background: resolvedBackground,
+        scope: resolvedScope,
         tenantId,
         userId,
       });
@@ -341,7 +360,94 @@ export async function updateProject(
     include: { customer: { select: { name: true } } },
   });
 
+  // PR #5 (T-03 Phase 2): text 変更時のみ embedding を再生成。
+  //   text 変更なし = 既存 embedding 流用 (= LLM 課金回避)。
+  if (
+    textFieldsChanging &&
+    resolvedPurpose != null &&
+    resolvedBackground != null &&
+    resolvedScope != null
+  ) {
+    await generateAndPersistProjectEmbedding(projectId, tenantId, userId, {
+      purpose: resolvedPurpose,
+      background: resolvedBackground,
+      scope: resolvedScope,
+    });
+  }
+
   return toProjectDTO(project);
+}
+
+/**
+ * PR #5 (T-03 Phase 2): Project の content_embedding を生成 + 保存する helper。
+ *
+ * createProject / updateProject 両方から呼ばれる。失敗時はサイレントに
+ * `system_error_logs` に warn 記録のみ行い、本体 INSERT/UPDATE はロールバックさせない
+ * (= fail-safe、embedding NULL のまま運用継続を許容)。
+ *
+ * 入力 text は purpose / background / scope を改行で結合した形にする。これは
+ * Voyage embedding が比較的長文も扱えるため、3 軸を統合して 1 ベクトルで意味検索する設計。
+ */
+async function generateAndPersistProjectEmbedding(
+  projectId: string,
+  tenantId: string,
+  userId: string,
+  fields: { purpose: string; background: string; scope: string },
+): Promise<void> {
+  const text = [
+    fields.purpose.trim(),
+    fields.background.trim(),
+    fields.scope.trim(),
+  ]
+    .filter((s) => s.length > 0)
+    .join('\n\n');
+
+  if (text.length === 0) {
+    // 全 text 空 (新規 + ユーザがいずれも空文字で送信) の場合は LLM 呼ばず終了
+    return;
+  }
+
+  const result = await generateEmbedding({
+    text,
+    featureUnit: 'project-embedding',
+    tenantId,
+    userId,
+  });
+
+  if (!result.ok) {
+    // 失敗ログ (warn): rate_limited / budget_exceeded / llm_error 等は運用後追跡用
+    await recordError({
+      severity: 'warn',
+      source: 'server',
+      message: `embedding generation failed for project ${projectId}: ${result.reason}`,
+      userId,
+      context: {
+        kind: 'project_embedding_failure',
+        projectId,
+        tenantId,
+        reason: result.reason,
+      },
+    });
+    return;
+  }
+
+  try {
+    await persistEmbedding('projects', projectId, tenantId, result.embedding);
+  } catch (error) {
+    // 書き込み失敗 (DB 接続切れ等) もサイレントに record して続行
+    await recordError({
+      severity: 'error',
+      source: 'server',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      userId,
+      context: {
+        kind: 'project_embedding_persist_failure',
+        projectId,
+        tenantId,
+      },
+    });
+  }
 }
 
 /**
