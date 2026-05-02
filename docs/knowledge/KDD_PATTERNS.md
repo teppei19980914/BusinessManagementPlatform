@@ -1,242 +1,8 @@
-# 開発者ガイド (DEVELOPER_GUIDE.md)
+# KDD (Knowledge-Driven Development) ナレッジ集
 
-> 本書はプログラムの**改修 / 機能追加 / 機能削除**を実施する人向けの実務手順書です。
-> 「どこを触れば何が起きるか」を具体的なファイル単位で示し、AI に頼らず一人で
-> 作業できることを目的とします。
->
-> 関連:
-> - [README.md](../../README.md) — プロジェクト概要・初回セットアップ
-> - [docs/administrator/OPERATION.md](../administrator/OPERATION.md) — デプロイ・運用・障害対応
-> - [docs/developer/DESIGN.md](./DESIGN.md) — 詳細設計 (情報源)
-> - [docs/developer/SPECIFICATION.md](./SPECIFICATION.md) — 機能仕様
+本ドキュメントは、PR ごとに蓄積された **既存機能の改修パターンと過去の罠** を集約する (DEVELOPER_GUIDE.md §5 全体、約 60 のサブセクション)。時系列順に並んでおり、各エントリは PR との対応を持つ。
 
----
-
-## 目次
-
-1. [src/config/ ディレクトリ案内](#1-srcconfig-ディレクトリ案内)
-2. [テーマカラーの追加・変更手順](#2-テーマカラーの追加変更手順)
-3. [マスタデータ列挙 (ステータス等) の追加手順](#3-マスタデータ列挙-ステータス等-の追加手順)
-4. [新しい画面・機能の追加手順](#4-新しい画面機能の追加手順)
-5. [既存機能の改修手順](#5-既存機能の改修手順)
-6. [機能削除の手順](#6-機能削除の手順)
-7. [DB スキーマ変更手順](#7-db-スキーマ変更手順)
-8. [UI ラベルの追加手順 (i18n)](#8-ui-ラベルの追加手順-i18n)
-9. [テスト・lint・build の実行](#9-テストlintbuild-の実行)
-10. [コミットとデプロイ](#10-コミットとデプロイ)
-11. [後続対応 (TODO) 一覧](#11-後続対応-todo-一覧-pr-122-で追加) (PR #122 追加)
-
----
-
-## 1. `src/config/` ディレクトリ案内
-
-> **設計原則**: 業務的意味を持つ値はプログラム内にハードコードせず、すべて `src/config/` に集約する (DESIGN.md §21.4 ゼロハードコーディング原則)。
-
-### 1.1 ファイル一覧
-
-| ファイル | 役割 | 主な定数・関数 |
-|---|---|---|
-| `master-data.ts` | 業務概念の列挙 | `TASK_STATUSES` / `VISIBILITIES` / `PRIORITIES` / `RISK_NATURES` / `SYSTEM_ROLES` / `PROJECT_ROLES` 等 |
-| `themes.ts` | テーマカタログ | `THEMES` (10 種) / `toSafeThemeId()` |
-| `theme-definitions.ts` | テーマ色定義 | `THEME_DEFINITIONS` (CSS 色トークン) / `THEME_COLOR_SCHEMES` (light/dark) |
-| `security.ts` | 認証・セキュリティ定数 | `BCRYPT_COST` / `LOGIN_FAILURE_MAX` / `PASSWORD_MIN_LENGTH` / 各トークン期限 |
-| `routes.ts` | 認可判定用パス | `PUBLIC_PATHS` / `MFA_PENDING_PATHS` / `LOGIN_PATH` |
-| `app-routes.ts` | 画面遷移パス | `PROJECTS_ROUTE` / `MY_TASKS_ROUTE` / `projectDetail(id)` 等 |
-| `suggestion.ts` | 提案型サービス調整値 | `SUGGESTION_TAG_WEIGHT` / `SUGGESTION_SCORE_THRESHOLD` |
-| `validation.ts` | 入力上限値 | `TITLE_MAX_LENGTH` / `MEDIUM_TEXT_MAX_LENGTH` / `TAGS_MAX_COUNT` |
-| `index.ts` | 公開エントリ | 上記すべてを再エクスポート (`import { X } from '@/config'`) |
-
-### 1.2 値を変更したいとき
-
-ほとんどの場合、`src/config/` 配下の該当ファイル 1 行を編集すれば、
-プログラム全体に反映されます。例:
-
-| やりたいこと | 編集するファイル |
-|---|---|
-| ログイン失敗ロック回数を 3 回に変更 | `security.ts` の `LOGIN_FAILURE_MAX` |
-| プロジェクト名の最大文字数を 50 に変更 | `validation.ts` の `NAME_MAX_LENGTH` |
-| 提案サービスの閾値を 0.1 に変更 | `suggestion.ts` の `SUGGESTION_SCORE_THRESHOLD` |
-| ダークテーマの背景を真っ黒に変更 | `theme-definitions.ts` の `dark.background` |
-| ログイン画面の URL を `/signin` に変更 | `routes.ts` の `LOGIN_PATH` + `app-routes.ts` の `LOGIN_ROUTE` |
-
----
-
-## 2. テーマカラーの追加・変更手順
-
-### 2.1 既存テーマの色を変更したい場合
-
-1. `src/config/theme-definitions.ts` を開く
-2. 対象テーマ (例: `dark`) の `extend({...})` 内で変更したい token を編集
-   ```ts
-   dark: extend({
-     background: 'oklch(0.10 0 0)',   // ← この値を変更
-     foreground: 'oklch(0.99 0 0)',
-     ...
-   }),
-   ```
-3. テスト実行 (`pnpm test`) で `theme-definitions.test.ts` が pass するか確認
-4. `pnpm dev` で起動して目視確認 (設定画面 → 画面テーマ → dark に切替)
-
-### 2.2 新しいテーマを追加したい場合
-
-例: `'cyber-pink'` という新テーマを追加するケース。
-
-#### Step 1: テーマカタログに登録
-
-`src/config/themes.ts`:
-```ts
-export const THEMES = {
-  light: 'ライトテーマ（デフォルト）',
-  dark: 'ダークテーマ',
-  // ... 既存 ...
-  'cyber-pink': 'サイバーピンク',  // ← 追加
-} as const;
-```
-
-#### Step 2: 色トークンを定義
-
-`src/config/theme-definitions.ts` の `THEME_DEFINITIONS` に追加:
-```ts
-'cyber-pink': extend({
-  background: 'oklch(0.95 0.08 350)',
-  primary: 'oklch(0.55 0.20 350)',
-  primaryForeground: 'oklch(0.99 0 0)',
-  // ... 必要な差分のみ。指定しない token は LIGHT から継承
-}),
-```
-
-> **重要**: `satisfies Record<ThemeId, ThemeTokens>` 制約により、追加漏れがあれば `pnpm build` がエラーになります。
-
-#### Step 3: color-scheme を指定
-
-同じファイルの `THEME_COLOR_SCHEMES` にも追加:
-```ts
-export const THEME_COLOR_SCHEMES = {
-  // ... 既存 ...
-  'cyber-pink': 'light',  // 背景が明るいので 'light'
-} as const satisfies Record<ThemeId, 'light' | 'dark'>;
-```
-
-#### Step 4: 動作確認
-
-```bash
-pnpm test     # theme-definitions.test.ts が新テーマを検証
-pnpm build    # 型エラーがないか
-pnpm dev      # 設定画面で切替
-```
-
----
-
-## 3. マスタデータ列挙 (ステータス等) の追加手順
-
-例: `TASK_STATUSES` に `'review'` (レビュー中) を追加するケース。
-
-### Step 1: 定義に追加
-
-`src/config/master-data.ts`:
-```ts
-export const TASK_STATUSES = {
-  not_started: '未着手',
-  in_progress: '進行中',
-  review: 'レビュー中',  // ← 追加
-  completed: '完了',
-  on_hold: '保留',
-} as const;
-```
-
-### Step 2: DB バリデーションを更新
-
-`src/lib/validators/task.ts` 等で `z.enum(...)` を使っている箇所があれば、
-新しい値を追加します。
-
-### Step 3: ロジック影響を確認
-
-新ステータスがあることで業務ロジックに影響が出るか検討:
-- 進捗率との整合性 (`task.service.ts` の `normalizeProgressForStatus`)
-- WP の状態自動判定 (`aggregateWpFromChildren`)
-- フィルタ UI のデフォルト選択肢
-
-### Step 4: マイグレーション (DB に既存値で投入されている場合)
-
-新しい値を既存レコードに使いたい場合は migration を作成:
-```bash
-npx prisma migrate dev --name add_task_status_review
-```
-
----
-
-## 4. 新しい画面・機能の追加手順
-
-例: 「コメント機能を全エンティティに追加する」のような大型機能追加の場合。
-
-### Step 1: 設計書に章を追加
-
-`docs/DESIGN.md` に新セクションを追加し、以下を明記:
-- なぜ必要か (背景)
-- データモデル (テーブル定義 / マイグレーション計画)
-- API 仕様
-- 画面仕様 (UI モック・遷移)
-- 認可ルール
-- セキュリティ考慮事項
-
-### Step 2: DB マイグレーション作成
-
-```bash
-# prisma/schema.prisma を編集してテーブル追加
-npx prisma migrate dev --name add_comments
-```
-
-詳細は本書 §7 (DB スキーマ変更手順)。
-
-### Step 3: 型 + バリデータ作成
-
-| ファイル | 内容 |
-|---|---|
-| `src/lib/validators/comment.ts` | Zod スキーマ (`createCommentSchema` 等) |
-| 新規型 (DTO) は service ファイル内で `export type CommentDTO` として宣言 |
-
-### Step 4: サービス層実装
-
-`src/services/comment.service.ts` を作成:
-- ファイル先頭に **必ず docblock** を書く (役割 / 設計判断 / 認可 / 関連設計書)
-  → 既存の `memo.service.ts` 等を参考に
-- CRUD 関数: `listComments` / `getComment` / `createComment` / `updateComment` / `deleteComment`
-- 認可は呼び出し元 API ルートに任せる方針
-
-### Step 5: API ルート実装
-
-`src/app/api/comments/route.ts` 等を作成:
-- ファイル先頭に **必ず docblock** を書く (HTTP メソッド / 認可 / 監査 / 関連設計書)
-- 認可: `getAuthenticatedUser` + `checkProjectPermission` または `requireAdmin`
-- 監査: 変更系操作は `recordAuditLog` を呼ぶ
-
-### Step 6: UI 実装
-
-| ファイル | 内容 |
-|---|---|
-| `src/app/(dashboard)/.../comments/page.tsx` | サーバコンポーネント (auth 確認 + 初期データ取得) |
-| `src/app/(dashboard)/.../comments/comments-client.tsx` | クライアントコンポーネント |
-| ファイル先頭に **必ず docblock** を書く (役割 / 設計 / 認可 / API / 関連) |
-
-### Step 7: i18n ラベル追加 (必要なら)
-
-新画面で使うラベルを `src/i18n/messages/ja.json` に追加 (詳細は §8)。
-
-### Step 8: テスト
-
-- サービスの単体テスト: `src/services/comment.service.test.ts`
-- バリデータの単体テスト: `src/lib/validators/comment.test.ts`
-- メッセージカタログテストが新キーを検出: `src/i18n/messages.test.ts` 内の `REQUIRED_*_KEYS` に追加
-
-### Step 9: ドキュメント更新
-
-- `docs/DESIGN.md` の該当章
-- `docs/SPECIFICATION.md` の機能仕様
-- `README.md` の機能一覧 (大型機能の場合)
-
-### Step 10: lint / test / build → コミット → PR
-
-詳細は §9, §10。
+索引と概要は [README.md](./README.md) を参照。
 
 ---
 
@@ -4299,1693 +4065,627 @@ function detectMentionContext(pathname: string): 'wbs' | 'project_list' | 'cross
 - DESIGN.md §8.3.4 (mention 認可マトリクス)
 - 修正例: `src/services/mention.service.ts` (kind 展開 + diff + 通知生成)
 
-## 6. 機能削除の手順
+### 5.57 一覧画面 UX クリーンアップ + テキストフィルタの否定条件 (PR fix/list-export-and-filter, 2026-05-01)
 
-### Step 1: 影響範囲の確認
+ユーザレポート 3 件を 1 PR で対応:
 
-```bash
-# 削除対象の関数 / API ルートが使われている箇所を網羅
-grep -rn "deleteFunctionName" src
-```
+#### Task 1: エクスポートボタンのラベル統一
 
-### Step 2: 順序立てた削除
+旧仕様で 5 entity (task / risk / retro / knowledge / memo) の `syncExport` キーがバラバラに「上書き用 N 列」のような実装詳細を含んでいた。**一律「エクスポート」に統一**。csvFormatHint の参照テキストも合わせて更新。
 
-1. **UI 側**: 削除対象機能を呼び出している画面を修正 (リンク削除 / ボタン非表示)
-2. **API ルート**: `src/app/api/.../route.ts` を削除
-3. **サービス層**: 該当関数を削除
-4. **バリデータ / 型**: 該当スキーマと型を削除
-5. **DB マイグレーション** (テーブル / カラム削除を伴う場合): 別 migration
-   ```bash
-   npx prisma migrate dev --name drop_xxx
-   ```
-6. **テスト**: 削除した関数のテストを削除
-7. **ドキュメント**: DESIGN.md / SPECIFICATION.md から該当記述を削除
-
-### Step 3: 監査ログの保護
-
-ユーザの過去操作の監査ログ (`audit_logs.entityType` 等) で該当エンティティが
-参照されている可能性があります。**監査記録は削除しない**でください
-(将来トレース不能になるため)。
-
----
-
-## 7. DB スキーマ変更手順
-
-詳細は [docs/administrator/OPERATION.md](../administrator/OPERATION.md) §3 (DB マイグレーション手順) を参照。
-
-要点:
-
-1. ローカルで `prisma/schema.prisma` を編集
-2. `npx prisma migrate dev --name xxx` で migration ファイル生成 + ローカル適用
-3. PR を作成
-4. **本番デプロイ前**に Supabase ダッシュボードの SQL Editor で migration SQL を
-   手動実行する (Vercel ビルドでは自動適用されない設計)
-5. 本番 DB 更新後に PR をマージ → Vercel が自動デプロイ
-
----
-
-## 8. UI ラベルの追加手順 (i18n)
-
-### 8.1 既存カテゴリへの追加 (Phase A/B/C 範囲)
-
-`src/i18n/messages/ja.json` に追加:
+旧:
 ```json
-{
-  "action": {
-    "save": "保存",
-    "submit": "送信"  // ← 追加
-  }
-}
+{ "syncExport": "WBSをエクスポート(上書き用)" }
+{ "syncExport": "エクスポート (上書き用 16 列)" }
 ```
 
-`src/i18n/messages.test.ts` の `REQUIRED_*_KEYS` 配列にもキーを追加して、
-将来の追加漏れを CI で検出できるようにします。
+新: 全て `"syncExport": "エクスポート"`
 
-JSX 側の使い方:
-```tsx
-'use client';
-import { useTranslations } from 'next-intl';
+#### Task 2: ナレッジ一覧のボタン位置を他一覧と揃える
 
-function MyComponent() {
-  const t = useTranslations('action');
-  return <Button>{t('submit')}</Button>;
-}
-```
+ナレッジ一覧だけ:
+- `justify-between` で count 表示 (`{N} 件`) が左、ボタン群が右
+- ボタンが `size="sm"` で他より小さい
 
-### 8.2 サーバコンポーネントでの使い方
+他一覧 (risks / retrospectives 等) はすべて `justify-end` + ボタン既定サイズ。**ナレッジを他一覧パターンに揃える** ことで一貫性回復。`countUnit` 表示は他一覧では持っていなかったので削除 (UI 簡素化、件数は一括選択ツールバーで間接的に確認可)。
 
-```tsx
-import { getTranslations } from 'next-intl/server';
+#### Task 3: テキストフィルタに否定条件追加 (`-` プレフィックス)
 
-export default async function Page() {
-  const t = await getTranslations('action');
-  return <h1>{t('submit')}</h1>;
-}
-```
+旧仕様 (`splitKeywordTokens` + `matchesAnyKeyword`):
+- 「ログイン エラー」 → 「ログイン」 OR 「エラー」を含むレコード
 
-### 8.3 移行ステータス
+新仕様 (Google 検索風):
+- 「重要 -完了」 → 「重要」を含み、「完了」を含まない レコード
+- 「-完了」 → 「完了」を含まない レコード (negative-only)
+- 「重要 緊急 -完了 -キャンセル」 → (重要 OR 緊急) AND NOT (完了 OR キャンセル)
 
-| Phase | 範囲 | 状態 |
-|---|---|---|
-| A | アクション動詞 9 語 (保存/削除/キャンセル等) | ✅ 完了 (PR #77) |
-| B | フォームラベル (件名/内容/担当者等) | 🟡 カタログ完備、JSX 移行は段階的 (PR #81 で 1 サンプル実施) |
-| C | 共通メッセージ (saveSuccess/deleteConfirm 等) | 🟡 カタログ完備、JSX 移行は使用機会のあるたびに段階移行 |
-| D | 画面固有文言 | 多言語化が必要になった段階で一括抽出予定 |
-
----
-
-## 9. テスト・lint・build の実行
-
-```bash
-# 単体テスト (vitest)
-pnpm test
-
-# テストをウォッチモードで
-pnpm test:watch
-
-# 単体テスト + カバレッジ計測 (PR #83 で追加)
-#   coverage/coverage-summary.json / lcov.info / HTML レポート (coverage/lcov-report/index.html)
-#   を出力する。HTML を開けば行単位で未到達箇所を確認可能。
-pnpm test --coverage
-
-# Lint (eslint)
-pnpm lint
-
-# ビルド検証 (型エラー / Next.js ビルドエラーを検出)
-pnpm build
-```
-
-**コミット前に最低限すべて通ること**。Stop hook で自動検査されます。
-
-### 9.1 CI のカバレッジレポート (PR #83)
-
-GitHub Actions CI は `pnpm test --coverage` を実行し、`davelosert/vitest-coverage-report-action@v2`
-経由で **PR コメントにカバレッジ要約・変更ファイル別カバレッジ・変更行カバレッジ** を
-自動投稿する。外部サービス (Codecov 等) 連携なしで GitHub 完結。
-
-- 対象計測範囲: `src/lib/**` / `src/services/**` (`vitest.config.ts` の `coverage.include` で指定)
-- レポーター: `text` / `lcov` / `json` / `json-summary` (action 必須の 2 つを含む)
-- CI 実行は `main` への push / PR でトリガー (PR コメントは PR 時のみ)
-
-### 9.2 カバレッジ閾値 80% (PR #84)
-
-`vitest.config.ts` の `thresholds` で **Lines / Statements / Functions: 80%**、
-**Branches: 70%** を常時強制する。これを下回る変更は CI (`pnpm test`) が失敗し
-マージできない。
-
-**計測対象外 (coverage.exclude)** — 単体テストで検証するのが困難なため除外:
-
-| ファイル | 除外理由 |
-|---|---|
-| `src/lib/auth.config.ts` / `src/lib/auth.ts` | next-auth provider 配線 (integration test 領域) |
-| `src/lib/use-lazy-fetch.ts` / `src/lib/use-session-state.ts` | React クライアントフック (要 RTL) |
-| `src/lib/db.ts` | PrismaClient のインスタンス化のみ |
-| `src/lib/search/pg-trgm-provider.ts` | 実 PostgreSQL (pg_trgm 拡張) 接続が必要 |
-| `src/lib/mail/resend-provider.ts` | 外部メール送信 API アダプタ (本物の Resend 必要) |
-| `**/*.test.ts`, `**/*.d.ts` | テスト本体・型定義 |
-
-**閾値を下げたい場合**の運用:
-1. 原則として **テストを追加して充足させる** (除外を増やさない)
-2. どうしても単体テストで検証不可能なファイルが増えた場合のみ `coverage.exclude` に
-   追加し、Why をコメントで残す
-3. `thresholds.branches` を 70% 未満にする変更は事前に DESIGN.md で合意を取る
-
-### 9.3 Security Workflow 攻撃種別マトリクス (PR #84)
-
-[.github/workflows/security.yml](../../.github/workflows/security.yml) の最後に
-`attack-matrix` job があり、GitHub Actions の **Job Summary** に以下のような
-攻撃種別マトリクスを日本語で自動出力する:
-
-| 状況 | 攻撃種別 (Attack) | 主な検証手段 |
-|:---:|---|---|
-| ✅ | 機密情報漏洩 (Secrets Exposure, CWE-798) | gitleaks |
-| ✅ | SQL インジェクション (SQL Injection, CWE-89) | Semgrep / CodeQL + Prisma ORM |
-| ✅ | 認可バイパス / IDOR (Authorization Bypass, CWE-639) | CodeQL + checkProjectPermission |
-| ... | ... | ... |
-
-- テンプレートは [.github/attack-matrix-summary.md](../../.github/attack-matrix-summary.md)
-- ワークフロー側で `sed` による `@@FOO@@` プレースホルダ置換で実スキャン結果を埋め込む
-- **行を追加/編集したいとき**: `.github/attack-matrix-summary.md` を直接編集する。
-  `to_mark` / `or_mark` で使えるステータストークン (`@@GITLEAKS@@` / `@@AUDIT@@` /
-  `@@SAST@@` / `@@CODEQL@@`) は security.yml の `sed` で定義済み。新しい検証手段を
-  増やす場合は security.yml にも変数を追加する。
-
-### 9.3.5 E2E 実装で得られた知見 (PR #90 以降累積)
-
-新しい E2E spec を書く前 / CI で E2E が赤になった時は、まず
-**[docs/E2E_LESSONS_LEARNED.md](./E2E_LESSONS_LEARNED.md)** を一読する。
-PR #90 以降の hotfix から得た **40 個超の罠パターン** (§4.1〜§4.40) と
-**アサーション戦略**が集約されている。
-
-### 9.3.6 Click 後の navigation 完了待機: 3 つの race パターンと使い分け (PR #154 で整理)
-
-E2E spec で「click → URL 遷移 → 遷移後 DOM を expect」という流れを書くとき、
-**click() の resolve タイミングと UI 遷移完了タイミングの race** に踏み込みやすい。
-本プロジェクトでは PR #114 / #144 / #154 で踏み抜いた 3 つの race パターンが整理されている。
-それぞれ性質が異なるため**修正方法も異なる**。新規 spec を書くときは下記マトリクスで
-適切なパターンを選ぶこと。
-
-| # | パターン | 症状 | 原因 | 修正方法 | 関連 LESSONS |
-|---|---|---|---|---|---|
-| 1 | **router.refresh() race** | mutation 後の一覧再取得が間に合わず古い行が残る | `router.refresh()` は **fire-and-forget** で await できない | mutation 完了後に `await page.reload({ waitUntil: 'networkidle' })` で確定 | §4.20 / §4.33 |
-| 2 | **長い click chain race** | API mutation を伴う click の後に複数 await が連なって不安定 | 各 await の間に Server Action / refetch が走り、状態が漂流 | click 前に `page.waitForResponse(...)` を**予約**してから click → response を await | §4.19 |
-| 3 | **Next.js Link click race** | `getByRole('link').click()` 直後の `waitForLoadState('networkidle')` が **0ms で即 resolve** し、navigation 未開始の古いページで expect が timeout | client-side navigation は **イベントループ非同期** のため click() resolve 直後はまだ network 層に request が出ていない | `Promise.all([page.waitForURL(/regex/), link.click()])` で navigation 完了を確実に anchor | §4.40 (PR #154) |
-
-**判別フロー** (どのパターンか見分けるための質問):
-
-```text
-Q1: その click は URL 遷移を起こすか?
-  YES → Q2 へ
-  NO (= 同一 URL の状態変化のみ) → ① router.refresh race を疑う
-
-Q2: 遷移は <Link> による client-side navigation か (vs <a href> や form submit)?
-  YES → ③ Next.js Link click race パターン
-  NO  → 通常の navigation。waitForLoadState で十分なことが多い
-
-Q3: click 後に複数の API 呼び出しを伴う複雑な flow か?
-  YES → ② 長い click chain race も併発しうる。waitForResponse で API ごとに区切る
-```
-
-**コード例**:
+実装 (新関数 `splitPositiveNegativeTokens`):
 
 ```ts
-// ❌ アンチパターン (3 つすべての race を踏みうる)
-await page.getByRole('link', { name: '...' }).first().click();
-await page.waitForLoadState('networkidle');  // 0ms 即 resolve のリスク
-await expect(page.getByRole('heading', { name: '...' })).toBeVisible();
+// `-` プレフィックスで positive / negative に分離
+function splitPositiveNegativeTokens(query: string): { positive: string[]; negative: string[] } {
+  const tokens = splitKeywordTokens(query);
+  // ... `-foo` → negative に追加 (先頭の `-` を除去)
+  // 単独の `-` は無視
+}
 
-// ✅ Pattern 3 (Link click race を回避)
-await Promise.all([
-  page.waitForURL(/\/customers\/[a-f0-9-]+/),
-  page.getByRole('link', { name: '...' }).first().click(),
-]);
-await expect(page.getByRole('heading', { name: '...' })).toBeVisible();
-
-// ✅ Pattern 2 (API 経由 mutation の後に DOM 検証)
-const apiResponse = page.waitForResponse(
-  (r) => r.url().endsWith('/api/customers') && r.request().method() === 'POST',
-);
-await page.getByRole('button', { name: '登録' }).click();
-await apiResponse;
-await page.reload({ waitUntil: 'networkidle' });  // Pattern 1 (router.refresh) もケア
-await expect(page.locator('tbody tr').filter({ hasText: '...' })).toBeVisible();
+function matchesAnyKeyword(query, fields): boolean {
+  const { positive, negative } = splitPositiveNegativeTokens(query);
+  // 1. 空クエリ → true
+  // 2. negative がいずれかの field にヒット → false (除外)
+  // 3. positive 無し → 通過
+  // 4. positive のいずれかが field にヒット → true (OR)
+}
 ```
 
-**新規 spec 作成時のチェックリスト**:
+`matchesAnyKeyword` の関数名は backward-compat のため保持。既存 callers は変更不要。新規テスト 10 件で positive-only / negative-only / 混在 / 複数 negative を網羅。
 
-- [ ] click() が URL 遷移を起こすなら **`Promise.all([waitForURL, click])`** を使う (Pattern 3)
-- [ ] mutation 系 click は **`waitForResponse`** で API 完了を anchor (Pattern 2)
-- [ ] mutation 後に画面再描画を期待するなら **`page.reload`** で router.refresh race を確定 (Pattern 1)
-- [ ] `waitForLoadState('networkidle')` 単独使用は **0ms 即 resolve のリスク** がある
-       (currently in-flight = 0 を満たすだけで navigation 完了を保証しない) → 補助手段として使う
+#### 抽出したルール
 
-**関連**:
-- [E2E_LESSONS_LEARNED.md §4.20](./E2E_LESSONS_LEARNED.md) — router.refresh race の詳細
-- [E2E_LESSONS_LEARNED.md §4.19](./E2E_LESSONS_LEARNED.md) — 長い click chain race の詳細
-- [E2E_LESSONS_LEARNED.md §4.40](./E2E_LESSONS_LEARNED.md) — Link click race の詳細 (PR #154)
+- [ ] **i18n キーの値に「実装詳細」を漏らさない**: 「上書き用 16 列」のような列数や用途は実装変動で陳腐化する。ラベルは UX 上の役割 (「エクスポート」) だけにする
+- [ ] **○○一覧の UI 共通化を保つ**: `flex justify-end` + ボタン既定サイズ + count 非表示 が他一覧パターン。新規一覧追加時は同パターンを踏襲する (DRY 原則 / §5.41 の延長)
+- [ ] **検索の拡張は「Google 検索風」が UX 学習コスト最小**: 既存ユーザの直感に合う syntax (`-` 否定 / 空白 OR) を採用、独自 syntax を作らない
+- [ ] **Backward-compat を保ちつつ新仕様を加える時は関数名を据え置く**: `matchesAnyKeyword` は名前は OR を示唆するが、negation 拡張も含む。callers の影響ゼロを優先
 
-### 9.4 E2E テスト (PR #90 で導入)
+#### 関連
 
-```bash
-# ローカル実行 (Next.js dev 起動済みが前提)
-pnpm dev &
-pnpm test:e2e                       # 全 specs + visual を実行
-pnpm test:e2e:ui                    # UI モードで対話的に実行
-pnpm test:e2e:update-snapshots      # 視覚回帰 baseline を更新
+- §5.41 (○○一覧 共通 UI 部品の抽出規約 — 本件 Task 2 の根拠)
+- Phase C 要件 19 (空白区切り OR 検索 — 本件 Task 3 の前身)
+- 修正例: `src/lib/text-search.ts` (negation 拡張)
 
-# カバレッジ一覧の gap 検出
-pnpm e2e:coverage-check
-```
+### 5.58 一覧画面のカラムソート機能 横展開 (PR feat/sortable-columns, 2026-05-01)
 
-#### 「何のテストをしているか」の確認方法 (PR #93 hotfix 2 で整備)
+#### 背景・要件
 
-1. **`e2e/README.md`** — 各 spec のシナリオを日本語で一覧化。コードを読まなくても
-   全シナリオが把握できる。新しい spec を追加したら必ず更新する。
-2. **Playwright HTML レポート** — CI の Artifact `playwright-report-<run_id>.zip` を
-   解凍し `index.html` を開く。各 test の trace viewer で各 action 毎の
-   DOM snapshot + スクリーンショット + ビデオを視覚的に追える。
-3. **節目スクリーンショット** — `test-results/steps/` 配下 (Artifact
-   `playwright-test-results-<run_id>.zip`) にラベル付きで保存される。
-   各 spec が `await snapshotStep(page, 'step-N-what-happened')` で
-   意味のある瞬間をキャプチャしている。
-4. **UI モード (ローカル)** — `pnpm test:e2e:ui` で Playwright の対話モードが起動。
-   time travel デバッガで任意時点の DOM を検査でき、成功したテストも
-   action 単位で追える。人間による目視確認に最適。
+ユーザ要望: 「○○一覧」「全○○」全画面で **列ヘッダクリックでソート** したい。WBS (タスク階層) は階層構造があるため対象外。Q4-1〜Q4-5 で確定した仕様:
 
-PR #93 hotfix 2 で `playwright.config.ts` の `trace` / `screenshot` / `video` を
-全て `'on'` に変更し、成功・失敗を問わず記録する方針にした (Artifact 肥大化は
-14 日保持で吸収)。
+- Q4-1: WBS は対象外 (階層を崩さないため)
+- Q4-2: チェックボックス・操作・添付列を除く全列ソート可
+- Q4-3: 永続化は `sessionStorage` (タブを閉じるまで保持、ユーザ間で共有しない)
+- Q4-4: 既定ソートは既存の `orderBy` (例: `createdAt DESC`) を保つ
+- Q4-5: バッジ表示で複数列の優先度を可視化 (↑¹ ↓²)
 
-### 9.5 新機能追加時の E2E カバレッジ横展開 (必須)
+#### 採用したパターン
 
-**新しい `page.tsx` や `route.ts` を追加したら、必ず `docs/developer/E2E_COVERAGE.md` を更新**してください。
-更新がないと `ci.yml` の `e2e:coverage-check` ステップが fail し、マージできません。
+##### 3 層構造の責務分離
 
-更新パターン:
-```markdown
-# 完全に E2E カバー済
-- [x] `/new-feature` — e2e/specs/04-new-feature.spec.ts
-
-# 同一 PR 内ではカバーせず、後続 PR で追加予定
-- [ ] `/new-feature` — skip: PR #XX で追加予定
-
-# 意図的にカバー対象外
-- [ ] `/admin/legacy-report` — skip: read-only / 優先度低
-```
-
-#### 9.5.1 漏れた場合の CI 連鎖 fail パターン (PR #115 で得た知見)
-
-`E2E coverage manifest check` が fail すると、**後続の `Test (vitest + coverage)` ステップが
-skip され、`coverage/coverage-summary.json` が生成されない**。その結果
-`Report coverage (PR comment)` ステップが `if: always()` で走るものの、
-`coverage-summary.json` が不在で ENOENT エラーとなり **2 ステップが赤で表示される**。
-
-見かけの症状:
-- Actions 一覧で `E2E coverage manifest check` と `Report coverage` の 2 ステップが ✗
-- `Report coverage` の log に `Error: ENOENT: no such file or directory, open '.../coverage-summary.json'`
-
-**真因は 1 つ**: `E2E_COVERAGE.md` に新規 `route.ts` / `page.tsx` の記載漏れ。
-manifest を修正するだけで 2 つの赤ランプが同時に解消する (Report coverage は副次症状)。
-
-デバッグ時のコツ:
-1. **まず Actions 一覧の最初の ✗ を見る** — 後続の fail は大体その連鎖症状
-2. `pnpm e2e:coverage-check` をローカルで実行して同じエラーが出るか確認
-3. `script/check-e2e-coverage.ts` の出力にある「未記載の機能」を手動で `E2E_COVERAGE.md`
-   に追記 (`[x]` / `[ ] skip: <理由>` のどちらかを選ぶ)
-
-### 9.6 視覚回帰のベースライン運用 (PR #90 合意 → PR #96 で自動化)
-
-視覚回帰テスト (`e2e/visual/*.spec.ts`) の baseline PNG は `e2e/**__screenshots__/` に
-commit されています。**PR 中に baseline 更新を許容**する方針です (前提: リビジョンが
-git 履歴に残るため監査可能)。
-
-**baseline 生成は Linux CI 環境で自動実行** (Windows / macOS ローカルではフォント差異で
-別 PNG になるため使わない):
-
-#### トリガ方法 A: commit message タグ (PR 中の初回推奨)
-
-`workflow_dispatch` は GitHub 仕様で **default branch (main) にファイルが存在する**
-必要があり、workflow 自体を新規追加する PR では UI に表示されません。回避策として、
-commit message に `[gen-visual]` タグを付けた push で自動発火します:
-
-```bash
-git commit --allow-empty -m "chore: generate visual baselines [gen-visual]"
-git push
-```
-
-→ GitHub Actions で "E2E Visual Baseline" ジョブが自動起動、PNG を同 branch に
-auto-commit する。push に `[gen-visual]` が無い限り発火しないので誤トリガしない。
-
-#### トリガ方法 B: Actions UI 手動実行 (workflow 本体が main にマージ済の場合)
-
-1. GitHub Actions UI → **"E2E Visual Baseline" workflow** を開く
-2. "Run workflow" → 対象 branch を選んで実行
-3. 完了後、同 branch に `Update visual baselines (workflow)` commit が auto-commit
-
----
-
-いずれの方法でも、完了後 E2E ワークフローが push をトリガに自動再実行されて green になります。
-
-**⚠️ 「CI を rerun する」だけでは baseline は生成されません**。
-baseline workflow の実行 → 自動 commit → (それをトリガに) E2E CI が自動再実行、
-という 2 段階の手順が必要です。
-
-baseline を上げずに fail したままマージすると main が red になり続けるので、
-**PR マージ前に必ず緑化**してください。
-
-#### ⚠️ 罠: `GITHUB_TOKEN` による auto-commit は次の workflow を起動しない (PR #119 で遭遇)
-
-baseline workflow の auto-commit (`Update visual baselines (workflow)` コミット)
-は既定の `GITHUB_TOKEN` で push されるため、**GitHub 仕様により後続 workflow を
-トリガしない** (無限ループ防止の仕様。[公式ドキュメント](https://docs.github.com/en/actions/security-guides/automatic-token-authentication#using-the-github_token-in-a-workflow)):
-
-> When you use the repository's GITHUB_TOKEN to perform tasks, events triggered
-> by the GITHUB_TOKEN will not create a new workflow run.
-
-**症状**: PR UI の required checks が延々と "Expected — Waiting for status to
-be reported" のまま変化しない。`gh run list --commit <auto-commit-SHA>` が空配列を返す。
-
-##### 手動対処手順 (確定版、PR #120 まで毎回必要)
-
-`[gen-visual]` push → baseline workflow が走り auto-commit された **後** に、
-開発者の credentials (GITHUB_TOKEN ではない) で空コミットを push して CI を再起動する:
-
-```bash
-# 1. baseline workflow の完了を待つ (gh run watch でも可)
-gh run list --branch $(git branch --show-current) --limit 5
-
-# 2. baseline auto-commit をローカルに取り込む
-git pull --ff-only
-
-# 3. 開発者 credentials で空コミット → push → CI 起動
-git commit --allow-empty -m "chore: retrigger CI after baseline update"
-git push
-
-# 4. 再起動された CI の状況確認
-gh run list --commit $(git rev-parse HEAD) --limit 5
-```
-
-**検出方法** (CI が止まっているか判断):
-
-```bash
-# 最新コミットに対する workflow run が 0 件なら GITHUB_TOKEN の罠に該当
-gh run list --commit $(git rev-parse origin/$(git branch --show-current)) --limit 5
-```
-
-空配列 (`[]`) が返ったら手動再起動が必要。1 件以上返れば正常に実行中 or 完了済。
-
-##### 恒久対策: PAT fallback 構文 (PR #121 で実装済み)
-
-PR #121 で `.github/workflows/e2e-visual-baseline.yml` に以下の fallback 構文を採用:
-
-```yaml
-token: ${{ secrets.CI_TRIGGER_PAT || secrets.GITHUB_TOKEN }}
-```
-
-- `CI_TRIGGER_PAT` が secrets に **登録されていれば** → PAT で push → **後続 CI が自動再起動** (GITHUB_TOKEN の罠回避)
-- 未登録なら → 空文字列扱いで `||` により `GITHUB_TOKEN` にフォールバック → 従来動作維持 (手動再起動が必要)
-
-**PAT 登録手順** (ユーザ側で 1 回のみ):
-
-1. GitHub → Settings → Developer settings → **Personal access tokens → Fine-grained tokens → Generate new token**
-2. 設定:
-   - Repository access: `teppei19980914/BusinessManagementPlatform` のみ
-   - Permissions: **Contents: Read and write**
-   - Expiration: 最長 1 年 (fine-grained の上限)
-3. Repo → Settings → Secrets and variables → Actions → Repository secrets → **`CI_TRIGGER_PAT`** として登録
-4. 次回以降の `[gen-visual]` push で自動再起動される
-
-**期限管理**: PAT の expiration 30 日前を目安に再発行 + secret 上書き。失効したら fallback で GITHUB_TOKEN に戻るだけ (壊れない)。
-
-**検討済の他選択肢** (PR #121 時点で不採用):
-
-| 選択肢 | 状態 | 理由 |
+| 層 | ファイル | 責務 |
 |---|---|---|
-| **B. workflow_dispatch 連鎖** | 不採用 | workflow_dispatch 起動の check run が PR の required checks に紐付くか実運用検証リスクあり |
-| **C. GitHub App** | 将来検討 | 個人非依存だがセットアップ工数大。MVP 段階では PAT で十分 |
-| **D. 現状維持** | 不採用 (旧案) | baseline 更新ごとに手動再起動。PR #119 / #120 で 2 回連続発生 |
+| 純関数 | `src/lib/multi-sort.ts` | `applySort` / `getColumnSort` / `multiSort` の比較ロジック (テスト容易) |
+| state hook | `src/components/sort/use-multi-sort.ts` | sessionStorage への load/save + `setSortColumn` |
+| UI 部品 | `src/components/sort/sortable-header.tsx` | 列ヘッダ内のドロップダウン (昇順/降順/クリア) + バッジ表示 |
+| 統合 | `src/components/sort/sortable-resizable-head.tsx` | `ResizableHead` + `SortableHeader` のショートカット (`columnKey` 重複指定を回避) |
 
-IDE 警告 `Context access might be invalid: CI_TRIGGER_PAT` は secrets 未登録時に出るが、
-fallback 構文で保護されているため **実害なし**。登録すれば警告も消える。
-
-#### mask テクニック (PR #96)
-
-動的に変化するコンテンツ (RUN_ID 付きのテストデータ名等) を視覚回帰対象外にするには
-`mask` オプションを使う:
+##### `SortState` 配列が「優先度順」を表現
 
 ```ts
-await expect(page).toHaveScreenshot('projects-light.png', {
-  fullPage: true,
-  mask: [page.locator('tbody tr')],  // テーブル内容は RUN_ID 依存で毎回変わる
+export type SortEntry = { columnKey: string; direction: 'asc' | 'desc' };
+export type SortState = SortEntry[]; // index 0 が最優先
+```
+
+`applySort` は:
+- 既存列の方向変更 → in-place 更新 (優先度維持)
+- 新規列追加 → 末尾に追加 (低優先度)
+- `clear` → 配列から除外
+
+これによりユーザが「最初に title asc、次に priority desc」を選んだ順がそのままソート優先度になる (Q4-5 仕様)。
+
+##### 値の比較規則 (`compareValues`)
+
+- `null / undefined / 空文字` は **direction に関わらず末尾**: 昇順でも降順でも空欄は最下段に置く方が UX が安定。
+- 数値 / Date / boolean はそれぞれ自然比較。
+- 文字列は `localeCompare('ja', { numeric: true, sensitivity: 'base' })` で日本語混在 + 数字混在 (foo2 < foo10) を自然順に。
+
+##### 横展開の手順 (12 画面)
+
+1. **`ResizableHead` を使う一覧 (9 画面)**: `<SortableResizableHead columnKey=... defaultWidth=... label=... sortState=... onSortChange=... />` に置換。`attachments` / `actions` / `select` (チェックボックス) 列は **そのまま `ResizableHead`** で残す (sort 対象外)。
+2. **plain `TableHead` を使う一覧 (customers / admin/users)**: `<TableHead><SortableHeader ... /></TableHead>` パターン。
+3. **server component の一覧 (admin/audit-logs / admin/role-changes)**: テーブル部分を client component (`*-table.tsx`) に切り出して page.tsx は server fetch + 整形 → client component に渡す。`formatDateTimeFull` は session TZ 参照で server 側でしか動かないので **整形済 string と ISO 文字列を両方渡す** (display 用と sort 用を分離)。
+4. **WBS (`tasks-client.tsx`)**: 対象外 (Q4-1)。階層構造が崩れるため。
+5. **`getXxxSortValue(row, columnKey)` を一覧ごとに定義**: switch case で columnKey → row 値の getter を書く。null フィールドは `?? ''` で正規化 (compareValues が末尾に並べる)。
+
+##### 不可視のハマりどころ
+
+- **`ResizableHead` の `overflow-hidden` 削除**: `SortableHeader` のドロップダウン (絶対配置) が th 外側にはみ出す必要があるため、`resizable-columns.tsx` の th 外側 `overflow-hidden` を削除した。テキスト truncation は子の `<div className="truncate pr-2">` で完結するので不要。
+- **storageKey の一意性**: `sort:all-risks` と `sort:project-risks` は別キー。`typeFilter` で risk/issue タブを分けている画面 (all-risks-table) は `sort:all-risks:${typeFilter}` のように suffix を付与し、タブごとに独立させる。
+- **`useMemo` の依存に `sortState` を必ず追加**: filter useMemo で `multiSort(xs, sortState, ...)` を呼ぶなら `sortState` を deps に入れないと再ソートされない。
+- **`my-tasks-client.tsx` の階層**: 各 `pg.tree` の **top-level** だけソートし `children` の順序は維持する (子タスクの順序を崩すと WBS の意味が壊れる)。
+
+#### 抽出したルール (今後の同種 UI)
+
+- [ ] **新規一覧画面追加時は 5 ステップで sort を組み込む**: ① import 3 行 ② `getXxxSortValue` 定義 ③ `useMultiSort('sort:UNIQUE-KEY')` ④ 描画前に `multiSort()` ⑤ 各 sortable header を `SortableResizableHead` (または `<TableHead><SortableHeader/>`) に置換
+- [ ] **「ソート不可」列を見極める**: チェックボックス / 添付一覧 / 操作ボタン列はソート不可、明示的に従来の `ResizableHead` のまま残す
+- [ ] **server component の一覧を sort 対応する場合は client 切り出し**: 整形済 string と ISO 文字列を両方渡す pattern (display と sort の分離)
+- [ ] **null/空文字は常に末尾**: direction で反転しない (UX 一貫性)
+- [ ] **WBS など階層型一覧は対象外**: 子要素の順序を崩すと意味が壊れる
+- [ ] **storageKey は画面固有 + 必要ならサブキー**: タブ切替で sort 状態を独立させたい場合は `sort:all-risks:risk` / `sort:all-risks:issue` のように suffix
+
+#### 関連
+
+- §5.41 (○○一覧 共通 UI 部品の抽出規約 — 本件も同パターン)
+- §5.53 (PR #204 sticky thead — 本件と同じく N 画面横展開パターン)
+- DESIGN.md §3.3 (DRY 原則)
+- 修正例: `src/lib/multi-sort.ts` (純関数 + 25 件のテスト) / `src/components/sort/*` (UI 部品)
+- 横展開先: `all-risks-table.tsx` / `all-retrospectives-table.tsx` / `knowledge-client.tsx` / `all-memos-client.tsx` / `risks-client.tsx` / `stakeholders-client.tsx` / `memos-client.tsx` / `my-tasks-client.tsx` / `projects-client.tsx` / `customers-client.tsx` / `admin/users-client.tsx` / `admin/audit-logs/audit-logs-table.tsx` / `admin/role-changes/role-changes-table.tsx`
+
+### 5.59 通知 deep link を「全○○」auto-open + entity 別メンション認可の細粒化 (PR feat/notification-edit-dialog, 2026-05-01)
+
+#### 背景・要件
+
+PR #205 (通知 MVP) + PR #207 (mention) で通知 link は **`/projects/[id]/...?xxxId=...`** (project 個別画面) を生成していたが、以下 2 つの問題が判明:
+
+1. **mention 受信者が project member 以外でも届く** (kind='user' / 'all') ため、リンククリック時に `/projects/[id]/risks` の `notFound` 認可で 403/404 になり、mention に応答できない
+2. **target query (`?riskId=...`) はどの画面でも消費されず**、list ページに着地するだけで dialog が auto-open しない (PR #205 が link 形式だけ用意し dialog 自動 open は実装漏れだった)
+
+ユーザ要望:
+> メンションによる通知をクリックすると、メンションがされた編集画面が直接開かれるようにロジックを修正
+> Customer はシステム管理者のみ、Stakeholder は PM/PL のみ、WBS は ProjectMember のみメンション可能に
+
+#### 採用したパターン
+
+##### entity 別の到達戦略 (cross-list 寄せ vs project-page + 認可制限)
+
+| entity | 通知 link | 到達戦略 | mention 認可 |
+|---|---|---|---|
+| risk / issue / retrospective / knowledge | **`/risks?riskId=`** 等 cross-list | 全○○ で auto-open (visibility=public のみ閲覧可、誰でもアクセスできる) | 認証済全員 (現状維持) |
+| task | `/projects/[id]/tasks?taskId=` | project 個別画面 | **ProjectMember のみ** (新設) |
+| stakeholder | `/projects/[id]/stakeholders?...` | project 個別画面 | **PM/TL のみ** (新設) |
+| customer | `/customers/[id]` | admin 専用画面 | **admin のみ** (現状維持を確認) |
+
+**設計の対称性**: mention 認可で書ける人 = mention 通知の to が必ずアクセスできる人、を担保することで「届かない通知」が原理的に発生しない。
+
+##### `useAutoOpenDialog` 共通フック
+
+各「全○○」画面で `?xxxId=...` を読み取って dialog を 1 度だけ open する共通ロジックを `src/components/common/use-auto-open-dialog.ts` に集約:
+
+```ts
+useAutoOpenDialog<AllRiskDTO>({
+  queryKey: 'riskId',
+  items: risks,
+  onOpen: (r) => void handleRowClick(r),
 });
 ```
 
-mask 対象は画像上でグレーに塗りつぶされ、pixel 比較から除外される。構造比較に集中できる。
+仕様:
+- mount 時に query 取得 → items から id 一致行検索 → onOpen 呼出
+- 開いた後は URL から該当 query を削除 (`router.replace`)、戻るボタンで再 open しない
+- `triggeredRef` で 1 度きり動作を担保 (filter / sort 変動で再発火しない)
 
-**ただし mask の限界** (PR #96 hotfix 3 教訓 / LESSONS §4.15): 並列テスト環境で
-他 spec のデータが DB に残り行数が変わると mask 領域自体が baseline とズレる。
-動的データは mask ではなく **固定値で seed** するほうが確実。
+##### `EntityResolveResult` への `requiredRole` 追加
 
-#### 今後の視覚回帰運用 (PR #96 定着後)
-
-視覚回帰はユーザ体感 UI の「見栄え回帰検知」を担うので、以下の運用サイクルで保つ。
-
-**(1) 日常開発 (通常の PR)**
-
-- UI に手を入れない PR → 視覚回帰は既存 baseline と比較、green で通る
-- UI に手を入れた PR → 意図通りの変更なら `[gen-visual]` コミットで baseline 再生成
-- 意図せぬ崩れ → コード側を修正して CI 緑化
-
-**(2) 判断フロー (PR に視覚回帰 fail が出たとき)**
-
-```
-差分 PNG を Artifact でダウンロード → 確認
-  ↓
-Q1. UI 変更は PR のスコープに含まれているか?
-  YES → Q2
-  NO  → 回帰バグ (コード側を修正)
-  ↓
-Q2. 変更は意図通り (仕様を満たす) か?
-  YES → [gen-visual] コミットで baseline 更新 + レビュアに PR diff で見せる
-  NO  → コード側を修正
-```
-
-**(3) baseline 更新時のレビュー観点**
-
-- diff 画像 (Actual / Expected / Diff) の 3 面が Artifact `playwright-report/` に入る
-- レビュアは **「変更予告された部分だけが差分か」** を確認
-- 予告外の領域に差分が出ていたら **副作用** なので差戻し
-
-**(4) 定期メンテナンス (月 1 程度)**
-
-- 全 baseline が最新の main の UI と一致しているか: CI 定期 run (schedule: daily) で検知
-- フォント/レンダリングライブラリの更新は CI image の更新で影響が出うる
-- baseline は git に残るので履歴から崩れ始めた時点を特定可能
-
-**(5) 大規模 UI リファクタ時**
-
-- shadcn/ui のバージョンアップや Tailwind 設定変更などで **全テーマの配色が微ズレ** する場合あり
-- `[gen-visual]` で一括再生成 → PR diff で全 PNG の差分をレビュアが一通り確認
-- 事前に事前共有 (スクショを Slack 等で) しておくとレビュー負担が軽い
-
-#### 「最初の push に `[gen-visual]` を含める」運用ルール (PR #143 / PR #144 連続漏れ事例より)
-
-UI レイアウト変更を含む PR では **最初の commit message に `[gen-visual]` を含める**
-ことで E2E 失敗 → hotfix → 再 push の 1 サイクルを節約できる。
-
-**判定条件 (どれかに該当したら最初から含める)**:
-- 既存の jsx 構造 (要素追加 / 順序変更 / className 変更) に手を入れた
-- 権限分岐や条件レンダリングを変えた (新しい UI 要素が表示される側のケースを生む)
-- shadcn/ui コンポーネントを追加・差し替えた
-
-**漏れた場合の連鎖**:
-1. PR push → E2E が visual mismatch で fail (3〜5 分浪費)
-2. 「あ、baseline 古いままだった」と気付く
-3. 空 commit `[gen-visual]` を push → baseline workflow 再走 (~3 分)
-4. baseline auto-commit → E2E 再走 (~5 分)
-
-事例:
-- **PR #143**: admin に状態変更 Select が新規表示 → 概要タブ baseline ズレ
-- **PR #144**: 概要タブを 11 フィールド + 3 タグ列追加 → 同上 baseline ズレ
-
-両者とも「最初から `[gen-visual]` を含めれば 1 サイクルで完了」だったが、
-後追い対応で 2 サイクル消費した。
-
-**判断のフローチャート**:
-
-```
-新規 PR を作成する直前 →
-  Q: jsx の構造変更 / className 変更 / 権限緩和 / コンポーネント追加 のいずれかをしたか?
-  YES → 最初の commit message に [gen-visual] を含める
-  NO  → 含めない (誤発火を防ぐ意図、文書/test のみの PR では baseline 不変)
-```
-
-### 9.7 E2E テスト失敗の調査手順 (PR #90 運用メモ)
-
-E2E が CI で失敗したとき、**ログの切り抜き画像だけでは原因を特定しにくい**ことが
-多々あります (minify されたスタックトレース、同時実行中のテストが出すノイズログ等)。
-以下の手順で切り分けると効率的です。
-
-#### 調査で集める情報
-
-1. **失敗テストと成功テストの対比** ← 最も強力な情報
-   - 類似シナリオの中で **一部だけ成功している** 場合、ページ自体は動作している
-   - 例: PR #90 hotfix 5 のケースでは以下で真因特定できた:
-     - test 6「不正メールでログイン失敗」 ✅ PASS (912ms)
-     - test 3「ログイン画面が表示される」 ❌ FAIL (5.7s)
-     - → 両方 `/login` を使う。test 6 が通る = ページは正常 = 原因は test 3 の
-       アサーション側 (`getByRole('heading')` が `<div>` を拾えない)
-
-2. **Playwright HTML レポートの Artifact ダウンロード** ← 画像証拠
-   - PR のチェック欄 → Actions タブ → Playwright E2E の失敗 run → Artifacts
-   - `playwright-report-<run_id>.zip` をダウンロード
-   - 解凍 → `index.html` をブラウザで開く
-   - 各テストで:
-     - 実際にキャプチャされたスクリーンショット (ページが 500 か、正常レンダリングか)
-     - trace viewer (タイムラインでどの操作で stuck したか)
-     - video (ブラウザ画面の録画、再現性確認)
-
-3. **テキストベースのログ全量**
-   - Actions UI の右上 **歯車 → View raw logs** で生ログ取得 (画像より情報多い)
-   - 画像切り抜きでは下部の詳細や前後のコンテキストが欠落しがち
-
-#### 原因切り分けで誤解しやすいログ
-
-| ログ | 意味 | 実際の原因かどうか |
-|---|---|---|
-| `[auth][error] CredentialsSignin` | next-auth `authorize()` が null を返したときの正常な内部ログ | ❌ 多くの場合ノイズ (意図的にログイン失敗を確認するテストで毎回出る) |
-| `"next start" does not work with "output: standalone"` | 警告 | ⚠️ 実害あり (`node .next/standalone/server.js` を使う必要) |
-| `Cannot find module ./messages/xxx.json` | next-intl 動的 import の標準トレース漏れ | ✅ 真因 (outputFileTracingIncludes で対応) |
-| `Type error: Expected N arguments, but got M` | TypeScript コンパイル失敗 | ✅ 真因 |
-| `waiting for getByRole...` タイムアウト | セレクタ不一致 | ✅ アサーション実装か UI 実装どちらかを直す |
-| `ReferenceError: exports is not defined in ES module scope` | Playwright の TS ローダが ESM の generated コード (例: Prisma client の `import.meta.url`) を CJS として扱って衝突 | ✅ 真因。E2E fixture から **Prisma client を直接 import しない**。DB 操作は `pg` の生 SQL で書く (PR #92 初回 CI 失敗の事例) |
-| `page.goto: net::ERR_ABORTED at http://localhost:3000/<path>` | 直前の navigation (特に 302 リダイレクトチェーン) が完了する前に次の `goto` / 別ナビゲーションが始まり、ブラウザが前者を abort | ✅ 真因。`waitForURL` の正規表現が中間 URL (例: ログイン後の `/` → `redirect('/projects')` 中の `/`) にマッチしていないか確認。対策: URL を glob 完全一致で待つ + `waitForLoadState('networkidle')` を加える (PR #92 hotfix 4、`waitForProjectsReady` ヘルパー参照) |
-| `locator.fill: Timeout Nms exceeded. waiting for ...getByLabel(...)` | **`<Label>` に `htmlFor` が無く `<Input>` に `id` が無い** 等で ARIA のラベル-入力リンクが欠落、`getByLabel` が辿れない。または全角/半角括弧の Unicode 不一致 (例: UI が `（確認）` U+FF08/FF09 なのにテストが `(確認)` U+0028/0029) | ✅ 真因 (a11y 欠陥も兼ねる)。**フォーム要素には `<Label htmlFor="x">` + `<Input id="x">` を必ずペアで付ける** (スクリーンリーダ対応と E2E 両立)。括弧は UI と Unicode 完全一致で書く (PR #92 hotfix 5 事例)。|
-| `locator.click: Timeout Nms exceeded. waiting for getByRole('button', ...)` が `/login` ページで発生 | **Playwright は既定で test ごとに新しい BrowserContext を作る**ため、前 test のログイン cookie が失われ、次 test で middleware が `/login` にリダイレクトする。該当ボタンは `/login` に存在しないためタイムアウト | ✅ 真因。`test.describe.serial()` だけでは context 共有されない。`beforeAll` で `browser.newContext() + context.newPage()` を作って describe 全体で共有し、各 test 内で `const page = sharedPage;` と明示する。意図的ログアウトは `sharedContext.clearCookies()` (PR #92 hotfix 6 事例)。|
-| `toBeVisible() failed` / `element(s) not found` on `getByRole('heading', { name: ... })` | shadcn/ui の `CardTitle` は `<div>` として描画され heading role を持たない。`<h1>`/`<h2>` 以外の「見出し風テキスト」はこのケースに該当 | ✅ 真因。`getByText('...', { exact: true })` に置換する。UI 側で heading 化するのはアクセシビリティ改善だが **別 PR 相当** (shadcn/ui の広範囲変更になる)。PR #90 hotfix 5 / PR #92 hotfix 7 で再発した既知パターン |
-| `strict mode violation: getByText(...) resolved to 2 elements` | 同一テキストを含む要素が hydration 過渡や状態バッジ近傍、**一覧テーブルの `<a>` prefetch** で 2 つ以上一致する。片方が `visibility:hidden` でも strict mode は fail する | ✅ locator スコープを具体化する。`<h2>` なら `page.locator('h2').filter({ hasText: X }).first()`、**一覧の行内文言なら `page.locator('tbody tr').filter({ hasText: X }).first()`**。`waitForLoadState('networkidle')` で過渡状態の待機も追加 (PR #93 hotfix 1 / PR #95 hotfix 1 / LESSONS_LEARNED §4.11) |
-| WBS 等のツリー UI で子行が `element(s) not found` | 親 WP が collapsed 状態だと子 ACT を **DOM に描画しない** (`{!isCollapsed && children.map(...)}`)。可視/不可視ではなく存在そのものが無い | ✅ 子を検証する前に親の展開トグルをクリックする。展開状態は useSessionStringSet 等で永続化される場合が多いので 1 度展開すれば後続 test でも保持 (PR #96 hotfix / LESSONS §4.13) |
-| `getByRole('button', { name: /...title-text.../ })` が見つからない | button に visible text (アイコン文字等) があると accessible name は **text content が優先**、`title` 属性は無視される (ARIA 仕様) | ✅ `aria-label` が無い title-only ボタン (展開トグル等) は **`getByTitle(...)`** を使う。`aria-label` がある場合は `getByRole` で OK (PR #96 hotfix / LESSONS §4.16) |
-| `toContainText` が **状態変化の前後どちらでも pass** する | 同じ行内に「確定ボタン」と「確定バッジ」両方に `確定` 文字がある等、**文字が複数要素に重複**する UI では text match で状態判定できない | ✅ `toContainText` ではなく **要素単位の存在/消失** (`toHaveCount(0)` / `toBeVisible`) で状態遷移を判定。消失すべき文字の `not.toContainText` も併用 (PR #96 hotfix / LESSONS §4.17) |
-| click 直後の `waitForLoadState('networkidle')` が 0ms で解決、その後のアサーションが reload 前に走って fail | Next.js `router.refresh()` は fire-and-forget。onClick が Promise を await しないため、Playwright の click() が返った時点では fetch/refresh は背景タスクで未 flight | ✅ click **前** に `page.waitForResponse(...)` を Promise として予約 → click 後に await し API 完了を確証。その後 `waitForLoadState('networkidle')` で補助 (PR #96 hotfix / LESSONS §4.18) |
-| MFA 検証等「click → API → session update → location.href → middleware → /projects」系 長いチェーンで `waitForURL` が 15s timeout | 並列 CI 下で各段階が数百ms〜数秒かかり合計で timeout 超過。click は event dispatch で即返るため、全チェーンを 1 つの timeout に吸収させると脆弱 | ✅ 最初の API (verify) のレスポンスを click 前に予約 → click 後に await → その後 `waitForURL` で残り部分のみ待機。チェーンを 2 段階に分割 (PR #96 hotfix / LESSONS §4.19) |
-| `waitForResponse + waitForLoadState('networkidle')` を組んでも確定/編集系の UI 検証が間欠的に fail | `router.refresh()` の RSC fetch は microtask の更に後 tick で発火することがあり、networkidle を呼んだ瞬間は「まだ発火していない」→ 0ms で即解決して race | ✅ 同一 URL で部分更新する操作 (router.refresh 依存) は `page.reload({ waitUntil: 'networkidle' })` で DB 真状態を強制取得する。ナビゲーション系 click は §4.19 の 2 段階待機で OK (PR #97 hotfix / LESSONS §4.20) |
-| `apiRequestContext.post: read ECONNRESET` 等 transient network error | 並列 CI で Next.js サーバ resource 逼迫 / TCP 接続プール枯渇 / Supabase 接続プール伝播等の infra flakiness。139ms 程度の極短時間で fail する点が特徴 | ✅ API ヘルパーに **transient error 限定 retry** (1s × 最大 3 回) を実装。4xx/5xx response は retry せず即 throw (本物のバグを隠蔽しない) (PR #97 hotfix / LESSONS §4.21) |
-| 視覚回帰テストで **pixel 差分 98% 等 大規模差** (Diff 画像が全面赤) | テーマ変更等 **Server Component 再取得に依存する動的 state** で、client state (`aria-checked` 等) は即時更新されるが SSR 属性 (`<html data-theme>` 等) は router.refresh 完了後に更新される。screenshot が中間状態 (client 更新済 / SSR 未更新) を captured | ✅ 状態変更 → **page.reload** → SSR 決定属性を assert で確証 → screenshot の順に並べる。client state (`aria-checked` 等) は race するので SSR が書く属性を見る (PR #97 hotfix / LESSONS §4.22) |
-| §4.22 を適用したのに `data-theme` 等 SSR 属性が 10s タイムアウトで前の値のまま | `page.reload` が JWT cookie 未更新の状態で走り、`layout.tsx` が古い session からテーマを SSR する。**原因は click → `updateSession()` (POST /api/auth/session) が独立 API であり、PATCH のみを `waitForResponse` していても JWT 更新を待てない** | ✅ click 対象のハンドラが next-auth の `useSession().update()` を呼んでいる場合、`waitForResponse(/api/auth/session POST)` **も click 前に予約して click 後に await** する。SSR が session を読む属性 (data-theme / lang / ロール等) は全て同じ race を抱える (PR #97 hotfix / LESSONS §4.23) |
-| MFA verify 後に `waitForURL('**/projects', { timeout: 15_000 })` が timeout し URL が `/login/mfa` から動かない | MfaForm は verify API の後に **独立した `await update({ mfaVerified: true })` (POST /api/auth/session)** を呼んで JWT を再発行し、その後 `window.location.href` で遷移する。verify API だけ `waitForResponse` しても session 更新の時間が 15s budget を食い尽くす | ✅ verify API **と** `/api/auth/session` POST の **両方** を click 前に並行予約し、両方 await してから `waitForURL` に入る。§4.23 と同根の race で、click 後の挙動が「reload」か「別 URL 遷移」かで待ち方が変わるだけ (PR #98 hotfix / LESSONS §4.24) |
-| `page.goto` 直後の `getByText` / `getByRole` が strict mode violation (同一 CardTitle 等が 2 要素) | Next.js 16 / React 19 の Suspense streaming 過渡期で、hydration 完了前に一瞬 DOM が二重化して観測される。`page.goto` は "load" までしか待たず hydration 完了は待たない | ✅ `page.waitForLoadState('networkidle')` を assertion 前に挟んで hydration を完了させる。safety net として text locator に `.first()` を付ける。Suspense / loading.tsx / parallel routes を含むページでは全般的に必要 (PR #98 hotfix / LESSONS §4.25) |
-| `page.once('dialog', ...)` を使う削除テストが CI で intermittent に `toHaveCount(0)` 10s timeout (networkidle が 1ms で即解決しているログが決定打) | click → confirm 承諾 → fetch DELETE → `router.refresh()` という **dialog 非同期 + fire-and-forget 連鎖** を `waitForLoadState('networkidle')` 単独では待てない。1 ms で idle 判定 → 古い DOM を 10s 観測し続けて fail | ✅ click 前に **`waitForResponse(DELETE)` + `page.once('dialog')`** を予約 → click → DELETE await → **`page.reload({ waitUntil: 'networkidle' })`** で DB 真状態を強制同期 → `toHaveCount(0)` で消失確認、の 5 ステップを全削除テストに横展開する。`page.once('dialog')` が grep でヒットする全 spec で揃える必要あり (PR #106 hotfix / LESSONS §4.26) |
-| CI の Playwright build step で `cp: cannot stat 'public': No such file or directory` (exit 1) — `next build` は成功しているのに standalone 組み立てで fail | アセット整理 PR で `public/` 配下のファイルを **全削除** して空ディレクトリになったが、**git は空ディレクトリを tracked しない** ため CI clone 時に `public/` 自体が存在しない。workflow の `cp -r public .next/standalone/` が標的ディレクトリ欠落で fail | ✅ 空になるアセットディレクトリには **`touch <dir>/.gitkeep`** を同時 commit する (本プロジェクトでは `public/.gitkeep`)。代替策として workflow を `[ -d public ] && cp ...` と defensive にする方法もあるが、silent failure の温床になるため本プロジェクトでは採用せず (PR #100 hotfix / LESSONS §4.27) |
-| MFA verify API が CI で intermittent に 400 を返す (ローカルでは通る) — `expect(mfaRes.ok()).toBeTruthy()` で Received: false | `otplib.verifySync({ token, secret })` を **`epochTolerance` 未指定** (既定 0) で呼んでおり、TOTP コード生成時刻と検証時刻が同一 30 秒 period 内になければ拒否される。CI 負荷 + Step 累積で period 境界を跨ぐと fail。テスト件数増加 (646 → 671 等) で顕在化する flaky | ✅ サーバ側で `verifyTotp` / `enableMfa` / `verifyInitialTotpSecret` すべてに **`epochTolerance: 30`** (±30 秒許容) を付与。RFC 6238 §5.2 推奨で業界標準。ブルートフォース耐性はロック機構 (5 回失敗で一時、3 回目で恒久) で十分確保 (PR #110 hotfix / LESSONS §4.28) |
-| 合成ラベルのボタンが `getByText('ラベル', { exact: true })` で見つからない | `<Button>{label}: {state}</Button>` の形式 (例: MultiSelectFilter) で実テキストは「担当者: 全員」等。label 単独では exact 一致しない | ✅ 正規表現で prefix match する: `page.getByRole('button', { name: /^担当者[::]/ })` (半角/全角コロン両対応) (PR #96 hotfix / LESSONS §4.14) |
-| 視覚回帰 mask ありでも `N pixels different` | 並列テスト環境で他 spec のデータが DB に残り行数が baseline 時と不一致。mask 境界は DOM 撮影時に動的決定なので、mask 範囲そのものが baseline とズレる | ✅ 動的データを mask で吸収するのは不確実。代わりに (a) 対象を視覚回帰から外す、(b) 固定値 (日付・名前) でデータ seed、(c) 画面を固定構造要素に絞る のいずれか (PR #96 hotfix / LESSONS §4.15) |
-| MFA 有効化後に `強制有効化 (解除不可)` バッジが 10s 待っても出ない | `router.refresh()` + Server Component 再取得のラウンドトリップが並列 CI で延びると expected visible が timeout する。API レスポンス自体は OK でも UI 反映が遅れる | ✅ `page.waitForResponse(r => r.url().includes('/api/auth/mfa/enable'))` で API 完了を明示的に待ち、続いて `waitForLoadState('networkidle')` で再レンダも待機。元ボタン (`MFA を有効化する`) の消失 (`toHaveCount(0)`) も補強アサーションとして加える (PR #93 hotfix 1) |
-| Tab アサーション `toHaveAttribute('data-state', 'active')` が timeout、Received `""` | 本プロジェクトは **Base UI** (`@base-ui/react/tabs`) で、Radix UI の `data-state="active"` とは異なる `data-active=""` + `aria-selected="true"` を使う | ✅ ライブラリ非依存の **W3C ARIA 標準** `aria-selected="true"` でアサーションする。`toHaveAttribute('aria-selected', 'true')` (PR #93 hotfix 3 事例)。UI ライブラリを識別するには `src/components/ui/*.tsx` の import 元を確認 |
-
-#### 修正方針の判断ルール
-
-E2E が fail したら、以下のどちらの原因かを見極める:
-
-1. **UI/実装に不具合がある** → ソースコードを修正
-2. **アサーションが UI 実装とズレている** → テスト側を実装に合わせる (仕様上許容される範囲で)
-
-判断基準:
-- 既存ユーザの体験として不備があるか → あれば実装修正、なければテスト修正
-- 例: `<div>` で見出し風に描画しているところに `getByRole('heading')` を当てるのは
-  アクセシビリティ観点で改善の余地はあるが、**本 E2E test の責務外** (別タスク化)
-
-### 9.8 E2E で招待メールと MFA を扱う (PR #92)
-
-Steps 1-6 のように、**招待メールのトークン抽出**や **TOTP コード生成**を含むテストを
-書く場合は、以下の E2E fixture を使う。
-
-#### 招待メールの捕捉 (inbox provider)
-
-CI 環境では `MAIL_PROVIDER=inbox` で `InboxMailProvider` が起動し、送信内容を
-`INBOX_DIR` 配下に 1 通 1 JSON ファイルとして書き出す。Playwright 側はこの
-ディレクトリを polling して受信を待つ。
+`comment.service.ts` の `kind: 'project-scoped'` に **`requiredRole: 'any' | 'pm_tl'`** を追加して route 層で:
 
 ```ts
-import { waitForMail, extractSetupPasswordUrl } from '../fixtures/inbox';
-
-const mail = await waitForMail('user@example.com', { after: testStartedAt });
-const setupUrl = extractSetupPasswordUrl(mail);
-await page.goto(setupUrl);
+for (const pid of result.projectIds) {
+  const m = await checkMembership(pid, user.id, user.systemRole);
+  if (!m.isMember) continue;
+  if (result.requiredRole === 'pm_tl' && m.projectRole !== 'pm_tl') continue;
+  return null;
+}
 ```
 
-- `after` を渡すと、それ以前のメール (他テストの残骸) を無視できる
-- タイムアウト既定 10 秒 / 250ms 間隔 polling
-- 本番環境では `MAIL_PROVIDER` を `brevo` / `resend` / `console` にする (inbox は E2E 専用)
+stakeholder は `requiredRole: 'pm_tl'`、task は `requiredRole: 'any'` を返す。admin は entity 種別に関わらず常に通る (super-user)。
 
-#### TOTP コード生成
+##### CommentSection の `canPost` prop (防衛的パターン)
 
-アプリ本体と同じ `otplib` (`generateSync`) で生成する。**時刻跨ぎのズレを
-避けるため、呼び出し直前で生成して即 fill** する。
+ページ/タブ表示の制御だけでは UI 二重防御が崩れた時に取り返せないため、CommentSection 自体にも `canPost?: boolean` prop を追加 (default true)。現在は呼出側全てが既に page/tab レベルで制御済のため未使用だが、将来 dialog を共有する画面が増えた場合の保険として残す。
 
+#### 設計判断のポイント
+
+1. **「全○○」寄せの妥当性**: mention で「誰でも対象になり得る」 entity (risk/issue/retro/knowledge) は、必然的に「誰でも閲覧可」の cross-list ページに着地させる必要がある。entity 自体の visibility は `public` のみ全○○ 表示なので、draft 投稿への mention は draft 作成者本人にしか届かない (これも対称的)
+2. **task/stakeholder は project page を維持**: mention 認可を ProjectMember / PM/TL に絞ることで、mention 通知 to は必ず project 個別画面にアクセス可能。「全○○」を作る必要がない (= データが project 内のみで意味を持つので cross-list が概念的に存在しない)
+3. **stakeholder の requiredRole 採用根拠**: ステークホルダ管理は計画責任者 (PM/TL) の業務領域。一般メンバーは閲覧のみで議論には参加しない (DESIGN.md 上の RACI)。mention 機能を開放すると意図しないコメント発生源が増えてノイズになる
+4. **`useSearchParams` ではなく専用フック化した理由**: 各 list ページで微妙に違う「item を探す → dialog open → URL クリーンアップ」を 1 箇所に集約することで、将来 N+1 ヒット (遅延 fetch / 複数 entity 混在) 拡張時に一括変更可能
+
+#### 抽出したルール (今後の同種 UI)
+
+- [ ] **mention 通知の to は必ず該当画面にアクセスできる**: mention 認可で「投稿可能な人」= 「to を受け取り得る人」が完全に project / role / admin スコープに含まれることを設計時に確認する
+- [ ] **link 構築 (entity-link.ts) と認可 (route layer) は対の設計**: link を変更したら認可マトリクスを再確認、認可を変更したら link を再確認
+- [ ] **deep link は受信者が絶対にアクセスできる URL を返す**: 「項目が見つからない時は list ページに fallback」「list ページ自体は誰でも見える」が deep link の基本要件
+- [ ] **auto-open は 1 度きり**: filter / sort 変動で再発火しないよう `useRef` でガード、開いたら URL クリーンアップで再 open を防ぐ
+- [ ] **UI gating は防衛的パターンとして prop 化しておく**: 現在使ってなくても将来の経路拡張で必要になる可能性が高い、コストはほぼゼロ
+- [ ] **page/tab レベルと API レベルの二重防御**: UI 制御を変えただけでは抜けられる経路 (URL 直打ち / 直接 fetch / 開発者ツール) が必ず残るため、両方で同じマトリクスを enforce する
+
+#### 既知の制約 / 後続対応
+
+- **`/projects/[id]/stakeholders/page.tsx` が存在しない**: stakeholder mention の deep link は形式上 `/projects/[id]/stakeholders?stakeholderId=...` だが現状 404。stakeholder dialog はプロジェクト詳細画面のタブからのみ到達可能。新規 mention 認可 (PM/TL のみ) では tab 自体が PM/TL + admin にしか出ないため実害は小さいが、URL 直打ちでは 404 になる。後続 PR で page.tsx 切り出し or `/projects/[id]?tab=stakeholders&stakeholderId=...` 形式への切替を検討
+- **task の auto-open 未実装**: `/projects/[id]/tasks?taskId=...` の URL 自体は機能するが、tasks-client は WBS 階層描画のため auto-open ロジックが list 系と異なる。後続 PR で対応
+
+#### 関連
+
+- §5.54 (PR #205 通知 MVP — 本件は link 形式の修正)
+- §5.56 (PR #207 mention — 本件と密接、認可マトリクスを更新)
+- §5.51 (visibility 認可マトリクス — 本件と同源、`requiredRole` 設計のベース)
+- DESIGN.md §22 (polymorphic comment / mention)
+- 修正例:
+  - `src/lib/entity-link.ts` (link 構築)
+  - `src/components/common/use-auto-open-dialog.ts` (新設、共通フック)
+  - `src/services/comment.service.ts` `EntityResolveResult.requiredRole` (型拡張)
+  - `src/app/api/comments/route.ts` `authorizeForComment` (PM/TL 判定追加)
+
+### 5.60 通知 deep link 完成 + コメント認可の mention/plain 分離 + 編集削除ボタン投稿者限定 (PR feat/notification-deep-link-completion, 2026-05-01)
+
+#### 背景・要件
+
+§5.59 (PR #211) で残した既知制約 2 件を解消し、ユーザ要望「メンション通知をクリック → 編集 dialog 直接 open」を完全実装。さらに 2 つの新要件を追加対応:
+
+1. **WBS タスクのコメント認可緩和**: 「データ/実績更新は project member 制限のままだが、**コメント自体は認証済全員可**」(PMO や他チームレビュアーのコメントを許容)。ただし mention 機能は ProjectMember 限定 (mention 受信者を project 内に閉じる)
+2. **コメント編集/削除ボタンの投稿者限定**: 旧 UI は admin override で他人コメントの編集/削除ボタンを表示していたが、API 側 (§5.51) は既に admin 救済を外しており UI が不整合だった。UI を API に合わせて投稿者本人のみに統一
+
+#### 採用したパターン
+
+##### 既知制約 1: stakeholder の専用 page.tsx 不在 → tab パラメータ方式
+
+stakeholder 専用の `page.tsx` を作る案 A と、`/projects/[id]?tab=stakeholders&stakeholderId=...` で project 詳細画面の tab 切替を活用する **案 B** を比較し、後者を採用:
+
+- 既存の lazy fetch + tab 構造を完全流用 (新規ルート追加なし)
+- project header (タブ navigation) が引き続き表示される
+- stakeholders / members の fetch を二重定義しなくて済む
+
+実装ポイント:
+- `entity-link.ts`: stakeholder の URL を `/projects/{pid}?tab=stakeholders&stakeholderId={id}` 形式に変更
+- `project-detail-client.tsx`:
+  - `useState` 初期値で `searchParams.get('tab')` を読み active tab を deep link から決定
+  - `useEffect` で mount 時に initial tab のデータを `loadTabData()` で 1 度だけ強制 fetch (lazy fetch は user click でしか発火しないため deep link 着地では trigger されない)
+- `stakeholders-client.tsx`: 既存の `useAutoOpenDialog` フックで `?stakeholderId=...` を読み dialog auto-open + URL クリーンアップ
+
+##### 既知制約 2: WBS task の auto-open (階層折りたたみ展開を含む)
+
+flat list の `useAutoOpenDialog` がそのまま使えない (task は tree 構造で、対象タスクが折りたたまれた親 WP の中にいると非表示)。
+
+**`task-tree-utils.ts` に 2 関数追加**:
+- `findTaskInTree(nodes, targetId)`: 再帰的にツリーから task を検出
+- `findAncestorIds(nodes, targetId)`: 自身を除く祖先 id 列を root → 親の順で返す
+
+**tasks-client.tsx に専用 useEffect**:
+1. `?taskId=...` を読む
+2. `findTaskInTree` で対象 task を取得
+3. `findAncestorIds` で祖先列取得 → `expandedTaskIds` set に全追加 (折りたたみ展開)
+4. `openEditDialog(task)` で dialog open
+5. URL から `?taskId=...` 削除 (router.replace + scroll: false)
+6. `useRef` で 1 度きり実行を担保 (filter 切替で再発火しない)
+
+##### 新要件 1: task の plain コメント認可緩和
+
+`EntityResolveResult` の `kind: 'project-scoped'` を 2 軸で再構成:
+- `mentionRequiredRole: 'any' | 'pm_tl'` — mention 含む write の必須 role
+- `plainCommentScope: 'public' | 'project-member'` — mention なし write / read の範囲
+
+| entity | mentionRequiredRole | plainCommentScope | 結果 |
+|---|---|---|---|
+| task | `'any'` | `'public'` | plain は誰でも可、mention 含む write は ProjectMember 必須 |
+| stakeholder | `'pm_tl'` | `'project-member'` | mention 有無に関わらず PM/TL のみ可 (= mentionRequiredRole を常に適用) |
+
+route 層 `authorizeForComment` で:
 ```ts
-import { generateTotpCode } from '../fixtures/totp';
-await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
+const isPlainOperation = mode === 'read' || (mode === 'write' && !hasMentions);
+if (isPlainOperation && plainCommentScope === 'public') return null; // task の早期通過
+// それ以外: mentionRequiredRole で判定 (admin はトップで通過済)
 ```
 
-MFA シークレットは `/settings` 画面の「手動入力用のシークレットキー」詳細から読み取るか、
-初期セットアップフローで setup-password レスポンスの `otpauthUri` から抽出する。
+##### 新要件 2: 編集/削除ボタンの投稿者限定
 
-#### 初期 admin シード + クリーンアップ
+`comment-section.tsx` の `canMutate` 関数を `isAdmin || c.userId === currentUserId` から `c.userId === currentUserId` に変更。`isAdmin` 変数自体を削除。
 
-`e2e/fixtures/db.ts` の `ensureInitialAdmin(email, password)` を `beforeAll` で
-呼ぶと、UPSERT で対象 email のユーザ状態を初期化する
-(`forcePasswordChange=true` / `mfaEnabled=false` / `isActive=true` /
-`failed_login_count=0` 等にリセット)。既存レコードがあっても `user.id` を保持したまま
-状態だけ洗い替えるため、users からの RESTRICT な FK (audit_logs 等) に抵触しない。
+理由: API (`/api/comments/[id]`) は §5.51 (PR fix/visibility-auth-matrix) で既に「投稿者本人のみ」に統一済 (admin 救済なし)。UI はそれに追随していなかったため、admin が他人コメントの編集ボタンを押しても 403 が返る矛盾があった。
 
-`e2e/fixtures/run-id.ts` の `withRunId('label')` で実行ごとに一意な文字列が得られる。
-ユーザ email / プロジェクト名等に付与し、`afterAll` の `cleanupByRunId()` で
-prefix 一括削除するとローカル実行時の残存を防げる (CI は Postgres コンテナ破棄で完全消去)。
+横展開チェック: `<CommentSection>` の利用箇所を grep で確認 — 全 5 箇所 (knowledge-edit-dialog / retrospective-edit-dialog / risk-edit-dialog / stakeholder-edit-dialog / customer-detail-client / tasks-client) は **共通コンポーネントを参照するだけ**で、それぞれ独自にボタン判定していないことを確認済。1 箇所修正で全画面に伝播。
 
-#### ⚠️ 重要: Prisma 生成クライアントを E2E から直接 import しない
+#### 設計判断のポイント
 
-`src/generated/prisma/client.ts` は `import.meta.url` を使う ESM で、Playwright の
-TypeScript ローダ (CJS デフォルト) から直接 import すると:
+1. **stakeholder で page.tsx を作らなかった理由**: stakeholder UI はプロジェクト詳細画面のタブ ([SPECIFICATION §7.9.1](../developer/SPECIFICATION.md)) として定義されており、独立した URL を持たない設計。専用 page.tsx を作ると stakeholder data + member data + project meta + RBAC を二重定義することになり、§21.2 DRY 原則違反。tab 方式は既存構造との整合性が高い
+2. **task の plainCommentScope='public' の根拠**: 「project member ではないが業務上コメントしたいケース」(PMO 横断 / 他チームレビュアー / 顧客リエゾン) を許容するため。一方 mention 機能を解放すると project 外の人に通知が飛んで「届かない通知」が発生するため mention は ProjectMember 必須を維持
+3. **stakeholder の plainCommentScope='project-member' を「mentionRequiredRole 適用」と読む**: スコープを明示する代わりに「mentionRequiredRole を plain にも適用するか否か」のフラグとして機能させ、stakeholder は常に PM/TL ロールチェックが走る構造に
+4. **`useEffect` で initial tab を fetch する理由**: lazy fetch は `handleTabChange` 経由でしか発火しないため、URL 直接遷移 (deep link) では tab UI を表示しても data が空の状態になる。mount 時に `loadTabData(initialTabFromUrl)` を 1 度呼ぶことで補完
+5. **編集削除ボタンの`isAdmin`削除を「横展開」と判定した理由**: comment-section.tsx の 1 箇所修正で全 6 経路 (knowledge / retro / risk / stakeholder / customer / task) に自動的に伝播する DRY 構造。grep で個別実装が無いことを確認した上で「1 箇所修正で N 画面伝播パターン」(§5.53) と同じ恩恵を受ける
+
+#### 抽出したルール (今後の同種 UI)
+
+- [ ] **専用 page.tsx を作る vs tab パラメータ方式の判断**: tab UI で実装されたサブ画面に deep link を作るときは、URL の RESTfulness より既存構造との DRY 整合性を優先 (`?tab=...&xxxId=...`)。fetch / RBAC / metadata を二重定義しなくて済むことが大きい
+- [ ] **lazy fetch + deep link の落とし穴**: lazy fetch は user click でしか発火しないため、deep link 着地時には mount effect で initial tab data を強制 load する必要がある
+- [ ] **WBS 階層 deep link は祖先展開とセット**: tree 構造の entity に deep link する場合、対象が折りたたまれた親 WP 内にいる前提で、`findAncestorIds` 経由で祖先全展開してから dialog open
+- [ ] **コメント認可の 2 軸モデル**: mention 有無 × plain スコープ の 2 軸で entity 別認可を表現 (`{mentionRequiredRole, plainCommentScope}`)。「mention は厳しく、plain は緩く」という非対称認可を素直に表現できる
+- [ ] **UI gating と API gating の整合**: API で admin 救済を外したら、UI 側の `isAdmin || ...` も同時に外す。1 箇所の見落としで「ボタンは見えるが押すと 403」の不整合 UX が発生する。grep で `isAdmin\s*\|\|` を点検
+
+#### 関連
+
+- §5.59 (PR #211 通知 link cross-list 化 — 本件で残課題を解消)
+- §5.51 (visibility 認可マトリクス — 編集削除ボタン投稿者限定の根拠)
+- §5.53 (sticky thead 1 箇所修正で N 画面伝播パターン — 本件のコメントボタン修正と同パターン)
+- DESIGN.md §22 (polymorphic comment / mention)
+- 修正例:
+  - `src/lib/entity-link.ts` (stakeholder URL 形式変更)
+  - `src/lib/task-tree-utils.ts` (`findAncestorIds` / `findTaskInTree` 追加)
+  - `src/services/comment.service.ts` (`EntityResolveResult` 2 軸再構成)
+  - `src/app/api/comments/route.ts` (`authorizeForComment` の plain/mention 分岐)
+  - `src/components/comments/comment-section.tsx` (`canMutate` の admin 救済削除)
+  - `src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx` (`?tab=` 読み + initial fetch)
+  - `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx` (`?taskId=` auto-open + 祖先展開)
+
+#### 追補: DB 上の旧通知 link 互換レイヤー (Vercel runtime log で発覚した本番障害対応)
+
+**症状**:
+PR #211 マージ直後 (2026-05-01T06:12) 〜 数分後の Vercel runtime log で `GET /projects/<pid>/knowledge` への **404 アクセスが多発**。ユーザ報告「メンション通知から該当ナレッジに遷移したときにエラー」と整合。
+
+**根本原因**:
+PR #207 (mention) 〜 PR #211 の間、`entity-link.ts` は knowledge / stakeholder 通知 link に `/projects/[id]/knowledge?knowledgeId=...` 形式を生成していたが、**該当 page.tsx が存在しないため恒常的に 404** だった。PR #211 で新規 link は cross-list 形式 (`/knowledge?knowledgeId=...`) に変更済だが、**既に DB に保存された Notification.link は旧 URL のまま残存** していた。Notification は cron 自動削除がまだ未整備のため、DB に長期間残る。
+
+**対応**:
+旧 URL を恒久救済する **互換ルート (redirect-only page.tsx) を 2 本追加**:
 
 ```
-ReferenceError: exports is not defined in ES module scope
-at ../src/generated/prisma/client.ts:3
+/projects/[id]/knowledge/page.tsx     → redirect to /knowledge?knowledgeId=<query>
+/projects/[id]/stakeholders/page.tsx  → redirect to /projects/[id]?tab=stakeholders&stakeholderId=<query>
 ```
 
-で落ちる (PR #92 の初回 CI 失敗事例)。対策:
+実装は `next/navigation` の `redirect()` を使った server component 数行のみ。認可は redirect 先で再判定される (cross-list は public のみ閲覧可、project page は ProjectMember/admin 必須)。
 
-- **E2E の DB 操作は `pg` の生 SQL で書く** (`e2e/fixtures/db.ts` 参照)
-- 列名は `prisma/schema.prisma` の `@map()` 名 (snake_case) を参照
-- `@updatedAt` は DB デフォルト無しなので INSERT 時に明示的に `NOW()` を入れる
-- Prisma の型情報が必要なら服務ロジック層 (`src/services/`) へ寄せ、E2E からは HTTP API 経由で呼ぶ
+**抽出した教訓 (新規ルール)**:
 
-#### E2E スペックを書くときの注意点 (PR #92 連続 hotfix で得た知見)
+- [ ] **link 構築ロジック変更時は DB 上の永続化済 link データも考慮する**: `entity-link.ts` のような link generator を変更したとき、古い link が DB に残るケース (Notification / Email / Audit ログ等) は必ず棚卸しし、互換レイヤー (redirect) または backfill migration のいずれかで救済する
+- [ ] **`page.tsx` 不在 URL を link generator が生成していないか CI/Lint で検出**: `entity-link.ts` のテストで「生成された URL が `app/` ディレクトリ構造と整合する」ことを assert する単体テストを追加するのが理想。または `pnpm tsx scripts/check-link-routes.ts` 的なヘルパー
+- [ ] **本番 deploy 後 30 分は Vercel runtime log を grep する**: `level:error` だけでなく `responseStatusCode:404` の急増もチェック対象。link generator 変更時は特に
+- [ ] **redirect-only page は最小実装で OK**: 認可ロジック / data fetch は不要、`redirect(newUrl)` を呼ぶだけ。本ルートを通過した後 redirect 先で標準の認可が動くため二重防御の心配なし
 
-以下は CI 失敗を繰り返して学んだチェックリスト。新しい spec を書くとき / 既存 spec を
-書き換えるときは必ず再確認する:
+#### 関連 (互換レイヤー)
 
-1. **ログイン後は `waitForProjectsReady(page)` ヘルパーを使う** (hotfix 4)
-   - `waitForURL(/\/projects|\/$/)` 等の緩い正規表現は 302 中間 URL にマッチして
-     `net::ERR_ABORTED` を起こす
-   - `**/projects` glob 完全一致 + `networkidle` で待つ
+- E2E_LESSONS_LEARNED §4.44 (PR マージ後 migration 適用忘れ — 本件と同類「DB と code が乖離する罠」)
+- §11 T-14 / T-24 (Notification / audit_logs の自動削除バッチ — 整備されれば本互換レイヤーも将来不要に)
+- 修正例: `src/app/(dashboard)/projects/[projectId]/{knowledge,stakeholders}/page.tsx` (redirect-only)
 
-2. **UI 実装の文字コードと完全一致させる** (hotfix 5 / hotfix 7)
-   - 全角括弧 `（）` U+FF08/U+FF09 と半角括弧 `()` U+0028/U+0029 は別文字
-   - `getByLabel('...(確認)')` と `getByLabel('...（確認）')` は別物
-   - rewrite のたびに混入しやすいので、疑わしければ `node` 等で文字コード確認
-
-3. **shadcn/ui の `CardTitle` は `<div>` で描画される** (hotfix 7, 既知 PR #90 hotfix 5 の再発)
-   - `getByRole('heading', { name: '...' })` では拾えない
-   - `getByText('...', { exact: true })` を使う
-   - 対象: `/login` / `/setup-password` / `/login/mfa` 等、Card ベースの画面
-   - 真の heading (`<h1>`/`<h2>` 等) は対象外 (例: `/settings` の `<h2>設定</h2>`)
-
-4. **フォーム要素は `<Label htmlFor="x">` + `<Input id="x">` を必ずペアで付ける** (hotfix 5)
-   - 欠けていると `getByLabel` が辿れない + スクリーンリーダーも壊れる
-   - a11y 改善と E2E 対応が両立する
-
-5. **`test.describe.serial()` だけでは BrowserContext は共有されない** (hotfix 6)
-   - 既定で test ごとに新しい context が作られセッション cookie が失われる
-   - セッションを引き継ぐ場合は `beforeAll` で `browser.newContext()` + `newPage()`
-     を作って describe 全体で共有する
-   - 意図的ログアウトは `sharedContext.clearCookies()`
-
-#### pg 生 SQL を使う際のセキュリティ/パフォーマンス規約 (PR #92 hotfix 2)
-
-E2E は CI で隔離実行されるが、`cleanupByRunId` のようにユーザ提供文字列を
-`LIKE` パターンに組み込む場合は以下を徹底する:
-
-1. **入力検証**: ユーザ/呼び出し元から渡る値は正規表現で許容文字集合を制限
-   (`assertRunIdFormat` の例: `/^[A-Za-z0-9-]{6,64}$/`)。LIKE の wildcard 文字
-   (`%` / `_`) やクオート/セミコロンが混入した時点で即 throw。
-2. **Prepared statement のみ**: 値連結 (`` `... ${x} ...` ``) は絶対に使わず、
-   必ず `$1` / `ANY($1)` プレースホルダ経由で渡す。
-3. **並列化**: 相互独立な DELETE (FK 先テーブル群) は `Promise.all` で束ねて
-   ラウンドトリップを削減する。
-4. **Transaction**: 2 段階削除 (FK 先 → 親) は `BEGIN..COMMIT` でアトミック化し、
-   失敗時は `ROLLBACK` + warn ログ (best-effort クリーンアップの一貫性保持)。
-
-これらは CLAUDE.md のコミット前チェック (2. セキュリティ / 3. パフォーマンス) に
-該当するため、E2E fixture に生 SQL を追加するたびに再確認する。
-
----
-
-## 10. コミットとデプロイ
-
-### 10.1 ブランチ運用
-
-- `main` ブランチへの直接コミット禁止
-- 機能改修は `feat/...` / `docs/...` / `fix/...` ブランチで作業
-- 当日ブランチ `dev/YYYY-MM-DD` は SessionStart hook が自動切替
-
-### 10.2 コミット作成
-
-```bash
-git add <changed files>
-git commit -m "変更内容を端的に記述"
-```
-
-> Stop hook が自動で secret scan / 静的解析 / テストを実行し、テスト成功時のみ
-> 自動 commit & push を行う設定もあります (`.claude/.git-automation-config`)。
-
-### 10.3 PR 作成
-
-```bash
-gh pr create --title "..." --body "..."
-```
-
-PR 本文には以下を含めると後の引き継ぎがスムーズです:
-- Summary (変更の目的と概要)
-- 変更したファイルと内容
-- Test plan (動作確認の手順)
-- 関連 PR / 設計書セクション
-
-### 10.4 マージとデプロイ
-
-1. GitHub 上で PR をマージ (手動)
-2. **DB スキーマ変更を含む場合**: マージ前に Supabase で migration を手動実行
-   (詳細: OPERATION.md §3)
-3. Vercel が `main` ブランチを自動デプロイ
-4. 本番 URL で動作確認
-
-### 10.5 並行 PR でコンフリクトが出た場合の解消手順 (PR #115 で得た知見)
-
-複数 PR が同時進行中に **同一ファイルを触る** と、先にマージされた PR の内容が
-後続 PR ベースに存在せず GitHub UI で "This branch has conflicts" 表示が出る。
-本プロジェクトでは daily branch + feature PR 並走運用のため発生しやすい。
-
-#### 典型パターン (PR #115 実例)
-
-- PR #114 (security hardening) がマージされた後、PR #115 (error log 基盤) が
-  コンフリクト表示。衝突したファイル:
-  1. `src/app/api/cron/cleanup-accounts/route.ts` — PR #114 が修正、PR #115 が削除 (modify/delete conflict)
-  2. `src/app/api/projects/[projectId]/tasks/import/route.ts` — 両 PR が同一 catch 句を編集 (content conflict)
-  3. `docs/developer/DESIGN.md` — 両 PR が §9.8 配下に新サブ節追加 (隣接挿入で誤検知)
-
-#### 解消手順 (CLI で実施)
-
-```bash
-# 1. PR ブランチに戻り、最新 main を取得
-git checkout feat/pr-xxx-...
-git fetch origin main
-
-# 2. main をマージ (rebase でも可)
-git merge origin/main
-# → CONFLICT (content) や CONFLICT (modify/delete) が出る
-
-# 3. 各ファイルの解消方針を決める
-#    - content conflict (<<<<<< / ====== / >>>>>>): エディタで手動統合
-#      → 「先行 PR の意図」と「本 PR の意図」を両方活かす (両方 keep が基本)
-#    - modify/delete conflict: ファイル自体の存続を決める
-#      → git rm <path> で削除側確定、または戻して修正版を残す
-
-# 4. 解消したら add → commit (merge commit)
-git add <解決済ファイル>
-git commit -m "Merge main into feat/pr-xxx: 先行 PR #NNN とのコンフリクト解消"
-
-# 5. lint / test / build で回帰確認
-pnpm lint && pnpm test --run && pnpm build
-
-# 6. push
-git push
-```
-
-#### 解消時の判断基準
-
-| 衝突パターン | 判断 |
-|---|---|
-| 同じバグ修正を両 PR で実装 (意図同じ) | **後続 PR (上位互換) の実装を採用**、先行 PR 実装は削除 |
-| 別々の機能追加 (隣接挿入) | **両方 keep**、マーカーだけ除去 |
-| 片方が削除、もう片方が修正 | **削除側が意図的なら削除確定** (git rm)、そうでないなら復元 + 修正統合 |
-| ドキュメントの表/セクション追加 | **両方 keep**、章番号は時系列順で整理 |
-
-#### 予防策
-
-- PR を小さく保つ (1 PR = 1 コンセプト)
-- 長期 PR は定期的に `git merge origin/main` で main 追従
-- 同じファイルを複数 PR で触る場合は PR の先後を事前に合意し、後続は先行マージ後に rebase
-
-#### ドキュメント追記箇所の「末尾追記」が多発する罠 (PR #127 で再確認)
-
-**症状**: `DEVELOPER_GUIDE.md` の **更新履歴テーブル末尾** や `RESPONSIVE_AUDIT.md` の
-**更新履歴末尾** に複数 PR が同時期に行を追加すると、ほぼ確実にコンフリクトが出る。
-
-例: PR #127 が main (PR #125 まで取り込み済) から分岐した後、PR #126 が main にマージ。
-両 PR が `| 2026-04-24 | §xxx 追加 (PR #xxx) |` を **同一行の直後** に追記しており、
-マージ時に `<<<<<<< HEAD | ... | ======= | >>>>>>> origin/main` が出る。
-
-**解消**: 両方 keep、時系列順 (PR 番号の若い順) に並べる。今回の衝突は PR #127 末尾行を PR #126 の直下に残すだけで解消。
-
-**予防**:
-- 更新履歴は「1 行 1 PR」なので、他 PR と干渉しやすい場所と認識する
-- stacked PR が複数ある場合は、上流が main にマージされたら速やかに下流を
-  `git merge origin/main` で追従させる
-- 長期 stacked PR では「末尾追記 3 行」を見越した rebase コミュニケーションを取る
-
-#### Stacked PR で base に hotfix を当てた場合の sub-PR への伝播 (PR #128 → #129 で得た知見)
-
-**背景**: 要望項目 7 のレスポンシブ対応は stacked PR (`#128` base → `#128a` `/projects`
-→ `#128a-2` WBS → `#128b` 横断一覧 → `#128c` admin → `#128d` fine-tune) で進めている。
-
-**症状**: `#128` base に hotfix を 4 回 commit (WebKit エンジン override / main merge /
-`testIgnore` / mobile baseline 自動生成) した後、`#128a` (= PR #129) の CI を確認すると
-**`#128` 初回と同じ WebKit 起動エラー 5 件** で fail していた。
-
-**原因**: `#128a` branch は `#128` の **初回コミット (0490185)** から分岐しており、
-以降に `#128` へ足した 4 件の hotfix を継承していない。stacked PR は後続が
-自動追従しないため、base 更新分は各 sub-PR で明示的に取り込む必要がある。
-
-**解消**: `#128a` で `git merge origin/feat/pr128-responsive-audit` 実行。
-auto-merge が全ファイル成立 (PR #128a の `/projects` モバイルカード実装は、main 由来
-SearchableSelect 追加と同一ファイル `projects-client.tsx` を触るが別範囲のため衝突なし)。
-
-**予防・運用ルール**:
-1. stacked PR の **base (上流) に hotfix を commit したら即座に下流全部に merge を流す**。
-   上流の CI が green になった時点で sub-PR の CI も再走させるために必要。
-2. sub-PR の CI が fail していて、かつ base (上流) の同 workflow も同時期に fail して
-   いた場合、**まず上流の fix 伝播漏れを疑う**。下流固有のバグ調査より先に rebase/merge
-   を試す方が安い。
-3. stacked PR の commit は意図的に 1 本化しておくと、base merge 時の衝突対処が容易
-   (#128a の 4870b74 のように 1 コミット/PR に寄せる)。
-4. Mobile baseline PNG のような **workflow が自動生成してコミットしたファイル** も
-   base に溜まっていく。sub-PR rebase 時に大量の新規 PNG ファイルが一括で降ってくるが
-   正常動作 (衝突にならない、単に `new file` として追加される)。
-
-**再発事例 3 例目 (PR #130 = PR #128a-2 hotfix)**: PR #129 への hotfix 取り込み後、
-PR #130 (`feat/pr128a-2-wbs-mobile`) も同じ E2E Visual Baseline の WebKit エラーで
-fail。PR #130 は PR #129 の **初回コミット 4870b74** から分岐しており、PR #129 が
-後から追加した merge commits (`f096b8d` + `fadcdfe`) を引き継いでいなかった。
-同じく `git merge origin/feat/pr128a-p1-tables-card` の 1 コマンドで auto-merge 成立
-(conflict 0 件、`projects-client.tsx` の WBS 改修 / mobile card / SearchableSelect
-3 系統が同一ファイルを触るが別範囲なので衝突せず)。stacked PR 長さが n 段なら
-hotfix 伝播もそのぶん n-1 回必要 = 本例では **#128 base → #128a(#129) → #128a-2(#130)**
-の 2 段伝播となった。
-
-**再発事例 4 例目 (PR #131 = PR #128b hotfix)**: 3 段目。PR #131
-(`feat/pr128b-p2-cross-list`, P2 横断一覧モバイルカード化) は PR #130 の初回
-コミットから分岐しており、PR #130 が後で取り込んだ hotfix を継承していなかった。
-`git merge origin/feat/pr128a-2-wbs-mobile` で auto-merge 成立。
-
-**再発事例 5 例目 + 6 例目 (PR #132 / #133 hotfix)**: 4 段目 / 5 段目。
-同パターンが **5 PR 連続** (#129 → #130 → #131 → #132 → #133) で再発し、
-それぞれ `git merge` 1 コマンドで解消。
-
-**運用ルールとして確定 (5 例以上の連続再発が根拠)**:
-1. stacked chain を運用する PR では **base ブランチへ hotfix が push されたら
-   即座に全 sub-PR へ順送り merge を流す** (下流ほど新しい変更を含むため、
-   上流から下流の向きが正しい)。
-2. 手動運用は 4 段を超えると伝播忘れが多発するため、**自動化スクリプト**
-   (各 sub-PR branch をチェックアウト → `git merge origin/<上流>` → push) を
-   整備すべき。現状は手動 + チェックリスト運用。
-3. sub-PR を作る際は **初回コミット直前に base の最新 HEAD に rebase しておく**
-   ことで以降の伝播回数を最小化できる (本件の PR #128 スタックは全 sub-PR が
-   一斉に #128 初期状態 0490185 から分岐していたため伝播コストが連鎖した)。
-4. **並走 docs PR の場合、後発 PR は先に main にマージされる予定の PR 内容を
-   事前に把握し sub-section header の重複追加を避ける** (本件の PR #136 で
-   遭遇 = §10.5 末尾追記罠 4 例目)。具体的には:
-   - 後発 PR を作る前に **gh pr list --state open** で並走中の docs 系 PR を確認
-   - 同一セクションを触る場合は **後発 PR の本文を「差分のみ」に絞る**
-     (header / 既存 sub-section の重複を避け、新規追加分だけを含める)
-   - 結果として後発 PR がコンフリクトしても **conflict 解消はゼロ削除のみ**
-     (新規追加行の保持) で済むようになる
-5. **stacked sub-PR は docs を抱えない、知見集約は別途専用 docs PR に切り出す**
-   (本件の PR #137 で遭遇 = §10.5 末尾追記罠 5 例目)。stacked PR の sub-PR
-   (`feat/pr128a-p1-tables-card` 等) が独自に §10.5 再発事例を docs に追記
-   していると、main 側で集約 PR (PR #136 形式) が先にマージされた瞬間、
-   sub-PR の docs 追記分は確実に重複コンフリクトを起こす。
-   - sub-PR の commit message には知見を残しても良いが、**docs ファイルへの
-     追記は集約 PR に一本化**する
-   - 集約 PR を後発で出す場合は本ルール 4 項目の「差分のみ追記」と組み合わせ、
-     sub-PR との衝突点を最小化する
-   - PR #137 で実証された通り、5 PR 連続再発した stacked chain では sub-PR
-     5 本ぶん全てに同じ docs 追記が紛れ込んでいる確率が高く、main 取り込み時
-     に **n-1 回**の同種 conflict が連鎖する
-
-**補足 (2026-04-24, docs/stacked-pr-propagation-lessons で追加)**:
-本セクションは PR #128 stack hotfix 対応で得た知見だが、sub-PR (#129〜#133) が
-**squash-merge** されたため、hotfix 伝播で追加した §10.5 の追記内容が main に
-取り込まれなかった。一般論として **「sub-PR が squash-merge 運用の場合、sub-PR
-のマージ後に追加した docs コミットは別 PR で main へ取り込む必要がある」** と
-いうメタ教訓もある (merge commit 運用なら自動継承されるが、squash-merge では
-最初の squash 時点のスナップショットしか残らないため)。
-
----
-
-#### 独立並走 PR の衝突パターン (PR #156-#162 一気出しで得た知見、2026-04-27)
-
-**3-6 例目までと異なる分類**: 上記 3-6 例目は「stacked PR の hotfix 伝播」(同じ機能を
-段階分割して上流→下流に流す系) の罠だったが、**7-8 例目は stacked ではなく独立
-並走 PR (1 セッションで複数の独立機能を 6 PR 一気にオープン) の衝突**で、性質が
-異なる。stacked では「上流が変わったから下流に流す」だが、独立並走では「同じ
-ファイルを別観点で編集した PR が並走」する点が違い、解消方針も「上流追従」では
-なく「**両方の意図を統合**」になる。
-
-**再発事例 7 例目 (PR #161 conflict resolve, 2026-04-27)**:
-PR #161 (feat/cross-list-bulk-update) は main から枝分かれ後、並走していた
-PR #156-#160 が先に **5 件連続マージ** され、PR #161 をマージする時点で 2 種類の
-コンフリクトが発生:
-1. **`src/services/risk.service.ts`**: PR #157 (cross-list-non-member-columns) が
-   `listAllRisksForViewer` の **同じ行** で「非メンバーへの氏名マスク撤廃」を実施。
-   PR #161 は同関数の同じ場所に `viewerIsCreator: r.reporterId === viewerUserId` を
-   追加しており、両方の修正が同一 return オブジェクトに集中して衝突。
-   **解消方針**: main の「氏名マスク撤廃」を採用 (確定方針) + PR #161 の
-   `viewerIsCreator` を維持 (両立可能、責務が直交している)。
-2. **`docs/developer/DEVELOPER_GUIDE.md`**: PR #160 が §5.20 を、PR #161 が §5.21 を
-   **§5.10.2 の直前** という同じ位置に追加 → 末尾追記コンフリクト。
-   **解消方針**: 番号順 (§5.20 → §5.21) に並べて両方残し、§5.21 の関連リンクから
-   §5.20 (同じく「DB 側 where で除外」設計指針) を参照する形で結合。
-
-**根本原因**: PR #161 を 2026-04-27 朝の 6 PR 一気出しの先頭で作成 (#156→#161 の
-順) したため、後発 PR が先にマージされる順序入れ替わりで衝突が発生。複数の独立 PR を
-並走で出す場合、各 PR の **影響ファイル** を事前にマトリクス化し、衝突確率の高い
-PR (同 entity / 同 service / 同 docs section) は逐次マージの順序合意を取ってから
-作成するのが望ましい。今回は影響範囲が幸い独立しており衝突解消は機械的だったが、
-PR #157 と PR #161 がどちらも risk.service.ts の同じ関数を触ったのは設計上の
-近さの問題で、片方マージ後の rebase で合流させる順序にすべきだった。
-
-**運用ルール 6 として確定**:
-6. **同 entity/同 service/同 docs section を触る並走 PR は逐次運用**: 影響範囲が
-   重なる PR を並列で出さない。先に出した PR のマージ後に rebase して 2 本目を出す。
-   それが難しければ、後発 PR の作成前に **影響ファイルマトリクス** で衝突確率を
-   見積もり、衝突確実なら先発 PR のマージを待つ。
-
-**再発事例 8 例目 (PR #162 conflict resolve, 2026-04-27 / 7 例目の **同日連鎖**)**:
-PR #162 (feat/cross-list-bulk-update-phase2) は PR #161 と同じ朝に並走作成された
-ため、PR #157 / PR #160 / PR #161 のマージ後に **3 種類** のコンフリクトが発生:
-
-1. **`src/services/knowledge.service.ts`** (= 7 例目の risk.service.ts と同型):
-   PR #157 が `listAllKnowledgeForViewer` で「非メンバーへの氏名マスク撤廃」を実施。
-   PR #162 は同関数の同じ return オブジェクトに `viewerIsCreator: k.createdBy === viewerUserId`
-   を追加。**解消**: 7 例目と同方針で main 採用 + viewerIsCreator 維持。
-2. **`src/services/retrospective.service.ts`** (auto-merge 成功): PR #157 の氏名公開と
-   PR #162 の viewerIsCreator が **return オブジェクト内の異なる行** に分散していたため
-   git の 3-way merge が自動解消。conflict marker 出ず。
-3. **`docs/developer/DEVELOPER_GUIDE.md`**: PR #160 (§5.20) + PR #161 (§5.21) が main に
-   先行マージされた後、PR #162 (§5.22) を加える形で末尾追記コンフリクト。
-   **解消**: 番号順 (§5.20 → §5.21 → §5.22) に並べて 3 つとも保持。
-
-**根本原因 (運用ルール 6 違反の証拠)**: PR #161 と PR #162 は **同じ「全○○一覧」横断
-ビュー機能の Phase 1/2 分割** で、構造上ほぼ同じファイル群 (knowledge/retrospective
-service の同じ DTO を編集) を触ることが事前に明白だった。にもかかわらず両 PR を
-2026-04-27 朝に同時オープンしたため、PR #161 マージ後の PR #162 で確実に衝突。
-**運用ルール 6 を確定したセッション (PR #161) と同セッションで違反した**ため、
-ルールが機能するのは「ルール確定後に作成する PR」のみで、**既に並走中の PR には
-適用できない** という制約が判明。
-
-**運用ルール 7 として補強 (機能段階展開系 PR の逐次運用)**:
-7. **機能段階展開系 PR (Phase 1 → Phase 2、entity 拡張展開、共通基盤 → 利用箇所展開等) は最初から逐次運用**:
-   同じ機能を段階分割する PR は、前段 (Phase N) のマージを待ってから後段 (Phase N+1) を作成する。
-   先回りして並走出しすると、前段の修正 (レビュー指摘での追加コミット等) が後段に伝播せず
-   再度衝突する 2 重コストが発生する。本件 (PR #161 → PR #162) のように **同じファイル群を
-   触ることが構造的に明白** な PR は運用ルール 6 の例外ではなく、より厳密に逐次化すべき。
-   - 適用例: Phase 分割 (Phase 1 / Phase 2)、entity 横展開 (Risk → Knowledge / Memo)、
-     共通 hook → 利用画面複数の段階展開
-   - 例外: 完全に独立した別機能 (entity も service も docs section も無関係) なら並走可
-
-**再発事例 9 例目 (PR #168 conflict resolve, 2026-04-27)**:
-独立並走 PR が **DEVELOPER_GUIDE.md の同じ位置に同番号でセクションを追加** したパターン。
-PR #167 (asset-tab-responsive-mobile) と PR #168 (wbs-attachment-display) はどちらも
-2026-04-27 朝に並走作成され、それぞれ:
-
-- PR #167 が `### 5.24 TabsList のレスポンシブ集約パターン` を §5 末尾に追加
-- PR #168 が `### 5.25 添付対応 entity の一覧表示横展開チェック` を §5 末尾に追加 (起票時点で
-  PR #167 が先にマージされる前提で 5.25 を予約)
-- 加えて §11.1 TODO 表で PR #167 (PR #166 経由) が **T-04** (視覚回帰拡大) を追加、
-  PR #168 が **T-05** (Estimate 添付 UI) を追加
-
-PR #167 が先に main へマージ → PR #168 で末尾追記コンフリクト 2 箇所発生:
-1. §5 末尾: HEAD §5.25 vs main §5.24 (両者は完全に独立した別トピック)
-2. §11.1 TODO 表: HEAD T-05 vs main T-04 (こちらも独立した別 TODO)
-
-**解消**: 番号順 (§5.24 → §5.25 / T-04 → T-05) で **両方 keep**。conflict marker を
-HEAD/origin 共に削除し、機械的に並べるだけで解決 (内容判断ゼロ)。
-
-**今回の特徴 (8 例目までと違う点)**:
-- 7-8 例目は **同じ機能領域の Phase 1/2 並走** (cross-list bulk update) が原因で同一
-  service 関数の同じ return オブジェクトが衝突した「**意図統合型**」
-- 9 例目は **完全に独立した機能** (タブ UI vs 添付一覧) が並走した結果、たまたま docs の
-  同セクション末尾に同時追記した「**機械並列型**」。運用ルール 6/7 の **例外条項
-  「完全に独立した別機能なら並走可」** に該当する正常運用での衝突であり、解消も機械的。
-- 番号予約 (`### 5.25` を先取り) は PR #167 が先にマージされる前提で行ったため番号自体は
-  正しく機能した (上書きせずに済んだ) が、**ファイル位置 (末尾 N 行目)** が同じになるのは
-  避けられず、git の text-merge は依然として conflict を出す。
-
-**運用ルール 8 として補強 (独立並走 PR の docs 衝突は機械解消で OK)**:
-8. **完全独立 PR (運用ルール 6/7 の例外条項該当) の docs コンフリクトは機械解消で良い**:
-   §5 末尾追記 / §11 TODO 表追記 のように **「リスト末尾に 1 セクション/1 行追加」型** の
-   コンフリクトは、両 PR の追加内容を **番号順に並べる** だけで解消する。意図統合や
-   設計判断は不要。
-   - 解消手順: `<<<<<<< HEAD ... >>>>>>>` の 2 ブロックを **両方残し、番号順に並び替える**
-   - 番号予約衝突 (両 PR が同番号 5.24 を予約してしまった等) が起きた場合のみ、後発 PR を
-     繰り上げ (5.25 にリネーム) する判断が必要
-   - 機械的に解消できるかの判断基準: **2 ブロックの内容が完全に独立** (同一 entity / 同一
-     service / 同一 sub-section を触っていない) なら機械解消で OK
-
-   **8a. 番号予約衝突の繰り上げ手順 (PR #171 で実適用、3 PR 並走に拡張)**:
-
-   N 件の先行 PR (PR #167/#168 で §5.24/§5.25 を取得) と並走していた後発 PR (PR #171 が
-   §5.24 を予約) が衝突した場合、後発 PR は **N 段繰り上げ** (§5.24 → §5.26) する。
-   その際、以下を **必ず一括更新**:
-
-   ```bash
-   # 1. セクション header の番号 (`### 5.24` → `### 5.26`)
-   # 2. body 内の self-reference (`本 §5.24` 等を全置換)
-   #    → grep で漏れチェック:
-   grep -n "§5\.24\|本セクション" docs/developer/DEVELOPER_GUIDE.md  # 該当 section 範囲のみ
-   # 3. 関連リンク (「関連」サブセクション内の `§5.24 (本 PR)` 等)
-   # 4. 更新履歴テーブルの追記行 (`§5.24 新設 (...)` → `§5.26 新設 (...)`)
-   # 5. 他セクションからの forward-reference (もしあれば)
-   ```
-
-   **冒頭に「section 番号メモ」コメントを残す**: 後から経緯を辿れるよう、繰り上げた
-   セクションの冒頭 (h3 直下) に `> **section 番号メモ**: 当初 §5.NN として執筆したが、
-   PR #XXX が先にマージされ §5.NN を取得したため §5.MM に繰り上げた。` を 1〜2 行で記載する。
-
-   **判定基準**: 先行 PR が main にマージされた時点で predecessor の section 番号は
-   **確定**。後発 PR の rebase/merge 時に **次に空いている番号** に振り直す
-   (run-time での衝突回避ではなく、merge resolve のタイミングで決定する)。
-
-**汎化された予防策 (累積版)**:
-- **PR 起票時に section 番号を予約**: PR description / commit message に「§5.NN を予約」
-  と明記し、並走中の PR description を `gh pr list --state open` で確認して衝突を予防
-- **末尾追記型のコンフリクトはほぼ確実に出る前提で運用**: 解消コストは低い (機械並べ替え)
-  ので、衝突を恐れて並走を止める必要はない。むしろ「衝突しても解消は機械的」という
-  共通理解で並走を許容するのが現実的
-
-#### 再発事例 10 例目 (PR #170 orphan recovery, 2026-04-27): stacked PR の base が main 以外の場合の落とし穴
-
-**症状**: PR #170 (i18n Phase C-1 認証系) は GitHub 上「MERGED」表示で `mergeCommit.oid`
-も存在 (6a88075) するが、**main の first-parent linear history に含まれない**。結果、
-PR #170 の変更 (auth セクション 50 行 / 認証画面 4 ファイルの i18n 化 / DEVELOPER_GUIDE
-§10.10.1) が main から **完全に欠落**。検出は Phase C-2 着手時に
-`git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件となって発覚。
-
-**根本原因**: PR #170 は `base = feat/i18n-foundation` (PR #169 の branch) で起票
-された stacked PR。`gh pr view 170 --json baseRefName` の結果も `feat/i18n-foundation`。
-
-時系列 (UTC):
-1. 09:28:50 — PR #169 が main にマージ (base=main、正常)
-2. 09:29:08 — PR #170 が **`feat/i18n-foundation` 側へマージ** (base=feat/i18n-foundation)
-
-**ここが落とし穴**: PR #169 が main にマージされた瞬間、`feat/i18n-foundation` ブランチは
-論理的に「不要」になるが GitHub は branch を自動削除しない (merge 後も残る)。
-PR #170 はその「孤児ブランチ」へマージされ、main には伝播しない。
-
-GitHub の挙動:
-- PR #170 の状態: `state=MERGED`, `mergedAt=09:29:08Z` (✅)
-- merge commit (6a88075) は存在 (✅)
-- ただし merge 先は **`feat/i18n-foundation`** (PR #170 の元 base)
-- main には反映されない (PR #169 マージ時点で stacked chain は切断済)
-
-**確認方法**:
-```bash
-# 1. PR の base を確認
-gh pr view 170 --json baseRefName,mergeCommit
-#   → baseRefName が "main" 以外なら orphan リスクあり
-
-# 2. main の first-parent history に merge commit があるか
-git log --first-parent origin/main | grep <merge_commit_oid>
-#   → 出てこなければ orphan 確定
-
-# 3. 各ファイルが main に取り込まれているか
-git show origin/main:<重要ファイル> | grep <PR で追加した識別子>
-```
-
-**Recovery 手順** (本 PR で実行):
-```bash
-# 1. main からリカバリーブランチを切る
-git checkout main && git checkout -b fix/<PR>-recovery
-
-# 2. orphan PR の元コミット (merge commit ではなく feature commits) を順に cherry-pick
-git log --oneline origin/main..origin/<PR_branch>
-git cherry-pick <commit1> <commit2> ...
-
-# 3. lint/test/build → push → 新規 PR (base=main) を起票
-```
-
-**予防ルール (運用ルール 9 として確定)**:
-9. **stacked PR を起票するときは「base が main か」を必ず確認**:
-   - 上流 PR (PR #169) の動向を見守りながら作業する場合は stacked にしてもよいが、
-     **上流が main にマージされた瞬間に下流 PR の base を main に切り替える** ことを
-     ルール化する (gh CLI: `gh pr edit <下流> --base main`)
-   - 切替を忘れると本件のように「PR は merged 表示なのに main に届いていない」
-     という見えない regression が発生する
-   - **GitHub UI 経由のマージ時はマージ画面で base を確認**: 「Merge into XXX」の
-     XXX が "main" でなければ alert
-   - **CI/CD と CODEOWNERS では検出できない**: regression は静かに進行するため、
-     依存する後続 PR (本件の Phase C-2) で初めて発覚する。**自動検出は困難**で、
-     起票時の base 設定が最後の砦
-   - **Stop hook 補強**: 並走 PR が複数ある場合、Stop hook で
-     `gh pr list --json number,baseRefName` を出力させ base が "main" 以外の PR を警告
-     する仕組みも検討余地あり (TODO)
-
-**§10.5 既存サブセクションとの関係**:
-- 既存「Stacked PR で base に hotfix を当てた場合の sub-PR への伝播」(再発 3-6 例目)
-  と関連するが、症状が異なる:
-  - 既存: 上流に追加された hotfix が下流に流れない (CI fail で検出可能)
-  - **10 例目 (本件)**: 上流マージ時点で **下流 PR が orphan 化** (CI は通る、merged 表示も出る、
-    main に届いていないことだけが問題 = 検出が難しい)
-- 既存の運用ルール 1「stacked PR の base に hotfix を commit したら即座に下流全部へ
-  順送り merge を流す」とは独立。本件は **「下流 PR の base を main に切替える」** という
-  別操作が必要
-
-### 10.5.1 並列 worktree agents による大規模一括翻訳パターン (PR #175 で確立)
+### 5.61 /api/attachments の visibility-aware 認可 + memo にコメント機能を追加 (PR #213, 2026-05-01)
 
 #### 背景
 
-Phase C 残作業 (~933 hits / 30+ ファイル) を 1 PR に統合するという要件があり、単一 agent
-での serial 処理ではコンテキスト枯渇のリスクが高かった。**isolated worktree** で 5 agents を
-並列実行することで、各 agent が独立したファイル群を担当できる構成を取った。
+ユーザレポート 2 件:
+1. **「全振り返り」一覧画面で作成者ではないユーザが編集 dialog を開くと `/api/attachments` GET が 403** (Vercel runtime log で観測)
+2. **全メモにはコメント機能がない** ので他「全○○」と同様に追加してほしい
 
-#### 実装パターン
+調査結果、両者は **DialogAttachmentSection コメントの「fix/cross-list-non-member-columns で開放済」が嘘** だった (batch endpoint のみ修正で singular GET は対応漏れ)、および **memo は PR #199 でポリモーフィック comment 対象外になっていた** ことが原因。
 
-```ts
-// 各 agent には固有の namespace prefix を割り当て、ja.json/en-US.json への追記が衝突しないようにする
-Agent A (worktree): project / customer / member  (~169 hits)
-Agent B (worktree): wbs / gantt / estimate       (~204 hits)
-Agent C (worktree): risk / retro / knowledge     (~207 hits)
-Agent D (worktree): memo / myTask / setting      (~103 hits)
-Agent E (worktree): admin / stakeholder / UI     (~120 hits)
-```
+#### Task 2: `/api/attachments` の 403 を visibility-aware 認可で解消 (regression fix)
 
-各 agent は:
-1. 担当ファイルを Read
-2. ja.json + en-US.json に **自分の namespace の root section** のみ追加
-3. 担当 .tsx を t() 呼び出しに置換
-4. 抽出スクリプトで自ファイルの残ヒット 0 件確認
-5. worktree branch に commit
+**症状**: cross-list 画面 (`/risks` `/retrospectives` `/knowledge`) から非 project member が public な entity の readOnly dialog を開くと、`<AttachmentList>` が `GET /api/attachments?entityType=...&entityId=...` を発火して 403 (Console エラー)。
 
-orchestrator (主 agent) は agents 完了後:
-1. 各 worktree branch を fetch
-2. 順次 merge — JSON は section 単位で独立追加なので機械解消可
-3. 全体検証 (lint / test / build) + extraction script で全体残数確認
-4. SELECTABLE_LOCALES 切替
+**根本原因**:
+- batch endpoint (`/api/attachments/batch`) は `fix/cross-list-non-member-columns` (2026-04-27) で `visibility='public'` の risk/retrospective/knowledge を非メンバーに開放済
+- **しかし singular endpoint (`/api/attachments?entityType=...`) は対応漏れ** で project member 必須のまま
+- DialogAttachmentSection の docstring は「開放済」と記載されていたが事実と乖離 (「動くと思っていたら動いていなかった」典型)
 
-#### 落とし穴 1: worktree の `.next/` ビルド成果物が ESLint で誤検出される
+**修正**:
+- `attachment.service.ts` に `getEntityVisibility(entityType, entityId)` ヘルパー追加 (visibility 概念を持つ risk/retrospective/knowledge のみ visibility + creatorId を返す。それ以外は null)
+- `route.ts` の `authorize()` を mode 別に分岐:
+  - `read` mode + visibility='public' → 認証済全員可 (project member 不要)
+  - `read` mode + visibility='draft' → 作成者本人のみ (admin はトップで通過)
+  - `write` mode → project member 必須 (visibility 関係なく、書き込みは厳格)
+  - `read` mode で visibility 概念なし (project/task/estimate) → project member 必須 (現状維持)
 
-各 agent worktree で `pnpm build` を実行すると `.next/build/chunks/*.js`
-等の生成 JS が大量に作られる。これらは `node_modules/` ではなく `.next/`
-配下なので **ESLint の ignore patterns に含まれていない場合がある**。
+batch route と singular route の認可ロジックが完全に対称化。
 
-PR #175 では merge 後の最終 lint で:
-```
-✖ 58529 problems (2844 errors, 55685 warnings)
-```
-が出て初見ではプロジェクト本体の問題と誤認した。実態は **agent worktrees の
-`.next/build/chunks/*.js`** (`require()` / `@ts-ignore` / `module = ...`
-等の bundler 出力) を ESLint が走査していただけ。
+#### Task 1: memo にコメント機能を追加
 
-**解消手順**:
-```bash
-# 1. worktree を git 管理から外す
-for wt in $(git worktree list --porcelain | grep "^worktree" | awk '{print $2}' | grep "agent-"); do
-  git worktree remove -f -f "$wt"
-done
+**設計判断**:
+- memo は user-scoped (project 紐付けなし) なので、knowledge と同じ `kind: 'public-or-draft'` を再利用 (visibility-based 認可)
+- mention 許容 kind は `['user', 'all']` (`project_member` / `role_*` / `assignee` は memo に概念がないため不可)
+- 通知 link は `/all-memos?memoId=...` (cross-list、auto-open)
 
-# 2. branch を削除
-git branch | grep worktree-agent | xargs -r git branch -D
-
-# 3. ディレクトリを物理削除 (Windows は long-path 問題が出るので PowerShell)
-# bash:
-#   rm -rf .claude/worktrees/agent-*
-# PowerShell (Windows long-path):
-#   Get-ChildItem ".claude\worktrees" -Directory | ForEach-Object {
-#     Remove-Item "\\?\$($_.FullName)" -Recurse -Force
-#   }
-
-# 4. lint 再実行 → clean になる
-pnpm lint
-```
-
-**汎化ルール**:
-- 並列 agents パターンを終了するときは **必ず worktree directory も物理削除**する
-  (git worktree remove だけでは Windows で「Filename too long」が残ることがある)
-- ESLint config の ignore patterns に `**/.next/**` を **明示**しておく
-  (Next.js プロジェクトでは事実上必須)
-
-#### 落とし穴 2: `pg` symlink 破損 → `pnpm install --force` で復旧
-
-worktree 削除と並行して `node_modules/.pnpm/@prisma+adapter-pg@*/node_modules/pg/`
-の symlink が壊れ、`pnpm test` で:
-```
-Error: Cannot find package 'pg/index.js' imported from @prisma/adapter-pg/dist/index.mjs
-```
-が発生。`pnpm install` (lockfile up to date) では復旧せず、`pnpm install --force`
-で全 symlink 再生成して復旧した。
-
-**汎化ルール**:
-- worktree を多用したセッション後に node_modules のリンク破損が起きうる
-- `pnpm install` で「Already up to date」と出ても症状が残るなら `--force` を試す
-
-#### 落とし穴 3: agent commit 後の未コミット残作業
-
-各 agent は worktree 内で commit + push (worktree branch) するが、orchestrator が
-最終 merge する際に「agent F (residual cleanup) が完了したが未コミット」のような
-中間状態が working tree に残る。これに気付かず lint/test を回すと既存の test 失敗が
-新規由来と誤認しやすい。
-
-**汎化ルール**:
-- セッション再開時 (resume) は最初に `git status --short` + `git stash list` を
-  確認し、未コミット変更が agent 残作業か確認する
-- agent 残作業の commit message は明示的に `(residual cleanup)` 等の suffix を
-  付け、後から判別しやすくする
-
-#### 関連
-- §10.5 (PR-conflict patterns) — orchestrator が複数 worktree を merge する際の参考
-- §10.6 (.next キャッシュ) — worktree でも同じ .next 罠が踏まれる
-- `scripts/i18n-extract-hardcoded-ja.ts` — 進捗計測スクリプト (PR #169)
-
-### 10.6 `.next` キャッシュがコンフリクト解消後にビルドを壊す (PR #115 hotfix)
-
-Next.js は開発時 `.next/dev/types/validator.ts` にルートハンドラの型情報を
-キャッシュする。**ファイル削除を伴うマージ**後にそのまま `pnpm build` すると、
-削除済みの `.next/dev/types/validator.ts` が消滅した route (例:
-`/api/cron/cleanup-accounts/route.js`) を import しようとして型エラーで
-build 失敗する。
-
-**対策**: コンフリクト解消後 (特にエンドポイント削除を含む場合) は必ず
-`rm -rf .next` で キャッシュを消してから build する。
-
-### 10.7 日時描画ルール — ハイドレーション不一致の防止 (PR #117 で得た知見)
-
-クライアントコンポーネントで `new Date(x).toLocaleString('ja-JP')` や
-`d.getFullYear()` 等の **runtime TZ に依存する API** を使うと、React hydration
-mismatch (`#418 Minified hydration failed because the server rendered text
-didn't match the client`) が発生する。
-
-**原因**: Next.js の Server Component → Client Component ハイドレーション時、
-サーバは UTC (Vercel/Docker 等) でレンダリングし、クライアントは JST で再計算する。
-`toLocaleString` / `getHours()` 等は実行環境の TZ を使うため、両者で文字列が
-異なり、React が「マウント時の DOM が SSR 出力と一致しない」と判定する。
-
-**ルール**:
-
-- クライアントコンポーネントで日時を描画するときは必ず `src/lib/format.ts` の
-  ヘルパを使う:
-  - `formatDate(iso)` → `YYYY/MM/DD`
-  - `formatDateTime(iso)` → `YYYY-MM-DD HH:MM`
-  - `formatDateTimeFull(iso)` → `YYYY/MM/DD HH:MM` (ツールチップ等)
-- サーバコンポーネント (`page.tsx` 等) でも、環境差を避けるため同じヘルパを使う
-- 禁止 API: `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString` /
-  `getFullYear()` / `getMonth()` / `getDate()` / `getHours()` / `getMinutes()`
-  (いずれも runtime TZ 依存)
-
-**実装の裏側** (PR #118 で i18n 化): ヘルパは `Intl.DateTimeFormat(locale, { timeZone, ... })`
-を (locale, tz) の組ごとにキャッシュして使い回す。
-サーバ/クライアントが同じ timezone/locale を渡す限りハイドレーション安全。
-
-テストは `src/lib/format.test.ts` / `src/config/i18n.test.ts` で
-UTC→JST 変換 / runtime TZ 独立性 / オプション指定 / フォールバック動作を検証。
-
-**チェック**: 新規ファイル追加時は以下で漏れ検査できる:
-
-```bash
-rg -n "toLocaleDateString|toLocaleString|toLocaleTimeString|getFullYear\(\)|getMonth\(\)|getDate\(\)|getHours\(\)|getMinutes\(\)" src/
-```
-
-### 10.8 タイムゾーン / ロケールの 3 段階フォールバック (PR #118)
-
-**背景**: 日本国内限定から将来的にローカル/オンプレ/クラウド多拠点展開を視野に入れ、
-JST ハードコード (PR #117) を設定可能化。
-
-**解決順序** (`src/config/i18n.ts` の `resolveTimezone()` / `resolveLocale()` 実装):
-
-```
-ユーザ個別設定 (User.timezone / User.locale)     ← 設定画面で変更 (PR #119 予定)
-  ↓ (null / 空文字列なら)
-システムデフォルト (src/config/i18n.ts の FALLBACK) ← リポジトリ同梱の既定値 (Asia/Tokyo / ja-JP)
-  ↓ (env が設定されていれば上書き)
-環境変数 (APP_DEFAULT_TIMEZONE / APP_DEFAULT_LOCALE) ← オンプレ / クラウド環境ごとに指定
-```
-
-**使い方** (PR #119 で整備済、通常こちらを使う):
-
-```tsx
-// クライアントコンポーネント: useFormatters フック
-'use client';
-import { useFormatters } from '@/lib/use-formatters';
-export function MyClient() {
-  const { formatDate, formatDateTime, formatDateTimeFull } = useFormatters();
-  return <span>{formatDate(iso)}</span>;
-}
-
-// サーバコンポーネント: getServerFormatters 関数
-import { getServerFormatters } from '@/lib/server-formatters';
-export default async function MyPage() {
-  const { formatDateTimeFull } = await getServerFormatters();
-  return <td>{formatDateTimeFull(log.createdAt.toISOString())}</td>;
-}
-```
-
-**低レベル API** (特殊ケース、通常は上記を使う):
-
-```ts
-import { formatDate } from '@/lib/format';
-// (1) 引数なし = システムデフォルト (login page 等 session が無い場所で使用)
-formatDate(iso)
-// (2) 明示的 TZ/locale 指定 (テスト・固定表示等)
-formatDate(iso, { timeZone: 'UTC', locale: 'ja-JP' })
-```
-
-**SSR/CSR 一貫性**: `session.user.timezone` / `session.user.locale` は JWT に格納され、
-`<SessionProvider session={session}>` (PR #119 で設定) により第 1 クライアントレンダリングで確定値が参照可能。
-サーバとクライアント両方で同じ値を使うためハイドレーション安全。
-
-**DB 格納方針**: DB の `timestamptz` は常に UTC で保存・交換する (Postgres 仕様通り)。
-描画時のみ TZ 解決を行う。API 境界も ISO 8601 UTC (`...Z` サフィックス) で統一。
-
-**env 設定例** (オンプレ展開で米国東部を既定にしたい場合):
-
-```bash
-# .env.production
-APP_DEFAULT_TIMEZONE=America/New_York
-APP_DEFAULT_LOCALE=en-US
-```
-
-**ロケールを段階的に提供するパターン (PR #120 で導入)**:
-
-メッセージカタログ未整備のロケールを UI に出したいが誤選択を防ぎたい場合、
-`src/config/i18n.ts` の `SELECTABLE_LOCALES` マップを使う:
-
-```ts
-// UI には出すが選択不可にしたい場合
-export const SUPPORTED_LOCALES = { 'ja-JP': '日本語', 'en-US': 'English' } as const;
-export const SELECTABLE_LOCALES = {
-  'ja-JP': true,   // 選択可
-  'en-US': false,  // 表示するが disabled (翻訳未完)
-} as const;
-```
-
-- UI 層: `<option disabled={!SELECTABLE_LOCALES[key]}>` + 「※準備中」表記
-- API 層: `isSelectableLocale(value)` で 400 拒否 (curl 直叩き等の迂回防止)
-- format 層: `isSupportedLocale` は true のまま返す (過去に書き込まれた値を壊さない)
-
-翻訳完了 PR で該当キーの `SELECTABLE_LOCALES` を `true` に切り替えると、
-カタログ側も紐付いて一斉に有効化される。
-
-### 10.9 設定画面にセクションを追加するときの CI 連鎖 fail パターン (PR #119 で得た知見)
-
-`settings-client.tsx` に新しい Card セクションを追加したり、`src/app/api/settings/*`
-配下に route.ts を新設したりする場合、以下の **2 つの CI チェックが同時に fail** する。
-両方まとめて対処しないとマージできないので手順化する。
-
-**症状**:
-1. `E2E coverage manifest check` — 新規 `route.ts` が `E2E_COVERAGE.md` に未記載
-2. 視覚回帰 (`e2e/visual/dashboard-screens.spec.ts` / `settings-themes.spec.ts`) —
-   設定画面の高さが変わって baseline PNG と不一致
-
-**対処手順**:
-
-1. `docs/developer/E2E_COVERAGE.md` の「API Routes > その他」セクションに新規 route を追記
-   (即 E2E でカバーしないなら `[ ] /api/settings/xxx — skip: <理由>` の形式)
-2. `pnpm e2e:coverage-check` をローカル実行して green 確認
-3. `[gen-visual]` タグ付き commit を push して baseline を CI で再生成:
-   ```bash
-   git commit --allow-empty -m "chore: regenerate visual baselines for settings section [gen-visual]"
-   git push
-   ```
-4. "E2E Visual Baseline" workflow 完了後、自動 commit が push され E2E ワークフローが緑化する
-
-**なぜ両方同時に必要か**: `E2E coverage manifest check` が先に fail すると
-`Test (vitest + coverage)` が skip → `coverage-summary.json` 不在で
-`Report coverage` も連鎖 fail (§9.5.1 の PR #115 知見と同パターン)。
-視覚回帰 fail は独立だが、UI 変更を伴う PR では必ず同時に発生する。
-
-### 10.10.1 i18n Phase C 翻訳実施時の罠と運用知見 (PR #170 / feat/i18n-phase-c-1-auth で得た知見)
-
-#### 罠 1: 抽出スクリプトはコメント内日本語も拾う
-
-`scripts/i18n-extract-hardcoded-ja.ts` は **シングル/ダブルクオート + JSX text node** を
-網羅抽出する。一方、コメント (`// ...` / `/* ... */`) 内の日本語は事前に `stripComments`
-で除去するが、**抽出後に grep で確認するときはコメントが含まれる**。
-
-- **対策**: 翻訳完了確認時は抽出スクリプト経由で 0 件確認 (コメント除去済) を採用、
-  生 grep `[ぁ-ゖァ-ヺ一-鿿]` ではなく
-  `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts | grep <folder>` で確認する
-
-#### 罠 2: useEffect の依存配列に t() を含める必要がある
-
-`useTranslations` で取得した `t` は **render ごとに新しい識別子** になる。
-useEffect 内で `t('xxx')` を呼ぶ場合、`t` を依存配列に含めないと React Hook の
-exhaustive-deps lint warning が出る。
-
-- **対策**: `useEffect(() => { setError(t('foo')); }, [token, t]);` のように `t` を含める。
-  next-intl の `useTranslations` は同一キーで安定した参照を返すため、過剰な再 render は起きない
-
-#### 罠 3: ICU MessageFormat の動的値は文字列連結よりも安全
-
-旧:
-```ts
-setError(`ログイン失敗が続いたため${formatDateTimeFull(unlockAt)} 以降に...`);
-```
-
-新:
-```ts
-setError(t('temporaryLock', { unlockAt: formatDateTimeFull(unlockAt) }));
-```
-
-- **理由**: 翻訳者が文型を入れ替えやすい (英語と日本語で語順が異なる)、テスト時に
-  プレースホルダ部分を動的に置換しやすい
-
-#### 罠 4: section 間でキーを重複定義しない (単一源泉性) — PR #170 hotfix
-
-`field.newPassword` / `field.newPasswordConfirm` が既に存在するのに、認証画面用に
-`auth.newPassword` / `auth.newPasswordConfirm` を **同じ意味で重複追加** してしまった。
-Stop hook §6 (i18n key 単一源泉チェック) で検出。
-
-- **対策**: 既存 `field.*` / `action.*` / `message.*` セクションに同名キーがある場合、
-  そちらを再利用する。複数 section から取りたい場合は **`useTranslations` を複数取得**:
-  ```tsx
-  const t = useTranslations('auth');
-  const tField = useTranslations('field');
-  // ...
-  <Label>{tField('newPassword')}</Label>
-  ```
-- **追加前 grep**: 新規キー追加時は `grep -n '"<keyName>"' src/i18n/messages/ja.json` で
-  別 section に同名が無いか確認 (キー名衝突 ≒ 意味重複の可能性大)
-- **判断基準**: 画面横断で再利用される **フォーム項目名** は `field.*`、**ボタン文言** は
-  `action.*`、**メッセージ** は `message.*`、画面固有のヒント・タイトルは `<screen>.*`
-
-#### Phase C 各 PR の進め方 (PR-1 認証系で確立)
-
-1. **対象ファイル特定**: `grep -E "^src.app..auth." docs/developer/i18n-extraction-2026-04-27.txt`
-   で機能領域内のハードコード一覧を抽出
-2. **キー設計**: 画面横断で再利用可能なキー (`email`, `password` 等) は共通化、
-   画面固有のメッセージは画面プレフィックス (`reset`, `setup` 等) で命名
-3. **両 JSON 同時更新**: ja.json と en-US.json に必ず同じキーを追加 (片方欠落で
-   フォールバック)
-4. **`useTranslations('auth')` を import**: 各 .tsx の関数本体先頭で `const t = useTranslations('section')` を取得
-5. **置換**: ハードコード文字列を `t('key')` に。三項演算子の両分岐 (例: `step === 'verify' ? 'A' : 'B'`)
-   も忘れず両方置換
-6. **進捗確認**: PR 後に抽出スクリプト再実行し、対象フォルダのヒット数が 0 になったことを確認
-7. **検証**: `pnpm lint` / `pnpm test` / `pnpm build` 全 pass
-
-#### Phase C の stacked PR 運用
-
-各 Phase C-N は **前段 (Phase B = PR #169) または前 Phase C にスタック** する。
-- **base ブランチ指定**: `gh pr create --base feat/i18n-foundation` のように直前のブランチを base に
-- **マージ順序**: PR #169 (Phase B) → PR #170 (C-1 認証) → PR #171 (C-2) ... の順
-- **base 切替**: 上流 PR がマージされたら、下流 PR の base を `main` に切り替えてマージ
-
-#### 関連
-
-- §10.10 (元規約)
-- §11.1 T-06 (Phase C 進捗管理)
-- `scripts/i18n-extract-hardcoded-ja.ts`
-- `docs/developer/i18n-extraction-2026-04-27.txt` (Phase B 起点の抽出結果)
-
-### 10.10 i18n 翻訳作業の規約 (PR #169 / feat/i18n-foundation)
-
-#### 全体像 (3 段階の現在地)
-
-| 段階 | 内容 | 現状 |
-|---|---|---|
-| **Phase A** (PR #77) | `next-intl` 導入、ja.json に最小キー (action / field / message) 集約 | 済 (50 行のみ) |
-| **Phase B** (PR #169 = 本セクションの起源) | en-US.json 雛形、request.ts の session.user.locale 連携、抽出スクリプト | 済 |
-| **Phase C** (§11 T-06 = 別 PR) | 1069 箇所のハードコード日本語を全件 ja.json + en-US.json に移行、SELECTABLE_LOCALES.en-US = true | 未着手 (Phase B 後) |
-
-#### Phase B (PR #169) で確立した基盤
-
-1. **`src/i18n/messages/en-US.json`** — `ja.json` と同構造の英訳カタログ (action / field / message セクション、計 50 行)
-2. **`src/i18n/request.ts`** — `auth().user.locale` を取得し `resolveLocale()` で BCP 47 解決、
-   `messages/{ja,en-US}.json` を動的 import。
-3. **`scripts/i18n-extract-hardcoded-ja.ts`** — `src/app/` + `src/components/` 配下から
-   日本語文字列をハードコードしている箇所を全件抽出 (シングル/ダブルクオート + JSX text node)
-4. **`docs/developer/i18n-extraction-2026-04-27.txt`** — 上記抽出スクリプトの実行結果。
-   総ヒット **1069 箇所** / ユニーク文字列 **621 種**
-
-#### Phase C 着手時の手順 (§11 T-06)
-
-1. `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts > docs/developer/i18n-extraction-<date>.txt` で再生成
-2. **頻出文字列上位** から順にキー化 (例: 「対象が見つかりません」23 件 → `message.notFound`)
-3. **キー命名規約**:
-   - **action.*** : ボタン/動詞 (save / delete / cancel / submit)
-   - **field.*** : フォーム項目ラベル (title / content / assignee)
-   - **message.*** : ユーザ向けメッセージ (saveSuccess / deleteFailed / loading)
-   - **page.<route>.*** : 画面固有のラベル (page.projects.create.title 等)
-4. **ja.json + en-US.json を同時更新** (キー追加は両方必須、片方だけだとフォールバックされる)
-5. **置換**: 該当 .tsx の文字列を `t('action.save')` に置換 (`useTranslations('action').then(t => t('save'))`)
-6. **動作確認**: 設定画面で言語を English に変更 → 該当画面が英語表示されることを確認
-7. **完了基準**: `pnpm tsx scripts/i18n-extract-hardcoded-ja.ts | grep "総ヒット数: 0"` ≒ 残ヒット数が
-   翻訳対象外文言 (ログメッセージ、Markdown placeholder の例示など) のみになるまで進める
-8. **最終ステップ**: `src/config/i18n.ts` の `SELECTABLE_LOCALES['en-US']` を `true` に切替、
-   設定画面の言語選択肢から英語を選べるようにして release
-
-#### 進め方の推奨 (1 PR = 1 機能領域)
-
-1069 箇所を 1 PR で全置換するのはレビュー負荷が大きすぎるため、**機能領域 (画面群) ごとに分割** する:
-
-- **PR-1**: 認証系 (login / mfa / setup-password / reset-password) ≈ 50 箇所
-- **PR-2**: ダッシュボード共通 (dashboard-header / loading-overlay / 各メニュー) ≈ 80 箇所
-- **PR-3**: プロジェクト系 (project-detail-client / risks / issues / retros / knowledge / wbs) ≈ 400 箇所
-- **PR-4**: 個人機能 (memos / settings / my-tasks) ≈ 100 箇所
-- **PR-5**: 管理系 (admin/users / customers / audit-logs) ≈ 200 箇所
-- **PR-6**: 残り + SELECTABLE_LOCALES.en-US = true 切替
-
-各 PR は単独でマージ可能 (ja のみ運用は維持される)。すべて完了 = SELECTABLE_LOCALES 切替で公開。
-
-#### 汎化ルール
-
-1. **新規 .tsx 追加時は最初から `useTranslations` を使う**: 後付けで置換するより着手段階で
-   キー化する方がコスト低
-2. **動的文字列 (`${count} 件`) は ICU MessageFormat**: `next-intl` は ICU 構文をサポート。
-   `t('foo', { count })` で `{count, plural, one{# 件} other{# 件}}` 形式を使う
-3. **DB 由来の文字列は翻訳しない**: ユーザ入力データ (タスク名、コメント本文等) は元言語で
-   表示する。UI ラベル/メッセージのみ翻訳対象
-
-#### 関連
-
-- DESIGN.md §21.4.5 (UI ラベル外出しと next-intl 導入指針)
-- src/config/i18n.ts (`SUPPORTED_LOCALES` / `SELECTABLE_LOCALES` / `resolveLocale`)
-- §11 T-06 (en-US 本格翻訳、6 サブ PR で段階展開)
-- §11 T-10 (en-US 有効化、本セクションで Phase B 完了を反映)
-
----
-
-## 11. 後続対応 (TODO) 一覧 (PR #122 で追加)
-
-> セッション内で暫定合意された未着手・延期項目を失念しないよう、本セクションに集約する。
-> 着手時は該当行を削除、完了時は該当 PR 番号を記載して残すこと。
-
-### 11.1 未着手 (優先度: 中)
-
-| # | 項目 | 背景 / 詳細 | 起票元 |
-|---|---|---|---|
-| T-01 | 入力層の TZ 統合 (date-picker / date-field 系) | PR #118-#119 で描画層は `session.user.timezone` 反映済だが、`date-field-helpers.ts` / `date-field-with-actions.tsx` / `gantt-client.tsx` 等の **入力** では `new Date()` / `.getFullYear()` 等のブラウザ runtime TZ 依存 API を使用中。海外ユーザが 2026-04-24 と入力した際の UTC 変換が TZ 依存になる可能性。date-fns-tz 導入 or 軽量自前変換で解消予定 | PR #118-#119 時点で PR #121 予定 → CI 恒久対策と入れ替わりで未着手 |
-| T-02 | PAT 動作確認 (`CI_TRIGGER_PAT`) | PR #121 で導入した PAT fallback が次回の baseline 更新時に正しく動作し、CI 自動再起動が効くか実地確認 | PR #121 マージ時、ユーザ指示「今後の開発で様子を見る」 |
-| T-03 | **【最重要 / 外部展開前必須】** 提案エンジン (suggestion) のヒット率向上 — 仕様 + 設計を詰める | 本サービスの**核心機能 + セールス上の差別化要素**。外部ユーザに刺さるかを左右する最大の要素。現状の課題: ①重み一律 0.5/0.5 でタグなしデータが不利 (final score 半減)、②text 入力の auto-tagging が未実装 (タグ未入力プロジェクトは jaccard=0 固定)、③シノニム / 表記ゆれ吸収なし、④TF-IDF 等の識別力評価なし (汎用語ノイズ)。検討候補: (A) vocab-matching auto-tag (依存ゼロ、語彙メンテ要) / (B) kuromoji.js 形態素解析 (npm 依存 +10MB 辞書 + コールドスタート影響) / (C) LLM-based 抽出 (Claude API、月数 $、品質最高) / (D) pgvector embedding 検索 (意味マッチ、本格改修)。**期限: 2026 年 5 月 (来月)** の外部ユーザ展開準備で仕様 + 設計を詰める | 2026-04-26 ユーザ明言「サービスの核心であり、外部展開時の中心機能」「弱いとサービスが刺さらない」 |
-| T-04 | **【外部公開直前必須】** 視覚回帰テスト カバレッジ拡大 (現状 4 spec → 主要画面全体 + cross-browser + a11y) | **現状把握** (PR #95-#96 で導入済): `e2e/visual/` に 4 spec (auth-screens / customers-screens / dashboard-screens / settings-themes 10 テーマ) が CI 自動実行中、baseline 更新は `[gen-visual]` commit 自動化済 (`.github/workflows/e2e-visual-baseline.yml`)。**外部公開直前タスクとして拡大すべき範囲**: ① project 詳細タブ (WBS / ガント / リスク / 課題 / 振り返り / ナレッジ / ステークホルダー) の baseline 取得 — 現状 `E2E_COVERAGE.md:38-42` で `[ ]` skip、② mobile viewport (`*-chromium-mobile-linux.png`) の baseline 拡充 (PR #128 カードビュー導入分の網羅)、③ クロスブラウザ追加 (Firefox / WebKit) — 現状 chromium のみ、④ a11y 自動テスト導入 (`@axe-core/playwright`) で WCAG 違反を CI 検出。④ の導入後は CI に accessibility ゲートを追加。**着手タイミング**: UI 確定 (= 主要機能凍結) 後に一括実施。UI 変更が頻繁なうちに baseline を取ると `[gen-visual]` 再生成コストが膨張するため | 2026-04-27 ユーザ問合せ「視覚回帰テストはどうなっているか / 公開直前で有効化する認識か」に対する回答として確定。既存 4 spec は既に有効、本 T-04 は **カバレッジ拡大とクロスブラウザ + a11y** が論点 |
-| T-05 | Estimate (見積もり) に添付 URL 登録 UI を追加 + 一覧表示 | API 経路 (`/api/attachments/batch` の `entityType === 'estimate'` 分岐) は対応済だが、**UI 経由の添付登録手段が無い**ため事実上未使用。`estimates-client.tsx` に `<StagedAttachmentsInput>` (作成時) + 編集 dialog 内の `<AttachmentList>` を追加し、見積一覧にも `useBatchAttachments('estimate', ...)` + `<AttachmentsCell>` を追加すれば他エンティティと parity が揃う。PR #168 で添付対応 entity 全体の一覧表示状態を網羅 grep し、estimate のみ「API 対応済 + UI 未対応」のギャップが判明 | 2026-04-27 PR #168 横展開調査時、ユーザ要望「添付できるものに関しては、一覧画面上に表示されているか影響調査し横展開を徹底」に部分対応。estimate の UI は別 PR で対応する宣言 |
-| T-06 | ~~**【外部公開直前必須】** en-US 本格翻訳~~ → **PR #170/#173/#174/#175 で大半完了 (~933 hits / 30+ ファイル / 24 sections / ~813 keys × 2 locales)。`SELECTABLE_LOCALES['en-US']=true` 切替済**。残り T-17 で対応 | PR #169 → #175 で実施。完了 |
-| T-17 | en-US 残 sweep — **Group 1 (ユーザ可視) 完了 / Group 2 (API error) 継続** | **2026-04-28 (本 PR) で Group 1 完了**: 全リスク/課題/振り返り page.tsx の見出し + 件数表記、admin-delete-button.tsx (3 entity) の title/aria-label/confirm/error、error.tsx の内部エラー文言、を全て t() 化 (`common.itemCount` / `common.internalError` / `common.adminDelete*` 等の共通キー追加)。**残**: API route の `throw new Error(...)` 約 30 件 (エラー時のみ HTTP body に露出、UX 影響小)、`/admin/audit-logs` 等の管理者画面文言 (一部)、個別 route の MFA / 認証エラー文言。**Group 2 着手指針**: 共通エラー (「対象が見つかりません」4 件 / 「フィルターを 1 つ以上適用」4 件 / 「権限がありません」3 件) を共通 message key に集約 → 各 route で t() 化。test ファイルの `it('...')` 説明文 ~56 件は翻訳不要 (ユーザ非表示) のため対象外 | 2026-04-28 ユーザ要望「残りの英語化対応は今度実施」、Group 1 完了は本 PR |
-| T-18 | **【UX 統一 / 後続】** Cross-list 横ぐしコメント機能 + 通知システム | PR #177 で振り返りコメント UI を非表示化したが、API/DB/service は温存中。再有効化時の方針: 振り返り固有の inline コメントではなく、**全 entity 横断で統一仕様**「リスク/課題/振り返り/ナレッジ + メモに対して関係者がコメント可能、コメント時に対象 entity の作成者 / 担当者に通知 (in-app + email)」を実装する。**設計検討項目**: (1) 単一 `comments` テーブル + `entity_type` / `entity_id` 多態的参照 vs 既存 `retrospective_comments` を踏襲, (2) 通知 channel 設計 (Notification entity + 未読管理), (3) UI: 各 ○○ 詳細画面の右パネル / カード内 inline / 全リスト画面横ぐしビューのいずれを最終形にするか。**着手目安**: 各 entity 仕様 (T-04 視覚回帰 / T-15/T-16 横断画面など) が揃った後 | 2026-04-28 ユーザ要望「振り返りのコメント機能は今後強化する予定 / 各○○一覧で横ぐしに実現したい / コメントがされたら通知される仕組み」を踏まえ、PR #177 で UI 非表示化と同時に T-18 として登録 |
-| ~~T-19~~ | ~~WBS エクスポート/インポート schema 整合化 (PR-ζ follow-up)~~ → **完了** (2026-04-28、本 PR)。**仕様微調整**: 当初「6 列」だったが、ID 空欄の新規作成行で階層位置 (parent) が解決できないことが判明したため `level` 1 列を追加し **7 列** で確定 (ID/種別/名称/レベル/予定開始日/予定終了日/予定工数)。担当者/優先度/マイルストーン/備考/WBS 番号/進捗系列は CSV 経由で扱わず UI 個別編集に集約する運用に変更。実装内容: (1) `task.service.ts` の `exportWbs` を 7 列出力 + BOM 付き UTF-8 に統一、(2) `task-sync-import.service.ts` の `parseSyncImportCsv` / `computeSyncDiff` / `applySyncImport` を 7 列対応に refactor (担当者 lookup と進捗系警告を廃止)、(3) 旧 template mode (`exportWbsTemplate(mode='template')` / `parseCsvTemplate` / `validateWbsTemplate` / `importWbsTemplate` / `/api/tasks/import` route / `wbsTemplateSchema`) を完全削除、(4) tasks-client.tsx の `_handleExport_unused` と eslint-disable 領域を削除し `handleWbsExport` に集約 | 2026-04-28 PR-ζ で UI 統合のみ実施、schema 整合は本 PR で完了 |
-| ~~T-21~~ | ~~アカウント永続ロック実装 (PR-η 調査結果のバグ修正)~~ → **完了** (2026-04-28、本 PR)。§5.29 選択肢 A に従い実装。**変更点**: (1) schema に `temporaryLockCount Int default(0)` 列追加 + migration `20260428_user_temporary_lock_count`、(2) `src/config/security.ts` に `PERMANENT_LOCK_THRESHOLD = 3` 定数追加、(3) `auth.ts`: 一時ロック発生時に `temporaryLockCount` インクリメント、`>= 3` で `permanentLock=true` 自動セット、ログイン成功時には `temporaryLockCount` も 0 にリセット、(4) `unlockAccount` (admin 解除) でも `temporaryLockCount=0` を含める、(5) UserDTO に `temporaryLockCount` 露出 (admin 画面の検証用)、(6) UI コメントを実装と同期、(7) auth_event_logs の `lock` イベント detail に `lockType: 'temporary' \| 'permanent'` + `temporaryLockCount` を記録。**本番適用**: Supabase SQL Editor で `pnpm migrate:print 20260428_user_temporary_lock_count` の SQL を手動実行 (E2E §4.44 教訓適用) | 2026-04-28 PR-η 調査結果、ユーザ要望「ロック情報の数字検証」 |
-| ~~T-22~~ | ~~**【重要 / Phase 22a/b/c/d 分割】** 「○○一覧」へのインポート/エクスポート機能の本格実装 (項目 1)~~ → **完了** (2026-04-28、本セッション)。Phase 22a/b/c/d 全実装。**新設**: `src/components/dialogs/entity-sync-import-dialog.tsx` (汎用 component、apiBasePath / i18nNamespace を prop で受ける) + 各 entity の `*-sync-import.service.ts` 4 件 + sync-import / export route 8 件。**列構成**: risks 16 列 / retrospectives 13 列 / knowledge 14 列 (tags 系はセミコロン区切り) / memos 4 列。memos のみ user-scoped (project 紐付けなし、self only 認可)。Phase 22a で確立した汎用 component を 22b/c/d で **完全機械流用**。**規模**: 全体 ~3,800 insertions | 2026-04-28 ユーザ要望「インポート/エクスポート機能を追加」。本日 §5.31 で枠数固定要件の事前検証を確立し T-22 設計を強化、Phase 22a の汎用 component 化により 22b/c/d は機械流用で実装完了 |
-| T-25 | **【調査要】** 「全顧客管理」ナビタブクリックで別 Window 起動する象 (Phase B 要件 14 で保留) | **症状**: 画面上部の「全顧客管理」タブをクリックすると別 Window で /customers が開く (他のナビタブは同タブ遷移)。**コード調査結果**: `src/components/dashboard-header.tsx` の nav リンクは全て `<Link>` (next/link) 統一、`target="_blank"` の hardcode なし、`<Menu.Item render={<Link href={...} />}>` の dropdown パターンも customers のみ別動作になる要素なし。**仮説**: (1) @base-ui/react v1.4.0 Menu.Item の rendering が admin-only flag のある link でのみ別挙動 / (2) ブラウザ拡張機能の干渉 / (3) ユーザの環境固有 (Cmd/Ctrl+クリック誤発火)。**着手手順**: 実機で再現、Chrome DevTools の Network panel で navigation type を確認、再現後に修正。**保留理由**: Phase B では再現環境がないため修正できず、誤った defensive 修正を加えるリスクの方が大きい | 2026-04-28 ユーザ要望、Phase B で再現できず保留 |
-| T-23 | **【期限: 2026-05 中】** Dependabot 全自動化 (脆弱性修正の PR 自動生成 + patch 自動マージ) | **背景**: 2026-04-28 PR #184 マージ後の `git push` で「3 moderate vulnerabilities (postcss / hono / @hono/node-server)」が GitHub から通知。現状は通知のみで **PR 自動生成・自動マージは未設定**。**実装内容**: (1) `.github/dependabot.yml` 新設で npm パッケージ更新 PR を週次自動生成、patch update は単一 PR にグルーピング、(2) `.github/workflows/dependabot-auto-merge.yml` 新設で **patch update のみ CI green 後に auto-merge** (minor/major は手動レビュー継続)、(3) branch protection で CI 必須を改めて確認、(4) 試験運用: 最初 1 週間は PR 自動生成のみで品質確認、問題なければ auto-merge を有効化。**自動化で防げる範囲**: GitHub Advisory DB 登録済の既知脆弱性 (大半のケース)。**防げない範囲**: 0-day / supply chain attack (別途 `npm audit signatures` 等で補完)。**期限根拠**: 現状の 3 moderate は緊急性なしだが (postcss は build-time 限定、hono 系は未使用 transitive)、放置すると蓄積するため 5 月内に仕組み化 | 2026-04-28 ユーザ指示「セキュリティアラート対応は 5 月中に実施しプランに追記」 |
-
-### 11.2 低優先 (長期案件)
-
-| # | 項目 | 背景 / 詳細 | 起票元 |
-|---|---|---|---|
-| T-10 | ~~UI 文字列の英訳 (en-US 有効化)~~ → **PR #169 で Phase B 完了 (en-US.json 雛形 + request.ts session 連携 + 抽出スクリプト)。本格翻訳は §11.1 T-06 に昇格して進捗管理** | PR #120 時点で記録、PR #169 (2026-04-27) で基盤完了に伴い T-06 へ昇格・本項は履歴として残置 |
-| T-11 | 本番 build での `console.*` 自動削除 (SWC `removeConsole`) | `next.config.ts` に `compiler: { removeConsole: { exclude: ['error', 'warn'] } }` 追加で可。現状 ESLint の `no-console` でソース混入は防げているが、本番バンドルでも保険として削除したい | PR #122 時点、SPECIFICATION §25.5 で限界として明示 |
-| T-12 | ソースマップ本番非公開の明示宣言 | 現状 Next.js の既定動作で本番ソースマップは生成されないが、`productionBrowserSourceMaps: false` を `next.config.ts` に明示宣言しておくと将来の誤変更防止になる | PR #122 時点 |
-| T-13 | `/api/settings/i18n` の E2E 実カバー | PR #119 で `[ ] skip` で manifest 登録済。単体テスト 8 ケースで主要観点はカバー済だが、設定画面からの反映確認は未 E2E | PR #119 時点 |
-| T-14 | `system_error_logs` の自動削除バッチ | 1 ヶ月経過ログの退避 or 物理削除を cron で自動化 (OPERATION §13.1 で言及) | PR #122 時点 |
-| T-24 | **`audit_logs` の自動アーカイブ/削除バッチ** (容量対策) | 2026-04-28 時点で audit_logs は **1.2 MB と DB 内最大テーブル** (Free tier 500 MB の 0.24% を単独で消費)。ユーザ操作回数に比例して **線形増加** するため、放置すると将来的に容量を圧迫する。**実装内容**: (1) Vercel Cron で日次実行する `/api/admin/audit-logs/cleanup` 新設、(2) 経過期間 (例: 1 年) を超えた audit_logs を物理削除、(3) 法定保存期間が必要な場合は archive 先 (S3 / 別 DB) に退避してから削除、(4) `OPERATION.md §13` に運用手順を追記。**T-14 と同パターン** (system_error_logs 自動削除と一体化検討)。**着手目安**: 外部公開時 (= ユーザ増のタイミング) までに実装。現状容量は Free tier の 2.97% (15 MB / 500 MB) で急務ではないが、external user の audit log が積み上がる前に仕組み化しておくのが現実的 | 2026-04-28 ユーザ要望「audit_logs の自動アーカイブ/削除バッチをプランに登録」、容量確認の結果 audit_logs が最大であることを受けて起票 |
-| T-15 | 全見積もり 横断画面 (`/estimates`) | プロジェクト横断で見積を一覧・比較する画面。route 実装後、ナビ「プロジェクト」プルダウンに追加 (SPECIFICATION §20.4) | PR #127 時点 |
-| T-16 | 全 WBS 横断画面 (`/wbs`) | プロジェクト横断で WBS (タスク階層) を俯瞰する画面。同上 | PR #127 時点 |
-
-### 11.3 期限付き (管理必須)
-
-| # | 項目 | 期限 | 内容 |
-|---|---|---|---|
-| T-20 | `CI_TRIGGER_PAT` ローテーション | **2027/04/24 失効** | 期限 30 日前を目安に fine-grained PAT 再発行 (repo: `BusinessManagementPlatform` only, `Contents: Read and write`, 1 年期限) → Repo Settings → Secrets の `CI_TRIGGER_PAT` を上書き。失効しても fallback で GITHUB_TOKEN に戻るだけで壊れないが、baseline auto-commit 後の CI 自動再起動が効かなくなる (§9.6 参照)。PR #121 時点で `/schedule` による自動リマインド Agent 登録は保留 |
-
-### 運用ルール
-
-- 新規発見の TODO は対応 PR を切る前に本セクションへ記入
-- 着手 PR で「T-XX 完了 (PR #XXX)」を commit message に含める
-- 半期に 1 回、本セクションの棚卸しを行い不要化した項目を削除
-
----
-
-## 付録 A. 設計原則のリマインダ
-
-- **§21.4 ゼロハードコーディング**: 業務的意味を持つ値は `src/config/` に外出し
-- **§21.1 デザイン 3 原則 (そろえる・まとめる・繰り返す)**: 同じ機能は同じ見た目に
-- **§21.2 DRY 原則**: 同じドメイン知識を 2 箇所以上に書かない
-- **§21.4.4 スコープ外**: レイアウト utility class / 単一コンポーネント内の数値定数 / 純粋な実装詳細は外出し対象外
-
-詳細は `docs/DESIGN.md §21` 参照。
-
-## 付録 B. よくある質問
-
-| 質問 | 回答 |
+**実装した拡張ポイント** (5 箇所):
+| ファイル | 変更内容 |
 |---|---|
-| 新しい色を JSX で使いたい | 必ず semantic token (`bg-card` / `text-muted-foreground` 等)。Tailwind パレット (`bg-gray-50` 等) は使わない |
-| ハードコード値があってもいい場面は? | (1) 単一コンポーネント内のレイアウト数値、(2) テストの期待値、(3) 普遍定数 (1000ms = 1秒等)。詳細は DESIGN.md §21.4.4 |
-| エラーメッセージはどこに書く? | API ルート内の固有メッセージは inline で OK。共通化すべきものは `src/i18n/messages/ja.json` の `message.*` |
-| 新しいエンティティの追加で迷ったら? | 既存の `Memo` (PR #70 で追加された最新の独立エンティティ) を参考に: schema → service → API → UI → test → docs の順に揃える |
+| `src/lib/validators/comment.ts` | `COMMENT_ENTITY_TYPES` に `'memo'` 追加 (7→8) |
+| `src/lib/validators/mention.ts` | `getAllowedMentionKinds('memo')` で `['user', 'all']` を返す case 追加 |
+| `src/services/comment.service.ts` | `resolveEntityForComment('memo')` で `kind: 'public-or-draft'` を返す case 追加 |
+| `src/services/mention.service.ts` | `getMentionContext('memo')` で `{projectId: null, assigneeId: null}` を返す case 追加 |
+| `src/lib/entity-link.ts` | `buildEntityCommentLink('memo')` で `/all-memos?memoId=...` を返す case 追加 |
 
----
+**UI 統合** (2 箇所):
+- `all-memos-client.tsx`: 詳細 dialog に `<CommentSection entityType="memo" entityId={...} />` 追加 + `useAutoOpenDialog` で `?memoId=...` から auto-open
+- `memos-client.tsx` (個人メモ): 編集 dialog に同様の `<CommentSection>` 追加
 
-## 更新履歴
+memo へのコメント認可は `kind: 'public-or-draft'` を流用するため `comment-section.tsx` / `route.ts` 側の追加変更は不要。
 
-| 日付 | 内容 |
-|---|---|
-| 2026-04-21 | 初版作成 (PR #81)。`src/config/` 構造 / テーマ追加手順 / 機能 CRUD 手順 / i18n / テスト / デプロイを集約 |
-| 2026-04-24 | §10.7 追加 (PR #117)。日時描画ルール / ハイドレーション不一致防止ガイド |
-| 2026-04-24 | §10.8 追加 + §10.7 更新 (PR #118)。TZ/locale の 3 段階フォールバック / env 上書き / format ヘルパのオプション化 |
-| 2026-04-24 | §10.8 拡充 (PR #119)。`useFormatters()` / `getServerFormatters()` + 設定画面 UI + `/api/settings/i18n` の整備完了 |
-| 2026-04-24 | §10.9 追加 (PR #119 hotfix)。設定画面に Card 追加時の CI 連鎖 fail (coverage manifest + 視覚回帰) 対処手順 |
-| 2026-04-24 | §9.6 罠追記 (PR #119 hotfix 2)。GITHUB_TOKEN による auto-commit は次の workflow を起動しない問題と回避手順 |
-| 2026-04-24 | §10.8 追記 (PR #120)。`SELECTABLE_LOCALES` による段階的ロケール提供パターン (翻訳未完ロケールを UI に出すが disabled + API 拒否) |
-| 2026-04-24 | §9.6 拡充 (PR #120)。GITHUB_TOKEN 罠の手動再起動手順を確定版として明示 + 恒久対策 4 選択肢の比較表 + 推奨案 (PAT) |
-| 2026-04-24 | §9.6 恒久対策実装 (PR #121)。`e2e-visual-baseline.yml` に PAT fallback 構文を導入。`CI_TRIGGER_PAT` secret を登録すれば baseline auto-commit 後の CI 再起動が自動化される (登録前は従来通り手動再起動、fallback により壊れない) |
-| 2026-04-24 | §11 追加 (PR #122)。後続対応 (TODO) 一覧を集約 (入力層 TZ / PAT 動作確認 / en-US 英訳 / SWC removeConsole / 期限付き PAT ローテーション等) |
-| 2026-04-24 | §5.8 追加 (PR #126)。Select と SearchableSelect の使い分け (件数が増える可能性のあるエンティティ系は SearchableSelect、固定少数は既存 Select) |
-| 2026-04-24 | §11.2 T-15/T-16 追加 (PR #127)。ナビ 3 分類ハイブリッド化に合わせ、全見積もり / 全 WBS 横断画面の実装時にプロジェクト プルダウンへ追加する TODO を登録 |
-| 2026-04-24 | §5.9 追加 (PR #128)。レスポンシブ実装パターン (ResponsiveTable 基盤 + 設計原則 + 段階 PR 計画)。詳細監査は docs/developer/RESPONSIVE_AUDIT.md を参照 |
-| 2026-04-24 | §10.5 再発事例追記 (PR #128 hotfix)。DEVELOPER_GUIDE の更新履歴テーブルで origin/main に PR #126/#127 が追加され、PR #128 の追記と末尾コンフリクト。PR 番号順 (#126 → #127 → #128) で結合する形で解消 (§10.5 テンプレ通りのリゾルブで 2 例目) |
-| 2026-04-24 | E2E_LESSONS_LEARNED §4.35 / §4.36 新設 (PR #128 hotfix 2 / 3)。§4.35: `devices['iPhone 13']` の defaultBrowserType='webkit' 罠 (chromium-mobile project で override 必須)。§4.36: 並列 project 間の固定 email UPSERT 干渉で spec 01 が mobile で fail → `testIgnore` で chromium 限定実行 |
-| 2026-04-24 | §10.5 サブセクション追加 (PR #129 hotfix = PR #128a hotfix)。Stacked PR で base に hotfix を当てた場合の sub-PR への伝播ルール (4 項目)。sub-PR は上流自動追従しないため base が green 化した時点で即 merge を流す必要があり、下流 CI fail は viewport 問題より base 伝播漏れを先に疑うべし |
-| 2026-04-24 | §5.10 新設 (fix/project-create-customer-validation)。フォーム送信前の事前バリデーション (エラー情報最小化方針)。HTML5 `required` で拾えない `SearchableSelect` 必須項目は `handleXxx` 先頭で事前 validation + `setError` + `return` し、無効値 POST が 400 を返してブラウザ Console にエラー情報を露出させる経路を断つ |
-| 2026-04-24 | §5.10.1 / §5.10.2 追加 (fix/project-create-customer-validation 追補)。§5.10.1: Base UI Combobox で `{value, label}` を items に渡すと onValueChange はオブジェクトで emit される (string 限定の type guard で選択イベントが握り潰されていた)。§5.10.2: タグ入力の全角読点「、」対応 + 共通関数 `@/lib/parse-tags.ts` 集約 (projects / knowledge の重複を解消) |
-| 2026-04-24 | §5.10.1.5 追加 (fix/project-create-customer-validation E2E hotfix)。`<Label>` + `<Input>` に htmlFor/id ペアを必ず付ける規約。欠落すると (1) screen reader 読み上げ不可 (2) Playwright `getByLabel` が timeout の 2 つが同時に壊れる (E2E §4.3 の再発事例)。projects-client の全入力フィールドに id を付与 |
-| 2026-04-24 | §10.5 末尾追記コンフリクト 3 例目 (PR #135 conflict resolve)。HEAD の §10.5 サブセクション追加行と origin/main の PR #134 系 3 行が更新履歴末尾で衝突 → 時系列 (PR #129 hotfix の docs commit 22:00 → PR #134 の docs commit 22:12-22:40) に従って HEAD 行を先に残し、main 由来 3 行をその直後に並べて解消。§10.5 既知パターン「末尾追記が多発する罠」3 例目として再記録 |
-| 2026-04-25 | §10.5 再発事例 3〜6 例目 + 運用ルール 3 項 + メタ教訓 (squash-merge 取りこぼし) を追加 (docs/stacked-pr-propagation-lessons)。sub-PR (#129〜#133) が squash-merge されたため hotfix 伝播で追記した §10.5 内容が main に届かなかった分を本 PR で集約。§10.5 sub-section header 自体は PR #135 経由で先に main へマージ済のため重複を回避し本 PR は **再発事例 3〜6 + 運用ルール + メタ教訓のみ** を追加 |
-| 2026-04-25 | §10.5 末尾追記コンフリクト **4 例目** (PR #136 conflict resolve)。HEAD (PR #136 の再発事例 3〜6 + 運用ルール + メタ教訓本文) と origin/main (PR #135 マージ後の §10.5 サブセクション header + PR #135 conflict resolve 行) が末尾衝突。**§10.5 既知パターン 4 例目**。本 conflict 自体が「短期間に末尾追記が連鎖する」パターンの再現で、同パターン 1 PR で 2 回 (PR #135 と PR #136) 発生したため**運用ルール 4 項目「並走 docs PR の場合、後発 PR は先に main にマージされる予定の PR 内容を事前に把握し sub-section header の重複追加を避ける」**を追記 |
-| 2026-04-25 | §10.5 末尾追記コンフリクト **5 例目** (PR #137 conflict resolve)。`feat/pr128a-p1-tables-card` (PR #128a-2 WBS の親階層) は §10.5 再発事例 3 例目を独自追加していたが、main 側で PR #136 が同事例を網羅的に取り込み済のため重複行が発生。HEAD 1 行 (PR #130 hotfix の単独追記) を drop し main の 6 行をそのまま採用 + 本 conflict resolve 行 (5 例目) を末尾追加。**5 例目で「stacked PR の sub-PR 自体が docs を抱えている場合、PR #136 のような後追い集約 PR がマージされた瞬間に当該 sub-PR の docs が必ず重複コンフリクトを起こす」教訓が追加判明** — sub-PR は docs を持たず、知見集約は別途専用 PR (PR #136 形式) に切り出すのが望ましいとの運用方針を §10.5 運用ルール 5 項目として下記本文に追記 |
-| 2026-04-25 | E2E_LESSONS_LEARNED §4.37 新設 (PR #137 E2E hotfix)。PC テーブル前提の `06-wbs-tasks.spec.ts` が PR #128a-2 のモバイルカードビュー導入後、chromium-mobile project で `locator('tr')` の hidden 判定により fail。`<tr>` は DOM に存在するが親 `<div className="hidden md:block">` の display:none で hidden 状態になる。`testIgnore` で 06 spec を chromium-mobile から除外 (mobile UX は視覚回帰で別途検証する住み分け)。viewport 切替で 2 系統 DOM を出し分ける画面は (A) testIgnore (B) viewport-agnostic locator (C) role="listitem" + helper の 3 択を §4.37 で整理 |
-| 2026-04-25 | アカウント自動削除→ロック切替 + UI 一貫性改善 (feat/account-lock-and-ui-consistency)。**item 1**: 30 日無アクティブ自動削除 (`cleanupInactiveUsers`) を **isActive=false ロック** (`lockInactiveUsers`) に変更し、ナレッジ参照のためアカウント情報を残しつつログインのみ封じる。endpoint / 設定名 rename。**item 5**: 「全○○」横断リストから draft を完全除外 (admin もシステム整合性のため public 限定、draft 管理はプロジェクト個別画面に集約)。**item 6 (§5.11)**: 編集ダイアログの save 後 `await onSaved() → close` を `close → void onSaved()` に統一し create と挙動一致化、reload 待ちで生じる「閉じない」体感を解消。**item 7 (§5.11)**: project-level risks/retrospectives 一覧に visibility 表示を追加 (knowledge/memo は既存)、編集後の即時反映を可視化 |
-| 2026-04-25 | §5.11.1 新設 (PR #138 Vercel build hotfix)。`prisma.user.update` に `updatedBy: systemTriggerId` を渡したら Vercel `next build` の型チェックで fail。User モデルは意図的に updatedBy 列を持たない設計 (self-referential 回避) で、他エンティティ流儀の借用が schema 不整合を起こした。`pnpm lint` は型チェックなしのためローカルでは気付けず、`pnpm tsc --noEmit` を commit 前に回すルールを追記 |
-| 2026-04-25 | §5.11.1 再発事例 2 例目 (PR #138 hotfix の hotfix)。前回の教訓 (commit 前 tsc) を直後 commit で守らず、`recordAuditLog` の引数名を `before/after` (実際は `beforeValue/afterValue`) と取り違えた別種の型エラーで CI / E2E が再 fail。**「修正」commit でも tsc --noEmit を必ず回す + API シグネチャは記憶ベースでなく Read で確認 + `pnpm lint` clean のみを根拠にした「検証完了」報告を禁止** という追加運用ルールを追記 |
-| 2026-04-25 | §5.12 新設 (PR #138 後 hotfix)。Zod の `.optional()` は `null` を拒否するため、DB nullable 列に対する schema は **`.nullable().optional()` 必須**。risk-edit-dialog の visibility 編集時に「Invalid input: expected string, received null」400 が発生していた根本原因。risk/knowledge/retro/project/estimate validator を全て横展開修正、回帰防止の単体テスト追加 (assigneeId=null / deadline=null 受理、空文字は依然拒否)。service 層の `new Date(null)` epoch 化バグも併せて修正 |
-| 2026-04-25 | §5.13 新設 (fix/suggestion-tag-parity)。「参考」タブの過去 Issue / 過去 Retrospective が **tagScore=0 固定** でナレッジと同等の tag-aware マッチングが効いていなかった問題。両者は DB に独自タグ列を持たないが、**親 Project のタグを proxy** として `jaccard` 計算に使う改修で Knowledge と挙動統一。schema 変更・migration 不要。回帰防止 unit test 2 件追加 |
-| 2026-04-26 | §5.14 新設 (fix/attachment-list-non-member-403)。非メンバーが「全リスク」一覧から行クリックでリスク詳細を開くと `/api/attachments?entityType=risk&...` が 403 を返し Console に露出 (§5.10 違反)。risk/retrospective/knowledge の 3 dialog で `<AttachmentList>` / `<SingleUrlField>` を **`{!readOnly && ...}` で gating** し、readOnly 時は mount せず fetch も発火させない構造に変更。汎化ルール「edit dialog に readOnly があるなら fetch する子 component は必ず gating」を §5.14 で明文化 |
-| 2026-04-26 | §5.15 新設 + KDD 仕組み強化 (fix/quick-ux PR #143 E2E hotfix)。**症状**: admin 状態変更プルダウン表示緩和で chromium-mobile が flex overlap → click intercept で fail。**修正**: flex-wrap + Select 幅 mobile 縮小。**仕組み穴塞ぎ**: 当初 commit message にしか書かず docs 追記漏れ → ユーザ指摘で発覚。CLAUDE.md KDD 原則に「commit message ≠ 常設ナレッジ」「対象範囲はテスト失敗だけでない」を追加、Stop hook prompt に **項目 6「ナレッジ追記チェック (KDD Step 4/6)」** を新設し漏れを構造的に防止 |
-| 2026-04-27 | §10.5 再発事例 9 例目 + 運用ルール 8 を追記 (PR #168 conflict resolve)。独立並走 PR (PR #167 タブ集約 / PR #168 添付一覧) が DEVELOPER_GUIDE.md の §5 末尾と §11.1 TODO 表の同位置に同時追記してコンフリクト発生。8 例目までの「意図統合型」(同一 service 関数を別観点で編集) と異なり、9 例目は**完全独立な機能**が単に末尾位置で衝突した「機械並列型」。番号順 (§5.24 → §5.25 / T-04 → T-05) で両方残す機械解消で OK と確定。運用ルール 8「完全独立 PR の docs コンフリクトは機械解消で良い」を追加し、衝突を恐れて並走を止める必要はないと明文化 |
-| 2026-04-27 | §5.26 新設 (PR #171 / feat/date-field-clear-rename)。日付入力の共通部品 `<DateFieldWithActions>` の default `clearLabel` を「削除」→「クリア」に統一 (削除という語は破壊的アクションと紛らわしい)、加えて risks-client.tsx bulk edit dialog が唯一 `<Input type="date">` を生で使っていた箇所を共通部品に置換。これで単発編集 / 一括編集の操作 UX が一貫する。**規約 (§5.26)**: 「同一機能 = 同一部品」を明文化し、`type="date"` を新規導入する PR は §5.26 の grep 点検 + 本セクションへの例外追記を必須化。共通部品流用を徹底することで「削除→クリア」のような文言変更が default prop 1 行で全画面に伝播する自己治癒性を担保。ユーザフィードバック「同じ機能を有する者は同じ部品を流用してください、これにより横展開漏れを徹底的に減らせます」を恒久ルール化。**section 番号変遷**: 当初 §5.24 として執筆 → PR #167/#168 が main 先行マージで §5.24/§5.25 を取得 → §5.26 に繰り上げ (§10.5 9 例目「機械並列型」適用、運用ルール 8 通りの機械解消) |
-| 2026-04-27 | §10.5 運用ルール 8a を追記 (Stop hook 補正、PR #168/#169/#171 conflict resolve の累積知見 / PR #172)。「番号予約衝突の繰り上げ手順」を独立サブルール化。N 件先行 PR との並走では **N 段繰り上げ** が必要であり、その際に更新すべき箇所 (header / self-reference / 関連リンク / 更新履歴 / forward-reference) を grep 例つき 5 項目チェックリストで明文化。冒頭の「section 番号メモ」コメント運用も標準化。本セッションで PR #168 (運用ルール 8 新設) → PR #169 (機械解消 1 例) → PR #171 (繰り上げ 1 例) と 3 段階に分かれて記録された知見を 1 箇所に集約 |
-| 2026-04-27 | §10.5 再発事例 10 例目 + 運用ルール 9 を追記 (PR #170 orphan recovery / PR #173)。PR #170 (Phase C-1 認証 i18n) は base=feat/i18n-foundation で起票された stacked PR で、PR #169 が main にマージされた直後に **base が孤児化** → PR #170 の merge commit (6a88075) は `feat/i18n-foundation` 側に残るのみで main の first-parent history に含まれない orphan 状態となった。**GitHub UI は MERGED 表示 + mergeCommit OID も持つため発覚が遅れる**点が極めて危険で、Phase C-2 着手時の grep `git show origin/main:src/i18n/messages/ja.json | grep auth` が 0 件で初めて検出。CI fail を伴わず merged 表示も出るため自動検出は困難。Recovery は origin/main から新規 branch を切って元 PR の 3 commits (73b6a4b → 526c2fc → 981ef5d) を順次 cherry-pick。運用ルール 9「stacked PR の上流が main マージされたら下流の base を main に切替える (`gh pr edit <PR> --base main`)」と「GitHub UI のマージ画面で base 確認を徹底」を §10.5 に新設 |
-| 2026-04-27 | §10.5 9 例目 4 回目再発 (PR #172 / PR #173 conflict resolve)。PR #172 (運用ルール 8a) と PR #173 (10 例目 + 運用ルール 9) の更新履歴行が末尾位置で衝突 → 番号順 (8a → 10 例目) で両方残す機械解消。1 セッション中に §10.5 9 例目が 4 回適用された (#168 / #169 / #171 / #173) が、**運用ルール 8 通り毎回機械解消で済むことが実証**され、並走 PR を恐れる必要がないことが再確認された |
-| 2026-04-28 | §10.5.1 新設 (PR #175 / feat/i18n-phase-c-final)。**並列 worktree agents による大規模一括翻訳パターン**を確立。Phase C 残 ~933 hits を 5 isolated worktree agents に分担 (project / wbs / risk / memo / admin) し、各 namespace を独立追加することで JSON 衝突を回避。**3 つの落とし穴**を §10.5.1 に明文化: (1) worktree の `.next/` ビルド成果物が ESLint で誤検出 (58529 problems の偽陽性、git worktree remove + 物理削除 + ESLint ignore で解消)、(2) `pg` symlink 破損 (`pnpm install --force` で復旧)、(3) agent 残作業 (residual cleanup) のセッション越境管理。§11 T-17 として残 ~104 hits の sweep を計画化 (test 文言 / API error message / 軽微な漏れ) |
-| 2026-04-28 | §5.27 新設 + §11 T-18 登録 (PR #177 / chore/hide-retro-comment-and-memo-filter)。**機能 deferral パターン**「UI のみ削除、DB/API/service は温存」を §6 (完全削除) と並ぶ独立パターンとして明文化。PR #177 で振り返りコメント機能を本パターンで非表示化 (将来 T-18 cross-list 横ぐし再設計予定)。適用判断基準 4 項目 (再有効化確定 / データ無傷 / API 直接呼び出し OK / 再有効化コスト高) と、UI 削除 → state 削除 → prop 整理 → import 整理 → 温存 → コメント追記 → §11 TODO 登録 の 7 step 手順を明示。grep 横展開チェックでは「JSDoc / API endpoint comment は削除した文脈で更新する」運用も合わせて規定 |
-| 2026-04-28 | §5.28 新設 (PR #178 E2E hotfix / fix(migration-β))。**Prisma migration の UPDATE/ALTER/DROP 文を書く前に init migration の CREATE TABLE で対象列の存在を grep する** 規約を明文化。本件 hotfix では `UPDATE "knowledge_projects" SET "dev_method"` と書いていたが `dev_method` 列は `knowledges` テーブルに存在 (knowledge_projects は多対多関連テーブル)。schema.prisma の model 名から table 名を脳内変換するのは事故の元 (KnowledgeProject ≠ Knowledge)。確認手順 (init migration grep + ローカル `prisma migrate dev`) を運用ルール化、CI を待たずに検出する手順を提示。関連: §5.11.1 (schema 借用ミス) / §11 T-21 (永続ロック migration で本教訓を活用) |
-| 2026-04-28 | §5.29 新設 + §11 T-21 登録 (PR #182 / investigation/lock-stats-verification)。**永続ロック未実装バグの発見**: ユーザ要望「アカウントロック情報の数字検証」(項目 16) で auth.ts を grep した結果、`permanentLock=true` を設定する経路がコードベース全体に存在しないことを確認。コメント (users-client.tsx:216) と実装の乖離。修正方針として `temporaryLockCount` 列追加 + 3 回到達で永続化 (選択肢 A、認証パス overhead 最小) を §5.29 で選定。一般化教訓として「UI コメントで言及されたフラグが実際に true 化される経路が存在するか grep で検証」する運用ルールを併記 |
-| 2026-04-28 | §5.30 新設 (PR #178 / PR-β hotfix / Stop hook 横断監査)。**master-data.ts 値変更時の validator 横展開チェックリスト**を確立。PR-β で `DEV_METHODS` の `power_platform` → `low_code_no_code` リネームを実施した際、`validators/project.ts` は更新したが `validators/estimate.ts` と `validators/knowledge.ts` の z.enum が旧値のまま残存し、API request 400 エラーになる状態だった (Stop hook 横断監査で発覚 → 即修正)。チェックリスト: (1) enum 名で validator 全検索、(2) 旧値文字列を grep、(3) test での旧値使用も検出、(4) UI render 箇所も確認。**恒久対策**として「master-data.ts を z.enum の source として直接 export 化」を提案 (将来の type-safe 化候補)。E2E §4.43 と §5.28 (migration UPDATE 検証) と並ぶ「変更時の横展開漏れ防止」3 兄弟が出揃った |
-| 2026-04-28 | §10.5 9 例目「機械並列型」**本セッション内 7 回適用 = ルーチン化完了** (PR #168/#169/#171/#173/#182/#183 + main↔dev/2026-04-28 merge)。最初は「珍しいパターン」として記録した 9 例目が、1 セッション内に独立並走 PR 6 件 + 当日 dev branch ↔ main 同期 1 件で計 7 回発生。**運用ルール 8「機械並列型は番号順に並べ替えるだけで解消可能」が完全に実証された**: 7 件すべて Stop hook 補正で深い設計判断なしに機械解消で済み、conflict 恐れず並走 PR を許容する運用が現実的に機能することが定量的に証明された。**累積教訓**: (1) 並走 PR を恐れて発展速度を落とす必要なし、(2) §10.5 で機械解消手順を整備しておけば「conflict は単なる作業」になる、(3) 「内容重複型」(PR #182 で発見) の新パターンが 1 件混在したが、これも HEAD ブロック削除で機械解消可能、(4) PR マージ後の `git pull --no-rebase` でも同じ機械解消ルールが適用できる (当日 dev branch ↔ main 同期パターンも 9 例目に含まれる) |
-| 2026-04-28 | E2E §4.44 新設 (PR #184 マージ直後の本番 P2022 障害)。**Vercel deploy 成功 + CI green でも本番が落ちる migration 未適用パターン**を常設化。本プロジェクトは Supabase IPv4 制約で `prisma migrate deploy` を Vercel build に組み込めず、SQL Editor 手動実行運用 (OPERATION §3.3)。PR #184 で `projects.contract_type` 列追加 migration の手動適用を失念 → 本番全画面で `P2022 ColumnNotFound`。検出フロー (Vercel runtime logs を error level で grep → P2022 / column 名 → migration 特定)、復旧手順 (`pnpm migrate:print` → SQL Editor 貼付)、適用状況確認クエリ (`SELECT FROM _prisma_migrations`)、5 つの落とし穴 (CI 検出不可 / 全画面波及 / カラム名は snake_case / 順序依存 / 二重実行禁止) を §4.44 にまとめた。§5.28 (migration UPDATE 検証) / §5.30 (validator 横展開) / §4.44 (PR マージ後 migration 適用) の **「変更時の漏れ防止」3 兄弟が出揃った** (validator 漏れ / migration 文法漏れ / migration 適用漏れ) |
-| 2026-04-28 | §11 T-19 完了 (WBS export/import 7 列化、PR-ζ follow-up)。**仕様微調整**: 当初要件「6 列のみ」に対し「ID 空欄行の新規作成で parent 解決不能」が判明、`level` 1 列を追加した **7 列** で確定 (ID/種別/名称/レベル/予定開始日/予定終了日/予定工数)。担当者/優先度/マイルストーン/備考/WBS 番号/進捗系列は CSV 非対応化、UI 個別編集に集約する運用に。**削除コード**: `exportWbsTemplate` (template mode 分岐含む) / `parseCsvTemplate` / `validateWbsTemplate` / `importWbsTemplate` / `wbsTemplateSchema` / `WbsTemplateTask` 型 / `/api/projects/[id]/tasks/import` route / `_handleExport_unused` 関数 + eslint-disable 領域。**新設**: `exportWbs` (7 列、BOM 付き UTF-8)、`WBS_CSV_HEADERS` 定数。**教訓 (KDD)**: 仕様起票時には階層構造を表す必要に気付きにくい。「枠数固定」(6 列など) で要件が来たときは **アクション 3 種 (CREATE/UPDATE/DELETE) 全てを満たせるか** を実装着手前に検証する習慣化が必要 → 本 KDD として §10.5 系の運用ルールに将来追加候補 |
-| 2026-04-28 | §11 T-21 完了 (永続ロック実装、PR-η バグ修正、§5.29 選択肢 A)。schema に `temporaryLockCount` 列追加 + `auth.ts` で一時ロック発生時に +1、`PERMANENT_LOCK_THRESHOLD=3` 到達で `permanentLock=true` 自動セット。ログイン成功時 + admin による `unlockAccount` 時には `temporaryLockCount=0` にリセット (前者は正規ユーザ復帰、後者は admin 確認後の再ログインを想定)。auth_event_logs の `lock` イベントに `lockType: 'temporary' \| 'permanent'` + 累積回数を detail で記録し追跡可能化。**本番適用**: migration `20260428_user_temporary_lock_count` を Supabase SQL Editor で手動実行が必要 (`ALTER TABLE users ADD COLUMN temporary_lock_count INTEGER NOT NULL DEFAULT 0;`)。E2E §4.44 教訓 (PR マージ後 migration 適用忘れ) の予防として commit message + 本 PR description に明記 |
-| 2026-04-28 | §5.31 新設 (T-19 の教訓 KDD 化、Stop hook 補正)。**枠数固定要件のアクション充足チェック**を運用ルール化。当初要件「6 列のみ」だった T-19 で「ID 空欄行の新規作成で parent 解決不能」が判明し `level` 1 列追加して 7 列確定する仕様微調整が発生した経験から、**枠数固定要件は CRUD マトリクス (CREATE/UPDATE/DELETE/階層保持/同名重複検知) を実装着手前に引く** ことを規約化。一般化として「フィールド N 個のみ」(form) /「ボタン N 個のみ」(UI 統合) /「画面 N ページのみ」(IA) でも同じパターンを適用。§5.28 / §5.30 / §4.44 の「変更時の漏れ防止 3 兄弟」と並ぶ「**仕様検証時の欠落防止**」ナレッジとして §5.31 を独立セクション化 |
-| 2026-04-28 | §11 T-22 を Phase 22a/22b/22c/22d に詳細仕様分解 (Stop hook 補正による設計強化)。本セッションで規模 (~1,100 行 × 4 entity) を再評価し、Phase 22a (risks の sync-import 単体 + 共通基盤確立) を **1 PR スコープに分離**、22b/22c/22d は機械的横展開タスクとして §11 に記録。Risk CSV 16 列の列構成 (ID/type/title/content/cause/impact/likelihood/responsePolicy/responseDetail/assigneeName/deadline/state/result/lessonLearned/visibility/riskNature) を §5.31 アクション充足マトリクスで事前検証済。**教訓**: 大規模タスク (1,000+ 行規模) は Phase 分割を §11 に明示することで、品質維持しつつ 1 PR ごとに安定したマージが可能になる。Phase 数 = entity 数 + 1 (基盤 phase) を原則化候補 |
-| 2026-04-28 | /knowledge-organize 整理: 「変更時の漏れ防止 3 兄弟」の正規定義を §5.30 末尾に表化 (長男§5.28 / 次男§5.30 / 三男§4.44)、§5.31 の関連リンクを「**仕様検証時の欠落防止**」レベルとして 3 兄弟と区別する記述に整合化、§5.28 関連の「§11 T-21」を完了マーク + 本教訓活用事実への参照に更新。整理しすぎない原則を尊重し再発事例シリーズや PR 番号引用は維持 |
-| 2026-04-28 | §11 T-22 完了 (「○○一覧」インポート/エクスポート全 4 entity)。Phase 22a (risks 16 列) で汎用 `EntitySyncImportDialog` component を確立し、Phase 22b (retrospectives 13 列) / 22c (knowledge 14 列、tags はセミコロン区切り) / 22d (memos 4 列、user-scoped) は **完全機械流用** で実装。Phase 22a の汎用化により 22b/c/d は約 300 行 / 30 分 / Phase で完了 (Phase 分割の正解パターン)。**汎用化の効果**: 4 entity 個別実装 (~4,400 行) を Phase 22a (~1,100 行) + 22b/c/d (~900 行 × 3) で計 ~3,800 行に削減 (~14% 圧縮)。**教訓 (KDD)**: 複数 entity 横展開時は先行 1 entity を「**汎用 component の prop API 設計まで含めた完成形**」で実装することで、後続 entity は機械流用が成立する。先行 entity を「専用実装」で済ませると後続が「コピー&置換」になり保守性が落ちる |
-| 2026-04-28 | §5.32 新設 (T-22 教訓 KDD 化、Stop hook 補正)。**複数 entity 横展開時の段階的汎用化パターン**を運用ルール化。T-22 (5 entity sync-import) で確立した「先行 1 entity (Phase A) で汎用 component の prop API 設計まで含めた完成形を作り、後続 N-1 entity (Phase B〜) は機械流用 (~300 行 / 30 分 / entity)」パターンを §5.32 として独立セクション化。実証数値 (4 entity / ~3,240 行 / 個別実装 ~4,400 行から 26% 圧縮) + 適用判断基準 + アンチパターン (Phase A 専用実装による Breaking change リスク) を網羅。§5.26 (共通部品流用) の戦略的拡張、§5.31 (アクション充足) との組み合わせで横展開前後の検証層を完備 |
-| 2026-04-28 | §5.33 新設 (T-17 Group 2 教訓 KDD 化、Stop hook 補正)。**API route の server-side i18n + vitest 共通モック** パターンを運用ルール化。T-17 Group 2 (2026-04-28) で 24 API route × 16 i18n keys を一括 i18n 化した際に確立した「`getTranslations(namespace)` 標準パターン + `vitest.setup.ts` での `next-intl/server` 共通スタブ」を §5.33 として独立セクション化。横展開時の 6 step 手順 + 4 アンチパターン (個別 mock 重複 / top-level await 浪費 / locale 片方漏れ / sync helper の await 伝播漏れ) を明文化。`pnpm tsx scripts/i18n-extract-hardcoded-ja.ts` の残ヒット 0 達成 (test 説明文を除く) で「ユーザ可視ハードコード = 0」を運用維持可能に |
-| 2026-04-28 | §11.2 T-24 新設: **`audit_logs` の自動アーカイブ/削除バッチ** (容量対策)。Supabase Free tier 容量確認 (現在 15 MB / 500 MB = 2.97%) の結果、audit_logs が DB 内最大テーブル (1.2 MB) と判明。ユーザ操作に比例して線形増加するため将来の容量圧迫を予防する目的で T-24 起票。T-14 (system_error_logs 自動削除) と同パターン、外部公開前の実装を想定。**容量データの記録**: 上位テーブルは audit_logs (1.2 MB) / knowledges (568 kB、内 index 480 kB は pg_trgm 全文検索) / risks_issues (392 kB) / tasks (280 kB) で、knowledges は本体 40 kB に対し index が 12 倍と特異な構造を持つ |
-| 2026-04-28 | §5.34 新設 (Phase A 教訓 KDD 化、Stop hook 補正)。**アクション型 Select の選択後表示** 問題を運用ルール化。@base-ui/react `<Select>` で `value` 未指定 (uncontrolled) のとき、`onValueChange` で API 即時実行した後に内部 key 名 (例: `'manager'`、`'planning'`) が trigger に露出する症状を Phase A で 3 箇所 (プロジェクト状態 / メンバーロール / ナレッジ種別) 修正。標準パターンを **系統 A (アクション型 Select、`value=""` + render 関数で二重防御)** と **系統 B (コントロール型 Select、render 関数のみ)** の 2 系統に整理し、`SelectValue children` を `(value) => label` 関数で必ず表示名マップする規約を §5.34 として明文化。横展開対象は `master-data` (PROJECT_STATUSES / PROJECT_ROLES / KNOWLEDGE_TYPES / DEV_METHODS / IMPACT_LEVELS) を扱う全 Select。アンチパターン 4 種 (固定 ReactNode 渡し / value 未指定 / undefined フォールバックなし / state と表示矛盾) を併記 |
-| 2026-04-28 | E2E §4.45 新設 (PR #187 Phase A E2E 連鎖失敗 教訓 KDD 化、Stop hook 補正)。**UI 構造変更 (h2/h3 削除) で連鎖する E2E spec の `getByRole('heading')` 連鎖失敗** を運用ルール化。Phase A 要件 6 でタブ画面 h2 タイトル 15 画面分を削除した結果、E2E spec 7 件 (specs/03/04/06/07/08/09) が `getByRole('heading', { name: '全リスク' })` 等で連鎖失敗した教訓を §4.45 として独立セクション化。対処パターン 3 系統 (テーブル UI → `table` / 機能タブ → タブ固有ボタン / 表示タブ → タブ固有テキスト) と判別の目安表 + 4 規約を網羅。「ページが render されたか」を heading で検証する過剰結合パターンの是正、新規 spec 作成時の選択基準を明確化 |
-| 2026-04-28 | Phase B (要件 4/5/14/20) 着手 / §11 T-25 新設 (要件 14 調査タスク)。Phase B では (要件 4) 編集 dialog 内の `<AttachmentList>` の nested form bug を修正 (HTML が nested forms を許容しないため内部 form の type=submit が外側 form を発火、外側 dialog の保存が走り「リンク追加 → 別画面遷移」と症状化していた)、(要件 5) 「○○一覧」「全○○」全画面で行/カードクリック時に dialog を全員に表示 (非作成者は readOnly モードで詳細閲覧、作成者は編集可)、(要件 20) WBS エクスポートの BOM が `res.text()` で strip される WHATWG Fetch 仕様による文字化けを `'﻿' + csvText` 再付与で修正、を実装。要件 14 (全顧客管理 target=_blank) は再現箇所がコード内に存在せず Phase B では保留し T-25 として詳細調査タスク化 |
-| 2026-04-28 | §5.35 / §5.36 新設 (Phase B 教訓 KDD 化、Stop hook 補正)。**§5.35: dialog 内 component の nested form 回避** ── HTML 仕様で nested forms は parser が無効化するため、内部 `<form onSubmit>` の type=submit ボタンが外側 dialog form を発火する罠を Phase B 要件 4 で発覚 (添付リンク追加 → dialog 閉じる症状)。`<div>` + `type="button"` + `onKeyDown` で Enter キー処理を自前実装するパターンを規約化。アンチパターン 3 種 (内部 form / type 未指定 / stopPropagation で済ませる) を併記。**§5.36: dialog の readOnly 分岐パターン** ── 一覧で全員 row click 可、dialog 内で `readOnly={!isOwner}` で詳細/編集を分岐するパターンを Phase B 要件 5 で確立。`fieldset disabled` 一括非活性化 + submit ボタンの `!readOnly` ガード + タイトル分岐 + サービス層での再判定 (§5.10) を含む 5 ポイント標準化 |
-| 2026-04-29 | §5.42 新設 (PR #190 Phase D 本番反映漏れ事故の KDD 化、Stop hook 補正)。**migration を含む PR は本番手動適用が必須** ── PR #190 (`20260429_stakeholder_priority`) を main マージ後、本番ステークホルダー画面が `P2022 ColumnNotFound` で 500 エラーに。原因: Vercel が IPv4 のみで Supabase 直結 URL に到達できないため `prisma migrate deploy` を実行しない (OPERATION.md §3.3) → SQL Editor 手動適用が必要だが、PR description にチェックリストを書かなかったため開発者が「マージ＝本番反映完了」と誤認。再発防止として **migration を伴う PR には固定フォーマットの「本番反映チェックリスト」セクションを description に必ず含める** ことを §5.42 として規約化。順序は **マージ前** に SQL Editor で適用 (Vercel 自動デプロイがコード反映だけ走り DB 不整合になる構造を防ぐ)。横展開チェックリスト 5 項目 + 自動化検討 (Supavisor + buildCommand) も併記 |
-| 2026-04-30 | §5.43 / §5.44 新設 (feat/ux-improvements-batch6)。**§5.43: ガントチャート independent tab 化 + responsive プルダウン** ── 旧 feat/gantt-tab-restructure (PR-C item 6) で WBS タブ内のトグルボタンに集約していた Gantt を独立タブ化。PC (lg+) では「WBS管理」「ガントチャート」を独立タブで並べ、Mobile (lg-) では「進捗管理 ▼」プルダウンに集約。「資産プルダウン」(PR #167) と同じ仕組みを再利用、`tabGantt` / `progressMenuLabel` / `progressMenuAria` を i18n 追加。**§5.44: リクエスト成功/失敗の Toast 通知パターン** ── 旧来は setError() ローカル state + alert() のみで成功フィードバックが無かった問題を解消。`<ToastProvider>` を新設、dashboard layout の LoadingProvider 内に mount。`useToast()` の `showSuccess` / `showError` を全 CRUD 呼び出し (dialog 7 + client 13 + shared 5 = 計 25 ファイル) に横展開。設計判断: 新規ライブラリ追加なし (sonner 等不採用)、メッセージ文字列は呼出側で直書き (i18n 経由しない、複合キー乱立を防ぐ)、setError() inline 表示と toast を併用 (役割分担)。横展開チェックリスト 8 項目 + 採用パターン 25 ファイル一覧を §5.44 末尾に明示 |
-| 2026-04-30 | §5.45 新設 (feat/ux-improvements-batch6 追加コミット 21471cb)。**既存スキーマカラムを UI のみで活かす任意入力フィールドの追加パターン** ── ユーザ要望「ACT に作業内容欄を追加」を受け、`Task.description` (Text, nullable, max 2000) が既に schema/validator/service/DTO に全て揃っていたことを発見。migration 不要で UI 4 箇所追加 (create form state / create body / edit form type+init+body / 両 dialog の textarea) だけで成立した経緯を KDD 化。横展開チェックリスト 8 項目 (schema grep / 任意項目の create-省略/update-null 規約 / type 別 UI 分岐 / i18n hint / CSV/bulk 連動) + アンチパターン 3 種 (空文字を validator に通す / create と edit で空文字の意味が混在) を併記。**「migration を追加する前に既存カラムを grep する」**を unwritten rule から成文化 |
-| 2026-04-30 | E2E §4.46 / §4.47 新設 (PR #194 hotfix)。**§4.46: Toast 文言と既存 UI 文言の部分マッチで strict mode violation** ── ToastProvider 導入で showSuccess の長文 (「ユーザを登録し、招待メールを送信しました」) が dialog title (「招待メールを送信しました」) を内包し、`getByText` の既定部分マッチで 2 elements にヒット → strict mode 違反。Toast 導入時の grep 予防、scope+role での 1 要素絞り、エンティティ名で一意化、Toast viewport の `role="region"` で意識的分離、の 4 ルールを記載。**§4.47: responsive で既存タブに hidden lg:inline-flex 付与で spec viewport 別分岐必須** ── Task 1 で WBS管理 タブを responsive 化した際、mobile でも `toBeVisible()` を要求していた既存テストが一斉 fail。さらに `toHaveCount(0)` の「ガント」が新タブ「ガントチャート」と部分マッチして fail。教訓として、PR #167 「資産プルダウン」を model にする方針、`{ exact: true }` 推奨、タブ追加 PR の動作確認 checklist 4 項目を成文化 |
-| 2026-04-30 | §5.46 新設 (PR #196 feat/security-check-script)。**外部提供スクリプトの導入と既存 skill 統合パターン** ── ユーザから外部開発の security-check.ts (CWE 静的解析) + skill 定義 .md を受領。「既存定義に盛り込む」指示に従い、新規 .claude/skills/security-check.md は作らず、CLAUDE.md §2 セキュリティチェックに第 5 層 (静的スキャン)、threat-model.md に Mode A (STRIDE 実装前) + Mode B (静的スキャン 実装後) の 2 モード構成として統合。抽出したルール 6 項目: (1) 外部提供は verbatim 配置 (2) 既存 skill 拡張を新規より優先 (3) 自動生成は .gitignore (4) 出力先 README.md は実行方法 1 セクション (5) CLAUDE.md は 1 行サマリ + skill link (6) 初回スキャン結果を PR description に記録。本 PR 初回スキャンは 9 Finding (CRITICAL 2/HIGH 4/MEDIUM 2/LOW 1, score 30/100) |
-| 2026-04-30 | §5.47 新設 (PR #197 docs/security-check-pr-workflow)。**PR 作成ワークフローへの security-check 統合と score 90+ 維持戦略** ── PR #196 で導入したツールに「いつ実行するか」を定める運用を確立。**全 PR 作成時必須の 5 ステップ** (① 既存レポート削除 → ② tsx 実行 → ③ score < 90 なら修正ループ → ④ PR 作成 → ⑤ コメントでスコア投稿) を threat-model.md Mode B-1 として定義。CLAUDE.md §2 第 5 層に「PR 作成のたびに必須実行」を明記。設計判断: CI gate ではなく Claude フロー側に組み込んだ理由 (修正まで含めるため)、HTML 直貼りでなく Markdown サマリ + ローカル案内に絞る理由 (GitHub の制限)、score 90 の意味 (HIGH 全消し + MEDIUM 1 件まで)、残存 Finding を PR コメントで記録することで reviewer が退行検知できる仕組み。スクリプト本体のメンテ (Mode B-2) は 1 check 関数 = 1 PR、CWE/OWASP リンク必須、トリガー 4 種 (CWE Top 25 更新 / インシデント / 新ライブラリ / 横展開判断) を成文化 |
-| 2026-04-30 | §5.48 / E2E §4.48 新設 (PR #198 feat/security-bringup-90)。**セキュリティスコア 30 → 94 ブリングアップ + CI Gate 化 (>= 90)** ── PR #197 で運用を skill 化したものの実スコアは 30/100 で運用に乗らない状態 + ユーザ要望「閾値 90 で deploy ブロック化」「デグレ禁止」に応える。F-01/F-03 (callbackUrl CWE-601) は `sanitizeCallbackUrl` 新設 + 受け取り時 + redirect 直前の両側 sanitize、F-04 (SameSite=Lax) は Credentials-only で OAuth 無のため Strict 化、F-05 (CWE-307) は in-memory rate-limit (5min/10req) を 3 公開 endpoint に適用、F-06 (MFA 暗号鍵) は dual-key migration 必要のため accept-list せず別 PR 留保、F-07 (CSP unsafe-inline) は accept-list で受容。`scripts/security-check.ts` に `--min-score=N` フラグ + `.github/workflows/security.yml` に `security-score-gate` job 追加 (score < 閾値で fail)。E2E §4.48 では (1) callback URL 両側 sanitize、(2) endpoint 別 rate-limit key、(3) Vercel multi-instance 上の in-memory 制限の 3 つの実装パターンと罠を記録 |
-| 2026-04-30 | §5.49 / E2E §4.49 新設 (PR #199 feat/entity-comments)。**ポリモーフィックコメント機能 (7 entity 横断)** ── 編集 dialog にコメントセクション追加 + 旧 `RetrospectiveComment` 専用テーブルを `Comment` (entity_type + entity_id) に統合 (data migration あり)。Attachment と同形の polymorphic 設計を踏襲、認可は判別ユニオン `{ kind: 'open' \| 'project-scoped' \| 'admin-only' \| 'not-found' }` で entity 別に切替 (issue/risk/retro/knowledge は誰でも、task/stakeholder は member、customer は admin)。E2E §4.49 では「§5.14 を機械的に踏襲しない (readOnly 振る舞いは要件で決まる)」「コードコメント内の `§NN` 参照を機械的にコピーすると stale ref が伝染」「data migration は `BEGIN ... COMMIT` で件数照合 + ROLLBACK 退路を必須化」の 3 罠を記録 |
-| 2026-04-30 | /knowledge-organize 監査整理 (PR #199 後)。**§5.10 → §5.14 stale ref 一括修正** ── §5.10 (フォーム送信前の事前バリデーション) と §5.14 (readOnly な edit dialog の fetch gating / fix/attachment-list-non-member-403) は別概念だが、コードコメント 4 箇所 (`dialog-attachment-section.tsx`, `knowledge/retrospective/risk-edit-dialog.tsx`) で `§5.10 由来「readOnly 非表示」` と stale 化していた。PR #199 §5.49 執筆時にこのコメントから機械的にコピーしてしまい DEVELOPER_GUIDE 内 3 箇所にも伝染。本整理で全 7 箇所を `§5.14` に統一 + §5.49 の関連セクションリストに §5.14/§5.35/§5.36/§4.49 を明示 (横展開漏れを防ぐ相互参照) |
-| 2026-05-01 | §5.50 新設 (PR #201 fix/stop-hook-speedup)。**Stop hook 重処理 + prompt 型を skill 化、開発速度回復** ── `.claude/settings.json` の Stop hook に `pnpm lint && pnpm test` (24 秒) と `type: "prompt"` の 6 観点チェックが登録されており、Claude が応答するたび毎回発火 → 質問応答や調査のみのターンでも 24 秒 + LLM 1 往復浪費。さらに prompt 型は応答後に Stop が再発火するため 6 観点チェック要求がループ的に再注入され、15 ターン以上実装が進まない事態発生。修正: lint+test+6 観点を `.claude/skills/quality-check.md` に分離、Stop は `secret-scan` + `auto-commit` の軽量 2 step のみに削減。仕組み (内容) は維持し、発火タイミングのみ「毎ターン」→「実装完了時」に変更。抽出ルール: (1) Stop hook に prompt 型を登録しない (応答ごと再注入で発散) (2) 重処理 (>5 秒) を Stop に置かない (3) 「自動化」と「毎ターン強制」は別物、PR/コミット単位は skill or CI へ |
-| 2026-05-01 | §5.51 / E2E §4.50 新設 (PR fix/visibility-auth-matrix)。**公開範囲 visibility と認可マトリクスの統合 + 自己 draft 可視化** ── ユーザが「課題一覧」から起票した際、Toast「課題を起票しました」は出るが画面上一覧に出ず Console エラーもない UX バグ発生。原因は旧 list filter が「自分の draft も一覧から除外」する設計で、Toast 導入 (PR #194) と組み合わさって顕在化。修正: list service (risk/retro/knowledge) の where 句に `OR [{public}, {draft AND createdBy=viewer}]` 追加、comment 認可 (route) に visibility + mode 連動の判別ユニオン拡張、entity 個別 delete に `prisma.comment.updateMany` cascade soft-delete を追加 (6 service)、project cascade delete にも risk/issue/knowledge/task の comment 物理削除を追加。コメント編集/削除認可は admin 救済を外し投稿者本人のみに変更。新規認可テスト 24 件 (1020 → 1044)、UI は既存 `<VisibilityBadge>` (Phase E §5.41) で draft/public を視覚区別。E2E §4.50 では「Toast 導入後の必修チェックリスト」「list filter で自己起票が見えなくなるアンチパターン」を罠として記録 |
-| 2026-05-01 | §5.52 / E2E §4.51 新設 (PR fix/attachments-batch-400)。**バッチ API の lenient validation 設計 + 構造化エラーログ** ── ユーザレポート「`/api/attachments/batch` で StatusCode:400 が Vercel log に出続けている」。原因は旧 route が `entityIds: z.array(z.string().uuid())` で 1 件でも非 UUID が混じるとバッチ全体を 400 で破棄する all-or-nothing 設計 + サーバ側に拒否 context を残していなかったため、status code のみで再現条件特定が不可能だった。修正: entityType / slot は厳格、entityIds は lenient (非 UUID は filter で除外、有効分のみ 200 返却)、validation 失敗時は `recordError` で system_error_logs に context (entityType の typeof / entityIds 件数 / Zod issues) を構造化記録。クライアント側 `useBatchAttachments` でも UUID 事前 filter を追加し二重防御。新規 9 件のテスト (1044 → 1053)。抽出ルール: (1) ベストエフォート系バッチ API は body lenient + 失敗黙殺で 200 (2) header / body の validation 厳しさを分離 (3) `console.*` 禁止 → `recordError` で構造化 DB ログ (4) クライアント側でも同正規表現で事前 filter |
-| 2026-05-01 | §5.53 新設 (PR feat/sticky-table-headers)。**一覧テーブルの Excel 風ヘッダー固定** ── 「○○一覧」「全○○」全画面で縦スクロール時に `<thead>` を viewport 上端に固定する UX 要望。共通 `<TableHeader>` コンポーネント 1 箇所に `sticky top-0 z-10 bg-card [&>tr>th]:bg-card` を追加するだけで 17+ 一覧画面に自動伝播 (DRY 原則)。`<TableHeader>` を経由しない raw `<thead>` 3 箇所 (`my-tasks-client` / `tasks-client` WBS / `responsive-table`) は個別対応。設計判断: (1) ページ全体スクロール基準で sticky → DashboardHeader (非 sticky) スクロールアウト後に thead が上端取る挙動 (2) `bg-card` 二重指定で古いブラウザ対応 (3) z-10 で Dialog/Toast/dropdown (z-50) より下に固定。抽出ルール: (a) 共通 UI 1 箇所修正で N 画面に伝播させる (b) sticky element には必ず bg を入れる (透過すると下行が透ける) (c) `<TableHeader>` を経由しない raw thead の grep を再発防止に運用 |
-| 2026-05-01 | §5.54 新設 (PR feat/notifications-mvp)。**アプリ内通知機能 MVP (完全無料、外部 push なし)** ── ベル UI を DashboardHeader に追加 + ACT の予定日リマインダ 2 種を Vercel Cron で日次生成 (JST 7:00 = UTC 22:00)。polymorphic Notification テーブル (Comment と同形)、`dedupeKey` UNIQUE で同日 2 重発火を DB レベルで弾く、partial index 2 本 (idx_tasks_planned_start_due / idx_tasks_planned_end_due) で flat query を高速化し WBS 階層 traversal を完全回避。`todayInJst()` ヘルパで cron の UTC ↔ JST 境界処理を service 層に閉じ込め、単体テストで UTC 14:59/15:00 境界を検証。既読 + 30 日経過の物理削除を同 cron に組み込み容量管理。UI polling は open 30 秒 / closed 5 分。新規テスト 29 件 (1053 → 1082)。抽出ルール: (1) 新 type 追加は validators の `NOTIFICATION_TYPES` 1 箇所 (2) dedupeKey は `{type}:{entityId}:{YYYY-MM-DD}` 形式を継承 (3) cron は flat query + partial index、階層探索を回避 (4) TZ 境界は `todayInJst` 経由、テストで 14:59/15:00 必須 (5) cron 認可は `CRON_SECRET` 未設定で fail-closed |
-| 2026-05-01 | §5.55 新設 (PR fix/sticky-and-readonly-links)。**sticky thead が効かない hotfix + 全○○ で参考リンク非表示の hotfix** ── PR #204 で sticky thead を共通 Table に追加したが、wrapper の `overflow-x-auto` が CSS 仕様上 (`visible→auto` 変換) 両軸スクロールコンテナ化し、wrapper には max-height がないため sticky が無効化されていた。修正: wrapper に `max-h-[calc(100vh-12rem)] overflow-auto` を追加し真の縦スクロールコンテナ化、Excel 風のテーブル領域内スクロール挙動に変更。WBS の raw thead wrapper も同パターンで修正。同時修正として `DialogAttachmentSection` が §5.14 由来の `if(readOnly) return null` で全○○ から添付リンクを完全非表示にしていた問題も解消 (`canEdit={!readOnly}` で読取専用表示に変更)。§5.14 の元来理由 (非メンバー 403) は 2026-04-27 fix/cross-list-non-member-columns で解消済だったが、防御コードだけが残置していた。抽出ルール: (1) 片軸 overflow-auto に max-h を必ず併記 (2) sticky 効かない時は親 scrolling ancestor を疑う (3) 過去の防御コードは前提変化時に再評価 (4) readOnly は data 編集のみを止め、表示まで止めない設計が正しい |
-| 2026-05-01 | §5.56 新設 (PR feat/comment-mentions)。**コメント @mention 機能 (完全無料、即時通知)** ── PR #205 の Notification 基盤上に追加。Mention テーブルを新設 (kind 判別ユニオン: user/all/project_member/role_*/assignee)、Comment との `onDelete: Cascade`。entityType 別の許容 kind マトリクスを `getAllowedMentionKinds` でサーバ側強制 (Q3 二重防御): WBS では all 不可、customer は user のみ。UI は @ トリガで `/api/mention-candidates` 候補表示 (Slack/GitHub 風)、`context` パラメータ ('wbs' / 'project_list' / 'cross_list') で UI 側のタブ絞り込み。配信は即時 (cron 経由せず POST 直後に Notification createMany)、`dedupeKey=comment_mention:{commentId}:{userId}` で 2 重通知防止、Q5 自分宛除外。Q2 採用で編集時は added のみ通知、removed は通知なし。新規テスト 33 件 (1082 → 1115)。抽出ルール: (1) kind 判別ユニオン拡張は `MENTION_KINDS` + `getAllowedMentionKinds` 1 箇所 (2) UI / server で同許容マトリクス二重防御 (3) context は UI ヒント、server は entityType ベースの validation (4) 編集時の通知は added のみ (5) 自分宛除外は service 層で実施 |
+#### 設計判断のポイント
+
+1. **batch と singular の認可は対称化が大原則**: 同じ entity への異なる ENDPOINT は同じ認可マトリクスでなければならない。片方だけ緩和すると本件のような「動くはずが動かない」UX が出る
+2. **`getEntityVisibility` を attachment.service と comment.service で別実装にした理由**: comment 側は `creatorId` の比較、attachment 側は `creatorId` でも比較するが、責務が異なるため重複は許容。1 関数に統合すると AttachmentEntityType と CommentEntityType の差 (memo は両方 / customer は comment のみ / project/estimate は attachment のみ) で型分岐が複雑化する
+3. **memo の mention kind を `['user', 'all']` に絞った理由**: memo は user-scoped で project 概念がないため、`project_member` / `role_*` / `assignee` の mention は意味的に不可能。validator で弾くことで誤った UI 露出を防ぐ
+4. **DialogAttachmentSection の docstring 修正**: 「fix/cross-list-non-member-columns で開放済」という嘘の記述を実態に合わせて修正。docstring が正しいと思い込んで詳細調査をスキップしていた、本件の遅延要因でもある
+
+#### 抽出したルール
+
+- [ ] **batch endpoint と singular endpoint の認可は必ず対称化**: 横展開チェックを CI/Lint で強化することが望ましい (将来の TODO)
+- [ ] **docstring の主張を実装で検証する**: 「○○で対応済」のようなコメントを書く際は、実装にテストで担保があるか確認。テスト無しで docstring を信用してはいけない
+- [ ] **新しい comment 対象 entity の追加は 5 拡張ポイント パターン**: `COMMENT_ENTITY_TYPES` / `getAllowedMentionKinds` / `resolveEntityForComment` / `getMentionContext` / `buildEntityCommentLink` の 5 箇所を更新する。漏れがあると「コメントは投稿できるが mention できない」「mention できるが通知 link が壊れる」など UX 不整合
+- [ ] **visibility-based 認可は `kind: 'public-or-draft'` で統一**: 新しい entity を追加するとき、既存の visibility-aware kind を流用すれば認可ロジックが自動で適用される (DRY)
+- [ ] **Vercel runtime log の 403 急増は週次で監視**: `responseStatusCode:403` を grep し、特定 endpoint で急増していたら認可マトリクスの抜けを疑う
+
+#### 関連
+
+- §5.59 / §5.60 (本件の前段、通知 deep link 系の改修)
+- §5.51 (visibility-aware 認可マトリクスの根拠 — 本件は同パターンを attachment にも適用)
+- §5.14 (`/api/attachments?entityType=risk` 403 の旧 hotfix。`{!readOnly && ...}` で gating したが本件で発覚した通り読み取りパスは依然として 403 を踏んでいた、本 PR が完全解消)
+- 修正例:
+  - `src/services/attachment.service.ts` (`getEntityVisibility` 新設)
+  - `src/app/api/attachments/route.ts` (`authorize()` の visibility 分岐)
+  - `src/lib/validators/{comment,mention}.ts` (memo enum 追加)
+  - `src/services/{comment,mention}.service.ts` (memo case 追加)
+  - `src/lib/entity-link.ts` (memo 通知 link)
+  - `src/app/(dashboard)/{all-memos,memos}/...client.tsx` (`<CommentSection>` 統合)
+
+### 5.62 提案エンジン v2 の設計議論と意思決定ログ (T-03 設計フェーズ, 2026-05-01)
+
+本セクションは、提案エンジン v2 (T-03) の設計フェーズで行われた約 5 時間にわたる対話的設計議論の意思決定を、後から再現可能な形で記録する。実装は明日 (5月2日) から着手予定であり、本記録は実装中の判断根拠として、また将来の振り返りで「なぜこの設計を選んだか」を辿るための一次資料となる。
+
+#### 議論の出発点
+
+本サービスのリポジトリには PR #65 で実装された提案エンジン v1 が存在し、`pg_trgm` による文字 n-gram 類似度とユーザ手動入力タグの Jaccard 係数を半々の重みで合成してスコアを算出していた。これは外部依存なし・追加コストなしという美徳がある一方で、文章の意味的な近さを捉えられず、新規ユーザほど提案精度の低さを体験するという根本的な弱点を抱えていた。これを T-03 として課題登録しており、本リリース戦略において「外部展開前必須」と位置付けていた。
+
+ユーザは本機能を「サービスの核心機能であり、世の中のタスク管理アプリにはない独自の機能で、最大の差別化ポイント」と明確に位置付け、「多少コストがかかっても大幅に検索性能が向上するのであれば検討材料としたい」と方針を示した。この姿勢が議論の前提となり、ゼロコスト運用に縛られず、外部 LLM API への継続的な金銭コストを許容する設計に踏み出すことになった。
+
+#### 技術選択肢の比較 (議論の核心)
+
+4 つの選択肢を比較した。語彙辞書を手書きする方式 (A) は、辞書メンテが永続的負債となるため不採用。形態素解析 (kuromoji.js) (B) は、Vercel Edge との相性が悪く、辞書ロードでコールドスタートが悪化するため不採用。LLM ベース (C) は推論精度が極めて高い一方でコストとレイテンシのトレードオフがある。Embedding ベース (D) は安価かつ高速で意味類似が捉えられる。
+
+最終的に **「D を主軸に C を載せる」3 段階構成** を採用した。これは Notion / Linear / Slack などの主要 SaaS のセマンティック検索が採用するデファクト構成であり、本サービスがこのトレースをすることに技術的・事業的な妥当性が高いと判断した。
+
+#### コスト試算と事業判断
+
+3 段階構成のランニングコストを、ユーザ規模別 (1 / 5 / 10 / 25 / 50 / 100 人) に試算した結果、Haiku 構成で 100 人規模で月 1,400 円、Sonnet 構成で月 4,000〜5,000 円と算定した。書き込み時の embedding 生成コストは無視できるレベルで、コストの大半は提案表示時の LLM Re-ranking で発生する。この試算をユーザは「月数千円なら核心機能への投資として十分許容できる」と判断し、本格運用前提の設計に進めることを決定した。
+
+Haiku と Sonnet の差は単価 3 倍だが、実体験上の差は「並び替え精度はほぼ同じで、説明文の質が劇的に違う」と分析した。これに基づき、「**初期は Haiku で開始、ユーザフィードバックで Sonnet 化を判断**」という段階移行戦略を採用した。
+
+#### 事業戦略との統合
+
+ユーザから「OSS として基本無料で展開、データ蓄積で価値を実感させ、Sonnet 化の Pro プラン課金で UX を最大化する」というシナリオが提示された。これは Notion / Linear / Figma / Sentry / Plausible が歩んだ典型的な OSS-with-managed-cloud モデルで、本サービスの差別化と完全に整合することを確認した。
+
+主要な合意事項として、コードベース全体を **AGPL ライセンス** で公開する (競合 SaaS の商用クローン阻止)、`User.subscription_tier` カラムによる **論理コンテナ分離** で Free/Pro を切り替える、無料ユーザの体験を「劣化版」ではなく「十分なベースライン」として設計する、初期データとして資格試験事例や著名な法則の独自要約を投入してコールドスタート問題を緩和する、を確定した。
+
+#### 悪用防止の最重要視
+
+ユーザの強い指示「**この機能は運用コストが発生するうえ、悪用されると経済破綻を引き起こす可能性が高い。手を抜いてはいけない**」を最重要事項として受け止め、**5 層悪用防止アーキテクチャ** を設計した。シークレット保護 / 認証強化 / ユーザ単位レート制限 + トークン上限 / プロンプトインジェクション対策 / workspace 上限の 5 層で、各層は独立して機能し、ある層が破られても他の層で被害を抑え込む構造とする。
+
+特に注目すべきは、**Anthropic workspace の月間予算ハード上限** が「最終的な経済的損失の天井」を決定するという観察である。これを想定使用量の 1.5〜2 倍 ($30 = 約 4500 円) に設定することで、上記 4 層がすべて破られても損失は $30 に制限される。
+
+コミット履歴の API キー漏洩調査も実施し、727 コミット全履歴に対して Anthropic / OpenAI / Voyage / GitHub PAT / AWS / JWT 等の典型パターンで網羅的検査を行い、**実際のシークレット混入は 1 件もないことを確認** した。これは `.gitignore` を最初から適切に設定する習慣が貫かれていた結果であり、出発点として極めて健全な状態にある。
+
+#### 主要な意思決定の記録
+
+第一に、**LLM プロバイダは Anthropic Claude を採用**。本サービスが Claude Code で開発されており API key 管理が既存、日本語精度が高く、prompt caching でコスト最適化可能、の 3 点を根拠とする。
+
+第二に、**Embedding プロバイダは Voyage AI の voyage-4-lite (1024 次元) を第一候補、OpenAI text-embedding-3-small を代替候補**。Voyage は Anthropic 推奨で API 形式が OpenAI 互換。**voyage-4-lite は 200M トークンが無料** で v1 規模では無料運用可。当初検討した voyage-3-lite は 2026 年時点で旧世代化し無料枠が失効したため 4 系に切替 (PR #4 で更新)。
+
+第三に、**ベクトル DB は Supabase pgvector 拡張を採用**。既存 Postgres に閉じることで追加サービスを増やさない。
+
+第四に、**初期実装の LLM モデルは Haiku 一本**。Sonnet 化はバージョンアップで Pro プランの提供時に行う。
+
+第五に、**Phase 3 (LLM Re-ranking) は 6月1日リリースから外す**。Phase 2 までで核心的な差別化体験は成立し、Phase 3 は後続でリリースした方が「進化し続けるアプリ」というシグナル効果がある。
+
+第六に、**ユーザ単位月間トークン上限は Free 10万 / Pro 100万** で開始、運用しながら調整。
+
+第七に、**監視・異常検知は v1 で最小実装、観測ダッシュボード UI は v1.x で追加**。Phase 3c の `/admin/observability` の一部として組み込む。
+
+#### 実装着手前のチェックリスト
+
+明日からの実装着手前に、以下の準備を完了しておく必要がある。
+
+設計ドキュメントの執筆は本 PR (`docs/suggestion-engine-spec`) で完了する。SUGGESTION_ENGINE_PLAN.md / REQUIREMENTS.md §13 / SPECIFICATION.md §26 / DESIGN.md §34 / SUGGESTION_ENGINE_THREAT_MODEL.md がすべて整備されたことを確認。
+
+Anthropic workspace の月間予算ハード上限 ($30) と通知設定はリリース前 (5月末) に必ず実施。Voyage AI も同様の上限設定を実施。
+
+git pre-commit hook (Husky / lefthook + gitleaks) の整備は PR #2 (経済的安全性の基盤実装) で実施。GitHub Push Protection の有効化は repo settings UI から admin 操作で実施。
+
+Upstash Redis の Vercel 連携は PR #2 のタイミングで Vercel ダッシュボードから有効化。無料 tier (10K commands/day) で開始し、必要に応じて拡大する。
+
+#### 抽出したルール
+
+- [ ] **核心機能の設計は「ユーザにとっての価値」と「悪用された場合のリスク」を同等に重視**: 本機能の設計議論で 6:4 の比率で悪用防止に時間を割いた。これが正しい配分であり、後から痛い目を見ない設計を作る基本姿勢
+- [ ] **OSS 公開する機能は「コードを読まれている前提」で防御を設計**: プロンプトの内容が公開される、攻撃手法が研究される、ことを前提に多層防御を組む
+- [ ] **段階的リリースは「ユーザに進化し続けるシグナル」を送る武器**: 一度に全部リリースせず、リリース後の継続的な機能追加でユーザに「成長するアプリ」と感じてもらう設計判断は SaaS リテンションに大きく寄与する
+- [ ] **コスト試算は「ユーザ像 × 規模」のマトリクスで考える**: ライト / ミディアム / ヘビーの 3 ユーザ像に分解し、人数規模別の月額試算を出すことで、事業判断のための具体的な根拠が得られる
+- [ ] **5 層防御の最後の砦は workspace 月間ハード上限**: アプリ層・認証層・rate limit 層・プロンプト層をすべて破られても、最終的に外部 API 側の予算上限で必ず止まる、という設計を持つことが致命的損失を防ぐ
+
+#### 関連ドキュメント
+
+- 実装計画: [SUGGESTION_ENGINE_PLAN.md](./SUGGESTION_ENGINE_PLAN.md)
+- 要件定義: [REQUIREMENTS.md §13](./REQUIREMENTS.md)
+- 機能仕様: [SPECIFICATION.md §26](./SPECIFICATION.md)
+- 技術設計: [DESIGN.md §34](./DESIGN.md)
+- 脅威モデル: [docs/security/SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)
+- リリース計画: [RELEASE_ROADMAP.md §2.6](../administrator/RELEASE_ROADMAP.md)
+
+#### 5.62 補強: マルチテナント運用前提の追加意思決定 (2026-05-01 同日中の補正)
+
+設計議論を初回完了した直後、ユーザから「外部公開後の運用フローを反映した設計に補正してほしい」という重要なフィードバックがあり、提案エンジンの設計を **マルチテナント SaaS 前提** に再構築した。これは設計の根本に関わる変更だったため、追加の意思決定として本セクションに記録する。
+
+#### マルチテナント化を決定した背景
+
+外部ユーザの利用申し込み → テナント作成 → 初期データ投入 → 利用 → サブスク契約 (Sonnet 化) → 利用停止 (テナント削除)、という一連の運用フローが明確化された。これに対応する設計上の選択は、**「論理コンテナ (テナント) ごとにデータと認可を分離する」** マルチテナント アーキテクチャ採用が唯一の合理解だった。
+
+採用根拠は 4 点ある。第一に、**外部ユーザの心理的安全性**: 機密性の高い業務情報を扱うサービスとして、運用者および他テナントから自分のデータが見えない構造であることが、法人ユーザの導入障壁を下げる決定的要因となる。第二に、**経済的安全性のスコープ限定**: 悪用された場合の被害をテナント単位で閉じ込めることで、サービス全体への波及を防げる。第三に、**契約モデルとの整合**: 個人利用でも組織利用でも「契約 = テナント」と統一できることで、課金プロバイダ連携が単純化する。第四に、**自然なデータ削除権の実現**: ユーザが利用停止を選んだ際、その意思を物理削除で実現することで、退会後の API 悪用を構造的に防げる。
+
+#### 追加の意思決定
+
+第一に、**データ分離方式は「shared DB + tenantId column」(soft isolation)** を採用。Postgres スキーマ単位の分離 (hard isolation) や RLS (row-level security) も検討したが、運用と実装の複雑度を考えると tenantId フィルタの徹底で十分。RLS 導入は v1.x 以降の追加防衛線として再検討。
+
+第二に、**トークン上限と subscription_tier は User ではなく Tenant に配置**。当初 User に配置する設計だったが、契約単位 = テナント単位の原則と矛盾するため、すべて Tenant に移動。テナント内の複数ユーザが予算を共有する形になる。
+
+第三に、**初期シードデータはテナント単位で複製**。すべてのテナントが同じ参照データを共有する設計も可能だったが、テナント独立性の担保 (削除時の整合性、テナント側の編集自由度) を優先して、テナント作成時にシードデータを clone する設計を採用。embedding ベクトルもコピーすることで再生成コストを節約する。
+
+第四に、**v1 では「単一 default-tenant 運用」に絞る**。マルチテナント完全対応のコードを書きつつ、運用上は 1 テナントのみが存在する状態で 6月1日にリリースする。テナント管理 UI / 招待メール / Stripe 連携などは v1.x で順次追加。これは当初スコープを超える機能であり、6月1日リリース必達の範囲を守るための判断。
+
+第五に、**提案機能多用に対する 3 段階コスト保護を追加**。Phase 3 結果のキャッシュ、テナント単位の日次 LLM 呼び出しキャップ、月間トークン上限と workspace 上限の組み合わせで、最悪ケースでも 1 テナントあたりの月間損失が数百円〜千円に収まる設計とする。
+
+第六に、**インフラ移行判断のトリガー条件を明文化**。Vercel Function timeout 1% 超 / Supabase 80% 超 / API 月額 \$100 超 / ユーザ体感悪化、のいずれかが発生した時点で AWS / Azure / GCP への移行を評価する。これは早期過剰投資と判断遅延の両方を避けるための仕組み。
+
+#### スケジュールへの影響
+
+マルチテナント基盤の追加によって、PR #2 の規模が当初 3〜4 日から 5〜7 日に拡大した。これに伴い後続 PR も若干後ろ倒しとなり、判断キータイミングが 5月25日 → **5月22日 (Week 3 前半)** に前倒しとなった。Week 3 前半時点で PR #5 (Phase 2 統合) まで完成していなければ、6月8日延伸 Plan B を発動する。
+
+縮退オプションとして、Phase 2 の HNSW インデックス最適化、詳細な異常検知ロジック、初期シードデータの量、を後続化する優先順位を明記。逆に **マルチテナント基盤、5 層悪用防止、最小限の監視は縮退対象から除外**。これらはセキュリティと経済的安全性の根幹であり、後続化を許容しない。
+
+#### 追加された脅威分析
+
+[SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md) に「マルチテナント前提での追加脅威」として 6 項目を追加。テナント間データ漏洩 (MT-1)、テナント認可境界のバイパス (MT-2)、テナント削除時のデータ漏れ (MT-3)、テナント単位コスト追跡の改ざん (MT-4)、初期シードデータを通じた漏洩 (MT-5)、Pro プラン契約状態の不正改ざん (MT-6) の各脅威について、対策と実装担当 PR を明記。
+
+特に MT-1 (テナント間データ漏洩) はマルチテナント SaaS で最も致命的な脆弱性類型であり、すべての DB クエリへの tenantId フィルタの徹底、`requireSameTenant()` ユーティリティの全 API ルートでの呼び出し、統合テストでの「テナント境界越境攻撃」の再現、を必須とする。
+
+#### 抽出した追加ルール
+
+- [ ] **マルチテナント設計は「契約 = テナント」を中心に据える**: ユーザ単位ではなく契約単位でデータと予算を分離することで、課金モデル・データ削除権・経済的安全性が一貫した形で実現される
+- [ ] **soft isolation (tenantId column) と hard isolation (DB schema) の中間として、RLS は強力な追加防衛線**: v1 では tenantId フィルタの徹底で十分だが、RLS は将来の選択肢として保持する
+- [ ] **初期シードデータはテナント単位で複製、共有は避ける**: ストレージ重複は微小だが、独立性とテナント削除時の整合性が大きく改善する
+- [ ] **「単一 default-tenant 運用」は段階移行の優れた中間状態**: マルチテナント完全対応のコードを単一テナントで稼働させることで、外部ユーザ受け入れの瞬間に運用モードを切り替えられる
+- [ ] **インフラ移行判断は明確なトリガー条件で機械的に評価**: 直感ではなく定量的な指標で判断することで、早期過剰投資と判断遅延の両方を避ける
+
+#### 5.62 補強 2: 課金モデルの確定 — 3 プラン構成 + 従量課金 (per-API-call) (2026-05-01 同日中の最終決定)
+
+マルチテナント アーキテクチャの議論からさらに踏み込み、**課金モデルを per-seat (席数比例) ではなく per-API-call (従量課金)** にすることで最終確定した。これは設計初期 (per-token / per-seat 等を検討した段階) から再々検討の議論を重ね、ユーザの直感とサービス特性に最も適合するモデルとして選ばれた。
+
+#### per-seat ではなく per-API-call を選んだ理由
+
+per-seat 課金モデル (1 席あたり N トークン) を中間案として検討したが、**ユーザ削除タイミングによる悪用** と **未使用ユーザ分の運用者損失** という 2 つの構造的問題が解消できなかった。具体的には、月末ぎりぎりに席数を減らすことで集計を誤魔化す不正利用パターンが発生しうる、また MAU (月間アクティブユーザ) ベースに変えても「使ってないが在籍するユーザ」のコストが運用者にしわ寄せされる構造が残る。
+
+これに対し per-API-call (実際に使った機能呼び出し回数による課金) は、**「使った分だけ払う」**という素朴な公平性を提供し、ユーザの削除タイミングや活動状態に依存しない。さらにユーザに「自分のクリック数 ≒ 課金額」という直感的な予測可能性を与える点で、Stripe / Twilio などの主要な従量課金 SaaS と同じパターンに乗ることになる。
+
+#### 確定した 3 プラン構成
+
+**Beginner プラン (無料)**: 最大 5 席、Claude Haiku、月間 100 回までの API 呼び出し上限。試験運用と上位プランへのアップセル誘導の入り口として機能する。100 回到達時は提案機能が縮退モード (embedding ベース並びのみ表示) に切り替わり、月初に自動リセット。
+
+**Expert プラン (席数無制限・従量課金)**: Claude Haiku、API 呼び出し 1 回あたり ¥10 (初期値、運用中に調整)。月間使用量に上限なし。
+
+**Pro プラン (席数無制限・従量課金、Sonnet)**: Claude Sonnet、API 呼び出し 1 回あたり ¥30 (初期値)。深い説明文付きの最上位プラン。
+
+価格は初期値であり、**実運用データを見ながら段階的に調整** する想定。Tenant テーブルの `pricePerCallHaiku` / `pricePerCallSonnet` カラムに保存し、admin による外部から調整可能。
+
+#### 「1 回」の課金単位の定義
+
+API 呼び出しの「1 回」は **ユーザに見える機能単位** で定義する。新規プロジェクト作成時の自動タグ抽出 + 初回提案生成は内部的に複数の LLM / Embedding 呼び出しを伴うが、ユーザから見て 1 操作なので 1 回としてカウントする。embedding 生成 (バックグラウンド処理) は課金対象外で運用者が吸収する。
+
+これによってユーザは「自分のクリック数 ≒ 課金額」と予測でき、Phase 3 のキャッシュヒット率向上などの内部最適化を進めても請求額に影響しない設計となる。
+
+#### 月次予算上限の自己設定とリアルタイム使用量ダッシュボード
+
+pure metered billing の最大の弱点である「請求額の予測不可能性」を、**ユーザ自身が月次予算上限を設定できる仕組み** で解消する。例: 「月最大 ¥10,000 まで」と設定すると、その金額に達した時点で API 呼び出しが縮退モードに自動切替される。法人ユーザの導入障壁を大きく下げる重要機能で、Stripe / Twilio など主要な従量課金 SaaS が採用する標準パターンである。
+
+加えて **リアルタイム使用量ダッシュボード** をテナント管理者設定画面で公開し、当月の API 呼び出し回数・課金額・予算比率・日次推移グラフ・機能別内訳を可視化する。これにより、月末まで請求額が不明な不安を取り除き、突発的な使用量増加 (= 異常パターン) をユーザ自身が発見できる窓口を提供する。
+
+#### プラン変更フローの制御 (特にダウングレード)
+
+テナント管理者は自テナントのシステム管理者設定画面でプラン変更を行えるが、ダウングレード時には **システム側で必ず制御を加える**。
+
+第一に、Expert / Pro → Beginner へのダウングレードは、現席数が 5 を超えるテナントに対しては **システムが拒否** する。「先に席数を 5 以下に減らしてください」という警告を表示し、API レベルでも拒否する二重防御とする。
+
+第二に、ダウングレードは **当月末まで現プラン継続、翌月 1 日から Beginner 適用** とする。これは月末ぎりぎりにダウングレードして当月分の従量課金を 0 円にする悪用を防ぐ仕組みで、`Tenant.scheduledPlanChangeAt` と `Tenant.scheduledNextPlan` フィールドで遅延適用を実現する。
+
+第三に、ダウングレード操作前の確認 UI で「ダウングレードはこの月の月末から適用されます。当月分の従量課金は通常通り発生します」という注意事項を **明示的に確認させる** 設計とする。
+
+アップグレード (Beginner → Expert / Pro) と Expert ↔ Pro 切替は即時反映する。
+
+#### 抽出した追加ルール
+
+- [ ] **per-API-call の「1 回」はユーザに見える機能単位で定義**: 内部 API 呼び出し数とは独立させることで、内部最適化が請求額に影響しない設計を実現
+- [ ] **pure metered billing には月次予算上限の自己設定機能を必ず併設**: 「使った分だけ」の公平性は、「いくら請求されるか分からない」不安と表裏一体。予算上限機能でこの不安を解消することが法人ユーザの導入を可能にする
+- [ ] **ダウングレードは月の途中に適用しない**: 月末ぎりぎりの操作で当月分の課金を回避する悪用を、遅延適用 (翌月から有効) で構造的に防ぐ
+- [ ] **「1 操作 = 1 課金」の単純化はユーザの心理的障壁を下げる**: per-token のような技術的計算ではなく、ユーザが直感的に予測できる単位で課金することで、機能利用への躊躇を最小化する
+- [ ] **価格設定は外出し化して運用中に調整**: 初期値はあくまで叩き台で、実運用データを集めて柔軟に変更できる構造を設計初期から組み込む
+

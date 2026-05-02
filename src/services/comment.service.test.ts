@@ -15,6 +15,7 @@ vi.mock('@/lib/db', () => ({
     task: { findFirst: vi.fn() },
     stakeholder: { findFirst: vi.fn() },
     customer: { findFirst: vi.fn() },
+    memo: { findFirst: vi.fn() },
   },
 }));
 
@@ -168,22 +169,56 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-3' });
   });
 
-  it('task: 存在すれば project-scoped (projectId 解決)', async () => {
+  it('task: 存在すれば project-scoped (mention は ProjectMember、plain コメントは全員可)', async () => {
+    // PR feat/notification-deep-link-completion (2026-05-01): task の plain コメントは緩和。
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
     const r = await resolveEntityForComment('task', 't-1');
-    expect(r).toEqual({ kind: 'project-scoped', projectIds: ['p-1'] });
+    expect(r).toEqual({
+      kind: 'project-scoped',
+      projectIds: ['p-1'],
+      mentionRequiredRole: 'any',
+      plainCommentScope: 'public',
+    });
   });
 
-  it('stakeholder: 存在すれば project-scoped (projectId 解決)', async () => {
+  it('stakeholder: 存在すれば project-scoped (mention/plain ともに PM/TL のみ)', async () => {
+    // PR feat/notification-edit-dialog (2026-05-01): stakeholder は PM/TL 限定。
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
     const r = await resolveEntityForComment('stakeholder', 's-1');
-    expect(r).toEqual({ kind: 'project-scoped', projectIds: ['p-1'] });
+    expect(r).toEqual({
+      kind: 'project-scoped',
+      projectIds: ['p-1'],
+      mentionRequiredRole: 'pm_tl',
+      plainCommentScope: 'project-member',
+    });
   });
 
   it('customer: 存在すれば admin-only', async () => {
     vi.mocked(prisma.customer.findFirst).mockResolvedValue({ id: 'cus-1' } as never);
     const r = await resolveEntityForComment('customer', 'cus-1');
     expect(r).toEqual({ kind: 'admin-only' });
+  });
+
+  // PR #213: memo にコメント機能追加 (visibility-based 認可)
+  it('memo (public): public-or-draft 扱い (誰でもコメント可)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      visibility: 'public', userId: 'u-1',
+    } as never);
+    const r = await resolveEntityForComment('memo', 'm-1');
+    expect(r).toEqual({ kind: 'public-or-draft', visibility: 'public', creatorId: 'u-1' });
+  });
+
+  it('memo (draft): public-or-draft 扱い (作成者のみコメント可)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      visibility: 'draft', userId: 'u-2',
+    } as never);
+    const r = await resolveEntityForComment('memo', 'm-1');
+    expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-2' });
+  });
+
+  it('memo: 不在なら not-found', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
+    expect(await resolveEntityForComment('memo', 'x')).toEqual({ kind: 'not-found' });
   });
 
   it('not-found: 各種で id が無効ならば not-found', async () => {

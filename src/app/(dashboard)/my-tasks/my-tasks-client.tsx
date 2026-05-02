@@ -30,9 +30,11 @@ import { MultiSelectFilter } from '@/components/multi-select-filter';
 import { filterTreeByStatus, taskStatusColors } from '@/lib/task-tree-utils';
 import {
   ResizableColumnsProvider,
-  ResizableHead,
   ResetColumnsButton,
 } from '@/components/ui/resizable-columns';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 // feat/gantt-tab-restructure (PR-C item 7): マイタスクに横断 Gantt 表示
 import { GanttClient } from '@/app/(dashboard)/projects/[projectId]/gantt/gantt-client';
 
@@ -55,6 +57,20 @@ type Props = {
 const statusColors = taskStatusColors;
 
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
+
+// PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
+// 注: my-tasks はツリー構造のため top-level の並び順のみ変更する (children の relative 順は保持)。
+function getMyTaskSortValue(t: TaskDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'name': return t.name;
+    case 'status': return t.status;
+    case 'progress': return t.progressRate;
+    case 'plannedRange': return t.plannedStartDate ?? '';
+    case 'actualRange': return t.actualStartDate ?? '';
+    case 'priority': return t.priority ?? '';
+    default: return null;
+  }
+}
 
 /**
  * マイタスクのクライアントコンポーネント。
@@ -97,6 +113,10 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
     () => [...ALL_STATUS_KEYS],
   );
 
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
+  // ツリー構造のため top-level の並び順のみ変更する。
+  const { sortState, setSortColumn } = useMultiSort('sort:my-tasks');
+
   const toggleProject = useCallback((projectId: string) => {
     setExpandedProjects((prev) => {
       const next = new Set(prev);
@@ -133,11 +153,18 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
     && ALL_STATUS_KEYS.every((k) => selectedStatuses.has(k));
 
   const filteredGroups = useMemo(() => {
-    if (isAllStatusesSelected) return projectGroups;
-    return projectGroups
-      .map((pg) => ({ ...pg, tree: filterTreeByStatus(pg.tree, selectedStatuses) }))
-      .filter((pg) => pg.tree.length > 0);
-  }, [projectGroups, selectedStatuses, isAllStatusesSelected]);
+    const base = isAllStatusesSelected
+      ? projectGroups
+      : projectGroups
+        .map((pg) => ({ ...pg, tree: filterTreeByStatus(pg.tree, selectedStatuses) }))
+        .filter((pg) => pg.tree.length > 0);
+    // PR feat/sortable-columns: 各プロジェクトの top-level tree を multiSort で並び替え (children は維持)
+    if (sortState.length === 0) return base;
+    return base.map((pg) => ({
+      ...pg,
+      tree: [...multiSort(pg.tree, sortState, getMyTaskSortValue)],
+    }));
+  }, [projectGroups, selectedStatuses, isAllStatusesSelected, sortState]);
 
   if (projectGroups.length === 0) {
     return (
@@ -230,12 +257,12 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
                     `<TableHeader>` を経由しない raw thead なので個別指定が必要。 */}
                 <thead className="sticky top-0 z-10 bg-card [&>tr>th]:bg-card">
                   <tr>
-                    <ResizableHead columnKey="name" defaultWidth={300}>{tMyTask('colName')}</ResizableHead>
-                    <ResizableHead columnKey="status" defaultWidth={100}>{tMyTask('colStatus')}</ResizableHead>
-                    <ResizableHead columnKey="progress" defaultWidth={140}>{tMyTask('colProgressEffort')}</ResizableHead>
-                    <ResizableHead columnKey="plannedRange" defaultWidth={180}>{tMyTask('colPlannedRange')}</ResizableHead>
-                    <ResizableHead columnKey="actualRange" defaultWidth={180}>{tMyTask('colActualRange')}</ResizableHead>
-                    <ResizableHead columnKey="priority" defaultWidth={80}>{tMyTask('colPriority')}</ResizableHead>
+                    <SortableResizableHead columnKey="name" defaultWidth={300} label={tMyTask('colName')} sortState={sortState} onSortChange={setSortColumn} />
+                    <SortableResizableHead columnKey="status" defaultWidth={100} label={tMyTask('colStatus')} sortState={sortState} onSortChange={setSortColumn} />
+                    <SortableResizableHead columnKey="progress" defaultWidth={140} label={tMyTask('colProgressEffort')} sortState={sortState} onSortChange={setSortColumn} />
+                    <SortableResizableHead columnKey="plannedRange" defaultWidth={180} label={tMyTask('colPlannedRange')} sortState={sortState} onSortChange={setSortColumn} />
+                    <SortableResizableHead columnKey="actualRange" defaultWidth={180} label={tMyTask('colActualRange')} sortState={sortState} onSortChange={setSortColumn} />
+                    <SortableResizableHead columnKey="priority" defaultWidth={80} label={tMyTask('colPriority')} sortState={sortState} onSortChange={setSortColumn} />
                   </tr>
                 </thead>
                 <tbody>

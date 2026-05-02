@@ -39,7 +39,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ResizableHead } from '@/components/ui/resizable-columns';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import {
   Select,
@@ -76,6 +78,19 @@ type Props = {
   customers: CustomerOption[];
 };
 
+// PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
+function getProjectSortValue(p: ProjectDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'name': return p.name;
+    case 'customer': return p.customerName ?? '';
+    case 'devMethod': return p.devMethod;
+    case 'status': return p.status;
+    case 'plannedStartDate': return p.plannedStartDate ?? '';
+    case 'plannedEndDate': return p.plannedEndDate ?? '';
+    default: return null;
+  }
+}
+
 const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   planning: 'outline',
   estimating: 'outline',
@@ -100,6 +115,9 @@ export function ProjectsClient({
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
+  const { sortState, setSortColumn } = useMultiSort('sort:projects');
+  const sortedProjects = multiSort(initialProjects, sortState, getProjectSortValue);
 
   const [form, setForm] = useState({
     name: '',
@@ -347,40 +365,48 @@ export function ProjectsClient({
                 </div>
                 {/*
                   PR #65: 提案型サービス (核心機能) のためのタグ入力。
-                  新規プロジェクトと過去ナレッジ/課題のマッチングに利用される。
-                  カンマ区切りで入力 (例: "React, Next.js, TypeScript")
-                  抜け漏れなく提案を出すため、可能な限り入力を推奨する。
+                  PR #4 (T-03): 任意入力に変更 + アコーディオン折りたたみで負担軽減。
+                    LLM 自動タグ抽出 (PR #220 / #223) が空欄を保存後に自動補完するため、
+                    手動入力は「自分のドメイン知識を反映したい場合」のみ推奨。
                 */}
-                <div className="space-y-2">
-                  <Label htmlFor="project-create-business-domain-tags">{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                  <Input
-                    id="project-create-business-domain-tags"
-                    value={form.businessDomainTagsInput}
-                    onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
-                    placeholder={t('tagPlaceholderBusinessDomain')}
-                    maxLength={500}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="project-create-tech-stack-tags">{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                  <Input
-                    id="project-create-tech-stack-tags"
-                    value={form.techStackTagsInput}
-                    onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
-                    placeholder={t('tagPlaceholderTechStackFull')}
-                    maxLength={500}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="project-create-process-tags">{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                  <Input
-                    id="project-create-process-tags"
-                    value={form.processTagsInput}
-                    onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
-                    placeholder={t('tagPlaceholderProcessFull')}
-                    maxLength={500}
-                  />
-                </div>
+                <details className="rounded-md border bg-muted/30 p-3 space-y-2">
+                  <summary className="cursor-pointer select-none text-sm font-medium">
+                    {t('tagsAccordionTitle')}
+                  </summary>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {t('tagsAccordionGuidance')}
+                  </p>
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="project-create-business-domain-tags">{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
+                    <Input
+                      id="project-create-business-domain-tags"
+                      value={form.businessDomainTagsInput}
+                      onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
+                      placeholder={t('tagPlaceholderBusinessDomain')}
+                      maxLength={500}
+                    />
+                  </div>
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="project-create-tech-stack-tags">{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
+                    <Input
+                      id="project-create-tech-stack-tags"
+                      value={form.techStackTagsInput}
+                      onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
+                      placeholder={t('tagPlaceholderTechStackFull')}
+                      maxLength={500}
+                    />
+                  </div>
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="project-create-process-tags">{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
+                    <Input
+                      id="project-create-process-tags"
+                      value={form.processTagsInput}
+                      onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
+                      placeholder={t('tagPlaceholderProcessFull')}
+                      maxLength={500}
+                    />
+                  </div>
+                </details>
                 {/* PR #67: 作成と同時に関連 URL を登録可能 */}
                 <StagedAttachmentsInput
                   value={stagedAttachments}
@@ -430,16 +456,16 @@ export function ProjectsClient({
         <ResizableTableShell tableKey="projects">
             <TableHeader>
               <TableRow>
-                <ResizableHead columnKey="name" defaultWidth={220}>{t('fieldName')}</ResizableHead>
-                <ResizableHead columnKey="customer" defaultWidth={160}>{t('fieldCustomer')}</ResizableHead>
-                <ResizableHead columnKey="devMethod" defaultWidth={140}>{t('fieldDevMethod')}</ResizableHead>
-                <ResizableHead columnKey="status" defaultWidth={110}>{t('fieldStatus')}</ResizableHead>
-                <ResizableHead columnKey="plannedStartDate" defaultWidth={120}>{t('fieldPlannedStartDate')}</ResizableHead>
-                <ResizableHead columnKey="plannedEndDate" defaultWidth={120}>{t('fieldPlannedEndDate')}</ResizableHead>
+                <SortableResizableHead columnKey="name" defaultWidth={220} label={t('fieldName')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="customer" defaultWidth={160} label={t('fieldCustomer')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="devMethod" defaultWidth={140} label={t('fieldDevMethod')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="status" defaultWidth={110} label={t('fieldStatus')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="plannedStartDate" defaultWidth={120} label={t('fieldPlannedStartDate')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="plannedEndDate" defaultWidth={120} label={t('fieldPlannedEndDate')} sortState={sortState} onSortChange={setSortColumn} />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {initialProjects.map((project) => (
+              {sortedProjects.map((project) => (
                 <TableRow key={project.id}>
                   <TableCell>
                     <Link
@@ -463,7 +489,7 @@ export function ProjectsClient({
                   <TableCell>{project.plannedEndDate}</TableCell>
                 </TableRow>
               ))}
-              {initialProjects.length === 0 && (
+              {sortedProjects.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                     {t('listEmpty')}

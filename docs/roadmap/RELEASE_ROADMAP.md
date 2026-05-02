@@ -151,10 +151,55 @@
 - [ ] `SECURITY.md` に脆弱性報告窓口を明示 (外部からの reporter 対応)
 - [ ] `pnpm audit` の critical / high 脆弱性を解消
 - [ ] 依存ライブラリのライセンスを `pnpm licenses` で確認、商用利用不可のものが無いか
-- [ ] 四半期 threat-modeling (STRIDE) 実施
+- [ ] 四半期 threat-modeling (STRIDE) 実施 — **本リリースでは提案エンジン v2 の脅威モデル ([SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)) を必須実施**
 - [ ] 監査ログの改ざん耐性確認
 
-### 2.6 Phase 2 完了の定義 (= プレリリース可能な状態)
+### 2.6 提案エンジン v2 の実装 (T-03 / 6月1日リリース必達)
+
+本サービスの核心機能である提案エンジンの根本的な性能向上。詳細は [SUGGESTION_ENGINE_PLAN.md](../developer/SUGGESTION_ENGINE_PLAN.md) を参照。LLM API への継続的な金銭コストが発生する初の機能であり、悪用された場合のリスクが極めて高いため、悪用防止と監視を最優先で設計する。
+
+#### 6月1日リリース (v1) で投入
+
+- [ ] **マルチテナント基盤**: Tenant テーブル新設、全業務エンティティへの tenantId 追加、default-tenant への migration、認可境界の徹底
+- [ ] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant テーブルに `plan` ('beginner' | 'expert' | 'pro') / `currentMonthApiCallCount` / `currentMonthApiCostJpy` / `monthlyBudgetCapJpy` / `beginnerMonthlyCallLimit` (default 100) / `beginnerMaxSeats` (default 5) / `pricePerCallHaiku` (default ¥10) / `pricePerCallSonnet` (default ¥30) / `scheduledPlanChangeAt` / `scheduledNextPlan` を配置
+- [ ] **ApiCallLog テーブル**: 各 API 呼び出しを (timestamp, tenantId, userId, featureUnit, modelName, costJpy, latencyMs, requestId) で記録 — 課金根拠データ
+- [ ] **`withMeteredLLM()` ミドルウェア**: 短期 rate limit + プラン判定 + Beginner 月間上限チェック + 予算上限チェック + LLM 呼び出し + カウンタ更新を統合
+- [ ] **月初リセットバッチ**: Vercel Cron で `currentMonthApiCallCount` / `currentMonthApiCostJpy` をリセット、`scheduledPlanChangeAt` 到達テナントのプラン適用
+- [ ] **Phase 1**: LLM (Claude Haiku) による自動タグ抽出
+- [ ] **Phase 2**: pgvector + Voyage AI Embedding による意味検索 (テナント内に閉じる)
+- [ ] **初期データ**: 資格試験事例・著名な法則を独自要約したナレッジ 30〜100 件 (default-tenant 投入 + テナント別シーディング機構)
+- [ ] **5 層悪用防止**: シークレット保護 / 認証強化 / テナント単位 rate limit + トークン上限 + 日次 LLM 呼び出しキャップ / プロンプトインジェクション対策 / workspace 上限
+- [ ] **コスト保護 (提案多用対策)**: Phase 3 の re-ranking 結果を 5〜10 分間 Postgres キャッシュ、テナント単位日次キャップで超過時 Phase 2 に縮退
+- [ ] **監視・異常検知 (最小実装)**: llm_call_log + token_usage_audit (tenant 単位) + 日次集計 + admin 通知
+- [ ] **AGPL ライセンス適用**: LICENSE ファイル更新
+- [ ] **git pre-commit hook**: gitleaks による API キー検知
+- [ ] **GitHub Push Protection 有効化**: repo 設定変更
+
+#### v1.x バージョンアップで段階的に追加
+
+- [ ] **テナント管理 UI**: admin 専用画面でのテナント作成・招待・削除
+- [ ] **テナント招待メール**: 新規外部ユーザの受け入れフロー
+- [ ] **テナント slug の URL ルーティング**: `tasukiba.vercel.app/{tenantSlug}/...` への移行
+- [ ] **Phase 3**: LLM Re-ranking と説明文生成 (Haiku、6月中旬目標)
+- [ ] **Sonnet ティーザー機能**: 無料ユーザの月 3 回までの Pro 体験
+- [ ] **30 日無料試用機能**: Pro プランの体験期間
+- [ ] **Stripe 連携**: Pro プランのサブスク課金 (テナント単位)
+- [ ] **観測ダッシュボード UI**: `/admin/observability/llm` (Phase 3c の一部、テナント単位の使用量可視化を含む)
+- [ ] **テナント削除機能**: カスケード削除 + 孤児レコード検出バッチ
+
+### 2.6.1 インフラスケーラビリティの将来評価
+
+現状のインフラ (Vercel Hobby + Supabase Free) は試験運用には十分だが、外部ユーザ拡大に伴い制約に直面する可能性がある。詳細は [DESIGN.md §34.13](../developer/DESIGN.md) を参照。
+
+**移行判断のトリガー条件** を以下に明記し、定期的な評価対象とする。
+
+第一に、月次の Vercel Function timeout エラー率が 1% を超えた場合。これはサービス品質悪化のシグナルとなる。第二に、Supabase データベースサイズが Free / Pro プランの 80% に達した場合。第三に、月間 Anthropic / Voyage の API 利用料が \$100 を超えた場合 (= 事業として成立する規模に到達)。第四に、ユーザから「動作が遅い」というフィードバックが構造的に集まった場合。
+
+**移行候補** は AWS ECS Fargate / Azure Container Apps / Google Cloud Run のいずれか。Next.js を `output: 'standalone'` で Docker 化し、PostgreSQL は AWS RDS / Azure Database for PostgreSQL に移行する。Prisma による DB 抽象化と Next.js の標準対応により、移行工数は 1〜2 週間程度と見込まれる。
+
+これらは将来の判断材料として記録するが、v1 リリース時点ではすべて Vercel + Supabase で運用する。本格的な事業拡大段階で再評価する。
+
+### 2.7 Phase 2 完了の定義 (= プレリリース可能な状態)
 
 - [ ] 3 環境すべてで `pnpm dev` が通る
 - [ ] 3 環境の手順書が [OPERATION.md](./OPERATION.md) に記載済
@@ -162,6 +207,10 @@
 - [ ] `/login` が外部からも理解可能な案内になっている
 - [ ] 利用規約 / プライバシーポリシーが設置済
 - [ ] `SECURITY.md` 設置済
+- [ ] **提案エンジン v2 (Phase 1 + Phase 2) が安定動作**
+- [ ] **5 層悪用防止が完全実装され、threat model のすべての項目が対策済**
+- [ ] **Anthropic / Voyage AI の workspace 月間ハード上限が設定済**
+- [ ] **AGPL ライセンスでの公開が法務確認済**
 
 ---
 

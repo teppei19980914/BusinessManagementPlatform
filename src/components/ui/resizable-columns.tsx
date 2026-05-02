@@ -135,11 +135,14 @@ export function ResizableHead({
     document.addEventListener('mouseup', onUp);
   }, [columnKey, setWidth, width]);
 
-  // 既存 TableHead と同じベーススタイルを踏襲しつつ、relative + overflow-hidden を追加。
-  // ドラッグハンドルは絶対配置の細い縦線として右端に置く。
+  // 既存 TableHead と同じベーススタイルを踏襲しつつ、relative + 折返し制御を追加。
+  // 2026-05-01 (PR feat/sortable-columns): outer の `overflow-hidden` を削除。
+  //   テキスト truncation は子の `<div className="truncate pr-2">` で完結するため、
+  //   th 外側の overflow-hidden は不要。SortableHeader のドロップダウン (絶対配置) が
+  //   th 外側にはみ出る必要があるため、ここを visible に。
   const baseClass
     = 'relative h-8 px-1.5 md:h-10 md:px-2 text-left align-middle font-medium text-foreground '
-    + 'overflow-hidden whitespace-nowrap';
+    + 'whitespace-nowrap';
   return (
     <th
       {...thProps}

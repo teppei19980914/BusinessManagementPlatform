@@ -34,6 +34,17 @@ import type { MentionInput, MentionKind } from '@/lib/validators/mention';
 type Props = {
   entityType: CommentEntityType;
   entityId: string;
+  /**
+   * コメント投稿フォームを表示するかどうか (PR feat/notification-edit-dialog / 2026-05-01)。
+   * 既定は true (= 認証済全員 OK の entity 用)。stakeholder / customer / task のように
+   * 投稿者を更に制限する場合、呼出側で false を渡してフォームを非表示にする (二重防御、
+   * 一次防御は API の authorizeForComment)。
+   *
+   * 非表示時は閲覧 + 自分が過去投稿したコメントの編集/削除のみ可能。
+   */
+  canPost?: boolean;
+  /** canPost=false 時に表示する補足メッセージ (任意、未指定時は何も表示しない) */
+  postDisabledHint?: string;
 };
 
 /**
@@ -237,13 +248,12 @@ function CommentTextarea({
   );
 }
 
-export function CommentSection({ entityType, entityId }: Props) {
+export function CommentSection({ entityType, entityId, canPost = true, postDisabledHint }: Props) {
   const t = useTranslations('comment');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
   const session = useSession();
   const currentUserId = session.data?.user?.id;
-  const isAdmin = session.data?.user?.systemRole === 'admin';
   const pathname = usePathname();
   const mentionContext = detectMentionContext(pathname ?? '');
 
@@ -354,8 +364,16 @@ export function CommentSection({ entityType, entityId }: Props) {
     await reload();
   }
 
+  /**
+   * 編集 / 削除ボタンの表示判定。
+   *
+   * 2026-05-01 PR feat/notification-deep-link-completion: **投稿者本人のみ表示** に厳格化
+   *   (旧仕様は admin も表示していたが、API 側は §5.51 で既に admin 救済を外しており UI が不整合だった)。
+   *   admin がボタンを押しても 403 を返すだけだったため UI を API に合わせる方向で揃える。
+   *   admin が他人コメントを操作したい場合は entity ごとカスケード削除に委ねる (§5.51 既定方針)。
+   */
   function canMutate(c: CommentDTO): boolean {
-    return isAdmin || c.userId === currentUserId;
+    return c.userId === currentUserId;
   }
 
   return (
@@ -366,39 +384,45 @@ export function CommentSection({ entityType, entityId }: Props) {
         <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>
       )}
 
-      {/* 投稿フォーム (要件 Q4: dialog readOnly でも常に有効) */}
+      {/* 投稿フォーム (要件 Q4: dialog readOnly でも常に有効、ただし canPost=false の entity では非表示) */}
       {/* nested form 回避: <div> + Enter キーは抑止し、Ctrl/Meta+Enter で投稿 */}
-      <div
-        className="space-y-2 rounded border bg-muted/40 p-2"
-        onKeyDown={(e) => {
-          // 通常 Enter は改行 (textarea 既定動作)。Ctrl/Meta+Enter で投稿させる。
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            void handlePost();
-          }
-        }}
-      >
-        <MentionAutocompleteTextarea
-          value={draft}
-          onChange={setDraft}
-          mentions={draftMentions}
-          onMentionsChange={setDraftMentions}
-          entityType={entityType}
-          entityId={entityId}
-          context={mentionContext}
-          placeholder={t('placeholder')}
-          ariaLabel={t('placeholder')}
-        />
-        <div className="flex items-center justify-between">
-          {/* メンション件数の確認チップ (UX 補助) */}
-          <span className="text-xs text-muted-foreground">
-            {draftMentions.length > 0 ? t('mentionsCount', { count: draftMentions.length }) : ''}
-          </span>
-          <Button type="button" size="sm" onClick={() => void handlePost()}>
-            {t('post')}
-          </Button>
+      {canPost ? (
+        <div
+          className="space-y-2 rounded border bg-muted/40 p-2"
+          onKeyDown={(e) => {
+            // 通常 Enter は改行 (textarea 既定動作)。Ctrl/Meta+Enter で投稿させる。
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              void handlePost();
+            }
+          }}
+        >
+          <MentionAutocompleteTextarea
+            value={draft}
+            onChange={setDraft}
+            mentions={draftMentions}
+            onMentionsChange={setDraftMentions}
+            entityType={entityType}
+            entityId={entityId}
+            context={mentionContext}
+            placeholder={t('placeholder')}
+            ariaLabel={t('placeholder')}
+          />
+          <div className="flex items-center justify-between">
+            {/* メンション件数の確認チップ (UX 補助) */}
+            <span className="text-xs text-muted-foreground">
+              {draftMentions.length > 0 ? t('mentionsCount', { count: draftMentions.length }) : ''}
+            </span>
+            <Button type="button" size="sm" onClick={() => void handlePost()}>
+              {t('post')}
+            </Button>
+          </div>
         </div>
-      </div>
+      ) : postDisabledHint ? (
+        <p className="rounded border bg-muted/30 p-2 text-xs text-muted-foreground" data-testid="comment-post-disabled-hint">
+          {postDisabledHint}
+        </p>
+      ) : null}
 
       {/* 既存コメント (新しい順) */}
       {loaded && items.length === 0 && (

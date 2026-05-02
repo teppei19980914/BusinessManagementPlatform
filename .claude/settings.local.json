@@ -8,7 +8,9 @@
       "WebFetch(domain:help.brevo.com)",
       "Skill(schedule)",
       "Skill(schedule:*)",
-      "WebFetch(domain:supabase.com)"
+      "WebFetch(domain:supabase.com)",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
     ]
   }
 }

@@ -27,6 +27,9 @@
 
 import { prisma } from '@/lib/db';
 import { canTransition } from './state-machine';
+import { extractAutoTags } from './auto-tag.service';
+import { generateEmbedding, persistEmbedding } from './embedding.service';
+import { recordError } from './error-log.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { ProjectStatus } from '@/types';
 
@@ -187,7 +190,27 @@ export type CreateProjectInput = {
 export async function createProject(
   input: CreateProjectInput,
   userId: string,
+  tenantId: string,
 ): Promise<ProjectDTO> {
+  // PR #3-b (T-03 Phase 1): purpose / background / scope から自動タグ抽出。
+  //   失敗時 (rate_limited / llm_error 等) はサイレントに userInput 単独で続行 (fail-safe)。
+  //   詳細は src/services/auto-tag.service.ts コメント参照。
+  const autoTagResult = await extractAutoTags({
+    purpose: input.purpose,
+    background: input.background,
+    scope: input.scope,
+    tenantId,
+    userId,
+  });
+  const mergedTags = mergeTags(
+    {
+      businessDomainTags: input.businessDomainTags ?? [],
+      techStackTags: input.techStackTags ?? [],
+      processTags: input.processTags ?? [],
+    },
+    autoTagResult.ok ? autoTagResult.tags : null,
+  );
+
   const project = await prisma.project.create({
     data: {
       name: input.name,
@@ -198,9 +221,9 @@ export async function createProject(
       outOfScope: input.outOfScope,
       devMethod: input.devMethod,
       contractType: input.contractType ?? null,
-      businessDomainTags: (input.businessDomainTags || []) as Prisma.InputJsonValue,
-      techStackTags: (input.techStackTags || []) as Prisma.InputJsonValue,
-      processTags: (input.processTags || []) as Prisma.InputJsonValue,
+      businessDomainTags: mergedTags.businessDomainTags as Prisma.InputJsonValue,
+      techStackTags: mergedTags.techStackTags as Prisma.InputJsonValue,
+      processTags: mergedTags.processTags as Prisma.InputJsonValue,
       plannedStartDate: new Date(input.plannedStartDate),
       plannedEndDate: new Date(input.plannedEndDate),
       notes: input.notes,
@@ -209,6 +232,15 @@ export async function createProject(
       updatedBy: userId,
     },
     include: { customer: { select: { name: true } } },
+  });
+
+  // PR #5 (T-03 Phase 2): purpose / background / scope を結合した text の embedding を
+  //   非同期に生成 + 保存。失敗時はサイレントに content_embedding=NULL のまま続行 (fail-safe)。
+  //   生成中の例外で本体 INSERT がロールバックされないよう、create() の **後** に呼ぶ。
+  await generateAndPersistProjectEmbedding(project.id, tenantId, userId, {
+    purpose: input.purpose,
+    background: input.background,
+    scope: input.scope,
   });
 
   return toProjectDTO(project);
@@ -228,7 +260,66 @@ export async function updateProject(
   projectId: string,
   input: UpdateProjectInput,
   userId: string,
+  tenantId: string,
 ): Promise<ProjectDTO> {
+  // PR #3-b (T-03 Phase 1): purpose / background / scope のいずれかが更新対象なら、
+  //   更新後の text を組み立てて自動タグ抽出を行う。text 変更がなければ呼ばない
+  //   (= LLM 課金を発生させない)。
+  const textFieldsChanging =
+    input.purpose !== undefined ||
+    input.background !== undefined ||
+    input.scope !== undefined;
+
+  let mergedAutoTags: AutoTagAxes | null = null;
+  // PR #5 (T-03 Phase 2): text 変更時は embedding も再生成する。実テキストは
+  //   下記の resolved* に確定するため、後段で `generateAndPersistProjectEmbedding` に渡す。
+  let resolvedPurpose: string | null = null;
+  let resolvedBackground: string | null = null;
+  let resolvedScope: string | null = null;
+  if (textFieldsChanging) {
+    // 変更されない text フィールドは現行値を採用するため、現行 row を取得。
+    const current = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        purpose: true,
+        background: true,
+        scope: true,
+        businessDomainTags: true,
+        techStackTags: true,
+        processTags: true,
+      },
+    });
+    if (current != null) {
+      resolvedPurpose = input.purpose ?? current.purpose;
+      resolvedBackground = input.background ?? current.background;
+      resolvedScope = input.scope ?? current.scope;
+      const autoTagResult = await extractAutoTags({
+        purpose: resolvedPurpose,
+        background: resolvedBackground,
+        scope: resolvedScope,
+        tenantId,
+        userId,
+      });
+      if (autoTagResult.ok) {
+        // ユーザがタグも同時に更新している場合はそれを優先、更新していない軸は
+        // DB 現行値 (= 過去の手動入力 + 過去の auto-extract) を継承して merge する。
+        mergedAutoTags = mergeTags(
+          {
+            businessDomainTags:
+              input.businessDomainTags ??
+              ((current.businessDomainTags as string[] | null) ?? []),
+            techStackTags:
+              input.techStackTags ??
+              ((current.techStackTags as string[] | null) ?? []),
+            processTags:
+              input.processTags ?? ((current.processTags as string[] | null) ?? []),
+          },
+          autoTagResult.tags,
+        );
+      }
+    }
+  }
+
   const data: Prisma.ProjectUpdateInput = { updatedBy: userId };
 
   if (input.name !== undefined) data.name = input.name;
@@ -242,12 +333,21 @@ export async function updateProject(
   if (input.outOfScope !== undefined) data.outOfScope = input.outOfScope;
   if (input.devMethod !== undefined) data.devMethod = input.devMethod;
   if (input.contractType !== undefined) data.contractType = input.contractType;
-  if (input.businessDomainTags !== undefined)
-    data.businessDomainTags = input.businessDomainTags as Prisma.InputJsonValue;
-  if (input.techStackTags !== undefined)
-    data.techStackTags = input.techStackTags as Prisma.InputJsonValue;
-  if (input.processTags !== undefined)
-    data.processTags = input.processTags as Prisma.InputJsonValue;
+
+  // PR #3-b: auto-tag 成功時は merge 結果で上書き、失敗時は input をそのまま反映 (fail-safe)。
+  if (mergedAutoTags != null) {
+    data.businessDomainTags = mergedAutoTags.businessDomainTags as Prisma.InputJsonValue;
+    data.techStackTags = mergedAutoTags.techStackTags as Prisma.InputJsonValue;
+    data.processTags = mergedAutoTags.processTags as Prisma.InputJsonValue;
+  } else {
+    if (input.businessDomainTags !== undefined)
+      data.businessDomainTags = input.businessDomainTags as Prisma.InputJsonValue;
+    if (input.techStackTags !== undefined)
+      data.techStackTags = input.techStackTags as Prisma.InputJsonValue;
+    if (input.processTags !== undefined)
+      data.processTags = input.processTags as Prisma.InputJsonValue;
+  }
+
   if (input.plannedStartDate !== undefined)
     data.plannedStartDate = new Date(input.plannedStartDate);
   if (input.plannedEndDate !== undefined)
@@ -260,7 +360,134 @@ export async function updateProject(
     include: { customer: { select: { name: true } } },
   });
 
+  // PR #5 (T-03 Phase 2): text 変更時のみ embedding を再生成。
+  //   text 変更なし = 既存 embedding 流用 (= LLM 課金回避)。
+  if (
+    textFieldsChanging &&
+    resolvedPurpose != null &&
+    resolvedBackground != null &&
+    resolvedScope != null
+  ) {
+    await generateAndPersistProjectEmbedding(projectId, tenantId, userId, {
+      purpose: resolvedPurpose,
+      background: resolvedBackground,
+      scope: resolvedScope,
+    });
+  }
+
   return toProjectDTO(project);
+}
+
+/**
+ * PR #5 (T-03 Phase 2): Project の content_embedding を生成 + 保存する helper。
+ *
+ * createProject / updateProject 両方から呼ばれる。失敗時はサイレントに
+ * `system_error_logs` に warn 記録のみ行い、本体 INSERT/UPDATE はロールバックさせない
+ * (= fail-safe、embedding NULL のまま運用継続を許容)。
+ *
+ * 入力 text は purpose / background / scope を改行で結合した形にする。これは
+ * Voyage embedding が比較的長文も扱えるため、3 軸を統合して 1 ベクトルで意味検索する設計。
+ */
+async function generateAndPersistProjectEmbedding(
+  projectId: string,
+  tenantId: string,
+  userId: string,
+  fields: { purpose: string; background: string; scope: string },
+): Promise<void> {
+  const text = [
+    fields.purpose.trim(),
+    fields.background.trim(),
+    fields.scope.trim(),
+  ]
+    .filter((s) => s.length > 0)
+    .join('\n\n');
+
+  if (text.length === 0) {
+    // 全 text 空 (新規 + ユーザがいずれも空文字で送信) の場合は LLM 呼ばず終了
+    return;
+  }
+
+  const result = await generateEmbedding({
+    text,
+    featureUnit: 'project-embedding',
+    tenantId,
+    userId,
+  });
+
+  if (!result.ok) {
+    // 失敗ログ (warn): rate_limited / budget_exceeded / llm_error 等は運用後追跡用
+    await recordError({
+      severity: 'warn',
+      source: 'server',
+      message: `embedding generation failed for project ${projectId}: ${result.reason}`,
+      userId,
+      context: {
+        kind: 'project_embedding_failure',
+        projectId,
+        tenantId,
+        reason: result.reason,
+      },
+    });
+    return;
+  }
+
+  try {
+    await persistEmbedding('projects', projectId, tenantId, result.embedding);
+  } catch (error) {
+    // 書き込み失敗 (DB 接続切れ等) もサイレントに record して続行
+    await recordError({
+      severity: 'error',
+      source: 'server',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      userId,
+      context: {
+        kind: 'project_embedding_persist_failure',
+        projectId,
+        tenantId,
+      },
+    });
+  }
+}
+
+/**
+ * PR #3-b (T-03 Phase 1): 3 軸タグの集約型 + 重複除去マージ helper。
+ * createProject / updateProject 両方から呼ばれる。
+ */
+type AutoTagAxes = {
+  businessDomainTags: string[];
+  techStackTags: string[];
+  processTags: string[];
+};
+
+function mergeTags(
+  user: AutoTagAxes,
+  auto: AutoTagAxes | null,
+): AutoTagAxes {
+  return {
+    businessDomainTags: dedupUnion(user.businessDomainTags, auto?.businessDomainTags ?? []),
+    techStackTags: dedupUnion(user.techStackTags, auto?.techStackTags ?? []),
+    processTags: dedupUnion(user.processTags, auto?.processTags ?? []),
+  };
+}
+
+/**
+ * 2 配列を順序保持で union (重複除去)。
+ * - 順序は [...user, ...auto] でユーザ入力を先頭に
+ * - case-sensitive 比較 (タグの表記揺れも別タグとして許容: "EC" と "ec" は別物)
+ * - 空文字や全角空白のみは除外
+ */
+function dedupUnion(a: string[], b: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of [...a, ...b]) {
+    const trimmed = v.trim();
+    if (trimmed.length === 0) continue;
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 /**

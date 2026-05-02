@@ -29,3 +29,5 @@ export * from './app-routes';
 export * from './suggestion';
 export * from './validation';
 export * from './i18n';
+// PR #2-c (T-03): LLM (Anthropic Claude / Voyage AI) のモデル名・rate limit・plan→model 解決
+export * from './llm';

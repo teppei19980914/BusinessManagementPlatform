@@ -194,12 +194,31 @@ describe('GET/POST — project-scoped (task / stakeholder)', () => {
     expect(postRes.status).toBe(201);
   });
 
-  it('task: 非 project member は 403', async () => {
+  // PR feat/notification-deep-link-completion (2026-05-01): task コメント認可緩和。
+  //   plain コメント / read: 認証済ユーザ全員可 (PMO や他チームレビュアーが残せる)
+  //   mention 含む write: ProjectMember (or admin) 必須 (mention 受信者を project 内に限定)
+  it('task: 非 project member でも plain コメント (read/write) は可能', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-out', systemRole: 'general' } as never);
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
+
+    const getRes = await GET(getReq('task', ENTITY_ID));
+    expect(getRes.status).toBe(200);
+
+    const postRes = await POST(postReq({ entityType: 'task', entityId: ENTITY_ID, content: 'hi' }));
+    expect(postRes.status).toBe(201);
+  });
+
+  it('task: 非 project member の mention 含む write は 403', async () => {
     vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-out', systemRole: 'general' } as never);
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
     vi.mocked(checkMembership).mockResolvedValue({ isMember: false, projectRole: null, projectStatus: 'active' } as never);
 
-    const res = await GET(getReq('task', ENTITY_ID));
+    const res = await POST(postReq({
+      entityType: 'task',
+      entityId: ENTITY_ID,
+      content: 'hi',
+      mentions: [{ kind: 'all' }],
+    }));
     expect(res.status).toBe(403);
   });
 
@@ -210,6 +229,42 @@ describe('GET/POST — project-scoped (task / stakeholder)', () => {
     const res = await GET(getReq('task', ENTITY_ID));
     expect(res.status).toBe(200);
     expect(checkMembership).not.toHaveBeenCalled();
+  });
+
+  // PR feat/notification-edit-dialog (2026-05-01): stakeholder は PM/TL 限定に厳格化
+  it('stakeholder: 一般 project member は 403 (PM/TL のみ許可)', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-member', systemRole: 'general' } as never);
+    vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
+    vi.mocked(checkMembership).mockResolvedValue({ isMember: true, projectRole: 'member', projectStatus: 'active' } as never);
+
+    const postRes = await POST(postReq({ entityType: 'stakeholder', entityId: ENTITY_ID, content: 'hi' }));
+    expect(postRes.status).toBe(403);
+  });
+
+  it('stakeholder: PM/TL は read/write 可', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-pmtl', systemRole: 'general' } as never);
+    vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
+    vi.mocked(checkMembership).mockResolvedValue({ isMember: true, projectRole: 'pm_tl', projectStatus: 'active' } as never);
+
+    const postRes = await POST(postReq({ entityType: 'stakeholder', entityId: ENTITY_ID, content: 'hi' }));
+    expect(postRes.status).toBe(201);
+  });
+
+  it('stakeholder: viewer (project member) は 403', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-viewer', systemRole: 'general' } as never);
+    vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
+    vi.mocked(checkMembership).mockResolvedValue({ isMember: true, projectRole: 'viewer', projectStatus: 'active' } as never);
+
+    const postRes = await POST(postReq({ entityType: 'stakeholder', entityId: ENTITY_ID, content: 'hi' }));
+    expect(postRes.status).toBe(403);
+  });
+
+  it('stakeholder: admin は role に関わらず read/write 可', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-admin', systemRole: 'admin' } as never);
+    vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
+
+    const postRes = await POST(postReq({ entityType: 'stakeholder', entityId: ENTITY_ID, content: 'hi' }));
+    expect(postRes.status).toBe(201);
   });
 });
 

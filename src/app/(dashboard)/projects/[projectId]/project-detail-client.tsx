@@ -22,7 +22,7 @@
  *   - DESIGN.md §6 (状態遷移) / §8 (権限制御) / §17 (パフォーマンス改修)
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 // Phase E 要件 1〜3 (2026-04-29): 共通クリッカブルカード部品
 import { ClickableCard } from '@/components/common/clickable-row';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -212,11 +212,21 @@ export function ProjectDetailClient({
   // feat/stakeholder-management: ステークホルダー一覧 (PM/TL + admin のみ取得・表示)
   const stakeholders = useLazyFetch<StakeholderDTO[]>(`/api/projects/${project.id}/stakeholders`);
 
-  const [activeTab, setActiveTab] = useState('overview');
-
   // PR #65 核心機能: 新規プロジェクト作成直後に ?suggestions=1 付きで遷移してくるパス用。
+  // PR feat/notification-deep-link-completion (2026-05-01): ?tab=stakeholders&stakeholderId=...
+  //   形式の deep link を sticker の通知から受け取って、初期 active tab + auto-open dialog する。
   // URL クエリを見てモーダルを開くかを決定し、モーダル閉鎖時は URL から除去する。
   const searchParams = useSearchParams();
+
+  // 通知 deep link で `?tab=` 指定があれば、それを初期 active tab に使う (権限 tab に限る)。
+  // 不正値 / 権限不足 tab を指定された場合は 'overview' fallback。
+  const initialTabFromUrl = (() => {
+    const t = searchParams.get('tab');
+    const allowed = ['overview', 'estimates', 'tasks', 'gantt', 'risks', 'issues', 'retrospectives', 'knowledge', 'members', 'stakeholders', 'suggestions'];
+    return t && allowed.includes(t) ? t : 'overview';
+  })();
+  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
+
   const [isSuggestionsModalOpen, setIsSuggestionsModalOpen] = useState(
     searchParams.get('suggestions') === '1',
   );
@@ -226,9 +236,8 @@ export function ProjectDetailClient({
     router.replace(`/projects/${project.id}`);
   }, [router, project.id]);
 
-  function handleTabChange(value: string) {
-    setActiveTab(value);
-    // タブ表示時に必要なデータをロード（キャッシュヒットなら no-op）
+  // タブ切替時のデータロード処理 (handleTabChange と初期 mount 時 effect から共通利用)
+  const loadTabData = useCallback((value: string) => {
     switch (value) {
       case 'estimates':
         estimates.load();
@@ -265,7 +274,21 @@ export function ProjectDetailClient({
       default:
         break;
     }
+  }, [estimates, tasks, members, risks, retros, knowledges, stakeholders, allUsers, systemRole]);
+
+  function handleTabChange(value: string) {
+    setActiveTab(value);
+    loadTabData(value);
   }
+
+  // 通知 deep link (e.g. /projects/[id]?tab=stakeholders&stakeholderId=...) で着地した際、
+  // initial active tab のデータが lazy fetch されないため mount 時に 1 度だけ強制ロード。
+  // PR feat/notification-deep-link-completion / 2026-05-01。
+  useEffect(() => {
+    if (initialTabFromUrl !== 'overview') {
+      loadTabData(initialTabFromUrl);
+    }
+  }, [initialTabFromUrl, loadTabData]);
 
   // CRUD 直後に呼ぶ再取得ハンドラ。router.refresh() は概要タブのプロジェクト基本情報のみで
   // 十分なため、タブ内 CRUD ではタブローカルの load(true) のみで完結させる。
@@ -505,19 +528,30 @@ export function ProjectDetailClient({
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} required hideClear />
                       </div>
                     </div>
-                    {/* feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2) */}
-                    <div className="space-y-2">
-                      <Label>{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder={t('tagPlaceholderBusinessDomain')} maxLength={500} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder={t('tagPlaceholderTechStack')} maxLength={500} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder={t('tagPlaceholderProcess')} maxLength={500} />
-                    </div>
+                    {/*
+                      feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2)
+                      PR #4 (T-03): 任意入力 + アコーディオン折りたたみ。LLM 自動補完が空欄を保存後に補完。
+                    */}
+                    <details className="rounded-md border bg-muted/30 p-3 space-y-2">
+                      <summary className="cursor-pointer select-none text-sm font-medium">
+                        {t('tagsAccordionTitle')}
+                      </summary>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {t('tagsAccordionGuidance')}
+                      </p>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder={t('tagPlaceholderBusinessDomain')} maxLength={500} />
+                      </div>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder={t('tagPlaceholderTechStack')} maxLength={500} />
+                      </div>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder={t('tagPlaceholderProcess')} maxLength={500} />
+                      </div>
+                    </details>
                     <Button type="submit" className="w-full">{t('editSubmit')}</Button>
                   </form>
                 </DialogContent>
@@ -1037,6 +1071,7 @@ export function ProjectDetailClient({
                       stakeholders={stakeholdersData}
                       members={membersData}
                       onReload={reloadStakeholders}
+                      /* stakeholderId は URL から useAutoOpenDialog が自前で読む */
                     />
                   )}
                 </LazyTabContent>
