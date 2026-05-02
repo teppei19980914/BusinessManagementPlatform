@@ -4,6 +4,16 @@ declare module 'next-auth' {
   interface Session {
     user: {
       id: string;
+      /**
+       * PR #2-b (T-03): ユーザの所属テナント ID。
+       * 認可境界 (cross-tenant attack 防止) のため、すべての API ルート / サービス層で
+       * リクエストユーザの tenantId と操作対象データの tenantId が一致することを
+       * `requireSameTenant()` (src/lib/permissions/tenant.ts) で検証する。
+       *
+       * v1 (2026-06-01) では全ユーザが default-tenant 配属のため値は固定だが、
+       * v1.x マルチテナント UI 提供時に複数テナントに広がる前提で配置済み。
+       */
+      tenantId: string;
       name: string;
       email: string;
       systemRole: string;
