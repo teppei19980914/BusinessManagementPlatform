@@ -26,6 +26,10 @@ import {
   TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { ResizableHead } from '@/components/ui/resizable-columns';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
+import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { StakeholderEditDialog } from '@/components/dialogs/stakeholder-edit-dialog';
 import {
@@ -81,6 +85,22 @@ const PRIORITY_BADGE_VARIANT: Record<StakeholderPriority, 'destructive' | 'defau
   low: 'secondary',
 };
 
+// PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
+function getStakeholderSortValue(s: StakeholderDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'priority': return s.priority;
+    case 'name': return s.name;
+    case 'organization': return s.organization ?? '';
+    case 'role': return s.role ?? '';
+    case 'influence': return s.influence;
+    case 'interest': return s.interest;
+    case 'attitude': return s.attitude;
+    case 'engagement': return s.currentEngagement;
+    case 'gap': return s.engagementGap;
+    default: return null;
+  }
+}
+
 type Props = {
   projectId: string;
   stakeholders: StakeholderDTO[];
@@ -88,7 +108,12 @@ type Props = {
   onReload: () => Promise<void> | void;
 };
 
-export function StakeholdersClient({ projectId, stakeholders, members, onReload }: Props) {
+export function StakeholdersClient({
+  projectId,
+  stakeholders,
+  members,
+  onReload,
+}: Props) {
   const t = useTranslations('stakeholder');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
@@ -97,6 +122,18 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
   const [editing, setEditing] = useState<StakeholderDTO | null>(null);
   // Phase D 要件 12 (2026-04-28): 優先度フィルタ ('' = 全件、'high'|'medium'|'low' = 該当のみ)
   const [priorityFilter, setPriorityFilter] = useState<'' | StakeholderPriority>('');
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
+  const { sortState, setSortColumn } = useMultiSort('sort:project-stakeholders');
+
+  // PR feat/notification-deep-link-completion (2026-05-01): 通知 deep link
+  // (`?tab=stakeholders&stakeholderId=...`) から着地した際、URL の stakeholderId を読み取って
+  // dialog を 1 度だけ auto-open する。useAutoOpenDialog 内部で URL クリーンアップ済 (再発火しない)。
+  // initialOpenStakeholderId prop は ssr 互換性のための受け取り口で、実際の URL parse は hook 内。
+  useAutoOpenDialog<StakeholderDTO>({
+    queryKey: 'stakeholderId',
+    items: stakeholders,
+    onOpen: (s) => setEditing(s),
+  });
 
   const reload = useCallback(async () => {
     await onReload();
@@ -113,9 +150,13 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
   for (const s of stakeholders) byQuadrant[s.quadrant].push(s);
 
   // 一覧テーブル側のみ priority filter を適用 (サービス層で priority asc ソート済)
-  const filteredStakeholders = priorityFilter
-    ? stakeholders.filter((s) => s.priority === priorityFilter)
-    : stakeholders;
+  const filteredStakeholders = multiSort(
+    priorityFilter
+      ? stakeholders.filter((s) => s.priority === priorityFilter)
+      : stakeholders,
+    sortState,
+    getStakeholderSortValue,
+  );
 
   const gapCount = stakeholders.filter((s) => s.engagementGap !== 0).length;
 
@@ -222,15 +263,15 @@ export function StakeholdersClient({ projectId, stakeholders, members, onReload 
           <TableHeader>
             <TableRow>
               {/* Phase D 要件 11/12: 優先度列を最左に配置 (一覧上部 = 高優先度) */}
-              <ResizableHead columnKey="priority" defaultWidth={70}>{t('columnPriority')}</ResizableHead>
-              <ResizableHead columnKey="name" defaultWidth={160}>{t('columnName')}</ResizableHead>
-              <ResizableHead columnKey="organization" defaultWidth={140}>{t('columnOrganization')}</ResizableHead>
-              <ResizableHead columnKey="role" defaultWidth={100}>{t('columnRole')}</ResizableHead>
-              <ResizableHead columnKey="influence" defaultWidth={70}>{t('columnInfluence')}</ResizableHead>
-              <ResizableHead columnKey="interest" defaultWidth={70}>{t('columnInterest')}</ResizableHead>
-              <ResizableHead columnKey="attitude" defaultWidth={70}>{t('columnAttitude')}</ResizableHead>
-              <ResizableHead columnKey="engagement" defaultWidth={140}>{t('columnEngagement')}</ResizableHead>
-              <ResizableHead columnKey="gap" defaultWidth={60}>{t('columnGap')}</ResizableHead>
+              <SortableResizableHead columnKey="priority" defaultWidth={70} label={t('columnPriority')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="name" defaultWidth={160} label={t('columnName')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="organization" defaultWidth={140} label={t('columnOrganization')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="role" defaultWidth={100} label={t('columnRole')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="influence" defaultWidth={70} label={t('columnInfluence')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="interest" defaultWidth={70} label={t('columnInterest')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="attitude" defaultWidth={70} label={t('columnAttitude')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="engagement" defaultWidth={140} label={t('columnEngagement')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="gap" defaultWidth={60} label={t('columnGap')} sortState={sortState} onSortChange={setSortColumn} />
               <ResizableHead columnKey="actions" defaultWidth={70}>{t('columnActions')}</ResizableHead>
             </TableRow>
           </TableHeader>

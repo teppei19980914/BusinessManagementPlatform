@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>たすきば セキュリティレポート 2026-05-01</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0c10;color:#e2e8f0;font-family:'Segoe UI',sans-serif;font-size:14px;line-height:1.7}
+.header{background:#111318;border-bottom:1px solid #1e2330;padding:32px 40px}
+.header-tag{font-family:monospace;font-size:11px;color:#ff4d4d;letter-spacing:3px;margin-bottom:8px}
+.header h1{font-size:24px;font-weight:700;margin-bottom:4px}
+.header-meta{font-size:12px;color:#64748b;font-family:monospace}
+.header-meta span{color:#60a5fa}
+.summary{display:flex;align-items:center;gap:40px;padding:24px 40px;background:#0f1117;border-bottom:1px solid #1e2330}
+.score-box{text-align:center}
+.score-num{font-family:monospace;font-size:48px;font-weight:700;color:#34d399;line-height:1}
+.score-label{font-size:11px;color:#64748b;letter-spacing:2px;margin-top:4px}
+.counts{display:flex;gap:16px;flex-wrap:wrap}
+.cnt{background:#111318;border:1px solid #1e2330;border-radius:6px;padding:10px 18px;text-align:center}
+.cnt .n{font-family:monospace;font-size:24px;font-weight:700}
+.cnt .l{font-size:11px;color:#64748b;letter-spacing:1px}
+.section{padding:24px 40px}
+.section h2{font-family:monospace;font-size:11px;letter-spacing:3px;color:#64748b;text-transform:uppercase;margin-bottom:16px}
+.finding{background:#111318;border:1px solid #1e2330;border-radius:6px;padding:16px;margin-bottom:12px}
+.finding-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.badge{font-family:monospace;font-size:10px;font-weight:700;letter-spacing:1px;padding:2px 8px;border-radius:3px}
+.fid{font-family:monospace;font-size:11px;color:#64748b}
+.cat{font-family:monospace;font-size:10px;background:#1e2330;color:#60a5fa;padding:2px 7px;border-radius:3px}
+.ftitle{font-size:14px;color:#e2e8f0}
+.floc{font-size:12px;color:#64748b;font-family:monospace;margin-bottom:6px}
+.fdesc{color:#94a3b8;font-size:13px;margin-bottom:10px}
+.code{background:#0d1117;border:1px solid #1e2330;border-radius:4px;padding:10px 12px;font-family:monospace;font-size:12px;color:#c9d1d9;overflow-x:auto;margin-bottom:10px;white-space:pre-wrap}
+.code.ok{border-color:rgba(52,211,153,0.3);color:#a7f3d0}
+.fix{background:rgba(52,211,153,0.04);border:1px solid rgba(52,211,153,0.15);border-radius:4px;padding:10px 12px;margin-bottom:8px}
+.fix strong,.test strong{font-size:12px;color:#34d399;display:block;margin-bottom:4px}
+.fix p,.test p{font-size:13px;color:#94a3b8}
+.test{background:rgba(96,165,250,0.04);border:1px solid rgba(96,165,250,0.15);border-radius:4px;padding:10px 12px}
+.test strong{color:#60a5fa}
+footer{padding:16px 40px;border-top:1px solid #1e2330;font-family:monospace;font-size:11px;color:#475569;display:flex;justify-content:space-between}
+</style></head><body>
+<div class="header">
+  <div class="header-tag">// SECURITY AUDIT REPORT</div>
+  <h1>たすきば セキュリティチェックレポート</h1>
+  <div class="header-meta">生成日時: <span>2026/5/1 16:18:54</span> &nbsp;|&nbsp; スタック: <span>Next.js / NextAuth v5 / Prisma / PostgreSQL</span></div>
+</div>
+<div class="summary">
+  <div class="score-box">
+    <div class="score-num">94</div>
+    <div class="score-label">/ 100</div>
+  </div>
+  <div class="counts">
+    <div class="cnt"><div class="n" style="color:#ff4d4d">0</div><div class="l">CRITICAL</div></div>
+    <div class="cnt"><div class="n" style="color:#f59e0b">0</div><div class="l">HIGH</div></div>
+    <div class="cnt"><div class="n" style="color:#60a5fa">1</div><div class="l">MEDIUM</div></div>
+    <div class="cnt"><div class="n" style="color:#34d399">0</div><div class="l">LOW</div></div>
+    <div class="cnt"><div class="n" style="color:#94a3b8">1</div><div class="l">TOTAL</div></div>
+    <div class="cnt"><div class="n" style="color:#94a3b8">2</div><div class="l">ACCEPTED</div></div>
+  </div>
+</div>
+<div class="section">
+  <h2>// 検出項目</h2>
+  
+    <div class="finding" style="border-left:3px solid #60a5fa">
+      <div class="finding-head">
+        <span class="badge" style="background:rgba(96,165,250,0.1);color:#60a5fa">MEDIUM</span>
+        <span class="fid">F-01</span>
+        <span class="cat">CRYPTO</span>
+        <strong class="ftitle">MFA 暗号化キーが NEXTAUTH_SECRET から直接派生 (短い場合にゼロパディング)</strong>
+      </div>
+      <div class="floc">📄 src/services/mfa.service.ts (L9)</div>
+      <p class="fdesc">NEXTAUTH_SECRET が 32 文字未満の場合、残りがゼロ文字で埋められ、予測可能なキーになります。また JWT 署名と暗号化キーが同一シークレット由来で用途分離が不十分です。</p>
+      <pre class="code">const ENCRYPTION_KEY = process.env.NEXTAUTH_SECRET?.slice(0, 32).padEnd(32, '0') || '0'.repeat(32);</pre>
+      <div class="fix"><strong>💡 推奨対策</strong><p>MFA 暗号化専用の環境変数 MFA_ENCRYPTION_KEY を追加してください。openssl rand -base64 32 で生成した 32 文字以上のランダム値を使用します。</p></div>
+      <pre class="code ok">// src/services/mfa.service.ts
+const rawKey = process.env.MFA_ENCRYPTION_KEY;
+if (!rawKey || rawKey.length &lt; 32) {
+  throw new Error('MFA_ENCRYPTION_KEY は 32 文字以上の環境変数を設定してください');
+}
+const ENCRYPTION_KEY = rawKey.slice(0, 32);
+
+// .env.example に追加
+// MFA_ENCRYPTION_KEY=  # openssl rand -base64 32 で生成</pre>
+      <div class="test"><strong>🧪 テスト要件</strong><p>MFA_ENCRYPTION_KEY 未設定時にサーバー起動エラーになることをテストすること。MFA 登録→認証の E2E が通過すること。</p></div>
+    </div>
+</div>
+<div class="section">
+  <h2>// 受容済み (Accept-list、score 計算対象外)</h2>
+  
+    <div class="finding" style="border-left:3px solid #94a3b8;opacity:0.75">
+      <div class="finding-head">
+        <span class="badge" style="background:rgba(148,163,184,0.12);color:#94a3b8">ACCEPTED</span>
+        <span class="fid">A-01</span>
+        <span class="cat">DEP</span>
+        <strong class="ftitle">本番環境でプレリリース版を使用: next-auth@5.0.0-beta.31</strong>
+      </div>
+      <div class="floc">📄 package.json</div>
+      <p class="fdesc">"next-auth@5.0.0-beta.31" はベータ/RC 版です。セキュリティパッチが正式版と異なるサイクルで提供されるため、未公表の脆弱性が放置されるリスクがあります。</p>
+      <div class="fix"><strong>📝 受容理由</strong><p>next-auth v5 は 2026-04-30 時点で stable 未リリース。NextAuth.js の公式案内通り beta を採用 (https://authjs.dev/getting-started/migrating-to-v5)。stable 公開後は速やかに移行。次回見直し: 月次 dependabot レビュー時。</p></div>
+    </div>
+    <div class="finding" style="border-left:3px solid #94a3b8;opacity:0.75">
+      <div class="finding-head">
+        <span class="badge" style="background:rgba(148,163,184,0.12);color:#94a3b8">ACCEPTED</span>
+        <span class="fid">A-02</span>
+        <span class="cat">CSP</span>
+        <strong class="ftitle">本番 CSP の script-src に 'unsafe-inline' が残存</strong>
+      </div>
+      <div class="floc">📄 next.config.ts (L13)</div>
+      <p class="fdesc">'unsafe-inline' が有効だと XSS 攻撃者がインラインスクリプトを実行できます。CSP の XSS 防御効果が大幅に低下します。</p>
+      <div class="fix"><strong>📝 受容理由</strong><p>Next.js 16 + next-intl v4.x は SSR 時のクライアントハイドレーションでインラインスクリプト/スタイルを多数注入する。本番完全な nonce-based CSP に移行するには middleware.ts でリクエスト毎に nonce を生成し、Next.js の <Script> / <style> 全箇所に nonce を伝播させる大規模改修が必要 (公式 docs: https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy)。本対応は別 PR に分離。X-Frame-Options=DENY + frame-ancestors='none' で clickjacking 防御は維持済。</p></div>
+    </div>
+</div>
+<footer>
+  <span>docs/security/security-report.html</span>
+  <span>2026-05-01 — たすきば自動セキュリティチェック</span>
+</footer>
+</body></html>

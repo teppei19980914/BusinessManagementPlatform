@@ -94,7 +94,7 @@ jobs:
           #   - CI_TRIGGER_PAT 登録時 (推奨): auto-commit 後に CI が正しく再起動される
           #     (GITHUB_TOKEN 仕様で後続 workflow が起動しない罠を回避)
           #   - CI_TRIGGER_PAT 未登録時: 既存動作 (GITHUB_TOKEN で push、手動再起動が必要)
-          #   詳細は docs/developer/DEVELOPER_GUIDE.md §9.6 参照
+          #   詳細は docs/archive/developer/DEVELOPER_GUIDE.md §9.6 参照 (履歴保全のため archive 内)
           token: ${{ secrets.CI_TRIGGER_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm

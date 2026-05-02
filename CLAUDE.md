@@ -45,8 +45,11 @@
 
 ### 開発中
 1. Claude Code が要件取り込み + テスト追加
-2. Stop Hook で `secret-scan` → 静的解析 → テスト → **テスト成功時のみ自動 commit & push**
-3. テスト失敗時はコミットせず、原因調査・修正後に再試行
+2. **実装が一区切りついたら `/quality-check` skill を実行** (lint + test + 6 観点チェック一括)
+3. Stop Hook で `secret-scan` → **テスト成功時のみ自動 commit & push** (lint/test 自体は /quality-check 側で実施済の前提)
+4. テスト失敗時はコミットせず、原因調査・修正後に再試行
+
+> **2026-05-01 改修**: Stop hook から `pnpm lint && pnpm test` (24 秒) と prompt-type 6 観点チェックを **`/quality-check` skill に分離**。応答ターンごとの重実行を解消し、開発速度を回復 (旧仕様は質問応答のみのターンでも 24 秒 + LLM 1 往復浪費)。詳細は DEVELOPER_GUIDE §5.50 を参照。
 
 ### マージ
 - 開発者が GitHub 上で PR をマージ（手動）
@@ -84,7 +87,7 @@
 - **対象範囲は「テスト失敗」だけでない**: 罠 / 落とし穴 / 新しい実装パターン / 横展開発見 / 「次回も同じ作業をしそう」と感じた手順 — すべて Step 4 / 6 のナレッジ追記対象
 - **重複は許さない**: 同じ事象を 2 箇所に書かない。整理時に統合する (`/knowledge-organize`)
 - **前提が変わったら updatedAt と再発事例の連番を必ず付ける** (§10.5 の方式)
-- **Stop hook の最終チェック項目 6** で「ナレッジ追記済か」を毎回確認 (`.claude/settings.json` Stop prompt 参照、settings 改修済)
+- **`/quality-check` skill 実行時の項目 6** で「ナレッジ追記済か」を確認 (旧仕様の Stop prompt は応答ごと再発火で開発速度を著しく低下させたため 2026-05-01 に skill 化)
 
 ## コミット前チェック（毎回必須）
 
@@ -100,16 +103,20 @@
 3. **パフォーマンスチェック** — N+1禁止、不要な再描画、非同期並列化
 4. **デプロイチェック** — `pnpm lint` → `pnpm test` → `pnpm build` をローカル実行
 5. **単体テスト** — テスト数の増減を確認、旧文言の残留を検索
-6. **E2E カバレッジ横展開** (PR #90 以降) — 新規 `page.tsx` / `route.ts` を追加したら必ず `docs/developer/E2E_COVERAGE.md` に追記する。`pnpm e2e:coverage-check` で gap 検出可、`ci.yml` でも強制
-7. **ドキュメント最新化** — 変更内容に応じて以下のドキュメントを必ず更新する (docs/ は PR #107 以降、役割別サブディレクトリ構成)
+6. **E2E カバレッジ横展開** (PR #90 以降) — 新規 `page.tsx` / `route.ts` を追加したら必ず `docs/test/E2E_COVERAGE.md` に追記する。`pnpm e2e:coverage-check` で gap 検出可、`ci.yml` でも強制
+7. **ドキュメント最新化** — 変更内容に応じて以下のドキュメントを必ず更新する (docs/ は PR #214 以降、役割別ディレクトリ構成。詳細は [docs/README.md](./docs/README.md) 参照)
    - `README.md` — プロジェクト概要・セットアップ手順 (外部ユーザ向け)
-   - `docs/administrator/OPERATION.md` — 運用手順・環境変数・マイグレーション・デプロイ・監視・障害対応・ロールバック
-   - `docs/developer/REQUIREMENTS.md` — 要件定義
-   - `docs/developer/SPECIFICATION.md` — 機能仕様
-   - `docs/developer/DESIGN.md` — 設計（アーキテクチャ・データモデル等）
-   - `docs/developer/TESTING_STRATEGY.md` — 自動テスト + 手動テストの全体戦略 (PR #96 以降、UAT/a11y/クロスブラウザ等の人間担当領域)
-   - `docs/developer/DEVELOPER_GUIDE.md` — コード改修手順・テスト実行・spec 作成規約
+   - `docs/business/` — ビジネスロジック (プロジェクトライフサイクル / テナント・課金 / ユーザロール / MVP スコープ)
+   - `docs/specification/` — 機能仕様 (主要画面 / 権限マトリクス / UI 制御ルール)
+   - `docs/design/` — プログラム設計 (アーキテクチャ / データモデル / API / セキュリティ / インフラ / UI パターン / 提案エンジン)
+   - `docs/operations/` — 運用・移行 (デプロイ / DB マイグレーション / 障害対応 / Cron / 環境変数 / AWS 移行)
+   - `docs/test/` — テスト (戦略 / E2E カバレッジ / 視覚回帰 / E2E 教訓)
+   - `docs/developer-guide/` — 開発者向け手順 (機能追加 / テスト lint build / コミット & デプロイ)
+   - `docs/knowledge/` — KDD ナレッジ集 (PR ごとに蓄積される教訓)
+   - `docs/roadmap/` — ロードマップ (リリース計画 / 提案エンジン実装計画)
+   - `docs/security/` — セキュリティ (脅威モデル / 運用タスク)
    - `docs/beginner/README.md` — 初見開発者向け onboarding (環境構築〜PR 作成)
+   - **過去のドキュメント (DEVELOPER_GUIDE / DESIGN / SPECIFICATION 等の単一巨大ファイル) は `docs/archive/` に保全**。新規追記は上記の役割別ディレクトリへ。
 
 ## Claude Code レベル最適化ルール
 

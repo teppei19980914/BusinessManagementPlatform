@@ -36,6 +36,8 @@ import { useTranslations } from 'next-intl';
 import { Menu } from '@base-ui/react/menu';
 import { ChevronDownIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+// PR feat/notifications-mvp: アカウント名の左に通知ベル UI を配置
+import { NotificationBell } from '@/components/notifications/notification-bell';
 import {
   PROJECTS_ROUTE,
   ALL_RISKS_ROUTE,
@@ -358,7 +360,11 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
             })}
           </nav>
         </div>
-        <AccountMenu user={user} />
+        <div className="flex items-center gap-1">
+          {/* PR feat/notifications-mvp: アカウント名の左に通知ベルを配置 */}
+          <NotificationBell />
+          <AccountMenu user={user} />
+        </div>
       </div>
     </header>
   );

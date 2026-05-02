@@ -123,27 +123,40 @@ export async function listKnowledge(
   const limit = Math.min(params.limit || 20, 100);
   const skip = (page - 1) * limit;
 
-  const where: Prisma.KnowledgeWhereInput = { deletedAt: null };
+  // 2026-05-01 (PR fix/visibility-auth-matrix): 「自分の draft は一覧に表示する」方針に変更。
+  //   旧仕様 (2026-04-24): 非 admin は draft 一切除外 → 自分の起票を視認できず混乱した。
+  //   新仕様: public + 自分の draft + (admin は他人の draft も) を表示。
+  //   visibility / keyword 両者が `OR` 構造を必要とするため、AND の中に複数 OR を並べる
+  //   配列スタイルにしている (Prisma の `AND: [...]` は OR 同士の合成にそのまま使える)。
+  const conditions: Prisma.KnowledgeWhereInput[] = [{ deletedAt: null }];
 
-  // 2026-04-24: 非 admin は一覧に draft を一切含めない (自分の draft も除外)。
-  // draft の個別参照は getKnowledge が作成者本人/admin のみ許可する。
-  void userId; // 旧実装で OR 句の一部に使っていた参照を削除
   if (systemRole !== 'admin') {
-    where.visibility = 'public';
+    conditions.push({
+      OR: [
+        { visibility: 'public' },
+        { visibility: 'draft', createdBy: userId },
+      ],
+    });
   }
 
   if (params.knowledgeType) {
-    where.knowledgeType = params.knowledgeType;
+    conditions.push({ knowledgeType: params.knowledgeType });
   }
+  // ユーザ指定の visibility filter (例: 「下書きだけ表示」)。上記の権限フィルタと AND で合成され、
+  // 非 admin が draft 指定時は「自分の draft のみ」になる (権限フィルタが効くため)。
   if (params.visibility) {
-    where.visibility = params.visibility;
+    conditions.push({ visibility: params.visibility });
   }
   if (params.keyword) {
-    where.OR = [
-      { title: { contains: params.keyword, mode: 'insensitive' as const } },
-      { content: { contains: params.keyword, mode: 'insensitive' as const } },
-    ];
+    conditions.push({
+      OR: [
+        { title: { contains: params.keyword, mode: 'insensitive' as const } },
+        { content: { contains: params.keyword, mode: 'insensitive' as const } },
+      ],
+    });
   }
+
+  const where: Prisma.KnowledgeWhereInput = { AND: conditions };
 
   const [knowledges, total] = await Promise.all([
     prisma.knowledge.findMany({
@@ -406,6 +419,7 @@ export async function deleteKnowledge(
   if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
 
   // PR #89: 紐づく Attachment も同時に論理削除 (孤児データ防止)
+  // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)
   const now = new Date();
   await prisma.$transaction([
     prisma.knowledge.update({
@@ -413,6 +427,10 @@ export async function deleteKnowledge(
       data: { deletedAt: now, updater: { connect: { id: userId } } },
     }),
     prisma.attachment.updateMany({
+      where: { entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
       where: { entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
       data: { deletedAt: now },
     }),

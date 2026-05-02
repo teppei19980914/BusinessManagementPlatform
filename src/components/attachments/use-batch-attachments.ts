@@ -14,9 +14,14 @@
  *   - react-hooks/set-state-in-effect の例外は他のサジェスト API と同様
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import type { AttachmentDTO } from '@/services/attachment.service';
+
+// UUID v1-v8 (RFC 4122) — 一覧 entity の id は全て gen_random_uuid() 由来 (= UUID v4)。
+//   2026-05-01 fix/attachments-batch-400: クライアント側でも事前 filter を挟み、
+//   無駄な 400 ラウンドトリップ + Vercel log ノイズを防ぐ。
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 
 export function useBatchAttachments(
   entityType: AttachmentEntityType,
@@ -24,14 +29,20 @@ export function useBatchAttachments(
   slot: string = 'general',
 ): Record<string, AttachmentDTO[]> {
   const [map, setMap] = useState<Record<string, AttachmentDTO[]>>({});
-  // entityIds は毎レンダで新しい配列になるため、内容変化を文字列比較で検出
-  const key = entityIds.join(',') + '|' + slot + '|' + entityType;
+  // 不正 ID (空文字 / 一時 ID / ステージ中など) を事前除外。サーバ側の lenient フィルタと
+  // 二重防御し、無駄な 400 を発生させない。`useMemo` で entityIds の identity 変動を吸収。
+  const validIds = useMemo(
+    () => entityIds.filter((id) => typeof id === 'string' && UUID_RE.test(id)),
+    [entityIds],
+  );
+  // validIds 単位で fetch trigger (entityIds の中身が同じなら fetch 不要)
+  const key = validIds.join(',') + '|' + slot + '|' + entityType;
   const keyRef = useRef<string>('');
 
   useEffect(() => {
     if (keyRef.current === key) return;
     keyRef.current = key;
-    if (entityIds.length === 0) {
+    if (validIds.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- 空 ID リストへの初期化、DESIGN.md §22 例外 (外部 API 同期)
       setMap({});
       return;
@@ -42,7 +53,7 @@ export function useBatchAttachments(
         const res = await fetch('/api/attachments/batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entityType, entityIds, slot }),
+          body: JSON.stringify({ entityType, entityIds: validIds, slot }),
         });
         if (!res.ok) {
           if (!cancelled) setMap({});
@@ -57,7 +68,7 @@ export function useBatchAttachments(
     return () => {
       cancelled = true;
     };
-  }, [key, entityType, entityIds, slot]);
+  }, [key, entityType, validIds, slot]);
 
   return map;
 }

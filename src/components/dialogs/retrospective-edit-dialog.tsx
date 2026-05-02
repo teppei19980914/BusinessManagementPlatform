@@ -161,7 +161,7 @@ export function RetrospectiveEditDialog({
             </div>
           ))}
           </fieldset>
-          {/* Phase E 共通化: DialogAttachmentSection に集約。readOnly 非表示は §5.10 由来 */}
+          {/* Phase E 共通化: DialogAttachmentSection に集約。readOnly 非表示は §5.14 由来 */}
           <DialogAttachmentSection
             entityType="retrospective"
             entityId={retro.id}

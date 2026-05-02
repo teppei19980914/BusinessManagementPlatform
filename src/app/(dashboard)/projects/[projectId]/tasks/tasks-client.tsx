@@ -28,8 +28,8 @@
  *   - DESIGN.md §15 (idx_tasks_gantt 等のインデックス) / §17 (パフォーマンス要件)
  */
 
-import { memo, useCallback, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
@@ -52,6 +52,8 @@ import {
   collectSelfAndDescendantIds,
   filterTreeByAssignee,
   filterTreeByStatus,
+  findAncestorIds,
+  findTaskInTree,
   taskStatusColors,
   UNASSIGNED_KEY,
 } from '@/lib/task-tree-utils';
@@ -739,6 +741,50 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setEditForm(null);
     setEditError('');
   }, []);
+
+  // PR feat/notification-deep-link-completion (2026-05-01): 通知 deep link
+  // (`/projects/[id]/tasks?taskId=...`) で着地した際、該当タスクの edit dialog を auto-open。
+  // WBS は階層構造のため、対象タスクが折りたたまれた親 WP の中にいると画面に出ない。
+  // → `findAncestorIds` で全祖先を `expandedTaskIds` に追加して可視化してから dialog open。
+  // useRef で 1 度きり実行を担保、tasks の lazy fetch 完了タイミングに対応。
+  const autoOpenSearchParams = useSearchParams();
+  const autoOpenPathname = usePathname();
+  const autoOpenTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenTriggeredRef.current) return;
+    if (!tasks || tasks.length === 0) return;
+    const targetTaskId = autoOpenSearchParams.get('taskId');
+    if (!targetTaskId) return;
+
+    const targetTask = findTaskInTree(tasks, targetTaskId);
+    if (!targetTask) {
+      // タスクが見つからない (削除済 / 別 project) → query 消すだけ
+      autoOpenTriggeredRef.current = true;
+      const next = new URLSearchParams(autoOpenSearchParams);
+      next.delete('taskId');
+      const qs = next.toString();
+      router.replace(qs ? `${autoOpenPathname}?${qs}` : autoOpenPathname, { scroll: false });
+      return;
+    }
+
+    // 祖先 (root → parent) を全展開して target を可視化
+    const ancestors = findAncestorIds(tasks, targetTaskId);
+    if (ancestors.length > 0) {
+      setExpandedTaskIds((prev) => {
+        const next = new Set(prev);
+        for (const id of ancestors) next.add(id);
+        return next;
+      });
+    }
+    autoOpenTriggeredRef.current = true;
+    openEditDialog(targetTask);
+    const next = new URLSearchParams(autoOpenSearchParams);
+    next.delete('taskId');
+    const qs = next.toString();
+    router.replace(qs ? `${autoOpenPathname}?${qs}` : autoOpenPathname, { scroll: false });
+    // tasks の load timing を監視するため deps に tasks を含める
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
   // 編集対象のロール判定
   const isEditingActivity = editingTask?.type === 'activity';
   const editingIsAssignee = editingTask?.assigneeId === userId;
@@ -1537,9 +1583,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           <div className="flex justify-end pb-2">
             <ResetColumnsButton />
           </div>
-          <div className="rounded-lg border overflow-x-auto">
+          {/* PR fix/sticky-and-readonly-links (2026-05-01): wrapper に max-h を追加し、
+              真の縦スクロールコンテナ化することで sticky thead が機能するようにする。
+              旧 (PR #204) は overflow-x-auto のみで vertical scroll を発生させない構造だったため、
+              sticky thead が無効化されていた (詳細: §5.55 / 共通 Table コンポーネントと同パターン)。 */}
+          <div className="rounded-lg border max-h-[calc(100vh-12rem)] overflow-auto">
             <table className="min-w-full text-xs md:text-sm">
-              <thead className="bg-muted">
+              {/* PR feat/sticky-table-headers: WBS 一覧の Excel 風ヘッダー固定 (§5.53)。
+                  `<TableHeader>` を経由しない raw thead で `bg-muted` を維持。 */}
+              <thead className="sticky top-0 z-10 bg-muted [&>tr>th]:bg-muted">
                 <tr>
                   {canSelectForProgress && (
                     <th className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">

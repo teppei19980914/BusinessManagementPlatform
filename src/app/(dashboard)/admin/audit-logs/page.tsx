@@ -2,12 +2,9 @@ import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/db';
-import { Badge } from '@/components/ui/badge';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
 // PR #117 → PR #119: session 連携フォーマッタ (ユーザ個別 TZ/locale を反映)
 import { getServerFormatters } from '@/lib/server-formatters';
+import { AuditLogsTable, type AuditLogRow } from './audit-logs-table';
 
 export default async function AuditLogsPage() {
   const session = await auth();
@@ -22,38 +19,22 @@ export default async function AuditLogsPage() {
     take: 100,
   });
 
+  // PR feat/sortable-columns: client component (sortable) に渡せるよう plain object に整形。
+  // formatDateTimeFull は session TZ を参照するため server 側で実行する必要がある。
+  const rows: AuditLogRow[] = logs.map((log) => ({
+    id: log.id,
+    createdAtIso: log.createdAt.toISOString(),
+    createdAtDisplay: formatDateTimeFull(log.createdAt.toISOString()),
+    userName: log.user.name,
+    action: log.action,
+    entityType: log.entityType,
+    entityId: log.entityId,
+  }));
+
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-semibold">{t('title')}</h2>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t('columnDateTime')}</TableHead>
-            <TableHead>{t('columnOperator')}</TableHead>
-            <TableHead>{t('columnAction')}</TableHead>
-            <TableHead>{t('columnTarget')}</TableHead>
-            <TableHead>{t('columnTargetId')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {logs.map((log) => (
-            <TableRow key={log.id}>
-              <TableCell className="text-sm">{formatDateTimeFull(log.createdAt.toISOString())}</TableCell>
-              <TableCell className="text-sm">{log.user.name}</TableCell>
-              <TableCell>
-                <Badge variant={log.action === 'DELETE' ? 'destructive' : log.action === 'CREATE' ? 'default' : 'secondary'}>
-                  {log.action}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-sm">{log.entityType}</TableCell>
-              <TableCell className="text-xs font-mono text-muted-foreground">{log.entityId.slice(0, 8)}...</TableCell>
-            </TableRow>
-          ))}
-          {logs.length === 0 && (
-            <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">{t('noLogs')}</TableCell></TableRow>
-          )}
-        </TableBody>
-      </Table>
+      <AuditLogsTable logs={rows} />
     </div>
   );
 }

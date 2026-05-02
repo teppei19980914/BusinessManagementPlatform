@@ -275,8 +275,16 @@ export async function deleteStakeholder(stakeholderId: string, userId: string): 
   });
   if (!existing) throw new Error('NOT_FOUND');
 
-  await prisma.stakeholder.update({
-    where: { id: stakeholderId },
-    data: { deletedAt: new Date(), updatedBy: userId },
-  });
+  // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.stakeholder.update({
+      where: { id: stakeholderId },
+      data: { deletedAt: now, updatedBy: userId },
+    }),
+    prisma.comment.updateMany({
+      where: { entityType: 'stakeholder', entityId: stakeholderId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+  ]);
 }

@@ -11,8 +11,20 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   //   wrapper 側に overflow-x-auto を置くことで、テーブルのはみ出しは wrapper 内に
   //   閉じ込められ、page-level の横スクロールやヘッダずれを防ぐ。
   //   はみ出しが無い場合はスクロールバーも出ないので、通常閲覧時の UX は維持。
+  //
+  // 2026-05-01 (PR fix/sticky-and-readonly-links): sticky thead 修正。
+  //   旧 (PR #204) は wrapper に max-height がなく、CSS 仕様上 `overflow-x: auto` が両軸の
+  //   スクロールコンテナを作る (visible→auto 変換) ため、sticky thead が wrapper に
+  //   対して固定 → wrapper は実際にはスクロールしないので何も起きない、という症状だった。
+  //   修正: `max-h-[calc(100vh-12rem)] overflow-auto` で wrapper を真の縦スクロールコンテナ化。
+  //   結果: テーブル領域内をスクロールすると thead が固定、データ行のみ流れる Excel 風 UX。
+  //   max-h は DashboardHeader (3.5rem) + main padding (3rem) + 余白の概算で 12rem 確保。
+  //   テーブル外側のフィルター/見出し領域はそのままページ内で残る。
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div
+      data-slot="table-container"
+      className="relative w-full max-h-[calc(100vh-12rem)] overflow-auto"
+    >
       <table
         data-slot="table"
         className={cn("w-full caption-bottom text-xs md:text-sm", className)}
@@ -26,7 +38,19 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
+      // 2026-05-01 (PR feat/sticky-table-headers): Excel 風のヘッダー固定化。
+      //   - `sticky top-0`: 縦スクロール時にヘッダー行を viewport 上端 (DashboardHeader が
+      //     非 sticky なので、スクロールすると DashboardHeader が消えた後の上端) に固定。
+      //   - `bg-card`: 下の行が透けないため必須 (sticky element に背景色がないと裏が透ける)。
+      //   - `z-10`: dropdown (z-50) / Toast (z-50) / Dialog overlay (z-50) より下に固定。
+      //     行内の元々ある要素 (リンク等) より上にする目的。
+      //   - `[&>tr>th]:bg-card`: 一部ブラウザで thead 自体への bg-card が効かない場合の保険。
+      //     th セルにも背景色を入れる二重指定。
+      //   - 既存の `[&_tr]:border-b` は維持 (1px の区切り線)。
+      className={cn(
+        "sticky top-0 z-10 bg-card [&>tr>th]:bg-card [&_tr]:border-b",
+        className,
+      )}
       {...props}
     />
   )

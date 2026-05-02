@@ -14,6 +14,8 @@ vi.mock('@/lib/db', () => ({
     user: { findMany: vi.fn() },
     // PR #89: deleteRisk が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
+    // PR fix/visibility-auth-matrix: deleteRisk が comment.updateMany を $transaction 内で呼ぶ
+    comment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -78,12 +80,16 @@ describe('listRisks', () => {
     expect(call.where).not.toHaveProperty('OR');
   });
 
-  it('非 admin は public のみ (2026-04-24: 自分の draft も一覧から除外)', async () => {
+  it('非 admin は public + 自分の draft (2026-05-01 仕様変更: 自分の draft は表示)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
     await listRisks('p-1', 'u-1', 'general');
     const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(call.where.visibility).toBe('public');
-    expect(call.where).not.toHaveProperty('OR');
+    // visibility は OR で「public OR (draft AND reporterId=自分)」
+    expect(call.where.OR).toEqual([
+      { visibility: 'public' },
+      { visibility: 'draft', reporterId: 'u-1' },
+    ]);
+    expect(call.where).not.toHaveProperty('visibility');
   });
 });
 

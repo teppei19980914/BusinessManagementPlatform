@@ -38,10 +38,18 @@ import {
   resolveEntityForComment,
 } from '@/services/comment.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { validateMentionsForEntity } from '@/services/mention.service';
+import { buildEntityCommentLink } from '@/lib/entity-link';
 
 /**
  * 親エンティティの存在確認 + 認可。リクエストユーザが当該 entity に対して
  * **コメントの読み書きを行う権利** を持つかを判定する。
+ *
+ * 2026-05-01 (PR fix/visibility-auth-matrix): visibility を持つ entity (issue / risk /
+ * retrospective / knowledge) で `mode='read' | 'write'` を区別。draft entity は:
+ *   - read: 作成者本人 OR admin
+ *   - write (投稿): 作成者本人のみ (admin は read だけで投稿不可)
+ * public は read/write とも認証済全アカウント可。
  *
  * 戻り値: NextResponse (拒否時) or null (許可)。
  */
@@ -49,6 +57,15 @@ async function authorizeForComment(
   user: { id: string; systemRole: string },
   entityType: CommentEntityType,
   entityId: string,
+  mode: 'read' | 'write',
+  /**
+   * mention を含むコメント投稿か否か (write 時のみ参照)。
+   * project-scoped entity (task / stakeholder) で mention 認可を分岐するために使う:
+   *   - task: mention なしなら誰でも可、mention ありなら ProjectMember 必須
+   *   - stakeholder: mention 有無に関わらず PM/TL 必須 (plainCommentScope='project-member')
+   * 2026-05-01 PR feat/notification-deep-link-completion で導入。
+   */
+  hasMentions = false,
 ): Promise<NextResponse | null> {
   const t = await getTranslations('message');
   const result = await resolveEntityForComment(entityType, entityId);
@@ -60,26 +77,53 @@ async function authorizeForComment(
     );
   }
 
-  // admin は常に許可 (孤児データ管理 / customer / 全エンティティ救済)
-  if (user.systemRole === 'admin') return null;
-
   if (result.kind === 'admin-only') {
-    // customer: admin 以外拒否
+    // customer: admin 以外拒否 (read / write 共通)
+    if (user.systemRole === 'admin') return null;
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: t('forbidden') } },
       { status: 403 },
     );
   }
 
-  if (result.kind === 'open') {
-    // 全○○ ありエンティティ (issue/risk/retrospective/knowledge): 認証済ユーザは誰でも可 (要件 Q4)
-    return null;
+  if (result.kind === 'public-or-draft') {
+    // public: 認証済全アカウントが read/write 可
+    if (result.visibility === 'public') return null;
+    // draft: read は作成者本人 OR admin、write (投稿) は作成者本人のみ
+    const isCreator = user.id === result.creatorId;
+    const isAdmin = user.systemRole === 'admin';
+    if (mode === 'read' && (isCreator || isAdmin)) return null;
+    if (mode === 'write' && isCreator) return null;
+    return NextResponse.json(
+      { error: { code: 'FORBIDDEN', message: t('forbidden') } },
+      { status: 403 },
+    );
   }
 
-  // project-scoped (task/stakeholder): project member 必須
+  // project-scoped (task / stakeholder)
+  // 2026-05-01 PR feat/notification-deep-link-completion で認可マトリクス再々細粒化:
+  //   - task: 'public' plainCommentScope → mention なし plain コメントは認証済全員可
+  //           mention あり / 'pm_tl' 不要 → ProjectMember 必須 (mention 受信者を project 内に限定)
+  //   - stakeholder: 'project-member' plainCommentScope + 'pm_tl' mentionRequiredRole
+  //                  → 常に PM/TL (or admin) のみ
+  if (user.systemRole === 'admin') return null;
+
+  // task: plainCommentScope='public' → mention 無し plain コメント / read は誰でも可
+  //         mention 含む POST は mentionRequiredRole='any' で project member 必須
+  // stakeholder: plainCommentScope='project-member' → mention 有無に関わらず
+  //              mentionRequiredRole='pm_tl' を適用 (PM/TL のみ書き込み可)
+  const isPlainOperation = mode === 'read' || (mode === 'write' && !hasMentions);
+  if (isPlainOperation && result.plainCommentScope === 'public') {
+    // task の plain コメント / read は誰でも可
+    return null;
+  }
+  // それ以外 (stakeholder の全操作 / task の mention 含む write):
+  //   project member であり、かつ mentionRequiredRole='pm_tl' なら projectRole='pm_tl' であること
   for (const pid of result.projectIds) {
     const m = await checkMembership(pid, user.id, user.systemRole);
-    if (m.isMember) return null;
+    if (!m.isMember) continue;
+    if (result.mentionRequiredRole === 'pm_tl' && m.projectRole !== 'pm_tl') continue;
+    return null;
   }
   return NextResponse.json(
     { error: { code: 'FORBIDDEN', message: t('forbidden') } },
@@ -114,7 +158,7 @@ export async function GET(req: NextRequest) {
   }
 
   const typed = entityType as CommentEntityType;
-  const forbidden = await authorizeForComment(user, typed, entityId);
+  const forbidden = await authorizeForComment(user, typed, entityId, 'read');
   if (forbidden) return forbidden;
 
   const data = await listComments(typed, entityId);
@@ -138,14 +182,38 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // mention の有無で認可分岐 (task の plain コメントは認証済全員、mention は ProjectMember 必須)
+  const mentions = parsed.data.mentions ?? [];
+  const hasMentions = mentions.length > 0;
   const forbidden = await authorizeForComment(
     user,
     parsed.data.entityType,
     parsed.data.entityId,
+    'write',
+    hasMentions,
   );
   if (forbidden) return forbidden;
 
-  const created = await createComment(parsed.data, user.id);
+  // PR feat/comment-mentions: mention の kind 妥当性をサーバ側でも検証 (Q3 二重防御)
+  if (mentions.length > 0) {
+    const v = validateMentionsForEntity(parsed.data.entityType, mentions);
+    if (!v.ok) {
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: v.reason } },
+        { status: 400 },
+      );
+    }
+  }
+
+  // 通知 link の生成 (entity の編集 dialog を開く URL)
+  const link = await buildEntityCommentLink(parsed.data.entityType, parsed.data.entityId);
+  const created = await createComment(
+    parsed.data,
+    user.id,
+    mentions,
+    user.name ?? null,
+    link,
+  );
 
   await recordAuditLog({
     userId: user.id,

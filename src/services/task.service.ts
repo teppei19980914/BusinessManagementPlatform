@@ -503,6 +503,7 @@ export async function updateTask(
  */
 export async function deleteTask(taskId: string, userId: string): Promise<void> {
   // PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児データ防止)
+  // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)
   const now = new Date();
   const [task] = await prisma.$transaction([
     prisma.task.update({
@@ -510,6 +511,10 @@ export async function deleteTask(taskId: string, userId: string): Promise<void> 
       data: { deletedAt: now, updatedBy: userId },
     }),
     prisma.attachment.updateMany({
+      where: { entityType: 'task', entityId: taskId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
       where: { entityType: 'task', entityId: taskId, deletedAt: null },
       data: { deletedAt: now },
     }),

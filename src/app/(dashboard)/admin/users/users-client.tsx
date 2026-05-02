@@ -48,10 +48,24 @@ import { SYSTEM_ROLES } from '@/types';
 import type { UserDTO } from '@/services/user.service';
 // PR #117 → PR #119: session 連携フォーマッタ (TZ/locale はユーザ設定を反映)
 import { useFormatters } from '@/lib/use-formatters';
+import { SortableHeader } from '@/components/sort/sortable-header';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 
 type Props = {
   initialUsers: UserDTO[];
 };
+
+function getUserSortValue(u: UserDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'name': return u.name;
+    case 'email': return u.email;
+    case 'role': return u.systemRole;
+    case 'status': return u.isActive ? 1 : 0;
+    case 'createdAt': return u.createdAt;
+    default: return null;
+  }
+}
 
 export function UsersClient({ initialUsers }: Props) {
   const tAction = useTranslations('action');
@@ -70,6 +84,10 @@ export function UsersClient({ initialUsers }: Props) {
   // Date.now() は render 中に呼べない (react-hooks/purity)。マウント時 1 回の評価で、
   // ユーザ一覧画面を開いている間にロック表示が自動で切り替わる必要はない想定。
   const [nowAtMount] = useState(() => Date.now());
+
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
+  const { sortState, setSortColumn } = useMultiSort('sort:admin-users');
+  const sortedUsers = multiSort(initialUsers, sortState, getUserSortValue);
 
   const [form, setForm] = useState({
     name: '',
@@ -213,10 +231,18 @@ export function UsersClient({ initialUsers }: Props) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>{t('fieldUserName')}</TableHead>
-            <TableHead>{t('fieldEmail')}</TableHead>
-            <TableHead>{t('columnRole')}</TableHead>
-            <TableHead>{t('columnStatus')}</TableHead>
+            <TableHead>
+              <SortableHeader columnKey="name" label={t('fieldUserName')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
+            <TableHead>
+              <SortableHeader columnKey="email" label={t('fieldEmail')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
+            <TableHead>
+              <SortableHeader columnKey="role" label={t('columnRole')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
+            <TableHead>
+              <SortableHeader columnKey="status" label={t('columnStatus')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
             {/*
               PR #85 / PR #116 / T-21: 認証ロック状態
               - パスワード失敗ロック: failedLoginCount 5 回で一時ロック (30 分)
@@ -226,11 +252,13 @@ export function UsersClient({ initialUsers }: Props) {
               - 1 列集約: tooltip で内訳 (原因・解除予定・失敗回数) を表示
             */}
             <TableHead>{t('columnAuthLock')}</TableHead>
-            <TableHead>{t('columnCreatedAt')}</TableHead>
+            <TableHead>
+              <SortableHeader columnKey="createdAt" label={t('columnCreatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {initialUsers.map((user) => {
+          {sortedUsers.map((user) => {
             const pwTemporaryLocked
               = !!user.lockedUntil && new Date(user.lockedUntil).getTime() > nowAtMount;
             // PR #116: MFA ロック (パスワードロックとは別系統)
@@ -313,7 +341,7 @@ export function UsersClient({ initialUsers }: Props) {
               </ClickableRow>
             );
           })}
-          {initialUsers.length === 0 && (
+          {sortedUsers.length === 0 && (
             <TableRow>
               <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                 {t('noUsers')}

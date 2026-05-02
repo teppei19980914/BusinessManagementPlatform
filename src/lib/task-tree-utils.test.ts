@@ -5,6 +5,8 @@ import {
   collectSelfAndDescendantIds,
   filterTreeByAssignee,
   filterTreeByStatus,
+  findAncestorIds,
+  findTaskInTree,
   UNASSIGNED_KEY,
 } from './task-tree-utils';
 
@@ -242,5 +244,78 @@ describe('filterTreeByStatus (PR #61)', () => {
 
   it('空ツリーでも空配列を返す', () => {
     expect(filterTreeByStatus([], new Set(['in_progress']))).toEqual([]);
+  });
+});
+
+// PR feat/notification-deep-link-completion (2026-05-01) で追加: 通知 deep link の auto-open 用
+describe('findAncestorIds', () => {
+  // 3 階層ツリー: root → mid → leaf
+  const tree: TaskDTO[] = [
+    makeTask({
+      id: 'root',
+      children: [
+        makeTask({
+          id: 'mid',
+          parentTaskId: 'root',
+          children: [
+            makeTask({ id: 'leaf', parentTaskId: 'mid' }),
+            makeTask({ id: 'leaf2', parentTaskId: 'mid' }),
+          ],
+        }),
+      ],
+    }),
+    makeTask({ id: 'sibling-root' }),
+  ];
+
+  it('リーフから祖先全列を返す (root が先頭、自身は含まない)', () => {
+    expect(findAncestorIds(tree, 'leaf')).toEqual(['root', 'mid']);
+  });
+
+  it('中間ノード (mid) からの祖先は root のみ', () => {
+    expect(findAncestorIds(tree, 'mid')).toEqual(['root']);
+  });
+
+  it('root ノード自身は祖先なしで空配列', () => {
+    expect(findAncestorIds(tree, 'root')).toEqual([]);
+  });
+
+  it('兄弟 root も祖先なし', () => {
+    expect(findAncestorIds(tree, 'sibling-root')).toEqual([]);
+  });
+
+  it('存在しない ID は空配列', () => {
+    expect(findAncestorIds(tree, 'nope')).toEqual([]);
+  });
+
+  it('空ツリーでも空配列', () => {
+    expect(findAncestorIds([], 'anything')).toEqual([]);
+  });
+});
+
+describe('findTaskInTree', () => {
+  const tree: TaskDTO[] = [
+    makeTask({
+      id: 'root',
+      children: [
+        makeTask({ id: 'mid', children: [makeTask({ id: 'leaf' })] }),
+      ],
+    }),
+  ];
+
+  it('リーフを再帰的に検出', () => {
+    const found = findTaskInTree(tree, 'leaf');
+    expect(found?.id).toBe('leaf');
+  });
+
+  it('root も検出', () => {
+    expect(findTaskInTree(tree, 'root')?.id).toBe('root');
+  });
+
+  it('存在しない ID は null', () => {
+    expect(findTaskInTree(tree, 'nope')).toBeNull();
+  });
+
+  it('空ツリーは null', () => {
+    expect(findTaskInTree([], 'anything')).toBeNull();
   });
 });

@@ -8,6 +8,9 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    // PR fix/visibility-auth-matrix: deleteStakeholder も comment cascade
+    comment: { updateMany: vi.fn() },
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
 

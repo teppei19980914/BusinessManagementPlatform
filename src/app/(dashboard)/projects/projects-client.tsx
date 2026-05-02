@@ -39,7 +39,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ResizableHead } from '@/components/ui/resizable-columns';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import {
   Select,
@@ -76,6 +78,19 @@ type Props = {
   customers: CustomerOption[];
 };
 
+// PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
+function getProjectSortValue(p: ProjectDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'name': return p.name;
+    case 'customer': return p.customerName ?? '';
+    case 'devMethod': return p.devMethod;
+    case 'status': return p.status;
+    case 'plannedStartDate': return p.plannedStartDate ?? '';
+    case 'plannedEndDate': return p.plannedEndDate ?? '';
+    default: return null;
+  }
+}
+
 const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   planning: 'outline',
   estimating: 'outline',
@@ -100,6 +115,9 @@ export function ProjectsClient({
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
+  const { sortState, setSortColumn } = useMultiSort('sort:projects');
+  const sortedProjects = multiSort(initialProjects, sortState, getProjectSortValue);
 
   const [form, setForm] = useState({
     name: '',
@@ -430,16 +448,16 @@ export function ProjectsClient({
         <ResizableTableShell tableKey="projects">
             <TableHeader>
               <TableRow>
-                <ResizableHead columnKey="name" defaultWidth={220}>{t('fieldName')}</ResizableHead>
-                <ResizableHead columnKey="customer" defaultWidth={160}>{t('fieldCustomer')}</ResizableHead>
-                <ResizableHead columnKey="devMethod" defaultWidth={140}>{t('fieldDevMethod')}</ResizableHead>
-                <ResizableHead columnKey="status" defaultWidth={110}>{t('fieldStatus')}</ResizableHead>
-                <ResizableHead columnKey="plannedStartDate" defaultWidth={120}>{t('fieldPlannedStartDate')}</ResizableHead>
-                <ResizableHead columnKey="plannedEndDate" defaultWidth={120}>{t('fieldPlannedEndDate')}</ResizableHead>
+                <SortableResizableHead columnKey="name" defaultWidth={220} label={t('fieldName')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="customer" defaultWidth={160} label={t('fieldCustomer')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="devMethod" defaultWidth={140} label={t('fieldDevMethod')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="status" defaultWidth={110} label={t('fieldStatus')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="plannedStartDate" defaultWidth={120} label={t('fieldPlannedStartDate')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="plannedEndDate" defaultWidth={120} label={t('fieldPlannedEndDate')} sortState={sortState} onSortChange={setSortColumn} />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {initialProjects.map((project) => (
+              {sortedProjects.map((project) => (
                 <TableRow key={project.id}>
                   <TableCell>
                     <Link
@@ -463,7 +481,7 @@ export function ProjectsClient({
                   <TableCell>{project.plannedEndDate}</TableCell>
                 </TableRow>
               ))}
-              {initialProjects.length === 0 && (
+              {sortedProjects.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                     {t('listEmpty')}
