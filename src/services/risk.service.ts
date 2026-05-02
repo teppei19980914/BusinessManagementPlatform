@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
 // Prisma types used for Decimal handling in toRiskDTO
 import type { CreateRiskInput } from '@/lib/validators/risk';
 import type { Priority } from '@/types';
@@ -305,6 +306,7 @@ export async function createRisk(
   projectId: string,
   input: CreateRiskInput,
   userId: string,
+  tenantId: string,
 ): Promise<RiskDTO> {
   const r = await prisma.riskIssue.create({
     data: {
@@ -333,7 +335,50 @@ export async function createRisk(
       assignee: { select: { name: true } },
     },
   });
+
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存 (fail-safe)
+  await generateAndPersistEntityEmbedding({
+    table: 'risks_issues',
+    rowId: r.id,
+    tenantId,
+    userId,
+    text: composeRiskText({
+      title: input.title,
+      content: input.content,
+      cause: input.cause ?? null,
+      responsePolicy: input.responsePolicy ?? null,
+      responseDetail: input.responseDetail ?? null,
+    }),
+    featureUnit: 'risk-issue-embedding',
+  });
+
   return toRiskDTO(r);
+}
+
+/**
+ * PR #5-c: RiskIssue の embedding 生成用 text 合成 helper。
+ *
+ * 意味検索の主たるシグナルとなる text フィールドを合成。impact / likelihood / priority
+ * 等の列挙値はベクトル化に貢献しないため除外。result / lessonLearned は事後追記される
+ * 性質のため、create 時点では空 → 別途 update 時に embedding 再生成される。
+ */
+function composeRiskText(fields: {
+  title: string;
+  content: string;
+  cause: string | null;
+  responsePolicy: string | null;
+  responseDetail: string | null;
+}): string {
+  return [
+    fields.title,
+    fields.content,
+    fields.cause ?? '',
+    fields.responsePolicy ?? '',
+    fields.responseDetail ?? '',
+  ]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join('\n\n');
 }
 
 /**
@@ -354,6 +399,7 @@ export async function updateRisk(
     lessonLearned?: string | null;
   },
   userId: string,
+  tenantId: string,
 ): Promise<RiskDTO> {
   const existing = await prisma.riskIssue.findFirst({
     where: { id: riskId, deletedAt: null },
@@ -361,6 +407,14 @@ export async function updateRisk(
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.reporterId !== userId) throw new Error('FORBIDDEN');
+
+  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定
+  const textFieldsChanging =
+    input.title !== undefined ||
+    input.content !== undefined ||
+    input.cause !== undefined ||
+    input.responsePolicy !== undefined ||
+    input.responseDetail !== undefined;
 
   const data: Record<string, unknown> = { updatedBy: userId };
 
@@ -400,6 +454,25 @@ export async function updateRisk(
       assignee: { select: { name: true } },
     },
   });
+
+  // PR #5-c: text 変更時のみ embedding を再生成
+  if (textFieldsChanging) {
+    await generateAndPersistEntityEmbedding({
+      table: 'risks_issues',
+      rowId: riskId,
+      tenantId,
+      userId,
+      text: composeRiskText({
+        title: r.title,
+        content: r.content,
+        cause: r.cause,
+        responsePolicy: r.responsePolicy,
+        responseDetail: r.responseDetail,
+      }),
+      featureUnit: 'risk-issue-embedding',
+    });
+  }
+
   return toRiskDTO(r);
 }
 

@@ -20,6 +20,13 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
+// PR #5-c (T-03 Phase 2): createKnowledge / updateKnowledge から呼ばれる embedding helper をモック。
+// 既定では何もせず終了 (本体 INSERT/UPDATE への副作用なし = fail-safe 設計の検証)。
+// 各テストで `vi.mocked(generateAndPersistEntityEmbedding).mockClear()` 等で呼び出し検証可能。
+vi.mock('./embedding.service', () => ({
+  generateAndPersistEntityEmbedding: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   listKnowledge,
   listAllKnowledgeForViewer,
@@ -31,6 +38,9 @@ import {
   bulkUpdateKnowledgeVisibilityFromList,
 } from './knowledge.service';
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
+
+const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 const now = new Date('2026-04-21T10:00:00Z');
 
@@ -260,6 +270,7 @@ describe('createKnowledge', () => {
         visibility: 'public',
       } as never,
       'u-1',
+      TEST_TENANT_ID,
     );
 
     const call = vi.mocked(prisma.knowledge.create).mock.calls[0][0];
@@ -282,10 +293,44 @@ describe('createKnowledge', () => {
         projectIds: ['p1', 'p2'],
       } as never,
       'u-1',
+      TEST_TENANT_ID,
     );
 
     const call = vi.mocked(prisma.knowledge.create).mock.calls[0][0];
     expect(call.data.knowledgeProjects.create).toHaveLength(2);
+  });
+
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding helper が呼ばれる (fail-safe)
+  it('createKnowledge: 本体作成後に generateAndPersistEntityEmbedding が呼ばれる', async () => {
+    vi.mocked(prisma.knowledge.create).mockResolvedValue(kRow({ id: 'k-new' }) as never);
+    await createKnowledge(
+      {
+        title: 't',
+        knowledgeType: 'pattern',
+        background: 'b',
+        content: 'c',
+        result: 'r',
+        techTags: [],
+        processTags: [],
+        businessDomainTags: [],
+        visibility: 'public',
+      } as never,
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    expect(args.table).toBe('knowledges');
+    expect(args.rowId).toBe('k-new');
+    expect(args.tenantId).toBe(TEST_TENANT_ID);
+    expect(args.userId).toBe('u-1');
+    expect(args.featureUnit).toBe('knowledge-embedding');
+    // composeKnowledgeText: title / background / content / result を改行結合
+    expect(args.text).toContain('t');
+    expect(args.text).toContain('b');
+    expect(args.text).toContain('c');
+    expect(args.text).toContain('r');
   });
 });
 
@@ -294,23 +339,50 @@ describe('updateKnowledge / deleteKnowledge', () => {
 
   it('updateKnowledge: 存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(null);
-    await expect(updateKnowledge('x', { title: 'n' }, 'u-1')).rejects.toThrow('NOT_FOUND');
+    await expect(updateKnowledge('x', { title: 'n' }, 'u-1', TEST_TENANT_ID)).rejects.toThrow(
+      'NOT_FOUND',
+    );
   });
 
   it('updateKnowledge: 作成者以外 (admin でも) は FORBIDDEN', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
-    await expect(updateKnowledge('k-1', { title: 'n' }, 'u-other')).rejects.toThrow('FORBIDDEN');
-    await expect(updateKnowledge('k-1', { title: 'n' }, 'admin-x')).rejects.toThrow('FORBIDDEN');
+    await expect(updateKnowledge('k-1', { title: 'n' }, 'u-other', TEST_TENANT_ID)).rejects.toThrow(
+      'FORBIDDEN',
+    );
+    await expect(updateKnowledge('k-1', { title: 'n' }, 'admin-x', TEST_TENANT_ID)).rejects.toThrow(
+      'FORBIDDEN',
+    );
   });
 
   it('updateKnowledge: 作成者本人なら指定フィールドのみ', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
-    await updateKnowledge('k-1', { title: 'new' }, 'u-1');
+    await updateKnowledge('k-1', { title: 'new' }, 'u-1', TEST_TENANT_ID);
 
     const call = vi.mocked(prisma.knowledge.update).mock.calls[0][0];
     expect(call.data.title).toBe('new');
     expect(call.data.content).toBeUndefined();
+  });
+
+  // PR #5-c: text フィールド変更時のみ embedding 再生成 (LLM 課金回避)
+  it('updateKnowledge: text フィールド変更時は embedding を再生成する', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
+    await updateKnowledge('k-1', { title: 'new title' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    expect(args.table).toBe('knowledges');
+    expect(args.rowId).toBe('k-1');
+    expect(args.tenantId).toBe(TEST_TENANT_ID);
+  });
+
+  it('updateKnowledge: text フィールド非変更 (visibility のみ) は embedding 再生成しない', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
+    await updateKnowledge('k-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 
   it('deleteKnowledge: 存在しなければ NOT_FOUND', async () => {

@@ -61,7 +61,7 @@ export async function PATCH(
 
   let risk;
   try {
-    risk = await updateRisk(riskId, parsed.data, user.id);
+    risk = await updateRisk(riskId, parsed.data, user.id, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

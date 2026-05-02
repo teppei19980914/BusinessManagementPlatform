@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
 import type { CreateRetrospectiveInput } from '@/lib/validators/retrospective';
 
 export type RetroDTO = {
@@ -180,6 +181,7 @@ export async function createRetrospective(
   projectId: string,
   input: CreateRetrospectiveInput,
   userId: string,
+  tenantId: string,
 ): Promise<RetroDTO> {
   const r = await prisma.retrospective.create({
     data: {
@@ -200,6 +202,24 @@ export async function createRetrospective(
       updatedBy: userId,
     },
   });
+
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存 (fail-safe)
+  await generateAndPersistEntityEmbedding({
+    table: 'retrospectives',
+    rowId: r.id,
+    tenantId,
+    userId,
+    text: composeRetrospectiveText({
+      planSummary: input.planSummary,
+      actualSummary: input.actualSummary,
+      goodPoints: input.goodPoints,
+      problems: input.problems,
+      improvements: input.improvements,
+      knowledgeToShare: input.knowledgeToShare ?? null,
+    }),
+    featureUnit: 'retrospective-embedding',
+  });
+
   return {
     id: r.id,
     projectId: r.projectId,
@@ -214,6 +234,33 @@ export async function createRetrospective(
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
   };
+}
+
+/**
+ * PR #5-c: Retrospective の embedding 生成用 text 合成 helper。
+ *
+ * 振り返りの主要な意味を担う text フィールドを合成。estimateGapFactors / scheduleGapFactors /
+ * qualityIssues / riskResponseEvaluation は補足項目で省略 (signal/noise 比を最適化)。
+ */
+function composeRetrospectiveText(fields: {
+  planSummary: string;
+  actualSummary: string;
+  goodPoints: string;
+  problems: string;
+  improvements: string;
+  knowledgeToShare: string | null;
+}): string {
+  return [
+    fields.planSummary,
+    fields.actualSummary,
+    fields.goodPoints,
+    fields.problems,
+    fields.improvements,
+    fields.knowledgeToShare ?? '',
+  ]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join('\n\n');
 }
 
 export async function confirmRetrospective(retroId: string, userId: string): Promise<void> {
@@ -252,6 +299,7 @@ export async function updateRetrospective(
     visibility?: string;
   },
   userId: string,
+  tenantId: string,
 ): Promise<void> {
   const existing = await prisma.retrospective.findFirst({
     where: { id: retroId, deletedAt: null },
@@ -259,6 +307,15 @@ export async function updateRetrospective(
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
+
+  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定
+  const textFieldsChanging =
+    input.planSummary !== undefined ||
+    input.actualSummary !== undefined ||
+    input.goodPoints !== undefined ||
+    input.problems !== undefined ||
+    input.improvements !== undefined ||
+    input.knowledgeToShare !== undefined;
 
   const data: Record<string, unknown> = { updatedBy: userId };
   if (input.conductedDate !== undefined) data.conductedDate = new Date(input.conductedDate);
@@ -275,7 +332,26 @@ export async function updateRetrospective(
   if (input.state !== undefined) data.state = input.state;
   if (input.visibility !== undefined) data.visibility = input.visibility;
 
-  await prisma.retrospective.update({ where: { id: retroId }, data });
+  const r = await prisma.retrospective.update({ where: { id: retroId }, data });
+
+  // PR #5-c: text 変更時のみ embedding を再生成
+  if (textFieldsChanging) {
+    await generateAndPersistEntityEmbedding({
+      table: 'retrospectives',
+      rowId: retroId,
+      tenantId,
+      userId,
+      text: composeRetrospectiveText({
+        planSummary: r.planSummary,
+        actualSummary: r.actualSummary,
+        goodPoints: r.goodPoints,
+        problems: r.problems,
+        improvements: r.improvements,
+        knowledgeToShare: r.knowledgeToShare,
+      }),
+      featureUnit: 'retrospective-embedding',
+    });
+  }
 }
 
 /**

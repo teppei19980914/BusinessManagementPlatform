@@ -21,6 +21,11 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
+// PR #5-c (T-03 Phase 2): createRetrospective / updateRetrospective から呼ばれる embedding helper をモック
+vi.mock('./embedding.service', () => ({
+  generateAndPersistEntityEmbedding: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   listRetrospectives,
   listAllRetrospectivesForViewer,
@@ -33,6 +38,9 @@ import {
   bulkUpdateRetrospectivesVisibilityFromList,
 } from './retrospective.service';
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
+
+const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 const now = new Date('2026-04-21T10:00:00Z');
 const conducted = new Date('2026-04-01T00:00:00Z');
@@ -175,12 +183,44 @@ describe('createRetrospective', () => {
         knowledgeToShare: null,
       } as never,
       'u-1',
+      TEST_TENANT_ID,
     );
 
     const call = vi.mocked(prisma.retrospective.create).mock.calls[0][0];
     expect(call.data.conductedDate).toBeInstanceOf(Date);
     expect(call.data.visibility).toBe('draft');
     expect(call.data.createdBy).toBe('u-1');
+  });
+
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding helper が呼ばれる (fail-safe)
+  it('createRetrospective: 本体作成後に generateAndPersistEntityEmbedding が呼ばれる', async () => {
+    vi.mocked(prisma.retrospective.create).mockResolvedValue(retRow({ id: 'ret-new' }) as never);
+
+    await createRetrospective(
+      'p-1',
+      {
+        conductedDate: '2026-04-01',
+        planSummary: '計画概要',
+        actualSummary: '実績概要',
+        goodPoints: 'good',
+        problems: 'prob',
+        improvements: 'imp',
+        knowledgeToShare: 'share',
+      } as never,
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    expect(args.table).toBe('retrospectives');
+    expect(args.rowId).toBe('ret-new');
+    expect(args.tenantId).toBe(TEST_TENANT_ID);
+    expect(args.userId).toBe('u-1');
+    expect(args.featureUnit).toBe('retrospective-embedding');
+    expect(args.text).toContain('計画概要');
+    expect(args.text).toContain('実績概要');
+    expect(args.text).toContain('share');
   });
 });
 
@@ -189,25 +229,25 @@ describe('updateRetrospective', () => {
 
   it('存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(null);
-    await expect(updateRetrospective('x', { planSummary: 'n' }, 'u-1')).rejects.toThrow(
-      'NOT_FOUND',
-    );
+    await expect(
+      updateRetrospective('x', { planSummary: 'n' }, 'u-1', TEST_TENANT_ID),
+    ).rejects.toThrow('NOT_FOUND');
   });
 
   it('作成者以外 (admin でも) は FORBIDDEN', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
-    await expect(updateRetrospective('ret-1', { planSummary: 'n' }, 'u-other')).rejects.toThrow(
-      'FORBIDDEN',
-    );
-    await expect(updateRetrospective('ret-1', { planSummary: 'n' }, 'admin-x')).rejects.toThrow(
-      'FORBIDDEN',
-    );
+    await expect(
+      updateRetrospective('ret-1', { planSummary: 'n' }, 'u-other', TEST_TENANT_ID),
+    ).rejects.toThrow('FORBIDDEN');
+    await expect(
+      updateRetrospective('ret-1', { planSummary: 'n' }, 'admin-x', TEST_TENANT_ID),
+    ).rejects.toThrow('FORBIDDEN');
   });
 
   it('作成者本人なら指定フィールドのみ data に積む', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
-    vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
-    await updateRetrospective('ret-1', { planSummary: 'new' }, 'u-1');
+    vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow() as never);
+    await updateRetrospective('ret-1', { planSummary: 'new' }, 'u-1', TEST_TENANT_ID);
 
     const call = vi.mocked(prisma.retrospective.update).mock.calls[0][0];
     expect(call.data).toEqual({ updatedBy: 'u-1', planSummary: 'new' });
@@ -215,11 +255,39 @@ describe('updateRetrospective', () => {
 
   it('conductedDate は Date に変換', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
-    vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
-    await updateRetrospective('ret-1', { conductedDate: '2026-05-01' }, 'u-1');
+    vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow() as never);
+    await updateRetrospective('ret-1', { conductedDate: '2026-05-01' }, 'u-1', TEST_TENANT_ID);
 
     const call = vi.mocked(prisma.retrospective.update).mock.calls[0][0];
     expect(call.data.conductedDate).toBeInstanceOf(Date);
+  });
+
+  // PR #5-c: text フィールド変更時のみ embedding 再生成 (LLM 課金回避)
+  it('updateRetrospective: text フィールド変更時は embedding を再生成する', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow() as never);
+
+    await updateRetrospective('ret-1', { planSummary: 'new plan' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    expect(args.table).toBe('retrospectives');
+    expect(args.rowId).toBe('ret-1');
+    expect(args.tenantId).toBe(TEST_TENANT_ID);
+  });
+
+  it('updateRetrospective: text フィールド非変更 (state/visibility のみ) は embedding 再生成しない', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow() as never);
+
+    await updateRetrospective(
+      'ret-1',
+      { state: 'confirmed', visibility: 'public' },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 });
 
