@@ -27,6 +27,7 @@
 
 import { prisma } from '@/lib/db';
 import { canTransition } from './state-machine';
+import { extractAutoTags } from './auto-tag.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { ProjectStatus } from '@/types';
 
@@ -187,7 +188,27 @@ export type CreateProjectInput = {
 export async function createProject(
   input: CreateProjectInput,
   userId: string,
+  tenantId: string,
 ): Promise<ProjectDTO> {
+  // PR #3-b (T-03 Phase 1): purpose / background / scope から自動タグ抽出。
+  //   失敗時 (rate_limited / llm_error 等) はサイレントに userInput 単独で続行 (fail-safe)。
+  //   詳細は src/services/auto-tag.service.ts コメント参照。
+  const autoTagResult = await extractAutoTags({
+    purpose: input.purpose,
+    background: input.background,
+    scope: input.scope,
+    tenantId,
+    userId,
+  });
+  const mergedTags = mergeTags(
+    {
+      businessDomainTags: input.businessDomainTags ?? [],
+      techStackTags: input.techStackTags ?? [],
+      processTags: input.processTags ?? [],
+    },
+    autoTagResult.ok ? autoTagResult.tags : null,
+  );
+
   const project = await prisma.project.create({
     data: {
       name: input.name,
@@ -198,9 +219,9 @@ export async function createProject(
       outOfScope: input.outOfScope,
       devMethod: input.devMethod,
       contractType: input.contractType ?? null,
-      businessDomainTags: (input.businessDomainTags || []) as Prisma.InputJsonValue,
-      techStackTags: (input.techStackTags || []) as Prisma.InputJsonValue,
-      processTags: (input.processTags || []) as Prisma.InputJsonValue,
+      businessDomainTags: mergedTags.businessDomainTags as Prisma.InputJsonValue,
+      techStackTags: mergedTags.techStackTags as Prisma.InputJsonValue,
+      processTags: mergedTags.processTags as Prisma.InputJsonValue,
       plannedStartDate: new Date(input.plannedStartDate),
       plannedEndDate: new Date(input.plannedEndDate),
       notes: input.notes,
@@ -228,7 +249,58 @@ export async function updateProject(
   projectId: string,
   input: UpdateProjectInput,
   userId: string,
+  tenantId: string,
 ): Promise<ProjectDTO> {
+  // PR #3-b (T-03 Phase 1): purpose / background / scope のいずれかが更新対象なら、
+  //   更新後の text を組み立てて自動タグ抽出を行う。text 変更がなければ呼ばない
+  //   (= LLM 課金を発生させない)。
+  const textFieldsChanging =
+    input.purpose !== undefined ||
+    input.background !== undefined ||
+    input.scope !== undefined;
+
+  let mergedAutoTags: AutoTagAxes | null = null;
+  if (textFieldsChanging) {
+    // 変更されない text フィールドは現行値を採用するため、現行 row を取得。
+    const current = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        purpose: true,
+        background: true,
+        scope: true,
+        businessDomainTags: true,
+        techStackTags: true,
+        processTags: true,
+      },
+    });
+    if (current != null) {
+      const autoTagResult = await extractAutoTags({
+        purpose: input.purpose ?? current.purpose,
+        background: input.background ?? current.background,
+        scope: input.scope ?? current.scope,
+        tenantId,
+        userId,
+      });
+      if (autoTagResult.ok) {
+        // ユーザがタグも同時に更新している場合はそれを優先、更新していない軸は
+        // DB 現行値 (= 過去の手動入力 + 過去の auto-extract) を継承して merge する。
+        mergedAutoTags = mergeTags(
+          {
+            businessDomainTags:
+              input.businessDomainTags ??
+              ((current.businessDomainTags as string[] | null) ?? []),
+            techStackTags:
+              input.techStackTags ??
+              ((current.techStackTags as string[] | null) ?? []),
+            processTags:
+              input.processTags ?? ((current.processTags as string[] | null) ?? []),
+          },
+          autoTagResult.tags,
+        );
+      }
+    }
+  }
+
   const data: Prisma.ProjectUpdateInput = { updatedBy: userId };
 
   if (input.name !== undefined) data.name = input.name;
@@ -242,12 +314,21 @@ export async function updateProject(
   if (input.outOfScope !== undefined) data.outOfScope = input.outOfScope;
   if (input.devMethod !== undefined) data.devMethod = input.devMethod;
   if (input.contractType !== undefined) data.contractType = input.contractType;
-  if (input.businessDomainTags !== undefined)
-    data.businessDomainTags = input.businessDomainTags as Prisma.InputJsonValue;
-  if (input.techStackTags !== undefined)
-    data.techStackTags = input.techStackTags as Prisma.InputJsonValue;
-  if (input.processTags !== undefined)
-    data.processTags = input.processTags as Prisma.InputJsonValue;
+
+  // PR #3-b: auto-tag 成功時は merge 結果で上書き、失敗時は input をそのまま反映 (fail-safe)。
+  if (mergedAutoTags != null) {
+    data.businessDomainTags = mergedAutoTags.businessDomainTags as Prisma.InputJsonValue;
+    data.techStackTags = mergedAutoTags.techStackTags as Prisma.InputJsonValue;
+    data.processTags = mergedAutoTags.processTags as Prisma.InputJsonValue;
+  } else {
+    if (input.businessDomainTags !== undefined)
+      data.businessDomainTags = input.businessDomainTags as Prisma.InputJsonValue;
+    if (input.techStackTags !== undefined)
+      data.techStackTags = input.techStackTags as Prisma.InputJsonValue;
+    if (input.processTags !== undefined)
+      data.processTags = input.processTags as Prisma.InputJsonValue;
+  }
+
   if (input.plannedStartDate !== undefined)
     data.plannedStartDate = new Date(input.plannedStartDate);
   if (input.plannedEndDate !== undefined)
@@ -261,6 +342,46 @@ export async function updateProject(
   });
 
   return toProjectDTO(project);
+}
+
+/**
+ * PR #3-b (T-03 Phase 1): 3 軸タグの集約型 + 重複除去マージ helper。
+ * createProject / updateProject 両方から呼ばれる。
+ */
+type AutoTagAxes = {
+  businessDomainTags: string[];
+  techStackTags: string[];
+  processTags: string[];
+};
+
+function mergeTags(
+  user: AutoTagAxes,
+  auto: AutoTagAxes | null,
+): AutoTagAxes {
+  return {
+    businessDomainTags: dedupUnion(user.businessDomainTags, auto?.businessDomainTags ?? []),
+    techStackTags: dedupUnion(user.techStackTags, auto?.techStackTags ?? []),
+    processTags: dedupUnion(user.processTags, auto?.processTags ?? []),
+  };
+}
+
+/**
+ * 2 配列を順序保持で union (重複除去)。
+ * - 順序は [...user, ...auto] でユーザ入力を先頭に
+ * - case-sensitive 比較 (タグの表記揺れも別タグとして許容: "EC" と "ec" は別物)
+ * - 空文字や全角空白のみは除外
+ */
+function dedupUnion(a: string[], b: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of [...a, ...b]) {
+    const trimmed = v.trim();
+    if (trimmed.length === 0) continue;
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 /**

@@ -12,6 +12,14 @@ import type { SystemRole, ProjectRole, ProjectStatus } from '@/types';
 
 export type AuthenticatedUser = {
   id: string;
+  /**
+   * PR #3-b (T-03): ユーザの所属テナント ID。
+   *   後続の API → service 呼び出しでテナント認可境界 (requireSameTenant) や
+   *   LLM 呼び出し計測 (withMeteredLLM) に渡される。
+   *   v1 では default-tenant 単一運用のため全ユーザ同値だが、v1.x マルチテナント
+   *   UI 提供時に複数テナントに広がる前提で配置済み。
+   */
+  tenantId: string;
   name: string;
   email: string;
   systemRole: SystemRole;
@@ -27,6 +35,7 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUser | NextRe
   }
   return {
     id: session.user.id,
+    tenantId: session.user.tenantId,
     name: session.user.name,
     email: session.user.email,
     systemRole: session.user.systemRole as SystemRole,
