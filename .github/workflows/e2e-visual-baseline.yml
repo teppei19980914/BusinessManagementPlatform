@@ -62,7 +62,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # PR #4 (T-03 Phase 2): pgvector プリインストール済イメージに切替 (e2e.yml と同方針)。
+        # 標準 postgres:16 は vector 拡張を含まず CREATE EXTENSION vector が失敗する。
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

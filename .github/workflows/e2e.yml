@@ -47,7 +47,12 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # PR #4 (T-03 Phase 2): pgvector 拡張プリインストール済みの公式イメージに切替。
+        #   標準 postgres:16 は vector 拡張の control file を含まないため
+        #   `CREATE EXTENSION vector` が "extension not available" エラーで失敗する。
+        #   pgvector/pgvector:pg16 は PostgreSQL 16 + pgvector を公式に統合した
+        #   イメージで、本番 Supabase の挙動と整合する。
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
