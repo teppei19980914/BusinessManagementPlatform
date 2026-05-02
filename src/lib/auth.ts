@@ -94,6 +94,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         return {
           id: user.id,
+          // PR #2-b (T-03): テナント境界の起点。session.user.tenantId に伝播し、
+          //   後続のすべての API ルートが requireSameTenant() で同テナント検証する。
+          tenantId: user.tenantId,
           name: user.name,
           email: user.email,
           systemRole: user.systemRole,
