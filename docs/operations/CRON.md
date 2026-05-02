@@ -16,6 +16,7 @@
 | ウォームアップ保険 | Vercel Cron (Hobby プラン) | `GET /api/health` | 日次 00:00 UTC | 不要 |
 | 未使用アカウントロック | Vercel Cron | `POST /api/admin/users/lock-inactive` | 日次 03:00 UTC | `Authorization: Bearer ${CRON_SECRET}` または admin セッション |
 | **アプリ内通知 (PR feat/notifications-mvp)** | Vercel Cron | `POST /api/cron/daily-notifications` | **日次 22:00 UTC (= JST 翌日 7:00)** | `Authorization: Bearer ${CRON_SECRET}` のみ (cron 専用) |
+| **Tenant 月次リセット (PR #2-d / T-03)** | Vercel Cron | `POST /api/cron/tenant-monthly-reset` | **毎月 1 日 00:00 UTC (= JST 09:00)** | `Authorization: Bearer ${CRON_SECRET}` のみ |
 
 ※ `/api/cron/cleanup-accounts` は PR #115 で削除 (デッドコード)。`/api/admin/users/lock-inactive` に一本化した (旧名 `cleanup-inactive`、feat/account-lock で改名)。vercel.json の `crons` も同 endpoint を参照。
 
@@ -43,6 +44,40 @@ curl -X POST https://tasukiba.vercel.app/api/cron/daily-notifications \
 ```
 
 `200 OK` + `data.source='cron'` で正常動作。
+
+### 「Tenant 月次リセット」cron の挙動 (PR #2-d / T-03、2026-05-02)
+
+提案エンジン v2 の課金モデル運用に必須のバッチ。**毎月 1 日 00:00 UTC** (= JST 09:00) に実行。
+
+**処理内容** (1 リクエストで以下を順次実行):
+
+1. **月初リセット**: `lastResetAt < 当月初 (UTC)` のテナントの `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセットし、`lastResetAt` を当月初に更新
+2. **プラン変更予約適用**: `scheduledPlanChangeAt <= now` のテナントに `scheduledNextPlan` を `plan` として適用 (Beginner ダウングレードの翌月適用)。適用後は scheduled 列を NULL に戻す
+
+**冪等性保証**: 再実行しても結果は同じ。Vercel Cron の at-least-once 配信仕様で複数回起動されても安全。
+
+**手動実行** (動作確認用):
+
+```bash
+curl -X POST https://tasukiba.vercel.app/api/cron/tenant-monthly-reset \
+  -H "Authorization: Bearer ${CRON_SECRET}"
+```
+
+レスポンス例 (3 テナントをリセット、1 テナントのプラン変更を適用):
+```json
+{
+  "data": {
+    "source": "cron",
+    "resetCount": 3,
+    "planAppliedCount": 1,
+    "invalidPlanSkippedCount": 0
+  }
+}
+```
+
+**監視ポイント**:
+- `resetCount` が 0 が連続 → cron 落ち or 全テナントが既にリセット済 (= 当月内 2 回目以降の実行は正常 0)
+- `invalidPlanSkippedCount > 0` → DB 不整合の検知。`scheduledNextPlan` に未知の値が混入。`system_error_logs` で当該テナント ID を確認
 
 ### 「未使用アカウントロック」の挙動 (feat/account-lock 改修、2026-04-25)
 
