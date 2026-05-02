@@ -1,0 +1,68 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/session-start-git.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/session-start-knowledge-check.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/block-dangerous-edit.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform\" && pnpm prettier --write $(echo $CLAUDE_TOOL_INPUT | grep -oP '\"file_path\":\\s*\"\\K[^\"]+') 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/secret-scan.sh\""
+          },
+          {
+            "type": "command",
+            "command": "cd \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform\" && echo '=== デプロイチェック ===' && echo '--- 静的解析 ---' && pnpm lint 2>&1 && echo '--- テスト ---' && pnpm test 2>&1 && echo '=== チェック完了 ==='"
+          },
+          {
+            "type": "command",
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/auto-commit.sh\""
+          },
+          {
+            "type": "prompt",
+            "prompt": "このセッションで編集したファイルについて、以下の観点で最終チェックを行い、問題があれば報告してください。問題がなければ「チェック完了: 問題なし」と報告してください。\n\n1. 横展開チェック: 修正した問題と同じパターンが他ファイルに残っていないか (実際に grep して証拠提示)\n2. セキュリティチェック: ユーザー入力のサニタイズ漏れ、生SQL、ハードコードされた機密情報がないか\n3. パフォーマンスチェック: ループ内DB問い合わせ、不要な再描画、不要なProvider watchがないか\n4. テスト整合性: 変更した場合、テストコードの旧文言が残っていないか\n5. ドキュメント更新: 機能追加・仕様変更があった場合、ドキュメントへの反映が必要か確認\n6. **ナレッジ追記チェック (KDD Step 4/6)**: 本セッションで以下のいずれかに該当した場合、`docs/developer/DEVELOPER_GUIDE.md` または `docs/developer/E2E_LESSONS_LEARNED.md` に新セクションが追加されているか必ず確認する: (a) 罠/落とし穴に遭遇 (b) 新しい実装パターンを採用 (c) CI / E2E / Vercel build エラーを修正 (d) 横展開が必要な発見があった (e) 「次回も同じ作業をしそう」と感じた手順がある。**commit message に記載しただけでは不十分** — 常設ナレッジ (上記 2 ファイル) への追記が必須。漏れがあれば該当セクションを追記してから「チェック完了」を報告すること"
+          }
+        ]
+      }
+    ]
+  }
+}
