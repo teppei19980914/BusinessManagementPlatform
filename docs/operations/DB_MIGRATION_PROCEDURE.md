@@ -56,6 +56,30 @@ npx prisma generate
 - pgbouncer (port 6543) は prepared statement 不可で DDL 失敗するため `DIRECT_URL` で **session pooler (port 5432)** を使う必要あり
 - pgvector 等の **拡張は事前に Supabase Dashboard → Extensions で手動有効化**しておくこと (`CREATE EXTENSION` は Supabase 権限制限で migration 内では失敗するケースあり)
 
+##### ⚠ よくある間違い: DIRECT_URL に「Direct connection」URL を使うと P1001 エラー
+
+Supabase Dashboard の Connection string ページには **3 種類の URL** が表示される。Vercel に登録するときに **どれを使うかを必ず確認**すること。
+
+| URL 種別 | Host | Port | IP | Vercel から使えるか |
+|---|---|---|---|---|
+| ❌ **Direct connection** | `db.[ref].supabase.co` | 5432 | **IPv6 のみ** | **❌ 使えない** (P1001 エラー) |
+| ✅ **Session Pooler** (Supavisor) | `aws-1-[region].pooler.supabase.com` | **5432** | IPv4 互換 | ✅ **DIRECT_URL に使う** |
+| ✅ **Transaction Pooler** (Supavisor) | `aws-1-[region].pooler.supabase.com` | 6543 | IPv4 互換 | ✅ DATABASE_URL に使う (`?pgbouncer=true`) |
+
+**Vercel build が失敗する典型例**:
+```
+Error: P1001: Can't reach database server at db.[ref].supabase.co:5432
+```
+→ DIRECT_URL に **Direct connection** (`db.[ref].supabase.co`) を登録している。**Session Pooler** (`aws-1-[region].pooler.supabase.com:5432`) に変更すれば解消。
+
+**正しい URL の取得手順**:
+1. Supabase Dashboard を開く
+2. 左サイドバーの **Connect** ボタン (上部にも) をクリック
+3. **Connection string** タブ
+4. **Session pooler** タブを選択 (Direct connection ではない)
+5. 表示された URL をコピーして Vercel `DIRECT_URL` に貼り付け
+6. ホスト名が `pooler.supabase.com` になっていることを再確認
+
 **確認手順**:
 1. Vercel ビルドログで `Applying migration X_Y_Z` 等のメッセージを確認
 2. Supabase SQL Editor で `SELECT * FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 5;` を実行し、最新 migration が適用されているか確認

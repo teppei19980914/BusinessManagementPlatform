@@ -4736,3 +4736,30 @@ DB クエリで User 行を確認すると `is_active=true / permanent_lock=fals
 - [ ] **本番障害の症状が「特定の DB クエリだけ失敗」ならスキーマ drift をまず疑う**: 認証 (毎回 SELECT *) は失敗するが、明示 `select` を持つクエリ (lock-status の `select: { permanentLock: true, lockedUntil: true }` 等) は通る — この症状が出たら 100% スキーマ drift
 - [ ] **Prisma の `_prisma_migrations` テーブルは本番調査の最初の確認先**: `SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 10;` で適用履歴が一目で分かる。コード側の `prisma/migrations/` ディレクトリ内容と突合すれば未適用 migration がすぐ特定できる
 
+---
+
+## 5.X+2 Supabase の DIRECT_URL は「Direct connection」ではなく「Session Pooler」を使う (PR fix/missing-migrations 続編 / 2026-05-03)
+
+### 背景
+
+PR #234 で `vercel.json` に `prisma migrate deploy` を組み込んだが、Vercel build がエラー `P1001: Can't reach database server at db.[ref].supabase.co:5432` で失敗した。
+
+調査の結果、Supabase Dashboard の Connection string ページには **3 種類の URL** が表示されており、ユーザは「Direct connection」(host=`db.[ref].supabase.co`) を `DIRECT_URL` に設定していた。これは **IPv6 のみ**で公開されており、Vercel build 環境 (IPv4 のみ) からは到達できない。
+
+正解は **Session Pooler** (Supavisor、host=`aws-1-[region].pooler.supabase.com:5432`) を使うこと。同じ host で port 5432 が Session、6543 が Transaction。Session は DDL 可、Transaction は DDL 不可。
+
+### URL 種別の整理
+
+| URL 種別 | Host | Port | IP | 用途 |
+|---|---|---|---|---|
+| Direct connection | `db.[ref].supabase.co` | 5432 | **IPv6 のみ** | ローカル開発 (IPv6 環境) |
+| Session Pooler | `aws-1-[region].pooler.supabase.com` | **5432** | IPv4 互換 | **Vercel migrate (DIRECT_URL)** |
+| Transaction Pooler | `aws-1-[region].pooler.supabase.com` | 6543 | IPv4 互換 | アプリ runtime (DATABASE_URL, `?pgbouncer=true`) |
+
+### 抽出したルール
+
+- [ ] **Supabase の DIRECT_URL は「Session Pooler」を使う (Direct connection ではない)**: `db.[ref].supabase.co` は IPv6 のみで Vercel から使えない。同じ port 5432 でも host が異なる: `aws-1-[region].pooler.supabase.com:5432` が正解
+- [ ] **「Connection string ページに 3 種類ある」事実を最初に把握**: Direct / Session Pooler / Transaction Pooler。それぞれ用途が異なり、UI 上のタブで切替えて表示する。Supabase の docs を読まずに Dashboard で適当にコピーすると Direct を選んでしまいがち
+- [ ] **Vercel build エラー `P1001: Can't reach ... db.[ref].supabase.co:5432` を見たら 100% IP プロトコル不整合**: ホスト名が `db.` で始まっている時点で Direct connection (IPv6 only)。`pooler.supabase.com` に書き換えれば解消する。他のエラーパターン (DNS / firewall / credentials) と混同しないこと
+- [ ] **`.env.example` の Supabase サンプル URL は `pooler.supabase.com` で書く**: `db.[ref].supabase.co` のサンプルを `.env.example` に書くと、ユーザがそのまま Vercel に登録して事故る。本番想定なら必ず Session Pooler 形式 (本リポジトリの `.env.example` も誤った Direct connection サンプルが残っていたため、フック保護を解除のうえ修正対象)
+
