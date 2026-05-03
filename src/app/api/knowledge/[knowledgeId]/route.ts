@@ -72,7 +72,7 @@ export async function PATCH(
 
   let knowledge;
   try {
-    knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id);
+    knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

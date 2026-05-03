@@ -37,6 +37,7 @@ import { prisma } from '@/lib/db';
 import { withMeteredLLM } from '@/lib/llm/metered';
 import { voyageEmbed } from '@/lib/llm/voyage-client';
 import { EMBEDDING_DIMENSIONS } from '@/config/llm';
+import { recordError } from './error-log.service';
 
 // ================================================================
 // 公開型
@@ -433,4 +434,97 @@ export async function searchSimilar(
   return rows
     .map((r) => ({ id: r.id, score: Number(r.score) }))
     .filter((r) => r.score >= minScore);
+}
+
+// ================================================================
+// 公開関数: エンティティ embedding 生成 + 保存の高レベル helper (PR #5-c)
+// ================================================================
+
+/**
+ * エンティティの content_embedding を生成 + 保存する高レベル helper。
+ * Knowledge / RiskIssue / Retrospective / Project すべての service 層から共通利用される。
+ *
+ * 動作:
+ *   1. text を trim、空ならサイレント終了 (LLM 呼び出しなし、課金回避)
+ *   2. generateEmbedding (withMeteredLLM 経由 = 課金 / rate limit / ApiCallLog 記録)
+ *   3. 失敗時 (rate_limited / llm_error 等) は recordError (warn) でログのみ → return
+ *   4. 成功時は persistEmbedding (raw SQL で vector cast)
+ *   5. persist 失敗時も recordError (error) でログのみ → return (本体に throw 伝播させない)
+ *
+ * **fail-safe 設計**:
+ *   - embedding の生成 / 保存失敗は本体 INSERT/UPDATE をロールバックさせない
+ *   - content_embedding NULL のまま運用継続を許容
+ *   - suggestion engine が tag/pg_trgm 軸のみで動作する縮退モードに自動移行
+ *
+ * @example
+ *   await generateAndPersistEntityEmbedding({
+ *     table: 'knowledges',
+ *     rowId: knowledge.id,
+ *     tenantId,
+ *     userId,
+ *     text: composeKnowledgeText(input),
+ *     featureUnit: 'knowledge-embedding',
+ *   });
+ */
+export async function generateAndPersistEntityEmbedding(args: {
+  /** 保存先テーブル (white-list 型で SQL injection 経路ゼロ) */
+  table: EmbeddingSearchTable;
+  /** 対象 row ID (UUID) */
+  rowId: string;
+  /** テナント境界 (= persistEmbedding の WHERE 条件) */
+  tenantId: string;
+  /** リクエストユーザ ID (cron / システム実行は undefined) */
+  userId?: string;
+  /** ベクトル化対象 text (空文字なら呼び出さず終了) */
+  text: string;
+  /** ApiCallLog に記録される featureUnit ('knowledge-embedding' 等) */
+  featureUnit: string;
+}): Promise<void> {
+  const trimmed = args.text.trim();
+  if (trimmed.length === 0) {
+    // 全 text 空 (新規 + ユーザがいずれも空文字で送信) の場合は LLM 呼ばず終了
+    return;
+  }
+
+  const result = await generateEmbedding({
+    text: trimmed,
+    featureUnit: args.featureUnit,
+    tenantId: args.tenantId,
+    userId: args.userId,
+  });
+
+  if (!result.ok) {
+    await recordError({
+      severity: 'warn',
+      source: 'server',
+      message: `embedding generation failed for ${args.table}/${args.rowId}: ${result.reason}`,
+      userId: args.userId,
+      context: {
+        kind: `${args.table}_embedding_failure`,
+        table: args.table,
+        rowId: args.rowId,
+        tenantId: args.tenantId,
+        reason: result.reason,
+      },
+    });
+    return;
+  }
+
+  try {
+    await persistEmbedding(args.table, args.rowId, args.tenantId, result.embedding);
+  } catch (error) {
+    await recordError({
+      severity: 'error',
+      source: 'server',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      userId: args.userId,
+      context: {
+        kind: `${args.table}_embedding_persist_failure`,
+        table: args.table,
+        rowId: args.rowId,
+        tenantId: args.tenantId,
+      },
+    });
+  }
 }

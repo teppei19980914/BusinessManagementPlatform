@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { CreateKnowledgeInput } from '@/lib/validators/knowledge';
 
@@ -314,6 +315,7 @@ export async function getKnowledge(
 export async function createKnowledge(
   input: CreateKnowledgeInput,
   userId: string,
+  tenantId: string,
 ): Promise<KnowledgeDTO> {
   const k = await prisma.knowledge.create({
     data: {
@@ -342,7 +344,52 @@ export async function createKnowledge(
     },
   });
 
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存。
+  //   失敗時はサイレントにスキップ (本体保存は成功、suggestion engine は 2 軸縮退モード)。
+  await generateAndPersistEntityEmbedding({
+    table: 'knowledges',
+    rowId: k.id,
+    tenantId,
+    userId,
+    text: composeKnowledgeText({
+      title: input.title,
+      background: input.background,
+      content: input.content,
+      result: input.result,
+      conclusion: input.conclusion ?? null,
+      recommendation: input.recommendation ?? null,
+    }),
+    featureUnit: 'knowledge-embedding',
+  });
+
   return toKnowledgeDTO(k);
+}
+
+/**
+ * PR #5-c: Knowledge の embedding 生成用 text 合成 helper。
+ *
+ * 意味検索の質を高めるため、Knowledge の主要な意味を担う text フィールドを改行結合して
+ * Voyage AI に渡す。null フィールドは除外。
+ */
+function composeKnowledgeText(fields: {
+  title: string;
+  background: string;
+  content: string;
+  result: string;
+  conclusion: string | null;
+  recommendation: string | null;
+}): string {
+  return [
+    fields.title,
+    fields.background,
+    fields.content,
+    fields.result,
+    fields.conclusion ?? '',
+    fields.recommendation ?? '',
+  ]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join('\n\n');
 }
 
 /**
@@ -358,6 +405,7 @@ export async function updateKnowledge(
   knowledgeId: string,
   input: Partial<CreateKnowledgeInput>,
   userId: string,
+  tenantId: string,
 ): Promise<KnowledgeDTO> {
   const existing = await prisma.knowledge.findFirst({
     where: { id: knowledgeId, deletedAt: null },
@@ -365,6 +413,15 @@ export async function updateKnowledge(
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
+
+  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定。変更なしなら embedding 再生成しない。
+  const textFieldsChanging =
+    input.title !== undefined ||
+    input.background !== undefined ||
+    input.content !== undefined ||
+    input.result !== undefined ||
+    input.conclusion !== undefined ||
+    input.recommendation !== undefined;
 
   const data: Prisma.KnowledgeUpdateInput = { updater: { connect: { id: userId } } };
 
@@ -391,6 +448,25 @@ export async function updateKnowledge(
       knowledgeProjects: { select: { projectId: true } },
     },
   });
+
+  // PR #5-c: text 変更時のみ embedding を再生成 (変更なしは LLM 課金回避)
+  if (textFieldsChanging) {
+    await generateAndPersistEntityEmbedding({
+      table: 'knowledges',
+      rowId: knowledgeId,
+      tenantId,
+      userId,
+      text: composeKnowledgeText({
+        title: k.title,
+        background: k.background,
+        content: k.content,
+        result: k.result,
+        conclusion: k.conclusion,
+        recommendation: k.recommendation,
+      }),
+      featureUnit: 'knowledge-embedding',
+    });
+  }
 
   return toKnowledgeDTO(k);
 }

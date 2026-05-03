@@ -60,7 +60,7 @@ export async function POST(
     );
   }
 
-  const risk = await createRisk(projectId, parsed.data, user.id);
+  const risk = await createRisk(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,
