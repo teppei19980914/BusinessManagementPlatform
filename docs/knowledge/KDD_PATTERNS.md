@@ -4763,3 +4763,27 @@ PR #234 で `vercel.json` に `prisma migrate deploy` を組み込んだが、Ve
 - [ ] **Vercel build エラー `P1001: Can't reach ... db.[ref].supabase.co:5432` を見たら 100% IP プロトコル不整合**: ホスト名が `db.` で始まっている時点で Direct connection (IPv6 only)。`pooler.supabase.com` に書き換えれば解消する。他のエラーパターン (DNS / firewall / credentials) と混同しないこと
 - [ ] **`.env.example` の Supabase サンプル URL は `pooler.supabase.com` で書く**: `db.[ref].supabase.co` のサンプルを `.env.example` に書くと、ユーザがそのまま Vercel に登録して事故る。本番想定なら必ず Session Pooler 形式 (本リポジトリの `.env.example` も誤った Direct connection サンプルが残っていたため、フック保護を解除のうえ修正対象)
 
+---
+
+## 5.X+3 LLM 機能の本番投入には「緊急停止フラグ」を最初から仕込む (PR #8 / T-03 リリース準備 / 2026-05-03)
+
+### 背景
+
+T-03 提案エンジン v2 のリリース準備 (PR #8) で、**外部 LLM API (Anthropic / Voyage) に依存する機能を本番投入する以上、緊急時に即座に停止できる仕組み**が必須と判断。
+
+想定される緊急停止シナリオ:
+- LLM API の障害で大量エラーが発生し、ユーザ体験が劣化している
+- 月次予算超過で全テナントへの課金を即座に止めたい
+- リグレッション (新リリースでのバグ) を切り分けるため一時無効化したい
+- 想定外の使用量スパイクで Voyage 200M 無料枠を食い潰しそう
+
+DB ベースのフラグだと「DB アクセス不能時に効かない」ジレンマがあるため、**環境変数 (`SUGGESTION_ENGINE_DISABLED=true`) で即時切替**できる仕組みを採用。Vercel 環境変数 + Redeploy で 2 分以内に全停止可能。
+
+### 抽出したルール
+
+- [ ] **外部 API に依存する機能は「緊急停止フラグ」を最初から実装する**: 後付けで追加すると、緊急時に「実装してからデプロイ」で間に合わない。最初の PR で env var チェックを 1 行入れておく
+- [ ] **緊急停止フラグは環境変数ベース、DB ベースは避ける**: 障害時に DB にアクセスできない可能性がある。Vercel 環境変数なら build artifact に含まれるため DB 障害でも有効
+- [ ] **緊急停止時の挙動は「空配列を返す」が安全**: error throw だと連鎖障害を起こすため、UI に対しては「候補なし」と同等の応答を返すのが優雅
+- [ ] **緊急停止フラグの切替手順を運用ドキュメントに必ず明記**: コードを書いた人だけが知っている状態だと、緊急時に他のメンバーが対応できない。`docs/operations/T-03_RELEASE_NOTES.md §緊急停止手順` に scenario 別の SQL/env var 操作を文書化
+- [ ] **テスト時は環境変数を beforeEach で reset、afterAll で原状復帰**: グローバル状態を変える feature flag のテストは並列実行で他テストに影響する。明示的に save/restore を記述する
+
