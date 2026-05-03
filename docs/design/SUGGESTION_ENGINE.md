@@ -4,23 +4,48 @@
 
 ---
 
-## 概要 — 一目で分かる構成 (2026-05-03 時点)
+## 概要 — 提案機能の全体像とコスト構造 (2026-05-03 時点)
 
-提案エンジンは「**過去の資産 (Knowledge / 過去課題 / 振り返り) を、新しいプロジェクトに自動で結びつける**」サービスの核心機能。本セクションでは、運用者が「何が動いていて、どの API キーが何に使われているか」を一目で把握できるよう、3 つの構成要素を整理する。
+本セクションは、**事業継続判断の根拠** (どの操作で課金が発生し、月次でいくらかかるか) を非エンジニアでも理解できる粒度で整理する。**コストは事業存続に直結する重要トピック**であり、機能仕様と一体で把握すべき情報として本ドキュメントに常設する。
 
-### 構成要素マップ
+提案エンジンは「**過去の資産 (Knowledge / 過去課題 / 振り返り) を、新しいプロジェクトに自動で結びつける**」サービスの核心機能。3 つの外部サービス (Anthropic / Voyage / Supabase pgvector) を組み合わせて実現する。
 
-| 構成要素 | 担当 | 課金体系 | 必要環境変数 / 設定 | 実装状況 |
-|---|---|---|---|---|
-| **Supabase pgvector** | 1024 次元のベクトル類似度検索 (Cosine Similarity) | DB 容量制限内なら無料 | Supabase ダッシュボードで `vector` 拡張を有効化 (DB 設定) | ✅ 6/1 リリース時稼働 |
-| **VOYAGE_API_KEY** (Voyage AI `voyage-4-lite`) | テキスト → 1024 次元ベクトル変換 (entity 保存時 + 検索クエリ時) | **200M token/月まで完全無料**、超過分は $0.02/M token | Vercel 環境変数 | ✅ 6/1 リリース時稼働 |
-| **ANTHROPIC_API_KEY** (Claude Haiku/Sonnet) | プロジェクト作成時の **自動タグ抽出** (purpose/background/scope → 各種タグ) | 完全従量課金 (無料枠なし)、Haiku 約 ¥1.6/M input token | Vercel 環境変数 | ✅ 6/1 リリース時稼働 (タグ抽出のみ) |
-| Anthropic による「上位 N 件への絞り込み再ランキング」 | (将来 Phase 3 構想) | — | — | ❌ **6/1 リリース時点で未実装**。Phase 3 で追加予定 |
+### A. API 呼び出しトリガー (誰がいつ何を呼ぶか)
 
-### スコアリングの仕組み (3 軸合算)
+提案機能の API 呼び出しは **3 つのトリガー** に分類される。これ以外の操作で外部 API は呼ばれない。
 
-提案候補の最終スコアは、3 つの類似度の重み付き合算で算出する。
+| # | トリガー | 呼び出される API | 1 操作あたり呼び出し回数 |
+|---|---|---|---|
+| **①** | **Project 作成・更新時** (purpose/background/scope の text 変更時) | **Anthropic** + **Voyage** | Anthropic 1 回 + Voyage 1 回 = **2 回** |
+| **②** | **資産作成・更新時** (Knowledge / RiskIssue / Retrospective の text 変更時) | **Voyage** | Voyage **1 回** |
+| **③** | **提案機能実行時** (Project 作成後の提案モーダル / 参考タブ / 課題起票画面の inline 提示) | **Supabase pgvector のみ** (DB 内処理で完結) | **外部 API 呼び出しなし (¥0)** |
 
+**重要**: トリガー③ では **何度提案画面を開いても追加課金は発生しない**。Voyage は事前にトリガー①②で生成・保存済みの embedding を pgvector が読み出して比較するだけのため、検索・表示時に外部 API は不要。これが本サービスのアーキテクチャ上の優位性で、外部 API 障害時 (Voyage 全停止) でも提案機能は止まらない fail-safe 性を担保する。
+
+### B. 機能概要 (各トリガーで何が起きるか)
+
+#### B-1. Project 作成・更新時 (トリガー①)
+
+`purpose` / `background` / `scope` の text から **Anthropic が自動でタグを抽出**。プランによってモデルが切り替わる。
+
+| プラン | 使用モデル | 1 回あたりの実コスト (推定) |
+|---|---|---|
+| Beginner / Expert | Claude **Haiku** | 入力 5K token + 出力 0.5K token ≒ **¥1.1 / 回** |
+| Pro | Claude **Sonnet** | 入力 5K token + 出力 0.5K token ≒ **¥3.4 / 回** |
+
+同時に **Voyage が text → 1024 次元 embedding を生成** し、Supabase pgvector の `content_embedding` 列に保存する (全プラン共通)。
+
+#### B-2. 資産作成・更新時 (トリガー②)
+
+Knowledge / RiskIssue / Retrospective の主要 text フィールドから **Voyage が embedding を生成** し、Supabase pgvector に保存する (全プラン共通)。Anthropic は呼ばれない (自動タグ抽出は Project 限定機能)。
+
+text が変更されない更新 (visibility のみの変更等) では Voyage は呼ばれない (LLM 課金回避設計)。
+
+#### B-3. 提案機能実行時 (トリガー③)
+
+Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 内で計算**。3 軸合算スコアで候補を並べ替え、上位 N 件を返す。**外部 API 呼び出しは発生しない**。
+
+**3 軸合算スコア式**:
 ```
 最終スコア = (タグ類似度 × 0.3) + (文字列類似度 × 0.2) + (意味類似度 × 0.5)
                 ↑                    ↑                      ↑
@@ -30,49 +55,139 @@
 
 | 軸 | 重み | 担当 | データソース |
 |---|---|---|---|
-| **タグ類似度** | 0.3 | Project タグと候補側タグの Jaccard 係数 | Project / Knowledge の `businessDomainTags` / `techStackTags` / `processTags` |
-| **文字列類似度** | 0.2 | pg_trgm (3-gram 部分一致)。「請求書」⇔「請求」のような表記ゆれを拾う | Project の purpose+background+scope / 候補の title+content |
-| **意味類似度** | 0.5 | Voyage embedding の Cosine 類似度。「請求書」⇔「インボイス」のような **意味的な近さ** を拾う (本軸) | 各 entity の `content_embedding` (1024 次元) |
+| **タグ類似度** | 0.3 | Project タグと候補側タグの Jaccard 係数 | `businessDomainTags` / `techStackTags` / `processTags` |
+| **文字列類似度** | 0.2 | pg_trgm (3-gram 部分一致)。「請求書」⇔「請求」のような表記ゆれを拾う | purpose+background+scope / 候補の title+content |
+| **意味類似度** | 0.5 | Voyage embedding の Cosine 類似度。「請求書」⇔「インボイス」のような意味的な近さを拾う (本軸) | 各 entity の `content_embedding` (1024 次元) |
 
-**3 軸の縮退モード**: embedding が NULL の候補 (Voyage 障害時 / 既存データで未生成) は意味類似度 = 0 として計算 → 自動的にタグ + 文字列の 2 軸 (合計 0.5) で評価される。**致命的停止にはならない fail-safe 設計**。
+**候補の絞り込み**: 各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.05` 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 10` 件まで返す → **各カテゴリ最大 10 件、3 カテゴリ合計最大 30 件**。
 
-### 候補の絞り込み
+#### B-4. ハードキャップ超過時の挙動 (重要: 機能停止しない fail-safe 設計)
 
-| ステップ | 内容 | 件数 |
+テナント単位の月次 API 呼び出しキャップを超過した場合の挙動:
+
+| 操作 | 影響 |
+|---|---|
+| 新規 Project / Knowledge / RiskIssue / Retrospective 作成 | Anthropic / Voyage の呼び出しがブロック → embedding は **NULL のまま保存** (本体データは正常保存される fail-safe 設計) |
+| 既存データの提案画面表示 | キャップ無関係で動作 (元々外部 API を呼ばないため) |
+| キャップ中に作成された新規データの提案画面表示 | **2 軸縮退モード** (タグ + pg_trgm のみで合計重み 0.5) に自動遷移 |
+
+**全候補は常に同じ土俵 (3 軸合算) で評価される**。ベクトルが保存されている候補は embedding 軸で寄与し、NULL の候補は embedding 軸で 0 として扱われる。「タグ全文検索」と「ベクトル検索」が別経路で走るのではなく、**1 つの統一スコア体系**で全データが比較される。
+
+#### B-5. 将来構想: Phase 3 LLM Re-ranking (6/1 リリース時点で未実装)
+
+Pro プランの差別化価値として、提案結果上位 N 件に **Anthropic Sonnet が「なぜ関連するか」の人間ライクな説明文を付与しつつ再ランキング** する機能を Phase 3 で実装予定。6/1 リリース時点では **未実装** で、現状は Pro プランも Expert プランと同じ提案結果 (検索のみ、説明文なし) を表示する。
+
+### C. プラン概要 (3 プラン構成)
+
+| プラン | 席数 | 月額固定 | 従量課金 | API 呼び出し上限 | 自動タグ抽出モデル | 提案機能 (検索) | 提案機能 (説明文付与) |
+|---|---|---|---|---|---|---|---|
+| **Beginner** | 5 席まで | ¥0 | なし | 月 100 回まで無料、超過後縮退 | Haiku | ✅ 3 軸スコアリング | ❌ 未実装 |
+| **Expert** | 無制限 | ¥0 | ¥10 / 1 API 呼び出し | 無制限 | Haiku | ✅ 3 軸スコアリング | ❌ 未実装 |
+| **Pro** | 無制限 | ¥0 | ¥30 / 1 API 呼び出し | 無制限 | Sonnet | ✅ 3 軸スコアリング | ❌ 未実装 (Phase 3 で実装予定) |
+
+**3 プラン共通**: ハードキャップ超過時は embedding 生成スキップ → 該当データのみ 2 軸縮退モードで動作する fail-safe 設計。
+
+### D. 4 機能のコア — 課金構造の詳細
+
+提案機能は **2 つの外部 LLM API + 1 つの DB サービス** で構成される。それぞれの課金体系は独立しており、月次コスト試算は 3 つの合算で計算する。
+
+#### D-1. Anthropic Claude API (自動タグ抽出 / 将来の Phase 3)
+
+**完全従量課金 / 無料枠なし / 入出力トークン別単価**
+
+| モデル | 入力トークン | 出力トークン | 用途 (本サービス) |
+|---|---|---|---|
+| **claude-haiku-4-5** | **$1 / 1M token** | **$5 / 1M token** | Beginner / Expert プランの自動タグ抽出 |
+| **claude-sonnet-4-6** | **$3 / 1M token** | **$15 / 1M token** | Pro プランの自動タグ抽出 |
+
+> ※ 単価は 2026 年初頭時点の概算。最新は [Anthropic 公式 pricing](https://www.anthropic.com/pricing) で要確認
+
+**コスト最適化機能**:
+- **Prompt Caching**: 同じシステムプロンプト再利用で入力料金 50% off
+- **Batch API**: 非同期処理で 50% off (本サービスはリアルタイム性重視のため未使用)
+
+#### D-2. Voyage AI Embedding API (embedding 生成)
+
+**従量課金 + 無料枠あり / 入力トークンのみ課金 (出力ベクトルは課金対象外)**
+
+| モデル | 無料枠 | 超過後 | 用途 (本サービス) |
+|---|---|---|---|
+| **voyage-4-lite** | **200M token / 月** | **$0.02 / 1M token** | 全プラン共通の embedding 生成 |
+
+> ※ 単価は 2026 年初頭時点。最新は [Voyage AI 公式 pricing](https://docs.voyageai.com/docs/pricing) で要確認
+>
+> **重要**: 「200M token / 月」は **月初リセットの無料枠**。「$0.02 / 1M token」は超過分の単価で、**月をまたぐ概念はない** (使い切り、繰り越しなし)。
+
+**Voyage Organization 単位で集計**: 全テナントが共有する 1 つの API キー = 1 つの Voyage Organization で 200M を共有する。テナント別の無料枠分配機能は Voyage 側にないため、本サービスの `withMeteredLLM` ミドルウェアでテナント単位の API 呼び出し回数を制御する設計。
+
+#### D-3. Supabase + pgvector (ベクトル保存・類似度検索)
+
+**pgvector 拡張機能は無料**。ただし Supabase 全体としてはプラン制で、容量・帯域・接続数に上限がある。
+
+| プラン | 月額 | DB 容量 | API 帯域 (egress) | 同時接続 | pgvector |
+|---|---|---|---|---|---|
+| **Free** | **$0** | **500 MB** | **5 GB / 月** | **60** | ✅ 含む |
+| **Pro** | **$25 / 月** | **8 GB** (超過後 **$0.125 / GB**) | **250 GB / 月** | **200** | ✅ 含む |
+| **Team** | **$599 / 月** | 8 GB+ (超過後同単価) | **無制限** | **400+** | ✅ 含む |
+| Enterprise | 個別見積 | 個別 | 個別 | 個別 | ✅ 含む |
+
+> ※ 単価は 2026 年初頭時点。最新は [Supabase pricing](https://supabase.com/pricing) で要確認
+
+**重要**: pgvector 自体はオープンソース拡張で追加料金なし。ただし embedding ベクトル (1024 次元 × 4 バイト ≒ 4KB / 行) は **DB 容量を消費** するため、間接的に Supabase プランの上限に影響する。
+
+**用語の意味**:
+- **DB 容量**: テーブル + インデックス + embedding ベクトルの合計サイズ
+- **API 帯域 (egress)**: Supabase から外部 (ブラウザ・サーバ) へ送信されたデータ量。**ダウンロード方向のみ**課金 (アップロードは無料)
+- **同時接続**: PostgreSQL に同時に張られる TCP コネクション数。Vercel serverless で大量並列実行する場合、Supavisor (Transaction pooler) を使うことで実質無制限化可能 (本サービスは利用済)
+
+### E. 月次コスト試算 (シナリオ別)
+
+#### E-1. 6/1 リリース直後の現実的シナリオ
+
+**前提**: 5-10 テナント / 月間 1,000 操作 / 自動タグ抽出 100 回 (Haiku)
+
+| サービス | 月次使用量 | 月次コスト |
 |---|---|---|
-| ① 取得 | DB から候補をすべて取得 (visibility + 自プロジェクト除外) | 全件 |
-| ② スコア計算 | 3 軸合算で各候補にスコア付与 | 全件 |
-| ③ 閾値カット | `SUGGESTION_SCORE_THRESHOLD = 0.05` 未満を除外 | (ノイズ除去) |
-| ④ ソート | スコア降順 | — |
-| ⑤ 上位 N 件 | カテゴリごとに `SUGGESTION_DEFAULT_LIMIT = 10` 件まで | **各カテゴリ最大 10 件、3 カテゴリで合計最大 30 件** |
-
-**Anthropic による再ランキングはこの段階に存在しない**。スコア計算は純粋に数値演算 (タグ Jaccard + pg_trgm + Voyage embedding cosine) のみで完結する。
-
-### LLM 呼び出しが発生するタイミング
-
-| イベント | 呼び出し | 用途 |
-|---|---|---|
-| Project 新規作成 | Anthropic 1 回 | 自動タグ抽出 (purpose/background/scope → タグ) |
-| Project 新規作成 | Voyage 1 回 | embedding 生成 (本体保存) |
-| Knowledge / RiskIssue / Retrospective 新規作成 | Voyage 1 回 | embedding 生成 (本体保存) |
-| 上記の更新 (text 変更時のみ) | Voyage 1 回 | embedding 再生成 |
-| 上記の更新 (text 非変更、visibility 等のみ) | 0 回 | embedding 再生成スキップ (LLM 課金回避) |
-| **提案画面の表示** | **0 回 (LLM 不使用)** | DB 内の embedding と pg_trgm + タグだけで完結 |
-| **リスク起票時の inline 軽量サジェスト** | **0 回 (LLM 不使用)** | pg_trgm のみで類似 issue 検索 (PR #5-b で確定: 500ms debounce 中の連続入力で LLM 課金が発生するのを避けるため、意図的に embedding は使わない設計) |
-
-**重要**: 検索・表示系の操作では Anthropic も Voyage も呼ばれない (= ユーザは何度提案を見ても追加課金なし)。Voyage は **データ保存時に 1 回だけ** 呼ばれる ETL 専用の用途で、保存されたベクトルを使った検索は pgvector が DB 内で完結させる。
-
-### 月次コスト試算 (6/1 リリース直後の想定: 5-10 テナント / 月 1000 操作)
-
-| サービス | 推定使用量 | コスト |
-|---|---|---|
-| Voyage AI | 月 5000 リクエスト × 平均 1500 token = 7.5M token | **¥0** (200M token 無料枠の 4%) |
-| Anthropic Haiku | 月 100 プロジェクト作成 × 約 5000 token = 0.5M token | 約 ¥80 (¥1.6/M × 0.5M) |
-| Supabase | DB 数十 MB | **¥0** (500MB Free tier の数 %) |
+| Anthropic Haiku (タグ抽出 ×100 回) | 0.5M token (入力 + 出力) | 約 **¥80** |
+| Voyage (embedding 生成 ×1,000 回) | 1.5M token | **¥0** (無料枠 200M の 0.75%) |
+| Supabase Free | DB ≒ 12MB / 帯域数 GB | **¥0** |
 | Vercel Hobby | Function 実行 数千回 | **¥0** (無料枠内) |
-| **合計 (推定)** | | **月 ¥100 未満** |
+| **合計** | — | **月 ¥80 程度** |
 
-実際の課金発生は Anthropic のみで、規模が伸びても**月 1000 円未満で当分推移する**見込み。
+これに対する**本サービスのテナント側課金 (Expert プラン仮)**: ¥10/回 × 100 回 = ¥1,000 → **粗利 92%**。
+
+#### E-2. 中規模シナリオ (3-6 ヶ月後)
+
+**前提**: 20-50 テナント / 月間 10,000 操作 / 自動タグ抽出 1,000 回
+
+| サービス | 月次使用量 | 月次コスト |
+|---|---|---|
+| Anthropic (Haiku 700 回 + Sonnet 300 回想定) | 5M token | 約 **¥1,800** |
+| Voyage (embedding 生成 ×10,000 回) | 15M token | **¥0** (無料枠の 7.5%) |
+| Supabase Pro 昇格想定 (DB 600MB 前後) | — | **¥4,000** |
+| **合計** | — | **月 ¥5,800 程度** |
+
+#### E-3. 拡大シナリオ (1 年後 / 200 テナント)
+
+**前提**: 月間 100,000 操作 / 自動タグ抽出 10,000 回
+
+| サービス | 月次使用量 | 月次コスト |
+|---|---|---|
+| Anthropic (Haiku 7,000 回 + Sonnet 3,000 回想定) | 50M token | 約 **¥18,000** |
+| Voyage (embedding 生成 ×100,000 回) | 150M token | **¥0** (無料枠の 75%) ※あと数ヶ月で超過の見込み |
+| Supabase Pro (DB 4GB) | — | **¥4,000** |
+| **合計** | — | **月 ¥22,000 程度** |
+
+このシナリオで月間売上 (Expert ¥10/回 × 100,000 = ¥1,000,000) → **原価率約 2.2%**、粗利率 **97.8%** を維持できる構造。
+
+### F. コスト超過リスクと監視ポイント
+
+| 監視項目 | 閾値 | 超過時のアクション | 通知手段 |
+|---|---|---|---|
+| Voyage 月次使用量 | 200M token (無料枠) | 課金開始 ($0.02/M)。アプリ側 Tenant.monthlyApiCallCap でハードキャップ | Voyage Budget Alerts ($7 設定済) |
+| Anthropic 月次使用料 | 月 $100 相当 | 事業性審査の閾値 ([MIGRATION_TO_AWS.md §34.13.3](../operations/MIGRATION_TO_AWS.md)) | Anthropic Console + workspace ハード上限 |
+| Supabase DB 容量 | 400MB (Free 80%) | Supabase Pro ($25/月) へ昇格、ダウンタイムなし | 月次 Cron で `pg_database_size` を記録 |
+| Supabase API 帯域 | 4GB (Free 80%) | Pro 昇格 (250GB/月化) | Supabase ダッシュボード |
 
 ---
 

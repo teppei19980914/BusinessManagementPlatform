@@ -9,3 +9,4 @@
 | [SCREENS.md](./SCREENS.md) | 主要 12 画面の機能仕様 + PR 別追記 (列幅リサイズ・WBS 集計・進捗整合性等) | SPECIFICATION.md §11 + §16-§24 |
 | [PERMISSION_MATRIX.md](./PERMISSION_MATRIX.md) | 画面 × 操作のロール別権限マトリクス | SPECIFICATION.md §7 |
 | [UI_RULES.md](./UI_RULES.md) | 共通 UI 制御ルール (画面横断のフォーム検証・確認 dialog 等) | SPECIFICATION.md §12 |
+| [SUGGESTION_FEATURE.md](./SUGGESTION_FEATURE.md) | **核心機能 (提案機能) の機能仕様 + コスト構造**。API 呼び出しトリガー / プラン別挙動 / 月次コスト試算 / 監視ポイント。事業継続判断の根拠資料 | 新規 (2026-05-03) |
