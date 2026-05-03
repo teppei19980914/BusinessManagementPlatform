@@ -63,6 +63,7 @@ export async function POST(
   const knowledge = await createKnowledge(
     { ...parsed.data, projectIds },
     user.id,
+    user.tenantId,
   );
 
   await recordAuditLog({

@@ -50,7 +50,7 @@ export async function POST(
     return NextResponse.json({ error: { code: 'VALIDATION_ERROR', details: parsed.error.issues } }, { status: 400 });
   }
 
-  const retro = await createRetrospective(projectId, parsed.data, user.id);
+  const retro = await createRetrospective(projectId, parsed.data, user.id, user.tenantId);
   await recordAuditLog({ userId: user.id, action: 'CREATE', entityType: 'retrospective', entityId: retro.id });
   return NextResponse.json({ data: retro }, { status: 201 });
 }
