@@ -131,6 +131,10 @@
 ### Tenant 月次リセット (PR #2-d / T-03)
 - [ ] `/api/cron/tenant-monthly-reset` (POST) — skip: cron 認可 + 月初リセット + scheduledPlanChangeAt 適用の単体テスト (`src/services/tenant-monthly-reset.service.test.ts` 11 件 + `src/app/api/cron/tenant-monthly-reset/route.test.ts` 5 件) で担保。E2E の対象外 (Vercel Cron 経由のみで UI 経路なし)
 
+### 使用量監視 (PR #7 / T-03)
+- [ ] `/api/cron/daily-usage-aggregation` (POST) — skip: cron 認可 + 集計 + 異常検知 + 予算アラート + admin メール通知の単体テスト (`src/services/usage-monitoring.service.test.ts` 12 件) で担保。E2E の対象外 (Vercel Cron 経由のみで UI 経路なし)
+- [ ] `/api/admin/usage-summary` (GET) — skip: admin 認可 + JSON 集計返却の単体テストで担保。super_admin ダッシュボード UI (PR-X2) 実装時に E2E 化予定
+
 ### メンション (PR feat/comment-mentions)
 - [ ] `/api/mention-candidates` (GET) — skip: 単体テスト (`src/app/api/mention-candidates/route.test.ts`) で context (project_list / cross_list / wbs) 別の groups 絞り込み + entityType 別 user 抽出を網羅
 - [ ] `/api/comments` (POST、mention 付き) — skip: 既存 `comment.service.test.ts` + 新 `mention.service.test.ts` で kind 展開 / 通知生成 / 自分宛除外 (Q5) / dedupe を網羅
