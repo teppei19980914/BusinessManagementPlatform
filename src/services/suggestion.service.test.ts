@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
@@ -585,5 +585,62 @@ describe('suggestRelatedIssuesForText', () => {
     expect(r[0].id).toBe('a');
     expect(r[4].id).toBe('e');
     expect(r.find((x) => x.id === 'g')).toBeUndefined();
+  });
+});
+
+// PR #8 (T-03 リリース準備): SUGGESTION_ENGINE_DISABLED 環境変数による緊急停止フラグ。
+describe('suggestion engine 緊急停止フラグ (SUGGESTION_ENGINE_DISABLED)', () => {
+  const originalEnv = process.env.SUGGESTION_ENGINE_DISABLED;
+
+  beforeEach(() => vi.clearAllMocks());
+
+  afterAll(() => {
+    if (originalEnv === undefined) delete process.env.SUGGESTION_ENGINE_DISABLED;
+    else process.env.SUGGESTION_ENGINE_DISABLED = originalEnv;
+  });
+
+  it('SUGGESTION_ENGINE_DISABLED=true で suggestForProject は即座に空配列を返す (DB クエリ走らない)', async () => {
+    process.env.SUGGESTION_ENGINE_DISABLED = 'true';
+
+    const r = await suggestForProject('any-project-id');
+
+    expect(r).toEqual({ knowledge: [], pastIssues: [], retrospectives: [] });
+    // DB が一切呼ばれないことを確認 (LLM 呼び出しゼロの担保)
+    expect(prisma.project.findFirst).not.toHaveBeenCalled();
+    expect(prisma.knowledge.findMany).not.toHaveBeenCalled();
+    expect(prisma.riskIssue.findMany).not.toHaveBeenCalled();
+
+    delete process.env.SUGGESTION_ENGINE_DISABLED;
+  });
+
+  it('SUGGESTION_ENGINE_DISABLED=true で suggestRelatedIssuesForText も空配列を返す', async () => {
+    process.env.SUGGESTION_ENGINE_DISABLED = 'true';
+
+    const r = await suggestRelatedIssuesForText('long enough input text here', 'p-1');
+
+    expect(r).toEqual([]);
+    expect(prisma.riskIssue.findMany).not.toHaveBeenCalled();
+
+    delete process.env.SUGGESTION_ENGINE_DISABLED;
+  });
+
+  it('SUGGESTION_ENGINE_DISABLED が未設定なら通常動作 (DB クエリが走る)', async () => {
+    delete process.env.SUGGESTION_ENGINE_DISABLED;
+
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
+    await suggestForProject('p-1');
+
+    expect(prisma.project.findFirst).toHaveBeenCalled();
+  });
+
+  it('SUGGESTION_ENGINE_DISABLED=false (明示) でも通常動作', async () => {
+    process.env.SUGGESTION_ENGINE_DISABLED = 'false';
+
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
+    await suggestForProject('p-1');
+
+    expect(prisma.project.findFirst).toHaveBeenCalled();
+
+    delete process.env.SUGGESTION_ENGINE_DISABLED;
   });
 });

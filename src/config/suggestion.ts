@@ -36,3 +36,26 @@ export const SUGGESTION_SCORE_THRESHOLD = 0.05;
 
 /** 各カテゴリの最大件数。提案量が多すぎて読まれないのを防ぐ。 */
 export const SUGGESTION_DEFAULT_LIMIT = 10;
+
+/**
+ * 提案機能の **緊急停止フラグ** (PR #8 / T-03 リリース準備)。
+ *
+ * 環境変数 `SUGGESTION_ENGINE_DISABLED=true` を設定すると、提案機能が完全に停止する:
+ *   - 提案画面で空配列が返却される (UI には「提案なし」と表示)
+ *   - LLM (Anthropic / Voyage) も呼ばれない
+ *   - 既存のプロジェクト作成・ナレッジ管理など他機能は無傷
+ *
+ * 想定ユースケース:
+ *   - LLM API の障害で大量エラーが発生し、緊急停止したい
+ *   - 月次予算超過で全テナントへの課金を即座に止めたい
+ *   - リグレッション発見時に問題切り分けで一時無効化したい
+ *
+ * 設計判断:
+ *   - **DB フラグではなく環境変数**: 障害時に DB アクセスができない可能性があるため、
+ *     Vercel 環境変数で即時切替可能な仕組みを採用。
+ *   - **デフォルト false**: 設定なし = 提案機能有効 (通常運用)。
+ *   - **テナント別ではなく全体フラグ**: 緊急停止は全体一括でよい (テナント別なら DB 操作)。
+ */
+export function isSuggestionEngineDisabled(): boolean {
+  return process.env.SUGGESTION_ENGINE_DISABLED === 'true';
+}

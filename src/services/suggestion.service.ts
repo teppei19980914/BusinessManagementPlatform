@@ -40,6 +40,7 @@ import {
   SUGGESTION_SCORE_THRESHOLD as SCORE_THRESHOLD,
   SUGGESTION_DEFAULT_LIMIT as DEFAULT_LIMIT,
 } from '@/config';
+import { isSuggestionEngineDisabled } from '@/config/suggestion';
 
 /**
  * 類似度スコア (0〜1 + 内訳) 付きの提案エントリ。
@@ -235,6 +236,11 @@ export async function suggestForProject(
   projectId: string,
   options: { limit?: number } = {},
 ): Promise<SuggestionsResult> {
+  // PR #8 (T-03): 緊急停止フラグ。SUGGESTION_ENGINE_DISABLED=true で空配列を返す。
+  // LLM 障害・予算超過・リグレッション切り分け時の即時停止に使う。
+  if (isSuggestionEngineDisabled()) {
+    return { knowledge: [], pastIssues: [], retrospectives: [] };
+  }
   const limit = options.limit ?? DEFAULT_LIMIT;
   const ctx = await loadProjectContext(projectId);
   if (!ctx) return { knowledge: [], pastIssues: [], retrospectives: [] };
@@ -548,6 +554,8 @@ export async function suggestRelatedIssuesForText(
   inputText: string,
   currentProjectId: string,
 ): Promise<PastIssueSuggestion[]> {
+  // PR #8 (T-03): 緊急停止フラグ。suggestForProject と同方針。
+  if (isSuggestionEngineDisabled()) return [];
   const trimmed = inputText.trim();
   if (trimmed.length < 10) return []; // 10 文字未満はノイズ多いので走らせない
 
