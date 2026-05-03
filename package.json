@@ -11,6 +11,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx}\"",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset",
+    "db:deploy": "prisma migrate deploy",
+    "db:recover": "tsx scripts/recover-prisma-migrations.ts",
     "migrate:print": "tsx scripts/print-migration.ts",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -32,21 +32,87 @@ npx prisma migrate dev --name <変更内容を英数字で>
 npx prisma generate
 ```
 
-### 3.3 Supabase 本番への適用 (⚠ 手動)
+### 3.3 Supabase 本番への適用 (Vercel ビルド時自動 + 緊急時手動)
 
-**重要**: Vercel ビルドでは `prisma migrate deploy` を **実行していない**。理由 (README より):
+> **2026-05-03 PR fix/missing-migrations 改修**: 従来の **「Supabase ダッシュボード SQL Editor で手動実行」** 運用を、**Vercel ビルド時の `prisma migrate deploy` 自動実行** に切り替えた。手動実行は緊急時のフォールバックとして残す。
+>
+> 改修理由: 手動 SQL Editor 運用は migration ごとに人手作業を強いる + 適用漏れ事故が発生しうる (実際 PR #229 マージ後に `tenant_id` 列が本番に反映されず本番ログイン全停止の事故が発生)。
 
-> Vercel ビルド環境は IPv4 のみで Supabase の直結 URL `db.[ref].supabase.co:5432` に到達できない。
+#### 3.3.1 通常運用: Vercel 自動デプロイ (推奨)
 
-したがって本番への適用は **Supabase ダッシュボードの SQL Editor で手動** に実行する。
+**前提条件**:
 
-#### 手順
+| 設定項目 | 値 | 設定場所 |
+|---|---|---|
+| `vercel.json` の `buildCommand` | `pnpm prisma generate && pnpm prisma migrate deploy && pnpm build` | リポジトリ |
+| `prisma.config.ts` の `datasource.url` | `process.env['DIRECT_URL'] || process.env['DATABASE_URL']` (DIRECT_URL 優先) | リポジトリ |
+| Vercel 環境変数 `DATABASE_URL` | `postgresql://postgres.[ref]:[pw]@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true` (Transaction pooler) | Vercel |
+| Vercel 環境変数 `DIRECT_URL` | `postgresql://postgres.[ref]:[pw]@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres` (Session pooler、port **5432** 注意) | Vercel |
+
+**重要**: Prisma 7 から `url` / `directUrl` を `schema.prisma` に書けなくなり (P1012 エラー)、`prisma.config.ts` の `datasource.url` で指定する仕様に変更されている。ランタイム (PrismaClient) は `process.env.DATABASE_URL` を自動利用、migrate 系は `prisma.config.ts` で指定した URL を使う。
+
+**仕組み**:
+- Vercel ビルド時に `prisma migrate deploy` が `DIRECT_URL` 経由で本番 DB に未適用の migration を順番に適用
+- pgbouncer (port 6543) は prepared statement 不可で DDL 失敗するため `DIRECT_URL` で **session pooler (port 5432)** を使う必要あり
+- pgvector 等の **拡張は事前に Supabase Dashboard → Extensions で手動有効化**しておくこと (`CREATE EXTENSION` は Supabase 権限制限で migration 内では失敗するケースあり)
+
+##### ⚠ よくある間違い: DIRECT_URL に「Direct connection」URL を使うと P1001 エラー
+
+Supabase Dashboard の Connection string ページには **3 種類の URL** が表示される。Vercel に登録するときに **どれを使うかを必ず確認**すること。
+
+| URL 種別 | Host | Port | IP | Vercel から使えるか |
+|---|---|---|---|---|
+| ❌ **Direct connection** | `db.[ref].supabase.co` | 5432 | **IPv6 のみ** | **❌ 使えない** (P1001 エラー) |
+| ✅ **Session Pooler** (Supavisor) | `aws-1-[region].pooler.supabase.com` | **5432** | IPv4 互換 | ✅ **DIRECT_URL に使う** |
+| ✅ **Transaction Pooler** (Supavisor) | `aws-1-[region].pooler.supabase.com` | 6543 | IPv4 互換 | ✅ DATABASE_URL に使う (`?pgbouncer=true`) |
+
+**Vercel build が失敗する典型例**:
+```
+Error: P1001: Can't reach database server at db.[ref].supabase.co:5432
+```
+→ DIRECT_URL に **Direct connection** (`db.[ref].supabase.co`) を登録している。**Session Pooler** (`aws-1-[region].pooler.supabase.com:5432`) に変更すれば解消。
+
+**正しい URL の取得手順**:
+1. Supabase Dashboard を開く
+2. 左サイドバーの **Connect** ボタン (上部にも) をクリック
+3. **Connection string** タブ
+4. **Session pooler** タブを選択 (Direct connection ではない)
+5. 表示された URL をコピーして Vercel `DIRECT_URL` に貼り付け
+6. ホスト名が `pooler.supabase.com` になっていることを再確認
+
+**確認手順**:
+1. Vercel ビルドログで `Applying migration X_Y_Z` 等のメッセージを確認
+2. Supabase SQL Editor で `SELECT * FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 5;` を実行し、最新 migration が適用されているか確認
+
+#### 3.3.2 緊急時: ローカルから本番へ手動 deploy
+
+Vercel ビルドが失敗していて本番デプロイ自体ができないが、DB は適用したい状況 (例: 本番ログイン障害が起きていて先に DB を整えたい):
+
+```bash
+# 1. .env.local に本番 DATABASE_URL / DIRECT_URL を一時設定
+#    (.env.local は git ignore 対象なのでコミットされない)
+
+# 2. ローカルから本番 DB に migrate deploy
+pnpm db:deploy
+# = pnpm prisma migrate deploy
+
+# 3. 適用結果を Supabase SQL Editor で確認
+#    SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 10;
+
+# 4. 必ず .env.local から本番 URL を削除 (誤操作防止)
+```
+
+⚠ **本番 DB 接続情報をローカルに置く期間は最小化**。作業完了後は `.env.local` から削除すること。誤って `pnpm db:reset` を実行すると本番 DB が全消去される事故になる。
+
+#### 3.3.3 Supabase Dashboard SQL Editor 手動 (最終手段)
+
+`prisma migrate deploy` がどうしても通らない場合 (拡張権限、独自 SQL 構文等):
 
 1. ローカルで SQL 本文を表示
 
    ```bash
    pnpm migrate:print <migration-name>
-   # 例: pnpm migrate:print 20260420_user_theme_preference
+   # 例: pnpm migrate:print 20260502_multi_tenant_base
    ```
 
    もしくは GitHub 上で `prisma/migrations/<name>/migration.sql` を開き、**Raw** ボタンから全文コピー。
@@ -63,9 +129,16 @@ npx prisma generate
 
 6. **RLS 警告が出た場合**: **Run without RLS** を選択 (本プロジェクトは全テーブル RLS なし運用、既存テーブルと同方針)
 
-### 3.4 自動化する場合 (README のメモより)
+7. 適用後、`_prisma_migrations` テーブルに該当行を手動追加 (Prisma の認識を合わせる):
 
-DIRECT_URL を **Supavisor セッションモード** (`pooler.supabase.com:5432`) に変更した上で、`vercel.json` の `buildCommand` に `pnpm prisma migrate deploy` を追加すれば Vercel 上で自動適用できる。ただし現状は採用されていない (要確認で実装検討)。
+   ```sql
+   INSERT INTO _prisma_migrations
+     (id, checksum, finished_at, migration_name, logs, rolled_back_at, started_at, applied_steps_count)
+   VALUES
+     (gen_random_uuid()::text, '<schema.prismaから取得>', now(), '<migration-name>', null, null, now(), 1);
+   ```
+
+   または `pnpm prisma migrate resolve --applied <migration-name>` (DIRECT_URL が通っていれば)。
 
 ### 3.5 migration ファイルを後から修正した場合 (drift 対応、PR #90 で追加)
 
@@ -86,6 +159,69 @@ pnpm prisma migrate resolve --applied <migration-name>
 - `_prisma_migrations` テーブル: PR #60 当時のチェックサムで記録
 - PR #90 で migration file を正しい `"knowledges"` に修正 → チェックサム変化
 - 次回 `prisma migrate deploy` (もし自動化する場合) で drift 警告 → 上記 resolve コマンドで解消
+
+### 3.6 過去に手動適用した migration が `_prisma_migrations` 未記録のまま自動 deploy に切替えた場合 (PR fix/missing-migrations / 2026-05-03)
+
+#### 症状
+
+`pnpm prisma migrate deploy` 実行時、過去に SQL Editor で手動適用したマイグレーションで以下のエラーが出る:
+
+```
+Error: P3018
+Migration name: 20260416_add_actual_dates
+Database error code: 42701
+ERROR: column "actual_start_date" of relation "tasks" already exists
+```
+
+#### 原因
+
+- DB スキーマ: 列は **存在する** (過去に SQL Editor で手動適用済)
+- `_prisma_migrations` テーブル: 該当 migration の **記録なし**
+- → `prisma migrate deploy` は「未適用」と判断して再実行 → 「すでに存在する」エラーで失敗
+
+#### リカバリ手順
+
+専用スクリプト `scripts/recover-prisma-migrations.ts` (`pnpm db:recover`) を使用:
+
+```bash
+# 1. .env.local に本番 DIRECT_URL (Session Pooler) を一時設定
+
+# 2. 「最後に確実に DB に適用されている migration の名前」を確認
+#    Supabase SQL Editor で:
+#    SELECT migration_name FROM _prisma_migrations ORDER BY migration_name;
+#    → ここに記録されていない migration のうち、DB には適用済のものを `--upto` で指定
+
+# 3. リカバリスクリプト実行 (例: 20260501_notifications まで適用済の場合)
+pnpm db:recover --upto 20260501_notifications
+#   → 先頭から 20260501_notifications までの全 migration を「適用済」として
+#     `_prisma_migrations` に記録 (DB スキーマには触らない)
+
+# 4. 通常の deploy
+pnpm db:deploy
+#   → リカバリ済より後の migration (例: 20260502_*) のみ実際に適用される
+
+# 5. 結果確認
+#    Supabase SQL Editor で _prisma_migrations の最新行を確認
+#    SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 10;
+
+# 6. .env.local から本番接続情報を削除 (誤操作防止)
+```
+
+#### `--upto` の決め方
+
+判断ロジック:
+1. `_prisma_migrations` テーブルの最新行を確認
+2. `prisma/migrations/` ディレクトリ内の同行以降のディレクトリ名を確認
+3. それぞれの migration の SQL を読み、対応する **列・テーブル・index が DB に既に存在するか** を SQL Editor で確認
+4. 「存在する」最後の migration を `--upto` に指定
+
+迷ったら、**最近の機能追加で確実に動いている範囲** (例えば「リスク起票画面が動いていれば 20260418_visibility_and_risk_nature まで適用済」) を基準にする。
+
+#### スクリプトの安全性
+
+- `prisma migrate resolve --applied` は `_prisma_migrations` に行を追加するだけで、**DB スキーマには一切触れない**
+- 万が一 `--upto` を間違えても破壊的影響なし。ただし resolve した後の `migrate deploy` で drift する可能性はあるため、最初の判断は慎重に
+- 既に resolve 済の migration への再 resolve は冪等 (no-op or 警告のみ)
 
 ---
 

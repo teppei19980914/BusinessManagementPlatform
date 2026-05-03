@@ -15,6 +15,12 @@ datasource db {
   provider   = "postgresql"
   // PR #4 (T-03 Phase 2): pgvector 拡張を Prisma に明示。
   // migration では `CREATE EXTENSION IF NOT EXISTS vector;` を実行する。
+  //
+  // 注: Prisma 7 では url / directUrl は schema.prisma に書けない (P1012 で禁止)。
+  //   代わりに prisma.config.ts の `datasource.url` で指定する。
+  //   prisma.config.ts は `process.env['DIRECT_URL'] || process.env['DATABASE_URL']`
+  //   の優先順で接続先を決定 (migrate 系は DIRECT_URL を使う設計)。
+  //   PrismaClient ランタイムは process.env.DATABASE_URL を自動利用する。
   extensions = [vector]
 }
 
