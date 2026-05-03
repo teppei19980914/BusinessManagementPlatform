@@ -4,6 +4,78 @@
 
 ---
 
+## 概要 — 一目で分かる構成 (2026-05-03 時点)
+
+提案エンジンは「**過去の資産 (Knowledge / 過去課題 / 振り返り) を、新しいプロジェクトに自動で結びつける**」サービスの核心機能。本セクションでは、運用者が「何が動いていて、どの API キーが何に使われているか」を一目で把握できるよう、3 つの構成要素を整理する。
+
+### 構成要素マップ
+
+| 構成要素 | 担当 | 課金体系 | 必要環境変数 / 設定 | 実装状況 |
+|---|---|---|---|---|
+| **Supabase pgvector** | 1024 次元のベクトル類似度検索 (Cosine Similarity) | DB 容量制限内なら無料 | Supabase ダッシュボードで `vector` 拡張を有効化 (DB 設定) | ✅ 6/1 リリース時稼働 |
+| **VOYAGE_API_KEY** (Voyage AI `voyage-4-lite`) | テキスト → 1024 次元ベクトル変換 (entity 保存時 + 検索クエリ時) | **200M token/月まで完全無料**、超過分は $0.02/M token | Vercel 環境変数 | ✅ 6/1 リリース時稼働 |
+| **ANTHROPIC_API_KEY** (Claude Haiku/Sonnet) | プロジェクト作成時の **自動タグ抽出** (purpose/background/scope → 各種タグ) | 完全従量課金 (無料枠なし)、Haiku 約 ¥1.6/M input token | Vercel 環境変数 | ✅ 6/1 リリース時稼働 (タグ抽出のみ) |
+| Anthropic による「上位 N 件への絞り込み再ランキング」 | (将来 Phase 3 構想) | — | — | ❌ **6/1 リリース時点で未実装**。Phase 3 で追加予定 |
+
+### スコアリングの仕組み (3 軸合算)
+
+提案候補の最終スコアは、3 つの類似度の重み付き合算で算出する。
+
+```
+最終スコア = (タグ類似度 × 0.3) + (文字列類似度 × 0.2) + (意味類似度 × 0.5)
+                ↑                    ↑                      ↑
+                Jaccard 係数         pg_trgm                Voyage embedding
+                (補助)               (表記ゆれに強い、補助)  (本軸 — 意味で繋がる)
+```
+
+| 軸 | 重み | 担当 | データソース |
+|---|---|---|---|
+| **タグ類似度** | 0.3 | Project タグと候補側タグの Jaccard 係数 | Project / Knowledge の `businessDomainTags` / `techStackTags` / `processTags` |
+| **文字列類似度** | 0.2 | pg_trgm (3-gram 部分一致)。「請求書」⇔「請求」のような表記ゆれを拾う | Project の purpose+background+scope / 候補の title+content |
+| **意味類似度** | 0.5 | Voyage embedding の Cosine 類似度。「請求書」⇔「インボイス」のような **意味的な近さ** を拾う (本軸) | 各 entity の `content_embedding` (1024 次元) |
+
+**3 軸の縮退モード**: embedding が NULL の候補 (Voyage 障害時 / 既存データで未生成) は意味類似度 = 0 として計算 → 自動的にタグ + 文字列の 2 軸 (合計 0.5) で評価される。**致命的停止にはならない fail-safe 設計**。
+
+### 候補の絞り込み
+
+| ステップ | 内容 | 件数 |
+|---|---|---|
+| ① 取得 | DB から候補をすべて取得 (visibility + 自プロジェクト除外) | 全件 |
+| ② スコア計算 | 3 軸合算で各候補にスコア付与 | 全件 |
+| ③ 閾値カット | `SUGGESTION_SCORE_THRESHOLD = 0.05` 未満を除外 | (ノイズ除去) |
+| ④ ソート | スコア降順 | — |
+| ⑤ 上位 N 件 | カテゴリごとに `SUGGESTION_DEFAULT_LIMIT = 10` 件まで | **各カテゴリ最大 10 件、3 カテゴリで合計最大 30 件** |
+
+**Anthropic による再ランキングはこの段階に存在しない**。スコア計算は純粋に数値演算 (タグ Jaccard + pg_trgm + Voyage embedding cosine) のみで完結する。
+
+### LLM 呼び出しが発生するタイミング
+
+| イベント | 呼び出し | 用途 |
+|---|---|---|
+| Project 新規作成 | Anthropic 1 回 | 自動タグ抽出 (purpose/background/scope → タグ) |
+| Project 新規作成 | Voyage 1 回 | embedding 生成 (本体保存) |
+| Knowledge / RiskIssue / Retrospective 新規作成 | Voyage 1 回 | embedding 生成 (本体保存) |
+| 上記の更新 (text 変更時のみ) | Voyage 1 回 | embedding 再生成 |
+| 上記の更新 (text 非変更、visibility 等のみ) | 0 回 | embedding 再生成スキップ (LLM 課金回避) |
+| 提案画面の表示 | **0 回 (LLM 不使用)** | DB 内の embedding と pg_trgm + タグだけで完結 |
+| リスク起票時の類似 issue サジェスト | Voyage 1 回 (検索クエリの embedding 化) | inline 提示 |
+
+**重要**: 「提案画面を開く」操作では Anthropic が呼ばれない (= ユーザは何度開いても追加課金なし)。embedding は **データ保存時に 1 回だけ** Voyage を呼ぶ設計で、検索クエリ用の embedding 生成 (約 12 token = 0.000012 / 200M = 無料枠の極小割合) のみ毎回発生する。
+
+### 月次コスト試算 (6/1 リリース直後の想定: 5-10 テナント / 月 1000 操作)
+
+| サービス | 推定使用量 | コスト |
+|---|---|---|
+| Voyage AI | 月 5000 リクエスト × 平均 1500 token = 7.5M token | **¥0** (200M token 無料枠の 4%) |
+| Anthropic Haiku | 月 100 プロジェクト作成 × 約 5000 token = 0.5M token | 約 ¥80 (¥1.6/M × 0.5M) |
+| Supabase | DB 数十 MB | **¥0** (500MB Free tier の数 %) |
+| Vercel Hobby | Function 実行 数千回 | **¥0** (無料枠内) |
+| **合計 (推定)** | | **月 ¥100 未満** |
+
+実際の課金発生は Anthropic のみで、規模が伸びても**月 1000 円未満で当分推移する**見込み。
+
+---
+
 ## v1 (PR #65) — 旧版の参考
 
 提案エンジン v1 (現行実装) は pg_trgm + タグ Jaccard ベース。
