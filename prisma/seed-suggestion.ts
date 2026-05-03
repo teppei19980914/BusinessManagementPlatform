@@ -624,6 +624,76 @@ export async function seedTenant(
 // メイン: コマンドライン起動
 // ================================================================
 
+/**
+ * DATABASE_URL から host:port のみ抽出してマスク表示する。
+ * 接続先の取り違え (ローカル vs 本番) を視覚的に確認できるようにする。
+ */
+function describeDatabaseTarget(): string {
+  const url = process.env.DATABASE_URL ?? '(未設定)';
+  // postgresql://user:pw@host:port/db?... → host:port のみ抜き出す
+  const match = url.match(/@([^/?]+)/);
+  return match?.[1] ?? '(URL 解析不可)';
+}
+
+/**
+ * Prisma エラーが ECONNREFUSED の場合に運用者向けの分かりやすい説明を出す。
+ */
+function printConnectionRefusedHelp(target: string): void {
+  console.error('');
+  console.error('❌ DB に接続できません (ECONNREFUSED): ' + target);
+  console.error('');
+  console.error('原因の可能性:');
+  console.error('  1. ローカル開発の DB (Docker Compose) が起動していない');
+  console.error('     → 解決: `docker compose up -d` で起動');
+  console.error('');
+  console.error('  2. .env の DATABASE_URL が古い接続情報のまま (本番に向けたい場合)');
+  console.error('     → 解決: .env.local に本番接続情報を一時設定して再実行');
+  console.error('             postgresql://postgres.[ref]:[pw]@aws-1-[region].pooler.supabase.com:6543/postgres?pgbouncer=true');
+  console.error('             ※ 必ず Session Pooler (aws-1-...pooler.supabase.com) を使用');
+  console.error('             ※ Direct connection (db.[ref].supabase.co) は IPv6 only で Vercel 不可');
+  console.error('     → 完了後は .env.local を必ず削除 (誤操作防止)');
+  console.error('');
+  console.error('  3. Supabase 側で firewall や network 設定が変更されている');
+  console.error('     → 解決: Supabase Dashboard → Settings → Database で URL を再取得');
+  console.error('');
+  console.error('詳細手順: docs/operations/DB_MIGRATION_PROCEDURE.md §3.3.2');
+}
+
+/**
+ * Prisma エラーが P1000 (Authentication Failed) の場合に運用者向けの分かりやすい説明を出す。
+ *
+ * 接続はできているが認証情報 (パスワード) が間違っている状況。
+ * Supabase の場合、特殊文字を含むパスワードの URL エンコードでよく失敗する。
+ */
+function printAuthenticationFailedHelp(target: string): void {
+  console.error('');
+  console.error('❌ DB の認証に失敗しました (P1000 AuthenticationFailed): ' + target);
+  console.error('');
+  console.error('接続自体はできているため、パスワード or ユーザ名が間違っています。');
+  console.error('');
+  console.error('原因の可能性:');
+  console.error('  1. パスワードに特殊文字 (`、!、$、@、# 等) が含まれており URL エンコードに失敗');
+  console.error('     → 解決: Supabase Dashboard → Connect → Connection string で表示される');
+  console.error('             URL を **そのまま** .env.local にコピペ (手書きの一部修正をしない)');
+  console.error('     → URL エンコード例: ` (バッククォート) → %60、! → %21、$ → %24');
+  console.error('');
+  console.error('  2. ユーザ名が "postgres" だけになっている (Session Pooler では "postgres.[ref]" が必要)');
+  console.error('     → 例: postgres.ejexwhjrnkttmmuvaxrh:[pw]@aws-1-...pooler.supabase.com');
+  console.error('       ↑ "postgres" の後に "." とプロジェクト ref が必要');
+  console.error('');
+  console.error('  3. Supabase でパスワードがリセットされた');
+  console.error('     → 解決: Supabase Dashboard → Settings → Database → Reset database password');
+  console.error('             その後 Vercel 環境変数も新パスワードに更新');
+  console.error('');
+  console.error('  4. .env.local を作成・保存後に DB ターゲットが切り替わっていない');
+  console.error('     → 解決: 同じシェルで再実行する。新しい PowerShell では .env.local を再読込する');
+  console.error('');
+  console.error('検証方法 (任意):');
+  console.error('  psql で直接接続を試して認証を切り分け:');
+  console.error('     psql "$env:DATABASE_URL"');
+  console.error('  認証エラーなら URL の userinfo 部 (user:pass) を再確認');
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const tenantArgIdx = args.indexOf('--tenant');
@@ -635,14 +705,23 @@ async function main() {
     process.exit(1);
   }
 
+  const dbTarget = describeDatabaseTarget();
+  console.log(`🌱 Seed suggestion data → tenant: ${targetTenantId}`);
+  console.log(`   DB target: ${dbTarget}`);
+  console.log('');
+
+  // ローカル接続の場合は注意喚起 (本番に対して打ちたかったケースの保険)
+  if (dbTarget.startsWith('localhost') || dbTarget.includes('127.0.0.1')) {
+    console.log('⚠ 警告: ローカル DB を対象としています。');
+    console.log('   本番投入が目的の場合は、.env.local に本番接続情報を一時設定してから再実行してください。');
+    console.log('');
+  }
+
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const adapter = new PrismaPg(pool);
   const prisma = new PrismaClient({ adapter });
 
   try {
-    console.log(`🌱 Seed suggestion data → tenant: ${targetTenantId}`);
-    console.log('');
-
     if (targetTenantId === DEFAULT_TENANT_ID) {
       // default-tenant への直接投入
       const createdBy = await findInitialAdmin(prisma, DEFAULT_TENANT_ID);
@@ -662,6 +741,25 @@ async function main() {
       console.log('');
       console.log('注: source (default-tenant) に embedding があればコピー、無ければ NULL。');
     }
+  } catch (error) {
+    // ECONNREFUSED / P1000 (AuthenticationFailed) は典型的な誤設定なので個別に手厚く案内する
+    const errMessage = error instanceof Error ? error.message : String(error);
+    const errCode = (error as { code?: string }).code;
+    if (errCode === 'ECONNREFUSED' || errMessage.includes('ECONNREFUSED')) {
+      printConnectionRefusedHelp(dbTarget);
+      process.exitCode = 1;
+      return;
+    }
+    if (
+      errCode === 'P1000' ||
+      errMessage.includes('Authentication failed') ||
+      errMessage.includes('AuthenticationFailed')
+    ) {
+      printAuthenticationFailedHelp(dbTarget);
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
   } finally {
     await prisma.$disconnect();
     await pool.end();
