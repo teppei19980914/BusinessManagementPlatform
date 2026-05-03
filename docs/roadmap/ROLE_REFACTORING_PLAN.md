@@ -82,6 +82,74 @@ general (= 一般ユーザ、各テナントごとに存在)
 | Tenant 名 (`Tenant.name`) | **`'Knowledge Relay Platform'`** |
 | プラン (`Tenant.plan`) | 特殊扱い (課金対象外、無制限)。実装上は `'pro'` 相当 + `monthlyApiCallCap = null` で運用 |
 | 説明 | 運営側の管理用テナント。ユーザ拡大しても super_admin 1〜数名のみ所属 |
+| `tenantSeq` (§2.3-bis) | **`null`** (顧客連番外) |
+
+### 2.3-bis テナント連番 (`tenantSeq`) の導入 (2026-05-03 追加決定、案 D 採用)
+
+#### 背景
+
+UUID は内部識別子として一意性は担保するが、人間が「テナント #3 様への請求書」のような会話・運用を行うには使えない。サポート対応・課金管理・admin ダッシュボードでの一覧表示で**人間可読の連番**が必要。
+
+#### 採用案: 案 D (顧客連番 + 管理テナントは UUID で別系統)
+
+| テナント | `tenantSeq` | UUID | 用途 |
+|---|---|---|---|
+| **既存 default-tenant** (teppei さん現使用) | **`1`** (固定 seed) | `00000000-0000-0000-0000-000000000001` | 顧客 #1 として永続使用 |
+| **管理テナント (Knowledge Relay Platform)** | **`null`** | `00000000-0000-0000-0000-FFFFFFFFFFFF` | 顧客連番に含めない (運営内部) |
+| **新規顧客テナント** | **`2, 3, 4, ...`** (PostgreSQL `SERIAL` で auto-increment) | `gen_random_uuid()` | 顧客追加ごとに連番を採番 |
+
+#### Schema 変更 (PR-X1 で実施)
+
+```prisma
+model Tenant {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// 顧客向け人間可読連番 (案 D / 2026-05-03)。default-tenant=1、新規顧客は 2, 3, 4, ...
+  /// 管理テナント (運営内部) は null (顧客連番外)。
+  /// 表示用 (請求書 / サポート / admin ダッシュボード一覧) のみで参照。
+  /// 内部参照 (FK / 認可) は引き続き UUID id を使う。
+  tenantSeq Int?    @unique @map("tenant_seq")
+  // ... 他の既存カラム
+}
+```
+
+#### Migration での seed 操作
+
+```sql
+-- 1. tenant_seq カラムを追加 (Int, nullable, unique)
+ALTER TABLE tenants ADD COLUMN tenant_seq INTEGER;
+CREATE UNIQUE INDEX idx_tenants_tenant_seq ON tenants(tenant_seq) WHERE tenant_seq IS NOT NULL;
+
+-- 2. SEQUENCE を作成 (新規テナント追加時に自動採番)
+CREATE SEQUENCE tenants_tenant_seq_seq START WITH 2;
+ALTER TABLE tenants ALTER COLUMN tenant_seq SET DEFAULT nextval('tenants_tenant_seq_seq');
+
+-- 3. 既存 default-tenant に tenant_seq=1 を固定 seed (SEQUENCE 値より小さい固定値)
+UPDATE tenants SET tenant_seq = 1
+  WHERE id = '00000000-0000-0000-0000-000000000001';
+
+-- 4. 管理テナント seed (PR-X1 で実施)
+INSERT INTO tenants (id, slug, name, plan, tenant_seq, ...)
+VALUES (
+  '00000000-0000-0000-0000-FFFFFFFFFFFF',
+  'platform-admin',
+  'Knowledge Relay Platform',
+  'pro',
+  NULL,  -- ← 管理テナントは連番外
+  ...
+);
+```
+
+#### UI 表示 (PR-X3 で実施)
+
+- 顧客テナント: `「テナント #1 - <name>」` `「テナント #2 - <name>」`
+- 管理テナント: `「Knowledge Relay Platform (運営)」` (連番表示なし)
+- super_admin ダッシュボードの一覧画面: `tenantSeq` 昇順でデフォルトソート
+
+#### 検討した却下案
+
+- **案 A** (`tenantSeq` のみで UUID 不使用): UUID は分散システムでの一意性・推測困難性が必須。却下
+- **案 B** (管理テナント = 連番 0): 0 は将来の意味付け衝突リスク (predicate / 不在 / システム値)。`null` が PostgreSQL 的にもクリーン。却下
+- **案 C** (UUID 末尾を連番): 推測可能性が増し、tenant id を URL 等に露出した場合に「次の id」を試す攻撃が容易になる。却下
 
 ### 2.4 super_admin アカウント運用 (案 2 採用)
 
@@ -164,12 +232,13 @@ PR-X3: UI 文言更新 + ドキュメント更新 (1 日)
 
 | カテゴリ | タスク |
 |---|---|
-| **schema migration** | `User.systemRole` の許容値に `'super_admin'` を追加 (列定義は `VarChar(20)` のままで OK)。validator (zod) を更新して 3 値 (`'general' \| 'admin' \| 'super_admin'`) に拡張 |
-| **管理テナント seed** | UUID `00000000-0000-0000-0000-FFFFFFFFFFFF` で `Tenant` レコード作成 (name='Knowledge Relay Platform'、plan='pro'、`monthlyApiCallCap=null`)。`prisma/seed.ts` に追加 |
+| **schema migration: systemRole** | `User.systemRole` の許容値に `'super_admin'` を追加 (列定義は `VarChar(20)` のままで OK)。validator (zod) を更新して 3 値 (`'general' \| 'admin' \| 'super_admin'`) に拡張 |
+| **schema migration: tenantSeq** (§2.3-bis) | `Tenant.tenantSeq` (`Int? @unique @map("tenant_seq")`) を追加。`tenants_tenant_seq_seq` SEQUENCE を `START WITH 2` で作成し DEFAULT に設定。default-tenant に `tenant_seq=1` を固定 seed (UPDATE)。管理テナントは `null` で seed |
+| **管理テナント seed** | UUID `00000000-0000-0000-0000-FFFFFFFFFFFF` で `Tenant` レコード作成 (name='Knowledge Relay Platform'、plan='pro'、`monthlyApiCallCap=null`、`tenant_seq=null` ← 顧客連番外)。`prisma/seed.ts` に追加 |
 | **初期 super_admin 登録** | `SUPER_ADMIN_INITIAL_EMAIL` / `SUPER_ADMIN_INITIAL_PASSWORD` / `SUPER_ADMIN_INITIAL_NAME` 環境変数経由で User 作成、bcrypt 化、`forcePasswordChange=true` セット |
 | **認可ヘルパ追加** | `src/lib/permissions/role.ts` (新規) に以下を追加:<br>- `isSuperAdmin(user): boolean`<br>- `isAdminOrAbove(user): boolean` (admin or super_admin)<br>- `isTenantAdmin(user): boolean` (admin のみ)<br>- `requireSuperAdmin(user): void` (throws if not) |
 | **既存コードの選択的置換** | 「**全テナント横断で見たい**」用途に該当する既存 `=== 'admin'` チェックを `isSuperAdmin()` に置換。例: `/admin/audit-logs`, `/admin/role-changes` 等の admin 系画面 (これらは v1.x で super_admin 専用に移行する想定) |
-| **テスト追加** | `src/lib/permissions/role.test.ts`、seed migration テスト、認可ヘルパの単体テスト |
+| **テスト追加** | `src/lib/permissions/role.test.ts`、seed migration テスト、認可ヘルパの単体テスト、`tenantSeq` 連番採番テスト (新規 INSERT で 2, 3, 4 と採番されること、default-tenant=1 が維持されること、管理テナント=null が維持されること) |
 
 **マイグレーション手順** (本番 Supabase):
 1. `pnpm prisma migrate deploy` で migration 適用 (列定義は変わらないので no-op、validator のみ実装に追加)
@@ -199,6 +268,7 @@ PR-X3: UI 文言更新 + ドキュメント更新 (1 日)
 |---|---|
 | `src/components/dashboard-header.tsx` 等 | UI Badge 表示「管理者」→「**テナント管理者**」(admin) / 「**システム管理者**」(super_admin) |
 | `src/app/(dashboard)/admin/users/users-client.tsx` | systemRole 表示に super_admin の Badge 追加 |
+| **super_admin ダッシュボード表示** (§2.3-bis) | テナント一覧で `tenant_seq` 昇順表示、各行に「テナント #1 - default」「テナント #2 - 顧客 X」等。管理テナントは「Knowledge Relay Platform (運営)」と連番表示なし |
 | `docs/specification/PERMISSION_MATRIX.md` | 3 ロール対応に更新。super_admin 列を追加 |
 | `docs/business/USER_ROLES.md` | super_admin の役割定義追加 |
 | `docs/specification/SUGGESTION_FEATURE.md` | 監視責務の主体を super_admin と明示 |
