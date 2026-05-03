@@ -10,6 +10,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx}\"",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed:suggestion": "tsx prisma/seed-suggestion.ts",
     "db:reset": "prisma migrate reset",
     "db:deploy": "prisma migrate deploy",
     "db:recover": "tsx scripts/recover-prisma-migrations.ts",
