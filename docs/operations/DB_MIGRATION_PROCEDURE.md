@@ -160,6 +160,69 @@ pnpm prisma migrate resolve --applied <migration-name>
 - PR #90 で migration file を正しい `"knowledges"` に修正 → チェックサム変化
 - 次回 `prisma migrate deploy` (もし自動化する場合) で drift 警告 → 上記 resolve コマンドで解消
 
+### 3.6 過去に手動適用した migration が `_prisma_migrations` 未記録のまま自動 deploy に切替えた場合 (PR fix/missing-migrations / 2026-05-03)
+
+#### 症状
+
+`pnpm prisma migrate deploy` 実行時、過去に SQL Editor で手動適用したマイグレーションで以下のエラーが出る:
+
+```
+Error: P3018
+Migration name: 20260416_add_actual_dates
+Database error code: 42701
+ERROR: column "actual_start_date" of relation "tasks" already exists
+```
+
+#### 原因
+
+- DB スキーマ: 列は **存在する** (過去に SQL Editor で手動適用済)
+- `_prisma_migrations` テーブル: 該当 migration の **記録なし**
+- → `prisma migrate deploy` は「未適用」と判断して再実行 → 「すでに存在する」エラーで失敗
+
+#### リカバリ手順
+
+専用スクリプト `scripts/recover-prisma-migrations.ts` (`pnpm db:recover`) を使用:
+
+```bash
+# 1. .env.local に本番 DIRECT_URL (Session Pooler) を一時設定
+
+# 2. 「最後に確実に DB に適用されている migration の名前」を確認
+#    Supabase SQL Editor で:
+#    SELECT migration_name FROM _prisma_migrations ORDER BY migration_name;
+#    → ここに記録されていない migration のうち、DB には適用済のものを `--upto` で指定
+
+# 3. リカバリスクリプト実行 (例: 20260501_notifications まで適用済の場合)
+pnpm db:recover --upto 20260501_notifications
+#   → 先頭から 20260501_notifications までの全 migration を「適用済」として
+#     `_prisma_migrations` に記録 (DB スキーマには触らない)
+
+# 4. 通常の deploy
+pnpm db:deploy
+#   → リカバリ済より後の migration (例: 20260502_*) のみ実際に適用される
+
+# 5. 結果確認
+#    Supabase SQL Editor で _prisma_migrations の最新行を確認
+#    SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 10;
+
+# 6. .env.local から本番接続情報を削除 (誤操作防止)
+```
+
+#### `--upto` の決め方
+
+判断ロジック:
+1. `_prisma_migrations` テーブルの最新行を確認
+2. `prisma/migrations/` ディレクトリ内の同行以降のディレクトリ名を確認
+3. それぞれの migration の SQL を読み、対応する **列・テーブル・index が DB に既に存在するか** を SQL Editor で確認
+4. 「存在する」最後の migration を `--upto` に指定
+
+迷ったら、**最近の機能追加で確実に動いている範囲** (例えば「リスク起票画面が動いていれば 20260418_visibility_and_risk_nature まで適用済」) を基準にする。
+
+#### スクリプトの安全性
+
+- `prisma migrate resolve --applied` は `_prisma_migrations` に行を追加するだけで、**DB スキーマには一切触れない**
+- 万が一 `--upto` を間違えても破壊的影響なし。ただし resolve した後の `migrate deploy` で drift する可能性はあるため、最初の判断は慎重に
+- 既に resolve 済の migration への再 resolve は冪等 (no-op or 警告のみ)
+
 ---
 
 ## 4. 適用済みマイグレーション一覧
