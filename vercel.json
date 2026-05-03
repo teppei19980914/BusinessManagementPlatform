@@ -1,6 +1,5 @@
 {
   "installCommand": "pnpm install",
-  "//buildCommand": "PR fix/missing-migrations (2026-05-03): `prisma migrate deploy` を build command に追加。これがないと schema.prisma で追加した列が本番 DB に反映されず、Prisma Client の SELECT * クエリが 'column does not exist' で失敗する。Vercel 環境変数に DIRECT_URL (port 5432, pgbouncer なし) が必須。pgvector 等の拡張は事前に Supabase Dashboard で有効化しておくこと (idempotent な `CREATE EXTENSION IF NOT EXISTS` だが権限不足で失敗するため)。",
   "buildCommand": "pnpm prisma generate && pnpm prisma migrate deploy && pnpm build",
   "crons": [
     {
