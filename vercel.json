@@ -17,6 +17,10 @@
     {
       "path": "/api/cron/tenant-monthly-reset",
       "schedule": "0 0 1 * *"
+    },
+    {
+      "path": "/api/cron/daily-usage-aggregation",
+      "schedule": "0 2 * * *"
     }
   ]
 }
