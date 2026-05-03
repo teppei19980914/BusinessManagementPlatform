@@ -18,6 +18,7 @@ vi.mock('@/lib/db', () => ({
 
 import { POST } from './route';
 import { prisma } from '@/lib/db';
+import { _resetRateLimitBucketsForTest } from '@/lib/rate-limit';
 
 function makeReq(body: unknown): Request {
   return new Request('http://test/api/auth/lock-status', {
@@ -28,7 +29,12 @@ function makeReq(body: unknown): Request {
 }
 
 describe('POST /api/auth/lock-status', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // PR fix/login-failure: テスト数増加で rate-limit (10 req/5min) に達するため
+    // 各テスト前に bucket をクリアする。
+    _resetRateLimitBucketsForTest();
+  });
 
   it('バリデーション失敗 (email 形式不正) は status=none を返す', async () => {
     const res = await POST(makeReq({ email: 'not-an-email' }) as never);
@@ -59,16 +65,54 @@ describe('POST /api/auth/lock-status', () => {
     vi.mocked(prisma.user.findFirst).mockResolvedValue({
       permanentLock: false,
       lockedUntil: null,
+      isActive: true,
     } as never);
     const res = await POST(makeReq({ email: 'a@b.co' }) as never);
     const body = await res.json();
     expect(body.status).toBe('none');
   });
 
+  // PR fix/login-failure (2026-05-03): 非活性ユーザを 'inactive' で報告。
+  //   これまで is_active=false ユーザは「パスワード間違い」と誤表示され、
+  //   本人が原因に気付けない UX バグの修正。
+  it('is_active=false (非活性) は status=inactive を返す', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({
+      permanentLock: false,
+      lockedUntil: null,
+      isActive: false,
+    } as never);
+    const res = await POST(makeReq({ email: 'a@b.co' }) as never);
+    const body = await res.json();
+    expect(body.status).toBe('inactive');
+  });
+
+  it('永続ロックは inactive より優先される', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({
+      permanentLock: true,
+      lockedUntil: null,
+      isActive: false,
+    } as never);
+    const res = await POST(makeReq({ email: 'a@b.co' }) as never);
+    const body = await res.json();
+    expect(body.status).toBe('permanent_lock');
+  });
+
+  it('一時ロックは inactive より優先される', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({
+      permanentLock: false,
+      lockedUntil: new Date(Date.now() + 60 * 60 * 1000),
+      isActive: false,
+    } as never);
+    const res = await POST(makeReq({ email: 'a@b.co' }) as never);
+    const body = await res.json();
+    expect(body.status).toBe('temporary_lock');
+  });
+
   it('永続ロック中は status=permanent_lock', async () => {
     vi.mocked(prisma.user.findFirst).mockResolvedValue({
       permanentLock: true,
       lockedUntil: null,
+      isActive: true,
     } as never);
     const res = await POST(makeReq({ email: 'a@b.co' }) as never);
     const body = await res.json();
@@ -80,6 +124,7 @@ describe('POST /api/auth/lock-status', () => {
     vi.mocked(prisma.user.findFirst).mockResolvedValue({
       permanentLock: false,
       lockedUntil: until,
+      isActive: true,
     } as never);
     const res = await POST(makeReq({ email: 'a@b.co' }) as never);
     const body = await res.json();
@@ -91,6 +136,7 @@ describe('POST /api/auth/lock-status', () => {
     vi.mocked(prisma.user.findFirst).mockResolvedValue({
       permanentLock: false,
       lockedUntil: new Date(Date.now() - 60 * 1000),
+      isActive: true,
     } as never);
     const res = await POST(makeReq({ email: 'a@b.co' }) as never);
     const body = await res.json();
@@ -101,6 +147,7 @@ describe('POST /api/auth/lock-status', () => {
     vi.mocked(prisma.user.findFirst).mockResolvedValue({
       permanentLock: true,
       lockedUntil: new Date(Date.now() + 60 * 60 * 1000),
+      isActive: true,
     } as never);
     const res = await POST(makeReq({ email: 'a@b.co' }) as never);
     const body = await res.json();

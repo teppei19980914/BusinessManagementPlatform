@@ -233,6 +233,7 @@
     "loginInProgress": "ログイン中...",
     "backToLogin": "ログインに戻る",
     "accountLocked": "アカウントがロックされています。管理者に解除を依頼してください。",
+    "accountInactive": "このアカウントは無効化されています。管理者にお問い合わせください。",
     "invalidCredentials": "メールアドレスまたはパスワードが正しくありません",
     "temporaryLock": "ログイン失敗が続いたためアカウントが一時ロックされています。{unlockAt} 以降に再度お試しください。",
     "forgotPassword": "パスワードをお忘れですか？",

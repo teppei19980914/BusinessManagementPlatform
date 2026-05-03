@@ -56,6 +56,7 @@ function LoginForm() {
         ? (await lockRes.json().catch(() => null) as
             | { status: 'permanent_lock' }
             | { status: 'temporary_lock'; unlockAt: string }
+            | { status: 'inactive' }
             | { status: 'none' }
             | null)
         : null;
@@ -65,6 +66,11 @@ function LoginForm() {
       } else if (lock?.status === 'temporary_lock') {
         // PR #117: JST 固定フォーマットで表示 (環境依存せず常に同じ表記)
         setError(t('temporaryLock', { unlockAt: formatDateTimeFull(lock.unlockAt) }));
+      } else if (lock?.status === 'inactive') {
+        // PR fix/login-failure (2026-05-03): 非活性アカウントを明示。
+        //   これまで「パスワード間違い」と誤表示されて本人が原因に気付けない
+        //   UX バグになっていた。
+        setError(t('accountInactive'));
       } else {
         setError(t('invalidCredentials'));
       }
