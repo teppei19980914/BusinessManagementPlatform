@@ -57,10 +57,10 @@
 | Knowledge / RiskIssue / Retrospective 新規作成 | Voyage 1 回 | embedding 生成 (本体保存) |
 | 上記の更新 (text 変更時のみ) | Voyage 1 回 | embedding 再生成 |
 | 上記の更新 (text 非変更、visibility 等のみ) | 0 回 | embedding 再生成スキップ (LLM 課金回避) |
-| 提案画面の表示 | **0 回 (LLM 不使用)** | DB 内の embedding と pg_trgm + タグだけで完結 |
-| リスク起票時の類似 issue サジェスト | Voyage 1 回 (検索クエリの embedding 化) | inline 提示 |
+| **提案画面の表示** | **0 回 (LLM 不使用)** | DB 内の embedding と pg_trgm + タグだけで完結 |
+| **リスク起票時の inline 軽量サジェスト** | **0 回 (LLM 不使用)** | pg_trgm のみで類似 issue 検索 (PR #5-b で確定: 500ms debounce 中の連続入力で LLM 課金が発生するのを避けるため、意図的に embedding は使わない設計) |
 
-**重要**: 「提案画面を開く」操作では Anthropic が呼ばれない (= ユーザは何度開いても追加課金なし)。embedding は **データ保存時に 1 回だけ** Voyage を呼ぶ設計で、検索クエリ用の embedding 生成 (約 12 token = 0.000012 / 200M = 無料枠の極小割合) のみ毎回発生する。
+**重要**: 検索・表示系の操作では Anthropic も Voyage も呼ばれない (= ユーザは何度提案を見ても追加課金なし)。Voyage は **データ保存時に 1 回だけ** 呼ばれる ETL 専用の用途で、保存されたベクトルを使った検索は pgvector が DB 内で完結させる。
 
 ### 月次コスト試算 (6/1 リリース直後の想定: 5-10 テナント / 月 1000 操作)
 
