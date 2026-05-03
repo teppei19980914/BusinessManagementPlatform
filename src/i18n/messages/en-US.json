@@ -233,6 +233,7 @@
     "loginInProgress": "Signing in...",
     "backToLogin": "Back to sign in",
     "accountLocked": "Your account is locked. Please contact your administrator to unlock it.",
+    "accountInactive": "This account is deactivated. Please contact your administrator.",
     "invalidCredentials": "Email or password is incorrect",
     "temporaryLock": "Your account is temporarily locked due to repeated sign-in failures. Please try again after {unlockAt}.",
     "forgotPassword": "Forgot your password?",

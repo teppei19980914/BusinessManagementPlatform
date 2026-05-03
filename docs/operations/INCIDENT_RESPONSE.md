@@ -66,6 +66,99 @@
 | `Error: P2021: The table ... does not exist` | マイグレーション未適用 | `npx prisma migrate dev` を実行 |
 | `next dev` 起動後 `http://localhost:3000` で 500 | `NEXTAUTH_SECRET` 未設定 | `openssl rand -base64 32` で生成して `.env` に設定 |
 
+### 6.5 ログイン失敗の調査手順 (PR fix/login-failure / 2026-05-03)
+
+ユーザから「ログインできない」報告があった場合の系統的な調査手順。**Vercel のリクエストログだけでは原因が分からない**ため、`auth_event_logs` テーブルと Vercel の Functions ログ (`console.error`) を併用する。
+
+#### Step 1: 本番 Supabase で `auth_event_logs` を確認
+
+最も確実な方法。`detail.reason` に失敗理由が記録されている。
+
+```sql
+-- 直近のログイン失敗を確認 (Supabase SQL Editor で実行)
+SELECT
+  created_at,
+  email,
+  detail->>'reason' AS reason,
+  user_id
+FROM auth_event_logs
+WHERE email = '<対象メールアドレス>'
+  AND event_type = 'login_failure'
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+`detail.reason` の値と意味:
+
+| reason 値 | 意味 | 対処 |
+|---|---|---|
+| `user_not_found` | メールアドレスのアカウントが存在しない | メールアドレスのスペル確認、別アカウントの可能性 |
+| `inactive` | `users.is_active=false` で非活性 | 後述の「非活性アカウントの再活性化」 |
+| `permanent_lock` | `users.permanent_lock=true` (永続ロック) | 後述の「永続ロックの解除」 |
+| `temporary_lock` | `users.locked_until > now()` (一時ロック中) | 30 分待機 or admin 解除 |
+| `invalid_password` | bcrypt 比較失敗 (パスワード違い) | ユーザにパスワードリセットを案内 |
+
+#### Step 2: Vercel Functions ログで `[auth]` プレフィックスを確認
+
+`auth_event_logs` の書き込みに失敗している場合 (DB 接続不能等) は Vercel ログのみが頼り。
+
+```
+Vercel Dashboard → 対象プロジェクト → Logs → 検索バーに `[auth] login_failure` を入力
+```
+
+ログに `reason` フィールドが含まれている (PR fix/login-failure 以降)。Email は `tep***@gmail.com` 形式でマスク表示される。
+
+#### Step 3: 個別の対処
+
+##### 非活性アカウントの再活性化
+
+```sql
+UPDATE users
+SET is_active = true
+WHERE email = '<対象メールアドレス>';
+```
+
+##### 永続ロックの解除
+
+```sql
+UPDATE users
+SET permanent_lock = false,
+    temporary_lock_count = 0,
+    failed_login_count = 0,
+    locked_until = NULL
+WHERE email = '<対象メールアドレス>';
+```
+
+##### 一時ロックの即時解除
+
+```sql
+UPDATE users
+SET locked_until = NULL,
+    failed_login_count = 0
+WHERE email = '<対象メールアドレス>';
+```
+
+##### パスワードのリセット (admin 経由、最終手段)
+
+ユーザにパスワードリセット URL を送信する正規ルートが推奨。直接 DB を更新する場合は bcrypt で再ハッシュ:
+
+```typescript
+// scripts/reset-password.ts (要 bcryptjs)
+import { hash } from 'bcryptjs';
+import { prisma } from '@/lib/db';
+const hashed = await hash('<新パスワード>', 10);
+await prisma.user.update({
+  where: { email: '<対象メールアドレス>' },
+  data: { passwordHash: hashed, forcePasswordChange: true },
+});
+```
+
+`forcePasswordChange=true` をセットして、次回ログイン時に再変更を強制する。
+
+#### Step 4: UX 改善状況 (PR fix/login-failure 以降)
+
+非活性アカウントは login UI で **「このアカウントは無効化されています」** と専用メッセージが出る (旧仕様: 「メールアドレスまたはパスワードが正しくありません」と誤表示で原因不明の状態だった)。`/api/auth/lock-status` が `status: 'inactive'` を返す経路で実現。
+
 ---
 
 
