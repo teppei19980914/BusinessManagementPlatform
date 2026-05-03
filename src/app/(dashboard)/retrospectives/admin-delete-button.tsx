@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 
 /**
  * 全振り返り画面で admin 向けに表示する削除ボタン。
@@ -24,6 +25,7 @@ export function AdminRetrospectiveDeleteButton({
 }) {
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const tAction = useTranslations('action');
   const tCommon = useTranslations('common');
   return (
@@ -39,9 +41,10 @@ export function AdminRetrospectiveDeleteButton({
           fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, { method: 'DELETE' }),
         );
         if (!res.ok) {
-          alert(tCommon('deleteFailed'));
+          showError('振り返りの削除に失敗しました');
           return;
         }
+        showSuccess('振り返りを削除しました');
         router.refresh();
       }}
     >

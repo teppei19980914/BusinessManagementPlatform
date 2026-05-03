@@ -12,6 +12,9 @@ vi.mock('@/lib/db', () => ({
     project: {
       findMany: vi.fn(),
     },
+    // PR fix/visibility-auth-matrix: deleteCustomer も comment cascade
+    comment: { updateMany: vi.fn() },
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
 

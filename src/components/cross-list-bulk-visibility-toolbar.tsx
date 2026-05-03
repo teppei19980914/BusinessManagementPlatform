@@ -27,6 +27,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 // Phase E 要件 1〜3 (2026-04-29): フィルタバー shell 部品
 import { FilterBar } from '@/components/common/filter-bar';
 
@@ -80,6 +81,7 @@ export function CrossListBulkVisibilityToolbar({
   const t = useTranslations('bulkVisibility');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkVisibility, setBulkVisibility] = useState<string>(visibilityOptions[0]?.value ?? '');
   const [error, setError] = useState('');
@@ -104,11 +106,15 @@ export function CrossListBulkVisibilityToolbar({
     );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      setError(j?.message || j?.error || t('bulkUpdateFailed'));
+      const msg = j?.message || j?.error || t('bulkUpdateFailed');
+      setError(msg);
+      showError(`${entityLabel}の一括更新に失敗しました`);
       return;
     }
+    const total = selectedIds.size;
     setBulkOpen(false);
     onSelectionClear();
+    showSuccess(`${total} 件の${entityLabel}を一括更新しました`);
     await onApplied();
   }
 

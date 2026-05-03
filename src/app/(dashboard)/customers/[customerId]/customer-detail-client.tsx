@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -41,6 +42,8 @@ import {
 } from '@/components/ui/table';
 import { PROJECT_STATUSES } from '@/types';
 import type { CustomerDTO } from '@/services/customer.service';
+// PR #199: コメントセクション (顧客は admin 専用エンティティ)
+import { CommentSection } from '@/components/comments/comment-section';
 
 type ProjectSummary = {
   id: string;
@@ -61,6 +64,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
   const tAction = useTranslations('action');
   const tProject = useTranslations('project');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
 
   // --- 編集ダイアログ ---
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -103,10 +107,13 @@ export function CustomerDetailClient({ customer, projects }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setEditError(json.error?.message || t('editFailed'));
+      const msg = json.error?.message || t('editFailed');
+      setEditError(msg);
+      showError('顧客の更新に失敗しました');
       return;
     }
     setIsEditOpen(false);
+    showSuccess('顧客を更新しました');
     router.refresh();
   }
 
@@ -140,9 +147,12 @@ export function CustomerDetailClient({ customer, projects }: Props) {
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      window.alert(json.error?.message || t('deleteFailed'));
+      const msg = json.error?.message || t('deleteFailed');
+      window.alert(msg);
+      showError('顧客の削除に失敗しました');
       return;
     }
+    showSuccess('顧客を削除しました');
     router.push('/customers');
   }
 
@@ -238,6 +248,8 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                   </Button>
                   <Button type="submit">{t('editSubmit')}</Button>
                 </div>
+                {/* PR #199: コメント。admin 限定エンティティのため admin 同士の注記用途。 */}
+                <CommentSection entityType="customer" entityId={customer.id} />
               </form>
             </DialogContent>
           </Dialog>

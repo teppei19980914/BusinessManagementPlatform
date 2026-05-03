@@ -5,11 +5,17 @@ import { setupPasswordSchema } from '@/lib/validators/auth';
 import { setupPassword, validateToken } from '@/services/email-verification.service';
 import { recordAuthEvent } from '@/services/auth-event.service';
 import { BCRYPT_COST } from '@/config';
+// PR #198: 公開認証エンドポイントのブルートフォース防御 (CWE-307)
+import { applyRateLimit } from '@/lib/rate-limit';
 
 /**
  * GET: トークンの有効性を検証する（画面初期表示用）
  */
 export async function GET(req: NextRequest) {
+  // PR #198: トークン総当たり試行を抑制
+  const limited = applyRateLimit(req, { key: 'setup-password-validate' });
+  if (limited) return limited;
+
   const token = req.nextUrl.searchParams.get('token');
 
   if (!token) {
@@ -44,6 +50,10 @@ export async function GET(req: NextRequest) {
  *   - admin  : { recoveryCodes, requiresMfa: true, mfa: { otpauthUri, qrCodeDataUrl } }
  */
 export async function POST(req: NextRequest) {
+  // PR #198: トークン + パスワード送信のブルートフォース防御
+  const limited = applyRateLimit(req, { key: 'setup-password' });
+  if (limited) return limited;
+
   const body = await req.json();
   const parsed = setupPasswordSchema.safeParse(body);
 

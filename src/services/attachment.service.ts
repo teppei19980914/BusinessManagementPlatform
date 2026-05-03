@@ -154,6 +154,53 @@ export async function deleteAttachment(id: string): Promise<void> {
 }
 
 /**
+ * 親エンティティの visibility と作成者を取得する (PR #213 / 2026-05-01)。
+ *
+ * `/api/attachments` の `authorize()` で「全○○」(cross-list) からの readOnly dialog
+ * からのリクエストを救うために使う。`visibility='public'` の risk/retrospective/knowledge は
+ * 非メンバーでも添付閲覧可とする (batch route の fix/cross-list-non-member-columns
+ * 2026-04-27 と整合)。
+ *
+ * 戻り値:
+ *   - `null`: visibility 概念のない entity (project / task / estimate / memo / customer)
+ *   - `{ visibility, creatorId }`: visibility を持つ entity (risk / retrospective / knowledge)
+ *   - `'not-found'`: entity が削除済 / 不在
+ */
+export async function getEntityVisibility(
+  entityType: AttachmentEntityType,
+  entityId: string,
+): Promise<{ visibility: 'public' | 'draft'; creatorId: string } | null | 'not-found'> {
+  switch (entityType) {
+    case 'risk': {
+      const r = await prisma.riskIssue.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { visibility: true, reporterId: true },
+      });
+      if (!r) return 'not-found';
+      return { visibility: r.visibility as 'public' | 'draft', creatorId: r.reporterId };
+    }
+    case 'retrospective': {
+      const retro = await prisma.retrospective.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { visibility: true, createdBy: true },
+      });
+      if (!retro) return 'not-found';
+      return { visibility: retro.visibility as 'public' | 'draft', creatorId: retro.createdBy };
+    }
+    case 'knowledge': {
+      const k = await prisma.knowledge.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { visibility: true, createdBy: true },
+      });
+      if (!k) return 'not-found';
+      return { visibility: k.visibility as 'public' | 'draft', creatorId: k.createdBy };
+    }
+    default:
+      return null; // visibility 概念なし: project / task / estimate / memo / customer
+  }
+}
+
+/**
  * 親エンティティから Project ID を解決する (認可導出用)。
  * 見つからない場合は null を返す (呼び出し側で 404 を返すこと)。
  *

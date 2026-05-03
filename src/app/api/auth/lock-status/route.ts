@@ -17,18 +17,30 @@
  *   - 監査ログは取らない (失敗時の補助情報取得なので過剰なログは避ける)。
  *
  * 入力: { email: string }
- * 出力: { status: 'permanent_lock' | 'temporary_lock' | 'none', unlockAt?: string (ISO) }
+ * 出力: { status: 'permanent_lock' | 'temporary_lock' | 'inactive' | 'none', unlockAt?: string (ISO) }
+ *
+ * 'inactive' (PR fix/login-failure / 2026-05-03):
+ *   非活性ユーザ (`is_active=false`) はパスワードが正しくてもログインできない。
+ *   これまで UI 上は「メールアドレスまたはパスワードが正しくありません」と表示されており、
+ *   本人が原因に気付けない UX バグになっていた。本対応で `inactive` ステータスを返し、
+ *   UI 側で「アカウントが無効化されています」と明示するようにする。
+ *   enumeration 観点: 既に `permanent_lock` でユーザ存在を露出しているのと同レベル。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { prisma } from '@/lib/db';
+// PR #198: 公開エンドポイントでメール存在列挙を狙う大量リクエストを抑制 (CWE-307)
+import { applyRateLimit } from '@/lib/rate-limit';
 
 const requestSchema = z.object({
   email: z.string().email(),
 });
 
 export async function POST(req: NextRequest) {
+  const limited = applyRateLimit(req, { key: 'lock-status' });
+  if (limited) return limited;
+
   const body = await req.json().catch(() => null);
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
@@ -38,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   const user = await prisma.user.findFirst({
     where: { email: parsed.data.email, deletedAt: null },
-    select: { permanentLock: true, lockedUntil: true },
+    select: { permanentLock: true, lockedUntil: true, isActive: true },
   });
 
   if (!user) {
@@ -55,6 +67,13 @@ export async function POST(req: NextRequest) {
       status: 'temporary_lock',
       unlockAt: user.lockedUntil.toISOString(),
     });
+  }
+
+  // PR fix/login-failure (2026-05-03): 非活性アカウントを明示的に通知。
+  //   これまで is_active=false ユーザは「パスワード間違い」と誤表示され、
+  //   本人が原因に気付けず無限にログイン試行する UX バグの修正。
+  if (!user.isActive) {
+    return NextResponse.json({ status: 'inactive' });
   }
 
   return NextResponse.json({ status: 'none' });

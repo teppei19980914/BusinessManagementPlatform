@@ -100,13 +100,16 @@ export function ResponsiveTable<T>({
       {/* PC (md:+): 従来のテーブル形式、UX 変更なし */}
       <div className={cn('hidden md:block', className)}>
         <table className="w-full caption-bottom text-sm" aria-label={ariaLabel}>
-          <thead className="border-b">
+          {/* PR feat/sticky-table-headers: Excel 風ヘッダー固定 (§5.53)。
+              ResponsiveTable は raw thead を持つので個別指定。bg-card は下行が透けないため必須。
+              th セルにも bg-card を入れて二重指定 (一部ブラウザの thead 単独 bg 問題への保険)。 */}
+          <thead className="sticky top-0 z-10 bg-card border-b">
             <tr>
               {columns.map((col) => (
                 <th
                   key={col.key}
                   className={cn(
-                    'h-10 px-2 text-left align-middle font-medium text-muted-foreground',
+                    'h-10 px-2 text-left align-middle font-medium text-muted-foreground bg-card',
                     col.className,
                   )}
                 >

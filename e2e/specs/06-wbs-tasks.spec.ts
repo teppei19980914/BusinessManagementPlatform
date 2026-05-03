@@ -81,9 +81,10 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
     const page = sharedPage;
     await page.goto(`/projects/${projectId}/tasks`);
     await page.waitForLoadState('networkidle');
-    // Phase A 要件 6 (2026-04-28): WBS管理 h2 タイトル削除に伴い、
-    //   タブナビの「ガント表示」ボタン (WBS タブ固有) で render 検証する形に変更。
-    await expect(page.getByRole('button', { name: 'ガントチャートを表示' })).toBeVisible({ timeout: 10_000 });
+    // Phase A 要件 6 (2026-04-28): WBS管理 h2 タイトル削除に伴い、ボタンで render 検証していた。
+    // 2026-04-30 (Task 1): Gantt は独立タブ化、トグルボタンは廃止。代わりに WBS タブ固有の
+    //   「エクスポート」ボタンで render 検証する (admin/PM/TL に表示、空 WBS でも可視)。
+    await expect(page.getByRole('button', { name: 'エクスポート' })).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'wbs-empty');
   });
 

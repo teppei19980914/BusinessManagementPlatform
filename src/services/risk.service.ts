@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
 // Prisma types used for Decimal handling in toRiskDTO
 import type { CreateRiskInput } from '@/lib/validators/risk';
 import type { Priority } from '@/types';
@@ -158,9 +159,14 @@ export async function listRisks(
   viewerSystemRole: string,
 ): Promise<RiskDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
-  // 2026-04-24: 非 admin は一覧に draft を一切含めない (自分の draft も一覧には出さない方針)。
-  // draft の個別参照は getRisk が作成者本人/admin のみ許可する。
-  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
+  // 2026-05-01 (PR fix/visibility-auth-matrix): 「自分の draft は一覧に表示する」方針に変更。
+  //   旧仕様 (2026-04-24): 非 admin は draft 一切除外 → 自分の起票を視認できず Toast 成功
+  //   なのに一覧未反映で混乱する UX バグの根本原因 (DEVELOPER_GUIDE §5.51 参照)。
+  //   新仕様: public は全員 + 自分の draft + (admin の場合は他人の draft も) を表示。
+  //   一覧 UI 側で「下書き」バッジを付け、視認の混乱を防ぐ。
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', reporterId: viewerUserId }] };
 
   const risks = await prisma.riskIssue.findMany({
     where: { projectId, deletedAt: null, ...visibilityWhere },
@@ -300,6 +306,7 @@ export async function createRisk(
   projectId: string,
   input: CreateRiskInput,
   userId: string,
+  tenantId: string,
 ): Promise<RiskDTO> {
   const r = await prisma.riskIssue.create({
     data: {
@@ -328,7 +335,50 @@ export async function createRisk(
       assignee: { select: { name: true } },
     },
   });
+
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存 (fail-safe)
+  await generateAndPersistEntityEmbedding({
+    table: 'risks_issues',
+    rowId: r.id,
+    tenantId,
+    userId,
+    text: composeRiskText({
+      title: input.title,
+      content: input.content,
+      cause: input.cause ?? null,
+      responsePolicy: input.responsePolicy ?? null,
+      responseDetail: input.responseDetail ?? null,
+    }),
+    featureUnit: 'risk-issue-embedding',
+  });
+
   return toRiskDTO(r);
+}
+
+/**
+ * PR #5-c: RiskIssue の embedding 生成用 text 合成 helper。
+ *
+ * 意味検索の主たるシグナルとなる text フィールドを合成。impact / likelihood / priority
+ * 等の列挙値はベクトル化に貢献しないため除外。result / lessonLearned は事後追記される
+ * 性質のため、create 時点では空 → 別途 update 時に embedding 再生成される。
+ */
+function composeRiskText(fields: {
+  title: string;
+  content: string;
+  cause: string | null;
+  responsePolicy: string | null;
+  responseDetail: string | null;
+}): string {
+  return [
+    fields.title,
+    fields.content,
+    fields.cause ?? '',
+    fields.responsePolicy ?? '',
+    fields.responseDetail ?? '',
+  ]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join('\n\n');
 }
 
 /**
@@ -349,6 +399,7 @@ export async function updateRisk(
     lessonLearned?: string | null;
   },
   userId: string,
+  tenantId: string,
 ): Promise<RiskDTO> {
   const existing = await prisma.riskIssue.findFirst({
     where: { id: riskId, deletedAt: null },
@@ -356,6 +407,14 @@ export async function updateRisk(
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.reporterId !== userId) throw new Error('FORBIDDEN');
+
+  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定
+  const textFieldsChanging =
+    input.title !== undefined ||
+    input.content !== undefined ||
+    input.cause !== undefined ||
+    input.responsePolicy !== undefined ||
+    input.responseDetail !== undefined;
 
   const data: Record<string, unknown> = { updatedBy: userId };
 
@@ -395,6 +454,25 @@ export async function updateRisk(
       assignee: { select: { name: true } },
     },
   });
+
+  // PR #5-c: text 変更時のみ embedding を再生成
+  if (textFieldsChanging) {
+    await generateAndPersistEntityEmbedding({
+      table: 'risks_issues',
+      rowId: riskId,
+      tenantId,
+      userId,
+      text: composeRiskText({
+        title: r.title,
+        content: r.content,
+        cause: r.cause,
+        responsePolicy: r.responsePolicy,
+        responseDetail: r.responseDetail,
+      }),
+      featureUnit: 'risk-issue-embedding',
+    });
+  }
+
   return toRiskDTO(r);
 }
 
@@ -475,7 +553,7 @@ export async function deleteRisk(
 ): Promise<void> {
   const existing = await prisma.riskIssue.findFirst({
     where: { id: riskId, deletedAt: null },
-    select: { reporterId: true },
+    select: { reporterId: true, type: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
   const isCreator = existing.reporterId === userId;
@@ -483,7 +561,13 @@ export async function deleteRisk(
   if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
 
   // PR #89: 紐づく Attachment も論理削除 (UI からアクセス不可になる孤児データ防止)
+  // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete。
+  //   コメントの認可は投稿者本人のみ (admin 不可) に絞ったため、entity 削除時に
+  //   一括クリアしないと「削除済 entity に紐づく宙ぶらりんコメント」が UI から
+  //   操作不能の孤児になる (DEVELOPER_GUIDE §5.51)。
   const now = new Date();
+  // entityType は entity の type 列を見る (risk / issue は同 model だが別 type)
+  const commentEntityType = existing.type === 'risk' ? 'risk' : 'issue';
   await prisma.$transaction([
     prisma.riskIssue.update({
       where: { id: riskId },
@@ -491,6 +575,10 @@ export async function deleteRisk(
     }),
     prisma.attachment.updateMany({
       where: { entityType: 'risk', entityId: riskId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
+      where: { entityType: commentEntityType, entityId: riskId, deletedAt: null },
       data: { deletedAt: now },
     }),
   ]);

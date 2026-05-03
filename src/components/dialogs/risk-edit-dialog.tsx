@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,6 +14,8 @@ import {
 import { IMPACT_LEVELS, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import { NAME_MAX_LENGTH, MEDIUM_TEXT_MAX_LENGTH } from '@/config';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// PR #199: コメントセクション (entityType は risk.type='risk'|'issue' に追従)
+import { CommentSection } from '@/components/comments/comment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
@@ -66,6 +69,7 @@ export function RiskEditDialog({
   const tField = useTranslations('field');
   const tRisk = useTranslations('risk');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。state は dialog ローカル。
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
@@ -134,13 +138,16 @@ export function RiskEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || tRisk('updateFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || tRisk('updateFailed');
+      setError(msg);
+      showError(risk.type === 'risk' ? 'リスクの更新に失敗しました' : '課題の更新に失敗しました');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
     // 旧実装: await onSaved() → onOpenChange(false) — reload 完了を待つため遅く感じる
     // 新実装: onOpenChange(false) → onSaved() (fire-and-forget) — 即座に閉じて裏で reload
     onOpenChange(false);
+    showSuccess(risk.type === 'risk' ? 'リスクを更新しました' : '課題を更新しました');
     void onSaved();
   }
 
@@ -238,7 +245,7 @@ export function RiskEditDialog({
             <DateFieldWithActions value={form.deadline} onChange={(v) => setForm({ ...form, deadline: v })} />
           </div>
           </fieldset>
-          {/* Phase E 共通化: DialogAttachmentSection に集約。readOnly 非表示は §5.10 由来 */}
+          {/* Phase E 共通化: DialogAttachmentSection に集約。readOnly 非表示は §5.14 由来 */}
           <DialogAttachmentSection
             entityType="risk"
             entityId={risk.id}
@@ -246,6 +253,11 @@ export function RiskEditDialog({
             mainLabel={tRisk('relatedUrl')}
           />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
+          {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
+          <CommentSection
+            entityType={risk.type === 'issue' ? 'issue' : 'risk'}
+            entityId={risk.id}
+          />
         </form>
       </DialogContent>
     </Dialog>

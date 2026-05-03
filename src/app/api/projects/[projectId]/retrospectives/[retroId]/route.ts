@@ -38,7 +38,7 @@ export async function PATCH(
 
   const body = await req.json();
   try {
-    await updateRetrospective(retroId, body, user.id);
+    await updateRetrospective(retroId, body, user.id, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

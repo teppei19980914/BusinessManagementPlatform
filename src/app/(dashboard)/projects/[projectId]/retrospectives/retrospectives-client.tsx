@@ -29,6 +29,7 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { matchesAnyKeyword } from '@/lib/text-search';
 // Phase E 要件 1〜3 (2026-04-29): 共通バッジ + クリッカブルカード + 一括選択部品
@@ -90,6 +91,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
   const RETRO_VISIBILITY_OPTIONS = buildRetroVisibilityOptions(tRetro);
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const reload = useCallback(async () => {
     if (onReload) {
       await onReload();
@@ -176,7 +178,9 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
     );
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || tRetro('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || tRetro('createFailed');
+      setError(msg);
+      showError('振り返りの作成に失敗しました');
       return;
     }
     // PR #67: 作成成功直後にステージされた添付を一括 POST
@@ -192,6 +196,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
 
     setIsCreateOpen(false);
     setForm({ conductedDate: new Date().toISOString().split('T')[0], planSummary: '', actualSummary: '', goodPoints: '', problems: '', improvements: '', visibility: 'draft' });
+    showSuccess('振り返りを作成しました');
     await reload();
   }
 
@@ -199,11 +204,16 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
     // PR #57 修正: 以前は POST /retrospectives に { action: 'confirm', retroId } を送って
     // 400 (create schema 違反) になっていた。正しい経路である
     // PATCH /retrospectives/[retroId] に state='confirmed' を送る。
-    await fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, {
+    const res = await fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ state: 'confirmed' }),
     });
+    if (!res.ok) {
+      showError('振り返りの確定に失敗しました');
+      return;
+    }
+    showSuccess('振り返りを確定しました');
     await reload();
   }
 
@@ -215,9 +225,10 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
       fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert(tRetro('deleteFailed'));
+      showError('振り返りの削除に失敗しました');
       return;
     }
+    showSuccess('振り返りを削除しました');
     await reload();
   }
 
@@ -409,11 +420,9 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
           </div>
 
           {/*
-            項目 10: 振り返りのコメント機能は現状非表示。
-            将来計画: 各「○○一覧」(リスク/課題/振り返り/ナレッジ) で横ぐしのコメント機能を実装し、
-            コメント時に通知が飛ぶ仕組みを導入予定 (PR-α 段階では UI 削除のみ、API/DB/service は温存)。
-            対応する API: POST /api/projects/[id]/retrospectives/[retroId]/comments は残置。
-            DTO の retro.comments は無視 (計算済だが UI で参照しない)。
+            PR #199: 振り返りのコメント機能は polymorphic <CommentSection> に統合。
+            一覧画面に列を追加せず、編集 dialog (RetrospectiveEditDialog) 内に表示する。
+            旧 RetrospectiveComment テーブル / 旧 API は削除済み。
           */}
         </ClickableCard>
         );

@@ -17,6 +17,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,6 +28,8 @@ import {
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import { parseTagsInput } from '@/lib/parse-tags';
+// PR #199: コメントセクション (新規作成時は entityId 未確定なので非表示)
+import { CommentSection } from '@/components/comments/comment-section';
 import {
   STAKEHOLDER_ATTITUDES,
   STAKEHOLDER_ENGAGEMENTS,
@@ -95,6 +98,7 @@ export function StakeholderEditDialog({
   const tAction = useTranslations('action');
   const t = useTranslations('stakeholder');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [error, setError] = useState('');
@@ -163,16 +167,17 @@ export function StakeholderEditDialog({
 
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(
-        json.error?.message
-          || json.error?.details?.[0]?.message
-          || (isEdit ? t('updateFailed') : t('registerFailed')),
-      );
+      const msg = json.error?.message
+        || json.error?.details?.[0]?.message
+        || (isEdit ? t('updateFailed') : t('registerFailed'));
+      setError(msg);
+      showError(isEdit ? 'ステークホルダーの更新に失敗しました' : 'ステークホルダーの登録に失敗しました');
       return;
     }
 
     // feat/account-lock-and-ui-consistency: 即座に閉じてから reload を裏で走らせる
     onOpenChange(false);
+    showSuccess(isEdit ? 'ステークホルダーを更新しました' : 'ステークホルダーを登録しました');
     void onSaved();
   }
 
@@ -357,6 +362,10 @@ export function StakeholderEditDialog({
           </div>
 
           <Button type="submit" className="w-full">{isEdit ? tAction('save') : t('submitRegister')}</Button>
+          {/* PR #199: コメント。新規作成時は entityId 未確定なので非表示。 */}
+          {isEdit && stakeholder && (
+            <CommentSection entityType="stakeholder" entityId={stakeholder.id} />
+          )}
         </form>
       </DialogContent>
     </Dialog>

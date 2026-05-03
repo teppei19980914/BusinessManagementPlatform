@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { KNOWLEDGE_TYPES } from '@/types';
 
 type KnowledgeSuggestion = {
@@ -70,6 +71,7 @@ export function SuggestionsPanel({
 }) {
   const t = useTranslations('suggestion');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [state, setState] = useState<PanelState>({ loaded: false });
   const [error, setError] = useState('');
   // 採用済の ID を記録し UI を「採用済」表示に切り替える (再フェッチ不要化)
@@ -113,6 +115,7 @@ export function SuggestionsPanel({
     );
     if (!res.ok) {
       setError(t('adoptFailed'));
+      showError(kind === 'knowledge' ? 'ナレッジの採用に失敗しました' : '過去課題の採用に失敗しました');
       return;
     }
     setAdopted((prev) => {
@@ -120,6 +123,7 @@ export function SuggestionsPanel({
       next.add(`${kind}:${id}`);
       return next;
     });
+    showSuccess(kind === 'knowledge' ? 'ナレッジを採用しました' : '過去課題を採用しました');
   }
 
   if (!state.loaded) {

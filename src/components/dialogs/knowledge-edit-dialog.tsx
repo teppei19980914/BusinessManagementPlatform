@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,6 +13,8 @@ import {
 } from '@/components/ui/dialog';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// PR #199: コメントセクション
+import { CommentSection } from '@/components/comments/comment-section';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
@@ -58,6 +61,7 @@ export function KnowledgeEditDialog({
   const t = useTranslations('action');
   const tKnowledge = useTranslations('knowledge');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
@@ -107,12 +111,15 @@ export function KnowledgeEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || tKnowledge('updateFailed'));
+      const msg = json.error?.message || tKnowledge('updateFailed');
+      setError(msg);
+      showError('ナレッジの更新に失敗しました');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
     // 即座に閉じてから reload を裏で走らせる (旧実装は reload await で遅く感じた)。
     onOpenChange(false);
+    showSuccess('ナレッジを更新しました');
     void onSaved();
   }
 
@@ -182,7 +189,7 @@ export function KnowledgeEditDialog({
           </div>
           </fieldset>
           {/* Phase E 共通化: DialogAttachmentSection に集約 (旧来は SingleUrlField +
-              AttachmentList を inline で並べていた。readOnly 時の §5.10 非表示も内部処理) */}
+              AttachmentList を inline で並べていた。readOnly 時の §5.14 非表示も内部処理) */}
           <DialogAttachmentSection
             entityType="knowledge"
             entityId={knowledge.id}
@@ -194,6 +201,8 @@ export function KnowledgeEditDialog({
             mainLabel={tKnowledge('referenceLinks')}
           />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
+          {/* PR #199: コメント。readOnly でも投稿可 (fieldset 外配置)。 */}
+          <CommentSection entityType="knowledge" entityId={knowledge.id} />
         </form>
       </DialogContent>
     </Dialog>

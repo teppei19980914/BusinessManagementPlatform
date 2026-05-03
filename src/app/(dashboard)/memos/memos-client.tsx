@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,8 +31,13 @@ import {
 } from '@/components/ui/table';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { ResizableHead } from '@/components/ui/resizable-columns';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+// PR #213 (2026-05-01): 個人メモ画面にもコメント機能を追加
+import { CommentSection } from '@/components/comments/comment-section';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -58,6 +64,18 @@ import {
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
 
+// PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
+function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'title': return m.title;
+    case 'content': return m.content;
+    case 'visibility': return m.visibility;
+    case 'author': return m.authorName ?? '';
+    case 'updatedAt': return m.updatedAt;
+    default: return null;
+  }
+}
+
 export function MemosClient({
   memos: initialMemos,
   viewerUserId,
@@ -81,6 +99,7 @@ export function MemosClient({
   };
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDateTime } = useFormatters();
   const [memos, setMemos] = useState(initialMemos);
@@ -107,16 +126,18 @@ export function MemosClient({
   // isMine=true のものだけ編集できるため、checkbox は isMine=true 行のみ active。
   const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
+  const { sortState, setSortColumn } = useMultiSort('sort:memos');
 
   const filteredMemos = useMemo(() => {
-    let xs = memos;
+    let xs: MemoDTO[] = memos;
     if (bulkFilter.mineOnly) xs = xs.filter((m) => m.isMine);
     if (bulkFilter.keyword.trim()) {
       // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
       xs = xs.filter((m) => matchesAnyKeyword(bulkFilter.keyword, [m.title, m.content]));
     }
-    return xs;
-  }, [memos, bulkFilter]);
+    return multiSort(xs, sortState, getMemoSortValue);
+  }, [memos, bulkFilter, sortState]);
 
   const selectableIds = filteredMemos.filter((m) => m.isMine).map((m) => m.id);
   const allSelectableSelected
@@ -157,7 +178,9 @@ export function MemosClient({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || json.error?.details?.[0]?.message || tMessage('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || tMessage('createFailed');
+      setError(msg);
+      showError('メモの作成に失敗しました');
       return;
     }
     const json = await res.json();
@@ -172,6 +195,7 @@ export function MemosClient({
     setStagedCreateAttachments([]);
     setCreateForm({ title: '', content: '', visibility: 'private' });
     setIsCreateOpen(false);
+    showSuccess('メモを作成しました');
     await reload();
   }
 
@@ -212,10 +236,13 @@ export function MemosClient({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || tMessage('updateFailed'));
+      const msg = json.error?.message || tMessage('updateFailed');
+      setError(msg);
+      showError('メモの更新に失敗しました');
       return;
     }
     setEditing(null);
+    showSuccess('メモを更新しました');
     await reload();
   }
 
@@ -225,9 +252,10 @@ export function MemosClient({
       fetch(`/api/memos/${memo.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      alert(tMessage('deleteFailed'));
+      showError('メモの削除に失敗しました');
       return;
     }
+    showSuccess('メモを削除しました');
     await reload();
   }
 
@@ -334,11 +362,11 @@ export function MemosClient({
                   ariaLabel={tMemo('selectAllEditable')}
                 />
               </ResizableHead>
-              <ResizableHead columnKey="title" defaultWidth={220}>{tField('title')}</ResizableHead>
-              <ResizableHead columnKey="content" defaultWidth={300}>{tField('body')}</ResizableHead>
-              <ResizableHead columnKey="visibility" defaultWidth={110}>{tField('visibility')}</ResizableHead>
-              <ResizableHead columnKey="author" defaultWidth={120}>{tMemo('colAuthor')}</ResizableHead>
-              <ResizableHead columnKey="updatedAt" defaultWidth={140}>{tMemo('colUpdatedAt')}</ResizableHead>
+              <SortableResizableHead columnKey="title" defaultWidth={220} label={tField('title')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="content" defaultWidth={300} label={tField('body')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="visibility" defaultWidth={110} label={tField('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="author" defaultWidth={120} label={tMemo('colAuthor')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="updatedAt" defaultWidth={140} label={tMemo('colUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
               <ResizableHead columnKey="attachments" defaultWidth={200}>{tMemo('colAttachments')}</ResizableHead>
               <ResizableHead columnKey="actions" defaultWidth={80}>{tMemo('colActions')}</ResizableHead>
             </TableRow>
@@ -446,6 +474,12 @@ export function MemosClient({
                 label={tMemo('referenceUrl')}
               />
               <Button type="submit" className="w-full">{tAction('save')}</Button>
+              {/* PR #213: 個人メモにもコメント機能 (全メモと同 UX)。form の外に配置することで
+                  保存ボタンと干渉しない。public memo は他人もコメント可、draft は本人のみ。 */}
+              <CommentSection
+                entityType="memo"
+                entityId={editing.id}
+              />
             </form>
           )}
         </DialogContent>

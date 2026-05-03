@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,6 +36,7 @@ export function UserEditDialog({
   const tField = useTranslations('field');
   const t = useTranslations('admin.userEdit');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDateTimeFull } = useFormatters();
   const [form, setForm] = useState({
@@ -82,11 +84,14 @@ export function UserEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || t('updateFailed'));
+      const msg = json.error?.message || t('updateFailed');
+      setError(msg);
+      showError('ユーザの更新に失敗しました');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
+    showSuccess('ユーザを更新しました');
     void onSaved();
   }
 
@@ -99,11 +104,14 @@ export function UserEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || t('unlockFailed'));
+      const msg = json.error?.message || t('unlockFailed');
+      setError(msg);
+      showError('ロック解除に失敗しました');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
+    showSuccess('アカウントのロックを解除しました');
     void onSaved();
   }
 
@@ -118,7 +126,9 @@ export function UserEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || t('deleteFailed'));
+      const msg = json.error?.message || t('deleteFailed');
+      setError(msg);
+      showError('ユーザの削除に失敗しました');
       return;
     }
     const json = await res.json().catch(() => ({ data: null }));
@@ -126,6 +136,7 @@ export function UserEditDialog({
     alert(t('deleteDone', { count: removed }));
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
+    showSuccess('ユーザを削除しました');
     void onSaved();
   }
 

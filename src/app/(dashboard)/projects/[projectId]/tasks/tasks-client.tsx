@@ -28,10 +28,11 @@
  *   - DESIGN.md §15 (idx_tasks_gantt 等のインデックス) / §17 (パフォーマンス要件)
  */
 
-import { memo, useCallback, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -51,12 +52,16 @@ import {
   collectSelfAndDescendantIds,
   filterTreeByAssignee,
   filterTreeByStatus,
+  findAncestorIds,
+  findTaskInTree,
   taskStatusColors,
   UNASSIGNED_KEY,
 } from '@/lib/task-tree-utils';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { TASK_STATUSES, WBS_TYPES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+// PR #199: コメントセクション (タスク編集 dialog)
+import { CommentSection } from '@/components/comments/comment-section';
 // feat/wbs-overwrite-import: WBS 上書きインポート (Sync by ID) ダイアログ
 import { WbsSyncImportDialog } from '@/components/dialogs/wbs-sync-import-dialog';
 import {
@@ -78,9 +83,6 @@ import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
-// feat/gantt-tab-restructure (PR-C item 6): Gantt 表示は専用タブから WBS タブ内のトグルへ移行
-import { GanttClient } from '../gantt/gantt-client';
-
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
 type Props = {
@@ -185,6 +187,7 @@ function TaskTreeNodeImpl({
   // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
   // CRUD 後の reload + stale-while-revalidate（PR #33）で UI が追従する。
   const t = useTranslations('wbs');
+  const { showSuccess, showError } = useToast();
   const unsetLabel = t('unsetShort');
 
   const isWP = task.type === 'work_package';
@@ -318,9 +321,14 @@ function TaskTreeNodeImpl({
                 aria-label={t('delete')}
                 onClick={async () => {
                   if (!confirm(isWP ? t('deleteConfirmWp') : t('deleteConfirmActivity'))) return;
-                  await onLoading(() =>
+                  const res = await onLoading(() =>
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
+                  if (!res.ok) {
+                    showError(isWP ? 'WPの削除に失敗しました' : 'アクティビティの削除に失敗しました');
+                    return;
+                  }
+                  showSuccess(isWP ? 'WPを削除しました' : 'アクティビティを削除しました');
                   await reload();
                 }}
               >
@@ -424,6 +432,7 @@ function TaskMobileCardImpl({
   attachmentsByEntity,
 }: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect' | 'showIdColumn'>) {
   const t = useTranslations('wbs');
+  const { showSuccess, showError } = useToast();
   const unsetLabel = t('unsetShort');
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
@@ -526,9 +535,14 @@ function TaskMobileCardImpl({
                 aria-label={t('delete')}
                 onClick={async () => {
                   if (!confirm(isWP ? t('deleteConfirmWp') : t('deleteConfirmActivity'))) return;
-                  await onLoading(() =>
+                  const res = await onLoading(() =>
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
+                  if (!res.ok) {
+                    showError(isWP ? 'WPの削除に失敗しました' : 'アクティビティの削除に失敗しました');
+                    return;
+                  }
+                  showSuccess(isWP ? 'WPを削除しました' : 'アクティビティを削除しました');
                   await reload();
                 }}
               >
@@ -583,10 +597,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const t = useTranslations('wbs');
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
-  // feat/gantt-tab-restructure (PR-C item 6): WBS タブ内で Gantt を切り替え表示する state
-  const [showGantt, setShowGantt] = useState(false);
   // fix/wbs-filter-regression: モバイル時のフィルタ折りたたみ state (md+ では常時開)
   const [isFilterMobileOpen, setIsFilterMobileOpen] = useState(false);
 
@@ -688,6 +701,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     type: 'work_package' | 'activity';
     parentTaskId: string;
     name: string;
+    /** 2026-04-30: ACT のみ表示・編集可。WP は使わない (子から集約) */
+    description: string;
     assigneeId: string;
     plannedStartDate: string;
     plannedEndDate: string;
@@ -701,6 +716,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     type: task.type as 'work_package' | 'activity',
     parentTaskId: task.parentTaskId ?? '',
     name: task.name,
+    description: task.description ?? '',
     assigneeId: task.assigneeId ?? '',
     plannedStartDate: task.plannedStartDate ?? '',
     plannedEndDate: task.plannedEndDate ?? '',
@@ -725,6 +741,50 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setEditForm(null);
     setEditError('');
   }, []);
+
+  // PR feat/notification-deep-link-completion (2026-05-01): 通知 deep link
+  // (`/projects/[id]/tasks?taskId=...`) で着地した際、該当タスクの edit dialog を auto-open。
+  // WBS は階層構造のため、対象タスクが折りたたまれた親 WP の中にいると画面に出ない。
+  // → `findAncestorIds` で全祖先を `expandedTaskIds` に追加して可視化してから dialog open。
+  // useRef で 1 度きり実行を担保、tasks の lazy fetch 完了タイミングに対応。
+  const autoOpenSearchParams = useSearchParams();
+  const autoOpenPathname = usePathname();
+  const autoOpenTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenTriggeredRef.current) return;
+    if (!tasks || tasks.length === 0) return;
+    const targetTaskId = autoOpenSearchParams.get('taskId');
+    if (!targetTaskId) return;
+
+    const targetTask = findTaskInTree(tasks, targetTaskId);
+    if (!targetTask) {
+      // タスクが見つからない (削除済 / 別 project) → query 消すだけ
+      autoOpenTriggeredRef.current = true;
+      const next = new URLSearchParams(autoOpenSearchParams);
+      next.delete('taskId');
+      const qs = next.toString();
+      router.replace(qs ? `${autoOpenPathname}?${qs}` : autoOpenPathname, { scroll: false });
+      return;
+    }
+
+    // 祖先 (root → parent) を全展開して target を可視化
+    const ancestors = findAncestorIds(tasks, targetTaskId);
+    if (ancestors.length > 0) {
+      setExpandedTaskIds((prev) => {
+        const next = new Set(prev);
+        for (const id of ancestors) next.add(id);
+        return next;
+      });
+    }
+    autoOpenTriggeredRef.current = true;
+    openEditDialog(targetTask);
+    const next = new URLSearchParams(autoOpenSearchParams);
+    next.delete('taskId');
+    const qs = next.toString();
+    router.replace(qs ? `${autoOpenPathname}?${qs}` : autoOpenPathname, { scroll: false });
+    // tasks の load timing を監視するため deps に tasks を含める
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
   // 編集対象のロール判定
   const isEditingActivity = editingTask?.type === 'activity';
   const editingIsAssignee = editingTask?.assigneeId === userId;
@@ -755,6 +815,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         body.plannedStartDate = editForm.plannedStartDate || null;
         body.plannedEndDate = editForm.plannedEndDate || null;
         body.plannedEffort = editForm.plannedEffort;
+        // 2026-04-30: ACT のみ description を更新。空文字は null (明示クリア) として送る。
+        body.description = editForm.description.trim() ? editForm.description.trim() : null;
       }
     }
     // 実績系（PM/TL または担当者本人）
@@ -779,9 +841,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         message = json.error?.message || json.error?.details?.[0]?.message || message;
       } catch {}
       setEditError(message);
+      showError('タスクの更新に失敗しました');
       return;
     }
     closeEditDialog();
+    showSuccess('タスクを更新しました');
     await reload();
   }
 
@@ -926,12 +990,20 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
     if (!confirm(t('bulkDeleteConfirm', { count: selectedIds.size }))) return;
+    let failed = 0;
+    const total = selectedIds.size;
     for (const id of selectedIds) {
-      await withLoading(() =>
+      const res = await withLoading(() =>
         fetch(`/api/projects/${projectId}/tasks/${id}`, { method: 'DELETE' }),
       );
+      if (!res.ok) failed += 1;
     }
     setSelectedIds(new Set());
+    if (failed > 0) {
+      showError(`${failed} 件のタスク削除に失敗しました (${total} 件中)`);
+    } else {
+      showSuccess(`${total} 件のタスクを削除しました`);
+    }
     await reload();
   }
 
@@ -963,13 +1035,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     if (bulkEditApply.plannedEndDate) updates.plannedEndDate = bulkEditValues.plannedEndDate || null;
     if (bulkEditApply.plannedEffort) updates.plannedEffort = bulkEditValues.plannedEffort;
 
+    const total = selectedIds.size;
     const err = await postBulkUpdate(updates);
     if (err) {
       setBulkEditError(err);
+      showError('タスクの一括更新 (計画) に失敗しました');
       return;
     }
     setIsBulkEditOpen(false);
     setSelectedIds(new Set());
+    showSuccess(`${total} 件のタスクの計画を一括更新しました`);
     // ※ apply / values の明示リセットは不要。次回開く際に onOpenChange→
     //    handleBulkEditOpenChange(true) が必ずリセットを行うため。
     await reload();
@@ -984,13 +1059,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     if (bulkActualApply.actualStartDate) updates.actualStartDate = bulkActualValues.actualStartDate || null;
     if (bulkActualApply.actualEndDate) updates.actualEndDate = bulkActualValues.actualEndDate || null;
 
+    const total = selectedIds.size;
     const err = await postBulkUpdate(updates);
     if (err) {
       setBulkActualError(err);
+      showError('タスクの一括更新 (実績) に失敗しました');
       return;
     }
     setIsBulkActualOpen(false);
     setSelectedIds(new Set());
+    showSuccess(`${total} 件のタスクの実績を一括更新しました`);
     // ※ 同上。リセットは onOpenChange 経由
     await reload();
   }
@@ -1016,7 +1094,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         body: JSON.stringify(body),
       }),
     );
-    if (!res.ok) return;
+    if (!res.ok) {
+      showError('WBS のエクスポートに失敗しました');
+      return;
+    }
     const csvText = await res.text();
     // BOM を再付与 (res.text() で strip されるため)
     const blob = new Blob(['﻿' + csvText], { type: 'text/csv; charset=utf-8' });
@@ -1026,6 +1107,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     a.download = `wbs-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    showSuccess('WBS をエクスポートしました');
   }
 
   // feat/wbs-overwrite-import: ID 表示トグル + 上書きインポートダイアログ state
@@ -1054,6 +1136,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   const [form, setForm] = useState({
     name: '',
+    // 2026-04-30: ACT のみ表示する作業内容欄。WP は子から集約されるため不要。
+    description: '',
     // fix/quick-ux item 8: デフォルト担当者=自分。プルダウンで変更可。
     assigneeId: userId,
     plannedStartDate: '',
@@ -1069,6 +1153,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setError('');
 
     // PR #63: UI から「優先度」を撤去。サーバ側バリデータは optional 扱いのため省略で OK。
+    // 2026-04-30: ACT のみ description を送信 (空文字は省略)。WP は子から集約のため不要。
     const base = createType === 'work_package'
       ? { type: 'work_package', name: form.name }
       : {
@@ -1078,6 +1163,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           plannedStartDate: form.plannedStartDate,
           plannedEndDate: form.plannedEndDate,
           plannedEffort: form.plannedEffort,
+          ...(form.description.trim() ? { description: form.description.trim() } : {}),
         };
 
     const body = parentTaskId ? { ...base, parentTaskId } : base;
@@ -1092,7 +1178,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || t('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || t('createFailed');
+      setError(msg);
+      showError(createType === 'work_package' ? 'WPの作成に失敗しました' : 'アクティビティの作成に失敗しました');
       return;
     }
 
@@ -1110,7 +1198,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setIsCreateOpen(false);
     setParentTaskId('');
     // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット
-    setForm({ name: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
+    setForm({ name: '', description: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
+    showSuccess(createType === 'work_package' ? 'WPを作成しました' : 'アクティビティを作成しました');
     await reload();
   }
 
@@ -1119,10 +1208,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
       <div className="flex items-center justify-end">
         <div className="flex gap-2">
-        {/* feat/gantt-tab-restructure (PR-C item 6): ガント表示トグル (全ユーザに開放、WBS タブ統合) */}
-        <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>
-          {showGantt ? t('hideGantt') : t('showGantt')}
-        </Button>
+        {/* 2026-04-30 (Task 1): ガント表示トグルを削除し、ガントチャートは独立タブ
+            ('gantt' tab) として project-detail-client 側で render する設計に移行。 */}
         {/* feat/wbs-overwrite-import: 一覧画面に ID 列を表示するトグル (CSV 整合確認用、既定 OFF) */}
         <Button
           variant={showIdColumn ? 'default' : 'outline'}
@@ -1232,6 +1319,19 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <Label>{t('plannedEffort')}</Label>
                       <NumberInput min={0.5} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
                     </div>
+                    {/* 2026-04-30: ACT 作業内容。何をするかを具体的に記述する欄 (任意) */}
+                    <div className="space-y-2">
+                      <Label htmlFor="task-create-description">{t('description')}</Label>
+                      <textarea
+                        id="task-create-description"
+                        value={form.description}
+                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        placeholder={t('descriptionPlaceholder')}
+                        maxLength={2000}
+                        rows={4}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      />
+                    </div>
                   </>
                 )}
 
@@ -1252,13 +1352,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         </div>
       </div>
 
-      {/* feat/gantt-tab-restructure (PR-C item 6): ガント表示エリア (toggle で開閉)。
-          tasks (tree) と members は本コンポーネントが既に保持しているため再 fetch 不要。 */}
-      {showGantt && (
-        <div className="rounded-lg border p-2">
-          <GanttClient projectId={projectId} tasks={tasks} members={members} />
-        </div>
-      )}
+      {/* 2026-04-30 (Task 1): ガント表示は独立タブに移行したため本タブ内では描画しない。
+          詳細は project-detail-client.tsx の TabsContent value="gantt" を参照。 */}
 
       {/*
         フィルタ (担当者 + 状況、PR #61)
@@ -1488,9 +1583,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           <div className="flex justify-end pb-2">
             <ResetColumnsButton />
           </div>
-          <div className="rounded-lg border overflow-x-auto">
+          {/* PR fix/sticky-and-readonly-links (2026-05-01): wrapper に max-h を追加し、
+              真の縦スクロールコンテナ化することで sticky thead が機能するようにする。
+              旧 (PR #204) は overflow-x-auto のみで vertical scroll を発生させない構造だったため、
+              sticky thead が無効化されていた (詳細: §5.55 / 共通 Table コンポーネントと同パターン)。 */}
+          <div className="rounded-lg border max-h-[calc(100vh-12rem)] overflow-auto">
             <table className="min-w-full text-xs md:text-sm">
-              <thead className="bg-muted">
+              {/* PR feat/sticky-table-headers: WBS 一覧の Excel 風ヘッダー固定 (§5.53)。
+                  `<TableHeader>` を経由しない raw thead で `bg-muted` を維持。 */}
+              <thead className="sticky top-0 z-10 bg-muted [&>tr>th]:bg-muted">
                 <tr>
                   {canSelectForProgress && (
                     <th className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
@@ -1673,6 +1774,19 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                         <Label>{t('estimatedEffort')}</Label>
                         <NumberInput min={0.5} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
                       </div>
+                      {/* 2026-04-30: ACT 作業内容 (任意)。何をするかを具体的に記述する欄 */}
+                      <div className="space-y-2">
+                        <Label htmlFor="task-edit-description">{t('description')}</Label>
+                        <textarea
+                          id="task-edit-description"
+                          value={editForm.description}
+                          onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                          placeholder={t('descriptionPlaceholder')}
+                          maxLength={2000}
+                          rows={4}
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
+                      </div>
                     </>
                   )}
                 </section>
@@ -1749,6 +1863,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 <Button type="button" variant="outline" onClick={closeEditDialog}>{tAction('cancel')}</Button>
                 <Button type="submit">{tAction('save')}</Button>
               </div>
+
+              {/* PR #199: コメント。プロジェクトメンバー必須 (task は project-scoped)。
+                  外側 form の submit を防ぐため CommentSection 内部で type="button" 徹底 */}
+              <CommentSection entityType="task" entityId={editingTask.id} />
             </form>
           )}
         </DialogContent>

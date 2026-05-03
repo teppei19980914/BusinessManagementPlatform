@@ -9,6 +9,14 @@
     {
       "path": "/api/admin/users/lock-inactive",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/daily-notifications",
+      "schedule": "0 22 * * *"
+    },
+    {
+      "path": "/api/cron/tenant-monthly-reset",
+      "schedule": "0 0 1 * *"
     }
   ]
 }

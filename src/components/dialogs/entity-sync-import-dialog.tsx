@@ -44,6 +44,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 
 type RemoveMode = 'keep' | 'warn' | 'delete';
 
@@ -106,6 +107,7 @@ export function EntitySyncImportDialog({
   const t = useTranslations(i18nNamespace);
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [step, setStep] = useState<'select' | 'preview'>('select');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<SyncDiffResult | null>(null);
@@ -184,11 +186,13 @@ export function EntitySyncImportDialog({
         /* noop */
       }
       setError(message);
+      showError('上書きインポートに失敗しました');
       return;
     }
 
     const json = await res.json();
     handleClose();
+    showSuccess('上書きインポートが完了しました');
     await onImported();
     alert(t('importComplete', {
       added: json.data.added,

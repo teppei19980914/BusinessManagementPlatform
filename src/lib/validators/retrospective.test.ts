@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createRetrospectiveSchema, addCommentSchema } from './retrospective';
+import { createRetrospectiveSchema } from './retrospective';
 
 describe('createRetrospectiveSchema', () => {
   const validInput = {
@@ -51,16 +51,5 @@ describe('createRetrospectiveSchema', () => {
   });
 });
 
-describe('addCommentSchema', () => {
-  it('有効なコメントを受け入れる', () => {
-    expect(addCommentSchema.safeParse({ content: 'コメント内容' }).success).toBe(true);
-  });
-
-  it('空のコメントを拒否する', () => {
-    expect(addCommentSchema.safeParse({ content: '' }).success).toBe(false);
-  });
-
-  it('2001文字のコメントを拒否する', () => {
-    expect(addCommentSchema.safeParse({ content: 'a'.repeat(2001) }).success).toBe(false);
-  });
-});
+// PR #199: addCommentSchema は createCommentSchema (validators/comment.ts) に移行。
+//   等価テストは src/lib/validators/comment.test.ts に新設。

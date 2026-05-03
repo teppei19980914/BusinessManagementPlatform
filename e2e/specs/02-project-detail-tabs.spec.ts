@@ -10,8 +10,9 @@
  *   リスク一覧 / 課題一覧 / 振り返り一覧 / ナレッジ一覧 /
  *   参考 / メンバー (admin/pm_tl のみ)
  *
- * feat/gantt-tab-restructure (PR-C item 6): ガント専用タブは WBS 管理タブ内の
- * 「ガントチャートを表示」トグルに統合され、独立した role='tab' は存在しない。
+ * 2026-04-30 (Task 1): ガントチャートは「WBS管理」と並ぶ独立タブとして再復活
+ *   (PC は role='tab'、Mobile は「進捗管理 ▼」プルダウン)。旧 feat/gantt-tab-restructure
+ *   (PR-C item 6) で WBS タブ内のトグルボタンに集約していた経緯は解消。
  *
  * CRUD 検証ではなく render smoke に絞る (CRUD は後続 PR)。
  *
@@ -99,16 +100,21 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // 全 viewport で visible な共通タブ
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '見積もり' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
-    // feat/gantt-tab-restructure (PR-C item 6): ガント専用タブは WBS 管理タブ内に統合
-    await expect(page.getByRole('tab', { name: 'ガント' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'メンバー' })).toBeVisible();
 
     if (isMobile) {
       // PR #167 mobile: 資産プルダウンが visible (個別 TabsTrigger は hidden)
       await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
+      // 2026-04-30 (Task 1) mobile: WBS管理 / ガントチャート は「進捗管理」プルダウンに集約。
+      //   個別 TabsTrigger は hidden lg:inline-flex で非表示なので、進捗管理プルダウン
+      //   トリガーで代替検証。配下 Menu.Item は閉じている間 DOM 上に出ないため visibility は
+      //   別 test で検証 (line 122 周辺の click test)。
+      await expect(page.getByRole('button', { name: '進捗管理メニューを開く' })).toBeVisible();
     } else {
       // PC viewport: 個別タブが visible
+      // 2026-04-30 (Task 1): WBS管理 / ガントチャートは PC では独立タブ
+      await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'ガントチャート' })).toBeVisible();
       await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
       await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
       await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
@@ -133,11 +139,12 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // ライブラリ固有の data 属性ではなく、W3C ARIA 標準の aria-selected で判定する
     // (Radix UI の data-state="active" とは異なるため、過去に Radix 想定で書いて
     // 失敗した → PR #93 hotfix 3)。
-    // feat/gantt-tab-restructure (PR-C item 6): ガントタブは WBS 管理タブ内のトグルに統合済
-    // PR #167: viewport 別に経路を分岐。
+    // 2026-04-30 (Task 1): WBS管理 / ガントチャートは PC では独立タブ、Mobile では
+    //   「進捗管理」プルダウンに集約。viewport 別に経路を分岐。
+    // PR #167: 同パターンが「リスク/課題/振り返り/ナレッジ/参考」(資産プルダウン) にも存在。
     const directlyClickableTabs = isMobile
-      ? ['概要', '見積もり', 'WBS管理']
-      : ['概要', '見積もり', 'WBS管理', 'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
+      ? ['概要', '見積もり']
+      : ['概要', '見積もり', 'WBS管理', 'ガントチャート', 'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
     for (const name of directlyClickableTabs) {
       const tab = page.getByRole('tab', { name });
       await tab.click();
@@ -145,16 +152,21 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     }
 
     if (isMobile) {
+      // 2026-04-30 (Task 1) mobile: 進捗管理プルダウン経由で WBS管理 / ガントチャート を選択
+      const progressTabsViaMenu = ['WBS管理', 'ガントチャート'];
+      for (const name of progressTabsViaMenu) {
+        await page.getByRole('button', { name: '進捗管理メニューを開く' }).click();
+        await page.getByRole('menuitem', { name }).click();
+        // PR #167 hotfix 2 と同様: hidden lg:inline-flex で display:none の要素を
+        // CSS セレクタ + filter(hasText) で取得し aria-selected を検証する。
+        const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
+        await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+      }
       // PR #167 mobile: 資産プルダウン経由で配下タブを選択
       const assetTabsViaMenu = ['リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
       for (const name of assetTabsViaMenu) {
         await page.getByRole('button', { name: '資産メニューを開く' }).click();
         await page.getByRole('menuitem', { name }).click();
-        // PR #167 hotfix 2: 資産タブ群は `hidden lg:inline-flex` で mobile では display:none。
-        // Playwright の `getByRole` は a11y tree を参照するため display:none 要素を「element not found」
-        // で除外する (CI で 1 度目に踏んだ罠)。一方 `page.locator('[role="tab"]')` は CSS セレクタなので
-        // display:none 要素も取得でき、`toHaveAttribute` は DOM 属性チェックなので可視性を要求しない。
-        // → CSS セレクタ + filter(hasText) で hidden tab の aria-selected を検証する。
         const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
         await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
       }
@@ -179,11 +191,15 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
 
     // member ロールは project:read 範囲のタブのみ表示される
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
     if (isMobile) {
+      // 2026-04-30 (Task 1) mobile: WBS管理 は「進捗管理」プルダウンに集約 (個別タブは hidden)
+      await expect(page.getByRole('button', { name: '進捗管理メニューを開く' })).toBeVisible();
       // PR #167 mobile: 資産プルダウン visible (個別タブは hidden)
       await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
     } else {
+      // 2026-04-30 (Task 1) PC: WBS管理 / ガントチャートは独立タブとして visible
+      await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'ガントチャート' })).toBeVisible();
       await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
       await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
       await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
@@ -193,8 +209,6 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // admin 専用のタブは表示されないこと
     await expect(page.getByRole('tab', { name: '見積もり' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'メンバー' })).toHaveCount(0);
-    // feat/gantt-tab-restructure (PR-C item 6): ガント専用タブは廃止 (WBS 管理タブ内に統合)
-    await expect(page.getByRole('tab', { name: 'ガント' })).toHaveCount(0);
     await snapshotStep(page, 'project-detail-general-member-view');
   });
 });

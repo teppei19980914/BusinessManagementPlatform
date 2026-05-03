@@ -194,8 +194,18 @@ export async function deleteCustomer(
     return { ok: false, reason: 'has_active_projects', activeProjectCount: activeCount };
   }
 
-  // 物理削除。論理削除済み Project の customer_id は FK ON DELETE SET NULL で自動 null 化。
-  await prisma.customer.delete({ where: { id: customerId } });
+  // PR fix/visibility-auth-matrix (2026-05-01): Customer は admin only entity だが
+  //   削除前に紐づく Comment を soft-delete してから物理削除する (§5.51)。
+  //   Customer 本体は物理削除なので、コメント側は将来的に物理削除を検討する余地あり。
+  //   現状は他 entity と挙動を揃えて soft-delete に統一する。
+  await prisma.$transaction([
+    prisma.comment.updateMany({
+      where: { entityType: 'customer', entityId: customerId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    }),
+    // 物理削除。論理削除済み Project の customer_id は FK ON DELETE SET NULL で自動 null 化。
+    prisma.customer.delete({ where: { id: customerId } }),
+  ]);
   return { ok: true };
 }
 

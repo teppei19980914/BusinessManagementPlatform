@@ -5,6 +5,7 @@ vi.mock('@/lib/db', () => ({
     riskIssue: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       // PR #161 / PR #165: bulkUpdateRisksFromList で使用
@@ -14,8 +15,15 @@ vi.mock('@/lib/db', () => ({
     user: { findMany: vi.fn() },
     // PR #89: deleteRisk が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
+    // PR fix/visibility-auth-matrix: deleteRisk が comment.updateMany を $transaction 内で呼ぶ
+    comment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
+}));
+
+// PR #5-c (T-03 Phase 2): createRisk / updateRisk から呼ばれる embedding helper をモック
+vi.mock('./embedding.service', () => ({
+  generateAndPersistEntityEmbedding: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {
@@ -30,6 +38,9 @@ import {
   type RiskDTO,
 } from './risk.service';
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
+
+const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 const now = new Date('2026-04-21T10:00:00Z');
 const rRow = (o: Record<string, unknown> = {}) => ({
@@ -78,12 +89,16 @@ describe('listRisks', () => {
     expect(call.where).not.toHaveProperty('OR');
   });
 
-  it('非 admin は public のみ (2026-04-24: 自分の draft も一覧から除外)', async () => {
+  it('非 admin は public + 自分の draft (2026-05-01 仕様変更: 自分の draft は表示)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
     await listRisks('p-1', 'u-1', 'general');
     const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(call.where.visibility).toBe('public');
-    expect(call.where).not.toHaveProperty('OR');
+    // visibility は OR で「public OR (draft AND reporterId=自分)」
+    expect(call.where.OR).toEqual([
+      { visibility: 'public' },
+      { visibility: 'draft', reporterId: 'u-1' },
+    ]);
+    expect(call.where).not.toHaveProperty('visibility');
   });
 });
 
@@ -236,6 +251,7 @@ describe('createRisk', () => {
         riskNature: 'threat',
       } as never,
       'u-1',
+      TEST_TENANT_ID,
     );
 
     expect(prisma.riskIssue.create).toHaveBeenCalledWith(
@@ -265,6 +281,7 @@ describe('createRisk', () => {
         riskNature: null,
       } as never,
       'u-1',
+      TEST_TENANT_ID,
     );
     const call = vi.mocked(prisma.riskIssue.create).mock.calls[0][0];
     expect(call.data.riskNature).toBe(null);
@@ -285,6 +302,7 @@ describe('createRisk', () => {
         visibility: 'draft',
       } as never,
       'u-1',
+      TEST_TENANT_ID,
     );
     const call = vi.mocked(prisma.riskIssue.create).mock.calls[0][0];
     expect(call.data.priority).toBe('low');
@@ -295,7 +313,7 @@ describe('createRisk', () => {
     await createRisk('p-1', {
       type: 'risk', title: 't', content: 'c', impact: 'high', likelihood: 'high',
       assigneeId: null, deadline: null, visibility: 'draft',
-    } as never, 'u-1');
+    } as never, 'u-1', TEST_TENANT_ID);
     expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('high');
   });
 
@@ -304,7 +322,7 @@ describe('createRisk', () => {
     await createRisk('p-1', {
       type: 'risk', title: 't', content: 'c', impact: 'low', likelihood: 'low',
       assigneeId: null, deadline: null, visibility: 'draft',
-    } as never, 'u-1');
+    } as never, 'u-1', TEST_TENANT_ID);
     expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('minimal');
   });
 
@@ -313,7 +331,7 @@ describe('createRisk', () => {
     await createRisk('p-1', {
       type: 'issue', title: 't', content: 'c', impact: 'high', likelihood: 'low',
       assigneeId: null, deadline: null, visibility: 'draft',
-    } as never, 'u-1');
+    } as never, 'u-1', TEST_TENANT_ID);
     expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('medium');
   });
 
@@ -322,8 +340,32 @@ describe('createRisk', () => {
     await createRisk('p-1', {
       type: 'issue', title: 't', content: 'c', impact: 'low', likelihood: 'high',
       assigneeId: null, deadline: null, visibility: 'draft',
-    } as never, 'u-1');
+    } as never, 'u-1', TEST_TENANT_ID);
     expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('low');
+  });
+
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding helper が呼ばれる (fail-safe)
+  it('createRisk: 本体作成後に generateAndPersistEntityEmbedding が呼ばれる', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow({ id: 'r-new' }) as never);
+    await createRisk(
+      'p-1',
+      {
+        type: 'risk', title: 'タイトル', content: '内容', impact: 'high', likelihood: 'low',
+        assigneeId: null, deadline: null, visibility: 'public', riskNature: 'threat',
+      } as never,
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    expect(args.table).toBe('risks_issues');
+    expect(args.rowId).toBe('r-new');
+    expect(args.tenantId).toBe(TEST_TENANT_ID);
+    expect(args.userId).toBe('u-1');
+    expect(args.featureUnit).toBe('risk-issue-embedding');
+    expect(args.text).toContain('タイトル');
+    expect(args.text).toContain('内容');
   });
 });
 
@@ -332,23 +374,29 @@ describe('updateRisk', () => {
 
   it('存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
-    await expect(updateRisk('x', { title: 'new' }, 'u-1')).rejects.toThrow('NOT_FOUND');
+    await expect(updateRisk('x', { title: 'new' }, 'u-1', TEST_TENANT_ID)).rejects.toThrow(
+      'NOT_FOUND',
+    );
   });
 
   it('作成者以外 (admin でも) は FORBIDDEN', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
       { reporterId: 'u-1' } as never,
     );
-    await expect(updateRisk('r-1', { title: 'new' }, 'u-other')).rejects.toThrow('FORBIDDEN');
+    await expect(updateRisk('r-1', { title: 'new' }, 'u-other', TEST_TENANT_ID)).rejects.toThrow(
+      'FORBIDDEN',
+    );
     // admin であっても他人のリスクは編集不可
-    await expect(updateRisk('r-1', { title: 'new' }, 'admin-x')).rejects.toThrow('FORBIDDEN');
+    await expect(updateRisk('r-1', { title: 'new' }, 'admin-x', TEST_TENANT_ID)).rejects.toThrow(
+      'FORBIDDEN',
+    );
   });
 
   it('作成者本人なら指定フィールドのみ data に積む', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
     vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
 
-    await updateRisk('r-1', { title: 'new', state: 'resolved' }, 'u-1');
+    await updateRisk('r-1', { title: 'new', state: 'resolved' }, 'u-1', TEST_TENANT_ID);
 
     const call = vi.mocked(prisma.riskIssue.update).mock.calls[0][0];
     expect(call.data.title).toBe('new');
@@ -361,10 +409,33 @@ describe('updateRisk', () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
     vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
 
-    await updateRisk('r-1', { deadline: '2026-06-01' }, 'u-1');
+    await updateRisk('r-1', { deadline: '2026-06-01' }, 'u-1', TEST_TENANT_ID);
 
     const call = vi.mocked(prisma.riskIssue.update).mock.calls[0][0];
     expect(call.data.deadline).toBeInstanceOf(Date);
+  });
+
+  // PR #5-c: text フィールド変更時のみ embedding 再生成 (LLM 課金回避)
+  it('updateRisk: text フィールド変更時は embedding を再生成する', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
+
+    await updateRisk('r-1', { title: 'new title' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    expect(args.table).toBe('risks_issues');
+    expect(args.rowId).toBe('r-1');
+    expect(args.tenantId).toBe(TEST_TENANT_ID);
+  });
+
+  it('updateRisk: text フィールド非変更 (state/assignee のみ) は embedding 再生成しない', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
+
+    await updateRisk('r-1', { state: 'resolved', assigneeId: 'u-2' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 });
 

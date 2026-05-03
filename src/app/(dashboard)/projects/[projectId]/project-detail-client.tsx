@@ -22,7 +22,7 @@
  *   - DESIGN.md §6 (状態遷移) / §8 (権限制御) / §17 (パフォーマンス改修)
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 // Phase E 要件 1〜3 (2026-04-29): 共通クリッカブルカード部品
 import { ClickableCard } from '@/components/common/clickable-row';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -31,6 +31,7 @@ import { Menu } from '@base-ui/react/menu';
 import { ChevronDownIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -58,6 +59,7 @@ import { SingleUrlField } from '@/components/attachments/single-url-field';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import { EstimatesClient } from './estimates/estimates-client';
 import { TasksClient } from './tasks/tasks-client';
+import { GanttClient } from './gantt/gantt-client';
 import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
 import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
@@ -127,6 +129,7 @@ export function ProjectDetailClient({
   const tAction = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   // 概要タブ内ヘッダの操作ボタン権限 (PR #58 → fix/quick-ux item 1 で改修):
   //   状態変更 / 編集: 実際のプロジェクト PM/TL **または** システム管理者
@@ -209,11 +212,21 @@ export function ProjectDetailClient({
   // feat/stakeholder-management: ステークホルダー一覧 (PM/TL + admin のみ取得・表示)
   const stakeholders = useLazyFetch<StakeholderDTO[]>(`/api/projects/${project.id}/stakeholders`);
 
-  const [activeTab, setActiveTab] = useState('overview');
-
   // PR #65 核心機能: 新規プロジェクト作成直後に ?suggestions=1 付きで遷移してくるパス用。
+  // PR feat/notification-deep-link-completion (2026-05-01): ?tab=stakeholders&stakeholderId=...
+  //   形式の deep link を sticker の通知から受け取って、初期 active tab + auto-open dialog する。
   // URL クエリを見てモーダルを開くかを決定し、モーダル閉鎖時は URL から除去する。
   const searchParams = useSearchParams();
+
+  // 通知 deep link で `?tab=` 指定があれば、それを初期 active tab に使う (権限 tab に限る)。
+  // 不正値 / 権限不足 tab を指定された場合は 'overview' fallback。
+  const initialTabFromUrl = (() => {
+    const t = searchParams.get('tab');
+    const allowed = ['overview', 'estimates', 'tasks', 'gantt', 'risks', 'issues', 'retrospectives', 'knowledge', 'members', 'stakeholders', 'suggestions'];
+    return t && allowed.includes(t) ? t : 'overview';
+  })();
+  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
+
   const [isSuggestionsModalOpen, setIsSuggestionsModalOpen] = useState(
     searchParams.get('suggestions') === '1',
   );
@@ -223,9 +236,8 @@ export function ProjectDetailClient({
     router.replace(`/projects/${project.id}`);
   }, [router, project.id]);
 
-  function handleTabChange(value: string) {
-    setActiveTab(value);
-    // タブ表示時に必要なデータをロード（キャッシュヒットなら no-op）
+  // タブ切替時のデータロード処理 (handleTabChange と初期 mount 時 effect から共通利用)
+  const loadTabData = useCallback((value: string) => {
     switch (value) {
       case 'estimates':
         estimates.load();
@@ -262,7 +274,21 @@ export function ProjectDetailClient({
       default:
         break;
     }
+  }, [estimates, tasks, members, risks, retros, knowledges, stakeholders, allUsers, systemRole]);
+
+  function handleTabChange(value: string) {
+    setActiveTab(value);
+    loadTabData(value);
   }
+
+  // 通知 deep link (e.g. /projects/[id]?tab=stakeholders&stakeholderId=...) で着地した際、
+  // initial active tab のデータが lazy fetch されないため mount 時に 1 度だけ強制ロード。
+  // PR feat/notification-deep-link-completion / 2026-05-01。
+  useEffect(() => {
+    if (initialTabFromUrl !== 'overview') {
+      loadTabData(initialTabFromUrl);
+    }
+  }, [initialTabFromUrl, loadTabData]);
 
   // CRUD 直後に呼ぶ再取得ハンドラ。router.refresh() は概要タブのプロジェクト基本情報のみで
   // 十分なため、タブ内 CRUD ではタブローカルの load(true) のみで完結させる。
@@ -314,10 +340,13 @@ export function ProjectDetailClient({
     );
     if (!res.ok) {
       const json = await res.json();
-      setEditError(json.error?.message || t('updateFailed'));
+      const msg = json.error?.message || t('updateFailed');
+      setEditError(msg);
+      showError('プロジェクトの更新に失敗しました');
       return;
     }
     setIsEditOpen(false);
+    showSuccess('プロジェクトを更新しました');
     router.refresh();
   }
 
@@ -348,9 +377,14 @@ export function ProjectDetailClient({
       cascadeRetros: String(cascadeRetros),
       cascadeKnowledge: String(cascadeKnowledge),
     });
-    await withLoading(() =>
+    const res = await withLoading(() =>
       fetch(`/api/projects/${project.id}?${params.toString()}`, { method: 'DELETE' }),
     );
+    if (!res.ok) {
+      showError('プロジェクトの削除に失敗しました');
+      return;
+    }
+    showSuccess('プロジェクトを削除しました');
     router.push('/projects');
   }
 
@@ -365,7 +399,12 @@ export function ProjectDetailClient({
       }),
     );
     setIsChangingStatus(false);
-    if (res.ok) router.refresh();
+    if (res.ok) {
+      showSuccess('プロジェクトの状態を更新しました');
+      router.refresh();
+    } else {
+      showError('プロジェクトの状態更新に失敗しました');
+    }
   }
 
   return (
@@ -489,19 +528,30 @@ export function ProjectDetailClient({
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} required hideClear />
                       </div>
                     </div>
-                    {/* feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2) */}
-                    <div className="space-y-2">
-                      <Label>{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder={t('tagPlaceholderBusinessDomain')} maxLength={500} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder={t('tagPlaceholderTechStack')} maxLength={500} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                      <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder={t('tagPlaceholderProcess')} maxLength={500} />
-                    </div>
+                    {/*
+                      feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2)
+                      PR #4 (T-03): 任意入力 + アコーディオン折りたたみ。LLM 自動補完が空欄を保存後に補完。
+                    */}
+                    <details className="rounded-md border bg-muted/30 p-3 space-y-2">
+                      <summary className="cursor-pointer select-none text-sm font-medium">
+                        {t('tagsAccordionTitle')}
+                      </summary>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {t('tagsAccordionGuidance')}
+                      </p>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder={t('tagPlaceholderBusinessDomain')} maxLength={500} />
+                      </div>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder={t('tagPlaceholderTechStack')} maxLength={500} />
+                      </div>
+                      <div className="space-y-2 pt-2">
+                        <Label>{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
+                        <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder={t('tagPlaceholderProcess')} maxLength={500} />
+                      </div>
+                    </details>
                     <Button type="submit" className="w-full">{t('editSubmit')}</Button>
                   </form>
                 </DialogContent>
@@ -528,8 +578,57 @@ export function ProjectDetailClient({
         <TabsList className="h-auto flex-wrap [&>*]:flex-none">
           <TabsTrigger value="overview">{t('tabOverview')}</TabsTrigger>
           {canEdit && <TabsTrigger value="estimates">{t('tabEstimates')}</TabsTrigger>}
-          {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止し WBS 管理タブ内に統合 */}
-          <TabsTrigger value="tasks">{t('tabTasks')}</TabsTrigger>
+          {/*
+            2026-04-30 (Task 1): ガントチャートを WBS タブ内ボタンから独立タブ化。
+            「○○一覧」(資産プルダウン) と同じ responsive 方式:
+              - PC (lg+): 「WBS管理」「ガントチャート」を独立タブとして表示
+              - Mobile (lg-): 「進捗管理 ▼」プルダウンに WBS / ガントチャートを集約
+          */}
+          {/* PC 表示: 個別タブ (lg+) */}
+          <TabsTrigger value="tasks" className="hidden lg:inline-flex">{t('tabTasks')}</TabsTrigger>
+          <TabsTrigger value="gantt" className="hidden lg:inline-flex">{t('tabGantt')}</TabsTrigger>
+          {/* Mobile 表示: 進捗管理プルダウン (lg-)。配下の値が active なら親も active 表示。 */}
+          <Menu.Root>
+            <Menu.Trigger
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md px-3 py-1 text-sm transition-colors hover:bg-accent lg:hidden',
+                ['tasks', 'gantt'].includes(activeTab)
+                  ? 'bg-background font-medium shadow-sm text-foreground'
+                  : 'text-muted-foreground',
+              )}
+              aria-label={t('progressMenuAria')}
+            >
+              <span>{t('progressMenuLabel')}</span>
+              <ChevronDownIcon className="size-3.5" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner sideOffset={4} className="isolate z-50">
+                <Menu.Popup
+                  className={cn(
+                    'min-w-[180px] origin-(--transform-origin) rounded-md border bg-card text-card-foreground shadow-md',
+                    'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95',
+                    'data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+                  )}
+                >
+                  {[
+                    { value: 'tasks', label: t('tabTasks') },
+                    { value: 'gantt', label: t('tabGantt') },
+                  ].map((opt) => (
+                    <Menu.Item
+                      key={opt.value}
+                      onClick={() => handleTabChange(opt.value)}
+                      className={cn(
+                        'block w-full cursor-pointer px-4 py-2 text-left text-sm transition-colors hover:bg-accent',
+                        activeTab === opt.value ? 'bg-accent font-medium' : 'text-foreground',
+                      )}
+                    >
+                      {opt.label}
+                    </Menu.Item>
+                  ))}
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
           {/*
             PR #167 (feat/asset-tab-responsive-mobile):
             画面幅 lg+ では各「○○一覧」を従来通り独立タブとして表示、
@@ -819,8 +918,23 @@ export function ProjectDetailClient({
           </LazyTabContent>
         </TabsContent>
 
-        {/* feat/gantt-tab-restructure (PR-C item 6): ガント専用タブを廃止。
-            WBS タブ (TasksClient) 内のトグルボタンで Gantt 表示を切替える設計に移行。 */}
+        {/* 2026-04-30 (Task 1): ガントチャートを独立タブとして復活。
+            WBS と同じ tasks tree + members を使うため lazy fetch も同じ load() を共用。 */}
+        <TabsContent value="gantt" className="mt-4">
+          <LazyTabContent state={tasks.state}>
+            {(tasksData) => (
+              <LazyTabContent state={members.state}>
+                {(membersData) => (
+                  <GanttClient
+                    projectId={project.id}
+                    tasks={tasksData.tree}
+                    members={membersData}
+                  />
+                )}
+              </LazyTabContent>
+            )}
+          </LazyTabContent>
+        </TabsContent>
 
         {/* リスクタブ (PR #60 #1: risk のみ表示) */}
         <TabsContent value="risks" className="mt-4">
@@ -957,6 +1071,7 @@ export function ProjectDetailClient({
                       stakeholders={stakeholdersData}
                       members={membersData}
                       onReload={reloadStakeholders}
+                      /* stakeholderId は URL から useAutoOpenDialog が自前で読む */
                     />
                   )}
                 </LazyTabContent>

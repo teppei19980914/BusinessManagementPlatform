@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { CreateKnowledgeInput } from '@/lib/validators/knowledge';
 
@@ -123,27 +124,40 @@ export async function listKnowledge(
   const limit = Math.min(params.limit || 20, 100);
   const skip = (page - 1) * limit;
 
-  const where: Prisma.KnowledgeWhereInput = { deletedAt: null };
+  // 2026-05-01 (PR fix/visibility-auth-matrix): 「自分の draft は一覧に表示する」方針に変更。
+  //   旧仕様 (2026-04-24): 非 admin は draft 一切除外 → 自分の起票を視認できず混乱した。
+  //   新仕様: public + 自分の draft + (admin は他人の draft も) を表示。
+  //   visibility / keyword 両者が `OR` 構造を必要とするため、AND の中に複数 OR を並べる
+  //   配列スタイルにしている (Prisma の `AND: [...]` は OR 同士の合成にそのまま使える)。
+  const conditions: Prisma.KnowledgeWhereInput[] = [{ deletedAt: null }];
 
-  // 2026-04-24: 非 admin は一覧に draft を一切含めない (自分の draft も除外)。
-  // draft の個別参照は getKnowledge が作成者本人/admin のみ許可する。
-  void userId; // 旧実装で OR 句の一部に使っていた参照を削除
   if (systemRole !== 'admin') {
-    where.visibility = 'public';
+    conditions.push({
+      OR: [
+        { visibility: 'public' },
+        { visibility: 'draft', createdBy: userId },
+      ],
+    });
   }
 
   if (params.knowledgeType) {
-    where.knowledgeType = params.knowledgeType;
+    conditions.push({ knowledgeType: params.knowledgeType });
   }
+  // ユーザ指定の visibility filter (例: 「下書きだけ表示」)。上記の権限フィルタと AND で合成され、
+  // 非 admin が draft 指定時は「自分の draft のみ」になる (権限フィルタが効くため)。
   if (params.visibility) {
-    where.visibility = params.visibility;
+    conditions.push({ visibility: params.visibility });
   }
   if (params.keyword) {
-    where.OR = [
-      { title: { contains: params.keyword, mode: 'insensitive' as const } },
-      { content: { contains: params.keyword, mode: 'insensitive' as const } },
-    ];
+    conditions.push({
+      OR: [
+        { title: { contains: params.keyword, mode: 'insensitive' as const } },
+        { content: { contains: params.keyword, mode: 'insensitive' as const } },
+      ],
+    });
   }
+
+  const where: Prisma.KnowledgeWhereInput = { AND: conditions };
 
   const [knowledges, total] = await Promise.all([
     prisma.knowledge.findMany({
@@ -301,6 +315,7 @@ export async function getKnowledge(
 export async function createKnowledge(
   input: CreateKnowledgeInput,
   userId: string,
+  tenantId: string,
 ): Promise<KnowledgeDTO> {
   const k = await prisma.knowledge.create({
     data: {
@@ -329,7 +344,52 @@ export async function createKnowledge(
     },
   });
 
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存。
+  //   失敗時はサイレントにスキップ (本体保存は成功、suggestion engine は 2 軸縮退モード)。
+  await generateAndPersistEntityEmbedding({
+    table: 'knowledges',
+    rowId: k.id,
+    tenantId,
+    userId,
+    text: composeKnowledgeText({
+      title: input.title,
+      background: input.background,
+      content: input.content,
+      result: input.result,
+      conclusion: input.conclusion ?? null,
+      recommendation: input.recommendation ?? null,
+    }),
+    featureUnit: 'knowledge-embedding',
+  });
+
   return toKnowledgeDTO(k);
+}
+
+/**
+ * PR #5-c: Knowledge の embedding 生成用 text 合成 helper。
+ *
+ * 意味検索の質を高めるため、Knowledge の主要な意味を担う text フィールドを改行結合して
+ * Voyage AI に渡す。null フィールドは除外。
+ */
+function composeKnowledgeText(fields: {
+  title: string;
+  background: string;
+  content: string;
+  result: string;
+  conclusion: string | null;
+  recommendation: string | null;
+}): string {
+  return [
+    fields.title,
+    fields.background,
+    fields.content,
+    fields.result,
+    fields.conclusion ?? '',
+    fields.recommendation ?? '',
+  ]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join('\n\n');
 }
 
 /**
@@ -345,6 +405,7 @@ export async function updateKnowledge(
   knowledgeId: string,
   input: Partial<CreateKnowledgeInput>,
   userId: string,
+  tenantId: string,
 ): Promise<KnowledgeDTO> {
   const existing = await prisma.knowledge.findFirst({
     where: { id: knowledgeId, deletedAt: null },
@@ -352,6 +413,15 @@ export async function updateKnowledge(
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
+
+  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定。変更なしなら embedding 再生成しない。
+  const textFieldsChanging =
+    input.title !== undefined ||
+    input.background !== undefined ||
+    input.content !== undefined ||
+    input.result !== undefined ||
+    input.conclusion !== undefined ||
+    input.recommendation !== undefined;
 
   const data: Prisma.KnowledgeUpdateInput = { updater: { connect: { id: userId } } };
 
@@ -378,6 +448,25 @@ export async function updateKnowledge(
       knowledgeProjects: { select: { projectId: true } },
     },
   });
+
+  // PR #5-c: text 変更時のみ embedding を再生成 (変更なしは LLM 課金回避)
+  if (textFieldsChanging) {
+    await generateAndPersistEntityEmbedding({
+      table: 'knowledges',
+      rowId: knowledgeId,
+      tenantId,
+      userId,
+      text: composeKnowledgeText({
+        title: k.title,
+        background: k.background,
+        content: k.content,
+        result: k.result,
+        conclusion: k.conclusion,
+        recommendation: k.recommendation,
+      }),
+      featureUnit: 'knowledge-embedding',
+    });
+  }
 
   return toKnowledgeDTO(k);
 }
@@ -406,6 +495,7 @@ export async function deleteKnowledge(
   if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
 
   // PR #89: 紐づく Attachment も同時に論理削除 (孤児データ防止)
+  // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)
   const now = new Date();
   await prisma.$transaction([
     prisma.knowledge.update({
@@ -413,6 +503,10 @@ export async function deleteKnowledge(
       data: { deletedAt: now, updater: { connect: { id: userId } } },
     }),
     prisma.attachment.updateMany({
+      where: { entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
       where: { entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
       data: { deletedAt: now },
     }),

@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const knowledge = await createKnowledge(parsed.data, user.id);
+  const knowledge = await createKnowledge(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,

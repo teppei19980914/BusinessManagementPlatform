@@ -50,7 +50,12 @@ export const authConfig: NextAuthConfig = {
           : 'authjs.session-token',
       options: {
         httpOnly: true,
-        sameSite: 'lax',
+        // PR #198 (2026-04-30): 'lax' → 'strict' に強化 (CWE-1275 対策)。
+        //   本サービスは Credentials provider のみで OAuth/SSO のクロスサイトコールバック
+        //   が無く、メール内リンクからのトップレベル遷移 (パスワード再設定 / 招待) は
+        //   遷移先で別途認証フローを通すため、'strict' でも UX 影響なし。
+        //   外部サイトからのトップレベル GET 遷移後でも認証が維持される必要がない。
+        sameSite: 'strict',
         path: '/',
         secure: process.env.NODE_ENV === 'production',
         // maxAge を指定しない → セッション cookie (タブ/ブラウザ閉じで失効)
@@ -92,6 +97,9 @@ export const authConfig: NextAuthConfig = {
     jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
+        // PR #2-b (T-03): tenantId を JWT に格納し、session callback で session.user に
+        //   伝播する。テナント境界チェック (requireSameTenant) の起点。
+        token.tenantId = (user as unknown as { tenantId: string }).tenantId;
         token.systemRole = (user as unknown as { systemRole: string }).systemRole;
         token.forcePasswordChange = (user as unknown as { forcePasswordChange: boolean })
           .forcePasswordChange;
@@ -135,6 +143,9 @@ export const authConfig: NextAuthConfig = {
     session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
+        // PR #2-b (T-03): JWT に格納された tenantId を session.user に公開。
+        //   これ以降のサーバ側コードは session.user.tenantId を信頼源として参照する。
+        session.user.tenantId = token.tenantId as string;
         session.user.systemRole = token.systemRole as string;
         session.user.forcePasswordChange = token.forcePasswordChange as boolean;
         session.user.mfaEnabled = (token.mfaEnabled as boolean | undefined) ?? false;

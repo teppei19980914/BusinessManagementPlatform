@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const project = await createProject(parsed.data, user.id);
+  const project = await createProject(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,

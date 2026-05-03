@@ -23,6 +23,7 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -50,6 +51,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
   const router = useRouter();
   const t = useTranslations('estimate');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
 
   const reload = useCallback(async () => {
     if (onReload) {
@@ -81,22 +83,30 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
     );
     if (!res.ok) {
       const json = await res.json();
-      setError(json.error?.message || json.error?.details?.[0]?.message || t('createFailed'));
+      const msg = json.error?.message || json.error?.details?.[0]?.message || t('createFailed');
+      setError(msg);
+      showError('見積もりの作成に失敗しました');
       return;
     }
     setIsCreateOpen(false);
     setForm({ itemName: '', category: 'development', devMethod: 'scratch', estimatedEffort: 0, effortUnit: 'person_hour', rationale: '' });
+    showSuccess('見積もりを作成しました');
     await reload();
   }
 
   async function handleConfirm(estimateId: string) {
-    await withLoading(() =>
+    const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/estimates/${estimateId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'confirm' }),
       }),
     );
+    if (!res.ok) {
+      showError('見積もりの確定に失敗しました');
+      return;
+    }
+    showSuccess('見積もりを確定しました');
     await reload();
   }
 
@@ -194,9 +204,14 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                         className="text-destructive"
                         onClick={async () => {
                           if (!confirm(t('deleteConfirm'))) return;
-                          await withLoading(() =>
+                          const res = await withLoading(() =>
                             fetch(`/api/projects/${projectId}/estimates/${e.id}`, { method: 'DELETE' }),
                           );
+                          if (!res.ok) {
+                            showError('見積もりの削除に失敗しました');
+                            return;
+                          }
+                          showSuccess('見積もりを削除しました');
                           await reload();
                         }}
                       >

@@ -1,13 +1,88 @@
 // たすきば Knowledge Relay - Prisma Schema
-// 設計書: docs/DESIGN.md セクション 4〜5
+// 設計書: docs/design/DATA_MODEL.md / docs/design/SUGGESTION_ENGINE.md
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  // PR #4 (T-03 Phase 2): pgvector の vector 型を Prisma が認識できないため、
+  // Unsupported("vector(1024)") として宣言。Prisma Client では `unknown` 型として扱われ、
+  // 直接 read/write するには $queryRaw を使う。
+  // 詳細: https://www.prisma.io/docs/orm/prisma-schema/data-model/unsupported-database-features
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  // PR #4 (T-03 Phase 2): pgvector 拡張を Prisma に明示。
+  // migration では `CREATE EXTENSION IF NOT EXISTS vector;` を実行する。
+  extensions = [vector]
+}
+
+// ============================================================
+// Tenants (PR #2 / T-03 提案エンジン v2)
+// ============================================================
+//
+// マルチテナント基盤。すべての業務エンティティの所属を一元管理する。
+// v1 (2026-06-01) は default-tenant という単一テナントのみで稼働し、
+// v1.x で UI を介したテナント追加を可能にする。
+//
+// 課金モデル (per-API-call、3 プラン構成):
+//   - Beginner: 月間 100 回上限・最大 5 席・無料・Claude Haiku
+//   - Expert:   無制限従量課金 (¥10/call)・Claude Haiku
+//   - Pro:      無制限従量課金 (¥30/call)・Claude Sonnet
+//
+// 月初リセット: Vercel Cron が `lastResetAt < 当月初` のテナントの
+// `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセット。
+// 同 cron が `scheduledPlanChangeAt <= 当日` のテナントに対し
+// `scheduledNextPlan` を `plan` に適用 (ダウングレード遅延適用)。
+//
+// 設計判断: tenantId は v1 では DB DEFAULT で default-tenant の UUID を注入し、
+// 既存コードを変更せずに単一テナント運用を可能にする。v1.x で DEFAULT を外す。
+
+model Tenant {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// URL ルーティング用 slug。v1 は 'default' 固定、v1.x で複数テナント対応時に動的解決。
+  slug                     String    @unique @db.VarChar(60)
+  name                     String    @db.VarChar(100)
+  /// 'beginner' | 'expert' | 'pro'
+  plan                     String    @default("beginner") @db.VarChar(20)
+  currentMonthApiCallCount Int       @default(0) @map("current_month_api_call_count")
+  currentMonthApiCostJpy   Int       @default(0) @map("current_month_api_cost_jpy")
+  /// ユーザ自己設定の月次予算上限 (円)。NULL = 無制限。withMeteredLLM が予測コスト超過チェックで参照。
+  monthlyBudgetCapJpy      Int?      @map("monthly_budget_cap_jpy")
+  /// Beginner プランの月間 API 呼び出し回数上限 (default 100)。プラン契約変更時のみ書き換え。
+  beginnerMonthlyCallLimit Int       @default(100) @map("beginner_monthly_call_limit")
+  /// Beginner プランの最大席数 (default 5)。User.tenantId が同じカウントで判定。
+  beginnerMaxSeats         Int       @default(5) @map("beginner_max_seats")
+  pricePerCallHaiku        Int       @default(10) @map("price_per_call_haiku")
+  pricePerCallSonnet       Int       @default(30) @map("price_per_call_sonnet")
+  /// プラン変更予約: ダウングレード時のみ翌月適用 (Expert/Pro → Beginner)。
+  scheduledPlanChangeAt    DateTime? @map("scheduled_plan_change_at") @db.Timestamptz
+  scheduledNextPlan        String?   @map("scheduled_next_plan") @db.VarChar(20)
+  /// 月初リセット cron が処理した最後の月初 (UTC ベース、毎月 1 日 00:00 UTC)。
+  lastResetAt              DateTime? @map("last_reset_at") @db.Timestamptz
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt                DateTime? @map("deleted_at") @db.Timestamptz
+
+  // Relations: 13 業務エンティティ + ApiCallLog
+  users           User[]
+  customers       Customer[]
+  projects        Project[]
+  knowledges      Knowledge[]
+  risksIssues     RiskIssue[]
+  retrospectives  Retrospective[]
+  memos           Memo[]
+  stakeholders    Stakeholder[]
+  comments        Comment[]
+  mentions        Mention[]
+  notifications   Notification[]
+  attachments     Attachment[]
+  systemErrorLogs SystemErrorLog[]
+  apiCallLogs     ApiCallLog[]
+
+  @@index([plan], map: "idx_tenants_plan")
+  @@map("tenants")
 }
 
 // ============================================================
@@ -15,68 +90,79 @@ datasource db {
 // ============================================================
 
 model User {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name              String    @db.VarChar(100)
-  email             String    @db.VarChar(255)
-  passwordHash      String    @map("password_hash") @db.VarChar(255)
-  systemRole        String    @default("general") @map("system_role") @db.VarChar(20)
-  isActive          Boolean   @default(true) @map("is_active")
-  failedLoginCount  Int       @default(0) @map("failed_login_count")
-  lockedUntil       DateTime? @map("locked_until") @db.Timestamptz
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2 (T-03): マルチテナント基盤。v1 では DB DEFAULT で default-tenant に自動配属。
+  // v1.x で UI 由来のテナント割当が必要になったタイミングで DEFAULT を外す。
+  tenantId            String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  name                String    @db.VarChar(100)
+  email               String    @db.VarChar(255)
+  passwordHash        String    @map("password_hash") @db.VarChar(255)
+  systemRole          String    @default("general") @map("system_role") @db.VarChar(20)
+  isActive            Boolean   @default(true) @map("is_active")
+  failedLoginCount    Int       @default(0) @map("failed_login_count")
+  lockedUntil         DateTime? @map("locked_until") @db.Timestamptz
   // T-21 (2026-04-28): 一時ロック発生回数の累積カウンタ。
   //   permanentLock 発火経路の起点 (5.29 選択肢 A)。
   //   閾値到達 (PERMANENT_LOCK_THRESHOLD=3) で permanentLock=true にセット。
   //   ログイン成功時に 0 にリセット (一時ロックを乗り越えて成功した = 正規ユーザの可能性)。
-  temporaryLockCount Int      @default(0) @map("temporary_lock_count")
-  permanentLock     Boolean   @default(false) @map("permanent_lock")
-  mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
-  mfaSecretEncrypted String?  @map("mfa_secret_encrypted") @db.VarChar(255)
-  mfaEnabledAt      DateTime? @map("mfa_enabled_at") @db.Timestamptz
+  temporaryLockCount  Int       @default(0) @map("temporary_lock_count")
+  permanentLock       Boolean   @default(false) @map("permanent_lock")
+  mfaEnabled          Boolean   @default(false) @map("mfa_enabled")
+  mfaSecretEncrypted  String?   @map("mfa_secret_encrypted") @db.VarChar(255)
+  mfaEnabledAt        DateTime? @map("mfa_enabled_at") @db.Timestamptz
   // PR #116 (2026-04-24): MFA verify 総当たり対策。パスワードロックとは別系統。
   //   - 3 回連続失敗で 30 分ロック (mfaLockedUntil に解除時刻をセット)
   //   - 正しい TOTP or recovery code 入力で 0 にリセット
   //   - 恒久ロックは設けない (recovery code 経路で自己解除可能なため)
-  mfaFailedCount    Int       @default(0) @map("mfa_failed_count")
-  mfaLockedUntil    DateTime? @map("mfa_locked_until") @db.Timestamptz
-  lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz
-  forcePasswordChange Boolean @default(false) @map("force_password_change")
+  mfaFailedCount      Int       @default(0) @map("mfa_failed_count")
+  mfaLockedUntil      DateTime? @map("mfa_locked_until") @db.Timestamptz
+  lastLoginAt         DateTime? @map("last_login_at") @db.Timestamptz
+  forcePasswordChange Boolean   @default(false) @map("force_password_change")
   // PR #72: 画面テーマ設定。既定 'light' (ライトテーマ)。ユーザが明示的に変更した
   // 値がセッションをまたいで永続適用されるため、sessionStorage ではなく DB 永続化する。
-  themePreference   String    @default("light") @map("theme_preference") @db.VarChar(30)
+  themePreference     String    @default("light") @map("theme_preference") @db.VarChar(30)
   // PR #118: 個別タイムゾーン (IANA 名、例 'Asia/Tokyo'/'America/New_York')。
   //   null の場合はシステムデフォルト (env APP_DEFAULT_TIMEZONE or config/i18n.ts) を使用。
   //   DB は常に UTC で格納し、描画時にこの値を Intl.DateTimeFormat に渡す方針。
-  timezone          String?   @map("timezone") @db.VarChar(60)
+  timezone            String?   @map("timezone") @db.VarChar(60)
   // PR #118: 個別ロケール (BCP 47、例 'ja-JP'/'en-US')。null はシステムデフォルト。
-  locale            String?   @map("locale") @db.VarChar(10)
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz
+  locale              String?   @map("locale") @db.VarChar(10)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz
 
   // Relations
-  projectMembers       ProjectMember[]     @relation("UserProjectMembers")
-  assignedTasks        Task[]              @relation("TaskAssignee")
-  taskProgressLogs     TaskProgressLog[]   @relation("ProgressUpdater")
-  reportedRisks        RiskIssue[]         @relation("RiskReporter")
-  assignedRisks        RiskIssue[]         @relation("RiskAssignee")
-  createdKnowledges    Knowledge[]         @relation("KnowledgeCreator")
-  updatedKnowledges    Knowledge[]         @relation("KnowledgeUpdater")
-  auditLogs            AuditLog[]
-  authEventLogs        AuthEventLog[]
-  systemErrorLogs      SystemErrorLog[]
-  roleChangesPerformed RoleChangeLog[]     @relation("RoleChanger")
-  roleChangesReceived  RoleChangeLog[]     @relation("RoleTarget")
+  projectMembers          ProjectMember[]          @relation("UserProjectMembers")
+  assignedTasks           Task[]                   @relation("TaskAssignee")
+  taskProgressLogs        TaskProgressLog[]        @relation("ProgressUpdater")
+  reportedRisks           RiskIssue[]              @relation("RiskReporter")
+  assignedRisks           RiskIssue[]              @relation("RiskAssignee")
+  createdKnowledges       Knowledge[]              @relation("KnowledgeCreator")
+  updatedKnowledges       Knowledge[]              @relation("KnowledgeUpdater")
+  auditLogs               AuditLog[]
+  authEventLogs           AuthEventLog[]
+  systemErrorLogs         SystemErrorLog[]
+  roleChangesPerformed    RoleChangeLog[]          @relation("RoleChanger")
+  roleChangesReceived     RoleChangeLog[]          @relation("RoleTarget")
   sessions                Session[]
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
   recoveryCodes           RecoveryCode[]
   passwordHistories       PasswordHistory[]
-  addedAttachments        Attachment[]       @relation("AttachmentAddedBy")
-  memos                   Memo[]             @relation("MemoAuthor")
-  stakeholderRecords      Stakeholder[]      @relation("StakeholderUser")
+  addedAttachments        Attachment[]             @relation("AttachmentAddedBy")
+  memos                   Memo[]                   @relation("MemoAuthor")
+  stakeholderRecords      Stakeholder[]            @relation("StakeholderUser")
+  authoredComments        Comment[]                @relation("CommentAuthor")
+  notifications           Notification[]           @relation("NotificationRecipient")
+  receivedMentions        Mention[]                @relation("MentionTarget")
+  apiCallLogs             ApiCallLog[]             @relation("ApiCallLogActor")
+
+  // PR #2: tenant への back relation
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@unique([email], map: "idx_users_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
+  @@index([tenantId], map: "idx_users_tenant")
   @@map("users")
 }
 
@@ -158,20 +244,24 @@ model PasswordHistory {
 // 設計方針: docs/developer/DESIGN.md の Customer 節参照 (PR #111-2 で追記)
 
 model Customer {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name            String   @db.VarChar(100)
-  department      String?  @db.VarChar(100)
-  contactPerson   String?  @map("contact_person") @db.VarChar(100)
-  contactEmail    String?  @map("contact_email") @db.VarChar(255)
-  notes           String?  @db.Text
-  createdBy       String   @map("created_by") @db.Uuid
-  updatedBy       String   @map("updated_by") @db.Uuid
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)
+  tenantId      String   @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  name          String   @db.VarChar(100)
+  department    String?  @db.VarChar(100)
+  contactPerson String?  @map("contact_person") @db.VarChar(100)
+  contactEmail  String?  @map("contact_email") @db.VarChar(255)
+  notes         String?  @db.Text
+  createdBy     String   @map("created_by") @db.Uuid
+  updatedBy     String   @map("updated_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  projects        Project[]
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  projects Project[]
 
   @@index([name], map: "idx_customers_name")
+  @@index([tenantId], map: "idx_customers_tenant")
   @@map("customers")
 }
 
@@ -180,40 +270,47 @@ model Customer {
 // ============================================================
 
 model Project {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name              String    @db.VarChar(100)
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)
+  tenantId           String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  name               String    @db.VarChar(100)
   // PR #111-2: customer_name 列を廃止し Customer テーブルへの FK に完全移行。
   // ON DELETE SET NULL: Customer 物理削除時、論理削除済み Project (deletedAt != null) の
   // customer_id が dangling にならないよう明示的に null 化する。
   // アクティブな Project (deletedAt = null) を抱える Customer は削除不可、
   // もしくは deleteCustomerCascade で関連資源を一括カスケード削除してから削除する。
   // その結果 customerId は運用上 NOT NULL を保証できる。
-  customerId        String    @map("customer_id") @db.Uuid
-  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  purpose           String    @db.Text
-  background        String    @db.Text
-  scope             String    @db.Text
-  outOfScope        String?   @map("out_of_scope") @db.Text
-  devMethod         String    @map("dev_method") @db.VarChar(30)
+  customerId         String    @map("customer_id") @db.Uuid
+  customer           Customer  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  purpose            String    @db.Text
+  background         String    @db.Text
+  scope              String    @db.Text
+  outOfScope         String?   @map("out_of_scope") @db.Text
+  devMethod          String    @map("dev_method") @db.VarChar(30)
   // 項目 14 (PR-β): 契約形態 (準委任 / 請負 / SES / そのほか)。既存 Project は null 許容で後付け。
-  contractType      String?   @map("contract_type") @db.VarChar(30)
-  businessDomainTags Json     @default("[]") @map("business_domain_tags") @db.JsonB
-  techStackTags     Json      @default("[]") @map("tech_stack_tags") @db.JsonB
+  contractType       String?   @map("contract_type") @db.VarChar(30)
+  businessDomainTags Json      @default("[]") @map("business_domain_tags") @db.JsonB
+  techStackTags      Json      @default("[]") @map("tech_stack_tags") @db.JsonB
   // PR #65: 新規プロジェクト作成時にナレッジ/過去課題を提案するため、
   // Knowledge と同じ粒度の工程タグも持たせる。Jaccard 類似度 + pg_trgm
   // テキスト類似度の併用で核心機能 (提案型サービス) を実現する。
-  processTags       Json      @default("[]") @map("process_tags") @db.JsonB
-  plannedStartDate  DateTime  @map("planned_start_date") @db.Date
-  plannedEndDate    DateTime  @map("planned_end_date") @db.Date
-  status            String    @default("planning") @db.VarChar(20)
-  notes             String?   @db.Text
-  createdBy         String    @map("created_by") @db.Uuid
-  updatedBy         String    @map("updated_by") @db.Uuid
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz
+  processTags        Json      @default("[]") @map("process_tags") @db.JsonB
+  plannedStartDate   DateTime  @map("planned_start_date") @db.Date
+  plannedEndDate     DateTime  @map("planned_end_date") @db.Date
+  status             String    @default("planning") @db.VarChar(20)
+  notes              String?   @db.Text
+  // PR #4 (T-03 Phase 2): purpose / background / scope を結合した text の Voyage AI
+  //   embedding (1024 次元、voyage-4-lite)。Cosine Similarity による意味検索の基盤。
+  //   生成失敗時 NULL を許容 (本体 INSERT/UPDATE は成功させる fail-safe)。
+  contentEmbedding   Unsupported("vector(1024)")? @map("content_embedding")
+  createdBy          String    @map("created_by") @db.Uuid
+  updatedBy          String    @map("updated_by") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz
 
   // Relations
+  tenant            Tenant             @relation(fields: [tenantId], references: [id])
   members           ProjectMember[]
   estimates         Estimate[]
   tasks             Task[]
@@ -225,6 +322,7 @@ model Project {
   @@index([status], map: "idx_projects_status")
   @@index([customerId], map: "idx_projects_customer_id")
   @@index([plannedStartDate, plannedEndDate], map: "idx_projects_dates")
+  @@index([tenantId], map: "idx_projects_tenant")
   @@map("projects")
 }
 
@@ -289,7 +387,7 @@ model Task {
   category         String    @db.VarChar(30)
   assigneeId       String?   @map("assignee_id") @db.Uuid // WP は null、ACT は必須
   plannedStartDate DateTime? @map("planned_start_date") @db.Date // WP は子から自動計算
-  plannedEndDate   DateTime? @map("planned_end_date") @db.Date   // WP は子から自動計算
+  plannedEndDate   DateTime? @map("planned_end_date") @db.Date // WP は子から自動計算
   actualStartDate  DateTime? @map("actual_start_date") @db.Date
   actualEndDate    DateTime? @map("actual_end_date") @db.Date
   plannedEffort    Decimal   @default(0) @map("planned_effort") @db.Decimal(10, 2) // WP は子の合計
@@ -305,11 +403,11 @@ model Task {
   deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
 
   // Relations
-  project      Project          @relation(fields: [projectId], references: [id])
-  parentTask   Task?            @relation("TaskHierarchy", fields: [parentTaskId], references: [id])
-  childTasks   Task[]           @relation("TaskHierarchy")
-  assignee     User?            @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  progressLogs TaskProgressLog[]
+  project        Project           @relation(fields: [projectId], references: [id])
+  parentTask     Task?             @relation("TaskHierarchy", fields: [parentTaskId], references: [id])
+  childTasks     Task[]            @relation("TaskHierarchy")
+  assignee       User?             @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  progressLogs   TaskProgressLog[]
   taskKnowledges TaskKnowledge[]
 
   @@index([projectId], map: "idx_tasks_project")
@@ -348,31 +446,36 @@ model TaskProgressLog {
 // ============================================================
 
 model RiskIssue {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  projectId       String    @map("project_id") @db.Uuid
-  type            String    @db.VarChar(10) // risk | issue
-  title           String    @db.VarChar(100)
-  content         String    @db.Text
-  cause           String?   @db.Text
-  impact          String    @db.VarChar(10) // low | medium | high
-  likelihood      String?   @db.VarChar(10)
-  priority        String    @db.VarChar(10) // low | medium | high
-  responsePolicy  String?   @map("response_policy") @db.Text
-  responseDetail  String?   @map("response_detail") @db.Text
-  reporterId      String    @map("reporter_id") @db.Uuid
-  assigneeId      String?   @map("assignee_id") @db.Uuid
-  deadline        DateTime? @db.Date
-  state           String    @default("open") @db.VarChar(20)
-  result          String?   @db.Text
-  lessonLearned   String?   @map("lesson_learned") @db.Text
-  visibility      String    @default("draft") @db.VarChar(20) // draft | public (PR #60)
-  riskNature      String?   @map("risk_nature") @db.VarChar(20) // threat | opportunity (type=risk のみ)
-  createdBy       String    @map("created_by") @db.Uuid
-  updatedBy       String    @map("updated_by") @db.Uuid
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)
+  tenantId       String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
+  type           String    @db.VarChar(10) // risk | issue
+  title          String    @db.VarChar(100)
+  content        String    @db.Text
+  cause          String?   @db.Text
+  impact         String    @db.VarChar(10) // low | medium | high
+  likelihood     String?   @db.VarChar(10)
+  priority       String    @db.VarChar(10) // low | medium | high
+  responsePolicy String?   @map("response_policy") @db.Text
+  responseDetail String?   @map("response_detail") @db.Text
+  reporterId     String    @map("reporter_id") @db.Uuid
+  assigneeId     String?   @map("assignee_id") @db.Uuid
+  deadline       DateTime? @db.Date
+  state          String    @default("open") @db.VarChar(20)
+  result         String?   @db.Text
+  lessonLearned  String?   @map("lesson_learned") @db.Text
+  visibility     String    @default("draft") @db.VarChar(20) // draft | public (PR #60)
+  riskNature     String?   @map("risk_nature") @db.VarChar(20) // threat | opportunity (type=risk のみ)
+  // PR #4 (T-03 Phase 2): title + content + cause + lessonLearned 等を結合した text の embedding
+  contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
+  createdBy      String    @map("created_by") @db.Uuid
+  updatedBy      String    @map("updated_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
 
+  tenant   Tenant  @relation(fields: [tenantId], references: [id])
   project  Project @relation(fields: [projectId], references: [id])
   reporter User    @relation("RiskReporter", fields: [reporterId], references: [id])
   assignee User?   @relation("RiskAssignee", fields: [assigneeId], references: [id])
@@ -380,6 +483,7 @@ model RiskIssue {
   @@index([projectId, type], map: "idx_risks_project")
   @@index([state, priority], map: "idx_risks_state")
   @@index([assigneeId], map: "idx_risks_assignee")
+  @@index([tenantId], map: "idx_risks_tenant")
   @@map("risks_issues")
 }
 
@@ -394,6 +498,8 @@ model RiskIssue {
 
 model Stakeholder {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)
+  tenantId          String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
   projectId         String    @map("project_id") @db.Uuid
   // 内部メンバーとの紐付け (任意)。null なら外部関係者。
   // ON DELETE SET NULL: User 物理削除時にステークホルダー記録は残す (人物評・履歴の保全)。
@@ -427,6 +533,7 @@ model Stakeholder {
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt         DateTime? @map("deleted_at") @db.Timestamptz
 
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
   project Project @relation(fields: [projectId], references: [id])
   user    User?   @relation("StakeholderUser", fields: [userId], references: [id], onDelete: SetNull)
 
@@ -434,6 +541,7 @@ model Stakeholder {
   @@index([userId], map: "idx_stakeholders_user")
   // Phase D 要件 12: 優先度フィルタの絞り込みに利用
   @@index([priority], map: "idx_stakeholders_priority")
+  @@index([tenantId], map: "idx_stakeholders_tenant")
   @@map("stakeholders")
 }
 
@@ -442,28 +550,35 @@ model Stakeholder {
 // ============================================================
 
 model Knowledge {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  title          String    @db.VarChar(150)
-  knowledgeType  String    @map("knowledge_type") @db.VarChar(30)
-  background     String    @db.Text
-  content        String    @db.Text
-  result         String    @db.Text
-  conclusion     String?   @db.Text
-  recommendation String?   @db.Text
-  reusability    String?   @db.VarChar(10)
-  techTags       Json      @default("[]") @map("tech_tags") @db.JsonB
-  devMethod      String?   @map("dev_method") @db.VarChar(30)
-  processTags    Json      @default("[]") @map("process_tags") @db.JsonB
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)
+  // テナント独立性を担保するため Knowledge はテナント間で重複コピー (default-tenant の
+  // シードナレッジを新規テナントに seedTenant() で複製)。設計判断は SUGGESTION_ENGINE_PLAN.md PR #6 参照。
+  tenantId           String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  title              String    @db.VarChar(150)
+  knowledgeType      String    @map("knowledge_type") @db.VarChar(30)
+  background         String    @db.Text
+  content            String    @db.Text
+  result             String    @db.Text
+  conclusion         String?   @db.Text
+  recommendation     String?   @db.Text
+  reusability        String?   @db.VarChar(10)
+  techTags           Json      @default("[]") @map("tech_tags") @db.JsonB
+  devMethod          String?   @map("dev_method") @db.VarChar(30)
+  processTags        Json      @default("[]") @map("process_tags") @db.JsonB
   // PR #65 Phase 2 (b): Project.businessDomainTags との対称化。
   // 提案型サービスの Jaccard 類似度で業務ドメイン軸もマッチできるようにする。
-  businessDomainTags Json   @default("[]") @map("business_domain_tags") @db.JsonB
-  visibility     String    @default("draft") @db.VarChar(20) // draft | project | company
-  createdBy      String    @map("created_by") @db.Uuid
-  updatedBy      String    @map("updated_by") @db.Uuid
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
+  businessDomainTags Json      @default("[]") @map("business_domain_tags") @db.JsonB
+  visibility         String    @default("draft") @db.VarChar(20) // draft | project | company
+  // PR #4 (T-03 Phase 2): title + background + content + result + conclusion を結合した text の embedding
+  contentEmbedding   Unsupported("vector(1024)")? @map("content_embedding")
+  createdBy          String    @map("created_by") @db.Uuid
+  updatedBy          String    @map("updated_by") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz
 
+  tenant            Tenant             @relation(fields: [tenantId], references: [id])
   creator           User               @relation("KnowledgeCreator", fields: [createdBy], references: [id])
   updater           User               @relation("KnowledgeUpdater", fields: [updatedBy], references: [id])
   knowledgeProjects KnowledgeProject[]
@@ -471,6 +586,7 @@ model Knowledge {
 
   @@index([knowledgeType], map: "idx_knowledges_type")
   @@index([visibility], map: "idx_knowledges_visibility")
+  @@index([tenantId], map: "idx_knowledges_tenant")
   @@map("knowledges")
 }
 
@@ -503,44 +619,37 @@ model TaskKnowledge {
 // ============================================================
 
 model Retrospective {
-  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  projectId               String    @map("project_id") @db.Uuid
-  conductedDate           DateTime  @map("conducted_date") @db.Date
-  planSummary             String    @map("plan_summary") @db.Text
-  actualSummary           String    @map("actual_summary") @db.Text
-  goodPoints              String    @map("good_points") @db.Text
-  problems                String    @db.Text
-  estimateGapFactors      String?   @map("estimate_gap_factors") @db.Text
-  scheduleGapFactors      String?   @map("schedule_gap_factors") @db.Text
-  qualityIssues           String?   @map("quality_issues") @db.Text
-  riskResponseEvaluation  String?   @map("risk_response_evaluation") @db.Text
-  improvements            String    @db.Text
-  knowledgeToShare        String?   @map("knowledge_to_share") @db.Text
-  state                   String    @default("draft") @db.VarChar(20)
-  visibility              String    @default("draft") @db.VarChar(20) // draft | public (PR #60)
-  createdBy               String    @map("created_by") @db.Uuid
-  updatedBy               String    @map("updated_by") @db.Uuid
-  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt               DateTime? @map("deleted_at") @db.Timestamptz
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)
+  tenantId               String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  projectId              String    @map("project_id") @db.Uuid
+  conductedDate          DateTime  @map("conducted_date") @db.Date
+  planSummary            String    @map("plan_summary") @db.Text
+  actualSummary          String    @map("actual_summary") @db.Text
+  goodPoints             String    @map("good_points") @db.Text
+  problems               String    @db.Text
+  estimateGapFactors     String?   @map("estimate_gap_factors") @db.Text
+  scheduleGapFactors     String?   @map("schedule_gap_factors") @db.Text
+  qualityIssues          String?   @map("quality_issues") @db.Text
+  riskResponseEvaluation String?   @map("risk_response_evaluation") @db.Text
+  improvements           String    @db.Text
+  knowledgeToShare       String?   @map("knowledge_to_share") @db.Text
+  state                  String    @default("draft") @db.VarChar(20)
+  visibility             String    @default("draft") @db.VarChar(20) // draft | public (PR #60)
+  // PR #4 (T-03 Phase 2): planSummary + actualSummary + goodPoints + improvements 等を結合した text の embedding
+  contentEmbedding       Unsupported("vector(1024)")? @map("content_embedding")
+  createdBy              String    @map("created_by") @db.Uuid
+  updatedBy              String    @map("updated_by") @db.Uuid
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt              DateTime? @map("deleted_at") @db.Timestamptz
 
-  project  Project                @relation(fields: [projectId], references: [id])
-  comments RetrospectiveComment[]
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
 
   @@index([projectId], map: "idx_retro_project")
+  @@index([tenantId], map: "idx_retro_tenant")
   @@map("retrospectives")
-}
-
-model RetrospectiveComment {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  retrospectiveId String   @map("retrospective_id") @db.Uuid
-  userId          String   @map("user_id") @db.Uuid
-  content         String   @db.Text
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-
-  retrospective Retrospective @relation(fields: [retrospectiveId], references: [id])
-
-  @@map("retrospective_comments")
 }
 
 // ============================================================
@@ -595,6 +704,8 @@ model AuthEventLog {
 ///   - context に IP / request path / 任意メタデータを JSON で持たせる。
 model SystemErrorLog {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)。pre-auth エラーは default-tenant に集約。
+  tenantId  String   @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
   severity  String   @db.VarChar(10) // 'info' | 'warn' | 'error' | 'fatal'
   source    String   @db.VarChar(30) // 'server' | 'client' | 'cron' | 'mail' | etc.
   message   String   @db.Text
@@ -604,25 +715,27 @@ model SystemErrorLog {
   context   Json?    @db.JsonB
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  user User? @relation(fields: [userId], references: [id])
+  user   User?  @relation(fields: [userId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([severity, createdAt(sort: Desc)], map: "idx_system_errors_severity")
   @@index([source, createdAt(sort: Desc)], map: "idx_system_errors_source")
   @@index([userId, createdAt(sort: Desc)], map: "idx_system_errors_user")
   @@index([createdAt(sort: Desc)], map: "idx_system_errors_date")
+  @@index([tenantId, createdAt(sort: Desc)], map: "idx_system_errors_tenant")
   @@map("system_error_logs")
 }
 
 model RoleChangeLog {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  changedBy    String    @map("changed_by") @db.Uuid
-  targetUserId String    @map("target_user_id") @db.Uuid
-  changeType   String    @map("change_type") @db.VarChar(20) // system_role | project_role
-  projectId    String?   @map("project_id") @db.Uuid
-  beforeRole   String?   @map("before_role") @db.VarChar(30)
-  afterRole    String    @map("after_role") @db.VarChar(30)
-  reason       String?   @db.Text
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  changedBy    String   @map("changed_by") @db.Uuid
+  targetUserId String   @map("target_user_id") @db.Uuid
+  changeType   String   @map("change_type") @db.VarChar(20) // system_role | project_role
+  projectId    String?  @map("project_id") @db.Uuid
+  beforeRole   String?  @map("before_role") @db.VarChar(30)
+  afterRole    String   @map("after_role") @db.VarChar(30)
+  reason       String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   changer    User @relation("RoleChanger", fields: [changedBy], references: [id])
   targetUser User @relation("RoleTarget", fields: [targetUserId], references: [id])
@@ -639,6 +752,8 @@ model RoleChangeLog {
 /// 長期運用に耐える設計 (DESIGN.md §21.2 DRY 原則に沿って共通テーブル化)。
 model Attachment {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)。親エンティティの tenantId と整合性をサービス層で担保。
+  tenantId    String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
   entityType  String    @map("entity_type") @db.VarChar(30)
   entityId    String    @map("entity_id") @db.Uuid
   slot        String    @default("general") @db.VarChar(30)
@@ -650,11 +765,110 @@ model Attachment {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
-  addedByUser User @relation("AttachmentAddedBy", fields: [addedBy], references: [id])
+  addedByUser User   @relation("AttachmentAddedBy", fields: [addedBy], references: [id])
+  tenant      Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([entityType, entityId], map: "idx_attachments_entity")
   @@index([entityType, entityId, slot], map: "idx_attachments_slot")
+  @@index([tenantId], map: "idx_attachments_tenant")
   @@map("attachments")
+}
+
+/// コメント (PR #199): エンティティ編集 dialog 内のディスカッション用
+/// ポリモーフィック関連 (entityType + entityId) で 7 種のエンティティと連携する:
+///   issue / task / risk / retrospective / knowledge / customer / stakeholder
+/// 既存の `RetrospectiveComment` テーブルは本 model に統合 (data migration あり)。
+/// 認可方針:
+///   - 投稿: 認証済ユーザは誰でも (project member 非メンバーも可、要件 Q4)
+///   - 編集 / 削除: 投稿者本人 OR システム管理者 (要件 Q5)
+/// 削除: soft-delete (`deletedAt`) — 監査要件 + 編集履歴保持目的
+model Comment {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)。親エンティティの tenantId と整合性をサービス層で担保。
+  tenantId   String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  entityType String    @map("entity_type") @db.VarChar(30)
+  entityId   String    @map("entity_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  content    String    @db.Text
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz
+
+  user     User      @relation("CommentAuthor", fields: [userId], references: [id])
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  mentions Mention[]
+
+  @@index([entityType, entityId, deletedAt], map: "idx_comments_entity")
+  @@index([tenantId], map: "idx_comments_tenant")
+  @@map("comments")
+}
+
+/// メンション (PR feat/comment-mentions): コメント本文中の `@username` / `@all` 等を
+/// 構造化データとして保存し、通知配信のソースになる。
+///
+/// 設計方針:
+///   - **kind の判別ユニオン**: 'user' (個別) / 'all' / 'project_member' / 'role_*' / 'assignee'
+///     - kind='user' のみ targetUserId を持つ (個別指定)
+///     - その他 (グループメンション) は targetUserId=null、配信時に動的に展開
+///   - **コメント削除で cascade 物理削除** (`onDelete: Cascade`):
+///     - コメントが消えたメンションは意味を持たないため、データ整合性のため自動削除
+///   - **編集時の差分処理**: 旧 mention と新 mention を kind+targetUserId で diff し、
+///     **追加分のみ通知** を生成 (Q2 採用)。削除分は何もしない。
+model Mention {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)。親 Comment の tenantId と整合性をサービス層で担保。
+  tenantId     String   @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  commentId    String   @map("comment_id") @db.Uuid
+  kind         String   @db.VarChar(40)
+  targetUserId String?  @map("target_user_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  comment    Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  targetUser User?   @relation("MentionTarget", fields: [targetUserId], references: [id])
+  tenant     Tenant  @relation(fields: [tenantId], references: [id])
+
+  @@index([commentId], map: "idx_mentions_comment")
+  @@index([tenantId], map: "idx_mentions_tenant")
+  @@map("mentions")
+}
+
+/// 通知 (PR feat/notifications-mvp): アプリ内のベル UI に表示するエンドユーザ向けメッセージ。
+/// 設計方針:
+///   - **アプリ内通知のみ** (メール / push 通知は対象外)
+///   - **polymorphic 連携** (entity_type + entity_id) で将来コメント mention 等に拡張可能
+///   - **dedupeKey** で同じトリガが 1 日 1 回しか発火しないよう保証 (例: 同タスクの開始通知が
+///     同日に複数回作られない)
+///   - 既読 (readAt が NULL でない) かつ 30 日経過したものは cron で物理削除
+///   - 受信者 (userId) は単一。複数ユーザに同時通知する場合は service 層でループ生成する
+///
+/// MVP の type:
+///   - 'task_start_due' : ACT の予定開始日当日 (status='not_started')
+///   - 'task_end_due'   : ACT の予定終了日当日 (status≠'completed')
+/// 将来:
+///   - 'comment_mention': コメント本文の @username で言及
+model Notification {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)。User の tenantId と整合性をサービス層で担保。
+  tenantId   String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  type       String    @db.VarChar(40)
+  entityType String    @map("entity_type") @db.VarChar(30)
+  entityId   String    @map("entity_id") @db.Uuid
+  title      String    @db.VarChar(200)
+  link       String    @db.VarChar(500)
+  /// 重複抑止用キー (例: `task_start_due:${taskId}:${YYYY-MM-DD}`)。
+  /// UNIQUE 制約で 2 重生成を DB レベルで弾く (cron が時間内に 2 回呼ばれても安全)。
+  dedupeKey  String    @map("dedupe_key") @db.VarChar(200)
+  readAt     DateTime? @map("read_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user   User   @relation("NotificationRecipient", fields: [userId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([dedupeKey], map: "idx_notifications_dedupe")
+  @@index([userId, readAt, createdAt(sort: Desc)], map: "idx_notifications_user_unread")
+  @@index([tenantId], map: "idx_notifications_tenant")
+  @@map("notifications")
 }
 
 /// 個人メモ (PR #70): プロジェクトに紐付かない個人の知見・作業ノートを保存する。
@@ -665,19 +879,68 @@ model Attachment {
 /// 添付は PR #64 の attachments テーブルに entityType='memo' で紐付け可能。
 model Memo {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // PR #2: tenant 配属 (DEFAULT default-tenant)。User の tenantId と整合性をサービス層で担保。
+  tenantId   String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
   userId     String    @map("user_id") @db.Uuid
   title      String    @db.VarChar(150)
   content    String    @db.Text
   visibility String    @default("private") @db.VarChar(20)
+  // PR #4 (T-03 Phase 2): title + content を結合した text の embedding
+  contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt  DateTime? @map("deleted_at") @db.Timestamptz
 
-  author User @relation("MemoAuthor", fields: [userId], references: [id])
+  author User   @relation("MemoAuthor", fields: [userId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   // 自分のメモ一覧 (MyMemos) での並び替えを効率化
   @@index([userId, createdAt(sort: Desc)], map: "idx_memos_user_recent")
   // 全メモ (公開メモ) 画面での並び替えを効率化
   @@index([visibility, createdAt(sort: Desc)], map: "idx_memos_visibility_recent")
+  @@index([tenantId], map: "idx_memos_tenant")
   @@map("memos")
+}
+
+// ============================================================
+// API Call Logs (PR #2 / T-03 提案エンジン v2)
+// ============================================================
+//
+// 各 LLM / Embedding API 呼び出しの記録。**課金根拠データとして法的に重要**。
+// withMeteredLLM ミドルウェアが成功時に必ず記録する。失敗時の記録方針は同 ミドルウェアに集約。
+//
+// `featureUnit` は「ユーザに見える 1 操作」と「内部処理」の対応関係を記録する識別子。
+//   - 'new-project-suggestion'      新規プロジェクト作成時の提案 (1 回 = 1 操作)
+//   - 'project-suggestion-refresh'  プロジェクト詳細での提案更新ボタン
+//   - 'risk-creation-suggest'       リスク起票時のサジェスト
+//   - 'auto-tag-extract'            プロジェクト保存時の自動タグ抽出 (Phase 1)
+//   - 'embedding-backfill'          バックグラウンド一括 embedding 生成
+//
+// `costJpy` は当該呼び出しに「テナント側に発生した課金額」(Beginner: 0 = 無料、Expert: 10、Pro: 30)。
+// 内部の Anthropic / Voyage AI API 実コストとは別概念で、本番運用では別系統の財務追跡で突合する。
+
+model ApiCallLog {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  userId          String?  @map("user_id") @db.Uuid // cron / 匿名 / システム実行時は null
+  featureUnit     String   @map("feature_unit") @db.VarChar(40)
+  modelName       String   @map("model_name") @db.VarChar(60)
+  /// LLM 入力トークン数 (Anthropic)。embedding 専用呼び出しは null。
+  llmInputTokens  Int?     @map("llm_input_tokens")
+  llmOutputTokens Int?     @map("llm_output_tokens")
+  /// embedding トークン数 (Voyage AI)。LLM 専用呼び出しは null。
+  embeddingTokens Int?     @map("embedding_tokens")
+  /// テナント側に発生した課金額 (円整数)。
+  costJpy         Int      @map("cost_jpy")
+  latencyMs       Int      @map("latency_ms")
+  requestId       String   @map("request_id") @db.VarChar(64)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User?  @relation("ApiCallLogActor", fields: [userId], references: [id])
+
+  @@index([tenantId, createdAt(sort: Desc)], map: "idx_api_call_logs_tenant")
+  @@index([requestId], map: "idx_api_call_logs_request")
+  @@index([featureUnit, createdAt(sort: Desc)], map: "idx_api_call_logs_feature")
+  @@map("api_call_logs")
 }

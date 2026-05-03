@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import {
@@ -11,6 +12,8 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// PR #199: コメントセクション (旧 retrospective_comments を polymorphic comments テーブルに統合)
+import { CommentSection } from '@/components/comments/comment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
@@ -51,6 +54,7 @@ export function RetrospectiveEditDialog({
   const tField = useTranslations('field');
   const tRetro = useTranslations('retro');
   const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
@@ -99,12 +103,15 @@ export function RetrospectiveEditDialog({
     );
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
-      setError(json.error?.message || tRetro('updateFailed'));
+      const msg = json.error?.message || tRetro('updateFailed');
+      setError(msg);
+      showError('振り返りの更新に失敗しました');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
     // 即座に閉じてから reload を裏で走らせる (旧実装は reload await で遅く感じた)。
     onOpenChange(false);
+    showSuccess('振り返りを更新しました');
     void onSaved();
   }
 
@@ -154,7 +161,7 @@ export function RetrospectiveEditDialog({
             </div>
           ))}
           </fieldset>
-          {/* Phase E 共通化: DialogAttachmentSection に集約。readOnly 非表示は §5.10 由来 */}
+          {/* Phase E 共通化: DialogAttachmentSection に集約。readOnly 非表示は §5.14 由来 */}
           <DialogAttachmentSection
             entityType="retrospective"
             entityId={retro.id}
@@ -162,6 +169,8 @@ export function RetrospectiveEditDialog({
             mainLabel={tRetro('relatedUrl')}
           />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
+          {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
+          <CommentSection entityType="retrospective" entityId={retro.id} />
         </form>
       </DialogContent>
     </Dialog>

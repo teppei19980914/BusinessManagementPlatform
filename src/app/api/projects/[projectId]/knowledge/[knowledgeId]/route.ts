@@ -59,7 +59,7 @@ export async function PATCH(
   let knowledge;
   try {
     // 2026-04-24: 作成者本人のみ編集可 (admin でも他人は不可)。service 層で enforce。
-    knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id);
+    knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

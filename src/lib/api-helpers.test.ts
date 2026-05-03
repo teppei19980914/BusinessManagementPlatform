@@ -14,14 +14,17 @@ import { auth } from '@/lib/auth';
 import { checkPermission, checkMembership } from '@/lib/permissions';
 import type { SystemRole } from '@/types';
 
+const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 const adminUser = {
   id: 'admin-1',
+  tenantId: TEST_TENANT_ID,
   name: 'Admin',
   email: 'admin@example.com',
   systemRole: 'admin' as SystemRole,
 };
 const generalUser = {
   id: 'user-1',
+  tenantId: TEST_TENANT_ID,
   name: 'User',
   email: 'user@example.com',
   systemRole: 'general' as SystemRole,

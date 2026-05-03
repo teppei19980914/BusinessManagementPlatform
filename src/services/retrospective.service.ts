@@ -13,7 +13,9 @@
  *   - problems / improvements は pg_trgm GIN インデックス付き (PR #65)。
  *     新プロジェクトの purpose / scope / background と類似度マッチして「過去の失敗」を
  *     早期に提示する用途 (suggestion.service.ts 経由)。
- *   - コメント (retrospective_comments) は別テーブルで Markdown 文字列を持つ。
+ *   - **コメントは PR #199 で polymorphic な `comments` テーブル (entityType='retrospective')
+ *     に統合**。本サービスはコメント関連 API/DTO を持たず、UI から直接 `/api/comments`
+ *     を呼ぶ。旧 `retrospective_comments` テーブルは migration で `comments` に移行済。
  *
  * 認可 (2026-04-24 改修):
  *   - 参照: 非 admin は visibility='public' のみ一覧表示、draft は他人のものは存在しない扱い。
@@ -24,12 +26,13 @@
  *   - 作成: 呼出元 API ルートで ProjectMember チェック済 (admin も非メンバーなら不可)。
  *
  * 関連ドキュメント:
- *   - DESIGN.md §5 (テーブル定義: retrospectives / retrospective_comments)
+ *   - DESIGN.md §5 (テーブル定義: retrospectives) / コメント機能節 (PR #199)
  *   - DESIGN.md §16 (全文検索 / pg_trgm)
  *   - DESIGN.md §23 (核心機能: 過去振り返りの提案)
  */
 
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
 import type { CreateRetrospectiveInput } from '@/lib/validators/retrospective';
 
 export type RetroDTO = {
@@ -47,21 +50,21 @@ export type RetroDTO = {
   /** 2026-04-24: UI 側で「自分が作成者か」を判定するために DTO に含める */
   createdBy: string;
   createdAt: string;
-  comments: { id: string; userName: string; content: string; createdAt: string }[];
+  // PR #199: コメントは polymorphic comments テーブルへ移管。本 DTO には含めない。
+  //   UI 側は edit dialog 内の <CommentSection> が /api/comments?entityType=retrospective
+  //   経由で直接取得する。
 };
 
 /**
  * 「全振り返り」ビュー用 DTO。
  * 閲覧ユーザが紐づくプロジェクトの ProjectMember か否かで情報量を切り替える。
- * 非メンバー: projectName マスク / canAccessProject=false / コメント投稿者名マスク
+ * 非メンバー: projectName マスク / canAccessProject=false。
  */
-export type AllRetroDTO = Omit<RetroDTO, 'comments'> & {
+export type AllRetroDTO = RetroDTO & {
   projectName: string | null;
   /** プロジェクトが論理削除済みか (admin のみ識別可、非 admin には false として秘匿) */
   projectDeleted: boolean;
   canAccessProject: boolean;
-  // コメントは件数と本文のみ公開、投稿者氏名は非メンバー向けにマスク
-  comments: { id: string; userName: string | null; content: string; createdAt: string }[];
   /** Req 4: 全振り返り画面で表示する追加フィールド (planSummary/actualSummary/improvements は既に RetroDTO 経由で含まれる) */
   updatedAt: string;
   createdByName: string | null;
@@ -93,15 +96,13 @@ export async function listAllRetrospectivesForViewer(
   const retros = await prisma.retrospective.findMany({
     where: { deletedAt: null, visibility: 'public' },
     include: {
-      comments: { orderBy: { createdAt: 'asc' } },
       project: { select: { id: true, name: true, deletedAt: true } },
     },
     orderBy: { conductedDate: 'desc' },
   });
 
-  // コメント投稿者名 + createdBy / updatedBy を解決 (マスクは row 単位でメンバー判定)
+  // createdBy / updatedBy のユーザ名を解決 (PR #199: コメントは別経路 /api/comments で取得)
   const userIds = [...new Set([
-    ...retros.flatMap((r) => r.comments.map((c) => c.userId)),
     ...retros.map((r) => r.createdBy),
     ...retros.map((r) => r.updatedBy),
   ])];
@@ -135,42 +136,30 @@ export async function listAllRetrospectivesForViewer(
       // プロジェクト名は機微情報扱いを維持 (上記 projectName 行で isMember gate 残置)。
       createdByName: userMap.get(r.createdBy) ?? null,
       updatedByName: userMap.get(r.updatedBy) ?? null,
-      comments: r.comments.map((c) => ({
-        id: c.id,
-        userName: userMap.get(c.userId) ?? null,
-        content: c.content,
-        createdAt: c.createdAt.toISOString(),
-      })),
     };
   });
 }
 
 export async function listRetrospectives(
   projectId: string,
-  _viewerUserId: string,
+  viewerUserId: string,
   viewerSystemRole: string,
 ): Promise<RetroDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
-  // 2026-04-24: 非 admin は一覧に draft を一切含めない (自分の draft も除外)。
-  // draft の個別参照は getRetrospective が作成者本人/admin のみ許可する。
-  const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
+  // 2026-05-01 (PR fix/visibility-auth-matrix): 「自分の draft は一覧に表示する」方針に変更。
+  //   旧仕様 (2026-04-24): 非 admin は draft 一切除外 → 自分の起票を視認できず混乱した。
+  //   新仕様: public + 自分の draft + (admin は他人の draft も) を表示。
+  //   一覧 UI 側で「下書き」バッジを付与する (DEVELOPER_GUIDE §5.51)。
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
 
+  // PR #199: コメントは polymorphic comments テーブル経由 (/api/comments) で取得するため
+  //   include: { comments: ... } は不要。retro 本体だけ load する。
   const retros = await prisma.retrospective.findMany({
     where: { projectId, deletedAt: null, ...visibilityWhere },
-    include: {
-      comments: {
-        orderBy: { createdAt: 'asc' },
-      },
-    },
     orderBy: { conductedDate: 'desc' },
   });
-
-  // コメントのユーザ名を取得
-  const userIds = [...new Set(retros.flatMap((r) => r.comments.map((c) => c.userId)))];
-  const users = userIds.length > 0
-    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
-    : [];
-  const userMap = new Map(users.map((u) => [u.id, u.name]));
 
   return retros.map((r) => ({
     id: r.id,
@@ -185,12 +174,6 @@ export async function listRetrospectives(
     visibility: r.visibility,
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
-    comments: r.comments.map((c) => ({
-      id: c.id,
-      userName: userMap.get(c.userId) || '不明',
-      content: c.content,
-      createdAt: c.createdAt.toISOString(),
-    })),
   }));
 }
 
@@ -198,6 +181,7 @@ export async function createRetrospective(
   projectId: string,
   input: CreateRetrospectiveInput,
   userId: string,
+  tenantId: string,
 ): Promise<RetroDTO> {
   const r = await prisma.retrospective.create({
     data: {
@@ -218,6 +202,24 @@ export async function createRetrospective(
       updatedBy: userId,
     },
   });
+
+  // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存 (fail-safe)
+  await generateAndPersistEntityEmbedding({
+    table: 'retrospectives',
+    rowId: r.id,
+    tenantId,
+    userId,
+    text: composeRetrospectiveText({
+      planSummary: input.planSummary,
+      actualSummary: input.actualSummary,
+      goodPoints: input.goodPoints,
+      problems: input.problems,
+      improvements: input.improvements,
+      knowledgeToShare: input.knowledgeToShare ?? null,
+    }),
+    featureUnit: 'retrospective-embedding',
+  });
+
   return {
     id: r.id,
     projectId: r.projectId,
@@ -231,8 +233,34 @@ export async function createRetrospective(
     visibility: r.visibility,
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
-    comments: [],
   };
+}
+
+/**
+ * PR #5-c: Retrospective の embedding 生成用 text 合成 helper。
+ *
+ * 振り返りの主要な意味を担う text フィールドを合成。estimateGapFactors / scheduleGapFactors /
+ * qualityIssues / riskResponseEvaluation は補足項目で省略 (signal/noise 比を最適化)。
+ */
+function composeRetrospectiveText(fields: {
+  planSummary: string;
+  actualSummary: string;
+  goodPoints: string;
+  problems: string;
+  improvements: string;
+  knowledgeToShare: string | null;
+}): string {
+  return [
+    fields.planSummary,
+    fields.actualSummary,
+    fields.goodPoints,
+    fields.problems,
+    fields.improvements,
+    fields.knowledgeToShare ?? '',
+  ]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join('\n\n');
 }
 
 export async function confirmRetrospective(retroId: string, userId: string): Promise<void> {
@@ -271,6 +299,7 @@ export async function updateRetrospective(
     visibility?: string;
   },
   userId: string,
+  tenantId: string,
 ): Promise<void> {
   const existing = await prisma.retrospective.findFirst({
     where: { id: retroId, deletedAt: null },
@@ -278,6 +307,15 @@ export async function updateRetrospective(
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
+
+  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定
+  const textFieldsChanging =
+    input.planSummary !== undefined ||
+    input.actualSummary !== undefined ||
+    input.goodPoints !== undefined ||
+    input.problems !== undefined ||
+    input.improvements !== undefined ||
+    input.knowledgeToShare !== undefined;
 
   const data: Record<string, unknown> = { updatedBy: userId };
   if (input.conductedDate !== undefined) data.conductedDate = new Date(input.conductedDate);
@@ -294,7 +332,26 @@ export async function updateRetrospective(
   if (input.state !== undefined) data.state = input.state;
   if (input.visibility !== undefined) data.visibility = input.visibility;
 
-  await prisma.retrospective.update({ where: { id: retroId }, data });
+  const r = await prisma.retrospective.update({ where: { id: retroId }, data });
+
+  // PR #5-c: text 変更時のみ embedding を再生成
+  if (textFieldsChanging) {
+    await generateAndPersistEntityEmbedding({
+      table: 'retrospectives',
+      rowId: retroId,
+      tenantId,
+      userId,
+      text: composeRetrospectiveText({
+        planSummary: r.planSummary,
+        actualSummary: r.actualSummary,
+        goodPoints: r.goodPoints,
+        problems: r.problems,
+        improvements: r.improvements,
+        knowledgeToShare: r.knowledgeToShare,
+      }),
+      featureUnit: 'retrospective-embedding',
+    });
+  }
 }
 
 /**
@@ -321,12 +378,17 @@ export async function deleteRetrospective(
   if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
 
   const now = new Date();
+  // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)
   await prisma.$transaction([
     prisma.retrospective.update({
       where: { id: retroId },
       data: { deletedAt: now, updatedBy: userId },
     }),
     prisma.attachment.updateMany({
+      where: { entityType: 'retrospective', entityId: retroId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
       where: { entityType: 'retrospective', entityId: retroId, deletedAt: null },
       data: { deletedAt: now },
     }),
@@ -394,12 +456,4 @@ export async function getRetrospective(
   return null;
 }
 
-export async function addComment(
-  retroId: string,
-  content: string,
-  userId: string,
-): Promise<void> {
-  await prisma.retrospectiveComment.create({
-    data: { retrospectiveId: retroId, userId, content },
-  });
-}
+// PR #199: addComment は削除。polymorphic comments テーブルへ移行 (`/api/comments`)。
