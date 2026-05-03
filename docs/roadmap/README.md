@@ -8,6 +8,7 @@
 |---|---|---|
 | [RELEASE_ROADMAP.md](./RELEASE_ROADMAP.md) | リリースロードマップ全体 (Phase 1〜Phase 3) | 既存 |
 | [SUGGESTION_ENGINE_PLAN.md](./SUGGESTION_ENGINE_PLAN.md) | 提案エンジン v2 の実装計画 (PR 分割・スケジュール・意思決定ログ) | 既存 |
+| [ROLE_REFACTORING_PLAN.md](./ROLE_REFACTORING_PLAN.md) | ロール再構築計画 (テナント管理者 + システム管理者の二層化、6/1 リリース目標) | 新規 (2026-05-03) |
 | [MVP_HISTORICAL.md](./MVP_HISTORICAL.md) | MVP 構築時の計画 (2026-04-15 完了時点の履歴記録、固定化済) | PLAN.md |
 
 ## 提案エンジン v2 の関連ドキュメント
