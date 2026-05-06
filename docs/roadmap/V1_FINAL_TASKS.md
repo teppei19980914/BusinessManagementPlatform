@@ -15,27 +15,27 @@
 | 1 | **PR-X1** | super_admin role + 管理テナント seed + 認可ヘルパ | 1-2 日 | (なし) |
 | 2 | **PR-X2** | super_admin ダッシュボード UI (Phase 1) | 2-3 日 | PR-X1 |
 | 3 | **PR-X4** | テナント管理者プラン変更 UI (`/settings` にタブ追加) | 2-3 日 | PR-X1 (認可ヘルパ流用) |
-| 4 | **PR-X5** | シードデータ拡充 (案 C: 課題・振り返り追加 + サンプルプロジェクト隠蔽 + ヒット率向上) | 1 日 | (独立、並行可) |
+| 4 | **PR-X5** | シードデータ拡充 (案 C: 課題・振り返り追加 + サンプルプロジェクト隠蔽 + ヒット率向上 + **事前生成 embedding 同梱**) | 1.5 日 | (独立、並行可) |
 | 5 | **PR-X3** | UI 文言更新 + ドキュメント整合 | 1 日 | PR-X1〜X5 |
 
-**合計**: 7-10 日
+**合計**: 7.5-10.5 日 (PR-X5 への embedding 事前生成スコープ追加で +0.5 日)
 
-**6/1 まで残**: 2026-05-04 起点で約 28 日 → **十分なバッファ** (品質確認・視覚回帰・想定外修正対応に約 18-21 日)。
+**6/1 まで残**: 2026-05-07 起点で約 25 日 → **十分なバッファ** (品質確認・視覚回帰・想定外修正対応に約 14-17 日)。
 
 ```
-[2026-05-04 着手]
+[2026-05-07 着手 (本日)]
    ↓
 PR-X1 (1-2 日)  ← 起点
    ↓
 PR-X2 ┐
-PR-X4 ┤ 並行可能 (それぞれ 2-3 日)
+PR-X4 ┤ 並行可能 (PR-X2/X4 各 2-3 日、PR-X5 が 1.5 日)
 PR-X5 ┘
    ↓
 PR-X3 (1 日)
    ↓
-[2026-05-13 前後 完了見込]
+[2026-05-16 前後 完了見込]
    ↓
-リリース直前テスト 約 18-21 日
+リリース直前テスト 約 14-17 日
    ↓
 [2026-06-01 リリース]
 ```
@@ -148,9 +148,11 @@ URL: /settings (既存ページにタブ追加)
 
 ---
 
-## PR-X5: シードデータ拡充 (案 C 採用、1 日)
+## PR-X5: シードデータ拡充 (案 C 採用 + embedding 事前生成、1.5 日)
 
 **ユーザの認識**: 提案機能は本サービスの根幹機能。初期データはユーザが評価する際の重要なデータ。妥協できない。
+
+> **2026-05-07 追記 (5-7 として scope 追加)**: 初期データに事前生成 embedding を同梱することで、新規テナントが Day 1 から 3 軸スコアリング (tag 0.3 + pg_trgm 0.2 + **embedding 0.5**) のフル精度で提案を体験できるようにする。embedding は本サービスの提案精度の主軸 (重み 50%) であるため、ここを欠くと初期体験が大きく劣化する。
 
 ### 案 C のスコープ
 
@@ -268,11 +270,108 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 
 このような拡充を 30 件すべてに適用。
 
-#### 5-6. 検証
+#### 5-7. 事前生成 embedding の同梱 (2026-05-07 追加)
+
+##### 動機
+
+現状 (PR #6 実装) のシードデータは `content_embedding = NULL` で投入される。結果として:
+- 新規テナントが提案画面を開いた時、シード候補すべてに対し embedding 軸 (重み **0.5**) がゼロ化
+- タグ 0.3 + pg_trgm 0.2 = 合計 **0.5 の縮退モード**で動作
+- 検索精度の主軸 (= 意味検索) が機能せず、「過去資産が結びつく体験」の核心価値が初期から伝わりにくい
+
+→ シードデータに **事前生成済 embedding を同梱**することで、新規テナントでも Day 1 から 3 軸フル精度で提案を体験できる。
+
+##### 実装構成
+
+```
+prisma/
+├─ seed-suggestion.ts                     # 既存 (拡充 + JSON 読込ロジック追加)
+├─ seed-suggestion-embeddings.json        # 新規 (生成済 embedding をリポジトリにコミット)
+└─ ...
+
+scripts/
+└─ generate-seed-embeddings.ts            # 新規 (開発者環境で 1 回実行)
+
+package.json:
+  "seed:generate-embeddings": "tsx scripts/generate-seed-embeddings.ts"
+```
+
+##### ワークフロー
+
+```
+[A. 開発者環境での生成 (1 回限り、新規シード追加・更新時のみ再実行)]
+  1. .env.local に VOYAGE_API_KEY 設定
+  2. pnpm seed:generate-embeddings 実行
+     → SEED_KNOWLEDGE / SEED_ISSUES / SEED_RETROSPECTIVES の各エントリで Voyage API 呼出
+     → seed-suggestion-embeddings.json に { entityType: { entry_key: [1024 floats] } } で保存
+  3. JSON ファイルを git commit (リポジトリに格納)
+
+[B. 本番 seed 投入時 (Vercel build / pnpm db:seed:suggestion)]
+  → SEED_KNOWLEDGE 等を INSERT
+  → seed-suggestion-embeddings.json から該当 embedding 読込
+  → raw SQL で content_embedding 列に書込 (Prisma の Unsupported("vector(1024)") のため $executeRaw)
+  → 結果: 全シードデータに embedding 付き
+
+[C. 新規テナント招待時 (seedTenant())]
+  → default-tenant の Knowledge / Issue / Retrospective を読込 (embedding 付き)
+  → 新規テナントへ INSERT (embedding ごとコピー、既存実装どおり)
+  → 結果: 新規テナントも Day 1 から 3 軸スコアリングフル稼働
+```
+
+##### キー設計
+
+JSON ファイルのエントリキー = **`title` の SHA-256 ハッシュ先頭 16 文字**:
+- 同じタイトルなら同じキー (冪等)
+- タイトル変更時は新キーになり、JSON に該当キーがなければ INSERT 時に embedding=NULL でスキップ (= 再生成漏れを警告ログで検知可能)
+
+##### JSON 構造例
+
+```json
+{
+  "knowledges": {
+    "abc123def4567890": [0.012, -0.453, 0.781, ...]
+  },
+  "issues": {
+    "def456abc7890123": [0.234, 0.567, -0.123, ...]
+  },
+  "retrospectives": {
+    "789abc123def4567": [-0.123, 0.456, 0.789, ...]
+  }
+}
+```
+
+##### Voyage API コスト試算
+
+```
+SEED_KNOWLEDGE (30 件) + SEED_ISSUES (10-15 件) + SEED_RETROSPECTIVES (5-7 件)
+≒ 50 件 × 平均 1500 token = 75,000 token
+
+無料枠 200M token のうち 0.038% を使用 → 実質コストゼロ
+```
+
+##### 想定外シナリオへの対応
+
+| 状況 | 対応 |
+|---|---|
+| seed-suggestion-embeddings.json に該当キーがない (= シード追記後に再生成漏れ) | INSERT 時に embedding=NULL で投入 + console.warn で警告。後追いで `pnpm seed:generate-embeddings` 実行で復旧 |
+| Voyage API キー未設定で `pnpm seed:generate-embeddings` 実行 | 明示的にエラー終了、適切なメッセージ表示 |
+| Voyage モデル変更 (例: voyage-4-lite → voyage-5-lite) | 開発者が `pnpm seed:generate-embeddings` を再実行 + 新 JSON をコミット (ベクトル次元が変わる場合は migration も必要だが本リリース範囲外) |
+
+##### 工数内訳
+
+- generate-seed-embeddings.ts 実装 + テスト: 0.3 日
+- seed-suggestion.ts の JSON 読込 + raw SQL embedding 書込: 0.2 日
+- 単体テスト追加 (JSON 不在時 / キー不在時のフォールバック): 0.1 日
+
+合計 0.5 日 (PR-X5 全体は元の 1 日 + 0.5 日 = **1.5 日**)。
+
+#### 5-8. 検証
 
 - 単体テスト追加: サンプルプロジェクトが各リスト view から除外されること
 - 単体テスト追加: 提案エンジンではサンプルプロジェクトの issues/retros が候補に含まれること
-- 統合テスト: seedTenant() が sample projects も含めて clone すること
+- 単体テスト追加: 事前生成 JSON が読まれて embedding 列に書込まれること
+- 単体テスト追加: JSON 不在 / キー不在時に NULL で投入されること (warning 出力)
+- 統合テスト: seedTenant() が sample projects も含めて clone し embedding がコピーされること
 - 視覚回帰: 提案モーダルでサンプル候補が表示されることを確認
 
 ---
@@ -304,7 +403,7 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 - [ ] PR-X1: schema migration + seed + 認可ヘルパ + 既存テスト維持
 - [ ] PR-X2: super_admin ダッシュボード 3 画面 + 認可境界 E2E
 - [ ] PR-X4: テナント管理者プラン変更 UI + 認可・バリデーション・ダウングレード遅延適用
-- [ ] PR-X5: シードナレッジ拡充 30 件 + サンプル課題 10-15 件 + サンプル振り返り 5-7 件 + 隠蔽機構
+- [ ] PR-X5: シードナレッジ拡充 30 件 + サンプル課題 10-15 件 + サンプル振り返り 5-7 件 + 隠蔽機構 + **事前生成 embedding 同梱 (seed-suggestion-embeddings.json) + generate-seed-embeddings.ts**
 - [ ] PR-X3: UI 文言 + ドキュメント整合
 
 ### 検証
@@ -329,21 +428,23 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 ## 着手順序のリマインダ
 
 ```
-明日 (2026-05-04) 着手:
+本日 (2026-05-07) 着手:
   1. PR-X1 (super_admin schema + 認可) ← 起点
-     完了見込: 2026-05-05 中
+     完了見込: 2026-05-08 中
 
 並行:
-  2. PR-X2 (super_admin ダッシュボード)
-  3. PR-X4 (テナント管理者プラン変更 UI)
-  4. PR-X5 (シードデータ拡充 + 隠蔽)
+  2. PR-X2 (super_admin ダッシュボード、2-3 日)
+  3. PR-X4 (テナント管理者プラン変更 UI、2-3 日)
+  4. PR-X5 (シードデータ拡充 + 隠蔽 + 事前生成 embedding 同梱、1.5 日)
 
 最後:
-  5. PR-X3 (UI 文言 + ドキュメント)
-     完了見込: 2026-05-13 前後
+  5. PR-X3 (UI 文言 + ドキュメント、1 日)
+     完了見込: 2026-05-16 前後
 ```
 
 PR-X4 と PR-X5 は **PR-X1 の認可ヘルパ完成後**に着手 (PR-X4 は admin 認可、PR-X5 はサンプル隠蔽の影響範囲確認に admin 動作確認が便利)。
+
+PR-X5 の `pnpm seed:generate-embeddings` 実行は **開発者環境 (teppei さん側)** で `.env.local` に `VOYAGE_API_KEY` を設定して 1 回実行 → 生成された JSON を repo に commit する手順となる。本作業は PR-X5 内で自動化スクリプトを整備するのみで、生成は teppei さん側のアクション。
 
 ---
 
