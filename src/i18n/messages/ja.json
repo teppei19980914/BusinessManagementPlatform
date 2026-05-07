@@ -1181,7 +1181,15 @@
     "retrospectiveItemTitle": "振り返り ({date})",
     "similarityBadge": "類似度 {percent}%",
     "scoreTooltip": "タグ類似度 {tagPercent}% / テキスト類似度 {textPercent}%",
-    "sourceProjectLink": "出典: {name}"
+    "sourceProjectLink": "出典: {name}",
+    "tierStrongLabel": "強く関連 ({count} 件)",
+    "tierMediumLabel": "関連の可能性 ({count} 件)",
+    "tierWeakLabel": "弱い関連性 ({count} 件)",
+    "tierStrongDescription": "プロジェクト内容に強く関連する候補です。優先的に確認してください。",
+    "tierMediumDescription": "関連する可能性があります。参考としてご確認ください。",
+    "tierWeakDescription": "関連性は低めですが、視点を広げる材料として参考にできます。",
+    "expandWeakSection": "弱い関連性も表示する",
+    "collapseWeakSection": "弱い関連性を折りたたむ"
   },
   "bulkVisibility": {
     "filterTitle": "フィルター",

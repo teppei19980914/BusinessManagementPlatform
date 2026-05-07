@@ -1181,7 +1181,15 @@
     "retrospectiveItemTitle": "Retrospective ({date})",
     "similarityBadge": "Similarity {percent}%",
     "scoreTooltip": "Tag similarity {tagPercent}% / Text similarity {textPercent}%",
-    "sourceProjectLink": "Source: {name}"
+    "sourceProjectLink": "Source: {name}",
+    "tierStrongLabel": "Strongly related ({count})",
+    "tierMediumLabel": "Possibly related ({count})",
+    "tierWeakLabel": "Weakly related ({count})",
+    "tierStrongDescription": "Strongly related to this project. Please check these first.",
+    "tierMediumDescription": "Possibly related. Use these as reference.",
+    "tierWeakDescription": "Relevance is low, but useful for broadening your perspective.",
+    "expandWeakSection": "Show weakly related",
+    "collapseWeakSection": "Hide weakly related"
   },
   "bulkVisibility": {
     "filterTitle": "Filter",
