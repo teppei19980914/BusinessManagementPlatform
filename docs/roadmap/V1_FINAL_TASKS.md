@@ -10,35 +10,49 @@
 
 ## 全体像
 
+**最優先: 提案機能関連 (PR-X5 + PR-X6)** — サービスの核心機能。本日着手分から先頭に置く。
+
 | 順序 | PR | 内容 | 工数 | 依存 |
 |---|---|---|---|---|
-| 1 | **PR-X1** | super_admin role + 管理テナント seed + 認可ヘルパ | 1-2 日 | (なし) |
-| 2 | **PR-X2** | super_admin ダッシュボード UI (Phase 1) | 2-3 日 | PR-X1 |
-| 3 | **PR-X4** | テナント管理者プラン変更 UI (`/settings` にタブ追加) | 2-3 日 | PR-X1 (認可ヘルパ流用) |
-| 4 | **PR-X5** | シードデータ拡充 (案 C: 課題・振り返り追加 + サンプルプロジェクト隠蔽 + ヒット率向上 + **事前生成 embedding 同梱**) | 1.5 日 | (独立、並行可) |
-| 5 | **PR-X3** | UI 文言更新 + ドキュメント整合 | 1 日 | PR-X1〜X5 |
+| 1 | **PR-X5** | シードデータ拡充 + 事前生成 embedding 同梱 + 既存データ backfill | 1.5 日 | (なし、最優先で着手) |
+| 2 | **PR-X6** | 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 | 2-3 日 | PR-X5 (backfill 後の embedding でテスト) |
+| 3 | **PR-X1** | super_admin role + 管理テナント seed + 認可ヘルパ | 1-2 日 | (なし、PR-X5/X6 と並行可) |
+| 4 | **PR-X2** | super_admin ダッシュボード UI (Phase 1) | 2-3 日 | PR-X1 |
+| 5 | **PR-X4** | テナント管理者プラン変更 UI (`/settings` にタブ追加) | 2-3 日 | PR-X1 (認可ヘルパ流用) |
+| 6 | **PR-X3** | UI 文言更新 + ドキュメント整合 | 1 日 | PR-X1〜X6 |
 
-**合計**: 7.5-10.5 日 (PR-X5 への embedding 事前生成スコープ追加で +0.5 日)
+**合計**: 9.5-13.5 日
 
-**6/1 まで残**: 2026-05-07 起点で約 25 日 → **十分なバッファ** (品質確認・視覚回帰・想定外修正対応に約 14-17 日)。
+**6/1 まで残**: 2026-05-07 起点で約 25 日 → **バッファ 11-15 日** (品質確認・視覚回帰・想定外修正対応に充当)。
 
 ```
-[2026-05-07 着手 (本日)]
+[2026-05-07 着手] (本日)
    ↓
-PR-X1 (1-2 日)  ← 起点
+PR-X5 (1.5 日)         ← 最優先 (提案機能のデータ基盤)
+   ↓
+PR-X6 (2-3 日)         ← 提案 UI 段階表示化
+   ↓
+   並行で PR-X1 (1-2 日) を進めておく (PR-X5 着手と同時開始可能)
    ↓
 PR-X2 ┐
-PR-X4 ┤ 並行可能 (PR-X2/X4 各 2-3 日、PR-X5 が 1.5 日)
-PR-X5 ┘
+PR-X4 ┤ 並行可能 (それぞれ 2-3 日、PR-X1 完了後)
    ↓
 PR-X3 (1 日)
    ↓
-[2026-05-16 前後 完了見込]
+[2026-05-17 〜 2026-05-20 完了見込]
    ↓
-リリース直前テスト 約 14-17 日
+リリース直前テスト 約 11-15 日
    ↓
 [2026-06-01 リリース]
 ```
+
+### 優先順位の根拠
+
+ユーザ指示 (2026-05-07): **「提案機能に関しては、最優先で着手するようにプランを変更してください」**。
+
+提案機能は本サービスの差別化要素であり、6/1 リリース時点で「過去資産を全網羅し、見落としなく
+未来のプロジェクト運営に活用できる」という体験を完成させる必要がある。
+具体設計の根拠は memory `project_suggestion_engine_priority.md` を参照。
 
 ---
 
@@ -270,7 +284,16 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 
 このような拡充を 30 件すべてに適用。
 
-#### 5-7. 事前生成 embedding の同梱 (2026-05-07 追加)
+#### 5-6. 検証 (基本)
+
+- 単体テスト追加: サンプルプロジェクトが各リスト view から除外されること
+- 単体テスト追加: 提案エンジンではサンプルプロジェクトの issues/retros が候補に含まれること
+- 単体テスト追加: 事前生成 JSON が読まれて embedding 列に書込まれること
+- 単体テスト追加: JSON 不在 / キー不在時に NULL で投入されること (warning 出力)
+- 統合テスト: seedTenant() が sample projects も含めて clone し embedding がコピーされること
+- 視覚回帰: 提案モーダルでサンプル候補が表示されることを確認
+
+#### 5-7. 事前生成 embedding 同梱 + 既存データ backfill (2026-05-07 追加)
 
 ##### 動機
 
@@ -279,7 +302,12 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 - タグ 0.3 + pg_trgm 0.2 = 合計 **0.5 の縮退モード**で動作
 - 検索精度の主軸 (= 意味検索) が機能せず、「過去資産が結びつく体験」の核心価値が初期から伝わりにくい
 
-→ シードデータに **事前生成済 embedding を同梱**することで、新規テナントでも Day 1 から 3 軸フル精度で提案を体験できる。
+加えて、`Knowledge.contentEmbedding` 等は **新規作成 / 更新時にしか生成されない** ため、
+**既存データ (本番に既に存在する 60+ 件) は永久に NULL のまま** = 縮退モードで運用される。
+
+→ 以下の 2 段構えで対処する:
+1. **シードデータに事前生成済 embedding を同梱** (新規テナントが Day 1 から 3 軸フル精度を体験)
+2. **本番既存データへの backfill コマンド** (本リポジトリ運用済テナントの過去資産も embedding 化)
 
 ##### 実装構成
 
@@ -291,6 +319,7 @@ prisma/
 
 scripts/
 └─ generate-seed-embeddings.ts            # 新規 (開発者環境で 1 回実行)
+                                          # --backfill-existing で本番既存データの embedding も生成
 
 package.json:
   "seed:generate-embeddings": "tsx scripts/generate-seed-embeddings.ts"
@@ -316,6 +345,12 @@ package.json:
   → default-tenant の Knowledge / Issue / Retrospective を読込 (embedding 付き)
   → 新規テナントへ INSERT (embedding ごとコピー、既存実装どおり)
   → 結果: 新規テナントも Day 1 から 3 軸スコアリングフル稼働
+
+[D. 本番既存データの backfill (1 回限り、teppei さん側で実行)]
+  → pnpm seed:generate-embeddings --backfill-existing を本番 DB 接続情報で実行
+  → 全 Knowledge / RiskIssue / Retrospective / Project を走査し、embedding=NULL の行に対して
+    Voyage API でベクトル生成 → DB へ直接書込
+  → 結果: 既存「請求書発行システム構築」プロジェクト等で提案が 0 件 → 多数件に改善
 ```
 
 ##### キー設計
@@ -343,10 +378,15 @@ JSON ファイルのエントリキー = **`title` の SHA-256 ハッシュ先�
 ##### Voyage API コスト試算
 
 ```
+[シード生成]
 SEED_KNOWLEDGE (30 件) + SEED_ISSUES (10-15 件) + SEED_RETROSPECTIVES (5-7 件)
 ≒ 50 件 × 平均 1500 token = 75,000 token
 
-無料枠 200M token のうち 0.038% を使用 → 実質コストゼロ
+[既存 backfill (本番)]
+既存 Knowledge 60+ 件 + Project 数件 + Issues / Retros (テナント蓄積分)
+≒ 100 件 × 平均 1500 token = 150,000 token
+
+合計 ≒ 225,000 token (無料枠 200M token のうち 0.11%) → 実質コストゼロ
 ```
 
 ##### 想定外シナリオへの対応
@@ -356,23 +396,140 @@ SEED_KNOWLEDGE (30 件) + SEED_ISSUES (10-15 件) + SEED_RETROSPECTIVES (5-7 件
 | seed-suggestion-embeddings.json に該当キーがない (= シード追記後に再生成漏れ) | INSERT 時に embedding=NULL で投入 + console.warn で警告。後追いで `pnpm seed:generate-embeddings` 実行で復旧 |
 | Voyage API キー未設定で `pnpm seed:generate-embeddings` 実行 | 明示的にエラー終了、適切なメッセージ表示 |
 | Voyage モデル変更 (例: voyage-4-lite → voyage-5-lite) | 開発者が `pnpm seed:generate-embeddings` を再実行 + 新 JSON をコミット (ベクトル次元が変わる場合は migration も必要だが本リリース範囲外) |
+| 本番 backfill が中断 (rate limit / ネットワーク障害) | スクリプトは冪等 (embedding=NULL の行のみ処理) のため再実行で続行可能 |
 
 ##### 工数内訳
 
 - generate-seed-embeddings.ts 実装 + テスト: 0.3 日
 - seed-suggestion.ts の JSON 読込 + raw SQL embedding 書込: 0.2 日
-- 単体テスト追加 (JSON 不在時 / キー不在時のフォールバック): 0.1 日
+- `--backfill-existing` モード実装 (既存データ走査 + DB 直接書込): 0.1 日
+- 単体テスト追加 (JSON 不在時 / キー不在時のフォールバック / backfill モード): 0.1 日
 
-合計 0.5 日 (PR-X5 全体は元の 1 日 + 0.5 日 = **1.5 日**)。
+合計 **0.5 日強** (PR-X5 全体は元の 1 日 + 0.5 日 = **1.5 日**)。
 
-#### 5-8. 検証
+#### 5-8. 検証 (拡充)
 
-- 単体テスト追加: サンプルプロジェクトが各リスト view から除外されること
-- 単体テスト追加: 提案エンジンではサンプルプロジェクトの issues/retros が候補に含まれること
-- 単体テスト追加: 事前生成 JSON が読まれて embedding 列に書込まれること
-- 単体テスト追加: JSON 不在 / キー不在時に NULL で投入されること (warning 出力)
-- 統合テスト: seedTenant() が sample projects も含めて clone し embedding がコピーされること
-- 視覚回帰: 提案モーダルでサンプル候補が表示されることを確認
+提案機能の効果を定量検証するため、以下を before/after で記録:
+
+- **検証対象プロジェクト**: 既存「請求書発行システム構築」(2026-05-07 時点で提案 0 件) +
+  新規作成のサンプルプロジェクト 2-3 件
+- **before スクショ**: 改修前の「ナレッジ候補 0 件 / 過去課題 0 件 / 過去振り返り 0 件」を保存
+- **after スクショ**: PR-X5 + PR-X6 完了後の段階表示画面を保存
+- **数値計測**:
+  - 提案件数 (各セクションごと: strong / medium / weak)
+  - 高スコア候補の関連性 (人間判断で「妥当」な比率)
+  - API 応答時間 (50 件表示時、500ms 以下が目安)
+- **記録先**: `docs/operations/SUGGESTION_ENGINE_VERIFICATION.md` に before/after を残す
+
+---
+
+## PR-X6: 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 (2-3 日)
+
+**追加日**: 2026-05-07
+**着手順序**: PR-X5 完了直後 (PR-X5 で backfill された embedding で動作確認するため)
+
+### 背景
+
+PR-X5 までは `SUGGESTION_SCORE_THRESHOLD = 0.05` で「明らかに関連するもののみ提案する」
+高精度・低再現率の設計だった。しかし本サービスの存在意義は **「人間が探さずに済む」
+「取りこぼし防止」** であり、高精度設計はこの哲学と矛盾する (= 弱関連を見るには結局
+人間が検索する必要が残る)。
+
+設計方針を **「全網羅 + 段階表示」** の高再現率設計に変更する。詳細は
+memory `project_suggestion_engine_priority.md` を参照。
+
+### スコープ
+
+#### 6-1. 設定値変更 ([src/config/suggestion.ts](../../src/config/suggestion.ts))
+
+| 定数 | 現状 | 変更後 | 理由 |
+|---|---|---|---|
+| `SUGGESTION_SCORE_THRESHOLD` | `0.05` | `0.01` (実質ゼロ寄り、完全撤廃でも可) | 全網羅のため閾値を実質撤廃 |
+| `SUGGESTION_DEFAULT_LIMIT` | `10` | `50` | 件数上限を緩和 (段階表示で可読性は確保) |
+| (新規) `SUGGESTION_TIER_STRONG_THRESHOLD` | — | `0.3` | strong セクションのしきい |
+| (新規) `SUGGESTION_TIER_MEDIUM_THRESHOLD` | — | `0.1` | medium セクションのしきい |
+
+スコアリング式 (タグ 0.3 + pg_trgm 0.2 + embedding 0.5) は **変更しない** (デグレ防止)。
+
+#### 6-2. サービス層変更
+
+[src/services/suggestion.service.ts](../../src/services/suggestion.service.ts) のレスポンス DTO に
+`tier` フィールドを追加:
+
+```typescript
+type SuggestionTier = 'strong' | 'medium' | 'weak';
+
+interface SuggestionItem {
+  id: string;
+  title: string;
+  score: number;
+  tier: SuggestionTier;  // 新規
+  // ... 既存フィールド
+}
+```
+
+クエリ自体は **大きな変更不要** (既にスコア降順で取得しているため、件数上限と閾値の
+緩和のみで段階表示の入力データが揃う)。
+
+#### 6-3. フロントエンド変更
+
+提案タブを **3 セクション + 折りたたみ** に改修:
+
+```
+┌─ 提案ナレッジ ─────────────────────────────────┐
+│                                                  │
+│ 🟢 強く関連 (3 件)                ← score >= 0.3 │
+│   • PowerPlatform を使った請求書発行...          │
+│   • 請求書発行は冪等に + 改ざん不可ログ          │
+│   • SAP 連携時の認証パターン                      │
+│                                                  │
+│ 🟡 関連する可能性 (8 件)        ← score 0.1-0.3 │
+│   • Conway の法則 — 組織構造がシステム構造を...  │
+│   • [展開ボタン: あと 5 件を表示]                │
+│                                                  │
+│ ⚪ 弱い関連性 (24 件)            ← score < 0.1  │
+│   [折りたたみ: クリックで展開]                   │
+│                                                  │
+└──────────────────────────────────────────────────┘
+```
+
+設計指針:
+- 各セクションに **件数バッジ** を表示 (ユーザが量を把握できる)
+- weak セクションは **折りたたみデフォルト** (情報過多回避)
+- セクション内は **スコア降順**
+- 同様の UI を「過去課題」「過去振り返り」にも適用
+
+#### 6-4. デグレ防止策
+
+- 既存テスト ([src/services/suggestion.service.test.ts](../../src/services/suggestion.service.test.ts))
+  を全件パスさせる
+- 段階表示の新規テスト (DTO に tier が付与される / 閾値ゾーン境界の振り分け) を追加
+- **feature flag** (`SUGGESTION_DISPLAY_MODE=tiered|legacy`) で並行運用 → 検証後に切替
+  - default: `tiered` (新方式)
+  - 緊急時に `legacy` で旧 UI に即時戻せる
+- 既存スコアリング計算は **そのまま** (重み 0.3 / 0.2 / 0.5 を変更しない)
+
+#### 6-5. パフォーマンス検証
+
+- 候補数増加 (10 → 50) で N+1 / クエリ時間が悪化しないか測定
+- pgvector 索引 (IVFFlat / HNSW) が想定通り効いているか確認
+- 目標: API 応答時間 500ms 以下 (本番に近いデータ量で計測)
+
+#### 6-6. LP / ドキュメント文言の見直し
+
+PR-X3 と分担し、以下を **PR-X6 内で完了** させる:
+- 提案画面の文言 (「明らかに関連するもの」表現があれば修正)
+- [docs/specification/SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) の
+  「網羅性重視」方針への書き換え
+
+### 完了条件
+
+- [ ] 設定変更が反映され、既存データで weak セクションも候補が出る
+- [ ] 3 セクション UI が画面で動作 (件数バッジ + 折りたたみ + ソート)
+- [ ] 既存テスト全件 PASS + 新規テスト追加
+- [ ] feature flag で legacy にロールバック可能
+- [ ] パフォーマンス API 応答時間 ≤ 500ms (50 件表示時)
+- [ ] LP 文言・仕様書ドキュメントを「網羅性」「段階表示」基調に更新
 
 ---
 
@@ -400,28 +557,38 @@ SEED_KNOWLEDGE (30 件) + SEED_ISSUES (10-15 件) + SEED_RETROSPECTIVES (5-7 件
 
 ### コード
 
+- [ ] PR-X5: シードナレッジ拡充 30 件 + サンプル課題 10-15 件 + サンプル振り返り 5-7 件 + 隠蔽機構 + **事前生成 embedding 同梱 (seed-suggestion-embeddings.json + generate-seed-embeddings.ts) + 既存データ backfill**
+- [ ] PR-X6: 段階表示 (Tiered) UI + 閾値撤廃 + DTO に tier + feature flag で legacy ロールバック可能
 - [ ] PR-X1: schema migration + seed + 認可ヘルパ + 既存テスト維持
 - [ ] PR-X2: super_admin ダッシュボード 3 画面 + 認可境界 E2E
 - [ ] PR-X4: テナント管理者プラン変更 UI + 認可・バリデーション・ダウングレード遅延適用
-- [ ] PR-X5: シードナレッジ拡充 30 件 + サンプル課題 10-15 件 + サンプル振り返り 5-7 件 + 隠蔽機構 + **事前生成 embedding 同梱 (seed-suggestion-embeddings.json) + generate-seed-embeddings.ts**
 - [ ] PR-X3: UI 文言 + ドキュメント整合
 
 ### 検証
 
-- [ ] `pnpm test` 全件 PASS (PR-X5 で +20 件程度の test 追加見込)
+- [ ] `pnpm test` 全件 PASS (PR-X5/X6 で +30 件程度の test 追加見込)
 - [ ] `pnpm lint` clean
 - [ ] `pnpm tsx scripts/security-check.ts` ≥ 90/100
 - [ ] `pnpm e2e:coverage-check` 全カバー
 - [ ] super_admin 用 Vercel 環境変数 3 件 (teppei さん) 設定済
 - [ ] 本番に対する seed 実行で 30 ナレッジ + 2 サンプルプロジェクト + 課題 + 振り返り が投入済
+- [ ] 本番既存データ (60+ 件) に対する embedding backfill 実行済
+- [ ] 提案 API 応答時間 ≤ 500ms (50 件表示時、本番データで計測)
 
 ### UX 検証 (teppei さん)
 
 - [ ] 新規プロジェクト作成 → 自動タグ抽出 → 提案モーダルで「過去資産が結びつく」体験を確認
+- [ ] 提案候補が **段階表示 (strong / medium / weak) で出る**ことを確認
+- [ ] 既存「請求書発行システム構築」プロジェクトで提案が **0 件 → 多数件** に改善することを確認
 - [ ] 提案候補に **ナレッジだけでなく課題・振り返りが現れる**ことを確認
 - [ ] サンプルプロジェクトが `/projects` リストに表示されないことを確認
 - [ ] テナント管理者として `/settings` のテナント設定タブで予算上限を設定できることを確認
 - [ ] super_admin として `/admin/super/tenants` で全テナント状況を確認できることを確認
+
+### 検証エビデンスの保管
+
+- [ ] 改修 before / after のスクショを `docs/operations/SUGGESTION_ENGINE_VERIFICATION.md` に記録
+- [ ] 数値計測 (件数・関連性比率・応答時間) を同ドキュメントに記録
 
 ---
 
@@ -429,20 +596,29 @@ SEED_KNOWLEDGE (30 件) + SEED_ISSUES (10-15 件) + SEED_RETROSPECTIVES (5-7 件
 
 ```
 本日 (2026-05-07) 着手:
-  1. PR-X1 (super_admin schema + 認可) ← 起点
-     完了見込: 2026-05-08 中
+  最優先トラック (提案機能):
+    1. PR-X5 (シードデータ拡充 + 事前生成 embedding 同梱 + 既存データ backfill、1.5 日)
+       完了見込: 2026-05-08 中
+    2. PR-X6 (段階表示 UI + 閾値撤廃、2-3 日)  ← PR-X5 完了後
+       完了見込: 2026-05-11 〜 12
 
-並行:
-  2. PR-X2 (super_admin ダッシュボード、2-3 日)
-  3. PR-X4 (テナント管理者プラン変更 UI、2-3 日)
-  4. PR-X5 (シードデータ拡充 + 隠蔽 + 事前生成 embedding 同梱、1.5 日)
+  並行トラック (ロール再構築):
+    3. PR-X1 (super_admin schema + 認可、1-2 日)  ← PR-X5 と同時着手可能
+       完了見込: 2026-05-08 〜 09
+    4. PR-X2 (super_admin ダッシュボード、2-3 日)  ← PR-X1 完了後
+    5. PR-X4 (テナント管理者プラン変更 UI、2-3 日)  ← PR-X1 完了後
+       PR-X2 と PR-X4 は並行可
 
-最後:
-  5. PR-X3 (UI 文言 + ドキュメント、1 日)
-     完了見込: 2026-05-16 前後
+  最後:
+    6. PR-X3 (UI 文言 + ドキュメント、1 日)  ← 全 PR 完了後
+       完了見込: 2026-05-17 〜 2026-05-20
 ```
 
-PR-X4 と PR-X5 は **PR-X1 の認可ヘルパ完成後**に着手 (PR-X4 は admin 認可、PR-X5 はサンプル隠蔽の影響範囲確認に admin 動作確認が便利)。
+**PR-X5/X6 を提案機能トラックとして最優先扱い** とする。理由は本ドキュメント冒頭
+「優先順位の根拠」を参照。
+
+PR-X4 と PR-X5 を同時着手しないこと (PR-X4 は admin 認可ヘルパに依存)。
+PR-X1 と PR-X5 は依存ゼロで並行着手可能。
 
 PR-X5 の `pnpm seed:generate-embeddings` 実行は **開発者環境 (teppei さん側)** で `.env.local` に `VOYAGE_API_KEY` を設定して 1 回実行 → 生成された JSON を repo に commit する手順となる。本作業は PR-X5 内で自動化スクリプトを整備するのみで、生成は teppei さん側のアクション。
 
@@ -455,5 +631,6 @@ PR-X5 の `pnpm seed:generate-embeddings` 実行は **開発者環境 (teppei �
 | [SUGGESTION_ENGINE_PLAN.md](./SUGGESTION_ENGINE_PLAN.md) | T-03 提案エンジン v2 の PR #1〜#8 計画 (完了済) |
 | [ROLE_REFACTORING_PLAN.md](./ROLE_REFACTORING_PLAN.md) | super_admin role の詳細設計 (PR-X1/X2/X3) |
 | [TENANT_AND_BILLING.md Part 5](../business/TENANT_AND_BILLING.md) | 課金モデル詳細 (PR-X4 の根拠) |
-| [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) | 提案機能の機能仕様 + コスト構造 (PR-X5 の根拠) |
+| [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) | 提案機能の機能仕様 + コスト構造 (PR-X5/X6 の根拠) |
 | [T-03_RELEASE_NOTES.md](../operations/T-03_RELEASE_NOTES.md) | リリース運用ガイド (本タスク完了後に最終更新) |
+| `SUGGESTION_ENGINE_VERIFICATION.md` (新規) | PR-X5/X6 改修の before/after エビデンス記録 (operations 配下に追加予定) |
