@@ -14,14 +14,14 @@
 
 | 順序 | PR | 内容 | 工数 | 依存 |
 |---|---|---|---|---|
-| 1 | **PR-X5** | シードデータ拡充 + 事前生成 embedding 同梱 + 既存データ backfill | 1.5 日 | (なし、最優先で着手) |
-| 2 | **PR-X6** | 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 | 2-3 日 | PR-X5 (backfill 後の embedding でテスト) |
+| 1 | **PR-X5** | シードデータ大幅拡充 (案 C 採用 + Sample Projects/Issues/Retros) + 事前生成 embedding 同梱 + 既存データ backfill + 文書 (SEED_DATA_MAINTENANCE / VERIFICATION) | 2 日 | (なし、最優先で着手) |
+| 2 | **PR-X6** | 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 + **最低件数保証ロジック (0 件回避の構造保証)** | 2.5-3.5 日 | PR-X5 (backfill 後の embedding でテスト) |
 | 3 | **PR-X1** | super_admin role + 管理テナント seed + 認可ヘルパ | 1-2 日 | (なし、PR-X5/X6 と並行可) |
 | 4 | **PR-X2** | super_admin ダッシュボード UI (Phase 1) | 2-3 日 | PR-X1 |
 | 5 | **PR-X4** | テナント管理者プラン変更 UI (`/settings` にタブ追加) | 2-3 日 | PR-X1 (認可ヘルパ流用) |
 | 6 | **PR-X3** | UI 文言更新 + ドキュメント整合 | 1 日 | PR-X1〜X6 |
 
-**合計**: 9.5-13.5 日
+**合計**: 10.5-14.5 日 (PR-X5 が +0.5 日、PR-X6 が +0.5 日、案 C 採用 + 件数保証ロジック追加で)
 
 **6/1 まで残**: 2026-05-07 起点で約 25 日 → **バッファ 11-15 日** (品質確認・視覚回帰・想定外修正対応に充当)。
 
@@ -53,6 +53,23 @@ PR-X3 (1 日)
 提案機能は本サービスの差別化要素であり、6/1 リリース時点で「過去資産を全網羅し、見落としなく
 未来のプロジェクト運営に活用できる」という体験を完成させる必要がある。
 具体設計の根拠は memory `project_suggestion_engine_priority.md` を参照。
+
+### 設計判断: シードデータ拡充は「案 C: 意味の濃さ優先」を採用 (2026-05-07)
+
+ユーザ指示で「初めてのユーザが 1 件目にどんなプロジェクトを登録しても必ず hit する」が要件として
+最重要視された。これに対する設計判断:
+
+| 軸 | 採用方針 |
+|---|---|
+| シード規模 | **115 件** (SEED_KNOWLEDGE 50 + SAMPLE_PROJECTS 10 + SAMPLE_ISSUES 40 + SAMPLE_RETROSPECTIVES 15) で業界・技術・プロセスを網羅 |
+| 文字数 | **意味の濃さ優先** (案 C 採用)。500-1000 字でも要点が濃く伝わる文章を目標とし、文字数を稼ぐ目的の冗長拡張は実施しない |
+| 0 件回避の構造保証 | **PR-X6 で最低件数保証ロジック** を追加 (`MINIMUM_GUARANTEED_COUNT = 5`)。閾値以下でもスコア降順 Top N を必ず返す |
+| 文書化 | [SEED_DATA_MAINTENANCE.md](../developer-guide/SEED_DATA_MAINTENANCE.md) で「embedding 向けに拾われやすい文章を書くコツ」を明文化。今後ユーザが追加するシードデータも同基準で運用 |
+
+文字数を増やしても意味の濃さが上がるわけではない (= embedding 精度向上は頭打ち + ノイズ混入リスク)
+ことが文字数測定 + 拾われやすさの観点で確認できたため、案 C を採用した。
+
+詳細は [SEED_DATA_MAINTENANCE.md §3](../developer-guide/SEED_DATA_MAINTENANCE.md) を参照。
 
 ---
 
@@ -162,7 +179,11 @@ URL: /settings (既存ページにタブ追加)
 
 ---
 
-## PR-X5: シードデータ拡充 (案 C 採用 + embedding 事前生成、1.5 日)
+## PR-X5: シードデータ拡充 (案 C 採用 + embedding 事前生成、2 日)
+
+> **2026-05-07 更新**: 当初計画 (1.5 日) からスコープ拡張。SAMPLE_PROJECTS 10 件 / SAMPLE_ISSUES 40 件 / SAMPLE_RETROSPECTIVES 15 件 / SEED_KNOWLEDGE 30→50 件 + 文書 ([SEED_DATA_MAINTENANCE.md](../developer-guide/SEED_DATA_MAINTENANCE.md) / [SUGGESTION_ENGINE_VERIFICATION.md](../operations/SUGGESTION_ENGINE_VERIFICATION.md)) を含めて 2 日。
+>
+> **シードデータの文字数方針 (案 C)**: 各 entry 500-1000 字で要点が濃く伝わることを目標。1500 字超の冗長拡張は逆効果のため実施しない。詳細は [SEED_DATA_MAINTENANCE.md §3](../developer-guide/SEED_DATA_MAINTENANCE.md) を参照。
 
 **ユーザの認識**: 提案機能は本サービスの根幹機能。初期データはユーザが評価する際の重要なデータ。妥協できない。
 
@@ -423,9 +444,9 @@ SEED_KNOWLEDGE (30 件) + SEED_ISSUES (10-15 件) + SEED_RETROSPECTIVES (5-7 件
 
 ---
 
-## PR-X6: 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 (2-3 日)
+## PR-X6: 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 + 最低件数保証 (2.5-3.5 日)
 
-**追加日**: 2026-05-07
+**追加日**: 2026-05-07 (件数保証ロジックを 2026-05-07 のユーザ要望で追加)
 **着手順序**: PR-X5 完了直後 (PR-X5 で backfill された embedding で動作確認するため)
 
 ### 背景
@@ -448,8 +469,35 @@ memory `project_suggestion_engine_priority.md` を参照。
 | `SUGGESTION_DEFAULT_LIMIT` | `10` | `50` | 件数上限を緩和 (段階表示で可読性は確保) |
 | (新規) `SUGGESTION_TIER_STRONG_THRESHOLD` | — | `0.3` | strong セクションのしきい |
 | (新規) `SUGGESTION_TIER_MEDIUM_THRESHOLD` | — | `0.1` | medium セクションのしきい |
+| (新規) `SUGGESTION_MINIMUM_GUARANTEED_COUNT` | — | `5` | **最低件数保証** (閾値以下でもスコア降順 Top N を必出) |
 
 スコアリング式 (タグ 0.3 + pg_trgm 0.2 + embedding 0.5) は **変更しない** (デグレ防止)。
+
+#### 6-1-bis. 最低件数保証ロジック (2026-05-07 追加 / ユーザ要望)
+
+**ユーザ要望**: 「初めてのユーザが 1 件目にどんなプロジェクトを登録しても必ず hit する。提案件数が 0 件とならないように考慮」。
+
+シードデータ拡充 (PR-X5) + 段階表示 (PR-X6 6-1) で大幅に改善されるが、**極端なケース** (シードと完全に異なる業務領域・タグ表記揺れの全方向不一致) で 0 件になる構造リスクが残る。これを構造保証するため:
+
+```typescript
+// suggestion.service.ts (擬似コード)
+const candidates = await searchCandidates(...);  // 既存ロジック
+const aboveThreshold = candidates.filter(c => c.score >= SUGGESTION_SCORE_THRESHOLD);
+
+if (aboveThreshold.length >= SUGGESTION_MINIMUM_GUARANTEED_COUNT) {
+  return aboveThreshold;  // 通常パス: 閾値以上で十分な件数あり
+}
+
+// 最低件数保証: 閾値以下も含めスコア降順 Top N を返す
+return candidates.slice(0, SUGGESTION_MINIMUM_GUARANTEED_COUNT);
+```
+
+**動作仕様**:
+- 候補総数が `SUGGESTION_MINIMUM_GUARANTEED_COUNT` 以下なら全件返す (上記 if-else は不要)
+- 閾値以上の候補が 5 件未満でも、スコア降順で Top 5 (最低 5 件) を必ず返す
+- 段階表示時は弱関連 (weak tier) セクションに分類 → ユーザに「関連性低い」と明示しつつ取りこぼし防止
+
+**前提**: シードデータが本テナントに最低 5 件投入されていること (PR-X5 で SAMPLE 系 + SEED_KNOWLEDGE で 100 件以上が default-tenant に存在)。
 
 #### 6-2. サービス層変更
 
@@ -526,7 +574,8 @@ PR-X3 と分担し、以下を **PR-X6 内で完了** させる:
 
 - [ ] 設定変更が反映され、既存データで weak セクションも候補が出る
 - [ ] 3 セクション UI が画面で動作 (件数バッジ + 折りたたみ + ソート)
-- [ ] 既存テスト全件 PASS + 新規テスト追加
+- [ ] **最低件数保証ロジック** が動作 (シードと完全に違う業務領域でも Top 5 が返ること)
+- [ ] 既存テスト全件 PASS + 新規テスト追加 (件数保証のテストも含む)
 - [ ] feature flag で legacy にロールバック可能
 - [ ] パフォーマンス API 応答時間 ≤ 500ms (50 件表示時)
 - [ ] LP 文言・仕様書ドキュメントを「網羅性」「段階表示」基調に更新

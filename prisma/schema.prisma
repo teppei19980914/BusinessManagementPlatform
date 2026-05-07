@@ -305,6 +305,13 @@ model Project {
   plannedEndDate     DateTime  @map("planned_end_date") @db.Date
   status             String    @default("planning") @db.VarChar(20)
   notes              String?   @db.Text
+  // PR-X5 (2026-05-07): シードデータ用のサンプルプロジェクト識別フラグ。
+  //   true のサンプルプロジェクトは:
+  //     - プロジェクト一覧 (`/projects`) / 全課題 / 全リスク / 全振り返り から非表示
+  //     - 直接 URL アクセス (`/projects/[id]`) でも 404
+  //     - **提案エンジン (参考タブ / 提案モーダル) では候補として可視** (= 設計目的)
+  //   default false で既存プロジェクトに影響なし。新規シーディング時のみ true で投入される。
+  isSampleData       Boolean   @default(false) @map("is_sample_data")
   // PR #4 (T-03 Phase 2): purpose / background / scope を結合した text の Voyage AI
   //   embedding (1024 次元、voyage-4-lite)。Cosine Similarity による意味検索の基盤。
   //   生成失敗時 NULL を許容 (本体 INSERT/UPDATE は成功させる fail-safe)。
@@ -329,6 +336,8 @@ model Project {
   @@index([customerId], map: "idx_projects_customer_id")
   @@index([plannedStartDate, plannedEndDate], map: "idx_projects_dates")
   @@index([tenantId], map: "idx_projects_tenant")
+  // PR-X5: サンプルデータの非表示フィルタを高速化する partial index (true の行のみ index)
+  @@index([isSampleData], map: "idx_projects_is_sample_data")
   @@map("projects")
 }
 
