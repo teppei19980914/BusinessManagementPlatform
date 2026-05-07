@@ -18,6 +18,13 @@ import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { KNOWLEDGE_TYPES } from '@/types';
@@ -100,6 +107,22 @@ export function SuggestionsPanel({
     new Set(),
   );
 
+  // P-3 (2026-05-08): 説明文ダイアログの state
+  // - explainTarget: 開いている候補の {kind, id, title}。null = ダイアログ閉
+  // - explainLoading: 取得中 (POST in flight)
+  // - explainResult: 取得済の {explanation, modelName, fromCache}
+  // - explainError: エラーメッセージ (i18n キー or fallback)
+  type ExplainTarget = {
+    kind: 'knowledge' | 'issue' | 'retrospective';
+    id: string;
+    title: string;
+  };
+  type ExplainResult = { explanation: string; modelName: string; fromCache: boolean };
+  const [explainTarget, setExplainTarget] = useState<ExplainTarget | null>(null);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainResult, setExplainResult] = useState<ExplainResult | null>(null);
+  const [explainError, setExplainError] = useState('');
+
   const scoreTooltip = useCallback(
     (s: { tagScore: number; textScore: number }): string =>
       t('scoreTooltip', {
@@ -121,9 +144,10 @@ export function SuggestionsPanel({
     setError('');
   }, [projectId, t]);
 
-  // 外部 API 同期のため react-hooks/set-state-in-effect の例外に該当 (DESIGN.md §22)
+  // 外部 API 同期 useEffect (DESIGN.md §22)。
+  // setState は async function 内に閉じ込められているため、react-hooks/set-state-in-effect は
+  // 直接トリガーされない (= 過去の disable directive は不要になったため P-3 で削除)。
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload]);
 
@@ -161,6 +185,49 @@ export function SuggestionsPanel({
     });
   };
 
+  /**
+   * P-3 (2026-05-08): 「なぜ?」ボタン押下 → 説明文ダイアログを開く + 取得開始。
+   * Lazy 生成 (オンデマンド) のため初回クリック時のみ LLM 課金。2 回目以降は DB キャッシュ。
+   */
+  async function handleExplain(target: ExplainTarget) {
+    setExplainTarget(target);
+    setExplainResult(null);
+    setExplainError('');
+    setExplainLoading(true);
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/suggestions/explain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ candidateKind: target.kind, candidateId: target.id }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const code = json?.error?.code as string | undefined;
+        // 課金 / rate limit 系は固有メッセージで通知 (Beginner プラン上限の文脈を残す)
+        if (code === 'RATE_LIMITED') setExplainError(t('explainErrorRateLimited'));
+        else if (code === 'BEGINNER_LIMIT_EXCEEDED') setExplainError(t('explainErrorBeginnerLimit'));
+        else if (code === 'BUDGET_EXCEEDED') setExplainError(t('explainErrorBudgetExceeded'));
+        else if (code === 'LLM_ERROR') setExplainError(t('explainErrorLlm'));
+        else setExplainError(t('explainErrorGeneric'));
+        return;
+      }
+      const data = json.data as { explanation: string; modelName: string; fromCache: boolean };
+      setExplainResult(data);
+    } catch {
+      setExplainError(t('explainErrorGeneric'));
+    } finally {
+      setExplainLoading(false);
+    }
+  }
+
+  function closeExplainDialog() {
+    setExplainTarget(null);
+    setExplainResult(null);
+    setExplainError('');
+    setExplainLoading(false);
+  }
+
   // tier ごとにグルーピング (loaded 後、メモ化)
   const grouped = useMemo(() => {
     if (!state.loaded) return null;
@@ -191,6 +258,14 @@ export function SuggestionsPanel({
               <Badge variant="outline" title={scoreTooltip(k)}>
                 {t('similarityBadge', { percent: (k.score * 100).toFixed(0) })}
               </Badge>
+              {/* P-3: 「なぜこのプロジェクトに関連するのか」を Lazy 生成 */}
+              <button
+                type="button"
+                className="text-xs text-info hover:underline"
+                onClick={() => handleExplain({ kind: 'knowledge', id: k.id, title: k.title })}
+              >
+                {t('explainButton')}
+              </button>
             </div>
             <p className="text-sm text-muted-foreground">{k.snippet}</p>
           </div>
@@ -228,6 +303,14 @@ export function SuggestionsPanel({
                   {t('sourceProjectLink', { name: i.sourceProjectName })}
                 </Link>
               )}
+              {/* P-3: 「なぜ?」ボタン */}
+              <button
+                type="button"
+                className="text-xs text-info hover:underline"
+                onClick={() => handleExplain({ kind: 'issue', id: i.id, title: i.title })}
+              >
+                {t('explainButton')}
+              </button>
             </div>
             <p className="text-sm text-muted-foreground">{i.snippet}</p>
           </div>
@@ -262,6 +345,20 @@ export function SuggestionsPanel({
                 {t('sourceProjectLink', { name: r.sourceProjectName })}
               </Link>
             )}
+            {/* P-3: 「なぜ?」ボタン */}
+            <button
+              type="button"
+              className="text-xs text-info hover:underline"
+              onClick={() =>
+                handleExplain({
+                  kind: 'retrospective',
+                  id: r.id,
+                  title: t('retrospectiveItemTitle', { date: r.conductedDate }),
+                })
+              }
+            >
+              {t('explainButton')}
+            </button>
           </div>
           <p className="text-sm text-muted-foreground">{r.snippet}</p>
         </div>
@@ -385,6 +482,45 @@ export function SuggestionsPanel({
           'retrospectivesNoMatch',
         )}
       </section>
+
+      {/* P-3 (2026-05-08): 「なぜ?」説明文ダイアログ */}
+      <Dialog
+        open={explainTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeExplainDialog();
+        }}
+      >
+        <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,40rem)]">
+          <DialogHeader>
+            <DialogTitle>{t('explainDialogTitle')}</DialogTitle>
+            <DialogDescription>
+              {explainTarget ? t('explainDialogSubject', { title: explainTarget.title }) : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {explainLoading && (
+              <p className="text-sm text-muted-foreground">{t('explainLoading')}</p>
+            )}
+            {explainError && (
+              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                {explainError}
+              </div>
+            )}
+            {explainResult && (
+              <>
+                <p className="whitespace-pre-line text-sm">{explainResult.explanation}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('explainModelLabel', { model: explainResult.modelName })}
+                  {explainResult.fromCache ? ` ・ ${t('explainCachedLabel')}` : ''}
+                </p>
+              </>
+            )}
+          </div>
+          <Button variant="outline" onClick={closeExplainDialog}>
+            {t('explainCloseButton')}
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -77,21 +77,22 @@ model Tenant {
   updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt                DateTime? @map("deleted_at") @db.Timestamptz
 
-  // Relations: 13 業務エンティティ + ApiCallLog
-  users           User[]
-  customers       Customer[]
-  projects        Project[]
-  knowledges      Knowledge[]
-  risksIssues     RiskIssue[]
-  retrospectives  Retrospective[]
-  memos           Memo[]
-  stakeholders    Stakeholder[]
-  comments        Comment[]
-  mentions        Mention[]
-  notifications   Notification[]
-  attachments     Attachment[]
-  systemErrorLogs SystemErrorLog[]
-  apiCallLogs     ApiCallLog[]
+  // Relations: 13 業務エンティティ + ApiCallLog + SuggestionExplanation (P-3)
+  users                   User[]
+  customers               Customer[]
+  projects                Project[]
+  knowledges              Knowledge[]
+  risksIssues             RiskIssue[]
+  retrospectives          Retrospective[]
+  memos                   Memo[]
+  stakeholders            Stakeholder[]
+  comments                Comment[]
+  mentions                Mention[]
+  notifications           Notification[]
+  attachments             Attachment[]
+  systemErrorLogs         SystemErrorLog[]
+  apiCallLogs             ApiCallLog[]
+  suggestionExplanations  SuggestionExplanation[]
 
   @@index([plan], map: "idx_tenants_plan")
   @@map("tenants")
@@ -168,6 +169,7 @@ model User {
   notifications           Notification[]           @relation("NotificationRecipient")
   receivedMentions        Mention[]                @relation("MentionTarget")
   apiCallLogs             ApiCallLog[]             @relation("ApiCallLogActor")
+  generatedExplanations   SuggestionExplanation[]  @relation("SuggestionExplanationGeneratedBy")
 
   // PR #2: tenant への back relation
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -329,14 +331,15 @@ model Project {
   deletedAt          DateTime? @map("deleted_at") @db.Timestamptz
 
   // Relations
-  tenant            Tenant             @relation(fields: [tenantId], references: [id])
-  members           ProjectMember[]
-  estimates         Estimate[]
-  tasks             Task[]
-  risksIssues       RiskIssue[]
-  retrospectives    Retrospective[]
-  knowledgeProjects KnowledgeProject[]
-  stakeholders      Stakeholder[]
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id])
+  members                ProjectMember[]
+  estimates              Estimate[]
+  tasks                  Task[]
+  risksIssues            RiskIssue[]
+  retrospectives         Retrospective[]
+  knowledgeProjects      KnowledgeProject[]
+  stakeholders           Stakeholder[]
+  suggestionExplanations SuggestionExplanation[]
 
   @@index([status], map: "idx_projects_status")
   @@index([customerId], map: "idx_projects_customer_id")
@@ -964,4 +967,59 @@ model ApiCallLog {
   @@index([requestId], map: "idx_api_call_logs_request")
   @@index([featureUnit, createdAt(sort: Desc)], map: "idx_api_call_logs_feature")
   @@map("api_call_logs")
+}
+
+/// 提案候補の人間ライクな説明文キャッシュ (P-3 / 2026-05-08)
+///
+/// 役割:
+///   提案画面で各候補 (knowledge / past_issue / retrospective) の「なぜこのプロジェクトに
+///   関連するのか」を LLM (Pro=Sonnet / Beginner-Expert=Haiku) で生成した結果を
+///   (projectId, candidateKind, candidateId) 単位で永続化する。
+///   Lazy 生成 (ユーザがクリックした時だけ生成) + DB キャッシュで再課金を防ぐ。
+///
+/// 設計判断:
+///   - **(projectId, candidateKind, candidateId) で unique**: 同じ提案画面を再訪 / 別ユーザが
+///     同じ画面を開いても再課金しない。プロジェクトと候補のペアでキャッシュするため、
+///     プロジェクト内容や候補内容が変わっても古い説明が再利用される
+///     (= 軽い stale。許容)。本格的に invalidate したくなったら updatedAt 比較で
+///     再生成判定するロジックを後付けする。
+///   - **tenantId を直接持つ (denormalized)**: 認可境界の検証を join なしで実施可能。
+///     Project にも tenantId はあるが、明示的にこのテーブルにも持つことで「外部から
+///     渡された projectId が他テナントだった場合に弾く」サニタイズが容易。
+///   - **modelName / costJpy を保存**: 過去の説明が Haiku 生成か Sonnet 生成かを後から
+///     監視できるようにする (Pro プラン契約者の体験品質モニタ用)。
+///   - **generatedBy (User FK)**: 監査用。説明生成は LLM 課金が発生するので、誰が
+///     呼び出したかを残す。
+///
+/// 関連:
+///   - サービス: src/services/suggestion-explanation.service.ts
+///   - API: src/app/api/projects/[projectId]/suggestions/explain/route.ts
+///   - 計画: docs/roadmap/V1_FINAL_TASKS.md P-3
+model SuggestionExplanation {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  /// 提案を受けたプロジェクト (= 「この PJ に対して説明する」の主語)
+  projectId      String   @map("project_id") @db.Uuid
+  /// 'knowledge' | 'issue' | 'retrospective'
+  candidateKind  String   @map("candidate_kind") @db.VarChar(20)
+  /// 候補側の ID (Knowledge.id / RiskIssue.id / Retrospective.id)
+  candidateId    String   @map("candidate_id") @db.Uuid
+  /// 生成された説明文 (UI で表示)
+  explanation    String   @db.Text
+  /// 生成に使われた LLM モデル名 (例: 'claude-haiku-4-5' / 'claude-sonnet-4-6')
+  modelName      String   @map("model_name") @db.VarChar(60)
+  /// 生成時の課金額 (円整数)。同候補に対する重複課金は本テーブルの cache hit で防ぐ。
+  costJpy        Int      @map("cost_jpy")
+  /// 生成を実行したユーザ (監査用)
+  generatedBy    String   @map("generated_by") @db.Uuid
+  generatedAt    DateTime @default(now()) @map("generated_at") @db.Timestamptz
+
+  tenant      Tenant  @relation(fields: [tenantId], references: [id])
+  project     Project @relation(fields: [projectId], references: [id])
+  generatedByUser User @relation("SuggestionExplanationGeneratedBy", fields: [generatedBy], references: [id])
+
+  /// 同じ (projectId, candidateKind, candidateId) は 1 つだけ。再要求時は cache hit。
+  @@unique([projectId, candidateKind, candidateId], map: "uq_suggestion_explanation_target")
+  @@index([tenantId, generatedAt(sort: Desc)], map: "idx_suggestion_explanations_tenant")
+  @@map("suggestion_explanations")
 }
