@@ -31,6 +31,34 @@ export const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 export const DEFAULT_TENANT_SLUG = 'default';
 
 /**
+ * 管理テナントの固定 UUID (PR-X1 / 2026-05-07)。
+ *
+ * **プラットフォーム運営者専用テナント**。super_admin user のみ所属し、全テナント横断の
+ * 監視・管理機能はこのテナントに所属する user からのみ実行可能。
+ *
+ * **特殊扱い**:
+ *   - tenantSeq は null (顧客連番外)
+ *   - 集計クエリでは原則として除外する (`tenantId != MANAGEMENT_TENANT_ID`)
+ *   - プランは 'pro' (課金対象外、内部運用)
+ *
+ * 詳細仕様: docs/roadmap/ROLE_REFACTORING_PLAN.md §2.3
+ */
+export const MANAGEMENT_TENANT_ID = '00000000-0000-0000-0000-ffffffffffff';
+
+/**
+ * 管理テナントの slug (URL ルーティング用)。
+ */
+export const MANAGEMENT_TENANT_SLUG = 'platform-admin';
+
+/**
+ * 指定された tenantId が管理テナントかを判定する。
+ * 集計・レポーティング系のクエリで「管理テナントを除外する」フィルタとして使う。
+ */
+export function isManagementTenant(tenantId: string): boolean {
+  return tenantId === MANAGEMENT_TENANT_ID;
+}
+
+/**
  * 課金プランの判別ユニオン。Tenant.plan カラムの値域。
  *
  * - `beginner`: 月間 100 回上限・最大 5 席・無料・Claude Haiku

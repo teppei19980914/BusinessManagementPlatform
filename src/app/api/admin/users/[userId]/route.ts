@@ -20,12 +20,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { z } from 'zod/v4';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
+import { isSuperAdmin } from '@/lib/permissions';
 import { updateUser, deleteUser } from '@/services/user.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
 
+// PR-X1 (2026-05-07): validator では super_admin も許容するが、route handler 側で
+// 「呼出者が super_admin でない限り super_admin への昇格は不可」のガードを追加。
 const updateUserSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  systemRole: z.enum(['admin', 'general']).optional(),
+  systemRole: z.enum(['super_admin', 'admin', 'general']).optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -50,6 +53,20 @@ export async function PATCH(
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', details: parsed.error.issues } },
       { status: 400 },
+    );
+  }
+
+  // PR-X1 (2026-05-07): super_admin への昇格・降格は super_admin のみが可能
+  // (テナント管理者が user を super_admin に昇格させる経路を遮断)
+  if (parsed.data.systemRole === 'super_admin' && !isSuperAdmin(user)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'FORBIDDEN',
+          message: 'super_admin への変更はシステム管理者のみ実行できます',
+        },
+      },
+      { status: 403 },
     );
   }
 

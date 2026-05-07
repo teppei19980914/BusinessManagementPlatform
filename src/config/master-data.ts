@@ -178,8 +178,21 @@ export const RISK_NATURES = {
 
 export type RiskNature = keyof typeof RISK_NATURES;
 
+/**
+ * PR-X1 (2026-05-07): ロール 3 階層化。
+ *   - super_admin: プラットフォーム運営者専用 (管理テナント所属)。全テナント横断アクセス
+ *   - admin     : テナント管理者。自テナント内の全権限 (= 既存の admin の意味再解釈)
+ *   - general   : 一般ユーザ。プロジェクト/役割に応じた権限
+ *
+ *   既存の `=== 'admin'` チェックは「テナント管理者」を意味し続ける (意味再解釈)。
+ *   全テナント横断用途のチェックには `isSuperAdmin()` ヘルパを使う。
+ *   詳細仕様: docs/roadmap/ROLE_REFACTORING_PLAN.md §2.1, §2.2
+ *
+ *   日本語ラベルは PR-X3 で「テナント管理者」「システム管理者」に変更予定 (現状は既存表示維持)。
+ */
 export const SYSTEM_ROLES = {
-  admin: 'システム管理者',
+  super_admin: 'システム管理者',
+  admin: '管理者',
   general: '一般ユーザ',
 } as const;
 

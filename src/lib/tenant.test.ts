@@ -7,6 +7,9 @@ import {
   DEFAULT_TENANT_SLUG,
   TENANT_PLANS,
   isTenantPlan,
+  MANAGEMENT_TENANT_ID,
+  MANAGEMENT_TENANT_SLUG,
+  isManagementTenant,
 } from './tenant';
 
 describe('tenant constants', () => {
@@ -77,6 +80,33 @@ describe('tenant constants', () => {
       expect(isTenantPlan(undefined)).toBe(false);
       expect(isTenantPlan(123)).toBe(false);
       expect(isTenantPlan({})).toBe(false);
+    });
+  });
+
+  // PR-X1 (2026-05-07): 管理テナント関連
+  describe('MANAGEMENT_TENANT_ID / isManagementTenant', () => {
+    it('管理テナントの UUID は default-tenant と異なる固定値', () => {
+      expect(MANAGEMENT_TENANT_ID).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      expect(MANAGEMENT_TENANT_ID).not.toBe(DEFAULT_TENANT_ID);
+    });
+
+    it('管理テナント slug は "platform-admin"', () => {
+      expect(MANAGEMENT_TENANT_SLUG).toBe('platform-admin');
+    });
+
+    it('isManagementTenant: 管理テナント ID で true', () => {
+      expect(isManagementTenant(MANAGEMENT_TENANT_ID)).toBe(true);
+    });
+
+    it('isManagementTenant: default-tenant ID で false', () => {
+      expect(isManagementTenant(DEFAULT_TENANT_ID)).toBe(false);
+    });
+
+    it('isManagementTenant: 任意の他 UUID で false', () => {
+      expect(isManagementTenant('11111111-1111-1111-1111-111111111111')).toBe(false);
+      expect(isManagementTenant('')).toBe(false);
     });
   });
 });
