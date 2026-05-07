@@ -46,6 +46,7 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { UserEditDialog } from '@/components/dialogs/user-edit-dialog';
 import { SYSTEM_ROLES } from '@/types';
 import type { UserDTO } from '@/services/user.service';
+import type { TenantPlan } from '@/lib/tenant';
 // PR #117 → PR #119: session 連携フォーマッタ (TZ/locale はユーザ設定を反映)
 import { useFormatters } from '@/lib/use-formatters';
 import { SortableHeader } from '@/components/sort/sortable-header';
@@ -54,6 +55,10 @@ import { multiSort } from '@/lib/multi-sort';
 
 type Props = {
   initialUsers: UserDTO[];
+  // P-2 (2026-05-08): Beginner プラン席数上限の UI ガード
+  tenantPlan: TenantPlan;
+  activeUserCount: number;
+  beginnerMaxSeats: number;
 };
 
 function getUserSortValue(u: UserDTO, columnKey: string): unknown {
@@ -67,7 +72,7 @@ function getUserSortValue(u: UserDTO, columnKey: string): unknown {
   }
 }
 
-export function UsersClient({ initialUsers }: Props) {
+export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginnerMaxSeats }: Props) {
   const tAction = useTranslations('action');
   const t = useTranslations('admin.users');
   const router = useRouter();
@@ -95,6 +100,10 @@ export function UsersClient({ initialUsers }: Props) {
     systemRole: 'general' as 'admin' | 'general',
   });
 
+  // P-2 (2026-05-08): Beginner プラン席数上限の UI ガード
+  // Beginner プラン契約テナントで activeUserCount >= beginnerMaxSeats なら新規招待ボタンを disabled
+  const isSeatLimitReached = tenantPlan === 'beginner' && activeUserCount >= beginnerMaxSeats;
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -113,6 +122,9 @@ export function UsersClient({ initialUsers }: Props) {
       const code = json.error?.code;
       if (code === 'DUPLICATE_EMAIL') {
         setError(t('duplicateEmail'));
+      } else if (code === 'SEAT_LIMIT_EXCEEDED') {
+        // P-2 (2026-05-08): Beginner プラン席数上限超過 (UI ガード突破時の防御)
+        setError(t('seatLimitExceeded'));
       } else if (code === 'EMAIL_SEND_FAILED') {
         setError(t('invitationSendFailed'));
       } else if (code === 'VALIDATION_ERROR') {
@@ -160,11 +172,36 @@ export function UsersClient({ initialUsers }: Props) {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">{t('title')}</h2>
         <div className="flex items-center gap-2">
+        {/*
+          P-2 (2026-05-08): Beginner プランのみ席数表示 (席埋まり状況の可視化)。
+          Expert / Pro は無制限のため表示しない。
+        */}
+        {tenantPlan === 'beginner' && (
+          <span className="text-sm text-muted-foreground">
+            {t('seatUsageLabel', { current: activeUserCount, max: beginnerMaxSeats })}
+          </span>
+        )}
         <Button variant="outline" size="sm" onClick={handleManualLockInactive}>
           {t('lockInactive')}
         </Button>
         <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsDialogOpen(true); }}>
-          <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{t('createUser')}</DialogTrigger>
+          {/*
+            P-2 (2026-05-08): 席数上限到達時は disabled + tooltip でユーザに事前に通知。
+            disabled 状態でも DialogTrigger が開かないよう button (button[disabled]) で実装。
+            UI ガードを突破した場合 (race / curl 直叩き等) は API 側 SEAT_LIMIT_EXCEEDED で防御。
+          */}
+          {isSeatLimitReached ? (
+            <button
+              type="button"
+              disabled
+              title={t('seatLimitTooltip', { max: beginnerMaxSeats })}
+              className="inline-flex shrink-0 cursor-not-allowed items-center justify-center rounded-md bg-primary/40 px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs"
+            >
+              {t('createUser')}
+            </button>
+          ) : (
+            <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">{t('createUser')}</DialogTrigger>
+          )}
           {/* PR #112: 大画面での余白過多対策 (基底で scroll 対応済) */}
           <DialogContent className="max-w-[min(90vw,32rem)] lg:max-w-[min(70vw,44rem)]">
             {success ? (
