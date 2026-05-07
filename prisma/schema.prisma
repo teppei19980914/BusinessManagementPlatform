@@ -50,6 +50,12 @@ model Tenant {
   /// URL ルーティング用 slug。v1 は 'default' 固定、v1.x で複数テナント対応時に動的解決。
   slug                     String    @unique @db.VarChar(60)
   name                     String    @db.VarChar(100)
+  /// PR-X1 (2026-05-07): 顧客向け人間可読連番 (案 D / ROLE_REFACTORING_PLAN.md §2.3-bis)。
+  ///   default-tenant=1 (固定 seed)、新規顧客は SEQUENCE で 2, 3, 4, ... 自動採番。
+  ///   管理テナント (Knowledge Relay Platform) は null (顧客連番外)。
+  ///   表示用 (請求書 / サポート / admin ダッシュボード一覧) のみで参照。
+  ///   内部参照 (FK / 認可) は引き続き UUID id を使う。
+  tenantSeq                Int?      @unique @map("tenant_seq")
   /// 'beginner' | 'expert' | 'pro'
   plan                     String    @default("beginner") @db.VarChar(20)
   currentMonthApiCallCount Int       @default(0) @map("current_month_api_call_count")

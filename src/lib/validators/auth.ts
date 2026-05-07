@@ -39,7 +39,10 @@ export const createUserSchema = z.object({
     .min(1, 'ユーザ名を入力してください')
     .max(NAME_MAX_LENGTH, `ユーザ名は${NAME_MAX_LENGTH}文字以内で入力してください`),
   email: z.email('有効なメールアドレスを入力してください'),
-  systemRole: z.enum(['admin', 'general']),
+  // PR-X1 (2026-05-07): super_admin を validator では許容するが、API route 側で
+  //   「呼出者が super_admin でない限り super_admin への昇格は不可」のガードを追加。
+  //   詳細: docs/roadmap/ROLE_REFACTORING_PLAN.md §3.1
+  systemRole: z.enum(['super_admin', 'admin', 'general']),
 });
 
 export const setupPasswordSchema = z
