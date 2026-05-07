@@ -10,35 +10,49 @@
 
 ## 全体像
 
+**最優先: 提案機能関連 (PR-X5 + PR-X6)** — サービスの核心機能。本日着手分から先頭に置く。
+
 | 順序 | PR | 内容 | 工数 | 依存 |
 |---|---|---|---|---|
-| 1 | **PR-X1** | super_admin role + 管理テナント seed + 認可ヘルパ | 1-2 日 | (なし) |
-| 2 | **PR-X2** | super_admin ダッシュボード UI (Phase 1) | 2-3 日 | PR-X1 |
-| 3 | **PR-X4** | テナント管理者プラン変更 UI (`/settings` にタブ追加) | 2-3 日 | PR-X1 (認可ヘルパ流用) |
-| 4 | **PR-X5** | シードデータ拡充 (案 C: 課題・振り返り追加 + サンプルプロジェクト隠蔽 + ヒット率向上) | 1 日 | (独立、並行可) |
-| 5 | **PR-X3** | UI 文言更新 + ドキュメント整合 | 1 日 | PR-X1〜X5 |
+| 1 | **PR-X5** | シードデータ拡充 + 既存 embedding backfill (生成済 JSON 同梱) | 1.5 日 | (なし、最優先で着手) |
+| 2 | **PR-X6** | 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 | 2-3 日 | PR-X5 (backfill 後の embedding でテスト) |
+| 3 | **PR-X1** | super_admin role + 管理テナント seed + 認可ヘルパ | 1-2 日 | (なし、PR-X5/X6 と並行可) |
+| 4 | **PR-X2** | super_admin ダッシュボード UI (Phase 1) | 2-3 日 | PR-X1 |
+| 5 | **PR-X4** | テナント管理者プラン変更 UI (`/settings` にタブ追加) | 2-3 日 | PR-X1 (認可ヘルパ流用) |
+| 6 | **PR-X3** | UI 文言更新 + ドキュメント整合 | 1 日 | PR-X1〜X6 |
 
-**合計**: 7-10 日
+**合計**: 9.5-13.5 日
 
-**6/1 まで残**: 2026-05-04 起点で約 28 日 → **十分なバッファ** (品質確認・視覚回帰・想定外修正対応に約 18-21 日)。
+**6/1 まで残**: 2026-05-07 起点で約 25 日 → **バッファ 11-15 日** (品質確認・視覚回帰・想定外修正対応に充当)。
 
 ```
-[2026-05-04 着手]
+[2026-05-07 着手] (本日)
    ↓
-PR-X1 (1-2 日)  ← 起点
+PR-X5 (1.5 日)         ← 最優先 (提案機能のデータ基盤)
+   ↓
+PR-X6 (2-3 日)         ← 提案 UI 段階表示化
+   ↓
+   並行で PR-X1 (1-2 日) を進めておく (PR-X5 着手と同時開始可能)
    ↓
 PR-X2 ┐
-PR-X4 ┤ 並行可能 (それぞれ 2-3 日)
-PR-X5 ┘
+PR-X4 ┤ 並行可能 (それぞれ 2-3 日、PR-X1 完了後)
    ↓
 PR-X3 (1 日)
    ↓
-[2026-05-13 前後 完了見込]
+[2026-05-17 〜 2026-05-20 完了見込]
    ↓
-リリース直前テスト 約 18-21 日
+リリース直前テスト 約 11-15 日
    ↓
 [2026-06-01 リリース]
 ```
+
+### 優先順位の根拠
+
+ユーザ指示 (2026-05-07): **「提案機能に関しては、最優先で着手するようにプランを変更してください」**。
+
+提案機能は本サービスの差別化要素であり、6/1 リリース時点で「過去資産を全網羅し、見落としなく
+未来のプロジェクト運営に活用できる」という体験を完成させる必要がある。
+具体設計の根拠は memory `project_suggestion_engine_priority.md` を参照。
 
 ---
 
@@ -268,12 +282,192 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 
 このような拡充を 30 件すべてに適用。
 
-#### 5-6. 検証
+#### 5-6. 検証 (基本)
 
 - 単体テスト追加: サンプルプロジェクトが各リスト view から除外されること
 - 単体テスト追加: 提案エンジンではサンプルプロジェクトの issues/retros が候補に含まれること
 - 統合テスト: seedTenant() が sample projects も含めて clone すること
 - 視覚回帰: 提案モーダルでサンプル候補が表示されることを確認
+
+#### 5-7. 既存データへの embedding pre-generation (本日追加)
+
+##### 背景
+
+提案機能は embedding 軸が主軸 (重み 0.5) だが、`Knowledge.contentEmbedding` 等は
+**新規作成 / 更新時にしか生成されない**。既存データ (本番にすでに存在する 60+ 件)
+は永久に NULL のまま = 縮退モード (タグ + pg_trgm のみ) で運用される。
+
+このため、既存データに対して 1 回だけ embedding をまとめて生成する仕組みが必要。
+ただし環境変数 (`VOYAGE_API_KEY`) を持つ開発者環境でしか実行できないため、
+**生成済み embedding を JSON にコミットしておき、deploy 時に DB へ流し込む** 設計を取る。
+
+##### 実装構成
+
+```
+prisma/
+├─ seed-suggestion.ts                     # 既存 (拡充 + JSON 読込ロジック追加)
+├─ seed-suggestion-embeddings.json        # 新規 (生成済 embedding をリポジトリにコミット)
+scripts/
+└─ generate-seed-embeddings.ts            # 新規 (開発者環境で 1 回実行)
+package.json:
+  "seed:generate-embeddings": "tsx scripts/generate-seed-embeddings.ts"
+```
+
+##### JSON 構造
+
+```json
+{
+  "knowledges": {
+    "<title-sha256-prefix>": [0.012, -0.453, ...]
+  },
+  "issues": {
+    "<title-sha256-prefix>": [0.234, 0.567, ...]
+  },
+  "retrospectives": {
+    "<conducted-date+project-name-sha256-prefix>": [-0.123, 0.456, ...]
+  }
+}
+```
+
+key は **シードデータの安定識別子** (title 等の SHA-256 先頭 16 文字) を使う。
+これにより、シード内容を後から修正しても同じ key で対応する embedding を
+解決できる (修正が大きい場合は再生成が必要)。
+
+##### 既存 (本番に手動投入済) データの backfill
+
+シード新規投入分は seed スクリプトが自動で JSON から読み込んで適用するが、
+**既に本番に存在する `PowerPlatform とは` 等のユーザ追加分** に対しては:
+
+1. **オプション A**: 開発者が `pnpm seed:generate-embeddings --backfill-existing` で
+   全件の embedding を Voyage API 経由で生成して直接 DB に書き込む (本番 DB に対して実行、
+   一度きり、所要時間 数分、Voyage 月次無料枠 200M token 内に十分収まる)
+2. **オプション B**: 各データを手で 1 回開いて「保存」→ embedding 自動生成
+
+オプション A を推奨 (手作業ゼロ)。
+
+#### 5-8. 検証 (拡充)
+
+提案機能の効果を定量検証するため、以下を before/after で記録:
+
+- **検証対象プロジェクト**: 既存「請求書発行システム構築」(2026-05-07 時点で提案 0 件) +
+  新規作成のサンプルプロジェクト 2-3 件
+- **before スクショ**: 改修前の「ナレッジ候補 0 件 / 過去課題 0 件 / 過去振り返り 0 件」を保存
+- **after スクショ**: PR-X5 + PR-X6 完了後の段階表示画面を保存
+- **数値計測**:
+  - 提案件数 (各セクションごと: strong / medium / weak)
+  - 高スコア候補の関連性 (人間判断で「妥当」な比率)
+  - API 応答時間 (50 件表示時、500ms 以下が目安)
+- **記録先**: `docs/operations/SUGGESTION_ENGINE_VERIFICATION.md` に before/after を残す
+
+---
+
+## PR-X6: 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 (2-3 日)
+
+**追加日**: 2026-05-07
+**着手順序**: PR-X5 完了直後 (PR-X5 で backfill された embedding で動作確認するため)
+
+### 背景
+
+PR-X5 までは `SUGGESTION_SCORE_THRESHOLD = 0.05` で「明らかに関連するもののみ提案する」
+高精度・低再現率の設計だった。しかし本サービスの存在意義は **「人間が探さずに済む」
+「取りこぼし防止」** であり、高精度設計はこの哲学と矛盾する (= 弱関連を見るには結局
+人間が検索する必要が残る)。
+
+設計方針を **「全網羅 + 段階表示」** の高再現率設計に変更する。詳細は
+memory `project_suggestion_engine_priority.md` を参照。
+
+### スコープ
+
+#### 6-1. 設定値変更 ([src/config/suggestion.ts](../../src/config/suggestion.ts))
+
+| 定数 | 現状 | 変更後 | 理由 |
+|---|---|---|---|
+| `SUGGESTION_SCORE_THRESHOLD` | `0.05` | `0.01` (実質ゼロ寄り、完全撤廃でも可) | 全網羅のため閾値を実質撤廃 |
+| `SUGGESTION_DEFAULT_LIMIT` | `10` | `50` | 件数上限を緩和 (段階表示で可読性は確保) |
+| (新規) `SUGGESTION_TIER_STRONG_THRESHOLD` | — | `0.3` | strong セクションのしきい |
+| (新規) `SUGGESTION_TIER_MEDIUM_THRESHOLD` | — | `0.1` | medium セクションのしきい |
+
+スコアリング式 (タグ 0.3 + pg_trgm 0.2 + embedding 0.5) は **変更しない** (デグレ防止)。
+
+#### 6-2. サービス層変更
+
+[src/services/suggestion.service.ts](../../src/services/suggestion.service.ts) のレスポンス DTO に
+`tier` フィールドを追加:
+
+```typescript
+type SuggestionTier = 'strong' | 'medium' | 'weak';
+
+interface SuggestionItem {
+  id: string;
+  title: string;
+  score: number;
+  tier: SuggestionTier;  // 新規
+  // ... 既存フィールド
+}
+```
+
+クエリ自体は **大きな変更不要** (既にスコア降順で取得しているため、件数上限と閾値の
+緩和のみで段階表示の入力データが揃う)。
+
+#### 6-3. フロントエンド変更
+
+提案タブを **3 セクション + 折りたたみ** に改修:
+
+```
+┌─ 提案ナレッジ ─────────────────────────────────┐
+│                                                  │
+│ 🟢 強く関連 (3 件)                ← score >= 0.3 │
+│   • PowerPlatform を使った請求書発行...          │
+│   • 請求書発行は冪等に + 改ざん不可ログ          │
+│   • SAP 連携時の認証パターン                      │
+│                                                  │
+│ 🟡 関連する可能性 (8 件)        ← score 0.1-0.3 │
+│   • Conway の法則 — 組織構造がシステム構造を...  │
+│   • [展開ボタン: あと 5 件を表示]                │
+│                                                  │
+│ ⚪ 弱い関連性 (24 件)            ← score < 0.1  │
+│   [折りたたみ: クリックで展開]                   │
+│                                                  │
+└──────────────────────────────────────────────────┘
+```
+
+設計指針:
+- 各セクションに **件数バッジ** を表示 (ユーザが量を把握できる)
+- weak セクションは **折りたたみデフォルト** (情報過多回避)
+- セクション内は **スコア降順**
+- 同様の UI を「過去課題」「過去振り返り」にも適用
+
+#### 6-4. デグレ防止策
+
+- 既存テスト ([src/services/suggestion.service.test.ts](../../src/services/suggestion.service.test.ts))
+  を全件パスさせる
+- 段階表示の新規テスト (DTO に tier が付与される / 閾値ゾーン境界の振り分け) を追加
+- **feature flag** (`SUGGESTION_DISPLAY_MODE=tiered|legacy`) で並行運用 → 検証後に切替
+  - default: `tiered` (新方式)
+  - 緊急時に `legacy` で旧 UI に即時戻せる
+- 既存スコアリング計算は **そのまま** (重み 0.3 / 0.2 / 0.5 を変更しない)
+
+#### 6-5. パフォーマンス検証
+
+- 候補数増加 (10 → 50) で N+1 / クエリ時間が悪化しないか測定
+- pgvector 索引 (IVFFlat / HNSW) が想定通り効いているか確認
+- 目標: API 応答時間 500ms 以下 (本番に近いデータ量で計測)
+
+#### 6-6. LP / ドキュメント文言の見直し
+
+PR-X3 と分担し、以下を **PR-X6 内で完了** させる:
+- 提案画面の文言 (「明らかに関連するもの」表現があれば修正)
+- [docs/specification/SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) の
+  「網羅性重視」方針への書き換え
+
+### 完了条件
+
+- [ ] 設定変更が反映され、既存データで weak セクションも候補が出る
+- [ ] 3 セクション UI が画面で動作 (件数バッジ + 折りたたみ + ソート)
+- [ ] 既存テスト全件 PASS + 新規テスト追加
+- [ ] feature flag で legacy にロールバック可能
+- [ ] パフォーマンス API 応答時間 ≤ 500ms (50 件表示時)
+- [ ] LP 文言・仕様書ドキュメントを「網羅性」「段階表示」基調に更新
 
 ---
 
@@ -301,49 +495,68 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 
 ### コード
 
+- [ ] PR-X5: シードナレッジ拡充 30 件 + サンプル課題 10-15 件 + サンプル振り返り 5-7 件 + 隠蔽機構 + 生成済 embedding 同梱 + 既存データ backfill
+- [ ] PR-X6: 段階表示 (Tiered) UI + 閾値撤廃 + DTO に tier + feature flag で legacy ロールバック可能
 - [ ] PR-X1: schema migration + seed + 認可ヘルパ + 既存テスト維持
 - [ ] PR-X2: super_admin ダッシュボード 3 画面 + 認可境界 E2E
 - [ ] PR-X4: テナント管理者プラン変更 UI + 認可・バリデーション・ダウングレード遅延適用
-- [ ] PR-X5: シードナレッジ拡充 30 件 + サンプル課題 10-15 件 + サンプル振り返り 5-7 件 + 隠蔽機構
 - [ ] PR-X3: UI 文言 + ドキュメント整合
 
 ### 検証
 
-- [ ] `pnpm test` 全件 PASS (PR-X5 で +20 件程度の test 追加見込)
+- [ ] `pnpm test` 全件 PASS (PR-X5/X6 で +30 件程度の test 追加見込)
 - [ ] `pnpm lint` clean
 - [ ] `pnpm tsx scripts/security-check.ts` ≥ 90/100
 - [ ] `pnpm e2e:coverage-check` 全カバー
 - [ ] super_admin 用 Vercel 環境変数 3 件 (teppei さん) 設定済
 - [ ] 本番に対する seed 実行で 30 ナレッジ + 2 サンプルプロジェクト + 課題 + 振り返り が投入済
+- [ ] 本番既存データ (60+ 件) に対する embedding backfill 実行済
+- [ ] 提案 API 応答時間 ≤ 500ms (50 件表示時、本番データで計測)
 
 ### UX 検証 (teppei さん)
 
 - [ ] 新規プロジェクト作成 → 自動タグ抽出 → 提案モーダルで「過去資産が結びつく」体験を確認
+- [ ] 提案候補が **段階表示 (strong / medium / weak) で出る**ことを確認
+- [ ] 既存「請求書発行システム構築」プロジェクトで提案が **0 件 → 多数件** に改善することを確認
 - [ ] 提案候補に **ナレッジだけでなく課題・振り返りが現れる**ことを確認
 - [ ] サンプルプロジェクトが `/projects` リストに表示されないことを確認
 - [ ] テナント管理者として `/settings` のテナント設定タブで予算上限を設定できることを確認
 - [ ] super_admin として `/admin/super/tenants` で全テナント状況を確認できることを確認
+
+### 検証エビデンスの保管
+
+- [ ] 改修 before / after のスクショを `docs/operations/SUGGESTION_ENGINE_VERIFICATION.md` に記録
+- [ ] 数値計測 (件数・関連性比率・応答時間) を同ドキュメントに記録
 
 ---
 
 ## 着手順序のリマインダ
 
 ```
-明日 (2026-05-04) 着手:
-  1. PR-X1 (super_admin schema + 認可) ← 起点
-     完了見込: 2026-05-05 中
+本日 (2026-05-07) 着手:
+  最優先トラック (提案機能):
+    1. PR-X5 (シードデータ拡充 + embedding backfill 1.5 日)
+       完了見込: 2026-05-08 中
+    2. PR-X6 (段階表示 UI + 閾値撤廃 2-3 日)  ← PR-X5 完了後
+       完了見込: 2026-05-11 〜 12
 
-並行:
-  2. PR-X2 (super_admin ダッシュボード)
-  3. PR-X4 (テナント管理者プラン変更 UI)
-  4. PR-X5 (シードデータ拡充 + 隠蔽)
+  並行トラック (ロール再構築):
+    3. PR-X1 (super_admin schema + 認可 1-2 日)  ← PR-X5 と同時着手可能
+       完了見込: 2026-05-08 〜 09
+    4. PR-X2 (super_admin ダッシュボード 2-3 日)  ← PR-X1 完了後
+    5. PR-X4 (テナント管理者プラン変更 UI 2-3 日)  ← PR-X1 完了後
+       PR-X2 と PR-X4 は並行可
 
-最後:
-  5. PR-X3 (UI 文言 + ドキュメント)
-     完了見込: 2026-05-13 前後
+  最後:
+    6. PR-X3 (UI 文言 + ドキュメント 1 日)  ← 全 PR 完了後
+       完了見込: 2026-05-17 〜 2026-05-20
 ```
 
-PR-X4 と PR-X5 は **PR-X1 の認可ヘルパ完成後**に着手 (PR-X4 は admin 認可、PR-X5 はサンプル隠蔽の影響範囲確認に admin 動作確認が便利)。
+**PR-X5/X6 を提案機能トラックとして最優先扱い** とする。理由は本ドキュメント冒頭
+「優先順位の根拠」を参照。
+
+PR-X4 と PR-X5 を同時着手しないこと (PR-X4 は admin 認可ヘルパに依存)。
+PR-X1 と PR-X5 は依存ゼロで並行着手可能。
 
 ---
 
@@ -354,5 +567,6 @@ PR-X4 と PR-X5 は **PR-X1 の認可ヘルパ完成後**に着手 (PR-X4 は ad
 | [SUGGESTION_ENGINE_PLAN.md](./SUGGESTION_ENGINE_PLAN.md) | T-03 提案エンジン v2 の PR #1〜#8 計画 (完了済) |
 | [ROLE_REFACTORING_PLAN.md](./ROLE_REFACTORING_PLAN.md) | super_admin role の詳細設計 (PR-X1/X2/X3) |
 | [TENANT_AND_BILLING.md Part 5](../business/TENANT_AND_BILLING.md) | 課金モデル詳細 (PR-X4 の根拠) |
-| [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) | 提案機能の機能仕様 + コスト構造 (PR-X5 の根拠) |
+| [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) | 提案機能の機能仕様 + コスト構造 (PR-X5/X6 の根拠) |
 | [T-03_RELEASE_NOTES.md](../operations/T-03_RELEASE_NOTES.md) | リリース運用ガイド (本タスク完了後に最終更新) |
+| `SUGGESTION_ENGINE_VERIFICATION.md` (新規) | PR-X5/X6 改修の before/after エビデンス記録 (operations 配下に追加予定) |
