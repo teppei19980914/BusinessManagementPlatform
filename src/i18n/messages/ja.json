@@ -14,7 +14,8 @@
   "nav": {
     "groupProjects": "プロジェクト",
     "groupAssets": "資産",
-    "groupAdmin": "システム管理者",
+    "groupAdmin": "テナント管理者",
+    "groupSuperAdmin": "システム管理者",
     "allProjects": "全プロジェクト",
     "allCustomers": "全顧客管理",
     "allRisks": "全リスク",
@@ -25,7 +26,12 @@
     "adminUsers": "ユーザ管理",
     "adminAuditLogs": "監査ログ",
     "adminRoleChanges": "権限変更",
-    "adminBadge": "管理者",
+    "adminBadge": "テナント管理者",
+    "superAdminBadge": "システム管理者",
+    "superAdminDashboard": "サマリ",
+    "superAdminTenants": "テナント一覧",
+    "superAdminUsage": "使用量",
+    "tenantSettings": "テナント設定",
     "myTasks": "マイタスク",
     "memos": "メモ一覧",
     "settings": "設定"

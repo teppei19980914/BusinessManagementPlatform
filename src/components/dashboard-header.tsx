@@ -68,12 +68,16 @@ type NavItem = {
   label: string;
   /** true なら systemRole='admin' のみに表示 (PR #127) */
   adminOnly?: boolean;
+  /** PR-X3 (2026-05-07): true なら systemRole='super_admin' のみに表示 */
+  superAdminOnly?: boolean;
 };
 
 type NavGroup = {
   label: string;
-  /** グループ全体を admin のみに表示 (例: システム管理者タブ) */
+  /** グループ全体を admin のみに表示 (例: テナント管理者タブ) */
   adminOnly?: boolean;
+  /** PR-X3: グループ全体を super_admin のみに表示 (例: システム管理者タブ) */
+  superAdminOnly?: boolean;
   items: NavItem[];
 };
 
@@ -84,7 +88,8 @@ type NavGroup = {
 type NavGroupConfig = {
   labelKey: string;
   adminOnly?: boolean;
-  items: { href: string; labelKey: string; adminOnly?: boolean }[];
+  superAdminOnly?: boolean;
+  items: { href: string; labelKey: string; adminOnly?: boolean; superAdminOnly?: boolean }[];
 };
 
 const navGroupsConfig: NavGroupConfig[] = [
@@ -112,25 +117,45 @@ const navGroupsConfig: NavGroupConfig[] = [
       { href: ADMIN_USERS_ROUTE, labelKey: 'adminUsers' },
       { href: ADMIN_AUDIT_LOGS_ROUTE, labelKey: 'adminAuditLogs' },
       { href: ADMIN_ROLE_CHANGES_ROUTE, labelKey: 'adminRoleChanges' },
+      // PR-X3 (2026-05-07): テナント管理者がプラン・予算上限を変更できる画面 (PR-X4)
+      { href: '/settings/tenant', labelKey: 'tenantSettings' },
+    ],
+  },
+  // PR-X3 (2026-05-07): super_admin (システム管理者) 専用ナビゲーション
+  {
+    labelKey: 'groupSuperAdmin',
+    superAdminOnly: true,
+    items: [
+      { href: '/admin/super', labelKey: 'superAdminDashboard' },
+      { href: '/admin/super/tenants', labelKey: 'superAdminTenants' },
+      { href: '/admin/super/usage', labelKey: 'superAdminUsage' },
     ],
   },
 ];
 
-/** 指定 item がユーザに表示可能か (adminOnly を考慮) */
-function isVisibleItem(item: NavItem, isAdmin: boolean): boolean {
-  return !item.adminOnly || isAdmin;
+/** 指定 item がユーザに表示可能か (adminOnly / superAdminOnly を考慮、PR-X3 拡張) */
+function isVisibleItem(item: NavItem, isAdmin: boolean, isSuperAdmin: boolean): boolean {
+  if (item.superAdminOnly) return isSuperAdmin;
+  if (item.adminOnly) return isAdmin;
+  return true;
 }
 
-/** 指定グループがユーザに表示可能か (adminOnly または表示可能 item が 0 件なら非表示) */
-function isVisibleGroup(group: NavGroup, isAdmin: boolean): boolean {
+/** 指定グループがユーザに表示可能か */
+function isVisibleGroup(group: NavGroup, isAdmin: boolean, isSuperAdmin: boolean): boolean {
+  if (group.superAdminOnly && !isSuperAdmin) return false;
   if (group.adminOnly && !isAdmin) return false;
-  return group.items.some((it) => isVisibleItem(it, isAdmin));
+  return group.items.some((it) => isVisibleItem(it, isAdmin, isSuperAdmin));
 }
 
 /** 指定 pathname が group 内のどれかの item にマッチするか (親タブのアクティブ判定用) */
-function isGroupActive(group: NavGroup, pathname: string, isAdmin: boolean): boolean {
+function isGroupActive(
+  group: NavGroup,
+  pathname: string,
+  isAdmin: boolean,
+  isSuperAdmin: boolean,
+): boolean {
   return group.items.some(
-    (it) => isVisibleItem(it, isAdmin) && pathname.startsWith(it.href),
+    (it) => isVisibleItem(it, isAdmin, isSuperAdmin) && pathname.startsWith(it.href),
   );
 }
 
@@ -175,6 +200,12 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
         aria-expanded={open}
       >
         <span>{user.name}</span>
+        {/* PR-X3 (2026-05-07): super_admin / admin で異なる Badge を表示 */}
+        {user.systemRole === 'super_admin' && (
+          <span className="rounded bg-amber-200/70 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">
+            {tNav('superAdminBadge')}
+          </span>
+        )}
         {user.systemRole === 'admin' && (
           <span className="rounded bg-info/20 px-1.5 py-0.5 text-xs text-info">
             {tNav('adminBadge')}
@@ -249,12 +280,14 @@ function GroupMenu({
   group,
   pathname,
   isAdmin,
+  isSuperAdmin,
 }: {
   group: NavGroup;
   pathname: string;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
 }) {
-  const groupActive = isGroupActive(group, pathname, isAdmin);
+  const groupActive = isGroupActive(group, pathname, isAdmin, isSuperAdmin);
   return (
     <Menu.Root>
       <Menu.Trigger
@@ -276,7 +309,7 @@ function GroupMenu({
             )}
           >
             {group.items
-              .filter((item) => isVisibleItem(item, isAdmin))
+              .filter((item) => isVisibleItem(item, isAdmin, isSuperAdmin))
               .map((item) => {
                 const active = pathname.startsWith(item.href);
                 return (
@@ -307,7 +340,10 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
   const pathname = usePathname();
   const tNav = useTranslations('nav');
   const tAuth = useTranslations('auth');
+  // PR-X3 (2026-05-07): 「テナント管理者」(= admin) と「システム管理者」(= super_admin) を別判定。
+  // 既存の `=== 'admin'` 比較は「テナント管理者」のみを意味するよう厳密化 (super_admin は別系統)。
   const isAdmin = user.systemRole === 'admin';
+  const isSuperAdmin = user.systemRole === 'super_admin';
 
   // Phase C-2: ラベルキーを t() で解決して NavGroup[] を組み立てる。
   // sub-component (FlatNavLink / GroupMenu) は localized 済の `label` を受け取るだけ。
@@ -316,10 +352,12 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
       navGroupsConfig.map((g) => ({
         label: tNav(g.labelKey),
         adminOnly: g.adminOnly,
+        superAdminOnly: g.superAdminOnly,
         items: g.items.map((it) => ({
           href: it.href,
           label: tNav(it.labelKey),
           adminOnly: it.adminOnly,
+          superAdminOnly: it.superAdminOnly,
         })),
       })),
     [tNav],
@@ -336,9 +374,9 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
           {/* PR #127: lg: 以上はフラット表示 (全項目横並び、従来挙動) */}
           <nav className="hidden items-center gap-1 lg:flex">
             {navGroups.map((group) => {
-              if (!isVisibleGroup(group, isAdmin)) return null;
+              if (!isVisibleGroup(group, isAdmin, isSuperAdmin)) return null;
               return group.items
-                .filter((item) => isVisibleItem(item, isAdmin))
+                .filter((item) => isVisibleItem(item, isAdmin, isSuperAdmin))
                 .map((item) => (
                   <FlatNavLink key={item.href} item={item} pathname={pathname} />
                 ));
@@ -348,13 +386,14 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
           {/* PR #127: lg: 未満は 3 分類プルダウン */}
           <nav className="flex items-center gap-1 lg:hidden">
             {navGroups.map((group) => {
-              if (!isVisibleGroup(group, isAdmin)) return null;
+              if (!isVisibleGroup(group, isAdmin, isSuperAdmin)) return null;
               return (
                 <GroupMenu
                   key={group.label}
                   group={group}
                   pathname={pathname}
                   isAdmin={isAdmin}
+                  isSuperAdmin={isSuperAdmin}
                 />
               );
             })}

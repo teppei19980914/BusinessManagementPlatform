@@ -14,7 +14,8 @@
   "nav": {
     "groupProjects": "Projects",
     "groupAssets": "Assets",
-    "groupAdmin": "System Admin",
+    "groupAdmin": "Tenant Admin",
+    "groupSuperAdmin": "System Admin",
     "allProjects": "All Projects",
     "allCustomers": "All Customers",
     "allRisks": "All Risks",
@@ -25,7 +26,12 @@
     "adminUsers": "Users",
     "adminAuditLogs": "Audit Logs",
     "adminRoleChanges": "Role Changes",
-    "adminBadge": "Admin",
+    "adminBadge": "Tenant Admin",
+    "superAdminBadge": "System Admin",
+    "superAdminDashboard": "Summary",
+    "superAdminTenants": "Tenants",
+    "superAdminUsage": "Usage",
+    "tenantSettings": "Tenant Settings",
     "myTasks": "My Tasks",
     "memos": "Memos",
     "settings": "Settings"

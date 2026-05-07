@@ -192,7 +192,7 @@ export type RiskNature = keyof typeof RISK_NATURES;
  */
 export const SYSTEM_ROLES = {
   super_admin: 'システム管理者',
-  admin: '管理者',
+  admin: 'テナント管理者',
   general: '一般ユーザ',
 } as const;
 
