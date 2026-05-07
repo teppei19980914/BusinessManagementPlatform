@@ -14,7 +14,7 @@
 
 | 順序 | PR | 内容 | 工数 | 依存 |
 |---|---|---|---|---|
-| 1 | **PR-X5** | シードデータ拡充 + 既存 embedding backfill (生成済 JSON 同梱) | 1.5 日 | (なし、最優先で着手) |
+| 1 | **PR-X5** | シードデータ拡充 + 事前生成 embedding 同梱 + 既存データ backfill | 1.5 日 | (なし、最優先で着手) |
 | 2 | **PR-X6** | 提案 UI を段階表示 (Tiered) に変更 + 閾値撤廃 | 2-3 日 | PR-X5 (backfill 後の embedding でテスト) |
 | 3 | **PR-X1** | super_admin role + 管理テナント seed + 認可ヘルパ | 1-2 日 | (なし、PR-X5/X6 と並行可) |
 | 4 | **PR-X2** | super_admin ダッシュボード UI (Phase 1) | 2-3 日 | PR-X1 |
@@ -162,9 +162,11 @@ URL: /settings (既存ページにタブ追加)
 
 ---
 
-## PR-X5: シードデータ拡充 (案 C 採用、1 日)
+## PR-X5: シードデータ拡充 (案 C 採用 + embedding 事前生成、1.5 日)
 
 **ユーザの認識**: 提案機能は本サービスの根幹機能。初期データはユーザが評価する際の重要なデータ。妥協できない。
+
+> **2026-05-07 追記 (5-7 として scope 追加)**: 初期データに事前生成 embedding を同梱することで、新規テナントが Day 1 から 3 軸スコアリング (tag 0.3 + pg_trgm 0.2 + **embedding 0.5**) のフル精度で提案を体験できるようにする。embedding は本サービスの提案精度の主軸 (重み 50%) であるため、ここを欠くと初期体験が大きく劣化する。
 
 ### 案 C のスコープ
 
@@ -286,20 +288,26 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 
 - 単体テスト追加: サンプルプロジェクトが各リスト view から除外されること
 - 単体テスト追加: 提案エンジンではサンプルプロジェクトの issues/retros が候補に含まれること
-- 統合テスト: seedTenant() が sample projects も含めて clone すること
+- 単体テスト追加: 事前生成 JSON が読まれて embedding 列に書込まれること
+- 単体テスト追加: JSON 不在 / キー不在時に NULL で投入されること (warning 出力)
+- 統合テスト: seedTenant() が sample projects も含めて clone し embedding がコピーされること
 - 視覚回帰: 提案モーダルでサンプル候補が表示されることを確認
 
-#### 5-7. 既存データへの embedding pre-generation (本日追加)
+#### 5-7. 事前生成 embedding 同梱 + 既存データ backfill (2026-05-07 追加)
 
-##### 背景
+##### 動機
 
-提案機能は embedding 軸が主軸 (重み 0.5) だが、`Knowledge.contentEmbedding` 等は
-**新規作成 / 更新時にしか生成されない**。既存データ (本番にすでに存在する 60+ 件)
-は永久に NULL のまま = 縮退モード (タグ + pg_trgm のみ) で運用される。
+現状 (PR #6 実装) のシードデータは `content_embedding = NULL` で投入される。結果として:
+- 新規テナントが提案画面を開いた時、シード候補すべてに対し embedding 軸 (重み **0.5**) がゼロ化
+- タグ 0.3 + pg_trgm 0.2 = 合計 **0.5 の縮退モード**で動作
+- 検索精度の主軸 (= 意味検索) が機能せず、「過去資産が結びつく体験」の核心価値が初期から伝わりにくい
 
-このため、既存データに対して 1 回だけ embedding をまとめて生成する仕組みが必要。
-ただし環境変数 (`VOYAGE_API_KEY`) を持つ開発者環境でしか実行できないため、
-**生成済み embedding を JSON にコミットしておき、deploy 時に DB へ流し込む** 設計を取る。
+加えて、`Knowledge.contentEmbedding` 等は **新規作成 / 更新時にしか生成されない** ため、
+**既存データ (本番に既に存在する 60+ 件) は永久に NULL のまま** = 縮退モードで運用される。
+
+→ 以下の 2 段構えで対処する:
+1. **シードデータに事前生成済 embedding を同梱** (新規テナントが Day 1 から 3 軸フル精度を体験)
+2. **本番既存データへの backfill コマンド** (本リポジトリ運用済テナントの過去資産も embedding 化)
 
 ##### 実装構成
 
@@ -307,43 +315,97 @@ CREATE INDEX idx_projects_is_sample_data ON projects(is_sample_data) WHERE is_sa
 prisma/
 ├─ seed-suggestion.ts                     # 既存 (拡充 + JSON 読込ロジック追加)
 ├─ seed-suggestion-embeddings.json        # 新規 (生成済 embedding をリポジトリにコミット)
+└─ ...
+
 scripts/
 └─ generate-seed-embeddings.ts            # 新規 (開発者環境で 1 回実行)
+                                          # --backfill-existing で本番既存データの embedding も生成
+
 package.json:
   "seed:generate-embeddings": "tsx scripts/generate-seed-embeddings.ts"
 ```
 
-##### JSON 構造
+##### ワークフロー
+
+```
+[A. 開発者環境での生成 (1 回限り、新規シード追加・更新時のみ再実行)]
+  1. .env.local に VOYAGE_API_KEY 設定
+  2. pnpm seed:generate-embeddings 実行
+     → SEED_KNOWLEDGE / SEED_ISSUES / SEED_RETROSPECTIVES の各エントリで Voyage API 呼出
+     → seed-suggestion-embeddings.json に { entityType: { entry_key: [1024 floats] } } で保存
+  3. JSON ファイルを git commit (リポジトリに格納)
+
+[B. 本番 seed 投入時 (Vercel build / pnpm db:seed:suggestion)]
+  → SEED_KNOWLEDGE 等を INSERT
+  → seed-suggestion-embeddings.json から該当 embedding 読込
+  → raw SQL で content_embedding 列に書込 (Prisma の Unsupported("vector(1024)") のため $executeRaw)
+  → 結果: 全シードデータに embedding 付き
+
+[C. 新規テナント招待時 (seedTenant())]
+  → default-tenant の Knowledge / Issue / Retrospective を読込 (embedding 付き)
+  → 新規テナントへ INSERT (embedding ごとコピー、既存実装どおり)
+  → 結果: 新規テナントも Day 1 から 3 軸スコアリングフル稼働
+
+[D. 本番既存データの backfill (1 回限り、teppei さん側で実行)]
+  → pnpm seed:generate-embeddings --backfill-existing を本番 DB 接続情報で実行
+  → 全 Knowledge / RiskIssue / Retrospective / Project を走査し、embedding=NULL の行に対して
+    Voyage API でベクトル生成 → DB へ直接書込
+  → 結果: 既存「請求書発行システム構築」プロジェクト等で提案が 0 件 → 多数件に改善
+```
+
+##### キー設計
+
+JSON ファイルのエントリキー = **`title` の SHA-256 ハッシュ先頭 16 文字**:
+- 同じタイトルなら同じキー (冪等)
+- タイトル変更時は新キーになり、JSON に該当キーがなければ INSERT 時に embedding=NULL でスキップ (= 再生成漏れを警告ログで検知可能)
+
+##### JSON 構造例
 
 ```json
 {
   "knowledges": {
-    "<title-sha256-prefix>": [0.012, -0.453, ...]
+    "abc123def4567890": [0.012, -0.453, 0.781, ...]
   },
   "issues": {
-    "<title-sha256-prefix>": [0.234, 0.567, ...]
+    "def456abc7890123": [0.234, 0.567, -0.123, ...]
   },
   "retrospectives": {
-    "<conducted-date+project-name-sha256-prefix>": [-0.123, 0.456, ...]
+    "789abc123def4567": [-0.123, 0.456, 0.789, ...]
   }
 }
 ```
 
-key は **シードデータの安定識別子** (title 等の SHA-256 先頭 16 文字) を使う。
-これにより、シード内容を後から修正しても同じ key で対応する embedding を
-解決できる (修正が大きい場合は再生成が必要)。
+##### Voyage API コスト試算
 
-##### 既存 (本番に手動投入済) データの backfill
+```
+[シード生成]
+SEED_KNOWLEDGE (30 件) + SEED_ISSUES (10-15 件) + SEED_RETROSPECTIVES (5-7 件)
+≒ 50 件 × 平均 1500 token = 75,000 token
 
-シード新規投入分は seed スクリプトが自動で JSON から読み込んで適用するが、
-**既に本番に存在する `PowerPlatform とは` 等のユーザ追加分** に対しては:
+[既存 backfill (本番)]
+既存 Knowledge 60+ 件 + Project 数件 + Issues / Retros (テナント蓄積分)
+≒ 100 件 × 平均 1500 token = 150,000 token
 
-1. **オプション A**: 開発者が `pnpm seed:generate-embeddings --backfill-existing` で
-   全件の embedding を Voyage API 経由で生成して直接 DB に書き込む (本番 DB に対して実行、
-   一度きり、所要時間 数分、Voyage 月次無料枠 200M token 内に十分収まる)
-2. **オプション B**: 各データを手で 1 回開いて「保存」→ embedding 自動生成
+合計 ≒ 225,000 token (無料枠 200M token のうち 0.11%) → 実質コストゼロ
+```
 
-オプション A を推奨 (手作業ゼロ)。
+##### 想定外シナリオへの対応
+
+| 状況 | 対応 |
+|---|---|
+| seed-suggestion-embeddings.json に該当キーがない (= シード追記後に再生成漏れ) | INSERT 時に embedding=NULL で投入 + console.warn で警告。後追いで `pnpm seed:generate-embeddings` 実行で復旧 |
+| Voyage API キー未設定で `pnpm seed:generate-embeddings` 実行 | 明示的にエラー終了、適切なメッセージ表示 |
+| Voyage モデル変更 (例: voyage-4-lite → voyage-5-lite) | 開発者が `pnpm seed:generate-embeddings` を再実行 + 新 JSON をコミット (ベクトル次元が変わる場合は migration も必要だが本リリース範囲外) |
+| 本番 backfill が中断 (rate limit / ネットワーク障害) | スクリプトは冪等 (embedding=NULL の行のみ処理) のため再実行で続行可能 |
+
+##### 工数内訳
+
+- generate-seed-embeddings.ts 実装 + テスト: 0.3 日
+- seed-suggestion.ts の JSON 読込 + raw SQL embedding 書込: 0.2 日
+- `--backfill-existing` モード実装 (既存データ走査 + DB 直接書込): 0.1 日
+- 単体テスト追加 (JSON 不在時 / キー不在時のフォールバック / backfill モード): 0.1 日
+
+合計 **0.5 日強** (PR-X5 全体は元の 1 日 + 0.5 日 = **1.5 日**)。
 
 #### 5-8. 検証 (拡充)
 
@@ -495,7 +557,7 @@ PR-X3 と分担し、以下を **PR-X6 内で完了** させる:
 
 ### コード
 
-- [ ] PR-X5: シードナレッジ拡充 30 件 + サンプル課題 10-15 件 + サンプル振り返り 5-7 件 + 隠蔽機構 + 生成済 embedding 同梱 + 既存データ backfill
+- [ ] PR-X5: シードナレッジ拡充 30 件 + サンプル課題 10-15 件 + サンプル振り返り 5-7 件 + 隠蔽機構 + **事前生成 embedding 同梱 (seed-suggestion-embeddings.json + generate-seed-embeddings.ts) + 既存データ backfill**
 - [ ] PR-X6: 段階表示 (Tiered) UI + 閾値撤廃 + DTO に tier + feature flag で legacy ロールバック可能
 - [ ] PR-X1: schema migration + seed + 認可ヘルパ + 既存テスト維持
 - [ ] PR-X2: super_admin ダッシュボード 3 画面 + 認可境界 E2E
@@ -535,20 +597,20 @@ PR-X3 と分担し、以下を **PR-X6 内で完了** させる:
 ```
 本日 (2026-05-07) 着手:
   最優先トラック (提案機能):
-    1. PR-X5 (シードデータ拡充 + embedding backfill 1.5 日)
+    1. PR-X5 (シードデータ拡充 + 事前生成 embedding 同梱 + 既存データ backfill、1.5 日)
        完了見込: 2026-05-08 中
-    2. PR-X6 (段階表示 UI + 閾値撤廃 2-3 日)  ← PR-X5 完了後
+    2. PR-X6 (段階表示 UI + 閾値撤廃、2-3 日)  ← PR-X5 完了後
        完了見込: 2026-05-11 〜 12
 
   並行トラック (ロール再構築):
-    3. PR-X1 (super_admin schema + 認可 1-2 日)  ← PR-X5 と同時着手可能
+    3. PR-X1 (super_admin schema + 認可、1-2 日)  ← PR-X5 と同時着手可能
        完了見込: 2026-05-08 〜 09
-    4. PR-X2 (super_admin ダッシュボード 2-3 日)  ← PR-X1 完了後
-    5. PR-X4 (テナント管理者プラン変更 UI 2-3 日)  ← PR-X1 完了後
+    4. PR-X2 (super_admin ダッシュボード、2-3 日)  ← PR-X1 完了後
+    5. PR-X4 (テナント管理者プラン変更 UI、2-3 日)  ← PR-X1 完了後
        PR-X2 と PR-X4 は並行可
 
   最後:
-    6. PR-X3 (UI 文言 + ドキュメント 1 日)  ← 全 PR 完了後
+    6. PR-X3 (UI 文言 + ドキュメント、1 日)  ← 全 PR 完了後
        完了見込: 2026-05-17 〜 2026-05-20
 ```
 
@@ -557,6 +619,8 @@ PR-X3 と分担し、以下を **PR-X6 内で完了** させる:
 
 PR-X4 と PR-X5 を同時着手しないこと (PR-X4 は admin 認可ヘルパに依存)。
 PR-X1 と PR-X5 は依存ゼロで並行着手可能。
+
+PR-X5 の `pnpm seed:generate-embeddings` 実行は **開発者環境 (teppei さん側)** で `.env.local` に `VOYAGE_API_KEY` を設定して 1 回実行 → 生成された JSON を repo に commit する手順となる。本作業は PR-X5 内で自動化スクリプトを整備するのみで、生成は teppei さん側のアクション。
 
 ---
 
