@@ -58,7 +58,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const baseUrl = process.env.NEXTAUTH_URL || req.nextUrl.origin;
-    const { user: newUser } = await createUser(parsed.data, user.id, { baseUrl });
+    // P-2 (2026-05-08): tenantId を渡して Beginner プラン席数上限を service 層で enforce する
+    const { user: newUser } = await createUser(parsed.data, user.id, {
+      baseUrl,
+      tenantId: user.tenantId,
+    });
 
     await recordAuditLog({
       userId: user.id,
@@ -88,6 +92,19 @@ export async function POST(req: NextRequest) {
             },
           },
           { status: 409 },
+        );
+      }
+      if (e.message === 'SEAT_LIMIT_EXCEEDED') {
+        // P-2 (2026-05-08): Beginner プラン席数上限超過 → 400
+        const tAdmin = await getTranslations('admin.users');
+        return NextResponse.json(
+          {
+            error: {
+              code: 'SEAT_LIMIT_EXCEEDED',
+              message: tAdmin('seatLimitExceeded'),
+            },
+          },
+          { status: 400 },
         );
       }
       if (e.message === 'EMAIL_SEND_FAILED') {
