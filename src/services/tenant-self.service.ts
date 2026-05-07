@@ -1,0 +1,193 @@
+/**
+ * テナント自己管理サービス (PR-X4 / 2026-05-07)
+ *
+ * 役割:
+ *   テナント管理者 (admin role) が自テナントのプラン・予算上限を self-service で変更する。
+ *   呼出側で systemRole === 'admin' を確認する前提。
+ *
+ * プラン変更ルール (V1_FINAL_TASKS.md §PR-X4):
+ *   - アップグレード (Beginner → Expert / Pro、Expert → Pro): **即時反映**
+ *   - ダウングレード (Pro → Expert / Beginner、Expert → Beginner): **翌月適用**
+ *     (scheduledPlanChangeAt + scheduledNextPlan を設定、月初 cron で実反映)
+ *   - Beginner ダウングレード時: 席数 ≤ 5 でないと拒否 (UI で事前警告 + API でも防御)
+ *
+ * 関連:
+ *   - 計画: docs/roadmap/V1_FINAL_TASKS.md PR-X4
+ *   - 月初 cron: scheduled_plan_change_at <= today に対して plan を scheduledNextPlan に更新
+ */
+
+import { prisma } from '@/lib/db';
+import type { TenantPlan } from '@/lib/tenant';
+
+/** プランの強さ順序 (アップグレード判定用) */
+const PLAN_ORDER: Record<TenantPlan, number> = {
+  beginner: 0,
+  expert: 1,
+  pro: 2,
+};
+
+function isUpgrade(current: TenantPlan, next: TenantPlan): boolean {
+  return PLAN_ORDER[next] > PLAN_ORDER[current];
+}
+
+export type TenantSelfInfo = {
+  id: string;
+  tenantSeq: number | null;
+  name: string;
+  plan: TenantPlan;
+  monthlyBudgetCapJpy: number | null;
+  beginnerMaxSeats: number;
+  beginnerMonthlyCallLimit: number;
+  currentMonthApiCallCount: number;
+  currentMonthApiCostJpy: number;
+  scheduledPlanChangeAt: Date | null;
+  scheduledNextPlan: string | null;
+  activeUserCount: number;
+};
+
+/**
+ * 自テナント情報の取得 (テナント管理者画面用)。
+ */
+export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInfo | null> {
+  const t = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+  });
+  if (!t) return null;
+
+  const activeUserCount = await prisma.user.count({
+    where: { tenantId, isActive: true, deletedAt: null },
+  });
+
+  return {
+    id: t.id,
+    tenantSeq: t.tenantSeq,
+    name: t.name,
+    plan: t.plan as TenantPlan,
+    monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+    beginnerMaxSeats: t.beginnerMaxSeats,
+    beginnerMonthlyCallLimit: t.beginnerMonthlyCallLimit,
+    currentMonthApiCallCount: t.currentMonthApiCallCount,
+    currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+    scheduledPlanChangeAt: t.scheduledPlanChangeAt,
+    scheduledNextPlan: t.scheduledNextPlan,
+    activeUserCount,
+  };
+}
+
+export type UpdateTenantSelfInput = {
+  /** 変更先プラン (省略時は変更なし)。 */
+  plan?: TenantPlan;
+  /** 月次予算上限。null = 無制限、undefined = 変更なし */
+  monthlyBudgetCapJpy?: number | null;
+};
+
+export type UpdateTenantSelfResult =
+  | { ok: true; appliedImmediately: boolean; scheduledFor: Date | null }
+  | { ok: false; error: 'BEGINNER_REQUIRES_FEWER_SEATS' | 'INVALID_BUDGET' };
+
+/**
+ * 自テナントのプラン / 予算上限を更新する。
+ *
+ * - プラン アップグレード時: 即時反映 (plan を直接更新)
+ * - プラン ダウングレード時: scheduledPlanChangeAt + scheduledNextPlan を翌月 1 日に設定
+ * - Beginner ダウングレード時: 席数 ≤ 5 でなければエラー
+ * - 予算上限: 即時反映 (non-negative or null)
+ */
+export async function updateTenantSelf(
+  tenantId: string,
+  input: UpdateTenantSelfInput,
+): Promise<UpdateTenantSelfResult> {
+  // 入力バリデーション
+  if (
+    input.monthlyBudgetCapJpy !== undefined &&
+    input.monthlyBudgetCapJpy !== null &&
+    input.monthlyBudgetCapJpy < 0
+  ) {
+    return { ok: false, error: 'INVALID_BUDGET' };
+  }
+
+  const tenant = await prisma.tenant.findFirstOrThrow({
+    where: { id: tenantId, deletedAt: null },
+  });
+
+  // 予算上限のみの変更 (プランは変えない)
+  if (input.plan === undefined) {
+    if (input.monthlyBudgetCapJpy !== undefined) {
+      await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy },
+      });
+    }
+    return { ok: true, appliedImmediately: true, scheduledFor: null };
+  }
+
+  const currentPlan = tenant.plan as TenantPlan;
+  const nextPlan = input.plan;
+
+  // 同一プランへの変更はノーオペ (ただし予算上限は更新可能)
+  if (currentPlan === nextPlan) {
+    if (input.monthlyBudgetCapJpy !== undefined) {
+      await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy },
+      });
+    }
+    return { ok: true, appliedImmediately: true, scheduledFor: null };
+  }
+
+  if (isUpgrade(currentPlan, nextPlan)) {
+    // アップグレード: 即時反映 + 予約をクリア
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        plan: nextPlan,
+        scheduledPlanChangeAt: null,
+        scheduledNextPlan: null,
+        ...(input.monthlyBudgetCapJpy !== undefined
+          ? { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy }
+          : {}),
+      },
+    });
+    return { ok: true, appliedImmediately: true, scheduledFor: null };
+  }
+
+  // ダウングレード: Beginner 移行時の席数チェック
+  if (nextPlan === 'beginner') {
+    const activeUserCount = await prisma.user.count({
+      where: { tenantId, isActive: true, deletedAt: null },
+    });
+    if (activeUserCount > tenant.beginnerMaxSeats) {
+      return { ok: false, error: 'BEGINNER_REQUIRES_FEWER_SEATS' };
+    }
+  }
+
+  // 翌月 1 日 (UTC) に予約
+  const now = new Date();
+  const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      scheduledPlanChangeAt: nextMonthStart,
+      scheduledNextPlan: nextPlan,
+      ...(input.monthlyBudgetCapJpy !== undefined
+        ? { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy }
+        : {}),
+    },
+  });
+
+  return { ok: true, appliedImmediately: false, scheduledFor: nextMonthStart };
+}
+
+/**
+ * ダウングレード予約をキャンセルする。
+ */
+export async function cancelScheduledPlanChange(tenantId: string): Promise<void> {
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      scheduledPlanChangeAt: null,
+      scheduledNextPlan: null,
+    },
+  });
+}
