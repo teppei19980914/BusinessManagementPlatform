@@ -226,8 +226,14 @@ export async function listAllRisksForViewer(
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面の○○一覧から行う。
   // isAdmin は projectName / 担当者名のマスキング解除にのみ使う (フィルタには使わない)。
+  // PR-X5: サンプルプロジェクト (isSampleData=true) 配下のリスク/課題は横断ビューから除外。
+  //   提案エンジンは別経路で参照されるため、表示用ビューのみフィルタ。
   const risks = await prisma.riskIssue.findMany({
-    where: { deletedAt: null, visibility: 'public' },
+    where: {
+      deletedAt: null,
+      visibility: 'public',
+      project: { isSampleData: false },
+    },
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
@@ -362,7 +368,11 @@ export async function createRisk(
  * 等の列挙値はベクトル化に貢献しないため除外。result / lessonLearned は事後追記される
  * 性質のため、create 時点では空 → 別途 update 時に embedding 再生成される。
  */
-function composeRiskText(fields: {
+/**
+ * PR-X5 (2026-05-07): script (seed embedding 生成 / backfill) からも参照できるよう export 化。
+ *   service 本体での呼出も同関数を継続利用するため、関数 signature / 実装は無変更。
+ */
+export function composeRiskText(fields: {
   title: string;
   content: string;
   cause: string | null;

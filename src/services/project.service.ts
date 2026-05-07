@@ -127,7 +127,10 @@ export async function listProjects(
   const limit = Math.min(params.limit || 20, 100);
   const skip = (page - 1) * limit;
 
-  const where: Prisma.ProjectWhereInput = { deletedAt: null };
+  // PR-X5: シーディング用のサンプルプロジェクト (isSampleData=true) は一覧から除外。
+  //   提案エンジンは listProjects を使わず別経路 (suggestion.service.ts) で候補を取得するため、
+  //   ここでフィルタを掛けてもエンジン本体の動作には影響しない。
+  const where: Prisma.ProjectWhereInput = { deletedAt: null, isSampleData: false };
 
   // 一般ユーザは自分がメンバーのプロジェクトのみ
   if (systemRole !== 'admin') {
@@ -248,7 +251,10 @@ export async function createProject(
 
 export async function getProject(projectId: string): Promise<ProjectDTO | null> {
   const project = await prisma.project.findFirst({
-    where: { id: projectId, deletedAt: null },
+    // PR-X5: サンプルプロジェクト (isSampleData=true) は直接 URL でも取得不可 (404 化)。
+    //   admin が偶発的に URL を踏んでも詳細画面は出さない設計。
+    //   提案エンジンは別経路 (suggestion.service.ts) で候補に含める。
+    where: { id: projectId, deletedAt: null, isSampleData: false },
     include: { customer: { select: { name: true } } },
   });
   return project ? toProjectDTO(project) : null;
@@ -388,19 +394,33 @@ export async function updateProject(
  * 入力 text は purpose / background / scope を改行で結合した形にする。これは
  * Voyage embedding が比較的長文も扱えるため、3 軸を統合して 1 ベクトルで意味検索する設計。
  */
-async function generateAndPersistProjectEmbedding(
-  projectId: string,
-  tenantId: string,
-  userId: string,
-  fields: { purpose: string; background: string; scope: string },
-): Promise<void> {
-  const text = [
+/**
+ * PR-X5 (2026-05-07): script (seed embedding 生成 / backfill) からも参照できるよう
+ *   inline 化されていた text 組立を独立関数に切り出し + export。
+ *   service 本体の generateAndPersistProjectEmbedding はこの関数を呼び出すよう改修するが、
+ *   組立ロジック (purpose / background / scope を改行 2 つで結合) は無変更。
+ */
+export function composeProjectText(fields: {
+  purpose: string;
+  background: string;
+  scope: string;
+}): string {
+  return [
     fields.purpose.trim(),
     fields.background.trim(),
     fields.scope.trim(),
   ]
     .filter((s) => s.length > 0)
     .join('\n\n');
+}
+
+async function generateAndPersistProjectEmbedding(
+  projectId: string,
+  tenantId: string,
+  userId: string,
+  fields: { purpose: string; background: string; scope: string },
+): Promise<void> {
+  const text = composeProjectText(fields);
 
   if (text.length === 0) {
     // 全 text 空 (新規 + ユーザがいずれも空文字で送信) の場合は LLM 呼ばず終了

@@ -1,0 +1,15 @@
+{
+  "$schema": "./seed-suggestion-embeddings.schema.json",
+  "_meta": {
+    "description": "PR-X5 で導入された seed データ (Knowledge / Issue / Retrospective / Project) の事前生成 embedding。`pnpm seed:generate-embeddings` で開発者環境にて生成し、git に commit する。本番 seed 投入時に prisma/seed-suggestion.ts が読み込み、各行の content_embedding 列へ raw SQL で書込む。",
+    "generator": "scripts/generate-seed-embeddings.ts",
+    "model": "voyage-4-lite",
+    "dimensions": 1024,
+    "lastGeneratedAt": null,
+    "lastGeneratedCommitSha": null
+  },
+  "knowledges": {},
+  "issues": {},
+  "retrospectives": {},
+  "projects": {}
+}

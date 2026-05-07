@@ -93,8 +93,14 @@ export async function listAllRetrospectivesForViewer(
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面から行う。
   // PR #165: viewerIsCreator は project-list 側に移したので、本関数では viewerUserId を memberships 取得のみで使用。
+  // PR-X5: サンプルプロジェクト (isSampleData=true) 配下の振り返りは横断ビューから除外。
+  //   提案エンジンは別経路で参照されるため、表示用ビューのみフィルタ。
   const retros = await prisma.retrospective.findMany({
-    where: { deletedAt: null, visibility: 'public' },
+    where: {
+      deletedAt: null,
+      visibility: 'public',
+      project: { isSampleData: false },
+    },
     include: {
       project: { select: { id: true, name: true, deletedAt: true } },
     },
@@ -242,7 +248,11 @@ export async function createRetrospective(
  * 振り返りの主要な意味を担う text フィールドを合成。estimateGapFactors / scheduleGapFactors /
  * qualityIssues / riskResponseEvaluation は補足項目で省略 (signal/noise 比を最適化)。
  */
-function composeRetrospectiveText(fields: {
+/**
+ * PR-X5 (2026-05-07): script (seed embedding 生成 / backfill) からも参照できるよう export 化。
+ *   service 本体での呼出も同関数を継続利用するため、関数 signature / 実装は無変更。
+ */
+export function composeRetrospectiveText(fields: {
   planSummary: string;
   actualSummary: string;
   goodPoints: string;

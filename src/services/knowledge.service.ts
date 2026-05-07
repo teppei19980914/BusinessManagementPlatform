@@ -371,7 +371,11 @@ export async function createKnowledge(
  * 意味検索の質を高めるため、Knowledge の主要な意味を担う text フィールドを改行結合して
  * Voyage AI に渡す。null フィールドは除外。
  */
-function composeKnowledgeText(fields: {
+/**
+ * PR-X5 (2026-05-07): script (seed embedding 生成 / backfill) からも参照できるよう export 化。
+ *   service 本体での呼出も同関数を継続利用するため、関数 signature / 実装は無変更。
+ */
+export function composeKnowledgeText(fields: {
   title: string;
   background: string;
   content: string;
