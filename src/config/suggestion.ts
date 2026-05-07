@@ -31,11 +31,99 @@ export const SUGGESTION_TEXT_WEIGHT = 0.2;
  */
 export const SUGGESTION_EMBEDDING_WEIGHT = 0.5;
 
-/** 候補を最終的に残す閾値 (ノイズカット)。ユーザが見るリストに意味のない 0 付近を並べない。 */
-export const SUGGESTION_SCORE_THRESHOLD = 0.05;
+/**
+ * 候補を最終的に残す閾値。
+ *
+ * **PR-X6 (2026-05-07) で変更**: 0.05 → 0.01。
+ *   従来は「明らかに関連するもののみ提案」する高精度・低再現率設計だったが、
+ *   サービスの存在意義 (「人間が探さずに済む」「取りこぼし防止」) と矛盾するため、
+ *   閾値を実質ゼロまで下げ、**全網羅 + 段階表示** の高再現率設計に変更。
+ *
+ *   弱関連 (weak tier) は UI 上では折りたたみ表示で情報過多を回避する。
+ */
+export const SUGGESTION_SCORE_THRESHOLD = 0.01;
 
-/** 各カテゴリの最大件数。提案量が多すぎて読まれないのを防ぐ。 */
-export const SUGGESTION_DEFAULT_LIMIT = 10;
+/**
+ * 各カテゴリの最大件数。
+ *
+ * **PR-X6 (2026-05-07) で変更**: 10 → 50。
+ *   段階表示で可読性を確保しつつ、網羅性を最大化するため上限を緩和。
+ *   weak tier は折りたたみ表示でフロント側の情報過多を防ぐ。
+ */
+export const SUGGESTION_DEFAULT_LIMIT = 50;
+
+/**
+ * 段階表示の閾値: 強く関連 (strong tier) のしきい。
+ * これ以上のスコアは UI で「強く関連」セクションに表示される。
+ * PR-X6 (2026-05-07) で導入。
+ */
+export const SUGGESTION_TIER_STRONG_THRESHOLD = 0.3;
+
+/**
+ * 段階表示の閾値: 関連の可能性 (medium tier) のしきい。
+ * これ以上 < SUGGESTION_TIER_STRONG_THRESHOLD は「関連の可能性」セクション。
+ * これ未満は「弱い関連性」セクションで折りたたみデフォルト。
+ * PR-X6 (2026-05-07) で導入。
+ */
+export const SUGGESTION_TIER_MEDIUM_THRESHOLD = 0.1;
+
+/**
+ * 最低件数保証 (PR-X6 / 2026-05-07 ユーザ要望対応)。
+ *
+ * シードデータと完全に異なる業務領域 (例: 養蜂・葬儀・林業) のプロジェクトに対しても、
+ * **必ずこの件数の候補を返す** ための保証ロジック。閾値以上の候補が本数値未満の場合、
+ * 閾値を無視してスコア降順 Top N (= この件数) を返す。
+ *
+ * ユーザ要望 (2026-05-07): 「初めてのユーザが 1 件目にどんなプロジェクトを登録しても
+ * 必ず hit する」「提案件数が 0 件とならないように考慮」。
+ *
+ * 動作:
+ *   - 閾値以上の候補が本数値以上なら通常通り (フィルタ + ソート)
+ *   - 閾値以上の候補が本数値未満なら、全候補からスコア降順 Top N を返す
+ *   - 候補総数が本数値未満なら全件返す
+ *
+ * 設計判断: 5 件 (UI 上で 1 画面で読める範囲、シードが豊富 = 必ず 5 件は存在する前提)。
+ */
+export const SUGGESTION_MINIMUM_GUARANTEED_COUNT = 5;
+
+/**
+ * 提案候補の段階分類。
+ * - 'strong': 強く関連 (score >= SUGGESTION_TIER_STRONG_THRESHOLD)
+ * - 'medium': 関連の可能性 (SUGGESTION_TIER_MEDIUM_THRESHOLD <= score < strong)
+ * - 'weak'  : 弱い関連性 (score < SUGGESTION_TIER_MEDIUM_THRESHOLD)
+ */
+export type SuggestionTier = 'strong' | 'medium' | 'weak';
+
+/**
+ * スコアから tier を計算する。PR-X6 で導入。
+ */
+export function classifyTier(score: number): SuggestionTier {
+  if (score >= SUGGESTION_TIER_STRONG_THRESHOLD) return 'strong';
+  if (score >= SUGGESTION_TIER_MEDIUM_THRESHOLD) return 'medium';
+  return 'weak';
+}
+
+/**
+ * 候補リストに最低件数保証を適用する (PR-X6)。
+ *
+ * @param candidates 全候補 (スコア降順を想定)
+ * @param threshold 閾値 (これ以上のスコアを「正規候補」と判定)
+ * @param minimum 最低保証件数 (= SUGGESTION_MINIMUM_GUARANTEED_COUNT)
+ * @returns 表示する候補の配列
+ */
+export function applyMinimumGuarantee<T extends { score: number }>(
+  candidates: ReadonlyArray<T>,
+  threshold: number = SUGGESTION_SCORE_THRESHOLD,
+  minimum: number = SUGGESTION_MINIMUM_GUARANTEED_COUNT,
+): T[] {
+  const aboveThreshold = candidates.filter((c) => c.score >= threshold);
+  // 閾値以上の候補が最低件数を満たすなら通常通り
+  if (aboveThreshold.length >= minimum) return aboveThreshold;
+  // 候補総数が最低件数未満なら全件
+  if (candidates.length <= minimum) return [...candidates];
+  // 閾値以上が不足する場合、全候補のスコア降順 Top minimum を返す
+  return [...candidates].sort((a, b) => b.score - a.score).slice(0, minimum);
+}
 
 /**
  * 提案機能の **緊急停止フラグ** (PR #8 / T-03 リリース準備)。

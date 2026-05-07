@@ -40,12 +40,19 @@ import {
   SUGGESTION_SCORE_THRESHOLD as SCORE_THRESHOLD,
   SUGGESTION_DEFAULT_LIMIT as DEFAULT_LIMIT,
 } from '@/config';
-import { isSuggestionEngineDisabled } from '@/config/suggestion';
+import {
+  isSuggestionEngineDisabled,
+  classifyTier,
+  applyMinimumGuarantee,
+  type SuggestionTier,
+} from '@/config/suggestion';
 
 /**
  * 類似度スコア (0〜1 + 内訳) 付きの提案エントリ。
  * UI では `score` 降順で表示し、`tagScore` / `textScore` / `embeddingScore` を
  * tooltip 等で理由表示できる。embedding が未生成の候補は embeddingScore=0。
+ *
+ * PR-X6 (2026-05-07): `tier` フィールドを追加。UI の段階表示 (strong / medium / weak) で利用。
  */
 export type SuggestionScore = {
   score: number;
@@ -53,6 +60,8 @@ export type SuggestionScore = {
   textScore: number;
   /** PR #5-b (T-03 Phase 2): embedding 意味類似度。0=直交 / 1=完全一致。 */
   embeddingScore: number;
+  /** PR-X6 (2026-05-07): スコアから自動分類された tier。UI の段階表示で利用。 */
+  tier: SuggestionTier;
 };
 
 export type KnowledgeSuggestion = SuggestionScore & {
@@ -304,6 +313,7 @@ export async function suggestForProject(
       tagScore,
       textScore,
       embeddingScore,
+      tier: classifyTier(score),
     };
   });
 
@@ -379,6 +389,7 @@ export async function suggestForProject(
       tagScore,
       textScore,
       embeddingScore,
+      tier: classifyTier(score),
     };
   });
 
@@ -452,22 +463,34 @@ export async function suggestForProject(
       tagScore,
       textScore,
       embeddingScore,
+      tier: classifyTier(score),
     };
   });
 
-  // 閾値で足切り + スコア降順 + 件数上限
-  const knowledge = knowledgeScored
-    .filter((k) => k.score >= SCORE_THRESHOLD)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-  const pastIssues = issueScored
-    .filter((i) => i.score >= SCORE_THRESHOLD)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-  const retrospectives = retroScored
-    .filter((r) => r.score >= SCORE_THRESHOLD)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+  // PR-X6 (2026-05-07): スコア降順 + 件数保証 + 件数上限。
+  //   1. スコア降順で全候補をソート
+  //   2. applyMinimumGuarantee で「閾値以上の候補が最低件数未満なら、全候補から Top N を返す」
+  //      → サンプルと完全に異なる業務領域でも 0 件は構造的に発生しない
+  //   3. 件数上限で切り詰め
+  //
+  //   tier (strong / medium / weak) は各候補生成時 (map 内) で classifyTier(score) により
+  //   既に付与済み。スコア順序と tier 整合性は applyMinimumGuarantee 後も維持される
+  //   (tier は score 由来のため、再ソートしてもスコアと矛盾しない)。
+  const sortByScore = <T extends { score: number }>(arr: T[]): T[] =>
+    [...arr].sort((a, b) => b.score - a.score);
+
+  const knowledge = applyMinimumGuarantee(
+    sortByScore(knowledgeScored),
+    SCORE_THRESHOLD,
+  ).slice(0, limit);
+  const pastIssues = applyMinimumGuarantee(
+    sortByScore(issueScored),
+    SCORE_THRESHOLD,
+  ).slice(0, limit);
+  const retrospectives = applyMinimumGuarantee(
+    sortByScore(retroScored),
+    SCORE_THRESHOLD,
+  ).slice(0, limit);
 
   return { knowledge, pastIssues, retrospectives };
 }
@@ -597,6 +620,7 @@ export async function suggestRelatedIssuesForText(
       tagScore: 0,
       textScore,
       embeddingScore: 0,
+      tier: classifyTier(textScore),
     };
   });
 

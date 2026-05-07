@@ -118,7 +118,11 @@ describe('suggestForProject', () => {
     expect(r.pastIssues[0].sourceProjectName).toBe(null);
   });
 
-  it('score が閾値未満なら除外される', async () => {
+  it('PR-X6: score が閾値未満でも候補が最低件数未満なら最低件数保証で表示される (0 件回避)', async () => {
+    // PR-X6 (2026-05-07) ユーザ要望対応:
+    //   候補総数が SUGGESTION_MINIMUM_GUARANTEED_COUNT (=5) 未満かつ
+    //   閾値以上が 1 件もない場合、それでも候補が「全件分」返る (0 件にならない構造保証)。
+    //   候補総数が最低件数未満の場合は「全件返す」ため、ここでは 1 件返ることを期待。
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       id: 'p-1',
       purpose: 'x',
@@ -146,7 +150,10 @@ describe('suggestForProject', () => {
     ] as never);
 
     const r = await suggestForProject('p-1');
-    expect(r.knowledge).toHaveLength(0);
+    // 候補総数 1 < 最低件数 5 なので全件 (1 件) 返る
+    expect(r.knowledge).toHaveLength(1);
+    // tier は weak (score < SUGGESTION_TIER_MEDIUM_THRESHOLD=0.1)
+    expect(r.knowledge[0].tier).toBe('weak');
   });
 
   // PR #140 後 改修: Issue / Retrospective が親 Project のタグを proxy として使うことの確認
