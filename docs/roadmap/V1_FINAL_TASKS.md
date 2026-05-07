@@ -673,6 +673,165 @@ PR-X5 の `pnpm seed:generate-embeddings` 実行は **開発者環境 (teppei �
 
 ---
 
+## 推奨される今後の優先順位 (V1 リリース後 / 2026-05-08 以降)
+
+PR-X1〜X6 マージ + 本番動作確認後、以下の改善を優先順位に従って順次実施する。各項目はソースコードフルスキャン (2026-05-07) で判明した「実装ギャップ」と「ユーザフィードバック」(2026-05-07 動作確認) に基づく。
+
+### 🔴 高優先度 (V1 直後に着手すべき)
+
+#### P-1: 段階表示のパーセンタイル化 (推定 0.5-1 日)
+
+**背景**: 現状の `SUGGESTION_TIER_STRONG_THRESHOLD = 0.3` (絶対閾値) では、シード豊富なシナリオで全候補が `42-57%` レンジに集中して **すべて「強く関連」** に分類される。視覚的差別化が機能せず、UX 上の優先順位付けの価値が損なわれている (2026-05-07 ユーザ実機確認で発覚)。
+
+**仕様 (ユーザ要望ベース、2026-05-07)**:
+- 全候補をスコア降順ソート
+- **上位 30% → strong (強く推奨)**
+- **中間 50% → medium (推奨)**
+- **下位 20% → weak (参考)** ※ ラベルは「非推奨」より「参考」を推奨 (全件表示哲学との整合)
+
+**設計上の留意点**:
+1. **絶対閾値とのハイブリッド**: Top 30% でもスコアが極端に低い (例: 5% 未満) 候補は誤誘導防止のため weak セクション扱いに降格。例:
+   ```typescript
+   const ABSOLUTE_FLOOR_FOR_STRONG = 0.05;
+   if (percentileRank < 0.3 && score >= ABSOLUTE_FLOOR_FOR_STRONG) tier = 'strong';
+   ```
+2. **少件数フォールバック**: 候補 5 件以下 (= 最低件数保証ロジック起動時) はパーセンタイル分割が無意味になるため、絶対閾値方式 (現行) にフォールバックする
+3. **件数の四捨五入**: 30% / 50% / 20% は `Math.ceil(n * 0.3)`、`Math.ceil(n * 0.5)`、残り の順で確実に下位を最後に
+4. **ラベル変更を併せて検討**: 「強く関連 / 関連の可能性 / 弱い関連性」 → 「強く推奨 / 推奨 / 参考」(意思決定を促す表現に)
+
+**実装箇所**:
+- [`src/config/suggestion.ts`](../../src/config/suggestion.ts): `classifyTier` を引数 `(score, percentileRank, totalCount)` に拡張
+- [`src/services/suggestion.service.ts`](../../src/services/suggestion.service.ts): tier 計算前に全候補のソート + percentile 計算
+- [`src/components/.../suggestions-panel.tsx`](../../src/app/(dashboard)/projects/%5BprojectId%5D/suggestions/suggestions-panel.tsx): ラベル変更 (i18n 対応)
+- テスト: `src/config/suggestion.test.ts` に percentile-based のテストケース追加
+
+#### P-2: Beginner プラン席数上限 (= 5 席) の API 層 enforce (推定 0.5 日)
+
+**背景**: ソースコードフルスキャン (2026-05-07) で発覚。DB 列 `Tenant.beginnerMaxSeats` は定義済だが、ユーザ招待時の API (`/api/admin/users` POST 等) で **「現在席数 + 1 ≤ beginnerMaxSeats かどうか」のチェックロジックが見つからない**。
+
+PR-X4 の `tenant-self.service.ts` ではダウングレード時の席数チェックのみ実装され、招待時 (= ユーザ作成時) の上限チェックは未実装。Beginner プラン契約テナントで 6 人目を招待すると拒否されない可能性あり (= 課金保護不全)。
+
+**仕様**:
+- POST `/api/admin/users` の handler で `getTenantSelfInfo()` から plan + activeUserCount + beginnerMaxSeats を取得
+- `plan === 'beginner' && activeUserCount + 1 > beginnerMaxSeats` なら 400 エラー (`SEAT_LIMIT_EXCEEDED`)
+- UI 側でも事前警告 (招待ボタン disabled + ツールチップ)
+
+**実装箇所**:
+- [`src/app/api/admin/users/route.ts`](../../src/app/api/admin/users/route.ts): POST handler 拡張
+- [`src/app/(dashboard)/admin/users/users-client.tsx`](../../src/app/(dashboard)/admin/users/users-client.tsx): 「新規ユーザ登録」ボタンの disabled 制御
+- 単体テスト追加 (Beginner で 5 席埋まっている時の招待拒否)
+
+### 🟡 中優先度 (リリース後 1-2 ヶ月以内、Phase 2)
+
+#### P-3: 提案結果の "人間ライクな説明文" 生成 (Phase 3、推定 2-3 日)
+
+**背景**: V1 時点で **Pro プラン (¥30/call) の差別化機能はほぼゼロ** (自動タグ抽出での Sonnet 利用のみ)。提案体験そのものは 3 プラン共通のため、Pro プラン契約者が高単価を支払う理由が顧客視点で不明瞭。
+
+**仕様**:
+- 提案結果の各候補 (knowledge / pastIssue / retrospective) に対して「なぜこのプロジェクトに関連するのか」の自然言語説明文を生成
+- プラン別モデル分岐:
+  - **Pro**: Claude Sonnet (`claude-sonnet-4-6`、高品質)
+  - **Expert / Beginner**: Claude Haiku (`claude-haiku-4-5`、低コスト)
+- 説明文は提案画面の各候補にツールチップ or 展開表示
+- `withMeteredLLM` 経由で課金 + rate limit 統合
+
+**実装イメージ**:
+```typescript
+// src/services/suggestion.service.ts に追加
+async function explainSuggestion(
+  candidate: KnowledgeSuggestion,
+  ctx: ProjectContext,
+  tenantId: string,
+  userId: string,
+): Promise<string> {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  const model = resolveModelForPlan(tenant.plan as TenantPlan);
+  return await withMeteredLLM(
+    { tenantId, userId, featureUnit: 'suggestion-explanation' },
+    async ({ requestId }) => {
+      const result = await anthropicComplete({
+        model,
+        prompt: `プロジェクト「${ctx.name}」(${ctx.purpose}) に対し、
+                 過去ナレッジ「${candidate.title}」が関連する理由を 100 字以内で説明:`,
+      });
+      return { result: result.text, usage: { input: result.inputTokens, output: result.outputTokens }, requestId };
+    },
+  );
+}
+```
+
+**実装箇所**:
+- [`src/services/suggestion.service.ts`](../../src/services/suggestion.service.ts): `explainSuggestion()` 追加
+- [`src/lib/llm/anthropic-client.ts`](../../src/lib/llm/anthropic-client.ts) (新規 or 既存): Claude API client
+- [`src/components/.../suggestions-panel.tsx`](../../src/app/(dashboard)/projects/%5BprojectId%5D/suggestions/suggestions-panel.tsx): ツールチップ or 展開 UI
+
+#### P-4: 提案結果のリランキング (Phase 3、推定 1-2 日)
+
+**背景**: 現状の embedding 上位 N 件は「意味的に近い」順だが、「**業務文脈で本当に有用か**」の判定は弱い。LLM (Sonnet) で上位 10-20 件を再評価することで精度を上げられる。
+
+**仕様**:
+- embedding + タグ + pg_trgm の 3 軸スコアで上位 20 件を取得
+- LLM に「このプロジェクト概要に対し、最も有用な順に並べ替えてください」とリストを渡す
+- LLM の判定でリオーダー → ユーザに表示
+
+**実装箇所**:
+- [`src/services/suggestion.service.ts`](../../src/services/suggestion.service.ts): `suggestForProject()` に rerank step 追加 (オプション)
+
+### 🟢 低優先度 (リリース後 3 ヶ月以降、運用負荷ベースで判断)
+
+#### P-5: 月次運用ダッシュボードの自動化 (推定 2-3 日)
+
+**背景**: 現状、月末日に手動で画面確認 + Excel 転記が必要。テナント数が 5-10 を超えると工数が爆発する。
+
+**仕様**:
+- 月次使用量の **CSV エクスポート** (テナント別 / 全体合計)
+- **過去 N ヶ月の使用量履歴** をグラフ表示
+- **Voyage / Anthropic 月次費用** をシステム管理者ダッシュボードで一元表示 (ベンダー API 連携)
+- **Supabase DB 容量モニタ** (Supabase API 連携)
+
+**実装箇所**:
+- [`src/services/super-admin.service.ts`](../../src/services/super-admin.service.ts): 履歴集計関数追加
+- 新規月次集計テーブル `tenant_monthly_usage_history` を migration で追加
+- [`src/app/(dashboard)/admin/super/usage/page.tsx`](../../src/app/(dashboard)/admin/super/usage/page.tsx): グラフ + CSV ダウンロード追加
+
+#### P-6: テナント別 API 呼出ログの可視化 + 最終ログイン日時 (推定 1-2 日)
+
+**背景**: 休眠テナント判定が「API 呼出数 = 0」のみで簡易すぎる。最終ログイン日時の追加で精度向上。
+
+**仕様**:
+- `User.lastLoginAt` (既存) を集計してテナント詳細画面に表示
+- 90 日連続休眠テナントは super_admin ダッシュボードで警告表示
+
+#### P-7: 請求書 PDF 自動生成 (推定 2-3 日)
+
+**背景**: テナント数が 20+ になったら請求書手作成が破綻する。
+
+**仕様**:
+- 月次クローズ後、各テナントへの請求金額を自動計算
+- PDF 生成 (jsPDF / Puppeteer 等) → メール送付 or ダウンロード提供
+
+### 着手順序の推奨
+
+```
+[2026-05-08 V1 リリース後着手]
+   ↓
+P-1 段階表示パーセンタイル化 (0.5-1 日) ← UX 改善、最優先
+   ↓
+P-2 Beginner 席数 enforce (0.5 日)        ← 課金保護、最優先
+   ↓
+P-3 提案説明文生成 (Phase 3、2-3 日)      ← Pro プラン差別化
+   ↓
+P-4 提案リランキング (Phase 3、1-2 日)    ← 精度向上、Pro 強化
+   ↓
+P-5 月次運用ダッシュボード自動化 (2-3 日) ← テナント増加に備えて
+   ↓
+P-6/P-7 (テナント数次第)
+```
+
+合計工数: **6-12 日** (P-1 + P-2 即座、P-3〜P-7 は需要ベースで段階的)
+
+---
+
 ## 関連ドキュメント
 
 | ファイル | 役割 |
