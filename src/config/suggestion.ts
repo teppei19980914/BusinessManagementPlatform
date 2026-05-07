@@ -95,12 +95,102 @@ export const SUGGESTION_MINIMUM_GUARANTEED_COUNT = 5;
 export type SuggestionTier = 'strong' | 'medium' | 'weak';
 
 /**
- * スコアから tier を計算する。PR-X6 で導入。
+ * スコアから tier を計算する (絶対閾値方式)。PR-X6 で導入。
+ *
+ * **P-1 (2026-05-08) 以降の使い分け**:
+ *   - 候補件数が `SUGGESTION_TIER_PERCENTILE_FALLBACK_THRESHOLD` (= 5) 以下の少件数時の
+ *     フォールバックとして残る。通常パスは `assignPercentileTiers()` を使う。
+ *   - inline 軽量サジェスト (`suggestRelatedIssuesForText` 等) のように
+ *     最大 5 件しか返さない経路でも引き続き使用される。
  */
 export function classifyTier(score: number): SuggestionTier {
   if (score >= SUGGESTION_TIER_STRONG_THRESHOLD) return 'strong';
   if (score >= SUGGESTION_TIER_MEDIUM_THRESHOLD) return 'medium';
   return 'weak';
+}
+
+/**
+ * パーセンタイル分類の上位比率 (strong tier 占有割合)。
+ * P-1 (2026-05-08): 全候補のスコア降順上位 30% を strong とする。
+ */
+export const SUGGESTION_TIER_PERCENTILE_STRONG_RATIO = 0.3;
+
+/**
+ * パーセンタイル分類の中段比率 (medium tier 占有割合、strong の次)。
+ * P-1 (2026-05-08): strong に続く 50% を medium、残り 20% を weak とする。
+ */
+export const SUGGESTION_TIER_PERCENTILE_MEDIUM_RATIO = 0.5;
+
+/**
+ * パーセンタイル分類の絶対下限 (誤誘導防止)。
+ * P-1 (2026-05-08): 上位 30% に入っていてもスコアがこの値未満なら strong に昇格させない
+ * (= medium に降格)。「全候補が低スコアでも上位は強く推奨と表示してしまう」事故を防ぐ。
+ */
+export const SUGGESTION_TIER_ABSOLUTE_FLOOR_FOR_STRONG = 0.05;
+
+/**
+ * パーセンタイル分類のフォールバック件数閾値。
+ * P-1 (2026-05-08): 候補件数がこの値以下の場合、パーセンタイル分類は統計的に意味を持たない
+ * ため、絶対閾値方式 (`classifyTier`) にフォールバックする。
+ */
+export const SUGGESTION_TIER_PERCENTILE_FALLBACK_THRESHOLD = 5;
+
+/**
+ * パーセンタイルで tier を割り当てる (P-1 / 2026-05-08)。
+ *
+ * **背景** (V1_FINAL_TASKS.md P-1):
+ *   絶対閾値方式 (`classifyTier`) は全候補が高スコア帯に集中する状況で
+ *   「全件 strong」になり、ユーザに段階差を提示できなくなる問題があった。
+ *   パーセンタイル方式に切り替え、相対的な「上位/中段/下段」を視覚化する。
+ *
+ * **アルゴリズム**:
+ *   - 候補 0 件: 空配列
+ *   - 候補 ≤ `SUGGESTION_TIER_PERCENTILE_FALLBACK_THRESHOLD` (= 5) 件: 絶対閾値方式に
+ *     フォールバック (= `classifyTier`)。少件数ではパーセンタイルが意味をなさないため
+ *   - それ以外: スコア降順ソート後、
+ *     - 先頭 `Math.ceil(n * 0.3)` 件 → strong (ただし score >= 0.05 を満たす場合のみ。
+ *       満たさない場合は medium に降格 = ABSOLUTE_FLOOR_FOR_STRONG ハイブリッド)
+ *     - 続く `Math.ceil(n * 0.5)` 件 → medium
+ *     - 残り → weak
+ *
+ * **入力**: 同種の提案候補配列 (Knowledge / Issue / Retrospective のいずれか単一カテゴリ)。
+ *   呼出側はカテゴリごとに個別に呼ぶこと (カテゴリ横断でパーセンタイルを計算しない)。
+ *
+ * **出力**: 入力と同じ件数の新しい配列。tier フィールドのみ上書き。
+ *   並び順はスコア降順で正規化される (UI は「上から順に強い」を期待)。
+ */
+export function assignPercentileTiers<T extends { score: number; tier: SuggestionTier }>(
+  items: ReadonlyArray<T>,
+): T[] {
+  if (items.length === 0) return [];
+
+  // 少件数: 絶対閾値方式にフォールバック (パーセンタイルは統計的に意味を持たない)
+  if (items.length <= SUGGESTION_TIER_PERCENTILE_FALLBACK_THRESHOLD) {
+    return [...items]
+      .sort((a, b) => b.score - a.score)
+      .map((it) => ({ ...it, tier: classifyTier(it.score) }));
+  }
+
+  const sorted = [...items].sort((a, b) => b.score - a.score);
+  const n = sorted.length;
+  const strongCount = Math.min(Math.ceil(n * SUGGESTION_TIER_PERCENTILE_STRONG_RATIO), n);
+  const mediumCount = Math.min(
+    Math.ceil(n * SUGGESTION_TIER_PERCENTILE_MEDIUM_RATIO),
+    n - strongCount,
+  );
+
+  return sorted.map((it, i) => {
+    let tier: SuggestionTier;
+    if (i < strongCount && it.score >= SUGGESTION_TIER_ABSOLUTE_FLOOR_FOR_STRONG) {
+      tier = 'strong';
+    } else if (i < strongCount + mediumCount) {
+      // 上位 30% に入っていても score < ABSOLUTE_FLOOR ならここに降格
+      tier = 'medium';
+    } else {
+      tier = 'weak';
+    }
+    return { ...it, tier };
+  });
 }
 
 /**
