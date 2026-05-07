@@ -56,60 +56,63 @@ async function main() {
   const prisma = new PrismaClient({ adapter });
 
   try {
-    // 冪等性: 既存ユーザがあればスキップ
+    // 冪等性: 既存の初期管理者ユーザがあれば作成をスキップ (リターンはしない)
+    //   PR-X1 (2026-05-07): 管理テナント + super_admin の seed は **既存初期管理者の有無に関わらず実行**。
+    //   旧実装では `if (existing) return;` で早期 return していたため、初期 admin 投入済の本番で
+    //   2 回目以降の seed が super_admin を作成しないバグがあった。
     const existing = await prisma.user.findFirst({
       where: { email, deletedAt: null },
     });
 
     if (existing) {
-      console.log(`スキップ: ${email} は既に登録済みです`);
-      return;
-    }
+      console.log(`スキップ: ${email} は既に登録済みです (初期管理者作成は飛ばします)`);
+    } else {
+      // パスワードハッシュ化
+      const passwordHash = await hash(password, BCRYPT_COST);
 
-    // パスワードハッシュ化
-    const passwordHash = await hash(password, BCRYPT_COST);
+      // リカバリーコード生成
+      const recoveryCodes: string[] = [];
+      for (let i = 0; i < RECOVERY_CODE_COUNT; i++) {
+        recoveryCodes.push(generateRecoveryCode());
+      }
 
-    // リカバリーコード生成
-    const recoveryCodes: string[] = [];
-    for (let i = 0; i < RECOVERY_CODE_COUNT; i++) {
-      recoveryCodes.push(generateRecoveryCode());
-    }
-
-    // ユーザ作成 + リカバリーコード保存
-    const user = await prisma.user.create({
-      data: {
-        name: '管理者',
-        email,
-        passwordHash,
-        systemRole: 'admin',
-        isActive: true,
-        forcePasswordChange: true,
-        recoveryCodes: {
-          create: await Promise.all(
-            recoveryCodes.map(async (code) => ({
-              codeHash: await hash(code, BCRYPT_COST),
-            })),
-          ),
+      // ユーザ作成 + リカバリーコード保存
+      const user = await prisma.user.create({
+        data: {
+          name: '管理者',
+          email,
+          passwordHash,
+          systemRole: 'admin',
+          isActive: true,
+          forcePasswordChange: true,
+          recoveryCodes: {
+            create: await Promise.all(
+              recoveryCodes.map(async (code) => ({
+                codeHash: await hash(code, BCRYPT_COST),
+              })),
+            ),
+          },
         },
-      },
-    });
+      });
 
-    console.log('');
-    console.log('=== 初期管理者アカウント作成 ===');
-    console.log(`メール:           ${user.email}`);
-    console.log('初回ログイン後にパスワード変更が強制されます');
-    console.log('');
-    console.log('リカバリーコード:');
-    recoveryCodes.forEach((code, i) => {
-      console.log(`  ${String(i + 1).padStart(2, ' ')}. ${code}`);
-    });
-    console.log('');
-    console.log('このリカバリーコードを安全な場所に保管してください。');
-    console.log('再表示はできません。');
-    console.log('================================');
-    console.log('');
+      console.log('');
+      console.log('=== 初期管理者アカウント作成 ===');
+      console.log(`メール:           ${user.email}`);
+      console.log('初回ログイン後にパスワード変更が強制されます');
+      console.log('');
+      console.log('リカバリーコード:');
+      recoveryCodes.forEach((code, i) => {
+        console.log(`  ${String(i + 1).padStart(2, ' ')}. ${code}`);
+      });
+      console.log('');
+      console.log('このリカバリーコードを安全な場所に保管してください。');
+      console.log('再表示はできません。');
+      console.log('================================');
+      console.log('');
+    }
 
-    // PR-X1 (2026-05-07): 管理テナント + super_admin user の seed (env 変数が揃っていれば作成)
+    // PR-X1 (2026-05-07): 管理テナント + super_admin user の seed (env 変数が揃っていれば作成)。
+    //   既存初期管理者がいる場合 (本番の通常状態) でも必ず実行される。
     await seedManagementTenantAndSuperAdmin(prisma);
   } finally {
     await prisma.$disconnect();
