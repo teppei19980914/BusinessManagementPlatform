@@ -55,6 +55,13 @@
 - [ ] `/admin/role-changes` — skip: 権限変更履歴、read-only で優先度低
 - [x] `/customers` — e2e/specs/09-customers.spec.ts (PR #111-2 / admin 専用画面の新規登録 + 一覧削除)。視覚回帰は並列テストで tbody 行数が変動するため対象外 (LESSONS §4.15 / §4.31 / settings-themes でテーマ回帰はカバー)
 - [x] `/customers/[customerId]` — e2e/specs/09-customers.spec.ts (PR #111-2 / 詳細画面編集 + active Project 紐付きカスケード削除) + e2e/visual/customers-screens.spec.ts (PR #111-2 / light テーマ詳細、単独スコープで決定化)
+- [ ] `/settings/tenant` — skip: PR-X4 (テナント管理者プラン変更 UI、admin 限定)。CRUD 単体テストは src/services/tenant-self.service.test.ts で対応 (E2E は V1.x 多テナント対応時に追加検討)
+
+### super_admin 専用 (PR-X2 / 2026-05-07)
+- [ ] `/admin/super` — skip: PR-X2 (super_admin ダッシュボードサマリ、運営者専用 read-only)。E2E は V1 後の Phase 2 で導入検討
+- [ ] `/admin/super/tenants` — skip: PR-X2 (全テナント一覧、運営者専用 read-only)
+- [ ] `/admin/super/tenants/[id]` — skip: PR-X2 (テナント詳細、運営者専用 read-only)
+- [ ] `/admin/super/usage` — skip: PR-X2 (使用量サマリ、運営者専用 read-only)
 
 ### その他
 - [ ] `/` (ルート) — skip: プロジェクト一覧へのリダイレクト、PR #B の /projects で間接カバー
@@ -154,6 +161,7 @@
 - [ ] `/api/admin/users/lock-inactive` — skip: 時間経過 (30 日以上) が必要、手動テスト (旧 `/api/admin/users/cleanup-inactive`、feat/account-lock で改名 + 論理削除→ロック挙動変更)
 - [ ] `/api/admin/audit-logs` — skip: read-only
 - [ ] `/api/admin/role-change-logs` — skip: read-only
+- [ ] `/api/tenants/me` — skip: PR-X4 (テナント管理者プラン変更 API、admin 限定 GET/PATCH/DELETE)。core ロジック (アップグレード即時 / ダウングレード翌月予約 / Beginner 席数チェック / 予算上限更新) は src/services/tenant-self.service.ts に集約され、単体テストは PR-X4 のフォローアップで追加予定。E2E は V1.x 多テナント対応時に検討
 
 ### その他
 - [x] `GET /api/health` — e2e/specs/00-smoke.spec.ts (副次的に起動確認)
