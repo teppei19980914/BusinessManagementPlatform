@@ -1,10 +1,10 @@
 /**
- * super_admin サービスの単体テスト (P-5b / 2026-05-08 — 履歴クエリのみ)
+ * super_admin サービスの単体テスト
  *
  * 検証項目:
- *   - listMonthlyUsageHistory: 過去 N ヶ月の yearMonth を生成して history を取得
- *   - months 引数のクランプ (1〜24)
- *   - tenant join + DTO 整形
+ *   - listMonthlyUsageHistory (P-5b): 過去 N ヶ月の yearMonth を生成して history を取得
+ *   - listDormantTenants (P-6): 90 日以上活動のないテナントの抽出
+ *   - DTO 整形
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -14,10 +14,21 @@ vi.mock('@/lib/db', () => ({
     tenantMonthlyUsageHistory: {
       findMany: vi.fn(),
     },
+    // P-6 (2026-05-08): listDormantTenants で使用
+    tenant: {
+      findMany: vi.fn(),
+    },
+    user: {
+      groupBy: vi.fn(),
+    },
   },
 }));
 
-import { listMonthlyUsageHistory } from './super-admin.service';
+import {
+  listMonthlyUsageHistory,
+  listDormantTenants,
+  DORMANT_TENANT_THRESHOLD_DAYS,
+} from './super-admin.service';
 import { prisma } from '@/lib/db';
 
 beforeEach(() => {
@@ -113,5 +124,121 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
 
     const rows = await listMonthlyUsageHistory(6);
     expect(rows).toEqual([]);
+  });
+});
+
+describe('listDormantTenants (P-6 / 2026-05-08)', () => {
+  // 固定された "今" を使ってテストの再現性を確保
+  const NOW = new Date('2026-05-08T12:00:00Z');
+  const day = (n: number) => new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000);
+
+  it('閾値 (90 日) 内に最終ログインがあったテナントは除外される', async () => {
+    // tenant-a (60 日前ログイン) は活動中、tenant-b (100 日前) は休眠
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'tenant-a', tenantSeq: 2, name: '活動中', plan: 'expert', createdAt: day(200) },
+      { id: 'tenant-b', tenantSeq: 3, name: '休眠中', plan: 'beginner', createdAt: day(200) },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
+      { tenantId: 'tenant-a', _max: { lastLoginAt: day(60) } },
+      { tenantId: 'tenant-b', _max: { lastLoginAt: day(100) } },
+    ] as never);
+
+    const rows = await listDormantTenants(90, NOW);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('tenant-b');
+    expect(rows[0]?.daysSinceLastActivity).toBe(100);
+  });
+
+  it('テナント内全員が一度もログインしていなければ createdAt 起点で判定', async () => {
+    // tenant-c は 200 日前作成 + 誰もログイン未経験 → 休眠 200 日
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'tenant-c', tenantSeq: 5, name: '無活動', plan: 'beginner', createdAt: day(200) },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
+      { tenantId: 'tenant-c', _max: { lastLoginAt: null } },
+    ] as never);
+
+    const rows = await listDormantTenants(90, NOW);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.lastUserLoginAt).toBeNull();
+    expect(rows[0]?.daysSinceLastActivity).toBe(200);
+  });
+
+  it('新規 onboarding 期間 (createdAt が閾値内) は休眠判定対象外', async () => {
+    // tenant-d は 30 日前作成 (= onboarding 中) → findMany の段階で除外される想定
+    // findMany の where が createdAt: { lte: cutoffDate } を含むので、Prisma が事前に弾く
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    const rows = await listDormantTenants(90, NOW);
+
+    expect(rows).toHaveLength(0);
+    // findMany の where に createdAt の制約が入る (onboarding 期間除外)
+    const callArg = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0];
+    expect(callArg).toMatchObject({
+      where: expect.objectContaining({
+        createdAt: expect.objectContaining({ lte: expect.any(Date) }),
+      }),
+    });
+  });
+
+  it('管理テナントは除外する (id != MANAGEMENT_TENANT_ID)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    await listDormantTenants(90, NOW);
+
+    const callArg = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0];
+    expect(callArg).toMatchObject({
+      where: expect.objectContaining({
+        id: { not: '00000000-0000-0000-0000-ffffffffffff' },
+        deletedAt: null,
+      }),
+    });
+  });
+
+  it('複数の休眠テナントは休眠日数降順で並ぶ', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'tenant-a', tenantSeq: 2, name: '100日休眠', plan: 'expert', createdAt: day(200) },
+      { id: 'tenant-b', tenantSeq: 3, name: '300日休眠', plan: 'beginner', createdAt: day(400) },
+      { id: 'tenant-c', tenantSeq: 4, name: '150日休眠', plan: 'pro', createdAt: day(200) },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
+      { tenantId: 'tenant-a', _max: { lastLoginAt: day(100) } },
+      { tenantId: 'tenant-b', _max: { lastLoginAt: day(300) } },
+      { tenantId: 'tenant-c', _max: { lastLoginAt: day(150) } },
+    ] as never);
+
+    const rows = await listDormantTenants(90, NOW);
+
+    expect(rows.map((r) => r.name)).toEqual(['300日休眠', '150日休眠', '100日休眠']);
+  });
+
+  it('対象テナント 0 件なら空配列 (user.groupBy 呼ばない)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    const rows = await listDormantTenants(90, NOW);
+
+    expect(rows).toEqual([]);
+    expect(prisma.user.groupBy).not.toHaveBeenCalled();
+  });
+
+  it('しきい値カスタマイズ: 30 日でも休眠判定可能', async () => {
+    // 60 日前ログインのテナントは 90 日基準では活動中だが、30 日基準では休眠
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'tenant-a', tenantSeq: 2, name: '60日休眠', plan: 'expert', createdAt: day(200) },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
+      { tenantId: 'tenant-a', _max: { lastLoginAt: day(60) } },
+    ] as never);
+
+    const rows = await listDormantTenants(30, NOW);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.daysSinceLastActivity).toBe(60);
+  });
+
+  it('DORMANT_TENANT_THRESHOLD_DAYS は 90 日', () => {
+    expect(DORMANT_TENANT_THRESHOLD_DAYS).toBe(90);
   });
 });
