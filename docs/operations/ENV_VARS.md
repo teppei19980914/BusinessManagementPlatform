@@ -81,6 +81,24 @@
 | `ENABLE_OPERATION_TRACE` | `false` | 操作トレースの有効化フラグ (要確認: 詳細は DESIGN.md) |
 | `CRON_SECRET` | (任意のランダム文字列) | Vercel Cron から `/api/admin/users/lock-inactive` 等を叩く際の `Authorization: Bearer` で使用。**未設定の場合 cron は実行されない** (手動実行は admin ログインで可能)。PR #89 で 30 日非アクティブユーザに使用 (feat/account-lock 改修で **論理削除 → ロック (isActive=false)** に方針変更)。 |
 
+### 1.6-bis DB 容量モニタ (P-5a / 2026-05-08 追加)
+
+| 変数名 | 既定値 (未設定時) | 用途 |
+|---|---|---|
+| `DB_CAPACITY_LIMIT_BYTES` | `524288000` (= Supabase Free プラン 500 MB) | super_admin ダッシュボードの DB 容量カードでしきい値判定に使用。プランをアップグレードした際は本値を上書きするだけで再デプロイ不要。 |
+
+**Supabase プラン別の参考値** (公式 https://supabase.com/pricing 2026-05 時点):
+
+| プラン | 上限 | 設定値 |
+|---|---|---|
+| Free | 500 MB | `524288000` (デフォルト) |
+| Pro | 8 GB | `8589934592` |
+| Team | 500 GB | `549755813888` |
+
+**設計意図**: Supabase Management API を使わず `pg_database_size()` で実測する方針。Personal Access Token 取得が不要・移植性が高い・テーブル別内訳も同時取得可。閾値は **80% で warn / 90% で alert** の 3 段階分類で表示色が変化。
+
+詳細は [src/services/db-capacity.service.ts](../../src/services/db-capacity.service.ts) と [src/config/db-capacity.ts](../../src/config/db-capacity.ts) 参照。
+
 ### 1.7 i18n (タイムゾーン / ロケール既定値) — PR #118 追加
 
 | 変数名 | 既定値 (未設定時) | 用途 |
