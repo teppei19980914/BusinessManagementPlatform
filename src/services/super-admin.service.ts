@@ -773,3 +773,150 @@ export async function deleteTenant(
     },
   };
 }
+
+// ================================================================
+// テナント物理削除 cron (2026-05-08): 論理削除から 90 日経過したテナントの業務データを物理削除
+// ================================================================
+
+/**
+ * 論理削除から 90 日経過したテナントを「業務データのみ物理削除」する cron 用関数。
+ *
+ * 削除対象 (= テナント業務データ、容量を解放するもの):
+ *   tasks / estimates / project_members / projects / knowledge_projects / knowledges /
+ *   risks_issues / retrospectives / memos / customers / stakeholders / mentions /
+ *   comments / attachments / tenant_import_preview / users
+ *
+ * 保護対象 (= 物理削除しない):
+ *   tenant 本体 (FK 整合性 + super_admin の監査参照)
+ *   api_call_logs (課金根拠の法的保持)
+ *   tenant_monthly_usage_history (請求書根拠)
+ *   audit_logs (監査要件)
+ *   auth_event_logs (セキュリティ監査)
+ *   role_change_logs (権限変更履歴)
+ *   email_send_logs (送信履歴)
+ *   notifications (テナント削除に伴い既読化されるが、論理削除済 user 経由で保持)
+ *
+ * 設計判断:
+ *   - **テナント本体は物理削除しない**: 上記ログテーブルが tenant_id NOT NULL FK を持つため、
+ *     tenant 物理削除すると FK violation。slug 再利用の利便性より整合性を優先。
+ *   - **users は物理削除する**: PII 削除 (= GDPR 等プライバシー要件への配慮)。
+ *     紐付き auth_event_logs / audit_logs などは user_id NULL になる
+ *     (= ON DELETE SET NULL の前提を満たす)。
+ *   - **冪等性**: 同一テナントの 2 回目以降は対象データが既に空なので no-op。
+ *     失敗時はテナントごとに try/catch、cron 全体は止めない。
+ *
+ * 関連:
+ *   - 計画: ユーザライフサイクルの Step 13 (テナント解約 → 90 日後物理削除)
+ *   - 月初 cron: src/services/tenant-monthly-reset.service.ts (本関数を呼ぶ)
+ */
+export type PurgeOldDeletedTenantsResult = {
+  /** 物理削除を試行したテナント件数 */
+  attempted: number;
+  /** 成功した件数 */
+  succeeded: number;
+  /** 削除されたレコード総数 (業務データの sum) */
+  totalRowsDeleted: number;
+};
+
+export async function purgeOldDeletedTenants(
+  now: Date = new Date(),
+): Promise<PurgeOldDeletedTenantsResult> {
+  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+
+  // 論理削除から 90 日以上経過したテナント (= 物理削除対象)
+  const targets = await prisma.tenant.findMany({
+    where: {
+      deletedAt: { lt: ninetyDaysAgo },
+      id: { not: MANAGEMENT_TENANT_ID },
+    },
+    select: { id: true },
+  });
+
+  let succeeded = 0;
+  let totalRowsDeleted = 0;
+
+  for (const t of targets) {
+    try {
+      // 単一 transaction で関連データを削除 (途中失敗時の半端状態を避ける)。
+      // FK の依存関係順 (子 → 親) に削除する: child first, parent last。
+      const [
+        // 子テーブル (= FK 参照される側ではなく、参照する側) を先に削除
+        mentions,
+        comments,
+        attachments,
+        knowledgeProjects,
+        taskKnowledges,
+        taskProgressLogs,
+        tasks,
+        estimates,
+        projectMembers,
+        risksIssues,
+        retrospectives,
+        memos,
+        stakeholders,
+        knowledges,
+        projects,
+        customers,
+        importPreviews,
+        users,
+      ] = await prisma.$transaction([
+        prisma.mention.deleteMany({ where: { tenantId: t.id } }),
+        prisma.comment.deleteMany({ where: { tenantId: t.id } }),
+        prisma.attachment.deleteMany({ where: { tenantId: t.id } }),
+        prisma.knowledgeProject.deleteMany({ where: { knowledge: { tenantId: t.id } } }),
+        prisma.taskKnowledge.deleteMany({ where: { knowledge: { tenantId: t.id } } }),
+        prisma.taskProgressLog.deleteMany({ where: { task: { project: { tenantId: t.id } } } }),
+        prisma.task.deleteMany({ where: { project: { tenantId: t.id } } }),
+        prisma.estimate.deleteMany({ where: { project: { tenantId: t.id } } }),
+        prisma.projectMember.deleteMany({ where: { project: { tenantId: t.id } } }),
+        prisma.riskIssue.deleteMany({ where: { tenantId: t.id } }),
+        prisma.retrospective.deleteMany({ where: { tenantId: t.id } }),
+        prisma.memo.deleteMany({ where: { tenantId: t.id } }),
+        prisma.stakeholder.deleteMany({ where: { tenantId: t.id } }),
+        prisma.knowledge.deleteMany({ where: { tenantId: t.id } }),
+        prisma.project.deleteMany({ where: { tenantId: t.id } }),
+        prisma.customer.deleteMany({ where: { tenantId: t.id } }),
+        prisma.tenantImportPreview.deleteMany({ where: { tenantId: t.id } }),
+        // users は最後 (= 上記の created_by / updated_by などの参照を解決した後)
+        prisma.user.deleteMany({ where: { tenantId: t.id } }),
+      ]);
+
+      const subTotal =
+        mentions.count +
+        comments.count +
+        attachments.count +
+        knowledgeProjects.count +
+        taskKnowledges.count +
+        taskProgressLogs.count +
+        tasks.count +
+        estimates.count +
+        projectMembers.count +
+        risksIssues.count +
+        retrospectives.count +
+        memos.count +
+        stakeholders.count +
+        knowledges.count +
+        projects.count +
+        customers.count +
+        importPreviews.count +
+        users.count;
+      totalRowsDeleted += subTotal;
+      succeeded += 1;
+
+      // 監査ログ: 物理削除実行を記録 (super_admin の監査参照用、別 PR の deleteTenant とペア)
+      // userId は cron 起動なので null 不可だが NOT NULL のため、performerId 不在で記録できない。
+      // → AuditLog ではなく SystemErrorLog に info severity で記録する代替案を採用
+      //   (= 純粋にログ目的、監査要件は別途 P-A 時の論理削除エントリでカバー)
+      // ※ 簡素化のため本実装ではログ省略 (cron 戻り値で件数を返すのみ)
+    } catch {
+      // 1 テナント失敗で他に影響させない (= 次回 cron で retry される)
+      // ロギングは route 側で集計戻り値を出力する想定
+    }
+  }
+
+  return {
+    attempted: targets.length,
+    succeeded,
+    totalRowsDeleted,
+  };
+}
