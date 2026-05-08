@@ -28,6 +28,13 @@ type TenantSelfInfo = {
   scheduledPlanChangeAt: Date | string | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
+  // P-G (2026-05-08): 請求先情報
+  billingCompanyName: string | null;
+  billingContactName: string | null;
+  billingContactEmail: string | null;
+  billingAddress: string | null;
+  billingPhoneNumber: string | null;
+  paymentMethod: string;
 };
 
 type PlanLabel = { value: 'beginner' | 'expert' | 'pro'; label: string; description: string };
@@ -293,6 +300,154 @@ export function TenantSettingsClient({ initialInfo }: { initialInfo: TenantSelfI
           {submitting ? '更新中...' : '変更を保存'}
         </Button>
       </form>
+
+      {/* P-G (2026-05-08): 請求先情報の編集 */}
+      <BillingContactSection initialInfo={info} />
     </div>
+  );
+}
+
+// ================================================================
+// P-G: 請求先情報の編集セクション
+// ================================================================
+
+function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo }) {
+  const router = useRouter();
+  const { showSuccess, showError } = useToast();
+
+  const [form, setForm] = useState({
+    billingCompanyName: initialInfo.billingCompanyName ?? '',
+    billingContactName: initialInfo.billingContactName ?? '',
+    billingContactEmail: initialInfo.billingContactEmail ?? '',
+    billingAddress: initialInfo.billingAddress ?? '',
+    billingPhoneNumber: initialInfo.billingPhoneNumber ?? '',
+    paymentMethod: initialInfo.paymentMethod || 'invoice',
+  });
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    setSubmitting(true);
+
+    try {
+      const res = await fetch('/api/tenants/me/billing', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          // 空文字は null に正規化 (= 値クリア)
+          billingPhoneNumber: form.billingPhoneNumber.trim() || null,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const code = json?.error?.code as string | undefined;
+        const message = json?.error?.message as string | undefined;
+        if (code === 'VALIDATION_ERROR') setError(message ?? '入力内容に誤りがあります');
+        else setError(message ?? '更新に失敗しました');
+        showError('請求先情報の更新に失敗しました');
+        return;
+      }
+
+      showSuccess('請求先情報を更新しました');
+      router.refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-8 space-y-4 rounded border p-4">
+      <h2 className="text-lg font-semibold">請求先情報</h2>
+      <p className="text-xs text-muted-foreground">
+        請求書の発行先・送付先として使用される情報です。super_admin (運営者) が請求業務で参照します。
+      </p>
+
+      {error && (
+        <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+      )}
+
+      <div className="space-y-2">
+        <label htmlFor="billingCompanyName" className="text-sm font-medium">会社名 / 法人名 *</label>
+        <input
+          id="billingCompanyName"
+          className="w-full rounded border p-2 text-sm"
+          value={form.billingCompanyName}
+          onChange={(e) => setForm({ ...form, billingCompanyName: e.target.value })}
+          maxLength={200}
+          required
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="billingContactName" className="text-sm font-medium">請求担当者名 *</label>
+        <input
+          id="billingContactName"
+          className="w-full rounded border p-2 text-sm"
+          value={form.billingContactName}
+          onChange={(e) => setForm({ ...form, billingContactName: e.target.value })}
+          maxLength={100}
+          required
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="billingContactEmail" className="text-sm font-medium">請求先メール *</label>
+        <input
+          id="billingContactEmail"
+          type="email"
+          className="w-full rounded border p-2 text-sm"
+          value={form.billingContactEmail}
+          onChange={(e) => setForm({ ...form, billingContactEmail: e.target.value })}
+          maxLength={255}
+          required
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="billingAddress" className="text-sm font-medium">請求書送付先住所 *</label>
+        <textarea
+          id="billingAddress"
+          className="w-full rounded border p-2 text-sm"
+          rows={3}
+          value={form.billingAddress}
+          onChange={(e) => setForm({ ...form, billingAddress: e.target.value })}
+          required
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="billingPhoneNumber" className="text-sm font-medium">電話番号 (任意)</label>
+        <input
+          id="billingPhoneNumber"
+          className="w-full rounded border p-2 text-sm"
+          value={form.billingPhoneNumber}
+          onChange={(e) => setForm({ ...form, billingPhoneNumber: e.target.value })}
+          maxLength={20}
+          placeholder="例: 03-1234-5678"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="paymentMethod" className="text-sm font-medium">支払い方法 *</label>
+        <select
+          id="paymentMethod"
+          className="w-full rounded border bg-background p-2 text-sm"
+          value={form.paymentMethod}
+          onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
+        >
+          <option value="invoice">請求書送付</option>
+          <option value="bank_transfer">銀行振込</option>
+          <option value="credit_card">クレジットカード (今後対応予定)</option>
+        </select>
+      </div>
+
+      <Button type="submit" disabled={submitting}>
+        {submitting ? '更新中...' : '請求先情報を更新'}
+      </Button>
+    </form>
   );
 }

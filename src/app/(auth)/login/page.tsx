@@ -129,6 +129,13 @@ function LoginForm() {
                 {t('forgotPassword')}
               </a>
             </p>
+            {/* P-G (2026-05-08): セルフサインアップ導線 */}
+            <p className="text-center text-xs text-muted-foreground">
+              新規組織でご利用ですか?{' '}
+              <a href="/signup" className="text-info hover:underline">
+                サインアップ
+              </a>
+            </p>
           </form>
         </CardContent>
       </Card>

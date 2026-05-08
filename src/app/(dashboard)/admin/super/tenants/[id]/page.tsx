@@ -90,6 +90,25 @@ export default async function SuperAdminTenantDetailPage({
         </ul>
       </section>
 
+      {/* P-G (2026-05-08): 請求先情報 */}
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">請求先情報</h2>
+        {tenant.billingCompanyName == null ? (
+          <p className="rounded border bg-muted/30 p-4 text-sm text-muted-foreground">
+            ℹ 請求先情報が未登録です (= 運営内部テナント、または旧データ)。請求業務には使用できません。
+          </p>
+        ) : (
+          <dl className="grid grid-cols-1 gap-2 rounded border p-3 text-sm sm:grid-cols-2">
+            <BillingRow label="会社名 / 法人名" value={tenant.billingCompanyName} />
+            <BillingRow label="請求担当者" value={tenant.billingContactName} />
+            <BillingRow label="請求先メール" value={tenant.billingContactEmail} />
+            <BillingRow label="電話番号" value={tenant.billingPhoneNumber ?? '(未設定)'} />
+            <BillingRow label="支払い方法" value={paymentMethodLabel(tenant.paymentMethod)} />
+            <BillingRow label="請求書送付先住所" value={tenant.billingAddress} fullWidth />
+          </dl>
+        )}
+      </section>
+
       {tenant.scheduledPlanChangeAt && tenant.scheduledNextPlan && (
         <section className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
           <strong>プラン変更予約:</strong> {tenant.scheduledPlanChangeAt.toISOString().split('T')[0]}{' '}
@@ -140,4 +159,36 @@ function EntityRow({ label, count }: { label: string; count: number }) {
       <span className="font-mono">{count.toLocaleString()}</span>
     </li>
   );
+}
+
+/** P-G (2026-05-08): 請求先 1 行 */
+function BillingRow({
+  label,
+  value,
+  fullWidth = false,
+}: {
+  label: string;
+  value: string | null;
+  fullWidth?: boolean;
+}) {
+  return (
+    <div className={fullWidth ? 'sm:col-span-2' : ''}>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="whitespace-pre-line font-medium">{value ?? '(未設定)'}</dd>
+    </div>
+  );
+}
+
+/** P-G (2026-05-08): paymentMethod の人間可読ラベル変換 */
+function paymentMethodLabel(method: string): string {
+  switch (method) {
+    case 'invoice':
+      return '請求書送付';
+    case 'bank_transfer':
+      return '銀行振込';
+    case 'credit_card':
+      return 'クレジットカード';
+    default:
+      return method;
+  }
 }

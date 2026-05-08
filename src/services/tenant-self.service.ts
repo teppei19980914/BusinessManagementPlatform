@@ -43,6 +43,13 @@ export type TenantSelfInfo = {
   scheduledPlanChangeAt: Date | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
+  // P-G (2026-05-08): 請求先情報
+  billingCompanyName: string | null;
+  billingContactName: string | null;
+  billingContactEmail: string | null;
+  billingAddress: string | null;
+  billingPhoneNumber: string | null;
+  paymentMethod: string;
 };
 
 /**
@@ -71,7 +78,52 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
     activeUserCount,
+    billingCompanyName: t.billingCompanyName,
+    billingContactName: t.billingContactName,
+    billingContactEmail: t.billingContactEmail,
+    billingAddress: t.billingAddress,
+    billingPhoneNumber: t.billingPhoneNumber,
+    paymentMethod: t.paymentMethod,
   };
+}
+
+/** P-G (2026-05-08): 請求先情報の更新入力 */
+export type UpdateBillingContactInput = {
+  billingCompanyName?: string | null;
+  billingContactName?: string | null;
+  billingContactEmail?: string | null;
+  billingAddress?: string | null;
+  billingPhoneNumber?: string | null;
+  paymentMethod?: string;
+};
+
+/**
+ * 請求先情報のみを更新する (テナント管理者画面の「請求先情報」セクション用)。
+ *
+ * - 各フィールドは optional: undefined なら変更なし、null なら値クリア
+ * - paymentMethod は文字列だが、UI 側で enum (invoice / bank_transfer / credit_card) を強制
+ *
+ * 設計判断: updateTenantSelf (プラン変更) と分離。プラン変更ロジックは複雑 (即時/翌月予約) で、
+ * 請求先情報の単純な update と一緒にすると条件分岐が散漫になるため、別関数化。
+ */
+export async function updateBillingContact(
+  tenantId: string,
+  input: UpdateBillingContactInput,
+): Promise<void> {
+  const data: Record<string, unknown> = {};
+  if (input.billingCompanyName !== undefined) data.billingCompanyName = input.billingCompanyName;
+  if (input.billingContactName !== undefined) data.billingContactName = input.billingContactName;
+  if (input.billingContactEmail !== undefined) data.billingContactEmail = input.billingContactEmail;
+  if (input.billingAddress !== undefined) data.billingAddress = input.billingAddress;
+  if (input.billingPhoneNumber !== undefined) data.billingPhoneNumber = input.billingPhoneNumber;
+  if (input.paymentMethod !== undefined) data.paymentMethod = input.paymentMethod;
+
+  if (Object.keys(data).length === 0) return; // 何も指定がなければ noop
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data,
+  });
 }
 
 export type UpdateTenantSelfInput = {

@@ -68,6 +68,24 @@ model Tenant {
   beginnerMaxSeats         Int       @default(5) @map("beginner_max_seats")
   pricePerCallHaiku        Int       @default(10) @map("price_per_call_haiku")
   pricePerCallSonnet       Int       @default(30) @map("price_per_call_sonnet")
+  /// P-G (2026-05-08): 請求先情報。super_admin の請求業務 (CSV エクスポート / 請求書手作成) で使用。
+  ///   - 既存テナント (default-tenant / management) は migration 後 null のまま
+  ///     (運営内部のため請求対象外、空 OK)。
+  ///   - 新規顧客テナント (P-G で実装される super_admin 作成 API + /signup) は登録時に
+  ///     必須 4 項目 (companyName / contactName / contactEmail / address) を要求する。
+  ///   - 別テーブル化せず Tenant に持たせるのは、1:1 関係 + 操作頻度低 + JOIN 回避のため。
+  /// 請求書発行先の正式会社名 / 法人名 (Tenant.name は表示用のため、請求文書では本フィールドを優先)
+  billingCompanyName       String?   @map("billing_company_name") @db.VarChar(200)
+  /// 請求書送付先担当者名
+  billingContactName       String?   @map("billing_contact_name") @db.VarChar(100)
+  /// 請求書送付先メールアドレス (= 請求書 PDF / 案内メールの送り先)
+  billingContactEmail      String?   @map("billing_contact_email") @db.VarChar(255)
+  /// 請求書送付先住所 (郵送が必要な場合 / 法人登記住所など)
+  billingAddress           String?   @map("billing_address") @db.Text
+  /// 連絡先電話番号 (任意)
+  billingPhoneNumber       String?   @map("billing_phone_number") @db.VarChar(20)
+  /// 支払い方法 ('invoice' = 請求書送付 / 'bank_transfer' = 銀行振込 / 'credit_card' = 後続実装)
+  paymentMethod            String    @default("invoice") @map("payment_method") @db.VarChar(30)
   /// プラン変更予約: ダウングレード時のみ翌月適用 (Expert/Pro → Beginner)。
   scheduledPlanChangeAt    DateTime? @map("scheduled_plan_change_at") @db.Timestamptz
   scheduledNextPlan        String?   @map("scheduled_next_plan") @db.VarChar(20)

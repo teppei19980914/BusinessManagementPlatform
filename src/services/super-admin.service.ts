@@ -39,6 +39,13 @@ export type TenantSummaryRow = {
   monthlyBudgetCapJpy: number | null;
   activeUserCount: number;
   createdAt: Date;
+  // P-G (2026-05-08): 請求先情報 (CSV エクスポート + super_admin 一覧表示用)
+  billingCompanyName: string | null;
+  billingContactName: string | null;
+  billingContactEmail: string | null;
+  billingAddress: string | null;
+  billingPhoneNumber: string | null;
+  paymentMethod: string;
 };
 
 export async function listAllTenants(): Promise<TenantSummaryRow[]> {
@@ -58,6 +65,13 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
       currentMonthApiCostJpy: true,
       monthlyBudgetCapJpy: true,
       createdAt: true,
+      // P-G (2026-05-08): 請求先情報
+      billingCompanyName: true,
+      billingContactName: true,
+      billingContactEmail: true,
+      billingAddress: true,
+      billingPhoneNumber: true,
+      paymentMethod: true,
     },
   });
 
@@ -84,6 +98,13 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     activeUserCount: userCountByTenant.get(t.id) ?? 0,
     createdAt: t.createdAt,
+    // P-G (2026-05-08): 請求先情報
+    billingCompanyName: t.billingCompanyName,
+    billingContactName: t.billingContactName,
+    billingContactEmail: t.billingContactEmail,
+    billingAddress: t.billingAddress,
+    billingPhoneNumber: t.billingPhoneNumber,
+    paymentMethod: t.paymentMethod,
   }));
 }
 
@@ -93,6 +114,7 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
  *
  * P-6 (2026-05-08): 休眠判定用に最終ログイン日時 + 休眠日数を追加。
  *   日数計算はサービス側で済ませて純関数化 (画面での Date.now() 呼出を避けるため)。
+ * P-G (2026-05-08): 請求先情報を含める (super_admin が請求業務で参照)。
  */
 export type TenantDetail = TenantSummaryRow & {
   beginnerMonthlyCallLimit: number;
@@ -105,6 +127,13 @@ export type TenantDetail = TenantSummaryRow & {
   daysSinceLastActivity: number;
   /** P-6: 休眠判定 (90 日以上活動なし) を満たすかどうか。 */
   isDormant: boolean;
+  // P-G (2026-05-08): 請求先情報
+  billingCompanyName: string | null;
+  billingContactName: string | null;
+  billingContactEmail: string | null;
+  billingAddress: string | null;
+  billingPhoneNumber: string | null;
+  paymentMethod: string;
   entityCounts: {
     projects: number;
     knowledges: number;
@@ -172,6 +201,13 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     lastUserLoginAt,
     daysSinceLastActivity,
     isDormant,
+    // P-G (2026-05-08): 請求先情報
+    billingCompanyName: t.billingCompanyName,
+    billingContactName: t.billingContactName,
+    billingContactEmail: t.billingContactEmail,
+    billingAddress: t.billingAddress,
+    billingPhoneNumber: t.billingPhoneNumber,
+    paymentMethod: t.paymentMethod,
     entityCounts: { projects, knowledges, risksIssues, retrospectives, memos },
   };
 }

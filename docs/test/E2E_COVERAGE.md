@@ -28,6 +28,7 @@
 - [x] `/reset-password` — e2e/visual/auth-screens.spec.ts (視覚回帰のみ、機能は PR #E 以降)
 - [x] `/login/mfa` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2b + Step 5)
 - [x] `/setup-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 4, general ユーザ招待経路)
+- [ ] `/signup` — skip: P-G (2026-05-08) 公開セルフサインアップ画面。bot 対策 (rate limit + honeypot) は src/app/api/auth/signup/route.ts で対応、フォーム動作 + テナント作成は src/services/tenant-onboarding.service.test.ts (11 件) で担保。E2E は V1.x で検討
 
 ### ダッシュボード
 - [x] `/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 作成 + Step 6b 一般ユーザ閲覧)
@@ -61,6 +62,7 @@
 - [ ] `/admin/super` — skip: PR-X2 (super_admin ダッシュボードサマリ、運営者専用 read-only)。E2E は V1 後の Phase 2 で導入検討
 - [ ] `/admin/super/tenants` — skip: PR-X2 (全テナント一覧、運営者専用 read-only)
 - [ ] `/admin/super/tenants/[id]` — skip: PR-X2 (テナント詳細、運営者専用 read-only)
+- [ ] `/admin/super/tenants/new` — skip: P-G (2026-05-08) super_admin 専用テナント手動払い出し画面。フォーム + 作成 API 連携は src/services/tenant-onboarding.service.test.ts (11 件) で担保
 - [ ] `/admin/super/usage` — skip: PR-X2 (使用量サマリ、運営者専用 read-only)
 
 ### その他
@@ -142,7 +144,10 @@
 - [ ] `/api/cron/daily-usage-aggregation` (POST) — skip: cron 認可 + 集計 + 異常検知 + 予算アラート + admin メール通知の単体テスト (`src/services/usage-monitoring.service.test.ts` 12 件) で担保。E2E の対象外 (Vercel Cron 経由のみで UI 経路なし)
 - [ ] `/api/admin/usage-summary` (GET) — skip: admin 認可 + JSON 集計返却の単体テストで担保。super_admin ダッシュボード UI (PR-X2) 実装時に E2E 化予定
 - [ ] `/api/admin/super/usage/export` (GET) — skip: P-5b (2026-05-08) super_admin 限定 CSV エクスポート。yearMonth 指定なしで当月分、指定で履歴テーブル参照。zod バリデーション + UTF-8 BOM 付き CSV 整形は単体テスト範疇 (E2E は V1.x で検討)
+- [ ] `/api/admin/super/tenants` (POST) — skip: P-G (2026-05-08) super_admin 専用テナント手動払い出し API。zod バリデーション + slug/email 重複検出 + compensating delete はサービステスト (tenant-onboarding.service.test.ts 11 件) で担保
 - [ ] `/api/admin/super/tenants/[id]` (DELETE) — skip: P-A (2026-05-08) super_admin 限定テナント論理削除。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / ALREADY_DELETED + カスケード (10 業務エンティティ + 監査ログ) は src/services/super-admin.service.test.ts (deleteTenant 6 テスト) で担保。E2E は V1.x で検討
+- [ ] `/api/auth/signup` (POST) — skip: P-G (2026-05-08) 公開セルフサインアップ。IP-based rate limit (5/hour) + honeypot (hp_url) + サービステスト (11 件) で担保。E2E は V1.x で検討
+- [ ] `/api/tenants/me/billing` (PATCH) — skip: P-G (2026-05-08) テナント管理者の請求先情報編集。zod バリデーション + サービステスト (tenant-self.service.test.ts) で担保
 
 ### メンション (PR feat/comment-mentions)
 - [ ] `/api/mention-candidates` (GET) — skip: 単体テスト (`src/app/api/mention-candidates/route.test.ts`) で context (project_list / cross_list / wbs) 別の groups 絞り込み + entityType 別 user 抽出を網羅
