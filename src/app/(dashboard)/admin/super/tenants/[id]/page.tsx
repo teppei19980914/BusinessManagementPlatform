@@ -90,6 +90,37 @@ export default async function SuperAdminTenantDetailPage({
         </ul>
       </section>
 
+      {/* Storage add-on (Phase 2 / 2026-05-08): 容量 + 課金統合表示 */}
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">ストレージ + 月次課金</h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <DetailCard
+            label="ストレージプラン"
+            value={`${tenant.storageAddonPlan} (+¥${tenant.storageAddonMonthlyJpy.toLocaleString()}/月)`}
+          />
+          <DetailCard
+            label="使用量 / 上限"
+            value={`${formatBytesSuper(tenant.storageBytesUsed)} / ${formatBytesSuper(tenant.storageLimitBytes)} (${Math.round(tenant.storageUsageRatio * 100)}%)`}
+            highlight={tenant.storageUsageRatio > 1.0}
+          />
+          <DetailCard
+            label="当月予想合計課金"
+            value={`¥${tenant.totalCurrentMonthJpy.toLocaleString()} (LLM ¥${tenant.currentMonthApiCostJpy.toLocaleString()} + Storage ¥${tenant.storageAddonMonthlyJpy.toLocaleString()})`}
+          />
+        </div>
+        {tenant.storageGracePeriodStartedAt && (
+          <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs dark:bg-amber-900/30">
+            ⚠ Grace period 開始: {tenant.storageGracePeriodStartedAt.toISOString().split('T')[0]} (7 日経過で write 停止)
+          </p>
+        )}
+        {tenant.storageScheduledAt && tenant.storageScheduledNext && (
+          <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs dark:bg-amber-900/30">
+            予約: {tenant.storageScheduledAt.toISOString().split('T')[0]} に{' '}
+            <span className="font-mono">{tenant.storageScheduledNext}</span> へ変更予定
+          </p>
+        )}
+      </section>
+
       {/* P-G (2026-05-08): 請求先情報 */}
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">請求先情報</h2>
@@ -149,6 +180,19 @@ export default async function SuperAdminTenantDetailPage({
       )}
     </div>
   );
+}
+
+function formatBytesSuper(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${bytes} B`;
 }
 
 function DetailCard({

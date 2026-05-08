@@ -17,6 +17,7 @@ import { redirect } from 'next/navigation';
 import { LOGIN_ROUTE } from '@/config';
 import { isTenantAdmin } from '@/lib/permissions';
 import { getTenantSelfInfo } from '@/services/tenant-self.service';
+import { getStorageInfo } from '@/services/tenant-storage.service';
 import { TenantSettingsClient } from './tenant-settings-client';
 
 export default async function TenantSettingsPage() {
@@ -30,5 +31,18 @@ export default async function TenantSettingsPage() {
   const info = await getTenantSelfInfo(session.user.tenantId);
   if (!info) redirect('/settings');
 
-  return <TenantSettingsClient initialInfo={info} />;
+  // Storage add-on (Phase 2 / 2026-05-08): Storage プラン選択セクション初期値
+  const storageInfo = await getStorageInfo(session.user.tenantId);
+
+  // BigInt + Date を JSON-friendly な形に変換 (Server Component → Client Component の境界)
+  const storageInitialInfo = storageInfo
+    ? {
+        ...storageInfo,
+        graceStartedAt: storageInfo.graceStartedAt?.toISOString() ?? null,
+        scheduledStorageAddonAt: storageInfo.scheduledStorageAddonAt?.toISOString() ?? null,
+        storageBytesUsedAt: storageInfo.storageBytesUsedAt?.toISOString() ?? null,
+      }
+    : null;
+
+  return <TenantSettingsClient initialInfo={info} storageInitialInfo={storageInitialInfo} />;
 }

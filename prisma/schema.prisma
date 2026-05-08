@@ -46,28 +46,28 @@ datasource db {
 // 既存コードを変更せずに単一テナント運用を可能にする。v1.x で DEFAULT を外す。
 
 model Tenant {
-  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// URL ルーティング用 slug。v1 は 'default' 固定、v1.x で複数テナント対応時に動的解決。
-  slug                        String    @unique @db.VarChar(60)
-  name                        String    @db.VarChar(100)
+  slug                         String    @unique @db.VarChar(60)
+  name                         String    @db.VarChar(100)
   /// PR-X1 (2026-05-07): 顧客向け人間可読連番 (案 D / ROLE_REFACTORING_PLAN.md §2.3-bis)。
   ///   default-tenant=1 (固定 seed)、新規顧客は SEQUENCE で 2, 3, 4, ... 自動採番。
   ///   管理テナント (Knowledge Relay Platform) は null (顧客連番外)。
   ///   表示用 (請求書 / サポート / admin ダッシュボード一覧) のみで参照。
   ///   内部参照 (FK / 認可) は引き続き UUID id を使う。
-  tenantSeq                   Int?      @unique @map("tenant_seq")
+  tenantSeq                    Int?      @unique @map("tenant_seq")
   /// 'beginner' | 'expert' | 'pro'
-  plan                        String    @default("beginner") @db.VarChar(20)
-  currentMonthApiCallCount    Int       @default(0) @map("current_month_api_call_count")
-  currentMonthApiCostJpy      Int       @default(0) @map("current_month_api_cost_jpy")
+  plan                         String    @default("beginner") @db.VarChar(20)
+  currentMonthApiCallCount     Int       @default(0) @map("current_month_api_call_count")
+  currentMonthApiCostJpy       Int       @default(0) @map("current_month_api_cost_jpy")
   /// ユーザ自己設定の月次予算上限 (円)。NULL = 無制限。withMeteredLLM が予測コスト超過チェックで参照。
-  monthlyBudgetCapJpy         Int?      @map("monthly_budget_cap_jpy")
+  monthlyBudgetCapJpy          Int?      @map("monthly_budget_cap_jpy")
   /// Beginner プランの月間 API 呼び出し回数上限 (default 100)。プラン契約変更時のみ書き換え。
-  beginnerMonthlyCallLimit    Int       @default(100) @map("beginner_monthly_call_limit")
+  beginnerMonthlyCallLimit     Int       @default(100) @map("beginner_monthly_call_limit")
   /// Beginner プランの最大席数 (default 5)。User.tenantId が同じカウントで判定。
-  beginnerMaxSeats            Int       @default(5) @map("beginner_max_seats")
-  pricePerCallHaiku           Int       @default(10) @map("price_per_call_haiku")
-  pricePerCallSonnet          Int       @default(30) @map("price_per_call_sonnet")
+  beginnerMaxSeats             Int       @default(5) @map("beginner_max_seats")
+  pricePerCallHaiku            Int       @default(10) @map("price_per_call_haiku")
+  pricePerCallSonnet           Int       @default(30) @map("price_per_call_sonnet")
   /// P-G (2026-05-08): 請求先情報。super_admin の請求業務 (CSV エクスポート / 請求書手作成) で使用。
   ///   - 既存テナント (default-tenant / management) は migration 後 null のまま
   ///     (運営内部のため請求対象外、空 OK)。
@@ -75,40 +75,60 @@ model Tenant {
   ///     必須 4 項目 (companyName / contactName / contactEmail / address) を要求する。
   ///   - 別テーブル化せず Tenant に持たせるのは、1:1 関係 + 操作頻度低 + JOIN 回避のため。
   /// 請求書発行先の正式会社名 / 法人名 (Tenant.name は表示用のため、請求文書では本フィールドを優先)
-  billingCompanyName          String?   @map("billing_company_name") @db.VarChar(200)
+  billingCompanyName           String?   @map("billing_company_name") @db.VarChar(200)
   /// 請求書送付先担当者名
-  billingContactName          String?   @map("billing_contact_name") @db.VarChar(100)
+  billingContactName           String?   @map("billing_contact_name") @db.VarChar(100)
   /// 請求書送付先メールアドレス (= 請求書 PDF / 案内メールの送り先)
-  billingContactEmail         String?   @map("billing_contact_email") @db.VarChar(255)
+  billingContactEmail          String?   @map("billing_contact_email") @db.VarChar(255)
   /// 請求書送付先住所 (郵送が必要な場合 / 法人登記住所など)
-  billingAddress              String?   @map("billing_address") @db.Text
+  billingAddress               String?   @map("billing_address") @db.Text
   /// 連絡先電話番号 (任意)
-  billingPhoneNumber          String?   @map("billing_phone_number") @db.VarChar(20)
+  billingPhoneNumber           String?   @map("billing_phone_number") @db.VarChar(20)
   /// 支払い方法 ('invoice' = 請求書送付 / 'bank_transfer' = 銀行振込 / 'credit_card' = 後続実装)
-  paymentMethod               String    @default("invoice") @map("payment_method") @db.VarChar(30)
+  paymentMethod                String    @default("invoice") @map("payment_method") @db.VarChar(30)
   /// プラン変更予約: ダウングレード時のみ翌月適用 (Expert/Pro → Beginner)。
-  scheduledPlanChangeAt       DateTime? @map("scheduled_plan_change_at") @db.Timestamptz
-  scheduledNextPlan           String?   @map("scheduled_next_plan") @db.VarChar(20)
+  scheduledPlanChangeAt        DateTime? @map("scheduled_plan_change_at") @db.Timestamptz
+  scheduledNextPlan            String?   @map("scheduled_next_plan") @db.VarChar(20)
   /// 月初リセット cron が処理した最後の月初 (UTC ベース、毎月 1 日 00:00 UTC)。
-  lastResetAt                 DateTime? @map("last_reset_at") @db.Timestamptz
+  lastResetAt                  DateTime? @map("last_reset_at") @db.Timestamptz
   /// P-B (2026-05-08): Beginner プラン永続利用防止。
   ///   - 計測起点: createdAt から 60/75/90 日経過判定で警告メール送信 + 90 日で read-only モード
   ///   - true 化条件: Tenant が一度でも Beginner 以外 (Expert/Pro) になった (= ダウングレードでも Beginner に戻せない)
   ///   - 解約済テナント (deletedAt セット) の billingContactEmail で同 email 再登録時の Beginner 拒否判定にも使用
-  beginnerEverUpgraded        Boolean   @default(false) @map("beginner_ever_upgraded")
+  beginnerEverUpgraded         Boolean   @default(false) @map("beginner_ever_upgraded")
   /// P-B: 60 日警告メール送信日時 (重複送信防止用、null なら未送信)
-  beginnerNoticeDay60SentAt   DateTime? @map("beginner_notice_day60_sent_at") @db.Timestamptz
+  beginnerNoticeDay60SentAt    DateTime? @map("beginner_notice_day60_sent_at") @db.Timestamptz
   /// P-B: 75 日警告メール送信日時
-  beginnerNoticeDay75SentAt   DateTime? @map("beginner_notice_day75_sent_at") @db.Timestamptz
+  beginnerNoticeDay75SentAt    DateTime? @map("beginner_notice_day75_sent_at") @db.Timestamptz
   /// P-B: 90 日経過 read-only 通知メール送信日時
-  beginnerExpiredNoticeSentAt DateTime? @map("beginner_expired_notice_sent_at") @db.Timestamptz
+  beginnerExpiredNoticeSentAt  DateTime? @map("beginner_expired_notice_sent_at") @db.Timestamptz
   /// P-D (2026-05-08): データインポート進行中の in-flight ロック。
   ///   - 開始時 NOW() / 終了時 NULL に戻す。クラッシュ残留対策のためタイムスタンプ型。
   ///   - 30 分 (IMPORT_LOCK_STALE_MINUTES) 以上経過した値は自動失効扱い。
-  importInProgressAt          DateTime? @map("import_in_progress_at") @db.Timestamptz
-  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt                   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt                   DateTime? @map("deleted_at") @db.Timestamptz
+  importInProgressAt           DateTime? @map("import_in_progress_at") @db.Timestamptz
+  /// Storage add-on (Phase 2 / 2026-05-08): LLM プランと独立した容量プラン。
+  ///   - 'standard' (default): LLM プラン連動 (Beginner 50MB / Expert 150MB / Pro 300MB)
+  ///   - 'plus':       Standard + 200MB 拡張 (+¥500/月)
+  ///   - 'pro_storage': Standard + 1GB 拡張 (+¥1500/月)
+  ///   - 'enterprise': Standard + 5GB 拡張 (+¥5000/月)
+  ///   ※ enum 名は LLM の 'pro' と衝突しないよう 'pro_storage' とする
+  storageAddonPlan             String    @default("standard") @map("storage_addon_plan") @db.VarChar(20)
+  /// Storage 使用量 (バイト)。日次 cron (`updateAllStorageBytesUsed`) で `pg_column_size`
+  /// 集計で更新。インポート/作成時のリアルタイム更新は重いので避けてキャッシュ運用。
+  storageBytesUsed             BigInt    @default(0) @map("storage_bytes_used")
+  /// 最終更新時刻 (UI 表示で「○分前」を出すため、また stale 判定で on-demand 再計算するため)
+  storageBytesUsedAt           DateTime? @map("storage_bytes_used_at") @db.Timestamptz
+  /// 上限超過 → Grace period 開始日時 (P-B 風、null=正常)。Grace 7 日経過後に write 停止。
+  storageGracePeriodStartedAt  DateTime? @map("storage_grace_period_started_at") @db.Timestamptz
+  /// 超過通知メール送信日時 (重複送信防止)
+  storageOverLimitNoticeSentAt DateTime? @map("storage_over_limit_notice_sent_at") @db.Timestamptz
+  /// ダウングレード予約日時 (= 翌月 1 日 UTC)
+  scheduledStorageAddonAt      DateTime? @map("scheduled_storage_addon_at") @db.Timestamptz
+  /// ダウングレード後のプラン名 (= scheduledStorageAddonAt と対)
+  scheduledNextStorageAddon    String?   @map("scheduled_next_storage_addon") @db.VarChar(20)
+  createdAt                    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt                    DateTime? @map("deleted_at") @db.Timestamptz
 
   // Relations: 13 業務エンティティ + ApiCallLog + SuggestionExplanation (P-3) + monthlyUsageHistory (P-5b)
   users                  User[]

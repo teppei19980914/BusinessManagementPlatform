@@ -22,6 +22,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateDailyNotifications, cleanupReadNotifications } from '@/services/notification.service';
 import { deleteExpiredPreviews } from '@/services/external-data-import.service';
+import {
+  updateAllStorageBytesUsed,
+  checkAndStartGracePeriod,
+} from '@/services/tenant-storage.service';
 
 function isCronAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
@@ -42,6 +46,12 @@ export async function POST(req: NextRequest) {
   const cleaned = await cleanupReadNotifications();
   // Phase 1 (2026-05-08): 期限切れ tenant_import_preview を物理削除 (TTL 24h)
   const expiredPreviewsDeleted = await deleteExpiredPreviews();
+  // Storage add-on (Phase 2 / 2026-05-08):
+  //   1. 全テナントの storageBytesUsed を pg_column_size 集計で更新 (キャッシュ刷新)
+  //   2. 上限超過/解消を検知して Grace period を開始/クリア
+  //   順序重要: 容量更新 → Grace 判定 (= 最新値で判定するため)
+  const storageBytesUpdated = await updateAllStorageBytesUsed();
+  const graceResult = await checkAndStartGracePeriod();
 
   return NextResponse.json({
     data: {
@@ -49,6 +59,11 @@ export async function POST(req: NextRequest) {
       generated,
       cleaned,
       expiredPreviewsDeleted,
+      storage: {
+        bytesUpdated: storageBytesUpdated,
+        graceStarted: graceResult.graceStartedCount,
+        graceCleared: graceResult.graceClearedCount,
+      },
     },
   });
 }

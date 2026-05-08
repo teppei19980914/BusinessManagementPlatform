@@ -248,6 +248,9 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       planAppliedCount: 1,
       invalidPlanSkippedCount: 1,
       snapshotSavedCount: 2,
+      // Storage add-on (Phase 2 / 2026-05-08): applyScheduledStorageChanges の戻り値
+      storageAddonAppliedCount: 0,
+      storageAddonSkippedCount: 0,
     });
   });
 });

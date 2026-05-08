@@ -53,6 +53,12 @@ declare module 'next-auth' {
       tenantPlan: string;
       tenantCreatedAt: string; // ISO 8601 文字列 (Edge で Date を再構築しやすいよう)
       tenantBeginnerEverUpgraded: boolean;
+      /**
+       * Storage add-on (Phase 2 / 2026-05-08): Storage Grace period 開始日時 ISO。
+       * middleware (Edge runtime) で `NOW() - parse() >= 7 日` 判定で write 系 API を弾く。
+       * Grace 未開始は null。
+       */
+      tenantStorageGracePeriodStartedAt: string | null;
     };
   }
 }
@@ -63,5 +69,7 @@ declare module 'next-auth/jwt' {
     tenantPlan?: string;
     tenantCreatedAt?: string;
     tenantBeginnerEverUpgraded?: boolean;
+    /** Storage add-on (Phase 2 / 2026-05-08): Grace period 開始日時 ISO (未開始は null) */
+    tenantStorageGracePeriodStartedAt?: string | null;
   }
 }
