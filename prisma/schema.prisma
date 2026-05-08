@@ -127,6 +127,7 @@ model Tenant {
   apiCallLogs            ApiCallLog[]
   suggestionExplanations SuggestionExplanation[]
   monthlyUsageHistory    TenantMonthlyUsageHistory[]
+  importPreviews         TenantImportPreview[]
 
   @@index([plan], map: "idx_tenants_plan")
   @@map("tenants")
@@ -204,6 +205,7 @@ model User {
   receivedMentions        Mention[]                @relation("MentionTarget")
   apiCallLogs             ApiCallLog[]             @relation("ApiCallLogActor")
   generatedExplanations   SuggestionExplanation[]  @relation("SuggestionExplanationGeneratedBy")
+  importPreviews          TenantImportPreview[]    @relation("TenantImportPreviewCreator")
 
   // PR #2: tenant への back relation
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -1085,20 +1087,28 @@ model SuggestionExplanation {
 ///   - UI: src/app/(dashboard)/admin/super/usage/page.tsx
 ///   - 計画: docs/roadmap/V1_FINAL_TASKS.md P-5
 model TenantMonthlyUsageHistory {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId        String   @map("tenant_id") @db.Uuid
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
   /// "YYYY-MM" 形式 (例: "2026-04" = 2026 年 4 月分)
-  yearMonth       String   @map("year_month") @db.VarChar(7)
+  yearMonth        String   @map("year_month") @db.VarChar(7)
   /// 当月総コール数 (= リセット直前の Tenant.currentMonthApiCallCount)
-  apiCallCount    Int      @map("api_call_count")
+  apiCallCount     Int      @map("api_call_count")
   /// 当月総課金額 (= リセット直前の Tenant.currentMonthApiCostJpy、円整数)
-  apiCostJpy      Int      @map("api_cost_jpy")
+  apiCostJpy       Int      @map("api_cost_jpy")
   /// 当月末時点のプラン (請求書根拠用)
-  plan            String   @db.VarChar(20)
+  plan             String   @db.VarChar(20)
   /// 当月末時点のアクティブユーザ数 (請求書根拠用)
-  activeUserCount Int      @map("active_user_count")
+  activeUserCount  Int      @map("active_user_count")
+  /// 後続 PR (Storage add-on) で使用予定のフィールド (前方互換のため Phase 1 で追加)。
+  ///   Phase 1 (外部 import) では値は 0 / 'standard' のまま記録される。
+  ///   Phase 2 (Storage add-on 実装) で実値を投入し super_admin ダッシュボードで表示する。
+  storageBytesUsed BigInt   @default(0) @map("storage_bytes_used")
+  storageAddonPlan String   @default("standard") @map("storage_addon_plan") @db.VarChar(20)
+  storageAddonJpy  Int      @default(0) @map("storage_addon_jpy")
+  /// 当月総課金額 (LLM + Storage の合算)。super_admin ダッシュボードでの集計に使う。
+  totalJpy         Int      @default(0) @map("total_jpy")
   /// snapshot 生成日時 (= 月初リセット cron の起動時刻)
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
@@ -1106,6 +1116,46 @@ model TenantMonthlyUsageHistory {
   @@unique([tenantId, yearMonth], map: "uq_tenant_monthly_usage_history")
   @@index([yearMonth], map: "idx_monthly_usage_year_month")
   @@map("tenant_monthly_usage_history")
+}
+
+/// テナント外部データ移行 (Phase 1 / 2026-05-08): preview 結果の一時保存。
+///
+/// 役割:
+///   POST /api/tenants/me/external-import/preview で検証済データを TTL 24 時間で保存し、
+///   ユーザが内容確認 → POST .../apply で確定する 2 段階フローを成立させる。
+///
+/// 設計判断:
+///   - **24 時間 TTL**: 翌営業日の上司承認等を見越して 1 時間→24 時間に拡大 (2026-05-08 ユーザ確定)。
+///   - **parsedJson に検証済データを格納**: apply 時にパース/バリデーションを再実行不要にする。
+///   - **costEstimate も併存**: apply 時に当時の見積と現在の状態を比較して二重防御。
+///   - **expiresAt インデックス**: 期限切れ削除 cron が高速に対象抽出できるようにする。
+///   - **tenantId 直接持つ**: 認可境界 (= 他テナントの previewId を盗用しても弾く) の前提。
+///
+/// 関連:
+///   - サービス: src/services/external-data-import.service.ts
+///   - cron: tenant-monthly-reset と同 endpoint で expiresAt < NOW() を削除
+model TenantImportPreview {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  /// preview を生成した admin user (= apply 時に同一ユーザのみ実行可、別管理者の preview は使えない)
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  /// パース + バリデーション済の取込予定データ (knowledge[], risksIssues[])。
+  /// Phase 1 では Knowledge と RiskIssue のみ含まれる。
+  parsedJson      Json     @map("parsed_json") @db.JsonB
+  /// 課金見積 (calls / estimatedJpy / projectedMonthJpy 等)。apply 時に状況再評価する。
+  costEstimate    Json     @map("cost_estimate") @db.JsonB
+  /// パース済件数 / エラー件数 / エラー詳細のサマリ (UI 再表示や監査用)
+  summary         Json     @db.JsonB
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  /// 24 時間後 (= createdAt + 24h)、cron がこれより前のレコードを削除する
+  expiresAt       DateTime @map("expires_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation("TenantImportPreviewCreator", fields: [createdByUserId], references: [id])
+
+  @@index([tenantId, createdAt(sort: Desc)], map: "idx_tenant_import_preview_tenant")
+  @@index([expiresAt], map: "idx_tenant_import_preview_expires")
+  @@map("tenant_import_preview")
 }
 
 /// メール送信ログ (P-H / 2026-05-08)
