@@ -4830,3 +4830,52 @@ PR #283 で Security Scan (`.github/workflows/security.yml` の `pnpm audit --au
 - [ ] **PR 作成前にローカルで `pnpm audit --audit-level=high` を 1 回実行する習慣を**: CI でしか気付かないと「PR 作成 → CI fail → 修正 → 再 push」で往復が発生する。Vulnerability advisory は時間で増えるため、commit 時点では問題なくても push 時点で fail することがある
 - [ ] **CI Gate (`security.yml`) を絶対にスキップしない**: HIGH 以上は build を止める運用。例外的に「依存元側にしかパッチがない」case でも、最低限 issue を切ってトラッキングする (silent ignore は厳禁)
 
+## 5.X+5 認可仕様 (MFA 強制対象) を緩和したら E2E アサーションと visual baseline 両方を更新する (PR #283 hotfix / 2026-05-09)
+
+### 背景
+
+PR #283 (#11 「テナント管理者の MFA を任意化」) で MFA 強制対象を `admin` → `super_admin` に
+変更したところ、E2E 2 系統が連鎖 fail した:
+
+1. **機能 spec** `01-admin-and-member-setup.spec.ts:114` Step 2 が
+   `await expect(page.getByText('強制有効化 (解除不可)')).toBeVisible()` で fail。
+   → 旧仕様 `systemRole === 'admin'` 前提のアサーション。新仕様では admin にこのバッジは出ない。
+   この test が fail した結果、`mode: 'serial'` で連鎖する Step 2b〜Step 6b が **6 件 skip**
+   され、見かけ上「7 件 fail」相当の影響に拡大。
+2. **視覚回帰** `dashboard-screens.spec.ts:74` (settings-light) と `settings-themes.spec.ts:68`
+   (10 テーマ × 設定画面) が pixel diff で fail。`admin` ユーザのスナップショットだったため
+   バッジ消失分の差分が出た。
+
+### 対応 (2 つを 1 PR で完結させる)
+
+1. **Step 2 アサーションを新仕様に書き直し** (この test は admin = テナント管理者なので、
+   有効化後の状態は「`MFA を有効化する` ボタン消失 + `有効` バッジ + `MFA を無効化する`
+   ボタン表示」で確認する。super_admin 強制の確認は別 spec に分ける):
+
+```diff
+- await expect(page.getByText('強制有効化 (解除不可)')).toBeVisible({ timeout: 10_000 });
++ await expect(page.getByText('有効', { exact: true })).toBeVisible({ timeout: 10_000 });
++ await expect(page.getByRole('button', { name: 'MFA を無効化する' })).toBeVisible({
++   timeout: 10_000,
++ });
+```
+
+2. **空コミットで baseline 再生成 workflow をトリガ**:
+
+```bash
+git commit --allow-empty -m "chore: regenerate visual baselines after MFA optional UI change [gen-visual]"
+git push
+```
+
+`[gen-visual]` タグ付き push は `.github/workflows/e2e-visual-baseline.yml` を発火し、
+`pnpm exec playwright test e2e/visual --update-snapshots` を CI で実行 → 差分があった
+PNG を `Update visual baselines (e2e-visual-baseline workflow)` commit で自動 push する。
+
+### 抽出したルール
+
+- [ ] **認可ロールの分岐文言を変えたら、文言にマッチする E2E test を `grep` で総当たり確認**: `'強制有効化'` / `'解除不可'` / `'MFA 必須'` 等のマジック文字列は、機能 spec / visual spec / i18n message の 3 箇所に散らばる。コード変更時に `git grep` で全箇所を洗い出すルーチンを徹底
+- [ ] **`mode: 'serial'` の test ファイルでは「最初の fail が連鎖 skip を起こす」**: skip された test は CI 上は別 line item に見えるが原因は 1 箇所。fail の根本原因 1 件を直せば連鎖 skip も解消するため、まず先頭 fail を fix することに集中する
+- [ ] **UI 変更を伴う認可緩和の PR は `[gen-visual]` を最初の commit から含めるか、PR 作成直後に空コミットで発火させる**: PR 作成 → e2e fail → `[gen-visual]` push → 再実行 で 1 サイクル余分にかかる。事前に「視覚スナップショットを取る画面 (settings, dashboard 等) に触る変更か?」を判断し、touch するなら CI 一発目から baseline 再生成を組み込む
+- [ ] **新旧の認可挙動を別 spec に分けて両方カバーする**: 旧仕様 (`super_admin` 強制) を消さず別 test として残すと、後から「super_admin の MFA 強制が壊れた」regression を catch できる。`#11` 緩和後は admin spec で「任意化済」、super_admin spec で「強制継続」を別々にアサートする
+- [ ] **連鎖 skip の影響範囲を PR description に明記**: 1 件 fail → 6 件 skip のような場合、原因と修正箇所を「失敗 1 件、skip 6 件 (= 同一原因)」と書くことで、レビュアが何を見ればよいか即時に判断できる
+
