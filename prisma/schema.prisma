@@ -77,7 +77,7 @@ model Tenant {
   updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt                DateTime? @map("deleted_at") @db.Timestamptz
 
-  // Relations: 13 業務エンティティ + ApiCallLog + SuggestionExplanation (P-3)
+  // Relations: 13 業務エンティティ + ApiCallLog + SuggestionExplanation (P-3) + monthlyUsageHistory (P-5b)
   users                   User[]
   customers               Customer[]
   projects                Project[]
@@ -93,6 +93,7 @@ model Tenant {
   systemErrorLogs         SystemErrorLog[]
   apiCallLogs             ApiCallLog[]
   suggestionExplanations  SuggestionExplanation[]
+  monthlyUsageHistory     TenantMonthlyUsageHistory[]
 
   @@index([plan], map: "idx_tenants_plan")
   @@map("tenants")
@@ -1022,4 +1023,54 @@ model SuggestionExplanation {
   @@unique([projectId, candidateKind, candidateId], map: "uq_suggestion_explanation_target")
   @@index([tenantId, generatedAt(sort: Desc)], map: "idx_suggestion_explanations_tenant")
   @@map("suggestion_explanations")
+}
+
+/// テナント別月次使用量の履歴スナップショット (P-5b / 2026-05-08)
+///
+/// 役割:
+///   月初リセット cron が `Tenant.currentMonthApiCallCount` / `currentMonthApiCostJpy` を
+///   0 にリセット **する直前** の値を、yearMonth (= リセット対象月の 1 つ前の月) で
+///   永続化する。super_admin の使用量履歴グラフ + CSV エクスポート + 請求書生成 (P-7)
+///   の正本データになる。
+///
+/// 設計判断:
+///   - **(tenantId, yearMonth) で unique**: 月次リセット cron の冪等性 (= 二重実行で
+///     行が重複しない) を保証。仮に cron が同月に複数回起動されても、最初の 1 回で
+///     決まったスナップショットを保つ。
+///   - **yearMonth は varchar(7) "YYYY-MM"**: 月単位の集計しか必要ないので date 型ではなく
+///     人間可読な文字列で持つ。SQL での SUBSTR 等不要、ORDER BY も自然に降順可能。
+///   - **plan / activeUserCount も保存**: 月次の課金根拠を後から再現可能にする
+///     (= 「2026-04 月時点で Pro プラン × アクティブ 5 人で ¥9,000」が後から監査できる)。
+///   - **管理テナント (Knowledge Relay Platform) は保存しない**:
+///     呼出側 (snapshot サービス) で `id != MANAGEMENT_TENANT_ID` で絞る。集計画面でも
+///     同様に除外しているため整合する。
+///
+/// 関連:
+///   - cron: src/services/tenant-monthly-reset.service.ts
+///   - 集計サービス: src/services/super-admin.service.ts (listMonthlyUsageHistory)
+///   - CSV API: src/app/api/admin/super/usage/export/route.ts
+///   - UI: src/app/(dashboard)/admin/super/usage/page.tsx
+///   - 計画: docs/roadmap/V1_FINAL_TASKS.md P-5
+model TenantMonthlyUsageHistory {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  /// "YYYY-MM" 形式 (例: "2026-04" = 2026 年 4 月分)
+  yearMonth       String   @map("year_month") @db.VarChar(7)
+  /// 当月総コール数 (= リセット直前の Tenant.currentMonthApiCallCount)
+  apiCallCount    Int      @map("api_call_count")
+  /// 当月総課金額 (= リセット直前の Tenant.currentMonthApiCostJpy、円整数)
+  apiCostJpy      Int      @map("api_cost_jpy")
+  /// 当月末時点のプラン (請求書根拠用)
+  plan            String   @db.VarChar(20)
+  /// 当月末時点のアクティブユーザ数 (請求書根拠用)
+  activeUserCount Int      @map("active_user_count")
+  /// snapshot 生成日時 (= 月初リセット cron の起動時刻)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  /// (tenantId, yearMonth) は 1 件のみ。月次 cron の冪等性保証。
+  @@unique([tenantId, yearMonth], map: "uq_tenant_monthly_usage_history")
+  @@index([yearMonth], map: "idx_monthly_usage_year_month")
+  @@map("tenant_monthly_usage_history")
 }
