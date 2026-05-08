@@ -1026,7 +1026,16 @@ P-D データ一括インポート (PR #270) ✅ 完了 (容量制限は後続�
 P-E プラン変更 e2e テスト (本 PR) ✅ 完了
 ```
 
-**全リリース必須/推奨課題完了** (2026-05-08 時点)。残るは容量制限の後続設計のみ。
+**全リリース必須/推奨課題完了** (2026-05-08 時点)。
+
+### 後続フェーズ (リリース後の機能拡張)
+
+| フェーズ | 内容 | 状態 | 備考 |
+|---|---|---|---|
+| **外部データ移行 Phase 1** | 外部システム (CSV/Excel) からの Knowledge + RiskIssue 初回取込ウィザード | ✅ 完了 (本 PR) | β: カラムマッピング UI / dry-run プレビュー / 失敗行レポート / Voyage 全件即時生成 (Beginner 上限チェック + Expert/Pro 課金見積) |
+| **ストレージ add-on** | LLM プランと独立したストレージ容量 add-on (Standard/Plus/Pro/Enterprise) | 🟡 未着手 | Grace period 7 日 + super_admin ダッシュボードの per-tenant 容量・課金可視化を含む。`tenant_monthly_usage_history` の前方互換カラムは本 PR で追加済 |
+| **外部データ移行 Phase 2** | Markdown/Wiki の AI パースで Knowledge 構造化 (Pro 限定) | 🟡 未着手 | Pro プランの差別化機能、Phase 1 リリース後の市場反応次第で着手判断 |
+| **外部データ移行 Phase 3** | Jira/Asana 等の競合ツール export 直読 | 🟡 未着手 | 競合からの乗換需要が出たら着手 |
 
 実績工数: P-1〜P-3 + P-5a/b + P-6 で **約 6-7 日相当**。P-A 〜 P-E は合計 **6.5-10 日**。
 

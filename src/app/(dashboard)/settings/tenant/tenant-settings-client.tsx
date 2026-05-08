@@ -434,6 +434,13 @@ function DataImportSection() {
         <li>同テナントで他のインポートが進行中の場合は受付不可</li>
       </ul>
 
+      <div className="mt-3 rounded border-l-4 border-info bg-info/5 p-3 text-xs">
+        <p className="font-semibold">外部システム (Excel / 旧 PM ツール 等) から初回データを取り込みたい場合</p>
+        <p className="mt-1 text-muted-foreground">
+          本機能ではなく <a href="/settings/tenant/external-import" className="text-info underline">外部データ移行ウィザード</a> をご利用ください。CSV/Excel をアップロード → カラムをマッピング → プレビュー → 取込 の 4 ステップでナレッジ + 過去課題を取り込めます。
+        </p>
+      </div>
+
       <form onSubmit={handleSubmit} className="mt-3 space-y-3">
         <div>
           <label htmlFor="import-zip" className="text-sm font-medium">

@@ -6,16 +6,22 @@ vi.mock('@/services/notification.service', () => ({
   cleanupReadNotifications: vi.fn(),
 }));
 
+vi.mock('@/services/external-data-import.service', () => ({
+  deleteExpiredPreviews: vi.fn(),
+}));
+
 import { POST, GET } from './route';
 import {
   generateDailyNotifications,
   cleanupReadNotifications,
 } from '@/services/notification.service';
+import { deleteExpiredPreviews } from '@/services/external-data-import.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(generateDailyNotifications).mockResolvedValue({ startCreated: 0, endCreated: 0 });
   vi.mocked(cleanupReadNotifications).mockResolvedValue({ deleted: 0 });
+  vi.mocked(deleteExpiredPreviews).mockResolvedValue(0);
 });
 
 function cronReq(authHeader?: string): NextRequest {
@@ -46,10 +52,11 @@ describe('POST /api/cron/daily-notifications', () => {
     expect(res.status).toBe(401);
   });
 
-  it('正しい Bearer なら generate + cleanup を実行して 200', async () => {
+  it('正しい Bearer なら generate + cleanup + 期限切れ preview 削除 を実行して 200', async () => {
     process.env.CRON_SECRET = 'test-secret';
     vi.mocked(generateDailyNotifications).mockResolvedValue({ startCreated: 3, endCreated: 2 });
     vi.mocked(cleanupReadNotifications).mockResolvedValue({ deleted: 5 });
+    vi.mocked(deleteExpiredPreviews).mockResolvedValue(2);
 
     const res = await POST(cronReq('Bearer test-secret'));
     expect(res.status).toBe(200);
@@ -58,9 +65,11 @@ describe('POST /api/cron/daily-notifications', () => {
       source: 'cron',
       generated: { startCreated: 3, endCreated: 2 },
       cleaned: { deleted: 5 },
+      expiredPreviewsDeleted: 2,
     });
     expect(generateDailyNotifications).toHaveBeenCalledOnce();
     expect(cleanupReadNotifications).toHaveBeenCalledOnce();
+    expect(deleteExpiredPreviews).toHaveBeenCalledOnce();
   });
 });
 

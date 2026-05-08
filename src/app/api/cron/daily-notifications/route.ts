@@ -21,6 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { generateDailyNotifications, cleanupReadNotifications } from '@/services/notification.service';
+import { deleteExpiredPreviews } from '@/services/external-data-import.service';
 
 function isCronAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
@@ -39,12 +40,15 @@ export async function POST(req: NextRequest) {
 
   const generated = await generateDailyNotifications();
   const cleaned = await cleanupReadNotifications();
+  // Phase 1 (2026-05-08): 期限切れ tenant_import_preview を物理削除 (TTL 24h)
+  const expiredPreviewsDeleted = await deleteExpiredPreviews();
 
   return NextResponse.json({
     data: {
       source: 'cron',
       generated,
       cleaned,
+      expiredPreviewsDeleted,
     },
   });
 }
