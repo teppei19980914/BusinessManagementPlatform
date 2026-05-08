@@ -47,6 +47,8 @@ export async function POST(req: NextRequest) {
       resetCount: result.resetCount,
       planAppliedCount: result.planAppliedCount,
       invalidPlanSkippedCount: result.invalidPlanSkippedCount,
+      // P-5b (2026-05-08): リセット直前のスナップショット保存件数
+      snapshotSavedCount: result.snapshotSavedCount,
     },
   });
 }

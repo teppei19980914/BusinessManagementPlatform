@@ -189,3 +189,61 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
     planDistribution: planGroups.map((p) => ({ plan: p.plan, count: p._count.id })),
   };
 }
+
+/**
+ * P-5b (2026-05-08): 過去 N ヶ月の月次使用量履歴を取得 (super_admin 履歴グラフ + CSV 用)。
+ *
+ * - tenant_monthly_usage_history からテナント x yearMonth で取得
+ * - 管理テナントは元から保存されていないので除外不要 (snapshot 側で MANAGEMENT_TENANT_ID を弾いている)
+ * - 並び: yearMonth 降順 (新しい月から) → tenantSeq 昇順
+ *
+ * @param months 取得月数 (1〜24 の範囲、それ以外はクランプ)
+ * @returns 月次使用量履歴の配列
+ */
+export type MonthlyUsageHistoryRow = {
+  yearMonth: string;
+  tenantId: string;
+  tenantSeq: number | null;
+  tenantName: string;
+  plan: string;
+  apiCallCount: number;
+  apiCostJpy: number;
+  activeUserCount: number;
+};
+
+export async function listMonthlyUsageHistory(
+  months: number = 6,
+): Promise<MonthlyUsageHistoryRow[]> {
+  const safeMonths = Math.max(1, Math.min(24, Math.trunc(months)));
+
+  // 直近 N ヶ月の yearMonth を生成 (UTC ベース、当月含まない過去 N ヶ月)
+  // 例: 2026-05 実行時で months=6 なら ['2026-04', '2026-03', ..., '2025-11']
+  const targetYearMonths: string[] = [];
+  const now = new Date();
+  for (let i = 1; i <= safeMonths; i += 1) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    targetYearMonths.push(ym);
+  }
+
+  const rows = await prisma.tenantMonthlyUsageHistory.findMany({
+    where: { yearMonth: { in: targetYearMonths } },
+    orderBy: [{ yearMonth: 'desc' }, { tenantId: 'asc' }],
+    include: {
+      tenant: {
+        select: { tenantSeq: true, name: true },
+      },
+    },
+  });
+
+  return rows.map((r) => ({
+    yearMonth: r.yearMonth,
+    tenantId: r.tenantId,
+    tenantSeq: r.tenant.tenantSeq,
+    tenantName: r.tenant.name,
+    plan: r.plan,
+    apiCallCount: r.apiCallCount,
+    apiCostJpy: r.apiCostJpy,
+    activeUserCount: r.activeUserCount,
+  }));
+}
