@@ -315,7 +315,8 @@ export async function notifyAdminsOfAlerts(
   const mail = getMailProvider();
   let sent = 0;
   for (const a of admins) {
-    const result = await mail.send({ to: a.email, subject, html, text });
+    // P-H (2026-05-08): 送信種別ラベル (ログ集計用)
+    const result = await mail.send({ to: a.email, subject, html, text, type: 'usage_alert' });
     if (result.success) sent++;
   }
   return sent;

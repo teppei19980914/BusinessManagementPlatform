@@ -1,9 +1,14 @@
-import type { MailProvider } from './mail-provider';
+import type { MailProvider, MailParams, MailResult } from './mail-provider';
 import { ConsoleMailProvider } from './console-provider';
 import { ResendMailProvider } from './resend-provider';
 import { BrevoMailProvider } from './brevo-provider';
 import { InboxMailProvider } from './inbox-provider';
 import { recordError } from '@/services/error-log.service';
+import {
+  recordEmailSend,
+  isDailyEmailLimitReached,
+  type EmailSendType,
+} from '@/services/email-send-log.service';
 
 export type { MailProvider, MailParams, MailResult } from './mail-provider';
 
@@ -55,10 +60,93 @@ export function createMailProvider(): MailProvider {
 
 // シングルトン
 let mailProvider: MailProvider | null = null;
+let loggingProvider: MailProvider | null = null;
 
 export function getMailProvider(): MailProvider {
-  if (!mailProvider) {
-    mailProvider = createMailProvider();
+  if (!loggingProvider) {
+    if (!mailProvider) {
+      mailProvider = createMailProvider();
+    }
+    // P-H (2026-05-08): 全送信ログ記録 + 日次上限チェックの decorator で wrap。
+    //   既存呼出 (sendVerificationEmail / usage alert / Beginner 警告) は変更不要。
+    loggingProvider = wrapWithLogging(mailProvider);
   }
-  return mailProvider;
+  return loggingProvider;
+}
+
+/**
+ * P-H (2026-05-08): MailProvider を log 記録 + 上限チェックでラップする decorator。
+ *
+ * 動作:
+ *   1. 送信前に日次上限チェック → 超過なら send をブロック (= 'daily_limit_exceeded' で
+ *      record + provider.send は呼ばない)
+ *   2. send 実行 → 戻り値 (success / error) を email_send_logs に記録
+ *   3. 失敗時はそのまま戻り値を caller に渡す (= 既存の handling を維持)
+ *
+ * 設計判断:
+ *   - **ログ記録は send の前後で行う** (前: 上限チェック、後: 結果記録)
+ *   - **ログ記録自体の失敗は無視** (= 本体送信のフローを止めない、recordEmailSend 側で握り潰し)
+ *   - **type の決定**: params.type が指定されていればそれ、未指定なら 'unknown'
+ *   - **provider 名**: 環境変数 MAIL_PROVIDER (or 'console' fallback)
+ */
+function wrapWithLogging(provider: MailProvider): MailProvider {
+  const providerName = process.env.MAIL_PROVIDER || 'console';
+
+  return {
+    async send(params: MailParams): Promise<MailResult> {
+      const type = params.type ?? 'unknown';
+      const tenantId = params.tenantId;
+
+      // 上限チェック: 日次上限到達なら send せず failure として記録
+      const limitReached = await isDailyEmailLimitReached();
+      if (limitReached) {
+        await recordError({
+          severity: 'error',
+          source: 'mail',
+          message:
+            '日次メール送信上限に達したため送信をブロックしました (EMAIL_DAILY_LIMIT)。' +
+            '上限値の引き上げまたは上位プラン契約をご検討ください。',
+          context: { type, recipientDomain: extractDomain(params.to) },
+        });
+        await recordEmailSend({
+          type: type as EmailSendType,
+          recipientEmail: params.to,
+          success: false,
+          errorMessage: 'daily_limit_exceeded',
+          providerName,
+          tenantId,
+        });
+        return {
+          success: false,
+          error: '日次メール送信上限に達しました。しばらく待ってから再試行してください。',
+        };
+      }
+
+      // 通常送信
+      const result = await provider.send(params);
+
+      // 結果を log 記録
+      await recordEmailSend({
+        type: type as EmailSendType,
+        recipientEmail: params.to,
+        success: result.success,
+        errorMessage: result.success ? undefined : result.error,
+        providerName,
+        tenantId,
+      });
+
+      return result;
+    },
+  };
+}
+
+function extractDomain(email: string): string {
+  const at = email.indexOf('@');
+  return at >= 0 ? email.slice(at) : '';
+}
+
+/** テスト用: シングルトンを破棄して次回 getMailProvider で再構築させる */
+export function _resetMailProviderForTest(): void {
+  mailProvider = null;
+  loggingProvider = null;
 }
