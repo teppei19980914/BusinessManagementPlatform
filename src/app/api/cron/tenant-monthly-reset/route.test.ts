@@ -40,6 +40,9 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       invalidPlanSkippedCount: 0,
       // P-5b (2026-05-08): スナップショット保存件数が結果に含まれる
       snapshotSavedCount: 3,
+      // Storage add-on (Phase 2 / 2026-05-08): ダウングレード適用 / 使用量超過 skip
+      storageAddonAppliedCount: 0,
+      storageAddonSkippedCount: 0,
     });
 
     const res = await POST(makeReq('Bearer test-cron-secret-xyz'));
@@ -52,6 +55,8 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       planAppliedCount: 1,
       invalidPlanSkippedCount: 0,
       snapshotSavedCount: 3,
+      storageAddonAppliedCount: 0,
+      storageAddonSkippedCount: 0,
     });
     expect(runTenantMonthlyReset).toHaveBeenCalledTimes(1);
   });

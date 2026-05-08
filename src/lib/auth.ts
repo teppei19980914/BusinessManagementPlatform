@@ -75,6 +75,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 plan: true,
                 createdAt: true,
                 beginnerEverUpgraded: true,
+                // Storage add-on (Phase 2 / 2026-05-08): Grace period 開始日時を JWT claim に
+                //   伝搬。middleware が write methods 時に NOW() と比較して 7 日経過判定。
+                storageGracePeriodStartedAt: true,
               },
             },
           },
@@ -169,6 +172,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           tenantPlan: user.tenant.plan,
           tenantCreatedAt: user.tenant.createdAt.toISOString(),
           tenantBeginnerEverUpgraded: user.tenant.beginnerEverUpgraded,
+          // Storage add-on (Phase 2 / 2026-05-08): Grace 開始日時の ISO 文字列、未開始は null。
+          //   middleware で `NOW() - parse() >= 7 日` 判定 → write 系 403。
+          tenantStorageGracePeriodStartedAt:
+            user.tenant.storageGracePeriodStartedAt?.toISOString() ?? null,
           name: user.name,
           email: user.email,
           systemRole: user.systemRole,

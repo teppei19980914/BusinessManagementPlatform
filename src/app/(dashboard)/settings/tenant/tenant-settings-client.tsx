@@ -60,7 +60,33 @@ const PLAN_OPTIONS: PlanLabel[] = [
   },
 ];
 
-export function TenantSettingsClient({ initialInfo }: { initialInfo: TenantSelfInfo }) {
+/**
+ * Storage add-on (Phase 2 / 2026-05-08): page.tsx から渡される初期情報。
+ * Server Component → Client Component の境界で BigInt と Date を string 化済。
+ */
+type StorageInitialInfo = {
+  tenantId: string;
+  llmPlan: 'beginner' | 'expert' | 'pro';
+  storageAddonPlan: 'standard' | 'plus' | 'pro_storage' | 'enterprise';
+  storageAddonMonthlyJpy: number;
+  storageBytesUsed: number;
+  storageLimitBytes: number;
+  usageRatio: number;
+  graceState: 'active' | 'grace_active' | 'write_blocked';
+  graceStartedAt: string | null;
+  graceDaysRemaining: number | null;
+  scheduledStorageAddonAt: string | null;
+  scheduledNextStorageAddon: 'standard' | 'plus' | 'pro_storage' | 'enterprise' | null;
+  storageBytesUsedAt: string | null;
+};
+
+export function TenantSettingsClient({
+  initialInfo,
+  storageInitialInfo,
+}: {
+  initialInfo: TenantSelfInfo;
+  storageInitialInfo: StorageInitialInfo | null;
+}) {
   const router = useRouter();
   const { showSuccess, showError } = useToast();
   const [info, setInfo] = useState(initialInfo);
@@ -307,6 +333,9 @@ export function TenantSettingsClient({ initialInfo }: { initialInfo: TenantSelfI
         </Button>
       </form>
 
+      {/* Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理 */}
+      {storageInitialInfo && <StorageAddonSection initialInfo={storageInitialInfo} />}
+
       {/* P-G (2026-05-08): 請求先情報の編集 */}
       <BillingContactSection initialInfo={info} />
 
@@ -316,6 +345,230 @@ export function TenantSettingsClient({ initialInfo }: { initialInfo: TenantSelfI
       {/* P-D (2026-05-08): データインポート */}
       <DataImportSection />
     </div>
+  );
+}
+
+// ================================================================
+// Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理セクション
+// ================================================================
+
+const STORAGE_ADDON_OPTIONS: Array<{
+  value: StorageInitialInfo['storageAddonPlan'];
+  label: string;
+  desc: string;
+}> = [
+  { value: 'standard', label: 'Standard', desc: 'LLM プランに連動した無料容量' },
+  { value: 'plus', label: 'Storage Plus', desc: '+200MB / +¥500/月' },
+  { value: 'pro_storage', label: 'Storage Pro', desc: '+1GB / +¥1,500/月' },
+  { value: 'enterprise', label: 'Storage Enterprise', desc: '+5GB / +¥5,000/月' },
+];
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${bytes} B`;
+}
+
+function StorageAddonSection({ initialInfo }: { initialInfo: StorageInitialInfo }) {
+  const router = useRouter();
+  const { showSuccess, showError } = useToast();
+  const [info, setInfo] = useState(initialInfo);
+  const [selected, setSelected] = useState(initialInfo.storageAddonPlan);
+  const [submitting, setSubmitting] = useState(false);
+
+  const usagePercent = Math.min(100, Math.round(info.usageRatio * 100));
+  const isOverLimit = info.usageRatio > 1.0;
+  const planChanged = selected !== info.storageAddonPlan;
+
+  const ADDON_ORDER = { standard: 0, plus: 1, pro_storage: 2, enterprise: 3 } as const;
+  const isDowngrade = ADDON_ORDER[selected] < ADDON_ORDER[info.storageAddonPlan];
+
+  const refresh = async () => {
+    const res = await fetch('/api/tenants/me/storage-addon');
+    if (!res.ok) return;
+    const json = await res.json();
+    if (json?.data) {
+      // graceStartedAt 等が Date のままなので、文字列化された response で上書き
+      setInfo({
+        ...json.data,
+        graceStartedAt: json.data.graceStartedAt
+          ? new Date(json.data.graceStartedAt).toISOString()
+          : null,
+        scheduledStorageAddonAt: json.data.scheduledStorageAddonAt
+          ? new Date(json.data.scheduledStorageAddonAt).toISOString()
+          : null,
+        storageBytesUsedAt: json.data.storageBytesUsedAt
+          ? new Date(json.data.storageBytesUsedAt).toISOString()
+          : null,
+      });
+      setSelected(json.data.storageAddonPlan);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!planChanged) {
+      showError('変更内容がありません');
+      return;
+    }
+    if (isDowngrade) {
+      const ok = confirm(
+        'ダウングレードは翌月 1 日 (UTC) から適用されます。当月分の月額は引き続き発生します。続行しますか?',
+      );
+      if (!ok) return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/tenants/me/storage-addon', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: selected }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        showError(json?.error?.message ?? 'プラン変更に失敗しました');
+        return;
+      }
+      if (json.data.appliedImmediately) {
+        showSuccess('ストレージプランを即時反映しました');
+      } else {
+        const date = new Date(json.data.scheduledFor).toISOString().split('T')[0];
+        showSuccess(`${date} にストレージプランを変更します`);
+      }
+      await refresh();
+      router.refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCancelScheduled = async () => {
+    if (!confirm('ストレージプラン変更予約をキャンセルしますか?')) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/tenants/me/storage-addon', { method: 'DELETE' });
+      if (!res.ok) {
+        showError('予約キャンセルに失敗しました');
+        return;
+      }
+      showSuccess('予約をキャンセルしました');
+      await refresh();
+      router.refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="rounded border p-4">
+      <h2 className="mb-2 font-semibold">ストレージプラン (容量 add-on)</h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        LLM プランと独立した容量プランです。アップグレードは即時反映、ダウングレードは翌月 1 日 UTC に適用されます。
+      </p>
+
+      {/* 当月使用量 */}
+      <div className="mb-3 rounded bg-muted/30 p-3 text-sm">
+        <div className="flex justify-between">
+          <span>当月使用量</span>
+          <span className={isOverLimit ? 'font-bold text-destructive' : 'font-bold'}>
+            {formatBytes(info.storageBytesUsed)} / {formatBytes(info.storageLimitBytes)}
+          </span>
+        </div>
+        <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
+          <div
+            className={`h-full ${
+              isOverLimit
+                ? 'bg-destructive'
+                : usagePercent >= 80
+                  ? 'bg-amber-500'
+                  : 'bg-info'
+            }`}
+            style={{ width: `${Math.min(100, usagePercent)}%` }}
+          />
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          使用率 {usagePercent}% (キャッシュ値、最終更新: {info.storageBytesUsedAt ?? '未計測'})
+        </p>
+      </div>
+
+      {/* Grace period 警告 */}
+      {info.graceState === 'grace_active' && (
+        <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
+          <p className="font-semibold">⚠ ストレージ上限超過中 (Grace period)</p>
+          <p>
+            残り {info.graceDaysRemaining} 日以内にデータ削除またはプランアップグレードが必要です。
+            7 日経過すると書き込み操作が停止します。
+          </p>
+        </div>
+      )}
+      {info.graceState === 'write_blocked' && (
+        <div className="mb-3 rounded border border-destructive bg-destructive/10 p-3 text-sm">
+          <p className="font-semibold text-destructive">🚨 書き込み停止中</p>
+          <p>
+            ストレージ上限超過状態が 7 日以上続いたため、書き込み操作が停止しています。
+            データを削除して上限内に戻すか、Storage プランをアップグレードしてください。
+          </p>
+        </div>
+      )}
+
+      {/* 予約済プラン変更 */}
+      {info.scheduledStorageAddonAt && info.scheduledNextStorageAddon && (
+        <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
+          <p>
+            <strong>ストレージプラン変更予約あり:</strong>{' '}
+            {info.scheduledStorageAddonAt.split('T')[0]} に{' '}
+            <span className="font-mono">{info.scheduledNextStorageAddon}</span> へ変更予定
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            onClick={handleCancelScheduled}
+            disabled={submitting}
+          >
+            予約をキャンセル
+          </Button>
+        </div>
+      )}
+
+      {/* プラン選択 */}
+      <form onSubmit={handleSubmit} className="space-y-2">
+        {STORAGE_ADDON_OPTIONS.map((opt) => (
+          <label
+            key={opt.value}
+            className="flex cursor-pointer items-start gap-2 rounded border p-3 hover:bg-muted/30"
+          >
+            <input
+              type="radio"
+              name="storageAddonPlan"
+              value={opt.value}
+              checked={selected === opt.value}
+              onChange={() => setSelected(opt.value)}
+              className="mt-1"
+            />
+            <div>
+              <p className="font-medium">{opt.label}</p>
+              <p className="text-xs text-muted-foreground">{opt.desc}</p>
+              {info.storageAddonPlan === opt.value && (
+                <p className="mt-1 text-xs text-info">現在のプラン</p>
+              )}
+            </div>
+          </label>
+        ))}
+
+        <Button type="submit" disabled={submitting || !planChanged}>
+          {submitting ? '更新中...' : 'ストレージプランを変更'}
+        </Button>
+      </form>
+    </section>
   );
 }
 

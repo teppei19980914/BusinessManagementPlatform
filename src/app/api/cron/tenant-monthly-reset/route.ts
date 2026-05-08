@@ -49,6 +49,9 @@ export async function POST(req: NextRequest) {
       invalidPlanSkippedCount: result.invalidPlanSkippedCount,
       // P-5b (2026-05-08): リセット直前のスナップショット保存件数
       snapshotSavedCount: result.snapshotSavedCount,
+      // Storage add-on (Phase 2 / 2026-05-08): ダウングレード予約適用件数 / 使用量超過 skip 件数
+      storageAddonAppliedCount: result.storageAddonAppliedCount,
+      storageAddonSkippedCount: result.storageAddonSkippedCount,
     },
   });
 }

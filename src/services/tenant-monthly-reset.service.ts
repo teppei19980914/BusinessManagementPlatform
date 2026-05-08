@@ -40,6 +40,11 @@
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
 import { isTenantPlan, MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import {
+  ADDON_MONTHLY_JPY as STORAGE_ADDON_MONTHLY_JPY,
+  isStorageAddonPlan,
+} from '@/config/storage-addon';
+import { applyScheduledStorageChanges } from '@/services/tenant-storage.service';
 
 export interface TenantMonthlyResetResult {
   /** 月初リセット対象として update したテナント件数。 */
@@ -50,6 +55,10 @@ export interface TenantMonthlyResetResult {
   invalidPlanSkippedCount: number;
   /** P-5b (2026-05-08): スナップショット保存件数 (= 履歴テーブルに insert した件数)。 */
   snapshotSavedCount: number;
+  /** Storage add-on (Phase 2 / 2026-05-08): ダウングレード予約適用件数 */
+  storageAddonAppliedCount: number;
+  /** Storage add-on (Phase 2): 月跨ぎでデータ増加し適用 skip した件数 */
+  storageAddonSkippedCount: number;
 }
 
 /**
@@ -108,6 +117,9 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       plan: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
+      // Storage add-on (Phase 2 / 2026-05-08): snapshot に当月末状態を記録するため取得
+      storageAddonPlan: true,
+      storageBytesUsed: true,
     },
   });
 
@@ -128,6 +140,11 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
   let saved = 0;
   for (const tenant of targets) {
     try {
+      const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
+      const storageAddonPlan = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
+      const storageAddonJpy = STORAGE_ADDON_MONTHLY_JPY[storageAddonPlan];
+      const totalJpy = tenant.currentMonthApiCostJpy + storageAddonJpy;
+
       await prisma.tenantMonthlyUsageHistory.upsert({
         where: {
           tenantId_yearMonth: { tenantId: tenant.id, yearMonth },
@@ -139,6 +156,11 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           apiCostJpy: tenant.currentMonthApiCostJpy,
           plan: tenant.plan,
           activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
+          // Storage add-on (Phase 2): 当月末時点の容量・プラン・課金を記録
+          storageBytesUsed: tenant.storageBytesUsed,
+          storageAddonPlan,
+          storageAddonJpy,
+          totalJpy,
         },
         update: {
           // 同月再実行: 最新値で update (cron が複数回起動された場合の整合性確保)
@@ -146,6 +168,10 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           apiCostJpy: tenant.currentMonthApiCostJpy,
           plan: tenant.plan,
           activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
+          storageBytesUsed: tenant.storageBytesUsed,
+          storageAddonPlan,
+          storageAddonJpy,
+          totalJpy,
         },
       });
       saved += 1;
@@ -264,10 +290,14 @@ export async function runTenantMonthlyReset(
   const snapshotSavedCount = await saveMonthlyUsageSnapshots(now);
   const resetCount = await resetTenantMonthlyCounters(now);
   const { applied, invalidSkipped } = await applyScheduledPlanChanges(now);
+  // Storage add-on (Phase 2 / 2026-05-08): LLM プランと同様、ダウングレード予約を月初に適用
+  const storageResult = await applyScheduledStorageChanges(now);
   return {
     resetCount,
     planAppliedCount: applied,
     invalidPlanSkippedCount: invalidSkipped,
     snapshotSavedCount,
+    storageAddonAppliedCount: storageResult.applied,
+    storageAddonSkippedCount: storageResult.skippedDueToUsage,
   };
 }

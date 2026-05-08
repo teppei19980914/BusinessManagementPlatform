@@ -16,6 +16,8 @@ import {
   getCrossTenantUsageSummary,
   listDormantTenants,
   DORMANT_TENANT_THRESHOLD_DAYS,
+  listStorageUsageTop,
+  type StorageUsageTopRow,
 } from '@/services/super-admin.service';
 import { getDatabaseCapacityReport } from '@/services/db-capacity.service';
 import { getEmailSendStats } from '@/services/email-send-log.service';
@@ -23,11 +25,12 @@ import type { DbCapacityStatus } from '@/config/db-capacity';
 import type { EmailLimitStatus } from '@/config/email-limit';
 
 export default async function SuperAdminTopPage() {
-  const [summary, capacity, dormant, emailStats] = await Promise.all([
+  const [summary, capacity, dormant, emailStats, storageTop] = await Promise.all([
     getCrossTenantUsageSummary(),
     getDatabaseCapacityReport(),
     listDormantTenants(),
     getEmailSendStats(),
+    listStorageUsageTop(10),
   ]);
 
   return (
@@ -55,6 +58,9 @@ export default async function SuperAdminTopPage() {
 
       {/* P-6 (2026-05-08): 休眠テナント警告 */}
       <DormantTenantsCard dormant={dormant} />
+
+      {/* Storage add-on (Phase 2 / 2026-05-08): テナント別容量 TOP 10 */}
+      <StorageUsageTopCard rows={storageTop} />
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">プラン別テナント数</h2>
@@ -378,6 +384,72 @@ function EmailSendMonitorCard({
         <code className="rounded bg-muted px-1">EMAIL_DAILY_LIMIT</code>、
         月次上限は <code className="rounded bg-muted px-1">EMAIL_MONTHLY_LIMIT</code> で可能
       </p>
+    </section>
+  );
+}
+
+
+// ================================================================
+// Storage add-on (Phase 2 / 2026-05-08): 容量 TOP 10 ランキングカード
+// ================================================================
+
+function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <section className="space-y-2 rounded border p-4">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-lg font-semibold">ストレージ使用量 TOP 10</h2>
+        <p className="text-xs text-muted-foreground">
+          ⚠ 80% 超 / 🚨 100% 超 (Grace period 中)
+        </p>
+      </div>
+      <ul className="rounded border text-sm">
+        {rows.map((r, idx) => {
+          const usagePct = Math.round(r.storageUsageRatio * 100);
+          const isOver = r.storageUsageRatio > 1.0;
+          const isWarn = !isOver && r.storageUsageRatio >= 0.8;
+          return (
+            <li
+              key={r.id}
+              className={`flex items-center gap-3 border-b p-2 last:border-b-0 ${
+                isOver ? "bg-destructive/5" : isWarn ? "bg-amber-50 dark:bg-amber-900/20" : ""
+              }`}
+            >
+              <span className="w-6 text-right text-xs text-muted-foreground">{idx + 1}.</span>
+              <div className="flex-1">
+                <Link
+                  href={`/admin/super/tenants/${r.id}`}
+                  className="font-medium text-info hover:underline"
+                >
+                  {r.name}
+                </Link>
+                {r.tenantSeq != null && (
+                  <span className="ml-2 text-xs text-muted-foreground">#{r.tenantSeq}</span>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  LLM: {r.llmPlan} / Storage: {r.storageAddonPlan}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs">
+                  {formatBytes(r.storageBytesUsed)} / {formatBytes(r.storageLimitBytes)}
+                </p>
+                <p
+                  className={`text-xs font-semibold ${
+                    isOver ? "text-destructive" : isWarn ? "text-amber-700 dark:text-amber-400" : ""
+                  }`}
+                >
+                  {usagePct}%
+                  {r.graceState === "grace_active" && " ⚠"}
+                  {r.graceState === "write_blocked" && " 🚨"}
+                </p>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }

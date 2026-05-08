@@ -131,6 +131,36 @@ export const authConfig: NextAuthConfig = {
             }
           }
         }
+
+        // Storage add-on (Phase 2 / 2026-05-08): Storage Grace 7 日経過テナントの write 停止。
+        //   Grace 開始日時 (= cron が容量超過検知でセット) から 7 日経過すると write 系停止。
+        //   ユーザがデータを削除して上限内に戻れば、cron が claim をクリア → 次回ログインで通る。
+        //   即時反映が必要な場合は再ログイン or trigger='update' 経路で claim 更新。
+        const graceStartedIso = auth.user.tenantStorageGracePeriodStartedAt;
+        if (typeof graceStartedIso === 'string' && graceStartedIso.length > 0) {
+          const graceStartedMs = Date.parse(graceStartedIso);
+          if (Number.isFinite(graceStartedMs)) {
+            const graceElapsedDays = Math.floor((Date.now() - graceStartedMs) / (24 * 60 * 60 * 1000));
+            // GRACE_DAYS=7 (= src/config/storage-addon.ts の STORAGE_GRACE_PERIOD_DAYS)。
+            // middleware は config を import できない (Edge runtime + dual import 制約) ため数値リテラル。
+            if (graceElapsedDays >= 7) {
+              return new Response(
+                JSON.stringify({
+                  error: {
+                    code: 'STORAGE_LIMIT_EXCEEDED',
+                    message:
+                      'ストレージ上限を超過した状態が 7 日以上続いたため、書き込み操作は停止しています。' +
+                      'データを削除して上限内に戻すか、Storage プランをアップグレードしてください。',
+                  },
+                }),
+                {
+                  status: 403,
+                  headers: { 'content-type': 'application/json' },
+                },
+              );
+            }
+          }
+        }
       }
 
       return true;
@@ -148,6 +178,10 @@ export const authConfig: NextAuthConfig = {
         token.tenantBeginnerEverUpgraded = (
           user as unknown as { tenantBeginnerEverUpgraded: boolean }
         ).tenantBeginnerEverUpgraded;
+        // Storage add-on (Phase 2 / 2026-05-08): Grace 期間判定用 claim
+        token.tenantStorageGracePeriodStartedAt = (
+          user as unknown as { tenantStorageGracePeriodStartedAt: string | null }
+        ).tenantStorageGracePeriodStartedAt ?? null;
         token.systemRole = (user as unknown as { systemRole: string }).systemRole;
         token.forcePasswordChange = (user as unknown as { forcePasswordChange: boolean })
           .forcePasswordChange;
@@ -207,6 +241,9 @@ export const authConfig: NextAuthConfig = {
         session.user.tenantCreatedAt = (token.tenantCreatedAt as string | undefined) ?? new Date().toISOString();
         session.user.tenantBeginnerEverUpgraded =
           (token.tenantBeginnerEverUpgraded as boolean | undefined) ?? false;
+        // Storage add-on (Phase 2): Grace 開始日時を session に伝播 (middleware + UI 両方で使用)
+        session.user.tenantStorageGracePeriodStartedAt =
+          (token.tenantStorageGracePeriodStartedAt as string | null | undefined) ?? null;
       }
       return session;
     },

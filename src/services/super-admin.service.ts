@@ -24,6 +24,10 @@ import {
   getBeginnerDaysRemaining,
   type BeginnerExpiryState,
 } from './beginner-expiry.service';
+import {
+  ADDON_MONTHLY_JPY as SUPER_ADMIN_ADDON_MONTHLY_JPY,
+  computeStorageLimitBytes,
+} from '@/config/storage-addon';
 
 /**
  * 全テナント一覧 (super_admin ダッシュボード用)。
@@ -150,6 +154,17 @@ export type TenantDetail = TenantSummaryRow & {
     retrospectives: number;
     memos: number;
   };
+  // Storage add-on (Phase 2 / 2026-05-08): super_admin がテナント別容量と課金を参照
+  storageAddonPlan: string;
+  storageBytesUsed: number;
+  storageLimitBytes: number;
+  storageUsageRatio: number;
+  storageAddonMonthlyJpy: number;
+  /** 当月の合計課金額 (LLM 部分 + Storage add-on) */
+  totalCurrentMonthJpy: number;
+  storageGracePeriodStartedAt: Date | null;
+  storageScheduledAt: Date | null;
+  storageScheduledNext: string | null;
 };
 
 export async function getTenantDetail(tenantId: string): Promise<TenantDetail | null> {
@@ -230,7 +245,124 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
       beginnerEverUpgraded: t.beginnerEverUpgraded,
     }),
     entityCounts: { projects, knowledges, risksIssues, retrospectives, memos },
+    // Storage add-on (Phase 2 / 2026-05-08): キャッシュ値ベースの容量・課金情報
+    ...computeStorageDetailFields(t),
   };
+}
+
+/**
+ * Storage add-on 関連フィールドを Tenant row から派生計算する内部 helper。
+ * super_admin ダッシュボード表示用 (= キャッシュ値の表示で十分)。
+ */
+function computeStorageDetailFields(t: {
+  plan: string;
+  storageAddonPlan: string;
+  storageBytesUsed: bigint;
+  storageGracePeriodStartedAt: Date | null;
+  scheduledStorageAddonAt: Date | null;
+  scheduledNextStorageAddon: string | null;
+  currentMonthApiCostJpy: number;
+}): {
+  storageAddonPlan: string;
+  storageBytesUsed: number;
+  storageLimitBytes: number;
+  storageUsageRatio: number;
+  storageAddonMonthlyJpy: number;
+  totalCurrentMonthJpy: number;
+  storageGracePeriodStartedAt: Date | null;
+  storageScheduledAt: Date | null;
+  storageScheduledNext: string | null;
+} {
+  const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
+  const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+  const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);
+  const usedBytes = Number(t.storageBytesUsed);
+  const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
+  const addonJpy = SUPER_ADMIN_ADDON_MONTHLY_JPY[addonPlan];
+  const totalJpy = t.currentMonthApiCostJpy + addonJpy;
+  return {
+    storageAddonPlan: addonPlan,
+    storageBytesUsed: usedBytes,
+    storageLimitBytes: limitBytes,
+    storageUsageRatio: usageRatio,
+    storageAddonMonthlyJpy: addonJpy,
+    totalCurrentMonthJpy: totalJpy,
+    storageGracePeriodStartedAt: t.storageGracePeriodStartedAt,
+    storageScheduledAt: t.scheduledStorageAddonAt,
+    storageScheduledNext: t.scheduledNextStorageAddon,
+  };
+}
+
+function isTenantPlanString(p: string): p is 'beginner' | 'expert' | 'pro' {
+  return p === 'beginner' || p === 'expert' || p === 'pro';
+}
+
+function isStorageAddonPlanStr(p: string): p is 'standard' | 'plus' | 'pro_storage' | 'enterprise' {
+  return p === 'standard' || p === 'plus' || p === 'pro_storage' || p === 'enterprise';
+}
+
+/**
+ * Storage 使用量 TOP N テナントを取得 (super_admin ダッシュボード TOP のランキング表示用)。
+ *
+ * - 管理テナント / 削除済みテナントは除外
+ * - キャッシュ値 (storageBytesUsed) で降順ソート → 上位 N 件取得
+ *
+ * @param limit 表示件数 (default 10)
+ */
+export type StorageUsageTopRow = {
+  id: string;
+  tenantSeq: number | null;
+  name: string;
+  llmPlan: string;
+  storageAddonPlan: string;
+  storageBytesUsed: number;
+  storageLimitBytes: number;
+  storageUsageRatio: number;
+  graceState: 'active' | 'grace_active' | 'write_blocked';
+};
+
+export async function listStorageUsageTop(limit: number = 10): Promise<StorageUsageTopRow[]> {
+  const tenants = await prisma.tenant.findMany({
+    where: { id: { not: MANAGEMENT_TENANT_ID }, deletedAt: null },
+    orderBy: { storageBytesUsed: 'desc' },
+    take: limit,
+    select: {
+      id: true,
+      tenantSeq: true,
+      name: true,
+      plan: true,
+      storageAddonPlan: true,
+      storageBytesUsed: true,
+      storageGracePeriodStartedAt: true,
+    },
+  });
+
+  return tenants.map((t) => {
+    const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
+    const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+    const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);
+    const usedBytes = Number(t.storageBytesUsed);
+    const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
+
+    let graceState: StorageUsageTopRow['graceState'] = 'active';
+    if (t.storageGracePeriodStartedAt) {
+      const elapsedDays =
+        (Date.now() - t.storageGracePeriodStartedAt.getTime()) / (1000 * 60 * 60 * 24);
+      graceState = elapsedDays >= 7 ? 'write_blocked' : 'grace_active';
+    }
+
+    return {
+      id: t.id,
+      tenantSeq: t.tenantSeq,
+      name: t.name,
+      llmPlan,
+      storageAddonPlan: addonPlan,
+      storageBytesUsed: usedBytes,
+      storageLimitBytes: limitBytes,
+      storageUsageRatio: usageRatio,
+      graceState,
+    };
+  });
 }
 
 /**
