@@ -24,6 +24,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { runDailyUsageAggregation } from '@/services/usage-monitoring.service';
+import { sendBeginnerExpiryNotices } from '@/services/beginner-expiry.service';
 
 function isCronAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
@@ -42,10 +43,17 @@ export async function POST(req: NextRequest) {
 
   const result = await runDailyUsageAggregation();
 
+  // P-B (2026-05-08): Beginner プラン期限警告メールを併走実行。
+  //   1 日 1 回送信される (cron のスケジュールどおり)。重複送信は service 側で防止。
+  //   失敗があっても usage aggregation の結果は返す (= 部分的成功も意味のある情報)。
+  const baseUrl = process.env.NEXTAUTH_URL || req.nextUrl.origin;
+  const beginnerNotices = await sendBeginnerExpiryNotices(baseUrl);
+
   return NextResponse.json({
     data: {
       source: 'cron',
       ...result,
+      beginnerNotices,
     },
   });
 }

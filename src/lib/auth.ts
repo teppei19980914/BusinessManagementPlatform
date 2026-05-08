@@ -64,7 +64,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           //   通常 deleteTenant() は user.deletedAt も併せて set するため
           //   `deletedAt: null` 条件で弾けるが、何らかの理由で user 側のカスケードが
           //   失敗 / スキップされた場合の backstop として tenant.deletedAt も検証する。
-          include: { tenant: { select: { deletedAt: true } } },
+          // P-B (2026-05-08): plan / createdAt / beginnerEverUpgraded を JWT claim に
+          //   伝搬し、middleware で read-only 判定 (= write 系 API 弾き) する。
+          //   middleware は Edge runtime で Prisma を呼べないため、claim に値を載せて
+          //   時刻計算で判定する設計。
+          include: {
+            tenant: {
+              select: {
+                deletedAt: true,
+                plan: true,
+                createdAt: true,
+                beginnerEverUpgraded: true,
+              },
+            },
+          },
         });
 
         if (!user) {
@@ -150,6 +163,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // PR #2-b (T-03): テナント境界の起点。session.user.tenantId に伝播し、
           //   後続のすべての API ルートが requireSameTenant() で同テナント検証する。
           tenantId: user.tenantId,
+          // P-B (2026-05-08): JWT claim 用の Beginner プラン期限判定材料。
+          //   middleware で `Date.now() - tenantCreatedAt >= 90日 && tenantPlan === 'beginner'
+          //   && !tenantBeginnerEverUpgraded` を判定して write 系 API を弾く。
+          tenantPlan: user.tenant.plan,
+          tenantCreatedAt: user.tenant.createdAt.toISOString(),
+          tenantBeginnerEverUpgraded: user.tenant.beginnerEverUpgraded,
           name: user.name,
           email: user.email,
           systemRole: user.systemRole,

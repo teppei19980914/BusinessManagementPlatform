@@ -91,6 +91,17 @@ model Tenant {
   scheduledNextPlan        String?   @map("scheduled_next_plan") @db.VarChar(20)
   /// 月初リセット cron が処理した最後の月初 (UTC ベース、毎月 1 日 00:00 UTC)。
   lastResetAt              DateTime? @map("last_reset_at") @db.Timestamptz
+  /// P-B (2026-05-08): Beginner プラン永続利用防止。
+  ///   - 計測起点: createdAt から 60/75/90 日経過判定で警告メール送信 + 90 日で read-only モード
+  ///   - true 化条件: Tenant が一度でも Beginner 以外 (Expert/Pro) になった (= ダウングレードでも Beginner に戻せない)
+  ///   - 解約済テナント (deletedAt セット) の billingContactEmail で同 email 再登録時の Beginner 拒否判定にも使用
+  beginnerEverUpgraded     Boolean   @default(false) @map("beginner_ever_upgraded")
+  /// P-B: 60 日警告メール送信日時 (重複送信防止用、null なら未送信)
+  beginnerNoticeDay60SentAt DateTime? @map("beginner_notice_day60_sent_at") @db.Timestamptz
+  /// P-B: 75 日警告メール送信日時
+  beginnerNoticeDay75SentAt DateTime? @map("beginner_notice_day75_sent_at") @db.Timestamptz
+  /// P-B: 90 日経過 read-only 通知メール送信日時
+  beginnerExpiredNoticeSentAt DateTime? @map("beginner_expired_notice_sent_at") @db.Timestamptz
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt                DateTime? @map("deleted_at") @db.Timestamptz

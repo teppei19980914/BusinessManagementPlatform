@@ -87,7 +87,9 @@ export type TenantOnboardingFailure = {
     | 'VALIDATION_ERROR'
     | 'SLUG_CONFLICT'
     | 'EMAIL_CONFLICT'
-    | 'EMAIL_SEND_FAILED';
+    | 'EMAIL_SEND_FAILED'
+    // P-B (2026-05-08): 解約済テナントの請求先メールで Beginner プラン再登録を拒否
+    | 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING';
   message: string;
 };
 
@@ -170,6 +172,33 @@ async function createTenantInternal(
     };
   }
 
+  // P-B (2026-05-08): 解約済テナントの billingContactEmail で Beginner 再登録を拒否
+  //   - 「Beginner プランは本当に初めてのユーザのみ 90 日限定」方針
+  //   - 同じ請求先メールで過去に解約 (= deletedAt セット) されたテナントがあれば、
+  //     再登録時は Expert/Pro 必須にする
+  //   - billingContactEmail も initialAdminEmail も両方チェック (= 一方を変えて回避を防ぐ)
+  if (input.plan === 'beginner') {
+    const previousDeletedTenants = await prisma.tenant.findMany({
+      where: {
+        deletedAt: { not: null },
+        OR: [
+          { billingContactEmail: input.billingContactEmail },
+          // initialAdminEmail と同じメールが過去テナントの billingContactEmail だった場合も拒否
+          { billingContactEmail: input.initialAdminEmail },
+        ],
+      },
+      select: { id: true },
+    });
+    if (previousDeletedTenants.length > 0) {
+      return {
+        ok: false,
+        reason: 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING',
+        message:
+          'このメールアドレスは過去に解約されたテナントで使用されており、Beginner プランでの再登録はできません。Expert または Pro プランをご検討ください。',
+      };
+    }
+  }
+
   // ---------- 3. transaction: Tenant + initial admin User + roleChangeLog ----------
   const placeholderHash = await hash(randomBytes(32).toString('hex'), BCRYPT_COST);
 
@@ -179,6 +208,12 @@ async function createTenantInternal(
         slug: input.slug,
         name: input.name,
         plan: input.plan as TenantPlan,
+        // P-B (2026-05-08): 初回 Beginner 試用期間ルールの実装。
+        //   - plan === 'beginner' で作成: 通常の試用開始 (= beginnerEverUpgraded=false で createdAt 起点 90 日)
+        //   - plan !== 'beginner' で作成 (super_admin が最初から Pro 等で発行する例外ケース):
+        //     **beginnerEverUpgraded=true** で作成 → 「初回から上位プラン」として Beginner 試用対象外に。
+        //     後で誤って Beginner にダウングレードしようとしても updateTenantSelf が拒否する。
+        beginnerEverUpgraded: input.plan !== 'beginner',
         billingCompanyName: input.billingCompanyName,
         billingContactName: input.billingContactName,
         billingContactEmail: input.billingContactEmail,

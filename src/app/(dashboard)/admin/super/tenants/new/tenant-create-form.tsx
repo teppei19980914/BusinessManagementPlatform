@@ -129,10 +129,14 @@ export function TenantCreateForm() {
             onChange={(e) => setForm({ ...form, plan: e.target.value as FormState['plan'] })}
             className={nativeSelectClass}
           >
-            <option value="beginner">Beginner (¥0、月 100 回上限、5 席)</option>
+            <option value="beginner">Beginner (¥0、月 100 回上限、5 席、90 日試用)</option>
             <option value="expert">Expert (¥10/call)</option>
             <option value="pro">Pro (¥30/call、Sonnet 説明文付)</option>
           </select>
+          <p className="text-xs text-muted-foreground">
+            <strong>P-B (2026-05-08) 注意</strong>: Beginner で作成 → 試用 90 日後に読み取り専用モードに移行。
+            Expert / Pro で作成 → 例外的に Beginner 試用対象外として開設 (= 後で Beginner にダウングレード不可)。
+          </p>
         </div>
       </fieldset>
 
