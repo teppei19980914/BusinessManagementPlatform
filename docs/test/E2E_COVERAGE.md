@@ -145,6 +145,7 @@
 - [ ] `/api/admin/usage-summary` (GET) — skip: admin 認可 + JSON 集計返却の単体テストで担保。super_admin ダッシュボード UI (PR-X2) 実装時に E2E 化予定
 - [ ] `/api/admin/super/usage/export` (GET) — skip: P-5b (2026-05-08) super_admin 限定 CSV エクスポート。yearMonth 指定なしで当月分、指定で履歴テーブル参照。zod バリデーション + UTF-8 BOM 付き CSV 整形は単体テスト範疇 (E2E は V1.x で検討)
 - [ ] `/api/admin/super/tenants` (POST) — skip: P-G (2026-05-08) super_admin 専用テナント手動払い出し API。zod バリデーション + slug/email 重複検出 + compensating delete はサービステスト (tenant-onboarding.service.test.ts 11 件) で担保
+- [ ] `/api/admin/super/tenants/[id]` (DELETE) — skip: P-A (2026-05-08) super_admin 限定テナント論理削除。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / ALREADY_DELETED + カスケード (10 業務エンティティ + 監査ログ) は src/services/super-admin.service.test.ts (deleteTenant 6 テスト) で担保。E2E は V1.x で検討
 - [ ] `/api/auth/signup` (POST) — skip: P-G (2026-05-08) 公開セルフサインアップ。IP-based rate limit (5/hour) + honeypot (hp_url) + サービステスト (11 件) で担保。E2E は V1.x で検討
 - [ ] `/api/tenants/me/billing` (PATCH) — skip: P-G (2026-05-08) テナント管理者の請求先情報編集。zod バリデーション + サービステスト (tenant-self.service.test.ts) で担保
 

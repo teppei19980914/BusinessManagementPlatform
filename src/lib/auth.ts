@@ -60,11 +60,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         const user = await prisma.user.findFirst({
           where: { email, deletedAt: null },
+          // P-A (2026-05-08): テナント論理削除時のログイン即時遮断 (defense in depth)。
+          //   通常 deleteTenant() は user.deletedAt も併せて set するため
+          //   `deletedAt: null` 条件で弾けるが、何らかの理由で user 側のカスケードが
+          //   失敗 / スキップされた場合の backstop として tenant.deletedAt も検証する。
+          include: { tenant: { select: { deletedAt: true } } },
         });
 
         if (!user) {
           logAuthFailureReason({ reason: 'user_not_found', email: maskedEmail });
           await recordAuthEvent({ eventType: 'login_failure', email, detail: { reason: 'user_not_found' } });
+          return null;
+        }
+
+        // P-A (2026-05-08): テナント論理削除時のログイン拒否
+        if (user.tenant.deletedAt != null) {
+          logAuthFailureReason({ reason: 'tenant_deleted', email: maskedEmail, userId: user.id });
+          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'tenant_deleted' } });
           return null;
         }
 

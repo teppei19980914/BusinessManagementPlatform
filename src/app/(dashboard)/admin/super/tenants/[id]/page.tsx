@@ -11,6 +11,8 @@ import {
   getTenantDetail,
   DORMANT_TENANT_THRESHOLD_DAYS,
 } from '@/services/super-admin.service';
+import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import { TenantDeleteButton } from './tenant-delete-button';
 
 export default async function SuperAdminTenantDetailPage({
   params,
@@ -111,6 +113,19 @@ export default async function SuperAdminTenantDetailPage({
         <section className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
           <strong>プラン変更予約:</strong> {tenant.scheduledPlanChangeAt.toISOString().split('T')[0]}{' '}
           に {tenant.scheduledNextPlan} へ変更予定
+        </section>
+      )}
+
+      {/* P-A (2026-05-08): テナント削除セクション (管理テナントは表示しない = 自爆防止 UI 強化) */}
+      {tenant.id !== MANAGEMENT_TENANT_ID && (
+        <section className="space-y-2 rounded border border-destructive/30 p-4">
+          <h2 className="text-lg font-semibold text-destructive">危険な操作</h2>
+          <p className="text-sm text-muted-foreground">
+            テナントを論理削除し、配下のユーザのログイン・業務操作を遮断します。取り消しできません。
+          </p>
+          <div className="pt-2">
+            <TenantDeleteButton tenantId={tenant.id} tenantName={tenant.name} />
+          </div>
         </section>
       )}
     </div>
