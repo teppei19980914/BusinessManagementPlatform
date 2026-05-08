@@ -5,16 +5,24 @@
  *
  * P-5a (2026-05-08): DB 容量モニタカードを追加。Supabase プラン上限到達による
  *   データ登録不能事故を未然に防ぐためのリアルタイム可視化。
+ * P-6 (2026-05-08): 休眠テナント警告セクションを追加。90 日連続休眠テナントの
+ *   早期発見・解約営業判断材料に。
  */
 
-import { getCrossTenantUsageSummary } from '@/services/super-admin.service';
+import Link from 'next/link';
+import {
+  getCrossTenantUsageSummary,
+  listDormantTenants,
+  DORMANT_TENANT_THRESHOLD_DAYS,
+} from '@/services/super-admin.service';
 import { getDatabaseCapacityReport } from '@/services/db-capacity.service';
 import type { DbCapacityStatus } from '@/config/db-capacity';
 
 export default async function SuperAdminTopPage() {
-  const [summary, capacity] = await Promise.all([
+  const [summary, capacity, dormant] = await Promise.all([
     getCrossTenantUsageSummary(),
     getDatabaseCapacityReport(),
+    listDormantTenants(),
   ]);
 
   return (
@@ -36,6 +44,9 @@ export default async function SuperAdminTopPage() {
 
       {/* P-5a: DB 容量モニタ */}
       <DatabaseCapacityCard capacity={capacity} />
+
+      {/* P-6 (2026-05-08): 休眠テナント警告 */}
+      <DormantTenantsCard dormant={dormant} />
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">プラン別テナント数</h2>
@@ -139,6 +150,80 @@ function DatabaseCapacityCard({
         {' ・ '}
         上限変更は環境変数 <code className="rounded bg-muted px-1">DB_CAPACITY_LIMIT_BYTES</code> で可能
       </p>
+    </section>
+  );
+}
+
+/**
+ * P-6 (2026-05-08): 休眠テナント警告カード。
+ *
+ * - 90 日 (= DORMANT_TENANT_THRESHOLD_DAYS) 以上ログインがないテナントを一覧表示
+ * - 解約営業 / 顧客サポート / 利用状況確認のトリガーとして使用
+ * - 0 件 (= 全テナント健全) なら緑色で「健全」表示
+ */
+function DormantTenantsCard({
+  dormant,
+}: {
+  dormant: Awaited<ReturnType<typeof listDormantTenants>>;
+}) {
+  if (dormant.length === 0) {
+    return (
+      <section className="space-y-2 rounded border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/30">
+        <h2 className="text-lg font-semibold">休眠テナント警告</h2>
+        <p className="text-sm text-emerald-800 dark:text-emerald-300">
+          ✅ 全テナントが {DORMANT_TENANT_THRESHOLD_DAYS} 日以内に活動しています。健全な状態です。
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-2 rounded border border-destructive/30 bg-destructive/5 p-4">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold">休眠テナント警告</h2>
+        <span className="rounded-full bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground">
+          {dormant.length} 件
+        </span>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {DORMANT_TENANT_THRESHOLD_DAYS} 日以上ログインがないテナントです。解約営業・顧客サポートの判断材料に。
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-sm">
+          <thead className="text-left">
+            <tr className="border-b">
+              <th className="p-2">テナント</th>
+              <th className="p-2">プラン</th>
+              <th className="p-2">最終ログイン</th>
+              <th className="p-2 text-right">休眠日数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dormant.map((t) => (
+              <tr key={t.id} className="border-b hover:bg-accent/40">
+                <td className="p-2">
+                  <Link
+                    href={`/admin/super/tenants/${t.id}`}
+                    className="text-info hover:underline"
+                  >
+                    {t.tenantSeq != null && (
+                      <span className="mr-1 text-xs text-muted-foreground">#{t.tenantSeq}</span>
+                    )}
+                    {t.name}
+                  </Link>
+                </td>
+                <td className="p-2 capitalize">{t.plan}</td>
+                <td className="p-2 text-xs">
+                  {t.lastUserLoginAt
+                    ? t.lastUserLoginAt.toISOString().split('T')[0]
+                    : `未ログイン (作成: ${t.createdAt.toISOString().split('T')[0]})`}
+                </td>
+                <td className="p-2 text-right font-mono">{t.daysSinceLastActivity} 日</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

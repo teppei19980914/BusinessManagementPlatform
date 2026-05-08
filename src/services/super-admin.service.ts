@@ -90,12 +90,21 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
 /**
  * テナント詳細 (super_admin ダッシュボードのテナント詳細画面用)。
  * 管理テナントへのアクセスは禁止 (= 顧客テナント以外は監視対象外)。
+ *
+ * P-6 (2026-05-08): 休眠判定用に最終ログイン日時 + 休眠日数を追加。
+ *   日数計算はサービス側で済ませて純関数化 (画面での Date.now() 呼出を避けるため)。
  */
 export type TenantDetail = TenantSummaryRow & {
   beginnerMonthlyCallLimit: number;
   beginnerMaxSeats: number;
   scheduledPlanChangeAt: Date | null;
   scheduledNextPlan: string | null;
+  /** P-6: テナント内 **任意** ユーザの最新 lastLoginAt。誰も一度もログインしていなければ null。 */
+  lastUserLoginAt: Date | null;
+  /** P-6: 最終活動 (lastLoginAt or createdAt) からの経過日数 (= 休眠日数の起点)。 */
+  daysSinceLastActivity: number;
+  /** P-6: 休眠判定 (90 日以上活動なし) を満たすかどうか。 */
+  isDormant: boolean;
   entityCounts: {
     projects: number;
     knowledges: number;
@@ -115,14 +124,35 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
   });
   if (!t) return null;
 
-  const [activeUserCount, projects, knowledges, risksIssues, retrospectives, memos] = await Promise.all([
+  const [
+    activeUserCount,
+    projects,
+    knowledges,
+    risksIssues,
+    retrospectives,
+    memos,
+    // P-6 (2026-05-08): テナント内最新ログイン日時 (1 ユーザでも最近ログインしていれば「活動あり」)
+    lastLoginAggregate,
+  ] = await Promise.all([
     prisma.user.count({ where: { tenantId, isActive: true, deletedAt: null } }),
     prisma.project.count({ where: { tenantId, deletedAt: null } }),
     prisma.knowledge.count({ where: { tenantId, deletedAt: null } }),
     prisma.riskIssue.count({ where: { tenantId, deletedAt: null } }),
     prisma.retrospective.count({ where: { tenantId, deletedAt: null } }),
     prisma.memo.count({ where: { tenantId, deletedAt: null } }),
+    prisma.user.aggregate({
+      where: { tenantId, deletedAt: null },
+      _max: { lastLoginAt: true },
+    }),
   ]);
+
+  // P-6: 休眠日数を service 側で計算 (server component の render purity 違反を回避)
+  const lastUserLoginAt = lastLoginAggregate._max.lastLoginAt ?? null;
+  const referenceTime = (lastUserLoginAt ?? t.createdAt).getTime();
+  const daysSinceLastActivity = Math.floor(
+    (Date.now() - referenceTime) / (24 * 60 * 60 * 1000),
+  );
+  const isDormant = daysSinceLastActivity >= DORMANT_TENANT_THRESHOLD_DAYS;
 
   return {
     id: t.id,
@@ -139,6 +169,9 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     beginnerMaxSeats: t.beginnerMaxSeats,
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
+    lastUserLoginAt,
+    daysSinceLastActivity,
+    isDormant,
     entityCounts: { projects, knowledges, risksIssues, retrospectives, memos },
   };
 }
@@ -246,4 +279,118 @@ export async function listMonthlyUsageHistory(
     apiCostJpy: r.apiCostJpy,
     activeUserCount: r.activeUserCount,
   }));
+}
+
+/**
+ * P-6 (2026-05-08): 休眠テナントの判定しきい値 (日数)。
+ *
+ * super_admin ダッシュボードの「休眠テナント警告」で
+ * `daysSinceLastLogin >= DORMANT_TENANT_THRESHOLD_DAYS` のテナントを警告対象とする。
+ *
+ * V1_FINAL_TASKS.md P-6 仕様の「90 日連続休眠テナント」を採用。
+ */
+export const DORMANT_TENANT_THRESHOLD_DAYS = 90;
+
+/**
+ * P-6 (2026-05-08): 休眠テナント判定の出力 1 行。
+ */
+export type DormantTenantRow = {
+  id: string;
+  tenantSeq: number | null;
+  name: string;
+  plan: string;
+  /** テナント内 **任意** ユーザの最新ログイン日時。誰も一度もログインしていなければ null。 */
+  lastUserLoginAt: Date | null;
+  /** テナント作成日時 (新規 onboarding 中かを判別するため) */
+  createdAt: Date;
+  /**
+   * 休眠日数。lastUserLoginAt があればそこから今日まで、なければ createdAt から今日まで。
+   * `null` (= 計算不能) は発生しない (= getCurrentDate との比較で常に数値)。
+   */
+  daysSinceLastActivity: number;
+};
+
+/**
+ * P-6 (2026-05-08): 休眠テナント一覧を取得 (super_admin ダッシュボード警告用)。
+ *
+ * 判定基準:
+ *   - 顧客テナント (= MANAGEMENT_TENANT_ID 以外、deletedAt = null)
+ *   - **テナント内にいずれのユーザもログインしていない期間 ≥ thresholdDays**
+ *     - すべてのユーザの lastLoginAt がしきい値より古い
+ *     - もしくは誰も一度もログインしておらず、テナント作成からしきい値経過
+ *   - **新規 onboarding 期間 (createdAt < thresholdDays 前) は除外**
+ *     (= 作成直後のテナントは「まだ動き出していないだけ」で休眠ではない)
+ *
+ * 並び順: 休眠日数の長い順 (= 一番危険なものを上に)
+ *
+ * @param thresholdDays 休眠判定しきい値 (デフォルト 90 日 = DORMANT_TENANT_THRESHOLD_DAYS)
+ * @param now 計算基準時刻 (テスト用)
+ */
+export async function listDormantTenants(
+  thresholdDays: number = DORMANT_TENANT_THRESHOLD_DAYS,
+  now: Date = new Date(),
+): Promise<DormantTenantRow[]> {
+  const cutoffDate = new Date(now.getTime() - thresholdDays * 24 * 60 * 60 * 1000);
+
+  // 顧客テナント全件 (管理テナント・削除済みは除外) + テナント内最新ログインを集計
+  const tenants = await prisma.tenant.findMany({
+    where: {
+      id: { not: MANAGEMENT_TENANT_ID },
+      deletedAt: null,
+      // onboarding 期間 (作成 < thresholdDays 前) は休眠判定対象外
+      createdAt: { lte: cutoffDate },
+    },
+    orderBy: { tenantSeq: 'asc' },
+    select: {
+      id: true,
+      tenantSeq: true,
+      name: true,
+      plan: true,
+      createdAt: true,
+    },
+  });
+
+  if (tenants.length === 0) return [];
+
+  // テナント内最新ログイン日時を groupBy で 1 クエリ取得 (N+1 回避)
+  const lastLogins = await prisma.user.groupBy({
+    by: ['tenantId'],
+    where: {
+      tenantId: { in: tenants.map((t) => t.id) },
+      deletedAt: null,
+    },
+    _max: { lastLoginAt: true },
+  });
+  const lastLoginByTenant = new Map(
+    lastLogins.map((l) => [l.tenantId, l._max.lastLoginAt]),
+  );
+
+  const rows: DormantTenantRow[] = [];
+  for (const t of tenants) {
+    const lastLogin = lastLoginByTenant.get(t.id) ?? null;
+
+    // 休眠判定:
+    //   - 誰も一度もログインしていない: テナント作成からの経過日数で判定
+    //   - 誰かがログインしたことがある: その最新時刻からの経過日数で判定
+    const referenceTime = lastLogin?.getTime() ?? t.createdAt.getTime();
+    const daysSinceLastActivity = Math.floor(
+      (now.getTime() - referenceTime) / (24 * 60 * 60 * 1000),
+    );
+
+    if (daysSinceLastActivity >= thresholdDays) {
+      rows.push({
+        id: t.id,
+        tenantSeq: t.tenantSeq,
+        name: t.name,
+        plan: t.plan,
+        lastUserLoginAt: lastLogin,
+        createdAt: t.createdAt,
+        daysSinceLastActivity,
+      });
+    }
+  }
+
+  // 休眠日数降順 (危険度の高い順)
+  rows.sort((a, b) => b.daysSinceLastActivity - a.daysSinceLastActivity);
+  return rows;
 }
