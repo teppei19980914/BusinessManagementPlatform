@@ -142,6 +142,7 @@
 - [ ] `/api/cron/daily-usage-aggregation` (POST) — skip: cron 認可 + 集計 + 異常検知 + 予算アラート + admin メール通知の単体テスト (`src/services/usage-monitoring.service.test.ts` 12 件) で担保。E2E の対象外 (Vercel Cron 経由のみで UI 経路なし)
 - [ ] `/api/admin/usage-summary` (GET) — skip: admin 認可 + JSON 集計返却の単体テストで担保。super_admin ダッシュボード UI (PR-X2) 実装時に E2E 化予定
 - [ ] `/api/admin/super/usage/export` (GET) — skip: P-5b (2026-05-08) super_admin 限定 CSV エクスポート。yearMonth 指定なしで当月分、指定で履歴テーブル参照。zod バリデーション + UTF-8 BOM 付き CSV 整形は単体テスト範疇 (E2E は V1.x で検討)
+- [ ] `/api/admin/super/tenants/[id]` (DELETE) — skip: P-A (2026-05-08) super_admin 限定テナント論理削除。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / ALREADY_DELETED + カスケード (10 業務エンティティ + 監査ログ) は src/services/super-admin.service.test.ts (deleteTenant 6 テスト) で担保。E2E は V1.x で検討
 
 ### メンション (PR feat/comment-mentions)
 - [ ] `/api/mention-candidates` (GET) — skip: 単体テスト (`src/app/api/mention-candidates/route.test.ts`) で context (project_list / cross_list / wbs) 別の groups 絞り込み + entityType 別 user 抽出を網羅
