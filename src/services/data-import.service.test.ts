@@ -452,4 +452,60 @@ describe('importTenantData', () => {
       data: { importInProgressAt: null },
     });
   });
+
+  // ================================================================
+  // S-2 (PHASE2_THREAT_MODEL.md / 2026-05-08): users.systemRole を 'general' 固定
+  // ================================================================
+  it('S-2: ZIP の users.systemRole=admin であっても DB には general で作成される', async () => {
+    const zip = await buildEmptyZip({
+      users: [
+        // 攻撃者が ZIP を改ざんして admin 偽装を試行
+        { id: 'u-1', name: 'Attacker', email: 'a@example.com', systemRole: 'admin', isActive: true },
+        // 通常の general
+        { id: 'u-2', name: 'Normal', email: 'n@example.com', systemRole: 'general', isActive: true },
+        // super_admin 偽装試行も同じく無効化される
+        { id: 'u-3', name: 'Super', email: 's@example.com', systemRole: 'super_admin', isActive: true },
+      ],
+    });
+
+    const r = await importTenantData(TENANT_ID, zip, IMPORTER_ID);
+    expect(r.ok).toBe(true);
+
+    expect(tx.user.create).toHaveBeenCalledTimes(3);
+    for (const call of tx.user.create.mock.calls) {
+      const data = call[0]!.data as { systemRole: string };
+      // ZIP の値に関わらず必ず 'general' で作成される
+      expect(data.systemRole).toBe('general');
+    }
+  });
+
+  // ================================================================
+  // D-1 (PHASE2_THREAT_MODEL.md / 2026-05-08): ZIP 解凍後サイズ上限 200MB
+  // ================================================================
+  it('D-1: ZIP 解凍後合計サイズが 200MB 超過 → DECOMPRESSED_TOO_LARGE', async () => {
+    // 軽量化: 実際に 250MB の JSON を生成すると CI でタイムアウトするので、
+    // 通常 ZIP をロード後 jszip 内部の `_data.uncompressedSize` を直接書き換えて
+    // 「解凍後 250MB」と service が認識する状態を作る。
+    const baseZip = await buildEmptyZip();
+    const JSZipModule = await import('jszip');
+    const loaded = await JSZipModule.default.loadAsync(baseZip);
+
+    // data/projects.json の内部 uncompressedSize を 250MB に偽装
+    const projectsFile = loaded.file('data/projects.json');
+    if (projectsFile) {
+      (projectsFile as unknown as { _data: { uncompressedSize: number } })._data.uncompressedSize =
+        250 * 1024 * 1024;
+    }
+
+    // service は zip.files から直接 uncompressedSize を読むため、loaded を渡せば判定発火する。
+    // ただし importTenantData は Buffer 経由で再 load するので、jszip mock を使う必要がある。
+    // 最もシンプルな経路: JSZip.loadAsync をスパイして loaded を返す形で service を実行。
+    const jszipDefault = JSZipModule.default;
+    const spy = vi.spyOn(jszipDefault, 'loadAsync').mockResolvedValueOnce(loaded);
+
+    const r = await importTenantData(TENANT_ID, baseZip, IMPORTER_ID);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('DECOMPRESSED_TOO_LARGE');
+    spy.mockRestore();
+  });
 });
