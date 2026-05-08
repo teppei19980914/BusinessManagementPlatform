@@ -2344,13 +2344,15 @@ git push
 #### ケーススタディ (本ナレッジ確立過程の実例 3 件)
 
 本ナレッジは PR #178/179 で 2 回適用され、その後 PR #262 (P-6) で **3 回目** が発生した。
-**3 回目の再発で「依存更新蓄積による drift パターン」として確定**。
+**3 回目の再発で「依存更新蓄積による drift パターン」として確定**。さらに PR #282
+(feat/seed-data-management) で **4 回目** の発生 = 「即応プレイブックの定着フェーズ」へ移行。
 
 | 事例 | PR | 影響 spec | サイズ差 | 原因分類 | 解決 |
 |---|---|---|---|---|---|
 | 1 | #178 (PR-β) | project-detail-light.png | 1440×**900→927** (+27px height) | **期待された変化** (新フィールド `contractType` 行追加 = `<dl>` 1 行分) | `[gen-visual]` で baseline 再生成 |
 | 2 | #179 (PR-γ) | project-detail-light + customer-detail-light (chromium-mobile) | **414→413px width** (-1px) | **環境差 / rounding 変動** (PR-γ branch では当該画面を未編集、PR-β の baseline 再生成後の rebase 経路差) | 同 (`[gen-visual]`) |
 | 3 | #262 (P-6) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px、1 回限りの再現) | **真の flakiness (再実行で消える)**。`[gen-visual]` workflow は実行したが「no baseline changes」で commit なし = 同条件で再生成しても 414px に収束。同 baseline で再 E2E が即 pass。依存更新が背景にはあるが (next-intl 4.9.1→4.9.2 / @formatjs/* / @anthropic-ai/sdk 等) 決定論的ではなく確率的な 1px ずれ | `[gen-visual]` 発火 **+ 再 E2E** で吸収。`[gen-visual]` の commit 有無に関わらず CI 再起動が要点 |
+| 4 | #282 (feat/seed-data-management) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px) | **同パターンの 4 回目** (= 即応プレイブック 4 条件すべて Yes)。本 PR の変更は `Knowledge.isSampleData` 追加 + super_admin bypass で、`/projects/[id]` テンプレートを一切触っていない。同 PR 内では大量のサービス変更を行ったが画面 layout には影響なし | `[gen-visual]` 即発火 → 完了 (深追いせず 5 分以内に対応) |
 
 **判断基準の検証**:
 - 事例 1 (+27px): 「dl 1 行分の妥当な差」→ 期待された変化と判定 → 即 `[gen-visual]` で確実解消
