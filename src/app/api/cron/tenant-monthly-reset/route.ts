@@ -52,6 +52,9 @@ export async function POST(req: NextRequest) {
       // Storage add-on (Phase 2 / 2026-05-08): ダウングレード予約適用件数 / 使用量超過 skip 件数
       storageAddonAppliedCount: result.storageAddonAppliedCount,
       storageAddonSkippedCount: result.storageAddonSkippedCount,
+      // テナント物理削除 (2026-05-08): 90 日 Grace 経過後の物理削除件数 + 削除レコード総数
+      purgedTenantCount: result.purgedTenantCount,
+      purgedRowCount: result.purgedRowCount,
     },
   });
 }

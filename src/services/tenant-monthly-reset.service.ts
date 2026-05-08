@@ -45,6 +45,7 @@ import {
   isStorageAddonPlan,
 } from '@/config/storage-addon';
 import { applyScheduledStorageChanges } from '@/services/tenant-storage.service';
+import { purgeOldDeletedTenants } from '@/services/super-admin.service';
 
 export interface TenantMonthlyResetResult {
   /** 月初リセット対象として update したテナント件数。 */
@@ -59,6 +60,10 @@ export interface TenantMonthlyResetResult {
   storageAddonAppliedCount: number;
   /** Storage add-on (Phase 2): 月跨ぎでデータ増加し適用 skip した件数 */
   storageAddonSkippedCount: number;
+  /** テナント物理削除 (2026-05-08): 90 日経過解約済テナントの purge 件数 */
+  purgedTenantCount: number;
+  /** テナント物理削除: 削除した業務データレコード総数 (容量解放量の指標) */
+  purgedRowCount: number;
 }
 
 /**
@@ -292,6 +297,9 @@ export async function runTenantMonthlyReset(
   const { applied, invalidSkipped } = await applyScheduledPlanChanges(now);
   // Storage add-on (Phase 2 / 2026-05-08): LLM プランと同様、ダウングレード予約を月初に適用
   const storageResult = await applyScheduledStorageChanges(now);
+  // テナント物理削除 (2026-05-08): 論理削除から 90 日経過したテナントの業務データを物理削除
+  //   (= 容量解放、課金根拠 + 監査ログは保護)
+  const purgeResult = await purgeOldDeletedTenants(now);
   return {
     resetCount,
     planAppliedCount: applied,
@@ -299,5 +307,7 @@ export async function runTenantMonthlyReset(
     snapshotSavedCount,
     storageAddonAppliedCount: storageResult.applied,
     storageAddonSkippedCount: storageResult.skippedDueToUsage,
+    purgedTenantCount: purgeResult.succeeded,
+    purgedRowCount: purgeResult.totalRowsDeleted,
   };
 }

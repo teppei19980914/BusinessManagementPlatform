@@ -43,6 +43,9 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       // Storage add-on (Phase 2 / 2026-05-08): ダウングレード適用 / 使用量超過 skip
       storageAddonAppliedCount: 0,
       storageAddonSkippedCount: 0,
+      // テナント物理削除 (2026-05-08): 90 日経過解約済テナントの purge 件数 / レコード数
+      purgedTenantCount: 0,
+      purgedRowCount: 0,
     });
 
     const res = await POST(makeReq('Bearer test-cron-secret-xyz'));
@@ -57,6 +60,8 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       snapshotSavedCount: 3,
       storageAddonAppliedCount: 0,
       storageAddonSkippedCount: 0,
+      purgedTenantCount: 0,
+      purgedRowCount: 0,
     });
     expect(runTenantMonthlyReset).toHaveBeenCalledTimes(1);
   });

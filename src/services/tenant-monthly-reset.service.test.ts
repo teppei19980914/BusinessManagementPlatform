@@ -251,6 +251,9 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       // Storage add-on (Phase 2 / 2026-05-08): applyScheduledStorageChanges の戻り値
       storageAddonAppliedCount: 0,
       storageAddonSkippedCount: 0,
+      // テナント物理削除 (2026-05-08): purgeOldDeletedTenants の戻り値
+      purgedTenantCount: 0,
+      purgedRowCount: 0,
     });
   });
 });

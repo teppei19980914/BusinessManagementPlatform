@@ -344,7 +344,96 @@ export function TenantSettingsClient({
 
       {/* P-D (2026-05-08): データインポート */}
       <DataImportSection />
+
+      {/* テナント解約 (2026-05-08): 危険な操作なので末尾配置 + 名称一致確認 */}
+      <SelfDeleteTenantSection tenantName={info.name} />
     </div>
+  );
+}
+
+// ================================================================
+// テナント解約セクション (2026-05-08)
+// ================================================================
+
+function SelfDeleteTenantSection({ tenantName }: { tenantName: string }) {
+  const router = useRouter();
+  const { showSuccess, showError } = useToast();
+  const [confirmName, setConfirmName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const isMatch = confirmName === tenantName;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    if (!isMatch) {
+      setError('入力されたテナント名が一致しません');
+      return;
+    }
+    const ok = confirm(
+      `本当にテナント「${tenantName}」を解約しますか?\n\n` +
+        '解約後は全ユーザーがログイン不可となり、業務データへのアクセスができなくなります。' +
+        '解約から 90 日経過すると業務データは物理削除されます (= 復元不可)。\n\n' +
+        '※ 解約前にデータエクスポートを実施することを強く推奨します。',
+    );
+    if (!ok) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/tenants/me/self-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantName: confirmName }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const msg = json?.error?.message ?? '解約に失敗しました';
+        setError(msg);
+        showError(msg);
+        return;
+      }
+      showSuccess('テナントを解約しました。ログアウトしています...');
+      // セルフサインアウト → ログイン画面へリダイレクト
+      await fetch('/api/auth/signout', { method: 'POST' }).catch(() => undefined);
+      router.replace('/login');
+      router.refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="mt-8 space-y-3 rounded border border-destructive/40 p-4">
+      <h2 className="text-lg font-semibold text-destructive">テナント解約 (危険な操作)</h2>
+      <p className="text-sm text-muted-foreground">
+        本テナントを解約します。解約後は全ユーザーがログイン不可となり、業務データへのアクセスができなくなります。
+      </p>
+      <ul className="ml-4 list-disc text-xs text-muted-foreground">
+        <li>解約直後: テナント本体 + 配下の業務データ (プロジェクト/ナレッジ/課題等) を **論理削除**</li>
+        <li>90 日経過後: 業務データを **物理削除** (= 復元不可、データ容量解放)</li>
+        <li>監査ログ・課金根拠データ (api_call_logs / 月次履歴) は保持</li>
+        <li>解約前に <a href="#" className="text-info underline">データエクスポート</a> 実施を強く推奨</li>
+      </ul>
+
+      <form onSubmit={handleSubmit} className="mt-3 space-y-2">
+        <label className="block text-sm font-medium">
+          確認のため、現在のテナント名「<span className="font-mono">{tenantName}</span>」を正確に入力してください
+        </label>
+        <input
+          type="text"
+          value={confirmName}
+          onChange={(e) => setConfirmName(e.target.value)}
+          placeholder={tenantName}
+          className="block w-full rounded border p-2 text-sm"
+          disabled={submitting}
+        />
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <Button type="submit" variant="destructive" disabled={submitting || !isMatch}>
+          {submitting ? '解約処理中...' : '🗑 テナントを解約する'}
+        </Button>
+      </form>
+    </section>
   );
 }
 
