@@ -95,11 +95,13 @@ export async function listAllRetrospectivesForViewer(
   // PR #165: viewerIsCreator は project-list 側に移したので、本関数では viewerUserId を memberships 取得のみで使用。
   // PR-X5: サンプルプロジェクト (isSampleData=true) 配下の振り返りは横断ビューから除外。
   //   提案エンジンは別経路で参照されるため、表示用ビューのみフィルタ。
+  // 2026-05-08: super_admin role はシードデータ管理のため bypass で表示可。
+  const isSuperAdmin = viewerSystemRole === 'super_admin';
   const retros = await prisma.retrospective.findMany({
     where: {
       deletedAt: null,
       visibility: 'public',
-      project: { isSampleData: false },
+      ...(isSuperAdmin ? {} : { project: { isSampleData: false } }),
     },
     include: {
       project: { select: { id: true, name: true, deletedAt: true } },

@@ -650,6 +650,11 @@ model Knowledge {
   // 提案型サービスの Jaccard 類似度で業務ドメイン軸もマッチできるようにする。
   businessDomainTags Json                         @default("[]") @map("business_domain_tags") @db.JsonB
   visibility         String                       @default("draft") @db.VarChar(20) // draft | project | company
+  // 2026-05-08: シードナレッジ識別フラグ (= Project.isSampleData と同じ目的)。
+  //   default-tenant に投入される SEED_KNOWLEDGE は true でマーキングし、
+  //   全ナレッジ画面 (`/knowledge`) では非表示にする (super_admin role は bypass で表示・編集可)。
+  //   提案エンジンでは `isSampleData=true` も候補として表示される (= デモデータの目的)。
+  isSampleData       Boolean                      @default(false) @map("is_sample_data")
   // PR #4 (T-03 Phase 2): title + background + content + result + conclusion を結合した text の embedding
   contentEmbedding   Unsupported("vector(1024)")? @map("content_embedding")
   createdBy          String                       @map("created_by") @db.Uuid
@@ -667,6 +672,8 @@ model Knowledge {
   @@index([knowledgeType], map: "idx_knowledges_type")
   @@index([visibility], map: "idx_knowledges_visibility")
   @@index([tenantId], map: "idx_knowledges_tenant")
+  // partial index: シードフィルタ用 (true の行のみ index、Project と同じ最適化)
+  @@index([isSampleData], map: "idx_knowledges_is_sample_data")
   @@map("knowledges")
 }
 

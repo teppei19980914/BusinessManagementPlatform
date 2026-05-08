@@ -228,11 +228,13 @@ export async function listAllRisksForViewer(
   // isAdmin は projectName / 担当者名のマスキング解除にのみ使う (フィルタには使わない)。
   // PR-X5: サンプルプロジェクト (isSampleData=true) 配下のリスク/課題は横断ビューから除外。
   //   提案エンジンは別経路で参照されるため、表示用ビューのみフィルタ。
+  // 2026-05-08: super_admin role はシードデータ管理のため bypass で表示可。
+  const isSuperAdmin = viewerSystemRole === 'super_admin';
   const risks = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
       visibility: 'public',
-      project: { isSampleData: false },
+      ...(isSuperAdmin ? {} : { project: { isSampleData: false } }),
     },
     include: {
       reporter: { select: { name: true } },

@@ -131,7 +131,14 @@ export async function listKnowledge(
   //   配列スタイルにしている (Prisma の `AND: [...]` は OR 同士の合成にそのまま使える)。
   const conditions: Prisma.KnowledgeWhereInput[] = [{ deletedAt: null }];
 
-  if (systemRole !== 'admin') {
+  // 2026-05-08: シードナレッジ (isSampleData=true) は全ナレッジ画面で非表示。
+  //   super_admin role は bypass (= シードデータ管理のため表示+編集可)。
+  //   Project.isSampleData (PR-X5) と同じ運用パターン。
+  if (systemRole !== 'super_admin') {
+    conditions.push({ isSampleData: false });
+  }
+
+  if (systemRole !== 'admin' && systemRole !== 'super_admin') {
     conditions.push({
       OR: [
         { visibility: 'public' },
@@ -213,7 +220,11 @@ export async function listAllKnowledgeForViewer(
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面 (/projects/[id]/knowledge) から行う。
   // isAdmin は projectName / 作成者氏名のマスキング解除にのみ使う (フィルタには使わない)。
-  const where: Prisma.KnowledgeWhereInput = { deletedAt: null, visibility: 'public' };
+  const isSuperAdmin = viewerSystemRole === 'super_admin';
+  // 2026-05-08: シードナレッジは全ナレッジ画面では除外。super_admin のみ bypass で表示+編集可。
+  const where: Prisma.KnowledgeWhereInput = isSuperAdmin
+    ? { deletedAt: null, visibility: 'public' }
+    : { deletedAt: null, visibility: 'public', isSampleData: false };
 
   const knowledges = await prisma.knowledge.findMany({
     where,
