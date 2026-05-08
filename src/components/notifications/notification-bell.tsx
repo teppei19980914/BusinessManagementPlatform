@@ -52,7 +52,6 @@ export function NotificationBell() {
       }
       const json = await res.json();
       const data = json.data as { items: NotificationDTO[]; unreadCount: number };
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- 外部 API (REST) 同期、AttachmentList と同パターン (DESIGN.md §22 例外規定)
       setState({ loaded: true, items: data.items ?? [], unreadCount: data.unreadCount ?? 0 });
     } catch {
       // network error も silent
