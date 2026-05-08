@@ -619,6 +619,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // 旧実装は canEditPmTl ゲートで member には何も表示していなかったため、
   // PR #85 で緩和した API 側の権限判定が UI からは使えない状態になっていた。
   const canSelectForProgress = canEditPmTl || projectRole === 'member';
+  // 2026-05-09 (#6): 新規 WBS タスク作成は member にも開放。Export/Import や 一括編集は
+  //   引き続き pm_tl 以上。check-permission.ts の ROLE_PERMISSIONS と整合させる。
+  const canCreateTask = canEditPmTl || projectRole === 'member';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // --- 担当者フィルタ (PR #61: sessionStorage 永続化) ---
@@ -1233,6 +1236,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
             {t('import')}
           </Button>
+          </>
+        )}
+        {/* 2026-05-09 (#6): 「タスク追加」は member にも開放。Export/Import は引き続き pm_tl 以上。 */}
+        {canCreateTask && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger render={<Button size="sm" />}>{tAction('add')}</DialogTrigger>
             {/* PR #87 横展開: アクティビティ作成ダイアログも grid-cols-2 + DateFieldWithActions を
@@ -1347,7 +1354,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
-          </>
         )}
         </div>
       </div>

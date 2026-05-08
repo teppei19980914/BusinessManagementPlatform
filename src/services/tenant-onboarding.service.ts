@@ -66,7 +66,8 @@ export const TenantOnboardingInputSchema = z.object({
 
   /** 任意 */
   billingPhoneNumber: z.string().trim().max(20).optional(),
-  paymentMethod: z.enum(['invoice', 'bank_transfer', 'credit_card']).default('invoice'),
+  // 2026-05-09 (#4): クレジットカードは未対応のため API でも reject (UI も disabled)。
+  paymentMethod: z.enum(['invoice', 'bank_transfer']).default('invoice'),
 
   /** 初期 admin ユーザ (検証メール送付先 = ログイン用) */
   initialAdminName: z.string().trim().min(1).max(100),

@@ -3,14 +3,11 @@
  *
  * 役割:
  *   ログイン中ユーザが自分の MFA を無効化する。
- *   admin (システム管理者) は MFA 必須のため、admin の場合は 403 を返す
- *   (disableMfa サービス側で判定)。
+ *   2026-05-09 (#11): MFA 強制対象を super_admin のみに限定。super_admin は引き続き
+ *     無効化禁止 (横断アクセス保護)。テナント管理者 (admin) と一般ユーザは無効化可能。
  *
- * 認可: getAuthenticatedUser (本人。admin はサービス側で再拒否)
+ * 認可: getAuthenticatedUser (本人。super_admin はサービス側で再拒否)
  * 監査: disableMfa サービス内で auth_event_logs (eventType=mfa_disabled) を記録。
- *
- * 関連:
- *   - DESIGN.md §9.5 (MFA 設計 / 管理者必須)
  */
 
 import { NextResponse } from 'next/server';
@@ -22,8 +19,8 @@ export async function POST() {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  // 管理者は MFA を無効化できない
-  if (user.systemRole === 'admin') {
+  // 2026-05-09 (#11): プラットフォーム運営者 (super_admin) のみ MFA 必須を維持。
+  if (user.systemRole === 'super_admin') {
     const t = await getTranslations('message');
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: t('cannotDisableAdminMfa') } },

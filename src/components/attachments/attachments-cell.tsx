@@ -27,8 +27,11 @@ export function AttachmentsCell({ items }: { items: AttachmentDTO[] }) {
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="inline-flex items-center rounded bg-info/10 px-1.5 py-0.5 text-xs text-info hover:bg-info/20"
-          title={a.url}
+          // 2026-05-09 (#1): chip 単体が長い displayName でセル幅を超える事象。
+          //   max-w で上限を切り、`truncate` で ellipsis (...) を発火させる。
+          //   ホバー時は title 属性で URL 表示。
+          className="inline-flex max-w-[200px] items-center truncate rounded bg-info/10 px-1.5 py-0.5 text-xs text-info hover:bg-info/20"
+          title={`${a.displayName}\n${a.url}`}
         >
           🔗 {a.displayName}
         </Link>

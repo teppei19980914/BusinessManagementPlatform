@@ -32,7 +32,9 @@ const BillingPatchSchema = z.object({
   billingAddress: z.string().trim().min(1).optional(),
   // 任意項目: null クリアも許可
   billingPhoneNumber: z.string().trim().max(20).nullable().optional(),
-  paymentMethod: z.enum(['invoice', 'bank_transfer', 'credit_card']).optional(),
+  // 2026-05-09 (#4): クレジットカードは UI 非活性 + API でも reject (defense-in-depth)。
+  //   将来対応する際に 'credit_card' を再追加する。
+  paymentMethod: z.enum(['invoice', 'bank_transfer']).optional(),
 });
 
 export async function PATCH(req: NextRequest) {

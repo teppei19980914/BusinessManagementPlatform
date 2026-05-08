@@ -957,7 +957,9 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
         >
           <option value="invoice">請求書送付</option>
           <option value="bank_transfer">銀行振込</option>
-          <option value="credit_card">クレジットカード (今後対応予定)</option>
+          {/* 2026-05-09 (#4): クレジットカード決済は未対応のため非活性。選択肢としては
+              将来対応を予告するため残す。サーバ側 zod でも 'credit_card' は reject。 */}
+          <option value="credit_card" disabled>クレジットカード (今後対応予定)</option>
         </select>
       </div>
 

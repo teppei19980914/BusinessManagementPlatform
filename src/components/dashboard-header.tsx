@@ -53,6 +53,8 @@ import {
   ADMIN_AUDIT_LOGS_ROUTE,
   ADMIN_ROLE_CHANGES_ROUTE,
   CUSTOMERS_ROUTE,
+  // 2026-05-09 (#16): Discord 招待リンク (環境変数 NEXT_PUBLIC_DISCORD_INVITE_URL で上書き可能)
+  getDiscordInviteUrl,
 } from '@/config';
 
 type DashboardHeaderProps = {
@@ -336,6 +338,32 @@ function GroupMenu({
   );
 }
 
+/**
+ * 2026-05-09 (#16): Discord コミュニティ招待ボタン。
+ *
+ * - 環境変数 `NEXT_PUBLIC_DISCORD_INVITE_URL` が未設定なら何も描画しない (graceful fallback)。
+ * - 外部リンクのため `target="_blank" rel="noopener noreferrer"` を徹底 (tabnabbing 防止)。
+ * - 視覚的には Discord ブランドカラー (#5865F2) のラベル風ボタン。
+ *   絵文字でアイコンを代替し、追加依存ゼロで実装。
+ */
+function DiscordLinkButton() {
+  const tNav = useTranslations('nav');
+  const url = getDiscordInviteUrl();
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={tNav('discordTooltip')}
+      className="hidden items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent sm:flex"
+    >
+      <span aria-hidden>💬</span>
+      <span>{tNav('discord')}</span>
+    </a>
+  );
+}
+
 export function DashboardHeader({ user }: DashboardHeaderProps) {
   const pathname = usePathname();
   const tNav = useTranslations('nav');
@@ -400,6 +428,8 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
           </nav>
         </div>
         <div className="flex items-center gap-1">
+          {/* 2026-05-09 (#16): Discord コミュニティ招待ボタン。env 未設定時は非表示。 */}
+          <DiscordLinkButton />
           {/* PR feat/notifications-mvp: アカウント名の左に通知ベルを配置 */}
           <NotificationBell />
           <AccountMenu user={user} />
