@@ -70,17 +70,29 @@ const kRow = (o: Record<string, unknown> = {}) => ({
 describe('listKnowledge', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('admin は権限フィルタ無しで全件 (deletedAt のみ AND の中)', async () => {
+  it('admin は権限フィルタ無しで全件 (deletedAt + isSampleData=false の AND)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
     await listKnowledge({}, 'admin-1', 'admin');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    // 2026-05-08: super_admin 以外は isSampleData=false でシードナレッジを除外
+    expect(call.where.AND).toEqual([{ deletedAt: null }, { isSampleData: false }]);
+  });
+
+  it('super_admin はシードナレッジも表示 (isSampleData フィルタ無し)', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
+
+    await listKnowledge({}, 'super-1', 'super_admin');
+
+    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    // super_admin は isSampleData フィルタ無し + visibility 制限も無し
     expect(call.where.AND).toEqual([{ deletedAt: null }]);
   });
 
-  it('非 admin は public + 自分の draft (2026-05-01 仕様変更)', async () => {
+  it('非 admin は public + 自分の draft + isSampleData=false (2026-05-01/05-08 仕様)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
@@ -88,6 +100,7 @@ describe('listKnowledge', () => {
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(call.where.AND).toContainEqual({ deletedAt: null });
+    expect(call.where.AND).toContainEqual({ isSampleData: false });
     expect(call.where.AND).toContainEqual({
       OR: [
         { visibility: 'public' },

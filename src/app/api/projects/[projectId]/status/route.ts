@@ -40,7 +40,7 @@ export async function PATCH(
   }
 
   try {
-    const before = await getProject(projectId);
+    const before = await getProject(projectId, user.systemRole);
     const project = await changeProjectStatus(projectId, parsed.data.status, user.id);
 
     await recordAuditLog({

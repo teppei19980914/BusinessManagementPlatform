@@ -2588,6 +2588,9 @@ async function insertSeedKnowledge(
         processTags: k.processTags,
         businessDomainTags: k.businessDomainTags,
         visibility: 'public',
+        // 2026-05-08: SEED_KNOWLEDGE は全ナレッジ画面で非表示にするためのフラグ。
+        //   提案エンジンは候補として表示、super_admin は bypass で編集可能。
+        isSampleData: true,
         createdBy,
         updatedBy: createdBy,
       },

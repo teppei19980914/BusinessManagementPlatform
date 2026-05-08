@@ -130,10 +130,14 @@ export async function listProjects(
   // PR-X5: シーディング用のサンプルプロジェクト (isSampleData=true) は一覧から除外。
   //   提案エンジンは listProjects を使わず別経路 (suggestion.service.ts) で候補を取得するため、
   //   ここでフィルタを掛けてもエンジン本体の動作には影響しない。
-  const where: Prisma.ProjectWhereInput = { deletedAt: null, isSampleData: false };
+  // 2026-05-08: super_admin role はシードデータ管理のため bypass で表示+編集可。
+  const where: Prisma.ProjectWhereInput = { deletedAt: null };
+  if (systemRole !== 'super_admin') {
+    where.isSampleData = false;
+  }
 
   // 一般ユーザは自分がメンバーのプロジェクトのみ
-  if (systemRole !== 'admin') {
+  if (systemRole !== 'admin' && systemRole !== 'super_admin') {
     where.members = { some: { userId } };
   }
 
@@ -249,12 +253,20 @@ export async function createProject(
   return toProjectDTO(project);
 }
 
-export async function getProject(projectId: string): Promise<ProjectDTO | null> {
+export async function getProject(
+  projectId: string,
+  systemRole?: string,
+): Promise<ProjectDTO | null> {
+  // PR-X5: サンプルプロジェクト (isSampleData=true) は直接 URL でも取得不可 (404 化)。
+  //   admin が偶発的に URL を踏んでも詳細画面は出さない設計。
+  //   提案エンジンは別経路 (suggestion.service.ts) で候補に含める。
+  // 2026-05-08: super_admin role はシードデータ管理のため bypass (= 詳細画面表示+編集可)。
+  const where: Prisma.ProjectWhereInput =
+    systemRole === 'super_admin'
+      ? { id: projectId, deletedAt: null }
+      : { id: projectId, deletedAt: null, isSampleData: false };
   const project = await prisma.project.findFirst({
-    // PR-X5: サンプルプロジェクト (isSampleData=true) は直接 URL でも取得不可 (404 化)。
-    //   admin が偶発的に URL を踏んでも詳細画面は出さない設計。
-    //   提案エンジンは別経路 (suggestion.service.ts) で候補に含める。
-    where: { id: projectId, deletedAt: null, isSampleData: false },
+    where,
     include: { customer: { select: { name: true } } },
   });
   return project ? toProjectDTO(project) : null;
