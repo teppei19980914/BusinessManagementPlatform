@@ -47,6 +47,15 @@ import type { Prisma } from '@/generated/prisma/client';
 
 const IMPORT_LOCK_STALE_MINUTES = 30;
 const BCRYPT_ROUNDS = 10;
+/**
+ * D-1 (PHASE2_THREAT_MODEL.md / 2026-05-08): ZIP 解凍後の合計サイズ上限。
+ *
+ * 50MB の ZIP 自体は middleware で弾けるが、極端な圧縮率の ZIP (= ZIP bomb) は
+ * 解凍時にメモリ + DB を大量消費して DoS になりうる。本上限はその二重防御。
+ *
+ * 200MB は通常運用 (= 5,000 行 × 数 KB) の 10 倍以上の安全マージン。
+ */
+const MAX_DECOMPRESSED_BYTES = 200 * 1024 * 1024;
 
 // ================================================================
 // 公開型
@@ -57,7 +66,8 @@ export type ImportErrorCode =
   | 'INVALID_FORMAT' // 必須ファイル不足 / JSON parse 不可
   | 'TENANT_NOT_FOUND'
   | 'IMPORT_IN_PROGRESS' // 二重インポート (in-flight ロック発火)
-  | 'BEGINNER_SEAT_LIMIT'; // Beginner 5 席超過
+  | 'BEGINNER_SEAT_LIMIT' // Beginner 5 席超過
+  | 'DECOMPRESSED_TOO_LARGE'; // D-1: ZIP 解凍後サイズが上限超過 (= ZIP bomb 二重防御)
 
 export type DataImportResult =
   | { ok: true; summary: ImportSummary }
@@ -122,6 +132,13 @@ export async function importTenantData(
         ok: false,
         error: 'INVALID_FORMAT',
         message: 'ZIP の構造が P-C エクスポート形式と一致しません。data/ 配下に必須 JSON ファイルが揃っているか確認してください。',
+      };
+    }
+    if (e instanceof Error && e.message === 'DECOMPRESSED_TOO_LARGE') {
+      return {
+        ok: false,
+        error: 'DECOMPRESSED_TOO_LARGE',
+        message: `ZIP 解凍後の合計サイズが上限 (${MAX_DECOMPRESSED_BYTES / 1024 / 1024} MB) を超過しています。圧縮率の高い ZIP は展開時に大量のメモリを消費するため拒否されます。データを分割して再アップロードしてください。`,
       };
     }
     return {
@@ -207,6 +224,20 @@ async function parseZip(zipBuffer: Buffer): Promise<ParsedExport> {
     zip = await JSZip.loadAsync(zipBuffer);
   } catch {
     throw new Error('INVALID_ZIP');
+  }
+
+  // D-1 (PHASE2_THREAT_MODEL.md / 2026-05-08): ZIP 解凍前に合計の解凍後サイズを推定し、
+  //   200MB を超えていれば ZIP bomb 疑いで拒否する (= 実際にメモリに展開する前に弾く)。
+  //   `_data.uncompressedSize` は jszip 内部 API だが安定して提供されている。
+  //   将来 jszip の API 変更に備え、`?? 0` で fallback して null safe。
+  const totalUncompressed = Object.values(zip.files).reduce((sum, f) => {
+    if (f.dir) return sum;
+    const fileSize =
+      (f as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0;
+    return sum + fileSize;
+  }, 0);
+  if (totalUncompressed > MAX_DECOMPRESSED_BYTES) {
+    throw new Error('DECOMPRESSED_TOO_LARGE');
   }
 
   const result: Partial<Record<string, Record<string, unknown>[]>> = {};
@@ -389,7 +420,10 @@ async function runImport(
         name: String(u.name ?? '').slice(0, 100),
         email: String(u.email),
         passwordHash: placeholderHash,
-        systemRole: typeof u.systemRole === 'string' ? u.systemRole : 'general',
+        // S-2 (PHASE2_THREAT_MODEL.md / 2026-05-08): ZIP 改ざんによる admin 昇格を防止するため
+        //   ZIP 内の systemRole 値は信用せず、必ず 'general' で固定する。
+        //   admin 権限が必要なユーザは、import 後に既存の admin 招待フローで個別昇格させる。
+        systemRole: 'general',
         isActive: u.isActive !== false,
         themePreference:
           typeof u.themePreference === 'string' ? u.themePreference : 'light',

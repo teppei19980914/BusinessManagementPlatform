@@ -21,6 +21,7 @@ import {
   cancelScheduledStorageAddon,
 } from '@/services/tenant-storage.service';
 import { STORAGE_ADDON_PLANS } from '@/config/storage-addon';
+import { recordAuditLog } from '@/services/audit.service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -64,6 +65,10 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
+  // R-2 (PHASE2_THREAT_MODEL.md / 2026-05-08): プラン変更前の状態を取得
+  //   audit log の before 値として使用 (= 課金否認防止)
+  const before = await getStorageInfo(user.tenantId);
+
   const result = await updateStorageAddonPlan(
     user.tenantId,
     parsed.data.plan as Parameters<typeof updateStorageAddonPlan>[1],
@@ -82,6 +87,27 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
+  // R-2: 監査ログ記録 (= LLM プラン変更と同じく課金影響の追跡)
+  //   前のプラン → 新プラン、即時/予約のどちらかを後続調査で確認可能にする。
+  await recordAuditLog({
+    userId: user.id,
+    action: 'UPDATE',
+    entityType: 'tenant_storage_addon',
+    entityId: user.tenantId,
+    beforeValue: before
+      ? {
+          storageAddonPlan: before.storageAddonPlan,
+          storageAddonMonthlyJpy: before.storageAddonMonthlyJpy,
+          scheduledNextStorageAddon: before.scheduledNextStorageAddon,
+        }
+      : null,
+    afterValue: {
+      requestedPlan: parsed.data.plan,
+      appliedImmediately: result.appliedImmediately,
+      scheduledFor: result.scheduledFor?.toISOString() ?? null,
+    },
+  });
+
   return NextResponse.json({
     data: {
       ok: true,
@@ -98,6 +124,25 @@ export async function DELETE() {
     return NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
   }
 
+  // R-2: 監査ログ用に予約状態を before として取得
+  const before = await getStorageInfo(user.tenantId);
+
   await cancelScheduledStorageAddon(user.tenantId);
+
+  // R-2: 予約キャンセルも audit ログに記録 (= 「ダウングレード予約していたか」の追跡)
+  await recordAuditLog({
+    userId: user.id,
+    action: 'UPDATE',
+    entityType: 'tenant_storage_addon_cancel',
+    entityId: user.tenantId,
+    beforeValue: before
+      ? {
+          scheduledStorageAddonAt: before.scheduledStorageAddonAt?.toISOString() ?? null,
+          scheduledNextStorageAddon: before.scheduledNextStorageAddon,
+        }
+      : null,
+    afterValue: null,
+  });
+
   return NextResponse.json({ data: { ok: true } });
 }

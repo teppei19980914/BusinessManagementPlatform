@@ -90,7 +90,9 @@ export async function POST(req: NextRequest) {
           ? 409
           : result.error === 'BEGINNER_SEAT_LIMIT'
             ? 422
-            : 400;
+            : result.error === 'DECOMPRESSED_TOO_LARGE'
+              ? 413 // Payload Too Large (= ZIP bomb 二重防御の D-1)
+              : 400;
     return NextResponse.json(
       { ok: false, error: { code: result.error, message: result.message } },
       { status },
