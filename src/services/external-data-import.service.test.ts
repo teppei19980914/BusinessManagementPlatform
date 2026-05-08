@@ -16,7 +16,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as XLSX from 'xlsx';
 
 vi.mock('@/lib/db', () => {
   const tx = {
@@ -492,25 +491,29 @@ describe('deleteExpiredPreviews', () => {
   });
 });
 
-describe('CSV パーサ統合: xlsx ライブラリ自体の動作確認', () => {
-  it('CSV と Excel 両方読める', async () => {
-    // CSV
-    const csv = buildKnowledgeCsv([
-      { title: 'CSV', background: 'B', content: 'C', result: 'R' },
-    ]);
-    const wb1 = XLSX.read(csv, { type: 'buffer' });
-    expect(wb1.SheetNames.length).toBeGreaterThan(0);
-
-    // xlsx (worksheet 作成 + buffer 化)
-    const ws = XLSX.utils.aoa_to_sheet([
-      ['title', 'background', 'content', 'result'],
-      ['Excel', 'B', 'C', 'R'],
-    ]);
-    const wb2 = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb2, ws, 'Sheet1');
-    const xlsxBuf = XLSX.write(wb2, { type: 'buffer', bookType: 'xlsx' });
-    const wb2Read = XLSX.read(xlsxBuf, { type: 'buffer' });
-    const rows = XLSX.utils.sheet_to_json(wb2Read.Sheets['Sheet1']!);
-    expect(rows.length).toBe(1);
+describe('CSV パーサ統合: UTF-8 BOM の扱い', () => {
+  it('UTF-8 BOM 付き CSV も正常にパースできる', async () => {
+    const csvBody = ['title,background,content,result', 'BomTitle,B,C,R'].join('\n');
+    const fileBuffer = Buffer.concat([Buffer.from('﻿'), Buffer.from(csvBody, 'utf-8')]);
+    const r = await previewImport({
+      tenantId: TENANT_ID,
+      userId: USER_ID,
+      fileBuffer,
+      mappings: [
+        {
+          entity: 'knowledge',
+          fieldMapping: {
+            title: 'title',
+            background: 'background',
+            content: 'content',
+            result: 'result',
+          },
+        },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.summary.knowledge.validRows).toBe(1);
+    }
   });
 });

@@ -9,12 +9,15 @@
  *   3. dry-run プレビュー (件数 + エラー + コスト見積) → 実行確認
  *   4. 結果表示
  *
- * Step 1 で xlsx をブラウザ側でパースしてヘッダ列を取得する (= マッピング UI のため)。
+ * 受付フォーマット: CSV のみ (UTF-8、BOM 自動除去)。
+ *   Excel (.xlsx) は xlsx ライブラリの未パッチ脆弱性により Phase 1 では非対応。
+ *   Excel ユーザは Excel の「名前を付けて保存」→「CSV (UTF-8)」で対応してもらう。
+ *
+ * Step 1 でブラウザ側で先頭行のみパースしてヘッダ列を取得 (= マッピング UI のため)。
  * Step 3 では preview API を呼び (Voyage 課金なし)、Step 4 で apply API を呼ぶ (= ここで初めて課金)。
  */
 
 import { useState } from 'react';
-import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/toast-provider';
 
@@ -28,8 +31,7 @@ type FieldMapping = Record<string, string>; // CSV列名 → フィールド名 
 
 type EntityState = {
   enabled: boolean;
-  sheetName: string | null; // xlsx の場合
-  headers: string[]; // 検出された CSV/Excel ヘッダ
+  headers: string[]; // 検出された CSV ヘッダ
   fieldMapping: FieldMapping;
   defaultProjectId: string; // RiskIssue のみ使用
 };
@@ -97,17 +99,32 @@ const RISKS_ISSUES_FIELDS: Array<{ value: string; label: string; required: boole
 
 const initialEntityState = (): EntityState => ({
   enabled: false,
-  sheetName: null,
   headers: [],
   fieldMapping: {},
   defaultProjectId: '',
 });
 
+/**
+ * CSV 先頭行 (= ヘッダ行) を簡易パースしてカラム名配列を返す。
+ *   - UTF-8 BOM (﻿) を除去
+ *   - 改行 (CRLF / LF) で分割し最初の行を取得
+ *   - 単純なカンマ分割 (本サービスのテンプレートにはカンマを含む列名がない前提)
+ *   - 引用符付き列名 ("a,b") は本機能の用途では発生しない想定
+ */
+function getCsvHeaders(text: string): string[] {
+  const cleaned = text.replace(/^﻿/, '');
+  const firstLine = cleaned.split(/\r?\n/, 1)[0] ?? '';
+  return firstLine
+    .split(',')
+    .map((h) => h.trim())
+    .filter((h) => h.length > 0);
+}
+
 export function ExternalImportWizard({ projects }: { projects: Project[] }) {
   const { showSuccess, showError } = useToast();
   const [step, setStep] = useState<WizardStep>(1);
   const [file, setFile] = useState<File | null>(null);
-  const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [knowledgeState, setKnowledgeState] = useState<EntityState>(initialEntityState);
   const [risksIssuesState, setRisksIssuesState] = useState<EntityState>(initialEntityState);
   const [previewResult, setPreviewResult] = useState<PreviewResponse | null>(null);
@@ -123,30 +140,26 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
   // ============ Step 1: ファイル選択時の処理 ============
   async function handleFileSelected(f: File): Promise<void> {
     setFile(f);
-    setWorkbook(null);
+    setCsvHeaders([]);
     setKnowledgeState(initialEntityState());
     setRisksIssuesState(initialEntityState());
     try {
-      const buf = await f.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
-      setWorkbook(wb);
+      // CSV はテキストとして読込、先頭行のみパースしてヘッダ列を抽出
+      const text = await f.text();
+      const headers = getCsvHeaders(text);
+      if (headers.length === 0) {
+        showError('CSV のヘッダ行を検出できませんでした');
+        return;
+      }
+      setCsvHeaders(headers);
     } catch {
-      showError('ファイルを CSV/Excel として読み込めませんでした');
+      showError('ファイルを CSV として読み込めませんでした');
     }
-  }
-
-  function getSheetHeaders(sheetName: string): string[] {
-    if (!workbook) return [];
-    const sheet = workbook.Sheets[sheetName];
-    if (!sheet) return [];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: null });
-    if (rows.length === 0) return [];
-    return Object.keys(rows[0]!);
   }
 
   // ============ Step 1 → Step 2 ============
   function goToMappingStep(): void {
-    if (!file || !workbook) {
+    if (!file || csvHeaders.length === 0) {
       showError('まずファイルを選択してください');
       return;
     }
@@ -154,24 +167,19 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
       showError('Knowledge または RiskIssue のいずれかを選択してください');
       return;
     }
-    // ヘッダを各 entity state に転写
-    const sheetNames = workbook.SheetNames;
+    // ヘッダを各 entity state に転写 + 同名フィールドの自動マッピング
     if (knowledgeState.enabled) {
-      const sheet = knowledgeState.sheetName ?? sheetNames[0]!;
       setKnowledgeState((s) => ({
         ...s,
-        sheetName: sheet,
-        headers: getSheetHeaders(sheet),
-        fieldMapping: autoMap(getSheetHeaders(sheet), KNOWLEDGE_FIELDS.map((f) => f.value)),
+        headers: csvHeaders,
+        fieldMapping: autoMap(csvHeaders, KNOWLEDGE_FIELDS.map((f) => f.value)),
       }));
     }
     if (risksIssuesState.enabled) {
-      const sheet = risksIssuesState.sheetName ?? sheetNames[0]!;
       setRisksIssuesState((s) => ({
         ...s,
-        sheetName: sheet,
-        headers: getSheetHeaders(sheet),
-        fieldMapping: autoMap(getSheetHeaders(sheet), RISKS_ISSUES_FIELDS.map((f) => f.value)),
+        headers: csvHeaders,
+        fieldMapping: autoMap(csvHeaders, RISKS_ISSUES_FIELDS.map((f) => f.value)),
       }));
     }
     setStep(2);
@@ -185,21 +193,18 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
     try {
       const mappings: Array<{
         entity: Entity;
-        sheetName?: string;
         fieldMapping: FieldMapping;
         defaultProjectId?: string;
       }> = [];
       if (knowledgeState.enabled) {
         mappings.push({
           entity: 'knowledge',
-          sheetName: knowledgeState.sheetName ?? undefined,
           fieldMapping: knowledgeState.fieldMapping,
         });
       }
       if (risksIssuesState.enabled) {
         mappings.push({
           entity: 'risksIssues',
-          sheetName: risksIssuesState.sheetName ?? undefined,
           fieldMapping: risksIssuesState.fieldMapping,
           defaultProjectId: risksIssuesState.defaultProjectId || undefined,
         });
@@ -297,8 +302,9 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">外部データ移行 (Phase 1)</h1>
       <p className="text-sm text-muted-foreground">
-        外部システム (社内 wiki / Excel / 旧 PM ツール等) から CSV/Excel で
+        外部システム (社内 wiki / Excel / 旧 PM ツール等) から **CSV** で
         Knowledge と RiskIssue を一括取り込みします。
+        Excel をお使いの場合は「名前を付けて保存」→「CSV (UTF-8)」で変換してください。
       </p>
 
       <StepIndicator current={step} />
@@ -306,7 +312,7 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
       {step === 1 && (
         <Step1FileSelect
           file={file}
-          workbook={workbook}
+          csvHeaders={csvHeaders}
           projects={projects}
           knowledgeState={knowledgeState}
           risksIssuesState={risksIssuesState}
@@ -381,7 +387,7 @@ function StepIndicator({ current }: { current: WizardStep }) {
 
 function Step1FileSelect(props: {
   file: File | null;
-  workbook: XLSX.WorkBook | null;
+  csvHeaders: string[];
   projects: Project[];
   knowledgeState: EntityState;
   risksIssuesState: EntityState;
@@ -390,18 +396,16 @@ function Step1FileSelect(props: {
   onRisksIssuesChange: (s: EntityState) => void;
   onNext: () => void;
 }) {
-  const sheetNames = props.workbook?.SheetNames ?? [];
-
   return (
     <div className="space-y-4">
       <section className="rounded border p-4">
         <h2 className="font-semibold">Step 1. ファイルとエンティティを選択</h2>
 
         <div className="mt-3 space-y-2">
-          <label className="block text-sm font-medium">CSV / Excel ファイル</label>
+          <label className="block text-sm font-medium">CSV ファイル (UTF-8)</label>
           <input
             type="file"
-            accept=".csv,.xlsx,.xls"
+            accept=".csv,text/csv"
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) props.onFileChange(f);
@@ -411,6 +415,9 @@ function Step1FileSelect(props: {
           {props.file && (
             <p className="text-xs text-muted-foreground">
               {props.file.name} ({(props.file.size / 1024).toFixed(1)} KB)
+              {props.csvHeaders.length > 0 && (
+                <> · 検出列数: {props.csvHeaders.length}</>
+              )}
             </p>
           )}
           <div className="flex gap-2 text-xs">
@@ -448,21 +455,6 @@ function Step1FileSelect(props: {
               <p className="text-xs text-muted-foreground">
                 ナレッジ (社内 wiki / 過去資料 / 教訓) を取り込みます。
               </p>
-              {props.knowledgeState.enabled && sheetNames.length > 1 && (
-                <select
-                  value={props.knowledgeState.sheetName ?? sheetNames[0]}
-                  onChange={(e) =>
-                    props.onKnowledgeChange({ ...props.knowledgeState, sheetName: e.target.value })
-                  }
-                  className="mt-1 rounded border bg-background p-1 text-xs"
-                >
-                  {sheetNames.map((s) => (
-                    <option key={s} value={s}>
-                      シート: {s}
-                    </option>
-                  ))}
-                </select>
-              )}
             </div>
           </label>
 
@@ -482,25 +474,7 @@ function Step1FileSelect(props: {
                 各行に projectId 列が無い場合、すべての行を 1 つのプロジェクトに所属させます。
               </p>
               {props.risksIssuesState.enabled && (
-                <div className="mt-2 space-y-1">
-                  {sheetNames.length > 1 && (
-                    <select
-                      value={props.risksIssuesState.sheetName ?? sheetNames[0]}
-                      onChange={(e) =>
-                        props.onRisksIssuesChange({
-                          ...props.risksIssuesState,
-                          sheetName: e.target.value,
-                        })
-                      }
-                      className="rounded border bg-background p-1 text-xs"
-                    >
-                      {sheetNames.map((s) => (
-                        <option key={s} value={s}>
-                          シート: {s}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                <div className="mt-2">
                   <select
                     value={props.risksIssuesState.defaultProjectId}
                     onChange={(e) =>
@@ -525,7 +499,7 @@ function Step1FileSelect(props: {
         </div>
       </section>
 
-      <Button onClick={props.onNext} disabled={!props.file || !props.workbook}>
+      <Button onClick={props.onNext} disabled={!props.file || props.csvHeaders.length === 0}>
         次へ (マッピング設定) →
       </Button>
     </div>

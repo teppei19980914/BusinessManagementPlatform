@@ -8,9 +8,11 @@
  *
  * 認可: admin role 必須 + 自テナント
  * 入力: multipart/form-data
- *   - file: CSV / xlsx
- *   - mappings: JSON 文字列 ([{ entity, sheetName?, fieldMapping, defaultProjectId? }])
+ *   - file: CSV (UTF-8 BOM 自動除去)
+ *   - mappings: JSON 文字列 ([{ entity, fieldMapping, defaultProjectId? }])
  * 出力: PreviewResult (previewId, summary, errors, costEstimate, expiresAt)
+ *
+ * 受付フォーマットは CSV のみ。Excel (.xlsx) は xlsx ライブラリの未パッチ脆弱性により Phase 1 では非対応。
  */
 
 import { NextRequest, NextResponse } from 'next/server';

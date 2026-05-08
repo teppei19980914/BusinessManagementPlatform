@@ -2,8 +2,14 @@
  * 外部データ移行サービス (Phase 1 / 2026-05-08)
  *
  * 役割:
- *   外部システム (社内 wiki / Excel / 旧 PM ツール等) から CSV/Excel でアップロードされたデータを、
+ *   外部システム (社内 wiki / 旧 PM ツール等) から **CSV** でアップロードされたデータを、
  *   自テナントの Knowledge / RiskIssue として一括取り込みする。
+ *
+ *   Excel (.xlsx) サポート保留の理由:
+ *     - 当初 xlsx (SheetJS) を使用予定だったが、HIGH severity 脆弱性 + パッチ未提供のため不採用
+ *     - exceljs / @sheet/core 等の代替を検討するが、Phase 1 MVP では CSV のみで提供
+ *     - Excel ユーザは Excel → CSV エクスポート で本機能を利用可能 (Excel 標準機能)
+ *     - Excel 直接対応は Phase 1.1 として別 PR で対応
  *
  *   P-D (data-import.service) との違い:
  *     - P-D は本サービス自身の P-C エクスポート ZIP を取込 (テナント間移行 / バックアップ復元)
@@ -14,7 +20,7 @@
  *   呼出側で「テナント管理者 (admin) が自テナント」を確認した前提。
  *
  * フロー (2 段階):
- *   1. previewImport(): CSV/Excel パース → バリデーション → コスト試算 → DB 保存 (TTL 24h)
+ *   1. previewImport(): CSV パース → バリデーション → コスト試算 → DB 保存 (TTL 24h)
  *      - Voyage は呼ばない (= 課金なし、件数 × 単価で見積のみ)
  *      - エラー行は CSV で返却可能な形式で蓄積
  *   2. applyImport(): previewId から検証済データ取り出し → embedding 生成 + 取込
@@ -35,7 +41,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import * as XLSX from 'xlsx';
+import { parse as parseCsv } from 'csv-parse/sync';
 import { prisma } from '@/lib/db';
 import { generateAndPersistEntityEmbedding } from '@/services/embedding.service';
 import { composeKnowledgeText } from '@/services/knowledge.service';
@@ -55,8 +61,6 @@ export type FieldMapping = Record<string, string>; // CSV カラム名 → 本�
 
 export type EntityMapping = {
   entity: ExternalImportEntity;
-  /** ファイル内のシート名 (Excel の場合)、CSV は使わない */
-  sheetName?: string;
   /** カラムマッピング (key=CSV列名 / value=フィールド名 or 'skip') */
   fieldMapping: FieldMapping;
   /** RiskIssue で全行を 1 プロジェクトに所属させる場合のプロジェクト ID */
@@ -66,9 +70,13 @@ export type EntityMapping = {
 export type PreviewInput = {
   tenantId: string;
   userId: string;
-  /** ファイルのバイナリ (CSV / xlsx) */
+  /** CSV ファイルのバイナリ */
   fileBuffer: Buffer;
-  /** xlsx の場合 entity ごとに sheet 切替可、CSV は単一シート扱い */
+  /**
+   * mappings は entity ごとに 1 つずつ。CSV は 1 ファイル = 1 entity 扱い
+   *   (= Knowledge と RiskIssue を同じ CSV に混在させない)。
+   * 複数 entity を取り込む場合は別ファイルで個別アップロードを想定。
+   */
   mappings: EntityMapping[];
 };
 
@@ -173,15 +181,20 @@ export async function previewImport(input: PreviewInput): Promise<PreviewResult>
     return { ok: false, error: 'TENANT_NOT_FOUND', message: 'テナントが見つかりません' };
   }
 
-  // ファイルパース
-  let workbook: XLSX.WorkBook;
+  // CSV パース (UTF-8 BOM 自動除去 + ヘッダ行をオブジェクトキーに使用)
+  let rows: Record<string, unknown>[];
   try {
-    workbook = XLSX.read(input.fileBuffer, { type: 'buffer', cellDates: true });
-  } catch {
+    rows = parseCsv(input.fileBuffer, {
+      columns: true, // 1 行目をヘッダとして使う
+      skip_empty_lines: true,
+      bom: true, // UTF-8 BOM を自動除去
+      trim: false, // 各セルの trim はバリデーション側で実施
+    }) as Record<string, unknown>[];
+  } catch (e) {
     return {
       ok: false,
       error: 'INVALID_FORMAT',
-      message: 'ファイルを CSV または Excel として読み込めませんでした',
+      message: `CSV として読み込めませんでした: ${e instanceof Error ? e.message : '不明なエラー'}`,
     };
   }
 
@@ -192,20 +205,6 @@ export async function previewImport(input: PreviewInput): Promise<PreviewResult>
   let riskIssueTotalRows = 0;
 
   for (const mapping of input.mappings) {
-    const sheetName = mapping.sheetName ?? workbook.SheetNames[0]!;
-    const sheet = workbook.Sheets[sheetName];
-    if (!sheet) {
-      return {
-        ok: false,
-        error: 'INVALID_FORMAT',
-        message: `シート "${sheetName}" が見つかりません`,
-      };
-    }
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-      defval: null,
-      raw: false, // 全て string で取得 (日付は string、後で Date 化)
-    });
-
     if (mapping.entity === 'knowledge') {
       knowledgeTotalRows += rows.length;
       const r = parseKnowledgeRows(rows, mapping.fieldMapping);
