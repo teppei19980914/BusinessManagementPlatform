@@ -11,6 +11,12 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      // P-2 (2026-05-08): 席数上限チェック用 (count of active users)
+      count: vi.fn(),
+    },
+    // P-2 (2026-05-08): 席数上限チェック用 (plan + beginnerMaxSeats 取得)
+    tenant: {
+      findUnique: vi.fn(),
     },
     roleChangeLog: {
       create: vi.fn(),
@@ -60,6 +66,7 @@ import {
   updateUserRole,
   deleteUser,
   lockInactiveUsers,
+  assertSeatAvailableForTenant,
 } from './user.service';
 import { prisma } from '@/lib/db';
 import {
@@ -166,6 +173,203 @@ describe('createUser', () => {
     await createUser(validInput, creatorId);
 
     expect(sendVerificationEmail).not.toHaveBeenCalled();
+  });
+
+  // P-2 (2026-05-08): Beginner プラン席数上限の API 層 enforce
+  describe('P-2: Beginner プラン席数上限 enforce', () => {
+    const tenantId = 'tenant-uuid';
+
+    it('tenantId 未指定なら席数チェックをスキップする (旧シグネチャ互換)', async () => {
+      await createUser(validInput, creatorId, { baseUrl: 'https://example.com' });
+      // tenant.findUnique も user.count も呼ばれない
+      expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.count).not.toHaveBeenCalled();
+    });
+
+    it('Beginner プランで席数に余裕があれば作成成功 (4 / 5 → 5 で OK)', async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        plan: 'beginner',
+        beginnerMaxSeats: 5,
+      } as never);
+      vi.mocked(prisma.user.count).mockResolvedValueOnce(4);
+
+      const result = await createUser(validInput, creatorId, {
+        baseUrl: 'https://example.com',
+        tenantId,
+      });
+
+      expect(result.user.email).toBe(validInput.email);
+      expect(prisma.user.create).toHaveBeenCalled();
+    });
+
+    it('Beginner プランで席数上限に達している場合は SEAT_LIMIT_EXCEEDED エラー (5 / 5 → 6 で拒否)', async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        plan: 'beginner',
+        beginnerMaxSeats: 5,
+      } as never);
+      vi.mocked(prisma.user.count).mockResolvedValueOnce(5);
+
+      await expect(
+        createUser(validInput, creatorId, {
+          baseUrl: 'https://example.com',
+          tenantId,
+        }),
+      ).rejects.toThrow('SEAT_LIMIT_EXCEEDED');
+
+      // 席数チェックで弾かれるため、user.create は呼ばれない
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('Beginner プランで席数を超過している場合も SEAT_LIMIT_EXCEEDED エラー (6 / 5 → 7 で拒否)', async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        plan: 'beginner',
+        beginnerMaxSeats: 5,
+      } as never);
+      vi.mocked(prisma.user.count).mockResolvedValueOnce(6);
+
+      await expect(
+        createUser(validInput, creatorId, {
+          baseUrl: 'https://example.com',
+          tenantId,
+        }),
+      ).rejects.toThrow('SEAT_LIMIT_EXCEEDED');
+    });
+
+    it('Expert プランは無制限 (席数チェックを実施しない)', async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        plan: 'expert',
+        beginnerMaxSeats: 5,
+      } as never);
+
+      const result = await createUser(validInput, creatorId, {
+        baseUrl: 'https://example.com',
+        tenantId,
+      });
+
+      expect(result.user.email).toBe(validInput.email);
+      // user.count は呼ばれない (Expert は plan チェックの時点で短絡)
+      expect(prisma.user.count).not.toHaveBeenCalled();
+    });
+
+    it('Pro プランは無制限 (席数チェックを実施しない)', async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        plan: 'pro',
+        beginnerMaxSeats: 5,
+      } as never);
+
+      const result = await createUser(validInput, creatorId, {
+        baseUrl: 'https://example.com',
+        tenantId,
+      });
+
+      expect(result.user.email).toBe(validInput.email);
+      expect(prisma.user.count).not.toHaveBeenCalled();
+    });
+
+    it('テナント不在 (DB から消えた) なら席数チェックをスキップ (他経路で 404 になる前提)', async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+      // 席数エラーは投げず、後続の DUPLICATE_EMAIL チェックや user.create に進む
+      const result = await createUser(validInput, creatorId, {
+        baseUrl: 'https://example.com',
+        tenantId,
+      });
+
+      expect(result.user.email).toBe(validInput.email);
+    });
+  });
+});
+
+describe('assertSeatAvailableForTenant (P-2 / 2026-05-08)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const tenantId = 'tenant-uuid';
+
+  it('Beginner で空き席ありなら例外を投げない', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      plan: 'beginner',
+      beginnerMaxSeats: 5,
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(3);
+
+    await expect(assertSeatAvailableForTenant(tenantId)).resolves.toBeUndefined();
+  });
+
+  it('Beginner で席数上限ちょうどなら SEAT_LIMIT_EXCEEDED', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      plan: 'beginner',
+      beginnerMaxSeats: 5,
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(5);
+
+    await expect(assertSeatAvailableForTenant(tenantId)).rejects.toThrow('SEAT_LIMIT_EXCEEDED');
+  });
+
+  it('Beginner で席数上限超過なら SEAT_LIMIT_EXCEEDED', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      plan: 'beginner',
+      beginnerMaxSeats: 5,
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(6);
+
+    await expect(assertSeatAvailableForTenant(tenantId)).rejects.toThrow('SEAT_LIMIT_EXCEEDED');
+  });
+
+  it('beginnerMaxSeats が 5 以外でもその値で判定する (将来 plan 変更想定)', async () => {
+    // beginnerMaxSeats = 3 で 3 人在籍 → 4 人目は拒否
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      plan: 'beginner',
+      beginnerMaxSeats: 3,
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(3);
+
+    await expect(assertSeatAvailableForTenant(tenantId)).rejects.toThrow('SEAT_LIMIT_EXCEEDED');
+  });
+
+  it('Expert / Pro は無制限なので user.count が呼ばれない', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      plan: 'expert',
+      beginnerMaxSeats: 5,
+    } as never);
+
+    await assertSeatAvailableForTenant(tenantId);
+    expect(prisma.user.count).not.toHaveBeenCalled();
+
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      plan: 'pro',
+      beginnerMaxSeats: 5,
+    } as never);
+
+    await assertSeatAvailableForTenant(tenantId);
+    expect(prisma.user.count).not.toHaveBeenCalled();
+  });
+
+  it('テナント不在ならスキップ (他経路で 404 を返す前提)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+    await expect(assertSeatAvailableForTenant(tenantId)).resolves.toBeUndefined();
+    expect(prisma.user.count).not.toHaveBeenCalled();
+  });
+
+  it('isActive=false および deletedAt!=null は席数カウント対象外 (tenant-self.service と統一)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      plan: 'beginner',
+      beginnerMaxSeats: 5,
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(2);
+
+    await assertSeatAvailableForTenant(tenantId);
+
+    // count の where 句に isActive: true, deletedAt: null が含まれることを確認
+    expect(prisma.user.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId,
+          isActive: true,
+          deletedAt: null,
+        }),
+      }),
+    );
   });
 });
 

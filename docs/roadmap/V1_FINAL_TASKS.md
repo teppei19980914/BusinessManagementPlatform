@@ -673,6 +673,341 @@ PR-X5 の `pnpm seed:generate-embeddings` 実行は **開発者環境 (teppei �
 
 ---
 
+## 推奨される今後の優先順位 (V1 リリース後 / 2026-05-08 以降)
+
+PR-X1〜X6 マージ + 本番動作確認後、以下の改善を優先順位に従って順次実施する。各項目はソースコードフルスキャン (2026-05-07) で判明した「実装ギャップ」と「ユーザフィードバック」(2026-05-07 動作確認) に基づく。
+
+### 進捗ステータス (2026-05-08 時点)
+
+| 項目 | 状態 | PR | 備考 |
+|---|---|---|---|
+| P-1: 段階表示のパーセンタイル化 | ✅ 完了 | #256 | 上位 30%/中段 50%/下位 20% + ABSOLUTE_FLOOR ハイブリッド |
+| P-2: Beginner 席数 API 層 enforce | ✅ 完了 | #257 | tenant-self.service と統一定義で席数チェック + UI ガード |
+| P-3: 提案候補の説明文生成 | ✅ 完了 | #258 | Lazy + DB キャッシュ + Pro=Sonnet / Beginner-Expert=Haiku |
+| **P-4: 提案結果のリランキング** | ⏸️ **見送り** | - | **下記 §P-4 見送り判断** 参照 |
+| P-5a: DB 容量モニタ | ✅ 完了 | #260 | pg_database_size + 80%/90% 警告 |
+| P-5b: 月次使用量 CSV + 履歴 | ✅ 完了 | #261 | tenant_monthly_usage_history + 月初 cron snapshot |
+| P-6: 最終ログイン日時 + 休眠警告 | ✅ 完了 | #262 | 90 日基準、新規 onboarding 期間は判定対象外 |
+| **P-7: 請求書 PDF 自動生成** | ⏸️ **見送り (リリース後送り)** | - | **下記 §P-7 見送り判断** 参照 |
+| **P-A: テナント削除機能 (super_admin)** | 🔴 **新規 (リリース必須)** | #264 | **下記 §リリース前必須課題** 参照 |
+| **P-B: Free プラン永続利用防止 (3 ヶ月制限)** | 🔴 **新規 (リリース必須)** | (本 PR) | 60/75 日警告メール + 90 日 read-only。Beginner downgrade 禁止 + 解約再登録時の Beginner 拒否 |
+| **P-C: テナント別データ一括エクスポート** | 🟡 **新規 (リリース推奨)** | (本 PR) | ZIP (JSON + CSV) で全業務データダウンロード。Beginner 期限切れ後もエクスポート可 (顧客救済優先)。super_admin 代行エクスポートも実装 |
+| **P-D: テナント別データ一括インポート** | 🟡 **新規 (リリース推奨)** | - | 同上 (新規獲得促進) |
+| **P-E: プラン変更 e2e テスト** | 🟢 **新規 (任意)** | - | 同上 (実機での月跨ぎ動作確認) |
+| **P-G: テナント払い出し + 請求先情報** | 🔴 **新規 (リリース必須)** | - | 2026-05-08 検証で発覚。下記 §P-G 参照 |
+
+### P-4 見送り判断 (2026-05-08)
+
+V1_FINAL_TASKS.md の当初計画では P-4 を Phase 3 で実装予定としていたが、検討の結果 **見送り** とした。
+
+**判断根拠**:
+
+1. **P-1 + P-3 で「推奨」の表現は十分**
+   - P-1 (パーセンタイル tier) で「上位 30% を strong / 中段 50% を medium / 下位 20% を weak」と視覚分離済
+   - P-3 (説明文「なぜ?」) で各候補の関連理由を Pro=Sonnet 品質で取得可能
+   - P-4 が改善する領域は「上位 5 件以内のどれを最初に見るか」のみ = ROI が低い
+
+2. **3 軸スコアリング (タグ + pg_trgm + Voyage embedding) で並び順は概ね妥当**
+   - 業務文脈で並び替えが必要な edge case は稀
+   - LLM 介入で目に見えて改善するケースを想定しづらい
+
+3. **コスト・コード量・運用負担に対して効果が見合わない**
+   - Lazy + キャッシュ前提でも月数千円〜のランニングコスト
+   - 新規 DB テーブル + service + API + UI + テスト の追加保守が発生
+   - Pro プラン差別化はすでに P-3 で達成済
+
+4. **2026-05-08 ユーザフィードバック**: 生成 AI 呼出箇所の最小化 = コスト効率を優先する方針。P-4 は「PM/PL の参考タブ」というトリガーは healthy だが、追加価値が低いため除外。
+
+**再検討トリガー**:
+- 顧客から「並び順が業務感覚と合わない」具体的なフィードバックが複数件出る
+- Pro プランの差別化を更に強化したい競合状況になる
+- LLM コストが大幅に下がる (例: モデル価格改定)
+
+### 🔴 高優先度 (V1 直後に着手すべき)
+
+#### P-1: 段階表示のパーセンタイル化 (推定 0.5-1 日) ✅ 完了 (PR #256)
+
+**背景**: 現状の `SUGGESTION_TIER_STRONG_THRESHOLD = 0.3` (絶対閾値) では、シード豊富なシナリオで全候補が `42-57%` レンジに集中して **すべて「強く関連」** に分類される。視覚的差別化が機能せず、UX 上の優先順位付けの価値が損なわれている (2026-05-07 ユーザ実機確認で発覚)。
+
+**仕様 (ユーザ要望ベース、2026-05-07)**:
+- 全候補をスコア降順ソート
+- **上位 30% → strong (強く推奨)**
+- **中間 50% → medium (推奨)**
+- **下位 20% → weak (参考)** ※ ラベルは「非推奨」より「参考」を推奨 (全件表示哲学との整合)
+
+**設計上の留意点**:
+1. **絶対閾値とのハイブリッド**: Top 30% でもスコアが極端に低い (例: 5% 未満) 候補は誤誘導防止のため weak セクション扱いに降格。例:
+   ```typescript
+   const ABSOLUTE_FLOOR_FOR_STRONG = 0.05;
+   if (percentileRank < 0.3 && score >= ABSOLUTE_FLOOR_FOR_STRONG) tier = 'strong';
+   ```
+2. **少件数フォールバック**: 候補 5 件以下 (= 最低件数保証ロジック起動時) はパーセンタイル分割が無意味になるため、絶対閾値方式 (現行) にフォールバックする
+3. **件数の四捨五入**: 30% / 50% / 20% は `Math.ceil(n * 0.3)`、`Math.ceil(n * 0.5)`、残り の順で確実に下位を最後に
+4. **ラベル変更を併せて検討**: 「強く関連 / 関連の可能性 / 弱い関連性」 → 「強く推奨 / 推奨 / 参考」(意思決定を促す表現に)
+
+**実装箇所**:
+- [`src/config/suggestion.ts`](../../src/config/suggestion.ts): `classifyTier` を引数 `(score, percentileRank, totalCount)` に拡張
+- [`src/services/suggestion.service.ts`](../../src/services/suggestion.service.ts): tier 計算前に全候補のソート + percentile 計算
+- [`src/components/.../suggestions-panel.tsx`](../../src/app/(dashboard)/projects/%5BprojectId%5D/suggestions/suggestions-panel.tsx): ラベル変更 (i18n 対応)
+- テスト: `src/config/suggestion.test.ts` に percentile-based のテストケース追加
+
+#### P-2: Beginner プラン席数上限 (= 5 席) の API 層 enforce (推定 0.5 日) ✅ 完了 (PR #257)
+
+**背景**: ソースコードフルスキャン (2026-05-07) で発覚。DB 列 `Tenant.beginnerMaxSeats` は定義済だが、ユーザ招待時の API (`/api/admin/users` POST 等) で **「現在席数 + 1 ≤ beginnerMaxSeats かどうか」のチェックロジックが見つからない**。
+
+PR-X4 の `tenant-self.service.ts` ではダウングレード時の席数チェックのみ実装され、招待時 (= ユーザ作成時) の上限チェックは未実装。Beginner プラン契約テナントで 6 人目を招待すると拒否されない可能性あり (= 課金保護不全)。
+
+**仕様**:
+- POST `/api/admin/users` の handler で `getTenantSelfInfo()` から plan + activeUserCount + beginnerMaxSeats を取得
+- `plan === 'beginner' && activeUserCount + 1 > beginnerMaxSeats` なら 400 エラー (`SEAT_LIMIT_EXCEEDED`)
+- UI 側でも事前警告 (招待ボタン disabled + ツールチップ)
+
+**実装箇所**:
+- [`src/app/api/admin/users/route.ts`](../../src/app/api/admin/users/route.ts): POST handler 拡張
+- [`src/app/(dashboard)/admin/users/users-client.tsx`](../../src/app/(dashboard)/admin/users/users-client.tsx): 「新規ユーザ登録」ボタンの disabled 制御
+- 単体テスト追加 (Beginner で 5 席埋まっている時の招待拒否)
+
+### 🟡 中優先度 (リリース後 1-2 ヶ月以内、Phase 2)
+
+#### P-3: 提案結果の "人間ライクな説明文" 生成 (Phase 3、推定 2-3 日) ✅ 完了 (PR #258)
+
+**背景**: V1 時点で **Pro プラン (¥30/call) の差別化機能はほぼゼロ** (自動タグ抽出での Sonnet 利用のみ)。提案体験そのものは 3 プラン共通のため、Pro プラン契約者が高単価を支払う理由が顧客視点で不明瞭。
+
+**仕様**:
+- 提案結果の各候補 (knowledge / pastIssue / retrospective) に対して「なぜこのプロジェクトに関連するのか」の自然言語説明文を生成
+- プラン別モデル分岐:
+  - **Pro**: Claude Sonnet (`claude-sonnet-4-6`、高品質)
+  - **Expert / Beginner**: Claude Haiku (`claude-haiku-4-5`、低コスト)
+- 説明文は提案画面の各候補にツールチップ or 展開表示
+- `withMeteredLLM` 経由で課金 + rate limit 統合
+
+**実装イメージ**:
+```typescript
+// src/services/suggestion.service.ts に追加
+async function explainSuggestion(
+  candidate: KnowledgeSuggestion,
+  ctx: ProjectContext,
+  tenantId: string,
+  userId: string,
+): Promise<string> {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  const model = resolveModelForPlan(tenant.plan as TenantPlan);
+  return await withMeteredLLM(
+    { tenantId, userId, featureUnit: 'suggestion-explanation' },
+    async ({ requestId }) => {
+      const result = await anthropicComplete({
+        model,
+        prompt: `プロジェクト「${ctx.name}」(${ctx.purpose}) に対し、
+                 過去ナレッジ「${candidate.title}」が関連する理由を 100 字以内で説明:`,
+      });
+      return { result: result.text, usage: { input: result.inputTokens, output: result.outputTokens }, requestId };
+    },
+  );
+}
+```
+
+**実装箇所**:
+- [`src/services/suggestion.service.ts`](../../src/services/suggestion.service.ts): `explainSuggestion()` 追加
+- [`src/lib/llm/anthropic-client.ts`](../../src/lib/llm/anthropic-client.ts) (新規 or 既存): Claude API client
+- [`src/components/.../suggestions-panel.tsx`](../../src/app/(dashboard)/projects/%5BprojectId%5D/suggestions/suggestions-panel.tsx): ツールチップ or 展開 UI
+
+#### P-4: 提案結果のリランキング (Phase 3、推定 1-2 日) ⏸️ 見送り (2026-05-08 判断)
+
+**当初の構想**: 現状の embedding 上位 N 件は「意味的に近い」順だが、「**業務文脈で本当に有用か**」の判定は弱い。LLM (Sonnet) で上位 10-20 件を再評価することで精度を上げる、という案だった。
+
+**見送り判断の根拠**: 上記 §P-4 見送り判断 を参照。要約すると、
+
+- P-1 (パーセンタイル tier) + P-3 (なぜ?) で既に Pro プラン差別化と推奨表現は十分達成
+- 並び順の精緻化のみが追加価値であり、ROI が低い
+- Lazy + キャッシュ前提でも月数千円のランニングコスト + コード/運用負担増
+
+**再検討トリガー**: 顧客フィードバックで「並び順が業務感覚と合わない」具体例が複数件出た場合、または LLM 単価が大幅に下がった場合に再評価。
+
+### 🟢 低優先度 (リリース後 3 ヶ月以降、運用負荷ベースで判断)
+
+#### P-5: 月次運用ダッシュボードの自動化 (推定 2-3 日)
+
+**背景**: 現状、月末日に手動で画面確認 + Excel 転記が必要。テナント数が 5-10 を超えると工数が爆発する。
+
+**仕様**:
+- 月次使用量の **CSV エクスポート** (テナント別 / 全体合計)
+- **過去 N ヶ月の使用量履歴** をグラフ表示
+- **Voyage / Anthropic 月次費用** をシステム管理者ダッシュボードで一元表示 (ベンダー API 連携)
+- **Supabase DB 容量モニタ** (Supabase API 連携)
+
+**実装箇所**:
+- [`src/services/super-admin.service.ts`](../../src/services/super-admin.service.ts): 履歴集計関数追加
+- 新規月次集計テーブル `tenant_monthly_usage_history` を migration で追加
+- [`src/app/(dashboard)/admin/super/usage/page.tsx`](../../src/app/(dashboard)/admin/super/usage/page.tsx): グラフ + CSV ダウンロード追加
+
+#### P-6: テナント別 API 呼出ログの可視化 + 最終ログイン日時 (推定 1-2 日)
+
+**背景**: 休眠テナント判定が「API 呼出数 = 0」のみで簡易すぎる。最終ログイン日時の追加で精度向上。
+
+**仕様**:
+- `User.lastLoginAt` (既存) を集計してテナント詳細画面に表示
+- 90 日連続休眠テナントは super_admin ダッシュボードで警告表示
+
+#### P-7: 請求書 PDF 自動生成 (推定 2-3 日) ⏸️ 見送り (2026-05-08 判断)
+
+**当初構想**: テナント数が 20+ になったら請求書手作成が破綻するため、月次クローズ後に各テナントへの請求金額を自動計算し PDF 生成 (jsPDF / Puppeteer 等) してメール送付する案だった。
+
+**見送り判断 (2026-05-08)**:
+
+リリース直後は **請求対象テナント数が 0〜数件** と少なく、手作業で十分処理可能。
+P-5b で蓄積される `tenant_monthly_usage_history` テーブルが正本データになるため、
+請求書発行の **データ基盤は既に整備済**。あとは PDF 化だけだが、これはテナント数が
+20+ に近づいた段階で着手すれば十分。
+
+**再着手トリガー**:
+- 顧客テナント数が 10 を超える (= 月次請求の手作業が複利的に苦痛になる)
+- 経理担当が増えて自動化の ROI が出る
+- テナント管理者から請求書 PDF の要望が複数出る
+
+**現時点の代替**: super_admin の CSV エクスポート機能 (P-5b) で月次データを Excel に流し込み、テンプレート文書を手作業で生成する運用。
+
+---
+
+## リリース前必須課題 (2026-05-08 検証で発覚)
+
+5 観点 (野良テナント削除 / プラン変更課金 / テナント管理者ダッシュボード / 表示データの現プラン基準 / 数値整合性) を全コードスキャンで検証した結果、**観点 2〜5 は実装済で問題なし** だが、**観点 1 (野良テナント削除機能) が完全に未実装** であることが判明。
+
+これに加えて、ユーザフィードバックで挙がった「Free プラン永続利用 (= 課金されないまま居座る) の防止」と「サービス利用時/離脱時のデータ移行 (一括インポート/エクスポート)」も V1 リリース前後の重要課題。
+
+優先度を以下のように設定する。
+
+#### P-A: テナント削除機能 (super_admin、推定 1-2 日) 🔴 リリース必須
+
+**背景** (2026-05-08 検証):
+- Tenant schema に `deletedAt` カラムは存在 (`prisma/schema.prisma:78`)
+- `withMeteredLLM` で `deletedAt: null` フィルタは実装済 ([`src/lib/llm/metered.ts:171-178`](../../src/lib/llm/metered.ts))
+- **しかし `deletedAt` を set する API / サービス / UI が一切存在しない** (確認済)
+- 結果: super_admin が問題テナント (課金未払 / TOS 違反等) を **止められない**
+
+**仕様**:
+- `DELETE /api/admin/super/tenants/[id]` (super_admin 限定)
+- 論理削除 (`deletedAt = now()`)
+- カスケード方針:
+  - 配下の users: `deletedAt = now() && isActive = false` (ログイン不可化)
+  - 配下の projects / knowledge / risksIssues / retrospectives / memos: 既存の `deletedAt` カラムで論理削除
+  - api_call_logs / tenant_monthly_usage_history: 監査・請求根拠のため **物理保持** (削除しない)
+- 削除前に確認ダイアログ (取消困難なため)
+- 復元機能は本 PR 外 (運用上必要になったら別 PR)
+
+**実装箇所**:
+- `src/app/api/admin/super/tenants/[id]/route.ts`: DELETE handler 新規追加
+- `src/services/super-admin.service.ts`: `deleteTenant(tenantId)` 関数
+- `src/app/(dashboard)/admin/super/tenants/[id]/page.tsx`: 削除ボタン UI
+- 単体テスト: 認可境界 / カスケード / 冪等性 / 削除済テナントへのアクセス禁止
+
+#### P-B: Free プラン永続利用の防止 (推定 1 日) 🔴 リリース必須
+
+**背景**:
+Beginner プラン (¥0、月 100 回上限) は無料のため、課金転換せずに永続利用する顧客が増えると LLM コストの持ち出しが発生する。3 ヶ月程度を上限とし、超過したらアップグレードか自動 deactivate するシステム制御が必要。
+
+**仕様**:
+- Beginner プラン契約から 90 日経過したテナントは:
+  - super_admin ダッシュボードで警告表示 (P-6 の休眠警告と同じ仕組みを流用可能)
+  - テナント管理者にメール通知 (アップグレード or 廃止選択を促す)
+  - 120 日超過で API 呼出を自動停止 (= LLM 機能のみ無効化、ログインは可)
+- アップグレード (Expert / Pro) すれば即時解除
+- 計測基点: `Tenant.createdAt` (= 初回契約日と仮定)
+
+**実装箇所**:
+- `src/services/super-admin.service.ts`: `listLongTermFreeTenants()` 関数
+- 既存の月初 cron (`tenant-monthly-reset.service.ts`) に通知 step 追加
+- `withMeteredLLM` で 120 日超 Beginner なら `tenant_inactive` 縮退
+- メール通知テンプレート
+
+#### P-C: テナント別データ一括エクスポート (推定 2-3 日) 🟡 リリース推奨
+
+**背景**:
+顧客がサービス離脱時に「自社で蓄積したナレッジ・課題・振り返り等を持ち出せる」ことを保証することは、契約獲得・離脱時の信頼維持の観点で重要 (= ロックイン回避)。
+
+**仕様**:
+- テナント管理者画面に「全データエクスポート」ボタン
+- ZIP ファイル (内訳: projects.json / knowledge.json / risks.json / retrospectives.json / memos.json) を生成
+- 添付ファイル URL は文字列のまま (実ファイルは外部ストレージ任せ)
+- super_admin 画面でも代行ダウンロード可能 (顧客サポート用途)
+
+**実装箇所**:
+- `src/services/data-export.service.ts` (新規)
+- `src/app/api/tenants/me/export/route.ts` (テナント管理者経路)
+- `src/app/api/admin/super/tenants/[id]/export/route.ts` (super_admin 経路)
+
+#### P-D: テナント別データ一括インポート (推定 2-3 日) 🟡 リリース推奨
+
+**背景**:
+新規テナントが既存資産 (社内 wiki / 旧システムの知見等) を本サービスに移行できれば、立ち上がりがスムーズになり契約獲得が促進される。
+
+**仕様**:
+- P-C と対称な ZIP 形式を入力として受け付け
+- 既存データとの ID 衝突は **新規 UUID で再採番**
+- 部分インポート (knowledge のみ等) を許可
+- import 中の進捗表示 (大量データ対応)
+- テナント管理者経路のみ (= 新規開設時の自助セットアップ用)
+
+**実装箇所**:
+- `src/services/data-import.service.ts` (新規)
+- `src/app/api/tenants/me/import/route.ts`
+
+#### P-E: プラン変更 e2e テスト追加 (推定 0.5-1 日) 🟢 リリース推奨
+
+**背景**:
+2026-05-08 検証で「プラン変更時の課金タイミング (アップグレード即時 / ダウングレード翌月適用)」は単体テストでは網羅されているが、**実 DB で月跨ぎの cron + 単価切替まで検証する e2e テスト** はまだない。リリース直前に最終確認したい。
+
+**仕様**:
+- 1 テストで 3 月分のシナリオ:
+  - M1: Beginner で 30 回呼出 → ¥0 課金
+  - M1 後半: アップグレード Expert → 直後の呼出 ¥10/call (Haiku 単価)
+  - M2 月初 cron: リセット + snapshot 保存確認
+  - M2 中: ダウングレード予約 (Beginner)
+  - M3 月初 cron: ダウングレード適用 → 当月から Beginner 単価
+- DB 状態を時間操作 (Date モック) で進行
+
+**実装箇所**:
+- `src/services/tenant-monthly-reset.service.test.ts`: 上記シナリオ追加 (e2e level の integration test)
+
+---
+
+### 着手順序の実績と次の予定
+
+```
+[2026-05-08 V1 リリース後]
+   ↓
+P-1 段階表示パーセンタイル化 (PR #256) ✅ 完了
+   ↓
+P-2 Beginner 席数 enforce (PR #257) ✅ 完了
+   ↓
+P-3 提案説明文生成 (PR #258) ✅ 完了
+   ↓
+P-4 提案リランキング ⏸️ 見送り
+   ↓
+P-5a DB 容量モニタ (PR #260) ✅ 完了
+   ↓
+P-5b 月次使用量 CSV + 履歴 (PR #261) ✅ 完了
+   ↓
+P-6 最終ログイン + 休眠警告 (PR #262) ✅ 完了
+   ↓
+P-7 請求書 PDF ⏸️ 見送り (リリース後送り)
+   ↓
+=== ここから 2026-05-08 検証で追加された必須/推奨課題 ===
+   ↓
+P-A テナント削除機能 (1-2 日) ← 次着手予定 🔴 リリース必須
+   ↓
+P-B Free プラン永続利用防止 (1 日) 🔴 リリース必須
+   ↓
+P-C データ一括エクスポート (2-3 日) 🟡 リリース推奨
+   ↓
+P-D データ一括インポート (2-3 日) 🟡 リリース推奨
+   ↓
+P-E プラン変更 e2e テスト (0.5-1 日) 🟢 任意
+```
+
+実績工数: P-1〜P-3 + P-5a/b + P-6 で **約 6-7 日相当**。P-A 〜 P-E は合計 **6.5-10 日**。
+
+---
+
 ## 関連ドキュメント
 
 | ファイル | 役割 |

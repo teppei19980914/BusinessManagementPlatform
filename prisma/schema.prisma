@@ -68,30 +68,61 @@ model Tenant {
   beginnerMaxSeats         Int       @default(5) @map("beginner_max_seats")
   pricePerCallHaiku        Int       @default(10) @map("price_per_call_haiku")
   pricePerCallSonnet       Int       @default(30) @map("price_per_call_sonnet")
+  /// P-G (2026-05-08): 請求先情報。super_admin の請求業務 (CSV エクスポート / 請求書手作成) で使用。
+  ///   - 既存テナント (default-tenant / management) は migration 後 null のまま
+  ///     (運営内部のため請求対象外、空 OK)。
+  ///   - 新規顧客テナント (P-G で実装される super_admin 作成 API + /signup) は登録時に
+  ///     必須 4 項目 (companyName / contactName / contactEmail / address) を要求する。
+  ///   - 別テーブル化せず Tenant に持たせるのは、1:1 関係 + 操作頻度低 + JOIN 回避のため。
+  /// 請求書発行先の正式会社名 / 法人名 (Tenant.name は表示用のため、請求文書では本フィールドを優先)
+  billingCompanyName       String?   @map("billing_company_name") @db.VarChar(200)
+  /// 請求書送付先担当者名
+  billingContactName       String?   @map("billing_contact_name") @db.VarChar(100)
+  /// 請求書送付先メールアドレス (= 請求書 PDF / 案内メールの送り先)
+  billingContactEmail      String?   @map("billing_contact_email") @db.VarChar(255)
+  /// 請求書送付先住所 (郵送が必要な場合 / 法人登記住所など)
+  billingAddress           String?   @map("billing_address") @db.Text
+  /// 連絡先電話番号 (任意)
+  billingPhoneNumber       String?   @map("billing_phone_number") @db.VarChar(20)
+  /// 支払い方法 ('invoice' = 請求書送付 / 'bank_transfer' = 銀行振込 / 'credit_card' = 後続実装)
+  paymentMethod            String    @default("invoice") @map("payment_method") @db.VarChar(30)
   /// プラン変更予約: ダウングレード時のみ翌月適用 (Expert/Pro → Beginner)。
   scheduledPlanChangeAt    DateTime? @map("scheduled_plan_change_at") @db.Timestamptz
   scheduledNextPlan        String?   @map("scheduled_next_plan") @db.VarChar(20)
   /// 月初リセット cron が処理した最後の月初 (UTC ベース、毎月 1 日 00:00 UTC)。
   lastResetAt              DateTime? @map("last_reset_at") @db.Timestamptz
+  /// P-B (2026-05-08): Beginner プラン永続利用防止。
+  ///   - 計測起点: createdAt から 60/75/90 日経過判定で警告メール送信 + 90 日で read-only モード
+  ///   - true 化条件: Tenant が一度でも Beginner 以外 (Expert/Pro) になった (= ダウングレードでも Beginner に戻せない)
+  ///   - 解約済テナント (deletedAt セット) の billingContactEmail で同 email 再登録時の Beginner 拒否判定にも使用
+  beginnerEverUpgraded     Boolean   @default(false) @map("beginner_ever_upgraded")
+  /// P-B: 60 日警告メール送信日時 (重複送信防止用、null なら未送信)
+  beginnerNoticeDay60SentAt DateTime? @map("beginner_notice_day60_sent_at") @db.Timestamptz
+  /// P-B: 75 日警告メール送信日時
+  beginnerNoticeDay75SentAt DateTime? @map("beginner_notice_day75_sent_at") @db.Timestamptz
+  /// P-B: 90 日経過 read-only 通知メール送信日時
+  beginnerExpiredNoticeSentAt DateTime? @map("beginner_expired_notice_sent_at") @db.Timestamptz
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt                DateTime? @map("deleted_at") @db.Timestamptz
 
-  // Relations: 13 業務エンティティ + ApiCallLog
-  users           User[]
-  customers       Customer[]
-  projects        Project[]
-  knowledges      Knowledge[]
-  risksIssues     RiskIssue[]
-  retrospectives  Retrospective[]
-  memos           Memo[]
-  stakeholders    Stakeholder[]
-  comments        Comment[]
-  mentions        Mention[]
-  notifications   Notification[]
-  attachments     Attachment[]
-  systemErrorLogs SystemErrorLog[]
-  apiCallLogs     ApiCallLog[]
+  // Relations: 13 業務エンティティ + ApiCallLog + SuggestionExplanation (P-3) + monthlyUsageHistory (P-5b)
+  users                   User[]
+  customers               Customer[]
+  projects                Project[]
+  knowledges              Knowledge[]
+  risksIssues             RiskIssue[]
+  retrospectives          Retrospective[]
+  memos                   Memo[]
+  stakeholders            Stakeholder[]
+  comments                Comment[]
+  mentions                Mention[]
+  notifications           Notification[]
+  attachments             Attachment[]
+  systemErrorLogs         SystemErrorLog[]
+  apiCallLogs             ApiCallLog[]
+  suggestionExplanations  SuggestionExplanation[]
+  monthlyUsageHistory     TenantMonthlyUsageHistory[]
 
   @@index([plan], map: "idx_tenants_plan")
   @@map("tenants")
@@ -168,6 +199,7 @@ model User {
   notifications           Notification[]           @relation("NotificationRecipient")
   receivedMentions        Mention[]                @relation("MentionTarget")
   apiCallLogs             ApiCallLog[]             @relation("ApiCallLogActor")
+  generatedExplanations   SuggestionExplanation[]  @relation("SuggestionExplanationGeneratedBy")
 
   // PR #2: tenant への back relation
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -329,14 +361,15 @@ model Project {
   deletedAt          DateTime? @map("deleted_at") @db.Timestamptz
 
   // Relations
-  tenant            Tenant             @relation(fields: [tenantId], references: [id])
-  members           ProjectMember[]
-  estimates         Estimate[]
-  tasks             Task[]
-  risksIssues       RiskIssue[]
-  retrospectives    Retrospective[]
-  knowledgeProjects KnowledgeProject[]
-  stakeholders      Stakeholder[]
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id])
+  members                ProjectMember[]
+  estimates              Estimate[]
+  tasks                  Task[]
+  risksIssues            RiskIssue[]
+  retrospectives         Retrospective[]
+  knowledgeProjects      KnowledgeProject[]
+  stakeholders           Stakeholder[]
+  suggestionExplanations SuggestionExplanation[]
 
   @@index([status], map: "idx_projects_status")
   @@index([customerId], map: "idx_projects_customer_id")
@@ -964,4 +997,151 @@ model ApiCallLog {
   @@index([requestId], map: "idx_api_call_logs_request")
   @@index([featureUnit, createdAt(sort: Desc)], map: "idx_api_call_logs_feature")
   @@map("api_call_logs")
+}
+
+/// 提案候補の人間ライクな説明文キャッシュ (P-3 / 2026-05-08)
+///
+/// 役割:
+///   提案画面で各候補 (knowledge / past_issue / retrospective) の「なぜこのプロジェクトに
+///   関連するのか」を LLM (Pro=Sonnet / Beginner-Expert=Haiku) で生成した結果を
+///   (projectId, candidateKind, candidateId) 単位で永続化する。
+///   Lazy 生成 (ユーザがクリックした時だけ生成) + DB キャッシュで再課金を防ぐ。
+///
+/// 設計判断:
+///   - **(projectId, candidateKind, candidateId) で unique**: 同じ提案画面を再訪 / 別ユーザが
+///     同じ画面を開いても再課金しない。プロジェクトと候補のペアでキャッシュするため、
+///     プロジェクト内容や候補内容が変わっても古い説明が再利用される
+///     (= 軽い stale。許容)。本格的に invalidate したくなったら updatedAt 比較で
+///     再生成判定するロジックを後付けする。
+///   - **tenantId を直接持つ (denormalized)**: 認可境界の検証を join なしで実施可能。
+///     Project にも tenantId はあるが、明示的にこのテーブルにも持つことで「外部から
+///     渡された projectId が他テナントだった場合に弾く」サニタイズが容易。
+///   - **modelName / costJpy を保存**: 過去の説明が Haiku 生成か Sonnet 生成かを後から
+///     監視できるようにする (Pro プラン契約者の体験品質モニタ用)。
+///   - **generatedBy (User FK)**: 監査用。説明生成は LLM 課金が発生するので、誰が
+///     呼び出したかを残す。
+///
+/// 関連:
+///   - サービス: src/services/suggestion-explanation.service.ts
+///   - API: src/app/api/projects/[projectId]/suggestions/explain/route.ts
+///   - 計画: docs/roadmap/V1_FINAL_TASKS.md P-3
+model SuggestionExplanation {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  /// 提案を受けたプロジェクト (= 「この PJ に対して説明する」の主語)
+  projectId      String   @map("project_id") @db.Uuid
+  /// 'knowledge' | 'issue' | 'retrospective'
+  candidateKind  String   @map("candidate_kind") @db.VarChar(20)
+  /// 候補側の ID (Knowledge.id / RiskIssue.id / Retrospective.id)
+  candidateId    String   @map("candidate_id") @db.Uuid
+  /// 生成された説明文 (UI で表示)
+  explanation    String   @db.Text
+  /// 生成に使われた LLM モデル名 (例: 'claude-haiku-4-5' / 'claude-sonnet-4-6')
+  modelName      String   @map("model_name") @db.VarChar(60)
+  /// 生成時の課金額 (円整数)。同候補に対する重複課金は本テーブルの cache hit で防ぐ。
+  costJpy        Int      @map("cost_jpy")
+  /// 生成を実行したユーザ (監査用)
+  generatedBy    String   @map("generated_by") @db.Uuid
+  generatedAt    DateTime @default(now()) @map("generated_at") @db.Timestamptz
+
+  tenant      Tenant  @relation(fields: [tenantId], references: [id])
+  project     Project @relation(fields: [projectId], references: [id])
+  generatedByUser User @relation("SuggestionExplanationGeneratedBy", fields: [generatedBy], references: [id])
+
+  /// 同じ (projectId, candidateKind, candidateId) は 1 つだけ。再要求時は cache hit。
+  @@unique([projectId, candidateKind, candidateId], map: "uq_suggestion_explanation_target")
+  @@index([tenantId, generatedAt(sort: Desc)], map: "idx_suggestion_explanations_tenant")
+  @@map("suggestion_explanations")
+}
+
+/// テナント別月次使用量の履歴スナップショット (P-5b / 2026-05-08)
+///
+/// 役割:
+///   月初リセット cron が `Tenant.currentMonthApiCallCount` / `currentMonthApiCostJpy` を
+///   0 にリセット **する直前** の値を、yearMonth (= リセット対象月の 1 つ前の月) で
+///   永続化する。super_admin の使用量履歴グラフ + CSV エクスポート + 請求書生成 (P-7)
+///   の正本データになる。
+///
+/// 設計判断:
+///   - **(tenantId, yearMonth) で unique**: 月次リセット cron の冪等性 (= 二重実行で
+///     行が重複しない) を保証。仮に cron が同月に複数回起動されても、最初の 1 回で
+///     決まったスナップショットを保つ。
+///   - **yearMonth は varchar(7) "YYYY-MM"**: 月単位の集計しか必要ないので date 型ではなく
+///     人間可読な文字列で持つ。SQL での SUBSTR 等不要、ORDER BY も自然に降順可能。
+///   - **plan / activeUserCount も保存**: 月次の課金根拠を後から再現可能にする
+///     (= 「2026-04 月時点で Pro プラン × アクティブ 5 人で ¥9,000」が後から監査できる)。
+///   - **管理テナント (Knowledge Relay Platform) は保存しない**:
+///     呼出側 (snapshot サービス) で `id != MANAGEMENT_TENANT_ID` で絞る。集計画面でも
+///     同様に除外しているため整合する。
+///
+/// 関連:
+///   - cron: src/services/tenant-monthly-reset.service.ts
+///   - 集計サービス: src/services/super-admin.service.ts (listMonthlyUsageHistory)
+///   - CSV API: src/app/api/admin/super/usage/export/route.ts
+///   - UI: src/app/(dashboard)/admin/super/usage/page.tsx
+///   - 計画: docs/roadmap/V1_FINAL_TASKS.md P-5
+model TenantMonthlyUsageHistory {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  /// "YYYY-MM" 形式 (例: "2026-04" = 2026 年 4 月分)
+  yearMonth       String   @map("year_month") @db.VarChar(7)
+  /// 当月総コール数 (= リセット直前の Tenant.currentMonthApiCallCount)
+  apiCallCount    Int      @map("api_call_count")
+  /// 当月総課金額 (= リセット直前の Tenant.currentMonthApiCostJpy、円整数)
+  apiCostJpy      Int      @map("api_cost_jpy")
+  /// 当月末時点のプラン (請求書根拠用)
+  plan            String   @db.VarChar(20)
+  /// 当月末時点のアクティブユーザ数 (請求書根拠用)
+  activeUserCount Int      @map("active_user_count")
+  /// snapshot 生成日時 (= 月初リセット cron の起動時刻)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  /// (tenantId, yearMonth) は 1 件のみ。月次 cron の冪等性保証。
+  @@unique([tenantId, yearMonth], map: "uq_tenant_monthly_usage_history")
+  @@index([yearMonth], map: "idx_monthly_usage_year_month")
+  @@map("tenant_monthly_usage_history")
+}
+
+/// メール送信ログ (P-H / 2026-05-08)
+///
+/// 役割:
+///   getMailProvider().send() の全送信を 1 行 1 record で記録する。
+///   super_admin ダッシュボードで「日次 / 月次の送信件数 + 上限到達警告」を表示する元データ。
+///   Brevo 無料 300 通/日 等の vendor 上限超過事故を未然に検知する目的。
+///
+/// 設計判断:
+///   - **本文・件名は保存しない**: PII / 機密情報の漏洩防止 (= recipient hash + 種別のみ)
+///   - **recipient ハッシュ化**: SHA-256 で保存 (= 「同じ宛先に送ったか」を確認できる程度の情報量)
+///   - **type フィールド**: 'invitation' / 'usage_alert' / 'beginner_warning_60' /
+///     'beginner_warning_75' / 'beginner_expired' / その他 — 送信目的別の集計用
+///   - **success / error**: provider が返した結果。失敗ログも残し、自動 retry 判断材料に
+///   - **tenantId は optional**: cron 経由 (= 特定テナント外) の system 通知も記録対象のため
+///
+/// 関連:
+///   - 計画: docs/roadmap/V1_FINAL_TASKS.md P-H
+///   - 集計サービス: src/services/email-send-log.service.ts
+///   - UI: super_admin ダッシュボード (P-5a と同パターンのカード)
+model EmailSendLog {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// 関連テナント (cron 経由で特定テナント外の通知は null = システム通知)
+  tenantId        String?  @map("tenant_id") @db.Uuid
+  /// 送信種別 ('invitation' / 'usage_alert' / 'beginner_warning_60' / etc.)
+  type            String   @db.VarChar(40)
+  /// 送信先メールアドレスの SHA-256 ハッシュ (PII 漏洩防止)
+  recipientHash   String   @map("recipient_hash") @db.VarChar(64)
+  /// 送信先メールアドレスのドメイン部のみ保存 (= '@example.com' / 集計時のドメイン分布把握用)
+  recipientDomain String   @map("recipient_domain") @db.VarChar(255)
+  /// 送信成功したか (provider.send の戻り値ベース)
+  success         Boolean
+  /// 失敗時のエラーメッセージ (= provider 側のエラー応答)
+  errorMessage    String?  @map("error_message") @db.Text
+  /// プロバイダ名 ('brevo' / 'resend' / 'console' / 'inbox' / 'smtp')
+  providerName    String   @map("provider_name") @db.VarChar(20)
+  sentAt          DateTime @default(now()) @map("sent_at") @db.Timestamptz
+
+  @@index([sentAt(sort: Desc)], map: "idx_email_send_logs_sent_at")
+  @@index([type, sentAt(sort: Desc)], map: "idx_email_send_logs_type")
+  @@map("email_send_logs")
 }

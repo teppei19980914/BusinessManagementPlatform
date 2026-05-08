@@ -18,6 +18,11 @@
 
 import { prisma } from '@/lib/db';
 import type { TenantPlan } from '@/lib/tenant';
+import {
+  getBeginnerExpiryState,
+  getBeginnerDaysRemaining,
+  type BeginnerExpiryState,
+} from './beginner-expiry.service';
 
 /** プランの強さ順序 (アップグレード判定用) */
 const PLAN_ORDER: Record<TenantPlan, number> = {
@@ -43,6 +48,17 @@ export type TenantSelfInfo = {
   scheduledPlanChangeAt: Date | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
+  // P-G (2026-05-08): 請求先情報
+  billingCompanyName: string | null;
+  billingContactName: string | null;
+  billingContactEmail: string | null;
+  billingAddress: string | null;
+  billingPhoneNumber: string | null;
+  paymentMethod: string;
+  // P-B (2026-05-08): Beginner プラン期限ステータス (画面のバナー表示用)
+  beginnerExpiryState: BeginnerExpiryState;
+  /** Beginner プランの残り日数。plan != beginner なら null */
+  beginnerDaysRemaining: number | null;
 };
 
 /**
@@ -58,6 +74,15 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     where: { tenantId, isActive: true, deletedAt: null },
   });
 
+  // P-B (2026-05-08): Beginner プラン期限の判定 (純関数なので副作用なし)
+  const expiryInput = {
+    plan: t.plan,
+    createdAt: t.createdAt,
+    beginnerEverUpgraded: t.beginnerEverUpgraded,
+  };
+  const beginnerExpiryState = getBeginnerExpiryState(expiryInput);
+  const beginnerDaysRemaining = getBeginnerDaysRemaining(expiryInput);
+
   return {
     id: t.id,
     tenantSeq: t.tenantSeq,
@@ -71,7 +96,54 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
     activeUserCount,
+    billingCompanyName: t.billingCompanyName,
+    billingContactName: t.billingContactName,
+    billingContactEmail: t.billingContactEmail,
+    billingAddress: t.billingAddress,
+    billingPhoneNumber: t.billingPhoneNumber,
+    paymentMethod: t.paymentMethod,
+    beginnerExpiryState,
+    beginnerDaysRemaining,
   };
+}
+
+/** P-G (2026-05-08): 請求先情報の更新入力 */
+export type UpdateBillingContactInput = {
+  billingCompanyName?: string | null;
+  billingContactName?: string | null;
+  billingContactEmail?: string | null;
+  billingAddress?: string | null;
+  billingPhoneNumber?: string | null;
+  paymentMethod?: string;
+};
+
+/**
+ * 請求先情報のみを更新する (テナント管理者画面の「請求先情報」セクション用)。
+ *
+ * - 各フィールドは optional: undefined なら変更なし、null なら値クリア
+ * - paymentMethod は文字列だが、UI 側で enum (invoice / bank_transfer / credit_card) を強制
+ *
+ * 設計判断: updateTenantSelf (プラン変更) と分離。プラン変更ロジックは複雑 (即時/翌月予約) で、
+ * 請求先情報の単純な update と一緒にすると条件分岐が散漫になるため、別関数化。
+ */
+export async function updateBillingContact(
+  tenantId: string,
+  input: UpdateBillingContactInput,
+): Promise<void> {
+  const data: Record<string, unknown> = {};
+  if (input.billingCompanyName !== undefined) data.billingCompanyName = input.billingCompanyName;
+  if (input.billingContactName !== undefined) data.billingContactName = input.billingContactName;
+  if (input.billingContactEmail !== undefined) data.billingContactEmail = input.billingContactEmail;
+  if (input.billingAddress !== undefined) data.billingAddress = input.billingAddress;
+  if (input.billingPhoneNumber !== undefined) data.billingPhoneNumber = input.billingPhoneNumber;
+  if (input.paymentMethod !== undefined) data.paymentMethod = input.paymentMethod;
+
+  if (Object.keys(data).length === 0) return; // 何も指定がなければ noop
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data,
+  });
 }
 
 export type UpdateTenantSelfInput = {
@@ -83,7 +155,14 @@ export type UpdateTenantSelfInput = {
 
 export type UpdateTenantSelfResult =
   | { ok: true; appliedImmediately: boolean; scheduledFor: Date | null }
-  | { ok: false; error: 'BEGINNER_REQUIRES_FEWER_SEATS' | 'INVALID_BUDGET' };
+  | {
+      ok: false;
+      error:
+        | 'BEGINNER_REQUIRES_FEWER_SEATS'
+        | 'INVALID_BUDGET'
+        // P-B (2026-05-08): 上位プラン → Beginner ダウングレードは禁止
+        | 'BEGINNER_DOWNGRADE_FORBIDDEN';
+    };
 
 /**
  * 自テナントのプラン / 予算上限を更新する。
@@ -136,13 +215,16 @@ export async function updateTenantSelf(
   }
 
   if (isUpgrade(currentPlan, nextPlan)) {
-    // アップグレード: 即時反映 + 予約をクリア
+    // アップグレード: 即時反映 + 予約をクリア + beginnerEverUpgraded フラグ立て
+    // P-B (2026-05-08): beginnerEverUpgraded=true にすることで、以後ダウングレード予約や
+    //   再アップグレードでも「Beginner 試用期間」の対象から外れる (Beginner に戻せない方針)。
     await prisma.tenant.update({
       where: { id: tenantId },
       data: {
         plan: nextPlan,
         scheduledPlanChangeAt: null,
         scheduledNextPlan: null,
+        beginnerEverUpgraded: true,
         ...(input.monthlyBudgetCapJpy !== undefined
           ? { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy }
           : {}),
@@ -151,14 +233,11 @@ export async function updateTenantSelf(
     return { ok: true, appliedImmediately: true, scheduledFor: null };
   }
 
-  // ダウングレード: Beginner 移行時の席数チェック
+  // P-B (2026-05-08): Beginner ダウングレード禁止 (Expert/Pro → Beginner は不可)。
+  //   Beginner プランは「初回テナント作成から 90 日限定の試用」のため、上位プランに
+  //   一度上がったテナントは戻せない仕様。Expert ↔ Pro 間のダウングレードは引き続き可。
   if (nextPlan === 'beginner') {
-    const activeUserCount = await prisma.user.count({
-      where: { tenantId, isActive: true, deletedAt: null },
-    });
-    if (activeUserCount > tenant.beginnerMaxSeats) {
-      return { ok: false, error: 'BEGINNER_REQUIRES_FEWER_SEATS' };
-    }
+    return { ok: false, error: 'BEGINNER_DOWNGRADE_FORBIDDEN' };
   }
 
   // 翌月 1 日 (UTC) に予約

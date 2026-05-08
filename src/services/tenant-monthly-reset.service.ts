@@ -39,7 +39,7 @@
 
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
-import { isTenantPlan } from '@/lib/tenant';
+import { isTenantPlan, MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 
 export interface TenantMonthlyResetResult {
   /** 月初リセット対象として update したテナント件数。 */
@@ -48,6 +48,8 @@ export interface TenantMonthlyResetResult {
   planAppliedCount: number;
   /** scheduledNextPlan が不正値のため skip した件数 (DB 不整合検知)。 */
   invalidPlanSkippedCount: number;
+  /** P-5b (2026-05-08): スナップショット保存件数 (= 履歴テーブルに insert した件数)。 */
+  snapshotSavedCount: number;
 }
 
 /**
@@ -55,6 +57,111 @@ export interface TenantMonthlyResetResult {
  */
 export function getCurrentMonthStartUtc(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
+/**
+ * P-5b (2026-05-08): 当月初の前月を "YYYY-MM" 文字列で返す。
+ *
+ * 月初リセット cron で snapshot を保存する yearMonth は **リセット対象月の 1 つ前** で
+ * ある (= 「2026-05-01 のリセット時点では、4 月分の使用量を確定して 4 月分として保存する」)。
+ *
+ * @param now 計算基準時刻 (実運用時は cron 起動時刻 = 当月初付近)
+ * @returns "YYYY-MM" 形式 (例: 2026-05-15 を渡すと "2026-04")
+ */
+export function getPreviousYearMonth(now: Date = new Date()): string {
+  // 当月初を取って 1 ms 引くと前月末になる、その UTC 年月を取り出す
+  const currentMonthStart = getCurrentMonthStartUtc(now);
+  const previousMonthInstant = new Date(currentMonthStart.getTime() - 1);
+  const year = previousMonthInstant.getUTCFullYear();
+  const month = previousMonthInstant.getUTCMonth() + 1; // 0-indexed → 1-indexed
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+/**
+ * P-5b (2026-05-08): 月次リセット **直前** に各テナントの当月使用量をスナップショット保存する。
+ *
+ * 動作:
+ *   - 対象: deletedAt IS NULL AND id != MANAGEMENT_TENANT_ID AND
+ *           (lastResetAt IS NULL OR lastResetAt < 当月初) — リセット対象と同じ条件
+ *   - 保存: tenant_monthly_usage_history に (tenantId, yearMonth=前月) で upsert
+ *   - 冪等性: (tenantId, yearMonth) unique 制約で二重実行時も 1 行のみに収束
+ *
+ * 注意:
+ *   この関数は resetTenantMonthlyCounters の **前** に呼ばなければならない
+ *   (= リセット後だと値が 0 になっており snapshot に意味がない)。
+ *
+ * @returns insert / update に成功したテナント件数
+ */
+export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise<number> {
+  const monthStart = getCurrentMonthStartUtc(now);
+  const yearMonth = getPreviousYearMonth(now);
+
+  // リセット対象テナント (= まだリセットされていない、当月分の値を保持中) を取得
+  const targets = await prisma.tenant.findMany({
+    where: {
+      id: { not: MANAGEMENT_TENANT_ID },
+      deletedAt: null,
+      OR: [{ lastResetAt: null }, { lastResetAt: { lt: monthStart } }],
+    },
+    select: {
+      id: true,
+      plan: true,
+      currentMonthApiCallCount: true,
+      currentMonthApiCostJpy: true,
+    },
+  });
+
+  if (targets.length === 0) return 0;
+
+  // アクティブユーザ数を groupBy で 1 クエリ取得 (N+1 回避)
+  const userCounts = await prisma.user.groupBy({
+    by: ['tenantId'],
+    where: {
+      isActive: true,
+      deletedAt: null,
+      tenantId: { in: targets.map((t) => t.id) },
+    },
+    _count: { id: true },
+  });
+  const userCountByTenant = new Map(userCounts.map((u) => [u.tenantId, u._count.id]));
+
+  let saved = 0;
+  for (const tenant of targets) {
+    try {
+      await prisma.tenantMonthlyUsageHistory.upsert({
+        where: {
+          tenantId_yearMonth: { tenantId: tenant.id, yearMonth },
+        },
+        create: {
+          tenantId: tenant.id,
+          yearMonth,
+          apiCallCount: tenant.currentMonthApiCallCount,
+          apiCostJpy: tenant.currentMonthApiCostJpy,
+          plan: tenant.plan,
+          activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
+        },
+        update: {
+          // 同月再実行: 最新値で update (cron が複数回起動された場合の整合性確保)
+          apiCallCount: tenant.currentMonthApiCallCount,
+          apiCostJpy: tenant.currentMonthApiCostJpy,
+          plan: tenant.plan,
+          activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
+        },
+      });
+      saved += 1;
+    } catch (error) {
+      // 1 テナントの失敗で cron 全体を落とさない (他テナントの snapshot 保存は継続)
+      await recordError({
+        severity: 'error',
+        source: 'cron',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        context: { kind: 'tenant_monthly_snapshot', tenantId: tenant.id, yearMonth },
+      });
+    }
+  }
+
+  return saved;
 }
 
 /**
@@ -143,16 +250,24 @@ export async function applyScheduledPlanChanges(
 
 /**
  * 月次バッチのエントリポイント。Vercel Cron が叩く API ルートから呼ばれる。
- * 月初リセット → プラン変更適用 の順で実行する。
+ *
+ * 順序: snapshot 保存 → 月初リセット → プラン変更適用
+ *
+ * P-5b (2026-05-08): スナップショット保存ステップを追加。リセット **前** の値を
+ * tenant_monthly_usage_history に保存することで、後から月次の使用量を再現できる
+ * (請求書根拠 / 履歴グラフ / CSV エクスポート)。
  */
 export async function runTenantMonthlyReset(
   now: Date = new Date(),
 ): Promise<TenantMonthlyResetResult> {
+  // P-5b: リセット直前にスナップショット保存 (順序重要: reset 後だと値が 0 になる)
+  const snapshotSavedCount = await saveMonthlyUsageSnapshots(now);
   const resetCount = await resetTenantMonthlyCounters(now);
   const { applied, invalidSkipped } = await applyScheduledPlanChanges(now);
   return {
     resetCount,
     planAppliedCount: applied,
     invalidPlanSkippedCount: invalidSkipped,
+    snapshotSavedCount,
   };
 }

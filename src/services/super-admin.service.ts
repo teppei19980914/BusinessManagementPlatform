@@ -19,6 +19,11 @@
 
 import { prisma } from '@/lib/db';
 import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import {
+  getBeginnerExpiryState,
+  getBeginnerDaysRemaining,
+  type BeginnerExpiryState,
+} from './beginner-expiry.service';
 
 /**
  * 全テナント一覧 (super_admin ダッシュボード用)。
@@ -39,6 +44,13 @@ export type TenantSummaryRow = {
   monthlyBudgetCapJpy: number | null;
   activeUserCount: number;
   createdAt: Date;
+  // P-G (2026-05-08): 請求先情報 (CSV エクスポート + super_admin 一覧表示用)
+  billingCompanyName: string | null;
+  billingContactName: string | null;
+  billingContactEmail: string | null;
+  billingAddress: string | null;
+  billingPhoneNumber: string | null;
+  paymentMethod: string;
 };
 
 export async function listAllTenants(): Promise<TenantSummaryRow[]> {
@@ -58,6 +70,13 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
       currentMonthApiCostJpy: true,
       monthlyBudgetCapJpy: true,
       createdAt: true,
+      // P-G (2026-05-08): 請求先情報
+      billingCompanyName: true,
+      billingContactName: true,
+      billingContactEmail: true,
+      billingAddress: true,
+      billingPhoneNumber: true,
+      paymentMethod: true,
     },
   });
 
@@ -84,18 +103,46 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     activeUserCount: userCountByTenant.get(t.id) ?? 0,
     createdAt: t.createdAt,
+    // P-G (2026-05-08): 請求先情報
+    billingCompanyName: t.billingCompanyName,
+    billingContactName: t.billingContactName,
+    billingContactEmail: t.billingContactEmail,
+    billingAddress: t.billingAddress,
+    billingPhoneNumber: t.billingPhoneNumber,
+    paymentMethod: t.paymentMethod,
   }));
 }
 
 /**
  * テナント詳細 (super_admin ダッシュボードのテナント詳細画面用)。
  * 管理テナントへのアクセスは禁止 (= 顧客テナント以外は監視対象外)。
+ *
+ * P-6 (2026-05-08): 休眠判定用に最終ログイン日時 + 休眠日数を追加。
+ *   日数計算はサービス側で済ませて純関数化 (画面での Date.now() 呼出を避けるため)。
+ * P-G (2026-05-08): 請求先情報を含める (super_admin が請求業務で参照)。
  */
 export type TenantDetail = TenantSummaryRow & {
   beginnerMonthlyCallLimit: number;
   beginnerMaxSeats: number;
   scheduledPlanChangeAt: Date | null;
   scheduledNextPlan: string | null;
+  /** P-6: テナント内 **任意** ユーザの最新 lastLoginAt。誰も一度もログインしていなければ null。 */
+  lastUserLoginAt: Date | null;
+  /** P-6: 最終活動 (lastLoginAt or createdAt) からの経過日数 (= 休眠日数の起点)。 */
+  daysSinceLastActivity: number;
+  /** P-6: 休眠判定 (90 日以上活動なし) を満たすかどうか。 */
+  isDormant: boolean;
+  // P-G (2026-05-08): 請求先情報
+  billingCompanyName: string | null;
+  billingContactName: string | null;
+  billingContactEmail: string | null;
+  billingAddress: string | null;
+  billingPhoneNumber: string | null;
+  paymentMethod: string;
+  // P-B (2026-05-08): Beginner プラン期限情報
+  beginnerEverUpgraded: boolean;
+  beginnerExpiryState: BeginnerExpiryState;
+  beginnerDaysRemaining: number | null;
   entityCounts: {
     projects: number;
     knowledges: number;
@@ -115,14 +162,35 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
   });
   if (!t) return null;
 
-  const [activeUserCount, projects, knowledges, risksIssues, retrospectives, memos] = await Promise.all([
+  const [
+    activeUserCount,
+    projects,
+    knowledges,
+    risksIssues,
+    retrospectives,
+    memos,
+    // P-6 (2026-05-08): テナント内最新ログイン日時 (1 ユーザでも最近ログインしていれば「活動あり」)
+    lastLoginAggregate,
+  ] = await Promise.all([
     prisma.user.count({ where: { tenantId, isActive: true, deletedAt: null } }),
     prisma.project.count({ where: { tenantId, deletedAt: null } }),
     prisma.knowledge.count({ where: { tenantId, deletedAt: null } }),
     prisma.riskIssue.count({ where: { tenantId, deletedAt: null } }),
     prisma.retrospective.count({ where: { tenantId, deletedAt: null } }),
     prisma.memo.count({ where: { tenantId, deletedAt: null } }),
+    prisma.user.aggregate({
+      where: { tenantId, deletedAt: null },
+      _max: { lastLoginAt: true },
+    }),
   ]);
+
+  // P-6: 休眠日数を service 側で計算 (server component の render purity 違反を回避)
+  const lastUserLoginAt = lastLoginAggregate._max.lastLoginAt ?? null;
+  const referenceTime = (lastUserLoginAt ?? t.createdAt).getTime();
+  const daysSinceLastActivity = Math.floor(
+    (Date.now() - referenceTime) / (24 * 60 * 60 * 1000),
+  );
+  const isDormant = daysSinceLastActivity >= DORMANT_TENANT_THRESHOLD_DAYS;
 
   return {
     id: t.id,
@@ -139,6 +207,28 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     beginnerMaxSeats: t.beginnerMaxSeats,
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
+    lastUserLoginAt,
+    daysSinceLastActivity,
+    isDormant,
+    // P-G (2026-05-08): 請求先情報
+    billingCompanyName: t.billingCompanyName,
+    billingContactName: t.billingContactName,
+    billingContactEmail: t.billingContactEmail,
+    billingAddress: t.billingAddress,
+    billingPhoneNumber: t.billingPhoneNumber,
+    paymentMethod: t.paymentMethod,
+    // P-B (2026-05-08): Beginner プラン期限情報 (純関数で計算)
+    beginnerEverUpgraded: t.beginnerEverUpgraded,
+    beginnerExpiryState: getBeginnerExpiryState({
+      plan: t.plan,
+      createdAt: t.createdAt,
+      beginnerEverUpgraded: t.beginnerEverUpgraded,
+    }),
+    beginnerDaysRemaining: getBeginnerDaysRemaining({
+      plan: t.plan,
+      createdAt: t.createdAt,
+      beginnerEverUpgraded: t.beginnerEverUpgraded,
+    }),
     entityCounts: { projects, knowledges, risksIssues, retrospectives, memos },
   };
 }
@@ -187,5 +277,336 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
     totalCurrentMonthApiCalls: agg._sum.currentMonthApiCallCount ?? 0,
     totalCurrentMonthApiCostJpy: agg._sum.currentMonthApiCostJpy ?? 0,
     planDistribution: planGroups.map((p) => ({ plan: p.plan, count: p._count.id })),
+  };
+}
+
+/**
+ * P-5b (2026-05-08): 過去 N ヶ月の月次使用量履歴を取得 (super_admin 履歴グラフ + CSV 用)。
+ *
+ * - tenant_monthly_usage_history からテナント x yearMonth で取得
+ * - 管理テナントは元から保存されていないので除外不要 (snapshot 側で MANAGEMENT_TENANT_ID を弾いている)
+ * - 並び: yearMonth 降順 (新しい月から) → tenantSeq 昇順
+ *
+ * @param months 取得月数 (1〜24 の範囲、それ以外はクランプ)
+ * @returns 月次使用量履歴の配列
+ */
+export type MonthlyUsageHistoryRow = {
+  yearMonth: string;
+  tenantId: string;
+  tenantSeq: number | null;
+  tenantName: string;
+  plan: string;
+  apiCallCount: number;
+  apiCostJpy: number;
+  activeUserCount: number;
+};
+
+export async function listMonthlyUsageHistory(
+  months: number = 6,
+): Promise<MonthlyUsageHistoryRow[]> {
+  const safeMonths = Math.max(1, Math.min(24, Math.trunc(months)));
+
+  // 直近 N ヶ月の yearMonth を生成 (UTC ベース、当月含まない過去 N ヶ月)
+  // 例: 2026-05 実行時で months=6 なら ['2026-04', '2026-03', ..., '2025-11']
+  const targetYearMonths: string[] = [];
+  const now = new Date();
+  for (let i = 1; i <= safeMonths; i += 1) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    targetYearMonths.push(ym);
+  }
+
+  const rows = await prisma.tenantMonthlyUsageHistory.findMany({
+    where: { yearMonth: { in: targetYearMonths } },
+    orderBy: [{ yearMonth: 'desc' }, { tenantId: 'asc' }],
+    include: {
+      tenant: {
+        select: { tenantSeq: true, name: true },
+      },
+    },
+  });
+
+  return rows.map((r) => ({
+    yearMonth: r.yearMonth,
+    tenantId: r.tenantId,
+    tenantSeq: r.tenant.tenantSeq,
+    tenantName: r.tenant.name,
+    plan: r.plan,
+    apiCallCount: r.apiCallCount,
+    apiCostJpy: r.apiCostJpy,
+    activeUserCount: r.activeUserCount,
+  }));
+}
+
+/**
+ * P-6 (2026-05-08): 休眠テナントの判定しきい値 (日数)。
+ *
+ * super_admin ダッシュボードの「休眠テナント警告」で
+ * `daysSinceLastLogin >= DORMANT_TENANT_THRESHOLD_DAYS` のテナントを警告対象とする。
+ *
+ * V1_FINAL_TASKS.md P-6 仕様の「90 日連続休眠テナント」を採用。
+ */
+export const DORMANT_TENANT_THRESHOLD_DAYS = 90;
+
+/**
+ * P-6 (2026-05-08): 休眠テナント判定の出力 1 行。
+ */
+export type DormantTenantRow = {
+  id: string;
+  tenantSeq: number | null;
+  name: string;
+  plan: string;
+  /** テナント内 **任意** ユーザの最新ログイン日時。誰も一度もログインしていなければ null。 */
+  lastUserLoginAt: Date | null;
+  /** テナント作成日時 (新規 onboarding 中かを判別するため) */
+  createdAt: Date;
+  /**
+   * 休眠日数。lastUserLoginAt があればそこから今日まで、なければ createdAt から今日まで。
+   * `null` (= 計算不能) は発生しない (= getCurrentDate との比較で常に数値)。
+   */
+  daysSinceLastActivity: number;
+};
+
+/**
+ * P-6 (2026-05-08): 休眠テナント一覧を取得 (super_admin ダッシュボード警告用)。
+ *
+ * 判定基準:
+ *   - 顧客テナント (= MANAGEMENT_TENANT_ID 以外、deletedAt = null)
+ *   - **テナント内にいずれのユーザもログインしていない期間 ≥ thresholdDays**
+ *     - すべてのユーザの lastLoginAt がしきい値より古い
+ *     - もしくは誰も一度もログインしておらず、テナント作成からしきい値経過
+ *   - **新規 onboarding 期間 (createdAt < thresholdDays 前) は除外**
+ *     (= 作成直後のテナントは「まだ動き出していないだけ」で休眠ではない)
+ *
+ * 並び順: 休眠日数の長い順 (= 一番危険なものを上に)
+ *
+ * @param thresholdDays 休眠判定しきい値 (デフォルト 90 日 = DORMANT_TENANT_THRESHOLD_DAYS)
+ * @param now 計算基準時刻 (テスト用)
+ */
+export async function listDormantTenants(
+  thresholdDays: number = DORMANT_TENANT_THRESHOLD_DAYS,
+  now: Date = new Date(),
+): Promise<DormantTenantRow[]> {
+  const cutoffDate = new Date(now.getTime() - thresholdDays * 24 * 60 * 60 * 1000);
+
+  // 顧客テナント全件 (管理テナント・削除済みは除外) + テナント内最新ログインを集計
+  const tenants = await prisma.tenant.findMany({
+    where: {
+      id: { not: MANAGEMENT_TENANT_ID },
+      deletedAt: null,
+      // onboarding 期間 (作成 < thresholdDays 前) は休眠判定対象外
+      createdAt: { lte: cutoffDate },
+    },
+    orderBy: { tenantSeq: 'asc' },
+    select: {
+      id: true,
+      tenantSeq: true,
+      name: true,
+      plan: true,
+      createdAt: true,
+    },
+  });
+
+  if (tenants.length === 0) return [];
+
+  // テナント内最新ログイン日時を groupBy で 1 クエリ取得 (N+1 回避)
+  const lastLogins = await prisma.user.groupBy({
+    by: ['tenantId'],
+    where: {
+      tenantId: { in: tenants.map((t) => t.id) },
+      deletedAt: null,
+    },
+    _max: { lastLoginAt: true },
+  });
+  const lastLoginByTenant = new Map(
+    lastLogins.map((l) => [l.tenantId, l._max.lastLoginAt]),
+  );
+
+  const rows: DormantTenantRow[] = [];
+  for (const t of tenants) {
+    const lastLogin = lastLoginByTenant.get(t.id) ?? null;
+
+    // 休眠判定:
+    //   - 誰も一度もログインしていない: テナント作成からの経過日数で判定
+    //   - 誰かがログインしたことがある: その最新時刻からの経過日数で判定
+    const referenceTime = lastLogin?.getTime() ?? t.createdAt.getTime();
+    const daysSinceLastActivity = Math.floor(
+      (now.getTime() - referenceTime) / (24 * 60 * 60 * 1000),
+    );
+
+    if (daysSinceLastActivity >= thresholdDays) {
+      rows.push({
+        id: t.id,
+        tenantSeq: t.tenantSeq,
+        name: t.name,
+        plan: t.plan,
+        lastUserLoginAt: lastLogin,
+        createdAt: t.createdAt,
+        daysSinceLastActivity,
+      });
+    }
+  }
+
+  // 休眠日数降順 (危険度の高い順)
+  rows.sort((a, b) => b.daysSinceLastActivity - a.daysSinceLastActivity);
+  return rows;
+}
+
+/**
+ * P-A (2026-05-08): テナント論理削除 (super_admin 専用)。
+ *
+ * 役割:
+ *   問題テナント (TOS 違反 / 課金未払 / 営業判断による解約) を super_admin が止める。
+ *   完全な物理削除ではなく、論理削除 + ログイン即時遮断 + データ参照不可化を行う。
+ *
+ * 削除対象 (= deletedAt をセットして参照不可化):
+ *   - Tenant 本体
+ *   - 配下 User: deletedAt + isActive=false (= ログイン即時不可化、§auth.ts のチェックで
+ *     将来のログインが弾かれる)
+ *   - 配下の業務エンティティ (deletedAt カラムを持つもの):
+ *     Project / Knowledge / RiskIssue / Retrospective / Memo / Stakeholder /
+ *     Comment / Attachment
+ *
+ * 削除対象外:
+ *   - **deletedAt カラムを持たないテーブル** (Customer / Mention / Notification):
+ *     親 Tenant が deletedAt セット済 = テナント一覧で非表示 → 参照不可化される (= 実害なし)
+ *   - ApiCallLog (= 過去課金根拠の物理保持)
+ *   - TenantMonthlyUsageHistory (= 月次集計、請求書再現可能性)
+ *   - AuditLog / AuthEventLog / RoleChangeLog / SystemErrorLog (= 監査ログ物理保持)
+ *
+ * 設計判断:
+ *   - **管理テナント (MANAGEMENT_TENANT_ID) は削除禁止** (= 自爆防止)
+ *   - **既に削除済みテナント** への再削除は ALREADY_DELETED エラー (冪等性ではなく明示エラー
+ *     にすることで誤操作検知を強化)
+ *   - **トランザクション**: 一連の更新は単一 transaction で実行、途中失敗で部分的に消えない
+ *   - **復元機能は本 PR スコープ外**: 必要になったら別 PR で `restoreTenant` を追加
+ *
+ * 認可:
+ *   呼出側で isSuperAdmin(user) チェック済の前提 (本サービス層では検証しない)。
+ *
+ * @param tenantId 削除対象テナント ID
+ * @param performerId 実行者 (= super_admin) のユーザ ID。監査ログ記録用
+ * @returns 削除されたエンティティ数のサマリ
+ * @throws Error('TENANT_NOT_FOUND') テナント不在時
+ * @throws Error('MANAGEMENT_TENANT_FORBIDDEN') 管理テナントを削除しようとした時
+ * @throws Error('ALREADY_DELETED') 既に論理削除済テナントへの再削除時
+ */
+export type DeleteTenantResult = {
+  tenantId: string;
+  deletedCounts: {
+    users: number;
+    projects: number;
+    knowledges: number;
+    risksIssues: number;
+    retrospectives: number;
+    memos: number;
+    stakeholders: number;
+    comments: number;
+    attachments: number;
+  };
+};
+
+export async function deleteTenant(
+  tenantId: string,
+  performerId: string,
+): Promise<DeleteTenantResult> {
+  if (tenantId === MANAGEMENT_TENANT_ID) {
+    throw new Error('MANAGEMENT_TENANT_FORBIDDEN');
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true, deletedAt: true, name: true },
+  });
+  if (!tenant) {
+    throw new Error('TENANT_NOT_FOUND');
+  }
+  if (tenant.deletedAt != null) {
+    throw new Error('ALREADY_DELETED');
+  }
+
+  const now = new Date();
+
+  // 単一 transaction で一気に論理削除 (途中失敗で部分削除の不整合を避ける)
+  // Tenant.update / auditLog.create の戻り値は破棄。
+  const [
+    usersUpdate,
+    projectsUpdate,
+    knowledgesUpdate,
+    risksIssuesUpdate,
+    retrospectivesUpdate,
+    memosUpdate,
+    stakeholdersUpdate,
+    commentsUpdate,
+    attachmentsUpdate,
+  ] = await prisma.$transaction([
+    // ユーザは isActive=false も併せて、ログイン即時不可化
+    prisma.user.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now, isActive: false },
+    }),
+    prisma.project.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.knowledge.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.riskIssue.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.retrospective.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.memo.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.stakeholder.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.attachment.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    // 最後に Tenant 本体
+    prisma.tenant.update({
+      where: { id: tenantId },
+      data: { deletedAt: now },
+    }),
+    // 監査ログを残す (物理保持テーブルなので今後復元・監査が可能)
+    prisma.auditLog.create({
+      data: {
+        userId: performerId,
+        action: 'DELETE',
+        entityType: 'tenant',
+        entityId: tenantId,
+        beforeValue: { name: tenant.name, deletedAt: null },
+        afterValue: { name: tenant.name, deletedAt: now.toISOString() },
+      },
+    }),
+  ]);
+
+  return {
+    tenantId,
+    deletedCounts: {
+      users: usersUpdate.count,
+      projects: projectsUpdate.count,
+      knowledges: knowledgesUpdate.count,
+      risksIssues: risksIssuesUpdate.count,
+      retrospectives: retrospectivesUpdate.count,
+      memos: memosUpdate.count,
+      stakeholders: stakeholdersUpdate.count,
+      comments: commentsUpdate.count,
+      attachments: attachmentsUpdate.count,
+    },
   };
 }

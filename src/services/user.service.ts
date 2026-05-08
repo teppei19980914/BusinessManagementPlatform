@@ -100,11 +100,53 @@ export async function listUsers(): Promise<UserDTO[]> {
   return users.map(toUserDTO);
 }
 
+/**
+ * P-2 (2026-05-08): Beginner プラン席数上限のガード。
+ *
+ * Beginner プラン契約テナントが `beginnerMaxSeats` (DB 値、既定 5) を超えて
+ * ユーザ招待しようとした場合に SEAT_LIMIT_EXCEEDED を投げる。
+ *
+ * 「アクティブユーザ」の定義は tenant-self.service.ts の `getTenantSelfInfo` と統一:
+ *   `isActive: true && deletedAt: null` (= 検証済 + 有効化済 + 論理削除なし)。
+ * 招待中の未検証ユーザ (deletedAt: not null, isActive: false) はカウント対象外。
+ *
+ * Beginner 以外 (Expert / Pro) は無制限のため何もしない。
+ *
+ * @throws Error('SEAT_LIMIT_EXCEEDED') — Beginner で席数超過の場合
+ */
+export async function assertSeatAvailableForTenant(tenantId: string): Promise<void> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { plan: true, beginnerMaxSeats: true },
+  });
+  if (!tenant) return; // テナント不在は他経路で 404 になる前提
+  if (tenant.plan !== 'beginner') return; // Beginner 以外は無制限
+
+  const activeUserCount = await prisma.user.count({
+    where: { tenantId, isActive: true, deletedAt: null },
+  });
+
+  if (activeUserCount + 1 > tenant.beginnerMaxSeats) {
+    throw new Error('SEAT_LIMIT_EXCEEDED');
+  }
+}
+
 export async function createUser(
   input: CreateUserInput,
   creatorId: string,
-  options?: { baseUrl?: string },
+  options?: { baseUrl?: string; tenantId?: string },
 ): Promise<{ user: UserDTO }> {
+  // P-2 (2026-05-08): Beginner プラン席数上限の API 層 enforce。
+  //   背景: PR-X4 では tenant-self ダウングレード時のみ席数チェックを実装し、
+  //         招待時 (= ユーザ作成時) の上限チェックが未実装。Beginner で 6 人目の招待が
+  //         拒否されない構造的欠陥を補完する。
+  //   仕様: tenantId が渡され、当該テナントが Beginner プランの場合、
+  //         activeUserCount + 1 <= beginnerMaxSeats でない限り SEAT_LIMIT_EXCEEDED を投げる。
+  //   tenantId 省略時 (= 旧シグネチャ互換): スキップ。テストや migration 経路の互換維持。
+  if (options?.tenantId) {
+    await assertSeatAvailableForTenant(options.tenantId);
+  }
+
   // メールアドレス重複チェック（有効なユーザ）
   const existingActive = await prisma.user.findFirst({
     where: { email: input.email, deletedAt: null },

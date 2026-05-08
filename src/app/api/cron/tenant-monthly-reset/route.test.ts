@@ -38,6 +38,8 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       resetCount: 3,
       planAppliedCount: 1,
       invalidPlanSkippedCount: 0,
+      // P-5b (2026-05-08): スナップショット保存件数が結果に含まれる
+      snapshotSavedCount: 3,
     });
 
     const res = await POST(makeReq('Bearer test-cron-secret-xyz'));
@@ -49,6 +51,7 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       resetCount: 3,
       planAppliedCount: 1,
       invalidPlanSkippedCount: 0,
+      snapshotSavedCount: 3,
     });
     expect(runTenantMonthlyReset).toHaveBeenCalledTimes(1);
   });

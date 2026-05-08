@@ -12,7 +12,16 @@ export default async function SuperAdminTenantsListPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">全テナント一覧</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">全テナント一覧</h1>
+        {/* P-G (2026-05-08): 新規テナント払い出し導線 */}
+        <Link
+          href="/admin/super/tenants/new"
+          className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+        >
+          + 新規テナント払い出し
+        </Link>
+      </div>
       <p className="text-sm text-muted-foreground">
         管理テナント (運営内部) は表示しません。tenantSeq 昇順で表示。
       </p>

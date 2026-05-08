@@ -45,6 +45,23 @@ declare module 'next-auth' {
        * 描画時は `resolveLocale(session.user.locale)` で解決する。
        */
       locale: string | null;
+      /**
+       * P-B (2026-05-08): Beginner プラン期限判定用の JWT claim。
+       * middleware (Edge runtime) で DB を引かずに read-only 判定するために
+       * テナントの plan / createdAt / beginnerEverUpgraded を session に持つ。
+       */
+      tenantPlan: string;
+      tenantCreatedAt: string; // ISO 8601 文字列 (Edge で Date を再構築しやすいよう)
+      tenantBeginnerEverUpgraded: boolean;
     };
+  }
+}
+
+declare module 'next-auth/jwt' {
+  interface JWT {
+    /** P-B (2026-05-08): Beginner プラン期限判定用 claim */
+    tenantPlan?: string;
+    tenantCreatedAt?: string;
+    tenantBeginnerEverUpgraded?: boolean;
   }
 }

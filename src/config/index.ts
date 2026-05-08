@@ -31,3 +31,7 @@ export * from './validation';
 export * from './i18n';
 // PR #2-c (T-03): LLM (Anthropic Claude / Voyage AI) のモデル名・rate limit・plan→model 解決
 export * from './llm';
+// P-5a (2026-05-08): DB 容量モニタ閾値 (Supabase プラン上限到達の事前検知)
+export * from './db-capacity';
+// P-H (2026-05-08): メール送信上限モニタ閾値 (Brevo 等の送信上限到達の事前検知)
+export * from './email-limit';

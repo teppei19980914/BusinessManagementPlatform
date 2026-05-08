@@ -7,6 +7,13 @@ vi.mock('@/lib/db', () => ({
       findMany: vi.fn(),
       update: vi.fn(),
     },
+    // P-5b (2026-05-08): snapshot 保存・user 集計用
+    tenantMonthlyUsageHistory: {
+      upsert: vi.fn(),
+    },
+    user: {
+      groupBy: vi.fn(),
+    },
   },
 }));
 
@@ -17,8 +24,10 @@ vi.mock('@/services/error-log.service', () => ({
 import {
   applyScheduledPlanChanges,
   getCurrentMonthStartUtc,
+  getPreviousYearMonth,
   resetTenantMonthlyCounters,
   runTenantMonthlyReset,
+  saveMonthlyUsageSnapshots,
 } from './tenant-monthly-reset.service';
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
@@ -196,11 +205,39 @@ describe('applyScheduledPlanChanges', () => {
 });
 
 describe('runTenantMonthlyReset (バッチ全体)', () => {
-  it('reset → apply の順で実行し、結果を集計して返す', async () => {
+  it('snapshot → reset → apply の順で実行し、結果を集計して返す', async () => {
+    // P-5b (2026-05-08): runTenantMonthlyReset は内部で
+    // saveMonthlyUsageSnapshots → resetTenantMonthlyCounters → applyScheduledPlanChanges
+    // の順で呼ぶ。各ステップは別々のモックで応答する。
+
+    // saveMonthlyUsageSnapshots: 対象 2 件
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: 'tenant-a',
+        plan: 'beginner',
+        currentMonthApiCallCount: 50,
+        currentMonthApiCostJpy: 0,
+      },
+      {
+        id: 'tenant-b',
+        plan: 'expert',
+        currentMonthApiCallCount: 100,
+        currentMonthApiCostJpy: 1000,
+      },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
+      { tenantId: 'tenant-a', _count: { id: 3 } },
+      { tenantId: 'tenant-b', _count: { id: 5 } },
+    ] as never);
+    vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValue({} as never);
+
+    // resetTenantMonthlyCounters
     vi.mocked(prisma.tenant.updateMany).mockResolvedValue({ count: 5 } as never);
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
-      { id: 'tenant-a', scheduledNextPlan: 'beginner' },
-      { id: 'tenant-b', scheduledNextPlan: 'invalid' },
+
+    // applyScheduledPlanChanges
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'tenant-c', scheduledNextPlan: 'beginner' },
+      { id: 'tenant-d', scheduledNextPlan: 'invalid' },
     ] as never);
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
 
@@ -210,6 +247,171 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       resetCount: 5,
       planAppliedCount: 1,
       invalidPlanSkippedCount: 1,
+      snapshotSavedCount: 2,
     });
+  });
+});
+
+describe('getPreviousYearMonth (P-5b / 2026-05-08)', () => {
+  it('当月の前月を YYYY-MM で返す', () => {
+    expect(getPreviousYearMonth(new Date('2026-05-15T08:00:00Z'))).toBe('2026-04');
+    expect(getPreviousYearMonth(new Date('2026-05-01T00:00:00Z'))).toBe('2026-04');
+    expect(getPreviousYearMonth(new Date('2026-05-31T23:59:59Z'))).toBe('2026-04');
+  });
+
+  it('1 月実行時は前年 12 月を返す', () => {
+    expect(getPreviousYearMonth(new Date('2026-01-15T08:00:00Z'))).toBe('2025-12');
+    expect(getPreviousYearMonth(new Date('2026-01-01T00:00:00Z'))).toBe('2025-12');
+  });
+
+  it('月の桁数は 0 埋め (例: 9 月 → 09)', () => {
+    expect(getPreviousYearMonth(new Date('2026-10-15T08:00:00Z'))).toBe('2026-09');
+    expect(getPreviousYearMonth(new Date('2026-02-15T08:00:00Z'))).toBe('2026-01');
+  });
+});
+
+describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
+  it('管理テナント以外を対象に upsert を呼ぶ', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: 'tenant-a',
+        plan: 'beginner',
+        currentMonthApiCallCount: 80,
+        currentMonthApiCostJpy: 0,
+      },
+      {
+        id: 'tenant-b',
+        plan: 'pro',
+        currentMonthApiCallCount: 1200,
+        currentMonthApiCostJpy: 36000,
+      },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
+      { tenantId: 'tenant-a', _count: { id: 2 } },
+      { tenantId: 'tenant-b', _count: { id: 8 } },
+    ] as never);
+    vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValue({} as never);
+
+    const saved = await saveMonthlyUsageSnapshots(new Date('2026-05-01T00:00:00Z'));
+
+    expect(saved).toBe(2);
+    // 管理テナント除外条件
+    expect(prisma.tenant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { not: '00000000-0000-0000-0000-ffffffffffff' },
+          deletedAt: null,
+        }),
+      }),
+    );
+    // upsert は 2 回 (1 テナントあたり 1 回)
+    expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('リセット直前の値を yearMonth=前月 で snapshot 保存する', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: 'tenant-a',
+        plan: 'expert',
+        currentMonthApiCallCount: 100,
+        currentMonthApiCostJpy: 1000,
+      },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
+      { tenantId: 'tenant-a', _count: { id: 5 } },
+    ] as never);
+    vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValue({} as never);
+
+    await saveMonthlyUsageSnapshots(new Date('2026-05-01T00:00:00Z'));
+
+    expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId_yearMonth: { tenantId: 'tenant-a', yearMonth: '2026-04' } },
+        create: expect.objectContaining({
+          tenantId: 'tenant-a',
+          yearMonth: '2026-04',
+          apiCallCount: 100,
+          apiCostJpy: 1000,
+          plan: 'expert',
+          activeUserCount: 5,
+        }),
+      }),
+    );
+  });
+
+  it('対象 0 件なら upsert を呼ばず 0 を返す', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    const saved = await saveMonthlyUsageSnapshots();
+
+    expect(saved).toBe(0);
+    expect(prisma.user.groupBy).not.toHaveBeenCalled();
+    expect(prisma.tenantMonthlyUsageHistory.upsert).not.toHaveBeenCalled();
+  });
+
+  it('1 件失敗しても他テナントの snapshot は継続 (recordError で記録)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: 'tenant-a',
+        plan: 'beginner',
+        currentMonthApiCallCount: 1,
+        currentMonthApiCostJpy: 0,
+      },
+      {
+        id: 'tenant-b',
+        plan: 'pro',
+        currentMonthApiCallCount: 2,
+        currentMonthApiCostJpy: 60,
+      },
+      {
+        id: 'tenant-c',
+        plan: 'expert',
+        currentMonthApiCallCount: 3,
+        currentMonthApiCostJpy: 30,
+      },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.tenantMonthlyUsageHistory.upsert)
+      .mockResolvedValueOnce({} as never)
+      .mockRejectedValueOnce(new Error('DB write failed'))
+      .mockResolvedValueOnce({} as never);
+
+    const saved = await saveMonthlyUsageSnapshots();
+
+    expect(saved).toBe(2); // a と c は成功、b は失敗
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        source: 'cron',
+        message: 'DB write failed',
+        context: expect.objectContaining({
+          kind: 'tenant_monthly_snapshot',
+          tenantId: 'tenant-b',
+        }),
+      }),
+    );
+  });
+
+  it('アクティブユーザがいないテナントも snapshot 対象 (activeUserCount=0)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: 'tenant-a',
+        plan: 'beginner',
+        currentMonthApiCallCount: 0,
+        currentMonthApiCostJpy: 0,
+      },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([] as never); // 該当 0 件
+    vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValue({} as never);
+
+    await saveMonthlyUsageSnapshots(new Date('2026-05-01T00:00:00Z'));
+
+    expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          activeUserCount: 0,
+        }),
+      }),
+    );
   });
 });

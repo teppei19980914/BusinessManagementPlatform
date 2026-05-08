@@ -44,6 +44,7 @@ import {
   isSuggestionEngineDisabled,
   classifyTier,
   applyMinimumGuarantee,
+  assignPercentileTiers,
   type SuggestionTier,
 } from '@/config/suggestion';
 
@@ -467,30 +468,30 @@ export async function suggestForProject(
     };
   });
 
-  // PR-X6 (2026-05-07): スコア降順 + 件数保証 + 件数上限。
+  // PR-X6 (2026-05-07) + P-1 (2026-05-08): スコア降順 + 件数保証 + 件数上限 + パーセンタイル tier。
   //   1. スコア降順で全候補をソート
   //   2. applyMinimumGuarantee で「閾値以上の候補が最低件数未満なら、全候補から Top N を返す」
   //      → サンプルと完全に異なる業務領域でも 0 件は構造的に発生しない
   //   3. 件数上限で切り詰め
+  //   4. **assignPercentileTiers** でカテゴリごとに上位 30% / 50% / 20% の段階を再割り当て
+  //      (P-1 / V1_FINAL_TASKS.md): 全候補が高スコア帯に集中して全件 strong になる事故を回避
   //
-  //   tier (strong / medium / weak) は各候補生成時 (map 内) で classifyTier(score) により
-  //   既に付与済み。スコア順序と tier 整合性は applyMinimumGuarantee 後も維持される
-  //   (tier は score 由来のため、再ソートしてもスコアと矛盾しない)。
+  //   各候補生成時 (map 内) で classifyTier(score) を一度付与しているのは、5 件以下の
+  //   フォールバックや inline サジェストで再利用されるため (assignPercentileTiers 内で
+  //   絶対閾値分類に切り替わる経路の整合性確保)。最終的な tier は assignPercentileTiers が
+  //   上書きする。
   const sortByScore = <T extends { score: number }>(arr: T[]): T[] =>
     [...arr].sort((a, b) => b.score - a.score);
 
-  const knowledge = applyMinimumGuarantee(
-    sortByScore(knowledgeScored),
-    SCORE_THRESHOLD,
-  ).slice(0, limit);
-  const pastIssues = applyMinimumGuarantee(
-    sortByScore(issueScored),
-    SCORE_THRESHOLD,
-  ).slice(0, limit);
-  const retrospectives = applyMinimumGuarantee(
-    sortByScore(retroScored),
-    SCORE_THRESHOLD,
-  ).slice(0, limit);
+  const knowledge = assignPercentileTiers(
+    applyMinimumGuarantee(sortByScore(knowledgeScored), SCORE_THRESHOLD).slice(0, limit),
+  );
+  const pastIssues = assignPercentileTiers(
+    applyMinimumGuarantee(sortByScore(issueScored), SCORE_THRESHOLD).slice(0, limit),
+  );
+  const retrospectives = assignPercentileTiers(
+    applyMinimumGuarantee(sortByScore(retroScored), SCORE_THRESHOLD).slice(0, limit),
+  );
 
   return { knowledge, pastIssues, retrospectives };
 }

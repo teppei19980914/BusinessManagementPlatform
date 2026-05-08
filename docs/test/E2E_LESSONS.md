@@ -2341,25 +2341,62 @@ git push
    `[gen-visual]` 1 commit で両 viewport 分の baseline が再生成されるので、別々に対応する必要なし。
    逆に「片方だけ」が fail する場合は viewport 固有の bug の可能性が高い (responsive layout など)。
 
-#### ケーススタディ (本ナレッジ確立過程の実例 2 件)
+#### ケーススタディ (本ナレッジ確立過程の実例 3 件)
 
-本ナレッジは 1 PR 中に異なる原因で 2 回適用され、診断手順の有効性が検証された。
+本ナレッジは PR #178/179 で 2 回適用され、その後 PR #262 (P-6) で **3 回目** が発生した。
+**3 回目の再発で「依存更新蓄積による drift パターン」として確定**。
 
 | 事例 | PR | 影響 spec | サイズ差 | 原因分類 | 解決 |
 |---|---|---|---|---|---|
 | 1 | #178 (PR-β) | project-detail-light.png | 1440×**900→927** (+27px height) | **期待された変化** (新フィールド `contractType` 行追加 = `<dl>` 1 行分) | `[gen-visual]` で baseline 再生成 |
 | 2 | #179 (PR-γ) | project-detail-light + customer-detail-light (chromium-mobile) | **414→413px width** (-1px) | **環境差 / rounding 変動** (PR-γ branch では当該画面を未編集、PR-β の baseline 再生成後の rebase 経路差) | 同 (`[gen-visual]`) |
+| 3 | #262 (P-6) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px、1 回限りの再現) | **真の flakiness (再実行で消える)**。`[gen-visual]` workflow は実行したが「no baseline changes」で commit なし = 同条件で再生成しても 414px に収束。同 baseline で再 E2E が即 pass。依存更新が背景にはあるが (next-intl 4.9.1→4.9.2 / @formatjs/* / @anthropic-ai/sdk 等) 決定論的ではなく確率的な 1px ずれ | `[gen-visual]` 発火 **+ 再 E2E** で吸収。`[gen-visual]` の commit 有無に関わらず CI 再起動が要点 |
 
 **判断基準の検証**:
 - 事例 1 (+27px): 「dl 1 行分の妥当な差」→ 期待された変化と判定 → 即 `[gen-visual]` で確実解消
 - 事例 2 (-1px width): 「1-2px 程度 = flaky / rounding」→ 該当画面の code 変更が PR-γ になく
   対象 dialog/component を PR-γ で触っていないことが grep で確認できた → 環境差と判定 → `[gen-visual]` で吸収
+- 事例 3 (-1px width): 同じく PR #262 の変更は `super_admin` 配下 4 ファイルのみで `/projects/[projectId]` を一切触っていないことを `git diff main..HEAD --stat` で確認。`grep -rn` で global CSS / layout / 共通 component 変更も無し → drift 確定 → `[gen-visual]` で吸収。**ただし baseline 再生成 workflow は「no baseline changes」を返した**。これは「同条件で再生成しても 414px に収束する」という意味で、**真の flakiness (確率的 1px ずれ)** の証拠。再 E2E ですぐに pass した
 
-**branch 跨ぎの落とし穴 (本ケースで実際に踏んだ)**:
+**3 回目の再発で確立した「即応プレイブック」**:
+
+下記すべて Yes なら **5 分以内に `[gen-visual]` を打って次に進む** (深追い禁止):
+
+1. ✅ 失敗テストが **chromium-mobile のみ** (chromium 通過)
+2. ✅ サイズ差が **1-2px 以内**
+3. ✅ 失敗 spec は `project-detail-light.png` / `customer-detail-light.png` / `dashboard-light.png` 等の **デフォルト一覧画面** (新規追加 spec ではない)
+4. ✅ 自 PR の `git diff main..HEAD --stat` で **該当画面のソースを触っていない**
+5. ✅ baseline (`git log <baseline-png>`) が **2 週間以上前**
+
+[gen-visual] コマンド (確認チェック付き):
+```bash
+# 必ず自分の作業 branch にいることを確認
+git branch --show-current   # ← 自 PR の branch であることを目視
+
+# 空コミットで baseline 再生成 workflow を発火
+git commit --allow-empty -m "chore(visual): regenerate baselines (依存更新の drift 吸収) [gen-visual]"
+git push
+```
+
+**branch 跨ぎの落とし穴 (PR #179 ケース 2 で実際に踏んだ)**:
 PR-γ branch で `[gen-visual]` empty commit を打とうとしたら、
 誤って **PR-β branch 上で `git commit` を実行** していた (terminal がそのときの cwd 直下、
 `branch --show-current` で気付かず) → push 後に `git reset --hard HEAD~1 && git push --force-with-lease`
 で取り消し → 正しい branch で再 commit。**毎回 `git branch --show-current` で確認する習慣化が必須**。
+
+**深追いしない判断 (重要)**:
+3 回目の再発で「これは bug ではなく、依存ライブラリの font/layout 内部処理が起こす **確率的な 1px drift**」と確定。
+**毎回 1〜2 時間調査するのは時間浪費**。チェックリスト 5 項目通れば即 `[gen-visual]`、ダメなら本格調査の 2 段戦略を採る。
+
+**`[gen-visual]` で「no baseline changes」になっても気にしない**:
+事例 3 で観察された通り、再生成しても baseline と一致して commit なしで終わるケースがある
+(= 同条件再生成では 414px に収束)。**これは正常**。`[gen-visual]` の副次効果として CI が
+再起動されるため、確率的な 1px ずれが解消するだけで実害なし。**「commit がない = 失敗」ではない**。
+
+**baseline メンテナンスの提言 (将来 PR で検討)**:
+ベースラインは PR ごとに古くなる。`@formatjs/*` 等の transitive 更新が積み上がると drift が
+体感頻度で起きる。**月 1 回の定期 `[gen-visual]` 運用** (例: 月初の週次 maintenance PR で
+empty commit を流す) を入れれば本問題は構造的に予防可能。
 
 #### 関連
 
