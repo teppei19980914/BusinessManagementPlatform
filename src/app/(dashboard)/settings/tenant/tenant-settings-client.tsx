@@ -312,6 +312,9 @@ export function TenantSettingsClient({ initialInfo }: { initialInfo: TenantSelfI
 
       {/* P-C (2026-05-08): データエクスポート */}
       <DataExportSection />
+
+      {/* P-D (2026-05-08): データインポート */}
+      <DataImportSection />
     </div>
   );
 }
@@ -341,6 +344,118 @@ function DataExportSection() {
       >
         📦 全データを ZIP でダウンロード
       </a>
+    </section>
+  );
+}
+
+// ================================================================
+// P-D (2026-05-08): データインポートセクション
+// ================================================================
+
+function DataImportSection() {
+  const router = useRouter();
+  const { showSuccess, showError } = useToast();
+  const [file, setFile] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [resultSummary, setResultSummary] = useState<{
+    importedAt: string;
+    counts: Record<string, number>;
+  } | null>(null);
+  const [error, setError] = useState<string>('');
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    setResultSummary(null);
+    if (!file) {
+      setError('ZIP ファイルを選択してください');
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      setError('拡張子が .zip のファイルを選択してください');
+      return;
+    }
+    const ok = confirm(
+      'インポートしたデータは全件「新規作成」されます (既存データは変更されません)。続行しますか?',
+    );
+    if (!ok) return;
+
+    setSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/tenants/me/import', {
+        method: 'POST',
+        body: formData,
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        const message = json?.error?.message ?? 'インポートに失敗しました';
+        setError(message);
+        showError(message);
+        return;
+      }
+      setResultSummary({
+        importedAt: json.summary.importedAt,
+        counts: json.summary.counts,
+      });
+      showSuccess('データを取り込みました');
+      router.refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="mt-8 space-y-3 rounded border p-4">
+      <h2 className="text-lg font-semibold">データインポート</h2>
+      <p className="text-sm text-muted-foreground">
+        本サービスから出力した P-C エクスポート ZIP をアップロードし、業務データを一括取り込みします。
+      </p>
+      <ul className="ml-4 list-disc text-xs text-muted-foreground">
+        <li>受付フォーマット: P-C エクスポート ZIP のみ (それ以外は拒否)</li>
+        <li>動作: 全件「新規作成」(既存データの上書き / マージはしません)</li>
+        <li>ユーザ: 同じメールアドレスの既存ユーザがいる場合は既存に再マップ。新規ユーザは初回ログイン時にパスワード再設定が必要</li>
+        <li>Beginner プランでは合計 5 席を超えるインポートを拒否</li>
+        <li>同テナントで他のインポートが進行中の場合は受付不可</li>
+      </ul>
+
+      <form onSubmit={handleSubmit} className="mt-3 space-y-3">
+        <div>
+          <label htmlFor="import-zip" className="text-sm font-medium">
+            ZIP ファイル
+          </label>
+          <input
+            id="import-zip"
+            type="file"
+            accept=".zip,application/zip"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="mt-1 block w-full text-sm"
+            disabled={submitting}
+          />
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <Button type="submit" disabled={submitting || !file}>
+          {submitting ? '取込中...' : '📥 取り込みを実行'}
+        </Button>
+      </form>
+
+      {resultSummary && (
+        <div className="mt-3 rounded bg-muted/50 p-3 text-xs">
+          <p className="font-semibold">取込完了 ({resultSummary.importedAt})</p>
+          <ul className="ml-4 list-disc">
+            <li>プロジェクト: {resultSummary.counts.projects}</li>
+            <li>タスク: {resultSummary.counts.tasks}</li>
+            <li>ナレッジ: {resultSummary.counts.knowledge}</li>
+            <li>リスク/課題: {resultSummary.counts.risksIssues}</li>
+            <li>振り返り: {resultSummary.counts.retrospectives}</li>
+            <li>メモ: {resultSummary.counts.memos}</li>
+            <li>顧客: {resultSummary.counts.customers}</li>
+            <li>ユーザ (新規作成): {resultSummary.counts.usersCreated}</li>
+            <li>ユーザ (既存に再マップ): {resultSummary.counts.usersMerged}</li>
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

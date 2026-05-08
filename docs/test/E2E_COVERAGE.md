@@ -150,6 +150,7 @@
 - [ ] `/api/tenants/me/billing` (PATCH) — skip: P-G (2026-05-08) テナント管理者の請求先情報編集。zod バリデーション + サービステスト (tenant-self.service.test.ts) で担保
 - [ ] `/api/tenants/me/export` (GET) — skip: P-C (2026-05-08) テナント管理者の全データエクスポート ZIP ダウンロード。テナントスコープ + PII 除去 + ZIP 構造 + UTF-8 BOM 付き CSV は src/services/data-export.service.test.ts (8 件) で担保
 - [ ] `/api/admin/super/tenants/[id]/export` (GET) — skip: P-C (2026-05-08) super_admin によるテナント代行エクスポート (顧客サポート用途、監査ログ記録)
+- [ ] `/api/tenants/me/import` (POST) — skip: P-D (2026-05-08) テナント管理者の P-C 形式 ZIP 一括取り込み。INVALID_ZIP / INVALID_FORMAT / IMPORT_IN_PROGRESS / BEGINNER_SEAT_LIMIT / FK 書き換え / Email merge / Task 自己参照 / polymorphic entityId は src/services/data-import.service.test.ts (11 件) で担保。E2E は V1.x で検討
 
 ### メンション (PR feat/comment-mentions)
 - [ ] `/api/mention-candidates` (GET) — skip: 単体テスト (`src/app/api/mention-candidates/route.test.ts`) で context (project_list / cross_list / wbs) 別の groups 絞り込み + entityType 別 user 抽出を網羅
