@@ -62,6 +62,11 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         apiCallCount: 250,
         apiCostJpy: 2500,
         activeUserCount: 4,
+        // Storage add-on (Phase 2): スナップショット時点の値
+        storageBytesUsed: BigInt(50 * 1024 * 1024),
+        storageAddonPlan: 'standard',
+        storageAddonJpy: 0,
+        totalJpy: 2500,
         tenant: { tenantSeq: 2, name: 'カスタマーA' },
       },
       {
@@ -71,6 +76,10 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         apiCallCount: 1500,
         apiCostJpy: 45000,
         activeUserCount: 12,
+        storageBytesUsed: BigInt(800 * 1024 * 1024),
+        storageAddonPlan: 'plus',
+        storageAddonJpy: 500,
+        totalJpy: 45500,
         tenant: { tenantSeq: 3, name: 'カスタマーB' },
       },
     ] as never);
@@ -87,6 +96,10 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         apiCallCount: 250,
         apiCostJpy: 2500,
         activeUserCount: 4,
+        storageBytesUsed: 50 * 1024 * 1024,
+        storageAddonPlan: 'standard',
+        storageAddonJpy: 0,
+        totalJpy: 2500,
       },
       {
         yearMonth: '2026-04',
@@ -97,6 +110,10 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         apiCallCount: 1500,
         apiCostJpy: 45000,
         activeUserCount: 12,
+        storageBytesUsed: 800 * 1024 * 1024,
+        storageAddonPlan: 'plus',
+        storageAddonJpy: 500,
+        totalJpy: 45500,
       },
     ]);
   });

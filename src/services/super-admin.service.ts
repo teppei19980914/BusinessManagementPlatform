@@ -55,6 +55,12 @@ export type TenantSummaryRow = {
   billingAddress: string | null;
   billingPhoneNumber: string | null;
   paymentMethod: string;
+  // Storage add-on (Phase 2 / 2026-05-08): 当月 CSV エクスポートで容量・追加課金を表示
+  storageAddonPlan: string;
+  storageBytesUsed: number;
+  storageAddonMonthlyJpy: number;
+  /** LLM 部分 + Storage add-on の合算課金。請求書生成根拠 */
+  totalCurrentMonthJpy: number;
 };
 
 export async function listAllTenants(): Promise<TenantSummaryRow[]> {
@@ -81,6 +87,9 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
       billingAddress: true,
       billingPhoneNumber: true,
       paymentMethod: true,
+      // Storage add-on (Phase 2 / 2026-05-08): CSV エクスポート用
+      storageAddonPlan: true,
+      storageBytesUsed: true,
     },
   });
 
@@ -114,6 +123,17 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
     billingAddress: t.billingAddress,
     billingPhoneNumber: t.billingPhoneNumber,
     paymentMethod: t.paymentMethod,
+    // Storage add-on (Phase 2 / 2026-05-08): 当月課金合計の請求書根拠
+    storageAddonPlan: isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard',
+    storageBytesUsed: Number(t.storageBytesUsed),
+    storageAddonMonthlyJpy: SUPER_ADMIN_ADDON_MONTHLY_JPY[
+      isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard'
+    ],
+    totalCurrentMonthJpy:
+      t.currentMonthApiCostJpy +
+      SUPER_ADMIN_ADDON_MONTHLY_JPY[
+        isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard'
+      ],
   }));
 }
 
@@ -431,6 +451,12 @@ export type MonthlyUsageHistoryRow = {
   apiCallCount: number;
   apiCostJpy: number;
   activeUserCount: number;
+  // Storage add-on (Phase 2 / 2026-05-08): 履歴 snapshot に Storage 関連を追加
+  storageBytesUsed: number;
+  storageAddonPlan: string;
+  storageAddonJpy: number;
+  /** 当月の合計課金 (apiCostJpy + storageAddonJpy)。請求書根拠 */
+  totalJpy: number;
 };
 
 export async function listMonthlyUsageHistory(
@@ -467,6 +493,11 @@ export async function listMonthlyUsageHistory(
     apiCallCount: r.apiCallCount,
     apiCostJpy: r.apiCostJpy,
     activeUserCount: r.activeUserCount,
+    // Storage add-on (Phase 2 / 2026-05-08): スナップショット時点の値
+    storageBytesUsed: Number(r.storageBytesUsed),
+    storageAddonPlan: r.storageAddonPlan,
+    storageAddonJpy: r.storageAddonJpy,
+    totalJpy: r.totalJpy,
   }));
 }
 
