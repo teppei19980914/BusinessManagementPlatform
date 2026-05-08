@@ -4787,3 +4787,46 @@ DB ベースのフラグだと「DB アクセス不能時に効かない」ジ�
 - [ ] **緊急停止フラグの切替手順を運用ドキュメントに必ず明記**: コードを書いた人だけが知っている状態だと、緊急時に他のメンバーが対応できない。`docs/operations/T-03_RELEASE_NOTES.md §緊急停止手順` に scenario 別の SQL/env var 操作を文書化
 - [ ] **テスト時は環境変数を beforeEach で reset、afterAll で原状復帰**: グローバル状態を変える feature flag のテストは並列実行で他テストに影響する。明示的に save/restore を記述する
 
+## 5.X+4 推移的依存 (transitive dependency) の脆弱性は `pnpm.overrides` で force-upgrade する (PR #283 hotfix / 2026-05-09)
+
+### 背景
+
+PR #283 で Security Scan (`.github/workflows/security.yml` の `pnpm audit --audit-level=high` ステップ)
+が **HIGH 2 件で fail**。発見された脆弱性は両方とも `fast-uri` (3.1.0) の経由問題:
+
+- GHSA-q3j6-qgpj-74h6: path traversal via percent-encoded dot segments (<=3.1.0, fixed in >=3.1.1)
+- GHSA-v39h-62p7-jpjc: host confusion via percent-encoded authority delimiters (<=3.1.1, fixed in >=3.1.2)
+
+依存パスは `prisma > @prisma/dev > @prisma/streams-local > ajv > fast-uri` の **5 段ネスト**。
+`prisma` のメジャー更新を待っても fast-uri のパッチには到達しない可能性が高く、また
+`shadcn > @modelcontextprotocol/sdk > ajv` 経由でも同じ ajv@8.18.0 を使っているため
+両エコシステム同時に救済する必要があった。
+
+### 対応 (2 行 diff)
+
+`package.json` の `pnpm.overrides` に 1 行追加:
+
+```diff
+   "overrides": {
+     "@hono/node-server": ">=1.19.13",
+     "hono": ">=4.12.16",
+     "postcss": ">=8.5.10",
+-    "ip-address": ">=10.1.1"
++    "ip-address": ">=10.1.1",
++    "fast-uri": ">=3.1.2"
+   }
+```
+
+その後 `pnpm install` で `pnpm-lock.yaml` を再生成し、`pnpm audit --audit-level=high` で
+"No known vulnerabilities found" を確認。これで 5 つ目の override 運用となり、
+**「transitive 脆弱性 → overrides 1 行追加」というワークフローが本リポジトリで定着** した。
+
+### 抽出したルール
+
+- [ ] **`pnpm audit` failure を見たら最初に `pnpm why <package>` でパスを確認**: 直接依存なら通常の version bump、transitive なら overrides。「どの直接依存が古いのか」を特定するのが先決
+- [ ] **`pnpm.overrides` は **patched version の最小値** で書く**: `">=3.1.2"` のように下限のみ指定し、メジャー上限は付けない。CI が次の advisory を拾った時に自動で最新パッチを取り込める
+- [ ] **複数経路 (ajv が 2 つ以上の dep tree から呼ばれる等) でも overrides は 1 つで足りる**: pnpm の overrides は **resolved 結果** に効くため、すべての経路の同名パッケージが同じバージョンに収束する
+- [ ] **過去の overrides を消さない (= migration ノートとして残す)**: `@hono/node-server` / `hono` / `postcss` / `ip-address` / `fast-uri` の 5 件は本リポジトリでの脆弱性履歴そのもの。直接依存の更新で不要になった override も残しておくと、再発時の調査ヒントになる
+- [ ] **PR 作成前にローカルで `pnpm audit --audit-level=high` を 1 回実行する習慣を**: CI でしか気付かないと「PR 作成 → CI fail → 修正 → 再 push」で往復が発生する。Vulnerability advisory は時間で増えるため、commit 時点では問題なくても push 時点で fail することがある
+- [ ] **CI Gate (`security.yml`) を絶対にスキップしない**: HIGH 以上は build を止める運用。例外的に「依存元側にしかパッチがない」case でも、最低限 issue を切ってトラッキングする (silent ignore は厳禁)
+
