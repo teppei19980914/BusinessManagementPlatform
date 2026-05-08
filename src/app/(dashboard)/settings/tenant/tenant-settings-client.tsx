@@ -408,12 +408,26 @@ function DataImportSection() {
 
   return (
     <section className="mt-8 space-y-3 rounded border p-4">
-      <h2 className="text-lg font-semibold">データインポート</h2>
+      <h2 className="text-lg font-semibold">データインポート (バックアップ復元 / テナント間移行用)</h2>
       <p className="text-sm text-muted-foreground">
-        本サービスから出力した P-C エクスポート ZIP をアップロードし、業務データを一括取り込みします。
+        <strong>本機能は本サービスから出力した ZIP の取込専用です。</strong>
+        データエクスポート機能で出力した ZIP をアップロードして取り込みます。
       </p>
+      <div className="rounded bg-muted/40 p-3 text-xs text-muted-foreground">
+        <p className="font-semibold text-foreground">想定する利用シーン</p>
+        <ul className="ml-4 mt-1 list-disc">
+          <li>退会前にエクスポートしたデータを別テナント (社内分社化など) に取り込む</li>
+          <li>誤削除・障害時のバックアップ復元</li>
+          <li>本番テナントの一部を検証用テナントに同期する</li>
+        </ul>
+        <p className="mt-2 font-semibold text-foreground">対象外の利用シーン</p>
+        <ul className="ml-4 mt-1 list-disc">
+          <li>外部システム (社内 wiki / Excel / 旧プロジェクト管理ツール) からの初回データ移行
+            <br />→ 独自フォーマットの取込は本機能では受け付けません (誤データ混入防止のため)</li>
+        </ul>
+      </div>
       <ul className="ml-4 list-disc text-xs text-muted-foreground">
-        <li>受付フォーマット: P-C エクスポート ZIP のみ (それ以外は拒否)</li>
+        <li>受付フォーマット: 本サービスのデータエクスポート ZIP のみ (それ以外は拒否)</li>
         <li>動作: 全件「新規作成」(既存データの上書き / マージはしません)</li>
         <li>ユーザ: 同じメールアドレスの既存ユーザがいる場合は既存に再マップ。新規ユーザは初回ログイン時にパスワード再設定が必要</li>
         <li>Beginner プランでは合計 5 席を超えるインポートを拒否</li>
