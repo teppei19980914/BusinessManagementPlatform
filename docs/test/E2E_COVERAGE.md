@@ -148,6 +148,8 @@
 - [ ] `/api/admin/super/tenants/[id]` (DELETE) — skip: P-A (2026-05-08) super_admin 限定テナント論理削除。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / ALREADY_DELETED + カスケード (10 業務エンティティ + 監査ログ) は src/services/super-admin.service.test.ts (deleteTenant 6 テスト) で担保。E2E は V1.x で検討
 - [ ] `/api/auth/signup` (POST) — skip: P-G (2026-05-08) 公開セルフサインアップ。IP-based rate limit (5/hour) + honeypot (hp_url) + サービステスト (11 件) で担保。E2E は V1.x で検討
 - [ ] `/api/tenants/me/billing` (PATCH) — skip: P-G (2026-05-08) テナント管理者の請求先情報編集。zod バリデーション + サービステスト (tenant-self.service.test.ts) で担保
+- [ ] `/api/tenants/me/export` (GET) — skip: P-C (2026-05-08) テナント管理者の全データエクスポート ZIP ダウンロード。テナントスコープ + PII 除去 + ZIP 構造 + UTF-8 BOM 付き CSV は src/services/data-export.service.test.ts (8 件) で担保
+- [ ] `/api/admin/super/tenants/[id]/export` (GET) — skip: P-C (2026-05-08) super_admin によるテナント代行エクスポート (顧客サポート用途、監査ログ記録)
 
 ### メンション (PR feat/comment-mentions)
 - [ ] `/api/mention-candidates` (GET) — skip: 単体テスト (`src/app/api/mention-candidates/route.test.ts`) で context (project_list / cross_list / wbs) 別の groups 絞り込み + entityType 別 user 抽出を網羅

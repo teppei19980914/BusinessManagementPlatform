@@ -11,8 +11,9 @@ import type { Prisma } from '@/generated/prisma/client';
 /**
  * 監査ログのアクション種別。
  * SYNC_IMPORT は feat/wbs-overwrite-import で追加 (WBS 上書きインポート 1 件 = 1 ログ)。
+ * EXPORT は P-C (2026-05-08) で追加 (super_admin のテナントデータ代行エクスポート)。
  */
-export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'SYNC_IMPORT';
+export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'SYNC_IMPORT' | 'EXPORT';
 
 export async function recordAuditLog(params: {
   userId: string;

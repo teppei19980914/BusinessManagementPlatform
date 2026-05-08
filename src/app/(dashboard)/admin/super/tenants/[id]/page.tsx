@@ -116,6 +116,25 @@ export default async function SuperAdminTenantDetailPage({
         </section>
       )}
 
+      {/* P-C (2026-05-08): データ代行エクスポート (顧客サポート用途) */}
+      {tenant.id !== MANAGEMENT_TENANT_ID && (
+        <section className="space-y-2 rounded border p-4">
+          <h2 className="text-lg font-semibold">データ代行エクスポート</h2>
+          <p className="text-sm text-muted-foreground">
+            このテナントの全業務データを ZIP ファイルで取得します。顧客サポート (例:
+            「自分でログインできない、データを送ってほしい」依頼) や監査用途で使用してください。
+            実行は監査ログに記録されます。
+          </p>
+          <a
+            href={`/api/admin/super/tenants/${tenant.id}/export`}
+            className="inline-flex items-center justify-center rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
+            download
+          >
+            📦 データを ZIP でダウンロード (代行)
+          </a>
+        </section>
+      )}
+
       {/* P-A (2026-05-08): テナント削除セクション (管理テナントは表示しない = 自爆防止 UI 強化) */}
       {tenant.id !== MANAGEMENT_TENANT_ID && (
         <section className="space-y-2 rounded border border-destructive/30 p-4">
