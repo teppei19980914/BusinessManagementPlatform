@@ -108,6 +108,11 @@ const HEADERS_CURRENT = [
   'API課金額(円)',
   'アクティブユーザ数',
   '月次予算上限(円)',
+  // Storage add-on (Phase 2 / 2026-05-08): 容量と追加課金 + 合計
+  'Storageプラン',
+  'Storage使用量(バイト)',
+  'Storage月額(円)',
+  '合計月額(円)',
   // P-G: 請求先情報
   '会社名_法人名',
   '請求担当者',
@@ -124,6 +129,11 @@ const HEADERS_HISTORY = [
   'API呼出回数',
   'API課金額(円)',
   'アクティブユーザ数',
+  // Storage add-on (Phase 2 / 2026-05-08): スナップショット時点の Storage 情報
+  'Storageプラン',
+  'Storage使用量(バイト)',
+  'Storage月額(円)',
+  '合計月額(円)',
 ];
 
 function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>>): string {
@@ -138,6 +148,11 @@ function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>
         t.currentMonthApiCostJpy.toString(),
         t.activeUserCount.toString(),
         t.monthlyBudgetCapJpy?.toString() ?? '',
+        // Storage add-on
+        csvEscape(t.storageAddonPlan),
+        t.storageBytesUsed.toString(),
+        t.storageAddonMonthlyJpy.toString(),
+        t.totalCurrentMonthJpy.toString(),
         // P-G: 請求先列
         csvEscape(t.billingCompanyName ?? ''),
         csvEscape(t.billingContactName ?? ''),
@@ -162,6 +177,11 @@ function buildHistoryCsv(rows: Awaited<ReturnType<typeof listMonthlyUsageHistory
         r.apiCallCount.toString(),
         r.apiCostJpy.toString(),
         r.activeUserCount.toString(),
+        // Storage add-on (Phase 2): snapshot 時点の Storage 関連
+        csvEscape(r.storageAddonPlan),
+        r.storageBytesUsed.toString(),
+        r.storageAddonJpy.toString(),
+        r.totalJpy.toString(),
       ].join(','),
     );
   }
