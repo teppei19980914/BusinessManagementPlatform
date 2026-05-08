@@ -2350,13 +2350,13 @@ git push
 |---|---|---|---|---|---|
 | 1 | #178 (PR-β) | project-detail-light.png | 1440×**900→927** (+27px height) | **期待された変化** (新フィールド `contractType` 行追加 = `<dl>` 1 行分) | `[gen-visual]` で baseline 再生成 |
 | 2 | #179 (PR-γ) | project-detail-light + customer-detail-light (chromium-mobile) | **414→413px width** (-1px) | **環境差 / rounding 変動** (PR-γ branch では当該画面を未編集、PR-β の baseline 再生成後の rebase 経路差) | 同 (`[gen-visual]`) |
-| 3 | #262 (P-6) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px) | **依存更新蓄積による drift** (baseline `b8937ce` 2026-04-28 以降、複数 PR で `next-intl 4.9.1→4.9.2` / `@formatjs/* 3.5.4→3.5.7` 等が transitive 含めて bumped。`@anthropic-ai/sdk` も新規追加。Playwright 1.59.1 自体は変わらず) | 同 (`[gen-visual]`) |
+| 3 | #262 (P-6) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px、1 回限りの再現) | **真の flakiness (再実行で消える)**。`[gen-visual]` workflow は実行したが「no baseline changes」で commit なし = 同条件で再生成しても 414px に収束。同 baseline で再 E2E が即 pass。依存更新が背景にはあるが (next-intl 4.9.1→4.9.2 / @formatjs/* / @anthropic-ai/sdk 等) 決定論的ではなく確率的な 1px ずれ | `[gen-visual]` 発火 **+ 再 E2E** で吸収。`[gen-visual]` の commit 有無に関わらず CI 再起動が要点 |
 
 **判断基準の検証**:
 - 事例 1 (+27px): 「dl 1 行分の妥当な差」→ 期待された変化と判定 → 即 `[gen-visual]` で確実解消
 - 事例 2 (-1px width): 「1-2px 程度 = flaky / rounding」→ 該当画面の code 変更が PR-γ になく
   対象 dialog/component を PR-γ で触っていないことが grep で確認できた → 環境差と判定 → `[gen-visual]` で吸収
-- 事例 3 (-1px width): 同じく PR #262 の変更は `super_admin` 配下 4 ファイルのみで `/projects/[projectId]` を一切触っていないことを `git diff main..HEAD --stat` で確認。`grep -rn` で global CSS / layout / 共通 component 変更も無し → drift 確定 → `[gen-visual]` で吸収
+- 事例 3 (-1px width): 同じく PR #262 の変更は `super_admin` 配下 4 ファイルのみで `/projects/[projectId]` を一切触っていないことを `git diff main..HEAD --stat` で確認。`grep -rn` で global CSS / layout / 共通 component 変更も無し → drift 確定 → `[gen-visual]` で吸収。**ただし baseline 再生成 workflow は「no baseline changes」を返した**。これは「同条件で再生成しても 414px に収束する」という意味で、**真の flakiness (確率的 1px ずれ)** の証拠。再 E2E ですぐに pass した
 
 **3 回目の再発で確立した「即応プレイブック」**:
 
@@ -2385,8 +2385,13 @@ PR-γ branch で `[gen-visual]` empty commit を打とうとしたら、
 で取り消し → 正しい branch で再 commit。**毎回 `git branch --show-current` で確認する習慣化が必須**。
 
 **深追いしない判断 (重要)**:
-3 回目の再発で「これは bug ではなく、依存ライブラリの font/layout 内部処理の drift」と確定。
+3 回目の再発で「これは bug ではなく、依存ライブラリの font/layout 内部処理が起こす **確率的な 1px drift**」と確定。
 **毎回 1〜2 時間調査するのは時間浪費**。チェックリスト 5 項目通れば即 `[gen-visual]`、ダメなら本格調査の 2 段戦略を採る。
+
+**`[gen-visual]` で「no baseline changes」になっても気にしない**:
+事例 3 で観察された通り、再生成しても baseline と一致して commit なしで終わるケースがある
+(= 同条件再生成では 414px に収束)。**これは正常**。`[gen-visual]` の副次効果として CI が
+再起動されるため、確率的な 1px ずれが解消するだけで実害なし。**「commit がない = 失敗」ではない**。
 
 **baseline メンテナンスの提言 (将来 PR で検討)**:
 ベースラインは PR ごとに古くなる。`@formatjs/*` 等の transitive 更新が積み上がると drift が
