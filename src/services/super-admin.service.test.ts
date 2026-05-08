@@ -17,10 +17,26 @@ vi.mock('@/lib/db', () => ({
     // P-6 (2026-05-08): listDormantTenants で使用
     tenant: {
       findMany: vi.fn(),
+      // P-A (2026-05-08): deleteTenant で使用
+      findUnique: vi.fn(),
+      update: vi.fn(),
     },
     user: {
       groupBy: vi.fn(),
+      updateMany: vi.fn(),
     },
+    // P-A: カスケード論理削除対象 (deletedAt カラム持ち)
+    project: { updateMany: vi.fn() },
+    knowledge: { updateMany: vi.fn() },
+    riskIssue: { updateMany: vi.fn() },
+    retrospective: { updateMany: vi.fn() },
+    memo: { updateMany: vi.fn() },
+    stakeholder: { updateMany: vi.fn() },
+    comment: { updateMany: vi.fn() },
+    attachment: { updateMany: vi.fn() },
+    auditLog: { create: vi.fn() },
+    // P-A: $transaction はモックの戻り値配列をそのまま resolve する想定
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
 
@@ -28,6 +44,7 @@ import {
   listMonthlyUsageHistory,
   listDormantTenants,
   DORMANT_TENANT_THRESHOLD_DAYS,
+  deleteTenant,
 } from './super-admin.service';
 import { prisma } from '@/lib/db';
 
@@ -240,5 +257,131 @@ describe('listDormantTenants (P-6 / 2026-05-08)', () => {
 
   it('DORMANT_TENANT_THRESHOLD_DAYS は 90 日', () => {
     expect(DORMANT_TENANT_THRESHOLD_DAYS).toBe(90);
+  });
+});
+
+describe('deleteTenant (P-A / 2026-05-08)', () => {
+  const TENANT_ID = '00000000-0000-0000-0000-000000000abc';
+  const PERFORMER_ID = 'super-admin-uuid';
+  const MANAGEMENT_TENANT_ID_VALUE = '00000000-0000-0000-0000-ffffffffffff';
+
+  function setupHappyPathMocks() {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      deletedAt: null,
+      name: 'テスト顧客',
+    } as never);
+
+    // 各 updateMany / update / create の mock
+    const mkRes = (count: number) => ({ count });
+    vi.mocked(prisma.user.updateMany).mockResolvedValueOnce(mkRes(3) as never);
+    vi.mocked(prisma.project.updateMany).mockResolvedValueOnce(mkRes(2) as never);
+    vi.mocked(prisma.knowledge.updateMany).mockResolvedValueOnce(mkRes(10) as never);
+    vi.mocked(prisma.riskIssue.updateMany).mockResolvedValueOnce(mkRes(5) as never);
+    vi.mocked(prisma.retrospective.updateMany).mockResolvedValueOnce(mkRes(4) as never);
+    vi.mocked(prisma.memo.updateMany).mockResolvedValueOnce(mkRes(7) as never);
+    vi.mocked(prisma.stakeholder.updateMany).mockResolvedValueOnce(mkRes(2) as never);
+    vi.mocked(prisma.comment.updateMany).mockResolvedValueOnce(mkRes(15) as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValueOnce(mkRes(8) as never);
+    vi.mocked(prisma.tenant.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.auditLog.create).mockResolvedValueOnce({} as never);
+  }
+
+  it('正常系: 全配下エンティティに deletedAt を set し件数サマリを返す', async () => {
+    setupHappyPathMocks();
+
+    const result = await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+    expect(result.tenantId).toBe(TENANT_ID);
+    expect(result.deletedCounts).toEqual({
+      users: 3,
+      projects: 2,
+      knowledges: 10,
+      risksIssues: 5,
+      retrospectives: 4,
+      memos: 7,
+      stakeholders: 2,
+      comments: 15,
+      attachments: 8,
+    });
+
+    // ユーザは isActive=false も併せて更新
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: TENANT_ID, deletedAt: null },
+        data: expect.objectContaining({ isActive: false }),
+      }),
+    );
+
+    // 監査ログが残る
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: PERFORMER_ID,
+          action: 'DELETE',
+          entityType: 'tenant',
+          entityId: TENANT_ID,
+        }),
+      }),
+    );
+  });
+
+  it('管理テナント (MANAGEMENT_TENANT_ID) を削除しようとすると MANAGEMENT_TENANT_FORBIDDEN', async () => {
+    await expect(deleteTenant(MANAGEMENT_TENANT_ID_VALUE, PERFORMER_ID)).rejects.toThrow(
+      'MANAGEMENT_TENANT_FORBIDDEN',
+    );
+    // findUnique も呼ばれない (= 早期 return)
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('テナント不在なら TENANT_NOT_FOUND', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+    await expect(deleteTenant(TENANT_ID, PERFORMER_ID)).rejects.toThrow('TENANT_NOT_FOUND');
+
+    // updateMany は呼ばれない
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('既に削除済みテナントは ALREADY_DELETED (冪等性ではなく明示エラー)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      deletedAt: new Date('2026-04-01'),
+      name: '削除済',
+    } as never);
+
+    await expect(deleteTenant(TENANT_ID, PERFORMER_ID)).rejects.toThrow('ALREADY_DELETED');
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('単一 transaction で実行 ($transaction 1 回呼出)', async () => {
+    setupHappyPathMocks();
+
+    await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    // 11 オペ: users, projects, knowledges, risksIssues, retrospectives,
+    // memos, stakeholders, comments, attachments, tenant.update, auditLog.create
+    const txArg = vi.mocked(prisma.$transaction).mock.calls[0]![0] as unknown as unknown[];
+    expect(txArg).toHaveLength(11);
+  });
+
+  it('既に user.deletedAt がセット済みの user は更新対象外 (where: deletedAt: null)', async () => {
+    setupHappyPathMocks();
+
+    await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+    // user.updateMany の where に deletedAt: null が含まれることを確認
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: TENANT_ID, deletedAt: null },
+      }),
+    );
+    // project も同じ
+    expect(prisma.project.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: TENANT_ID, deletedAt: null },
+      }),
+    );
   });
 });

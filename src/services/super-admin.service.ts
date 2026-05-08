@@ -394,3 +394,162 @@ export async function listDormantTenants(
   rows.sort((a, b) => b.daysSinceLastActivity - a.daysSinceLastActivity);
   return rows;
 }
+
+/**
+ * P-A (2026-05-08): テナント論理削除 (super_admin 専用)。
+ *
+ * 役割:
+ *   問題テナント (TOS 違反 / 課金未払 / 営業判断による解約) を super_admin が止める。
+ *   完全な物理削除ではなく、論理削除 + ログイン即時遮断 + データ参照不可化を行う。
+ *
+ * 削除対象 (= deletedAt をセットして参照不可化):
+ *   - Tenant 本体
+ *   - 配下 User: deletedAt + isActive=false (= ログイン即時不可化、§auth.ts のチェックで
+ *     将来のログインが弾かれる)
+ *   - 配下の業務エンティティ (deletedAt カラムを持つもの):
+ *     Project / Knowledge / RiskIssue / Retrospective / Memo / Stakeholder /
+ *     Comment / Attachment
+ *
+ * 削除対象外:
+ *   - **deletedAt カラムを持たないテーブル** (Customer / Mention / Notification):
+ *     親 Tenant が deletedAt セット済 = テナント一覧で非表示 → 参照不可化される (= 実害なし)
+ *   - ApiCallLog (= 過去課金根拠の物理保持)
+ *   - TenantMonthlyUsageHistory (= 月次集計、請求書再現可能性)
+ *   - AuditLog / AuthEventLog / RoleChangeLog / SystemErrorLog (= 監査ログ物理保持)
+ *
+ * 設計判断:
+ *   - **管理テナント (MANAGEMENT_TENANT_ID) は削除禁止** (= 自爆防止)
+ *   - **既に削除済みテナント** への再削除は ALREADY_DELETED エラー (冪等性ではなく明示エラー
+ *     にすることで誤操作検知を強化)
+ *   - **トランザクション**: 一連の更新は単一 transaction で実行、途中失敗で部分的に消えない
+ *   - **復元機能は本 PR スコープ外**: 必要になったら別 PR で `restoreTenant` を追加
+ *
+ * 認可:
+ *   呼出側で isSuperAdmin(user) チェック済の前提 (本サービス層では検証しない)。
+ *
+ * @param tenantId 削除対象テナント ID
+ * @param performerId 実行者 (= super_admin) のユーザ ID。監査ログ記録用
+ * @returns 削除されたエンティティ数のサマリ
+ * @throws Error('TENANT_NOT_FOUND') テナント不在時
+ * @throws Error('MANAGEMENT_TENANT_FORBIDDEN') 管理テナントを削除しようとした時
+ * @throws Error('ALREADY_DELETED') 既に論理削除済テナントへの再削除時
+ */
+export type DeleteTenantResult = {
+  tenantId: string;
+  deletedCounts: {
+    users: number;
+    projects: number;
+    knowledges: number;
+    risksIssues: number;
+    retrospectives: number;
+    memos: number;
+    stakeholders: number;
+    comments: number;
+    attachments: number;
+  };
+};
+
+export async function deleteTenant(
+  tenantId: string,
+  performerId: string,
+): Promise<DeleteTenantResult> {
+  if (tenantId === MANAGEMENT_TENANT_ID) {
+    throw new Error('MANAGEMENT_TENANT_FORBIDDEN');
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true, deletedAt: true, name: true },
+  });
+  if (!tenant) {
+    throw new Error('TENANT_NOT_FOUND');
+  }
+  if (tenant.deletedAt != null) {
+    throw new Error('ALREADY_DELETED');
+  }
+
+  const now = new Date();
+
+  // 単一 transaction で一気に論理削除 (途中失敗で部分削除の不整合を避ける)
+  // Tenant.update / auditLog.create の戻り値は破棄。
+  const [
+    usersUpdate,
+    projectsUpdate,
+    knowledgesUpdate,
+    risksIssuesUpdate,
+    retrospectivesUpdate,
+    memosUpdate,
+    stakeholdersUpdate,
+    commentsUpdate,
+    attachmentsUpdate,
+  ] = await prisma.$transaction([
+    // ユーザは isActive=false も併せて、ログイン即時不可化
+    prisma.user.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now, isActive: false },
+    }),
+    prisma.project.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.knowledge.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.riskIssue.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.retrospective.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.memo.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.stakeholder.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.attachment.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    // 最後に Tenant 本体
+    prisma.tenant.update({
+      where: { id: tenantId },
+      data: { deletedAt: now },
+    }),
+    // 監査ログを残す (物理保持テーブルなので今後復元・監査が可能)
+    prisma.auditLog.create({
+      data: {
+        userId: performerId,
+        action: 'DELETE',
+        entityType: 'tenant',
+        entityId: tenantId,
+        beforeValue: { name: tenant.name, deletedAt: null },
+        afterValue: { name: tenant.name, deletedAt: now.toISOString() },
+      },
+    }),
+  ]);
+
+  return {
+    tenantId,
+    deletedCounts: {
+      users: usersUpdate.count,
+      projects: projectsUpdate.count,
+      knowledges: knowledgesUpdate.count,
+      risksIssues: risksIssuesUpdate.count,
+      retrospectives: retrospectivesUpdate.count,
+      memos: memosUpdate.count,
+      stakeholders: stakeholdersUpdate.count,
+      comments: commentsUpdate.count,
+      attachments: attachmentsUpdate.count,
+    },
+  };
+}
