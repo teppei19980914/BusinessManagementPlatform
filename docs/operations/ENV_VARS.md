@@ -81,6 +81,26 @@
 | `ENABLE_OPERATION_TRACE` | `false` | 操作トレースの有効化フラグ (要確認: 詳細は DESIGN.md) |
 | `CRON_SECRET` | (任意のランダム文字列) | Vercel Cron から `/api/admin/users/lock-inactive` 等を叩く際の `Authorization: Bearer` で使用。**未設定の場合 cron は実行されない** (手動実行は admin ログインで可能)。PR #89 で 30 日非アクティブユーザに使用 (feat/account-lock 改修で **論理削除 → ロック (isActive=false)** に方針変更)。 |
 
+### 1.6-ter メール送信モニタ (P-H / 2026-05-08 追加)
+
+| 変数名 | 既定値 (未設定時) | 用途 |
+|---|---|---|
+| `EMAIL_DAILY_LIMIT` | `300` (= Brevo 無料プラン) | super_admin ダッシュボードの「メール送信モニタ」カードでしきい値判定に使用。日次の送信件数がこの値に達すると以降の送信を自動ブロック (`daily_limit_exceeded`)。プロバイダ変更時は本値を上書き。 |
+| `EMAIL_MONTHLY_LIMIT` | `null` (= 制限なし) | 月次上限がある プロバイダ (Resend free 3000/月 等) で指定。`null` なら月次集計表示のみで送信ブロックには使わない (= 日次上限のみで運用)。 |
+
+**プロバイダ別の参考値**:
+
+| プロバイダ | プラン | 設定例 |
+|---|---|---|
+| Brevo Free | 300 通/日 | デフォルト |
+| Brevo Starter ($9/月) | 5000 通/月 | `EMAIL_DAILY_LIMIT=20000` (実質無制限) + `EMAIL_MONTHLY_LIMIT=5000` |
+| Resend Free | 100 通/日, 3000 通/月 | `EMAIL_DAILY_LIMIT=100` + `EMAIL_MONTHLY_LIMIT=3000` |
+| AWS SES | 実質無制限 | `EMAIL_DAILY_LIMIT=100000` (= 大きな値) |
+
+**設計意図**: ベンダー側の送信上限超過は招待・パスワードリセット等の重要メールが消失するため、超過する**前**に super_admin ダッシュボードで気付く設計。80% で warn / 90% で alert / 100% で送信自動ブロック (本体送信を止めて recordError 記録 + 自動 retry なし)。
+
+詳細は [src/services/email-send-log.service.ts](../../src/services/email-send-log.service.ts) と [src/config/email-limit.ts](../../src/config/email-limit.ts) 参照。
+
 ### 1.6-bis DB 容量モニタ (P-5a / 2026-05-08 追加)
 
 | 変数名 | 既定値 (未設定時) | 用途 |

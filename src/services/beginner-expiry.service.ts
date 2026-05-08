@@ -307,11 +307,20 @@ ${upgradeUrl}
   }
 
   const provider = getMailProvider();
+  // P-H (2026-05-08): 送信種別ラベル (ログ集計用)。Day 60/75/期限切れで type を分けて記録。
+  const mailType =
+    type === 'day_60'
+      ? 'beginner_warning_60'
+      : type === 'day_75'
+        ? 'beginner_warning_75'
+        : 'beginner_expired';
   const sendResult = await provider.send({
     to: tenant.billingContactEmail,
     subject,
     text: body,
     html: `<pre style="font-family: sans-serif; white-space: pre-wrap;">${escapeHtml(body)}</pre>`,
+    type: mailType,
+    tenantId: tenant.id,
   });
 
   if (!sendResult.success) {

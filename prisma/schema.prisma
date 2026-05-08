@@ -1103,3 +1103,45 @@ model TenantMonthlyUsageHistory {
   @@index([yearMonth], map: "idx_monthly_usage_year_month")
   @@map("tenant_monthly_usage_history")
 }
+
+/// メール送信ログ (P-H / 2026-05-08)
+///
+/// 役割:
+///   getMailProvider().send() の全送信を 1 行 1 record で記録する。
+///   super_admin ダッシュボードで「日次 / 月次の送信件数 + 上限到達警告」を表示する元データ。
+///   Brevo 無料 300 通/日 等の vendor 上限超過事故を未然に検知する目的。
+///
+/// 設計判断:
+///   - **本文・件名は保存しない**: PII / 機密情報の漏洩防止 (= recipient hash + 種別のみ)
+///   - **recipient ハッシュ化**: SHA-256 で保存 (= 「同じ宛先に送ったか」を確認できる程度の情報量)
+///   - **type フィールド**: 'invitation' / 'usage_alert' / 'beginner_warning_60' /
+///     'beginner_warning_75' / 'beginner_expired' / その他 — 送信目的別の集計用
+///   - **success / error**: provider が返した結果。失敗ログも残し、自動 retry 判断材料に
+///   - **tenantId は optional**: cron 経由 (= 特定テナント外) の system 通知も記録対象のため
+///
+/// 関連:
+///   - 計画: docs/roadmap/V1_FINAL_TASKS.md P-H
+///   - 集計サービス: src/services/email-send-log.service.ts
+///   - UI: super_admin ダッシュボード (P-5a と同パターンのカード)
+model EmailSendLog {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// 関連テナント (cron 経由で特定テナント外の通知は null = システム通知)
+  tenantId        String?  @map("tenant_id") @db.Uuid
+  /// 送信種別 ('invitation' / 'usage_alert' / 'beginner_warning_60' / etc.)
+  type            String   @db.VarChar(40)
+  /// 送信先メールアドレスの SHA-256 ハッシュ (PII 漏洩防止)
+  recipientHash   String   @map("recipient_hash") @db.VarChar(64)
+  /// 送信先メールアドレスのドメイン部のみ保存 (= '@example.com' / 集計時のドメイン分布把握用)
+  recipientDomain String   @map("recipient_domain") @db.VarChar(255)
+  /// 送信成功したか (provider.send の戻り値ベース)
+  success         Boolean
+  /// 失敗時のエラーメッセージ (= provider 側のエラー応答)
+  errorMessage    String?  @map("error_message") @db.Text
+  /// プロバイダ名 ('brevo' / 'resend' / 'console' / 'inbox' / 'smtp')
+  providerName    String   @map("provider_name") @db.VarChar(20)
+  sentAt          DateTime @default(now()) @map("sent_at") @db.Timestamptz
+
+  @@index([sentAt(sort: Desc)], map: "idx_email_send_logs_sent_at")
+  @@index([type, sentAt(sort: Desc)], map: "idx_email_send_logs_type")
+  @@map("email_send_logs")
+}

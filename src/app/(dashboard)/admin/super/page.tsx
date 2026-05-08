@@ -7,6 +7,8 @@
  *   データ登録不能事故を未然に防ぐためのリアルタイム可視化。
  * P-6 (2026-05-08): 休眠テナント警告セクションを追加。90 日連続休眠テナントの
  *   早期発見・解約営業判断材料に。
+ * P-H (2026-05-08): メール送信モニタカードを追加。Brevo 等の無料プラン送信上限
+ *   (300 通/日) 超過事故を未然に検知する。
  */
 
 import Link from 'next/link';
@@ -16,13 +18,16 @@ import {
   DORMANT_TENANT_THRESHOLD_DAYS,
 } from '@/services/super-admin.service';
 import { getDatabaseCapacityReport } from '@/services/db-capacity.service';
+import { getEmailSendStats } from '@/services/email-send-log.service';
 import type { DbCapacityStatus } from '@/config/db-capacity';
+import type { EmailLimitStatus } from '@/config/email-limit';
 
 export default async function SuperAdminTopPage() {
-  const [summary, capacity, dormant] = await Promise.all([
+  const [summary, capacity, dormant, emailStats] = await Promise.all([
     getCrossTenantUsageSummary(),
     getDatabaseCapacityReport(),
     listDormantTenants(),
+    getEmailSendStats(),
   ]);
 
   return (
@@ -44,6 +49,9 @@ export default async function SuperAdminTopPage() {
 
       {/* P-5a: DB 容量モニタ */}
       <DatabaseCapacityCard capacity={capacity} />
+
+      {/* P-H (2026-05-08): メール送信モニタ */}
+      <EmailSendMonitorCard stats={emailStats} />
 
       {/* P-6 (2026-05-08): 休眠テナント警告 */}
       <DormantTenantsCard dormant={dormant} />
@@ -261,4 +269,115 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+// ================================================================
+// P-H (2026-05-08): メール送信モニタカード
+// ================================================================
+
+const EMAIL_STATUS_STYLES: Record<EmailLimitStatus, { bg: string; bar: string; badge: string; text: string }> = {
+  ok: {
+    bg: 'bg-background',
+    bar: 'bg-emerald-500',
+    badge: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200',
+    text: 'text-emerald-700 dark:text-emerald-400',
+  },
+  warn: {
+    bg: 'bg-amber-50 dark:bg-amber-950/30',
+    bar: 'bg-amber-500',
+    badge: 'bg-amber-200 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200',
+    text: 'text-amber-700 dark:text-amber-400',
+  },
+  alert: {
+    bg: 'bg-destructive/10',
+    bar: 'bg-destructive',
+    badge: 'bg-destructive text-destructive-foreground',
+    text: 'text-destructive',
+  },
+};
+
+function EmailSendMonitorCard({
+  stats,
+}: {
+  stats: Awaited<ReturnType<typeof getEmailSendStats>>;
+}) {
+  // 日次のステータスをカード全体に適用 (= 当日の上限到達が最も緊急)
+  const styles = EMAIL_STATUS_STYLES[stats.dailyStatus];
+  const dailyPercent = (stats.dailyUtilizationRatio * 100).toFixed(1);
+  const monthlyPercent =
+    stats.monthlyUtilizationRatio != null ? (stats.monthlyUtilizationRatio * 100).toFixed(1) : null;
+
+  return (
+    <section className={`space-y-3 rounded border p-4 ${styles.bg}`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold">メール送信モニタ (日次)</h2>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}>
+          {STATUS_LABEL[stats.dailyStatus]}
+        </span>
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-sm">
+          本日の送信: <strong>{stats.dailySent.toLocaleString()}</strong> / 上限{' '}
+          <strong>{stats.dailyLimit.toLocaleString()}</strong> 件{' '}
+          (<span className={styles.text}>{dailyPercent}%</span>){' '}
+          <span className="text-xs text-muted-foreground">
+            (成功: {stats.dailySuccessful.toLocaleString()}、失敗: {stats.dailyFailed.toLocaleString()})
+          </span>
+        </p>
+        <div className="h-2 w-full overflow-hidden rounded bg-muted">
+          <div
+            className={`h-full ${styles.bar}`}
+            style={{ width: `${Math.min(100, stats.dailyUtilizationRatio * 100)}%` }}
+          />
+        </div>
+      </div>
+
+      {/* 月次は limit があれば表示 */}
+      {stats.monthlyLimit != null && monthlyPercent != null && (
+        <div className="space-y-1 border-t pt-2">
+          <p className="text-sm">
+            今月の送信: <strong>{stats.monthlySent.toLocaleString()}</strong> / 上限{' '}
+            <strong>{stats.monthlyLimit.toLocaleString()}</strong> 件{' '}
+            (<span className={EMAIL_STATUS_STYLES[stats.monthlyStatus].text}>{monthlyPercent}%</span>)
+          </p>
+          <div className="h-2 w-full overflow-hidden rounded bg-muted">
+            <div
+              className={`h-full ${EMAIL_STATUS_STYLES[stats.monthlyStatus].bar}`}
+              style={{
+                width: `${Math.min(100, (stats.monthlyUtilizationRatio ?? 0) * 100)}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {stats.monthlyLimit == null && (
+        <p className="text-xs text-muted-foreground border-t pt-2">
+          今月の送信: <strong>{stats.monthlySent.toLocaleString()}</strong> 件 (月次上限未設定)
+        </p>
+      )}
+
+      {stats.dailyStatus === 'alert' && (
+        <p className="text-sm font-medium text-destructive">
+          ⚠️ 日次上限に近づいています ({dailyPercent}%)。上限到達後はメール送信が自動的に
+          ブロックされ、招待・パスワードリセット等の重要メールも送信できなくなります。
+          上限値の引き上げまたは上位プラン契約をご検討ください。
+        </p>
+      )}
+      {stats.dailyStatus === 'warn' && (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          ⚠️ 日次送信件数が 80% を超えました。送信パターンの監視を強化してください。
+        </p>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        計測時刻: {stats.measuredAt.toLocaleString('ja-JP')}
+        {' ・ '}
+        日次上限変更は環境変数{' '}
+        <code className="rounded bg-muted px-1">EMAIL_DAILY_LIMIT</code>、
+        月次上限は <code className="rounded bg-muted px-1">EMAIL_MONTHLY_LIMIT</code> で可能
+      </p>
+    </section>
+  );
 }

@@ -46,6 +46,8 @@ export async function sendVerificationEmail(
   const mailProvider = getMailProvider();
   const result = await mailProvider.send({
     to: email,
+    // P-H (2026-05-08): 送信種別ラベル (ログ集計用)
+    type: 'invitation',
     subject: 'たすきば - アカウントの設定',
     html: `
       <h2>たすきば へようこそ</h2>
