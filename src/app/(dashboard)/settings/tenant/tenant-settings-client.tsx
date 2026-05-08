@@ -309,7 +309,39 @@ export function TenantSettingsClient({ initialInfo }: { initialInfo: TenantSelfI
 
       {/* P-G (2026-05-08): 請求先情報の編集 */}
       <BillingContactSection initialInfo={info} />
+
+      {/* P-C (2026-05-08): データエクスポート */}
+      <DataExportSection />
     </div>
+  );
+}
+
+// ================================================================
+// P-C (2026-05-08): データエクスポートセクション
+// ================================================================
+
+function DataExportSection() {
+  return (
+    <section className="mt-8 space-y-3 rounded border p-4">
+      <h2 className="text-lg font-semibold">データエクスポート</h2>
+      <p className="text-sm text-muted-foreground">
+        本テナントの全業務データ (プロジェクト / ナレッジ / 課題 / 振り返り / メモ /
+        顧客 / ステークホルダー等) を ZIP ファイルでダウンロードします。
+      </p>
+      <ul className="ml-4 list-disc text-xs text-muted-foreground">
+        <li>JSON 形式 (構造化データ、再 import 可能な完全な情報)</li>
+        <li>CSV 形式併載 (主要 5 種別、Excel での閲覧用)</li>
+        <li>添付ファイル: URL のみ含まれます (実ファイルは外部ストレージから別途取得してください)</li>
+        <li>パスワードハッシュ・MFA 秘密鍵等の認証情報は除外されています</li>
+      </ul>
+      <a
+        href="/api/tenants/me/export"
+        className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+        download
+      >
+        📦 全データを ZIP でダウンロード
+      </a>
+    </section>
   );
 }
 
@@ -488,8 +520,10 @@ function BeginnerExpiryBanner({ info }: { info: TenantSelfInfo }) {
         </p>
         <ul className="ml-4 list-disc text-sm text-muted-foreground">
           <li>データの作成・更新・削除はできません</li>
-          <li>エクスポート機能は停止しています</li>
           <li>ログインと既存データの閲覧は引き続き可能です</li>
+          <li>
+            <strong>データのエクスポートは引き続きご利用いただけます</strong> (下記「データエクスポート」セクションからダウンロード可)
+          </li>
         </ul>
         <p className="text-sm">
           書き込み機能を再開するには下記の「プラン変更」セクションから <strong>Expert または Pro プラン</strong> へのアップグレードをお願いします。
@@ -505,8 +539,9 @@ function BeginnerExpiryBanner({ info }: { info: TenantSelfInfo }) {
           🟠 Beginner プラン期限まで残り {days} 日 (重要)
         </h2>
         <p className="text-sm text-orange-900 dark:text-orange-200">
-          期限超過後は <strong>読み取り専用モード</strong> に移行し、データの<strong>エクスポートもできなくなります</strong>。
-          データ保全のためエクスポートは期限内 (残り {days} 日以内) に実施することを強くお勧めします。
+          期限超過後は <strong>読み取り専用モード</strong> に移行します (データの作成・更新・削除はできなくなります)。
+          引き続きアクティブにご利用いただく場合は下記の「プラン変更」セクションで Expert / Pro プランへのアップグレードをご検討ください。
+          なお、データエクスポート機能は期限後も引き続きご利用可能です。
         </p>
       </section>
     );
@@ -519,8 +554,8 @@ function BeginnerExpiryBanner({ info }: { info: TenantSelfInfo }) {
           🟡 Beginner プラン期限まで残り {days} 日
         </h2>
         <p className="text-sm text-amber-900 dark:text-amber-200">
-          Beginner プランは初回テナント作成から 90 日限定の試用プランです。期限超過後は読み取り専用モードに移行し、エクスポートもできなくなります。
-          引き続きご利用の場合は下記の「プラン変更」セクションで Expert / Pro プランへのアップグレードをご検討ください。
+          Beginner プランは初回テナント作成から 90 日限定の試用プランです。期限超過後は読み取り専用モードに移行します (データのエクスポート機能は期限後も継続利用可能)。
+          引き続きアクティブにご利用の場合は下記の「プラン変更」セクションで Expert / Pro プランへのアップグレードをご検討ください。
         </p>
       </section>
     );
