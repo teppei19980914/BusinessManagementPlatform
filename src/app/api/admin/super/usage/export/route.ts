@@ -95,7 +95,12 @@ export async function GET(req: NextRequest) {
 // CSV builders
 // ================================================================
 
-const HEADERS = [
+// P-G (2026-05-08): 当月データには請求先列を含める (super_admin の請求業務で
+//   宛先情報がそのまま使えるように)。履歴 CSV は当月時点ではなくスナップショット時点の
+//   集計値であり、請求先は最新を Tenant テーブルから別途参照すれば十分なため、
+//   履歴 CSV には請求先列を含めない (= 列分離で運用混乱を避ける)。
+
+const HEADERS_CURRENT = [
   'テナント連番',
   'テナント名',
   'プラン',
@@ -103,10 +108,26 @@ const HEADERS = [
   'API課金額(円)',
   'アクティブユーザ数',
   '月次予算上限(円)',
+  // P-G: 請求先情報
+  '会社名_法人名',
+  '請求担当者',
+  '請求先メール',
+  '電話番号',
+  '支払い方法',
+  '請求書送付先住所',
+];
+
+const HEADERS_HISTORY = [
+  'テナント連番',
+  'テナント名',
+  'プラン',
+  'API呼出回数',
+  'API課金額(円)',
+  'アクティブユーザ数',
 ];
 
 function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>>): string {
-  const lines = [HEADERS.join(',')];
+  const lines = [HEADERS_CURRENT.join(',')];
   for (const t of tenants) {
     lines.push(
       [
@@ -117,6 +138,13 @@ function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>
         t.currentMonthApiCostJpy.toString(),
         t.activeUserCount.toString(),
         t.monthlyBudgetCapJpy?.toString() ?? '',
+        // P-G: 請求先列
+        csvEscape(t.billingCompanyName ?? ''),
+        csvEscape(t.billingContactName ?? ''),
+        csvEscape(t.billingContactEmail ?? ''),
+        csvEscape(t.billingPhoneNumber ?? ''),
+        csvEscape(t.paymentMethod),
+        csvEscape(t.billingAddress ?? ''),
       ].join(','),
     );
   }
@@ -124,7 +152,7 @@ function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>
 }
 
 function buildHistoryCsv(rows: Awaited<ReturnType<typeof listMonthlyUsageHistory>>): string {
-  const lines = [HEADERS.join(',')];
+  const lines = [HEADERS_HISTORY.join(',')];
   for (const r of rows) {
     lines.push(
       [
@@ -134,8 +162,6 @@ function buildHistoryCsv(rows: Awaited<ReturnType<typeof listMonthlyUsageHistory
         r.apiCallCount.toString(),
         r.apiCostJpy.toString(),
         r.activeUserCount.toString(),
-        // 履歴テーブルには monthlyBudgetCapJpy 列がない (請求書根拠としての必要性が低い)
-        '',
       ].join(','),
     );
   }
