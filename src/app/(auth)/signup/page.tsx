@@ -127,7 +127,9 @@ export default function SignupPage() {
         <CardHeader>
           <CardTitle>たすきば サインアップ</CardTitle>
           <CardDescription>
-            新規テナント (組織) を開設します。Beginner プランは月 100 回まで無料でご利用いただけます。
+            新規テナント (組織) を開設します。<strong>Beginner プラン (90 日試用、月 100 回まで無料)</strong>{' '}
+            で開始されます。期限後は読み取り専用モードに移行し、エクスポートも停止します。
+            引き続きご利用の場合は試用期間内に Expert / Pro プランへのアップグレードをお願いします。
           </CardDescription>
         </CardHeader>
         <CardContent>

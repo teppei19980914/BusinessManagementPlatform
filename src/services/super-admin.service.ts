@@ -19,6 +19,11 @@
 
 import { prisma } from '@/lib/db';
 import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import {
+  getBeginnerExpiryState,
+  getBeginnerDaysRemaining,
+  type BeginnerExpiryState,
+} from './beginner-expiry.service';
 
 /**
  * 全テナント一覧 (super_admin ダッシュボード用)。
@@ -134,6 +139,10 @@ export type TenantDetail = TenantSummaryRow & {
   billingAddress: string | null;
   billingPhoneNumber: string | null;
   paymentMethod: string;
+  // P-B (2026-05-08): Beginner プラン期限情報
+  beginnerEverUpgraded: boolean;
+  beginnerExpiryState: BeginnerExpiryState;
+  beginnerDaysRemaining: number | null;
   entityCounts: {
     projects: number;
     knowledges: number;
@@ -208,6 +217,18 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     billingAddress: t.billingAddress,
     billingPhoneNumber: t.billingPhoneNumber,
     paymentMethod: t.paymentMethod,
+    // P-B (2026-05-08): Beginner プラン期限情報 (純関数で計算)
+    beginnerEverUpgraded: t.beginnerEverUpgraded,
+    beginnerExpiryState: getBeginnerExpiryState({
+      plan: t.plan,
+      createdAt: t.createdAt,
+      beginnerEverUpgraded: t.beginnerEverUpgraded,
+    }),
+    beginnerDaysRemaining: getBeginnerDaysRemaining({
+      plan: t.plan,
+      createdAt: t.createdAt,
+      beginnerEverUpgraded: t.beginnerEverUpgraded,
+    }),
     entityCounts: { projects, knowledges, risksIssues, retrospectives, memos },
   };
 }

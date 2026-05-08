@@ -35,6 +35,9 @@ type TenantSelfInfo = {
   billingAddress: string | null;
   billingPhoneNumber: string | null;
   paymentMethod: string;
+  // P-B (2026-05-08): Beginner プラン期限ステータス
+  beginnerExpiryState: 'active' | 'warning_60' | 'warning_75' | 'expired';
+  beginnerDaysRemaining: number | null;
 };
 
 type PlanLabel = { value: 'beginner' | 'expert' | 'pro'; label: string; description: string };
@@ -168,6 +171,9 @@ export function TenantSettingsClient({ initialInfo }: { initialInfo: TenantSelfI
         テナント名: {info.name}
         {info.tenantSeq != null && <span className="ml-2">(テナント #{info.tenantSeq})</span>}
       </p>
+
+      {/* P-B (2026-05-08): Beginner プラン期限バナー */}
+      <BeginnerExpiryBanner info={info} />
 
       {/* 当月使用量 */}
       <section className="rounded border p-4">
@@ -449,5 +455,86 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
         {submitting ? '更新中...' : '請求先情報を更新'}
       </Button>
     </form>
+  );
+}
+
+// ================================================================
+// P-B (2026-05-08): Beginner プラン期限バナー
+// ================================================================
+
+/**
+ * Beginner プラン契約中のテナントに、残り日数 / 期限切れ警告を表示するバナー。
+ * Expert / Pro プラン (= 期限制御対象外) の場合は何も表示しない。
+ *
+ * 表示パターン:
+ *   - active (Day 0〜59): 黄色バナー (= Beginner 試用中、残り日数表示)
+ *   - warning_60 (Day 60〜74): 橙バナー (=「残り {N} 日」)
+ *   - warning_75 (Day 75〜89): 強橙バナー (= 強い警告 +「期限後はエクスポート不可」)
+ *   - expired (Day 90+): 赤バナー (= 読み取り専用モード明示)
+ */
+function BeginnerExpiryBanner({ info }: { info: TenantSelfInfo }) {
+  if (info.plan !== 'beginner') return null;
+
+  const days = info.beginnerDaysRemaining ?? 0;
+
+  if (info.beginnerExpiryState === 'expired') {
+    return (
+      <section className="space-y-2 rounded border border-destructive/30 bg-destructive/10 p-4">
+        <h2 className="text-base font-semibold text-destructive">
+          🔴 Beginner プラン期限切れ — 読み取り専用モード
+        </h2>
+        <p className="text-sm">
+          Beginner プランの試用期間 (90 日) が経過したため、ご利用テナントは <strong>読み取り専用モード</strong> に移行しました。
+        </p>
+        <ul className="ml-4 list-disc text-sm text-muted-foreground">
+          <li>データの作成・更新・削除はできません</li>
+          <li>エクスポート機能は停止しています</li>
+          <li>ログインと既存データの閲覧は引き続き可能です</li>
+        </ul>
+        <p className="text-sm">
+          書き込み機能を再開するには下記の「プラン変更」セクションから <strong>Expert または Pro プラン</strong> へのアップグレードをお願いします。
+        </p>
+      </section>
+    );
+  }
+
+  if (info.beginnerExpiryState === 'warning_75') {
+    return (
+      <section className="space-y-2 rounded border border-orange-400 bg-orange-50 p-4 dark:border-orange-900/40 dark:bg-orange-950/30">
+        <h2 className="text-base font-semibold text-orange-900 dark:text-orange-200">
+          🟠 Beginner プラン期限まで残り {days} 日 (重要)
+        </h2>
+        <p className="text-sm text-orange-900 dark:text-orange-200">
+          期限超過後は <strong>読み取り専用モード</strong> に移行し、データの<strong>エクスポートもできなくなります</strong>。
+          データ保全のためエクスポートは期限内 (残り {days} 日以内) に実施することを強くお勧めします。
+        </p>
+      </section>
+    );
+  }
+
+  if (info.beginnerExpiryState === 'warning_60') {
+    return (
+      <section className="space-y-2 rounded border border-amber-400 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/30">
+        <h2 className="text-base font-semibold text-amber-900 dark:text-amber-200">
+          🟡 Beginner プラン期限まで残り {days} 日
+        </h2>
+        <p className="text-sm text-amber-900 dark:text-amber-200">
+          Beginner プランは初回テナント作成から 90 日限定の試用プランです。期限超過後は読み取り専用モードに移行し、エクスポートもできなくなります。
+          引き続きご利用の場合は下記の「プラン変更」セクションで Expert / Pro プランへのアップグレードをご検討ください。
+        </p>
+      </section>
+    );
+  }
+
+  // active (Day 0〜59): 控えめに「試用中」を案内
+  return (
+    <section className="space-y-1 rounded border border-info/30 bg-info/5 p-3">
+      <p className="text-sm">
+        <strong>Beginner プラン (90 日試用) ご利用中</strong> — 残り {days} 日。
+      </p>
+      <p className="text-xs text-muted-foreground">
+        試用期間終了後は読み取り専用モードに移行します。引き続きご利用の場合は Expert / Pro プランへのアップグレードをお願いします。
+      </p>
+    </section>
   );
 }

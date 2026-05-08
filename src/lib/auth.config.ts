@@ -66,7 +66,8 @@ export const authConfig: NextAuthConfig = {
     signIn: LOGIN_PATH,
   },
   callbacks: {
-    authorized({ auth, request: { nextUrl } }) {
+    authorized({ auth, request }) {
+      const { nextUrl } = request;
       const isPublicPath = PUBLIC_PATHS.some((path) =>
         nextUrl.pathname.startsWith(path),
       );
@@ -92,6 +93,46 @@ export const authConfig: NextAuthConfig = {
         }
       }
 
+      // P-B (2026-05-08): Beginner プラン期限切れテナントの read-only モード。
+      //   write 系 HTTP method (POST/PATCH/PUT/DELETE) のみ弾き、GET/HEAD/OPTIONS は通す。
+      //   middleware は Edge runtime で DB を引けないので、JWT claim の
+      //   tenantPlan / tenantCreatedAt / tenantBeginnerEverUpgraded から純関数で判定。
+      //   アップグレードしたら次回の jwt callback で claim が更新される (新しい authorize() 結果が反映)。
+      const writeMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+      if (writeMethods.has(request.method)) {
+        const plan = auth.user.tenantPlan;
+        const createdAtIso = auth.user.tenantCreatedAt;
+        const everUpgraded = auth.user.tenantBeginnerEverUpgraded;
+        if (
+          plan === 'beginner' &&
+          everUpgraded === false &&
+          typeof createdAtIso === 'string'
+        ) {
+          const createdAtMs = Date.parse(createdAtIso);
+          if (Number.isFinite(createdAtMs)) {
+            const daysElapsed = Math.floor((Date.now() - createdAtMs) / (24 * 60 * 60 * 1000));
+            if (daysElapsed >= 90) {
+              // ログアウト系 (= 別 method なので通る) と認証 API は PUBLIC_PATHS で通過済。
+              // 業務 API のみここで弾く。
+              return new Response(
+                JSON.stringify({
+                  error: {
+                    code: 'BEGINNER_EXPIRED_READ_ONLY',
+                    message:
+                      'Beginner プランの試用期間 (90 日) が経過したため、書き込み操作は停止しています。' +
+                      'Expert または Pro プランへのアップグレードをお願いします。',
+                  },
+                }),
+                {
+                  status: 403,
+                  headers: { 'content-type': 'application/json' },
+                },
+              );
+            }
+          }
+        }
+      }
+
       return true;
     },
     jwt({ token, user, trigger, session }) {
@@ -100,6 +141,13 @@ export const authConfig: NextAuthConfig = {
         // PR #2-b (T-03): tenantId を JWT に格納し、session callback で session.user に
         //   伝播する。テナント境界チェック (requireSameTenant) の起点。
         token.tenantId = (user as unknown as { tenantId: string }).tenantId;
+        // P-B (2026-05-08): Beginner プラン期限判定用の claim。
+        //   middleware の authorized callback で Date.now() と比較して read-only 判定。
+        token.tenantPlan = (user as unknown as { tenantPlan: string }).tenantPlan;
+        token.tenantCreatedAt = (user as unknown as { tenantCreatedAt: string }).tenantCreatedAt;
+        token.tenantBeginnerEverUpgraded = (
+          user as unknown as { tenantBeginnerEverUpgraded: boolean }
+        ).tenantBeginnerEverUpgraded;
         token.systemRole = (user as unknown as { systemRole: string }).systemRole;
         token.forcePasswordChange = (user as unknown as { forcePasswordChange: boolean })
           .forcePasswordChange;
@@ -154,6 +202,11 @@ export const authConfig: NextAuthConfig = {
         // PR #118: null 許容 (システムデフォルト意) のまま公開する。
         session.user.timezone = (token.timezone as string | null | undefined) ?? null;
         session.user.locale = (token.locale as string | null | undefined) ?? null;
+        // P-B (2026-05-08): Beginner プラン期限 claim を session に伝播 (UI 側でバナー表示等に使用)
+        session.user.tenantPlan = (token.tenantPlan as string | undefined) ?? 'beginner';
+        session.user.tenantCreatedAt = (token.tenantCreatedAt as string | undefined) ?? new Date().toISOString();
+        session.user.tenantBeginnerEverUpgraded =
+          (token.tenantBeginnerEverUpgraded as boolean | undefined) ?? false;
       }
       return session;
     },

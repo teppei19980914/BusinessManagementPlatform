@@ -84,6 +84,10 @@ export async function POST(req: NextRequest) {
   // honeypot 以外のフィールドのみを onboarding service に渡す
   const onboardingInput = bodyObj == null ? {} : { ...bodyObj };
   if (onboardingInput && 'hp_url' in onboardingInput) delete onboardingInput.hp_url;
+  // P-B (2026-05-08): 公開セルフサインアップは **強制的に Beginner プラン**。
+  //   ユーザが入力で plan: 'pro' 等を送ってきても無視。最初から上位プランで開設したい
+  //   顧客は super_admin による手動払い出し経路を使ってもらう。
+  onboardingInput.plan = 'beginner';
 
   const result = await createTenantBySignup(onboardingInput, baseUrl);
 
@@ -119,6 +123,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: { code: 'EMAIL_SEND_FAILED', message: result.message } },
         { status: 502 },
+      );
+    case 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING':
+      return NextResponse.json(
+        { error: { code: 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING', message: result.message } },
+        { status: 409 },
       );
   }
 }

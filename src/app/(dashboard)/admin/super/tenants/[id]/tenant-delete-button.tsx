@@ -112,6 +112,18 @@ export function TenantDeleteButton({ tenantId, tenantName }: Props) {
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* P-B (2026-05-08): 運営者の手動運用としてメール事前連絡が必要であることを明示 */}
+          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-900/40 dark:bg-amber-950/30">
+            <p className="font-semibold text-amber-900 dark:text-amber-200">
+              ⚠ 削除前の運用上の手順
+            </p>
+            <p className="mt-1 text-amber-900 dark:text-amber-200">
+              削除前に <strong>テナントの代表者 (請求先メール) へ削除予告メールを送信</strong>
+              し、削除実施日と既存データの取り扱いについて合意を取ってから本機能で削除してください。
+              本ダイアログからは自動でメールは送信されません。
+            </p>
+          </div>
+
           <div className="rounded border border-destructive/30 bg-destructive/5 p-3 text-sm">
             <p>
               <strong>削除対象:</strong> {tenantName}

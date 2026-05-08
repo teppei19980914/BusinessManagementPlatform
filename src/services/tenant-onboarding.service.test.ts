@@ -14,6 +14,8 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     tenant: {
       findUnique: vi.fn(),
+      // P-B (2026-05-08): 解約済テナントの billingContactEmail で Beginner 再登録拒否
+      findMany: vi.fn(),
       create: vi.fn(),
       delete: vi.fn(),
     },
@@ -90,8 +92,9 @@ const BASE_URL = 'https://example.com';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // デフォルトでは slug 重複なし、メール重複なし
+  // デフォルトでは slug 重複なし、メール重複なし、解約済テナントなし (P-B)
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
+  vi.mocked(prisma.tenant.findMany).mockResolvedValue([]);
   vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
   vi.mocked(prisma.tenant.create).mockResolvedValue({ id: 'tenant-uuid' } as never);
   vi.mocked(prisma.user.create).mockResolvedValue({ id: 'user-uuid' } as never);
@@ -220,5 +223,55 @@ describe('createTenantBySignup', () => {
     expect(prisma.tenant.create).toHaveBeenCalled();
     expect(prisma.user.create).toHaveBeenCalled();
     expect(sendVerificationEmail).toHaveBeenCalled();
+  });
+});
+
+describe('P-B (2026-05-08): Beginner プラン再登録防止 + beginnerEverUpgraded セット', () => {
+  it('解約済テナントの billingContactEmail で Beginner 再登録すると BEGINNER_NOT_AVAILABLE_FOR_RETURNING', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'past-deleted-tenant' },
+    ] as never);
+
+    const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('BEGINNER_NOT_AVAILABLE_FOR_RETURNING');
+    expect(prisma.tenant.create).not.toHaveBeenCalled();
+  });
+
+  it('plan=expert/pro なら解約再登録チェックは実施されず作成可能 + beginnerEverUpgraded=true で初期化', async () => {
+    // 注: findMany を mockResolvedValueOnce で「解約済あり」にしても、plan=expert なので
+    // そもそも findMany が呼ばれない (= プランで早期に bypass する)。明示的に未呼出を verify。
+
+    const result = await createTenantBySuperAdmin(
+      { ...VALID_INPUT, plan: 'expert' },
+      BASE_URL,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(prisma.tenant.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          plan: 'expert',
+          // 上位プランで作成 → beginnerEverUpgraded=true で初期化 (= 後で Beginner ダウングレード不可)
+          beginnerEverUpgraded: true,
+        }),
+      }),
+    );
+    // findMany は呼ばれない (= Beginner 再登録チェックを skip)
+    expect(prisma.tenant.findMany).not.toHaveBeenCalled();
+  });
+
+  it('Beginner プランで作成すると beginnerEverUpgraded=false (= 試用開始)', async () => {
+    await createTenantBySuperAdmin(VALID_INPUT, BASE_URL);
+
+    expect(prisma.tenant.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          plan: 'beginner',
+          beginnerEverUpgraded: false,
+        }),
+      }),
+    );
   });
 });
