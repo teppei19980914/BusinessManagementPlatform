@@ -692,7 +692,7 @@ PR-X1〜X6 マージ + 本番動作確認後、以下の改善を優先順位に
 | **P-A: テナント削除機能 (super_admin)** | 🔴 **新規 (リリース必須)** | #264 | **下記 §リリース前必須課題** 参照 |
 | **P-B: Free プラン永続利用防止 (3 ヶ月制限)** | 🔴 **新規 (リリース必須)** | (本 PR) | 60/75 日警告メール + 90 日 read-only。Beginner downgrade 禁止 + 解約再登録時の Beginner 拒否 |
 | **P-C: テナント別データ一括エクスポート** | 🟡 **新規 (リリース推奨)** | (本 PR) | ZIP (JSON + CSV) で全業務データダウンロード。Beginner 期限切れ後もエクスポート可 (顧客救済優先)。super_admin 代行エクスポートも実装 |
-| **P-D: テナント別データ一括インポート** | 🟡 **新規 (リリース推奨)** | - | 同上 (新規獲得促進) |
+| **P-D: テナント別データ一括インポート** | ✅ 完了 (容量制限は後続課題) | (本 PR) | P-C ZIP 受付 + UUID 再採番 + Beginner 5 席チェック + in-flight ロック。容量制限 (テナント別プラン階層上限) は別途設計予定 |
 | **P-E: プラン変更 e2e テスト** | 🟢 **新規 (任意)** | - | 同上 (実機での月跨ぎ動作確認) |
 | **P-G: テナント払い出し + 請求先情報** | 🔴 **新規 (リリース必須)** | - | 2026-05-08 検証で発覚。下記 §P-G 参照 |
 
@@ -935,21 +935,33 @@ Beginner プラン (¥0、月 100 回上限) は無料のため、課金転換�
 - `src/app/api/tenants/me/export/route.ts` (テナント管理者経路)
 - `src/app/api/admin/super/tenants/[id]/export/route.ts` (super_admin 経路)
 
-#### P-D: テナント別データ一括インポート (推定 2-3 日) 🟡 リリース推奨
+#### P-D: テナント別データ一括インポート (推定 2-3 日) ✅ 完了 (本 PR、2026-05-08)
 
 **背景**:
 新規テナントが既存資産 (社内 wiki / 旧システムの知見等) を本サービスに移行できれば、立ち上がりがスムーズになり契約獲得が促進される。
 
-**仕様**:
-- P-C と対称な ZIP 形式を入力として受け付け
-- 既存データとの ID 衝突は **新規 UUID で再採番**
-- 部分インポート (knowledge のみ等) を許可
-- import 中の進捗表示 (大量データ対応)
-- テナント管理者経路のみ (= 新規開設時の自助セットアップ用)
+**仕様 (確定済 / 2026-05-08 ユーザ要件)**:
+- 受付フォーマット: **P-C で出力した ZIP のみ** (= テナント管理者画面でフォーマット厳格に検証、独自 CSV 等は拒否)
+- 動作: **全件「新規作成」のみ** (部分インポート / 上書き / マージは対象外、それらは既存 UI で対応)
+- ID 衝突対策: 全エンティティの UUID を **新規発行**、FK / 自己参照 / polymorphic entityId はマップ経由で書き換え
+- ユーザインポート時の特例:
+  - 既存 email と一致するユーザは **既存にマージ** (新規作成しない、FK を既存ユーザに再マップ)
+  - 新規作成ユーザは `forcePasswordChange=true` + ランダム placeholder ハッシュ (= 初回ログイン時にパスワード再設定が必須)
+- **Beginner プラン席数チェック**: 既存 active ユーザ数 + 新規作成ユーザ数 > `beginnerMaxSeats (=5)` なら拒否 (`BEGINNER_SEAT_LIMIT`)
+- **二重インポート防止**: `Tenant.importInProgressAt` を in-flight ロック (30 分超のクラッシュ残留は自動失効)
+- 経路: テナント管理者のみ (super_admin 代行は本 PR 範囲外)
 
-**実装箇所**:
-- `src/services/data-import.service.ts` (新規)
-- `src/app/api/tenants/me/import/route.ts`
+**実装内容**:
+- `src/services/data-import.service.ts`: ZIP パース + 15 エンティティ取込 + UUID マップによる FK 書き換え
+- `src/app/api/tenants/me/import/route.ts`: multipart/form-data 受付 + 50MB サイズ上限 + 監査ログ
+- `src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx`: `DataImportSection` 追加 (DataExportSection の対称配置)
+- `prisma/migrations/20260508_tenant_import_lock/`: `Tenant.importInProgressAt` カラム追加
+- 単体テスト 11 件 (`src/services/data-import.service.test.ts`)
+
+**容量制限 (後続課題)**:
+本 PR では着手せず、別タスクで設計を詰める。仮置きで API route に 50MB の ZIP サイズ上限のみ設定。
+プラン階層別のテナントごと上限 (Beginner 50MB / Expert 150MB / Pro 300MB) を、`storageBytesUsed` カラムや
+on-demand `pg_column_size` 集計で実装する案がある。設計確定後に別 PR で対応。
 
 #### P-E: プラン変更 e2e テスト追加 (推定 0.5-1 日) 🟢 リリース推奨
 
@@ -997,11 +1009,11 @@ P-A テナント削除機能 (1-2 日) ← 次着手予定 🔴 リリース必�
    ↓
 P-B Free プラン永続利用防止 (1 日) 🔴 リリース必須
    ↓
-P-C データ一括エクスポート (2-3 日) 🟡 リリース推奨
+P-C データ一括エクスポート (PR #268) ✅ 完了
    ↓
-P-D データ一括インポート (2-3 日) 🟡 リリース推奨
+P-D データ一括インポート (本 PR) ✅ 完了 (容量制限は後続課題)
    ↓
-P-E プラン変更 e2e テスト (0.5-1 日) 🟢 任意
+P-E プラン変更 e2e テスト (0.5-1 日) 🟢 任意 ← 次着手
 ```
 
 実績工数: P-1〜P-3 + P-5a/b + P-6 で **約 6-7 日相当**。P-A 〜 P-E は合計 **6.5-10 日**。
