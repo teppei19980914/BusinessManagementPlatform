@@ -45,11 +45,11 @@
 
 ### 開発中
 1. Claude Code が要件取り込み + テスト追加
-2. **実装が一区切りついたら `/quality-check` skill を実行** (lint + test + 6 観点チェック一括)
+2. **実装が一区切りついたら `/quality-check` skill を実行** (lint + test + 観点チェック一括)
 3. Stop Hook で `secret-scan` → **テスト成功時のみ自動 commit & push** (lint/test 自体は /quality-check 側で実施済の前提)
 4. テスト失敗時はコミットせず、原因調査・修正後に再試行
 
-> **2026-05-01 改修**: Stop hook から `pnpm lint && pnpm test` (24 秒) と prompt-type 6 観点チェックを **`/quality-check` skill に分離**。応答ターンごとの重実行を解消し、開発速度を回復 (旧仕様は質問応答のみのターンでも 24 秒 + LLM 1 往復浪費)。詳細は DEVELOPER_GUIDE §5.50 を参照。
+> **2026-05-01 改修**: Stop hook から `pnpm lint && pnpm test` (24 秒) と prompt-type 観点チェックを **`/quality-check` skill に分離**。応答ターンごとの重実行を解消し、開発速度を回復 (旧仕様は質問応答のみのターンでも 24 秒 + LLM 1 往復浪費)。詳細は DEVELOPER_GUIDE §5.50 を参照。
 
 ### マージ
 - 開発者が GitHub 上で PR をマージ（手動）
@@ -87,24 +87,24 @@
 - **対象範囲は「テスト失敗」だけでない**: 罠 / 落とし穴 / 新しい実装パターン / 横展開発見 / 「次回も同じ作業をしそう」と感じた手順 — すべて Step 4 / 6 のナレッジ追記対象
 - **重複は許さない**: 同じ事象を 2 箇所に書かない。整理時に統合する (`/knowledge-organize`)
 - **前提が変わったら updatedAt と再発事例の連番を必ず付ける** (§10.5 の方式)
-- **`/quality-check` skill 実行時の項目 6** で「ナレッジ追記済か」を確認 (旧仕様の Stop prompt は応答ごと再発火で開発速度を著しく低下させたため 2026-05-01 に skill 化)
+- **`/quality-check` skill 実行時の項目で「ナレッジ追記済か」を確認** (旧仕様の Stop prompt は応答ごと再発火で開発速度を著しく低下させたため 2026-05-01 に skill 化)
 
 ## コミット前チェック（毎回必須）
 
 実装完了後、コミット前に以下を必ず実施する。詳細手順は各スキルを参照。
 
+> **2026-05-09 改訂**: 開発効率向上のため「セキュリティチェック」「パフォーマンスチェック」をローカルチェックから外した。代替として:
+> - **セキュリティ**: GitHub Actions `.github/workflows/security.yml` が `pnpm tsx scripts/security-check.ts --min-score=90` で **PR ごとに自動実行**。閾値 score 90/100 を CI で強制するため、手動チェックは不要。
+> - **パフォーマンス**: ユーザリクエストによる **都度対応** に切り替え。N+1 などの予防的検査は KDD ナレッジ (`docs/knowledge/KDD_PATTERNS.md`) で発見時のパターンを残し、再発防止に活用する。
+
 1. **横展開チェック** — 同一パターンを検索し漏れなく対応
-2. **セキュリティチェック** — 以下の仕組みで多層防御
-   - **自動ブロック (Hooks)**: 危険API (`eval`/`innerHTML`/`dangerouslySetInnerHTML`/動的`exec`)、機密ファイル (`.env`/`*.pem`/`*.key`) への編集、機密情報の混入を自動検知
-   - **観点別レビュー (Agents)**: `auth-reviewer` / `injection-reviewer` / `xss-reviewer` / `secret-reviewer` / `dependency-reviewer` を**並列実行**
-   - **設計段階 (Skill)**: 新機能実装前に `/threat-model` で STRIDE 分析を必須化
-   - **静的スキャン (Script)**: **PR 作成のたびに必須実行** (`/threat-model` skill Mode B-1 の 5 ステップ: ① 既存レポート削除 → ② `pnpm tsx scripts/security-check.ts` → ③ score < 90 なら `docs/security/SECURITY-TASKS.md` の Finding を CRITICAL/HIGH 順に修正してループ → ④ PR 作成 → ⑤ `gh pr comment` でスコア+件数を投稿)。**閾値 score 90/100** で退行ない状態を維持。スクリプト自体のメンテナンス (新 CWE 取り込み) も skill Mode B-2 参照
-   - **セキュリティテスト必須**: 認可境界、不正入力（SQLi/XSS payload）、認証バイパス試行のテストを追加
-3. **パフォーマンスチェック** — N+1禁止、不要な再描画、非同期並列化
-4. **デプロイチェック** — `pnpm lint` → `pnpm test` → `pnpm build` をローカル実行
-5. **単体テスト** — テスト数の増減を確認、旧文言の残留を検索
-6. **E2E カバレッジ横展開** (PR #90 以降) — 新規 `page.tsx` / `route.ts` を追加したら必ず `docs/test/E2E_COVERAGE.md` に追記する。`pnpm e2e:coverage-check` で gap 検出可、`ci.yml` でも強制
-7. **ドキュメント最新化** — 変更内容に応じて以下のドキュメントを必ず更新する (docs/ は PR #214 以降、役割別ディレクトリ構成。詳細は [docs/README.md](./docs/README.md) 参照)
+2. **退行（リグレッション）チェック (重点)** — ソースコード規模に応じて退行コストが膨らむため、本項を最重視する
+   - **単体テスト** (`pnpm test`): 1700+ 件、~12 秒。ローカルで実行し、差分が無いことを確認。テスト数の増減 / 旧文言残留もチェック
+   - **E2E カバレッジ横展開** (PR #90 以降): 新規 `page.tsx` / `route.ts` を追加したら必ず `docs/test/E2E_COVERAGE.md` に追記する。`pnpm e2e:coverage-check` で gap 検出可、`ci.yml` でも強制
+   - **ローカル単体テストと E2E は別観点**: 単体は「分岐ロジック / 認可マトリクス / 純粋関数」の高速検出、E2E は「画面 → API → DB の統合動作」の検出。両方とも継続する (詳細は 2026-05-09 改訂判断記録を参照)
+3. **デプロイチェック** — `pnpm lint` → `pnpm tsc --noEmit` → `pnpm test` → `pnpm build` をローカル実行
+4. **E2E ローカル実行 (任意)** — UI / API 変更時は `pnpm test:e2e` で事前検証。CI でも自動実行されるため必須ではないが、push → CI 失敗 → 修正の往復を減らす目的で推奨
+5. **ドキュメント最新化** — 変更内容に応じて以下のドキュメントを必ず更新する (docs/ は PR #214 以降、役割別ディレクトリ構成。詳細は [docs/README.md](./docs/README.md) 参照)
    - `README.md` — プロジェクト概要・セットアップ手順 (外部ユーザ向け)
    - `docs/business/` — ビジネスロジック (プロジェクトライフサイクル / テナント・課金 / ユーザロール / MVP スコープ)
    - `docs/specification/` — 機能仕様 (主要画面 / 権限マトリクス / UI 制御ルール)
