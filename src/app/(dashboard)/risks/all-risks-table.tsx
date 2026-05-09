@@ -263,11 +263,16 @@ export function AllRisksTable({
               </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AdminRiskDeleteButton
-                    projectId={r.projectId}
-                    riskId={r.id}
-                    label={r.title}
-                  />
+                  {/* PR feat/asset-multi-project-linking: 作成元が削除済 (projectId=null)
+                      の場合は紐付け済プロジェクトから 1 件 fallback を使う。両方無い orphan は
+                      admin が手動 cleanup する想定で本ボタンは出さない。 */}
+                  {(r.projectId ?? r.linkedProjectIds[0]) ? (
+                    <AdminRiskDeleteButton
+                      projectId={(r.projectId ?? r.linkedProjectIds[0])!}
+                      riskId={r.id}
+                      label={r.title}
+                    />
+                  ) : null}
                 </TableCell>
               )}
             </ClickableRow>

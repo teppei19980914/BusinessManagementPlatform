@@ -336,8 +336,17 @@ erDiagram
     tasks ||--o{ tasks : "parent-child"
     tasks ||--o{ task_progress_logs : "has"
     users ||--o{ task_progress_logs : "updates"
-    projects ||--o{ risks_issues : "has"
-    projects ||--o{ retrospectives : "has"
+    %% PR feat/asset-multi-project-linking (2026-05-09):
+    %%   risks_issues / retrospectives は M:N (中間テーブル経由)。
+    %%   `risks_issues.project_id` / `retrospectives.project_id` は「**作成元プロジェクト**」(audit) で
+    %%   ON DELETE SET NULL。検索 / 一覧 / cascade はすべて `risk_issue_projects` /
+    %%   `retrospective_projects` 経由で行う。
+    projects ||--o{ risks_issues : "creator (SET NULL)"
+    projects ||--o{ retrospectives : "creator (SET NULL)"
+    projects ||--o{ risk_issue_projects : "linked-by"
+    risks_issues ||--o{ risk_issue_projects : "linked-to"
+    projects ||--o{ retrospective_projects : "linked-by"
+    retrospectives ||--o{ retrospective_projects : "linked-to"
     %% PR #199: comments は polymorphic (entity_type + entity_id)。FK は持たないため
     %%   ER 図上では「持つ」リレーションを表現せず単独テーブルとして配置。
     projects ||--o{ decisions : "has"

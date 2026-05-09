@@ -22,7 +22,8 @@ import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 
 type RetroLike = {
   id: string;
-  projectId: string;
+  // PR feat/asset-multi-project-linking: 「作成元」projectId は M:N 化で nullable に
+  projectId: string | null;
   conductedDate: string;
   planSummary: string;
   actualSummary: string;

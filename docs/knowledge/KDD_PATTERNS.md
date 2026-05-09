@@ -4967,3 +4967,49 @@ PR E は `super-admin.service` に新規 3 関数 (Voyage / Anthropic / Beginner
 - [ ] **集計関数 (aggregate / groupBy) のテストは where 句の検証が肝**: 値の正しさだけでなく `notIn: [MANAGEMENT, DEFAULT]` の包含を `expect(...).toMatchObject({ where: { id: { notIn: [...] } } })` で検証する。回帰: テナント除外漏れは集計値の誤りに直結する
 - [ ] **現在時刻に依存する関数は `daysAgo(N)` のような相対日付ヘルパで再現**: `Date.now()` を直接モックすると beforeEach での復元忘れによる他テスト汚染リスクがある。今回は `getBeginnerExpiryState` のテストで採用
 - [ ] **PR 提出前にローカルで `pnpm test --coverage` を実行**: CI で発覚すると 1 サイクル余分 (CI fail → 修正 → 再 push)。ローカル実行 1 分で同じ情報が得られる
+
+## 5.X+8 1:N → M:N への asset 紐付けモデル変更パターン (PR feat/asset-multi-project-linking / 2026-05-09)
+
+### 背景
+
+`Knowledge` は当初から M:N (`KnowledgeProject` 中間テーブル) で複数プロジェクトに紐付け可能だったが、
+`RiskIssue` / `Retrospective` は単一 `projectId` の 1:N で「1 リスク = 1 プロジェクト専属」だった。
+ユーザ要件: 「**A プロジェクトで作成した資産を B でも紐付けたい。A 削除でも B が参照中なら資産は残す。
+最後の紐付けプロジェクト削除時に cascade 選択した場合のみ物理削除する**」を満たすため、
+リスク/課題/振り返りも Knowledge と同じ M:N モデルに統一した。
+
+### 移行で踏んだ落とし穴
+
+#### 落とし穴 1: `project_id` を NOT NULL のまま残すと cascade 削除で FK 違反
+
+旧スキーマでは `risks_issues.project_id` は NOT NULL + RESTRICT FK。M:N 化後も「作成元プロジェクト」
+(audit 用) として残置したかったが、project 削除時に「資産は残し createdInProjectId を NULL に」
+を実現するには **nullable + ON DELETE SET NULL** に変更が必要。NOT NULL のままだと FK 違反で
+project.delete が失敗する。
+
+#### 落とし穴 2: 「このプロジェクトの一覧」query の where 句
+
+旧 `where: { projectId }` は「作成元一致」を意味する別概念になる。新仕様では「このプロジェクトに **紐付け済**」
+を意味する `where: { riskIssueProjects: { some: { projectId } } }` に置換する必要がある。
+影響範囲は service / API / sync-import / data-export と広い。**全件検索で `where: { projectId }` を
+置き忘れると「自プロジェクトで作ったレコードしか見えなくなる」regression** が起きる。
+
+#### 落とし穴 3: DTO の projectId 型変更が UI 型まで波及
+
+`RiskDTO.projectId: string` → `string | null` にすると、`RiskLike` / `RetroLike` などの dialog 用
+小型インターフェイスにも null 化を伝播させないと TS error 連鎖。**DTO 変更時は依存型を grep で全件
+洗い出して同 PR で修正**。
+
+#### 落とし穴 4: API ルートの「このプロジェクトのレコードか」判定
+
+`GET /api/projects/:projectId/risks/:riskId` 等で `existing.projectId !== projectId` で「他プロジェクト
+の risk を弾く」していた。新仕様では `!existing.linkedProjectIds.includes(projectId)` に置き換え。
+`linkedProjectIds: string[]` を DTO に追加する必要がある (`include: { riskIssueProjects: { ... } }`)。
+
+### 抽出したルール
+
+- [ ] **1:N → M:N への移行は 5 つのレイヤーをすべて触る**: ① Schema (中間テーブル + nullable + SET NULL) → ② Migration (既存データを M:N にコピー + ALTER COLUMN) → ③ Service (where 句を `riskIssueProjects: { some: { projectId } }` に) → ④ API ルート (`linkedProjectIds.includes(projectId)` チェックに) → ⑤ DTO/UI 型 (projectId を nullable に + linkedProjectIds 追加)
+- [ ] **Knowledge 既存実装をリファレンスに**: 同型移行 (RiskIssueProject / RetrospectiveProject) は KnowledgeProject の cascade ロジック / linkXxx pattern をコピペベースで進められる。差分はエンティティ名のみ
+- [ ] **「作成元プロジェクト」を残すなら必ず SET NULL FK**: NOT NULL + RESTRICT のままでは project 削除時に FK violation が発生し、cascade 選択しなかった場合の orphan 化が成立しない
+- [ ] **新中間テーブル追加時は data-export.service と sync-import.service も忘れずに更新**: tenant export ZIP に新中間テーブル JSON を含める / sync-import の `existing` 取得を M:N 経由に変更。漏れると「export 後の re-import で紐付けが消える」silent data loss
+- [ ] **「最後の紐付けが消えたら物理削除」ロジック**: deleteProjectCascade で `prisma.X.count({ where: { Yid } }) <= 1` なら delete、超えていれば unlink のみ。Knowledge §752-784 の既存ロジックを横展開

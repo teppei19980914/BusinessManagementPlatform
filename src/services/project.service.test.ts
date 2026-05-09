@@ -11,8 +11,21 @@ vi.mock('@/lib/db', () => ({
       delete: vi.fn(),
       count: vi.fn(),
     },
-    riskIssue: { findMany: vi.fn(), deleteMany: vi.fn() },
-    retrospective: { findMany: vi.fn(), deleteMany: vi.fn() },
+    riskIssue: { findMany: vi.fn(), deleteMany: vi.fn(), delete: vi.fn() },
+    retrospective: { findMany: vi.fn(), deleteMany: vi.fn(), delete: vi.fn() },
+    // PR feat/asset-multi-project-linking: M:N 中間テーブルのモック追加
+    riskIssueProject: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    retrospectiveProject: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     comment: { deleteMany: vi.fn() },
     knowledgeProject: {
       findMany: vi.fn(),
@@ -803,51 +816,91 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     });
   });
 
-  it('cascadeRisks=true: リスク (type=risk) と添付を物理削除', async () => {
-    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-      { id: 'r-1' },
-      { id: 'r-2' },
+  // PR feat/asset-multi-project-linking: 新仕様 = Knowledge と同型の M:N 経由カスケード
+  //   linkCount > 1 → unlink のみ / linkCount = 1 → 本体物理削除
+  it('cascadeRisks=true (単独紐付け): 本体 + 添付 + コメントを物理削除', async () => {
+    vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([
+      { riskIssueId: 'r-1' },
+      { riskIssueId: 'r-2' },
     ] as never);
-    vi.mocked(prisma.riskIssue.deleteMany).mockResolvedValue({ count: 2 } as never);
+    // 各 risk の linkCount = 1 (この project 以外の参照なし) → 物理削除
+    vi.mocked(prisma.riskIssueProject.count).mockResolvedValue(1);
+    vi.mocked(prisma.riskIssueProject.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.riskIssue.delete).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.deleteMany).mockResolvedValue({ count: 5 } as never);
 
     const r = await deleteProjectCascade('p-1', { cascadeRisks: true });
 
     expect(r.risks).toBe(2);
-    // riskIssue.findMany は type='risk' でフィルタ
-    const riskFindCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(riskFindCall.where).toEqual(expect.objectContaining({ type: 'risk' }));
-    expect(prisma.attachment.deleteMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ entityType: 'risk', entityId: { in: ['r-1', 'r-2'] } }),
-      }),
-    );
+    // findMany は projectId + type='risk' で絞り込み
+    const findCall = vi.mocked(prisma.riskIssueProject.findMany).mock.calls[0][0];
+    expect(findCall.where).toEqual({ projectId: 'p-1', riskIssue: { type: 'risk' } });
+    // 本体 delete が 2 件分呼ばれる
+    expect(prisma.riskIssue.delete).toHaveBeenCalledTimes(2);
   });
 
-  it('cascadeIssues=true: 課題 (type=issue) のみ削除 (リスクは残す)', async () => {
-    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([{ id: 'i-1' }] as never);
-    vi.mocked(prisma.riskIssue.deleteMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(prisma.attachment.deleteMany).mockResolvedValue({ count: 0 } as never);
+  it('cascadeRisks=true (他プロジェクト参照あり): 本体は残し M:N 行のみ削除 (unlink)', async () => {
+    vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([
+      { riskIssueId: 'r-1' },
+    ] as never);
+    // linkCount = 2 → unlink のみ
+    vi.mocked(prisma.riskIssueProject.count).mockResolvedValue(2);
+    vi.mocked(prisma.riskIssueProject.delete).mockResolvedValue({} as never);
+
+    const r = await deleteProjectCascade('p-1', { cascadeRisks: true });
+
+    expect(r.risks).toBe(0); // 本体は削除されていない
+    // 単独 unlink delete が呼ばれる
+    expect(prisma.riskIssueProject.delete).toHaveBeenCalledWith({
+      where: { riskIssueId_projectId: { riskIssueId: 'r-1', projectId: 'p-1' } },
+    });
+    expect(prisma.riskIssue.delete).not.toHaveBeenCalled();
+  });
+
+  it('cascadeIssues=true (単独紐付け): 課題本体を物理削除', async () => {
+    vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([
+      { riskIssueId: 'i-1' },
+    ] as never);
+    vi.mocked(prisma.riskIssueProject.count).mockResolvedValue(1);
+    vi.mocked(prisma.riskIssueProject.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.riskIssue.delete).mockResolvedValue({} as never);
 
     const r = await deleteProjectCascade('p-1', { cascadeIssues: true });
 
     expect(r.issues).toBe(1);
     expect(r.risks).toBe(0);
-    const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(call.where).toEqual(expect.objectContaining({ type: 'issue' }));
+    const findCall = vi.mocked(prisma.riskIssueProject.findMany).mock.calls[0][0];
+    expect(findCall.where).toEqual({ projectId: 'p-1', riskIssue: { type: 'issue' } });
   });
 
-  it('cascadeRetros=true: 振り返り + コメントを物理削除', async () => {
-    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
-      { id: 'ret-1' },
+  it('cascadeRetros=true (単独紐付け): 振り返り本体 + コメントを物理削除', async () => {
+    vi.mocked(prisma.retrospectiveProject.findMany).mockResolvedValue([
+      { retrospectiveId: 'ret-1' },
     ] as never);
-    vi.mocked(prisma.retrospective.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.retrospectiveProject.count).mockResolvedValue(1);
+    vi.mocked(prisma.retrospectiveProject.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.retrospective.delete).mockResolvedValue({} as never);
     vi.mocked(prisma.comment.deleteMany).mockResolvedValue({ count: 2 } as never);
 
     const r = await deleteProjectCascade('p-1', { cascadeRetros: true });
 
     expect(r.retrospectives).toBe(1);
     expect(prisma.comment.deleteMany).toHaveBeenCalled();
+    expect(prisma.retrospective.delete).toHaveBeenCalledWith({ where: { id: 'ret-1' } });
+  });
+
+  it('cascadeRetros=true (他プロジェクト参照あり): 本体は残し unlink', async () => {
+    vi.mocked(prisma.retrospectiveProject.findMany).mockResolvedValue([
+      { retrospectiveId: 'ret-1' },
+    ] as never);
+    vi.mocked(prisma.retrospectiveProject.count).mockResolvedValue(2);
+    vi.mocked(prisma.retrospectiveProject.delete).mockResolvedValue({} as never);
+
+    const r = await deleteProjectCascade('p-1', { cascadeRetros: true });
+
+    expect(r.retrospectives).toBe(0);
+    expect(prisma.retrospective.delete).not.toHaveBeenCalled();
+    expect(prisma.retrospectiveProject.delete).toHaveBeenCalled();
   });
 
   it('cascadeKnowledge=true: 他プロジェクト共有のナレッジは unlink (本体残存)', async () => {
@@ -887,15 +940,22 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     ).toBe(true);
   });
 
-  it('全フラグ true: すべて物理削除して count を返す', async () => {
-    vi.mocked(prisma.riskIssue.findMany)
-      .mockResolvedValueOnce([{ id: 'r-1' }] as never) // risk
-      .mockResolvedValueOnce([{ id: 'i-1' }, { id: 'i-2' }] as never); // issue
-    vi.mocked(prisma.riskIssue.deleteMany)
-      .mockResolvedValueOnce({ count: 1 } as never)
-      .mockResolvedValueOnce({ count: 2 } as never);
-    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([{ id: 'ret-1' }] as never);
-    vi.mocked(prisma.retrospective.deleteMany).mockResolvedValue({ count: 1 } as never);
+  it('全フラグ true: 単独紐付けは物理削除、共有資産は unlink (Knowledge と同型)', async () => {
+    // PR feat/asset-multi-project-linking: 全 asset 種類で M:N + linkCount 判定
+    vi.mocked(prisma.riskIssueProject.findMany)
+      .mockResolvedValueOnce([{ riskIssueId: 'r-1' }] as never) // type=risk
+      .mockResolvedValueOnce([{ riskIssueId: 'i-1' }, { riskIssueId: 'i-2' }] as never); // type=issue
+    vi.mocked(prisma.riskIssueProject.count).mockResolvedValue(1); // すべて単独紐付け
+    vi.mocked(prisma.riskIssueProject.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.riskIssue.delete).mockResolvedValue({} as never);
+
+    vi.mocked(prisma.retrospectiveProject.findMany).mockResolvedValue([
+      { retrospectiveId: 'ret-1' },
+    ] as never);
+    vi.mocked(prisma.retrospectiveProject.count).mockResolvedValue(1);
+    vi.mocked(prisma.retrospectiveProject.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.retrospective.delete).mockResolvedValue({} as never);
+
     vi.mocked(prisma.comment.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([]);
 

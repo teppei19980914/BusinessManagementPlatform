@@ -254,9 +254,13 @@ export async function computeRiskSyncDiff(
     return result;
   }
 
+  // PR feat/asset-multi-project-linking: M:N 化により「このプロジェクトに紐付け済」のリスクを取得
   const [existingRisks, members] = await Promise.all([
     prisma.riskIssue.findMany({
-      where: { projectId, deletedAt: null },
+      where: {
+        deletedAt: null,
+        riskIssueProjects: { some: { projectId } },
+      },
       select: {
         id: true, projectId: true, type: true, title: true, content: true,
         cause: true, impact: true, likelihood: true, priority: true,
@@ -493,8 +497,12 @@ export async function applyRiskSyncImport(
   }
 
   // 3. snapshot
+  // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付け済」のリスクのスナップショット
   const snapshot = await prisma.riskIssue.findMany({
-    where: { projectId, deletedAt: null },
+    where: {
+      deletedAt: null,
+      riskIssueProjects: { some: { projectId } },
+    },
   });
   const snapshotById = new Map(snapshot.map((r) => [r.id, r]));
 
@@ -545,11 +553,13 @@ export async function applyRiskSyncImport(
         });
         updatedIds.push(row.id);
       } else {
+        // PR feat/asset-multi-project-linking: M:N 紐付けも create で同時に作成
         const created = await prisma.riskIssue.create({
           data: {
             ...data,
             reporterId: userId,
             createdBy: userId,
+            riskIssueProjects: { create: [{ projectId }] },
           },
         });
         createdIds.push(created.id);
@@ -654,8 +664,13 @@ export async function exportRisksSync(
   const isAdmin = viewerSystemRole === 'admin';
   const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
 
+  // PR feat/asset-multi-project-linking: M:N 化で「このプロジェクトに紐付け済」を export
   const risks = await prisma.riskIssue.findMany({
-    where: { projectId, deletedAt: null, ...visibilityWhere },
+    where: {
+      deletedAt: null,
+      ...visibilityWhere,
+      riskIssueProjects: { some: { projectId } },
+    },
     include: { assignee: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });

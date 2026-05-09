@@ -81,7 +81,8 @@ export type PastIssueSuggestion = SuggestionScore & {
   id: string;
   title: string;
   snippet: string;
-  sourceProjectId: string;
+  // PR feat/asset-multi-project-linking: 作成元 project が削除済の場合 null
+  sourceProjectId: string | null;
   sourceProjectName: string | null;
 };
 
@@ -95,7 +96,8 @@ export type RetrospectiveSuggestion = SuggestionScore & {
   id: string;
   conductedDate: string;
   snippet: string;
-  sourceProjectId: string;
+  // PR feat/asset-multi-project-linking: 作成元 project が削除済の場合 null
+  sourceProjectId: string | null;
   sourceProjectName: string | null;
 };
 
@@ -112,7 +114,8 @@ export type PastRiskSuggestion = SuggestionScore & {
   id: string;
   title: string;
   snippet: string;
-  sourceProjectId: string;
+  // PR feat/asset-multi-project-linking: 作成元 project が削除済の場合 null
+  sourceProjectId: string | null;
   sourceProjectName: string | null;
 };
 
@@ -370,13 +373,15 @@ export async function suggestForProject(
   //   利用することで Knowledge と同等の tag-aware なマッチングを実現する。
   //   semantic な妥当性: 「同じドメイン (e.g. fintech) のプロジェクトで起きた issue は
   //   別ドメインの issue より関連性が高い」。schema 変更不要。
+  // PR feat/asset-multi-project-linking: 既に自プロジェクトに紐付け済の課題は提案候補から除外
+  //   (Knowledge と同型の where 句)。「参考」タブに自分の一覧と同じものが並ぶ UX ノイズを回避。
   const issues = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
       type: 'issue',
       state: 'resolved',
       ...excludeManagementTenant,
-      NOT: { projectId },
+      NOT: { riskIssueProjects: { some: { projectId } } },
     },
     select: {
       id: true,
@@ -442,13 +447,14 @@ export async function suggestForProject(
   // 自プロジェクトの未解消 risk は普段の「リスク一覧」で見られるので除外。
   // 旧仕様 (PR #65) で除外していたが、過去対応事例は次プロジェクトの先回り設計に役立つ
   // ため #21 で再導入。Issue と同じ tag-aware 設計 (親 Project のタグを proxy に使用)。
+  // PR feat/asset-multi-project-linking: 既に自プロジェクトに紐付け済のリスクは候補から除外。
   const risks = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
       type: 'risk',
       state: 'resolved',
       ...excludeManagementTenant,
-      NOT: { projectId },
+      NOT: { riskIssueProjects: { some: { projectId } } },
     },
     select: {
       id: true,
@@ -514,12 +520,13 @@ export async function suggestForProject(
   // タグスコア (PR #140 後 改修):
   //   Retrospective 自体は DB にタグ列を持たないが、Issue と同じく **親 Project の
   //   タグを proxy** として使う。Knowledge と同等の tag-aware マッチングに統一。
+  // PR feat/asset-multi-project-linking: 既に自プロジェクトに紐付け済の振り返りは候補から除外。
   const retros = await prisma.retrospective.findMany({
     where: {
       deletedAt: null,
       visibility: 'public',
       ...excludeManagementTenant,
-      NOT: { projectId },
+      NOT: { retrospectiveProjects: { some: { projectId } } },
     },
     select: {
       id: true,
@@ -700,12 +707,13 @@ export async function suggestRelatedIssuesForText(
   const trimmed = inputText.trim();
   if (trimmed.length < 10) return []; // 10 文字未満はノイズ多いので走らせない
 
+  // PR feat/asset-multi-project-linking: M:N 経由で自プロジェクト紐付け済を除外
   const issues = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
       type: 'issue',
       state: 'resolved',
-      NOT: { projectId: currentProjectId },
+      NOT: { riskIssueProjects: { some: { projectId: currentProjectId } } },
     },
     select: {
       id: true,

@@ -27,7 +27,8 @@ export async function GET(
   if (forbidden) return forbidden;
   // 2026-04-24: draft は作成者/admin のみ参照可。他人の draft は null が返る。
   const risk = await getRisk(riskId, user.id, user.systemRole);
-  if (!risk || risk.projectId !== projectId) {
+  // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付け済」かを linkedProjectIds で判定
+  if (!risk || !risk.linkedProjectIds.includes(projectId)) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
   return NextResponse.json({ data: risk });
@@ -43,7 +44,8 @@ export async function PATCH(
 
   // 2026-04-24: 内部呼び出し (既存検証) は認可引数なしで取得。FORBIDDEN 判定は service 層で実施。
   const existing = await getRisk(riskId);
-  if (!existing || existing.projectId !== projectId) {
+  // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
+  if (!existing || !existing.linkedProjectIds.includes(projectId)) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
 
@@ -99,7 +101,8 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'risk:read');
   if (forbidden) return forbidden;
   const existing = await getRisk(riskId);
-  if (!existing || existing.projectId !== projectId) {
+  // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
+  if (!existing || !existing.linkedProjectIds.includes(projectId)) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
   try {

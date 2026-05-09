@@ -25,7 +25,8 @@ export async function PATCH(
   const t = await getTranslations('message');
 
   const existing = await getRetrospective(retroId);
-  if (!existing || existing.projectId !== projectId) {
+  // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
+  if (!existing || !existing.linkedProjectIds.includes(projectId)) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
@@ -81,7 +82,8 @@ export async function DELETE(
   const t = await getTranslations('message');
 
   const existing = await getRetrospective(retroId);
-  if (!existing || existing.projectId !== projectId) {
+  // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
+  if (!existing || !existing.linkedProjectIds.includes(projectId)) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },

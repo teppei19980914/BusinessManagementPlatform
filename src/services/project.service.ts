@@ -676,76 +676,93 @@ export async function deleteProjectCascade(
   const taskIds = tasks.map((t) => t.id);
   const estimateIds = estimates.map((e) => e.id);
 
+  // PR feat/asset-multi-project-linking (2026-05-09):
+  //   リスク/課題/振り返り も Knowledge 同型の「最後の紐付けが消えた時のみ物理削除」モデルに統一。
+  //   このプロジェクトに紐付いている asset を取得し、紐付け数 > 1 なら unlink のみ、=1 なら物理削除。
+  //   cascadeXxx=true の選択でも他プロジェクトが参照中なら本体は残す (ユーザ要件)。
+
   // ---------- 条件付き: リスク (type='risk') ----------
   if (cascadeRisks) {
-    const riskIds = (
-      await prisma.riskIssue.findMany({
-        where: { projectId, type: 'risk' },
-        select: { id: true },
-      })
-    ).map((r) => r.id);
-    if (riskIds.length > 0) {
-      const attRes = await prisma.attachment.deleteMany({
-        where: { entityType: 'risk', entityId: { in: riskIds } },
-      });
-      attachmentsDeleted += attRes.count;
-      // PR fix/visibility-auth-matrix (2026-05-01): comments も cascade 物理削除 (§5.51)
-      await prisma.comment.deleteMany({
-        where: { entityType: 'risk', entityId: { in: riskIds } },
-      });
-      const delRes = await prisma.riskIssue.deleteMany({
-        where: { id: { in: riskIds } },
-      });
-      risksCount = delRes.count;
+    const linkedRisks = await prisma.riskIssueProject.findMany({
+      where: { projectId, riskIssue: { type: 'risk' } },
+      select: { riskIssueId: true },
+    });
+    for (const { riskIssueId } of linkedRisks) {
+      const linkCount = await prisma.riskIssueProject.count({ where: { riskIssueId } });
+      if (linkCount <= 1) {
+        // 他に紐付け無し → 本体 + attachment + comment を物理削除
+        const attRes = await prisma.attachment.deleteMany({
+          where: { entityType: 'risk', entityId: riskIssueId },
+        });
+        attachmentsDeleted += attRes.count;
+        await prisma.comment.deleteMany({
+          where: { entityType: 'risk', entityId: riskIssueId },
+        });
+        await prisma.riskIssueProject.deleteMany({ where: { riskIssueId } });
+        await prisma.riskIssue.delete({ where: { id: riskIssueId } });
+        risksCount++;
+      } else {
+        // 他プロジェクトが参照中 → 紐付けのみ解除し本体は残す
+        await prisma.riskIssueProject.delete({
+          where: { riskIssueId_projectId: { riskIssueId, projectId } },
+        });
+      }
     }
   }
 
   // ---------- 条件付き: 課題 (type='issue') ----------
   if (cascadeIssues) {
-    const issueIds = (
-      await prisma.riskIssue.findMany({
-        where: { projectId, type: 'issue' },
-        select: { id: true },
-      })
-    ).map((i) => i.id);
-    if (issueIds.length > 0) {
-      const attRes = await prisma.attachment.deleteMany({
-        where: { entityType: 'risk', entityId: { in: issueIds } },
-      });
-      attachmentsDeleted += attRes.count;
-      // PR fix/visibility-auth-matrix: comments も cascade 物理削除 (§5.51)
-      await prisma.comment.deleteMany({
-        where: { entityType: 'issue', entityId: { in: issueIds } },
-      });
-      const delRes = await prisma.riskIssue.deleteMany({
-        where: { id: { in: issueIds } },
-      });
-      issuesCount = delRes.count;
+    const linkedIssues = await prisma.riskIssueProject.findMany({
+      where: { projectId, riskIssue: { type: 'issue' } },
+      select: { riskIssueId: true },
+    });
+    for (const { riskIssueId } of linkedIssues) {
+      const linkCount = await prisma.riskIssueProject.count({ where: { riskIssueId } });
+      if (linkCount <= 1) {
+        const attRes = await prisma.attachment.deleteMany({
+          where: { entityType: 'risk', entityId: riskIssueId },
+        });
+        attachmentsDeleted += attRes.count;
+        await prisma.comment.deleteMany({
+          where: { entityType: 'issue', entityId: riskIssueId },
+        });
+        await prisma.riskIssueProject.deleteMany({ where: { riskIssueId } });
+        await prisma.riskIssue.delete({ where: { id: riskIssueId } });
+        issuesCount++;
+      } else {
+        await prisma.riskIssueProject.delete({
+          where: { riskIssueId_projectId: { riskIssueId, projectId } },
+        });
+      }
     }
   }
 
   // ---------- 条件付き: 振り返り ----------
   if (cascadeRetros) {
-    const retroIds = (
-      await prisma.retrospective.findMany({
-        where: { projectId },
-        select: { id: true },
-      })
-    ).map((r) => r.id);
-    if (retroIds.length > 0) {
-      const attRes = await prisma.attachment.deleteMany({
-        where: { entityType: 'retrospective', entityId: { in: retroIds } },
+    const linkedRetros = await prisma.retrospectiveProject.findMany({
+      where: { projectId },
+      select: { retrospectiveId: true },
+    });
+    for (const { retrospectiveId } of linkedRetros) {
+      const linkCount = await prisma.retrospectiveProject.count({
+        where: { retrospectiveId },
       });
-      attachmentsDeleted += attRes.count;
-      // PR #199: 旧 retrospective_comments は polymorphic comments に統合済。
-      //   retrospective 削除時は entityType='retrospective' のコメントも一括削除する。
-      await prisma.comment.deleteMany({
-        where: { entityType: 'retrospective', entityId: { in: retroIds } },
-      });
-      const delRes = await prisma.retrospective.deleteMany({
-        where: { id: { in: retroIds } },
-      });
-      retrosCount = delRes.count;
+      if (linkCount <= 1) {
+        const attRes = await prisma.attachment.deleteMany({
+          where: { entityType: 'retrospective', entityId: retrospectiveId },
+        });
+        attachmentsDeleted += attRes.count;
+        await prisma.comment.deleteMany({
+          where: { entityType: 'retrospective', entityId: retrospectiveId },
+        });
+        await prisma.retrospectiveProject.deleteMany({ where: { retrospectiveId } });
+        await prisma.retrospective.delete({ where: { id: retrospectiveId } });
+        retrosCount++;
+      } else {
+        await prisma.retrospectiveProject.delete({
+          where: { retrospectiveId_projectId: { retrospectiveId, projectId } },
+        });
+      }
     }
   }
 

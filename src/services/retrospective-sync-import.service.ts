@@ -172,8 +172,12 @@ export async function computeRetrospectiveSyncDiff(
     return result;
   }
 
+  // PR feat/asset-multi-project-linking: M:N 化により「このプロジェクトに紐付け済」を取得
   const existingRetros = await prisma.retrospective.findMany({
-    where: { projectId, deletedAt: null },
+    where: {
+      deletedAt: null,
+      retrospectiveProjects: { some: { projectId } },
+    },
     select: {
       id: true, projectId: true, conductedDate: true,
       planSummary: true, actualSummary: true, goodPoints: true, problems: true,
@@ -339,7 +343,13 @@ export async function applyRetrospectiveSyncImport(
     }
   }
 
-  const snapshot = await prisma.retrospective.findMany({ where: { projectId, deletedAt: null } });
+  // PR feat/asset-multi-project-linking: M:N 紐付け済のスナップショット
+  const snapshot = await prisma.retrospective.findMany({
+    where: {
+      deletedAt: null,
+      retrospectiveProjects: { some: { projectId } },
+    },
+  });
   const snapshotById = new Map(snapshot.map((r) => [r.id, r]));
 
   const createdIds: string[] = [];
@@ -369,8 +379,13 @@ export async function applyRetrospectiveSyncImport(
         await prisma.retrospective.update({ where: { id: row.id }, data });
         updatedIds.push(row.id);
       } else {
+        // PR feat/asset-multi-project-linking: M:N 紐付けも create で同時に作成
         const created = await prisma.retrospective.create({
-          data: { ...data, createdBy: userId },
+          data: {
+            ...data,
+            createdBy: userId,
+            retrospectiveProjects: { create: [{ projectId }] },
+          },
         });
         createdIds.push(created.id);
       }
@@ -455,8 +470,13 @@ export async function exportRetrospectivesSync(
   const isAdmin = viewerSystemRole === 'admin';
   const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
 
+  // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付け済」を export
   const retros = await prisma.retrospective.findMany({
-    where: { projectId, deletedAt: null, ...visibilityWhere },
+    where: {
+      deletedAt: null,
+      ...visibilityWhere,
+      retrospectiveProjects: { some: { projectId } },
+    },
     orderBy: { conductedDate: 'desc' },
   });
 

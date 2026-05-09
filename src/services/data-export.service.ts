@@ -81,7 +81,10 @@ export type ExportSummary = {
     knowledge: number;
     knowledgeProjects: number;
     risksIssues: number;
+    // PR feat/asset-multi-project-linking: M:N 紐付け行数も含める
+    riskIssueProjects: number;
     retrospectives: number;
+    retrospectiveProjects: number;
     memos: number;
     customers: number;
     stakeholders: number;
@@ -121,7 +124,9 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
     knowledge,
     knowledgeProjects,
     risksIssues,
+    riskIssueProjects,
     retrospectives,
+    retrospectiveProjects,
     memos,
     customers,
     stakeholders,
@@ -160,9 +165,16 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
       where: { tenantId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
     }),
+    // PR feat/asset-multi-project-linking: M:N 中間テーブルを export に含める
+    prisma.riskIssueProject.findMany({
+      where: { riskIssue: { tenantId } },
+    }),
     prisma.retrospective.findMany({
       where: { tenantId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
+    }),
+    prisma.retrospectiveProject.findMany({
+      where: { retrospective: { tenantId } },
     }),
     prisma.memo.findMany({
       where: { tenantId, deletedAt: null },
@@ -224,7 +236,10 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
       knowledge: knowledge.length,
       knowledgeProjects: knowledgeProjects.length,
       risksIssues: risksIssues.length,
+      // PR feat/asset-multi-project-linking: M:N 紐付けの行数も summary に含める
+      riskIssueProjects: riskIssueProjects.length,
       retrospectives: retrospectives.length,
+      retrospectiveProjects: retrospectiveProjects.length,
       memos: memos.length,
       customers: customers.length,
       stakeholders: stakeholders.length,
@@ -248,7 +263,9 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
   dataDir.file('knowledge.json', toJson(stripEmbedding(knowledge as never)));
   dataDir.file('knowledge_projects.json', toJson(knowledgeProjects));
   dataDir.file('risks_issues.json', toJson(stripEmbedding(risksIssues as never)));
+  dataDir.file('risk_issue_projects.json', toJson(riskIssueProjects));
   dataDir.file('retrospectives.json', toJson(stripEmbedding(retrospectives as never)));
+  dataDir.file('retrospective_projects.json', toJson(retrospectiveProjects));
   dataDir.file('memos.json', toJson(stripEmbedding(memos as never)));
   dataDir.file('customers.json', toJson(customers));
   dataDir.file('stakeholders.json', toJson(stakeholders));

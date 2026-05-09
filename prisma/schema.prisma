@@ -415,8 +415,13 @@ model Project {
   members                ProjectMember[]
   estimates              Estimate[]
   tasks                  Task[]
+  // PR feat/asset-multi-project-linking: `risksIssues` / `retrospectives` は **作成元** が
+  //   このプロジェクトである行のみを返す (新仕様)。プロジェクトが「参照中」の資産一覧は
+  //   `riskIssueProjects` / `retrospectiveProjects` (M:N 中間) を辿ること。
   risksIssues            RiskIssue[]
   retrospectives         Retrospective[]
+  riskIssueProjects      RiskIssueProject[]
+  retrospectiveProjects  RetrospectiveProject[]
   knowledgeProjects      KnowledgeProject[]
   stakeholders           Stakeholder[]
   suggestionExplanations SuggestionExplanation[]
@@ -553,7 +558,11 @@ model RiskIssue {
   id               String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // PR #2: tenant 配属 (DEFAULT default-tenant)
   tenantId         String                       @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
-  projectId        String                       @map("project_id") @db.Uuid
+  // PR feat/asset-multi-project-linking (2026-05-09):
+  //   M:N 化に伴い「**作成元プロジェクト** (createdInProject)」の意味に変更。nullable + SET NULL。
+  //   作成元 project が物理削除された後はこの値が NULL となり、資産は他リンクが残れば生存する。
+  //   全プロジェクトから紐付け解除された場合の orphan 状態を許容する (ユーザ要件)。
+  projectId        String?                      @map("project_id") @db.Uuid
   type             String                       @db.VarChar(10) // risk | issue
   title            String                       @db.VarChar(100)
   content          String                       @db.Text
@@ -580,15 +589,41 @@ model RiskIssue {
   deletedAt        DateTime?                    @map("deleted_at") @db.Timestamptz
 
   tenant   Tenant  @relation(fields: [tenantId], references: [id])
-  project  Project @relation(fields: [projectId], references: [id])
-  reporter User    @relation("RiskReporter", fields: [reporterId], references: [id])
-  assignee User?   @relation("RiskAssignee", fields: [assigneeId], references: [id])
+  // PR feat/asset-multi-project-linking (2026-05-09):
+  //   `projectId` は M:N 化に伴い「**作成元プロジェクト** (audit/UI 上の起源表示用)」に意味が変わる。
+  //   検索 / 一覧 / cascade 駆動はすべて `riskIssueProjects` (中間テーブル) 経由になる。
+  //   従って `Project @relation` は audit 用に残すが、code 上は `riskIssueProjects: { some: { projectId } }`
+  //   形のフィルタを使用すること。直接 `where: { projectId }` は **作成元一致** を意味する別概念。
+  //   ON DELETE SET NULL: 作成元 project 物理削除時に projectId は NULL になる (orphan 許容)。
+  project              Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  reporter             User                 @relation("RiskReporter", fields: [reporterId], references: [id])
+  assignee             User?                @relation("RiskAssignee", fields: [assigneeId], references: [id])
+  riskIssueProjects    RiskIssueProject[]
 
   @@index([projectId, type], map: "idx_risks_project")
   @@index([state, priority], map: "idx_risks_state")
   @@index([assigneeId], map: "idx_risks_assignee")
   @@index([tenantId], map: "idx_risks_tenant")
   @@map("risks_issues")
+}
+
+/// PR feat/asset-multi-project-linking (2026-05-09):
+///   リスク/課題と Project の M:N 中間テーブル。Knowledge の KnowledgeProject と同設計。
+///   作成時 (作成元プロジェクト=A) は (riskIssueId, A) を 1 行 insert。
+///   B が「参考」タブから紐付けると (riskIssueId, B) を追加 insert。
+///   A が削除される時、cascadeRisks 選択でも他に紐付けが残れば本体は残し RiskIssueProject 行のみ削除。
+///   最後の紐付け解除時のみ本体 / attachment / comment が物理削除される (KnowledgeProject 既存動作と同型)。
+model RiskIssueProject {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  riskIssueId String @map("risk_issue_id") @db.Uuid
+  projectId   String @map("project_id") @db.Uuid
+
+  riskIssue RiskIssue @relation(fields: [riskIssueId], references: [id], onDelete: Cascade)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([riskIssueId, projectId])
+  @@index([projectId], map: "idx_risk_issue_projects_project")
+  @@map("risk_issue_projects")
 }
 
 // ============================================================
@@ -733,7 +768,9 @@ model Retrospective {
   id                     String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // PR #2: tenant 配属 (DEFAULT default-tenant)
   tenantId               String                       @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
-  projectId              String                       @map("project_id") @db.Uuid
+  // PR feat/asset-multi-project-linking (2026-05-09):
+  //   作成元プロジェクト (createdInProject)。M:N 化で audit 用、SET NULL で orphan 許容。
+  projectId              String?                      @map("project_id") @db.Uuid
   conductedDate          DateTime                     @map("conducted_date") @db.Date
   planSummary            String                       @map("plan_summary") @db.Text
   actualSummary          String                       @map("actual_summary") @db.Text
@@ -756,11 +793,30 @@ model Retrospective {
   deletedAt              DateTime?                    @map("deleted_at") @db.Timestamptz
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id])
-  project Project @relation(fields: [projectId], references: [id])
+  // PR feat/asset-multi-project-linking: `projectId` は「作成元プロジェクト」を意味する audit 用フィールド。
+  // 検索 / 一覧 / cascade は retrospectiveProjects (M:N) 経由で行うこと。
+  // ON DELETE SET NULL: 作成元 project 物理削除時に projectId は NULL になる (orphan 許容)。
+  project                Project?               @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  retrospectiveProjects  RetrospectiveProject[]
 
   @@index([projectId], map: "idx_retro_project")
   @@index([tenantId], map: "idx_retro_tenant")
   @@map("retrospectives")
+}
+
+/// PR feat/asset-multi-project-linking (2026-05-09):
+///   振り返りと Project の M:N 中間テーブル。RiskIssueProject と同設計。
+model RetrospectiveProject {
+  id              String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  retrospectiveId String @map("retrospective_id") @db.Uuid
+  projectId       String @map("project_id") @db.Uuid
+
+  retrospective Retrospective @relation(fields: [retrospectiveId], references: [id], onDelete: Cascade)
+  project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([retrospectiveId, projectId])
+  @@index([projectId], map: "idx_retro_projects_project")
+  @@map("retrospective_projects")
 }
 
 // ============================================================
