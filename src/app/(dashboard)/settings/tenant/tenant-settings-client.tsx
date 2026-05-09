@@ -210,19 +210,31 @@ export function TenantSettingsClient({
       {/* P-B (2026-05-08): Beginner プラン期限バナー */}
       <BeginnerExpiryBanner info={info} />
 
-      {/* 当月使用量 */}
-      <section className="rounded border p-4">
+      {/* 当月使用量 (2026-05-09 PR E でツールチップ追加) */}
+      <section
+        className="rounded border p-4"
+        title="本テナントの当月使用量。月初 (UTC) にリセット"
+      >
         <h2 className="mb-2 font-semibold">当月使用量</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div>
+          <div
+            className="cursor-help"
+            title="当月の LLM/Embedding 呼出回数 (withMeteredLLM 経由)。Beginner プランは 100 回/月の上限あり"
+          >
             <p className="text-xs text-muted-foreground">API 呼出</p>
             <p className="text-xl font-bold">{info.currentMonthApiCallCount.toLocaleString()}</p>
           </div>
-          <div>
+          <div
+            className="cursor-help"
+            title="当月の内部請求額。Beginner ¥0/call / Expert ¥10/call / Pro ¥30/call の固定単価で計算"
+          >
             <p className="text-xs text-muted-foreground">API 費用</p>
             <p className="text-xl font-bold">¥{info.currentMonthApiCostJpy.toLocaleString()}</p>
           </div>
-          <div>
+          <div
+            className="cursor-help"
+            title="自分で設定した月次予算上限。超過時は LLM 呼び出しが自動ブロックされる"
+          >
             <p className="text-xs text-muted-foreground">月次予算上限</p>
             <p className="text-xl font-bold">
               {info.monthlyBudgetCapJpy != null

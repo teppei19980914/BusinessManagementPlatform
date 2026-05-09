@@ -217,7 +217,8 @@ describe('listDormantTenants (P-6 / 2026-05-08)', () => {
     });
   });
 
-  it('管理テナントは除外する (id != MANAGEMENT_TENANT_ID)', async () => {
+  // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+  it('管理テナント + default テナントを除外する (id notIn MANAGEMENT/DEFAULT)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
 
     await listDormantTenants(90, NOW);
@@ -225,7 +226,12 @@ describe('listDormantTenants (P-6 / 2026-05-08)', () => {
     const callArg = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0];
     expect(callArg).toMatchObject({
       where: expect.objectContaining({
-        id: { not: '00000000-0000-0000-0000-ffffffffffff' },
+        id: {
+          notIn: [
+            '00000000-0000-0000-0000-ffffffffffff',
+            '00000000-0000-0000-0000-000000000001',
+          ],
+        },
         deletedAt: null,
       }),
     });
