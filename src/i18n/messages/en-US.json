@@ -56,6 +56,18 @@
     "deleteFailed": "Failed to delete notification",
     "unreadBadge": "{count} unread notifications"
   },
+  "linkedProjects": {
+    "sectionTitle": "Linked projects ({count})",
+    "noLinks": "Not linked to any project (orphan).",
+    "currentBadge": "This project",
+    "deletedProjectTitle": "Deleted project",
+    "lastLinkWarning": "Unlinking will leave this asset orphaned (no project references)",
+    "hint": "To unlink another project, perform the operation from that project.",
+    "unlinkButtonTitle": "Unlink from this project",
+    "unlinkConfirm": "Unlink \"{name}\"? The asset itself remains as long as another project references it.",
+    "unlinkSuccess": "Unlinked from \"{name}\"",
+    "unlinkFailed": "Failed to unlink"
+  },
   "comment": {
     "section": "Comments",
     "placeholder": "Write a comment (@ to mention)",
@@ -1191,8 +1203,12 @@
     "pastIssuesSectionTitle": "Past issues ({count})",
     "pastIssuesDescription": "Import resolved issues from past projects as templates. Adopting one clones it as a new issue with state=\"open\" so you can prepare in advance.",
     "pastIssuesNoMatch": "No similar past issues found.",
-    "pastIssuesAdoptedBadge": "Adopted",
-    "pastIssuesAdoptButton": "Adopt as template",
+    "pastIssuesAdoptedBadge": "Linked",
+    "pastIssuesAdoptButton": "Link to this project",
+    "riskLinkButton": "Link to this project",
+    "riskLinkedBadge": "Linked",
+    "retrospectiveLinkButton": "Link to this project",
+    "retrospectiveLinkedBadge": "Linked",
     "pastRisksSectionTitle": "Past risks ({count})",
     "pastRisksDescription": "Risks that were addressed or resolved in past projects, shown for reference. Use them as templates to mitigate proactively before they materialize.",
     "pastRisksNoMatch": "No similar past risks were found.",

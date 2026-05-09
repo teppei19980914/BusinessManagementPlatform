@@ -78,6 +78,9 @@ export type RiskDTO = {
   projectId: string | null;
   /** 紐付け済プロジェクトの id 一覧 (M:N)。ここに含まれる project でアクセス権が発生する。 */
   linkedProjectIds: string[];
+  /** PR feat/asset-multi-linking-ui (Phase 2): UI 表示用の紐付け済プロジェクト詳細
+   *  (id + 表示名 + 削除状態)。ダイアログ「紐付けプロジェクト」セクションで使用。 */
+  linkedProjects: { id: string; name: string; deleted: boolean }[];
   type: string;
   title: string;
   content: string;
@@ -129,12 +132,23 @@ function toRiskDTO(r: {
   riskNature: string | null;
   createdAt: Date;
   updatedAt: Date;
-  riskIssueProjects?: { projectId: string }[];
+  riskIssueProjects?: {
+    projectId: string;
+    project?: { id: string; name: string; deletedAt: Date | null };
+  }[];
 }): RiskDTO {
+  const links = r.riskIssueProjects ?? [];
   return {
     id: r.id,
     projectId: r.projectId,
-    linkedProjectIds: r.riskIssueProjects?.map((rp) => rp.projectId) ?? [],
+    linkedProjectIds: links.map((rp) => rp.projectId),
+    linkedProjects: links
+      .filter((rp) => rp.project != null)
+      .map((rp) => ({
+        id: rp.project!.id,
+        name: rp.project!.name,
+        deleted: rp.project!.deletedAt != null,
+      })),
     type: r.type,
     title: r.title,
     content: r.content,
@@ -186,7 +200,14 @@ export async function listRisks(
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
-      riskIssueProjects: { select: { projectId: true } },
+      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+      //   linkedProjects DTO で表示するため、N+1 を避けるため include 経由で 1 クエリに統合。
+      riskIssueProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -254,7 +275,14 @@ export async function listAllRisksForViewer(
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
       project: { select: { id: true, name: true, deletedAt: true } },
-      riskIssueProjects: { select: { projectId: true } },
+      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+      //   linkedProjects DTO で表示するため、N+1 を避けるため include 経由で 1 クエリに統合。
+      riskIssueProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -310,7 +338,14 @@ export async function getRisk(
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
-      riskIssueProjects: { select: { projectId: true } },
+      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+      //   linkedProjects DTO で表示するため、N+1 を避けるため include 経由で 1 クエリに統合。
+      riskIssueProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
     },
   });
   if (!r) return null;
@@ -362,7 +397,14 @@ export async function createRisk(
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
-      riskIssueProjects: { select: { projectId: true } },
+      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+      //   linkedProjects DTO で表示するため、N+1 を避けるため include 経由で 1 クエリに統合。
+      riskIssueProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
     },
   });
 
@@ -494,7 +536,14 @@ export async function updateRisk(
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
-      riskIssueProjects: { select: { projectId: true } },
+      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+      //   linkedProjects DTO で表示するため、N+1 を避けるため include 経由で 1 クエリに統合。
+      riskIssueProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
     },
   });
 

@@ -42,6 +42,8 @@ export type RetroDTO = {
   projectId: string | null;
   /** 紐付け済プロジェクトの id 一覧 (M:N)。 */
   linkedProjectIds: string[];
+  /** PR feat/asset-multi-linking-ui (Phase 2): UI 表示用の紐付け済プロジェクト詳細。 */
+  linkedProjects: { id: string; name: string; deleted: boolean }[];
   conductedDate: string;
   planSummary: string;
   actualSummary: string;
@@ -109,7 +111,13 @@ export async function listAllRetrospectivesForViewer(
     },
     include: {
       project: { select: { id: true, name: true, deletedAt: true } },
-      retrospectiveProjects: { select: { projectId: true } },
+      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+      retrospectiveProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
     },
     orderBy: { conductedDate: 'desc' },
   });
@@ -127,12 +135,20 @@ export async function listAllRetrospectivesForViewer(
   return retros.map((r) => {
     // PR feat/asset-multi-project-linking: 紐付け済プロジェクトのいずれかのメンバーなら isMember 扱い
     const linkedProjectIds = r.retrospectiveProjects.map((rp) => rp.projectId);
+    const linkedProjects = r.retrospectiveProjects
+      .filter((rp) => rp.project != null)
+      .map((rp) => ({
+        id: rp.project!.id,
+        name: rp.project!.name,
+        deleted: rp.project!.deletedAt != null,
+      }));
     const isMember = isAdmin || linkedProjectIds.some((pid) => memberProjectIds.has(pid));
     const projectDeleted = r.project?.deletedAt != null;
     return {
       id: r.id,
       projectId: r.projectId,
       linkedProjectIds,
+      linkedProjects,
       projectName: isMember ? r.project?.name ?? null : null,
       projectDeleted: isAdmin ? projectDeleted : false,
       canAccessProject: isMember && !projectDeleted,
@@ -181,7 +197,13 @@ export async function listRetrospectives(
       retrospectiveProjects: { some: { projectId } },
     },
     include: {
-      retrospectiveProjects: { select: { projectId: true } },
+      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+      retrospectiveProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
     },
     orderBy: { conductedDate: 'desc' },
   });
@@ -190,6 +212,13 @@ export async function listRetrospectives(
     id: r.id,
     projectId: r.projectId,
     linkedProjectIds: r.retrospectiveProjects.map((rp) => rp.projectId),
+    linkedProjects: r.retrospectiveProjects
+      .filter((rp) => rp.project != null)
+      .map((rp) => ({
+        id: rp.project!.id,
+        name: rp.project!.name,
+        deleted: rp.project!.deletedAt != null,
+      })),
     conductedDate: r.conductedDate.toISOString().split('T')[0],
     planSummary: r.planSummary,
     actualSummary: r.actualSummary,
@@ -253,6 +282,8 @@ export async function createRetrospective(
     id: r.id,
     projectId: r.projectId,
     linkedProjectIds: [projectId], // create 直後の紐付けは作成元のみ
+    // create 直後は project info を取得していないため空配列。UI 側は再フェッチで反映する想定
+    linkedProjects: [],
     conductedDate: r.conductedDate.toISOString().split('T')[0],
     planSummary: r.planSummary,
     actualSummary: r.actualSummary,
@@ -505,7 +536,13 @@ export async function getRetrospective(
       projectId: true,
       createdBy: true,
       visibility: true,
-      retrospectiveProjects: { select: { projectId: true } },
+      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+      retrospectiveProjects: {
+        select: {
+          projectId: true,
+          project: { select: { id: true, name: true, deletedAt: true } },
+        },
+      },
     },
   });
   if (!raw) return null;

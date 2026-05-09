@@ -173,7 +173,14 @@ export function SuggestionsPanel({
     void reload();
   }, [reload]);
 
-  async function handleAdopt(kind: 'knowledge' | 'issue', id: string) {
+  /**
+   * 提案された資産をこのプロジェクトに紐付ける (M:N 中間テーブルへの追加)。
+   *
+   * PR feat/asset-multi-linking-ui (2026-05-09 / Phase 2):
+   *   旧仕様 (knowledge: 紐付け / issue: 雛形複製) を統一して **全 4 種で紐付け** に変更。
+   *   issue/risk/retrospective も A プロジェクトに残ったまま、B から参照できるようになる。
+   */
+  async function handleAdopt(kind: 'knowledge' | 'issue' | 'risk' | 'retrospective', id: string) {
     setError('');
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/suggestions/adopt`, {
@@ -184,7 +191,13 @@ export function SuggestionsPanel({
     );
     if (!res.ok) {
       setError(t('adoptFailed'));
-      showError(kind === 'knowledge' ? 'ナレッジの採用に失敗しました' : '過去課題の採用に失敗しました');
+      const labelMap = {
+        knowledge: 'ナレッジ',
+        issue: '過去課題',
+        risk: '過去リスク',
+        retrospective: '振り返り',
+      };
+      showError(`${labelMap[kind]}の紐付けに失敗しました`);
       return;
     }
     setAdopted((prev) => {
@@ -192,7 +205,13 @@ export function SuggestionsPanel({
       next.add(`${kind}:${id}`);
       return next;
     });
-    showSuccess(kind === 'knowledge' ? 'ナレッジを採用しました' : '過去課題を採用しました');
+    const labelMap = {
+      knowledge: 'ナレッジ',
+      issue: '過去課題',
+      risk: '過去リスク',
+      retrospective: '振り返り',
+    };
+    showSuccess(`${labelMap[kind]}を紐付けました`);
   }
 
   const toggleWeak = (category: 'knowledge' | 'issue' | 'risk' | 'retrospective') => {
@@ -360,81 +379,106 @@ export function SuggestionsPanel({
     );
   };
 
-  // 2026-05-09 (PR D / #21): 過去 Risk アイテム (採用ボタンなし、参照のみ + なぜ?)。
-  //   Issue と DB が同一テーブル (riskIssue) だが、kind='risk' で区別表示する。
-  const renderRiskItem = (r: PastRiskSuggestion) => (
-    <li key={r.id} className="rounded border p-3">
-      <div className="flex items-start gap-3">
-        <div className="flex-1 space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{r.title}</span>
-            <Badge variant="outline" title={scoreTooltip(r)}>
-              {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
-            </Badge>
-            {r.sourceProjectName && (
-              <Link
-                href={`/projects/${r.sourceProjectId}/risks`}
-                className="text-xs text-info hover:underline"
-              >
-                {t('sourceProjectLink', { name: r.sourceProjectName })}
-              </Link>
-            )}
-            {/* なぜ? は Pro 限定 (#22) */}
-            {canExplain && (
-              <button
-                type="button"
-                className="text-xs text-info hover:underline"
-                onClick={() => handleExplain({ kind: 'risk', id: r.id, title: r.title })}
-              >
-                {t('explainButton')}
-              </button>
-            )}
+  // 2026-05-09 (PR D / #21): 過去 Risk アイテム。
+  //   PR feat/asset-multi-linking-ui (Phase 2): 「+ このプロジェクトに紐付ける」ボタンを追加。
+  //   紐付けで本プロジェクトの「リスク一覧」にも該当 Risk が出るようになる。
+  const renderRiskItem = (r: PastRiskSuggestion) => {
+    const adoptedKey = `risk:${r.id}`;
+    const isAdopted = adopted.has(adoptedKey);
+    return (
+      <li key={r.id} className="rounded border p-3">
+        <div className="flex items-start gap-3">
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{r.title}</span>
+              <Badge variant="outline" title={scoreTooltip(r)}>
+                {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
+              </Badge>
+              {r.sourceProjectName && (
+                <Link
+                  href={`/projects/${r.sourceProjectId}/risks`}
+                  className="text-xs text-info hover:underline"
+                >
+                  {t('sourceProjectLink', { name: r.sourceProjectName })}
+                </Link>
+              )}
+              {/* なぜ? は Pro 限定 (#22) */}
+              {canExplain && (
+                <button
+                  type="button"
+                  className="text-xs text-info hover:underline"
+                  onClick={() => handleExplain({ kind: 'risk', id: r.id, title: r.title })}
+                >
+                  {t('explainButton')}
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">{r.snippet}</p>
           </div>
-          <p className="text-sm text-muted-foreground">{r.snippet}</p>
+          <div className="shrink-0">
+            {isAdopted ? (
+              <Badge>{t('riskLinkedBadge')}</Badge>
+            ) : canAdopt ? (
+              <Button size="sm" onClick={() => handleAdopt('risk', r.id)}>
+                {t('riskLinkButton')}
+              </Button>
+            ) : null}
+          </div>
         </div>
-      </div>
-    </li>
-  );
+      </li>
+    );
+  };
 
-  const renderRetrospectiveItem = (r: RetrospectiveSuggestion) => (
-    <li key={r.id} className="rounded border p-3">
-      <div className="flex items-start gap-3">
-        <div className="flex-1 space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{t('retrospectiveItemTitle', { date: r.conductedDate })}</span>
-            <Badge variant="outline" title={scoreTooltip(r)}>
-              {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
-            </Badge>
-            {r.sourceProjectName && (
-              <Link
-                href={`/projects/${r.sourceProjectId}/retrospectives`}
-                className="text-xs text-info hover:underline"
-              >
-                {t('sourceProjectLink', { name: r.sourceProjectName })}
-              </Link>
-            )}
-            {/* P-3: 「なぜ?」ボタン (2026-05-09 / #22: Pro 限定) */}
-            {canExplain && (
-              <button
-                type="button"
-                className="text-xs text-info hover:underline"
-                onClick={() =>
-                  handleExplain({
-                    kind: 'retrospective',
-                    id: r.id,
-                    title: t('retrospectiveItemTitle', { date: r.conductedDate }),
-                  })
-                }
-              >
-                {t('explainButton')}
-              </button>
-            )}
+  // PR feat/asset-multi-linking-ui (Phase 2): retrospective にも紐付けボタンを追加。
+  const renderRetrospectiveItem = (r: RetrospectiveSuggestion) => {
+    const adoptedKey = `retrospective:${r.id}`;
+    const isAdopted = adopted.has(adoptedKey);
+    const itemTitle = t('retrospectiveItemTitle', { date: r.conductedDate });
+    return (
+      <li key={r.id} className="rounded border p-3">
+        <div className="flex items-start gap-3">
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{itemTitle}</span>
+              <Badge variant="outline" title={scoreTooltip(r)}>
+                {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
+              </Badge>
+              {r.sourceProjectName && (
+                <Link
+                  href={`/projects/${r.sourceProjectId}/retrospectives`}
+                  className="text-xs text-info hover:underline"
+                >
+                  {t('sourceProjectLink', { name: r.sourceProjectName })}
+                </Link>
+              )}
+              {/* P-3: 「なぜ?」ボタン (2026-05-09 / #22: Pro 限定) */}
+              {canExplain && (
+                <button
+                  type="button"
+                  className="text-xs text-info hover:underline"
+                  onClick={() =>
+                    handleExplain({ kind: 'retrospective', id: r.id, title: itemTitle })
+                  }
+                >
+                  {t('explainButton')}
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">{r.snippet}</p>
           </div>
-          <p className="text-sm text-muted-foreground">{r.snippet}</p>
+          <div className="shrink-0">
+            {isAdopted ? (
+              <Badge>{t('retrospectiveLinkedBadge')}</Badge>
+            ) : canAdopt ? (
+              <Button size="sm" onClick={() => handleAdopt('retrospective', r.id)}>
+                {t('retrospectiveLinkButton')}
+              </Button>
+            ) : null}
+          </div>
         </div>
-      </div>
-    </li>
-  );
+      </li>
+    );
+  };
 
   /**
    * tier 別の表示ブロックを共通化。
