@@ -150,20 +150,32 @@ function safeDate(d: Date | null | undefined): string | null {
  * クエリ数は N+2 (プロジェクト数 N) で MVP 許容範囲。
  * 1 人のユーザが多数プロジェクトに跨がる場合は将来最適化検討。
  */
-export async function listMyTaskProjects(userId: string): Promise<{
+/**
+ * 2026-05-09 feedback Phase 2: severity-1 テナント越境対策。
+ *   Task テーブルは tenantId 列を持たず、project の tenantId に依存する設計のため、
+ *   `project: { tenantId: viewerTenantId }` の関連フィルタで自テナント限定する。
+ *   ユーザは自テナント内のプロジェクトのタスクのみ assigneeId に持つはずだが、
+ *   防御深化として project tenant 検証を併せる (テナント間で userId 衝突した際のフェイルセーフ)。
+ */
+export async function listMyTaskProjects(userId: string, viewerTenantId: string): Promise<{
   projectId: string;
   projectName: string;
   tree: TaskDTO[];
 }[]> {
   const assignments = await prisma.task.findMany({
-    where: { assigneeId: userId, type: 'activity', deletedAt: null },
+    where: {
+      assigneeId: userId,
+      type: 'activity',
+      deletedAt: null,
+      project: { tenantId: viewerTenantId },
+    },
     select: { projectId: true },
   });
   const projectIds = [...new Set(assignments.map((a) => a.projectId))];
   if (projectIds.length === 0) return [];
 
   const projects = await prisma.project.findMany({
-    where: { id: { in: projectIds }, deletedAt: null },
+    where: { id: { in: projectIds }, tenantId: viewerTenantId, deletedAt: null },
     select: { id: true, name: true },
     orderBy: { name: 'asc' },
   });
@@ -173,7 +185,7 @@ export async function listMyTaskProjects(userId: string): Promise<{
 
   const results = await Promise.all(
     projects.map(async (p) => {
-      const tree = await listTasks(p.id);
+      const tree = await listTasks(p.id, viewerTenantId);
       const filtered = filterTreeByAssignee(tree, new Set([userId]));
       return { projectId: p.id, projectName: p.name, tree: filtered };
     }),
@@ -181,9 +193,13 @@ export async function listMyTaskProjects(userId: string): Promise<{
   return results;
 }
 
-export async function listTasks(projectId: string): Promise<TaskDTO[]> {
+/**
+ * 2026-05-09 feedback Phase 2: viewerTenantId を必須化し、Task の project リレーション経由で
+ *   テナント越境を遮断する。projectId 直叩きで他テナントの WBS を全件取得する経路を塞ぐ。
+ */
+export async function listTasks(projectId: string, viewerTenantId: string): Promise<TaskDTO[]> {
   const tasks = await prisma.task.findMany({
-    where: { projectId, deletedAt: null },
+    where: { projectId, deletedAt: null, project: { tenantId: viewerTenantId } },
     include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
     orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
@@ -231,10 +247,12 @@ export function buildTree(tasks: TaskDTO[]): TaskDTO[] {
 
 /**
  * フラットなタスク一覧（API 用）
+ *
+ * 2026-05-09 feedback Phase 2: viewerTenantId 必須化、project リレーション経由で越境遮断。
  */
-export async function listTasksFlat(projectId: string): Promise<TaskDTO[]> {
+export async function listTasksFlat(projectId: string, viewerTenantId: string): Promise<TaskDTO[]> {
   const tasks = await prisma.task.findMany({
-    where: { projectId, deletedAt: null },
+    where: { projectId, deletedAt: null, project: { tenantId: viewerTenantId } },
     include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
     orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
@@ -280,7 +298,9 @@ export type AssigneeWorkloadRow = {
  */
 export async function getAssigneeDailyWorkload(
   projectId: string,
+  viewerTenantId: string,
 ): Promise<AssigneeWorkloadRow[]> {
+  // 2026-05-09 feedback Phase 2: project tenant 越境遮断。
   const tasks = await prisma.task.findMany({
     where: {
       projectId,
@@ -289,6 +309,7 @@ export async function getAssigneeDailyWorkload(
       assigneeId: { not: null },
       plannedStartDate: { not: null },
       plannedEndDate: { not: null },
+      project: { tenantId: viewerTenantId },
     },
     select: {
       assigneeId: true,
@@ -368,9 +389,10 @@ function round(n: number, digits: number): number {
  */
 export async function listTasksWithTree(
   projectId: string,
+  viewerTenantId: string,
 ): Promise<{ tree: TaskDTO[]; flat: TaskDTO[] }> {
   const tasks = await prisma.task.findMany({
-    where: { projectId, deletedAt: null },
+    where: { projectId, deletedAt: null, project: { tenantId: viewerTenantId } },
     include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
     orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
@@ -378,9 +400,13 @@ export async function listTasksWithTree(
   return { tree: buildTree(flat), flat };
 }
 
-export async function getTask(taskId: string): Promise<TaskDTO | null> {
+/**
+ * 2026-05-09 feedback Phase 2: viewerTenantId 必須化。taskId 直叩きで他テナントのタスクが
+ *   read される経路を遮断 (個人情報含む name / description が漏洩する severity-1 リスク)。
+ */
+export async function getTask(taskId: string, viewerTenantId: string): Promise<TaskDTO | null> {
   const task = await prisma.task.findFirst({
-    where: { id: taskId, deletedAt: null },
+    where: { id: taskId, deletedAt: null, project: { tenantId: viewerTenantId } },
     include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
   });
   return task ? toTaskDTO(task) : null;
@@ -405,7 +431,18 @@ export async function createTask(
   projectId: string,
   input: CreateTaskInput,
   userId: string,
+  viewerTenantId: string,
 ): Promise<TaskDTO> {
+  // 2026-05-09 feedback Phase 2: 越境 create を遮断する所有確認。
+  //   呼び出し元 (checkProjectPermission) も Phase 1 で塞いだが、defense-in-depth として
+  //   service 層でも project の tenant 一致を verify する。NOT_FOUND を返すか throw するかは
+  //   呼び出し側の挙動と整合させるため、不一致なら throw NOT_FOUND。
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!project) throw new Error('NOT_FOUND');
+
   const isActivity = input.type === 'activity';
 
   // ACT の場合は計画値・担当を渡す。WP は集計対象なので null / 0 / false で作成。
@@ -526,7 +563,16 @@ export async function updateTask(
   taskId: string,
   input: UpdateTaskInput,
   userId: string,
+  viewerTenantId: string,
 ): Promise<TaskDTO> {
+  // 2026-05-09 feedback Phase 2: 越境編集を遮断するため task の project tenant 一致を verify。
+  //   findFirst で先に検証することで、taskId 直叩きの編集を NOT_FOUND として弾く。
+  const owned = await prisma.task.findFirst({
+    where: { id: taskId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const data: Prisma.TaskUpdateInput = { updatedBy: userId };
 
   if (input.type !== undefined) data.type = input.type;
@@ -621,7 +667,18 @@ export async function updateTask(
  * 副作用:
  *   親 WP が存在する場合は集計再計算 (子が消えた → 親の合計工数等が変わる)。
  */
-export async function deleteTask(taskId: string, userId: string): Promise<void> {
+export async function deleteTask(
+  taskId: string,
+  userId: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2: 越境削除を遮断するため task の project tenant 一致を verify。
+  const owned = await prisma.task.findFirst({
+    where: { id: taskId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   // PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児データ防止)
   // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)
   const now = new Date();
@@ -671,7 +728,15 @@ export async function bulkUpdateTasks(
     actualEndDate?: string | null;
   },
   userId: string,
+  viewerTenantId: string,
 ): Promise<number> {
+  // 2026-05-09 feedback Phase 2: 越境一括更新を遮断するため project tenant 一致を verify。
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!project) throw new Error('NOT_FOUND');
+
   // 担当者がプロジェクトメンバーであることを検証
   if (updates.assigneeId) {
     const isMember = await prisma.projectMember.findFirst({
@@ -751,6 +816,9 @@ export async function bulkUpdateTasks(
       projectId,
       deletedAt: null,
       type: 'activity', // WP は対象外（集計値は子から自動算出）
+      // 2026-05-09 feedback Phase 2: 越境更新の二重防御 (project tenant 検証は冒頭で済だが、
+      //   updateMany の where に併記して projectId 引数偽装の保険にする)。
+      project: { tenantId: viewerTenantId },
     },
     data,
   });
@@ -806,7 +874,16 @@ export async function updateTaskProgress(
   taskId: string,
   input: UpdateProgressInput,
   userId: string,
+  viewerTenantId: string,
 ): Promise<void> {
+  // 2026-05-09 feedback Phase 2: 越境進捗更新を遮断するため task の project tenant 一致を verify。
+  //   進捗ログ追加 + task 本体更新の前に所有確認。
+  const owned = await prisma.task.findFirst({
+    where: { id: taskId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   // 進捗ログを 1 件追記 (時系列履歴を残す)。
   await prisma.taskProgressLog.create({
     data: {
@@ -896,9 +973,16 @@ export async function recalculateAncestorsPublic(taskId: string): Promise<void> 
  */
 export async function recalculateAllProjectWps(
   projectId: string,
+  viewerTenantId: string,
 ): Promise<{ total: number; updated: number }> {
+  // 2026-05-09 feedback Phase 2: 越境再計算を遮断するため project tenant 一致を verify。
   const wps = await prisma.task.findMany({
-    where: { projectId, type: 'work_package', deletedAt: null },
+    where: {
+      projectId,
+      type: 'work_package',
+      deletedAt: null,
+      project: { tenantId: viewerTenantId },
+    },
     select: { id: true, parentTaskId: true },
   });
   if (wps.length === 0) return { total: 0, updated: 0 };
@@ -1191,7 +1275,17 @@ export type ProgressLogDTO = {
   createdAt: string;
 };
 
-export async function getProgressLogs(taskId: string): Promise<ProgressLogDTO[]> {
+export async function getProgressLogs(
+  taskId: string,
+  viewerTenantId: string,
+): Promise<ProgressLogDTO[]> {
+  // 2026-05-09 feedback Phase 2: 越境進捗ログ閲覧を遮断するため task の project tenant 検証。
+  const owned = await prisma.task.findFirst({
+    where: { id: taskId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    select: { id: true },
+  });
+  if (!owned) return []; // 越境時は空配列 (情報漏洩防止)
+
   const logs = await prisma.taskProgressLog.findMany({
     where: { taskId },
     include: { updater: { select: { name: true } } },
@@ -1285,9 +1379,15 @@ export function parseCsvLine(line: string): string[] {
  */
 export async function exportWbs(
   projectId: string,
+  viewerTenantId: string,
   taskIds?: string[],
 ): Promise<string> {
-  const where: Prisma.TaskWhereInput = { projectId, deletedAt: null };
+  // 2026-05-09 feedback Phase 2: 越境エクスポートを遮断するため project tenant フィルタを併記。
+  const where: Prisma.TaskWhereInput = {
+    projectId,
+    deletedAt: null,
+    project: { tenantId: viewerTenantId },
+  };
   if (taskIds && taskIds.length > 0) {
     where.id = { in: taskIds };
   }

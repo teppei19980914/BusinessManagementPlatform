@@ -100,7 +100,7 @@ export async function PATCH(
 
   let count: number;
   try {
-    count = await bulkUpdateTasks(projectId, taskIds, updates, user.id);
+    count = await bulkUpdateTasks(projectId, taskIds, updates, user.id, user.tenantId);
   } catch (e) {
     if (e instanceof Error && e.message === 'ASSIGNEE_NOT_MEMBER') {
       const t = await getTranslations('message');

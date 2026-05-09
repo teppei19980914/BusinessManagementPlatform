@@ -20,7 +20,7 @@ export default async function TasksPage({ params }: Props) {
   if (!membership.isMember) notFound();
 
   const [tasks, members] = await Promise.all([
-    listTasks(projectId),
+    listTasks(projectId, session.user.tenantId),
     listMembers(projectId),
   ]);
 
