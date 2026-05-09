@@ -413,20 +413,28 @@ export async function updateRisk(
   userId: string,
   tenantId: string,
 ): Promise<RiskDTO> {
+  // 2026-05-09 (PR D / #20): 既存 text を含めて取得し、実値変更時のみ embedding を再生成。
   const existing = await prisma.riskIssue.findFirst({
     where: { id: riskId, deletedAt: null },
-    select: { reporterId: true },
+    select: {
+      reporterId: true,
+      title: true,
+      content: true,
+      cause: true,
+      responsePolicy: true,
+      responseDetail: true,
+    },
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.reporterId !== userId) throw new Error('FORBIDDEN');
 
-  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定
+  // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
   const textFieldsChanging =
-    input.title !== undefined ||
-    input.content !== undefined ||
-    input.cause !== undefined ||
-    input.responsePolicy !== undefined ||
-    input.responseDetail !== undefined;
+    (input.title !== undefined && input.title !== existing.title) ||
+    (input.content !== undefined && input.content !== existing.content) ||
+    (input.cause !== undefined && input.cause !== existing.cause) ||
+    (input.responsePolicy !== undefined && input.responsePolicy !== existing.responsePolicy) ||
+    (input.responseDetail !== undefined && input.responseDetail !== existing.responseDetail);
 
   const data: Record<string, unknown> = { updatedBy: userId };
 

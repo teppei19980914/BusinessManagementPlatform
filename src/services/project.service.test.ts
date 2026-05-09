@@ -341,13 +341,39 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   });
 
   it('updateProject: text フィールドが更新対象でなければ extractAutoTags は呼ばれない (LLM 課金回避)', async () => {
+    // 2026-05-09 (PR D / #20): findUnique は常に呼ぶ (実値比較で更新判定するため)。
+    //   extractAutoTags は textFieldsChanging=false なら呼ばれない (LLM 課金回避は維持)。
+    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+      purpose: 'cur p',
+      background: 'cur b',
+      scope: 'cur s',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
 
     await updateProject('p-1', { name: 'new name' }, 'u-1', TEST_TENANT_ID);
 
     expect(extractAutoTags).not.toHaveBeenCalled();
-    // findUnique も呼ばれない (text 変更なし → 現行値を取りに行く必要なし)
-    expect(prisma.project.findUnique).not.toHaveBeenCalled();
+  });
+
+  // 2026-05-09 (PR D / #20): 実値比較ガード — input.purpose が現行値と同じなら呼ばない
+  it('updateProject: input.purpose が現行値と同じなら extractAutoTags は呼ばれない (#20)', async () => {
+    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+      purpose: 'same purpose',
+      background: 'cur b',
+      scope: 'cur s',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
+
+    // 同一値で送信
+    await updateProject('p-1', { purpose: 'same purpose' }, 'u-1', TEST_TENANT_ID);
+
+    expect(extractAutoTags).not.toHaveBeenCalled();
   });
 
   it('updateProject: purpose 更新時に extractAutoTags が呼ばれ、変更しない text は現行値で補完', async () => {

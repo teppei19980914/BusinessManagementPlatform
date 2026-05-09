@@ -55,6 +55,16 @@ type PastIssueSuggestion = ScoreFields & {
   sourceProjectName: string | null;
 };
 
+// 2026-05-09 (PR D / #21): 過去リスクの提案
+type PastRiskSuggestion = ScoreFields & {
+  kind: 'risk';
+  id: string;
+  title: string;
+  snippet: string;
+  sourceProjectId: string;
+  sourceProjectName: string | null;
+};
+
 type RetrospectiveSuggestion = ScoreFields & {
   kind: 'retrospective';
   id: string;
@@ -67,6 +77,8 @@ type RetrospectiveSuggestion = ScoreFields & {
 type SuggestionsResult = {
   knowledge: KnowledgeSuggestion[];
   pastIssues: PastIssueSuggestion[];
+  // 2026-05-09 (PR D / #21): 過去リスクを提案対象に追加
+  pastRisks: PastRiskSuggestion[];
   retrospectives: RetrospectiveSuggestion[];
 };
 
@@ -111,7 +123,8 @@ export function SuggestionsPanel({
   // 採用済の ID を記録し UI を「採用済」表示に切り替える (再フェッチ不要化)
   const [adopted, setAdopted] = useState<Set<string>>(new Set());
   // 各カテゴリの「弱い関連性」セクションの展開状態 (PR-X6: 折りたたみデフォルト)
-  const [expandedWeak, setExpandedWeak] = useState<Set<'knowledge' | 'issue' | 'retrospective'>>(
+  // 2026-05-09 (PR D / #21): 'risk' カテゴリを追加
+  const [expandedWeak, setExpandedWeak] = useState<Set<'knowledge' | 'issue' | 'risk' | 'retrospective'>>(
     new Set(),
   );
 
@@ -121,7 +134,8 @@ export function SuggestionsPanel({
   // - explainResult: 取得済の {explanation, modelName, fromCache}
   // - explainError: エラーメッセージ (i18n キー or fallback)
   type ExplainTarget = {
-    kind: 'knowledge' | 'issue' | 'retrospective';
+    // 2026-05-09 (PR D / #21): 'risk' を追加
+    kind: 'knowledge' | 'issue' | 'risk' | 'retrospective';
     id: string;
     title: string;
   };
@@ -144,7 +158,7 @@ export function SuggestionsPanel({
     const res = await fetch(`/api/projects/${projectId}/suggestions`);
     if (!res.ok) {
       setError(t('fetchFailed'));
-      setState({ loaded: true, data: { knowledge: [], pastIssues: [], retrospectives: [] } });
+      setState({ loaded: true, data: { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] } });
       return;
     }
     const json = await res.json();
@@ -181,7 +195,7 @@ export function SuggestionsPanel({
     showSuccess(kind === 'knowledge' ? 'ナレッジを採用しました' : '過去課題を採用しました');
   }
 
-  const toggleWeak = (category: 'knowledge' | 'issue' | 'retrospective') => {
+  const toggleWeak = (category: 'knowledge' | 'issue' | 'risk' | 'retrospective') => {
     setExpandedWeak((prev) => {
       const next = new Set(prev);
       if (next.has(category)) {
@@ -245,6 +259,8 @@ export function SuggestionsPanel({
     return {
       knowledge: groupByTier(state.data.knowledge),
       pastIssues: groupByTier(state.data.pastIssues),
+      // 2026-05-09 (PR D / #21): 過去リスクを Tier 表示に追加
+      pastRisks: groupByTier(state.data.pastRisks ?? []),
       retrospectives: groupByTier(state.data.retrospectives),
     };
   }, [state]);
@@ -344,6 +360,42 @@ export function SuggestionsPanel({
     );
   };
 
+  // 2026-05-09 (PR D / #21): 過去 Risk アイテム (採用ボタンなし、参照のみ + なぜ?)。
+  //   Issue と DB が同一テーブル (riskIssue) だが、kind='risk' で区別表示する。
+  const renderRiskItem = (r: PastRiskSuggestion) => (
+    <li key={r.id} className="rounded border p-3">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{r.title}</span>
+            <Badge variant="outline" title={scoreTooltip(r)}>
+              {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
+            </Badge>
+            {r.sourceProjectName && (
+              <Link
+                href={`/projects/${r.sourceProjectId}/risks`}
+                className="text-xs text-info hover:underline"
+              >
+                {t('sourceProjectLink', { name: r.sourceProjectName })}
+              </Link>
+            )}
+            {/* なぜ? は Pro 限定 (#22) */}
+            {canExplain && (
+              <button
+                type="button"
+                className="text-xs text-info hover:underline"
+                onClick={() => handleExplain({ kind: 'risk', id: r.id, title: r.title })}
+              >
+                {t('explainButton')}
+              </button>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">{r.snippet}</p>
+        </div>
+      </div>
+    </li>
+  );
+
   const renderRetrospectiveItem = (r: RetrospectiveSuggestion) => (
     <li key={r.id} className="rounded border p-3">
       <div className="flex items-start gap-3">
@@ -391,10 +443,11 @@ export function SuggestionsPanel({
    * - weak: 灰色のボーダー、折りたたみデフォルト
    */
   const renderTieredSection = <T extends { id: string; tier: SuggestionTier }>(
-    category: 'knowledge' | 'issue' | 'retrospective',
+    // 2026-05-09 (PR D / #21): 'risk' を追加
+    category: 'knowledge' | 'issue' | 'risk' | 'retrospective',
     grouped: { strong: T[]; medium: T[]; weak: T[] },
     renderItem: (item: T) => React.ReactNode,
-    noMatchKey: 'knowledgeNoMatch' | 'pastIssuesNoMatch' | 'retrospectivesNoMatch',
+    noMatchKey: 'knowledgeNoMatch' | 'pastIssuesNoMatch' | 'pastRisksNoMatch' | 'retrospectivesNoMatch',
   ) => {
     const totalCount = grouped.strong.length + grouped.medium.length + grouped.weak.length;
     if (totalCount === 0) {
@@ -460,6 +513,8 @@ export function SuggestionsPanel({
   const totals = {
     knowledge: state.data.knowledge.length,
     pastIssues: state.data.pastIssues.length,
+    // 2026-05-09 (PR D / #21): 過去リスクのカウントを追加
+    pastRisks: state.data.pastRisks?.length ?? 0,
     retrospectives: state.data.retrospectives.length,
   };
 
@@ -487,6 +542,13 @@ export function SuggestionsPanel({
         <h3 className="font-semibold">{t('pastIssuesSectionTitle', { count: totals.pastIssues })}</h3>
         <p className="text-xs text-muted-foreground">{t('pastIssuesDescription')}</p>
         {renderTieredSection('issue', grouped.pastIssues, renderIssueItem, 'pastIssuesNoMatch')}
+      </section>
+
+      {/* 2026-05-09 (PR D / #21): 過去リスク提案 (参照のみ、採用ボタンなし) */}
+      <section className="space-y-2">
+        <h3 className="font-semibold">{t('pastRisksSectionTitle', { count: totals.pastRisks })}</h3>
+        <p className="text-xs text-muted-foreground">{t('pastRisksDescription')}</p>
+        {renderTieredSection('risk', grouped.pastRisks, renderRiskItem, 'pastRisksNoMatch')}
       </section>
 
       {/* 過去振り返り */}

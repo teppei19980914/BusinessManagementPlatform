@@ -26,7 +26,7 @@ describe('suggestForProject', () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
 
     const r = await suggestForProject('missing');
-    expect(r).toEqual({ knowledge: [], pastIssues: [], retrospectives: [] });
+    expect(r).toEqual({ knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] });
   });
 
   it('ctx 取得後、knowledge / issue / retro の各候補を取得し DTO で返す', async () => {
@@ -87,6 +87,59 @@ describe('suggestForProject', () => {
     expect(r.pastIssues[0].sourceProjectName).toBe('Other PJ');
     expect(r.retrospectives[0].id).toBe('r-1');
     expect(r.retrospectives[0].snippet).toContain('問題点');
+  });
+
+  // 2026-05-09 (PR D / #21): 過去リスクが提案結果に含まれる
+  it('過去 Risk を提案結果に含める (#21)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'p',
+      background: 'b',
+      scope: 's',
+      businessDomainTags: ['finance'],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    // riskIssue.findMany は issue クエリと risk クエリの 2 回呼ばれる。
+    //   1 回目 (issue): 空配列で返す
+    //   2 回目 (risk): risk row 1 件を返す
+    vi.mocked(prisma.riskIssue.findMany)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'risk-1',
+          title: 'past risk',
+          content: 'about finance',
+          projectId: 'p-2',
+          project: {
+            name: 'Other PJ',
+            deletedAt: null,
+            businessDomainTags: ['finance'],
+            techStackTags: [],
+            processTags: [],
+          },
+        },
+      ] as never);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { id: 'risk-1', score: 0.7 },
+    ] as never);
+
+    const r = await suggestForProject('p-1');
+
+    expect(r.pastRisks).toHaveLength(1);
+    expect(r.pastRisks[0].id).toBe('risk-1');
+    expect(r.pastRisks[0].kind).toBe('risk');
+    expect(r.pastRisks[0].sourceProjectName).toBe('Other PJ');
+
+    // riskIssue.findMany が 2 回呼ばれた (issue + risk) ことを確認
+    expect(prisma.riskIssue.findMany).toHaveBeenCalledTimes(2);
+    const riskCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[1];
+    if (!riskCall) throw new Error('Risk findMany call missing');
+    // 2 回目の where に type='risk' AND state='resolved' が指定されていること
+    expect((riskCall[0] as { where: { type: string; state: string } }).where.type).toBe('risk');
+    expect((riskCall[0] as { where: { type: string; state: string } }).where.state).toBe('resolved');
   });
 
   it('削除済み project の sourceProjectName は null', async () => {
@@ -611,7 +664,7 @@ describe('suggestion engine 緊急停止フラグ (SUGGESTION_ENGINE_DISABLED)',
 
     const r = await suggestForProject('any-project-id');
 
-    expect(r).toEqual({ knowledge: [], pastIssues: [], retrospectives: [] });
+    expect(r).toEqual({ knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] });
     // DB が一切呼ばれないことを確認 (LLM 呼び出しゼロの担保)
     expect(prisma.project.findFirst).not.toHaveBeenCalled();
     expect(prisma.knowledge.findMany).not.toHaveBeenCalled();
