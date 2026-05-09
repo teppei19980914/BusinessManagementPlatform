@@ -17,8 +17,10 @@
 pnpm tsx scripts/security-check.ts
 ```
 
-詳細手順は **CLAUDE.md §2 セキュリティチェック (5層目: 静的スキャン)** および
-[.claude/skills/threat-model.md の「既存コードの静的スキャン」セクション](../../.claude/skills/threat-model.md) を参照。
+> **2026-05-09 改訂**: ローカル必須実行は撤廃され、`.github/workflows/security.yml` の **CI 自動実行 (PR ごと、閾値 90/100)** に一本化されました。手動実行はユーザ依頼時 (大規模リファクタ後の追加検査 / CI で score 低下が報告された時) のみ。
+
+詳細手順は [.claude/skills/threat-model.md の「Mode B」セクション](../../.claude/skills/threat-model.md) と
+CLAUDE.md「コミット前チェック」セクションを参照。
 
 ## レポートの確認
 
@@ -31,7 +33,7 @@ open docs/security/security-report.html
 xdg-open docs/security/security-report.html
 ```
 
-## CI への組み込み (将来検討)
+## CI 統合 (PR #198 で実装済)
 
-`scripts/security-check.ts` のヘッダコメントに記載の通り、GitHub Actions で
-週次実行 + main 直 push 時実行を追加すれば継続的に検出できます。
+`.github/workflows/security.yml` で `pnpm tsx scripts/security-check.ts --min-score=90` を
+PR ごとに自動実行。score < 90 で deploy をブロック。詳細は [docs/developer-guide/REFERENCE.md §5.48](../developer-guide/REFERENCE.md) 参照。
