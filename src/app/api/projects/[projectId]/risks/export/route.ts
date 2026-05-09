@@ -54,7 +54,7 @@ export async function GET(
     return NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
   }
 
-  const risks = await listRisks(projectId, user.id, user.systemRole);
+  const risks = await listRisks(projectId, user.id, user.systemRole, user.tenantId);
   const csv = risksToCSV(risks);
 
   return new NextResponse(csv, {

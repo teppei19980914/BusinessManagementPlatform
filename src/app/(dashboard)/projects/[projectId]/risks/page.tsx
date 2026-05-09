@@ -17,7 +17,7 @@ export default async function RisksPage({ params }: Props) {
   if (!membership.isMember) notFound();
 
   const [risks, members, actualRole] = await Promise.all([
-    listRisks(projectId, session.user.id, session.user.systemRole),
+    listRisks(projectId, session.user.id, session.user.systemRole, session.user.tenantId),
     listMembers(projectId),
     // 2026-04-24: 起票ボタンは実際の ProjectMember (pm_tl/member) のみ。admin 短絡は使わない。
     getActualProjectRole(projectId, session.user.id),

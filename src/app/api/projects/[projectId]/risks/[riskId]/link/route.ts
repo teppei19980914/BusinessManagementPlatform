@@ -68,7 +68,7 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'risk:update');
   if (forbidden) return forbidden;
 
-  const result = await unlinkRiskFromProject(riskId, projectId);
+  const result = await unlinkRiskFromProject(riskId, projectId, user.tenantId);
   if (result.removed) {
     await recordAuditLog({
       userId: user.id,

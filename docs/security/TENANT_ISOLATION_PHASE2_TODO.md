@@ -30,14 +30,15 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [x] `deleteProjectCascade(projectId, viewerTenantId, options)` — 冒頭で所有確認 (越境カスケード破壊を遮断)
 - [x] `createProject` — `data.tenantId` を明示化 (schema DB DEFAULT への暗黙依存を解消)
 
-### risk.service.ts
+### risk.service.ts ✅ 完了 (PR Phase 2-3, 2026-05-09)
 
-- [ ] `listRisks(projectId, viewerUserId, viewerSystemRole, viewerTenantId)`
-- [ ] `getRisk(riskId, viewerUserId?, viewerSystemRole?, viewerTenantId?)` — 内部 helper はオプショナル維持可
-- [ ] `updateRisk(riskId, input, userId, viewerTenantId)` — 既存 `tenantId` 引数は embedding 用、別途 viewer 用引数追加
-- [ ] `bulkUpdateRisksFromList(projectId, ids, ..., viewerTenantId)`
-- [ ] `deleteRisk(riskId, userId, systemRole, viewerTenantId)`
-- [ ] `unlinkRiskFromProject(riskId, projectId, viewerTenantId)`
+- [x] `listRisks(projectId, viewerUserId, viewerSystemRole, viewerTenantId)` — where に tenantId 必須化
+- [x] `getRisk(riskId, viewerUserId?, viewerSystemRole?, viewerTenantId?)` — 内部 helper はオプショナル維持 (cascade 削除等の認可スキップ経路を維持)
+- [x] `updateRisk(riskId, input, userId, tenantId)` — 既存 `tenantId` 引数を viewer 認可境界として再利用、findFirst の where に併記
+- [x] `bulkUpdateRisksFromList(projectId, ids, patch, viewerUserId, viewerTenantId)` — findMany の where に tenantId 併記
+- [x] `deleteRisk(riskId, userId, systemRole, viewerTenantId)` — findFirst の where に tenantId 必須化
+- [x] `unlinkRiskFromProject(riskId, projectId, viewerTenantId)` — 冒頭で risk の tenant 一致確認 (越境紐付け解除を遮断)
+- [x] `linkRiskToProject` は既存実装で risk.tenantId === project.tenantId を verify 済 (TENANT_MISMATCH throw) のため変更不要
 
 ### knowledge.service.ts
 

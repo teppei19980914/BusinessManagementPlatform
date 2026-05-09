@@ -32,7 +32,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'risk:read');
   if (forbidden) return forbidden;
 
-  const risks = await listRisks(projectId, user.id, user.systemRole);
+  const risks = await listRisks(projectId, user.id, user.systemRole, user.tenantId);
   return NextResponse.json({ data: risks });
 }
 

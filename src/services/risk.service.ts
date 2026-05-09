@@ -177,6 +177,7 @@ export async function listRisks(
   projectId: string,
   viewerUserId: string,
   viewerSystemRole: string,
+  viewerTenantId: string,
 ): Promise<RiskDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
   // 2026-05-01 (PR fix/visibility-auth-matrix): 「自分の draft は一覧に表示する」方針に変更。
@@ -191,9 +192,13 @@ export async function listRisks(
   // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付いている」リスク/課題を返す。
   //   作成元 (createdInProject = riskIssue.projectId) ではなく M:N 中間テーブル (RiskIssueProject)
   //   経由で判定。これにより A 作成 → B 紐付け の risk が B の一覧にも出る。
+  // 2026-05-09 feedback Phase 2-3: severity-1 テナント越境対策。
+  //   RiskIssue テーブルは tenantId 列を持つため where に直接指定し越境を遮断。
+  //   旧仕様は projectId 直叩きで他テナントの risk が読まれる脆弱性があった。
   const risks = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
+      tenantId: viewerTenantId,
       ...visibilityWhere,
       riskIssueProjects: { some: { projectId } },
     },
@@ -332,9 +337,14 @@ export async function getRisk(
   riskId: string,
   viewerUserId?: string,
   viewerSystemRole?: string,
+  viewerTenantId?: string,
 ): Promise<RiskDTO | null> {
+  // 2026-05-09 feedback Phase 2-3: viewerTenantId が指定された場合のみ where に追加。
+  //   内部呼び出し (cascade 削除等) では認可をスキップする既存設計を維持しつつ、
+  //   通常の API 経路では viewerTenantId 必須化により越境を遮断する。
+  const tenantWhere = viewerTenantId !== undefined ? { tenantId: viewerTenantId } : {};
   const r = await prisma.riskIssue.findFirst({
-    where: { id: riskId, deletedAt: null },
+    where: { id: riskId, deletedAt: null, ...tenantWhere },
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
@@ -478,8 +488,11 @@ export async function updateRisk(
   tenantId: string,
 ): Promise<RiskDTO> {
   // 2026-05-09 (PR D / #20): 既存 text を含めて取得し、実値変更時のみ embedding を再生成。
+  // 2026-05-09 feedback Phase 2-3: 越境編集を遮断するため where に tenantId を併記。
+  //   tenantId 引数は元々 embedding 用だが、本 PR で同時に認可境界として再利用する
+  //   (= viewer の tenantId と一致する riskIssue のみ編集可能)。
   const existing = await prisma.riskIssue.findFirst({
-    where: { id: riskId, deletedAt: null },
+    where: { id: riskId, deletedAt: null, tenantId },
     select: {
       reporterId: true,
       title: true,
@@ -594,6 +607,7 @@ export async function bulkUpdateRisksFromList(
     deadline?: string | null;
   },
   viewerUserId: string,
+  viewerTenantId: string,
 ): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
   if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
 
@@ -601,10 +615,12 @@ export async function bulkUpdateRisksFromList(
   // PR #165: where に projectId を加え、他プロジェクトのレコードは skippedNotFound 扱いにする
   // PR feat/asset-multi-project-linking: scope は M:N (riskIssueProjects) 経由で判定する。
   //   つまり「この project に紐付け済 (作成元または参照先)」のレコードのみ一括更新可能。
+  // 2026-05-09 feedback Phase 2-3: 越境一括更新を遮断するため tenantId フィルタを併記。
   const targets = await prisma.riskIssue.findMany({
     where: {
       id: { in: ids },
       deletedAt: null,
+      tenantId: viewerTenantId,
       riskIssueProjects: { some: { projectId } },
     },
     select: { id: true, reporterId: true },
@@ -648,9 +664,11 @@ export async function deleteRisk(
   riskId: string,
   userId: string,
   systemRole: string,
+  viewerTenantId: string,
 ): Promise<void> {
+  // 2026-05-09 feedback Phase 2-3: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.riskIssue.findFirst({
-    where: { id: riskId, deletedAt: null },
+    where: { id: riskId, deletedAt: null, tenantId: viewerTenantId },
     select: { reporterId: true, type: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
@@ -738,7 +756,15 @@ export async function linkRiskToProject(
 export async function unlinkRiskFromProject(
   riskId: string,
   projectId: string,
+  viewerTenantId: string,
 ): Promise<{ removed: boolean }> {
+  // 2026-05-09 feedback Phase 2-3: 越境紐付け解除を遮断するため、対象 risk の tenant 一致を verify。
+  //   不一致時は removed=false で silent fallback (情報漏洩防止)。
+  const owned = await prisma.riskIssue.findFirst({
+    where: { id: riskId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) return { removed: false };
   const existing = await prisma.riskIssueProject.findUnique({
     where: { riskIssueId_projectId: { riskIssueId: riskId, projectId } },
     select: { id: true },
