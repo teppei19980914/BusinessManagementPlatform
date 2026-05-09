@@ -45,6 +45,8 @@ type TenantSelfInfo = {
   // P-B (2026-05-08): Beginner プラン期限ステータス
   beginnerExpiryState: 'active' | 'warning_60' | 'warning_75' | 'expired';
   beginnerDaysRemaining: number | null;
+  // 2026-05-09 (PR G / #24): シードデータ参照 toggle
+  seedDataEnabled: boolean;
 };
 
 type PlanLabel = { value: 'beginner' | 'expert' | 'pro'; label: string; description: string };
@@ -342,6 +344,14 @@ export function TenantSettingsClient({
 
       {/* Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理 */}
       {storageInitialInfo && <StorageAddonSection initialInfo={storageInitialInfo} />}
+
+      {/* 2026-05-09 (PR G / #24): シードデータ参照 toggle */}
+      <SeedDataToggleSection
+        initialEnabled={info.seedDataEnabled}
+        onUpdate={async () => {
+          await refreshInfo();
+        }}
+      />
 
       {/* P-G (2026-05-08): 請求先情報の編集 */}
       <BillingContactSection initialInfo={info} />
@@ -826,6 +836,67 @@ function DataImportSection() {
           </ul>
         </div>
       )}
+    </section>
+  );
+}
+
+// ================================================================
+// 2026-05-09 (PR G / #24): シードデータ参照 toggle セクション
+// ================================================================
+
+function SeedDataToggleSection({
+  initialEnabled,
+  onUpdate,
+}: {
+  initialEnabled: boolean;
+  onUpdate: () => Promise<void>;
+}) {
+  const { showSuccess, showError } = useToast();
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleToggle(next: boolean) {
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/tenants/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seedDataEnabled: next }),
+      });
+      if (!res.ok) {
+        showError('シードデータ参照の切替に失敗しました');
+        return;
+      }
+      setEnabled(next);
+      showSuccess(next ? 'シードデータ参照を有効化しました' : 'シードデータ参照を無効化しました');
+      await onUpdate();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="mt-8 rounded border p-4">
+      <h2 className="text-lg font-semibold">提案エンジン: シードデータ参照</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        プラットフォーム運営者が用意した <strong>サンプルナレッジ・サンプル過去案件</strong> を、
+        提案エンジンの候補に含めるかを切替えます。契約直後でデータが少ない時期にサンプルから
+        雛形採用するのに有効ですが、業務固有の文脈に集中したい場合は無効化してください。
+      </p>
+      <div className="mt-3 flex items-center gap-3">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={submitting}
+            onChange={(e) => handleToggle(e.target.checked)}
+          />
+          シードデータを提案候補に含める (default: 有効)
+        </label>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        現在: <strong>{enabled ? '有効 (シードを参照)' : '無効 (自テナント + 他顧客のみ)'}</strong>
+      </p>
     </section>
   );
 }

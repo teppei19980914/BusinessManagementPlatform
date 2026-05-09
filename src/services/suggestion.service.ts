@@ -32,6 +32,9 @@
  */
 
 import { prisma } from '@/lib/db';
+// 2026-05-09 (PR G / 設計合意 B + #24): シードデータは管理テナントに集中。
+//   テナント別 seedDataEnabled toggle で管理テナントの参照を遮断する。
+import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 import { jaccard, unifyProjectTags, unifyKnowledgeTags, combineScores } from '@/lib/similarity';
 import {
   SUGGESTION_TAG_WEIGHT as TAG_WEIGHT,
@@ -130,6 +133,11 @@ type ProjectContext = {
    *   null の場合は embedding 軸スコア = 0 で 2 軸縮退モード。
    */
   embeddingText: string | null;
+  /**
+   * PR G (#24 / 2026-05-09): 自テナントの seedDataEnabled。
+   *   false のときは管理テナント (MANAGEMENT_TENANT_ID) のシードデータを提案候補から除外。
+   */
+  seedDataEnabled: boolean;
 };
 
 async function loadProjectContext(projectId: string): Promise<ProjectContext | null> {
@@ -137,6 +145,7 @@ async function loadProjectContext(projectId: string): Promise<ProjectContext | n
     where: { id: projectId, deletedAt: null },
     select: {
       id: true,
+      tenantId: true,
       purpose: true,
       background: true,
       scope: true,
@@ -146,6 +155,14 @@ async function loadProjectContext(projectId: string): Promise<ProjectContext | n
     },
   });
   if (!p) return null;
+
+  // PR G (#24): プロジェクトの所属テナントの seedDataEnabled を取得。
+  //   この値で管理テナントのシードを提案候補に含めるかを判定する。
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: p.tenantId },
+    select: { seedDataEnabled: true },
+  });
+  const seedDataEnabled = tenant?.seedDataEnabled ?? true;
   const tags = unifyProjectTags({
     businessDomainTags: (p.businessDomainTags as string[]) ?? [],
     techStackTags: (p.techStackTags as string[]) ?? [],
@@ -164,7 +181,7 @@ async function loadProjectContext(projectId: string): Promise<ProjectContext | n
   `;
   const embeddingText = embRows[0]?.embedding ?? null;
 
-  return { id: p.id, tags, text, embeddingText };
+  return { id: p.id, tags, text, embeddingText, seedDataEnabled };
 }
 
 /**
@@ -273,6 +290,12 @@ export async function suggestForProject(
   const ctx = await loadProjectContext(projectId);
   if (!ctx) return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] };
 
+  // PR G (#24 / 2026-05-09): seedDataEnabled=false なら管理テナント (= シード保管先) を除外。
+  //   true (default) の場合は条件を付与しない (= 全テナント横断、現状維持)。
+  const excludeManagementTenant = !ctx.seedDataEnabled
+    ? { tenantId: { not: MANAGEMENT_TENANT_ID } }
+    : {};
+
   // ---------- Knowledge 候補 ----------
   // visibility='public' のみ対象 (draft は作成者だけが閲覧できる想定)
   // 論理削除除外 + 入力プロジェクトに紐付け済のナレッジは候補から **除外**
@@ -282,6 +305,7 @@ export async function suggestForProject(
     where: {
       deletedAt: null,
       visibility: 'public',
+      ...excludeManagementTenant,
       NOT: {
         knowledgeProjects: { some: { projectId } },
       },
@@ -351,6 +375,7 @@ export async function suggestForProject(
       deletedAt: null,
       type: 'issue',
       state: 'resolved',
+      ...excludeManagementTenant,
       NOT: { projectId },
     },
     select: {
@@ -422,6 +447,7 @@ export async function suggestForProject(
       deletedAt: null,
       type: 'risk',
       state: 'resolved',
+      ...excludeManagementTenant,
       NOT: { projectId },
     },
     select: {
@@ -492,6 +518,7 @@ export async function suggestForProject(
     where: {
       deletedAt: null,
       visibility: 'public',
+      ...excludeManagementTenant,
       NOT: { projectId },
     },
     select: {

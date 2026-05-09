@@ -66,6 +66,8 @@ export type TenantSelfInfo = {
   beginnerExpiryState: BeginnerExpiryState;
   /** Beginner プランの残り日数。plan != beginner なら null */
   beginnerDaysRemaining: number | null;
+  // 2026-05-09 (PR G / #24): シードデータ参照 toggle
+  seedDataEnabled: boolean;
 };
 
 /**
@@ -117,6 +119,7 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     paymentMethod: t.paymentMethod,
     beginnerExpiryState,
     beginnerDaysRemaining,
+    seedDataEnabled: t.seedDataEnabled,
   };
 }
 
@@ -185,6 +188,8 @@ export type UpdateTenantSelfInput = {
   plan?: TenantPlan;
   /** 月次予算上限。null = 無制限、undefined = 変更なし */
   monthlyBudgetCapJpy?: number | null;
+  // 2026-05-09 (PR G / #24): シードデータ参照 toggle (即時反映)
+  seedDataEnabled?: boolean;
 };
 
 export type UpdateTenantSelfResult =
@@ -223,13 +228,14 @@ export async function updateTenantSelf(
     where: { id: tenantId, deletedAt: null },
   });
 
-  // 予算上限のみの変更 (プランは変えない)
+  // 予算上限 / seedDataEnabled のみの変更 (プランは変えない)
   if (input.plan === undefined) {
-    if (input.monthlyBudgetCapJpy !== undefined) {
-      await prisma.tenant.update({
-        where: { id: tenantId },
-        data: { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy },
-      });
+    const data: Record<string, unknown> = {};
+    if (input.monthlyBudgetCapJpy !== undefined) data.monthlyBudgetCapJpy = input.monthlyBudgetCapJpy;
+    // 2026-05-09 (PR G / #24): seedDataEnabled toggle (即時反映)
+    if (input.seedDataEnabled !== undefined) data.seedDataEnabled = input.seedDataEnabled;
+    if (Object.keys(data).length > 0) {
+      await prisma.tenant.update({ where: { id: tenantId }, data });
     }
     return { ok: true, appliedImmediately: true, scheduledFor: null };
   }

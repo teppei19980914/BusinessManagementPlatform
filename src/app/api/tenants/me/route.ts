@@ -27,6 +27,8 @@ import {
 const updateBodySchema = z.object({
   plan: z.enum(['beginner', 'expert', 'pro']).optional(),
   monthlyBudgetCapJpy: z.number().int().nonnegative().nullable().optional(),
+  // 2026-05-09 (PR G / #24): シードデータ参照 toggle
+  seedDataEnabled: z.boolean().optional(),
 });
 
 export async function GET() {
