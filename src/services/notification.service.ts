@@ -60,10 +60,13 @@ function toDTO(n: {
  */
 export async function listNotificationsForUser(
   userId: string,
+  viewerTenantId: string,
   options: { includeRead?: boolean; limit?: number } = {},
 ): Promise<{ items: NotificationDTO[]; unreadCount: number }> {
   const { includeRead = false, limit = 20 } = options;
-  const where = { userId, ...(includeRead ? {} : { readAt: null }) };
+  // 2026-05-09 feedback Phase 2-7: 二重防御として tenantId フィルタ併記。
+  //   userId は tenant 内で一意なので実質 no-op だが、テナント間 userId 衝突への保険。
+  const where = { userId, tenantId: viewerTenantId, ...(includeRead ? {} : { readAt: null }) };
 
   // 取得 + 未読件数を 1 transaction に束ねる (race-free counter)
   const [items, unreadCount] = await Promise.all([
@@ -72,7 +75,7 @@ export async function listNotificationsForUser(
       orderBy: { createdAt: 'desc' },
       take: limit,
     }),
-    prisma.notification.count({ where: { userId, readAt: null } }),
+    prisma.notification.count({ where: { userId, tenantId: viewerTenantId, readAt: null } }),
   ]);
   return { items: items.map(toDTO), unreadCount };
 }
@@ -84,7 +87,17 @@ export async function listNotificationsForUser(
 export async function setNotificationRead(
   notificationId: string,
   read: boolean,
+  viewerUserId: string,
+  viewerTenantId: string,
 ): Promise<NotificationDTO> {
+  // 2026-05-09 feedback Phase 2-7: 越境既読化を遮断するため findFirst で先に所有確認。
+  //   旧仕様は id 単独 update で他テナント user の通知を勝手に既読化可能だった。
+  const owned = await prisma.notification.findFirst({
+    where: { id: notificationId, userId: viewerUserId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const updated = await prisma.notification.update({
     where: { id: notificationId },
     data: { readAt: read ? new Date() : null },
@@ -93,9 +106,13 @@ export async function setNotificationRead(
 }
 
 /** 自分宛の未読通知をすべて既読化する (一括既読ボタン用)。 */
-export async function markAllNotificationsRead(userId: string): Promise<{ count: number }> {
+export async function markAllNotificationsRead(
+  userId: string,
+  viewerTenantId: string,
+): Promise<{ count: number }> {
+  // 2026-05-09 feedback Phase 2-7: 二重防御として tenantId フィルタ併記。
   const r = await prisma.notification.updateMany({
-    where: { userId, readAt: null },
+    where: { userId, tenantId: viewerTenantId, readAt: null },
     data: { readAt: new Date() },
   });
   return { count: r.count };
@@ -104,12 +121,15 @@ export async function markAllNotificationsRead(userId: string): Promise<{ count:
 /**
  * 指定 ID の通知を取得する (認可判定用、findFirst で deletedAt 等の概念無し)。
  * MVP では自分宛か確認するため userId も合わせて検証する形で使う。
+ *
+ * 2026-05-09 feedback Phase 2-7: 越境取得を遮断するため tenantId フィルタ必須化。
  */
 export async function getNotification(
   notificationId: string,
+  viewerTenantId: string,
 ): Promise<{ id: string; userId: string } | null> {
-  return prisma.notification.findUnique({
-    where: { id: notificationId },
+  return prisma.notification.findFirst({
+    where: { id: notificationId, tenantId: viewerTenantId },
     select: { id: true, userId: true },
   });
 }
