@@ -1212,6 +1212,7 @@
     "explainErrorRateLimited": "Too many explanation requests in a short time. Please wait and try again.",
     "explainErrorBeginnerLimit": "Beginner plan monthly API limit reached. Please consider upgrading to Expert / Pro.",
     "explainErrorBudgetExceeded": "Tenant monthly budget cap reached. Cannot generate an explanation.",
+    "explainErrorPlanForbidden": "The 'Why?' explanation feature is available only on the Pro plan. Please consider upgrading.",
     "explainErrorLlm": "A temporary AI error occurred. Please wait and try again."
   },
   "bulkVisibility": {

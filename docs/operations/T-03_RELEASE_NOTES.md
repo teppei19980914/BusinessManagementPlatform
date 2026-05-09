@@ -171,6 +171,48 @@ GET /api/admin/usage-summary?date=2026-06-01
 
 将来 (PR-X2) で super_admin ダッシュボード UI で可視化予定。
 
+### Q5. Anthropic コンソール上のクレジット残高が減らないのはなぜか? (#23 / 2026-05-09)
+
+**A**: 仕様通り。本サービスの内部請求 (`Tenant.currentMonthApiCostJpy`) と Anthropic の実 API 課金は **完全に独立した 2 系統**:
+
+| 系統 | 計測対象 | 単価 | 反映タイミング | 反映先 |
+|---|---|---|---|---|
+| **内部請求 (本サービス)** | `withMeteredLLM` 越しの呼び出し回数 | プラン別固定単価 (Beginner ¥0 / Expert ¥10/call / Pro ¥30/call) | 呼び出し成功直後にアトミック increment | `Tenant.currentMonthApiCostJpy` + `ApiCallLog` |
+| **Anthropic 課金** | API key で発生した実トークン消費 | Anthropic 公式単価 (input/output トークン課金) | Anthropic 側で集計 | Anthropic Console |
+
+つまり「Anthropic クレジットが減らない」と感じる場合は **Anthropic API key が正しく設定されているか / call が実際に発火しているか** を確認する。観測ポイント:
+
+1. **API key 設定**: Vercel 環境変数 `ANTHROPIC_API_KEY` が正しいか / 該当 key の Console を見ているか
+2. **呼び出し発火**: `ApiCallLog` テーブルに該当 `featureUnit` (`auto-tag-extract` / `suggestion-explanation`) のレコードが入っているか — 入っていれば呼び出しは成功しトークン消費もしているはず
+3. **集計タイミング**: Anthropic Console は数十秒〜数分の遅延があるため、即時反映を期待しない
+4. **無料クレジット**: 新規アカウントの無料クレジット枠から先に消費されるため、有償残高表示が動かないように見えることがある
+
+> **将来の改善**: 内部請求単価と Anthropic 実コストの乖離を縮めるため、`ApiCallLog.llmInputTokens` / `llmOutputTokens` から実コスト概算を出して `Tenant.currentMonthApiCostJpy` に動的反映する案がある。MVP 後に検討 (リリース後 2 ヶ月予定)。
+
+### Q6. Anthropic API はどのタイミングで呼ばれるか? (#17 / 2026-05-09)
+
+**A**: 本サービスから Anthropic Claude を叩くトリガは **2 経路のみ** (両方とも `withMeteredLLM` 越し):
+
+| 経路 | トリガ | featureUnit | モデル分岐 | キャッシュ |
+|---|---|---|---|---|
+| **(a) 自動タグ抽出** | プロジェクトの **新規作成 / 編集** で `purpose` / `background` / `scope` が変わったとき | `auto-tag-extract` | Beginner/Expert: Haiku / Pro: Sonnet | なし (毎回呼ぶ。失敗しても fail-safe で続行) |
+| **(b) 「なぜ?」説明文** | 提案画面で「なぜ?」ボタンを **クリックしたとき** (Lazy 生成) | `suggestion-explanation` | Beginner/Expert: Haiku / Pro: Sonnet | DB 永続キャッシュ。`(projectId, candidateKind, candidateId)` で 2 回目以降は再課金しない |
+
+それ以外 (一覧表示 / WBS 作成 / Knowledge 作成 / 提案候補リスト取得 など) では **Anthropic は呼ばない**。リスト系の類似度計算は **Voyage AI embedding (別サービス)** + pg_trgm のローカル計算でまかなっている。
+
+呼び出し有無の確認は `ApiCallLog` テーブルの `feature_unit` 列で行う:
+
+```sql
+-- 直近 24h で発火した Anthropic 呼び出し
+SELECT feature_unit, COUNT(*), SUM(llm_input_tokens), SUM(llm_output_tokens)
+  FROM api_call_logs
+ WHERE created_at > NOW() - INTERVAL '24 hours'
+   AND feature_unit IN ('auto-tag-extract', 'suggestion-explanation')
+ GROUP BY feature_unit;
+```
+
+> **2026-05-09 (#22) 改修**: 「なぜ?」説明文機能は **Pro プラン限定**になった。Beginner / Expert ではボタン非表示 + サーバ側で `plan_forbidden` を返す (defense-in-depth)。Anthropic 呼び出し量は Pro プラン契約者のなぜ?クリック数次第。
+
 ---
 
 ## リリース後の改善ロードマップ
