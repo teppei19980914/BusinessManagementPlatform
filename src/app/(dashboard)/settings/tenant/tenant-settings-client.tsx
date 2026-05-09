@@ -28,11 +28,18 @@ type TenantSelfInfo = {
   scheduledPlanChangeAt: Date | string | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
-  // P-G (2026-05-08): 請求先情報
+  // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で個人法人 + 構造化住所
+  billingType: string;
   billingCompanyName: string | null;
   billingContactName: string | null;
   billingContactEmail: string | null;
+  /** Legacy: 旧 単一 Text 住所 (フォールバック表示用) */
   billingAddress: string | null;
+  billingPostalCode: string | null;
+  billingPrefecture: string | null;
+  billingCity: string | null;
+  billingStreetAddress: string | null;
+  billingBuildingName: string | null;
   billingPhoneNumber: string | null;
   paymentMethod: string;
   // P-B (2026-05-08): Beginner プラン期限ステータス
@@ -831,11 +838,17 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
   const router = useRouter();
   const { showSuccess, showError } = useToast();
 
+  // 2026-05-09 (PR C / #5/#8/#10): 個人/法人 + 住所サブフィールドを追加
   const [form, setForm] = useState({
+    billingType: (initialInfo.billingType as 'corporate' | 'individual') || 'corporate',
     billingCompanyName: initialInfo.billingCompanyName ?? '',
     billingContactName: initialInfo.billingContactName ?? '',
     billingContactEmail: initialInfo.billingContactEmail ?? '',
-    billingAddress: initialInfo.billingAddress ?? '',
+    billingPostalCode: initialInfo.billingPostalCode ?? '',
+    billingPrefecture: initialInfo.billingPrefecture ?? '',
+    billingCity: initialInfo.billingCity ?? '',
+    billingStreetAddress: initialInfo.billingStreetAddress ?? '',
+    billingBuildingName: initialInfo.billingBuildingName ?? '',
     billingPhoneNumber: initialInfo.billingPhoneNumber ?? '',
     paymentMethod: initialInfo.paymentMethod || 'invoice',
   });
@@ -853,6 +866,13 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          // 2026-05-09 (PR C / #5): 個人プラン時は会社名を null クリア (UI 非表示でも残値防止)
+          billingCompanyName:
+            form.billingType === 'individual'
+              ? null
+              : form.billingCompanyName.trim() || null,
+          // (#10) 建物名は任意 (空文字は null クリア)
+          billingBuildingName: form.billingBuildingName.trim() || null,
           // 空文字は null に正規化 (= 値クリア)
           billingPhoneNumber: form.billingPhoneNumber.trim() || null,
         }),
@@ -886,20 +906,51 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
         <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
       )}
 
+      {/* 2026-05-09 (PR C / #5): 個人 / 法人 切替 */}
       <div className="space-y-2">
-        <label htmlFor="billingCompanyName" className="text-sm font-medium">会社名 / 法人名 *</label>
-        <input
-          id="billingCompanyName"
-          className="w-full rounded border p-2 text-sm"
-          value={form.billingCompanyName}
-          onChange={(e) => setForm({ ...form, billingCompanyName: e.target.value })}
-          maxLength={200}
-          required
-        />
+        <span className="text-sm font-medium">請求先種別 *</span>
+        <div className="flex gap-4 text-sm">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="radio"
+              name="billingType"
+              value="corporate"
+              checked={form.billingType === 'corporate'}
+              onChange={() => setForm({ ...form, billingType: 'corporate' })}
+            />
+            法人
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="radio"
+              name="billingType"
+              value="individual"
+              checked={form.billingType === 'individual'}
+              onChange={() => setForm({ ...form, billingType: 'individual', billingCompanyName: '' })}
+            />
+            個人
+          </label>
+        </div>
       </div>
 
+      {form.billingType === 'corporate' && (
+        <div className="space-y-2">
+          <label htmlFor="billingCompanyName" className="text-sm font-medium">会社名 / 法人名 *</label>
+          <input
+            id="billingCompanyName"
+            className="w-full rounded border p-2 text-sm"
+            value={form.billingCompanyName}
+            onChange={(e) => setForm({ ...form, billingCompanyName: e.target.value })}
+            maxLength={200}
+            required
+          />
+        </div>
+      )}
+
       <div className="space-y-2">
-        <label htmlFor="billingContactName" className="text-sm font-medium">請求担当者名 *</label>
+        <label htmlFor="billingContactName" className="text-sm font-medium">
+          {form.billingType === 'corporate' ? '請求担当者名 *' : 'お名前 *'}
+        </label>
         <input
           id="billingContactName"
           className="w-full rounded border p-2 text-sm"
@@ -923,17 +974,83 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
         />
       </div>
 
+      {/* 2026-05-09 (PR C / #8): 住所をサブフィールドに分割 */}
       <div className="space-y-2">
-        <label htmlFor="billingAddress" className="text-sm font-medium">請求書送付先住所 *</label>
-        <textarea
-          id="billingAddress"
+        <label htmlFor="billingPostalCode" className="text-sm font-medium">郵便番号 *</label>
+        <input
+          id="billingPostalCode"
           className="w-full rounded border p-2 text-sm"
-          rows={3}
-          value={form.billingAddress}
-          onChange={(e) => setForm({ ...form, billingAddress: e.target.value })}
+          value={form.billingPostalCode}
+          onChange={(e) => setForm({ ...form, billingPostalCode: e.target.value })}
+          maxLength={10}
+          placeholder="例: 100-0001"
+          pattern="\d{3}-?\d{4}"
           required
         />
       </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <label htmlFor="billingPrefecture" className="text-sm font-medium">都道府県 *</label>
+          <input
+            id="billingPrefecture"
+            className="w-full rounded border p-2 text-sm"
+            value={form.billingPrefecture}
+            onChange={(e) => setForm({ ...form, billingPrefecture: e.target.value })}
+            maxLength={20}
+            placeholder="例: 東京都"
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <label htmlFor="billingCity" className="text-sm font-medium">市区町村 *</label>
+          <input
+            id="billingCity"
+            className="w-full rounded border p-2 text-sm"
+            value={form.billingCity}
+            onChange={(e) => setForm({ ...form, billingCity: e.target.value })}
+            maxLength={100}
+            placeholder="例: 千代田区"
+            required
+          />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <label htmlFor="billingStreetAddress" className="text-sm font-medium">番地・町名 *</label>
+        <input
+          id="billingStreetAddress"
+          className="w-full rounded border p-2 text-sm"
+          value={form.billingStreetAddress}
+          onChange={(e) => setForm({ ...form, billingStreetAddress: e.target.value })}
+          maxLength={200}
+          placeholder="例: 千代田1-1"
+          required
+        />
+      </div>
+      {/* 2026-05-09 (#10): 任意 */}
+      <div className="space-y-2">
+        <label htmlFor="billingBuildingName" className="text-sm font-medium">建物名・部屋番号 (任意)</label>
+        <input
+          id="billingBuildingName"
+          className="w-full rounded border p-2 text-sm"
+          value={form.billingBuildingName}
+          onChange={(e) => setForm({ ...form, billingBuildingName: e.target.value })}
+          maxLength={200}
+          placeholder="例: 〇〇ビル 5F"
+        />
+      </div>
+
+      {/* 2026-05-09 (PR C): legacy billingAddress が残っている場合は read-only で表示 (データ損失防止) */}
+      {initialInfo.billingAddress
+        && !initialInfo.billingPostalCode
+        && !initialInfo.billingPrefecture && (
+        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs dark:bg-amber-900/30">
+          <strong>過去登録された住所 (旧形式):</strong>
+          <pre className="mt-1 whitespace-pre-wrap font-mono text-xs">{initialInfo.billingAddress}</pre>
+          <p className="mt-1">
+            上記サブフィールドに分割入力 + 保存すると、旧形式は新形式で上書きされます。
+          </p>
+        </div>
+      )}
 
       <div className="space-y-2">
         <label htmlFor="billingPhoneNumber" className="text-sm font-medium">電話番号 (任意)</label>

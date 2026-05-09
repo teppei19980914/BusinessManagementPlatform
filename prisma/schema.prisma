@@ -74,14 +74,30 @@ model Tenant {
   ///   - 新規顧客テナント (P-G で実装される super_admin 作成 API + /signup) は登録時に
   ///     必須 4 項目 (companyName / contactName / contactEmail / address) を要求する。
   ///   - 別テーブル化せず Tenant に持たせるのは、1:1 関係 + 操作頻度低 + JOIN 回避のため。
-  /// 請求書発行先の正式会社名 / 法人名 (Tenant.name は表示用のため、請求文書では本フィールドを優先)
+  /// 2026-05-09 (PR C / #5): 請求先種別。'corporate' (法人) / 'individual' (個人)。
+  ///   - corporate: billingCompanyName 必須
+  ///   - individual: billingCompanyName は不要 (UI 非表示)、billingContactName が個人氏名
+  billingType                  String    @default("corporate") @map("billing_type") @db.VarChar(20)
+  /// 請求書発行先の正式会社名 / 法人名 (Tenant.name は表示用のため、請求文書では本フィールドを優先)。
+  /// billingType='individual' のときは UI 非表示 + 任意 (NULL 可)。
   billingCompanyName           String?   @map("billing_company_name") @db.VarChar(200)
-  /// 請求書送付先担当者名
+  /// 請求書送付先担当者名 (個人プランでは個人氏名、法人プランでは経理担当者など)
   billingContactName           String?   @map("billing_contact_name") @db.VarChar(100)
   /// 請求書送付先メールアドレス (= 請求書 PDF / 案内メールの送り先)
   billingContactEmail          String?   @map("billing_contact_email") @db.VarChar(255)
-  /// 請求書送付先住所 (郵送が必要な場合 / 法人登記住所など)
+  /// 2026-05-09 (PR C / #8) で **構造化** 。新規入力はサブフィールドへ。
+  /// Legacy: 旧 単一 Text 住所。データ損失防止のためフォールバック表示用に残置。
   billingAddress               String?   @map("billing_address") @db.Text
+  /// 郵便番号 (例 100-0001)。#8 で構造化追加
+  billingPostalCode            String?   @map("billing_postal_code") @db.VarChar(10)
+  /// 都道府県 (例 東京都)。#8
+  billingPrefecture            String?   @map("billing_prefecture") @db.VarChar(20)
+  /// 市区町村 (例 千代田区)。#8
+  billingCity                  String?   @map("billing_city") @db.VarChar(100)
+  /// 番地・町名 (例 千代田1-1)。#8
+  billingStreetAddress         String?   @map("billing_street_address") @db.VarChar(200)
+  /// 建物名・部屋番号 (任意 #10)
+  billingBuildingName          String?   @map("billing_building_name") @db.VarChar(200)
   /// 連絡先電話番号 (任意)
   billingPhoneNumber           String?   @map("billing_phone_number") @db.VarChar(20)
   /// 支払い方法 ('invoice' = 請求書送付 / 'bank_transfer' = 銀行振込 / 'credit_card' = 後続実装)

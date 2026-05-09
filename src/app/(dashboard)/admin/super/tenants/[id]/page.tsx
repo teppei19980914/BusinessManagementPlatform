@@ -121,21 +121,36 @@ export default async function SuperAdminTenantDetailPage({
         )}
       </section>
 
-      {/* P-G (2026-05-08): 請求先情報 */}
+      {/* P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で個人法人 + 住所構造化 */}
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">請求先情報</h2>
-        {tenant.billingCompanyName == null ? (
+        {tenant.billingContactName == null ? (
           <p className="rounded border bg-muted/30 p-4 text-sm text-muted-foreground">
             ℹ 請求先情報が未登録です (= 運営内部テナント、または旧データ)。請求業務には使用できません。
           </p>
         ) : (
           <dl className="grid grid-cols-1 gap-2 rounded border p-3 text-sm sm:grid-cols-2">
-            <BillingRow label="会社名 / 法人名" value={tenant.billingCompanyName} />
-            <BillingRow label="請求担当者" value={tenant.billingContactName} />
+            {/* 2026-05-09 (PR C / #5): billingType 表示 + 個人プランは会社名行を出さない */}
+            <BillingRow
+              label="種別"
+              value={tenant.billingType === 'individual' ? '個人' : '法人'}
+            />
+            {tenant.billingType !== 'individual' && tenant.billingCompanyName && (
+              <BillingRow label="会社名 / 法人名" value={tenant.billingCompanyName} />
+            )}
+            <BillingRow
+              label={tenant.billingType === 'individual' ? 'お名前' : '請求担当者'}
+              value={tenant.billingContactName}
+            />
             <BillingRow label="請求先メール" value={tenant.billingContactEmail} />
             <BillingRow label="電話番号" value={tenant.billingPhoneNumber ?? '(未設定)'} />
             <BillingRow label="支払い方法" value={paymentMethodLabel(tenant.paymentMethod)} />
-            <BillingRow label="請求書送付先住所" value={tenant.billingAddress} fullWidth />
+            {/* 2026-05-09 (PR C / #8): 構造化住所優先、未設定時は legacy billingAddress フォールバック */}
+            <BillingRow
+              label="請求書送付先住所"
+              value={formatBillingAddress(tenant)}
+              fullWidth
+            />
           </dl>
         )}
       </section>
@@ -254,4 +269,28 @@ function paymentMethodLabel(method: string): string {
     default:
       return method;
   }
+}
+
+/**
+ * 2026-05-09 (PR C / #8): 構造化住所を 1 行に整形。
+ *   構造化フィールドが揃っていれば優先、未設定なら legacy billing_address にフォールバック、
+ *   どちらもなければ '(未設定)'。
+ */
+function formatBillingAddress(t: {
+  billingPostalCode: string | null;
+  billingPrefecture: string | null;
+  billingCity: string | null;
+  billingStreetAddress: string | null;
+  billingBuildingName: string | null;
+  billingAddress: string | null;
+}): string | null {
+  if (t.billingPostalCode || t.billingPrefecture || t.billingCity || t.billingStreetAddress) {
+    const postal = t.billingPostalCode ? `〒${t.billingPostalCode} ` : '';
+    const main = [t.billingPrefecture, t.billingCity, t.billingStreetAddress]
+      .filter(Boolean)
+      .join('');
+    const building = t.billingBuildingName ? ` ${t.billingBuildingName}` : '';
+    return `${postal}${main}${building}`;
+  }
+  return t.billingAddress;
 }

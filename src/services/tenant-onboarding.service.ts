@@ -48,31 +48,59 @@ import type { TenantPlan } from '@/lib/tenant';
 // ================================================================
 
 /** 共通の入力バリデーション (super_admin / signup 共通) */
-export const TenantOnboardingInputSchema = z.object({
-  /** 表示用テナント名 (画面ヘッダ等。請求書の正式社名は billingCompanyName を使う) */
-  name: z.string().trim().min(1).max(100),
-  /** URL ルーティング用 slug (英数 + ハイフン、3-60 文字) */
-  slug: z.string().trim().regex(/^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$/, {
-    message: 'slug は英小文字・数字・ハイフンのみ、3〜60 文字で入力してください',
-  }),
-  /** プラン (デフォルト beginner) */
-  plan: z.enum(['beginner', 'expert', 'pro']).default('beginner'),
+export const TenantOnboardingInputSchema = z
+  .object({
+    /** 表示用テナント名 (画面ヘッダ等。請求書の正式社名は billingCompanyName を使う) */
+    name: z.string().trim().min(1).max(100),
+    /** URL ルーティング用 slug (英数 + ハイフン、3-60 文字) */
+    slug: z.string().trim().regex(/^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$/, {
+      message: 'slug は英小文字・数字・ハイフンのみ、3〜60 文字で入力してください',
+    }),
+    /** プラン (デフォルト beginner) */
+    plan: z.enum(['beginner', 'expert', 'pro']).default('beginner'),
 
-  /** 請求先必須 4 項目 */
-  billingCompanyName: z.string().trim().min(1).max(200),
-  billingContactName: z.string().trim().min(1).max(100),
-  billingContactEmail: z.string().trim().email().max(255),
-  billingAddress: z.string().trim().min(1),
+    // 2026-05-09 (PR C / #5): 請求先種別。corporate = 法人 / individual = 個人。
+    //   - corporate: billingCompanyName 必須 (= 法人名)
+    //   - individual: billingCompanyName は省略可 (UI 側でフィールド非表示、入力されても OK)
+    billingType: z.enum(['corporate', 'individual']).default('corporate'),
+    /**
+     * 請求先会社名 / 法人名。billingType='corporate' のときは required (refine で強制)、
+     * 'individual' のときは optional (空でも OK)。
+     */
+    billingCompanyName: z.string().trim().max(200).optional(),
+    billingContactName: z.string().trim().min(1).max(100),
+    billingContactEmail: z.string().trim().email().max(255),
 
-  /** 任意 */
-  billingPhoneNumber: z.string().trim().max(20).optional(),
-  // 2026-05-09 (#4): クレジットカードは未対応のため API でも reject (UI も disabled)。
-  paymentMethod: z.enum(['invoice', 'bank_transfer']).default('invoice'),
+    // 2026-05-09 (PR C / #8): 住所サブフィールド化。新規入力は構造化した個別フィールドで受ける。
+    //   - 旧 billingAddress (単一 Text) は legacy として schema 上残置 (既存データ保護)。
+    //   - 構造化フィールドはすべて required (#10 で billingBuildingName のみ optional)。
+    billingPostalCode: z.string().trim().regex(/^\d{3}-?\d{4}$/, {
+      message: '郵便番号は 7 桁 (例 100-0001) で入力してください',
+    }),
+    billingPrefecture: z.string().trim().min(1).max(20),
+    billingCity: z.string().trim().min(1).max(100),
+    billingStreetAddress: z.string().trim().min(1).max(200),
+    billingBuildingName: z.string().trim().max(200).optional(),
 
-  /** 初期 admin ユーザ (検証メール送付先 = ログイン用) */
-  initialAdminName: z.string().trim().min(1).max(100),
-  initialAdminEmail: z.string().trim().email().max(255),
-});
+    /** 任意 */
+    billingPhoneNumber: z.string().trim().max(20).optional(),
+    // 2026-05-09 (#4): クレジットカードは未対応のため API でも reject (UI も disabled)。
+    paymentMethod: z.enum(['invoice', 'bank_transfer']).default('invoice'),
+
+    /** 初期 admin ユーザ (検証メール送付先 = ログイン用) */
+    initialAdminName: z.string().trim().min(1).max(100),
+    initialAdminEmail: z.string().trim().email().max(255),
+  })
+  // 2026-05-09 (PR C / #5): 法人プランのみ会社名必須。
+  //   個人プランで誤入力された会社名は許容 (UI 非表示なので通常は空) し、
+  //   サーバ側で sanitize する (UI へ渡す表示は法人 ↔ 個人切替で動的)。
+  .refine(
+    (d) => d.billingType !== 'corporate' || (d.billingCompanyName != null && d.billingCompanyName.length > 0),
+    {
+      path: ['billingCompanyName'],
+      message: '法人プランでは会社名 / 法人名は必須です',
+    },
+  );
 
 export type TenantOnboardingInput = z.infer<typeof TenantOnboardingInputSchema>;
 
@@ -215,10 +243,20 @@ async function createTenantInternal(
         //     **beginnerEverUpgraded=true** で作成 → 「初回から上位プラン」として Beginner 試用対象外に。
         //     後で誤って Beginner にダウングレードしようとしても updateTenantSelf が拒否する。
         beginnerEverUpgraded: input.plan !== 'beginner',
-        billingCompanyName: input.billingCompanyName,
+        // 2026-05-09 (PR C / #5): 個人プランでは会社名は null で保存する (UI 非表示)。
+        billingType: input.billingType,
+        billingCompanyName: input.billingType === 'corporate' ? input.billingCompanyName : null,
         billingContactName: input.billingContactName,
         billingContactEmail: input.billingContactEmail,
-        billingAddress: input.billingAddress,
+        // 2026-05-09 (PR C / #8): 住所サブフィールド化。
+        //   新規 onboarding は legacy billingAddress を null で保存し、構造化フィールドのみ使う。
+        billingAddress: null,
+        billingPostalCode: input.billingPostalCode,
+        billingPrefecture: input.billingPrefecture,
+        billingCity: input.billingCity,
+        billingStreetAddress: input.billingStreetAddress,
+        // 2026-05-09 (PR C / #10): building は optional。空文字は null に正規化。
+        billingBuildingName: input.billingBuildingName?.trim() || null,
         billingPhoneNumber: input.billingPhoneNumber ?? null,
         paymentMethod: input.paymentMethod,
       },
