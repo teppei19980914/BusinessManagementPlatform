@@ -13,7 +13,12 @@ export default async function RoleChangesPage() {
   const t = await getTranslations('admin.roleChanges');
   const { formatDateTimeFull } = await getServerFormatters();
 
+  // 2026-05-09 feedback: severity-1 テナント越境対策。
+  //   旧仕様では他テナントの全 role_change_log (誰がいつ誰の権限を変更したか) が
+  //   テナント A の admin に閲覧可能だった。RoleChangeLog は tenantId 列を持たないため
+  //   targetUser リレーション経由で自テナント限定する (changer も同テナント前提)。
   const logs = await prisma.roleChangeLog.findMany({
+    where: { targetUser: { tenantId: session.user.tenantId } },
     include: {
       changer: { select: { name: true } },
       targetUser: { select: { name: true, email: true } },

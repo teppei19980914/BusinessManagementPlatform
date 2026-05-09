@@ -92,9 +92,14 @@ function toUserDTO(user: {
   };
 }
 
-export async function listUsers(): Promise<UserDTO[]> {
+/**
+ * 2026-05-09 feedback: severity-1 テナント越境対策。viewer の所属テナント内のユーザのみ返却。
+ *   旧仕様: 全テナントの全ユーザ (氏名 / メール / MFA 状態 / ロック状態) が他テナント admin に漏洩していた。
+ *   PII 漏洩 + 他テナント user のアカウント乗っ取り経路 (recovery-codes 再発行等) の起点になっていた重大バグ。
+ */
+export async function listUsers(viewerTenantId: string): Promise<UserDTO[]> {
   const users = await prisma.user.findMany({
-    where: { deletedAt: null },
+    where: { deletedAt: null, tenantId: viewerTenantId },
     orderBy: { createdAt: 'desc' },
   });
   return users.map(toUserDTO);

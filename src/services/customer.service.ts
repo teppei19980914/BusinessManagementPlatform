@@ -58,9 +58,14 @@ function toDTO(c: {
 /**
  * 顧客一覧取得。
  * 紐付く active Project 件数も同時に取得 (UI の「削除ボタン活性/非活性」判定に使う)。
+ *
+ * 2026-05-09 feedback: severity-1 テナント越境防止。viewerTenantId を必須化し、
+ *   自テナント内の顧客のみ返す。旧仕様では全テナントの顧客 (氏名 / 連絡先 / メール) が
+ *   他テナント admin に漏洩する重大バグだった。
  */
-export async function listCustomers(): Promise<CustomerDTO[]> {
+export async function listCustomers(viewerTenantId: string): Promise<CustomerDTO[]> {
   const rows = await prisma.customer.findMany({
+    where: { tenantId: viewerTenantId },
     include: {
       _count: {
         select: {
@@ -75,10 +80,17 @@ export async function listCustomers(): Promise<CustomerDTO[]> {
   return rows.map(toDTO);
 }
 
-/** 単一顧客取得 (存在しない場合は null)。 */
-export async function getCustomer(customerId: string): Promise<CustomerDTO | null> {
-  const row = await prisma.customer.findUnique({
-    where: { id: customerId },
+/**
+ * 単一顧客取得 (存在しない場合は null)。
+ *
+ * 2026-05-09 feedback: viewerTenantId を必須化し、id バレで他テナント顧客が漏れる経路を遮断。
+ */
+export async function getCustomer(
+  customerId: string,
+  viewerTenantId: string,
+): Promise<CustomerDTO | null> {
+  const row = await prisma.customer.findFirst({
+    where: { id: customerId, tenantId: viewerTenantId },
     include: {
       _count: {
         select: {
@@ -95,9 +107,12 @@ export async function getCustomer(customerId: string): Promise<CustomerDTO | nul
 export async function createCustomer(
   input: CreateCustomerInput,
   userId: string,
+  tenantId: string,
 ): Promise<CustomerDTO> {
+  // 2026-05-09 feedback: tenantId を data に明示し、schema DB DEFAULT への暗黙依存を解消。
   const created = await prisma.customer.create({
     data: {
+      tenantId,
       name: input.name,
       department: input.department || null,
       contactPerson: input.contactPerson || null,
@@ -123,9 +138,11 @@ export async function updateCustomer(
   customerId: string,
   input: UpdateCustomerInput,
   userId: string,
+  viewerTenantId: string,
 ): Promise<CustomerDTO | null> {
-  const existing = await prisma.customer.findUnique({
-    where: { id: customerId },
+  // 2026-05-09 feedback: 越境編集を遮断するため where に tenantId を含める。
+  const existing = await prisma.customer.findFirst({
+    where: { id: customerId, tenantId: viewerTenantId },
     select: { id: true },
   });
   if (!existing) return null;
@@ -168,13 +185,15 @@ export async function updateCustomer(
  */
 export async function deleteCustomer(
   customerId: string,
+  viewerTenantId: string,
 ): Promise<
   | { ok: true }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'has_active_projects'; activeProjectCount: number }
 > {
-  const existing = await prisma.customer.findUnique({
-    where: { id: customerId },
+  // 2026-05-09 feedback: 越境削除を遮断するため where に tenantId を含める。
+  const existing = await prisma.customer.findFirst({
+    where: { id: customerId, tenantId: viewerTenantId },
     include: {
       _count: {
         select: {
@@ -224,6 +243,7 @@ export async function deleteCustomer(
  */
 export async function deleteCustomerCascade(
   customerId: string,
+  viewerTenantId: string,
   options: {
     cascadeRisks?: boolean;
     cascadeIssues?: boolean;
@@ -243,15 +263,17 @@ export async function deleteCustomerCascade(
       attachmentsDeleted: number;
     }
 > {
-  const existing = await prisma.customer.findUnique({
-    where: { id: customerId },
+  // 2026-05-09 feedback: 越境カスケード削除を遮断するため where に tenantId を必ず含める。
+  const existing = await prisma.customer.findFirst({
+    where: { id: customerId, tenantId: viewerTenantId },
     select: { id: true },
   });
   if (!existing) return { ok: false, reason: 'not_found' };
 
-  // active Project のみ対象 (論理削除済 Project は FK null 化のみで残す)
+  // active Project のみ対象 (論理削除済 Project は FK null 化のみで残す)。
+  // tenantId フィルタも併記して不慮の越境カスケードを二重防御。
   const activeProjects = await prisma.project.findMany({
-    where: { customerId, deletedAt: null },
+    where: { customerId, tenantId: viewerTenantId, deletedAt: null },
     select: { id: true },
   });
 

@@ -19,7 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { z } from 'zod/v4';
-import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireAdmin, requireSameTenantUser } from '@/lib/api-helpers';
 import { isSuperAdmin } from '@/lib/permissions';
 import { updateUser, deleteUser } from '@/services/user.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
@@ -46,6 +46,10 @@ export async function PATCH(
   if (forbiddenAdmin) return forbiddenAdmin;
 
   const { userId } = await params;
+  // 2026-05-09 feedback: 対象 user が同テナントか検証 (越境編集を遮断)
+  const tenantViolation = await requireSameTenantUser(user, userId);
+  if (tenantViolation) return tenantViolation;
+
   const t = await getTranslations('message');
   const body = await req.json();
   const parsed = updateUserSchema.safeParse(body);
@@ -107,6 +111,10 @@ export async function DELETE(
   if (forbiddenAdmin) return forbiddenAdmin;
 
   const { userId } = await params;
+  // 2026-05-09 feedback: 対象 user が同テナントか検証 (越境削除を遮断)
+  const tenantViolation = await requireSameTenantUser(user, userId);
+  if (tenantViolation) return tenantViolation;
+
   const t = await getTranslations('message');
 
   try {

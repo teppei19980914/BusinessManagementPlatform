@@ -16,7 +16,7 @@ export default async function TasksPage({ params }: Props) {
 
   const { projectId } = await params;
 
-  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
+  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId);
   if (!membership.isMember) notFound();
 
   const [tasks, members] = await Promise.all([

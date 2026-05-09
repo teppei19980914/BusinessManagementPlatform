@@ -5320,3 +5320,94 @@ osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
 - `src/lib/tenant.ts:46` (MANAGEMENT_TENANT_ID 定数 / `isManagementTenant()` ヘルパー)
 - `prisma/schema.prisma:188` (User.tenantId カラム / DEFAULT default-tenant)
 - 公式 doc (Next.js multi-tenant の概念): <https://nextjs.org/docs/app/guides/multi-tenant>
+
+## 5.X+14 テナント越境バグ全網羅監査と Phase 1 修正 + Phase 2 残課題 (PR feat/issues-from-feedback-2026-05-09 hotfix)
+
+### 背景
+
+§5.X+13 でテナント越境の核心 (listAll 系 / 全○○画面) を塞いだ後、ユーザから「**全ソースコードをフルスキャン**して個人情報漏洩・情報完全性侵害の可能性を網羅的に洗い出せ」と severity-1 緊急要請。auth-reviewer エージェント 4 並列 + Prisma クエリ全件 grep で監査した結果、**約 80 箇所の越境経路** が発見された。
+
+### Phase 1 で塞いだ最重要箇所 (本 PR で対応完了)
+
+#### A. 中核ヘルパー (1 箇所修正で十数ルートを波及防御)
+
+[src/lib/permissions/membership.ts:62](../../src/lib/permissions/membership.ts#L62) `checkMembership(projectId, userId, systemRole, userTenantId)` に **`userTenantId` を必須化**。`project.tenantId !== userTenantId` の場合は admin であっても `isMember: false` を返す。super_admin (MANAGEMENT_TENANT 所属) のみ越境管理を bypass。
+
+これにより、`checkProjectPermission` 経由のすべてのルート (`/api/projects/[projectId]/**` 配下の数十本) と `/projects/[projectId]/**` 配下の Server Component (8 ファイル) が **1 ヘルパー修正で一括防御**される。
+
+#### B. PII 大量漏洩経路
+
+- [src/services/user.service.ts:95](../../src/services/user.service.ts#L95) `listUsers(viewerTenantId)`: 旧仕様は全テナント全ユーザの氏名 + メール + MFA 状態 + ロック状態を返していた (テナント A の admin が テナント B の組織情報を全閲覧可)
+- [src/app/api/mention-candidates/route.ts:96-155](../../src/app/api/mention-candidates/route.ts#L96): メンション補完 API が認証済ユーザ誰でも全テナントのユーザ氏名 + メールを取得可能だった
+
+#### C. 越境管理ログ閲覧
+
+- [src/app/(dashboard)/admin/audit-logs/page.tsx:16](../../src/app/(dashboard)/admin/audit-logs/page.tsx#L16): `where: { user: { tenantId: session.user.tenantId } }` で自テナント user の audit_log のみに限定
+- [src/app/(dashboard)/admin/role-changes/page.tsx:16](../../src/app/(dashboard)/admin/role-changes/page.tsx#L16): `where: { targetUser: { tenantId } }` で同様に限定
+
+#### D. アカウント乗っ取り経路
+
+[src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) に `requireSameTenantUser(user, targetUserId)` ヘルパーを新設し、以下 4 ルートで対象 user の越境チェックを enforce:
+
+- `PATCH /api/admin/users/[userId]` (氏名/ロール/isActive 編集)
+- `DELETE /api/admin/users/[userId]` (論理削除)
+- `POST /api/admin/users/[userId]/recovery-codes` (リカバリーコード再発行 → 旧仕様は他テナント user のコード再発行で **MFA 完全乗っ取り可能** だった)
+- `POST /api/admin/users/[userId]/unlock` (パスワード/MFA ロック解除)
+
+#### E. customer.service 主要関数
+
+[src/services/customer.service.ts](../../src/services/customer.service.ts) の `listCustomers` / `getCustomer` / `createCustomer` (data に tenantId 明示) / `updateCustomer` / `deleteCustomer` / `deleteCustomerCascade` 全関数に `viewerTenantId` を必須引数化。
+
+### Phase 2 残課題 (本 PR では未着手、別 PR で順次対応)
+
+監査で発見されたが **本 PR で着手しなかった** 越境経路。各々ナレッジに残し、Phase 2 (severity-1 残対応) として別 PR で対応する。**v1.x マルチテナント解放前に必ず塞ぎ切る**。
+
+#### B-Class HIGH (admin が他テナントの ID を直叩きできる経路)
+
+1. **project.service.ts**: `getProject` / `updateProject` / `changeProjectStatus` / `deleteProject` / `deleteProjectCascade` (※ `checkMembership` 強化で大半は防御されるが、二重防御として where に tenantId 必須化)
+2. **risk.service.ts**: `listRisks` / `getRisk` / `updateRisk` / `bulkUpdateRisksFromList` / `deleteRisk` / `unlinkRiskFromProject`
+3. **knowledge.service.ts**: `listKnowledge` / `listKnowledgeByProject` / `getKnowledge` / `updateKnowledge` / `deleteKnowledge` / `bulkUpdateKnowledgeVisibilityFromList`
+4. **retrospective.service.ts**: `listRetrospectives` / `getRetrospective` / `confirmRetrospective` / `updateRetrospective` / `deleteRetrospective` / `bulkUpdateRetrospectivesVisibilityFromList` / `unlinkRetrospectiveFromProject`
+5. **memo.service.ts**: `getMemoForViewer` / `updateMemo` / `deleteMemo` / `bulkUpdateMemosVisibilityFromList`
+6. **task.service.ts (最大の盲点 — tenantId フィルタ皆無)**: 全関数 `listTasks` / `listTasksFlat` / `listTasksWithTree` / `getTask` / `getAssigneeDailyWorkload` / `createTask` / `updateTask` / `deleteTask` / `bulkUpdateTasks` / `updateTaskProgress` / `recalculateAllProjectWps` / `exportWbs` / `listMyTaskProjects`
+7. **comment.service.ts**: 全関数 (`listComments` / `getComment` / `createComment` / `updateComment` / `deleteComment` / `resolveEntityForComment` / `softDeleteCommentsForEntity`)
+8. **stakeholder.service.ts**: 全 5 関数
+9. **attachment.service.ts**: 全 8 関数 (添付ファイル URL 漏洩は機密情報直結)
+10. **estimate.service.ts**: 全 6 関数 (契約金額 / 見積根拠の漏洩は致命的)
+11. **member.service.ts**: 全 4 関数 (`addMember` で他テナント user を pm_tl で追加 → 権限昇格攻撃)
+12. **user.service.ts (B 拡張)**: `createUser` / `updateUserStatus` / `updateUser` / `updateUserRole` / `deleteUser` / `lockInactiveUsers` (cron 経路は意図的横断、手動経路は要分離)
+13. **suggestion.service.ts**: `loadProjectContext` / `suggestForProject` の where 全箇所に `tenantId` 必須 + `excludeManagementTenant` を「追加許可」に書き換え (`tenantId: { in: [ctx.tenantId, MANAGEMENT_TENANT_ID] }`)、`adoptPastIssueAsTemplate` / `linkKnowledgeToProject` / `suggestRelatedIssuesForText`
+14. **mention.service.ts**: `getMentionContext` / `expandMention` (kind='all') / `generateMentionNotifications`
+15. **notification.service.ts**: `setNotificationRead` / `getNotification` (二重防御)
+16. **sync-import 系 5 ファイル** (task / knowledge / risk / retrospective / memo): 全 `applySyncImport` / `computeSyncDiff` に `viewerTenantId` 必須 + projectId の tenant 検証
+17. **`/api/admin/audit-logs`, `/api/admin/role-change-logs`, `/api/admin/usage-summary`** API ルートに同様の自テナント限定を追加 (Server Component は塞いだが API は別経路で漏洩中)
+18. **`POST /api/attachments/batch`** の admin 分岐 (`filteredIds = entityIds`): 親 entity の tenantId 検証を入れる
+
+#### B-Class MEDIUM (構造的脆弱性 — 監査ログ / トークンの tenant 帰属)
+
+19. **audit.service.ts**: `recordAuditLog` / `recordAuditLogBulk` の data に `tenantId` 明示 (現状 schema DEFAULT に依存)
+20. **email-verification.service.ts**: `EmailVerificationToken.create` / `RecoveryCode.createMany` の data に `tenantId` 明示
+21. **comment.service.ts createComment**: `data.tenantId` 明示 + `mention.createMany` も同様
+22. **attachment.service.ts createAttachment**: `data.tenantId` 明示
+23. **memo.service.ts createMemo**: `data.tenantId` 明示
+24. **task.service.ts createTask**: `data.tenantId` 明示 (project から導出)
+25. **project.service.ts createProject**: 既存引数の tenantId を `data.tenantId` に明示
+
+### 抽出したルール (今後の必須遵守事項)
+
+- [ ] **新規 list 系関数 / API ルートを追加する際、`viewerTenantId` を必須引数として宣言する**: オプショナルやデフォルト値は不可。型システムで呼び忘れを構文的に検知する設計を維持する。
+- [ ] **新規 entity 取得関数で `findUnique({ where: { id } })` を書かない**: 必ず `findFirst({ where: { id, tenantId: viewerTenantId } })` または `findUnique` の後に `requireSameTenant(viewerTenantId, entity)` を併記する (二重防御)。
+- [ ] **`where: { id: someId }` だけの update / delete / updateMany / deleteMany を書かない**: 必ず `tenantId` 条件を併記する。Prisma 5+ の compound where が使えない場合は `findFirst` で先に所有確認する。
+- [ ] **新規 create / createMany の data に `tenantId` を必ず明示する**: schema DB DEFAULT に依存しない。マルチテナント時に DEFAULT_TENANT_ID への暗黙書込が事故を誘発する。
+- [ ] **`requireAdmin` 直後に対象 entity の越境チェックを実施する**: admin でも他テナントの ID を直叩きで操作できないこと。`requireSameTenantUser()` / `requireSameTenant()` を一律使用する。
+- [ ] **テナント越境テストを E2E に追加する**: 「テナント A の admin が テナント B の {project,user,risk,...} ID で各 API を叩いた際 404 / 403 が返ること」を CI gate 化する。
+- [ ] **`checkMembership` / `checkProjectPermission` を経由しないルートを追加する場合は警告コメントを書く**: cron 系 / super_admin 系で意図的に越境するときのみ。intentional であることを明記。
+- [ ] **`isSampleData` フィルタはテナント分離の代替にならない**: 「シード v.s. 実データ」の制御と「テナント分離」は直交する別概念。混同しない。
+- [ ] **severity-1 セキュリティ事象は即時 PR + 即時 main マージで対応する**: 段階リリースの誘惑に負けず、発見したら最優先で塞ぐ。サービス利用停止や事業継続リスクに直結する。
+
+### 関連
+
+- 修正例: PR feat/issues-from-feedback-2026-05-09 (Phase 1 hotfix)
+- §5.X+13 (本件の前段、listAll 系の越境塞ぎ)
+- 公式 OWASP IDOR (Insecure Direct Object Reference): <https://owasp.org/www-community/attacks/Indirect_Object_Reference>
+- `src/lib/permissions/tenant.ts` (`requireSameTenant` / `tenantScope` ヘルパー — 全 service で活用すべき)

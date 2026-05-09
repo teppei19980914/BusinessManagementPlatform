@@ -119,7 +119,7 @@ async function authorizeForComment(
   // それ以外 (stakeholder の全操作 / task の mention 含む write):
   //   project member であり、かつ mentionRequiredRole='pm_tl' なら projectRole='pm_tl' であること
   for (const pid of result.projectIds) {
-    const m = await checkMembership(pid, user.id, user.systemRole);
+    const m = await checkMembership(pid, user.id, user.systemRole, user.tenantId);
     if (!m.isMember) continue;
     if (result.mentionRequiredRole === 'pm_tl' && m.projectRole !== 'pm_tl') continue;
     return null;

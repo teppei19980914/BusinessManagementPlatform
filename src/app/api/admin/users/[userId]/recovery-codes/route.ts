@@ -21,7 +21,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireAdmin, requireSameTenantUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -47,6 +47,10 @@ export async function POST(
   if (forbidden) return forbidden;
 
   const { userId } = await params;
+  // 2026-05-09 feedback: 対象 user が同テナントか検証
+  //   (他テナント user のリカバリーコード再発行 → アカウント乗っ取り経路を遮断)
+  const tenantViolation = await requireSameTenantUser(user, userId);
+  if (tenantViolation) return tenantViolation;
 
   // 旧コードを全て無効化
   await prisma.recoveryCode.updateMany({

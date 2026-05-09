@@ -117,7 +117,7 @@ async function authorize(
 
   // いずれか 1 つでもメンバーなら許可 (ナレッジは複数プロジェクト紐付け有り)
   for (const pid of projectIds) {
-    const membership = await checkMembership(pid, user.id, user.systemRole);
+    const membership = await checkMembership(pid, user.id, user.systemRole, user.tenantId);
     if (membership.isMember) return null;
   }
   return NextResponse.json(

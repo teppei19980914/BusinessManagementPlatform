@@ -391,15 +391,22 @@ const baseUserRow = {
 describe('listUsers', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('削除済みを除外して DTO で返す', async () => {
+  it('削除済みを除外し自テナント限定で DTO を返す', async () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([baseUserRow] as never);
 
-    const r = await listUsers();
+    const r = await listUsers('tenant-A');
 
     expect(r[0].id).toBe('u-1');
     expect(prisma.user.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { deletedAt: null } }),
+      expect.objectContaining({ where: { deletedAt: null, tenantId: 'tenant-A' } }),
     );
+  });
+
+  it('テナント越境フィルタで他テナント user は返さない (severity-1 防御)', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+    await listUsers('tenant-A');
+    const call = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 

@@ -21,7 +21,7 @@ export default async function CustomerDetailPage({ params }: Props) {
   }
 
   const { customerId } = await params;
-  const customer = await getCustomer(customerId);
+  const customer = await getCustomer(customerId, session.user.tenantId);
   if (!customer) notFound();
 
   // 顧客配下の active Project (論理削除済はカスケードの対象外なので含めない)

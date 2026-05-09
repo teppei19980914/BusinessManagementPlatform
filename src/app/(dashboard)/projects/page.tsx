@@ -17,7 +17,7 @@ export default async function ProjectsPage() {
       session.user.tenantId,
     ),
     // PR #111-2: 新規作成ダイアログの顧客セレクト用
-    listCustomers(),
+    listCustomers(session.user.tenantId),
   ]);
 
   return (

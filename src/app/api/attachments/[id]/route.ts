@@ -71,7 +71,7 @@ async function authorizeForAttachment(
     );
   }
   for (const pid of projectIds) {
-    const membership = await checkMembership(pid, user.id, user.systemRole);
+    const membership = await checkMembership(pid, user.id, user.systemRole, user.tenantId);
     if (membership.isMember) return null;
   }
   return NextResponse.json(
