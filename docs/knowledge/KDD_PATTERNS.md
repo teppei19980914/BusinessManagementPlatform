@@ -5203,5 +5203,75 @@ curl --retry 3 --retry-delay 2 -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
 
 - 修正例: PR #296 hotfix 続編 (2026-05-09)
 - §5.X+10 (action 撤廃 → install スクリプト方針 — 本件はその install スクリプトが踏んだ次の罠)
+- §5.X+12 (本セクションで「常に最新を取得」した結果、CLI 仕様変更を踏んだ)
 - 公式 doc: <https://docs.github.com/ja/repositories/releasing-projects-on-github/linking-to-releases>
   ("最新リリースのファイルへのリンク")
+
+## 5.X+12 「常に最新を取得」する設計は upstream の breaking change を直撃する — メジャーバージョン跨ぎ CLI を本番起動時に検出する仕組みが必要 (PR #296 hotfix 第三弾 / 2026-05-09)
+
+### 背景
+
+§5.X+10 / §5.X+11 で OSV-Scanner を「毎ジョブで最新 stable バイナリを取得 → 実行」する設計に統一した直後、
+PR #296 の次の CI 実行で **OSV-Scanner v2.3.8 が `--skip-git` フラグを認識せず exit 127** で fail した。
+
+```
+Run osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+Incorrect Usage: flag provided but not defined: -skip-git
+##[error]Process completed with exit code 127.
+```
+
+事象解析:
+
+- v1 系で有効だった `--skip-git` は v2 で **削除** された (Cobra → urfave/cli/v3 への移行と同時に CLI 仕様が再構成)
+- 同等機能は **デフォルト挙動** に組み込まれた: `osv-scanner scan source` のフラグ `--include-git-root` (default `false`)
+  → git root スキャンはデフォルトで OFF。v1 の `--skip-git` を渡す必要そのものがなくなった
+- 我々の workflow は「latest stable を毎回取得」する設計のため、**OSV-Scanner v2 が released された瞬間に
+  既存の起動オプションが breaking** した
+
+### 対応
+
+v2 系の正式サブコマンド形式に書き換え:
+
+```yaml
+# Before (v1 syntax — v2 では `--skip-git` 不存在で fail)
+osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+
+# After (v2 syntax — `scan source` サブコマンドに明示)
+osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
+```
+
+公式ソース ([cmd/osv-scanner/scan/source/command.go](https://github.com/google/osv-scanner/blob/main/cmd/osv-scanner/scan/source/command.go))
+で v2 が受け付けるフラグを確認:
+
+- `--lockfile` (`-L`): 残存
+- `--recursive` (`-r`): 残存
+- `--skip-git`: 削除 (代替: デフォルト挙動 + `--include-git-root` opt-in)
+- `--no-ignore`: 新設
+- `--data-source`: 新設 (`deps.dev` / `native`)
+
+### 抽出したルール
+
+- [ ] **「常に最新を取得」する CI 設計には breaking change 検出ステップを併設する** — `<tool> --version` で
+      バージョンを echo + 失敗時のフラグ一覧 echo (`<tool> --help` を `|| true` で必ず流す) を install ステップに
+      入れておくと、メジャーアップデート時の原因特定が秒で終わる
+- [ ] **CLI ツールは「コマンド全体」を一次ソース (公式 git の cmd/.../command.go や cobra/cli 定義) で確認する** —
+      Web ドキュメントは反映遅延がある。OSV-Scanner v2 のフラグ確認は
+      `https://raw.githubusercontent.com/google/osv-scanner/main/cmd/osv-scanner/scan/source/command.go`
+      を curl するのが最速・最確実
+- [ ] **メジャーバージョン跨ぎ前提の install ピン候補を残しておく** — どうしても安定運用したい場合は
+      `releases/download/<v_pinned>/<asset>` で **明示版 pin** する選択肢を残す。Dependabot は「実行ファイルの
+      バイナリ pin」を更新できないので運用はマニュアルになるが、突発 fail を避けられる。
+      本プロジェクトは「最新追従」を優先するためデフォルト stable URL のままだが、トレードオフは認識しておく
+- [ ] **`exit code 127` (command not found / 不明オプション) は CLI 仕様変更を最優先で疑う** — Go の `flag` /
+      `cobra` / `urfave/cli` はいずれも未知フラグで exit 1〜127 を返す。バイナリそのものの欠落 (PATH 通っていない)
+      なら "command not found" を伴う bash メッセージが出るので区別がつく
+- [ ] **CLI 起動オプションは「現バージョン公式の subcommand 形式」に揃える** — レガシー top-level 形式は
+      compat layer で残ることはあるが breaking 対象になりやすい。`osv-scanner scan source ...` のように
+      明示する方が将来の breaking に強い
+
+### 関連
+
+- 修正例: PR #296 hotfix 第三弾 (2026-05-09)
+- §5.X+10 / §5.X+11 (本件の前段 — 同 PR の連続 hotfix 3 連鎖)
+- 公式 ソース (一次): <https://github.com/google/osv-scanner/blob/main/cmd/osv-scanner/scan/source/command.go>
+- 公式 doc: <https://google.github.io/osv-scanner/usage/>

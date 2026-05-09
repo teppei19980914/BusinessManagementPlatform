@@ -180,9 +180,14 @@ jobs:
           osv-scanner --version
       - name: Run osv-scanner against pnpm-lock.yaml
         run: |
-          # --lockfile を明示し、recursive で全 lockfile を確実に拾う
+          # OSV-Scanner v2 系: `scan source` サブコマンド経由で呼び出す。
+          # - --lockfile=<path>: 明示的に lockfile を指定
+          # - --recursive: サブディレクトリも走査
+          # - 末尾の `.` はスキャン対象ディレクトリ
+          # 注: v1 系の `--skip-git` は v2 で削除された (PR #296 続編で観測)。
+          # v2 はデフォルトで `--include-git-root=false` のため、git scanning は明示無効化不要。
           # CRITICAL/HIGH 検出時に exit 1 で fail
-          osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+          osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
 
   # ============================================================
   # 6. Trivy (Aqua Security CVE DB + IaC + secrets)

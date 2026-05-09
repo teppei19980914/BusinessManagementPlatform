@@ -10,7 +10,9 @@
       "Skill(schedule:*)",
       "WebFetch(domain:supabase.com)",
       "Skill(update-config)",
-      "Skill(update-config:*)"
+      "Skill(update-config:*)",
+      "WebFetch(domain:google.github.io)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
