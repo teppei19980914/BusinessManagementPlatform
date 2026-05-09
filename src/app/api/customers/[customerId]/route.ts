@@ -53,7 +53,7 @@ export async function GET(
   if (user.systemRole !== 'admin') return await forbidden();
 
   const { customerId } = await params;
-  const customer = await getCustomer(customerId);
+  const customer = await getCustomer(customerId, user.tenantId);
   if (!customer) return await notFound();
 
   return NextResponse.json({ data: customer });
@@ -78,10 +78,10 @@ export async function PATCH(
     );
   }
 
-  const before = await getCustomer(customerId);
+  const before = await getCustomer(customerId, user.tenantId);
   if (!before) return await notFound();
 
-  const updated = await updateCustomer(customerId, parsed.data, user.id);
+  const updated = await updateCustomer(customerId, parsed.data, user.id, user.tenantId);
   if (!updated) return await notFound();
 
   await recordAuditLog({
@@ -105,7 +105,7 @@ export async function DELETE(
   if (user.systemRole !== 'admin') return await forbidden();
 
   const { customerId } = await params;
-  const before = await getCustomer(customerId);
+  const before = await getCustomer(customerId, user.tenantId);
   if (!before) return await notFound();
 
   // PR #111-2: ?cascade=true で deleteCustomerCascade 経路に切り替え
@@ -113,7 +113,7 @@ export async function DELETE(
   const cascade = searchParams.get('cascade') === 'true';
 
   if (cascade) {
-    const result = await deleteCustomerCascade(customerId, {
+    const result = await deleteCustomerCascade(customerId, user.tenantId, {
       cascadeRisks: searchParams.get('cascadeRisks') === 'true',
       cascadeIssues: searchParams.get('cascadeIssues') === 'true',
       cascadeRetros: searchParams.get('cascadeRetros') === 'true',
@@ -147,7 +147,7 @@ export async function DELETE(
     });
   }
 
-  const result = await deleteCustomer(customerId);
+  const result = await deleteCustomer(customerId, user.tenantId);
 
   if (!result.ok && result.reason === 'not_found') {
     return await notFound();

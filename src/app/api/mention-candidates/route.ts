@@ -93,10 +93,14 @@ export async function GET(req: NextRequest) {
   // ---- users (個別候補) ----
   let users: { id: string; name: string; email: string }[] = [];
 
+  // 2026-05-09 feedback: severity-1 テナント越境対策。全 user.findMany と entity 検索に
+  //   `tenantId: user.tenantId` を必須化。旧仕様は全テナントの全ユーザ氏名+メールを
+  //   認証済ユーザ誰でも取得可能で、競合他社の組織図 (PII) が漏洩する重大バグだった。
   if (typed === 'customer') {
-    // customer は admin のみ対象
+    // customer は admin のみ対象 (自テナント内の admin のみ)
     users = await prisma.user.findMany({
       where: {
+        tenantId: user.tenantId,
         systemRole: 'admin',
         isActive: true,
         deletedAt: null,
@@ -113,21 +117,26 @@ export async function GET(req: NextRequest) {
     }
     let projectId: string | null = null;
     if (typed === 'task') {
+      // 2026-05-09 feedback: Task テーブルには tenantId 列が無いため (project の tenantId に
+      //   依存する設計)、関連フィルタ `project: { tenantId }` で自テナント限定する。
       const t = await prisma.task.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, project: { tenantId: user.tenantId } },
         select: { projectId: true },
       });
       projectId = t?.projectId ?? null;
     } else {
+      // Stakeholder は tenantId 列を直接持つので簡潔に絞れる。
       const s = await prisma.stakeholder.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: user.tenantId },
         select: { projectId: true },
       });
       projectId = s?.projectId ?? null;
     }
     if (projectId) {
+      // ProjectMember 経由の user は自テナント内に閉じているはず (project の tenantId 整合性が
+      //   service 層で担保される前提) だが、defense-in-depth で user.tenantId フィルタも併記。
       const members = await prisma.projectMember.findMany({
-        where: { projectId },
+        where: { projectId, user: { tenantId: user.tenantId } },
         select: { user: { select: { id: true, name: true, email: true, isActive: true, deletedAt: true } } },
       });
       users = members
@@ -140,9 +149,10 @@ export async function GET(req: NextRequest) {
         .map(({ id, name, email }) => ({ id, name, email }));
     }
   } else {
-    // issue / risk / retrospective / knowledge: 認証済全員 (cross-list でもアクセス可能)
+    // issue / risk / retrospective / knowledge: 自テナント内の認証済全員のみ
     users = await prisma.user.findMany({
       where: {
+        tenantId: user.tenantId,
         isActive: true,
         deletedAt: null,
         permanentLock: false,

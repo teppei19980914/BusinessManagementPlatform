@@ -13,7 +13,7 @@ export default async function GanttPage({ params }: Props) {
   if (!session) redirect(LOGIN_ROUTE);
 
   const { projectId } = await params;
-  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
+  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId);
   if (!membership.isMember) notFound();
 
   // GanttClient は WBS と同じ tree 構造を要求する（階層描画 + 担当者フィルタのため）

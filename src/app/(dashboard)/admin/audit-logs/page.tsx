@@ -13,7 +13,12 @@ export default async function AuditLogsPage() {
   const t = await getTranslations('admin.auditLogs');
   const { formatDateTimeFull } = await getServerFormatters();
 
+  // 2026-05-09 feedback: severity-1 テナント越境対策。
+  //   旧仕様では他テナントの全 audit_log (誰がいつ何の entity を CRUD したか) が
+  //   テナント A の admin に閲覧可能だった。AuditLog は tenantId 列を持たないため
+  //   user リレーション経由で自テナント限定する。
   const logs = await prisma.auditLog.findMany({
+    where: { user: { tenantId: session.user.tenantId } },
     include: { user: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
     take: 100,

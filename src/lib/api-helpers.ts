@@ -52,7 +52,9 @@ export async function checkProjectPermission(
   action: Action,
   resourceOwnerId?: string,
 ): Promise<NextResponse | null> {
-  const membership = await checkMembership(projectId, user.id, user.systemRole);
+  // 2026-05-09 feedback: severity-1 テナント越境対策。user.tenantId を渡し、
+  //   admin が他テナントの projectId を直叩きしても 404 で弾かれるようにする。
+  const membership = await checkMembership(projectId, user.id, user.systemRole, user.tenantId);
 
   if (!membership.isMember) {
     return NextResponse.json(
@@ -90,6 +92,37 @@ export function requireAdmin(user: AuthenticatedUser): NextResponse | null {
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
       { status: 403 },
+    );
+  }
+  return null;
+}
+
+/**
+ * 2026-05-09 feedback: severity-1 テナント越境対策。
+ *
+ * `/api/admin/users/[userId]/**` 系ルートで、対象 user の tenantId が呼出者と
+ * 一致することを検証する。不一致なら 404 (情報漏洩防止のため FORBIDDEN ではなく NOT_FOUND)。
+ *
+ * 旧仕様: `requireAdmin` 通過後に直接 userId 操作 (PATCH/DELETE/recovery-codes 再発行/unlock)
+ * が可能で、テナント A の admin が テナント B の user を任意に操作できる重大バグだった。
+ *
+ * super_admin は MANAGEMENT_TENANT 所属で全テナント横断管理が必要なので bypass する。
+ */
+export async function requireSameTenantUser(
+  user: AuthenticatedUser,
+  targetUserId: string,
+): Promise<NextResponse | null> {
+  if (user.systemRole === 'super_admin') return null; // super_admin は越境管理可
+
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { tenantId: true },
+  });
+
+  if (!target || target.tenantId !== user.tenantId) {
+    return NextResponse.json(
+      { error: { code: 'NOT_FOUND', message: '対象が見つかりません' } },
+      { status: 404 },
     );
   }
   return null;

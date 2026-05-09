@@ -36,7 +36,7 @@ export async function GET() {
   const forbidden = requireAdmin(user);
   if (forbidden) return forbidden;
 
-  const users = await listUsers();
+  const users = await listUsers(user.tenantId);
   return NextResponse.json({ data: users });
 }
 

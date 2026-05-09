@@ -22,7 +22,7 @@ export default async function CustomersPage() {
     redirect('/');
   }
 
-  const customers = await listCustomers();
+  const customers = await listCustomers(session.user.tenantId);
 
   return <CustomersClient initialCustomers={customers} />;
 }

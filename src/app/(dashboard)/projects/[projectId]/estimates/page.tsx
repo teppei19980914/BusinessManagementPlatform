@@ -12,7 +12,7 @@ export default async function EstimatesPage({ params }: Props) {
   if (!session) redirect(LOGIN_ROUTE);
 
   const { projectId } = await params;
-  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
+  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId);
   if (!membership.isMember) notFound();
 
   const estimates = await listEstimates(projectId);

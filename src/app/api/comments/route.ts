@@ -53,7 +53,9 @@ import { validateMentionsForEntity } from '@/services/mention.service';
  * 戻り値: NextResponse (拒否時) or null (許可)。
  */
 async function authorizeForComment(
-  user: { id: string; systemRole: string },
+  // 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
+  //   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
+  user: { id: string; systemRole: string; tenantId: string },
   entityType: CommentEntityType,
   entityId: string,
   mode: 'read' | 'write',
@@ -119,7 +121,7 @@ async function authorizeForComment(
   // それ以外 (stakeholder の全操作 / task の mention 含む write):
   //   project member であり、かつ mentionRequiredRole='pm_tl' なら projectRole='pm_tl' であること
   for (const pid of result.projectIds) {
-    const m = await checkMembership(pid, user.id, user.systemRole);
+    const m = await checkMembership(pid, user.id, user.systemRole, user.tenantId);
     if (!m.isMember) continue;
     if (result.mentionRequiredRole === 'pm_tl' && m.projectRole !== 'pm_tl') continue;
     return null;

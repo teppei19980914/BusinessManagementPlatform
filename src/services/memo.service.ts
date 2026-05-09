@@ -54,10 +54,17 @@ function toDTO(
 /**
  * 「メモ」画面 (/memos) 用 — 閲覧ユーザ自身のメモのみ返す (PR #71)。
  * private / public 問わず、自分が作成した全件。ここは編集/削除可能な個人管理画面。
+ *
+ * 2026-05-09 feedback: テナント越境防止のため `viewerTenantId` でフィルタ。
+ *   ユーザは自テナント内でしかメモを作成できないため通常 no-op だが、テナント間で
+ *   userId が衝突した場合のフェイルセーフとして必須 (defense-in-depth)。
  */
-export async function listMyMemos(viewerUserId: string): Promise<MemoDTO[]> {
+export async function listMyMemos(
+  viewerUserId: string,
+  viewerTenantId: string,
+): Promise<MemoDTO[]> {
   const rows = await prisma.memo.findMany({
-    where: { deletedAt: null, userId: viewerUserId },
+    where: { deletedAt: null, userId: viewerUserId, tenantId: viewerTenantId },
     include: { author: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -65,13 +72,19 @@ export async function listMyMemos(viewerUserId: string): Promise<MemoDTO[]> {
 }
 
 /**
- * 「全メモ」画面 (/all-memos) 用 — visibility='public' のメモを全件返す (PR #71)。
- * 自分の公開メモも含む (自分のメモでも「公開範囲=全メモに公開」に設定したものは全員が閲覧対象)。
+ * 「全メモ」画面 (/all-memos) 用 — visibility='public' のメモを自テナント内で全件返す。
+ * 自分の公開メモも含む (自分のメモでも「公開範囲=全メモに公開」に設定したものは同テナント全員が閲覧対象)。
  * この画面は read-only。編集/削除は個別の /memos 画面側で行う。
+ *
+ * 2026-05-09 feedback: テナント越境防止のため `viewerTenantId` でフィルタ。
+ *   旧実装はテナントフィルタ無しで他テナントの公開メモが見えてしまっていた (重大バグ)。
  */
-export async function listPublicMemos(viewerUserId: string): Promise<MemoDTO[]> {
+export async function listPublicMemos(
+  viewerUserId: string,
+  viewerTenantId: string,
+): Promise<MemoDTO[]> {
   const rows = await prisma.memo.findMany({
-    where: { deletedAt: null, visibility: 'public' },
+    where: { deletedAt: null, visibility: 'public', tenantId: viewerTenantId },
     include: { author: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });

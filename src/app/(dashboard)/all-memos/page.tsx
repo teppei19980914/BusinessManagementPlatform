@@ -14,6 +14,6 @@ export default async function AllMemosPage() {
   const session = await auth();
   if (!session?.user) redirect(LOGIN_ROUTE);
 
-  const memos = await listPublicMemos(session.user.id);
+  const memos = await listPublicMemos(session.user.id, session.user.tenantId);
   return <AllMemosClient memos={memos} />;
 }

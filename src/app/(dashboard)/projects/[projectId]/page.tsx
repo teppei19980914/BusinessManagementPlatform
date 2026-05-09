@@ -28,11 +28,11 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   // 認可チェック・project・customers は互いに依存しないので並列取得
   const [membership, project, customers, actualRole] = await Promise.all([
-    checkMembership(projectId, session.user.id, session.user.systemRole),
+    checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId),
     // 2026-05-08: super_admin はシードプロジェクト (isSampleData=true) も参照可
     getProject(projectId, session.user.systemRole),
     // PR #111-2: 編集ダイアログの顧客セレクト用マスタ
-    listCustomers(),
+    listCustomers(session.user.tenantId),
     // 2026-04-24: リスク/課題/振り返り/ナレッジ 一覧の作成ボタン判定用 (admin 短絡なし)
     getActualProjectRole(projectId, session.user.id),
   ]);

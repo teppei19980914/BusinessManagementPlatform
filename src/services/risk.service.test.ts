@@ -126,7 +126,7 @@ describe('listAllRisksForViewer', () => {
       { id: 'u-1', name: 'Alice' },
     ] as never);
 
-    const r = await listAllRisksForViewer('admin-1', 'admin');
+    const r = await listAllRisksForViewer('admin-1', 'admin', 'tenant-A');
 
     expect(r[0].projectName).toBe('PJ A');
     expect(r[0].reporterName).toBe('Alice');
@@ -146,7 +146,7 @@ describe('listAllRisksForViewer', () => {
       { id: 'u-2', name: 'Bob' },
     ] as never);
 
-    const r = await listAllRisksForViewer('u-99', 'general');
+    const r = await listAllRisksForViewer('u-99', 'general', 'tenant-A');
 
     expect(r[0].projectName).toBe(null); // プロジェクト名は引き続き機微扱い
     expect(r[0].reporterName).toBe('Alice'); // 氏名は公開 (rRow().reporter.name)
@@ -163,7 +163,7 @@ describe('listAllRisksForViewer', () => {
     ] as never);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
-    const r = await listAllRisksForViewer('admin-1', 'admin');
+    const r = await listAllRisksForViewer('admin-1', 'admin', 'tenant-A');
 
     expect(r[0].projectDeleted).toBe(true);
     expect(r[0].canAccessProject).toBe(false); // deleted なのでリンク不可
@@ -175,7 +175,7 @@ describe('listAllRisksForViewer', () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
     // 非 admin
-    await listAllRisksForViewer('u-1', 'general');
+    await listAllRisksForViewer('u-1', 'general', 'tenant-A');
     const generalCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
     expect(generalCall.where.visibility).toBe('public');
     expect(generalCall.where).not.toHaveProperty('OR');
@@ -186,7 +186,7 @@ describe('listAllRisksForViewer', () => {
 
     // admin (旧仕様: visibility 制約なし → 要件変更で admin も public 固定。
     // admin が draft を管理削除したい場合はプロジェクト個別画面から行う)
-    await listAllRisksForViewer('admin-1', 'admin');
+    await listAllRisksForViewer('admin-1', 'admin', 'tenant-A');
     const adminCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
     expect(adminCall.where.visibility).toBe('public');
   });

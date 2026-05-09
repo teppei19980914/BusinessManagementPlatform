@@ -16,6 +16,7 @@ export default async function KnowledgePage() {
   const knowledges = await listAllKnowledgeForViewer(
     session.user.id,
     session.user.systemRole,
+    session.user.tenantId,
   );
 
   return (

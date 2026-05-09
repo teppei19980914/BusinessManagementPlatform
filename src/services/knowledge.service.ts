@@ -206,6 +206,7 @@ export type AllKnowledgeDTO = KnowledgeDTO & {
 export async function listAllKnowledgeForViewer(
   viewerUserId: string,
   viewerSystemRole: string,
+  viewerTenantId: string,
 ): Promise<AllKnowledgeDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
   const memberships = isAdmin
@@ -220,11 +221,13 @@ export async function listAllKnowledgeForViewer(
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面 (/projects/[id]/knowledge) から行う。
   // isAdmin は projectName / 作成者氏名のマスキング解除にのみ使う (フィルタには使わない)。
-  const isSuperAdmin = viewerSystemRole === 'super_admin';
-  // 2026-05-08: シードナレッジは全ナレッジ画面では除外。super_admin のみ bypass で表示+編集可。
-  const where: Prisma.KnowledgeWhereInput = isSuperAdmin
-    ? { deletedAt: null, visibility: 'public' }
-    : { deletedAt: null, visibility: 'public', isSampleData: false };
+  // 2026-05-09 feedback: テナント越境防止。tenantId フィルタに集約 (super_admin の
+  //   `isSampleData` bypass は MANAGEMENT_TENANT_ID 所属で自然に表示されるため削除)。
+  const where: Prisma.KnowledgeWhereInput = {
+    deletedAt: null,
+    visibility: 'public',
+    tenantId: viewerTenantId,
+  };
 
   const knowledges = await prisma.knowledge.findMany({
     where,

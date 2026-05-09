@@ -11,7 +11,7 @@ export default async function UsersPage() {
   }
 
   const [users, tenantInfo] = await Promise.all([
-    listUsers(),
+    listUsers(session.user.tenantId),
     // P-2 (2026-05-08): Beginner プラン席数上限の UI ガード用に
     // 現テナントの plan / activeUserCount / beginnerMaxSeats を取得
     getTenantSelfInfo(session.user.tenantId),
