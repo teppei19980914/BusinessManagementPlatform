@@ -58,6 +58,12 @@ export const ALL_MEMOS_ROUTE = '/all-memos';
 /** 設定画面 (テーマ / パスワード変更 / MFA)。 */
 export const SETTINGS_ROUTE = '/settings';
 
+/** 使い方ガイド (PR I / 2026-05-09)。役割別 + 用語集 + LP 導線。 */
+export const GUIDE_ROUTE = '/guide';
+
+/** ヘルプ・FAQ (PR I / 2026-05-09)。よくある質問 + テナント管理者向け生成 AI 説明。 */
+export const HELP_ROUTE = '/help';
+
 // ---------- 管理者専用 ----------
 
 export const ADMIN_USERS_ROUTE = '/admin/users';

@@ -36,7 +36,14 @@
     "memos": "Memos",
     "settings": "Settings",
     "discord": "Discord",
-    "discordTooltip": "Join the Discord community (opens a new tab)"
+    "discordTooltip": "Join the Discord community (opens a new tab)",
+    "groupHelp": "Help",
+    "guide": "How to Use",
+    "help": "FAQ",
+    "contactDeveloper": "Talk to the developer (Discord)",
+    "contactDeveloperTooltip": "Reach the developer on Discord (bugs, questions, etc.)",
+    "featureRequest": "Feature requests / Custom work",
+    "featureRequestTooltip": "Send a feature request or project inquiry (Discord forum)"
   },
   "notification": {
     "title": "Notifications",

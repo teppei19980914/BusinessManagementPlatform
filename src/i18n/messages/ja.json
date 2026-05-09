@@ -36,7 +36,14 @@
     "memos": "メモ一覧",
     "settings": "設定",
     "discord": "Discord",
-    "discordTooltip": "Discord コミュニティに参加 (新しいタブで開きます)"
+    "discordTooltip": "Discord コミュニティに参加 (新しいタブで開きます)",
+    "groupHelp": "ヘルプ",
+    "guide": "使い方ガイド",
+    "help": "よくある質問",
+    "contactDeveloper": "開発者と話す (Discord)",
+    "contactDeveloperTooltip": "Discord で開発者と直接話す (バグ報告・問い合わせ等)",
+    "featureRequest": "機能要望・案件依頼",
+    "featureRequestTooltip": "新機能の要望や案件依頼を送る (Discord フォーラム)"
   },
   "notification": {
     "title": "通知",

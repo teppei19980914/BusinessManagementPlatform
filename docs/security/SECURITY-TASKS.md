@@ -1,5 +1,5 @@
 # SECURITY-TASKS.md
-> 生成日時: 2026/5/3 14:37:31
+> 生成日時: 2026/5/9 12:11:39
 > スクリプト: `tsx scripts/security-check.ts`
 > 総合スコア: **94/100**
 > 検出件数: CRITICAL 0 / HIGH 0 / MEDIUM 1 / LOW 0
