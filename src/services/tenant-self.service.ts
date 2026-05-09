@@ -48,11 +48,18 @@ export type TenantSelfInfo = {
   scheduledPlanChangeAt: Date | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
-  // P-G (2026-05-08): 請求先情報
+  // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で個人法人 + 住所構造化を追加
+  billingType: string;
   billingCompanyName: string | null;
   billingContactName: string | null;
   billingContactEmail: string | null;
+  /** Legacy: 旧 単一 Text 住所 (新規入力なし、構造化が NULL の時のみ表示フォールバック) */
   billingAddress: string | null;
+  billingPostalCode: string | null;
+  billingPrefecture: string | null;
+  billingCity: string | null;
+  billingStreetAddress: string | null;
+  billingBuildingName: string | null;
   billingPhoneNumber: string | null;
   paymentMethod: string;
   // P-B (2026-05-08): Beginner プラン期限ステータス (画面のバナー表示用)
@@ -96,10 +103,16 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
     activeUserCount,
+    billingType: t.billingType,
     billingCompanyName: t.billingCompanyName,
     billingContactName: t.billingContactName,
     billingContactEmail: t.billingContactEmail,
     billingAddress: t.billingAddress,
+    billingPostalCode: t.billingPostalCode,
+    billingPrefecture: t.billingPrefecture,
+    billingCity: t.billingCity,
+    billingStreetAddress: t.billingStreetAddress,
+    billingBuildingName: t.billingBuildingName,
     billingPhoneNumber: t.billingPhoneNumber,
     paymentMethod: t.paymentMethod,
     beginnerExpiryState,
@@ -107,12 +120,17 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
   };
 }
 
-/** P-G (2026-05-08): 請求先情報の更新入力 */
+/** P-G (2026-05-08): 請求先情報の更新入力 / PR C (2026-05-09 #5/#8/#10) 拡張 */
 export type UpdateBillingContactInput = {
+  billingType?: 'corporate' | 'individual';
   billingCompanyName?: string | null;
   billingContactName?: string | null;
   billingContactEmail?: string | null;
-  billingAddress?: string | null;
+  billingPostalCode?: string | null;
+  billingPrefecture?: string | null;
+  billingCity?: string | null;
+  billingStreetAddress?: string | null;
+  billingBuildingName?: string | null;
   billingPhoneNumber?: string | null;
   paymentMethod?: string;
 };
@@ -123,6 +141,9 @@ export type UpdateBillingContactInput = {
  * - 各フィールドは optional: undefined なら変更なし、null なら値クリア
  * - paymentMethod は文字列だが、UI 側で enum (invoice / bank_transfer / credit_card) を強制
  *
+ * 2026-05-09 (PR C / #5): billingType='individual' に切替時は会社名を自動 null クリアする
+ *   (UI で会社名フィールドが非表示になるが過去入力データを残さないようサーバ側でも保証)。
+ *
  * 設計判断: updateTenantSelf (プラン変更) と分離。プラン変更ロジックは複雑 (即時/翌月予約) で、
  * 請求先情報の単純な update と一緒にすると条件分岐が散漫になるため、別関数化。
  */
@@ -131,10 +152,23 @@ export async function updateBillingContact(
   input: UpdateBillingContactInput,
 ): Promise<void> {
   const data: Record<string, unknown> = {};
+  if (input.billingType !== undefined) {
+    data.billingType = input.billingType;
+    // 2026-05-09 (PR C / #5): individual 切替時は会社名を null クリア。
+    //   client が billingCompanyName を渡さない / null で渡してくる前提だが、defense-in-depth。
+    if (input.billingType === 'individual') {
+      data.billingCompanyName = null;
+    }
+  }
   if (input.billingCompanyName !== undefined) data.billingCompanyName = input.billingCompanyName;
   if (input.billingContactName !== undefined) data.billingContactName = input.billingContactName;
   if (input.billingContactEmail !== undefined) data.billingContactEmail = input.billingContactEmail;
-  if (input.billingAddress !== undefined) data.billingAddress = input.billingAddress;
+  // 2026-05-09 (PR C / #8): 住所構造化フィールド。
+  if (input.billingPostalCode !== undefined) data.billingPostalCode = input.billingPostalCode;
+  if (input.billingPrefecture !== undefined) data.billingPrefecture = input.billingPrefecture;
+  if (input.billingCity !== undefined) data.billingCity = input.billingCity;
+  if (input.billingStreetAddress !== undefined) data.billingStreetAddress = input.billingStreetAddress;
+  if (input.billingBuildingName !== undefined) data.billingBuildingName = input.billingBuildingName;
   if (input.billingPhoneNumber !== undefined) data.billingPhoneNumber = input.billingPhoneNumber;
   if (input.paymentMethod !== undefined) data.paymentMethod = input.paymentMethod;
 

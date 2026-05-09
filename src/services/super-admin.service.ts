@@ -48,11 +48,18 @@ export type TenantSummaryRow = {
   monthlyBudgetCapJpy: number | null;
   activeUserCount: number;
   createdAt: Date;
-  // P-G (2026-05-08): 請求先情報 (CSV エクスポート + super_admin 一覧表示用)
+  // P-G (2026-05-08): 請求先情報 (CSV エクスポート + super_admin 一覧表示用) / PR C で拡張
+  billingType: string;
   billingCompanyName: string | null;
   billingContactName: string | null;
   billingContactEmail: string | null;
+  /** Legacy: 旧 単一 Text 住所 (新規入力なし) */
   billingAddress: string | null;
+  billingPostalCode: string | null;
+  billingPrefecture: string | null;
+  billingCity: string | null;
+  billingStreetAddress: string | null;
+  billingBuildingName: string | null;
   billingPhoneNumber: string | null;
   paymentMethod: string;
   // Storage add-on (Phase 2 / 2026-05-08): 当月 CSV エクスポートで容量・追加課金を表示
@@ -80,11 +87,17 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
       currentMonthApiCostJpy: true,
       monthlyBudgetCapJpy: true,
       createdAt: true,
-      // P-G (2026-05-08): 請求先情報
+      // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で拡張
+      billingType: true,
       billingCompanyName: true,
       billingContactName: true,
       billingContactEmail: true,
       billingAddress: true,
+      billingPostalCode: true,
+      billingPrefecture: true,
+      billingCity: true,
+      billingStreetAddress: true,
+      billingBuildingName: true,
       billingPhoneNumber: true,
       paymentMethod: true,
       // Storage add-on (Phase 2 / 2026-05-08): CSV エクスポート用
@@ -116,11 +129,17 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     activeUserCount: userCountByTenant.get(t.id) ?? 0,
     createdAt: t.createdAt,
-    // P-G (2026-05-08): 請求先情報
+    // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09)
+    billingType: t.billingType,
     billingCompanyName: t.billingCompanyName,
     billingContactName: t.billingContactName,
     billingContactEmail: t.billingContactEmail,
     billingAddress: t.billingAddress,
+    billingPostalCode: t.billingPostalCode,
+    billingPrefecture: t.billingPrefecture,
+    billingCity: t.billingCity,
+    billingStreetAddress: t.billingStreetAddress,
+    billingBuildingName: t.billingBuildingName,
     billingPhoneNumber: t.billingPhoneNumber,
     paymentMethod: t.paymentMethod,
     // Storage add-on (Phase 2 / 2026-05-08): 当月課金合計の請求書根拠
@@ -156,13 +175,9 @@ export type TenantDetail = TenantSummaryRow & {
   daysSinceLastActivity: number;
   /** P-6: 休眠判定 (90 日以上活動なし) を満たすかどうか。 */
   isDormant: boolean;
-  // P-G (2026-05-08): 請求先情報
-  billingCompanyName: string | null;
-  billingContactName: string | null;
-  billingContactEmail: string | null;
-  billingAddress: string | null;
-  billingPhoneNumber: string | null;
-  paymentMethod: string;
+  // P-G (2026-05-08) + PR C (2026-05-09): 請求先情報。
+  //   実際のフィールド (billingType / billingCompanyName / billingPostalCode 等) は
+  //   TenantSummaryRow から継承 (`& TenantSummaryRow` で intersection)。
   // P-B (2026-05-08): Beginner プラン期限情報
   beginnerEverUpgraded: boolean;
   beginnerExpiryState: BeginnerExpiryState;
@@ -245,11 +260,17 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     lastUserLoginAt,
     daysSinceLastActivity,
     isDormant,
-    // P-G (2026-05-08): 請求先情報
+    // P-G (2026-05-08) + PR C (2026-05-09): 請求先情報
+    billingType: t.billingType,
     billingCompanyName: t.billingCompanyName,
     billingContactName: t.billingContactName,
     billingContactEmail: t.billingContactEmail,
     billingAddress: t.billingAddress,
+    billingPostalCode: t.billingPostalCode,
+    billingPrefecture: t.billingPrefecture,
+    billingCity: t.billingCity,
+    billingStreetAddress: t.billingStreetAddress,
+    billingBuildingName: t.billingBuildingName,
     billingPhoneNumber: t.billingPhoneNumber,
     paymentMethod: t.paymentMethod,
     // P-B (2026-05-08): Beginner プラン期限情報 (純関数で計算)

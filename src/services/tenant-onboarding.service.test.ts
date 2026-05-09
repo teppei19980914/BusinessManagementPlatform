@@ -74,14 +74,20 @@ import {
   EmailSendError,
 } from './email-verification.service';
 
+// 2026-05-09 (PR C / #5/#8/#10): billingType + 構造化住所サブフィールドを必須化
 const VALID_INPUT = {
   name: 'カスタマーA',
   slug: 'customer-a',
   plan: 'beginner' as const,
+  billingType: 'corporate' as const,
   billingCompanyName: 'カスタマーA 株式会社',
   billingContactName: '山田太郎',
   billingContactEmail: 'billing@customer-a.example',
-  billingAddress: '東京都千代田区...',
+  billingPostalCode: '100-0001',
+  billingPrefecture: '東京都',
+  billingCity: '千代田区',
+  billingStreetAddress: '千代田1-1',
+  billingBuildingName: '〇〇ビル 5F',
   billingPhoneNumber: '03-1234-5678',
   paymentMethod: 'invoice' as const,
   initialAdminName: 'admin Yamada',
@@ -136,6 +142,42 @@ describe('TenantOnboardingInputSchema', () => {
     const r = TenantOnboardingInputSchema.safeParse(noPlan);
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.plan).toBe('beginner');
+  });
+
+  // 2026-05-09 (PR C / #5): 法人プランは会社名必須
+  it('法人プランで会社名空は reject (#5)', () => {
+    const bad = { ...VALID_INPUT, billingCompanyName: '' };
+    expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
+  });
+
+  // 2026-05-09 (PR C / #5): 個人プランは会社名 optional (空で OK)
+  it('個人プランは会社名なしでも parse 成功 (#5)', () => {
+    const individual = {
+      ...VALID_INPUT,
+      billingType: 'individual' as const,
+      billingCompanyName: undefined,
+    };
+    const r = TenantOnboardingInputSchema.safeParse(individual);
+    expect(r.success).toBe(true);
+  });
+
+  // 2026-05-09 (PR C / #8): 郵便番号フォーマット検証
+  it('郵便番号が 7 桁でないと reject (#8)', () => {
+    const bad = { ...VALID_INPUT, billingPostalCode: '12345' };
+    expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it('郵便番号 7 桁 (ハイフンなし) も受理 (#8)', () => {
+    const noHyphen = { ...VALID_INPUT, billingPostalCode: '1000001' };
+    expect(TenantOnboardingInputSchema.safeParse(noHyphen).success).toBe(true);
+  });
+
+  // 2026-05-09 (PR C / #10): 建物名は任意
+  it('建物名は省略可 (#10)', () => {
+    const noBuilding = { ...VALID_INPUT };
+    delete (noBuilding as Partial<typeof noBuilding>).billingBuildingName;
+    const r = TenantOnboardingInputSchema.safeParse(noBuilding);
+    expect(r.success).toBe(true);
   });
 });
 
