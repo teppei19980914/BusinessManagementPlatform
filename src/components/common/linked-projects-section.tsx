@@ -107,24 +107,25 @@ export function LinkedProjectsSection({
           return (
             <li
               key={p.id}
-              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+              className={`flex max-w-full items-center gap-1.5 overflow-hidden rounded-full border px-2.5 py-1 text-xs ${
                 p.deleted ? 'bg-muted text-muted-foreground line-through' : 'bg-card'
               }`}
-              title={p.deleted ? t('deletedProjectTitle') : undefined}
+              title={p.deleted ? t('deletedProjectTitle') : p.name}
             >
               {p.deleted ? (
-                <span>{p.name}</span>
+                <span className="min-w-0 flex-1 truncate">{p.name}</span>
               ) : (
                 <Link
                   href={`/projects/${p.id}`}
-                  className="hover:underline"
+                  className="min-w-0 flex-1 truncate hover:underline"
                   onClick={(e) => e.stopPropagation()}
+                  title={p.name}
                 >
                   {p.name}
                 </Link>
               )}
               {isCurrent && (
-                <Badge variant="outline" className="ml-0.5 px-1 py-0 text-[10px]">
+                <Badge variant="outline" className="ml-0.5 shrink-0 px-1 py-0 text-[10px]">
                   {t('currentBadge')}
                 </Badge>
               )}
@@ -133,7 +134,7 @@ export function LinkedProjectsSection({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="ml-0.5 h-4 w-4 text-muted-foreground hover:text-destructive"
+                  className="ml-0.5 h-4 w-4 shrink-0 text-muted-foreground hover:text-destructive"
                   onClick={() => handleUnlink(p.id, p.name)}
                   title={t('unlinkButtonTitle')}
                   aria-label={t('unlinkButtonTitle')}

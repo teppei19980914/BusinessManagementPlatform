@@ -1239,7 +1239,9 @@
     "explainErrorBeginnerLimit": "Beginner plan monthly API limit reached. Please consider upgrading to Expert / Pro.",
     "explainErrorBudgetExceeded": "Tenant monthly budget cap reached. Cannot generate an explanation.",
     "explainErrorPlanForbidden": "The 'Why?' explanation feature is available only on the Pro plan. Please consider upgrading.",
-    "explainErrorLlm": "A temporary AI error occurred. Please wait and try again."
+    "explainErrorLlm": "A temporary AI error occurred. Please wait and try again.",
+    "viewDetailsHint": "Click to view details (read-only)",
+    "viewDetailsFailed": "Failed to fetch details. You may lack permission or the item was deleted."
   },
   "bulkVisibility": {
     "filterTitle": "Filter",

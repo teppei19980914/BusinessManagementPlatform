@@ -129,27 +129,29 @@ describe('listProjects', () => {
     vi.mocked(prisma.project.findMany).mockResolvedValue([pRow()] as never);
     vi.mocked(prisma.project.count).mockResolvedValue(1);
 
-    await listProjects({}, 'admin-1', 'admin');
+    await listProjects({}, 'admin-1', 'admin', 'tenant-A');
 
     const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
     expect(call.where).not.toHaveProperty('members');
+    expect(call.where.tenantId).toBe('tenant-A');
   });
 
   it('非 admin は自身がメンバーのみ', async () => {
     vi.mocked(prisma.project.findMany).mockResolvedValue([]);
     vi.mocked(prisma.project.count).mockResolvedValue(0);
 
-    await listProjects({}, 'u-1', 'general');
+    await listProjects({}, 'u-1', 'general', 'tenant-A');
 
     const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
     expect(call.where.members).toEqual({ some: { userId: 'u-1' } });
+    expect(call.where.tenantId).toBe('tenant-A');
   });
 
   it('keyword でフィルタ (name/customer.name/purpose の OR)', async () => {
     vi.mocked(prisma.project.findMany).mockResolvedValue([]);
     vi.mocked(prisma.project.count).mockResolvedValue(0);
 
-    await listProjects({ keyword: 'searchword' }, 'admin-1', 'admin');
+    await listProjects({ keyword: 'searchword' }, 'admin-1', 'admin', 'tenant-A');
 
     const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
     expect(call.where.OR).toHaveLength(3);
@@ -165,7 +167,7 @@ describe('listProjects', () => {
     vi.mocked(prisma.project.findMany).mockResolvedValue([]);
     vi.mocked(prisma.project.count).mockResolvedValue(0);
 
-    await listProjects({ limit: 999, page: 3 }, 'admin-1', 'admin');
+    await listProjects({ limit: 999, page: 3 }, 'admin-1', 'admin', 'tenant-A');
 
     const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
     expect(call.take).toBe(100);
@@ -176,7 +178,7 @@ describe('listProjects', () => {
     vi.mocked(prisma.project.findMany).mockResolvedValue([]);
     vi.mocked(prisma.project.count).mockResolvedValue(0);
 
-    await listProjects({ customerName: 'ACME' }, 'admin-1', 'admin');
+    await listProjects({ customerName: 'ACME' }, 'admin-1', 'admin', 'tenant-A');
 
     const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
     expect(call.where.customer).toEqual({
@@ -188,7 +190,7 @@ describe('listProjects', () => {
     vi.mocked(prisma.project.findMany).mockResolvedValue([pRow()] as never);
     vi.mocked(prisma.project.count).mockResolvedValue(1);
 
-    const result = await listProjects({}, 'admin-1', 'admin');
+    const result = await listProjects({}, 'admin-1', 'admin', 'tenant-A');
 
     const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
     expect(call.include).toEqual({ customer: { select: { name: true } } });

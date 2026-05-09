@@ -245,6 +245,7 @@ export type AllRiskDTO = Omit<RiskDTO, 'assigneeName' | 'reporterName' | 'viewer
 export async function listAllRisksForViewer(
   viewerUserId: string,
   viewerSystemRole: string,
+  viewerTenantId: string,
 ): Promise<AllRiskDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
   // ユーザが所属するプロジェクト ID 集合を先に取得 (非メンバー判定に使う)
@@ -261,15 +262,14 @@ export async function listAllRisksForViewer(
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面の○○一覧から行う。
   // isAdmin は projectName / 担当者名のマスキング解除にのみ使う (フィルタには使わない)。
-  // PR-X5: サンプルプロジェクト (isSampleData=true) 配下のリスク/課題は横断ビューから除外。
-  //   提案エンジンは別経路で参照されるため、表示用ビューのみフィルタ。
-  // 2026-05-08: super_admin role はシードデータ管理のため bypass で表示可。
-  const isSuperAdmin = viewerSystemRole === 'super_admin';
+  // 2026-05-09 feedback: テナント越境防止。`tenantId = viewerTenantId` で自テナントのみ
+  //   返す (シードデータは MANAGEMENT_TENANT_ID 所属、super_admin が同テナントの場合のみ見える)。
+  //   ※ super_admin の `isSampleData` bypass はテナントフィルタにより不要化したため削除。
   const risks = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
       visibility: 'public',
-      ...(isSuperAdmin ? {} : { project: { isSampleData: false } }),
+      tenantId: viewerTenantId,
     },
     include: {
       reporter: { select: { name: true } },

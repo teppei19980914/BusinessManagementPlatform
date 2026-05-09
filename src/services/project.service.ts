@@ -122,19 +122,16 @@ export async function listProjects(
   params: ListProjectsParams,
   userId: string,
   systemRole: string,
+  tenantId: string,
 ): Promise<{ data: ProjectDTO[]; total: number }> {
   const page = params.page || 1;
   const limit = Math.min(params.limit || 20, 100);
   const skip = (page - 1) * limit;
 
-  // PR-X5: シーディング用のサンプルプロジェクト (isSampleData=true) は一覧から除外。
-  //   提案エンジンは listProjects を使わず別経路 (suggestion.service.ts) で候補を取得するため、
-  //   ここでフィルタを掛けてもエンジン本体の動作には影響しない。
-  // 2026-05-08: super_admin role はシードデータ管理のため bypass で表示+編集可。
-  const where: Prisma.ProjectWhereInput = { deletedAt: null };
-  if (systemRole !== 'super_admin') {
-    where.isSampleData = false;
-  }
+  // 2026-05-09 feedback: テナント越境防止。`tenantId` フィルタにより自テナントのみ
+  //   返す (シードプロジェクトは MANAGEMENT_TENANT_ID 所属、super_admin が同テナントの
+  //   場合のみ閲覧/編集可)。旧 `isSampleData` bypass はテナントフィルタに集約。
+  const where: Prisma.ProjectWhereInput = { deletedAt: null, tenantId };
 
   // 一般ユーザは自分がメンバーのプロジェクトのみ
   if (systemRole !== 'admin' && systemRole !== 'super_admin') {

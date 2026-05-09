@@ -118,7 +118,7 @@ describe('listAllRetrospectivesForViewer', () => {
       { id: 'u-1', name: 'Alice' },
     ] as never);
 
-    const r = await listAllRetrospectivesForViewer('admin-1', 'admin');
+    const r = await listAllRetrospectivesForViewer('admin-1', 'admin', 'tenant-A');
 
     expect(r[0].projectName).toBe('PJ');
     expect(r[0].createdByName).toBe('Alice');
@@ -131,7 +131,7 @@ describe('listAllRetrospectivesForViewer', () => {
     ] as never);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
-    const r = await listAllRetrospectivesForViewer('u-99', 'general');
+    const r = await listAllRetrospectivesForViewer('u-99', 'general', 'tenant-A');
 
     expect(r[0].projectName).toBe(null);
     expect(r[0].createdByName).toBe(null);
@@ -144,7 +144,7 @@ describe('listAllRetrospectivesForViewer', () => {
     ] as never);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
-    const r = await listAllRetrospectivesForViewer('admin-1', 'admin');
+    const r = await listAllRetrospectivesForViewer('admin-1', 'admin', 'tenant-A');
 
     expect(r[0].projectDeleted).toBe(true);
     expect(r[0].canAccessProject).toBe(false);
@@ -156,7 +156,7 @@ describe('listAllRetrospectivesForViewer', () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
     // 非 admin
-    await listAllRetrospectivesForViewer('u-1', 'general');
+    await listAllRetrospectivesForViewer('u-1', 'general', 'tenant-A');
     const generalCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
     expect(generalCall.where.visibility).toBe('public');
     expect(generalCall.where).not.toHaveProperty('OR');
@@ -166,7 +166,7 @@ describe('listAllRetrospectivesForViewer', () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
     // admin (旧仕様では visibility 制約なしだったが要件変更で admin も public 固定)
-    await listAllRetrospectivesForViewer('admin-1', 'admin');
+    await listAllRetrospectivesForViewer('admin-1', 'admin', 'tenant-A');
     const adminCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
     expect(adminCall.where.visibility).toBe('public');
   });

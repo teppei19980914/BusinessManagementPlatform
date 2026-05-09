@@ -11,7 +11,11 @@ export default async function AllRetrospectivesPage() {
 
   // Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため)
   const tCommon = await getTranslations('common');
-  const retros = await listAllRetrospectivesForViewer(session.user.id, session.user.systemRole);
+  const retros = await listAllRetrospectivesForViewer(
+    session.user.id,
+    session.user.systemRole,
+    session.user.tenantId,
+  );
   const isAdmin = session.user.systemRole === 'admin';
 
   return (

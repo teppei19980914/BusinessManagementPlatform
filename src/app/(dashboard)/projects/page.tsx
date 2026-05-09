@@ -14,6 +14,7 @@ export default async function ProjectsPage() {
       { page: 1, limit: 20 },
       session.user.id,
       session.user.systemRole,
+      session.user.tenantId,
     ),
     // PR #111-2: 新規作成ダイアログの顧客セレクト用
     listCustomers(),

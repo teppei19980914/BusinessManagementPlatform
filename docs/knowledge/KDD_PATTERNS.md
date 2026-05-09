@@ -5275,3 +5275,48 @@ osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
 - §5.X+10 / §5.X+11 (本件の前段 — 同 PR の連続 hotfix 3 連鎖)
 - 公式 ソース (一次): <https://github.com/google/osv-scanner/blob/main/cmd/osv-scanner/scan/source/command.go>
 - 公式 doc: <https://google.github.io/osv-scanner/usage/>
+
+## 5.X+13 マルチテナント越境バグの恒久対策パターン + 「過去指示が反映されない」根本原因と再発防止 (PR feat/issues-from-feedback-2026-05-09)
+
+### 背景
+
+ユーザから 2026-05-09 セッションで報告された 5 件のフィードバックのうち 2 件が「以前のセッションで指示済だが反映されていない」事例 (Defaultテナントのデータ非表示 / スマホ編集画面のリンク名 UI 崩れ)。
+
+調査の結果:
+
+1. **テナント越境バグ**: `listAll{Risks,Retrospectives,Knowledge}ForViewer` および `listProjects` / `listMyMemos` / `listPublicMemos` が `tenantId` フィルタを持たず、複数テナント運用時に他テナントのデータが漏れる重大バグだった。**個人情報漏洩 + 情報完全性侵害** に該当する severity-1 級。
+2. **既存のフィルタは `isSampleData=false` のみ** = シードデータの除外しかしておらず、**テナント越境**の制御は別物。
+3. リンク名 overflow は `linked-projects-section.tsx` (PR #294 で新設) に対策が抜けていた (truncate / min-w-0 / shrink-0 の欠落)。
+
+「指示が反映されていない」根本原因は 3 通りに分解できた:
+
+- (a) **会話だけで完結し、ナレッジ化されなかった (KDD Step 4 抜け)** — commit message のみに残り、後続セッションで `/recall` しても拾えない。本件の指示2 (mobile リンク UI) はこのパターン。
+- (b) **指示は実装されたが、後続 PR で新コンポーネント (例: linked-projects-section.tsx) が追加された際に「同じ罠を再現させない」原則が適用されなかった (横展開漏れ)**。
+- (c) **そもそも該当箇所が無く、別観点 (シード除外) で対応した気になっていた**。本件の指示1 (テナント越境) はこのパターン。
+
+### 対策実装
+
+1. **listAll 系すべてに `viewerTenantId` 引数を必須化** ([risk.service.ts:245](../../src/services/risk.service.ts#L245), [retrospective.service.ts:85](../../src/services/retrospective.service.ts#L85), [knowledge.service.ts:206](../../src/services/knowledge.service.ts#L206), [memo.service.ts:58-79](../../src/services/memo.service.ts#L58), [project.service.ts:121](../../src/services/project.service.ts#L121))。`where.tenantId = viewerTenantId` で自テナント限定。
+
+2. **API ルート / Server Component で `user.tenantId` を必ず渡す** — 引数省略時は型エラーで気付ける (defense via 型システム)。
+
+3. **旧 `super_admin` bypass (`isSampleData=false`) は削除** — super_admin は MANAGEMENT_TENANT_ID 所属のため、テナントフィルタだけで自然にシードデータが見える。bypass ロジックの撤廃により認可境界が単純化。
+
+4. **linked-projects-section.tsx の chip 内テキストに `min-w-0 flex-1 truncate` + 親 li に `max-w-full overflow-hidden` を適用** ([linked-projects-section.tsx:104-147](../../src/components/common/linked-projects-section.tsx#L104))。Badge / Button は `shrink-0` で縮小防止、tooltip でフルネーム露出。
+
+### 抽出したルール
+
+- [ ] **テナント越境チェックはサービス層で必須**: 一覧系 (`list*ForViewer`) は viewer の `tenantId` を引数で受け取り、`where.tenantId = viewerTenantId` を **すべての findMany** に必ず付ける。引数省略時は型エラーになるよう必須引数で受ける (オプショナルにしない)。
+- [ ] **`isSampleData` フィルタは「シード v.s. 実データ」の区別であり、テナント分離の代替にならない**: シードと実データは tenantId が異なる別物として配置 (シード = MANAGEMENT_TENANT_ID 配下) し、表示制御は `tenantId` 一本で行う。
+- [ ] **新規コンポーネント / 新規エンドポイントを追加する際は同種の既存実装の overflow / truncate / 認可ガードを `grep` で確認し、同パターンを適用する**: 本件 PR #294 で新設した linked-projects-section.tsx は attachment-list.tsx の min-w-0+truncate を踏襲できなかった事例。新規追加 = 横展開チェックの起点と心得る。
+- [ ] **「以前のセッションで指示した」が拾えない事象を見つけたら KDD ナレッジに必ず追記する**: commit message だけでは将来の `/recall` で拾えない。`docs/knowledge/KDD_PATTERNS.md` または `docs/test/E2E_LESSONS_LEARNED.md` に新セクションを切る。
+- [ ] **テナント越境バグの severity は最高位 (個人情報漏洩 + 情報完全性侵害)** — 単一テナント運用 (v1) では実害が見えにくいが、v1.x マルチテナント解放と同時に顕在化する。コードフリーズ前に**必ず**塞ぎ切る。CI gate (E2E) で別テナントの user で別テナントのデータが API から取れないことを検証する仕組みを追加検討。
+- [ ] **「全○○」画面のような横断ビューは「テナント横断」ではなく「自テナント内のプロジェクト横断」と再定義する**: テナント壁を超えるのは super_admin の MANAGEMENT_TENANT 内の挙動だけ。コメントで「横断」と書く時は必ずスコープを明示する (テナント内 / 全体)。
+
+### 関連
+
+- 修正例: PR feat/issues-from-feedback-2026-05-09
+- §5.62 (提案エンジン v2 の設計議論 — シード管理テナント方針の起点)
+- `src/lib/tenant.ts:46` (MANAGEMENT_TENANT_ID 定数 / `isManagementTenant()` ヘルパー)
+- `prisma/schema.prisma:188` (User.tenantId カラム / DEFAULT default-tenant)
+- 公式 doc (Next.js multi-tenant の概念): <https://nextjs.org/docs/app/guides/multi-tenant>

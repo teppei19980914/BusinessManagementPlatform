@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
     },
     user.id,
     user.systemRole,
+    user.tenantId,
   );
 
   return NextResponse.json({

@@ -29,6 +29,7 @@ export default async function CustomerDetailPage({ params }: Props) {
     { customerId, limit: 100 },
     session.user.id,
     session.user.systemRole,
+    session.user.tenantId,
   );
 
   return (

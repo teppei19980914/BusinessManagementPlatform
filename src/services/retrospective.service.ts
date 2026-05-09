@@ -85,6 +85,7 @@ export type AllRetroDTO = RetroDTO & {
 export async function listAllRetrospectivesForViewer(
   viewerUserId: string,
   viewerSystemRole: string,
+  viewerTenantId: string,
 ): Promise<AllRetroDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
   const memberships = isAdmin
@@ -98,16 +99,13 @@ export async function listAllRetrospectivesForViewer(
   // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面から行う。
-  // PR #165: viewerIsCreator は project-list 側に移したので、本関数では viewerUserId を memberships 取得のみで使用。
-  // PR-X5: サンプルプロジェクト (isSampleData=true) 配下の振り返りは横断ビューから除外。
-  //   提案エンジンは別経路で参照されるため、表示用ビューのみフィルタ。
-  // 2026-05-08: super_admin role はシードデータ管理のため bypass で表示可。
-  const isSuperAdmin = viewerSystemRole === 'super_admin';
+  // 2026-05-09 feedback: テナント越境防止のため tenantId フィルタを追加。
+  //   旧 super_admin bypass (`isSampleData`) はテナント制御に集約したため削除。
   const retros = await prisma.retrospective.findMany({
     where: {
       deletedAt: null,
       visibility: 'public',
-      ...(isSuperAdmin ? {} : { project: { isSampleData: false } }),
+      tenantId: viewerTenantId,
     },
     include: {
       project: { select: { id: true, name: true, deletedAt: true } },

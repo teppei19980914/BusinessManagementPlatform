@@ -17,7 +17,11 @@ export default async function AllIssuesPage() {
 
   // Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため)
   const tCommon = await getTranslations('common');
-  const risks = await listAllRisksForViewer(session.user.id, session.user.systemRole);
+  const risks = await listAllRisksForViewer(
+    session.user.id,
+    session.user.systemRole,
+    session.user.tenantId,
+  );
   const isAdmin = session.user.systemRole === 'admin';
   const filtered = risks.filter((r) => r.type === 'issue');
 

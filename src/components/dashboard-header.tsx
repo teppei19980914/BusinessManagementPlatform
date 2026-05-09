@@ -273,6 +273,27 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           >
             {tNav('help')}
           </Link>
+          {/* 2026-05-09 feedback: ヘッダ右の DiscordLinkButton は `sm:flex` 以上のみ表示なので、
+              モバイル (< 640px) およびヘッダ overflow 時の fallback として AccountMenu にも掲載。
+              Discord は開発者⇔ユーザのコンタクトハブのため、画面のどこからでも常に到達可能であることを担保する。 */}
+          {(() => {
+            const discordUrl = getDiscordInviteUrl();
+            if (!discordUrl) return null;
+            return (
+              <a
+                href={discordUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                role="menuitem"
+                className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
+                onClick={() => setOpen(false)}
+                title={tNav('contactDeveloperTooltip')}
+              >
+                <span aria-hidden className="mr-1">💬</span>
+                {tNav('discord')}
+              </a>
+            );
+          })()}
           <button
             type="button"
             role="menuitem"

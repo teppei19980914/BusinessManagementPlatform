@@ -17,7 +17,11 @@ export default async function AllRisksPage() {
   if (!session) redirect(LOGIN_ROUTE);
 
   const tCommon = await getTranslations('common');
-  const risks = await listAllRisksForViewer(session.user.id, session.user.systemRole);
+  const risks = await listAllRisksForViewer(
+    session.user.id,
+    session.user.systemRole,
+    session.user.tenantId,
+  );
   const isAdmin = session.user.systemRole === 'admin';
   const filtered = risks.filter((r) => r.type === 'risk');
 
