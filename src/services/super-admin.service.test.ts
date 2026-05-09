@@ -25,19 +25,32 @@ vi.mock('@/lib/db', () => ({
       groupBy: vi.fn(),
       updateMany: vi.fn(),
       count: vi.fn(),
+      // 2026-05-09 (#18): purgeOldDeletedTenants で削除すべきでない (regression test 用)
+      deleteMany: vi.fn(),
     },
     // P-A: カスケード論理削除対象 (deletedAt カラム持ち)
-    project: { updateMany: vi.fn() },
-    knowledge: { updateMany: vi.fn() },
-    riskIssue: { updateMany: vi.fn() },
-    retrospective: { updateMany: vi.fn() },
-    memo: { updateMany: vi.fn() },
-    stakeholder: { updateMany: vi.fn() },
-    comment: { updateMany: vi.fn() },
-    attachment: { updateMany: vi.fn() },
+    project: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    knowledge: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    riskIssue: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    retrospective: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    memo: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    stakeholder: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    comment: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    attachment: { updateMany: vi.fn(), deleteMany: vi.fn() },
     auditLog: { create: vi.fn() },
     // 2026-05-09 (PR E / #12 #14): Voyage / Anthropic 集計で使用
     apiCallLog: { aggregate: vi.fn() },
+    // 2026-05-09 (PR F / #18): purgeOldDeletedTenants で参照する追加テーブル
+    mention: { deleteMany: vi.fn() },
+    knowledgeProject: { deleteMany: vi.fn() },
+    taskKnowledge: { deleteMany: vi.fn() },
+    taskProgressLog: { deleteMany: vi.fn() },
+    task: { deleteMany: vi.fn() },
+    estimate: { deleteMany: vi.fn() },
+    projectMember: { deleteMany: vi.fn() },
+    customer: { deleteMany: vi.fn() },
+    tenantImportPreview: { deleteMany: vi.fn() },
+    suggestionExplanation: { deleteMany: vi.fn() },
     // P-A: $transaction はモックの戻り値配列をそのまま resolve する想定
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
@@ -52,6 +65,8 @@ import {
   getVoyageUsageSummary,
   getAnthropicUsageSummary,
   getBeginnerUsageSummary,
+  // 2026-05-09 (PR F / #18)
+  purgeOldDeletedTenants,
 } from './super-admin.service';
 import { prisma } from '@/lib/db';
 
@@ -592,6 +607,72 @@ describe('getBeginnerUsageSummary (PR E / #15)', () => {
         ],
       },
       plan: 'beginner',
+    });
+  });
+});
+
+// ================================================================
+// 2026-05-09 (PR F / #18): purgeOldDeletedTenants で users を物理削除しないこと
+// ================================================================
+
+describe('purgeOldDeletedTenants (PR F / #18)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 全 deleteMany が { count: 0 } を返すデフォルトを設定
+    const zero = { count: 0 } as never;
+    vi.mocked(prisma.mention.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.comment.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.attachment.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.knowledgeProject.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.taskKnowledge.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.taskProgressLog.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.task.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.estimate.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.riskIssue.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.retrospective.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.memo.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.stakeholder.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.knowledge.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.suggestionExplanation.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.project.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.customer.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.tenantImportPreview.deleteMany).mockResolvedValue(zero);
+  });
+
+  it('対象テナント (deletedAt から 90 日以上経過) があっても user.deleteMany は呼ばれない (#18)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'old-tenant-1' },
+      { id: 'old-tenant-2' },
+    ] as never);
+
+    await purgeOldDeletedTenants(new Date('2026-05-09T00:00:00Z'));
+
+    // 業務データの deleteMany は呼ばれるが、user.deleteMany は意図的に呼ばない
+    expect(prisma.project.deleteMany).toHaveBeenCalled();
+    expect(prisma.knowledge.deleteMany).toHaveBeenCalled();
+    expect(prisma.user.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('対象テナント 0 件なら deleteMany は一切呼ばれない', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    const r = await purgeOldDeletedTenants(new Date('2026-05-09T00:00:00Z'));
+
+    expect(r.attempted).toBe(0);
+    expect(prisma.user.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.project.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('SuggestionExplanation も削除対象に含まれる (hotfix 既存挙動)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'old-tenant-1' },
+    ] as never);
+
+    await purgeOldDeletedTenants(new Date('2026-05-09T00:00:00Z'));
+
+    expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({
+      where: { tenantId: 'old-tenant-1' },
     });
   });
 });

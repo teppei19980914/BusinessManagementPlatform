@@ -213,6 +213,22 @@ SELECT feature_unit, COUNT(*), SUM(llm_input_tokens), SUM(llm_output_tokens)
 
 > **2026-05-09 (#22) 改修**: 「なぜ?」説明文機能は **Pro プラン限定**になった。Beginner / Expert ではボタン非表示 + サーバ側で `plan_forbidden` を返す (defense-in-depth)。Anthropic 呼び出し量は Pro プラン契約者のなぜ?クリック数次第。
 
+### Q7. テナント解約後に user データはどれくらい保持されるか? (#18 / 2026-05-09)
+
+**A**: テナント解約 → 90 日経過後の物理削除 cron (`purgeOldDeletedTenants`) は **業務データ (Project / Knowledge / RiskIssue / Retrospective / Memo / 添付など) のみ削除し、users 行は永続保持** する仕様 (#18 / 2026-05-09 で方針変更)。
+
+理由: **Beginner プラン乱用防止**。「Beginner で 90 日試用 → 解約 → 別 email で再契約 → また 90 日試用」という抜け道を防ぐため、過去の解約済テナントに紐付く user.email を `BEGINNER_NOT_AVAILABLE_FOR_RETURNING` 判定 (`tenant-onboarding.service.ts`) で参照する。
+
+| 項目 | 解約直後 | 90 日後 (cron 実行後) |
+|---|---|---|
+| `tenant.deletedAt` | now でセット | そのまま (削除されない) |
+| `user.deletedAt` / `isActive` | now / false | そのまま (削除されない、login は不可) |
+| `user.email` / `name` | 保持 | 保持 (abuse 検知用) |
+| 業務データ (Project 等) | 論理削除 (deletedAt セット) | **物理削除 (DB 容量解放)** |
+| ログ系 (audit / auth_event / role_change / api_call / monthly_usage / email_send) | 保持 | 保持 (法的要件 / 監査) |
+
+GDPR 等で個別ユーザの削除請求があった場合は **super_admin が手動対応** する運用。cron の自動削除には含めない。
+
 ---
 
 ## リリース後の改善ロードマップ

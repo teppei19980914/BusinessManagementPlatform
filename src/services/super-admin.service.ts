@@ -979,10 +979,11 @@ export async function deleteTenant(
  * 削除対象 (= テナント業務データ、容量を解放するもの):
  *   tasks / estimates / project_members / projects / knowledge_projects / knowledges /
  *   risks_issues / retrospectives / memos / customers / stakeholders / mentions /
- *   comments / attachments / tenant_import_preview / users
+ *   comments / attachments / tenant_import_preview / suggestion_explanations
  *
  * 保護対象 (= 物理削除しない):
  *   tenant 本体 (FK 整合性 + super_admin の監査参照)
+ *   **users (2026-05-09 #18 で方針変更): Beginner プラン乱用防止のため永続保持**
  *   api_call_logs (課金根拠の法的保持)
  *   tenant_monthly_usage_history (請求書根拠)
  *   audit_logs (監査要件)
@@ -994,15 +995,20 @@ export async function deleteTenant(
  * 設計判断:
  *   - **テナント本体は物理削除しない**: 上記ログテーブルが tenant_id NOT NULL FK を持つため、
  *     tenant 物理削除すると FK violation。slug 再利用の利便性より整合性を優先。
- *   - **users は物理削除する**: PII 削除 (= GDPR 等プライバシー要件への配慮)。
- *     紐付き auth_event_logs / audit_logs などは user_id NULL になる
- *     (= ON DELETE SET NULL の前提を満たす)。
+ *   - **users は物理削除しない (2026-05-09 / #18 方針変更)**:
+ *     旧仕様 (P-A) は GDPR 配慮で users を物理削除していたが、その後の方針判断により
+ *     **Beginner プラン乱用防止** (= 解約 → Beginner 再契約の繰り返し回避) を優先するため、
+ *     users 行は permanent に保持する。soft-delete 状態 (isActive=false / deletedAt=now)
+ *     のままで、ログインは不可だが email + role は abuse-prevention check の根拠として残す。
+ *     - tenant-onboarding.service.ts の `BEGINNER_NOT_AVAILABLE_FOR_RETURNING` 判定で参照
+ *     - GDPR 等の個別削除請求は super_admin が手動で対応する運用 (cron 自動削除しない)
  *   - **冪等性**: 同一テナントの 2 回目以降は対象データが既に空なので no-op。
  *     失敗時はテナントごとに try/catch、cron 全体は止めない。
  *
  * 関連:
  *   - 計画: ユーザライフサイクルの Step 13 (テナント解約 → 90 日後物理削除)
  *   - 月初 cron: src/services/tenant-monthly-reset.service.ts (本関数を呼ぶ)
+ *   - Beginner abuse 検知: src/services/tenant-onboarding.service.ts §previousDeletedTenants
  */
 export type PurgeOldDeletedTenantsResult = {
   /** 物理削除を試行したテナント件数 */
@@ -1034,6 +1040,11 @@ export async function purgeOldDeletedTenants(
     try {
       // 単一 transaction で関連データを削除 (途中失敗時の半端状態を避ける)。
       // FK の依存関係順 (子 → 親) に削除する: child first, parent last。
+      // 2026-05-09 (#18 方針変更): users を物理削除しない。
+      //   Beginner プラン乱用防止のため、解約済テナントの users 行を永続保持する
+      //   (soft-delete 状態のまま)。tenant-onboarding 側の abuse-prevention check は
+      //   billingContactEmail を参照するため厳密には users 不要だが、将来 user.email
+      //   ベースの判定に拡張する余地を残すため、ここで保護対象とする。
       const [
         // 子テーブル (= FK 参照される側ではなく、参照する側) を先に削除
         mentions,
@@ -1055,7 +1066,6 @@ export async function purgeOldDeletedTenants(
         projects,
         customers,
         importPreviews,
-        users,
       ] = await prisma.$transaction([
         prisma.mention.deleteMany({ where: { tenantId: t.id } }),
         prisma.comment.deleteMany({ where: { tenantId: t.id } }),
@@ -1072,13 +1082,12 @@ export async function purgeOldDeletedTenants(
         prisma.stakeholder.deleteMany({ where: { tenantId: t.id } }),
         prisma.knowledge.deleteMany({ where: { tenantId: t.id } }),
         // 2026-05-09 hotfix: SuggestionExplanation は project_id / tenant_id / generated_by の
-        //   3 経路で FK を持つ。project / tenant / user の削除前に必ず明示削除する。
+        //   3 経路で FK を持つ。project / tenant の削除前に必ず明示削除する。
         prisma.suggestionExplanation.deleteMany({ where: { tenantId: t.id } }),
         prisma.project.deleteMany({ where: { tenantId: t.id } }),
         prisma.customer.deleteMany({ where: { tenantId: t.id } }),
         prisma.tenantImportPreview.deleteMany({ where: { tenantId: t.id } }),
-        // users は最後 (= 上記の created_by / updated_by などの参照を解決した後)
-        prisma.user.deleteMany({ where: { tenantId: t.id } }),
+        // 2026-05-09 (#18): users.deleteMany は意図的に削除しない (Beginner abuse 防止)
       ]);
 
       const subTotal =
@@ -1100,8 +1109,7 @@ export async function purgeOldDeletedTenants(
         suggestionExplanations.count +
         projects.count +
         customers.count +
-        importPreviews.count +
-        users.count;
+        importPreviews.count;
       totalRowsDeleted += subTotal;
       succeeded += 1;
 
