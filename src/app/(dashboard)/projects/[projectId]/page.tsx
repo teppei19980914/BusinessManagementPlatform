@@ -60,6 +60,8 @@ export default async function ProjectDetailPage({ params }: Props) {
       canCreate={canCreate}
       canCreateOwnedList={canCreateOwnedList}
       customers={customers.map((c) => ({ id: c.id, name: c.name }))}
+      // 2026-05-09 (#22): 「なぜ?」ボタンの可視性判定用 (Pro 限定機能)
+      tenantPlan={session.user.tenantPlan}
     />
   );
 }

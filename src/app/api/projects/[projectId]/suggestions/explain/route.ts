@@ -132,6 +132,12 @@ function mapDegradedToHttp(result: ExplainSuggestionDegraded): NextResponse {
         { error: { code: 'PLAN_INVALID', message: result.message } },
         { status: 500 },
       );
+    // 2026-05-09 (#22): Pro 限定機能のため Beginner/Expert は 403 PLAN_FORBIDDEN。
+    case 'plan_forbidden':
+      return NextResponse.json(
+        { error: { code: 'PLAN_FORBIDDEN', message: result.message } },
+        { status: 403 },
+      );
     case 'llm_error':
       return NextResponse.json(
         { error: { code: 'LLM_ERROR', message: result.message } },

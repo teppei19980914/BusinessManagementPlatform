@@ -91,10 +91,18 @@ function groupByTier<T extends { tier: SuggestionTier }>(items: T[]): {
 export function SuggestionsPanel({
   projectId,
   canAdopt,
+  tenantPlan,
 }: {
   projectId: string;
   canAdopt: boolean;
+  // 2026-05-09 (#22): 「なぜ?」ボタンの可視性制御。Pro プラン限定機能。
+  //   Beginner / Expert では button 非表示 + Pro へのアップグレード誘導文を出す。
+  tenantPlan: string;
 }) {
+  // 2026-05-09 (#22): explain ('なぜ?') 機能は Pro プラン限定 (差別化の核)。
+  //   サーバ側 (suggestion-explanation.service.ts) でも plan_forbidden で reject するため
+  //   UI 露出はガードラインの 1 段にすぎないが、ユーザに無駄なクリックをさせない目的。
+  const canExplain = tenantPlan === 'pro';
   const t = useTranslations('suggestion');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
@@ -208,6 +216,9 @@ export function SuggestionsPanel({
         if (code === 'RATE_LIMITED') setExplainError(t('explainErrorRateLimited'));
         else if (code === 'BEGINNER_LIMIT_EXCEEDED') setExplainError(t('explainErrorBeginnerLimit'));
         else if (code === 'BUDGET_EXCEEDED') setExplainError(t('explainErrorBudgetExceeded'));
+        // 2026-05-09 (#22): Pro 限定機能の defense-in-depth エラー (UI で button を
+        //   非表示にしているが直叩き / state 不整合に備える)
+        else if (code === 'PLAN_FORBIDDEN') setExplainError(t('explainErrorPlanForbidden'));
         else if (code === 'LLM_ERROR') setExplainError(t('explainErrorLlm'));
         else setExplainError(t('explainErrorGeneric'));
         return;
@@ -258,14 +269,17 @@ export function SuggestionsPanel({
               <Badge variant="outline" title={scoreTooltip(k)}>
                 {t('similarityBadge', { percent: (k.score * 100).toFixed(0) })}
               </Badge>
-              {/* P-3: 「なぜこのプロジェクトに関連するのか」を Lazy 生成 */}
-              <button
-                type="button"
-                className="text-xs text-info hover:underline"
-                onClick={() => handleExplain({ kind: 'knowledge', id: k.id, title: k.title })}
-              >
-                {t('explainButton')}
-              </button>
+              {/* P-3: 「なぜこのプロジェクトに関連するのか」を Lazy 生成。
+                  2026-05-09 (#22): Pro プラン限定機能のため canExplain でゲート。 */}
+              {canExplain && (
+                <button
+                  type="button"
+                  className="text-xs text-info hover:underline"
+                  onClick={() => handleExplain({ kind: 'knowledge', id: k.id, title: k.title })}
+                >
+                  {t('explainButton')}
+                </button>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">{k.snippet}</p>
           </div>
@@ -303,14 +317,16 @@ export function SuggestionsPanel({
                   {t('sourceProjectLink', { name: i.sourceProjectName })}
                 </Link>
               )}
-              {/* P-3: 「なぜ?」ボタン */}
-              <button
-                type="button"
-                className="text-xs text-info hover:underline"
-                onClick={() => handleExplain({ kind: 'issue', id: i.id, title: i.title })}
-              >
-                {t('explainButton')}
-              </button>
+              {/* P-3: 「なぜ?」ボタン (2026-05-09 / #22: Pro 限定) */}
+              {canExplain && (
+                <button
+                  type="button"
+                  className="text-xs text-info hover:underline"
+                  onClick={() => handleExplain({ kind: 'issue', id: i.id, title: i.title })}
+                >
+                  {t('explainButton')}
+                </button>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">{i.snippet}</p>
           </div>
@@ -345,20 +361,22 @@ export function SuggestionsPanel({
                 {t('sourceProjectLink', { name: r.sourceProjectName })}
               </Link>
             )}
-            {/* P-3: 「なぜ?」ボタン */}
-            <button
-              type="button"
-              className="text-xs text-info hover:underline"
-              onClick={() =>
-                handleExplain({
-                  kind: 'retrospective',
-                  id: r.id,
-                  title: t('retrospectiveItemTitle', { date: r.conductedDate }),
-                })
-              }
-            >
-              {t('explainButton')}
-            </button>
+            {/* P-3: 「なぜ?」ボタン (2026-05-09 / #22: Pro 限定) */}
+            {canExplain && (
+              <button
+                type="button"
+                className="text-xs text-info hover:underline"
+                onClick={() =>
+                  handleExplain({
+                    kind: 'retrospective',
+                    id: r.id,
+                    title: t('retrospectiveItemTitle', { date: r.conductedDate }),
+                  })
+                }
+              >
+                {t('explainButton')}
+              </button>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">{r.snippet}</p>
         </div>

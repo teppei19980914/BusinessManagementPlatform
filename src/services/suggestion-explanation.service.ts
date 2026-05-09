@@ -77,6 +77,8 @@ export interface ExplainSuggestionDegraded {
     | 'beginner_limit_exceeded'
     | 'budget_exceeded'
     | 'plan_invalid'
+    // 2026-05-09 (#22): Pro プラン限定機能のため、それ以外のプランは plan_forbidden で拒否。
+    | 'plan_forbidden'
     | 'llm_error'
     | 'project_not_found'
     | 'candidate_not_found'
@@ -142,6 +144,29 @@ const EXPLAIN_SYSTEM_PROMPT = `あなたはソフトウェア開発プロジェ�
 export async function getOrGenerateSuggestionExplanation(
   input: ExplainSuggestionInput,
 ): Promise<ExplainSuggestionResult> {
+  // ---------- 0. プラン認可: Pro 限定機能 (2026-05-09 / #22) ----------
+  //   「なぜ?」説明文は Pro プランの差別化の核 (V1_FINAL_TASKS.md P-3)。
+  //   Beginner / Expert は機能自体を非開放とし、UI でも button を非表示にする。
+  //   API 直叩きを防ぐためサービス層でも plan を見て plan_forbidden で拒否する (defense-in-depth)。
+  const tenantForPlan = await prisma.tenant.findFirst({
+    where: { id: input.tenantId, deletedAt: null },
+    select: { plan: true },
+  });
+  if (tenantForPlan == null) {
+    return {
+      ok: false,
+      reason: 'tenant_inactive',
+      message: 'テナントが存在しないか、無効化されています',
+    };
+  }
+  if (tenantForPlan.plan !== 'pro') {
+    return {
+      ok: false,
+      reason: 'plan_forbidden',
+      message: '「なぜ?」説明文機能は Pro プラン限定です',
+    };
+  }
+
   // ---------- 1. キャッシュ参照 ----------
   const cached = await prisma.suggestionExplanation.findUnique({
     where: {

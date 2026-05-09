@@ -1212,6 +1212,7 @@
     "explainErrorRateLimited": "短時間に説明文の取得を行いすぎました。少し待ってから再度お試しください。",
     "explainErrorBeginnerLimit": "Beginner プランの月間 API 呼び出し上限に達しました。Expert / Pro プランへのアップグレードをご検討ください。",
     "explainErrorBudgetExceeded": "テナントの月次予算上限に達したため説明文を生成できませんでした。",
+    "explainErrorPlanForbidden": "「なぜ?」説明文機能は Pro プラン限定です。Pro プランへのアップグレードをご検討ください。",
     "explainErrorLlm": "AI 側で一時的なエラーが発生しました。少し待ってから再度お試しください。"
   },
   "bulkVisibility": {

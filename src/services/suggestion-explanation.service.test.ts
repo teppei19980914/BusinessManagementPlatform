@@ -30,6 +30,10 @@ vi.mock('@/lib/db', () => ({
     retrospective: {
       findFirst: vi.fn(),
     },
+    // 2026-05-09 (#22): プラン制限ゲート用 tenant.findFirst
+    tenant: {
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -53,6 +57,9 @@ const CANDIDATE_ID = 'candidate-uuid-1';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 2026-05-09 (#22): デフォルトで Pro プラン (= 機能利用可) として既存テスト互換にする。
+  //   Beginner / Expert を test するときは個別 mockResolvedValueOnce で上書き。
+  vi.mocked(prisma.tenant.findFirst).mockResolvedValue({ plan: 'pro' } as never);
 });
 
 /**
@@ -472,6 +479,59 @@ describe('getOrGenerateSuggestionExplanation', () => {
         // 800 字に切り詰められている
         expect(result.explanation.length).toBeLessThanOrEqual(800);
       }
+    });
+  });
+
+  // 2026-05-09 (#22): プラン認可ゲートのテスト。Pro 以外は plan_forbidden で
+  //   キャッシュ参照すら行わず即拒否する (defense-in-depth + コスト保護)。
+  describe('プラン認可ゲート (Pro 限定 / #22)', () => {
+    it('Beginner プランは plan_forbidden で即拒否 (キャッシュも見ない)', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({ plan: 'beginner' } as never);
+
+      const result = await getOrGenerateSuggestionExplanation({
+        projectId: PROJECT_ID,
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        candidateKind: 'knowledge',
+        candidateId: CANDIDATE_ID,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('plan_forbidden');
+      expect(prisma.suggestionExplanation.findUnique).not.toHaveBeenCalled();
+      expect(withMeteredLLM).not.toHaveBeenCalled();
+    });
+
+    it('Expert プランも plan_forbidden で拒否 (Pro 専用機能)', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({ plan: 'expert' } as never);
+
+      const result = await getOrGenerateSuggestionExplanation({
+        projectId: PROJECT_ID,
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        candidateKind: 'knowledge',
+        candidateId: CANDIDATE_ID,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('plan_forbidden');
+      expect(withMeteredLLM).not.toHaveBeenCalled();
+    });
+
+    it('テナント不在なら tenant_inactive (plan_forbidden より先に判定)', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null);
+
+      const result = await getOrGenerateSuggestionExplanation({
+        projectId: PROJECT_ID,
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        candidateKind: 'knowledge',
+        candidateId: CANDIDATE_ID,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('tenant_inactive');
+      expect(withMeteredLLM).not.toHaveBeenCalled();
     });
   });
 });
