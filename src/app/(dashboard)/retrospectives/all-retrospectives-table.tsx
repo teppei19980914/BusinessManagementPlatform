@@ -176,11 +176,14 @@ export function AllRetrospectivesTable({
               </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AdminRetrospectiveDeleteButton
-                    projectId={r.projectId}
-                    retroId={r.id}
-                    label={r.conductedDate}
-                  />
+                  {/* PR feat/asset-multi-project-linking: orphan は admin 手動 cleanup の想定 */}
+                  {(r.projectId ?? r.linkedProjectIds[0]) ? (
+                    <AdminRetrospectiveDeleteButton
+                      projectId={(r.projectId ?? r.linkedProjectIds[0])!}
+                      retroId={r.id}
+                      label={r.conductedDate}
+                    />
+                  ) : null}
                 </TableCell>
               )}
             </ClickableRow>

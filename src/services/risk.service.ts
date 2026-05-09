@@ -73,7 +73,11 @@ export function computePriority(
 
 export type RiskDTO = {
   id: string;
-  projectId: string;
+  /** PR feat/asset-multi-project-linking: 「作成元プロジェクト」(audit / 起源表示用)。
+   *  作成元 project が削除された後は null。検索/紐付け判定は linkedProjectIds を使うこと。 */
+  projectId: string | null;
+  /** 紐付け済プロジェクトの id 一覧 (M:N)。ここに含まれる project でアクセス権が発生する。 */
+  linkedProjectIds: string[];
   type: string;
   title: string;
   content: string;
@@ -103,7 +107,7 @@ export type RiskDTO = {
 
 function toRiskDTO(r: {
   id: string;
-  projectId: string;
+  projectId: string | null;
   type: string;
   title: string;
   content: string;
@@ -125,10 +129,12 @@ function toRiskDTO(r: {
   riskNature: string | null;
   createdAt: Date;
   updatedAt: Date;
+  riskIssueProjects?: { projectId: string }[];
 }): RiskDTO {
   return {
     id: r.id,
     projectId: r.projectId,
+    linkedProjectIds: r.riskIssueProjects?.map((rp) => rp.projectId) ?? [],
     type: r.type,
     title: r.title,
     content: r.content,
@@ -168,11 +174,19 @@ export async function listRisks(
     ? {}
     : { OR: [{ visibility: 'public' }, { visibility: 'draft', reporterId: viewerUserId }] };
 
+  // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付いている」リスク/課題を返す。
+  //   作成元 (createdInProject = riskIssue.projectId) ではなく M:N 中間テーブル (RiskIssueProject)
+  //   経由で判定。これにより A 作成 → B 紐付け の risk が B の一覧にも出る。
   const risks = await prisma.riskIssue.findMany({
-    where: { projectId, deletedAt: null, ...visibilityWhere },
+    where: {
+      deletedAt: null,
+      ...visibilityWhere,
+      riskIssueProjects: { some: { projectId } },
+    },
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
+      riskIssueProjects: { select: { projectId: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -240,6 +254,7 @@ export async function listAllRisksForViewer(
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
       project: { select: { id: true, name: true, deletedAt: true } },
+      riskIssueProjects: { select: { projectId: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -253,7 +268,9 @@ export async function listAllRisksForViewer(
   const userNameById = new Map(users.map((u) => [u.id, u.name]));
 
   return risks.map((r) => {
-    const isMember = isAdmin || memberProjectIds.has(r.projectId);
+    // PR feat/asset-multi-project-linking: 紐付け済プロジェクトのいずれかのメンバーなら member 扱い
+    const linkedProjectIds = r.riskIssueProjects?.map((rp) => rp.projectId) ?? [];
+    const isMember = isAdmin || linkedProjectIds.some((pid) => memberProjectIds.has(pid));
     const projectDeleted = r.project?.deletedAt != null;
     return {
       ...toRiskDTO(r),
@@ -293,6 +310,7 @@ export async function getRisk(
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
+      riskIssueProjects: { select: { projectId: true } },
     },
   });
   if (!r) return null;
@@ -318,7 +336,10 @@ export async function createRisk(
 ): Promise<RiskDTO> {
   const r = await prisma.riskIssue.create({
     data: {
+      // PR feat/asset-multi-project-linking: projectId は **作成元** プロジェクト (audit)。
+      //   検索はすべて riskIssueProjects (M:N) 経由になるため、ここで初期紐付けも作成する。
       projectId,
+      riskIssueProjects: { create: [{ projectId }] },
       type: input.type,
       title: input.title,
       content: input.content,
@@ -341,6 +362,7 @@ export async function createRisk(
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
+      riskIssueProjects: { select: { projectId: true } },
     },
   });
 
@@ -472,6 +494,7 @@ export async function updateRisk(
     include: {
       reporter: { select: { name: true } },
       assignee: { select: { name: true } },
+      riskIssueProjects: { select: { projectId: true } },
     },
   });
 
@@ -527,8 +550,14 @@ export async function bulkUpdateRisksFromList(
 
   // 一度のクエリで対象を取得し、所有権を行ごとに判定 (N+1 回避)
   // PR #165: where に projectId を加え、他プロジェクトのレコードは skippedNotFound 扱いにする
+  // PR feat/asset-multi-project-linking: scope は M:N (riskIssueProjects) 経由で判定する。
+  //   つまり「この project に紐付け済 (作成元または参照先)」のレコードのみ一括更新可能。
   const targets = await prisma.riskIssue.findMany({
-    where: { id: { in: ids }, projectId, deletedAt: null },
+    where: {
+      id: { in: ids },
+      deletedAt: null,
+      riskIssueProjects: { some: { projectId } },
+    },
     select: { id: true, reporterId: true },
   });
   const found = new Set(targets.map((t) => t.id));
@@ -602,6 +631,73 @@ export async function deleteRisk(
       data: { deletedAt: now },
     }),
   ]);
+}
+
+/**
+ * PR feat/asset-multi-project-linking (2026-05-09 / Phase 1):
+ *   別プロジェクトの「参考」タブで提示されたリスク/課題を、自プロジェクトに紐付ける。
+ *
+ * 認可: 呼出元 API が「対象プロジェクトのメンバー (member/pm_tl)」であることを既に検証している前提
+ *   (Knowledge の linkKnowledgeToProject と同方針)。viewer は API 層で除外。
+ *
+ * @returns added=true なら新規紐付け、false なら既存 (idempotent)
+ * @throws {Error} 'NOT_FOUND' リスク/課題が存在しない or 論理削除済 / 'PROJECT_NOT_FOUND' 紐付け先 project 無効
+ */
+export async function linkRiskToProject(
+  riskId: string,
+  projectId: string,
+): Promise<{ added: boolean }> {
+  const [risk, project] = await Promise.all([
+    prisma.riskIssue.findFirst({
+      where: { id: riskId, deletedAt: null },
+      select: { id: true, tenantId: true, visibility: true },
+    }),
+    prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { id: true, tenantId: true },
+    }),
+  ]);
+  if (!risk) throw new Error('NOT_FOUND');
+  if (!project) throw new Error('PROJECT_NOT_FOUND');
+  // テナント越境を防ぐ (一般的な認可境界)
+  if (risk.tenantId !== project.tenantId) throw new Error('TENANT_MISMATCH');
+  // 「参考」タブから紐付ける = visibility=public のリスクのみ。draft は他者から不可視のため。
+  // 一方、自テナント内であれば admin が draft を意図的に紐付けるユースケースは想定し許容
+  // (UI 側で draft を提示しないことで実質的に保護)。
+
+  // upsert 風の挙動: 既存なら何もしない (idempotent)
+  const existing = await prisma.riskIssueProject.findUnique({
+    where: { riskIssueId_projectId: { riskIssueId: riskId, projectId } },
+    select: { id: true },
+  });
+  if (existing) return { added: false };
+
+  await prisma.riskIssueProject.create({
+    data: { riskIssueId: riskId, projectId },
+  });
+  return { added: true };
+}
+
+/**
+ * リスク/課題から指定プロジェクトの紐付けを解除する。本体は削除しない (orphan 化を許容)。
+ *
+ * 「画面上から削除しないことを選択」した場合の運用に該当。
+ * 本体の物理削除は deleteProjectCascade(cascadeRisks=true) または deleteRisk() のみで発生する。
+ *
+ * @returns removed=true なら解除した、false なら元から紐付いていなかった
+ */
+export async function unlinkRiskFromProject(
+  riskId: string,
+  projectId: string,
+): Promise<{ removed: boolean }> {
+  const existing = await prisma.riskIssueProject.findUnique({
+    where: { riskIssueId_projectId: { riskIssueId: riskId, projectId } },
+    select: { id: true },
+  });
+  if (!existing) return { removed: false };
+
+  await prisma.riskIssueProject.delete({ where: { id: existing.id } });
+  return { removed: true };
 }
 
 const IMPACT_LABELS: Record<string, string> = { low: '低', medium: '中', high: '高' };

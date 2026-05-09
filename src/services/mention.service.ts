@@ -76,18 +76,31 @@ export async function getMentionContext(
     }
     case 'issue':
     case 'risk': {
+      // PR feat/asset-multi-project-linking: M:N 化で projectId が null (orphan) のケースあり。
+      //   creator が削除済なら最初の紐付けプロジェクトを fallback に使う。
       const r = await prisma.riskIssue.findFirst({
         where: { id: entityId, deletedAt: null },
-        select: { projectId: true, assigneeId: true },
+        select: {
+          projectId: true,
+          assigneeId: true,
+          riskIssueProjects: { select: { projectId: true }, take: 1 },
+        },
       });
-      return r ? { projectId: r.projectId, assigneeId: r.assigneeId } : null;
+      if (!r) return null;
+      const pid = r.projectId ?? r.riskIssueProjects[0]?.projectId ?? null;
+      return { projectId: pid, assigneeId: r.assigneeId };
     }
     case 'retrospective': {
       const retro = await prisma.retrospective.findFirst({
         where: { id: entityId, deletedAt: null },
-        select: { projectId: true },
+        select: {
+          projectId: true,
+          retrospectiveProjects: { select: { projectId: true }, take: 1 },
+        },
       });
-      return retro ? { projectId: retro.projectId, assigneeId: null } : null;
+      if (!retro) return null;
+      const pid = retro.projectId ?? retro.retrospectiveProjects[0]?.projectId ?? null;
+      return { projectId: pid, assigneeId: null };
     }
     case 'knowledge': {
       // Knowledge は N:M で複数プロジェクトに紐付き得る。MVP では projectId は使わない

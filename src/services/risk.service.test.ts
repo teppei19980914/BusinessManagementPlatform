@@ -11,6 +11,13 @@ vi.mock('@/lib/db', () => ({
       // PR #161 / PR #165: bulkUpdateRisksFromList で使用
       updateMany: vi.fn(),
     },
+    // PR feat/asset-multi-project-linking: link/unlink API
+    riskIssueProject: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      delete: vi.fn(),
+    },
+    project: { findFirst: vi.fn() },
     projectMember: { findMany: vi.fn() },
     user: { findMany: vi.fn() },
     // PR #89: deleteRisk が attachment.updateMany を $transaction 内で呼ぶ
@@ -35,6 +42,8 @@ import {
   deleteRisk,
   bulkUpdateRisksFromList,
   risksToCSV,
+  linkRiskToProject,
+  unlinkRiskFromProject,
   type RiskDTO,
 } from './risk.service';
 import { prisma } from '@/lib/db';
@@ -75,14 +84,18 @@ const rRow = (o: Record<string, unknown> = {}) => ({
 describe('listRisks', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('admin は全リスクをフィルタなしで取得', async () => {
+  it('admin は全リスクをフィルタなしで取得 (M:N 経由)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([rRow()] as never);
 
     await listRisks('p-1', 'admin-id', 'admin');
 
+    // PR feat/asset-multi-project-linking: scope は M:N (riskIssueProjects) 経由で判定する。
     expect(prisma.riskIssue.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ projectId: 'p-1', deletedAt: null }),
+        where: expect.objectContaining({
+          deletedAt: null,
+          riskIssueProjects: { some: { projectId: 'p-1' } },
+        }),
       }),
     );
     const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
@@ -480,6 +493,7 @@ describe('risksToCSV', () => {
   const base = (o: Partial<RiskDTO> = {}): RiskDTO => ({
     id: 'r',
     projectId: 'p',
+    linkedProjectIds: ['p'],
     type: 'risk',
     title: 'タイトル',
     content: '',
@@ -560,9 +574,13 @@ describe('bulkUpdateRisksFromList', () => {
     expect(r.skippedNotOwned).toBe(1);
     expect(r.skippedNotFound).toBe(0);
 
-    // PR #165: findMany の where に projectId が含まれることを確認
+    // PR feat/asset-multi-project-linking: scope は M:N (riskIssueProjects) 経由で判定する。
     const findCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(findCall.where).toEqual({ id: { in: ['r-1', 'r-2', 'r-3'] }, projectId: 'p-1', deletedAt: null });
+    expect(findCall.where).toEqual({
+      id: { in: ['r-1', 'r-2', 'r-3'] },
+      deletedAt: null,
+      riskIssueProjects: { some: { projectId: 'p-1' } },
+    });
 
     const updateCall = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0];
     expect(updateCall.where).toEqual({ id: { in: ['r-1', 'r-2'] } });
@@ -622,5 +640,101 @@ describe('bulkUpdateRisksFromList', () => {
     const data = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0].data;
     expect(data.deadline).toBeInstanceOf(Date);
     expect((data.deadline as Date).toISOString()).toContain('2026-12-31');
+  });
+});
+
+// PR feat/asset-multi-project-linking (2026-05-09 / Phase 1):
+//   M:N 紐付けの link/unlink ユニット。Knowledge の linkKnowledgeToProject と同設計。
+describe('linkRiskToProject', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('新規紐付け → added=true で M:N 行作成', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      id: 'r-1',
+      tenantId: TEST_TENANT_ID,
+      visibility: 'public',
+    } as never);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-2',
+      tenantId: TEST_TENANT_ID,
+    } as never);
+    vi.mocked(prisma.riskIssueProject.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.riskIssueProject.create).mockResolvedValue({} as never);
+
+    const result = await linkRiskToProject('r-1', 'p-2');
+    expect(result).toEqual({ added: true });
+    expect(prisma.riskIssueProject.create).toHaveBeenCalledWith({
+      data: { riskIssueId: 'r-1', projectId: 'p-2' },
+    });
+  });
+
+  it('既存紐付けあり → added=false で create を呼ばない (idempotent)', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      id: 'r-1',
+      tenantId: TEST_TENANT_ID,
+      visibility: 'public',
+    } as never);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-2',
+      tenantId: TEST_TENANT_ID,
+    } as never);
+    vi.mocked(prisma.riskIssueProject.findUnique).mockResolvedValue({ id: 'rp-1' } as never);
+
+    const result = await linkRiskToProject('r-1', 'p-2');
+    expect(result).toEqual({ added: false });
+    expect(prisma.riskIssueProject.create).not.toHaveBeenCalled();
+  });
+
+  it('リスク不存在 → NOT_FOUND', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-2',
+      tenantId: TEST_TENANT_ID,
+    } as never);
+    await expect(linkRiskToProject('r-X', 'p-2')).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('プロジェクト不存在 → PROJECT_NOT_FOUND', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      id: 'r-1',
+      tenantId: TEST_TENANT_ID,
+      visibility: 'public',
+    } as never);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
+    await expect(linkRiskToProject('r-1', 'p-X')).rejects.toThrow('PROJECT_NOT_FOUND');
+  });
+
+  it('テナント不一致 → TENANT_MISMATCH (テナント越境ガード)', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      id: 'r-1',
+      tenantId: TEST_TENANT_ID,
+      visibility: 'public',
+    } as never);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-X',
+      tenantId: '00000000-0000-0000-0000-other-tenant-id',
+    } as never);
+    await expect(linkRiskToProject('r-1', 'p-X')).rejects.toThrow('TENANT_MISMATCH');
+  });
+});
+
+describe('unlinkRiskFromProject', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('既存紐付けあり → removed=true で delete', async () => {
+    vi.mocked(prisma.riskIssueProject.findUnique).mockResolvedValue({ id: 'rp-1' } as never);
+    vi.mocked(prisma.riskIssueProject.delete).mockResolvedValue({} as never);
+
+    const result = await unlinkRiskFromProject('r-1', 'p-2');
+    expect(result).toEqual({ removed: true });
+    expect(prisma.riskIssueProject.delete).toHaveBeenCalledWith({ where: { id: 'rp-1' } });
+  });
+
+  it('紐付けなし → removed=false (idempotent)', async () => {
+    vi.mocked(prisma.riskIssueProject.findUnique).mockResolvedValue(null);
+
+    const result = await unlinkRiskFromProject('r-1', 'p-2');
+    expect(result).toEqual({ removed: false });
+    expect(prisma.riskIssueProject.delete).not.toHaveBeenCalled();
   });
 });

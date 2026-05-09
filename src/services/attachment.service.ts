@@ -234,18 +234,22 @@ export async function resolveProjectIds(
       return e ? [e.projectId] : null;
     }
     case 'risk': {
+      // PR feat/asset-multi-project-linking: M:N 化により紐付け済プロジェクト全件を返す
+      //   (Knowledge と同じ挙動)。orphan (孤児) なら [] を返す。
       const r = await prisma.riskIssue.findFirst({
         where: { id: entityId, deletedAt: null },
-        select: { projectId: true },
+        select: { id: true, riskIssueProjects: { select: { projectId: true } } },
       });
-      return r ? [r.projectId] : null;
+      if (!r) return null;
+      return r.riskIssueProjects.map((rp) => rp.projectId);
     }
     case 'retrospective': {
       const retro = await prisma.retrospective.findFirst({
         where: { id: entityId, deletedAt: null },
-        select: { projectId: true },
+        select: { id: true, retrospectiveProjects: { select: { projectId: true } } },
       });
-      return retro ? [retro.projectId] : null;
+      if (!retro) return null;
+      return retro.retrospectiveProjects.map((rp) => rp.projectId);
     }
     case 'knowledge': {
       const k = await prisma.knowledge.findFirst({

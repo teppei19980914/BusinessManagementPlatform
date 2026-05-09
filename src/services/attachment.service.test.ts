@@ -189,13 +189,20 @@ describe('resolveProjectIds', () => {
     expect(await resolveProjectIds('estimate', 'e1')).toEqual(['p3']);
   });
 
-  it('risk: projectId を返す', async () => {
-    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ projectId: 'p4' } as never);
-    expect(await resolveProjectIds('risk', 'r1')).toEqual(['p4']);
+  it('risk: 紐付け済プロジェクト全件を返す (M:N)', async () => {
+    // PR feat/asset-multi-project-linking: M:N 化により紐付け済全プロジェクトを返す
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      id: 'r1',
+      riskIssueProjects: [{ projectId: 'p4' }, { projectId: 'p4b' }],
+    } as never);
+    expect(await resolveProjectIds('risk', 'r1')).toEqual(['p4', 'p4b']);
   });
 
-  it('retrospective: projectId を返す', async () => {
-    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ projectId: 'p5' } as never);
+  it('retrospective: 紐付け済プロジェクト全件を返す (M:N)', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      id: 'ret1',
+      retrospectiveProjects: [{ projectId: 'p5' }],
+    } as never);
     expect(await resolveProjectIds('retrospective', 'r1')).toEqual(['p5']);
   });
 

@@ -23,7 +23,10 @@ vi.mock('@/lib/db', () => ({
     knowledge: { findMany: vi.fn() },
     knowledgeProject: { findMany: vi.fn() },
     riskIssue: { findMany: vi.fn() },
+    // PR feat/asset-multi-project-linking: M:N 中間テーブル
+    riskIssueProject: { findMany: vi.fn() },
     retrospective: { findMany: vi.fn() },
+    retrospectiveProject: { findMany: vi.fn() },
     memo: { findMany: vi.fn() },
     customer: { findMany: vi.fn() },
     stakeholder: { findMany: vi.fn() },
@@ -54,7 +57,9 @@ beforeEach(() => {
   vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
   vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([]);
   vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+  vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([]);
   vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+  vi.mocked(prisma.retrospectiveProject.findMany).mockResolvedValue([]);
   vi.mocked(prisma.memo.findMany).mockResolvedValue([]);
   vi.mocked(prisma.customer.findMany).mockResolvedValue([]);
   vi.mocked(prisma.stakeholder.findMany).mockResolvedValue([]);

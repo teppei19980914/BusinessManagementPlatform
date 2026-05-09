@@ -27,7 +27,8 @@ import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
  */
 type RiskLike = {
   id: string;
-  projectId: string;
+  // PR feat/asset-multi-project-linking: 「作成元」projectId は M:N 化で nullable に
+  projectId: string | null;
   type: string;
   title: string;
   content: string;

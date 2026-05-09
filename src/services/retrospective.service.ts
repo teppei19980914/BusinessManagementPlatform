@@ -37,7 +37,11 @@ import type { CreateRetrospectiveInput } from '@/lib/validators/retrospective';
 
 export type RetroDTO = {
   id: string;
-  projectId: string;
+  /** PR feat/asset-multi-project-linking: 「作成元プロジェクト」(audit / 起源表示用)。
+   *  作成元 project が削除された後は null。検索/紐付け判定は linkedProjectIds を使うこと。 */
+  projectId: string | null;
+  /** 紐付け済プロジェクトの id 一覧 (M:N)。 */
+  linkedProjectIds: string[];
   conductedDate: string;
   planSummary: string;
   actualSummary: string;
@@ -105,6 +109,7 @@ export async function listAllRetrospectivesForViewer(
     },
     include: {
       project: { select: { id: true, name: true, deletedAt: true } },
+      retrospectiveProjects: { select: { projectId: true } },
     },
     orderBy: { conductedDate: 'desc' },
   });
@@ -120,11 +125,14 @@ export async function listAllRetrospectivesForViewer(
   const userMap = new Map(users.map((u) => [u.id, u.name]));
 
   return retros.map((r) => {
-    const isMember = isAdmin || memberProjectIds.has(r.projectId);
+    // PR feat/asset-multi-project-linking: 紐付け済プロジェクトのいずれかのメンバーなら isMember 扱い
+    const linkedProjectIds = r.retrospectiveProjects.map((rp) => rp.projectId);
+    const isMember = isAdmin || linkedProjectIds.some((pid) => memberProjectIds.has(pid));
     const projectDeleted = r.project?.deletedAt != null;
     return {
       id: r.id,
       projectId: r.projectId,
+      linkedProjectIds,
       projectName: isMember ? r.project?.name ?? null : null,
       projectDeleted: isAdmin ? projectDeleted : false,
       canAccessProject: isMember && !projectDeleted,
@@ -164,14 +172,24 @@ export async function listRetrospectives(
 
   // PR #199: コメントは polymorphic comments テーブル経由 (/api/comments) で取得するため
   //   include: { comments: ... } は不要。retro 本体だけ load する。
+  // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付いている」振り返りを返す。
+  //   作成元 (createdInProject) ではなく M:N 中間 (RetrospectiveProject) 経由で判定。
   const retros = await prisma.retrospective.findMany({
-    where: { projectId, deletedAt: null, ...visibilityWhere },
+    where: {
+      deletedAt: null,
+      ...visibilityWhere,
+      retrospectiveProjects: { some: { projectId } },
+    },
+    include: {
+      retrospectiveProjects: { select: { projectId: true } },
+    },
     orderBy: { conductedDate: 'desc' },
   });
 
   return retros.map((r) => ({
     id: r.id,
     projectId: r.projectId,
+    linkedProjectIds: r.retrospectiveProjects.map((rp) => rp.projectId),
     conductedDate: r.conductedDate.toISOString().split('T')[0],
     planSummary: r.planSummary,
     actualSummary: r.actualSummary,
@@ -193,7 +211,10 @@ export async function createRetrospective(
 ): Promise<RetroDTO> {
   const r = await prisma.retrospective.create({
     data: {
+      // PR feat/asset-multi-project-linking: projectId は **作成元** プロジェクト (audit)。
+      //   検索はすべて retrospectiveProjects (M:N) 経由になるため、初期紐付けも作成する。
       projectId,
+      retrospectiveProjects: { create: [{ projectId }] },
       conductedDate: new Date(input.conductedDate),
       planSummary: input.planSummary,
       actualSummary: input.actualSummary,
@@ -231,6 +252,7 @@ export async function createRetrospective(
   return {
     id: r.id,
     projectId: r.projectId,
+    linkedProjectIds: [projectId], // create 直後の紐付けは作成元のみ
     conductedDate: r.conductedDate.toISOString().split('T')[0],
     planSummary: r.planSummary,
     actualSummary: r.actualSummary,
@@ -431,8 +453,14 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
   if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
 
   // PR #165: where に projectId 追加 (他プロジェクトの行が ids に混ざってもサーバ側で除外)
+  // PR feat/asset-multi-project-linking: scope は M:N (retrospectiveProjects) 経由で判定する。
+  //   = この project に紐付け済 (作成元または参照先) の振り返りに対してのみ一括更新可能。
   const targets = await prisma.retrospective.findMany({
-    where: { id: { in: ids }, projectId, deletedAt: null },
+    where: {
+      id: { in: ids },
+      deletedAt: null,
+      retrospectiveProjects: { some: { projectId } },
+    },
     select: { id: true, createdBy: true },
   });
   const skippedNotFound = ids.length - targets.length;
@@ -462,12 +490,32 @@ export async function getRetrospective(
   retroId: string,
   viewerUserId?: string,
   viewerSystemRole?: string,
-): Promise<{ id: string; projectId: string; createdBy: string; visibility: string } | null> {
-  const r = await prisma.retrospective.findFirst({
+): Promise<{
+  id: string;
+  projectId: string | null;
+  /** PR feat/asset-multi-project-linking: 紐付け済プロジェクトの id 一覧 (M:N) */
+  linkedProjectIds: string[];
+  createdBy: string;
+  visibility: string;
+} | null> {
+  const raw = await prisma.retrospective.findFirst({
     where: { id: retroId, deletedAt: null },
-    select: { id: true, projectId: true, createdBy: true, visibility: true },
+    select: {
+      id: true,
+      projectId: true,
+      createdBy: true,
+      visibility: true,
+      retrospectiveProjects: { select: { projectId: true } },
+    },
   });
-  if (!r) return null;
+  if (!raw) return null;
+  const r = {
+    id: raw.id,
+    projectId: raw.projectId,
+    linkedProjectIds: raw.retrospectiveProjects.map((rp) => rp.projectId),
+    createdBy: raw.createdBy,
+    visibility: raw.visibility,
+  };
   if (viewerUserId === undefined) return r;
 
   if (r.visibility === 'public') return r;
@@ -475,6 +523,60 @@ export async function getRetrospective(
   const isAdmin = viewerSystemRole === 'admin';
   if (isCreator || isAdmin) return r;
   return null;
+}
+
+/**
+ * PR feat/asset-multi-project-linking (2026-05-09 / Phase 1):
+ *   別プロジェクトの「参考」タブから振り返りを自プロジェクトに紐付ける。
+ *
+ * 認可: API 層で「対象プロジェクトのメンバー」を確認済の前提 (linkRiskToProject と同方針)。
+ *
+ * @returns added=true 新規紐付け / false 既存 (idempotent)
+ */
+export async function linkRetrospectiveToProject(
+  retroId: string,
+  projectId: string,
+): Promise<{ added: boolean }> {
+  const [retro, project] = await Promise.all([
+    prisma.retrospective.findFirst({
+      where: { id: retroId, deletedAt: null },
+      select: { id: true, tenantId: true },
+    }),
+    prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { id: true, tenantId: true },
+    }),
+  ]);
+  if (!retro) throw new Error('NOT_FOUND');
+  if (!project) throw new Error('PROJECT_NOT_FOUND');
+  if (retro.tenantId !== project.tenantId) throw new Error('TENANT_MISMATCH');
+
+  const existing = await prisma.retrospectiveProject.findUnique({
+    where: { retrospectiveId_projectId: { retrospectiveId: retroId, projectId } },
+    select: { id: true },
+  });
+  if (existing) return { added: false };
+
+  await prisma.retrospectiveProject.create({
+    data: { retrospectiveId: retroId, projectId },
+  });
+  return { added: true };
+}
+
+/**
+ * 振り返りから指定プロジェクトの紐付けを解除する。本体は削除しない (orphan 化を許容)。
+ */
+export async function unlinkRetrospectiveFromProject(
+  retroId: string,
+  projectId: string,
+): Promise<{ removed: boolean }> {
+  const existing = await prisma.retrospectiveProject.findUnique({
+    where: { retrospectiveId_projectId: { retrospectiveId: retroId, projectId } },
+    select: { id: true },
+  });
+  if (!existing) return { removed: false };
+  await prisma.retrospectiveProject.delete({ where: { id: existing.id } });
+  return { removed: true };
 }
 
 // PR #199: addComment は削除。polymorphic comments テーブルへ移行 (`/api/comments`)。
