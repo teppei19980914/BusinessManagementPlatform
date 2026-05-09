@@ -5068,3 +5068,72 @@ CLAUDE.md「コミット前チェック」を **5 項目に再編** し、退行
 - CLAUDE.md「コミット前チェック」(本改訂の最終版)
 - §5.46 〜 §5.48 (security-check.ts 導入と CI gate 化の経緯)
 - 修正例: 2026-05-09 (本セクション、CLAUDE.md + .claude/skills/* + .claude/agents/* 一斉更新 PR)
+
+## 5.X+10 GitHub Actions の脆弱なアクションを避け公式 install スクリプトで CI 化する (PR #296 hotfix / 2026-05-09)
+
+### 背景
+
+PR #296 で OSV-Scanner / Trivy を CI に追加したところ、3 つの fail が発生:
+
+1. **OSV-Scanner**: `google/osv-scanner-action@v1` で `Unable to resolve action ... unable to find version 'v1'`
+   → Marketplace のパス命名 (`/osv-scanner-action/osv-scanner-action@vX.Y.Z`) が変動し、`@v1` major タグが存在しない
+2. **Trivy**: `aquasecurity/trivy-action@0.28.0` が **GHSA-69fq-xp46-6x23 (Trivy ecosystem supply chain was briefly compromised, CRITICAL)** にヒット
+   → アクションそのものが公式に汚染認定され、安全な version の判定もリリースノートを跨ぐ手間が生じる
+3. **Dependency Review**: 上記 Trivy アクションのバージョンを CI が `fail-on-severity: high` で検知し PR 全体が block
+
+### 対応
+
+両アクションとも **公式バイナリの install スクリプト経由に切替** て、Marketplace アクションへの依存を撤廃:
+
+```yaml
+# OSV-Scanner: GitHub API から最新リリースの linux_amd64 binary URL を解決して直接インストール
+- name: Install osv-scanner
+  run: |
+    DL_URL=$(curl -sSfL https://api.github.com/repos/google/osv-scanner/releases/latest \
+      | grep -oE '"browser_download_url": "[^"]*linux_amd64[^"]*"' \
+      | head -n1 | sed -E 's/.*"(.*)"/\1/')
+    curl -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+    chmod +x /usr/local/bin/osv-scanner
+- name: Run osv-scanner
+  run: osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+
+# Trivy: 公式 install.sh で最新版 (stable) を取得
+- name: Install trivy
+  run: |
+    curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+      | sudo sh -s -- -b /usr/local/bin
+- name: Run trivy fs
+  run: |
+    trivy fs --severity CRITICAL,HIGH --ignore-unfixed \
+      --format sarif --output trivy-results.sarif --exit-code 1 .
+- uses: github/codeql-action/upload-sarif@v3   # 公式 GitHub アクションは安全
+  with: { sarif_file: trivy-results.sarif, category: trivy }
+```
+
+これにより:
+- アクションのサプライチェーン汚染リスクを排除 (`actions/checkout` / `github/codeql-action` 等の **GitHub 公式 Verified アクションのみ使用**)
+- 同時に「常時最新バイナリを使う」要件も満たせる (install スクリプトが latest を解決)
+- Dependency Review の `fail-on-severity: high` も clean に通過する
+
+### 抽出したルール
+
+- [ ] **GitHub Marketplace の third-party アクションを採用する前に、Dependency Review の advisory DB と
+      OSSF Scorecard を必ず確認する**: 過去に supply chain 汚染を起こしたアクション (例: `tj-actions/changed-files`、
+      `aquasecurity/trivy-action` 等) は今後も risk が伴う。同等機能の **公式 install スクリプト** が
+      存在する場合はそちらを優先
+- [ ] **「最新を使う」要件はバージョン pin より install スクリプトが向く**: `@vX.Y.Z` pin は Dependabot
+      週次更新でも反応が遅れがち。公式の `latest` 解決ロジック (curl + GitHub Releases API) なら
+      毎ジョブで最新版が確定する
+- [ ] **CI で利用するアクションは「`actions/*` (GitHub 公式) + `github/codeql-action`」のみを基本とし、
+      それ以外は curl ベースインストールを優先する**: アクションが破壊された時の影響範囲を最小化
+- [ ] **アクションの version error (`Unable to resolve action`) はパス命名規則を疑う**: monorepo 構成の
+      アクション (`org/repo/subpath@vX`) は major tag が存在しないことがあるので、Marketplace ページで
+      正確な uses 形式を確認 — または curl 化を検討する
+- [ ] **PR の Dependency Review が fail したら advisory ID を必ず確認**: GHSA-* で過去のサプライチェーン
+      事案を引いていることが多く、その場合はバージョン bump ではなく **アクション自体の置き換え** が必要
+
+### 関連
+
+- 修正例: PR #296 hotfix (2026-05-09)
+- §5.46 〜 §5.48 (security-check.ts CI gate)
+- §5.X+9 (ローカル必須 → CI 自動への分離方針)

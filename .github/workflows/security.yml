@@ -154,45 +154,73 @@ jobs:
   # 最新性: Google が運用する OSV.dev データベースを実行時に live 問い合わせ。
   #   pnpm audit の npm registry 由来データと相補的に動作 (OSV は OSS 横断 = npm 以外も対応、
   #   またコミットレベルの脆弱性追跡があり、npm registry より早く CVE が登録されることがある)。
-  # 公式: https://google.github.io/osv-scanner/github-action/
+  # 公式: https://google.github.io/osv-scanner/
+  #
+  # 採用方式: 公式バイナリの直接ダウンロード + 実行 (action wrapper を経由しない)。
+  #   理由: GitHub Marketplace の osv-scanner-action はパス命名が変動しており解決失敗するため、
+  #   公式 GitHub Releases から最新バイナリを取得する方式に統一 (常時最新)。
   # ============================================================
   osv-scanner:
     name: OSV-Scanner
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v1
-        with:
-          scan-args: |-
-            --recursive
-            --skip-git
-            ./
+      - name: Install osv-scanner (latest release)
+        run: |
+          set -euo pipefail
+          # GitHub API から最新リリースの linux amd64 binary URL を取得して設置
+          DL_URL=$(curl -sSfL https://api.github.com/repos/google/osv-scanner/releases/latest \
+            | grep -oE '"browser_download_url": "[^"]*linux_amd64[^"]*"' \
+            | head -n1 | sed -E 's/.*"(.*)"/\1/')
+          if [ -z "$DL_URL" ]; then
+            echo "::error::Could not resolve osv-scanner latest release URL"
+            exit 1
+          fi
+          echo "Downloading: $DL_URL"
+          curl -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner --version
+      - name: Run osv-scanner against pnpm-lock.yaml
+        run: |
+          # --lockfile を明示し、recursive で全 lockfile を確実に拾う
+          # CRITICAL/HIGH 検出時に exit 1 で fail
+          osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
 
   # ============================================================
   # 6. Trivy (Aqua Security CVE DB + IaC + secrets)
   #
-  # 最新性: Aqua Security の脆弱性 DB をジョブ起動時に同期 (内部で `trivy image db update`
-  #   相当が走る)。OSV / pnpm audit / GitHub Advisory と独立した CVE 源泉を加える。
-  # 公式: https://github.com/aquasecurity/trivy-action
+  # 最新性: Aqua Security の脆弱性 DB をジョブ起動時に同期。OSV / pnpm audit /
+  #   GitHub Advisory と独立した CVE 源泉を加える。
+  # 公式インストール: https://aquasecurity.github.io/trivy/latest/getting-started/installation/
+  #
+  # 採用方式: 公式 install スクリプトでバイナリを最新版インストール
+  #   (アクション `aquasecurity/trivy-action` のサプライチェーン汚染 GHSA-69fq-xp46-6x23 を回避)。
   # ============================================================
   trivy:
     name: Trivy (CVE / IaC / Secrets)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          # SARIF 出力を GitHub Code Scanning に送信して PR に inline コメント
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          exit-code: '1'
-      - name: Upload Trivy results to GitHub Security tab
+      - name: Install trivy (latest stable from official install script)
+        run: |
+          set -euo pipefail
+          # 公式 install.sh は最新の stable リリースを取得 (Aqua Security 提供)
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+          trivy --version
+      - name: Run trivy filesystem scan (SARIF + fail on HIGH/CRITICAL)
+        run: |
+          set -euo pipefail
+          # SARIF 出力 → GitHub Code Scanning に投稿。--exit-code 1 で HIGH/CRITICAL fail。
+          trivy fs \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-results.sarif \
+            --exit-code 1 \
+            --skip-dirs node_modules,.next,src/generated \
+            .
+      - name: Upload Trivy SARIF to GitHub Security tab
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
