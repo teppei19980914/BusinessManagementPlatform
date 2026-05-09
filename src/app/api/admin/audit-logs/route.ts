@@ -27,7 +27,11 @@ export async function GET(req: NextRequest) {
   const page = Number(searchParams.get('page')) || 1;
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 100);
 
-  const where: Record<string, unknown> = {};
+  // 2026-05-10 feedback Phase 2-9: 越境取得を遮断するため自テナント user のログのみ。
+  //   AuditLog 自身は tenantId 列を持たないため User リレーション経由で絞る。
+  const where: Record<string, unknown> = {
+    user: { tenantId: user.tenantId },
+  };
   if (entityType) where.entityType = entityType;
 
   const [logs, total] = await Promise.all([

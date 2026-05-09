@@ -27,8 +27,12 @@ export async function GET(req: NextRequest) {
   const page = Number(searchParams.get('page')) || 1;
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 100);
 
+  // 2026-05-10 feedback Phase 2-9: 越境取得を遮断するため target user が自テナントのもののみ。
+  //   RoleChangeLog 自身は tenantId 列を持たないため target/changer の User リレーション経由で絞る。
+  const where = { targetUser: { tenantId: user.tenantId } };
   const [logs, total] = await Promise.all([
     prisma.roleChangeLog.findMany({
+      where,
       include: {
         changer: { select: { name: true } },
         targetUser: { select: { name: true, email: true } },
@@ -37,7 +41,7 @@ export async function GET(req: NextRequest) {
       skip: (page - 1) * limit,
       take: limit,
     }),
-    prisma.roleChangeLog.count(),
+    prisma.roleChangeLog.count({ where }),
   ]);
 
   const data = logs.map((l) => ({

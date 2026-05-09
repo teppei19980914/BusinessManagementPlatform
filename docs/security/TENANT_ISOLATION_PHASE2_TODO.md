@@ -40,25 +40,25 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [x] `unlinkRiskFromProject(riskId, projectId, viewerTenantId)` — 冒頭で risk の tenant 一致確認 (越境紐付け解除を遮断)
 - [x] `linkRiskToProject` は既存実装で risk.tenantId === project.tenantId を verify 済 (TENANT_MISMATCH throw) のため変更不要
 
-### knowledge.service.ts
+### knowledge.service.ts ✅ 完了 (PR #301 Phase 2-4)
 
-- [ ] `listKnowledge(params, userId, systemRole, viewerTenantId)`
-- [ ] `listKnowledgeByProject(projectId, viewerTenantId)`
-- [ ] `getKnowledge(knowledgeId, ..., viewerTenantId)`
-- [ ] `updateKnowledge(knowledgeId, input, userId, viewerTenantId)` — 既存 `tenantId` 引数同上
-- [ ] `deleteKnowledge(knowledgeId, userId, systemRole, viewerTenantId)`
-- [ ] `bulkUpdateKnowledgeVisibilityFromList(projectId, ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `listKnowledge(params, userId, systemRole, viewerTenantId)`
+- [x] `listKnowledgeByProject(projectId, viewerTenantId)`
+- [x] `getKnowledge(knowledgeId, ..., viewerTenantId)`
+- [x] `updateKnowledge(knowledgeId, input, userId, viewerTenantId)` — 既存 `tenantId` 引数同上
+- [x] `deleteKnowledge(knowledgeId, userId, systemRole, viewerTenantId)`
+- [x] `bulkUpdateKnowledgeVisibilityFromList(projectId, ids, visibility, viewerUserId, viewerTenantId)`
 
-### retrospective.service.ts
+### retrospective.service.ts ✅ 完了 (PR #301 Phase 2-4)
 
-- [ ] 全 7 関数 (`listRetrospectives` / `getRetrospective` / `confirmRetrospective` / `updateRetrospective` / `deleteRetrospective` / `bulkUpdateRetrospectivesVisibilityFromList` / `unlinkRetrospectiveFromProject`)
+- [x] 全 7 関数 (`listRetrospectives` / `getRetrospective` / `confirmRetrospective` / `updateRetrospective` / `deleteRetrospective` / `bulkUpdateRetrospectivesVisibilityFromList` / `unlinkRetrospectiveFromProject`)
 
-### memo.service.ts (Phase 1 の listMy/listPublic に続く残り)
+### memo.service.ts ✅ 完了 (PR #301 Phase 2-4)
 
-- [ ] `getMemoForViewer(memoId, viewerUserId, viewerTenantId)`
-- [ ] `updateMemo(memoId, input, userId, viewerTenantId)`
-- [ ] `deleteMemo(memoId, userId, viewerTenantId)`
-- [ ] `bulkUpdateMemosVisibilityFromList(ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `getMemoForViewer(memoId, viewerUserId, viewerTenantId)`
+- [x] `updateMemo(memoId, input, userId, viewerTenantId)`
+- [x] `deleteMemo(memoId, userId, viewerTenantId)`
+- [x] `bulkUpdateMemosVisibilityFromList(ids, visibility, viewerUserId, viewerTenantId)`
 
 ### task.service.ts (最大の盲点 — tenantId フィルタ皆無) ✅ 完了 (PR Phase 2-1, 2026-05-09)
 
@@ -76,72 +76,79 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [x] `getProgressLogs(taskId, viewerTenantId)` — 当初 TODO 漏れ、本 PR で塞いだ
 - [x] `recalculateAncestorsPublic` / `recalculateAncestors` / `recalculateWp` / `recalculateWpOnly` — 内部 helper、上位関数で tenant 検証された taskId しか流れないため変更不要
 
-### comment.service.ts
+### comment.service.ts ✅ 完了 (PR #302 Phase 2-5)
 
-- [ ] 全 7 関数 (`listComments` / `getComment` / `createComment` (data.tenantId 明示) / `updateComment` / `deleteComment` / `resolveEntityForComment` / `softDeleteCommentsForEntity`)
-- [ ] `mention.createMany` (createComment 内) も `data.tenantId` 明示
+- [x] 全 7 関数 (`listComments` / `getComment` / `createComment` (data.tenantId 明示) / `updateComment` / `deleteComment` / `resolveEntityForComment` / `softDeleteCommentsForEntity`)
+- [x] `mention.createMany` (createComment 内) も `data.tenantId` 明示
 
-### stakeholder.service.ts
+### stakeholder.service.ts ✅ 完了 (PR #302 Phase 2-5)
 
-- [ ] 全 5 関数 (`listStakeholders` / `getStakeholder` / `createStakeholder` (data.tenantId 明示) / `updateStakeholder` / `deleteStakeholder`)
+- [x] 全 5 関数 (`listStakeholders` / `getStakeholder` / `createStakeholder` (data.tenantId 明示) / `updateStakeholder` / `deleteStakeholder`)
 
-### attachment.service.ts (添付ファイル URL 漏洩は機密情報直結)
+### attachment.service.ts ✅ 完了 (PR #302 Phase 2-5)
 
-- [ ] 全 8 関数 (`listAttachments` / `getAttachment` / `createAttachment` (data.tenantId 明示) / `updateAttachment` / `deleteAttachment` / `getEntityVisibility` / `resolveProjectIds` / `authorizeMemoAttachment`)
+- [x] 全 8 関数 (`listAttachments` / `getAttachment` / `createAttachment` (data.tenantId 明示) / `updateAttachment` / `deleteAttachment` / `getEntityVisibility` / `resolveProjectIds` / `authorizeMemoAttachment`)
 
-### estimate.service.ts (契約金額 / 見積根拠の漏洩は致命的)
+### estimate.service.ts ✅ 完了 (PR #303 Phase 2-6)
 
-- [ ] 全 6 関数
+- [x] 全 6 関数
 
-### member.service.ts
+### member.service.ts ✅ 完了 (PR #303 Phase 2-6)
 
-- [ ] `listMembers(projectId, viewerTenantId)`
-- [ ] `addMember(projectId, userId, projectRole, viewerTenantId)` — **User と Project の tenantId 一致を verify** (権限昇格攻撃防止)
-- [ ] `updateMemberRole(memberId, ..., viewerTenantId)`
-- [ ] `removeMember(memberId, viewerTenantId)`
+- [x] `listMembers(projectId, viewerTenantId)`
+- [x] `addMember(projectId, userId, projectRole, viewerTenantId)` — **User と Project の tenantId 一致を verify** (権限昇格攻撃防止)
+- [x] `updateMemberRole(memberId, ..., viewerTenantId)`
+- [x] `removeMember(memberId, viewerTenantId)`
 
-### user.service.ts (B 拡張)
+### user.service.ts (B 拡張) ✅ 完了 (PR #303 Phase 2-6)
 
-- [ ] `createUser(input, creatorId, options, viewerTenantId)` — `data.tenantId` を引数の tenantId と一致確認
-- [ ] `updateUserStatus(userId, isActive, updaterId, viewerTenantId)`
-- [ ] `updateUser(userId, input, updaterId, viewerTenantId)`
-- [ ] `updateUserRole(userId, newRole, updaterId, viewerTenantId)`
-- [ ] `deleteUser(userId, deleterId, viewerTenantId)` — 内部の projectMember カスケードも tenantId 条件併記
-- [ ] `lockInactiveUsers(systemTriggerId, viewerTenantId?)` — cron 経路は意図的全テナント横断、手動経路のみ tenantId 限定
+- [x] `createUser(input, creatorId, options, viewerTenantId)` — `data.tenantId` を引数の tenantId と一致確認
+- [x] `updateUserStatus(userId, isActive, updaterId, viewerTenantId)`
+- [x] `updateUser(userId, input, updaterId, viewerTenantId)`
+- [x] `updateUserRole(userId, newRole, updaterId, viewerTenantId)`
+- [x] `deleteUser(userId, deleterId, viewerTenantId)` — 内部の projectMember カスケードも tenantId 条件併記
+- [x] `lockInactiveUsers(systemTriggerId, viewerTenantId?)` — cron 経路は意図的全テナント横断、手動経路のみ tenantId 限定
 
-### suggestion.service.ts
+### suggestion.service.ts ✅ 完了 (PR #304 Phase 2-7)
 
-- [ ] `loadProjectContext(projectId, viewerTenantId)`
-- [ ] `suggestForProject(projectId, options, viewerTenantId)` — knowledge / issue / risk / retrospective の findMany **すべて** に `tenantId: ctx.tenantId` 必須。`excludeManagementTenant` を「追加許可」に書き換え (`tenantId: { in: [ctx.tenantId, MANAGEMENT_TENANT_ID] }` when seedDataEnabled)
-- [ ] `adoptPastIssueAsTemplate(sourceIssueId, targetProjectId, userId)` — sourceIssue.tenantId === targetProject.tenantId を verify
-- [ ] `linkKnowledgeToProject(knowledgeId, projectId, viewerTenantId)`
-- [ ] `suggestRelatedIssuesForText(inputText, currentProjectId, viewerTenantId)`
+- [x] `loadProjectContext(projectId, viewerTenantId)`
+- [x] `suggestForProject(projectId, options, viewerTenantId)` — knowledge / issue / risk / retrospective の findMany **すべて** に `tenantId: ctx.tenantId` 必須。`excludeManagementTenant` を「追加許可」に書き換え (`tenantId: { in: [ctx.tenantId, MANAGEMENT_TENANT_ID] }` when seedDataEnabled)
+- [x] `adoptPastIssueAsTemplate(sourceIssueId, targetProjectId, userId)` — sourceIssue.tenantId === targetProject.tenantId を verify
+- [x] `linkKnowledgeToProject(knowledgeId, projectId, viewerTenantId)`
+- [x] `suggestRelatedIssuesForText(inputText, currentProjectId, viewerTenantId)`
 
-### mention.service.ts
+### mention.service.ts ✅ 完了 (PR #304 Phase 2-7)
 
-- [ ] `getMentionContext(entityType, entityId, viewerTenantId)`
-- [ ] `expandMention(kind, ...)` — kind='all' の `user.findMany` に tenantId フィルタ
-- [ ] `generateMentionNotifications(...)` — `notification.createMany` の data に tenantId 明示
+- [x] `getMentionContext(entityType, entityId, viewerTenantId)`
+- [x] `expandMention(kind, ...)` — kind='all' の `user.findMany` に tenantId フィルタ
+- [x] `generateMentionNotifications(...)` — `notification.createMany` の data に tenantId 明示
 
-### notification.service.ts (二重防御)
+### notification.service.ts (二重防御) ✅ 完了 (PR #304 Phase 2-7)
 
-- [ ] `setNotificationRead(notificationId, read, viewerUserId, viewerTenantId)` — where に userId + tenantId 併記
-- [ ] `getNotification(notificationId, viewerTenantId)`
+- [x] `setNotificationRead(notificationId, read, viewerUserId, viewerTenantId)` — where に userId + tenantId 併記
+- [x] `getNotification(notificationId, viewerTenantId)`
 
-### sync-import 系 5 ファイル
+### sync-import 系 5 ファイル ✅ 完了 (PR #305 Phase 2-8)
 
-- [ ] `task-sync-import.service.ts` / `knowledge-sync-import.service.ts` / `risk-sync-import.service.ts` / `retrospective-sync-import.service.ts` / `memo-sync-import.service.ts`
-- [ ] 全 `applySyncImport` / `computeSyncDiff` に `viewerTenantId` 必須引数 + projectId の tenant 検証
+- [x] `task-sync-import.service.ts` / `knowledge-sync-import.service.ts` / `risk-sync-import.service.ts` / `retrospective-sync-import.service.ts` / `memo-sync-import.service.ts`
+- [x] 全 `applySyncImport` / `computeSyncDiff` に `viewerTenantId` 必須引数 + projectId の tenant 検証
+- [x] export 系 (`exportKnowledgeSync` / `exportRisksSync` / `exportRetrospectivesSync` / `exportMemosSync`) も合わせて引数追加
 
-### API ルート (Server Component を Phase 1 で塞いだが API は未対応)
+### API ルート (Server Component を Phase 1 で塞いだが API は未対応) ✅ 完了 (Phase 2-9)
 
-- [ ] `GET /api/admin/audit-logs/route.ts` — 自テナント限定
-- [ ] `GET /api/admin/role-change-logs/route.ts` — 同上
-- [ ] `GET /api/admin/usage-summary/route.ts` — 同上
-- [ ] `POST /api/attachments/batch` の admin 分岐 (`filteredIds = entityIds`): 親 entity の tenantId 検証
+- [x] `GET /api/admin/audit-logs/route.ts` — 自テナント限定 (User リレーション経由)
+- [x] `GET /api/admin/role-change-logs/route.ts` — 自テナント限定 (User リレーション経由)
+- [x] `GET /api/admin/usage-summary/route.ts` — 自テナント分のみ返す (将来 super_admin 導入時にロール分岐)
+- [x] `POST /api/attachments/batch` の admin 分岐: 親 entity の tenantId 検証 (severity-1 IDOR を遮断)
 
 ## Phase 2 MEDIUM (構造的脆弱性 — 監査ログ / トークンの tenant 帰属明示化)
 
+> **現状の制約**: 以下のモデルは schema にまだ tenantId 列が存在しない (`AuditLog` / `RoleChangeLog` / `EmailVerificationToken` / `RecoveryCode` / `PasswordResetToken` / `PasswordHistory`)。
+>   `recordAuditLog` 等の `data.tenantId` 明示には schema migration が前提となる。
+> **暫定対応 (Phase 2-9)**: API 側 (admin/audit-logs, admin/role-change-logs) で User リレーション経由で `where.user.tenantId = viewerTenantId` を強制し、テナント越境取得を遮断済。
+> **後続 Phase 2-10 (要 DB 列追加)**:
+
+- [ ] `AuditLog` / `RoleChangeLog` / `EmailVerificationToken` / `RecoveryCode` / `PasswordResetToken` / `PasswordHistory` に `tenantId` 列追加 (Prisma migration)
 - [ ] `audit.service.ts`: `recordAuditLog` / `recordAuditLogBulk` の data に `tenantId` 明示
 - [ ] `email-verification.service.ts`: `EmailVerificationToken.create` / `RecoveryCode.createMany` の data に `tenantId` 明示
 
