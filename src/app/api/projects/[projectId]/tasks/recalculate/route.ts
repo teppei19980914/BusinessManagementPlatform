@@ -31,7 +31,7 @@ export async function POST(
   const forbidden = await checkProjectPermission(user, projectId, 'task:update');
   if (forbidden) return forbidden;
 
-  const { total, updated } = await recalculateAllProjectWps(projectId);
+  const { total, updated } = await recalculateAllProjectWps(projectId, user.tenantId);
 
   // 監査ログ: プロジェクト単位の操作として記録（entityId はプロジェクト ID）
   // 実際に値が変わった数のみ記録（一致スキップは監査対象外）

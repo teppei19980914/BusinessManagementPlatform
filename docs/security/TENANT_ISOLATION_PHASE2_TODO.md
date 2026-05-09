@@ -58,19 +58,21 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [ ] `deleteMemo(memoId, userId, viewerTenantId)`
 - [ ] `bulkUpdateMemosVisibilityFromList(ids, visibility, viewerUserId, viewerTenantId)`
 
-### task.service.ts (最大の盲点 — tenantId フィルタ皆無)
+### task.service.ts (最大の盲点 — tenantId フィルタ皆無) ✅ 完了 (PR Phase 2-1, 2026-05-09)
 
-- [ ] `listMyTaskProjects(userId, viewerTenantId)`
-- [ ] `listTasks(projectId, viewerTenantId)` / `listTasksFlat` / `listTasksWithTree`
-- [ ] `getAssigneeDailyWorkload(projectId, viewerTenantId)`
-- [ ] `getTask(taskId, viewerTenantId)`
-- [ ] `createTask(projectId, input, userId, viewerTenantId)` — `data.tenantId` 明示 + project の tenant 検証
-- [ ] `updateTask(taskId, input, userId, viewerTenantId)`
-- [ ] `deleteTask(taskId, userId, viewerTenantId)`
-- [ ] `bulkUpdateTasks(projectId, taskIds, ..., viewerTenantId)`
-- [ ] `updateTaskProgress(taskId, input, userId, viewerTenantId)`
-- [ ] `recalculateAllProjectWps(projectId, viewerTenantId)`
-- [ ] `exportWbs(projectId, taskIds?, viewerTenantId)`
+- [x] `listMyTaskProjects(userId, viewerTenantId)`
+- [x] `listTasks(projectId, viewerTenantId)` / `listTasksFlat` / `listTasksWithTree`
+- [x] `getAssigneeDailyWorkload(projectId, viewerTenantId)`
+- [x] `getTask(taskId, viewerTenantId)`
+- [x] `createTask(projectId, input, userId, viewerTenantId)` — project の tenant 検証で越境 create 遮断
+- [x] `updateTask(taskId, input, userId, viewerTenantId)`
+- [x] `deleteTask(taskId, userId, viewerTenantId)`
+- [x] `bulkUpdateTasks(projectId, taskIds, ..., viewerTenantId)`
+- [x] `updateTaskProgress(taskId, input, userId, viewerTenantId)`
+- [x] `recalculateAllProjectWps(projectId, viewerTenantId)`
+- [x] `exportWbs(projectId, viewerTenantId, taskIds?)` — viewerTenantId は taskIds 前 (シグネチャ整合)
+- [x] `getProgressLogs(taskId, viewerTenantId)` — 当初 TODO 漏れ、本 PR で塞いだ
+- [x] `recalculateAncestorsPublic` / `recalculateAncestors` / `recalculateWp` / `recalculateWpOnly` — 内部 helper、上位関数で tenant 検証された taskId しか流れないため変更不要
 
 ### comment.service.ts
 

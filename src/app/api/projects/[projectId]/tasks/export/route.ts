@@ -33,7 +33,7 @@ export async function POST(
     ? body.taskIds.filter((id: unknown): id is string => typeof id === 'string' && uuidRegex.test(id))
     : undefined;
 
-  const csv = await exportWbs(projectId, taskIds);
+  const csv = await exportWbs(projectId, user.tenantId, taskIds);
 
   return new NextResponse(csv, {
     headers: {

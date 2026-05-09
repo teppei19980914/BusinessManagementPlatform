@@ -22,6 +22,6 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'task:read');
   if (forbidden) return forbidden;
 
-  const result = await listTasksWithTree(projectId);
+  const result = await listTasksWithTree(projectId, user.tenantId);
   return NextResponse.json({ data: result });
 }

@@ -29,7 +29,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'task:read');
   if (forbidden) return forbidden;
 
-  const tasks = await listTasksFlat(projectId);
+  const tasks = await listTasksFlat(projectId, user.tenantId);
   return NextResponse.json({ data: tasks });
 }
 
@@ -53,7 +53,7 @@ export async function POST(
     );
   }
 
-  const task = await createTask(projectId, parsed.data, user.id);
+  const task = await createTask(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,

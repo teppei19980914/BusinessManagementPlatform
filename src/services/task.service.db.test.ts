@@ -15,7 +15,8 @@ vi.mock('@/lib/db', () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
-    project: { findMany: vi.fn() },
+    // 2026-05-09 feedback Phase 2: createTask / bulkUpdateTasks の冒頭で project tenant 検証するため findFirst も mock
+    project: { findMany: vi.fn(), findFirst: vi.fn() },
     taskProgressLog: { create: vi.fn(), findMany: vi.fn() },
     user: { findMany: vi.fn() },
     // PR #89: deleteTask が attachment.updateMany を $transaction 内で呼ぶ
@@ -84,7 +85,7 @@ describe('listTasks / listTasksFlat / listTasksWithTree / getTask', () => {
       rowTask({ id: 'a1', parentTaskId: 'wp' }),
     ] as never);
 
-    const r = await listTasks('p-1');
+    const r = await listTasks('p-1', 'tenant-A');
     expect(r).toHaveLength(1);
     expect(r[0].id).toBe('wp');
     expect(r[0].children).toHaveLength(1);
@@ -97,7 +98,7 @@ describe('listTasks / listTasksFlat / listTasksWithTree / getTask', () => {
       rowTask({ id: 'b' }),
     ] as never);
 
-    const r = await listTasksFlat('p-1');
+    const r = await listTasksFlat('p-1', 'tenant-A');
     expect(r).toHaveLength(2);
     expect(r[0].children).toBeUndefined();
   });
@@ -108,7 +109,7 @@ describe('listTasks / listTasksFlat / listTasksWithTree / getTask', () => {
       rowTask({ id: 'a', parentTaskId: 'wp' }),
     ] as never);
 
-    const r = await listTasksWithTree('p-1');
+    const r = await listTasksWithTree('p-1', 'tenant-A');
     expect(r.tree).toHaveLength(1);
     expect(r.flat).toHaveLength(2);
     expect(prisma.task.findMany).toHaveBeenCalledOnce();
@@ -116,12 +117,12 @@ describe('listTasks / listTasksFlat / listTasksWithTree / getTask', () => {
 
   it('getTask: 存在しなければ null', async () => {
     vi.mocked(prisma.task.findFirst).mockResolvedValue(null);
-    expect(await getTask('x')).toBe(null);
+    expect(await getTask('x', 'tenant-A')).toBe(null);
   });
 
   it('getTask: 存在すれば DTO', async () => {
     vi.mocked(prisma.task.findFirst).mockResolvedValue(rowTask() as never);
-    const r = await getTask('t-1');
+    const r = await getTask('t-1', 'tenant-A');
     expect(r?.id).toBe('t-1');
   });
 });
@@ -132,7 +133,7 @@ describe('listMyTaskProjects', () => {
   it('担当割り当てがなければ空配列', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValueOnce([]);
 
-    const r = await listMyTaskProjects('u-1');
+    const r = await listMyTaskProjects('u-1', 'tenant-A');
     expect(r).toEqual([]);
   });
 
@@ -152,7 +153,7 @@ describe('listMyTaskProjects', () => {
       rowTask({ id: 't-1' }),
     ] as never);
 
-    const r = await listMyTaskProjects('u-1');
+    const r = await listMyTaskProjects('u-1', 'tenant-A');
 
     expect(r).toHaveLength(2);
     expect(r.map((x) => x.projectId).sort()).toEqual(['p-1', 'p-2']);
@@ -163,6 +164,8 @@ describe('createTask', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ACT 作成: 計画値・担当が data に反映される', async () => {
+    // 2026-05-09 feedback Phase 2: createTask 冒頭の project tenant 検証用 mock
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.task.create).mockResolvedValue(rowTask() as never);
 
     await createTask(
@@ -182,6 +185,7 @@ describe('createTask', () => {
         notes: null,
       } as never,
       'u-1',
+      'tenant-A',
     );
 
     const call = vi.mocked(prisma.task.create).mock.calls[0][0];
@@ -191,6 +195,7 @@ describe('createTask', () => {
   });
 
   it('WP 作成: 計画値・担当は null/0 で初期化', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.task.create).mockResolvedValue(
       rowTask({ type: 'work_package', assigneeId: null }) as never,
     );
@@ -212,6 +217,7 @@ describe('createTask', () => {
         notes: null,
       } as never,
       'u-1',
+      'tenant-A',
     );
 
     const call = vi.mocked(prisma.task.create).mock.calls[0][0];
@@ -227,12 +233,14 @@ describe('deleteTask', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('deletedAt をセット (論理削除)', async () => {
+    // 2026-05-09 feedback Phase 2: deleteTask 冒頭の所有確認用 mock
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.task.findUnique).mockResolvedValue({
       parentTaskId: null,
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue({} as never);
 
-    await deleteTask('t-1', 'u-1');
+    await deleteTask('t-1', 'u-1', 'tenant-A');
 
     expect(prisma.task.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -268,7 +276,7 @@ describe('getProgressLogs', () => {
       },
     ] as never);
 
-    const r = await getProgressLogs('t-1');
+    const r = await getProgressLogs('t-1', 'tenant-A');
 
     expect(r).toHaveLength(1);
     expect(r[0].id).toBe('pl-1');
@@ -286,7 +294,7 @@ describe('exportWbs (T-19, 7 列)', () => {
   it('空プロジェクトは BOM + ヘッダー行のみ', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([]);
 
-    const csv = await exportWbs('p-1');
+    const csv = await exportWbs('p-1', 'tenant-A');
     // BOM 付き UTF-8 + 7 列ヘッダー
     expect(csv.startsWith('﻿')).toBe(true);
     expect(csv).toContain('ID,種別,名称,レベル,予定開始日,予定終了日,予定工数');
@@ -321,7 +329,7 @@ describe('exportWbs (T-19, 7 列)', () => {
     };
     vi.mocked(prisma.task.findMany).mockResolvedValue([wp, act] as never);
 
-    const csv = await exportWbs('p-1');
+    const csv = await exportWbs('p-1', 'tenant-A');
 
     const lines = csv.split('\n');
     // ヘッダー (BOM 含む)
@@ -337,7 +345,7 @@ describe('exportWbs (T-19, 7 列)', () => {
 
   it('taskIds 指定時は where.id.in に反映', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([]);
-    await exportWbs('p-1', ['t-a', 't-b']);
+    await exportWbs('p-1', 'tenant-A', ['t-a', 't-b']);
 
     const call = vi.mocked(prisma.task.findMany).mock.calls[0]?.[0];
     expect(call?.where?.id).toEqual({ in: ['t-a', 't-b'] });
@@ -348,18 +356,21 @@ describe('updateTask (主要分岐)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('単純フィールド更新 (status / progress 非指定) は現行値を取らずに update', async () => {
+    // 2026-05-09 feedback Phase 2: updateTask 冒頭の所有確認用 mock
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
     vi.mocked(prisma.task.findUnique).mockResolvedValue({
       parentTaskId: null,
     } as never);
 
-    await updateTask('t-1', { name: 'renamed' } as never, 'u-1');
+    await updateTask('t-1', { name: 'renamed' } as never, 'u-1', 'tenant-A');
 
     const call = vi.mocked(prisma.task.update).mock.calls[0][0];
     expect(call.data.name).toBe('renamed');
   });
 
   it('status=completed 指定時は progress=100 に正規化される (PR #69 整合性)', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.task.findUnique).mockResolvedValue({
       status: 'in_progress',
       progressRate: 50,
@@ -369,7 +380,7 @@ describe('updateTask (主要分岐)', () => {
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
-    await updateTask('t-1', { status: 'completed' } as never, 'u-1');
+    await updateTask('t-1', { status: 'completed' } as never, 'u-1', 'tenant-A');
 
     const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
     expect(updateCall.data.progressRate).toBe(100);
@@ -377,6 +388,7 @@ describe('updateTask (主要分岐)', () => {
   });
 
   it('progress=100 指定時は status=completed に正規化される (PR #69 整合性)', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.task.findUnique).mockResolvedValue({
       status: 'in_progress',
       progressRate: 50,
@@ -386,7 +398,7 @@ describe('updateTask (主要分岐)', () => {
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
-    await updateTask('t-1', { progressRate: 100 } as never, 'u-1');
+    await updateTask('t-1', { progressRate: 100 } as never, 'u-1', 'tenant-A');
 
     const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
     expect(updateCall.data.status).toBe('completed');
@@ -394,6 +406,7 @@ describe('updateTask (主要分岐)', () => {
   });
 
   it('status=not_started に変えると actual 日付が両方 null になる', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.task.findUnique).mockResolvedValue({
       status: 'in_progress',
       progressRate: 30,
@@ -403,7 +416,7 @@ describe('updateTask (主要分岐)', () => {
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
-    await updateTask('t-1', { status: 'not_started' } as never, 'u-1');
+    await updateTask('t-1', { status: 'not_started' } as never, 'u-1', 'tenant-A');
 
     const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
     expect(updateCall.data.actualStartDate).toBe(null);
@@ -411,6 +424,7 @@ describe('updateTask (主要分岐)', () => {
   });
 
   it('status=on_hold に変えると actualEndDate のみ null、actualStartDate は維持', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.task.findUnique).mockResolvedValue({
       status: 'completed',
       progressRate: 100,
@@ -420,7 +434,7 @@ describe('updateTask (主要分岐)', () => {
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
-    await updateTask('t-1', { status: 'on_hold' } as never, 'u-1');
+    await updateTask('t-1', { status: 'on_hold' } as never, 'u-1', 'tenant-A');
 
     const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
     expect(updateCall.data.actualStartDate).toEqual(new Date('2026-04-01'));
@@ -428,11 +442,23 @@ describe('updateTask (主要分岐)', () => {
   });
 
   it('現在タスクが見つからなければ NOT_FOUND', async () => {
+    // 2026-05-09 feedback Phase 2: 越境/不存在いずれの場合も findFirst で NOT_FOUND を返す
+    vi.mocked(prisma.task.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.task.findUnique).mockResolvedValue(null);
 
     await expect(
-      updateTask('x', { status: 'completed' } as never, 'u-1'),
+      updateTask('x', { status: 'completed' } as never, 'u-1', 'tenant-A'),
     ).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('テナント越境時は NOT_FOUND (Phase 2 severity-1 防御)', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue(null); // 他テナント所有のため NOT_FOUND
+    await expect(
+      updateTask('t-1', { name: 'x' } as never, 'u-1', 'tenant-A'),
+    ).rejects.toThrow('NOT_FOUND');
+    // findFirst の where に project: { tenantId } が入っていることを検証
+    const call = vi.mocked(prisma.task.findFirst).mock.calls[0][0];
+    expect((call.where as { project: { tenantId: string } }).project.tenantId).toBe('tenant-A');
   });
 });
 
@@ -440,6 +466,7 @@ describe('updateTaskProgress', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('進捗ログ追加 + 本体更新、progress=100 で status=completed に強制', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.taskProgressLog.create).mockResolvedValue({} as never);
     vi.mocked(prisma.task.findUnique).mockResolvedValue({
       actualStartDate: null,
@@ -460,6 +487,7 @@ describe('updateTaskProgress', () => {
         hasIssue: false,
       } as never,
       'u-1',
+      'tenant-A',
     );
 
     const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
@@ -468,6 +496,7 @@ describe('updateTaskProgress', () => {
   });
 
   it('progress=50 / status=in_progress → そのまま保存', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.taskProgressLog.create).mockResolvedValue({} as never);
     vi.mocked(prisma.task.findUnique).mockResolvedValue({
       actualStartDate: new Date('2026-04-01'),
@@ -488,6 +517,7 @@ describe('updateTaskProgress', () => {
         hasIssue: false,
       } as never,
       'u-1',
+      'tenant-A',
     );
 
     const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
@@ -500,14 +530,17 @@ describe('bulkUpdateTasks', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('空 taskIds は 0 を返す (no-op)', async () => {
+    // 2026-05-09 feedback Phase 2: bulkUpdateTasks 冒頭の project tenant 検証用 mock
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 0 } as never);
 
-    const r = await bulkUpdateTasks('p-1', [], { status: 'in_progress' } as never, 'u-1');
+    const r = await bulkUpdateTasks('p-1', [], { status: 'in_progress' } as never, 'u-1', 'tenant-A');
 
     expect(r).toBe(0);
   });
 
   it('updateMany で ACT のみ対象に更新', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 3 } as never);
     vi.mocked(prisma.task.findMany).mockResolvedValue([]);
 
@@ -516,6 +549,7 @@ describe('bulkUpdateTasks', () => {
       ['t-1', 't-2', 't-3'],
       { priority: 'high' } as never,
       'u-1',
+      'tenant-A',
     );
 
     expect(r).toBe(3);
@@ -535,7 +569,7 @@ describe('getAssigneeDailyWorkload (PR H / #7)', () => {
   it('対象なしなら空配列', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValueOnce([]);
     const { getAssigneeDailyWorkload } = await import('./task.service');
-    const r = await getAssigneeDailyWorkload('p-1');
+    const r = await getAssigneeDailyWorkload('p-1', 'tenant-A');
     expect(r).toEqual([]);
   });
 
@@ -551,7 +585,7 @@ describe('getAssigneeDailyWorkload (PR H / #7)', () => {
     ] as never);
 
     const { getAssigneeDailyWorkload } = await import('./task.service');
-    const r = await getAssigneeDailyWorkload('p-1');
+    const r = await getAssigneeDailyWorkload('p-1', 'tenant-A');
 
     expect(r).toHaveLength(1);
     expect(r[0]?.assigneeId).toBe('u-1');
@@ -592,7 +626,7 @@ describe('getAssigneeDailyWorkload (PR H / #7)', () => {
     ] as never);
 
     const { getAssigneeDailyWorkload } = await import('./task.service');
-    const r = await getAssigneeDailyWorkload('p-1');
+    const r = await getAssigneeDailyWorkload('p-1', 'tenant-A');
 
     expect(r).toHaveLength(2);
     // 並び順は totalEffortHours 降順 (Alice 7h > Bob 5h)
@@ -625,14 +659,14 @@ describe('getAssigneeDailyWorkload (PR H / #7)', () => {
     ] as never);
 
     const { getAssigneeDailyWorkload } = await import('./task.service');
-    const r = await getAssigneeDailyWorkload('p-1');
+    const r = await getAssigneeDailyWorkload('p-1', 'tenant-A');
     expect(r).toEqual([]);
   });
 
   it('where 句で activity 限定 + assigneeId/期日が not null', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValueOnce([]);
     const { getAssigneeDailyWorkload } = await import('./task.service');
-    await getAssigneeDailyWorkload('p-1');
+    await getAssigneeDailyWorkload('p-1', 'tenant-A');
 
     const callArg = vi.mocked(prisma.task.findMany).mock.calls.at(-1)![0];
     expect(callArg.where).toEqual(

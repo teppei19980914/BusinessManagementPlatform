@@ -24,6 +24,6 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'task:read');
   if (forbidden) return forbidden;
 
-  const data = await getAssigneeDailyWorkload(projectId);
+  const data = await getAssigneeDailyWorkload(projectId, user.tenantId);
   return NextResponse.json({ data });
 }
