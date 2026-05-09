@@ -55,6 +55,9 @@ import {
   CUSTOMERS_ROUTE,
   // 2026-05-09 (#16): Discord 招待リンク (環境変数 NEXT_PUBLIC_DISCORD_INVITE_URL で上書き可能)
   getDiscordInviteUrl,
+  // 2026-05-09 (PR I): ヘルプ画面 / 使い方ガイド (機能要望リンクは /help 画面側で参照)
+  GUIDE_ROUTE,
+  HELP_ROUTE,
 } from '@/config';
 
 type DashboardHeaderProps = {
@@ -131,6 +134,16 @@ const navGroupsConfig: NavGroupConfig[] = [
       { href: '/admin/super', labelKey: 'superAdminDashboard' },
       { href: '/admin/super/tenants', labelKey: 'superAdminTenants' },
       { href: '/admin/super/usage', labelKey: 'superAdminUsage' },
+    ],
+  },
+  // PR I (2026-05-09 / #1+#2): ヘルプ系メニュー (全ロール表示)。
+  // Discord ボタンはヘッダ右側に残す (即時 CTA)、本グループは「コンテンツ閲覧系」2 項目に絞る。
+  // 機能要望は /help 画面の末尾 CTA に置いており、ヘッダには出さない (FAQ を読んでから出す導線)。
+  {
+    labelKey: 'groupHelp',
+    items: [
+      { href: GUIDE_ROUTE, labelKey: 'guide' },
+      { href: HELP_ROUTE, labelKey: 'help' },
     ],
   },
 ];
@@ -339,12 +352,13 @@ function GroupMenu({
 }
 
 /**
- * 2026-05-09 (#16): Discord コミュニティ招待ボタン。
+ * 2026-05-09 (#16 + PR I/#3): 開発者コンタクト (Discord) ボタン。
  *
  * - 環境変数 `NEXT_PUBLIC_DISCORD_INVITE_URL` が未設定なら何も描画しない (graceful fallback)。
  * - 外部リンクのため `target="_blank" rel="noopener noreferrer"` を徹底 (tabnabbing 防止)。
- * - 視覚的には Discord ブランドカラー (#5865F2) のラベル風ボタン。
- *   絵文字でアイコンを代替し、追加依存ゼロで実装。
+ * - PR I: ラベルを「Discord」から「開発者と話す」に変更。
+ *   従来「Discord」だけだとコミュニティリンクと誤認されがちだった (実態は開発者コンタクト窓口)。
+ *   ヘルプメニューと並んで「即時に問い合わせる」入口として機能。
  */
 function DiscordLinkButton() {
   const tNav = useTranslations('nav');
@@ -355,11 +369,12 @@ function DiscordLinkButton() {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      title={tNav('discordTooltip')}
+      title={tNav('contactDeveloperTooltip')}
       className="hidden items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent sm:flex"
     >
       <span aria-hidden>💬</span>
-      <span>{tNav('discord')}</span>
+      <span className="hidden md:inline">{tNav('contactDeveloper')}</span>
+      <span className="md:hidden">{tNav('discord')}</span>
     </a>
   );
 }

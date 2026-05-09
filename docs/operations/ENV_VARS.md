@@ -139,5 +139,16 @@ APP_DEFAULT_LOCALE=en-US
 
 詳細は [developer/DEVELOPER_GUIDE.md §10.8](../developer/DEVELOPER_GUIDE.md#108-タイムゾーン--ロケールの-3-段階フォールバック-pr-118) 参照。
 
+### 1.8 コミュニティ・コンタクトリンク (#16 / PR I 2026-05-09)
+
+| 変数名 | 既定値 (未設定時) | 用途 |
+|---|---|---|
+| `NEXT_PUBLIC_DISCORD_INVITE_URL` | `https://discord.com/invite/AYekewZg2S` (公式コミュニティ) | ヘッダ右側の「開発者と話す (Discord)」ボタンと、`/help` 末尾の連絡先 CTA に使用。値を `disabled` または空文字にすると UI から非表示にできる。別環境で異なる Discord サーバを使う場合のみ上書き。 |
+| `NEXT_PUBLIC_FEATURE_REQUEST_URL` | (未設定) | 機能要望・案件依頼の専用リンク。Discord フォーラムチャンネル等。未設定なら一般 Discord (`NEXT_PUBLIC_DISCORD_INVITE_URL`) にフォールバック。 |
+
+**設計意図**: 招待 URL は **クライアントに見える** 前提なので機密ではなく、ハードコード既定値で「ゼロ設定で動く」状態を担保。一方、別環境で別 URL を使いたい運営は env で上書き可能。`NEXT_PUBLIC_*` プレフィックスで client/server 両方から参照可能。
+
+詳細は [src/config/community.ts](../../src/config/community.ts) 参照。
+
 ---
 
