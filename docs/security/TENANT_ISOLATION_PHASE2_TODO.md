@@ -21,13 +21,14 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 
 各 service で `viewerTenantId: string` を必須引数化し、`where.tenantId = viewerTenantId` を Prisma findMany / findFirst / update / delete / updateMany / deleteMany に必ず付ける。create / createMany は `data.tenantId` を明示。
 
-### project.service.ts
+### project.service.ts ✅ 完了 (PR Phase 2-2, 2026-05-09)
 
-- [ ] `getProject(projectId, viewerTenantId, systemRole?)` (※ `checkMembership` 強化で大半防御済だが二重防御として)
-- [ ] `updateProject(projectId, ..., viewerTenantId)`
-- [ ] `changeProjectStatus(projectId, ..., viewerTenantId)`
-- [ ] `deleteProject(projectId, ..., viewerTenantId)`
-- [ ] `deleteProjectCascade(projectId, ..., viewerTenantId)` — 内部の attachment/comment/task/estimate/risk/retro/knowledge cascade すべて tenant 条件併記
+- [x] `getProject(projectId, viewerTenantId, systemRole?)` — where に tenantId 必須化
+- [x] `updateProject(projectId, input, userId, tenantId)` — findUnique → findFirst (tenantId 検証) + 不一致時 NOT_FOUND throw
+- [x] `changeProjectStatus(projectId, newStatus, userId, viewerTenantId)`
+- [x] `deleteProject(projectId, userId, viewerTenantId)` — 冒頭で project の所有確認
+- [x] `deleteProjectCascade(projectId, viewerTenantId, options)` — 冒頭で所有確認 (越境カスケード破壊を遮断)
+- [x] `createProject` — `data.tenantId` を明示化 (schema DB DEFAULT への暗黙依存を解消)
 
 ### risk.service.ts
 

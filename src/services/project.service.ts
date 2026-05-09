@@ -215,8 +215,11 @@ export async function createProject(
     autoTagResult.ok ? autoTagResult.tags : null,
   );
 
+  // 2026-05-09 feedback Phase 2: data.tenantId を明示し、schema DB DEFAULT への暗黙依存を解消。
+  //   v1 (単一テナント) では DB DEFAULT で同値だが、マルチテナント環境では明示が必須。
   const project = await prisma.project.create({
     data: {
+      tenantId,
       name: input.name,
       customerId: input.customerId,
       purpose: input.purpose,
@@ -252,16 +255,21 @@ export async function createProject(
 
 export async function getProject(
   projectId: string,
+  viewerTenantId: string,
   systemRole?: string,
 ): Promise<ProjectDTO | null> {
-  // PR-X5: サンプルプロジェクト (isSampleData=true) は直接 URL でも取得不可 (404 化)。
-  //   admin が偶発的に URL を踏んでも詳細画面は出さない設計。
-  //   提案エンジンは別経路 (suggestion.service.ts) で候補に含める。
-  // 2026-05-08: super_admin role はシードデータ管理のため bypass (= 詳細画面表示+編集可)。
+  // 2026-05-09 feedback Phase 2: severity-1 テナント越境対策。
+  //   project は tenantId 列を直接持つため where に tenantId を必須化。
+  //   旧仕様は projectId 直叩きで他テナントの project 詳細が読める脆弱性があった。
+  //   super_admin (MANAGEMENT_TENANT_ID 所属) は引数 viewerTenantId が MANAGEMENT_TENANT_ID
+  //   になるため、シード prj (MANAGEMENT_TENANT 所属) を自然に閲覧可。
+  //
+  // PR-X5: サンプルプロジェクト (isSampleData=true) は通常ユーザに対して 404 化する。
+  //   super_admin の場合は MANAGEMENT_TENANT 内のシード prj を管理する必要があるので bypass。
   const where: Prisma.ProjectWhereInput =
     systemRole === 'super_admin'
-      ? { id: projectId, deletedAt: null }
-      : { id: projectId, deletedAt: null, isSampleData: false };
+      ? { id: projectId, tenantId: viewerTenantId, deletedAt: null }
+      : { id: projectId, tenantId: viewerTenantId, deletedAt: null, isSampleData: false };
   const project = await prisma.project.findFirst({
     where,
     include: { customer: { select: { name: true } } },
@@ -281,8 +289,13 @@ export async function updateProject(
   //   purpose / background / scope の **実値変更** 時のみ自動タグ抽出 + embedding を行う。
   //   未指定 (undefined) または既存値と同一なら LLM 課金を発生させない。
   //   そのため現行 row 取得を `textFieldsChanging` の判定よりも前に持ってくる。
-  const current = await prisma.project.findUnique({
-    where: { id: projectId },
+  // 2026-05-09 feedback Phase 2: 越境編集を遮断するため findFirst + tenantId 検証に変更。
+  //   越境時は current=null となり、textFieldsChanging が false 評価され、後続の update も
+  //   findFirst の不一致で arena が空になる。NOT_FOUND エラーは throw しないが、
+  //   下流の prisma.project.update (where: { id }) は越境を直接弾けないため、
+  //   念のため where 検証された行のみ続行する設計。
+  const current = await prisma.project.findFirst({
+    where: { id: projectId, tenantId },
     select: {
       purpose: true,
       background: true,
@@ -292,7 +305,9 @@ export async function updateProject(
       processTags: true,
     },
   });
-  const textFieldsChanging = current != null && (
+  // 越境または存在しない場合は NOT_FOUND を throw (route 側で 404 に変換される前提)
+  if (!current) throw new Error('NOT_FOUND');
+  const textFieldsChanging = (
     (input.purpose !== undefined && input.purpose !== current.purpose) ||
     (input.background !== undefined && input.background !== current.background) ||
     (input.scope !== undefined && input.scope !== current.scope)
@@ -305,7 +320,7 @@ export async function updateProject(
   let resolvedBackground: string | null = null;
   let resolvedScope: string | null = null;
   if (textFieldsChanging) {
-    if (current != null) {
+    {
       resolvedPurpose = input.purpose ?? current.purpose;
       resolvedBackground = input.background ?? current.background;
       resolvedScope = input.scope ?? current.scope;
@@ -540,9 +555,11 @@ export async function changeProjectStatus(
   projectId: string,
   newStatus: ProjectStatus,
   userId: string,
+  viewerTenantId: string,
 ): Promise<ProjectDTO> {
+  // 2026-05-09 feedback Phase 2: 越境状態変更を遮断するため where に tenantId を追加。
   const project = await prisma.project.findFirst({
-    where: { id: projectId, deletedAt: null },
+    where: { id: projectId, tenantId: viewerTenantId, deletedAt: null },
   });
 
   if (!project) throw new Error('NOT_FOUND');
@@ -567,7 +584,19 @@ export async function changeProjectStatus(
   return toProjectDTO(updated);
 }
 
-export async function deleteProject(projectId: string, userId: string): Promise<void> {
+export async function deleteProject(
+  projectId: string,
+  userId: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2: 越境論理削除を遮断するため、最初に project の tenant 検証。
+  //   不一致時は NOT_FOUND を throw (route 側で 404 に変換される前提)。
+  const owned = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   // PR #89: プロジェクト scoped の Attachment (project / task / estimate) も同時に論理削除。
   // 子 risk / retro / knowledge の attachment は各 delete*Service 側で削除済 (個別削除パス)、
   // もしくは cascade で削除する (deleteProjectCascade)。
@@ -637,6 +666,7 @@ export async function deleteProject(projectId: string, userId: string): Promise<
  */
 export async function deleteProjectCascade(
   projectId: string,
+  viewerTenantId: string,
   options: {
     cascadeRisks?: boolean;
     cascadeIssues?: boolean;
@@ -651,6 +681,14 @@ export async function deleteProjectCascade(
   knowledgeUnlinked: number;
   attachmentsDeleted: number;
 }> {
+  // 2026-05-09 feedback Phase 2: 越境カスケード削除は最も破壊的な severity-1 攻撃経路。
+  //   project の tenant 一致を verify しないと他テナントの全データを物理削除可能。
+  const owned = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const {
     cascadeRisks = false,
     cascadeIssues = false,

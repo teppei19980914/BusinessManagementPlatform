@@ -40,8 +40,8 @@ export async function PATCH(
   }
 
   try {
-    const before = await getProject(projectId, user.systemRole);
-    const project = await changeProjectStatus(projectId, parsed.data.status, user.id);
+    const before = await getProject(projectId, user.tenantId, user.systemRole);
+    const project = await changeProjectStatus(projectId, parsed.data.status, user.id, user.tenantId);
 
     await recordAuditLog({
       userId: user.id,

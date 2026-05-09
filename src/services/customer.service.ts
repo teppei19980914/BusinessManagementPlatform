@@ -288,7 +288,7 @@ export async function deleteCustomerCascade(
   };
 
   for (const p of activeProjects) {
-    const r = await deleteProjectCascade(p.id, options);
+    const r = await deleteProjectCascade(p.id, viewerTenantId, options);
     totals.projectsDeleted += 1;
     totals.risksDeleted += r.risks;
     totals.issuesDeleted += r.issues;

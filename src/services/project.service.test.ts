@@ -229,6 +229,15 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   });
 
   it('updateProject: customerId 変更は customer.connect() に変換 (PR #111-2)', async () => {
+    // 2026-05-09 feedback Phase 2-2: tenant 検証用の所有確認 mock
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      purpose: 'p',
+      background: 'b',
+      scope: 's',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
     await updateProject('p-1', { customerId: 'cust-new' }, 'u-1', TEST_TENANT_ID);
     const call = vi.mocked(prisma.project.update).mock.calls[0][0];
@@ -238,10 +247,18 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
 
   it('getProject: 存在しなければ null', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
-    expect(await getProject('x')).toBe(null);
+    expect(await getProject('x', TEST_TENANT_ID)).toBe(null);
   });
 
   it('updateProject: 指定フィールドのみ', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      purpose: 'p',
+      background: 'b',
+      scope: 's',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
     await updateProject('p-1', { name: 'new' }, 'u-1', TEST_TENANT_ID);
 
@@ -360,7 +377,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   it('updateProject: text フィールドが更新対象でなければ extractAutoTags は呼ばれない (LLM 課金回避)', async () => {
     // 2026-05-09 (PR D / #20): findUnique は常に呼ぶ (実値比較で更新判定するため)。
     //   extractAutoTags は textFieldsChanging=false なら呼ばれない (LLM 課金回避は維持)。
-    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'cur p',
       background: 'cur b',
       scope: 'cur s',
@@ -377,7 +394,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
 
   // 2026-05-09 (PR D / #20): 実値比較ガード — input.purpose が現行値と同じなら呼ばない
   it('updateProject: input.purpose が現行値と同じなら extractAutoTags は呼ばれない (#20)', async () => {
-    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'same purpose',
       background: 'cur b',
       scope: 'cur s',
@@ -394,7 +411,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   });
 
   it('updateProject: purpose 更新時に extractAutoTags が呼ばれ、変更しない text は現行値で補完', async () => {
-    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'old purpose', // 上書きされる
       background: 'EXISTING bg',
       scope: 'EXISTING sc',
@@ -438,7 +455,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   });
 
   it('updateProject: text + tags 同時更新時、user 入力タグ + auto タグを優先 (current は使わない)', async () => {
-    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'old',
       background: 'old',
       scope: 'old',
@@ -477,7 +494,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   });
 
   it('updateProject: text 更新 + extractAutoTags 失敗時、user 提供のみで更新 (fail-safe)', async () => {
-    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'old',
       background: 'old',
       scope: 'old',
@@ -508,20 +525,20 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(call.data.processTags).toBeUndefined();
   });
 
-  it('updateProject: 対象プロジェクトが存在しない場合 extractAutoTags は呼ばれず、通常 update に進む', async () => {
-    vi.mocked(prisma.project.findUnique).mockResolvedValue(null);
+  it('updateProject: 対象プロジェクトが存在しない or テナント越境時は NOT_FOUND を throw (Phase 2-2)', async () => {
+    // 2026-05-09 feedback Phase 2-2: 越境/不存在を NOT_FOUND として弾く設計に変更。
+    //   旧仕様 (findUnique で null → そのまま update へ進む) は越境時に Prisma 側で
+    //   NOT_FOUND を throw する保険があったが、明示的に service 層で先に弾く方が安全。
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
 
-    await updateProject(
-      'p-missing',
-      { purpose: 'NEW' },
-      'u-1',
-      TEST_TENANT_ID,
-    );
+    await expect(
+      updateProject('p-missing', { purpose: 'NEW' }, 'u-1', TEST_TENANT_ID),
+    ).rejects.toThrow('NOT_FOUND');
 
     expect(extractAutoTags).not.toHaveBeenCalled();
-    // update 自体は実行 (Prisma 側で NOT_FOUND として throw する別経路)
-    expect(prisma.project.update).toHaveBeenCalled();
+    // findFirst で先に弾くため update は呼ばれない
+    expect(prisma.project.update).not.toHaveBeenCalled();
   });
 
   // ========================================================
@@ -675,6 +692,14 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   });
 
   it('updateProject: text 変更なしなら embedding 呼び出しなし (LLM 課金回避)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      purpose: 'p',
+      background: 'b',
+      scope: 's',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
 
     await updateProject('p-1', { name: 'new name' }, 'u-1', TEST_TENANT_ID);
@@ -684,7 +709,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   });
 
   it('updateProject: text 変更時、embedding を再生成 + persist する', async () => {
-    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'old',
       background: 'old bg',
       scope: 'old sc',
@@ -724,13 +749,15 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   });
 
   it('deleteProject: deletedAt セット (論理削除)', async () => {
+    // 2026-05-09 feedback Phase 2-2: 冒頭の所有確認用 mock
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.project.update).mockResolvedValue({} as never);
     // PR #89: deleteProject が task / estimate の findMany を呼ぶため事前モック
     vi.mocked(prisma.task.findMany).mockResolvedValue([]);
     vi.mocked(prisma.estimate.findMany).mockResolvedValue([]);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
 
-    await deleteProject('p-1', 'u-1');
+    await deleteProject('p-1', 'u-1', TEST_TENANT_ID);
 
     expect(prisma.project.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -748,7 +775,7 @@ describe('changeProjectStatus', () => {
   it('プロジェクト不在で NOT_FOUND', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
     await expect(
-      changeProjectStatus('p-1', 'estimating' as never, 'u-1'),
+      changeProjectStatus('p-1', 'estimating' as never, 'u-1', TEST_TENANT_ID),
     ).rejects.toThrow('NOT_FOUND');
   });
 
@@ -757,7 +784,7 @@ describe('changeProjectStatus', () => {
     vi.mocked(canTransition).mockReturnValue({ allowed: false, reason: '逆戻りは不可' });
 
     await expect(
-      changeProjectStatus('p-1', 'planning' as never, 'u-1'),
+      changeProjectStatus('p-1', 'planning' as never, 'u-1', TEST_TENANT_ID),
     ).rejects.toThrow(/STATE_CONFLICT:逆戻り/);
   });
 
@@ -768,7 +795,7 @@ describe('changeProjectStatus', () => {
       pRow({ status: 'estimating' }) as never,
     );
 
-    const r = await changeProjectStatus('p-1', 'estimating' as never, 'u-1');
+    const r = await changeProjectStatus('p-1', 'estimating' as never, 'u-1', TEST_TENANT_ID);
     expect(r.status).toBe('estimating');
     expect(prisma.project.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -781,6 +808,8 @@ describe('changeProjectStatus', () => {
 describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 2026-05-09 feedback Phase 2-2: 冒頭の所有確認用 mock (越境カスケード遮断)
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     // 共通のベースラインモック (呼び出されても影響しない)
     vi.mocked(prisma.task.findMany).mockResolvedValue([]);
     vi.mocked(prisma.estimate.findMany).mockResolvedValue([]);
@@ -794,7 +823,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
   });
 
   it('フラグ全て false (デフォルト): リスク/課題/振り返り/ナレッジは削除されず、本体のみ物理削除', async () => {
-    const r = await deleteProjectCascade('p-1');
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID);
 
     expect(r.risks).toBe(0);
     expect(r.issues).toBe(0);
@@ -811,7 +840,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
   // 2026-05-09 hotfix: project.delete 前に SuggestionExplanation を必ず deleteMany する
   //   (FK suggestion_explanations_project_id_fkey の P2003 を回避)。本番障害の再現防止。
   it('project.delete 前に SuggestionExplanation を必ず削除する (#hotfix)', async () => {
-    await deleteProjectCascade('p-1');
+    await deleteProjectCascade('p-1', TEST_TENANT_ID);
 
     expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({
       where: { projectId: 'p-1' },
@@ -831,7 +860,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.riskIssue.delete).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.deleteMany).mockResolvedValue({ count: 5 } as never);
 
-    const r = await deleteProjectCascade('p-1', { cascadeRisks: true });
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID, { cascadeRisks: true });
 
     expect(r.risks).toBe(2);
     // findMany は projectId + type='risk' で絞り込み
@@ -849,7 +878,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.riskIssueProject.count).mockResolvedValue(2);
     vi.mocked(prisma.riskIssueProject.delete).mockResolvedValue({} as never);
 
-    const r = await deleteProjectCascade('p-1', { cascadeRisks: true });
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID, { cascadeRisks: true });
 
     expect(r.risks).toBe(0); // 本体は削除されていない
     // 単独 unlink delete が呼ばれる
@@ -867,7 +896,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.riskIssueProject.deleteMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.riskIssue.delete).mockResolvedValue({} as never);
 
-    const r = await deleteProjectCascade('p-1', { cascadeIssues: true });
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID, { cascadeIssues: true });
 
     expect(r.issues).toBe(1);
     expect(r.risks).toBe(0);
@@ -884,7 +913,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.retrospective.delete).mockResolvedValue({} as never);
     vi.mocked(prisma.comment.deleteMany).mockResolvedValue({ count: 2 } as never);
 
-    const r = await deleteProjectCascade('p-1', { cascadeRetros: true });
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID, { cascadeRetros: true });
 
     expect(r.retrospectives).toBe(1);
     expect(prisma.comment.deleteMany).toHaveBeenCalled();
@@ -898,7 +927,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.retrospectiveProject.count).mockResolvedValue(2);
     vi.mocked(prisma.retrospectiveProject.delete).mockResolvedValue({} as never);
 
-    const r = await deleteProjectCascade('p-1', { cascadeRetros: true });
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID, { cascadeRetros: true });
 
     expect(r.retrospectives).toBe(0);
     expect(prisma.retrospective.delete).not.toHaveBeenCalled();
@@ -912,7 +941,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.knowledgeProject.count).mockResolvedValue(3);
     vi.mocked(prisma.knowledgeProject.delete).mockResolvedValue({} as never);
 
-    const r = await deleteProjectCascade('p-1', { cascadeKnowledge: true });
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID, { cascadeKnowledge: true });
 
     expect(r.knowledgeUnlinked).toBe(1);
     expect(r.knowledgeDeleted).toBe(0);
@@ -927,7 +956,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.knowledgeProject.deleteMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.knowledge.delete).mockResolvedValue({} as never);
 
-    const r = await deleteProjectCascade('p-1', { cascadeKnowledge: true });
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID, { cascadeKnowledge: true });
 
     expect(r.knowledgeDeleted).toBe(1);
     expect(r.knowledgeUnlinked).toBe(0);
@@ -961,7 +990,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.comment.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([]);
 
-    const r = await deleteProjectCascade('p-1', {
+    const r = await deleteProjectCascade('p-1', TEST_TENANT_ID, {
       cascadeRisks: true,
       cascadeIssues: true,
       cascadeRetros: true,

@@ -37,7 +37,7 @@ export async function GET(
   if (forbidden) return forbidden;
 
   // 2026-05-08: super_admin はシードデータ管理のため isSampleData=true プロジェクトも参照可
-  const project = await getProject(projectId, user.systemRole);
+  const project = await getProject(projectId, user.tenantId, user.systemRole);
   if (!project) {
     const t = await getTranslations('message');
     return NextResponse.json(
@@ -69,7 +69,7 @@ export async function PATCH(
     );
   }
 
-  const before = await getProject(projectId, user.systemRole);
+  const before = await getProject(projectId, user.tenantId, user.systemRole);
   const project = await updateProject(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
@@ -115,10 +115,10 @@ export async function DELETE(
   const cascadeRetros = req.nextUrl.searchParams.get('cascadeRetros') === 'true';
   const cascadeKnowledge = req.nextUrl.searchParams.get('cascadeKnowledge') === 'true';
 
-  const before = await getProject(projectId, user.systemRole);
+  const before = await getProject(projectId, user.tenantId, user.systemRole);
 
   if (cascade) {
-    const counts = await deleteProjectCascade(projectId, {
+    const counts = await deleteProjectCascade(projectId, user.tenantId, {
       cascadeRisks,
       cascadeIssues,
       cascadeRetros,
@@ -143,7 +143,7 @@ export async function DELETE(
   }
 
   // 従来通り論理削除
-  await deleteProject(projectId, user.id);
+  await deleteProject(projectId, user.id, user.tenantId);
   await recordAuditLog({
     userId: user.id,
     action: 'DELETE',
