@@ -288,6 +288,23 @@ describe('P-B (2026-05-08): Beginner プラン再登録防止 + beginnerEverUpgr
     expect(prisma.tenant.create).not.toHaveBeenCalled();
   });
 
+  // 2026-05-09 (#18): 解約済 user の email でも Beginner 再登録を拒否 (defense-in-depth)
+  it('解約済 user の email で Beginner 再登録すると BEGINNER_NOT_AVAILABLE_FOR_RETURNING (#18)', async () => {
+    // tenant.findMany は空 (= 過去テナントなし) だが、user.findFirst が hit するパス
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+    // 通常 mock: user.findFirst (line ~98 の重複チェック) は active user なし → null
+    // → 2 回目: user.findFirst (#18 abuse check) で過去 soft-deleted user が見つかる
+    vi.mocked(prisma.user.findFirst)
+      .mockResolvedValueOnce(null) // 1 回目: メール重複チェック (deletedAt=null フィルタ)
+      .mockResolvedValueOnce({ id: 'soft-deleted-user' } as never); // 2 回目: abuse check
+
+    const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('BEGINNER_NOT_AVAILABLE_FOR_RETURNING');
+    expect(prisma.tenant.create).not.toHaveBeenCalled();
+  });
+
   it('plan=expert/pro なら解約再登録チェックは実施されず作成可能 + beginnerEverUpgraded=true で初期化', async () => {
     // 注: findMany を mockResolvedValueOnce で「解約済あり」にしても、plan=expert なので
     // そもそも findMany が呼ばれない (= プランで早期に bypass する)。明示的に未呼出を verify。

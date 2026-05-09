@@ -206,19 +206,35 @@ async function createTenantInternal(
   //   - 同じ請求先メールで過去に解約 (= deletedAt セット) されたテナントがあれば、
   //     再登録時は Expert/Pro 必須にする
   //   - billingContactEmail も initialAdminEmail も両方チェック (= 一方を変えて回避を防ぐ)
+  // 2026-05-09 (#18 強化): users 行を永続保持する方針 (purgeOldDeletedTenants で削除しない)
+  //   に伴い、過去テナントの user.email でも abuse-prevention 判定する (defense-in-depth)。
+  //   1 つのメアドが「テナント請求先」でも「テナント内 admin ユーザ」でもなかったとしても、
+  //   過去にどこかのテナントに登録されていれば Beginner 再契約を拒否する。
   if (input.plan === 'beginner') {
-    const previousDeletedTenants = await prisma.tenant.findMany({
-      where: {
-        deletedAt: { not: null },
-        OR: [
-          { billingContactEmail: input.billingContactEmail },
-          // initialAdminEmail と同じメールが過去テナントの billingContactEmail だった場合も拒否
-          { billingContactEmail: input.initialAdminEmail },
-        ],
-      },
-      select: { id: true },
-    });
-    if (previousDeletedTenants.length > 0) {
+    const [previousDeletedTenants, previousDeletedUsers] = await Promise.all([
+      prisma.tenant.findMany({
+        where: {
+          deletedAt: { not: null },
+          OR: [
+            { billingContactEmail: input.billingContactEmail },
+            { billingContactEmail: input.initialAdminEmail },
+          ],
+        },
+        select: { id: true },
+      }),
+      // 2026-05-09 (#18): 解約済テナントに所属していた user の email で同 email 再登録を拒否
+      prisma.user.findFirst({
+        where: {
+          deletedAt: { not: null },
+          OR: [
+            { email: input.billingContactEmail },
+            { email: input.initialAdminEmail },
+          ],
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (previousDeletedTenants.length > 0 || previousDeletedUsers != null) {
       return {
         ok: false,
         reason: 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING',
