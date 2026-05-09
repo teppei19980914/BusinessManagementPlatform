@@ -4918,3 +4918,52 @@ ON DELETE CASCADE を FK に付与する選択肢もあったが、本リポジ�
 - [ ] **「delete cascade is implicit」と思い込まない**: Prisma schema 上 `relation` を書いただけでは Postgres FK には `ON DELETE NO ACTION` が設定される。`onDelete: Cascade` を schema 側で明示するか、application 側で manual cleanup を書くかの **どちらかが必須**
 - [ ] **本番で再現した cascade 漏れバグは `deleteProjectCascade` テストの「呼出順序」テストで再発防止**: `expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({ where: { projectId } })` のような mock 呼出検証で「次の新設テーブル追加時に同じ罠を踏む」を防ぐ
 - [ ] **`purgeOldDeletedTenants` の `$transaction` 配列は順序が FK 依存関係**: 順序を間違えると別の FK が先に火を吹くため、変更時は `git diff` で行追加位置を慎重に確認する
+
+## 5.X+7 ブランチカバレッジ閾値 (70%) 維持戦略 (PR #289 hotfix / 2026-05-09)
+
+### 背景
+
+PR #289 (PR E ダッシュボード強化) で **branches 69.66% < 70% 閾値** で CI fail:
+
+```
+ERROR: Coverage for branches (69.66%) does not meet global threshold (70%)
+```
+
+PR E は `super-admin.service` に新規 3 関数 (Voyage / Anthropic / Beginner サマリ) を
+追加し、それぞれが内部で複数の if 分岐 (status='ok'/'warn'/'alert' 等) を持つため、
+**コードの追加に対してテストがない = ブランチ未到達** が増えて閾値を割った。
+
+### 対応
+
+1. **ブランチ未到達の上位ファイルを特定**:
+   ```
+   pnpm test --coverage
+   ```
+   出力をブランチ % 昇順でソートし、最も低いファイルから着手。
+
+2. **今回の上位ターゲット**:
+   - `tenant-self.service.ts` (18.86% → 80%+) - **最大インパクト**: テスト未作成だった
+   - `super-admin.service.ts` (新規 3 関数) - 各関数の 3-4 分岐をテスト
+
+3. **追加テスト**:
+   - `tenant-self.service.test.ts` を新規作成 (18 件)
+     - getTenantSelfInfo: テナント不在 / 取得成功 + 派生フィールド
+     - updateBillingContact: 部分更新 / individual 切替時の null クリア / null 値クリア
+     - updateTenantSelf: budget 単独 / seedDataEnabled 単独 / 同一プラン / アップグレード /
+       ダウングレード予約 / Beginner ダウングレード禁止
+     - cancelScheduledPlanChange: 予約クリア
+   - `super-admin.service.test.ts` に 12 件追加
+     - getVoyageUsageSummary: ok/warn/alert 3 段階 + null fallback + 除外フィルタ
+     - getAnthropicUsageSummary: 通常 / null fallback / where OR 検証
+     - getBeginnerUsageSummary: 0 件 / 60/75/expired 分類 / 除外フィルタ
+
+   結果: branches **69.66% → 71.15%** (+1.49pt) で閾値クリア。
+
+### 抽出したルール
+
+- [ ] **新規関数を追加する PR には**「対応する unit test を同 PR で追加」**を必須化**: PR 説明に test コミット ID を明記。あとから補完すると忘れがち
+- [ ] **branch coverage は新規 if/switch 分岐を入れるたびにストレスがかかる**: 既存ファイルの分岐は tested 済が多いが、**新規ファイル / 新規関数は 0% から始まる** ため、コード追加直前のスコアからの劣化幅が大きい
+- [ ] **branch coverage 80% に上げる前に 70% を必達ライン化**: 防御的 if (= defense-in-depth) は実用上テストしづらく 80% は過大負荷。70% で「主要分岐は全て tested」が保証されればトレード OK (vitest.config.ts §thresholds 参照)
+- [ ] **集計関数 (aggregate / groupBy) のテストは where 句の検証が肝**: 値の正しさだけでなく `notIn: [MANAGEMENT, DEFAULT]` の包含を `expect(...).toMatchObject({ where: { id: { notIn: [...] } } })` で検証する。回帰: テナント除外漏れは集計値の誤りに直結する
+- [ ] **現在時刻に依存する関数は `daysAgo(N)` のような相対日付ヘルパで再現**: `Date.now()` を直接モックすると beforeEach での復元忘れによる他テスト汚染リスクがある。今回は `getBeginnerExpiryState` のテストで採用
+- [ ] **PR 提出前にローカルで `pnpm test --coverage` を実行**: CI で発覚すると 1 サイクル余分 (CI fail → 修正 → 再 push)。ローカル実行 1 分で同じ情報が得られる
