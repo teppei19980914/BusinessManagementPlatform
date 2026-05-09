@@ -40,25 +40,33 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [x] `unlinkRiskFromProject(riskId, projectId, viewerTenantId)` — 冒頭で risk の tenant 一致確認 (越境紐付け解除を遮断)
 - [x] `linkRiskToProject` は既存実装で risk.tenantId === project.tenantId を verify 済 (TENANT_MISMATCH throw) のため変更不要
 
-### knowledge.service.ts
+### knowledge.service.ts ✅ 完了 (PR Phase 2-4, 2026-05-09)
 
-- [ ] `listKnowledge(params, userId, systemRole, viewerTenantId)`
-- [ ] `listKnowledgeByProject(projectId, viewerTenantId)`
-- [ ] `getKnowledge(knowledgeId, ..., viewerTenantId)`
-- [ ] `updateKnowledge(knowledgeId, input, userId, viewerTenantId)` — 既存 `tenantId` 引数同上
-- [ ] `deleteKnowledge(knowledgeId, userId, systemRole, viewerTenantId)`
-- [ ] `bulkUpdateKnowledgeVisibilityFromList(projectId, ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `listKnowledge(params, userId, systemRole, viewerTenantId)`
+- [x] `listKnowledgeByProject(projectId, viewerTenantId)`
+- [x] `getKnowledge(knowledgeId, viewerUserId?, viewerSystemRole?, viewerTenantId?)` — 内部 helper オプショナル維持
+- [x] `updateKnowledge(knowledgeId, input, userId, tenantId)` — 既存 `tenantId` を viewer 認可境界として再利用
+- [x] `deleteKnowledge(knowledgeId, userId, systemRole, viewerTenantId)`
+- [x] `bulkUpdateKnowledgeVisibilityFromList(projectId, ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `createKnowledge` — `data.tenantId` を明示化
 
-### retrospective.service.ts
+### retrospective.service.ts ✅ 完了 (PR Phase 2-4, 2026-05-09)
 
-- [ ] 全 7 関数 (`listRetrospectives` / `getRetrospective` / `confirmRetrospective` / `updateRetrospective` / `deleteRetrospective` / `bulkUpdateRetrospectivesVisibilityFromList` / `unlinkRetrospectiveFromProject`)
+- [x] `listRetrospectives(projectId, viewerUserId, viewerSystemRole, viewerTenantId)`
+- [x] `getRetrospective(retroId, viewerUserId?, viewerSystemRole?, viewerTenantId?)`
+- [x] `confirmRetrospective(retroId, userId, viewerTenantId)` — 冒頭で findFirst 所有確認
+- [x] `updateRetrospective(retroId, input, userId, tenantId)` — 既存 tenantId を認可境界として再利用
+- [x] `deleteRetrospective(retroId, userId, systemRole, viewerTenantId)`
+- [x] `bulkUpdateRetrospectivesVisibilityFromList(projectId, ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `unlinkRetrospectiveFromProject(retroId, projectId, viewerTenantId)`
 
-### memo.service.ts (Phase 1 の listMy/listPublic に続く残り)
+### memo.service.ts ✅ 完了 (PR Phase 2-4, 2026-05-09)
 
-- [ ] `getMemoForViewer(memoId, viewerUserId, viewerTenantId)`
-- [ ] `updateMemo(memoId, input, userId, viewerTenantId)`
-- [ ] `deleteMemo(memoId, userId, viewerTenantId)`
-- [ ] `bulkUpdateMemosVisibilityFromList(ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `getMemoForViewer(memoId, viewerUserId, viewerTenantId)`
+- [x] `updateMemo(memoId, input, userId, viewerTenantId)`
+- [x] `deleteMemo(memoId, userId, viewerTenantId)`
+- [x] `bulkUpdateMemosVisibilityFromList(ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `createMemo` — `data.tenantId` を明示化
 
 ### task.service.ts (最大の盲点 — tenantId フィルタ皆無) ✅ 完了 (PR Phase 2-1, 2026-05-09)
 
