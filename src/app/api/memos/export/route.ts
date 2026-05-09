@@ -14,7 +14,7 @@ export async function GET(_req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const csv = await exportMemosSync(user.id);
+  const csv = await exportMemosSync(user.id, user.tenantId);
   return new NextResponse(csv, {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
