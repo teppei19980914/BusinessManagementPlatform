@@ -422,21 +422,34 @@ export async function updateKnowledge(
   userId: string,
   tenantId: string,
 ): Promise<KnowledgeDTO> {
+  // 2026-05-09 (PR D / #20): 既存 text を含めて取得し、入力 text が「実際に変わったか」を判定。
+  //   旧実装は `input.title !== undefined` だけで「フォームが title を送ってきた = 変更あり」
+  //   とみなし、UI が常に全フィールドを送る場合に embedding が無駄に再生成されていた。
+  //   defense-in-depth: フォームが部分更新を送ってきても、内容が同一なら LLM 課金を回避。
   const existing = await prisma.knowledge.findFirst({
     where: { id: knowledgeId, deletedAt: null },
-    select: { createdBy: true },
+    select: {
+      createdBy: true,
+      title: true,
+      background: true,
+      content: true,
+      result: true,
+      conclusion: true,
+      recommendation: true,
+    },
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
 
-  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定。変更なしなら embedding 再生成しない。
+  // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
+  //   未指定 (undefined) または既存値と同一なら trigger しない (LLM 課金回避)。
   const textFieldsChanging =
-    input.title !== undefined ||
-    input.background !== undefined ||
-    input.content !== undefined ||
-    input.result !== undefined ||
-    input.conclusion !== undefined ||
-    input.recommendation !== undefined;
+    (input.title !== undefined && input.title !== existing.title) ||
+    (input.background !== undefined && input.background !== existing.background) ||
+    (input.content !== undefined && input.content !== existing.content) ||
+    (input.result !== undefined && input.result !== existing.result) ||
+    (input.conclusion !== undefined && input.conclusion !== existing.conclusion) ||
+    (input.recommendation !== undefined && input.recommendation !== existing.recommendation);
 
   const data: Prisma.KnowledgeUpdateInput = { updater: { connect: { id: userId } } };
 

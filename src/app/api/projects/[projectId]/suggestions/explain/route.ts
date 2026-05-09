@@ -35,7 +35,8 @@ import {
 } from '@/services/suggestion-explanation.service';
 
 const ExplainBodySchema = z.object({
-  candidateKind: z.enum(['knowledge', 'issue', 'retrospective']),
+  // 2026-05-09 (PR D / #21): 過去リスク 'risk' を追加
+  candidateKind: z.enum(['knowledge', 'issue', 'risk', 'retrospective']),
   candidateId: z.string().uuid(),
 });
 

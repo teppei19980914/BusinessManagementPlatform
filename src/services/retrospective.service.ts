@@ -313,21 +313,30 @@ export async function updateRetrospective(
   userId: string,
   tenantId: string,
 ): Promise<void> {
+  // 2026-05-09 (PR D / #20): 既存 text を含めて取得し、実値変更時のみ embedding を再生成。
   const existing = await prisma.retrospective.findFirst({
     where: { id: retroId, deletedAt: null },
-    select: { createdBy: true },
+    select: {
+      createdBy: true,
+      planSummary: true,
+      actualSummary: true,
+      goodPoints: true,
+      problems: true,
+      improvements: true,
+      knowledgeToShare: true,
+    },
   });
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
 
-  // PR #5-c: text フィールドのいずれかが更新対象かを先に判定
+  // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
   const textFieldsChanging =
-    input.planSummary !== undefined ||
-    input.actualSummary !== undefined ||
-    input.goodPoints !== undefined ||
-    input.problems !== undefined ||
-    input.improvements !== undefined ||
-    input.knowledgeToShare !== undefined;
+    (input.planSummary !== undefined && input.planSummary !== existing.planSummary) ||
+    (input.actualSummary !== undefined && input.actualSummary !== existing.actualSummary) ||
+    (input.goodPoints !== undefined && input.goodPoints !== existing.goodPoints) ||
+    (input.problems !== undefined && input.problems !== existing.problems) ||
+    (input.improvements !== undefined && input.improvements !== existing.improvements) ||
+    (input.knowledgeToShare !== undefined && input.knowledgeToShare !== existing.knowledgeToShare);
 
   const data: Record<string, unknown> = { updatedBy: userId };
   if (input.conductedDate !== undefined) data.conductedDate = new Date(input.conductedDate);

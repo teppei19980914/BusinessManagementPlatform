@@ -280,13 +280,26 @@ export async function updateProject(
   userId: string,
   tenantId: string,
 ): Promise<ProjectDTO> {
-  // PR #3-b (T-03 Phase 1): purpose / background / scope のいずれかが更新対象なら、
-  //   更新後の text を組み立てて自動タグ抽出を行う。text 変更がなければ呼ばない
-  //   (= LLM 課金を発生させない)。
-  const textFieldsChanging =
-    input.purpose !== undefined ||
-    input.background !== undefined ||
-    input.scope !== undefined;
+  // PR #3-b (T-03 Phase 1) + PR D (2026-05-09 / #20):
+  //   purpose / background / scope の **実値変更** 時のみ自動タグ抽出 + embedding を行う。
+  //   未指定 (undefined) または既存値と同一なら LLM 課金を発生させない。
+  //   そのため現行 row 取得を `textFieldsChanging` の判定よりも前に持ってくる。
+  const current = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: {
+      purpose: true,
+      background: true,
+      scope: true,
+      businessDomainTags: true,
+      techStackTags: true,
+      processTags: true,
+    },
+  });
+  const textFieldsChanging = current != null && (
+    (input.purpose !== undefined && input.purpose !== current.purpose) ||
+    (input.background !== undefined && input.background !== current.background) ||
+    (input.scope !== undefined && input.scope !== current.scope)
+  );
 
   let mergedAutoTags: AutoTagAxes | null = null;
   // PR #5 (T-03 Phase 2): text 変更時は embedding も再生成する。実テキストは
@@ -295,18 +308,6 @@ export async function updateProject(
   let resolvedBackground: string | null = null;
   let resolvedScope: string | null = null;
   if (textFieldsChanging) {
-    // 変更されない text フィールドは現行値を採用するため、現行 row を取得。
-    const current = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: {
-        purpose: true,
-        background: true,
-        scope: true,
-        businessDomainTags: true,
-        techStackTags: true,
-        processTags: true,
-      },
-    });
     if (current != null) {
       resolvedPurpose = input.purpose ?? current.purpose;
       resolvedBackground = input.background ?? current.background;

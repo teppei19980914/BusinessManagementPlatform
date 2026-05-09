@@ -96,9 +96,27 @@ export type RetrospectiveSuggestion = SuggestionScore & {
   sourceProjectName: string | null;
 };
 
+/**
+ * 2026-05-09 (PR D / #21): 過去プロジェクトのリスクを推薦対象に追加。
+ *   過去 Issue (発生した問題) との対比で、過去 Risk (発生に備えた対応事例) は
+ *   「次プロジェクトで先回りで備える」ための雛形として参照価値が高い。
+ *   旧仕様 (PR #65) は「リスクは不確実性で発生していないため対象外」としていたが、
+ *   resolved 状態 = 顕在化したか / 対応済まで進んだもの は学びの宝庫。
+ *   採用 (= 自プロジェクトへ複製) は行わず、参照のみ (Retrospective と同じ扱い)。
+ */
+export type PastRiskSuggestion = SuggestionScore & {
+  kind: 'risk';
+  id: string;
+  title: string;
+  snippet: string;
+  sourceProjectId: string;
+  sourceProjectName: string | null;
+};
+
 export type SuggestionsResult = {
   knowledge: KnowledgeSuggestion[];
   pastIssues: PastIssueSuggestion[];
+  pastRisks: PastRiskSuggestion[];
   retrospectives: RetrospectiveSuggestion[];
 };
 
@@ -249,11 +267,11 @@ export async function suggestForProject(
   // PR #8 (T-03): 緊急停止フラグ。SUGGESTION_ENGINE_DISABLED=true で空配列を返す。
   // LLM 障害・予算超過・リグレッション切り分け時の即時停止に使う。
   if (isSuggestionEngineDisabled()) {
-    return { knowledge: [], pastIssues: [], retrospectives: [] };
+    return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] };
   }
   const limit = options.limit ?? DEFAULT_LIMIT;
   const ctx = await loadProjectContext(projectId);
-  if (!ctx) return { knowledge: [], pastIssues: [], retrospectives: [] };
+  if (!ctx) return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] };
 
   // ---------- Knowledge 候補 ----------
   // visibility='public' のみ対象 (draft は作成者だけが閲覧できる想定)
@@ -394,6 +412,74 @@ export async function suggestForProject(
     };
   });
 
+  // ---------- 過去 Risk 候補 (PR D / 2026-05-09 / #21) ----------
+  // 他プロジェクトの解消済 risk を対象 (= 顕在化対応または計画通り収束)。
+  // 自プロジェクトの未解消 risk は普段の「リスク一覧」で見られるので除外。
+  // 旧仕様 (PR #65) で除外していたが、過去対応事例は次プロジェクトの先回り設計に役立つ
+  // ため #21 で再導入。Issue と同じ tag-aware 設計 (親 Project のタグを proxy に使用)。
+  const risks = await prisma.riskIssue.findMany({
+    where: {
+      deletedAt: null,
+      type: 'risk',
+      state: 'resolved',
+      NOT: { projectId },
+    },
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      projectId: true,
+      project: {
+        select: {
+          name: true,
+          deletedAt: true,
+          businessDomainTags: true,
+          techStackTags: true,
+          processTags: true,
+        },
+      },
+    },
+  });
+
+  const riskText = await computeTextSimilarities(
+    ctx.text,
+    risks.map((r) => ({ id: r.id, text: `${r.title} ${r.content}` })),
+  );
+  const riskEmb = await computeEmbeddingSimilarities(
+    ctx.embeddingText,
+    'risks_issues',
+    risks.map((r) => r.id),
+  );
+
+  const riskScored: PastRiskSuggestion[] = risks.map((r) => {
+    const riskProjectTags = unifyProjectTags({
+      businessDomainTags: (r.project?.businessDomainTags as string[]) ?? [],
+      techStackTags: (r.project?.techStackTags as string[]) ?? [],
+      processTags: (r.project?.processTags as string[]) ?? [],
+    });
+    const tagScore = jaccard(ctx.tags, riskProjectTags);
+    const textScore = riskText.get(r.id) ?? 0;
+    const embeddingScore = riskEmb.get(r.id) ?? 0;
+    const score = combineScores([
+      { score: tagScore, weight: TAG_WEIGHT },
+      { score: textScore, weight: TEXT_WEIGHT },
+      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
+    ]);
+    return {
+      kind: 'risk' as const,
+      id: r.id,
+      title: r.title,
+      snippet: r.content.slice(0, 120),
+      sourceProjectId: r.projectId,
+      sourceProjectName: r.project?.deletedAt ? null : r.project?.name ?? null,
+      score,
+      tagScore,
+      textScore,
+      embeddingScore,
+      tier: classifyTier(score),
+    };
+  });
+
   // ---------- 過去 Retrospective 候補 (PR #65 Phase 2 (a)) ----------
   // 他プロジェクトの振り返り (confirmed) を対象。
   // 自プロジェクトの振り返りは普段の「振り返り一覧」で見られるので除外。
@@ -489,11 +575,15 @@ export async function suggestForProject(
   const pastIssues = assignPercentileTiers(
     applyMinimumGuarantee(sortByScore(issueScored), SCORE_THRESHOLD).slice(0, limit),
   );
+  // 2026-05-09 (PR D / #21): 過去 Risk も同じ tier 付与で返す
+  const pastRisks = assignPercentileTiers(
+    applyMinimumGuarantee(sortByScore(riskScored), SCORE_THRESHOLD).slice(0, limit),
+  );
   const retrospectives = assignPercentileTiers(
     applyMinimumGuarantee(sortByScore(retroScored), SCORE_THRESHOLD).slice(0, limit),
   );
 
-  return { knowledge, pastIssues, retrospectives };
+  return { knowledge, pastIssues, pastRisks, retrospectives };
 }
 
 /**
