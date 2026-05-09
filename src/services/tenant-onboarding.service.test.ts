@@ -123,6 +123,13 @@ describe('TenantOnboardingInputSchema', () => {
     expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
   });
 
+  // 2026-05-09 (#4): クレジットカード決済は現状未対応のため API でも reject。
+  //   将来対応時はこのテストの期待値を反転させる。
+  it('paymentMethod は credit_card を reject (#4 future support)', () => {
+    const bad = { ...VALID_INPUT, paymentMethod: 'credit_card' };
+    expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
+  });
+
   it('plan 省略時は beginner デフォルト', () => {
     const noPlan = { ...VALID_INPUT };
     delete (noPlan as Partial<typeof noPlan>).plan;

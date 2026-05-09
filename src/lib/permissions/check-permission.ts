@@ -82,7 +82,12 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
   ]),
   member: new Set([
     'project:read',
-    'task:read', 'task:update_progress',
+    // 2026-05-09 (#6): メンバーにも WBS タスクの新規作成を許可。
+    //   現場の作業項目は実作業者である member 自身が定義することが多く、
+    //   PM/TL に作成依頼してから着手するのは運用上のボトルネックになっていた。
+    //   `task:update` (= 他人が作ったタスクの編集) は引き続き禁止。member の編集系は
+    //   `task:update_progress` (自分担当のタスクの進捗更新) のみ。
+    'task:create', 'task:read', 'task:update_progress',
     'knowledge:create', 'knowledge:read', 'knowledge:update',
     'risk:create', 'risk:read', 'risk:update',
     // ステークホルダー: member は閲覧不可 (個人情報保護)

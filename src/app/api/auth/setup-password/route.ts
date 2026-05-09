@@ -41,13 +41,16 @@ export async function GET(req: NextRequest) {
 /**
  * POST: パスワード設定 + アカウント有効化
  *
- * PR #91: admin ユーザは本エンドポイントでは **有効化せず**、MFA シークレットを
- *   生成して返す。UI は続いて MFA 登録ステップへ進み、
- *   `/api/auth/setup-mfa-initial` で TOTP 検証成功時に初めて有効化される。
+ * 2026-05-09 (#11): 強制 MFA は super_admin のみに限定 (旧 PR #91 の admin 強制を緩和)。
+ *   super_admin は本エンドポイントでは **有効化せず**、MFA シークレットを生成して返す。
+ *   UI は続いて MFA 登録ステップへ進み、`/api/auth/setup-mfa-initial` で
+ *   TOTP 検証成功時に初めて有効化される。
+ *
+ *   テナント管理者 (admin) と一般ユーザ (general) は即時有効化。MFA は任意 (設定画面)。
  *
  * 応答:
- *   - general: { recoveryCodes }
- *   - admin  : { recoveryCodes, requiresMfa: true, mfa: { otpauthUri, qrCodeDataUrl } }
+ *   - admin / general: { recoveryCodes }
+ *   - super_admin   : { recoveryCodes, requiresMfa: true, mfa: { otpauthUri, qrCodeDataUrl } }
  */
 export async function POST(req: NextRequest) {
   // PR #198: トークン + パスワード送信のブルートフォース防御

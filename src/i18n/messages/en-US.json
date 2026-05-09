@@ -34,7 +34,9 @@
     "tenantSettings": "Tenant Settings",
     "myTasks": "My Tasks",
     "memos": "Memos",
-    "settings": "Settings"
+    "settings": "Settings",
+    "discord": "Discord",
+    "discordTooltip": "Join the Discord community (opens a new tab)"
   },
   "notification": {
     "title": "Notifications",
@@ -214,7 +216,7 @@
     "adminUserNotFoundCron": "Cannot run cron: no admin user found",
     "wrongPassword": "Password is incorrect",
     "wrongRecoveryCode": "Recovery code is incorrect",
-    "cannotDisableAdminMfa": "Administrators cannot disable MFA",
+    "cannotDisableAdminMfa": "System administrators cannot disable MFA",
     "mfaCodeRequired": "Please enter a 6-digit code",
     "mfaAlreadyEnabled": "MFA is already enabled. Disable it first to reconfigure.",
     "invalidRequest": "Invalid request",
@@ -1020,10 +1022,10 @@
     "mfaEnabledBadge": "Enabled",
     "mfaDisabledBadge": "Disabled",
     "mfaDescription": "Configure two-step verification using an authenticator app (e.g., Google Authenticator).",
-    "mfaAdminNote": " Administrators must use MFA and cannot disable it from this screen (PR #91).",
+    "mfaAdminNote": " System administrators (super_admin) must use MFA and cannot disable it from this screen.",
     "mfaEnableButton": "Enable MFA",
     "mfaDisableButton": "Disable MFA",
-    "mfaAdminLockedNote": "Administrator accounts have MFA forcibly enabled and cannot disable it on this screen. To change authenticator apps, please ask a system administrator to issue a new account.",
+    "mfaAdminLockedNote": "System administrator (super_admin) accounts have MFA forcibly enabled and cannot disable it on this screen. To change authenticator apps, please ask another system administrator to issue a new account.",
     "mfaSetupFailed": "Failed to set up MFA",
     "mfaCodeVerifyFailed": "Failed to verify code",
     "mfaScanHint": "Scan this QR code with your authenticator app.",

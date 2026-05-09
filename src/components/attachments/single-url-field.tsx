@@ -140,7 +140,8 @@ export function SingleUrlField({
             href={current.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 truncate text-info hover:underline"
+            // 2026-05-09 (#1): flex item の `truncate` は `min-w-0` 併設で発火させる
+            className="min-w-0 flex-1 truncate text-info hover:underline"
             title={current.url}
           >
             {current.displayName}

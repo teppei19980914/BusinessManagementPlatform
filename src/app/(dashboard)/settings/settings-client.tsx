@@ -39,6 +39,8 @@ import { THEME_DEFINITIONS, SUPPORTED_LOCALES, SELECTABLE_LOCALES, DEFAULT_TIMEZ
 
 type Props = {
   mfaEnabled: boolean;
+  // 2026-05-09 (#11): 旧 `systemRole === 'admin'` 判定から super_admin 限定へ。
+  //   名前は後方互換のため維持。意味は「MFA 強制ユーザか (= super_admin)」。
   isAdmin: boolean;
   /** PR #72: 現在の画面テーマ (初期選択値) */
   currentTheme: string;

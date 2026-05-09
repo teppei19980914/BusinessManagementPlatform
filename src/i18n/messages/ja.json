@@ -34,7 +34,9 @@
     "tenantSettings": "テナント設定",
     "myTasks": "マイタスク",
     "memos": "メモ一覧",
-    "settings": "設定"
+    "settings": "設定",
+    "discord": "Discord",
+    "discordTooltip": "Discord コミュニティに参加 (新しいタブで開きます)"
   },
   "notification": {
     "title": "通知",
@@ -214,7 +216,7 @@
     "adminUserNotFoundCron": "admin ユーザが存在しないため cron 実行不可",
     "wrongPassword": "パスワードが正しくありません",
     "wrongRecoveryCode": "リカバリーコードが正しくありません",
-    "cannotDisableAdminMfa": "管理者は MFA を無効化できません",
+    "cannotDisableAdminMfa": "システム管理者は MFA を無効化できません",
     "mfaCodeRequired": "6 桁のコードを入力してください",
     "mfaAlreadyEnabled": "MFA は既に有効化されています。再設定する場合は一度無効化してください",
     "invalidRequest": "不正なリクエストです",
@@ -1020,10 +1022,10 @@
     "mfaEnabledBadge": "有効",
     "mfaDisabledBadge": "無効",
     "mfaDescription": "認証アプリ（Google Authenticator 等）を使用した二段階認証を設定できます。",
-    "mfaAdminNote": " 管理者は MFA が必須であり、本設定画面からは無効化できません (PR #91)。",
+    "mfaAdminNote": " システム管理者 (super_admin) は MFA が必須であり、本設定画面からは無効化できません。",
     "mfaEnableButton": "MFA を有効化する",
     "mfaDisableButton": "MFA を無効化する",
-    "mfaAdminLockedNote": "管理者アカウントは MFA が強制的に有効化されており、この画面から無効化できません。認証アプリを変更したい場合は、システム管理者に新しいアカウントの発行を依頼してください。",
+    "mfaAdminLockedNote": "システム管理者 (super_admin) アカウントは MFA が強制的に有効化されており、この画面から無効化できません。認証アプリを変更したい場合は、別のシステム管理者に新しいアカウントの発行を依頼してください。",
     "mfaSetupFailed": "MFA の設定に失敗しました",
     "mfaCodeVerifyFailed": "コードの検証に失敗しました",
     "mfaScanHint": "認証アプリでこの QR コードをスキャンしてください。",
