@@ -4879,3 +4879,42 @@ PNG を `Update visual baselines (e2e-visual-baseline workflow)` commit で自�
 - [ ] **新旧の認可挙動を別 spec に分けて両方カバーする**: 旧仕様 (`super_admin` 強制) を消さず別 test として残すと、後から「super_admin の MFA 強制が壊れた」regression を catch できる。`#11` 緩和後は admin spec で「任意化済」、super_admin spec で「強制継続」を別々にアサートする
 - [ ] **連鎖 skip の影響範囲を PR description に明記**: 1 件 fail → 6 件 skip のような場合、原因と修正箇所を「失敗 1 件、skip 6 件 (= 同一原因)」と書くことで、レビュアが何を見ればよいか即時に判断できる
 
+
+
+## 5.X+6 新テーブル追加時は cascade 削除パスの全洗い出しが必須 (P-3 / 2026-05-08 → 本番障害 / 2026-05-09)
+
+### 背景
+
+P-3 (PR #259 / 2026-05-08) で `SuggestionExplanation` テーブルを新設した際、
+**cascade 削除のパスを更新し忘れ** て本番で project 削除が 500 エラーで失敗:
+
+```
+PrismaClientKnownRequestError: Foreign key constraint violated on the constraint:
+  `suggestion_explanations_project_id_fkey`
+prisma.project.delete() invocation
+```
+
+`SuggestionExplanation` は `project_id` / `tenant_id` / `generated_by` の 3 経路で
+FK を持っており、それぞれ Project / Tenant / User の物理削除前に明示的に
+deleteMany する必要があった。`deleteProjectCascade` (project-level) と
+`purgeOldDeletedTenants` (tenant-level) のどちらも漏れていた。
+
+ON DELETE CASCADE を FK に付与する選択肢もあったが、本リポジトリの既存パターン
+(他の child テーブル: Comment / Attachment / TaskProgressLog 等) は **manual cleanup**
+で統一されているため、踏襲した。
+
+### 対応
+
+1. `deleteProjectCascade` の `prisma.project.delete()` 直前に
+   `prisma.suggestionExplanation.deleteMany({ where: { projectId } })` を追加
+2. `purgeOldDeletedTenants` の `$transaction` 内、`project.deleteMany` の前に
+   `suggestionExplanation.deleteMany({ where: { tenantId } })` を追加
+3. 回帰テストで「project.delete 前に suggestionExplanation.deleteMany が呼ばれる」を verify
+
+### 抽出したルール
+
+- [ ] **新テーブル追加 PR には「cascade 削除パスの更新有無」をレビューチェックリストに含める**: 単体テストでは検出できない (削除対象テーブルが空なら通る)。本番でデータが入って初めて顕在化する罠
+- [ ] **FK を持つテーブル新設時は 3 経路 (parent table A / B / C) の **全ての** delete code path を grep で洗い出す**: `grep -rn 'project.delete\|project.deleteMany' src/services/` のように grep で複数箇所を一気に拾い、漏れチェックする
+- [ ] **「delete cascade is implicit」と思い込まない**: Prisma schema 上 `relation` を書いただけでは Postgres FK には `ON DELETE NO ACTION` が設定される。`onDelete: Cascade` を schema 側で明示するか、application 側で manual cleanup を書くかの **どちらかが必須**
+- [ ] **本番で再現した cascade 漏れバグは `deleteProjectCascade` テストの「呼出順序」テストで再発防止**: `expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({ where: { projectId } })` のような mock 呼出検証で「次の新設テーブル追加時に同じ罠を踏む」を防ぐ
+- [ ] **`purgeOldDeletedTenants` の `$transaction` 配列は順序が FK 依存関係**: 順序を間違えると別の FK が先に火を吹くため、変更時は `git diff` で行追加位置を慎重に確認する

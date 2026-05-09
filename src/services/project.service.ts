@@ -809,6 +809,11 @@ export async function deleteProjectCascade(
   await prisma.task.deleteMany({ where: { projectId } });
   await prisma.estimate.deleteMany({ where: { projectId } });
   await prisma.projectMember.deleteMany({ where: { projectId } });
+  // 2026-05-09 hotfix: SuggestionExplanation の FK (suggestion_explanations_project_id_fkey)
+  //   が ON DELETE CASCADE 未指定のため、project.delete 前に明示削除しないと P2003 エラー。
+  //   P-3 (2026-05-08) で SuggestionExplanation テーブルを追加したが、deleteProjectCascade
+  //   に対応する cleanup を追加し忘れていた本番事象を修正 (KDD §5.X+6)。
+  await prisma.suggestionExplanation.deleteMany({ where: { projectId } });
   await prisma.project.delete({ where: { id: projectId } });
 
   return {
