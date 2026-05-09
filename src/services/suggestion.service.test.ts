@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 vi.mock('@/lib/db', () => ({
   prisma: {
     project: { findFirst: vi.fn() },
+    // 2026-05-09 (PR G / #24): loadProjectContext で seedDataEnabled を取得するため
+    tenant: { findUnique: vi.fn() },
     knowledge: { findMany: vi.fn() },
     knowledgeProject: { createMany: vi.fn() },
     riskIssue: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
@@ -20,7 +22,11 @@ import {
 import { prisma } from '@/lib/db';
 
 describe('suggestForProject', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 2026-05-09 (PR G / #24): デフォルトで seedDataEnabled=true (= 既存テスト互換)
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ seedDataEnabled: true } as never);
+  });
 
   it('プロジェクト不在なら空結果', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
@@ -87,6 +93,56 @@ describe('suggestForProject', () => {
     expect(r.pastIssues[0].sourceProjectName).toBe('Other PJ');
     expect(r.retrospectives[0].id).toBe('r-1');
     expect(r.retrospectives[0].snippet).toContain('問題点');
+  });
+
+  // 2026-05-09 (PR G / #24): seedDataEnabled=false なら管理テナントを除外する
+  it('seedDataEnabled=false なら管理テナント (MANAGEMENT_TENANT_ID) を where 節で除外する (#24)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      tenantId: 'tenant-customer',
+      purpose: 'p',
+      background: 'b',
+      scope: 's',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    // 自テナントの seedDataEnabled = false
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({ seedDataEnabled: false } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
+
+    await suggestForProject('p-1');
+
+    // knowledge.findMany の where に tenantId not management が含まれること
+    const knowledgeCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(knowledgeCall.where.tenantId).toEqual({ not: '00000000-0000-0000-0000-ffffffffffff' });
+  });
+
+  // 2026-05-09 (PR G / #24): seedDataEnabled=true ならテナント除外フィルタは付かない
+  it('seedDataEnabled=true (default) なら管理テナント除外フィルタは付かない (#24)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      tenantId: 'tenant-customer',
+      purpose: 'p',
+      background: 'b',
+      scope: 's',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({ seedDataEnabled: true } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
+
+    await suggestForProject('p-1');
+
+    const knowledgeCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(knowledgeCall.where.tenantId).toBeUndefined();
   });
 
   // 2026-05-09 (PR D / #21): 過去リスクが提案結果に含まれる

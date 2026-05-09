@@ -118,6 +118,14 @@ model Tenant {
   beginnerNoticeDay75SentAt    DateTime? @map("beginner_notice_day75_sent_at") @db.Timestamptz
   /// P-B: 90 日経過 read-only 通知メール送信日時
   beginnerExpiredNoticeSentAt  DateTime? @map("beginner_expired_notice_sent_at") @db.Timestamptz
+  /// PR G (#24 / 2026-05-09): 提案エンジンに **管理テナントのシードデータ** を含めるか。
+  ///   - true (default): 提案候補に管理テナントの isSampleData=true なデータを横断検索
+  ///   - false:          管理テナントを除外し、自テナント + 他顧客テナントのデータのみで提案
+  ///
+  /// 設計合意 B (2026-05-09): シード実データは管理テナント (MANAGEMENT_TENANT_ID) に集中。
+  ///   このフラグはテナント管理者が「契約直後の宇宙人感を抑える」「業務に近いシードを使いたくない」
+  ///   等のニーズに応じてシード参照を遮断するための toggle。
+  seedDataEnabled              Boolean   @default(true) @map("seed_data_enabled")
   /// P-D (2026-05-08): データインポート進行中の in-flight ロック。
   ///   - 開始時 NOW() / 終了時 NULL に戻す。クラッシュ残留対策のためタイムスタンプ型。
   ///   - 30 分 (IMPORT_LOCK_STALE_MINUTES) 以上経過した値は自動失効扱い。
