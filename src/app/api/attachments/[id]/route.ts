@@ -32,7 +32,9 @@ import { recordAuditLog } from '@/services/audit.service';
  * 対象添付の親エンティティをたどり、リクエストユーザが権限を持つかを確認する。
  */
 async function authorizeForAttachment(
-  user: { id: string; systemRole: string },
+  // 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
+  //   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
+  user: { id: string; systemRole: string; tenantId: string },
   entityType: AttachmentEntityType,
   entityId: string,
 ): Promise<NextResponse | null> {

@@ -5411,3 +5411,45 @@ osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
 - §5.X+13 (本件の前段、listAll 系の越境塞ぎ)
 - 公式 OWASP IDOR (Insecure Direct Object Reference): <https://owasp.org/www-community/attacks/Indirect_Object_Reference>
 - `src/lib/permissions/tenant.ts` (`requireSameTenant` / `tenantScope` ヘルパー — 全 service で活用すべき)
+
+## 5.X+15 `pnpm tsc --noEmit` と `pnpm build` (Next.js TypeScript) は別物 — コミット前 build 実行が必須 (PR #297 hotfix)
+
+### 背景
+
+PR #297 Phase 1 commit を push 直後、Vercel / GitHub Actions / Playwright E2E がすべて Next.js build の TypeScript チェックで fail した。**ローカルでは `pnpm tsc --noEmit` がパスしていた** ため発見が遅れ、CI 1 サイクル (約 90 秒) を消費した。
+
+検出された 2 種類のエラー:
+
+1. **内部ヘルパー型シグネチャ非互換** (3 箇所):
+   - `authorize`/`authorizeForAttachment`/`authorizeForComment` のローカル user 引数型 `{ id: string; systemRole: string }` に `tenantId` がない
+   - Phase 1 で `checkMembership` 引数に `user.tenantId` を渡したため、ヘルパー内部で `Property 'tenantId' does not exist on type` エラー
+
+2. **Prisma Where 型違反** (1 箇所):
+   - `prisma.task.findFirst({ where: { tenantId: ... } })` を書いたが、**Task モデルには tenantId 列が無い**
+   - Task は `project.tenantId` 経由で絞る関連フィルタが正解 (`where: { project: { tenantId } }`)
+   - 既存 schema を grep せずに「全 entity に tenantId 列がある」と暗黙仮定したのが原因
+
+### なぜ `pnpm tsc --noEmit` で検出できなかったのか
+
+調査の結果、両者には実装上の差異がある:
+
+- **`tsc --noEmit`**: tsconfig の `incremental: true` キャッシュを再利用するため、依存関係のみ再チェック。一部の関数引数型推論を skip する場合がある
+- **`next build` の TypeScript チェック**: `next-env.d.ts` を含む完全プロジェクトで `tsc --noEmit` を fresh 実行 + 環境変数 (`NEXT_TYPESCRIPT_TYPECHECK`) 経由で**型チェックが厳格化**されるケースがある (Turbopack 環境含む)
+- 結果: ローカル `pnpm tsc --noEmit` で OK でも CI で fail する非対称が発生する
+
+公式 doc 一次ソースとしては Next.js が `tsc` を内部呼び出しすることは明記されているが ([Next.js TypeScript](https://nextjs.org/docs/app/api-reference/config/typescript)), `tsc --noEmit` 単独実行との差異の詳細は未文書化のため**経験的検証**に依存。
+
+### 対処したルール
+
+- [ ] **コミット前は必ず `pnpm build` を実行する**: `pnpm tsc --noEmit` だけでは Next.js build の型チェックを完全代替できない (= 90 秒 CI サイクルを消費するリスク)。`pnpm tsc --noEmit && pnpm build` を seq で実行するのが防衛的
+- [ ] **新規エンティティに対して `where.tenantId = ...` を追加する前に schema を確認する**: 全 entity に tenantId 列があるとは限らない (Task / TaskProgressLog / TaskKnowledge 等は project 経由で絞る設計)。grep `model X` で確認するか、Prisma 型エラーで気付くしかない (= build が必須)
+- [ ] **Task のように tenantId 列が無い entity は `project: { tenantId }` の関連フィルタで代替する**: Prisma の relational filter は indexed JOIN として最適化されるため性能影響軽微。schema をマイグレーションで tenantId 列追加するか、関連フィルタを使うかは設計判断 (本件は後者を採用)
+- [ ] **API ルート内のローカル `authorize*` ヘルパーの user 引数型は `getAuthenticatedUser()` の戻り型と完全一致させる**: `AuthenticatedUser` 型を直接 import する方が安全。今回の `{ id; systemRole }` のような部分型は将来の必須引数追加で同種のエラーを誘発する。可能なら `import type { AuthenticatedUser }` で揃える
+- [ ] **CI fail を検出したら最初に Vercel / GitHub Actions のログを確認**: ローカル再現手順を確立してから fix を書く。盲目的な「とりあえず修正 push」は CI 消費とコンテキストスイッチコストが大きい
+
+### 関連
+
+- 修正例: PR #297 hotfix (e8a9701 push 後の build fix commit)
+- §5.X+13 / §5.X+14 (本件の前段、テナント越境バグ恒久対策)
+- 公式 doc: <https://nextjs.org/docs/app/api-reference/config/typescript>
+- 公式 doc (Next.js Build Output): <https://nextjs.org/docs/app/api-reference/cli/next#next-build-options>

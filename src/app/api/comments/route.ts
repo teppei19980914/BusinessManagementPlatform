@@ -53,7 +53,9 @@ import { validateMentionsForEntity } from '@/services/mention.service';
  * 戻り値: NextResponse (拒否時) or null (許可)。
  */
 async function authorizeForComment(
-  user: { id: string; systemRole: string },
+  // 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
+  //   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
+  user: { id: string; systemRole: string; tenantId: string },
   entityType: CommentEntityType,
   entityId: string,
   mode: 'read' | 'write',

@@ -117,13 +117,15 @@ export async function GET(req: NextRequest) {
     }
     let projectId: string | null = null;
     if (typed === 'task') {
-      // 2026-05-09 feedback: 親 entity 取得時も自テナント限定
+      // 2026-05-09 feedback: Task テーブルには tenantId 列が無いため (project の tenantId に
+      //   依存する設計)、関連フィルタ `project: { tenantId }` で自テナント限定する。
       const t = await prisma.task.findFirst({
-        where: { id: entityId, deletedAt: null, tenantId: user.tenantId },
+        where: { id: entityId, deletedAt: null, project: { tenantId: user.tenantId } },
         select: { projectId: true },
       });
       projectId = t?.projectId ?? null;
     } else {
+      // Stakeholder は tenantId 列を直接持つので簡潔に絞れる。
       const s = await prisma.stakeholder.findFirst({
         where: { id: entityId, deletedAt: null, tenantId: user.tenantId },
         select: { projectId: true },
