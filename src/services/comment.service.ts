@@ -27,6 +27,8 @@ import {
   diffMentions,
   generateMentionNotifications,
 } from './mention.service';
+// 2026-05-09 (PR H / #3): 通知 link に commentId を付与して該当コメントへ直接遷移させる
+import { buildEntityCommentLink } from '@/lib/entity-link';
 
 export type CommentDTO = {
   id: string;
@@ -94,7 +96,6 @@ export async function createComment(
   userId: string,
   mentions: MentionInput[] = [],
   mentionerName: string | null = null,
-  link: string = '',
 ): Promise<CommentDTO> {
   const created = await prisma.comment.create({
     data: {
@@ -115,6 +116,14 @@ export async function createComment(
         targetUserId: m.targetUserId ?? null,
       })),
     });
+    // 2026-05-09 (PR H / #3): 通知 link を「commentId 付き」で生成。
+    //   通知をクリックしたユーザは該当コメントへ自動スクロールできる (CommentSection 側で実装)。
+    //   旧仕様は taskId/riskId のみで dialog は開くがコメント末尾配置のため画面外。
+    const linkWithComment = await buildEntityCommentLink(
+      input.entityType,
+      input.entityId,
+      created.id,
+    );
     // 通知一括生成 (Q5 自分宛除外、dedupe は DB UNIQUE で担保)
     await generateMentionNotifications({
       commentId: created.id,
@@ -122,7 +131,7 @@ export async function createComment(
       mentions,
       mentionerId: userId,
       mentionerName: mentionerName ?? created.user?.name ?? null,
-      link,
+      link: linkWithComment,
     });
   }
 
@@ -156,7 +165,6 @@ export async function updateComment(
   content: string,
   mentions?: MentionInput[],
   mentionerName: string | null = null,
-  link: string = '',
 ): Promise<CommentDTO> {
   const updated = await prisma.comment.update({
     where: { id: commentId },
@@ -183,6 +191,12 @@ export async function updateComment(
           targetUserId: m.targetUserId ?? null,
         })),
       });
+      // 2026-05-09 (PR H / #3): commentId 付き link で通知を生成
+      const linkWithComment = await buildEntityCommentLink(
+        updated.entityType as CommentEntityType,
+        updated.entityId,
+        commentId,
+      );
       // Q2 採用: 追加分のみ通知 (削除分は何もしない)
       await generateMentionNotifications({
         commentId,
@@ -190,7 +204,7 @@ export async function updateComment(
         mentions: added,
         mentionerId: updated.userId,
         mentionerName: mentionerName ?? updated.user?.name ?? null,
-        link,
+        link: linkWithComment,
       });
     }
   }

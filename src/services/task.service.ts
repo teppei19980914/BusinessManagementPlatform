@@ -241,6 +241,126 @@ export async function listTasksFlat(projectId: string): Promise<TaskDTO[]> {
   return tasks.map(toTaskDTO);
 }
 
+// ================================================================
+// 2026-05-09 (PR H / #7): 担当者別 日次工数集計
+// ================================================================
+
+export type DailyWorkloadEntry = {
+  /** YYYY-MM-DD (UTC ベース) */
+  date: string;
+  /** 当日の予定工数 (= タスク plannedEffort を期間で按分した合計) */
+  effortHours: number;
+};
+
+export type AssigneeWorkloadRow = {
+  assigneeId: string;
+  assigneeName: string;
+  /** assignee がアサインされている activity 数 */
+  taskCount: number;
+  /** 期間総工数 (タスク plannedEffort の単純合計) */
+  totalEffortHours: number;
+  /** 日次内訳 (date 昇順、effort=0 の日は含めない) */
+  daily: DailyWorkloadEntry[];
+};
+
+/**
+ * 担当者別の日次工数を集計する (#7 / 2026-05-09)。
+ *
+ * アルゴリズム:
+ *   - assignee + plannedStartDate + plannedEndDate + plannedEffort > 0 が揃った
+ *     activity (type='activity') のみ対象 (= 集約 WP は子に按分されているので除外)
+ *   - 各タスクの plannedEffort を期間 (start-end の inclusive) の日数で **均等に按分**
+ *     例: plannedEffort=8h, 期間 4 日 → 1 日 2h を各日に加算
+ *   - assignee × date で合計
+ *
+ * 設計判断:
+ *   - 営業日 (祝日除外) ベースの按分は将来拡張余地。MVP は単純按分で十分
+ *   - effort=0 の日は daily 配列から除外 (ペイロード削減)
+ *   - 並び順: 担当者は totalEffortHours 降順、daily は date 昇順
+ */
+export async function getAssigneeDailyWorkload(
+  projectId: string,
+): Promise<AssigneeWorkloadRow[]> {
+  const tasks = await prisma.task.findMany({
+    where: {
+      projectId,
+      deletedAt: null,
+      type: 'activity',
+      assigneeId: { not: null },
+      plannedStartDate: { not: null },
+      plannedEndDate: { not: null },
+    },
+    select: {
+      assigneeId: true,
+      assignee: { select: { name: true } },
+      plannedStartDate: true,
+      plannedEndDate: true,
+      plannedEffort: true,
+    },
+  });
+
+  // assigneeId → { name, taskCount, totalEffort, dailyMap (date → effort) }
+  type Acc = {
+    name: string;
+    taskCount: number;
+    totalEffortHours: number;
+    dailyMap: Map<string, number>;
+  };
+  const byAssignee = new Map<string, Acc>();
+
+  for (const t of tasks) {
+    if (!t.assigneeId || !t.plannedStartDate || !t.plannedEndDate) continue;
+    const effort = Number(t.plannedEffort);
+    if (effort <= 0) continue;
+
+    const days = countInclusiveDays(t.plannedStartDate, t.plannedEndDate);
+    if (days <= 0) continue;
+    const perDay = effort / days;
+
+    const acc = byAssignee.get(t.assigneeId) ?? {
+      name: t.assignee?.name ?? '(unknown)',
+      taskCount: 0,
+      totalEffortHours: 0,
+      dailyMap: new Map<string, number>(),
+    };
+    acc.taskCount += 1;
+    acc.totalEffortHours += effort;
+
+    // 期間の各日に perDay を加算
+    const cursor = new Date(t.plannedStartDate);
+    for (let i = 0; i < days; i++) {
+      const ymd = cursor.toISOString().split('T')[0];
+      acc.dailyMap.set(ymd, (acc.dailyMap.get(ymd) ?? 0) + perDay);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    byAssignee.set(t.assigneeId, acc);
+  }
+
+  return Array.from(byAssignee.entries())
+    .map(([assigneeId, acc]) => ({
+      assigneeId,
+      assigneeName: acc.name,
+      taskCount: acc.taskCount,
+      totalEffortHours: round(acc.totalEffortHours, 2),
+      daily: Array.from(acc.dailyMap.entries())
+        .map(([date, effortHours]) => ({ date, effortHours: round(effortHours, 2) }))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    }))
+    .sort((a, b) => b.totalEffortHours - a.totalEffortHours);
+}
+
+/** 期間 (inclusive) の日数を返す。start > end なら 0。 */
+function countInclusiveDays(start: Date, end: Date): number {
+  const ms = end.getTime() - start.getTime();
+  if (ms < 0) return 0;
+  return Math.floor(ms / (24 * 60 * 60 * 1000)) + 1;
+}
+
+function round(n: number, digits: number): number {
+  const f = 10 ** digits;
+  return Math.round(n * f) / f;
+}
+
 /**
  * ツリー構造とフラット構造を同時に必要とする画面向け。
  * 1 回の DB クエリで両方のビューを生成する（listTasks + listTasksFlat の 2 クエリを集約）。

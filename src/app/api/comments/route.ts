@@ -39,7 +39,6 @@ import {
 } from '@/services/comment.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { validateMentionsForEntity } from '@/services/mention.service';
-import { buildEntityCommentLink } from '@/lib/entity-link';
 
 /**
  * 親エンティティの存在確認 + 認可。リクエストユーザが当該 entity に対して
@@ -205,14 +204,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 通知 link の生成 (entity の編集 dialog を開く URL)
-  const link = await buildEntityCommentLink(parsed.data.entityType, parsed.data.entityId);
+  // 2026-05-09 (PR H / #3): 通知 link は createComment 内で commentId 付きで再構築する。
+  //   旧仕様 (PR feat/notification-edit-dialog) は事前に build していたが、commentId が必要に
+  //   なったため service 内に移動。本 route 層では link を渡さない (buildEntityCommentLink
+  //   import も不要に)。
   const created = await createComment(
     parsed.data,
     user.id,
     mentions,
     user.name ?? null,
-    link,
   );
 
   await recordAuditLog({
