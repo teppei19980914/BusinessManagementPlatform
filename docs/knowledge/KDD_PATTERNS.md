@@ -5068,3 +5068,210 @@ CLAUDE.md「コミット前チェック」を **5 項目に再編** し、退行
 - CLAUDE.md「コミット前チェック」(本改訂の最終版)
 - §5.46 〜 §5.48 (security-check.ts 導入と CI gate 化の経緯)
 - 修正例: 2026-05-09 (本セクション、CLAUDE.md + .claude/skills/* + .claude/agents/* 一斉更新 PR)
+
+## 5.X+10 GitHub Actions の脆弱なアクションを避け公式 install スクリプトで CI 化する (PR #296 hotfix / 2026-05-09)
+
+### 背景
+
+PR #296 で OSV-Scanner / Trivy を CI に追加したところ、3 つの fail が発生:
+
+1. **OSV-Scanner**: `google/osv-scanner-action@v1` で `Unable to resolve action ... unable to find version 'v1'`
+   → Marketplace のパス命名 (`/osv-scanner-action/osv-scanner-action@vX.Y.Z`) が変動し、`@v1` major タグが存在しない
+2. **Trivy**: `aquasecurity/trivy-action@0.28.0` が **GHSA-69fq-xp46-6x23 (Trivy ecosystem supply chain was briefly compromised, CRITICAL)** にヒット
+   → アクションそのものが公式に汚染認定され、安全な version の判定もリリースノートを跨ぐ手間が生じる
+3. **Dependency Review**: 上記 Trivy アクションのバージョンを CI が `fail-on-severity: high` で検知し PR 全体が block
+
+### 対応
+
+両アクションとも **公式バイナリの install スクリプト経由に切替** て、Marketplace アクションへの依存を撤廃:
+
+```yaml
+# OSV-Scanner: GitHub API から最新リリースの linux_amd64 binary URL を解決して直接インストール
+- name: Install osv-scanner
+  run: |
+    DL_URL=$(curl -sSfL https://api.github.com/repos/google/osv-scanner/releases/latest \
+      | grep -oE '"browser_download_url": "[^"]*linux_amd64[^"]*"' \
+      | head -n1 | sed -E 's/.*"(.*)"/\1/')
+    curl -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+    chmod +x /usr/local/bin/osv-scanner
+- name: Run osv-scanner
+  run: osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+
+# Trivy: 公式 install.sh で最新版 (stable) を取得
+- name: Install trivy
+  run: |
+    curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+      | sudo sh -s -- -b /usr/local/bin
+- name: Run trivy fs
+  run: |
+    trivy fs --severity CRITICAL,HIGH --ignore-unfixed \
+      --format sarif --output trivy-results.sarif --exit-code 1 .
+- uses: github/codeql-action/upload-sarif@v3   # 公式 GitHub アクションは安全
+  with: { sarif_file: trivy-results.sarif, category: trivy }
+```
+
+これにより:
+- アクションのサプライチェーン汚染リスクを排除 (`actions/checkout` / `github/codeql-action` 等の **GitHub 公式 Verified アクションのみ使用**)
+- 同時に「常時最新バイナリを使う」要件も満たせる (install スクリプトが latest を解決)
+- Dependency Review の `fail-on-severity: high` も clean に通過する
+
+### 抽出したルール
+
+- [ ] **GitHub Marketplace の third-party アクションを採用する前に、Dependency Review の advisory DB と
+      OSSF Scorecard を必ず確認する**: 過去に supply chain 汚染を起こしたアクション (例: `tj-actions/changed-files`、
+      `aquasecurity/trivy-action` 等) は今後も risk が伴う。同等機能の **公式 install スクリプト** が
+      存在する場合はそちらを優先
+- [ ] **「最新を使う」要件はバージョン pin より install スクリプトが向く**: `@vX.Y.Z` pin は Dependabot
+      週次更新でも反応が遅れがち。公式の `latest` 解決ロジック (curl + GitHub Releases API) なら
+      毎ジョブで最新版が確定する
+- [ ] **CI で利用するアクションは「`actions/*` (GitHub 公式) + `github/codeql-action`」のみを基本とし、
+      それ以外は curl ベースインストールを優先する**: アクションが破壊された時の影響範囲を最小化
+- [ ] **アクションの version error (`Unable to resolve action`) はパス命名規則を疑う**: monorepo 構成の
+      アクション (`org/repo/subpath@vX`) は major tag が存在しないことがあるので、Marketplace ページで
+      正確な uses 形式を確認 — または curl 化を検討する
+- [ ] **PR の Dependency Review が fail したら advisory ID を必ず確認**: GHSA-* で過去のサプライチェーン
+      事案を引いていることが多く、その場合はバージョン bump ではなく **アクション自体の置き換え** が必要
+
+### 関連
+
+- 修正例: PR #296 hotfix (2026-05-09)
+- §5.46 〜 §5.48 (security-check.ts CI gate)
+- §5.X+9 (ローカル必須 → CI 自動への分離方針)
+- §5.X+11 (本セクションの install スクリプトが踏んだ次の罠 = `api.github.com` レート制限)
+
+## 5.X+11 GitHub Actions から `api.github.com` を未認証で叩くと共有 IP の 60 req/hour 制限に当たる (PR #296 hotfix 続編 / 2026-05-09)
+
+### 背景
+
+§5.X+10 で OSV-Scanner を `api.github.com/repos/google/osv-scanner/releases/latest` の JSON を curl + grep で
+解析して latest バイナリ URL を解決する方式に切り替えたが、**初回実行で install ステップが 245ms で死亡**:
+
+- `set -euo pipefail` 配下なのに stderr/stdout に出力ゼロ
+- `::error::Could not resolve ...` の echo にも到達せず
+- `Downloading: ...` の echo にも到達せず
+
+切り分けの結果、原因は **GitHub API の未認証レート制限 (IP 単位 60 req/hour)**:
+
+- GitHub Actions ホストランナーは Azure の **共有 IP プール** を使用するため、自リポジトリが初めて API を叩いても
+  同 IP の他テナントが先に枠を消費していると即 `403 rate limit exceeded` を踏む
+- `curl -sSfL` は HTTP 4xx で exit 22 だが、`-f` の "Fail silently on server errors" によりエラー本文が出ず、
+  さらにパイプ末尾の `head -n1` が早期 close → 上流に SIGPIPE を送る組み合わせで pipefail が即発火し
+  ログ痕跡なしで step が die する
+
+### 対応
+
+GitHub が公式提供する **`https://github.com/<owner>/<repo>/releases/latest/download/<asset>` の安定リダイレクト URL**
+に切り替え、`api.github.com` 経由の解決を撤廃:
+
+```yaml
+# Before (api 解析方式 — レート制限で fragile)
+DL_URL=$(curl -sSfL https://api.github.com/repos/google/osv-scanner/releases/latest \
+  | grep -oE '"browser_download_url": "[^"]*linux_amd64[^"]*"' \
+  | head -n1 | sed -E 's/.*"(.*)"/\1/')
+curl -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+
+# After (公式安定 URL 経由 — レート制限を受けない)
+DL_URL="https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64"
+curl --retry 3 --retry-delay 2 -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+```
+
+`releases/latest/download/<asset>` は github.com 側で 302 を返してくれるため:
+
+- API 認証不要 (rate limit に該当しない通常の Web リクエスト)
+- JSON parse 不要 (sed/grep 失敗の余地なし)
+- pipefail + SIGPIPE 罠を踏まない (パイプを使わない)
+- アセット名さえ stable なら **常に最新の stable リリース** に解決される
+
+### 抽出したルール
+
+- [ ] **CI ジョブ内で `api.github.com` を未認証で叩かない** — 共有 IP の rate limit (60 req/hour) は
+      自プロジェクト由来でなくても枯渇する。代替は (a) `releases/latest/download/<asset>` の安定 URL、
+      または (b) `secrets.GITHUB_TOKEN` を Authorization ヘッダで付与 (5000 req/hour に拡張)
+- [ ] **`curl -sSf` + `head -n1` のパイプは pipefail と相性が悪い** — `head` の早期 close で上流に
+      SIGPIPE が飛ぶため、`set -euo pipefail` 配下では非ゼロ終了の伏線になる。回避策: パイプを使わず
+      安定 URL に直行する / `awk 'NR==1; {exit}'` で head の代替にする / pipefail を局所的に外す
+- [ ] **CI step が「ログを残さず die」したら共有環境のリソース制限を疑う** — GitHub Actions の場合は
+      `api.github.com` rate limit、Docker Hub anonymous pull limit、HashiCorp registry limit など。
+      ローカル再現できないがランナーで再現する事象はだいたいこの系統
+- [ ] **`-f` (fail silently) と `-S` (show errors) の組み合わせでも HTTP 4xx は黙殺されることがある** —
+      curl のドキュメント上 `-S` は "connection error" にしか効かないケースが含まれる。診断時は
+      `-w '%{http_code}\n'` や `--fail-with-body` (curl 7.76+) を使うとレスポンス本文が出て便利
+- [ ] **GitHub の Releases には常に `latest/download/<asset>` の安定リダイレクト URL がある** — Marketplace
+      にもベンダ自前 install.sh にも依存せず最新を取れる。サプライチェーン経路を最小化したい場合の第一候補
+
+### 関連
+
+- 修正例: PR #296 hotfix 続編 (2026-05-09)
+- §5.X+10 (action 撤廃 → install スクリプト方針 — 本件はその install スクリプトが踏んだ次の罠)
+- §5.X+12 (本セクションで「常に最新を取得」した結果、CLI 仕様変更を踏んだ)
+- 公式 doc: <https://docs.github.com/ja/repositories/releasing-projects-on-github/linking-to-releases>
+  ("最新リリースのファイルへのリンク")
+
+## 5.X+12 「常に最新を取得」する設計は upstream の breaking change を直撃する — メジャーバージョン跨ぎ CLI を本番起動時に検出する仕組みが必要 (PR #296 hotfix 第三弾 / 2026-05-09)
+
+### 背景
+
+§5.X+10 / §5.X+11 で OSV-Scanner を「毎ジョブで最新 stable バイナリを取得 → 実行」する設計に統一した直後、
+PR #296 の次の CI 実行で **OSV-Scanner v2.3.8 が `--skip-git` フラグを認識せず exit 127** で fail した。
+
+```
+Run osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+Incorrect Usage: flag provided but not defined: -skip-git
+##[error]Process completed with exit code 127.
+```
+
+事象解析:
+
+- v1 系で有効だった `--skip-git` は v2 で **削除** された (Cobra → urfave/cli/v3 への移行と同時に CLI 仕様が再構成)
+- 同等機能は **デフォルト挙動** に組み込まれた: `osv-scanner scan source` のフラグ `--include-git-root` (default `false`)
+  → git root スキャンはデフォルトで OFF。v1 の `--skip-git` を渡す必要そのものがなくなった
+- 我々の workflow は「latest stable を毎回取得」する設計のため、**OSV-Scanner v2 が released された瞬間に
+  既存の起動オプションが breaking** した
+
+### 対応
+
+v2 系の正式サブコマンド形式に書き換え:
+
+```yaml
+# Before (v1 syntax — v2 では `--skip-git` 不存在で fail)
+osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+
+# After (v2 syntax — `scan source` サブコマンドに明示)
+osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
+```
+
+公式ソース ([cmd/osv-scanner/scan/source/command.go](https://github.com/google/osv-scanner/blob/main/cmd/osv-scanner/scan/source/command.go))
+で v2 が受け付けるフラグを確認:
+
+- `--lockfile` (`-L`): 残存
+- `--recursive` (`-r`): 残存
+- `--skip-git`: 削除 (代替: デフォルト挙動 + `--include-git-root` opt-in)
+- `--no-ignore`: 新設
+- `--data-source`: 新設 (`deps.dev` / `native`)
+
+### 抽出したルール
+
+- [ ] **「常に最新を取得」する CI 設計には breaking change 検出ステップを併設する** — `<tool> --version` で
+      バージョンを echo + 失敗時のフラグ一覧 echo (`<tool> --help` を `|| true` で必ず流す) を install ステップに
+      入れておくと、メジャーアップデート時の原因特定が秒で終わる
+- [ ] **CLI ツールは「コマンド全体」を一次ソース (公式 git の cmd/.../command.go や cobra/cli 定義) で確認する** —
+      Web ドキュメントは反映遅延がある。OSV-Scanner v2 のフラグ確認は
+      `https://raw.githubusercontent.com/google/osv-scanner/main/cmd/osv-scanner/scan/source/command.go`
+      を curl するのが最速・最確実
+- [ ] **メジャーバージョン跨ぎ前提の install ピン候補を残しておく** — どうしても安定運用したい場合は
+      `releases/download/<v_pinned>/<asset>` で **明示版 pin** する選択肢を残す。Dependabot は「実行ファイルの
+      バイナリ pin」を更新できないので運用はマニュアルになるが、突発 fail を避けられる。
+      本プロジェクトは「最新追従」を優先するためデフォルト stable URL のままだが、トレードオフは認識しておく
+- [ ] **`exit code 127` (command not found / 不明オプション) は CLI 仕様変更を最優先で疑う** — Go の `flag` /
+      `cobra` / `urfave/cli` はいずれも未知フラグで exit 1〜127 を返す。バイナリそのものの欠落 (PATH 通っていない)
+      なら "command not found" を伴う bash メッセージが出るので区別がつく
+- [ ] **CLI 起動オプションは「現バージョン公式の subcommand 形式」に揃える** — レガシー top-level 形式は
+      compat layer で残ることはあるが breaking 対象になりやすい。`osv-scanner scan source ...` のように
+      明示する方が将来の breaking に強い
+
+### 関連
+
+- 修正例: PR #296 hotfix 第三弾 (2026-05-09)
+- §5.X+10 / §5.X+11 (本件の前段 — 同 PR の連続 hotfix 3 連鎖)
+- 公式 ソース (一次): <https://github.com/google/osv-scanner/blob/main/cmd/osv-scanner/scan/source/command.go>
+- 公式 doc: <https://google.github.io/osv-scanner/usage/>

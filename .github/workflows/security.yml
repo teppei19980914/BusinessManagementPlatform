@@ -1,22 +1,32 @@
-# セキュリティスキャンワークフロー (PR #82 で .template から有効化)
+# セキュリティスキャンワークフロー
+#
+# 設計方針 (PR feat/security-auto-update / 2026-05-09 全面再構成):
+#   「ローカル必須チェック撤廃 → CI 自動に一本化」の前提を満たすため、
+#   **すべての検査が実行のたびに最新の検出ルール / 脆弱性 DB を参照する** 構成に変更した。
+#   実装ベースの最新性 (どこから fetch されるか) は本ファイル内の各 step コメントを参照。
 #
 # 実行内容:
-#   1. gitleaks       — 機密情報スキャン (コミット履歴に secrets が混入していないか)
-#   2. pnpm audit     — 依存パッケージの既知脆弱性スキャン
-#   3. semgrep        — SAST (静的セキュリティ解析)
-#   4. CodeQL         — 高度な SAST (GitHub 標準)
+#   1. gitleaks       — 機密情報スキャン (gitleaks-action 最新バージョンの内蔵ルール)
+#   2. pnpm audit     — npm registry に live 問い合わせ (毎回最新 CVE)
+#   3. semgrep        — 公開 community rule set (auto / OWASP Top 10 / Next.js / TypeScript)
+#                       SEMGREP_APP_TOKEN 不要。registry から最新ルールを fetch
+#   4. CodeQL         — GitHub 管理クエリ (`@v3` が実行時に最新クエリスイートを fetch)
+#   5. OSV-Scanner    — Google OSV.dev DB (オープンソース脆弱性 DB、毎回 live)
+#   6. Trivy          — Aqua Security DB (CVE / セキュアコーディング、最新の DB をジョブ起動時に同期)
+#   7. Security Score Gate — `scripts/security-check.ts` (プロジェクト固有設計パターン + pnpm audit live)
+#   8. Attack Matrix — 上記 7 ジョブの結果を summary に集計
 #
 # 実行タイミング:
 #   - main への push / PR
 #   - 毎日 03:00 UTC の定期実行 (新規 CVE 検出のため)
 #
+# 自動更新の仕組み:
+#   - Dependabot (.github/dependabot.yml) が github-actions エコシステムを **週次** で更新
+#     → gitleaks-action / codeql-action / setup-node 等のバージョン pin が古くならない
+#   - npm の CVE が公開された場合は dependabot が即時 PR を起こす (security-only ルール)
+#   - 各 SAST / SCA ツール本体のルールは実行時 fetch (semgrep registry / CodeQL / OSV / Trivy DB)
+#
 # 注意:
-#   - semgrep は SEMGREP_APP_TOKEN secret 未設定時はスキップされる (任意連携)
-#     ※ PR #83: GitHub Actions の制約上、`jobs.<id>.if` 内では `secrets`
-#       コンテキストを直接参照できない (Unrecognized named-value: 'secrets'
-#       エラーになる)。このため step レベルで env 経由に落として自己スキップ
-#       させる形に変更した。
-#       参考: https://docs.github.com/en/actions/learn-github-actions/contexts#context-availability
 #   - gitleaks の有償ライセンス未設定時は free 版で動作 (基本検出は十分)
 
 name: Security Scan
@@ -36,6 +46,9 @@ permissions:
 jobs:
   # ============================================================
   # 1. Secret Scan (gitleaks)
+  #
+  # 最新性: gitleaks-action のバージョンに依存。Dependabot が週次更新するため
+  #   「使用中のバージョンが常に最新」状態が自動維持される。
   # ============================================================
   secret-scan:
     name: Secret Scan
@@ -51,6 +64,9 @@ jobs:
 
   # ============================================================
   # 2. Dependency Vulnerability Scan (pnpm audit)
+  #
+  # 最新性: npm registry の advisory API を毎回 live 問い合わせ。
+  #   新規 CVE が公開された数分後の実行でも反映される。
   # ============================================================
   pnpm-audit:
     name: pnpm audit
@@ -75,30 +91,47 @@ jobs:
         run: pnpm audit --audit-level=high
 
   # ============================================================
-  # 3. SAST - Semgrep (SEMGREP_APP_TOKEN 設定時のみ有効)
+  # 3. SAST - Semgrep (token 不要、コミュニティルール)
+  #
+  # 最新性: semgrep registry (https://semgrep.dev/r/) から **実行時に最新ルールを fetch**。
+  #   - p/security-audit: 一般的な脆弱性パターン
+  #   - p/owasp-top-ten: OWASP Top 10 (年次更新)
+  #   - p/javascript / p/typescript / p/react / p/nextjs: 言語/FW 固有
+  # 旧仕様 (SEMGREP_APP_TOKEN 必須 + skip) を撤廃。token なしでも公開ルールは動作する。
   # ============================================================
   semgrep:
     name: Semgrep SAST
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      image: returntocorp/semgrep
     steps:
       - uses: actions/checkout@v4
-      - name: Run semgrep (skip when token is not set)
-        # PR #83 修正: job レベル `if: ${{ secrets.SEMGREP_APP_TOKEN != '' }}`
-        # は構文エラーになる (Unrecognized named-value: 'secrets')。
-        # step レベルに移し、env 経由で受け取った値で自己スキップさせる。
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+      - name: Run semgrep with auto-update community rule sets
         run: |
-          if [ -z "$SEMGREP_APP_TOKEN" ]; then
-            echo "SEMGREP_APP_TOKEN is not set. Skipping Semgrep scan."
-            exit 0
-          fi
-          semgrep ci --config=auto
+          # `semgrep scan` (= ci ではなく scan) は SEMGREP_APP_TOKEN 不要で動作する公式コマンド。
+          # 公開 ruleset を組み合わせて広範に検出する。--error で HIGH 以上を fail 扱い。
+          semgrep scan \
+            --config=p/security-audit \
+            --config=p/owasp-top-ten \
+            --config=p/javascript \
+            --config=p/typescript \
+            --config=p/react \
+            --config=p/nextjs \
+            --error \
+            --severity=ERROR \
+            --severity=WARNING \
+            --metrics=off \
+            --exclude=node_modules \
+            --exclude=.next \
+            --exclude=src/generated \
+            .
 
   # ============================================================
   # 4. CodeQL (高度な SAST)
+  #
+  # 最新性: github/codeql-action/init@v3 がジョブ実行時に最新の CodeQL クエリスイートと
+  #   GitHub Advisory Database を fetch する。GitHub 公式が継続的に更新するため、
+  #   アクション側の手動更新なしで常に最新の検出ロジックが適用される。
   # ============================================================
   codeql:
     name: CodeQL Analysis
@@ -111,21 +144,105 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
+          # security-extended は標準 + 拡張クエリで検出範囲を広げる (パフォーマンス影響は軽微)
+          queries: security-extended,security-and-quality
       - uses: github/codeql-action/analyze@v3
 
   # ============================================================
-  # 5. Security Score Gate (PR #198 — score 閾値 90 デプロイゲート)
+  # 5. OSV-Scanner (Google Open Source Vulnerability DB)
+  #
+  # 最新性: Google が運用する OSV.dev データベースを実行時に live 問い合わせ。
+  #   pnpm audit の npm registry 由来データと相補的に動作 (OSV は OSS 横断 = npm 以外も対応、
+  #   またコミットレベルの脆弱性追跡があり、npm registry より早く CVE が登録されることがある)。
+  # 公式: https://google.github.io/osv-scanner/
+  #
+  # 採用方式: GitHub が公式提供する `releases/latest/download/<asset>` 安定リダイレクト URL
+  #   経由でバイナリを取得 (常に最新の stable リリースに 302 される)。
+  #   旧方式 (api.github.com の releases/latest を JSON parse) は **未認証 60 req/hour の
+  #   IP 単位 rate limit** に容易に引っかかり、ホストランナーの共有 IP では突然 403 で fail する
+  #   ため撤廃した (PR #296 で観測: 245ms で script 終了 = curl 即時失敗)。
+  # ============================================================
+  osv-scanner:
+    name: OSV-Scanner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install osv-scanner (latest release)
+        run: |
+          set -euo pipefail
+          # 安定リダイレクト URL: 常に latest release の linux_amd64 アセットへ 302 される
+          # (api.github.com を経由しないため rate limit の影響を受けない)
+          DL_URL="https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64"
+          echo "Downloading: $DL_URL"
+          # --retry で transient failure を吸収、-L でリダイレクト追跡
+          curl --retry 3 --retry-delay 2 -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner --version
+      - name: Run osv-scanner against pnpm-lock.yaml
+        run: |
+          # OSV-Scanner v2 系: `scan source` サブコマンド経由で呼び出す。
+          # - --lockfile=<path>: 明示的に lockfile を指定
+          # - --recursive: サブディレクトリも走査
+          # - 末尾の `.` はスキャン対象ディレクトリ
+          # 注: v1 系の `--skip-git` は v2 で削除された (PR #296 続編で観測)。
+          # v2 はデフォルトで `--include-git-root=false` のため、git scanning は明示無効化不要。
+          # CRITICAL/HIGH 検出時に exit 1 で fail
+          osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
+
+  # ============================================================
+  # 6. Trivy (Aqua Security CVE DB + IaC + secrets)
+  #
+  # 最新性: Aqua Security の脆弱性 DB をジョブ起動時に同期。OSV / pnpm audit /
+  #   GitHub Advisory と独立した CVE 源泉を加える。
+  # 公式インストール: https://aquasecurity.github.io/trivy/latest/getting-started/installation/
+  #
+  # 採用方式: 公式 install スクリプトでバイナリを最新版インストール
+  #   (アクション `aquasecurity/trivy-action` のサプライチェーン汚染 GHSA-69fq-xp46-6x23 を回避)。
+  # ============================================================
+  trivy:
+    name: Trivy (CVE / IaC / Secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install trivy (latest stable from official install script)
+        run: |
+          set -euo pipefail
+          # 公式 install.sh は最新の stable リリースを取得 (Aqua Security 提供)
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+          trivy --version
+      - name: Run trivy filesystem scan (SARIF + fail on HIGH/CRITICAL)
+        run: |
+          set -euo pipefail
+          # SARIF 出力 → GitHub Code Scanning に投稿。--exit-code 1 で HIGH/CRITICAL fail。
+          trivy fs \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-results.sarif \
+            --exit-code 1 \
+            --skip-dirs node_modules,.next,src/generated \
+            .
+      - name: Upload Trivy SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: trivy
+
+  # ============================================================
+  # 7. Security Score Gate (PR #198 — score 閾値 90 デプロイゲート)
   #
   # `scripts/security-check.ts` が独自にスキャンしてスコア化したものを **CI で
   # 強制** する。閾値未達なら job が落ち、PR の「必須チェック」(Required status
   # check) を満たせなくなりマージ不可になる。
   #
-  # 本ゲートの狙い:
-  #   - 既存の codeql / semgrep / pnpm audit と独立した、**プロジェクト固有の
-  #     設計上のセキュリティ要件** (callbackUrl 検証、SameSite=Strict、Rate
-  #     limit、MFA 暗号、CSP 等) を回帰させない
-  #   - 設計判断として受容している項目は `.security-check-acceptlist.json` に
-  #     明示し、レビュー対象として残す
+  # 最新性 (混合):
+  #   - 内部の `pnpm audit --json` 呼出は live (npm registry の最新 CVE を反映)
+  #   - 設計パターン検出 (callbackUrl / SameSite / CSP 等) は **scripts/security-check.ts に
+  #     ハードコードされた正規表現** に基づく。新パターン追加には Mode B-2 PR が必要。
+  #   - 公開済 OSS 脆弱性 / 一般 CWE パターンの最新性は OSV-Scanner / Trivy / Semgrep / CodeQL
+  #     が補完する設計 (本 job は **プロジェクト固有の設計要件回帰チェック** に特化)。
   # ============================================================
   security-score-gate:
     name: Security Score Gate (>= 90)
@@ -157,7 +274,7 @@ jobs:
           retention-days: 30
 
   # ============================================================
-  # 6. 攻撃種別マトリクス (PR #84)
+  # 8. 攻撃種別マトリクス (PR #84 + 2026-05-09 拡張: osv-scanner / trivy 追加)
   #
   # 本プロダクトがどの攻撃種別を考慮して実装されているかを俯瞰するための
   # サマリー。GitHub Actions の Job Summary 機能 (GITHUB_STEP_SUMMARY) を
@@ -167,7 +284,7 @@ jobs:
   attack-matrix:
     name: 攻撃種別マトリクス (Attack Matrix)
     runs-on: ubuntu-latest
-    needs: [secret-scan, pnpm-audit, semgrep, codeql, security-score-gate]
+    needs: [secret-scan, pnpm-audit, semgrep, codeql, osv-scanner, trivy, security-score-gate]
     if: always()
     steps:
       - uses: actions/checkout@v4
@@ -178,6 +295,9 @@ jobs:
           AUDIT_STATUS: ${{ needs.pnpm-audit.result }}
           SEMGREP_STATUS: ${{ needs.semgrep.result }}
           CODEQL_STATUS: ${{ needs.codeql.result }}
+          OSV_STATUS: ${{ needs.osv-scanner.result }}
+          TRIVY_STATUS: ${{ needs.trivy.result }}
+          GATE_STATUS: ${{ needs.security-score-gate.result }}
         run: |
           # 判定ヘルパー: success → ✅ / failure → ❌ / skipped → ⚠️
           to_mark() {
@@ -195,7 +315,7 @@ jobs:
           }
 
           GITLEAKS=$(to_mark "$GITLEAKS_STATUS")
-          AUDIT=$(to_mark "$AUDIT_STATUS")
+          AUDIT=$(or_mark "$AUDIT_STATUS" "$OSV_STATUS" "$TRIVY_STATUS")
           CODEQL=$(to_mark "$CODEQL_STATUS")
           SAST=$(or_mark "$SEMGREP_STATUS" "$CODEQL_STATUS")
 

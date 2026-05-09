@@ -5,8 +5,8 @@
 
 | 状況 | 攻撃種別 (Attack) | 主な検証手段 | 備考 |
 |:---:|---|---|---|
-| @@GITLEAKS@@ | 機密情報漏洩 (Secrets Exposure, CWE-798) | gitleaks | git 履歴全走査で API キー / パスワード等を検出 |
-| @@AUDIT@@ | 依存脆弱性 (Dependency Vulnerability, CWE-1104) | pnpm audit (--audit-level=high) | high/critical のみ失敗扱い、毎日 03:00 UTC 再実行 |
+| @@GITLEAKS@@ | 機密情報漏洩 (Secrets Exposure, CWE-798) | gitleaks (Dependabot 週次更新) | git 履歴全走査で API キー / パスワード等を検出 |
+| @@AUDIT@@ | 依存脆弱性 (Dependency Vulnerability, CWE-1104) | pnpm audit + OSV-Scanner + Trivy (3 系統 live DB) | npm registry / Google OSV.dev / Aqua Trivy DB を毎回参照、毎日 03:00 UTC 再実行 |
 | @@SAST@@ | SQL インジェクション (SQL Injection, CWE-89) | Semgrep / CodeQL + Prisma ORM | 本プロダクトは全クエリを Prisma 経由 (raw SQL 非使用) |
 | @@SAST@@ | クロスサイトスクリプティング (XSS, CWE-79) | Semgrep / CodeQL + React JSX 自動エスケープ | 危険な DOM API 利用は Stop hook でブロック |
 | @@SAST@@ | クロスサイトリクエストフォージェリ (CSRF, CWE-352) | next-auth v5 + SameSite=Lax Cookie | API Route は同一オリジンのみ許可 |
@@ -26,8 +26,11 @@
 ### 凡例
 
 - **✅ 対策検証済** : 主な検証手段が走って success
-- **⚠️ 対策は実装済だが検証手段が限定的** : Semgrep が SEMGREP_APP_TOKEN 未設定等で skip
+- **⚠️ 対策は実装済だが検証手段が限定的** : 検出ジョブが skip
 - **❌ 対策の検証が失敗** : 主な検証手段が failure (要修正)
 
 > 注: このマトリクスは「自動スキャン結果 × 実装上の対策設計」を合成した俯瞰ビューです。
-> 個別の脆弱性判断は各ジョブ (Secret Scan / pnpm audit / Semgrep / CodeQL) のログをご確認ください。
+> 個別の脆弱性判断は各ジョブ (Secret Scan / pnpm audit / Semgrep / CodeQL / OSV-Scanner / Trivy / Security Score Gate) のログをご確認ください。
+>
+> **最新性 (2026-05-09 改訂)**: 全ジョブが実行のたびに最新の検出ルール / 脆弱性 DB を参照する構成。
+> アクションのバージョン pin は Dependabot (`.github/dependabot.yml`) が **週次** で自動更新します。

@@ -1,0 +1,75 @@
+# Dependabot 設定 (PR feat/security-auto-update / 2026-05-09)
+#
+# 目的: セキュリティスキャナのアクションバージョン (gitleaks-action / codeql-action / setup-node 等)
+#   が古くなって新しい脅威パターンに追従できなくなる問題を防ぐ。github-actions エコシステムを
+#   週次で自動アップデート + npm の セキュリティアップデートのみ即時 PR 化することで
+#   「外部の最新検出ルールが常時取り込まれる」状態を担保する。
+#
+# 公式ドキュメント:
+#   https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# 更新スコープ:
+#   - github-actions: 週次 (新しい脆弱性検出ルールをすぐに取り込む)
+#   - npm: 月次 (頻繁な PR を避け、セキュリティアップデートのみ別ルールで即時化)
+#   - npm (security only): 即時 PR (ライブラリの CVE 公表時に自動 PR)
+
+version: 2
+
+updates:
+  # ────────────────────────────────────────────────
+  # GitHub Actions: 週次でアクションバージョンを自動更新
+  #   gitleaks-action / codeql-action / pnpm/action-setup / actions/setup-node 等が対象
+  #   これにより gitleaks 等の「アクションにバンドルされた検出ルール」が常に最新化される
+  # ────────────────────────────────────────────────
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '03:00'
+      timezone: 'Asia/Tokyo'
+    labels:
+      - 'dependencies'
+      - 'github-actions'
+    commit-message:
+      prefix: 'chore(actions)'
+    open-pull-requests-limit: 5
+    # マイナー / パッチ更新を自動マージしてくれるツール導入を将来検討。現状は手動マージ。
+    # メジャーアップデートは破壊的変更を含むことがあるため別 PR で慎重に確認する。
+
+  # ────────────────────────────────────────────────
+  # npm: 月次で全依存を更新 (粒度を抑えて開発を妨げない)
+  # ────────────────────────────────────────────────
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'monthly'
+      day: 'first monday'
+      time: '03:00'
+      timezone: 'Asia/Tokyo'
+    labels:
+      - 'dependencies'
+      - 'npm'
+    commit-message:
+      prefix: 'chore(deps)'
+    open-pull-requests-limit: 10
+    # ignore: ここで pin したいパッケージがあれば追加 (現状なし)
+    groups:
+      # Next.js / React など同時更新したい関連パッケージはグループ化して PR 数を抑制
+      next-react:
+        patterns:
+          - 'next'
+          - 'next-*'
+          - 'react'
+          - 'react-*'
+          - '@types/react*'
+      prisma:
+        patterns:
+          - '@prisma/*'
+          - 'prisma'
+      testing:
+        patterns:
+          - 'vitest*'
+          - '@vitest/*'
+          - '@playwright/*'
+          - 'playwright'
