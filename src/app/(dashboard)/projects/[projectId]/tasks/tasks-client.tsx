@@ -64,6 +64,8 @@ import { AttachmentList } from '@/components/attachments/attachment-list';
 import { CommentSection } from '@/components/comments/comment-section';
 // feat/wbs-overwrite-import: WBS 上書きインポート (Sync by ID) ダイアログ
 import { WbsSyncImportDialog } from '@/components/dialogs/wbs-sync-import-dialog';
+// 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ
+import { WorkloadDialog } from '@/components/dialogs/workload-dialog';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -1116,6 +1118,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // feat/wbs-overwrite-import: ID 表示トグル + 上書きインポートダイアログ state
   const [showIdColumn, setShowIdColumn] = useState(false);
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
+  // 2026-05-09 (PR H / #7): 工数集計ダイアログ
+  const [isWorkloadOpen, setIsWorkloadOpen] = useState(false);
 
   const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
   const [parentTaskId, setParentTaskId] = useState('');
@@ -1221,6 +1225,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           title={t('idToggleTooltip')}
         >
           {showIdColumn ? t('hideId') : t('showId')}
+        </Button>
+        {/* 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsWorkloadOpen(true)}
+          title="担当者別の日次予定工数を集計表示します (#7)"
+        >
+          工数集計
         </Button>
         {canEditPmTl && (
           <>
@@ -1884,6 +1897,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         open={isSyncImportOpen}
         onOpenChange={setIsSyncImportOpen}
         onImported={reload}
+      />
+
+      {/* 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ */}
+      <WorkloadDialog
+        projectId={projectId}
+        open={isWorkloadOpen}
+        onOpenChange={setIsWorkloadOpen}
       />
     </div>
   );

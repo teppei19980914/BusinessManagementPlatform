@@ -28,7 +28,7 @@ import {
 } from '@/services/comment.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { validateMentionsForEntity } from '@/services/mention.service';
-import { buildEntityCommentLink } from '@/lib/entity-link';
+// 2026-05-09 (PR H / #3): link は service 層で commentId 付きで再構築するため import 不要
 
 async function notFound() {
   const t = await getTranslations('message');
@@ -90,10 +90,8 @@ export async function PATCH(
       );
     }
   }
-  const link = mentions
-    ? await buildEntityCommentLink(existing.entityType as CommentEntityType, existing.entityId)
-    : '';
-  const updated = await updateComment(id, parsed.data.content, mentions, user.name, link);
+  // 2026-05-09 (PR H / #3): link は updateComment 内で commentId 付きで再構築するため不要
+  const updated = await updateComment(id, parsed.data.content, mentions, user.name);
 
   await recordAuditLog({
     userId: user.id,

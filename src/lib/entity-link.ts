@@ -32,8 +32,25 @@ import type { CommentEntityType } from '@/lib/validators/comment';
 
 /**
  * Notification.link を組み立てる。entity 削除済 / 解決不能ならフォールバック URL を返す。
+ *
+ * 2026-05-09 (#3): commentId が指定されたときは URL に `&commentId={id}` を追加し、
+ *   CommentSection が該当コメントへ自動スクロール + ハイライトできるようにする。
+ *   旧仕様は taskId/riskId 等のみで dialog は開くが、コメントセクションは末尾配置のため
+ *   通知元のコメントが画面外にあるケースが多く、ユーザが「ナビゲーションが切れた」と感じていた。
  */
 export async function buildEntityCommentLink(
+  entityType: CommentEntityType,
+  entityId: string,
+  commentId?: string,
+): Promise<string> {
+  const base = await buildEntityBaseLink(entityType, entityId);
+  // base が fallback URL (= entity 不在で query なし) の場合は commentId も付与しない
+  if (!commentId) return base;
+  if (!base.includes('?')) return base; // fallback path に commentId を付けても意味がないので skip
+  return `${base}&commentId=${commentId}`;
+}
+
+async function buildEntityBaseLink(
   entityType: CommentEntityType,
   entityId: string,
 ): Promise<string> {
@@ -71,10 +88,6 @@ export async function buildEntityCommentLink(
       return k ? `/knowledge?knowledgeId=${entityId}` : '/knowledge';
     }
     case 'stakeholder': {
-      // mention は PM/TL 限定 (route 層で enforce)。
-      // /projects/{id}/stakeholders/page.tsx は存在しない (stakeholder UI はプロジェクト詳細画面の
-      // タブとして実装) ため、`?tab=stakeholders&stakeholderId=...` で tab 切替 + dialog auto-open
-      // を project-detail-client で行う (PR feat/notification-deep-link-completion / 2026-05-01)。
       const s = await prisma.stakeholder.findFirst({
         where: { id: entityId, deletedAt: null },
         select: { projectId: true },
@@ -84,13 +97,9 @@ export async function buildEntityCommentLink(
         : '/projects';
     }
     case 'customer': {
-      // mention は admin 限定 (route 層で enforce)、admin only ページに直接遷移。
       return `/customers/${entityId}`;
     }
     case 'memo': {
-      // PR #213: memo の通知 link は /all-memos?memoId=... に遷移し、cross-list 画面で
-      // dialog auto-open。memo は user-scoped で project member 概念がないため、cross-list が
-      // 唯一の到達手段 (個人 /memos は自分のメモ専用、他人のメモ閲覧には全メモが必要)。
       const m = await prisma.memo.findFirst({
         where: { id: entityId, deletedAt: null },
         select: { id: true },

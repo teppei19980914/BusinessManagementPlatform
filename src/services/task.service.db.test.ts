@@ -524,3 +524,125 @@ describe('bulkUpdateTasks', () => {
     expect(call.where.projectId).toBe('p-1');
   });
 });
+
+// ================================================================
+// 2026-05-09 (PR H / #7): getAssigneeDailyWorkload
+// ================================================================
+
+describe('getAssigneeDailyWorkload (PR H / #7)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('対象なしなら空配列', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValueOnce([]);
+    const { getAssigneeDailyWorkload } = await import('./task.service');
+    const r = await getAssigneeDailyWorkload('p-1');
+    expect(r).toEqual([]);
+  });
+
+  it('plannedEffort を期間で均等按分する (1 タスク 8h × 4 日 = 1 日 2h)', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValueOnce([
+      {
+        assigneeId: 'u-1',
+        assignee: { name: 'Alice' },
+        plannedStartDate: new Date('2026-04-01T00:00:00Z'),
+        plannedEndDate: new Date('2026-04-04T00:00:00Z'), // 4 日 (1,2,3,4 inclusive)
+        plannedEffort: 8 as unknown,
+      },
+    ] as never);
+
+    const { getAssigneeDailyWorkload } = await import('./task.service');
+    const r = await getAssigneeDailyWorkload('p-1');
+
+    expect(r).toHaveLength(1);
+    expect(r[0]?.assigneeId).toBe('u-1');
+    expect(r[0]?.assigneeName).toBe('Alice');
+    expect(r[0]?.totalEffortHours).toBe(8);
+    expect(r[0]?.taskCount).toBe(1);
+    expect(r[0]?.daily).toEqual([
+      { date: '2026-04-01', effortHours: 2 },
+      { date: '2026-04-02', effortHours: 2 },
+      { date: '2026-04-03', effortHours: 2 },
+      { date: '2026-04-04', effortHours: 2 },
+    ]);
+  });
+
+  it('複数 assignee + 期間重複時は同 date で加算 (担当者 = 異なる行で集計)', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValueOnce([
+      {
+        assigneeId: 'u-1',
+        assignee: { name: 'Alice' },
+        plannedStartDate: new Date('2026-04-01T00:00:00Z'),
+        plannedEndDate: new Date('2026-04-02T00:00:00Z'),
+        plannedEffort: 4 as unknown, // 1 日 2h
+      },
+      {
+        assigneeId: 'u-1',
+        assignee: { name: 'Alice' },
+        plannedStartDate: new Date('2026-04-02T00:00:00Z'),
+        plannedEndDate: new Date('2026-04-02T00:00:00Z'),
+        plannedEffort: 3 as unknown, // 4/2 のみ 3h
+      },
+      {
+        assigneeId: 'u-2',
+        assignee: { name: 'Bob' },
+        plannedStartDate: new Date('2026-04-01T00:00:00Z'),
+        plannedEndDate: new Date('2026-04-01T00:00:00Z'),
+        plannedEffort: 5 as unknown,
+      },
+    ] as never);
+
+    const { getAssigneeDailyWorkload } = await import('./task.service');
+    const r = await getAssigneeDailyWorkload('p-1');
+
+    expect(r).toHaveLength(2);
+    // 並び順は totalEffortHours 降順 (Alice 7h > Bob 5h)
+    expect(r[0]?.assigneeName).toBe('Alice');
+    expect(r[0]?.totalEffortHours).toBe(7);
+    expect(r[0]?.daily).toEqual([
+      { date: '2026-04-01', effortHours: 2 },
+      { date: '2026-04-02', effortHours: 5 }, // 2 (按分) + 3 (1 日タスク)
+    ]);
+    expect(r[1]?.assigneeName).toBe('Bob');
+    expect(r[1]?.totalEffortHours).toBe(5);
+  });
+
+  it('plannedEffort=0 や start>end は無視', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValueOnce([
+      {
+        assigneeId: 'u-1',
+        assignee: { name: 'A' },
+        plannedStartDate: new Date('2026-04-01T00:00:00Z'),
+        plannedEndDate: new Date('2026-04-02T00:00:00Z'),
+        plannedEffort: 0 as unknown,
+      },
+      {
+        assigneeId: 'u-1',
+        assignee: { name: 'A' },
+        plannedStartDate: new Date('2026-04-10T00:00:00Z'),
+        plannedEndDate: new Date('2026-04-01T00:00:00Z'), // start > end
+        plannedEffort: 5 as unknown,
+      },
+    ] as never);
+
+    const { getAssigneeDailyWorkload } = await import('./task.service');
+    const r = await getAssigneeDailyWorkload('p-1');
+    expect(r).toEqual([]);
+  });
+
+  it('where 句で activity 限定 + assigneeId/期日が not null', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValueOnce([]);
+    const { getAssigneeDailyWorkload } = await import('./task.service');
+    await getAssigneeDailyWorkload('p-1');
+
+    const callArg = vi.mocked(prisma.task.findMany).mock.calls.at(-1)![0];
+    expect(callArg.where).toEqual(
+      expect.objectContaining({
+        projectId: 'p-1',
+        type: 'activity',
+        assigneeId: { not: null },
+        plannedStartDate: { not: null },
+        plannedEndDate: { not: null },
+      }),
+    );
+  });
+});
