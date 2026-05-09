@@ -325,11 +325,12 @@ describe('deleteCustomerCascade (PR #111-2)', () => {
     }
     // 各 project に同じ options が渡されること
     expect(deleteProjectCascade).toHaveBeenCalledTimes(2);
-    expect(deleteProjectCascade).toHaveBeenNthCalledWith(1, 'p-1', {
+    // 2026-05-09 feedback Phase 2-2: deleteProjectCascade に viewerTenantId が伝達される
+    expect(deleteProjectCascade).toHaveBeenNthCalledWith(1, 'p-1', 'tenant-A', {
       cascadeRisks: true,
       cascadeIssues: true,
     });
-    expect(deleteProjectCascade).toHaveBeenNthCalledWith(2, 'p-2', {
+    expect(deleteProjectCascade).toHaveBeenNthCalledWith(2, 'p-2', 'tenant-A', {
       cascadeRisks: true,
       cascadeIssues: true,
     });
