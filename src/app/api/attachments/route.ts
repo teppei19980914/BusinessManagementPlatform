@@ -58,7 +58,7 @@ async function authorize(
   const t = await getTranslations('message');
   // PR #70: memo は admin 特権なしの個人リソース。project スコープとは別経路で判定する。
   if (entityType === 'memo') {
-    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, mode);
+    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
     if (notFound) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -81,7 +81,7 @@ async function authorize(
   //   見るのが正常動線 (read-only dialog から AttachmentList が GET する)。
   //   write 時は引き続き project member 必須 (visibility 関係なく)。
   if (mode === 'read') {
-    const visInfo = await getEntityVisibility(entityType, entityId);
+    const visInfo = await getEntityVisibility(entityType, entityId, user.tenantId);
     if (visInfo === 'not-found') {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -102,7 +102,7 @@ async function authorize(
   }
 
   // project member 経路 (write 全般 + read on project/task/estimate)
-  const projectIds = await resolveProjectIds(entityType, entityId);
+  const projectIds = await resolveProjectIds(entityType, entityId, user.tenantId);
   if (projectIds === null) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -159,7 +159,7 @@ export async function GET(req: NextRequest) {
   const forbidden = await authorize(user, typed, entityId, 'read');
   if (forbidden) return forbidden;
 
-  const data = await listAttachments(typed, entityId, slot);
+  const data = await listAttachments(typed, entityId, user.tenantId, slot);
   return NextResponse.json({ data });
 }
 
@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
   const forbidden = await authorize(user, parsed.data.entityType, parsed.data.entityId, 'write');
   if (forbidden) return forbidden;
 
-  const created = await createAttachment(parsed.data, user.id);
+  const created = await createAttachment(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,

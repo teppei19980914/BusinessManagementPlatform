@@ -76,18 +76,34 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [x] `getProgressLogs(taskId, viewerTenantId)` — 当初 TODO 漏れ、本 PR で塞いだ
 - [x] `recalculateAncestorsPublic` / `recalculateAncestors` / `recalculateWp` / `recalculateWpOnly` — 内部 helper、上位関数で tenant 検証された taskId しか流れないため変更不要
 
-### comment.service.ts
+### comment.service.ts ✅ 完了 (PR Phase 2-5, 2026-05-10)
 
-- [ ] 全 7 関数 (`listComments` / `getComment` / `createComment` (data.tenantId 明示) / `updateComment` / `deleteComment` / `resolveEntityForComment` / `softDeleteCommentsForEntity`)
-- [ ] `mention.createMany` (createComment 内) も `data.tenantId` 明示
+- [x] `listComments(entityType, entityId, viewerTenantId)`
+- [x] `getComment(commentId, viewerTenantId)`
+- [x] `createComment(input, userId, tenantId, mentions?, mentionerName?)` — `data.tenantId` 明示 + `mention.createMany` にも tenantId 明示
+- [x] `updateComment(commentId, content, viewerTenantId, mentions?, mentionerName?)` — 冒頭で findFirst 所有確認
+- [x] `deleteComment(commentId, viewerTenantId)` — updateMany で tenantId 検証 (越境誤削除遮断)
+- [x] `resolveEntityForComment(entityType, entityId, viewerTenantId)` — 全 entity 検索に tenantId 必須化
+- [x] `softDeleteCommentsForEntity(entityType, entityId, viewerTenantId)` — 越境 cascade 削除遮断
 
-### stakeholder.service.ts
+### stakeholder.service.ts ✅ 完了 (PR Phase 2-5, 2026-05-10)
 
-- [ ] 全 5 関数 (`listStakeholders` / `getStakeholder` / `createStakeholder` (data.tenantId 明示) / `updateStakeholder` / `deleteStakeholder`)
+- [x] `listStakeholders(projectId, viewerTenantId)`
+- [x] `getStakeholder(stakeholderId, viewerTenantId)`
+- [x] `createStakeholder(projectId, input, userId, tenantId)` — project 所有確認 + `data.tenantId` 明示
+- [x] `updateStakeholder(stakeholderId, input, userId, viewerTenantId)`
+- [x] `deleteStakeholder(stakeholderId, userId, viewerTenantId)`
 
-### attachment.service.ts (添付ファイル URL 漏洩は機密情報直結)
+### attachment.service.ts (添付ファイル URL 漏洩は機密情報直結) ✅ 完了 (PR Phase 2-5, 2026-05-10)
 
-- [ ] 全 8 関数 (`listAttachments` / `getAttachment` / `createAttachment` (data.tenantId 明示) / `updateAttachment` / `deleteAttachment` / `getEntityVisibility` / `resolveProjectIds` / `authorizeMemoAttachment`)
+- [x] `listAttachments(entityType, entityId, viewerTenantId, slot?)`
+- [x] `getAttachment(id, viewerTenantId)`
+- [x] `createAttachment(input, userId, tenantId)` — `data.tenantId` 明示
+- [x] `updateAttachment(id, input, viewerTenantId)` — 冒頭で findFirst 所有確認
+- [x] `deleteAttachment(id, viewerTenantId)` — updateMany で tenantId 検証
+- [x] `getEntityVisibility(entityType, entityId, viewerTenantId)` — 全 entity 検索に tenantId 必須化
+- [x] `resolveProjectIds(entityType, entityId, viewerTenantId)` — task / estimate は project 経由で絞り込み
+- [x] `authorizeMemoAttachment(memoId, viewerUserId, mode, viewerTenantId)`
 
 ### estimate.service.ts (契約金額 / 見積根拠の漏洩は致命的)
 

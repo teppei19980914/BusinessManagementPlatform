@@ -53,7 +53,7 @@ describe('listAttachments', () => {
   it('entity 指定で取得する', async () => {
     vi.mocked(prisma.attachment.findMany).mockResolvedValue([row()] as never);
 
-    const r = await listAttachments('risk', 'r1');
+    const r = await listAttachments('risk', 'r1', 'tenant-A');
 
     expect(r).toHaveLength(1);
     expect(prisma.attachment.findMany).toHaveBeenCalledWith(
@@ -66,7 +66,7 @@ describe('listAttachments', () => {
   it('slot 指定ありの場合は where.slot にも反映', async () => {
     vi.mocked(prisma.attachment.findMany).mockResolvedValue([]);
 
-    await listAttachments('risk', 'r1', 'primary');
+    await listAttachments('risk', 'r1', 'tenant-A', 'primary');
 
     expect(prisma.attachment.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -81,12 +81,12 @@ describe('getAttachment', () => {
 
   it('見つからなければ null', async () => {
     vi.mocked(prisma.attachment.findFirst).mockResolvedValue(null);
-    expect(await getAttachment('x')).toBe(null);
+    expect(await getAttachment('x', 'tenant-A')).toBe(null);
   });
 
   it('見つかれば DTO', async () => {
     vi.mocked(prisma.attachment.findFirst).mockResolvedValue(row() as never);
-    const r = await getAttachment('att-1');
+    const r = await getAttachment('att-1', 'tenant-A');
     expect(r?.id).toBe('att-1');
     expect(r?.addedByName).toBe('Alice');
   });
@@ -107,6 +107,7 @@ describe('createAttachment', () => {
         mimeHint: null,
       },
       'user-1',
+      'tenant-A',
     );
 
     expect(prisma.attachment.updateMany).not.toHaveBeenCalled();
@@ -129,6 +130,7 @@ describe('createAttachment', () => {
         mimeHint: null,
       },
       'user-1',
+      'tenant-A',
     );
 
     expect(prisma.attachment.updateMany).toHaveBeenCalledWith(
@@ -145,21 +147,23 @@ describe('updateAttachment / deleteAttachment', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('updateAttachment は指定フィールドのみ更新する', async () => {
+    // 2026-05-09 feedback Phase 2-5: 冒頭の所有確認 mock 必須
+    vi.mocked(prisma.attachment.findFirst).mockResolvedValue({ id: 'att-1' } as never);
     vi.mocked(prisma.attachment.update).mockResolvedValue(row({ displayName: 'new' }) as never);
 
-    await updateAttachment('att-1', { displayName: 'new', url: 'https://x.y', mimeHint: null });
+    await updateAttachment('att-1', { displayName: 'new', url: 'https://x.y', mimeHint: null }, 'tenant-A');
 
     expect(prisma.attachment.update).toHaveBeenCalled();
   });
 
-  it('deleteAttachment は論理削除 (deletedAt set)', async () => {
-    vi.mocked(prisma.attachment.update).mockResolvedValue({} as never);
+  it('deleteAttachment は論理削除 (updateMany で tenantId 検証)', async () => {
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    await deleteAttachment('att-1');
+    await deleteAttachment('att-1', 'tenant-A');
 
-    expect(prisma.attachment.update).toHaveBeenCalledWith(
+    expect(prisma.attachment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'att-1' },
+        where: { id: 'att-1', tenantId: 'tenant-A' },
         data: { deletedAt: expect.any(Date) },
       }),
     );
@@ -171,22 +175,22 @@ describe('resolveProjectIds', () => {
 
   it('project: 存在すれば [id]', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p1' } as never);
-    expect(await resolveProjectIds('project', 'p1')).toEqual(['p1']);
+    expect(await resolveProjectIds('project', 'p1', 'tenant-A')).toEqual(['p1']);
   });
 
   it('project: 不在なら null', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
-    expect(await resolveProjectIds('project', 'p1')).toBe(null);
+    expect(await resolveProjectIds('project', 'p1', 'tenant-A')).toBe(null);
   });
 
   it('task: projectId を返す', async () => {
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectId: 'p2' } as never);
-    expect(await resolveProjectIds('task', 't1')).toEqual(['p2']);
+    expect(await resolveProjectIds('task', 't1', 'tenant-A')).toEqual(['p2']);
   });
 
   it('estimate: projectId を返す', async () => {
     vi.mocked(prisma.estimate.findFirst).mockResolvedValue({ projectId: 'p3' } as never);
-    expect(await resolveProjectIds('estimate', 'e1')).toEqual(['p3']);
+    expect(await resolveProjectIds('estimate', 'e1', 'tenant-A')).toEqual(['p3']);
   });
 
   it('risk: 紐付け済プロジェクト全件を返す (M:N)', async () => {
@@ -195,7 +199,7 @@ describe('resolveProjectIds', () => {
       id: 'r1',
       riskIssueProjects: [{ projectId: 'p4' }, { projectId: 'p4b' }],
     } as never);
-    expect(await resolveProjectIds('risk', 'r1')).toEqual(['p4', 'p4b']);
+    expect(await resolveProjectIds('risk', 'r1', 'tenant-A')).toEqual(['p4', 'p4b']);
   });
 
   it('retrospective: 紐付け済プロジェクト全件を返す (M:N)', async () => {
@@ -203,7 +207,7 @@ describe('resolveProjectIds', () => {
       id: 'ret1',
       retrospectiveProjects: [{ projectId: 'p5' }],
     } as never);
-    expect(await resolveProjectIds('retrospective', 'r1')).toEqual(['p5']);
+    expect(await resolveProjectIds('retrospective', 'r1', 'tenant-A')).toEqual(['p5']);
   });
 
   it('knowledge: 関連プロジェクト配列を返す', async () => {
@@ -212,7 +216,7 @@ describe('resolveProjectIds', () => {
       knowledgeProjects: [{ projectId: 'pA' }, { projectId: 'pB' }],
     } as never);
 
-    expect(await resolveProjectIds('knowledge', 'k1')).toEqual(['pA', 'pB']);
+    expect(await resolveProjectIds('knowledge', 'k1', 'tenant-A')).toEqual(['pA', 'pB']);
   });
 
   it('knowledge: 孤児 (紐付けゼロ) の場合は空配列', async () => {
@@ -221,17 +225,17 @@ describe('resolveProjectIds', () => {
       knowledgeProjects: [],
     } as never);
 
-    expect(await resolveProjectIds('knowledge', 'k1')).toEqual([]);
+    expect(await resolveProjectIds('knowledge', 'k1', 'tenant-A')).toEqual([]);
   });
 
   it('memo: 存在すれば [] (project スコープ外)', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue({ id: 'm1' } as never);
-    expect(await resolveProjectIds('memo', 'm1')).toEqual([]);
+    expect(await resolveProjectIds('memo', 'm1', 'tenant-A')).toEqual([]);
   });
 
   it('memo: 不在なら null', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
-    expect(await resolveProjectIds('memo', 'm1')).toBe(null);
+    expect(await resolveProjectIds('memo', 'm1', 'tenant-A')).toBe(null);
   });
 });
 
@@ -240,7 +244,7 @@ describe('authorizeMemoAttachment', () => {
 
   it('memo 不在なら notFound: true', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
-    expect(await authorizeMemoAttachment('m1', 'u1', 'read')).toEqual({
+    expect(await authorizeMemoAttachment('m1', 'u1', 'read', 'tenant-A')).toEqual({
       ok: false,
       notFound: true,
     });
@@ -251,11 +255,11 @@ describe('authorizeMemoAttachment', () => {
       userId: 'u1',
       visibility: 'public',
     } as never);
-    expect(await authorizeMemoAttachment('m1', 'u1', 'write')).toEqual({
+    expect(await authorizeMemoAttachment('m1', 'u1', 'write', 'tenant-A')).toEqual({
       ok: true,
       notFound: false,
     });
-    expect(await authorizeMemoAttachment('m1', 'u2', 'write')).toEqual({
+    expect(await authorizeMemoAttachment('m1', 'u2', 'write', 'tenant-A')).toEqual({
       ok: false,
       notFound: false,
     });
@@ -266,14 +270,14 @@ describe('authorizeMemoAttachment', () => {
       userId: 'u1',
       visibility: 'public',
     } as never);
-    expect((await authorizeMemoAttachment('m1', 'u2', 'read')).ok).toBe(true);
+    expect((await authorizeMemoAttachment('m1', 'u2', 'read', 'tenant-A')).ok).toBe(true);
 
     vi.mocked(prisma.memo.findFirst).mockResolvedValue({
       userId: 'u1',
       visibility: 'private',
     } as never);
-    expect((await authorizeMemoAttachment('m1', 'u2', 'read')).ok).toBe(false);
-    expect((await authorizeMemoAttachment('m1', 'u1', 'read')).ok).toBe(true);
+    expect((await authorizeMemoAttachment('m1', 'u2', 'read', 'tenant-A')).ok).toBe(false);
+    expect((await authorizeMemoAttachment('m1', 'u1', 'read', 'tenant-A')).ok).toBe(true);
   });
 });
 
@@ -286,7 +290,7 @@ describe('getEntityVisibility', () => {
       visibility: 'public',
       reporterId: 'u-1',
     } as never);
-    expect(await getEntityVisibility('risk', 'r1')).toEqual({
+    expect(await getEntityVisibility('risk', 'r1', 'tenant-A')).toEqual({
       visibility: 'public',
       creatorId: 'u-1',
     });
@@ -297,7 +301,7 @@ describe('getEntityVisibility', () => {
       visibility: 'draft',
       reporterId: 'u-2',
     } as never);
-    expect(await getEntityVisibility('risk', 'r1')).toEqual({
+    expect(await getEntityVisibility('risk', 'r1', 'tenant-A')).toEqual({
       visibility: 'draft',
       creatorId: 'u-2',
     });
@@ -308,7 +312,7 @@ describe('getEntityVisibility', () => {
       visibility: 'public',
       createdBy: 'u-3',
     } as never);
-    expect(await getEntityVisibility('retrospective', 'retro-1')).toEqual({
+    expect(await getEntityVisibility('retrospective', 'retro-1', 'tenant-A')).toEqual({
       visibility: 'public',
       creatorId: 'u-3',
     });
@@ -319,7 +323,7 @@ describe('getEntityVisibility', () => {
       visibility: 'draft',
       createdBy: 'u-4',
     } as never);
-    expect(await getEntityVisibility('knowledge', 'k1')).toEqual({
+    expect(await getEntityVisibility('knowledge', 'k1', 'tenant-A')).toEqual({
       visibility: 'draft',
       creatorId: 'u-4',
     });
@@ -327,13 +331,13 @@ describe('getEntityVisibility', () => {
 
   it('risk が削除済なら not-found', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
-    expect(await getEntityVisibility('risk', 'deleted')).toBe('not-found');
+    expect(await getEntityVisibility('risk', 'deleted', 'tenant-A')).toBe('not-found');
   });
 
   it('project / task / estimate / memo は null (visibility 概念なし)', async () => {
-    expect(await getEntityVisibility('project', 'p1')).toBeNull();
-    expect(await getEntityVisibility('task', 't1')).toBeNull();
-    expect(await getEntityVisibility('estimate', 'e1')).toBeNull();
-    expect(await getEntityVisibility('memo', 'm1')).toBeNull();
+    expect(await getEntityVisibility('project', 'p1', 'tenant-A')).toBeNull();
+    expect(await getEntityVisibility('task', 't1', 'tenant-A')).toBeNull();
+    expect(await getEntityVisibility('estimate', 'e1', 'tenant-A')).toBeNull();
+    expect(await getEntityVisibility('memo', 'm1', 'tenant-A')).toBeNull();
   });
 });

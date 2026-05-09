@@ -30,7 +30,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'stakeholder:read');
   if (forbidden) return forbidden;
 
-  const stakeholders = await listStakeholders(projectId);
+  const stakeholders = await listStakeholders(projectId, user.tenantId);
   return NextResponse.json({ data: stakeholders });
 }
 
@@ -62,7 +62,7 @@ export async function POST(
     );
   }
 
-  const stakeholder = await createStakeholder(projectId, parsed.data, user.id);
+  const stakeholder = await createStakeholder(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,

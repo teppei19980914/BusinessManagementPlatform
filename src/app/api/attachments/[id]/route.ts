@@ -41,7 +41,7 @@ async function authorizeForAttachment(
   const t = await getTranslations('message');
   // PR #70: memo は admin 特権なしの個人リソース。PATCH/DELETE は作成者のみ。
   if (entityType === 'memo') {
-    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, 'write');
+    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, 'write', user.tenantId);
     if (notFound) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -59,7 +59,7 @@ async function authorizeForAttachment(
 
   if (user.systemRole === 'admin') return null;
 
-  const projectIds = await resolveProjectIds(entityType, entityId);
+  const projectIds = await resolveProjectIds(entityType, entityId, user.tenantId);
   if (projectIds === null) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -91,7 +91,7 @@ export async function PATCH(
 
   const { id } = await params;
   const t = await getTranslations('message');
-  const existing = await getAttachment(id);
+  const existing = await getAttachment(id, user.tenantId);
   if (!existing) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -115,7 +115,7 @@ export async function PATCH(
     );
   }
 
-  const updated = await updateAttachment(id, parsed.data);
+  const updated = await updateAttachment(id, parsed.data, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,
@@ -136,7 +136,7 @@ export async function DELETE(
 
   const { id } = await params;
   const t = await getTranslations('message');
-  const existing = await getAttachment(id);
+  const existing = await getAttachment(id, user.tenantId);
   if (!existing) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -151,7 +151,7 @@ export async function DELETE(
   );
   if (forbidden) return forbidden;
 
-  await deleteAttachment(id);
+  await deleteAttachment(id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,
