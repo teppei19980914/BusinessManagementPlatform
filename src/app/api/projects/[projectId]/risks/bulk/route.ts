@@ -54,6 +54,7 @@ export async function PATCH(
     parsed.data.ids,
     parsed.data.patch,
     user.id,
+    user.tenantId,
   );
 
   return NextResponse.json({ data: result });

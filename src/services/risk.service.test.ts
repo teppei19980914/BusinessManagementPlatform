@@ -87,7 +87,7 @@ describe('listRisks', () => {
   it('admin は全リスクをフィルタなしで取得 (M:N 経由)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([rRow()] as never);
 
-    await listRisks('p-1', 'admin-id', 'admin');
+    await listRisks('p-1', 'admin-id', 'admin', TEST_TENANT_ID);
 
     // PR feat/asset-multi-project-linking: scope は M:N (riskIssueProjects) 経由で判定する。
     expect(prisma.riskIssue.findMany).toHaveBeenCalledWith(
@@ -104,7 +104,7 @@ describe('listRisks', () => {
 
   it('非 admin は public + 自分の draft (2026-05-01 仕様変更: 自分の draft は表示)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
-    await listRisks('p-1', 'u-1', 'general');
+    await listRisks('p-1', 'u-1', 'general', TEST_TENANT_ID);
     const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
     // visibility は OR で「public OR (draft AND reporterId=自分)」
     expect(call.where.OR).toEqual([
@@ -457,7 +457,7 @@ describe('deleteRisk', () => {
 
   it('存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
-    await expect(deleteRisk('x', 'u-1', 'general')).rejects.toThrow('NOT_FOUND');
+    await expect(deleteRisk('x', 'u-1', 'general', TEST_TENANT_ID)).rejects.toThrow('NOT_FOUND');
   });
 
   it('作成者本人は削除できる', async () => {
@@ -465,7 +465,7 @@ describe('deleteRisk', () => {
     vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
 
-    await deleteRisk('r-1', 'u-1', 'general');
+    await deleteRisk('r-1', 'u-1', 'general', TEST_TENANT_ID);
 
     expect(prisma.riskIssue.update).toHaveBeenCalledWith({
       where: { id: 'r-1' },
@@ -478,14 +478,14 @@ describe('deleteRisk', () => {
     vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
 
-    await deleteRisk('r-1', 'admin-x', 'admin');
+    await deleteRisk('r-1', 'admin-x', 'admin', TEST_TENANT_ID);
 
     expect(prisma.riskIssue.update).toHaveBeenCalled();
   });
 
   it('非 admin の第三者は FORBIDDEN', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
-    await expect(deleteRisk('r-1', 'u-other', 'general')).rejects.toThrow('FORBIDDEN');
+    await expect(deleteRisk('r-1', 'u-other', 'general', TEST_TENANT_ID)).rejects.toThrow('FORBIDDEN');
   });
 });
 
@@ -551,7 +551,7 @@ describe('bulkUpdateRisksFromList', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ids が空配列なら updateMany を呼ばずに 0 件で返す', async () => {
-    const r = await bulkUpdateRisksFromList('p-1', [], { state: 'resolved' }, 'u-1');
+    const r = await bulkUpdateRisksFromList('p-1', [], { state: 'resolved' }, 'u-1', TEST_TENANT_ID);
     expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
     expect(prisma.riskIssue.updateMany).not.toHaveBeenCalled();
   });
@@ -594,7 +594,7 @@ describe('bulkUpdateRisksFromList', () => {
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    const r = await bulkUpdateRisksFromList('p-1', ['r-1', 'r-MISSING'], { state: 'in_progress' }, 'u-1');
+    const r = await bulkUpdateRisksFromList('p-1', ['r-1', 'r-MISSING'], { state: 'in_progress' }, 'u-1', TEST_TENANT_ID);
     expect(r.updatedIds).toEqual(['r-1']);
     expect(r.skippedNotFound).toBe(1);
   });
@@ -603,7 +603,7 @@ describe('bulkUpdateRisksFromList', () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
       { id: 'r-1', reporterId: 'u-OTHER' },
     ] as never);
-    const r = await bulkUpdateRisksFromList('p-1', ['r-1'], { state: 'resolved' }, 'u-1');
+    const r = await bulkUpdateRisksFromList('p-1', ['r-1'], { state: 'resolved' }, 'u-1', TEST_TENANT_ID);
     expect(r.updatedIds).toEqual([]);
     expect(r.skippedNotOwned).toBe(1);
     expect(prisma.riskIssue.updateMany).not.toHaveBeenCalled();
@@ -615,7 +615,7 @@ describe('bulkUpdateRisksFromList', () => {
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    await bulkUpdateRisksFromList('p-1', ['r-1'], { assigneeId: null }, 'u-1');
+    await bulkUpdateRisksFromList('p-1', ['r-1'], { assigneeId: null }, 'u-1', TEST_TENANT_ID);
     const data = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0].data;
     expect(data).toEqual({ updatedBy: 'u-1', assigneeId: null });
   });
@@ -626,7 +626,7 @@ describe('bulkUpdateRisksFromList', () => {
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    await bulkUpdateRisksFromList('p-1', ['r-1'], { deadline: null }, 'u-1');
+    await bulkUpdateRisksFromList('p-1', ['r-1'], { deadline: null }, 'u-1', TEST_TENANT_ID);
     const data = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0].data;
     expect(data.deadline).toBe(null);
   });
@@ -637,7 +637,7 @@ describe('bulkUpdateRisksFromList', () => {
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    await bulkUpdateRisksFromList('p-1', ['r-1'], { deadline: '2026-12-31' }, 'u-1');
+    await bulkUpdateRisksFromList('p-1', ['r-1'], { deadline: '2026-12-31' }, 'u-1', TEST_TENANT_ID);
     const data = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0].data;
     expect(data.deadline).toBeInstanceOf(Date);
     expect((data.deadline as Date).toISOString()).toContain('2026-12-31');
@@ -726,7 +726,7 @@ describe('unlinkRiskFromProject', () => {
     vi.mocked(prisma.riskIssueProject.findUnique).mockResolvedValue({ id: 'rp-1' } as never);
     vi.mocked(prisma.riskIssueProject.delete).mockResolvedValue({} as never);
 
-    const result = await unlinkRiskFromProject('r-1', 'p-2');
+    const result = await unlinkRiskFromProject('r-1', 'p-2', TEST_TENANT_ID);
     expect(result).toEqual({ removed: true });
     expect(prisma.riskIssueProject.delete).toHaveBeenCalledWith({ where: { id: 'rp-1' } });
   });
@@ -734,7 +734,7 @@ describe('unlinkRiskFromProject', () => {
   it('紐付けなし → removed=false (idempotent)', async () => {
     vi.mocked(prisma.riskIssueProject.findUnique).mockResolvedValue(null);
 
-    const result = await unlinkRiskFromProject('r-1', 'p-2');
+    const result = await unlinkRiskFromProject('r-1', 'p-2', TEST_TENANT_ID);
     expect(result).toEqual({ removed: false });
     expect(prisma.riskIssueProject.delete).not.toHaveBeenCalled();
   });
