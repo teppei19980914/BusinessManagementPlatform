@@ -18,7 +18,15 @@
  */
 
 import { prisma } from '@/lib/db';
-import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
+
+/**
+ * 2026-05-09 (PR E / #19): super_admin ダッシュボード集計から除外するテナント。
+ *   - 管理テナント (MANAGEMENT_TENANT_ID): プラットフォーム運営者用、課金対象外
+ *   - default テナント (DEFAULT_TENANT_ID): v1 単一テナント運用の placeholder。
+ *     後続のマルチテナント運用では実顧客ではない (= 顧客集計に含めない方針 / 設計合意 B)
+ */
+const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
 import {
   getBeginnerExpiryState,
   getBeginnerDaysRemaining,
@@ -73,7 +81,8 @@ export type TenantSummaryRow = {
 export async function listAllTenants(): Promise<TenantSummaryRow[]> {
   const tenants = await prisma.tenant.findMany({
     where: {
-      id: { not: MANAGEMENT_TENANT_ID },
+      // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+      id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
       deletedAt: null,
     },
     orderBy: { tenantSeq: 'asc' },
@@ -364,7 +373,8 @@ export type StorageUsageTopRow = {
 
 export async function listStorageUsageTop(limit: number = 10): Promise<StorageUsageTopRow[]> {
   const tenants = await prisma.tenant.findMany({
-    where: { id: { not: MANAGEMENT_TENANT_ID }, deletedAt: null },
+    // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+    where: { id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS }, deletedAt: null },
     orderBy: { storageBytesUsed: 'desc' },
     take: limit,
     select: {
@@ -419,8 +429,9 @@ export type CrossTenantUsageSummary = {
 };
 
 export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSummary> {
+  // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外して集計
   const tenantWhere = {
-    id: { not: MANAGEMENT_TENANT_ID },
+    id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
     deletedAt: null,
   };
 
@@ -439,7 +450,7 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
       where: {
         isActive: true,
         deletedAt: null,
-        tenantId: { not: MANAGEMENT_TENANT_ID },
+        tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
       },
     }),
   ]);
@@ -450,6 +461,168 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
     totalCurrentMonthApiCalls: agg._sum.currentMonthApiCallCount ?? 0,
     totalCurrentMonthApiCostJpy: agg._sum.currentMonthApiCostJpy ?? 0,
     planDistribution: planGroups.map((p) => ({ plan: p.plan, count: p._count.id })),
+  };
+}
+
+// ================================================================
+// 2026-05-09 (PR E / #12 #14 #15): 外部サービス使用量 + Beginner 期限サマリ
+// ================================================================
+
+/**
+ * Voyage AI 無料枠 (200M tokens / month) のしきい値。
+ * 公式 (https://docs.voyageai.com/docs/pricing) に基づく voyage-4-lite の無料枠。
+ * しきい値変更時は本定数を更新する。
+ */
+const VOYAGE_FREE_TIER_TOKENS_PER_MONTH = 200_000_000;
+
+/**
+ * Voyage AI 無料枠カードの返り値。
+ *   - 当月累計の embedding token 数 (全テナント合算)
+ *   - 200M 上限に対する利用率 (0.0-1.0+)
+ *   - 'ok' / 'warn' (>=80%) / 'alert' (>=100%) のステータス
+ */
+export type VoyageUsageSummary = {
+  currentMonthTokens: number;
+  freeTierTokens: number;
+  utilizationRatio: number;
+  status: 'ok' | 'warn' | 'alert';
+};
+
+/**
+ * Anthropic API 使用量カードの返り値。
+ *   - 当月累計の input/output トークン
+ *   - 当月累計の API 呼び出し回数 (auto-tag-extract + suggestion-explanation)
+ *   - 当月累計の内部請求額 (= プラン別固定単価。Anthropic 実コストとは別系統 — Q5 参照)
+ */
+export type AnthropicUsageSummary = {
+  currentMonthInputTokens: number;
+  currentMonthOutputTokens: number;
+  currentMonthCallCount: number;
+  currentMonthInternalCostJpy: number;
+};
+
+/**
+ * Beginner プラン使用状況サマリ。
+ *   - Beginner プラン契約中のテナント件数
+ *   - 期限切迫 (warning_60 / warning_75 / expired) のテナント件数
+ *   - 当月の Beginner プラン総 API 呼び出し回数 (= 100 回/テナント上限の使用状況)
+ */
+export type BeginnerUsageSummary = {
+  totalTenants: number;
+  warning60Count: number;
+  warning75Count: number;
+  expiredCount: number;
+  totalCurrentMonthCalls: number;
+};
+
+/**
+ * 2026-05-09 (PR E): 当月初 (UTC 1 日 00:00) を返す。月初リセット cron と整合。
+ */
+function getCurrentMonthStartUtc(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0));
+}
+
+/**
+ * 2026-05-09 (PR E / #12): Voyage AI 当月使用量を集計。
+ *   embedding 系の ApiCallLog (modelName = LLM_MODELS.EMBEDDING) を月初から集計。
+ */
+export async function getVoyageUsageSummary(): Promise<VoyageUsageSummary> {
+  const monthStart = getCurrentMonthStartUtc();
+  const result = await prisma.apiCallLog.aggregate({
+    where: {
+      createdAt: { gte: monthStart },
+      // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+      tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
+      embeddingTokens: { not: null },
+    },
+    _sum: { embeddingTokens: true },
+  });
+  const currentMonthTokens = Number(result._sum.embeddingTokens ?? 0);
+  const utilizationRatio = currentMonthTokens / VOYAGE_FREE_TIER_TOKENS_PER_MONTH;
+  const status: VoyageUsageSummary['status'] =
+    utilizationRatio >= 1.0 ? 'alert' : utilizationRatio >= 0.8 ? 'warn' : 'ok';
+  return {
+    currentMonthTokens,
+    freeTierTokens: VOYAGE_FREE_TIER_TOKENS_PER_MONTH,
+    utilizationRatio,
+    status,
+  };
+}
+
+/**
+ * 2026-05-09 (PR E / #14): Anthropic 当月使用量を集計。
+ *   LLM 系の ApiCallLog (llmInputTokens / llmOutputTokens) を月初から集計。
+ */
+export async function getAnthropicUsageSummary(): Promise<AnthropicUsageSummary> {
+  const monthStart = getCurrentMonthStartUtc();
+  const result = await prisma.apiCallLog.aggregate({
+    where: {
+      createdAt: { gte: monthStart },
+      tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
+      // LLM 呼び出しに限る (= input か output トークンのいずれかが記録されている)
+      OR: [
+        { llmInputTokens: { not: null } },
+        { llmOutputTokens: { not: null } },
+      ],
+    },
+    _sum: {
+      llmInputTokens: true,
+      llmOutputTokens: true,
+      costJpy: true,
+    },
+    _count: { id: true },
+  });
+  return {
+    currentMonthInputTokens: Number(result._sum.llmInputTokens ?? 0),
+    currentMonthOutputTokens: Number(result._sum.llmOutputTokens ?? 0),
+    currentMonthCallCount: result._count.id,
+    currentMonthInternalCostJpy: result._sum.costJpy ?? 0,
+  };
+}
+
+/**
+ * 2026-05-09 (PR E / #15): Beginner プランのテナント別使用状況サマリ。
+ *   beginnerExpiryState (active / warning_60 / warning_75 / expired) でカウントし、
+ *   月次 API 呼出合計を返す。
+ */
+export async function getBeginnerUsageSummary(): Promise<BeginnerUsageSummary> {
+  const tenants = await prisma.tenant.findMany({
+    where: {
+      id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
+      deletedAt: null,
+      plan: 'beginner',
+    },
+    select: {
+      createdAt: true,
+      beginnerEverUpgraded: true,
+      currentMonthApiCallCount: true,
+    },
+  });
+
+  const { getBeginnerExpiryState } = await import('./beginner-expiry.service');
+  let warning60 = 0;
+  let warning75 = 0;
+  let expired = 0;
+  let totalCalls = 0;
+  for (const t of tenants) {
+    const state = getBeginnerExpiryState({
+      plan: 'beginner',
+      createdAt: t.createdAt,
+      beginnerEverUpgraded: t.beginnerEverUpgraded,
+    });
+    if (state === 'warning_60') warning60 += 1;
+    else if (state === 'warning_75') warning75 += 1;
+    else if (state === 'expired') expired += 1;
+    totalCalls += t.currentMonthApiCallCount;
+  }
+
+  return {
+    totalTenants: tenants.length,
+    warning60Count: warning60,
+    warning75Count: warning75,
+    expiredCount: expired,
+    totalCurrentMonthCalls: totalCalls,
   };
 }
 
@@ -573,10 +746,11 @@ export async function listDormantTenants(
 ): Promise<DormantTenantRow[]> {
   const cutoffDate = new Date(now.getTime() - thresholdDays * 24 * 60 * 60 * 1000);
 
-  // 顧客テナント全件 (管理テナント・削除済みは除外) + テナント内最新ログインを集計
+  // 顧客テナント全件 (管理テナント + default テナント + 削除済みは除外) + テナント内最新ログインを集計
   const tenants = await prisma.tenant.findMany({
     where: {
-      id: { not: MANAGEMENT_TENANT_ID },
+      // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+      id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
       deletedAt: null,
       // onboarding 期間 (作成 < thresholdDays 前) は休眠判定対象外
       createdAt: { lte: cutoffDate },
