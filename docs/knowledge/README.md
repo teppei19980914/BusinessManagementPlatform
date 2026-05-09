@@ -16,6 +16,7 @@
 - §5.2 認可ルールを変える / §5.14 readOnly edit dialog の認可漏洩 / §5.19 横断ビューの可視性レイヤ整理
 - §5.46 外部スクリプト導入と skill 統合 / §5.47-§5.48 セキュリティスコア初回ブリングアップ + CI Gate
 - §5.51 公開範囲 (visibility) と認可マトリクスの統合 / §5.59〜§5.61 通知 deep link + コメント認可分離
+- §5.X+10 GitHub Actions のサプライチェーン汚染回避 (公式 install スクリプト化) / §5.X+11 `api.github.com` 共有 IP rate limit 回避 (releases/latest/download URL)
 
 ### UI コンポーネント・パターン系
 - §5.4-§5.7 UI レイアウト・ダイアログサイズ・state 初期化 / §5.16-§5.17 全画面トグル + Markdown

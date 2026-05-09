@@ -156,9 +156,11 @@ jobs:
   #   またコミットレベルの脆弱性追跡があり、npm registry より早く CVE が登録されることがある)。
   # 公式: https://google.github.io/osv-scanner/
   #
-  # 採用方式: 公式バイナリの直接ダウンロード + 実行 (action wrapper を経由しない)。
-  #   理由: GitHub Marketplace の osv-scanner-action はパス命名が変動しており解決失敗するため、
-  #   公式 GitHub Releases から最新バイナリを取得する方式に統一 (常時最新)。
+  # 採用方式: GitHub が公式提供する `releases/latest/download/<asset>` 安定リダイレクト URL
+  #   経由でバイナリを取得 (常に最新の stable リリースに 302 される)。
+  #   旧方式 (api.github.com の releases/latest を JSON parse) は **未認証 60 req/hour の
+  #   IP 単位 rate limit** に容易に引っかかり、ホストランナーの共有 IP では突然 403 で fail する
+  #   ため撤廃した (PR #296 で観測: 245ms で script 終了 = curl 即時失敗)。
   # ============================================================
   osv-scanner:
     name: OSV-Scanner
@@ -168,16 +170,12 @@ jobs:
       - name: Install osv-scanner (latest release)
         run: |
           set -euo pipefail
-          # GitHub API から最新リリースの linux amd64 binary URL を取得して設置
-          DL_URL=$(curl -sSfL https://api.github.com/repos/google/osv-scanner/releases/latest \
-            | grep -oE '"browser_download_url": "[^"]*linux_amd64[^"]*"' \
-            | head -n1 | sed -E 's/.*"(.*)"/\1/')
-          if [ -z "$DL_URL" ]; then
-            echo "::error::Could not resolve osv-scanner latest release URL"
-            exit 1
-          fi
+          # 安定リダイレクト URL: 常に latest release の linux_amd64 アセットへ 302 される
+          # (api.github.com を経由しないため rate limit の影響を受けない)
+          DL_URL="https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64"
           echo "Downloading: $DL_URL"
-          curl -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+          # --retry で transient failure を吸収、-L でリダイレクト追跡
+          curl --retry 3 --retry-delay 2 -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
           chmod +x /usr/local/bin/osv-scanner
           osv-scanner --version
       - name: Run osv-scanner against pnpm-lock.yaml
