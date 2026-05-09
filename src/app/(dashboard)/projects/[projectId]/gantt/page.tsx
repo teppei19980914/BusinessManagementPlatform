@@ -19,7 +19,7 @@ export default async function GanttPage({ params }: Props) {
   // GanttClient は WBS と同じ tree 構造を要求する（階層描画 + 担当者フィルタのため）
   const [tasks, members] = await Promise.all([
     listTasks(projectId, session.user.tenantId),
-    listMembers(projectId),
+    listMembers(projectId, session.user.tenantId),
   ]);
 
   return <GanttClient projectId={projectId} tasks={tasks} members={members} />;

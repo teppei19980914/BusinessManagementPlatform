@@ -29,7 +29,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
 
-  const estimates = await listEstimates(projectId);
+  const estimates = await listEstimates(projectId, user.tenantId);
   return NextResponse.json({ data: estimates });
 }
 
@@ -53,7 +53,7 @@ export async function POST(
     );
   }
 
-  const estimate = await createEstimate(projectId, parsed.data, user.id);
+  const estimate = await createEstimate(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,

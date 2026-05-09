@@ -89,25 +89,30 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 
 - [ ] 全 8 関数 (`listAttachments` / `getAttachment` / `createAttachment` (data.tenantId 明示) / `updateAttachment` / `deleteAttachment` / `getEntityVisibility` / `resolveProjectIds` / `authorizeMemoAttachment`)
 
-### estimate.service.ts (契約金額 / 見積根拠の漏洩は致命的)
+### estimate.service.ts (契約金額 / 見積根拠の漏洩は致命的) ✅ 完了 (PR Phase 2-6, 2026-05-10)
 
-- [ ] 全 6 関数
+- [x] `listEstimates(projectId, viewerTenantId)` — project 経由で絞り込み
+- [x] `getEstimate(estimateId, viewerTenantId)`
+- [x] `createEstimate(projectId, input, userId, viewerTenantId)` — 冒頭で project tenant 検証
+- [x] `updateEstimate(estimateId, input, userId, viewerTenantId)` — 冒頭で findFirst 所有確認
+- [x] `confirmEstimate(estimateId, userId, viewerTenantId)`
+- [x] `deleteEstimate(estimateId, userId, viewerTenantId)`
 
-### member.service.ts
+### member.service.ts ✅ 完了 (PR Phase 2-6, 2026-05-10)
 
-- [ ] `listMembers(projectId, viewerTenantId)`
-- [ ] `addMember(projectId, userId, projectRole, viewerTenantId)` — **User と Project の tenantId 一致を verify** (権限昇格攻撃防止)
-- [ ] `updateMemberRole(memberId, ..., viewerTenantId)`
-- [ ] `removeMember(memberId, viewerTenantId)`
+- [x] `listMembers(projectId, viewerTenantId)` — project 経由で絞り込み
+- [x] `addMember(projectId, userId, projectRole, assignedBy, viewerTenantId)` — **User と Project の tenantId 一致を verify** (権限昇格攻撃防止)
+- [x] `updateMemberRole(memberId, newRole, changedBy, viewerTenantId)` — findUnique → findFirst (project tenant 検証)
+- [x] `removeMember(memberId, changedBy, viewerTenantId)`
 
-### user.service.ts (B 拡張)
+### user.service.ts (B 拡張) ✅ 完了 (PR Phase 2-6, 2026-05-10)
 
-- [ ] `createUser(input, creatorId, options, viewerTenantId)` — `data.tenantId` を引数の tenantId と一致確認
-- [ ] `updateUserStatus(userId, isActive, updaterId, viewerTenantId)`
-- [ ] `updateUser(userId, input, updaterId, viewerTenantId)`
-- [ ] `updateUserRole(userId, newRole, updaterId, viewerTenantId)`
-- [ ] `deleteUser(userId, deleterId, viewerTenantId)` — 内部の projectMember カスケードも tenantId 条件併記
-- [ ] `lockInactiveUsers(systemTriggerId, viewerTenantId?)` — cron 経路は意図的全テナント横断、手動経路のみ tenantId 限定
+- [x] `createUser(input, creatorId, options)` — メール重複チェックを tenant scope で実施 + `data.tenantId` を明示
+- [x] `updateUserStatus(userId, isActive, updaterId, viewerTenantId)` — 冒頭で findFirst 所有確認
+- [x] `updateUser(userId, input, updaterId, viewerTenantId)` — 冒頭で findFirst 所有確認 (内部 dispatch も tenant 検証)
+- [x] `updateUserRole(userId, newRole, updaterId, viewerTenantId)` — findUnique → findFirst (tenantId 検証)
+- [x] `deleteUser(userId, deleterId, viewerTenantId)` — findFirst の where に tenantId 必須化
+- [ ] `lockInactiveUsers(systemTriggerId, viewerTenantId?)` — cron 経路は意図的全テナント横断、手動経路のみ tenantId 限定 (Phase 2-9 で対応予定)
 
 ### suggestion.service.ts
 
