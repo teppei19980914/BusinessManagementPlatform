@@ -494,6 +494,7 @@ describe('risksToCSV', () => {
     id: 'r',
     projectId: 'p',
     linkedProjectIds: ['p'],
+    linkedProjects: [{ id: 'p', name: 'Project P', deleted: false }],
     type: 'risk',
     title: 'タイトル',
     content: '',

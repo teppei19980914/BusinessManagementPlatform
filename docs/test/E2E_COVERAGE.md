@@ -108,7 +108,9 @@
 
 ### リスク / 課題 / 振り返り / ナレッジ / サジェスト / メンバー
 - [ ] `/api/projects/[projectId]/risks/*` — skip: PR #C
+- [ ] `/api/projects/[projectId]/risks/[riskId]/link` (POST/DELETE) — skip: PR feat/asset-multi-linking-ui Phase 2 で追加。M:N 紐付けの link/unlink。unit test src/services/risk.service.test.ts で linkRiskToProject / unlinkRiskFromProject を担保
 - [ ] `/api/projects/[projectId]/retrospectives/*` — skip: PR #C
+- [ ] `/api/projects/[projectId]/retrospectives/[retroId]/link` (POST/DELETE) — skip: 同上 (retrospective)。unit test src/services/retrospective.service.test.ts で担保
 - [ ] `/api/projects/[projectId]/knowledge/*` — skip: PR #C
 - [ ] `/api/projects/[projectId]/suggestions/*` — skip: PR #C (提案型サービス、核心機能)
 - [x] `/api/projects/[projectId]/members/*` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 6a POST, GET は画面経由)

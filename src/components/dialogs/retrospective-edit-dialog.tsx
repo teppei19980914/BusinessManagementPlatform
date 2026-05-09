@@ -12,6 +12,8 @@ import {
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { VISIBILITIES } from '@/types';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト表示 + 解除ボタン
+import { LinkedProjectsSection } from '@/components/common/linked-projects-section';
 // PR #199: コメントセクション (旧 retrospective_comments を polymorphic comments テーブルに統合)
 import { CommentSection } from '@/components/comments/comment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
@@ -31,6 +33,8 @@ type RetroLike = {
   problems: string;
   improvements: string;
   visibility: string;
+  // PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト一覧
+  linkedProjects?: { id: string; name: string; deleted: boolean }[];
 };
 
 /**
@@ -43,6 +47,7 @@ export function RetrospectiveEditDialog({
   onOpenChange,
   onSaved,
   readOnly = false,
+  currentProjectId,
 }: {
   retro: RetroLike | null;
   open: boolean;
@@ -50,6 +55,9 @@ export function RetrospectiveEditDialog({
   onSaved: () => Promise<void> | void;
   /** PR #61: 非公開プロジェクト用の参照専用モード */
   readOnly?: boolean;
+  /** PR feat/asset-multi-linking-ui (Phase 2): ダイアログを開いている画面の projectId
+   *  (PATCH URL 構築 + 解除可能 chip の判定に使う)。 */
+  currentProjectId?: string | null;
 }) {
   const t = useTranslations('action');
   const tField = useTranslations('field');
@@ -95,8 +103,16 @@ export function RetrospectiveEditDialog({
     e.preventDefault();
     if (!retro) return;
     setError('');
+    // PR feat/asset-multi-linking-ui (Phase 2): currentProjectId を最優先 (UI 文脈の project)
+    const targetProjectId =
+      currentProjectId ?? retro.projectId ?? retro.linkedProjects?.[0]?.id ?? null;
+    if (!targetProjectId) {
+      setError(tRetro('updateFailed'));
+      showError('編集対象プロジェクトが特定できません (孤児状態)');
+      return;
+    }
     const res = await withLoading(() =>
-      fetch(`/api/projects/${retro.projectId}/retrospectives/${retro.id}`, {
+      fetch(`/api/projects/${targetProjectId}/retrospectives/${retro.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -169,6 +185,16 @@ export function RetrospectiveEditDialog({
             readOnly={readOnly}
             mainLabel={tRetro('relatedUrl')}
           />
+          {/* PR feat/asset-multi-linking-ui (Phase 2): 紐付け先プロジェクト一覧 */}
+          {retro.linkedProjects && (
+            <LinkedProjectsSection
+              entityType="retrospective"
+              entityId={retro.id}
+              linkedProjects={retro.linkedProjects}
+              currentProjectId={currentProjectId ?? null}
+              onChanged={onSaved}
+            />
+          )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
           {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
           <CommentSection entityType="retrospective" entityId={retro.id} />
