@@ -3008,6 +3008,62 @@ grep -rn "status: 400\|status: 422" src/app/api/ | xargs grep -L "recordError\|l
 - `src/services/error-log.service.ts` (recordError API)
 - 修正例: PR fix/attachments-batch-400 (2026-05-01)
 
+### 4.52 dashboard-header に top-nav グループを追加すると chromium-mobile の `fullPage` snapshot 幅が成長する罠 (PR #292 / PR I で遭遇)
+
+#### 罠の正体
+
+PR I で /guide /help を新規追加した際、ヘッダ navGroupsConfig に **5 つ目の「ヘルプ」グループ** を
+追加した。chromium project (PC 1440×900) では問題なく通るが、chromium-mobile (iPhone 13 / 390×664)
+で複数の主要視覚回帰テストが失敗:
+
+```
+Expected an image 402px by 685px, received 408px by 695px.
+  - Snapshot: customer-detail-light.png
+  - Snapshot: settings-light.png
+  - Snapshot: settings-theme-light.png
+```
+
+**幅 +6px / 高さ +10px** の差分。原因は dashboard-header.tsx に追加した groupHelp プルダウンが
+mobile viewport (390px) のヘッダ横幅を押し広げ、ページ全体に **横スクロール** を発生させたこと。
+`fullPage: true` 指定の screenshot は **content の overflow を含む実描画領域** を捕捉するため、
+viewport 390px なのに実画像は 408px になり baseline (402px) と一致しない。
+
+mobile では既に admin で 4 グループ (プロジェクト/資産/テナント管理者/超級) + Discord ボタン +
+Bell + アカウント名 の構成で 12px 程度 overflow しており (baseline 402px = viewport 390 + 12)、
+そこにもう 1 グループを足すと overflow が +6px 拡大する状況。
+
+#### 教訓
+
+- [ ] **dashboard-header.tsx に top-nav グループを追加するときは chromium-mobile の overflow 量を増やさないこと**:
+      既に mobile 幅は overflow 状態 (baseline 402px > viewport 390px) であり、新規グループは
+      `lg:flex hidden` で desktop 限定にするか、**AccountMenu (右上ドロップダウン) 内に格納** する
+- [ ] **AccountMenu は閉じている時 `{open && (...)}` で何もレンダリングしないので、項目を
+      増やしても closed 状態の snapshot は変化しない** — ヘルプ系・ユーティリティ系メニューは
+      ここに集約することで視覚回帰回避
+- [ ] **新規ナビ追加時は `mobile snapshot baseline + 6px` ルール** で事前に判断:
+      iPhone 13 viewport 390px に対して既に baseline が 402px (overflow 12px) の状態なら、
+      余地は厳しい。新規項目で +6px 以上増える見込みならヘッダ外に出す
+- [ ] **Discord 風 hidden sm:flex ボタンの label 変更も snapshot 影響に注意**: 「Discord」(7px 幅)
+      → 「開発者と話す (Discord)」(80px 幅) のように label を伸ばすと desktop snapshot に
+      数 px の影響が出得る。文字数を変える label 変更は事前に snapshot 影響を見積もる
+
+#### 横展開チェック
+
+```bash
+# top-nav に新規グループ / ボタンを追加した PR では、必ず chromium-mobile snapshot で
+# `fullPage: true` 系テストを実行 (customer-detail / settings / dashboard 各画面)
+pnpm e2e --project=chromium-mobile -g 'visual'
+```
+
+snapshot diff が出たら **baseline 更新ではなく「ヘッダから外す」を第一選択** にする
+(横スクロールは UX 悪化のため新規追加で許容しない)。
+
+#### 関連
+
+- 修正例: PR #292 (2026-05-09) — groupHelp を AccountMenu に移動
+- §4.43 (chromium-mobile 1px width drift) — 同じ snapshot 系統の累積誤差問題
+- src/components/dashboard-header.tsx の `navGroupsConfig` (top-nav 構造定義)
+
 ---
 
 ## 8. 未解決課題 (将来 PR 候補)

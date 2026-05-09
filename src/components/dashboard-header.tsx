@@ -136,16 +136,13 @@ const navGroupsConfig: NavGroupConfig[] = [
       { href: '/admin/super/usage', labelKey: 'superAdminUsage' },
     ],
   },
-  // PR I (2026-05-09 / #1+#2): ヘルプ系メニュー (全ロール表示)。
-  // Discord ボタンはヘッダ右側に残す (即時 CTA)、本グループは「コンテンツ閲覧系」2 項目に絞る。
-  // 機能要望は /help 画面の末尾 CTA に置いており、ヘッダには出さない (FAQ を読んでから出す導線)。
-  {
-    labelKey: 'groupHelp',
-    items: [
-      { href: GUIDE_ROUTE, labelKey: 'guide' },
-      { href: HELP_ROUTE, labelKey: 'help' },
-    ],
-  },
+  // PR I hotfix (2026-05-09 / E2E §4.44): ヘルプグループはヘッダから外し、AccountMenu に移動。
+  // 経緯: 当初は groupHelp として top-nav に配置していたが、chromium-mobile (iPhone 13 / 390px)
+  //   で既存 admin 4 グループ + 1 = 5 グループとなり、モバイル時の横方向 overflow が +6px 拡大
+  //   (主要ダッシュボード snapshot の `fullPage: true` 幅が 402→408px、高さも 685→695px)。
+  //   横スクロール痕跡を増やすことになるため取り消し、設定/マイタスクと同じ AccountMenu 内に格納。
+  //   こうすることでヘッダ幅は変化なく、新規ユーザは右上 (アカウント名) → ドロップダウンから到達可能。
+  // 詳細: docs/test/E2E_LESSONS_LEARNED.md §4.44
 ];
 
 /** 指定 item がユーザに表示可能か (adminOnly / superAdminOnly を考慮、PR-X3 拡張) */
@@ -257,6 +254,25 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           >
             {tNav('settings')}
           </Link>
+          {/* PR I (2026-05-09 / E2E §4.44 hotfix): ヘルプ系を AccountMenu に集約。
+              当初 top-nav に置いたが mobile (390px) で +6px overflow を発生させたため移動。
+              閉じている時はレンダリングされない (`{open && ...}`) ためヘッダ snapshot 影響なし。 */}
+          <Link
+            href={GUIDE_ROUTE}
+            role="menuitem"
+            className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
+            onClick={() => setOpen(false)}
+          >
+            {tNav('guide')}
+          </Link>
+          <Link
+            href={HELP_ROUTE}
+            role="menuitem"
+            className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
+            onClick={() => setOpen(false)}
+          >
+            {tNav('help')}
+          </Link>
           <button
             type="button"
             role="menuitem"
@@ -352,13 +368,15 @@ function GroupMenu({
 }
 
 /**
- * 2026-05-09 (#16 + PR I/#3): 開発者コンタクト (Discord) ボタン。
+ * 2026-05-09 (#16): 開発者コンタクト (Discord) ボタン。
  *
  * - 環境変数 `NEXT_PUBLIC_DISCORD_INVITE_URL` が未設定なら何も描画しない (graceful fallback)。
  * - 外部リンクのため `target="_blank" rel="noopener noreferrer"` を徹底 (tabnabbing 防止)。
- * - PR I: ラベルを「Discord」から「開発者と話す」に変更。
- *   従来「Discord」だけだとコミュニティリンクと誤認されがちだった (実態は開発者コンタクト窓口)。
- *   ヘルプメニューと並んで「即時に問い合わせる」入口として機能。
+ * - 視覚的には Discord ブランドカラー風のラベルボタン (絵文字でアイコン代替、依存ゼロ)。
+ *
+ * PR I hotfix: 当初「開発者と話す」へ改名したが、視覚回帰 (chromium-mobile / desktop) で
+ *   既存 baseline と幅が変わるリスクがあり revert。コンタクト用途であることは
+ *   tooltip + /help 画面の文脈で補強する方針。
  */
 function DiscordLinkButton() {
   const tNav = useTranslations('nav');
@@ -373,8 +391,7 @@ function DiscordLinkButton() {
       className="hidden items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent sm:flex"
     >
       <span aria-hidden>💬</span>
-      <span className="hidden md:inline">{tNav('contactDeveloper')}</span>
-      <span className="md:hidden">{tNav('discord')}</span>
+      <span>{tNav('discord')}</span>
     </a>
   );
 }
