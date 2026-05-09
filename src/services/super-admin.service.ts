@@ -876,6 +876,8 @@ export async function purgeOldDeletedTenants(
         memos,
         stakeholders,
         knowledges,
+        // 2026-05-09 hotfix: SuggestionExplanation を project / customer の前で削除
+        suggestionExplanations,
         projects,
         customers,
         importPreviews,
@@ -895,6 +897,9 @@ export async function purgeOldDeletedTenants(
         prisma.memo.deleteMany({ where: { tenantId: t.id } }),
         prisma.stakeholder.deleteMany({ where: { tenantId: t.id } }),
         prisma.knowledge.deleteMany({ where: { tenantId: t.id } }),
+        // 2026-05-09 hotfix: SuggestionExplanation は project_id / tenant_id / generated_by の
+        //   3 経路で FK を持つ。project / tenant / user の削除前に必ず明示削除する。
+        prisma.suggestionExplanation.deleteMany({ where: { tenantId: t.id } }),
         prisma.project.deleteMany({ where: { tenantId: t.id } }),
         prisma.customer.deleteMany({ where: { tenantId: t.id } }),
         prisma.tenantImportPreview.deleteMany({ where: { tenantId: t.id } }),
@@ -917,6 +922,8 @@ export async function purgeOldDeletedTenants(
         memos.count +
         stakeholders.count +
         knowledges.count +
+        // 2026-05-09 hotfix: SuggestionExplanation も合算
+        suggestionExplanations.count +
         projects.count +
         customers.count +
         importPreviews.count +

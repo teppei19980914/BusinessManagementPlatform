@@ -27,6 +27,8 @@ vi.mock('@/lib/db', () => ({
     projectMember: { deleteMany: vi.fn() },
     // PR #89: deleteProject + deleteProjectCascade は attachment を扱う
     attachment: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    // 2026-05-09 hotfix: deleteProjectCascade は SuggestionExplanation も cleanup
+    suggestionExplanation: { deleteMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -771,6 +773,8 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     vi.mocked(prisma.task.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.estimate.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue({ count: 0 } as never);
+    // 2026-05-09 hotfix: SuggestionExplanation cleanup
+    vi.mocked(prisma.suggestionExplanation.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.project.delete).mockResolvedValue({} as never);
   });
 
@@ -787,6 +791,16 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     // 本体 + 強制削除対象 (task / estimate / projectMember / project) は実行される
     expect(prisma.project.delete).toHaveBeenCalledWith({ where: { id: 'p-1' } });
     expect(prisma.projectMember.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'p-1' } });
+  });
+
+  // 2026-05-09 hotfix: project.delete 前に SuggestionExplanation を必ず deleteMany する
+  //   (FK suggestion_explanations_project_id_fkey の P2003 を回避)。本番障害の再現防止。
+  it('project.delete 前に SuggestionExplanation を必ず削除する (#hotfix)', async () => {
+    await deleteProjectCascade('p-1');
+
+    expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'p-1' },
+    });
   });
 
   it('cascadeRisks=true: リスク (type=risk) と添付を物理削除', async () => {
