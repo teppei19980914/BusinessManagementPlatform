@@ -154,9 +154,12 @@ export async function createTenantWithFullDataset(
   const projectId = projectRes.rows[0].id;
 
   // 6. ProjectMember (admin = pm_tl, general = member)
+  // NOTE: Prisma の `@updatedAt` は client 側でのみ自動セットされる装飾子であり、
+  //   DB column 自体は `TIMESTAMPTZ NOT NULL` (DEFAULT なし)。生 SQL では NOW() を明示。
+  //   created_at は `@default(now())` 持ちなので省略可能だが対称性のため両方書く。
   await pool.query(
-    `INSERT INTO project_members (project_id, user_id, project_role, assigned_by)
-     VALUES ($1, $2, 'pm_tl', $2), ($1, $3, 'member', $2)`,
+    `INSERT INTO project_members (project_id, user_id, project_role, assigned_by, created_at, updated_at)
+     VALUES ($1, $2, 'pm_tl', $2, NOW(), NOW()), ($1, $3, 'member', $2, NOW(), NOW())`,
     [projectId, adminId, generalId],
   );
 
@@ -202,8 +205,11 @@ export async function createTenantWithFullDataset(
   const riskId = riskRes.rows[0].id;
 
   // M:N 紐付け (RiskIssueProject)
+  // NOTE: 実 DB テーブル名は `risk_issue_projects` (単数形)。schema.prisma L651 の
+  //   `@@map("risk_issue_projects")` が正。RiskIssue モデルが `risks_issues` に
+  //   map されるのと混同しやすいので注意。
   await pool.query(
-    `INSERT INTO risks_issues_projects (risk_issue_id, project_id) VALUES ($1, $2)`,
+    `INSERT INTO risk_issue_projects (risk_issue_id, project_id) VALUES ($1, $2)`,
     [riskId, projectId],
   );
 
@@ -236,8 +242,9 @@ export async function createTenantWithFullDataset(
     [tenantId, projectId, adminId],
   );
   const retrospectiveId = retroRes.rows[0].id;
+  // 実 DB テーブル名は `retrospective_projects` (単数形)。schema.prisma L844 の `@@map` が正。
   await pool.query(
-    `INSERT INTO retrospectives_projects (retrospective_id, project_id) VALUES ($1, $2)`,
+    `INSERT INTO retrospective_projects (retrospective_id, project_id) VALUES ($1, $2)`,
     [retrospectiveId, projectId],
   );
 
@@ -344,11 +351,14 @@ export async function cleanupTenants(tenantIds: string[]): Promise<void> {
       'notifications',
       'stakeholders',
       'memos',
-      'retrospectives_projects',
+      // M:N link table 名は単数形 (schema.prisma の `@@map` を参照)。
+      // 注: 本体側 (`risks_issues` / `retrospectives` / `knowledges`) は複数形だが
+      //     link は `risk_issue_projects` / `retrospective_projects` / `knowledge_projects` と単数形。
+      'retrospective_projects',
       'retrospectives',
       'knowledge_projects',
       'knowledges',
-      'risks_issues_projects',
+      'risk_issue_projects',
       'risks_issues',
       'estimates',
       'task_progress_logs',

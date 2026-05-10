@@ -3195,10 +3195,25 @@ test.afterAll(async () => {
 | 3 | `projects` | `purpose` / `background` / `scope` / `dev_method` / `planned_start_date` / `planned_end_date` (全て NOT NULL) | CI run 2 (25624486444) |
 | 4 | `estimates` | `item_name` (`name` を誤指定) / `category` / `dev_method` / `estimated_effort` / `effort_unit` / `rationale` (全て NOT NULL) / `status` 列は存在しない | (3 と同時修正) |
 | 5 | `stakeholders` | `influence` / `interest` / `attitude` / `current_engagement` / `desired_engagement` (全て NOT NULL) | (3 と同時修正) |
+| 6 | `project_members` | `updated_at` (Prisma `@updatedAt` は client 専用、DB 列は NOT NULL DEFAULT なし) | CI run 3 (25625257419) |
+| 7 | `risks_issues_projects` (誤テーブル名) | 正しくは `risk_issue_projects` (単数形)。`@@map("risk_issue_projects")` 参照 | (6 と同時に発見、未到達) |
+| 8 | `retrospectives_projects` (誤テーブル名) | 正しくは `retrospective_projects` (単数形)。`@@map("retrospective_projects")` 参照 | (6 と同時に発見、未到達) |
 
-→ **教訓**: 「fixture 1 件 INSERT → CI で次の violation を発見 → 修正」を繰り返すと CI 1 回 = 5〜10 分の
+→ **教訓 1**: 「fixture 1 件 INSERT → CI で次の violation を発見 → 修正」を繰り返すと CI 1 回 = 5〜10 分の
 無駄が累積する。fixture 作成時点で `prisma/schema.prisma` を 14 モデル全て trace し、
 各 model の `String` (`@db.VarChar` `@db.Text` `@db.Date`) で末尾に `?` のないカラムを **すべて** 書き出す。
+
+→ **教訓 2**: **Prisma `@updatedAt` は client 側装飾子のみ**。マイグレーション SQL では
+`"updated_at" TIMESTAMPTZ NOT NULL` (DEFAULT なし) として生成されるため、
+**Prisma client を経由しない生 SQL INSERT は必ず `NOW()` を明示的に渡す** こと。
+`@default(now())` 持ちの `created_at` は省略可だが、対称性のため両方書くと安全。
+
+→ **教訓 3**: **本体テーブルが複数形でも M:N 中間テーブル名は単数形** という不一致パターンが存在。
+`risks_issues` ⇄ `risk_issue_projects` / `retrospectives` ⇄ `retrospective_projects`
+(`knowledges` ⇄ `knowledge_projects` のみ整合)。生 SQL を書く前に必ず `@@map` を grep する:
+```bash
+grep -E '@@map\("(risk_issue_projects|retrospective_projects|knowledge_projects)"\)' prisma/schema.prisma
+```
 
 #### 関連
 
