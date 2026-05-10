@@ -36,7 +36,7 @@ export async function GET(
     const forbidden = await checkProjectPermission(user, projectId, 'risk:update');
     if (forbidden) return forbidden;
 
-    const csv = await exportRisksSync(projectId, user.id, user.systemRole);
+    const csv = await exportRisksSync(projectId, user.id, user.systemRole, user.tenantId);
     return new NextResponse(csv, {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',

@@ -107,6 +107,7 @@ type DbMemoSnapshot = {
 export async function computeMemoSyncDiff(
   userId: string,
   csvRows: MemoSyncImportRow[],
+  viewerTenantId: string,
 ): Promise<MemoSyncDiffResult> {
   const result: MemoSyncDiffResult = {
     summary: { added: 0, updated: 0, removed: 0, blockedErrors: 0, warnings: 0 },
@@ -125,8 +126,9 @@ export async function computeMemoSyncDiff(
   }
 
   // 自分のメモのみを対象 (user-scoped)
+  // 2026-05-10 Phase 2-8: tenantId 二重防御 (userId + tenantId で絞り込み)
   const existingMemos = await prisma.memo.findMany({
-    where: { userId, deletedAt: null },
+    where: { userId, tenantId: viewerTenantId, deletedAt: null },
     select: { id: true, userId: true, title: true, content: true, visibility: true },
   });
 
@@ -250,8 +252,9 @@ export async function applyMemoSyncImport(
   userId: string,
   csvRows: MemoSyncImportRow[],
   removeMode: RemoveMode,
+  viewerTenantId: string,
 ): Promise<MemoSyncImportResult> {
-  const diff = await computeMemoSyncDiff(userId, csvRows);
+  const diff = await computeMemoSyncDiff(userId, csvRows, viewerTenantId);
   if (!diff.canExecute) {
     const msgs = [
       ...diff.globalErrors,
@@ -269,7 +272,8 @@ export async function applyMemoSyncImport(
     }
   }
 
-  const snapshot = await prisma.memo.findMany({ where: { userId, deletedAt: null } });
+  // 2026-05-10 Phase 2-8: tenantId 二重防御
+  const snapshot = await prisma.memo.findMany({ where: { userId, tenantId: viewerTenantId, deletedAt: null } });
   const snapshotById = new Map(snapshot.map((m) => [m.id, m]));
 
   const createdIds: string[] = [];
@@ -285,11 +289,17 @@ export async function applyMemoSyncImport(
       };
 
       if (row.id) {
+        // 2026-05-10 Phase 2-8: 二重防御 - 自テナント + 自分のメモであることを確認後に update
+        const owned = await prisma.memo.findFirst({
+          where: { id: row.id, userId, tenantId: viewerTenantId },
+          select: { id: true },
+        });
+        if (!owned) throw new Error(`IMPORT_VALIDATION_ERROR:ID "${row.id}" が見つかりません`);
         await prisma.memo.update({ where: { id: row.id }, data });
         updatedIds.push(row.id);
       } else {
         const created = await prisma.memo.create({
-          data: { ...data, userId },
+          data: { ...data, userId, tenantId: viewerTenantId },
         });
         createdIds.push(created.id);
       }
@@ -298,11 +308,12 @@ export async function applyMemoSyncImport(
     if (removeMode === 'delete') {
       for (const r of diff.rows) {
         if (r.action === 'REMOVE_CANDIDATE' && r.id && !r.hasProgress) {
-          await prisma.memo.update({
-            where: { id: r.id },
+          // 2026-05-10 Phase 2-8: tenantId フィルタ付きで二重防御
+          const updated = await prisma.memo.updateMany({
+            where: { id: r.id, userId, tenantId: viewerTenantId },
             data: { deletedAt: new Date() },
           });
-          softDeletedIds.push(r.id);
+          if (updated.count === 1) softDeletedIds.push(r.id);
         }
       }
     }
@@ -351,9 +362,10 @@ function escapeCsv(v: string | null | undefined): string {
   return s;
 }
 
-export async function exportMemosSync(userId: string): Promise<string> {
+export async function exportMemosSync(userId: string, viewerTenantId: string): Promise<string> {
+  // 2026-05-10 Phase 2-8: tenantId 二重防御
   const memos = await prisma.memo.findMany({
-    where: { userId, deletedAt: null },
+    where: { userId, tenantId: viewerTenantId, deletedAt: null },
     orderBy: { createdAt: 'desc' },
   });
 

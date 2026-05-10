@@ -4,11 +4,16 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     retrospective: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
       deleteMany: vi.fn(),
+    },
+    // 2026-05-10 Phase 2-8: 越境 sync-import 遮断のため project の tenant 検証を実施
+    project: {
+      findFirst: vi.fn(),
     },
   },
 }));
@@ -106,52 +111,58 @@ function csvRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe('computeRetrospectiveSyncDiff (T-22 Phase 22b)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 2026-05-10 Phase 2-8: テナント検証 mock — 全テストで「自テナント所有」の前提
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
+    // 2026-05-10 Phase 2-8: applyRetrospectiveSyncImport 内 owned check のデフォルト
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ id: 'r-1' } as never);
+  });
 
   it('空の CSV はグローバルエラー', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([] as never);
-    const r = await computeRetrospectiveSyncDiff(projectId, []);
+    const r = await computeRetrospectiveSyncDiff(projectId, [], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 
   it('500 件超は globalError', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([] as never);
     const rows = Array.from({ length: 501 }, (_, i) => csvRow({ tempRowIndex: i + 2, conductedDate: `2026-${String(Math.floor(i / 28) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')}` }));
-    const r = await computeRetrospectiveSyncDiff(projectId, rows);
+    const r = await computeRetrospectiveSyncDiff(projectId, rows, 'tenant-A');
     expect(r.canExecute).toBe(false);
     expect(r.globalErrors[0]).toContain('500 件');
   });
 
   it('ID 空欄 + DB 同実施日なし → CREATE', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([] as never);
-    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ conductedDate: '2026-05-01' })]);
+    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ conductedDate: '2026-05-01' })], 'tenant-A');
     expect(r.canExecute).toBe(true);
     expect(r.summary.added).toBe(1);
   });
 
   it('ID 空欄 + DB 同実施日あり → blocker', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([baseDbRetro] as never);
-    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ conductedDate: '2026-04-15' })]);
+    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ conductedDate: '2026-04-15' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
     expect(r.rows[0].errors?.[0]).toContain('同じ実施日');
   });
 
   it('ID 一致 + 変更なし → NO_CHANGE', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([baseDbRetro] as never);
-    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'r-1' })]);
+    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'r-1' })], 'tenant-A');
     expect(r.rows[0].action).toBe('NO_CHANGE');
   });
 
   it('ID 一致 + improvements 変更 → UPDATE + fieldChanges', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([baseDbRetro] as never);
-    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'r-1', improvements: '改善 v2' })]);
+    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'r-1', improvements: '改善 v2' })], 'tenant-A');
     expect(r.rows[0].action).toBe('UPDATE');
     expect(r.rows[0].fieldChanges?.find((fc) => fc.field === 'improvements')).toBeDefined();
   });
 
   it('ID DB に不在 → blocker', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([] as never);
-    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'unknown' })]);
+    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'unknown' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 
@@ -160,7 +171,7 @@ describe('computeRetrospectiveSyncDiff (T-22 Phase 22b)', () => {
       baseDbRetro,
       { ...baseDbRetro, id: 'r-2', conductedDate: new Date('2026-03-20'), state: 'draft' },
     ] as never);
-    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'r-1' })]);
+    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'r-1' })], 'tenant-A');
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(false);
     expect(removeRow?.warningLevel).toBe('WARN');
@@ -171,7 +182,7 @@ describe('computeRetrospectiveSyncDiff (T-22 Phase 22b)', () => {
       baseDbRetro,
       { ...baseDbRetro, id: 'r-2', conductedDate: new Date('2026-03-20'), state: 'finalized' },
     ] as never);
-    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'r-1' })]);
+    const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ id: 'r-1' })], 'tenant-A');
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(true);
     expect(removeRow?.warningLevel).toBe('ERROR');
@@ -182,17 +193,21 @@ describe('computeRetrospectiveSyncDiff (T-22 Phase 22b)', () => {
     const r = await computeRetrospectiveSyncDiff(projectId, [
       csvRow({ id: 'r-1', conductedDate: '2026-04-15', tempRowIndex: 2 }),
       csvRow({ id: 'r-1', conductedDate: '2026-03-20', tempRowIndex: 3 }),
-    ]);
+    ], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 });
 
 describe('applyRetrospectiveSyncImport (T-22 Phase 22b)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ id: 'r-1' } as never);
+  });
 
   it('canExecute=false なら IMPORT_VALIDATION_ERROR を投げる', async () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([] as never);
-    await expect(applyRetrospectiveSyncImport(projectId, [], 'keep', 'u-1'))
+    await expect(applyRetrospectiveSyncImport(projectId, [], 'keep', 'u-1', 'tenant-A'))
       .rejects.toThrow(/IMPORT_VALIDATION_ERROR/);
   });
 
@@ -204,7 +219,7 @@ describe('applyRetrospectiveSyncImport (T-22 Phase 22b)', () => {
     const result = await applyRetrospectiveSyncImport(projectId, [
       csvRow({ id: 'r-1', improvements: '改善 v2' }),
       csvRow({ conductedDate: '2026-05-01', improvements: '新規' }),
-    ], 'keep', 'u-1');
+    ], 'keep', 'u-1', 'tenant-A');
 
     expect(result.added).toBe(1);
     expect(result.updated).toBe(1);
