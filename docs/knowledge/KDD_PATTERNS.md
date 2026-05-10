@@ -5616,3 +5616,94 @@ default: {
   - CWE-94 (Improper Control of Generation of Code / 'Code Injection'): <https://cwe.mitre.org/data/definitions/94.html>
   - CWE-290 (Authentication Bypass by Spoofing): <https://cwe.mitre.org/data/definitions/290.html>
   - CWE-807 (Reliance on Untrusted Inputs in a Security Decision): <https://cwe.mitre.org/data/definitions/807.html>
+
+## 5.X+17 同一ファイルを **複数開発中 PR が並行更新する場合の merge conflict 対策** (PR #306 で確立)
+
+### 背景
+
+Phase 2 テナント越境対策を 9 個の独立 PR (#298〜#306) に分割して並行進行した結果、**全 PR が同じドキュメント `docs/security/TENANT_ISOLATION_PHASE2_TODO.md` を更新**する設計となり、後発の PR が先行 PR のマージ後に必ず conflict を起こした。
+
+PR #306 (Phase 2-9) の場合:
+- 作成時点 (2026-05-09): main は #297-#300 までマージ済
+- マージ時点 (2026-05-10): main は #301-#305 + #307 までマージ済 ← **5 PR 分の進捗が main 側に書き込まれている**
+- PR #306 自身も「Phase 2-9 完了マーク」を doc に追加していた → 3 箇所で衝突
+
+```
+docs/security/TENANT_ISOLATION_PHASE2_TODO.md
+  3 箇所 conflict (knowledge/retrospective/memo セクション + memo の createMemo 行 +
+                    comment/stakeholder/attachment/estimate/member/user セクション)
+```
+
+### 観測された衝突パターン
+
+| パターン | 例 | 解消方針 |
+|---|---|---|
+| 同じセクションを **両方が完了マーク** | knowledge.service.ts: HEAD は `(PR #301 Phase 2-4)`、main は `(PR Phase 2-4, 2026-05-09)` で文言違い | **main を採用** (実際に merge されたバージョン) |
+| 一方が後続項目を追加 | memo.service.ts に main 側で `createMemo` 行が追加 | **main を採用** (情報が増えている) |
+| 一方が完了状態を更新 | user.service.ts の `lockInactiveUsers` を HEAD は `[x]`、main は `[ ] (Phase 2-9 で対応予定)` | **実態を確認**: コードを grep して既に実装済みなら `[x]` を採用 (HEAD の認識が正しい)、未実装なら main を採用 |
+| **後続フェーズ PR が前フェーズの暫定実装を最終形に置換** | PR #307 (Phase 2-10) で `audit-logs/route.ts`: HEAD は `where: { tenantId: user.tenantId }` (直接列フィルタ、Phase 2-10 schema 列追加が前提)、main は `where: { user: { tenantId } }` (Phase 2-9 暫定対応の relation 経由) | **HEAD を採用** (Phase 2-10 schema 列追加で初めて有効になる最終形)。Phase 2-9 は schema 制約下の暫定 fallback だったため、Phase 2-10 が完成したら HEAD の方が技術的に正解 |
+
+### 採用したルール
+
+- [ ] **進捗 doc は「PR 番号で完了マーク」をやめ「日付ベース」に揃える**: `(PR #301 Phase 2-4)` ではなく `(PR Phase 2-4, 2026-05-09)` のように **日付** を主キーにする。PR 番号は merge 順で前後するが、日付は単調で衝突解消の判断基準として一意
+- [ ] **同 doc を更新する PR が並行する場合、後発 PR は冒頭で `git pull origin main` してリベースを試す**: `gh pr view <n> --json mergeStateStatus` で `DIRTY` (= conflict) を検出したら即対応する。マージ直前に発覚すると CI 再実行で +30 分のロス
+- [ ] **conflict 解消の判断基準**: 「**実際に main にマージされた状態が真**」が原則。HEAD 側の文言が古い情報 (PR 作成時点の認識) で、main 側の文言が最新の実装状況を反映している。ただし「完了マーク `[x]/[ ]`」については、対応する **コードの grep で実態を確認**してから判断する (= doc が間違っている可能性も考慮)
+- [ ] **Phase 並行型 PR では doc 更新を別 PR にまとめる選択肢もあり**: 今回は各 PR が自分の進捗を doc に書き込む方式だったが、これだと N 並行 PR で N-1 回 conflict を踏む。代替案として **進捗 doc 更新だけを別 PR で月末バッチ更新**にすると衝突 0 にできる (但し各 PR の進捗が他 PR からは見えないトレードオフあり)
+- [ ] **進捗 doc に書く粒度を制御する**: 「全 7 関数」のような略記より「個別関数名 + 一行説明」の方が衝突しても merge tool が機械的に解消できる確率が高い (3-way merge 時の anchor が増えるため)
+
+### conflict 解消手順 (本件で確立)
+
+```bash
+# 1. main 取り込みを試行
+git checkout <pr-branch>
+git pull origin main --no-edit
+
+# 2. conflict ファイル一覧を確認
+git status | grep "both modified"
+
+# 3. 各 conflict について「main 側」を採用するか「HEAD 側」を採用するか判定
+git diff <conflict-file>     # markers と内容を確認
+# - 文言違いだけ                   → main を採用 (より新しい)
+# - HEAD のみ追加項目あり          → HEAD を採用
+# - main のみ追加項目あり          → main を採用
+# - 両方が同じ行を異なる完了状態に  → コード grep で実態確認
+
+# 4. 全 conflict 解消後に検証
+grep -rn "<<<<<<<\|=======\|>>>>>>>" docs/   # → 出力なしを確認
+pnpm test && pnpm build                       # → リグレッションなしを確認
+
+# 5. merge commit を完了
+git add <conflict-files>
+git commit --no-edit                          # default merge message を採用
+git push
+```
+
+### 後続フェーズが暫定実装を置換する場合のルール (PR #307 で確立)
+
+Phase 2-9 と Phase 2-10 のように **同じファイルを段階的に進化させる PR** が並行する場合、
+2 つの異なる衝突パターンが発生する:
+
+1. **HEAD = 最終形 / main = 暫定 fallback**: Phase 2-10 (PR #307) は schema 列追加を前提とした
+   最終実装 (`where.tenantId`)。Phase 2-9 (PR #306) は schema 列が無い段階での暫定実装
+   (`where.user.tenantId`)。**HEAD を採用** (= schema 列がある前提の最終形が正解)
+2. **HEAD = 暫定 / main = 最終形**: 通常はこの順で発生しない (= 後発 PR が先行 PR の最終形に
+   逆戻りすることは無い) が、誤って起きた場合は main を採用
+
+### 段階的実装の conflict 予防策
+
+- [ ] **後発 PR (Phase N) のコード comment に「Phase N-1 で導入した暫定実装からの最終移行」を明記**:
+      conflict 解消時に HEAD/main どちらが「最終形」か即判別できる
+- [ ] **段階実装の最後の commit message に「Phase N で完成、Phase N-1 の暫定実装を置換」と記録**:
+      git log から conflict 解消の判断材料を遡れる
+- [ ] **同 schema 依存の PR が並行する場合は順次マージ**: Phase 2-9 がマージされる前に
+      Phase 2-10 を作成すると、Phase 2-10 の最終形コードがレビューで「現在は使えない」と
+      misunderstanding されるリスク。本件では Phase 2-10 を後発 (#307) として、Phase 2-9
+      (#306) の merge 待ちの後に流す予定だったが、両方並行で merge しようとして conflict 発生
+
+### 関連
+
+- 修正例 1: PR #306 (feat/tenant-isolation-phase2-api-medium) の merge conflict 解消 (進捗 doc のみ)
+- 修正例 2: PR #307 (feat/tenant-isolation-phase2-audit-tokens) の merge conflict 解消
+  (進捗 doc + audit-logs/route.ts + role-change-logs/route.ts の 3 箇所、後続フェーズ置換パターン)
+- 並行 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 文言修正)
+- 公式 doc (Git merge): <https://git-scm.com/docs/git-merge>

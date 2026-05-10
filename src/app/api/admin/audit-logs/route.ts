@@ -27,8 +27,10 @@ export async function GET(req: NextRequest) {
   const page = Number(searchParams.get('page')) || 1;
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 100);
 
-  // 2026-05-10 Phase 2-10: AuditLog 直接 tenantId 列で絞込み (旧 User join 経由フィルタから移行)。
-  //   User 物理削除後の宙ぶらりんログにも追従可能になり、より高速。
+  // 2026-05-10 Phase 2-10: AuditLog 直接 tenantId 列で絞込み (Phase 2-9 で導入した User join 経由フィルタから移行)。
+  //   User 物理削除後の宙ぶらりんログにも追従可能になり、indexed lookup で高速。
+  //   Phase 2-10 schema migration (`20260514_phase2_10_audit_token_tenant_id`) で
+  //   audit_logs.tenant_id 列が追加されたため、本フィルタが有効になる。
   const where: Record<string, unknown> = { tenantId: user.tenantId };
   if (entityType) where.entityType = entityType;
 
