@@ -2357,6 +2357,7 @@ oscillation 状態にあることが git log で裏付けられた**。
 | 3 | #262 (P-6) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px、1 回限りの再現) | **真の flakiness (再実行で消える)**。`[gen-visual]` workflow は実行したが「no baseline changes」で commit なし = 同条件で再生成しても 414px に収束。同 baseline で再 E2E が即 pass。依存更新が背景にはあるが (next-intl 4.9.1→4.9.2 / @formatjs/* / @anthropic-ai/sdk 等) 決定論的ではなく確率的な 1px ずれ | `[gen-visual]` 発火 **+ 再 E2E** で吸収。`[gen-visual]` の commit 有無に関わらず CI 再起動が要点 |
 | 4 | #282 (feat/seed-data-management) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px) | **同パターンの 4 回目** (= 即応プレイブック 4 条件すべて Yes)。本 PR の変更は `Knowledge.isSampleData` 追加 + super_admin bypass で、`/projects/[id]` テンプレートを一切触っていない。同 PR 内では大量のサービス変更を行ったが画面 layout には影響なし | `[gen-visual]` 即発火 → 完了 (深追いせず 5 分以内に対応) |
 | 5 | #301 (feat/tenant-isolation-phase2-business-entities) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px、3 回 retry すべて 413px) | **5 回目の再発 + 新たな観測**: 同時期の PR #302 (Phase 2-5、同種の tenant isolation PR) は **同 baseline (414px) で pass**、PR #301 は同 baseline で 413 を produce → **同 baseline / 同 main 系統での render 結果がブランチごとに分かれる「真の確率的 1px drift」**。さらに `git log <baseline-png>` を辿ると baseline 自身が **414→413→414→413→414 で oscillation** していた (= 過去の `[gen-visual]` workflow 実行結果すら 1px 揺れる)。本 PR の changes は service / API route のみで `/projects/[projectId]` template / global CSS 一切触らず | `[gen-visual]` 即発火 (5 分以内対応) |
+| 6 | #309 (feat/tenant-isolation-comprehensive-tests) | project-detail-light.png (chromium-mobile **のみ**) | **414→411px width** (-3px、3 回 retry すべて 411px) | **6 回目の再発 + 過去最大の drift 幅**: これまで 1px だったが今回は **3px**。本 PR は E2E test / fixture / docs のみ変更で `/projects/[projectId]` template も global CSS も一切触らず。直近 main commit `dee5394 fix(ui): 「他顧客テナント」文言訂正` が UI text 変更を含むため、文字列幅変動が次の請求書として可視化された可能性。1px 変動と異なり 3px は font metrics の境界変動ではなく **layout-level の small shift** の疑い | `[gen-visual]` 即発火 (commit `a69d790`) |
 
 **判断基準の検証**:
 - 事例 1 (+27px): 「dl 1 行分の妥当な差」→ 期待された変化と判定 → 即 `[gen-visual]` で確実解消
@@ -3099,6 +3100,205 @@ snapshot diff が出たら **baseline 更新ではなく「ヘッダから外す
 - 修正例: PR #292 (2026-05-09) — groupHelp を AccountMenu に移動
 - §4.43 (chromium-mobile 1px width drift) — 同じ snapshot 系統の累積誤差問題
 - src/components/dashboard-header.tsx の `navGroupsConfig` (top-nav 構造定義)
+
+---
+
+### 4.53 E2E fixture で生 SQL INSERT する時、Prisma schema の NOT NULL カラム漏れと afterAll 二重エラー (PR #309 で遭遇)
+
+#### 罠の正体
+
+PR #309 (テナント分離 / 提案エンジン包括テスト) で multi-tenant fixture を作成した際、
+Playwright から Prisma client を直接 import できない (ESM 制約) ため `pg.Pool` で生 SQL を書いた。
+このとき以下の **2 段階のバグ連鎖** が発生し、CI で 38 件中 2 件が fail / 残り 36 件が skip と
+報告されて根本原因の特定が難しくなった:
+
+1. **段階 1 (根本原因)**: `customers` テーブルの NOT NULL カラム (`created_by` / `updated_by`) を
+   INSERT 文に含め忘れた。Prisma の `Customer.createdBy: String` (`@map("created_by") @db.Uuid` /
+   nullable でない) は schema 上で必須だが、生 SQL 文だと TypeScript の型補完が効かないため
+   `INSERT INTO customers (tenant_id, name, ...)` で nullable と勘違いして VALUES から漏らした。
+   → CI で `null value in column "created_by" of relation "customers" violates not-null constraint`。
+
+2. **段階 2 (二次エラー)**: `beforeAll` の fixture 作成中に throw すると、続くページオブジェクト
+   (`adminAPage` / `adminAContext`) が **未初期化** のまま `afterAll` に到達する。
+   `afterAll` で `await adminAPage.close()` が `Cannot read properties of undefined (reading 'close')`
+   で失敗し、Playwright のレポートに 2 行の error stack が出る。**最初に表示される error が二次的な
+   undefined.close() の方** で、根本原因の DB エラーが 2 段目に潜って読みづらい。
+
+3. **段階 3 (副次バグ)**: spec 12 (suggestion-seed-data) で `risks_issues` に `is_sample_data`
+   カラムを INSERT しようとしていたが、**RiskIssue モデルにはこのカラムは存在しない**
+   (Project / Knowledge のみ持つ。RiskIssue は `tenantId === MANAGEMENT_TENANT_ID` でシード判定する設計。
+   `prisma/migrations/20260513_seed_to_management_tenant/migration.sql` のコメントに明記)。
+
+#### 採用したパターン
+
+##### 1. 生 SQL の fixture を書く時は schema を 1 行ずつ trace する
+
+```ts
+// e2e/fixtures/multi-tenant.ts
+// NOTE: customers.created_by / updated_by は NOT NULL (prisma/schema.prisma L374-L375)。
+//   admin user の id を流用してシードする (本番運用と同じパターン)。
+const customerRes = await pool.query<{ id: string }>(
+  `INSERT INTO customers (tenant_id, name, created_by, updated_by, created_at, updated_at)
+   VALUES ($1, $2, $3, $3, NOW(), NOW())
+   RETURNING id`,
+  [tenantId, `Customer ${label} ${runId}`, adminId],
+);
+```
+
+- INSERT 文の VALUES 句に **NOT NULL 列を schema から逐一 grep して全部書き出す**
+- コメントで参照 schema 行を残す → 将来の schema 変更で migrate する人が壊さないよう
+
+##### 2. afterAll は optional chaining で防御する
+
+```ts
+test.afterAll(async () => {
+  // beforeAll が fixture 作成中に throw した場合、adminAPage / adminAContext が未初期化となる。
+  // 二次エラーで根本原因がログから埋もれるのを避けるため optional chaining + try で防御する。
+  await adminAPage?.close().catch(() => undefined);
+  await adminAContext?.close().catch(() => undefined);
+  await cleanupTenants([tenantA?.tenantId, tenantB?.tenantId].filter(Boolean));
+  await disconnectMultiTenantDb();
+});
+```
+
+- `adminAPage?.close()` で undefined ガード
+- `.catch(() => undefined)` で close 自体が再 throw しても cleanup を継続
+- これで CI ログに **DB error がトップで表示される** → 根本原因の特定が即座にできる
+
+##### 3. 「シード判定列」の有無は schema を信じる
+
+- Project / Knowledge は `is_sample_data` を持つ → INSERT に含めて OK
+- RiskIssue / Retrospective は持たない → `tenantId === MANAGEMENT_TENANT_ID` のみで判定
+- 設計ドキュメント `prisma/migrations/20260513_seed_to_management_tenant/migration.sql` の冒頭
+  コメントに「RiskIssue 自体に is_sample_data カラムはない。Project 経由で識別」と明記済
+
+#### 横展開チェック (生 SQL fixture / migration 追加時)
+
+- [ ] **INSERT 対象の全テーブルを 1 巡 trace する** — 1 件直したら CI 回す → 次の NOT NULL violation が
+      出る → 修正、というループは時間の無駄。fixture 作成時点で **全モデルの NOT NULL 列を一気に確認** する
+- [ ] INSERT 対象テーブルの全列を `prisma/schema.prisma` でチェックし、`?` (nullable) でない
+      列はすべて VALUES に含めたか
+- [ ] `created_by` / `updated_by` / `reporter_id` / `added_by` などの **user FK 系 NOT NULL** が
+      抜けていないか (生 SQL は型ガードがないため最も漏れやすい)
+- [ ] **存在しない列名を書いていないか** — Estimate に `name` / `status` 列はない (`item_name` が正)。
+      schema と異なる列名は「column does not exist」エラーで遅延発覚するので INSERT 前に grep で確認
+- [ ] `is_sample_data` のように **存在するモデルと存在しないモデルが混在** する列を、
+      全モデルで一律に書いていないか
+- [ ] `beforeAll` で重い fixture を作る spec は `afterAll` で `obj?.close()` のガードを入れたか
+- [ ] CI fail 時に **最初に表示される error が根本原因か** (二次エラーが上位にあると調査が遅れる)
+
+#### PR #309 で実際に見つかった漏れ一覧 (反面教師)
+
+| # | テーブル | 抜けていた / 誤っていたカラム | 検出フェーズ |
+|---|---|---|---|
+| 1 | `customers` | `created_by` / `updated_by` (NOT NULL) | CI run 1 (25618460161) |
+| 2 | `risks_issues` | `is_sample_data` (存在しない列を指定) | CI run 1 |
+| 3 | `projects` | `purpose` / `background` / `scope` / `dev_method` / `planned_start_date` / `planned_end_date` (全て NOT NULL) | CI run 2 (25624486444) |
+| 4 | `estimates` | `item_name` (`name` を誤指定) / `category` / `dev_method` / `estimated_effort` / `effort_unit` / `rationale` (全て NOT NULL) / `status` 列は存在しない | (3 と同時修正) |
+| 5 | `stakeholders` | `influence` / `interest` / `attitude` / `current_engagement` / `desired_engagement` (全て NOT NULL) | (3 と同時修正) |
+| 6 | `project_members` | `updated_at` (Prisma `@updatedAt` は client 専用、DB 列は NOT NULL DEFAULT なし) | CI run 3 (25625257419) |
+| 7 | `risks_issues_projects` (誤テーブル名) | 正しくは `risk_issue_projects` (単数形)。`@@map("risk_issue_projects")` 参照 | (6 と同時に発見、未到達) |
+| 8 | `retrospectives_projects` (誤テーブル名) | 正しくは `retrospective_projects` (単数形)。`@@map("retrospective_projects")` 参照 | (6 と同時に発見、未到達) |
+| 9 | `knowledges.business_domain_tags` の cast | jsonb 列に `ARRAY['x']::text[]` を渡すと型不一致エラー。`'["x"]'::jsonb` を使う | CI run 4 (25625659810) |
+| 10 | API endpoint method | retrospective `[rid]` は GET ハンドラなし (PATCH/DELETE のみ)。GET → 405 で test fail。事前に `route.ts` の export 関数を確認 | CI run 4 |
+| 11 | RUN_ID 同 worker 共有 + cleanup transaction abort | spec 11 → spec 12 が同 worker で順次実行されると同じ RUN_ID から同じ slug を生成し UNIQUE 違反。さらに cleanup が transaction abort で部分失敗し tenants 残留。fixture 呼び出しごとに `randomBytes(3).toString('hex')` を suffix 付与 + cleanup を非トランザクション化 | CI run 5 (25626083322) |
+| 12 | MANAGEMENT_TENANT_ID が CI test DB に存在しない | `prisma migrate deploy` だけでは作られない (`pnpm db:seed` のみで作成)。spec 12 の seedKnowledge INSERT が `knowledges_tenant_id_fkey` FK 違反。spec の beforeAll で `INSERT ... ON CONFLICT (id) DO NOTHING` を実行 | CI run 6 (25626639953) |
+| 13 | cleanup が tenant_id 列の有無を区別していない | 一律 `WHERE tenant_id = ANY($1)` で消そうとすると、estimates / tasks / project_members / 中間 link / tenants は全て fail。テーブルごとに DELETE 句を分岐し、tenant_id 列を持たない子は親 JOIN 経由 (例: `WHERE project_id IN (SELECT id FROM projects WHERE tenant_id = ANY)`)、tenants 自身は `WHERE id = ANY` で対応 | CI run 6 |
+| 14 | chromium-mobile baseline drift (PR 無関係) | PR の tenant test は全 pass、唯一残った blocker が `chromium-mobile project-detail-light.png` の幅 drift (414→411px、6 回目の再発)。§4.43 即応プレイブック該当 → `[gen-visual]` 即発火 (depth 5 分以内、深追いせず) | CI run 7 (25627219649) |
+
+→ **教訓 1**: 「fixture 1 件 INSERT → CI で次の violation を発見 → 修正」を繰り返すと CI 1 回 = 5〜10 分の
+無駄が累積する。fixture 作成時点で `prisma/schema.prisma` を 14 モデル全て trace し、
+各 model の `String` (`@db.VarChar` `@db.Text` `@db.Date`) で末尾に `?` のないカラムを **すべて** 書き出す。
+
+→ **教訓 2**: **Prisma `@updatedAt` は client 側装飾子のみ**。マイグレーション SQL では
+`"updated_at" TIMESTAMPTZ NOT NULL` (DEFAULT なし) として生成されるため、
+**Prisma client を経由しない生 SQL INSERT は必ず `NOW()` を明示的に渡す** こと。
+`@default(now())` 持ちの `created_at` は省略可だが、対称性のため両方書くと安全。
+
+→ **教訓 3**: **本体テーブルが複数形でも M:N 中間テーブル名は単数形** という不一致パターンが存在。
+`risks_issues` ⇄ `risk_issue_projects` / `retrospectives` ⇄ `retrospective_projects`
+(`knowledges` ⇄ `knowledge_projects` のみ整合)。生 SQL を書く前に必ず `@@map` を grep する:
+```bash
+grep -E '@@map\("(risk_issue_projects|retrospective_projects|knowledge_projects)"\)' prisma/schema.prisma
+```
+
+→ **教訓 4**: **`@db.JsonB` 列に Postgres ARRAY を渡してはいけない**。Prisma schema で
+`Json @db.JsonB` と宣言された列は実 DB 上 `jsonb` 型 (postgres ネイティブの text[] とは別物)。
+生 SQL では JSON literal をキャストする:
+```sql
+-- × NG: type 不一致 (text[] ⇄ jsonb)
+ARRAY['fintech']::text[]
+-- ✓ OK
+'["fintech"]'::jsonb
+```
+
+→ **教訓 5**: **API ルートに HTTP method ハンドラが揃っているとは限らない**。
+個別エンティティ取得は `GET /api/<resource>/[id]` で取れると思い込みがちだが、実際は **PATCH / DELETE のみ
+提供** されているケースがある (例: `/api/projects/[pid]/retrospectives/[rid]` は一覧 + 個別更新のみ提供で、
+取得は親一覧経由で行う設計)。GET を投げると Next.js は **405 Method Not Allowed** を返し、テストの
+`expect([403, 404]).toContain(res.status())` が fail する。
+**E2E 越境テストを書く前に必ず `route.ts` の export 関数 grep で許可メソッドを確認**:
+```bash
+grep -hE "^export (async )?function (GET|POST|PATCH|PUT|DELETE)" src/app/api/<path>/route.ts
+```
+
+→ **教訓 6**: **Playwright の `RUN_ID` は worker プロセス単位で固定される**。`fullyParallel: false` +
+`workers: 2` 設定下で同じ worker 内に複数 spec が割り当てられると、両者が同じ RUN_ID で fixture を
+作成し UNIQUE 制約違反する経路が存在。fixture 内部で **呼び出しごとに追加の random suffix** を付けて、
+RUN_ID 共有でも slug / email が一意になるようにする:
+```ts
+const callSuffix = randomBytes(3).toString('hex'); // 6 hex = 16M 通り
+const slug = `e2e-${runId}-${label}-${callSuffix}`;
+```
+
+→ **教訓 7**: **PostgreSQL の transaction 内で 1 文でも失敗すると後続が全 abort される**。
+`BEGIN ... COMMIT` で囲んだ cleanup ループで try/catch していても、JS 側の例外を握り潰すだけで
+**transaction state は abort 状態**。後続 DELETE は全て "current transaction is aborted, commands
+ignored until end of transaction block" で silent fail する。
+最も多い表れ方は「cleanup が partial failure → 親テーブル (`tenants` / `users` 等) に行が残留 →
+次のテストで UNIQUE 違反」。
+対処: **ベストエフォート cleanup には transaction を使わない** (各 DELETE を独立クエリとして実行し、
+個別 catch で握り潰す)。原子性が必要な業務ロジックでは SAVEPOINT を併用する。
+
+→ **教訓 8**: **`prisma migrate deploy` だけで E2E test DB に管理テナントは作られない**。
+管理テナント (`MANAGEMENT_TENANT_ID = '00000000-0000-0000-0000-ffffffffffff'`) は migration ではなく
+`prisma/seed.ts` (`pnpm db:seed`) でのみ作成される。CI workflow は `migrate deploy` までしか走らない
+(seed は明示しない限りスキップ) ため、管理テナントを参照する FK INSERT は失敗する。
+シード参照を伴う E2E spec の beforeAll では **明示的に upsert** すること:
+```ts
+await pool.query(
+  `INSERT INTO tenants (id, slug, name, plan, created_at, updated_at)
+   VALUES ($1, $2, 'Knowledge Relay Platform', 'pro', NOW(), NOW())
+   ON CONFLICT (id) DO NOTHING`,
+  [MANAGEMENT_TENANT_ID, 'platform-admin'],
+);
+```
+
+→ **教訓 9**: **マルチテナント DB の cleanup は tenant_id 列の有無で DELETE 句を分岐する**。
+一律 `WHERE tenant_id = ANY($1)` で消そうとすると、tenant_id を持たない表 (M:N 中間 / project 配下の
+estimates / tasks / project_members / tenants 自身など) で全 fail する。具体的なパターン:
+
+| 表の種別 | 例 | DELETE 句 |
+|---|---|---|
+| tenant_id 列あり | knowledges / projects / users 等 | `WHERE tenant_id = ANY($1)` |
+| M:N 中間 (link table) | knowledge_projects / risk_issue_projects | `WHERE knowledge_id IN (SELECT id FROM knowledges WHERE tenant_id = ANY($1))` |
+| project 配下 (tenant_id なし) | tasks / estimates / project_members | `WHERE project_id IN (SELECT id FROM projects WHERE tenant_id = ANY($1))` |
+| user 配下 (tenant_id なし) | sessions / password_reset_tokens / recovery_codes | `WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ANY($1))` |
+| tenants 本体 | tenants | `WHERE id = ANY($1)` (主キーで直接) |
+
+実装例: [e2e/fixtures/multi-tenant.ts](../../e2e/fixtures/multi-tenant.ts) の `cleanupTenants` (`steps: DeleteStep[]`)。
+
+#### 関連
+
+- 修正例:
+  - PR #309 (2026-05-10) commit `bf2f4f3` (customers / risks_issues `is_sample_data`)
+  - PR #309 (2026-05-10) commit `<this-commit>` (projects / estimates / stakeholders)
+- 関連 fixture: [e2e/fixtures/multi-tenant.ts](../../e2e/fixtures/multi-tenant.ts)
+- 関連 spec: [e2e/specs/11-tenant-isolation.spec.ts](../../e2e/specs/11-tenant-isolation.spec.ts) /
+  [e2e/specs/12-suggestion-seed-data.spec.ts](../../e2e/specs/12-suggestion-seed-data.spec.ts)
+- 関連 schema: [prisma/schema.prisma](../../prisma/schema.prisma)
+  - Customer: L365-L385 / Project: L391-L460 / Estimate: L467-L489 / Stakeholder: L663-L710
+- 関連 migration: [prisma/migrations/20260513_seed_to_management_tenant/migration.sql](../../prisma/migrations/20260513_seed_to_management_tenant/migration.sql)
 
 ---
 

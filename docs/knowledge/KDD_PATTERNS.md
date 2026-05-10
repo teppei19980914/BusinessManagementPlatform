@@ -5707,3 +5707,121 @@ Phase 2-9 と Phase 2-10 のように **同じファイルを段階的に進化�
   (進捗 doc + audit-logs/route.ts + role-change-logs/route.ts の 3 箇所、後続フェーズ置換パターン)
 - 並行 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 文言修正)
 - 公式 doc (Git merge): <https://git-scm.com/docs/git-merge>
+
+## 5.X+18 severity-1 セキュリティ仕様の **3 層防御テスト戦略** (PR feat/tenant-isolation-comprehensive-tests で確立)
+
+### 背景
+
+Phase 2 (PR #297-#308) で確立した「テナント越境を構造的に遮断する」仕様は、**今後の改修でも
+基本変更されない**。一方、改修時にうっかり tenant フィルタを忘れた service / route が混入すると、
+**個人情報漏洩 (severity-1)** に直結する。リリース後検知では遅すぎるため、**リリース前検知の
+網を厚くする** 必要があった。
+
+### 採用した 3 層防御テスト戦略
+
+severity-1 リグレッションを **3 つの独立したレイヤ** で検出する設計。1 層が破られても他層で
+catch できるよう、検出粒度と検出原理を変える。
+
+#### Layer 1: Service 層 不変条件テスト (`src/services/__tests__/tenant-isolation-invariants.test.ts`)
+
+**検出原理**: ファイル内容の **静的解析** (grep 相当)。
+
+```ts
+// 全 service ファイルが tenant フィルタを使っていることを静的に保証
+it.each(ALL_SERVICE_FILES.filter(...))(
+  '%s に tenantId / viewerTenantId フィルタが含まれている',
+  (filePath) => {
+    const content = readFileSync(filePath, 'utf-8');
+    const hasTenantFilter =
+      content.includes('tenantId:') ||
+      content.includes('viewerTenantId') ||
+      content.includes('project: { tenantId') ||
+      content.includes('tenant: {');
+    expect(hasTenantFilter).toBe(true);
+  },
+);
+```
+
+**強み**: コード追加時に **即時 fail** (DB 不要、< 1 秒)。CI 高速 path で先頭で検出。
+**弱み**: false positive を避けるため許可リスト管理が必要 (cron / pure logic / pre-auth 等)。
+
+#### Layer 2: Service 層 単体テスト (各 `*.service.test.ts`)
+
+**検出原理**: モック DB に対して service 関数を呼んで、`prisma.findMany` の where 句に
+tenantId が含まれることを **mock 呼び出し検査** で確認。
+
+```ts
+it('★越境テスト★ 他テナント user は返さない', async () => {
+  await listKnowledge({ ... }, 'u-1', 'general', 'tenant-A');
+  const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+  expect(call.where).toMatchObject({ tenantId: 'tenant-A' });
+});
+```
+
+**強み**: ロジックの細部 (ID lookup / where 構築) を高速に検証。リファクタ時の挙動保存を保証。
+**弱み**: モック前提なので「実 DB で本当に隔離されているか」までは保証しない。
+
+#### Layer 3: E2E 越境攻撃シナリオ (`e2e/specs/11-tenant-isolation.spec.ts`)
+
+**検出原理**: 実 DB に 2 テナント立てて、テナント A admin が テナント B の URL を **直接叩く**
+攻撃シナリオを再現。Service / Route / DB / Auth middleware の **end-to-end 動作で隔離を確認**。
+
+```ts
+test('PATCH /api/projects/[B-id] → 404 (テナント B の project は A admin が更新不可)', async () => {
+  const res = await adminARequest.patch(`/api/projects/${tenantB.projectId}`, {
+    data: { name: 'attacked' },
+  });
+  expect([403, 404]).toContain(res.status());
+});
+```
+
+**強み**: 「攻撃者視点の動作」を直接検証。テスト間に依存がないので 1 件 fail でも他 28 件は走る。
+**弱み**: CI 時間がかかる (E2E は分単位)。DB セットアップ + cleanup の重さ。
+
+### 3 層の使い分け
+
+| 検出シナリオ | Layer 1 (静的) | Layer 2 (単体) | Layer 3 (E2E) |
+|---|---|---|---|
+| 新規 service が tenant フィルタを忘れた | ✅ 即検出 | ❌ そもそも test 書かれてない可能性 | ✅ E2E で 404/403 期待 |
+| 既存 service の where から tenantId が消えた | ❌ 他箇所に残ってる可能性 | ✅ 直接検出 | ✅ E2E で fail |
+| API route が user.tenantId を service に渡し忘れた | ❌ 静的解析の限界 | △ service 単体だと API 層は別 | ✅ E2E で必ず fail |
+| 提案エンジンが seed 以外の他テナント許容 | ✅ MANAGEMENT_TENANT_ID パターン検証 | ✅ where 句構造検証 | ✅ E2E で B のデータ混入確認 |
+| schema 列追加忘れ (migration 漏れ) | ❌ 静的解析範囲外 | △ Prisma 型エラーで間接検出 | ✅ 実 DB 経路で確実に検出 |
+
+### 採用したルール
+
+- [ ] **severity-1 仕様 (個人情報 / 認可境界 / アカウント乗っ取り経路) は 3 層防御を必須化**:
+      Layer 1 (静的) + Layer 2 (単体) + Layer 3 (E2E) のいずれかが欠けていたら PR レビューで reject
+- [ ] **invariants test は許可リスト管理**: 例外を入れる時は **コメントに理由** を必ず明記。
+      「pure logic」「cron 横断」「pre-auth」等のカテゴリで分類すると後で見直しやすい
+- [ ] **E2E は API レイヤで検証する**: UI 経由はボタン非表示で気付けない攻撃経路を見逃す。
+      `Playwright APIRequestContext` で session cookie を持ったまま `fetch` で直接 URL を叩く
+- [ ] **E2E spec は chromium project でのみ実行**: モバイル viewport で重複実行しても
+      検出価値ゼロかつ CI 時間 2x。`testIgnore` で除外
+- [ ] **multi-tenant fixture は別ファイルに集約**: `e2e/fixtures/multi-tenant.ts` で
+      `createTenantPair(runId)` / `cleanupTenants(ids)` を提供すると spec 側がスッキリする
+- [ ] **テスト名に「★越境★」「★severity-1★」等の視覚マーカーを入れる**: CI ログで該当 fail を
+      即座に発見できる。一般機能 fail とごった煮にしない
+
+### 横展開チェック (新規 severity-1 仕様を作る時)
+
+```bash
+# Layer 1 候補追加
+ls src/services/*.ts | wc -l   # 全 service 数を確認
+# tenant-isolation-invariants.test.ts に新 service の允許 / 検査追加
+
+# Layer 2 候補追加
+grep -L "tenant" src/services/*.test.ts   # tenant 検証無い test ファイル抽出
+
+# Layer 3 候補追加
+ls e2e/specs/*.spec.ts | grep -i security  # 既存 security spec を流用 or 新規
+```
+
+### 関連
+
+- 仕様 doc: docs/security/TENANT_ISOLATION_PHASE2_TODO.md (3 層が full coverage したら HISTORY.md へリネーム)
+- 元 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 修正)
+- E2E coverage 一覧: docs/test/E2E_COVERAGE.md 「★テナント分離 / 提案エンジン」セクション
+- Layer 1 実装: src/services/__tests__/tenant-isolation-invariants.test.ts
+- Layer 2 実装: src/services/*.service.test.ts (各 service の越境テスト)
+- Layer 3 実装: e2e/specs/11-tenant-isolation.spec.ts / e2e/specs/12-suggestion-seed-data.spec.ts
