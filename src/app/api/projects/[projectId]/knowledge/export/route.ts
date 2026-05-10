@@ -19,7 +19,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'knowledge:read');
   if (forbidden) return forbidden;
 
-  const csv = await exportKnowledgeSync(projectId);
+  const csv = await exportKnowledgeSync(projectId, user.tenantId);
   return new NextResponse(csv, {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',

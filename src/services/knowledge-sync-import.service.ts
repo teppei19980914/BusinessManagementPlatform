@@ -172,11 +172,23 @@ type DbKnowledgeSnapshot = {
 export async function computeKnowledgeSyncDiff(
   projectId: string,
   csvRows: KnowledgeSyncImportRow[],
+  viewerTenantId: string,
 ): Promise<KnowledgeSyncDiffResult> {
   const result: KnowledgeSyncDiffResult = {
     summary: { added: 0, updated: 0, removed: 0, blockedErrors: 0, warnings: 0 },
     rows: [], canExecute: true, globalErrors: [],
   };
+
+  // 2026-05-10 feedback Phase 2-8: 越境 sync-import を遮断するため projectId のテナント検証。
+  const projectOk = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!projectOk) {
+    result.globalErrors.push('プロジェクトが見つかりません');
+    result.canExecute = false;
+    return result;
+  }
 
   if (csvRows.length === 0) {
     result.globalErrors.push('インポート可能な行がありません');
@@ -189,10 +201,11 @@ export async function computeKnowledgeSyncDiff(
     return result;
   }
 
-  // 当該プロジェクトに紐付いた knowledge のみを対象
+  // 当該プロジェクトに紐付いた knowledge のみを対象 + tenantId 二重防御
   const existingKnowledges = await prisma.knowledge.findMany({
     where: {
       deletedAt: null,
+      tenantId: viewerTenantId,
       knowledgeProjects: { some: { projectId } },
     },
     select: {
@@ -341,8 +354,9 @@ export async function applyKnowledgeSyncImport(
   csvRows: KnowledgeSyncImportRow[],
   removeMode: RemoveMode,
   userId: string,
+  viewerTenantId: string,
 ): Promise<KnowledgeSyncImportResult> {
-  const diff = await computeKnowledgeSyncDiff(projectId, csvRows);
+  const diff = await computeKnowledgeSyncDiff(projectId, csvRows, viewerTenantId);
   if (!diff.canExecute) {
     const msgs = [
       ...diff.globalErrors,
@@ -361,7 +375,7 @@ export async function applyKnowledgeSyncImport(
   }
 
   const snapshot = await prisma.knowledge.findMany({
-    where: { deletedAt: null, knowledgeProjects: { some: { projectId } } },
+    where: { deletedAt: null, tenantId: viewerTenantId, knowledgeProjects: { some: { projectId } } },
   });
   const snapshotById = new Map(snapshot.map((k) => [k.id, k]));
 
@@ -389,12 +403,19 @@ export async function applyKnowledgeSyncImport(
       };
 
       if (row.id) {
+        // 2026-05-10 Phase 2-8: 二重防御 - 自テナント所有確認後に update
+        const owned = await prisma.knowledge.findFirst({
+          where: { id: row.id, tenantId: viewerTenantId },
+          select: { id: true },
+        });
+        if (!owned) throw new Error(`IMPORT_VALIDATION_ERROR:ID "${row.id}" が見つかりません`);
         await prisma.knowledge.update({ where: { id: row.id }, data });
         updatedIds.push(row.id);
       } else {
         const created = await prisma.knowledge.create({
           data: {
             ...data,
+            tenantId: viewerTenantId,
             createdBy: userId,
             knowledgeProjects: { create: { projectId } },
           },
@@ -406,11 +427,12 @@ export async function applyKnowledgeSyncImport(
     if (removeMode === 'delete') {
       for (const r of diff.rows) {
         if (r.action === 'REMOVE_CANDIDATE' && r.id && !r.hasProgress) {
-          await prisma.knowledge.update({
-            where: { id: r.id },
+          // 2026-05-10 Phase 2-8: 二重防御 - tenantId フィルタ付きで update
+          const updated = await prisma.knowledge.updateMany({
+            where: { id: r.id, tenantId: viewerTenantId },
             data: { deletedAt: new Date(), updatedBy: userId },
           });
-          softDeletedIds.push(r.id);
+          if (updated.count === 1) softDeletedIds.push(r.id);
         }
       }
     }
@@ -476,9 +498,17 @@ function escapeCsv(v: string | null | undefined): string {
   return s;
 }
 
-export async function exportKnowledgeSync(projectId: string): Promise<string> {
+export async function exportKnowledgeSync(
+  projectId: string,
+  viewerTenantId: string,
+): Promise<string> {
+  // 2026-05-10 Phase 2-8: 越境 export を遮断するため tenantId 二重防御
   const knowledges = await prisma.knowledge.findMany({
-    where: { deletedAt: null, knowledgeProjects: { some: { projectId } } },
+    where: {
+      deletedAt: null,
+      tenantId: viewerTenantId,
+      knowledgeProjects: { some: { projectId } },
+    },
     orderBy: { createdAt: 'desc' },
   });
 

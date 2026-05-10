@@ -79,17 +79,30 @@ function toEstimateDTO(e: {
   };
 }
 
-export async function listEstimates(projectId: string): Promise<EstimateDTO[]> {
+/**
+ * 2026-05-09 feedback Phase 2-6: severity-1 テナント越境対策。
+ *   Estimate は schema 上 tenantId 列を持たないため、`project: { tenantId: viewerTenantId }`
+ *   の関連フィルタで自テナント限定する (Task と同じパターン)。
+ *   契約金額 / 見積根拠の漏洩は致命的なため最優先対応。
+ */
+export async function listEstimates(
+  projectId: string,
+  viewerTenantId: string,
+): Promise<EstimateDTO[]> {
   const estimates = await prisma.estimate.findMany({
-    where: { projectId, deletedAt: null },
+    where: { projectId, deletedAt: null, project: { tenantId: viewerTenantId } },
     orderBy: { createdAt: 'asc' },
   });
   return estimates.map(toEstimateDTO);
 }
 
-export async function getEstimate(estimateId: string): Promise<EstimateDTO | null> {
+export async function getEstimate(
+  estimateId: string,
+  viewerTenantId: string,
+): Promise<EstimateDTO | null> {
+  // 2026-05-09 feedback Phase 2-6: 越境取得を遮断するため project tenant 検証。
   const e = await prisma.estimate.findFirst({
-    where: { id: estimateId, deletedAt: null },
+    where: { id: estimateId, deletedAt: null, project: { tenantId: viewerTenantId } },
   });
   return e ? toEstimateDTO(e) : null;
 }
@@ -98,7 +111,15 @@ export async function createEstimate(
   projectId: string,
   input: CreateEstimateInput,
   userId: string,
+  viewerTenantId: string,
 ): Promise<EstimateDTO> {
+  // 2026-05-09 feedback Phase 2-6: 冒頭で project の tenant 一致を verify。
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!project) throw new Error('NOT_FOUND');
+
   const e = await prisma.estimate.create({
     data: {
       projectId,
@@ -121,7 +142,15 @@ export async function updateEstimate(
   estimateId: string,
   input: Partial<CreateEstimateInput>,
   userId: string,
+  viewerTenantId: string,
 ): Promise<EstimateDTO> {
+  // 2026-05-09 feedback Phase 2-6: 越境編集を遮断するため findFirst で先に所有確認。
+  const owned = await prisma.estimate.findFirst({
+    where: { id: estimateId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const data: Record<string, unknown> = { updatedBy: userId };
 
   if (input.itemName !== undefined) data.itemName = input.itemName;
@@ -140,7 +169,18 @@ export async function updateEstimate(
   return toEstimateDTO(e);
 }
 
-export async function confirmEstimate(estimateId: string, userId: string): Promise<EstimateDTO> {
+export async function confirmEstimate(
+  estimateId: string,
+  userId: string,
+  viewerTenantId: string,
+): Promise<EstimateDTO> {
+  // 2026-05-09 feedback Phase 2-6: 越境確定を遮断するため findFirst で先に所有確認。
+  const owned = await prisma.estimate.findFirst({
+    where: { id: estimateId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const e = await prisma.estimate.update({
     where: { id: estimateId },
     data: { isConfirmed: true, updatedBy: userId },
@@ -148,7 +188,18 @@ export async function confirmEstimate(estimateId: string, userId: string): Promi
   return toEstimateDTO(e);
 }
 
-export async function deleteEstimate(estimateId: string, userId: string): Promise<void> {
+export async function deleteEstimate(
+  estimateId: string,
+  userId: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2-6: 越境削除を遮断するため findFirst で先に所有確認。
+  const owned = await prisma.estimate.findFirst({
+    where: { id: estimateId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   // PR #89: 紐づく Attachment も同時に論理削除 (孤児データ防止)
   const now = new Date();
   await prisma.$transaction([

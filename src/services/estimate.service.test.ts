@@ -8,6 +8,8 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    // 2026-05-09 feedback Phase 2-6: createEstimate で project tenant 検証用
+    project: { findFirst: vi.fn() },
     // PR #89: deleteEstimate が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
@@ -52,12 +54,12 @@ describe('listEstimates', () => {
   it('プロジェクトの有効な見積もりを並び順で返す', async () => {
     vi.mocked(prisma.estimate.findMany).mockResolvedValue([eRow()] as never);
 
-    const r = await listEstimates('p-1');
+    const r = await listEstimates('p-1', 'tenant-A');
 
     expect(r[0].estimatedEffort).toBe(10.5);
     expect(prisma.estimate.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { projectId: 'p-1', deletedAt: null },
+        where: { projectId: 'p-1', deletedAt: null, project: { tenantId: 'tenant-A' } },
         orderBy: { createdAt: 'asc' },
       }),
     );
@@ -69,12 +71,12 @@ describe('getEstimate', () => {
 
   it('存在しなければ null', async () => {
     vi.mocked(prisma.estimate.findFirst).mockResolvedValue(null);
-    expect(await getEstimate('x')).toBe(null);
+    expect(await getEstimate('x', 'tenant-A')).toBe(null);
   });
 
   it('存在すれば DTO', async () => {
     vi.mocked(prisma.estimate.findFirst).mockResolvedValue(eRow() as never);
-    const r = await getEstimate('e-1');
+    const r = await getEstimate('e-1', 'tenant-A');
     expect(r?.id).toBe('e-1');
   });
 });
@@ -83,6 +85,8 @@ describe('createEstimate', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('必須値で作成し createdBy / updatedBy をセット', async () => {
+    // 2026-05-09 feedback Phase 2-6: project tenant 検証用 mock
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.estimate.create).mockResolvedValue(eRow() as never);
 
     await createEstimate(
@@ -98,6 +102,7 @@ describe('createEstimate', () => {
         notes: null,
       },
       'u-1',
+      'tenant-A',
     );
 
     expect(prisma.estimate.create).toHaveBeenCalledWith(
@@ -116,9 +121,11 @@ describe('updateEstimate', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('指定されたフィールドのみ data に積まれる', async () => {
+    // 2026-05-09 feedback Phase 2-6: 所有確認 mock 必須
+    vi.mocked(prisma.estimate.findFirst).mockResolvedValue({ id: 'e-1' } as never);
     vi.mocked(prisma.estimate.update).mockResolvedValue(eRow() as never);
 
-    await updateEstimate('e-1', { itemName: 'new name' }, 'u-1');
+    await updateEstimate('e-1', { itemName: 'new name' }, 'u-1', 'tenant-A');
 
     expect(prisma.estimate.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -129,6 +136,7 @@ describe('updateEstimate', () => {
   });
 
   it('全フィールド更新を積める', async () => {
+    vi.mocked(prisma.estimate.findFirst).mockResolvedValue({ id: 'e-1' } as never);
     vi.mocked(prisma.estimate.update).mockResolvedValue(eRow() as never);
 
     await updateEstimate(
@@ -144,6 +152,7 @@ describe('updateEstimate', () => {
         notes: 'n',
       },
       'u-1',
+      'tenant-A',
     );
 
     const call = vi.mocked(prisma.estimate.update).mock.calls[0][0];
@@ -167,11 +176,12 @@ describe('confirmEstimate', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('isConfirmed: true にする', async () => {
+    vi.mocked(prisma.estimate.findFirst).mockResolvedValue({ id: 'e-1' } as never);
     vi.mocked(prisma.estimate.update).mockResolvedValue(
       eRow({ isConfirmed: true }) as never,
     );
 
-    await confirmEstimate('e-1', 'u-1');
+    await confirmEstimate('e-1', 'u-1', 'tenant-A');
 
     expect(prisma.estimate.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -185,9 +195,10 @@ describe('deleteEstimate', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('deletedAt をセット (論理削除)', async () => {
+    vi.mocked(prisma.estimate.findFirst).mockResolvedValue({ id: 'e-1' } as never);
     vi.mocked(prisma.estimate.update).mockResolvedValue(eRow() as never);
 
-    await deleteEstimate('e-1', 'u-1');
+    await deleteEstimate('e-1', 'u-1', 'tenant-A');
 
     expect(prisma.estimate.update).toHaveBeenCalledWith(
       expect.objectContaining({

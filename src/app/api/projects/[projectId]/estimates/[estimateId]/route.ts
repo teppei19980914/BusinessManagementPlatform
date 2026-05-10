@@ -32,7 +32,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
 
-  const estimate = await getEstimate(estimateId);
+  const estimate = await getEstimate(estimateId, user.tenantId);
   if (!estimate || estimate.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
@@ -51,7 +51,7 @@ export async function PATCH(
   const forbidden = await checkProjectPermission(user, projectId, 'project:update');
   if (forbidden) return forbidden;
 
-  const existing = await getEstimate(estimateId);
+  const existing = await getEstimate(estimateId, user.tenantId);
   if (!existing || existing.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
@@ -60,7 +60,7 @@ export async function PATCH(
 
   // 確定アクション
   if (body.action === 'confirm') {
-    const estimate = await confirmEstimate(estimateId, user.id);
+    const estimate = await confirmEstimate(estimateId, user.id, user.tenantId);
     await recordAuditLog({
       userId: user.id,
       action: 'UPDATE',
@@ -88,7 +88,7 @@ export async function PATCH(
     );
   }
 
-  const estimate = await updateEstimate(estimateId, parsed.data, user.id);
+  const estimate = await updateEstimate(estimateId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,
@@ -113,12 +113,12 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'project:update');
   if (forbidden) return forbidden;
 
-  const existing = await getEstimate(estimateId);
+  const existing = await getEstimate(estimateId, user.tenantId);
   if (!existing || existing.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
 
-  await deleteEstimate(estimateId, user.id);
+  await deleteEstimate(estimateId, user.id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,

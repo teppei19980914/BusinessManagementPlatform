@@ -58,6 +58,7 @@ describe('expandMention', () => {
     const r = await expandMention(
       { kind: 'user', targetUserId: 'u-1' },
       { projectId: 'p-1', assigneeId: null },
+      'tenant-A',
     );
     expect(r).toEqual(['u-1']);
   });
@@ -66,10 +67,10 @@ describe('expandMention', () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([
       { id: 'u-1' }, { id: 'u-2' },
     ] as never);
-    const r = await expandMention({ kind: 'all' }, { projectId: null, assigneeId: null });
+    const r = await expandMention({ kind: 'all' }, { projectId: null, assigneeId: null }, 'tenant-A');
     expect(r).toEqual(['u-1', 'u-2']);
     const call = vi.mocked(prisma.user.findMany).mock.calls[0][0];
-    expect(call?.where).toMatchObject({ isActive: true, deletedAt: null, permanentLock: false });
+    expect(call?.where).toMatchObject({ tenantId: 'tenant-A', isActive: true, deletedAt: null, permanentLock: false });
   });
 
   it('kind=project_member は projectId のメンバーを返す', async () => {
@@ -79,6 +80,7 @@ describe('expandMention', () => {
     const r = await expandMention(
       { kind: 'project_member' },
       { projectId: 'p-1', assigneeId: null },
+      'tenant-A',
     );
     expect(r).toEqual(['u-a', 'u-b']);
     const call = vi.mocked(prisma.projectMember.findMany).mock.calls[0][0];
@@ -87,21 +89,21 @@ describe('expandMention', () => {
 
   it('kind=role_pm_tl は projectRole=pm_tl で絞る', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([{ userId: 'u-pm' }] as never);
-    await expandMention({ kind: 'role_pm_tl' }, { projectId: 'p-1', assigneeId: null });
+    await expandMention({ kind: 'role_pm_tl' }, { projectId: 'p-1', assigneeId: null }, 'tenant-A');
     const call = vi.mocked(prisma.projectMember.findMany).mock.calls[0][0];
     expect(call?.where).toEqual({ projectId: 'p-1', projectRole: 'pm_tl' });
   });
 
   it('kind=role_general は projectRole=member で絞る', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
-    await expandMention({ kind: 'role_general' }, { projectId: 'p-1', assigneeId: null });
+    await expandMention({ kind: 'role_general' }, { projectId: 'p-1', assigneeId: null }, 'tenant-A');
     const call = vi.mocked(prisma.projectMember.findMany).mock.calls[0][0];
     expect(call?.where).toEqual({ projectId: 'p-1', projectRole: 'member' });
   });
 
   it('kind=role_viewer は projectRole=viewer で絞る', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
-    await expandMention({ kind: 'role_viewer' }, { projectId: 'p-1', assigneeId: null });
+    await expandMention({ kind: 'role_viewer' }, { projectId: 'p-1', assigneeId: null }, 'tenant-A');
     const call = vi.mocked(prisma.projectMember.findMany).mock.calls[0][0];
     expect(call?.where).toEqual({ projectId: 'p-1', projectRole: 'viewer' });
   });
@@ -110,6 +112,7 @@ describe('expandMention', () => {
     const r = await expandMention(
       { kind: 'assignee' },
       { projectId: 'p-1', assigneeId: 'u-as' },
+      'tenant-A',
     );
     expect(r).toEqual(['u-as']);
   });
@@ -118,6 +121,7 @@ describe('expandMention', () => {
     const r = await expandMention(
       { kind: 'assignee' },
       { projectId: 'p-1', assigneeId: null },
+      'tenant-A',
     );
     expect(r).toEqual([]);
   });
@@ -126,6 +130,7 @@ describe('expandMention', () => {
     const r = await expandMention(
       { kind: 'project_member' },
       { projectId: null, assigneeId: null },
+      'tenant-A',
     );
     expect(r).toEqual([]);
     expect(prisma.projectMember.findMany).not.toHaveBeenCalled();
@@ -145,6 +150,7 @@ describe('expandMentionsToRecipients', () => {
       [{ kind: 'all' }, { kind: 'project_member' }],
       { projectId: 'p-1', assigneeId: null },
       'u-self',
+      'tenant-A',
     );
     expect(Array.from(r).sort()).toEqual(['u-1', 'u-2', 'u-3']);
     expect(r.has('u-self')).toBe(false);
@@ -179,25 +185,25 @@ describe('diffMentions', () => {
 describe('getMentionContext', () => {
   it('task: projectId + assigneeId を返す', async () => {
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectId: 'p-1', assigneeId: 'u-1' } as never);
-    const r = await getMentionContext('task', 't-1');
+    const r = await getMentionContext('task', 't-1', 'tenant-A');
     expect(r).toEqual({ projectId: 'p-1', assigneeId: 'u-1' });
   });
 
   it('retrospective: assigneeId は常に null', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
-    const r = await getMentionContext('retrospective', 'rt-1');
+    const r = await getMentionContext('retrospective', 'rt-1', 'tenant-A');
     expect(r).toEqual({ projectId: 'p-1', assigneeId: null });
   });
 
   it('customer: projectId / assigneeId とも null', async () => {
     vi.mocked(prisma.customer.findFirst).mockResolvedValue({ id: 'c-1' } as never);
-    const r = await getMentionContext('customer', 'c-1');
+    const r = await getMentionContext('customer', 'c-1', 'tenant-A');
     expect(r).toEqual({ projectId: null, assigneeId: null });
   });
 
   it('not-found なら null', async () => {
     vi.mocked(prisma.task.findFirst).mockResolvedValue(null);
-    const r = await getMentionContext('task', 'missing');
+    const r = await getMentionContext('task', 'missing', 'tenant-A');
     expect(r).toBeNull();
   });
 });
@@ -217,6 +223,7 @@ describe('generateMentionNotifications', () => {
       mentionerId: 'u-mentioner',
       mentionerName: '田中',
       link: '/projects/p-1/tasks?taskId=t-1',
+      tenantId: 'tenant-A',
     });
     expect(r.created).toBe(2);
     const call = vi.mocked(prisma.notification.createMany).mock.calls[0][0];
@@ -250,6 +257,7 @@ describe('generateMentionNotifications', () => {
       mentionerId: 'u-self', // assignee = 自分 → 除外で 0 件
       mentionerName: null,
       link: '',
+      tenantId: 'tenant-A',
     });
     expect(r.created).toBe(0);
     expect(prisma.notification.createMany).not.toHaveBeenCalled();

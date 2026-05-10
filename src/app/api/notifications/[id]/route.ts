@@ -22,7 +22,7 @@ export async function PATCH(
 
   const { id } = await params;
   const t = await getTranslations('message');
-  const existing = await getNotification(id);
+  const existing = await getNotification(id, user.tenantId);
   if (!existing) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -45,6 +45,6 @@ export async function PATCH(
     );
   }
 
-  const updated = await setNotificationRead(id, parsed.data.read);
+  const updated = await setNotificationRead(id, parsed.data.read, user.id, user.tenantId);
   return NextResponse.json({ data: updated });
 }

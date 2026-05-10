@@ -5,7 +5,8 @@ vi.mock('@/lib/db', () => ({
     project: { findFirst: vi.fn() },
     // 2026-05-09 (PR G / #24): loadProjectContext で seedDataEnabled を取得するため
     tenant: { findUnique: vi.fn() },
-    knowledge: { findMany: vi.fn() },
+    // 2026-05-10 Phase 2-7: linkKnowledgeToProject で knowledge.findFirst によるテナント検証
+    knowledge: { findMany: vi.fn(), findFirst: vi.fn() },
     knowledgeProject: { createMany: vi.fn() },
     riskIssue: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     retrospective: { findMany: vi.fn() },
@@ -31,7 +32,7 @@ describe('suggestForProject', () => {
   it('プロジェクト不在なら空結果', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
 
-    const r = await suggestForProject('missing');
+    const r = await suggestForProject('missing', 'tenant-A');
     expect(r).toEqual({ knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] });
   });
 
@@ -86,7 +87,7 @@ describe('suggestForProject', () => {
       { id: 'r-1', score: 0.6 },
     ] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
 
     expect(r.knowledge[0].id).toBe('k-1');
     expect(r.pastIssues[0].id).toBe('i-1');
@@ -96,7 +97,9 @@ describe('suggestForProject', () => {
   });
 
   // 2026-05-09 (PR G / #24): seedDataEnabled=false なら管理テナントを除外する
-  it('seedDataEnabled=false なら管理テナント (MANAGEMENT_TENANT_ID) を where 節で除外する (#24)', async () => {
+  // 2026-05-10 Phase 2-7: テナント越境遮断のため、seedDataEnabled=false は **自テナントのみ** に絞る
+  //   (旧仕様の `{ not: MANAGEMENT_TENANT_ID }` は他顧客テナントの提案候補が混入する severity-1 バグ)。
+  it('seedDataEnabled=false なら自テナント (viewerTenantId) のみを where 節で許容する (#24 / Phase 2-7)', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       id: 'p-1',
       tenantId: 'tenant-customer',
@@ -114,15 +117,17 @@ describe('suggestForProject', () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
     vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
 
-    await suggestForProject('p-1');
+    await suggestForProject('p-1', 'tenant-customer');
 
-    // knowledge.findMany の where に tenantId not management が含まれること
+    // knowledge.findMany の where に tenantId === 'tenant-customer' が含まれること
     const knowledgeCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(knowledgeCall.where.tenantId).toEqual({ not: '00000000-0000-0000-0000-ffffffffffff' });
+    expect(knowledgeCall?.where?.tenantId).toBe('tenant-customer');
   });
 
   // 2026-05-09 (PR G / #24): seedDataEnabled=true ならテナント除外フィルタは付かない
-  it('seedDataEnabled=true (default) なら管理テナント除外フィルタは付かない (#24)', async () => {
+  // 2026-05-10 Phase 2-7: 旧仕様 (where に tenantId フィルタなし = 全テナント混入) は severity-1 バグ。
+  //   現仕様: 自テナント + 管理テナント (シード) のみ許容。
+  it('seedDataEnabled=true (default) なら自テナント + 管理テナントのみ許容する (#24 / Phase 2-7)', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       id: 'p-1',
       tenantId: 'tenant-customer',
@@ -139,10 +144,12 @@ describe('suggestForProject', () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
     vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
 
-    await suggestForProject('p-1');
+    await suggestForProject('p-1', 'tenant-customer');
 
     const knowledgeCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(knowledgeCall.where.tenantId).toBeUndefined();
+    expect(knowledgeCall?.where?.tenantId).toEqual({
+      in: ['tenant-customer', '00000000-0000-0000-0000-ffffffffffff'],
+    });
   });
 
   // 2026-05-09 (PR D / #21): 過去リスクが提案結果に含まれる
@@ -182,7 +189,7 @@ describe('suggestForProject', () => {
       { id: 'risk-1', score: 0.7 },
     ] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
 
     expect(r.pastRisks).toHaveLength(1);
     expect(r.pastRisks[0].id).toBe('risk-1');
@@ -223,7 +230,7 @@ describe('suggestForProject', () => {
       { id: 'i-1', score: 0.9 },
     ] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
     expect(r.pastIssues[0].sourceProjectName).toBe(null);
   });
 
@@ -258,7 +265,7 @@ describe('suggestForProject', () => {
       { id: 'k-1', score: 0.001 },
     ] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
     // 候補総数 1 < 最低件数 5 なので全件 (1 件) 返る
     expect(r.knowledge).toHaveLength(1);
     // tier は weak (score < SUGGESTION_TIER_MEDIUM_THRESHOLD=0.1)
@@ -319,7 +326,7 @@ describe('suggestForProject', () => {
       { id: 'r-fintech', score: 0.5 },
     ] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
 
     // tagScore は Issue / Retro 共に 0 でなく > 0 (親 Project タグの jaccard)
     // 旧実装は tagScore=0 固定だったので、>0 になること自体が parity 達成の証拠。
@@ -375,7 +382,7 @@ describe('suggestForProject', () => {
       .mockResolvedValueOnce([{ id: 'k-1', score: 0.4 }] as never)
       .mockResolvedValueOnce([{ id: 'k-1', score: 0.9 }] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
 
     expect(r.knowledge).toHaveLength(1);
     const k = r.knowledge[0];
@@ -417,7 +424,7 @@ describe('suggestForProject', () => {
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([{ id: 'k-1', score: 0.5 }] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
 
     const k = r.knowledge[0];
     expect(k.embeddingScore).toBe(0);
@@ -469,7 +476,7 @@ describe('suggestForProject', () => {
       ] as never)
       .mockResolvedValueOnce([{ id: 'k-with-emb', score: 0.8 }] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
 
     // score 降順で並ぶので k-with-emb が先頭
     expect(r.knowledge[0].id).toBe('k-with-emb');
@@ -507,7 +514,7 @@ describe('suggestForProject', () => {
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([{ id: 'k-1', score: 1.0 }] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
 
     // 型レベルでも runtime レベルでも embeddingScore フィールドが存在する
     expect(r.knowledge[0]).toHaveProperty('embeddingScore');
@@ -522,6 +529,7 @@ describe('suggestForProject', () => {
   it('自プロジェクトに紐付け済の Knowledge は where 節で除外する (PR #160)', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       id: 'p-1',
+      tenantId: 'tenant-customer',
       purpose: 'x',
       background: '',
       scope: '',
@@ -534,14 +542,16 @@ describe('suggestForProject', () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
 
-    await suggestForProject('p-1');
+    await suggestForProject('p-1', 'tenant-customer');
 
     // findMany の where 句に NOT: { knowledgeProjects: { some: { projectId: 'p-1' } } } が
     // 含まれているかを検証 (regression防止: alreadyLinked 戻し対策)
+    // 2026-05-10 Phase 2-7: テナント越境遮断のため tenantId フィルタも併存する
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(call?.where).toEqual({
       deletedAt: null,
       visibility: 'public',
+      tenantId: { in: ['tenant-customer', '00000000-0000-0000-0000-ffffffffffff'] },
       NOT: {
         knowledgeProjects: { some: { projectId: 'p-1' } },
       },
@@ -577,7 +587,7 @@ describe('suggestForProject', () => {
       { id: 'k-1', score: 0.5 },
     ] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
     expect(r.knowledge[0]).not.toHaveProperty('alreadyLinked');
   });
 
@@ -612,18 +622,22 @@ describe('suggestForProject', () => {
       { id: 'i-no-tags', score: 0.5 },
     ] as never);
 
-    const r = await suggestForProject('p-1');
+    const r = await suggestForProject('p-1', 'tenant-A');
     expect(r.pastIssues[0].tagScore).toBe(0);
   });
 });
 
 describe('adoptPastIssueAsTemplate', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 2026-05-10 Phase 2-7: target project のテナント検証を全テストでパスさせる
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'target', tenantId: 'tenant-A' } as never);
+  });
 
   it('元 issue がなければエラー', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
     await expect(
-      adoptPastIssueAsTemplate('src', 'target', 'u-1'),
+      adoptPastIssueAsTemplate('src', 'target', 'u-1', 'tenant-A'),
     ).rejects.toThrow('source issue not found');
   });
 
@@ -640,7 +654,7 @@ describe('adoptPastIssueAsTemplate', () => {
     } as never);
     vi.mocked(prisma.riskIssue.create).mockResolvedValue({ id: 'new-id' } as never);
 
-    const r = await adoptPastIssueAsTemplate('src', 'target', 'u-1');
+    const r = await adoptPastIssueAsTemplate('src', 'target', 'u-1', 'tenant-A');
 
     expect(r.id).toBe('new-id');
     const call = vi.mocked(prisma.riskIssue.create).mock.calls[0][0];
@@ -652,12 +666,17 @@ describe('adoptPastIssueAsTemplate', () => {
 });
 
 describe('linkKnowledgeToProject', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 2026-05-10 Phase 2-7: knowledge / project のテナント検証 mock
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ id: 'k-1' } as never);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+  });
 
   it('skipDuplicates で冪等に INSERT', async () => {
     vi.mocked(prisma.knowledgeProject.createMany).mockResolvedValue({ count: 1 } as never);
 
-    await linkKnowledgeToProject('k-1', 'p-1');
+    await linkKnowledgeToProject('k-1', 'p-1', 'tenant-A');
 
     expect(prisma.knowledgeProject.createMany).toHaveBeenCalledWith({
       data: [{ knowledgeId: 'k-1', projectId: 'p-1' }],
@@ -670,7 +689,7 @@ describe('suggestRelatedIssuesForText', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('10 文字未満の入力は空配列 (ノイズ防止)', async () => {
-    const r = await suggestRelatedIssuesForText('short', 'p-1');
+    const r = await suggestRelatedIssuesForText('short', 'p-1', 'tenant-A');
     expect(r).toEqual([]);
     expect(prisma.riskIssue.findMany).not.toHaveBeenCalled();
   });
@@ -695,7 +714,7 @@ describe('suggestRelatedIssuesForText', () => {
       { id: 'g', score: 0.05 }, // 閾値以下
     ] as never);
 
-    const r = await suggestRelatedIssuesForText('this is a long enough input', 'p-1');
+    const r = await suggestRelatedIssuesForText('this is a long enough input', 'p-1', 'tenant-A');
 
     expect(r).toHaveLength(5);
     expect(r[0].id).toBe('a');
@@ -718,7 +737,7 @@ describe('suggestion engine 緊急停止フラグ (SUGGESTION_ENGINE_DISABLED)',
   it('SUGGESTION_ENGINE_DISABLED=true で suggestForProject は即座に空配列を返す (DB クエリ走らない)', async () => {
     process.env.SUGGESTION_ENGINE_DISABLED = 'true';
 
-    const r = await suggestForProject('any-project-id');
+    const r = await suggestForProject('any-project-id', 'tenant-A');
 
     expect(r).toEqual({ knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] });
     // DB が一切呼ばれないことを確認 (LLM 呼び出しゼロの担保)
@@ -732,7 +751,7 @@ describe('suggestion engine 緊急停止フラグ (SUGGESTION_ENGINE_DISABLED)',
   it('SUGGESTION_ENGINE_DISABLED=true で suggestRelatedIssuesForText も空配列を返す', async () => {
     process.env.SUGGESTION_ENGINE_DISABLED = 'true';
 
-    const r = await suggestRelatedIssuesForText('long enough input text here', 'p-1');
+    const r = await suggestRelatedIssuesForText('long enough input text here', 'p-1', 'tenant-A');
 
     expect(r).toEqual([]);
     expect(prisma.riskIssue.findMany).not.toHaveBeenCalled();
@@ -744,7 +763,7 @@ describe('suggestion engine 緊急停止フラグ (SUGGESTION_ENGINE_DISABLED)',
     delete process.env.SUGGESTION_ENGINE_DISABLED;
 
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
-    await suggestForProject('p-1');
+    await suggestForProject('p-1', 'tenant-A');
 
     expect(prisma.project.findFirst).toHaveBeenCalled();
   });
@@ -753,7 +772,7 @@ describe('suggestion engine 緊急停止フラグ (SUGGESTION_ENGINE_DISABLED)',
     process.env.SUGGESTION_ENGINE_DISABLED = 'false';
 
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
-    await suggestForProject('p-1');
+    await suggestForProject('p-1', 'tenant-A');
 
     expect(prisma.project.findFirst).toHaveBeenCalled();
 

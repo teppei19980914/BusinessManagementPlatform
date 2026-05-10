@@ -5,6 +5,8 @@ vi.mock('@/lib/db', () => ({
     notification: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      // 2026-05-09 feedback Phase 2-7: setNotificationRead / getNotification は所有確認に findFirst を使う
+      findFirst: vi.fn(),
       count: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
@@ -58,53 +60,56 @@ describe('listNotificationsForUser', () => {
     ] as never);
     vi.mocked(prisma.notification.count).mockResolvedValue(3 as never);
 
-    const r = await listNotificationsForUser('u-1');
+    const r = await listNotificationsForUser('u-1', 'tenant-A');
     expect(r.unreadCount).toBe(3);
     expect(r.items).toHaveLength(1);
     const findCall = vi.mocked(prisma.notification.findMany).mock.calls[0][0];
-    expect(findCall?.where).toEqual({ userId: 'u-1', readAt: null });
+    expect(findCall?.where).toEqual({ userId: 'u-1', tenantId: 'tenant-A', readAt: null });
   });
 
   it('includeRead=true で既読も含める', async () => {
     vi.mocked(prisma.notification.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.notification.count).mockResolvedValue(0 as never);
 
-    await listNotificationsForUser('u-1', { includeRead: true });
+    await listNotificationsForUser('u-1', 'tenant-A', { includeRead: true });
     const findCall = vi.mocked(prisma.notification.findMany).mock.calls[0][0];
-    expect(findCall?.where).toEqual({ userId: 'u-1' });
+    expect(findCall?.where).toEqual({ userId: 'u-1', tenantId: 'tenant-A' });
   });
 });
 
 describe('setNotificationRead / markAllNotificationsRead', () => {
   it('setNotificationRead(true) は readAt をセット', async () => {
+    // 2026-05-09 feedback Phase 2-7: 所有確認 mock 必須
+    vi.mocked(prisma.notification.findFirst).mockResolvedValue({ id: 'n1' } as never);
     vi.mocked(prisma.notification.update).mockResolvedValue({
       id: 'n1', type: 'task_start_due', entityType: 'task', entityId: 't1',
       title: 't', link: '/x', readAt: NOW_UTC, createdAt: NOW_UTC,
     } as never);
 
-    const r = await setNotificationRead('n1', true);
+    const r = await setNotificationRead('n1', true, 'u-1', 'tenant-A');
     expect(r.readAt).not.toBeNull();
     const call = vi.mocked(prisma.notification.update).mock.calls[0][0];
     expect(call?.data.readAt).toBeInstanceOf(Date);
   });
 
   it('setNotificationRead(false) は readAt を null にする', async () => {
+    vi.mocked(prisma.notification.findFirst).mockResolvedValue({ id: 'n1' } as never);
     vi.mocked(prisma.notification.update).mockResolvedValue({
       id: 'n1', type: 'task_start_due', entityType: 'task', entityId: 't1',
       title: 't', link: '/x', readAt: null, createdAt: NOW_UTC,
     } as never);
 
-    await setNotificationRead('n1', false);
+    await setNotificationRead('n1', false, 'u-1', 'tenant-A');
     const call = vi.mocked(prisma.notification.update).mock.calls[0][0];
     expect(call?.data.readAt).toBeNull();
   });
 
   it('markAllNotificationsRead は user 自身の未読のみを既読化', async () => {
     vi.mocked(prisma.notification.updateMany).mockResolvedValue({ count: 5 } as never);
-    const r = await markAllNotificationsRead('u-1');
+    const r = await markAllNotificationsRead('u-1', 'tenant-A');
     expect(r.count).toBe(5);
     const call = vi.mocked(prisma.notification.updateMany).mock.calls[0][0];
-    expect(call?.where).toEqual({ userId: 'u-1', readAt: null });
+    expect(call?.where).toEqual({ userId: 'u-1', tenantId: 'tenant-A', readAt: null });
   });
 });
 

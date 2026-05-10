@@ -51,7 +51,7 @@ describe('listComments', () => {
   it('entity 指定で deletedAt=null かつ createdAt DESC で取得する (要件 Q6)', async () => {
     vi.mocked(prisma.comment.findMany).mockResolvedValue([row()] as never);
 
-    const r = await listComments('issue', 'r-1');
+    const r = await listComments('issue', 'r-1', 'tenant-A');
 
     expect(r).toHaveLength(1);
     expect(r[0].userName).toBe('Alice');
@@ -66,7 +66,7 @@ describe('listComments', () => {
 
   it('user リレーションが null なら userName は null', async () => {
     vi.mocked(prisma.comment.findMany).mockResolvedValue([row({ user: null })] as never);
-    const r = await listComments('issue', 'r-1');
+    const r = await listComments('issue', 'r-1', 'tenant-A');
     expect(r[0].userName).toBe(null);
   });
 
@@ -77,7 +77,7 @@ describe('listComments', () => {
         updatedAt: new Date('2026-04-21T10:05:00Z'),
       }),
     ] as never);
-    const r = await listComments('issue', 'r-1');
+    const r = await listComments('issue', 'r-1', 'tenant-A');
     expect(r[0].edited).toBe(true);
   });
 });
@@ -104,7 +104,7 @@ describe('getComment / updateComment / deleteComment', () => {
 
   it('getComment: deletedAt=null のレコードのみ', async () => {
     vi.mocked(prisma.comment.findFirst).mockResolvedValue(row() as never);
-    const c = await getComment('c-1');
+    const c = await getComment('c-1', 'tenant-A');
     expect(c?.id).toBe('c-1');
     const call = vi.mocked(prisma.comment.findFirst).mock.calls[0][0]!;
     expect(call.where).toMatchObject({ id: 'c-1', deletedAt: null });
@@ -112,25 +112,27 @@ describe('getComment / updateComment / deleteComment', () => {
 
   it('getComment: 不在なら null', async () => {
     vi.mocked(prisma.comment.findFirst).mockResolvedValue(null);
-    const c = await getComment('missing');
+    const c = await getComment('missing', 'tenant-A');
     expect(c).toBeNull();
   });
 
   it('updateComment: content のみ更新 (updatedAt は @updatedAt 自動)', async () => {
+    // 2026-05-09 feedback Phase 2-5: 冒頭の所有確認 mock 必須
+    vi.mocked(prisma.comment.findFirst).mockResolvedValue({ id: 'c-1' } as never);
     vi.mocked(prisma.comment.update).mockResolvedValue(row({ content: 'edited' }) as never);
-    const c = await updateComment('c-1', 'edited');
+    const c = await updateComment('c-1', 'edited', 'tenant-A');
     expect(c.content).toBe('edited');
     const call = vi.mocked(prisma.comment.update).mock.calls[0][0]!;
     expect(call.where).toEqual({ id: 'c-1' });
     expect(call.data).toEqual({ content: 'edited' });
   });
 
-  it('deleteComment: deletedAt をセットする (soft delete)', async () => {
-    vi.mocked(prisma.comment.update).mockResolvedValue({} as never);
-    await deleteComment('c-1');
-    const call = vi.mocked(prisma.comment.update).mock.calls[0][0]!;
-    expect(call.where).toEqual({ id: 'c-1' });
-    expect(call.data.deletedAt).toBeInstanceOf(Date);
+  it('deleteComment: deletedAt をセットする (updateMany で tenantId 検証)', async () => {
+    vi.mocked(prisma.comment.updateMany).mockResolvedValue({ count: 1 } as never);
+    await deleteComment('c-1', 'tenant-A');
+    const call = vi.mocked(prisma.comment.updateMany).mock.calls[0][0]!;
+    expect(call.where).toEqual({ id: 'c-1', tenantId: 'tenant-A' });
+    expect((call.data as { deletedAt: Date }).deletedAt).toBeInstanceOf(Date);
   });
 });
 
@@ -141,7 +143,7 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
       visibility: 'public', reporterId: 'u-1',
     } as never);
-    const r = await resolveEntityForComment('issue', 'r-1');
+    const r = await resolveEntityForComment('issue', 'r-1', 'tenant-A');
     expect(r).toEqual({ kind: 'public-or-draft', visibility: 'public', creatorId: 'u-1' });
   });
 
@@ -149,7 +151,7 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
       visibility: 'draft', reporterId: 'u-1',
     } as never);
-    const r = await resolveEntityForComment('risk', 'r-1');
+    const r = await resolveEntityForComment('risk', 'r-1', 'tenant-A');
     expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-1' });
   });
 
@@ -157,7 +159,7 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
       visibility: 'public', createdBy: 'u-2',
     } as never);
-    const r = await resolveEntityForComment('retrospective', 'rt-1');
+    const r = await resolveEntityForComment('retrospective', 'rt-1', 'tenant-A');
     expect(r).toEqual({ kind: 'public-or-draft', visibility: 'public', creatorId: 'u-2' });
   });
 
@@ -165,14 +167,14 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
       visibility: 'draft', createdBy: 'u-3',
     } as never);
-    const r = await resolveEntityForComment('knowledge', 'k-1');
+    const r = await resolveEntityForComment('knowledge', 'k-1', 'tenant-A');
     expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-3' });
   });
 
   it('task: 存在すれば project-scoped (mention は ProjectMember、plain コメントは全員可)', async () => {
     // PR feat/notification-deep-link-completion (2026-05-01): task の plain コメントは緩和。
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
-    const r = await resolveEntityForComment('task', 't-1');
+    const r = await resolveEntityForComment('task', 't-1', 'tenant-A');
     expect(r).toEqual({
       kind: 'project-scoped',
       projectIds: ['p-1'],
@@ -184,7 +186,7 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
   it('stakeholder: 存在すれば project-scoped (mention/plain ともに PM/TL のみ)', async () => {
     // PR feat/notification-edit-dialog (2026-05-01): stakeholder は PM/TL 限定。
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ projectId: 'p-1' } as never);
-    const r = await resolveEntityForComment('stakeholder', 's-1');
+    const r = await resolveEntityForComment('stakeholder', 's-1', 'tenant-A');
     expect(r).toEqual({
       kind: 'project-scoped',
       projectIds: ['p-1'],
@@ -195,7 +197,7 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
 
   it('customer: 存在すれば admin-only', async () => {
     vi.mocked(prisma.customer.findFirst).mockResolvedValue({ id: 'cus-1' } as never);
-    const r = await resolveEntityForComment('customer', 'cus-1');
+    const r = await resolveEntityForComment('customer', 'cus-1', 'tenant-A');
     expect(r).toEqual({ kind: 'admin-only' });
   });
 
@@ -204,7 +206,7 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue({
       visibility: 'public', userId: 'u-1',
     } as never);
-    const r = await resolveEntityForComment('memo', 'm-1');
+    const r = await resolveEntityForComment('memo', 'm-1', 'tenant-A');
     expect(r).toEqual({ kind: 'public-or-draft', visibility: 'public', creatorId: 'u-1' });
   });
 
@@ -212,13 +214,13 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue({
       visibility: 'draft', userId: 'u-2',
     } as never);
-    const r = await resolveEntityForComment('memo', 'm-1');
+    const r = await resolveEntityForComment('memo', 'm-1', 'tenant-A');
     expect(r).toEqual({ kind: 'public-or-draft', visibility: 'draft', creatorId: 'u-2' });
   });
 
   it('memo: 不在なら not-found', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
-    expect(await resolveEntityForComment('memo', 'x')).toEqual({ kind: 'not-found' });
+    expect(await resolveEntityForComment('memo', 'x', 'tenant-A')).toEqual({ kind: 'not-found' });
   });
 
   it('not-found: 各種で id が無効ならば not-found', async () => {
@@ -226,9 +228,9 @@ describe('resolveEntityForComment (2026-05-01: visibility 連動)', () => {
     vi.mocked(prisma.task.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.customer.findFirst).mockResolvedValue(null);
 
-    expect(await resolveEntityForComment('issue', 'x')).toEqual({ kind: 'not-found' });
-    expect(await resolveEntityForComment('task', 'x')).toEqual({ kind: 'not-found' });
-    expect(await resolveEntityForComment('customer', 'x')).toEqual({ kind: 'not-found' });
+    expect(await resolveEntityForComment('issue', 'x', 'tenant-A')).toEqual({ kind: 'not-found' });
+    expect(await resolveEntityForComment('task', 'x', 'tenant-A')).toEqual({ kind: 'not-found' });
+    expect(await resolveEntityForComment('customer', 'x', 'tenant-A')).toEqual({ kind: 'not-found' });
   });
 });
 

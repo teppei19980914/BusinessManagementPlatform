@@ -46,7 +46,7 @@ export async function PATCH(
   }
 
   try {
-    const member = await updateMemberRole(memberId, parsed.data.projectRole, user.id);
+    const member = await updateMemberRole(memberId, parsed.data.projectRole, user.id, user.tenantId);
 
     await recordAuditLog({
       userId: user.id,
@@ -82,7 +82,7 @@ export async function DELETE(
   const { memberId } = await params;
 
   try {
-    await removeMember(memberId, user.id);
+    await removeMember(memberId, user.id, user.tenantId);
 
     await recordAuditLog({
       userId: user.id,
