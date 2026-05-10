@@ -21,7 +21,7 @@ export default async function TasksPage({ params }: Props) {
 
   const [tasks, members] = await Promise.all([
     listTasks(projectId, session.user.tenantId),
-    listMembers(projectId),
+    listMembers(projectId, session.user.tenantId),
   ]);
 
   return (
