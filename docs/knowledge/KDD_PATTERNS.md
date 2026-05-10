@@ -5453,3 +5453,113 @@ PR #297 Phase 1 commit を push 直後、Vercel / GitHub Actions / Playwright E2
 - §5.X+13 / §5.X+14 (本件の前段、テナント越境バグ恒久対策)
 - 公式 doc: <https://nextjs.org/docs/app/api-reference/config/typescript>
 - 公式 doc (Next.js Build Output): <https://nextjs.org/docs/app/api-reference/cli/next#next-build-options>
+
+## 5.X+16 CodeQL `js/user-controlled-bypass` 偽陽性は **constant-record dispatch** で構造的に解消する (PR #302 で確立)
+
+### 背景
+
+PR #302 (Phase 2-5: comment / attachment / stakeholder のテナント越境フィルタ) で
+GitHub Advanced Security の **CodeQL チェックが「1 new alert (high severity)」で fail**:
+
+```
+Rule: js/user-controlled-bypass (CWE-290 / CWE-807, severity high)
+File: src/app/api/attachments/route.ts:60
+Title: User-controlled bypass of security check
+Message: This condition guards a sensitive [action], but a [user-provided value] controls it.
+```
+
+該当コード:
+
+```ts
+async function authorize(user, entityType, entityId, mode) {
+  if (entityType === 'memo') {           // ← この行が flagged
+    const { ok } = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
+    ...
+  }
+  // project member 経路 (project / task / estimate / risk / retrospective / knowledge)
+  ...
+}
+```
+
+CodeQL の懸念: `entityType` (URL `searchParams.get('entityType')` 由来 = user-controlled) で
+**認可関数 (`authorizeMemoAttachment` vs `checkMembership`) を切り替え** している → user が
+choose できる security check は bypass 経路になり得る (CWE-290 認証バイパス / CWE-807 信頼できない入力に基づく
+セキュリティ判断)。
+
+### なぜ偽陽性なのか
+
+1. `entityType` は handler 入口で **`ATTACHMENT_ENTITY_TYPES` (Zod enum) で whitelist 検証済**:
+
+   ```ts
+   if (!ATTACHMENT_ENTITY_TYPES.includes(entityType as AttachmentEntityType)) {
+     return NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 });
+   }
+   ```
+
+2. memo path (`authorizeMemoAttachment`) と project path (`checkMembership` ベース) は
+   **同等に厳格な認可**を実施しており、片方が weak で他方が strong という非対称性は無い
+
+3. **データモデル上、memo は user-scoped、他 6 種は project-scoped** という構造的事実があり、
+   entity type に応じた dispatch は **設計の必然**
+
+CodeQL のヒューリスティックは「user input → if 分岐 → 異なる関数呼び出し」を機械的に拾うため、
+意味論的には安全な dispatch も flag される。
+
+### 対策実装 (constant-record dispatch)
+
+`if (entityType === '...')` を **`Record<EnumKey, Authorizer>` のテーブル lookup** に置換:
+
+```ts
+type AuthorizedUser = { id: string; systemRole: string; tenantId: string };
+
+async function authorizeMemoEntity(user, entityId, mode) { /* memo path */ }
+async function authorizeProjectScopedEntity(user, entityType, entityId, mode) { /* project path */ }
+
+const ATTACHMENT_AUTHORIZER: Record<
+  AttachmentEntityType,
+  (user: AuthorizedUser, entityId: string, mode: 'read' | 'write') => Promise<NextResponse | null>
+> = {
+  memo: (user, entityId, mode) => authorizeMemoEntity(user, entityId, mode),
+  project: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'project', entityId, mode),
+  task: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'task', entityId, mode),
+  estimate: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'estimate', entityId, mode),
+  risk: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'risk', entityId, mode),
+  retrospective: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'retrospective', entityId, mode),
+  knowledge: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'knowledge', entityId, mode),
+};
+
+async function authorize(user, entityType, entityId, mode) {
+  return ATTACHMENT_AUTHORIZER[entityType](user, entityId, mode);
+}
+```
+
+### 効果
+
+1. **CodeQL の if-branch ヒューリスティック回避**: user-controlled 値で if を切らない構造 → flag されない
+2. **網羅性の compile-time 強制**: `Record<AttachmentEntityType, ...>` 型注釈により、新 entityType
+   追加時に handler を書き忘れると **TypeScript build が fail** (= ランタイムで silent bypass しない)
+3. **コードの意図が明確**: 「entityType ごとに固定の authorizer を呼ぶ」がデータ構造で表現される
+4. **既存の認可ロジック保存**: `authorizeMemoEntity` / `authorizeProjectScopedEntity` は既存 if-block を
+   そのまま関数抽出しただけで、認可セマンティクスは一切変更なし (= リグレッションリスク最小)
+
+### 抽出したルール
+
+- [ ] **`if (userControlledValue === 'literal')` で security 関数を dispatch する pattern は CodeQL `js/user-controlled-bypass` の格好の標的**: 認可 / 認証 / アクセス制御の関数呼び出しを user-input 由来の if で切る場合は **constant-record dispatch に移行**することを第一選択にする
+- [ ] **`Record<EnumKey, Handler>` 型注釈は安全な dispatch のシグナル**: TypeScript の型システムで全 enum value の handler が必須化される (= silent fallthrough なし)。CodeQL も「validated enum を index に使う dispatch は安全」と判断する経験則がある
+- [ ] **CodeQL JavaScript は inline 抑止コメントを公式サポートしていない (2026-05 時点)**: `// lgtm[js/...]` や `// codeql[js/...]` は C/C++/Java/C# のみ。JS は **コードを refactor するか UI で dismiss** の二択
+- [ ] **dismiss は GitHub UI で `security_events: write` 権限が必要**: gh CLI の `repo` scope では不可。CI を通したい場合は **コード refactor が現実解**
+- [ ] **既存 alert と同じ rule + 同じ file + 同じ line でも PR で「new alert」扱いになり得る**: CodeQL のフィンガープリントは周辺コード変更で揺れる (call-site の引数追加で変わる例を本件で観測)。「main で既に open な alert」が PR で再 flag されるパターンは想定しておく
+- [ ] **横展開チェック**: `git grep "if (.*=== '.*')"` で user-controlled な if-dispatch を検出し、認可周りでは表ベース dispatch に予防的置換することを検討する
+
+### 横展開対象 (本 PR では未着手、将来対応候補)
+
+- `src/app/api/attachments/[id]/route.ts:43` — 同じ `if (entityType === 'memo')` パターン (現状は CodeQL 未 flag、`existing.entityType` が DB 由来で user-controlled でないため)
+- `src/app/api/attachments/batch/route.ts` — 多数の `if (entityType === '...')` 分岐あり (但し dispatch ではなく entity 個別 query なので別 pattern)
+
+### 関連
+
+- 修正例: PR #302 (feat/tenant-isolation-phase2-comment-attachment-stakeholder) — `src/app/api/attachments/route.ts` の authorize() refactor
+- CodeQL alert 番号: #14 (PR #302 head), #5 (main 既存・同 rule/同 file/同 line)
+- CodeQL rule: `js/user-controlled-bypass` <https://codeql.github.com/codeql-query-help/javascript/js-user-controlled-bypass/>
+- CWE-290 (Authentication Bypass): <https://cwe.mitre.org/data/definitions/290.html>
+- CWE-807 (Reliance on Untrusted Inputs in a Security Decision): <https://cwe.mitre.org/data/definitions/807.html>

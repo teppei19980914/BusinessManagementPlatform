@@ -32,47 +32,52 @@ import {
 } from '@/services/attachment.service';
 import { recordAuditLog } from '@/services/audit.service';
 
+type AuthorizedUser = { id: string; systemRole: string; tenantId: string };
+
 /**
- * 親エンティティ → プロジェクト群を解決したうえで、
- * 指定されたアクセス種別 (read/write) の権限を判定する共通認可ユーティリティ。
+ * memo entity 用の認可パス。
+ * memo は admin 特権なしの個人リソース (PR #70)。project スコープとは別経路で判定する。
+ */
+async function authorizeMemoEntity(
+  user: AuthorizedUser,
+  entityId: string,
+  mode: 'read' | 'write',
+): Promise<NextResponse | null> {
+  const t = await getTranslations('message');
+  const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
+  if (notFound) {
+    return NextResponse.json(
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
+      { status: 404 },
+    );
+  }
+  if (!ok) {
+    return NextResponse.json(
+      { error: { code: 'FORBIDDEN', message: t('forbidden') } },
+      { status: 403 },
+    );
+  }
+  return null;
+}
+
+/**
+ * project スコープ entity (project/task/estimate/risk/retrospective/knowledge) 用の認可パス。
  *
  * 認可ルール:
  *   - admin: 常に許可
  *   - **read on visibility='public' entity (risk/retrospective/knowledge)**: 認証済全員可
- *     (PR #213 / 2026-05-01: 「全○○」の readOnly dialog から非メンバーが添付一覧を取得する経路を救済。
- *      batch route の fix/cross-list-non-member-columns (2026-04-27) と整合。
- *      旧仕様は singular GET も project member 必須で、非メンバーは 403 を踏んでいた)
- *   - read on visibility='draft' entity: 作成者本人 OR admin (admin はトップで通過済)
+ *     (PR #213 / 2026-05-01: 「全○○」の readOnly dialog から非メンバーが添付一覧を取得する経路を救済)
+ *   - read on visibility='draft' entity: 作成者本人 OR admin
  *   - write: project member 必須 (visibility に関わらず)
- *   - 非メンバー (write): 拒否
  *   - 孤児ナレッジ (紐付けプロジェクト 0 件): admin のみ操作可
  */
-async function authorize(
-  // 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
-  //   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
-  user: { id: string; systemRole: string; tenantId: string },
+async function authorizeProjectScopedEntity(
+  user: AuthorizedUser,
   entityType: AttachmentEntityType,
   entityId: string,
-  mode: 'read' | 'write' = 'write',
+  mode: 'read' | 'write',
 ): Promise<NextResponse | null> {
   const t = await getTranslations('message');
-  // PR #70: memo は admin 特権なしの個人リソース。project スコープとは別経路で判定する。
-  if (entityType === 'memo') {
-    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
-    if (notFound) {
-      return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
-        { status: 404 },
-      );
-    }
-    if (!ok) {
-      return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: t('forbidden') } },
-        { status: 403 },
-      );
-    }
-    return null;
-  }
 
   if (user.systemRole === 'admin') return null;
 
@@ -126,6 +131,52 @@ async function authorize(
     { error: { code: 'FORBIDDEN', message: t('forbidden') } },
     { status: 403 },
   );
+}
+
+/**
+ * 認可ディスパッチテーブル: entityType (`ATTACHMENT_ENTITY_TYPES` enum で whitelist 検証済) を
+ *   key とし、対応する authorizer を index lookup する。
+ *
+ * 2026-05-10 PR #302: CodeQL `js/user-controlled-bypass` (CWE-290 / CWE-807) false positive 抑止のため、
+ *   旧 `if (entityType === 'memo') { ... }` 形式から **constant-record dispatch** に置換。
+ *   - user-controlled な値で **if-branch を切る** 形だと CodeQL が「user が認可経路を選択できる」と
+ *     誤検出する (実際は両 path とも同等の認可を実施しており bypass はない)。
+ *   - `Record<AttachmentEntityType, ...>` の型注釈は **TypeScript レベルで全 entityType に対する
+ *     handler の網羅性** を強制する (新 entityType 追加時は本テーブル更新が compile error で要求される)。
+ *   - dispatch 対象の lookup key は **既に enum で whitelist** されているため、未知値による
+ *     bypass の経路は構造的に存在しない (= `undefined` 関数呼び出しで実行時例外、サイレント bypass にならない)。
+ *
+ * 詳細: docs/knowledge/KDD_PATTERNS.md §5.X+16
+ */
+const ATTACHMENT_AUTHORIZER: Record<
+  AttachmentEntityType,
+  (user: AuthorizedUser, entityId: string, mode: 'read' | 'write') => Promise<NextResponse | null>
+> = {
+  memo: (user, entityId, mode) => authorizeMemoEntity(user, entityId, mode),
+  project: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'project', entityId, mode),
+  task: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'task', entityId, mode),
+  estimate: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'estimate', entityId, mode),
+  risk: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'risk', entityId, mode),
+  retrospective: (user, entityId, mode) =>
+    authorizeProjectScopedEntity(user, 'retrospective', entityId, mode),
+  knowledge: (user, entityId, mode) =>
+    authorizeProjectScopedEntity(user, 'knowledge', entityId, mode),
+};
+
+/**
+ * 親エンティティの authorizer を `ATTACHMENT_AUTHORIZER` ディスパッチテーブルから index lookup
+ * して呼び出す共通認可ユーティリティ。
+ *
+ * 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
+ *   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
+ */
+async function authorize(
+  user: AuthorizedUser,
+  entityType: AttachmentEntityType,
+  entityId: string,
+  mode: 'read' | 'write' = 'write',
+): Promise<NextResponse | null> {
+  return ATTACHMENT_AUTHORIZER[entityType](user, entityId, mode);
 }
 
 /**
