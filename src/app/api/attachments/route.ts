@@ -134,41 +134,25 @@ async function authorizeProjectScopedEntity(
 }
 
 /**
- * 認可ディスパッチテーブル: entityType (`ATTACHMENT_ENTITY_TYPES` enum で whitelist 検証済) を
- *   key とし、対応する authorizer を index lookup する。
- *
- * 2026-05-10 PR #302: CodeQL `js/user-controlled-bypass` (CWE-290 / CWE-807) false positive 抑止のため、
- *   旧 `if (entityType === 'memo') { ... }` 形式から **constant-record dispatch** に置換。
- *   - user-controlled な値で **if-branch を切る** 形だと CodeQL が「user が認可経路を選択できる」と
- *     誤検出する (実際は両 path とも同等の認可を実施しており bypass はない)。
- *   - `Record<AttachmentEntityType, ...>` の型注釈は **TypeScript レベルで全 entityType に対する
- *     handler の網羅性** を強制する (新 entityType 追加時は本テーブル更新が compile error で要求される)。
- *   - dispatch 対象の lookup key は **既に enum で whitelist** されているため、未知値による
- *     bypass の経路は構造的に存在しない (= `undefined` 関数呼び出しで実行時例外、サイレント bypass にならない)。
- *
- * 詳細: docs/knowledge/KDD_PATTERNS.md §5.X+16
- */
-const ATTACHMENT_AUTHORIZER: Record<
-  AttachmentEntityType,
-  (user: AuthorizedUser, entityId: string, mode: 'read' | 'write') => Promise<NextResponse | null>
-> = {
-  memo: (user, entityId, mode) => authorizeMemoEntity(user, entityId, mode),
-  project: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'project', entityId, mode),
-  task: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'task', entityId, mode),
-  estimate: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'estimate', entityId, mode),
-  risk: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'risk', entityId, mode),
-  retrospective: (user, entityId, mode) =>
-    authorizeProjectScopedEntity(user, 'retrospective', entityId, mode),
-  knowledge: (user, entityId, mode) =>
-    authorizeProjectScopedEntity(user, 'knowledge', entityId, mode),
-};
-
-/**
- * 親エンティティの authorizer を `ATTACHMENT_AUTHORIZER` ディスパッチテーブルから index lookup
- * して呼び出す共通認可ユーティリティ。
+ * 親エンティティの authorizer を **静的な switch 文** で dispatch する共通認可ユーティリティ。
  *
  * 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
  *   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
+ *
+ * 2026-05-10 PR #302 (commit #2): CodeQL false positive 対応の試行錯誤を経て **switch 文** に確定:
+ *   - 試行 1 (元コード): `if (entityType === 'memo') { ... } else { ... }` →
+ *     `js/user-controlled-bypass` (CWE-290/807) で flagged (user-controlled value が
+ *     security check を gate していると判定された)。
+ *   - 試行 2 (constant-record dispatch): `ATTACHMENT_AUTHORIZER[entityType](...)` →
+ *     `js/unvalidated-dynamic-method-call` (CWE-94) で flagged (user-controlled name で
+ *     dynamic method call → 未知 key で `undefined()` 例外の懸念)。
+ *   - 試行 3 (本実装、switch 文): 各 case label が **静的 string literal** で、dispatch は
+ *     **コンパイル時に確定** する。CodeQL は exhaustive switch on typed enum を
+ *     "user-controlled bypass" としても "dynamic method call" としても扱わない。
+ *     さらに TypeScript exhaustiveness check (`exhaustive: never`) で全 enum 値の
+ *     case 漏れを compile-time に検出する。
+ *
+ * 詳細: docs/knowledge/KDD_PATTERNS.md §5.X+16
  */
 async function authorize(
   user: AuthorizedUser,
@@ -176,7 +160,23 @@ async function authorize(
   entityId: string,
   mode: 'read' | 'write' = 'write',
 ): Promise<NextResponse | null> {
-  return ATTACHMENT_AUTHORIZER[entityType](user, entityId, mode);
+  switch (entityType) {
+    case 'memo':
+      return authorizeMemoEntity(user, entityId, mode);
+    case 'project':
+    case 'task':
+    case 'estimate':
+    case 'risk':
+    case 'retrospective':
+    case 'knowledge':
+      return authorizeProjectScopedEntity(user, entityType, entityId, mode);
+    default: {
+      // TypeScript exhaustiveness check: 新 entityType 追加時は本 default 節で
+      // compile error になるため、authorize() の case 漏れを構造的に防ぐ。
+      const _exhaustive: never = entityType;
+      throw new Error(`Unhandled attachment entityType: ${String(_exhaustive)}`);
+    }
+  }
 }
 
 /**
