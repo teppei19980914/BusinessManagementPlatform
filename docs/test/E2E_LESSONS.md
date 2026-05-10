@@ -3173,22 +3173,43 @@ test.afterAll(async () => {
 
 #### 横展開チェック (生 SQL fixture / migration 追加時)
 
+- [ ] **INSERT 対象の全テーブルを 1 巡 trace する** — 1 件直したら CI 回す → 次の NOT NULL violation が
+      出る → 修正、というループは時間の無駄。fixture 作成時点で **全モデルの NOT NULL 列を一気に確認** する
 - [ ] INSERT 対象テーブルの全列を `prisma/schema.prisma` でチェックし、`?` (nullable) でない
       列はすべて VALUES に含めたか
 - [ ] `created_by` / `updated_by` / `reporter_id` / `added_by` などの **user FK 系 NOT NULL** が
       抜けていないか (生 SQL は型ガードがないため最も漏れやすい)
+- [ ] **存在しない列名を書いていないか** — Estimate に `name` / `status` 列はない (`item_name` が正)。
+      schema と異なる列名は「column does not exist」エラーで遅延発覚するので INSERT 前に grep で確認
 - [ ] `is_sample_data` のように **存在するモデルと存在しないモデルが混在** する列を、
       全モデルで一律に書いていないか
 - [ ] `beforeAll` で重い fixture を作る spec は `afterAll` で `obj?.close()` のガードを入れたか
 - [ ] CI fail 時に **最初に表示される error が根本原因か** (二次エラーが上位にあると調査が遅れる)
 
+#### PR #309 で実際に見つかった漏れ一覧 (反面教師)
+
+| # | テーブル | 抜けていた / 誤っていたカラム | 検出フェーズ |
+|---|---|---|---|
+| 1 | `customers` | `created_by` / `updated_by` (NOT NULL) | CI run 1 (25618460161) |
+| 2 | `risks_issues` | `is_sample_data` (存在しない列を指定) | CI run 1 |
+| 3 | `projects` | `purpose` / `background` / `scope` / `dev_method` / `planned_start_date` / `planned_end_date` (全て NOT NULL) | CI run 2 (25624486444) |
+| 4 | `estimates` | `item_name` (`name` を誤指定) / `category` / `dev_method` / `estimated_effort` / `effort_unit` / `rationale` (全て NOT NULL) / `status` 列は存在しない | (3 と同時修正) |
+| 5 | `stakeholders` | `influence` / `interest` / `attitude` / `current_engagement` / `desired_engagement` (全て NOT NULL) | (3 と同時修正) |
+
+→ **教訓**: 「fixture 1 件 INSERT → CI で次の violation を発見 → 修正」を繰り返すと CI 1 回 = 5〜10 分の
+無駄が累積する。fixture 作成時点で `prisma/schema.prisma` を 14 モデル全て trace し、
+各 model の `String` (`@db.VarChar` `@db.Text` `@db.Date`) で末尾に `?` のないカラムを **すべて** 書き出す。
+
 #### 関連
 
-- 修正例: PR #309 (2026-05-10)
+- 修正例:
+  - PR #309 (2026-05-10) commit `bf2f4f3` (customers / risks_issues `is_sample_data`)
+  - PR #309 (2026-05-10) commit `<this-commit>` (projects / estimates / stakeholders)
 - 関連 fixture: [e2e/fixtures/multi-tenant.ts](../../e2e/fixtures/multi-tenant.ts)
 - 関連 spec: [e2e/specs/11-tenant-isolation.spec.ts](../../e2e/specs/11-tenant-isolation.spec.ts) /
   [e2e/specs/12-suggestion-seed-data.spec.ts](../../e2e/specs/12-suggestion-seed-data.spec.ts)
-- 関連 schema: [prisma/schema.prisma](../../prisma/schema.prisma) L365-L385 (Customer)
+- 関連 schema: [prisma/schema.prisma](../../prisma/schema.prisma)
+  - Customer: L365-L385 / Project: L391-L460 / Estimate: L467-L489 / Stakeholder: L663-L710
 - 関連 migration: [prisma/migrations/20260513_seed_to_management_tenant/migration.sql](../../prisma/migrations/20260513_seed_to_management_tenant/migration.sql)
 
 ---

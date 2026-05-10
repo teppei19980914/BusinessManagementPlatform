@@ -136,11 +136,18 @@ export async function createTenantWithFullDataset(
   const customerId = customerRes.rows[0].id;
 
   // 5. Project
+  // NOTE: prisma/schema.prisma L391-L460 の NOT NULL 必須カラム多数:
+  //   purpose / background / scope / dev_method / planned_start_date / planned_end_date /
+  //   created_by / updated_by。生 SQL は型補完が効かないため明示的に全て VALUES に書く。
   const projectRes = await pool.query<{ id: string }>(
     `INSERT INTO projects (
-       tenant_id, name, customer_id, status, created_by, updated_by, created_at, updated_at
+       tenant_id, name, customer_id, purpose, background, scope, dev_method,
+       planned_start_date, planned_end_date, status,
+       created_by, updated_by, created_at, updated_at
      )
-     VALUES ($1, $2, $3, 'planning', $4, $4, NOW(), NOW())
+     VALUES ($1, $2, $3, 'E2E purpose', 'E2E background', 'E2E scope', 'agile',
+             '2026-04-01', '2026-12-31', 'planning',
+             $4, $4, NOW(), NOW())
      RETURNING id`,
     [tenantId, `Project ${label} ${runId}`, customerId, adminId],
   );
@@ -166,11 +173,16 @@ export async function createTenantWithFullDataset(
   const taskId = taskRes.rows[0].id;
 
   // 8. Estimate
+  // NOTE: prisma/schema.prisma L467-L489 — `name` / `status` 列は存在しない (旧誤実装)。
+  //   実カラムは item_name / category / dev_method / estimated_effort / effort_unit /
+  //   rationale (全て NOT NULL) + created_by / updated_by。
   const estimateRes = await pool.query<{ id: string }>(
     `INSERT INTO estimates (
-       project_id, name, status, created_by, updated_by, created_at, updated_at
+       project_id, item_name, category, dev_method, estimated_effort, effort_unit,
+       rationale, created_by, updated_by, created_at, updated_at
      )
-     VALUES ($1, $2, 'draft', $3, $3, NOW(), NOW())
+     VALUES ($1, $2, 'design', 'agile', 1.0, 'person_day',
+             'E2E rationale', $3, $3, NOW(), NOW())
      RETURNING id`,
     [projectId, `Estimate ${label} ${runId}`, adminId],
   );
@@ -239,11 +251,17 @@ export async function createTenantWithFullDataset(
   const memoId = memoRes.rows[0].id;
 
   // 13. Stakeholder
+  // NOTE: prisma/schema.prisma L663-L710 で influence / interest (Int 1-5) /
+  //   attitude / current_engagement / desired_engagement が NOT NULL。
   const stakeholderRes = await pool.query<{ id: string }>(
     `INSERT INTO stakeholders (
-       tenant_id, project_id, name, role, created_by, updated_by, created_at, updated_at
+       tenant_id, project_id, name, role,
+       influence, interest, attitude, current_engagement, desired_engagement,
+       created_by, updated_by, created_at, updated_at
      )
-     VALUES ($1, $2, $3, 'sponsor', $4, $4, NOW(), NOW())
+     VALUES ($1, $2, $3, 'sponsor',
+             3, 3, 'neutral', 'neutral', 'supportive',
+             $4, $4, NOW(), NOW())
      RETURNING id`,
     [tenantId, projectId, `Stakeholder ${label} ${runId}`, adminId],
   );
