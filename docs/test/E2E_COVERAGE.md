@@ -194,6 +194,48 @@
 
 ---
 
+## ★テナント分離 / 提案エンジン (severity-1 リグレッション防止) — PR feat/tenant-isolation-comprehensive-tests で追加 (2026-05-10)
+
+**本セクションのテストは将来も絶対に通り続けることが前提**。1 件でも fail した場合は
+個人情報漏洩リスクに直結するため、緊急対応必須。
+
+### テナント越境遮断 (e2e/specs/11-tenant-isolation.spec.ts)
+全 business entity API (project / task / risk / knowledge / retrospective / memo / customer
+/ comment / attachment / stakeholder / estimate / member) について、テナント A の admin が
+テナント B の各 ID を直接 URL/API で叩いた際に **GET → 404 / PATCH/POST/DELETE → 403 or 404**
+が返ることを網羅検証。
+
+- [x] **38 ケース** (entity × verb 組合せ + admin API 4 本 + sync-import) — PR feat/tenant-isolation-comprehensive-tests
+  - 業務 entity (project/task/risk/knowledge/retrospective/memo/customer/comment/attachment/stakeholder/estimate)
+  - admin API (`/api/admin/users` `/api/admin/audit-logs` `/api/admin/role-change-logs`)
+  - sync-import の越境 import 試行
+- [x] chromium project でのみ実行 (mobile viewport で重複実行しない、playwright.config.ts で `testIgnore`)
+
+### 提案機能シードデータ参照 + テナント独立トグル (e2e/specs/12-suggestion-seed-data.spec.ts)
+seedDataEnabled トグルが正しく動作し、他顧客テナントのデータが**toggle 値に関わらず混入しない**
+ことを保証する。
+
+- [x] **5 ケース** — PR feat/tenant-isolation-comprehensive-tests
+  - seedDataEnabled=true で管理テナントのシードが提案候補に含まれる
+  - seedDataEnabled=false で管理テナントのシードが消える
+  - **どちらの場合もテナント B の data は混入しない**
+  - adoptPastIssueAsTemplate でシード採用時、自テナントに新規 create + シード自体は不変
+  - テナント B の toggle 変更がテナント A の挙動に影響しない (テナント独立性)
+
+### Service 層 不変条件テスト (src/services/__tests__/tenant-isolation-invariants.test.ts)
+全 service ファイルが tenant フィルタ (`viewerTenantId` / `tenantId` / `project: { tenantId }`)
+を含むことを **静的解析** で確認。新規 service 追加時に tenant フィルタを忘れると即時 fail する。
+
+- [x] 全 src/services/*.ts (許可リスト 25 件除く) で tenant フィルタ存在
+- [x] suggestion.service.ts の MANAGEMENT_TENANT_ID 参照と tenantScopeFilter 構造の検証
+- [x] MANAGEMENT_TENANT_ID 定数値が seed migration と一致
+
+### 関連
+- 仕様: docs/security/TENANT_ISOLATION_PHASE2_TODO.md (Phase 2-10 完了状態)
+- 元 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 文言修正)
+
+---
+
 ## 視覚回帰対象画面
 
 ベースライン PNG は `e2e/**__screenshots__/` に commit される。
