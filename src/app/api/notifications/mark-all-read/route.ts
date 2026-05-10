@@ -14,6 +14,6 @@ export async function POST() {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const result = await markAllNotificationsRead(user.id);
+  const result = await markAllNotificationsRead(user.id, user.tenantId);
   return NextResponse.json({ data: result });
 }

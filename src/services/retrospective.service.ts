@@ -174,6 +174,7 @@ export async function listRetrospectives(
   projectId: string,
   viewerUserId: string,
   viewerSystemRole: string,
+  viewerTenantId: string,
 ): Promise<RetroDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
   // 2026-05-01 (PR fix/visibility-auth-matrix): 「自分の draft は一覧に表示する」方針に変更。
@@ -187,10 +188,11 @@ export async function listRetrospectives(
   // PR #199: コメントは polymorphic comments テーブル経由 (/api/comments) で取得するため
   //   include: { comments: ... } は不要。retro 本体だけ load する。
   // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付いている」振り返りを返す。
-  //   作成元 (createdInProject) ではなく M:N 中間 (RetrospectiveProject) 経由で判定。
+  // 2026-05-09 feedback Phase 2-4: severity-1 越境対策。tenantId を where に必須化。
   const retros = await prisma.retrospective.findMany({
     where: {
       deletedAt: null,
+      tenantId: viewerTenantId,
       ...visibilityWhere,
       retrospectiveProjects: { some: { projectId } },
     },
@@ -326,7 +328,18 @@ export function composeRetrospectiveText(fields: {
     .join('\n\n');
 }
 
-export async function confirmRetrospective(retroId: string, userId: string): Promise<void> {
+export async function confirmRetrospective(
+  retroId: string,
+  userId: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2-4: 越境状態確定を遮断するため findFirst で先に所有確認。
+  const owned = await prisma.retrospective.findFirst({
+    where: { id: retroId, deletedAt: null, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   await prisma.retrospective.update({
     where: { id: retroId },
     data: { state: 'confirmed', updatedBy: userId },
@@ -365,8 +378,10 @@ export async function updateRetrospective(
   tenantId: string,
 ): Promise<void> {
   // 2026-05-09 (PR D / #20): 既存 text を含めて取得し、実値変更時のみ embedding を再生成。
+  // 2026-05-09 feedback Phase 2-4: 越境編集を遮断するため where に tenantId 併記。
+  //   既存 tenantId 引数 (元 embedding 用) を viewer 認可境界として再利用。
   const existing = await prisma.retrospective.findFirst({
-    where: { id: retroId, deletedAt: null },
+    where: { id: retroId, deletedAt: null, tenantId },
     select: {
       createdBy: true,
       planSummary: true,
@@ -439,9 +454,11 @@ export async function deleteRetrospective(
   retroId: string,
   userId: string,
   systemRole: string,
+  viewerTenantId: string,
 ): Promise<void> {
+  // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.retrospective.findFirst({
-    where: { id: retroId, deletedAt: null },
+    where: { id: retroId, deletedAt: null, tenantId: viewerTenantId },
     select: { createdBy: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
@@ -478,16 +495,18 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
   ids: string[],
   visibility: 'draft' | 'public',
   viewerUserId: string,
+  viewerTenantId: string,
 ): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
   if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
 
   // PR #165: where に projectId 追加 (他プロジェクトの行が ids に混ざってもサーバ側で除外)
   // PR feat/asset-multi-project-linking: scope は M:N (retrospectiveProjects) 経由で判定する。
-  //   = この project に紐付け済 (作成元または参照先) の振り返りに対してのみ一括更新可能。
+  // 2026-05-09 feedback Phase 2-4: 越境一括更新を遮断するため tenantId 併記。
   const targets = await prisma.retrospective.findMany({
     where: {
       id: { in: ids },
       deletedAt: null,
+      tenantId: viewerTenantId,
       retrospectiveProjects: { some: { projectId } },
     },
     select: { id: true, createdBy: true },
@@ -519,6 +538,7 @@ export async function getRetrospective(
   retroId: string,
   viewerUserId?: string,
   viewerSystemRole?: string,
+  viewerTenantId?: string,
 ): Promise<{
   id: string;
   projectId: string | null;
@@ -527,8 +547,11 @@ export async function getRetrospective(
   createdBy: string;
   visibility: string;
 } | null> {
+  // 2026-05-09 feedback Phase 2-4: viewerTenantId が指定された場合のみ where に追加。
+  //   内部呼び出し (cascade 削除等) は認可スキップ経路を維持。
+  const tenantWhere = viewerTenantId !== undefined ? { tenantId: viewerTenantId } : {};
   const raw = await prisma.retrospective.findFirst({
-    where: { id: retroId, deletedAt: null },
+    where: { id: retroId, deletedAt: null, ...tenantWhere },
     select: {
       id: true,
       projectId: true,
@@ -604,7 +627,15 @@ export async function linkRetrospectiveToProject(
 export async function unlinkRetrospectiveFromProject(
   retroId: string,
   projectId: string,
+  viewerTenantId: string,
 ): Promise<{ removed: boolean }> {
+  // 2026-05-09 feedback Phase 2-4: 越境紐付け解除を遮断するため、対象 retro の tenant 一致を verify。
+  const owned = await prisma.retrospective.findFirst({
+    where: { id: retroId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) return { removed: false };
+
   const existing = await prisma.retrospectiveProject.findUnique({
     where: { retrospectiveId_projectId: { retrospectiveId: retroId, projectId } },
     select: { id: true },

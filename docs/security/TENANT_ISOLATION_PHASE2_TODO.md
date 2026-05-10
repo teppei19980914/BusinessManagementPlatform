@@ -40,25 +40,33 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [x] `unlinkRiskFromProject(riskId, projectId, viewerTenantId)` — 冒頭で risk の tenant 一致確認 (越境紐付け解除を遮断)
 - [x] `linkRiskToProject` は既存実装で risk.tenantId === project.tenantId を verify 済 (TENANT_MISMATCH throw) のため変更不要
 
-### knowledge.service.ts
+### knowledge.service.ts ✅ 完了 (PR Phase 2-4, 2026-05-09)
 
-- [ ] `listKnowledge(params, userId, systemRole, viewerTenantId)`
-- [ ] `listKnowledgeByProject(projectId, viewerTenantId)`
-- [ ] `getKnowledge(knowledgeId, ..., viewerTenantId)`
-- [ ] `updateKnowledge(knowledgeId, input, userId, viewerTenantId)` — 既存 `tenantId` 引数同上
-- [ ] `deleteKnowledge(knowledgeId, userId, systemRole, viewerTenantId)`
-- [ ] `bulkUpdateKnowledgeVisibilityFromList(projectId, ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `listKnowledge(params, userId, systemRole, viewerTenantId)`
+- [x] `listKnowledgeByProject(projectId, viewerTenantId)`
+- [x] `getKnowledge(knowledgeId, viewerUserId?, viewerSystemRole?, viewerTenantId?)` — 内部 helper オプショナル維持
+- [x] `updateKnowledge(knowledgeId, input, userId, tenantId)` — 既存 `tenantId` を viewer 認可境界として再利用
+- [x] `deleteKnowledge(knowledgeId, userId, systemRole, viewerTenantId)`
+- [x] `bulkUpdateKnowledgeVisibilityFromList(projectId, ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `createKnowledge` — `data.tenantId` を明示化
 
-### retrospective.service.ts
+### retrospective.service.ts ✅ 完了 (PR Phase 2-4, 2026-05-09)
 
-- [ ] 全 7 関数 (`listRetrospectives` / `getRetrospective` / `confirmRetrospective` / `updateRetrospective` / `deleteRetrospective` / `bulkUpdateRetrospectivesVisibilityFromList` / `unlinkRetrospectiveFromProject`)
+- [x] `listRetrospectives(projectId, viewerUserId, viewerSystemRole, viewerTenantId)`
+- [x] `getRetrospective(retroId, viewerUserId?, viewerSystemRole?, viewerTenantId?)`
+- [x] `confirmRetrospective(retroId, userId, viewerTenantId)` — 冒頭で findFirst 所有確認
+- [x] `updateRetrospective(retroId, input, userId, tenantId)` — 既存 tenantId を認可境界として再利用
+- [x] `deleteRetrospective(retroId, userId, systemRole, viewerTenantId)`
+- [x] `bulkUpdateRetrospectivesVisibilityFromList(projectId, ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `unlinkRetrospectiveFromProject(retroId, projectId, viewerTenantId)`
 
-### memo.service.ts (Phase 1 の listMy/listPublic に続く残り)
+### memo.service.ts ✅ 完了 (PR Phase 2-4, 2026-05-09)
 
-- [ ] `getMemoForViewer(memoId, viewerUserId, viewerTenantId)`
-- [ ] `updateMemo(memoId, input, userId, viewerTenantId)`
-- [ ] `deleteMemo(memoId, userId, viewerTenantId)`
-- [ ] `bulkUpdateMemosVisibilityFromList(ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `getMemoForViewer(memoId, viewerUserId, viewerTenantId)`
+- [x] `updateMemo(memoId, input, userId, viewerTenantId)`
+- [x] `deleteMemo(memoId, userId, viewerTenantId)`
+- [x] `bulkUpdateMemosVisibilityFromList(ids, visibility, viewerUserId, viewerTenantId)`
+- [x] `createMemo` — `data.tenantId` を明示化
 
 ### task.service.ts (最大の盲点 — tenantId フィルタ皆無) ✅ 完了 (PR Phase 2-1, 2026-05-09)
 
@@ -76,38 +84,59 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [x] `getProgressLogs(taskId, viewerTenantId)` — 当初 TODO 漏れ、本 PR で塞いだ
 - [x] `recalculateAncestorsPublic` / `recalculateAncestors` / `recalculateWp` / `recalculateWpOnly` — 内部 helper、上位関数で tenant 検証された taskId しか流れないため変更不要
 
-### comment.service.ts
+### comment.service.ts ✅ 完了 (PR Phase 2-5, 2026-05-10)
 
-- [ ] 全 7 関数 (`listComments` / `getComment` / `createComment` (data.tenantId 明示) / `updateComment` / `deleteComment` / `resolveEntityForComment` / `softDeleteCommentsForEntity`)
-- [ ] `mention.createMany` (createComment 内) も `data.tenantId` 明示
+- [x] `listComments(entityType, entityId, viewerTenantId)`
+- [x] `getComment(commentId, viewerTenantId)`
+- [x] `createComment(input, userId, tenantId, mentions?, mentionerName?)` — `data.tenantId` 明示 + `mention.createMany` にも tenantId 明示
+- [x] `updateComment(commentId, content, viewerTenantId, mentions?, mentionerName?)` — 冒頭で findFirst 所有確認
+- [x] `deleteComment(commentId, viewerTenantId)` — updateMany で tenantId 検証 (越境誤削除遮断)
+- [x] `resolveEntityForComment(entityType, entityId, viewerTenantId)` — 全 entity 検索に tenantId 必須化
+- [x] `softDeleteCommentsForEntity(entityType, entityId, viewerTenantId)` — 越境 cascade 削除遮断
 
-### stakeholder.service.ts
+### stakeholder.service.ts ✅ 完了 (PR Phase 2-5, 2026-05-10)
 
-- [ ] 全 5 関数 (`listStakeholders` / `getStakeholder` / `createStakeholder` (data.tenantId 明示) / `updateStakeholder` / `deleteStakeholder`)
+- [x] `listStakeholders(projectId, viewerTenantId)`
+- [x] `getStakeholder(stakeholderId, viewerTenantId)`
+- [x] `createStakeholder(projectId, input, userId, tenantId)` — project 所有確認 + `data.tenantId` 明示
+- [x] `updateStakeholder(stakeholderId, input, userId, viewerTenantId)`
+- [x] `deleteStakeholder(stakeholderId, userId, viewerTenantId)`
 
-### attachment.service.ts (添付ファイル URL 漏洩は機密情報直結)
+### attachment.service.ts (添付ファイル URL 漏洩は機密情報直結) ✅ 完了 (PR Phase 2-5, 2026-05-10)
 
-- [ ] 全 8 関数 (`listAttachments` / `getAttachment` / `createAttachment` (data.tenantId 明示) / `updateAttachment` / `deleteAttachment` / `getEntityVisibility` / `resolveProjectIds` / `authorizeMemoAttachment`)
+- [x] `listAttachments(entityType, entityId, viewerTenantId, slot?)`
+- [x] `getAttachment(id, viewerTenantId)`
+- [x] `createAttachment(input, userId, tenantId)` — `data.tenantId` 明示
+- [x] `updateAttachment(id, input, viewerTenantId)` — 冒頭で findFirst 所有確認
+- [x] `deleteAttachment(id, viewerTenantId)` — updateMany で tenantId 検証
+- [x] `getEntityVisibility(entityType, entityId, viewerTenantId)` — 全 entity 検索に tenantId 必須化
+- [x] `resolveProjectIds(entityType, entityId, viewerTenantId)` — task / estimate は project 経由で絞り込み
+- [x] `authorizeMemoAttachment(memoId, viewerUserId, mode, viewerTenantId)`
 
-### estimate.service.ts (契約金額 / 見積根拠の漏洩は致命的)
+### estimate.service.ts (契約金額 / 見積根拠の漏洩は致命的) ✅ 完了 (PR Phase 2-6, 2026-05-10)
 
-- [ ] 全 6 関数
+- [x] `listEstimates(projectId, viewerTenantId)` — project 経由で絞り込み
+- [x] `getEstimate(estimateId, viewerTenantId)`
+- [x] `createEstimate(projectId, input, userId, viewerTenantId)` — 冒頭で project tenant 検証
+- [x] `updateEstimate(estimateId, input, userId, viewerTenantId)` — 冒頭で findFirst 所有確認
+- [x] `confirmEstimate(estimateId, userId, viewerTenantId)`
+- [x] `deleteEstimate(estimateId, userId, viewerTenantId)`
 
-### member.service.ts
+### member.service.ts ✅ 完了 (PR Phase 2-6, 2026-05-10)
 
-- [ ] `listMembers(projectId, viewerTenantId)`
-- [ ] `addMember(projectId, userId, projectRole, viewerTenantId)` — **User と Project の tenantId 一致を verify** (権限昇格攻撃防止)
-- [ ] `updateMemberRole(memberId, ..., viewerTenantId)`
-- [ ] `removeMember(memberId, viewerTenantId)`
+- [x] `listMembers(projectId, viewerTenantId)` — project 経由で絞り込み
+- [x] `addMember(projectId, userId, projectRole, assignedBy, viewerTenantId)` — **User と Project の tenantId 一致を verify** (権限昇格攻撃防止)
+- [x] `updateMemberRole(memberId, newRole, changedBy, viewerTenantId)` — findUnique → findFirst (project tenant 検証)
+- [x] `removeMember(memberId, changedBy, viewerTenantId)`
 
-### user.service.ts (B 拡張)
+### user.service.ts (B 拡張) ✅ 完了 (PR Phase 2-6, 2026-05-10)
 
-- [ ] `createUser(input, creatorId, options, viewerTenantId)` — `data.tenantId` を引数の tenantId と一致確認
-- [ ] `updateUserStatus(userId, isActive, updaterId, viewerTenantId)`
-- [ ] `updateUser(userId, input, updaterId, viewerTenantId)`
-- [ ] `updateUserRole(userId, newRole, updaterId, viewerTenantId)`
-- [ ] `deleteUser(userId, deleterId, viewerTenantId)` — 内部の projectMember カスケードも tenantId 条件併記
-- [ ] `lockInactiveUsers(systemTriggerId, viewerTenantId?)` — cron 経路は意図的全テナント横断、手動経路のみ tenantId 限定
+- [x] `createUser(input, creatorId, options)` — メール重複チェックを tenant scope で実施 + `data.tenantId` を明示
+- [x] `updateUserStatus(userId, isActive, updaterId, viewerTenantId)` — 冒頭で findFirst 所有確認
+- [x] `updateUser(userId, input, updaterId, viewerTenantId)` — 冒頭で findFirst 所有確認 (内部 dispatch も tenant 検証)
+- [x] `updateUserRole(userId, newRole, updaterId, viewerTenantId)` — findUnique → findFirst (tenantId 検証)
+- [x] `deleteUser(userId, deleterId, viewerTenantId)` — findFirst の where に tenantId 必須化
+- [ ] `lockInactiveUsers(systemTriggerId, viewerTenantId?)` — cron 経路は意図的全テナント横断、手動経路のみ tenantId 限定 (Phase 2-9 で対応予定)
 
 ### suggestion.service.ts
 

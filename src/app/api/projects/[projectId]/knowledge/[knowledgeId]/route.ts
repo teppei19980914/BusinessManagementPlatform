@@ -32,7 +32,7 @@ export async function PATCH(
   if (forbidden) return forbidden;
 
   const t = await getTranslations('message');
-  const existing = await getKnowledge(knowledgeId);
+  const existing = await getKnowledge(knowledgeId, undefined, undefined, user.tenantId);
   if (!existing) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -98,7 +98,7 @@ export async function DELETE(
   if (forbidden) return forbidden;
 
   const t = await getTranslations('message');
-  const existing = await getKnowledge(knowledgeId);
+  const existing = await getKnowledge(knowledgeId, undefined, undefined, user.tenantId);
   if (!existing) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -114,7 +114,7 @@ export async function DELETE(
 
   try {
     // 2026-04-24: 削除は作成者本人 OR admin (service 層で enforce)。
-    await deleteKnowledge(knowledgeId, user.id, user.systemRole);
+    await deleteKnowledge(knowledgeId, user.id, user.systemRole, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

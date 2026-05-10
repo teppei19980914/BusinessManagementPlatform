@@ -35,6 +35,6 @@ export async function GET(
     ? Math.max(1, Math.min(SUGGESTIONS_API_MAX_LIMIT, Number(raw) || SUGGESTION_DEFAULT_LIMIT))
     : SUGGESTION_DEFAULT_LIMIT;
 
-  const data = await suggestForProject(projectId, { limit });
+  const data = await suggestForProject(projectId, user.tenantId, { limit });
   return NextResponse.json({ data });
 }
