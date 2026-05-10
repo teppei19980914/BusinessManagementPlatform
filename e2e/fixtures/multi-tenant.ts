@@ -19,6 +19,7 @@
  */
 
 import { Pool } from 'pg';
+import { randomBytes } from 'crypto';
 import { hash } from 'bcryptjs';
 import { BCRYPT_COST } from '../../src/config/security';
 
@@ -81,9 +82,18 @@ export async function createTenantWithFullDataset(
   label: 'A' | 'B',
 ): Promise<TenantFixture> {
   const pool = getPool();
-  const slug = `e2e-${runId}-${label.toLowerCase()}`;
-  const adminEmail = `admin-${runId}-${label.toLowerCase()}@example.com`.toLowerCase();
-  const generalEmail = `general-${runId}-${label.toLowerCase()}@example.com`.toLowerCase();
+  // RUN_ID はモジュール load 時に 1 度だけ生成され、同じ worker 内の複数 spec で **共有** される。
+  //   `fullyParallel: false` + `workers: 2` 設定下で spec 11 → spec 12 が同 worker で順次実行されると、
+  //   両者が同じ RUN_ID で createTenantPair を呼び、`tenants_slug_key` UNIQUE 違反する。
+  //   後段の cleanupTenants はトランザクション abort で部分失敗するケースがあり、
+  //   tenants が残留 → spec 12 で重複が顕在化する経路が判明 (CI run 25626083322)。
+  //   per-fixture-call の suffix を付与して、cleanup 成否に依存せず slug を一意化する。
+  const callSuffix = randomBytes(3).toString('hex'); // 6 hex = 16M 通り
+  const slug = `e2e-${runId}-${label.toLowerCase()}-${callSuffix}`;
+  const adminEmail =
+    `admin-${runId}-${label.toLowerCase()}-${callSuffix}@example.com`.toLowerCase();
+  const generalEmail =
+    `general-${runId}-${label.toLowerCase()}-${callSuffix}@example.com`.toLowerCase();
   // E2E ダミー値。secret-scan の検出パターンを避けるため、テンプレートリテラル + runId 置換で構築する。
   // 環境変数 E2E_TENANT_PASSWORD が設定されていればそれを優先 (CI で固定値を注入したい場合)。
   const password = process.env.E2E_TENANT_PASSWORD ?? `E2eTenant!Pw_${runId}`;
@@ -339,61 +349,61 @@ export async function createTenantPair(runId: string): Promise<{
 export async function cleanupTenants(tenantIds: string[]): Promise<void> {
   if (tenantIds.length === 0) return;
   const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    // RESTRICT FK が無いものは ON DELETE CASCADE か論理削除前提なので
-    // 親テーブルから順に削除して問題なし。子テーブル → 親テーブルの順に削除する。
-    const cascadeOrder = [
-      'attachments',
-      'comments',
-      'mentions',
-      'notifications',
-      'stakeholders',
-      'memos',
-      // M:N link table 名は単数形 (schema.prisma の `@@map` を参照)。
-      // 注: 本体側 (`risks_issues` / `retrospectives` / `knowledges`) は複数形だが
-      //     link は `risk_issue_projects` / `retrospective_projects` / `knowledge_projects` と単数形。
-      'retrospective_projects',
-      'retrospectives',
-      'knowledge_projects',
-      'knowledges',
-      'risk_issue_projects',
-      'risks_issues',
-      'estimates',
-      'task_progress_logs',
-      'tasks',
-      'project_members',
-      'projects',
-      'customers',
-      'audit_logs',
-      'role_change_logs',
-      'auth_event_logs',
-      'email_verification_tokens',
-      'password_reset_tokens',
-      'recovery_codes',
-      'password_histories',
-      'system_error_logs',
-      'api_call_logs',
-      'tenant_monthly_usage_history',
-      'tenant_import_previews',
-      'users',
-      'tenants',
-    ];
-    for (const table of cascadeOrder) {
-      // 各テーブルが tenant_id 列を持つかは異なる。エラーになっても cleanup なので無視。
-      try {
-        await client.query(`DELETE FROM "${table}" WHERE tenant_id = ANY($1)`, [tenantIds]);
-      } catch {
-        // tenant_id 列を持たないテーブル (sessions / project_members 等) は親経由で
-        // 既に削除済のはず。エラーは握りつぶす。
-      }
+  // NOTE: トランザクションは使わない。PostgreSQL は **transaction 内で 1 つでも文が失敗すると、
+  //   後続の文はすべて "current transaction is aborted, commands ignored until end of
+  //   transaction block" でブロック** される (try/catch では握り潰せない)。
+  //   旧実装は BEGIN ... COMMIT で囲んでいたため、tenant_id 列が無い表で 1 度失敗すると
+  //   以降の DELETE FROM tenants も silent fail し、tenants 行が残留する → 次の spec で
+  //   `tenants_slug_key` UNIQUE 違反 (CI run 25626083322)。
+  //   個別 DELETE を独立クエリとして実行し、各エラーは catch で握り潰す。
+  // RESTRICT FK が無いものは ON DELETE CASCADE か論理削除前提なので
+  // 親テーブルから順に削除して問題なし。子テーブル → 親テーブルの順に削除する。
+  const cascadeOrder = [
+    'attachments',
+    'comments',
+    'mentions',
+    'notifications',
+    'stakeholders',
+    'memos',
+    // M:N link table 名は単数形 (schema.prisma の `@@map` を参照)。
+    // 注: 本体側 (`risks_issues` / `retrospectives` / `knowledges`) は複数形だが
+    //     link は `risk_issue_projects` / `retrospective_projects` / `knowledge_projects` と単数形。
+    'retrospective_projects',
+    'retrospectives',
+    'knowledge_projects',
+    'knowledges',
+    'risk_issue_projects',
+    'risks_issues',
+    'estimates',
+    'task_progress_logs',
+    'tasks',
+    'project_members',
+    'projects',
+    'customers',
+    'audit_logs',
+    'role_change_logs',
+    'auth_event_logs',
+    'email_verification_tokens',
+    'password_reset_tokens',
+    'recovery_codes',
+    'password_histories',
+    'system_error_logs',
+    'api_call_logs',
+    'tenant_monthly_usage_history',
+    'tenant_import_previews',
+    'users',
+    'tenants',
+  ];
+  for (const table of cascadeOrder) {
+    try {
+      await pool.query(`DELETE FROM "${table}" WHERE tenant_id = ANY($1)`, [tenantIds]);
+    } catch (e) {
+      // tenant_id 列を持たないテーブル (sessions / project_members 等) は親経由で
+      // 既に削除済のはず。FK 違反も「先に他テーブルが消えていれば再 DELETE で解決」する
+      // ケースが多いので警告のみ。
+      console.warn(
+        `[e2e cleanup tenants] DELETE FROM ${table} 失敗 (継続): ${(e as Error).message}`,
+      );
     }
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    console.warn('[e2e cleanup tenants] 無視可能なエラー:', (e as Error).message);
-  } finally {
-    client.release();
   }
 }

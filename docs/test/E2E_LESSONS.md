@@ -3200,6 +3200,7 @@ test.afterAll(async () => {
 | 8 | `retrospectives_projects` (誤テーブル名) | 正しくは `retrospective_projects` (単数形)。`@@map("retrospective_projects")` 参照 | (6 と同時に発見、未到達) |
 | 9 | `knowledges.business_domain_tags` の cast | jsonb 列に `ARRAY['x']::text[]` を渡すと型不一致エラー。`'["x"]'::jsonb` を使う | CI run 4 (25625659810) |
 | 10 | API endpoint method | retrospective `[rid]` は GET ハンドラなし (PATCH/DELETE のみ)。GET → 405 で test fail。事前に `route.ts` の export 関数を確認 | CI run 4 |
+| 11 | RUN_ID 同 worker 共有 + cleanup transaction abort | spec 11 → spec 12 が同 worker で順次実行されると同じ RUN_ID から同じ slug を生成し UNIQUE 違反。さらに cleanup が transaction abort で部分失敗し tenants 残留。fixture 呼び出しごとに `randomBytes(3).toString('hex')` を suffix 付与 + cleanup を非トランザクション化 | CI run 5 (25626083322) |
 
 → **教訓 1**: 「fixture 1 件 INSERT → CI で次の violation を発見 → 修正」を繰り返すと CI 1 回 = 5〜10 分の
 無駄が累積する。fixture 作成時点で `prisma/schema.prisma` を 14 モデル全て trace し、
@@ -3236,6 +3237,24 @@ ARRAY['fintech']::text[]
 ```bash
 grep -hE "^export (async )?function (GET|POST|PATCH|PUT|DELETE)" src/app/api/<path>/route.ts
 ```
+
+→ **教訓 6**: **Playwright の `RUN_ID` は worker プロセス単位で固定される**。`fullyParallel: false` +
+`workers: 2` 設定下で同じ worker 内に複数 spec が割り当てられると、両者が同じ RUN_ID で fixture を
+作成し UNIQUE 制約違反する経路が存在。fixture 内部で **呼び出しごとに追加の random suffix** を付けて、
+RUN_ID 共有でも slug / email が一意になるようにする:
+```ts
+const callSuffix = randomBytes(3).toString('hex'); // 6 hex = 16M 通り
+const slug = `e2e-${runId}-${label}-${callSuffix}`;
+```
+
+→ **教訓 7**: **PostgreSQL の transaction 内で 1 文でも失敗すると後続が全 abort される**。
+`BEGIN ... COMMIT` で囲んだ cleanup ループで try/catch していても、JS 側の例外を握り潰すだけで
+**transaction state は abort 状態**。後続 DELETE は全て "current transaction is aborted, commands
+ignored until end of transaction block" で silent fail する。
+最も多い表れ方は「cleanup が partial failure → 親テーブル (`tenants` / `users` 等) に行が残留 →
+次のテストで UNIQUE 違反」。
+対処: **ベストエフォート cleanup には transaction を使わない** (各 DELETE を独立クエリとして実行し、
+個別 catch で握り潰す)。原子性が必要な業務ロジックでは SAVEPOINT を併用する。
 
 #### 関連
 
