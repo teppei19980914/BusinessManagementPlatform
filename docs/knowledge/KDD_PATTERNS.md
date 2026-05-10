@@ -5825,3 +5825,63 @@ ls e2e/specs/*.spec.ts | grep -i security  # 既存 security spec を流用 or �
 - Layer 1 実装: src/services/__tests__/tenant-isolation-invariants.test.ts
 - Layer 2 実装: src/services/*.service.test.ts (各 service の越境テスト)
 - Layer 3 実装: e2e/specs/11-tenant-isolation.spec.ts / e2e/specs/12-suggestion-seed-data.spec.ts
+
+---
+
+## 5.X+19 dependabot.yml の `schedule.day` は `weekly` 限定 (PR #310 で遭遇)
+
+### 罠の正体
+
+`.github/dependabot.yml` の `schedule.day` フィールドは **`interval: weekly` でのみ有効**。
+`monthly` で `day` を指定したり、`'first monday'` のような複合文字列を渡すと、GitHub の
+dependabot validator が **PR check 段階で fail** する (1 秒以内、ログ出力なし)。
+
+### 仕様 (公式)
+
+公式ドキュメント: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+| `interval` | `day` 指定可否 | 有効値 |
+|---|---|---|
+| `daily` | × (毎日実行) | — |
+| `weekly` | ✅ (必須ではない、未指定なら任意の曜日) | `monday` / `tuesday` / ... / `sunday` の **単一値のみ** |
+| `monthly` | ❌ (毎月 1 日に自動実行) | — |
+
+`'first monday'` `'last friday'` などの複合表現は仕様にない。
+
+### 検出が遅れた理由
+
+- **dependabot check は CI ログを残さず短時間で fail** (1s) するため、ログを grep しても
+  原因に到達できない。`gh pr checks` の URL を辿ると detailed error が見える場合があるが、
+  辿れないこともある (PR #310 では 404)。
+- 設定ファイル parse は GitHub 側 service が行うため、**ローカルの YAML lint では捕捉できない**。
+
+### 横展開チェック (dependabot.yml 編集時)
+
+- [ ] `schedule.day` を入れているなら `interval: weekly` か確認
+- [ ] `schedule.day` の値は `monday` 〜 `sunday` の単一文字列か確認 (空白を含む複合表現は無効)
+- [ ] `monthly` で「月内の特定週/曜日に実行したい」要件があれば、**`weekly` + `day: monday`
+      に変更し、人間の判断で月内の必要回数だけマージ** する運用に切り替える (= dependabot は
+      週次 PR を出すが、人間が月初の Monday 分だけ approve する)
+
+### 修正例
+
+```yaml
+# Before (PR #310 fail):
+- package-ecosystem: 'npm'
+  schedule:
+    interval: 'monthly'
+    day: 'first monday'        # ← 二重に invalid (monthly + 複合文字列)
+
+# After:
+- package-ecosystem: 'npm'
+  schedule:
+    interval: 'monthly'         # 月次は毎月 1 日固定で自動実行される
+    time: '03:00'
+    timezone: 'Asia/Tokyo'
+```
+
+### 関連
+
+- 修正例: PR #310 (2026-05-10)
+- 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
+- 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
