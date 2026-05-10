@@ -51,5 +51,28 @@ export async function GET(req: NextRequest) {
   }
 
   const summary = await getAdminUsageSummary(targetDate);
-  return NextResponse.json({ data: summary });
+
+  // 2026-05-10 feedback Phase 2-9: 越境取得を遮断するため自テナントの分のみ返す。
+  //   全テナント横断は将来 super_admin (PR-X2) 導入後にロール分岐する。
+  //   現状の admin はテナント内権限なので、自テナント分のみ可視。
+  const myTenant = summary.tenants.find((t) => t.tenantId === user.tenantId);
+  const filteredAnomalies = summary.anomalies.filter((a) => a.tenantId === user.tenantId);
+  const filteredAlerts = summary.budgetAlerts.filter((b) => b.tenantId === user.tenantId);
+  const filtered = {
+    date: summary.date,
+    tenants: myTenant ? [myTenant] : [],
+    total: myTenant
+      ? {
+          tenantCount: 1,
+          callCount: myTenant.callCount,
+          costJpy: myTenant.costJpy,
+          embeddingTokens: myTenant.embeddingTokens,
+          llmInputTokens: myTenant.llmInputTokens,
+          llmOutputTokens: myTenant.llmOutputTokens,
+        }
+      : { tenantCount: 0, callCount: 0, costJpy: 0, embeddingTokens: 0, llmInputTokens: 0, llmOutputTokens: 0 },
+    anomalies: filteredAnomalies,
+    budgetAlerts: filteredAlerts,
+  };
+  return NextResponse.json({ data: filtered });
 }

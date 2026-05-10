@@ -50,6 +50,14 @@ export type RecordErrorInput = {
   stack?: string;
   /** 認証済ユーザの ID。pre-auth や cron は undefined。 */
   userId?: string;
+  /**
+   * Phase 2-10 (2026-05-10): エラーの所属テナント (省略時は schema の DB DEFAULT = default-tenant)。
+   *   - 認証済 user の error は user.tenantId を渡す (= 自テナントのエラー監視で見えるように)
+   *   - cron / pre-auth は省略 → default-tenant に集約 (= super_admin 監視で見える)
+   *   旧仕様 (Phase 2-10 以前) は省略デフォルト依存だったため、本来テナント別エラーが
+   *   default-tenant に紛れ込み「default-tenant ばかりエラーが多い」誤認の温床だった。
+   */
+  tenantId?: string;
   /** trace 用の request id (middleware で header から払い出す想定)。 */
   requestId?: string;
   /** IP / URL path / HTTP method / 任意メタデータ (機密は含めない)。 */
@@ -72,6 +80,8 @@ export async function recordError(input: RecordErrorInput): Promise<void> {
         message: input.message,
         stack: input.stack,
         userId: input.userId,
+        // Phase 2-10: tenantId 明示 (省略時は schema DB DEFAULT)。
+        ...(input.tenantId ? { tenantId: input.tenantId } : {}),
         requestId: input.requestId,
         context: input.context as object | undefined,
       },

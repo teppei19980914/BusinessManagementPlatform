@@ -94,6 +94,7 @@ export async function PATCH(
   const updated = await updateComment(id, parsed.data.content, user.tenantId, mentions, user.name);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'comment',
@@ -119,6 +120,7 @@ export async function DELETE(
   await deleteComment(id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'comment',

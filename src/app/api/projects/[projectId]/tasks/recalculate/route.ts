@@ -37,6 +37,7 @@ export async function POST(
   // 実際に値が変わった数のみ記録（一致スキップは監査対象外）
   if (updated > 0) {
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'UPDATE',
       entityType: 'project',

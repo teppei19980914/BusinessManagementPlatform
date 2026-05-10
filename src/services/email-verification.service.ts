@@ -14,15 +14,19 @@ function hashToken(token: string): string {
 /**
  * メール検証トークンを生成し、検証メールを送信する
  * @throws {EmailSendError} メール送信に失敗した場合
+ *
+ * Phase 2-10 (2026-05-10): tenantId 必須化。token 漏洩時の越境再利用を遮断するため、
+ *   token は所属テナント内でのみ有効。verify 時に findFirst が tenantId フィルタを併用する。
  */
 export async function sendVerificationEmail(
   userId: string,
+  tenantId: string,
   email: string,
   baseUrl: string,
 ): Promise<void> {
-  // 未使用の既存トークンを無効化
+  // 未使用の既存トークンを無効化 (自テナント + 同 user に限定 = 二重防御)
   await prisma.emailVerificationToken.updateMany({
-    where: { userId, usedAt: null },
+    where: { userId, tenantId, usedAt: null },
     data: { usedAt: new Date() },
   });
 
@@ -33,6 +37,7 @@ export async function sendVerificationEmail(
 
   await prisma.emailVerificationToken.create({
     data: {
+      tenantId,
       userId,
       tokenHash,
       expiresAt,
@@ -207,7 +212,9 @@ export async function setupPassword(
         },
       }),
       prisma.recoveryCode.createMany({
+        // Phase 2-10: tenantId 必須化 (token record の tenantId を継承)
         data: recoveryCodeHashes.map((h) => ({
+          tenantId: record.tenantId,
           userId: record.userId,
           ...h,
         })),
@@ -238,7 +245,9 @@ export async function setupPassword(
       },
     }),
     prisma.recoveryCode.createMany({
+      // Phase 2-10: tenantId 必須化 (token record の tenantId を継承)
       data: recoveryCodeHashes.map((h) => ({
+        tenantId: record.tenantId,
         userId: record.userId,
         ...h,
       })),

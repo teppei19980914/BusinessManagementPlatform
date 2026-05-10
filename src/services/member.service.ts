@@ -94,9 +94,10 @@ export async function addMember(
     include: { user: { select: { name: true, email: true } } },
   });
 
-  // 権限変更ログ
+  // 権限変更ログ (Phase 2-10: tenantId 必須化)
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: viewerTenantId,
       changedBy: assignedBy,
       targetUserId: userId,
       changeType: 'project_role',
@@ -136,8 +137,10 @@ export async function updateMemberRole(
     include: { user: { select: { name: true, email: true } } },
   });
 
+  // Phase 2-10: tenantId 必須化
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: viewerTenantId,
       changedBy,
       targetUserId: member.userId,
       changeType: 'project_role',
@@ -171,8 +174,10 @@ export async function removeMember(
 
   await prisma.projectMember.delete({ where: { id: memberId } });
 
+  // Phase 2-10: tenantId 必須化
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: viewerTenantId,
       changedBy,
       targetUserId: member.userId,
       changeType: 'project_role',

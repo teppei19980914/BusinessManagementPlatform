@@ -136,43 +136,61 @@ PR feat/issues-from-feedback-2026-05-09 (Phase 1) で **中核 + 最重要 PII �
 - [x] `updateUser(userId, input, updaterId, viewerTenantId)` — 冒頭で findFirst 所有確認 (内部 dispatch も tenant 検証)
 - [x] `updateUserRole(userId, newRole, updaterId, viewerTenantId)` — findUnique → findFirst (tenantId 検証)
 - [x] `deleteUser(userId, deleterId, viewerTenantId)` — findFirst の where に tenantId 必須化
-- [ ] `lockInactiveUsers(systemTriggerId, viewerTenantId?)` — cron 経路は意図的全テナント横断、手動経路のみ tenantId 限定 (Phase 2-9 で対応予定)
+- [x] `lockInactiveUsers(systemTriggerId, viewerTenantId?)` — cron 経路は意図的全テナント横断、手動経路のみ tenantId 限定 (Phase 2-6 で対応済)
 
-### suggestion.service.ts
+### suggestion.service.ts ✅ 完了 (PR #304 Phase 2-7)
 
-- [ ] `loadProjectContext(projectId, viewerTenantId)`
-- [ ] `suggestForProject(projectId, options, viewerTenantId)` — knowledge / issue / risk / retrospective の findMany **すべて** に `tenantId: ctx.tenantId` 必須。`excludeManagementTenant` を「追加許可」に書き換え (`tenantId: { in: [ctx.tenantId, MANAGEMENT_TENANT_ID] }` when seedDataEnabled)
-- [ ] `adoptPastIssueAsTemplate(sourceIssueId, targetProjectId, userId)` — sourceIssue.tenantId === targetProject.tenantId を verify
-- [ ] `linkKnowledgeToProject(knowledgeId, projectId, viewerTenantId)`
-- [ ] `suggestRelatedIssuesForText(inputText, currentProjectId, viewerTenantId)`
+- [x] `loadProjectContext(projectId, viewerTenantId)`
+- [x] `suggestForProject(projectId, options, viewerTenantId)` — knowledge / issue / risk / retrospective の findMany **すべて** に `tenantId: ctx.tenantId` 必須。`excludeManagementTenant` を「追加許可」に書き換え (`tenantId: { in: [ctx.tenantId, MANAGEMENT_TENANT_ID] }` when seedDataEnabled)
+- [x] `adoptPastIssueAsTemplate(sourceIssueId, targetProjectId, userId)` — sourceIssue.tenantId === targetProject.tenantId を verify
+- [x] `linkKnowledgeToProject(knowledgeId, projectId, viewerTenantId)`
+- [x] `suggestRelatedIssuesForText(inputText, currentProjectId, viewerTenantId)`
 
-### mention.service.ts
+### mention.service.ts ✅ 完了 (PR #304 Phase 2-7)
 
-- [ ] `getMentionContext(entityType, entityId, viewerTenantId)`
-- [ ] `expandMention(kind, ...)` — kind='all' の `user.findMany` に tenantId フィルタ
-- [ ] `generateMentionNotifications(...)` — `notification.createMany` の data に tenantId 明示
+- [x] `getMentionContext(entityType, entityId, viewerTenantId)`
+- [x] `expandMention(kind, ...)` — kind='all' の `user.findMany` に tenantId フィルタ
+- [x] `generateMentionNotifications(...)` — `notification.createMany` の data に tenantId 明示
 
-### notification.service.ts (二重防御)
+### notification.service.ts (二重防御) ✅ 完了 (PR #304 Phase 2-7)
 
-- [ ] `setNotificationRead(notificationId, read, viewerUserId, viewerTenantId)` — where に userId + tenantId 併記
-- [ ] `getNotification(notificationId, viewerTenantId)`
+- [x] `setNotificationRead(notificationId, read, viewerUserId, viewerTenantId)` — where に userId + tenantId 併記
+- [x] `getNotification(notificationId, viewerTenantId)`
 
-### sync-import 系 5 ファイル
+### sync-import 系 5 ファイル ✅ 完了 (PR #305 Phase 2-8)
 
-- [ ] `task-sync-import.service.ts` / `knowledge-sync-import.service.ts` / `risk-sync-import.service.ts` / `retrospective-sync-import.service.ts` / `memo-sync-import.service.ts`
-- [ ] 全 `applySyncImport` / `computeSyncDiff` に `viewerTenantId` 必須引数 + projectId の tenant 検証
+- [x] `task-sync-import.service.ts` / `knowledge-sync-import.service.ts` / `risk-sync-import.service.ts` / `retrospective-sync-import.service.ts` / `memo-sync-import.service.ts`
+- [x] 全 `applySyncImport` / `computeSyncDiff` に `viewerTenantId` 必須引数 + projectId の tenant 検証
+- [x] export 系 (`exportKnowledgeSync` / `exportRisksSync` / `exportRetrospectivesSync` / `exportMemosSync`) も合わせて引数追加
 
-### API ルート (Server Component を Phase 1 で塞いだが API は未対応)
+### API ルート (Server Component を Phase 1 で塞いだが API は未対応) ✅ 完了 (Phase 2-9)
 
-- [ ] `GET /api/admin/audit-logs/route.ts` — 自テナント限定
-- [ ] `GET /api/admin/role-change-logs/route.ts` — 同上
-- [ ] `GET /api/admin/usage-summary/route.ts` — 同上
-- [ ] `POST /api/attachments/batch` の admin 分岐 (`filteredIds = entityIds`): 親 entity の tenantId 検証
+- [x] `GET /api/admin/audit-logs/route.ts` — 自テナント限定 (User リレーション経由)
+- [x] `GET /api/admin/role-change-logs/route.ts` — 自テナント限定 (User リレーション経由)
+- [x] `GET /api/admin/usage-summary/route.ts` — 自テナント分のみ返す (将来 super_admin 導入時にロール分岐)
+- [x] `POST /api/attachments/batch` の admin 分岐: 親 entity の tenantId 検証 (severity-1 IDOR を遮断)
 
-## Phase 2 MEDIUM (構造的脆弱性 — 監査ログ / トークンの tenant 帰属明示化)
+## Phase 2-10 (旧 MEDIUM) ✅ 完了 (PR feat/tenant-isolation-phase2-audit-tokens, 2026-05-10)
 
-- [ ] `audit.service.ts`: `recordAuditLog` / `recordAuditLogBulk` の data に `tenantId` 明示
-- [ ] `email-verification.service.ts`: `EmailVerificationToken.create` / `RecoveryCode.createMany` の data に `tenantId` 明示
+監査ログ / 認証トークン / 認証イベント全 7 model に `tenantId` 列追加 + 全 service / route の caller 伝播。
+
+- [x] **schema.prisma 7 model に tenantId 列追加 + Tenant FK + index** (`AuditLog` / `RoleChangeLog` / `AuthEventLog` (NULL 許容) / `EmailVerificationToken` / `PasswordResetToken` / `RecoveryCode` / `PasswordHistory`)
+- [x] **migration `20260514_phase2_10_audit_token_tenant_id`**: ADD COLUMN + UPDATE backfill (users.tenant_id JOIN) + ALTER NOT NULL + ADD CONSTRAINT (DO ブロックで idempotent) + CREATE INDEX
+- [x] `audit.service.ts`: `recordAuditLog` / `recordBulkAuditLogs` に `tenantId` 必須引数化 + `data.tenantId` 明示
+- [x] `auth-event.service.ts`: `recordAuthEvent` に `tenantId` (NULL 許容) 追加 + `data.tenantId` 明示
+- [x] `email-verification.service.ts`: `sendVerificationEmail` に `tenantId` 必須化 + `EmailVerificationToken.create` / `RecoveryCode.createMany` の data に明示
+- [x] `password-reset.service.ts`: `PasswordResetToken.create` / `PasswordHistory.create` の data に `tenantId` 明示 + `RecoveryCode.updateMany` `findMany` `PasswordHistory.findMany` の where に併記 (二重防御)
+- [x] `password.service.ts`: `PasswordHistory.findMany` `create` に tenantId 明示 + `unlockAccount` を `viewerTenantId` 必須化 (越境 unlock 遮断 = `updateMany` で `where.tenantId` 併記)
+- [x] `error-log.service.ts`: `RecordErrorInput.tenantId` 追加 + 呼出元で明示伝播 (DB DEFAULT 暗黙依存を解消)
+- [x] **全 caller 伝播**: 50 ファイル中 46 ファイルは python script で `recordAuditLog` 呼出に `tenantId: user.tenantId,` 一括追加。残り 4 ファイル (super_admin export / tenant create / lockInactiveUsers / super-admin tenant DELETE) は **target tenant** を渡す特殊ケースとして手動修正
+- [x] **`/admin/audit-logs` / `/admin/role-changes` page + API**: User/targetUser リレーション経由フィルタ (Phase 2-9 暫定対応) から **直接 `where.tenantId` フィルタ** に最終移行 (より高速、User 物理削除後も追従可能)
+- [x] **`tenant-onboarding.service.ts`**: Tenant + 初期 admin 作成時の RoleChangeLog / sendVerificationEmail に新規 tenant.id を伝播
+- [x] **`prisma/seed.ts`**: 初期 admin (default-tenant) / super_admin (management-tenant) の RecoveryCode 生成に tenantId 明示
+
+### 検証
+- ✅ `pnpm test` 全 1750 件 pass
+- ✅ `pnpm build` 成功
+- ✅ TypeScript 全 production code 型エラーなし
 
 ## E2E テスト追加 (CI gate 化必須)
 

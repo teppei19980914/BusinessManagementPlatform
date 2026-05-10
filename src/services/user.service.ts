@@ -165,19 +165,20 @@ export async function createUser(
   }
 
   // 未有効化（deletedAt 付き）の既存ユーザがあれば削除して再登録を許可
+  // Phase 2-10: tenantId フィルタで二重防御 (existingInactive.tenantId を明示的に使用)
   const existingInactive = await prisma.user.findFirst({
     where: { email: input.email, deletedAt: { not: null }, isActive: false, ...tenantScope },
   });
   if (existingInactive) {
     await prisma.$transaction([
       prisma.emailVerificationToken.deleteMany({
-        where: { userId: existingInactive.id },
+        where: { userId: existingInactive.id, tenantId: existingInactive.tenantId },
       }),
       prisma.recoveryCode.deleteMany({
-        where: { userId: existingInactive.id },
+        where: { userId: existingInactive.id, tenantId: existingInactive.tenantId },
       }),
       prisma.roleChangeLog.deleteMany({
-        where: { targetUserId: existingInactive.id },
+        where: { targetUserId: existingInactive.id, tenantId: existingInactive.tenantId },
       }),
       prisma.user.delete({ where: { id: existingInactive.id } }),
     ]);
@@ -201,9 +202,10 @@ export async function createUser(
     },
   });
 
-  // 権限変更ログ
+  // 権限変更ログ (Phase 2-10: tenantId 必須化)
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: user.tenantId,
       changedBy: creatorId,
       targetUserId: user.id,
       changeType: 'system_role',
@@ -214,17 +216,19 @@ export async function createUser(
   });
 
   // 招待メール送信（パスワード設定リンク）
+  // Phase 2-10: sendVerificationEmail に tenantId 必須化
   if (options?.baseUrl) {
     try {
-      await sendVerificationEmail(user.id, user.email, options.baseUrl);
+      await sendVerificationEmail(user.id, user.tenantId, user.email, options.baseUrl);
     } catch (e) {
       // メール送信失敗時はユーザ・関連レコードをロールバック
+      // Phase 2-10: tenantId フィルタで二重防御
       await prisma.$transaction([
         prisma.emailVerificationToken.deleteMany({
-          where: { userId: user.id },
+          where: { userId: user.id, tenantId: user.tenantId },
         }),
         prisma.roleChangeLog.deleteMany({
-          where: { targetUserId: user.id },
+          where: { targetUserId: user.id, tenantId: user.tenantId },
         }),
         prisma.user.delete({ where: { id: user.id } }),
       ]);
@@ -257,8 +261,10 @@ export async function updateUserStatus(
     data: { isActive },
   });
 
+  // Phase 2-10: tenantId 必須化
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: viewerTenantId,
       changedBy: updaterId,
       targetUserId: userId,
       changeType: 'system_role',
@@ -342,8 +348,10 @@ export async function updateUserRole(
     data: { systemRole: newRole },
   });
 
+  // Phase 2-10: tenantId 必須化
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: viewerTenantId,
       changedBy: updaterId,
       targetUserId: userId,
       changeType: 'system_role',
@@ -397,15 +405,16 @@ export async function deleteUser(
   if (!user) throw new Error('NOT_FOUND');
 
   // ProjectMember / Session / RecoveryCode 等を物理削除 + User 本体に deletedAt セット
+  // Phase 2-10: 各 deleteMany に tenantId フィルタを併記して二重防御
   const [removedMembers] = await prisma.$transaction([
     prisma.projectMember.deleteMany({ where: { userId } }),
     prisma.session.deleteMany({ where: { userId } }),
-    prisma.recoveryCode.deleteMany({ where: { userId } }),
-    prisma.emailVerificationToken.deleteMany({ where: { userId } }),
-    prisma.passwordResetToken.deleteMany({ where: { userId } }),
-    prisma.passwordHistory.deleteMany({ where: { userId } }),
+    prisma.recoveryCode.deleteMany({ where: { userId, tenantId: viewerTenantId } }),
+    prisma.emailVerificationToken.deleteMany({ where: { userId, tenantId: viewerTenantId } }),
+    prisma.passwordResetToken.deleteMany({ where: { userId, tenantId: viewerTenantId } }),
+    prisma.passwordHistory.deleteMany({ where: { userId, tenantId: viewerTenantId } }),
     // 2026-04-24: Memo は個人資産なのでユーザ削除と同時にカスケード物理削除
-    prisma.memo.deleteMany({ where: { userId } }),
+    prisma.memo.deleteMany({ where: { userId, tenantId: viewerTenantId } }),
     prisma.user.update({
       where: { id: userId },
       data: {
@@ -418,6 +427,7 @@ export async function deleteUser(
     }),
     prisma.roleChangeLog.create({
       data: {
+        tenantId: viewerTenantId,
         changedBy: deleterId,
         targetUserId: userId,
         changeType: 'system_role',
@@ -468,6 +478,7 @@ export async function lockInactiveUsers(
   );
 
   // 候補抽出: 長期間ログインなし (or 一度もログインしていないかつ作成から閾値経過)
+  // Phase 2-10: tenantId を select に追加 (audit log の所属 tenant に使う)
   const candidates = await prisma.user.findMany({
     where: {
       isActive: true,
@@ -478,7 +489,7 @@ export async function lockInactiveUsers(
         { AND: [{ lastLoginAt: null }, { createdAt: { lt: thresholdDate } }] },
       ],
     },
-    select: { id: true, name: true, email: true },
+    select: { id: true, name: true, email: true, tenantId: true },
   });
 
   const lockedUserIds: string[] = [];
@@ -493,7 +504,9 @@ export async function lockInactiveUsers(
         data: { isActive: false },
       });
       // 監査ログ: 削除 (DELETE) ではなく更新 (UPDATE) として記録
+      // Phase 2-10: tenantId は **lock 対象 user の所属 tenant** を使う (cron 横断処理のため)
       await recordAuditLog({
+        tenantId: c.tenantId,
         userId: systemTriggerId,
         action: 'UPDATE',
         entityType: 'user',

@@ -74,6 +74,7 @@ export async function POST(
   try {
     const result = await applyRetrospectiveSyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'SYNC_IMPORT',
       entityType: 'retrospective_sync_import',

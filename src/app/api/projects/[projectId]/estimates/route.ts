@@ -56,6 +56,7 @@ export async function POST(
   const estimate = await createEstimate(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'estimate',

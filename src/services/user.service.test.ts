@@ -89,6 +89,8 @@ describe('createUser', () => {
     vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.user.create).mockResolvedValue({
       id: 'new-user-id',
+      // Phase 2-10: sendVerificationEmail に tenantId 必須、user.create のレスポンスでも返す
+      tenantId: 'tenant-A',
       name: validInput.name,
       email: validInput.email,
       passwordHash: 'hashed_placeholder',
@@ -126,6 +128,7 @@ describe('createUser', () => {
 
     expect(sendVerificationEmail).toHaveBeenCalledWith(
       'new-user-id',
+      'tenant-A',
       validInput.email,
       'https://example.com',
     );
@@ -375,6 +378,8 @@ describe('assertSeatAvailableForTenant (P-2 / 2026-05-08)', () => {
 
 const baseUserRow = {
   id: 'u-1',
+  // Phase 2-10: tenantId 必須化対応 (deleteUser 等で参照される)
+  tenantId: 'tenant-A',
   name: 'Alice',
   email: 'a@b.co',
   systemRole: 'general',
@@ -612,8 +617,8 @@ describe('deleteUser (PR #89)', () => {
 
     await deleteUser('u-1', 'admin-1', 'tenant-A');
 
-    // Memo.deleteMany が userId=u-1 で 1 回呼ばれたこと
-    expect(prisma.memo.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u-1' } });
+    // Memo.deleteMany が userId=u-1 + tenantId 二重防御で 1 回呼ばれたこと (Phase 2-10)
+    expect(prisma.memo.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u-1', tenantId: 'tenant-A' } });
     expect(prisma.memo.deleteMany).toHaveBeenCalledTimes(1);
   });
 });
