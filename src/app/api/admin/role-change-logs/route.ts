@@ -27,9 +27,10 @@ export async function GET(req: NextRequest) {
   const page = Number(searchParams.get('page')) || 1;
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 100);
 
-  // 2026-05-10 feedback Phase 2-9: 越境取得を遮断するため target user が自テナントのもののみ。
-  //   RoleChangeLog 自身は tenantId 列を持たないため target/changer の User リレーション経由で絞る。
-  const where = { targetUser: { tenantId: user.tenantId } };
+  // 2026-05-10 Phase 2-10: RoleChangeLog 直接 tenantId 列で絞込み (Phase 2-9 で導入した targetUser join 経由から移行)。
+  //   Phase 2-10 schema migration で role_change_logs.tenant_id 列が追加されたため有効に。
+  //   indexed lookup で高速、target user 物理削除後も追従可能。
+  const where = { tenantId: user.tenantId };
   const [logs, total] = await Promise.all([
     prisma.roleChangeLog.findMany({
       where,

@@ -52,9 +52,9 @@ export async function POST(
   const tenantViolation = await requireSameTenantUser(user, userId);
   if (tenantViolation) return tenantViolation;
 
-  // 旧コードを全て無効化
+  // 旧コードを全て無効化 (Phase 2-10: tenantId フィルタで二重防御)
   await prisma.recoveryCode.updateMany({
-    where: { userId, usedAt: null },
+    where: { userId, tenantId: user.tenantId, usedAt: null },
     data: { usedAt: new Date() },
   });
 
@@ -64,16 +64,18 @@ export async function POST(
     recoveryCodes.push(generateRecoveryCode());
   }
 
+  // Phase 2-10: tenantId 必須化
   await Promise.all(
     recoveryCodes.map(async (code) => {
       const codeHash = await hash(code, BCRYPT_COST);
       return prisma.recoveryCode.create({
-        data: { userId, codeHash },
+        data: { tenantId: user.tenantId, userId, codeHash },
       });
     }),
   );
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'recovery_codes',
@@ -83,6 +85,7 @@ export async function POST(
 
   await recordAuthEvent({
     eventType: 'password_change',
+    tenantId: user.tenantId,
     userId,
     detail: { action: 'recovery_code_reissued', reissuedBy: user.id },
   });

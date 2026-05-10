@@ -49,6 +49,7 @@ export async function PATCH(
     const member = await updateMemberRole(memberId, parsed.data.projectRole, user.id, user.tenantId);
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'UPDATE',
       entityType: 'project_member',
@@ -85,6 +86,7 @@ export async function DELETE(
     await removeMember(memberId, user.id, user.tenantId);
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'DELETE',
       entityType: 'project_member',

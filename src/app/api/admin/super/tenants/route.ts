@@ -53,7 +53,9 @@ export async function POST(req: NextRequest) {
 
   if (result.ok) {
     // 監査ログ: super_admin がテナント新規作成
+    // Phase 2-10: tenantId は **新規作成された tenant の id** を使う (target tenant への操作として記録)
     await recordAuditLog({
+      tenantId: result.tenantId,
       userId: user.id,
       action: 'CREATE',
       entityType: 'tenant',

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    user: { findUnique: vi.fn(), update: vi.fn() },
+    user: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     passwordHistory: { findMany: vi.fn(), create: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
@@ -110,12 +110,13 @@ describe('unlockAccount', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ロック情報をクリアして監査ログに account_reactivated を残す (T-21: temporaryLockCount もリセット)', async () => {
-    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    // Phase 2-10: tenantId フィルタ付き updateMany で越境 unlock 遮断
+    vi.mocked(prisma.user.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    await unlockAccount('u1', 'admin-1');
+    await unlockAccount('u1', 'admin-1', 'tenant-A');
 
-    expect(prisma.user.update).toHaveBeenCalledWith({
-      where: { id: 'u1' },
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: 'u1', tenantId: 'tenant-A' },
       data: {
         failedLoginCount: 0,
         lockedUntil: null,
@@ -126,6 +127,7 @@ describe('unlockAccount', () => {
     expect(recordAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'account_reactivated',
+        tenantId: 'tenant-A',
         userId: 'u1',
         detail: expect.objectContaining({ unlockedBy: 'admin-1' }),
       }),

@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
   await prisma.session.deleteMany({ where: { userId: user.id } });
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'user',
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
 
   await recordAuthEvent({
     eventType: 'account_deactivated',
+    tenantId: user.tenantId,
     userId: user.id,
     detail: { action: 'self_delete' },
   });

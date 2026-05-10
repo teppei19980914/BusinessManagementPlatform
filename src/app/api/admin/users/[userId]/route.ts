@@ -77,6 +77,7 @@ export async function PATCH(
   try {
     const updated = await updateUser(userId, parsed.data, user.id, user.tenantId);
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'UPDATE',
       entityType: 'user',
@@ -120,6 +121,7 @@ export async function DELETE(
   try {
     const result = await deleteUser(userId, user.id, user.tenantId);
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'DELETE',
       entityType: 'user',

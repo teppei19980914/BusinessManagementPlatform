@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
   const customer = await createCustomer(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'customer',

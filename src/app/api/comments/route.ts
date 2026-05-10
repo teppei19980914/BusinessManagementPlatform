@@ -219,6 +219,7 @@ export async function POST(req: NextRequest) {
   );
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'comment',

@@ -118,6 +118,7 @@ export async function PATCH(
   const updated = await updateAttachment(id, parsed.data, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'attachment',
@@ -154,6 +155,7 @@ export async function DELETE(
   await deleteAttachment(id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'attachment',

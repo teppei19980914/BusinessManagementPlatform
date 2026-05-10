@@ -5641,6 +5641,7 @@ docs/security/TENANT_ISOLATION_PHASE2_TODO.md
 | 同じセクションを **両方が完了マーク** | knowledge.service.ts: HEAD は `(PR #301 Phase 2-4)`、main は `(PR Phase 2-4, 2026-05-09)` で文言違い | **main を採用** (実際に merge されたバージョン) |
 | 一方が後続項目を追加 | memo.service.ts に main 側で `createMemo` 行が追加 | **main を採用** (情報が増えている) |
 | 一方が完了状態を更新 | user.service.ts の `lockInactiveUsers` を HEAD は `[x]`、main は `[ ] (Phase 2-9 で対応予定)` | **実態を確認**: コードを grep して既に実装済みなら `[x]` を採用 (HEAD の認識が正しい)、未実装なら main を採用 |
+| **後続フェーズ PR が前フェーズの暫定実装を最終形に置換** | PR #307 (Phase 2-10) で `audit-logs/route.ts`: HEAD は `where: { tenantId: user.tenantId }` (直接列フィルタ、Phase 2-10 schema 列追加が前提)、main は `where: { user: { tenantId } }` (Phase 2-9 暫定対応の relation 経由) | **HEAD を採用** (Phase 2-10 schema 列追加で初めて有効になる最終形)。Phase 2-9 は schema 制約下の暫定 fallback だったため、Phase 2-10 が完成したら HEAD の方が技術的に正解 |
 
 ### 採用したルール
 
@@ -5677,8 +5678,32 @@ git commit --no-edit                          # default merge message を採用
 git push
 ```
 
+### 後続フェーズが暫定実装を置換する場合のルール (PR #307 で確立)
+
+Phase 2-9 と Phase 2-10 のように **同じファイルを段階的に進化させる PR** が並行する場合、
+2 つの異なる衝突パターンが発生する:
+
+1. **HEAD = 最終形 / main = 暫定 fallback**: Phase 2-10 (PR #307) は schema 列追加を前提とした
+   最終実装 (`where.tenantId`)。Phase 2-9 (PR #306) は schema 列が無い段階での暫定実装
+   (`where.user.tenantId`)。**HEAD を採用** (= schema 列がある前提の最終形が正解)
+2. **HEAD = 暫定 / main = 最終形**: 通常はこの順で発生しない (= 後発 PR が先行 PR の最終形に
+   逆戻りすることは無い) が、誤って起きた場合は main を採用
+
+### 段階的実装の conflict 予防策
+
+- [ ] **後発 PR (Phase N) のコード comment に「Phase N-1 で導入した暫定実装からの最終移行」を明記**:
+      conflict 解消時に HEAD/main どちらが「最終形」か即判別できる
+- [ ] **段階実装の最後の commit message に「Phase N で完成、Phase N-1 の暫定実装を置換」と記録**:
+      git log から conflict 解消の判断材料を遡れる
+- [ ] **同 schema 依存の PR が並行する場合は順次マージ**: Phase 2-9 がマージされる前に
+      Phase 2-10 を作成すると、Phase 2-10 の最終形コードがレビューで「現在は使えない」と
+      misunderstanding されるリスク。本件では Phase 2-10 を後発 (#307) として、Phase 2-9
+      (#306) の merge 待ちの後に流す予定だったが、両方並行で merge しようとして conflict 発生
+
 ### 関連
 
-- 修正例: PR #306 (feat/tenant-isolation-phase2-api-medium) の merge conflict 解消
+- 修正例 1: PR #306 (feat/tenant-isolation-phase2-api-medium) の merge conflict 解消 (進捗 doc のみ)
+- 修正例 2: PR #307 (feat/tenant-isolation-phase2-audit-tokens) の merge conflict 解消
+  (進捗 doc + audit-logs/route.ts + role-change-logs/route.ts の 3 箇所、後続フェーズ置換パターン)
 - 並行 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 文言修正)
 - 公式 doc (Git merge): <https://git-scm.com/docs/git-merge>

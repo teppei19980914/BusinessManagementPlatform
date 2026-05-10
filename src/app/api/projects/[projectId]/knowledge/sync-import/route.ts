@@ -76,6 +76,7 @@ export async function POST(
   try {
     const result = await applyKnowledgeSyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'SYNC_IMPORT',
       entityType: 'knowledge_sync_import',

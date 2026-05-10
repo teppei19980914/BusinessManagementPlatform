@@ -294,9 +294,10 @@ async function createTenantInternal(
       select: { id: true },
     });
 
-    // 監査: 役割変更ログ
+    // 監査: 役割変更ログ (Phase 2-10: tenantId 必須化、新規テナント t.id を使用)
     await tx.roleChangeLog.create({
       data: {
+        tenantId: t.id,
         changedBy: u.id, // 自身が初期作成 (super_admin 経路でも auditLog で別途残す)
         targetUserId: u.id,
         changeType: 'system_role',
@@ -310,13 +311,15 @@ async function createTenantInternal(
   });
 
   // ---------- 4. 検証メール送信 (失敗時 compensating delete) ----------
+  // Phase 2-10: sendVerificationEmail に tenantId 必須化
   try {
-    await sendVerificationEmail(user.id, input.initialAdminEmail, baseUrl);
+    await sendVerificationEmail(user.id, tenant.id, input.initialAdminEmail, baseUrl);
   } catch (e) {
     // テナント + ユーザを物理削除 (テナント作成直後のため整合性検査は最小限)
+    // Phase 2-10: tenantId フィルタで二重防御
     await prisma.$transaction([
-      prisma.emailVerificationToken.deleteMany({ where: { userId: user.id } }),
-      prisma.roleChangeLog.deleteMany({ where: { targetUserId: user.id } }),
+      prisma.emailVerificationToken.deleteMany({ where: { userId: user.id, tenantId: tenant.id } }),
+      prisma.roleChangeLog.deleteMany({ where: { targetUserId: user.id, tenantId: tenant.id } }),
       prisma.user.delete({ where: { id: user.id } }),
       prisma.tenant.delete({ where: { id: tenant.id } }),
     ]);

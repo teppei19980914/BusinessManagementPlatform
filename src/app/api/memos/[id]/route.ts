@@ -58,6 +58,7 @@ export async function PATCH(
     );
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'memo',
@@ -86,6 +87,7 @@ export async function DELETE(
     );
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'memo',
