@@ -30,7 +30,7 @@ export async function GET(
   const { knowledgeId } = await params;
   const t = await getTranslations('message');
   // 2026-04-24: service 層で public/draft 判定 (他人の draft は null)
-  const knowledge = await getKnowledge(knowledgeId, user.id, user.systemRole);
+  const knowledge = await getKnowledge(knowledgeId, user.id, user.systemRole, user.tenantId);
 
   if (!knowledge) {
     return NextResponse.json(
@@ -52,7 +52,7 @@ export async function PATCH(
   const { knowledgeId } = await params;
   const t = await getTranslations('message');
   // 内部呼び出し (認可オフ) で生行を取得してから service 層で判定させる
-  const existing = await getKnowledge(knowledgeId);
+  const existing = await getKnowledge(knowledgeId, undefined, undefined, user.tenantId);
 
   if (!existing) {
     return NextResponse.json(
@@ -108,7 +108,7 @@ export async function DELETE(
 
   const { knowledgeId } = await params;
   const t = await getTranslations('message');
-  const existing = await getKnowledge(knowledgeId);
+  const existing = await getKnowledge(knowledgeId, undefined, undefined, user.tenantId);
 
   if (!existing) {
     return NextResponse.json(
@@ -119,7 +119,7 @@ export async function DELETE(
 
   // 2026-04-24: 削除は作成者本人 OR admin (service 層で enforce)。
   try {
-    await deleteKnowledge(knowledgeId, user.id, user.systemRole);
+    await deleteKnowledge(knowledgeId, user.id, user.systemRole, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

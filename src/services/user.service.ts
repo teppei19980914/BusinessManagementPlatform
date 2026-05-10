@@ -152,9 +152,13 @@ export async function createUser(
     await assertSeatAvailableForTenant(options.tenantId);
   }
 
+  // 2026-05-09 feedback Phase 2-6: 越境ユーザ作成を遮断するため、メール重複チェックは
+  //   tenant 内で実施 (テナント間で同じメールアドレスは別ユーザとして許容する設計)。
+  //   ただし options.tenantId が無い旧シグネチャ互換経路では従来通り全テナント横断で検証。
+  const tenantScope = options?.tenantId ? { tenantId: options.tenantId } : {};
   // メールアドレス重複チェック（有効なユーザ）
   const existingActive = await prisma.user.findFirst({
-    where: { email: input.email, deletedAt: null },
+    where: { email: input.email, deletedAt: null, ...tenantScope },
   });
   if (existingActive) {
     throw new Error('DUPLICATE_EMAIL');
@@ -162,7 +166,7 @@ export async function createUser(
 
   // 未有効化（deletedAt 付き）の既存ユーザがあれば削除して再登録を許可
   const existingInactive = await prisma.user.findFirst({
-    where: { email: input.email, deletedAt: { not: null }, isActive: false },
+    where: { email: input.email, deletedAt: { not: null }, isActive: false, ...tenantScope },
   });
   if (existingInactive) {
     await prisma.$transaction([
@@ -182,8 +186,11 @@ export async function createUser(
   // パスワードなしで仮登録（ユーザ自身がパスワード設定画面で設定する）
   const placeholderHash = await hash(randomBytes(32).toString('hex'), BCRYPT_COST);
 
+  // 2026-05-09 feedback Phase 2-6: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
+  //   options.tenantId 必須 (route 層で必ず渡す)、互換経路 (旧シグネチャ) は schema DEFAULT に依存。
   const user = await prisma.user.create({
     data: {
+      ...(options?.tenantId ? { tenantId: options.tenantId } : {}),
       name: input.name,
       email: input.email,
       passwordHash: placeholderHash,
@@ -235,7 +242,16 @@ export async function updateUserStatus(
   userId: string,
   isActive: boolean,
   updaterId: string,
+  viewerTenantId: string,
 ): Promise<UserDTO> {
+  // 2026-05-09 feedback Phase 2-6: 越境ユーザステータス変更を遮断するため findFirst で先に所有確認。
+  //   旧仕様は他テナント user の isActive を勝手に切り替え可能だった (アカウント DoS 経路)。
+  const owned = await prisma.user.findFirst({
+    where: { id: userId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const user = await prisma.user.update({
     where: { id: userId },
     data: { isActive },
@@ -269,14 +285,24 @@ export async function updateUser(
     isActive?: boolean;
   },
   updaterId: string,
+  viewerTenantId: string,
 ): Promise<UserDTO> {
+  // 2026-05-09 feedback Phase 2-6: 冒頭で対象 user の tenant 一致を verify。
+  //   ただし内部 dispatch する updateUserRole / updateUserStatus は各々で tenant 検証するため、
+  //   ここでは name 単独更新分のみ検証する。
+  const owned = await prisma.user.findFirst({
+    where: { id: userId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   let latest: UserDTO | null = null;
 
   if (input.systemRole !== undefined) {
-    latest = await updateUserRole(userId, input.systemRole, updaterId);
+    latest = await updateUserRole(userId, input.systemRole, updaterId, viewerTenantId);
   }
   if (input.isActive !== undefined) {
-    latest = await updateUserStatus(userId, input.isActive, updaterId);
+    latest = await updateUserStatus(userId, input.isActive, updaterId, viewerTenantId);
   }
   if (input.name !== undefined) {
     const user = await prisma.user.update({
@@ -297,13 +323,18 @@ export async function updateUserRole(
   userId: string,
   newRole: string,
   updaterId: string,
+  viewerTenantId: string,
 ): Promise<UserDTO> {
   // 自分自身のロール変更は不可
   if (userId === updaterId) {
     throw new Error('CANNOT_CHANGE_OWN_ROLE');
   }
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  // 2026-05-09 feedback Phase 2-6: 越境ロール変更を遮断するため tenantId 必須化。
+  //   旧仕様は他テナント user を super_admin に昇格可能で権限昇格攻撃の起点だった。
+  const user = await prisma.user.findFirst({
+    where: { id: userId, tenantId: viewerTenantId },
+  });
   if (!user) throw new Error('NOT_FOUND');
 
   const updated = await prisma.user.update({
@@ -353,13 +384,15 @@ export async function updateUserRole(
 export async function deleteUser(
   userId: string,
   deleterId: string,
+  viewerTenantId: string,
 ): Promise<{ deletedUserId: string; removedMemberships: number }> {
   if (userId === deleterId) {
     throw new Error('CANNOT_DELETE_SELF');
   }
 
+  // 2026-05-09 feedback Phase 2-6: 越境削除を遮断するため tenantId 必須化。
   const user = await prisma.user.findFirst({
-    where: { id: userId, deletedAt: null },
+    where: { id: userId, tenantId: viewerTenantId, deletedAt: null },
   });
   if (!user) throw new Error('NOT_FOUND');
 

@@ -24,7 +24,7 @@ export async function PATCH(
   const { projectId, retroId } = await params;
   const t = await getTranslations('message');
 
-  const existing = await getRetrospective(retroId);
+  const existing = await getRetrospective(retroId, undefined, undefined, user.tenantId);
   // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
   if (!existing || !existing.linkedProjectIds.includes(projectId)) {
     return NextResponse.json(
@@ -81,7 +81,7 @@ export async function DELETE(
   const { projectId, retroId } = await params;
   const t = await getTranslations('message');
 
-  const existing = await getRetrospective(retroId);
+  const existing = await getRetrospective(retroId, undefined, undefined, user.tenantId);
   // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
   if (!existing || !existing.linkedProjectIds.includes(projectId)) {
     return NextResponse.json(
@@ -94,7 +94,7 @@ export async function DELETE(
   if (forbidden) return forbidden;
 
   try {
-    await deleteRetrospective(retroId, user.id, user.systemRole);
+    await deleteRetrospective(retroId, user.id, user.systemRole, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

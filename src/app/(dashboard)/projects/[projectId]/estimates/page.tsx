@@ -15,7 +15,7 @@ export default async function EstimatesPage({ params }: Props) {
   const membership = await checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId);
   if (!membership.isMember) notFound();
 
-  const estimates = await listEstimates(projectId);
+  const estimates = await listEstimates(projectId, session.user.tenantId);
 
   return (
     <EstimatesClient

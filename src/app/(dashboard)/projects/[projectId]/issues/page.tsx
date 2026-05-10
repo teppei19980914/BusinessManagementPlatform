@@ -22,7 +22,7 @@ export default async function IssuesPage({ params }: Props) {
 
   const [risks, members, actualRole] = await Promise.all([
     listRisks(projectId, session.user.id, session.user.systemRole, session.user.tenantId),
-    listMembers(projectId),
+    listMembers(projectId, session.user.tenantId),
     // 2026-04-24: 実際の ProjectMember 判定。admin 短絡なし。
     getActualProjectRole(projectId, session.user.id),
   ]);

@@ -2346,6 +2346,9 @@ git push
 本ナレッジは PR #178/179 で 2 回適用され、その後 PR #262 (P-6) で **3 回目** が発生した。
 **3 回目の再発で「依存更新蓄積による drift パターン」として確定**。さらに PR #282
 (feat/seed-data-management) で **4 回目** の発生 = 「即応プレイブックの定着フェーズ」へ移行。
+**5 回目** が PR #301 (feat/tenant-isolation-phase2-business-entities, 2026-05-09) で発生。
+**5 回目の再発で「同 PR ペアの一方のみ発症」観測 → main の baseline 自体が flaky な 414/413
+oscillation 状態にあることが git log で裏付けられた**。
 
 | 事例 | PR | 影響 spec | サイズ差 | 原因分類 | 解決 |
 |---|---|---|---|---|---|
@@ -2353,6 +2356,7 @@ git push
 | 2 | #179 (PR-γ) | project-detail-light + customer-detail-light (chromium-mobile) | **414→413px width** (-1px) | **環境差 / rounding 変動** (PR-γ branch では当該画面を未編集、PR-β の baseline 再生成後の rebase 経路差) | 同 (`[gen-visual]`) |
 | 3 | #262 (P-6) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px、1 回限りの再現) | **真の flakiness (再実行で消える)**。`[gen-visual]` workflow は実行したが「no baseline changes」で commit なし = 同条件で再生成しても 414px に収束。同 baseline で再 E2E が即 pass。依存更新が背景にはあるが (next-intl 4.9.1→4.9.2 / @formatjs/* / @anthropic-ai/sdk 等) 決定論的ではなく確率的な 1px ずれ | `[gen-visual]` 発火 **+ 再 E2E** で吸収。`[gen-visual]` の commit 有無に関わらず CI 再起動が要点 |
 | 4 | #282 (feat/seed-data-management) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px) | **同パターンの 4 回目** (= 即応プレイブック 4 条件すべて Yes)。本 PR の変更は `Knowledge.isSampleData` 追加 + super_admin bypass で、`/projects/[id]` テンプレートを一切触っていない。同 PR 内では大量のサービス変更を行ったが画面 layout には影響なし | `[gen-visual]` 即発火 → 完了 (深追いせず 5 分以内に対応) |
+| 5 | #301 (feat/tenant-isolation-phase2-business-entities) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px、3 回 retry すべて 413px) | **5 回目の再発 + 新たな観測**: 同時期の PR #302 (Phase 2-5、同種の tenant isolation PR) は **同 baseline (414px) で pass**、PR #301 は同 baseline で 413 を produce → **同 baseline / 同 main 系統での render 結果がブランチごとに分かれる「真の確率的 1px drift」**。さらに `git log <baseline-png>` を辿ると baseline 自身が **414→413→414→413→414 で oscillation** していた (= 過去の `[gen-visual]` workflow 実行結果すら 1px 揺れる)。本 PR の changes は service / API route のみで `/projects/[projectId]` template / global CSS 一切触らず | `[gen-visual]` 即発火 (5 分以内対応) |
 
 **判断基準の検証**:
 - 事例 1 (+27px): 「dl 1 行分の妥当な差」→ 期待された変化と判定 → 即 `[gen-visual]` で確実解消
@@ -2399,6 +2403,38 @@ PR-γ branch で `[gen-visual]` empty commit を打とうとしたら、
 ベースラインは PR ごとに古くなる。`@formatjs/*` 等の transitive 更新が積み上がると drift が
 体感頻度で起きる。**月 1 回の定期 `[gen-visual]` 運用** (例: 月初の週次 maintenance PR で
 empty commit を流す) を入れれば本問題は構造的に予防可能。
+
+**baseline 自身が oscillate しているケース (事例 5 で発覚)**:
+`git log <baseline-png>` を辿ると、過去の `[gen-visual]` 自動再生成 commit が
+**414 → 413 → 414 → 413 → 414** と 1px width を交互に書き換えていた。これは
+「baseline 再生成 workflow が走るたびに `body` の content width 計測が確率的に 1px ずれる」
+ことを示しており、**baseline 自体が信頼できない** 状況。
+
+```bash
+# 自分が触ったファイルではない baseline-png の write 履歴を確認:
+for sha in $(git log --format=%h main -- e2e/visual/<spec>.spec.ts-snapshots/<name>.png | head -5); do
+  git show $sha:e2e/visual/<spec>.spec.ts-snapshots/<name>.png 2>/dev/null > /tmp/b-$sha.png
+  echo "$sha: $(file /tmp/b-$sha.png | grep -oE '[0-9]+ x [0-9]+')"
+done
+# 出力例 (事例 5):
+#   2d61b92: 414 x 1503  ← 直近
+#   f2997ba: 413 x 1503
+#   b8937ce: 414 x 1503
+#   c137e1c: 413 x 1503
+#   7d9ac8c: 414 x 1503
+# = oscillation 確定。即 [gen-visual] で対応 (深追い禁止)
+```
+
+この場合は `[gen-visual]` で **新たに 413 にロックされる** か、再び 414 で書き戻されるか
+確率的だが、いずれにせよ「次の同条件 E2E では一致する確率」が高まる (連続 fail 確率が下がる)。
+
+**根治には現在 (2026-05) 時点で 2 案あり** (どちらも別 PR で扱う):
+1. **maxDiffPixelRatio を緩める** (現 0.01 → 0.02): playwright.config.ts の expect 設定。
+   1px 幅差は 1/414 ≈ 0.24% なので 1% (= 0.01) ですり抜ける感覚だが、 width 不一致は
+   pixel ratio 比較の前段で reject される (image dimensions が異なる時点で fail)。**効果なし**。
+2. **`fullPage: true` をやめて固定 viewport screenshot にする**: `clip: { x: 0, y: 0, width: 390, height: 1500 }`
+   で iPhone 13 viewport に揃える。content overflow による drift を構造的に防げる。
+   ただし mask 範囲との整合性を取る必要あり (別 PR で検討)。
 
 #### 関連
 

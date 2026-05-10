@@ -40,7 +40,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
 
-  const members = await listMembers(projectId);
+  const members = await listMembers(projectId, user.tenantId);
   return NextResponse.json({ data: members });
 }
 
@@ -70,6 +70,7 @@ export async function POST(
       parsed.data.userId,
       parsed.data.projectRole,
       user.id,
+      user.tenantId,
     );
 
     await recordAuditLog({

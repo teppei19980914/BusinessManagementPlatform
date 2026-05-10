@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/db', () => ({
   prisma: {
     user: { findFirst: vi.fn() },
+    // 2026-05-09 feedback Phase 2-6: addMember で project tenant 検証用
+    project: { findFirst: vi.fn() },
     projectMember: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
@@ -35,13 +37,13 @@ describe('listMembers', () => {
   it('プロジェクトメンバー一覧を DTO に変換して返す', async () => {
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([mRow()] as never);
 
-    const r = await listMembers('p-1');
+    const r = await listMembers('p-1', 'tenant-A');
 
     expect(r).toHaveLength(1);
     expect(r[0].userName).toBe('Alice');
     expect(r[0].userEmail).toBe('a@b.co');
     expect(prisma.projectMember.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { projectId: 'p-1' } }),
+      expect.objectContaining({ where: { projectId: 'p-1', project: { tenantId: 'tenant-A' } } }),
     );
   });
 });
@@ -50,26 +52,30 @@ describe('addMember', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ユーザが存在しなければ USER_NOT_FOUND', async () => {
+    // 2026-05-09 feedback Phase 2-6: project tenant 検証 mock 必須
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
 
-    await expect(addMember('p-1', 'u-1', 'member', 'admin-1')).rejects.toThrow('USER_NOT_FOUND');
+    await expect(addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A')).rejects.toThrow('USER_NOT_FOUND');
     expect(prisma.projectMember.create).not.toHaveBeenCalled();
   });
 
   it('既にメンバーなら ALREADY_MEMBER', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-1' } as never);
     vi.mocked(prisma.projectMember.findFirst).mockResolvedValue({ id: 'existing' } as never);
 
-    await expect(addMember('p-1', 'u-1', 'member', 'admin-1')).rejects.toThrow('ALREADY_MEMBER');
+    await expect(addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A')).rejects.toThrow('ALREADY_MEMBER');
   });
 
   it('成功: メンバー作成 + roleChangeLog に記録', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-1' } as never);
     vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.projectMember.create).mockResolvedValue(mRow() as never);
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
 
-    const r = await addMember('p-1', 'u-1', 'member', 'admin-1');
+    const r = await addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A');
 
     expect(r.userId).toBe('u-1');
     expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
@@ -88,12 +94,13 @@ describe('updateMemberRole', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('存在しなければ NOT_FOUND', async () => {
-    vi.mocked(prisma.projectMember.findUnique).mockResolvedValue(null);
-    await expect(updateMemberRole('x', 'pm_tl', 'admin-1')).rejects.toThrow('NOT_FOUND');
+    // 2026-05-09 feedback Phase 2-6: findUnique → findFirst (project tenant 検証付き) に変更
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(null);
+    await expect(updateMemberRole('x', 'pm_tl', 'admin-1', 'tenant-A')).rejects.toThrow('NOT_FOUND');
   });
 
   it('ロール変更 + beforeRole/afterRole を記録', async () => {
-    vi.mocked(prisma.projectMember.findUnique).mockResolvedValue(
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(
       mRow({ projectRole: 'member' }) as never,
     );
     vi.mocked(prisma.projectMember.update).mockResolvedValue(
@@ -101,7 +108,7 @@ describe('updateMemberRole', () => {
     );
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
 
-    const r = await updateMemberRole('m-1', 'pm_tl', 'admin-1');
+    const r = await updateMemberRole('m-1', 'pm_tl', 'admin-1', 'tenant-A');
 
     expect(r.projectRole).toBe('pm_tl');
     expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
@@ -116,17 +123,17 @@ describe('removeMember', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('存在しなければ NOT_FOUND', async () => {
-    vi.mocked(prisma.projectMember.findUnique).mockResolvedValue(null);
-    await expect(removeMember('x', 'admin-1')).rejects.toThrow('NOT_FOUND');
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(null);
+    await expect(removeMember('x', 'admin-1', 'tenant-A')).rejects.toThrow('NOT_FOUND');
     expect(prisma.projectMember.delete).not.toHaveBeenCalled();
   });
 
   it('物理削除 + removed ログ', async () => {
-    vi.mocked(prisma.projectMember.findUnique).mockResolvedValue(mRow() as never);
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(mRow() as never);
     vi.mocked(prisma.projectMember.delete).mockResolvedValue({} as never);
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
 
-    await removeMember('m-1', 'admin-1');
+    await removeMember('m-1', 'admin-1', 'tenant-A');
 
     expect(prisma.projectMember.delete).toHaveBeenCalledWith({ where: { id: 'm-1' } });
     expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
