@@ -59,7 +59,7 @@ export async function POST(
 
   try {
     if (parsed.data.kind === 'knowledge') {
-      await linkKnowledgeToProject(parsed.data.id, projectId);
+      await linkKnowledgeToProject(parsed.data.id, projectId, user.tenantId);
       await recordAuditLog({
         userId: user.id,
         action: 'CREATE',

@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const data = await listNotificationsForUser(user.id, {
+  const data = await listNotificationsForUser(user.id, user.tenantId, {
     includeRead: parsed.data.includeRead,
     limit: parsed.data.limit,
   });
