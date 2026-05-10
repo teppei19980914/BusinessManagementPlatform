@@ -39,7 +39,12 @@ export async function GET(
     const result = await exportTenantData(id);
 
     // 監査ログ: super_admin が他テナントのデータを取得した = 監査対象
+    // Phase 2-10 (2026-05-10): tenantId は **代行先のテナント** (= id) を使う。
+    //   actor の super_admin は management tenant 所属だが、本ログは
+    //   「target tenant に対する操作」として記録するのが意味的に正しい
+    //   (= target tenant の admin は自分のテナントが代行されたことを監査可能)。
     await recordAuditLog({
+      tenantId: id,
       userId: user.id,
       action: 'EXPORT',
       entityType: 'tenant',

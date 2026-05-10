@@ -116,6 +116,7 @@ export async function PATCH(
   // 以前は entityId に `bulk:${count}` のような合成文字列を入れていたが、
   // AuditLog.entityId は @db.Uuid 型のため P2007 エラーになり一括更新全体が 500 になっていた。
   await recordBulkAuditLogs({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'task',

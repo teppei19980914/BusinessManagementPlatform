@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
   const knowledge = await createKnowledge(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'knowledge',

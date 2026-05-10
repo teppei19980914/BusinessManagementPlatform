@@ -85,6 +85,7 @@ export async function PATCH(
   if (!updated) return await notFound();
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'customer',
@@ -122,6 +123,7 @@ export async function DELETE(
     if (!result.ok && result.reason === 'not_found') return await notFound();
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'DELETE',
       entityType: 'customer',
@@ -166,6 +168,7 @@ export async function DELETE(
   }
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'customer',

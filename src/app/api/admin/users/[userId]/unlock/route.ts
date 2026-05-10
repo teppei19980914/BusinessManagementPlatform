@@ -37,11 +37,12 @@ export async function POST(
   const tenantViolation = await requireSameTenantUser(user, userId);
   if (tenantViolation) return tenantViolation;
 
-  // パスワードロックと MFA ロックを同時解除
-  await unlockAccount(userId, user.id);
+  // パスワードロックと MFA ロックを同時解除 (Phase 2-10: tenantId 必須化)
+  await unlockAccount(userId, user.id, user.tenantId);
   await unlockMfaByAdmin(userId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'user',

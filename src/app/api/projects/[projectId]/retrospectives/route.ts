@@ -51,6 +51,6 @@ export async function POST(
   }
 
   const retro = await createRetrospective(projectId, parsed.data, user.id, user.tenantId);
-  await recordAuditLog({ userId: user.id, action: 'CREATE', entityType: 'retrospective', entityId: retro.id });
+  await recordAuditLog({ tenantId: user.tenantId, userId: user.id, action: 'CREATE', entityType: 'retrospective', entityId: retro.id });
   return NextResponse.json({ data: retro }, { status: 201 });
 }

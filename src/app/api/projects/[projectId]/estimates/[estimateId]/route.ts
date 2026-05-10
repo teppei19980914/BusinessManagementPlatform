@@ -62,6 +62,7 @@ export async function PATCH(
   if (body.action === 'confirm') {
     const estimate = await confirmEstimate(estimateId, user.id, user.tenantId);
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'UPDATE',
       entityType: 'estimate',
@@ -91,6 +92,7 @@ export async function PATCH(
   const estimate = await updateEstimate(estimateId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'estimate',
@@ -121,6 +123,7 @@ export async function DELETE(
   await deleteEstimate(estimateId, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'estimate',

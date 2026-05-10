@@ -27,7 +27,9 @@ export async function GET(req: NextRequest) {
   const page = Number(searchParams.get('page')) || 1;
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 100);
 
-  const where: Record<string, unknown> = {};
+  // 2026-05-10 Phase 2-10: AuditLog 直接 tenantId 列で絞込み (旧 User join 経由フィルタから移行)。
+  //   User 物理削除後の宙ぶらりんログにも追従可能になり、より高速。
+  const where: Record<string, unknown> = { tenantId: user.tenantId };
   if (entityType) where.entityType = entityType;
 
   const [logs, total] = await Promise.all([

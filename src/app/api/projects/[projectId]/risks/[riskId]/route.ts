@@ -80,6 +80,7 @@ export async function PATCH(
     throw e;
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'risk_issue',
@@ -123,6 +124,7 @@ export async function DELETE(
     throw e;
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'risk_issue',

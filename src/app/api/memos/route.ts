@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
 
   const created = await createMemo(parsed.data, user.id, user.tenantId);
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'memo',

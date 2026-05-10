@@ -90,6 +90,7 @@ export async function PATCH(req: NextRequest) {
   // R-2: 監査ログ記録 (= LLM プラン変更と同じく課金影響の追跡)
   //   前のプラン → 新プラン、即時/予約のどちらかを後続調査で確認可能にする。
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'tenant_storage_addon',
@@ -131,6 +132,7 @@ export async function DELETE() {
 
   // R-2: 予約キャンセルも audit ログに記録 (= 「ダウングレード予約していたか」の追跡)
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'tenant_storage_addon_cancel',

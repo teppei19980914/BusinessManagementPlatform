@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/db', () => ({
   prisma: {
     user: { findFirst: vi.fn(), update: vi.fn() },
-    recoveryCode: { findMany: vi.fn(), update: vi.fn() },
+    // Phase 2-10: tenantId 併記の二重防御で updateMany を使う
+    recoveryCode: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     passwordResetToken: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     passwordHistory: { findMany: vi.fn(), create: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
@@ -49,19 +50,21 @@ describe('verifyAndIssueResetToken', () => {
   });
 
   it('成功: リカバリーコード使用済みマーク + トークン発行', async () => {
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u1' } as never);
+    // Phase 2-10: user.findFirst 結果に tenantId を含める (recoveryCode 系の where に使用)
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u1', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.recoveryCode.findMany).mockResolvedValue([
       { id: 'c1', codeHash: 'h1' },
     ] as never);
     vi.mocked(compare).mockResolvedValueOnce(true);
-    vi.mocked(prisma.recoveryCode.update).mockResolvedValue({} as never);
+    // Phase 2-10: updateMany で tenantId 二重防御
+    vi.mocked(prisma.recoveryCode.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.passwordResetToken.create).mockResolvedValue({} as never);
 
     const res = await verifyAndIssueResetToken('a@b.co', 'goodcode');
 
     expect(res.success).toBe(true);
     expect(res.token).toMatch(/^[a-f0-9]{64}$/);
-    expect(prisma.recoveryCode.update).toHaveBeenCalled();
+    expect(prisma.recoveryCode.updateMany).toHaveBeenCalled();
     expect(prisma.passwordResetToken.create).toHaveBeenCalled();
   });
 });

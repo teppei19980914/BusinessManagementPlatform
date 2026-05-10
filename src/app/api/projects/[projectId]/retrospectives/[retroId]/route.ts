@@ -55,6 +55,7 @@ export async function PATCH(
   }
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'retrospective',
@@ -109,6 +110,7 @@ export async function DELETE(
     throw e;
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'retrospective',

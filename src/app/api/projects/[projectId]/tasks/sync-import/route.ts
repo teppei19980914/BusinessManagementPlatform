@@ -119,6 +119,7 @@ export async function POST(
     const result = await applySyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'SYNC_IMPORT',
       entityType: 'wbs_sync_import',

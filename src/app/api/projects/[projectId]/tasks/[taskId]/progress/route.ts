@@ -84,6 +84,7 @@ export async function POST(
   await updateTaskProgress(taskId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'task_progress',

@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
 
   // 監査ログ
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'tenant_external_import',

@@ -65,6 +65,7 @@ export async function POST(
   const stakeholder = await createStakeholder(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'stakeholder',

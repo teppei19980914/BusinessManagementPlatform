@@ -74,6 +74,7 @@ export async function POST(
     );
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'CREATE',
       entityType: 'project_member',

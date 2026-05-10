@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
     });
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'CREATE',
       entityType: 'user',
@@ -74,6 +75,7 @@ export async function POST(req: NextRequest) {
 
     await recordAuthEvent({
       eventType: 'account_created',
+      tenantId: user.tenantId,
       userId: newUser.id,
       email: newUser.email,
       detail: { createdBy: user.id },

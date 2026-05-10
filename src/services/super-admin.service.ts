@@ -941,8 +941,10 @@ export async function deleteTenant(
       data: { deletedAt: now },
     }),
     // 監査ログを残す (物理保持テーブルなので今後復元・監査が可能)
+    // Phase 2-10: tenantId は削除対象テナント (= tenantId) を使う
     prisma.auditLog.create({
       data: {
+        tenantId,
         userId: performerId,
         action: 'DELETE',
         entityType: 'tenant',
