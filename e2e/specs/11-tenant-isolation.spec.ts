@@ -85,8 +85,10 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
   });
 
   test.afterAll(async () => {
-    await adminAPage.close();
-    await adminAContext.close();
+    // beforeAll が fixture 作成中に throw した場合、adminAPage / adminAContext が未初期化となる。
+    // 二次エラーで根本原因がログから埋もれるのを避けるため optional chaining + try で防御する。
+    await adminAPage?.close().catch(() => undefined);
+    await adminAContext?.close().catch(() => undefined);
     // tenant A / B のフルクリーンアップ (Phase 2 後の DB は schema 上 tenant_id 列が
     // 全 monitoring/audit table に居るため、テナント単位の一括削除が成立する)
     await cleanupTenants([tenantA?.tenantId, tenantB?.tenantId].filter(Boolean));

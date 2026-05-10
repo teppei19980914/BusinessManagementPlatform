@@ -87,14 +87,17 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
     );
     seedKnowledgeId = seedKnowledgeRes.rows[0].id;
 
+    // NOTE: risks_issues テーブルには `is_sample_data` 列が存在しない (Project / Knowledge のみ保持)。
+    //   提案エンジン側は `tenantId === MANAGEMENT_TENANT_ID` でシード判定するため列は不要。
+    //   prisma/migrations/20260513_seed_to_management_tenant/migration.sql コメント参照。
     const seedIssueRes = await pool.query<{ id: string }>(
       `INSERT INTO risks_issues (
          tenant_id, project_id, type, title, content, impact, priority,
-         reporter_id, state, visibility, is_sample_data,
+         reporter_id, state, visibility,
          created_by, updated_by, created_at, updated_at
        )
        VALUES ($1, NULL, 'issue', $2, 'シード本文 sample issue', 'medium', 'medium',
-               $3, 'resolved', 'public', true,
+               $3, 'resolved', 'public',
                $3, $3, NOW(), NOW())
        RETURNING id`,
       [MANAGEMENT_TENANT_ID, `Seed Issue ${RUN_ID}`, tenantA.adminId],
@@ -113,8 +116,9 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
   });
 
   test.afterAll(async () => {
-    await adminAPage.close();
-    await adminAContext.close();
+    // beforeAll が fixture 作成中に throw した場合に二次エラーで根本原因が埋もれないよう防御。
+    await adminAPage?.close().catch(() => undefined);
+    await adminAContext?.close().catch(() => undefined);
     // 管理テナントに仕込んだシード行も明示削除 (cleanupTenants は management tenant を消さない)
     if (seedKnowledgeId || seedIssueId) {
       const pool = getPool();

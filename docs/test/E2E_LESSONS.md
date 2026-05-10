@@ -3102,6 +3102,97 @@ snapshot diff が出たら **baseline 更新ではなく「ヘッダから外す
 
 ---
 
+### 4.53 E2E fixture で生 SQL INSERT する時、Prisma schema の NOT NULL カラム漏れと afterAll 二重エラー (PR #309 で遭遇)
+
+#### 罠の正体
+
+PR #309 (テナント分離 / 提案エンジン包括テスト) で multi-tenant fixture を作成した際、
+Playwright から Prisma client を直接 import できない (ESM 制約) ため `pg.Pool` で生 SQL を書いた。
+このとき以下の **2 段階のバグ連鎖** が発生し、CI で 38 件中 2 件が fail / 残り 36 件が skip と
+報告されて根本原因の特定が難しくなった:
+
+1. **段階 1 (根本原因)**: `customers` テーブルの NOT NULL カラム (`created_by` / `updated_by`) を
+   INSERT 文に含め忘れた。Prisma の `Customer.createdBy: String` (`@map("created_by") @db.Uuid` /
+   nullable でない) は schema 上で必須だが、生 SQL 文だと TypeScript の型補完が効かないため
+   `INSERT INTO customers (tenant_id, name, ...)` で nullable と勘違いして VALUES から漏らした。
+   → CI で `null value in column "created_by" of relation "customers" violates not-null constraint`。
+
+2. **段階 2 (二次エラー)**: `beforeAll` の fixture 作成中に throw すると、続くページオブジェクト
+   (`adminAPage` / `adminAContext`) が **未初期化** のまま `afterAll` に到達する。
+   `afterAll` で `await adminAPage.close()` が `Cannot read properties of undefined (reading 'close')`
+   で失敗し、Playwright のレポートに 2 行の error stack が出る。**最初に表示される error が二次的な
+   undefined.close() の方** で、根本原因の DB エラーが 2 段目に潜って読みづらい。
+
+3. **段階 3 (副次バグ)**: spec 12 (suggestion-seed-data) で `risks_issues` に `is_sample_data`
+   カラムを INSERT しようとしていたが、**RiskIssue モデルにはこのカラムは存在しない**
+   (Project / Knowledge のみ持つ。RiskIssue は `tenantId === MANAGEMENT_TENANT_ID` でシード判定する設計。
+   `prisma/migrations/20260513_seed_to_management_tenant/migration.sql` のコメントに明記)。
+
+#### 採用したパターン
+
+##### 1. 生 SQL の fixture を書く時は schema を 1 行ずつ trace する
+
+```ts
+// e2e/fixtures/multi-tenant.ts
+// NOTE: customers.created_by / updated_by は NOT NULL (prisma/schema.prisma L374-L375)。
+//   admin user の id を流用してシードする (本番運用と同じパターン)。
+const customerRes = await pool.query<{ id: string }>(
+  `INSERT INTO customers (tenant_id, name, created_by, updated_by, created_at, updated_at)
+   VALUES ($1, $2, $3, $3, NOW(), NOW())
+   RETURNING id`,
+  [tenantId, `Customer ${label} ${runId}`, adminId],
+);
+```
+
+- INSERT 文の VALUES 句に **NOT NULL 列を schema から逐一 grep して全部書き出す**
+- コメントで参照 schema 行を残す → 将来の schema 変更で migrate する人が壊さないよう
+
+##### 2. afterAll は optional chaining で防御する
+
+```ts
+test.afterAll(async () => {
+  // beforeAll が fixture 作成中に throw した場合、adminAPage / adminAContext が未初期化となる。
+  // 二次エラーで根本原因がログから埋もれるのを避けるため optional chaining + try で防御する。
+  await adminAPage?.close().catch(() => undefined);
+  await adminAContext?.close().catch(() => undefined);
+  await cleanupTenants([tenantA?.tenantId, tenantB?.tenantId].filter(Boolean));
+  await disconnectMultiTenantDb();
+});
+```
+
+- `adminAPage?.close()` で undefined ガード
+- `.catch(() => undefined)` で close 自体が再 throw しても cleanup を継続
+- これで CI ログに **DB error がトップで表示される** → 根本原因の特定が即座にできる
+
+##### 3. 「シード判定列」の有無は schema を信じる
+
+- Project / Knowledge は `is_sample_data` を持つ → INSERT に含めて OK
+- RiskIssue / Retrospective は持たない → `tenantId === MANAGEMENT_TENANT_ID` のみで判定
+- 設計ドキュメント `prisma/migrations/20260513_seed_to_management_tenant/migration.sql` の冒頭
+  コメントに「RiskIssue 自体に is_sample_data カラムはない。Project 経由で識別」と明記済
+
+#### 横展開チェック (生 SQL fixture / migration 追加時)
+
+- [ ] INSERT 対象テーブルの全列を `prisma/schema.prisma` でチェックし、`?` (nullable) でない
+      列はすべて VALUES に含めたか
+- [ ] `created_by` / `updated_by` / `reporter_id` / `added_by` などの **user FK 系 NOT NULL** が
+      抜けていないか (生 SQL は型ガードがないため最も漏れやすい)
+- [ ] `is_sample_data` のように **存在するモデルと存在しないモデルが混在** する列を、
+      全モデルで一律に書いていないか
+- [ ] `beforeAll` で重い fixture を作る spec は `afterAll` で `obj?.close()` のガードを入れたか
+- [ ] CI fail 時に **最初に表示される error が根本原因か** (二次エラーが上位にあると調査が遅れる)
+
+#### 関連
+
+- 修正例: PR #309 (2026-05-10)
+- 関連 fixture: [e2e/fixtures/multi-tenant.ts](../../e2e/fixtures/multi-tenant.ts)
+- 関連 spec: [e2e/specs/11-tenant-isolation.spec.ts](../../e2e/specs/11-tenant-isolation.spec.ts) /
+  [e2e/specs/12-suggestion-seed-data.spec.ts](../../e2e/specs/12-suggestion-seed-data.spec.ts)
+- 関連 schema: [prisma/schema.prisma](../../prisma/schema.prisma) L365-L385 (Customer)
+- 関連 migration: [prisma/migrations/20260513_seed_to_management_tenant/migration.sql](../../prisma/migrations/20260513_seed_to_management_tenant/migration.sql)
+
+---
+
 ## 8. 未解決課題 (将来 PR 候補)
 
 | 項目 | 理由 |

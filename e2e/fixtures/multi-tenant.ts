@@ -125,11 +125,13 @@ export async function createTenantWithFullDataset(
   const generalId = generalRes.rows[0].id;
 
   // 4. Customer
+  // NOTE: customers.created_by / updated_by は NOT NULL (prisma/schema.prisma L374-L375)。
+  //   admin user の id を流用してシードする (本番運用と同じパターン)。
   const customerRes = await pool.query<{ id: string }>(
-    `INSERT INTO customers (tenant_id, name, created_at, updated_at)
-     VALUES ($1, $2, NOW(), NOW())
+    `INSERT INTO customers (tenant_id, name, created_by, updated_by, created_at, updated_at)
+     VALUES ($1, $2, $3, $3, NOW(), NOW())
      RETURNING id`,
-    [tenantId, `Customer ${label} ${runId}`],
+    [tenantId, `Customer ${label} ${runId}`, adminId],
   );
   const customerId = customerRes.rows[0].id;
 
