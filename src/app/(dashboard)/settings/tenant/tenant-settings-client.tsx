@@ -895,6 +895,10 @@ function SeedDataToggleSection({
         提案エンジンの候補に含めるかを切替えます。契約直後でデータが少ない時期にサンプルから
         雛形採用するのに有効ですが、業務固有の文脈に集中したい場合は無効化してください。
       </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        ※ <strong>テナント分離 (Phase 2 完了)</strong> により、他テナント (他顧客) のデータは
+        本トグル設定に関わらず一切参照されません。本トグルは「管理テナントのシードデータ参照」のみを制御します。
+      </p>
       <div className="mt-3 flex items-center gap-3">
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -907,7 +911,7 @@ function SeedDataToggleSection({
         </label>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
-        現在: <strong>{enabled ? '有効 (シードを参照)' : '無効 (自テナント + 他顧客のみ)'}</strong>
+        現在: <strong>{enabled ? '有効 (自テナント + 管理テナントのシード)' : '無効 (自テナントのみ)'}</strong>
       </p>
     </section>
   );
