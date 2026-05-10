@@ -27,7 +27,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'stakeholder:read');
   if (forbidden) return forbidden;
 
-  const stakeholder = await getStakeholder(stakeholderId);
+  const stakeholder = await getStakeholder(stakeholderId, user.tenantId);
   if (!stakeholder || stakeholder.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
@@ -42,7 +42,7 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
   const { projectId, stakeholderId } = await params;
 
-  const existing = await getStakeholder(stakeholderId);
+  const existing = await getStakeholder(stakeholderId, user.tenantId);
   if (!existing || existing.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
@@ -61,7 +61,7 @@ export async function PATCH(
 
   let stakeholder;
   try {
-    stakeholder = await updateStakeholder(stakeholderId, parsed.data, user.id);
+    stakeholder = await updateStakeholder(stakeholderId, parsed.data, user.id, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'NOT_FOUND') {
@@ -93,13 +93,13 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'stakeholder:delete');
   if (forbidden) return forbidden;
 
-  const existing = await getStakeholder(stakeholderId);
+  const existing = await getStakeholder(stakeholderId, user.tenantId);
   if (!existing || existing.projectId !== projectId) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
 
   try {
-    await deleteStakeholder(stakeholderId, user.id);
+    await deleteStakeholder(stakeholderId, user.id, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'NOT_FOUND') {

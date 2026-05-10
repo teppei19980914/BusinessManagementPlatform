@@ -26,7 +26,7 @@ function makeReq(body: unknown): Request {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(auth).mockResolvedValue({
-    user: { id: 'u-1', name: 'A', email: 'a@x.co', systemRole: 'general' },
+    user: { id: 'u-1', tenantId: 'tenant-A', name: 'A', email: 'a@x.co', systemRole: 'general' },
   } as never);
 });
 
@@ -65,7 +65,7 @@ describe('PATCH /api/memos/bulk', () => {
     }) as never);
     expect(res.status).toBe(200);
     expect(bulkUpdateMemosVisibilityFromList).toHaveBeenCalledWith(
-      [VALID_UUID], 'private', 'u-1',
+      [VALID_UUID], 'private', 'u-1', 'tenant-A',
     );
   });
 });

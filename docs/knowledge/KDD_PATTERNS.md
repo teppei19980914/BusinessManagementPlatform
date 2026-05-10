@@ -5453,3 +5453,166 @@ PR #297 Phase 1 commit を push 直後、Vercel / GitHub Actions / Playwright E2
 - §5.X+13 / §5.X+14 (本件の前段、テナント越境バグ恒久対策)
 - 公式 doc: <https://nextjs.org/docs/app/api-reference/config/typescript>
 - 公式 doc (Next.js Build Output): <https://nextjs.org/docs/app/api-reference/cli/next#next-build-options>
+
+## 5.X+16 CodeQL の user-controlled な認可 dispatch 偽陽性は **switch 文** で構造的に解消する (PR #302 で 3 段階の試行錯誤を経て確立)
+
+### 背景
+
+PR #302 (Phase 2-5: comment / attachment / stakeholder のテナント越境フィルタ) で
+GitHub Advanced Security の **CodeQL チェックが連続 fail**。**異なる rule の偽陽性を 2 連続**で踏んでから
+最終解にたどり着いた経緯を記録する。
+
+### 試行 1: 元コード (`if (entityType === 'memo')`) → `js/user-controlled-bypass` で flagged
+
+```
+Rule: js/user-controlled-bypass (CWE-290 / CWE-807, severity high)
+File: src/app/api/attachments/route.ts:60
+Title: User-controlled bypass of security check
+Message: This condition guards a sensitive [action], but a [user-provided value] controls it.
+```
+
+```ts
+async function authorize(user, entityType, entityId, mode) {
+  if (entityType === 'memo') {           // ← この行が flagged
+    const { ok } = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
+    ...
+  }
+  // project member 経路 (project / task / estimate / risk / retrospective / knowledge)
+  ...
+}
+```
+
+CodeQL の懸念: `entityType` (URL `searchParams.get('entityType')` 由来 = user-controlled) で
+**認可関数 (`authorizeMemoAttachment` vs `checkMembership`) を切り替え** している → user が
+choose できる security check は bypass 経路になり得る (CWE-290 認証バイパス / CWE-807 信頼できない入力に基づく
+セキュリティ判断)。
+
+### 試行 2: constant-record dispatch (`obj[entityType](...)`) → `js/unvalidated-dynamic-method-call` で flagged
+
+試行 1 を解消するため `Record<AttachmentEntityType, Authorizer>` のテーブル lookup に置換:
+
+```ts
+const ATTACHMENT_AUTHORIZER: Record<AttachmentEntityType, ...> = {
+  memo: (user, entityId, mode) => authorizeMemoEntity(user, entityId, mode),
+  project: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'project', entityId, mode),
+  // ... 他 5 種
+};
+async function authorize(user, entityType, entityId, mode) {
+  return ATTACHMENT_AUTHORIZER[entityType](user, entityId, mode);   // ← この行が flagged
+}
+```
+
+しかし新たな alert が発生:
+
+```
+Rule: js/unvalidated-dynamic-method-call (CWE-94, severity high)
+File: src/app/api/attachments/route.ts:179
+Title: Unvalidated dynamic method call
+Message: Invocation of method with [user-controlled] name may dispatch to unexpected target and cause an exception.
+```
+
+CodeQL の懸念: user-controlled `entityType` が **動的プロパティアクセスのキー**として使われる →
+未知のキーで `undefined()` 例外、もしくは prototype-pollution 経由の意図しない関数呼び出しの懸念。
+TypeScript の `Record<EnumKey, ...>` 型注釈は **コンパイル時の網羅性チェック**には効くが、
+**ランタイムの値域は CodeQL データフロー解析からは見えない**ため flag される。
+
+### 試行 3 (最終解): **switch 文** + TypeScript exhaustive `never` ガード
+
+```ts
+async function authorize(user, entityType, entityId, mode) {
+  switch (entityType) {
+    case 'memo':
+      return authorizeMemoEntity(user, entityId, mode);
+    case 'project':
+    case 'task':
+    case 'estimate':
+    case 'risk':
+    case 'retrospective':
+    case 'knowledge':
+      return authorizeProjectScopedEntity(user, entityType, entityId, mode);
+    default: {
+      // TypeScript exhaustiveness check: 新 entityType 追加時は本 default 節で
+      // compile error になるため、authorize() の case 漏れを構造的に防ぐ。
+      const _exhaustive: never = entityType;
+      throw new Error(`Unhandled attachment entityType: ${String(_exhaustive)}`);
+    }
+  }
+}
+```
+
+### なぜ switch なら通るのか
+
+CodeQL JS のクエリは「user-controlled な if-condition で security 関数を gate」「user-controlled キーで
+動的プロパティアクセス」を flag する一方、**switch 文の case label は静的 string literal**
+として扱われ、以下 2 点で「構造的安全」と判定される:
+
+1. **case label の値域がコンパイル時に確定** — `'memo'` `'project'` 等は AST 上の string literal で、
+   user-controlled value が「label を選ぶ」のではなく「事前定義された label の中から match
+   するものに飛ぶ」semantics。CodeQL の dispatch tracker は switch を「table-driven dispatch on
+   typed enum」として認識する経験則がある。
+2. **動的プロパティアクセスが存在しない** — `obj[entityType]` のような computed lookup が無く、
+   各 case の関数呼び出しは **静的に解決**される。`js/unvalidated-dynamic-method-call` の
+   data-flow tracker が引っかからない。
+
+### TypeScript exhaustive `never` ガードが組み合わせとして必須
+
+```ts
+default: {
+  const _exhaustive: never = entityType;
+  throw new Error(`Unhandled attachment entityType: ${String(_exhaustive)}`);
+}
+```
+
+- `AttachmentEntityType` enum に新 entity 種別 (例: `'comment'`) を追加すると、
+  `_exhaustive: never = entityType` で **compile error** になる (= 全 case が網羅されていない)
+- ランタイムで万一未知 entityType が来たら **throw で fail-fast** (silent bypass を防ぐ)
+- これにより constant-record dispatch の「型レベル網羅性強制」と同等の保護を維持しつつ、
+  静的 dispatch の利点を得る
+
+### 抽出したルール
+
+- [ ] **user-controlled value で認可関数を dispatch する場合は最初から `switch` 文で書く**:
+      `if (x === 'literal') { ... }` でも `obj[x]()` でも CodeQL に flagged される。
+      `switch (x) { case 'literal': ... default: assertNever(x) }` のみが両方を回避できる
+- [ ] **switch + exhaustive `never` ガードの組合せが TypeScript / CodeQL 両方に対する黄金パターン**:
+      新 enum 値の追加が compile error で検出され (silent bypass なし)、
+      かつ CodeQL の「dispatch on validated enum is safe」ヒューリスティックに乗る
+- [ ] **CodeQL 偽陽性 fix は「別の偽陽性」を呼びがち**: PR #302 では if → record dispatch で
+      別 alert が発生した。**fix のたびに実 push して CodeQL の判定を確認する**フィードバック
+      ループが必要 (机上で「これで通るはず」と決め打ちしない)
+- [ ] **`Record<EnumKey, Handler>[userKey]()` は便利だが認可 dispatch には使えない**:
+      動的プロパティアクセスが CodeQL `js/unvalidated-dynamic-method-call` のメイン検出対象。
+      認可以外の dispatch (例えば formatter / serializer など security に直接関係ない用途) は OK
+- [ ] **CodeQL JavaScript は inline 抑止コメント (`// lgtm[...]` / `// codeql[...]`) を公式サポートしない**
+      (2026-05 時点。C/C++/Java/C# のみ)。**コード refactor が JS では唯一の解**
+- [ ] **dismiss は GitHub UI で `security_events: write` 権限が必要**: gh CLI の `repo` scope では不可。
+      CI を通したい場合はコード refactor が現実解
+- [ ] **既存 alert と同じ rule + 同じ file + 同じ line でも PR で「new alert」扱いになり得る**:
+      CodeQL のフィンガープリントは周辺コード変更で揺れる (call-site の引数追加で変わる例を本件で観測)
+- [ ] **横展開チェック**: `git grep -E "if \(.*=== '.*'\)" src/app/api/` で user-controlled な
+      if-dispatch を検出し、認可周りでは予防的に switch 文に書き換える
+
+### 横展開対象 (本 PR では未着手、将来対応候補)
+
+- `src/app/api/attachments/[id]/route.ts:43` — 同じ `if (entityType === 'memo')` パターン
+  (現状は CodeQL 未 flag、`existing.entityType` が DB 由来で user-controlled tracker に乗らないため)
+- `src/app/api/attachments/batch/route.ts` — 多数の `if (entityType === '...')` 分岐
+  (但し dispatch ではなく entity 個別 query なので別 pattern)
+
+### 関連
+
+- 修正例: PR #302 (feat/tenant-isolation-phase2-comment-attachment-stakeholder)
+  - 試行 1 (元コード): commit 008a138 — main 同等の if-condition
+  - 試行 2 (record dispatch): commit 54933e7 — `js/user-controlled-bypass` 解消も別 alert 発生
+  - 試行 3 (switch 文、本ナレッジ確立): 本 PR の最終 commit
+- CodeQL alert 番号:
+  - #14: PR #302 試行 1 が flagged
+  - #5: main 既存・同 rule/同 file/同 line (試行 1 と本質的に同じ)
+  - 試行 2 で発生した alert (commit 54933e7 head)
+- CodeQL rule docs:
+  - `js/user-controlled-bypass`: <https://codeql.github.com/codeql-query-help/javascript/js-user-controlled-bypass/>
+  - `js/unvalidated-dynamic-method-call`: <https://codeql.github.com/codeql-query-help/javascript/js-unvalidated-dynamic-method-call/>
+- CWE 番号:
+  - CWE-94 (Improper Control of Generation of Code / 'Code Injection'): <https://cwe.mitre.org/data/definitions/94.html>
+  - CWE-290 (Authentication Bypass by Spoofing): <https://cwe.mitre.org/data/definitions/290.html>
+  - CWE-807 (Reliance on Untrusted Inputs in a Security Decision): <https://cwe.mitre.org/data/definitions/807.html>

@@ -119,17 +119,18 @@ export async function listKnowledge(
   params: ListKnowledgeParams,
   userId: string,
   systemRole: string,
+  viewerTenantId: string,
 ): Promise<{ data: KnowledgeDTO[]; total: number }> {
   const page = params.page || 1;
   const limit = Math.min(params.limit || 20, 100);
   const skip = (page - 1) * limit;
 
-  // 2026-05-01 (PR fix/visibility-auth-matrix): 「自分の draft は一覧に表示する」方針に変更。
-  //   旧仕様 (2026-04-24): 非 admin は draft 一切除外 → 自分の起票を視認できず混乱した。
-  //   新仕様: public + 自分の draft + (admin は他人の draft も) を表示。
-  //   visibility / keyword 両者が `OR` 構造を必要とするため、AND の中に複数 OR を並べる
-  //   配列スタイルにしている (Prisma の `AND: [...]` は OR 同士の合成にそのまま使える)。
-  const conditions: Prisma.KnowledgeWhereInput[] = [{ deletedAt: null }];
+  // 2026-05-09 feedback Phase 2-4: severity-1 テナント越境対策。
+  //   Knowledge は schema 上 tenantId 列を持つため where に直接フィルタ追加。
+  const conditions: Prisma.KnowledgeWhereInput[] = [
+    { deletedAt: null },
+    { tenantId: viewerTenantId },
+  ];
 
   // 2026-05-08: シードナレッジ (isSampleData=true) は全ナレッジ画面で非表示。
   //   super_admin role は bypass (= シードデータ管理のため表示+編集可)。
@@ -280,10 +281,15 @@ export async function listAllKnowledgeForViewer(
  * サービス単体では追加の公開範囲制御はしない (プロジェクトメンバーは紐付くナレッジを
  * 公開範囲によらず全て見られる想定 = 一覧/全ナレッジの連動を保つ)。
  */
-export async function listKnowledgeByProject(projectId: string): Promise<KnowledgeDTO[]> {
+export async function listKnowledgeByProject(
+  projectId: string,
+  viewerTenantId: string,
+): Promise<KnowledgeDTO[]> {
+  // 2026-05-09 feedback Phase 2-4: 越境一覧を遮断するため tenantId 必須化。
   const knowledges = await prisma.knowledge.findMany({
     where: {
       deletedAt: null,
+      tenantId: viewerTenantId,
       knowledgeProjects: { some: { projectId } },
     },
     include: {
@@ -306,9 +312,13 @@ export async function getKnowledge(
   knowledgeId: string,
   viewerUserId?: string,
   viewerSystemRole?: string,
+  viewerTenantId?: string,
 ): Promise<KnowledgeDTO | null> {
+  // 2026-05-09 feedback Phase 2-4: viewerTenantId が指定された場合のみ where に追加。
+  //   内部呼び出し (cascade 削除等) は認可スキップ経路を維持しつつ、API 経路では必須。
+  const tenantWhere = viewerTenantId !== undefined ? { tenantId: viewerTenantId } : {};
   const k = await prisma.knowledge.findFirst({
-    where: { id: knowledgeId, deletedAt: null },
+    where: { id: knowledgeId, deletedAt: null, ...tenantWhere },
     include: {
       creator: { select: { name: true } },
       knowledgeProjects: { select: { projectId: true } },
@@ -331,8 +341,10 @@ export async function createKnowledge(
   userId: string,
   tenantId: string,
 ): Promise<KnowledgeDTO> {
+  // 2026-05-09 feedback Phase 2-4: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
   const k = await prisma.knowledge.create({
     data: {
+      tenantId,
       title: input.title,
       knowledgeType: input.knowledgeType,
       background: input.background,
@@ -429,8 +441,10 @@ export async function updateKnowledge(
   //   旧実装は `input.title !== undefined` だけで「フォームが title を送ってきた = 変更あり」
   //   とみなし、UI が常に全フィールドを送る場合に embedding が無駄に再生成されていた。
   //   defense-in-depth: フォームが部分更新を送ってきても、内容が同一なら LLM 課金を回避。
+  // 2026-05-09 feedback Phase 2-4: 越境編集を遮断するため where に tenantId 併記。
+  //   既存 tenantId 引数 (元 embedding 用) を viewer 認可境界として再利用。
   const existing = await prisma.knowledge.findFirst({
-    where: { id: knowledgeId, deletedAt: null },
+    where: { id: knowledgeId, deletedAt: null, tenantId },
     select: {
       createdBy: true,
       title: true,
@@ -515,9 +529,11 @@ export async function deleteKnowledge(
   knowledgeId: string,
   userId: string,
   systemRole: string,
+  viewerTenantId: string,
 ): Promise<void> {
+  // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.knowledge.findFirst({
-    where: { id: knowledgeId, deletedAt: null },
+    where: { id: knowledgeId, deletedAt: null, tenantId: viewerTenantId },
     select: { createdBy: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
@@ -558,14 +574,17 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
   ids: string[],
   visibility: 'draft' | 'public',
   viewerUserId: string,
+  viewerTenantId: string,
 ): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
   if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
 
   // PR #165: project-scoped。当該プロジェクトに紐付くナレッジのみ対象 (多対多 中間テーブル経由)
+  // 2026-05-09 feedback Phase 2-4: 越境一括更新を遮断するため tenantId フィルタを併記。
   const targets = await prisma.knowledge.findMany({
     where: {
       id: { in: ids },
       deletedAt: null,
+      tenantId: viewerTenantId,
       knowledgeProjects: { some: { projectId } },
     },
     select: { id: true, createdBy: true },

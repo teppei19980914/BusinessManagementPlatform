@@ -144,9 +144,14 @@ function toStakeholderDTO(s: StakeholderRow): StakeholderDTO {
  * influence/interest/createdAt の順に取得した後 in-memory で priority 並び替えする
  * (DB index は filter 用途のみ有効)。
  */
-export async function listStakeholders(projectId: string): Promise<StakeholderDTO[]> {
+export async function listStakeholders(
+  projectId: string,
+  viewerTenantId: string,
+): Promise<StakeholderDTO[]> {
+  // 2026-05-09 feedback Phase 2-5: 越境一覧を遮断するため tenantId 必須化。
+  //   stakeholder は氏名・連絡先・所属組織等の個人情報を含むため最重要。
   const rows = await prisma.stakeholder.findMany({
-    where: { projectId, deletedAt: null },
+    where: { projectId, deletedAt: null, tenantId: viewerTenantId },
     include: { user: { select: { name: true } } },
     orderBy: [
       { influence: 'desc' },
@@ -168,9 +173,13 @@ export async function listStakeholders(projectId: string): Promise<StakeholderDT
  * 単一ステークホルダーを取得する。
  * 認可オフの内部呼び出し (existing 検証用) は viewerUserId を省略可。
  */
-export async function getStakeholder(stakeholderId: string): Promise<StakeholderDTO | null> {
+export async function getStakeholder(
+  stakeholderId: string,
+  viewerTenantId: string,
+): Promise<StakeholderDTO | null> {
+  // 2026-05-09 feedback Phase 2-5: 越境取得を遮断するため tenantId 必須化。
   const row = await prisma.stakeholder.findFirst({
-    where: { id: stakeholderId, deletedAt: null },
+    where: { id: stakeholderId, deletedAt: null, tenantId: viewerTenantId },
     include: { user: { select: { name: true } } },
   });
   if (!row) return null;
@@ -181,11 +190,20 @@ export async function createStakeholder(
   projectId: string,
   input: CreateStakeholderInput,
   userId: string,
+  tenantId: string,
 ): Promise<StakeholderDTO> {
   // Phase D 要件 11 (2026-04-28): influence × interest から priority を自動分類して保存。
+  // 2026-05-09 feedback Phase 2-5: project 所有確認 + data.tenantId 明示化。
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, tenantId },
+    select: { id: true },
+  });
+  if (!project) throw new Error('NOT_FOUND');
+
   const priority = deriveStakeholderPriority(input.influence, input.interest);
   const row = await prisma.stakeholder.create({
     data: {
+      tenantId,
       projectId,
       userId: input.userId ?? null,
       name: input.name,
@@ -222,10 +240,12 @@ export async function updateStakeholder(
   stakeholderId: string,
   input: UpdateStakeholderInput,
   userId: string,
+  viewerTenantId: string,
 ): Promise<StakeholderDTO> {
   // Phase D 要件 11: priority 再計算には現値の influence/interest が必要なので select しておく。
+  // 2026-05-09 feedback Phase 2-5: 越境編集を遮断するため where に tenantId 必須化。
   const existing = await prisma.stakeholder.findFirst({
-    where: { id: stakeholderId, deletedAt: null },
+    where: { id: stakeholderId, deletedAt: null, tenantId: viewerTenantId },
     select: { id: true, influence: true, interest: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
@@ -268,9 +288,14 @@ export async function updateStakeholder(
  *
  * @throws {Error} 'NOT_FOUND' — 存在しない or 既に削除済み
  */
-export async function deleteStakeholder(stakeholderId: string, userId: string): Promise<void> {
+export async function deleteStakeholder(
+  stakeholderId: string,
+  userId: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2-5: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.stakeholder.findFirst({
-    where: { id: stakeholderId, deletedAt: null },
+    where: { id: stakeholderId, deletedAt: null, tenantId: viewerTenantId },
     select: { id: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
