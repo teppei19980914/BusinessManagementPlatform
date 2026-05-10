@@ -3198,6 +3198,8 @@ test.afterAll(async () => {
 | 6 | `project_members` | `updated_at` (Prisma `@updatedAt` は client 専用、DB 列は NOT NULL DEFAULT なし) | CI run 3 (25625257419) |
 | 7 | `risks_issues_projects` (誤テーブル名) | 正しくは `risk_issue_projects` (単数形)。`@@map("risk_issue_projects")` 参照 | (6 と同時に発見、未到達) |
 | 8 | `retrospectives_projects` (誤テーブル名) | 正しくは `retrospective_projects` (単数形)。`@@map("retrospective_projects")` 参照 | (6 と同時に発見、未到達) |
+| 9 | `knowledges.business_domain_tags` の cast | jsonb 列に `ARRAY['x']::text[]` を渡すと型不一致エラー。`'["x"]'::jsonb` を使う | CI run 4 (25625659810) |
+| 10 | API endpoint method | retrospective `[rid]` は GET ハンドラなし (PATCH/DELETE のみ)。GET → 405 で test fail。事前に `route.ts` の export 関数を確認 | CI run 4 |
 
 → **教訓 1**: 「fixture 1 件 INSERT → CI で次の violation を発見 → 修正」を繰り返すと CI 1 回 = 5〜10 分の
 無駄が累積する。fixture 作成時点で `prisma/schema.prisma` を 14 モデル全て trace し、
@@ -3213,6 +3215,26 @@ test.afterAll(async () => {
 (`knowledges` ⇄ `knowledge_projects` のみ整合)。生 SQL を書く前に必ず `@@map` を grep する:
 ```bash
 grep -E '@@map\("(risk_issue_projects|retrospective_projects|knowledge_projects)"\)' prisma/schema.prisma
+```
+
+→ **教訓 4**: **`@db.JsonB` 列に Postgres ARRAY を渡してはいけない**。Prisma schema で
+`Json @db.JsonB` と宣言された列は実 DB 上 `jsonb` 型 (postgres ネイティブの text[] とは別物)。
+生 SQL では JSON literal をキャストする:
+```sql
+-- × NG: type 不一致 (text[] ⇄ jsonb)
+ARRAY['fintech']::text[]
+-- ✓ OK
+'["fintech"]'::jsonb
+```
+
+→ **教訓 5**: **API ルートに HTTP method ハンドラが揃っているとは限らない**。
+個別エンティティ取得は `GET /api/<resource>/[id]` で取れると思い込みがちだが、実際は **PATCH / DELETE のみ
+提供** されているケースがある (例: `/api/projects/[pid]/retrospectives/[rid]` は一覧 + 個別更新のみ提供で、
+取得は親一覧経由で行う設計)。GET を投げると Next.js は **405 Method Not Allowed** を返し、テストの
+`expect([403, 404]).toContain(res.status())` が fail する。
+**E2E 越境テストを書く前に必ず `route.ts` の export 関数 grep で許可メソッドを確認**:
+```bash
+grep -hE "^export (async )?function (GET|POST|PATCH|PUT|DELETE)" src/app/api/<path>/route.ts
 ```
 
 #### 関連

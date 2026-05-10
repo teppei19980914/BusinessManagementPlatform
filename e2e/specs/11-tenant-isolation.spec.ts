@@ -208,8 +208,20 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
   // Retrospective 系
   // ==========================================================================
 
-  test('GET /api/projects/[A-pid]/retrospectives/[B-rid] → 404', async () => {
-    const res = await adminARequest.get(
+  // NOTE: retrospective endpoint (`/api/projects/[pid]/retrospectives/[rid]`) は GET ハンドラを
+  //   持たず PATCH / DELETE のみ提供される (一覧は親 `/retrospectives` で取得する設計)。
+  //   GET を投げると 405 Method Not Allowed が返るため、cross-tenant attack vector としては
+  //   PATCH (越境更新試行) を検証する。
+  test('PATCH /api/projects/[A-pid]/retrospectives/[B-rid] → 404 (越境 retrospective 更新不可)', async () => {
+    const res = await adminARequest.patch(
+      `/api/projects/${tenantA.projectId}/retrospectives/${tenantB.retrospectiveId}`,
+      { data: { planSummary: 'attacked' } },
+    );
+    expect([400, 403, 404]).toContain(res.status());
+  });
+
+  test('DELETE /api/projects/[A-pid]/retrospectives/[B-rid] → 404 (越境 retrospective 削除不可)', async () => {
+    const res = await adminARequest.delete(
       `/api/projects/${tenantA.projectId}/retrospectives/${tenantB.retrospectiveId}`,
     );
     expect([403, 404]).toContain(res.status());

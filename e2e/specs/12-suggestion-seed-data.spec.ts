@@ -73,6 +73,9 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
     //   FK 違反する可能性があるため、tenant A の admin を created_by に流用する
     //   (created_by はテナント越境を許容する設計、検証用途として OK)。
     const pool = getPool();
+    // NOTE: business_domain_tags 列は `Json @db.JsonB` (jsonb 型) であり text[] ではない。
+    //   ARRAY['fintech']::text[] を渡すと "column is of type jsonb but expression is of type text[]"
+    //   エラーになるため、jsonb literal を直接書く。
     const seedKnowledgeRes = await pool.query<{ id: string }>(
       `INSERT INTO knowledges (
          tenant_id, title, knowledge_type, background, content, result, visibility,
@@ -80,7 +83,7 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
          created_by, updated_by, created_at, updated_at
        )
        VALUES ($1, $2, 'lesson', 'bg', 'シード本文 financial PoC', 'ok', 'public',
-               true, ARRAY['fintech']::text[],
+               true, '["fintech"]'::jsonb,
                $3, $3, NOW(), NOW())
        RETURNING id`,
       [MANAGEMENT_TENANT_ID, `Seed Knowledge ${RUN_ID}`, tenantA.adminId],
