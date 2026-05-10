@@ -3201,6 +3201,8 @@ test.afterAll(async () => {
 | 9 | `knowledges.business_domain_tags` の cast | jsonb 列に `ARRAY['x']::text[]` を渡すと型不一致エラー。`'["x"]'::jsonb` を使う | CI run 4 (25625659810) |
 | 10 | API endpoint method | retrospective `[rid]` は GET ハンドラなし (PATCH/DELETE のみ)。GET → 405 で test fail。事前に `route.ts` の export 関数を確認 | CI run 4 |
 | 11 | RUN_ID 同 worker 共有 + cleanup transaction abort | spec 11 → spec 12 が同 worker で順次実行されると同じ RUN_ID から同じ slug を生成し UNIQUE 違反。さらに cleanup が transaction abort で部分失敗し tenants 残留。fixture 呼び出しごとに `randomBytes(3).toString('hex')` を suffix 付与 + cleanup を非トランザクション化 | CI run 5 (25626083322) |
+| 12 | MANAGEMENT_TENANT_ID が CI test DB に存在しない | `prisma migrate deploy` だけでは作られない (`pnpm db:seed` のみで作成)。spec 12 の seedKnowledge INSERT が `knowledges_tenant_id_fkey` FK 違反。spec の beforeAll で `INSERT ... ON CONFLICT (id) DO NOTHING` を実行 | CI run 6 (25626639953) |
+| 13 | cleanup が tenant_id 列の有無を区別していない | 一律 `WHERE tenant_id = ANY($1)` で消そうとすると、estimates / tasks / project_members / 中間 link / tenants は全て fail。テーブルごとに DELETE 句を分岐し、tenant_id 列を持たない子は親 JOIN 経由 (例: `WHERE project_id IN (SELECT id FROM projects WHERE tenant_id = ANY)`)、tenants 自身は `WHERE id = ANY` で対応 | CI run 6 |
 
 → **教訓 1**: 「fixture 1 件 INSERT → CI で次の violation を発見 → 修正」を繰り返すと CI 1 回 = 5〜10 分の
 無駄が累積する。fixture 作成時点で `prisma/schema.prisma` を 14 モデル全て trace し、
@@ -3255,6 +3257,34 @@ ignored until end of transaction block" で silent fail する。
 次のテストで UNIQUE 違反」。
 対処: **ベストエフォート cleanup には transaction を使わない** (各 DELETE を独立クエリとして実行し、
 個別 catch で握り潰す)。原子性が必要な業務ロジックでは SAVEPOINT を併用する。
+
+→ **教訓 8**: **`prisma migrate deploy` だけで E2E test DB に管理テナントは作られない**。
+管理テナント (`MANAGEMENT_TENANT_ID = '00000000-0000-0000-0000-ffffffffffff'`) は migration ではなく
+`prisma/seed.ts` (`pnpm db:seed`) でのみ作成される。CI workflow は `migrate deploy` までしか走らない
+(seed は明示しない限りスキップ) ため、管理テナントを参照する FK INSERT は失敗する。
+シード参照を伴う E2E spec の beforeAll では **明示的に upsert** すること:
+```ts
+await pool.query(
+  `INSERT INTO tenants (id, slug, name, plan, created_at, updated_at)
+   VALUES ($1, $2, 'Knowledge Relay Platform', 'pro', NOW(), NOW())
+   ON CONFLICT (id) DO NOTHING`,
+  [MANAGEMENT_TENANT_ID, 'platform-admin'],
+);
+```
+
+→ **教訓 9**: **マルチテナント DB の cleanup は tenant_id 列の有無で DELETE 句を分岐する**。
+一律 `WHERE tenant_id = ANY($1)` で消そうとすると、tenant_id を持たない表 (M:N 中間 / project 配下の
+estimates / tasks / project_members / tenants 自身など) で全 fail する。具体的なパターン:
+
+| 表の種別 | 例 | DELETE 句 |
+|---|---|---|
+| tenant_id 列あり | knowledges / projects / users 等 | `WHERE tenant_id = ANY($1)` |
+| M:N 中間 (link table) | knowledge_projects / risk_issue_projects | `WHERE knowledge_id IN (SELECT id FROM knowledges WHERE tenant_id = ANY($1))` |
+| project 配下 (tenant_id なし) | tasks / estimates / project_members | `WHERE project_id IN (SELECT id FROM projects WHERE tenant_id = ANY($1))` |
+| user 配下 (tenant_id なし) | sessions / password_reset_tokens / recovery_codes | `WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ANY($1))` |
+| tenants 本体 | tenants | `WHERE id = ANY($1)` (主キーで直接) |
+
+実装例: [e2e/fixtures/multi-tenant.ts](../../e2e/fixtures/multi-tenant.ts) の `cleanupTenants` (`steps: DeleteStep[]`)。
 
 #### 関連
 

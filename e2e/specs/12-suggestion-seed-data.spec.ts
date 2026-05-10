@@ -73,6 +73,17 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
     //   FK 違反する可能性があるため、tenant A の admin を created_by に流用する
     //   (created_by はテナント越境を許容する設計、検証用途として OK)。
     const pool = getPool();
+
+    // CI test DB は `prisma migrate deploy` のみ実行で `pnpm db:seed` は走らない。
+    //   prisma/seed.ts が作る管理テナント (MANAGEMENT_TENANT_ID) が test DB には存在せず、
+    //   そのままシード INSERT すると `knowledges_tenant_id_fkey` FK 違反する。
+    //   ON CONFLICT DO NOTHING で冪等的に確保する (既に存在すれば NOOP)。
+    await pool.query(
+      `INSERT INTO tenants (id, slug, name, plan, created_at, updated_at)
+       VALUES ($1, $2, 'Knowledge Relay Platform', 'pro', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [MANAGEMENT_TENANT_ID, 'platform-admin'],
+    );
     // NOTE: business_domain_tags 列は `Json @db.JsonB` (jsonb 型) であり text[] ではない。
     //   ARRAY['fintech']::text[] を渡すと "column is of type jsonb but expression is of type text[]"
     //   エラーになるため、jsonb literal を直接書く。
