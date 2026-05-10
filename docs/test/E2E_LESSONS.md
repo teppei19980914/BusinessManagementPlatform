@@ -2358,6 +2358,7 @@ oscillation 状態にあることが git log で裏付けられた**。
 | 4 | #282 (feat/seed-data-management) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px) | **同パターンの 4 回目** (= 即応プレイブック 4 条件すべて Yes)。本 PR の変更は `Knowledge.isSampleData` 追加 + super_admin bypass で、`/projects/[id]` テンプレートを一切触っていない。同 PR 内では大量のサービス変更を行ったが画面 layout には影響なし | `[gen-visual]` 即発火 → 完了 (深追いせず 5 分以内に対応) |
 | 5 | #301 (feat/tenant-isolation-phase2-business-entities) | project-detail-light.png (chromium-mobile **のみ**) | **414→413px width** (-1px、3 回 retry すべて 413px) | **5 回目の再発 + 新たな観測**: 同時期の PR #302 (Phase 2-5、同種の tenant isolation PR) は **同 baseline (414px) で pass**、PR #301 は同 baseline で 413 を produce → **同 baseline / 同 main 系統での render 結果がブランチごとに分かれる「真の確率的 1px drift」**。さらに `git log <baseline-png>` を辿ると baseline 自身が **414→413→414→413→414 で oscillation** していた (= 過去の `[gen-visual]` workflow 実行結果すら 1px 揺れる)。本 PR の changes は service / API route のみで `/projects/[projectId]` template / global CSS 一切触らず | `[gen-visual]` 即発火 (5 分以内対応) |
 | 6 | #309 (feat/tenant-isolation-comprehensive-tests) | project-detail-light.png (chromium-mobile **のみ**) | **414→411px width** (-3px、3 回 retry すべて 411px) | **6 回目の再発 + 過去最大の drift 幅**: これまで 1px だったが今回は **3px**。本 PR は E2E test / fixture / docs のみ変更で `/projects/[projectId]` template も global CSS も一切触らず。直近 main commit `dee5394 fix(ui): 「他顧客テナント」文言訂正` が UI text 変更を含むため、文字列幅変動が次の請求書として可視化された可能性。1px 変動と異なり 3px は font metrics の境界変動ではなく **layout-level の small shift** の疑い | `[gen-visual]` 即発火 (commit `a69d790`) |
+| 7 | #310 (dev/2026-05-09 daily) | project-detail-light.png (chromium-mobile **のみ**) | **413→414px width** (+1px、3 回 retry すべて 414px) | **7 回目の再発 = oscillation の継続証明**: 前回 (#309) で baseline が 414→411 になり、その後 workflow auto-commit `f27dfde` で 413 に再収束。今回はそこから 414 に戻った。**1px 範囲内の確率的揺れが定常化**。PR #310 は dependabot 修正と日次マージのみで UI 不変 | `[gen-visual]` 即発火 (commit `35f9241`) |
 
 **判断基準の検証**:
 - 事例 1 (+27px): 「dl 1 行分の妥当な差」→ 期待された変化と判定 → 即 `[gen-visual]` で確実解消
@@ -3314,6 +3315,7 @@ estimates / tasks / project_members / tenants 自身など) で全 fail する�
 | self-delete (/api/auth/delete-account) | recoveryCode 取得フローの整備が必要 |
 | Firefox / Safari ブラウザ互換 | MVP では Chromium 1 種類のみ |
 | モバイル解像度マトリクス | 固定 1440×900 で運用中 |
+| **chromium-mobile 1px width oscillation の構造的解消** | §4.43 で 7 回目の再発を確認。即応プレイブック (`[gen-visual]`) で個別対応してきたが定常化している。候補対応: (a) viewport を `devices['iPhone 13']` から **deviceScaleFactor=1 の固定 viewport** に変更、(b) full-page screenshot から **要素単位 screenshot** へ移行、(c) chromium-mobile で project-detail-light のみ skip。コスト/効果は別 PR で評価 |
 
 ---
 
