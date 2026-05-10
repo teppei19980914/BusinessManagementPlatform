@@ -65,7 +65,7 @@ export async function PATCH(
   if (user instanceof NextResponse) return user;
 
   const { id } = await params;
-  const existing = await getComment(id);
+  const existing = await getComment(id, user.tenantId);
   if (!existing) return notFound();
 
   if (!canMutate(user, existing)) return forbidden();
@@ -91,7 +91,7 @@ export async function PATCH(
     }
   }
   // 2026-05-09 (PR H / #3): link は updateComment 内で commentId 付きで再構築するため不要
-  const updated = await updateComment(id, parsed.data.content, mentions, user.name);
+  const updated = await updateComment(id, parsed.data.content, user.tenantId, mentions, user.name);
 
   await recordAuditLog({
     userId: user.id,
@@ -111,12 +111,12 @@ export async function DELETE(
   if (user instanceof NextResponse) return user;
 
   const { id } = await params;
-  const existing = await getComment(id);
+  const existing = await getComment(id, user.tenantId);
   if (!existing) return notFound();
 
   if (!canMutate(user, existing)) return forbidden();
 
-  await deleteComment(id);
+  await deleteComment(id, user.tenantId);
 
   await recordAuditLog({
     userId: user.id,

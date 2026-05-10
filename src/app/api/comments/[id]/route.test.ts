@@ -12,6 +12,8 @@ vi.mock('@/lib/db', () => ({
     comment: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      // 2026-05-09 feedback Phase 2-5: deleteComment は越境遮断のため updateMany 経由
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -50,6 +52,8 @@ const params = Promise.resolve({ id: COMMENT_ID });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 2026-05-09 feedback Phase 2-5: deleteComment は updateMany 経由で実装される
+  vi.mocked(prisma.comment.updateMany).mockResolvedValue({ count: 1 } as never);
   vi.mocked(prisma.comment.update).mockResolvedValue({
     id: COMMENT_ID,
     entityType: 'issue',
@@ -64,7 +68,7 @@ beforeEach(() => {
 
 describe('PATCH /api/comments/[id]', () => {
   it('投稿者本人は編集可', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-author', systemRole: 'general' } as never);
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-author', systemRole: 'general', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.comment.findFirst).mockResolvedValue({
       id: COMMENT_ID, userId: 'u-author', entityType: 'issue', entityId: 'r-1',
       content: 'orig', createdAt: new Date(), updatedAt: new Date(),
@@ -76,7 +80,7 @@ describe('PATCH /api/comments/[id]', () => {
   });
 
   it('admin は他人のコメントを編集不可 (2026-05-01 仕様変更で admin 救済を外した)', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-admin', systemRole: 'admin' } as never);
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-admin', systemRole: 'admin', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.comment.findFirst).mockResolvedValue({
       id: COMMENT_ID, userId: 'u-author', entityType: 'issue', entityId: 'r-1',
       content: 'orig', createdAt: new Date(), updatedAt: new Date(),
@@ -88,7 +92,7 @@ describe('PATCH /api/comments/[id]', () => {
   });
 
   it('他人 (非投稿者) は 403', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-other', systemRole: 'general' } as never);
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-other', systemRole: 'general', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.comment.findFirst).mockResolvedValue({
       id: COMMENT_ID, userId: 'u-author', entityType: 'issue', entityId: 'r-1',
       content: 'orig', createdAt: new Date(), updatedAt: new Date(),
@@ -100,7 +104,7 @@ describe('PATCH /api/comments/[id]', () => {
   });
 
   it('存在しないコメントは 404', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-author', systemRole: 'general' } as never);
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-author', systemRole: 'general', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.comment.findFirst).mockResolvedValue(null);
 
     const res = await PATCH(patchReq({ content: 'x' }), { params });
@@ -110,7 +114,7 @@ describe('PATCH /api/comments/[id]', () => {
 
 describe('DELETE /api/comments/[id]', () => {
   it('投稿者本人は削除可', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-author', systemRole: 'general' } as never);
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-author', systemRole: 'general', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.comment.findFirst).mockResolvedValue({
       id: COMMENT_ID, userId: 'u-author', entityType: 'issue', entityId: 'r-1',
       content: 'orig', createdAt: new Date(), updatedAt: new Date(),
@@ -122,7 +126,7 @@ describe('DELETE /api/comments/[id]', () => {
   });
 
   it('admin は他人のコメントを削除不可', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-admin', systemRole: 'admin' } as never);
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-admin', systemRole: 'admin', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.comment.findFirst).mockResolvedValue({
       id: COMMENT_ID, userId: 'u-author', entityType: 'issue', entityId: 'r-1',
       content: 'orig', createdAt: new Date(), updatedAt: new Date(),
@@ -134,7 +138,7 @@ describe('DELETE /api/comments/[id]', () => {
   });
 
   it('他人 (非投稿者) は 403', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-other', systemRole: 'general' } as never);
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-other', systemRole: 'general', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.comment.findFirst).mockResolvedValue({
       id: COMMENT_ID, userId: 'u-author', entityType: 'issue', entityId: 'r-1',
       content: 'orig', createdAt: new Date(), updatedAt: new Date(),
