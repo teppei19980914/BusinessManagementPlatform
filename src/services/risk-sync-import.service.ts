@@ -235,6 +235,7 @@ function dateOnlyStr(d: Date | null): string | null {
 export async function computeRiskSyncDiff(
   projectId: string,
   csvRows: RiskSyncImportRow[],
+  viewerTenantId: string,
 ): Promise<RiskSyncDiffResult> {
   const result: RiskSyncDiffResult = {
     summary: { added: 0, updated: 0, removed: 0, blockedErrors: 0, warnings: 0 },
@@ -242,6 +243,17 @@ export async function computeRiskSyncDiff(
     canExecute: true,
     globalErrors: [],
   };
+
+  // 2026-05-10 feedback Phase 2-8: 越境 sync-import を遮断するため projectId のテナント検証。
+  const projectOk = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!projectOk) {
+    result.globalErrors.push('プロジェクトが見つかりません');
+    result.canExecute = false;
+    return result;
+  }
 
   if (csvRows.length === 0) {
     result.globalErrors.push('インポート可能な行がありません');
@@ -254,9 +266,15 @@ export async function computeRiskSyncDiff(
     return result;
   }
 
+  // PR feat/asset-multi-project-linking: M:N 化により「このプロジェクトに紐付け済」のリスクを取得
+  // 2026-05-10 Phase 2-8: tenantId 二重防御
   const [existingRisks, members] = await Promise.all([
     prisma.riskIssue.findMany({
-      where: { projectId, deletedAt: null },
+      where: {
+        deletedAt: null,
+        tenantId: viewerTenantId,
+        riskIssueProjects: { some: { projectId } },
+      },
       select: {
         id: true, projectId: true, type: true, title: true, content: true,
         cause: true, impact: true, likelihood: true, priority: true,
@@ -469,9 +487,10 @@ export async function applyRiskSyncImport(
   csvRows: RiskSyncImportRow[],
   removeMode: RemoveMode,
   userId: string,
+  viewerTenantId: string,
 ): Promise<RiskSyncImportResult> {
-  // 1. 再 validation
-  const diff = await computeRiskSyncDiff(projectId, csvRows);
+  // 1. 再 validation (computeRiskSyncDiff 側でテナント検証も実施)
+  const diff = await computeRiskSyncDiff(projectId, csvRows, viewerTenantId);
   if (!diff.canExecute) {
     const msgs = [
       ...diff.globalErrors,
@@ -493,8 +512,14 @@ export async function applyRiskSyncImport(
   }
 
   // 3. snapshot
+  // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付け済」のリスクのスナップショット
+  // 2026-05-10 Phase 2-8: tenantId 二重防御
   const snapshot = await prisma.riskIssue.findMany({
-    where: { projectId, deletedAt: null },
+    where: {
+      deletedAt: null,
+      tenantId: viewerTenantId,
+      riskIssueProjects: { some: { projectId } },
+    },
   });
   const snapshotById = new Map(snapshot.map((r) => [r.id, r]));
 
@@ -539,17 +564,26 @@ export async function applyRiskSyncImport(
       };
 
       if (row.id) {
+        // 2026-05-10 Phase 2-8: 二重防御 - 自テナント所有確認後に update
+        const owned = await prisma.riskIssue.findFirst({
+          where: { id: row.id, tenantId: viewerTenantId },
+          select: { id: true },
+        });
+        if (!owned) throw new Error(`IMPORT_VALIDATION_ERROR:ID "${row.id}" が見つかりません`);
         await prisma.riskIssue.update({
           where: { id: row.id },
           data,
         });
         updatedIds.push(row.id);
       } else {
+        // PR feat/asset-multi-project-linking: M:N 紐付けも create で同時に作成
         const created = await prisma.riskIssue.create({
           data: {
             ...data,
+            tenantId: viewerTenantId,
             reporterId: userId,
             createdBy: userId,
+            riskIssueProjects: { create: [{ projectId }] },
           },
         });
         createdIds.push(created.id);
@@ -560,11 +594,12 @@ export async function applyRiskSyncImport(
     if (removeMode === 'delete') {
       for (const r of diff.rows) {
         if (r.action === 'REMOVE_CANDIDATE' && r.id && !r.hasProgress) {
-          await prisma.riskIssue.update({
-            where: { id: r.id },
+          // 2026-05-10 Phase 2-8: tenantId フィルタ付き update で二重防御
+          const updated = await prisma.riskIssue.updateMany({
+            where: { id: r.id, tenantId: viewerTenantId },
             data: { deletedAt: new Date(), updatedBy: userId },
           });
-          softDeletedIds.push(r.id);
+          if (updated.count === 1) softDeletedIds.push(r.id);
         }
       }
     }
@@ -650,12 +685,20 @@ export async function exportRisksSync(
   projectId: string,
   viewerUserId: string,
   viewerSystemRole: string,
+  viewerTenantId: string,
 ): Promise<string> {
   const isAdmin = viewerSystemRole === 'admin';
   const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
 
+  // PR feat/asset-multi-project-linking: M:N 化で「このプロジェクトに紐付け済」を export
+  // 2026-05-10 Phase 2-8: tenantId 二重防御 (越境 export を遮断)
   const risks = await prisma.riskIssue.findMany({
-    where: { projectId, deletedAt: null, ...visibilityWhere },
+    where: {
+      deletedAt: null,
+      tenantId: viewerTenantId,
+      ...visibilityWhere,
+      riskIssueProjects: { some: { projectId } },
+    },
     include: { assignee: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });

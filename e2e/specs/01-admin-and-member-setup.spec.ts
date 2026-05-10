@@ -142,12 +142,18 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     // あった (PR #114 CI で顕在化)。`page.reload()` で DB の真状態を強制取得する。
     await page.reload({ waitUntil: 'networkidle' });
 
-    // PR #91 で admin は常に強制有効化バッジ表示。
-    // 有効化成功時は「MFA を有効化する」ボタンが消えることも併せて確認する。
+    // 2026-05-09 (#11): MFA 強制対象を super_admin のみに限定。テナント管理者 (admin) の
+    //   MFA は任意設定となったため「強制有効化 (解除不可)」バッジは出ない。
+    //   テナント管理者は通常の有効化フロー (= general と同じ UI) で MFA を有効化し、
+    //   有効化後は「有効」バッジ + 「MFA を無効化する」ボタンが表示される。
+    //   旧仕様の確認 (super_admin のみ強制) は別 spec (super_admin) でカバー。
     await expect(page.getByRole('button', { name: 'MFA を有効化する' })).toHaveCount(0, {
       timeout: 10_000,
     });
-    await expect(page.getByText('強制有効化 (解除不可)')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('有効', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'MFA を無効化する' })).toBeVisible({
+      timeout: 10_000,
+    });
     await snapshotStep(page, 'step-2-mfa-enabled-badge');
   });
 

@@ -130,13 +130,15 @@ export async function enableMfa(
     return { success: false, error: 'コードが正しくありません' };
   }
 
-  await prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data: { mfaEnabled: true, mfaEnabledAt: new Date() },
+    select: { tenantId: true },
   });
 
   await recordAuthEvent({
     eventType: 'password_change',
+    tenantId: updated.tenantId,
     userId,
     detail: { action: 'mfa_enabled' },
   });
@@ -147,18 +149,19 @@ export async function enableMfa(
 /**
  * MFA 無効化
  *
- * PR #91: admin (システム管理者) は MFA を無効化できない。
- * 呼出前に API route 層でも admin チェックを行うが、サービス層でも防御多層化として拒否する。
+ * 2026-05-09 (#11): MFA 強制対象を super_admin (プラットフォーム運営者) のみに限定。
+ *   テナント管理者 (admin) と一般ユーザは無効化可能 (任意設定)。
+ * 呼出前に API route 層でも super_admin チェックを行うが、サービス層でも防御多層化として拒否する。
  *
- * @throws {Error} 'CANNOT_DISABLE_ADMIN_MFA' — admin が対象の場合
+ * @throws {Error} 'CANNOT_DISABLE_ADMIN_MFA' — super_admin が対象の場合
  */
 export async function disableMfa(userId: string): Promise<void> {
-  // PR #91: admin は MFA 必須 — 無効化禁止 (サービス層防御)
+  // 2026-05-09 (#11): super_admin のみ MFA 必須 — 無効化禁止 (サービス層防御)
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { systemRole: true },
+    select: { systemRole: true, tenantId: true },
   });
-  if (user?.systemRole === 'admin') {
+  if (user?.systemRole === 'super_admin') {
     throw new Error('CANNOT_DISABLE_ADMIN_MFA');
   }
 
@@ -173,6 +176,7 @@ export async function disableMfa(userId: string): Promise<void> {
 
   await recordAuthEvent({
     eventType: 'password_change',
+    tenantId: user?.tenantId,
     userId,
     detail: { action: 'mfa_disabled' },
   });
@@ -233,6 +237,7 @@ export async function verifyTotp(userId: string, totpCode: string): Promise<bool
   if (shouldLock) {
     await recordAuthEvent({
       eventType: 'lock',
+      tenantId: user.tenantId,
       userId,
       detail: {
         lockType: 'mfa_temporary',

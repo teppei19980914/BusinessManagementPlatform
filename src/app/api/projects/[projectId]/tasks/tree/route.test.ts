@@ -45,7 +45,7 @@ describe('GET /api/projects/[projectId]/tasks/tree', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ data: { tree: [], flat: [] } });
-    expect(mockedListTasksWithTree).toHaveBeenCalledWith('p1');
+    expect(mockedListTasksWithTree).toHaveBeenCalledWith('p1', '00000000-0000-0000-0000-000000000001');
   });
 
   it('未認証なら認証ヘルパーの 401 レスポンスをそのまま返す', async () => {

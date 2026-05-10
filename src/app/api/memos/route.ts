@@ -15,8 +15,8 @@ export async function GET(req: NextRequest) {
 
   const scope = new URL(req.url).searchParams.get('scope') === 'public' ? 'public' : 'mine';
   const data = scope === 'public'
-    ? await listPublicMemos(user.id)
-    : await listMyMemos(user.id);
+    ? await listPublicMemos(user.id, user.tenantId)
+    : await listMyMemos(user.id, user.tenantId);
   return NextResponse.json({ data });
 }
 
@@ -37,8 +37,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const created = await createMemo(parsed.data, user.id);
+  const created = await createMemo(parsed.data, user.id, user.tenantId);
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'memo',

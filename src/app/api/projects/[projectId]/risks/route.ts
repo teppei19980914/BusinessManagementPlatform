@@ -32,7 +32,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'risk:read');
   if (forbidden) return forbidden;
 
-  const risks = await listRisks(projectId, user.id, user.systemRole);
+  const risks = await listRisks(projectId, user.id, user.systemRole, user.tenantId);
   return NextResponse.json({ data: risks });
 }
 
@@ -63,6 +63,7 @@ export async function POST(
   const risk = await createRisk(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'risk_issue',

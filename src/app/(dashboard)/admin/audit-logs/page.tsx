@@ -13,7 +13,10 @@ export default async function AuditLogsPage() {
   const t = await getTranslations('admin.auditLogs');
   const { formatDateTimeFull } = await getServerFormatters();
 
+  // 2026-05-10 Phase 2-10: AuditLog 直接 tenantId 列で絞込み (旧 user join 経由フィルタから移行)。
+  //   User 物理削除後の宙ぶらりんログにも追従でき、indexed lookup で高速。
   const logs = await prisma.auditLog.findMany({
+    where: { tenantId: session.user.tenantId },
     include: { user: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
     take: 100,

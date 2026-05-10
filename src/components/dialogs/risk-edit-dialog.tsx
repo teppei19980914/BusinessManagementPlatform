@@ -14,6 +14,8 @@ import {
 import { IMPACT_LEVELS, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import { NAME_MAX_LENGTH, MEDIUM_TEXT_MAX_LENGTH } from '@/config';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト表示 + 解除ボタン
+import { LinkedProjectsSection } from '@/components/common/linked-projects-section';
 // PR #199: コメントセクション (entityType は risk.type='risk'|'issue' に追従)
 import { CommentSection } from '@/components/comments/comment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
@@ -27,7 +29,8 @@ import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
  */
 type RiskLike = {
   id: string;
-  projectId: string;
+  // PR feat/asset-multi-project-linking: 「作成元」projectId は M:N 化で nullable に
+  projectId: string | null;
   type: string;
   title: string;
   content: string;
@@ -39,6 +42,8 @@ type RiskLike = {
   deadline: string | null;
   visibility: string;
   riskNature: string | null;
+  // PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト一覧
+  linkedProjects?: { id: string; name: string; deleted: boolean }[];
 };
 
 /**
@@ -56,6 +61,7 @@ export function RiskEditDialog({
   onOpenChange,
   onSaved,
   readOnly = false,
+  currentProjectId,
 }: {
   risk: RiskLike | null;
   members: { userId: string; userName: string }[];
@@ -64,6 +70,11 @@ export function RiskEditDialog({
   onSaved: () => Promise<void> | void;
   /** PR #61: 非公開プロジェクトの行クリック時など、参照専用で開く場合に true */
   readOnly?: boolean;
+  /** PR feat/asset-multi-linking-ui (Phase 2): ダイアログを開いている画面のプロジェクト ID。
+   *  /projects/X/risks → X、/risks (全リスク横断) → null。
+   *  PATCH の URL 構築 (作成元 project が削除済の場合の fallback) と
+   *  LinkedProjectsSection の解除可能 chip の判定に使う。 */
+  currentProjectId?: string | null;
 }) {
   const t = useTranslations('action');
   const tField = useTranslations('field');
@@ -129,8 +140,18 @@ export function RiskEditDialog({
       body.riskNature = form.riskNature;
     }
 
+    // PR feat/asset-multi-linking-ui (Phase 2): currentProjectId を最優先 (UI 文脈の project)。
+    //   作成元が削除済 → fallback で linkedProjects[0]。両方無い orphan は読み取り専用想定なので
+    //   実質発生しない (PATCH URL は member 認可を通過する project が必須)。
+    const targetProjectId =
+      currentProjectId ?? risk.projectId ?? risk.linkedProjects?.[0]?.id ?? null;
+    if (!targetProjectId) {
+      setError(tRisk('updateFailed'));
+      showError('編集対象プロジェクトが特定できません (孤児状態)');
+      return;
+    }
     const res = await withLoading(() =>
-      fetch(`/api/projects/${risk.projectId}/risks/${risk.id}`, {
+      fetch(`/api/projects/${targetProjectId}/risks/${risk.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -252,6 +273,17 @@ export function RiskEditDialog({
             readOnly={readOnly}
             mainLabel={tRisk('relatedUrl')}
           />
+          {/* PR feat/asset-multi-linking-ui (Phase 2): 紐付け先プロジェクトを chip で表示 +
+              現在のプロジェクトのみ「解除」可能 (他プロジェクトの解除は越境となるため非表示)。 */}
+          {risk.linkedProjects && (
+            <LinkedProjectsSection
+              entityType={risk.type === 'issue' ? 'issue' : 'risk'}
+              entityId={risk.id}
+              linkedProjects={risk.linkedProjects}
+              currentProjectId={currentProjectId ?? null}
+              onChanged={onSaved}
+            />
+          )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
           {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
           <CommentSection

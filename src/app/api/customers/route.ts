@@ -31,7 +31,7 @@ export async function GET() {
   if (user instanceof NextResponse) return user;
   if (user.systemRole !== 'admin') return await forbidden();
 
-  const data = await listCustomers();
+  const data = await listCustomers(user.tenantId);
   return NextResponse.json({ data });
 }
 
@@ -49,9 +49,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const customer = await createCustomer(parsed.data, user.id);
+  const customer = await createCustomer(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'customer',

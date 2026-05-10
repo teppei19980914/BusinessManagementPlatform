@@ -84,9 +84,14 @@ describe('checkPermission', () => {
       expect(checkPermission('task:read', ctx({ projectRole: 'member' })).allowed).toBe(true);
     });
 
-    it('タスクの作成・編集は拒否される', () => {
+    // 2026-05-09 (#6): メンバーにも WBS タスクの新規作成を許可。task:update は引き続き禁止。
+    it('タスクの新規作成は許可される (#6)', () => {
       const c = ctx({ projectRole: 'member' });
-      expect(checkPermission('task:create', c).allowed).toBe(false);
+      expect(checkPermission('task:create', c).allowed).toBe(true);
+    });
+
+    it('タスクの編集 (task:update) は引き続き拒否される', () => {
+      const c = ctx({ projectRole: 'member' });
       expect(checkPermission('task:update', c).allowed).toBe(false);
     });
 

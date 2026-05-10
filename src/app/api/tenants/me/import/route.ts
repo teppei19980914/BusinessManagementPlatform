@@ -101,6 +101,7 @@ export async function POST(req: NextRequest) {
 
   // 監査ログ: テナント全体に影響する取込操作なので必ず記録
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'tenant_data_import',

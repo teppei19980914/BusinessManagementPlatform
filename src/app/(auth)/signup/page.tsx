@@ -26,10 +26,18 @@ type FormState = {
   name: string;
   slug: string;
   plan: 'beginner' | 'expert' | 'pro';
+  // 2026-05-09 (PR C / #5): 個人 / 法人 切替
+  billingType: 'corporate' | 'individual';
   billingCompanyName: string;
   billingContactName: string;
   billingContactEmail: string;
-  billingAddress: string;
+  // 2026-05-09 (PR C / #8): 住所サブフィールド化
+  billingPostalCode: string;
+  billingPrefecture: string;
+  billingCity: string;
+  billingStreetAddress: string;
+  // (#10) 建物名・部屋番号は任意
+  billingBuildingName: string;
   billingPhoneNumber: string;
   paymentMethod: 'invoice' | 'bank_transfer' | 'credit_card';
   initialAdminName: string;
@@ -42,10 +50,15 @@ const INITIAL: FormState = {
   name: '',
   slug: '',
   plan: 'beginner',
+  billingType: 'corporate',
   billingCompanyName: '',
   billingContactName: '',
   billingContactEmail: '',
-  billingAddress: '',
+  billingPostalCode: '',
+  billingPrefecture: '',
+  billingCity: '',
+  billingStreetAddress: '',
+  billingBuildingName: '',
   billingPhoneNumber: '',
   paymentMethod: 'invoice',
   initialAdminName: '',
@@ -65,8 +78,12 @@ export default function SignupPage() {
     setSubmitting(true);
 
     try {
+      // 2026-05-09 (PR C / #5): 個人プラン時は会社名を送らない (= サーバ側で null 保存)。
+      //   (#10) 建物名は空文字 → undefined に正規化。
       const payload = {
         ...form,
+        billingCompanyName: form.billingType === 'individual' ? undefined : form.billingCompanyName,
+        billingBuildingName: form.billingBuildingName.trim() || undefined,
         billingPhoneNumber: form.billingPhoneNumber.trim() || undefined,
       };
 
@@ -167,22 +184,86 @@ export default function SignupPage() {
 
             <fieldset className="space-y-3 rounded border p-4">
               <legend className="px-1 text-sm font-semibold">請求先情報</legend>
+
+              {/* 2026-05-09 (PR C / #5): 個人 / 法人 切替 */}
               <div className="space-y-1.5">
-                <Label htmlFor="billingCompanyName">会社名 / 法人名 *</Label>
-                <Input id="billingCompanyName" value={form.billingCompanyName} onChange={(e) => setForm({ ...form, billingCompanyName: e.target.value })} maxLength={200} required />
+                <Label>請求先種別 *</Label>
+                <div className="flex gap-4 text-sm">
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="billingType"
+                      value="corporate"
+                      checked={form.billingType === 'corporate'}
+                      onChange={() => setForm({ ...form, billingType: 'corporate' })}
+                    />
+                    法人
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="billingType"
+                      value="individual"
+                      checked={form.billingType === 'individual'}
+                      onChange={() => setForm({ ...form, billingType: 'individual', billingCompanyName: '' })}
+                    />
+                    個人
+                  </label>
+                </div>
               </div>
+
+              {/* 2026-05-09 (#5): 法人選択時のみ会社名を表示・必須 */}
+              {form.billingType === 'corporate' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="billingCompanyName">会社名 / 法人名 *</Label>
+                  <Input id="billingCompanyName" value={form.billingCompanyName} onChange={(e) => setForm({ ...form, billingCompanyName: e.target.value })} maxLength={200} required />
+                </div>
+              )}
+
               <div className="space-y-1.5">
-                <Label htmlFor="billingContactName">請求担当者名 *</Label>
+                <Label htmlFor="billingContactName">
+                  {form.billingType === 'corporate' ? '請求担当者名 *' : 'お名前 *'}
+                </Label>
                 <Input id="billingContactName" value={form.billingContactName} onChange={(e) => setForm({ ...form, billingContactName: e.target.value })} maxLength={100} required />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="billingContactEmail">請求先メール *</Label>
                 <Input id="billingContactEmail" type="email" value={form.billingContactEmail} onChange={(e) => setForm({ ...form, billingContactEmail: e.target.value })} maxLength={255} required />
               </div>
+
+              {/* 2026-05-09 (PR C / #8): 住所をサブフィールドに分割 */}
               <div className="space-y-1.5">
-                <Label htmlFor="billingAddress">請求書送付先住所 *</Label>
-                <textarea id="billingAddress" value={form.billingAddress} onChange={(e) => setForm({ ...form, billingAddress: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm" rows={3} required />
+                <Label htmlFor="billingPostalCode">郵便番号 *</Label>
+                <Input
+                  id="billingPostalCode"
+                  value={form.billingPostalCode}
+                  onChange={(e) => setForm({ ...form, billingPostalCode: e.target.value })}
+                  maxLength={10}
+                  placeholder="例: 100-0001"
+                  pattern="\d{3}-?\d{4}"
+                  required
+                />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="billingPrefecture">都道府県 *</Label>
+                  <Input id="billingPrefecture" value={form.billingPrefecture} onChange={(e) => setForm({ ...form, billingPrefecture: e.target.value })} maxLength={20} placeholder="例: 東京都" required />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="billingCity">市区町村 *</Label>
+                  <Input id="billingCity" value={form.billingCity} onChange={(e) => setForm({ ...form, billingCity: e.target.value })} maxLength={100} placeholder="例: 千代田区" required />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="billingStreetAddress">番地・町名 *</Label>
+                <Input id="billingStreetAddress" value={form.billingStreetAddress} onChange={(e) => setForm({ ...form, billingStreetAddress: e.target.value })} maxLength={200} placeholder="例: 千代田1-1" required />
+              </div>
+              {/* 2026-05-09 (#10): 建物名・部屋番号は任意 */}
+              <div className="space-y-1.5">
+                <Label htmlFor="billingBuildingName">建物名・部屋番号 (任意)</Label>
+                <Input id="billingBuildingName" value={form.billingBuildingName} onChange={(e) => setForm({ ...form, billingBuildingName: e.target.value })} maxLength={200} placeholder="例: 〇〇ビル 5F" />
+              </div>
+
               <div className="space-y-1.5">
                 <Label htmlFor="billingPhoneNumber">電話番号 (任意)</Label>
                 <Input id="billingPhoneNumber" value={form.billingPhoneNumber} onChange={(e) => setForm({ ...form, billingPhoneNumber: e.target.value })} maxLength={20} placeholder="例: 03-1234-5678" />

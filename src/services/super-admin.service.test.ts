@@ -24,17 +24,33 @@ vi.mock('@/lib/db', () => ({
     user: {
       groupBy: vi.fn(),
       updateMany: vi.fn(),
+      count: vi.fn(),
+      // 2026-05-09 (#18): purgeOldDeletedTenants で削除すべきでない (regression test 用)
+      deleteMany: vi.fn(),
     },
     // P-A: カスケード論理削除対象 (deletedAt カラム持ち)
-    project: { updateMany: vi.fn() },
-    knowledge: { updateMany: vi.fn() },
-    riskIssue: { updateMany: vi.fn() },
-    retrospective: { updateMany: vi.fn() },
-    memo: { updateMany: vi.fn() },
-    stakeholder: { updateMany: vi.fn() },
-    comment: { updateMany: vi.fn() },
-    attachment: { updateMany: vi.fn() },
+    project: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    knowledge: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    riskIssue: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    retrospective: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    memo: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    stakeholder: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    comment: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    attachment: { updateMany: vi.fn(), deleteMany: vi.fn() },
     auditLog: { create: vi.fn() },
+    // 2026-05-09 (PR E / #12 #14): Voyage / Anthropic 集計で使用
+    apiCallLog: { aggregate: vi.fn() },
+    // 2026-05-09 (PR F / #18): purgeOldDeletedTenants で参照する追加テーブル
+    mention: { deleteMany: vi.fn() },
+    knowledgeProject: { deleteMany: vi.fn() },
+    taskKnowledge: { deleteMany: vi.fn() },
+    taskProgressLog: { deleteMany: vi.fn() },
+    task: { deleteMany: vi.fn() },
+    estimate: { deleteMany: vi.fn() },
+    projectMember: { deleteMany: vi.fn() },
+    customer: { deleteMany: vi.fn() },
+    tenantImportPreview: { deleteMany: vi.fn() },
+    suggestionExplanation: { deleteMany: vi.fn() },
     // P-A: $transaction はモックの戻り値配列をそのまま resolve する想定
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
@@ -45,6 +61,12 @@ import {
   listDormantTenants,
   DORMANT_TENANT_THRESHOLD_DAYS,
   deleteTenant,
+  // 2026-05-09 (PR E)
+  getVoyageUsageSummary,
+  getAnthropicUsageSummary,
+  getBeginnerUsageSummary,
+  // 2026-05-09 (PR F / #18)
+  purgeOldDeletedTenants,
 } from './super-admin.service';
 import { prisma } from '@/lib/db';
 
@@ -217,7 +239,8 @@ describe('listDormantTenants (P-6 / 2026-05-08)', () => {
     });
   });
 
-  it('管理テナントは除外する (id != MANAGEMENT_TENANT_ID)', async () => {
+  // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+  it('管理テナント + default テナントを除外する (id notIn MANAGEMENT/DEFAULT)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
 
     await listDormantTenants(90, NOW);
@@ -225,7 +248,12 @@ describe('listDormantTenants (P-6 / 2026-05-08)', () => {
     const callArg = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0];
     expect(callArg).toMatchObject({
       where: expect.objectContaining({
-        id: { not: '00000000-0000-0000-0000-ffffffffffff' },
+        id: {
+          notIn: [
+            '00000000-0000-0000-0000-ffffffffffff',
+            '00000000-0000-0000-0000-000000000001',
+          ],
+        },
         deletedAt: null,
       }),
     });
@@ -400,5 +428,251 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
         where: { tenantId: TENANT_ID, deletedAt: null },
       }),
     );
+  });
+});
+
+// ================================================================
+// 2026-05-09 (PR E coverage 補強): Voyage / Anthropic / Beginner サマリ
+// ================================================================
+
+describe('getVoyageUsageSummary (PR E / #12)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('当月 embedding token を集計し ok ステータスを返す (< 80%)', async () => {
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _sum: { embeddingTokens: BigInt(1_000_000) },
+    } as never);
+
+    const r = await getVoyageUsageSummary();
+
+    expect(r.currentMonthTokens).toBe(1_000_000);
+    expect(r.freeTierTokens).toBe(200_000_000);
+    expect(r.utilizationRatio).toBeLessThan(0.8);
+    expect(r.status).toBe('ok');
+  });
+
+  it('80% 超で warn ステータス', async () => {
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _sum: { embeddingTokens: BigInt(170_000_000) }, // 85%
+    } as never);
+
+    const r = await getVoyageUsageSummary();
+    expect(r.status).toBe('warn');
+  });
+
+  it('100% 超で alert ステータス', async () => {
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _sum: { embeddingTokens: BigInt(210_000_000) },
+    } as never);
+
+    const r = await getVoyageUsageSummary();
+    expect(r.status).toBe('alert');
+  });
+
+  it('embedding 使用ゼロ時は 0 / ok を返す', async () => {
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _sum: { embeddingTokens: null },
+    } as never);
+
+    const r = await getVoyageUsageSummary();
+    expect(r.currentMonthTokens).toBe(0);
+    expect(r.utilizationRatio).toBe(0);
+    expect(r.status).toBe('ok');
+  });
+
+  it('management + default tenant を notIn で除外する (#19)', async () => {
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _sum: { embeddingTokens: BigInt(0) },
+    } as never);
+
+    await getVoyageUsageSummary();
+
+    const callArg = vi.mocked(prisma.apiCallLog.aggregate).mock.calls[0]![0];
+    expect(callArg.where).toMatchObject({
+      tenantId: {
+        notIn: [
+          '00000000-0000-0000-0000-ffffffffffff',
+          '00000000-0000-0000-0000-000000000001',
+        ],
+      },
+    });
+  });
+});
+
+describe('getAnthropicUsageSummary (PR E / #14)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('input/output トークン + 呼出回数 + 内部請求額を返す', async () => {
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _sum: {
+        llmInputTokens: BigInt(50000),
+        llmOutputTokens: BigInt(20000),
+        costJpy: 1500,
+      },
+      _count: { id: 42 },
+    } as never);
+
+    const r = await getAnthropicUsageSummary();
+
+    expect(r.currentMonthInputTokens).toBe(50000);
+    expect(r.currentMonthOutputTokens).toBe(20000);
+    expect(r.currentMonthCallCount).toBe(42);
+    expect(r.currentMonthInternalCostJpy).toBe(1500);
+  });
+
+  it('ゼロ呼出時は 0 でフォールバック', async () => {
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _sum: { llmInputTokens: null, llmOutputTokens: null, costJpy: null },
+      _count: { id: 0 },
+    } as never);
+
+    const r = await getAnthropicUsageSummary();
+    expect(r.currentMonthInputTokens).toBe(0);
+    expect(r.currentMonthOutputTokens).toBe(0);
+    expect(r.currentMonthInternalCostJpy).toBe(0);
+    expect(r.currentMonthCallCount).toBe(0);
+  });
+
+  it('LLM 系 ApiCallLog のみ集計対象 (input/output どちらか not null)', async () => {
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _sum: { llmInputTokens: BigInt(0), llmOutputTokens: BigInt(0), costJpy: 0 },
+      _count: { id: 0 },
+    } as never);
+
+    await getAnthropicUsageSummary();
+
+    const callArg = vi.mocked(prisma.apiCallLog.aggregate).mock.calls[0]![0];
+    expect(callArg.where).toMatchObject({
+      OR: [
+        { llmInputTokens: { not: null } },
+        { llmOutputTokens: { not: null } },
+      ],
+    });
+  });
+});
+
+describe('getBeginnerUsageSummary (PR E / #15)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // beginner-expiry の閾値計算で使う「現在時刻」を固定するため、Date.now を mock
+  // するアプローチも可能だが、ここでは createdAt を相対的に置くことで状態を再現。
+  function daysAgo(days: number): Date {
+    return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  }
+
+  it('Beginner テナント 0 件なら全カウント 0', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    const r = await getBeginnerUsageSummary();
+
+    expect(r.totalTenants).toBe(0);
+    expect(r.warning60Count).toBe(0);
+    expect(r.warning75Count).toBe(0);
+    expect(r.expiredCount).toBe(0);
+    expect(r.totalCurrentMonthCalls).toBe(0);
+  });
+
+  it('期限切迫テナント (60/75/expired) を分類してカウント', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      // 30 日経過 (警告なし)
+      { createdAt: daysAgo(30), beginnerEverUpgraded: false, currentMonthApiCallCount: 10 },
+      // 65 日経過 → warning_60
+      { createdAt: daysAgo(65), beginnerEverUpgraded: false, currentMonthApiCallCount: 20 },
+      // 80 日経過 → warning_75
+      { createdAt: daysAgo(80), beginnerEverUpgraded: false, currentMonthApiCallCount: 30 },
+      // 95 日経過 → expired
+      { createdAt: daysAgo(95), beginnerEverUpgraded: false, currentMonthApiCallCount: 40 },
+    ] as never);
+
+    const r = await getBeginnerUsageSummary();
+
+    expect(r.totalTenants).toBe(4);
+    expect(r.warning60Count).toBe(1);
+    expect(r.warning75Count).toBe(1);
+    expect(r.expiredCount).toBe(1);
+    expect(r.totalCurrentMonthCalls).toBe(100);
+  });
+
+  it('management + default tenant を notIn で除外する (#19)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    await getBeginnerUsageSummary();
+
+    const callArg = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0];
+    expect(callArg.where).toMatchObject({
+      id: {
+        notIn: [
+          '00000000-0000-0000-0000-ffffffffffff',
+          '00000000-0000-0000-0000-000000000001',
+        ],
+      },
+      plan: 'beginner',
+    });
+  });
+});
+
+// ================================================================
+// 2026-05-09 (PR F / #18): purgeOldDeletedTenants で users を物理削除しないこと
+// ================================================================
+
+describe('purgeOldDeletedTenants (PR F / #18)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 全 deleteMany が { count: 0 } を返すデフォルトを設定
+    const zero = { count: 0 } as never;
+    vi.mocked(prisma.mention.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.comment.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.attachment.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.knowledgeProject.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.taskKnowledge.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.taskProgressLog.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.task.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.estimate.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.riskIssue.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.retrospective.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.memo.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.stakeholder.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.knowledge.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.suggestionExplanation.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.project.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.customer.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.tenantImportPreview.deleteMany).mockResolvedValue(zero);
+  });
+
+  it('対象テナント (deletedAt から 90 日以上経過) があっても user.deleteMany は呼ばれない (#18)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'old-tenant-1' },
+      { id: 'old-tenant-2' },
+    ] as never);
+
+    await purgeOldDeletedTenants(new Date('2026-05-09T00:00:00Z'));
+
+    // 業務データの deleteMany は呼ばれるが、user.deleteMany は意図的に呼ばない
+    expect(prisma.project.deleteMany).toHaveBeenCalled();
+    expect(prisma.knowledge.deleteMany).toHaveBeenCalled();
+    expect(prisma.user.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('対象テナント 0 件なら deleteMany は一切呼ばれない', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    const r = await purgeOldDeletedTenants(new Date('2026-05-09T00:00:00Z'));
+
+    expect(r.attempted).toBe(0);
+    expect(prisma.user.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.project.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('SuggestionExplanation も削除対象に含まれる (hotfix 既存挙動)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'old-tenant-1' },
+    ] as never);
+
+    await purgeOldDeletedTenants(new Date('2026-05-09T00:00:00Z'));
+
+    expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({
+      where: { tenantId: 'old-tenant-1' },
+    });
   });
 });

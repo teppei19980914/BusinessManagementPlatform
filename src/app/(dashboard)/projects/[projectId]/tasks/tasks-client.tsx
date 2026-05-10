@@ -64,6 +64,8 @@ import { AttachmentList } from '@/components/attachments/attachment-list';
 import { CommentSection } from '@/components/comments/comment-section';
 // feat/wbs-overwrite-import: WBS 上書きインポート (Sync by ID) ダイアログ
 import { WbsSyncImportDialog } from '@/components/dialogs/wbs-sync-import-dialog';
+// 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ
+import { WorkloadDialog } from '@/components/dialogs/workload-dialog';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -619,6 +621,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // 旧実装は canEditPmTl ゲートで member には何も表示していなかったため、
   // PR #85 で緩和した API 側の権限判定が UI からは使えない状態になっていた。
   const canSelectForProgress = canEditPmTl || projectRole === 'member';
+  // 2026-05-09 (#6): 新規 WBS タスク作成は member にも開放。Export/Import や 一括編集は
+  //   引き続き pm_tl 以上。check-permission.ts の ROLE_PERMISSIONS と整合させる。
+  const canCreateTask = canEditPmTl || projectRole === 'member';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // --- 担当者フィルタ (PR #61: sessionStorage 永続化) ---
@@ -1113,6 +1118,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // feat/wbs-overwrite-import: ID 表示トグル + 上書きインポートダイアログ state
   const [showIdColumn, setShowIdColumn] = useState(false);
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
+  // 2026-05-09 (PR H / #7): 工数集計ダイアログ
+  const [isWorkloadOpen, setIsWorkloadOpen] = useState(false);
 
   const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
   const [parentTaskId, setParentTaskId] = useState('');
@@ -1219,6 +1226,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         >
           {showIdColumn ? t('hideId') : t('showId')}
         </Button>
+        {/* 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsWorkloadOpen(true)}
+          title="担当者別の日次予定工数を集計表示します (#7)"
+        >
+          工数集計
+        </Button>
         {canEditPmTl && (
           <>
           {/*
@@ -1233,6 +1249,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
             {t('import')}
           </Button>
+          </>
+        )}
+        {/* 2026-05-09 (#6): 「タスク追加」は member にも開放。Export/Import は引き続き pm_tl 以上。 */}
+        {canCreateTask && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger render={<Button size="sm" />}>{tAction('add')}</DialogTrigger>
             {/* PR #87 横展開: アクティビティ作成ダイアログも grid-cols-2 + DateFieldWithActions を
@@ -1347,7 +1367,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
-          </>
         )}
         </div>
       </div>
@@ -1878,6 +1897,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         open={isSyncImportOpen}
         onOpenChange={setIsSyncImportOpen}
         onImported={reload}
+      />
+
+      {/* 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ */}
+      <WorkloadDialog
+        projectId={projectId}
+        open={isWorkloadOpen}
+        onOpenChange={setIsWorkloadOpen}
       />
     </div>
   );

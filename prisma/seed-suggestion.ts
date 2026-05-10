@@ -44,7 +44,8 @@ import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
-import { DEFAULT_TENANT_ID } from '../src/lib/tenant';
+// 2026-05-09 (PR G / 設計合意 B): シードデータは管理テナントに集中する設計に変更
+import { DEFAULT_TENANT_ID, MANAGEMENT_TENANT_ID } from '../src/lib/tenant';
 
 // ================================================================
 // シードナレッジ定義 (30 件、業界横断の古典的パターン)
@@ -3034,11 +3035,14 @@ function printAuthenticationFailedHelp(target: string): void {
 async function main() {
   const args = process.argv.slice(2);
   const tenantArgIdx = args.indexOf('--tenant');
-  const targetTenantId = tenantArgIdx !== -1 ? args[tenantArgIdx + 1] : DEFAULT_TENANT_ID;
+  // 2026-05-09 (PR G / 設計合意 B): シードデータの実体は管理テナントに集中。
+  //   従来の default-tenant 既定は廃止。明示指定なき場合は管理テナント (MANAGEMENT_TENANT_ID)
+  //   へ投入する。default 等の他テナントへ shoehorn 投入したい場合は --tenant <id> で指定。
+  const targetTenantId = tenantArgIdx !== -1 ? args[tenantArgIdx + 1] : MANAGEMENT_TENANT_ID;
 
   if (!targetTenantId) {
     console.error('Usage: pnpm tsx prisma/seed-suggestion.ts [--tenant <tenantId>]');
-    console.error('  --tenant 省略時は default-tenant が対象');
+    console.error('  --tenant 省略時は管理テナント (MANAGEMENT_TENANT_ID) が対象');
     process.exit(1);
   }
 
@@ -3071,54 +3075,59 @@ async function main() {
       console.log('');
     }
 
-    if (targetTenantId === DEFAULT_TENANT_ID) {
-      // default-tenant への直接投入
-      const createdBy = await findInitialAdmin(prisma, DEFAULT_TENANT_ID);
+    // 2026-05-09 (PR G / 設計合意 B): 直接投入の対象は管理テナント (default 廃止) に変更。
+    //   ただし `--tenant <DEFAULT_TENANT_ID>` を明示すれば従来動作 (default 直接投入) も可能。
+    if (targetTenantId === MANAGEMENT_TENANT_ID || targetTenantId === DEFAULT_TENANT_ID) {
+      // 直接投入 (管理テナント or default)
+      // 2026-05-09 (PR G): findInitialAdmin はテナント内の最初の admin を取る。
+      //   管理テナントには super_admin だけが居るため彼を createdBy として採用。
+      const createdBy = await findInitialAdmin(prisma, targetTenantId);
+      const tenantLabel = targetTenantId === MANAGEMENT_TENANT_ID ? 'management-tenant' : 'default-tenant';
 
       // 1. ナレッジ
       const { inserted, skipped, embeddingApplied } = await insertSeedKnowledge(
         prisma,
-        DEFAULT_TENANT_ID,
+        targetTenantId,
         createdBy,
         embeddings,
       );
       console.log(
-        `✅ default-tenant knowledges: ${inserted} 件投入 / ${skipped} 件スキップ (既存) / ${embeddingApplied} 件 embedding 付き`,
+        `✅ ${tenantLabel} knowledges: ${inserted} 件投入 / ${skipped} 件スキップ (既存) / ${embeddingApplied} 件 embedding 付き`,
       );
 
       // 2. サンプルプロジェクト
       const projectStats = await insertSeedSampleProjects(
         prisma,
-        DEFAULT_TENANT_ID,
+        targetTenantId,
         createdBy,
         embeddings,
       );
       console.log(
-        `✅ default-tenant サンプルプロジェクト: ${projectStats.inserted} 件投入 / ${projectStats.skipped} 件スキップ / embedding 付き ${projectStats.embeddingApplied} 件`,
+        `✅ ${tenantLabel} サンプルプロジェクト: ${projectStats.inserted} 件投入 / ${projectStats.skipped} 件スキップ / embedding 付き ${projectStats.embeddingApplied} 件`,
       );
 
       // 3. サンプル課題 (親 Project が必要なため projects 投入後に実行)
       const issueStats = await insertSeedSampleIssues(
         prisma,
-        DEFAULT_TENANT_ID,
+        targetTenantId,
         createdBy,
         projectStats.projectIdByName,
         embeddings,
       );
       console.log(
-        `✅ default-tenant サンプル課題: ${issueStats.inserted} 件投入 / ${issueStats.skipped} 件スキップ / embedding 付き ${issueStats.embeddingApplied} 件`,
+        `✅ ${tenantLabel} サンプル課題: ${issueStats.inserted} 件投入 / ${issueStats.skipped} 件スキップ / embedding 付き ${issueStats.embeddingApplied} 件`,
       );
 
       // 4. サンプル振り返り
       const retroStats = await insertSeedSampleRetrospectives(
         prisma,
-        DEFAULT_TENANT_ID,
+        targetTenantId,
         createdBy,
         projectStats.projectIdByName,
         embeddings,
       );
       console.log(
-        `✅ default-tenant サンプル振り返り: ${retroStats.inserted} 件投入 / ${retroStats.skipped} 件スキップ / embedding 付き ${retroStats.embeddingApplied} 件`,
+        `✅ ${tenantLabel} サンプル振り返り: ${retroStats.inserted} 件投入 / ${retroStats.skipped} 件スキップ / embedding 付き ${retroStats.embeddingApplied} 件`,
       );
 
       console.log('');

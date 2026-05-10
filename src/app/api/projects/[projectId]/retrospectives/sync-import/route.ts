@@ -67,13 +67,14 @@ export async function POST(
 
   const csvRows = parseRetrospectiveSyncImportCsv(csvText);
   if (isDryRun) {
-    const diff = await computeRetrospectiveSyncDiff(projectId, csvRows);
+    const diff = await computeRetrospectiveSyncDiff(projectId, csvRows, user.tenantId);
     return NextResponse.json({ data: diff });
   }
 
   try {
-    const result = await applyRetrospectiveSyncImport(projectId, csvRows, removeMode, user.id);
+    const result = await applyRetrospectiveSyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'SYNC_IMPORT',
       entityType: 'retrospective_sync_import',

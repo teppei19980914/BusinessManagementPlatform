@@ -39,7 +39,6 @@ import {
 } from '@/services/comment.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { validateMentionsForEntity } from '@/services/mention.service';
-import { buildEntityCommentLink } from '@/lib/entity-link';
 
 /**
  * 親エンティティの存在確認 + 認可。リクエストユーザが当該 entity に対して
@@ -54,7 +53,9 @@ import { buildEntityCommentLink } from '@/lib/entity-link';
  * 戻り値: NextResponse (拒否時) or null (許可)。
  */
 async function authorizeForComment(
-  user: { id: string; systemRole: string },
+  // 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
+  //   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
+  user: { id: string; systemRole: string; tenantId: string },
   entityType: CommentEntityType,
   entityId: string,
   mode: 'read' | 'write',
@@ -68,7 +69,7 @@ async function authorizeForComment(
   hasMentions = false,
 ): Promise<NextResponse | null> {
   const t = await getTranslations('message');
-  const result = await resolveEntityForComment(entityType, entityId);
+  const result = await resolveEntityForComment(entityType, entityId, user.tenantId);
 
   if (result.kind === 'not-found') {
     return NextResponse.json(
@@ -120,7 +121,7 @@ async function authorizeForComment(
   // それ以外 (stakeholder の全操作 / task の mention 含む write):
   //   project member であり、かつ mentionRequiredRole='pm_tl' なら projectRole='pm_tl' であること
   for (const pid of result.projectIds) {
-    const m = await checkMembership(pid, user.id, user.systemRole);
+    const m = await checkMembership(pid, user.id, user.systemRole, user.tenantId);
     if (!m.isMember) continue;
     if (result.mentionRequiredRole === 'pm_tl' && m.projectRole !== 'pm_tl') continue;
     return null;
@@ -161,7 +162,7 @@ export async function GET(req: NextRequest) {
   const forbidden = await authorizeForComment(user, typed, entityId, 'read');
   if (forbidden) return forbidden;
 
-  const data = await listComments(typed, entityId);
+  const data = await listComments(typed, entityId, user.tenantId);
   return NextResponse.json({ data });
 }
 
@@ -205,17 +206,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 通知 link の生成 (entity の編集 dialog を開く URL)
-  const link = await buildEntityCommentLink(parsed.data.entityType, parsed.data.entityId);
+  // 2026-05-09 (PR H / #3): 通知 link は createComment 内で commentId 付きで再構築する。
+  //   旧仕様 (PR feat/notification-edit-dialog) は事前に build していたが、commentId が必要に
+  //   なったため service 内に移動。本 route 層では link を渡さない (buildEntityCommentLink
+  //   import も不要に)。
   const created = await createComment(
     parsed.data,
     user.id,
+    user.tenantId,
     mentions,
     user.name ?? null,
-    link,
   );
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'comment',

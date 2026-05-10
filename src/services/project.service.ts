@@ -122,19 +122,16 @@ export async function listProjects(
   params: ListProjectsParams,
   userId: string,
   systemRole: string,
+  tenantId: string,
 ): Promise<{ data: ProjectDTO[]; total: number }> {
   const page = params.page || 1;
   const limit = Math.min(params.limit || 20, 100);
   const skip = (page - 1) * limit;
 
-  // PR-X5: シーディング用のサンプルプロジェクト (isSampleData=true) は一覧から除外。
-  //   提案エンジンは listProjects を使わず別経路 (suggestion.service.ts) で候補を取得するため、
-  //   ここでフィルタを掛けてもエンジン本体の動作には影響しない。
-  // 2026-05-08: super_admin role はシードデータ管理のため bypass で表示+編集可。
-  const where: Prisma.ProjectWhereInput = { deletedAt: null };
-  if (systemRole !== 'super_admin') {
-    where.isSampleData = false;
-  }
+  // 2026-05-09 feedback: テナント越境防止。`tenantId` フィルタにより自テナントのみ
+  //   返す (シードプロジェクトは MANAGEMENT_TENANT_ID 所属、super_admin が同テナントの
+  //   場合のみ閲覧/編集可)。旧 `isSampleData` bypass はテナントフィルタに集約。
+  const where: Prisma.ProjectWhereInput = { deletedAt: null, tenantId };
 
   // 一般ユーザは自分がメンバーのプロジェクトのみ
   if (systemRole !== 'admin' && systemRole !== 'super_admin') {
@@ -218,8 +215,11 @@ export async function createProject(
     autoTagResult.ok ? autoTagResult.tags : null,
   );
 
+  // 2026-05-09 feedback Phase 2: data.tenantId を明示し、schema DB DEFAULT への暗黙依存を解消。
+  //   v1 (単一テナント) では DB DEFAULT で同値だが、マルチテナント環境では明示が必須。
   const project = await prisma.project.create({
     data: {
+      tenantId,
       name: input.name,
       customerId: input.customerId,
       purpose: input.purpose,
@@ -255,16 +255,21 @@ export async function createProject(
 
 export async function getProject(
   projectId: string,
+  viewerTenantId: string,
   systemRole?: string,
 ): Promise<ProjectDTO | null> {
-  // PR-X5: サンプルプロジェクト (isSampleData=true) は直接 URL でも取得不可 (404 化)。
-  //   admin が偶発的に URL を踏んでも詳細画面は出さない設計。
-  //   提案エンジンは別経路 (suggestion.service.ts) で候補に含める。
-  // 2026-05-08: super_admin role はシードデータ管理のため bypass (= 詳細画面表示+編集可)。
+  // 2026-05-09 feedback Phase 2: severity-1 テナント越境対策。
+  //   project は tenantId 列を直接持つため where に tenantId を必須化。
+  //   旧仕様は projectId 直叩きで他テナントの project 詳細が読める脆弱性があった。
+  //   super_admin (MANAGEMENT_TENANT_ID 所属) は引数 viewerTenantId が MANAGEMENT_TENANT_ID
+  //   になるため、シード prj (MANAGEMENT_TENANT 所属) を自然に閲覧可。
+  //
+  // PR-X5: サンプルプロジェクト (isSampleData=true) は通常ユーザに対して 404 化する。
+  //   super_admin の場合は MANAGEMENT_TENANT 内のシード prj を管理する必要があるので bypass。
   const where: Prisma.ProjectWhereInput =
     systemRole === 'super_admin'
-      ? { id: projectId, deletedAt: null }
-      : { id: projectId, deletedAt: null, isSampleData: false };
+      ? { id: projectId, tenantId: viewerTenantId, deletedAt: null }
+      : { id: projectId, tenantId: viewerTenantId, deletedAt: null, isSampleData: false };
   const project = await prisma.project.findFirst({
     where,
     include: { customer: { select: { name: true } } },
@@ -280,13 +285,33 @@ export async function updateProject(
   userId: string,
   tenantId: string,
 ): Promise<ProjectDTO> {
-  // PR #3-b (T-03 Phase 1): purpose / background / scope のいずれかが更新対象なら、
-  //   更新後の text を組み立てて自動タグ抽出を行う。text 変更がなければ呼ばない
-  //   (= LLM 課金を発生させない)。
-  const textFieldsChanging =
-    input.purpose !== undefined ||
-    input.background !== undefined ||
-    input.scope !== undefined;
+  // PR #3-b (T-03 Phase 1) + PR D (2026-05-09 / #20):
+  //   purpose / background / scope の **実値変更** 時のみ自動タグ抽出 + embedding を行う。
+  //   未指定 (undefined) または既存値と同一なら LLM 課金を発生させない。
+  //   そのため現行 row 取得を `textFieldsChanging` の判定よりも前に持ってくる。
+  // 2026-05-09 feedback Phase 2: 越境編集を遮断するため findFirst + tenantId 検証に変更。
+  //   越境時は current=null となり、textFieldsChanging が false 評価され、後続の update も
+  //   findFirst の不一致で arena が空になる。NOT_FOUND エラーは throw しないが、
+  //   下流の prisma.project.update (where: { id }) は越境を直接弾けないため、
+  //   念のため where 検証された行のみ続行する設計。
+  const current = await prisma.project.findFirst({
+    where: { id: projectId, tenantId },
+    select: {
+      purpose: true,
+      background: true,
+      scope: true,
+      businessDomainTags: true,
+      techStackTags: true,
+      processTags: true,
+    },
+  });
+  // 越境または存在しない場合は NOT_FOUND を throw (route 側で 404 に変換される前提)
+  if (!current) throw new Error('NOT_FOUND');
+  const textFieldsChanging = (
+    (input.purpose !== undefined && input.purpose !== current.purpose) ||
+    (input.background !== undefined && input.background !== current.background) ||
+    (input.scope !== undefined && input.scope !== current.scope)
+  );
 
   let mergedAutoTags: AutoTagAxes | null = null;
   // PR #5 (T-03 Phase 2): text 変更時は embedding も再生成する。実テキストは
@@ -295,19 +320,7 @@ export async function updateProject(
   let resolvedBackground: string | null = null;
   let resolvedScope: string | null = null;
   if (textFieldsChanging) {
-    // 変更されない text フィールドは現行値を採用するため、現行 row を取得。
-    const current = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: {
-        purpose: true,
-        background: true,
-        scope: true,
-        businessDomainTags: true,
-        techStackTags: true,
-        processTags: true,
-      },
-    });
-    if (current != null) {
+    {
       resolvedPurpose = input.purpose ?? current.purpose;
       resolvedBackground = input.background ?? current.background;
       resolvedScope = input.scope ?? current.scope;
@@ -542,9 +555,11 @@ export async function changeProjectStatus(
   projectId: string,
   newStatus: ProjectStatus,
   userId: string,
+  viewerTenantId: string,
 ): Promise<ProjectDTO> {
+  // 2026-05-09 feedback Phase 2: 越境状態変更を遮断するため where に tenantId を追加。
   const project = await prisma.project.findFirst({
-    where: { id: projectId, deletedAt: null },
+    where: { id: projectId, tenantId: viewerTenantId, deletedAt: null },
   });
 
   if (!project) throw new Error('NOT_FOUND');
@@ -569,7 +584,19 @@ export async function changeProjectStatus(
   return toProjectDTO(updated);
 }
 
-export async function deleteProject(projectId: string, userId: string): Promise<void> {
+export async function deleteProject(
+  projectId: string,
+  userId: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2: 越境論理削除を遮断するため、最初に project の tenant 検証。
+  //   不一致時は NOT_FOUND を throw (route 側で 404 に変換される前提)。
+  const owned = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   // PR #89: プロジェクト scoped の Attachment (project / task / estimate) も同時に論理削除。
   // 子 risk / retro / knowledge の attachment は各 delete*Service 側で削除済 (個別削除パス)、
   // もしくは cascade で削除する (deleteProjectCascade)。
@@ -639,6 +666,7 @@ export async function deleteProject(projectId: string, userId: string): Promise<
  */
 export async function deleteProjectCascade(
   projectId: string,
+  viewerTenantId: string,
   options: {
     cascadeRisks?: boolean;
     cascadeIssues?: boolean;
@@ -653,6 +681,14 @@ export async function deleteProjectCascade(
   knowledgeUnlinked: number;
   attachmentsDeleted: number;
 }> {
+  // 2026-05-09 feedback Phase 2: 越境カスケード削除は最も破壊的な severity-1 攻撃経路。
+  //   project の tenant 一致を verify しないと他テナントの全データを物理削除可能。
+  const owned = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const {
     cascadeRisks = false,
     cascadeIssues = false,
@@ -675,76 +711,93 @@ export async function deleteProjectCascade(
   const taskIds = tasks.map((t) => t.id);
   const estimateIds = estimates.map((e) => e.id);
 
+  // PR feat/asset-multi-project-linking (2026-05-09):
+  //   リスク/課題/振り返り も Knowledge 同型の「最後の紐付けが消えた時のみ物理削除」モデルに統一。
+  //   このプロジェクトに紐付いている asset を取得し、紐付け数 > 1 なら unlink のみ、=1 なら物理削除。
+  //   cascadeXxx=true の選択でも他プロジェクトが参照中なら本体は残す (ユーザ要件)。
+
   // ---------- 条件付き: リスク (type='risk') ----------
   if (cascadeRisks) {
-    const riskIds = (
-      await prisma.riskIssue.findMany({
-        where: { projectId, type: 'risk' },
-        select: { id: true },
-      })
-    ).map((r) => r.id);
-    if (riskIds.length > 0) {
-      const attRes = await prisma.attachment.deleteMany({
-        where: { entityType: 'risk', entityId: { in: riskIds } },
-      });
-      attachmentsDeleted += attRes.count;
-      // PR fix/visibility-auth-matrix (2026-05-01): comments も cascade 物理削除 (§5.51)
-      await prisma.comment.deleteMany({
-        where: { entityType: 'risk', entityId: { in: riskIds } },
-      });
-      const delRes = await prisma.riskIssue.deleteMany({
-        where: { id: { in: riskIds } },
-      });
-      risksCount = delRes.count;
+    const linkedRisks = await prisma.riskIssueProject.findMany({
+      where: { projectId, riskIssue: { type: 'risk' } },
+      select: { riskIssueId: true },
+    });
+    for (const { riskIssueId } of linkedRisks) {
+      const linkCount = await prisma.riskIssueProject.count({ where: { riskIssueId } });
+      if (linkCount <= 1) {
+        // 他に紐付け無し → 本体 + attachment + comment を物理削除
+        const attRes = await prisma.attachment.deleteMany({
+          where: { entityType: 'risk', entityId: riskIssueId },
+        });
+        attachmentsDeleted += attRes.count;
+        await prisma.comment.deleteMany({
+          where: { entityType: 'risk', entityId: riskIssueId },
+        });
+        await prisma.riskIssueProject.deleteMany({ where: { riskIssueId } });
+        await prisma.riskIssue.delete({ where: { id: riskIssueId } });
+        risksCount++;
+      } else {
+        // 他プロジェクトが参照中 → 紐付けのみ解除し本体は残す
+        await prisma.riskIssueProject.delete({
+          where: { riskIssueId_projectId: { riskIssueId, projectId } },
+        });
+      }
     }
   }
 
   // ---------- 条件付き: 課題 (type='issue') ----------
   if (cascadeIssues) {
-    const issueIds = (
-      await prisma.riskIssue.findMany({
-        where: { projectId, type: 'issue' },
-        select: { id: true },
-      })
-    ).map((i) => i.id);
-    if (issueIds.length > 0) {
-      const attRes = await prisma.attachment.deleteMany({
-        where: { entityType: 'risk', entityId: { in: issueIds } },
-      });
-      attachmentsDeleted += attRes.count;
-      // PR fix/visibility-auth-matrix: comments も cascade 物理削除 (§5.51)
-      await prisma.comment.deleteMany({
-        where: { entityType: 'issue', entityId: { in: issueIds } },
-      });
-      const delRes = await prisma.riskIssue.deleteMany({
-        where: { id: { in: issueIds } },
-      });
-      issuesCount = delRes.count;
+    const linkedIssues = await prisma.riskIssueProject.findMany({
+      where: { projectId, riskIssue: { type: 'issue' } },
+      select: { riskIssueId: true },
+    });
+    for (const { riskIssueId } of linkedIssues) {
+      const linkCount = await prisma.riskIssueProject.count({ where: { riskIssueId } });
+      if (linkCount <= 1) {
+        const attRes = await prisma.attachment.deleteMany({
+          where: { entityType: 'risk', entityId: riskIssueId },
+        });
+        attachmentsDeleted += attRes.count;
+        await prisma.comment.deleteMany({
+          where: { entityType: 'issue', entityId: riskIssueId },
+        });
+        await prisma.riskIssueProject.deleteMany({ where: { riskIssueId } });
+        await prisma.riskIssue.delete({ where: { id: riskIssueId } });
+        issuesCount++;
+      } else {
+        await prisma.riskIssueProject.delete({
+          where: { riskIssueId_projectId: { riskIssueId, projectId } },
+        });
+      }
     }
   }
 
   // ---------- 条件付き: 振り返り ----------
   if (cascadeRetros) {
-    const retroIds = (
-      await prisma.retrospective.findMany({
-        where: { projectId },
-        select: { id: true },
-      })
-    ).map((r) => r.id);
-    if (retroIds.length > 0) {
-      const attRes = await prisma.attachment.deleteMany({
-        where: { entityType: 'retrospective', entityId: { in: retroIds } },
+    const linkedRetros = await prisma.retrospectiveProject.findMany({
+      where: { projectId },
+      select: { retrospectiveId: true },
+    });
+    for (const { retrospectiveId } of linkedRetros) {
+      const linkCount = await prisma.retrospectiveProject.count({
+        where: { retrospectiveId },
       });
-      attachmentsDeleted += attRes.count;
-      // PR #199: 旧 retrospective_comments は polymorphic comments に統合済。
-      //   retrospective 削除時は entityType='retrospective' のコメントも一括削除する。
-      await prisma.comment.deleteMany({
-        where: { entityType: 'retrospective', entityId: { in: retroIds } },
-      });
-      const delRes = await prisma.retrospective.deleteMany({
-        where: { id: { in: retroIds } },
-      });
-      retrosCount = delRes.count;
+      if (linkCount <= 1) {
+        const attRes = await prisma.attachment.deleteMany({
+          where: { entityType: 'retrospective', entityId: retrospectiveId },
+        });
+        attachmentsDeleted += attRes.count;
+        await prisma.comment.deleteMany({
+          where: { entityType: 'retrospective', entityId: retrospectiveId },
+        });
+        await prisma.retrospectiveProject.deleteMany({ where: { retrospectiveId } });
+        await prisma.retrospective.delete({ where: { id: retrospectiveId } });
+        retrosCount++;
+      } else {
+        await prisma.retrospectiveProject.delete({
+          where: { retrospectiveId_projectId: { retrospectiveId, projectId } },
+        });
+      }
     }
   }
 
@@ -808,6 +861,11 @@ export async function deleteProjectCascade(
   await prisma.task.deleteMany({ where: { projectId } });
   await prisma.estimate.deleteMany({ where: { projectId } });
   await prisma.projectMember.deleteMany({ where: { projectId } });
+  // 2026-05-09 hotfix: SuggestionExplanation の FK (suggestion_explanations_project_id_fkey)
+  //   が ON DELETE CASCADE 未指定のため、project.delete 前に明示削除しないと P2003 エラー。
+  //   P-3 (2026-05-08) で SuggestionExplanation テーブルを追加したが、deleteProjectCascade
+  //   に対応する cleanup を追加し忘れていた本番事象を修正 (KDD §5.X+6)。
+  await prisma.suggestionExplanation.deleteMany({ where: { projectId } });
   await prisma.project.delete({ where: { id: projectId } });
 
   return {

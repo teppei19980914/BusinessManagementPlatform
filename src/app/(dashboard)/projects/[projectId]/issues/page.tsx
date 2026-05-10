@@ -17,12 +17,12 @@ export default async function IssuesPage({ params }: Props) {
   if (!session) redirect(LOGIN_ROUTE);
 
   const { projectId } = await params;
-  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
+  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId);
   if (!membership.isMember) notFound();
 
   const [risks, members, actualRole] = await Promise.all([
-    listRisks(projectId, session.user.id, session.user.systemRole),
-    listMembers(projectId),
+    listRisks(projectId, session.user.id, session.user.systemRole, session.user.tenantId),
+    listMembers(projectId, session.user.tenantId),
     // 2026-04-24: 実際の ProjectMember 判定。admin 短絡なし。
     getActualProjectRole(projectId, session.user.id),
   ]);

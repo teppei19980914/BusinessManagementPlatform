@@ -120,6 +120,12 @@ export default defineConfig({
       testIgnore: [
         /01-admin-and-member-setup\.spec\.ts/,
         /06-wbs-tasks\.spec\.ts/,
+        // PR feat/tenant-isolation-comprehensive-tests (2026-05-10):
+        //   テナント分離 / 提案エンジン E2E は **API レイヤ** で検証するため
+        //   mobile viewport 固有の挙動と無関係。chromium project でのみ実行する
+        //   (重複実行で CI 時間を浪費しない)。
+        /11-tenant-isolation\.spec\.ts/,
+        /12-suggestion-seed-data\.spec\.ts/,
       ],
     },
   ],

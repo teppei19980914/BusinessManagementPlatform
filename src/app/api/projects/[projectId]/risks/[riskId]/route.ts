@@ -26,8 +26,9 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'risk:read');
   if (forbidden) return forbidden;
   // 2026-04-24: draft は作成者/admin のみ参照可。他人の draft は null が返る。
-  const risk = await getRisk(riskId, user.id, user.systemRole);
-  if (!risk || risk.projectId !== projectId) {
+  const risk = await getRisk(riskId, user.id, user.systemRole, user.tenantId);
+  // PR feat/asset-multi-project-linking: 「このプロジェクトに紐付け済」かを linkedProjectIds で判定
+  if (!risk || !risk.linkedProjectIds.includes(projectId)) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
   return NextResponse.json({ data: risk });
@@ -42,8 +43,10 @@ export async function PATCH(
   const { projectId, riskId } = await params;
 
   // 2026-04-24: 内部呼び出し (既存検証) は認可引数なしで取得。FORBIDDEN 判定は service 層で実施。
-  const existing = await getRisk(riskId);
-  if (!existing || existing.projectId !== projectId) {
+  // 2026-05-09 feedback Phase 2-3: 越境編集対象の存在確認を含めて防御するため tenantId を渡す。
+  const existing = await getRisk(riskId, undefined, undefined, user.tenantId);
+  // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
+  if (!existing || !existing.linkedProjectIds.includes(projectId)) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
 
@@ -77,6 +80,7 @@ export async function PATCH(
     throw e;
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'risk_issue',
@@ -98,12 +102,13 @@ export async function DELETE(
   //             作成者本人 or admin の判定は service 層で厳格に実施する。
   const forbidden = await checkProjectPermission(user, projectId, 'risk:read');
   if (forbidden) return forbidden;
-  const existing = await getRisk(riskId);
-  if (!existing || existing.projectId !== projectId) {
+  const existing = await getRisk(riskId, undefined, undefined, user.tenantId);
+  // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
+  if (!existing || !existing.linkedProjectIds.includes(projectId)) {
     return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
   }
   try {
-    await deleteRisk(riskId, user.id, user.systemRole);
+    await deleteRisk(riskId, user.id, user.systemRole, user.tenantId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {
@@ -119,6 +124,7 @@ export async function DELETE(
     throw e;
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'risk_issue',

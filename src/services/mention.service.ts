@@ -65,11 +65,14 @@ export type EntityContext = {
 export async function getMentionContext(
   entityType: CommentEntityType,
   entityId: string,
+  viewerTenantId: string,
 ): Promise<EntityContext | null> {
+  // 2026-05-09 feedback Phase 2-7: 全 entity 検索に tenantId フィルタ必須化。
+  //   越境 entity の context を取得すると mention 通知が他テナント user に飛ぶリスク。
   switch (entityType) {
     case 'task': {
       const t = await prisma.task.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, project: { tenantId: viewerTenantId } },
         select: { projectId: true, assigneeId: true },
       });
       return t ? { projectId: t.projectId, assigneeId: t.assigneeId } : null;
@@ -77,23 +80,32 @@ export async function getMentionContext(
     case 'issue':
     case 'risk': {
       const r = await prisma.riskIssue.findFirst({
-        where: { id: entityId, deletedAt: null },
-        select: { projectId: true, assigneeId: true },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
+        select: {
+          projectId: true,
+          assigneeId: true,
+          riskIssueProjects: { select: { projectId: true }, take: 1 },
+        },
       });
-      return r ? { projectId: r.projectId, assigneeId: r.assigneeId } : null;
+      if (!r) return null;
+      const pid = r.projectId ?? r.riskIssueProjects[0]?.projectId ?? null;
+      return { projectId: pid, assigneeId: r.assigneeId };
     }
     case 'retrospective': {
       const retro = await prisma.retrospective.findFirst({
-        where: { id: entityId, deletedAt: null },
-        select: { projectId: true },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
+        select: {
+          projectId: true,
+          retrospectiveProjects: { select: { projectId: true }, take: 1 },
+        },
       });
-      return retro ? { projectId: retro.projectId, assigneeId: null } : null;
+      if (!retro) return null;
+      const pid = retro.projectId ?? retro.retrospectiveProjects[0]?.projectId ?? null;
+      return { projectId: pid, assigneeId: null };
     }
     case 'knowledge': {
-      // Knowledge は N:M で複数プロジェクトに紐付き得る。MVP では projectId は使わない
-      // (role_* / project_member kind は許容しているが、knowledgeProjects から最初の 1 件で代用)
       const k = await prisma.knowledge.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: {
           knowledgeProjects: { select: { projectId: true }, take: 1 },
         },
@@ -104,24 +116,21 @@ export async function getMentionContext(
     }
     case 'stakeholder': {
       const s = await prisma.stakeholder.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { projectId: true, userId: true },
       });
-      // stakeholder.userId を assignee 相当として扱う (内部メンバー紐付けの場合)
       return s ? { projectId: s.projectId, assigneeId: s.userId } : null;
     }
     case 'customer': {
       const c = await prisma.customer.findFirst({
-        where: { id: entityId },
+        where: { id: entityId, tenantId: viewerTenantId },
         select: { id: true },
       });
       return c ? { projectId: null, assigneeId: null } : null;
     }
     case 'memo': {
-      // PR #213: memo は user-scoped (project 紐付けなし)。kind='all'/'user' のみ展開で
-      // 'project_member' / 'role_*' / 'assignee' は概念がない (mention validator で弾く)。
       const m = await prisma.memo.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { id: true },
       });
       return m ? { projectId: null, assigneeId: null } : null;
@@ -140,6 +149,7 @@ export async function getMentionContext(
 export async function expandMention(
   mention: MentionInput,
   context: EntityContext,
+  viewerTenantId: string,
 ): Promise<string[]> {
   switch (mention.kind) {
     case 'user':
@@ -147,9 +157,15 @@ export async function expandMention(
       return mention.targetUserId ? [mention.targetUserId] : [];
 
     case 'all': {
-      // 認証済全アクティブユーザ
+      // 2026-05-09 feedback Phase 2-7: 「全アカウント」は自テナント内に限定。
+      //   旧仕様は全テナントの全ユーザに通知が飛ぶ重大バグだった。
       const users = await prisma.user.findMany({
-        where: { isActive: true, deletedAt: null, permanentLock: false },
+        where: {
+          tenantId: viewerTenantId,
+          isActive: true,
+          deletedAt: null,
+          permanentLock: false,
+        },
         select: { id: true },
       });
       return users.map((u) => u.id);
@@ -193,10 +209,11 @@ export async function expandMentionsToRecipients(
   mentions: MentionInput[],
   context: EntityContext,
   excludeUserId: string,
+  viewerTenantId: string,
 ): Promise<Set<string>> {
   const recipients = new Set<string>();
   for (const m of mentions) {
-    const ids = await expandMention(m, context);
+    const ids = await expandMention(m, context, viewerTenantId);
     for (const id of ids) recipients.add(id);
   }
   recipients.delete(excludeUserId); // Q5: 自分宛は通知しない
@@ -248,18 +265,33 @@ export async function generateMentionNotifications(params: {
   mentionerName: string | null;
   /** Notification.link に使う URL (UI で深いリンクを開く想定) */
   link: string;
+  /**
+   * 2026-05-09 feedback Phase 2-7: 通知が飛ぶ tenant スコープ (送信者の tenantId)。
+   *   省略時は entity から逆引きする (旧シグネチャ互換、PR #302 マージ後に必須化予定)。
+   */
+  tenantId?: string;
 }): Promise<{ created: number }> {
-  const { commentId, comment, mentions, mentionerId, mentionerName, link } = params;
+  const { commentId, comment, mentions, mentionerId, mentionerName, link, tenantId } = params;
   if (mentions.length === 0) return { created: 0 };
 
-  const ctx = await getMentionContext(comment.entityType, comment.entityId);
+  // 2026-05-09 feedback Phase 2-7: tenantId 未指定時は entity から逆引き (旧呼び出し元互換)。
+  let resolvedTenantId = tenantId;
+  if (!resolvedTenantId) {
+    const fallbackTenant = await resolveEntityTenantId(comment.entityType, comment.entityId);
+    if (!fallbackTenant) return { created: 0 };
+    resolvedTenantId = fallbackTenant;
+  }
+
+  const ctx = await getMentionContext(comment.entityType, comment.entityId, resolvedTenantId);
   if (!ctx) return { created: 0 }; // entity が見つからない (削除済等)
 
-  const recipients = await expandMentionsToRecipients(mentions, ctx, mentionerId);
+  const recipients = await expandMentionsToRecipients(mentions, ctx, mentionerId, resolvedTenantId);
   if (recipients.size === 0) return { created: 0 };
 
   const senderLabel = mentionerName ?? '誰か';
+  // 2026-05-09 feedback Phase 2-7: notification.createMany の data に tenantId を明示。
   const data = Array.from(recipients).map((userId) => ({
+    tenantId: resolvedTenantId!,
     userId,
     type: 'comment_mention' as const,
     entityType: comment.entityType,
@@ -270,4 +302,66 @@ export async function generateMentionNotifications(params: {
   }));
   const r = await prisma.notification.createMany({ data, skipDuplicates: true });
   return { created: r.count };
+}
+
+/**
+ * 2026-05-09 feedback Phase 2-7: entity から tenantId を逆引きする内部ヘルパー。
+ *   `generateMentionNotifications` の tenantId 引数省略時 (旧シグネチャ互換) のフォールバック用。
+ */
+async function resolveEntityTenantId(
+  entityType: CommentEntityType,
+  entityId: string,
+): Promise<string | null> {
+  switch (entityType) {
+    case 'task': {
+      const t = await prisma.task.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { project: { select: { tenantId: true } } },
+      });
+      return t?.project?.tenantId ?? null;
+    }
+    case 'issue':
+    case 'risk': {
+      const r = await prisma.riskIssue.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { tenantId: true },
+      });
+      return r?.tenantId ?? null;
+    }
+    case 'retrospective': {
+      const retro = await prisma.retrospective.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { tenantId: true },
+      });
+      return retro?.tenantId ?? null;
+    }
+    case 'knowledge': {
+      const k = await prisma.knowledge.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { tenantId: true },
+      });
+      return k?.tenantId ?? null;
+    }
+    case 'stakeholder': {
+      const s = await prisma.stakeholder.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { tenantId: true },
+      });
+      return s?.tenantId ?? null;
+    }
+    case 'customer': {
+      const c = await prisma.customer.findFirst({
+        where: { id: entityId },
+        select: { tenantId: true },
+      });
+      return c?.tenantId ?? null;
+    }
+    case 'memo': {
+      const m = await prisma.memo.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { tenantId: true },
+      });
+      return m?.tenantId ?? null;
+    }
+  }
 }

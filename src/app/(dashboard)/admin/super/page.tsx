@@ -17,7 +17,14 @@ import {
   listDormantTenants,
   DORMANT_TENANT_THRESHOLD_DAYS,
   listStorageUsageTop,
+  // 2026-05-09 (PR E / #12 #14 #15): Voyage / Anthropic / Beginner サマリ
+  getVoyageUsageSummary,
+  getAnthropicUsageSummary,
+  getBeginnerUsageSummary,
   type StorageUsageTopRow,
+  type VoyageUsageSummary,
+  type AnthropicUsageSummary,
+  type BeginnerUsageSummary,
 } from '@/services/super-admin.service';
 import { getDatabaseCapacityReport } from '@/services/db-capacity.service';
 import { getEmailSendStats } from '@/services/email-send-log.service';
@@ -25,12 +32,16 @@ import type { DbCapacityStatus } from '@/config/db-capacity';
 import type { EmailLimitStatus } from '@/config/email-limit';
 
 export default async function SuperAdminTopPage() {
-  const [summary, capacity, dormant, emailStats, storageTop] = await Promise.all([
+  const [summary, capacity, dormant, emailStats, storageTop, voyage, anthropic, beginner] = await Promise.all([
     getCrossTenantUsageSummary(),
     getDatabaseCapacityReport(),
     listDormantTenants(),
     getEmailSendStats(),
     listStorageUsageTop(10),
+    // 2026-05-09 (PR E)
+    getVoyageUsageSummary(),
+    getAnthropicUsageSummary(),
+    getBeginnerUsageSummary(),
   ]);
 
   return (
@@ -38,17 +49,37 @@ export default async function SuperAdminTopPage() {
       <h1 className="text-2xl font-bold">システム管理者ダッシュボード</h1>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <SummaryCard label="顧客テナント数" value={summary.tenantCount.toString()} />
-        <SummaryCard label="アクティブユーザ総数" value={summary.totalActiveUsers.toString()} />
+        {/* 2026-05-09 (PR E): 全項目に title 属性でツールチップ追加 */}
+        <SummaryCard
+          label="顧客テナント数"
+          value={summary.tenantCount.toString()}
+          tooltip="現在契約中の顧客テナント数 (削除済み・管理テナント・default テナントは除外)"
+        />
+        <SummaryCard
+          label="アクティブユーザ総数"
+          value={summary.totalActiveUsers.toString()}
+          tooltip="顧客テナントに所属する isActive=true のユーザ総数 (招待未承諾 / 削除済みは除外)"
+        />
         <SummaryCard
           label="今月の API 呼出 (合計)"
           value={summary.totalCurrentMonthApiCalls.toLocaleString()}
+          tooltip="顧客テナント全体の当月 LLM/Embedding 呼出回数。月初 (UTC) にリセット"
         />
         <SummaryCard
           label="今月の API 費用 (合計)"
           value={`¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()}`}
+          tooltip="顧客テナント全体の当月内部請求額 (プラン別固定単価。Anthropic 実コストとは別系統)"
         />
       </section>
+
+      {/* 2026-05-09 (PR E / #12): Voyage AI 無料枠モニタ */}
+      <VoyageUsageCard voyage={voyage} />
+
+      {/* 2026-05-09 (PR E / #14): Anthropic 当月使用量 */}
+      <AnthropicUsageCard anthropic={anthropic} />
+
+      {/* 2026-05-09 (PR E / #15): Beginner プラン使用状況 */}
+      <BeginnerUsageCard beginner={beginner} />
 
       {/* P-5a: DB 容量モニタ */}
       <DatabaseCapacityCard capacity={capacity} />
@@ -62,14 +93,26 @@ export default async function SuperAdminTopPage() {
       {/* Storage add-on (Phase 2 / 2026-05-08): テナント別容量 TOP 10 */}
       <StorageUsageTopCard rows={storageTop} />
 
-      <section className="space-y-2">
+      <section className="space-y-2" title="現在の契約プラン別テナント分布。営業・解約予測のベース指標">
         <h2 className="text-lg font-semibold">プラン別テナント数</h2>
         <ul className="rounded border p-3 text-sm">
           {summary.planDistribution.length === 0 ? (
             <li className="text-muted-foreground">テナントがありません</li>
           ) : (
             summary.planDistribution.map((p) => (
-              <li key={p.plan} className="flex justify-between border-b py-1 last:border-b-0">
+              <li
+                key={p.plan}
+                className="flex justify-between border-b py-1 last:border-b-0"
+                title={
+                  p.plan === 'beginner'
+                    ? 'Beginner: 月 100 回上限・最大 5 席・無料・90 日試用'
+                    : p.plan === 'expert'
+                      ? 'Expert: 無制限従量課金 (¥10/call)、Claude Haiku'
+                      : p.plan === 'pro'
+                        ? 'Pro: 無制限従量課金 (¥30/call)、Claude Sonnet、「なぜ?」機能限定'
+                        : `プラン: ${p.plan}`
+                }
+              >
                 <span className="font-medium capitalize">{p.plan}</span>
                 <span>{p.count} 件</span>
               </li>
@@ -81,9 +124,21 @@ export default async function SuperAdminTopPage() {
   );
 }
 
-function SummaryCard({ label, value }: { label: string; value: string }) {
+function SummaryCard({
+  label,
+  value,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  // 2026-05-09 (PR E): 全カードにツールチップ (title 属性 + cursor-help)
+  tooltip?: string;
+}) {
   return (
-    <div className="rounded border p-4">
+    <div
+      className={`rounded border p-4${tooltip ? ' cursor-help' : ''}`}
+      title={tooltip}
+    >
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 text-2xl font-bold">{value}</p>
     </div>
@@ -107,23 +162,43 @@ function DatabaseCapacityCard({
   const percent = (capacity.utilizationRatio * 100).toFixed(1);
 
   return (
-    <section className={`space-y-3 rounded border p-4 ${styles.bg}`}>
+    <section
+      className={`space-y-3 rounded border p-4 ${styles.bg}`}
+      title="Supabase Postgres の DB 容量。上限到達でデータ登録が失敗するため事前検知用。プラン上限変更は環境変数 DB_CAPACITY_LIMIT_BYTES で可能"
+    >
       <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">DB 容量モニタ</h2>
-        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}>
+        <h2 className="text-lg font-semibold" title="DB の物理容量を計測してプラン上限との対比を表示するモニタ (P-5a)">
+          DB 容量モニタ
+        </h2>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}
+          title={
+            capacity.status === 'alert'
+              ? '緊急: 上限に近接。直ちにアップグレード or データ削除を'
+              : capacity.status === 'warn'
+                ? '要注意: 80% 超過、推移を監視'
+                : '正常 (80% 未満)'
+          }
+        >
           {STATUS_LABEL[capacity.status]}
         </span>
       </div>
 
       <div className="space-y-1">
-        <p className="text-sm">
+        <p
+          className="text-sm"
+          title={`使用量 ${formatBytes(capacity.usedBytes)} / 上限 ${formatBytes(capacity.limitBytes)}`}
+        >
           使用量: <strong>{formatBytes(capacity.usedBytes)}</strong> / 上限{' '}
           <strong>{formatBytes(capacity.limitBytes)}</strong>
           {' '}
           (<span className={styles.text}>{percent}%</span>)
         </p>
         {/* シンプルなプログレスバー */}
-        <div className="h-2 w-full overflow-hidden rounded bg-muted">
+        <div
+          className="h-2 w-full overflow-hidden rounded bg-muted"
+          title="プログレスバー: 緑=正常, 黄=80% 超, 赤=100% 超"
+        >
           <div
             className={`h-full ${styles.bar}`}
             style={{ width: `${Math.min(100, capacity.utilizationRatio * 100)}%` }}
@@ -182,7 +257,10 @@ function DormantTenantsCard({
 }) {
   if (dormant.length === 0) {
     return (
-      <section className="space-y-2 rounded border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/30">
+      <section
+        className="space-y-2 rounded border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/30"
+        title={`90 日以上ログインのないテナントを検出するアラート (P-6)。現在 0 件 = 健全`}
+      >
         <h2 className="text-lg font-semibold">休眠テナント警告</h2>
         <p className="text-sm text-emerald-800 dark:text-emerald-300">
           ✅ 全テナントが {DORMANT_TENANT_THRESHOLD_DAYS} 日以内に活動しています。健全な状態です。
@@ -192,10 +270,16 @@ function DormantTenantsCard({
   }
 
   return (
-    <section className="space-y-2 rounded border border-destructive/30 bg-destructive/5 p-4">
+    <section
+      className="space-y-2 rounded border border-destructive/30 bg-destructive/5 p-4"
+      title="90 日以上テナント内でログインがない = 解約予兆。営業・サポートのトリガーとして活用"
+    >
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold">休眠テナント警告</h2>
-        <span className="rounded-full bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground">
+        <span
+          className="rounded-full bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground"
+          title={`${dormant.length} 件の休眠テナントを検出 (要対応)`}
+        >
           {dormant.length} 件
         </span>
       </div>
@@ -206,10 +290,10 @@ function DormantTenantsCard({
         <table className="w-full border-collapse text-sm">
           <thead className="text-left">
             <tr className="border-b">
-              <th className="p-2">テナント</th>
-              <th className="p-2">プラン</th>
-              <th className="p-2">最終ログイン</th>
-              <th className="p-2 text-right">休眠日数</th>
+              <th className="p-2" title="テナント名 (クリックで詳細画面へ)">テナント</th>
+              <th className="p-2" title="現在の契約プラン">プラン</th>
+              <th className="p-2" title="テナント内のいずれかのユーザの最終ログイン日">最終ログイン</th>
+              <th className="p-2 text-right" title="最終活動日 (lastLoginAt or createdAt) からの経過日数">休眠日数</th>
             </tr>
           </thead>
           <tbody>
@@ -314,16 +398,33 @@ function EmailSendMonitorCard({
     stats.monthlyUtilizationRatio != null ? (stats.monthlyUtilizationRatio * 100).toFixed(1) : null;
 
   return (
-    <section className={`space-y-3 rounded border p-4 ${styles.bg}`}>
+    <section
+      className={`space-y-3 rounded border p-4 ${styles.bg}`}
+      title="メール送信プロバイダ (Brevo 等) の日次/月次送信上限モニタ。上限到達で招待・パスワードリセット等の重要メールが送れなくなるため事前検知 (P-H)"
+    >
       <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">メール送信モニタ (日次)</h2>
-        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}>
+        <h2 className="text-lg font-semibold" title="MAIL_PROVIDER の送信上限を可視化。Brevo は 300 通/日 (無料プラン)">
+          メール送信モニタ (日次)
+        </h2>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}
+          title={
+            stats.dailyStatus === 'alert'
+              ? '緊急: 日次上限に近接、上限到達で送信ブロック'
+              : stats.dailyStatus === 'warn'
+                ? '要注意: 80% 超過、推移を監視'
+                : '正常 (80% 未満)'
+          }
+        >
           {STATUS_LABEL[stats.dailyStatus]}
         </span>
       </div>
 
       <div className="space-y-1">
-        <p className="text-sm">
+        <p
+          className="text-sm"
+          title={`本日 ${stats.dailySent.toLocaleString()} 通 / 上限 ${stats.dailyLimit.toLocaleString()} 通 (成功 ${stats.dailySuccessful} / 失敗 ${stats.dailyFailed})`}
+        >
           本日の送信: <strong>{stats.dailySent.toLocaleString()}</strong> / 上限{' '}
           <strong>{stats.dailyLimit.toLocaleString()}</strong> 件{' '}
           (<span className={styles.text}>{dailyPercent}%</span>){' '}
@@ -398,10 +499,18 @@ function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
     return null;
   }
   return (
-    <section className="space-y-2 rounded border p-4">
+    <section
+      className="space-y-2 rounded border p-4"
+      title="顧客テナントのストレージ使用量 TOP 10 ランキング。Storage add-on プラン (standard / plus / pro_storage) と上限到達状態を表示"
+    >
       <div className="flex items-baseline justify-between">
-        <h2 className="text-lg font-semibold">ストレージ使用量 TOP 10</h2>
-        <p className="text-xs text-muted-foreground">
+        <h2 className="text-lg font-semibold" title="Phase 2 (2026-05-08) で導入された Storage add-on のテナント別容量モニタ">
+          ストレージ使用量 TOP 10
+        </h2>
+        <p
+          className="text-xs text-muted-foreground"
+          title="⚠ = 80% 超 / 🚨 = 100% 超で Grace period 中 (7 日経過で write 停止)"
+        >
           ⚠ 80% 超 / 🚨 100% 超 (Grace period 中)
         </p>
       </div>
@@ -450,6 +559,178 @@ function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
           );
         })}
       </ul>
+    </section>
+  );
+}
+
+// ================================================================
+// 2026-05-09 (PR E / #12): Voyage AI 無料枠カード
+// ================================================================
+
+const VOYAGE_STATUS_STYLES: Record<VoyageUsageSummary['status'], { bg: string; bar: string; badge: string; text: string }> = {
+  ok: {
+    bg: 'bg-background',
+    bar: 'bg-emerald-500',
+    badge: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200',
+    text: 'text-emerald-700 dark:text-emerald-400',
+  },
+  warn: {
+    bg: 'bg-amber-50 dark:bg-amber-950/30',
+    bar: 'bg-amber-500',
+    badge: 'bg-amber-200 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200',
+    text: 'text-amber-700 dark:text-amber-400',
+  },
+  alert: {
+    bg: 'bg-destructive/10',
+    bar: 'bg-destructive',
+    badge: 'bg-destructive text-destructive-foreground',
+    text: 'text-destructive',
+  },
+};
+
+function VoyageUsageCard({ voyage }: { voyage: VoyageUsageSummary }) {
+  const styles = VOYAGE_STATUS_STYLES[voyage.status];
+  const percent = (voyage.utilizationRatio * 100).toFixed(1);
+
+  return (
+    <section
+      className={`space-y-3 rounded border p-4 ${styles.bg}`}
+      title="Voyage AI (embedding 用) の当月トークン使用量と無料枠 (200M tokens/月) 対比。80% 超で要注意、100% 超で従量課金が発生します。"
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold" title="Voyage AI は提案エンジンの類似度検索 (embedding) で利用される外部サービス">
+          Voyage AI 無料枠 (当月)
+        </h2>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}
+          title={voyage.status === 'alert' ? '無料枠を超過。従量課金が発生中の可能性あり' : voyage.status === 'warn' ? '80% 超過、推移を要監視' : '健全 (80% 未満)'}
+        >
+          {STATUS_LABEL[voyage.status]}
+        </span>
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-sm" title={`累計 ${voyage.currentMonthTokens.toLocaleString()} tokens / 上限 ${voyage.freeTierTokens.toLocaleString()} tokens`}>
+          使用量: <strong>{voyage.currentMonthTokens.toLocaleString()}</strong> tokens / 無料枠{' '}
+          <strong>{voyage.freeTierTokens.toLocaleString()}</strong> tokens (
+          <span className={styles.text}>{percent}%</span>)
+        </p>
+        <div
+          className="h-2 w-full overflow-hidden rounded bg-muted"
+          title="プログレスバー: 緑=正常, 黄=80% 超, 赤=100% 超"
+        >
+          <div
+            className={`h-full ${styles.bar}`}
+            style={{ width: `${Math.min(100, voyage.utilizationRatio * 100)}%` }}
+          />
+        </div>
+      </div>
+
+      {voyage.status === 'alert' && (
+        <p className="text-sm font-medium text-destructive">
+          ⚠️ 無料枠 200M tokens を超えました。Voyage 側で従量課金が発生している可能性があります (公式単価: $0.05/M tokens)。
+        </p>
+      )}
+      {voyage.status === 'warn' && (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          ⚠️ 無料枠の 80% を超えました。推移を監視してください。
+        </p>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        集計対象: 顧客テナント全体 (管理 + default は除外)。 計測元: ApiCallLog.embedding_tokens
+      </p>
+    </section>
+  );
+}
+
+// ================================================================
+// 2026-05-09 (PR E / #14): Anthropic 当月使用量カード
+// ================================================================
+
+function AnthropicUsageCard({ anthropic }: { anthropic: AnthropicUsageSummary }) {
+  const totalTokens = anthropic.currentMonthInputTokens + anthropic.currentMonthOutputTokens;
+
+  return (
+    <section
+      className="space-y-3 rounded border p-4"
+      title="Anthropic Claude (LLM) の当月使用量。auto-tag-extract / suggestion-explanation の 2 経路のみで発火 (詳細: T-03 リリースノート Q6)"
+    >
+      <h2 className="text-lg font-semibold" title="Anthropic Claude は自動タグ抽出 (プロジェクト作成/更新) と「なぜ?」説明文 (Pro 限定) の 2 経路で利用">
+        Anthropic 使用量 (当月)
+      </h2>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryCard
+          label="API 呼出回数"
+          value={anthropic.currentMonthCallCount.toLocaleString()}
+          tooltip="featureUnit=auto-tag-extract / suggestion-explanation の合計呼出回数 (当月)"
+        />
+        <SummaryCard
+          label="入力トークン (合計)"
+          value={anthropic.currentMonthInputTokens.toLocaleString()}
+          tooltip="プロンプト + システムメッセージのトークン数合計。Anthropic 課金根拠 (input 単価)"
+        />
+        <SummaryCard
+          label="出力トークン (合計)"
+          value={anthropic.currentMonthOutputTokens.toLocaleString()}
+          tooltip="LLM が生成したトークン数合計。Anthropic 課金根拠 (output 単価、input より高単価)"
+        />
+        <SummaryCard
+          label="内部請求額"
+          value={`¥${anthropic.currentMonthInternalCostJpy.toLocaleString()}`}
+          tooltip="プラン別固定単価で計算した内部請求額 (Beginner ¥0 / Expert ¥10/call / Pro ¥30/call)。Anthropic 実コストとは別系統"
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        集計対象: 顧客テナント全体 (管理 + default は除外)、合計トークン {totalTokens.toLocaleString()}
+        {' ・ '}
+        Anthropic 実 API 課金は Anthropic Console で別途確認 (リリースノート Q5 参照)
+      </p>
+    </section>
+  );
+}
+
+// ================================================================
+// 2026-05-09 (PR E / #15): Beginner プラン使用状況カード
+// ================================================================
+
+function BeginnerUsageCard({ beginner }: { beginner: BeginnerUsageSummary }) {
+  const hasWarning = beginner.warning60Count + beginner.warning75Count + beginner.expiredCount > 0;
+  return (
+    <section
+      className={`space-y-3 rounded border p-4 ${hasWarning ? 'bg-amber-50 dark:bg-amber-950/30' : ''}`}
+      title="Beginner プラン契約中のテナント数と期限切迫サマリ。90 日試用期間後は読み取り専用モードに自動移行"
+    >
+      <h2 className="text-lg font-semibold" title="Beginner プラン: 月 100 回上限・最大 5 席・無料・90 日試用">
+        Beginner プラン使用状況
+      </h2>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <SummaryCard
+          label="契約テナント数"
+          value={beginner.totalTenants.toString()}
+          tooltip="現在 plan='beginner' のテナント件数 (削除済み・管理 + default 除外)"
+        />
+        <SummaryCard
+          label="60 日警告"
+          value={beginner.warning60Count.toString()}
+          tooltip="作成から 60 日経過し、Expert/Pro へのアップグレードを促すメールが送信されたテナント"
+        />
+        <SummaryCard
+          label="75 日警告"
+          value={beginner.warning75Count.toString()}
+          tooltip="作成から 75 日経過、最終警告メールが送信されたテナント (15 日以内に上位プラン契約しないと read-only)"
+        />
+        <SummaryCard
+          label="期限切れ"
+          value={beginner.expiredCount.toString()}
+          tooltip="90 日経過し読み取り専用モードに移行したテナント。Expert/Pro 契約で復帰可能"
+        />
+        <SummaryCard
+          label="当月 API 呼出 (合計)"
+          value={beginner.totalCurrentMonthCalls.toLocaleString()}
+          tooltip="Beginner プランの当月 API 呼出総数 (各テナント 100 回上限)"
+        />
+      </div>
     </section>
   );
 }

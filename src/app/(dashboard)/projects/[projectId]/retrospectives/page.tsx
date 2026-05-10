@@ -12,11 +12,11 @@ export default async function RetrospectivesPage({ params }: Props) {
   if (!session) redirect(LOGIN_ROUTE);
 
   const { projectId } = await params;
-  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole);
+  const membership = await checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId);
   if (!membership.isMember) notFound();
 
   const [retros, actualRole] = await Promise.all([
-    listRetrospectives(projectId, session.user.id, session.user.systemRole),
+    listRetrospectives(projectId, session.user.id, session.user.systemRole, session.user.tenantId),
     getActualProjectRole(projectId, session.user.id),
   ]);
   const canCreate = actualRole === 'pm_tl' || actualRole === 'member';

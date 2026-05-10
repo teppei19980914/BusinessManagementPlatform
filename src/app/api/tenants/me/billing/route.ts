@@ -25,15 +25,46 @@ import { z } from 'zod';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { updateBillingContact } from '@/services/tenant-self.service';
 
-const BillingPatchSchema = z.object({
-  billingCompanyName: z.string().trim().min(1).max(200).optional(),
-  billingContactName: z.string().trim().min(1).max(100).optional(),
-  billingContactEmail: z.string().trim().email().max(255).optional(),
-  billingAddress: z.string().trim().min(1).optional(),
-  // 任意項目: null クリアも許可
-  billingPhoneNumber: z.string().trim().max(20).nullable().optional(),
-  paymentMethod: z.enum(['invoice', 'bank_transfer', 'credit_card']).optional(),
-});
+// 2026-05-09 (PR C / #5/#8/#10): 個人法人切替 + 住所サブフィールド化。
+//   PATCH 用なので各フィールドはすべて optional。送られてきた fields のみ update する。
+//   billingCompanyName: 法人切替時は client から required 文字列、個人切替時は null クリア許可。
+//   refine は意味的整合性 (= 法人なのに会社名空) を防ぐ用途で個別 endpoint 側に追加。
+const BillingPatchSchema = z
+  .object({
+    billingType: z.enum(['corporate', 'individual']).optional(),
+    billingCompanyName: z.string().trim().max(200).nullable().optional(),
+    billingContactName: z.string().trim().min(1).max(100).optional(),
+    billingContactEmail: z.string().trim().email().max(255).optional(),
+    // 構造化住所 (#8)
+    billingPostalCode: z.string().trim().regex(/^\d{3}-?\d{4}$/, {
+      message: '郵便番号は 7 桁 (例 100-0001) で入力してください',
+    }).optional(),
+    billingPrefecture: z.string().trim().min(1).max(20).optional(),
+    billingCity: z.string().trim().min(1).max(100).optional(),
+    billingStreetAddress: z.string().trim().min(1).max(200).optional(),
+    // (#10) building は optional。null クリアも可。
+    billingBuildingName: z.string().trim().max(200).nullable().optional(),
+    // 任意項目: null クリアも許可
+    billingPhoneNumber: z.string().trim().max(20).nullable().optional(),
+    // 2026-05-09 (#4): クレジットカードは UI 非活性 + API でも reject (defense-in-depth)。
+    //   将来対応する際に 'credit_card' を再追加する。
+    paymentMethod: z.enum(['invoice', 'bank_transfer']).optional(),
+  })
+  // 2026-05-09 (PR C / #5): 法人切替 + 会社名を同時に送ってきた場合は会社名必須。
+  //   billingType だけ切替えで会社名を送らないケース (= 既存値を維持) は許容する。
+  .refine(
+    (d) => {
+      if (d.billingType !== 'corporate') return true;
+      // billingCompanyName を明示的に送ってこなかった場合は既存値維持で OK
+      if (d.billingCompanyName === undefined) return true;
+      // 法人切替で会社名を空 / null に設定しようとしている → reject
+      return d.billingCompanyName != null && d.billingCompanyName.trim().length > 0;
+    },
+    {
+      path: ['billingCompanyName'],
+      message: '法人プランでは会社名 / 法人名は必須です',
+    },
+  );
 
 export async function PATCH(req: NextRequest) {
   const user = await getAuthenticatedUser();

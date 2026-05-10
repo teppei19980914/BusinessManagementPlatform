@@ -24,6 +24,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import {
   TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -145,18 +146,30 @@ export function AllRetrospectivesTable({
               onClick={() => setEditingRetro(r)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
-                {r.projectName == null ? (
-                  <span className="text-muted-foreground">{tRetro('private')}</span>
-                ) : r.canAccessProject ? (
-                  <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
-                    {r.projectName}
-                  </Link>
-                ) : (
-                  <span className="text-muted-foreground">
-                    {r.projectName}
-                    {r.projectDeleted && <span className="ml-1 text-xs text-destructive">{tRetro('deleted')}</span>}
-                  </span>
-                )}
+                <div className="flex items-center gap-1.5">
+                  {r.projectName == null ? (
+                    <span className="text-muted-foreground">{tRetro('private')}</span>
+                  ) : r.canAccessProject && r.projectId ? (
+                    <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
+                      {r.projectName}
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      {r.projectName}
+                      {r.projectDeleted && <span className="ml-1 text-xs text-destructive">{tRetro('deleted')}</span>}
+                    </span>
+                  )}
+                  {/* PR feat/asset-multi-linking-ui (Phase 2): 紐付け先複数の場合の件数 badge */}
+                  {r.linkedProjectIds.length > 1 && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px]"
+                      title={`${r.linkedProjectIds.length} 件のプロジェクトに紐付け済`}
+                    >
+                      +{r.linkedProjectIds.length - 1}
+                    </Badge>
+                  )}
+                </div>
               </TableCell>
               <TableCell className="whitespace-nowrap font-medium">{r.conductedDate}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.planSummary || '-'}</TableCell>
@@ -176,11 +189,14 @@ export function AllRetrospectivesTable({
               </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AdminRetrospectiveDeleteButton
-                    projectId={r.projectId}
-                    retroId={r.id}
-                    label={r.conductedDate}
-                  />
+                  {/* PR feat/asset-multi-project-linking: orphan は admin 手動 cleanup の想定 */}
+                  {(r.projectId ?? r.linkedProjectIds[0]) ? (
+                    <AdminRetrospectiveDeleteButton
+                      projectId={(r.projectId ?? r.linkedProjectIds[0])!}
+                      retroId={r.id}
+                      label={r.conductedDate}
+                    />
+                  ) : null}
                 </TableCell>
               )}
             </ClickableRow>

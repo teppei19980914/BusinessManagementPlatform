@@ -431,6 +431,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
       {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。 */}
       <RetrospectiveEditDialog
         retro={editingRetro}
+        currentProjectId={projectId}
         open={editingRetro != null}
         onOpenChange={(v) => { if (!v) setEditingRetro(null); }}
         onSaved={reload}

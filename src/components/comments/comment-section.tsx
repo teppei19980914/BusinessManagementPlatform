@@ -17,8 +17,8 @@
  *   - サーバ側で trim + 1〜2000 文字バリデート。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -287,8 +287,38 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
     void reload();
   }, [reload]);
 
-  const items = listState.loaded ? listState.items : [];
+  const items = useMemo(
+    () => (listState.loaded ? listState.items : []),
+    [listState],
+  );
   const loaded = listState.loaded;
+
+  // 2026-05-09 (PR H / #3): 通知 deep link で `?commentId=...` が付いていたら、
+  //   ロード後にその DOM 要素へスクロール + ハイライト表示する。
+  //   1 度きり実行 (useRef で再実行を抑止)。dialog auto-open との競合を避けるため
+  //   100ms の delay を挟む (dialog の open animation 後に scroll した方が安定)。
+  const searchParams = useSearchParams();
+  const targetCommentId = searchParams.get('commentId');
+  const scrolledRef = useRef(false);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loaded || !targetCommentId || scrolledRef.current) return;
+    const exists = items.some((c) => c.id === targetCommentId);
+    if (!exists) return;
+    scrolledRef.current = true;
+    // URL クエリ (= 外部状態) からのトリガで一度だけ highlight を立てる。
+    // react-hooks/set-state-in-effect は外部同期用途で警告例外。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHighlightId(targetCommentId);
+    // 次の tick で DOM 要素を取得 → smooth scroll
+    const handle = setTimeout(() => {
+      const el = document.getElementById(`comment-${targetCommentId}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // 3 秒後にハイライトを解除
+      setTimeout(() => setHighlightId(null), 3000);
+    }, 100);
+    return () => clearTimeout(handle);
+  }, [loaded, items, targetCommentId]);
 
   async function handlePost() {
     setError('');
@@ -433,10 +463,15 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
         <ul className="space-y-2">
           {items.map((c) => {
             const editing = editingId === c.id;
+            // 2026-05-09 (PR H / #3): 通知 deep link でハイライト対象なら背景を 3 秒間黄色化
+            const isHighlighted = highlightId === c.id;
             return (
               <li
                 key={c.id}
-                className="rounded border bg-card p-2 text-sm"
+                id={`comment-${c.id}`}
+                className={`rounded border p-2 text-sm transition-colors ${
+                  isHighlighted ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/40' : 'bg-card'
+                }`}
                 data-testid="comment-item"
                 data-comment-id={c.id}
               >

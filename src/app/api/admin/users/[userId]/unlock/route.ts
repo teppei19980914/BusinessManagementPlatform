@@ -17,7 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireAdmin, requireSameTenantUser } from '@/lib/api-helpers';
 import { unlockAccount } from '@/services/password.service';
 import { unlockMfaByAdmin } from '@/services/mfa.service';
 import { recordAuditLog } from '@/services/audit.service';
@@ -33,12 +33,16 @@ export async function POST(
   if (forbidden) return forbidden;
 
   const { userId } = await params;
+  // 2026-05-09 feedback: 対象 user が同テナントか検証 (他テナント user のロック解除攻撃を遮断)
+  const tenantViolation = await requireSameTenantUser(user, userId);
+  if (tenantViolation) return tenantViolation;
 
-  // パスワードロックと MFA ロックを同時解除
-  await unlockAccount(userId, user.id);
+  // パスワードロックと MFA ロックを同時解除 (Phase 2-10: tenantId 必須化)
+  await unlockAccount(userId, user.id, user.tenantId);
   await unlockMfaByAdmin(userId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'user',

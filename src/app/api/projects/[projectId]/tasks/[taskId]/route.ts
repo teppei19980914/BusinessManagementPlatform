@@ -32,7 +32,7 @@ export async function GET(
   if (forbidden) return forbidden;
 
   const t = await getTranslations('message');
-  const task = await getTask(taskId);
+  const task = await getTask(taskId, user.tenantId);
   if (!task || task.projectId !== projectId) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -62,7 +62,7 @@ export async function PATCH(
     );
   }
 
-  const before = await getTask(taskId);
+  const before = await getTask(taskId, user.tenantId);
   if (!before || before.projectId !== projectId) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -107,9 +107,10 @@ export async function PATCH(
     }
   }
 
-  const task = await updateTask(taskId, parsed.data, user.id);
+  const task = await updateTask(taskId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'task',
@@ -133,7 +134,7 @@ export async function DELETE(
   if (forbidden) return forbidden;
 
   const t = await getTranslations('message');
-  const before = await getTask(taskId);
+  const before = await getTask(taskId, user.tenantId);
   if (!before || before.projectId !== projectId) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -141,9 +142,10 @@ export async function DELETE(
     );
   }
 
-  await deleteTask(taskId, user.id);
+  await deleteTask(taskId, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'task',

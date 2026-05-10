@@ -14,15 +14,19 @@ function hashToken(token: string): string {
 /**
  * メール検証トークンを生成し、検証メールを送信する
  * @throws {EmailSendError} メール送信に失敗した場合
+ *
+ * Phase 2-10 (2026-05-10): tenantId 必須化。token 漏洩時の越境再利用を遮断するため、
+ *   token は所属テナント内でのみ有効。verify 時に findFirst が tenantId フィルタを併用する。
  */
 export async function sendVerificationEmail(
   userId: string,
+  tenantId: string,
   email: string,
   baseUrl: string,
 ): Promise<void> {
-  // 未使用の既存トークンを無効化
+  // 未使用の既存トークンを無効化 (自テナント + 同 user に限定 = 二重防御)
   await prisma.emailVerificationToken.updateMany({
-    where: { userId, usedAt: null },
+    where: { userId, tenantId, usedAt: null },
     data: { usedAt: new Date() },
   });
 
@@ -33,6 +37,7 @@ export async function sendVerificationEmail(
 
   await prisma.emailVerificationToken.create({
     data: {
+      tenantId,
       userId,
       tokenHash,
       expiresAt,
@@ -102,20 +107,24 @@ export async function validateToken(
 }
 
 /**
- * トークンを検証し、パスワード設定 + リカバリーコード生成 + アカウント有効化 (+ admin は MFA 準備) を行う。
+ * トークンを検証し、パスワード設定 + リカバリーコード生成 + アカウント有効化 (+ super_admin は MFA 準備) を行う。
  *
- * PR #91 改訂: システム管理者 (systemRole='admin') の初期セットアップフローを
- *   2 段階化し「パスワード設定だけではアカウント有効化しない」仕様に変更。
- *   admin は本関数でパスワード + MFA シークレット生成まで行い、後続の
- *   `setupInitialMfa` で TOTP 検証に成功したときに初めて
- *   isActive=true / deletedAt=null / mfaEnabled=true となる。
+ * PR #91 (2026-04) 改訂: 全 admin に MFA を強制していた。
+ * 2026-05-09 (#11) 改訂: 「テナント管理者 (systemRole='admin')」の MFA を任意化。
+ *   テナント管理者は社内の運用者で、MFA 強制が業務開始のハードルになるという
+ *   ユーザフィードバックに基づく。プラットフォーム運営者である super_admin は
+ *   引き続き MFA を強制する (横断アクセスによる影響範囲が大きいため)。
  *
- *   一般ユーザ (systemRole='general') は従来通り本関数で即時有効化。
+ *   - super_admin: 本関数でパスワード + MFA シークレット生成まで行い、後続の
+ *     `setupInitialMfa` で TOTP 検証に成功したときに初めて isActive=true /
+ *     deletedAt=null / mfaEnabled=true となる。
+ *   - admin / general: 従来 general 同様に本関数で即時有効化。MFA は任意で
+ *     設定画面から自分で有効化可能。
  *
  * 返却値:
- *   - general: { success, recoveryCodes }
- *   - admin  : { success, recoveryCodes, requiresMfa: true, mfa: { otpauthUri, qrCodeDataUrl } }
- *             (requiresMfa=true で UI 側が MFA ステップを表示する)
+ *   - admin / general: { success, recoveryCodes }
+ *   - super_admin   : { success, recoveryCodes, requiresMfa: true, mfa: { otpauthUri, qrCodeDataUrl } }
+ *                     (requiresMfa=true で UI 側が MFA ステップを表示する)
  */
 export async function setupPassword(
   token: string,
@@ -174,10 +183,12 @@ export async function setupPassword(
     })),
   );
 
-  const isAdmin = user.systemRole === 'admin';
+  // 2026-05-09 (#11): 強制 MFA は super_admin のみ。テナント管理者 (admin) は
+  //   一般ユーザと同じ即時有効化フローに合流させる。
+  const isSuperAdmin = user.systemRole === 'super_admin';
 
-  if (isAdmin) {
-    // PR #91: admin は MFA セットアップを必須化する。
+  if (isSuperAdmin) {
+    // super_admin は MFA セットアップを必須化する (横断アクセス権限の保護)。
     // パスワード保存 + MFA シークレット生成 (まだ mfaEnabled=false) + recoveryCodes 作成。
     // **isActive / deletedAt / token.usedAt は変更しない** (後続の setupInitialMfa で
     // TOTP 検証に成功したときに初めて一括更新)。
@@ -201,7 +212,9 @@ export async function setupPassword(
         },
       }),
       prisma.recoveryCode.createMany({
+        // Phase 2-10: tenantId 必須化 (token record の tenantId を継承)
         data: recoveryCodeHashes.map((h) => ({
+          tenantId: record.tenantId,
           userId: record.userId,
           ...h,
         })),
@@ -232,7 +245,9 @@ export async function setupPassword(
       },
     }),
     prisma.recoveryCode.createMany({
+      // Phase 2-10: tenantId 必須化 (token record の tenantId を継承)
       data: recoveryCodeHashes.map((h) => ({
+        tenantId: record.tenantId,
         userId: record.userId,
         ...h,
       })),

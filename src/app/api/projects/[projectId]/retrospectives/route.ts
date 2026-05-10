@@ -27,7 +27,7 @@ export async function GET(
   const { projectId } = await params;
   const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
-  const retros = await listRetrospectives(projectId, user.id, user.systemRole);
+  const retros = await listRetrospectives(projectId, user.id, user.systemRole, user.tenantId);
   return NextResponse.json({ data: retros });
 }
 
@@ -51,6 +51,6 @@ export async function POST(
   }
 
   const retro = await createRetrospective(projectId, parsed.data, user.id, user.tenantId);
-  await recordAuditLog({ userId: user.id, action: 'CREATE', entityType: 'retrospective', entityId: retro.id });
+  await recordAuditLog({ tenantId: user.tenantId, userId: user.id, action: 'CREATE', entityType: 'retrospective', entityId: retro.id });
   return NextResponse.json({ data: retro }, { status: 201 });
 }

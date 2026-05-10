@@ -4787,3 +4787,1041 @@ DB ベースのフラグだと「DB アクセス不能時に効かない」ジ�
 - [ ] **緊急停止フラグの切替手順を運用ドキュメントに必ず明記**: コードを書いた人だけが知っている状態だと、緊急時に他のメンバーが対応できない。`docs/operations/T-03_RELEASE_NOTES.md §緊急停止手順` に scenario 別の SQL/env var 操作を文書化
 - [ ] **テスト時は環境変数を beforeEach で reset、afterAll で原状復帰**: グローバル状態を変える feature flag のテストは並列実行で他テストに影響する。明示的に save/restore を記述する
 
+## 5.X+4 推移的依存 (transitive dependency) の脆弱性は `pnpm.overrides` で force-upgrade する (PR #283 hotfix / 2026-05-09)
+
+### 背景
+
+PR #283 で Security Scan (`.github/workflows/security.yml` の `pnpm audit --audit-level=high` ステップ)
+が **HIGH 2 件で fail**。発見された脆弱性は両方とも `fast-uri` (3.1.0) の経由問題:
+
+- GHSA-q3j6-qgpj-74h6: path traversal via percent-encoded dot segments (<=3.1.0, fixed in >=3.1.1)
+- GHSA-v39h-62p7-jpjc: host confusion via percent-encoded authority delimiters (<=3.1.1, fixed in >=3.1.2)
+
+依存パスは `prisma > @prisma/dev > @prisma/streams-local > ajv > fast-uri` の **5 段ネスト**。
+`prisma` のメジャー更新を待っても fast-uri のパッチには到達しない可能性が高く、また
+`shadcn > @modelcontextprotocol/sdk > ajv` 経由でも同じ ajv@8.18.0 を使っているため
+両エコシステム同時に救済する必要があった。
+
+### 対応 (2 行 diff)
+
+`package.json` の `pnpm.overrides` に 1 行追加:
+
+```diff
+   "overrides": {
+     "@hono/node-server": ">=1.19.13",
+     "hono": ">=4.12.16",
+     "postcss": ">=8.5.10",
+-    "ip-address": ">=10.1.1"
++    "ip-address": ">=10.1.1",
++    "fast-uri": ">=3.1.2"
+   }
+```
+
+その後 `pnpm install` で `pnpm-lock.yaml` を再生成し、`pnpm audit --audit-level=high` で
+"No known vulnerabilities found" を確認。これで 5 つ目の override 運用となり、
+**「transitive 脆弱性 → overrides 1 行追加」というワークフローが本リポジトリで定着** した。
+
+### 抽出したルール
+
+- [ ] **`pnpm audit` failure を見たら最初に `pnpm why <package>` でパスを確認**: 直接依存なら通常の version bump、transitive なら overrides。「どの直接依存が古いのか」を特定するのが先決
+- [ ] **`pnpm.overrides` は **patched version の最小値** で書く**: `">=3.1.2"` のように下限のみ指定し、メジャー上限は付けない。CI が次の advisory を拾った時に自動で最新パッチを取り込める
+- [ ] **複数経路 (ajv が 2 つ以上の dep tree から呼ばれる等) でも overrides は 1 つで足りる**: pnpm の overrides は **resolved 結果** に効くため、すべての経路の同名パッケージが同じバージョンに収束する
+- [ ] **過去の overrides を消さない (= migration ノートとして残す)**: `@hono/node-server` / `hono` / `postcss` / `ip-address` / `fast-uri` の 5 件は本リポジトリでの脆弱性履歴そのもの。直接依存の更新で不要になった override も残しておくと、再発時の調査ヒントになる
+- [ ] **PR 作成前にローカルで `pnpm audit --audit-level=high` を 1 回実行する習慣を**: CI でしか気付かないと「PR 作成 → CI fail → 修正 → 再 push」で往復が発生する。Vulnerability advisory は時間で増えるため、commit 時点では問題なくても push 時点で fail することがある
+- [ ] **CI Gate (`security.yml`) を絶対にスキップしない**: HIGH 以上は build を止める運用。例外的に「依存元側にしかパッチがない」case でも、最低限 issue を切ってトラッキングする (silent ignore は厳禁)
+
+## 5.X+5 認可仕様 (MFA 強制対象) を緩和したら E2E アサーションと visual baseline 両方を更新する (PR #283 hotfix / 2026-05-09)
+
+### 背景
+
+PR #283 (#11 「テナント管理者の MFA を任意化」) で MFA 強制対象を `admin` → `super_admin` に
+変更したところ、E2E 2 系統が連鎖 fail した:
+
+1. **機能 spec** `01-admin-and-member-setup.spec.ts:114` Step 2 が
+   `await expect(page.getByText('強制有効化 (解除不可)')).toBeVisible()` で fail。
+   → 旧仕様 `systemRole === 'admin'` 前提のアサーション。新仕様では admin にこのバッジは出ない。
+   この test が fail した結果、`mode: 'serial'` で連鎖する Step 2b〜Step 6b が **6 件 skip**
+   され、見かけ上「7 件 fail」相当の影響に拡大。
+2. **視覚回帰** `dashboard-screens.spec.ts:74` (settings-light) と `settings-themes.spec.ts:68`
+   (10 テーマ × 設定画面) が pixel diff で fail。`admin` ユーザのスナップショットだったため
+   バッジ消失分の差分が出た。
+
+### 対応 (2 つを 1 PR で完結させる)
+
+1. **Step 2 アサーションを新仕様に書き直し** (この test は admin = テナント管理者なので、
+   有効化後の状態は「`MFA を有効化する` ボタン消失 + `有効` バッジ + `MFA を無効化する`
+   ボタン表示」で確認する。super_admin 強制の確認は別 spec に分ける):
+
+```diff
+- await expect(page.getByText('強制有効化 (解除不可)')).toBeVisible({ timeout: 10_000 });
++ await expect(page.getByText('有効', { exact: true })).toBeVisible({ timeout: 10_000 });
++ await expect(page.getByRole('button', { name: 'MFA を無効化する' })).toBeVisible({
++   timeout: 10_000,
++ });
+```
+
+2. **空コミットで baseline 再生成 workflow をトリガ**:
+
+```bash
+git commit --allow-empty -m "chore: regenerate visual baselines after MFA optional UI change [gen-visual]"
+git push
+```
+
+`[gen-visual]` タグ付き push は `.github/workflows/e2e-visual-baseline.yml` を発火し、
+`pnpm exec playwright test e2e/visual --update-snapshots` を CI で実行 → 差分があった
+PNG を `Update visual baselines (e2e-visual-baseline workflow)` commit で自動 push する。
+
+### 抽出したルール
+
+- [ ] **認可ロールの分岐文言を変えたら、文言にマッチする E2E test を `grep` で総当たり確認**: `'強制有効化'` / `'解除不可'` / `'MFA 必須'` 等のマジック文字列は、機能 spec / visual spec / i18n message の 3 箇所に散らばる。コード変更時に `git grep` で全箇所を洗い出すルーチンを徹底
+- [ ] **`mode: 'serial'` の test ファイルでは「最初の fail が連鎖 skip を起こす」**: skip された test は CI 上は別 line item に見えるが原因は 1 箇所。fail の根本原因 1 件を直せば連鎖 skip も解消するため、まず先頭 fail を fix することに集中する
+- [ ] **UI 変更を伴う認可緩和の PR は `[gen-visual]` を最初の commit から含めるか、PR 作成直後に空コミットで発火させる**: PR 作成 → e2e fail → `[gen-visual]` push → 再実行 で 1 サイクル余分にかかる。事前に「視覚スナップショットを取る画面 (settings, dashboard 等) に触る変更か?」を判断し、touch するなら CI 一発目から baseline 再生成を組み込む
+- [ ] **新旧の認可挙動を別 spec に分けて両方カバーする**: 旧仕様 (`super_admin` 強制) を消さず別 test として残すと、後から「super_admin の MFA 強制が壊れた」regression を catch できる。`#11` 緩和後は admin spec で「任意化済」、super_admin spec で「強制継続」を別々にアサートする
+- [ ] **連鎖 skip の影響範囲を PR description に明記**: 1 件 fail → 6 件 skip のような場合、原因と修正箇所を「失敗 1 件、skip 6 件 (= 同一原因)」と書くことで、レビュアが何を見ればよいか即時に判断できる
+
+
+
+## 5.X+6 新テーブル追加時は cascade 削除パスの全洗い出しが必須 (P-3 / 2026-05-08 → 本番障害 / 2026-05-09)
+
+### 背景
+
+P-3 (PR #259 / 2026-05-08) で `SuggestionExplanation` テーブルを新設した際、
+**cascade 削除のパスを更新し忘れ** て本番で project 削除が 500 エラーで失敗:
+
+```
+PrismaClientKnownRequestError: Foreign key constraint violated on the constraint:
+  `suggestion_explanations_project_id_fkey`
+prisma.project.delete() invocation
+```
+
+`SuggestionExplanation` は `project_id` / `tenant_id` / `generated_by` の 3 経路で
+FK を持っており、それぞれ Project / Tenant / User の物理削除前に明示的に
+deleteMany する必要があった。`deleteProjectCascade` (project-level) と
+`purgeOldDeletedTenants` (tenant-level) のどちらも漏れていた。
+
+ON DELETE CASCADE を FK に付与する選択肢もあったが、本リポジトリの既存パターン
+(他の child テーブル: Comment / Attachment / TaskProgressLog 等) は **manual cleanup**
+で統一されているため、踏襲した。
+
+### 対応
+
+1. `deleteProjectCascade` の `prisma.project.delete()` 直前に
+   `prisma.suggestionExplanation.deleteMany({ where: { projectId } })` を追加
+2. `purgeOldDeletedTenants` の `$transaction` 内、`project.deleteMany` の前に
+   `suggestionExplanation.deleteMany({ where: { tenantId } })` を追加
+3. 回帰テストで「project.delete 前に suggestionExplanation.deleteMany が呼ばれる」を verify
+
+### 抽出したルール
+
+- [ ] **新テーブル追加 PR には「cascade 削除パスの更新有無」をレビューチェックリストに含める**: 単体テストでは検出できない (削除対象テーブルが空なら通る)。本番でデータが入って初めて顕在化する罠
+- [ ] **FK を持つテーブル新設時は 3 経路 (parent table A / B / C) の **全ての** delete code path を grep で洗い出す**: `grep -rn 'project.delete\|project.deleteMany' src/services/` のように grep で複数箇所を一気に拾い、漏れチェックする
+- [ ] **「delete cascade is implicit」と思い込まない**: Prisma schema 上 `relation` を書いただけでは Postgres FK には `ON DELETE NO ACTION` が設定される。`onDelete: Cascade` を schema 側で明示するか、application 側で manual cleanup を書くかの **どちらかが必須**
+- [ ] **本番で再現した cascade 漏れバグは `deleteProjectCascade` テストの「呼出順序」テストで再発防止**: `expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({ where: { projectId } })` のような mock 呼出検証で「次の新設テーブル追加時に同じ罠を踏む」を防ぐ
+- [ ] **`purgeOldDeletedTenants` の `$transaction` 配列は順序が FK 依存関係**: 順序を間違えると別の FK が先に火を吹くため、変更時は `git diff` で行追加位置を慎重に確認する
+
+## 5.X+7 ブランチカバレッジ閾値 (70%) 維持戦略 (PR #289 hotfix / 2026-05-09)
+
+### 背景
+
+PR #289 (PR E ダッシュボード強化) で **branches 69.66% < 70% 閾値** で CI fail:
+
+```
+ERROR: Coverage for branches (69.66%) does not meet global threshold (70%)
+```
+
+PR E は `super-admin.service` に新規 3 関数 (Voyage / Anthropic / Beginner サマリ) を
+追加し、それぞれが内部で複数の if 分岐 (status='ok'/'warn'/'alert' 等) を持つため、
+**コードの追加に対してテストがない = ブランチ未到達** が増えて閾値を割った。
+
+### 対応
+
+1. **ブランチ未到達の上位ファイルを特定**:
+   ```
+   pnpm test --coverage
+   ```
+   出力をブランチ % 昇順でソートし、最も低いファイルから着手。
+
+2. **今回の上位ターゲット**:
+   - `tenant-self.service.ts` (18.86% → 80%+) - **最大インパクト**: テスト未作成だった
+   - `super-admin.service.ts` (新規 3 関数) - 各関数の 3-4 分岐をテスト
+
+3. **追加テスト**:
+   - `tenant-self.service.test.ts` を新規作成 (18 件)
+     - getTenantSelfInfo: テナント不在 / 取得成功 + 派生フィールド
+     - updateBillingContact: 部分更新 / individual 切替時の null クリア / null 値クリア
+     - updateTenantSelf: budget 単独 / seedDataEnabled 単独 / 同一プラン / アップグレード /
+       ダウングレード予約 / Beginner ダウングレード禁止
+     - cancelScheduledPlanChange: 予約クリア
+   - `super-admin.service.test.ts` に 12 件追加
+     - getVoyageUsageSummary: ok/warn/alert 3 段階 + null fallback + 除外フィルタ
+     - getAnthropicUsageSummary: 通常 / null fallback / where OR 検証
+     - getBeginnerUsageSummary: 0 件 / 60/75/expired 分類 / 除外フィルタ
+
+   結果: branches **69.66% → 71.15%** (+1.49pt) で閾値クリア。
+
+### 抽出したルール
+
+- [ ] **新規関数を追加する PR には**「対応する unit test を同 PR で追加」**を必須化**: PR 説明に test コミット ID を明記。あとから補完すると忘れがち
+- [ ] **branch coverage は新規 if/switch 分岐を入れるたびにストレスがかかる**: 既存ファイルの分岐は tested 済が多いが、**新規ファイル / 新規関数は 0% から始まる** ため、コード追加直前のスコアからの劣化幅が大きい
+- [ ] **branch coverage 80% に上げる前に 70% を必達ライン化**: 防御的 if (= defense-in-depth) は実用上テストしづらく 80% は過大負荷。70% で「主要分岐は全て tested」が保証されればトレード OK (vitest.config.ts §thresholds 参照)
+- [ ] **集計関数 (aggregate / groupBy) のテストは where 句の検証が肝**: 値の正しさだけでなく `notIn: [MANAGEMENT, DEFAULT]` の包含を `expect(...).toMatchObject({ where: { id: { notIn: [...] } } })` で検証する。回帰: テナント除外漏れは集計値の誤りに直結する
+- [ ] **現在時刻に依存する関数は `daysAgo(N)` のような相対日付ヘルパで再現**: `Date.now()` を直接モックすると beforeEach での復元忘れによる他テスト汚染リスクがある。今回は `getBeginnerExpiryState` のテストで採用
+- [ ] **PR 提出前にローカルで `pnpm test --coverage` を実行**: CI で発覚すると 1 サイクル余分 (CI fail → 修正 → 再 push)。ローカル実行 1 分で同じ情報が得られる
+
+## 5.X+8 1:N → M:N への asset 紐付けモデル変更パターン (PR feat/asset-multi-project-linking / 2026-05-09)
+
+### 背景
+
+`Knowledge` は当初から M:N (`KnowledgeProject` 中間テーブル) で複数プロジェクトに紐付け可能だったが、
+`RiskIssue` / `Retrospective` は単一 `projectId` の 1:N で「1 リスク = 1 プロジェクト専属」だった。
+ユーザ要件: 「**A プロジェクトで作成した資産を B でも紐付けたい。A 削除でも B が参照中なら資産は残す。
+最後の紐付けプロジェクト削除時に cascade 選択した場合のみ物理削除する**」を満たすため、
+リスク/課題/振り返りも Knowledge と同じ M:N モデルに統一した。
+
+### 移行で踏んだ落とし穴
+
+#### 落とし穴 1: `project_id` を NOT NULL のまま残すと cascade 削除で FK 違反
+
+旧スキーマでは `risks_issues.project_id` は NOT NULL + RESTRICT FK。M:N 化後も「作成元プロジェクト」
+(audit 用) として残置したかったが、project 削除時に「資産は残し createdInProjectId を NULL に」
+を実現するには **nullable + ON DELETE SET NULL** に変更が必要。NOT NULL のままだと FK 違反で
+project.delete が失敗する。
+
+#### 落とし穴 2: 「このプロジェクトの一覧」query の where 句
+
+旧 `where: { projectId }` は「作成元一致」を意味する別概念になる。新仕様では「このプロジェクトに **紐付け済**」
+を意味する `where: { riskIssueProjects: { some: { projectId } } }` に置換する必要がある。
+影響範囲は service / API / sync-import / data-export と広い。**全件検索で `where: { projectId }` を
+置き忘れると「自プロジェクトで作ったレコードしか見えなくなる」regression** が起きる。
+
+#### 落とし穴 3: DTO の projectId 型変更が UI 型まで波及
+
+`RiskDTO.projectId: string` → `string | null` にすると、`RiskLike` / `RetroLike` などの dialog 用
+小型インターフェイスにも null 化を伝播させないと TS error 連鎖。**DTO 変更時は依存型を grep で全件
+洗い出して同 PR で修正**。
+
+#### 落とし穴 4: API ルートの「このプロジェクトのレコードか」判定
+
+`GET /api/projects/:projectId/risks/:riskId` 等で `existing.projectId !== projectId` で「他プロジェクト
+の risk を弾く」していた。新仕様では `!existing.linkedProjectIds.includes(projectId)` に置き換え。
+`linkedProjectIds: string[]` を DTO に追加する必要がある (`include: { riskIssueProjects: { ... } }`)。
+
+### 抽出したルール
+
+- [ ] **1:N → M:N への移行は 5 つのレイヤーをすべて触る**: ① Schema (中間テーブル + nullable + SET NULL) → ② Migration (既存データを M:N にコピー + ALTER COLUMN) → ③ Service (where 句を `riskIssueProjects: { some: { projectId } }` に) → ④ API ルート (`linkedProjectIds.includes(projectId)` チェックに) → ⑤ DTO/UI 型 (projectId を nullable に + linkedProjectIds 追加)
+- [ ] **Knowledge 既存実装をリファレンスに**: 同型移行 (RiskIssueProject / RetrospectiveProject) は KnowledgeProject の cascade ロジック / linkXxx pattern をコピペベースで進められる。差分はエンティティ名のみ
+- [ ] **「作成元プロジェクト」を残すなら必ず SET NULL FK**: NOT NULL + RESTRICT のままでは project 削除時に FK violation が発生し、cascade 選択しなかった場合の orphan 化が成立しない
+- [ ] **新中間テーブル追加時は data-export.service と sync-import.service も忘れずに更新**: tenant export ZIP に新中間テーブル JSON を含める / sync-import の `existing` 取得を M:N 経由に変更。漏れると「export 後の re-import で紐付けが消える」silent data loss
+- [ ] **「最後の紐付けが消えたら物理削除」ロジック**: deleteProjectCascade で `prisma.X.count({ where: { Yid } }) <= 1` なら delete、超えていれば unlink のみ。Knowledge §752-784 の既存ロジックを横展開
+
+## 5.X+9 ローカル必須チェックの整理 — セキュリティ/パフォーマンスを CI / 都度対応に分離 (2026-05-09)
+
+### 背景
+
+旧運用では CLAUDE.md「コミット前チェック」に **7 項目** が並んでおり、毎回の実装完了時に
+全項目を確認する負荷が大きく、開発効率を圧迫していた。特に下記 2 項目は冗長:
+
+- **セキュリティチェック**: 既に GitHub Actions `.github/workflows/security.yml` が PR ごとに
+  `pnpm tsx scripts/security-check.ts --min-score=90` で自動実行 (§5.46〜§5.48 で確立済)。
+  ローカル手動チェックと CI チェックの **二重実行** になっていた。
+- **パフォーマンスチェック**: 予防的 N+1 検査は実コード変更との関連が低く、ユーザリクエスト時に
+  ピンポイントで対応する方が効果的。
+
+一方で、ソースコード規模の拡大に伴い **退行 (リグレッション) の検出コスト** が増えており、
+退行テスト (単体 + E2E) の徹底にリソースを集中させたい背景がある。
+
+### 対応
+
+CLAUDE.md「コミット前チェック」を **5 項目に再編** し、退行チェックを最重点項目化:
+
+| 旧 (7 項目) | 新 (5 項目) | 変更 |
+|---|---|---|
+| 横展開チェック | 横展開チェック | 維持 |
+| セキュリティチェック | — | **撤廃 → CI 自動 (security.yml)** |
+| パフォーマンスチェック | — | **撤廃 → ユーザリクエスト時 都度対応** |
+| デプロイチェック | デプロイチェック (lint/tsc/test/build) | 維持 + tsc 明記 |
+| 単体テスト | **退行（リグレッション）チェック (重点)** | 単体 + E2E 統合 (両観点併記) |
+| E2E カバレッジ横展開 | (退行チェック内に統合) | — |
+| ドキュメント最新化 | ドキュメント最新化 | 維持 |
+| — | E2E ローカル実行 (任意) | **新設** (CI 待ちの往復削減) |
+
+連動更新:
+- `.claude/skills/quality-check.md` Step 2 を 6 項目 → 4 項目に整理 (security/performance を除外)
+- `.claude/skills/fix-issue.md` 観点別レビューエージェント並列実行を必須から外し、ユーザ依頼時のみ実行に変更
+- `.claude/skills/threat-model.md` Mode B-1「全 PR で必須」を「ユーザ依頼時のみ」に変更 (CI 自動に一本化)
+- `.claude/agents/performance-reviewer.md` ヘッダに「ユーザリクエスト時のみ呼出」を明記
+
+### 抽出したルール
+
+- [ ] **「ローカル必須」 vs 「CI 自動」 vs 「都度対応」を年に 1 回見直す**: ツールが CI 自動化されたら
+      ローカル必須から外す。二重実行は開発効率を下げる
+- [ ] **退行テスト (単体 + E2E) は別観点で両方残す**: 単体は分岐ロジック / 認可マトリクスを高速 (~12 秒) に
+      検出、E2E は画面 → API → DB の統合動作を検出。E2E で単体を代替するのは非効率 (UI 経由で全分岐を
+      網羅するシナリオを書くと数十分かかる)
+- [ ] **撤廃する仕組みは「代替手段の所在」を明記**: 「セキュリティはどこで担保?」と聞かれて即答できる
+      ように、撤廃時の代替 (CI workflow の path / agent 名) を CLAUDE.md / skill に書き残す
+- [ ] **ローカル必須チェックの数は最小化**: 開発効率は (項目数 × 実行頻度) の関数。「毎回必須」は
+      本当に毎回必要か疑い、`pnpm test` レベルの高速・幅広いものに絞る
+
+### 関連
+
+- CLAUDE.md「コミット前チェック」(本改訂の最終版)
+- §5.46 〜 §5.48 (security-check.ts 導入と CI gate 化の経緯)
+- 修正例: 2026-05-09 (本セクション、CLAUDE.md + .claude/skills/* + .claude/agents/* 一斉更新 PR)
+
+## 5.X+10 GitHub Actions の脆弱なアクションを避け公式 install スクリプトで CI 化する (PR #296 hotfix / 2026-05-09)
+
+### 背景
+
+PR #296 で OSV-Scanner / Trivy を CI に追加したところ、3 つの fail が発生:
+
+1. **OSV-Scanner**: `google/osv-scanner-action@v1` で `Unable to resolve action ... unable to find version 'v1'`
+   → Marketplace のパス命名 (`/osv-scanner-action/osv-scanner-action@vX.Y.Z`) が変動し、`@v1` major タグが存在しない
+2. **Trivy**: `aquasecurity/trivy-action@0.28.0` が **GHSA-69fq-xp46-6x23 (Trivy ecosystem supply chain was briefly compromised, CRITICAL)** にヒット
+   → アクションそのものが公式に汚染認定され、安全な version の判定もリリースノートを跨ぐ手間が生じる
+3. **Dependency Review**: 上記 Trivy アクションのバージョンを CI が `fail-on-severity: high` で検知し PR 全体が block
+
+### 対応
+
+両アクションとも **公式バイナリの install スクリプト経由に切替** て、Marketplace アクションへの依存を撤廃:
+
+```yaml
+# OSV-Scanner: GitHub API から最新リリースの linux_amd64 binary URL を解決して直接インストール
+- name: Install osv-scanner
+  run: |
+    DL_URL=$(curl -sSfL https://api.github.com/repos/google/osv-scanner/releases/latest \
+      | grep -oE '"browser_download_url": "[^"]*linux_amd64[^"]*"' \
+      | head -n1 | sed -E 's/.*"(.*)"/\1/')
+    curl -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+    chmod +x /usr/local/bin/osv-scanner
+- name: Run osv-scanner
+  run: osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+
+# Trivy: 公式 install.sh で最新版 (stable) を取得
+- name: Install trivy
+  run: |
+    curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+      | sudo sh -s -- -b /usr/local/bin
+- name: Run trivy fs
+  run: |
+    trivy fs --severity CRITICAL,HIGH --ignore-unfixed \
+      --format sarif --output trivy-results.sarif --exit-code 1 .
+- uses: github/codeql-action/upload-sarif@v3   # 公式 GitHub アクションは安全
+  with: { sarif_file: trivy-results.sarif, category: trivy }
+```
+
+これにより:
+- アクションのサプライチェーン汚染リスクを排除 (`actions/checkout` / `github/codeql-action` 等の **GitHub 公式 Verified アクションのみ使用**)
+- 同時に「常時最新バイナリを使う」要件も満たせる (install スクリプトが latest を解決)
+- Dependency Review の `fail-on-severity: high` も clean に通過する
+
+### 抽出したルール
+
+- [ ] **GitHub Marketplace の third-party アクションを採用する前に、Dependency Review の advisory DB と
+      OSSF Scorecard を必ず確認する**: 過去に supply chain 汚染を起こしたアクション (例: `tj-actions/changed-files`、
+      `aquasecurity/trivy-action` 等) は今後も risk が伴う。同等機能の **公式 install スクリプト** が
+      存在する場合はそちらを優先
+- [ ] **「最新を使う」要件はバージョン pin より install スクリプトが向く**: `@vX.Y.Z` pin は Dependabot
+      週次更新でも反応が遅れがち。公式の `latest` 解決ロジック (curl + GitHub Releases API) なら
+      毎ジョブで最新版が確定する
+- [ ] **CI で利用するアクションは「`actions/*` (GitHub 公式) + `github/codeql-action`」のみを基本とし、
+      それ以外は curl ベースインストールを優先する**: アクションが破壊された時の影響範囲を最小化
+- [ ] **アクションの version error (`Unable to resolve action`) はパス命名規則を疑う**: monorepo 構成の
+      アクション (`org/repo/subpath@vX`) は major tag が存在しないことがあるので、Marketplace ページで
+      正確な uses 形式を確認 — または curl 化を検討する
+- [ ] **PR の Dependency Review が fail したら advisory ID を必ず確認**: GHSA-* で過去のサプライチェーン
+      事案を引いていることが多く、その場合はバージョン bump ではなく **アクション自体の置き換え** が必要
+
+### 関連
+
+- 修正例: PR #296 hotfix (2026-05-09)
+- §5.46 〜 §5.48 (security-check.ts CI gate)
+- §5.X+9 (ローカル必須 → CI 自動への分離方針)
+- §5.X+11 (本セクションの install スクリプトが踏んだ次の罠 = `api.github.com` レート制限)
+
+## 5.X+11 GitHub Actions から `api.github.com` を未認証で叩くと共有 IP の 60 req/hour 制限に当たる (PR #296 hotfix 続編 / 2026-05-09)
+
+### 背景
+
+§5.X+10 で OSV-Scanner を `api.github.com/repos/google/osv-scanner/releases/latest` の JSON を curl + grep で
+解析して latest バイナリ URL を解決する方式に切り替えたが、**初回実行で install ステップが 245ms で死亡**:
+
+- `set -euo pipefail` 配下なのに stderr/stdout に出力ゼロ
+- `::error::Could not resolve ...` の echo にも到達せず
+- `Downloading: ...` の echo にも到達せず
+
+切り分けの結果、原因は **GitHub API の未認証レート制限 (IP 単位 60 req/hour)**:
+
+- GitHub Actions ホストランナーは Azure の **共有 IP プール** を使用するため、自リポジトリが初めて API を叩いても
+  同 IP の他テナントが先に枠を消費していると即 `403 rate limit exceeded` を踏む
+- `curl -sSfL` は HTTP 4xx で exit 22 だが、`-f` の "Fail silently on server errors" によりエラー本文が出ず、
+  さらにパイプ末尾の `head -n1` が早期 close → 上流に SIGPIPE を送る組み合わせで pipefail が即発火し
+  ログ痕跡なしで step が die する
+
+### 対応
+
+GitHub が公式提供する **`https://github.com/<owner>/<repo>/releases/latest/download/<asset>` の安定リダイレクト URL**
+に切り替え、`api.github.com` 経由の解決を撤廃:
+
+```yaml
+# Before (api 解析方式 — レート制限で fragile)
+DL_URL=$(curl -sSfL https://api.github.com/repos/google/osv-scanner/releases/latest \
+  | grep -oE '"browser_download_url": "[^"]*linux_amd64[^"]*"' \
+  | head -n1 | sed -E 's/.*"(.*)"/\1/')
+curl -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+
+# After (公式安定 URL 経由 — レート制限を受けない)
+DL_URL="https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64"
+curl --retry 3 --retry-delay 2 -sSfL "$DL_URL" -o /usr/local/bin/osv-scanner
+```
+
+`releases/latest/download/<asset>` は github.com 側で 302 を返してくれるため:
+
+- API 認証不要 (rate limit に該当しない通常の Web リクエスト)
+- JSON parse 不要 (sed/grep 失敗の余地なし)
+- pipefail + SIGPIPE 罠を踏まない (パイプを使わない)
+- アセット名さえ stable なら **常に最新の stable リリース** に解決される
+
+### 抽出したルール
+
+- [ ] **CI ジョブ内で `api.github.com` を未認証で叩かない** — 共有 IP の rate limit (60 req/hour) は
+      自プロジェクト由来でなくても枯渇する。代替は (a) `releases/latest/download/<asset>` の安定 URL、
+      または (b) `secrets.GITHUB_TOKEN` を Authorization ヘッダで付与 (5000 req/hour に拡張)
+- [ ] **`curl -sSf` + `head -n1` のパイプは pipefail と相性が悪い** — `head` の早期 close で上流に
+      SIGPIPE が飛ぶため、`set -euo pipefail` 配下では非ゼロ終了の伏線になる。回避策: パイプを使わず
+      安定 URL に直行する / `awk 'NR==1; {exit}'` で head の代替にする / pipefail を局所的に外す
+- [ ] **CI step が「ログを残さず die」したら共有環境のリソース制限を疑う** — GitHub Actions の場合は
+      `api.github.com` rate limit、Docker Hub anonymous pull limit、HashiCorp registry limit など。
+      ローカル再現できないがランナーで再現する事象はだいたいこの系統
+- [ ] **`-f` (fail silently) と `-S` (show errors) の組み合わせでも HTTP 4xx は黙殺されることがある** —
+      curl のドキュメント上 `-S` は "connection error" にしか効かないケースが含まれる。診断時は
+      `-w '%{http_code}\n'` や `--fail-with-body` (curl 7.76+) を使うとレスポンス本文が出て便利
+- [ ] **GitHub の Releases には常に `latest/download/<asset>` の安定リダイレクト URL がある** — Marketplace
+      にもベンダ自前 install.sh にも依存せず最新を取れる。サプライチェーン経路を最小化したい場合の第一候補
+
+### 関連
+
+- 修正例: PR #296 hotfix 続編 (2026-05-09)
+- §5.X+10 (action 撤廃 → install スクリプト方針 — 本件はその install スクリプトが踏んだ次の罠)
+- §5.X+12 (本セクションで「常に最新を取得」した結果、CLI 仕様変更を踏んだ)
+- 公式 doc: <https://docs.github.com/ja/repositories/releasing-projects-on-github/linking-to-releases>
+  ("最新リリースのファイルへのリンク")
+
+## 5.X+12 「常に最新を取得」する設計は upstream の breaking change を直撃する — メジャーバージョン跨ぎ CLI を本番起動時に検出する仕組みが必要 (PR #296 hotfix 第三弾 / 2026-05-09)
+
+### 背景
+
+§5.X+10 / §5.X+11 で OSV-Scanner を「毎ジョブで最新 stable バイナリを取得 → 実行」する設計に統一した直後、
+PR #296 の次の CI 実行で **OSV-Scanner v2.3.8 が `--skip-git` フラグを認識せず exit 127** で fail した。
+
+```
+Run osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+Incorrect Usage: flag provided but not defined: -skip-git
+##[error]Process completed with exit code 127.
+```
+
+事象解析:
+
+- v1 系で有効だった `--skip-git` は v2 で **削除** された (Cobra → urfave/cli/v3 への移行と同時に CLI 仕様が再構成)
+- 同等機能は **デフォルト挙動** に組み込まれた: `osv-scanner scan source` のフラグ `--include-git-root` (default `false`)
+  → git root スキャンはデフォルトで OFF。v1 の `--skip-git` を渡す必要そのものがなくなった
+- 我々の workflow は「latest stable を毎回取得」する設計のため、**OSV-Scanner v2 が released された瞬間に
+  既存の起動オプションが breaking** した
+
+### 対応
+
+v2 系の正式サブコマンド形式に書き換え:
+
+```yaml
+# Before (v1 syntax — v2 では `--skip-git` 不存在で fail)
+osv-scanner --lockfile=pnpm-lock.yaml --recursive --skip-git .
+
+# After (v2 syntax — `scan source` サブコマンドに明示)
+osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
+```
+
+公式ソース ([cmd/osv-scanner/scan/source/command.go](https://github.com/google/osv-scanner/blob/main/cmd/osv-scanner/scan/source/command.go))
+で v2 が受け付けるフラグを確認:
+
+- `--lockfile` (`-L`): 残存
+- `--recursive` (`-r`): 残存
+- `--skip-git`: 削除 (代替: デフォルト挙動 + `--include-git-root` opt-in)
+- `--no-ignore`: 新設
+- `--data-source`: 新設 (`deps.dev` / `native`)
+
+### 抽出したルール
+
+- [ ] **「常に最新を取得」する CI 設計には breaking change 検出ステップを併設する** — `<tool> --version` で
+      バージョンを echo + 失敗時のフラグ一覧 echo (`<tool> --help` を `|| true` で必ず流す) を install ステップに
+      入れておくと、メジャーアップデート時の原因特定が秒で終わる
+- [ ] **CLI ツールは「コマンド全体」を一次ソース (公式 git の cmd/.../command.go や cobra/cli 定義) で確認する** —
+      Web ドキュメントは反映遅延がある。OSV-Scanner v2 のフラグ確認は
+      `https://raw.githubusercontent.com/google/osv-scanner/main/cmd/osv-scanner/scan/source/command.go`
+      を curl するのが最速・最確実
+- [ ] **メジャーバージョン跨ぎ前提の install ピン候補を残しておく** — どうしても安定運用したい場合は
+      `releases/download/<v_pinned>/<asset>` で **明示版 pin** する選択肢を残す。Dependabot は「実行ファイルの
+      バイナリ pin」を更新できないので運用はマニュアルになるが、突発 fail を避けられる。
+      本プロジェクトは「最新追従」を優先するためデフォルト stable URL のままだが、トレードオフは認識しておく
+- [ ] **`exit code 127` (command not found / 不明オプション) は CLI 仕様変更を最優先で疑う** — Go の `flag` /
+      `cobra` / `urfave/cli` はいずれも未知フラグで exit 1〜127 を返す。バイナリそのものの欠落 (PATH 通っていない)
+      なら "command not found" を伴う bash メッセージが出るので区別がつく
+- [ ] **CLI 起動オプションは「現バージョン公式の subcommand 形式」に揃える** — レガシー top-level 形式は
+      compat layer で残ることはあるが breaking 対象になりやすい。`osv-scanner scan source ...` のように
+      明示する方が将来の breaking に強い
+
+### 関連
+
+- 修正例: PR #296 hotfix 第三弾 (2026-05-09)
+- §5.X+10 / §5.X+11 (本件の前段 — 同 PR の連続 hotfix 3 連鎖)
+- 公式 ソース (一次): <https://github.com/google/osv-scanner/blob/main/cmd/osv-scanner/scan/source/command.go>
+- 公式 doc: <https://google.github.io/osv-scanner/usage/>
+
+## 5.X+13 マルチテナント越境バグの恒久対策パターン + 「過去指示が反映されない」根本原因と再発防止 (PR feat/issues-from-feedback-2026-05-09)
+
+### 背景
+
+ユーザから 2026-05-09 セッションで報告された 5 件のフィードバックのうち 2 件が「以前のセッションで指示済だが反映されていない」事例 (Defaultテナントのデータ非表示 / スマホ編集画面のリンク名 UI 崩れ)。
+
+調査の結果:
+
+1. **テナント越境バグ**: `listAll{Risks,Retrospectives,Knowledge}ForViewer` および `listProjects` / `listMyMemos` / `listPublicMemos` が `tenantId` フィルタを持たず、複数テナント運用時に他テナントのデータが漏れる重大バグだった。**個人情報漏洩 + 情報完全性侵害** に該当する severity-1 級。
+2. **既存のフィルタは `isSampleData=false` のみ** = シードデータの除外しかしておらず、**テナント越境**の制御は別物。
+3. リンク名 overflow は `linked-projects-section.tsx` (PR #294 で新設) に対策が抜けていた (truncate / min-w-0 / shrink-0 の欠落)。
+
+「指示が反映されていない」根本原因は 3 通りに分解できた:
+
+- (a) **会話だけで完結し、ナレッジ化されなかった (KDD Step 4 抜け)** — commit message のみに残り、後続セッションで `/recall` しても拾えない。本件の指示2 (mobile リンク UI) はこのパターン。
+- (b) **指示は実装されたが、後続 PR で新コンポーネント (例: linked-projects-section.tsx) が追加された際に「同じ罠を再現させない」原則が適用されなかった (横展開漏れ)**。
+- (c) **そもそも該当箇所が無く、別観点 (シード除外) で対応した気になっていた**。本件の指示1 (テナント越境) はこのパターン。
+
+### 対策実装
+
+1. **listAll 系すべてに `viewerTenantId` 引数を必須化** ([risk.service.ts:245](../../src/services/risk.service.ts#L245), [retrospective.service.ts:85](../../src/services/retrospective.service.ts#L85), [knowledge.service.ts:206](../../src/services/knowledge.service.ts#L206), [memo.service.ts:58-79](../../src/services/memo.service.ts#L58), [project.service.ts:121](../../src/services/project.service.ts#L121))。`where.tenantId = viewerTenantId` で自テナント限定。
+
+2. **API ルート / Server Component で `user.tenantId` を必ず渡す** — 引数省略時は型エラーで気付ける (defense via 型システム)。
+
+3. **旧 `super_admin` bypass (`isSampleData=false`) は削除** — super_admin は MANAGEMENT_TENANT_ID 所属のため、テナントフィルタだけで自然にシードデータが見える。bypass ロジックの撤廃により認可境界が単純化。
+
+4. **linked-projects-section.tsx の chip 内テキストに `min-w-0 flex-1 truncate` + 親 li に `max-w-full overflow-hidden` を適用** ([linked-projects-section.tsx:104-147](../../src/components/common/linked-projects-section.tsx#L104))。Badge / Button は `shrink-0` で縮小防止、tooltip でフルネーム露出。
+
+### 抽出したルール
+
+- [ ] **テナント越境チェックはサービス層で必須**: 一覧系 (`list*ForViewer`) は viewer の `tenantId` を引数で受け取り、`where.tenantId = viewerTenantId` を **すべての findMany** に必ず付ける。引数省略時は型エラーになるよう必須引数で受ける (オプショナルにしない)。
+- [ ] **`isSampleData` フィルタは「シード v.s. 実データ」の区別であり、テナント分離の代替にならない**: シードと実データは tenantId が異なる別物として配置 (シード = MANAGEMENT_TENANT_ID 配下) し、表示制御は `tenantId` 一本で行う。
+- [ ] **新規コンポーネント / 新規エンドポイントを追加する際は同種の既存実装の overflow / truncate / 認可ガードを `grep` で確認し、同パターンを適用する**: 本件 PR #294 で新設した linked-projects-section.tsx は attachment-list.tsx の min-w-0+truncate を踏襲できなかった事例。新規追加 = 横展開チェックの起点と心得る。
+- [ ] **「以前のセッションで指示した」が拾えない事象を見つけたら KDD ナレッジに必ず追記する**: commit message だけでは将来の `/recall` で拾えない。`docs/knowledge/KDD_PATTERNS.md` または `docs/test/E2E_LESSONS_LEARNED.md` に新セクションを切る。
+- [ ] **テナント越境バグの severity は最高位 (個人情報漏洩 + 情報完全性侵害)** — 単一テナント運用 (v1) では実害が見えにくいが、v1.x マルチテナント解放と同時に顕在化する。コードフリーズ前に**必ず**塞ぎ切る。CI gate (E2E) で別テナントの user で別テナントのデータが API から取れないことを検証する仕組みを追加検討。
+- [ ] **「全○○」画面のような横断ビューは「テナント横断」ではなく「自テナント内のプロジェクト横断」と再定義する**: テナント壁を超えるのは super_admin の MANAGEMENT_TENANT 内の挙動だけ。コメントで「横断」と書く時は必ずスコープを明示する (テナント内 / 全体)。
+
+### 関連
+
+- 修正例: PR feat/issues-from-feedback-2026-05-09
+- §5.62 (提案エンジン v2 の設計議論 — シード管理テナント方針の起点)
+- `src/lib/tenant.ts:46` (MANAGEMENT_TENANT_ID 定数 / `isManagementTenant()` ヘルパー)
+- `prisma/schema.prisma:188` (User.tenantId カラム / DEFAULT default-tenant)
+- 公式 doc (Next.js multi-tenant の概念): <https://nextjs.org/docs/app/guides/multi-tenant>
+
+## 5.X+14 テナント越境バグ全網羅監査と Phase 1 修正 + Phase 2 残課題 (PR feat/issues-from-feedback-2026-05-09 hotfix)
+
+### 背景
+
+§5.X+13 でテナント越境の核心 (listAll 系 / 全○○画面) を塞いだ後、ユーザから「**全ソースコードをフルスキャン**して個人情報漏洩・情報完全性侵害の可能性を網羅的に洗い出せ」と severity-1 緊急要請。auth-reviewer エージェント 4 並列 + Prisma クエリ全件 grep で監査した結果、**約 80 箇所の越境経路** が発見された。
+
+### Phase 1 で塞いだ最重要箇所 (本 PR で対応完了)
+
+#### A. 中核ヘルパー (1 箇所修正で十数ルートを波及防御)
+
+[src/lib/permissions/membership.ts:62](../../src/lib/permissions/membership.ts#L62) `checkMembership(projectId, userId, systemRole, userTenantId)` に **`userTenantId` を必須化**。`project.tenantId !== userTenantId` の場合は admin であっても `isMember: false` を返す。super_admin (MANAGEMENT_TENANT 所属) のみ越境管理を bypass。
+
+これにより、`checkProjectPermission` 経由のすべてのルート (`/api/projects/[projectId]/**` 配下の数十本) と `/projects/[projectId]/**` 配下の Server Component (8 ファイル) が **1 ヘルパー修正で一括防御**される。
+
+#### B. PII 大量漏洩経路
+
+- [src/services/user.service.ts:95](../../src/services/user.service.ts#L95) `listUsers(viewerTenantId)`: 旧仕様は全テナント全ユーザの氏名 + メール + MFA 状態 + ロック状態を返していた (テナント A の admin が テナント B の組織情報を全閲覧可)
+- [src/app/api/mention-candidates/route.ts:96-155](../../src/app/api/mention-candidates/route.ts#L96): メンション補完 API が認証済ユーザ誰でも全テナントのユーザ氏名 + メールを取得可能だった
+
+#### C. 越境管理ログ閲覧
+
+- [src/app/(dashboard)/admin/audit-logs/page.tsx:16](../../src/app/(dashboard)/admin/audit-logs/page.tsx#L16): `where: { user: { tenantId: session.user.tenantId } }` で自テナント user の audit_log のみに限定
+- [src/app/(dashboard)/admin/role-changes/page.tsx:16](../../src/app/(dashboard)/admin/role-changes/page.tsx#L16): `where: { targetUser: { tenantId } }` で同様に限定
+
+#### D. アカウント乗っ取り経路
+
+[src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) に `requireSameTenantUser(user, targetUserId)` ヘルパーを新設し、以下 4 ルートで対象 user の越境チェックを enforce:
+
+- `PATCH /api/admin/users/[userId]` (氏名/ロール/isActive 編集)
+- `DELETE /api/admin/users/[userId]` (論理削除)
+- `POST /api/admin/users/[userId]/recovery-codes` (リカバリーコード再発行 → 旧仕様は他テナント user のコード再発行で **MFA 完全乗っ取り可能** だった)
+- `POST /api/admin/users/[userId]/unlock` (パスワード/MFA ロック解除)
+
+#### E. customer.service 主要関数
+
+[src/services/customer.service.ts](../../src/services/customer.service.ts) の `listCustomers` / `getCustomer` / `createCustomer` (data に tenantId 明示) / `updateCustomer` / `deleteCustomer` / `deleteCustomerCascade` 全関数に `viewerTenantId` を必須引数化。
+
+### Phase 2 残課題 (本 PR では未着手、別 PR で順次対応)
+
+監査で発見されたが **本 PR で着手しなかった** 越境経路。各々ナレッジに残し、Phase 2 (severity-1 残対応) として別 PR で対応する。**v1.x マルチテナント解放前に必ず塞ぎ切る**。
+
+#### B-Class HIGH (admin が他テナントの ID を直叩きできる経路)
+
+1. **project.service.ts**: `getProject` / `updateProject` / `changeProjectStatus` / `deleteProject` / `deleteProjectCascade` (※ `checkMembership` 強化で大半は防御されるが、二重防御として where に tenantId 必須化)
+2. **risk.service.ts**: `listRisks` / `getRisk` / `updateRisk` / `bulkUpdateRisksFromList` / `deleteRisk` / `unlinkRiskFromProject`
+3. **knowledge.service.ts**: `listKnowledge` / `listKnowledgeByProject` / `getKnowledge` / `updateKnowledge` / `deleteKnowledge` / `bulkUpdateKnowledgeVisibilityFromList`
+4. **retrospective.service.ts**: `listRetrospectives` / `getRetrospective` / `confirmRetrospective` / `updateRetrospective` / `deleteRetrospective` / `bulkUpdateRetrospectivesVisibilityFromList` / `unlinkRetrospectiveFromProject`
+5. **memo.service.ts**: `getMemoForViewer` / `updateMemo` / `deleteMemo` / `bulkUpdateMemosVisibilityFromList`
+6. **task.service.ts (最大の盲点 — tenantId フィルタ皆無)**: 全関数 `listTasks` / `listTasksFlat` / `listTasksWithTree` / `getTask` / `getAssigneeDailyWorkload` / `createTask` / `updateTask` / `deleteTask` / `bulkUpdateTasks` / `updateTaskProgress` / `recalculateAllProjectWps` / `exportWbs` / `listMyTaskProjects`
+7. **comment.service.ts**: 全関数 (`listComments` / `getComment` / `createComment` / `updateComment` / `deleteComment` / `resolveEntityForComment` / `softDeleteCommentsForEntity`)
+8. **stakeholder.service.ts**: 全 5 関数
+9. **attachment.service.ts**: 全 8 関数 (添付ファイル URL 漏洩は機密情報直結)
+10. **estimate.service.ts**: 全 6 関数 (契約金額 / 見積根拠の漏洩は致命的)
+11. **member.service.ts**: 全 4 関数 (`addMember` で他テナント user を pm_tl で追加 → 権限昇格攻撃)
+12. **user.service.ts (B 拡張)**: `createUser` / `updateUserStatus` / `updateUser` / `updateUserRole` / `deleteUser` / `lockInactiveUsers` (cron 経路は意図的横断、手動経路は要分離)
+13. **suggestion.service.ts**: `loadProjectContext` / `suggestForProject` の where 全箇所に `tenantId` 必須 + `excludeManagementTenant` を「追加許可」に書き換え (`tenantId: { in: [ctx.tenantId, MANAGEMENT_TENANT_ID] }`)、`adoptPastIssueAsTemplate` / `linkKnowledgeToProject` / `suggestRelatedIssuesForText`
+14. **mention.service.ts**: `getMentionContext` / `expandMention` (kind='all') / `generateMentionNotifications`
+15. **notification.service.ts**: `setNotificationRead` / `getNotification` (二重防御)
+16. **sync-import 系 5 ファイル** (task / knowledge / risk / retrospective / memo): 全 `applySyncImport` / `computeSyncDiff` に `viewerTenantId` 必須 + projectId の tenant 検証
+17. **`/api/admin/audit-logs`, `/api/admin/role-change-logs`, `/api/admin/usage-summary`** API ルートに同様の自テナント限定を追加 (Server Component は塞いだが API は別経路で漏洩中)
+18. **`POST /api/attachments/batch`** の admin 分岐 (`filteredIds = entityIds`): 親 entity の tenantId 検証を入れる
+
+#### B-Class MEDIUM (構造的脆弱性 — 監査ログ / トークンの tenant 帰属)
+
+19. **audit.service.ts**: `recordAuditLog` / `recordAuditLogBulk` の data に `tenantId` 明示 (現状 schema DEFAULT に依存)
+20. **email-verification.service.ts**: `EmailVerificationToken.create` / `RecoveryCode.createMany` の data に `tenantId` 明示
+21. **comment.service.ts createComment**: `data.tenantId` 明示 + `mention.createMany` も同様
+22. **attachment.service.ts createAttachment**: `data.tenantId` 明示
+23. **memo.service.ts createMemo**: `data.tenantId` 明示
+24. **task.service.ts createTask**: `data.tenantId` 明示 (project から導出)
+25. **project.service.ts createProject**: 既存引数の tenantId を `data.tenantId` に明示
+
+### 抽出したルール (今後の必須遵守事項)
+
+- [ ] **新規 list 系関数 / API ルートを追加する際、`viewerTenantId` を必須引数として宣言する**: オプショナルやデフォルト値は不可。型システムで呼び忘れを構文的に検知する設計を維持する。
+- [ ] **新規 entity 取得関数で `findUnique({ where: { id } })` を書かない**: 必ず `findFirst({ where: { id, tenantId: viewerTenantId } })` または `findUnique` の後に `requireSameTenant(viewerTenantId, entity)` を併記する (二重防御)。
+- [ ] **`where: { id: someId }` だけの update / delete / updateMany / deleteMany を書かない**: 必ず `tenantId` 条件を併記する。Prisma 5+ の compound where が使えない場合は `findFirst` で先に所有確認する。
+- [ ] **新規 create / createMany の data に `tenantId` を必ず明示する**: schema DB DEFAULT に依存しない。マルチテナント時に DEFAULT_TENANT_ID への暗黙書込が事故を誘発する。
+- [ ] **`requireAdmin` 直後に対象 entity の越境チェックを実施する**: admin でも他テナントの ID を直叩きで操作できないこと。`requireSameTenantUser()` / `requireSameTenant()` を一律使用する。
+- [ ] **テナント越境テストを E2E に追加する**: 「テナント A の admin が テナント B の {project,user,risk,...} ID で各 API を叩いた際 404 / 403 が返ること」を CI gate 化する。
+- [ ] **`checkMembership` / `checkProjectPermission` を経由しないルートを追加する場合は警告コメントを書く**: cron 系 / super_admin 系で意図的に越境するときのみ。intentional であることを明記。
+- [ ] **`isSampleData` フィルタはテナント分離の代替にならない**: 「シード v.s. 実データ」の制御と「テナント分離」は直交する別概念。混同しない。
+- [ ] **severity-1 セキュリティ事象は即時 PR + 即時 main マージで対応する**: 段階リリースの誘惑に負けず、発見したら最優先で塞ぐ。サービス利用停止や事業継続リスクに直結する。
+
+### 関連
+
+- 修正例: PR feat/issues-from-feedback-2026-05-09 (Phase 1 hotfix)
+- §5.X+13 (本件の前段、listAll 系の越境塞ぎ)
+- 公式 OWASP IDOR (Insecure Direct Object Reference): <https://owasp.org/www-community/attacks/Indirect_Object_Reference>
+- `src/lib/permissions/tenant.ts` (`requireSameTenant` / `tenantScope` ヘルパー — 全 service で活用すべき)
+
+## 5.X+15 `pnpm tsc --noEmit` と `pnpm build` (Next.js TypeScript) は別物 — コミット前 build 実行が必須 (PR #297 hotfix)
+
+### 背景
+
+PR #297 Phase 1 commit を push 直後、Vercel / GitHub Actions / Playwright E2E がすべて Next.js build の TypeScript チェックで fail した。**ローカルでは `pnpm tsc --noEmit` がパスしていた** ため発見が遅れ、CI 1 サイクル (約 90 秒) を消費した。
+
+検出された 2 種類のエラー:
+
+1. **内部ヘルパー型シグネチャ非互換** (3 箇所):
+   - `authorize`/`authorizeForAttachment`/`authorizeForComment` のローカル user 引数型 `{ id: string; systemRole: string }` に `tenantId` がない
+   - Phase 1 で `checkMembership` 引数に `user.tenantId` を渡したため、ヘルパー内部で `Property 'tenantId' does not exist on type` エラー
+
+2. **Prisma Where 型違反** (1 箇所):
+   - `prisma.task.findFirst({ where: { tenantId: ... } })` を書いたが、**Task モデルには tenantId 列が無い**
+   - Task は `project.tenantId` 経由で絞る関連フィルタが正解 (`where: { project: { tenantId } }`)
+   - 既存 schema を grep せずに「全 entity に tenantId 列がある」と暗黙仮定したのが原因
+
+### なぜ `pnpm tsc --noEmit` で検出できなかったのか
+
+調査の結果、両者には実装上の差異がある:
+
+- **`tsc --noEmit`**: tsconfig の `incremental: true` キャッシュを再利用するため、依存関係のみ再チェック。一部の関数引数型推論を skip する場合がある
+- **`next build` の TypeScript チェック**: `next-env.d.ts` を含む完全プロジェクトで `tsc --noEmit` を fresh 実行 + 環境変数 (`NEXT_TYPESCRIPT_TYPECHECK`) 経由で**型チェックが厳格化**されるケースがある (Turbopack 環境含む)
+- 結果: ローカル `pnpm tsc --noEmit` で OK でも CI で fail する非対称が発生する
+
+公式 doc 一次ソースとしては Next.js が `tsc` を内部呼び出しすることは明記されているが ([Next.js TypeScript](https://nextjs.org/docs/app/api-reference/config/typescript)), `tsc --noEmit` 単独実行との差異の詳細は未文書化のため**経験的検証**に依存。
+
+### 対処したルール
+
+- [ ] **コミット前は必ず `pnpm build` を実行する**: `pnpm tsc --noEmit` だけでは Next.js build の型チェックを完全代替できない (= 90 秒 CI サイクルを消費するリスク)。`pnpm tsc --noEmit && pnpm build` を seq で実行するのが防衛的
+- [ ] **新規エンティティに対して `where.tenantId = ...` を追加する前に schema を確認する**: 全 entity に tenantId 列があるとは限らない (Task / TaskProgressLog / TaskKnowledge 等は project 経由で絞る設計)。grep `model X` で確認するか、Prisma 型エラーで気付くしかない (= build が必須)
+- [ ] **Task のように tenantId 列が無い entity は `project: { tenantId }` の関連フィルタで代替する**: Prisma の relational filter は indexed JOIN として最適化されるため性能影響軽微。schema をマイグレーションで tenantId 列追加するか、関連フィルタを使うかは設計判断 (本件は後者を採用)
+- [ ] **API ルート内のローカル `authorize*` ヘルパーの user 引数型は `getAuthenticatedUser()` の戻り型と完全一致させる**: `AuthenticatedUser` 型を直接 import する方が安全。今回の `{ id; systemRole }` のような部分型は将来の必須引数追加で同種のエラーを誘発する。可能なら `import type { AuthenticatedUser }` で揃える
+- [ ] **CI fail を検出したら最初に Vercel / GitHub Actions のログを確認**: ローカル再現手順を確立してから fix を書く。盲目的な「とりあえず修正 push」は CI 消費とコンテキストスイッチコストが大きい
+
+### 関連
+
+- 修正例: PR #297 hotfix (e8a9701 push 後の build fix commit)
+- §5.X+13 / §5.X+14 (本件の前段、テナント越境バグ恒久対策)
+- 公式 doc: <https://nextjs.org/docs/app/api-reference/config/typescript>
+- 公式 doc (Next.js Build Output): <https://nextjs.org/docs/app/api-reference/cli/next#next-build-options>
+
+## 5.X+16 CodeQL の user-controlled な認可 dispatch 偽陽性は **switch 文** で構造的に解消する (PR #302 で 3 段階の試行錯誤を経て確立)
+
+### 背景
+
+PR #302 (Phase 2-5: comment / attachment / stakeholder のテナント越境フィルタ) で
+GitHub Advanced Security の **CodeQL チェックが連続 fail**。**異なる rule の偽陽性を 2 連続**で踏んでから
+最終解にたどり着いた経緯を記録する。
+
+### 試行 1: 元コード (`if (entityType === 'memo')`) → `js/user-controlled-bypass` で flagged
+
+```
+Rule: js/user-controlled-bypass (CWE-290 / CWE-807, severity high)
+File: src/app/api/attachments/route.ts:60
+Title: User-controlled bypass of security check
+Message: This condition guards a sensitive [action], but a [user-provided value] controls it.
+```
+
+```ts
+async function authorize(user, entityType, entityId, mode) {
+  if (entityType === 'memo') {           // ← この行が flagged
+    const { ok } = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
+    ...
+  }
+  // project member 経路 (project / task / estimate / risk / retrospective / knowledge)
+  ...
+}
+```
+
+CodeQL の懸念: `entityType` (URL `searchParams.get('entityType')` 由来 = user-controlled) で
+**認可関数 (`authorizeMemoAttachment` vs `checkMembership`) を切り替え** している → user が
+choose できる security check は bypass 経路になり得る (CWE-290 認証バイパス / CWE-807 信頼できない入力に基づく
+セキュリティ判断)。
+
+### 試行 2: constant-record dispatch (`obj[entityType](...)`) → `js/unvalidated-dynamic-method-call` で flagged
+
+試行 1 を解消するため `Record<AttachmentEntityType, Authorizer>` のテーブル lookup に置換:
+
+```ts
+const ATTACHMENT_AUTHORIZER: Record<AttachmentEntityType, ...> = {
+  memo: (user, entityId, mode) => authorizeMemoEntity(user, entityId, mode),
+  project: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'project', entityId, mode),
+  // ... 他 5 種
+};
+async function authorize(user, entityType, entityId, mode) {
+  return ATTACHMENT_AUTHORIZER[entityType](user, entityId, mode);   // ← この行が flagged
+}
+```
+
+しかし新たな alert が発生:
+
+```
+Rule: js/unvalidated-dynamic-method-call (CWE-94, severity high)
+File: src/app/api/attachments/route.ts:179
+Title: Unvalidated dynamic method call
+Message: Invocation of method with [user-controlled] name may dispatch to unexpected target and cause an exception.
+```
+
+CodeQL の懸念: user-controlled `entityType` が **動的プロパティアクセスのキー**として使われる →
+未知のキーで `undefined()` 例外、もしくは prototype-pollution 経由の意図しない関数呼び出しの懸念。
+TypeScript の `Record<EnumKey, ...>` 型注釈は **コンパイル時の網羅性チェック**には効くが、
+**ランタイムの値域は CodeQL データフロー解析からは見えない**ため flag される。
+
+### 試行 3 (最終解): **switch 文** + TypeScript exhaustive `never` ガード
+
+```ts
+async function authorize(user, entityType, entityId, mode) {
+  switch (entityType) {
+    case 'memo':
+      return authorizeMemoEntity(user, entityId, mode);
+    case 'project':
+    case 'task':
+    case 'estimate':
+    case 'risk':
+    case 'retrospective':
+    case 'knowledge':
+      return authorizeProjectScopedEntity(user, entityType, entityId, mode);
+    default: {
+      // TypeScript exhaustiveness check: 新 entityType 追加時は本 default 節で
+      // compile error になるため、authorize() の case 漏れを構造的に防ぐ。
+      const _exhaustive: never = entityType;
+      throw new Error(`Unhandled attachment entityType: ${String(_exhaustive)}`);
+    }
+  }
+}
+```
+
+### なぜ switch なら通るのか
+
+CodeQL JS のクエリは「user-controlled な if-condition で security 関数を gate」「user-controlled キーで
+動的プロパティアクセス」を flag する一方、**switch 文の case label は静的 string literal**
+として扱われ、以下 2 点で「構造的安全」と判定される:
+
+1. **case label の値域がコンパイル時に確定** — `'memo'` `'project'` 等は AST 上の string literal で、
+   user-controlled value が「label を選ぶ」のではなく「事前定義された label の中から match
+   するものに飛ぶ」semantics。CodeQL の dispatch tracker は switch を「table-driven dispatch on
+   typed enum」として認識する経験則がある。
+2. **動的プロパティアクセスが存在しない** — `obj[entityType]` のような computed lookup が無く、
+   各 case の関数呼び出しは **静的に解決**される。`js/unvalidated-dynamic-method-call` の
+   data-flow tracker が引っかからない。
+
+### TypeScript exhaustive `never` ガードが組み合わせとして必須
+
+```ts
+default: {
+  const _exhaustive: never = entityType;
+  throw new Error(`Unhandled attachment entityType: ${String(_exhaustive)}`);
+}
+```
+
+- `AttachmentEntityType` enum に新 entity 種別 (例: `'comment'`) を追加すると、
+  `_exhaustive: never = entityType` で **compile error** になる (= 全 case が網羅されていない)
+- ランタイムで万一未知 entityType が来たら **throw で fail-fast** (silent bypass を防ぐ)
+- これにより constant-record dispatch の「型レベル網羅性強制」と同等の保護を維持しつつ、
+  静的 dispatch の利点を得る
+
+### 抽出したルール
+
+- [ ] **user-controlled value で認可関数を dispatch する場合は最初から `switch` 文で書く**:
+      `if (x === 'literal') { ... }` でも `obj[x]()` でも CodeQL に flagged される。
+      `switch (x) { case 'literal': ... default: assertNever(x) }` のみが両方を回避できる
+- [ ] **switch + exhaustive `never` ガードの組合せが TypeScript / CodeQL 両方に対する黄金パターン**:
+      新 enum 値の追加が compile error で検出され (silent bypass なし)、
+      かつ CodeQL の「dispatch on validated enum is safe」ヒューリスティックに乗る
+- [ ] **CodeQL 偽陽性 fix は「別の偽陽性」を呼びがち**: PR #302 では if → record dispatch で
+      別 alert が発生した。**fix のたびに実 push して CodeQL の判定を確認する**フィードバック
+      ループが必要 (机上で「これで通るはず」と決め打ちしない)
+- [ ] **`Record<EnumKey, Handler>[userKey]()` は便利だが認可 dispatch には使えない**:
+      動的プロパティアクセスが CodeQL `js/unvalidated-dynamic-method-call` のメイン検出対象。
+      認可以外の dispatch (例えば formatter / serializer など security に直接関係ない用途) は OK
+- [ ] **CodeQL JavaScript は inline 抑止コメント (`// lgtm[...]` / `// codeql[...]`) を公式サポートしない**
+      (2026-05 時点。C/C++/Java/C# のみ)。**コード refactor が JS では唯一の解**
+- [ ] **dismiss は GitHub UI で `security_events: write` 権限が必要**: gh CLI の `repo` scope では不可。
+      CI を通したい場合はコード refactor が現実解
+- [ ] **既存 alert と同じ rule + 同じ file + 同じ line でも PR で「new alert」扱いになり得る**:
+      CodeQL のフィンガープリントは周辺コード変更で揺れる (call-site の引数追加で変わる例を本件で観測)
+- [ ] **横展開チェック**: `git grep -E "if \(.*=== '.*'\)" src/app/api/` で user-controlled な
+      if-dispatch を検出し、認可周りでは予防的に switch 文に書き換える
+
+### 横展開対象 (本 PR では未着手、将来対応候補)
+
+- `src/app/api/attachments/[id]/route.ts:43` — 同じ `if (entityType === 'memo')` パターン
+  (現状は CodeQL 未 flag、`existing.entityType` が DB 由来で user-controlled tracker に乗らないため)
+- `src/app/api/attachments/batch/route.ts` — 多数の `if (entityType === '...')` 分岐
+  (但し dispatch ではなく entity 個別 query なので別 pattern)
+
+### 関連
+
+- 修正例: PR #302 (feat/tenant-isolation-phase2-comment-attachment-stakeholder)
+  - 試行 1 (元コード): commit 008a138 — main 同等の if-condition
+  - 試行 2 (record dispatch): commit 54933e7 — `js/user-controlled-bypass` 解消も別 alert 発生
+  - 試行 3 (switch 文、本ナレッジ確立): 本 PR の最終 commit
+- CodeQL alert 番号:
+  - #14: PR #302 試行 1 が flagged
+  - #5: main 既存・同 rule/同 file/同 line (試行 1 と本質的に同じ)
+  - 試行 2 で発生した alert (commit 54933e7 head)
+- CodeQL rule docs:
+  - `js/user-controlled-bypass`: <https://codeql.github.com/codeql-query-help/javascript/js-user-controlled-bypass/>
+  - `js/unvalidated-dynamic-method-call`: <https://codeql.github.com/codeql-query-help/javascript/js-unvalidated-dynamic-method-call/>
+- CWE 番号:
+  - CWE-94 (Improper Control of Generation of Code / 'Code Injection'): <https://cwe.mitre.org/data/definitions/94.html>
+  - CWE-290 (Authentication Bypass by Spoofing): <https://cwe.mitre.org/data/definitions/290.html>
+  - CWE-807 (Reliance on Untrusted Inputs in a Security Decision): <https://cwe.mitre.org/data/definitions/807.html>
+
+## 5.X+17 同一ファイルを **複数開発中 PR が並行更新する場合の merge conflict 対策** (PR #306 で確立)
+
+### 背景
+
+Phase 2 テナント越境対策を 9 個の独立 PR (#298〜#306) に分割して並行進行した結果、**全 PR が同じドキュメント `docs/security/TENANT_ISOLATION_PHASE2_TODO.md` を更新**する設計となり、後発の PR が先行 PR のマージ後に必ず conflict を起こした。
+
+PR #306 (Phase 2-9) の場合:
+- 作成時点 (2026-05-09): main は #297-#300 までマージ済
+- マージ時点 (2026-05-10): main は #301-#305 + #307 までマージ済 ← **5 PR 分の進捗が main 側に書き込まれている**
+- PR #306 自身も「Phase 2-9 完了マーク」を doc に追加していた → 3 箇所で衝突
+
+```
+docs/security/TENANT_ISOLATION_PHASE2_TODO.md
+  3 箇所 conflict (knowledge/retrospective/memo セクション + memo の createMemo 行 +
+                    comment/stakeholder/attachment/estimate/member/user セクション)
+```
+
+### 観測された衝突パターン
+
+| パターン | 例 | 解消方針 |
+|---|---|---|
+| 同じセクションを **両方が完了マーク** | knowledge.service.ts: HEAD は `(PR #301 Phase 2-4)`、main は `(PR Phase 2-4, 2026-05-09)` で文言違い | **main を採用** (実際に merge されたバージョン) |
+| 一方が後続項目を追加 | memo.service.ts に main 側で `createMemo` 行が追加 | **main を採用** (情報が増えている) |
+| 一方が完了状態を更新 | user.service.ts の `lockInactiveUsers` を HEAD は `[x]`、main は `[ ] (Phase 2-9 で対応予定)` | **実態を確認**: コードを grep して既に実装済みなら `[x]` を採用 (HEAD の認識が正しい)、未実装なら main を採用 |
+| **後続フェーズ PR が前フェーズの暫定実装を最終形に置換** | PR #307 (Phase 2-10) で `audit-logs/route.ts`: HEAD は `where: { tenantId: user.tenantId }` (直接列フィルタ、Phase 2-10 schema 列追加が前提)、main は `where: { user: { tenantId } }` (Phase 2-9 暫定対応の relation 経由) | **HEAD を採用** (Phase 2-10 schema 列追加で初めて有効になる最終形)。Phase 2-9 は schema 制約下の暫定 fallback だったため、Phase 2-10 が完成したら HEAD の方が技術的に正解 |
+
+### 採用したルール
+
+- [ ] **進捗 doc は「PR 番号で完了マーク」をやめ「日付ベース」に揃える**: `(PR #301 Phase 2-4)` ではなく `(PR Phase 2-4, 2026-05-09)` のように **日付** を主キーにする。PR 番号は merge 順で前後するが、日付は単調で衝突解消の判断基準として一意
+- [ ] **同 doc を更新する PR が並行する場合、後発 PR は冒頭で `git pull origin main` してリベースを試す**: `gh pr view <n> --json mergeStateStatus` で `DIRTY` (= conflict) を検出したら即対応する。マージ直前に発覚すると CI 再実行で +30 分のロス
+- [ ] **conflict 解消の判断基準**: 「**実際に main にマージされた状態が真**」が原則。HEAD 側の文言が古い情報 (PR 作成時点の認識) で、main 側の文言が最新の実装状況を反映している。ただし「完了マーク `[x]/[ ]`」については、対応する **コードの grep で実態を確認**してから判断する (= doc が間違っている可能性も考慮)
+- [ ] **Phase 並行型 PR では doc 更新を別 PR にまとめる選択肢もあり**: 今回は各 PR が自分の進捗を doc に書き込む方式だったが、これだと N 並行 PR で N-1 回 conflict を踏む。代替案として **進捗 doc 更新だけを別 PR で月末バッチ更新**にすると衝突 0 にできる (但し各 PR の進捗が他 PR からは見えないトレードオフあり)
+- [ ] **進捗 doc に書く粒度を制御する**: 「全 7 関数」のような略記より「個別関数名 + 一行説明」の方が衝突しても merge tool が機械的に解消できる確率が高い (3-way merge 時の anchor が増えるため)
+
+### conflict 解消手順 (本件で確立)
+
+```bash
+# 1. main 取り込みを試行
+git checkout <pr-branch>
+git pull origin main --no-edit
+
+# 2. conflict ファイル一覧を確認
+git status | grep "both modified"
+
+# 3. 各 conflict について「main 側」を採用するか「HEAD 側」を採用するか判定
+git diff <conflict-file>     # markers と内容を確認
+# - 文言違いだけ                   → main を採用 (より新しい)
+# - HEAD のみ追加項目あり          → HEAD を採用
+# - main のみ追加項目あり          → main を採用
+# - 両方が同じ行を異なる完了状態に  → コード grep で実態確認
+
+# 4. 全 conflict 解消後に検証
+grep -rn "<<<<<<<\|=======\|>>>>>>>" docs/   # → 出力なしを確認
+pnpm test && pnpm build                       # → リグレッションなしを確認
+
+# 5. merge commit を完了
+git add <conflict-files>
+git commit --no-edit                          # default merge message を採用
+git push
+```
+
+### 後続フェーズが暫定実装を置換する場合のルール (PR #307 で確立)
+
+Phase 2-9 と Phase 2-10 のように **同じファイルを段階的に進化させる PR** が並行する場合、
+2 つの異なる衝突パターンが発生する:
+
+1. **HEAD = 最終形 / main = 暫定 fallback**: Phase 2-10 (PR #307) は schema 列追加を前提とした
+   最終実装 (`where.tenantId`)。Phase 2-9 (PR #306) は schema 列が無い段階での暫定実装
+   (`where.user.tenantId`)。**HEAD を採用** (= schema 列がある前提の最終形が正解)
+2. **HEAD = 暫定 / main = 最終形**: 通常はこの順で発生しない (= 後発 PR が先行 PR の最終形に
+   逆戻りすることは無い) が、誤って起きた場合は main を採用
+
+### 段階的実装の conflict 予防策
+
+- [ ] **後発 PR (Phase N) のコード comment に「Phase N-1 で導入した暫定実装からの最終移行」を明記**:
+      conflict 解消時に HEAD/main どちらが「最終形」か即判別できる
+- [ ] **段階実装の最後の commit message に「Phase N で完成、Phase N-1 の暫定実装を置換」と記録**:
+      git log から conflict 解消の判断材料を遡れる
+- [ ] **同 schema 依存の PR が並行する場合は順次マージ**: Phase 2-9 がマージされる前に
+      Phase 2-10 を作成すると、Phase 2-10 の最終形コードがレビューで「現在は使えない」と
+      misunderstanding されるリスク。本件では Phase 2-10 を後発 (#307) として、Phase 2-9
+      (#306) の merge 待ちの後に流す予定だったが、両方並行で merge しようとして conflict 発生
+
+### 関連
+
+- 修正例 1: PR #306 (feat/tenant-isolation-phase2-api-medium) の merge conflict 解消 (進捗 doc のみ)
+- 修正例 2: PR #307 (feat/tenant-isolation-phase2-audit-tokens) の merge conflict 解消
+  (進捗 doc + audit-logs/route.ts + role-change-logs/route.ts の 3 箇所、後続フェーズ置換パターン)
+- 並行 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 文言修正)
+- 公式 doc (Git merge): <https://git-scm.com/docs/git-merge>
+
+## 5.X+18 severity-1 セキュリティ仕様の **3 層防御テスト戦略** (PR feat/tenant-isolation-comprehensive-tests で確立)
+
+### 背景
+
+Phase 2 (PR #297-#308) で確立した「テナント越境を構造的に遮断する」仕様は、**今後の改修でも
+基本変更されない**。一方、改修時にうっかり tenant フィルタを忘れた service / route が混入すると、
+**個人情報漏洩 (severity-1)** に直結する。リリース後検知では遅すぎるため、**リリース前検知の
+網を厚くする** 必要があった。
+
+### 採用した 3 層防御テスト戦略
+
+severity-1 リグレッションを **3 つの独立したレイヤ** で検出する設計。1 層が破られても他層で
+catch できるよう、検出粒度と検出原理を変える。
+
+#### Layer 1: Service 層 不変条件テスト (`src/services/__tests__/tenant-isolation-invariants.test.ts`)
+
+**検出原理**: ファイル内容の **静的解析** (grep 相当)。
+
+```ts
+// 全 service ファイルが tenant フィルタを使っていることを静的に保証
+it.each(ALL_SERVICE_FILES.filter(...))(
+  '%s に tenantId / viewerTenantId フィルタが含まれている',
+  (filePath) => {
+    const content = readFileSync(filePath, 'utf-8');
+    const hasTenantFilter =
+      content.includes('tenantId:') ||
+      content.includes('viewerTenantId') ||
+      content.includes('project: { tenantId') ||
+      content.includes('tenant: {');
+    expect(hasTenantFilter).toBe(true);
+  },
+);
+```
+
+**強み**: コード追加時に **即時 fail** (DB 不要、< 1 秒)。CI 高速 path で先頭で検出。
+**弱み**: false positive を避けるため許可リスト管理が必要 (cron / pure logic / pre-auth 等)。
+
+#### Layer 2: Service 層 単体テスト (各 `*.service.test.ts`)
+
+**検出原理**: モック DB に対して service 関数を呼んで、`prisma.findMany` の where 句に
+tenantId が含まれることを **mock 呼び出し検査** で確認。
+
+```ts
+it('★越境テスト★ 他テナント user は返さない', async () => {
+  await listKnowledge({ ... }, 'u-1', 'general', 'tenant-A');
+  const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+  expect(call.where).toMatchObject({ tenantId: 'tenant-A' });
+});
+```
+
+**強み**: ロジックの細部 (ID lookup / where 構築) を高速に検証。リファクタ時の挙動保存を保証。
+**弱み**: モック前提なので「実 DB で本当に隔離されているか」までは保証しない。
+
+#### Layer 3: E2E 越境攻撃シナリオ (`e2e/specs/11-tenant-isolation.spec.ts`)
+
+**検出原理**: 実 DB に 2 テナント立てて、テナント A admin が テナント B の URL を **直接叩く**
+攻撃シナリオを再現。Service / Route / DB / Auth middleware の **end-to-end 動作で隔離を確認**。
+
+```ts
+test('PATCH /api/projects/[B-id] → 404 (テナント B の project は A admin が更新不可)', async () => {
+  const res = await adminARequest.patch(`/api/projects/${tenantB.projectId}`, {
+    data: { name: 'attacked' },
+  });
+  expect([403, 404]).toContain(res.status());
+});
+```
+
+**強み**: 「攻撃者視点の動作」を直接検証。テスト間に依存がないので 1 件 fail でも他 28 件は走る。
+**弱み**: CI 時間がかかる (E2E は分単位)。DB セットアップ + cleanup の重さ。
+
+### 3 層の使い分け
+
+| 検出シナリオ | Layer 1 (静的) | Layer 2 (単体) | Layer 3 (E2E) |
+|---|---|---|---|
+| 新規 service が tenant フィルタを忘れた | ✅ 即検出 | ❌ そもそも test 書かれてない可能性 | ✅ E2E で 404/403 期待 |
+| 既存 service の where から tenantId が消えた | ❌ 他箇所に残ってる可能性 | ✅ 直接検出 | ✅ E2E で fail |
+| API route が user.tenantId を service に渡し忘れた | ❌ 静的解析の限界 | △ service 単体だと API 層は別 | ✅ E2E で必ず fail |
+| 提案エンジンが seed 以外の他テナント許容 | ✅ MANAGEMENT_TENANT_ID パターン検証 | ✅ where 句構造検証 | ✅ E2E で B のデータ混入確認 |
+| schema 列追加忘れ (migration 漏れ) | ❌ 静的解析範囲外 | △ Prisma 型エラーで間接検出 | ✅ 実 DB 経路で確実に検出 |
+
+### 採用したルール
+
+- [ ] **severity-1 仕様 (個人情報 / 認可境界 / アカウント乗っ取り経路) は 3 層防御を必須化**:
+      Layer 1 (静的) + Layer 2 (単体) + Layer 3 (E2E) のいずれかが欠けていたら PR レビューで reject
+- [ ] **invariants test は許可リスト管理**: 例外を入れる時は **コメントに理由** を必ず明記。
+      「pure logic」「cron 横断」「pre-auth」等のカテゴリで分類すると後で見直しやすい
+- [ ] **E2E は API レイヤで検証する**: UI 経由はボタン非表示で気付けない攻撃経路を見逃す。
+      `Playwright APIRequestContext` で session cookie を持ったまま `fetch` で直接 URL を叩く
+- [ ] **E2E spec は chromium project でのみ実行**: モバイル viewport で重複実行しても
+      検出価値ゼロかつ CI 時間 2x。`testIgnore` で除外
+- [ ] **multi-tenant fixture は別ファイルに集約**: `e2e/fixtures/multi-tenant.ts` で
+      `createTenantPair(runId)` / `cleanupTenants(ids)` を提供すると spec 側がスッキリする
+- [ ] **テスト名に「★越境★」「★severity-1★」等の視覚マーカーを入れる**: CI ログで該当 fail を
+      即座に発見できる。一般機能 fail とごった煮にしない
+
+### 横展開チェック (新規 severity-1 仕様を作る時)
+
+```bash
+# Layer 1 候補追加
+ls src/services/*.ts | wc -l   # 全 service 数を確認
+# tenant-isolation-invariants.test.ts に新 service の允許 / 検査追加
+
+# Layer 2 候補追加
+grep -L "tenant" src/services/*.test.ts   # tenant 検証無い test ファイル抽出
+
+# Layer 3 候補追加
+ls e2e/specs/*.spec.ts | grep -i security  # 既存 security spec を流用 or 新規
+```
+
+### 関連
+
+- 仕様 doc: docs/security/TENANT_ISOLATION_PHASE2_TODO.md (3 層が full coverage したら HISTORY.md へリネーム)
+- 元 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 修正)
+- E2E coverage 一覧: docs/test/E2E_COVERAGE.md 「★テナント分離 / 提案エンジン」セクション
+- Layer 1 実装: src/services/__tests__/tenant-isolation-invariants.test.ts
+- Layer 2 実装: src/services/*.service.test.ts (各 service の越境テスト)
+- Layer 3 実装: e2e/specs/11-tenant-isolation.spec.ts / e2e/specs/12-suggestion-seed-data.spec.ts

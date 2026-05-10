@@ -32,6 +32,9 @@
  */
 
 import { prisma } from '@/lib/db';
+// 2026-05-09 (PR G / 設計合意 B + #24): シードデータは管理テナントに集中。
+//   テナント別 seedDataEnabled toggle で管理テナントの参照を遮断する。
+import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 import { jaccard, unifyProjectTags, unifyKnowledgeTags, combineScores } from '@/lib/similarity';
 import {
   SUGGESTION_TAG_WEIGHT as TAG_WEIGHT,
@@ -78,7 +81,8 @@ export type PastIssueSuggestion = SuggestionScore & {
   id: string;
   title: string;
   snippet: string;
-  sourceProjectId: string;
+  // PR feat/asset-multi-project-linking: 作成元 project が削除済の場合 null
+  sourceProjectId: string | null;
   sourceProjectName: string | null;
 };
 
@@ -92,13 +96,33 @@ export type RetrospectiveSuggestion = SuggestionScore & {
   id: string;
   conductedDate: string;
   snippet: string;
-  sourceProjectId: string;
+  // PR feat/asset-multi-project-linking: 作成元 project が削除済の場合 null
+  sourceProjectId: string | null;
+  sourceProjectName: string | null;
+};
+
+/**
+ * 2026-05-09 (PR D / #21): 過去プロジェクトのリスクを推薦対象に追加。
+ *   過去 Issue (発生した問題) との対比で、過去 Risk (発生に備えた対応事例) は
+ *   「次プロジェクトで先回りで備える」ための雛形として参照価値が高い。
+ *   旧仕様 (PR #65) は「リスクは不確実性で発生していないため対象外」としていたが、
+ *   resolved 状態 = 顕在化したか / 対応済まで進んだもの は学びの宝庫。
+ *   採用 (= 自プロジェクトへ複製) は行わず、参照のみ (Retrospective と同じ扱い)。
+ */
+export type PastRiskSuggestion = SuggestionScore & {
+  kind: 'risk';
+  id: string;
+  title: string;
+  snippet: string;
+  // PR feat/asset-multi-project-linking: 作成元 project が削除済の場合 null
+  sourceProjectId: string | null;
   sourceProjectName: string | null;
 };
 
 export type SuggestionsResult = {
   knowledge: KnowledgeSuggestion[];
   pastIssues: PastIssueSuggestion[];
+  pastRisks: PastRiskSuggestion[];
   retrospectives: RetrospectiveSuggestion[];
 };
 
@@ -112,13 +136,24 @@ type ProjectContext = {
    *   null の場合は embedding 軸スコア = 0 で 2 軸縮退モード。
    */
   embeddingText: string | null;
+  /**
+   * PR G (#24 / 2026-05-09): 自テナントの seedDataEnabled。
+   *   false のときは管理テナント (MANAGEMENT_TENANT_ID) のシードデータを提案候補から除外。
+   */
+  seedDataEnabled: boolean;
 };
 
-async function loadProjectContext(projectId: string): Promise<ProjectContext | null> {
+async function loadProjectContext(
+  projectId: string,
+  viewerTenantId: string,
+): Promise<ProjectContext | null> {
+  // 2026-05-09 feedback Phase 2-7: 越境提案を遮断するため tenantId 必須化。
+  //   旧仕様は projectId 直叩きで他テナントの提案候補が引かれる経路を放置していた。
   const p = await prisma.project.findFirst({
-    where: { id: projectId, deletedAt: null },
+    where: { id: projectId, deletedAt: null, tenantId: viewerTenantId },
     select: {
       id: true,
+      tenantId: true,
       purpose: true,
       background: true,
       scope: true,
@@ -128,6 +163,14 @@ async function loadProjectContext(projectId: string): Promise<ProjectContext | n
     },
   });
   if (!p) return null;
+
+  // PR G (#24): プロジェクトの所属テナントの seedDataEnabled を取得。
+  //   この値で管理テナントのシードを提案候補に含めるかを判定する。
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: p.tenantId },
+    select: { seedDataEnabled: true },
+  });
+  const seedDataEnabled = tenant?.seedDataEnabled ?? true;
   const tags = unifyProjectTags({
     businessDomainTags: (p.businessDomainTags as string[]) ?? [],
     techStackTags: (p.techStackTags as string[]) ?? [],
@@ -146,7 +189,7 @@ async function loadProjectContext(projectId: string): Promise<ProjectContext | n
   `;
   const embeddingText = embRows[0]?.embedding ?? null;
 
-  return { id: p.id, tags, text, embeddingText };
+  return { id: p.id, tags, text, embeddingText, seedDataEnabled };
 }
 
 /**
@@ -244,16 +287,26 @@ async function computeTextSimilarities(
  */
 export async function suggestForProject(
   projectId: string,
+  viewerTenantId: string,
   options: { limit?: number } = {},
 ): Promise<SuggestionsResult> {
   // PR #8 (T-03): 緊急停止フラグ。SUGGESTION_ENGINE_DISABLED=true で空配列を返す。
-  // LLM 障害・予算超過・リグレッション切り分け時の即時停止に使う。
   if (isSuggestionEngineDisabled()) {
-    return { knowledge: [], pastIssues: [], retrospectives: [] };
+    return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] };
   }
   const limit = options.limit ?? DEFAULT_LIMIT;
-  const ctx = await loadProjectContext(projectId);
-  if (!ctx) return { knowledge: [], pastIssues: [], retrospectives: [] };
+  const ctx = await loadProjectContext(projectId, viewerTenantId);
+  if (!ctx) return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] };
+
+  // 2026-05-09 feedback Phase 2-7: severity-1 越境対策。
+  //   旧仕様は提案候補に他テナントのデータが混入する設計バグだった。
+  //   - seedDataEnabled=true: 自テナント + 管理テナント (シード) を許可
+  //   - seedDataEnabled=false: 自テナントのみ
+  const tenantScopeFilter = ctx.seedDataEnabled
+    ? { tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] } }
+    : { tenantId: viewerTenantId };
+  // 旧名 excludeManagementTenant の互換 (where に展開する形に統一)
+  const excludeManagementTenant = tenantScopeFilter;
 
   // ---------- Knowledge 候補 ----------
   // visibility='public' のみ対象 (draft は作成者だけが閲覧できる想定)
@@ -264,6 +317,7 @@ export async function suggestForProject(
     where: {
       deletedAt: null,
       visibility: 'public',
+      ...excludeManagementTenant,
       NOT: {
         knowledgeProjects: { some: { projectId } },
       },
@@ -328,12 +382,15 @@ export async function suggestForProject(
   //   利用することで Knowledge と同等の tag-aware なマッチングを実現する。
   //   semantic な妥当性: 「同じドメイン (e.g. fintech) のプロジェクトで起きた issue は
   //   別ドメインの issue より関連性が高い」。schema 変更不要。
+  // PR feat/asset-multi-project-linking: 既に自プロジェクトに紐付け済の課題は提案候補から除外
+  //   (Knowledge と同型の where 句)。「参考」タブに自分の一覧と同じものが並ぶ UX ノイズを回避。
   const issues = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
       type: 'issue',
       state: 'resolved',
-      NOT: { projectId },
+      ...excludeManagementTenant,
+      NOT: { riskIssueProjects: { some: { projectId } } },
     },
     select: {
       id: true,
@@ -394,6 +451,76 @@ export async function suggestForProject(
     };
   });
 
+  // ---------- 過去 Risk 候補 (PR D / 2026-05-09 / #21) ----------
+  // 他プロジェクトの解消済 risk を対象 (= 顕在化対応または計画通り収束)。
+  // 自プロジェクトの未解消 risk は普段の「リスク一覧」で見られるので除外。
+  // 旧仕様 (PR #65) で除外していたが、過去対応事例は次プロジェクトの先回り設計に役立つ
+  // ため #21 で再導入。Issue と同じ tag-aware 設計 (親 Project のタグを proxy に使用)。
+  // PR feat/asset-multi-project-linking: 既に自プロジェクトに紐付け済のリスクは候補から除外。
+  const risks = await prisma.riskIssue.findMany({
+    where: {
+      deletedAt: null,
+      type: 'risk',
+      state: 'resolved',
+      ...excludeManagementTenant,
+      NOT: { riskIssueProjects: { some: { projectId } } },
+    },
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      projectId: true,
+      project: {
+        select: {
+          name: true,
+          deletedAt: true,
+          businessDomainTags: true,
+          techStackTags: true,
+          processTags: true,
+        },
+      },
+    },
+  });
+
+  const riskText = await computeTextSimilarities(
+    ctx.text,
+    risks.map((r) => ({ id: r.id, text: `${r.title} ${r.content}` })),
+  );
+  const riskEmb = await computeEmbeddingSimilarities(
+    ctx.embeddingText,
+    'risks_issues',
+    risks.map((r) => r.id),
+  );
+
+  const riskScored: PastRiskSuggestion[] = risks.map((r) => {
+    const riskProjectTags = unifyProjectTags({
+      businessDomainTags: (r.project?.businessDomainTags as string[]) ?? [],
+      techStackTags: (r.project?.techStackTags as string[]) ?? [],
+      processTags: (r.project?.processTags as string[]) ?? [],
+    });
+    const tagScore = jaccard(ctx.tags, riskProjectTags);
+    const textScore = riskText.get(r.id) ?? 0;
+    const embeddingScore = riskEmb.get(r.id) ?? 0;
+    const score = combineScores([
+      { score: tagScore, weight: TAG_WEIGHT },
+      { score: textScore, weight: TEXT_WEIGHT },
+      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
+    ]);
+    return {
+      kind: 'risk' as const,
+      id: r.id,
+      title: r.title,
+      snippet: r.content.slice(0, 120),
+      sourceProjectId: r.projectId,
+      sourceProjectName: r.project?.deletedAt ? null : r.project?.name ?? null,
+      score,
+      tagScore,
+      textScore,
+      embeddingScore,
+      tier: classifyTier(score),
+    };
+  });
+
   // ---------- 過去 Retrospective 候補 (PR #65 Phase 2 (a)) ----------
   // 他プロジェクトの振り返り (confirmed) を対象。
   // 自プロジェクトの振り返りは普段の「振り返り一覧」で見られるので除外。
@@ -402,11 +529,13 @@ export async function suggestForProject(
   // タグスコア (PR #140 後 改修):
   //   Retrospective 自体は DB にタグ列を持たないが、Issue と同じく **親 Project の
   //   タグを proxy** として使う。Knowledge と同等の tag-aware マッチングに統一。
+  // PR feat/asset-multi-project-linking: 既に自プロジェクトに紐付け済の振り返りは候補から除外。
   const retros = await prisma.retrospective.findMany({
     where: {
       deletedAt: null,
       visibility: 'public',
-      NOT: { projectId },
+      ...excludeManagementTenant,
+      NOT: { retrospectiveProjects: { some: { projectId } } },
     },
     select: {
       id: true,
@@ -489,11 +618,15 @@ export async function suggestForProject(
   const pastIssues = assignPercentileTiers(
     applyMinimumGuarantee(sortByScore(issueScored), SCORE_THRESHOLD).slice(0, limit),
   );
+  // 2026-05-09 (PR D / #21): 過去 Risk も同じ tier 付与で返す
+  const pastRisks = assignPercentileTiers(
+    applyMinimumGuarantee(sortByScore(riskScored), SCORE_THRESHOLD).slice(0, limit),
+  );
   const retrospectives = assignPercentileTiers(
     applyMinimumGuarantee(sortByScore(retroScored), SCORE_THRESHOLD).slice(0, limit),
   );
 
-  return { knowledge, pastIssues, retrospectives };
+  return { knowledge, pastIssues, pastRisks, retrospectives };
 }
 
 /**
@@ -508,9 +641,24 @@ export async function adoptPastIssueAsTemplate(
   sourceIssueId: string,
   targetProjectId: string,
   userId: string,
+  viewerTenantId: string,
 ): Promise<{ id: string }> {
+  // 2026-05-09 feedback Phase 2-7: 越境テンプレート複製を遮断するため、
+  //   sourceIssue と targetProject 両方の tenant 一致を verify。
+  const target = await prisma.project.findFirst({
+    where: { id: targetProjectId, tenantId: viewerTenantId },
+    select: { id: true, tenantId: true },
+  });
+  if (!target) throw new Error('target project not found');
+
   const src = await prisma.riskIssue.findFirst({
-    where: { id: sourceIssueId, deletedAt: null, type: 'issue' },
+    where: {
+      id: sourceIssueId,
+      deletedAt: null,
+      type: 'issue',
+      // sourceIssue は自テナント + 管理テナントのシードを許容 (suggestForProject の seedDataEnabled と整合)
+      tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] },
+    },
     select: {
       title: true,
       content: true,
@@ -520,12 +668,14 @@ export async function adoptPastIssueAsTemplate(
       priority: true,
       responsePolicy: true,
       responseDetail: true,
+      tenantId: true,
     },
   });
   if (!src) throw new Error('source issue not found');
 
   const created = await prisma.riskIssue.create({
     data: {
+      tenantId: viewerTenantId,
       projectId: targetProjectId,
       type: 'issue',
       title: src.title,
@@ -555,9 +705,28 @@ export async function adoptPastIssueAsTemplate(
 export async function linkKnowledgeToProject(
   knowledgeId: string,
   projectId: string,
+  viewerTenantId: string,
 ): Promise<void> {
-  // KnowledgeProject には @@unique([knowledgeId, projectId]) が張られているため、
-  // skipDuplicates で冪等に INSERT する (連打や二重遷移で例外にならないように)
+  // 2026-05-09 feedback Phase 2-7: 越境紐付けを遮断するため、knowledge と project 両方の
+  //   tenant 一致を verify。knowledge は自テナント + シード (MANAGEMENT_TENANT_ID) を許容、
+  //   project は自テナントのみ。
+  const [knowledge, project] = await Promise.all([
+    prisma.knowledge.findFirst({
+      where: {
+        id: knowledgeId,
+        deletedAt: null,
+        tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] },
+      },
+      select: { id: true },
+    }),
+    prisma.project.findFirst({
+      where: { id: projectId, tenantId: viewerTenantId },
+      select: { id: true },
+    }),
+  ]);
+  if (!knowledge) throw new Error('knowledge not found');
+  if (!project) throw new Error('project not found');
+
   await prisma.knowledgeProject.createMany({
     data: [{ knowledgeId, projectId }],
     skipDuplicates: true,
@@ -577,18 +746,22 @@ export async function linkKnowledgeToProject(
 export async function suggestRelatedIssuesForText(
   inputText: string,
   currentProjectId: string,
+  viewerTenantId: string,
 ): Promise<PastIssueSuggestion[]> {
   // PR #8 (T-03): 緊急停止フラグ。suggestForProject と同方針。
   if (isSuggestionEngineDisabled()) return [];
   const trimmed = inputText.trim();
   if (trimmed.length < 10) return []; // 10 文字未満はノイズ多いので走らせない
 
+  // 2026-05-09 feedback Phase 2-7: 自テナント + シード (MANAGEMENT_TENANT_ID) のみ対象に。
+  //   旧仕様は他テナントの過去 issue が候補に混入していた重大バグ。
   const issues = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
       type: 'issue',
       state: 'resolved',
-      NOT: { projectId: currentProjectId },
+      tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] },
+      NOT: { riskIssueProjects: { some: { projectId: currentProjectId } } },
     },
     select: {
       id: true,

@@ -50,17 +50,24 @@ describe('listMyMemos', () => {
       memoRow({ id: 'b', visibility: 'public' }),
     ] as never);
 
-    const result = await listMyMemos('user-1');
+    const result = await listMyMemos('user-1', 'tenant-A');
 
     expect(result).toHaveLength(2);
     expect(result[0].isMine).toBe(true);
     expect(result[0].authorName).toBe('Alice');
     expect(prisma.memo.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { deletedAt: null, userId: 'user-1' },
+        where: { deletedAt: null, userId: 'user-1', tenantId: 'tenant-A' },
         orderBy: { createdAt: 'desc' },
       }),
     );
+  });
+
+  it('viewerTenantId 以外のメモは含めない (テナント越境防止)', async () => {
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([]);
+    await listMyMemos('user-1', 'tenant-A');
+    const call = vi.mocked(prisma.memo.findMany).mock.calls[0][0];
+    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 
@@ -73,13 +80,22 @@ describe('listPublicMemos', () => {
       memoRow({ id: 'b', userId: 'user-2', visibility: 'public' }),
     ] as never);
 
-    const result = await listPublicMemos('user-1');
+    const result = await listPublicMemos('user-1', 'tenant-A');
 
     expect(result[0].isMine).toBe(true);
     expect(result[1].isMine).toBe(false);
     expect(prisma.memo.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { deletedAt: null, visibility: 'public' } }),
+      expect.objectContaining({
+        where: { deletedAt: null, visibility: 'public', tenantId: 'tenant-A' },
+      }),
     );
+  });
+
+  it('viewerTenantId 以外の public メモは含めない (テナント越境防止)', async () => {
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([]);
+    await listPublicMemos('user-1', 'tenant-A');
+    const call = vi.mocked(prisma.memo.findMany).mock.calls[0][0];
+    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 

@@ -60,13 +60,14 @@ export async function POST(req: NextRequest) {
 
   const csvRows = parseMemoSyncImportCsv(csvText);
   if (isDryRun) {
-    const diff = await computeMemoSyncDiff(user.id, csvRows);
+    const diff = await computeMemoSyncDiff(user.id, csvRows, user.tenantId);
     return NextResponse.json({ data: diff });
   }
 
   try {
-    const result = await applyMemoSyncImport(user.id, csvRows, removeMode);
+    const result = await applyMemoSyncImport(user.id, csvRows, removeMode, user.tenantId);
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'SYNC_IMPORT',
       entityType: 'memo_sync_import',

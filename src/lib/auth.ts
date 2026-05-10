@@ -92,25 +92,25 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // P-A (2026-05-08): テナント論理削除時のログイン拒否
         if (user.tenant.deletedAt != null) {
           logAuthFailureReason({ reason: 'tenant_deleted', email: maskedEmail, userId: user.id });
-          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'tenant_deleted' } });
+          await recordAuthEvent({ eventType: 'login_failure', tenantId: user.tenantId, userId: user.id, email, detail: { reason: 'tenant_deleted' } });
           return null;
         }
 
         if (!user.isActive) {
           logAuthFailureReason({ reason: 'inactive', email: maskedEmail, userId: user.id });
-          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'inactive' } });
+          await recordAuthEvent({ eventType: 'login_failure', tenantId: user.tenantId, userId: user.id, email, detail: { reason: 'inactive' } });
           return null;
         }
 
         if (user.permanentLock) {
           logAuthFailureReason({ reason: 'permanent_lock', email: maskedEmail, userId: user.id });
-          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'permanent_lock' } });
+          await recordAuthEvent({ eventType: 'login_failure', tenantId: user.tenantId, userId: user.id, email, detail: { reason: 'permanent_lock' } });
           return null;
         }
 
         if (user.lockedUntil && user.lockedUntil > new Date()) {
           logAuthFailureReason({ reason: 'temporary_lock', email: maskedEmail, userId: user.id, until: user.lockedUntil.toISOString() });
-          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'temporary_lock' } });
+          await recordAuthEvent({ eventType: 'login_failure', tenantId: user.tenantId, userId: user.id, email, detail: { reason: 'temporary_lock' } });
           return null;
         }
 
@@ -132,9 +132,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             updateData.temporaryLockCount = newTemporaryLockCount;
             if (newTemporaryLockCount >= PERMANENT_LOCK_THRESHOLD) {
               updateData.permanentLock = true;
-              await recordAuthEvent({ eventType: 'lock', userId: user.id, email, detail: { lockType: 'permanent', temporaryLockCount: newTemporaryLockCount } });
+              await recordAuthEvent({ eventType: 'lock', tenantId: user.tenantId, userId: user.id, email, detail: { lockType: 'permanent', temporaryLockCount: newTemporaryLockCount } });
             } else {
-              await recordAuthEvent({ eventType: 'lock', userId: user.id, email, detail: { lockType: 'temporary', temporaryLockCount: newTemporaryLockCount } });
+              await recordAuthEvent({ eventType: 'lock', tenantId: user.tenantId, userId: user.id, email, detail: { lockType: 'temporary', temporaryLockCount: newTemporaryLockCount } });
             }
           }
 
@@ -143,7 +143,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             data: updateData,
           });
 
-          await recordAuthEvent({ eventType: 'login_failure', userId: user.id, email, detail: { reason: 'invalid_password' } });
+          await recordAuthEvent({ eventType: 'login_failure', tenantId: user.tenantId, userId: user.id, email, detail: { reason: 'invalid_password' } });
           return null;
         }
 
@@ -159,7 +159,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           },
         });
 
-        await recordAuthEvent({ eventType: 'login_success', userId: user.id, email });
+        await recordAuthEvent({ eventType: 'login_success', tenantId: user.tenantId, userId: user.id, email });
 
         return {
           id: user.id,

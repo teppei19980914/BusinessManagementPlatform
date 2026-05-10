@@ -35,3 +35,5 @@ export * from './llm';
 export * from './db-capacity';
 // P-H (2026-05-08): メール送信上限モニタ閾値 (Brevo 等の送信上限到達の事前検知)
 export * from './email-limit';
+// 2026-05-09 (#16): Discord 等のコミュニティ招待リンク
+export * from './community';

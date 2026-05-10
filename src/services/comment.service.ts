@@ -27,6 +27,8 @@ import {
   diffMentions,
   generateMentionNotifications,
 } from './mention.service';
+// 2026-05-09 (PR H / #3): 通知 link に commentId を付与して該当コメントへ直接遷移させる
+import { buildEntityCommentLink } from '@/lib/entity-link';
 
 export type CommentDTO = {
   id: string;
@@ -71,9 +73,11 @@ function toDTO(c: {
 export async function listComments(
   entityType: CommentEntityType,
   entityId: string,
+  viewerTenantId: string,
 ): Promise<CommentDTO[]> {
+  // 2026-05-09 feedback Phase 2-5: 越境一覧を遮断するため tenantId 必須化。
   const rows = await prisma.comment.findMany({
-    where: { entityType, entityId, deletedAt: null },
+    where: { entityType, entityId, deletedAt: null, tenantId: viewerTenantId },
     include: { user: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -92,12 +96,14 @@ export async function listComments(
 export async function createComment(
   input: { entityType: CommentEntityType; entityId: string; content: string },
   userId: string,
+  tenantId: string,
   mentions: MentionInput[] = [],
   mentionerName: string | null = null,
-  link: string = '',
 ): Promise<CommentDTO> {
+  // 2026-05-09 feedback Phase 2-5: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
   const created = await prisma.comment.create({
     data: {
+      tenantId,
       entityType: input.entityType,
       entityId: input.entityId,
       userId,
@@ -108,13 +114,23 @@ export async function createComment(
 
   if (mentions.length > 0) {
     // Mention レコード作成
+    // 2026-05-09 feedback Phase 2-5: mention にも tenantId を明示
     await prisma.mention.createMany({
       data: mentions.map((m) => ({
+        tenantId,
         commentId: created.id,
         kind: m.kind,
         targetUserId: m.targetUserId ?? null,
       })),
     });
+    // 2026-05-09 (PR H / #3): 通知 link を「commentId 付き」で生成。
+    //   通知をクリックしたユーザは該当コメントへ自動スクロールできる (CommentSection 側で実装)。
+    //   旧仕様は taskId/riskId のみで dialog は開くがコメント末尾配置のため画面外。
+    const linkWithComment = await buildEntityCommentLink(
+      input.entityType,
+      input.entityId,
+      created.id,
+    );
     // 通知一括生成 (Q5 自分宛除外、dedupe は DB UNIQUE で担保)
     await generateMentionNotifications({
       commentId: created.id,
@@ -122,7 +138,7 @@ export async function createComment(
       mentions,
       mentionerId: userId,
       mentionerName: mentionerName ?? created.user?.name ?? null,
-      link,
+      link: linkWithComment,
     });
   }
 
@@ -133,9 +149,13 @@ export async function createComment(
  * 指定 ID のコメントを取得する (論理削除除外)。
  * 編集 / 削除前の認可判定で「投稿者本人か」を確認するため、まず取得して userId を返す。
  */
-export async function getComment(commentId: string): Promise<CommentDTO | null> {
+export async function getComment(
+  commentId: string,
+  viewerTenantId: string,
+): Promise<CommentDTO | null> {
+  // 2026-05-09 feedback Phase 2-5: 越境取得を遮断するため tenantId 必須化。
   const c = await prisma.comment.findFirst({
-    where: { id: commentId, deletedAt: null },
+    where: { id: commentId, deletedAt: null, tenantId: viewerTenantId },
     include: { user: { select: { name: true } } },
   });
   return c ? toDTO(c) : null;
@@ -154,10 +174,17 @@ export async function getComment(commentId: string): Promise<CommentDTO | null> 
 export async function updateComment(
   commentId: string,
   content: string,
+  viewerTenantId: string,
   mentions?: MentionInput[],
   mentionerName: string | null = null,
-  link: string = '',
 ): Promise<CommentDTO> {
+  // 2026-05-09 feedback Phase 2-5: 越境編集を遮断するため findFirst で先に所有確認。
+  const owned = await prisma.comment.findFirst({
+    where: { id: commentId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const updated = await prisma.comment.update({
     where: { id: commentId },
     data: { content },
@@ -178,11 +205,18 @@ export async function updateComment(
     if (added.length > 0) {
       await prisma.mention.createMany({
         data: added.map((m) => ({
+          tenantId: viewerTenantId,
           commentId,
           kind: m.kind,
           targetUserId: m.targetUserId ?? null,
         })),
       });
+      // 2026-05-09 (PR H / #3): commentId 付き link で通知を生成
+      const linkWithComment = await buildEntityCommentLink(
+        updated.entityType as CommentEntityType,
+        updated.entityId,
+        commentId,
+      );
       // Q2 採用: 追加分のみ通知 (削除分は何もしない)
       await generateMentionNotifications({
         commentId,
@@ -190,7 +224,7 @@ export async function updateComment(
         mentions: added,
         mentionerId: updated.userId,
         mentionerName: mentionerName ?? updated.user?.name ?? null,
-        link,
+        link: linkWithComment,
       });
     }
   }
@@ -202,9 +236,14 @@ export async function updateComment(
  * コメントを論理削除する。
  * 2026-05-01 仕様: 認可は呼び出し側で **投稿者本人のみ** を確認 (admin の救済は外した)。
  */
-export async function deleteComment(commentId: string): Promise<void> {
-  await prisma.comment.update({
-    where: { id: commentId },
+export async function deleteComment(
+  commentId: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2-5: 越境削除を遮断するため updateMany で tenantId 検証。
+  //   id 単独 update は越境で誤削除する経路、updateMany で where に tenantId 併記して防御。
+  await prisma.comment.updateMany({
+    where: { id: commentId, tenantId: viewerTenantId },
     data: { deletedAt: new Date() },
   });
 }
@@ -243,14 +282,17 @@ export type EntityResolveResult =
 export async function resolveEntityForComment(
   entityType: CommentEntityType,
   entityId: string,
+  viewerTenantId: string,
 ): Promise<EntityResolveResult> {
+  // 2026-05-09 feedback Phase 2-5: 全 entity 検索に tenantId フィルタ必須化。
+  //   越境 entity の存在で内部状態が漏れる経路を遮断。
+  //   Task / Memo は schema 上 tenantId 列を持つので直接フィルタ。
+  //   その他 (riskIssue / retrospective / knowledge / stakeholder / customer) も tenantId 列保有。
   switch (entityType) {
     case 'issue':
     case 'risk': {
-      // issue / risk は同一 RiskIssue モデル (type discriminator で区別)
-      // 作成者は reporterId
       const r = await prisma.riskIssue.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { visibility: true, reporterId: true },
       });
       return r
@@ -263,7 +305,7 @@ export async function resolveEntityForComment(
     }
     case 'retrospective': {
       const retro = await prisma.retrospective.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { visibility: true, createdBy: true },
       });
       return retro
@@ -276,7 +318,7 @@ export async function resolveEntityForComment(
     }
     case 'knowledge': {
       const k = await prisma.knowledge.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { visibility: true, createdBy: true },
       });
       return k
@@ -288,11 +330,9 @@ export async function resolveEntityForComment(
         : { kind: 'not-found' };
     }
     case 'task': {
-      // Task: コメント投稿は認証済全員、mention 含む場合のみ ProjectMember (要件 2026-05-01)。
-      // PMO や他チームレビュアーが「自分のタスクではないがコメントを残したい」ケースを許容しつつ、
-      // mention で project 外の人に通知が飛ぶことは防ぐ (mention 受信者は必ず project member)。
+      // Task は tenantId 列を持たないため project 経由でフィルタ
       const t = await prisma.task.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, project: { tenantId: viewerTenantId } },
         select: { projectId: true },
       });
       return t
@@ -305,10 +345,8 @@ export async function resolveEntityForComment(
         : { kind: 'not-found' };
     }
     case 'stakeholder': {
-      // Stakeholder: PM/TL のみメンション/コメント許可 (mention 有無に関わらず)。
-      // ステークホルダ管理は計画責任者の業務領域のため、一般メンバーには書き込み権限を渡さない。
       const s = await prisma.stakeholder.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { projectId: true },
       });
       return s
@@ -321,20 +359,15 @@ export async function resolveEntityForComment(
         : { kind: 'not-found' };
     }
     case 'customer': {
-      // Customer は admin only (物理削除方針なので deletedAt 列なし、id のみ確認)
       const c = await prisma.customer.findFirst({
-        where: { id: entityId },
+        where: { id: entityId, tenantId: viewerTenantId },
         select: { id: true },
       });
       return c ? { kind: 'admin-only' } : { kind: 'not-found' };
     }
     case 'memo': {
-      // PR #213: memo にもコメント機能を追加。memo は project に紐付かない user-scoped entity
-      // のため、visibility (public/draft) のみで認可する: knowledge と同じ public-or-draft kind を流用。
-      // - public memo: 認証済全員可 (read/write 共通)
-      // - draft memo: 作成者本人のみ (admin は read のみ)
       const m = await prisma.memo.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { visibility: true, userId: true },
       });
       return m
@@ -355,9 +388,11 @@ export async function resolveEntityForComment(
 export async function softDeleteCommentsForEntity(
   entityType: CommentEntityType,
   entityId: string,
+  viewerTenantId: string,
 ): Promise<void> {
+  // 2026-05-09 feedback Phase 2-5: 越境 cascade 削除を遮断するため tenantId 必須化。
   await prisma.comment.updateMany({
-    where: { entityType, entityId, deletedAt: null },
+    where: { entityType, entityId, deletedAt: null, tenantId: viewerTenantId },
     data: { deletedAt: new Date() },
   });
 }

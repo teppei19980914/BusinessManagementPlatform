@@ -113,13 +113,19 @@ const HEADERS_CURRENT = [
   'Storage使用量(バイト)',
   'Storage月額(円)',
   '合計月額(円)',
-  // P-G: 請求先情報
+  // P-G: 請求先情報 / PR C (2026-05-09 #5/#8/#10) で構造化
+  '請求先種別',
   '会社名_法人名',
   '請求担当者',
   '請求先メール',
   '電話番号',
   '支払い方法',
-  '請求書送付先住所',
+  '郵便番号',
+  '都道府県',
+  '市区町村',
+  '番地町名',
+  '建物名_部屋番号',
+  '請求書送付先住所_legacy',
 ];
 
 const HEADERS_HISTORY = [
@@ -153,12 +159,18 @@ function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>
         t.storageBytesUsed.toString(),
         t.storageAddonMonthlyJpy.toString(),
         t.totalCurrentMonthJpy.toString(),
-        // P-G: 請求先列
+        // P-G: 請求先列 / PR C (2026-05-09): 個人法人 + 構造化住所
+        csvEscape(t.billingType === 'individual' ? '個人' : '法人'),
         csvEscape(t.billingCompanyName ?? ''),
         csvEscape(t.billingContactName ?? ''),
         csvEscape(t.billingContactEmail ?? ''),
         csvEscape(t.billingPhoneNumber ?? ''),
         csvEscape(t.paymentMethod),
+        csvEscape(t.billingPostalCode ?? ''),
+        csvEscape(t.billingPrefecture ?? ''),
+        csvEscape(t.billingCity ?? ''),
+        csvEscape(t.billingStreetAddress ?? ''),
+        csvEscape(t.billingBuildingName ?? ''),
         csvEscape(t.billingAddress ?? ''),
       ].join(','),
     );

@@ -32,7 +32,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'task:read');
   if (forbidden) return forbidden;
 
-  const task = await getTask(taskId);
+  const task = await getTask(taskId, user.tenantId);
   if (!task || task.projectId !== projectId) {
     const t = await getTranslations('message');
     return NextResponse.json(
@@ -41,7 +41,7 @@ export async function GET(
     );
   }
 
-  const logs = await getProgressLogs(taskId);
+  const logs = await getProgressLogs(taskId, user.tenantId);
   return NextResponse.json({ data: logs });
 }
 
@@ -54,7 +54,7 @@ export async function POST(
 
   const { projectId, taskId } = await params;
 
-  const task = await getTask(taskId);
+  const task = await getTask(taskId, user.tenantId);
   if (!task || task.projectId !== projectId) {
     const t = await getTranslations('message');
     return NextResponse.json(
@@ -81,9 +81,10 @@ export async function POST(
     );
   }
 
-  await updateTaskProgress(taskId, parsed.data, user.id);
+  await updateTaskProgress(taskId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'task_progress',

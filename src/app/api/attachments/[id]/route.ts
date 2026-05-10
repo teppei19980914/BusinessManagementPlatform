@@ -32,14 +32,16 @@ import { recordAuditLog } from '@/services/audit.service';
  * 対象添付の親エンティティをたどり、リクエストユーザが権限を持つかを確認する。
  */
 async function authorizeForAttachment(
-  user: { id: string; systemRole: string },
+  // 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
+  //   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
+  user: { id: string; systemRole: string; tenantId: string },
   entityType: AttachmentEntityType,
   entityId: string,
 ): Promise<NextResponse | null> {
   const t = await getTranslations('message');
   // PR #70: memo は admin 特権なしの個人リソース。PATCH/DELETE は作成者のみ。
   if (entityType === 'memo') {
-    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, 'write');
+    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, 'write', user.tenantId);
     if (notFound) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -57,7 +59,7 @@ async function authorizeForAttachment(
 
   if (user.systemRole === 'admin') return null;
 
-  const projectIds = await resolveProjectIds(entityType, entityId);
+  const projectIds = await resolveProjectIds(entityType, entityId, user.tenantId);
   if (projectIds === null) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -71,7 +73,7 @@ async function authorizeForAttachment(
     );
   }
   for (const pid of projectIds) {
-    const membership = await checkMembership(pid, user.id, user.systemRole);
+    const membership = await checkMembership(pid, user.id, user.systemRole, user.tenantId);
     if (membership.isMember) return null;
   }
   return NextResponse.json(
@@ -89,7 +91,7 @@ export async function PATCH(
 
   const { id } = await params;
   const t = await getTranslations('message');
-  const existing = await getAttachment(id);
+  const existing = await getAttachment(id, user.tenantId);
   if (!existing) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -113,9 +115,10 @@ export async function PATCH(
     );
   }
 
-  const updated = await updateAttachment(id, parsed.data);
+  const updated = await updateAttachment(id, parsed.data, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'attachment',
@@ -134,7 +137,7 @@ export async function DELETE(
 
   const { id } = await params;
   const t = await getTranslations('message');
-  const existing = await getAttachment(id);
+  const existing = await getAttachment(id, user.tenantId);
   if (!existing) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -149,9 +152,10 @@ export async function DELETE(
   );
   if (forbidden) return forbidden;
 
-  await deleteAttachment(id);
+  await deleteAttachment(id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'attachment',

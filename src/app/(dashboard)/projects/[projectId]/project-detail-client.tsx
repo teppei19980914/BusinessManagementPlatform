@@ -84,6 +84,8 @@ type Props = {
   canCreateOwnedList: boolean;
   // PR #111-2: 編集ダイアログの顧客選択肢
   customers: CustomerOption[];
+  // 2026-05-09 (#22): 「なぜ?」ボタンを Pro プラン限定にするため tenant.plan を渡す
+  tenantPlan: string;
 };
 
 const NEXT_STATUSES: Record<string, string[]> = {
@@ -123,7 +125,7 @@ function LazyTabContent<T>({
 
 export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
-  canEdit, canCreate, canCreateOwnedList, customers,
+  canEdit, canCreate, canCreateOwnedList, customers, tenantPlan,
 }: Props) {
   const t = useTranslations('project');
   const tAction = useTranslations('action');
@@ -1021,7 +1023,7 @@ export function ProjectDetailClient({
           本タブは独自の fetch (SuggestionsPanel 内) を持つため LazyTabContent 不要。
         */}
         <TabsContent value="suggestions" className="mt-4">
-          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} />
+          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} tenantPlan={tenantPlan} />
         </TabsContent>
 
         {/* メンバータブ（admin/pm_tl のみ、admin なら allUsers も必要）*/}
@@ -1097,7 +1099,7 @@ export function ProjectDetailClient({
               {t('suggestionsModalDescription')}
             </DialogDescription>
           </DialogHeader>
-          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} />
+          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} tenantPlan={tenantPlan} />
           <div className="mt-4 flex justify-end">
             <Button variant="outline" onClick={closeSuggestionsModal}>
               {tAction('close')}

@@ -42,8 +42,11 @@ import type { TextBlock } from '@anthropic-ai/sdk/resources/messages';
 // 公開型
 // ================================================================
 
-/** 候補の種別。SuggestionExplanation.candidateKind の許容値と一致。 */
-export type CandidateKind = 'knowledge' | 'issue' | 'retrospective';
+/**
+ * 候補の種別。SuggestionExplanation.candidateKind の許容値と一致。
+ * 2026-05-09 (PR D / #21): 'risk' を追加 (過去リスクの説明文生成)。
+ */
+export type CandidateKind = 'knowledge' | 'issue' | 'risk' | 'retrospective';
 
 export interface ExplainSuggestionInput {
   /** 提案を受けたプロジェクト ID */
@@ -77,6 +80,8 @@ export interface ExplainSuggestionDegraded {
     | 'beginner_limit_exceeded'
     | 'budget_exceeded'
     | 'plan_invalid'
+    // 2026-05-09 (#22): Pro プラン限定機能のため、それ以外のプランは plan_forbidden で拒否。
+    | 'plan_forbidden'
     | 'llm_error'
     | 'project_not_found'
     | 'candidate_not_found'
@@ -142,6 +147,29 @@ const EXPLAIN_SYSTEM_PROMPT = `あなたはソフトウェア開発プロジェ�
 export async function getOrGenerateSuggestionExplanation(
   input: ExplainSuggestionInput,
 ): Promise<ExplainSuggestionResult> {
+  // ---------- 0. プラン認可: Pro 限定機能 (2026-05-09 / #22) ----------
+  //   「なぜ?」説明文は Pro プランの差別化の核 (V1_FINAL_TASKS.md P-3)。
+  //   Beginner / Expert は機能自体を非開放とし、UI でも button を非表示にする。
+  //   API 直叩きを防ぐためサービス層でも plan を見て plan_forbidden で拒否する (defense-in-depth)。
+  const tenantForPlan = await prisma.tenant.findFirst({
+    where: { id: input.tenantId, deletedAt: null },
+    select: { plan: true },
+  });
+  if (tenantForPlan == null) {
+    return {
+      ok: false,
+      reason: 'tenant_inactive',
+      message: 'テナントが存在しないか、無効化されています',
+    };
+  }
+  if (tenantForPlan.plan !== 'pro') {
+    return {
+      ok: false,
+      reason: 'plan_forbidden',
+      message: '「なぜ?」説明文機能は Pro プラン限定です',
+    };
+  }
+
   // ---------- 1. キャッシュ参照 ----------
   const cached = await prisma.suggestionExplanation.findUnique({
     where: {
@@ -295,6 +323,9 @@ export async function getOrGenerateSuggestionExplanation(
 type CandidateRow =
   | { kind: 'knowledge'; title: string; content: string }
   | { kind: 'issue'; title: string; content: string }
+  // 2026-05-09 (PR D / #21): risk は同じ riskIssue テーブルだが type='risk' で抽出。
+  //   issue と同じ XML schema (title + content) を使い、prompt 側でタグ値だけ変える。
+  | { kind: 'risk'; title: string; content: string }
   | { kind: 'retrospective'; problems: string; improvements: string };
 
 async function loadCandidate(
@@ -316,6 +347,14 @@ async function loadCandidate(
         select: { title: true, content: true },
       });
       return i ? { kind: 'issue', title: i.title, content: i.content } : null;
+    }
+    case 'risk': {
+      // 2026-05-09 (PR D / #21): 過去 risk の説明文生成
+      const r = await prisma.riskIssue.findFirst({
+        where: { id, tenantId, deletedAt: null, type: 'risk' },
+        select: { title: true, content: true },
+      });
+      return r ? { kind: 'risk', title: r.title, content: r.content } : null;
     }
     case 'retrospective': {
       const r = await prisma.retrospective.findFirst({
@@ -374,6 +413,18 @@ function buildUserPrompt(args: {
     case 'issue':
       candidateBlock = [
         '<candidate_kind>issue</candidate_kind>',
+        '<candidate_title>',
+        escapeClosingTags(truncate(candidate.title, MAX_FIELD_CHARS)),
+        '</candidate_title>',
+        '<candidate_content>',
+        escapeClosingTags(truncate(candidate.content, MAX_FIELD_CHARS)),
+        '</candidate_content>',
+      ].join('\n');
+      break;
+    case 'risk':
+      // 2026-05-09 (PR D / #21): risk タグで「過去リスクとその対応」を区別する
+      candidateBlock = [
+        '<candidate_kind>risk</candidate_kind>',
         '<candidate_title>',
         escapeClosingTags(truncate(candidate.title, MAX_FIELD_CHARS)),
         '</candidate_title>',

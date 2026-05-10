@@ -13,7 +13,10 @@ export default async function RoleChangesPage() {
   const t = await getTranslations('admin.roleChanges');
   const { formatDateTimeFull } = await getServerFormatters();
 
+  // 2026-05-10 Phase 2-10: RoleChangeLog 直接 tenantId 列で絞込み (旧 targetUser join 経由から移行)。
+  //   indexed lookup で高速、User 物理削除後の追従も可能。
   const logs = await prisma.roleChangeLog.findMany({
+    where: { tenantId: session.user.tenantId },
     include: {
       changer: { select: { name: true } },
       targetUser: { select: { name: true, email: true } },

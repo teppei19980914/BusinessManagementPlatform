@@ -22,9 +22,9 @@ export async function changePassword(
   const isValid = await compare(currentPassword, user.passwordHash);
   if (!isValid) return { success: false, error: '現在のパスワードが正しくありません' };
 
-  // パスワード履歴チェック（直近5回の再利用禁止）
+  // パスワード履歴チェック（直近5回の再利用禁止）— Phase 2-10: tenantId フィルタで二重防御
   const histories = await prisma.passwordHistory.findMany({
-    where: { userId },
+    where: { userId, tenantId: user.tenantId },
     orderBy: { createdAt: 'desc' },
     take: PASSWORD_HISTORY_COUNT,
   });
@@ -54,9 +54,10 @@ export async function changePassword(
         forcePasswordChange: false,
       },
     }),
-    // 履歴に追加
+    // 履歴に追加 (Phase 2-10: tenantId 必須化)
     prisma.passwordHistory.create({
       data: {
+        tenantId: user.tenantId,
         userId,
         passwordHash: newHash,
       },
@@ -65,6 +66,7 @@ export async function changePassword(
 
   await recordAuthEvent({
     eventType: 'password_change',
+    tenantId: user.tenantId,
     userId,
     detail: { changedBy: 'self' },
   });
@@ -77,13 +79,17 @@ export async function changePassword(
  *
  * T-21 (2026-04-28): 永続ロック実装に伴い、temporaryLockCount もリセットする。
  *   解除直後の再ログイン失敗で即座に永続ロック再発生してしまうのを防ぐため。
+ *
+ * Phase 2-10 (2026-05-10): tenantId 必須化 (admin が他テナントの user を unlock できないように)。
  */
 export async function unlockAccount(
   userId: string,
   adminId: string,
+  viewerTenantId: string,
 ): Promise<void> {
-  await prisma.user.update({
-    where: { id: userId },
+  // 越境 unlock 遮断: 自テナント所属の user に限定
+  const updated = await prisma.user.updateMany({
+    where: { id: userId, tenantId: viewerTenantId },
     data: {
       failedLoginCount: 0,
       lockedUntil: null,
@@ -91,9 +97,13 @@ export async function unlockAccount(
       temporaryLockCount: 0,
     },
   });
+  if (updated.count === 0) {
+    throw new Error('NOT_FOUND');
+  }
 
   await recordAuthEvent({
     eventType: 'account_reactivated',
+    tenantId: viewerTenantId,
     userId,
     detail: { action: 'unlock', unlockedBy: adminId },
   });

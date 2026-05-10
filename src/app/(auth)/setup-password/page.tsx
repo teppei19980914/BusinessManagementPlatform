@@ -1,22 +1,25 @@
 'use client';
 
 /**
- * 初期パスワード設定画面 (PR #91 で admin 向け MFA 強制を追加)。
+ * 初期パスワード設定画面。
+ *
+ * 2026-05-09 (#11): 強制 MFA を super_admin のみに限定。テナント管理者 (admin) と
+ *   一般ユーザ (general) は即時有効化される。設定画面から任意で MFA を有効化可能。
  *
  * フロー:
  *   1. パスワード入力 (step='password')
  *      → POST /api/auth/setup-password
- *      → admin なら requiresMfa=true + QR を受け取って step='mfa' へ
- *      → general なら recoveryCodes を受け取って step='done' へ
- *   2. MFA 登録 (step='mfa', admin のみ)
+ *      → super_admin なら requiresMfa=true + QR を受け取って step='mfa' へ
+ *      → それ以外なら recoveryCodes を受け取って step='done' へ
+ *   2. MFA 登録 (step='mfa', super_admin のみ)
  *      → QR を表示、TOTP 6 桁入力
  *      → POST /api/auth/setup-mfa-initial
  *      → 成功時 step='done' (アカウント有効化される)
  *   3. リカバリーコード表示 (step='done')
  *      → ログイン画面へ誘導
  *
- * トークンは step 1 完了時点では未使用のまま保持され、step 2 成功で初めて使用済になる
- * (PR #91 仕様: 「password 設定 + MFA 有効化」の両方が揃わないと有効化されない)。
+ * super_admin の場合、トークンは step 1 完了時点では未使用のまま保持され、step 2 成功で
+ * 初めて使用済になる (「password 設定 + MFA 有効化」の両方が揃わないと有効化されない)。
  */
 
 import { Suspense, useState, useEffect } from 'react';
@@ -125,11 +128,11 @@ function SetupPasswordForm() {
       setRecoveryCodes(json.data.recoveryCodes);
 
       if (json.data.requiresMfa && json.data.mfa) {
-        // admin: MFA 登録へ
+        // super_admin: MFA 登録へ
         setMfaData(json.data.mfa);
         setStep('mfa');
       } else {
-        // general: 即 done
+        // admin / general: 即 done (MFA は任意設定)
         setStep('done');
       }
     } catch {

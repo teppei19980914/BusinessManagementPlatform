@@ -16,7 +16,7 @@ export default async function MyTasksPage() {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
 
-  const projectGroups = await listMyTaskProjects(session.user.id);
+  const projectGroups = await listMyTaskProjects(session.user.id, session.user.tenantId);
   // サーバ側で算出した today (YYYY-MM-DD) を props 経由で渡し、クライアント描画で
   // new Date() を使った比較を行わないようにする (SSR⇔hydrate の時刻差に伴う
   // React error #418 ハイドレーションミスマッチ対策)。

@@ -4,11 +4,16 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     knowledge: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
       deleteMany: vi.fn(),
+    },
+    // 2026-05-10 Phase 2-8: 越境 sync-import 遮断のため project の tenant 検証を実施
+    project: {
+      findFirst: vi.fn(),
     },
   },
 }));
@@ -106,36 +111,40 @@ function csvRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe('computeKnowledgeSyncDiff (T-22 Phase 22c)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 2026-05-10 Phase 2-8: テナント検証 mock — 全テストで「自テナント所有」の前提
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
+  });
 
   it('空の CSV はグローバルエラー', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([] as never);
-    const r = await computeKnowledgeSyncDiff(projectId, []);
+    const r = await computeKnowledgeSyncDiff(projectId, [], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 
   it('ID 空欄 + DB 同タイトルなし → CREATE', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([] as never);
-    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ title: '新規ナレッジ' })]);
+    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ title: '新規ナレッジ' })], 'tenant-A');
     expect(r.canExecute).toBe(true);
     expect(r.summary.added).toBe(1);
   });
 
   it('ID 空欄 + DB 同タイトルあり → blocker', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([baseDbKnowledge] as never);
-    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ title: 'React導入' })]);
+    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ title: 'React導入' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 
   it('ID 一致 + 変更なし → NO_CHANGE', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([baseDbKnowledge] as never);
-    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'k-1' })]);
+    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'k-1' })], 'tenant-A');
     expect(r.rows[0].action).toBe('NO_CHANGE');
   });
 
   it('tags 変更を fieldChanges で検出', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([baseDbKnowledge] as never);
-    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'k-1', techTags: ['react', 'next.js'] })]);
+    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'k-1', techTags: ['react', 'next.js'] })], 'tenant-A');
     expect(r.rows[0].action).toBe('UPDATE');
     expect(r.rows[0].fieldChanges?.find((fc) => fc.field === 'techTags')).toBeDefined();
   });
@@ -145,7 +154,7 @@ describe('computeKnowledgeSyncDiff (T-22 Phase 22c)', () => {
       baseDbKnowledge,
       { ...baseDbKnowledge, id: 'k-2', title: 'draft K', visibility: 'draft' },
     ] as never);
-    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'k-1' })]);
+    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'k-1' })], 'tenant-A');
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(false);
   });
@@ -155,7 +164,7 @@ describe('computeKnowledgeSyncDiff (T-22 Phase 22c)', () => {
       baseDbKnowledge,
       { ...baseDbKnowledge, id: 'k-2', title: 'public K', visibility: 'public' },
     ] as never);
-    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'k-1' })]);
+    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'k-1' })], 'tenant-A');
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(true);
     expect(removeRow?.warningLevel).toBe('ERROR');
@@ -163,17 +172,21 @@ describe('computeKnowledgeSyncDiff (T-22 Phase 22c)', () => {
 
   it('ID DB に不在 → blocker', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([] as never);
-    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'unknown' })]);
+    const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ id: 'unknown' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 });
 
 describe('applyKnowledgeSyncImport (T-22 Phase 22c)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 2026-05-10 Phase 2-8: テナント検証 mock
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
+  });
 
   it('canExecute=false なら IMPORT_VALIDATION_ERROR を投げる', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([] as never);
-    await expect(applyKnowledgeSyncImport(projectId, [], 'keep', 'u-1'))
+    await expect(applyKnowledgeSyncImport(projectId, [], 'keep', 'u-1', 'tenant-A'))
       .rejects.toThrow(/IMPORT_VALIDATION_ERROR/);
   });
 
@@ -181,7 +194,7 @@ describe('applyKnowledgeSyncImport (T-22 Phase 22c)', () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.knowledge.create).mockResolvedValue({ id: 'k-new' } as never);
 
-    const result = await applyKnowledgeSyncImport(projectId, [csvRow({ title: '新規' })], 'keep', 'u-1');
+    const result = await applyKnowledgeSyncImport(projectId, [csvRow({ title: '新規' })], 'keep', 'u-1', 'tenant-A');
     expect(result.added).toBe(1);
     expect(prisma.knowledge.create).toHaveBeenCalledWith(
       expect.objectContaining({

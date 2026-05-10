@@ -151,7 +151,10 @@ export function AttachmentList({
                 href={a.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 truncate text-info hover:underline"
+                // 2026-05-09: 長い displayName で flex-row が画面幅を超える事象 (#1)。
+                //   `truncate` 単独では flex item が min-content を確保するため効かない。
+                //   `min-w-0` を併設して flex item を 0 まで縮小可能にし、ellipsis を確実発火。
+                className="min-w-0 flex-1 truncate text-info hover:underline"
                 title={a.url}
               >
                 {a.displayName}

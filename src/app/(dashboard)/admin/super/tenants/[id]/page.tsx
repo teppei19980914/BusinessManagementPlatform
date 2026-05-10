@@ -49,9 +49,17 @@ export default async function SuperAdminTenantDetailPage({
       )}
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <DetailCard label="プラン" value={tenant.plan} />
-        <DetailCard label="アクティブユーザ数" value={tenant.activeUserCount.toString()} />
-        {/* P-6: 最終ログイン日時 */}
+        {/* 2026-05-09 (PR E): 全 DetailCard にツールチップ */}
+        <DetailCard
+          label="プラン"
+          value={tenant.plan}
+          tooltip="現在の契約プラン (beginner / expert / pro)。プラン変更はテナント管理者が /settings/tenant で実施"
+        />
+        <DetailCard
+          label="アクティブユーザ数"
+          value={tenant.activeUserCount.toString()}
+          tooltip="isActive=true かつ deletedAt=null のユーザ数。Beginner プランは 5 席上限"
+        />
         <DetailCard
           label="最終ログイン (テナント内)"
           value={
@@ -60,52 +68,80 @@ export default async function SuperAdminTenantDetailPage({
               : '未ログイン'
           }
           highlight={isDormant}
+          tooltip="テナント内のいずれかのユーザの最新 lastLoginAt。90 日以上経過で「休眠テナント」候補"
         />
         <DetailCard
           label="今月 API 呼出"
           value={tenant.currentMonthApiCallCount.toLocaleString()}
+          tooltip="当月の LLM/Embedding 呼出回数 (withMeteredLLM 経由)。月初 (UTC) にリセット"
         />
         <DetailCard
           label="今月 API 費用"
           value={`¥${tenant.currentMonthApiCostJpy.toLocaleString()}`}
+          tooltip="当月の内部請求額 (プラン別固定単価)。Anthropic 実コストとは別系統"
         />
         <DetailCard
           label="月次予算上限"
           value={tenant.monthlyBudgetCapJpy != null ? `¥${tenant.monthlyBudgetCapJpy.toLocaleString()}` : '無制限'}
+          tooltip="テナント管理者が設定した月次予算 (円)。超過時は LLM 呼び出しがブロックされる"
         />
         <DetailCard
           label="Beginner 月間呼出上限"
           value={tenant.beginnerMonthlyCallLimit.toString()}
+          tooltip="Beginner プラン時の月間 API 呼出上限 (default 100)。Expert/Pro では適用されない"
         />
       </section>
 
-      <section className="space-y-2">
+      <section className="space-y-2" title="テナント所属の業務データ件数 (deletedAt=null のものを集計)">
         <h2 className="text-lg font-semibold">エンティティ数</h2>
         <ul className="rounded border p-3 text-sm">
-          <EntityRow label="プロジェクト" count={tenant.entityCounts.projects} />
-          <EntityRow label="ナレッジ" count={tenant.entityCounts.knowledges} />
-          <EntityRow label="リスク/課題" count={tenant.entityCounts.risksIssues} />
-          <EntityRow label="振り返り" count={tenant.entityCounts.retrospectives} />
-          <EntityRow label="メモ" count={tenant.entityCounts.memos} />
+          <EntityRow
+            label="プロジェクト"
+            count={tenant.entityCounts.projects}
+            tooltip="テナント内の active プロジェクト数 (削除済みを除く)。is_sample_data=true のシードは除外済"
+          />
+          <EntityRow
+            label="ナレッジ"
+            count={tenant.entityCounts.knowledges}
+            tooltip="ナレッジ件数。複数プロジェクトで共有されるため Project と件数は独立"
+          />
+          <EntityRow
+            label="リスク/課題"
+            count={tenant.entityCounts.risksIssues}
+            tooltip="type='risk' (リスク) と 'issue' (課題) の合計"
+          />
+          <EntityRow
+            label="振り返り"
+            count={tenant.entityCounts.retrospectives}
+            tooltip="プロジェクト振り返り (Retrospective) 件数。各プロジェクトに 1 件以上"
+          />
+          <EntityRow
+            label="メモ"
+            count={tenant.entityCounts.memos}
+            tooltip="個人メモ件数。private/public visibility で公開範囲を制御"
+          />
         </ul>
       </section>
 
       {/* Storage add-on (Phase 2 / 2026-05-08): 容量 + 課金統合表示 */}
-      <section className="space-y-2">
+      <section className="space-y-2" title="Storage add-on プラン (Phase 2 / 2026-05-08) と容量・月次課金の統合表示">
         <h2 className="text-lg font-semibold">ストレージ + 月次課金</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <DetailCard
             label="ストレージプラン"
             value={`${tenant.storageAddonPlan} (+¥${tenant.storageAddonMonthlyJpy.toLocaleString()}/月)`}
+            tooltip="standard (LLM プラン連動 50/150/300MB) / plus (+200MB ¥500) / pro_storage (+1GB ¥1500)"
           />
           <DetailCard
             label="使用量 / 上限"
             value={`${formatBytesSuper(tenant.storageBytesUsed)} / ${formatBytesSuper(tenant.storageLimitBytes)} (${Math.round(tenant.storageUsageRatio * 100)}%)`}
             highlight={tenant.storageUsageRatio > 1.0}
+            tooltip="添付ファイル合算サイズ。100% 超で Grace period (7 日)、未対応で write 停止"
           />
           <DetailCard
             label="当月予想合計課金"
             value={`¥${tenant.totalCurrentMonthJpy.toLocaleString()} (LLM ¥${tenant.currentMonthApiCostJpy.toLocaleString()} + Storage ¥${tenant.storageAddonMonthlyJpy.toLocaleString()})`}
+            tooltip="LLM 部分 (従量課金) + Storage add-on (固定月額) の合算。請求書根拠"
           />
         </div>
         {tenant.storageGracePeriodStartedAt && (
@@ -121,21 +157,36 @@ export default async function SuperAdminTenantDetailPage({
         )}
       </section>
 
-      {/* P-G (2026-05-08): 請求先情報 */}
+      {/* P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で個人法人 + 住所構造化 */}
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">請求先情報</h2>
-        {tenant.billingCompanyName == null ? (
+        {tenant.billingContactName == null ? (
           <p className="rounded border bg-muted/30 p-4 text-sm text-muted-foreground">
             ℹ 請求先情報が未登録です (= 運営内部テナント、または旧データ)。請求業務には使用できません。
           </p>
         ) : (
           <dl className="grid grid-cols-1 gap-2 rounded border p-3 text-sm sm:grid-cols-2">
-            <BillingRow label="会社名 / 法人名" value={tenant.billingCompanyName} />
-            <BillingRow label="請求担当者" value={tenant.billingContactName} />
+            {/* 2026-05-09 (PR C / #5): billingType 表示 + 個人プランは会社名行を出さない */}
+            <BillingRow
+              label="種別"
+              value={tenant.billingType === 'individual' ? '個人' : '法人'}
+            />
+            {tenant.billingType !== 'individual' && tenant.billingCompanyName && (
+              <BillingRow label="会社名 / 法人名" value={tenant.billingCompanyName} />
+            )}
+            <BillingRow
+              label={tenant.billingType === 'individual' ? 'お名前' : '請求担当者'}
+              value={tenant.billingContactName}
+            />
             <BillingRow label="請求先メール" value={tenant.billingContactEmail} />
             <BillingRow label="電話番号" value={tenant.billingPhoneNumber ?? '(未設定)'} />
             <BillingRow label="支払い方法" value={paymentMethodLabel(tenant.paymentMethod)} />
-            <BillingRow label="請求書送付先住所" value={tenant.billingAddress} fullWidth />
+            {/* 2026-05-09 (PR C / #8): 構造化住所優先、未設定時は legacy billingAddress フォールバック */}
+            <BillingRow
+              label="請求書送付先住所"
+              value={formatBillingAddress(tenant)}
+              fullWidth
+            />
           </dl>
         )}
       </section>
@@ -199,15 +250,19 @@ function DetailCard({
   label,
   value,
   highlight = false,
+  tooltip,
 }: {
   label: string;
   value: string;
   /** P-6: 休眠警告などで強調表示したい場合 true */
   highlight?: boolean;
+  // 2026-05-09 (PR E): 全カードにツールチップ
+  tooltip?: string;
 }) {
   return (
     <div
-      className={`rounded border p-4 ${highlight ? 'border-destructive/30 bg-destructive/5' : ''}`}
+      className={`rounded border p-4 ${highlight ? 'border-destructive/30 bg-destructive/5' : ''}${tooltip ? ' cursor-help' : ''}`}
+      title={tooltip}
     >
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className={`mt-1 text-xl font-bold ${highlight ? 'text-destructive' : ''}`}>{value}</p>
@@ -215,27 +270,40 @@ function DetailCard({
   );
 }
 
-function EntityRow({ label, count }: { label: string; count: number }) {
+function EntityRow({
+  label,
+  count,
+  tooltip,
+}: {
+  label: string;
+  count: number;
+  tooltip?: string;
+}) {
   return (
-    <li className="flex justify-between border-b py-1 last:border-b-0">
+    <li
+      className={`flex justify-between border-b py-1 last:border-b-0${tooltip ? ' cursor-help' : ''}`}
+      title={tooltip}
+    >
       <span>{label}</span>
       <span className="font-mono">{count.toLocaleString()}</span>
     </li>
   );
 }
 
-/** P-G (2026-05-08): 請求先 1 行 */
+/** P-G (2026-05-08): 請求先 1 行 (2026-05-09 PR E でツールチップ追加) */
 function BillingRow({
   label,
   value,
   fullWidth = false,
+  tooltip,
 }: {
   label: string;
   value: string | null;
   fullWidth?: boolean;
+  tooltip?: string;
 }) {
   return (
-    <div className={fullWidth ? 'sm:col-span-2' : ''}>
+    <div className={fullWidth ? 'sm:col-span-2' : ''} title={tooltip}>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="whitespace-pre-line font-medium">{value ?? '(未設定)'}</dd>
     </div>
@@ -254,4 +322,28 @@ function paymentMethodLabel(method: string): string {
     default:
       return method;
   }
+}
+
+/**
+ * 2026-05-09 (PR C / #8): 構造化住所を 1 行に整形。
+ *   構造化フィールドが揃っていれば優先、未設定なら legacy billing_address にフォールバック、
+ *   どちらもなければ '(未設定)'。
+ */
+function formatBillingAddress(t: {
+  billingPostalCode: string | null;
+  billingPrefecture: string | null;
+  billingCity: string | null;
+  billingStreetAddress: string | null;
+  billingBuildingName: string | null;
+  billingAddress: string | null;
+}): string | null {
+  if (t.billingPostalCode || t.billingPrefecture || t.billingCity || t.billingStreetAddress) {
+    const postal = t.billingPostalCode ? `〒${t.billingPostalCode} ` : '';
+    const main = [t.billingPrefecture, t.billingCity, t.billingStreetAddress]
+      .filter(Boolean)
+      .join('');
+    const building = t.billingBuildingName ? ` ${t.billingBuildingName}` : '';
+    return `${postal}${main}${building}`;
+  }
+  return t.billingAddress;
 }

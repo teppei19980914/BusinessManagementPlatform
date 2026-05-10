@@ -32,45 +32,52 @@ import {
 } from '@/services/attachment.service';
 import { recordAuditLog } from '@/services/audit.service';
 
+type AuthorizedUser = { id: string; systemRole: string; tenantId: string };
+
 /**
- * 親エンティティ → プロジェクト群を解決したうえで、
- * 指定されたアクセス種別 (read/write) の権限を判定する共通認可ユーティリティ。
+ * memo entity 用の認可パス。
+ * memo は admin 特権なしの個人リソース (PR #70)。project スコープとは別経路で判定する。
+ */
+async function authorizeMemoEntity(
+  user: AuthorizedUser,
+  entityId: string,
+  mode: 'read' | 'write',
+): Promise<NextResponse | null> {
+  const t = await getTranslations('message');
+  const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
+  if (notFound) {
+    return NextResponse.json(
+      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
+      { status: 404 },
+    );
+  }
+  if (!ok) {
+    return NextResponse.json(
+      { error: { code: 'FORBIDDEN', message: t('forbidden') } },
+      { status: 403 },
+    );
+  }
+  return null;
+}
+
+/**
+ * project スコープ entity (project/task/estimate/risk/retrospective/knowledge) 用の認可パス。
  *
  * 認可ルール:
  *   - admin: 常に許可
  *   - **read on visibility='public' entity (risk/retrospective/knowledge)**: 認証済全員可
- *     (PR #213 / 2026-05-01: 「全○○」の readOnly dialog から非メンバーが添付一覧を取得する経路を救済。
- *      batch route の fix/cross-list-non-member-columns (2026-04-27) と整合。
- *      旧仕様は singular GET も project member 必須で、非メンバーは 403 を踏んでいた)
- *   - read on visibility='draft' entity: 作成者本人 OR admin (admin はトップで通過済)
+ *     (PR #213 / 2026-05-01: 「全○○」の readOnly dialog から非メンバーが添付一覧を取得する経路を救済)
+ *   - read on visibility='draft' entity: 作成者本人 OR admin
  *   - write: project member 必須 (visibility に関わらず)
- *   - 非メンバー (write): 拒否
  *   - 孤児ナレッジ (紐付けプロジェクト 0 件): admin のみ操作可
  */
-async function authorize(
-  user: { id: string; systemRole: string },
+async function authorizeProjectScopedEntity(
+  user: AuthorizedUser,
   entityType: AttachmentEntityType,
   entityId: string,
-  mode: 'read' | 'write' = 'write',
+  mode: 'read' | 'write',
 ): Promise<NextResponse | null> {
   const t = await getTranslations('message');
-  // PR #70: memo は admin 特権なしの個人リソース。project スコープとは別経路で判定する。
-  if (entityType === 'memo') {
-    const { ok, notFound } = await authorizeMemoAttachment(entityId, user.id, mode);
-    if (notFound) {
-      return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
-        { status: 404 },
-      );
-    }
-    if (!ok) {
-      return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: t('forbidden') } },
-        { status: 403 },
-      );
-    }
-    return null;
-  }
 
   if (user.systemRole === 'admin') return null;
 
@@ -79,7 +86,7 @@ async function authorize(
   //   見るのが正常動線 (read-only dialog から AttachmentList が GET する)。
   //   write 時は引き続き project member 必須 (visibility 関係なく)。
   if (mode === 'read') {
-    const visInfo = await getEntityVisibility(entityType, entityId);
+    const visInfo = await getEntityVisibility(entityType, entityId, user.tenantId);
     if (visInfo === 'not-found') {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -100,7 +107,7 @@ async function authorize(
   }
 
   // project member 経路 (write 全般 + read on project/task/estimate)
-  const projectIds = await resolveProjectIds(entityType, entityId);
+  const projectIds = await resolveProjectIds(entityType, entityId, user.tenantId);
   if (projectIds === null) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -117,13 +124,59 @@ async function authorize(
 
   // いずれか 1 つでもメンバーなら許可 (ナレッジは複数プロジェクト紐付け有り)
   for (const pid of projectIds) {
-    const membership = await checkMembership(pid, user.id, user.systemRole);
+    const membership = await checkMembership(pid, user.id, user.systemRole, user.tenantId);
     if (membership.isMember) return null;
   }
   return NextResponse.json(
     { error: { code: 'FORBIDDEN', message: t('forbidden') } },
     { status: 403 },
   );
+}
+
+/**
+ * 親エンティティの authorizer を **静的な switch 文** で dispatch する共通認可ユーティリティ。
+ *
+ * 2026-05-09 feedback: severity-1 テナント越境対策で checkMembership に tenantId が必須化されたため、
+ *   本ヘルパー引数の user にも tenantId を含める。getAuthenticatedUser() の戻り値と一致。
+ *
+ * 2026-05-10 PR #302 (commit #2): CodeQL false positive 対応の試行錯誤を経て **switch 文** に確定:
+ *   - 試行 1 (元コード): `if (entityType === 'memo') { ... } else { ... }` →
+ *     `js/user-controlled-bypass` (CWE-290/807) で flagged (user-controlled value が
+ *     security check を gate していると判定された)。
+ *   - 試行 2 (constant-record dispatch): `ATTACHMENT_AUTHORIZER[entityType](...)` →
+ *     `js/unvalidated-dynamic-method-call` (CWE-94) で flagged (user-controlled name で
+ *     dynamic method call → 未知 key で `undefined()` 例外の懸念)。
+ *   - 試行 3 (本実装、switch 文): 各 case label が **静的 string literal** で、dispatch は
+ *     **コンパイル時に確定** する。CodeQL は exhaustive switch on typed enum を
+ *     "user-controlled bypass" としても "dynamic method call" としても扱わない。
+ *     さらに TypeScript exhaustiveness check (`exhaustive: never`) で全 enum 値の
+ *     case 漏れを compile-time に検出する。
+ *
+ * 詳細: docs/knowledge/KDD_PATTERNS.md §5.X+16
+ */
+async function authorize(
+  user: AuthorizedUser,
+  entityType: AttachmentEntityType,
+  entityId: string,
+  mode: 'read' | 'write' = 'write',
+): Promise<NextResponse | null> {
+  switch (entityType) {
+    case 'memo':
+      return authorizeMemoEntity(user, entityId, mode);
+    case 'project':
+    case 'task':
+    case 'estimate':
+    case 'risk':
+    case 'retrospective':
+    case 'knowledge':
+      return authorizeProjectScopedEntity(user, entityType, entityId, mode);
+    default: {
+      // TypeScript exhaustiveness check: 新 entityType 追加時は本 default 節で
+      // compile error になるため、authorize() の case 漏れを構造的に防ぐ。
+      const _exhaustive: never = entityType;
+      throw new Error(`Unhandled attachment entityType: ${String(_exhaustive)}`);
+    }
+  }
 }
 
 /**
@@ -157,7 +210,7 @@ export async function GET(req: NextRequest) {
   const forbidden = await authorize(user, typed, entityId, 'read');
   if (forbidden) return forbidden;
 
-  const data = await listAttachments(typed, entityId, slot);
+  const data = await listAttachments(typed, entityId, user.tenantId, slot);
   return NextResponse.json({ data });
 }
 
@@ -181,9 +234,10 @@ export async function POST(req: NextRequest) {
   const forbidden = await authorize(user, parsed.data.entityType, parsed.data.entityId, 'write');
   if (forbidden) return forbidden;
 
-  const created = await createAttachment(parsed.data, user.id);
+  const created = await createAttachment(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'attachment',

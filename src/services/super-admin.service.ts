@@ -18,7 +18,15 @@
  */
 
 import { prisma } from '@/lib/db';
-import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
+
+/**
+ * 2026-05-09 (PR E / #19): super_admin ダッシュボード集計から除外するテナント。
+ *   - 管理テナント (MANAGEMENT_TENANT_ID): プラットフォーム運営者用、課金対象外
+ *   - default テナント (DEFAULT_TENANT_ID): v1 単一テナント運用の placeholder。
+ *     後続のマルチテナント運用では実顧客ではない (= 顧客集計に含めない方針 / 設計合意 B)
+ */
+const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
 import {
   getBeginnerExpiryState,
   getBeginnerDaysRemaining,
@@ -48,11 +56,18 @@ export type TenantSummaryRow = {
   monthlyBudgetCapJpy: number | null;
   activeUserCount: number;
   createdAt: Date;
-  // P-G (2026-05-08): 請求先情報 (CSV エクスポート + super_admin 一覧表示用)
+  // P-G (2026-05-08): 請求先情報 (CSV エクスポート + super_admin 一覧表示用) / PR C で拡張
+  billingType: string;
   billingCompanyName: string | null;
   billingContactName: string | null;
   billingContactEmail: string | null;
+  /** Legacy: 旧 単一 Text 住所 (新規入力なし) */
   billingAddress: string | null;
+  billingPostalCode: string | null;
+  billingPrefecture: string | null;
+  billingCity: string | null;
+  billingStreetAddress: string | null;
+  billingBuildingName: string | null;
   billingPhoneNumber: string | null;
   paymentMethod: string;
   // Storage add-on (Phase 2 / 2026-05-08): 当月 CSV エクスポートで容量・追加課金を表示
@@ -66,7 +81,8 @@ export type TenantSummaryRow = {
 export async function listAllTenants(): Promise<TenantSummaryRow[]> {
   const tenants = await prisma.tenant.findMany({
     where: {
-      id: { not: MANAGEMENT_TENANT_ID },
+      // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+      id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
       deletedAt: null,
     },
     orderBy: { tenantSeq: 'asc' },
@@ -80,11 +96,17 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
       currentMonthApiCostJpy: true,
       monthlyBudgetCapJpy: true,
       createdAt: true,
-      // P-G (2026-05-08): 請求先情報
+      // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で拡張
+      billingType: true,
       billingCompanyName: true,
       billingContactName: true,
       billingContactEmail: true,
       billingAddress: true,
+      billingPostalCode: true,
+      billingPrefecture: true,
+      billingCity: true,
+      billingStreetAddress: true,
+      billingBuildingName: true,
       billingPhoneNumber: true,
       paymentMethod: true,
       // Storage add-on (Phase 2 / 2026-05-08): CSV エクスポート用
@@ -116,11 +138,17 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     activeUserCount: userCountByTenant.get(t.id) ?? 0,
     createdAt: t.createdAt,
-    // P-G (2026-05-08): 請求先情報
+    // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09)
+    billingType: t.billingType,
     billingCompanyName: t.billingCompanyName,
     billingContactName: t.billingContactName,
     billingContactEmail: t.billingContactEmail,
     billingAddress: t.billingAddress,
+    billingPostalCode: t.billingPostalCode,
+    billingPrefecture: t.billingPrefecture,
+    billingCity: t.billingCity,
+    billingStreetAddress: t.billingStreetAddress,
+    billingBuildingName: t.billingBuildingName,
     billingPhoneNumber: t.billingPhoneNumber,
     paymentMethod: t.paymentMethod,
     // Storage add-on (Phase 2 / 2026-05-08): 当月課金合計の請求書根拠
@@ -156,13 +184,9 @@ export type TenantDetail = TenantSummaryRow & {
   daysSinceLastActivity: number;
   /** P-6: 休眠判定 (90 日以上活動なし) を満たすかどうか。 */
   isDormant: boolean;
-  // P-G (2026-05-08): 請求先情報
-  billingCompanyName: string | null;
-  billingContactName: string | null;
-  billingContactEmail: string | null;
-  billingAddress: string | null;
-  billingPhoneNumber: string | null;
-  paymentMethod: string;
+  // P-G (2026-05-08) + PR C (2026-05-09): 請求先情報。
+  //   実際のフィールド (billingType / billingCompanyName / billingPostalCode 等) は
+  //   TenantSummaryRow から継承 (`& TenantSummaryRow` で intersection)。
   // P-B (2026-05-08): Beginner プラン期限情報
   beginnerEverUpgraded: boolean;
   beginnerExpiryState: BeginnerExpiryState;
@@ -245,11 +269,17 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     lastUserLoginAt,
     daysSinceLastActivity,
     isDormant,
-    // P-G (2026-05-08): 請求先情報
+    // P-G (2026-05-08) + PR C (2026-05-09): 請求先情報
+    billingType: t.billingType,
     billingCompanyName: t.billingCompanyName,
     billingContactName: t.billingContactName,
     billingContactEmail: t.billingContactEmail,
     billingAddress: t.billingAddress,
+    billingPostalCode: t.billingPostalCode,
+    billingPrefecture: t.billingPrefecture,
+    billingCity: t.billingCity,
+    billingStreetAddress: t.billingStreetAddress,
+    billingBuildingName: t.billingBuildingName,
     billingPhoneNumber: t.billingPhoneNumber,
     paymentMethod: t.paymentMethod,
     // P-B (2026-05-08): Beginner プラン期限情報 (純関数で計算)
@@ -343,7 +373,8 @@ export type StorageUsageTopRow = {
 
 export async function listStorageUsageTop(limit: number = 10): Promise<StorageUsageTopRow[]> {
   const tenants = await prisma.tenant.findMany({
-    where: { id: { not: MANAGEMENT_TENANT_ID }, deletedAt: null },
+    // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+    where: { id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS }, deletedAt: null },
     orderBy: { storageBytesUsed: 'desc' },
     take: limit,
     select: {
@@ -398,8 +429,9 @@ export type CrossTenantUsageSummary = {
 };
 
 export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSummary> {
+  // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外して集計
   const tenantWhere = {
-    id: { not: MANAGEMENT_TENANT_ID },
+    id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
     deletedAt: null,
   };
 
@@ -418,7 +450,7 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
       where: {
         isActive: true,
         deletedAt: null,
-        tenantId: { not: MANAGEMENT_TENANT_ID },
+        tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
       },
     }),
   ]);
@@ -429,6 +461,168 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
     totalCurrentMonthApiCalls: agg._sum.currentMonthApiCallCount ?? 0,
     totalCurrentMonthApiCostJpy: agg._sum.currentMonthApiCostJpy ?? 0,
     planDistribution: planGroups.map((p) => ({ plan: p.plan, count: p._count.id })),
+  };
+}
+
+// ================================================================
+// 2026-05-09 (PR E / #12 #14 #15): 外部サービス使用量 + Beginner 期限サマリ
+// ================================================================
+
+/**
+ * Voyage AI 無料枠 (200M tokens / month) のしきい値。
+ * 公式 (https://docs.voyageai.com/docs/pricing) に基づく voyage-4-lite の無料枠。
+ * しきい値変更時は本定数を更新する。
+ */
+const VOYAGE_FREE_TIER_TOKENS_PER_MONTH = 200_000_000;
+
+/**
+ * Voyage AI 無料枠カードの返り値。
+ *   - 当月累計の embedding token 数 (全テナント合算)
+ *   - 200M 上限に対する利用率 (0.0-1.0+)
+ *   - 'ok' / 'warn' (>=80%) / 'alert' (>=100%) のステータス
+ */
+export type VoyageUsageSummary = {
+  currentMonthTokens: number;
+  freeTierTokens: number;
+  utilizationRatio: number;
+  status: 'ok' | 'warn' | 'alert';
+};
+
+/**
+ * Anthropic API 使用量カードの返り値。
+ *   - 当月累計の input/output トークン
+ *   - 当月累計の API 呼び出し回数 (auto-tag-extract + suggestion-explanation)
+ *   - 当月累計の内部請求額 (= プラン別固定単価。Anthropic 実コストとは別系統 — Q5 参照)
+ */
+export type AnthropicUsageSummary = {
+  currentMonthInputTokens: number;
+  currentMonthOutputTokens: number;
+  currentMonthCallCount: number;
+  currentMonthInternalCostJpy: number;
+};
+
+/**
+ * Beginner プラン使用状況サマリ。
+ *   - Beginner プラン契約中のテナント件数
+ *   - 期限切迫 (warning_60 / warning_75 / expired) のテナント件数
+ *   - 当月の Beginner プラン総 API 呼び出し回数 (= 100 回/テナント上限の使用状況)
+ */
+export type BeginnerUsageSummary = {
+  totalTenants: number;
+  warning60Count: number;
+  warning75Count: number;
+  expiredCount: number;
+  totalCurrentMonthCalls: number;
+};
+
+/**
+ * 2026-05-09 (PR E): 当月初 (UTC 1 日 00:00) を返す。月初リセット cron と整合。
+ */
+function getCurrentMonthStartUtc(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0));
+}
+
+/**
+ * 2026-05-09 (PR E / #12): Voyage AI 当月使用量を集計。
+ *   embedding 系の ApiCallLog (modelName = LLM_MODELS.EMBEDDING) を月初から集計。
+ */
+export async function getVoyageUsageSummary(): Promise<VoyageUsageSummary> {
+  const monthStart = getCurrentMonthStartUtc();
+  const result = await prisma.apiCallLog.aggregate({
+    where: {
+      createdAt: { gte: monthStart },
+      // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+      tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
+      embeddingTokens: { not: null },
+    },
+    _sum: { embeddingTokens: true },
+  });
+  const currentMonthTokens = Number(result._sum.embeddingTokens ?? 0);
+  const utilizationRatio = currentMonthTokens / VOYAGE_FREE_TIER_TOKENS_PER_MONTH;
+  const status: VoyageUsageSummary['status'] =
+    utilizationRatio >= 1.0 ? 'alert' : utilizationRatio >= 0.8 ? 'warn' : 'ok';
+  return {
+    currentMonthTokens,
+    freeTierTokens: VOYAGE_FREE_TIER_TOKENS_PER_MONTH,
+    utilizationRatio,
+    status,
+  };
+}
+
+/**
+ * 2026-05-09 (PR E / #14): Anthropic 当月使用量を集計。
+ *   LLM 系の ApiCallLog (llmInputTokens / llmOutputTokens) を月初から集計。
+ */
+export async function getAnthropicUsageSummary(): Promise<AnthropicUsageSummary> {
+  const monthStart = getCurrentMonthStartUtc();
+  const result = await prisma.apiCallLog.aggregate({
+    where: {
+      createdAt: { gte: monthStart },
+      tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
+      // LLM 呼び出しに限る (= input か output トークンのいずれかが記録されている)
+      OR: [
+        { llmInputTokens: { not: null } },
+        { llmOutputTokens: { not: null } },
+      ],
+    },
+    _sum: {
+      llmInputTokens: true,
+      llmOutputTokens: true,
+      costJpy: true,
+    },
+    _count: { id: true },
+  });
+  return {
+    currentMonthInputTokens: Number(result._sum.llmInputTokens ?? 0),
+    currentMonthOutputTokens: Number(result._sum.llmOutputTokens ?? 0),
+    currentMonthCallCount: result._count.id,
+    currentMonthInternalCostJpy: result._sum.costJpy ?? 0,
+  };
+}
+
+/**
+ * 2026-05-09 (PR E / #15): Beginner プランのテナント別使用状況サマリ。
+ *   beginnerExpiryState (active / warning_60 / warning_75 / expired) でカウントし、
+ *   月次 API 呼出合計を返す。
+ */
+export async function getBeginnerUsageSummary(): Promise<BeginnerUsageSummary> {
+  const tenants = await prisma.tenant.findMany({
+    where: {
+      id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
+      deletedAt: null,
+      plan: 'beginner',
+    },
+    select: {
+      createdAt: true,
+      beginnerEverUpgraded: true,
+      currentMonthApiCallCount: true,
+    },
+  });
+
+  const { getBeginnerExpiryState } = await import('./beginner-expiry.service');
+  let warning60 = 0;
+  let warning75 = 0;
+  let expired = 0;
+  let totalCalls = 0;
+  for (const t of tenants) {
+    const state = getBeginnerExpiryState({
+      plan: 'beginner',
+      createdAt: t.createdAt,
+      beginnerEverUpgraded: t.beginnerEverUpgraded,
+    });
+    if (state === 'warning_60') warning60 += 1;
+    else if (state === 'warning_75') warning75 += 1;
+    else if (state === 'expired') expired += 1;
+    totalCalls += t.currentMonthApiCallCount;
+  }
+
+  return {
+    totalTenants: tenants.length,
+    warning60Count: warning60,
+    warning75Count: warning75,
+    expiredCount: expired,
+    totalCurrentMonthCalls: totalCalls,
   };
 }
 
@@ -552,10 +746,11 @@ export async function listDormantTenants(
 ): Promise<DormantTenantRow[]> {
   const cutoffDate = new Date(now.getTime() - thresholdDays * 24 * 60 * 60 * 1000);
 
-  // 顧客テナント全件 (管理テナント・削除済みは除外) + テナント内最新ログインを集計
+  // 顧客テナント全件 (管理テナント + default テナント + 削除済みは除外) + テナント内最新ログインを集計
   const tenants = await prisma.tenant.findMany({
     where: {
-      id: { not: MANAGEMENT_TENANT_ID },
+      // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
+      id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
       deletedAt: null,
       // onboarding 期間 (作成 < thresholdDays 前) は休眠判定対象外
       createdAt: { lte: cutoffDate },
@@ -746,8 +941,10 @@ export async function deleteTenant(
       data: { deletedAt: now },
     }),
     // 監査ログを残す (物理保持テーブルなので今後復元・監査が可能)
+    // Phase 2-10: tenantId は削除対象テナント (= tenantId) を使う
     prisma.auditLog.create({
       data: {
+        tenantId,
         userId: performerId,
         action: 'DELETE',
         entityType: 'tenant',
@@ -784,10 +981,11 @@ export async function deleteTenant(
  * 削除対象 (= テナント業務データ、容量を解放するもの):
  *   tasks / estimates / project_members / projects / knowledge_projects / knowledges /
  *   risks_issues / retrospectives / memos / customers / stakeholders / mentions /
- *   comments / attachments / tenant_import_preview / users
+ *   comments / attachments / tenant_import_preview / suggestion_explanations
  *
  * 保護対象 (= 物理削除しない):
  *   tenant 本体 (FK 整合性 + super_admin の監査参照)
+ *   **users (2026-05-09 #18 で方針変更): Beginner プラン乱用防止のため永続保持**
  *   api_call_logs (課金根拠の法的保持)
  *   tenant_monthly_usage_history (請求書根拠)
  *   audit_logs (監査要件)
@@ -799,15 +997,20 @@ export async function deleteTenant(
  * 設計判断:
  *   - **テナント本体は物理削除しない**: 上記ログテーブルが tenant_id NOT NULL FK を持つため、
  *     tenant 物理削除すると FK violation。slug 再利用の利便性より整合性を優先。
- *   - **users は物理削除する**: PII 削除 (= GDPR 等プライバシー要件への配慮)。
- *     紐付き auth_event_logs / audit_logs などは user_id NULL になる
- *     (= ON DELETE SET NULL の前提を満たす)。
+ *   - **users は物理削除しない (2026-05-09 / #18 方針変更)**:
+ *     旧仕様 (P-A) は GDPR 配慮で users を物理削除していたが、その後の方針判断により
+ *     **Beginner プラン乱用防止** (= 解約 → Beginner 再契約の繰り返し回避) を優先するため、
+ *     users 行は permanent に保持する。soft-delete 状態 (isActive=false / deletedAt=now)
+ *     のままで、ログインは不可だが email + role は abuse-prevention check の根拠として残す。
+ *     - tenant-onboarding.service.ts の `BEGINNER_NOT_AVAILABLE_FOR_RETURNING` 判定で参照
+ *     - GDPR 等の個別削除請求は super_admin が手動で対応する運用 (cron 自動削除しない)
  *   - **冪等性**: 同一テナントの 2 回目以降は対象データが既に空なので no-op。
  *     失敗時はテナントごとに try/catch、cron 全体は止めない。
  *
  * 関連:
  *   - 計画: ユーザライフサイクルの Step 13 (テナント解約 → 90 日後物理削除)
  *   - 月初 cron: src/services/tenant-monthly-reset.service.ts (本関数を呼ぶ)
+ *   - Beginner abuse 検知: src/services/tenant-onboarding.service.ts §previousDeletedTenants
  */
 export type PurgeOldDeletedTenantsResult = {
   /** 物理削除を試行したテナント件数 */
@@ -839,6 +1042,11 @@ export async function purgeOldDeletedTenants(
     try {
       // 単一 transaction で関連データを削除 (途中失敗時の半端状態を避ける)。
       // FK の依存関係順 (子 → 親) に削除する: child first, parent last。
+      // 2026-05-09 (#18 方針変更): users を物理削除しない。
+      //   Beginner プラン乱用防止のため、解約済テナントの users 行を永続保持する
+      //   (soft-delete 状態のまま)。tenant-onboarding 側の abuse-prevention check は
+      //   billingContactEmail を参照するため厳密には users 不要だが、将来 user.email
+      //   ベースの判定に拡張する余地を残すため、ここで保護対象とする。
       const [
         // 子テーブル (= FK 参照される側ではなく、参照する側) を先に削除
         mentions,
@@ -855,10 +1063,11 @@ export async function purgeOldDeletedTenants(
         memos,
         stakeholders,
         knowledges,
+        // 2026-05-09 hotfix: SuggestionExplanation を project / customer の前で削除
+        suggestionExplanations,
         projects,
         customers,
         importPreviews,
-        users,
       ] = await prisma.$transaction([
         prisma.mention.deleteMany({ where: { tenantId: t.id } }),
         prisma.comment.deleteMany({ where: { tenantId: t.id } }),
@@ -874,11 +1083,13 @@ export async function purgeOldDeletedTenants(
         prisma.memo.deleteMany({ where: { tenantId: t.id } }),
         prisma.stakeholder.deleteMany({ where: { tenantId: t.id } }),
         prisma.knowledge.deleteMany({ where: { tenantId: t.id } }),
+        // 2026-05-09 hotfix: SuggestionExplanation は project_id / tenant_id / generated_by の
+        //   3 経路で FK を持つ。project / tenant の削除前に必ず明示削除する。
+        prisma.suggestionExplanation.deleteMany({ where: { tenantId: t.id } }),
         prisma.project.deleteMany({ where: { tenantId: t.id } }),
         prisma.customer.deleteMany({ where: { tenantId: t.id } }),
         prisma.tenantImportPreview.deleteMany({ where: { tenantId: t.id } }),
-        // users は最後 (= 上記の created_by / updated_by などの参照を解決した後)
-        prisma.user.deleteMany({ where: { tenantId: t.id } }),
+        // 2026-05-09 (#18): users.deleteMany は意図的に削除しない (Beginner abuse 防止)
       ]);
 
       const subTotal =
@@ -896,10 +1107,11 @@ export async function purgeOldDeletedTenants(
         memos.count +
         stakeholders.count +
         knowledges.count +
+        // 2026-05-09 hotfix: SuggestionExplanation も合算
+        suggestionExplanations.count +
         projects.count +
         customers.count +
-        importPreviews.count +
-        users.count;
+        importPreviews.count;
       totalRowsDeleted += subTotal;
       succeeded += 1;
 

@@ -68,7 +68,7 @@ describe('sendVerificationEmail', () => {
     mockSend.mockResolvedValue({ success: true, messageId: 'msg-123' });
 
     await expect(
-      sendVerificationEmail('user-id', 'test@example.com', 'https://example.com'),
+      sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com'),
     ).resolves.toBeUndefined();
 
     expect(mockSend).toHaveBeenCalledOnce();
@@ -79,17 +79,17 @@ describe('sendVerificationEmail', () => {
     mockSend.mockResolvedValue({ success: false, error: 'Resend 403 error' });
 
     await expect(
-      sendVerificationEmail('user-id', 'test@example.com', 'https://example.com'),
+      sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com'),
     ).rejects.toThrow(EmailSendError);
   });
 
   it('既存の未使用トークンを無効化してから新しいトークンを作成する', async () => {
     mockSend.mockResolvedValue({ success: true, messageId: 'msg-456' });
 
-    await sendVerificationEmail('user-id', 'test@example.com', 'https://example.com');
+    await sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com');
 
     expect(prisma.emailVerificationToken.updateMany).toHaveBeenCalledWith({
-      where: { userId: 'user-id', usedAt: null },
+      where: { userId: 'user-id', tenantId: 'tenant-A', usedAt: null },
       data: { usedAt: expect.any(Date) },
     });
     expect(prisma.emailVerificationToken.create).toHaveBeenCalledOnce();
@@ -269,18 +269,19 @@ describe('setupPassword', () => {
     expect(txCall).toHaveLength(3);
   });
 
-  it('PR #91 admin 成功時: requiresMfa=true + mfa データ返却 + token はまだ使用済にしない', async () => {
+  // 2026-05-09 (#11): 強制 MFA を super_admin のみに限定。
+  it('super_admin 成功時: requiresMfa=true + mfa データ返却 + token はまだ使用済にしない', async () => {
     vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
       id: 't',
-      userId: 'admin-1',
+      userId: 'super-1',
       tokenHash: 'h',
       expiresAt: new Date(Date.now() + 60000),
       usedAt: null,
       createdAt: new Date(),
     });
     vi.mocked(prisma.user.findUnique).mockResolvedValue({
-      id: 'admin-1',
-      systemRole: 'admin',
+      id: 'super-1',
+      systemRole: 'super_admin',
     } as never);
 
     const r = await setupPassword('x', 'new-hash');
@@ -292,10 +293,36 @@ describe('setupPassword', () => {
     expect(r.mfa?.qrCodeDataUrl).toContain('data:image/png');
     expect(r.recoveryCodes?.length).toBeGreaterThan(0);
 
-    // admin 用 transaction は 2 要素 (user update [isActive 設定しない] + recoveryCode)
+    // super_admin 用 transaction は 2 要素 (user update [isActive 設定しない] + recoveryCode)
     // token.usedAt は setupInitialMfa まで保持される
     const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
     expect(txCall).toHaveLength(2);
+  });
+
+  // 2026-05-09 (#11): テナント管理者 (admin) は MFA 任意化に伴い、即時有効化フローへ。
+  it('テナント管理者 (admin) 成功時: requiresMfa=false + 即時有効化 (#11)', async () => {
+    vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+      id: 't',
+      userId: 'tenant-admin-1',
+      tokenHash: 'h',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'tenant-admin-1',
+      systemRole: 'admin',
+    } as never);
+
+    const r = await setupPassword('x', 'new-hash');
+
+    expect(r.success).toBe(true);
+    expect(r.requiresMfa).toBeFalsy();
+    expect(r.mfa).toBeUndefined();
+    expect(r.recoveryCodes?.length).toBeGreaterThan(0);
+    // 一般ユーザと同じ 3 要素 transaction (token.usedAt + user 有効化 + recoveryCode)
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    expect(txCall).toHaveLength(3);
   });
 
   it('使用済みトークンで エラー', async () => {

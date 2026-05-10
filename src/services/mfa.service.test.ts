@@ -227,12 +227,25 @@ describe('disableMfa', () => {
     );
   });
 
-  it('PR #91: admin は CANNOT_DISABLE_ADMIN_MFA を throw (サービス層防御)', async () => {
-    vi.mocked(prisma.user.findUnique).mockResolvedValue({ systemRole: 'admin' } as never);
+  // 2026-05-09 (#11): MFA 強制対象を super_admin のみに限定。
+  it('super_admin は CANNOT_DISABLE_ADMIN_MFA を throw (サービス層防御)', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ systemRole: 'super_admin' } as never);
 
-    await expect(disableMfa('admin-1')).rejects.toThrow('CANNOT_DISABLE_ADMIN_MFA');
+    await expect(disableMfa('super-1')).rejects.toThrow('CANNOT_DISABLE_ADMIN_MFA');
     expect(prisma.user.update).not.toHaveBeenCalled();
     expect(recordAuthEvent).not.toHaveBeenCalled();
+  });
+
+  // 2026-05-09 (#11): テナント管理者 (admin) は MFA 任意化に伴い無効化可能。
+  it('テナント管理者 (admin) も MFA 無効化可能 (#11)', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ systemRole: 'admin' } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+
+    await disableMfa('tenant-admin-1');
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'tenant-admin-1' },
+      data: { mfaEnabled: false, mfaSecretEncrypted: null, mfaEnabledAt: null },
+    });
   });
 });
 

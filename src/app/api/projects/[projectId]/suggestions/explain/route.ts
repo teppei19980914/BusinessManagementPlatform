@@ -35,7 +35,8 @@ import {
 } from '@/services/suggestion-explanation.service';
 
 const ExplainBodySchema = z.object({
-  candidateKind: z.enum(['knowledge', 'issue', 'retrospective']),
+  // 2026-05-09 (PR D / #21): 過去リスク 'risk' を追加
+  candidateKind: z.enum(['knowledge', 'issue', 'risk', 'retrospective']),
   candidateId: z.string().uuid(),
 });
 
@@ -131,6 +132,12 @@ function mapDegradedToHttp(result: ExplainSuggestionDegraded): NextResponse {
       return NextResponse.json(
         { error: { code: 'PLAN_INVALID', message: result.message } },
         { status: 500 },
+      );
+    // 2026-05-09 (#22): Pro 限定機能のため Beginner/Expert は 403 PLAN_FORBIDDEN。
+    case 'plan_forbidden':
+      return NextResponse.json(
+        { error: { code: 'PLAN_FORBIDDEN', message: result.message } },
+        { status: 403 },
       );
     case 'llm_error':
       return NextResponse.json(

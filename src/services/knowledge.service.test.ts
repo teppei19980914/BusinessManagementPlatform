@@ -70,33 +70,39 @@ const kRow = (o: Record<string, unknown> = {}) => ({
 describe('listKnowledge', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('admin は権限フィルタ無しで全件 (deletedAt + isSampleData=false の AND)', async () => {
+  it('admin は権限フィルタ無しで全件 (deletedAt + tenantId + isSampleData=false の AND)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
-    await listKnowledge({}, 'admin-1', 'admin');
+    await listKnowledge({}, 'admin-1', 'admin', 'tenant-A');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     // 2026-05-08: super_admin 以外は isSampleData=false でシードナレッジを除外
-    expect(call.where.AND).toEqual([{ deletedAt: null }, { isSampleData: false }]);
+    // 2026-05-09 Phase 2-4: tenantId フィルタ必須化
+    expect(call.where.AND).toEqual([
+      { deletedAt: null },
+      { tenantId: 'tenant-A' },
+      { isSampleData: false },
+    ]);
   });
 
   it('super_admin はシードナレッジも表示 (isSampleData フィルタ無し)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
-    await listKnowledge({}, 'super-1', 'super_admin');
+    await listKnowledge({}, 'super-1', 'super_admin', 'tenant-A');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     // super_admin は isSampleData フィルタ無し + visibility 制限も無し
-    expect(call.where.AND).toEqual([{ deletedAt: null }]);
+    // ただし tenantId フィルタは必須 (Phase 2-4)
+    expect(call.where.AND).toEqual([{ deletedAt: null }, { tenantId: 'tenant-A' }]);
   });
 
   it('非 admin は public + 自分の draft + isSampleData=false (2026-05-01/05-08 仕様)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
-    await listKnowledge({}, 'u-1', 'general');
+    await listKnowledge({}, 'u-1', 'general', 'tenant-A');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(call.where.AND).toContainEqual({ deletedAt: null });
@@ -113,7 +119,7 @@ describe('listKnowledge', () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
-    await listKnowledge({ keyword: 'bug' }, 'u-1', 'general');
+    await listKnowledge({ keyword: 'bug' }, 'u-1', 'general', 'tenant-A');
 
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     // 権限 OR と keyword OR の 2 つが AND の中に並ぶ
@@ -133,6 +139,7 @@ describe('listKnowledge', () => {
       { knowledgeType: 'pattern', visibility: 'public' },
       'admin-1',
       'admin',
+      'tenant-A',
     );
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(call.where.AND).toContainEqual({ knowledgeType: 'pattern' });
@@ -143,7 +150,7 @@ describe('listKnowledge', () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
-    await listKnowledge({ limit: 999, page: 2 }, 'admin-1', 'admin');
+    await listKnowledge({ limit: 999, page: 2 }, 'admin-1', 'admin', 'tenant-A');
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(call.take).toBe(100);
     expect(call.skip).toBe(100);
@@ -164,7 +171,7 @@ describe('listAllKnowledgeForViewer', () => {
       },
     ] as never);
 
-    const r = await listAllKnowledgeForViewer('admin-1', 'admin');
+    const r = await listAllKnowledgeForViewer('admin-1', 'admin', 'tenant-A');
     expect(r[0].projectName).toBe('PJ');
     expect(r[0].updatedByName).toBe('Up');
     expect(r[0].linkedProjectCount).toBe(1);
@@ -184,7 +191,7 @@ describe('listAllKnowledgeForViewer', () => {
       },
     ] as never);
 
-    const r = await listAllKnowledgeForViewer('u-99', 'general');
+    const r = await listAllKnowledgeForViewer('u-99', 'general', 'tenant-A');
     expect(r[0].projectName).toBe(null); // プロジェクト名は機微扱い維持
     expect(r[0].updatedByName).toBe('Up'); // 氏名は公開
     expect(r[0].canAccessProject).toBe(false);
@@ -195,7 +202,7 @@ describe('listAllKnowledgeForViewer', () => {
       { ...kRow(), updater: null, knowledgeProjects: [] },
     ] as never);
 
-    const r = await listAllKnowledgeForViewer('admin-1', 'admin');
+    const r = await listAllKnowledgeForViewer('admin-1', 'admin', 'tenant-A');
     expect(r[0].primaryProjectId).toBe(null);
     expect(r[0].canAccessProject).toBe(false);
   });
@@ -205,7 +212,7 @@ describe('listAllKnowledgeForViewer', () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
 
     // 非 admin
-    await listAllKnowledgeForViewer('u-1', 'general');
+    await listAllKnowledgeForViewer('u-1', 'general', 'tenant-A');
     const generalCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(generalCall.where.visibility).toBe('public');
     expect(generalCall.where).not.toHaveProperty('OR');
@@ -214,7 +221,7 @@ describe('listAllKnowledgeForViewer', () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
 
     // admin (旧仕様では visibility 制約なしだったが、要件変更で admin も public 固定)
-    await listAllKnowledgeForViewer('admin-1', 'admin');
+    await listAllKnowledgeForViewer('admin-1', 'admin', 'tenant-A');
     const adminCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(adminCall.where.visibility).toBe('public');
   });

@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
     },
     user.id,
     user.systemRole,
+    user.tenantId,
   );
 
   return NextResponse.json({
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
   const project = await createProject(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'project',

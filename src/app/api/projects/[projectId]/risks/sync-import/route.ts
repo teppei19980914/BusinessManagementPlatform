@@ -100,14 +100,15 @@ export async function POST(
   const csvRows = parseRiskSyncImportCsv(csvText);
 
   if (isDryRun) {
-    const diff = await computeRiskSyncDiff(projectId, csvRows);
+    const diff = await computeRiskSyncDiff(projectId, csvRows, user.tenantId);
     return NextResponse.json({ data: diff });
   }
 
   try {
-    const result = await applyRiskSyncImport(projectId, csvRows, removeMode, user.id);
+    const result = await applyRiskSyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'SYNC_IMPORT',
       entityType: 'risk_sync_import',

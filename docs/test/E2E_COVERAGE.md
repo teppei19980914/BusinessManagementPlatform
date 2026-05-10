@@ -49,6 +49,8 @@
 - [x] `/all-memos` — e2e/specs/04-personal-features.spec.ts (PR #94 / 公開メモの一覧表示)
 - [x] `/my-tasks` — e2e/specs/04-personal-features.spec.ts (PR #94 / 画面 render)
 - [x] `/settings` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / パスワード変更 + MFA 有効化) + e2e/specs/04-personal-features.spec.ts (PR #94 / テーマ変更)
+- [ ] `/guide` — skip: PR I (2026-05-09 / #1) 静的 + tab 切替のみの使い方ガイド。auth リダイレクト + ロール別 initialTab は src/app/(dashboard)/guide/page.test.ts で担保。視覚回帰 + tab 切替の E2E は v1.x で検討
+- [ ] `/help` — skip: PR I (2026-05-09 / #2) 静的 + accordion のみの FAQ。auth リダイレクト + tenant admin セクション条件分岐は src/app/(dashboard)/help/page.test.ts で担保。E2E は v1.x で検討
 
 ### admin 専用
 - [x] `/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 招待)
@@ -98,6 +100,7 @@
 ### タスク (WBS) / ガント
 - [x] `/api/projects/[projectId]/tasks/*` — e2e/specs/06-wbs-tasks.spec.ts (PR #96 / POST WP + ACT / DELETE は UI 経由) ※ bulk/progress/export/import/recalculate/tree は後続 PR
 - [ ] `/api/projects/[projectId]/tasks/sync-import` — skip: feat/wbs-overwrite-import で新設。CRUD 単体テストは src/services/task-sync-import.service.test.ts で対応 (E2E は後続 PR)
+- [ ] `/api/projects/[projectId]/tasks/workload` — skip: PR H (#7 / 2026-05-09) で新設。担当者別日次工数集計を返す純関数 + Prisma findMany のみ。集計ロジックは src/services/task.service.test.ts の getAssigneeDailyWorkload で対応 (E2E は後続 PR)
 - [x] `/api/projects/[projectId]/gantt` — e2e/specs/07-gantt-timeline.spec.ts (PR #96 / 画面経由で GET)
 
 ### ステークホルダー (PMBOK 13 / feat/stakeholder-management)
@@ -105,7 +108,9 @@
 
 ### リスク / 課題 / 振り返り / ナレッジ / サジェスト / メンバー
 - [ ] `/api/projects/[projectId]/risks/*` — skip: PR #C
+- [ ] `/api/projects/[projectId]/risks/[riskId]/link` (POST/DELETE) — skip: PR feat/asset-multi-linking-ui Phase 2 で追加。M:N 紐付けの link/unlink。unit test src/services/risk.service.test.ts で linkRiskToProject / unlinkRiskFromProject を担保
 - [ ] `/api/projects/[projectId]/retrospectives/*` — skip: PR #C
+- [ ] `/api/projects/[projectId]/retrospectives/[retroId]/link` (POST/DELETE) — skip: 同上 (retrospective)。unit test src/services/retrospective.service.test.ts で担保
 - [ ] `/api/projects/[projectId]/knowledge/*` — skip: PR #C
 - [ ] `/api/projects/[projectId]/suggestions/*` — skip: PR #C (提案型サービス、核心機能)
 - [x] `/api/projects/[projectId]/members/*` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 6a POST, GET は画面経由)
@@ -186,6 +191,48 @@
 - [ ] `/api/settings/i18n` — skip: PR #119 で新設。バリデーション / 認可 / 部分更新 / null 戻しは単体テスト `src/app/api/settings/i18n/route.test.ts` (8 ケース) で担保済。UI 側の反映確認は後続 PR #121 (date-picker TZ 統合) と合わせて E2E 化予定
 - [x] `/api/cron/cleanup-accounts` — **削除済 (PR #115)**。`/api/admin/users/lock-inactive` (旧名 cleanup-inactive) に一本化
 - [ ] `/api/client-errors` — skip: クライアント error boundary 経由の log 送信エンドポイント (PR #115)。ログ送信の失敗はユーザ操作に影響しない (silent fail) 設計で、E2E で再現させる value が低い。単体テストで schema validation + DB 書込を担保
+
+---
+
+## ★テナント分離 / 提案エンジン (severity-1 リグレッション防止) — PR feat/tenant-isolation-comprehensive-tests で追加 (2026-05-10)
+
+**本セクションのテストは将来も絶対に通り続けることが前提**。1 件でも fail した場合は
+個人情報漏洩リスクに直結するため、緊急対応必須。
+
+### テナント越境遮断 (e2e/specs/11-tenant-isolation.spec.ts)
+全 business entity API (project / task / risk / knowledge / retrospective / memo / customer
+/ comment / attachment / stakeholder / estimate / member) について、テナント A の admin が
+テナント B の各 ID を直接 URL/API で叩いた際に **GET → 404 / PATCH/POST/DELETE → 403 or 404**
+が返ることを網羅検証。
+
+- [x] **38 ケース** (entity × verb 組合せ + admin API 4 本 + sync-import) — PR feat/tenant-isolation-comprehensive-tests
+  - 業務 entity (project/task/risk/knowledge/retrospective/memo/customer/comment/attachment/stakeholder/estimate)
+  - admin API (`/api/admin/users` `/api/admin/audit-logs` `/api/admin/role-change-logs`)
+  - sync-import の越境 import 試行
+- [x] chromium project でのみ実行 (mobile viewport で重複実行しない、playwright.config.ts で `testIgnore`)
+
+### 提案機能シードデータ参照 + テナント独立トグル (e2e/specs/12-suggestion-seed-data.spec.ts)
+seedDataEnabled トグルが正しく動作し、他顧客テナントのデータが**toggle 値に関わらず混入しない**
+ことを保証する。
+
+- [x] **5 ケース** — PR feat/tenant-isolation-comprehensive-tests
+  - seedDataEnabled=true で管理テナントのシードが提案候補に含まれる
+  - seedDataEnabled=false で管理テナントのシードが消える
+  - **どちらの場合もテナント B の data は混入しない**
+  - adoptPastIssueAsTemplate でシード採用時、自テナントに新規 create + シード自体は不変
+  - テナント B の toggle 変更がテナント A の挙動に影響しない (テナント独立性)
+
+### Service 層 不変条件テスト (src/services/__tests__/tenant-isolation-invariants.test.ts)
+全 service ファイルが tenant フィルタ (`viewerTenantId` / `tenantId` / `project: { tenantId }`)
+を含むことを **静的解析** で確認。新規 service 追加時に tenant フィルタを忘れると即時 fail する。
+
+- [x] 全 src/services/*.ts (許可リスト 25 件除く) で tenant フィルタ存在
+- [x] suggestion.service.ts の MANAGEMENT_TENANT_ID 参照と tenantScopeFilter 構造の検証
+- [x] MANAGEMENT_TENANT_ID 定数値が seed migration と一致
+
+### 関連
+- 仕様: docs/security/TENANT_ISOLATION_PHASE2_TODO.md (Phase 2-10 完了状態)
+- 元 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 文言修正)
 
 ---
 

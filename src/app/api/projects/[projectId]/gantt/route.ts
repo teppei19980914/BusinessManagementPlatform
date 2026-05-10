@@ -27,7 +27,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'task:read');
   if (forbidden) return forbidden;
 
-  const tasks = await listTasksFlat(projectId);
+  const tasks = await listTasksFlat(projectId, user.tenantId);
 
   // ガント用にデータ変換
   const ganttData = tasks.map((t) => ({

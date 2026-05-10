@@ -112,8 +112,52 @@ export async function POST(req: NextRequest) {
     });
     filteredIds = accessibleMemos.map((m) => m.id);
   } else if (isAdmin) {
-    // admin は全プロジェクトにアクセス可能なので絞り込み不要
-    filteredIds = entityIds;
+    // 2026-05-10 feedback Phase 2-9: 越境取得を遮断するため admin でも親 entity の
+    //   tenantId を verify する (旧仕様 `filteredIds = entityIds` は admin が他テナントの
+    //   添付 URL を取得可能な severity-1 IDOR 経路だった)。
+    //   admin は自テナント内では全プロジェクト横断可能 (短絡)、他テナントは不可。
+    if (entityType === 'project') {
+      const rows = await prisma.project.findMany({
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'task') {
+      // Task は tenantId を持たないため project リレーション経由
+      const rows = await prisma.task.findMany({
+        where: { id: { in: entityIds }, project: { tenantId: user.tenantId } },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'estimate') {
+      // Estimate は tenantId を持たないため project リレーション経由
+      const rows = await prisma.estimate.findMany({
+        where: { id: { in: entityIds }, project: { tenantId: user.tenantId } },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'risk') {
+      const rows = await prisma.riskIssue.findMany({
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'retrospective') {
+      const rows = await prisma.retrospective.findMany({
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'knowledge') {
+      const rows = await prisma.knowledge.findMany({
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else {
+      // 未知 entityType (Zod で弾かれる想定だが保険)
+      filteredIds = [];
+    }
   } else {
     // 自分がメンバーのプロジェクト ID 集合を先に取得
     const memberships = await prisma.projectMember.findMany({
@@ -141,34 +185,49 @@ export async function POST(req: NextRequest) {
       // fix/cross-list-non-member-columns (2026-04-27): visibility='public' のリスク/課題は
       // 横断「全リスク/全課題」で公開されているため、非メンバーでも添付閲覧を許可する
       // (添付は entity の付随情報であり、行が公開なら添付も公開する設計)。
+      // PR feat/asset-multi-project-linking: M:N 化により、いずれか 1 つでもメンバーの
+      //   プロジェクトに紐付いていれば閲覧可能 (Knowledge と同型)。orphan は public 限定で許可。
       const all = await prisma.riskIssue.findMany({
         where: { id: { in: entityIds } },
-        select: { id: true, projectId: true, visibility: true },
+        select: {
+          id: true,
+          visibility: true,
+          riskIssueProjects: { select: { projectId: true } },
+        },
       });
-      rows = all
-        .filter((x) => x.visibility === 'public' || memberProjectIds.has(x.projectId))
-        // 後段の memberProjectIds.has(...) フィルタを通すため、public なものは
-        // 「常に通す」projectId に置き換え (下のフィルタで通過するように)
-        .map((x) => ({
-          id: x.id,
-          // public なら「メンバーである」ことに見せかけて通過させる (ダミー値で OK、
-          // 後段は projectId から二重チェックしない)
-          projectId: x.visibility === 'public' ? '__public__' : x.projectId,
-        }));
-      // public ダミー projectId を memberProjectIds 集合に追加 (一度限り)
-      memberProjectIds.add('__public__');
+      const accessibleIds = new Set<string>();
+      for (const x of all) {
+        if (x.visibility === 'public') {
+          accessibleIds.add(x.id);
+          continue;
+        }
+        if (x.riskIssueProjects.some((rp) => memberProjectIds.has(rp.projectId))) {
+          accessibleIds.add(x.id);
+        }
+      }
+      rows = entityIds.filter((id) => accessibleIds.has(id)).map((id) => ({ id, projectId: '__access_ok__' }));
+      memberProjectIds.add('__access_ok__');
     } else if (entityType === 'retrospective') {
       const all = await prisma.retrospective.findMany({
         where: { id: { in: entityIds } },
-        select: { id: true, projectId: true, visibility: true },
+        select: {
+          id: true,
+          visibility: true,
+          retrospectiveProjects: { select: { projectId: true } },
+        },
       });
-      rows = all
-        .filter((x) => x.visibility === 'public' || memberProjectIds.has(x.projectId))
-        .map((x) => ({
-          id: x.id,
-          projectId: x.visibility === 'public' ? '__public__' : x.projectId,
-        }));
-      memberProjectIds.add('__public__');
+      const accessibleIds = new Set<string>();
+      for (const x of all) {
+        if (x.visibility === 'public') {
+          accessibleIds.add(x.id);
+          continue;
+        }
+        if (x.retrospectiveProjects.some((rp) => memberProjectIds.has(rp.projectId))) {
+          accessibleIds.add(x.id);
+        }
+      }
+      rows = entityIds.filter((id) => accessibleIds.has(id)).map((id) => ({ id, projectId: '__access_ok__' }));
+      memberProjectIds.add('__access_ok__');
     } else if (entityType === 'knowledge') {
       // knowledge は N:M なので、いずれか 1 つでもメンバーのプロジェクトに紐付いていれば OK
       const links = await prisma.knowledgeProject.findMany({

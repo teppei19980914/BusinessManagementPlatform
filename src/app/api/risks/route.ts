@@ -16,6 +16,6 @@ export async function GET() {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const risks = await listAllRisksForViewer(user.id, user.systemRole);
+  const risks = await listAllRisksForViewer(user.id, user.systemRole, user.tenantId);
   return NextResponse.json({ data: risks });
 }

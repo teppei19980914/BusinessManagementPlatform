@@ -28,6 +28,11 @@ import {
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { KNOWLEDGE_TYPES } from '@/types';
+// 2026-05-09 feedback: 提案された資産の詳細をその場で確認できる readOnly ダイアログ。
+// 「全○○」画面の行クリック UX と統一 (採用判断のため詳細確認可能性を担保)。
+import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
+import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
+import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
 
 type SuggestionTier = 'strong' | 'medium' | 'weak';
 
@@ -55,6 +60,16 @@ type PastIssueSuggestion = ScoreFields & {
   sourceProjectName: string | null;
 };
 
+// 2026-05-09 (PR D / #21): 過去リスクの提案
+type PastRiskSuggestion = ScoreFields & {
+  kind: 'risk';
+  id: string;
+  title: string;
+  snippet: string;
+  sourceProjectId: string;
+  sourceProjectName: string | null;
+};
+
 type RetrospectiveSuggestion = ScoreFields & {
   kind: 'retrospective';
   id: string;
@@ -67,6 +82,8 @@ type RetrospectiveSuggestion = ScoreFields & {
 type SuggestionsResult = {
   knowledge: KnowledgeSuggestion[];
   pastIssues: PastIssueSuggestion[];
+  // 2026-05-09 (PR D / #21): 過去リスクを提案対象に追加
+  pastRisks: PastRiskSuggestion[];
   retrospectives: RetrospectiveSuggestion[];
 };
 
@@ -91,10 +108,18 @@ function groupByTier<T extends { tier: SuggestionTier }>(items: T[]): {
 export function SuggestionsPanel({
   projectId,
   canAdopt,
+  tenantPlan,
 }: {
   projectId: string;
   canAdopt: boolean;
+  // 2026-05-09 (#22): 「なぜ?」ボタンの可視性制御。Pro プラン限定機能。
+  //   Beginner / Expert では button 非表示 + Pro へのアップグレード誘導文を出す。
+  tenantPlan: string;
 }) {
+  // 2026-05-09 (#22): explain ('なぜ?') 機能は Pro プラン限定 (差別化の核)。
+  //   サーバ側 (suggestion-explanation.service.ts) でも plan_forbidden で reject するため
+  //   UI 露出はガードラインの 1 段にすぎないが、ユーザに無駄なクリックをさせない目的。
+  const canExplain = tenantPlan === 'pro';
   const t = useTranslations('suggestion');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
@@ -103,7 +128,8 @@ export function SuggestionsPanel({
   // 採用済の ID を記録し UI を「採用済」表示に切り替える (再フェッチ不要化)
   const [adopted, setAdopted] = useState<Set<string>>(new Set());
   // 各カテゴリの「弱い関連性」セクションの展開状態 (PR-X6: 折りたたみデフォルト)
-  const [expandedWeak, setExpandedWeak] = useState<Set<'knowledge' | 'issue' | 'retrospective'>>(
+  // 2026-05-09 (PR D / #21): 'risk' カテゴリを追加
+  const [expandedWeak, setExpandedWeak] = useState<Set<'knowledge' | 'issue' | 'risk' | 'retrospective'>>(
     new Set(),
   );
 
@@ -113,7 +139,8 @@ export function SuggestionsPanel({
   // - explainResult: 取得済の {explanation, modelName, fromCache}
   // - explainError: エラーメッセージ (i18n キー or fallback)
   type ExplainTarget = {
-    kind: 'knowledge' | 'issue' | 'retrospective';
+    // 2026-05-09 (PR D / #21): 'risk' を追加
+    kind: 'knowledge' | 'issue' | 'risk' | 'retrospective';
     id: string;
     title: string;
   };
@@ -122,6 +149,19 @@ export function SuggestionsPanel({
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainResult, setExplainResult] = useState<ExplainResult | null>(null);
   const [explainError, setExplainError] = useState('');
+
+  // 2026-05-09 feedback: 提案資産の詳細を readOnly EditDialog で表示するための state。
+  //   `kind` ごとに別 Dialog (RiskEditDialog / KnowledgeEditDialog / RetrospectiveEditDialog) を呼び分け、
+  //   API 経由で取得した詳細データを `data` に格納する。close 時は両方 null にリセット。
+  type ViewingTarget = {
+    kind: 'knowledge' | 'risk' | 'issue' | 'retrospective';
+    id: string;
+    sourceProjectId: string | null;
+  };
+  // any 回避: 各 EditDialog の Like 型に互換のオブジェクトを格納する。
+  // API DTO の shape はそれぞれ Like 型のスーパーセットなのでそのまま渡せる。
+  const [viewing, setViewing] = useState<ViewingTarget | null>(null);
+  const [viewingData, setViewingData] = useState<unknown>(null);
 
   const scoreTooltip = useCallback(
     (s: { tagScore: number; textScore: number }): string =>
@@ -136,7 +176,7 @@ export function SuggestionsPanel({
     const res = await fetch(`/api/projects/${projectId}/suggestions`);
     if (!res.ok) {
       setError(t('fetchFailed'));
-      setState({ loaded: true, data: { knowledge: [], pastIssues: [], retrospectives: [] } });
+      setState({ loaded: true, data: { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] } });
       return;
     }
     const json = await res.json();
@@ -151,7 +191,14 @@ export function SuggestionsPanel({
     void reload();
   }, [reload]);
 
-  async function handleAdopt(kind: 'knowledge' | 'issue', id: string) {
+  /**
+   * 提案された資産をこのプロジェクトに紐付ける (M:N 中間テーブルへの追加)。
+   *
+   * PR feat/asset-multi-linking-ui (2026-05-09 / Phase 2):
+   *   旧仕様 (knowledge: 紐付け / issue: 雛形複製) を統一して **全 4 種で紐付け** に変更。
+   *   issue/risk/retrospective も A プロジェクトに残ったまま、B から参照できるようになる。
+   */
+  async function handleAdopt(kind: 'knowledge' | 'issue' | 'risk' | 'retrospective', id: string) {
     setError('');
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/suggestions/adopt`, {
@@ -162,7 +209,13 @@ export function SuggestionsPanel({
     );
     if (!res.ok) {
       setError(t('adoptFailed'));
-      showError(kind === 'knowledge' ? 'ナレッジの採用に失敗しました' : '過去課題の採用に失敗しました');
+      const labelMap = {
+        knowledge: 'ナレッジ',
+        issue: '過去課題',
+        risk: '過去リスク',
+        retrospective: '振り返り',
+      };
+      showError(`${labelMap[kind]}の紐付けに失敗しました`);
       return;
     }
     setAdopted((prev) => {
@@ -170,10 +223,16 @@ export function SuggestionsPanel({
       next.add(`${kind}:${id}`);
       return next;
     });
-    showSuccess(kind === 'knowledge' ? 'ナレッジを採用しました' : '過去課題を採用しました');
+    const labelMap = {
+      knowledge: 'ナレッジ',
+      issue: '過去課題',
+      risk: '過去リスク',
+      retrospective: '振り返り',
+    };
+    showSuccess(`${labelMap[kind]}を紐付けました`);
   }
 
-  const toggleWeak = (category: 'knowledge' | 'issue' | 'retrospective') => {
+  const toggleWeak = (category: 'knowledge' | 'issue' | 'risk' | 'retrospective') => {
     setExpandedWeak((prev) => {
       const next = new Set(prev);
       if (next.has(category)) {
@@ -208,6 +267,9 @@ export function SuggestionsPanel({
         if (code === 'RATE_LIMITED') setExplainError(t('explainErrorRateLimited'));
         else if (code === 'BEGINNER_LIMIT_EXCEEDED') setExplainError(t('explainErrorBeginnerLimit'));
         else if (code === 'BUDGET_EXCEEDED') setExplainError(t('explainErrorBudgetExceeded'));
+        // 2026-05-09 (#22): Pro 限定機能の defense-in-depth エラー (UI で button を
+        //   非表示にしているが直叩き / state 不整合に備える)
+        else if (code === 'PLAN_FORBIDDEN') setExplainError(t('explainErrorPlanForbidden'));
         else if (code === 'LLM_ERROR') setExplainError(t('explainErrorLlm'));
         else setExplainError(t('explainErrorGeneric'));
         return;
@@ -228,12 +290,52 @@ export function SuggestionsPanel({
     setExplainLoading(false);
   }
 
+  /**
+   * 2026-05-09 feedback: 提案された資産の詳細を readOnly でその場確認する。
+   * 「全○○」画面の行クリック UX と統一 (採用判断には詳細確認が必要)。
+   *
+   * 取得経路 (kind 別):
+   *   - knowledge: GET /api/knowledge/:id (project 紐付け不要、自テナント内 visibility=public 限定)
+   *   - risk/issue: GET /api/projects/:sourceProjectId/risks/:id
+   *   - retrospective: GET /api/projects/:sourceProjectId/retrospectives/:id
+   *
+   * 取得失敗時はトーストで通知してダイアログは開かない (権限がない/削除済等のエッジケース)。
+   */
+  async function handleViewDetails(target: ViewingTarget) {
+    setViewing(target);
+    setViewingData(null);
+    let url: string;
+    if (target.kind === 'knowledge') {
+      url = `/api/knowledge/${target.id}`;
+    } else if (target.kind === 'retrospective') {
+      url = `/api/projects/${target.sourceProjectId}/retrospectives/${target.id}`;
+    } else {
+      // risk / issue は同テーブル (riskIssue) — API は /risks/:id で共通
+      url = `/api/projects/${target.sourceProjectId}/risks/${target.id}`;
+    }
+    const res = await withLoading(() => fetch(url));
+    if (!res.ok) {
+      showError(t('viewDetailsFailed'));
+      setViewing(null);
+      return;
+    }
+    const json = await res.json();
+    setViewingData(json.data);
+  }
+
+  function closeViewing() {
+    setViewing(null);
+    setViewingData(null);
+  }
+
   // tier ごとにグルーピング (loaded 後、メモ化)
   const grouped = useMemo(() => {
     if (!state.loaded) return null;
     return {
       knowledge: groupByTier(state.data.knowledge),
       pastIssues: groupByTier(state.data.pastIssues),
+      // 2026-05-09 (PR D / #21): 過去リスクを Tier 表示に追加
+      pastRisks: groupByTier(state.data.pastRisks ?? []),
       retrospectives: groupByTier(state.data.retrospectives),
     };
   }, [state]);
@@ -247,7 +349,12 @@ export function SuggestionsPanel({
     const adoptedKey = `knowledge:${k.id}`;
     const isAdopted = adopted.has(adoptedKey);
     return (
-      <li key={k.id} className="rounded border p-3">
+      <li
+        key={k.id}
+        className="cursor-pointer rounded border p-3 hover:bg-accent/50"
+        onClick={() => void handleViewDetails({ kind: 'knowledge', id: k.id, sourceProjectId: null })}
+        title={t('viewDetailsHint')}
+      >
         <div className="flex items-start gap-3">
           <div className="flex-1 space-y-1">
             <div className="flex items-center gap-2">
@@ -258,18 +365,24 @@ export function SuggestionsPanel({
               <Badge variant="outline" title={scoreTooltip(k)}>
                 {t('similarityBadge', { percent: (k.score * 100).toFixed(0) })}
               </Badge>
-              {/* P-3: 「なぜこのプロジェクトに関連するのか」を Lazy 生成 */}
-              <button
-                type="button"
-                className="text-xs text-info hover:underline"
-                onClick={() => handleExplain({ kind: 'knowledge', id: k.id, title: k.title })}
-              >
-                {t('explainButton')}
-              </button>
+              {/* P-3: 「なぜこのプロジェクトに関連するのか」を Lazy 生成。
+                  2026-05-09 (#22): Pro プラン限定機能のため canExplain でゲート。 */}
+              {canExplain && (
+                <button
+                  type="button"
+                  className="text-xs text-info hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExplain({ kind: 'knowledge', id: k.id, title: k.title });
+                  }}
+                >
+                  {t('explainButton')}
+                </button>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">{k.snippet}</p>
           </div>
-          <div className="shrink-0">
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
             {isAdopted ? (
               <Badge>{t('knowledgeAdoptedBadge')}</Badge>
             ) : canAdopt ? (
@@ -287,7 +400,12 @@ export function SuggestionsPanel({
     const adoptedKey = `issue:${i.id}`;
     const isAdopted = adopted.has(adoptedKey);
     return (
-      <li key={i.id} className="rounded border p-3">
+      <li
+        key={i.id}
+        className="cursor-pointer rounded border p-3 hover:bg-accent/50"
+        onClick={() => void handleViewDetails({ kind: 'issue', id: i.id, sourceProjectId: i.sourceProjectId })}
+        title={t('viewDetailsHint')}
+      >
         <div className="flex items-start gap-3">
           <div className="flex-1 space-y-1">
             <div className="flex items-center gap-2">
@@ -299,22 +417,28 @@ export function SuggestionsPanel({
                 <Link
                   href={`/projects/${i.sourceProjectId}`}
                   className="text-xs text-info hover:underline"
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {t('sourceProjectLink', { name: i.sourceProjectName })}
                 </Link>
               )}
-              {/* P-3: 「なぜ?」ボタン */}
-              <button
-                type="button"
-                className="text-xs text-info hover:underline"
-                onClick={() => handleExplain({ kind: 'issue', id: i.id, title: i.title })}
-              >
-                {t('explainButton')}
-              </button>
+              {/* P-3: 「なぜ?」ボタン (2026-05-09 / #22: Pro 限定) */}
+              {canExplain && (
+                <button
+                  type="button"
+                  className="text-xs text-info hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExplain({ kind: 'issue', id: i.id, title: i.title });
+                  }}
+                >
+                  {t('explainButton')}
+                </button>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">{i.snippet}</p>
           </div>
-          <div className="shrink-0">
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
             {isAdopted ? (
               <Badge>{t('pastIssuesAdoptedBadge')}</Badge>
             ) : canAdopt ? (
@@ -328,43 +452,122 @@ export function SuggestionsPanel({
     );
   };
 
-  const renderRetrospectiveItem = (r: RetrospectiveSuggestion) => (
-    <li key={r.id} className="rounded border p-3">
-      <div className="flex items-start gap-3">
-        <div className="flex-1 space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{t('retrospectiveItemTitle', { date: r.conductedDate })}</span>
-            <Badge variant="outline" title={scoreTooltip(r)}>
-              {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
-            </Badge>
-            {r.sourceProjectName && (
-              <Link
-                href={`/projects/${r.sourceProjectId}/retrospectives`}
-                className="text-xs text-info hover:underline"
-              >
-                {t('sourceProjectLink', { name: r.sourceProjectName })}
-              </Link>
-            )}
-            {/* P-3: 「なぜ?」ボタン */}
-            <button
-              type="button"
-              className="text-xs text-info hover:underline"
-              onClick={() =>
-                handleExplain({
-                  kind: 'retrospective',
-                  id: r.id,
-                  title: t('retrospectiveItemTitle', { date: r.conductedDate }),
-                })
-              }
-            >
-              {t('explainButton')}
-            </button>
+  // 2026-05-09 (PR D / #21): 過去 Risk アイテム。
+  //   PR feat/asset-multi-linking-ui (Phase 2): 「+ このプロジェクトに紐付ける」ボタンを追加。
+  //   紐付けで本プロジェクトの「リスク一覧」にも該当 Risk が出るようになる。
+  const renderRiskItem = (r: PastRiskSuggestion) => {
+    const adoptedKey = `risk:${r.id}`;
+    const isAdopted = adopted.has(adoptedKey);
+    return (
+      <li
+        key={r.id}
+        className="cursor-pointer rounded border p-3 hover:bg-accent/50"
+        onClick={() => void handleViewDetails({ kind: 'risk', id: r.id, sourceProjectId: r.sourceProjectId })}
+        title={t('viewDetailsHint')}
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{r.title}</span>
+              <Badge variant="outline" title={scoreTooltip(r)}>
+                {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
+              </Badge>
+              {r.sourceProjectName && (
+                <Link
+                  href={`/projects/${r.sourceProjectId}/risks`}
+                  className="text-xs text-info hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {t('sourceProjectLink', { name: r.sourceProjectName })}
+                </Link>
+              )}
+              {/* なぜ? は Pro 限定 (#22) */}
+              {canExplain && (
+                <button
+                  type="button"
+                  className="text-xs text-info hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExplain({ kind: 'risk', id: r.id, title: r.title });
+                  }}
+                >
+                  {t('explainButton')}
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">{r.snippet}</p>
           </div>
-          <p className="text-sm text-muted-foreground">{r.snippet}</p>
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            {isAdopted ? (
+              <Badge>{t('riskLinkedBadge')}</Badge>
+            ) : canAdopt ? (
+              <Button size="sm" onClick={() => handleAdopt('risk', r.id)}>
+                {t('riskLinkButton')}
+              </Button>
+            ) : null}
+          </div>
         </div>
-      </div>
-    </li>
-  );
+      </li>
+    );
+  };
+
+  // PR feat/asset-multi-linking-ui (Phase 2): retrospective にも紐付けボタンを追加。
+  const renderRetrospectiveItem = (r: RetrospectiveSuggestion) => {
+    const adoptedKey = `retrospective:${r.id}`;
+    const isAdopted = adopted.has(adoptedKey);
+    const itemTitle = t('retrospectiveItemTitle', { date: r.conductedDate });
+    return (
+      <li
+        key={r.id}
+        className="cursor-pointer rounded border p-3 hover:bg-accent/50"
+        onClick={() => void handleViewDetails({ kind: 'retrospective', id: r.id, sourceProjectId: r.sourceProjectId })}
+        title={t('viewDetailsHint')}
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{itemTitle}</span>
+              <Badge variant="outline" title={scoreTooltip(r)}>
+                {t('similarityBadge', { percent: (r.score * 100).toFixed(0) })}
+              </Badge>
+              {r.sourceProjectName && (
+                <Link
+                  href={`/projects/${r.sourceProjectId}/retrospectives`}
+                  className="text-xs text-info hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {t('sourceProjectLink', { name: r.sourceProjectName })}
+                </Link>
+              )}
+              {/* P-3: 「なぜ?」ボタン (2026-05-09 / #22: Pro 限定) */}
+              {canExplain && (
+                <button
+                  type="button"
+                  className="text-xs text-info hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExplain({ kind: 'retrospective', id: r.id, title: itemTitle });
+                  }}
+                >
+                  {t('explainButton')}
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">{r.snippet}</p>
+          </div>
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            {isAdopted ? (
+              <Badge>{t('retrospectiveLinkedBadge')}</Badge>
+            ) : canAdopt ? (
+              <Button size="sm" onClick={() => handleAdopt('retrospective', r.id)}>
+                {t('retrospectiveLinkButton')}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </li>
+    );
+  };
 
   /**
    * tier 別の表示ブロックを共通化。
@@ -373,10 +576,11 @@ export function SuggestionsPanel({
    * - weak: 灰色のボーダー、折りたたみデフォルト
    */
   const renderTieredSection = <T extends { id: string; tier: SuggestionTier }>(
-    category: 'knowledge' | 'issue' | 'retrospective',
+    // 2026-05-09 (PR D / #21): 'risk' を追加
+    category: 'knowledge' | 'issue' | 'risk' | 'retrospective',
     grouped: { strong: T[]; medium: T[]; weak: T[] },
     renderItem: (item: T) => React.ReactNode,
-    noMatchKey: 'knowledgeNoMatch' | 'pastIssuesNoMatch' | 'retrospectivesNoMatch',
+    noMatchKey: 'knowledgeNoMatch' | 'pastIssuesNoMatch' | 'pastRisksNoMatch' | 'retrospectivesNoMatch',
   ) => {
     const totalCount = grouped.strong.length + grouped.medium.length + grouped.weak.length;
     if (totalCount === 0) {
@@ -442,6 +646,8 @@ export function SuggestionsPanel({
   const totals = {
     knowledge: state.data.knowledge.length,
     pastIssues: state.data.pastIssues.length,
+    // 2026-05-09 (PR D / #21): 過去リスクのカウントを追加
+    pastRisks: state.data.pastRisks?.length ?? 0,
     retrospectives: state.data.retrospectives.length,
   };
 
@@ -471,6 +677,13 @@ export function SuggestionsPanel({
         {renderTieredSection('issue', grouped.pastIssues, renderIssueItem, 'pastIssuesNoMatch')}
       </section>
 
+      {/* 2026-05-09 (PR D / #21): 過去リスク提案 (参照のみ、採用ボタンなし) */}
+      <section className="space-y-2">
+        <h3 className="font-semibold">{t('pastRisksSectionTitle', { count: totals.pastRisks })}</h3>
+        <p className="text-xs text-muted-foreground">{t('pastRisksDescription')}</p>
+        {renderTieredSection('risk', grouped.pastRisks, renderRiskItem, 'pastRisksNoMatch')}
+      </section>
+
       {/* 過去振り返り */}
       <section className="space-y-2">
         <h3 className="font-semibold">{t('retrospectivesSectionTitle', { count: totals.retrospectives })}</h3>
@@ -482,6 +695,40 @@ export function SuggestionsPanel({
           'retrospectivesNoMatch',
         )}
       </section>
+
+      {/* 2026-05-09 feedback: 提案資産の readOnly 詳細ダイアログ群。kind 別に Dialog を出し分け、
+          fetch 完了 (viewingData != null) まではダイアログを描画しない (空フォーム表示の防止)。 */}
+      {viewing?.kind === 'risk' || viewing?.kind === 'issue' ? (
+        <RiskEditDialog
+          risk={(viewingData as Parameters<typeof RiskEditDialog>[0]['risk']) ?? null}
+          members={[]}
+          open={viewingData !== null}
+          onOpenChange={(v) => { if (!v) closeViewing(); }}
+          onSaved={async () => {}}
+          readOnly
+          currentProjectId={projectId}
+        />
+      ) : null}
+      {viewing?.kind === 'knowledge' ? (
+        <KnowledgeEditDialog
+          knowledge={(viewingData as Parameters<typeof KnowledgeEditDialog>[0]['knowledge']) ?? null}
+          projectId={null}
+          open={viewingData !== null}
+          onOpenChange={(v) => { if (!v) closeViewing(); }}
+          onSaved={async () => {}}
+          readOnly
+        />
+      ) : null}
+      {viewing?.kind === 'retrospective' ? (
+        <RetrospectiveEditDialog
+          retro={(viewingData as Parameters<typeof RetrospectiveEditDialog>[0]['retro']) ?? null}
+          open={viewingData !== null}
+          onOpenChange={(v) => { if (!v) closeViewing(); }}
+          onSaved={async () => {}}
+          readOnly
+          currentProjectId={projectId}
+        />
+      ) : null}
 
       {/* P-3 (2026-05-08): 「なぜ?」説明文ダイアログ */}
       <Dialog

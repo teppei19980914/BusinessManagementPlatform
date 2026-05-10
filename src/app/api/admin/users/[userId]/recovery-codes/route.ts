@@ -21,7 +21,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireAdmin, requireSameTenantUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -47,10 +47,14 @@ export async function POST(
   if (forbidden) return forbidden;
 
   const { userId } = await params;
+  // 2026-05-09 feedback: 対象 user が同テナントか検証
+  //   (他テナント user のリカバリーコード再発行 → アカウント乗っ取り経路を遮断)
+  const tenantViolation = await requireSameTenantUser(user, userId);
+  if (tenantViolation) return tenantViolation;
 
-  // 旧コードを全て無効化
+  // 旧コードを全て無効化 (Phase 2-10: tenantId フィルタで二重防御)
   await prisma.recoveryCode.updateMany({
-    where: { userId, usedAt: null },
+    where: { userId, tenantId: user.tenantId, usedAt: null },
     data: { usedAt: new Date() },
   });
 
@@ -60,16 +64,18 @@ export async function POST(
     recoveryCodes.push(generateRecoveryCode());
   }
 
+  // Phase 2-10: tenantId 必須化
   await Promise.all(
     recoveryCodes.map(async (code) => {
       const codeHash = await hash(code, BCRYPT_COST);
       return prisma.recoveryCode.create({
-        data: { userId, codeHash },
+        data: { tenantId: user.tenantId, userId, codeHash },
       });
     }),
   );
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'recovery_codes',
@@ -79,6 +85,7 @@ export async function POST(
 
   await recordAuthEvent({
     eventType: 'password_change',
+    tenantId: user.tenantId,
     userId,
     detail: { action: 'recovery_code_reissued', reissuedBy: user.id },
   });

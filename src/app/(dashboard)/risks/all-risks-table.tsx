@@ -216,18 +216,31 @@ export function AllRisksTable({
               onClick={() => handleRowClick(r)}
             >
               <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
-                {r.projectName == null ? (
-                  <span className="text-muted-foreground">{tRisk('private')}</span>
-                ) : r.canAccessProject ? (
-                  <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
-                    {r.projectName}
-                  </Link>
-                ) : (
-                  <span className="text-muted-foreground">
-                    {r.projectName}
-                    {r.projectDeleted && <span className="ml-1 text-xs text-destructive">{tRisk('deleted')}</span>}
-                  </span>
-                )}
+                <div className="flex items-center gap-1.5">
+                  {r.projectName == null ? (
+                    <span className="text-muted-foreground">{tRisk('private')}</span>
+                  ) : r.canAccessProject && r.projectId ? (
+                    <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
+                      {r.projectName}
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      {r.projectName}
+                      {r.projectDeleted && <span className="ml-1 text-xs text-destructive">{tRisk('deleted')}</span>}
+                    </span>
+                  )}
+                  {/* PR feat/asset-multi-linking-ui (Phase 2): 紐付け先が複数ある場合は件数 badge を表示。
+                      hover で詳細 (どの project に紐付いているか) を表示してダイアログ起動を促す。 */}
+                  {r.linkedProjectIds.length > 1 && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px]"
+                      title={`${r.linkedProjectIds.length} 件のプロジェクトに紐付け済 (詳細はクリックで開くダイアログを参照)`}
+                    >
+                      +{r.linkedProjectIds.length - 1}
+                    </Badge>
+                  )}
+                </div>
               </TableCell>
               {!typeFilter && (
                 <TableCell>
@@ -263,11 +276,16 @@ export function AllRisksTable({
               </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AdminRiskDeleteButton
-                    projectId={r.projectId}
-                    riskId={r.id}
-                    label={r.title}
-                  />
+                  {/* PR feat/asset-multi-project-linking: 作成元が削除済 (projectId=null)
+                      の場合は紐付け済プロジェクトから 1 件 fallback を使う。両方無い orphan は
+                      admin が手動 cleanup する想定で本ボタンは出さない。 */}
+                  {(r.projectId ?? r.linkedProjectIds[0]) ? (
+                    <AdminRiskDeleteButton
+                      projectId={(r.projectId ?? r.linkedProjectIds[0])!}
+                      riskId={r.id}
+                      label={r.title}
+                    />
+                  ) : null}
                 </TableCell>
               )}
             </ClickableRow>

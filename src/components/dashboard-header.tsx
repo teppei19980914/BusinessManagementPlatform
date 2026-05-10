@@ -53,6 +53,11 @@ import {
   ADMIN_AUDIT_LOGS_ROUTE,
   ADMIN_ROLE_CHANGES_ROUTE,
   CUSTOMERS_ROUTE,
+  // 2026-05-09 (#16): Discord 招待リンク (環境変数 NEXT_PUBLIC_DISCORD_INVITE_URL で上書き可能)
+  getDiscordInviteUrl,
+  // 2026-05-09 (PR I): ヘルプ画面 / 使い方ガイド (機能要望リンクは /help 画面側で参照)
+  GUIDE_ROUTE,
+  HELP_ROUTE,
 } from '@/config';
 
 type DashboardHeaderProps = {
@@ -131,6 +136,13 @@ const navGroupsConfig: NavGroupConfig[] = [
       { href: '/admin/super/usage', labelKey: 'superAdminUsage' },
     ],
   },
+  // PR I hotfix (2026-05-09 / E2E §4.44): ヘルプグループはヘッダから外し、AccountMenu に移動。
+  // 経緯: 当初は groupHelp として top-nav に配置していたが、chromium-mobile (iPhone 13 / 390px)
+  //   で既存 admin 4 グループ + 1 = 5 グループとなり、モバイル時の横方向 overflow が +6px 拡大
+  //   (主要ダッシュボード snapshot の `fullPage: true` 幅が 402→408px、高さも 685→695px)。
+  //   横スクロール痕跡を増やすことになるため取り消し、設定/マイタスクと同じ AccountMenu 内に格納。
+  //   こうすることでヘッダ幅は変化なく、新規ユーザは右上 (アカウント名) → ドロップダウンから到達可能。
+  // 詳細: docs/test/E2E_LESSONS_LEARNED.md §4.44
 ];
 
 /** 指定 item がユーザに表示可能か (adminOnly / superAdminOnly を考慮、PR-X3 拡張) */
@@ -242,6 +254,46 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
           >
             {tNav('settings')}
           </Link>
+          {/* PR I (2026-05-09 / E2E §4.44 hotfix): ヘルプ系を AccountMenu に集約。
+              当初 top-nav に置いたが mobile (390px) で +6px overflow を発生させたため移動。
+              閉じている時はレンダリングされない (`{open && ...}`) ためヘッダ snapshot 影響なし。 */}
+          <Link
+            href={GUIDE_ROUTE}
+            role="menuitem"
+            className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
+            onClick={() => setOpen(false)}
+          >
+            {tNav('guide')}
+          </Link>
+          <Link
+            href={HELP_ROUTE}
+            role="menuitem"
+            className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
+            onClick={() => setOpen(false)}
+          >
+            {tNav('help')}
+          </Link>
+          {/* 2026-05-09 feedback: ヘッダ右の DiscordLinkButton は `sm:flex` 以上のみ表示なので、
+              モバイル (< 640px) およびヘッダ overflow 時の fallback として AccountMenu にも掲載。
+              Discord は開発者⇔ユーザのコンタクトハブのため、画面のどこからでも常に到達可能であることを担保する。 */}
+          {(() => {
+            const discordUrl = getDiscordInviteUrl();
+            if (!discordUrl) return null;
+            return (
+              <a
+                href={discordUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                role="menuitem"
+                className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
+                onClick={() => setOpen(false)}
+                title={tNav('contactDeveloperTooltip')}
+              >
+                <span aria-hidden className="mr-1">💬</span>
+                {tNav('discord')}
+              </a>
+            );
+          })()}
           <button
             type="button"
             role="menuitem"
@@ -336,6 +388,35 @@ function GroupMenu({
   );
 }
 
+/**
+ * 2026-05-09 (#16): 開発者コンタクト (Discord) ボタン。
+ *
+ * - 環境変数 `NEXT_PUBLIC_DISCORD_INVITE_URL` が未設定なら何も描画しない (graceful fallback)。
+ * - 外部リンクのため `target="_blank" rel="noopener noreferrer"` を徹底 (tabnabbing 防止)。
+ * - 視覚的には Discord ブランドカラー風のラベルボタン (絵文字でアイコン代替、依存ゼロ)。
+ *
+ * PR I hotfix: 当初「開発者と話す」へ改名したが、視覚回帰 (chromium-mobile / desktop) で
+ *   既存 baseline と幅が変わるリスクがあり revert。コンタクト用途であることは
+ *   tooltip + /help 画面の文脈で補強する方針。
+ */
+function DiscordLinkButton() {
+  const tNav = useTranslations('nav');
+  const url = getDiscordInviteUrl();
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={tNav('contactDeveloperTooltip')}
+      className="hidden items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent sm:flex"
+    >
+      <span aria-hidden>💬</span>
+      <span>{tNav('discord')}</span>
+    </a>
+  );
+}
+
 export function DashboardHeader({ user }: DashboardHeaderProps) {
   const pathname = usePathname();
   const tNav = useTranslations('nav');
@@ -400,6 +481,8 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
           </nav>
         </div>
         <div className="flex items-center gap-1">
+          {/* 2026-05-09 (#16): Discord コミュニティ招待ボタン。env 未設定時は非表示。 */}
+          <DiscordLinkButton />
           {/* PR feat/notifications-mvp: アカウント名の左に通知ベルを配置 */}
           <NotificationBell />
           <AccountMenu user={user} />

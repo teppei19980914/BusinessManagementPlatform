@@ -10,6 +10,13 @@ vi.mock('@/lib/db', () => ({
       // PR #162 / PR #165: bulkUpdateRetrospectivesVisibilityFromList が呼ぶ
       updateMany: vi.fn(),
     },
+    // PR feat/asset-multi-project-linking: M:N link/unlink
+    retrospectiveProject: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      delete: vi.fn(),
+    },
+    project: { findFirst: vi.fn() },
     // PR #199: retrospectiveComment は polymorphic comments テーブルに統合済 → mock 不要
     projectMember: { findMany: vi.fn() },
     user: { findMany: vi.fn() },
@@ -36,6 +43,8 @@ import {
   getRetrospective,
   // PR #199: addComment は削除 (polymorphic comments テーブルへ移行)
   bulkUpdateRetrospectivesVisibilityFromList,
+  linkRetrospectiveToProject,
+  unlinkRetrospectiveFromProject,
 } from './retrospective.service';
 import { prisma } from '@/lib/db';
 import { generateAndPersistEntityEmbedding } from './embedding.service';
@@ -61,6 +70,8 @@ const retRow = (o: Record<string, unknown> = {}) => ({
   createdAt: now,
   updatedAt: now,
   // PR #199: comments は polymorphic comments テーブルへ移行 (DTO に含まれない)
+  // PR feat/asset-multi-project-linking: M:N 紐付け済 (作成元のみ)
+  retrospectiveProjects: [{ projectId: 'p-1' }],
   ...o,
 });
 
@@ -107,7 +118,7 @@ describe('listAllRetrospectivesForViewer', () => {
       { id: 'u-1', name: 'Alice' },
     ] as never);
 
-    const r = await listAllRetrospectivesForViewer('admin-1', 'admin');
+    const r = await listAllRetrospectivesForViewer('admin-1', 'admin', 'tenant-A');
 
     expect(r[0].projectName).toBe('PJ');
     expect(r[0].createdByName).toBe('Alice');
@@ -120,7 +131,7 @@ describe('listAllRetrospectivesForViewer', () => {
     ] as never);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
-    const r = await listAllRetrospectivesForViewer('u-99', 'general');
+    const r = await listAllRetrospectivesForViewer('u-99', 'general', 'tenant-A');
 
     expect(r[0].projectName).toBe(null);
     expect(r[0].createdByName).toBe(null);
@@ -133,7 +144,7 @@ describe('listAllRetrospectivesForViewer', () => {
     ] as never);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
-    const r = await listAllRetrospectivesForViewer('admin-1', 'admin');
+    const r = await listAllRetrospectivesForViewer('admin-1', 'admin', 'tenant-A');
 
     expect(r[0].projectDeleted).toBe(true);
     expect(r[0].canAccessProject).toBe(false);
@@ -145,7 +156,7 @@ describe('listAllRetrospectivesForViewer', () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
     // 非 admin
-    await listAllRetrospectivesForViewer('u-1', 'general');
+    await listAllRetrospectivesForViewer('u-1', 'general', 'tenant-A');
     const generalCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
     expect(generalCall.where.visibility).toBe('public');
     expect(generalCall.where).not.toHaveProperty('OR');
@@ -155,7 +166,7 @@ describe('listAllRetrospectivesForViewer', () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
     // admin (旧仕様では visibility 制約なしだったが要件変更で admin も public 固定)
-    await listAllRetrospectivesForViewer('admin-1', 'admin');
+    await listAllRetrospectivesForViewer('admin-1', 'admin', 'tenant-A');
     const adminCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
     expect(adminCall.where.visibility).toBe('public');
   });
@@ -348,6 +359,7 @@ describe('getRetrospective', () => {
       projectId: 'p-1',
       createdBy: 'u-1',
       visibility: 'draft',
+      retrospectiveProjects: [{ projectId: 'p-1' }],
     } as never);
 
     const r = await getRetrospective('ret-1');
@@ -360,6 +372,7 @@ describe('getRetrospective', () => {
       projectId: 'p-1',
       createdBy: 'u-1',
       visibility: 'public',
+      retrospectiveProjects: [{ projectId: 'p-1' }],
     } as never);
 
     const r = await getRetrospective('ret-1', 'u-other', 'general');
@@ -372,6 +385,7 @@ describe('getRetrospective', () => {
       projectId: 'p-1',
       createdBy: 'u-1',
       visibility: 'draft',
+      retrospectiveProjects: [{ projectId: 'p-1' }],
     } as never);
 
     const r = await getRetrospective('ret-1', 'u-other', 'general');
@@ -411,9 +425,13 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
     expect(r.skippedNotOwned).toBe(1);
     expect(r.skippedNotFound).toBe(0);
 
-    // PR #165: findMany の where に projectId が含まれることを確認
+    // PR feat/asset-multi-project-linking: scope は M:N (retrospectiveProjects) 経由で判定する。
     const findCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
-    expect(findCall.where).toEqual({ id: { in: ['ret-1', 'ret-2', 'ret-3'] }, projectId: 'p-1', deletedAt: null });
+    expect(findCall.where).toEqual({
+      id: { in: ['ret-1', 'ret-2', 'ret-3'] },
+      deletedAt: null,
+      retrospectiveProjects: { some: { projectId: 'p-1' } },
+    });
 
     const call = vi.mocked(prisma.retrospective.updateMany).mock.calls[0][0];
     expect(call.where).toEqual({ id: { in: ['ret-1', 'ret-3'] } });
@@ -439,5 +457,76 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
     expect(r.updatedIds).toEqual([]);
     expect(r.skippedNotOwned).toBe(1);
     expect(prisma.retrospective.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// PR feat/asset-multi-project-linking: M:N link/unlink ユニット
+describe('linkRetrospectiveToProject', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('新規紐付け → added=true で M:N 行作成', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      id: 'ret-1',
+      tenantId: TEST_TENANT_ID,
+    } as never);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-2',
+      tenantId: TEST_TENANT_ID,
+    } as never);
+    vi.mocked(prisma.retrospectiveProject.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.retrospectiveProject.create).mockResolvedValue({} as never);
+
+    const result = await linkRetrospectiveToProject('ret-1', 'p-2');
+    expect(result).toEqual({ added: true });
+    expect(prisma.retrospectiveProject.create).toHaveBeenCalledWith({
+      data: { retrospectiveId: 'ret-1', projectId: 'p-2' },
+    });
+  });
+
+  it('既存紐付けあり → added=false (idempotent)', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      id: 'ret-1',
+      tenantId: TEST_TENANT_ID,
+    } as never);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-2',
+      tenantId: TEST_TENANT_ID,
+    } as never);
+    vi.mocked(prisma.retrospectiveProject.findUnique).mockResolvedValue({ id: 'rp-1' } as never);
+
+    const result = await linkRetrospectiveToProject('ret-1', 'p-2');
+    expect(result).toEqual({ added: false });
+    expect(prisma.retrospectiveProject.create).not.toHaveBeenCalled();
+  });
+
+  it('テナント不一致 → TENANT_MISMATCH', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      id: 'ret-1',
+      tenantId: TEST_TENANT_ID,
+    } as never);
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-X',
+      tenantId: '00000000-0000-0000-0000-other-tenant',
+    } as never);
+    await expect(linkRetrospectiveToProject('ret-1', 'p-X')).rejects.toThrow('TENANT_MISMATCH');
+  });
+});
+
+describe('unlinkRetrospectiveFromProject', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('既存紐付けあり → removed=true で delete', async () => {
+    vi.mocked(prisma.retrospectiveProject.findUnique).mockResolvedValue({ id: 'rp-1' } as never);
+    vi.mocked(prisma.retrospectiveProject.delete).mockResolvedValue({} as never);
+
+    const result = await unlinkRetrospectiveFromProject('ret-1', 'p-2');
+    expect(result).toEqual({ removed: true });
+  });
+
+  it('紐付けなし → removed=false (idempotent)', async () => {
+    vi.mocked(prisma.retrospectiveProject.findUnique).mockResolvedValue(null);
+
+    const result = await unlinkRetrospectiveFromProject('ret-1', 'p-2');
+    expect(result).toEqual({ removed: false });
   });
 });

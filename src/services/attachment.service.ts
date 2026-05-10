@@ -65,14 +65,17 @@ function toDTO(a: {
 export async function listAttachments(
   entityType: AttachmentEntityType,
   entityId: string,
+  viewerTenantId: string,
   slot?: string,
 ): Promise<AttachmentDTO[]> {
+  // 2026-05-09 feedback Phase 2-5: 越境一覧を遮断するため tenantId 必須化。
   const rows = await prisma.attachment.findMany({
     where: {
       entityType,
       entityId,
       slot: slot ?? undefined,
       deletedAt: null,
+      tenantId: viewerTenantId,
     },
     include: { addedByUser: { select: { name: true } } },
     orderBy: [{ slot: 'asc' }, { createdAt: 'asc' }],
@@ -80,9 +83,14 @@ export async function listAttachments(
   return rows.map(toDTO);
 }
 
-export async function getAttachment(id: string): Promise<AttachmentDTO | null> {
+export async function getAttachment(
+  id: string,
+  viewerTenantId: string,
+): Promise<AttachmentDTO | null> {
+  // 2026-05-09 feedback Phase 2-5: 越境取得を遮断するため tenantId 必須化。
+  //   添付 URL は機密情報直結 (個人情報含むファイルへのアクセス権限) のため最重要。
   const a = await prisma.attachment.findFirst({
-    where: { id, deletedAt: null },
+    where: { id, deletedAt: null, tenantId: viewerTenantId },
     include: { addedByUser: { select: { name: true } } },
   });
   return a ? toDTO(a) : null;
@@ -98,10 +106,11 @@ const SINGLE_SLOTS = new Set(['primary', 'source']);
 export async function createAttachment(
   input: CreateAttachmentInput,
   userId: string,
+  tenantId: string,
 ): Promise<AttachmentDTO> {
   const slot = input.slot ?? 'general';
 
-  // 単数スロットは既存行を論理削除してから新規作成 (履歴保持のため UPDATE ではなく置換)
+  // 2026-05-09 feedback Phase 2-5: data.tenantId 明示 + updateMany にも tenantId 併記。
   if (SINGLE_SLOTS.has(slot)) {
     await prisma.attachment.updateMany({
       where: {
@@ -109,6 +118,7 @@ export async function createAttachment(
         entityId: input.entityId,
         slot,
         deletedAt: null,
+        tenantId,
       },
       data: { deletedAt: new Date() },
     });
@@ -116,6 +126,7 @@ export async function createAttachment(
 
   const created = await prisma.attachment.create({
     data: {
+      tenantId,
       entityType: input.entityType,
       entityId: input.entityId,
       slot,
@@ -132,7 +143,15 @@ export async function createAttachment(
 export async function updateAttachment(
   id: string,
   input: UpdateAttachmentInput,
+  viewerTenantId: string,
 ): Promise<AttachmentDTO> {
+  // 2026-05-09 feedback Phase 2-5: 越境編集を遮断するため findFirst で先に所有確認。
+  const owned = await prisma.attachment.findFirst({
+    where: { id, deletedAt: null, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error('NOT_FOUND');
+
   const updated = await prisma.attachment.update({
     where: { id },
     data: {
@@ -146,9 +165,13 @@ export async function updateAttachment(
 }
 
 /** 論理削除 (restore 余地を残す) */
-export async function deleteAttachment(id: string): Promise<void> {
-  await prisma.attachment.update({
-    where: { id },
+export async function deleteAttachment(
+  id: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2-5: 越境削除を遮断するため updateMany で tenantId 検証。
+  await prisma.attachment.updateMany({
+    where: { id, tenantId: viewerTenantId },
     data: { deletedAt: new Date() },
   });
 }
@@ -169,11 +192,13 @@ export async function deleteAttachment(id: string): Promise<void> {
 export async function getEntityVisibility(
   entityType: AttachmentEntityType,
   entityId: string,
+  viewerTenantId: string,
 ): Promise<{ visibility: 'public' | 'draft'; creatorId: string } | null | 'not-found'> {
+  // 2026-05-09 feedback Phase 2-5: 全 entity 検索に tenantId フィルタ必須化。
   switch (entityType) {
     case 'risk': {
       const r = await prisma.riskIssue.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { visibility: true, reporterId: true },
       });
       if (!r) return 'not-found';
@@ -181,7 +206,7 @@ export async function getEntityVisibility(
     }
     case 'retrospective': {
       const retro = await prisma.retrospective.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { visibility: true, createdBy: true },
       });
       if (!retro) return 'not-found';
@@ -189,7 +214,7 @@ export async function getEntityVisibility(
     }
     case 'knowledge': {
       const k = await prisma.knowledge.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { visibility: true, createdBy: true },
       });
       if (!k) return 'not-found';
@@ -210,62 +235,63 @@ export async function getEntityVisibility(
 export async function resolveProjectIds(
   entityType: AttachmentEntityType,
   entityId: string,
+  viewerTenantId: string,
 ): Promise<string[] | null> {
+  // 2026-05-09 feedback Phase 2-5: 全 entity 検索に tenantId フィルタ必須化。
   switch (entityType) {
     case 'project': {
       const p = await prisma.project.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { id: true },
       });
       return p ? [p.id] : null;
     }
     case 'task': {
+      // task は tenantId 列なし、project 経由でフィルタ
       const t = await prisma.task.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, project: { tenantId: viewerTenantId } },
         select: { projectId: true },
       });
       return t ? [t.projectId] : null;
     }
     case 'estimate': {
+      // estimate は tenantId 列なし、project 経由でフィルタ
       const e = await prisma.estimate.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, project: { tenantId: viewerTenantId } },
         select: { projectId: true },
       });
       return e ? [e.projectId] : null;
     }
     case 'risk': {
       const r = await prisma.riskIssue.findFirst({
-        where: { id: entityId, deletedAt: null },
-        select: { projectId: true },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
+        select: { id: true, riskIssueProjects: { select: { projectId: true } } },
       });
-      return r ? [r.projectId] : null;
+      if (!r) return null;
+      return r.riskIssueProjects.map((rp) => rp.projectId);
     }
     case 'retrospective': {
       const retro = await prisma.retrospective.findFirst({
-        where: { id: entityId, deletedAt: null },
-        select: { projectId: true },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
+        select: { id: true, retrospectiveProjects: { select: { projectId: true } } },
       });
-      return retro ? [retro.projectId] : null;
+      if (!retro) return null;
+      return retro.retrospectiveProjects.map((rp) => rp.projectId);
     }
     case 'knowledge': {
       const k = await prisma.knowledge.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: {
           id: true,
           knowledgeProjects: { select: { projectId: true } },
         },
       });
       if (!k) return null;
-      // 紐付けプロジェクトがゼロの孤児ナレッジも許容 (admin のみ操作可能)
       return k.knowledgeProjects.map((kp) => kp.projectId);
     }
     case 'memo': {
-      // PR #70: memo はプロジェクトに紐付かない個人エンティティなので projectIds は空。
-      // 呼び出し側は authorizeMemoAttachment で userId+visibility を別途検証する必要がある。
-      // null ではなく [] を返すのは「エンティティは存在する、が project 権限では判定不能」
-      // であることを示すため。
       const m = await prisma.memo.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
         select: { id: true },
       });
       return m ? [] : null;
@@ -286,9 +312,11 @@ export async function authorizeMemoAttachment(
   memoId: string,
   viewerUserId: string,
   mode: 'read' | 'write',
+  viewerTenantId: string,
 ): Promise<{ ok: boolean; notFound: boolean }> {
+  // 2026-05-09 feedback Phase 2-5: 越境取得を遮断するため tenantId 必須化。
   const memo = await prisma.memo.findFirst({
-    where: { id: memoId, deletedAt: null },
+    where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
     select: { userId: true, visibility: true },
   });
   if (!memo) return { ok: false, notFound: true };

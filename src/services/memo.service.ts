@@ -54,10 +54,17 @@ function toDTO(
 /**
  * 「メモ」画面 (/memos) 用 — 閲覧ユーザ自身のメモのみ返す (PR #71)。
  * private / public 問わず、自分が作成した全件。ここは編集/削除可能な個人管理画面。
+ *
+ * 2026-05-09 feedback: テナント越境防止のため `viewerTenantId` でフィルタ。
+ *   ユーザは自テナント内でしかメモを作成できないため通常 no-op だが、テナント間で
+ *   userId が衝突した場合のフェイルセーフとして必須 (defense-in-depth)。
  */
-export async function listMyMemos(viewerUserId: string): Promise<MemoDTO[]> {
+export async function listMyMemos(
+  viewerUserId: string,
+  viewerTenantId: string,
+): Promise<MemoDTO[]> {
   const rows = await prisma.memo.findMany({
-    where: { deletedAt: null, userId: viewerUserId },
+    where: { deletedAt: null, userId: viewerUserId, tenantId: viewerTenantId },
     include: { author: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -65,13 +72,19 @@ export async function listMyMemos(viewerUserId: string): Promise<MemoDTO[]> {
 }
 
 /**
- * 「全メモ」画面 (/all-memos) 用 — visibility='public' のメモを全件返す (PR #71)。
- * 自分の公開メモも含む (自分のメモでも「公開範囲=全メモに公開」に設定したものは全員が閲覧対象)。
+ * 「全メモ」画面 (/all-memos) 用 — visibility='public' のメモを自テナント内で全件返す。
+ * 自分の公開メモも含む (自分のメモでも「公開範囲=全メモに公開」に設定したものは同テナント全員が閲覧対象)。
  * この画面は read-only。編集/削除は個別の /memos 画面側で行う。
+ *
+ * 2026-05-09 feedback: テナント越境防止のため `viewerTenantId` でフィルタ。
+ *   旧実装はテナントフィルタ無しで他テナントの公開メモが見えてしまっていた (重大バグ)。
  */
-export async function listPublicMemos(viewerUserId: string): Promise<MemoDTO[]> {
+export async function listPublicMemos(
+  viewerUserId: string,
+  viewerTenantId: string,
+): Promise<MemoDTO[]> {
   const rows = await prisma.memo.findMany({
-    where: { deletedAt: null, visibility: 'public' },
+    where: { deletedAt: null, visibility: 'public', tenantId: viewerTenantId },
     include: { author: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -85,9 +98,11 @@ export async function listPublicMemos(viewerUserId: string): Promise<MemoDTO[]> 
 export async function getMemoForViewer(
   memoId: string,
   viewerUserId: string,
+  viewerTenantId: string,
 ): Promise<MemoDTO | null> {
+  // 2026-05-09 feedback Phase 2-4: 越境取得を遮断するため where に tenantId 必須化。
   const m = await prisma.memo.findFirst({
-    where: { id: memoId, deletedAt: null },
+    where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
     include: { author: { select: { name: true } } },
   });
   if (!m) return null;
@@ -100,9 +115,12 @@ export async function getMemoForViewer(
 export async function createMemo(
   input: CreateMemoInput,
   userId: string,
+  tenantId: string,
 ): Promise<MemoDTO> {
+  // 2026-05-09 feedback Phase 2-4: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
   const created = await prisma.memo.create({
     data: {
+      tenantId,
       userId,
       title: input.title,
       content: input.content,
@@ -120,9 +138,11 @@ export async function updateMemo(
   memoId: string,
   input: UpdateMemoInput,
   userId: string,
+  viewerTenantId: string,
 ): Promise<MemoDTO | null> {
+  // 2026-05-09 feedback Phase 2-4: 越境編集を遮断するため where に tenantId 必須化。
   const existing = await prisma.memo.findFirst({
-    where: { id: memoId, deletedAt: null },
+    where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
     select: { userId: true },
   });
   if (!existing) return null;
@@ -151,11 +171,13 @@ export async function bulkUpdateMemosVisibilityFromList(
   ids: string[],
   visibility: 'private' | 'public',
   viewerUserId: string,
+  viewerTenantId: string,
 ): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
   if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
 
+  // 2026-05-09 feedback Phase 2-4: 越境一括更新を遮断するため tenantId 併記。
   const targets = await prisma.memo.findMany({
-    where: { id: { in: ids }, deletedAt: null },
+    where: { id: { in: ids }, deletedAt: null, tenantId: viewerTenantId },
     select: { id: true, userId: true },
   });
   const skippedNotFound = ids.length - targets.length;
@@ -174,9 +196,14 @@ export async function bulkUpdateMemosVisibilityFromList(
   return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
 }
 
-export async function deleteMemo(memoId: string, userId: string): Promise<boolean> {
+export async function deleteMemo(
+  memoId: string,
+  userId: string,
+  viewerTenantId: string,
+): Promise<boolean> {
+  // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.memo.findFirst({
-    where: { id: memoId, deletedAt: null },
+    where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
     select: { userId: true },
   });
   if (!existing) return false;

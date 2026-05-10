@@ -704,6 +704,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       <RiskEditDialog
         risk={editingRisk}
         members={members}
+        currentProjectId={projectId}
         open={editingRisk != null}
         onOpenChange={(v) => { if (!v) setEditingRisk(null); }}
         onSaved={reload}

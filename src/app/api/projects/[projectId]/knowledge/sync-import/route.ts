@@ -69,13 +69,14 @@ export async function POST(
 
   const csvRows = parseKnowledgeSyncImportCsv(csvText);
   if (isDryRun) {
-    const diff = await computeKnowledgeSyncDiff(projectId, csvRows);
+    const diff = await computeKnowledgeSyncDiff(projectId, csvRows, user.tenantId);
     return NextResponse.json({ data: diff });
   }
 
   try {
-    const result = await applyKnowledgeSyncImport(projectId, csvRows, removeMode, user.id);
+    const result = await applyKnowledgeSyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'SYNC_IMPORT',
       entityType: 'knowledge_sync_import',

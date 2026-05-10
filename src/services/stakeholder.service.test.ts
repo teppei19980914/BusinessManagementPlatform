@@ -8,6 +8,8 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    // 2026-05-09 feedback Phase 2-5: createStakeholder で project tenant 検証用
+    project: { findFirst: vi.fn() },
     // PR fix/visibility-auth-matrix: deleteStakeholder も comment cascade
     comment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
@@ -54,11 +56,11 @@ describe('listStakeholders', () => {
 
   it('プロジェクト ID でフィルタし、deletedAt=null + 影響度 desc / 関心度 desc でソート', async () => {
     vi.mocked(prisma.stakeholder.findMany).mockResolvedValue([sRow()] as never);
-    await listStakeholders('p-1');
+    await listStakeholders('p-1', 'tenant-A');
 
     expect(prisma.stakeholder.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { projectId: 'p-1', deletedAt: null },
+        where: { projectId: 'p-1', deletedAt: null, tenantId: 'tenant-A' },
         orderBy: [
           { influence: 'desc' },
           { interest: 'desc' },
@@ -74,7 +76,7 @@ describe('listStakeholders', () => {
       sRow({ id: 's-2', influence: 2, interest: 2, priority: 'low', currentEngagement: 'supportive', desiredEngagement: 'supportive' }),
     ] as never);
 
-    const result = await listStakeholders('p-1');
+    const result = await listStakeholders('p-1', 'tenant-A');
 
     expect(result[0].quadrant).toBe('manage_closely'); // 5x5 = high/high
     expect(result[0].engagementGap).toBe(4); // unaware (idx 0) → leading (idx 4)
@@ -96,7 +98,7 @@ describe('listStakeholders', () => {
       sRow({ id: 'C', influence: 5, interest: 5, priority: 'high' }),
     ] as never);
 
-    const result = await listStakeholders('p-1');
+    const result = await listStakeholders('p-1', 'tenant-A');
     // priority 順に並び替わっていることを id で検証
     expect(result.map((r) => r.id)).toEqual(['C', 'A', 'B']);
   });
@@ -107,7 +109,7 @@ describe('listStakeholders', () => {
       sRow({ id: 's-2', tags: 'broken-string' }),
     ] as never);
 
-    const result = await listStakeholders('p-1');
+    const result = await listStakeholders('p-1', 'tenant-A');
     expect(result[0].tags).toEqual([]);
     expect(result[1].tags).toEqual([]);
   });
@@ -118,7 +120,7 @@ describe('getStakeholder', () => {
 
   it('論理削除済 (deletedAt!=null) は除外して null を返す', async () => {
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue(null);
-    const result = await getStakeholder('s-1');
+    const result = await getStakeholder('s-1', 'tenant-A');
     expect(result).toBeNull();
 
     const call = vi.mocked(prisma.stakeholder.findFirst).mock.calls[0]?.[0] as {
@@ -130,7 +132,7 @@ describe('getStakeholder', () => {
 
   it('存在すれば DTO を返す', async () => {
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue(sRow() as never);
-    const result = await getStakeholder('s-1');
+    const result = await getStakeholder('s-1', 'tenant-A');
     expect(result?.name).toBe('山田太郎');
     expect(result?.influence).toBe(5);
   });
@@ -140,6 +142,8 @@ describe('createStakeholder', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('createdBy / updatedBy に呼出ユーザを設定し、null フィールドを保持', async () => {
+    // 2026-05-09 feedback Phase 2-5: project tenant 検証用 mock
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.stakeholder.create).mockResolvedValue(sRow() as never);
 
     await createStakeholder(
@@ -154,6 +158,7 @@ describe('createStakeholder', () => {
         // organization 等を意図的に省略 (optional)
       },
       'u-creator',
+      'tenant-A',
     );
 
     const callArg = vi.mocked(prisma.stakeholder.create).mock.calls[0]?.[0] as {
@@ -174,6 +179,7 @@ describe('createStakeholder', () => {
     [2, 5, 'medium'], // keep_informed
     [2, 2, 'low'],    // monitor
   ])('priority を influence=%d / interest=%d から %s に自動分類', async (influence, interest, expected) => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.stakeholder.create).mockResolvedValue(sRow({ priority: expected }) as never);
 
     await createStakeholder('p-1', {
@@ -183,7 +189,7 @@ describe('createStakeholder', () => {
       attitude: 'neutral',
       currentEngagement: 'neutral',
       desiredEngagement: 'neutral',
-    }, 'u-1');
+    }, 'u-1', 'tenant-A');
 
     const callArg = vi.mocked(prisma.stakeholder.create).mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
@@ -197,14 +203,14 @@ describe('updateStakeholder', () => {
 
   it('既存が無ければ NOT_FOUND を投げる', async () => {
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue(null);
-    await expect(updateStakeholder('s-1', { name: '新名' }, 'u-1')).rejects.toThrow('NOT_FOUND');
+    await expect(updateStakeholder('s-1', { name: '新名' }, 'u-1', 'tenant-A')).rejects.toThrow('NOT_FOUND');
   });
 
   it('undefined フィールドは update payload に含めない (部分更新)', async () => {
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ id: 's-1', influence: 5, interest: 4 } as never);
     vi.mocked(prisma.stakeholder.update).mockResolvedValue(sRow({ name: '新名' }) as never);
 
-    await updateStakeholder('s-1', { name: '新名' }, 'u-editor');
+    await updateStakeholder('s-1', { name: '新名' }, 'u-editor', 'tenant-A');
 
     const callArg = vi.mocked(prisma.stakeholder.update).mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
@@ -222,7 +228,7 @@ describe('updateStakeholder', () => {
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ id: 's-1', influence: 5, interest: 4 } as never);
     vi.mocked(prisma.stakeholder.update).mockResolvedValue(sRow() as never);
 
-    await updateStakeholder('s-1', { organization: null, contactInfo: null }, 'u-editor');
+    await updateStakeholder('s-1', { organization: null, contactInfo: null }, 'u-editor', 'tenant-A');
 
     const callArg = vi.mocked(prisma.stakeholder.update).mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
@@ -237,7 +243,7 @@ describe('updateStakeholder', () => {
     vi.mocked(prisma.stakeholder.update).mockResolvedValue(sRow({ priority: 'medium' }) as never);
 
     // influence を 5 → 2 に下げると quadrant は manage_closely (high) → keep_informed (medium)
-    await updateStakeholder('s-1', { influence: 2 }, 'u-editor');
+    await updateStakeholder('s-1', { influence: 2 }, 'u-editor', 'tenant-A');
 
     const callArg = vi.mocked(prisma.stakeholder.update).mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
@@ -251,7 +257,7 @@ describe('updateStakeholder', () => {
     vi.mocked(prisma.stakeholder.update).mockResolvedValue(sRow({ priority: 'medium' }) as never);
 
     // interest を 2 → 5 に上げると monitor (low) → keep_informed (medium)
-    await updateStakeholder('s-1', { interest: 5 }, 'u-editor');
+    await updateStakeholder('s-1', { interest: 5 }, 'u-editor', 'tenant-A');
 
     const callArg = vi.mocked(prisma.stakeholder.update).mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
@@ -267,7 +273,7 @@ describe('deleteStakeholder', () => {
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue({ id: 's-1' } as never);
     vi.mocked(prisma.stakeholder.update).mockResolvedValue(sRow() as never);
 
-    await deleteStakeholder('s-1', 'u-deleter');
+    await deleteStakeholder('s-1', 'u-deleter', 'tenant-A');
 
     const callArg = vi.mocked(prisma.stakeholder.update).mock.calls[0]?.[0] as {
       data: { deletedAt: Date; updatedBy: string };
@@ -278,6 +284,6 @@ describe('deleteStakeholder', () => {
 
   it('既存が無ければ NOT_FOUND を投げる', async () => {
     vi.mocked(prisma.stakeholder.findFirst).mockResolvedValue(null);
-    await expect(deleteStakeholder('s-1', 'u-1')).rejects.toThrow('NOT_FOUND');
+    await expect(deleteStakeholder('s-1', 'u-1', 'tenant-A')).rejects.toThrow('NOT_FOUND');
   });
 });
