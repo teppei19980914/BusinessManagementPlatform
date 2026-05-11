@@ -78,7 +78,7 @@ jobs:
         with:
           version: 10
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           # PR #84 hotfix: cache: 'pnpm' を外す。
@@ -254,7 +254,7 @@ jobs:
         with:
           version: 10
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'pnpm'
