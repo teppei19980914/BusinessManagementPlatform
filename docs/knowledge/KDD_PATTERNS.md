@@ -5936,6 +5936,13 @@ GitHub の dependabot は **PR の base branch が更新されると自動的に
 1. **`mergeable: UNKNOWN`**: GitHub が computing 中。1-2 分待って再取得。
 2. **`mergeStateStatus: BLOCKED`**: ファイル conflict ではなく、required reviews / checks が
    未通過の状態。コンフリクトとは別物。
+   - **実例 PR #318** (2026-05-15): ユーザが「コンフリクト発生」と認識して conflict UI を
+     開いたが、調査時点で `mergeable: MERGEABLE` / `mergeStateStatus: BLOCKED` の組合せ。
+     原因は auto-rebase 直後で **CI 進行中 (Lint/Test/Build / Playwright E2E / CodeQL が IN_PROGRESS、
+     Vercel が PENDING)** だっただけ。CI 完了を待てば `CLEAN` に遷移し、そのままマージ可能。
+   - GitHub UI の「Resolve conflicts」ボタンは BLOCKED 時にも表示される場合があり、
+     ユーザがコンフリクトと誤認しやすい。**まず `mergeable` フィールドを見る**こと
+     (CONFLICTING ≠ BLOCKED)。
 3. **CI が古い base で走った場合**: auto-rebase 後に CI 再実行が走らないと、
    古い PR commit の検査結果のままで「checks pass」になる。dependabot は再 push で
    CI を再実行させる。マージ前に「最新の checks が pass か」を目視確認。
