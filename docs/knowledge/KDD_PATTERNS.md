@@ -5885,3 +5885,154 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 修正例: PR #310 (2026-05-10)
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+---
+
+## 5.X+20 `eslint-config-next` minor 上げで `react-hooks/set-state-in-effect` / `react-hooks/refs` が新規 enforce — 既存 useEffect/useRef を Hooks-7.1 互換に書き換える (PR #323 dependabot 対応 / 2026-05-11)
+
+### 罠の正体
+
+dependabot の **patch / minor 上げ** にしか見えない `eslint-config-next 16.2.3 → 16.2.6` で、
+**`eslint-plugin-react-hooks` が 7.0.x → 7.1.1 に transitive bump** し、以下 2 ルールが新規 enforce:
+
+| ルール | 検出対象 | 影響範囲 |
+|---|---|---|
+| `react-hooks/set-state-in-effect` | useEffect 本体内 (同期) で setState を呼ぶ、または **setState を含む関数を呼ぶ (call graph 解析)** | fetch-on-mount / derived state sync / deep-link auto-open |
+| `react-hooks/refs` | render 中 (= useEffect/useCallback/event handler 外) で `ref.current = ...` する | "最新値を保持する ref" の常用パターン |
+
+CI ログでは `eslint-plugin-react-hooks` の version 表記が無いため、**「config-next を上げただけ」と
+見誤って原因特定が遅れる**。実体は **transitive な peer plugin** の major-minor 跨ぎ強化。
+
+PR #323 の CI fail 内訳 (5 件):
+
+| ファイル | ルール | 構造 |
+|---|---|---|
+| `src/app/(auth)/setup-password/page.tsx:78` | set-state-in-effect | useEffect 同期分岐 `if (!token) { setTokenError(...); setIsValidating(false); }` |
+| `src/app/(dashboard)/memos/memos-client.tsx:264` | set-state-in-effect | `useEffect(() => setMemos(initialMemos), [initialMemos])` (derived state sync) |
+| `src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx:191` | set-state-in-effect | `useEffect(() => { void reload(); }, [reload])` (call graph で reload 内 setState を検出) |
+| `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx:785` | set-state-in-effect | useEffect 内 `openEditDialog(target)` (useCallback 内で setState を呼ぶ) |
+| `src/lib/use-lazy-fetch.ts:35` | refs | `stateRef.current = state` を render body 直下で実行 |
+
+### 修正パターン (4 種類)
+
+#### Pattern A: 初期 state を派生させる (synchronous-setState-in-effect 解消)
+
+**Before:**
+
+```tsx
+const [tokenError, setTokenError] = useState('');
+const [isValidating, setIsValidating] = useState(true);
+useEffect(() => {
+  if (!token) {
+    setTokenError(t('invalidLink'));  // ★ violation
+    setIsValidating(false);
+    return;
+  }
+  fetch(...).then(...);
+}, [token, t]);
+```
+
+**After:**
+
+```tsx
+// 初期 state を token 有無から派生
+const [tokenError, setTokenError] = useState(token ? '' : t('invalidLink'));
+const [isValidating, setIsValidating] = useState(!!token);
+useEffect(() => {
+  if (!token) return;        // 初期 state で表示済
+  fetch(...).then(...);      // .then 内 setState は microtask で対象外
+}, [token, t]);
+```
+
+#### Pattern B: derived state は **render 中に prev 比較で setState** (React 公式推奨)
+
+`useEffect(() => setX(prop), [prop])` は React 公式が "Anti-pattern" と明記している。
+代わりに **render 中の条件付き setState** (React は自動的に再 render を 1 回に統合) を使う。
+
+**Before:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+useEffect(() => {
+  setMemos(initialMemos);  // ★ violation + 余分な再 render
+}, [initialMemos]);
+```
+
+**After:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+const [prevInitialMemos, setPrevInitialMemos] = useState(initialMemos);
+if (prevInitialMemos !== initialMemos) {
+  setPrevInitialMemos(initialMemos);  // render 中の setState は合法 (React docs)
+  setMemos(initialMemos);
+}
+```
+
+ref: <https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes>
+
+#### Pattern C: ref 同期は useEffect 経由 (`react-hooks/refs` 解消)
+
+**Before:**
+
+```ts
+const stateRef = useRef(state);
+stateRef.current = state;  // ★ violation: render 中の ref 更新
+```
+
+**After:**
+
+```ts
+const stateRef = useRef(state);
+useEffect(() => {
+  stateRef.current = state;  // commit 後に同期、async コールバックの読出しには十分
+});
+```
+
+#### Pattern D: 公式が認める正当パターンは `eslint-disable-next-line` (reason コメント必須)
+
+以下は React 公式が `useEffect` を **正当な選択肢** として挙げているため、disable で局所許容する:
+
+1. **fetch-on-mount** (`useEffect(() => { void reload(); })`):
+   ref: <https://react.dev/reference/react/useEffect#fetching-data-with-effects>
+2. **Deep-link 着地時の 1 回限り副作用** (ref ガード済の auto-open dialog):
+   cascading render は ref ガードで防止済
+
+**書き方** (理由は必ず `--` 以降に明記):
+
+```tsx
+useEffect(() => {
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- reload は async で setState は microtask、fetch-on-mount 公式パターン
+  void reload();
+}, [reload]);
+```
+
+### 検出が遅れた理由
+
+- `eslint-plugin-react-hooks` の version は `eslint-config-next` の transitive。`pnpm-lock.yaml`
+  の差分にしか現れず、PR の `package.json` diff (`config-next` の 1 行) からは推測不可能。
+- 各 violation は **build / tsc では検出されない** (lint 専用)。CI が `pnpm lint` を走らせて
+  初めて発覚する。
+- ローカル `pnpm lint` でも、main の lockfile (7.0.x) では新ルールが存在しないため再現しない。
+  → **PR ブランチの lockfile を pull するか、`pnpm add -D eslint-plugin-react-hooks@7.1.1`
+  で手動 pin** しないと再現できなかった。
+
+### 横展開チェック (dependabot で eslint 系 minor 上げ PR を見たとき)
+
+- [ ] `pnpm-lock.yaml` の diff から `eslint-plugin-react-hooks` の version 変動を確認
+- [ ] CI lint ログで `react-hooks/(set-state-in-effect|refs)` を grep し、件数を把握
+- [ ] 修正は **本 PR ではなく main ベースの独立 PR** で行う (dependabot ブランチは force-push
+      されうるため変更が消える可能性)。main 経由で fix が入れば dependabot PR は rebase 後に
+      自動で green
+- [ ] disable directive を使う場合は **reason コメント必須** (`--` 以降に「なぜ」を書く)。
+      "fetch-on-mount" や "ref ガード済" 等の根拠を残す
+- [ ] 修正後は **fix branch でも `pnpm-lock.yaml` は触らない** ことを推奨 (config-next の bump は
+      dependabot に任せる)。これにより fix PR は code-only の小さい diff になり review しやすい
+
+### 関連
+
+- 修正 PR: 本 PR (fix/eslint-react-hooks-rules-16.2.6 / 2026-05-11)
+- dependabot PR: #323 (chore(deps): bump eslint-config-next from 16.2.3 to 16.2.6)
+- 公式 (React docs): <https://react.dev/learn/you-might-not-need-an-effect>
+- 公式 (React useEffect): <https://react.dev/reference/react/useEffect>
+- 公式 (eslint-plugin-react-hooks): <https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks>
