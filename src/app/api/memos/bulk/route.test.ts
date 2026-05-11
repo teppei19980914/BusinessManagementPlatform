@@ -8,6 +8,17 @@ vi.mock('@/lib/auth', () => ({ auth: vi.fn() }));
 vi.mock('@/services/memo.service', () => ({
   bulkUpdateMemosVisibilityFromList: vi.fn(),
 }));
+// PR-5 (2026-05-15): api-helpers の requireStorageQuotaForWrite を stub
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    tenant: {
+      findFirst: vi.fn(async () => ({
+        storageAddonPlan: 'standard',
+        storageBytesUsed: BigInt(0),
+      })),
+    },
+  },
+}));
 
 import { PATCH } from './route';
 import { auth } from '@/lib/auth';

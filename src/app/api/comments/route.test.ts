@@ -28,6 +28,8 @@ vi.mock('@/lib/db', () => ({
 
 vi.mock('@/lib/api-helpers', () => ({
   getAuthenticatedUser: vi.fn(),
+  // PR-5 (2026-05-15): storage quota pre-check は本テストでは常時 OK で stub
+  requireStorageQuotaForWrite: vi.fn(async () => null),
 }));
 
 vi.mock('@/lib/permissions', () => ({

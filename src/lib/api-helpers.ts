@@ -9,6 +9,9 @@ import { prisma } from '@/lib/db';
 import { checkPermission, checkMembership } from '@/lib/permissions';
 import type { Action, PermissionContext } from '@/lib/permissions';
 import type { SystemRole, ProjectRole, ProjectStatus } from '@/types';
+// PR-5 (2026-05-15): ストレージ容量 Pre-check (cached) — write API の入口で
+//   テナント上限超過を早期に弾く。完全な Post-check は import 経路で別途実施。
+import { precheckStorageLimit } from '@/services/storage-guard.service';
 
 export type AuthenticatedUser = {
   id: string;
@@ -152,6 +155,49 @@ export async function requireActualProjectMember(
         error: {
           code: 'FORBIDDEN',
           message: 'このプロジェクトのメンバーのみ作成できます',
+        },
+      },
+      { status: 403 },
+    );
+  }
+  return null;
+}
+
+/**
+ * PR-5 (2026-05-15): write 系 API の入口で **ストレージ容量 Pre-check** を行う共通ヘルパ。
+ *
+ * 役割:
+ *   テナントの `storageBytesUsed` (キャッシュ値) + 予測サイズが上限を超える場合に
+ *   403 STORAGE_LIMIT_EXCEEDED を返す。
+ *
+ * 設計判断:
+ *   - **Pre-check のみ (キャッシュベース)** で個別 CRUD の入口を守る:
+ *     - cache は日次 cron で更新 (= 最大 24h lag)
+ *     - 細かい race は許容、daily cron + 7 日 Grace で eventual に補正
+ *   - 完全な atomic guard (= Post-check + ロールバック) は **import 経路で別途実施**:
+ *     - data-import / external-data-import の `withStorageGuard` で transaction 内 Post-check
+ *   - 個別 create/update は payload が kB 規模なので Pre-check で十分
+ *
+ * @param tenantId 対象テナント
+ * @param estimatedBytes 追加見込みバイト数 (= JSON.stringify(body).length 等の近似)。
+ *   省略時は 0 (= 既に上限超過しているテナントのみ拒否、新規 payload は通す)。
+ * @returns 超過時は NextResponse (403)、OK なら null
+ */
+export async function requireStorageQuotaForWrite(
+  tenantId: string,
+  estimatedBytes: number = 0,
+): Promise<NextResponse | null> {
+  const result = await precheckStorageLimit(tenantId, estimatedBytes);
+  if (!result.ok) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'STORAGE_LIMIT_EXCEEDED',
+          message:
+            'ストレージ上限を超えるためデータを保存できません。データを削除するか、Storage プランをアップグレードしてください。',
+          currentBytes: result.cachedUsedBytes,
+          limitBytes: result.limitBytes,
+          addonPlan: result.addonPlan,
         },
       },
       { status: 403 },

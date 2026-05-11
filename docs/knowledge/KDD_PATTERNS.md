@@ -5939,6 +5939,48 @@ PR-3 で個別 CRUD まで広げなかった理由: テスト書き換えの規�
 - guard service: src/services/storage-guard.service.ts (`withStorageGuard` / `assertStorageLimitInTx` / `precheckStorageLimit`)
 - import 経路: src/services/data-import.service.ts (ZIP) / src/services/external-data-import.service.ts (CSV)
 
+## 5.X+29 個別 CRUD 経路のストレージ Pre-check は API route 層に集約する (PR-5 / 2026-05-15)
+<!-- 元番号 §5.X+23 から §5.X+29 に renumber (PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / PR-4=+28 / PR-5=+29 に従う。詳細は §5.X+21 の stacked PR 教訓参照) -->
+
+### 背景
+PR-3 でインフラ (storage-guard service) は完備したが、**通常 CRUD への適用は未着手** だった。
+全 13 個の write service の create / update を `withStorageGuard` で wrap すると、
+約 30+ 個のテスト mock 書き換えが必要で PR サイズが大きすぎる。
+
+### 教訓
+- **API route 層に Pre-check ヘルパを集約**: `requireStorageQuotaForWrite(tenantId, estimatedBytes)`
+  を `api-helpers.ts` に追加し、各 route.ts で 1 行呼び出すパターンに統一。
+- **service 層は変更しない**: 既存 service test が壊れない。route test だけが影響対象。
+- **`estimatedBytes` は payload サイズ近似**: `JSON.stringify(parsed.data).length` を渡す。
+  正確ではないが入口の防御層として十分。
+- **正確な Post-check はインポート経路のみ**: 個別 CRUD は payload が kB 規模なので
+  Pre-check (cache 値 + 予測サイズ) で十分。バッファ overrun は daily cron + 7 日 Grace で
+  eventual 補正。
+
+### 設計の落とし穴
+
+1. **route.ts のテスト mock 更新が必要**: `vi.mock('@/lib/api-helpers', ...)` で
+   `getAuthenticatedUser` のみ stub している既存テストは、`requireStorageQuotaForWrite`
+   の export 不在で `vi.mock` の incomplete エラーになる。
+   → mock オブジェクトに `requireStorageQuotaForWrite: vi.fn(async () => null)` を追記。
+2. **route.ts のテストが prisma を mock していない場合**: `requireStorageQuotaForWrite`
+   は内部で `prisma.tenant.findFirst` を呼ぶため、prisma を一切 mock していないと
+   実 DB に接続しようとして fail。`@/lib/db` を mock する必要あり。
+3. **配置位置の順序**: validation → 権限チェック → **storage check** → service 呼び出し。
+
+### 適用範囲 (PR-5 で完了)
+24 個の write route (POST / PATCH) に適用済:
+projects / tasks / knowledge / risks / retrospectives / estimates / customers /
+stakeholders / members / comments / attachments / memos
+
+既存の import 経路 (PR-3): `data-import` / `external-data-import` で完全な Post-check + ロールバック継続。
+
+### 関連
+- 元 PR: PR-5 (2026-05-15) CRUD ストレージ Pre-check 横展開
+- helper: src/lib/api-helpers.ts `requireStorageQuotaForWrite`
+- 元実装: PR-3 (#330) `precheckStorageLimit / withStorageGuard / assertStorageLimitInTx`
+- 前提 PR: PR-3 (#330) storage-guard.service
+
 ---
 
 ## 5.X+26 Beginner プランは「値の変動がない管理項目」を UI から消す — 表示の意図不在を防ぐ (PR-2 / 2026-05-15)

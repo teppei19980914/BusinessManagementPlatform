@@ -25,7 +25,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
 import { checkMembership } from '@/lib/permissions';
 import {
   createCommentSchema,
@@ -205,6 +205,13 @@ export async function POST(req: NextRequest) {
       );
     }
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   // 2026-05-09 (PR H / #3): 通知 link は createComment 内で commentId 付きで再構築する。
   //   旧仕様 (PR feat/notification-edit-dialog) は事前に build していたが、commentId が必要に

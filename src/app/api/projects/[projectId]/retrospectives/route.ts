@@ -13,6 +13,7 @@ import {
   getAuthenticatedUser,
   checkProjectPermission,
   requireActualProjectMember,
+  requireStorageQuotaForWrite,
 } from '@/lib/api-helpers';
 import { createRetrospectiveSchema } from '@/lib/validators/retrospective';
 import { listRetrospectives, createRetrospective } from '@/services/retrospective.service';
@@ -49,6 +50,13 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: { code: 'VALIDATION_ERROR', details: parsed.error.issues } }, { status: 400 });
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   const retro = await createRetrospective(projectId, parsed.data, user.id, user.tenantId);
   await recordAuditLog({ tenantId: user.tenantId, userId: user.id, action: 'CREATE', entityType: 'retrospective', entityId: retro.id });
