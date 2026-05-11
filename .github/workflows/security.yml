@@ -54,7 +54,7 @@ jobs:
     name: Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Run gitleaks
@@ -72,7 +72,7 @@ jobs:
     name: pnpm audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -105,7 +105,7 @@ jobs:
     container:
       image: returntocorp/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run semgrep with auto-update community rule sets
         run: |
           # `semgrep scan` (= ci ではなく scan) は SEMGREP_APP_TOKEN 不要で動作する公式コマンド。
@@ -140,7 +140,7 @@ jobs:
       matrix:
         language: ['javascript-typescript']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
@@ -166,7 +166,7 @@ jobs:
     name: OSV-Scanner
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install osv-scanner (latest release)
         run: |
           set -euo pipefail
@@ -203,7 +203,7 @@ jobs:
     name: Trivy (CVE / IaC / Secrets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install trivy (latest stable from official install script)
         run: |
           set -euo pipefail
@@ -248,7 +248,7 @@ jobs:
     name: Security Score Gate (>= 90)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -287,7 +287,7 @@ jobs:
     needs: [secret-scan, pnpm-audit, semgrep, codeql, osv-scanner, trivy, security-score-gate]
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Generate attack coverage matrix
         env:
