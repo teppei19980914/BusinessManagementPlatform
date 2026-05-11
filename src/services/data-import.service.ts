@@ -427,8 +427,9 @@ async function runImport(
         isActive: u.isActive !== false,
         themePreference:
           typeof u.themePreference === 'string' ? u.themePreference : 'light',
-        timezone: typeof u.timezone === 'string' ? u.timezone : null,
-        locale: typeof u.locale === 'string' ? u.locale : null,
+        // PR-1 (2026-05-15): timezone / locale はテナント単位に集約されたため User には設定しない。
+        //   旧 ZIP 形式 (User.timezone / User.locale を含む) は黙って無視して取込を継続する。
+        //   テナントの TZ/locale は既存テナント側設定を維持。
         forcePasswordChange: true, // インポートユーザは必ず初回パスワード変更
       },
     });

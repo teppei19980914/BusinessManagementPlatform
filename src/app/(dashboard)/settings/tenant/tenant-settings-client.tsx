@@ -10,10 +10,12 @@
  *   4. 予約済プラン変更の表示 + キャンセル
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/toast-provider';
+import { SUPPORTED_LOCALES, SELECTABLE_LOCALES } from '@/config';
 
 type TenantSelfInfo = {
   id: string;
@@ -47,6 +49,9 @@ type TenantSelfInfo = {
   beginnerDaysRemaining: number | null;
   // 2026-05-09 (PR G / #24): シードデータ参照 toggle
   seedDataEnabled: boolean;
+  // PR-1 (2026-05-15): テナント単位 TZ / locale (旧 User.timezone/locale の集約先)
+  timezone: string;
+  locale: string;
 };
 
 type PlanLabel = { value: 'beginner' | 'expert' | 'pro'; label: string; description: string };
@@ -353,6 +358,15 @@ export function TenantSettingsClient({
           {submitting ? '更新中...' : '変更を保存'}
         </Button>
       </form>
+
+      {/* PR-1 (2026-05-15): テナント単位の言語・タイムゾーン設定 */}
+      <TenantI18nSection
+        initialTimezone={info.timezone}
+        initialLocale={info.locale}
+        onUpdate={async () => {
+          await refreshInfo();
+        }}
+      />
 
       {/* Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理 */}
       {storageInitialInfo && <StorageAddonSection initialInfo={storageInitialInfo} />}
@@ -1254,6 +1268,141 @@ function BeginnerExpiryBanner({ info }: { info: TenantSelfInfo }) {
       <p className="text-xs text-muted-foreground">
         試用期間終了後は読み取り専用モードに移行します。引き続きご利用の場合は Expert / Pro プランへのアップグレードをお願いします。
       </p>
+    </section>
+  );
+}
+
+// ================================================================
+// PR-1 (2026-05-15): テナント単位の言語・タイムゾーン設定セクション
+// ================================================================
+
+/**
+ * テナント全体の TZ / locale を変更するフォーム (テナント管理者のみ)。
+ *
+ * - 旧 `/settings` の i18n セクションを集約。
+ * - 設定値は配下全ユーザの日付表示・残日数計算・月初リセット境界に適用される。
+ * - 保存後は `useSession().update()` で JWT を即時更新し、再描画で反映する。
+ */
+function TenantI18nSection({
+  initialTimezone,
+  initialLocale,
+  onUpdate,
+}: {
+  initialTimezone: string;
+  initialLocale: string;
+  onUpdate: () => Promise<void>;
+}) {
+  const router = useRouter();
+  const { showSuccess, showError } = useToast();
+  const { update: updateSession } = useSession();
+  const [tz, setTz] = useState(initialTimezone);
+  const [loc, setLoc] = useState(initialLocale);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Intl.supportedValuesOf('timeZone') で IANA タイムゾーン名一覧を動的取得 (2022 以降標準)。
+  const tzOptions = useMemo<string[]>(() => {
+    try {
+      const supported = Intl.supportedValuesOf as ((key: 'timeZone') => string[]) | undefined;
+      if (typeof supported === 'function') return supported('timeZone');
+    } catch {
+      // 非対応ブラウザは fallback
+    }
+    return [
+      'UTC',
+      'Asia/Tokyo',
+      'Asia/Shanghai',
+      'Asia/Seoul',
+      'America/New_York',
+      'America/Los_Angeles',
+      'Europe/London',
+      'Europe/Paris',
+    ];
+  }, []);
+
+  const changed = tz !== initialTimezone || loc !== initialLocale;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!changed) {
+      showError('変更内容がありません');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const body: Record<string, string> = {};
+      if (tz !== initialTimezone) body.timezone = tz;
+      if (loc !== initialLocale) body.locale = loc;
+
+      const res = await fetch('/api/tenants/me/i18n', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        showError(json?.error?.message ?? '言語・タイムゾーン設定の保存に失敗しました');
+        return;
+      }
+      const json = await res.json();
+      // JWT 反映 (全ユーザが再ログインせずとも自分のセッションには即時反映)
+      await updateSession({ timezone: json.data.timezone, locale: json.data.locale });
+      showSuccess('言語・タイムゾーン設定を保存しました');
+      await onUpdate();
+      router.refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="mt-8 rounded border p-4">
+      <h2 className="mb-2 text-lg font-semibold">言語・タイムゾーン</h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        テナント全体に適用される表示言語・タイムゾーンです。配下の全ユーザの画面表示・
+        Beginner 残日数・月初リセット境界などはこの設定に従います。
+      </p>
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div className="space-y-1">
+          <label htmlFor="tenant-i18n-locale" className="text-sm font-medium">
+            言語
+          </label>
+          <select
+            id="tenant-i18n-locale"
+            value={loc}
+            onChange={(e) => setLoc(e.target.value)}
+            className="w-64 rounded border bg-background p-2 text-sm"
+          >
+            {Object.entries(SUPPORTED_LOCALES).map(([key, label]) => {
+              const selectable = SELECTABLE_LOCALES[key as keyof typeof SELECTABLE_LOCALES];
+              return (
+                <option key={key} value={key} disabled={!selectable}>
+                  {label} ({key}){!selectable ? ' — 翻訳準備中' : ''}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label htmlFor="tenant-i18n-tz" className="text-sm font-medium">
+            タイムゾーン
+          </label>
+          <select
+            id="tenant-i18n-tz"
+            value={tz}
+            onChange={(e) => setTz(e.target.value)}
+            className="w-64 rounded border bg-background p-2 text-sm"
+          >
+            {tzOptions.map((zone) => (
+              <option key={zone} value={zone}>
+                {zone}
+              </option>
+            ))}
+          </select>
+        </div>
+        <Button type="submit" disabled={submitting || !changed}>
+          {submitting ? '更新中...' : '保存'}
+        </Button>
+      </form>
     </section>
   );
 }

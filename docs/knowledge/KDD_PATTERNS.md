@@ -5885,3 +5885,55 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 修正例: PR #310 (2026-05-10)
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+## 5.X+25 timezone / locale はユーザ単位ではなくテナント単位で持つ — 同一テナント内で日付計算が揺らがない設計 (PR-1 / 2026-05-15)
+
+### 背景
+旧仕様 (PR #118 〜 PR #119) では `User.timezone` / `User.locale` でユーザごとに TZ/言語を選べた。
+ところがテナント全体の挙動 (Beginner 残日数 / 月初リセット境界 / 翌月適用日 / 日次集計 boundary)
+を「ユーザ TZ」基準にすると、**同一テナント内に TZ の異なる 2 名が居ると同一日付の認識がずれて**、
+請求書や使用量のカウント断面に矛盾が生じる。
+
+### 教訓
+- **テナント全体の挙動に使う TZ/locale は Tenant に持つ**:
+  - `Tenant.timezone String NOT NULL DEFAULT 'Asia/Tokyo'`
+  - `Tenant.locale String NOT NULL DEFAULT 'ja-JP'`
+- ユーザ個別設定は **テーマ / MFA / パスワード等の「個人のセッション体験」に限定**。
+  時刻基準は本人の手元観測値より「テナント全体での会計・運用断面」を優先する。
+- JWT claim にはテナント値を載せる (`session.user.timezone` / `session.user.locale`)。
+  この命名は維持 (= 描画コード側の `Intl.DateTimeFormat` 呼出は変更不要)、
+  だが **意味はテナント単位** であることをコメントで明示する。
+- API は `/api/tenants/me/i18n` に集約。テナント管理者 (admin) のみ更新可。
+  general / super_admin は 403 (テナント設定はテナント管理者の責務)。
+
+### 設計の落とし穴
+
+1. **値が `null` 許容のままだとデフォルトが分散する**:
+   旧 `User.timezone String?` の運用では「null = システム既定」だったが、テナント単位では
+   既定値を **DB の NOT NULL + DEFAULT** で持たせて nullable を撤去。`resolveTimezone()` の
+   フォールバックチェーンを 1 段減らせる + 型安全 (`session.user.timezone: string`)。
+2. **`trigger='update'` 経路の patch 型を null から外す**:
+   JWT 反映で `useSession().update({ timezone, locale })` の patch 型を `string | null` から
+   `string` に変更。null を入れる経路 (= システム既定に戻す UI) を廃止したため。
+3. **データインポートの後方互換**:
+   旧 ZIP に `User.timezone / User.locale` が含まれていても、新 import コードは黙って無視する。
+   テナント側設定は維持。誤ってユーザレコードに NULL を書き戻すと型エラーで止まるため defensive。
+4. **データエクスポートの新フィールド追加**:
+   `ExportSummary` に `tenantTimezone` / `tenantLocale` を追加。再インポート時にテナント設定を
+   復元する手がかりとして使える (将来の super_admin 代行 import 用)。
+
+### 横展開で漏らしやすい箇所
+
+- `prisma.user.findUnique({ select: { timezone: true, locale: true } })` を残してしまう
+  → ビルドエラーで気付ける (列が DB から消えるため)
+- `session.user.timezone === null` という null 判定が残る
+  → tsc が型エラーで指摘
+- データインポート/エクスポートのテストモックに `timezone: ..., locale: ...` が残る
+  → 警告は出ないがビルドは通る (テストで verify されている前提なら問題なし)
+
+### 関連
+
+- 元 PR: PR-1 (2026-05-15) テナント管理者ダッシュボード改修 — タイムゾーン/ロケール集約
+- migration: prisma/migrations/20260515_tenant_i18n_settings/migration.sql
+- 旧 migration: prisma/migrations/20260424_user_i18n_preferences/ (User に timezone/locale 追加 → drop)
+- 関連設定: src/config/i18n.ts (`DEFAULT_TIMEZONE` / `DEFAULT_LOCALE`)
