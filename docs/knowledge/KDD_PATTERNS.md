@@ -6036,3 +6036,77 @@ useEffect(() => {
 - 公式 (React docs): <https://react.dev/learn/you-might-not-need-an-effect>
 - 公式 (React useEffect): <https://react.dev/reference/react/useEffect>
 - 公式 (eslint-plugin-react-hooks): <https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks>
+
+---
+
+## 5.X+21 `.claude/.last-knowledge-check-sha` は **gitignore 済だが track 状態** で毎回 conflict を起こす — `git rm --cached` + `.gitattributes merge=ours` で恒久解消 (PR #326 / 2026-05-11)
+
+### 罠の正体
+
+`.claude/.last-knowledge-check-sha` は `session-start-knowledge-check.sh` が **ローカルセッション
+毎に** 上書きする bookkeeping (前回 SessionStart 時の `origin/main` HEAD SHA) で、本来
+git にコミットすべきではないファイル。
+
+- `.gitignore` の line 56 に登録済 — 設計上は untracked
+- しかし過去のセッション (2026-04-25 の auto-commit) で **gitignore 設定前に commit された**
+  ため、git history 上はずっと **tracked 扱い**
+- 一度 tracked になると `.gitignore` は **新規追加のみブロック** し、既存 tracked file の
+  変更は通常通り stage される
+
+→ 結果として毎日 dev ブランチで auto-commit が走り、main 側も別タイミングで更新され、
+**毎回の dev → main マージで必ず 1-line conflict が発生** する。発生例:
+- PR #319, #326 (dev 系) など、本ファイルしか差分がない PR が auto-PR 作成のたびに conflict 化
+- 2026-05-10 にも同種の修正が必要だった (`.last-knowledge-check-sha` 単体 conflict 解消)
+
+### 恒久対策 (PR #326 で適用)
+
+1. **`git rm --cached .claude/.last-knowledge-check-sha`** で git tracking から外す
+   - ローカルファイルは残るため SessionStart hook の動作 (line 36-39 で「ファイル不在なら
+     初期化のみで exit」) には影響なし
+   - 新規 clone した環境では本ファイルが存在しないが、初回 SessionStart で自動初期化される
+2. **`.gitattributes` に `merge=ours` を追加** — 保険として「再 track された場合も自動で
+   destination 側の値を優先する」merge driver を仕込む
+   ```
+   .claude/.last-knowledge-check-sha merge=ours
+   ```
+3. (`.gitignore` は既に line 56 に登録済 — 変更不要)
+
+### conflict が発生してしまった時の応急処置 (恒久対策が入る前)
+
+dev → main 方向の merge で `.last-knowledge-check-sha` だけが衝突した場合、**ファイル単体
+の中身は意味を持たない** ため、destination (= main 側) の値を採用すれば良い。
+
+```bash
+# dev ブランチで main を取り込む場合
+git merge origin/main
+# → CONFLICT (content): Merge conflict in .claude/.last-knowledge-check-sha
+git checkout --theirs .claude/.last-knowledge-check-sha
+git add .claude/.last-knowledge-check-sha
+git commit
+```
+
+なお、当日 dev ブランチに **本ファイルしか差分がない** auto-PR (例: PR #326) は
+**マージしても main に何も変化を与えない**。conflict 解消だけして merge するか、PR ごと
+close するかは判断次第:
+- merge する判断 → 「daily branch 運用記録」として PR 履歴を残したい場合
+- close する判断 → 純粋な no-op を main の merge log に残したくない場合
+
+### 横展開チェック (新しく「セッション毎に変わるローカル bookkeeping ファイル」を追加するとき)
+
+- [ ] **新規ファイルは絶対に commit しない**: `.gitignore` への登録だけでは不十分 (track
+      済ファイルは止められない)。最初の commit 前に `.gitignore` 登録を済ませる
+- [ ] **既存ファイルを「これからは ignore する」場合**: `.gitignore` 追加だけでなく
+      **必ず `git rm --cached` で untrack** すること。`.gitattributes merge=ours` も併用
+- [ ] **session-start hook が `git add -A` を使う場合**: hook 側で `git update-index --skip-worktree`
+      する代替案もあるが、新規 clone した同僚に伝播しないため `.gitignore` + `git rm --cached`
+      の方が安全
+- [ ] auto-PR 自動化スクリプト (`session-start-git.sh` 等) は「実質コード変更が無い branch
+      は PR 化しない」スキップ条件を後で追加検討 (本件のような no-op PR 量産を防ぐ)
+
+### 関連
+
+- 修正 PR: 本 PR (#326 / dev/2026-05-10)
+- 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
+- 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
+- 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
+- 公式 (gitattributes merge): <https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver>
