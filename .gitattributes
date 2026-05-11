@@ -1,0 +1,9 @@
+# Per-file merge strategies.
+#
+# `.claude/.last-knowledge-check-sha`:
+#   session-start-knowledge-check.sh が **ブランチ独立に** 上書きする bookkeeping ファイル。
+#   両ブランチが独立に更新するため毎回 merge conflict を起こす。
+#   公式の .gitignore には登録済 (line 56) だが、過去 commit で誤って track されてしまったため
+#   `git rm --cached` で untrack 済 (PR #326 / KDD §5.X+21)。
+#   万一 `git add -f` 等で再 track された場合に conflict を防ぐため `merge=ours` を保険設定。
+.claude/.last-knowledge-check-sha merge=ours
