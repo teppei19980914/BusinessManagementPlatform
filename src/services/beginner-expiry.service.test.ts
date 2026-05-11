@@ -292,4 +292,117 @@ describe('sendBeginnerExpiryNotices', () => {
     expect(result.day60Sent).toBe(0);
     expect(result.failed).toBe(1);
   });
+
+  // 2026-05-11: 自動物理削除 (Day 180) に向けた Day 150/170 中間警告メール
+  describe('自動削除予告メール (Day 150 / Day 170)', () => {
+    it('Day 150 ちょうど + Day 150 未送信 → 自動削除 30 日前予告メール送信', async () => {
+      const send = setupMailMock();
+      vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+        {
+          id: 't1',
+          name: 'T1',
+          plan: 'beginner',
+          createdAt: day(150),
+          beginnerEverUpgraded: false,
+          billingContactEmail: 'billing@t1.example',
+          billingContactName: 'A',
+          beginnerNoticeDay60SentAt: day(90),
+          beginnerNoticeDay75SentAt: day(75),
+          beginnerExpiredNoticeSentAt: day(60),
+          beginnerAutoDeleteNoticeDay150SentAt: null,
+          beginnerAutoDeleteNoticeDay170SentAt: null,
+        },
+      ] as never);
+      vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+
+      const result = await sendBeginnerExpiryNotices('https://example.com', NOW);
+
+      expect(result.autoDeleteDay150Sent).toBe(1);
+      expect(result.autoDeleteDay170Sent).toBe(0);
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: expect.stringContaining('あと 30 日'),
+        }),
+      );
+    });
+
+    it('Day 170 経過 + Day 150/170 共に未送信 → 両方送信', async () => {
+      const send = setupMailMock();
+      vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+        {
+          id: 't1',
+          name: 'T1',
+          plan: 'beginner',
+          createdAt: day(170),
+          beginnerEverUpgraded: false,
+          billingContactEmail: 'billing@t1.example',
+          billingContactName: 'A',
+          beginnerNoticeDay60SentAt: day(110),
+          beginnerNoticeDay75SentAt: day(95),
+          beginnerExpiredNoticeSentAt: day(80),
+          beginnerAutoDeleteNoticeDay150SentAt: null,
+          beginnerAutoDeleteNoticeDay170SentAt: null,
+        },
+      ] as never);
+      vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+
+      const result = await sendBeginnerExpiryNotices('https://example.com', NOW);
+
+      expect(result.autoDeleteDay150Sent).toBe(1);
+      expect(result.autoDeleteDay170Sent).toBe(1);
+      expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    it('Day 149 (= 150 未満) は自動削除予告メール送らない', async () => {
+      const send = setupMailMock();
+      vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+        {
+          id: 't1',
+          name: 'T1',
+          plan: 'beginner',
+          createdAt: day(149),
+          beginnerEverUpgraded: false,
+          billingContactEmail: 'billing@t1.example',
+          billingContactName: 'A',
+          beginnerNoticeDay60SentAt: day(89),
+          beginnerNoticeDay75SentAt: day(74),
+          beginnerExpiredNoticeSentAt: day(59),
+          beginnerAutoDeleteNoticeDay150SentAt: null,
+          beginnerAutoDeleteNoticeDay170SentAt: null,
+        },
+      ] as never);
+
+      const result = await sendBeginnerExpiryNotices('https://example.com', NOW);
+
+      expect(result.autoDeleteDay150Sent).toBe(0);
+      expect(result.autoDeleteDay170Sent).toBe(0);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('Day 150 送信済みなら再送しない (冪等性)', async () => {
+      const send = setupMailMock();
+      vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+        {
+          id: 't1',
+          name: 'T1',
+          plan: 'beginner',
+          createdAt: day(160),
+          beginnerEverUpgraded: false,
+          billingContactEmail: 'billing@t1.example',
+          billingContactName: 'A',
+          beginnerNoticeDay60SentAt: day(100),
+          beginnerNoticeDay75SentAt: day(85),
+          beginnerExpiredNoticeSentAt: day(70),
+          beginnerAutoDeleteNoticeDay150SentAt: day(10), // 10 日前に送信済
+          beginnerAutoDeleteNoticeDay170SentAt: null,
+        },
+      ] as never);
+
+      const result = await sendBeginnerExpiryNotices('https://example.com', NOW);
+
+      expect(result.autoDeleteDay150Sent).toBe(0);
+      expect(result.autoDeleteDay170Sent).toBe(0); // まだ Day 170 未到達
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
 });

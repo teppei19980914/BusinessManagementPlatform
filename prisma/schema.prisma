@@ -118,6 +118,10 @@ model Tenant {
   beginnerNoticeDay75SentAt    DateTime? @map("beginner_notice_day75_sent_at") @db.Timestamptz
   /// P-B: 90 日経過 read-only 通知メール送信日時
   beginnerExpiredNoticeSentAt  DateTime? @map("beginner_expired_notice_sent_at") @db.Timestamptz
+  /// 2026-05-11: 自動物理削除予告メール (150 日経過 = 削除 30 日前)
+  beginnerAutoDeleteNoticeDay150SentAt DateTime? @map("beginner_auto_delete_notice_day150_sent_at") @db.Timestamptz
+  /// 2026-05-11: 自動物理削除予告メール (170 日経過 = 削除 10 日前、最終警告)
+  beginnerAutoDeleteNoticeDay170SentAt DateTime? @map("beginner_auto_delete_notice_day170_sent_at") @db.Timestamptz
   /// PR G (#24 / 2026-05-09): 提案エンジンに **管理テナントのシードデータ** を含めるか。
   ///   - true (default): 提案候補に管理テナントの isSampleData=true なデータを横断検索
   ///   - false:          管理テナントを除外し、自テナント + 他顧客テナントのデータのみで提案

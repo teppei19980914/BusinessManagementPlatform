@@ -383,3 +383,77 @@ describe('updateTenantI18n (PR-1 / 2026-05-15)', () => {
     expect(prisma.tenant.update).not.toHaveBeenCalled();
   });
 });
+
+// ================================================================
+// 2026-05-11: 期限切れ Beginner → アップグレード → 復帰 統合シナリオ
+// ================================================================
+
+describe('expired Beginner upgrade scenario (2026-05-11)', () => {
+  /**
+   * シナリオ:
+   *   1. 期限切れ Beginner (Day 95) のテナントが getTenantSelfInfo で 'expired' 判定される
+   *   2. updateTenantSelf で plan=expert を呼ぶ
+   *   3. 即時アップグレード成功 + beginnerEverUpgraded=true がセットされる
+   *   4. 以降は middleware の read-only 判定でも対象外になる
+   *      (= isBeginnerExpired は beginnerEverUpgraded=true で常に false を返す)
+   *
+   * これにより、PR #341 で middleware の bypass + 自動削除を加えた仕様の
+   * 「ユーザが Day 90 以降でも自分でアップグレードで復帰できる」を保証する。
+   */
+  const expiredBeginnerTenant = {
+    ...baseTenant,
+    plan: 'beginner',
+    beginnerEverUpgraded: false,
+    // 95 日前 (= expired 状態) を固定値で再現
+    createdAt: new Date(Date.now() - 95 * 24 * 60 * 60 * 1000),
+  };
+
+  it('Step 1: 期限切れ Beginner は getTenantSelfInfo で beginnerExpiryState=expired を返す', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(expiredBeginnerTenant as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(2);
+
+    const r = await getTenantSelfInfo(TENANT_ID);
+    expect(r).not.toBeNull();
+    if (!r) return;
+    expect(r.plan).toBe('beginner');
+    expect(r.beginnerExpiryState).toBe('expired');
+    expect(r.beginnerDaysRemaining).toBeLessThanOrEqual(-5); // Day 90+ なので残り日数は負
+  });
+
+  it('Step 2 + 3: 期限切れ Beginner → Expert アップグレードは即時反映 + beginnerEverUpgraded=true', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce(expiredBeginnerTenant as never);
+
+    const r = await updateTenantSelf(TENANT_ID, { plan: 'expert' });
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.appliedImmediately).toBe(true);
+
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: expect.objectContaining({
+        plan: 'expert',
+        beginnerEverUpgraded: true,
+        scheduledPlanChangeAt: null,
+        scheduledNextPlan: null,
+      }),
+    });
+  });
+
+  it('Step 4: アップグレード後の getTenantSelfInfo は beginnerExpiryState=active を返す', async () => {
+    // アップグレード後の state を模した tenant 状態
+    const upgradedTenant = {
+      ...expiredBeginnerTenant,
+      plan: 'expert',
+      beginnerEverUpgraded: true,
+    };
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(upgradedTenant as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(2);
+
+    const r = await getTenantSelfInfo(TENANT_ID);
+    expect(r).not.toBeNull();
+    if (!r) return;
+    // plan != 'beginner' & beginnerEverUpgraded=true なので 'active' (制御対象外)
+    expect(r.beginnerExpiryState).toBe('active');
+    expect(r.beginnerDaysRemaining).toBeNull();
+  });
+});
