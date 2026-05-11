@@ -505,6 +505,17 @@ export async function updateRisk(
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.reporterId !== userId) throw new Error('FORBIDDEN');
 
+  // 2026-05-11 defense-in-depth: 「全メンバー」(public) 化する更新で、
+  //   title が input でも DB でも空の場合は拒否 (個人情報がうっかり公開化されるのを防ぐ)。
+  //   通常 validator (updateRiskSchema) が title=='' を弾くが、API 直叩きで
+  //   `{ visibility: 'public' }` のみ送られて DB の既存 title が空のケースを救う。
+  if (input.visibility === 'public') {
+    const effectiveTitle = input.title !== undefined ? input.title : existing.title;
+    if (!effectiveTitle || effectiveTitle.trim().length === 0) {
+      throw new Error('PUBLIC_REQUIRES_TITLE');
+    }
+  }
+
   // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
   const textFieldsChanging =
     (input.title !== undefined && input.title !== existing.title) ||

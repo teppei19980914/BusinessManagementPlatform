@@ -55,7 +55,8 @@ describe('createRetrospectiveSchema', () => {
   //   - 「全メンバー」(public) では conductedDate を明示入力する必要がある
   describe('visibility 連動の必須チェック (2026-05-11)', () => {
     it('visibility=draft (既定) + conductedDate 未指定なら default で当日日付が入る', () => {
-      const { conductedDate: _, ...withoutDate } = validInput;
+      const withoutDate = { ...validInput };
+      delete (withoutDate as { conductedDate?: string }).conductedDate;
       const parsed = createRetrospectiveSchema.safeParse(withoutDate);
       expect(parsed.success).toBe(true);
       if (parsed.success) {

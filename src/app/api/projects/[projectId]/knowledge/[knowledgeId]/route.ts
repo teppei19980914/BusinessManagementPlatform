@@ -71,6 +71,18 @@ export async function PATCH(
     if (msg === 'NOT_FOUND') {
       return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
     }
+    // 2026-05-11 defense-in-depth: 「全メンバー」化を試みたが title が空 (input + DB 共に) のケース
+    if (msg === 'PUBLIC_REQUIRES_TITLE') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'PUBLIC_REQUIRES_TITLE',
+            message: '「全メンバー」に公開する場合はタイトルを入力してください',
+          },
+        },
+        { status: 400 },
+      );
+    }
     throw e;
   }
 
