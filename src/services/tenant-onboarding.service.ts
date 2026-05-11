@@ -185,7 +185,7 @@ async function createTenantInternal(
     return {
       ok: false,
       reason: 'SLUG_CONFLICT',
-      message: 'この URL slug は既に使用されています',
+      message: 'この組織 ID は既に使用されています',
     };
   }
 
