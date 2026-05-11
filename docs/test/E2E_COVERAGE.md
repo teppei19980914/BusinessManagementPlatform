@@ -153,6 +153,7 @@
 - [ ] `/api/admin/super/tenants/[id]` (DELETE) — skip: P-A (2026-05-08) super_admin 限定テナント論理削除。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / ALREADY_DELETED + カスケード (10 業務エンティティ + 監査ログ) は src/services/super-admin.service.test.ts (deleteTenant 6 テスト) で担保。E2E は V1.x で検討
 - [ ] `/api/auth/signup` (POST) — skip: P-G (2026-05-08) 公開セルフサインアップ。IP-based rate limit (5/hour) + honeypot (hp_url) + サービステスト (11 件) で担保。E2E は V1.x で検討
 - [ ] `/api/tenants/me/billing` (PATCH) — skip: P-G (2026-05-08) テナント管理者の請求先情報編集。zod バリデーション + サービステスト (tenant-self.service.test.ts) で担保
+- [ ] `/api/tenants/me/i18n` (GET / PATCH) — skip: PR-1 (2026-05-15) テナント単位 timezone / locale 設定 API (admin 限定 / general & super_admin は 403)。zod バリデーション + 認可 + 部分更新 + DB 保存 + JWT 反映フローは `src/app/api/tenants/me/i18n/route.test.ts` (8 ケース) + `src/services/tenant-self.service.test.ts` で担保済。旧 `/api/settings/i18n` (ユーザ単位) を置き換え。UI 側の反映確認は visual regression (settings 画面) で担保
 - [ ] `/api/tenants/me/storage-addon` (GET / PATCH / DELETE) — skip: Storage add-on (Phase 2 / 2026-05-08) テナント管理者のストレージプラン管理 (即時アップ / 翌月ダウン予約 / 使用量超過拒否 / Grace state)。サービステスト 22 件 (tenant-storage.service.test.ts) で担保。E2E は V1.x で検討
 - [ ] `/api/tenants/me/self-delete` (POST) — skip: 2026-05-08 テナント管理者のセルフ解約 API。テナント名一致確認 + 既存 deleteTenant() (P-A) のカスケード論理削除を再利用。FORBIDDEN / NAME_MISMATCH / ALREADY_DELETED / TENANT_NOT_FOUND の認可・確認ロジックは super-admin.service.test.ts (deleteTenant) で間接担保。E2E は V1.x で検討 (= 自爆系テストのため決定論性確保が難しい)
 - [ ] `/api/tenants/me/export` (GET) — skip: P-C (2026-05-08) テナント管理者の全データエクスポート ZIP ダウンロード。テナントスコープ + PII 除去 + ZIP 構造 + UTF-8 BOM 付き CSV は src/services/data-export.service.test.ts (8 件) で担保
@@ -188,7 +189,7 @@
 - [x] `GET /api/health` — e2e/specs/00-smoke.spec.ts (副次的に起動確認)
 - [x] `/api/my-tasks` — e2e/specs/04-personal-features.spec.ts (PR #94 / /my-tasks 画面経由で間接カバー)
 - [x] `/api/settings/theme` — e2e/specs/04-personal-features.spec.ts (PR #94 / テーマ変更 UI から PATCH)
-- [ ] `/api/settings/i18n` — skip: PR #119 で新設。バリデーション / 認可 / 部分更新 / null 戻しは単体テスト `src/app/api/settings/i18n/route.test.ts` (8 ケース) で担保済。UI 側の反映確認は後続 PR #121 (date-picker TZ 統合) と合わせて E2E 化予定
+- [x] `/api/settings/i18n` — **削除済 (PR-1 / 2026-05-15)**。`User.timezone / locale` 廃止に伴い `/api/tenants/me/i18n` (テナント単位設定) に置換 (詳細は §テナント自身 セクション参照)
 - [x] `/api/cron/cleanup-accounts` — **削除済 (PR #115)**。`/api/admin/users/lock-inactive` (旧名 cleanup-inactive) に一本化
 - [ ] `/api/client-errors` — skip: クライアント error boundary 経由の log 送信エンドポイント (PR #115)。ログ送信の失敗はユーザ操作に影響しない (silent fail) 設計で、E2E で再現させる value が低い。単体テストで schema validation + DB 書込を担保
 

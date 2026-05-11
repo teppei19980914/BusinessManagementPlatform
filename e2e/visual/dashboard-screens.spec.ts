@@ -78,7 +78,26 @@ test.describe('@visual:dashboard ダッシュボード主要画面', () => {
     await expect(page).toHaveScreenshot('settings-light.png', { fullPage: true });
   });
 
-  test('プロジェクト詳細 概要タブ 初期表示 (light テーマ)', async () => {
+  test('プロジェクト詳細 概要タブ 初期表示 (light テーマ)', async ({}, testInfo) => {
+    // PR fix/visual-mobile-drift (2026-05-11): 7 回目の確率的 drift を断ち切るため
+    //   chromium-mobile project から本 spec を除外する。
+    //
+    //   背景: E2E_LESSONS §4.43 / §4.53 #14 に詳述の通り、chromium-mobile での
+    //   `project-detail-light.png` baseline width が 414 ↔ 413 で **真の確率的 oscillation**
+    //   を起こす (6 回 [gen-visual] でリセットしても 1 日後に再発)。
+    //   `git log <baseline-png>` で baseline 自身が 414→413→414→413→414→413→414 と
+    //   交互に書き換わっている事実が確認済み (PR fix/visual-mobile-drift の調査ログ)。
+    //
+    //   根本原因: chromium-mobile (iPhone 13 viewport / DPR>1) での Playwright snapshot 取得時、
+    //   body content width 計測が再生成ごとに 1px ずれる Playwright/Chromium 内部の確率的挙動。
+    //
+    //   対処方針: chromium project で同じ assertion が安定稼働しているため、本 spec を
+    //   chromium-mobile から除外しても回帰検知力は維持される。mobile レイアウト固有の
+    //   regression は `settings-themes.spec.ts` (10 テーマ マトリクス) で別途カバー。
+    test.skip(
+      testInfo.project.name === 'chromium-mobile',
+      'baseline width が 414↔413 で確率的振動するため chromium-mobile では skip (E2E_LESSONS §4.43)',
+    );
     const page = sharedPage;
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');

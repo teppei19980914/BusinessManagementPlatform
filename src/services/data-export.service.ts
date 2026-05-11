@@ -73,6 +73,9 @@ export type ExportSummary = {
   tenantId: string;
   tenantName: string;
   tenantSlug: string;
+  // PR-1 (2026-05-15): テナント単位の i18n 設定。インポート先で再現するのに利用できる。
+  tenantTimezone: string;
+  tenantLocale: string;
   counts: {
     projects: number;
     tasks: number;
@@ -109,7 +112,8 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
   // ---------- 1. テナント情報取得 (削除済テナントは拒否) ----------
   const tenant = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
-    select: { id: true, name: true, slug: true },
+    // PR-1 (2026-05-15): tenant.timezone / tenant.locale を metadata に含める
+    select: { id: true, name: true, slug: true, timezone: true, locale: true },
   });
   if (!tenant) throw new Error('TENANT_NOT_FOUND');
 
@@ -228,6 +232,9 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
     tenantId: tenant.id,
     tenantName: tenant.name,
     tenantSlug: tenant.slug,
+    // PR-1 (2026-05-15): テナント i18n 設定
+    tenantTimezone: tenant.timezone,
+    tenantLocale: tenant.locale,
     counts: {
       projects: projects.length,
       tasks: tasks.length,
@@ -309,6 +316,8 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
  *   - 内部フラグ: forcePasswordChange
  */
 function stripUserPII(user: Record<string, unknown>): Record<string, unknown> {
+  // PR-1 (2026-05-15): timezone / locale はテナント単位に集約されたため User からは除外。
+  //   テナント metadata セクション (= tenant.timezone / tenant.locale) で出力される。
   return {
     id: user.id,
     name: user.name,
@@ -316,8 +325,6 @@ function stripUserPII(user: Record<string, unknown>): Record<string, unknown> {
     systemRole: user.systemRole,
     isActive: user.isActive,
     themePreference: user.themePreference,
-    timezone: user.timezone,
-    locale: user.locale,
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,

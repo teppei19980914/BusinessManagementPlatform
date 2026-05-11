@@ -5825,3 +5825,436 @@ ls e2e/specs/*.spec.ts | grep -i security  # 既存 security spec を流用 or �
 - Layer 1 実装: src/services/__tests__/tenant-isolation-invariants.test.ts
 - Layer 2 実装: src/services/*.service.test.ts (各 service の越境テスト)
 - Layer 3 実装: e2e/specs/11-tenant-isolation.spec.ts / e2e/specs/12-suggestion-seed-data.spec.ts
+
+---
+
+## 5.X+19 dependabot.yml の `schedule.day` は `weekly` 限定 (PR #310 で遭遇)
+
+### 罠の正体
+
+`.github/dependabot.yml` の `schedule.day` フィールドは **`interval: weekly` でのみ有効**。
+`monthly` で `day` を指定したり、`'first monday'` のような複合文字列を渡すと、GitHub の
+dependabot validator が **PR check 段階で fail** する (1 秒以内、ログ出力なし)。
+
+### 仕様 (公式)
+
+公式ドキュメント: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+| `interval` | `day` 指定可否 | 有効値 |
+|---|---|---|
+| `daily` | × (毎日実行) | — |
+| `weekly` | ✅ (必須ではない、未指定なら任意の曜日) | `monday` / `tuesday` / ... / `sunday` の **単一値のみ** |
+| `monthly` | ❌ (毎月 1 日に自動実行) | — |
+
+`'first monday'` `'last friday'` などの複合表現は仕様にない。
+
+### 検出が遅れた理由
+
+- **dependabot check は CI ログを残さず短時間で fail** (1s) するため、ログを grep しても
+  原因に到達できない。`gh pr checks` の URL を辿ると detailed error が見える場合があるが、
+  辿れないこともある (PR #310 では 404)。
+- 設定ファイル parse は GitHub 側 service が行うため、**ローカルの YAML lint では捕捉できない**。
+
+### 横展開チェック (dependabot.yml 編集時)
+
+- [ ] `schedule.day` を入れているなら `interval: weekly` か確認
+- [ ] `schedule.day` の値は `monday` 〜 `sunday` の単一文字列か確認 (空白を含む複合表現は無効)
+- [ ] `monthly` で「月内の特定週/曜日に実行したい」要件があれば、**`weekly` + `day: monday`
+      に変更し、人間の判断で月内の必要回数だけマージ** する運用に切り替える (= dependabot は
+      週次 PR を出すが、人間が月初の Monday 分だけ approve する)
+
+### 修正例
+
+```yaml
+# Before (PR #310 fail):
+- package-ecosystem: 'npm'
+  schedule:
+    interval: 'monthly'
+    day: 'first monday'        # ← 二重に invalid (monthly + 複合文字列)
+
+# After:
+- package-ecosystem: 'npm'
+  schedule:
+    interval: 'monthly'         # 月次は毎月 1 日固定で自動実行される
+    time: '03:00'
+    timezone: 'Asia/Tokyo'
+```
+
+### 関連
+
+- 修正例: PR #310 (2026-05-10)
+- 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
+- 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+## 5.X+25 timezone / locale はユーザ単位ではなくテナント単位で持つ — 同一テナント内で日付計算が揺らがない設計 (PR-1 / 2026-05-15)
+
+### 背景
+旧仕様 (PR #118 〜 PR #119) では `User.timezone` / `User.locale` でユーザごとに TZ/言語を選べた。
+ところがテナント全体の挙動 (Beginner 残日数 / 月初リセット境界 / 翌月適用日 / 日次集計 boundary)
+を「ユーザ TZ」基準にすると、**同一テナント内に TZ の異なる 2 名が居ると同一日付の認識がずれて**、
+請求書や使用量のカウント断面に矛盾が生じる。
+
+### 教訓
+- **テナント全体の挙動に使う TZ/locale は Tenant に持つ**:
+  - `Tenant.timezone String NOT NULL DEFAULT 'Asia/Tokyo'`
+  - `Tenant.locale String NOT NULL DEFAULT 'ja-JP'`
+- ユーザ個別設定は **テーマ / MFA / パスワード等の「個人のセッション体験」に限定**。
+  時刻基準は本人の手元観測値より「テナント全体での会計・運用断面」を優先する。
+- JWT claim にはテナント値を載せる (`session.user.timezone` / `session.user.locale`)。
+  この命名は維持 (= 描画コード側の `Intl.DateTimeFormat` 呼出は変更不要)、
+  だが **意味はテナント単位** であることをコメントで明示する。
+- API は `/api/tenants/me/i18n` に集約。テナント管理者 (admin) のみ更新可。
+  general / super_admin は 403 (テナント設定はテナント管理者の責務)。
+
+### 設計の落とし穴
+
+1. **値が `null` 許容のままだとデフォルトが分散する**:
+   旧 `User.timezone String?` の運用では「null = システム既定」だったが、テナント単位では
+   既定値を **DB の NOT NULL + DEFAULT** で持たせて nullable を撤去。`resolveTimezone()` の
+   フォールバックチェーンを 1 段減らせる + 型安全 (`session.user.timezone: string`)。
+2. **`trigger='update'` 経路の patch 型を null から外す**:
+   JWT 反映で `useSession().update({ timezone, locale })` の patch 型を `string | null` から
+   `string` に変更。null を入れる経路 (= システム既定に戻す UI) を廃止したため。
+3. **データインポートの後方互換**:
+   旧 ZIP に `User.timezone / User.locale` が含まれていても、新 import コードは黙って無視する。
+   テナント側設定は維持。誤ってユーザレコードに NULL を書き戻すと型エラーで止まるため defensive。
+4. **データエクスポートの新フィールド追加**:
+   `ExportSummary` に `tenantTimezone` / `tenantLocale` を追加。再インポート時にテナント設定を
+   復元する手がかりとして使える (将来の super_admin 代行 import 用)。
+
+### 横展開で漏らしやすい箇所
+
+- `prisma.user.findUnique({ select: { timezone: true, locale: true } })` を残してしまう
+  → ビルドエラーで気付ける (列が DB から消えるため)
+- `session.user.timezone === null` という null 判定が残る
+  → tsc が型エラーで指摘
+- データインポート/エクスポートのテストモックに `timezone: ..., locale: ...` が残る
+  → 警告は出ないがビルドは通る (テストで verify されている前提なら問題なし)
+
+### 関連
+
+- 元 PR: PR-1 (2026-05-15) テナント管理者ダッシュボード改修 — タイムゾーン/ロケール集約
+- migration: prisma/migrations/20260515_tenant_i18n_settings/migration.sql
+- 旧 migration: prisma/migrations/20260424_user_i18n_preferences/ (User に timezone/locale 追加 → drop)
+- 関連設定: src/config/i18n.ts (`DEFAULT_TIMEZONE` / `DEFAULT_LOCALE`)
+
+---
+
+## 5.X+20 `eslint-config-next` minor 上げで `react-hooks/set-state-in-effect` / `react-hooks/refs` が新規 enforce — 既存 useEffect/useRef を Hooks-7.1 互換に書き換える (PR #323 dependabot 対応 / 2026-05-11)
+
+### 罠の正体
+
+dependabot の **patch / minor 上げ** にしか見えない `eslint-config-next 16.2.3 → 16.2.6` で、
+**`eslint-plugin-react-hooks` が 7.0.x → 7.1.1 に transitive bump** し、以下 2 ルールが新規 enforce:
+
+| ルール | 検出対象 | 影響範囲 |
+|---|---|---|
+| `react-hooks/set-state-in-effect` | useEffect 本体内 (同期) で setState を呼ぶ、または **setState を含む関数を呼ぶ (call graph 解析)** | fetch-on-mount / derived state sync / deep-link auto-open |
+| `react-hooks/refs` | render 中 (= useEffect/useCallback/event handler 外) で `ref.current = ...` する | "最新値を保持する ref" の常用パターン |
+
+CI ログでは `eslint-plugin-react-hooks` の version 表記が無いため、**「config-next を上げただけ」と
+見誤って原因特定が遅れる**。実体は **transitive な peer plugin** の major-minor 跨ぎ強化。
+
+PR #323 の CI fail 内訳 (5 件):
+
+| ファイル | ルール | 構造 |
+|---|---|---|
+| `src/app/(auth)/setup-password/page.tsx:78` | set-state-in-effect | useEffect 同期分岐 `if (!token) { setTokenError(...); setIsValidating(false); }` |
+| `src/app/(dashboard)/memos/memos-client.tsx:264` | set-state-in-effect | `useEffect(() => setMemos(initialMemos), [initialMemos])` (derived state sync) |
+| `src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx:191` | set-state-in-effect | `useEffect(() => { void reload(); }, [reload])` (call graph で reload 内 setState を検出) |
+| `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx:785` | set-state-in-effect | useEffect 内 `openEditDialog(target)` (useCallback 内で setState を呼ぶ) |
+| `src/lib/use-lazy-fetch.ts:35` | refs | `stateRef.current = state` を render body 直下で実行 |
+
+### 修正パターン (4 種類)
+
+#### Pattern A: 初期 state を派生させる (synchronous-setState-in-effect 解消)
+
+**Before:**
+
+```tsx
+const [tokenError, setTokenError] = useState('');
+const [isValidating, setIsValidating] = useState(true);
+useEffect(() => {
+  if (!token) {
+    setTokenError(t('invalidLink'));  // ★ violation
+    setIsValidating(false);
+    return;
+  }
+  fetch(...).then(...);
+}, [token, t]);
+```
+
+**After:**
+
+```tsx
+// 初期 state を token 有無から派生
+const [tokenError, setTokenError] = useState(token ? '' : t('invalidLink'));
+const [isValidating, setIsValidating] = useState(!!token);
+useEffect(() => {
+  if (!token) return;        // 初期 state で表示済
+  fetch(...).then(...);      // .then 内 setState は microtask で対象外
+}, [token, t]);
+```
+
+#### Pattern B: derived state は **render 中に prev 比較で setState** (React 公式推奨)
+
+`useEffect(() => setX(prop), [prop])` は React 公式が "Anti-pattern" と明記している。
+代わりに **render 中の条件付き setState** (React は自動的に再 render を 1 回に統合) を使う。
+
+**Before:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+useEffect(() => {
+  setMemos(initialMemos);  // ★ violation + 余分な再 render
+}, [initialMemos]);
+```
+
+**After:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+const [prevInitialMemos, setPrevInitialMemos] = useState(initialMemos);
+if (prevInitialMemos !== initialMemos) {
+  setPrevInitialMemos(initialMemos);  // render 中の setState は合法 (React docs)
+  setMemos(initialMemos);
+}
+```
+
+ref: <https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes>
+
+#### Pattern C: ref 同期は useEffect 経由 (`react-hooks/refs` 解消)
+
+**Before:**
+
+```ts
+const stateRef = useRef(state);
+stateRef.current = state;  // ★ violation: render 中の ref 更新
+```
+
+**After:**
+
+```ts
+const stateRef = useRef(state);
+useEffect(() => {
+  stateRef.current = state;  // commit 後に同期、async コールバックの読出しには十分
+});
+```
+
+#### Pattern D: 公式が認める正当パターンは `eslint-disable-next-line` (reason コメント必須)
+
+以下は React 公式が `useEffect` を **正当な選択肢** として挙げているため、disable で局所許容する:
+
+1. **fetch-on-mount** (`useEffect(() => { void reload(); })`):
+   ref: <https://react.dev/reference/react/useEffect#fetching-data-with-effects>
+2. **Deep-link 着地時の 1 回限り副作用** (ref ガード済の auto-open dialog):
+   cascading render は ref ガードで防止済
+
+**書き方** (理由は必ず `--` 以降に明記):
+
+```tsx
+useEffect(() => {
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- reload は async で setState は microtask、fetch-on-mount 公式パターン
+  void reload();
+}, [reload]);
+```
+
+### 検出が遅れた理由
+
+- `eslint-plugin-react-hooks` の version は `eslint-config-next` の transitive。`pnpm-lock.yaml`
+  の差分にしか現れず、PR の `package.json` diff (`config-next` の 1 行) からは推測不可能。
+- 各 violation は **build / tsc では検出されない** (lint 専用)。CI が `pnpm lint` を走らせて
+  初めて発覚する。
+- ローカル `pnpm lint` でも、main の lockfile (7.0.x) では新ルールが存在しないため再現しない。
+  → **PR ブランチの lockfile を pull するか、`pnpm add -D eslint-plugin-react-hooks@7.1.1`
+  で手動 pin** しないと再現できなかった。
+
+### 横展開チェック (dependabot で eslint 系 minor 上げ PR を見たとき)
+
+- [ ] `pnpm-lock.yaml` の diff から `eslint-plugin-react-hooks` の version 変動を確認
+- [ ] CI lint ログで `react-hooks/(set-state-in-effect|refs)` を grep し、件数を把握
+- [ ] 修正は **本 PR ではなく main ベースの独立 PR** で行う (dependabot ブランチは force-push
+      されうるため変更が消える可能性)。main 経由で fix が入れば dependabot PR は rebase 後に
+      自動で green
+- [ ] disable directive を使う場合は **reason コメント必須** (`--` 以降に「なぜ」を書く)。
+      "fetch-on-mount" や "ref ガード済" 等の根拠を残す
+- [ ] 修正後は **fix branch でも `pnpm-lock.yaml` は触らない** ことを推奨 (config-next の bump は
+      dependabot に任せる)。これにより fix PR は code-only の小さい diff になり review しやすい
+
+### 関連
+
+- 修正 PR: 本 PR (fix/eslint-react-hooks-rules-16.2.6 / 2026-05-11)
+- dependabot PR: #323 (chore(deps): bump eslint-config-next from 16.2.3 to 16.2.6)
+- 公式 (React docs): <https://react.dev/learn/you-might-not-need-an-effect>
+- 公式 (React useEffect): <https://react.dev/reference/react/useEffect>
+- 公式 (eslint-plugin-react-hooks): <https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks>
+
+---
+
+## 5.X+21 `.claude/.last-knowledge-check-sha` は **gitignore 済だが track 状態** で毎回 conflict を起こす — `git rm --cached` + `.gitattributes merge=ours` で恒久解消 (PR #326 / 2026-05-11)
+
+### 罠の正体
+
+`.claude/.last-knowledge-check-sha` は `session-start-knowledge-check.sh` が **ローカルセッション
+毎に** 上書きする bookkeeping (前回 SessionStart 時の `origin/main` HEAD SHA) で、本来
+git にコミットすべきではないファイル。
+
+- `.gitignore` の line 56 に登録済 — 設計上は untracked
+- しかし過去のセッション (2026-04-25 の auto-commit) で **gitignore 設定前に commit された**
+  ため、git history 上はずっと **tracked 扱い**
+- 一度 tracked になると `.gitignore` は **新規追加のみブロック** し、既存 tracked file の
+  変更は通常通り stage される
+
+→ 結果として毎日 dev ブランチで auto-commit が走り、main 側も別タイミングで更新され、
+**毎回の dev → main マージで必ず 1-line conflict が発生** する。発生例:
+- PR #319, #326 (dev 系) など、本ファイルしか差分がない PR が auto-PR 作成のたびに conflict 化
+- 2026-05-10 にも同種の修正が必要だった (`.last-knowledge-check-sha` 単体 conflict 解消)
+
+### 恒久対策 (PR #326 で適用)
+
+1. **`git rm --cached .claude/.last-knowledge-check-sha`** で git tracking から外す
+   - ローカルファイルは残るため SessionStart hook の動作 (line 36-39 で「ファイル不在なら
+     初期化のみで exit」) には影響なし
+   - 新規 clone した環境では本ファイルが存在しないが、初回 SessionStart で自動初期化される
+2. **`.gitattributes` に `merge=ours` を追加** — 保険として「再 track された場合も自動で
+   destination 側の値を優先する」merge driver を仕込む
+   ```
+   .claude/.last-knowledge-check-sha merge=ours
+   ```
+3. (`.gitignore` は既に line 56 に登録済 — 変更不要)
+
+### conflict が発生してしまった時の応急処置 (恒久対策が入る前)
+
+dev → main 方向の merge で `.last-knowledge-check-sha` だけが衝突した場合、**ファイル単体
+の中身は意味を持たない** ため、destination (= main 側) の値を採用すれば良い。
+
+```bash
+# dev ブランチで main を取り込む場合
+git merge origin/main
+# → CONFLICT (content): Merge conflict in .claude/.last-knowledge-check-sha
+git checkout --theirs .claude/.last-knowledge-check-sha
+git add .claude/.last-knowledge-check-sha
+git commit
+```
+
+なお、当日 dev ブランチに **本ファイルしか差分がない** auto-PR (例: PR #326) は
+**マージしても main に何も変化を与えない**。conflict 解消だけして merge するか、PR ごと
+close するかは判断次第:
+- merge する判断 → 「daily branch 運用記録」として PR 履歴を残したい場合
+- close する判断 → 純粋な no-op を main の merge log に残したくない場合
+
+### 横展開チェック (新しく「セッション毎に変わるローカル bookkeeping ファイル」を追加するとき)
+
+- [ ] **新規ファイルは絶対に commit しない**: `.gitignore` への登録だけでは不十分 (track
+      済ファイルは止められない)。最初の commit 前に `.gitignore` 登録を済ませる
+- [ ] **既存ファイルを「これからは ignore する」場合**: `.gitignore` 追加だけでなく
+      **必ず `git rm --cached` で untrack** すること。`.gitattributes merge=ours` も併用
+- [ ] **session-start hook が `git add -A` を使う場合**: hook 側で `git update-index --skip-worktree`
+      する代替案もあるが、新規 clone した同僚に伝播しないため `.gitignore` + `git rm --cached`
+      の方が安全
+- [ ] auto-PR 自動化スクリプト (`session-start-git.sh` 等) は「実質コード変更が無い branch
+      は PR 化しない」スキップ条件を後で追加検討 (本件のような no-op PR 量産を防ぐ)
+
+### 再発事例 1 例目 (PR #328 / dev/2026-05-11 / 2026-05-11)
+
+PR #326 の恒久対策 (`git rm --cached` + `.gitattributes merge=ours`) を main に入れた **その日のうちに** 同じ症状の残存 PR が現れた。原因は **dev/2026-05-11 ブランチが PR #326 untrack 適用前 (= 2026-05-10 朝の daily 自動分岐) に作成** されており、tracked 状態の `.last-knowledge-check-sha` をまだ保持していたため。
+
+- 衝突の種別: **modify/delete** (main は delete 済、dev は modify 中)
+- 解消手順: `git rm .claude/.last-knowledge-check-sha` でブランチ側でも削除を確定。以後の `pnpm-lock.yaml` 等の追加差分は無いため、本 PR は **untrack を引き継ぐだけの no-op merge**
+
+#### 教訓 (横展開ルール)
+
+- [ ] 恒久対策を入れた PR より **以前に分岐した既存ブランチ全てで「再度の手動マージ」が必要** (= untrack 操作は branch 内 commit 履歴の前方互換性が無い)
+- [ ] 自動 daily branch 群 (`dev/YYYY-MM-DD`) で同様の operation を入れる場合は、main マージ後に **全 open dev ブランチを一斉 rebase or merge** する hook を検討 (本件は手動対応で済んだが、ブランチが 10 個以上ある日は手間が積み上がる)
+
+### 関連
+
+- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11)
+- 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
+- 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
+- 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
+- 公式 (gitattributes merge): <https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver>
+
+---
+
+## 5.X+22 新規 `page.tsx` / `route.ts` を追加したら **必ず `docs/test/E2E_COVERAGE.md` 更新**、UI 移管 PR は **visual baseline 再生成必須** — 旧ルート削除と併せた一括対応のチェックリスト (PR #327 / PR-1 tenant-i18n / 2026-05-11)
+
+### 罠の正体
+
+PR #327 (PR-1 timezone/locale をテナント単位に集約) で 2 種類の CI fail が同時発生した:
+
+1. **`pnpm e2e:coverage-check` fail**:
+   ```
+   ❌ docs/test/E2E_COVERAGE.md に未記載の機能があります:
+      - /api/tenants/me/i18n
+   ```
+   新設した route の登録漏れ。`scripts/check-e2e-coverage.ts` が PR #90 以降 enforce。
+
+2. **Playwright visual regression fail** (`settings-light.png`):
+   ```
+   Expected an image 1440px by 1473px, received 1440px by 1125px.
+   28893 pixels (ratio 0.02 of all image pixels) are different.
+   ```
+   `/settings` から timezone/locale UI (123 行) を `/settings/tenant` へ移管した結果、
+   設定画面の高さが 1473px → 1125px (348px 縮小) して baseline drift。
+
+両方とも **「実装意図通りの当然の結果」** で、コード自体に不具合は無いが、
+**周辺ドキュメント / baseline の更新を本 PR 内で同梱しないと CI が通らない**。
+
+### 根本原因
+
+- **新規 route 追加** = E2E_COVERAGE.md 更新は ローカル `pnpm e2e:coverage-check`
+  または CI 失敗で気付く設計だが、**実装着手時にチェックリストを開いていないと忘れる**
+- **UI 移管・削除** = visual baseline は **PR で `[gen-visual]` トリガー** しないと
+  drift し続ける。今回は **旧 UI 削除のみ気付いたが baseline 更新を忘れた**
+
+### 修正パターン (本 PR で適用)
+
+```bash
+# 1. 新 route 追加時のチェックリスト
+pnpm e2e:coverage-check              # ローカルで確認
+# → ❌ 表示されたら docs/test/E2E_COVERAGE.md に
+#   - [ ] `/api/path` — skip: <理由> または
+#   - [x] `/api/path` — e2e/specs/XX-spec.ts
+# の形式で追加
+
+# 2. 旧 route 削除時のチェックリスト
+# E2E_COVERAGE.md の旧エントリを「削除済 (PR-N / YYYY-MM-DD)」と記録
+# (検索性のため完全削除はしない、移管先 PR への辿りやすさ確保)
+
+# 3. UI 移管/削除時の visual baseline 再生成
+# 別 commit で空コミットを作る:
+git commit --allow-empty -m "chore(visual): regenerate baseline for /settings UI 縮小 [gen-visual]"
+git push
+# → .github/workflows/e2e-visual-baseline.yml が発火し
+#   baseline 画像を再生成して bot コミットで PR ブランチに push
+```
+
+### 横展開チェック (UI 移管 / route 移管系の PR を作る時)
+
+- [ ] **新 route**: `pnpm e2e:coverage-check` をローカルで実行 → ✅ になるまで `docs/test/E2E_COVERAGE.md` に追記
+- [ ] **旧 route**: 削除した route は E2E_COVERAGE.md で `[x] **削除済 (PR-N / YYYY-MM-DD)**` 表記に更新 (完全削除しない)
+- [ ] **UI 縮小/拡大**: `pnpm test:e2e e2e/visual/` をローカル実行できるなら事前確認。CI で fail したら `[gen-visual]` commit で再生成
+- [ ] **新 UI 追加 (新画面)**: 対応する visual spec を `e2e/visual/` 配下に追加 + `[gen-visual]` で baseline 生成
+- [ ] **「ユーザ単位設定 → テナント単位設定」のような認可境界変更**: 旧 API の `/api/settings/i18n` を関連する全画面から呼び出し撤去 (本件: settings-client.tsx の useEffect から削除)。残しておくと 404 を呼び続けて余計なエラーログが発生
+- [ ] **JWT claim の意味変更**: `session.user.timezone` の値が「ユーザ TZ」から「テナント TZ」に変わる場合、**型は同じ string でも意味が違う** ため、命名維持は OK だが TS コメントで明示 (rg `session\.user\.timezone` で全箇所確認)
+
+### 設計の落とし穴 (PR-1 で踏んだもの)
+
+1. **null 許容の撤廃**: `User.timezone String?` → 廃止、`Tenant.timezone String NOT NULL DEFAULT 'Asia/Tokyo'`。
+   テナント単位では「null = 未設定」概念が不要 (DB default が機能する) ため NOT NULL 化。
+   `resolveTimezone()` のフォールバックチェーンを 1 段減らせる + 型安全 (`session.user.timezone: string`)
+2. **`useSession().update({ timezone, locale })` の patch 型を `string | null` から `string` に絞る**:
+   null を入れる経路 (= システム既定に戻す UI) を廃止したため
+3. **データインポートの後方互換**: 旧 ZIP に `User.timezone / User.locale` が含まれていても
+   新 import コードは黙って無視。NULL を書き戻すと型エラーで止まるため defensive 設計
+4. **データエクスポートの新フィールド**: `ExportSummary` に `tenantTimezone` / `tenantLocale` 追加。
+   再インポート時にテナント設定を復元する手がかり (将来の super_admin 代行 import 用)
+
+### 関連
+
+- 元 PR: PR-1 (2026-05-15 / feat/pr-1-tenant-i18n-settings)
+- 関連 KDD: §5.X+25 (テナント単位 i18n 設計の詳細)
+- 関連 script: [scripts/check-e2e-coverage.ts](../../scripts/check-e2e-coverage.ts)
+- 関連 workflow: [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml)
+- 関連 doc: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md), [E2E カバレッジ運用](../test/E2E_LESSONS.md)
