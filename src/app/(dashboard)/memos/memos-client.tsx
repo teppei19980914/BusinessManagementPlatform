@@ -303,7 +303,7 @@ export function MemosClient({
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               {tMemo('create')}
             </DialogTrigger>
-            <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${createFsClassName}`}>
+            <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-x-hidden overflow-y-auto ${createFsClassName}`}>
               <DialogHeader>
                 <div className="flex items-center justify-between gap-2">
                   <DialogTitle>{tMemo('create')}</DialogTitle>
@@ -430,7 +430,7 @@ export function MemosClient({
 
       {/* 編集ダイアログ (自分のメモのみ開く) */}
       <Dialog open={editing != null} onOpenChange={(o) => { if (!o) setEditing(null); }}>
-        <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${editFsClassName}`}>
+        <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-x-hidden overflow-y-auto ${editFsClassName}`}>
           <DialogHeader>
             <div className="flex items-center justify-between gap-2">
               <DialogTitle>{tMemo('edit')}</DialogTitle>

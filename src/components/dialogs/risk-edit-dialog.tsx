@@ -177,7 +177,7 @@ export function RiskEditDialog({
     : (risk.type === 'risk' ? tRisk('editRisk') : tRisk('editIssue'));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto ${fullscreenClassName}`}>
+      <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-x-hidden overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
           <div className="flex items-center justify-between gap-2">
             <DialogTitle>{dialogTitle}</DialogTitle>
