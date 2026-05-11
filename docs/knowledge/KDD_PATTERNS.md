@@ -6162,3 +6162,87 @@ close するかは判断次第:
 - 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
 - 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
 - 公式 (gitattributes merge): <https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver>
+
+---
+
+## 5.X+22 新規 `page.tsx` / `route.ts` を追加したら **必ず `docs/test/E2E_COVERAGE.md` 更新**、UI 移管 PR は **visual baseline 再生成必須** — 旧ルート削除と併せた一括対応のチェックリスト (PR #327 / PR-1 tenant-i18n / 2026-05-11)
+
+### 罠の正体
+
+PR #327 (PR-1 timezone/locale をテナント単位に集約) で 2 種類の CI fail が同時発生した:
+
+1. **`pnpm e2e:coverage-check` fail**:
+   ```
+   ❌ docs/test/E2E_COVERAGE.md に未記載の機能があります:
+      - /api/tenants/me/i18n
+   ```
+   新設した route の登録漏れ。`scripts/check-e2e-coverage.ts` が PR #90 以降 enforce。
+
+2. **Playwright visual regression fail** (`settings-light.png`):
+   ```
+   Expected an image 1440px by 1473px, received 1440px by 1125px.
+   28893 pixels (ratio 0.02 of all image pixels) are different.
+   ```
+   `/settings` から timezone/locale UI (123 行) を `/settings/tenant` へ移管した結果、
+   設定画面の高さが 1473px → 1125px (348px 縮小) して baseline drift。
+
+両方とも **「実装意図通りの当然の結果」** で、コード自体に不具合は無いが、
+**周辺ドキュメント / baseline の更新を本 PR 内で同梱しないと CI が通らない**。
+
+### 根本原因
+
+- **新規 route 追加** = E2E_COVERAGE.md 更新は ローカル `pnpm e2e:coverage-check`
+  または CI 失敗で気付く設計だが、**実装着手時にチェックリストを開いていないと忘れる**
+- **UI 移管・削除** = visual baseline は **PR で `[gen-visual]` トリガー** しないと
+  drift し続ける。今回は **旧 UI 削除のみ気付いたが baseline 更新を忘れた**
+
+### 修正パターン (本 PR で適用)
+
+```bash
+# 1. 新 route 追加時のチェックリスト
+pnpm e2e:coverage-check              # ローカルで確認
+# → ❌ 表示されたら docs/test/E2E_COVERAGE.md に
+#   - [ ] `/api/path` — skip: <理由> または
+#   - [x] `/api/path` — e2e/specs/XX-spec.ts
+# の形式で追加
+
+# 2. 旧 route 削除時のチェックリスト
+# E2E_COVERAGE.md の旧エントリを「削除済 (PR-N / YYYY-MM-DD)」と記録
+# (検索性のため完全削除はしない、移管先 PR への辿りやすさ確保)
+
+# 3. UI 移管/削除時の visual baseline 再生成
+# 別 commit で空コミットを作る:
+git commit --allow-empty -m "chore(visual): regenerate baseline for /settings UI 縮小 [gen-visual]"
+git push
+# → .github/workflows/e2e-visual-baseline.yml が発火し
+#   baseline 画像を再生成して bot コミットで PR ブランチに push
+```
+
+### 横展開チェック (UI 移管 / route 移管系の PR を作る時)
+
+- [ ] **新 route**: `pnpm e2e:coverage-check` をローカルで実行 → ✅ になるまで `docs/test/E2E_COVERAGE.md` に追記
+- [ ] **旧 route**: 削除した route は E2E_COVERAGE.md で `[x] **削除済 (PR-N / YYYY-MM-DD)**` 表記に更新 (完全削除しない)
+- [ ] **UI 縮小/拡大**: `pnpm test:e2e e2e/visual/` をローカル実行できるなら事前確認。CI で fail したら `[gen-visual]` commit で再生成
+- [ ] **新 UI 追加 (新画面)**: 対応する visual spec を `e2e/visual/` 配下に追加 + `[gen-visual]` で baseline 生成
+- [ ] **「ユーザ単位設定 → テナント単位設定」のような認可境界変更**: 旧 API の `/api/settings/i18n` を関連する全画面から呼び出し撤去 (本件: settings-client.tsx の useEffect から削除)。残しておくと 404 を呼び続けて余計なエラーログが発生
+- [ ] **JWT claim の意味変更**: `session.user.timezone` の値が「ユーザ TZ」から「テナント TZ」に変わる場合、**型は同じ string でも意味が違う** ため、命名維持は OK だが TS コメントで明示 (rg `session\.user\.timezone` で全箇所確認)
+
+### 設計の落とし穴 (PR-1 で踏んだもの)
+
+1. **null 許容の撤廃**: `User.timezone String?` → 廃止、`Tenant.timezone String NOT NULL DEFAULT 'Asia/Tokyo'`。
+   テナント単位では「null = 未設定」概念が不要 (DB default が機能する) ため NOT NULL 化。
+   `resolveTimezone()` のフォールバックチェーンを 1 段減らせる + 型安全 (`session.user.timezone: string`)
+2. **`useSession().update({ timezone, locale })` の patch 型を `string | null` から `string` に絞る**:
+   null を入れる経路 (= システム既定に戻す UI) を廃止したため
+3. **データインポートの後方互換**: 旧 ZIP に `User.timezone / User.locale` が含まれていても
+   新 import コードは黙って無視。NULL を書き戻すと型エラーで止まるため defensive 設計
+4. **データエクスポートの新フィールド**: `ExportSummary` に `tenantTimezone` / `tenantLocale` 追加。
+   再インポート時にテナント設定を復元する手がかり (将来の super_admin 代行 import 用)
+
+### 関連
+
+- 元 PR: PR-1 (2026-05-15 / feat/pr-1-tenant-i18n-settings)
+- 関連 KDD: §5.X+25 (テナント単位 i18n 設計の詳細)
+- 関連 script: [scripts/check-e2e-coverage.ts](../../scripts/check-e2e-coverage.ts)
+- 関連 workflow: [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml)
+- 関連 doc: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md), [E2E カバレッジ運用](../test/E2E_LESSONS.md)
