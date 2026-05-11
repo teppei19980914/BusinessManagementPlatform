@@ -5934,15 +5934,28 @@ GitHub の dependabot は **PR の base branch が更新されると自動的に
 ### 設計の落とし穴
 
 1. **`mergeable: UNKNOWN`**: GitHub が computing 中。1-2 分待って再取得。
-2. **`mergeStateStatus: BLOCKED`**: ファイル conflict ではなく、required reviews / checks が
-   未通過の状態。コンフリクトとは別物。
-   - **実例 PR #318** (2026-05-15): ユーザが「コンフリクト発生」と認識して conflict UI を
-     開いたが、調査時点で `mergeable: MERGEABLE` / `mergeStateStatus: BLOCKED` の組合せ。
-     原因は auto-rebase 直後で **CI 進行中 (Lint/Test/Build / Playwright E2E / CodeQL が IN_PROGRESS、
-     Vercel が PENDING)** だっただけ。CI 完了を待てば `CLEAN` に遷移し、そのままマージ可能。
-   - GitHub UI の「Resolve conflicts」ボタンは BLOCKED 時にも表示される場合があり、
-     ユーザがコンフリクトと誤認しやすい。**まず `mergeable` フィールドを見る**こと
-     (CONFLICTING ≠ BLOCKED)。
+2. **`mergeStateStatus: BLOCKED` / `UNSTABLE`**: ファイル conflict ではなく、CI / Vercel /
+   required reviews などが pending な状態。コンフリクトとは別物。
+   - **実例 PR #318** (2026-05-15、`BLOCKED`): auto-rebase 直後で **必須 CI が IN_PROGRESS**
+     (Lint/Test/Build, Playwright E2E, CodeQL)。CI 完了で `CLEAN` に遷移。
+   - **実例 PR #319** (2026-05-15、`UNSTABLE`): すべての必須 CI は SUCCESS だが
+     **Vercel preview deployment のみ `PENDING`**。Vercel は非必須 (informational) なので
+     `mergeable: MERGEABLE` のままだが、`mergeStateStatus` は `UNSTABLE` 扱い。
+     **`UNSTABLE` でも実際にはマージ可能** (GitHub UI が「Merge」ボタンを許可する)。
+   - GitHub UI の「Resolve conflicts」ボタンは BLOCKED/UNSTABLE 時にも表示される場合があり、
+     ユーザがコンフリクトと誤認しやすい。**まず `mergeable` フィールドを見る** こと
+     (CONFLICTING ≠ BLOCKED ≠ UNSTABLE)。
+
+   状態判別マトリクス:
+
+   | `mergeable` | `mergeStateStatus` | 意味 | アクション |
+   |---|---|---|---|
+   | CONFLICTING | DIRTY | 本物のファイル衝突 | 手動 rebase / `@dependabot rebase` |
+   | MERGEABLE | CLEAN | 即マージ可能 | `gh pr merge --squash` |
+   | MERGEABLE | BEHIND | base が進んだが衝突なし | "Update branch" or そのままマージ可 |
+   | MERGEABLE | BLOCKED | **必須** check 未完 / レビュー待ち | check 完了 / レビュー取得を待つ |
+   | MERGEABLE | UNSTABLE | **非必須** check (Vercel 等) が pending | **そのままマージ可能** |
+   | UNKNOWN | (任意) | GitHub 計算中 | 1-2 分待って再取得 |
 3. **CI が古い base で走った場合**: auto-rebase 後に CI 再実行が走らないと、
    古い PR commit の検査結果のままで「checks pass」になる。dependabot は再 push で
    CI を再実行させる。マージ前に「最新の checks が pass か」を目視確認。
