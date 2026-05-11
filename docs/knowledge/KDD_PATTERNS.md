@@ -6074,6 +6074,47 @@ stakeholders / members / comments / attachments / memos
 - 旧 migration: prisma/migrations/20260424_user_i18n_preferences/ (User に timezone/locale 追加 → drop)
 - 関連設定: src/config/i18n.ts (`DEFAULT_TIMEZONE` / `DEFAULT_LOCALE`)
 
+## 5.X+28 日付計算ロジックをテナント TZ カレンダー日ベースに移行 — UTC 経過時間 ÷ 24h は要件から不一致 (PR-4 / 2026-05-15)
+<!-- 元番号 §5.X+22 から §5.X+28 に renumber (main 側 PR #327 で §5.X+22 が E2E_COVERAGE で先取りされたため衝突回避。PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / PR-4=+28 に従う) -->
+
+### 背景
+PR-1 で `Tenant.timezone` の schema / JWT / UI は集約済みだが、**実際の日付計算ロジック**
+(Beginner 90 日判定 / 月初リセット境界 / 翌月適用 / Grace 7 日) は依然 UTC ベース。
+ユーザ要件「タイムゾーンの時間で機能している体験」を満たすには計算側も TZ ローカル
+カレンダー日ベースへ移行する必要があった。
+
+具体例: JST テナントが 2026-02-01 14:00 JST に作成された場合、
+- 旧仕様 (絶対経過時間 ÷ 24h): 90 日後 09:00 JST 時点で 89.98 日 → まだ active
+- 新仕様 (TZ カレンダー日差): 90 日後 09:00 JST 時点で `2026-05-02 - 2026-02-01` = 90 日 → expired
+
+### 教訓
+- **TZ helper を 1 箇所に集約**: `src/lib/tenant-time.ts` を新設し
+  `formatTenantDate / tenantCalendarDayDiff / getTenantMonthStart / getTenantNextMonthStart /
+  getTenantPreviousYearMonth` を Node 標準 (Intl.DateTimeFormat) のみで実装。外部 lib 不要。
+- **判定対象**:
+  1. `beginner-expiry.service.ts`: 90日判定にテナント TZ
+  2. `tenant-monthly-reset.service.ts`: per-tenant TZ で月初判定 (updateMany → 個別 update に refactor)
+  3. `tenant-self.service.ts` / `tenant-storage.service.ts`: 翌月適用日を `getTenantNextMonthStart` で計算
+  4. `lib/auth.config.ts` (middleware): Edge runtime 制約のため inline `tenantCalendarDayDiffEdge` 実装
+  5. UI: `toISOString().split('T')[0]` → `useFormatters().formatDate(iso)`
+- **Edge runtime 制約**: middleware は `Intl.DateTimeFormat` のみ使える。Node 固有 module 不可
+
+### 設計の落とし穴
+
+1. **`updateMany` は per-tenant TZ で使えない**: テナントごとに monthStart が異なるため、
+   `findMany → JS filter → per-tenant update` のループに refactor 必須。
+2. **境界値の TZ 解釈**: `2026-05-31T23:59:59Z` (UTC 月末) は JST では `2026-06-01 08:59:59` (= 翌月初)。
+   テストでは UTC と JST で別の期待値を明示する。
+3. **`getTenantNextMonthStart` の年跨ぎ**: 12月 → 翌年 1月の分岐を忘れずに。
+4. **`session.user.timezone` はテナント値** (PR-1 で意味変更): middleware から `auth.user.timezone` 参照可。
+
+### 関連
+- 元 PR: PR-4 (2026-05-15) テナント TZ 計算ロジック移行
+- helper: src/lib/tenant-time.ts
+- 対象 service: beginner-expiry / tenant-monthly-reset / tenant-self / tenant-storage
+- middleware inline helper: src/lib/auth.config.ts `tenantCalendarDayDiffEdge`
+- 前提 PR: PR-1 (#327) Tenant.timezone schema
+
 ---
 
 ## 5.X+20 `eslint-config-next` minor 上げで `react-hooks/set-state-in-effect` / `react-hooks/refs` が新規 enforce — 既存 useEffect/useRef を Hooks-7.1 互換に書き換える (PR #323 dependabot 対応 / 2026-05-11)
@@ -6303,6 +6344,21 @@ PR #326 の恒久対策 (`git rm --cached` + `.gitattributes merge=ours`) を ma
 - [ ] 恒久対策を入れた PR より **以前に分岐した既存ブランチ全てで「再度の手動マージ」が必要** (= untrack 操作は branch 内 commit 履歴の前方互換性が無い)
 - [ ] 自動 daily branch 群 (`dev/YYYY-MM-DD`) で同様の operation を入れる場合は、main マージ後に **全 open dev ブランチを一斉 rebase or merge** する hook を検討 (本件は手動対応で済んだが、ブランチが 10 個以上ある日は手間が積み上がる)
 
+### 再発事例 4 例目 (PR #332 / feat/pr-4-tenant-tz-logic / 2026-05-11) — stacked PR 固有の追加要因
+
+PR-4 は **stacked PR** で `base = feat/pr-1-tenant-i18n-settings` (PR #327 の HEAD) のまま、PR #327 が main にマージされた後も base が古いままだった。`.last-knowledge-check-sha` 系の衝突は無かった (PR-1 から派生したため hook 更新無し) が、**KDD section の番号衝突** が発生:
+
+- PR-4 側: `§5.X+22` で start (PR-4 ブランチ作成時点では未使用番号)
+- main 側: PR #327 で `§5.X+22` が E2E_COVERAGE で先取り (= renumber 漏れ)
+- 解消: PR-4 を **§5.X+28** に renumber (PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / **PR-4=+28**)
+
+#### Stacked PR 固有教訓
+
+- [ ] **stack の base PR が main にマージされたら、上層 PR の base を即時 main に切替える** (`gh pr edit <N> --base main`)
+- [ ] base 切替なしに main マージし続けると、上層 PR の "PR diff" が base PR のコミットを再表示し続けてレビュー困難になる
+- [ ] **KDD section 番号は PR-N 単位で reserved 番号体系を遵守** (PR-N = §5.X+(24+N))。
+      合間の hotfix 系 PR (PR #326 / #327 / #336) は別途連番を消費するため、**並走 feature PR 側で番号を取り過ぎないよう reserved 範囲を明確化** する
+
 ### 再発事例 3 例目 (PR #330 / feat/pr-3-storage-guard / 2026-05-11)
 
 PR-3 (Storage 20MB 共通化 + guard サービス) も同パターン。**1 日に 3 件続いた再発**で、原因は同じ「PR #326 untrack 前に分岐していた」。
@@ -6331,7 +6387,7 @@ dev/* 系の auto-branch だけでなく **feature branch** (PR-2 = Beginner UI 
 
 ### 関連
 
-- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11) + PR #329 (再発事例 2 例目 / feat/pr-2-beginner-ui) + PR #330 (再発事例 3 例目 / feat/pr-3-storage-guard)
+- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11) + PR #329 (再発事例 2 例目 / feat/pr-2-beginner-ui) + PR #330 (再発事例 3 例目 / feat/pr-3-storage-guard) + PR #332 (再発事例 4 例目 / feat/pr-4-tenant-tz-logic / stacked PR)
 - 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
 - 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
 - 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
