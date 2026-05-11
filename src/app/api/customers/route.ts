@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
 import { createCustomerSchema } from '@/lib/validators/customer';
 import { listCustomers, createCustomer } from '@/services/customer.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
@@ -48,6 +48,13 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   const customer = await createCustomer(parsed.data, user.id, user.tenantId);
 
