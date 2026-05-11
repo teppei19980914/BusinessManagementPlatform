@@ -5937,3 +5937,43 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - migration: prisma/migrations/20260515_tenant_i18n_settings/migration.sql
 - 旧 migration: prisma/migrations/20260424_user_i18n_preferences/ (User に timezone/locale 追加 → drop)
 - 関連設定: src/config/i18n.ts (`DEFAULT_TIMEZONE` / `DEFAULT_LOCALE`)
+
+## 5.X+22 日付計算ロジックをテナント TZ カレンダー日ベースに移行 — UTC 経過時間 ÷ 24h は要件から不一致 (PR-4 / 2026-05-15)
+
+### 背景
+PR-1 で `Tenant.timezone` の schema / JWT / UI は集約済みだが、**実際の日付計算ロジック**
+(Beginner 90 日判定 / 月初リセット境界 / 翌月適用 / Grace 7 日) は依然 UTC ベース。
+ユーザ要件「タイムゾーンの時間で機能している体験」を満たすには計算側も TZ ローカル
+カレンダー日ベースへ移行する必要があった。
+
+具体例: JST テナントが 2026-02-01 14:00 JST に作成された場合、
+- 旧仕様 (絶対経過時間 ÷ 24h): 90 日後 09:00 JST 時点で 89.98 日 → まだ active
+- 新仕様 (TZ カレンダー日差): 90 日後 09:00 JST 時点で `2026-05-02 - 2026-02-01` = 90 日 → expired
+
+### 教訓
+- **TZ helper を 1 箇所に集約**: `src/lib/tenant-time.ts` を新設し
+  `formatTenantDate / tenantCalendarDayDiff / getTenantMonthStart / getTenantNextMonthStart /
+  getTenantPreviousYearMonth` を Node 標準 (Intl.DateTimeFormat) のみで実装。外部 lib 不要。
+- **判定対象**:
+  1. `beginner-expiry.service.ts`: 90日判定にテナント TZ
+  2. `tenant-monthly-reset.service.ts`: per-tenant TZ で月初判定 (updateMany → 個別 update に refactor)
+  3. `tenant-self.service.ts` / `tenant-storage.service.ts`: 翌月適用日を `getTenantNextMonthStart` で計算
+  4. `lib/auth.config.ts` (middleware): Edge runtime 制約のため inline `tenantCalendarDayDiffEdge` 実装
+  5. UI: `toISOString().split('T')[0]` → `useFormatters().formatDate(iso)`
+- **Edge runtime 制約**: middleware は `Intl.DateTimeFormat` のみ使える。Node 固有 module 不可
+
+### 設計の落とし穴
+
+1. **`updateMany` は per-tenant TZ で使えない**: テナントごとに monthStart が異なるため、
+   `findMany → JS filter → per-tenant update` のループに refactor 必須。
+2. **境界値の TZ 解釈**: `2026-05-31T23:59:59Z` (UTC 月末) は JST では `2026-06-01 08:59:59` (= 翌月初)。
+   テストでは UTC と JST で別の期待値を明示する。
+3. **`getTenantNextMonthStart` の年跨ぎ**: 12月 → 翌年 1月の分岐を忘れずに。
+4. **`session.user.timezone` はテナント値** (PR-1 で意味変更): middleware から `auth.user.timezone` 参照可。
+
+### 関連
+- 元 PR: PR-4 (2026-05-15) テナント TZ 計算ロジック移行
+- helper: src/lib/tenant-time.ts
+- 対象 service: beginner-expiry / tenant-monthly-reset / tenant-self / tenant-storage
+- middleware inline helper: src/lib/auth.config.ts `tenantCalendarDayDiffEdge`
+- 前提 PR: PR-1 (#327) Tenant.timezone schema

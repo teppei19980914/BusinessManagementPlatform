@@ -23,6 +23,8 @@ import {
   getBeginnerDaysRemaining,
   type BeginnerExpiryState,
 } from './beginner-expiry.service';
+// PR-4 (2026-05-15): 翌月適用日をテナント TZ ベースで計算
+import { getTenantNextMonthStart } from '@/lib/tenant-time';
 
 /** プランの強さ順序 (アップグレード判定用) */
 const PLAN_ORDER: Record<TenantPlan, number> = {
@@ -324,9 +326,11 @@ export async function updateTenantSelf(
     return { ok: false, error: 'BEGINNER_DOWNGRADE_FORBIDDEN' };
   }
 
-  // 翌月 1 日 (UTC) に予約
+  // PR-4 (2026-05-15): 翌月 1 日 (テナント TZ 0:00) に予約。
+  //   旧仕様は UTC 月初固定だったため、JST テナントでは「翌月 1 日 09:00 JST」適用で違和感あり。
+  //   tenant.timezone (PR-1 で追加) を使って TZ ローカルの月初を計算する。
   const now = new Date();
-  const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const nextMonthStart = getTenantNextMonthStart(now, tenant.timezone);
 
   await prisma.tenant.update({
     where: { id: tenantId },
