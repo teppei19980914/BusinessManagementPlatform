@@ -4,6 +4,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     riskIssue: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
@@ -12,6 +13,10 @@ vi.mock('@/lib/db', () => ({
     },
     projectMember: {
       findMany: vi.fn(),
+    },
+    // 2026-05-10 Phase 2-8: 越境 sync-import 遮断のため project の tenant 検証を実施
+    project: {
+      findFirst: vi.fn(),
     },
   },
 }));
@@ -134,13 +139,17 @@ function csvRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 2026-05-10 Phase 2-8: テナント検証 mock — 全テストで「自テナント所有」の前提
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
+  });
 
   it('空の CSV はグローバルエラー + canExecute=false', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
-    const r = await computeRiskSyncDiff(projectId, []);
+    const r = await computeRiskSyncDiff(projectId, [], 'tenant-A');
     expect(r.canExecute).toBe(false);
     expect(r.globalErrors.length).toBeGreaterThan(0);
   });
@@ -149,7 +158,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
-    const r = await computeRiskSyncDiff(projectId, [csvRow({ title: '新規リスク' })]);
+    const r = await computeRiskSyncDiff(projectId, [csvRow({ title: '新規リスク' })], 'tenant-A');
     expect(r.canExecute).toBe(true);
     expect(r.summary.added).toBe(1);
     expect(r.rows[0].action).toBe('CREATE');
@@ -160,7 +169,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([baseDbRisk] as never);
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
-    const r = await computeRiskSyncDiff(projectId, [csvRow({ title: 'DB ダウン' })]);
+    const r = await computeRiskSyncDiff(projectId, [csvRow({ title: 'DB ダウン' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
     expect(r.rows[0].errors?.[0]).toContain('ID 空欄ですが同じ件名');
   });
@@ -171,7 +180,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
 
     const r = await computeRiskSyncDiff(projectId, [
       csvRow({ id: 'r-1', title: 'DB ダウン' }),
-    ]);
+    ], 'tenant-A');
     expect(r.canExecute).toBe(true);
     expect(r.rows[0].action).toBe('NO_CHANGE');
   });
@@ -182,7 +191,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
 
     const r = await computeRiskSyncDiff(projectId, [
       csvRow({ id: 'r-1', title: 'DB 完全停止' }),
-    ]);
+    ], 'tenant-A');
     expect(r.summary.updated).toBe(1);
     expect(r.rows[0].action).toBe('UPDATE');
     expect(r.rows[0].fieldChanges?.find((fc) => fc.field === 'title')).toMatchObject({
@@ -197,7 +206,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
 
     const r = await computeRiskSyncDiff(projectId, [
       csvRow({ id: 'r-1', title: 'DB ダウン', type: 'issue' }),
-    ]);
+    ], 'tenant-A');
     expect(r.canExecute).toBe(false);
     expect(r.rows[0].errors?.some((e) => e.includes('種別'))).toBe(true);
   });
@@ -210,7 +219,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
 
     const r = await computeRiskSyncDiff(projectId, [
       csvRow({ title: '新規', assigneeName: 'Charlie' }),
-    ]);
+    ], 'tenant-A');
     expect(r.canExecute).toBe(false);
     expect(r.rows[0].errors?.some((e) => e.includes('担当者 "Charlie"'))).toBe(true);
   });
@@ -222,7 +231,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
     const r = await computeRiskSyncDiff(projectId, [
       csvRow({ id: 'r-1', title: 'DB ダウン', tempRowIndex: 2 }),
       csvRow({ id: 'r-1', title: 'DB ダウン 2', tempRowIndex: 3 }),
-    ]);
+    ], 'tenant-A');
     expect(r.canExecute).toBe(false);
     expect(r.rows[0].errors?.some((e) => e.includes('CSV 内で ID'))).toBe(true);
   });
@@ -236,7 +245,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
 
     const r = await computeRiskSyncDiff(projectId, [
       csvRow({ id: 'r-1', title: 'DB ダウン' }),
-    ]);
+    ], 'tenant-A');
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow).toBeDefined();
     expect(removeRow?.name).toBe('解決した課題');
@@ -253,7 +262,7 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
 
     const r = await computeRiskSyncDiff(projectId, [
       csvRow({ id: 'r-1', title: 'DB ダウン' }),
-    ]);
+    ], 'tenant-A');
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(true);
     expect(removeRow?.warningLevel).toBe('ERROR');

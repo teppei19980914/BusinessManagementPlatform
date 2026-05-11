@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
   const project = await createProject(parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'project',

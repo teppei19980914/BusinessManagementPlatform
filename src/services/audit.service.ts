@@ -16,6 +16,12 @@ import type { Prisma } from '@/generated/prisma/client';
 export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'SYNC_IMPORT' | 'EXPORT';
 
 export async function recordAuditLog(params: {
+  /**
+   * Phase 2-10 (2026-05-10): 監査ログの所属テナント。通常は actor (userId) のテナントと一致するが、
+   *   super_admin が他テナントを代行操作するケース (P-C export 等) では **対象テナントの ID** を渡す。
+   *   = 「誰がどのテナントの何を操作したか」を直接フィルタ可能にする (User join 経由ではなく)。
+   */
+  tenantId: string;
   userId: string;
   action: AuditAction;
   entityType: string;
@@ -26,6 +32,7 @@ export async function recordAuditLog(params: {
 }): Promise<void> {
   await prisma.auditLog.create({
     data: {
+      tenantId: params.tenantId,
       userId: params.userId,
       action: params.action,
       entityType: params.entityType,
@@ -47,6 +54,8 @@ export async function recordAuditLog(params: {
  *   メタデータ（bulk: true, bulkBatchSize, 適用した updates 等）で保持する
  */
 export async function recordBulkAuditLogs(params: {
+  /** Phase 2-10: 監査ログの所属テナント (recordAuditLog 同様)。 */
+  tenantId: string;
   userId: string;
   action: AuditAction;
   entityType: string;
@@ -60,6 +69,7 @@ export async function recordBulkAuditLogs(params: {
   if (params.entityIds.length === 0) return;
   await prisma.auditLog.createMany({
     data: params.entityIds.map((entityId) => ({
+      tenantId: params.tenantId,
       userId: params.userId,
       action: params.action,
       entityType: params.entityType,

@@ -34,6 +34,7 @@ export async function POST(
     const result = await linkRetrospectiveToProject(retroId, projectId);
     if (result.added) {
       await recordAuditLog({
+        tenantId: user.tenantId,
         userId: user.id,
         action: 'CREATE',
         entityType: 'retrospective_project',
@@ -68,9 +69,10 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'risk:update');
   if (forbidden) return forbidden;
 
-  const result = await unlinkRetrospectiveFromProject(retroId, projectId);
+  const result = await unlinkRetrospectiveFromProject(retroId, projectId, user.tenantId);
   if (result.removed) {
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'DELETE',
       entityType: 'retrospective_project',

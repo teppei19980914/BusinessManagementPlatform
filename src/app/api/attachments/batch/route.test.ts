@@ -52,12 +52,15 @@ function postReq(body: unknown): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-admin', systemRole: 'admin' } as never);
+  // 2026-05-10 Phase 2-9: admin でも親 entity の tenantId を verify するため tenantId が必要
+  vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-admin', systemRole: 'admin', tenantId: 'tenant-A' } as never);
   vi.mocked(prisma.attachment.findMany).mockResolvedValue([] as never);
 });
 
 describe('POST /api/attachments/batch — lenient entityIds', () => {
   it('全 ID が有効 UUID なら 200 + データ取得', async () => {
+    // 2026-05-10 Phase 2-9: admin path で task.findMany により tenant 検証する
+    vi.mocked(prisma.task.findMany).mockResolvedValue([{ id: VALID_UUID_1 }, { id: VALID_UUID_2 }] as never);
     const res = await POST(postReq({
       entityType: 'task',
       entityIds: [VALID_UUID_1, VALID_UUID_2],
@@ -67,6 +70,8 @@ describe('POST /api/attachments/batch — lenient entityIds', () => {
   });
 
   it('一部 ID が非 UUID でも 200 (有効分のみ処理)', async () => {
+    // 2026-05-10 Phase 2-9: admin path で task.findMany により tenant 検証する
+    vi.mocked(prisma.task.findMany).mockResolvedValue([{ id: VALID_UUID_1 }] as never);
     const res = await POST(postReq({
       entityType: 'task',
       entityIds: [VALID_UUID_1, 'not-a-uuid', '', 'temp-staging-id'],

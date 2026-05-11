@@ -20,6 +20,13 @@ export type AuthEventType =
 
 export async function recordAuthEvent(params: {
   eventType: AuthEventType;
+  /**
+   * Phase 2-10 (2026-05-10): 認証イベントの所属テナント (NULL 許容)。
+   *   - 通常 (userId が解決済) は user.tenantId を渡す
+   *   - pre-auth 失敗 (login_failure with email-not-found) は **NULL** のまま記録
+   *   - email から user 解決済の login_failure (パスワード誤り等) では tenantId を渡す
+   */
+  tenantId?: string | null;
   userId?: string;
   email?: string;
   ipAddress?: string;
@@ -29,6 +36,7 @@ export async function recordAuthEvent(params: {
   await prisma.authEventLog.create({
     data: {
       eventType: params.eventType,
+      tenantId: params.tenantId ?? undefined,
       userId: params.userId,
       email: params.email,
       ipAddress: params.ipAddress,

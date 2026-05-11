@@ -43,8 +43,12 @@ updates:
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
+      # NOTE: `schedule.day` は `interval: weekly` でのみ valid (公式 schema 制約)。
+      #   `monthly` 指定時は dependabot が毎月 1 日に自動実行するため省略する。
+      #   旧設定で `day: 'first monday'` を入れて GitHub の dependabot.yml validator が
+      #   「day は weekly でのみ valid」「'first monday' は無効値」で fail していた。
+      #   (有効値: monday/tuesday/.../sunday の単一指定のみ)
       interval: 'monthly'
-      day: 'first monday'
       time: '03:00'
       timezone: 'Asia/Tokyo'
     labels:

@@ -68,7 +68,7 @@ describe('sendVerificationEmail', () => {
     mockSend.mockResolvedValue({ success: true, messageId: 'msg-123' });
 
     await expect(
-      sendVerificationEmail('user-id', 'test@example.com', 'https://example.com'),
+      sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com'),
     ).resolves.toBeUndefined();
 
     expect(mockSend).toHaveBeenCalledOnce();
@@ -79,17 +79,17 @@ describe('sendVerificationEmail', () => {
     mockSend.mockResolvedValue({ success: false, error: 'Resend 403 error' });
 
     await expect(
-      sendVerificationEmail('user-id', 'test@example.com', 'https://example.com'),
+      sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com'),
     ).rejects.toThrow(EmailSendError);
   });
 
   it('既存の未使用トークンを無効化してから新しいトークンを作成する', async () => {
     mockSend.mockResolvedValue({ success: true, messageId: 'msg-456' });
 
-    await sendVerificationEmail('user-id', 'test@example.com', 'https://example.com');
+    await sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com');
 
     expect(prisma.emailVerificationToken.updateMany).toHaveBeenCalledWith({
-      where: { userId: 'user-id', usedAt: null },
+      where: { userId: 'user-id', tenantId: 'tenant-A', usedAt: null },
       data: { usedAt: expect.any(Date) },
     });
     expect(prisma.emailVerificationToken.create).toHaveBeenCalledOnce();

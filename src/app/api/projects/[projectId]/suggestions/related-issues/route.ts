@@ -36,6 +36,6 @@ export async function POST(
     );
   }
 
-  const data = await suggestRelatedIssuesForText(parsed.data.text, projectId);
+  const data = await suggestRelatedIssuesForText(parsed.data.text, projectId, user.tenantId);
   return NextResponse.json({ data });
 }

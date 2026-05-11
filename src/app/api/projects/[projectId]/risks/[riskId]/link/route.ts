@@ -34,6 +34,7 @@ export async function POST(
     const result = await linkRiskToProject(riskId, projectId);
     if (result.added) {
       await recordAuditLog({
+        tenantId: user.tenantId,
         userId: user.id,
         action: 'CREATE',
         entityType: 'risk_issue_project',
@@ -71,6 +72,7 @@ export async function DELETE(
   const result = await unlinkRiskFromProject(riskId, projectId, user.tenantId);
   if (result.removed) {
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'DELETE',
       entityType: 'risk_issue_project',

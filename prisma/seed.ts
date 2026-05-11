@@ -20,7 +20,7 @@ import {
   PASSWORD_MIN_LENGTH,
   PASSWORD_REQUIRED_CHAR_TYPE_COUNT,
 } from '../src/config/security';
-import { MANAGEMENT_TENANT_ID, MANAGEMENT_TENANT_SLUG } from '../src/lib/tenant';
+import { DEFAULT_TENANT_ID, MANAGEMENT_TENANT_ID, MANAGEMENT_TENANT_SLUG } from '../src/lib/tenant';
 
 function generateRecoveryCode(): string {
   const bytes = randomBytes(8);
@@ -86,8 +86,10 @@ async function main() {
           isActive: true,
           forcePasswordChange: true,
           recoveryCodes: {
+            // Phase 2-10: tenantId 必須化。初期 admin は default-tenant 所属。
             create: await Promise.all(
               recoveryCodes.map(async (code) => ({
+                tenantId: DEFAULT_TENANT_ID,
                 codeHash: await hash(code, BCRYPT_COST),
               })),
             ),
@@ -219,8 +221,10 @@ async function seedManagementTenantAndSuperAdmin(prisma: PrismaClient): Promise<
       isActive: true,
       forcePasswordChange: true,
       recoveryCodes: {
+        // Phase 2-10: tenantId 必須化。super_admin は管理テナント所属。
         create: await Promise.all(
           superAdminRecoveryCodes.map(async (code) => ({
+            tenantId: MANAGEMENT_TENANT_ID,
             codeHash: await hash(code, BCRYPT_COST),
           })),
         ),

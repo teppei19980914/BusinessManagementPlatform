@@ -110,15 +110,16 @@ export async function POST(
 
   if (isDryRun) {
     // dry-run: diff を計算して返す (副作用なし)
-    const diff = await computeSyncDiff(projectId, csvRows);
+    const diff = await computeSyncDiff(projectId, csvRows, user.tenantId);
     return NextResponse.json({ data: diff });
   }
 
   // 本実行
   try {
-    const result = await applySyncImport(projectId, csvRows, removeMode, user.id);
+    const result = await applySyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'SYNC_IMPORT',
       entityType: 'wbs_sync_import',

@@ -59,8 +59,9 @@ export async function POST(
 
   try {
     if (parsed.data.kind === 'knowledge') {
-      await linkKnowledgeToProject(parsed.data.id, projectId);
+      await linkKnowledgeToProject(parsed.data.id, projectId, user.tenantId);
       await recordAuditLog({
+        tenantId: user.tenantId,
         userId: user.id,
         action: 'CREATE',
         entityType: 'knowledge_project',
@@ -73,6 +74,7 @@ export async function POST(
       const result = await linkRiskToProject(parsed.data.id, projectId);
       if (result.added) {
         await recordAuditLog({
+          tenantId: user.tenantId,
           userId: user.id,
           action: 'CREATE',
           entityType: 'risk_issue_project',
@@ -87,6 +89,7 @@ export async function POST(
     const result = await linkRetrospectiveToProject(parsed.data.id, projectId);
     if (result.added) {
       await recordAuditLog({
+        tenantId: user.tenantId,
         userId: user.id,
         action: 'CREATE',
         entityType: 'retrospective_project',

@@ -20,7 +20,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'project:update');
   if (forbidden) return forbidden;
 
-  const csv = await exportRetrospectivesSync(projectId, user.systemRole);
+  const csv = await exportRetrospectivesSync(projectId, user.systemRole, user.tenantId);
 
   return new NextResponse(csv, {
     headers: {

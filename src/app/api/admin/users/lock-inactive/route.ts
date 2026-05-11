@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
 
   // 集約ログ (どのユーザをロックしたか個別は lockInactiveUsers 内で記録済)
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'user',

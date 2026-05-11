@@ -27,7 +27,7 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'knowledge:read');
   if (forbidden) return forbidden;
 
-  const knowledges = await listKnowledgeByProject(projectId);
+  const knowledges = await listKnowledgeByProject(projectId, user.tenantId);
   return NextResponse.json({ data: knowledges });
 }
 
@@ -67,6 +67,7 @@ export async function POST(
   );
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'knowledge',

@@ -69,7 +69,7 @@ async function authorizeForComment(
   hasMentions = false,
 ): Promise<NextResponse | null> {
   const t = await getTranslations('message');
-  const result = await resolveEntityForComment(entityType, entityId);
+  const result = await resolveEntityForComment(entityType, entityId, user.tenantId);
 
   if (result.kind === 'not-found') {
     return NextResponse.json(
@@ -162,7 +162,7 @@ export async function GET(req: NextRequest) {
   const forbidden = await authorizeForComment(user, typed, entityId, 'read');
   if (forbidden) return forbidden;
 
-  const data = await listComments(typed, entityId);
+  const data = await listComments(typed, entityId, user.tenantId);
   return NextResponse.json({ data });
 }
 
@@ -213,11 +213,13 @@ export async function POST(req: NextRequest) {
   const created = await createComment(
     parsed.data,
     user.id,
+    user.tenantId,
     mentions,
     user.name ?? null,
   );
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'CREATE',
     entityType: 'comment',

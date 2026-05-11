@@ -4,6 +4,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     memo: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
@@ -90,45 +91,45 @@ describe('computeMemoSyncDiff (T-22 Phase 22d, user-scoped)', () => {
 
   it('空の CSV はグローバルエラー', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([] as never);
-    const r = await computeMemoSyncDiff(userId, []);
+    const r = await computeMemoSyncDiff(userId, [], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 
   it('500 件超は globalError', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([] as never);
     const rows = Array.from({ length: 501 }, (_, i) => csvRow({ tempRowIndex: i + 2, title: `M${i}` }));
-    const r = await computeMemoSyncDiff(userId, rows);
+    const r = await computeMemoSyncDiff(userId, rows, 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 
   it('ID 空欄 + DB 同タイトルなし → CREATE', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([] as never);
-    const r = await computeMemoSyncDiff(userId, [csvRow({ title: '新規' })]);
+    const r = await computeMemoSyncDiff(userId, [csvRow({ title: '新規' })], 'tenant-A');
     expect(r.canExecute).toBe(true);
     expect(r.summary.added).toBe(1);
   });
 
   it('ID 空欄 + DB 同タイトルあり → blocker', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([baseDbMemo] as never);
-    const r = await computeMemoSyncDiff(userId, [csvRow({ title: '既存メモ' })]);
+    const r = await computeMemoSyncDiff(userId, [csvRow({ title: '既存メモ' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 
   it('ID 一致 + 変更なし → NO_CHANGE', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([baseDbMemo] as never);
-    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-1' })]);
+    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-1' })], 'tenant-A');
     expect(r.rows[0].action).toBe('NO_CHANGE');
   });
 
   it('ID 一致 + content 変更 → UPDATE', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([baseDbMemo] as never);
-    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-1', content: '本文 v2' })]);
+    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-1', content: '本文 v2' })], 'tenant-A');
     expect(r.rows[0].action).toBe('UPDATE');
   });
 
   it('ID DB に不在 → blocker (他ユーザのメモは見えない)', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([] as never);
-    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-other' })]);
+    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-other' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
     expect(r.rows[0].errors?.[0]).toContain('自分のメモ以外は同期できません');
   });
@@ -138,7 +139,7 @@ describe('computeMemoSyncDiff (T-22 Phase 22d, user-scoped)', () => {
       baseDbMemo,
       { ...baseDbMemo, id: 'm-2', title: 'public M', visibility: 'public' },
     ] as never);
-    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-1' })]);
+    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-1' })], 'tenant-A');
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(true);
     expect(removeRow?.warningLevel).toBe('ERROR');
@@ -149,7 +150,7 @@ describe('computeMemoSyncDiff (T-22 Phase 22d, user-scoped)', () => {
       baseDbMemo,
       { ...baseDbMemo, id: 'm-2', title: 'private M', visibility: 'private' },
     ] as never);
-    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-1' })]);
+    const r = await computeMemoSyncDiff(userId, [csvRow({ id: 'm-1' })], 'tenant-A');
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(false);
     expect(removeRow?.warningLevel).toBe('WARN');
@@ -160,17 +161,21 @@ describe('computeMemoSyncDiff (T-22 Phase 22d, user-scoped)', () => {
     const r = await computeMemoSyncDiff(userId, [
       csvRow({ id: 'm-1', tempRowIndex: 2 }),
       csvRow({ id: 'm-1', title: '別タイトル', tempRowIndex: 3 }),
-    ]);
+    ], 'tenant-A');
     expect(r.canExecute).toBe(false);
   });
 });
 
 describe('applyMemoSyncImport (T-22 Phase 22d)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 2026-05-10 Phase 2-8: applyMemoSyncImport 内の owned check のデフォルト
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({ id: 'm-1' } as never);
+  });
 
   it('canExecute=false なら IMPORT_VALIDATION_ERROR を投げる', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([] as never);
-    await expect(applyMemoSyncImport(userId, [], 'keep'))
+    await expect(applyMemoSyncImport(userId, [], 'keep', 'tenant-A'))
       .rejects.toThrow(/IMPORT_VALIDATION_ERROR/);
   });
 
@@ -182,7 +187,7 @@ describe('applyMemoSyncImport (T-22 Phase 22d)', () => {
     const result = await applyMemoSyncImport(userId, [
       csvRow({ id: 'm-1', content: '本文 v2' }),
       csvRow({ title: '新規メモ' }),
-    ], 'keep');
+    ], 'keep', 'tenant-A');
 
     expect(result.added).toBe(1);
     expect(result.updated).toBe(1);
@@ -194,7 +199,7 @@ describe('applyMemoSyncImport (T-22 Phase 22d)', () => {
       { ...baseDbMemo, id: 'm-2', title: 'public', visibility: 'public' },
     ] as never);
 
-    await expect(applyMemoSyncImport(userId, [csvRow({ id: 'm-1' })], 'delete'))
+    await expect(applyMemoSyncImport(userId, [csvRow({ id: 'm-1' })], 'delete', 'tenant-A'))
       .rejects.toThrow(/IMPORT_REMOVE_BLOCKED/);
   });
 });

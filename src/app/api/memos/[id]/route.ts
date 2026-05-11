@@ -18,7 +18,7 @@ export async function GET(
 
   const { id } = await params;
   const t = await getTranslations('message');
-  const memo = await getMemoForViewer(id, user.id);
+  const memo = await getMemoForViewer(id, user.id, user.tenantId);
   if (!memo) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -49,7 +49,7 @@ export async function PATCH(
     );
   }
 
-  const updated = await updateMemo(id, parsed.data, user.id);
+  const updated = await updateMemo(id, parsed.data, user.id, user.tenantId);
   if (!updated) {
     // 他人のメモ or 存在しない → 404 (情報漏洩防止のため 403 でなく 404)
     return NextResponse.json(
@@ -58,6 +58,7 @@ export async function PATCH(
     );
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'memo',
@@ -78,7 +79,7 @@ export async function DELETE(
 
   const { id } = await params;
   const t = await getTranslations('message');
-  const ok = await deleteMemo(id, user.id);
+  const ok = await deleteMemo(id, user.id, user.tenantId);
   if (!ok) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
@@ -86,6 +87,7 @@ export async function DELETE(
     );
   }
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'memo',

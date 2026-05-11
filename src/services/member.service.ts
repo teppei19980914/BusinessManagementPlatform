@@ -34,9 +34,18 @@ export type MemberDTO = {
   createdAt: string;
 };
 
-export async function listMembers(projectId: string): Promise<MemberDTO[]> {
+/**
+ * 2026-05-09 feedback Phase 2-6: severity-1 テナント越境対策。
+ *   ProjectMember は schema 上 tenantId 列を持たないため `project: { tenantId }` 経由で絞り込み。
+ *   特に addMember は **権限昇格攻撃の起点** (他テナント user を pm_tl で追加) のため
+ *   user と project の tenant 一致を verify する。
+ */
+export async function listMembers(
+  projectId: string,
+  viewerTenantId: string,
+): Promise<MemberDTO[]> {
   const members = await prisma.projectMember.findMany({
-    where: { projectId },
+    where: { projectId, project: { tenantId: viewerTenantId } },
     include: { user: { select: { name: true, email: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -56,10 +65,21 @@ export async function addMember(
   userId: string,
   projectRole: string,
   assignedBy: string,
+  viewerTenantId: string,
 ): Promise<MemberDTO> {
-  // ユーザ存在・有効チェック
+  // 2026-05-09 feedback Phase 2-6: 権限昇格攻撃を遮断するため:
+  //   1. project が viewer の tenant に属することを verify
+  //   2. user が同 tenant に属することを verify
+  //   両者が一致しなければ NOT_FOUND を throw (USER_NOT_FOUND と区別せず情報漏洩防止)
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!project) throw new Error('NOT_FOUND');
+
+  // ユーザ存在・有効チェック + tenantId 一致確認
   const user = await prisma.user.findFirst({
-    where: { id: userId, isActive: true, deletedAt: null },
+    where: { id: userId, tenantId: viewerTenantId, isActive: true, deletedAt: null },
   });
   if (!user) throw new Error('USER_NOT_FOUND');
 
@@ -74,9 +94,10 @@ export async function addMember(
     include: { user: { select: { name: true, email: true } } },
   });
 
-  // 権限変更ログ
+  // 権限変更ログ (Phase 2-10: tenantId 必須化)
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: viewerTenantId,
       changedBy: assignedBy,
       targetUserId: userId,
       changeType: 'project_role',
@@ -101,9 +122,11 @@ export async function updateMemberRole(
   memberId: string,
   newRole: string,
   changedBy: string,
+  viewerTenantId: string,
 ): Promise<MemberDTO> {
-  const member = await prisma.projectMember.findUnique({
-    where: { id: memberId },
+  // 2026-05-09 feedback Phase 2-6: 越境ロール変更を遮断するため findFirst + project tenant 検証。
+  const member = await prisma.projectMember.findFirst({
+    where: { id: memberId, project: { tenantId: viewerTenantId } },
     include: { user: { select: { name: true, email: true } } },
   });
   if (!member) throw new Error('NOT_FOUND');
@@ -114,8 +137,10 @@ export async function updateMemberRole(
     include: { user: { select: { name: true, email: true } } },
   });
 
+  // Phase 2-10: tenantId 必須化
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: viewerTenantId,
       changedBy,
       targetUserId: member.userId,
       changeType: 'project_role',
@@ -136,14 +161,23 @@ export async function updateMemberRole(
   };
 }
 
-export async function removeMember(memberId: string, changedBy: string): Promise<void> {
-  const member = await prisma.projectMember.findUnique({ where: { id: memberId } });
+export async function removeMember(
+  memberId: string,
+  changedBy: string,
+  viewerTenantId: string,
+): Promise<void> {
+  // 2026-05-09 feedback Phase 2-6: 越境メンバー解除を遮断するため findFirst + project tenant 検証。
+  const member = await prisma.projectMember.findFirst({
+    where: { id: memberId, project: { tenantId: viewerTenantId } },
+  });
   if (!member) throw new Error('NOT_FOUND');
 
   await prisma.projectMember.delete({ where: { id: memberId } });
 
+  // Phase 2-10: tenantId 必須化
   await prisma.roleChangeLog.create({
     data: {
+      tenantId: viewerTenantId,
       changedBy,
       targetUserId: member.userId,
       changeType: 'project_role',

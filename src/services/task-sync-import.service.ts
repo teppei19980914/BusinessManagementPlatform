@@ -208,6 +208,7 @@ function dateOnlyStr(d: Date | null): string | null {
 export async function computeSyncDiff(
   projectId: string,
   csvRows: SyncImportRow[],
+  viewerTenantId: string,
 ): Promise<SyncDiffResult> {
   const result: SyncDiffResult = {
     summary: { added: 0, updated: 0, removed: 0, blockedErrors: 0, warnings: 0 },
@@ -215,6 +216,18 @@ export async function computeSyncDiff(
     canExecute: true,
     globalErrors: [],
   };
+
+  // 2026-05-10 feedback Phase 2-8: 越境 sync-import を遮断するため projectId のテナント検証。
+  //   旧仕様は projectId 直叩きで他テナントの WBS を import 可能だった severity-1 バグ。
+  const projectOk = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!projectOk) {
+    result.globalErrors.push('プロジェクトが見つかりません');
+    result.canExecute = false;
+    return result;
+  }
 
   if (csvRows.length === 0) {
     result.globalErrors.push('インポート可能な行がありません');
@@ -229,6 +242,7 @@ export async function computeSyncDiff(
   }
 
   // DB 既存タスクを取得 (T-19: 担当者は CSV で扱わないので member lookup 不要)
+  // Task は tenantId 列を持たないが、projectId が viewerTenantId 配下にあることを上で確認済。
   const existingTasks = await prisma.task.findMany({
     where: { projectId, deletedAt: null },
     select: {
@@ -503,9 +517,10 @@ export async function applySyncImport(
   csvRows: SyncImportRow[],
   removeMode: RemoveMode,
   userId: string,
+  viewerTenantId: string,
 ): Promise<SyncImportResult> {
-  // 1. 再 validation
-  const diff = await computeSyncDiff(projectId, csvRows);
+  // 1. 再 validation (computeSyncDiff 側でテナント検証も実施)
+  const diff = await computeSyncDiff(projectId, csvRows, viewerTenantId);
   if (!diff.canExecute) {
     const msgs = [
       ...diff.globalErrors,

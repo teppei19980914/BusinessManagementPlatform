@@ -46,9 +46,10 @@ export async function PATCH(
   }
 
   try {
-    const member = await updateMemberRole(memberId, parsed.data.projectRole, user.id);
+    const member = await updateMemberRole(memberId, parsed.data.projectRole, user.id, user.tenantId);
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'UPDATE',
       entityType: 'project_member',
@@ -82,9 +83,10 @@ export async function DELETE(
   const { memberId } = await params;
 
   try {
-    await removeMember(memberId, user.id);
+    await removeMember(memberId, user.id, user.tenantId);
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'DELETE',
       entityType: 'project_member',

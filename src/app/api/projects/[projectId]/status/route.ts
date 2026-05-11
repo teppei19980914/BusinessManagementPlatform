@@ -44,6 +44,7 @@ export async function PATCH(
     const project = await changeProjectStatus(projectId, parsed.data.status, user.id, user.tenantId);
 
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'UPDATE',
       entityType: 'project',

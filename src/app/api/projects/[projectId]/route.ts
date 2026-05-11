@@ -73,6 +73,7 @@ export async function PATCH(
   const project = await updateProject(projectId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'project',
@@ -125,6 +126,7 @@ export async function DELETE(
       cascadeKnowledge,
     });
     await recordAuditLog({
+      tenantId: user.tenantId,
       userId: user.id,
       action: 'DELETE',
       entityType: 'project',
@@ -145,6 +147,7 @@ export async function DELETE(
   // 従来通り論理削除
   await deleteProject(projectId, user.id, user.tenantId);
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'project',

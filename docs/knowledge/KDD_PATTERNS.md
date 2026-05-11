@@ -5453,3 +5453,660 @@ PR #297 Phase 1 commit を push 直後、Vercel / GitHub Actions / Playwright E2
 - §5.X+13 / §5.X+14 (本件の前段、テナント越境バグ恒久対策)
 - 公式 doc: <https://nextjs.org/docs/app/api-reference/config/typescript>
 - 公式 doc (Next.js Build Output): <https://nextjs.org/docs/app/api-reference/cli/next#next-build-options>
+
+## 5.X+16 CodeQL の user-controlled な認可 dispatch 偽陽性は **switch 文** で構造的に解消する (PR #302 で 3 段階の試行錯誤を経て確立)
+
+### 背景
+
+PR #302 (Phase 2-5: comment / attachment / stakeholder のテナント越境フィルタ) で
+GitHub Advanced Security の **CodeQL チェックが連続 fail**。**異なる rule の偽陽性を 2 連続**で踏んでから
+最終解にたどり着いた経緯を記録する。
+
+### 試行 1: 元コード (`if (entityType === 'memo')`) → `js/user-controlled-bypass` で flagged
+
+```
+Rule: js/user-controlled-bypass (CWE-290 / CWE-807, severity high)
+File: src/app/api/attachments/route.ts:60
+Title: User-controlled bypass of security check
+Message: This condition guards a sensitive [action], but a [user-provided value] controls it.
+```
+
+```ts
+async function authorize(user, entityType, entityId, mode) {
+  if (entityType === 'memo') {           // ← この行が flagged
+    const { ok } = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
+    ...
+  }
+  // project member 経路 (project / task / estimate / risk / retrospective / knowledge)
+  ...
+}
+```
+
+CodeQL の懸念: `entityType` (URL `searchParams.get('entityType')` 由来 = user-controlled) で
+**認可関数 (`authorizeMemoAttachment` vs `checkMembership`) を切り替え** している → user が
+choose できる security check は bypass 経路になり得る (CWE-290 認証バイパス / CWE-807 信頼できない入力に基づく
+セキュリティ判断)。
+
+### 試行 2: constant-record dispatch (`obj[entityType](...)`) → `js/unvalidated-dynamic-method-call` で flagged
+
+試行 1 を解消するため `Record<AttachmentEntityType, Authorizer>` のテーブル lookup に置換:
+
+```ts
+const ATTACHMENT_AUTHORIZER: Record<AttachmentEntityType, ...> = {
+  memo: (user, entityId, mode) => authorizeMemoEntity(user, entityId, mode),
+  project: (user, entityId, mode) => authorizeProjectScopedEntity(user, 'project', entityId, mode),
+  // ... 他 5 種
+};
+async function authorize(user, entityType, entityId, mode) {
+  return ATTACHMENT_AUTHORIZER[entityType](user, entityId, mode);   // ← この行が flagged
+}
+```
+
+しかし新たな alert が発生:
+
+```
+Rule: js/unvalidated-dynamic-method-call (CWE-94, severity high)
+File: src/app/api/attachments/route.ts:179
+Title: Unvalidated dynamic method call
+Message: Invocation of method with [user-controlled] name may dispatch to unexpected target and cause an exception.
+```
+
+CodeQL の懸念: user-controlled `entityType` が **動的プロパティアクセスのキー**として使われる →
+未知のキーで `undefined()` 例外、もしくは prototype-pollution 経由の意図しない関数呼び出しの懸念。
+TypeScript の `Record<EnumKey, ...>` 型注釈は **コンパイル時の網羅性チェック**には効くが、
+**ランタイムの値域は CodeQL データフロー解析からは見えない**ため flag される。
+
+### 試行 3 (最終解): **switch 文** + TypeScript exhaustive `never` ガード
+
+```ts
+async function authorize(user, entityType, entityId, mode) {
+  switch (entityType) {
+    case 'memo':
+      return authorizeMemoEntity(user, entityId, mode);
+    case 'project':
+    case 'task':
+    case 'estimate':
+    case 'risk':
+    case 'retrospective':
+    case 'knowledge':
+      return authorizeProjectScopedEntity(user, entityType, entityId, mode);
+    default: {
+      // TypeScript exhaustiveness check: 新 entityType 追加時は本 default 節で
+      // compile error になるため、authorize() の case 漏れを構造的に防ぐ。
+      const _exhaustive: never = entityType;
+      throw new Error(`Unhandled attachment entityType: ${String(_exhaustive)}`);
+    }
+  }
+}
+```
+
+### なぜ switch なら通るのか
+
+CodeQL JS のクエリは「user-controlled な if-condition で security 関数を gate」「user-controlled キーで
+動的プロパティアクセス」を flag する一方、**switch 文の case label は静的 string literal**
+として扱われ、以下 2 点で「構造的安全」と判定される:
+
+1. **case label の値域がコンパイル時に確定** — `'memo'` `'project'` 等は AST 上の string literal で、
+   user-controlled value が「label を選ぶ」のではなく「事前定義された label の中から match
+   するものに飛ぶ」semantics。CodeQL の dispatch tracker は switch を「table-driven dispatch on
+   typed enum」として認識する経験則がある。
+2. **動的プロパティアクセスが存在しない** — `obj[entityType]` のような computed lookup が無く、
+   各 case の関数呼び出しは **静的に解決**される。`js/unvalidated-dynamic-method-call` の
+   data-flow tracker が引っかからない。
+
+### TypeScript exhaustive `never` ガードが組み合わせとして必須
+
+```ts
+default: {
+  const _exhaustive: never = entityType;
+  throw new Error(`Unhandled attachment entityType: ${String(_exhaustive)}`);
+}
+```
+
+- `AttachmentEntityType` enum に新 entity 種別 (例: `'comment'`) を追加すると、
+  `_exhaustive: never = entityType` で **compile error** になる (= 全 case が網羅されていない)
+- ランタイムで万一未知 entityType が来たら **throw で fail-fast** (silent bypass を防ぐ)
+- これにより constant-record dispatch の「型レベル網羅性強制」と同等の保護を維持しつつ、
+  静的 dispatch の利点を得る
+
+### 抽出したルール
+
+- [ ] **user-controlled value で認可関数を dispatch する場合は最初から `switch` 文で書く**:
+      `if (x === 'literal') { ... }` でも `obj[x]()` でも CodeQL に flagged される。
+      `switch (x) { case 'literal': ... default: assertNever(x) }` のみが両方を回避できる
+- [ ] **switch + exhaustive `never` ガードの組合せが TypeScript / CodeQL 両方に対する黄金パターン**:
+      新 enum 値の追加が compile error で検出され (silent bypass なし)、
+      かつ CodeQL の「dispatch on validated enum is safe」ヒューリスティックに乗る
+- [ ] **CodeQL 偽陽性 fix は「別の偽陽性」を呼びがち**: PR #302 では if → record dispatch で
+      別 alert が発生した。**fix のたびに実 push して CodeQL の判定を確認する**フィードバック
+      ループが必要 (机上で「これで通るはず」と決め打ちしない)
+- [ ] **`Record<EnumKey, Handler>[userKey]()` は便利だが認可 dispatch には使えない**:
+      動的プロパティアクセスが CodeQL `js/unvalidated-dynamic-method-call` のメイン検出対象。
+      認可以外の dispatch (例えば formatter / serializer など security に直接関係ない用途) は OK
+- [ ] **CodeQL JavaScript は inline 抑止コメント (`// lgtm[...]` / `// codeql[...]`) を公式サポートしない**
+      (2026-05 時点。C/C++/Java/C# のみ)。**コード refactor が JS では唯一の解**
+- [ ] **dismiss は GitHub UI で `security_events: write` 権限が必要**: gh CLI の `repo` scope では不可。
+      CI を通したい場合はコード refactor が現実解
+- [ ] **既存 alert と同じ rule + 同じ file + 同じ line でも PR で「new alert」扱いになり得る**:
+      CodeQL のフィンガープリントは周辺コード変更で揺れる (call-site の引数追加で変わる例を本件で観測)
+- [ ] **横展開チェック**: `git grep -E "if \(.*=== '.*'\)" src/app/api/` で user-controlled な
+      if-dispatch を検出し、認可周りでは予防的に switch 文に書き換える
+
+### 横展開対象 (本 PR では未着手、将来対応候補)
+
+- `src/app/api/attachments/[id]/route.ts:43` — 同じ `if (entityType === 'memo')` パターン
+  (現状は CodeQL 未 flag、`existing.entityType` が DB 由来で user-controlled tracker に乗らないため)
+- `src/app/api/attachments/batch/route.ts` — 多数の `if (entityType === '...')` 分岐
+  (但し dispatch ではなく entity 個別 query なので別 pattern)
+
+### 関連
+
+- 修正例: PR #302 (feat/tenant-isolation-phase2-comment-attachment-stakeholder)
+  - 試行 1 (元コード): commit 008a138 — main 同等の if-condition
+  - 試行 2 (record dispatch): commit 54933e7 — `js/user-controlled-bypass` 解消も別 alert 発生
+  - 試行 3 (switch 文、本ナレッジ確立): 本 PR の最終 commit
+- CodeQL alert 番号:
+  - #14: PR #302 試行 1 が flagged
+  - #5: main 既存・同 rule/同 file/同 line (試行 1 と本質的に同じ)
+  - 試行 2 で発生した alert (commit 54933e7 head)
+- CodeQL rule docs:
+  - `js/user-controlled-bypass`: <https://codeql.github.com/codeql-query-help/javascript/js-user-controlled-bypass/>
+  - `js/unvalidated-dynamic-method-call`: <https://codeql.github.com/codeql-query-help/javascript/js-unvalidated-dynamic-method-call/>
+- CWE 番号:
+  - CWE-94 (Improper Control of Generation of Code / 'Code Injection'): <https://cwe.mitre.org/data/definitions/94.html>
+  - CWE-290 (Authentication Bypass by Spoofing): <https://cwe.mitre.org/data/definitions/290.html>
+  - CWE-807 (Reliance on Untrusted Inputs in a Security Decision): <https://cwe.mitre.org/data/definitions/807.html>
+
+## 5.X+17 同一ファイルを **複数開発中 PR が並行更新する場合の merge conflict 対策** (PR #306 で確立)
+
+### 背景
+
+Phase 2 テナント越境対策を 9 個の独立 PR (#298〜#306) に分割して並行進行した結果、**全 PR が同じドキュメント `docs/security/TENANT_ISOLATION_PHASE2_TODO.md` を更新**する設計となり、後発の PR が先行 PR のマージ後に必ず conflict を起こした。
+
+PR #306 (Phase 2-9) の場合:
+- 作成時点 (2026-05-09): main は #297-#300 までマージ済
+- マージ時点 (2026-05-10): main は #301-#305 + #307 までマージ済 ← **5 PR 分の進捗が main 側に書き込まれている**
+- PR #306 自身も「Phase 2-9 完了マーク」を doc に追加していた → 3 箇所で衝突
+
+```
+docs/security/TENANT_ISOLATION_PHASE2_TODO.md
+  3 箇所 conflict (knowledge/retrospective/memo セクション + memo の createMemo 行 +
+                    comment/stakeholder/attachment/estimate/member/user セクション)
+```
+
+### 観測された衝突パターン
+
+| パターン | 例 | 解消方針 |
+|---|---|---|
+| 同じセクションを **両方が完了マーク** | knowledge.service.ts: HEAD は `(PR #301 Phase 2-4)`、main は `(PR Phase 2-4, 2026-05-09)` で文言違い | **main を採用** (実際に merge されたバージョン) |
+| 一方が後続項目を追加 | memo.service.ts に main 側で `createMemo` 行が追加 | **main を採用** (情報が増えている) |
+| 一方が完了状態を更新 | user.service.ts の `lockInactiveUsers` を HEAD は `[x]`、main は `[ ] (Phase 2-9 で対応予定)` | **実態を確認**: コードを grep して既に実装済みなら `[x]` を採用 (HEAD の認識が正しい)、未実装なら main を採用 |
+| **後続フェーズ PR が前フェーズの暫定実装を最終形に置換** | PR #307 (Phase 2-10) で `audit-logs/route.ts`: HEAD は `where: { tenantId: user.tenantId }` (直接列フィルタ、Phase 2-10 schema 列追加が前提)、main は `where: { user: { tenantId } }` (Phase 2-9 暫定対応の relation 経由) | **HEAD を採用** (Phase 2-10 schema 列追加で初めて有効になる最終形)。Phase 2-9 は schema 制約下の暫定 fallback だったため、Phase 2-10 が完成したら HEAD の方が技術的に正解 |
+
+### 採用したルール
+
+- [ ] **進捗 doc は「PR 番号で完了マーク」をやめ「日付ベース」に揃える**: `(PR #301 Phase 2-4)` ではなく `(PR Phase 2-4, 2026-05-09)` のように **日付** を主キーにする。PR 番号は merge 順で前後するが、日付は単調で衝突解消の判断基準として一意
+- [ ] **同 doc を更新する PR が並行する場合、後発 PR は冒頭で `git pull origin main` してリベースを試す**: `gh pr view <n> --json mergeStateStatus` で `DIRTY` (= conflict) を検出したら即対応する。マージ直前に発覚すると CI 再実行で +30 分のロス
+- [ ] **conflict 解消の判断基準**: 「**実際に main にマージされた状態が真**」が原則。HEAD 側の文言が古い情報 (PR 作成時点の認識) で、main 側の文言が最新の実装状況を反映している。ただし「完了マーク `[x]/[ ]`」については、対応する **コードの grep で実態を確認**してから判断する (= doc が間違っている可能性も考慮)
+- [ ] **Phase 並行型 PR では doc 更新を別 PR にまとめる選択肢もあり**: 今回は各 PR が自分の進捗を doc に書き込む方式だったが、これだと N 並行 PR で N-1 回 conflict を踏む。代替案として **進捗 doc 更新だけを別 PR で月末バッチ更新**にすると衝突 0 にできる (但し各 PR の進捗が他 PR からは見えないトレードオフあり)
+- [ ] **進捗 doc に書く粒度を制御する**: 「全 7 関数」のような略記より「個別関数名 + 一行説明」の方が衝突しても merge tool が機械的に解消できる確率が高い (3-way merge 時の anchor が増えるため)
+
+### conflict 解消手順 (本件で確立)
+
+```bash
+# 1. main 取り込みを試行
+git checkout <pr-branch>
+git pull origin main --no-edit
+
+# 2. conflict ファイル一覧を確認
+git status | grep "both modified"
+
+# 3. 各 conflict について「main 側」を採用するか「HEAD 側」を採用するか判定
+git diff <conflict-file>     # markers と内容を確認
+# - 文言違いだけ                   → main を採用 (より新しい)
+# - HEAD のみ追加項目あり          → HEAD を採用
+# - main のみ追加項目あり          → main を採用
+# - 両方が同じ行を異なる完了状態に  → コード grep で実態確認
+
+# 4. 全 conflict 解消後に検証
+grep -rn "<<<<<<<\|=======\|>>>>>>>" docs/   # → 出力なしを確認
+pnpm test && pnpm build                       # → リグレッションなしを確認
+
+# 5. merge commit を完了
+git add <conflict-files>
+git commit --no-edit                          # default merge message を採用
+git push
+```
+
+### 後続フェーズが暫定実装を置換する場合のルール (PR #307 で確立)
+
+Phase 2-9 と Phase 2-10 のように **同じファイルを段階的に進化させる PR** が並行する場合、
+2 つの異なる衝突パターンが発生する:
+
+1. **HEAD = 最終形 / main = 暫定 fallback**: Phase 2-10 (PR #307) は schema 列追加を前提とした
+   最終実装 (`where.tenantId`)。Phase 2-9 (PR #306) は schema 列が無い段階での暫定実装
+   (`where.user.tenantId`)。**HEAD を採用** (= schema 列がある前提の最終形が正解)
+2. **HEAD = 暫定 / main = 最終形**: 通常はこの順で発生しない (= 後発 PR が先行 PR の最終形に
+   逆戻りすることは無い) が、誤って起きた場合は main を採用
+
+### 段階的実装の conflict 予防策
+
+- [ ] **後発 PR (Phase N) のコード comment に「Phase N-1 で導入した暫定実装からの最終移行」を明記**:
+      conflict 解消時に HEAD/main どちらが「最終形」か即判別できる
+- [ ] **段階実装の最後の commit message に「Phase N で完成、Phase N-1 の暫定実装を置換」と記録**:
+      git log から conflict 解消の判断材料を遡れる
+- [ ] **同 schema 依存の PR が並行する場合は順次マージ**: Phase 2-9 がマージされる前に
+      Phase 2-10 を作成すると、Phase 2-10 の最終形コードがレビューで「現在は使えない」と
+      misunderstanding されるリスク。本件では Phase 2-10 を後発 (#307) として、Phase 2-9
+      (#306) の merge 待ちの後に流す予定だったが、両方並行で merge しようとして conflict 発生
+
+### 関連
+
+- 修正例 1: PR #306 (feat/tenant-isolation-phase2-api-medium) の merge conflict 解消 (進捗 doc のみ)
+- 修正例 2: PR #307 (feat/tenant-isolation-phase2-audit-tokens) の merge conflict 解消
+  (進捗 doc + audit-logs/route.ts + role-change-logs/route.ts の 3 箇所、後続フェーズ置換パターン)
+- 並行 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 文言修正)
+- 公式 doc (Git merge): <https://git-scm.com/docs/git-merge>
+
+## 5.X+18 severity-1 セキュリティ仕様の **3 層防御テスト戦略** (PR feat/tenant-isolation-comprehensive-tests で確立)
+
+### 背景
+
+Phase 2 (PR #297-#308) で確立した「テナント越境を構造的に遮断する」仕様は、**今後の改修でも
+基本変更されない**。一方、改修時にうっかり tenant フィルタを忘れた service / route が混入すると、
+**個人情報漏洩 (severity-1)** に直結する。リリース後検知では遅すぎるため、**リリース前検知の
+網を厚くする** 必要があった。
+
+### 採用した 3 層防御テスト戦略
+
+severity-1 リグレッションを **3 つの独立したレイヤ** で検出する設計。1 層が破られても他層で
+catch できるよう、検出粒度と検出原理を変える。
+
+#### Layer 1: Service 層 不変条件テスト (`src/services/__tests__/tenant-isolation-invariants.test.ts`)
+
+**検出原理**: ファイル内容の **静的解析** (grep 相当)。
+
+```ts
+// 全 service ファイルが tenant フィルタを使っていることを静的に保証
+it.each(ALL_SERVICE_FILES.filter(...))(
+  '%s に tenantId / viewerTenantId フィルタが含まれている',
+  (filePath) => {
+    const content = readFileSync(filePath, 'utf-8');
+    const hasTenantFilter =
+      content.includes('tenantId:') ||
+      content.includes('viewerTenantId') ||
+      content.includes('project: { tenantId') ||
+      content.includes('tenant: {');
+    expect(hasTenantFilter).toBe(true);
+  },
+);
+```
+
+**強み**: コード追加時に **即時 fail** (DB 不要、< 1 秒)。CI 高速 path で先頭で検出。
+**弱み**: false positive を避けるため許可リスト管理が必要 (cron / pure logic / pre-auth 等)。
+
+#### Layer 2: Service 層 単体テスト (各 `*.service.test.ts`)
+
+**検出原理**: モック DB に対して service 関数を呼んで、`prisma.findMany` の where 句に
+tenantId が含まれることを **mock 呼び出し検査** で確認。
+
+```ts
+it('★越境テスト★ 他テナント user は返さない', async () => {
+  await listKnowledge({ ... }, 'u-1', 'general', 'tenant-A');
+  const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+  expect(call.where).toMatchObject({ tenantId: 'tenant-A' });
+});
+```
+
+**強み**: ロジックの細部 (ID lookup / where 構築) を高速に検証。リファクタ時の挙動保存を保証。
+**弱み**: モック前提なので「実 DB で本当に隔離されているか」までは保証しない。
+
+#### Layer 3: E2E 越境攻撃シナリオ (`e2e/specs/11-tenant-isolation.spec.ts`)
+
+**検出原理**: 実 DB に 2 テナント立てて、テナント A admin が テナント B の URL を **直接叩く**
+攻撃シナリオを再現。Service / Route / DB / Auth middleware の **end-to-end 動作で隔離を確認**。
+
+```ts
+test('PATCH /api/projects/[B-id] → 404 (テナント B の project は A admin が更新不可)', async () => {
+  const res = await adminARequest.patch(`/api/projects/${tenantB.projectId}`, {
+    data: { name: 'attacked' },
+  });
+  expect([403, 404]).toContain(res.status());
+});
+```
+
+**強み**: 「攻撃者視点の動作」を直接検証。テスト間に依存がないので 1 件 fail でも他 28 件は走る。
+**弱み**: CI 時間がかかる (E2E は分単位)。DB セットアップ + cleanup の重さ。
+
+### 3 層の使い分け
+
+| 検出シナリオ | Layer 1 (静的) | Layer 2 (単体) | Layer 3 (E2E) |
+|---|---|---|---|
+| 新規 service が tenant フィルタを忘れた | ✅ 即検出 | ❌ そもそも test 書かれてない可能性 | ✅ E2E で 404/403 期待 |
+| 既存 service の where から tenantId が消えた | ❌ 他箇所に残ってる可能性 | ✅ 直接検出 | ✅ E2E で fail |
+| API route が user.tenantId を service に渡し忘れた | ❌ 静的解析の限界 | △ service 単体だと API 層は別 | ✅ E2E で必ず fail |
+| 提案エンジンが seed 以外の他テナント許容 | ✅ MANAGEMENT_TENANT_ID パターン検証 | ✅ where 句構造検証 | ✅ E2E で B のデータ混入確認 |
+| schema 列追加忘れ (migration 漏れ) | ❌ 静的解析範囲外 | △ Prisma 型エラーで間接検出 | ✅ 実 DB 経路で確実に検出 |
+
+### 採用したルール
+
+- [ ] **severity-1 仕様 (個人情報 / 認可境界 / アカウント乗っ取り経路) は 3 層防御を必須化**:
+      Layer 1 (静的) + Layer 2 (単体) + Layer 3 (E2E) のいずれかが欠けていたら PR レビューで reject
+- [ ] **invariants test は許可リスト管理**: 例外を入れる時は **コメントに理由** を必ず明記。
+      「pure logic」「cron 横断」「pre-auth」等のカテゴリで分類すると後で見直しやすい
+- [ ] **E2E は API レイヤで検証する**: UI 経由はボタン非表示で気付けない攻撃経路を見逃す。
+      `Playwright APIRequestContext` で session cookie を持ったまま `fetch` で直接 URL を叩く
+- [ ] **E2E spec は chromium project でのみ実行**: モバイル viewport で重複実行しても
+      検出価値ゼロかつ CI 時間 2x。`testIgnore` で除外
+- [ ] **multi-tenant fixture は別ファイルに集約**: `e2e/fixtures/multi-tenant.ts` で
+      `createTenantPair(runId)` / `cleanupTenants(ids)` を提供すると spec 側がスッキリする
+- [ ] **テスト名に「★越境★」「★severity-1★」等の視覚マーカーを入れる**: CI ログで該当 fail を
+      即座に発見できる。一般機能 fail とごった煮にしない
+
+### 横展開チェック (新規 severity-1 仕様を作る時)
+
+```bash
+# Layer 1 候補追加
+ls src/services/*.ts | wc -l   # 全 service 数を確認
+# tenant-isolation-invariants.test.ts に新 service の允許 / 検査追加
+
+# Layer 2 候補追加
+grep -L "tenant" src/services/*.test.ts   # tenant 検証無い test ファイル抽出
+
+# Layer 3 候補追加
+ls e2e/specs/*.spec.ts | grep -i security  # 既存 security spec を流用 or 新規
+```
+
+### 関連
+
+- 仕様 doc: docs/security/TENANT_ISOLATION_PHASE2_TODO.md (3 層が full coverage したら HISTORY.md へリネーム)
+- 元 PR シリーズ: #297-#308 (Phase 1〜2-10 + UI 修正)
+- E2E coverage 一覧: docs/test/E2E_COVERAGE.md 「★テナント分離 / 提案エンジン」セクション
+- Layer 1 実装: src/services/__tests__/tenant-isolation-invariants.test.ts
+- Layer 2 実装: src/services/*.service.test.ts (各 service の越境テスト)
+- Layer 3 実装: e2e/specs/11-tenant-isolation.spec.ts / e2e/specs/12-suggestion-seed-data.spec.ts
+
+---
+
+## 5.X+19 dependabot.yml の `schedule.day` は `weekly` 限定 (PR #310 で遭遇)
+
+### 罠の正体
+
+`.github/dependabot.yml` の `schedule.day` フィールドは **`interval: weekly` でのみ有効**。
+`monthly` で `day` を指定したり、`'first monday'` のような複合文字列を渡すと、GitHub の
+dependabot validator が **PR check 段階で fail** する (1 秒以内、ログ出力なし)。
+
+### 仕様 (公式)
+
+公式ドキュメント: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+| `interval` | `day` 指定可否 | 有効値 |
+|---|---|---|
+| `daily` | × (毎日実行) | — |
+| `weekly` | ✅ (必須ではない、未指定なら任意の曜日) | `monday` / `tuesday` / ... / `sunday` の **単一値のみ** |
+| `monthly` | ❌ (毎月 1 日に自動実行) | — |
+
+`'first monday'` `'last friday'` などの複合表現は仕様にない。
+
+### 検出が遅れた理由
+
+- **dependabot check は CI ログを残さず短時間で fail** (1s) するため、ログを grep しても
+  原因に到達できない。`gh pr checks` の URL を辿ると detailed error が見える場合があるが、
+  辿れないこともある (PR #310 では 404)。
+- 設定ファイル parse は GitHub 側 service が行うため、**ローカルの YAML lint では捕捉できない**。
+
+### 横展開チェック (dependabot.yml 編集時)
+
+- [ ] `schedule.day` を入れているなら `interval: weekly` か確認
+- [ ] `schedule.day` の値は `monday` 〜 `sunday` の単一文字列か確認 (空白を含む複合表現は無効)
+- [ ] `monthly` で「月内の特定週/曜日に実行したい」要件があれば、**`weekly` + `day: monday`
+      に変更し、人間の判断で月内の必要回数だけマージ** する運用に切り替える (= dependabot は
+      週次 PR を出すが、人間が月初の Monday 分だけ approve する)
+
+### 修正例
+
+```yaml
+# Before (PR #310 fail):
+- package-ecosystem: 'npm'
+  schedule:
+    interval: 'monthly'
+    day: 'first monday'        # ← 二重に invalid (monthly + 複合文字列)
+
+# After:
+- package-ecosystem: 'npm'
+  schedule:
+    interval: 'monthly'         # 月次は毎月 1 日固定で自動実行される
+    time: '03:00'
+    timezone: 'Asia/Tokyo'
+```
+
+### 関連
+
+- 修正例: PR #310 (2026-05-10)
+- 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
+- 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+---
+
+## 5.X+20 `eslint-config-next` minor 上げで `react-hooks/set-state-in-effect` / `react-hooks/refs` が新規 enforce — 既存 useEffect/useRef を Hooks-7.1 互換に書き換える (PR #323 dependabot 対応 / 2026-05-11)
+
+### 罠の正体
+
+dependabot の **patch / minor 上げ** にしか見えない `eslint-config-next 16.2.3 → 16.2.6` で、
+**`eslint-plugin-react-hooks` が 7.0.x → 7.1.1 に transitive bump** し、以下 2 ルールが新規 enforce:
+
+| ルール | 検出対象 | 影響範囲 |
+|---|---|---|
+| `react-hooks/set-state-in-effect` | useEffect 本体内 (同期) で setState を呼ぶ、または **setState を含む関数を呼ぶ (call graph 解析)** | fetch-on-mount / derived state sync / deep-link auto-open |
+| `react-hooks/refs` | render 中 (= useEffect/useCallback/event handler 外) で `ref.current = ...` する | "最新値を保持する ref" の常用パターン |
+
+CI ログでは `eslint-plugin-react-hooks` の version 表記が無いため、**「config-next を上げただけ」と
+見誤って原因特定が遅れる**。実体は **transitive な peer plugin** の major-minor 跨ぎ強化。
+
+PR #323 の CI fail 内訳 (5 件):
+
+| ファイル | ルール | 構造 |
+|---|---|---|
+| `src/app/(auth)/setup-password/page.tsx:78` | set-state-in-effect | useEffect 同期分岐 `if (!token) { setTokenError(...); setIsValidating(false); }` |
+| `src/app/(dashboard)/memos/memos-client.tsx:264` | set-state-in-effect | `useEffect(() => setMemos(initialMemos), [initialMemos])` (derived state sync) |
+| `src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx:191` | set-state-in-effect | `useEffect(() => { void reload(); }, [reload])` (call graph で reload 内 setState を検出) |
+| `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx:785` | set-state-in-effect | useEffect 内 `openEditDialog(target)` (useCallback 内で setState を呼ぶ) |
+| `src/lib/use-lazy-fetch.ts:35` | refs | `stateRef.current = state` を render body 直下で実行 |
+
+### 修正パターン (4 種類)
+
+#### Pattern A: 初期 state を派生させる (synchronous-setState-in-effect 解消)
+
+**Before:**
+
+```tsx
+const [tokenError, setTokenError] = useState('');
+const [isValidating, setIsValidating] = useState(true);
+useEffect(() => {
+  if (!token) {
+    setTokenError(t('invalidLink'));  // ★ violation
+    setIsValidating(false);
+    return;
+  }
+  fetch(...).then(...);
+}, [token, t]);
+```
+
+**After:**
+
+```tsx
+// 初期 state を token 有無から派生
+const [tokenError, setTokenError] = useState(token ? '' : t('invalidLink'));
+const [isValidating, setIsValidating] = useState(!!token);
+useEffect(() => {
+  if (!token) return;        // 初期 state で表示済
+  fetch(...).then(...);      // .then 内 setState は microtask で対象外
+}, [token, t]);
+```
+
+#### Pattern B: derived state は **render 中に prev 比較で setState** (React 公式推奨)
+
+`useEffect(() => setX(prop), [prop])` は React 公式が "Anti-pattern" と明記している。
+代わりに **render 中の条件付き setState** (React は自動的に再 render を 1 回に統合) を使う。
+
+**Before:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+useEffect(() => {
+  setMemos(initialMemos);  // ★ violation + 余分な再 render
+}, [initialMemos]);
+```
+
+**After:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+const [prevInitialMemos, setPrevInitialMemos] = useState(initialMemos);
+if (prevInitialMemos !== initialMemos) {
+  setPrevInitialMemos(initialMemos);  // render 中の setState は合法 (React docs)
+  setMemos(initialMemos);
+}
+```
+
+ref: <https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes>
+
+#### Pattern C: ref 同期は useEffect 経由 (`react-hooks/refs` 解消)
+
+**Before:**
+
+```ts
+const stateRef = useRef(state);
+stateRef.current = state;  // ★ violation: render 中の ref 更新
+```
+
+**After:**
+
+```ts
+const stateRef = useRef(state);
+useEffect(() => {
+  stateRef.current = state;  // commit 後に同期、async コールバックの読出しには十分
+});
+```
+
+#### Pattern D: 公式が認める正当パターンは `eslint-disable-next-line` (reason コメント必須)
+
+以下は React 公式が `useEffect` を **正当な選択肢** として挙げているため、disable で局所許容する:
+
+1. **fetch-on-mount** (`useEffect(() => { void reload(); })`):
+   ref: <https://react.dev/reference/react/useEffect#fetching-data-with-effects>
+2. **Deep-link 着地時の 1 回限り副作用** (ref ガード済の auto-open dialog):
+   cascading render は ref ガードで防止済
+
+**書き方** (理由は必ず `--` 以降に明記):
+
+```tsx
+useEffect(() => {
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- reload は async で setState は microtask、fetch-on-mount 公式パターン
+  void reload();
+}, [reload]);
+```
+
+### 検出が遅れた理由
+
+- `eslint-plugin-react-hooks` の version は `eslint-config-next` の transitive。`pnpm-lock.yaml`
+  の差分にしか現れず、PR の `package.json` diff (`config-next` の 1 行) からは推測不可能。
+- 各 violation は **build / tsc では検出されない** (lint 専用)。CI が `pnpm lint` を走らせて
+  初めて発覚する。
+- ローカル `pnpm lint` でも、main の lockfile (7.0.x) では新ルールが存在しないため再現しない。
+  → **PR ブランチの lockfile を pull するか、`pnpm add -D eslint-plugin-react-hooks@7.1.1`
+  で手動 pin** しないと再現できなかった。
+
+### 横展開チェック (dependabot で eslint 系 minor 上げ PR を見たとき)
+
+- [ ] `pnpm-lock.yaml` の diff から `eslint-plugin-react-hooks` の version 変動を確認
+- [ ] CI lint ログで `react-hooks/(set-state-in-effect|refs)` を grep し、件数を把握
+- [ ] 修正は **本 PR ではなく main ベースの独立 PR** で行う (dependabot ブランチは force-push
+      されうるため変更が消える可能性)。main 経由で fix が入れば dependabot PR は rebase 後に
+      自動で green
+- [ ] disable directive を使う場合は **reason コメント必須** (`--` 以降に「なぜ」を書く)。
+      "fetch-on-mount" や "ref ガード済" 等の根拠を残す
+- [ ] 修正後は **fix branch でも `pnpm-lock.yaml` は触らない** ことを推奨 (config-next の bump は
+      dependabot に任せる)。これにより fix PR は code-only の小さい diff になり review しやすい
+
+### 関連
+
+- 修正 PR: 本 PR (fix/eslint-react-hooks-rules-16.2.6 / 2026-05-11)
+- dependabot PR: #323 (chore(deps): bump eslint-config-next from 16.2.3 to 16.2.6)
+- 公式 (React docs): <https://react.dev/learn/you-might-not-need-an-effect>
+- 公式 (React useEffect): <https://react.dev/reference/react/useEffect>
+- 公式 (eslint-plugin-react-hooks): <https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks>
+
+---
+
+## 5.X+21 `.claude/.last-knowledge-check-sha` は **gitignore 済だが track 状態** で毎回 conflict を起こす — `git rm --cached` + `.gitattributes merge=ours` で恒久解消 (PR #326 / 2026-05-11)
+
+### 罠の正体
+
+`.claude/.last-knowledge-check-sha` は `session-start-knowledge-check.sh` が **ローカルセッション
+毎に** 上書きする bookkeeping (前回 SessionStart 時の `origin/main` HEAD SHA) で、本来
+git にコミットすべきではないファイル。
+
+- `.gitignore` の line 56 に登録済 — 設計上は untracked
+- しかし過去のセッション (2026-04-25 の auto-commit) で **gitignore 設定前に commit された**
+  ため、git history 上はずっと **tracked 扱い**
+- 一度 tracked になると `.gitignore` は **新規追加のみブロック** し、既存 tracked file の
+  変更は通常通り stage される
+
+→ 結果として毎日 dev ブランチで auto-commit が走り、main 側も別タイミングで更新され、
+**毎回の dev → main マージで必ず 1-line conflict が発生** する。発生例:
+- PR #319, #326 (dev 系) など、本ファイルしか差分がない PR が auto-PR 作成のたびに conflict 化
+- 2026-05-10 にも同種の修正が必要だった (`.last-knowledge-check-sha` 単体 conflict 解消)
+
+### 恒久対策 (PR #326 で適用)
+
+1. **`git rm --cached .claude/.last-knowledge-check-sha`** で git tracking から外す
+   - ローカルファイルは残るため SessionStart hook の動作 (line 36-39 で「ファイル不在なら
+     初期化のみで exit」) には影響なし
+   - 新規 clone した環境では本ファイルが存在しないが、初回 SessionStart で自動初期化される
+2. **`.gitattributes` に `merge=ours` を追加** — 保険として「再 track された場合も自動で
+   destination 側の値を優先する」merge driver を仕込む
+   ```
+   .claude/.last-knowledge-check-sha merge=ours
+   ```
+3. (`.gitignore` は既に line 56 に登録済 — 変更不要)
+
+### conflict が発生してしまった時の応急処置 (恒久対策が入る前)
+
+dev → main 方向の merge で `.last-knowledge-check-sha` だけが衝突した場合、**ファイル単体
+の中身は意味を持たない** ため、destination (= main 側) の値を採用すれば良い。
+
+```bash
+# dev ブランチで main を取り込む場合
+git merge origin/main
+# → CONFLICT (content): Merge conflict in .claude/.last-knowledge-check-sha
+git checkout --theirs .claude/.last-knowledge-check-sha
+git add .claude/.last-knowledge-check-sha
+git commit
+```
+
+なお、当日 dev ブランチに **本ファイルしか差分がない** auto-PR (例: PR #326) は
+**マージしても main に何も変化を与えない**。conflict 解消だけして merge するか、PR ごと
+close するかは判断次第:
+- merge する判断 → 「daily branch 運用記録」として PR 履歴を残したい場合
+- close する判断 → 純粋な no-op を main の merge log に残したくない場合
+
+### 横展開チェック (新しく「セッション毎に変わるローカル bookkeeping ファイル」を追加するとき)
+
+- [ ] **新規ファイルは絶対に commit しない**: `.gitignore` への登録だけでは不十分 (track
+      済ファイルは止められない)。最初の commit 前に `.gitignore` 登録を済ませる
+- [ ] **既存ファイルを「これからは ignore する」場合**: `.gitignore` 追加だけでなく
+      **必ず `git rm --cached` で untrack** すること。`.gitattributes merge=ours` も併用
+- [ ] **session-start hook が `git add -A` を使う場合**: hook 側で `git update-index --skip-worktree`
+      する代替案もあるが、新規 clone した同僚に伝播しないため `.gitignore` + `git rm --cached`
+      の方が安全
+- [ ] auto-PR 自動化スクリプト (`session-start-git.sh` 等) は「実質コード変更が無い branch
+      は PR 化しない」スキップ条件を後で追加検討 (本件のような no-op PR 量産を防ぐ)
+
+### 関連
+
+- 修正 PR: 本 PR (#326 / dev/2026-05-10)
+- 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
+- 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
+- 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
+- 公式 (gitattributes merge): <https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver>

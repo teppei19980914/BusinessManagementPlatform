@@ -112,8 +112,52 @@ export async function POST(req: NextRequest) {
     });
     filteredIds = accessibleMemos.map((m) => m.id);
   } else if (isAdmin) {
-    // admin は全プロジェクトにアクセス可能なので絞り込み不要
-    filteredIds = entityIds;
+    // 2026-05-10 feedback Phase 2-9: 越境取得を遮断するため admin でも親 entity の
+    //   tenantId を verify する (旧仕様 `filteredIds = entityIds` は admin が他テナントの
+    //   添付 URL を取得可能な severity-1 IDOR 経路だった)。
+    //   admin は自テナント内では全プロジェクト横断可能 (短絡)、他テナントは不可。
+    if (entityType === 'project') {
+      const rows = await prisma.project.findMany({
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'task') {
+      // Task は tenantId を持たないため project リレーション経由
+      const rows = await prisma.task.findMany({
+        where: { id: { in: entityIds }, project: { tenantId: user.tenantId } },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'estimate') {
+      // Estimate は tenantId を持たないため project リレーション経由
+      const rows = await prisma.estimate.findMany({
+        where: { id: { in: entityIds }, project: { tenantId: user.tenantId } },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'risk') {
+      const rows = await prisma.riskIssue.findMany({
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'retrospective') {
+      const rows = await prisma.retrospective.findMany({
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else if (entityType === 'knowledge') {
+      const rows = await prisma.knowledge.findMany({
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      filteredIds = rows.map((r) => r.id);
+    } else {
+      // 未知 entityType (Zod で弾かれる想定だが保険)
+      filteredIds = [];
+    }
   } else {
     // 自分がメンバーのプロジェクト ID 集合を先に取得
     const memberships = await prisma.projectMember.findMany({

@@ -110,6 +110,7 @@ export async function PATCH(
   const task = await updateTask(taskId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'task',
@@ -144,6 +145,7 @@ export async function DELETE(
   await deleteTask(taskId, user.id, user.tenantId);
 
   await recordAuditLog({
+    tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'task',

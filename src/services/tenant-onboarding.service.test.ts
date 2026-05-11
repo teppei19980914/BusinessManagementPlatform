@@ -213,7 +213,8 @@ describe('createTenantBySuperAdmin', () => {
         }),
       }),
     );
-    expect(sendVerificationEmail).toHaveBeenCalledWith('user-uuid', 'admin@customer-a.example', BASE_URL);
+    // Phase 2-10: sendVerificationEmail に tenantId 必須化
+    expect(sendVerificationEmail).toHaveBeenCalledWith('user-uuid', 'tenant-uuid', 'admin@customer-a.example', BASE_URL);
   });
 
   it('slug 重複なら SLUG_CONFLICT (Tenant.create を呼ばない)', async () => {
