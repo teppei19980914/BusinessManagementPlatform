@@ -5886,6 +5886,45 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
+## 5.X+26 Beginner プランは「値の変動がない管理項目」を UI から消す — 表示の意図不在を防ぐ (PR-2 / 2026-05-15)
+
+### 背景
+旧テナント設定画面では「当月使用量」セクションに **3 タイル固定** (API 呼出 / API 費用 / 月次予算上限) を表示していた。
+ところが Beginner プランは単価 0 円固定 + 月次予算上限が常に null (= 設定不可) のため、
+**「API 費用 ¥0」「月次予算上限 - 」と表示しても何も伝えていない**。
+ユーザにとっては「これは何のために表示されているのか?」となり、UI ノイズ + 認知コスト増。
+
+### 教訓
+- **「値の変動がない管理項目」は表示しない**:
+  値が常に同じ (= 固定値、または常に空) なら、それを管理対象として見せる意図は存在しない。
+  プラン別に「そのプランで意味のあるタイル」だけを残す。
+- 代わりに **そのプランで利用者の行動指針となる値** を出す:
+  Beginner プランは「あと何回呼べるか (残数)」が利用者の最大関心事 → タイル化。
+  Expert / Pro は金額 / 予算上限が関心事 → 従来通り。
+- **API/service 層に「Beginner では予算上限を設定不可」の防御層を入れる**:
+  UI でフォームを非表示にするだけでは curl 直叩きで迂回可能。`updateTenantSelf` で
+  `BEGINNER_BUDGET_NOT_ALLOWED` エラーコードを定義し、API は 400 で拒否する。
+
+### 設計の落とし穴
+
+1. **`monthlyBudgetCapJpy: null` (= クリア) は許可する**:
+   完全に拒否すると、過去に Expert で予算を設定したユーザが Beginner にダウングレード
+   (= 現状仕様上は禁止だが将来緩和の可能性) した時に残値をクリアできない。
+   `null` 指定だけは救済として通す。
+2. **UI 側のフォーム送信でも防御**: `selectedPlan === 'beginner'` なら `budgetCap` の値を
+   無視して null を送る。「フォームが非表示」だけでは React state の残値がそのまま送信
+   される事故を防げない (チェックボックスをポチった後にプランを Beginner に切替する経路等)。
+3. **タイル数の `sm:grid-cols-N` を plan 別に切替**: 2 タイルなのに `sm:grid-cols-3` を
+   使うと最後の列が空き、レイアウトが間延びする。
+
+### 関連
+
+- 元 PR: PR-2 (2026-05-15) テナント管理者ダッシュボード改修 — Beginner プラン UI 改修
+- 関連 service: src/services/tenant-self.service.ts `updateTenantSelf` (`BEGINNER_BUDGET_NOT_ALLOWED`)
+- 関連 UI: src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx `UsageSection`
+
+---
+
 ## 5.X+25 timezone / locale はユーザ単位ではなくテナント単位で持つ — 同一テナント内で日付計算が揺らがない設計 (PR-1 / 2026-05-15)
 
 ### 背景
@@ -6167,9 +6206,23 @@ PR #326 の恒久対策 (`git rm --cached` + `.gitattributes merge=ours`) を ma
 - [ ] 恒久対策を入れた PR より **以前に分岐した既存ブランチ全てで「再度の手動マージ」が必要** (= untrack 操作は branch 内 commit 履歴の前方互換性が無い)
 - [ ] 自動 daily branch 群 (`dev/YYYY-MM-DD`) で同様の operation を入れる場合は、main マージ後に **全 open dev ブランチを一斉 rebase or merge** する hook を検討 (本件は手動対応で済んだが、ブランチが 10 個以上ある日は手間が積み上がる)
 
+### 再発事例 2 例目 (PR #329 / feat/pr-2-beginner-ui / 2026-05-11)
+
+dev/* 系の auto-branch だけでなく **feature branch** (PR-2 = Beginner UI 改修) でも同じ症状が出た。`feat/pr-2-beginner-ui` は PR #326 untrack 前に分岐 + SessionStart hook で `.last-knowledge-check-sha` を更新済の状態だったため、main マージで modify/delete 衝突。
+
+加えて **KDD_PATTERNS.md の末尾セクション衝突** も同時発生:
+- PR-2 側 (HEAD): `§5.X+26` (Beginner UI) を追記
+- main 側: `§5.X+25 / +20 / +21 / +22` が直前の merge ラッシュで追加済
+- 解消: 全 5 セクションを順序保持で残し、各セクション間に `---` 区切りを明示
+
+#### 追加教訓
+
+- [ ] **長寿命 feature branch ほど積み残し conflict のリスクが高い**: 並走 PR が多い時期は週次で main を取り込む rebase / merge を推奨
+- [ ] KDD section の end-of-file append は **物理的に並走 PR が衝突しやすい局所**。本ファイルに限り `.gitattributes` で `merge=union` (両側の追記を行ベース統合) を検討する余地あり ※ ただし重複 header が出るリスクがあるため要試行
+
 ### 関連
 
-- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11)
+- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11) + PR #329 (再発事例 2 例目 / feat/pr-2-beginner-ui)
 - 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
 - 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
 - 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")

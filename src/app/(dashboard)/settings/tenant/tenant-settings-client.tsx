@@ -143,7 +143,16 @@ export function TenantSettingsClient({
     try {
       const body: Record<string, unknown> = {};
       if (planChanged) body.plan = selectedPlan;
-      const parsedBudget = budgetUnlimited ? null : Number(budgetCap);
+      // PR-2 (2026-05-15): Beginner プラン時は予算上限が常に null (固定の月 100 回上限で運用)。
+      //   UI でフォーム自体は非表示だが、防御的に Beginner では送信内容から budgetCap を除外する。
+      //   さらに「Expert/Pro → Beginner」のダウングレード時 (現状仕様禁止) や、
+      //   現プランが Beginner なら予算を null に強制する。
+      const isBeginnerTarget = selectedPlan === 'beginner';
+      const parsedBudget = isBeginnerTarget
+        ? null
+        : budgetUnlimited
+          ? null
+          : Number(budgetCap);
       if (
         (parsedBudget === null && info.monthlyBudgetCapJpy !== null) ||
         (parsedBudget !== null &&
@@ -215,57 +224,8 @@ export function TenantSettingsClient({
       {/* P-B (2026-05-08): Beginner プラン期限バナー */}
       <BeginnerExpiryBanner info={info} />
 
-      {/* 当月使用量 (2026-05-09 PR E でツールチップ追加) */}
-      <section
-        className="rounded border p-4"
-        title="本テナントの当月使用量。月初 (UTC) にリセット"
-      >
-        <h2 className="mb-2 font-semibold">当月使用量</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div
-            className="cursor-help"
-            title="当月の LLM/Embedding 呼出回数 (withMeteredLLM 経由)。Beginner プランは 100 回/月の上限あり"
-          >
-            <p className="text-xs text-muted-foreground">API 呼出</p>
-            <p className="text-xl font-bold">{info.currentMonthApiCallCount.toLocaleString()}</p>
-          </div>
-          <div
-            className="cursor-help"
-            title="当月の内部請求額。Beginner ¥0/call / Expert ¥10/call / Pro ¥30/call の固定単価で計算"
-          >
-            <p className="text-xs text-muted-foreground">API 費用</p>
-            <p className="text-xl font-bold">¥{info.currentMonthApiCostJpy.toLocaleString()}</p>
-          </div>
-          <div
-            className="cursor-help"
-            title="自分で設定した月次予算上限。超過時は LLM 呼び出しが自動ブロックされる"
-          >
-            <p className="text-xs text-muted-foreground">月次予算上限</p>
-            <p className="text-xl font-bold">
-              {info.monthlyBudgetCapJpy != null
-                ? `¥${info.monthlyBudgetCapJpy.toLocaleString()}`
-                : '無制限'}
-            </p>
-          </div>
-        </div>
-        {budgetUsagePercent !== null && (
-          <div className="mt-3">
-            <div className="h-2 w-full overflow-hidden rounded bg-muted">
-              <div
-                className={`h-full ${
-                  budgetUsagePercent >= 100
-                    ? 'bg-destructive'
-                    : budgetUsagePercent >= 80
-                      ? 'bg-amber-500'
-                      : 'bg-info'
-                }`}
-                style={{ width: `${budgetUsagePercent}%` }}
-              />
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">予算消化率: {budgetUsagePercent}%</p>
-          </div>
-        )}
-      </section>
+      {/* 当月使用量 (PR-2 / 2026-05-15: plan 別タイル構成に切替) */}
+      <UsageSection info={info} budgetUsagePercent={budgetUsagePercent} />
 
       {/* 予約済プラン変更 */}
       {info.scheduledPlanChangeAt && info.scheduledNextPlan && (
@@ -326,33 +286,38 @@ export function TenantSettingsClient({
           )}
         </section>
 
-        <section className="rounded border p-4">
-          <h2 className="mb-2 font-semibold">月次予算上限</h2>
-          <p className="mb-3 text-xs text-muted-foreground">
-            上限を超えそうな時に LLM 呼出を停止します。Beginner プランでは無効 (上限が固定)。
-          </p>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={budgetUnlimited}
-              onChange={(e) => setBudgetUnlimited(e.target.checked)}
-            />
-            <span>予算上限を設定しない (無制限)</span>
-          </label>
-          {!budgetUnlimited && (
-            <div className="mt-2">
+        {/* PR-2 (2026-05-15): Beginner プランでは月次予算上限フォームを非表示。
+            Beginner は固定の月 100 回上限で運用するため、テナント管理者が金額の上限を
+            設定する余地がない。Expert/Pro のみ表示。 */}
+        {selectedPlan !== 'beginner' && (
+          <section className="rounded border p-4">
+            <h2 className="mb-2 font-semibold">月次予算上限</h2>
+            <p className="mb-3 text-xs text-muted-foreground">
+              上限を超えそうな時に LLM 呼出を停止します (金額ベース)。
+            </p>
+            <label className="flex items-center gap-2">
               <input
-                type="number"
-                min={0}
-                value={budgetCap}
-                onChange={(e) => setBudgetCap(e.target.value)}
-                className="w-48 rounded border p-2"
-                placeholder="例: 5000"
+                type="checkbox"
+                checked={budgetUnlimited}
+                onChange={(e) => setBudgetUnlimited(e.target.checked)}
               />
-              <span className="ml-2 text-sm text-muted-foreground">円 / 月</span>
-            </div>
-          )}
-        </section>
+              <span>予算上限を設定しない (無制限)</span>
+            </label>
+            {!budgetUnlimited && (
+              <div className="mt-2">
+                <input
+                  type="number"
+                  min={0}
+                  value={budgetCap}
+                  onChange={(e) => setBudgetCap(e.target.value)}
+                  className="w-48 rounded border p-2"
+                  placeholder="例: 5000"
+                />
+                <span className="ml-2 text-sm text-muted-foreground">円 / 月</span>
+              </div>
+            )}
+          </section>
+        )}
 
         <Button type="submit" disabled={submitting || beginnerSeatsExceeded}>
           {submitting ? '更新中...' : '変更を保存'}
@@ -391,6 +356,126 @@ export function TenantSettingsClient({
       {/* テナント解約 (2026-05-08): 危険な操作なので末尾配置 + 名称一致確認 */}
       <SelfDeleteTenantSection tenantName={info.name} />
     </div>
+  );
+}
+
+// ================================================================
+// PR-2 (2026-05-15): 当月使用量セクション (plan 別タイル構成)
+// ================================================================
+
+/**
+ * 当月使用量セクション。プラン別にタイル構成を切り替える。
+ *
+ * - Beginner: 「API 呼出」+ 「月次API呼出 残数」 (¥0 固定なので費用タイル/予算タイルは非表示)
+ * - Expert / Pro: 「API 呼出」+「API 費用」+「月次予算上限」 (従来通り)
+ *
+ * 設計判断: Beginner では費用が常に 0 円のため「API 費用」タイルを出す意味がない。
+ * 代わりに「残数」を見せる方が利用者にとっての操作の指針 (= あと何回呼べるか) として有用。
+ */
+function UsageSection({
+  info,
+  budgetUsagePercent,
+}: {
+  info: TenantSelfInfo;
+  budgetUsagePercent: number | null;
+}) {
+  const isBeginner = info.plan === 'beginner';
+  // Beginner プラン残数 (= 上限 - 当月既呼出)。負数にしないため Math.max(0, ...) で clamp。
+  const beginnerCallsRemaining = Math.max(
+    0,
+    info.beginnerMonthlyCallLimit - info.currentMonthApiCallCount,
+  );
+
+  return (
+    <section
+      className="rounded border p-4"
+      title="本テナントの当月使用量。月初 (テナント TZ) にリセット"
+    >
+      <h2 className="mb-2 font-semibold">当月使用量</h2>
+      <div
+        className={
+          isBeginner
+            ? 'grid grid-cols-1 gap-3 sm:grid-cols-2'
+            : 'grid grid-cols-1 gap-3 sm:grid-cols-3'
+        }
+      >
+        <div
+          className="cursor-help"
+          title="当月の LLM/Embedding 呼出回数 (withMeteredLLM 経由)"
+        >
+          <p className="text-xs text-muted-foreground">API 呼出</p>
+          <p className="text-xl font-bold">
+            {info.currentMonthApiCallCount.toLocaleString()}
+            {isBeginner && (
+              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                / {info.beginnerMonthlyCallLimit}
+              </span>
+            )}
+          </p>
+        </div>
+
+        {isBeginner ? (
+          <div
+            className="cursor-help"
+            title="Beginner プランは月 100 回までの API 呼出が無料です。残数が 0 になると当月は LLM 呼出が停止します"
+          >
+            <p className="text-xs text-muted-foreground">月次API呼出 残数</p>
+            <p
+              className={`text-xl font-bold ${
+                beginnerCallsRemaining === 0
+                  ? 'text-destructive'
+                  : beginnerCallsRemaining <= 10
+                    ? 'text-amber-600'
+                    : ''
+              }`}
+            >
+              {beginnerCallsRemaining.toLocaleString()}
+              <span className="ml-1 text-sm font-normal text-muted-foreground">回</span>
+            </p>
+          </div>
+        ) : (
+          <>
+            <div
+              className="cursor-help"
+              title="当月の内部請求額。Expert ¥10/call / Pro ¥30/call の固定単価で計算"
+            >
+              <p className="text-xs text-muted-foreground">API 費用</p>
+              <p className="text-xl font-bold">
+                ¥{info.currentMonthApiCostJpy.toLocaleString()}
+              </p>
+            </div>
+            <div
+              className="cursor-help"
+              title="自分で設定した月次予算上限。超過時は LLM 呼び出しが自動ブロックされる"
+            >
+              <p className="text-xs text-muted-foreground">月次予算上限</p>
+              <p className="text-xl font-bold">
+                {info.monthlyBudgetCapJpy != null
+                  ? `¥${info.monthlyBudgetCapJpy.toLocaleString()}`
+                  : '無制限'}
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+      {!isBeginner && budgetUsagePercent !== null && (
+        <div className="mt-3">
+          <div className="h-2 w-full overflow-hidden rounded bg-muted">
+            <div
+              className={`h-full ${
+                budgetUsagePercent >= 100
+                  ? 'bg-destructive'
+                  : budgetUsagePercent >= 80
+                    ? 'bg-amber-500'
+                    : 'bg-info'
+              }`}
+              style={{ width: `${budgetUsagePercent}%` }}
+            />
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">予算消化率: {budgetUsagePercent}%</p>
+        </div>
+      )}
+    </section>
   );
 }
 
