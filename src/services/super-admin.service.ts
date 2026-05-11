@@ -21,10 +21,18 @@ import { prisma } from '@/lib/db';
 import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
 
 /**
- * 2026-05-09 (PR E / #19): super_admin ダッシュボード集計から除外するテナント。
+ * super_admin ダッシュボードの **顧客集計** (=請求対象テナントの合算) から除外するテナント。
+ *
  *   - 管理テナント (MANAGEMENT_TENANT_ID): プラットフォーム運営者用、課金対象外
- *   - default テナント (DEFAULT_TENANT_ID): v1 単一テナント運用の placeholder。
- *     後続のマルチテナント運用では実顧客ではない (= 顧客集計に含めない方針 / 設計合意 B)
+ *   - default テナント (DEFAULT_TENANT_ID): 運営者自身のテナント。請求先 = 運営者 のため
+ *     顧客課金集計には含めない (= 売上扱いしない)
+ *
+ * 2026-05-11 改訂: Default テナントを「顧客集計」からは除外したまま、画面上には
+ *   別セクション (= 「Default テナント (運営者自身)」) として情報を表示する方針に変更。
+ *   旧仕様 (PR E / #19) は集計からも画面表示からも完全に除外していたが、運営者が
+ *   自身のテナントの状況を super_admin ダッシュボードで一括管理したいニーズを反映。
+ *   - 顧客集計クエリ: 本定数で除外 (= 不変)
+ *   - Default テナント自身の情報: `getDefaultTenantOwnSummary` で個別取得し別セクション表示
  */
 const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
 import {
@@ -424,18 +432,27 @@ export type CrossTenantUsageSummary = {
   tenantCount: number;
   totalActiveUsers: number;
   totalCurrentMonthApiCalls: number;
+  /** LLM 部分の当月内部請求額合計 (Storage は除く) */
   totalCurrentMonthApiCostJpy: number;
+  /**
+   * Storage add-on の月額合計 (= 顧客テナントの storage_addon_plan ベース固定額の総和)。
+   * 2026-05-11: 「ストレージプラン (容量 add-on) も考慮した費用 UI」の実装で追加。
+   */
+  totalCurrentMonthStorageJpy: number;
+  /** LLM + Storage 合算の当月請求額 (請求書の根拠合計) */
+  totalCurrentMonthCombinedJpy: number;
   planDistribution: { plan: string; count: number }[];
 };
 
 export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSummary> {
-  // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外して集計
+  // 管理テナント + default テナントを「顧客集計」から除外
+  // (Default テナント自身の情報は getDefaultTenantOwnSummary で別取得)
   const tenantWhere = {
     id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
     deletedAt: null,
   };
 
-  const [tenantCount, agg, planGroups, activeUsersAgg] = await Promise.all([
+  const [tenantCount, agg, planGroups, activeUsersAgg, storageGroups] = await Promise.all([
     prisma.tenant.count({ where: tenantWhere }),
     prisma.tenant.aggregate({
       where: tenantWhere,
@@ -453,14 +470,104 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
         tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
       },
     }),
+    // 2026-05-11: Storage add-on プラン別件数を取得し、固定月額の合計を計算
+    prisma.tenant.groupBy({
+      by: ['storageAddonPlan'],
+      where: tenantWhere,
+      _count: { id: true },
+    }),
   ]);
+
+  const totalCurrentMonthApiCostJpy = agg._sum.currentMonthApiCostJpy ?? 0;
+  const totalCurrentMonthStorageJpy = storageGroups.reduce((acc, g) => {
+    const plan = isStorageAddonPlanStr(g.storageAddonPlan) ? g.storageAddonPlan : 'standard';
+    return acc + SUPER_ADMIN_ADDON_MONTHLY_JPY[plan] * g._count.id;
+  }, 0);
 
   return {
     tenantCount,
     totalActiveUsers: activeUsersAgg,
     totalCurrentMonthApiCalls: agg._sum.currentMonthApiCallCount ?? 0,
-    totalCurrentMonthApiCostJpy: agg._sum.currentMonthApiCostJpy ?? 0,
+    totalCurrentMonthApiCostJpy,
+    totalCurrentMonthStorageJpy,
+    totalCurrentMonthCombinedJpy: totalCurrentMonthApiCostJpy + totalCurrentMonthStorageJpy,
     planDistribution: planGroups.map((p) => ({ plan: p.plan, count: p._count.id })),
+  };
+}
+
+// ================================================================
+// 2026-05-11: Default テナント (運営者自身) のサマリ
+// ================================================================
+
+/**
+ * Default テナント (運営者自身) のサマリ。
+ *
+ * 役割:
+ *   super_admin ダッシュボードで、運営者が自身のテナント情報を顧客テナントと別セクションで
+ *   一括確認できるようにする。請求対象外のため `getCrossTenantUsageSummary` の合計集計には
+ *   含めず、ここで個別に取得する。
+ *
+ * テナント不在時 (= seed 未投入 / 削除済) は `null` を返す。
+ */
+export type DefaultTenantOwnSummary = {
+  id: string;
+  tenantSeq: number | null;
+  slug: string;
+  name: string;
+  plan: string;
+  createdAt: Date;
+  activeUserCount: number;
+  currentMonthApiCallCount: number;
+  /** 内部記録値。Default テナントは請求対象外のため表示は「(請求対象外)」扱い */
+  currentMonthApiCostJpy: number;
+  storageAddonPlan: string;
+  storageBytesUsed: number;
+  storageLimitBytes: number;
+  storageUsageRatio: number;
+};
+
+export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSummary | null> {
+  const t = await prisma.tenant.findFirst({
+    where: { id: DEFAULT_TENANT_ID, deletedAt: null },
+    select: {
+      id: true,
+      tenantSeq: true,
+      slug: true,
+      name: true,
+      plan: true,
+      createdAt: true,
+      currentMonthApiCallCount: true,
+      currentMonthApiCostJpy: true,
+      storageAddonPlan: true,
+      storageBytesUsed: true,
+    },
+  });
+  if (!t) return null;
+
+  const activeUserCount = await prisma.user.count({
+    where: { tenantId: DEFAULT_TENANT_ID, isActive: true, deletedAt: null },
+  });
+
+  const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
+  const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+  const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);
+  const usedBytes = Number(t.storageBytesUsed);
+  const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
+
+  return {
+    id: t.id,
+    tenantSeq: t.tenantSeq,
+    slug: t.slug,
+    name: t.name,
+    plan: t.plan,
+    createdAt: t.createdAt,
+    activeUserCount,
+    currentMonthApiCallCount: t.currentMonthApiCallCount,
+    currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+    storageAddonPlan: addonPlan,
+    storageBytesUsed: usedBytes,
+    storageLimitBytes: limitBytes,
+    storageUsageRatio: usageRatio,
   };
 }
 

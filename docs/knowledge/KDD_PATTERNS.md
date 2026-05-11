@@ -6258,3 +6258,73 @@ git push
 - 関連 script: [scripts/check-e2e-coverage.ts](../../scripts/check-e2e-coverage.ts)
 - 関連 workflow: [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml)
 - 関連 doc: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md), [E2E カバレッジ運用](../test/E2E_LESSONS.md)
+
+
+## 5.X+23 super_admin ダッシュボードで Default テナント (運営者自身) を **集計除外** しても **画面非表示にはしない** — 「集計」と「表示」の境界を明確に分ける (PR-X / 2026-05-11)
+
+### 罠の正体
+
+PR E (`#19`, 2026-05-09) で super_admin ダッシュボードの集計から `DEFAULT_TENANT_ID` を除外する変更を入れた (`SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID]`)。これは「v1.x マルチテナント運用時に default テナントを実顧客と扱わない」設計合意 B に従ったもの。
+
+しかし v1 MVP (2026-06-01 リリース直前) 時点では Default テナントが唯一の本番テナントとなるため、運営者がダッシュボードを開いても:
+
+- 「顧客テナント数」「アクティブユーザ数」「今月の API 呼出」「今月の API 費用」が**すべて 0 表示**
+- 「テナント一覧」に「顧客テナントはまだ登録されていません」表示
+- 「プラン別分布」に「テナントがありません」表示
+- Anthropic / Voyage / Beginner 使用量も 0 表示
+
+「ダッシュボードが完全に空に見える」=「運営者が自身のテナントを super_admin 画面で管理できない」状態だった。
+
+### 根本原因
+
+- **「集計から除外」=「画面から非表示」と誤って同一視していた**
+- ユーザ意図: Default テナント = 運営者自身 = **請求対象外** だが、**運営者は当然自分の状況を見たい**
+- 集計 (請求合計) と表示 (運営者の管理画面) は**別の目的**で動く設計にすべきだった
+
+### 修正パターン (2026-05-11)
+
+「集計除外」と「表示」を分離:
+
+1. **集計除外は維持**: `SUPER_ADMIN_EXCLUDED_TENANT_IDS` は変更せず、顧客課金合計に Default を入れない方針を継続 (= 売上扱いしない)
+2. **Default 専用セクションを追加**: `getDefaultTenantOwnSummary()` を新設、サマリ / 一覧 / 使用量サマリの各タブで **顧客テナントとは別セクション** で Default の情報を表示
+3. **「(請求対象外)」ラベル併記**: 費用欄に明示し、運営者が「課金されている」と誤解しないようにする
+
+```typescript
+// src/services/super-admin.service.ts
+// ❌ Before: 集計除外 = 画面非表示
+const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+// (Default テナントの情報を取得する関数は存在しなかった)
+
+// ✅ After: 集計除外は維持しつつ、画面表示用の取得関数を追加
+const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+
+export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSummary | null> {
+  const t = await prisma.tenant.findFirst({
+    where: { id: DEFAULT_TENANT_ID, deletedAt: null },
+    /* ... */
+  });
+  if (!t) return null;
+  // 必要な集計を行って返す
+}
+```
+
+### 副次的な改善 (本 PR で同時対応)
+
+1. **ストレージ add-on 課金の合算 UI**: `getCrossTenantUsageSummary` に `totalCurrentMonthStorageJpy` / `totalCurrentMonthCombinedJpy` を追加。サマリカードを「今月の API 費用 (合計)」→「今月の合計課金 (LLM + Storage)」に変更し、内訳を補助行で併記。
+2. **小数点パーセント表示の精度動的化**: Voyage AI 使用率が 0.03% (= 200M token 上限の 60K token 利用) のとき `(0.0003 * 100).toFixed(1) = "0.0%"` で「未使用」と誤解されていた。`formatPercent()` ヘルパで < 0.1% は小数点 3 桁、< 10% は 2 桁、それ以外は 1 桁の動的精度に変更。
+
+### 横展開チェック
+
+- [ ] 集計除外フィルタ (`{ notIn: [...] }` / `{ id: { not: ... } }`) を追加する際は、**集計と表示の用途を明確に分ける**:
+  - 集計から外す → DB レベルで notIn
+  - 表示は欲しい → 別関数で個別取得、UI で別セクション化
+- [ ] パーセント表示は `toFixed(1)` を機械的に使わず、想定される値の幅 (例: 0.01%〜100%) を考慮して動的精度関数を使う
+- [ ] 「顧客課金集計」と「運営者自身の利用状況」は **同じ UI 表現で混ぜない** (= 区別が視覚的につくよう別セクション + ラベルで明示)
+- [ ] 「(請求対象外)」「(参考)」など意図のラベルを併記し、UI 受け手 (= 運営者) の誤読を防ぐ
+
+### 関連
+
+- 元 PR: PR-X / dev/2026-05-11 (super_admin ダッシュボード Default テナント表示)
+- 関連 service: [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts) — `getDefaultTenantOwnSummary`, `getCrossTenantUsageSummary`
+- 関連 page: [src/app/(dashboard)/admin/super/page.tsx](../../src/app/(dashboard)/admin/super/page.tsx), [tenants/page.tsx](../../src/app/(dashboard)/admin/super/tenants/page.tsx), [usage/page.tsx](../../src/app/(dashboard)/admin/super/usage/page.tsx)
+- 旧設計合意: 設計合意 B (= v1.x マルチテナント運用時に default = placeholder 扱い) — v1 MVP では「Default = 運営者自身のテナント」を主とし、v1.x で multi-tenant 化される時点で再評価

@@ -20,6 +20,11 @@ vi.mock('@/lib/db', () => ({
       // P-A (2026-05-08): deleteTenant で使用
       findUnique: vi.fn(),
       update: vi.fn(),
+      // 2026-05-11: getCrossTenantUsageSummary / getDefaultTenantOwnSummary で使用
+      findFirst: vi.fn(),
+      count: vi.fn(),
+      aggregate: vi.fn(),
+      groupBy: vi.fn(),
     },
     user: {
       groupBy: vi.fn(),
@@ -67,6 +72,9 @@ import {
   getBeginnerUsageSummary,
   // 2026-05-09 (PR F / #18)
   purgeOldDeletedTenants,
+  // 2026-05-11: 顧客集計 + Default テナント個別取得
+  getCrossTenantUsageSummary,
+  getDefaultTenantOwnSummary,
 } from './super-admin.service';
 import { prisma } from '@/lib/db';
 
@@ -598,7 +606,7 @@ describe('getBeginnerUsageSummary (PR E / #15)', () => {
 
     await getBeginnerUsageSummary();
 
-    const callArg = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0];
+    const callArg = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0]!;
     expect(callArg.where).toMatchObject({
       id: {
         notIn: [
@@ -608,6 +616,176 @@ describe('getBeginnerUsageSummary (PR E / #15)', () => {
       },
       plan: 'beginner',
     });
+  });
+});
+
+// ================================================================
+// 2026-05-11: getCrossTenantUsageSummary に Storage add-on 合計を追加
+// ================================================================
+
+describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('LLM 費用 + Storage add-on 月額の合算 + 内訳を返す', async () => {
+    vi.mocked(prisma.tenant.count).mockResolvedValueOnce(3 as never);
+    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
+      _sum: { currentMonthApiCallCount: 1200, currentMonthApiCostJpy: 8000 },
+    } as never);
+    vi.mocked(prisma.tenant.groupBy)
+      .mockResolvedValueOnce([
+        { plan: 'beginner', _count: { id: 1 } },
+        { plan: 'expert', _count: { id: 2 } },
+      ] as never)
+      // storageAddonPlan groupBy: 1 standard (¥0) + 1 plus (¥500) + 1 pro_storage (¥1500)
+      .mockResolvedValueOnce([
+        { storageAddonPlan: 'standard', _count: { id: 1 } },
+        { storageAddonPlan: 'plus', _count: { id: 1 } },
+        { storageAddonPlan: 'pro_storage', _count: { id: 1 } },
+      ] as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(15 as never);
+
+    const r = await getCrossTenantUsageSummary();
+
+    expect(r.tenantCount).toBe(3);
+    expect(r.totalActiveUsers).toBe(15);
+    expect(r.totalCurrentMonthApiCalls).toBe(1200);
+    expect(r.totalCurrentMonthApiCostJpy).toBe(8000);
+    // Storage: 0 + 500 + 1500 = 2000
+    expect(r.totalCurrentMonthStorageJpy).toBe(2000);
+    // 合算: 8000 + 2000 = 10000
+    expect(r.totalCurrentMonthCombinedJpy).toBe(10000);
+    expect(r.planDistribution).toEqual([
+      { plan: 'beginner', count: 1 },
+      { plan: 'expert', count: 2 },
+    ]);
+  });
+
+  it('顧客テナント 0 件なら全 0 を返す', async () => {
+    vi.mocked(prisma.tenant.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
+      _sum: { currentMonthApiCallCount: null, currentMonthApiCostJpy: null },
+    } as never);
+    vi.mocked(prisma.tenant.groupBy)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
+
+    const r = await getCrossTenantUsageSummary();
+
+    expect(r.tenantCount).toBe(0);
+    expect(r.totalCurrentMonthApiCostJpy).toBe(0);
+    expect(r.totalCurrentMonthStorageJpy).toBe(0);
+    expect(r.totalCurrentMonthCombinedJpy).toBe(0);
+  });
+
+  it('管理テナント + Default テナントを集計から除外する', async () => {
+    vi.mocked(prisma.tenant.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
+      _sum: { currentMonthApiCallCount: null, currentMonthApiCostJpy: null },
+    } as never);
+    vi.mocked(prisma.tenant.groupBy)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
+
+    await getCrossTenantUsageSummary();
+
+    const countWhere = vi.mocked(prisma.tenant.count).mock.calls[0]![0]!.where!;
+    expect(countWhere).toMatchObject({
+      id: {
+        notIn: [
+          '00000000-0000-0000-0000-ffffffffffff',
+          '00000000-0000-0000-0000-000000000001',
+        ],
+      },
+      deletedAt: null,
+    });
+    const userWhere = vi.mocked(prisma.user.count).mock.calls[0]![0]!.where!;
+    expect(userWhere).toMatchObject({
+      isActive: true,
+      deletedAt: null,
+      tenantId: {
+        notIn: [
+          '00000000-0000-0000-0000-ffffffffffff',
+          '00000000-0000-0000-0000-000000000001',
+        ],
+      },
+    });
+  });
+});
+
+// ================================================================
+// 2026-05-11: getDefaultTenantOwnSummary (Default テナント = 運営者自身の個別取得)
+// ================================================================
+
+describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('Default テナント存在時: 各種使用量と Storage 上限を計算して返す', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      id: '00000000-0000-0000-0000-000000000001',
+      tenantSeq: null,
+      slug: 'default',
+      name: 'Default',
+      plan: 'expert',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      currentMonthApiCallCount: 42,
+      currentMonthApiCostJpy: 420,
+      storageAddonPlan: 'standard',
+      storageBytesUsed: BigInt(10 * 1024 * 1024), // 10MB
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(5 as never);
+
+    const r = await getDefaultTenantOwnSummary();
+
+    expect(r).not.toBeNull();
+    expect(r?.id).toBe('00000000-0000-0000-0000-000000000001');
+    expect(r?.activeUserCount).toBe(5);
+    expect(r?.currentMonthApiCallCount).toBe(42);
+    expect(r?.currentMonthApiCostJpy).toBe(420);
+    expect(r?.storageBytesUsed).toBe(10 * 1024 * 1024);
+    // Expert (150MB) + standard (0) = 150MB
+    expect(r?.storageLimitBytes).toBe(150 * 1024 * 1024);
+    expect(r?.storageUsageRatio).toBeCloseTo((10 * 1024 * 1024) / (150 * 1024 * 1024), 5);
+
+    // findFirst が DEFAULT_TENANT_ID を引いていること (運営者自身のテナント)
+    const whereArg = vi.mocked(prisma.tenant.findFirst).mock.calls[0]![0]!.where!;
+    expect(whereArg).toMatchObject({
+      id: '00000000-0000-0000-0000-000000000001',
+      deletedAt: null,
+    });
+  });
+
+  it('Default テナント不在時 (= seed 未投入 / 削除済) は null を返す', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null);
+
+    const r = await getDefaultTenantOwnSummary();
+
+    expect(r).toBeNull();
+    // user.count は呼ばれない (早期 return)
+    expect(prisma.user.count).not.toHaveBeenCalled();
+  });
+
+  it('不正な plan / storageAddonPlan は beginner / standard へフォールバック', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      id: '00000000-0000-0000-0000-000000000001',
+      tenantSeq: null,
+      slug: 'default',
+      name: 'Default',
+      plan: 'unknown_plan',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      storageAddonPlan: 'unknown_addon',
+      storageBytesUsed: BigInt(0),
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
+
+    const r = await getDefaultTenantOwnSummary();
+
+    // beginner (50MB) + standard (0) = 50MB
+    expect(r?.storageLimitBytes).toBe(50 * 1024 * 1024);
+    expect(r?.storageAddonPlan).toBe('standard');
   });
 });
 
