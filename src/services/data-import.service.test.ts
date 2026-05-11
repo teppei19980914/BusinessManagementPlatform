@@ -15,6 +15,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import JSZip from 'jszip';
 
 vi.mock('@/lib/db', () => {
+  // PR-3 (2026-05-15): tx 側にも tenant.findFirst / tenant.update / $queryRaw を追加。
+  //   assertStorageLimitInTx が storage-guard.service 経由で tx 経由のクエリを呼ぶため。
   const tx = {
     user: { findMany: vi.fn(), create: vi.fn() },
     customer: { create: vi.fn() },
@@ -31,6 +33,16 @@ vi.mock('@/lib/db', () => {
     comment: { create: vi.fn() },
     mention: { create: vi.fn() },
     attachment: { create: vi.fn() },
+    // PR-3: storage-guard が tx 経由で呼ぶ tenant 操作。
+    //   findFirst は storageAddonPlan を返し、$queryRaw は実測 0 byte を返す。
+    tenant: {
+      findFirst: vi.fn(async () => ({
+        storageAddonPlan: 'standard',
+        storageBytesUsed: BigInt(0),
+      })),
+      update: vi.fn(),
+    },
+    $queryRaw: vi.fn(async () => [{ total_bytes: BigInt(0) }]),
   };
   return {
     prisma: {

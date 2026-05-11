@@ -9,7 +9,7 @@
  * - 列幅リサイズ (PR #68) + 添付列 (PR #67) のパターンを踏襲
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
@@ -266,9 +266,16 @@ export function MemosClient({
   }
 
   // initialMemos の更新に合わせて state 側も追従 (Derived State)
-  useEffect(() => {
+  // PR fix/eslint-config-next-16.2.6 (2026-05-11):
+  //   eslint-config-next 16.2.6 が `react-hooks/set-state-in-effect` を新たに enforce。
+  //   旧実装: `useEffect(() => setMemos(initialMemos), [initialMemos])` は violation。
+  //   → React 公式推奨の **「前回 prop を比較して render 中に setState する」** パターンに変更。
+  //   ref: https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [prevInitialMemos, setPrevInitialMemos] = useState(initialMemos);
+  if (prevInitialMemos !== initialMemos) {
+    setPrevInitialMemos(initialMemos);
     setMemos(initialMemos);
-  }, [initialMemos]);
+  }
 
   return (
     <div className="space-y-6">

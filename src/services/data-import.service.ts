@@ -44,6 +44,11 @@ import { randomUUID } from 'crypto';
 import { hash as bcryptHash } from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
+// PR-3 (2026-05-15): 取込後の容量超過を検知してロールバックする
+import {
+  assertStorageLimitInTx,
+  StorageLimitExceededError,
+} from '@/services/storage-guard.service';
 
 const IMPORT_LOCK_STALE_MINUTES = 30;
 const BCRYPT_ROUNDS = 10;
@@ -67,7 +72,9 @@ export type ImportErrorCode =
   | 'TENANT_NOT_FOUND'
   | 'IMPORT_IN_PROGRESS' // 二重インポート (in-flight ロック発火)
   | 'BEGINNER_SEAT_LIMIT' // Beginner 5 席超過
-  | 'DECOMPRESSED_TOO_LARGE'; // D-1: ZIP 解凍後サイズが上限超過 (= ZIP bomb 二重防御)
+  | 'DECOMPRESSED_TOO_LARGE' // D-1: ZIP 解凍後サイズが上限超過 (= ZIP bomb 二重防御)
+  // PR-3 (2026-05-15): 取込後の容量が Storage プラン上限超過 → 全件ロールバック
+  | 'STORAGE_LIMIT_EXCEEDED';
 
 export type DataImportResult =
   | { ok: true; summary: ImportSummary }
@@ -164,13 +171,29 @@ export async function importTenantData(
     };
   }
 
-  // ---------- 5. トランザクション内で全件作成 ----------
+  // ---------- 5. トランザクション内で全件作成 + ストレージ Post-check ----------
+  // PR-3 (2026-05-15): 取込後に容量が Storage プラン上限を超えていたら全件ロールバックする。
+  //   ZIP の中身が大きく、Pre-check (キャッシュ値) を通り抜けても実取込で超過しうるため
+  //   transaction 内で `assertStorageLimitInTx` を呼んで最終境界を担保する。
   try {
     const summary = await prisma.$transaction(
-      async (tx) => runImport(tx, tenantId, parsed, importerUserId),
+      async (tx) => {
+        const s = await runImport(tx, tenantId, parsed, importerUserId);
+        await assertStorageLimitInTx(tx, tenantId);
+        return s;
+      },
       { timeout: 120_000, maxWait: 10_000 },
     );
     return { ok: true, summary };
+  } catch (error) {
+    if (error instanceof StorageLimitExceededError) {
+      return {
+        ok: false,
+        error: 'STORAGE_LIMIT_EXCEEDED',
+        message: `取込データの合計容量がストレージ上限 (${Math.floor(error.limitBytes / (1024 * 1024))} MB) を超えるためインポートを中止しました。データを削除するか、Storage プランをアップグレードしてください。`,
+      };
+    }
+    throw error;
   } finally {
     // 例外時もロック解放 (失敗で残らないように try/finally で保証)
     await releaseImportLock(tenantId);
@@ -427,8 +450,9 @@ async function runImport(
         isActive: u.isActive !== false,
         themePreference:
           typeof u.themePreference === 'string' ? u.themePreference : 'light',
-        timezone: typeof u.timezone === 'string' ? u.timezone : null,
-        locale: typeof u.locale === 'string' ? u.locale : null,
+        // PR-1 (2026-05-15): timezone / locale はテナント単位に集約されたため User には設定しない。
+        //   旧 ZIP 形式 (User.timezone / User.locale を含む) は黙って無視して取込を継続する。
+        //   テナントの TZ/locale は既存テナント側設定を維持。
         forcePasswordChange: true, // インポートユーザは必ず初回パスワード変更
       },
     });

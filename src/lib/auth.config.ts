@@ -199,25 +199,24 @@ export const authConfig: NextAuthConfig = {
       // PR #67: /login/mfa で useSession().update({ mfaVerified: true }) を
       // 呼ぶと trigger='update' の session 渡しで TOTP 検証済を token に反映する。
       // PR #72: 設定画面でテーマ変更時も同経路で { themePreference: '...' } を反映する。
-      // PR #118: 設定画面で TZ / locale を変更時も同じ経路で反映 (null 指定でシステム既定に戻せる)。
+      // PR-1 (2026-05-15): テナント設定画面で TZ / locale を変更時も同じ経路で反映。
+      //   テナント単位に集約済みのため null には戻せない (NOT NULL 制約)。
       if (trigger === 'update' && session && typeof session === 'object') {
         const patch = session as {
           mfaVerified?: boolean;
           themePreference?: string;
-          timezone?: string | null;
-          locale?: string | null;
+          timezone?: string;
+          locale?: string;
         };
         if (patch.mfaVerified === true) token.mfaVerified = true;
         if (typeof patch.themePreference === 'string') {
           token.themePreference = patch.themePreference;
         }
-        // timezone/locale は null を明示して「システム既定に戻す」が可能なので
-        // in 演算子でキー存在を確認する。
-        if ('timezone' in patch) {
-          token.timezone = patch.timezone ?? null;
+        if (typeof patch.timezone === 'string' && patch.timezone.length > 0) {
+          token.timezone = patch.timezone;
         }
-        if ('locale' in patch) {
-          token.locale = patch.locale ?? null;
+        if (typeof patch.locale === 'string' && patch.locale.length > 0) {
+          token.locale = patch.locale;
         }
       }
       return token;
@@ -233,9 +232,10 @@ export const authConfig: NextAuthConfig = {
         session.user.mfaEnabled = (token.mfaEnabled as boolean | undefined) ?? false;
         session.user.mfaVerified = (token.mfaVerified as boolean | undefined) ?? false;
         session.user.themePreference = (token.themePreference as string | undefined) ?? 'light';
-        // PR #118: null 許容 (システムデフォルト意) のまま公開する。
-        session.user.timezone = (token.timezone as string | null | undefined) ?? null;
-        session.user.locale = (token.locale as string | null | undefined) ?? null;
+        // PR-1 (2026-05-15): timezone / locale はテナント単位 (NOT NULL) になったため
+        //   non-nullable で公開する。token が万が一 undefined なら DEFAULT に fallback。
+        session.user.timezone = (token.timezone as string | undefined) ?? 'Asia/Tokyo';
+        session.user.locale = (token.locale as string | undefined) ?? 'ja-JP';
         // P-B (2026-05-08): Beginner プラン期限 claim を session に伝播 (UI 側でバナー表示等に使用)
         session.user.tenantPlan = (token.tenantPlan as string | undefined) ?? 'beginner';
         session.user.tenantCreatedAt = (token.tenantCreatedAt as string | undefined) ?? new Date().toISOString();

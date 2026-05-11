@@ -13,14 +13,13 @@ export default async function SettingsPage() {
   //   画面のため、DB 取得失敗時に dashboard error.tsx へ飛んで「ログインできない」体験を
   //   引き起こさないよう、prisma.user.findUnique を try/catch で囲い、失敗時は
   //   フォールバック値 + 警告バナーで操作可能 UI を維持する。詳細は admin/users/page.tsx 参照。
+  // 注: PR-1 (#327) で User.timezone / locale はテナント単位に集約され、本 select からは除去。
   // `prisma.user.findUnique` の戻り型は select 指定で narrow されるため、
   // 取得結果と同じ shape の型を明示宣言してフォールバック (null) でも代入可能にする。
   type SettingsUser = {
     mfaEnabled: boolean;
     systemRole: string;
     themePreference: string;
-    timezone: string | null;
-    locale: string | null;
   } | null;
   let user: SettingsUser = null;
   let dataLoadError = false;
@@ -31,9 +30,6 @@ export default async function SettingsPage() {
         mfaEnabled: true,
         systemRole: true,
         themePreference: true,
-        // PR #119: i18n 設定の初期値として渡す (null = システム既定継承)
-        timezone: true,
-        locale: true,
       },
     });
   } catch (error) {
@@ -65,8 +61,6 @@ export default async function SettingsPage() {
       mfaEnabled={user?.mfaEnabled || false}
       isAdmin={isMfaForced}
       currentTheme={user?.themePreference ?? 'light'}
-      currentTimezone={user?.timezone ?? null}
-      currentLocale={user?.locale ?? null}
       dataLoadError={dataLoadError}
     />
   );
