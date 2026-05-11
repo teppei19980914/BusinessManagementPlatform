@@ -5885,3 +5885,130 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 修正例: PR #310 (2026-05-10)
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+## 5.X+28 「ログインできない」の真因は別経路にあることが多い ─ 切り分け手順と防御的 server component (PR fix/admin-users-defensive-render / 2026-05-15)
+
+### 背景
+ユーザから「サービスへログインできなくなった」と報告。共有された error log は `system_error_logs`
+テーブルの内容で、最新エラーは `/admin/users` での Server Components render error (digest 713007954)、
+それ以外は `[attachments/batch]` 系の info ログばかり。**ログイン失敗を示すエントリが存在しなかった**。
+
+調査の結果、ログイン失敗イベントは `auth_event_logs` (別テーブル) に記録される設計のため、
+`system_error_logs` を見ても真因は判らない構造だった。
+
+### 教訓 (切り分けフローの確立)
+
+**1. ログイン失敗かどうかを最初に確認**:
+
+```sql
+-- 直近 24 時間の login_failure を email で抽出
+SELECT event_type, detail, ip_address, created_at
+FROM auth_event_logs
+WHERE event_type = 'login_failure'
+  AND email = '<ユーザ email>'
+  AND created_at >= NOW() - INTERVAL '24 hours'
+ORDER BY created_at DESC;
+```
+
+`detail.reason` の値で原因を判別:
+- `user_not_found`: メール未登録 (typo or 削除済)
+- `invalid_password`: パスワード誤り (試行回数も同 row で確認)
+- `temporary_lock`: 一時ロック中 (`lockedUntil` 確認)
+- `permanent_lock`: 永続ロック (recovery code または admin に解除依頼)
+- `inactive`: アカウント無効化 (admin が isActive=false にした)
+- `tenant_deleted`: テナント論理削除中
+- `missing_credentials`: 空 submit (client bug の可能性)
+
+**2. login_failure ログがない場合 = ログインは成功している可能性大**:
+
+ユーザは「ログインできない」と感じているが実際にはログインできており、**ログイン直後の遷移先で
+server component が crash して error boundary に飛ばされている** ケースがある。ユーザにとっては
+「ログイン → エラー → 戻る → ログイン → エラー」のループに見える。
+
+確認方法:
+
+```sql
+-- 同 email の login_success が直近にあるか
+SELECT event_type, created_at FROM auth_event_logs
+WHERE email = '<ユーザ email>'
+  AND event_type IN ('login_success', 'login_failure')
+ORDER BY created_at DESC LIMIT 10;
+```
+
+login_success が出ているのに login_failure も間に挟まる場合 = ログイン成功 → 画面でエラー → 再ログイン
+のループパターン確定。
+
+**3. server component error の digest を Vercel で追跡**:
+
+```
+Vercel Dashboard → Project → Logs → Search "digest=713007954"
+```
+
+production build では `error.message` がマスクされて UI に出ないが、Vercel runtime log には
+完全なスタックトレースが残る。**digest が同じなら同じ箇所での throw**。
+
+### 防御的 server component パターン (PR fix/admin-users-defensive-render)
+
+`/admin/users` のような **ログイン直後にユーザが遷移しやすいページ** が server component crash すると、
+ユーザは「ログインできない」と認識する。次の防御策で UX とデバッグ可能性を両立する:
+
+```ts
+// Before
+const [users, tenantInfo] = await Promise.all([
+  listUsers(session.user.tenantId),
+  getTenantSelfInfo(session.user.tenantId),
+]);
+
+// After (PR fix/admin-users-defensive-render):
+let users: Awaited<ReturnType<typeof listUsers>> = [];
+let tenantInfo: Awaited<ReturnType<typeof getTenantSelfInfo>> = null;
+let dataLoadError = false;
+try {
+  [users, tenantInfo] = await Promise.all([
+    listUsers(session.user.tenantId),
+    getTenantSelfInfo(session.user.tenantId),
+  ]);
+} catch (error) {
+  dataLoadError = true;
+  await recordError({
+    severity: 'error',
+    source: 'server',
+    message: '[/admin/users] failed to load users or tenant info',
+    stack: error instanceof Error ? error.stack : String(error),
+    userId: session.user.id,
+    context: {
+      path: '/admin/users',
+      errorName: error instanceof Error ? error.name : 'unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+      tenantId: session.user.tenantId,
+    },
+  });
+}
+
+return <UsersClient ... dataLoadError={dataLoadError} />;
+```
+
+ポイント:
+- **error message を `system_error_logs` に詳細記録**: digest 番号だけで Vercel を辿る必要を減らす。
+  errorName / errorMessage / stack を context に入れることで `system_error_logs` から原因が直接判る。
+- **画面操作は維持**: 一覧は空 + 警告バナー表示にとどめ、ヘッダ / 招待 dialog 等は引き続き使える。
+  admin が他経路で復旧操作を取れる。
+- **error boundary に飛ばさない**: dashboard セグメントの error.tsx に飛ぶと「ログインできない」
+  感じになる。本パターンで予防的に防げる。
+
+### 横展開で漏らしやすい箇所
+
+ログイン直後にユーザが遷移しやすい主要ページ:
+- `/projects` (デフォルト遷移先、最高優先)
+- `/admin/users` (admin 系)
+- `/settings`, `/settings/tenant`
+- `/projects/[id]` (前回開いていたプロジェクト)
+
+これらは **server component の最上位データ取得を try/catch で囲み、空フォールバック + recordError
++ dataLoadError prop で UI 警告** のパターンを適用すべき。後続 PR で横展開。
+
+### 関連
+- 元 PR: fix/admin-users-defensive-render (2026-05-15)
+- 関連 service: src/services/error-log.service.ts (`recordError`)
+- 関連 layout: src/app/(dashboard)/error.tsx (default error boundary)
+- 関連 schema: prisma/schema.prisma `AuthEventLog` モデル (eventType / detail / email / userId)
