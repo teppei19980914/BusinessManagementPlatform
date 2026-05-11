@@ -68,6 +68,9 @@ export type TenantSelfInfo = {
   beginnerDaysRemaining: number | null;
   // 2026-05-09 (PR G / #24): シードデータ参照 toggle
   seedDataEnabled: boolean;
+  // PR-1 (2026-05-15): テナント単位の TZ / locale (旧 User.timezone/locale の集約先)
+  timezone: string;
+  locale: string;
 };
 
 /**
@@ -120,7 +123,48 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     beginnerExpiryState,
     beginnerDaysRemaining,
     seedDataEnabled: t.seedDataEnabled,
+    // PR-1 (2026-05-15): テナント単位 TZ / locale
+    timezone: t.timezone,
+    locale: t.locale,
   };
+}
+
+/**
+ * PR-1 (2026-05-15): テナント i18n 設定 (timezone / locale) を更新する。
+ *
+ * - 旧 User.timezone / User.locale を Tenant に集約。テナント管理者のみ更新可。
+ * - 値の検証は呼出側 (zod) で実施 (IANA TZ / SELECTABLE_LOCALES のみ受理)。
+ * - 同一テナント内の全ユーザが同じ TZ/locale で運用される。
+ *
+ * @returns 更新後の値
+ */
+export async function updateTenantI18n(
+  tenantId: string,
+  input: { timezone?: string; locale?: string },
+): Promise<{ timezone: string; locale: string }> {
+  const data: Record<string, string> = {};
+  if (typeof input.timezone === 'string' && input.timezone.length > 0) {
+    data.timezone = input.timezone;
+  }
+  if (typeof input.locale === 'string' && input.locale.length > 0) {
+    data.locale = input.locale;
+  }
+
+  if (Object.keys(data).length === 0) {
+    // no-op: 現在値を返す (UI 側で state 同期するため、空送信もエラーにしない)
+    const t = await prisma.tenant.findFirstOrThrow({
+      where: { id: tenantId, deletedAt: null },
+      select: { timezone: true, locale: true },
+    });
+    return { timezone: t.timezone, locale: t.locale };
+  }
+
+  const updated = await prisma.tenant.update({
+    where: { id: tenantId },
+    data,
+    select: { timezone: true, locale: true },
+  });
+  return { timezone: updated.timezone, locale: updated.locale };
 }
 
 /** P-G (2026-05-08): 請求先情報の更新入力 / PR C (2026-05-09 #5/#8/#10) 拡張 */

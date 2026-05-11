@@ -34,17 +34,16 @@ declare module 'next-auth' {
        */
       themePreference: string;
       /**
-       * PR #118: 個別タイムゾーン (IANA 名、例 'Asia/Tokyo')。
-       * null はシステムデフォルト (config/i18n.ts) を使う意味。
-       * 描画時は `resolveTimezone(session.user.timezone)` で解決する。
+       * PR-1 (2026-05-15): テナント単位の IANA タイムゾーン名 (例 'Asia/Tokyo')。
+       * Tenant.timezone を JWT 経由で session に伝搬。NOT NULL (default 'Asia/Tokyo')。
+       * 描画時はそのまま `Intl.DateTimeFormat` の timeZone に渡せる。
        */
-      timezone: string | null;
+      timezone: string;
       /**
-       * PR #118: 個別ロケール (BCP 47、例 'ja-JP')。
-       * null はシステムデフォルトを使う意味。
-       * 描画時は `resolveLocale(session.user.locale)` で解決する。
+       * PR-1 (2026-05-15): テナント単位の BCP 47 ロケール (例 'ja-JP')。
+       * Tenant.locale を JWT 経由で session に伝搬。NOT NULL (default 'ja-JP')。
        */
-      locale: string | null;
+      locale: string;
       /**
        * P-B (2026-05-08): Beginner プラン期限判定用の JWT claim。
        * middleware (Edge runtime) で DB を引かずに read-only 判定するために

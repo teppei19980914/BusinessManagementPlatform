@@ -70,15 +70,17 @@ function SetupPasswordForm() {
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
 
   // トークン検証 (初期表示)
-  const [tokenError, setTokenError] = useState('');
-  const [isValidating, setIsValidating] = useState(true);
+  // PR fix/eslint-config-next-16.2.6 (2026-05-11):
+  //   eslint-config-next 16.2.6 が `react-hooks/set-state-in-effect` を新たに enforce する。
+  //   旧実装は useEffect 内で `if (!token) { setTokenError(t('invalidLink')); setIsValidating(false); return; }`
+  //   と synchronous setState を行っていたため violation。
+  //   → 初期 state を token 有無から **派生** し、useEffect 内の synchronous setState を除去。
+  //   fetch 完了後 (microtask 内) の setState は rule 対象外。
+  const [tokenError, setTokenError] = useState(token ? '' : t('invalidLink'));
+  const [isValidating, setIsValidating] = useState(!!token);
 
   useEffect(() => {
-    if (!token) {
-      setTokenError(t('invalidLink'));
-      setIsValidating(false);
-      return;
-    }
+    if (!token) return; // 初期 state で既に invalidLink を表示済
 
     fetch(`/api/auth/setup-password?token=${encodeURIComponent(token)}`)
       .then((res) => res.json())
