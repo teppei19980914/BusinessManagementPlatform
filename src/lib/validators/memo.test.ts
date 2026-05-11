@@ -26,8 +26,23 @@ describe('createMemoSchema', () => {
     expect(createMemoSchema.safeParse({ ...valid, visibility: 'project' }).success).toBe(false);
   });
 
-  it('空タイトルを拒否', () => {
-    expect(createMemoSchema.safeParse({ ...valid, title: '' }).success).toBe(false);
+  // 2026-05-11: visibility 連動の必須チェックに変更。
+  //   - 「自分のみ」(private、既定) では title 空も許容 (一時保存的に保存可)
+  //   - 「全メンバー」(public) ではタイトル必須
+  it('visibility=private (既定) なら空タイトルを許容 (一時保存)', () => {
+    expect(createMemoSchema.safeParse({ ...valid, title: '' }).success).toBe(true);
+  });
+
+  it('visibility=public で空タイトルを拒否', () => {
+    expect(
+      createMemoSchema.safeParse({ ...valid, title: '', visibility: 'public' }).success,
+    ).toBe(false);
+  });
+
+  it('visibility=public で空白のみのタイトルも拒否 (trim 検証)', () => {
+    expect(
+      createMemoSchema.safeParse({ ...valid, title: '   ', visibility: 'public' }).success,
+    ).toBe(false);
   });
 
   it('タイトル 151 文字を拒否', () => {
@@ -47,7 +62,7 @@ describe('createMemoSchema', () => {
 describe('updateMemoSchema', () => {
   it('部分更新を受け入れる', () => {
     expect(updateMemoSchema.safeParse({ title: '変更後' }).success).toBe(true);
-    expect(updateMemoSchema.safeParse({ visibility: 'public' }).success).toBe(true);
+    expect(updateMemoSchema.safeParse({ visibility: 'public', title: 'ok' }).success).toBe(true);
   });
 
   it('空オブジェクトでも受け入れる', () => {
@@ -56,5 +71,14 @@ describe('updateMemoSchema', () => {
 
   it('無効な visibility は拒否', () => {
     expect(updateMemoSchema.safeParse({ visibility: 'foo' }).success).toBe(false);
+  });
+
+  // 2026-05-11: 部分更新で visibility='public' に変更しつつ title を空文字に戻そうとした場合は拒否
+  it('visibility=public への変更時に title を空文字にすると拒否', () => {
+    expect(updateMemoSchema.safeParse({ visibility: 'public', title: '' }).success).toBe(false);
+  });
+
+  it('visibility=private への変更時に title を空文字にしても許容 (一時保存)', () => {
+    expect(updateMemoSchema.safeParse({ visibility: 'private', title: '' }).success).toBe(true);
   });
 });

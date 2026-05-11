@@ -328,12 +328,18 @@ export function MemosClient({
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>{tField('title')}</Label>
+                  <Label>
+                    {tField('title')}
+                    {/* 2026-05-11: 公開範囲 = 自分のみ なら任意 (一時保存可)、全メンバー なら必須 */}
+                    {createForm.visibility === 'private' && (
+                      <span className="ml-2 text-xs text-muted-foreground">{tMemo('contentOptional')}</span>
+                    )}
+                  </Label>
                   <Input
                     value={createForm.title}
                     onChange={(e) => setCreateForm({ ...createForm, title: e.target.value })}
                     maxLength={150}
-                    required
+                    required={createForm.visibility === 'public'}
                   />
                 </div>
                 <div className="space-y-2">
@@ -454,12 +460,18 @@ export function MemosClient({
                 </select>
               </div>
               <div className="space-y-2">
-                <Label>{tField('title')}</Label>
+                <Label>
+                  {tField('title')}
+                  {/* 2026-05-11: 編集時も visibility 連動で required を切替 */}
+                  {editForm.visibility === 'private' && (
+                    <span className="ml-2 text-xs text-muted-foreground">{tMemo('contentOptional')}</span>
+                  )}
+                </Label>
                 <Input
                   value={editForm.title}
                   onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
                   maxLength={150}
-                  required
+                  required={editForm.visibility === 'public'}
                 />
               </div>
               <div className="space-y-2">

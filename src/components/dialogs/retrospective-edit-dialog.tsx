@@ -111,11 +111,18 @@ export function RetrospectiveEditDialog({
       showError('編集対象プロジェクトが特定できません (孤児状態)');
       return;
     }
+    // 2026-05-11: 「自分のみ (draft)」保存時は conductedDate を空にできる仕様のため、
+    //   '' を undefined に変換してから送信する (validator の regex で '' は弾かれるため)。
+    //   public 時は UI 側で required により '' での送信は発生しないが、サーバ側 superRefine でも検証される。
+    const payload: Record<string, unknown> = { ...form };
+    if (form.conductedDate === '') {
+      delete payload.conductedDate;
+    }
     const res = await withLoading(() =>
       fetch(`/api/projects/${targetProjectId}/retrospectives/${retro.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       }),
     );
     if (!res.ok) {
@@ -155,8 +162,19 @@ export function RetrospectiveEditDialog({
             </select>
           </div>
           <div className="space-y-2">
-            <Label>{tField('conductedDate')}</Label>
-            <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
+            <Label>
+              {tField('conductedDate')}
+              {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意。空のまま draft 保存可 (= サーバ側で当日日付が default 補完される) */}
+              {form.visibility === 'draft' && (
+                <span className="ml-2 text-xs text-muted-foreground">(任意)</span>
+              )}
+            </Label>
+            <DateFieldWithActions
+              value={form.conductedDate}
+              onChange={(v) => setForm({ ...form, conductedDate: v })}
+              required={form.visibility === 'public'}
+              hideClear
+            />
           </div>
           {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 */}
           {([

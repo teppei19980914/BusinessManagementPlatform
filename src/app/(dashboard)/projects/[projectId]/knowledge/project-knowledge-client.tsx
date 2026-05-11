@@ -276,12 +276,18 @@ export function ProjectKnowledgeClient({
                     <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                   )}
                   <div className="space-y-2">
-                    <Label>{tKnowledge('fieldTitle')}</Label>
+                    <Label>
+                      {tKnowledge('fieldTitle')}
+                      {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
+                      {form.visibility === 'draft' && (
+                        <span className="ml-2 text-xs text-muted-foreground">(任意)</span>
+                      )}
+                    </Label>
                     <Input
                       value={form.title}
                       onChange={(e) => setForm({ ...form, title: e.target.value })}
                       maxLength={150}
-                      required
+                      required={form.visibility === 'public'}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
