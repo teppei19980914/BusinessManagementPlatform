@@ -6328,3 +6328,78 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
 - 関連 service: [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts) — `getDefaultTenantOwnSummary`, `getCrossTenantUsageSummary`
 - 関連 page: [src/app/(dashboard)/admin/super/page.tsx](../../src/app/(dashboard)/admin/super/page.tsx), [tenants/page.tsx](../../src/app/(dashboard)/admin/super/tenants/page.tsx), [usage/page.tsx](../../src/app/(dashboard)/admin/super/usage/page.tsx)
 - 旧設計合意: 設計合意 B (= v1.x マルチテナント運用時に default = placeholder 扱い) — v1 MVP では「Default = 運営者自身のテナント」を主とし、v1.x で multi-tenant 化される時点で再評価
+
+
+## 5.X+24 集計除外フィルタは **集計・スナップショット・履歴クエリの 3 段全部** に揃えないと月次 CSV (請求書根拠) に Default が混入する (2026-05-11 監査で検出)
+
+### 罠の正体
+
+§5.X+23 で「Default テナントを顧客集計から除外」する方針を導入したが、その時に修正したのは **顧客集計クエリ** (`getCrossTenantUsageSummary` / `listAllTenants` 等の "現在値" 系) のみだった。
+
+監査で 2 件の漏れが判明:
+
+1. **`saveMonthlyUsageSnapshots` (= 月初リセット cron で前月使用量を `tenant_monthly_usage_history` に保存する関数)** が `id: { not: MANAGEMENT_TENANT_ID }` のみで絞っており、**Default テナントの月次スナップショットが毎月 DB に保存され続ける**。
+2. **`listMonthlyUsageHistory` (= /admin/super/usage の過去月履歴 + CSV エクスポートの過去月経路で参照)** には **テナント除外フィルタが存在しなかった**。
+
+→ 結果として:
+- 過去月の CSV エクスポート (= 請求書根拠) に **Default テナント行が混入**
+- /admin/super/usage の「過去 6 ヶ月の使用量履歴」テーブルに **Default 行が表示**
+- 顧客集計には除外、過去月集計には混入、という**不整合**が発生
+
+### 影響範囲
+
+これは事業継続性に直結する不具合:
+
+1. **取りこぼし方向**: 該当しない (Default は売上扱いしない方針なので、CSV に Default が混じっても請求書合計が増えるだけで取りこぼしはなし)
+2. **過剰請求方向**: 該当しない (= Default テナントの請求業務は実施しないため、CSV 上に出ても運営者が見ているだけ)
+3. **しかし運用混乱**: CSV 集計時に「これ請求しなくていいやつだっけ?」と毎月の確認コストが発生 + 集計ツールで気付かず Default 込みの合計を顧客請求合計と誤認するリスク
+
+### 修正パターン (2026-05-11)
+
+集計除外フィルタを **3 段全部** に揃える:
+
+```typescript
+// 1. 顧客集計クエリ (= 既存 / §5.X+23 対応済)
+const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+prisma.tenant.findMany({ where: { id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS } } });
+
+// 2. スナップショット保存 (= 今回追加)
+//    src/services/tenant-monthly-reset.service.ts
+const SNAPSHOT_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+prisma.tenant.findMany({ where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS } } });
+
+// 3. 履歴クエリ (= 今回追加、二重防御)
+//    src/services/super-admin.service.ts (listMonthlyUsageHistory)
+prisma.tenantMonthlyUsageHistory.findMany({
+  where: {
+    yearMonth: { in: targetYearMonths },
+    tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },  // 二重防御
+  },
+});
+```
+
+### 横展開チェック (今後同様の除外フィルタを足す時の checklist)
+
+- [ ] **「現在値」を返す関数**: `prisma.tenant.findMany` / `aggregate` / `groupBy` / `count` のすべての where に `id: { notIn: EXCLUDED }` を入れる
+- [ ] **「過去値」を保存する関数 (cron / snapshot)**: 保存対象テナントの絞り込みにも同じ除外を入れる (= 保存しないことで根本的に混入経路を遮断)
+- [ ] **「過去値」を読む関数 (履歴クエリ / 集計レポート)**: 既存データに対する **二重防御** として where に除外フィルタを入れる
+- [ ] **CSV / レポート / 外部連携 API**: 上記 3 段に依存する API は再検証
+- [ ] **ユニットテスト**: 各関数の where 条件を assert.toMatchObject で検証 (= 将来の改修で除外が外れても CI で気付く)
+
+### 請求業務正確性の防衛線 (本 PR で構築)
+
+「請求金額の取りこぼし / 過剰請求」を防ぐため、以下を多重で保証する:
+
+| レイヤ | 検証手段 | 件数 |
+|---|---|---|
+| サービス層 | super-admin.service.test.ts (listAllTenants / listStorageUsageTop / getTenantDetail / getCrossTenantUsageSummary / getDefaultTenantOwnSummary / listMonthlyUsageHistory) | 56 件 |
+| cron 層 | tenant-monthly-reset.service.test.ts (saveMonthlyUsageSnapshots の Default 除外) | 20 件 (既存 + 改修) |
+| API 層 | api/admin/super/usage/export/route.test.ts (CSV 当月 / 過去月 / Default 除外 / 認可) | 12 件 |
+| E2E 層 | e2e/specs/13-super-admin-dashboard.spec.ts (ダッシュボード表示 + Default 別セクション + CSV Default 除外 + 認可境界) | 5 件 |
+
+### 関連
+
+- 元 PR: PR-X / dev/2026-05-11 (請求業務正確性監査)
+- 関連 service: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts), [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts)
+- 関連 test: [src/services/super-admin.service.test.ts](../../src/services/super-admin.service.test.ts), [src/services/tenant-monthly-reset.service.test.ts](../../src/services/tenant-monthly-reset.service.test.ts), [src/app/api/admin/super/usage/export/route.test.ts](../../src/app/api/admin/super/usage/export/route.test.ts), [e2e/specs/13-super-admin-dashboard.spec.ts](../../e2e/specs/13-super-admin-dashboard.spec.ts)
+- 関連 KDD: §5.X+23 (集計除外と画面表示の分離)

@@ -775,8 +775,15 @@ export async function listMonthlyUsageHistory(
     targetYearMonths.push(ym);
   }
 
+  // 2026-05-11: 顧客集計 (= 請求対象) のため、管理テナント + Default テナント (運営者自身)
+  //   のスナップショットは除外。過去 PR で saveMonthlyUsageSnapshots が DEFAULT_TENANT_ID
+  //   を含めて保存していた期間があり、本番 DB に Default の履歴行が残っている可能性に
+  //   備えて防御的に query 層でも除外する (二重防御)。
   const rows = await prisma.tenantMonthlyUsageHistory.findMany({
-    where: { yearMonth: { in: targetYearMonths } },
+    where: {
+      yearMonth: { in: targetYearMonths },
+      tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
+    },
     orderBy: [{ yearMonth: 'desc' }, { tenantId: 'asc' }],
     include: {
       tenant: {

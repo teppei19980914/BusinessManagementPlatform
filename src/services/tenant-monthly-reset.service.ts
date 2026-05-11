@@ -39,13 +39,22 @@
 
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
-import { isTenantPlan, MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import { isTenantPlan, MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
 import {
   ADDON_MONTHLY_JPY as STORAGE_ADDON_MONTHLY_JPY,
   isStorageAddonPlan,
 } from '@/config/storage-addon';
 import { applyScheduledStorageChanges } from '@/services/tenant-storage.service';
 import { purgeOldDeletedTenants } from '@/services/super-admin.service';
+
+/**
+ * 2026-05-11: 月次使用量履歴のスナップショット保存対象から **除外** するテナント。
+ *
+ * Default テナント (運営者自身) は請求対象外のため、月次履歴 (= 請求書根拠) には残さない。
+ * 過去 PR では MANAGEMENT_TENANT_ID のみ除外していたため Default の月次スナップショットが
+ * 蓄積されてしまい、CSV エクスポート (過去月) や履歴グラフに混入する不具合があった。
+ */
+const SNAPSHOT_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
 
 export interface TenantMonthlyResetResult {
   /** 月初リセット対象として update したテナント件数。 */
@@ -111,9 +120,11 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
   const yearMonth = getPreviousYearMonth(now);
 
   // リセット対象テナント (= まだリセットされていない、当月分の値を保持中) を取得
+  // 2026-05-11: Default テナント (= 運営者自身、請求対象外) も除外 — 過去 PR では
+  //   MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に混入していた。
   const targets = await prisma.tenant.findMany({
     where: {
-      id: { not: MANAGEMENT_TENANT_ID },
+      id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS },
       deletedAt: null,
       OR: [{ lastResetAt: null }, { lastResetAt: { lt: monthStart } }],
     },

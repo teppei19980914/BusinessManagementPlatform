@@ -277,19 +277,23 @@ describe('getPreviousYearMonth (P-5b / 2026-05-08)', () => {
 });
 
 describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
-  it('管理テナント以外を対象に upsert を呼ぶ', async () => {
+  it('管理テナント + Default テナント以外を対象に upsert を呼ぶ (2026-05-11 改修)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       {
         id: 'tenant-a',
         plan: 'beginner',
         currentMonthApiCallCount: 80,
         currentMonthApiCostJpy: 0,
+        storageAddonPlan: 'standard',
+        storageBytesUsed: BigInt(0),
       },
       {
         id: 'tenant-b',
         plan: 'pro',
         currentMonthApiCallCount: 1200,
         currentMonthApiCostJpy: 36000,
+        storageAddonPlan: 'standard',
+        storageBytesUsed: BigInt(0),
       },
     ] as never);
     vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
@@ -301,11 +305,17 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
     const saved = await saveMonthlyUsageSnapshots(new Date('2026-05-01T00:00:00Z'));
 
     expect(saved).toBe(2);
-    // 管理テナント除外条件
+    // 2026-05-11 改修: 管理テナント + Default テナント (= 運営者自身、請求対象外) を除外
+    // Default が混入すると過去月 CSV エクスポートに不正に含まれてしまうため二重防御
     expect(prisma.tenant.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          id: { not: '00000000-0000-0000-0000-ffffffffffff' },
+          id: {
+            notIn: [
+              '00000000-0000-0000-0000-ffffffffffff', // MANAGEMENT
+              '00000000-0000-0000-0000-000000000001', // DEFAULT
+            ],
+          },
           deletedAt: null,
         }),
       }),
