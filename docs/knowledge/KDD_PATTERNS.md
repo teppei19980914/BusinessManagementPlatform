@@ -5885,3 +5885,56 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 修正例: PR #310 (2026-05-10)
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+## 5.X+27 ストレージ上限を LLM プランから切り離し 20MB 共通ベース + add-on 独立軸に統一 — 横展開可能な guard サービス化 (PR-3 / 2026-05-15)
+
+### 背景
+旧仕様では `STANDARD_STORAGE_BYTES_BY_PLAN = { beginner: 50MB, expert: 150MB, pro: 300MB }`
+と LLM プランに連動して Standard 上限が変動していた。
+ユーザ要件で確定: **「Standard 20MB / Plus 220MB / Pro 1.02GB / Enterprise 5.02GB」** を
+全テナント共通で運用 (LLM プラン非依存)。日次 cron + 7 日 Grace の従来仕様だけでは最大 24h 遅延で
+データが上限超過状態で書き込まれてしまう問題があったため、リアルタイム guard も併設。
+
+### 教訓
+- **Standard ベースを定数化し、computeStorageLimitBytes のシグネチャから llmPlan 引数を撤去**:
+  `STANDARD_STORAGE_BYTES = 20MB` (単一定数) + `ADDON_EXTRA_BYTES[addonPlan]` で合算。
+  call site が散在しているため、シグネチャ変更で漏れを tsc が検出できる構造に変える。
+- **Pre-check (cache) + Post-check (transaction 内実測)** の二段戦略:
+  - Pre-check: キャッシュ値 + 予測サイズで早期拒否 (24h ラグあり = fail-open 寄り)
+  - Post-check: transaction 内で `pg_column_size` 集計の実測 → 超過なら `throw` で全件ロールバック
+  - 後者が真の境界、前者は明らかに巨大な payload を入口で弾くだけ
+- **共通ヘルパに集約**: `withStorageGuard(tenantId, (tx) => fn)` で transaction の中身を渡せば
+  Post-check と上限超過ロールバックを自動化。書き込み系 service に横展開しやすい設計
+- **エラーマッピング集中**: `mapStorageGuardErrorToResponse(error)` で 403 を組み立て、route が個別判定する必要を排除
+
+### 設計の落とし穴
+
+1. **`calculateTenantStorageBytes` を transaction 内で使うと外側 DB を見る**:
+   `tenant-storage.service.ts` 側は `prisma.$queryRaw` 直叩きで tx スコープ外。
+   `storage-guard.service.ts` 内に **tx 引数を取る同等 SQL** を別途実装 (`calculateTenantStorageBytesInTx`)。
+2. **テスト mock の更新**:
+   `prisma.$transaction(async (tx) => ...)` の tx mock 側にも
+   `tenant.findFirst`, `tenant.update`, `$queryRaw` のスタブが必要。
+3. **キャッシュの同期書き込みは tx 内**:
+   `assertStorageLimitInTx` で実測値を `Tenant.storageBytesUsed` に書き戻すが、
+   transaction がロールバックされた時は当然破棄される (= キャッシュ汚染が発生しない)。
+
+### 横展開で漏らしやすい箇所 (PR-3 では未着手、follow-up 対象)
+
+PR-3 では **インポート経路 (data-import + external-data-import)** に Post-check + ロールバックを適用済み。
+通常の CRUD (project / task / knowledge / risk / retro / memo / customer / stakeholder / member / comment / attachment)
+は **未適用**。follow-up PR で:
+
+- 各 service の `create / update / bulkUpdate` を `withStorageGuard(tenantId, (tx) => tx.X.create(...))` で wrap
+- 上限超過時の API レスポンスは `mapStorageGuardErrorToResponse(error)` で 403 を返す
+- 各 service の test mock に `tx.tenant.findFirst / tx.tenant.update / tx.$queryRaw` を追加 (data-import.service.test.ts のパターンを流用)
+
+PR-3 で個別 CRUD まで広げなかった理由: テスト書き換えの規模が約 30+ ファイルに及び、PR レビュー単位として
+大きすぎるため。インフラ + 最重要経路 (= bulk import) を先行、CRUD 個別は段階的に follow-up。
+
+### 関連
+
+- 元 PR: PR-3 (2026-05-15) テナント管理者ダッシュボード改修 — Storage 20MB 共通化 + リアルタイム guard
+- config: src/config/storage-addon.ts (`STANDARD_STORAGE_BYTES` / `ADDON_EXTRA_BYTES`)
+- guard service: src/services/storage-guard.service.ts (`withStorageGuard` / `assertStorageLimitInTx` / `precheckStorageLimit`)
+- import 経路: src/services/data-import.service.ts (ZIP) / src/services/external-data-import.service.ts (CSV)
