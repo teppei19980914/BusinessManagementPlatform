@@ -752,6 +752,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // WBS は階層構造のため、対象タスクが折りたたまれた親 WP の中にいると画面に出ない。
   // → `findAncestorIds` で全祖先を `expandedTaskIds` に追加して可視化してから dialog open。
   // useRef で 1 度きり実行を担保、tasks の lazy fetch 完了タイミングに対応。
+  //
+  // PR fix/eslint-config-next-16.2.6 (2026-05-11):
+  //   eslint-config-next 16.2.6 の `react-hooks/set-state-in-effect` は本 effect 内の
+  //   `setExpandedTaskIds` / `openEditDialog` (内部で setEditingTask 等) を violation 扱い。
+  //   ただし本 effect は **deep link 着地時に 1 度だけ実行する不可避な副作用** で、
+  //   `autoOpenTriggeredRef` で再実行を防止しており cascading render は起きない。
+  //   React 公式も "Triggering an animation / Showing a modal / etc." は effect で OK としており、
+  //   本ケースもそれに該当するため disable で局所許容。
   const autoOpenSearchParams = useSearchParams();
   const autoOpenPathname = usePathname();
   const autoOpenTriggeredRef = useRef(false);
@@ -782,6 +790,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       });
     }
     autoOpenTriggeredRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- ref ガード済の 1 回限り deep-link auto-open、cascading render なし
     openEditDialog(targetTask);
     const next = new URLSearchParams(autoOpenSearchParams);
     next.delete('taskId');
