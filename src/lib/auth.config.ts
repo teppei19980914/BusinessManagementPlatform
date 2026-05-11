@@ -98,8 +98,22 @@ export const authConfig: NextAuthConfig = {
       //   middleware は Edge runtime で DB を引けないので、JWT claim の
       //   tenantPlan / tenantCreatedAt / tenantBeginnerEverUpgraded から純関数で判定。
       //   アップグレードしたら次回の jwt callback で claim が更新される (新しい authorize() 結果が反映)。
+      //
+      // 2026-05-11 改修: 「プラン変更」「セルフ削除」だけは read-only モード中でも許可する。
+      //   - PATCH /api/tenants/me: Beginner → Expert/Pro アップグレード経路 (これを弾くと
+      //     "アップグレードしてください" と案内しつつ自己矛盾的にブロックする状態だった)
+      //   - POST /api/tenants/me/self-delete: テナント解約経路 (これも write なので弾かれていた)
+      //   - DELETE /api/tenants/me: プラン変更予約のキャンセル (= アップグレード操作に付随)
+      //   middleware (Edge) は body を読めないため path 完全一致で判定する。
+      //   PATCH /api/tenants/me は plan 以外 (budget / seedDataEnabled) も含むが、
+      //   サービス層側で Beginner 期間中の不正設定はそれぞれ別エラーで弾かれるため害なし。
       const writeMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
-      if (writeMethods.has(request.method)) {
+      const READ_ONLY_BYPASS_PATHS = new Set([
+        '/api/tenants/me',
+        '/api/tenants/me/self-delete',
+      ]);
+      const isReadOnlyBypass = READ_ONLY_BYPASS_PATHS.has(nextUrl.pathname);
+      if (writeMethods.has(request.method) && !isReadOnlyBypass) {
         const plan = auth.user.tenantPlan;
         const createdAtIso = auth.user.tenantCreatedAt;
         const everUpgraded = auth.user.tenantBeginnerEverUpgraded;
@@ -113,7 +127,7 @@ export const authConfig: NextAuthConfig = {
             const daysElapsed = Math.floor((Date.now() - createdAtMs) / (24 * 60 * 60 * 1000));
             if (daysElapsed >= 90) {
               // ログアウト系 (= 別 method なので通る) と認証 API は PUBLIC_PATHS で通過済。
-              // 業務 API のみここで弾く。
+              // 業務 API のみここで弾く。プラン変更とセルフ削除は READ_ONLY_BYPASS_PATHS で通過済。
               return new Response(
                 JSON.stringify({
                   error: {

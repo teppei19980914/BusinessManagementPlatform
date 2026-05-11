@@ -67,6 +67,9 @@ import {
   getBeginnerUsageSummary,
   // 2026-05-09 (PR F / #18)
   purgeOldDeletedTenants,
+  // 2026-05-11: Day 180 自動物理削除
+  purgeExpiredBeginnerTenants,
+  BEGINNER_AUTO_DELETE_TOTAL_DAYS,
 } from './super-admin.service';
 import { prisma } from '@/lib/db';
 
@@ -674,5 +677,112 @@ describe('purgeOldDeletedTenants (PR F / #18)', () => {
     expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({
       where: { tenantId: 'old-tenant-1' },
     });
+  });
+});
+
+// ================================================================
+// 2026-05-11: Day 180 自動物理削除 (purgeExpiredBeginnerTenants)
+// ================================================================
+
+describe('purgeExpiredBeginnerTenants (2026-05-11)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const zero = { count: 0 } as never;
+    vi.mocked(prisma.mention.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.comment.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.attachment.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.knowledgeProject.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.taskKnowledge.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.taskProgressLog.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.task.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.estimate.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.riskIssue.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.retrospective.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.memo.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.stakeholder.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.knowledge.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.suggestionExplanation.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.project.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.customer.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.tenantImportPreview.deleteMany).mockResolvedValue(zero);
+    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.user.updateMany).mockResolvedValue(zero);
+  });
+
+  it('閾値定数 BEGINNER_AUTO_DELETE_TOTAL_DAYS は 180', () => {
+    expect(BEGINNER_AUTO_DELETE_TOTAL_DAYS).toBe(180);
+  });
+
+  it('対象テナント (Beginner / 未アップグレード / 未削除 / 180 日経過) を物理削除する', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'expired-1' },
+      { id: 'expired-2' },
+    ] as never);
+
+    const result = await purgeExpiredBeginnerTenants(new Date('2026-05-11T00:00:00Z'));
+
+    expect(result.attempted).toBe(2);
+    expect(result.succeeded).toBe(2);
+    // 業務データ削除 + テナント論理削除 + user 論理削除 が呼ばれる
+    expect(prisma.project.deleteMany).toHaveBeenCalled();
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: 'expired-1' },
+      data: { deletedAt: new Date('2026-05-11T00:00:00Z') },
+    });
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: 'expired-1', deletedAt: null },
+      data: { deletedAt: new Date('2026-05-11T00:00:00Z'), isActive: false },
+    });
+  });
+
+  it('検索条件: plan=beginner, beginnerEverUpgraded=false, deletedAt=null, createdAt < (now - 180d), id != MANAGEMENT', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    const now = new Date('2026-05-11T00:00:00Z');
+    await purgeExpiredBeginnerTenants(now);
+
+    const threshold = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+    expect(prisma.tenant.findMany).toHaveBeenCalledWith({
+      where: {
+        plan: 'beginner',
+        beginnerEverUpgraded: false,
+        deletedAt: null,
+        createdAt: { lt: threshold },
+        id: expect.objectContaining({ not: expect.any(String) }),
+      },
+      select: { id: true },
+    });
+  });
+
+  it('対象 0 件なら deleteMany は呼ばれない', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+
+    const r = await purgeExpiredBeginnerTenants(new Date('2026-05-11T00:00:00Z'));
+
+    expect(r.attempted).toBe(0);
+    expect(r.succeeded).toBe(0);
+    expect(prisma.project.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('1 テナント失敗しても他テナントの処理は継続する (per-tenant try/catch)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'fails' },
+      { id: 'succeeds' },
+    ] as never);
+    // $transaction の最初の呼び出しのみ失敗、2 回目は成功
+    let call = 0;
+    vi.mocked(prisma.$transaction).mockImplementation(async (ops: unknown) => {
+      call += 1;
+      if (call === 1) throw new Error('simulated failure');
+      // ops は Promise[] (mock 結果) を含むので Promise.all で resolve
+      return Promise.all(ops as Promise<unknown>[]);
+    });
+
+    const r = await purgeExpiredBeginnerTenants(new Date('2026-05-11T00:00:00Z'));
+
+    expect(r.attempted).toBe(2);
+    expect(r.succeeded).toBe(1);
   });
 });

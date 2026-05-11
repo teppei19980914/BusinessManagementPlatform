@@ -233,10 +233,12 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
 
 - **攻撃者**: Beginner 期限切れテナント
 - **シナリオ**: Beginner 90 日経過で write 停止後、Storage プランを Plus にアップグレードして容量増を狙う (が、middleware で write 停止されている)
-- **影響度**: 低 (= write が止まっているのでアップグレード API も呼べない)
+- **影響度**: 低
 - **発生確率**: ゼロ
 - **既存対策**: middleware が PATCH メソッドを `BEGINNER_EXPIRED_READ_ONLY` で 403
 - **追加対策**: 不要
+
+> **2026-05-11 更新**: middleware に `READ_ONLY_BYPASS_PATHS` を追加し、`/api/tenants/me` (LLM プラン変更) と `/api/tenants/me/self-delete` (セルフ解約) は read-only モードでも許可する仕様に変更。これは「ユーザに復帰経路 + 解約経路を必ず残す」UX 要件のため。Storage プラン変更は別 endpoint のため本 bypass の対象外で、E-2 の脅威は引き続き防御される。LLM プランアップグレード経由で Storage 上限が変わる経路はないため、E-2 の影響度評価に変更なし。
 
 #### E-3. Storage Grace 7 日後の write 停止回避
 

@@ -25,6 +25,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runDailyUsageAggregation } from '@/services/usage-monitoring.service';
 import { sendBeginnerExpiryNotices } from '@/services/beginner-expiry.service';
+import { purgeExpiredBeginnerTenants } from '@/services/super-admin.service';
 
 function isCronAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
@@ -49,11 +50,18 @@ export async function POST(req: NextRequest) {
   const baseUrl = process.env.NEXTAUTH_URL || req.nextUrl.origin;
   const beginnerNotices = await sendBeginnerExpiryNotices(baseUrl);
 
+  // 2026-05-11: Day 180 自動物理削除。Beginner 試用期間 (90 日) + 読み取り専用猶予 (90 日) を
+  //   過ぎてもアップグレードされなかったテナントを自動的に物理削除する。Day 90 通知メールで
+  //   「90 日後に自動削除」を予告済みのため、ユーザは事前に対応 (= アップグレード /
+  //   セルフ削除 / エクスポート退避) する機会を得ている。
+  const beginnerAutoPurge = await purgeExpiredBeginnerTenants();
+
   return NextResponse.json({
     data: {
       source: 'cron',
       ...result,
       beginnerNotices,
+      beginnerAutoPurge,
     },
   });
 }
