@@ -5886,6 +5886,58 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
+## 5.X+25 timezone / locale はユーザ単位ではなくテナント単位で持つ — 同一テナント内で日付計算が揺らがない設計 (PR-1 / 2026-05-15)
+
+### 背景
+旧仕様 (PR #118 〜 PR #119) では `User.timezone` / `User.locale` でユーザごとに TZ/言語を選べた。
+ところがテナント全体の挙動 (Beginner 残日数 / 月初リセット境界 / 翌月適用日 / 日次集計 boundary)
+を「ユーザ TZ」基準にすると、**同一テナント内に TZ の異なる 2 名が居ると同一日付の認識がずれて**、
+請求書や使用量のカウント断面に矛盾が生じる。
+
+### 教訓
+- **テナント全体の挙動に使う TZ/locale は Tenant に持つ**:
+  - `Tenant.timezone String NOT NULL DEFAULT 'Asia/Tokyo'`
+  - `Tenant.locale String NOT NULL DEFAULT 'ja-JP'`
+- ユーザ個別設定は **テーマ / MFA / パスワード等の「個人のセッション体験」に限定**。
+  時刻基準は本人の手元観測値より「テナント全体での会計・運用断面」を優先する。
+- JWT claim にはテナント値を載せる (`session.user.timezone` / `session.user.locale`)。
+  この命名は維持 (= 描画コード側の `Intl.DateTimeFormat` 呼出は変更不要)、
+  だが **意味はテナント単位** であることをコメントで明示する。
+- API は `/api/tenants/me/i18n` に集約。テナント管理者 (admin) のみ更新可。
+  general / super_admin は 403 (テナント設定はテナント管理者の責務)。
+
+### 設計の落とし穴
+
+1. **値が `null` 許容のままだとデフォルトが分散する**:
+   旧 `User.timezone String?` の運用では「null = システム既定」だったが、テナント単位では
+   既定値を **DB の NOT NULL + DEFAULT** で持たせて nullable を撤去。`resolveTimezone()` の
+   フォールバックチェーンを 1 段減らせる + 型安全 (`session.user.timezone: string`)。
+2. **`trigger='update'` 経路の patch 型を null から外す**:
+   JWT 反映で `useSession().update({ timezone, locale })` の patch 型を `string | null` から
+   `string` に変更。null を入れる経路 (= システム既定に戻す UI) を廃止したため。
+3. **データインポートの後方互換**:
+   旧 ZIP に `User.timezone / User.locale` が含まれていても、新 import コードは黙って無視する。
+   テナント側設定は維持。誤ってユーザレコードに NULL を書き戻すと型エラーで止まるため defensive。
+4. **データエクスポートの新フィールド追加**:
+   `ExportSummary` に `tenantTimezone` / `tenantLocale` を追加。再インポート時にテナント設定を
+   復元する手がかりとして使える (将来の super_admin 代行 import 用)。
+
+### 横展開で漏らしやすい箇所
+
+- `prisma.user.findUnique({ select: { timezone: true, locale: true } })` を残してしまう
+  → ビルドエラーで気付ける (列が DB から消えるため)
+- `session.user.timezone === null` という null 判定が残る
+  → tsc が型エラーで指摘
+- データインポート/エクスポートのテストモックに `timezone: ..., locale: ...` が残る
+  → 警告は出ないがビルドは通る (テストで verify されている前提なら問題なし)
+
+### 関連
+
+- 元 PR: PR-1 (2026-05-15) テナント管理者ダッシュボード改修 — タイムゾーン/ロケール集約
+- migration: prisma/migrations/20260515_tenant_i18n_settings/migration.sql
+- 旧 migration: prisma/migrations/20260424_user_i18n_preferences/ (User に timezone/locale 追加 → drop)
+- 関連設定: src/config/i18n.ts (`DEFAULT_TIMEZONE` / `DEFAULT_LOCALE`)
+
 ---
 
 ## 5.X+20 `eslint-config-next` minor 上げで `react-hooks/set-state-in-effect` / `react-hooks/refs` が新規 enforce — 既存 useEffect/useRef を Hooks-7.1 互換に書き換える (PR #323 dependabot 対応 / 2026-05-11)
@@ -6110,3 +6162,87 @@ close するかは判断次第:
 - 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
 - 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
 - 公式 (gitattributes merge): <https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver>
+
+---
+
+## 5.X+22 新規 `page.tsx` / `route.ts` を追加したら **必ず `docs/test/E2E_COVERAGE.md` 更新**、UI 移管 PR は **visual baseline 再生成必須** — 旧ルート削除と併せた一括対応のチェックリスト (PR #327 / PR-1 tenant-i18n / 2026-05-11)
+
+### 罠の正体
+
+PR #327 (PR-1 timezone/locale をテナント単位に集約) で 2 種類の CI fail が同時発生した:
+
+1. **`pnpm e2e:coverage-check` fail**:
+   ```
+   ❌ docs/test/E2E_COVERAGE.md に未記載の機能があります:
+      - /api/tenants/me/i18n
+   ```
+   新設した route の登録漏れ。`scripts/check-e2e-coverage.ts` が PR #90 以降 enforce。
+
+2. **Playwright visual regression fail** (`settings-light.png`):
+   ```
+   Expected an image 1440px by 1473px, received 1440px by 1125px.
+   28893 pixels (ratio 0.02 of all image pixels) are different.
+   ```
+   `/settings` から timezone/locale UI (123 行) を `/settings/tenant` へ移管した結果、
+   設定画面の高さが 1473px → 1125px (348px 縮小) して baseline drift。
+
+両方とも **「実装意図通りの当然の結果」** で、コード自体に不具合は無いが、
+**周辺ドキュメント / baseline の更新を本 PR 内で同梱しないと CI が通らない**。
+
+### 根本原因
+
+- **新規 route 追加** = E2E_COVERAGE.md 更新は ローカル `pnpm e2e:coverage-check`
+  または CI 失敗で気付く設計だが、**実装着手時にチェックリストを開いていないと忘れる**
+- **UI 移管・削除** = visual baseline は **PR で `[gen-visual]` トリガー** しないと
+  drift し続ける。今回は **旧 UI 削除のみ気付いたが baseline 更新を忘れた**
+
+### 修正パターン (本 PR で適用)
+
+```bash
+# 1. 新 route 追加時のチェックリスト
+pnpm e2e:coverage-check              # ローカルで確認
+# → ❌ 表示されたら docs/test/E2E_COVERAGE.md に
+#   - [ ] `/api/path` — skip: <理由> または
+#   - [x] `/api/path` — e2e/specs/XX-spec.ts
+# の形式で追加
+
+# 2. 旧 route 削除時のチェックリスト
+# E2E_COVERAGE.md の旧エントリを「削除済 (PR-N / YYYY-MM-DD)」と記録
+# (検索性のため完全削除はしない、移管先 PR への辿りやすさ確保)
+
+# 3. UI 移管/削除時の visual baseline 再生成
+# 別 commit で空コミットを作る:
+git commit --allow-empty -m "chore(visual): regenerate baseline for /settings UI 縮小 [gen-visual]"
+git push
+# → .github/workflows/e2e-visual-baseline.yml が発火し
+#   baseline 画像を再生成して bot コミットで PR ブランチに push
+```
+
+### 横展開チェック (UI 移管 / route 移管系の PR を作る時)
+
+- [ ] **新 route**: `pnpm e2e:coverage-check` をローカルで実行 → ✅ になるまで `docs/test/E2E_COVERAGE.md` に追記
+- [ ] **旧 route**: 削除した route は E2E_COVERAGE.md で `[x] **削除済 (PR-N / YYYY-MM-DD)**` 表記に更新 (完全削除しない)
+- [ ] **UI 縮小/拡大**: `pnpm test:e2e e2e/visual/` をローカル実行できるなら事前確認。CI で fail したら `[gen-visual]` commit で再生成
+- [ ] **新 UI 追加 (新画面)**: 対応する visual spec を `e2e/visual/` 配下に追加 + `[gen-visual]` で baseline 生成
+- [ ] **「ユーザ単位設定 → テナント単位設定」のような認可境界変更**: 旧 API の `/api/settings/i18n` を関連する全画面から呼び出し撤去 (本件: settings-client.tsx の useEffect から削除)。残しておくと 404 を呼び続けて余計なエラーログが発生
+- [ ] **JWT claim の意味変更**: `session.user.timezone` の値が「ユーザ TZ」から「テナント TZ」に変わる場合、**型は同じ string でも意味が違う** ため、命名維持は OK だが TS コメントで明示 (rg `session\.user\.timezone` で全箇所確認)
+
+### 設計の落とし穴 (PR-1 で踏んだもの)
+
+1. **null 許容の撤廃**: `User.timezone String?` → 廃止、`Tenant.timezone String NOT NULL DEFAULT 'Asia/Tokyo'`。
+   テナント単位では「null = 未設定」概念が不要 (DB default が機能する) ため NOT NULL 化。
+   `resolveTimezone()` のフォールバックチェーンを 1 段減らせる + 型安全 (`session.user.timezone: string`)
+2. **`useSession().update({ timezone, locale })` の patch 型を `string | null` から `string` に絞る**:
+   null を入れる経路 (= システム既定に戻す UI) を廃止したため
+3. **データインポートの後方互換**: 旧 ZIP に `User.timezone / User.locale` が含まれていても
+   新 import コードは黙って無視。NULL を書き戻すと型エラーで止まるため defensive 設計
+4. **データエクスポートの新フィールド**: `ExportSummary` に `tenantTimezone` / `tenantLocale` 追加。
+   再インポート時にテナント設定を復元する手がかり (将来の super_admin 代行 import 用)
+
+### 関連
+
+- 元 PR: PR-1 (2026-05-15 / feat/pr-1-tenant-i18n-settings)
+- 関連 KDD: §5.X+25 (テナント単位 i18n 設計の詳細)
+- 関連 script: [scripts/check-e2e-coverage.ts](../../scripts/check-e2e-coverage.ts)
+- 関連 workflow: [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml)
+- 関連 doc: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md), [E2E カバレッジ運用](../test/E2E_LESSONS.md)

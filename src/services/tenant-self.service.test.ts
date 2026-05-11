@@ -29,6 +29,7 @@ import {
   updateBillingContact,
   updateTenantSelf,
   cancelScheduledPlanChange,
+  updateTenantI18n,
 } from './tenant-self.service';
 import { prisma } from '@/lib/db';
 
@@ -65,6 +66,9 @@ const baseTenant = {
   beginnerEverUpgraded: true,
   createdAt: new Date('2026-01-01T00:00:00Z'),
   seedDataEnabled: true,
+  // PR-1 (2026-05-15): テナント単位 i18n
+  timezone: 'Asia/Tokyo',
+  locale: 'ja-JP',
 };
 
 describe('getTenantSelfInfo', () => {
@@ -266,5 +270,70 @@ describe('cancelScheduledPlanChange', () => {
       where: { id: TENANT_ID },
       data: { scheduledPlanChangeAt: null, scheduledNextPlan: null },
     });
+  });
+});
+
+describe('updateTenantI18n (PR-1 / 2026-05-15)', () => {
+  it('timezone のみ指定: timezone のみ update する', async () => {
+    vi.mocked(prisma.tenant.update).mockResolvedValueOnce({
+      timezone: 'America/New_York',
+      locale: 'ja-JP',
+    } as never);
+
+    const r = await updateTenantI18n(TENANT_ID, { timezone: 'America/New_York' });
+
+    expect(r).toEqual({ timezone: 'America/New_York', locale: 'ja-JP' });
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { timezone: 'America/New_York' },
+      select: { timezone: true, locale: true },
+    });
+  });
+
+  it('locale のみ指定: locale のみ update する', async () => {
+    vi.mocked(prisma.tenant.update).mockResolvedValueOnce({
+      timezone: 'Asia/Tokyo',
+      locale: 'en-US',
+    } as never);
+
+    const r = await updateTenantI18n(TENANT_ID, { locale: 'en-US' });
+
+    expect(r).toEqual({ timezone: 'Asia/Tokyo', locale: 'en-US' });
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { locale: 'en-US' },
+      select: { timezone: true, locale: true },
+    });
+  });
+
+  it('両方指定: 両方 update する', async () => {
+    vi.mocked(prisma.tenant.update).mockResolvedValueOnce({
+      timezone: 'UTC',
+      locale: 'en-US',
+    } as never);
+    const r = await updateTenantI18n(TENANT_ID, { timezone: 'UTC', locale: 'en-US' });
+    expect(r).toEqual({ timezone: 'UTC', locale: 'en-US' });
+  });
+
+  it('空入力: update を呼ばず現在値を返す (no-op)', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      timezone: 'Asia/Tokyo',
+      locale: 'ja-JP',
+    } as never);
+
+    const r = await updateTenantI18n(TENANT_ID, {});
+
+    expect(r).toEqual({ timezone: 'Asia/Tokyo', locale: 'ja-JP' });
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('空文字列の timezone は無視する (no-op 扱い)', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      timezone: 'Asia/Tokyo',
+      locale: 'ja-JP',
+    } as never);
+    const r = await updateTenantI18n(TENANT_ID, { timezone: '', locale: '' });
+    expect(r).toEqual({ timezone: 'Asia/Tokyo', locale: 'ja-JP' });
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
   });
 });

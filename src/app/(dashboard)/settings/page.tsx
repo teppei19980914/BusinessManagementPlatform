@@ -14,9 +14,6 @@ export default async function SettingsPage() {
       mfaEnabled: true,
       systemRole: true,
       themePreference: true,
-      // PR #119: i18n 設定の初期値として渡す (null = システム既定継承)
-      timezone: true,
-      locale: true,
     },
   });
 
@@ -31,8 +28,6 @@ export default async function SettingsPage() {
       mfaEnabled={user?.mfaEnabled || false}
       isAdmin={isMfaForced}
       currentTheme={user?.themePreference ?? 'light'}
-      currentTimezone={user?.timezone ?? null}
-      currentLocale={user?.locale ?? null}
     />
   );
 }

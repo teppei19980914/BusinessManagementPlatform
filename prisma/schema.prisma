@@ -150,6 +150,13 @@ model Tenant {
   scheduledStorageAddonAt      DateTime? @map("scheduled_storage_addon_at") @db.Timestamptz
   /// ダウングレード後のプラン名 (= scheduledStorageAddonAt と対)
   scheduledNextStorageAddon    String?   @map("scheduled_next_storage_addon") @db.VarChar(20)
+  /// PR-1 (2026-05-15): テナント全体の IANA タイムゾーン名。
+  ///   全ユーザの日付表示・残日数計算・月初リセット境界に使用する。
+  ///   default 'Asia/Tokyo'。テナント管理者が /settings/tenant から変更可。
+  timezone                     String    @default("Asia/Tokyo") @map("timezone") @db.VarChar(60)
+  /// PR-1 (2026-05-15): テナント全体の BCP 47 ロケール (例 'ja-JP' / 'en-US')。
+  ///   default 'ja-JP'。テナント管理者が /settings/tenant から変更可。
+  locale                       String    @default("ja-JP") @map("locale") @db.VarChar(10)
   createdAt                    DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt                    DateTime? @map("deleted_at") @db.Timestamptz
@@ -221,12 +228,8 @@ model User {
   // PR #72: 画面テーマ設定。既定 'light' (ライトテーマ)。ユーザが明示的に変更した
   // 値がセッションをまたいで永続適用されるため、sessionStorage ではなく DB 永続化する。
   themePreference     String    @default("light") @map("theme_preference") @db.VarChar(30)
-  // PR #118: 個別タイムゾーン (IANA 名、例 'Asia/Tokyo'/'America/New_York')。
-  //   null の場合はシステムデフォルト (env APP_DEFAULT_TIMEZONE or config/i18n.ts) を使用。
-  //   DB は常に UTC で格納し、描画時にこの値を Intl.DateTimeFormat に渡す方針。
-  timezone            String?   @map("timezone") @db.VarChar(60)
-  // PR #118: 個別ロケール (BCP 47、例 'ja-JP'/'en-US')。null はシステムデフォルト。
-  locale              String?   @map("locale") @db.VarChar(10)
+  // PR-1 (2026-05-15): timezone / locale はテナント単位 (Tenant.timezone / Tenant.locale) に
+  //   集約されたため User からは撤去。同一テナント内のユーザは同じ TZ/locale で運用する。
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt           DateTime? @map("deleted_at") @db.Timestamptz
