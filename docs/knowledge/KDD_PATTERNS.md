@@ -5885,3 +5885,40 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 修正例: PR #310 (2026-05-10)
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+## 5.X+26 Beginner プランは「値の変動がない管理項目」を UI から消す — 表示の意図不在を防ぐ (PR-2 / 2026-05-15)
+
+### 背景
+旧テナント設定画面では「当月使用量」セクションに **3 タイル固定** (API 呼出 / API 費用 / 月次予算上限) を表示していた。
+ところが Beginner プランは単価 0 円固定 + 月次予算上限が常に null (= 設定不可) のため、
+**「API 費用 ¥0」「月次予算上限 - 」と表示しても何も伝えていない**。
+ユーザにとっては「これは何のために表示されているのか?」となり、UI ノイズ + 認知コスト増。
+
+### 教訓
+- **「値の変動がない管理項目」は表示しない**:
+  値が常に同じ (= 固定値、または常に空) なら、それを管理対象として見せる意図は存在しない。
+  プラン別に「そのプランで意味のあるタイル」だけを残す。
+- 代わりに **そのプランで利用者の行動指針となる値** を出す:
+  Beginner プランは「あと何回呼べるか (残数)」が利用者の最大関心事 → タイル化。
+  Expert / Pro は金額 / 予算上限が関心事 → 従来通り。
+- **API/service 層に「Beginner では予算上限を設定不可」の防御層を入れる**:
+  UI でフォームを非表示にするだけでは curl 直叩きで迂回可能。`updateTenantSelf` で
+  `BEGINNER_BUDGET_NOT_ALLOWED` エラーコードを定義し、API は 400 で拒否する。
+
+### 設計の落とし穴
+
+1. **`monthlyBudgetCapJpy: null` (= クリア) は許可する**:
+   完全に拒否すると、過去に Expert で予算を設定したユーザが Beginner にダウングレード
+   (= 現状仕様上は禁止だが将来緩和の可能性) した時に残値をクリアできない。
+   `null` 指定だけは救済として通す。
+2. **UI 側のフォーム送信でも防御**: `selectedPlan === 'beginner'` なら `budgetCap` の値を
+   無視して null を送る。「フォームが非表示」だけでは React state の残値がそのまま送信
+   される事故を防げない (チェックボックスをポチった後にプランを Beginner に切替する経路等)。
+3. **タイル数の `sm:grid-cols-N` を plan 別に切替**: 2 タイルなのに `sm:grid-cols-3` を
+   使うと最後の列が空き、レイアウトが間延びする。
+
+### 関連
+
+- 元 PR: PR-2 (2026-05-15) テナント管理者ダッシュボード改修 — Beginner プラン UI 改修
+- 関連 service: src/services/tenant-self.service.ts `updateTenantSelf` (`BEGINNER_BUDGET_NOT_ALLOWED`)
+- 関連 UI: src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx `UsageSection`

@@ -157,6 +157,52 @@ describe('updateTenantSelf', () => {
     });
   });
 
+  it('PR-2: 現プラン Beginner で budget (非 null) 指定: BEGINNER_BUDGET_NOT_ALLOWED', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'beginner',
+      beginnerEverUpgraded: false,
+    } as never);
+
+    const r = await updateTenantSelf(TENANT_ID, { monthlyBudgetCapJpy: 5000 });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('BEGINNER_BUDGET_NOT_ALLOWED');
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('PR-2: 現プラン Beginner で budget=null 指定: 通る (残値クリアの救済)', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'beginner',
+      beginnerEverUpgraded: false,
+      monthlyBudgetCapJpy: 1000,
+    } as never);
+
+    const r = await updateTenantSelf(TENANT_ID, { monthlyBudgetCapJpy: null });
+
+    expect(r.ok).toBe(true);
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { monthlyBudgetCapJpy: null },
+    });
+  });
+
+  it('PR-2: Expert で budget 指定: 従来通り通る', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'expert',
+    } as never);
+
+    const r = await updateTenantSelf(TENANT_ID, { monthlyBudgetCapJpy: 3000 });
+
+    expect(r.ok).toBe(true);
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { monthlyBudgetCapJpy: 3000 },
+    });
+  });
+
   it('plan 未指定 + seedDataEnabled 指定: 即時反映 (PR G / #24)', async () => {
     vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce(baseTenant as never);
     const r = await updateTenantSelf(TENANT_ID, { seedDataEnabled: false });
