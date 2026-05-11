@@ -6155,9 +6155,21 @@ close するかは判断次第:
 - [ ] auto-PR 自動化スクリプト (`session-start-git.sh` 等) は「実質コード変更が無い branch
       は PR 化しない」スキップ条件を後で追加検討 (本件のような no-op PR 量産を防ぐ)
 
+### 再発事例 1 例目 (PR #328 / dev/2026-05-11 / 2026-05-11)
+
+PR #326 の恒久対策 (`git rm --cached` + `.gitattributes merge=ours`) を main に入れた **その日のうちに** 同じ症状の残存 PR が現れた。原因は **dev/2026-05-11 ブランチが PR #326 untrack 適用前 (= 2026-05-10 朝の daily 自動分岐) に作成** されており、tracked 状態の `.last-knowledge-check-sha` をまだ保持していたため。
+
+- 衝突の種別: **modify/delete** (main は delete 済、dev は modify 中)
+- 解消手順: `git rm .claude/.last-knowledge-check-sha` でブランチ側でも削除を確定。以後の `pnpm-lock.yaml` 等の追加差分は無いため、本 PR は **untrack を引き継ぐだけの no-op merge**
+
+#### 教訓 (横展開ルール)
+
+- [ ] 恒久対策を入れた PR より **以前に分岐した既存ブランチ全てで「再度の手動マージ」が必要** (= untrack 操作は branch 内 commit 履歴の前方互換性が無い)
+- [ ] 自動 daily branch 群 (`dev/YYYY-MM-DD`) で同様の operation を入れる場合は、main マージ後に **全 open dev ブランチを一斉 rebase or merge** する hook を検討 (本件は手動対応で済んだが、ブランチが 10 個以上ある日は手間が積み上がる)
+
 ### 関連
 
-- 修正 PR: 本 PR (#326 / dev/2026-05-10)
+- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11)
 - 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
 - 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
 - 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
