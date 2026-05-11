@@ -79,9 +79,15 @@ function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
 export function MemosClient({
   memos: initialMemos,
   viewerUserId,
+  dataLoadError = false,
 }: {
   memos: MemoDTO[];
   viewerUserId: string;
+  /**
+   * fix/admin-users-defensive-render 横展開 (2026-05-15): server 側 data 取得が失敗した時に
+   * 表示する警告バナーの可否。デフォルト false (= 正常)。
+   */
+  dataLoadError?: boolean;
 }) {
   const tAction = useTranslations('action');
   const tField = useTranslations('field');
@@ -266,6 +272,17 @@ export function MemosClient({
 
   return (
     <div className="space-y-6">
+      {/* fix/admin-users-defensive-render 横展開 (2026-05-15): server data load 失敗時のバナー。
+          listMyMemos が throw した場合、画面は空表示になるが新規作成等の操作は維持。 */}
+      {dataLoadError && (
+        <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
+          <p className="font-semibold">⚠ メモ一覧の読み込みに失敗しました</p>
+          <p className="mt-1 text-muted-foreground">
+            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
+            問題が継続する場合は管理者にお問合せください。
+          </p>
+        </div>
+      )}
       {/* PR #165: 個人「メモ一覧」での一括 visibility 変更 */}
       <CrossListBulkVisibilityToolbar
         endpoint="/api/memos/bulk"

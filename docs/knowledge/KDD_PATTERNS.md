@@ -6012,3 +6012,115 @@ return <UsersClient ... dataLoadError={dataLoadError} />;
 - 関連 service: src/services/error-log.service.ts (`recordError`)
 - 関連 layout: src/app/(dashboard)/error.tsx (default error boundary)
 - 関連 schema: prisma/schema.prisma `AuthEventLog` モデル (eventType / detail / email / userId)
+
+## 5.X+29 「invalid_password と記録されているが本人は正しい入力 + パスワードマネージャ使用」のパターン ─ authorize() 例外で auth_event_logs に何も残らないケースが多い (PR fix/auth-diagnostics-defensive / 2026-05-15)
+
+### 背景
+ユーザから「サービスへログインできない、ログイン情報はパスワードマネージャ使用で誤入力ありえない」報告。
+`auth_event_logs` を確認すると `reason: invalid_password` で 2 行のみ、ただし **どちらも 2 週間以上前** で、
+**今日のログイン試行は 1 件も記録されていない**。
+
+```sql
+SELECT event_type, detail, created_at FROM auth_event_logs
+WHERE event_type = 'login_failure' AND email = 'xxx@example.com'
+ORDER BY created_at DESC LIMIT 20;
+-- → 2 行のみ、最新は 2 週間前
+```
+
+= ユーザは今日もログインボタンを押しているはずなのに **auth_event_logs に何も書かれていない** =
+**authorize() 関数の途中で例外が発生し、recordAuthEvent を呼ぶ前に死んでいる** 可能性が極めて高い。
+
+### 教訓
+- **「event_type='login_failure' に絞った検索」だけでは不十分**: 直近の event 全体を確認する:
+  ```sql
+  SELECT event_type, detail, created_at FROM auth_event_logs
+  WHERE email = 'xxx@example.com' AND created_at >= NOW() - INTERVAL '24 hours'
+  ORDER BY created_at DESC LIMIT 50;
+  ```
+- **直近 24h で 1 行も無ければ authorize() 未到達を疑う**:
+  - NextAuth handler が落ちている (Vercel runtime log を要確認)
+  - Prisma connection failure (`prisma.user.findFirst` で throw)
+  - bcrypt が hash format error で throw
+  - middleware が信号を block
+- **authorize() を try/catch でラップ + internal_error 経路を必ず記録する**:
+
+```ts
+async authorize(credentials) {
+  try {
+    // 既存のロジック
+  } catch (e) {
+    await recordAuthEvent({
+      eventType: 'login_failure',
+      email: typeof credentials?.email === 'string' ? credentials.email : undefined,
+      detail: {
+        reason: 'internal_error',
+        errorName: e instanceof Error ? e.name : 'unknown',
+        errorMessage: e instanceof Error ? e.message : String(e),
+        stackHead: e instanceof Error && typeof e.stack === 'string'
+          ? e.stack.slice(0, 500) : null,
+      },
+    }).catch(() => undefined); // recordAuthEvent 自体の失敗で連鎖を起こさない
+    return null;
+  }
+}
+```
+
+これで「authorize() に到達したが何かで死んだ」ケースを **DB 一発で判別可能** になる。
+
+### bcrypt compare 周辺の診断ログ強化
+
+「authorize() に到達 + invalid_password の経路を辿る」場合でも、真因は次の 4 つに分かれる:
+
+1. **本当にパスワード違い** (= ユーザの記憶違い / autofill が古い値)
+2. **passwordHash カラムが壊れている** (= 文字化け / truncated / null / 空文字)
+3. **bcrypt hash format mismatch** (= '$2a$' / '$2b$' / '$2y$' いずれでもない = 別アルゴリズムのハッシュが混入)
+4. **bcryptjs library 互換性** (= 別バージョンで作られた hash で compare が失敗)
+
+これらを切り分けるため、`login_failure` の detail に下記を追記する:
+
+```ts
+const passwordHashLength = user.passwordHash?.length ?? 0;
+const passwordHashPrefix = (user.passwordHash ?? '').slice(0, 7); // '$2a$10$' / '$2b$12$' 等
+const bcryptStart = Date.now();
+let isValid: boolean;
+let bcryptError: string | null = null;
+try {
+  isValid = await compare(password, user.passwordHash);
+} catch (e) {
+  isValid = false;
+  bcryptError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+}
+const bcryptElapsedMs = Date.now() - bcryptStart;
+
+if (!isValid) {
+  await recordAuthEvent({
+    eventType: 'login_failure',
+    /* ... */
+    detail: {
+      reason: 'invalid_password',
+      passwordHashLength,    // 標準は 60。それ以外なら hash 破損
+      passwordHashPrefix,    // '$2a$' / '$2b$' / '$2y$' 以外なら format 異常
+      bcryptElapsedMs,       // 0-1ms なら即時失敗 (hash 不正)、50-200ms が正常
+      bcryptError,           // compare 例外時のエラー名
+    },
+  });
+}
+```
+
+判別:
+- `passwordHashLength != 60` → hash 破損 (DB の passwordHash カラムを直接修正、または password reset 発行)
+- `passwordHashPrefix not in ['$2a$', '$2b$', '$2y$']` → format 異常 (同上)
+- `bcryptError != null` → bcrypt が throw (= invalid hash の format chars 等、ライブラリ更新による互換性問題の可能性も)
+- 上記全て正常 + `isValid = false` → **本当に password 違い** (ユーザは password マネージャ更新 / reset を案内)
+
+### 横展開で漏らしやすい箇所
+
+- **MFA 認証経路** (`/api/auth/mfa/verify`): 同様に internal_error 経路を保証
+- **パスワード変更** (`/api/auth/change-password`): 既存 hash の compare で同じ問題があり得る
+- **パスワードリセット** (`/api/auth/reset-password/...`): bcrypt 周辺の例外捕捉
+
+### 関連
+- 元 PR: fix/auth-diagnostics-defensive (2026-05-15)
+- 関連 service: src/lib/auth.ts (`authorize`)
+- 関連 event log: prisma/schema.prisma `AuthEventLog` モデル (`detail` JSONB)
+- 過去の関連 §5.X+28: 「ログイン直後 server component crash = ログインできない感」
