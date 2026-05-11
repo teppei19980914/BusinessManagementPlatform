@@ -49,6 +49,9 @@ beforeEach(() => {
     id: TENANT_ID,
     name: 'カスタマーA',
     slug: 'customer-a',
+    // PR-1 (2026-05-15): テナント単位 i18n
+    timezone: 'Asia/Tokyo',
+    locale: 'ja-JP',
   } as never);
   vi.mocked(prisma.project.findMany).mockResolvedValue([]);
   vi.mocked(prisma.task.findMany).mockResolvedValue([]);
@@ -130,8 +133,7 @@ describe('exportTenantData', () => {
         permanentLock: true,
         forcePasswordChange: true,
         themePreference: 'light',
-        timezone: 'Asia/Tokyo',
-        locale: 'ja-JP',
+        // PR-1 (2026-05-15): timezone/locale はテナント単位に移行したため User からは出力されない
         lastLoginAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),

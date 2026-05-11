@@ -96,21 +96,31 @@ export const authConfig: NextAuthConfig = {
       // P-B (2026-05-08): Beginner プラン期限切れテナントの read-only モード。
       //   write 系 HTTP method (POST/PATCH/PUT/DELETE) のみ弾き、GET/HEAD/OPTIONS は通す。
       //   middleware は Edge runtime で DB を引けないので、JWT claim の
-      //   tenantPlan / tenantCreatedAt / tenantBeginnerEverUpgraded から純関数で判定。
+      //   tenantPlan / tenantCreatedAt / tenantBeginnerEverUpgraded / timezone から純関数で判定。
       //   アップグレードしたら次回の jwt callback で claim が更新される (新しい authorize() 結果が反映)。
+      //
+      // PR-4 (2026-05-15): 90 日判定をテナント TZ カレンダー日ベースに変更。
+      //   旧仕様 (絶対経過時間 ÷ 24h) は「JST 14:00 作成 → 90 日後 09:00 JST」で 89.98 日扱いだった。
+      //   新仕様は「TZ ローカル YYYY-MM-DD 差」なので JST 0:00 でデクリメントする要件と一致。
       const writeMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
       if (writeMethods.has(request.method)) {
         const plan = auth.user.tenantPlan;
         const createdAtIso = auth.user.tenantCreatedAt;
         const everUpgraded = auth.user.tenantBeginnerEverUpgraded;
+        const tenantTimezone = auth.user.timezone || 'Asia/Tokyo';
         if (
           plan === 'beginner' &&
           everUpgraded === false &&
           typeof createdAtIso === 'string'
         ) {
-          const createdAtMs = Date.parse(createdAtIso);
-          if (Number.isFinite(createdAtMs)) {
-            const daysElapsed = Math.floor((Date.now() - createdAtMs) / (24 * 60 * 60 * 1000));
+          const createdAt = new Date(createdAtIso);
+          if (!Number.isNaN(createdAt.getTime())) {
+            // PR-4: tenant TZ カレンダー日ベース。Edge runtime で外部 import を避けるため inline 実装。
+            const daysElapsed = tenantCalendarDayDiffEdge(
+              createdAt,
+              new Date(),
+              tenantTimezone,
+            );
             if (daysElapsed >= 90) {
               // ログアウト系 (= 別 method なので通る) と認証 API は PUBLIC_PATHS で通過済。
               // 業務 API のみここで弾く。
@@ -132,15 +142,19 @@ export const authConfig: NextAuthConfig = {
           }
         }
 
-        // Storage add-on (Phase 2 / 2026-05-08): Storage Grace 7 日経過テナントの write 停止。
+        // Storage add-on (Phase 2 / 2026-05-08, PR-4 で TZ ベース化): Storage Grace 7 日経過テナントの write 停止。
         //   Grace 開始日時 (= cron が容量超過検知でセット) から 7 日経過すると write 系停止。
         //   ユーザがデータを削除して上限内に戻れば、cron が claim をクリア → 次回ログインで通る。
-        //   即時反映が必要な場合は再ログイン or trigger='update' 経路で claim 更新。
+        //   PR-4 (2026-05-15): 7 日判定もテナント TZ カレンダー日ベース。
         const graceStartedIso = auth.user.tenantStorageGracePeriodStartedAt;
         if (typeof graceStartedIso === 'string' && graceStartedIso.length > 0) {
-          const graceStartedMs = Date.parse(graceStartedIso);
-          if (Number.isFinite(graceStartedMs)) {
-            const graceElapsedDays = Math.floor((Date.now() - graceStartedMs) / (24 * 60 * 60 * 1000));
+          const graceStartedAt = new Date(graceStartedIso);
+          if (!Number.isNaN(graceStartedAt.getTime())) {
+            const graceElapsedDays = tenantCalendarDayDiffEdge(
+              graceStartedAt,
+              new Date(),
+              tenantTimezone,
+            );
             // GRACE_DAYS=7 (= src/config/storage-addon.ts の STORAGE_GRACE_PERIOD_DAYS)。
             // middleware は config を import できない (Edge runtime + dual import 制約) ため数値リテラル。
             if (graceElapsedDays >= 7) {
@@ -199,25 +213,24 @@ export const authConfig: NextAuthConfig = {
       // PR #67: /login/mfa で useSession().update({ mfaVerified: true }) を
       // 呼ぶと trigger='update' の session 渡しで TOTP 検証済を token に反映する。
       // PR #72: 設定画面でテーマ変更時も同経路で { themePreference: '...' } を反映する。
-      // PR #118: 設定画面で TZ / locale を変更時も同じ経路で反映 (null 指定でシステム既定に戻せる)。
+      // PR-1 (2026-05-15): テナント設定画面で TZ / locale を変更時も同じ経路で反映。
+      //   テナント単位に集約済みのため null には戻せない (NOT NULL 制約)。
       if (trigger === 'update' && session && typeof session === 'object') {
         const patch = session as {
           mfaVerified?: boolean;
           themePreference?: string;
-          timezone?: string | null;
-          locale?: string | null;
+          timezone?: string;
+          locale?: string;
         };
         if (patch.mfaVerified === true) token.mfaVerified = true;
         if (typeof patch.themePreference === 'string') {
           token.themePreference = patch.themePreference;
         }
-        // timezone/locale は null を明示して「システム既定に戻す」が可能なので
-        // in 演算子でキー存在を確認する。
-        if ('timezone' in patch) {
-          token.timezone = patch.timezone ?? null;
+        if (typeof patch.timezone === 'string' && patch.timezone.length > 0) {
+          token.timezone = patch.timezone;
         }
-        if ('locale' in patch) {
-          token.locale = patch.locale ?? null;
+        if (typeof patch.locale === 'string' && patch.locale.length > 0) {
+          token.locale = patch.locale;
         }
       }
       return token;
@@ -233,9 +246,10 @@ export const authConfig: NextAuthConfig = {
         session.user.mfaEnabled = (token.mfaEnabled as boolean | undefined) ?? false;
         session.user.mfaVerified = (token.mfaVerified as boolean | undefined) ?? false;
         session.user.themePreference = (token.themePreference as string | undefined) ?? 'light';
-        // PR #118: null 許容 (システムデフォルト意) のまま公開する。
-        session.user.timezone = (token.timezone as string | null | undefined) ?? null;
-        session.user.locale = (token.locale as string | null | undefined) ?? null;
+        // PR-1 (2026-05-15): timezone / locale はテナント単位 (NOT NULL) になったため
+        //   non-nullable で公開する。token が万が一 undefined なら DEFAULT に fallback。
+        session.user.timezone = (token.timezone as string | undefined) ?? 'Asia/Tokyo';
+        session.user.locale = (token.locale as string | undefined) ?? 'ja-JP';
         // P-B (2026-05-08): Beginner プラン期限 claim を session に伝播 (UI 側でバナー表示等に使用)
         session.user.tenantPlan = (token.tenantPlan as string | undefined) ?? 'beginner';
         session.user.tenantCreatedAt = (token.tenantCreatedAt as string | undefined) ?? new Date().toISOString();
@@ -249,3 +263,31 @@ export const authConfig: NextAuthConfig = {
     },
   },
 };
+
+/**
+ * PR-4 (2026-05-15): Edge runtime 互換のテナント TZ カレンダー日差ヘルパ。
+ *
+ * `src/lib/tenant-time.ts` の `tenantCalendarDayDiff` と同等の実装だが、
+ * Edge runtime は Node 固有 module を import しない事を保証するため inline で実装する。
+ * 依存は Intl.DateTimeFormat (Web 標準) のみ。
+ */
+function tenantCalendarDayDiffEdge(
+  earlier: Date,
+  later: Date,
+  timeZone: string,
+): number {
+  const fmt = (d: Date) => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(d);
+    const get = (t: 'year' | 'month' | 'day') =>
+      parts.find((p) => p.type === t)?.value ?? '';
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  };
+  const eMs = Date.parse(`${fmt(earlier)}T00:00:00Z`);
+  const lMs = Date.parse(`${fmt(later)}T00:00:00Z`);
+  return Math.floor((lMs - eMs) / (24 * 60 * 60 * 1000));
+}

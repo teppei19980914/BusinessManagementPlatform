@@ -78,6 +78,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 // Storage add-on (Phase 2 / 2026-05-08): Grace period 開始日時を JWT claim に
                 //   伝搬。middleware が write methods 時に NOW() と比較して 7 日経過判定。
                 storageGracePeriodStartedAt: true,
+                // PR-1 (2026-05-15): timezone / locale はテナント単位に集約。
+                //   従来 User.timezone / User.locale を JWT に載せていたが、テナント横断の
+                //   日付計算 (Beginner 残日数 / 月初リセット境界) で揺らがないようテナントの
+                //   値を信頼源とする。
+                timezone: true,
+                locale: true,
               },
             },
           },
@@ -185,10 +191,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           mfaEnabled: user.mfaEnabled,
           // PR #72: テーマ設定。layout.tsx で <html data-theme=...> に反映する。
           themePreference: user.themePreference,
-          // PR #118: i18n 設定 (null = システムデフォルトを使う)。
-          // 描画時は resolveTimezone/resolveLocale でフォールバック込みで解決する。
-          timezone: user.timezone,
-          locale: user.locale,
+          // PR-1 (2026-05-15): timezone / locale はテナント単位に集約。
+          //   テナント全体の TZ/locale を JWT に伝搬する (null は来ない設計 — Tenant 側で
+          //   NOT NULL + default 'Asia/Tokyo' / 'ja-JP')。
+          timezone: user.tenant.timezone,
+          locale: user.tenant.locale,
         };
       },
     }),

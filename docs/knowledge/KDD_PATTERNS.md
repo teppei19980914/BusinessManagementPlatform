@@ -6000,3 +6000,643 @@ gh pr list --search "is:open author:app/dependabot" --json number,mergeable
 - 同パターン: #311, #313, #314, #315, #316 (連続 dependabot merge)
 - 設定: [.github/dependabot.yml](../../.github/dependabot.yml) (groups + open-pull-requests-limit)
 - 公式仕様: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates
+
+## 5.X+27 ストレージ上限を LLM プランから切り離し 20MB 共通ベース + add-on 独立軸に統一 — 横展開可能な guard サービス化 (PR-3 / 2026-05-15)
+
+### 背景
+旧仕様では `STANDARD_STORAGE_BYTES_BY_PLAN = { beginner: 50MB, expert: 150MB, pro: 300MB }`
+と LLM プランに連動して Standard 上限が変動していた。
+ユーザ要件で確定: **「Standard 20MB / Plus 220MB / Pro 1.02GB / Enterprise 5.02GB」** を
+全テナント共通で運用 (LLM プラン非依存)。日次 cron + 7 日 Grace の従来仕様だけでは最大 24h 遅延で
+データが上限超過状態で書き込まれてしまう問題があったため、リアルタイム guard も併設。
+
+### 教訓
+- **Standard ベースを定数化し、computeStorageLimitBytes のシグネチャから llmPlan 引数を撤去**:
+  `STANDARD_STORAGE_BYTES = 20MB` (単一定数) + `ADDON_EXTRA_BYTES[addonPlan]` で合算。
+  call site が散在しているため、シグネチャ変更で漏れを tsc が検出できる構造に変える。
+- **Pre-check (cache) + Post-check (transaction 内実測)** の二段戦略:
+  - Pre-check: キャッシュ値 + 予測サイズで早期拒否 (24h ラグあり = fail-open 寄り)
+  - Post-check: transaction 内で `pg_column_size` 集計の実測 → 超過なら `throw` で全件ロールバック
+  - 後者が真の境界、前者は明らかに巨大な payload を入口で弾くだけ
+- **共通ヘルパに集約**: `withStorageGuard(tenantId, (tx) => fn)` で transaction の中身を渡せば
+  Post-check と上限超過ロールバックを自動化。書き込み系 service に横展開しやすい設計
+- **エラーマッピング集中**: `mapStorageGuardErrorToResponse(error)` で 403 を組み立て、route が個別判定する必要を排除
+
+### 設計の落とし穴
+
+1. **`calculateTenantStorageBytes` を transaction 内で使うと外側 DB を見る**:
+   `tenant-storage.service.ts` 側は `prisma.$queryRaw` 直叩きで tx スコープ外。
+   `storage-guard.service.ts` 内に **tx 引数を取る同等 SQL** を別途実装 (`calculateTenantStorageBytesInTx`)。
+2. **テスト mock の更新**:
+   `prisma.$transaction(async (tx) => ...)` の tx mock 側にも
+   `tenant.findFirst`, `tenant.update`, `$queryRaw` のスタブが必要。
+3. **キャッシュの同期書き込みは tx 内**:
+   `assertStorageLimitInTx` で実測値を `Tenant.storageBytesUsed` に書き戻すが、
+   transaction がロールバックされた時は当然破棄される (= キャッシュ汚染が発生しない)。
+
+### 横展開で漏らしやすい箇所 (PR-3 では未着手、follow-up 対象)
+
+PR-3 では **インポート経路 (data-import + external-data-import)** に Post-check + ロールバックを適用済み。
+通常の CRUD (project / task / knowledge / risk / retro / memo / customer / stakeholder / member / comment / attachment)
+は **未適用**。follow-up PR で:
+
+- 各 service の `create / update / bulkUpdate` を `withStorageGuard(tenantId, (tx) => tx.X.create(...))` で wrap
+- 上限超過時の API レスポンスは `mapStorageGuardErrorToResponse(error)` で 403 を返す
+- 各 service の test mock に `tx.tenant.findFirst / tx.tenant.update / tx.$queryRaw` を追加 (data-import.service.test.ts のパターンを流用)
+
+PR-3 で個別 CRUD まで広げなかった理由: テスト書き換えの規模が約 30+ ファイルに及び、PR レビュー単位として
+大きすぎるため。インフラ + 最重要経路 (= bulk import) を先行、CRUD 個別は段階的に follow-up。
+
+### 関連
+
+- 元 PR: PR-3 (2026-05-15) テナント管理者ダッシュボード改修 — Storage 20MB 共通化 + リアルタイム guard
+- config: src/config/storage-addon.ts (`STANDARD_STORAGE_BYTES` / `ADDON_EXTRA_BYTES`)
+- guard service: src/services/storage-guard.service.ts (`withStorageGuard` / `assertStorageLimitInTx` / `precheckStorageLimit`)
+- import 経路: src/services/data-import.service.ts (ZIP) / src/services/external-data-import.service.ts (CSV)
+
+## 5.X+29 個別 CRUD 経路のストレージ Pre-check は API route 層に集約する (PR-5 / 2026-05-15)
+<!-- 元番号 §5.X+23 から §5.X+29 に renumber (PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / PR-4=+28 / PR-5=+29 に従う。詳細は §5.X+21 の stacked PR 教訓参照) -->
+
+### 背景
+PR-3 でインフラ (storage-guard service) は完備したが、**通常 CRUD への適用は未着手** だった。
+全 13 個の write service の create / update を `withStorageGuard` で wrap すると、
+約 30+ 個のテスト mock 書き換えが必要で PR サイズが大きすぎる。
+
+### 教訓
+- **API route 層に Pre-check ヘルパを集約**: `requireStorageQuotaForWrite(tenantId, estimatedBytes)`
+  を `api-helpers.ts` に追加し、各 route.ts で 1 行呼び出すパターンに統一。
+- **service 層は変更しない**: 既存 service test が壊れない。route test だけが影響対象。
+- **`estimatedBytes` は payload サイズ近似**: `JSON.stringify(parsed.data).length` を渡す。
+  正確ではないが入口の防御層として十分。
+- **正確な Post-check はインポート経路のみ**: 個別 CRUD は payload が kB 規模なので
+  Pre-check (cache 値 + 予測サイズ) で十分。バッファ overrun は daily cron + 7 日 Grace で
+  eventual 補正。
+
+### 設計の落とし穴
+
+1. **route.ts のテスト mock 更新が必要**: `vi.mock('@/lib/api-helpers', ...)` で
+   `getAuthenticatedUser` のみ stub している既存テストは、`requireStorageQuotaForWrite`
+   の export 不在で `vi.mock` の incomplete エラーになる。
+   → mock オブジェクトに `requireStorageQuotaForWrite: vi.fn(async () => null)` を追記。
+2. **route.ts のテストが prisma を mock していない場合**: `requireStorageQuotaForWrite`
+   は内部で `prisma.tenant.findFirst` を呼ぶため、prisma を一切 mock していないと
+   実 DB に接続しようとして fail。`@/lib/db` を mock する必要あり。
+3. **配置位置の順序**: validation → 権限チェック → **storage check** → service 呼び出し。
+
+### 適用範囲 (PR-5 で完了)
+24 個の write route (POST / PATCH) に適用済:
+projects / tasks / knowledge / risks / retrospectives / estimates / customers /
+stakeholders / members / comments / attachments / memos
+
+既存の import 経路 (PR-3): `data-import` / `external-data-import` で完全な Post-check + ロールバック継続。
+
+### 関連
+- 元 PR: PR-5 (2026-05-15) CRUD ストレージ Pre-check 横展開
+- helper: src/lib/api-helpers.ts `requireStorageQuotaForWrite`
+- 元実装: PR-3 (#330) `precheckStorageLimit / withStorageGuard / assertStorageLimitInTx`
+- 前提 PR: PR-3 (#330) storage-guard.service
+
+---
+
+## 5.X+26 Beginner プランは「値の変動がない管理項目」を UI から消す — 表示の意図不在を防ぐ (PR-2 / 2026-05-15)
+
+### 背景
+旧テナント設定画面では「当月使用量」セクションに **3 タイル固定** (API 呼出 / API 費用 / 月次予算上限) を表示していた。
+ところが Beginner プランは単価 0 円固定 + 月次予算上限が常に null (= 設定不可) のため、
+**「API 費用 ¥0」「月次予算上限 - 」と表示しても何も伝えていない**。
+ユーザにとっては「これは何のために表示されているのか?」となり、UI ノイズ + 認知コスト増。
+
+### 教訓
+- **「値の変動がない管理項目」は表示しない**:
+  値が常に同じ (= 固定値、または常に空) なら、それを管理対象として見せる意図は存在しない。
+  プラン別に「そのプランで意味のあるタイル」だけを残す。
+- 代わりに **そのプランで利用者の行動指針となる値** を出す:
+  Beginner プランは「あと何回呼べるか (残数)」が利用者の最大関心事 → タイル化。
+  Expert / Pro は金額 / 予算上限が関心事 → 従来通り。
+- **API/service 層に「Beginner では予算上限を設定不可」の防御層を入れる**:
+  UI でフォームを非表示にするだけでは curl 直叩きで迂回可能。`updateTenantSelf` で
+  `BEGINNER_BUDGET_NOT_ALLOWED` エラーコードを定義し、API は 400 で拒否する。
+
+### 設計の落とし穴
+
+1. **`monthlyBudgetCapJpy: null` (= クリア) は許可する**:
+   完全に拒否すると、過去に Expert で予算を設定したユーザが Beginner にダウングレード
+   (= 現状仕様上は禁止だが将来緩和の可能性) した時に残値をクリアできない。
+   `null` 指定だけは救済として通す。
+2. **UI 側のフォーム送信でも防御**: `selectedPlan === 'beginner'` なら `budgetCap` の値を
+   無視して null を送る。「フォームが非表示」だけでは React state の残値がそのまま送信
+   される事故を防げない (チェックボックスをポチった後にプランを Beginner に切替する経路等)。
+3. **タイル数の `sm:grid-cols-N` を plan 別に切替**: 2 タイルなのに `sm:grid-cols-3` を
+   使うと最後の列が空き、レイアウトが間延びする。
+
+### 関連
+
+- 元 PR: PR-2 (2026-05-15) テナント管理者ダッシュボード改修 — Beginner プラン UI 改修
+- 関連 service: src/services/tenant-self.service.ts `updateTenantSelf` (`BEGINNER_BUDGET_NOT_ALLOWED`)
+- 関連 UI: src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx `UsageSection`
+
+---
+
+## 5.X+25 timezone / locale はユーザ単位ではなくテナント単位で持つ — 同一テナント内で日付計算が揺らがない設計 (PR-1 / 2026-05-15)
+
+### 背景
+旧仕様 (PR #118 〜 PR #119) では `User.timezone` / `User.locale` でユーザごとに TZ/言語を選べた。
+ところがテナント全体の挙動 (Beginner 残日数 / 月初リセット境界 / 翌月適用日 / 日次集計 boundary)
+を「ユーザ TZ」基準にすると、**同一テナント内に TZ の異なる 2 名が居ると同一日付の認識がずれて**、
+請求書や使用量のカウント断面に矛盾が生じる。
+
+### 教訓
+- **テナント全体の挙動に使う TZ/locale は Tenant に持つ**:
+  - `Tenant.timezone String NOT NULL DEFAULT 'Asia/Tokyo'`
+  - `Tenant.locale String NOT NULL DEFAULT 'ja-JP'`
+- ユーザ個別設定は **テーマ / MFA / パスワード等の「個人のセッション体験」に限定**。
+  時刻基準は本人の手元観測値より「テナント全体での会計・運用断面」を優先する。
+- JWT claim にはテナント値を載せる (`session.user.timezone` / `session.user.locale`)。
+  この命名は維持 (= 描画コード側の `Intl.DateTimeFormat` 呼出は変更不要)、
+  だが **意味はテナント単位** であることをコメントで明示する。
+- API は `/api/tenants/me/i18n` に集約。テナント管理者 (admin) のみ更新可。
+  general / super_admin は 403 (テナント設定はテナント管理者の責務)。
+
+### 設計の落とし穴
+
+1. **値が `null` 許容のままだとデフォルトが分散する**:
+   旧 `User.timezone String?` の運用では「null = システム既定」だったが、テナント単位では
+   既定値を **DB の NOT NULL + DEFAULT** で持たせて nullable を撤去。`resolveTimezone()` の
+   フォールバックチェーンを 1 段減らせる + 型安全 (`session.user.timezone: string`)。
+2. **`trigger='update'` 経路の patch 型を null から外す**:
+   JWT 反映で `useSession().update({ timezone, locale })` の patch 型を `string | null` から
+   `string` に変更。null を入れる経路 (= システム既定に戻す UI) を廃止したため。
+3. **データインポートの後方互換**:
+   旧 ZIP に `User.timezone / User.locale` が含まれていても、新 import コードは黙って無視する。
+   テナント側設定は維持。誤ってユーザレコードに NULL を書き戻すと型エラーで止まるため defensive。
+4. **データエクスポートの新フィールド追加**:
+   `ExportSummary` に `tenantTimezone` / `tenantLocale` を追加。再インポート時にテナント設定を
+   復元する手がかりとして使える (将来の super_admin 代行 import 用)。
+
+### 横展開で漏らしやすい箇所
+
+- `prisma.user.findUnique({ select: { timezone: true, locale: true } })` を残してしまう
+  → ビルドエラーで気付ける (列が DB から消えるため)
+- `session.user.timezone === null` という null 判定が残る
+  → tsc が型エラーで指摘
+- データインポート/エクスポートのテストモックに `timezone: ..., locale: ...` が残る
+  → 警告は出ないがビルドは通る (テストで verify されている前提なら問題なし)
+
+### 関連
+
+- 元 PR: PR-1 (2026-05-15) テナント管理者ダッシュボード改修 — タイムゾーン/ロケール集約
+- migration: prisma/migrations/20260515_tenant_i18n_settings/migration.sql
+- 旧 migration: prisma/migrations/20260424_user_i18n_preferences/ (User に timezone/locale 追加 → drop)
+- 関連設定: src/config/i18n.ts (`DEFAULT_TIMEZONE` / `DEFAULT_LOCALE`)
+
+## 5.X+28 日付計算ロジックをテナント TZ カレンダー日ベースに移行 — UTC 経過時間 ÷ 24h は要件から不一致 (PR-4 / 2026-05-15)
+<!-- 元番号 §5.X+22 から §5.X+28 に renumber (main 側 PR #327 で §5.X+22 が E2E_COVERAGE で先取りされたため衝突回避。PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / PR-4=+28 に従う) -->
+
+### 背景
+PR-1 で `Tenant.timezone` の schema / JWT / UI は集約済みだが、**実際の日付計算ロジック**
+(Beginner 90 日判定 / 月初リセット境界 / 翌月適用 / Grace 7 日) は依然 UTC ベース。
+ユーザ要件「タイムゾーンの時間で機能している体験」を満たすには計算側も TZ ローカル
+カレンダー日ベースへ移行する必要があった。
+
+具体例: JST テナントが 2026-02-01 14:00 JST に作成された場合、
+- 旧仕様 (絶対経過時間 ÷ 24h): 90 日後 09:00 JST 時点で 89.98 日 → まだ active
+- 新仕様 (TZ カレンダー日差): 90 日後 09:00 JST 時点で `2026-05-02 - 2026-02-01` = 90 日 → expired
+
+### 教訓
+- **TZ helper を 1 箇所に集約**: `src/lib/tenant-time.ts` を新設し
+  `formatTenantDate / tenantCalendarDayDiff / getTenantMonthStart / getTenantNextMonthStart /
+  getTenantPreviousYearMonth` を Node 標準 (Intl.DateTimeFormat) のみで実装。外部 lib 不要。
+- **判定対象**:
+  1. `beginner-expiry.service.ts`: 90日判定にテナント TZ
+  2. `tenant-monthly-reset.service.ts`: per-tenant TZ で月初判定 (updateMany → 個別 update に refactor)
+  3. `tenant-self.service.ts` / `tenant-storage.service.ts`: 翌月適用日を `getTenantNextMonthStart` で計算
+  4. `lib/auth.config.ts` (middleware): Edge runtime 制約のため inline `tenantCalendarDayDiffEdge` 実装
+  5. UI: `toISOString().split('T')[0]` → `useFormatters().formatDate(iso)`
+- **Edge runtime 制約**: middleware は `Intl.DateTimeFormat` のみ使える。Node 固有 module 不可
+
+### 設計の落とし穴
+
+1. **`updateMany` は per-tenant TZ で使えない**: テナントごとに monthStart が異なるため、
+   `findMany → JS filter → per-tenant update` のループに refactor 必須。
+2. **境界値の TZ 解釈**: `2026-05-31T23:59:59Z` (UTC 月末) は JST では `2026-06-01 08:59:59` (= 翌月初)。
+   テストでは UTC と JST で別の期待値を明示する。
+3. **`getTenantNextMonthStart` の年跨ぎ**: 12月 → 翌年 1月の分岐を忘れずに。
+4. **`session.user.timezone` はテナント値** (PR-1 で意味変更): middleware から `auth.user.timezone` 参照可。
+
+### 関連
+- 元 PR: PR-4 (2026-05-15) テナント TZ 計算ロジック移行
+- helper: src/lib/tenant-time.ts
+- 対象 service: beginner-expiry / tenant-monthly-reset / tenant-self / tenant-storage
+- middleware inline helper: src/lib/auth.config.ts `tenantCalendarDayDiffEdge`
+- 前提 PR: PR-1 (#327) Tenant.timezone schema
+
+---
+
+## 5.X+20 `eslint-config-next` minor 上げで `react-hooks/set-state-in-effect` / `react-hooks/refs` が新規 enforce — 既存 useEffect/useRef を Hooks-7.1 互換に書き換える (PR #323 dependabot 対応 / 2026-05-11)
+
+### 罠の正体
+
+dependabot の **patch / minor 上げ** にしか見えない `eslint-config-next 16.2.3 → 16.2.6` で、
+**`eslint-plugin-react-hooks` が 7.0.x → 7.1.1 に transitive bump** し、以下 2 ルールが新規 enforce:
+
+| ルール | 検出対象 | 影響範囲 |
+|---|---|---|
+| `react-hooks/set-state-in-effect` | useEffect 本体内 (同期) で setState を呼ぶ、または **setState を含む関数を呼ぶ (call graph 解析)** | fetch-on-mount / derived state sync / deep-link auto-open |
+| `react-hooks/refs` | render 中 (= useEffect/useCallback/event handler 外) で `ref.current = ...` する | "最新値を保持する ref" の常用パターン |
+
+CI ログでは `eslint-plugin-react-hooks` の version 表記が無いため、**「config-next を上げただけ」と
+見誤って原因特定が遅れる**。実体は **transitive な peer plugin** の major-minor 跨ぎ強化。
+
+PR #323 の CI fail 内訳 (5 件):
+
+| ファイル | ルール | 構造 |
+|---|---|---|
+| `src/app/(auth)/setup-password/page.tsx:78` | set-state-in-effect | useEffect 同期分岐 `if (!token) { setTokenError(...); setIsValidating(false); }` |
+| `src/app/(dashboard)/memos/memos-client.tsx:264` | set-state-in-effect | `useEffect(() => setMemos(initialMemos), [initialMemos])` (derived state sync) |
+| `src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx:191` | set-state-in-effect | `useEffect(() => { void reload(); }, [reload])` (call graph で reload 内 setState を検出) |
+| `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx:785` | set-state-in-effect | useEffect 内 `openEditDialog(target)` (useCallback 内で setState を呼ぶ) |
+| `src/lib/use-lazy-fetch.ts:35` | refs | `stateRef.current = state` を render body 直下で実行 |
+
+### 修正パターン (4 種類)
+
+#### Pattern A: 初期 state を派生させる (synchronous-setState-in-effect 解消)
+
+**Before:**
+
+```tsx
+const [tokenError, setTokenError] = useState('');
+const [isValidating, setIsValidating] = useState(true);
+useEffect(() => {
+  if (!token) {
+    setTokenError(t('invalidLink'));  // ★ violation
+    setIsValidating(false);
+    return;
+  }
+  fetch(...).then(...);
+}, [token, t]);
+```
+
+**After:**
+
+```tsx
+// 初期 state を token 有無から派生
+const [tokenError, setTokenError] = useState(token ? '' : t('invalidLink'));
+const [isValidating, setIsValidating] = useState(!!token);
+useEffect(() => {
+  if (!token) return;        // 初期 state で表示済
+  fetch(...).then(...);      // .then 内 setState は microtask で対象外
+}, [token, t]);
+```
+
+#### Pattern B: derived state は **render 中に prev 比較で setState** (React 公式推奨)
+
+`useEffect(() => setX(prop), [prop])` は React 公式が "Anti-pattern" と明記している。
+代わりに **render 中の条件付き setState** (React は自動的に再 render を 1 回に統合) を使う。
+
+**Before:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+useEffect(() => {
+  setMemos(initialMemos);  // ★ violation + 余分な再 render
+}, [initialMemos]);
+```
+
+**After:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+const [prevInitialMemos, setPrevInitialMemos] = useState(initialMemos);
+if (prevInitialMemos !== initialMemos) {
+  setPrevInitialMemos(initialMemos);  // render 中の setState は合法 (React docs)
+  setMemos(initialMemos);
+}
+```
+
+ref: <https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes>
+
+#### Pattern C: ref 同期は useEffect 経由 (`react-hooks/refs` 解消)
+
+**Before:**
+
+```ts
+const stateRef = useRef(state);
+stateRef.current = state;  // ★ violation: render 中の ref 更新
+```
+
+**After:**
+
+```ts
+const stateRef = useRef(state);
+useEffect(() => {
+  stateRef.current = state;  // commit 後に同期、async コールバックの読出しには十分
+});
+```
+
+#### Pattern D: 公式が認める正当パターンは `eslint-disable-next-line` (reason コメント必須)
+
+以下は React 公式が `useEffect` を **正当な選択肢** として挙げているため、disable で局所許容する:
+
+1. **fetch-on-mount** (`useEffect(() => { void reload(); })`):
+   ref: <https://react.dev/reference/react/useEffect#fetching-data-with-effects>
+2. **Deep-link 着地時の 1 回限り副作用** (ref ガード済の auto-open dialog):
+   cascading render は ref ガードで防止済
+
+**書き方** (理由は必ず `--` 以降に明記):
+
+```tsx
+useEffect(() => {
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- reload は async で setState は microtask、fetch-on-mount 公式パターン
+  void reload();
+}, [reload]);
+```
+
+### 検出が遅れた理由
+
+- `eslint-plugin-react-hooks` の version は `eslint-config-next` の transitive。`pnpm-lock.yaml`
+  の差分にしか現れず、PR の `package.json` diff (`config-next` の 1 行) からは推測不可能。
+- 各 violation は **build / tsc では検出されない** (lint 専用)。CI が `pnpm lint` を走らせて
+  初めて発覚する。
+- ローカル `pnpm lint` でも、main の lockfile (7.0.x) では新ルールが存在しないため再現しない。
+  → **PR ブランチの lockfile を pull するか、`pnpm add -D eslint-plugin-react-hooks@7.1.1`
+  で手動 pin** しないと再現できなかった。
+
+### 横展開チェック (dependabot で eslint 系 minor 上げ PR を見たとき)
+
+- [ ] `pnpm-lock.yaml` の diff から `eslint-plugin-react-hooks` の version 変動を確認
+- [ ] CI lint ログで `react-hooks/(set-state-in-effect|refs)` を grep し、件数を把握
+- [ ] 修正は **本 PR ではなく main ベースの独立 PR** で行う (dependabot ブランチは force-push
+      されうるため変更が消える可能性)。main 経由で fix が入れば dependabot PR は rebase 後に
+      自動で green
+- [ ] disable directive を使う場合は **reason コメント必須** (`--` 以降に「なぜ」を書く)。
+      "fetch-on-mount" や "ref ガード済" 等の根拠を残す
+- [ ] 修正後は **fix branch でも `pnpm-lock.yaml` は触らない** ことを推奨 (config-next の bump は
+      dependabot に任せる)。これにより fix PR は code-only の小さい diff になり review しやすい
+
+### 関連
+
+- 修正 PR: 本 PR (fix/eslint-react-hooks-rules-16.2.6 / 2026-05-11)
+- dependabot PR: #323 (chore(deps): bump eslint-config-next from 16.2.3 to 16.2.6)
+- 公式 (React docs): <https://react.dev/learn/you-might-not-need-an-effect>
+- 公式 (React useEffect): <https://react.dev/reference/react/useEffect>
+- 公式 (eslint-plugin-react-hooks): <https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks>
+
+---
+
+## 5.X+21 `.claude/.last-knowledge-check-sha` は **gitignore 済だが track 状態** で毎回 conflict を起こす — `git rm --cached` + `.gitattributes merge=ours` で恒久解消 (PR #326 / 2026-05-11)
+
+### 罠の正体
+
+`.claude/.last-knowledge-check-sha` は `session-start-knowledge-check.sh` が **ローカルセッション
+毎に** 上書きする bookkeeping (前回 SessionStart 時の `origin/main` HEAD SHA) で、本来
+git にコミットすべきではないファイル。
+
+- `.gitignore` の line 56 に登録済 — 設計上は untracked
+- しかし過去のセッション (2026-04-25 の auto-commit) で **gitignore 設定前に commit された**
+  ため、git history 上はずっと **tracked 扱い**
+- 一度 tracked になると `.gitignore` は **新規追加のみブロック** し、既存 tracked file の
+  変更は通常通り stage される
+
+→ 結果として毎日 dev ブランチで auto-commit が走り、main 側も別タイミングで更新され、
+**毎回の dev → main マージで必ず 1-line conflict が発生** する。発生例:
+- PR #319, #326 (dev 系) など、本ファイルしか差分がない PR が auto-PR 作成のたびに conflict 化
+- 2026-05-10 にも同種の修正が必要だった (`.last-knowledge-check-sha` 単体 conflict 解消)
+
+### 恒久対策 (PR #326 で適用)
+
+1. **`git rm --cached .claude/.last-knowledge-check-sha`** で git tracking から外す
+   - ローカルファイルは残るため SessionStart hook の動作 (line 36-39 で「ファイル不在なら
+     初期化のみで exit」) には影響なし
+   - 新規 clone した環境では本ファイルが存在しないが、初回 SessionStart で自動初期化される
+2. **`.gitattributes` に `merge=ours` を追加** — 保険として「再 track された場合も自動で
+   destination 側の値を優先する」merge driver を仕込む
+   ```
+   .claude/.last-knowledge-check-sha merge=ours
+   ```
+3. (`.gitignore` は既に line 56 に登録済 — 変更不要)
+
+### conflict が発生してしまった時の応急処置 (恒久対策が入る前)
+
+dev → main 方向の merge で `.last-knowledge-check-sha` だけが衝突した場合、**ファイル単体
+の中身は意味を持たない** ため、destination (= main 側) の値を採用すれば良い。
+
+```bash
+# dev ブランチで main を取り込む場合
+git merge origin/main
+# → CONFLICT (content): Merge conflict in .claude/.last-knowledge-check-sha
+git checkout --theirs .claude/.last-knowledge-check-sha
+git add .claude/.last-knowledge-check-sha
+git commit
+```
+
+なお、当日 dev ブランチに **本ファイルしか差分がない** auto-PR (例: PR #326) は
+**マージしても main に何も変化を与えない**。conflict 解消だけして merge するか、PR ごと
+close するかは判断次第:
+- merge する判断 → 「daily branch 運用記録」として PR 履歴を残したい場合
+- close する判断 → 純粋な no-op を main の merge log に残したくない場合
+
+### 横展開チェック (新しく「セッション毎に変わるローカル bookkeeping ファイル」を追加するとき)
+
+- [ ] **新規ファイルは絶対に commit しない**: `.gitignore` への登録だけでは不十分 (track
+      済ファイルは止められない)。最初の commit 前に `.gitignore` 登録を済ませる
+- [ ] **既存ファイルを「これからは ignore する」場合**: `.gitignore` 追加だけでなく
+      **必ず `git rm --cached` で untrack** すること。`.gitattributes merge=ours` も併用
+- [ ] **session-start hook が `git add -A` を使う場合**: hook 側で `git update-index --skip-worktree`
+      する代替案もあるが、新規 clone した同僚に伝播しないため `.gitignore` + `git rm --cached`
+      の方が安全
+- [ ] auto-PR 自動化スクリプト (`session-start-git.sh` 等) は「実質コード変更が無い branch
+      は PR 化しない」スキップ条件を後で追加検討 (本件のような no-op PR 量産を防ぐ)
+
+### 再発事例 1 例目 (PR #328 / dev/2026-05-11 / 2026-05-11)
+
+PR #326 の恒久対策 (`git rm --cached` + `.gitattributes merge=ours`) を main に入れた **その日のうちに** 同じ症状の残存 PR が現れた。原因は **dev/2026-05-11 ブランチが PR #326 untrack 適用前 (= 2026-05-10 朝の daily 自動分岐) に作成** されており、tracked 状態の `.last-knowledge-check-sha` をまだ保持していたため。
+
+- 衝突の種別: **modify/delete** (main は delete 済、dev は modify 中)
+- 解消手順: `git rm .claude/.last-knowledge-check-sha` でブランチ側でも削除を確定。以後の `pnpm-lock.yaml` 等の追加差分は無いため、本 PR は **untrack を引き継ぐだけの no-op merge**
+
+#### 教訓 (横展開ルール)
+
+- [ ] 恒久対策を入れた PR より **以前に分岐した既存ブランチ全てで「再度の手動マージ」が必要** (= untrack 操作は branch 内 commit 履歴の前方互換性が無い)
+- [ ] 自動 daily branch 群 (`dev/YYYY-MM-DD`) で同様の operation を入れる場合は、main マージ後に **全 open dev ブランチを一斉 rebase or merge** する hook を検討 (本件は手動対応で済んだが、ブランチが 10 個以上ある日は手間が積み上がる)
+
+### 再発事例 4 例目 (PR #332 / feat/pr-4-tenant-tz-logic / 2026-05-11) — stacked PR 固有の追加要因
+
+PR-4 は **stacked PR** で `base = feat/pr-1-tenant-i18n-settings` (PR #327 の HEAD) のまま、PR #327 が main にマージされた後も base が古いままだった。`.last-knowledge-check-sha` 系の衝突は無かった (PR-1 から派生したため hook 更新無し) が、**KDD section の番号衝突** が発生:
+
+- PR-4 側: `§5.X+22` で start (PR-4 ブランチ作成時点では未使用番号)
+- main 側: PR #327 で `§5.X+22` が E2E_COVERAGE で先取り (= renumber 漏れ)
+- 解消: PR-4 を **§5.X+28** に renumber (PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / **PR-4=+28**)
+
+#### Stacked PR 固有教訓
+
+- [ ] **stack の base PR が main にマージされたら、上層 PR の base を即時 main に切替える** (`gh pr edit <N> --base main`)
+- [ ] base 切替なしに main マージし続けると、上層 PR の "PR diff" が base PR のコミットを再表示し続けてレビュー困難になる
+- [ ] **KDD section 番号は PR-N 単位で reserved 番号体系を遵守** (PR-N = §5.X+(24+N))。
+      合間の hotfix 系 PR (PR #326 / #327 / #336) は別途連番を消費するため、**並走 feature PR 側で番号を取り過ぎないよう reserved 範囲を明確化** する
+
+### 再発事例 3 例目 (PR #330 / feat/pr-3-storage-guard / 2026-05-11)
+
+PR-3 (Storage 20MB 共通化 + guard サービス) も同パターン。**1 日に 3 件続いた再発**で、原因は同じ「PR #326 untrack 前に分岐していた」。
+
+- 連発の構造: PR-1 (#327), PR-2 (#329), PR-3 (#330) は **同じ親 main commit から並列に分岐** した一連の改修 → どの PR でも `.last-knowledge-check-sha` を SessionStart hook が tracked のまま更新 → main マージ後に同じ衝突パターンが量産される
+- 解消手順は 1 例目 / 2 例目と完全同型: `git rm` + KDD 末尾セクション順序保持
+
+#### 確定した結論 (3 例後)
+
+- [ ] **PR #326 のような untrack 系恒久対策が main に入ったら、その時点で open な全ブランチを `git pull --rebase` or `git merge main` で一斉に同期する運用ルール** を hook 化検討対象に追加
+- [ ] **branch protection で "main 更新後 X 時間以内に同期必須" を運用する選択肢** もあるが、現状の頻度なら本 KDD の再発事例リストを溜めるだけで横展開警告が機能する
+
+### 再発事例 2 例目 (PR #329 / feat/pr-2-beginner-ui / 2026-05-11)
+
+dev/* 系の auto-branch だけでなく **feature branch** (PR-2 = Beginner UI 改修) でも同じ症状が出た。`feat/pr-2-beginner-ui` は PR #326 untrack 前に分岐 + SessionStart hook で `.last-knowledge-check-sha` を更新済の状態だったため、main マージで modify/delete 衝突。
+
+加えて **KDD_PATTERNS.md の末尾セクション衝突** も同時発生:
+- PR-2 側 (HEAD): `§5.X+26` (Beginner UI) を追記
+- main 側: `§5.X+25 / +20 / +21 / +22` が直前の merge ラッシュで追加済
+- 解消: 全 5 セクションを順序保持で残し、各セクション間に `---` 区切りを明示
+
+#### 追加教訓
+
+- [ ] **長寿命 feature branch ほど積み残し conflict のリスクが高い**: 並走 PR が多い時期は週次で main を取り込む rebase / merge を推奨
+- [ ] KDD section の end-of-file append は **物理的に並走 PR が衝突しやすい局所**。本ファイルに限り `.gitattributes` で `merge=union` (両側の追記を行ベース統合) を検討する余地あり ※ ただし重複 header が出るリスクがあるため要試行
+
+### 関連
+
+- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11) + PR #329 (再発事例 2 例目 / feat/pr-2-beginner-ui) + PR #330 (再発事例 3 例目 / feat/pr-3-storage-guard) + PR #332 (再発事例 4 例目 / feat/pr-4-tenant-tz-logic / stacked PR)
+- 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
+- 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
+- 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
+- 公式 (gitattributes merge): <https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver>
+
+---
+
+## 5.X+22 新規 `page.tsx` / `route.ts` を追加したら **必ず `docs/test/E2E_COVERAGE.md` 更新**、UI 移管 PR は **visual baseline 再生成必須** — 旧ルート削除と併せた一括対応のチェックリスト (PR #327 / PR-1 tenant-i18n / 2026-05-11)
+
+### 罠の正体
+
+PR #327 (PR-1 timezone/locale をテナント単位に集約) で 2 種類の CI fail が同時発生した:
+
+1. **`pnpm e2e:coverage-check` fail**:
+   ```
+   ❌ docs/test/E2E_COVERAGE.md に未記載の機能があります:
+      - /api/tenants/me/i18n
+   ```
+   新設した route の登録漏れ。`scripts/check-e2e-coverage.ts` が PR #90 以降 enforce。
+
+2. **Playwright visual regression fail** (`settings-light.png`):
+   ```
+   Expected an image 1440px by 1473px, received 1440px by 1125px.
+   28893 pixels (ratio 0.02 of all image pixels) are different.
+   ```
+   `/settings` から timezone/locale UI (123 行) を `/settings/tenant` へ移管した結果、
+   設定画面の高さが 1473px → 1125px (348px 縮小) して baseline drift。
+
+両方とも **「実装意図通りの当然の結果」** で、コード自体に不具合は無いが、
+**周辺ドキュメント / baseline の更新を本 PR 内で同梱しないと CI が通らない**。
+
+### 根本原因
+
+- **新規 route 追加** = E2E_COVERAGE.md 更新は ローカル `pnpm e2e:coverage-check`
+  または CI 失敗で気付く設計だが、**実装着手時にチェックリストを開いていないと忘れる**
+- **UI 移管・削除** = visual baseline は **PR で `[gen-visual]` トリガー** しないと
+  drift し続ける。今回は **旧 UI 削除のみ気付いたが baseline 更新を忘れた**
+
+### 修正パターン (本 PR で適用)
+
+```bash
+# 1. 新 route 追加時のチェックリスト
+pnpm e2e:coverage-check              # ローカルで確認
+# → ❌ 表示されたら docs/test/E2E_COVERAGE.md に
+#   - [ ] `/api/path` — skip: <理由> または
+#   - [x] `/api/path` — e2e/specs/XX-spec.ts
+# の形式で追加
+
+# 2. 旧 route 削除時のチェックリスト
+# E2E_COVERAGE.md の旧エントリを「削除済 (PR-N / YYYY-MM-DD)」と記録
+# (検索性のため完全削除はしない、移管先 PR への辿りやすさ確保)
+
+# 3. UI 移管/削除時の visual baseline 再生成
+# 別 commit で空コミットを作る:
+git commit --allow-empty -m "chore(visual): regenerate baseline for /settings UI 縮小 [gen-visual]"
+git push
+# → .github/workflows/e2e-visual-baseline.yml が発火し
+#   baseline 画像を再生成して bot コミットで PR ブランチに push
+```
+
+### 横展開チェック (UI 移管 / route 移管系の PR を作る時)
+
+- [ ] **新 route**: `pnpm e2e:coverage-check` をローカルで実行 → ✅ になるまで `docs/test/E2E_COVERAGE.md` に追記
+- [ ] **旧 route**: 削除した route は E2E_COVERAGE.md で `[x] **削除済 (PR-N / YYYY-MM-DD)**` 表記に更新 (完全削除しない)
+- [ ] **UI 縮小/拡大**: `pnpm test:e2e e2e/visual/` をローカル実行できるなら事前確認。CI で fail したら `[gen-visual]` commit で再生成
+- [ ] **新 UI 追加 (新画面)**: 対応する visual spec を `e2e/visual/` 配下に追加 + `[gen-visual]` で baseline 生成
+- [ ] **「ユーザ単位設定 → テナント単位設定」のような認可境界変更**: 旧 API の `/api/settings/i18n` を関連する全画面から呼び出し撤去 (本件: settings-client.tsx の useEffect から削除)。残しておくと 404 を呼び続けて余計なエラーログが発生
+- [ ] **JWT claim の意味変更**: `session.user.timezone` の値が「ユーザ TZ」から「テナント TZ」に変わる場合、**型は同じ string でも意味が違う** ため、命名維持は OK だが TS コメントで明示 (rg `session\.user\.timezone` で全箇所確認)
+
+### 設計の落とし穴 (PR-1 で踏んだもの)
+
+1. **null 許容の撤廃**: `User.timezone String?` → 廃止、`Tenant.timezone String NOT NULL DEFAULT 'Asia/Tokyo'`。
+   テナント単位では「null = 未設定」概念が不要 (DB default が機能する) ため NOT NULL 化。
+   `resolveTimezone()` のフォールバックチェーンを 1 段減らせる + 型安全 (`session.user.timezone: string`)
+2. **`useSession().update({ timezone, locale })` の patch 型を `string | null` から `string` に絞る**:
+   null を入れる経路 (= システム既定に戻す UI) を廃止したため
+3. **データインポートの後方互換**: 旧 ZIP に `User.timezone / User.locale` が含まれていても
+   新 import コードは黙って無視。NULL を書き戻すと型エラーで止まるため defensive 設計
+4. **データエクスポートの新フィールド**: `ExportSummary` に `tenantTimezone` / `tenantLocale` 追加。
+   再インポート時にテナント設定を復元する手がかり (将来の super_admin 代行 import 用)
+
+### 関連
+
+- 元 PR: PR-1 (2026-05-15 / feat/pr-1-tenant-i18n-settings)
+- 関連 KDD: §5.X+25 (テナント単位 i18n 設計の詳細)
+- 関連 script: [scripts/check-e2e-coverage.ts](../../scripts/check-e2e-coverage.ts)
+- 関連 workflow: [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml)
+- 関連 doc: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md), [E2E カバレッジ運用](../test/E2E_LESSONS.md)
+
+---
+
+## 5.X+30 長期 PR と main の並行更新で KDD ファイル末尾コンフリクトが発生する ─ 両方残してマージするのが正解 (PR #334 / 2026-05-12)
+
+### 罠の正体
+
+`docs/knowledge/KDD_PATTERNS.md` のような **追記専用ナレッジファイル** は、ブランチごとに末尾へ新セクションを足す運用のため、長期 PR が main の高頻度マージ (PR-1 〜 PR-5 のような関連 PR 群) に遅れると **「両ブランチが末尾に異なるセクションを追加した」** タイプのコンフリクトが必発する。
+
+PR #334 のケースでは:
+- HEAD (PR #334 ブランチ): `## 5.X+24 dependabot 複数 PR の pnpm-lock.yaml コンフリクト` を末尾に追加
+- main: `## 5.X+27 ストレージ上限 LLM プラン切り離し` 他 5 件 (5.X+25/26/27/28/29) を末尾に追加
+
+両者は **独立した別トピックの新規ナレッジ** であり、片方を破棄すると情報損失が発生する。
+
+### 採用したパターン
+
+**両方残す + 番号順に整える** が正解:
+
+1. コンフリクトマーカー (`<<<<<<<` / `=======` / `>>>>>>>`) を除去
+2. HEAD 側セクションを残す (5.X+24)
+3. main 側セクション (5.X+27) を続けて配置
+4. 番号順 (24 → 27) で並ぶよう間に空行を挿入
+
+main 側の section 番号順序が既に非連続 (例: 27→29→26→25→28→22 の順で並んでいる) でも、それを正すのは **別 PR の整理タスク** として切り分け、本コンフリクト解決の範囲外とする (= scope creep を避ける)。
+
+### 予防策
+
+| 戦略 | 効果 | コスト |
+|---|---|---|
+| **KDD ファイルへの追記は PR の最後にまとめる** | コンフリクト発生確率を低減 | 軽 (運用ルール) |
+| **長期 PR は main を週次で rebase / merge** | コンフリクトを小さく頻繁に解消 | 中 (作業時間) |
+| **KDD ファイルを「セクション 1 ファイル」に分割** | ファイル単位コンフリクトを排除 | 高 (構造変更) |
+| **section 番号を `5.X+N` から日時 prefix へ移行** | 番号衝突自体を回避 | 中 (既存ファイルの一括書き換え) |
+
+現状は **運用ルール (追記は PR 最後にまとめる) + 長期 PR は週次 rebase** で対応。日時 prefix 移行はバックログ候補。
+
+### 横展開チェック (KDD ファイル編集 PR のレビュー時)
+
+- [ ] PR が長期化していないか (1 週間以上 main を取り込んでいない場合は rebase 推奨)
+- [ ] 追加セクションの番号が既存の最大番号 + 1 か (main 側で番号が進んでいる可能性)
+- [ ] コンフリクト解決時に **どちらかのセクションを誤って削除していない** か
+- [ ] セクション番号順に並べた結果、参照リンク (`§5.X+25` 等) が壊れていないか
+
+### 関連
+
+- 修正例: PR #334 (2026-05-12) / コンフリクト発生 PR #317 関連の連鎖
+- 同類パターン: `.claude/.last-knowledge-check-sha` のような自動更新ステートファイル (PR #310 で対処)
+- 関連 doc: [docs/knowledge/KDD_PATTERNS.md](./KDD_PATTERNS.md) 自身

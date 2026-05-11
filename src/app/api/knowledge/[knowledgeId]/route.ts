@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
 import { updateKnowledgeSchema } from '@/lib/validators/knowledge';
 import { getKnowledge, updateKnowledge, deleteKnowledge } from '@/services/knowledge.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
@@ -69,6 +69,13 @@ export async function PATCH(
       { status: 400 },
     );
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   let knowledge;
   try {

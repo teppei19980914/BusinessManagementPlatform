@@ -185,9 +185,14 @@ export function SuggestionsPanel({
   }, [projectId, t]);
 
   // 外部 API 同期 useEffect (DESIGN.md §22)。
-  // setState は async function 内に閉じ込められているため、react-hooks/set-state-in-effect は
-  // 直接トリガーされない (= 過去の disable directive は不要になったため P-3 で削除)。
+  // PR fix/eslint-config-next-16.2.6 (2026-05-11):
+  //   eslint-config-next 16.2.6 の `react-hooks/set-state-in-effect` は call graph を辿るため、
+  //   `void reload()` を呼んだ瞬間に reload 内の setState が **意味的には microtask** だとしても
+  //   violation 扱いになる (静的解析は async/await 境界を区別しない)。
+  //   → fetch-on-mount は React 公式が認める正当パターン (https://react.dev/reference/react/useEffect#fetching-data-with-effects)。
+  //     SWR/React Query へ移行するまでは disable で局所許容。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reload は async で setState は microtask、fetch-on-mount 公式パターン
     void reload();
   }, [reload]);
 

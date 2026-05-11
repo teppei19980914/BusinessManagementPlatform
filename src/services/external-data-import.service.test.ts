@@ -18,10 +18,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db', () => {
+  // PR-3 (2026-05-15): tx 側にも storage-guard 用の tenant.findFirst / update / $queryRaw を追加
   const tx = {
     knowledge: { create: vi.fn() },
     riskIssue: { create: vi.fn() },
     tenantImportPreview: { delete: vi.fn() },
+    tenant: {
+      findFirst: vi.fn(async () => ({
+        storageAddonPlan: 'standard',
+        storageBytesUsed: BigInt(0),
+      })),
+      update: vi.fn(),
+    },
+    $queryRaw: vi.fn(async () => [{ total_bytes: BigInt(0) }]),
   };
   return {
     prisma: {
