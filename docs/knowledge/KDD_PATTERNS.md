@@ -5886,6 +5886,121 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
+## 5.X+24 dependabot 複数 PR が `pnpm-lock.yaml` で相互コンフリクトする ─ 「auto-rebase 待ち」と「PR 数抑制」で運用 (PR #317 / 2026-05-15)
+
+### 背景
+
+PR #317 (`dependabot/npm_and_yarn/prisma-36eb5828e4`、Prisma 7.7.0 → 7.8.0) で
+**コンフリクトが GitHub UI に表示された** が、調査時点では `mergeable: MERGEABLE` /
+`mergeStateStatus: CLEAN` で **既に解消** していた。
+
+### 根本原因
+
+**pnpm-lock.yaml はモノリシックなロックファイル** で、任意の依存パッケージ更新で必ず変更が発生する。
+dependabot が **複数 PR を同時に open** すると以下が発生:
+
+```
+main:                  A → B → C
+PR #316 (next-react):  A → P1 (touches pnpm-lock.yaml)
+PR #317 (prisma):      A → P2 (touches pnpm-lock.yaml)
+```
+
+PR #316 がマージされると、`main` が進む (`A → B → next-react`)。すると PR #317 の
+base (= 旧 `main` = `A`) と現 `main` (= `A → next-react`) で **pnpm-lock.yaml が同一行付近** に
+別の変更を持つことになり、Git が 3-way merge できず CONFLICTING になる。
+
+### 解消の仕組み (今回のケース)
+
+GitHub の dependabot は **PR の base branch が更新されると自動的に rebase** する設計
+(条件: PR ブランチ未触り、checks が grace 期間内)。
+
+時系列:
+1. PR #316 (next-react) を main にマージ → main 更新
+2. dependabot が PR #317 を検知 → 自動 rebase → 新 commit `911fb5a` 生成
+3. 新 commit は新 main 基準で pnpm-lock.yaml を再生成 → CONFLICTING 解消
+
+つまり **ユーザが見たコンフリクトは過渡的状態** で、dependabot の auto-rebase
+完了で自動的に消える。
+
+### 教訓
+
+- **コンフリクト発生時の最初の対応**: `gh pr view <#> --json mergeable,mergeStateStatus`
+  で確認。`CLEAN` ならもう何もしなくて OK。
+- **手動 rebase 不要**: dependabot ブランチに手動で `git push` すると dependabot の
+  auto-rebase が **無効化** され、以降は手動メンテになる。基本は触らない。
+- **マージ順序戦略**: 同種の依存更新 PR が複数 open 中の場合、**マージしたい順序を決めて
+  順次マージ**。1 件マージ → 数分待って残りの auto-rebase 完了を確認 → 次マージ。
+
+### 設計の落とし穴
+
+1. **`mergeable: UNKNOWN`**: GitHub が computing 中。1-2 分待って再取得。
+2. **`mergeStateStatus: BLOCKED` / `UNSTABLE`**: ファイル conflict ではなく、CI / Vercel /
+   required reviews などが pending な状態。コンフリクトとは別物。
+   - **実例 PR #318** (2026-05-15、`BLOCKED`): auto-rebase 直後で **必須 CI が IN_PROGRESS**
+     (Lint/Test/Build, Playwright E2E, CodeQL)。CI 完了で `CLEAN` に遷移。
+   - **実例 PR #319** (2026-05-15、`UNSTABLE`): すべての必須 CI は SUCCESS だが
+     **Vercel preview deployment のみ `PENDING`**。Vercel は非必須 (informational) なので
+     `mergeable: MERGEABLE` のままだが、`mergeStateStatus` は `UNSTABLE` 扱い。
+     **`UNSTABLE` でも実際にはマージ可能** (GitHub UI が「Merge」ボタンを許可する)。
+   - GitHub UI の「Resolve conflicts」ボタンは BLOCKED/UNSTABLE 時にも表示される場合があり、
+     ユーザがコンフリクトと誤認しやすい。**まず `mergeable` フィールドを見る** こと
+     (CONFLICTING ≠ BLOCKED ≠ UNSTABLE)。
+
+   状態判別マトリクス:
+
+   | `mergeable` | `mergeStateStatus` | 意味 | アクション |
+   |---|---|---|---|
+   | CONFLICTING | DIRTY | 本物のファイル衝突 | 手動 rebase / `@dependabot rebase` |
+   | MERGEABLE | CLEAN | 即マージ可能 | `gh pr merge --squash` |
+   | MERGEABLE | BEHIND | base が進んだが衝突なし | "Update branch" or そのままマージ可 |
+   | MERGEABLE | BLOCKED | **必須** check 未完 / レビュー待ち | check 完了 / レビュー取得を待つ |
+   | MERGEABLE | UNSTABLE | **非必須** check (Vercel 等) が pending | **そのままマージ可能** |
+   | UNKNOWN | (任意) | GitHub 計算中 | 1-2 分待って再取得 |
+3. **CI が古い base で走った場合**: auto-rebase 後に CI 再実行が走らないと、
+   古い PR commit の検査結果のままで「checks pass」になる。dependabot は再 push で
+   CI を再実行させる。マージ前に「最新の checks が pass か」を目視確認。
+4. **groups 設定**: dependabot.yml の `groups` 設定で関連パッケージをまとめて 1 PR にすると、
+   PR 数自体を減らせる (= 相互コンフリクト発生確率を抑制)。既に prisma / next-react /
+   testing は groups 化済 (本リポジトリ `.github/dependabot.yml`)。
+5. **`open-pull-requests-limit`**: 現状 10 だが、自前で順次マージしきれない場合は
+   5 に下げて「常に少数 PR で頻繁回す」運用にする選択肢あり。
+
+### 横展開で漏らしやすい箇所
+
+- **feature ブランチも同じ影響を受ける**: dependabot PR がマージされると feature PR が
+  CONFLICTING になることがある。1 PR ずつ手動 rebase (`git rebase origin/main`) で対応。
+  実例: 本 PR (#317) 調査時、open feature PR #327/#329/#330 が CONFLICTING になっていた
+  (dependabot #311/#313-#316 の連続マージ後)。
+- **マイグレーション系 PR (schema.prisma / migration ファイル) と dependabot**: 同様に
+  conflict が起きやすい。マージ順序: dependabot → migration の順に通すと安全
+  (schema は依存影響を受けないため逆も可、ただし pnpm-lock の auto-rebase は走らない)。
+
+### 推奨運用フロー (今後)
+
+```bash
+# 1. dependabot PR を見つけた時の確認
+gh pr view <#> --json mergeable,mergeStateStatus,statusCheckRollup
+
+# 2. mergeable=MERGEABLE && mergeStateStatus=CLEAN なら即マージ
+gh pr merge <#> --squash --auto
+
+# 3. CONFLICTING の場合は時間を置く (dependabot auto-rebase 待ち、~5 分)
+sleep 300 && gh pr view <#> --json mergeable
+
+# 4. それでも解消しない場合: PR コメントで rebase 指示
+gh pr comment <#> --body "@dependabot rebase"
+
+# 5. マージ後は他の open dependabot PR の auto-rebase を確認
+gh pr list --search "is:open author:app/dependabot" --json number,mergeable
+```
+
+### 関連
+
+- 元 PR: #317 (prisma 7.7.0 → 7.8.0 group)
+- 同パターン: #311, #313, #314, #315, #316 (連続 dependabot merge)
+- 設定: [.github/dependabot.yml](../../.github/dependabot.yml) (groups + open-pull-requests-limit)
+- 公式仕様: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates
+
 ## 5.X+27 ストレージ上限を LLM プランから切り離し 20MB 共通ベース + add-on 独立軸に統一 — 横展開可能な guard サービス化 (PR-3 / 2026-05-15)
 
 ### 背景
@@ -6476,3 +6591,52 @@ git push
 - 関連 script: [scripts/check-e2e-coverage.ts](../../scripts/check-e2e-coverage.ts)
 - 関連 workflow: [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml)
 - 関連 doc: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md), [E2E カバレッジ運用](../test/E2E_LESSONS.md)
+
+---
+
+## 5.X+30 長期 PR と main の並行更新で KDD ファイル末尾コンフリクトが発生する ─ 両方残してマージするのが正解 (PR #334 / 2026-05-12)
+
+### 罠の正体
+
+`docs/knowledge/KDD_PATTERNS.md` のような **追記専用ナレッジファイル** は、ブランチごとに末尾へ新セクションを足す運用のため、長期 PR が main の高頻度マージ (PR-1 〜 PR-5 のような関連 PR 群) に遅れると **「両ブランチが末尾に異なるセクションを追加した」** タイプのコンフリクトが必発する。
+
+PR #334 のケースでは:
+- HEAD (PR #334 ブランチ): `## 5.X+24 dependabot 複数 PR の pnpm-lock.yaml コンフリクト` を末尾に追加
+- main: `## 5.X+27 ストレージ上限 LLM プラン切り離し` 他 5 件 (5.X+25/26/27/28/29) を末尾に追加
+
+両者は **独立した別トピックの新規ナレッジ** であり、片方を破棄すると情報損失が発生する。
+
+### 採用したパターン
+
+**両方残す + 番号順に整える** が正解:
+
+1. コンフリクトマーカー (`<<<<<<<` / `=======` / `>>>>>>>`) を除去
+2. HEAD 側セクションを残す (5.X+24)
+3. main 側セクション (5.X+27) を続けて配置
+4. 番号順 (24 → 27) で並ぶよう間に空行を挿入
+
+main 側の section 番号順序が既に非連続 (例: 27→29→26→25→28→22 の順で並んでいる) でも、それを正すのは **別 PR の整理タスク** として切り分け、本コンフリクト解決の範囲外とする (= scope creep を避ける)。
+
+### 予防策
+
+| 戦略 | 効果 | コスト |
+|---|---|---|
+| **KDD ファイルへの追記は PR の最後にまとめる** | コンフリクト発生確率を低減 | 軽 (運用ルール) |
+| **長期 PR は main を週次で rebase / merge** | コンフリクトを小さく頻繁に解消 | 中 (作業時間) |
+| **KDD ファイルを「セクション 1 ファイル」に分割** | ファイル単位コンフリクトを排除 | 高 (構造変更) |
+| **section 番号を `5.X+N` から日時 prefix へ移行** | 番号衝突自体を回避 | 中 (既存ファイルの一括書き換え) |
+
+現状は **運用ルール (追記は PR 最後にまとめる) + 長期 PR は週次 rebase** で対応。日時 prefix 移行はバックログ候補。
+
+### 横展開チェック (KDD ファイル編集 PR のレビュー時)
+
+- [ ] PR が長期化していないか (1 週間以上 main を取り込んでいない場合は rebase 推奨)
+- [ ] 追加セクションの番号が既存の最大番号 + 1 か (main 側で番号が進んでいる可能性)
+- [ ] コンフリクト解決時に **どちらかのセクションを誤って削除していない** か
+- [ ] セクション番号順に並べた結果、参照リンク (`§5.X+25` 等) が壊れていないか
+
+### 関連
+
+- 修正例: PR #334 (2026-05-12) / コンフリクト発生 PR #317 関連の連鎖
+- 同類パターン: `.claude/.last-knowledge-check-sha` のような自動更新ステートファイル (PR #310 で対処)
+- 関連 doc: [docs/knowledge/KDD_PATTERNS.md](./KDD_PATTERNS.md) 自身
