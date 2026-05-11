@@ -3,6 +3,7 @@ import {
   getAuthenticatedUser,
   checkProjectPermission,
   requireActualProjectMember,
+  requireStorageQuotaForWrite,
 } from '@/lib/api-helpers';
 import { createKnowledgeSchema } from '@/lib/validators/knowledge';
 import { listKnowledgeByProject, createKnowledge } from '@/services/knowledge.service';
@@ -53,6 +54,13 @@ export async function POST(
       { status: 400 },
     );
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   // プロジェクト紐付けを自動付与: ユーザ入力の projectIds に現在の projectId を
   // マージ (重複排除)。これにより「ナレッジ一覧」タブから作成したナレッジが
