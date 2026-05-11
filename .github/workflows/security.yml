@@ -129,7 +129,7 @@ jobs:
   # ============================================================
   # 4. CodeQL (高度な SAST)
   #
-  # 最新性: github/codeql-action/init@v3 がジョブ実行時に最新の CodeQL クエリスイートと
+  # 最新性: github/codeql-action/init@v4 がジョブ実行時に最新の CodeQL クエリスイートと
   #   GitHub Advisory Database を fetch する。GitHub 公式が継続的に更新するため、
   #   アクション側の手動更新なしで常に最新の検出ロジックが適用される。
   # ============================================================
@@ -141,12 +141,12 @@ jobs:
         language: ['javascript-typescript']
     steps:
       - uses: actions/checkout@v6
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # security-extended は標準 + 拡張クエリで検出範囲を広げる (パフォーマンス影響は軽微)
           queries: security-extended,security-and-quality
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
 
   # ============================================================
   # 5. OSV-Scanner (Google Open Source Vulnerability DB)
@@ -225,7 +225,7 @@ jobs:
             .
       - name: Upload Trivy SARIF to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
           category: trivy
