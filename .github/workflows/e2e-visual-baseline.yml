@@ -88,7 +88,7 @@ jobs:
       CI: 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.branch || github.ref }}
           # commit push に必要 (actions/checkout の token は fetch 専用)。
@@ -105,7 +105,7 @@ jobs:
           version: 10
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -147,7 +147,7 @@ jobs:
 
       - name: Upload generated PNGs as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-baselines-${{ github.run_id }}
           path: e2e/visual/**/*.png

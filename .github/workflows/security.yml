@@ -54,7 +54,7 @@ jobs:
     name: Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Run gitleaks
@@ -72,13 +72,13 @@ jobs:
     name: pnpm audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           # PR #84 hotfix: cache: 'pnpm' を外す。
@@ -105,7 +105,7 @@ jobs:
     container:
       image: returntocorp/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run semgrep with auto-update community rule sets
         run: |
           # `semgrep scan` (= ci ではなく scan) は SEMGREP_APP_TOKEN 不要で動作する公式コマンド。
@@ -129,7 +129,7 @@ jobs:
   # ============================================================
   # 4. CodeQL (高度な SAST)
   #
-  # 最新性: github/codeql-action/init@v3 がジョブ実行時に最新の CodeQL クエリスイートと
+  # 最新性: github/codeql-action/init@v4 がジョブ実行時に最新の CodeQL クエリスイートと
   #   GitHub Advisory Database を fetch する。GitHub 公式が継続的に更新するため、
   #   アクション側の手動更新なしで常に最新の検出ロジックが適用される。
   # ============================================================
@@ -140,13 +140,13 @@ jobs:
       matrix:
         language: ['javascript-typescript']
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v6
+      - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # security-extended は標準 + 拡張クエリで検出範囲を広げる (パフォーマンス影響は軽微)
           queries: security-extended,security-and-quality
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
 
   # ============================================================
   # 5. OSV-Scanner (Google Open Source Vulnerability DB)
@@ -166,7 +166,7 @@ jobs:
     name: OSV-Scanner
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install osv-scanner (latest release)
         run: |
           set -euo pipefail
@@ -203,7 +203,7 @@ jobs:
     name: Trivy (CVE / IaC / Secrets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install trivy (latest stable from official install script)
         run: |
           set -euo pipefail
@@ -225,7 +225,7 @@ jobs:
             .
       - name: Upload Trivy SARIF to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
           category: trivy
@@ -248,13 +248,13 @@ jobs:
     name: Security Score Gate (>= 90)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -264,7 +264,7 @@ jobs:
         run: pnpm tsx scripts/security-check.ts --min-score=90
       - name: Upload security report (always)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: security-report
           path: |
@@ -287,7 +287,7 @@ jobs:
     needs: [secret-scan, pnpm-audit, semgrep, codeql, osv-scanner, trivy, security-score-gate]
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Generate attack coverage matrix
         env:
