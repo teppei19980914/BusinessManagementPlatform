@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * 遅延フェッチの状態型。画面のローディング/エラー/ready を表現する。
@@ -32,7 +32,13 @@ export function useLazyFetch<T>(url: string): LazyFetch<T> {
   const [state, setState] = useState<LazyState<T>>({ status: 'idle' });
   const inflightRef = useRef<Promise<void> | null>(null);
   const stateRef = useRef(state);
-  stateRef.current = state;
+  // PR fix/eslint-config-next-16.2.6 (2026-05-11):
+  //   eslint-config-next 16.2.6 の `react-hooks/refs` は render 中の `ref.current = ...` を
+  //   violation 扱いにする。useEffect 経由で同期する React 公式パターンへ移行。
+  //   `load` は async 呼出のため、commit 後の ref 同期で実用上問題なし。
+  useEffect(() => {
+    stateRef.current = state;
+  });
 
   const load = useCallback(
     async (force = false) => {
