@@ -5937,3 +5937,228 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - migration: prisma/migrations/20260515_tenant_i18n_settings/migration.sql
 - 旧 migration: prisma/migrations/20260424_user_i18n_preferences/ (User に timezone/locale 追加 → drop)
 - 関連設定: src/config/i18n.ts (`DEFAULT_TIMEZONE` / `DEFAULT_LOCALE`)
+
+---
+
+## 5.X+20 `eslint-config-next` minor 上げで `react-hooks/set-state-in-effect` / `react-hooks/refs` が新規 enforce — 既存 useEffect/useRef を Hooks-7.1 互換に書き換える (PR #323 dependabot 対応 / 2026-05-11)
+
+### 罠の正体
+
+dependabot の **patch / minor 上げ** にしか見えない `eslint-config-next 16.2.3 → 16.2.6` で、
+**`eslint-plugin-react-hooks` が 7.0.x → 7.1.1 に transitive bump** し、以下 2 ルールが新規 enforce:
+
+| ルール | 検出対象 | 影響範囲 |
+|---|---|---|
+| `react-hooks/set-state-in-effect` | useEffect 本体内 (同期) で setState を呼ぶ、または **setState を含む関数を呼ぶ (call graph 解析)** | fetch-on-mount / derived state sync / deep-link auto-open |
+| `react-hooks/refs` | render 中 (= useEffect/useCallback/event handler 外) で `ref.current = ...` する | "最新値を保持する ref" の常用パターン |
+
+CI ログでは `eslint-plugin-react-hooks` の version 表記が無いため、**「config-next を上げただけ」と
+見誤って原因特定が遅れる**。実体は **transitive な peer plugin** の major-minor 跨ぎ強化。
+
+PR #323 の CI fail 内訳 (5 件):
+
+| ファイル | ルール | 構造 |
+|---|---|---|
+| `src/app/(auth)/setup-password/page.tsx:78` | set-state-in-effect | useEffect 同期分岐 `if (!token) { setTokenError(...); setIsValidating(false); }` |
+| `src/app/(dashboard)/memos/memos-client.tsx:264` | set-state-in-effect | `useEffect(() => setMemos(initialMemos), [initialMemos])` (derived state sync) |
+| `src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx:191` | set-state-in-effect | `useEffect(() => { void reload(); }, [reload])` (call graph で reload 内 setState を検出) |
+| `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx:785` | set-state-in-effect | useEffect 内 `openEditDialog(target)` (useCallback 内で setState を呼ぶ) |
+| `src/lib/use-lazy-fetch.ts:35` | refs | `stateRef.current = state` を render body 直下で実行 |
+
+### 修正パターン (4 種類)
+
+#### Pattern A: 初期 state を派生させる (synchronous-setState-in-effect 解消)
+
+**Before:**
+
+```tsx
+const [tokenError, setTokenError] = useState('');
+const [isValidating, setIsValidating] = useState(true);
+useEffect(() => {
+  if (!token) {
+    setTokenError(t('invalidLink'));  // ★ violation
+    setIsValidating(false);
+    return;
+  }
+  fetch(...).then(...);
+}, [token, t]);
+```
+
+**After:**
+
+```tsx
+// 初期 state を token 有無から派生
+const [tokenError, setTokenError] = useState(token ? '' : t('invalidLink'));
+const [isValidating, setIsValidating] = useState(!!token);
+useEffect(() => {
+  if (!token) return;        // 初期 state で表示済
+  fetch(...).then(...);      // .then 内 setState は microtask で対象外
+}, [token, t]);
+```
+
+#### Pattern B: derived state は **render 中に prev 比較で setState** (React 公式推奨)
+
+`useEffect(() => setX(prop), [prop])` は React 公式が "Anti-pattern" と明記している。
+代わりに **render 中の条件付き setState** (React は自動的に再 render を 1 回に統合) を使う。
+
+**Before:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+useEffect(() => {
+  setMemos(initialMemos);  // ★ violation + 余分な再 render
+}, [initialMemos]);
+```
+
+**After:**
+
+```tsx
+const [memos, setMemos] = useState(initialMemos);
+const [prevInitialMemos, setPrevInitialMemos] = useState(initialMemos);
+if (prevInitialMemos !== initialMemos) {
+  setPrevInitialMemos(initialMemos);  // render 中の setState は合法 (React docs)
+  setMemos(initialMemos);
+}
+```
+
+ref: <https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes>
+
+#### Pattern C: ref 同期は useEffect 経由 (`react-hooks/refs` 解消)
+
+**Before:**
+
+```ts
+const stateRef = useRef(state);
+stateRef.current = state;  // ★ violation: render 中の ref 更新
+```
+
+**After:**
+
+```ts
+const stateRef = useRef(state);
+useEffect(() => {
+  stateRef.current = state;  // commit 後に同期、async コールバックの読出しには十分
+});
+```
+
+#### Pattern D: 公式が認める正当パターンは `eslint-disable-next-line` (reason コメント必須)
+
+以下は React 公式が `useEffect` を **正当な選択肢** として挙げているため、disable で局所許容する:
+
+1. **fetch-on-mount** (`useEffect(() => { void reload(); })`):
+   ref: <https://react.dev/reference/react/useEffect#fetching-data-with-effects>
+2. **Deep-link 着地時の 1 回限り副作用** (ref ガード済の auto-open dialog):
+   cascading render は ref ガードで防止済
+
+**書き方** (理由は必ず `--` 以降に明記):
+
+```tsx
+useEffect(() => {
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- reload は async で setState は microtask、fetch-on-mount 公式パターン
+  void reload();
+}, [reload]);
+```
+
+### 検出が遅れた理由
+
+- `eslint-plugin-react-hooks` の version は `eslint-config-next` の transitive。`pnpm-lock.yaml`
+  の差分にしか現れず、PR の `package.json` diff (`config-next` の 1 行) からは推測不可能。
+- 各 violation は **build / tsc では検出されない** (lint 専用)。CI が `pnpm lint` を走らせて
+  初めて発覚する。
+- ローカル `pnpm lint` でも、main の lockfile (7.0.x) では新ルールが存在しないため再現しない。
+  → **PR ブランチの lockfile を pull するか、`pnpm add -D eslint-plugin-react-hooks@7.1.1`
+  で手動 pin** しないと再現できなかった。
+
+### 横展開チェック (dependabot で eslint 系 minor 上げ PR を見たとき)
+
+- [ ] `pnpm-lock.yaml` の diff から `eslint-plugin-react-hooks` の version 変動を確認
+- [ ] CI lint ログで `react-hooks/(set-state-in-effect|refs)` を grep し、件数を把握
+- [ ] 修正は **本 PR ではなく main ベースの独立 PR** で行う (dependabot ブランチは force-push
+      されうるため変更が消える可能性)。main 経由で fix が入れば dependabot PR は rebase 後に
+      自動で green
+- [ ] disable directive を使う場合は **reason コメント必須** (`--` 以降に「なぜ」を書く)。
+      "fetch-on-mount" や "ref ガード済" 等の根拠を残す
+- [ ] 修正後は **fix branch でも `pnpm-lock.yaml` は触らない** ことを推奨 (config-next の bump は
+      dependabot に任せる)。これにより fix PR は code-only の小さい diff になり review しやすい
+
+### 関連
+
+- 修正 PR: 本 PR (fix/eslint-react-hooks-rules-16.2.6 / 2026-05-11)
+- dependabot PR: #323 (chore(deps): bump eslint-config-next from 16.2.3 to 16.2.6)
+- 公式 (React docs): <https://react.dev/learn/you-might-not-need-an-effect>
+- 公式 (React useEffect): <https://react.dev/reference/react/useEffect>
+- 公式 (eslint-plugin-react-hooks): <https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks>
+
+---
+
+## 5.X+21 `.claude/.last-knowledge-check-sha` は **gitignore 済だが track 状態** で毎回 conflict を起こす — `git rm --cached` + `.gitattributes merge=ours` で恒久解消 (PR #326 / 2026-05-11)
+
+### 罠の正体
+
+`.claude/.last-knowledge-check-sha` は `session-start-knowledge-check.sh` が **ローカルセッション
+毎に** 上書きする bookkeeping (前回 SessionStart 時の `origin/main` HEAD SHA) で、本来
+git にコミットすべきではないファイル。
+
+- `.gitignore` の line 56 に登録済 — 設計上は untracked
+- しかし過去のセッション (2026-04-25 の auto-commit) で **gitignore 設定前に commit された**
+  ため、git history 上はずっと **tracked 扱い**
+- 一度 tracked になると `.gitignore` は **新規追加のみブロック** し、既存 tracked file の
+  変更は通常通り stage される
+
+→ 結果として毎日 dev ブランチで auto-commit が走り、main 側も別タイミングで更新され、
+**毎回の dev → main マージで必ず 1-line conflict が発生** する。発生例:
+- PR #319, #326 (dev 系) など、本ファイルしか差分がない PR が auto-PR 作成のたびに conflict 化
+- 2026-05-10 にも同種の修正が必要だった (`.last-knowledge-check-sha` 単体 conflict 解消)
+
+### 恒久対策 (PR #326 で適用)
+
+1. **`git rm --cached .claude/.last-knowledge-check-sha`** で git tracking から外す
+   - ローカルファイルは残るため SessionStart hook の動作 (line 36-39 で「ファイル不在なら
+     初期化のみで exit」) には影響なし
+   - 新規 clone した環境では本ファイルが存在しないが、初回 SessionStart で自動初期化される
+2. **`.gitattributes` に `merge=ours` を追加** — 保険として「再 track された場合も自動で
+   destination 側の値を優先する」merge driver を仕込む
+   ```
+   .claude/.last-knowledge-check-sha merge=ours
+   ```
+3. (`.gitignore` は既に line 56 に登録済 — 変更不要)
+
+### conflict が発生してしまった時の応急処置 (恒久対策が入る前)
+
+dev → main 方向の merge で `.last-knowledge-check-sha` だけが衝突した場合、**ファイル単体
+の中身は意味を持たない** ため、destination (= main 側) の値を採用すれば良い。
+
+```bash
+# dev ブランチで main を取り込む場合
+git merge origin/main
+# → CONFLICT (content): Merge conflict in .claude/.last-knowledge-check-sha
+git checkout --theirs .claude/.last-knowledge-check-sha
+git add .claude/.last-knowledge-check-sha
+git commit
+```
+
+なお、当日 dev ブランチに **本ファイルしか差分がない** auto-PR (例: PR #326) は
+**マージしても main に何も変化を与えない**。conflict 解消だけして merge するか、PR ごと
+close するかは判断次第:
+- merge する判断 → 「daily branch 運用記録」として PR 履歴を残したい場合
+- close する判断 → 純粋な no-op を main の merge log に残したくない場合
+
+### 横展開チェック (新しく「セッション毎に変わるローカル bookkeeping ファイル」を追加するとき)
+
+- [ ] **新規ファイルは絶対に commit しない**: `.gitignore` への登録だけでは不十分 (track
+      済ファイルは止められない)。最初の commit 前に `.gitignore` 登録を済ませる
+- [ ] **既存ファイルを「これからは ignore する」場合**: `.gitignore` 追加だけでなく
+      **必ず `git rm --cached` で untrack** すること。`.gitattributes merge=ours` も併用
+- [ ] **session-start hook が `git add -A` を使う場合**: hook 側で `git update-index --skip-worktree`
+      する代替案もあるが、新規 clone した同僚に伝播しないため `.gitignore` + `git rm --cached`
+      の方が安全
+- [ ] auto-PR 自動化スクリプト (`session-start-git.sh` 等) は「実質コード変更が無い branch
+      は PR 化しない」スキップ条件を後で追加検討 (本件のような no-op PR 量産を防ぐ)
+
+### 関連
+
+- 修正 PR: 本 PR (#326 / dev/2026-05-10)
+- 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
+- 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
+- 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
+- 公式 (gitattributes merge): <https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver>
