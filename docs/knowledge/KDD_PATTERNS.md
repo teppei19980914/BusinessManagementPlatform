@@ -5888,6 +5888,12 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 
 ## 5.X+24 dependabot 複数 PR が `pnpm-lock.yaml` で相互コンフリクトする ─ 「auto-rebase 待ち」と「PR 数抑制」で運用 (PR #317 / 2026-05-15)
 
+<!-- PR #335 マージ時点 conflict 解消: PR #335 HEAD で末尾に追加された 2 セクション
+     (§5.X+30/+31) は、PR #334 が先にマージされて main 側 §5.X+30 (KDD ファイル末尾
+     コンフリクトパターン) と番号衝突したため、§5.X+31/+32 に再 renumber して
+     ファイル末尾に再配置した (§5.X+30 KDD コンフリクトパターン §5.X+30 自身の
+     実践例)。 -->
+
 ### 背景
 
 PR #317 (`dependabot/npm_and_yarn/prisma-36eb5828e4`、Prisma 7.7.0 → 7.8.0) で
@@ -6640,3 +6646,254 @@ main 側の section 番号順序が既に非連続 (例: 27→29→26→25→28�
 - 修正例: PR #334 (2026-05-12) / コンフリクト発生 PR #317 関連の連鎖
 - 同類パターン: `.claude/.last-knowledge-check-sha` のような自動更新ステートファイル (PR #310 で対処)
 - 関連 doc: [docs/knowledge/KDD_PATTERNS.md](./KDD_PATTERNS.md) 自身
+
+---
+
+## 5.X+31 「ログインできない」の真因は別経路にあることが多い ─ 切り分け手順と防御的 server component (PR fix/admin-users-defensive-render / 2026-05-15)
+
+<!-- PR #335 マージ時 renumber: 元番号 §5.X+28 → §5.X+30 → §5.X+31。
+     PR #334 が先にマージされて main 側 §5.X+30 (KDD ファイル末尾コンフリクト
+     パターン) と衝突したため次の空き番号に再配置。§5.X+30 自身が記録する
+     パターンの実践例となった。 -->
+
+### 背景
+ユーザから「サービスへログインできなくなった」と報告。共有された error log は `system_error_logs`
+テーブルの内容で、最新エラーは `/admin/users` での Server Components render error (digest 713007954)、
+それ以外は `[attachments/batch]` 系の info ログばかり。**ログイン失敗を示すエントリが存在しなかった**。
+
+調査の結果、ログイン失敗イベントは `auth_event_logs` (別テーブル) に記録される設計のため、
+`system_error_logs` を見ても真因は判らない構造だった。
+
+### 教訓 (切り分けフローの確立)
+
+**1. ログイン失敗かどうかを最初に確認**:
+
+```sql
+-- 直近 24 時間の login_failure を email で抽出
+SELECT event_type, detail, ip_address, created_at
+FROM auth_event_logs
+WHERE event_type = 'login_failure'
+  AND email = '<ユーザ email>'
+  AND created_at >= NOW() - INTERVAL '24 hours'
+ORDER BY created_at DESC;
+```
+
+`detail.reason` の値で原因を判別:
+- `user_not_found`: メール未登録 (typo or 削除済)
+- `invalid_password`: パスワード誤り (試行回数も同 row で確認)
+- `temporary_lock`: 一時ロック中 (`lockedUntil` 確認)
+- `permanent_lock`: 永続ロック (recovery code または admin に解除依頼)
+- `inactive`: アカウント無効化 (admin が isActive=false にした)
+- `tenant_deleted`: テナント論理削除中
+- `missing_credentials`: 空 submit (client bug の可能性)
+
+**2. login_failure ログがない場合 = ログインは成功している可能性大**:
+
+ユーザは「ログインできない」と感じているが実際にはログインできており、**ログイン直後の遷移先で
+server component が crash して error boundary に飛ばされている** ケースがある。ユーザにとっては
+「ログイン → エラー → 戻る → ログイン → エラー」のループに見える。
+
+確認方法:
+
+```sql
+-- 同 email の login_success が直近にあるか
+SELECT event_type, created_at FROM auth_event_logs
+WHERE email = '<ユーザ email>'
+  AND event_type IN ('login_success', 'login_failure')
+ORDER BY created_at DESC LIMIT 10;
+```
+
+login_success が出ているのに login_failure も間に挟まる場合 = ログイン成功 → 画面でエラー → 再ログイン
+のループパターン確定。
+
+**3. server component error の digest を Vercel で追跡**:
+
+```
+Vercel Dashboard → Project → Logs → Search "digest=713007954"
+```
+
+production build では `error.message` がマスクされて UI に出ないが、Vercel runtime log には
+完全なスタックトレースが残る。**digest が同じなら同じ箇所での throw**。
+
+### 防御的 server component パターン (PR fix/admin-users-defensive-render)
+
+`/admin/users` のような **ログイン直後にユーザが遷移しやすいページ** が server component crash すると、
+ユーザは「ログインできない」と認識する。次の防御策で UX とデバッグ可能性を両立する:
+
+```ts
+// Before
+const [users, tenantInfo] = await Promise.all([
+  listUsers(session.user.tenantId),
+  getTenantSelfInfo(session.user.tenantId),
+]);
+
+// After (PR fix/admin-users-defensive-render):
+let users: Awaited<ReturnType<typeof listUsers>> = [];
+let tenantInfo: Awaited<ReturnType<typeof getTenantSelfInfo>> = null;
+let dataLoadError = false;
+try {
+  [users, tenantInfo] = await Promise.all([
+    listUsers(session.user.tenantId),
+    getTenantSelfInfo(session.user.tenantId),
+  ]);
+} catch (error) {
+  dataLoadError = true;
+  await recordError({
+    severity: 'error',
+    source: 'server',
+    message: '[/admin/users] failed to load users or tenant info',
+    stack: error instanceof Error ? error.stack : String(error),
+    userId: session.user.id,
+    context: {
+      path: '/admin/users',
+      errorName: error instanceof Error ? error.name : 'unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+      tenantId: session.user.tenantId,
+    },
+  });
+}
+
+return <UsersClient ... dataLoadError={dataLoadError} />;
+```
+
+ポイント:
+- **error message を `system_error_logs` に詳細記録**: digest 番号だけで Vercel を辿る必要を減らす。
+  errorName / errorMessage / stack を context に入れることで `system_error_logs` から原因が直接判る。
+- **画面操作は維持**: 一覧は空 + 警告バナー表示にとどめ、ヘッダ / 招待 dialog 等は引き続き使える。
+  admin が他経路で復旧操作を取れる。
+- **error boundary に飛ばさない**: dashboard セグメントの error.tsx に飛ぶと「ログインできない」
+  感じになる。本パターンで予防的に防げる。
+
+### 横展開で漏らしやすい箇所
+
+ログイン直後にユーザが遷移しやすい主要ページ:
+- `/projects` (デフォルト遷移先、最高優先)
+- `/admin/users` (admin 系)
+- `/settings`, `/settings/tenant`
+- `/projects/[id]` (前回開いていたプロジェクト)
+
+これらは **server component の最上位データ取得を try/catch で囲み、空フォールバック + recordError
++ dataLoadError prop で UI 警告** のパターンを適用すべき。後続 PR で横展開。
+
+### 関連
+- 元 PR: fix/admin-users-defensive-render (2026-05-15)
+- 関連 service: src/services/error-log.service.ts (`recordError`)
+- 関連 layout: src/app/(dashboard)/error.tsx (default error boundary)
+- 関連 schema: prisma/schema.prisma `AuthEventLog` モデル (eventType / detail / email / userId)
+
+---
+
+## 5.X+32 「invalid_password と記録されているが本人は正しい入力 + パスワードマネージャ使用」のパターン ─ authorize() 例外で auth_event_logs に何も残らないケースが多い (PR fix/auth-diagnostics-defensive / 2026-05-15)
+
+<!-- PR #335 マージ時 renumber: 元番号 §5.X+29 → §5.X+31 → §5.X+32。
+     §5.X+31 (login defensive) と連番化するため。 -->
+
+### 背景
+ユーザから「サービスへログインできない、ログイン情報はパスワードマネージャ使用で誤入力ありえない」報告。
+`auth_event_logs` を確認すると `reason: invalid_password` で 2 行のみ、ただし **どちらも 2 週間以上前** で、
+**今日のログイン試行は 1 件も記録されていない**。
+
+```sql
+SELECT event_type, detail, created_at FROM auth_event_logs
+WHERE event_type = 'login_failure' AND email = 'xxx@example.com'
+ORDER BY created_at DESC LIMIT 20;
+-- → 2 行のみ、最新は 2 週間前
+```
+
+= ユーザは今日もログインボタンを押しているはずなのに **auth_event_logs に何も書かれていない** =
+**authorize() 関数の途中で例外が発生し、recordAuthEvent を呼ぶ前に死んでいる** 可能性が極めて高い。
+
+### 教訓
+- **「event_type='login_failure' に絞った検索」だけでは不十分**: 直近の event 全体を確認する:
+  ```sql
+  SELECT event_type, detail, created_at FROM auth_event_logs
+  WHERE email = 'xxx@example.com' AND created_at >= NOW() - INTERVAL '24 hours'
+  ORDER BY created_at DESC LIMIT 50;
+  ```
+- **直近 24h で 1 行も無ければ authorize() 未到達を疑う**:
+  - NextAuth handler が落ちている (Vercel runtime log を要確認)
+  - Prisma connection failure (`prisma.user.findFirst` で throw)
+  - bcrypt が hash format error で throw
+  - middleware が信号を block
+- **authorize() を try/catch でラップ + internal_error 経路を必ず記録する**:
+
+```ts
+async authorize(credentials) {
+  try {
+    // 既存のロジック
+  } catch (e) {
+    await recordAuthEvent({
+      eventType: 'login_failure',
+      email: typeof credentials?.email === 'string' ? credentials.email : undefined,
+      detail: {
+        reason: 'internal_error',
+        errorName: e instanceof Error ? e.name : 'unknown',
+        errorMessage: e instanceof Error ? e.message : String(e),
+        stackHead: e instanceof Error && typeof e.stack === 'string'
+          ? e.stack.slice(0, 500) : null,
+      },
+    }).catch(() => undefined); // recordAuthEvent 自体の失敗で連鎖を起こさない
+    return null;
+  }
+}
+```
+
+これで「authorize() に到達したが何かで死んだ」ケースを **DB 一発で判別可能** になる。
+
+### bcrypt compare 周辺の診断ログ強化
+
+「authorize() に到達 + invalid_password の経路を辿る」場合でも、真因は次の 4 つに分かれる:
+
+1. **本当にパスワード違い** (= ユーザの記憶違い / autofill が古い値)
+2. **passwordHash カラムが壊れている** (= 文字化け / truncated / null / 空文字)
+3. **bcrypt hash format mismatch** (= '$2a$' / '$2b$' / '$2y$' いずれでもない = 別アルゴリズムのハッシュが混入)
+4. **bcryptjs library 互換性** (= 別バージョンで作られた hash で compare が失敗)
+
+これらを切り分けるため、`login_failure` の detail に下記を追記する:
+
+```ts
+const passwordHashLength = user.passwordHash?.length ?? 0;
+const passwordHashPrefix = (user.passwordHash ?? '').slice(0, 7); // '$2a$10$' / '$2b$12$' 等
+const bcryptStart = Date.now();
+let isValid: boolean;
+let bcryptError: string | null = null;
+try {
+  isValid = await compare(password, user.passwordHash);
+} catch (e) {
+  isValid = false;
+  bcryptError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+}
+const bcryptElapsedMs = Date.now() - bcryptStart;
+
+if (!isValid) {
+  await recordAuthEvent({
+    eventType: 'login_failure',
+    /* ... */
+    detail: {
+      reason: 'invalid_password',
+      passwordHashLength,    // 標準は 60。それ以外なら hash 破損
+      passwordHashPrefix,    // '$2a$' / '$2b$' / '$2y$' 以外なら format 異常
+      bcryptElapsedMs,       // 0-1ms なら即時失敗 (hash 不正)、50-200ms が正常
+      bcryptError,           // compare 例外時のエラー名
+    },
+  });
+}
+```
+
+判別:
+- `passwordHashLength != 60` → hash 破損 (DB の passwordHash カラムを直接修正、または password reset 発行)
+- `passwordHashPrefix not in ['$2a$', '$2b$', '$2y$']` → format 異常 (同上)
+- `bcryptError != null` → bcrypt が throw (= invalid hash の format chars 等、ライブラリ更新による互換性問題の可能性も)
+- 上記全て正常 + `isValid = false` → **本当に password 違い** (ユーザは password マネージャ更新 / reset を案内)
+
+### 横展開で漏らしやすい箇所
+
+- **MFA 認証経路** (`/api/auth/mfa/verify`): 同様に internal_error 経路を保証
+- **パスワード変更** (`/api/auth/change-password`): 既存 hash の compare で同じ問題があり得る
+- **パスワードリセット** (`/api/auth/reset-password/...`): bcrypt 周辺の例外捕捉
+
+### 関連
+- 元 PR: fix/auth-diagnostics-defensive (2026-05-15)
+- 関連 service: src/lib/auth.ts (`authorize`)
+- 関連 event log: prisma/schema.prisma `AuthEventLog` モデル (`detail` JSONB)
+- 過去の関連 §5.X+31: 「ログイン直後 server component crash = ログインできない感」
