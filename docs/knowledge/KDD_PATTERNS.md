@@ -5885,3 +5885,98 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 修正例: PR #310 (2026-05-10)
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+## 5.X+24 dependabot 複数 PR が `pnpm-lock.yaml` で相互コンフリクトする ─ 「auto-rebase 待ち」と「PR 数抑制」で運用 (PR #317 / 2026-05-15)
+
+### 背景
+
+PR #317 (`dependabot/npm_and_yarn/prisma-36eb5828e4`、Prisma 7.7.0 → 7.8.0) で
+**コンフリクトが GitHub UI に表示された** が、調査時点では `mergeable: MERGEABLE` /
+`mergeStateStatus: CLEAN` で **既に解消** していた。
+
+### 根本原因
+
+**pnpm-lock.yaml はモノリシックなロックファイル** で、任意の依存パッケージ更新で必ず変更が発生する。
+dependabot が **複数 PR を同時に open** すると以下が発生:
+
+```
+main:                  A → B → C
+PR #316 (next-react):  A → P1 (touches pnpm-lock.yaml)
+PR #317 (prisma):      A → P2 (touches pnpm-lock.yaml)
+```
+
+PR #316 がマージされると、`main` が進む (`A → B → next-react`)。すると PR #317 の
+base (= 旧 `main` = `A`) と現 `main` (= `A → next-react`) で **pnpm-lock.yaml が同一行付近** に
+別の変更を持つことになり、Git が 3-way merge できず CONFLICTING になる。
+
+### 解消の仕組み (今回のケース)
+
+GitHub の dependabot は **PR の base branch が更新されると自動的に rebase** する設計
+(条件: PR ブランチ未触り、checks が grace 期間内)。
+
+時系列:
+1. PR #316 (next-react) を main にマージ → main 更新
+2. dependabot が PR #317 を検知 → 自動 rebase → 新 commit `911fb5a` 生成
+3. 新 commit は新 main 基準で pnpm-lock.yaml を再生成 → CONFLICTING 解消
+
+つまり **ユーザが見たコンフリクトは過渡的状態** で、dependabot の auto-rebase
+完了で自動的に消える。
+
+### 教訓
+
+- **コンフリクト発生時の最初の対応**: `gh pr view <#> --json mergeable,mergeStateStatus`
+  で確認。`CLEAN` ならもう何もしなくて OK。
+- **手動 rebase 不要**: dependabot ブランチに手動で `git push` すると dependabot の
+  auto-rebase が **無効化** され、以降は手動メンテになる。基本は触らない。
+- **マージ順序戦略**: 同種の依存更新 PR が複数 open 中の場合、**マージしたい順序を決めて
+  順次マージ**。1 件マージ → 数分待って残りの auto-rebase 完了を確認 → 次マージ。
+
+### 設計の落とし穴
+
+1. **`mergeable: UNKNOWN`**: GitHub が computing 中。1-2 分待って再取得。
+2. **`mergeStateStatus: BLOCKED`**: ファイル conflict ではなく、required reviews / checks が
+   未通過の状態。コンフリクトとは別物。
+3. **CI が古い base で走った場合**: auto-rebase 後に CI 再実行が走らないと、
+   古い PR commit の検査結果のままで「checks pass」になる。dependabot は再 push で
+   CI を再実行させる。マージ前に「最新の checks が pass か」を目視確認。
+4. **groups 設定**: dependabot.yml の `groups` 設定で関連パッケージをまとめて 1 PR にすると、
+   PR 数自体を減らせる (= 相互コンフリクト発生確率を抑制)。既に prisma / next-react /
+   testing は groups 化済 (本リポジトリ `.github/dependabot.yml`)。
+5. **`open-pull-requests-limit`**: 現状 10 だが、自前で順次マージしきれない場合は
+   5 に下げて「常に少数 PR で頻繁回す」運用にする選択肢あり。
+
+### 横展開で漏らしやすい箇所
+
+- **feature ブランチも同じ影響を受ける**: dependabot PR がマージされると feature PR が
+  CONFLICTING になることがある。1 PR ずつ手動 rebase (`git rebase origin/main`) で対応。
+  実例: 本 PR (#317) 調査時、open feature PR #327/#329/#330 が CONFLICTING になっていた
+  (dependabot #311/#313-#316 の連続マージ後)。
+- **マイグレーション系 PR (schema.prisma / migration ファイル) と dependabot**: 同様に
+  conflict が起きやすい。マージ順序: dependabot → migration の順に通すと安全
+  (schema は依存影響を受けないため逆も可、ただし pnpm-lock の auto-rebase は走らない)。
+
+### 推奨運用フロー (今後)
+
+```bash
+# 1. dependabot PR を見つけた時の確認
+gh pr view <#> --json mergeable,mergeStateStatus,statusCheckRollup
+
+# 2. mergeable=MERGEABLE && mergeStateStatus=CLEAN なら即マージ
+gh pr merge <#> --squash --auto
+
+# 3. CONFLICTING の場合は時間を置く (dependabot auto-rebase 待ち、~5 分)
+sleep 300 && gh pr view <#> --json mergeable
+
+# 4. それでも解消しない場合: PR コメントで rebase 指示
+gh pr comment <#> --body "@dependabot rebase"
+
+# 5. マージ後は他の open dependabot PR の auto-rebase を確認
+gh pr list --search "is:open author:app/dependabot" --json number,mergeable
+```
+
+### 関連
+
+- 元 PR: #317 (prisma 7.7.0 → 7.8.0 group)
+- 同パターン: #311, #313, #314, #315, #316 (連続 dependabot merge)
+- 設定: [.github/dependabot.yml](../../.github/dependabot.yml) (groups + open-pull-requests-limit)
+- 公式仕様: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates
