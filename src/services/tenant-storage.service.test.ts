@@ -47,7 +47,7 @@ beforeEach(() => {
 });
 
 describe('getStorageInfo', () => {
-  it('Standard プランの正常系 (Beginner=50MB 上限、使用量 10MB → 20%、Grace=active)', async () => {
+  it('Standard プランの正常系 (全プラン共通 20MB 上限、使用量 10MB → 50%、Grace=active)', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
       id: TENANT_ID,
       plan: 'beginner',
@@ -65,14 +65,15 @@ describe('getStorageInfo', () => {
       expect(info.llmPlan).toBe('beginner');
       expect(info.storageAddonPlan).toBe('standard');
       expect(info.storageBytesUsed).toBe(10 * ONE_MB);
-      expect(info.storageLimitBytes).toBe(50 * ONE_MB);
-      expect(info.usageRatio).toBeCloseTo(0.2);
+      // PR-3 (2026-05-15): 20MB 共通
+      expect(info.storageLimitBytes).toBe(20 * ONE_MB);
+      expect(info.usageRatio).toBeCloseTo(0.5);
       expect(info.graceState).toBe('active');
       expect(info.storageAddonMonthlyJpy).toBe(0);
     }
   });
 
-  it('Plus プランで Expert: 上限 = 150 + 200 = 350MB / 月額 ¥500', async () => {
+  it('PR-3: Plus プラン: 上限 = 20 + 200 = 220MB / 月額 ¥500 (LLM プラン非依存)', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
       id: TENANT_ID,
       plan: 'expert',
@@ -86,8 +87,46 @@ describe('getStorageInfo', () => {
 
     const info = await getStorageInfo(TENANT_ID);
     if (info) {
-      expect(info.storageLimitBytes).toBe(350 * ONE_MB);
+      expect(info.storageLimitBytes).toBe(220 * ONE_MB);
       expect(info.storageAddonMonthlyJpy).toBe(500);
+    }
+  });
+
+  it('PR-3: Pro Storage プラン: 上限 = 20 + 1000 = 1020MB / 月額 ¥1500', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      id: TENANT_ID,
+      plan: 'beginner',
+      storageAddonPlan: 'pro_storage',
+      storageBytesUsed: BigInt(0),
+      storageBytesUsedAt: null,
+      storageGracePeriodStartedAt: null,
+      scheduledStorageAddonAt: null,
+      scheduledNextStorageAddon: null,
+    } as never);
+
+    const info = await getStorageInfo(TENANT_ID);
+    if (info) {
+      expect(info.storageLimitBytes).toBe(1020 * ONE_MB);
+      expect(info.storageAddonMonthlyJpy).toBe(1500);
+    }
+  });
+
+  it('PR-3: Enterprise プラン: 上限 = 20 + 5000 = 5020MB / 月額 ¥5000', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      id: TENANT_ID,
+      plan: 'pro',
+      storageAddonPlan: 'enterprise',
+      storageBytesUsed: BigInt(0),
+      storageBytesUsedAt: null,
+      storageGracePeriodStartedAt: null,
+      scheduledStorageAddonAt: null,
+      scheduledNextStorageAddon: null,
+    } as never);
+
+    const info = await getStorageInfo(TENANT_ID);
+    if (info) {
+      expect(info.storageLimitBytes).toBe(5020 * ONE_MB);
+      expect(info.storageAddonMonthlyJpy).toBe(5000);
     }
   });
 
@@ -97,7 +136,7 @@ describe('getStorageInfo', () => {
       id: TENANT_ID,
       plan: 'beginner',
       storageAddonPlan: 'standard',
-      storageBytesUsed: BigInt(60 * ONE_MB),
+      storageBytesUsed: BigInt(30 * ONE_MB), // 20MB 超過
       storageBytesUsedAt: null,
       storageGracePeriodStartedAt: threeDaysAgo,
       scheduledStorageAddonAt: null,
@@ -117,7 +156,7 @@ describe('getStorageInfo', () => {
       id: TENANT_ID,
       plan: 'beginner',
       storageAddonPlan: 'standard',
-      storageBytesUsed: BigInt(60 * ONE_MB),
+      storageBytesUsed: BigInt(30 * ONE_MB),
       storageBytesUsedAt: null,
       storageGracePeriodStartedAt: eightDaysAgo,
       scheduledStorageAddonAt: null,
@@ -191,12 +230,12 @@ describe('updateStorageAddonPlan', () => {
     });
   });
 
-  it('Plus → Standard ダウングレード: 翌月予約', async () => {
+  it('Plus → Standard ダウングレード: 翌月予約 (新上限 20MB 以内)', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
       id: TENANT_ID,
       plan: 'expert',
       storageAddonPlan: 'plus',
-      storageBytesUsed: BigInt(50 * ONE_MB), // Standard (150MB) 内なので OK
+      storageBytesUsed: BigInt(10 * ONE_MB), // PR-3: Standard (20MB) 内なので OK
     } as never);
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
 
@@ -208,12 +247,12 @@ describe('updateStorageAddonPlan', () => {
     }
   });
 
-  it('Plus → Standard ダウングレードで使用量 > 新上限 → 拒否', async () => {
+  it('Plus → Standard ダウングレードで使用量 > 新上限 → 拒否 (新上限 20MB)', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
       id: TENANT_ID,
       plan: 'expert',
       storageAddonPlan: 'plus',
-      storageBytesUsed: BigInt(200 * ONE_MB), // 150MB 超過
+      storageBytesUsed: BigInt(50 * ONE_MB), // PR-3: 20MB 超過
     } as never);
 
     const r = await updateStorageAddonPlan(TENANT_ID, 'standard');
@@ -255,13 +294,12 @@ describe('cancelScheduledStorageAddon', () => {
 });
 
 describe('checkAndStartGracePeriod', () => {
-  it('使用量 > 上限 かつ Grace 未開始 → Grace 開始', async () => {
+  it('使用量 > 上限 かつ Grace 未開始 → Grace 開始 (PR-3: Standard 20MB)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValue([
       {
         id: TENANT_ID,
-        plan: 'beginner',
         storageAddonPlan: 'standard',
-        storageBytesUsed: BigInt(60 * ONE_MB), // 50MB 超過
+        storageBytesUsed: BigInt(30 * ONE_MB), // PR-3: 20MB 超過
         storageGracePeriodStartedAt: null,
       },
     ] as never);
@@ -276,9 +314,8 @@ describe('checkAndStartGracePeriod', () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValue([
       {
         id: TENANT_ID,
-        plan: 'beginner',
         storageAddonPlan: 'standard',
-        storageBytesUsed: BigInt(40 * ONE_MB), // 50MB 内
+        storageBytesUsed: BigInt(15 * ONE_MB), // PR-3: 20MB 内
         storageGracePeriodStartedAt: new Date(),
       },
     ] as never);
@@ -289,13 +326,12 @@ describe('checkAndStartGracePeriod', () => {
     expect(r.graceClearedCount).toBe(1);
   });
 
-  it('使用量 ≤ 上限 かつ Grace 未開始 → noop', async () => {
+  it('使用量 ≤ 上限 かつ Grace 未開始 → noop (PR-3: Plus 220MB)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValue([
       {
         id: TENANT_ID,
-        plan: 'expert',
         storageAddonPlan: 'plus',
-        storageBytesUsed: BigInt(100 * ONE_MB),
+        storageBytesUsed: BigInt(100 * ONE_MB), // 220MB 内
         storageGracePeriodStartedAt: null,
       },
     ] as never);
@@ -308,13 +344,12 @@ describe('checkAndStartGracePeriod', () => {
 });
 
 describe('applyScheduledStorageChanges', () => {
-  it('予約済テナント: 使用量 ≤ 新上限 → 適用', async () => {
+  it('予約済テナント: 使用量 ≤ 新上限 → 適用 (PR-3: Standard 20MB)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValue([
       {
         id: TENANT_ID,
-        plan: 'expert',
         storageAddonPlan: 'plus',
-        storageBytesUsed: BigInt(50 * ONE_MB),
+        storageBytesUsed: BigInt(10 * ONE_MB), // PR-3: Standard 20MB 内
         scheduledNextStorageAddon: 'standard',
       },
     ] as never);
@@ -325,13 +360,12 @@ describe('applyScheduledStorageChanges', () => {
     expect(r.skippedDueToUsage).toBe(0);
   });
 
-  it('予約済テナント: 使用量 > 新上限 → skip + 予約クリア', async () => {
+  it('予約済テナント: 使用量 > 新上限 → skip + 予約クリア (PR-3: Standard 20MB 超)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValue([
       {
         id: TENANT_ID,
-        plan: 'expert',
         storageAddonPlan: 'plus',
-        storageBytesUsed: BigInt(200 * ONE_MB), // 150MB 超
+        storageBytesUsed: BigInt(50 * ONE_MB), // PR-3: Standard 20MB 超
         scheduledNextStorageAddon: 'standard',
       },
     ] as never);

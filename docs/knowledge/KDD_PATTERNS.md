@@ -5886,6 +5886,61 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
+## 5.X+27 ストレージ上限を LLM プランから切り離し 20MB 共通ベース + add-on 独立軸に統一 — 横展開可能な guard サービス化 (PR-3 / 2026-05-15)
+
+### 背景
+旧仕様では `STANDARD_STORAGE_BYTES_BY_PLAN = { beginner: 50MB, expert: 150MB, pro: 300MB }`
+と LLM プランに連動して Standard 上限が変動していた。
+ユーザ要件で確定: **「Standard 20MB / Plus 220MB / Pro 1.02GB / Enterprise 5.02GB」** を
+全テナント共通で運用 (LLM プラン非依存)。日次 cron + 7 日 Grace の従来仕様だけでは最大 24h 遅延で
+データが上限超過状態で書き込まれてしまう問題があったため、リアルタイム guard も併設。
+
+### 教訓
+- **Standard ベースを定数化し、computeStorageLimitBytes のシグネチャから llmPlan 引数を撤去**:
+  `STANDARD_STORAGE_BYTES = 20MB` (単一定数) + `ADDON_EXTRA_BYTES[addonPlan]` で合算。
+  call site が散在しているため、シグネチャ変更で漏れを tsc が検出できる構造に変える。
+- **Pre-check (cache) + Post-check (transaction 内実測)** の二段戦略:
+  - Pre-check: キャッシュ値 + 予測サイズで早期拒否 (24h ラグあり = fail-open 寄り)
+  - Post-check: transaction 内で `pg_column_size` 集計の実測 → 超過なら `throw` で全件ロールバック
+  - 後者が真の境界、前者は明らかに巨大な payload を入口で弾くだけ
+- **共通ヘルパに集約**: `withStorageGuard(tenantId, (tx) => fn)` で transaction の中身を渡せば
+  Post-check と上限超過ロールバックを自動化。書き込み系 service に横展開しやすい設計
+- **エラーマッピング集中**: `mapStorageGuardErrorToResponse(error)` で 403 を組み立て、route が個別判定する必要を排除
+
+### 設計の落とし穴
+
+1. **`calculateTenantStorageBytes` を transaction 内で使うと外側 DB を見る**:
+   `tenant-storage.service.ts` 側は `prisma.$queryRaw` 直叩きで tx スコープ外。
+   `storage-guard.service.ts` 内に **tx 引数を取る同等 SQL** を別途実装 (`calculateTenantStorageBytesInTx`)。
+2. **テスト mock の更新**:
+   `prisma.$transaction(async (tx) => ...)` の tx mock 側にも
+   `tenant.findFirst`, `tenant.update`, `$queryRaw` のスタブが必要。
+3. **キャッシュの同期書き込みは tx 内**:
+   `assertStorageLimitInTx` で実測値を `Tenant.storageBytesUsed` に書き戻すが、
+   transaction がロールバックされた時は当然破棄される (= キャッシュ汚染が発生しない)。
+
+### 横展開で漏らしやすい箇所 (PR-3 では未着手、follow-up 対象)
+
+PR-3 では **インポート経路 (data-import + external-data-import)** に Post-check + ロールバックを適用済み。
+通常の CRUD (project / task / knowledge / risk / retro / memo / customer / stakeholder / member / comment / attachment)
+は **未適用**。follow-up PR で:
+
+- 各 service の `create / update / bulkUpdate` を `withStorageGuard(tenantId, (tx) => tx.X.create(...))` で wrap
+- 上限超過時の API レスポンスは `mapStorageGuardErrorToResponse(error)` で 403 を返す
+- 各 service の test mock に `tx.tenant.findFirst / tx.tenant.update / tx.$queryRaw` を追加 (data-import.service.test.ts のパターンを流用)
+
+PR-3 で個別 CRUD まで広げなかった理由: テスト書き換えの規模が約 30+ ファイルに及び、PR レビュー単位として
+大きすぎるため。インフラ + 最重要経路 (= bulk import) を先行、CRUD 個別は段階的に follow-up。
+
+### 関連
+
+- 元 PR: PR-3 (2026-05-15) テナント管理者ダッシュボード改修 — Storage 20MB 共通化 + リアルタイム guard
+- config: src/config/storage-addon.ts (`STANDARD_STORAGE_BYTES` / `ADDON_EXTRA_BYTES`)
+- guard service: src/services/storage-guard.service.ts (`withStorageGuard` / `assertStorageLimitInTx` / `precheckStorageLimit`)
+- import 経路: src/services/data-import.service.ts (ZIP) / src/services/external-data-import.service.ts (CSV)
+
+---
+
 ## 5.X+26 Beginner プランは「値の変動がない管理項目」を UI から消す — 表示の意図不在を防ぐ (PR-2 / 2026-05-15)
 
 ### 背景
@@ -6206,6 +6261,18 @@ PR #326 の恒久対策 (`git rm --cached` + `.gitattributes merge=ours`) を ma
 - [ ] 恒久対策を入れた PR より **以前に分岐した既存ブランチ全てで「再度の手動マージ」が必要** (= untrack 操作は branch 内 commit 履歴の前方互換性が無い)
 - [ ] 自動 daily branch 群 (`dev/YYYY-MM-DD`) で同様の operation を入れる場合は、main マージ後に **全 open dev ブランチを一斉 rebase or merge** する hook を検討 (本件は手動対応で済んだが、ブランチが 10 個以上ある日は手間が積み上がる)
 
+### 再発事例 3 例目 (PR #330 / feat/pr-3-storage-guard / 2026-05-11)
+
+PR-3 (Storage 20MB 共通化 + guard サービス) も同パターン。**1 日に 3 件続いた再発**で、原因は同じ「PR #326 untrack 前に分岐していた」。
+
+- 連発の構造: PR-1 (#327), PR-2 (#329), PR-3 (#330) は **同じ親 main commit から並列に分岐** した一連の改修 → どの PR でも `.last-knowledge-check-sha` を SessionStart hook が tracked のまま更新 → main マージ後に同じ衝突パターンが量産される
+- 解消手順は 1 例目 / 2 例目と完全同型: `git rm` + KDD 末尾セクション順序保持
+
+#### 確定した結論 (3 例後)
+
+- [ ] **PR #326 のような untrack 系恒久対策が main に入ったら、その時点で open な全ブランチを `git pull --rebase` or `git merge main` で一斉に同期する運用ルール** を hook 化検討対象に追加
+- [ ] **branch protection で "main 更新後 X 時間以内に同期必須" を運用する選択肢** もあるが、現状の頻度なら本 KDD の再発事例リストを溜めるだけで横展開警告が機能する
+
 ### 再発事例 2 例目 (PR #329 / feat/pr-2-beginner-ui / 2026-05-11)
 
 dev/* 系の auto-branch だけでなく **feature branch** (PR-2 = Beginner UI 改修) でも同じ症状が出た。`feat/pr-2-beginner-ui` は PR #326 untrack 前に分岐 + SessionStart hook で `.last-knowledge-check-sha` を更新済の状態だったため、main マージで modify/delete 衝突。
@@ -6222,7 +6289,7 @@ dev/* 系の auto-branch だけでなく **feature branch** (PR-2 = Beginner UI 
 
 ### 関連
 
-- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11) + PR #329 (再発事例 2 例目 / feat/pr-2-beginner-ui)
+- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11) + PR #329 (再発事例 2 例目 / feat/pr-2-beginner-ui) + PR #330 (再発事例 3 例目 / feat/pr-3-storage-guard)
 - 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
 - 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
 - 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
