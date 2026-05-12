@@ -7219,3 +7219,107 @@ expect(r?.storageLimitBytes).toBe(20 * 1024 * 1024);
 - 関連 service: [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts), [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
 - 関連 config: [src/config/storage-addon.ts](../../src/config/storage-addon.ts) (新シグネチャ定義)
 - 関連 KDD: §5.X+27 (LLM プランから切り離し → 共通 20MB), §5.X+33 (refactor + コメント追加型 conflict)
+
+---
+
+## 5.X+35 multi-project Playwright で **同 spec が複数 project で並列実行** されると fixture が DB に同名行を量産する罠 ─ name に callSuffix を必ず付与、cleanup は FK 順を厳守、redirect-during-goto は `waitUntil: 'commit'` (PR #337 E2E fix / 2026-05-12)
+
+### 罠の正体
+
+PR #337 の E2E で `13-super-admin-dashboard.spec.ts` が 2 種類のエラーで連続 fail:
+
+1. **chromium project / test 121**: `strict mode violation: getByText('E2E Tenant A e2e-...') resolved to 2 elements` — DB に **同じ name + 異なる UUID の tenant 行が 2 件存在**
+2. **chromium-mobile project / test 233**: `page.goto: net::ERR_ABORTED at /admin/super` — server-side `redirect('/')` 中に navigation がアボート
+
+両方の根本原因が **multi-project Playwright (chromium + chromium-mobile) で同一 spec を実行** する設計に起因。
+
+#### 1 の機序: 同 spec の重複 fixture 投入
+
+- `playwright.config.ts` の `workers: 2` 設定下、同一 spec を chromium / chromium-mobile **両 project** が実行
+- worker process は project ごとに切り替わる可能性があり、**同一 worker process** で連続実行されると `RUN_ID` (= `e2e-${timestamp}-${pid}-${rand}`) が共有される
+- fixture 内で `name` を `${runId}` だけで構成すると → 2 回 beforeAll 呼び出しで **同じ name の行が 2 つ insert** される (slug は `randomBytes(3)` で一意、UNIQUE 制約は slug にのみ存在)
+- さらに **afterAll の cleanup が FK 違反で部分失敗** すると行が残留し、次の project run で重複が確定する
+
+```ts
+// アンチパターン (PR #337 修正前)
+const slugA = `e2e-sa-${runId}-${suffix}-a`;        // slug は suffix 含む = UNIQUE OK
+const tenantA = await pool.query(`INSERT ... `, [slugA, `E2E Tenant A ${runId}`]);
+//                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+//                                                       name は runId のみ = 重複可能
+```
+
+```ts
+// 正しいパターン
+const slugA = `e2e-sa-${runId}-${suffix}-a`;
+const nameA = `E2E Tenant A ${runId}-${suffix}`;    // name にも suffix 付与
+```
+
+#### 2 の機序: redirect-during-goto アボート
+
+`/admin/super` の server-side layout で `redirect('/')` が発火すると、`page.goto()` 中に navigation が断ち切られて `net::ERR_ABORTED` を throw する Chromium 実装がある (特に mobile viewport)。`waitUntil: 'load'` (デフォルト) は完全な response 受領を要求するため fail する。
+
+```ts
+// 正しいパターン
+try {
+  await adminPage.goto('/admin/super', { waitUntil: 'commit' });
+  // 'commit' = 最初のレスポンスヘッダ受領まで待つだけで、その後の server redirect は許容
+} catch (e) {
+  // 念のため ERR_ABORTED 例外は飲み込む (final URL 検証で本質を担保)
+  if (!(e instanceof Error && e.message.includes('ERR_ABORTED'))) throw e;
+}
+await adminPage.waitForURL((url) => !url.pathname.startsWith('/admin/super'), { timeout: 10_000 });
+```
+
+#### cleanup 順序 (FK 違反防止)
+
+E2E で admin が一度でも login すると `auth_event_logs` が tenant_id 付きで insert される。これが残ったまま `DELETE FROM tenants` を発火すると FK 違反で blocking → tenants 残留。
+
+```ts
+// 正しい cleanup 順序
+// 1. tenants を参照する FK 子テーブルを先に DELETE
+//    (auth_event_logs / audit_logs / system_error_logs / api_call_logs /
+//     role_change_logs / sessions / tokens など)
+// 2. users (= tenant_id 持ち)
+// 3. tenants
+// 各 step は独立クエリ + try/catch で 1 つ失敗しても残りを継続 (transaction 不可、§5.X+30 教訓 7 参照)
+```
+
+### 採用したパターン (PR #337 fix)
+
+1. **fixture の name にも suffix を付与** — `E2E Tenant A ${runId}-${suffix}` 形式で同 RUN_ID 複数 call でも重複しない
+2. **cleanup の FK 子テーブル先行 DELETE** — `auth_event_logs` 等を 10 種類列挙してから tenants 削除
+3. **redirect-during-goto を `waitUntil: 'commit'` + ERR_ABORTED 例外スワロー** で許容
+4. **multi-project 並列実行が不要な spec は `testIgnore` で chromium-mobile から除外** — 構造的に重複実行自体を回避
+
+```ts
+// playwright.config.ts
+projects: [
+  { name: 'chromium', ... },
+  {
+    name: 'chromium-mobile',
+    testIgnore: [
+      // 共有 DB に fixture 書き込む spec は project 単位で重複させない
+      /11-tenant-isolation\.spec\.ts/,
+      /12-suggestion-seed-data\.spec\.ts/,
+      /13-super-admin-dashboard\.spec\.ts/,
+    ],
+  },
+],
+```
+
+### 横展開チェック (新規 E2E spec / fixture を追加する時)
+
+- [ ] **fixture が共有 DB に書き込む** か (= tenants / users / 業務 entity を INSERT する)
+- [ ] そうなら **name 系カラムにも `randomBytes(N)` の suffix を付与** したか (slug の UNIQUE だけでは不十分)
+- [ ] cleanup で **tenants / users の FK 子テーブル** を grep し、全て先行 DELETE しているか
+- [ ] cleanup は **transaction を使わず独立クエリ** で実行 (§5.X+30 教訓 7)
+- [ ] spec が **複数 project (chromium / chromium-mobile) で実行する必要があるか** 判定し、不要なら `testIgnore` で chromium-mobile から外す
+- [ ] server-side `redirect()` を経由する navigation は `waitUntil: 'commit'` + ERR_ABORTED swallow パターンを採用
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — feat/guide-page-restructure
+- 関連 fixture: [e2e/fixtures/super-admin.ts](../../e2e/fixtures/super-admin.ts) (name suffix + 拡張 cleanup)
+- 関連 spec: [e2e/specs/13-super-admin-dashboard.spec.ts](../../e2e/specs/13-super-admin-dashboard.spec.ts) (redirect goto 修正)
+- 関連 config: [playwright.config.ts](../../playwright.config.ts) (chromium-mobile testIgnore)
+- 過去関連 KDD: §5.X+30 (cleanup transaction 不使用), `e2e/fixtures/multi-tenant.ts` の callSuffix パターン (先行事例)
