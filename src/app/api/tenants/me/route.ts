@@ -86,6 +86,19 @@ export async function PATCH(req: NextRequest) {
         { status: 400 },
       );
     }
+    // PR-2 (2026-05-15): Beginner プランは月次予算上限を設定不可
+    if (result.error === 'BEGINNER_BUDGET_NOT_ALLOWED') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'BEGINNER_BUDGET_NOT_ALLOWED',
+            message:
+              'Beginner プランは固定の月 100 回上限で運用されるため、月次予算上限は設定できません。Expert または Pro プランへのアップグレード後に設定してください。',
+          },
+        },
+        { status: 400 },
+      );
+    }
     return NextResponse.json(
       { error: { code: result.error, message: '入力が不正です' } },
       { status: 400 },

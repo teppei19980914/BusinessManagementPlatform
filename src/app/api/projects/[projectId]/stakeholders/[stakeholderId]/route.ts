@@ -8,7 +8,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
+import {
+  getAuthenticatedUser,
+  checkProjectPermission,
+  requireStorageQuotaForWrite,
+} from '@/lib/api-helpers';
 import { updateStakeholderSchema } from '@/lib/validators/stakeholder';
 import {
   getStakeholder,
@@ -58,6 +62,13 @@ export async function PATCH(
       { status: 400 },
     );
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   let stakeholder;
   try {

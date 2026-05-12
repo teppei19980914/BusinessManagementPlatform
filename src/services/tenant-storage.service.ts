@@ -41,6 +41,12 @@ import {
 } from '@/config/storage-addon';
 import { isTenantPlan, type TenantPlan } from '@/lib/tenant';
 import { recordError } from '@/services/error-log.service';
+// PR-4 (2026-05-15): テナント TZ で翌月適用日を計算
+import { getTenantNextMonthStart } from '@/lib/tenant-time';
+
+// PR-3 (2026-05-15): computeStorageLimitBytes は LLM プラン非依存になったため、
+//   呼出側で llmPlan を解決する必要はなくなった。
+//   llmPlan は TenantStorageInfo の表示用情報としてのみ残置。
 
 // ================================================================
 // 公開型
@@ -174,7 +180,8 @@ function computeStorageInfo(tenant: {
     ? tenant.storageAddonPlan
     : 'standard';
 
-  const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);
+  // PR-3 (2026-05-15): 20MB + add-on 拡張で上限を算出 (LLM プラン非依存)
+  const limitBytes = computeStorageLimitBytes(addonPlan);
   const usedBytes = Number(tenant.storageBytesUsed);
   const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
 
@@ -257,13 +264,14 @@ export async function updateStorageAddonPlan(
       plan: true,
       storageAddonPlan: true,
       storageBytesUsed: true,
+      // PR-4 (2026-05-15): 翌月適用日をテナント TZ ベースで計算するため取得
+      timezone: true,
     },
   });
   if (!tenant) {
     return { ok: false, error: 'TENANT_NOT_FOUND', message: 'テナントが見つかりません' };
   }
 
-  const llmPlan: TenantPlan = isTenantPlan(tenant.plan) ? tenant.plan : 'beginner';
   const currentAddon: StorageAddonPlan = isStorageAddonPlan(tenant.storageAddonPlan)
     ? tenant.storageAddonPlan
     : 'standard';
@@ -287,7 +295,8 @@ export async function updateStorageAddonPlan(
   }
 
   // ダウングレード: 現使用量チェック (使用量 > ダウングレード後上限なら拒否)
-  const newLimitBytes = computeStorageLimitBytes(llmPlan, nextPlan);
+  // PR-3 (2026-05-15): 20MB + add-on 拡張 (LLM プラン非依存)
+  const newLimitBytes = computeStorageLimitBytes(nextPlan);
   if (Number(tenant.storageBytesUsed) > newLimitBytes) {
     return {
       ok: false,
@@ -296,9 +305,9 @@ export async function updateStorageAddonPlan(
     };
   }
 
-  // ダウングレード: 翌月 1 日 UTC に予約
+  // PR-4 (2026-05-15): 翌月 1 日 (テナント TZ 0:00) に予約。
   const now = new Date();
-  const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const nextMonthStart = getTenantNextMonthStart(now, tenant.timezone);
   await prisma.tenant.update({
     where: { id: tenantId },
     data: {
@@ -382,7 +391,6 @@ export async function checkAndStartGracePeriod(): Promise<{
     where: { deletedAt: null },
     select: {
       id: true,
-      plan: true,
       storageAddonPlan: true,
       storageBytesUsed: true,
       storageGracePeriodStartedAt: true,
@@ -393,11 +401,11 @@ export async function checkAndStartGracePeriod(): Promise<{
   let cleared = 0;
 
   for (const t of tenants) {
-    const llmPlan: TenantPlan = isTenantPlan(t.plan) ? t.plan : 'beginner';
     const addonPlan: StorageAddonPlan = isStorageAddonPlan(t.storageAddonPlan)
       ? t.storageAddonPlan
       : 'standard';
-    const limit = computeStorageLimitBytes(llmPlan, addonPlan);
+    // PR-3 (2026-05-15): 20MB + add-on 拡張 (LLM プラン非依存)
+    const limit = computeStorageLimitBytes(addonPlan);
     const used = Number(t.storageBytesUsed);
     const isOverLimit = used > limit;
 
@@ -446,7 +454,6 @@ export async function applyScheduledStorageChanges(now: Date = new Date()): Prom
     },
     select: {
       id: true,
-      plan: true,
       storageAddonPlan: true,
       storageBytesUsed: true,
       scheduledNextStorageAddon: true,
@@ -469,8 +476,8 @@ export async function applyScheduledStorageChanges(now: Date = new Date()): Prom
       continue;
     }
 
-    const llmPlan: TenantPlan = isTenantPlan(t.plan) ? t.plan : 'beginner';
-    const newLimit = computeStorageLimitBytes(llmPlan, nextPlan);
+    // PR-3 (2026-05-15): 20MB + add-on 拡張 (LLM プラン非依存)
+    const newLimit = computeStorageLimitBytes(nextPlan);
     if (Number(t.storageBytesUsed) > newLimit) {
       // 月跨ぎでデータ増加: 適用 skip + 予約クリア (= ユーザは現プラン継続)
       // 当月以降も超過状態が継続するため checkAndStartGracePeriod が Grace を開始する。

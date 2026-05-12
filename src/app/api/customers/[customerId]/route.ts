@@ -18,7 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
 import { updateCustomerSchema } from '@/lib/validators/customer';
 import {
   getCustomer,
@@ -80,6 +80,13 @@ export async function PATCH(
 
   const before = await getCustomer(customerId, user.tenantId);
   if (!before) return await notFound();
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   const updated = await updateCustomer(customerId, parsed.data, user.id, user.tenantId);
   if (!updated) return await notFound();

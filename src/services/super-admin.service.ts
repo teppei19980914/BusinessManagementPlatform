@@ -331,9 +331,9 @@ function computeStorageDetailFields(t: {
   storageScheduledAt: Date | null;
   storageScheduledNext: string | null;
 } {
-  const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
   const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
-  const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);
+  // PR-3 (2026-05-15): 20MB + add-on 拡張 (LLM プラン非依存)
+  const limitBytes = computeStorageLimitBytes(addonPlan);
   const usedBytes = Number(t.storageBytesUsed);
   const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
   const addonJpy = SUPER_ADMIN_ADDON_MONTHLY_JPY[addonPlan];
@@ -397,9 +397,10 @@ export async function listStorageUsageTop(limit: number = 10): Promise<StorageUs
   });
 
   return tenants.map((t) => {
+    // PR-3 (2026-05-15): llmPlan は表示用のみ (上限計算には使わない)
     const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
     const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
-    const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);
+    const limitBytes = computeStorageLimitBytes(addonPlan);
     const usedBytes = Number(t.storageBytesUsed);
     const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
 

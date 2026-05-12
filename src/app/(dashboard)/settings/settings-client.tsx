@@ -43,12 +43,21 @@ type Props = {
   isAdmin: boolean;
   /** PR #72: 現在の画面テーマ (初期選択値) */
   currentTheme: string;
+  /**
+   * fix/admin-users-defensive-render 横展開 (2026-05-15): server 側 data 取得が失敗した時に
+   * 表示する警告バナーの可否。デフォルト false (= 正常)。
+   *
+   * 注: timezone / locale は PR-1 (#327) でユーザ単位 → テナント単位に集約されたため
+   * 本 Client から prop 受領しなくなった。テナント側設定は /settings/tenant で行う。
+   */
+  dataLoadError?: boolean;
 };
 
 export function SettingsClient({
   mfaEnabled,
   isAdmin,
   currentTheme,
+  dataLoadError = false,
 }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
@@ -194,6 +203,17 @@ export function SettingsClient({
 
   return (
     <div className="mx-auto max-w-[min(90vw,42rem)] space-y-6">
+      {/* fix/admin-users-defensive-render 横展開 (2026-05-15): server data load 失敗時のバナー。
+          prisma.user.findUnique が throw した場合、フォールバック値で UI 描画継続。 */}
+      {dataLoadError && (
+        <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
+          <p className="font-semibold">⚠ 設定情報の読み込みに失敗しました</p>
+          <p className="mt-1 text-muted-foreground">
+            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
+            問題が継続する場合は管理者にお問合せください。
+          </p>
+        </div>
+      )}
       <h2 className="text-xl font-semibold">{tSetting('title')}</h2>
 
       {/* PR #72: テーマ設定 */}

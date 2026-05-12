@@ -18,7 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
 import { updateCommentSchema } from '@/lib/validators/comment';
 import type { CommentEntityType } from '@/lib/validators/comment';
 import {
@@ -90,6 +90,13 @@ export async function PATCH(
       );
     }
   }
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
+
   // 2026-05-09 (PR H / #3): link は updateComment 内で commentId 付きで再構築するため不要
   const updated = await updateComment(id, parsed.data.content, user.tenantId, mentions, user.name);
 
