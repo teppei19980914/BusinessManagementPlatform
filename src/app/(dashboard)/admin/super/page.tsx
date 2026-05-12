@@ -21,10 +21,13 @@ import {
   getVoyageUsageSummary,
   getAnthropicUsageSummary,
   getBeginnerUsageSummary,
+  // 2026-05-11: Default テナント (運営者自身) サマリ
+  getDefaultTenantOwnSummary,
   type StorageUsageTopRow,
   type VoyageUsageSummary,
   type AnthropicUsageSummary,
   type BeginnerUsageSummary,
+  type DefaultTenantOwnSummary,
 } from '@/services/super-admin.service';
 import { getDatabaseCapacityReport } from '@/services/db-capacity.service';
 import { getEmailSendStats } from '@/services/email-send-log.service';
@@ -32,8 +35,9 @@ import type { DbCapacityStatus } from '@/config/db-capacity';
 import type { EmailLimitStatus } from '@/config/email-limit';
 
 export default async function SuperAdminTopPage() {
-  const [summary, capacity, dormant, emailStats, storageTop, voyage, anthropic, beginner] = await Promise.all([
+  const [summary, defaultTenant, capacity, dormant, emailStats, storageTop, voyage, anthropic, beginner] = await Promise.all([
     getCrossTenantUsageSummary(),
+    getDefaultTenantOwnSummary(),
     getDatabaseCapacityReport(),
     listDormantTenants(),
     getEmailSendStats(),
@@ -53,24 +57,29 @@ export default async function SuperAdminTopPage() {
         <SummaryCard
           label="顧客テナント数"
           value={summary.tenantCount.toString()}
-          tooltip="現在契約中の顧客テナント数 (削除済み・管理テナント・default テナントは除外)"
+          tooltip="現在契約中の顧客テナント数 (削除済み・管理テナント・default テナント = 運営者自身は除外。Default テナントは下部の専用セクションを参照)"
         />
         <SummaryCard
           label="アクティブユーザ総数"
           value={summary.totalActiveUsers.toString()}
-          tooltip="顧客テナントに所属する isActive=true のユーザ総数 (招待未承諾 / 削除済みは除外)"
+          tooltip="顧客テナントに所属する isActive=true のユーザ総数 (招待未承諾 / 削除済みは除外、Default テナントのユーザも除外)"
         />
         <SummaryCard
           label="今月の API 呼出 (合計)"
           value={summary.totalCurrentMonthApiCalls.toLocaleString()}
-          tooltip="顧客テナント全体の当月 LLM/Embedding 呼出回数。月初 (UTC) にリセット"
+          tooltip="顧客テナント全体の当月 LLM/Embedding 呼出回数。月初 (UTC) にリセット (Default テナント除く)"
         />
+        {/* 2026-05-11: 合算課金 (LLM + Storage add-on) を表示し、内訳を補助行で併記 */}
         <SummaryCard
-          label="今月の API 費用 (合計)"
-          value={`¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()}`}
-          tooltip="顧客テナント全体の当月内部請求額 (プラン別固定単価。Anthropic 実コストとは別系統)"
+          label="今月の合計課金 (LLM + Storage)"
+          value={`¥${summary.totalCurrentMonthCombinedJpy.toLocaleString()}`}
+          subValue={`内訳: LLM ¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()} + Storage ¥${summary.totalCurrentMonthStorageJpy.toLocaleString()}`}
+          tooltip="顧客テナント全体の当月内部請求額。LLM 部分 (プラン別従量課金) + Storage add-on (固定月額) の合算。Default テナント (運営者自身) は請求対象外のため含まれません"
         />
       </section>
+
+      {/* 2026-05-11: Default テナント (運営者自身) 専用セクション */}
+      <DefaultTenantSection defaultTenant={defaultTenant} />
 
       {/* 2026-05-09 (PR E / #12): Voyage AI 無料枠モニタ */}
       <VoyageUsageCard voyage={voyage} />
@@ -93,11 +102,14 @@ export default async function SuperAdminTopPage() {
       {/* Storage add-on (Phase 2 / 2026-05-08): テナント別容量 TOP 10 */}
       <StorageUsageTopCard rows={storageTop} />
 
-      <section className="space-y-2" title="現在の契約プラン別テナント分布。営業・解約予測のベース指標">
-        <h2 className="text-lg font-semibold">プラン別テナント数</h2>
+      <section className="space-y-2" title="現在の契約プラン別テナント分布 (顧客テナントのみ)。営業・解約予測のベース指標">
+        <h2 className="text-lg font-semibold">プラン別テナント数 (顧客テナントのみ)</h2>
+        <p className="text-xs text-muted-foreground">
+          Default テナント (運営者自身) は専用セクションに表示しています
+        </p>
         <ul className="rounded border p-3 text-sm">
           {summary.planDistribution.length === 0 ? (
-            <li className="text-muted-foreground">テナントがありません</li>
+            <li className="text-muted-foreground">顧客テナントがまだ登録されていません</li>
           ) : (
             summary.planDistribution.map((p) => (
               <li
@@ -128,11 +140,14 @@ function SummaryCard({
   label,
   value,
   tooltip,
+  subValue,
 }: {
   label: string;
   value: string;
   // 2026-05-09 (PR E): 全カードにツールチップ (title 属性 + cursor-help)
   tooltip?: string;
+  /** 2026-05-11: 内訳など補助テキスト (例: "LLM ¥X + Storage ¥Y") */
+  subValue?: string;
 }) {
   return (
     <div
@@ -141,7 +156,85 @@ function SummaryCard({
     >
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 text-2xl font-bold">{value}</p>
+      {subValue && <p className="mt-1 text-xs text-muted-foreground">{subValue}</p>}
     </div>
+  );
+}
+
+/**
+ * 2026-05-11: Default テナント (運営者自身) 専用セクション。
+ *
+ * 顧客テナント集計とは別枠で、運営者自身のテナント (= 請求対象外) の使用状況を表示する。
+ * Default テナントが存在しない場合 (seed 未投入等) は空のメッセージを表示。
+ */
+function DefaultTenantSection({
+  defaultTenant,
+}: {
+  defaultTenant: DefaultTenantOwnSummary | null;
+}) {
+  if (!defaultTenant) {
+    return (
+      <section className="space-y-2 rounded border border-info/30 bg-info/5 p-4">
+        <h2 className="text-lg font-semibold">Default テナント (運営者自身)</h2>
+        <p className="text-sm text-muted-foreground">
+          Default テナントが存在しません (seed 未投入または削除済)。
+        </p>
+      </section>
+    );
+  }
+  const usagePercent = (defaultTenant.storageUsageRatio * 100).toFixed(2);
+  return (
+    <section
+      className="space-y-3 rounded border border-info/40 bg-info/5 p-4"
+      title="Default テナント (= 運営者自身のテナント)。請求対象外のため顧客集計には含まれず、ここで個別に状況を確認します"
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold">Default テナント (運営者自身)</h2>
+        <Link
+          href={`/admin/super/tenants/${defaultTenant.id}`}
+          className="text-xs text-info hover:underline"
+        >
+          詳細を見る →
+        </Link>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        運営者自身のテナント。顧客課金集計には含まれません (= 請求対象外)
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryCard
+          label="テナント"
+          value={defaultTenant.name}
+          tooltip={`slug: ${defaultTenant.slug} / plan: ${defaultTenant.plan} / 作成: ${defaultTenant.createdAt.toISOString().split('T')[0]}`}
+        />
+        <SummaryCard
+          label="アクティブユーザ数"
+          value={defaultTenant.activeUserCount.toString()}
+          tooltip="Default テナント所属の isActive=true ユーザ数"
+        />
+        <SummaryCard
+          label="今月の API 呼出"
+          value={defaultTenant.currentMonthApiCallCount.toLocaleString()}
+          tooltip="当月の LLM/Embedding 呼出回数 (Default テナント内)"
+        />
+        <SummaryCard
+          label="今月の API 費用 (参考)"
+          value={`¥${defaultTenant.currentMonthApiCostJpy.toLocaleString()}`}
+          subValue="(請求対象外)"
+          tooltip="内部記録値。Default テナントは請求対象外のため実際の請求は発生しません"
+        />
+        <SummaryCard
+          label="Storage プラン"
+          value={defaultTenant.storageAddonPlan}
+          tooltip="standard / plus / pro_storage / enterprise"
+        />
+        <SummaryCard
+          label="Storage 使用量"
+          value={`${formatBytes(defaultTenant.storageBytesUsed)} / ${formatBytes(defaultTenant.storageLimitBytes)}`}
+          subValue={`${usagePercent}%`}
+          tooltip="添付ファイル等の合算サイズ / 上限"
+        />
+      </div>
+    </section>
   );
 }
 
@@ -359,6 +452,20 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/**
+ * 2026-05-11: パーセント表示を動的精度で整形。
+ *   0.0% に丸まることで「使っていない」と誤解されるのを防ぐ。
+ *   - < 0.1%: 小数点 3 桁 (例: "0.030%")
+ *   - < 10%:  小数点 2 桁 (例: "5.40%")
+ *   - それ以外: 小数点 1 桁 (例: "48.0%")
+ */
+function formatPercent(percent: number): string {
+  const abs = Math.abs(percent);
+  if (abs < 0.1) return percent.toFixed(3);
+  if (abs < 10) return percent.toFixed(2);
+  return percent.toFixed(1);
 }
 
 // ================================================================
@@ -590,7 +697,9 @@ const VOYAGE_STATUS_STYLES: Record<VoyageUsageSummary['status'], { bg: string; b
 
 function VoyageUsageCard({ voyage }: { voyage: VoyageUsageSummary }) {
   const styles = VOYAGE_STATUS_STYLES[voyage.status];
-  const percent = (voyage.utilizationRatio * 100).toFixed(1);
+  // 2026-05-11: 1% 未満では 0.0% に丸まって「使ってない」と誤解されるため小数点精度を動的調整
+  //   例: 0.03% → "0.030%"、5.4% → "5.40%"、48% → "48.0%"
+  const percent = formatPercent(voyage.utilizationRatio * 100);
 
   return (
     <section

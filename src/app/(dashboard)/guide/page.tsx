@@ -1,30 +1,34 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { LOGIN_ROUTE } from '@/config';
+import { resolveGuideRole } from '@/services/guide-role.service';
 import { GuideClient } from './guide-client';
 
 /**
- * 使い方画面 (PR I / 2026-05-09 / #1).
+ * 使い方画面 (PR I / 2026-05-09 / #1, リファクタ 2026-05-11).
  *
  * 目的:
- *   サインアップ直後のユーザが「全体像 + ロール別の使い方 + 用語」を 1 画面で把握できる
+ *   サインアップ直後のユーザが「全体像 + 自分のロールでやること + 用語」を 1 画面で把握できる
  *   ハブとして機能。離脱率の最大化要因「最初に何をすべきか分からない」を解消する。
  *
- * 設計判断:
- *   - server component で session から systemRole を取り出し、初期 tab を出し分ける
- *     (テナント管理者なら tab=admin、それ以外は tab=member、PM/PL の判別は project 単位なので
- *     UI 上 tab 切替で全ロールを閲覧可能にする)
- *   - 用語集は accordion ではなく定義リストで「Ctrl+F で検索したい」ニーズに応える
- *   - LP リンクは画面冒頭 + 末尾 CTA の 2 箇所 (初見ユーザは LP に戻りたいことが多く、
- *     一読後にアップセル CTA としても機能)
+ * 2026-05-11 リファクタ:
+ *   - ロール別タブ廃止: systemRole + ProjectMember.projectRole からユーザに合うセクションのみ表示
+ *     (4 ロールのタブを並べると、自分が何者か考えるコストが発生 + 関係ない情報が視界に入る)
+ *   - 全体像を視覚的なフロー図 + ロール × できること表で表現
+ *   - 一般メンバー / 閲覧者には生成 AI ロジック詳細を出さない (= 業務に不要な認知負荷を減らす)
+ *   - LP / FAQ ボタンはヘッダから削除、末尾 CTA のみに集約 (= AccountMenu でも到達可能)
  */
 export default async function GuidePage() {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
 
-  const systemRole = session.user.systemRole;
-  const initialTab: 'admin' | 'pm' | 'member' | 'viewer' =
-    systemRole === 'admin' || systemRole === 'super_admin' ? 'admin' : 'member';
+  const role = await resolveGuideRole(session.user.id, session.user.systemRole);
 
-  return <GuideClient initialTab={initialTab} userName={session.user.name ?? ''} />;
+  return (
+    <GuideClient
+      role={role}
+      systemRole={session.user.systemRole}
+      userName={session.user.name ?? ''}
+    />
+  );
 }

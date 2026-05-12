@@ -16,6 +16,7 @@ import {
   getAuthenticatedUser,
   checkProjectPermission,
   requireActualProjectMember,
+  requireStorageQuotaForWrite,
 } from '@/lib/api-helpers';
 import { createRiskSchema } from '@/lib/validators/risk';
 import { listRisks, createRisk } from '@/services/risk.service';
@@ -59,6 +60,13 @@ export async function POST(
       { status: 400 },
     );
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   const risk = await createRisk(projectId, parsed.data, user.id, user.tenantId);
 

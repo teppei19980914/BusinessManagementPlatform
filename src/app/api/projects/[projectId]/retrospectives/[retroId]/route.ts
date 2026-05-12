@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
+import {
+  getAuthenticatedUser,
+  checkProjectPermission,
+  requireStorageQuotaForWrite,
+} from '@/lib/api-helpers';
 import {
   deleteRetrospective,
   getRetrospective,
@@ -38,6 +42,14 @@ export async function PATCH(
   if (forbidden) return forbidden;
 
   const body = await req.json();
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(body).length,
+  );
+  if (quotaErr) return quotaErr;
+
   try {
     await updateRetrospective(retroId, body, user.id, user.tenantId);
   } catch (e) {

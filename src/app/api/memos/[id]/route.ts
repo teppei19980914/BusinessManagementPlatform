@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
 import { updateMemoSchema } from '@/lib/validators/memo';
 import { deleteMemo, getMemoForViewer, updateMemo } from '@/services/memo.service';
 import { recordAuditLog } from '@/services/audit.service';
@@ -48,6 +48,13 @@ export async function PATCH(
       { status: 400 },
     );
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check (write 前に拒否し、無駄な service 呼出を回避)
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   let updated;
   try {

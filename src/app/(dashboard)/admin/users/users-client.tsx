@@ -59,6 +59,9 @@ type Props = {
   tenantPlan: TenantPlan;
   activeUserCount: number;
   beginnerMaxSeats: number;
+  // fix/admin-users-defensive-render (2026-05-15): server 側 data 取得が失敗した時に
+  //   表示する警告バナーの可否。デフォルト false (= 正常)。
+  dataLoadError?: boolean;
 };
 
 function getUserSortValue(u: UserDTO, columnKey: string): unknown {
@@ -72,7 +75,7 @@ function getUserSortValue(u: UserDTO, columnKey: string): unknown {
   }
 }
 
-export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginnerMaxSeats }: Props) {
+export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginnerMaxSeats, dataLoadError = false }: Props) {
   const tAction = useTranslations('action');
   const t = useTranslations('admin.users');
   const router = useRouter();
@@ -169,6 +172,18 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
 
   return (
     <div className="space-y-6">
+      {/* fix/admin-users-defensive-render (2026-05-15): server data load 失敗時のバナー。
+          listUsers / getTenantSelfInfo が throw した場合、画面は空表示になるが
+          ヘッダ + 招待 dialog 等の操作は維持。 */}
+      {dataLoadError && (
+        <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
+          <p className="font-semibold">⚠ ユーザ一覧の読み込みに失敗しました</p>
+          <p className="mt-1 text-muted-foreground">
+            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
+            問題が継続する場合は管理者にお問合せください。
+          </p>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">{t('title')}</h2>
         <div className="flex items-center gap-2">
