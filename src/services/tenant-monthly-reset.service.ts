@@ -46,6 +46,9 @@ import {
 } from '@/config/storage-addon';
 import { applyScheduledStorageChanges } from '@/services/tenant-storage.service';
 import { purgeOldDeletedTenants } from '@/services/super-admin.service';
+// PR-4 (2026-05-15): テナント TZ ベースの月初判定
+import { getTenantMonthStart, getTenantPreviousYearMonth } from '@/lib/tenant-time';
+import { DEFAULT_TIMEZONE } from '@/config/i18n';
 
 /**
  * 2026-05-11: 月次使用量履歴のスナップショット保存対象から **除外** するテナント。
@@ -77,27 +80,30 @@ export interface TenantMonthlyResetResult {
 
 /**
  * 当月の UTC 月初を返す (例: 2026-05-15T08:30:00Z → 2026-05-01T00:00:00Z)。
+ *
+ * **後方互換用**: PR-4 (2026-05-15) でテナント TZ 月初判定に切り替えたため、新規呼び出しは
+ * `getTenantMonthStart(now, tenantTimezone)` (src/lib/tenant-time.ts) を使うこと。
+ * 本関数は管理テナント / 非テナントスコープな処理に限り残置。
  */
 export function getCurrentMonthStartUtc(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
 /**
- * P-5b (2026-05-08): 当月初の前月を "YYYY-MM" 文字列で返す。
+ * P-5b (2026-05-08, PR-4 で TZ 対応): 当月初の前月を "YYYY-MM" 文字列で返す。
  *
  * 月初リセット cron で snapshot を保存する yearMonth は **リセット対象月の 1 つ前** で
  * ある (= 「2026-05-01 のリセット時点では、4 月分の使用量を確定して 4 月分として保存する」)。
  *
  * @param now 計算基準時刻 (実運用時は cron 起動時刻 = 当月初付近)
- * @returns "YYYY-MM" 形式 (例: 2026-05-15 を渡すと "2026-04")
+ * @param timeZone 対象テナントの TZ (省略時 DEFAULT_TIMEZONE)
+ * @returns "YYYY-MM" 形式 (例: Asia/Tokyo で 2026-05-15 を渡すと "2026-04")
  */
-export function getPreviousYearMonth(now: Date = new Date()): string {
-  // 当月初を取って 1 ms 引くと前月末になる、その UTC 年月を取り出す
-  const currentMonthStart = getCurrentMonthStartUtc(now);
-  const previousMonthInstant = new Date(currentMonthStart.getTime() - 1);
-  const year = previousMonthInstant.getUTCFullYear();
-  const month = previousMonthInstant.getUTCMonth() + 1; // 0-indexed → 1-indexed
-  return `${year}-${String(month).padStart(2, '0')}`;
+export function getPreviousYearMonth(
+  now: Date = new Date(),
+  timeZone: string = DEFAULT_TIMEZONE,
+): string {
+  return getTenantPreviousYearMonth(now, timeZone);
 }
 
 /**
@@ -116,27 +122,35 @@ export function getPreviousYearMonth(now: Date = new Date()): string {
  * @returns insert / update に成功したテナント件数
  */
 export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise<number> {
-  const monthStart = getCurrentMonthStartUtc(now);
-  const yearMonth = getPreviousYearMonth(now);
-
-  // リセット対象テナント (= まだリセットされていない、当月分の値を保持中) を取得
-  // 2026-05-11: Default テナント (= 運営者自身、請求対象外) も除外 — 過去 PR では
-  //   MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に混入していた。
-  const targets = await prisma.tenant.findMany({
+  // PR-4 (2026-05-15): 各テナントの TZ ローカル月初を基準にする。
+  //   従来は UTC 月初固定 (`getCurrentMonthStartUtc` / `getPreviousYearMonth`) だったが、
+  //   テナント TZ に依存する月初境界を per-tenant で計算する設計に切替。
+  //   全テナント (削除済除く / SNAPSHOT_EXCLUDED_TENANT_IDS 以外) を取得し、
+  //   各テナントの月初判定を後段の filter で実施する。
+  // 2026-05-11 (HEAD 履歴): Default テナント (= 運営者自身、請求対象外) も除外。
+  //   過去 PR では MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に
+  //   混入していたため SNAPSHOT_EXCLUDED_TENANT_IDS に追加済 (line 60 参照)。
+  const allTenants = await prisma.tenant.findMany({
     where: {
       id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS },
       deletedAt: null,
-      OR: [{ lastResetAt: null }, { lastResetAt: { lt: monthStart } }],
     },
     select: {
       id: true,
       plan: true,
+      timezone: true,
+      lastResetAt: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
-      // Storage add-on (Phase 2 / 2026-05-08): snapshot に当月末状態を記録するため取得
       storageAddonPlan: true,
       storageBytesUsed: true,
     },
+  });
+
+  // 各テナントの TZ 月初を計算し、リセット対象か判定する
+  const targets = allTenants.filter((t) => {
+    const tenantMonthStart = getTenantMonthStart(now, t.timezone);
+    return t.lastResetAt == null || t.lastResetAt < tenantMonthStart;
   });
 
   if (targets.length === 0) return 0;
@@ -155,6 +169,8 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
 
   let saved = 0;
   for (const tenant of targets) {
+    // PR-4: 各テナントの TZ で「前月の YYYY-MM」を計算
+    const yearMonth = getTenantPreviousYearMonth(now, tenant.timezone);
     try {
       const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
       const storageAddonPlan = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
@@ -172,14 +188,12 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           apiCostJpy: tenant.currentMonthApiCostJpy,
           plan: tenant.plan,
           activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
-          // Storage add-on (Phase 2): 当月末時点の容量・プラン・課金を記録
           storageBytesUsed: tenant.storageBytesUsed,
           storageAddonPlan,
           storageAddonJpy,
           totalJpy,
         },
         update: {
-          // 同月再実行: 最新値で update (cron が複数回起動された場合の整合性確保)
           apiCallCount: tenant.currentMonthApiCallCount,
           apiCostJpy: tenant.currentMonthApiCostJpy,
           plan: tenant.plan,
@@ -192,7 +206,6 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       });
       saved += 1;
     } catch (error) {
-      // 1 テナントの失敗で cron 全体を落とさない (他テナントの snapshot 保存は継続)
       await recordError({
         severity: 'error',
         source: 'cron',
@@ -207,26 +220,37 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
 }
 
 /**
- * 月初を跨いだテナントの API 呼び出しカウンタ + 課金額を 0 にリセットする。
+ * 月初を跨いだテナントの API 呼び出しカウンタ + 課金額を 0 にリセットする (PR-4 でテナント TZ 月初基準に変更)。
  *
- * - 対象: deletedAt IS NULL AND (lastResetAt IS NULL OR lastResetAt < 当月初 UTC)
- * - 結果: currentMonthApiCallCount=0, currentMonthApiCostJpy=0, lastResetAt=当月初
+ * - 対象: deletedAt IS NULL AND (lastResetAt IS NULL OR lastResetAt < テナント TZ 当月初)
+ * - 結果: currentMonthApiCallCount=0, currentMonthApiCostJpy=0, lastResetAt=テナント TZ 月初
  * - 冪等: 一度適用済みのテナントは再対象外
+ *
+ * 注意: cron は UTC ベースの起動時刻で動くが、判定はテナントごとの TZ ローカル月初。
+ * cron を最低 hourly で動かせば各テナントの TZ 月初を逃さない。
  */
 export async function resetTenantMonthlyCounters(now: Date = new Date()): Promise<number> {
-  const monthStart = getCurrentMonthStartUtc(now);
-  const result = await prisma.tenant.updateMany({
-    where: {
-      deletedAt: null,
-      OR: [{ lastResetAt: null }, { lastResetAt: { lt: monthStart } }],
-    },
-    data: {
-      currentMonthApiCallCount: 0,
-      currentMonthApiCostJpy: 0,
-      lastResetAt: monthStart,
-    },
+  // PR-4: per-tenant TZ 判定のため findMany + filter + 個別 update に変更
+  const allTenants = await prisma.tenant.findMany({
+    where: { deletedAt: null },
+    select: { id: true, timezone: true, lastResetAt: true },
   });
-  return result.count;
+  let resetCount = 0;
+  for (const t of allTenants) {
+    const monthStart = getTenantMonthStart(now, t.timezone);
+    if (t.lastResetAt == null || t.lastResetAt < monthStart) {
+      await prisma.tenant.update({
+        where: { id: t.id },
+        data: {
+          currentMonthApiCallCount: 0,
+          currentMonthApiCostJpy: 0,
+          lastResetAt: monthStart,
+        },
+      });
+      resetCount += 1;
+    }
+  }
+  return resetCount;
 }
 
 /**

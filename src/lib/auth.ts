@@ -47,10 +47,26 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: {},
       },
       async authorize(credentials) {
+        // fix/auth-diagnostics (2026-05-15): authorize() 全体を try/catch で囲み、
+        //   Prisma 接続失敗・bcrypt 例外・想定外 throw のいずれであっても
+        //   **必ず login_failure イベントを auth_event_logs に残す** ことを保証する。
+        //   従来は throw すると next-auth が generic CredentialsSignin error を返すだけで、
+        //   DB には何の痕跡も残らず「ログインできない、ログも無い」状態になっていた。
+        try {
         if (!credentials?.email || !credentials?.password) {
           // PR fix/login-failure (2026-05-03): logAuthFailureReason() ヘルパ経由で
           //   Vercel ログに記録 (DB 接続失敗時の最終手段)。認証情報は出さない。
           logAuthFailureReason({ reason: 'missing_credentials' });
+          // fix/auth-diagnostics (2026-05-15): missing_credentials も auth_event_logs に記録する
+          //   ことで、「ログインボタン押下で何も記録されない」状態の切り分けに使う。
+          //   従来は console.error のみで auth_event_logs には記録していなかったため、
+          //   「ログイン試行は来てるが credentials が来ていない」状態と「ログイン試行自体が
+          //   来ていない (NextAuth handler が落ちている)」状態の区別が付かなかった。
+          await recordAuthEvent({
+            eventType: 'login_failure',
+            email: typeof credentials?.email === 'string' ? credentials.email : undefined,
+            detail: { reason: 'missing_credentials' },
+          }).catch(() => undefined);
           return null;
         }
 
@@ -120,7 +136,24 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return null;
         }
 
-        const isValid = await compare(password, user.passwordHash);
+        // fix/auth-diagnostics (2026-05-15): bcrypt 周りの真因切り分けに必要な診断情報を
+        //   detail に保存する。「invalid_password」と記録されるが実際は passwordHash 自体が
+        //   壊れているケース (= bcrypt format でない / 長さが異常 / 文字化け) を見つけるため。
+        //   入力 password そのものは ABSOLUTELY 記録しない (秘匿)。
+        const passwordHashLength = user.passwordHash?.length ?? 0;
+        const passwordHashPrefix = (user.passwordHash ?? '').slice(0, 7); // '$2a$10$' / '$2b$12$' 等
+        const bcryptStart = Date.now();
+        let isValid: boolean;
+        let bcryptError: string | null = null;
+        try {
+          isValid = await compare(password, user.passwordHash);
+        } catch (e) {
+          // bcryptjs は invalid hash format を投げる: "Invalid salt revision" 等。
+          // この場合 isValid = false 扱い + 詳細を log に残す (= 永続的にログインできなくなる重大事象)
+          isValid = false;
+          bcryptError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        }
+        const bcryptElapsedMs = Date.now() - bcryptStart;
 
         if (!isValid) {
           logAuthFailureReason({ reason: 'invalid_password', email: maskedEmail, userId: user.id, failedCount: user.failedLoginCount + 1 });
@@ -149,7 +182,24 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             data: updateData,
           });
 
-          await recordAuthEvent({ eventType: 'login_failure', tenantId: user.tenantId, userId: user.id, email, detail: { reason: 'invalid_password' } });
+          await recordAuthEvent({
+            eventType: 'login_failure',
+            tenantId: user.tenantId,
+            userId: user.id,
+            email,
+            detail: {
+              reason: 'invalid_password',
+              // fix/auth-diagnostics (2026-05-15): bcrypt compare の周辺情報。
+              //   - passwordHashLength: bcrypt hash の標準長は 60。それ以外なら hash 破損疑い
+              //   - passwordHashPrefix: '$2a$' / '$2b$' / '$2y$' のいずれかでないと bcrypt invalid
+              //   - bcryptElapsedMs: 通常 50-200ms 程度。0-1ms なら compare 自体が即時失敗 (hash 不正)
+              //   - bcryptError: compare が throw した場合のエラー名 (= hash format が壊れているサイン)
+              passwordHashLength,
+              passwordHashPrefix,
+              bcryptElapsedMs,
+              bcryptError,
+            },
+          });
           return null;
         }
 
@@ -197,6 +247,40 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           timezone: user.tenant.timezone,
           locale: user.tenant.locale,
         };
+        } catch (e) {
+          // fix/auth-diagnostics (2026-05-15): authorize() 内の未捕捉例外を必ず記録する。
+          //   - Prisma 接続失敗 (Neon 一時断 / connection pool 枯渇)
+          //   - bcrypt が予想外の throw (上で catch しているが defense-in-depth)
+          //   - 想定外の TypeError 等
+          //   いずれの場合も login_failure イベントを書き、reason='internal_error' で記録。
+          //   これで「ログイン試行は来ているが何かで死んでいる」状態を auth_event_logs から
+          //   直接判別可能になる。スタックトレースは Vercel runtime log にも残るが、
+          //   detail に summary を入れて DB 一発で原因が判るようにする。
+          const maskedEmail = typeof credentials?.email === 'string'
+            ? maskEmailForLog(credentials.email)
+            : '(absent)';
+          // eslint-disable-next-line no-console
+          console.error('[auth] authorize internal error', {
+            reason: 'internal_error',
+            email: maskedEmail,
+            errorName: e instanceof Error ? e.name : 'unknown',
+            errorMessage: e instanceof Error ? e.message : String(e),
+          });
+          await recordAuthEvent({
+            eventType: 'login_failure',
+            email: typeof credentials?.email === 'string' ? credentials.email : undefined,
+            detail: {
+              reason: 'internal_error',
+              errorName: e instanceof Error ? e.name : 'unknown',
+              errorMessage: e instanceof Error ? e.message : String(e),
+              // stack の冒頭 500 文字だけ詰める (容量肥大化防止 + 概略は掴めるサイズ)
+              stackHead: e instanceof Error && typeof e.stack === 'string'
+                ? e.stack.slice(0, 500)
+                : null,
+            },
+          }).catch(() => undefined);
+          return null;
+        }
       },
     }),
   ],

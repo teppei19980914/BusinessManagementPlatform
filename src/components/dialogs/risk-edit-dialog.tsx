@@ -177,7 +177,7 @@ export function RiskEditDialog({
     : (risk.type === 'risk' ? tRisk('editRisk') : tRisk('editIssue'));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-y-auto ${fullscreenClassName}`}>
+      <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-x-hidden overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
           <div className="flex items-center justify-between gap-2">
             <DialogTitle>{dialogTitle}</DialogTitle>
@@ -208,12 +208,18 @@ export function RiskEditDialog({
             )}
           </div>
           <div className="space-y-2">
-            <Label>{tField('title')}</Label>
+            <Label>
+              {tField('title')}
+              {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
+              {form.visibility === 'draft' && (
+                <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
+              )}
+            </Label>
             <Input
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               maxLength={NAME_MAX_LENGTH}
-              required
+              required={form.visibility === 'public'}
             />
           </div>
           <div className="space-y-2">

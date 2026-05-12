@@ -51,6 +51,11 @@ type Props = {
   /** feat/gantt-tab-restructure (PR-C item 7): Gantt 表示時の担当者フィルタ初期値 */
   currentUserId: string;
   currentUserName: string;
+  /**
+   * fix/admin-users-defensive-render 横展開 (2026-05-15): server 側 data 取得が失敗した時に
+   * 表示する警告バナーの可否。デフォルト false (= 正常)。
+   */
+  dataLoadError?: boolean;
 };
 
 // 旧ローカル statusColors は lib/task-tree-utils.ts の taskStatusColors に集約 (PR #63 DRY)
@@ -80,7 +85,7 @@ function getMyTaskSortValue(t: TaskDTO, columnKey: string): unknown {
  *   - プロジェクト / WP の展開状態は sessionStorage で保持 (同一タブ内で永続)
  *   - 状況 (task status) の複数選択フィルタを追加 (デフォルト全選択)
  */
-export function MyTasksClient({ projectGroups, today, currentUserId, currentUserName }: Props) {
+export function MyTasksClient({ projectGroups, today, currentUserId, currentUserName, dataLoadError = false }: Props) {
   const tMyTask = useTranslations('myTask');
   // feat/gantt-tab-restructure (PR-C item 7): Gantt 表示トグル
   const [showGantt, setShowGantt] = useState(false);
@@ -178,6 +183,17 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
   return (
     <ResizableColumnsProvider tableKey="my-tasks">
     <div className="space-y-4">
+      {/* fix/admin-users-defensive-render 横展開 (2026-05-15): server data load 失敗時のバナー。
+          listMyTaskProjects が throw した場合、画面は空表示になるが他画面への遷移は維持。 */}
+      {dataLoadError && (
+        <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
+          <p className="font-semibold">⚠ マイタスクの読み込みに失敗しました</p>
+          <p className="mt-1 text-muted-foreground">
+            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
+            問題が継続する場合は管理者にお問合せください。
+          </p>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">{tMyTask('title')}</h2>
         <div className="flex items-center gap-2">

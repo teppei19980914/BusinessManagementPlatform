@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
+import {
+  getAuthenticatedUser,
+  checkProjectPermission,
+  requireStorageQuotaForWrite,
+} from '@/lib/api-helpers';
 import { updateKnowledgeSchema } from '@/lib/validators/knowledge';
 import { getKnowledge, updateKnowledge, deleteKnowledge } from '@/services/knowledge.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
@@ -56,6 +60,13 @@ export async function PATCH(
     );
   }
 
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
+
   let knowledge;
   try {
     // 2026-04-24: 作成者本人のみ編集可 (admin でも他人は不可)。service 層で enforce。
@@ -70,6 +81,18 @@ export async function PATCH(
     }
     if (msg === 'NOT_FOUND') {
       return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
+    }
+    // 2026-05-11 defense-in-depth: 「全メンバー」化を試みたが title が空 (input + DB 共に) のケース
+    if (msg === 'PUBLIC_REQUIRES_TITLE') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'PUBLIC_REQUIRES_TITLE',
+            message: '「全メンバー」に公開する場合はタイトルを入力してください',
+          },
+        },
+        { status: 400 },
+      );
     }
     throw e;
   }

@@ -141,12 +141,24 @@ export async function updateMemo(
   viewerTenantId: string,
 ): Promise<MemoDTO | null> {
   // 2026-05-09 feedback Phase 2-4: 越境編集を遮断するため where に tenantId 必須化。
+  // 2026-05-11: visibility 連動の title 必須チェックのため title も取得 (defense-in-depth)。
   const existing = await prisma.memo.findFirst({
     where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
-    select: { userId: true },
+    select: { userId: true, title: true },
   });
   if (!existing) return null;
   if (existing.userId !== userId) return null; // 他人のメモは編集不可
+
+  // 2026-05-11 defense-in-depth: 「全メンバー」(public) 化する更新で、
+  //   title が input でも DB でも空になる場合は拒否。
+  //   通常 validator (updateMemoSchema) が title=='' を弾くが、API 直叩きで
+  //   `{ visibility: 'public' }` のみ送られて DB の既存 title が空のケースを救う。
+  if (input.visibility === 'public') {
+    const effectiveTitle = input.title !== undefined ? input.title : existing.title;
+    if (!effectiveTitle || effectiveTitle.trim().length === 0) {
+      throw new Error('PUBLIC_REQUIRES_TITLE');
+    }
+  }
 
   const updated = await prisma.memo.update({
     where: { id: memoId },
@@ -172,20 +184,41 @@ export async function bulkUpdateMemosVisibilityFromList(
   visibility: 'private' | 'public',
   viewerUserId: string,
   viewerTenantId: string,
-): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
-  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+): Promise<{
+  updatedIds: string[];
+  skippedNotOwned: number;
+  skippedNotFound: number;
+  /** 2026-05-11: 「全メンバー」公開を試みた行のうち、タイトル空のためスキップした件数 */
+  skippedEmptyTitle: number;
+}> {
+  if (ids.length === 0) {
+    return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0 };
+  }
 
   // 2026-05-09 feedback Phase 2-4: 越境一括更新を遮断するため tenantId 併記。
+  // 2026-05-11: title を取得して、'public' 化時に空タイトルをスキップ判定に使う。
   const targets = await prisma.memo.findMany({
     where: { id: { in: ids }, deletedAt: null, tenantId: viewerTenantId },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, title: true },
   });
   const skippedNotFound = ids.length - targets.length;
-  const ownedIds = targets.filter((t) => t.userId === viewerUserId).map((t) => t.id);
-  const skippedNotOwned = targets.length - ownedIds.length;
+  const owned = targets.filter((t) => t.userId === viewerUserId);
+  const skippedNotOwned = targets.length - owned.length;
+
+  // 2026-05-11: 「自分のみ」(private) で作られたタイトル空のメモを一括で「全メンバー」(public)
+  //   に昇格させようとした場合、サーバ側 validator のルール (public はタイトル必須) と
+  //   整合するように silent skip する。逆方向 (public → private) は制約緩和なので無条件で許可。
+  let eligible = owned;
+  let skippedEmptyTitle = 0;
+  if (visibility === 'public') {
+    const beforeCount = eligible.length;
+    eligible = eligible.filter((t) => t.title.trim().length > 0);
+    skippedEmptyTitle = beforeCount - eligible.length;
+  }
+  const ownedIds = eligible.map((t) => t.id);
 
   if (ownedIds.length === 0) {
-    return { updatedIds: [], skippedNotOwned, skippedNotFound };
+    return { updatedIds: [], skippedNotOwned, skippedNotFound, skippedEmptyTitle };
   }
 
   await prisma.memo.updateMany({
@@ -193,7 +226,7 @@ export async function bulkUpdateMemosVisibilityFromList(
     data: { visibility },
   });
 
-  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, skippedEmptyTitle };
 }
 
 export async function deleteMemo(

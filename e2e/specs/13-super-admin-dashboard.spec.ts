@@ -249,9 +249,22 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
       });
 
       // /admin/super にアクセスを試行 → / にリダイレクトされる
-      await adminPage.goto('/admin/super');
-      // layout で redirect('/') されるため、最終 URL が /admin/super で「ない」こと
-      await adminPage.waitForLoadState('networkidle');
+      // NOTE (PR #337 fix, KDD §5.X+35): layout の `redirect('/')` が goto 中に発火すると
+      //   Playwright が `net::ERR_ABORTED` で throw するブラウザ実装がある (chromium-mobile で発生)。
+      //   waitUntil: 'commit' で 「最初のレスポンスヘッダ受領」 だけで完了とし、その後の
+      //   server redirect は waitForURL で受け止める方式に変更。
+      try {
+        await adminPage.goto('/admin/super', { waitUntil: 'commit' });
+      } catch (e) {
+        // ERR_ABORTED は redirect race condition の症状なので OK (final URL で検証する)
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes('ERR_ABORTED')) throw e;
+      }
+      // redirect 完了を待つ (最終 URL が /admin/super で「ない」状態になるまで)
+      await adminPage
+        .waitForURL((url) => !url.pathname.startsWith('/admin/super'), { timeout: 10_000 })
+        .catch(() => undefined);
+      await adminPage.waitForLoadState('networkidle').catch(() => undefined);
       const finalUrl = new URL(adminPage.url());
       expect(
         finalUrl.pathname.startsWith('/admin/super'),

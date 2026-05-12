@@ -87,7 +87,13 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   const superAdminId = superAdminRes.rows[0]!.id;
 
   // 2. 顧客テナント A: expert / plus = LLM ¥3000 + Storage ¥500
+  // NOTE (PR #337 fix): name にも suffix を付与する。slug だけ一意では不十分。
+  //   playwright が同一 spec を chromium / chromium-mobile 両 project で実行する場合、
+  //   同一 worker process なら RUN_ID が共有されるため、suffix 無しの name だと
+  //   2 行が異なる UUID + 同じ name で DB に並列存在し、E2E `getByText` の
+  //   strict mode violation を引き起こす (KDD §5.X+35 参照)。
   const slugA = `e2e-sa-${runId}-${suffix}-a`;
+  const nameA = `E2E Tenant A ${runId}-${suffix}`;
   const tenantA = await pool.query<{ id: string }>(
     `INSERT INTO tenants (
        slug, name, plan, current_month_api_call_count, current_month_api_cost_jpy,
@@ -99,7 +105,7 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
              'corporate', 'E2E Corp A', '担当者A', 'a@example.com',
              'invoice', NOW(), NOW())
      RETURNING id`,
-    [slugA, `E2E Tenant A ${runId}`],
+    [slugA, nameA],
   );
   const tenantAId = tenantA.rows[0]!.id;
 
@@ -117,6 +123,7 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
 
   // 3. 顧客テナント B: pro / pro_storage = LLM ¥30000 + Storage ¥1500
   const slugB = `e2e-sa-${runId}-${suffix}-b`;
+  const nameB = `E2E Tenant B ${runId}-${suffix}`; // 名前にも suffix (上記 nameA と同理由)
   const tenantB = await pool.query<{ id: string }>(
     `INSERT INTO tenants (
        slug, name, plan, current_month_api_call_count, current_month_api_cost_jpy,
@@ -128,7 +135,7 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
              'corporate', 'E2E Corp B', '担当者B', 'b@example.com',
              'invoice', NOW(), NOW())
      RETURNING id`,
-    [slugB, `E2E Tenant B ${runId}`],
+    [slugB, nameB],
   );
   const tenantBId = tenantB.rows[0]!.id;
 
@@ -149,13 +156,13 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
     superAdminPassword,
     customerTenantA: {
       id: tenantAId,
-      name: `E2E Tenant A ${runId}`,
+      name: nameA,
       slug: slugA,
       adminEmail: adminEmailA,
     },
     customerTenantB: {
       id: tenantBId,
-      name: `E2E Tenant B ${runId}`,
+      name: nameB,
       slug: slugB,
       adminEmail: adminEmailB,
     },
@@ -167,17 +174,75 @@ export async function cleanupSuperAdminFixture(
 ): Promise<void> {
   if (!fixture) return;
   const pool = getPool();
+  const tenantIds = [fixture.customerTenantA.id, fixture.customerTenantB.id];
+
+  // NOTE (PR #337 fix, KDD §5.X+35): tenants 削除前に FK 子テーブルを先に消す。
+  //   特に auth_event_logs は顧客 admin のログイン試行で生成され、tenants 削除を
+  //   blocking する。旧 cleanup は DELETE FROM tenants 直叩きで FK 違反 → 残存 →
+  //   次の project run (chromium-mobile) で同名 tenant が重複生成され、テスト
+  //   getByText が 2 要素ヒットで strict mode violation を起こした。
+  //   ベストエフォート方式 (各 DELETE 独立、catch で握り潰し継続)。
+  const childDeletes: { label: string; sql: string }[] = [
+    { label: 'auth_event_logs', sql: 'DELETE FROM auth_event_logs WHERE tenant_id = ANY($1)' },
+    { label: 'audit_logs', sql: 'DELETE FROM audit_logs WHERE tenant_id = ANY($1)' },
+    { label: 'system_error_logs', sql: 'DELETE FROM system_error_logs WHERE tenant_id = ANY($1)' },
+    { label: 'api_call_logs', sql: 'DELETE FROM api_call_logs WHERE tenant_id = ANY($1)' },
+    { label: 'role_change_logs', sql: 'DELETE FROM role_change_logs WHERE tenant_id = ANY($1)' },
+    {
+      label: 'email_verification_tokens',
+      sql: 'DELETE FROM email_verification_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'password_reset_tokens',
+      sql: 'DELETE FROM password_reset_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'recovery_codes',
+      sql: 'DELETE FROM recovery_codes WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'password_histories',
+      sql: 'DELETE FROM password_histories WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'sessions',
+      sql: 'DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ANY($1))',
+    },
+  ];
+  for (const step of childDeletes) {
+    try {
+      await pool.query(step.sql, [tenantIds]);
+    } catch (e) {
+      console.warn(
+        `[super-admin cleanup] DELETE ${step.label} 失敗 (継続): ${(e as Error).message}`,
+      );
+    }
+  }
 
   // 顧客テナント A/B のユーザを削除 → テナント削除
-  await pool.query('DELETE FROM users WHERE tenant_id IN ($1, $2)', [
-    fixture.customerTenantA.id,
-    fixture.customerTenantB.id,
-  ]);
-  await pool.query('DELETE FROM tenants WHERE id IN ($1, $2)', [
-    fixture.customerTenantA.id,
-    fixture.customerTenantB.id,
-  ]);
+  try {
+    await pool.query('DELETE FROM users WHERE tenant_id = ANY($1)', [tenantIds]);
+  } catch (e) {
+    console.warn(`[super-admin cleanup] DELETE users 失敗: ${(e as Error).message}`);
+  }
+  try {
+    await pool.query('DELETE FROM tenants WHERE id = ANY($1)', [tenantIds]);
+  } catch (e) {
+    console.warn(`[super-admin cleanup] DELETE tenants 失敗: ${(e as Error).message}`);
+  }
 
   // super_admin user を削除 (= 管理テナントには触らない)
-  await pool.query('DELETE FROM users WHERE id = $1', [fixture.superAdminId]);
+  // super_admin の auth_event_logs (login_success など) も先に消す必要がある。
+  try {
+    await pool.query('DELETE FROM auth_event_logs WHERE user_id = $1', [fixture.superAdminId]);
+  } catch (e) {
+    console.warn(
+      `[super-admin cleanup] DELETE auth_event_logs (super_admin) 失敗: ${(e as Error).message}`,
+    );
+  }
+  try {
+    await pool.query('DELETE FROM users WHERE id = $1', [fixture.superAdminId]);
+  } catch (e) {
+    console.warn(`[super-admin cleanup] DELETE super_admin user 失敗: ${(e as Error).message}`);
+  }
 }

@@ -49,6 +49,31 @@ describe('createRetrospectiveSchema', () => {
   it('無効な公開範囲を拒否する', () => {
     expect(createRetrospectiveSchema.safeParse({ ...validInput, visibility: 'company' }).success).toBe(false);
   });
+
+  // 2026-05-11: visibility 連動の必須チェック追加。
+  //   - 「自分のみ」(draft) では conductedDate 未指定でも default で当日日付が補完される
+  //   - 「全メンバー」(public) では conductedDate を明示入力する必要がある
+  describe('visibility 連動の必須チェック (2026-05-11)', () => {
+    it('visibility=draft (既定) + conductedDate 未指定なら default で当日日付が入る', () => {
+      const withoutDate = { ...validInput };
+      delete (withoutDate as { conductedDate?: string }).conductedDate;
+      const parsed = createRetrospectiveSchema.safeParse(withoutDate);
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.conductedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      }
+    });
+
+    it('visibility=public + conductedDate が不正形式なら拒否', () => {
+      expect(
+        createRetrospectiveSchema.safeParse({
+          ...validInput,
+          visibility: 'public',
+          conductedDate: 'invalid-date',
+        }).success,
+      ).toBe(false);
+    });
+  });
 });
 
 // PR #199: addCommentSchema は createCommentSchema (validators/comment.ts) に移行。

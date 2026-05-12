@@ -183,7 +183,7 @@ export function StakeholderEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[min(90vw,42rem)] max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(90vw,42rem)] max-h-[85vh] overflow-x-hidden overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? t('editTitle') : t('createTitle')}</DialogTitle>
           <DialogDescription>

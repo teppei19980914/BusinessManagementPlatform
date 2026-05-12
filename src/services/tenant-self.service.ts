@@ -23,6 +23,8 @@ import {
   getBeginnerDaysRemaining,
   type BeginnerExpiryState,
 } from './beginner-expiry.service';
+// PR-4 (2026-05-15): 翌月適用日をテナント TZ ベースで計算
+import { getTenantNextMonthStart } from '@/lib/tenant-time';
 
 /** プランの強さ順序 (アップグレード判定用) */
 const PLAN_ORDER: Record<TenantPlan, number> = {
@@ -244,7 +246,10 @@ export type UpdateTenantSelfResult =
         | 'BEGINNER_REQUIRES_FEWER_SEATS'
         | 'INVALID_BUDGET'
         // P-B (2026-05-08): 上位プラン → Beginner ダウングレードは禁止
-        | 'BEGINNER_DOWNGRADE_FORBIDDEN';
+        | 'BEGINNER_DOWNGRADE_FORBIDDEN'
+        // PR-2 (2026-05-15): Beginner プランは月次予算上限 (金額) を設定できない (=固定の月 100 回上限)。
+        //   UI でフォーム自体は非表示だが、API 直叩きの迂回防止として明示的に拒否する。
+        | 'BEGINNER_BUDGET_NOT_ALLOWED';
     };
 
 /**
@@ -271,6 +276,20 @@ export async function updateTenantSelf(
   const tenant = await prisma.tenant.findFirstOrThrow({
     where: { id: tenantId, deletedAt: null },
   });
+
+  // PR-2 (2026-05-15): Beginner プランの最終 plan で予算上限 (= 非 null 値) を設定しようとしたら拒否。
+  //   ここでの「最終 plan」= 変更後 plan が指定されていればそれ、なければ現プラン。
+  //   - 既存テナントが Beginner: 予算更新リクエスト拒否
+  //   - 同一プラン (Beginner → Beginner) で予算更新: 拒否
+  //   - プラン変更なし + 予算 null 化 (= 明示的にクリア): 許可 (Beginner で残値クリアの救済)
+  const targetPlan: TenantPlan = (input.plan ?? tenant.plan) as TenantPlan;
+  if (
+    targetPlan === 'beginner' &&
+    input.monthlyBudgetCapJpy !== undefined &&
+    input.monthlyBudgetCapJpy !== null
+  ) {
+    return { ok: false, error: 'BEGINNER_BUDGET_NOT_ALLOWED' };
+  }
 
   // 予算上限 / seedDataEnabled のみの変更 (プランは変えない)
   if (input.plan === undefined) {
@@ -324,9 +343,11 @@ export async function updateTenantSelf(
     return { ok: false, error: 'BEGINNER_DOWNGRADE_FORBIDDEN' };
   }
 
-  // 翌月 1 日 (UTC) に予約
+  // PR-4 (2026-05-15): 翌月 1 日 (テナント TZ 0:00) に予約。
+  //   旧仕様は UTC 月初固定だったため、JST テナントでは「翌月 1 日 09:00 JST」適用で違和感あり。
+  //   tenant.timezone (PR-1 で追加) を使って TZ ローカルの月初を計算する。
   const now = new Date();
-  const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const nextMonthStart = getTenantNextMonthStart(now, tenant.timezone);
 
   await prisma.tenant.update({
     where: { id: tenantId },

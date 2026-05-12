@@ -5886,6 +5886,263 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - 関連設定: [.github/dependabot.yml](../../.github/dependabot.yml)
 - 公式: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
+## 5.X+24 dependabot 複数 PR が `pnpm-lock.yaml` で相互コンフリクトする ─ 「auto-rebase 待ち」と「PR 数抑制」で運用 (PR #317 / 2026-05-15)
+
+<!-- PR #335 マージ時点 conflict 解消: PR #335 HEAD で末尾に追加された 2 セクション
+     (§5.X+30/+31) は、PR #334 が先にマージされて main 側 §5.X+30 (KDD ファイル末尾
+     コンフリクトパターン) と番号衝突したため、§5.X+31/+32 に再 renumber して
+     ファイル末尾に再配置した (§5.X+30 KDD コンフリクトパターン §5.X+30 自身の
+     実践例)。 -->
+
+### 背景
+
+PR #317 (`dependabot/npm_and_yarn/prisma-36eb5828e4`、Prisma 7.7.0 → 7.8.0) で
+**コンフリクトが GitHub UI に表示された** が、調査時点では `mergeable: MERGEABLE` /
+`mergeStateStatus: CLEAN` で **既に解消** していた。
+
+### 根本原因
+
+**pnpm-lock.yaml はモノリシックなロックファイル** で、任意の依存パッケージ更新で必ず変更が発生する。
+dependabot が **複数 PR を同時に open** すると以下が発生:
+
+```
+main:                  A → B → C
+PR #316 (next-react):  A → P1 (touches pnpm-lock.yaml)
+PR #317 (prisma):      A → P2 (touches pnpm-lock.yaml)
+```
+
+PR #316 がマージされると、`main` が進む (`A → B → next-react`)。すると PR #317 の
+base (= 旧 `main` = `A`) と現 `main` (= `A → next-react`) で **pnpm-lock.yaml が同一行付近** に
+別の変更を持つことになり、Git が 3-way merge できず CONFLICTING になる。
+
+### 解消の仕組み (今回のケース)
+
+GitHub の dependabot は **PR の base branch が更新されると自動的に rebase** する設計
+(条件: PR ブランチ未触り、checks が grace 期間内)。
+
+時系列:
+1. PR #316 (next-react) を main にマージ → main 更新
+2. dependabot が PR #317 を検知 → 自動 rebase → 新 commit `911fb5a` 生成
+3. 新 commit は新 main 基準で pnpm-lock.yaml を再生成 → CONFLICTING 解消
+
+つまり **ユーザが見たコンフリクトは過渡的状態** で、dependabot の auto-rebase
+完了で自動的に消える。
+
+### 教訓
+
+- **コンフリクト発生時の最初の対応**: `gh pr view <#> --json mergeable,mergeStateStatus`
+  で確認。`CLEAN` ならもう何もしなくて OK。
+- **手動 rebase 不要**: dependabot ブランチに手動で `git push` すると dependabot の
+  auto-rebase が **無効化** され、以降は手動メンテになる。基本は触らない。
+- **マージ順序戦略**: 同種の依存更新 PR が複数 open 中の場合、**マージしたい順序を決めて
+  順次マージ**。1 件マージ → 数分待って残りの auto-rebase 完了を確認 → 次マージ。
+
+### 設計の落とし穴
+
+1. **`mergeable: UNKNOWN`**: GitHub が computing 中。1-2 分待って再取得。
+2. **`mergeStateStatus: BLOCKED` / `UNSTABLE`**: ファイル conflict ではなく、CI / Vercel /
+   required reviews などが pending な状態。コンフリクトとは別物。
+   - **実例 PR #318** (2026-05-15、`BLOCKED`): auto-rebase 直後で **必須 CI が IN_PROGRESS**
+     (Lint/Test/Build, Playwright E2E, CodeQL)。CI 完了で `CLEAN` に遷移。
+   - **実例 PR #319** (2026-05-15、`UNSTABLE`): すべての必須 CI は SUCCESS だが
+     **Vercel preview deployment のみ `PENDING`**。Vercel は非必須 (informational) なので
+     `mergeable: MERGEABLE` のままだが、`mergeStateStatus` は `UNSTABLE` 扱い。
+     **`UNSTABLE` でも実際にはマージ可能** (GitHub UI が「Merge」ボタンを許可する)。
+   - GitHub UI の「Resolve conflicts」ボタンは BLOCKED/UNSTABLE 時にも表示される場合があり、
+     ユーザがコンフリクトと誤認しやすい。**まず `mergeable` フィールドを見る** こと
+     (CONFLICTING ≠ BLOCKED ≠ UNSTABLE)。
+
+   状態判別マトリクス:
+
+   | `mergeable` | `mergeStateStatus` | 意味 | アクション |
+   |---|---|---|---|
+   | CONFLICTING | DIRTY | 本物のファイル衝突 | 手動 rebase / `@dependabot rebase` |
+   | MERGEABLE | CLEAN | 即マージ可能 | `gh pr merge --squash` |
+   | MERGEABLE | BEHIND | base が進んだが衝突なし | "Update branch" or そのままマージ可 |
+   | MERGEABLE | BLOCKED | **必須** check 未完 / レビュー待ち | check 完了 / レビュー取得を待つ |
+   | MERGEABLE | UNSTABLE | **非必須** check (Vercel 等) が pending | **そのままマージ可能** |
+   | UNKNOWN | (任意) | GitHub 計算中 | 1-2 分待って再取得 |
+3. **CI が古い base で走った場合**: auto-rebase 後に CI 再実行が走らないと、
+   古い PR commit の検査結果のままで「checks pass」になる。dependabot は再 push で
+   CI を再実行させる。マージ前に「最新の checks が pass か」を目視確認。
+4. **groups 設定**: dependabot.yml の `groups` 設定で関連パッケージをまとめて 1 PR にすると、
+   PR 数自体を減らせる (= 相互コンフリクト発生確率を抑制)。既に prisma / next-react /
+   testing は groups 化済 (本リポジトリ `.github/dependabot.yml`)。
+5. **`open-pull-requests-limit`**: 現状 10 だが、自前で順次マージしきれない場合は
+   5 に下げて「常に少数 PR で頻繁回す」運用にする選択肢あり。
+
+### 横展開で漏らしやすい箇所
+
+- **feature ブランチも同じ影響を受ける**: dependabot PR がマージされると feature PR が
+  CONFLICTING になることがある。1 PR ずつ手動 rebase (`git rebase origin/main`) で対応。
+  実例: 本 PR (#317) 調査時、open feature PR #327/#329/#330 が CONFLICTING になっていた
+  (dependabot #311/#313-#316 の連続マージ後)。
+- **マイグレーション系 PR (schema.prisma / migration ファイル) と dependabot**: 同様に
+  conflict が起きやすい。マージ順序: dependabot → migration の順に通すと安全
+  (schema は依存影響を受けないため逆も可、ただし pnpm-lock の auto-rebase は走らない)。
+
+### 推奨運用フロー (今後)
+
+```bash
+# 1. dependabot PR を見つけた時の確認
+gh pr view <#> --json mergeable,mergeStateStatus,statusCheckRollup
+
+# 2. mergeable=MERGEABLE && mergeStateStatus=CLEAN なら即マージ
+gh pr merge <#> --squash --auto
+
+# 3. CONFLICTING の場合は時間を置く (dependabot auto-rebase 待ち、~5 分)
+sleep 300 && gh pr view <#> --json mergeable
+
+# 4. それでも解消しない場合: PR コメントで rebase 指示
+gh pr comment <#> --body "@dependabot rebase"
+
+# 5. マージ後は他の open dependabot PR の auto-rebase を確認
+gh pr list --search "is:open author:app/dependabot" --json number,mergeable
+```
+
+### 関連
+
+- 元 PR: #317 (prisma 7.7.0 → 7.8.0 group)
+- 同パターン: #311, #313, #314, #315, #316 (連続 dependabot merge)
+- 設定: [.github/dependabot.yml](../../.github/dependabot.yml) (groups + open-pull-requests-limit)
+- 公式仕様: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates
+
+## 5.X+27 ストレージ上限を LLM プランから切り離し 20MB 共通ベース + add-on 独立軸に統一 — 横展開可能な guard サービス化 (PR-3 / 2026-05-15)
+
+### 背景
+旧仕様では `STANDARD_STORAGE_BYTES_BY_PLAN = { beginner: 50MB, expert: 150MB, pro: 300MB }`
+と LLM プランに連動して Standard 上限が変動していた。
+ユーザ要件で確定: **「Standard 20MB / Plus 220MB / Pro 1.02GB / Enterprise 5.02GB」** を
+全テナント共通で運用 (LLM プラン非依存)。日次 cron + 7 日 Grace の従来仕様だけでは最大 24h 遅延で
+データが上限超過状態で書き込まれてしまう問題があったため、リアルタイム guard も併設。
+
+### 教訓
+- **Standard ベースを定数化し、computeStorageLimitBytes のシグネチャから llmPlan 引数を撤去**:
+  `STANDARD_STORAGE_BYTES = 20MB` (単一定数) + `ADDON_EXTRA_BYTES[addonPlan]` で合算。
+  call site が散在しているため、シグネチャ変更で漏れを tsc が検出できる構造に変える。
+- **Pre-check (cache) + Post-check (transaction 内実測)** の二段戦略:
+  - Pre-check: キャッシュ値 + 予測サイズで早期拒否 (24h ラグあり = fail-open 寄り)
+  - Post-check: transaction 内で `pg_column_size` 集計の実測 → 超過なら `throw` で全件ロールバック
+  - 後者が真の境界、前者は明らかに巨大な payload を入口で弾くだけ
+- **共通ヘルパに集約**: `withStorageGuard(tenantId, (tx) => fn)` で transaction の中身を渡せば
+  Post-check と上限超過ロールバックを自動化。書き込み系 service に横展開しやすい設計
+- **エラーマッピング集中**: `mapStorageGuardErrorToResponse(error)` で 403 を組み立て、route が個別判定する必要を排除
+
+### 設計の落とし穴
+
+1. **`calculateTenantStorageBytes` を transaction 内で使うと外側 DB を見る**:
+   `tenant-storage.service.ts` 側は `prisma.$queryRaw` 直叩きで tx スコープ外。
+   `storage-guard.service.ts` 内に **tx 引数を取る同等 SQL** を別途実装 (`calculateTenantStorageBytesInTx`)。
+2. **テスト mock の更新**:
+   `prisma.$transaction(async (tx) => ...)` の tx mock 側にも
+   `tenant.findFirst`, `tenant.update`, `$queryRaw` のスタブが必要。
+3. **キャッシュの同期書き込みは tx 内**:
+   `assertStorageLimitInTx` で実測値を `Tenant.storageBytesUsed` に書き戻すが、
+   transaction がロールバックされた時は当然破棄される (= キャッシュ汚染が発生しない)。
+
+### 横展開で漏らしやすい箇所 (PR-3 では未着手、follow-up 対象)
+
+PR-3 では **インポート経路 (data-import + external-data-import)** に Post-check + ロールバックを適用済み。
+通常の CRUD (project / task / knowledge / risk / retro / memo / customer / stakeholder / member / comment / attachment)
+は **未適用**。follow-up PR で:
+
+- 各 service の `create / update / bulkUpdate` を `withStorageGuard(tenantId, (tx) => tx.X.create(...))` で wrap
+- 上限超過時の API レスポンスは `mapStorageGuardErrorToResponse(error)` で 403 を返す
+- 各 service の test mock に `tx.tenant.findFirst / tx.tenant.update / tx.$queryRaw` を追加 (data-import.service.test.ts のパターンを流用)
+
+PR-3 で個別 CRUD まで広げなかった理由: テスト書き換えの規模が約 30+ ファイルに及び、PR レビュー単位として
+大きすぎるため。インフラ + 最重要経路 (= bulk import) を先行、CRUD 個別は段階的に follow-up。
+
+### 関連
+
+- 元 PR: PR-3 (2026-05-15) テナント管理者ダッシュボード改修 — Storage 20MB 共通化 + リアルタイム guard
+- config: src/config/storage-addon.ts (`STANDARD_STORAGE_BYTES` / `ADDON_EXTRA_BYTES`)
+- guard service: src/services/storage-guard.service.ts (`withStorageGuard` / `assertStorageLimitInTx` / `precheckStorageLimit`)
+- import 経路: src/services/data-import.service.ts (ZIP) / src/services/external-data-import.service.ts (CSV)
+
+## 5.X+29 個別 CRUD 経路のストレージ Pre-check は API route 層に集約する (PR-5 / 2026-05-15)
+<!-- 元番号 §5.X+23 から §5.X+29 に renumber (PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / PR-4=+28 / PR-5=+29 に従う。詳細は §5.X+21 の stacked PR 教訓参照) -->
+
+### 背景
+PR-3 でインフラ (storage-guard service) は完備したが、**通常 CRUD への適用は未着手** だった。
+全 13 個の write service の create / update を `withStorageGuard` で wrap すると、
+約 30+ 個のテスト mock 書き換えが必要で PR サイズが大きすぎる。
+
+### 教訓
+- **API route 層に Pre-check ヘルパを集約**: `requireStorageQuotaForWrite(tenantId, estimatedBytes)`
+  を `api-helpers.ts` に追加し、各 route.ts で 1 行呼び出すパターンに統一。
+- **service 層は変更しない**: 既存 service test が壊れない。route test だけが影響対象。
+- **`estimatedBytes` は payload サイズ近似**: `JSON.stringify(parsed.data).length` を渡す。
+  正確ではないが入口の防御層として十分。
+- **正確な Post-check はインポート経路のみ**: 個別 CRUD は payload が kB 規模なので
+  Pre-check (cache 値 + 予測サイズ) で十分。バッファ overrun は daily cron + 7 日 Grace で
+  eventual 補正。
+
+### 設計の落とし穴
+
+1. **route.ts のテスト mock 更新が必要**: `vi.mock('@/lib/api-helpers', ...)` で
+   `getAuthenticatedUser` のみ stub している既存テストは、`requireStorageQuotaForWrite`
+   の export 不在で `vi.mock` の incomplete エラーになる。
+   → mock オブジェクトに `requireStorageQuotaForWrite: vi.fn(async () => null)` を追記。
+2. **route.ts のテストが prisma を mock していない場合**: `requireStorageQuotaForWrite`
+   は内部で `prisma.tenant.findFirst` を呼ぶため、prisma を一切 mock していないと
+   実 DB に接続しようとして fail。`@/lib/db` を mock する必要あり。
+3. **配置位置の順序**: validation → 権限チェック → **storage check** → service 呼び出し。
+
+### 適用範囲 (PR-5 で完了)
+24 個の write route (POST / PATCH) に適用済:
+projects / tasks / knowledge / risks / retrospectives / estimates / customers /
+stakeholders / members / comments / attachments / memos
+
+既存の import 経路 (PR-3): `data-import` / `external-data-import` で完全な Post-check + ロールバック継続。
+
+### 関連
+- 元 PR: PR-5 (2026-05-15) CRUD ストレージ Pre-check 横展開
+- helper: src/lib/api-helpers.ts `requireStorageQuotaForWrite`
+- 元実装: PR-3 (#330) `precheckStorageLimit / withStorageGuard / assertStorageLimitInTx`
+- 前提 PR: PR-3 (#330) storage-guard.service
+
+---
+
+## 5.X+26 Beginner プランは「値の変動がない管理項目」を UI から消す — 表示の意図不在を防ぐ (PR-2 / 2026-05-15)
+
+### 背景
+旧テナント設定画面では「当月使用量」セクションに **3 タイル固定** (API 呼出 / API 費用 / 月次予算上限) を表示していた。
+ところが Beginner プランは単価 0 円固定 + 月次予算上限が常に null (= 設定不可) のため、
+**「API 費用 ¥0」「月次予算上限 - 」と表示しても何も伝えていない**。
+ユーザにとっては「これは何のために表示されているのか?」となり、UI ノイズ + 認知コスト増。
+
+### 教訓
+- **「値の変動がない管理項目」は表示しない**:
+  値が常に同じ (= 固定値、または常に空) なら、それを管理対象として見せる意図は存在しない。
+  プラン別に「そのプランで意味のあるタイル」だけを残す。
+- 代わりに **そのプランで利用者の行動指針となる値** を出す:
+  Beginner プランは「あと何回呼べるか (残数)」が利用者の最大関心事 → タイル化。
+  Expert / Pro は金額 / 予算上限が関心事 → 従来通り。
+- **API/service 層に「Beginner では予算上限を設定不可」の防御層を入れる**:
+  UI でフォームを非表示にするだけでは curl 直叩きで迂回可能。`updateTenantSelf` で
+  `BEGINNER_BUDGET_NOT_ALLOWED` エラーコードを定義し、API は 400 で拒否する。
+
+### 設計の落とし穴
+
+1. **`monthlyBudgetCapJpy: null` (= クリア) は許可する**:
+   完全に拒否すると、過去に Expert で予算を設定したユーザが Beginner にダウングレード
+   (= 現状仕様上は禁止だが将来緩和の可能性) した時に残値をクリアできない。
+   `null` 指定だけは救済として通す。
+2. **UI 側のフォーム送信でも防御**: `selectedPlan === 'beginner'` なら `budgetCap` の値を
+   無視して null を送る。「フォームが非表示」だけでは React state の残値がそのまま送信
+   される事故を防げない (チェックボックスをポチった後にプランを Beginner に切替する経路等)。
+3. **タイル数の `sm:grid-cols-N` を plan 別に切替**: 2 タイルなのに `sm:grid-cols-3` を
+   使うと最後の列が空き、レイアウトが間延びする。
+
+### 関連
+
+- 元 PR: PR-2 (2026-05-15) テナント管理者ダッシュボード改修 — Beginner プラン UI 改修
+- 関連 service: src/services/tenant-self.service.ts `updateTenantSelf` (`BEGINNER_BUDGET_NOT_ALLOWED`)
+- 関連 UI: src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx `UsageSection`
+
+---
+
 ## 5.X+25 timezone / locale はユーザ単位ではなくテナント単位で持つ — 同一テナント内で日付計算が揺らがない設計 (PR-1 / 2026-05-15)
 
 ### 背景
@@ -5937,6 +6194,47 @@ dependabot validator が **PR check 段階で fail** する (1 秒以内、ロ�
 - migration: prisma/migrations/20260515_tenant_i18n_settings/migration.sql
 - 旧 migration: prisma/migrations/20260424_user_i18n_preferences/ (User に timezone/locale 追加 → drop)
 - 関連設定: src/config/i18n.ts (`DEFAULT_TIMEZONE` / `DEFAULT_LOCALE`)
+
+## 5.X+28 日付計算ロジックをテナント TZ カレンダー日ベースに移行 — UTC 経過時間 ÷ 24h は要件から不一致 (PR-4 / 2026-05-15)
+<!-- 元番号 §5.X+22 から §5.X+28 に renumber (main 側 PR #327 で §5.X+22 が E2E_COVERAGE で先取りされたため衝突回避。PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / PR-4=+28 に従う) -->
+
+### 背景
+PR-1 で `Tenant.timezone` の schema / JWT / UI は集約済みだが、**実際の日付計算ロジック**
+(Beginner 90 日判定 / 月初リセット境界 / 翌月適用 / Grace 7 日) は依然 UTC ベース。
+ユーザ要件「タイムゾーンの時間で機能している体験」を満たすには計算側も TZ ローカル
+カレンダー日ベースへ移行する必要があった。
+
+具体例: JST テナントが 2026-02-01 14:00 JST に作成された場合、
+- 旧仕様 (絶対経過時間 ÷ 24h): 90 日後 09:00 JST 時点で 89.98 日 → まだ active
+- 新仕様 (TZ カレンダー日差): 90 日後 09:00 JST 時点で `2026-05-02 - 2026-02-01` = 90 日 → expired
+
+### 教訓
+- **TZ helper を 1 箇所に集約**: `src/lib/tenant-time.ts` を新設し
+  `formatTenantDate / tenantCalendarDayDiff / getTenantMonthStart / getTenantNextMonthStart /
+  getTenantPreviousYearMonth` を Node 標準 (Intl.DateTimeFormat) のみで実装。外部 lib 不要。
+- **判定対象**:
+  1. `beginner-expiry.service.ts`: 90日判定にテナント TZ
+  2. `tenant-monthly-reset.service.ts`: per-tenant TZ で月初判定 (updateMany → 個別 update に refactor)
+  3. `tenant-self.service.ts` / `tenant-storage.service.ts`: 翌月適用日を `getTenantNextMonthStart` で計算
+  4. `lib/auth.config.ts` (middleware): Edge runtime 制約のため inline `tenantCalendarDayDiffEdge` 実装
+  5. UI: `toISOString().split('T')[0]` → `useFormatters().formatDate(iso)`
+- **Edge runtime 制約**: middleware は `Intl.DateTimeFormat` のみ使える。Node 固有 module 不可
+
+### 設計の落とし穴
+
+1. **`updateMany` は per-tenant TZ で使えない**: テナントごとに monthStart が異なるため、
+   `findMany → JS filter → per-tenant update` のループに refactor 必須。
+2. **境界値の TZ 解釈**: `2026-05-31T23:59:59Z` (UTC 月末) は JST では `2026-06-01 08:59:59` (= 翌月初)。
+   テストでは UTC と JST で別の期待値を明示する。
+3. **`getTenantNextMonthStart` の年跨ぎ**: 12月 → 翌年 1月の分岐を忘れずに。
+4. **`session.user.timezone` はテナント値** (PR-1 で意味変更): middleware から `auth.user.timezone` 参照可。
+
+### 関連
+- 元 PR: PR-4 (2026-05-15) テナント TZ 計算ロジック移行
+- helper: src/lib/tenant-time.ts
+- 対象 service: beginner-expiry / tenant-monthly-reset / tenant-self / tenant-storage
+- middleware inline helper: src/lib/auth.config.ts `tenantCalendarDayDiffEdge`
+- 前提 PR: PR-1 (#327) Tenant.timezone schema
 
 ---
 
@@ -6167,9 +6465,50 @@ PR #326 の恒久対策 (`git rm --cached` + `.gitattributes merge=ours`) を ma
 - [ ] 恒久対策を入れた PR より **以前に分岐した既存ブランチ全てで「再度の手動マージ」が必要** (= untrack 操作は branch 内 commit 履歴の前方互換性が無い)
 - [ ] 自動 daily branch 群 (`dev/YYYY-MM-DD`) で同様の operation を入れる場合は、main マージ後に **全 open dev ブランチを一斉 rebase or merge** する hook を検討 (本件は手動対応で済んだが、ブランチが 10 個以上ある日は手間が積み上がる)
 
+### 再発事例 4 例目 (PR #332 / feat/pr-4-tenant-tz-logic / 2026-05-11) — stacked PR 固有の追加要因
+
+PR-4 は **stacked PR** で `base = feat/pr-1-tenant-i18n-settings` (PR #327 の HEAD) のまま、PR #327 が main にマージされた後も base が古いままだった。`.last-knowledge-check-sha` 系の衝突は無かった (PR-1 から派生したため hook 更新無し) が、**KDD section の番号衝突** が発生:
+
+- PR-4 側: `§5.X+22` で start (PR-4 ブランチ作成時点では未使用番号)
+- main 側: PR #327 で `§5.X+22` が E2E_COVERAGE で先取り (= renumber 漏れ)
+- 解消: PR-4 を **§5.X+28** に renumber (PR-N 予約番号体系 PR-1=+25 / PR-2=+26 / PR-3=+27 / **PR-4=+28**)
+
+#### Stacked PR 固有教訓
+
+- [ ] **stack の base PR が main にマージされたら、上層 PR の base を即時 main に切替える** (`gh pr edit <N> --base main`)
+- [ ] base 切替なしに main マージし続けると、上層 PR の "PR diff" が base PR のコミットを再表示し続けてレビュー困難になる
+- [ ] **KDD section 番号は PR-N 単位で reserved 番号体系を遵守** (PR-N = §5.X+(24+N))。
+      合間の hotfix 系 PR (PR #326 / #327 / #336) は別途連番を消費するため、**並走 feature PR 側で番号を取り過ぎないよう reserved 範囲を明確化** する
+
+### 再発事例 3 例目 (PR #330 / feat/pr-3-storage-guard / 2026-05-11)
+
+PR-3 (Storage 20MB 共通化 + guard サービス) も同パターン。**1 日に 3 件続いた再発**で、原因は同じ「PR #326 untrack 前に分岐していた」。
+
+- 連発の構造: PR-1 (#327), PR-2 (#329), PR-3 (#330) は **同じ親 main commit から並列に分岐** した一連の改修 → どの PR でも `.last-knowledge-check-sha` を SessionStart hook が tracked のまま更新 → main マージ後に同じ衝突パターンが量産される
+- 解消手順は 1 例目 / 2 例目と完全同型: `git rm` + KDD 末尾セクション順序保持
+
+#### 確定した結論 (3 例後)
+
+- [ ] **PR #326 のような untrack 系恒久対策が main に入ったら、その時点で open な全ブランチを `git pull --rebase` or `git merge main` で一斉に同期する運用ルール** を hook 化検討対象に追加
+- [ ] **branch protection で "main 更新後 X 時間以内に同期必須" を運用する選択肢** もあるが、現状の頻度なら本 KDD の再発事例リストを溜めるだけで横展開警告が機能する
+
+### 再発事例 2 例目 (PR #329 / feat/pr-2-beginner-ui / 2026-05-11)
+
+dev/* 系の auto-branch だけでなく **feature branch** (PR-2 = Beginner UI 改修) でも同じ症状が出た。`feat/pr-2-beginner-ui` は PR #326 untrack 前に分岐 + SessionStart hook で `.last-knowledge-check-sha` を更新済の状態だったため、main マージで modify/delete 衝突。
+
+加えて **KDD_PATTERNS.md の末尾セクション衝突** も同時発生:
+- PR-2 側 (HEAD): `§5.X+26` (Beginner UI) を追記
+- main 側: `§5.X+25 / +20 / +21 / +22` が直前の merge ラッシュで追加済
+- 解消: 全 5 セクションを順序保持で残し、各セクション間に `---` 区切りを明示
+
+#### 追加教訓
+
+- [ ] **長寿命 feature branch ほど積み残し conflict のリスクが高い**: 並走 PR が多い時期は週次で main を取り込む rebase / merge を推奨
+- [ ] KDD section の end-of-file append は **物理的に並走 PR が衝突しやすい局所**。本ファイルに限り `.gitattributes` で `merge=union` (両側の追記を行ベース統合) を検討する余地あり ※ ただし重複 header が出るリスクがあるため要試行
+
 ### 関連
 
-- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11)
+- 修正 PR: PR #326 (恒久対策本体 / dev/2026-05-10) + PR #328 (再発事例 1 例目 / dev/2026-05-11) + PR #329 (再発事例 2 例目 / feat/pr-2-beginner-ui) + PR #330 (再発事例 3 例目 / feat/pr-3-storage-guard) + PR #332 (再発事例 4 例目 / feat/pr-4-tenant-tz-logic / stacked PR)
 - 関連ファイル: [.gitattributes](../../.gitattributes), [.gitignore](../../.gitignore) (line 56)
 - 関連 hook: [.claude/hooks/session-start-knowledge-check.sh](../../.claude/hooks/session-start-knowledge-check.sh)
 - 公式 (gitignore): <https://git-scm.com/docs/gitignore> ("Files already tracked by Git are not affected")
@@ -6259,6 +6598,7 @@ git push
 - 関連 workflow: [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml)
 - 関連 doc: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md), [E2E カバレッジ運用](../test/E2E_LESSONS.md)
 
+---
 
 ## 5.X+23 super_admin ダッシュボードで Default テナント (運営者自身) を **集計除外** しても **画面非表示にはしない** — 「集計」と「表示」の境界を明確に分ける (PR-X / 2026-05-11)
 
@@ -6403,3 +6743,655 @@ prisma.tenantMonthlyUsageHistory.findMany({
 - 関連 service: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts), [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts)
 - 関連 test: [src/services/super-admin.service.test.ts](../../src/services/super-admin.service.test.ts), [src/services/tenant-monthly-reset.service.test.ts](../../src/services/tenant-monthly-reset.service.test.ts), [src/app/api/admin/super/usage/export/route.test.ts](../../src/app/api/admin/super/usage/export/route.test.ts), [e2e/specs/13-super-admin-dashboard.spec.ts](../../e2e/specs/13-super-admin-dashboard.spec.ts)
 - 関連 KDD: §5.X+23 (集計除外と画面表示の分離)
+
+---
+
+## 5.X+30 長期 PR と main の並行更新で KDD ファイル末尾コンフリクトが発生する ─ 両方残してマージするのが正解 (PR #334 / 2026-05-12)
+
+### 罠の正体
+
+`docs/knowledge/KDD_PATTERNS.md` のような **追記専用ナレッジファイル** は、ブランチごとに末尾へ新セクションを足す運用のため、長期 PR が main の高頻度マージ (PR-1 〜 PR-5 のような関連 PR 群) に遅れると **「両ブランチが末尾に異なるセクションを追加した」** タイプのコンフリクトが必発する。
+
+PR #334 のケースでは:
+- HEAD (PR #334 ブランチ): `## 5.X+24 dependabot 複数 PR の pnpm-lock.yaml コンフリクト` を末尾に追加
+- main: `## 5.X+27 ストレージ上限 LLM プラン切り離し` 他 5 件 (5.X+25/26/27/28/29) を末尾に追加
+
+両者は **独立した別トピックの新規ナレッジ** であり、片方を破棄すると情報損失が発生する。
+
+### 採用したパターン
+
+**両方残す + 番号順に整える** が正解:
+
+1. コンフリクトマーカー (`<<<<<<<` / `=======` / `>>>>>>>`) を除去
+2. HEAD 側セクションを残す (5.X+24)
+3. main 側セクション (5.X+27) を続けて配置
+4. 番号順 (24 → 27) で並ぶよう間に空行を挿入
+
+main 側の section 番号順序が既に非連続 (例: 27→29→26→25→28→22 の順で並んでいる) でも、それを正すのは **別 PR の整理タスク** として切り分け、本コンフリクト解決の範囲外とする (= scope creep を避ける)。
+
+### 予防策
+
+| 戦略 | 効果 | コスト |
+|---|---|---|
+| **KDD ファイルへの追記は PR の最後にまとめる** | コンフリクト発生確率を低減 | 軽 (運用ルール) |
+| **長期 PR は main を週次で rebase / merge** | コンフリクトを小さく頻繁に解消 | 中 (作業時間) |
+| **KDD ファイルを「セクション 1 ファイル」に分割** | ファイル単位コンフリクトを排除 | 高 (構造変更) |
+| **section 番号を `5.X+N` から日時 prefix へ移行** | 番号衝突自体を回避 | 中 (既存ファイルの一括書き換え) |
+
+現状は **運用ルール (追記は PR 最後にまとめる) + 長期 PR は週次 rebase** で対応。日時 prefix 移行はバックログ候補。
+
+### 横展開チェック (KDD ファイル編集 PR のレビュー時)
+
+- [ ] PR が長期化していないか (1 週間以上 main を取り込んでいない場合は rebase 推奨)
+- [ ] 追加セクションの番号が既存の最大番号 + 1 か (main 側で番号が進んでいる可能性)
+- [ ] コンフリクト解決時に **どちらかのセクションを誤って削除していない** か
+- [ ] セクション番号順に並べた結果、参照リンク (`§5.X+25` 等) が壊れていないか
+
+### 関連
+
+- 修正例: PR #334 (2026-05-12) / コンフリクト発生 PR #317 関連の連鎖
+- 同類パターン: `.claude/.last-knowledge-check-sha` のような自動更新ステートファイル (PR #310 で対処)
+- 関連 doc: [docs/knowledge/KDD_PATTERNS.md](./KDD_PATTERNS.md) 自身
+
+---
+
+## 5.X+31 「ログインできない」の真因は別経路にあることが多い ─ 切り分け手順と防御的 server component (PR fix/admin-users-defensive-render / 2026-05-15)
+
+<!-- PR #335 マージ時 renumber: 元番号 §5.X+28 → §5.X+30 → §5.X+31。
+     PR #334 が先にマージされて main 側 §5.X+30 (KDD ファイル末尾コンフリクト
+     パターン) と衝突したため次の空き番号に再配置。§5.X+30 自身が記録する
+     パターンの実践例となった。 -->
+
+### 背景
+ユーザから「サービスへログインできなくなった」と報告。共有された error log は `system_error_logs`
+テーブルの内容で、最新エラーは `/admin/users` での Server Components render error (digest 713007954)、
+それ以外は `[attachments/batch]` 系の info ログばかり。**ログイン失敗を示すエントリが存在しなかった**。
+
+調査の結果、ログイン失敗イベントは `auth_event_logs` (別テーブル) に記録される設計のため、
+`system_error_logs` を見ても真因は判らない構造だった。
+
+### 教訓 (切り分けフローの確立)
+
+**1. ログイン失敗かどうかを最初に確認**:
+
+```sql
+-- 直近 24 時間の login_failure を email で抽出
+SELECT event_type, detail, ip_address, created_at
+FROM auth_event_logs
+WHERE event_type = 'login_failure'
+  AND email = '<ユーザ email>'
+  AND created_at >= NOW() - INTERVAL '24 hours'
+ORDER BY created_at DESC;
+```
+
+`detail.reason` の値で原因を判別:
+- `user_not_found`: メール未登録 (typo or 削除済)
+- `invalid_password`: パスワード誤り (試行回数も同 row で確認)
+- `temporary_lock`: 一時ロック中 (`lockedUntil` 確認)
+- `permanent_lock`: 永続ロック (recovery code または admin に解除依頼)
+- `inactive`: アカウント無効化 (admin が isActive=false にした)
+- `tenant_deleted`: テナント論理削除中
+- `missing_credentials`: 空 submit (client bug の可能性)
+
+**2. login_failure ログがない場合 = ログインは成功している可能性大**:
+
+ユーザは「ログインできない」と感じているが実際にはログインできており、**ログイン直後の遷移先で
+server component が crash して error boundary に飛ばされている** ケースがある。ユーザにとっては
+「ログイン → エラー → 戻る → ログイン → エラー」のループに見える。
+
+確認方法:
+
+```sql
+-- 同 email の login_success が直近にあるか
+SELECT event_type, created_at FROM auth_event_logs
+WHERE email = '<ユーザ email>'
+  AND event_type IN ('login_success', 'login_failure')
+ORDER BY created_at DESC LIMIT 10;
+```
+
+login_success が出ているのに login_failure も間に挟まる場合 = ログイン成功 → 画面でエラー → 再ログイン
+のループパターン確定。
+
+**3. server component error の digest を Vercel で追跡**:
+
+```
+Vercel Dashboard → Project → Logs → Search "digest=713007954"
+```
+
+production build では `error.message` がマスクされて UI に出ないが、Vercel runtime log には
+完全なスタックトレースが残る。**digest が同じなら同じ箇所での throw**。
+
+### 防御的 server component パターン (PR fix/admin-users-defensive-render)
+
+`/admin/users` のような **ログイン直後にユーザが遷移しやすいページ** が server component crash すると、
+ユーザは「ログインできない」と認識する。次の防御策で UX とデバッグ可能性を両立する:
+
+```ts
+// Before
+const [users, tenantInfo] = await Promise.all([
+  listUsers(session.user.tenantId),
+  getTenantSelfInfo(session.user.tenantId),
+]);
+
+// After (PR fix/admin-users-defensive-render):
+let users: Awaited<ReturnType<typeof listUsers>> = [];
+let tenantInfo: Awaited<ReturnType<typeof getTenantSelfInfo>> = null;
+let dataLoadError = false;
+try {
+  [users, tenantInfo] = await Promise.all([
+    listUsers(session.user.tenantId),
+    getTenantSelfInfo(session.user.tenantId),
+  ]);
+} catch (error) {
+  dataLoadError = true;
+  await recordError({
+    severity: 'error',
+    source: 'server',
+    message: '[/admin/users] failed to load users or tenant info',
+    stack: error instanceof Error ? error.stack : String(error),
+    userId: session.user.id,
+    context: {
+      path: '/admin/users',
+      errorName: error instanceof Error ? error.name : 'unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+      tenantId: session.user.tenantId,
+    },
+  });
+}
+
+return <UsersClient ... dataLoadError={dataLoadError} />;
+```
+
+ポイント:
+- **error message を `system_error_logs` に詳細記録**: digest 番号だけで Vercel を辿る必要を減らす。
+  errorName / errorMessage / stack を context に入れることで `system_error_logs` から原因が直接判る。
+- **画面操作は維持**: 一覧は空 + 警告バナー表示にとどめ、ヘッダ / 招待 dialog 等は引き続き使える。
+  admin が他経路で復旧操作を取れる。
+- **error boundary に飛ばさない**: dashboard セグメントの error.tsx に飛ぶと「ログインできない」
+  感じになる。本パターンで予防的に防げる。
+
+### 横展開で漏らしやすい箇所
+
+ログイン直後にユーザが遷移しやすい主要ページ:
+- `/projects` (デフォルト遷移先、最高優先)
+- `/admin/users` (admin 系)
+- `/settings`, `/settings/tenant`
+- `/projects/[id]` (前回開いていたプロジェクト)
+
+これらは **server component の最上位データ取得を try/catch で囲み、空フォールバック + recordError
++ dataLoadError prop で UI 警告** のパターンを適用すべき。後続 PR で横展開。
+
+### 関連
+- 元 PR: fix/admin-users-defensive-render (2026-05-15)
+- 関連 service: src/services/error-log.service.ts (`recordError`)
+- 関連 layout: src/app/(dashboard)/error.tsx (default error boundary)
+- 関連 schema: prisma/schema.prisma `AuthEventLog` モデル (eventType / detail / email / userId)
+
+---
+
+## 5.X+32 「invalid_password と記録されているが本人は正しい入力 + パスワードマネージャ使用」のパターン ─ authorize() 例外で auth_event_logs に何も残らないケースが多い (PR fix/auth-diagnostics-defensive / 2026-05-15)
+
+<!-- PR #335 マージ時 renumber: 元番号 §5.X+29 → §5.X+31 → §5.X+32。
+     §5.X+31 (login defensive) と連番化するため。 -->
+
+### 背景
+ユーザから「サービスへログインできない、ログイン情報はパスワードマネージャ使用で誤入力ありえない」報告。
+`auth_event_logs` を確認すると `reason: invalid_password` で 2 行のみ、ただし **どちらも 2 週間以上前** で、
+**今日のログイン試行は 1 件も記録されていない**。
+
+```sql
+SELECT event_type, detail, created_at FROM auth_event_logs
+WHERE event_type = 'login_failure' AND email = 'xxx@example.com'
+ORDER BY created_at DESC LIMIT 20;
+-- → 2 行のみ、最新は 2 週間前
+```
+
+= ユーザは今日もログインボタンを押しているはずなのに **auth_event_logs に何も書かれていない** =
+**authorize() 関数の途中で例外が発生し、recordAuthEvent を呼ぶ前に死んでいる** 可能性が極めて高い。
+
+### 教訓
+- **「event_type='login_failure' に絞った検索」だけでは不十分**: 直近の event 全体を確認する:
+  ```sql
+  SELECT event_type, detail, created_at FROM auth_event_logs
+  WHERE email = 'xxx@example.com' AND created_at >= NOW() - INTERVAL '24 hours'
+  ORDER BY created_at DESC LIMIT 50;
+  ```
+- **直近 24h で 1 行も無ければ authorize() 未到達を疑う**:
+  - NextAuth handler が落ちている (Vercel runtime log を要確認)
+  - Prisma connection failure (`prisma.user.findFirst` で throw)
+  - bcrypt が hash format error で throw
+  - middleware が信号を block
+- **authorize() を try/catch でラップ + internal_error 経路を必ず記録する**:
+
+```ts
+async authorize(credentials) {
+  try {
+    // 既存のロジック
+  } catch (e) {
+    await recordAuthEvent({
+      eventType: 'login_failure',
+      email: typeof credentials?.email === 'string' ? credentials.email : undefined,
+      detail: {
+        reason: 'internal_error',
+        errorName: e instanceof Error ? e.name : 'unknown',
+        errorMessage: e instanceof Error ? e.message : String(e),
+        stackHead: e instanceof Error && typeof e.stack === 'string'
+          ? e.stack.slice(0, 500) : null,
+      },
+    }).catch(() => undefined); // recordAuthEvent 自体の失敗で連鎖を起こさない
+    return null;
+  }
+}
+```
+
+これで「authorize() に到達したが何かで死んだ」ケースを **DB 一発で判別可能** になる。
+
+### bcrypt compare 周辺の診断ログ強化
+
+「authorize() に到達 + invalid_password の経路を辿る」場合でも、真因は次の 4 つに分かれる:
+
+1. **本当にパスワード違い** (= ユーザの記憶違い / autofill が古い値)
+2. **passwordHash カラムが壊れている** (= 文字化け / truncated / null / 空文字)
+3. **bcrypt hash format mismatch** (= '$2a$' / '$2b$' / '$2y$' いずれでもない = 別アルゴリズムのハッシュが混入)
+4. **bcryptjs library 互換性** (= 別バージョンで作られた hash で compare が失敗)
+
+これらを切り分けるため、`login_failure` の detail に下記を追記する:
+
+```ts
+const passwordHashLength = user.passwordHash?.length ?? 0;
+const passwordHashPrefix = (user.passwordHash ?? '').slice(0, 7); // '$2a$10$' / '$2b$12$' 等
+const bcryptStart = Date.now();
+let isValid: boolean;
+let bcryptError: string | null = null;
+try {
+  isValid = await compare(password, user.passwordHash);
+} catch (e) {
+  isValid = false;
+  bcryptError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+}
+const bcryptElapsedMs = Date.now() - bcryptStart;
+
+if (!isValid) {
+  await recordAuthEvent({
+    eventType: 'login_failure',
+    /* ... */
+    detail: {
+      reason: 'invalid_password',
+      passwordHashLength,    // 標準は 60。それ以外なら hash 破損
+      passwordHashPrefix,    // '$2a$' / '$2b$' / '$2y$' 以外なら format 異常
+      bcryptElapsedMs,       // 0-1ms なら即時失敗 (hash 不正)、50-200ms が正常
+      bcryptError,           // compare 例外時のエラー名
+    },
+  });
+}
+```
+
+判別:
+- `passwordHashLength != 60` → hash 破損 (DB の passwordHash カラムを直接修正、または password reset 発行)
+- `passwordHashPrefix not in ['$2a$', '$2b$', '$2y$']` → format 異常 (同上)
+- `bcryptError != null` → bcrypt が throw (= invalid hash の format chars 等、ライブラリ更新による互換性問題の可能性も)
+- 上記全て正常 + `isValid = false` → **本当に password 違い** (ユーザは password マネージャ更新 / reset を案内)
+
+### 横展開で漏らしやすい箇所
+
+- **MFA 認証経路** (`/api/auth/mfa/verify`): 同様に internal_error 経路を保証
+- **パスワード変更** (`/api/auth/change-password`): 既存 hash の compare で同じ問題があり得る
+- **パスワードリセット** (`/api/auth/reset-password/...`): bcrypt 周辺の例外捕捉
+
+### 関連
+- 元 PR: fix/auth-diagnostics-defensive (2026-05-15)
+- 関連 service: src/lib/auth.ts (`authorize`)
+- 関連 event log: prisma/schema.prisma `AuthEventLog` モデル (`detail` JSONB)
+- 過去の関連 §5.X+31: 「ログイン直後 server component crash = ログインできない感」
+
+---
+
+## 5.X+33 service コード conflict: 「片側は refactor、もう片側はコメント追加」型 ─ コメント意図が既に定数化されていれば refactor を採用し、historical context として吸収する (PR #337 / 2026-05-12)
+
+### 罠の正体
+
+長期 PR と main の並行で **同じ関数を異なる粒度で編集** していた場合、`git merge` は両方の差分をマーカで提示するが、機械的には判断できないケースがある:
+
+| ブランチ | 編集粒度 | 例 (PR #337) |
+|---|---|---|
+| HEAD | **コメント追加のみ** (実装意図の追記) | 「2026-05-11: Default テナントも除外 — 過去 PR では MANAGEMENT のみ除外していた」 |
+| main | **構造的 refactor** (関数挙動の変更) | UTC 月初固定 → per-tenant TZ ローカル月初に切替 + `targets` → `allTenants` 変数名変更 + filter を JS 側に移動 |
+
+両者を素朴に concat すると、main の refactor 構造に HEAD のコメントが宙ぶらりんで貼り付くか、HEAD のコメントが消えて意図の歴史が失われる。
+
+### 採用したパターン
+
+**「HEAD コメントの意図が既に定数 / 設定で実現されていないか」を先に確認** する:
+
+```bash
+# 例: HEAD コメントが「Default テナントも除外」と言っているなら、
+#     その定数 (SNAPSHOT_EXCLUDED_TENANT_IDS 等) を grep し、main 側に既に
+#     反映済かを確認する。
+grep -nE "SNAPSHOT_EXCLUDED_TENANT_IDS|DEFAULT_TENANT_ID" <service>.ts
+# → const SNAPSHOT_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+#   が既にある = HEAD コメントの意図は実装済 = コメントは「歴史的 context」として残せばよい
+```
+
+確認後の判断:
+- **意図が定数で実現済** → main の refactor を採用しつつ、HEAD コメントを **「<日付> (HEAD 履歴): ...」** の体裁で documentation comment として残す
+- **意図が未実装** → refactor を採用 + 意図を改めて実装 (constant 更新 or filter 追加)
+
+### 実例 (PR #337 merge resolution)
+
+```ts
+// Before (HEAD)
+const monthStart = getCurrentMonthStartUtc(now);
+const yearMonth = getPreviousYearMonth(now);
+
+// リセット対象テナント (= まだリセットされていない、当月分の値を保持中) を取得
+// 2026-05-11: Default テナント (= 運営者自身、請求対象外) も除外 — 過去 PR では
+//   MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に混入していた。
+const targets = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+
+// Before (main)
+// PR-4 (2026-05-15): 各テナントの TZ ローカル月初を基準にする。
+const allTenants = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+const targets = allTenants.filter((t) => {
+  const tenantMonthStart = getTenantMonthStart(now, t.timezone);
+  return t.lastResetAt == null || t.lastResetAt < tenantMonthStart;
+});
+
+// After (merge resolution)
+// PR-4 (2026-05-15): 各テナントの TZ ローカル月初を基準にする。
+//   従来は UTC 月初固定 (`getCurrentMonthStartUtc` / `getPreviousYearMonth`) だったが、
+//   テナント TZ に依存する月初境界を per-tenant で計算する設計に切替。
+// 2026-05-11 (HEAD 履歴): Default テナント (= 運営者自身、請求対象外) も除外。
+//   過去 PR では MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に
+//   混入していたため SNAPSHOT_EXCLUDED_TENANT_IDS に追加済 (line 60 参照)。
+const allTenants = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+```
+
+両方の意図 (TZ-aware refactor + Default 除外の歴史) を 1 つのブロックに統合し、`line 60 参照` で具体的実装の所在も明記した。
+
+### 横展開チェック (service code conflict 時)
+
+- [ ] 双方の編集が **異なる粒度** (refactor vs コメントのみ) か確認
+- [ ] HEAD 側コメントの意図が **定数 / 設定 / 別関数で実装済** か `grep` で確認
+- [ ] 実装済なら → refactor を採用 + コメントを「<日付> (HEAD 履歴): ...」体裁で残す
+- [ ] 未実装なら → refactor を採用 + 意図を改めて実装 (定数追加 / filter 追加など)
+- [ ] 関連テストを実行して挙動が壊れていないか確認 (今回は tenant-monthly-reset.service.test.ts 22/22 pass)
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — feat/guide-page-restructure ↔ main の `tenant-monthly-reset.service.ts` 競合
+- 関連 service: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts)
+- 関連 test: [src/services/tenant-monthly-reset.service.test.ts](../../src/services/tenant-monthly-reset.service.test.ts)
+- 関連 KDD: §5.X+30 (KDD ファイル末尾コンフリクト一般論)
+
+---
+
+## 5.X+34 merge 後の **conflict zone 外** に同 refactor 関数の旧シグネチャ呼び出しが残存する罠 ─ `grep` で全 call site を verify する (PR #337 / 2026-05-12)
+
+### 罠の正体
+
+PR #337 で `tenant-monthly-reset.service.ts` の conflict を §5.X+33 パターンで解消した直後、CI で 3 種類のエラーが連鎖発生:
+
+1. **Lint/Test/Build**: `super-admin.service.test.ts` の 4 テストが `expected NaN to be 157286400` 等で fail (storage 計算が NaN)
+2. **E2E**: TypeScript build が `super-admin.service.ts:554` で「Expected 1 arguments, but got 2」で fail
+3. **Vercel**: 同 build 失敗で Deployment Failed
+
+原因は **PR-3 (§5.X+27) で `computeStorageLimitBytes(llmPlan, addonPlan)` → `computeStorageLimitBytes(addonPlan)` にシグネチャ変更** されたが、HEAD (PR #337) は **`super-admin.service.ts` の 3 つの call site のうち 1 つだけが conflict zone 内** で、残り 2 つは conflict marker が付かなかったため自動 merge で旧シグネチャのまま残った:
+
+```ts
+// 同じファイル内に 3 つの call site が存在:
+//   line 336: computeStorageLimitBytes(addonPlan)              ← main が直接編集 (1 引数化済)
+//   line 403: computeStorageLimitBytes(addonPlan)              ← main が直接編集 (1 引数化済)
+//   line 554: computeStorageLimitBytes(llmPlan, addonPlan)     ← HEAD だけが touch → conflict 対象外
+//                                                                 → 旧 2 引数のまま残存 ❌
+```
+
+さらに **test の expectation も旧仕様** (`expect(r?.storageLimitBytes).toBe(150 * 1024 * 1024)` 等) で、main の新仕様 (LLM プラン非依存、Standard 20MB 共通) と矛盾していた。
+
+### 採用したパターン
+
+§5.X+33 解決直後に **必ず以下 3 つを実行**:
+
+```bash
+# 1. refactor 対象関数の全 call site を grep し、引数数 / 引数並びが新シグネチャに揃っているか確認
+grep -nE "computeStorageLimitBytes" src/ -r
+# → 1 つでも旧シグネチャ呼び出しが残っていたら修正
+
+# 2. 関連テストファイルで旧 magic number / 旧定数値を grep
+grep -nE "150 \* 1024 \* 1024|50 \* 1024 \* 1024|300 \* 1024 \* 1024" src/services/*.test.ts
+# → 旧値の expectation があれば新仕様に更新
+
+# 3. 念のため full type check + 全テストを通す
+pnpm tsc --noEmit  # build 時の type error を先に検出
+pnpm test          # test expectation の不一致を検出
+```
+
+**conflict marker は「同じ行を両方が編集した箇所」しか flag しない**。HEAD だけが触った場所 / main だけが触った場所は自動 merge で「両方の変更を残す」動作になる。refactor は基本的に main 側の一方向変更なので、HEAD の旧シグネチャ呼び出しはそのまま生き残る。
+
+### 修正例 (PR #337)
+
+```ts
+// Before merge (HEAD line 554 — conflict zone 外 = marker 無し)
+const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
+const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);  // ❌ 旧 2 引数
+                                            // ^^^^^^^^ TS error: Expected 1 arguments, but got 2
+
+// After merge fix
+// PR-3 (§5.X+27, 2026-05-15): computeStorageLimitBytes は LLM プランから切り離され
+//   `addonPlan` (Standard 20MB + add-on extra) のみで計算する 1 引数シグネチャ。
+//   旧 2 引数呼び出しが merge resolution で残存していたため修正 (PR #337 fix)。
+const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+const limitBytes = computeStorageLimitBytes(addonPlan);  // ✅ 新 1 引数
+```
+
+テスト側 (`super-admin.service.test.ts`) も同期して更新:
+
+```ts
+// Before
+// Expert (150MB) + standard (0) = 150MB
+expect(r?.storageLimitBytes).toBe(150 * 1024 * 1024);
+
+// After
+// PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard add-on = 20MB 共通ベース。
+expect(r?.storageLimitBytes).toBe(20 * 1024 * 1024);
+```
+
+### 横展開チェック (long-lived PR を main にマージする時)
+
+- [ ] **API シグネチャ変更を含む refactor が main 側にあるか** を `git log main..HEAD -- <file>` で確認
+- [ ] あれば該当関数を `grep -nE "<funcName>"` で全 call site 列挙し、新シグネチャに揃ったか目視確認
+- [ ] **テストの magic number / 旧定数値** も同 PR の `git diff main..HEAD` で旧仕様前提が無いか確認
+- [ ] `pnpm tsc --noEmit` を merge 直後に必ず実行 (build error を CI 前に検出)
+- [ ] `pnpm test <affected>.test.ts` で関連 test の旧 expectation が新仕様で通るか確認
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — `feat/guide-page-restructure` ↔ main の `computeStorageLimitBytes` シグネチャ不一致
+- 関連 service: [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts), [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
+- 関連 config: [src/config/storage-addon.ts](../../src/config/storage-addon.ts) (新シグネチャ定義)
+- 関連 KDD: §5.X+27 (LLM プランから切り離し → 共通 20MB), §5.X+33 (refactor + コメント追加型 conflict)
+
+---
+
+## 5.X+35 multi-project Playwright で **同 spec が複数 project で並列実行** されると fixture が DB に同名行を量産する罠 ─ name に callSuffix を必ず付与、cleanup は FK 順を厳守、redirect-during-goto は `waitUntil: 'commit'` (PR #337 E2E fix / 2026-05-12)
+
+### 罠の正体
+
+PR #337 の E2E で `13-super-admin-dashboard.spec.ts` が 2 種類のエラーで連続 fail:
+
+1. **chromium project / test 121**: `strict mode violation: getByText('E2E Tenant A e2e-...') resolved to 2 elements` — DB に **同じ name + 異なる UUID の tenant 行が 2 件存在**
+2. **chromium-mobile project / test 233**: `page.goto: net::ERR_ABORTED at /admin/super` — server-side `redirect('/')` 中に navigation がアボート
+
+両方の根本原因が **multi-project Playwright (chromium + chromium-mobile) で同一 spec を実行** する設計に起因。
+
+#### 1 の機序: 同 spec の重複 fixture 投入
+
+- `playwright.config.ts` の `workers: 2` 設定下、同一 spec を chromium / chromium-mobile **両 project** が実行
+- worker process は project ごとに切り替わる可能性があり、**同一 worker process** で連続実行されると `RUN_ID` (= `e2e-${timestamp}-${pid}-${rand}`) が共有される
+- fixture 内で `name` を `${runId}` だけで構成すると → 2 回 beforeAll 呼び出しで **同じ name の行が 2 つ insert** される (slug は `randomBytes(3)` で一意、UNIQUE 制約は slug にのみ存在)
+- さらに **afterAll の cleanup が FK 違反で部分失敗** すると行が残留し、次の project run で重複が確定する
+
+```ts
+// アンチパターン (PR #337 修正前)
+const slugA = `e2e-sa-${runId}-${suffix}-a`;        // slug は suffix 含む = UNIQUE OK
+const tenantA = await pool.query(`INSERT ... `, [slugA, `E2E Tenant A ${runId}`]);
+//                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+//                                                       name は runId のみ = 重複可能
+```
+
+```ts
+// 正しいパターン
+const slugA = `e2e-sa-${runId}-${suffix}-a`;
+const nameA = `E2E Tenant A ${runId}-${suffix}`;    // name にも suffix 付与
+```
+
+#### 2 の機序: redirect-during-goto アボート
+
+`/admin/super` の server-side layout で `redirect('/')` が発火すると、`page.goto()` 中に navigation が断ち切られて `net::ERR_ABORTED` を throw する Chromium 実装がある (特に mobile viewport)。`waitUntil: 'load'` (デフォルト) は完全な response 受領を要求するため fail する。
+
+```ts
+// 正しいパターン
+try {
+  await adminPage.goto('/admin/super', { waitUntil: 'commit' });
+  // 'commit' = 最初のレスポンスヘッダ受領まで待つだけで、その後の server redirect は許容
+} catch (e) {
+  // 念のため ERR_ABORTED 例外は飲み込む (final URL 検証で本質を担保)
+  if (!(e instanceof Error && e.message.includes('ERR_ABORTED'))) throw e;
+}
+await adminPage.waitForURL((url) => !url.pathname.startsWith('/admin/super'), { timeout: 10_000 });
+```
+
+#### cleanup 順序 (FK 違反防止)
+
+E2E で admin が一度でも login すると `auth_event_logs` が tenant_id 付きで insert される。これが残ったまま `DELETE FROM tenants` を発火すると FK 違反で blocking → tenants 残留。
+
+```ts
+// 正しい cleanup 順序
+// 1. tenants を参照する FK 子テーブルを先に DELETE
+//    (auth_event_logs / audit_logs / system_error_logs / api_call_logs /
+//     role_change_logs / sessions / tokens など)
+// 2. users (= tenant_id 持ち)
+// 3. tenants
+// 各 step は独立クエリ + try/catch で 1 つ失敗しても残りを継続 (transaction 不可、§5.X+30 教訓 7 参照)
+```
+
+### 採用したパターン (PR #337 fix)
+
+1. **fixture の name にも suffix を付与** — `E2E Tenant A ${runId}-${suffix}` 形式で同 RUN_ID 複数 call でも重複しない
+2. **cleanup の FK 子テーブル先行 DELETE** — `auth_event_logs` 等を 10 種類列挙してから tenants 削除
+3. **redirect-during-goto を `waitUntil: 'commit'` + ERR_ABORTED 例外スワロー** で許容
+4. **multi-project 並列実行が不要な spec は `testIgnore` で chromium-mobile から除外** — 構造的に重複実行自体を回避
+
+```ts
+// playwright.config.ts
+projects: [
+  { name: 'chromium', ... },
+  {
+    name: 'chromium-mobile',
+    testIgnore: [
+      // 共有 DB に fixture 書き込む spec は project 単位で重複させない
+      /11-tenant-isolation\.spec\.ts/,
+      /12-suggestion-seed-data\.spec\.ts/,
+      /13-super-admin-dashboard\.spec\.ts/,
+    ],
+  },
+],
+```
+
+### 横展開チェック (新規 E2E spec / fixture を追加する時)
+
+- [ ] **fixture が共有 DB に書き込む** か (= tenants / users / 業務 entity を INSERT する)
+- [ ] そうなら **name 系カラムにも `randomBytes(N)` の suffix を付与** したか (slug の UNIQUE だけでは不十分)
+- [ ] cleanup で **tenants / users の FK 子テーブル** を grep し、全て先行 DELETE しているか
+- [ ] cleanup は **transaction を使わず独立クエリ** で実行 (§5.X+30 教訓 7)
+- [ ] spec が **複数 project (chromium / chromium-mobile) で実行する必要があるか** 判定し、不要なら `testIgnore` で chromium-mobile から外す
+- [ ] server-side `redirect()` を経由する navigation は `waitUntil: 'commit'` + ERR_ABORTED swallow パターンを採用
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — feat/guide-page-restructure
+- 関連 fixture: [e2e/fixtures/super-admin.ts](../../e2e/fixtures/super-admin.ts) (name suffix + 拡張 cleanup)
+- 関連 spec: [e2e/specs/13-super-admin-dashboard.spec.ts](../../e2e/specs/13-super-admin-dashboard.spec.ts) (redirect goto 修正)
+- 関連 config: [playwright.config.ts](../../playwright.config.ts) (chromium-mobile testIgnore)
+- 過去関連 KDD: §5.X+30 (cleanup transaction 不使用), `e2e/fixtures/multi-tenant.ts` の callSuffix パターン (先行事例)
+
+---
+
+## 5.X+36 infrastructure PR と feature PR が同一 route ファイルを別観点で修正していて衝突する ─ **両方の副作用を順序連鎖** (Pre-check → service 呼出 → try/catch) させて解消 (PR #339 / 2026-05-12)
+
+### 罠の正体
+
+PR #339 (`fix/memo-edit-long-link-overflow`) は memo 編集ダイアログの長 URL 表示崩れ修正で、副次的に **`/api/memos/[id]` PATCH route で `PUBLIC_REQUIRES_TITLE` のサービス例外を 400 へ変換する try/catch** を追加していた。
+
+ところがその間に PR-5 (#333) が main にマージされ、**同一の `/api/memos/[id]` PATCH route に `requireStorageQuotaForWrite` Pre-check が挿入** された結果、main 取り込み時に **`updateMemo()` 呼出 line を含むハンクで content conflict** が発生。
+
+```ts
+// HEAD (PR #339): try/catch wrap
+let updated;
+try {
+  updated = await updateMemo(...);
+} catch (e) {
+  if (e.message === 'PUBLIC_REQUIRES_TITLE') return NextResponse.json(..., { status: 400 });
+  throw e;
+}
+
+// main (PR-5): Pre-check 挿入
+const quotaErr = await requireStorageQuotaForWrite(...);
+if (quotaErr) return quotaErr;
+const updated = await updateMemo(...);
+```
+
+両側とも **service 呼出 line を取り合っている** が、**意味的には独立** (storage quota / value validation)。
+
+### 教訓 (副作用の順序設計)
+
+API route のミドルウェア風レイヤは、慣習的に以下の順序で並べる:
+
+1. **認証 / 認可** (`getAuthenticatedUser` / `checkProjectPermission`)
+2. **入力バリデーション** (`schema.safeParse`)
+3. **クォータ / プラン制限 Pre-check** (`requireStorageQuotaForWrite` / `withMeteredLLM`) ← **fail-fast で service 呼出を回避**
+4. **service 呼出** (try/catch でビジネス例外 → HTTP error code 変換)
+5. **副作用ログ** (`recordAuditLog` 等)
+
+→ Pre-check を service 呼出より **前** に置くことで「無駄な service 実行 + 後始末」を避ける設計。conflict が発生したら、この順序原則に従って**両側の改修を順序連鎖**させればよい。
+
+### 修正パターン (本 PR で適用)
+
+```ts
+// PR-5 Pre-check (write 前に拒否し service 呼出を回避)
+const quotaErr = await requireStorageQuotaForWrite(user.tenantId, JSON.stringify(parsed.data).length);
+if (quotaErr) return quotaErr;
+
+// PR #339 service 例外ハンドル
+let updated;
+try {
+  updated = await updateMemo(id, parsed.data, user.id, user.tenantId);
+} catch (e) {
+  if (e instanceof Error && e.message === 'PUBLIC_REQUIRES_TITLE') {
+    return NextResponse.json({ error: { code: 'PUBLIC_REQUIRES_TITLE', message: '...' } }, { status: 400 });
+  }
+  throw e;
+}
+```
+
+### 横展開で漏らしやすい箇所
+
+- [ ] **「片方を捨てて勝者を採用」しないこと**: conflict が同 line 上にあると `--theirs` / `--ours` で安易に解決しがちだが、両方が**異なる目的の正当な改修**であれば両方残す
+- [ ] **既存の Pre-check helper を import 漏れさせない**: 本 PR でも `requireStorageQuotaForWrite` の import 文は main 側で既に追加済 (`@/lib/api-helpers` から re-export) のため、再度 import 文を書き直す必要は無かった。**import 文も conflict ハンクに含まれている場合は片方を採用**
+- [ ] **副作用順序: Pre-check → service → audit log**: 順序を入れ替えると「拒否なのに audit ログが残る」「先に書き込んだ後で quota 超過判明」等の副作用順序バグを生む
+
+### 関連
+
+- 修正 PR: PR #339 (2026-05-12 / fix/memo-edit-long-link-overflow)
+- infrastructure PR: PR-5 (#333) — `requireStorageQuotaForWrite` の CRUD 全 write route 横展開
+- 関連 helper: [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) (`requireStorageQuotaForWrite`)
+- 過去関連 KDD: §5.X+17 (同一ファイル並行更新の merge conflict 対策), §5.X+29 (Pre-check の API route 層集約方針)
