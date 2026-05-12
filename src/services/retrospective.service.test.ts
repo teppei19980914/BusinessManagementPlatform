@@ -419,6 +419,7 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
       ['ret-1', 'ret-2', 'ret-3'],
       'draft',
       'u-1',
+      't-1', // viewerTenantId
     );
 
     expect(r.updatedIds).toEqual(['ret-1', 'ret-3']);
@@ -426,15 +427,22 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
     expect(r.skippedNotFound).toBe(0);
 
     // PR feat/asset-multi-project-linking: scope は M:N (retrospectiveProjects) 経由で判定する。
+    // 2026-05-12: findMany にも tenantId 含まれる
     const findCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
-    expect(findCall.where).toEqual({
+    expect(findCall.where).toMatchObject({
       id: { in: ['ret-1', 'ret-2', 'ret-3'] },
       deletedAt: null,
+      tenantId: 't-1',
       retrospectiveProjects: { some: { projectId: 'p-1' } },
     });
 
+    // 2026-05-12 severity-1 防御: tenantId / createdBy 明示
     const call = vi.mocked(prisma.retrospective.updateMany).mock.calls[0][0];
-    expect(call.where).toEqual({ id: { in: ['ret-1', 'ret-3'] } });
+    expect(call.where).toMatchObject({
+      id: { in: ['ret-1', 'ret-3'] },
+      tenantId: 't-1',
+      createdBy: 'u-1',
+    });
     expect(call.data).toEqual({ visibility: 'draft', updatedBy: 'u-1' });
   });
 

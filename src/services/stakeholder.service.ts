@@ -308,7 +308,8 @@ export async function deleteStakeholder(
       data: { deletedAt: now, updatedBy: userId },
     }),
     prisma.comment.updateMany({
-      where: { entityType: 'stakeholder', entityId: stakeholderId, deletedAt: null },
+      // 2026-05-12 severity-1 防御: tenantId 明示
+      where: { tenantId: viewerTenantId, entityType: 'stakeholder', entityId: stakeholderId, deletedAt: null },
       data: { deletedAt: now },
     }),
   ]);

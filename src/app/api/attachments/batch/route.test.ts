@@ -116,6 +116,22 @@ describe('POST /api/attachments/batch — lenient entityIds', () => {
     const json = await res.json();
     expect(json).toEqual({ data: {} });
   });
+
+  // 2026-05-12 severity-1 防御テスト
+  it('★テナント越境防止★ memo branch で memo.findMany の where に tenantId が含まれる', async () => {
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([{ id: VALID_UUID_1 }] as never);
+    const res = await POST(postReq({
+      entityType: 'memo',
+      entityIds: [VALID_UUID_1],
+    }));
+    expect(res.status).toBe(200);
+
+    // memo.findMany の where に tenantId が必須化されていることを検証 (IDOR 越境遮断)
+    const memoCall = vi.mocked(prisma.memo.findMany).mock.calls[0]?.[0];
+    expect((memoCall?.where as Record<string, unknown> | undefined)?.tenantId).toBeDefined();
+    // OR の visibility=public 経路があっても他テナント memo は除外される (= tenantId 必須)
+    expect((memoCall?.where as Record<string, unknown>)?.OR).toBeDefined();
+  });
 });
 
 describe('POST /api/attachments/batch — entityType / slot は厳格', () => {

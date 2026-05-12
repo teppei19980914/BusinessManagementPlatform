@@ -102,10 +102,15 @@ export async function POST(req: NextRequest) {
   let filteredIds: string[];
 
   if (entityType === 'memo') {
+    // 2026-05-12 severity-1 修正: tenantId フィルタを追加。
+    //   旧仕様は OR: [{ userId }, { visibility: 'public' }] のみで、他テナントの
+    //   visibility='public' memo の添付 URL が IDOR で取得可能だった (entityIds は
+    //   攻撃者制御の入力)。tenantId フィルタを必須化して越境を構造的に遮断する。
     const accessibleMemos = await prisma.memo.findMany({
       where: {
         id: { in: entityIds },
         deletedAt: null,
+        tenantId: user.tenantId,
         OR: [{ userId: user.id }, { visibility: 'public' }],
       },
       select: { id: true },

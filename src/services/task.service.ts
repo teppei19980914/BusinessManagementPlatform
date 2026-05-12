@@ -688,11 +688,12 @@ export async function deleteTask(
       data: { deletedAt: now, updatedBy: userId },
     }),
     prisma.attachment.updateMany({
-      where: { entityType: 'task', entityId: taskId, deletedAt: null },
+      // 2026-05-12 severity-1 防御: tenantId 明示
+      where: { tenantId: viewerTenantId, entityType: 'task', entityId: taskId, deletedAt: null },
       data: { deletedAt: now },
     }),
     prisma.comment.updateMany({
-      where: { entityType: 'task', entityId: taskId, deletedAt: null },
+      where: { tenantId: viewerTenantId, entityType: 'task', entityId: taskId, deletedAt: null },
       data: { deletedAt: now },
     }),
   ]);

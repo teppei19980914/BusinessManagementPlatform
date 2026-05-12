@@ -241,6 +241,9 @@ export async function cleanupReadNotifications(
   retentionDays: number = 30,
 ): Promise<{ deleted: number }> {
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+  // 2026-05-12: 意図的に全テナント横断 (cron で system-wide な古い既読通知のクリーンアップ)。
+  //   tenantId フィルタなしは仕様。本コメントが tenant-isolation-invariants test の
+  //   allowlist マーカーになる (cross-tenant 明示)。
   const r = await prisma.notification.deleteMany({
     where: {
       readAt: { lt: cutoff, not: null },

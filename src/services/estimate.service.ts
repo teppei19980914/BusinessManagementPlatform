@@ -208,7 +208,8 @@ export async function deleteEstimate(
       data: { deletedAt: now, updatedBy: userId },
     }),
     prisma.attachment.updateMany({
-      where: { entityType: 'estimate', entityId: estimateId, deletedAt: null },
+      // 2026-05-12 severity-1 防御: tenantId 明示 (cascade soft-delete でも越境遮断)
+      where: { tenantId: viewerTenantId, entityType: 'estimate', entityId: estimateId, deletedAt: null },
       data: { deletedAt: now },
     }),
   ]);

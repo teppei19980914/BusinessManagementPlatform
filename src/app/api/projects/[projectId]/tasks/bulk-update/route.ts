@@ -74,10 +74,13 @@ export async function PATCH(
   // 計画系 (task:update) の場合は従来どおり PM/TL 以上で自由 (アサイン変更は
   // PM/TL の業務権限)。
   if (!hasPlanEdit) {
+    // 2026-05-12: 多層防御として project.tenantId を併記。projectId は checkProjectPermission
+    //   で検証済みだが、設計原則「全 query で tenant 明示」を徹底するため。
     const others = await prisma.task.findMany({
       where: {
         id: { in: taskIds },
         projectId,
+        project: { tenantId: user.tenantId },
         deletedAt: null,
         // 自分が担当でないタスクを 1 件でも含むなら弾く
         NOT: { assigneeId: user.id },

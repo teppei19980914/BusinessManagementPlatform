@@ -610,8 +610,16 @@ export async function applyRiskSyncImport(
       removed: softDeletedIds.length,
     };
   } catch (e) {
-    // rollback
-    await rollbackToSnapshot(snapshot, snapshotById, createdIds, updatedIds, softDeletedIds, userId);
+    // rollback (2026-05-12 severity-1 防御: viewerTenantId を渡す)
+    await rollbackToSnapshot(
+      snapshot,
+      snapshotById,
+      createdIds,
+      updatedIds,
+      softDeletedIds,
+      userId,
+      viewerTenantId,
+    );
     throw e;
   }
 }
@@ -623,15 +631,19 @@ async function rollbackToSnapshot(
   updatedIds: string[],
   softDeletedIds: string[],
   userId: string,
+  // 2026-05-12 severity-1 防御: rollback の write 経路にも tenantId 必須化
+  viewerTenantId: string,
 ): Promise<void> {
   if (createdIds.length > 0) {
-    await prisma.riskIssue.deleteMany({ where: { id: { in: createdIds } } });
+    await prisma.riskIssue.deleteMany({
+      where: { id: { in: createdIds }, tenantId: viewerTenantId },
+    });
   }
   for (const id of updatedIds) {
     const orig = snapshotById.get(id);
     if (!orig) continue;
-    await prisma.riskIssue.update({
-      where: { id },
+    await prisma.riskIssue.updateMany({
+      where: { id, tenantId: viewerTenantId },
       data: {
         type: orig.type,
         title: orig.title,
@@ -655,7 +667,7 @@ async function rollbackToSnapshot(
   }
   if (softDeletedIds.length > 0) {
     await prisma.riskIssue.updateMany({
-      where: { id: { in: softDeletedIds } },
+      where: { id: { in: softDeletedIds }, tenantId: viewerTenantId },
       data: { deletedAt: null, updatedBy: userId },
     });
   }

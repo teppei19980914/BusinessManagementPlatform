@@ -619,12 +619,14 @@ export async function deleteProject(
       where: { id: projectId },
       data: { deletedAt: now, updatedBy: userId },
     }),
+    // 2026-05-12 severity-1 防御: 全 attachment.updateMany に tenantId 明示
     prisma.attachment.updateMany({
-      where: { entityType: 'project', entityId: projectId, deletedAt: null },
+      where: { tenantId: viewerTenantId, entityType: 'project', entityId: projectId, deletedAt: null },
       data: { deletedAt: now },
     }),
     prisma.attachment.updateMany({
       where: {
+        tenantId: viewerTenantId,
         entityType: 'task',
         entityId: { in: tasks.map((t) => t.id) },
         deletedAt: null,
@@ -633,6 +635,7 @@ export async function deleteProject(
     }),
     prisma.attachment.updateMany({
       where: {
+        tenantId: viewerTenantId,
         entityType: 'estimate',
         entityId: { in: estimates.map((e) => e.id) },
         deletedAt: null,
@@ -726,12 +729,13 @@ export async function deleteProjectCascade(
       const linkCount = await prisma.riskIssueProject.count({ where: { riskIssueId } });
       if (linkCount <= 1) {
         // 他に紐付け無し → 本体 + attachment + comment を物理削除
+        // 2026-05-12 severity-1 防御: tenantId 明示
         const attRes = await prisma.attachment.deleteMany({
-          where: { entityType: 'risk', entityId: riskIssueId },
+          where: { tenantId: viewerTenantId, entityType: 'risk', entityId: riskIssueId },
         });
         attachmentsDeleted += attRes.count;
         await prisma.comment.deleteMany({
-          where: { entityType: 'risk', entityId: riskIssueId },
+          where: { tenantId: viewerTenantId, entityType: 'risk', entityId: riskIssueId },
         });
         await prisma.riskIssueProject.deleteMany({ where: { riskIssueId } });
         await prisma.riskIssue.delete({ where: { id: riskIssueId } });
@@ -754,12 +758,13 @@ export async function deleteProjectCascade(
     for (const { riskIssueId } of linkedIssues) {
       const linkCount = await prisma.riskIssueProject.count({ where: { riskIssueId } });
       if (linkCount <= 1) {
+        // 2026-05-12 severity-1 防御: tenantId 明示
         const attRes = await prisma.attachment.deleteMany({
-          where: { entityType: 'risk', entityId: riskIssueId },
+          where: { tenantId: viewerTenantId, entityType: 'risk', entityId: riskIssueId },
         });
         attachmentsDeleted += attRes.count;
         await prisma.comment.deleteMany({
-          where: { entityType: 'issue', entityId: riskIssueId },
+          where: { tenantId: viewerTenantId, entityType: 'issue', entityId: riskIssueId },
         });
         await prisma.riskIssueProject.deleteMany({ where: { riskIssueId } });
         await prisma.riskIssue.delete({ where: { id: riskIssueId } });
@@ -783,12 +788,13 @@ export async function deleteProjectCascade(
         where: { retrospectiveId },
       });
       if (linkCount <= 1) {
+        // 2026-05-12 severity-1 防御: tenantId 明示
         const attRes = await prisma.attachment.deleteMany({
-          where: { entityType: 'retrospective', entityId: retrospectiveId },
+          where: { tenantId: viewerTenantId, entityType: 'retrospective', entityId: retrospectiveId },
         });
         attachmentsDeleted += attRes.count;
         await prisma.comment.deleteMany({
-          where: { entityType: 'retrospective', entityId: retrospectiveId },
+          where: { tenantId: viewerTenantId, entityType: 'retrospective', entityId: retrospectiveId },
         });
         await prisma.retrospectiveProject.deleteMany({ where: { retrospectiveId } });
         await prisma.retrospective.delete({ where: { id: retrospectiveId } });
@@ -814,13 +820,17 @@ export async function deleteProjectCascade(
       });
       if (linkCount <= 1) {
         // 他に紐付けがない → 本体 + attachment + comment を物理削除
+        // 2026-05-12: 多層防御として全 deleteMany に tenantId を明示。
+        //   line 686-690 で project.tenantId == viewerTenantId は検証済みだが、
+        //   個別 deleteMany に明示することで「全 query に tenantId」原則を徹底し、
+        //   将来の data corruption / 連番 ID 化への耐性を獲得する。
         const attRes = await prisma.attachment.deleteMany({
-          where: { entityType: 'knowledge', entityId: kId },
+          where: { tenantId: viewerTenantId, entityType: 'knowledge', entityId: kId },
         });
         attachmentsDeleted += attRes.count;
         // PR fix/visibility-auth-matrix: comments も cascade 物理削除 (§5.51)
         await prisma.comment.deleteMany({
-          where: { entityType: 'knowledge', entityId: kId },
+          where: { tenantId: viewerTenantId, entityType: 'knowledge', entityId: kId },
         });
         await prisma.knowledgeProject.deleteMany({ where: { knowledgeId: kId } });
         await prisma.knowledge.delete({ where: { id: kId } });
@@ -836,36 +846,45 @@ export async function deleteProjectCascade(
   }
 
   // ---------- 強制削除: Task / Estimate / ProjectMember / Project + Attachments ----------
+  // 2026-05-12: 多層防御として全 deleteMany に tenantId を明示。projectId 経由でも
+  //   tenant は転写されているが、Attachment / Comment / TaskProgressLog のような
+  //   tenantId 列を持つ entity は直接フィルタを併記する。
   if (taskIds.length > 0) {
-    await prisma.taskProgressLog.deleteMany({ where: { taskId: { in: taskIds } } });
+    // TaskProgressLog は task 経由で project に紐付くため task の親 projectId+tenantId で検証
+    await prisma.taskProgressLog.deleteMany({
+      where: { taskId: { in: taskIds }, task: { project: { tenantId: viewerTenantId } } },
+    });
     const attTaskRes = await prisma.attachment.deleteMany({
-      where: { entityType: 'task', entityId: { in: taskIds } },
+      where: { tenantId: viewerTenantId, entityType: 'task', entityId: { in: taskIds } },
     });
     attachmentsDeleted += attTaskRes.count;
     // PR fix/visibility-auth-matrix: task comments も cascade 物理削除 (§5.51)
     await prisma.comment.deleteMany({
-      where: { entityType: 'task', entityId: { in: taskIds } },
+      where: { tenantId: viewerTenantId, entityType: 'task', entityId: { in: taskIds } },
     });
   }
   if (estimateIds.length > 0) {
     const attEstRes = await prisma.attachment.deleteMany({
-      where: { entityType: 'estimate', entityId: { in: estimateIds } },
+      where: { tenantId: viewerTenantId, entityType: 'estimate', entityId: { in: estimateIds } },
     });
     attachmentsDeleted += attEstRes.count;
   }
   const attProjRes = await prisma.attachment.deleteMany({
-    where: { entityType: 'project', entityId: projectId },
+    where: { tenantId: viewerTenantId, entityType: 'project', entityId: projectId },
   });
   attachmentsDeleted += attProjRes.count;
 
-  await prisma.task.deleteMany({ where: { projectId } });
-  await prisma.estimate.deleteMany({ where: { projectId } });
-  await prisma.projectMember.deleteMany({ where: { projectId } });
+  // Task / Estimate / ProjectMember は projectId 経由で tenant 転写済 (project は検証済)。
+  // ProjectMember は tenantId 列を持たないため projectId 一致のみで十分。
+  await prisma.task.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
+  await prisma.estimate.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
+  await prisma.projectMember.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
   // 2026-05-09 hotfix: SuggestionExplanation の FK (suggestion_explanations_project_id_fkey)
   //   が ON DELETE CASCADE 未指定のため、project.delete 前に明示削除しないと P2003 エラー。
   //   P-3 (2026-05-08) で SuggestionExplanation テーブルを追加したが、deleteProjectCascade
   //   に対応する cleanup を追加し忘れていた本番事象を修正 (KDD §5.X+6)。
-  await prisma.suggestionExplanation.deleteMany({ where: { projectId } });
+  //   2026-05-12: 多層防御として tenantId 明示。
+  await prisma.suggestionExplanation.deleteMany({ where: { tenantId: viewerTenantId, projectId } });
   await prisma.project.delete({ where: { id: projectId } });
 
   return {

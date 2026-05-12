@@ -21,12 +21,18 @@ export async function GET() {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
+  // 2026-05-12: 多層防御として project.tenantId フィルタを追加。
+  //   User.tenantId は不変 + ProjectMember は同テナント前提で運用されているため、
+  //   `assigneeId: user.id` だけでも自テナント内に絞れる **はず** だが、過去の
+  //   data corruption / 越境 ProjectMember 追加バグへの耐性として project リレーション
+  //   フィルタを併記する (severity-1 防御徹底)。
   const tasks = await prisma.task.findMany({
     where: {
       assigneeId: user.id,
       type: 'activity',
       deletedAt: null,
       status: { not: 'completed' },
+      project: { tenantId: user.tenantId },
     },
     include: {
       project: { select: { name: true } },

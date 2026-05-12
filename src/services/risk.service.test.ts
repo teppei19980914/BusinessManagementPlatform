@@ -569,6 +569,7 @@ describe('bulkUpdateRisksFromList', () => {
       ['r-1', 'r-2', 'r-3'],
       { state: 'resolved' },
       'u-1',
+      't-1', // viewerTenantId
     );
 
     expect(r.updatedIds).toEqual(['r-1', 'r-2']);
@@ -576,15 +577,22 @@ describe('bulkUpdateRisksFromList', () => {
     expect(r.skippedNotFound).toBe(0);
 
     // PR feat/asset-multi-project-linking: scope は M:N (riskIssueProjects) 経由で判定する。
+    // 2026-05-12: findMany にも tenantId が含まれる
     const findCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
-    expect(findCall.where).toEqual({
+    expect(findCall.where).toMatchObject({
       id: { in: ['r-1', 'r-2', 'r-3'] },
       deletedAt: null,
+      tenantId: 't-1',
       riskIssueProjects: { some: { projectId: 'p-1' } },
     });
 
+    // 2026-05-12 severity-1 防御: tenantId / reporterId 明示
     const updateCall = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0];
-    expect(updateCall.where).toEqual({ id: { in: ['r-1', 'r-2'] } });
+    expect(updateCall.where).toMatchObject({
+      id: { in: ['r-1', 'r-2'] },
+      tenantId: 't-1',
+      reporterId: 'u-1',
+    });
     expect(updateCall.data).toEqual({ updatedBy: 'u-1', state: 'resolved' });
   });
 

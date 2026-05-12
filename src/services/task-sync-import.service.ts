@@ -661,8 +661,17 @@ export async function applySyncImport(
       removed: softDeletedIds.length,
     };
   } catch (e) {
-    // rollback: snapshot から完全復元
-    await rollbackToSnapshot(snapshot, snapshotById, createdIds, updatedIds, softDeletedIds, userId);
+    // rollback: snapshot から完全復元 (2026-05-12 severity-1 防御: projectId を渡して project.tenantId 検証)
+    await rollbackToSnapshot(
+      snapshot,
+      snapshotById,
+      createdIds,
+      updatedIds,
+      softDeletedIds,
+      userId,
+      projectId,
+      viewerTenantId,
+    );
     throw e;
   }
 }
@@ -674,6 +683,9 @@ export async function applySyncImport(
  *   - 本処理で作成したタスクは物理削除
  *   - 本処理で UPDATE したタスクは snapshot から完全復元 (全列)
  *   - 本処理で論理削除したタスクは deletedAt=null に戻す
+ *
+ * 2026-05-12 severity-1 防御: Task は tenantId 列を持たないが、`project: { tenantId }` リレーション
+ *   フィルタで自テナント所属 project の task のみに絞る。
  */
 async function rollbackToSnapshot(
   snapshot: Awaited<ReturnType<typeof prisma.task.findMany>>,
@@ -682,17 +694,25 @@ async function rollbackToSnapshot(
   updatedIds: string[],
   softDeletedIds: string[],
   userId: string,
+  projectId: string,
+  viewerTenantId: string,
 ): Promise<void> {
-  // 1. 作成済を物理削除
+  // 1. 作成済を物理削除 (project が自テナント所属であることを併記)
   if (createdIds.length > 0) {
-    await prisma.task.deleteMany({ where: { id: { in: createdIds } } });
+    await prisma.task.deleteMany({
+      where: {
+        id: { in: createdIds },
+        projectId,
+        project: { tenantId: viewerTenantId },
+      },
+    });
   }
   // 2. UPDATE 済を復元
   for (const id of updatedIds) {
     const orig = snapshotById.get(id);
     if (!orig) continue;
-    await prisma.task.update({
-      where: { id },
+    await prisma.task.updateMany({
+      where: { id, projectId, project: { tenantId: viewerTenantId } },
       data: {
         parentTaskId: orig.parentTaskId,
         type: orig.type,
@@ -718,7 +738,11 @@ async function rollbackToSnapshot(
   // 3. 論理削除を巻き戻し
   if (softDeletedIds.length > 0) {
     await prisma.task.updateMany({
-      where: { id: { in: softDeletedIds } },
+      where: {
+        id: { in: softDeletedIds },
+        projectId,
+        project: { tenantId: viewerTenantId },
+      },
       data: { deletedAt: null, updatedBy: userId },
     });
   }
