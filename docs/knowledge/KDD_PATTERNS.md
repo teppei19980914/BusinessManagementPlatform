@@ -7131,3 +7131,91 @@ const allTenants = await prisma.tenant.findMany({
 - 関連 service: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts)
 - 関連 test: [src/services/tenant-monthly-reset.service.test.ts](../../src/services/tenant-monthly-reset.service.test.ts)
 - 関連 KDD: §5.X+30 (KDD ファイル末尾コンフリクト一般論)
+
+---
+
+## 5.X+34 merge 後の **conflict zone 外** に同 refactor 関数の旧シグネチャ呼び出しが残存する罠 ─ `grep` で全 call site を verify する (PR #337 / 2026-05-12)
+
+### 罠の正体
+
+PR #337 で `tenant-monthly-reset.service.ts` の conflict を §5.X+33 パターンで解消した直後、CI で 3 種類のエラーが連鎖発生:
+
+1. **Lint/Test/Build**: `super-admin.service.test.ts` の 4 テストが `expected NaN to be 157286400` 等で fail (storage 計算が NaN)
+2. **E2E**: TypeScript build が `super-admin.service.ts:554` で「Expected 1 arguments, but got 2」で fail
+3. **Vercel**: 同 build 失敗で Deployment Failed
+
+原因は **PR-3 (§5.X+27) で `computeStorageLimitBytes(llmPlan, addonPlan)` → `computeStorageLimitBytes(addonPlan)` にシグネチャ変更** されたが、HEAD (PR #337) は **`super-admin.service.ts` の 3 つの call site のうち 1 つだけが conflict zone 内** で、残り 2 つは conflict marker が付かなかったため自動 merge で旧シグネチャのまま残った:
+
+```ts
+// 同じファイル内に 3 つの call site が存在:
+//   line 336: computeStorageLimitBytes(addonPlan)              ← main が直接編集 (1 引数化済)
+//   line 403: computeStorageLimitBytes(addonPlan)              ← main が直接編集 (1 引数化済)
+//   line 554: computeStorageLimitBytes(llmPlan, addonPlan)     ← HEAD だけが touch → conflict 対象外
+//                                                                 → 旧 2 引数のまま残存 ❌
+```
+
+さらに **test の expectation も旧仕様** (`expect(r?.storageLimitBytes).toBe(150 * 1024 * 1024)` 等) で、main の新仕様 (LLM プラン非依存、Standard 20MB 共通) と矛盾していた。
+
+### 採用したパターン
+
+§5.X+33 解決直後に **必ず以下 3 つを実行**:
+
+```bash
+# 1. refactor 対象関数の全 call site を grep し、引数数 / 引数並びが新シグネチャに揃っているか確認
+grep -nE "computeStorageLimitBytes" src/ -r
+# → 1 つでも旧シグネチャ呼び出しが残っていたら修正
+
+# 2. 関連テストファイルで旧 magic number / 旧定数値を grep
+grep -nE "150 \* 1024 \* 1024|50 \* 1024 \* 1024|300 \* 1024 \* 1024" src/services/*.test.ts
+# → 旧値の expectation があれば新仕様に更新
+
+# 3. 念のため full type check + 全テストを通す
+pnpm tsc --noEmit  # build 時の type error を先に検出
+pnpm test          # test expectation の不一致を検出
+```
+
+**conflict marker は「同じ行を両方が編集した箇所」しか flag しない**。HEAD だけが触った場所 / main だけが触った場所は自動 merge で「両方の変更を残す」動作になる。refactor は基本的に main 側の一方向変更なので、HEAD の旧シグネチャ呼び出しはそのまま生き残る。
+
+### 修正例 (PR #337)
+
+```ts
+// Before merge (HEAD line 554 — conflict zone 外 = marker 無し)
+const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
+const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);  // ❌ 旧 2 引数
+                                            // ^^^^^^^^ TS error: Expected 1 arguments, but got 2
+
+// After merge fix
+// PR-3 (§5.X+27, 2026-05-15): computeStorageLimitBytes は LLM プランから切り離され
+//   `addonPlan` (Standard 20MB + add-on extra) のみで計算する 1 引数シグネチャ。
+//   旧 2 引数呼び出しが merge resolution で残存していたため修正 (PR #337 fix)。
+const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+const limitBytes = computeStorageLimitBytes(addonPlan);  // ✅ 新 1 引数
+```
+
+テスト側 (`super-admin.service.test.ts`) も同期して更新:
+
+```ts
+// Before
+// Expert (150MB) + standard (0) = 150MB
+expect(r?.storageLimitBytes).toBe(150 * 1024 * 1024);
+
+// After
+// PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard add-on = 20MB 共通ベース。
+expect(r?.storageLimitBytes).toBe(20 * 1024 * 1024);
+```
+
+### 横展開チェック (long-lived PR を main にマージする時)
+
+- [ ] **API シグネチャ変更を含む refactor が main 側にあるか** を `git log main..HEAD -- <file>` で確認
+- [ ] あれば該当関数を `grep -nE "<funcName>"` で全 call site 列挙し、新シグネチャに揃ったか目視確認
+- [ ] **テストの magic number / 旧定数値** も同 PR の `git diff main..HEAD` で旧仕様前提が無いか確認
+- [ ] `pnpm tsc --noEmit` を merge 直後に必ず実行 (build error を CI 前に検出)
+- [ ] `pnpm test <affected>.test.ts` で関連 test の旧 expectation が新仕様で通るか確認
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — `feat/guide-page-restructure` ↔ main の `computeStorageLimitBytes` シグネチャ不一致
+- 関連 service: [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts), [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
+- 関連 config: [src/config/storage-addon.ts](../../src/config/storage-addon.ts) (新シグネチャ定義)
+- 関連 KDD: §5.X+27 (LLM プランから切り離し → 共通 20MB), §5.X+33 (refactor + コメント追加型 conflict)

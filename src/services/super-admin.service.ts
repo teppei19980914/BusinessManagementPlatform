@@ -549,9 +549,11 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
     where: { tenantId: DEFAULT_TENANT_ID, isActive: true, deletedAt: null },
   });
 
-  const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
+  // PR-3 (§5.X+27, 2026-05-15): computeStorageLimitBytes は LLM プランから切り離され
+  //   `addonPlan` (Standard 20MB + add-on extra) のみで計算する 1 引数シグネチャ。
+  //   旧 2 引数呼び出しが merge resolution で残存していたため修正 (PR #337 fix)。
   const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
-  const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);
+  const limitBytes = computeStorageLimitBytes(addonPlan);
   const usedBytes = Number(t.storageBytesUsed);
   const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
 

@@ -769,9 +769,9 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
     expect(r?.currentMonthApiCallCount).toBe(42);
     expect(r?.currentMonthApiCostJpy).toBe(420);
     expect(r?.storageBytesUsed).toBe(10 * 1024 * 1024);
-    // Expert (150MB) + standard (0) = 150MB
-    expect(r?.storageLimitBytes).toBe(150 * 1024 * 1024);
-    expect(r?.storageUsageRatio).toBeCloseTo((10 * 1024 * 1024) / (150 * 1024 * 1024), 5);
+    // PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard add-on = 20MB 共通ベース。
+    expect(r?.storageLimitBytes).toBe(20 * 1024 * 1024);
+    expect(r?.storageUsageRatio).toBeCloseTo((10 * 1024 * 1024) / (20 * 1024 * 1024), 5);
 
     // findFirst が DEFAULT_TENANT_ID を引いていること (運営者自身のテナント)
     const whereArg = vi.mocked(prisma.tenant.findFirst).mock.calls[0]![0]!.where!;
@@ -808,8 +808,8 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
 
     const r = await getDefaultTenantOwnSummary();
 
-    // beginner (50MB) + standard (0) = 50MB
-    expect(r?.storageLimitBytes).toBe(50 * 1024 * 1024);
+    // PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard fallback = 20MB 共通ベース。
+    expect(r?.storageLimitBytes).toBe(20 * 1024 * 1024);
     expect(r?.storageAddonPlan).toBe('standard');
   });
 });
@@ -1058,10 +1058,10 @@ describe('listStorageUsageTop — Storage ランキング (顧客のみ)', () =>
     });
   });
 
-  it('Storage 上限と使用率を LLM プラン x add-on プランから正確に計算', async () => {
+  it('Storage 上限と使用率を add-on プランから正確に計算', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
-      // pro plan (300MB standard) + pro_storage (+1GB) = 1.3GB limit
-      // 1.5GB 使用 = 115%
+      // PR-3 (§5.X+27): LLM プラン非依存。pro_storage = 20MB + 1000MB = 1.02GB
+      // 1.5GB 使用 = 約 140% (上限超過)
       {
         id: 'tenant-over', tenantSeq: 2, name: '上限超過',
         plan: 'pro', storageAddonPlan: 'pro_storage',
@@ -1072,7 +1072,8 @@ describe('listStorageUsageTop — Storage ランキング (顧客のみ)', () =>
 
     const rows = await listStorageUsageTop(10);
 
-    expect(rows[0]!.storageLimitBytes).toBe(300 * 1024 * 1024 + 1024 * 1024 * 1024);
+    // 20MB (standard base) + 1000MB (pro_storage extra) = 1020MB
+    expect(rows[0]!.storageLimitBytes).toBe(20 * 1024 * 1024 + 1000 * 1024 * 1024);
     expect(rows[0]!.storageUsageRatio).toBeGreaterThan(1.0);
     // Grace period 開始から 3 日 (< 7 日) → grace_active
     expect(rows[0]!.graceState).toBe('grace_active');
@@ -1160,8 +1161,8 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
     expect(result!.entityCounts).toEqual({
       projects: 2, knowledges: 10, risksIssues: 3, retrospectives: 1, memos: 4,
     });
-    // expert (150MB) + standard (0) = 150MB
-    expect(result!.storageLimitBytes).toBe(150 * 1024 * 1024);
+    // PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard add-on = 20MB 共通ベース。
+    expect(result!.storageLimitBytes).toBe(20 * 1024 * 1024);
     // 当月課金 (内部記録値): LLM ¥420 + Storage ¥0 = ¥420
     expect(result!.totalCurrentMonthJpy).toBe(420);
   });
