@@ -472,6 +472,18 @@ export async function deleteUser(
  */
 export async function lockInactiveUsers(
   systemTriggerId: string,
+  /**
+   * 2026-05-12 severity-1 修正: テナントスコープ引数を追加。
+   *
+   *   - 指定あり (= manual パス、tenant admin から起動): 自テナント内のユーザのみロック
+   *   - 指定なし (= cron パス): 全テナント横断 (Vercel Cron での日次実行)
+   *
+   * 旧仕様は引数なしで常に全テナント横断していたため、tenant A の admin が manual
+   * エンドポイントを叩くと **tenant B のユーザを一斉ロックできる** severity-1 越境バグ
+   * があった。`/api/admin/users/lock-inactive/route.ts` の manual 経路は本引数に
+   * `user.tenantId` を渡すこと。cron 経路は意図的に省略 (全テナント横断が仕様)。
+   */
+  tenantScope?: string,
 ): Promise<{ lockedUserIds: string[] }> {
   const thresholdDate = new Date(
     Date.now() - INACTIVE_USER_LOCK_DAYS * 24 * 60 * 60 * 1000,
@@ -479,11 +491,13 @@ export async function lockInactiveUsers(
 
   // 候補抽出: 長期間ログインなし (or 一度もログインしていないかつ作成から閾値経過)
   // Phase 2-10: tenantId を select に追加 (audit log の所属 tenant に使う)
+  // 2026-05-12: tenantScope が指定されたら自テナント内のみに絞る (manual 経路の越境遮断)
   const candidates = await prisma.user.findMany({
     where: {
       isActive: true,
       deletedAt: null,
       systemRole: { not: 'admin' },
+      ...(tenantScope !== undefined ? { tenantId: tenantScope } : {}),
       OR: [
         { lastLoginAt: { lt: thresholdDate } },
         { AND: [{ lastLoginAt: null }, { createdAt: { lt: thresholdDate } }] },

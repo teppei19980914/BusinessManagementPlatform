@@ -74,8 +74,14 @@ export async function POST(req: NextRequest) {
 
   const projectIds = parsed.data.projectIds ?? [];
   if (projectIds.length > 0) {
+    // 2026-05-12 severity-1 防御: project リレーション経由で自テナント限定を併記。
+    //   user.id は単一テナント所属だが、data corruption への耐性として明示。
     const memberships = await prisma.projectMember.findMany({
-      where: { userId: user.id, projectId: { in: projectIds } },
+      where: {
+        userId: user.id,
+        projectId: { in: projectIds },
+        project: { tenantId: user.tenantId },
+      },
       select: { projectId: true },
     });
     const memberSet = new Set(memberships.map((m) => m.projectId));

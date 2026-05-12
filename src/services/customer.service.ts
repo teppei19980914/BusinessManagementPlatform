@@ -217,9 +217,17 @@ export async function deleteCustomer(
   //   削除前に紐づく Comment を soft-delete してから物理削除する (§5.51)。
   //   Customer 本体は物理削除なので、コメント側は将来的に物理削除を検討する余地あり。
   //   現状は他 entity と挙動を揃えて soft-delete に統一する。
+  // 2026-05-12: 多層防御として comment.updateMany にも tenantId を明示。
+  //   UUID 衝突確率は実質ゼロだが、設計原則「全 query で tenantId 明示」を徹底し、
+  //   将来 entityId が連番化されたり、データ corruption が起きた場合でも越境を防ぐ。
   await prisma.$transaction([
     prisma.comment.updateMany({
-      where: { entityType: 'customer', entityId: customerId, deletedAt: null },
+      where: {
+        tenantId: viewerTenantId,
+        entityType: 'customer',
+        entityId: customerId,
+        deletedAt: null,
+      },
       data: { deletedAt: new Date() },
     }),
     // 物理削除。論理削除済み Project の customer_id は FK ON DELETE SET NULL で自動 null 化。

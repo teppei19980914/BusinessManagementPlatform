@@ -121,6 +121,9 @@ export async function listAllRetrospectivesForViewer(
   });
 
   // createdBy / updatedBy のユーザ名を解決 (PR #199: コメントは別経路 /api/comments で取得)
+  // 2026-05-12: 意図的な cross-tenant lookup。userIds は事前にテナント検証済の retros から
+  //   抽出されるが、createdBy / updatedBy は過去に他テナント所属だった元 user の可能性 (退職後の
+  //   テナント移動など) があり得るため tenantId フィルタは掛けない。氏名のみ select で機微情報なし。
   const userIds = [...new Set([
     ...retros.map((r) => r.createdBy),
     ...retros.map((r) => r.updatedBy),
@@ -474,11 +477,12 @@ export async function deleteRetrospective(
       data: { deletedAt: now, updatedBy: userId },
     }),
     prisma.attachment.updateMany({
-      where: { entityType: 'retrospective', entityId: retroId, deletedAt: null },
+      // 2026-05-12 severity-1 防御: tenantId 明示
+      where: { tenantId: viewerTenantId, entityType: 'retrospective', entityId: retroId, deletedAt: null },
       data: { deletedAt: now },
     }),
     prisma.comment.updateMany({
-      where: { entityType: 'retrospective', entityId: retroId, deletedAt: null },
+      where: { tenantId: viewerTenantId, entityType: 'retrospective', entityId: retroId, deletedAt: null },
       data: { deletedAt: now },
     }),
   ]);
@@ -520,7 +524,8 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
   }
 
   await prisma.retrospective.updateMany({
-    where: { id: { in: ownedIds } },
+    // 2026-05-12 severity-1 防御: tenantId / createdBy 明示
+    where: { id: { in: ownedIds }, tenantId: viewerTenantId, createdBy: viewerUserId },
     data: { visibility, updatedBy: viewerUserId },
   });
 

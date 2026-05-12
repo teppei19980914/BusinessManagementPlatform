@@ -193,14 +193,17 @@ export async function updateComment(
 
   if (mentions !== undefined) {
     // 旧 mentions 取得
+    // 2026-05-12 severity-1 防御: tenantId 明示 (comment は親で tenant 検証済みだが mention にも併記)
     const old = await prisma.mention.findMany({
-      where: { commentId },
+      where: { commentId, tenantId: viewerTenantId },
       select: { id: true, kind: true, targetUserId: true },
     });
     const { added, removedIds } = diffMentions(old, mentions);
 
     if (removedIds.length > 0) {
-      await prisma.mention.deleteMany({ where: { id: { in: removedIds } } });
+      await prisma.mention.deleteMany({
+        where: { id: { in: removedIds }, tenantId: viewerTenantId, commentId },
+      });
     }
     if (added.length > 0) {
       await prisma.mention.createMany({

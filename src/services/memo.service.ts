@@ -222,7 +222,9 @@ export async function bulkUpdateMemosVisibilityFromList(
   }
 
   await prisma.memo.updateMany({
-    where: { id: { in: ownedIds } },
+    // 2026-05-12 severity-1 防御: ownedIds は事前 findMany で tenantId 検証済みだが、
+    //   updateMany にも tenantId を併記し「全 query で tenantId 必須」原則を徹底
+    where: { id: { in: ownedIds }, tenantId: viewerTenantId, userId: viewerUserId },
     data: { visibility },
   });
 
@@ -250,7 +252,8 @@ export async function deleteMemo(
       data: { deletedAt: now },
     }),
     prisma.attachment.updateMany({
-      where: { entityType: 'memo', entityId: memoId, deletedAt: null },
+      // 2026-05-12 severity-1 防御: tenantId 明示
+      where: { tenantId: viewerTenantId, entityType: 'memo', entityId: memoId, deletedAt: null },
       data: { deletedAt: now },
     }),
   ]);

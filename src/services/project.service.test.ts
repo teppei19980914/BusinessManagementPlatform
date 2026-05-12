@@ -834,16 +834,37 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
     expect(prisma.knowledgeProject.findMany).not.toHaveBeenCalled();
     // 本体 + 強制削除対象 (task / estimate / projectMember / project) は実行される
     expect(prisma.project.delete).toHaveBeenCalledWith({ where: { id: 'p-1' } });
-    expect(prisma.projectMember.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'p-1' } });
+    // 2026-05-12 severity-1 防御: projectMember.deleteMany にも project.tenantId 検証を併記
+    expect(prisma.projectMember.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'p-1', project: { tenantId: TEST_TENANT_ID } },
+    });
   });
 
   // 2026-05-09 hotfix: project.delete 前に SuggestionExplanation を必ず deleteMany する
   //   (FK suggestion_explanations_project_id_fkey の P2003 を回避)。本番障害の再現防止。
+  // 2026-05-12: severity-1 防御として tenantId を where に明示
   it('project.delete 前に SuggestionExplanation を必ず削除する (#hotfix)', async () => {
     await deleteProjectCascade('p-1', TEST_TENANT_ID);
 
     expect(prisma.suggestionExplanation.deleteMany).toHaveBeenCalledWith({
-      where: { projectId: 'p-1' },
+      where: { tenantId: TEST_TENANT_ID, projectId: 'p-1' },
+    });
+  });
+
+  // 2026-05-12 severity-1 防御: cascade 削除の各 deleteMany が tenantId を持つことを検証
+  it('cascade 削除の全 deleteMany に tenantId が含まれる (defense-in-depth)', async () => {
+    await deleteProjectCascade('p-1', TEST_TENANT_ID);
+
+    // task / estimate / projectMember は project relation 経由
+    expect(prisma.task.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'p-1', project: { tenantId: TEST_TENANT_ID } },
+    });
+    expect(prisma.estimate.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'p-1', project: { tenantId: TEST_TENANT_ID } },
+    });
+    // attachment は tenantId 列を持つので直接フィルタ
+    expect(prisma.attachment.deleteMany).toHaveBeenCalledWith({
+      where: { tenantId: TEST_TENANT_ID, entityType: 'project', entityId: 'p-1' },
     });
   });
 

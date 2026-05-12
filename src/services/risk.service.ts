@@ -294,6 +294,8 @@ export async function listAllRisksForViewer(
 
   // createdBy / updatedBy は scalar カラムで User リレーションが張られていないため、
   // 関連ユーザ名をバルクで 1 クエリ取得して map 引きする (N+1 回避)。
+  // 2026-05-12: 意図的な cross-tenant lookup。userIds は事前にテナント検証済の risks から
+  //   抽出。氏名のみ select で機微情報は含まない。
   const userIds = Array.from(new Set(risks.flatMap((r) => [r.createdBy, r.updatedBy])));
   const users = userIds.length > 0
     ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
@@ -655,7 +657,8 @@ export async function bulkUpdateRisksFromList(
   }
 
   await prisma.riskIssue.updateMany({
-    where: { id: { in: ownedIds } },
+    // 2026-05-12 severity-1 防御: tenantId / reporterId 明示
+    where: { id: { in: ownedIds }, tenantId: viewerTenantId, reporterId: viewerUserId },
     data,
   });
 
@@ -701,11 +704,12 @@ export async function deleteRisk(
       data: { deletedAt: now, updatedBy: userId },
     }),
     prisma.attachment.updateMany({
-      where: { entityType: 'risk', entityId: riskId, deletedAt: null },
+      // 2026-05-12 severity-1 防御: tenantId 明示
+      where: { tenantId: viewerTenantId, entityType: 'risk', entityId: riskId, deletedAt: null },
       data: { deletedAt: now },
     }),
     prisma.comment.updateMany({
-      where: { entityType: commentEntityType, entityId: riskId, deletedAt: null },
+      where: { tenantId: viewerTenantId, entityType: commentEntityType, entityId: riskId, deletedAt: null },
       data: { deletedAt: now },
     }),
   ]);

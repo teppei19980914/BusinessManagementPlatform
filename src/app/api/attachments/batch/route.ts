@@ -102,10 +102,15 @@ export async function POST(req: NextRequest) {
   let filteredIds: string[];
 
   if (entityType === 'memo') {
+    // 2026-05-12 severity-1 修正: tenantId フィルタを追加。
+    //   旧仕様は OR: [{ userId }, { visibility: 'public' }] のみで、他テナントの
+    //   visibility='public' memo の添付 URL が IDOR で取得可能だった (entityIds は
+    //   攻撃者制御の入力)。tenantId フィルタを必須化して越境を構造的に遮断する。
     const accessibleMemos = await prisma.memo.findMany({
       where: {
         id: { in: entityIds },
         deletedAt: null,
+        tenantId: user.tenantId,
         OR: [{ userId: user.id }, { visibility: 'public' }],
       },
       select: { id: true },
@@ -187,8 +192,9 @@ export async function POST(req: NextRequest) {
       // (添付は entity の付随情報であり、行が公開なら添付も公開する設計)。
       // PR feat/asset-multi-project-linking: M:N 化により、いずれか 1 つでもメンバーの
       //   プロジェクトに紐付いていれば閲覧可能 (Knowledge と同型)。orphan は public 限定で許可。
+      // 2026-05-12 severity-1 防御: tenantId 必須化 (他テナントの public riskIssue 経由の越境を遮断)
       const all = await prisma.riskIssue.findMany({
-        where: { id: { in: entityIds } },
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
         select: {
           id: true,
           visibility: true,
@@ -208,8 +214,9 @@ export async function POST(req: NextRequest) {
       rows = entityIds.filter((id) => accessibleIds.has(id)).map((id) => ({ id, projectId: '__access_ok__' }));
       memberProjectIds.add('__access_ok__');
     } else if (entityType === 'retrospective') {
+      // 2026-05-12 severity-1 防御: tenantId 必須化
       const all = await prisma.retrospective.findMany({
-        where: { id: { in: entityIds } },
+        where: { id: { in: entityIds }, tenantId: user.tenantId },
         select: {
           id: true,
           visibility: true,
@@ -241,9 +248,11 @@ export async function POST(req: NextRequest) {
         }
       }
       // さらに「プロジェクト紐付けゼロで visibility=public」なナレッジは全ログインユーザが見える
+      // 2026-05-12 severity-1 防御: tenantId 必須化 (他テナントの public knowledge 経由の越境を遮断)
       const publicOrphanKnowledges = await prisma.knowledge.findMany({
         where: {
           id: { in: entityIds },
+          tenantId: user.tenantId,
           visibility: 'public',
           knowledgeProjects: { none: {} },
         },
@@ -256,8 +265,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ data: {} });
       }
       // knowledge は早期 return で返す
+      // 2026-05-12 severity-1 防御: tenantId 必須化 (attachment テーブル自体に tenantId 列あり)
       const rowsK = await prisma.attachment.findMany({
         where: {
+          tenantId: user.tenantId,
           entityType,
           entityId: { in: filteredIds },
           slot: slot ?? undefined,
@@ -300,8 +311,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: {} });
   }
 
+  // 2026-05-12 severity-1 防御: tenantId 必須化 (filteredIds は事前検証済だが defense-in-depth)
   const rows = await prisma.attachment.findMany({
     where: {
+      tenantId: user.tenantId,
       entityType,
       entityId: { in: filteredIds },
       slot: slot ?? undefined,

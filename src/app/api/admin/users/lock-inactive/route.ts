@@ -49,6 +49,7 @@ function isCronAuthorized(req: NextRequest): boolean {
 
 export async function POST(req: NextRequest) {
   // 経路 A: Vercel Cron (CRON_SECRET ヘッダ)
+  //   全テナント横断ロック (システム運用、意図的に tenantScope 指定なし)。
   if (isCronAuthorized(req)) {
     // cron 実行者は system (固定 UUID 相当)。監査ログは lockInactiveUsers 内で
     // `userId=<最初の admin userId>` で残す。該当 admin が居なければ cron スキップ。
@@ -63,17 +64,22 @@ export async function POST(req: NextRequest) {
         { status: 500 },
       );
     }
+    // tenantScope 省略 = 全テナント横断 (cron 仕様)
     const result = await lockInactiveUsers(firstAdmin.id);
     return NextResponse.json({ data: { source: 'cron', ...result } });
   }
 
   // 経路 B: 管理画面からの手動実行
+  //   2026-05-12 severity-1 修正: tenant admin (= systemRole='admin') は自テナント内のみ
+  //   ロック可能。旧仕様は tenantScope 指定なしで `lockInactiveUsers(user.id)` を呼んでおり、
+  //   tenant A の admin が tenant B のユーザを一斉ロックできるバグがあった。
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
   const forbidden = requireAdmin(user);
   if (forbidden) return forbidden;
 
-  const result = await lockInactiveUsers(user.id);
+  // user.tenantId を tenantScope として渡す = 自テナント内のみロック
+  const result = await lockInactiveUsers(user.id, user.tenantId);
 
   // 集約ログ (どのユーザをロックしたか個別は lockInactiveUsers 内で記録済)
   await recordAuditLog({

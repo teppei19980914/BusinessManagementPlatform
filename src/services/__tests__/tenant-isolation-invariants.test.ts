@@ -191,6 +191,270 @@ describe('★提案エンジン tenant scope filter — リグレッション防
 });
 
 // ============================================================================
+// I-2 強化版 (2026-05-12): 各 prisma クエリの where に tenantId が含まれているか
+//   個別 query 単位 で機械的に検査。
+//
+//   旧 I-1 はファイル全体に `tenantId:` の文字列があれば pass する粗いチェックだったが、
+//   「同一ファイル内で 1 つの query が tenantId を持ち、別の query が忘れている」ケースを
+//   検出できなかった (例: customer.service.ts:221 の comment.updateMany 忘れ、
+//   project.service.ts cascade の deleteMany 忘れ)。
+//
+//   本セクションでは prisma.X.findMany/findFirst/findUnique/deleteMany/updateMany/count の
+//   各クエリブロックを個別に抽出し、where 内に tenant 関連フィルタが必ず含まれることを検証する。
+// ============================================================================
+
+/** クエリ単位で tenant フィルタを検出するパターン */
+const TENANT_FILTER_PATTERNS = [
+  /\btenantId\s*[:,}\n]/, // tenantId: ... / tenantId, (shorthand) / tenantId\n (multi-line)
+  /viewerTenantId/,
+  /\btenant\s*:\s*\{/, // tenant: { ... }
+  /project\s*:\s*\{[^}]*tenantId/,
+  /knowledge\s*:\s*\{[^}]*tenantId/,
+  /tenantScopeFilter/,
+  /excludeManagementTenant/,
+  /SUPER_ADMIN_EXCLUDED_TENANT_IDS/,
+  // spread syntax: `...tenantWhere`, `...tenantFilter` 等 (条件付き tenant 注入のパターン)
+  /\.\.\.\s*\w*[tT]enant\w*/,
+];
+
+/** クエリ block 内のいずれかのパターンが match するか */
+function hasTenantFilterInQuery(queryBlock: string, fileContent: string): boolean {
+  // 1. インライン where object: tenant パターン直接検出
+  if (TENANT_FILTER_PATTERNS.some((re) => re.test(queryBlock))) return true;
+  // 2. where: variableName 形式 (Prisma 型の external where 変数) は変数定義を遡って検査
+  //    regex では完全には追えないため、ファイル全体に tenantId/viewerTenantId 言及があれば
+  //    変数定義側で tenant フィルタが入っていると見なし許容する (heuristic)。
+  const varRef = /where\s*:\s*(\w+)\s*[,}\n]/.exec(queryBlock);
+  if (varRef && !['true', 'false', 'null', 'undefined'].includes(varRef[1])) {
+    return /\btenantId\b|viewerTenantId|tenantScopeFilter/.test(fileContent);
+  }
+  // 3. { where, ... } shorthand (= where: where)。同様に変数定義を信頼する heuristic
+  if (/\{\s*where\s*[,}\n]/.test(queryBlock) || /\bwhere\s*,/.test(queryBlock)) {
+    return /\btenantId\b|viewerTenantId|tenantScopeFilter/.test(fileContent);
+  }
+  return false;
+}
+
+/**
+ * 意図的な全テナント横断 (cron / system-wide cleanup / pre-auth など) を明示宣言する
+ * コメントが直前 8 行以内にあれば、tenantId フィルタなしでも許容する。
+ *
+ * 認識キーワード (どれか 1 つ含まれていれば OK):
+ *   - "cross-tenant" / "全テナント横断" / "全テナント対象"
+ *   - "cron で全" / "system-wide"
+ *   - "意図的" + ("tenant" / "テナント")
+ *   - "pre-auth" / "認証前"
+ */
+function hasIntentionalCrossTenantAnnotation(content: string, queryStartLine: number): boolean {
+  // queryStartLine は 1-based。lines は 0-indexed。
+  // 直前 8 行 = lines[queryStartLine - 9 .. queryStartLine - 2] (1-based 番号で queryStartLine - 8 〜 queryStartLine - 1)
+  const lines = content.split('\n');
+  const startIdx = Math.max(0, queryStartLine - 9);
+  const endIdx = queryStartLine - 1; // exclusive (= 直前の行まで)
+  for (let i = startIdx; i < endIdx; i++) {
+    const line = lines[i] ?? '';
+    if (/cross-tenant|全テナント横断|全テナント対象|cron で全|system-wide|pre-auth|認証前/.test(line)) {
+      return true;
+    }
+    if (/(意図的|意図的に).*(tenant|テナント)/.test(line) || /(tenant|テナント).*(意図的|意図的に)/.test(line)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * service ファイル内の `prisma.<model>.<method>({ ... })` 形式の呼び出しを抽出する。
+ * ネストした波括弧に対応するため、balanced parser を使う (regex 単独では限界)。
+ */
+function extractPrismaQueryBlocks(content: string): Array<{ model: string; method: string; block: string; lineNumber: number }> {
+  const blocks: Array<{ model: string; method: string; block: string; lineNumber: number }> = [];
+  const METHODS = ['findMany', 'findFirst', 'findUnique', 'deleteMany', 'updateMany', 'count', 'aggregate', 'groupBy'];
+  const re = new RegExp(`prisma\\.(\\w+)\\.(${METHODS.join('|')})\\(\\s*\\{`, 'g');
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    const model = match[1];
+    const method = match[2];
+    const start = match.index + match[0].length - 1; // '{' の位置
+    let depth = 1;
+    let i = start + 1;
+    while (i < content.length && depth > 0) {
+      if (content[i] === '{') depth++;
+      else if (content[i] === '}') depth--;
+      i++;
+    }
+    if (depth === 0) {
+      const block = content.slice(start, i);
+      const lineNumber = content.slice(0, match.index).split('\n').length;
+      blocks.push({ model, method, block, lineNumber });
+    }
+  }
+  return blocks;
+}
+
+/** tenant フィルタが不要な model (M:N 中間テーブル、tenant 概念なし) */
+const TENANT_AGNOSTIC_MODELS = new Set([
+  'tenant', // テナントそのもの
+  'session', // session は userId-scoped (user 経由で tenant 転写)
+  'passwordHistory', // user-scoped
+  'recoveryCode', // userId 必須経路あり (auth 系)
+  'passwordResetToken', // pre-auth, userId-scoped
+  'emailVerificationToken', // pre-auth
+  'projectMember', // project 経由
+  'knowledgeProject', // 中間テーブル (knowledge 経由)
+  'retrospectiveProject', // 中間テーブル
+  'riskIssueProject', // 中間テーブル
+  'taskKnowledge', // 中間テーブル
+  'taskProgressLog', // task 経由
+  'task', // project 経由 (tenantId 列なし)
+  'estimate', // project 経由
+]);
+
+/** 越境を許す model (super_admin 専用集計など、CROSS_TENANT_ALLOWED_FILES とセット運用) */
+function isCrossTenantContext(filePath: string): boolean {
+  const baseName = filePath.split(/[\\/]/).pop() ?? '';
+  return CROSS_TENANT_ALLOWED_FILES.has(baseName);
+}
+
+describe('★I-2 強化: prisma クエリ単位の tenant フィルタ検査★ (2026-05-12)', () => {
+  const targetFiles = ALL_SERVICE_FILES.filter((f) => !isCrossTenantContext(f));
+
+  it.each(targetFiles)('%s の全 prisma クエリに tenant フィルタが含まれる', (filePath) => {
+    const content = readFileSync(filePath, 'utf-8');
+    const queries = extractPrismaQueryBlocks(content);
+
+    const missing: Array<{ model: string; method: string; line: number }> = [];
+    for (const q of queries) {
+      // tenant 概念のないモデルはスキップ
+      if (TENANT_AGNOSTIC_MODELS.has(q.model)) continue;
+      // user.update の where: { id } 限定は user 自身の更新 (= tenant 経由) なので許容
+      if (q.model === 'user' && (q.method === 'update' || q.method === 'findUnique')
+        && /where:\s*\{\s*id:/.test(q.block)) continue;
+      // user.findFirst で email scope (pre-auth lock-status 等) も許容
+      if (q.model === 'user' && q.method === 'findFirst' && /email:/.test(q.block) && !/tenantId/.test(q.block)) continue;
+
+      if (!hasTenantFilterInQuery(q.block, content)) {
+        // 直前 8 行に「意図的越境」コメントがあれば許容 (cron, system-wide cleanup 等)
+        if (hasIntentionalCrossTenantAnnotation(content, q.lineNumber)) continue;
+        missing.push({ model: q.model, method: q.method, line: q.lineNumber });
+      }
+    }
+
+    if (missing.length > 0) {
+      const fileBaseName = filePath.split(/[\\/]/).pop();
+      const detail = missing
+        .map((m) => `  - line ${m.line}: prisma.${m.model}.${m.method}`)
+        .join('\n');
+      console.error(`★severity-1 候補★ ${fileBaseName}:\n${detail}`);
+    }
+
+    expect(missing).toEqual([]);
+  });
+});
+
+// ============================================================================
+// I-2 拡張 (2026-05-12): app/(dashboard)/**/*.tsx と app/api/**/*.ts も対象に
+//
+//   旧 I-2 は src/services/ のみカバーしていた。しかし page.tsx (server component) や
+//   API route で **直接 prisma を呼ぶ箇所** も same level の risk を持つ。
+//   - audit-logs/page.tsx (Phase 2-10 で修正済み) のような直叫び経路が再発する可能性
+//   - サービスを介さない API route が tenantId フィルタを忘れる可能性
+//
+//   ファイル全体に prisma 呼出があれば対象とし、各 query block 単位で検査する。
+// ============================================================================
+
+const APP_DIR = join(__dirname, '../../app');
+
+function listAppFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const stat = statSync(full);
+    if (stat.isDirectory()) {
+      files.push(...listAppFiles(full));
+    } else if (
+      stat.isFile() &&
+      (name.endsWith('.ts') || name.endsWith('.tsx')) &&
+      !name.endsWith('.test.ts') &&
+      !name.endsWith('.test.tsx') &&
+      !name.endsWith('.db.test.ts')
+    ) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
+const ALL_APP_FILES = listAppFiles(APP_DIR);
+
+/**
+ * page / route ファイル用の許可リスト。
+ *   - super_admin 系: 全テナント横断が仕様
+ *   - 認証フロー / health check: pre-auth / tenant 概念なし
+ *   - cron: 全テナント横断
+ */
+const APP_CROSS_TENANT_ALLOWED = new Set<string>([
+  // super_admin 専用 (全テナント横断が仕様)
+  'src/app/(dashboard)/admin/super',
+  'src/app/api/admin/super',
+  // 認証フロー (pre-auth / tenant 不明)
+  'src/app/api/auth',
+  'src/app/api/health',
+  // Cron endpoints (全テナント対象)
+  'src/app/api/cron',
+  // テナント作成 (新規 tenant 自体を作るため、所属 tenant 概念がない初期処理)
+  'src/app/api/tenants/me/storage-addon',
+]);
+
+function isAllowedAppPath(filePath: string): boolean {
+  // Windows パス区切り対応で正規化
+  const normalized = filePath.replace(/\\/g, '/');
+  for (const allowed of APP_CROSS_TENANT_ALLOWED) {
+    if (normalized.includes(allowed)) return true;
+  }
+  return false;
+}
+
+describe('★I-2 拡張: app (page/route) 層の prisma クエリ tenant フィルタ検査★ (2026-05-12)', () => {
+  const appFiles = ALL_APP_FILES.filter((f) => {
+    if (isAllowedAppPath(f)) return false;
+    // prisma を import していなければ対象外
+    const content = readFileSync(f, 'utf-8');
+    return content.includes("from '@/lib/db'") || content.includes('from "@/lib/db"');
+  });
+
+  it.each(appFiles)('%s の全 prisma クエリに tenant フィルタが含まれる', (filePath) => {
+    const content = readFileSync(filePath, 'utf-8');
+    const queries = extractPrismaQueryBlocks(content);
+
+    const missing: Array<{ model: string; method: string; line: number }> = [];
+    for (const q of queries) {
+      if (TENANT_AGNOSTIC_MODELS.has(q.model)) continue;
+      // user は self-scope (id: user.id) パターンは tenant 経由で安全
+      if (q.model === 'user' && (q.method === 'update' || q.method === 'findUnique' || q.method === 'delete')
+        && /where:\s*\{\s*id:/.test(q.block)) continue;
+      // user.findFirst で email scope (pre-auth) は許容
+      if (q.model === 'user' && q.method === 'findFirst' && /email:/.test(q.block) && !/tenantId/.test(q.block)) continue;
+
+      if (!hasTenantFilterInQuery(q.block, content)) {
+        if (hasIntentionalCrossTenantAnnotation(content, q.lineNumber)) continue;
+        missing.push({ model: q.model, method: q.method, line: q.lineNumber });
+      }
+    }
+
+    if (missing.length > 0) {
+      const fileBaseName = filePath.split(/[\\/]/).slice(-3).join('/');
+      const detail = missing
+        .map((m) => `  - line ${m.line}: prisma.${m.model}.${m.method}`)
+        .join('\n');
+      console.error(`★severity-1 候補★ ${fileBaseName}:\n${detail}`);
+    }
+
+    expect(missing).toEqual([]);
+  });
+});
+
+// ============================================================================
 // I-4: 「シードデータ以外、別テナントのデータは参照/更新/削除不可」が文書化されていること
 // ============================================================================
 

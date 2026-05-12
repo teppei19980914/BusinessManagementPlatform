@@ -439,7 +439,16 @@ export async function applyKnowledgeSyncImport(
 
     return { added: createdIds.length, updated: updatedIds.length, removed: softDeletedIds.length };
   } catch (e) {
-    await rollbackToSnapshot(snapshot, snapshotById, createdIds, updatedIds, softDeletedIds, userId);
+    // 2026-05-12 severity-1 防御: rollback 経路にも viewerTenantId を渡す
+    await rollbackToSnapshot(
+      snapshot,
+      snapshotById,
+      createdIds,
+      updatedIds,
+      softDeletedIds,
+      userId,
+      viewerTenantId,
+    );
     throw e;
   }
 }
@@ -451,16 +460,23 @@ async function rollbackToSnapshot(
   updatedIds: string[],
   softDeletedIds: string[],
   userId: string,
+  // 2026-05-12 severity-1 防御: rollback の write 経路にも tenantId 必須化。
+  //   sync-import 本体は tenantId 検証済みだが、rollback 関数の引数は ID 配列だけで
+  //   tenant 文脈が消えていた。万一バグで他テナントの ID が混入してもロールバック対象外にする。
+  viewerTenantId: string,
 ): Promise<void> {
   if (createdIds.length > 0) {
     // 作成された knowledge_projects junction も cascade で消える想定
-    await prisma.knowledge.deleteMany({ where: { id: { in: createdIds } } });
+    await prisma.knowledge.deleteMany({
+      where: { id: { in: createdIds }, tenantId: viewerTenantId },
+    });
   }
   for (const id of updatedIds) {
     const orig = snapshotById.get(id);
     if (!orig) continue;
-    await prisma.knowledge.update({
-      where: { id },
+    // update where に tenantId 併記して越境を遮断
+    await prisma.knowledge.updateMany({
+      where: { id, tenantId: viewerTenantId },
       data: {
         title: orig.title,
         knowledgeType: orig.knowledgeType,
@@ -481,7 +497,7 @@ async function rollbackToSnapshot(
   }
   if (softDeletedIds.length > 0) {
     await prisma.knowledge.updateMany({
-      where: { id: { in: softDeletedIds } },
+      where: { id: { in: softDeletedIds }, tenantId: viewerTenantId },
       data: { deletedAt: null, updatedBy: userId },
     });
   }

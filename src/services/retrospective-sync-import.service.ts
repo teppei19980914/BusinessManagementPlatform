@@ -430,7 +430,16 @@ export async function applyRetrospectiveSyncImport(
 
     return { added: createdIds.length, updated: updatedIds.length, removed: softDeletedIds.length };
   } catch (e) {
-    await rollbackToSnapshot(snapshot, snapshotById, createdIds, updatedIds, softDeletedIds, userId);
+    // 2026-05-12 severity-1 防御: rollback 経路にも viewerTenantId を渡す
+    await rollbackToSnapshot(
+      snapshot,
+      snapshotById,
+      createdIds,
+      updatedIds,
+      softDeletedIds,
+      userId,
+      viewerTenantId,
+    );
     throw e;
   }
 }
@@ -442,15 +451,19 @@ async function rollbackToSnapshot(
   updatedIds: string[],
   softDeletedIds: string[],
   userId: string,
+  // 2026-05-12 severity-1 防御: rollback の write 経路にも tenantId 必須化
+  viewerTenantId: string,
 ): Promise<void> {
   if (createdIds.length > 0) {
-    await prisma.retrospective.deleteMany({ where: { id: { in: createdIds } } });
+    await prisma.retrospective.deleteMany({
+      where: { id: { in: createdIds }, tenantId: viewerTenantId },
+    });
   }
   for (const id of updatedIds) {
     const orig = snapshotById.get(id);
     if (!orig) continue;
-    await prisma.retrospective.update({
-      where: { id },
+    await prisma.retrospective.updateMany({
+      where: { id, tenantId: viewerTenantId },
       data: {
         conductedDate: orig.conductedDate,
         planSummary: orig.planSummary,
@@ -471,7 +484,7 @@ async function rollbackToSnapshot(
   }
   if (softDeletedIds.length > 0) {
     await prisma.retrospective.updateMany({
-      where: { id: { in: softDeletedIds } },
+      where: { id: { in: softDeletedIds }, tenantId: viewerTenantId },
       data: { deletedAt: null, updatedBy: userId },
     });
   }

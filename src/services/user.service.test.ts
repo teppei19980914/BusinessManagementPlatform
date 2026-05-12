@@ -677,4 +677,43 @@ describe('lockInactiveUsers (PR #89 + feat/account-lock 改修)', () => {
     // u-bad は失敗したので 1 件のみ成功
     expect(r.lockedUserIds).toEqual(['u-good']);
   });
+
+  // 2026-05-12 severity-1 防御テスト
+  describe('★テナント越境防止★ tenantScope 引数', () => {
+    it('tenantScope 省略 (cron 経路) は全テナント横断 (where に tenantId フィルタなし)', async () => {
+      vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
+
+      await lockInactiveUsers('cron-trigger');
+
+      const findCall = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+      // 全テナント横断 = where に tenantId プロパティが存在しない
+      expect((findCall?.where as Record<string, unknown> | undefined)?.tenantId).toBeUndefined();
+    });
+
+    it('tenantScope 指定 (manual 経路) は自テナント内のみに限定', async () => {
+      vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
+
+      await lockInactiveUsers('admin-from-tenant-A', 'tenant-A-id');
+
+      const findCall = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+      // 自テナント内のみ = where.tenantId が指定されている
+      expect((findCall?.where as Record<string, unknown>)?.tenantId).toBe('tenant-A-id');
+    });
+
+    it('tenantScope=tenant-A の場合、tenant-B のユーザは抽出対象外 (越境ロック遮断)', async () => {
+      vi.mocked(prisma.user.findMany).mockResolvedValue([
+        { id: 'u-tenant-a-stale', name: 'A', email: 'a@a.com', tenantId: 'tenant-A-id' },
+      ] as never);
+      vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+      vi.mocked(prisma.auditLog.create).mockResolvedValue({} as never);
+
+      const r = await lockInactiveUsers('admin-from-tenant-A', 'tenant-A-id');
+
+      // findMany の where に tenantId='tenant-A-id' が必ず含まれる → tenant-B 越境不可
+      const findCall = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+      expect((findCall?.where as Record<string, unknown>)?.tenantId).toBe('tenant-A-id');
+      // 1 件のみ抽出された
+      expect(r.lockedUserIds).toEqual(['u-tenant-a-stale']);
+    });
+  });
 });

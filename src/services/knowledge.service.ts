@@ -579,11 +579,12 @@ export async function deleteKnowledge(
       data: { deletedAt: now, updater: { connect: { id: userId } } },
     }),
     prisma.attachment.updateMany({
-      where: { entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
+      // 2026-05-12 severity-1 防御: tenantId 明示
+      where: { tenantId: viewerTenantId, entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
       data: { deletedAt: now },
     }),
     prisma.comment.updateMany({
-      where: { entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
+      where: { tenantId: viewerTenantId, entityType: 'knowledge', entityId: knowledgeId, deletedAt: null },
       data: { deletedAt: now },
     }),
   ]);
@@ -649,8 +650,9 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
 
   // updateMany は relation connect 構文を受け付けないため scalar `updatedBy` を直接セットする
   // (単発 updateKnowledge の `updater: { connect }` 経路とは別経路、§5.21 と同方針)
+  // 2026-05-12 severity-1 防御: tenantId / createdBy 明示
   await prisma.knowledge.updateMany({
-    where: { id: { in: ownedIds } },
+    where: { id: { in: ownedIds }, tenantId: viewerTenantId, createdBy: viewerUserId },
     data: { visibility, updatedBy: viewerUserId },
   });
 
