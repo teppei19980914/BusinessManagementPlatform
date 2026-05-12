@@ -41,6 +41,12 @@ import { DEFAULT_TIMEZONE } from '@/config/i18n';
 export const BEGINNER_NOTICE_DAY_60 = 60;
 export const BEGINNER_NOTICE_DAY_75 = 75;
 export const BEGINNER_EXPIRY_DAYS = 90;
+/** 2026-05-11: 自動物理削除予告 — Day 150 で「あと 30 日で自動削除」を通知 */
+export const BEGINNER_AUTO_DELETE_NOTICE_DAY_150 = 150;
+/** 2026-05-11: 自動物理削除予告 — Day 170 で「あと 10 日で自動削除」を最終通知 */
+export const BEGINNER_AUTO_DELETE_NOTICE_DAY_170 = 170;
+/** 2026-05-11: 自動物理削除発火日。実装は src/services/super-admin.service.ts purgeExpiredBeginnerTenants */
+export const BEGINNER_AUTO_DELETE_DAYS = 180;
 
 // ================================================================
 // 型
@@ -128,6 +134,10 @@ export type SendBeginnerNoticesResult = {
   day75Sent: number;
   /** 90 日 expired 通知メール送信件数 */
   expiredSent: number;
+  /** 2026-05-11: 自動削除 30 日前予告 (Day 150) 送信件数 */
+  autoDeleteDay150Sent: number;
+  /** 2026-05-11: 自動削除 10 日前最終警告 (Day 170) 送信件数 */
+  autoDeleteDay170Sent: number;
   /** メール送信失敗件数 (recordError 記録済み) */
   failed: number;
 };
@@ -150,6 +160,8 @@ export async function sendBeginnerExpiryNotices(
     day60Sent: 0,
     day75Sent: 0,
     expiredSent: 0,
+    autoDeleteDay150Sent: 0,
+    autoDeleteDay170Sent: 0,
     failed: 0,
   };
 
@@ -174,6 +186,9 @@ export async function sendBeginnerExpiryNotices(
       beginnerNoticeDay60SentAt: true,
       beginnerNoticeDay75SentAt: true,
       beginnerExpiredNoticeSentAt: true,
+      // 2026-05-11: 自動削除 30 日前 / 10 日前の予告メール用フラグ
+      beginnerAutoDeleteNoticeDay150SentAt: true,
+      beginnerAutoDeleteNoticeDay170SentAt: true,
     },
   });
 
@@ -221,6 +236,38 @@ export async function sendBeginnerExpiryNotices(
             });
             result.expiredSent += 1;
           }
+          // 2026-05-11: Day 180 自動物理削除に向けた中間警告メール。
+          // 'expired' state でも継続して経過日数を見て Day 150 / Day 170 で追加通知する。
+          // 冪等性: 各 type 固有のフラグで重複送信防止。
+          {
+            const daysElapsedNow = Math.floor(
+              (now.getTime() - t.createdAt.getTime()) / (24 * 60 * 60 * 1000),
+            );
+            if (
+              daysElapsedNow >= BEGINNER_AUTO_DELETE_NOTICE_DAY_150 &&
+              t.beginnerAutoDeleteNoticeDay150SentAt == null
+            ) {
+              const daysUntilDelete = BEGINNER_AUTO_DELETE_DAYS - daysElapsedNow;
+              await sendNoticeEmail(t, 'auto_delete_day_150', daysUntilDelete, baseUrl);
+              await prisma.tenant.update({
+                where: { id: t.id },
+                data: { beginnerAutoDeleteNoticeDay150SentAt: now },
+              });
+              result.autoDeleteDay150Sent += 1;
+            }
+            if (
+              daysElapsedNow >= BEGINNER_AUTO_DELETE_NOTICE_DAY_170 &&
+              t.beginnerAutoDeleteNoticeDay170SentAt == null
+            ) {
+              const daysUntilDelete = BEGINNER_AUTO_DELETE_DAYS - daysElapsedNow;
+              await sendNoticeEmail(t, 'auto_delete_day_170', daysUntilDelete, baseUrl);
+              await prisma.tenant.update({
+                where: { id: t.id },
+                data: { beginnerAutoDeleteNoticeDay170SentAt: now },
+              });
+              result.autoDeleteDay170Sent += 1;
+            }
+          }
           break;
         case 'active':
           // 何もしない
@@ -245,7 +292,13 @@ export async function sendBeginnerExpiryNotices(
 // 内部
 // ================================================================
 
-type NoticeType = 'day_60' | 'day_75' | 'expired';
+type NoticeType =
+  | 'day_60'
+  | 'day_75'
+  | 'expired'
+  // 2026-05-11: 自動物理削除予告 (Day 150 = 30 日前 / Day 170 = 10 日前)
+  | 'auto_delete_day_150'
+  | 'auto_delete_day_170';
 
 async function sendNoticeEmail(
   tenant: { id: string; name: string; billingContactEmail: string | null; billingContactName: string | null },
@@ -301,6 +354,49 @@ Beginner プラン (無料試用期間 90 日) の期限まで、あと ${daysRe
 ${upgradeUrl}
 
 — たすきば 運営チーム`;
+  } else if (type === 'auto_delete_day_150') {
+    subject = `【たすきば】重要：あと ${daysRemaining} 日でテナントが自動削除されます`;
+    body = `${greeting}
+
+ご利用中のテナントは Beginner プランの試用期間 (90 日) を超過し、現在 **読み取り専用モード** で稼働しています。
+
+⚠ **重要なご連絡**: テナント作成から 180 日経過時点で、業務データは **自動的に物理削除** されます。
+本日時点で削除実行まで **あと ${daysRemaining} 日** となっています。
+
+**現在ご選択いただける選択肢**:
+
+1. **継続利用 (推奨)**: Expert または Pro プランへアップグレードすると、即時に通常運用へ復帰します。データは失われません。
+   ${upgradeUrl}
+
+2. **データ退避のみ**: テナント設定画面の「データエクスポート」機能で全データを取得できます。
+
+3. **セルフ解約**: テナント設定画面の「テナント解約」機能で能動的に解約できます (この場合も解約から 90 日後に物理削除)。
+
+何もしない場合、上記期日に業務データが **不可逆的に削除** されますのでご注意ください。
+
+ご不明点は本メールへご返信ください。
+
+— たすきば 運営チーム`;
+  } else if (type === 'auto_delete_day_170') {
+    subject = `【たすきば】最終警告：あと ${daysRemaining} 日でテナント自動削除`;
+    body = `${greeting}
+
+🚨 **最終警告 (再送)**
+
+ご利用中のテナントは Beginner プランの試用期間 (90 日) を超過した状態で読み取り専用モードに留まっており、本日時点で自動削除まで **あと ${daysRemaining} 日** となっています。
+
+**${daysRemaining} 日後にすべての業務データが自動的に物理削除されます (復旧不可)。**
+
+データを失わないために、以下のいずれかを必ず実施してください:
+
+1. **アップグレード (推奨)**: Expert または Pro プランへ即時切替えで通常運用に復帰します。
+   ${upgradeUrl}
+
+2. **エクスポート**: テナント設定画面からデータをダウンロードして退避してください。
+
+ご質問・ご相談は本メールへご返信いただくか、Discord コミュニティへお気軽にお問い合わせください。
+
+— たすきば 運営チーム`;
   } else {
     subject = '【たすきば】Beginner プラン期限切れ — 読み取り専用モードに移行しました';
     body = `${greeting}
@@ -311,23 +407,31 @@ Beginner プランの利用期間 90 日が経過したため、ご利用テナ�
 - データの作成・更新・削除はできません
 - ログインと既存データの閲覧は引き続き可能です
 - **データのエクスポートは引き続きご利用いただけます** (テナント設定画面からダウンロード可能)
+- **プランのアップグレードとセルフ解約は引き続き可能です** (テナント設定画面から実行可能)
 
 書き込み機能を再開するには Expert または Pro プランへのアップグレードが必要です:
 ${upgradeUrl}
 
-ご解約をご希望の場合はお手数ですが本メールへご返信ください (運営側でデータエクスポート代行も承ります)。
+⚠ **重要なお知らせ**: 本日から **90 日後 (テナント作成から合計 180 日経過時点)** にアップグレードされていないテナントは、業務データを **自動的に物理削除** いたします。継続してご利用の場合は猶予期間中にアップグレードをお願いいたします。データのみ退避したい場合はエクスポート機能で取得可能です。
+
+ご解約をご希望の場合はテナント設定画面のセルフ解約機能をご利用いただくか、お手数ですが本メールへご返信ください (運営側でデータエクスポート代行も承ります)。
 
 — たすきば 運営チーム`;
   }
 
   const provider = getMailProvider();
-  // P-H (2026-05-08): 送信種別ラベル (ログ集計用)。Day 60/75/期限切れで type を分けて記録。
+  // P-H (2026-05-08): 送信種別ラベル (ログ集計用)。
+  // 2026-05-11: 自動削除予告 (Day 150 / Day 170) のラベルを追加。
   const mailType =
     type === 'day_60'
       ? 'beginner_warning_60'
       : type === 'day_75'
         ? 'beginner_warning_75'
-        : 'beginner_expired';
+        : type === 'auto_delete_day_150'
+          ? 'beginner_auto_delete_warning_150'
+          : type === 'auto_delete_day_170'
+            ? 'beginner_auto_delete_warning_170'
+            : 'beginner_expired';
   const sendResult = await provider.send({
     to: tenant.billingContactEmail,
     subject,

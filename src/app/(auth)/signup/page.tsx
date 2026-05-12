@@ -97,7 +97,7 @@ export default function SignupPage() {
       if (!res.ok) {
         const code = json?.error?.code as string | undefined;
         const message = json?.error?.message as string | undefined;
-        if (code === 'SLUG_CONFLICT') setError('この URL slug は既に使用されています。別の slug を入力してください。');
+        if (code === 'SLUG_CONFLICT') setError('この組織 ID は既に使用されています。別の ID を入力してください。');
         else if (code === 'EMAIL_CONFLICT') setError('このメールアドレスは既に他のテナントで使用されています。');
         else if (code === 'EMAIL_SEND_FAILED') setError('招待メール送信に失敗したため登録を取り消しました。メールアドレスを確認のうえ再度お試しください。');
         else if (code === 'RATE_LIMITED') setError('短時間に多くの申込がありました。1 時間後に再度お試しください。');
@@ -145,7 +145,7 @@ export default function SignupPage() {
           <CardTitle>たすきば サインアップ</CardTitle>
           <CardDescription>
             新規テナント (組織) を開設します。<strong>Beginner プラン (90 日試用、月 100 回まで無料)</strong>{' '}
-            で開始されます。期限後は読み取り専用モードに移行し、エクスポートも停止します。
+            で開始されます。期限後は読み取り専用モードに移行します (データのエクスポート機能は引き続きご利用いただけます)。
             引き続きご利用の場合は試用期間内に Expert / Pro プランへのアップグレードをお願いします。
           </CardDescription>
         </CardHeader>
@@ -176,7 +176,7 @@ export default function SignupPage() {
                 <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={100} required />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="slug">URL slug *</Label>
+                <Label htmlFor="slug">組織 ID *</Label>
                 <Input id="slug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })} placeholder="例: my-company" pattern="[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?" required />
                 <p className="text-xs text-muted-foreground">英小文字・数字・ハイフンのみ、3〜60 文字</p>
               </div>

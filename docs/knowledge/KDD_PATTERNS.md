@@ -7395,3 +7395,146 @@ try {
 - infrastructure PR: PR-5 (#333) — `requireStorageQuotaForWrite` の CRUD 全 write route 横展開
 - 関連 helper: [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) (`requireStorageQuotaForWrite`)
 - 過去関連 KDD: §5.X+17 (同一ファイル並行更新の merge conflict 対策), §5.X+29 (Pre-check の API route 層集約方針)
+
+---
+
+## 5.X+37 test ファイルの末尾 describe ブロック衝突は **describe の閉じ括弧** が conflict marker と一緒に「マーカー外」に押し出される ─ 解消時は両側 describe を独立に閉じる必要がある (PR #341 / 2026-05-12)
+
+### 罠の正体
+
+`super-admin.service.test.ts` で HEAD と main が **末尾に独立した describe ブロックを並行追加** していて衝突。git の auto-merge アルゴリズムは:
+
+1. 両側がファイル末尾に追記しているため、HEAD 側の追加内容と main 側の追加内容を `<<<<<<< / ======= / >>>>>>>` で挟む
+2. ところが **HEAD 側 describe の閉じ括弧 (`});` `});`)** と **main 側 describe の閉じ括弧 (`});` `});`)** が**ファイル末尾の同じ位置**に「両側共通の closing 行」として残る → 一見すると HEAD describe が「閉じ忘れ」で main describe の冒頭に流れ込んでいるように見える
+
+```ts
+describe('HEAD test ブロック', () => {
+  it('...', () => { /* HEAD body */
+    expect(r.succeeded).toBe(1);
+<<<<<<< HEAD                   // ← マーカー直前で「閉じ括弧前」
+=======
+// main 側の banner コメント + 新 describe ブロック群 (1400 行超)
+//   describe(...) → it(...) → expect(...) で末尾は閉じ括弧手前
+>>>>>>> origin/main
+  });   // ← マーカー後の "共通の closing" だが、実は main 側 describe の閉じ括弧
+});
+```
+
+主観的には HEAD describe が破損して見えるが、実際は **共通の closing 2 行 (`});` `});`) を片側にしか割り当てない** のが正解。
+
+### 解消手順
+
+1. **HEAD 側 describe を明示的に閉じる**: 「マーカー直前」(`=======` の前) に `});` `});` を挿入して HEAD describe を完結させる
+2. **main 側 describe はそのまま採用**: 末尾の共通 `});` `});` がそのまま main describe の閉じ括弧として機能する
+3. **両 describe の間に separator コメント** (`// ============`) を挟む
+
+```ts
+describe('HEAD test ブロック', () => {
+  it('...', () => { /* HEAD body */
+    expect(r.succeeded).toBe(1);
+  });   // ← HEAD 用の追加閉じ括弧 (it 用)
+});     // ← HEAD 用の追加閉じ括弧 (describe 用)
+
+// ================================================================
+// main 側の banner
+// ================================================================
+
+describe('main test ブロック', () => {
+  // ...
+});   // ← 共通の末尾閉じ括弧 (it 用)
+});   // ← 共通の末尾閉じ括弧 (describe 用)
+```
+
+### 検証チェック
+
+- [ ] `grep -nE "^<<<<<<<|^>>>>>>>|^=======$"` で marker 完全除去確認
+- [ ] **describe ブロックごとに対応する `}` `}` がペアになっているか**: `grep -c "^describe(" file.ts` と `grep -cE "^\}\)\;" file.ts` を比較 (= top-level の数)
+- [ ] **pnpm test で対象 spec が pass する**: brace 不整合があれば parser エラーで全 spec 失敗するので、ファイル単体 `pnpm test path/to.test.ts` を最初に実行
+
+### 関連
+
+- 修正 PR: PR #341 (2026-05-12 / feat/public-docs-account-setup)
+- 関連 KDD: §5.X+17 (同一ファイル並行更新の merge conflict 対策), §5.X+36 (副作用順序連鎖型 conflict 解消)
+- 公式 doc (git merge): <https://git-scm.com/docs/git-merge#_how_conflicts_are_presented>
+
+---
+
+## 5.X+38 サービス層で新しいラベル値 (enum-like literal) を増やしたら **型 union 側にも必ず追加** ─ `pnpm test` は通るが `pnpm build` (tsc) で初めて検出される (PR #341 / 2026-05-12)
+
+### 罠の正体
+
+PR #341 で Beginner プラン Day 180 自動物理削除に向けた 2 種類の事前通知メールを追加した:
+
+```ts
+// src/services/beginner-expiry.service.ts (l.425-434)
+const mailType =
+  type === 'day_60'                ? 'beginner_warning_60'
+  : type === 'day_75'              ? 'beginner_warning_75'
+  : type === 'auto_delete_day_150' ? 'beginner_auto_delete_warning_150'  // ★ 新規
+  : type === 'auto_delete_day_170' ? 'beginner_auto_delete_warning_170'  // ★ 新規
+  : 'beginner_expired';
+await provider.send({ type: mailType, ... });
+```
+
+ところが受け手の型 (`MailParams.type`) は固定 union だったため tsc が NG:
+
+```
+Type '"beginner_auto_delete_warning_150" | ...' is not assignable to type
+     '"invitation" | "password_reset" | "usage_alert" | "beginner_warning_60" |
+      "beginner_warning_75" | "beginner_expired" | "unknown" | undefined'.
+```
+
+**`pnpm test` は通る** (vi.mock で受け側を mock し型を chechしない)、**`pnpm lint` も通る** (ESLint は型を見ない)、**`pnpm build` 内の Next.js TypeScript 型チェックで初めて検出**。
+
+### 教訓
+
+- **string literal union 型は「拡張ポイント」になりにくい**: サービス側で新規 literal を増やすたびに union 側も更新が必要。type-safe だが追加忘れのコストがある
+- **mock を介する単体テストは型ガードにならない**: `vi.mock(() => ({ send: vi.fn() }))` は MailProvider の型を完全に置き換えるため、引数の型不整合は検出されない
+- **「tsc / build は別物」原則を再確認**: §5.X+15 で「`pnpm tsc --noEmit` と `pnpm build` (Next.js TypeScript) は別物 — コミット前 build 実行が必須」と記録済。今回も `pnpm tsc` は **未走行** で push してしまっていた疑いあり
+
+### 修正パターン
+
+union を新値で拡張する:
+
+```ts
+// src/lib/mail/mail-provider.ts
+type?:
+  | 'invitation'
+  | 'password_reset'
+  | 'usage_alert'
+  | 'beginner_warning_60'
+  | 'beginner_warning_75'
+  | 'beginner_expired'
+  | 'beginner_auto_delete_warning_150'  // ★ 追加
+  | 'beginner_auto_delete_warning_170'  // ★ 追加
+  | 'unknown';
+```
+
+DB 側制約 (`email_send_logs.type` 列) は **`VarChar(40)` のみで CHECK / enum 制約無し** のため、コード union 追加だけで DB migration 不要。コード側でのみ legal value を管理する設計を維持。
+
+### 横展開チェック (string literal union を増やす時)
+
+- [ ] **コミット前に必ず `pnpm build` をローカル実行** (§5.X+15 のルール再確認)
+- [ ] **新規 literal の文字数が DB の `VarChar(N)` を超えないか**確認 (例: `beginner_auto_delete_warning_150` = 33 chars < 40 chars OK)
+- [ ] **DB 制約 (CHECK / enum / VarChar)** が存在する場合は migration も必要
+- [ ] **使用箇所の grep**: `grep -rn "<新 literal>"` で送信側 (service) + 受信側 (provider 型) の両方を確認
+- [ ] **型 union を `as const` 配列 + `typeof X[number]` に refactor する選択肢**: legal values を 1 箇所にまとめると追加忘れを防げる (= 拡張ポイント化)
+
+```ts
+// alternative refactor (本 PR では適用していないが将来検討)
+export const MAIL_KINDS = [
+  'invitation', 'password_reset', 'usage_alert',
+  'beginner_warning_60', 'beginner_warning_75', 'beginner_expired',
+  'beginner_auto_delete_warning_150', 'beginner_auto_delete_warning_170',
+  'unknown',
+] as const;
+export type MailKind = (typeof MAIL_KINDS)[number];
+// 配列を export しておけば runtime validation (zod 等) との二重定義も避けられる
+```
+
+### 関連
+
+- 修正 PR: PR #341 (2026-05-12 / feat/public-docs-account-setup)
+- 関連ファイル: [src/lib/mail/mail-provider.ts](../../src/lib/mail/mail-provider.ts) (union 定義), [src/services/beginner-expiry.service.ts](../../src/services/beginner-expiry.service.ts) (送信側)
+- 関連 migration: [prisma/migrations/20260516_beginner_auto_delete_notices/](../../prisma/migrations/20260516_beginner_auto_delete_notices/) (送信日時列追加のみ、type 制約変更無し)
+- 過去関連 KDD: §5.X+15 (tsc と build は別物、コミット前 build 実行必須)

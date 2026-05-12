@@ -1249,3 +1249,164 @@ export async function purgeOldDeletedTenants(
     totalRowsDeleted,
   };
 }
+
+// ================================================================
+// 2026-05-11: Day 180 自動物理削除 — 期限切れ Beginner テナントの自動回収
+// ================================================================
+
+/**
+ * Beginner プランで作成され、試用期間 (90日) を超えてもアップグレードされなかった
+ * テナントを、作成から 180 日経過時点で自動的に物理削除する。
+ *
+ * 設計意図:
+ *   - Day 0〜89:  Beginner 試用期間 (通常運用)
+ *   - Day 90〜179: 読み取り専用モード (アップグレード or セルフ削除の猶予期間)
+ *   - Day 180+:   本関数が物理削除を実行 (= データ容量の自動回収)
+ *
+ *   90 日の猶予期間はユーザが「アップグレードして救済」「データをエクスポートして退避」
+ *   「セルフ削除で清算」のいずれかを選べる時間として確保される。期限切れ通知メール
+ *   (beginner-expiry.service.ts) に「90 日後に自動削除」の旨が明記される。
+ *
+ * 対象条件:
+ *   - plan = 'beginner'
+ *   - beginnerEverUpgraded = false  (= 一度もアップグレード経験なし。経験ありは試用対象外なので 180 日縛りも対象外)
+ *   - deletedAt = null              (= 既に手動セルフ削除 / super_admin 削除されていない)
+ *   - createdAt < (now - 180 日)
+ *   - id != MANAGEMENT_TENANT_ID    (= 管理テナントは絶対に削除しない)
+ *
+ * 動作:
+ *   単一トランザクションで、業務データ群を物理削除 + tenant.deletedAt をセット (= 論理削除状態へ遷移)。
+ *   users 行は **物理削除しない** (= purgeOldDeletedTenants と同方針。Beginner 乱用防止のため永続保持)。
+ *   失敗は per-tenant try/catch で次回 cron へ retry を委ねる (= 1 件失敗が全体停止を引き起こさない)。
+ *
+ * 関連:
+ *   - middleware (auth.config.ts): READ_ONLY_BYPASS_PATHS で「プラン変更」「セルフ削除」を許可。
+ *     ユーザは Day 90 以降でも本関数による削除前にアップグレード or セルフ削除が可能。
+ *   - 既存 purgeOldDeletedTenants: 手動 deleteTenant 後の grace 90 日対象 (本関数とはペア)。
+ *   - cron: src/app/api/cron/daily-usage-aggregation/route.ts が本関数を呼ぶ (日次 02:00 UTC)。
+ *   - 通知: beginner-expiry.service.ts の Day 90 メールで「90 日後に自動削除」を予告。
+ */
+export type PurgeExpiredBeginnerTenantsResult = {
+  /** 物理削除を試行したテナント件数 */
+  attempted: number;
+  /** 成功した件数 */
+  succeeded: number;
+  /** 削除されたレコード総数 (業務データの sum) */
+  totalRowsDeleted: number;
+};
+
+/**
+ * 自動物理削除の対象となる「テナント作成からの日数」。
+ *   - 90 日: 試用期間
+ *   - + 90 日: 読み取り専用モード猶予 (= 救済期間)
+ *   = 180 日合計
+ */
+export const BEGINNER_AUTO_DELETE_TOTAL_DAYS = 180;
+
+export async function purgeExpiredBeginnerTenants(
+  now: Date = new Date(),
+): Promise<PurgeExpiredBeginnerTenantsResult> {
+  const threshold = new Date(
+    now.getTime() - BEGINNER_AUTO_DELETE_TOTAL_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  const targets = await prisma.tenant.findMany({
+    where: {
+      plan: 'beginner',
+      beginnerEverUpgraded: false,
+      deletedAt: null,
+      createdAt: { lt: threshold },
+      id: { not: MANAGEMENT_TENANT_ID },
+    },
+    select: { id: true },
+  });
+
+  let succeeded = 0;
+  let totalRowsDeleted = 0;
+
+  for (const t of targets) {
+    try {
+      // 単一 transaction で業務データ削除 + tenant 論理削除セットを実行。
+      // 削除順序は purgeOldDeletedTenants と同一: 子テーブル → 親テーブル → tenant 本体。
+      const [
+        mentions,
+        comments,
+        attachments,
+        knowledgeProjects,
+        taskKnowledges,
+        taskProgressLogs,
+        tasks,
+        estimates,
+        projectMembers,
+        risksIssues,
+        retrospectives,
+        memos,
+        stakeholders,
+        knowledges,
+        suggestionExplanations,
+        projects,
+        customers,
+        importPreviews,
+      ] = await prisma.$transaction([
+        prisma.mention.deleteMany({ where: { tenantId: t.id } }),
+        prisma.comment.deleteMany({ where: { tenantId: t.id } }),
+        prisma.attachment.deleteMany({ where: { tenantId: t.id } }),
+        prisma.knowledgeProject.deleteMany({ where: { knowledge: { tenantId: t.id } } }),
+        prisma.taskKnowledge.deleteMany({ where: { knowledge: { tenantId: t.id } } }),
+        prisma.taskProgressLog.deleteMany({ where: { task: { project: { tenantId: t.id } } } }),
+        prisma.task.deleteMany({ where: { project: { tenantId: t.id } } }),
+        prisma.estimate.deleteMany({ where: { project: { tenantId: t.id } } }),
+        prisma.projectMember.deleteMany({ where: { project: { tenantId: t.id } } }),
+        prisma.riskIssue.deleteMany({ where: { tenantId: t.id } }),
+        prisma.retrospective.deleteMany({ where: { tenantId: t.id } }),
+        prisma.memo.deleteMany({ where: { tenantId: t.id } }),
+        prisma.stakeholder.deleteMany({ where: { tenantId: t.id } }),
+        prisma.knowledge.deleteMany({ where: { tenantId: t.id } }),
+        prisma.suggestionExplanation.deleteMany({ where: { tenantId: t.id } }),
+        prisma.project.deleteMany({ where: { tenantId: t.id } }),
+        prisma.customer.deleteMany({ where: { tenantId: t.id } }),
+        prisma.tenantImportPreview.deleteMany({ where: { tenantId: t.id } }),
+        // テナント本体は deletedAt セット (= 物理削除しない。users とのペアで永続保持)。
+        // user.isActive=false も同時に設定し、ログイン即時不可化 (deleteTenant と同パターン)。
+        prisma.tenant.update({
+          where: { id: t.id },
+          data: { deletedAt: now },
+        }),
+        prisma.user.updateMany({
+          where: { tenantId: t.id, deletedAt: null },
+          data: { deletedAt: now, isActive: false },
+        }),
+      ]);
+
+      const subTotal =
+        mentions.count +
+        comments.count +
+        attachments.count +
+        knowledgeProjects.count +
+        taskKnowledges.count +
+        taskProgressLogs.count +
+        tasks.count +
+        estimates.count +
+        projectMembers.count +
+        risksIssues.count +
+        retrospectives.count +
+        memos.count +
+        stakeholders.count +
+        knowledges.count +
+        suggestionExplanations.count +
+        projects.count +
+        customers.count +
+        importPreviews.count;
+      totalRowsDeleted += subTotal;
+      succeeded += 1;
+    } catch {
+      // 1 テナント失敗で他に影響させない (次回 cron で retry)
+    }
+  }
+
+  return {
+    attempted: targets.length,
+    succeeded,
+    totalRowsDeleted,
+  };
+}

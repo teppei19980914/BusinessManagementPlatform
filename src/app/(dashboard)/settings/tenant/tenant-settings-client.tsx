@@ -1296,7 +1296,7 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
  * 表示パターン:
  *   - active (Day 0〜59): 黄色バナー (= Beginner 試用中、残り日数表示)
  *   - warning_60 (Day 60〜74): 橙バナー (=「残り {N} 日」)
- *   - warning_75 (Day 75〜89): 強橙バナー (= 強い警告 +「期限後はエクスポート不可」)
+ *   - warning_75 (Day 75〜89): 強橙バナー (= 強い警告。期限後もエクスポートは継続利用可)
  *   - expired (Day 90+): 赤バナー (= 読み取り専用モード明示)
  */
 function BeginnerExpiryBanner({ info }: { info: TenantSelfInfo }) {
