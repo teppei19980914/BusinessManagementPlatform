@@ -7043,3 +7043,91 @@ if (!isValid) {
 - 関連 service: src/lib/auth.ts (`authorize`)
 - 関連 event log: prisma/schema.prisma `AuthEventLog` モデル (`detail` JSONB)
 - 過去の関連 §5.X+31: 「ログイン直後 server component crash = ログインできない感」
+
+---
+
+## 5.X+33 service コード conflict: 「片側は refactor、もう片側はコメント追加」型 ─ コメント意図が既に定数化されていれば refactor を採用し、historical context として吸収する (PR #337 / 2026-05-12)
+
+### 罠の正体
+
+長期 PR と main の並行で **同じ関数を異なる粒度で編集** していた場合、`git merge` は両方の差分をマーカで提示するが、機械的には判断できないケースがある:
+
+| ブランチ | 編集粒度 | 例 (PR #337) |
+|---|---|---|
+| HEAD | **コメント追加のみ** (実装意図の追記) | 「2026-05-11: Default テナントも除外 — 過去 PR では MANAGEMENT のみ除外していた」 |
+| main | **構造的 refactor** (関数挙動の変更) | UTC 月初固定 → per-tenant TZ ローカル月初に切替 + `targets` → `allTenants` 変数名変更 + filter を JS 側に移動 |
+
+両者を素朴に concat すると、main の refactor 構造に HEAD のコメントが宙ぶらりんで貼り付くか、HEAD のコメントが消えて意図の歴史が失われる。
+
+### 採用したパターン
+
+**「HEAD コメントの意図が既に定数 / 設定で実現されていないか」を先に確認** する:
+
+```bash
+# 例: HEAD コメントが「Default テナントも除外」と言っているなら、
+#     その定数 (SNAPSHOT_EXCLUDED_TENANT_IDS 等) を grep し、main 側に既に
+#     反映済かを確認する。
+grep -nE "SNAPSHOT_EXCLUDED_TENANT_IDS|DEFAULT_TENANT_ID" <service>.ts
+# → const SNAPSHOT_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+#   が既にある = HEAD コメントの意図は実装済 = コメントは「歴史的 context」として残せばよい
+```
+
+確認後の判断:
+- **意図が定数で実現済** → main の refactor を採用しつつ、HEAD コメントを **「<日付> (HEAD 履歴): ...」** の体裁で documentation comment として残す
+- **意図が未実装** → refactor を採用 + 意図を改めて実装 (constant 更新 or filter 追加)
+
+### 実例 (PR #337 merge resolution)
+
+```ts
+// Before (HEAD)
+const monthStart = getCurrentMonthStartUtc(now);
+const yearMonth = getPreviousYearMonth(now);
+
+// リセット対象テナント (= まだリセットされていない、当月分の値を保持中) を取得
+// 2026-05-11: Default テナント (= 運営者自身、請求対象外) も除外 — 過去 PR では
+//   MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に混入していた。
+const targets = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+
+// Before (main)
+// PR-4 (2026-05-15): 各テナントの TZ ローカル月初を基準にする。
+const allTenants = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+const targets = allTenants.filter((t) => {
+  const tenantMonthStart = getTenantMonthStart(now, t.timezone);
+  return t.lastResetAt == null || t.lastResetAt < tenantMonthStart;
+});
+
+// After (merge resolution)
+// PR-4 (2026-05-15): 各テナントの TZ ローカル月初を基準にする。
+//   従来は UTC 月初固定 (`getCurrentMonthStartUtc` / `getPreviousYearMonth`) だったが、
+//   テナント TZ に依存する月初境界を per-tenant で計算する設計に切替。
+// 2026-05-11 (HEAD 履歴): Default テナント (= 運営者自身、請求対象外) も除外。
+//   過去 PR では MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に
+//   混入していたため SNAPSHOT_EXCLUDED_TENANT_IDS に追加済 (line 60 参照)。
+const allTenants = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+```
+
+両方の意図 (TZ-aware refactor + Default 除外の歴史) を 1 つのブロックに統合し、`line 60 参照` で具体的実装の所在も明記した。
+
+### 横展開チェック (service code conflict 時)
+
+- [ ] 双方の編集が **異なる粒度** (refactor vs コメントのみ) か確認
+- [ ] HEAD 側コメントの意図が **定数 / 設定 / 別関数で実装済** か `grep` で確認
+- [ ] 実装済なら → refactor を採用 + コメントを「<日付> (HEAD 履歴): ...」体裁で残す
+- [ ] 未実装なら → refactor を採用 + 意図を改めて実装 (定数追加 / filter 追加など)
+- [ ] 関連テストを実行して挙動が壊れていないか確認 (今回は tenant-monthly-reset.service.test.ts 22/22 pass)
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — feat/guide-page-restructure ↔ main の `tenant-monthly-reset.service.ts` 競合
+- 関連 service: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts)
+- 関連 test: [src/services/tenant-monthly-reset.service.test.ts](../../src/services/tenant-monthly-reset.service.test.ts)
+- 関連 KDD: §5.X+30 (KDD ファイル末尾コンフリクト一般論)
