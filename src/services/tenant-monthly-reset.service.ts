@@ -39,7 +39,7 @@
 
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
-import { isTenantPlan, MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import { isTenantPlan, MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
 import {
   ADDON_MONTHLY_JPY as STORAGE_ADDON_MONTHLY_JPY,
   isStorageAddonPlan,
@@ -49,6 +49,15 @@ import { purgeOldDeletedTenants } from '@/services/super-admin.service';
 // PR-4 (2026-05-15): テナント TZ ベースの月初判定
 import { getTenantMonthStart, getTenantPreviousYearMonth } from '@/lib/tenant-time';
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
+
+/**
+ * 2026-05-11: 月次使用量履歴のスナップショット保存対象から **除外** するテナント。
+ *
+ * Default テナント (運営者自身) は請求対象外のため、月次履歴 (= 請求書根拠) には残さない。
+ * 過去 PR では MANAGEMENT_TENANT_ID のみ除外していたため Default の月次スナップショットが
+ * 蓄積されてしまい、CSV エクスポート (過去月) や履歴グラフに混入する不具合があった。
+ */
+const SNAPSHOT_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
 
 export interface TenantMonthlyResetResult {
   /** 月初リセット対象として update したテナント件数。 */
@@ -114,11 +123,16 @@ export function getPreviousYearMonth(
  */
 export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise<number> {
   // PR-4 (2026-05-15): 各テナントの TZ ローカル月初を基準にする。
-  //   従来は UTC 月初固定だったが、テナント TZ に依存する月初境界を per-tenant で計算。
-  //   全テナント (削除済除く) を取得 → 各テナントの月初判定を後段で実施。
+  //   従来は UTC 月初固定 (`getCurrentMonthStartUtc` / `getPreviousYearMonth`) だったが、
+  //   テナント TZ に依存する月初境界を per-tenant で計算する設計に切替。
+  //   全テナント (削除済除く / SNAPSHOT_EXCLUDED_TENANT_IDS 以外) を取得し、
+  //   各テナントの月初判定を後段の filter で実施する。
+  // 2026-05-11 (HEAD 履歴): Default テナント (= 運営者自身、請求対象外) も除外。
+  //   過去 PR では MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に
+  //   混入していたため SNAPSHOT_EXCLUDED_TENANT_IDS に追加済 (line 60 参照)。
   const allTenants = await prisma.tenant.findMany({
     where: {
-      id: { not: MANAGEMENT_TENANT_ID },
+      id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS },
       deletedAt: null,
     },
     select: {

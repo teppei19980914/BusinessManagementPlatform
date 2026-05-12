@@ -6600,6 +6600,152 @@ git push
 
 ---
 
+## 5.X+23 super_admin ダッシュボードで Default テナント (運営者自身) を **集計除外** しても **画面非表示にはしない** — 「集計」と「表示」の境界を明確に分ける (PR-X / 2026-05-11)
+
+### 罠の正体
+
+PR E (`#19`, 2026-05-09) で super_admin ダッシュボードの集計から `DEFAULT_TENANT_ID` を除外する変更を入れた (`SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID]`)。これは「v1.x マルチテナント運用時に default テナントを実顧客と扱わない」設計合意 B に従ったもの。
+
+しかし v1 MVP (2026-06-01 リリース直前) 時点では Default テナントが唯一の本番テナントとなるため、運営者がダッシュボードを開いても:
+
+- 「顧客テナント数」「アクティブユーザ数」「今月の API 呼出」「今月の API 費用」が**すべて 0 表示**
+- 「テナント一覧」に「顧客テナントはまだ登録されていません」表示
+- 「プラン別分布」に「テナントがありません」表示
+- Anthropic / Voyage / Beginner 使用量も 0 表示
+
+「ダッシュボードが完全に空に見える」=「運営者が自身のテナントを super_admin 画面で管理できない」状態だった。
+
+### 根本原因
+
+- **「集計から除外」=「画面から非表示」と誤って同一視していた**
+- ユーザ意図: Default テナント = 運営者自身 = **請求対象外** だが、**運営者は当然自分の状況を見たい**
+- 集計 (請求合計) と表示 (運営者の管理画面) は**別の目的**で動く設計にすべきだった
+
+### 修正パターン (2026-05-11)
+
+「集計除外」と「表示」を分離:
+
+1. **集計除外は維持**: `SUPER_ADMIN_EXCLUDED_TENANT_IDS` は変更せず、顧客課金合計に Default を入れない方針を継続 (= 売上扱いしない)
+2. **Default 専用セクションを追加**: `getDefaultTenantOwnSummary()` を新設、サマリ / 一覧 / 使用量サマリの各タブで **顧客テナントとは別セクション** で Default の情報を表示
+3. **「(請求対象外)」ラベル併記**: 費用欄に明示し、運営者が「課金されている」と誤解しないようにする
+
+```typescript
+// src/services/super-admin.service.ts
+// ❌ Before: 集計除外 = 画面非表示
+const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+// (Default テナントの情報を取得する関数は存在しなかった)
+
+// ✅ After: 集計除外は維持しつつ、画面表示用の取得関数を追加
+const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+
+export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSummary | null> {
+  const t = await prisma.tenant.findFirst({
+    where: { id: DEFAULT_TENANT_ID, deletedAt: null },
+    /* ... */
+  });
+  if (!t) return null;
+  // 必要な集計を行って返す
+}
+```
+
+### 副次的な改善 (本 PR で同時対応)
+
+1. **ストレージ add-on 課金の合算 UI**: `getCrossTenantUsageSummary` に `totalCurrentMonthStorageJpy` / `totalCurrentMonthCombinedJpy` を追加。サマリカードを「今月の API 費用 (合計)」→「今月の合計課金 (LLM + Storage)」に変更し、内訳を補助行で併記。
+2. **小数点パーセント表示の精度動的化**: Voyage AI 使用率が 0.03% (= 200M token 上限の 60K token 利用) のとき `(0.0003 * 100).toFixed(1) = "0.0%"` で「未使用」と誤解されていた。`formatPercent()` ヘルパで < 0.1% は小数点 3 桁、< 10% は 2 桁、それ以外は 1 桁の動的精度に変更。
+
+### 横展開チェック
+
+- [ ] 集計除外フィルタ (`{ notIn: [...] }` / `{ id: { not: ... } }`) を追加する際は、**集計と表示の用途を明確に分ける**:
+  - 集計から外す → DB レベルで notIn
+  - 表示は欲しい → 別関数で個別取得、UI で別セクション化
+- [ ] パーセント表示は `toFixed(1)` を機械的に使わず、想定される値の幅 (例: 0.01%〜100%) を考慮して動的精度関数を使う
+- [ ] 「顧客課金集計」と「運営者自身の利用状況」は **同じ UI 表現で混ぜない** (= 区別が視覚的につくよう別セクション + ラベルで明示)
+- [ ] 「(請求対象外)」「(参考)」など意図のラベルを併記し、UI 受け手 (= 運営者) の誤読を防ぐ
+
+### 関連
+
+- 元 PR: PR-X / dev/2026-05-11 (super_admin ダッシュボード Default テナント表示)
+- 関連 service: [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts) — `getDefaultTenantOwnSummary`, `getCrossTenantUsageSummary`
+- 関連 page: [src/app/(dashboard)/admin/super/page.tsx](../../src/app/(dashboard)/admin/super/page.tsx), [tenants/page.tsx](../../src/app/(dashboard)/admin/super/tenants/page.tsx), [usage/page.tsx](../../src/app/(dashboard)/admin/super/usage/page.tsx)
+- 旧設計合意: 設計合意 B (= v1.x マルチテナント運用時に default = placeholder 扱い) — v1 MVP では「Default = 運営者自身のテナント」を主とし、v1.x で multi-tenant 化される時点で再評価
+
+
+## 5.X+24 集計除外フィルタは **集計・スナップショット・履歴クエリの 3 段全部** に揃えないと月次 CSV (請求書根拠) に Default が混入する (2026-05-11 監査で検出)
+
+### 罠の正体
+
+§5.X+23 で「Default テナントを顧客集計から除外」する方針を導入したが、その時に修正したのは **顧客集計クエリ** (`getCrossTenantUsageSummary` / `listAllTenants` 等の "現在値" 系) のみだった。
+
+監査で 2 件の漏れが判明:
+
+1. **`saveMonthlyUsageSnapshots` (= 月初リセット cron で前月使用量を `tenant_monthly_usage_history` に保存する関数)** が `id: { not: MANAGEMENT_TENANT_ID }` のみで絞っており、**Default テナントの月次スナップショットが毎月 DB に保存され続ける**。
+2. **`listMonthlyUsageHistory` (= /admin/super/usage の過去月履歴 + CSV エクスポートの過去月経路で参照)** には **テナント除外フィルタが存在しなかった**。
+
+→ 結果として:
+- 過去月の CSV エクスポート (= 請求書根拠) に **Default テナント行が混入**
+- /admin/super/usage の「過去 6 ヶ月の使用量履歴」テーブルに **Default 行が表示**
+- 顧客集計には除外、過去月集計には混入、という**不整合**が発生
+
+### 影響範囲
+
+これは事業継続性に直結する不具合:
+
+1. **取りこぼし方向**: 該当しない (Default は売上扱いしない方針なので、CSV に Default が混じっても請求書合計が増えるだけで取りこぼしはなし)
+2. **過剰請求方向**: 該当しない (= Default テナントの請求業務は実施しないため、CSV 上に出ても運営者が見ているだけ)
+3. **しかし運用混乱**: CSV 集計時に「これ請求しなくていいやつだっけ?」と毎月の確認コストが発生 + 集計ツールで気付かず Default 込みの合計を顧客請求合計と誤認するリスク
+
+### 修正パターン (2026-05-11)
+
+集計除外フィルタを **3 段全部** に揃える:
+
+```typescript
+// 1. 顧客集計クエリ (= 既存 / §5.X+23 対応済)
+const SUPER_ADMIN_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+prisma.tenant.findMany({ where: { id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS } } });
+
+// 2. スナップショット保存 (= 今回追加)
+//    src/services/tenant-monthly-reset.service.ts
+const SNAPSHOT_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+prisma.tenant.findMany({ where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS } } });
+
+// 3. 履歴クエリ (= 今回追加、二重防御)
+//    src/services/super-admin.service.ts (listMonthlyUsageHistory)
+prisma.tenantMonthlyUsageHistory.findMany({
+  where: {
+    yearMonth: { in: targetYearMonths },
+    tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },  // 二重防御
+  },
+});
+```
+
+### 横展開チェック (今後同様の除外フィルタを足す時の checklist)
+
+- [ ] **「現在値」を返す関数**: `prisma.tenant.findMany` / `aggregate` / `groupBy` / `count` のすべての where に `id: { notIn: EXCLUDED }` を入れる
+- [ ] **「過去値」を保存する関数 (cron / snapshot)**: 保存対象テナントの絞り込みにも同じ除外を入れる (= 保存しないことで根本的に混入経路を遮断)
+- [ ] **「過去値」を読む関数 (履歴クエリ / 集計レポート)**: 既存データに対する **二重防御** として where に除外フィルタを入れる
+- [ ] **CSV / レポート / 外部連携 API**: 上記 3 段に依存する API は再検証
+- [ ] **ユニットテスト**: 各関数の where 条件を assert.toMatchObject で検証 (= 将来の改修で除外が外れても CI で気付く)
+
+### 請求業務正確性の防衛線 (本 PR で構築)
+
+「請求金額の取りこぼし / 過剰請求」を防ぐため、以下を多重で保証する:
+
+| レイヤ | 検証手段 | 件数 |
+|---|---|---|
+| サービス層 | super-admin.service.test.ts (listAllTenants / listStorageUsageTop / getTenantDetail / getCrossTenantUsageSummary / getDefaultTenantOwnSummary / listMonthlyUsageHistory) | 56 件 |
+| cron 層 | tenant-monthly-reset.service.test.ts (saveMonthlyUsageSnapshots の Default 除外) | 20 件 (既存 + 改修) |
+| API 層 | api/admin/super/usage/export/route.test.ts (CSV 当月 / 過去月 / Default 除外 / 認可) | 12 件 |
+| E2E 層 | e2e/specs/13-super-admin-dashboard.spec.ts (ダッシュボード表示 + Default 別セクション + CSV Default 除外 + 認可境界) | 5 件 |
+
+### 関連
+
+- 元 PR: PR-X / dev/2026-05-11 (請求業務正確性監査)
+- 関連 service: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts), [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts)
+- 関連 test: [src/services/super-admin.service.test.ts](../../src/services/super-admin.service.test.ts), [src/services/tenant-monthly-reset.service.test.ts](../../src/services/tenant-monthly-reset.service.test.ts), [src/app/api/admin/super/usage/export/route.test.ts](../../src/app/api/admin/super/usage/export/route.test.ts), [e2e/specs/13-super-admin-dashboard.spec.ts](../../e2e/specs/13-super-admin-dashboard.spec.ts)
+- 関連 KDD: §5.X+23 (集計除外と画面表示の分離)
+
+---
+
 ## 5.X+30 長期 PR と main の並行更新で KDD ファイル末尾コンフリクトが発生する ─ 両方残してマージするのが正解 (PR #334 / 2026-05-12)
 
 ### 罠の正体
@@ -6897,3 +7043,283 @@ if (!isValid) {
 - 関連 service: src/lib/auth.ts (`authorize`)
 - 関連 event log: prisma/schema.prisma `AuthEventLog` モデル (`detail` JSONB)
 - 過去の関連 §5.X+31: 「ログイン直後 server component crash = ログインできない感」
+
+---
+
+## 5.X+33 service コード conflict: 「片側は refactor、もう片側はコメント追加」型 ─ コメント意図が既に定数化されていれば refactor を採用し、historical context として吸収する (PR #337 / 2026-05-12)
+
+### 罠の正体
+
+長期 PR と main の並行で **同じ関数を異なる粒度で編集** していた場合、`git merge` は両方の差分をマーカで提示するが、機械的には判断できないケースがある:
+
+| ブランチ | 編集粒度 | 例 (PR #337) |
+|---|---|---|
+| HEAD | **コメント追加のみ** (実装意図の追記) | 「2026-05-11: Default テナントも除外 — 過去 PR では MANAGEMENT のみ除外していた」 |
+| main | **構造的 refactor** (関数挙動の変更) | UTC 月初固定 → per-tenant TZ ローカル月初に切替 + `targets` → `allTenants` 変数名変更 + filter を JS 側に移動 |
+
+両者を素朴に concat すると、main の refactor 構造に HEAD のコメントが宙ぶらりんで貼り付くか、HEAD のコメントが消えて意図の歴史が失われる。
+
+### 採用したパターン
+
+**「HEAD コメントの意図が既に定数 / 設定で実現されていないか」を先に確認** する:
+
+```bash
+# 例: HEAD コメントが「Default テナントも除外」と言っているなら、
+#     その定数 (SNAPSHOT_EXCLUDED_TENANT_IDS 等) を grep し、main 側に既に
+#     反映済かを確認する。
+grep -nE "SNAPSHOT_EXCLUDED_TENANT_IDS|DEFAULT_TENANT_ID" <service>.ts
+# → const SNAPSHOT_EXCLUDED_TENANT_IDS = [MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID];
+#   が既にある = HEAD コメントの意図は実装済 = コメントは「歴史的 context」として残せばよい
+```
+
+確認後の判断:
+- **意図が定数で実現済** → main の refactor を採用しつつ、HEAD コメントを **「<日付> (HEAD 履歴): ...」** の体裁で documentation comment として残す
+- **意図が未実装** → refactor を採用 + 意図を改めて実装 (constant 更新 or filter 追加)
+
+### 実例 (PR #337 merge resolution)
+
+```ts
+// Before (HEAD)
+const monthStart = getCurrentMonthStartUtc(now);
+const yearMonth = getPreviousYearMonth(now);
+
+// リセット対象テナント (= まだリセットされていない、当月分の値を保持中) を取得
+// 2026-05-11: Default テナント (= 運営者自身、請求対象外) も除外 — 過去 PR では
+//   MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に混入していた。
+const targets = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+
+// Before (main)
+// PR-4 (2026-05-15): 各テナントの TZ ローカル月初を基準にする。
+const allTenants = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+const targets = allTenants.filter((t) => {
+  const tenantMonthStart = getTenantMonthStart(now, t.timezone);
+  return t.lastResetAt == null || t.lastResetAt < tenantMonthStart;
+});
+
+// After (merge resolution)
+// PR-4 (2026-05-15): 各テナントの TZ ローカル月初を基準にする。
+//   従来は UTC 月初固定 (`getCurrentMonthStartUtc` / `getPreviousYearMonth`) だったが、
+//   テナント TZ に依存する月初境界を per-tenant で計算する設計に切替。
+// 2026-05-11 (HEAD 履歴): Default テナント (= 運営者自身、請求対象外) も除外。
+//   過去 PR では MANAGEMENT のみ除外していたが、Default 分の月次履歴が請求 CSV に
+//   混入していたため SNAPSHOT_EXCLUDED_TENANT_IDS に追加済 (line 60 参照)。
+const allTenants = await prisma.tenant.findMany({
+  where: { id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS }, deletedAt: null },
+  /* ... */
+});
+```
+
+両方の意図 (TZ-aware refactor + Default 除外の歴史) を 1 つのブロックに統合し、`line 60 参照` で具体的実装の所在も明記した。
+
+### 横展開チェック (service code conflict 時)
+
+- [ ] 双方の編集が **異なる粒度** (refactor vs コメントのみ) か確認
+- [ ] HEAD 側コメントの意図が **定数 / 設定 / 別関数で実装済** か `grep` で確認
+- [ ] 実装済なら → refactor を採用 + コメントを「<日付> (HEAD 履歴): ...」体裁で残す
+- [ ] 未実装なら → refactor を採用 + 意図を改めて実装 (定数追加 / filter 追加など)
+- [ ] 関連テストを実行して挙動が壊れていないか確認 (今回は tenant-monthly-reset.service.test.ts 22/22 pass)
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — feat/guide-page-restructure ↔ main の `tenant-monthly-reset.service.ts` 競合
+- 関連 service: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts)
+- 関連 test: [src/services/tenant-monthly-reset.service.test.ts](../../src/services/tenant-monthly-reset.service.test.ts)
+- 関連 KDD: §5.X+30 (KDD ファイル末尾コンフリクト一般論)
+
+---
+
+## 5.X+34 merge 後の **conflict zone 外** に同 refactor 関数の旧シグネチャ呼び出しが残存する罠 ─ `grep` で全 call site を verify する (PR #337 / 2026-05-12)
+
+### 罠の正体
+
+PR #337 で `tenant-monthly-reset.service.ts` の conflict を §5.X+33 パターンで解消した直後、CI で 3 種類のエラーが連鎖発生:
+
+1. **Lint/Test/Build**: `super-admin.service.test.ts` の 4 テストが `expected NaN to be 157286400` 等で fail (storage 計算が NaN)
+2. **E2E**: TypeScript build が `super-admin.service.ts:554` で「Expected 1 arguments, but got 2」で fail
+3. **Vercel**: 同 build 失敗で Deployment Failed
+
+原因は **PR-3 (§5.X+27) で `computeStorageLimitBytes(llmPlan, addonPlan)` → `computeStorageLimitBytes(addonPlan)` にシグネチャ変更** されたが、HEAD (PR #337) は **`super-admin.service.ts` の 3 つの call site のうち 1 つだけが conflict zone 内** で、残り 2 つは conflict marker が付かなかったため自動 merge で旧シグネチャのまま残った:
+
+```ts
+// 同じファイル内に 3 つの call site が存在:
+//   line 336: computeStorageLimitBytes(addonPlan)              ← main が直接編集 (1 引数化済)
+//   line 403: computeStorageLimitBytes(addonPlan)              ← main が直接編集 (1 引数化済)
+//   line 554: computeStorageLimitBytes(llmPlan, addonPlan)     ← HEAD だけが touch → conflict 対象外
+//                                                                 → 旧 2 引数のまま残存 ❌
+```
+
+さらに **test の expectation も旧仕様** (`expect(r?.storageLimitBytes).toBe(150 * 1024 * 1024)` 等) で、main の新仕様 (LLM プラン非依存、Standard 20MB 共通) と矛盾していた。
+
+### 採用したパターン
+
+§5.X+33 解決直後に **必ず以下 3 つを実行**:
+
+```bash
+# 1. refactor 対象関数の全 call site を grep し、引数数 / 引数並びが新シグネチャに揃っているか確認
+grep -nE "computeStorageLimitBytes" src/ -r
+# → 1 つでも旧シグネチャ呼び出しが残っていたら修正
+
+# 2. 関連テストファイルで旧 magic number / 旧定数値を grep
+grep -nE "150 \* 1024 \* 1024|50 \* 1024 \* 1024|300 \* 1024 \* 1024" src/services/*.test.ts
+# → 旧値の expectation があれば新仕様に更新
+
+# 3. 念のため full type check + 全テストを通す
+pnpm tsc --noEmit  # build 時の type error を先に検出
+pnpm test          # test expectation の不一致を検出
+```
+
+**conflict marker は「同じ行を両方が編集した箇所」しか flag しない**。HEAD だけが触った場所 / main だけが触った場所は自動 merge で「両方の変更を残す」動作になる。refactor は基本的に main 側の一方向変更なので、HEAD の旧シグネチャ呼び出しはそのまま生き残る。
+
+### 修正例 (PR #337)
+
+```ts
+// Before merge (HEAD line 554 — conflict zone 外 = marker 無し)
+const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
+const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+const limitBytes = computeStorageLimitBytes(llmPlan, addonPlan);  // ❌ 旧 2 引数
+                                            // ^^^^^^^^ TS error: Expected 1 arguments, but got 2
+
+// After merge fix
+// PR-3 (§5.X+27, 2026-05-15): computeStorageLimitBytes は LLM プランから切り離され
+//   `addonPlan` (Standard 20MB + add-on extra) のみで計算する 1 引数シグネチャ。
+//   旧 2 引数呼び出しが merge resolution で残存していたため修正 (PR #337 fix)。
+const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
+const limitBytes = computeStorageLimitBytes(addonPlan);  // ✅ 新 1 引数
+```
+
+テスト側 (`super-admin.service.test.ts`) も同期して更新:
+
+```ts
+// Before
+// Expert (150MB) + standard (0) = 150MB
+expect(r?.storageLimitBytes).toBe(150 * 1024 * 1024);
+
+// After
+// PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard add-on = 20MB 共通ベース。
+expect(r?.storageLimitBytes).toBe(20 * 1024 * 1024);
+```
+
+### 横展開チェック (long-lived PR を main にマージする時)
+
+- [ ] **API シグネチャ変更を含む refactor が main 側にあるか** を `git log main..HEAD -- <file>` で確認
+- [ ] あれば該当関数を `grep -nE "<funcName>"` で全 call site 列挙し、新シグネチャに揃ったか目視確認
+- [ ] **テストの magic number / 旧定数値** も同 PR の `git diff main..HEAD` で旧仕様前提が無いか確認
+- [ ] `pnpm tsc --noEmit` を merge 直後に必ず実行 (build error を CI 前に検出)
+- [ ] `pnpm test <affected>.test.ts` で関連 test の旧 expectation が新仕様で通るか確認
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — `feat/guide-page-restructure` ↔ main の `computeStorageLimitBytes` シグネチャ不一致
+- 関連 service: [src/services/super-admin.service.ts](../../src/services/super-admin.service.ts), [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
+- 関連 config: [src/config/storage-addon.ts](../../src/config/storage-addon.ts) (新シグネチャ定義)
+- 関連 KDD: §5.X+27 (LLM プランから切り離し → 共通 20MB), §5.X+33 (refactor + コメント追加型 conflict)
+
+---
+
+## 5.X+35 multi-project Playwright で **同 spec が複数 project で並列実行** されると fixture が DB に同名行を量産する罠 ─ name に callSuffix を必ず付与、cleanup は FK 順を厳守、redirect-during-goto は `waitUntil: 'commit'` (PR #337 E2E fix / 2026-05-12)
+
+### 罠の正体
+
+PR #337 の E2E で `13-super-admin-dashboard.spec.ts` が 2 種類のエラーで連続 fail:
+
+1. **chromium project / test 121**: `strict mode violation: getByText('E2E Tenant A e2e-...') resolved to 2 elements` — DB に **同じ name + 異なる UUID の tenant 行が 2 件存在**
+2. **chromium-mobile project / test 233**: `page.goto: net::ERR_ABORTED at /admin/super` — server-side `redirect('/')` 中に navigation がアボート
+
+両方の根本原因が **multi-project Playwright (chromium + chromium-mobile) で同一 spec を実行** する設計に起因。
+
+#### 1 の機序: 同 spec の重複 fixture 投入
+
+- `playwright.config.ts` の `workers: 2` 設定下、同一 spec を chromium / chromium-mobile **両 project** が実行
+- worker process は project ごとに切り替わる可能性があり、**同一 worker process** で連続実行されると `RUN_ID` (= `e2e-${timestamp}-${pid}-${rand}`) が共有される
+- fixture 内で `name` を `${runId}` だけで構成すると → 2 回 beforeAll 呼び出しで **同じ name の行が 2 つ insert** される (slug は `randomBytes(3)` で一意、UNIQUE 制約は slug にのみ存在)
+- さらに **afterAll の cleanup が FK 違反で部分失敗** すると行が残留し、次の project run で重複が確定する
+
+```ts
+// アンチパターン (PR #337 修正前)
+const slugA = `e2e-sa-${runId}-${suffix}-a`;        // slug は suffix 含む = UNIQUE OK
+const tenantA = await pool.query(`INSERT ... `, [slugA, `E2E Tenant A ${runId}`]);
+//                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+//                                                       name は runId のみ = 重複可能
+```
+
+```ts
+// 正しいパターン
+const slugA = `e2e-sa-${runId}-${suffix}-a`;
+const nameA = `E2E Tenant A ${runId}-${suffix}`;    // name にも suffix 付与
+```
+
+#### 2 の機序: redirect-during-goto アボート
+
+`/admin/super` の server-side layout で `redirect('/')` が発火すると、`page.goto()` 中に navigation が断ち切られて `net::ERR_ABORTED` を throw する Chromium 実装がある (特に mobile viewport)。`waitUntil: 'load'` (デフォルト) は完全な response 受領を要求するため fail する。
+
+```ts
+// 正しいパターン
+try {
+  await adminPage.goto('/admin/super', { waitUntil: 'commit' });
+  // 'commit' = 最初のレスポンスヘッダ受領まで待つだけで、その後の server redirect は許容
+} catch (e) {
+  // 念のため ERR_ABORTED 例外は飲み込む (final URL 検証で本質を担保)
+  if (!(e instanceof Error && e.message.includes('ERR_ABORTED'))) throw e;
+}
+await adminPage.waitForURL((url) => !url.pathname.startsWith('/admin/super'), { timeout: 10_000 });
+```
+
+#### cleanup 順序 (FK 違反防止)
+
+E2E で admin が一度でも login すると `auth_event_logs` が tenant_id 付きで insert される。これが残ったまま `DELETE FROM tenants` を発火すると FK 違反で blocking → tenants 残留。
+
+```ts
+// 正しい cleanup 順序
+// 1. tenants を参照する FK 子テーブルを先に DELETE
+//    (auth_event_logs / audit_logs / system_error_logs / api_call_logs /
+//     role_change_logs / sessions / tokens など)
+// 2. users (= tenant_id 持ち)
+// 3. tenants
+// 各 step は独立クエリ + try/catch で 1 つ失敗しても残りを継続 (transaction 不可、§5.X+30 教訓 7 参照)
+```
+
+### 採用したパターン (PR #337 fix)
+
+1. **fixture の name にも suffix を付与** — `E2E Tenant A ${runId}-${suffix}` 形式で同 RUN_ID 複数 call でも重複しない
+2. **cleanup の FK 子テーブル先行 DELETE** — `auth_event_logs` 等を 10 種類列挙してから tenants 削除
+3. **redirect-during-goto を `waitUntil: 'commit'` + ERR_ABORTED 例外スワロー** で許容
+4. **multi-project 並列実行が不要な spec は `testIgnore` で chromium-mobile から除外** — 構造的に重複実行自体を回避
+
+```ts
+// playwright.config.ts
+projects: [
+  { name: 'chromium', ... },
+  {
+    name: 'chromium-mobile',
+    testIgnore: [
+      // 共有 DB に fixture 書き込む spec は project 単位で重複させない
+      /11-tenant-isolation\.spec\.ts/,
+      /12-suggestion-seed-data\.spec\.ts/,
+      /13-super-admin-dashboard\.spec\.ts/,
+    ],
+  },
+],
+```
+
+### 横展開チェック (新規 E2E spec / fixture を追加する時)
+
+- [ ] **fixture が共有 DB に書き込む** か (= tenants / users / 業務 entity を INSERT する)
+- [ ] そうなら **name 系カラムにも `randomBytes(N)` の suffix を付与** したか (slug の UNIQUE だけでは不十分)
+- [ ] cleanup で **tenants / users の FK 子テーブル** を grep し、全て先行 DELETE しているか
+- [ ] cleanup は **transaction を使わず独立クエリ** で実行 (§5.X+30 教訓 7)
+- [ ] spec が **複数 project (chromium / chromium-mobile) で実行する必要があるか** 判定し、不要なら `testIgnore` で chromium-mobile から外す
+- [ ] server-side `redirect()` を経由する navigation は `waitUntil: 'commit'` + ERR_ABORTED swallow パターンを採用
+
+### 関連
+
+- 修正例: PR #337 (2026-05-12) — feat/guide-page-restructure
+- 関連 fixture: [e2e/fixtures/super-admin.ts](../../e2e/fixtures/super-admin.ts) (name suffix + 拡張 cleanup)
+- 関連 spec: [e2e/specs/13-super-admin-dashboard.spec.ts](../../e2e/specs/13-super-admin-dashboard.spec.ts) (redirect goto 修正)
+- 関連 config: [playwright.config.ts](../../playwright.config.ts) (chromium-mobile testIgnore)
+- 過去関連 KDD: §5.X+30 (cleanup transaction 不使用), `e2e/fixtures/multi-tenant.ts` の callSuffix パターン (先行事例)

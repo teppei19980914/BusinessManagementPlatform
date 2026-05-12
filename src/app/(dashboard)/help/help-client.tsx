@@ -19,8 +19,6 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import {
   GUIDE_ROUTE,
-  PRODUCT_LP_URL,
-  getDiscordInviteUrl,
   getFeatureRequestUrl,
 } from '@/config';
 
@@ -29,9 +27,10 @@ type Props = {
 };
 
 export function HelpClient({ isTenantAdmin }: Props) {
+  // 2026-05-11: Discord / LP は AccountMenu (画面右上) に集約したため当画面の末尾 CTA から削除。
+  //   機能要望リンクのみ /help 末尾に残す (= 機能改善依頼は FAQ 文脈で発生しやすいため)。
   const tNav = useTranslations('nav');
-  const discord = getDiscordInviteUrl();
-  const featureRequest = getFeatureRequestUrl() ?? discord;
+  const featureRequest = getFeatureRequestUrl();
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 pb-12">
@@ -272,21 +271,13 @@ export function HelpClient({ isTenantAdmin }: Props) {
       <section className="rounded-lg border bg-muted/40 p-5">
         <h2 className="text-base font-semibold">解決しなかった場合</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          直接ご連絡いただければ開発者がお答えします。お気軽にどうぞ。
+          ここで解決しない場合は、画面右上のアカウントメニューから{' '}
+          <strong>Discord (開発者へ質問)</strong> や{' '}
+          <strong>サービス紹介ページ</strong> にアクセスできます。
+          機能改善のご要望は下記から直接お送りください。
         </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {discord && (
-            <a
-              href={discord}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={tNav('contactDeveloperTooltip')}
-              className="inline-flex items-center gap-1.5 rounded-md bg-card px-3 py-1.5 text-sm hover:bg-accent"
-            >
-              💬 {tNav('contactDeveloper')}
-            </a>
-          )}
-          {featureRequest && (
+        {featureRequest && (
+          <div className="mt-3 flex flex-wrap gap-2">
             <a
               href={featureRequest}
               target="_blank"
@@ -296,16 +287,8 @@ export function HelpClient({ isTenantAdmin }: Props) {
             >
               ✨ {tNav('featureRequest')}
             </a>
-          )}
-          <a
-            href={PRODUCT_LP_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md bg-card px-3 py-1.5 text-sm hover:bg-accent"
-          >
-            🌐 サービス紹介ページ
-          </a>
-        </div>
+          </div>
+        )}
       </section>
     </div>
   );
