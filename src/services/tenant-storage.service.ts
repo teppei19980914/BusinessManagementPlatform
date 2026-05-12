@@ -41,6 +41,8 @@ import {
 } from '@/config/storage-addon';
 import { isTenantPlan, type TenantPlan } from '@/lib/tenant';
 import { recordError } from '@/services/error-log.service';
+// PR-4 (2026-05-15): テナント TZ で翌月適用日を計算
+import { getTenantNextMonthStart } from '@/lib/tenant-time';
 
 // PR-3 (2026-05-15): computeStorageLimitBytes は LLM プラン非依存になったため、
 //   呼出側で llmPlan を解決する必要はなくなった。
@@ -262,6 +264,8 @@ export async function updateStorageAddonPlan(
       plan: true,
       storageAddonPlan: true,
       storageBytesUsed: true,
+      // PR-4 (2026-05-15): 翌月適用日をテナント TZ ベースで計算するため取得
+      timezone: true,
     },
   });
   if (!tenant) {
@@ -301,9 +305,9 @@ export async function updateStorageAddonPlan(
     };
   }
 
-  // ダウングレード: 翌月 1 日 UTC に予約
+  // PR-4 (2026-05-15): 翌月 1 日 (テナント TZ 0:00) に予約。
   const now = new Date();
-  const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const nextMonthStart = getTenantNextMonthStart(now, tenant.timezone);
   await prisma.tenant.update({
     where: { id: tenantId },
     data: {

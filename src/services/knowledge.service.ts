@@ -277,19 +277,37 @@ export async function listAllKnowledgeForViewer(
  * 既存 listKnowledge は全ナレッジ (visibility 制御のみ) を返すのに対し、
  * 本関数は knowledgeProjects 中間テーブル経由で projectId 一致のもののみ返す。
  *
+ * 2026-05-11 改修: 公開範囲ラベルを「自分のみ / 全メンバー」に統一した際に visibility
+ *   フィルタの不整合を発見し修正。
+ *   旧仕様: プロジェクトメンバーは draft を含む全ナレッジを閲覧可。
+ *   新仕様: Risk / Retrospective と同様、非 admin は public + 自分の draft のみ閲覧可。
+ *   - 「自分のみ」(draft) を選んだ作成者の意図と一致 (= 他人には見せない)
+ *   - admin はプロジェクト全 draft 閲覧可 (情報資産管理の責務)
+ *   - getKnowledge (単独取得) と同じ認可ロジックでリスト/詳細の整合性を担保
+ *
  * 認可前提: 呼び出し側 (API ルート) で checkProjectPermission('knowledge:read') を通過済み。
- * サービス単体では追加の公開範囲制御はしない (プロジェクトメンバーは紐付くナレッジを
- * 公開範囲によらず全て見られる想定 = 一覧/全ナレッジの連動を保つ)。
  */
 export async function listKnowledgeByProject(
   projectId: string,
   viewerTenantId: string,
+  viewerUserId?: string,
+  viewerSystemRole?: string,
 ): Promise<KnowledgeDTO[]> {
   // 2026-05-09 feedback Phase 2-4: 越境一覧を遮断するため tenantId 必須化。
+  // 2026-05-11: 公開範囲 (visibility) フィルタ追加。
+  //   viewerUserId 未指定の内部呼び出し (cascade 削除等) は従来どおり全件返す。
+  //   admin / super_admin はテナント内 draft も含めて全件閲覧可。
+  const isAdmin = viewerSystemRole === 'admin' || viewerSystemRole === 'super_admin';
+  const visibilityWhere =
+    viewerUserId === undefined || isAdmin
+      ? {}
+      : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
+
   const knowledges = await prisma.knowledge.findMany({
     where: {
       deletedAt: null,
       tenantId: viewerTenantId,
+      ...visibilityWhere,
       knowledgeProjects: { some: { projectId } },
     },
     include: {
@@ -458,6 +476,17 @@ export async function updateKnowledge(
   if (!existing) throw new Error('NOT_FOUND');
   if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
 
+  // 2026-05-11 defense-in-depth: 「全メンバー」(public) 化する更新で、
+  //   title が input でも DB でも空の場合は拒否。
+  //   通常 validator (updateKnowledgeSchema) が title=='' を弾くが、API 直叩きで
+  //   `{ visibility: 'public' }` のみ送られて DB の既存 title が空のケースを救う。
+  if (input.visibility === 'public') {
+    const effectiveTitle = input.title !== undefined ? input.title : existing.title;
+    if (!effectiveTitle || effectiveTitle.trim().length === 0) {
+      throw new Error('PUBLIC_REQUIRES_TITLE');
+    }
+  }
+
   // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
   //   未指定 (undefined) または既存値と同一なら trigger しない (LLM 課金回避)。
   const textFieldsChanging =
@@ -575,11 +604,20 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
   visibility: 'draft' | 'public',
   viewerUserId: string,
   viewerTenantId: string,
-): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
-  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+): Promise<{
+  updatedIds: string[];
+  skippedNotOwned: number;
+  skippedNotFound: number;
+  /** 2026-05-11: 「全メンバー」公開を試みた行のうち、タイトル空のためスキップした件数 */
+  skippedEmptyTitle: number;
+}> {
+  if (ids.length === 0) {
+    return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0 };
+  }
 
   // PR #165: project-scoped。当該プロジェクトに紐付くナレッジのみ対象 (多対多 中間テーブル経由)
   // 2026-05-09 feedback Phase 2-4: 越境一括更新を遮断するため tenantId フィルタを併記。
+  // 2026-05-11: title を取得して、'public' 化時に空タイトルをスキップ判定に使う。
   const targets = await prisma.knowledge.findMany({
     where: {
       id: { in: ids },
@@ -587,14 +625,26 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
       tenantId: viewerTenantId,
       knowledgeProjects: { some: { projectId } },
     },
-    select: { id: true, createdBy: true },
+    select: { id: true, createdBy: true, title: true },
   });
   const skippedNotFound = ids.length - targets.length;
-  const ownedIds = targets.filter((t) => t.createdBy === viewerUserId).map((t) => t.id);
-  const skippedNotOwned = targets.length - ownedIds.length;
+  const owned = targets.filter((t) => t.createdBy === viewerUserId);
+  const skippedNotOwned = targets.length - owned.length;
+
+  // 2026-05-11: 「自分のみ」(draft) で作られたタイトル空のナレッジを一括で「全メンバー」(public)
+  //   に昇格させようとした場合、サーバ側 validator のルール (public はタイトル必須) と
+  //   整合するように silent skip する。逆方向 (public → draft) は制約緩和なので無条件で許可。
+  let eligible = owned;
+  let skippedEmptyTitle = 0;
+  if (visibility === 'public') {
+    const beforeCount = eligible.length;
+    eligible = eligible.filter((t) => t.title.trim().length > 0);
+    skippedEmptyTitle = beforeCount - eligible.length;
+  }
+  const ownedIds = eligible.map((t) => t.id);
 
   if (ownedIds.length === 0) {
-    return { updatedIds: [], skippedNotOwned, skippedNotFound };
+    return { updatedIds: [], skippedNotOwned, skippedNotFound, skippedEmptyTitle };
   }
 
   // updateMany は relation connect 構文を受け付けないため scalar `updatedBy` を直接セットする
@@ -604,5 +654,5 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
     data: { visibility, updatedBy: viewerUserId },
   });
 
-  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, skippedEmptyTitle };
 }

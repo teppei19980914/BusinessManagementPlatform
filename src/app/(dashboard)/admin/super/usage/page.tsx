@@ -7,16 +7,24 @@
  * - プラン別分布
  * - **CSV ダウンロード** (当月 = 現在値、過去月 = 履歴テーブル)
  * - **過去 6 ヶ月の使用量履歴テーブル** (テナント x 月)
+ *
+ * 2026-05-11 改訂:
+ *   - 「今月の費用」を LLM + Storage add-on 合算に変更し、内訳を補助行で併記
+ *   - Default テナント (運営者自身) のサマリを別セクションで表示 (請求対象外)
  */
 
+import Link from 'next/link';
 import {
   getCrossTenantUsageSummary,
+  getDefaultTenantOwnSummary,
   listMonthlyUsageHistory,
+  type DefaultTenantOwnSummary,
 } from '@/services/super-admin.service';
 
 export default async function SuperAdminUsagePage() {
-  const [summary, history] = await Promise.all([
+  const [summary, defaultTenant, history] = await Promise.all([
     getCrossTenantUsageSummary(),
+    getDefaultTenantOwnSummary(),
     listMonthlyUsageHistory(6),
   ]);
 
@@ -31,10 +39,11 @@ export default async function SuperAdminUsagePage() {
   const yearMonths = Array.from(byYearMonth.keys()).sort().reverse();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <h1 className="text-2xl font-bold">使用量サマリ (全テナント横断)</h1>
       <p className="text-sm text-muted-foreground">
-        管理テナント (運営内部) は集計から除外しています。
+        管理テナント (運営内部) と Default テナント (運営者自身) は顧客集計から除外しています。
+        Default テナントの情報は下部の専用セクションを参照してください。
       </p>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -53,15 +62,23 @@ export default async function SuperAdminUsagePage() {
           value={summary.totalCurrentMonthApiCalls.toLocaleString()}
           unit="回"
         />
+        {/* 2026-05-11: LLM + Storage add-on 合算課金 + 内訳併記 */}
         <UsageCard
-          label="今月の API 費用"
-          value={`¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()}`}
+          label="今月の合計課金 (LLM + Storage)"
+          value={`¥${summary.totalCurrentMonthCombinedJpy.toLocaleString()}`}
           unit=""
+          subValue={`LLM ¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()} + Storage ¥${summary.totalCurrentMonthStorageJpy.toLocaleString()}`}
         />
       </section>
 
+      {/* 2026-05-11: Default テナント (運営者自身) サマリを別セクション */}
+      <DefaultTenantUsageSection defaultTenant={defaultTenant} />
+
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">プラン別分布</h2>
+        <p className="text-xs text-muted-foreground">
+          顧客テナントのみ集計 (Default テナント = 運営者自身は別セクションを参照)
+        </p>
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b text-left">
@@ -73,7 +90,7 @@ export default async function SuperAdminUsagePage() {
             {summary.planDistribution.length === 0 ? (
               <tr>
                 <td colSpan={2} className="p-4 text-center text-muted-foreground">
-                  テナントがありません
+                  顧客テナントがありません
                 </td>
               </tr>
             ) : (
@@ -167,7 +184,18 @@ export default async function SuperAdminUsagePage() {
   );
 }
 
-function UsageCard({ label, value, unit }: { label: string; value: string; unit: string }) {
+function UsageCard({
+  label,
+  value,
+  unit,
+  subValue,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  /** 2026-05-11: 内訳など補助テキスト */
+  subValue?: string;
+}) {
   return (
     <div className="rounded border p-4">
       <p className="text-xs text-muted-foreground">{label}</p>
@@ -175,6 +203,72 @@ function UsageCard({ label, value, unit }: { label: string; value: string; unit:
         <span className="text-2xl font-bold">{value}</span>
         {unit && <span className="ml-1 text-sm text-muted-foreground">{unit}</span>}
       </p>
+      {subValue && <p className="mt-1 text-xs text-muted-foreground">{subValue}</p>}
     </div>
   );
+}
+
+/**
+ * 2026-05-11: Default テナント (運営者自身) の使用量サマリを別セクションで表示。
+ */
+function DefaultTenantUsageSection({
+  defaultTenant,
+}: {
+  defaultTenant: DefaultTenantOwnSummary | null;
+}) {
+  return (
+    <section className="space-y-2 rounded border border-info/40 bg-info/5 p-4">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold">Default テナント (運営者自身)</h2>
+        {defaultTenant && (
+          <Link
+            href={`/admin/super/tenants/${defaultTenant.id}`}
+            className="text-xs text-info hover:underline"
+          >
+            詳細を見る →
+          </Link>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        運営者自身のテナント。顧客集計には含まれません (= 請求対象外)
+      </p>
+      {!defaultTenant ? (
+        <p className="text-sm text-muted-foreground">
+          Default テナントが存在しません (seed 未投入または削除済)。
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <UsageCard
+            label="アクティブユーザ"
+            value={defaultTenant.activeUserCount.toString()}
+            unit="人"
+          />
+          <UsageCard
+            label="今月の API 呼出"
+            value={defaultTenant.currentMonthApiCallCount.toLocaleString()}
+            unit="回"
+          />
+          <UsageCard
+            label="今月の API 費用 (参考)"
+            value={`¥${defaultTenant.currentMonthApiCostJpy.toLocaleString()}`}
+            unit=""
+            subValue="(請求対象外)"
+          />
+          <UsageCard
+            label="Storage プラン / 使用"
+            value={defaultTenant.storageAddonPlan}
+            unit=""
+            subValue={`${formatBytesLocal(defaultTenant.storageBytesUsed)} / ${formatBytesLocal(defaultTenant.storageLimitBytes)}`}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatBytesLocal(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }

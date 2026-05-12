@@ -169,11 +169,18 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    // 2026-05-11: 「自分のみ (draft)」保存時は conductedDate を空にできる仕様のため、
+    //   '' を undefined に変換してから送信する (validator の regex で '' は弾かれるため、
+    //   サーバ側 default で当日日付を補完)。
+    const payload: Record<string, unknown> = { ...form };
+    if (form.conductedDate === '') {
+      delete payload.conductedDate;
+    }
     const res = await withLoading(() =>
       fetch(`/api/projects/${projectId}/retrospectives`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       }),
     );
     if (!res.ok) {
@@ -271,8 +278,19 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>{tRetro('conductedDate')}</Label>
-                  <DateFieldWithActions value={form.conductedDate} onChange={(v) => setForm({ ...form, conductedDate: v })} required hideClear />
+                  <Label>
+                    {tRetro('conductedDate')}
+                    {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意 (サーバ側で当日日付を default 補完) */}
+                    {form.visibility === 'draft' && (
+                      <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>
+                    )}
+                  </Label>
+                  <DateFieldWithActions
+                    value={form.conductedDate}
+                    onChange={(v) => setForm({ ...form, conductedDate: v })}
+                    required={form.visibility === 'public'}
+                    hideClear
+                  />
                 </div>
                 {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 (実施日のみ必須) */}
                 <div className="space-y-2">

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
 import { bulkUpdateMemosVisibilityFromList } from '@/services/memo.service';
 import { bulkUpdateMemoVisibilitySchema } from '@/lib/validators/cross-list-bulk-visibility';
 
@@ -35,6 +35,13 @@ export async function PATCH(req: NextRequest) {
       { status: 400 },
     );
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   const result = await bulkUpdateMemosVisibilityFromList(
     parsed.data.ids,

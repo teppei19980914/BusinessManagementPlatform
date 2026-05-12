@@ -52,6 +52,11 @@ type FakeTenant = {
   lastResetAt: Date | null;
   createdAt: Date;
   deletedAt: Date | null;
+  // PR-4 (2026-05-15): テナント TZ
+  timezone: string;
+  // PR-3 / Storage add-on 関連 (本テストでは未使用だが型整合のため)
+  storageAddonPlan: string;
+  storageBytesUsed: bigint;
 };
 
 const initialState = (): FakeTenant => ({
@@ -70,6 +75,10 @@ const initialState = (): FakeTenant => ({
   lastResetAt: null,
   createdAt: new Date('2026-04-15T00:00:00Z'),
   deletedAt: null,
+  // PR-4: UTC TZ で本テストの境界判定 (2026-06-01T00:00:00Z) が UTC ベースの旧仕様と一致
+  timezone: 'UTC',
+  storageAddonPlan: 'standard',
+  storageBytesUsed: BigInt(0),
 });
 
 let state: FakeTenant;
@@ -93,9 +102,8 @@ vi.mock('@/lib/db', () => ({
         return { ...state };
       }),
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
-        // resetTenantMonthlyCounters / saveMonthlyUsageSnapshots / applyScheduledPlanChanges 用
-        // OR 条件が含まれる場合は「リセット未済」フィルタ、
-        // scheduledPlanChangeAt 条件は「ダウングレード適用」フィルタとして判定する
+        // PR-4 (2026-05-15): mocks for tenant-monthly-reset (per-tenant TZ filtering 後の全テナント取得) +
+        //   applyScheduledPlanChanges (scheduledPlanChangeAt 条件) を扱う。
         if (where.scheduledPlanChangeAt !== undefined) {
           // applyScheduledPlanChanges 用
           if (
@@ -107,34 +115,16 @@ vi.mock('@/lib/db', () => ({
           }
           return [];
         }
-        // saveMonthlyUsageSnapshots 用 (lastResetAt < monthStart の場合のみ対象)
-        const monthStart = (where.OR as Array<Record<string, unknown>>)?.[1]
-          ? ((where.OR as Array<{ lastResetAt: { lt: Date } }>)[1]!.lastResetAt.lt)
-          : null;
-        if (monthStart && (state.lastResetAt === null || state.lastResetAt < monthStart)) {
-          return [
-            {
-              id: state.id,
-              plan: state.plan,
-              currentMonthApiCallCount: state.currentMonthApiCallCount,
-              currentMonthApiCostJpy: state.currentMonthApiCostJpy,
-            },
-          ];
-        }
-        return [];
+        // saveMonthlyUsageSnapshots / resetTenantMonthlyCounters 用:
+        //   今は WHERE で lastResetAt フィルタしないため、deletedAt=null かつ
+        //   (id != MANAGEMENT_TENANT_ID または filter なし) のテナントを全件返す。
+        //   サービス側で per-tenant TZ ベースに JS filter する。
+        if (state.deletedAt !== null) return [];
+        return [{ ...state }];
       }),
-      updateMany: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
-        // resetTenantMonthlyCounters は updateMany を使う
-        const orList = (where.OR as Array<Record<string, unknown>>) ?? [];
-        const monthStart = orList[1]
-          ? (orList[1] as { lastResetAt: { lt: Date } }).lastResetAt.lt
-          : null;
-        if (monthStart && (state.lastResetAt === null || state.lastResetAt < monthStart)) {
-          state.currentMonthApiCallCount = data.currentMonthApiCallCount as number;
-          state.currentMonthApiCostJpy = data.currentMonthApiCostJpy as number;
-          state.lastResetAt = data.lastResetAt as Date;
-          return { count: 1 };
-        }
+      updateMany: vi.fn(async () => {
+        // PR-4: resetTenantMonthlyCounters は updateMany ではなく per-tenant update に変更されたため
+        //   現在 updateMany は使われない。互換 stub として残置。
         return { count: 0 };
       }),
       update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {

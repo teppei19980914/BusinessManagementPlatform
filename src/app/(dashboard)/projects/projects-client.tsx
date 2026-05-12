@@ -76,6 +76,9 @@ type Props = {
   isAdmin: boolean;
   // PR #111-2: 新規作成ダイアログの顧客選択肢
   customers: CustomerOption[];
+  // fix/admin-users-defensive-render 横展開 (2026-05-15): server 側 data 取得が失敗した時に
+  //   表示する警告バナーの可否。デフォルト false (= 正常)。
+  dataLoadError?: boolean;
 };
 
 // PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
@@ -106,6 +109,7 @@ export function ProjectsClient({
   initialTotal,
   isAdmin,
   customers,
+  dataLoadError = false,
 }: Props) {
   const router = useRouter();
   const t = useTranslations('project');
@@ -233,6 +237,18 @@ export function ProjectsClient({
 
   return (
     <div className="space-y-6">
+      {/* fix/admin-users-defensive-render 横展開 (2026-05-15): server data load 失敗時のバナー。
+          listProjects / listCustomers が throw した場合、画面は空表示になるが
+          ヘッダ + 作成 dialog 等の操作は維持。 */}
+      {dataLoadError && (
+        <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
+          <p className="font-semibold">⚠ プロジェクト一覧の読み込みに失敗しました</p>
+          <p className="mt-1 text-muted-foreground">
+            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
+            問題が継続する場合は管理者にお問合せください。
+          </p>
+        </div>
+      )}
       {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
       <div className="flex items-center justify-end">
         {isAdmin && (

@@ -109,6 +109,9 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   'suggestion-explanation.service.ts',
   // 純粋ロジック (DB アクセスなし、tenant 概念と無関係)
   'state-machine.ts',
+  // 2026-05-11: /guide ロール判定。`userId` 単独で ProjectMember を引くため tenant 越境不可。
+  //   user は単一 tenant にのみ所属するため、user-scoped クエリは構造的にテナント分離されている。
+  'guide-role.service.ts',
 ]);
 
 /**

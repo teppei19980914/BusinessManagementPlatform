@@ -11,7 +11,7 @@ import {
   getTenantDetail,
   DORMANT_TENANT_THRESHOLD_DAYS,
 } from '@/services/super-admin.service';
-import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
 import { TenantDeleteButton } from './tenant-delete-button';
 
 export default async function SuperAdminTenantDetailPage({
@@ -25,15 +25,31 @@ export default async function SuperAdminTenantDetailPage({
 
   // P-6: 休眠状態は service 側で計算済 (render 中の Date.now() を回避)
   const { daysSinceLastActivity, isDormant } = tenant;
+  // 2026-05-11: Default テナント (= 運営者自身) は請求対象外。費用表示にラベル併記する
+  const isDefaultTenant = tenant.id === DEFAULT_TENANT_ID;
+  const nonBillableSuffix = isDefaultTenant ? ' (請求対象外)' : '';
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">{tenant.name}</h1>
+        <h1 className="text-2xl font-bold">
+          {tenant.name}
+          {isDefaultTenant && (
+            <span className="ml-2 rounded bg-info/20 px-2 py-0.5 align-middle text-xs font-medium text-info">
+              運営者自身 / 請求対象外
+            </span>
+          )}
+        </h1>
         <p className="text-sm text-muted-foreground">
           tenantSeq: {tenant.tenantSeq ?? '-'} / slug: {tenant.slug} / 作成日:{' '}
           {tenant.createdAt.toISOString().split('T')[0]}
         </p>
+        {isDefaultTenant && (
+          <p className="mt-2 rounded border border-info/30 bg-info/5 p-2 text-xs text-info">
+            このテナントは運営者自身のテナント (Default) です。費用集計は内部記録値であり、
+            実際の請求は発生しません。顧客テナントの請求書合計には含まれません。
+          </p>
+        )}
       </div>
 
       {/* P-6 (2026-05-08): 休眠警告 */}
@@ -76,9 +92,13 @@ export default async function SuperAdminTenantDetailPage({
           tooltip="当月の LLM/Embedding 呼出回数 (withMeteredLLM 経由)。月初 (UTC) にリセット"
         />
         <DetailCard
-          label="今月 API 費用"
+          label={`今月 API 費用${nonBillableSuffix}`}
           value={`¥${tenant.currentMonthApiCostJpy.toLocaleString()}`}
-          tooltip="当月の内部請求額 (プラン別固定単価)。Anthropic 実コストとは別系統"
+          tooltip={
+            isDefaultTenant
+              ? '内部記録値。Default テナントは請求対象外のため実際の請求は発生しません'
+              : '当月の内部請求額 (プラン別固定単価)。Anthropic 実コストとは別系統'
+          }
         />
         <DetailCard
           label="月次予算上限"
@@ -139,9 +159,13 @@ export default async function SuperAdminTenantDetailPage({
             tooltip="添付ファイル合算サイズ。100% 超で Grace period (7 日)、未対応で write 停止"
           />
           <DetailCard
-            label="当月予想合計課金"
+            label={`当月予想合計課金${nonBillableSuffix}`}
             value={`¥${tenant.totalCurrentMonthJpy.toLocaleString()} (LLM ¥${tenant.currentMonthApiCostJpy.toLocaleString()} + Storage ¥${tenant.storageAddonMonthlyJpy.toLocaleString()})`}
-            tooltip="LLM 部分 (従量課金) + Storage add-on (固定月額) の合算。請求書根拠"
+            tooltip={
+              isDefaultTenant
+                ? '内部記録値。Default テナントは請求対象外のため顧客請求書合計には含まれません'
+                : 'LLM 部分 (従量課金) + Storage add-on (固定月額) の合算。請求書根拠'
+            }
           />
         </div>
         {tenant.storageGracePeriodStartedAt && (

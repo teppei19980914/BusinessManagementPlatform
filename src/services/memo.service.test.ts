@@ -217,19 +217,19 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ids 空 → updateMany 呼ばず 0 件', async () => {
-    const r = await bulkUpdateMemosVisibilityFromList([], 'private', 'u-1');
-    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
+    const r = await bulkUpdateMemosVisibilityFromList([], 'private', 'u-1', 't-1');
+    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0 });
     expect(prisma.memo.updateMany).not.toHaveBeenCalled();
   });
 
   it('userId 本人のみ updateMany される (他人混入は silent skip)', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([
-      { id: 'memo-1', userId: 'u-1' },
-      { id: 'memo-2', userId: 'u-OTHER' },
+      { id: 'memo-1', userId: 'u-1', title: '正しいタイトル' },
+      { id: 'memo-2', userId: 'u-OTHER', title: '他人のメモ' },
     ] as never);
     vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    const r = await bulkUpdateMemosVisibilityFromList(['memo-1', 'memo-2'], 'private', 'u-1');
+    const r = await bulkUpdateMemosVisibilityFromList(['memo-1', 'memo-2'], 'private', 'u-1', 't-1');
 
     expect(r.updatedIds).toEqual(['memo-1']);
     expect(r.skippedNotOwned).toBe(1);
@@ -242,12 +242,50 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
 
   it('Memo は visibility="public" も受理 (private→public の bulk 公開)', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([
-      { id: 'memo-1', userId: 'u-1' },
+      { id: 'memo-1', userId: 'u-1', title: '正しいタイトル' },
     ] as never);
     vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    const r = await bulkUpdateMemosVisibilityFromList(['memo-1'], 'public', 'u-1');
+    const r = await bulkUpdateMemosVisibilityFromList(['memo-1'], 'public', 'u-1', 't-1');
     expect(r.updatedIds).toEqual(['memo-1']);
     expect(vi.mocked(prisma.memo.updateMany).mock.calls[0][0].data).toEqual({ visibility: 'public' });
+  });
+
+  // 2026-05-11: 「自分のみ」(private) で空タイトル保存されたメモを「全メンバー」(public) に
+  //   昇格させようとした場合、サーバ側 validator のルール (public はタイトル必須) と整合するため
+  //   silent skip + skippedEmptyTitle を返す。
+  it('private→public 化時に空タイトルの行はスキップ (個人情報漏洩 + UX 不整合の防止)', async () => {
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([
+      { id: 'memo-1', userId: 'u-1', title: '正しいタイトル' },
+      { id: 'memo-empty', userId: 'u-1', title: '' },
+      { id: 'memo-space', userId: 'u-1', title: '   ' },
+    ] as never);
+    vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateMemosVisibilityFromList(
+      ['memo-1', 'memo-empty', 'memo-space'],
+      'public',
+      'u-1',
+      't-1',
+    );
+
+    expect(r.updatedIds).toEqual(['memo-1']);
+    expect(r.skippedEmptyTitle).toBe(2);
+
+    // updateMany は memo-1 のみが対象
+    const call = vi.mocked(prisma.memo.updateMany).mock.calls[0][0];
+    expect(call.where.id.in).toEqual(['memo-1']);
+  });
+
+  it('private 化 (public→private) の場合は空タイトル行もそのまま通す (制約緩和方向)', async () => {
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([
+      { id: 'memo-empty', userId: 'u-1', title: '' },
+    ] as never);
+    vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateMemosVisibilityFromList(['memo-empty'], 'private', 'u-1', 't-1');
+
+    expect(r.updatedIds).toEqual(['memo-empty']);
+    expect(r.skippedEmptyTitle).toBe(0);
   });
 });

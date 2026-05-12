@@ -126,6 +126,13 @@ export default defineConfig({
         //   (重複実行で CI 時間を浪費しない)。
         /11-tenant-isolation\.spec\.ts/,
         /12-suggestion-seed-data\.spec\.ts/,
+        // PR #337 fix (2026-05-12, KDD §5.X+35):
+        //   super_admin ダッシュボード spec は **fixture が tenant を共有 DB に書き込む**
+        //   ため、chromium / chromium-mobile が同 worker で連続実行されると tenants が
+        //   重複生成 (slug は一意だが name 重複) し getByText が strict mode violation。
+        //   ダッシュボード UI は desktop 専用、auth boundary は HTTP レイヤで決まる
+        //   ため mobile viewport 検証の価値が低い → chromium project のみで実行する。
+        /13-super-admin-dashboard\.spec\.ts/,
       ],
     },
   ],

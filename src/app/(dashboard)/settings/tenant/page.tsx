@@ -14,10 +14,12 @@
 
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { LOGIN_ROUTE } from '@/config';
 import { isTenantAdmin } from '@/lib/permissions';
 import { getTenantSelfInfo } from '@/services/tenant-self.service';
 import { getStorageInfo } from '@/services/tenant-storage.service';
+import { recordError } from '@/services/error-log.service';
 import { TenantSettingsClient } from './tenant-settings-client';
 
 export default async function TenantSettingsPage() {
@@ -28,11 +30,60 @@ export default async function TenantSettingsPage() {
   // super_admin は管理テナント所属で本画面の対象外、general は権限なし。
   if (!isTenantAdmin(session.user)) redirect('/settings');
 
-  const info = await getTenantSelfInfo(session.user.tenantId);
-  if (!info) redirect('/settings');
+  // fix/admin-users-defensive-render 横展開 (2026-05-15): テナント管理者がよく見る画面
+  //   のため、getTenantSelfInfo / getStorageInfo の throw が dashboard error.tsx に
+  //   飛んで「ログインできない」体験を引き起こさないよう、try/catch で囲い、失敗時は
+  //   インライン error UI + /settings リンクで操作可能 UI を維持する。
+  //   詳細は admin/users/page.tsx 参照。
+  //   TenantSettingsClient は initialInfo (non-null) に強く依存するため、admin/users
+  //   のような「フォールバック値で描画継続」ではなく、project-detail と同様に
+  //   インライン error 画面を直接描画する形を採る。
+  let info: Awaited<ReturnType<typeof getTenantSelfInfo>> = null;
+  let storageInfo: Awaited<ReturnType<typeof getStorageInfo>> = null;
+  let dataLoadError = false;
+  try {
+    info = await getTenantSelfInfo(session.user.tenantId);
+    // Storage add-on (Phase 2 / 2026-05-08): Storage プラン選択セクション初期値
+    storageInfo = await getStorageInfo(session.user.tenantId);
+  } catch (error) {
+    dataLoadError = true;
+    await recordError({
+      severity: 'error',
+      source: 'server',
+      message: '[/settings/tenant] failed to load tenant info or storage info',
+      stack: error instanceof Error ? error.stack : String(error),
+      userId: session.user.id,
+      tenantId: session.user.tenantId,
+      context: {
+        path: '/settings/tenant',
+        errorName: error instanceof Error ? error.name : 'unknown',
+        errorMessage: error instanceof Error ? error.message : String(error),
+        tenantId: session.user.tenantId,
+      },
+    });
+  }
 
-  // Storage add-on (Phase 2 / 2026-05-08): Storage プラン選択セクション初期値
-  const storageInfo = await getStorageInfo(session.user.tenantId);
+  if (dataLoadError || !info) {
+    // dashboard/error.tsx に飛ばすと「ログインできない」体験になるため、ここで
+    // 操作可能な fallback UI を直接描画する (/settings へ戻るリンク付き)。
+    return (
+      <div className="space-y-4">
+        <div className="rounded border border-destructive/30 bg-destructive/10 p-4 text-sm">
+          <p className="font-semibold">⚠ テナント設定の読み込みに失敗しました</p>
+          <p className="mt-1 text-muted-foreground">
+            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
+            問題が継続する場合は管理者にお問合せください。
+          </p>
+        </div>
+        <Link
+          href="/settings"
+          className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+        >
+          設定画面へ戻る
+        </Link>
+      </div>
+    );
+  }
 
   // BigInt + Date を JSON-friendly な形に変換 (Server Component → Client Component の境界)
   const storageInitialInfo = storageInfo

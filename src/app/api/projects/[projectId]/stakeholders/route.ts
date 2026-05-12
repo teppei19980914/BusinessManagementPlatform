@@ -14,6 +14,7 @@ import {
   getAuthenticatedUser,
   checkProjectPermission,
   requireActualProjectMember,
+  requireStorageQuotaForWrite,
 } from '@/lib/api-helpers';
 import { createStakeholderSchema } from '@/lib/validators/stakeholder';
 import { listStakeholders, createStakeholder } from '@/services/stakeholder.service';
@@ -61,6 +62,13 @@ export async function POST(
       { status: 400 },
     );
   }
+
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  const quotaErr = await requireStorageQuotaForWrite(
+    user.tenantId,
+    JSON.stringify(parsed.data).length,
+  );
+  if (quotaErr) return quotaErr;
 
   const stakeholder = await createStakeholder(projectId, parsed.data, user.id, user.tenantId);
 

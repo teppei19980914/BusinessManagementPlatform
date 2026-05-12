@@ -30,6 +30,9 @@ import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
 import { getMailProvider } from '@/lib/mail';
 import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+// PR-4 (2026-05-15): テナント TZ ベースの日付計算ヘルパ
+import { tenantCalendarDayDiff } from '@/lib/tenant-time';
+import { DEFAULT_TIMEZONE } from '@/config/i18n';
 
 // ================================================================
 // 公開定数
@@ -56,6 +59,9 @@ export type BeginnerExpiryInput = {
   plan: string;
   createdAt: Date;
   beginnerEverUpgraded: boolean;
+  // PR-4 (2026-05-15): テナント TZ。未指定なら DEFAULT_TIMEZONE (= 'Asia/Tokyo')。
+  //   middleware (JWT claim 経由) や cron (DB 直読) の両経路で渡せる optional。
+  timezone?: string;
 };
 
 // ================================================================
@@ -63,10 +69,15 @@ export type BeginnerExpiryInput = {
 // ================================================================
 
 /**
- * Beginner プラン期限の state を判定する (純関数)。
+ * Beginner プラン期限の state を判定する (純関数、PR-4 でテナント TZ ベース化)。
  *
  * - plan != 'beginner' / beginnerEverUpgraded=true / 管理テナント: 'active'
- * - それ以外: createdAt 起点の経過日数で 4 段階分類
+ * - それ以外: createdAt 起点の **テナント TZ カレンダー日数** で 4 段階分類
+ *   (旧仕様 = 絶対経過時間 / 24h、新仕様 = TZ ローカルでの YYYY-MM-DD 差)
+ *
+ * 例: 'Asia/Tokyo' で 2026-02-01 14:00 JST 作成 → 2026-05-02 09:00 JST 時点で
+ *   絶対経過 89.98 日だが、TZ カレンダー差は (2026-05-02 - 2026-02-01) = 90 日 → expired
+ *   (TZ 0:00 に切替わる挙動を実現)
  */
 export function getBeginnerExpiryState(
   tenant: BeginnerExpiryInput,
@@ -75,9 +86,9 @@ export function getBeginnerExpiryState(
   if (tenant.plan !== 'beginner') return 'active';
   if (tenant.beginnerEverUpgraded) return 'active';
 
-  const daysElapsed = Math.floor(
-    (now.getTime() - tenant.createdAt.getTime()) / (24 * 60 * 60 * 1000),
-  );
+  // PR-4: テナント TZ カレンダー日差で判定
+  const timeZone = tenant.timezone ?? DEFAULT_TIMEZONE;
+  const daysElapsed = tenantCalendarDayDiff(tenant.createdAt, now, timeZone);
 
   if (daysElapsed >= BEGINNER_EXPIRY_DAYS) return 'expired';
   if (daysElapsed >= BEGINNER_NOTICE_DAY_75) return 'warning_75';
@@ -86,7 +97,7 @@ export function getBeginnerExpiryState(
 }
 
 /**
- * 残り日数を返す (= 90 日まで何日)。expired なら負数。plan != beginner なら null。
+ * 残り日数を返す (= 90 日まで何日、PR-4 でテナント TZ ベース)。expired なら負数。plan != beginner なら null。
  */
 export function getBeginnerDaysRemaining(
   tenant: BeginnerExpiryInput,
@@ -95,9 +106,9 @@ export function getBeginnerDaysRemaining(
   if (tenant.plan !== 'beginner') return null;
   if (tenant.beginnerEverUpgraded) return null;
 
-  const daysElapsed = Math.floor(
-    (now.getTime() - tenant.createdAt.getTime()) / (24 * 60 * 60 * 1000),
-  );
+  // PR-4: テナント TZ カレンダー日差
+  const timeZone = tenant.timezone ?? DEFAULT_TIMEZONE;
+  const daysElapsed = tenantCalendarDayDiff(tenant.createdAt, now, timeZone);
   return BEGINNER_EXPIRY_DAYS - daysElapsed;
 }
 
@@ -168,6 +179,8 @@ export async function sendBeginnerExpiryNotices(
       plan: true,
       createdAt: true,
       beginnerEverUpgraded: true,
+      // PR-4 (2026-05-15): テナント TZ も取得し、各テナントのローカル日付で判定
+      timezone: true,
       billingContactEmail: true,
       billingContactName: true,
       beginnerNoticeDay60SentAt: true,

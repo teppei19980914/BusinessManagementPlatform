@@ -107,6 +107,42 @@ describe('getBeginnerExpiryState', () => {
     expect(BEGINNER_NOTICE_DAY_75).toBe(75);
     expect(BEGINNER_EXPIRY_DAYS).toBe(90);
   });
+
+  describe('PR-4: テナント TZ カレンダー日ベース判定', () => {
+    it('JST 14:00 作成 → 90 日後 09:00 JST 時点は expired (旧仕様の絶対経過 89.98 日では active になっていた)', () => {
+      // JST 2026-02-01 14:00 = UTC 2026-02-01 05:00
+      const createdAt = new Date('2026-02-01T05:00:00Z');
+      // JST 2026-05-02 09:00 = UTC 2026-05-02 00:00
+      const checkAt = new Date('2026-05-02T00:00:00Z');
+      const tenant = {
+        plan: 'beginner',
+        createdAt,
+        beginnerEverUpgraded: false,
+        timezone: 'Asia/Tokyo',
+      };
+      expect(getBeginnerExpiryState(tenant, checkAt)).toBe('expired');
+      expect(getBeginnerDaysRemaining(tenant, checkAt)).toBe(0);
+    });
+
+    it('UTC TZ 指定: 旧仕様と同じ結果 (絶対経過時間ベースに収束)', () => {
+      const tenant = {
+        plan: 'beginner',
+        createdAt: day(60),
+        beginnerEverUpgraded: false,
+        timezone: 'UTC',
+      };
+      expect(getBeginnerExpiryState(tenant, NOW)).toBe('warning_60');
+    });
+
+    it('timezone 未指定 → DEFAULT_TIMEZONE (Asia/Tokyo) で判定 (既存呼出の後方互換)', () => {
+      const tenant = {
+        plan: 'beginner',
+        createdAt: day(60),
+        beginnerEverUpgraded: false,
+      };
+      expect(getBeginnerExpiryState(tenant, NOW)).toBe('warning_60');
+    });
+  });
 });
 
 describe('getBeginnerDaysRemaining', () => {

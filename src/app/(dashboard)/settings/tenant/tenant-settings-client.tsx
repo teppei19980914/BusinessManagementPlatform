@@ -16,6 +16,8 @@ import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/toast-provider';
 import { SUPPORTED_LOCALES, SELECTABLE_LOCALES } from '@/config';
+// PR-4 (2026-05-15): テナント TZ で日付を表示
+import { useFormatters } from '@/lib/use-formatters';
 
 type TenantSelfInfo = {
   id: string;
@@ -101,6 +103,8 @@ export function TenantSettingsClient({
   initialInfo: TenantSelfInfo;
   storageInitialInfo: StorageInitialInfo | null;
 }) {
+  // PR-4 (2026-05-15): テナント TZ で日付を表示するため useFormatters を導入
+  const { formatDate } = useFormatters();
   const router = useRouter();
   const { showSuccess, showError } = useToast();
   const [info, setInfo] = useState(initialInfo);
@@ -181,7 +185,8 @@ export function TenantSettingsClient({
       if (json.data.appliedImmediately) {
         showSuccess('変更を即時反映しました');
       } else {
-        const date = new Date(json.data.scheduledFor).toISOString().split('T')[0];
+        // PR-4 (2026-05-15): テナント TZ で日付表示
+        const date = formatDate(json.data.scheduledFor);
         showSuccess(`${date} に変更が適用されます`);
       }
       await refreshInfo();
@@ -227,12 +232,16 @@ export function TenantSettingsClient({
       {/* 当月使用量 (PR-2 / 2026-05-15: plan 別タイル構成に切替) */}
       <UsageSection info={info} budgetUsagePercent={budgetUsagePercent} />
 
-      {/* 予約済プラン変更 */}
+      {/* 予約済プラン変更 (PR-4: テナント TZ で日付表示) */}
       {info.scheduledPlanChangeAt && info.scheduledNextPlan && (
         <section className="rounded border border-amber-300 bg-amber-50 p-4 text-sm dark:bg-amber-900/30">
           <p>
             <strong>プラン変更予約あり:</strong>{' '}
-            {new Date(info.scheduledPlanChangeAt).toISOString().split('T')[0]} に{' '}
+            {formatDate(
+              typeof info.scheduledPlanChangeAt === 'string'
+                ? info.scheduledPlanChangeAt
+                : info.scheduledPlanChangeAt.toISOString(),
+            )} に{' '}
             <span className="font-mono">{info.scheduledNextPlan}</span> へ変更予定
           </p>
           <Button
@@ -596,6 +605,8 @@ function formatBytes(bytes: number): string {
 function StorageAddonSection({ initialInfo }: { initialInfo: StorageInitialInfo }) {
   const router = useRouter();
   const { showSuccess, showError } = useToast();
+  // PR-4 (2026-05-15): テナント TZ で日付を表示
+  const { formatDate } = useFormatters();
   const [info, setInfo] = useState(initialInfo);
   const [selected, setSelected] = useState(initialInfo.storageAddonPlan);
   const [submitting, setSubmitting] = useState(false);
@@ -656,7 +667,8 @@ function StorageAddonSection({ initialInfo }: { initialInfo: StorageInitialInfo 
       if (json.data.appliedImmediately) {
         showSuccess('ストレージプランを即時反映しました');
       } else {
-        const date = new Date(json.data.scheduledFor).toISOString().split('T')[0];
+        // PR-4 (2026-05-15): テナント TZ で日付表示
+        const date = formatDate(json.data.scheduledFor);
         showSuccess(`${date} にストレージプランを変更します`);
       }
       await refresh();
@@ -735,12 +747,12 @@ function StorageAddonSection({ initialInfo }: { initialInfo: StorageInitialInfo 
         </div>
       )}
 
-      {/* 予約済プラン変更 */}
+      {/* 予約済プラン変更 (PR-4: テナント TZ で日付表示) */}
       {info.scheduledStorageAddonAt && info.scheduledNextStorageAddon && (
         <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
           <p>
             <strong>ストレージプラン変更予約あり:</strong>{' '}
-            {info.scheduledStorageAddonAt.split('T')[0]} に{' '}
+            {formatDate(info.scheduledStorageAddonAt)} に{' '}
             <span className="font-mono">{info.scheduledNextStorageAddon}</span> へ変更予定
           </p>
           <Button

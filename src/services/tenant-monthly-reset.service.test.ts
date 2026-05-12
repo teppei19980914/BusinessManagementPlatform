@@ -60,32 +60,34 @@ describe('getCurrentMonthStartUtc', () => {
 });
 
 describe('resetTenantMonthlyCounters', () => {
-  it('updateMany で deletedAt=null かつ lastResetAt < monthStart を絞り込み', async () => {
-    vi.mocked(prisma.tenant.updateMany).mockResolvedValue({ count: 3 } as never);
-
-    const count = await resetTenantMonthlyCounters(
-      new Date('2026-05-15T08:00:00Z'),
-    );
-
-    expect(count).toBe(3);
-    expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
-      where: {
-        deletedAt: null,
-        OR: [
-          { lastResetAt: null },
-          { lastResetAt: { lt: new Date('2026-05-01T00:00:00Z') } },
-        ],
+  it('PR-4: テナント TZ 月初を超えたテナントのみ個別 update する (Asia/Tokyo は 5/1 00:00 JST = 4/30 15:00 UTC 基準)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      // テナントA: Asia/Tokyo、lastResetAt が前月初 (リセット対象)
+      {
+        id: 'a',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: new Date('2026-04-01T00:00:00Z'),
       },
-      data: {
-        currentMonthApiCallCount: 0,
-        currentMonthApiCostJpy: 0,
+      // テナントB: Asia/Tokyo、当月初を既に過ぎている (対象外)
+      {
+        id: 'b',
+        timezone: 'Asia/Tokyo',
         lastResetAt: new Date('2026-05-01T00:00:00Z'),
       },
-    });
+      // テナントC: UTC、lastResetAt = null (初回リセット対象)
+      { id: 'c', timezone: 'UTC', lastResetAt: null },
+    ] as never);
+    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+
+    const count = await resetTenantMonthlyCounters(new Date('2026-05-15T08:00:00Z'));
+
+    // a と c の 2 件が対象
+    expect(count).toBe(2);
+    expect(prisma.tenant.update).toHaveBeenCalledTimes(2);
   });
 
   it('対象 0 件でも例外なく 0 を返す (冪等動作)', async () => {
-    vi.mocked(prisma.tenant.updateMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([] as never);
     const count = await resetTenantMonthlyCounters();
     expect(count).toBe(0);
   });
@@ -215,12 +217,16 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       {
         id: 'tenant-a',
         plan: 'beginner',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 50,
         currentMonthApiCostJpy: 0,
       },
       {
         id: 'tenant-b',
         plan: 'expert',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 100,
         currentMonthApiCostJpy: 1000,
       },
@@ -231,38 +237,50 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
     ] as never);
     vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValue({} as never);
 
-    // resetTenantMonthlyCounters
-    vi.mocked(prisma.tenant.updateMany).mockResolvedValue({ count: 5 } as never);
+    // resetTenantMonthlyCounters (PR-4: findMany + 個別 update に変更)
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      { id: 'tenant-a', timezone: 'Asia/Tokyo', lastResetAt: null },
+      { id: 'tenant-b', timezone: 'Asia/Tokyo', lastResetAt: null },
+      { id: 'tenant-c', timezone: 'Asia/Tokyo', lastResetAt: null },
+      { id: 'tenant-d', timezone: 'Asia/Tokyo', lastResetAt: null },
+      { id: 'tenant-e', timezone: 'Asia/Tokyo', lastResetAt: null },
+    ] as never);
+    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
 
     // applyScheduledPlanChanges
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       { id: 'tenant-c', scheduledNextPlan: 'beginner' },
       { id: 'tenant-d', scheduledNextPlan: 'invalid' },
     ] as never);
-    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
 
-    const result = await runTenantMonthlyReset(new Date('2026-05-01T00:00:00Z'));
+    const result = await runTenantMonthlyReset(new Date('2026-05-15T00:00:00Z'));
 
     expect(result).toEqual({
       resetCount: 5,
       planAppliedCount: 1,
       invalidPlanSkippedCount: 1,
       snapshotSavedCount: 2,
-      // Storage add-on (Phase 2 / 2026-05-08): applyScheduledStorageChanges の戻り値
       storageAddonAppliedCount: 0,
       storageAddonSkippedCount: 0,
-      // テナント物理削除 (2026-05-08): purgeOldDeletedTenants の戻り値
       purgedTenantCount: 0,
       purgedRowCount: 0,
     });
   });
 });
 
-describe('getPreviousYearMonth (P-5b / 2026-05-08)', () => {
-  it('当月の前月を YYYY-MM で返す', () => {
+describe('getPreviousYearMonth (P-5b / 2026-05-08, PR-4 で TZ 引数追加)', () => {
+  it('当月の前月を YYYY-MM で返す (JST default)', () => {
+    // JST default: 2026-05-15 17:00 JST → 前月 04
     expect(getPreviousYearMonth(new Date('2026-05-15T08:00:00Z'))).toBe('2026-04');
+    // 2026-05-01 09:00 JST → 前月 04
     expect(getPreviousYearMonth(new Date('2026-05-01T00:00:00Z'))).toBe('2026-04');
-    expect(getPreviousYearMonth(new Date('2026-05-31T23:59:59Z'))).toBe('2026-04');
+  });
+
+  it('UTC 月末 23:59:59 は JST だと翌月初なので前月扱いに注意', () => {
+    // 2026-05-31T23:59:59Z = JST 2026-06-01 08:59:59 → 6 月扱い → 前月 05
+    expect(getPreviousYearMonth(new Date('2026-05-31T23:59:59Z'))).toBe('2026-05');
+    // 明示的に UTC 指定なら 04 (= 旧仕様の挙動)
+    expect(getPreviousYearMonth(new Date('2026-05-31T23:59:59Z'), 'UTC')).toBe('2026-04');
   });
 
   it('1 月実行時は前年 12 月を返す', () => {
@@ -274,22 +292,38 @@ describe('getPreviousYearMonth (P-5b / 2026-05-08)', () => {
     expect(getPreviousYearMonth(new Date('2026-10-15T08:00:00Z'))).toBe('2026-09');
     expect(getPreviousYearMonth(new Date('2026-02-15T08:00:00Z'))).toBe('2026-01');
   });
+
+  it('PR-4: テナント TZ 指定で異なる結果を返す', () => {
+    // 2026-05-01T00:00:00Z は UTC で 5月、Asia/Tokyo で同日 09:00 → 5月、America/New_York で 4月末
+    expect(getPreviousYearMonth(new Date('2026-05-01T00:00:00Z'), 'UTC')).toBe('2026-04');
+    expect(getPreviousYearMonth(new Date('2026-05-01T00:00:00Z'), 'Asia/Tokyo')).toBe('2026-04');
+    // 2026-05-01T00:00:00Z = NY 2026-04-30 20:00 → 4月扱い → 前月 03
+    expect(getPreviousYearMonth(new Date('2026-05-01T00:00:00Z'), 'America/New_York')).toBe('2026-03');
+  });
 });
 
 describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
-  it('管理テナント以外を対象に upsert を呼ぶ', async () => {
+  it('管理テナント + Default テナント以外を対象に upsert を呼ぶ (2026-05-11 改修)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       {
         id: 'tenant-a',
         plan: 'beginner',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 80,
         currentMonthApiCostJpy: 0,
+        storageAddonPlan: 'standard',
+        storageBytesUsed: BigInt(0),
       },
       {
         id: 'tenant-b',
         plan: 'pro',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 1200,
         currentMonthApiCostJpy: 36000,
+        storageAddonPlan: 'standard',
+        storageBytesUsed: BigInt(0),
       },
     ] as never);
     vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
@@ -301,11 +335,17 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
     const saved = await saveMonthlyUsageSnapshots(new Date('2026-05-01T00:00:00Z'));
 
     expect(saved).toBe(2);
-    // 管理テナント除外条件
+    // 2026-05-11 改修: 管理テナント + Default テナント (= 運営者自身、請求対象外) を除外
+    // Default が混入すると過去月 CSV エクスポートに不正に含まれてしまうため二重防御
     expect(prisma.tenant.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          id: { not: '00000000-0000-0000-0000-ffffffffffff' },
+          id: {
+            notIn: [
+              '00000000-0000-0000-0000-ffffffffffff', // MANAGEMENT
+              '00000000-0000-0000-0000-000000000001', // DEFAULT
+            ],
+          },
           deletedAt: null,
         }),
       }),
@@ -319,6 +359,8 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
       {
         id: 'tenant-a',
         plan: 'expert',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 100,
         currentMonthApiCostJpy: 1000,
       },
@@ -328,7 +370,8 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
     ] as never);
     vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValue({} as never);
 
-    await saveMonthlyUsageSnapshots(new Date('2026-05-01T00:00:00Z'));
+    // 2026-05-15 09:00 JST 時点で「前月 = 2026-04」を期待
+    await saveMonthlyUsageSnapshots(new Date('2026-05-15T00:00:00Z'));
 
     expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -360,18 +403,24 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
       {
         id: 'tenant-a',
         plan: 'beginner',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 1,
         currentMonthApiCostJpy: 0,
       },
       {
         id: 'tenant-b',
         plan: 'pro',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 2,
         currentMonthApiCostJpy: 60,
       },
       {
         id: 'tenant-c',
         plan: 'expert',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 3,
         currentMonthApiCostJpy: 30,
       },
@@ -403,6 +452,8 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
       {
         id: 'tenant-a',
         plan: 'beginner',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
         currentMonthApiCallCount: 0,
         currentMonthApiCostJpy: 0,
       },

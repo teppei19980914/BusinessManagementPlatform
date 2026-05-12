@@ -79,9 +79,15 @@ function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
 export function MemosClient({
   memos: initialMemos,
   viewerUserId,
+  dataLoadError = false,
 }: {
   memos: MemoDTO[];
   viewerUserId: string;
+  /**
+   * fix/admin-users-defensive-render 横展開 (2026-05-15): server 側 data 取得が失敗した時に
+   * 表示する警告バナーの可否。デフォルト false (= 正常)。
+   */
+  dataLoadError?: boolean;
 }) {
   const tAction = useTranslations('action');
   const tField = useTranslations('field');
@@ -273,6 +279,17 @@ export function MemosClient({
 
   return (
     <div className="space-y-6">
+      {/* fix/admin-users-defensive-render 横展開 (2026-05-15): server data load 失敗時のバナー。
+          listMyMemos が throw した場合、画面は空表示になるが新規作成等の操作は維持。 */}
+      {dataLoadError && (
+        <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
+          <p className="font-semibold">⚠ メモ一覧の読み込みに失敗しました</p>
+          <p className="mt-1 text-muted-foreground">
+            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
+            問題が継続する場合は管理者にお問合せください。
+          </p>
+        </div>
+      )}
       {/* PR #165: 個人「メモ一覧」での一括 visibility 変更 */}
       <CrossListBulkVisibilityToolbar
         endpoint="/api/memos/bulk"
@@ -303,7 +320,7 @@ export function MemosClient({
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               {tMemo('create')}
             </DialogTrigger>
-            <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${createFsClassName}`}>
+            <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-x-hidden overflow-y-auto ${createFsClassName}`}>
               <DialogHeader>
                 <div className="flex items-center justify-between gap-2">
                   <DialogTitle>{tMemo('create')}</DialogTitle>
@@ -328,12 +345,18 @@ export function MemosClient({
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>{tField('title')}</Label>
+                  <Label>
+                    {tField('title')}
+                    {/* 2026-05-11: 公開範囲 = 自分のみ なら任意 (一時保存可)、全メンバー なら必須 */}
+                    {createForm.visibility === 'private' && (
+                      <span className="ml-2 text-xs text-muted-foreground">{tMemo('contentOptional')}</span>
+                    )}
+                  </Label>
                   <Input
                     value={createForm.title}
                     onChange={(e) => setCreateForm({ ...createForm, title: e.target.value })}
                     maxLength={150}
-                    required
+                    required={createForm.visibility === 'public'}
                   />
                 </div>
                 <div className="space-y-2">
@@ -430,7 +453,7 @@ export function MemosClient({
 
       {/* 編集ダイアログ (自分のメモのみ開く) */}
       <Dialog open={editing != null} onOpenChange={(o) => { if (!o) setEditing(null); }}>
-        <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${editFsClassName}`}>
+        <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-x-hidden overflow-y-auto ${editFsClassName}`}>
           <DialogHeader>
             <div className="flex items-center justify-between gap-2">
               <DialogTitle>{tMemo('edit')}</DialogTitle>
@@ -454,12 +477,18 @@ export function MemosClient({
                 </select>
               </div>
               <div className="space-y-2">
-                <Label>{tField('title')}</Label>
+                <Label>
+                  {tField('title')}
+                  {/* 2026-05-11: 編集時も visibility 連動で required を切替 */}
+                  {editForm.visibility === 'private' && (
+                    <span className="ml-2 text-xs text-muted-foreground">{tMemo('contentOptional')}</span>
+                  )}
+                </Label>
                 <Input
                   value={editForm.title}
                   onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
                   maxLength={150}
-                  required
+                  required={editForm.visibility === 'public'}
                 />
               </div>
               <div className="space-y-2">
