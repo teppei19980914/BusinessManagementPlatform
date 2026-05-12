@@ -613,12 +613,21 @@ E2E は CI で隔離実行されるが、`cleanupByRunId` のようにユーザ�
    必ず `$1` / `ANY($1)` プレースホルダ経由で渡す。
 3. **並列化**: 相互独立な DELETE (FK 先テーブル群) は `Promise.all` で束ねて
    ラウンドトリップを削減する。
-4. **Transaction**: 2 段階削除 (FK 先 → 親) は `BEGIN..COMMIT` でアトミック化し、
-   失敗時は `ROLLBACK` + warn ログ (best-effort クリーンアップの一貫性保持)。
+4. **Transaction の扱い (2026-05-12 修正)**: cleanup 系の **ベストエフォート** DELETE では
+   `BEGIN..COMMIT` を **使わない**。PostgreSQL は transaction 内で 1 文でも fail すると後続を
+   全て abort し、JS の try/catch では握り潰せないため、tenant_id 列がない子テーブル等で
+   1 件 fail すると以降の DELETE が silent fail し残留する原因になる。
+   各 DELETE を独立クエリで投げ、個別 catch で握り潰す。詳細は
+   [KDD §5.X+30 教訓 7](../knowledge/KDD_PATTERNS.md) 参照。原子性が必要な業務ロジックには SAVEPOINT を併用。
 
 これらは生 SQL を使う際の必須規約。**2026-05-09 改訂**: CLAUDE.md「コミット前チェック」から
 「セキュリティチェック」「パフォーマンスチェック」項目は撤廃 (CI 自動 + 都度対応に分離) されたが、
 E2E fixture に生 SQL を追加する際は本セクションの 1〜4 を引き続き遵守する (ローカル運用ルールとして残す)。
+
+> **新規 fixture / spec を追加する際の必読 KDD (2026-05-12 追記)**:
+> - [§5.X+30](../knowledge/KDD_PATTERNS.md) — cleanup の transaction 不使用 / FK 子テーブル先行 DELETE
+> - [§5.X+35](../knowledge/KDD_PATTERNS.md) — multi-project Playwright と name suffix / redirect-during-goto 罠 (PR #337)
+> - 上記の **横展開チェックリスト** を fixture 追加 PR レビューでも参照すること。
 
 ---
 

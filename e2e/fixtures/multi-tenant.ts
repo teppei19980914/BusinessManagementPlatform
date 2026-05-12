@@ -100,11 +100,14 @@ export async function createTenantWithFullDataset(
   const passwordHash = await hash(password, BCRYPT_COST);
 
   // 1. Tenant
+  // PR #337 KDD §5.X+35 横展開: name にも callSuffix を付与する。
+  //   spec 11/12 は現状 API 検証のため UI strict mode に当たらないが、
+  //   将来 UI 検証が追加されると getByText() が複数要素にヒットする潜在罠を予防する。
   const tenantRes = await pool.query<{ id: string }>(
     `INSERT INTO tenants (slug, name, plan, created_at, updated_at)
      VALUES ($1, $2, 'pro', NOW(), NOW())
      RETURNING id`,
-    [slug, `E2E Tenant ${label} ${runId}`],
+    [slug, `E2E Tenant ${label} ${runId}-${callSuffix}`],
   );
   const tenantId = tenantRes.rows[0].id;
 

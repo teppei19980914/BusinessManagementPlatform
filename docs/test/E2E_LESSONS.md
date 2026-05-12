@@ -3208,6 +3208,12 @@ test.afterAll(async () => {
 
 #### 横展開チェック (生 SQL fixture / migration 追加時)
 
+> **関連 KDD (必読)**:
+> - [docs/knowledge/KDD_PATTERNS.md §5.X+35](../knowledge/KDD_PATTERNS.md) — multi-project Playwright + 共有 DB fixture の name suffix / FK cleanup 順 / redirect-during-goto パターン (PR #337)
+> - 同 §5.X+30 教訓 7 — cleanup は transaction 不使用 (PostgreSQL の transaction abort propagation 回避)
+>
+> 新規 fixture を追加する際は、下記チェックに加えて §5.X+35 の **横展開チェック 6 点** も併せて確認すること。
+
 - [ ] **INSERT 対象の全テーブルを 1 巡 trace する** — 1 件直したら CI 回す → 次の NOT NULL violation が
       出る → 修正、というループは時間の無駄。fixture 作成時点で **全モデルの NOT NULL 列を一気に確認** する
 - [ ] INSERT 対象テーブルの全列を `prisma/schema.prisma` でチェックし、`?` (nullable) でない
