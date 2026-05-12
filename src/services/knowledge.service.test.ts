@@ -232,9 +232,43 @@ describe('listKnowledgeByProject / getKnowledge', () => {
 
   it('listKnowledgeByProject: knowledgeProjects.some.projectId でフィルタ', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
-    await listKnowledgeByProject('p-1');
+    await listKnowledgeByProject('p-1', 't-1');
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(call.where.knowledgeProjects.some.projectId).toBe('p-1');
+  });
+
+  // 2026-05-11: 公開範囲 (visibility) フィルタを viewer 単位で適用するリグレッション防止テスト。
+  //   「自分のみ (draft)」を選んだナレッジが他のプロジェクトメンバーに見えてはならない。
+  it('listKnowledgeByProject: 非 admin は public + 自分の draft のみ (他人の draft は除外)', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    await listKnowledgeByProject('p-1', 't-1', 'u-self', 'general');
+    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(call.where.OR).toEqual([
+      { visibility: 'public' },
+      { visibility: 'draft', createdBy: 'u-self' },
+    ]);
+  });
+
+  it('listKnowledgeByProject: admin は draft も含めて全件閲覧可', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    await listKnowledgeByProject('p-1', 't-1', 'u-admin', 'admin');
+    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    // admin の場合は visibility フィルタなし (OR が undefined)
+    expect(call.where.OR).toBeUndefined();
+  });
+
+  it('listKnowledgeByProject: super_admin も全件閲覧可', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    await listKnowledgeByProject('p-1', 't-1', 'u-super', 'super_admin');
+    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(call.where.OR).toBeUndefined();
+  });
+
+  it('listKnowledgeByProject: viewerUserId 省略 (内部呼び出し) は全件返却 (cascade 削除等の運用)', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    await listKnowledgeByProject('p-1', 't-1');
+    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(call.where.OR).toBeUndefined();
   });
 
   it('getKnowledge: 存在しなければ null', async () => {
@@ -398,11 +432,49 @@ describe('updateKnowledge / deleteKnowledge', () => {
   });
 
   it('updateKnowledge: text フィールド非変更 (visibility のみ) は embedding 再生成しない', async () => {
-    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    // 2026-05-11: defense-in-depth が「public 化時に DB の既存 title が空でない」ことを要求するため、
+    //   findFirst モックで非空 title を返す必要がある (テスト整合性のため)。
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      createdBy: 'u-1',
+      title: '既存タイトル',
+      background: '',
+      content: '',
+      result: '',
+      conclusion: null,
+      recommendation: null,
+    } as never);
     vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
     await updateKnowledge('k-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID);
 
     expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+  });
+
+  // 2026-05-11: defense-in-depth テスト — `{ visibility: 'public' }` のみ送信 + DB title 空のとき拒否
+  it('updateKnowledge: public 化時に DB の title が空なら PUBLIC_REQUIRES_TITLE をスロー (defense-in-depth)', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      createdBy: 'u-1',
+      title: '', // 既存が空タイトル (draft で作成された)
+      background: '',
+      content: '',
+      result: '',
+      conclusion: null,
+      recommendation: null,
+    } as never);
+    await expect(
+      updateKnowledge('k-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID),
+    ).rejects.toThrow('PUBLIC_REQUIRES_TITLE');
+  });
+
+  it('updateKnowledge: public 化時に input.title 空 + DB title 空でも拒否 (空白のみも対象)', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      createdBy: 'u-1',
+      title: '既存',
+      background: '', content: '', result: '',
+      conclusion: null, recommendation: null,
+    } as never);
+    await expect(
+      updateKnowledge('k-1', { visibility: 'public', title: '   ' }, 'u-1', TEST_TENANT_ID),
+    ).rejects.toThrow('PUBLIC_REQUIRES_TITLE');
   });
 
   it('deleteKnowledge: 存在しなければ NOT_FOUND', async () => {
@@ -442,33 +514,61 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ids 空 → updateMany 呼ばず 0 件', async () => {
-    const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', [], 'draft', 'u-1');
-    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
+    const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', [], 'draft', 'u-1', 't-1');
+    expect(r).toEqual({
+      updatedIds: [],
+      skippedNotOwned: 0,
+      skippedNotFound: 0,
+      skippedEmptyTitle: 0,
+    });
     expect(prisma.knowledge.updateMany).not.toHaveBeenCalled();
   });
 
   it('createdBy 本人のみ updateMany される (他人混入は silent skip)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
-      { id: 'k-1', createdBy: 'u-1' },
-      { id: 'k-2', createdBy: 'u-OTHER' },
+      { id: 'k-1', createdBy: 'u-1', title: 'タイトル A' },
+      { id: 'k-2', createdBy: 'u-OTHER', title: '他人のナレッジ' },
     ] as never);
     vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', ['k-1', 'k-2'], 'draft', 'u-1');
+    const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', ['k-1', 'k-2'], 'draft', 'u-1', 't-1');
 
     expect(r.updatedIds).toEqual(['k-1']);
     expect(r.skippedNotOwned).toBe(1);
 
     // PR #165: findMany の where に knowledgeProjects.some.projectId が含まれることを確認 (多対多)
     const findCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(findCall.where).toEqual({
+    expect(findCall.where).toMatchObject({
       id: { in: ['k-1', 'k-2'] },
       deletedAt: null,
+      tenantId: 't-1',
       knowledgeProjects: { some: { projectId: 'p-1' } },
     });
 
     const call = vi.mocked(prisma.knowledge.updateMany).mock.calls[0][0];
     // updateMany は scalar updatedBy のみ受理する (relation connect 構文不可)
     expect(call.data).toEqual({ visibility: 'draft', updatedBy: 'u-1' });
+  });
+
+  // 2026-05-11: 「自分のみ」(draft) で空タイトル保存されたナレッジを「全メンバー」(public)
+  //   に昇格させようとした場合、サーバ側 validator のルール (public はタイトル必須) と整合するため
+  //   silent skip + skippedEmptyTitle を返す。
+  it('draft→public 化時に空タイトルの行はスキップ', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      { id: 'k-1', createdBy: 'u-1', title: '正しい' },
+      { id: 'k-empty', createdBy: 'u-1', title: '' },
+    ] as never);
+    vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateKnowledgeVisibilityFromList(
+      'p-1',
+      ['k-1', 'k-empty'],
+      'public',
+      'u-1',
+      't-1',
+    );
+
+    expect(r.updatedIds).toEqual(['k-1']);
+    expect(r.skippedEmptyTitle).toBe(1);
   });
 });

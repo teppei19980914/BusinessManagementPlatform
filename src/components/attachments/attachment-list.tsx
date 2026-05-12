@@ -146,15 +146,18 @@ export function AttachmentList({
       {items.length > 0 && (
         <ul className="space-y-1">
           {items.map((a) => (
-            <li key={a.id} className="flex items-center gap-2 rounded border px-2 py-1 text-sm">
+            <li key={a.id} className="flex items-start gap-2 rounded border px-2 py-1 text-sm">
               <a
                 href={a.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                // 2026-05-09: 長い displayName で flex-row が画面幅を超える事象 (#1)。
-                //   `truncate` 単独では flex item が min-content を確保するため効かない。
-                //   `min-w-0` を併設して flex item を 0 まで縮小可能にし、ellipsis を確実発火。
-                className="min-w-0 flex-1 truncate text-info hover:underline"
+                // 2026-05-11: 長い displayName 対応を「末尾省略 (truncate)」→「複数行折り返し」に変更。
+                //   旧仕様 (`min-w-0 flex-1 truncate`) は <a> が display:inline のため
+                //   text-overflow:ellipsis が機能せず、内容がダイアログの max-w を超えて
+                //   描画され、横スクロール + ヘッダの全画面ボタンずれが発生していた (UX 報告)。
+                //   新仕様: `wrap-anywhere` で任意位置で改行可能にし、行高が伸びても全文表示。
+                //   親 <li> は `items-start` にして、ボタンが上端寄せされるよう調整。
+                className="min-w-0 flex-1 wrap-anywhere text-info hover:underline"
                 title={a.url}
               >
                 {a.displayName}
@@ -164,7 +167,7 @@ export function AttachmentList({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="text-destructive"
+                  className="shrink-0 text-destructive"
                   onClick={() => handleDelete(a.id)}
                 >
                   {tAction('delete')}

@@ -15,8 +15,19 @@ describe('createKnowledgeSchema', () => {
     expect(createKnowledgeSchema.safeParse(validInput).success).toBe(true);
   });
 
-  it('タイトルが空の場合を拒否する', () => {
-    expect(createKnowledgeSchema.safeParse({ ...validInput, title: '' }).success).toBe(false);
+  // 2026-05-11: visibility 連動の必須チェックに変更。
+  //   - 「自分のみ」(draft) では title 空も許容 (一時保存)
+  //   - 「全メンバー」(public) ではタイトル必須
+  it('visibility=draft なら空タイトルを許容 (一時保存)', () => {
+    expect(
+      createKnowledgeSchema.safeParse({ ...validInput, title: '', visibility: 'draft' }).success,
+    ).toBe(true);
+  });
+
+  it('visibility=public で空タイトルを拒否', () => {
+    expect(
+      createKnowledgeSchema.safeParse({ ...validInput, title: '', visibility: 'public' }).success,
+    ).toBe(false);
   });
 
   it('タイトルが151文字の場合を拒否する', () => {

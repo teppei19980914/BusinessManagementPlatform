@@ -7323,3 +7323,75 @@ projects: [
 - 関連 spec: [e2e/specs/13-super-admin-dashboard.spec.ts](../../e2e/specs/13-super-admin-dashboard.spec.ts) (redirect goto 修正)
 - 関連 config: [playwright.config.ts](../../playwright.config.ts) (chromium-mobile testIgnore)
 - 過去関連 KDD: §5.X+30 (cleanup transaction 不使用), `e2e/fixtures/multi-tenant.ts` の callSuffix パターン (先行事例)
+
+---
+
+## 5.X+36 infrastructure PR と feature PR が同一 route ファイルを別観点で修正していて衝突する ─ **両方の副作用を順序連鎖** (Pre-check → service 呼出 → try/catch) させて解消 (PR #339 / 2026-05-12)
+
+### 罠の正体
+
+PR #339 (`fix/memo-edit-long-link-overflow`) は memo 編集ダイアログの長 URL 表示崩れ修正で、副次的に **`/api/memos/[id]` PATCH route で `PUBLIC_REQUIRES_TITLE` のサービス例外を 400 へ変換する try/catch** を追加していた。
+
+ところがその間に PR-5 (#333) が main にマージされ、**同一の `/api/memos/[id]` PATCH route に `requireStorageQuotaForWrite` Pre-check が挿入** された結果、main 取り込み時に **`updateMemo()` 呼出 line を含むハンクで content conflict** が発生。
+
+```ts
+// HEAD (PR #339): try/catch wrap
+let updated;
+try {
+  updated = await updateMemo(...);
+} catch (e) {
+  if (e.message === 'PUBLIC_REQUIRES_TITLE') return NextResponse.json(..., { status: 400 });
+  throw e;
+}
+
+// main (PR-5): Pre-check 挿入
+const quotaErr = await requireStorageQuotaForWrite(...);
+if (quotaErr) return quotaErr;
+const updated = await updateMemo(...);
+```
+
+両側とも **service 呼出 line を取り合っている** が、**意味的には独立** (storage quota / value validation)。
+
+### 教訓 (副作用の順序設計)
+
+API route のミドルウェア風レイヤは、慣習的に以下の順序で並べる:
+
+1. **認証 / 認可** (`getAuthenticatedUser` / `checkProjectPermission`)
+2. **入力バリデーション** (`schema.safeParse`)
+3. **クォータ / プラン制限 Pre-check** (`requireStorageQuotaForWrite` / `withMeteredLLM`) ← **fail-fast で service 呼出を回避**
+4. **service 呼出** (try/catch でビジネス例外 → HTTP error code 変換)
+5. **副作用ログ** (`recordAuditLog` 等)
+
+→ Pre-check を service 呼出より **前** に置くことで「無駄な service 実行 + 後始末」を避ける設計。conflict が発生したら、この順序原則に従って**両側の改修を順序連鎖**させればよい。
+
+### 修正パターン (本 PR で適用)
+
+```ts
+// PR-5 Pre-check (write 前に拒否し service 呼出を回避)
+const quotaErr = await requireStorageQuotaForWrite(user.tenantId, JSON.stringify(parsed.data).length);
+if (quotaErr) return quotaErr;
+
+// PR #339 service 例外ハンドル
+let updated;
+try {
+  updated = await updateMemo(id, parsed.data, user.id, user.tenantId);
+} catch (e) {
+  if (e instanceof Error && e.message === 'PUBLIC_REQUIRES_TITLE') {
+    return NextResponse.json({ error: { code: 'PUBLIC_REQUIRES_TITLE', message: '...' } }, { status: 400 });
+  }
+  throw e;
+}
+```
+
+### 横展開で漏らしやすい箇所
+
+- [ ] **「片方を捨てて勝者を採用」しないこと**: conflict が同 line 上にあると `--theirs` / `--ours` で安易に解決しがちだが、両方が**異なる目的の正当な改修**であれば両方残す
+- [ ] **既存の Pre-check helper を import 漏れさせない**: 本 PR でも `requireStorageQuotaForWrite` の import 文は main 側で既に追加済 (`@/lib/api-helpers` から re-export) のため、再度 import 文を書き直す必要は無かった。**import 文も conflict ハンクに含まれている場合は片方を採用**
+- [ ] **副作用順序: Pre-check → service → audit log**: 順序を入れ替えると「拒否なのに audit ログが残る」「先に書き込んだ後で quota 超過判明」等の副作用順序バグを生む
+
+### 関連
+
+- 修正 PR: PR #339 (2026-05-12 / fix/memo-edit-long-link-overflow)
+- infrastructure PR: PR-5 (#333) — `requireStorageQuotaForWrite` の CRUD 全 write route 横展開
+- 関連 helper: [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) (`requireStorageQuotaForWrite`)
+- 過去関連 KDD: §5.X+17 (同一ファイル並行更新の merge conflict 対策), §5.X+29 (Pre-check の API route 層集約方針)

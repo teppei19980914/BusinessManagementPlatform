@@ -49,14 +49,31 @@ export async function PATCH(
     );
   }
 
-  // PR-5 (2026-05-15): ストレージ容量 Pre-check
+  // PR-5 (2026-05-15): ストレージ容量 Pre-check (write 前に拒否し、無駄な service 呼出を回避)
   const quotaErr = await requireStorageQuotaForWrite(
     user.tenantId,
     JSON.stringify(parsed.data).length,
   );
   if (quotaErr) return quotaErr;
 
-  const updated = await updateMemo(id, parsed.data, user.id, user.tenantId);
+  let updated;
+  try {
+    updated = await updateMemo(id, parsed.data, user.id, user.tenantId);
+  } catch (e) {
+    // 2026-05-11 defense-in-depth: 「全メンバー」化を試みたが title が空 (input + DB 共に) のケース
+    if (e instanceof Error && e.message === 'PUBLIC_REQUIRES_TITLE') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'PUBLIC_REQUIRES_TITLE',
+            message: '「全メンバー」に公開する場合はタイトルを入力してください',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
   if (!updated) {
     // 他人のメモ or 存在しない → 404 (情報漏洩防止のため 403 でなく 404)
     return NextResponse.json(

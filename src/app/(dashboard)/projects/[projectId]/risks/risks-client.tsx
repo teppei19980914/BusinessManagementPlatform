@@ -425,8 +425,19 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                     </div>
                   )}
                   <div className="space-y-2">
-                    <Label>{tRisk('subject')}</Label>
-                    <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={100} required />
+                    <Label>
+                      {tRisk('subject')}
+                      {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
+                      {form.visibility === 'draft' && (
+                        <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
+                      )}
+                    </Label>
+                    <Input
+                      value={form.title}
+                      onChange={(e) => setForm({ ...form, title: e.target.value })}
+                      maxLength={100}
+                      required={form.visibility === 'public'}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>{tField('content')} <span className="text-xs text-muted-foreground">{tRisk('optional')}</span></Label>

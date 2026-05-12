@@ -28,7 +28,9 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'knowledge:read');
   if (forbidden) return forbidden;
 
-  const knowledges = await listKnowledgeByProject(projectId, user.tenantId);
+  // 2026-05-11: 公開範囲 (visibility) フィルタを viewer 単位で適用するため
+  //   userId + systemRole も渡す。非 admin は他人の draft を見られない。
+  const knowledges = await listKnowledgeByProject(projectId, user.tenantId, user.id, user.systemRole);
   return NextResponse.json({ data: knowledges });
 }
 

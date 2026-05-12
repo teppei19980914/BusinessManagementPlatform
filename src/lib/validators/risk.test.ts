@@ -27,8 +27,17 @@ describe('createRiskSchema', () => {
     expect(createRiskSchema.safeParse(validIssue).success).toBe(true);
   });
 
-  it('件名が空の場合を拒否する', () => {
-    expect(createRiskSchema.safeParse({ ...validRisk, title: '' }).success).toBe(false);
+  // 2026-05-11: visibility 連動の必須チェックに変更。
+  //   - 「自分のみ」(draft、既定) では title 空も許容 (一時保存)
+  //   - 「全メンバー」(public) では件名必須
+  it('visibility=draft (既定) なら空件名を許容 (一時保存)', () => {
+    expect(createRiskSchema.safeParse({ ...validRisk, title: '' }).success).toBe(true);
+  });
+
+  it('visibility=public で空件名を拒否', () => {
+    expect(
+      createRiskSchema.safeParse({ ...validRisk, title: '', visibility: 'public' }).success,
+    ).toBe(false);
   });
 
   it('件名が101文字の場合を拒否する', () => {

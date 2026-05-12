@@ -135,13 +135,16 @@ export function SingleUrlField({
       {error && <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>}
 
       {!editing && current && (
-        <div className="flex items-center gap-2 rounded border px-2 py-1 text-sm">
+        <div className="flex items-start gap-2 rounded border px-2 py-1 text-sm">
           <a
             href={current.url}
             target="_blank"
             rel="noopener noreferrer"
-            // 2026-05-09 (#1): flex item の `truncate` は `min-w-0` 併設で発火させる
-            className="min-w-0 flex-1 truncate text-info hover:underline"
+            // 2026-05-11: 長い displayName 対応を「末尾省略 (truncate)」→「複数行折り返し」に変更。
+            //   旧仕様の truncate は <a> が display:inline のため ellipsis が発火せず、
+            //   親ダイアログの max-w を超えて横スクロールが発生していた (AttachmentList と同経緯)。
+            //   新仕様: `wrap-anywhere` で任意位置改行 + 親 div を `items-start` にしてボタンを上端寄せ。
+            className="min-w-0 flex-1 wrap-anywhere text-info hover:underline"
             title={current.url}
           >
             {current.displayName}
@@ -152,6 +155,7 @@ export function SingleUrlField({
                 type="button"
                 variant="ghost"
                 size="sm"
+                className="shrink-0"
                 onClick={() => {
                   setDisplayName(current.displayName);
                   setUrl(current.url);
@@ -164,7 +168,7 @@ export function SingleUrlField({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="text-destructive"
+                className="shrink-0 text-destructive"
                 onClick={handleClear}
               >
                 {tAction('delete')}
