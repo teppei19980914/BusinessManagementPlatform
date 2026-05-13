@@ -52,6 +52,9 @@ export async function changePassword(
       data: {
         passwordHash: newHash,
         forcePasswordChange: false,
+        // 2026-05-13 (security/jwt-invalidation, L-1): パスワード変更時に
+        //   既存全 JWT を即時失効させる (他デバイスからの強制ログアウト)。
+        tokenVersion: { increment: 1 },
       },
     }),
     // 履歴に追加 (Phase 2-10: tenantId 必須化)
@@ -95,6 +98,9 @@ export async function unlockAccount(
       lockedUntil: null,
       permanentLock: false,
       temporaryLockCount: 0,
+      // 2026-05-13 (security/jwt-invalidation, L-1): unlock 操作で
+      //   既存 JWT を失効 (ロック中の旧 JWT があれば再ログイン強制)。
+      tokenVersion: { increment: 1 },
     },
   });
   if (updated.count === 0) {

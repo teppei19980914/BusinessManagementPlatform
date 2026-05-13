@@ -229,6 +229,14 @@ model User {
   mfaLockedUntil      DateTime? @map("mfa_locked_until") @db.Timestamptz
   lastLoginAt         DateTime? @map("last_login_at") @db.Timestamptz
   forcePasswordChange Boolean   @default(false) @map("force_password_change")
+  // 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ。
+  //   ログイン時に JWT に格納し、API route 経由のリクエスト時に DB の最新値と比較。
+  //   不一致なら 401 を返してログアウト誘導する。
+  //   admin による「強制ログアウト」操作 (パスワード変更 / ロック解除 / ユーザ削除 / ロール変更) で
+  //   `{ increment: 1 }` し、当該ユーザの既存 JWT を全て即時失効させる。
+  //   middleware (Edge runtime) は DB アクセス不可のため検証できないが、API route 入口の
+  //   getAuthenticatedUser で DB 比較する設計で、機微操作 (write 系) は確実に弾く。
+  tokenVersion        Int       @default(0) @map("token_version")
   // PR #72: 画面テーマ設定。既定 'light' (ライトテーマ)。ユーザが明示的に変更した
   // 値がセッションをまたいで永続適用されるため、sessionStorage ではなく DB 永続化する。
   themePreference     String    @default("light") @map("theme_preference") @db.VarChar(30)

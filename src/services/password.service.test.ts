@@ -122,6 +122,8 @@ describe('unlockAccount', () => {
         lockedUntil: null,
         permanentLock: false,
         temporaryLockCount: 0,
+        // 2026-05-13 (security/jwt-invalidation, L-1): unlock で既存 JWT を失効
+        tokenVersion: { increment: 1 },
       },
     });
     expect(recordAuthEvent).toHaveBeenCalledWith(

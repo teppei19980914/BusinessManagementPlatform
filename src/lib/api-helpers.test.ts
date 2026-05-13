@@ -9,9 +9,22 @@ vi.mock('@/lib/permissions', () => ({
   checkMembership: vi.fn(),
 }));
 
+// 2026-05-13 (security/jwt-invalidation, L-1): getAuthenticatedUser は DB 検証を行うため mock 必須
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    user: {
+      findUnique: vi.fn(),
+    },
+    projectMember: {
+      findFirst: vi.fn(),
+    },
+  },
+}));
+
 import { getAuthenticatedUser, checkProjectPermission, requireAdmin } from './api-helpers';
 import { auth } from '@/lib/auth';
 import { checkPermission, checkMembership } from '@/lib/permissions';
+import { prisma } from '@/lib/db';
 import type { SystemRole } from '@/types';
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
@@ -47,24 +60,104 @@ describe('getAuthenticatedUser', () => {
     expect(body.error.code).toBe('UNAUTHORIZED');
   });
 
-  it('セッションがあればユーザ情報を返す', async () => {
+  it('セッションがあり DB の tokenVersion が JWT と一致すればユーザ情報を返す', async () => {
     vi.mocked(auth).mockResolvedValue({
       user: {
         id: 'user-1',
+        tenantId: TEST_TENANT_ID,
         name: 'Alice',
         email: 'alice@example.com',
         systemRole: 'general',
+        tokenVersion: 0,
       },
+    } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: true,
+      deletedAt: null,
     } as never);
 
     const result = await getAuthenticatedUser();
 
     expect(result).toEqual({
       id: 'user-1',
+      tenantId: TEST_TENANT_ID,
       name: 'Alice',
       email: 'alice@example.com',
       systemRole: 'general',
     });
+  });
+
+  // 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効ガードの回帰テスト
+  it('JWT tokenVersion が DB と不一致なら 401 SESSION_INVALIDATED (L-1: admin 強制ログアウト経路)', async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: {
+        id: 'user-1',
+        tenantId: TEST_TENANT_ID,
+        name: 'Alice',
+        email: 'alice@example.com',
+        systemRole: 'general',
+        tokenVersion: 0, // JWT 側は 0
+      },
+    } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 1, // DB 側は 1 (admin が increment 済)
+      isActive: true,
+      deletedAt: null,
+    } as never);
+
+    const result = await getAuthenticatedUser();
+
+    expect(result).toBeInstanceOf(Response);
+    const body = await (result as Response).json();
+    expect(body.error.code).toBe('SESSION_INVALIDATED');
+    expect((result as Response).status).toBe(401);
+  });
+
+  it('対象ユーザが削除済 (deletedAt != null) なら 401', async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: {
+        id: 'user-1',
+        tenantId: TEST_TENANT_ID,
+        name: 'Alice',
+        email: 'alice@example.com',
+        systemRole: 'general',
+        tokenVersion: 0,
+      },
+    } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: true,
+      deletedAt: new Date(),
+    } as never);
+
+    const result = await getAuthenticatedUser();
+
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
+  });
+
+  it('対象ユーザが無効化 (isActive=false) なら 401', async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: {
+        id: 'user-1',
+        tenantId: TEST_TENANT_ID,
+        name: 'Alice',
+        email: 'alice@example.com',
+        systemRole: 'general',
+        tokenVersion: 0,
+      },
+    } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: false,
+      deletedAt: null,
+    } as never);
+
+    const result = await getAuthenticatedUser();
+
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
   });
 });
 

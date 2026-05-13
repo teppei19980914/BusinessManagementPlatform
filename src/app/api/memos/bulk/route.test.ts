@@ -17,6 +17,14 @@ vi.mock('@/lib/db', () => ({
         storageBytesUsed: BigInt(0),
       })),
     },
+    // 2026-05-13 (security/jwt-invalidation, L-1): getAuthenticatedUser が DB 検証するため mock
+    user: {
+      findUnique: vi.fn(async () => ({
+        tokenVersion: 0,
+        isActive: true,
+        deletedAt: null,
+      })),
+    },
   },
 }));
 
@@ -37,7 +45,7 @@ function makeReq(body: unknown): Request {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(auth).mockResolvedValue({
-    user: { id: 'u-1', tenantId: 'tenant-A', name: 'A', email: 'a@x.co', systemRole: 'general' },
+    user: { id: 'u-1', tenantId: 'tenant-A', name: 'A', email: 'a@x.co', systemRole: 'general', tokenVersion: 0 },
   } as never);
 });
 

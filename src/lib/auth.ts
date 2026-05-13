@@ -222,6 +222,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // PR #2-b (T-03): テナント境界の起点。session.user.tenantId に伝播し、
           //   後続のすべての API ルートが requireSameTenant() で同テナント検証する。
           tenantId: user.tenantId,
+          // 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ。
+          //   admin 操作で increment され、API route 入口で DB 比較 → 不一致なら 401。
+          tokenVersion: user.tokenVersion,
           // P-B (2026-05-08): JWT claim 用の Beginner プラン期限判定材料。
           //   middleware で `Date.now() - tenantCreatedAt >= 90日 && tenantPlan === 'beginner'
           //   && !tenantBeginnerEverUpgraded` を判定して write 系 API を弾く。
