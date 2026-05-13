@@ -154,7 +154,7 @@ export function GuideClient({ role, systemRole, userName }: Props) {
         <h2 className="text-base font-semibold">関連リンク</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           サービスの背景は LP、よくある質問は FAQ、開発者や他のユーザと話したいときは
-          Discord コミュニティでどうぞ (利用事例の共有・質問・バグ報告・要望)。
+          <strong>たすきばコミュニティ (Discord)</strong> でどうぞ (利用事例の共有・質問・バグ報告・要望)。
           画面右上のアカウントメニューからも常時アクセスできます。
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
