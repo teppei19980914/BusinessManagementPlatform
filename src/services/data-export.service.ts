@@ -351,6 +351,10 @@ export const USER_PII_FIELDS = [
   'mfaLockedUntil',
   'forcePasswordChange',
   'deletedAt',
+  // 2026-05-13 (PR #350 security/jwt-invalidation, L-1): JWT 失効カウンタは内部認証情報。
+  //   admin 操作で increment され既存 JWT を即時失効させるための実装詳細であり、
+  //   顧客データ持ち出しの export 対象には含めない。
+  'tokenVersion',
 ] as const;
 
 function stripUserPII(user: Record<string, unknown>): Record<string, unknown> {

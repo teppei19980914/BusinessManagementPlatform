@@ -104,6 +104,33 @@ describe('changePassword', () => {
       expect.objectContaining({ eventType: 'password_change', userId: 'u1' }),
     );
   });
+
+  // 2026-05-13 (security/jwt-invalidation, L-1 follow-up): 回帰テスト。
+  //   changePassword は **自分自身の操作** のため tokenVersion を increment してはならない。
+  //   increment すると同セッションの JWT (= 古い tokenVersion) が DB と不一致になり、
+  //   直後の API 呼び出しで SESSION_INVALIDATED 401 で弾かれる (E2E spec 01 Step 2 で発覚)。
+  //   admin による他人操作 (unlockAccount / updateUserStatus / updateUserRole / deleteUser)
+  //   では引き続き increment するため、本テストは「自分操作のみ skip」の境界を保証する。
+  it('回帰: 自分のパスワード変更では tokenVersion を increment しない (同セッション SESSION_INVALIDATED 防止)', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'u1',
+      passwordHash: 'hashed_real',
+      tenantId: 'tenant-A',
+    } as never);
+    vi.mocked(compare)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    vi.mocked(prisma.passwordHistory.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.passwordHistory.create).mockResolvedValue({} as never);
+
+    await changePassword('u1', 'current', 'brandnew');
+
+    // prisma.user.update の呼び出し data に tokenVersion が含まれていない事を assert
+    const updateCall = vi.mocked(prisma.user.update).mock.calls[0]?.[0];
+    expect(updateCall?.data).toBeDefined();
+    expect(updateCall?.data).not.toHaveProperty('tokenVersion');
+  });
 });
 
 describe('unlockAccount', () => {
@@ -122,6 +149,8 @@ describe('unlockAccount', () => {
         lockedUntil: null,
         permanentLock: false,
         temporaryLockCount: 0,
+        // 2026-05-13 (security/jwt-invalidation, L-1): unlock で既存 JWT を失効
+        tokenVersion: { increment: 1 },
       },
     });
     expect(recordAuthEvent).toHaveBeenCalledWith(

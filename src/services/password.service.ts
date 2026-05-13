@@ -52,6 +52,17 @@ export async function changePassword(
       data: {
         passwordHash: newHash,
         forcePasswordChange: false,
+        // 2026-05-13 (security/jwt-invalidation, L-1 follow-up):
+        //   旧実装は `tokenVersion: { increment: 1 }` で「他デバイスからの強制ログアウト」を
+        //   行っていたが、**自分自身のセッションも即座に SESSION_INVALIDATED に弾かれる**
+        //   重大バグを引き起こした (Step 2 で MFA setup が「再度ログインしてください」で停止)。
+        //   getAuthenticatedUser は JWT.tokenVersion と DB.tokenVersion を比較するため、
+        //   パスワード変更直後の JWT (= 古い値) が新しい DB 値と一致しなくなる。
+        //   修正: 自分操作の changePassword では increment しない。他デバイス強制ログアウトは
+        //   別 UI (「全デバイスからログアウト」ボタン等) で session.update 経由で実装する
+        //   (post-MVP)。admin 操作 (updateUserStatus / updateUserRole / unlockAccount /
+        //   deleteUser) では引き続き increment を維持 (= 他人の session を強制失効させる)。
+        //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+46
       },
     }),
     // 履歴に追加 (Phase 2-10: tenantId 必須化)
@@ -95,6 +106,9 @@ export async function unlockAccount(
       lockedUntil: null,
       permanentLock: false,
       temporaryLockCount: 0,
+      // 2026-05-13 (security/jwt-invalidation, L-1): unlock 操作で
+      //   既存 JWT を失効 (ロック中の旧 JWT があれば再ログイン強制)。
+      tokenVersion: { increment: 1 },
     },
   });
   if (updated.count === 0) {

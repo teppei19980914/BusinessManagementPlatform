@@ -31,12 +31,44 @@ export type AuthenticatedUser = {
 
 /**
  * 認証済みユーザを取得する。未認証の場合は 401 レスポンスを返す。
+ *
+ * 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効検証を追加。
+ *   JWT 内 tokenVersion vs DB の最新 user.tokenVersion を比較し、不一致なら 401。
+ *   admin がパスワード変更 / ロック解除 / ユーザ削除 / ロール変更で increment した瞬間に、
+ *   当該ユーザの既存 JWT は全て即時失効する (= 強制ログアウト)。
+ *
+ *   性能影響: API route ごとに `prisma.user.findUnique` が 1 回追加 (~5ms / Supabase Pooler 経由)。
+ *   全 API route で許容できる範囲。
+ *
+ *   middleware (Edge runtime) は DB アクセス不可のため検証できず、JWT 内の値のみで動作する
+ *   (= middleware で守るプラン期限・Storage Grace 判定は変わらず)。本ガードは API route 入口で
+ *   write 系操作を確実に弾く設計。
  */
 export async function getAuthenticatedUser(): Promise<AuthenticatedUser | NextResponse> {
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
   }
+
+  // L-1: tokenVersion 検証 (JWT 失効ガード)
+  const jwtTokenVersion = session.user.tokenVersion ?? 0;
+  const dbUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { tokenVersion: true, isActive: true, deletedAt: true },
+  });
+  if (
+    !dbUser
+    || dbUser.deletedAt !== null
+    || !dbUser.isActive
+    || dbUser.tokenVersion !== jwtTokenVersion
+  ) {
+    // 削除 / 無効化 / tokenVersion 不一致 = 既存 JWT は失効
+    return NextResponse.json(
+      { error: { code: 'SESSION_INVALIDATED', message: '再度ログインしてください' } },
+      { status: 401 },
+    );
+  }
+
   return {
     id: session.user.id,
     tenantId: session.user.tenantId,
