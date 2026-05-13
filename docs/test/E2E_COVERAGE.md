@@ -163,6 +163,9 @@
 - [ ] `/api/tenants/me/external-import/apply` (POST) — skip: Phase 1 (2026-05-08) 外部 import の apply API (= ここで Voyage embedding 全件即時生成 + 課金)。PREVIEW_NOT_FOUND / PREVIEW_NOT_OWNED / PREVIEW_EXPIRED / 認可境界 / apply 直前の二重防御は同テストで担保。E2E は V1.x で検討
 - [ ] `/api/tenants/me/external-import/template` (GET) — skip: Phase 1 (2026-05-08) Knowledge / RiskIssue の CSV テンプレートダウンロード。固定列 + サンプル行 + UTF-8 BOM の単純 CSV 生成のため単体テスト不要 (= 静的データ)
 - [ ] `/settings/tenant/external-import` (page) — skip: Phase 1 (2026-05-08) 4 ステップウィザード (file→mapping→preview→result) 画面。ブラウザ側の xlsx パース + マッピング選択 UI が中心、E2E は V1.x で検討
+- [ ] `/api/admin/super/recalculate-all` (POST) — skip: 2026-05-14 super_admin ダッシュボード遷移時 + 「全テナント再集計」ボタンで呼ぶ on-demand 再集計 API。認可 (super_admin 限定 401/403/200) + Promise.allSettled 部分失敗 + 監査ログ (entityType=system) は src/app/api/admin/super/recalculate-all/route.test.ts (5 ケース) で担保。E2E は V1.x で検討 (= 全テナント集計の決定論性確保が難しい)
+- [ ] `/api/admin/super/tenants/[id]/recalculate` (POST) — skip: 2026-05-14 super_admin がテナント詳細画面 + ストレージ TOP10 から特定テナントを on-demand 再集計する代行操作 API。認可 (admin → 403) + テナント不在 404 + 監査ログ (target tenant で記録) は src/app/api/admin/super/tenants/[id]/recalculate/route.test.ts (4 ケース) で担保
+- [ ] `/api/tenants/me/recalculate` (POST) — skip: 2026-05-14 テナント管理者が `/settings/tenant` で自テナントを on-demand 再集計する API。**テナント越境防止 (severity-1)**: URL/Body の tenantId を一切受けず session.user.tenantId で固定する構造的境界。general → 403 / Body に他テナント id を渡しても無視 / 監査ログは自テナントで記録、は src/app/api/tenants/me/recalculate/route.test.ts (6 ケース、越境テスト 3 件含む) で担保
 
 ### メンション (PR feat/comment-mentions)
 - [ ] `/api/mention-candidates` (GET) — skip: 単体テスト (`src/app/api/mention-candidates/route.test.ts`) で context (project_list / cross_list / wbs) 別の groups 絞り込み + entityType 別 user 抽出を網羅

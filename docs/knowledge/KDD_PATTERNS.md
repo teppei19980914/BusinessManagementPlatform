@@ -8440,3 +8440,61 @@ Import trace: usage-drift-badge.tsx → api-usage-recalc.service.ts → @/lib/db
 - 修正パターン: `src/config/api-usage-drift.ts` で `DRIFT_WARNING_THRESHOLD` を分離 → Client / Server 双方から `@/config/*` 経由で取得
 - 関連 公式 docs: [Next.js: Server and Client Composition Patterns](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns#supported-pattern-passing-server-components-to-client-components-as-props)
 
+## 5.X+49 新規 `route.ts` / `page.tsx` を追加した PR は **必ず `docs/test/E2E_COVERAGE.md` にエントリを追記** ─ CI の `e2e:coverage-check` が exit 1 で落とす (2026-05-14 PR #355 で実体験)
+
+### 背景
+
+PR #355 (本 PR) で `/api/admin/super/recalculate-all`, `/api/admin/super/tenants/[id]/recalculate`, `/api/tenants/me/recalculate` の 3 つの API Route を新規追加したが、`docs/test/E2E_COVERAGE.md` への追記を忘れた結果、GitHub Actions の `Lint / Test / Build` ジョブが以下で失敗:
+
+```
+> tsx scripts/check-e2e-coverage.ts
+❌ docs/test/E2E_COVERAGE.md に未記載の機能があります:
+   - /api/admin/super/recalculate-all
+   - /api/admin/super/tenants/[id]/recalculate
+   - /api/tenants/me/recalculate
+ELIFECYCLE Command failed with exit code 1.
+```
+
+CLAUDE.md §コミット前チェック §6 で「新規 page.tsx / route.ts を追加したら必ず追記」と明記されているが、実装に集中していると見落としやすい。**ローカルで lint/test/build を通しても、`e2e:coverage-check` を別途実行しないと検出されない罠**。
+
+### 教訓
+
+新規ルート / 画面の追加 PR を出す前に **必ず** ローカルで以下を実行:
+
+```bash
+pnpm e2e:coverage-check
+```
+
+このコマンドは CI と同じスクリプト (`scripts/check-e2e-coverage.ts`) を実行し、未記載があれば exit 1。`pnpm lint && pnpm tsc --noEmit && pnpm test && pnpm build` の **4 点セットには含まれていない** ため意識的に追加実行が必要。
+
+### 記載パターン
+
+| ケース | 形式 |
+|---|---|
+| E2E 化済 | `- [x] /path — e2e/specs/NN-foo.spec.ts (取材内容)` |
+| 未カバー (skip) | `- [ ] /path (METHOD) — skip: <理由>。<別経路の担保 (サービステスト等)>` |
+
+「skip: 」を必ず付与する (= スクリプトが「明示的に skip」と認識)。
+
+### 横展開で漏らしやすい箇所
+
+- [ ] 新規ファイル追加時のチェックリスト: `route.ts` / `page.tsx` / `loading.tsx` 以外の `*.tsx` を含むか?
+  - **loading.tsx は不要** (E2E_COVERAGE はあくまでルート/エンドポイント単位)
+  - `route.test.ts` 等のテストファイルも不要
+- [ ] CI が落ちる前に: PR 作成前 push の **直前** に `pnpm e2e:coverage-check` を打つ習慣
+- [ ] チェック対象を増やす提案: `auto-commit.sh` (Stop Hook) に `e2e:coverage-check` を組み込めば再発防止できる (将来の改善候補)
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| CI ジョブ `Lint / Test / Build` のみ red、ローカルは全 pass | E2E_COVERAGE 漏れ (`tsx scripts/check-e2e-coverage.ts` が exit 1) |
+| `❌ docs/test/E2E_COVERAGE.md に未記載の機能があります` ログ | まさにこれ |
+
+### 関連
+
+- PR: #355 (2026-05-14 dev/2026-05-14 本 PR で実体験)
+- スクリプト: [scripts/check-e2e-coverage.ts](../../scripts/check-e2e-coverage.ts)
+- ドキュメント: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md)
+- 修正コミット: `docs(e2e): PR #355 で追加した recalculate 系 3 endpoint を E2E_COVERAGE に追記`
+
