@@ -77,6 +77,12 @@ jobs:
       # PR #92: シナリオ Step 1 で使用する初期 admin (E2E 実行ごとに DB にシード)
       INITIAL_ADMIN_EMAIL: admin-e2e@example.com
       INITIAL_ADMIN_PASSWORD: 'E2eInitial!Pw_2026'
+      # 2026-05-13 (security/auth-secret-hardening, B-2 follow-up):
+      #   middleware の login IP rate limit (max=20 / 5min) は、E2E の複数 worker から
+      #   同一 IP (localhost) で短時間に大量の login が発生する CI 環境で 429 を引き起こす。
+      #   本フラグで rate limit を完全 disable する。本番 env (Vercel) では絶対に設定しないこと。
+      #   詳細: docs/test/E2E_LESSONS.md "login rate limit と E2E 並列実行の衝突"
+      DISABLE_LOGIN_RATE_LIMIT: 'true'
       CI: 'true'
 
     steps:

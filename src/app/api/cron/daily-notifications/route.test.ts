@@ -55,19 +55,19 @@ describe('POST /api/cron/daily-notifications', () => {
   });
 
   it('Authorization ヘッダなしは 401', async () => {
-    process.env.CRON_SECRET = 'test-secret';
+    process.env.CRON_SECRET = 'test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx';
     const res = await POST(cronReq());
     expect(res.status).toBe(401);
   });
 
   it('Authorization ヘッダが間違っていれば 401', async () => {
-    process.env.CRON_SECRET = 'test-secret';
+    process.env.CRON_SECRET = 'test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx';
     const res = await POST(cronReq('Bearer wrong'));
     expect(res.status).toBe(401);
   });
 
   it('正しい Bearer なら generate + cleanup + 期限切れ preview + storage 更新 を実行して 200', async () => {
-    process.env.CRON_SECRET = 'test-secret';
+    process.env.CRON_SECRET = 'test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx';
     vi.mocked(generateDailyNotifications).mockResolvedValue({ startCreated: 3, endCreated: 2 });
     vi.mocked(cleanupReadNotifications).mockResolvedValue({ deleted: 5 });
     vi.mocked(deleteExpiredPreviews).mockResolvedValue(2);
@@ -77,7 +77,7 @@ describe('POST /api/cron/daily-notifications', () => {
       graceClearedCount: 2,
     });
 
-    const res = await POST(cronReq('Bearer test-secret'));
+    const res = await POST(cronReq('Bearer test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx'));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data).toEqual({

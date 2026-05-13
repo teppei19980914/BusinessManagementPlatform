@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { checkPermission, checkMembership } from '@/lib/permissions';
+import { isAdminOrAbove } from '@/lib/permissions/role';
 import type { Action, PermissionContext } from '@/lib/permissions';
 import type { SystemRole, ProjectRole, ProjectStatus } from '@/types';
 // PR-5 (2026-05-15): ストレージ容量 Pre-check (cached) — write API の入口で
@@ -88,10 +89,16 @@ export async function checkProjectPermission(
 }
 
 /**
- * システム管理者チェック
+ * システム管理者チェック (admin または super_admin を許可)。
+ *
+ * 2026-05-13 (security/auth-secret-hardening, B-3): super_admin が
+ * `/api/admin/**` 18 ファイルでアクセス不可だった運用バグを修正。
+ * `lib/permissions/role.ts:isAdminOrAbove` を採用し、admin と super_admin を
+ * 等しく許可する。テナント越境制御は呼出側の `requireSameTenantUser` が担う
+ * (super_admin は MANAGEMENT_TENANT 所属で明示的に bypass される設計)。
  */
 export function requireAdmin(user: AuthenticatedUser): NextResponse | null {
-  if (user.systemRole !== 'admin') {
+  if (!isAdminOrAbove(user)) {
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
       { status: 403 },

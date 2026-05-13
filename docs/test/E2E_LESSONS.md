@@ -3336,6 +3336,202 @@ estimates / tasks / project_members / tenants 自身など) で全 fail する�
 
 ---
 
+### 4.54 セキュリティ強化で追加した login IP rate limit が E2E 並列実行を 429 で全滅させる (PR #345 で遭遇)
+
+#### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で **B-2: credential stuffing 対策** として
+`src/middleware.ts` に `/api/auth/callback/credentials` POST への IP 単位 rate limit
+(`applyRateLimit({ key: 'login', max: 20, windowMs: 5 * 60 * 1000 })`) を追加。
+本番では妥当な設定だが、CI で E2E (Playwright) を流すと **15 件中 14 件以上が
+ログイン直後の `waitForURL('**/projects')` で 15s timeout** という大量失敗を起こした。
+
+原因連鎖:
+
+1. **E2E は CI で複数 worker 並列実行**: e2e.yml は workers=4 (chromium / chromium-mobile 等)
+   で spec を並列消化する。
+2. **各 spec の beforeEach (or fixtures/auth.ts:loginAs) で都度 login**: 1 spec 平均 1〜2 回の
+   login。50 spec を 4 worker で流すと 5 分間に 60〜100 件の login POST が同一 IP (localhost) から発生。
+3. **rate limit 機構は in-memory Map で IP 単位カウント**: 同一プロセスから見ると
+   `localhost:port` は全 worker で同じ IP として記録される。20 件目以降の login POST が
+   429 Too Many Requests を返す。
+4. **NextAuth は 429 を「認証失敗」として扱い、ブラウザは /login に留まる**:
+   そのため `waitForURL('**/projects')` が 15s で timeout → spec が fail。
+
+#### 採用したパターン
+
+##### 1. 環境変数で middleware の rate limit を完全 disable できる経路を作る
+
+`src/middleware.ts` に **明示的にバイパス可能なフラグ** を追加 (`'true'` 文字列リテラル):
+
+```ts
+const LOGIN_RATE_LIMIT_DISABLED = process.env.DISABLE_LOGIN_RATE_LIMIT === 'true';
+
+export default auth((req) => {
+  if (
+    req.nextUrl.pathname === '/api/auth/callback/credentials'
+    && req.method === 'POST'
+    && !LOGIN_RATE_LIMIT_DISABLED  // ← ここ
+  ) {
+    const limited = applyRateLimit(req, { key: 'login', max: 20, windowMs: 5 * 60 * 1000 });
+    if (limited) return limited;
+  }
+});
+```
+
+##### 2. CI workflow にだけフラグをセットする (本番 env では未設定)
+
+`.github/workflows/e2e.yml` および `e2e-visual-baseline.yml` の `env:` に
+`DISABLE_LOGIN_RATE_LIMIT: 'true'` を追加。**Vercel 本番 env では絶対に設定しない**
+(設定すると credential stuffing 対策が無効化される) ことを workflow コメントで明示。
+
+##### 3. playwright.config.ts の webServer.env で子プロセスにも明示伝搬
+
+`webServer.env` は親プロセスの env を継承せず明示列挙が必要なため、
+`DISABLE_LOGIN_RATE_LIMIT: process.env.DISABLE_LOGIN_RATE_LIMIT || ''` を追加。
+これを忘れると workflow で env を設定しても **Next.js webServer 子プロセスに
+伝わらず rate limit が有効のまま** という見えにくいバグになる (実際に踏んだ罠)。
+
+#### 一般化できる教訓
+
+- **「本番で正しい防御」が「テストでは過剰防御」になる対立**: rate limit / アカウントロック /
+  CSRF / CAPTCHA などの認証境界の追加は、E2E が本番より遥かに高頻度の認証を行う性質と
+  必ず衝突する。security PR を出すときは **同時に E2E 影響を考慮し、env で disable できる
+  経路を最初から用意する** のが安全。
+- **CI と本番の env 差分は 1 箇所に集約・文書化する**: 「CI でのみ ON にする env」を増やすほど、
+  「本番に誤って設定したら何が壊れるか」が見えにくくなる。本 PR では middleware の冒頭 JSDoc
+  と workflow の env コメントに「本番では未設定 = rate limit 有効」を明記し、追跡可能にした。
+- **Playwright の webServer.env は親 env を継承しない**: NextAuth secret / DB URL を渡したい
+  時の通例なので意識されにくいが、新規 env を増やしたら **playwright.config.ts の env も同時に更新**
+  しないと CI で謎の挙動を引き起こす (本罠の二次バグ候補)。
+
+#### 検出のしかた
+
+- 症状: `waitForURL('**/projects')` の Timeout が 10 件以上同時発生 (rate limit のしきい値を
+  超えた worker 群が一斉に失敗する)
+- 確認: Playwright report の任意 fail spec の "page screenshot" に **/login 画面が映っている**
+  (= login 自体は POST されたが認証通過していない)
+- 切り分け: server log で `429 Too Many Requests` が `/api/auth/callback/credentials` に対して
+  並ぶことを確認。auth_event_logs テーブルには login_failure が記録されない (middleware で
+  弾かれているため authorize() を到達せず)
+
+#### 関連
+
+- 関連 PR: PR #345 (`security/auth-secret-hardening`) — 本罠を作り込んだ commit と本罠を修正した commit が同一 PR
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — rate limit 適用と disable フラグ
+  - [src/lib/rate-limit.ts](../../src/lib/rate-limit.ts) — in-memory Map ベースの実装と Vercel 分散の限界 (§13-21)
+  - [.github/workflows/e2e.yml](../../.github/workflows/e2e.yml) — `DISABLE_LOGIN_RATE_LIMIT: 'true'`
+  - [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml) — 同上
+  - [playwright.config.ts](../../playwright.config.ts) — webServer.env で子プロセスに伝搬
+- 関連メモ: docs/test/E2E_LESSONS.md §4.43 (in-memory Map が serverless 環境で挙動が変わる類話)
+
+---
+
+### 4.55 `waitForURL((url) => !pathname.includes('/login'))` パターンは redirect chain 途中で抜けて race を起こす ─ 終端到達 (`/projects`) を条件にする (PR #345 で遭遇)
+
+#### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で middleware に login rate limit を追加した。
+rate limit 自体は CI 用 env (`DISABLE_LOGIN_RATE_LIMIT='true'`, §4.54) で bypass したが、
+**login 後の応答タイミングが微妙に変わった副作用で、別の race condition が顕在化** した:
+
+```
+[chromium] › e2e/specs/13-super-admin-dashboard.spec.ts:82:7
+Error: page.goto: Navigation to "/admin/super" is interrupted by
+       another navigation to "/projects"
+```
+
+問題のパターン (spec 11/12/13 で同じ):
+
+```ts
+// beforeAll で login
+await page.goto('/login');
+await page.fill(...).fill(...);
+await page.getByRole('button', { name: 'ログイン' }).click();
+// ↓↓↓ これが race の元 ↓↓↓
+await page.waitForURL((url) => !url.pathname.includes('/login'), {
+  timeout: 10_000,
+});
+```
+
+`!pathname.includes('/login')` は **「`/login` でない URL」** を条件にしているが、
+本サービスの login 後の redirect chain は `/login` → `/` → `/projects` の 2 段:
+
+1. NextAuth が POST 成功で `/` に redirect (302)
+2. `(dashboard)/page.tsx` が `redirect('/projects')` で更に redirect
+
+このとき、`/` 到達時点で **条件式は既に true** (`!pathname.includes('/login') === true`)
+になるため、`waitForURL` は **`/` で抜ける**。その後、test 本体で
+`page.goto('/admin/super')` を呼ぶと、まだ進行中だった `/` → `/projects` の server redirect が
+goto に割り込んで `/admin/super` への navigation を中断する。
+
+#### 採用したパターン
+
+`e2e/fixtures/auth.ts` に既存していた共通ヘルパー `waitForProjectsReady` に統一:
+
+```ts
+// e2e/fixtures/auth.ts
+export async function waitForProjectsReady(page: Page): Promise<void> {
+  await page.waitForURL('**/projects', { timeout: 15_000 });
+  await page.waitForLoadState('networkidle');
+}
+```
+
+**ポイント**:
+- **終端 URL (`/projects`) の到達** を待つ (= redirect chain が完全に終わってから抜ける)
+- `waitForLoadState('networkidle')` で初期 hydration / SWR fetch も落ち着くまで待つ
+- 既存 fixture (`loginAsAdminWithMfa` / `loginAsGeneral`) は既にこのヘルパーを使っていた。
+  spec 11/12/13 だけが独自実装で race-prone だった
+
+#### 横展開対象 (本 PR で全件修正)
+
+- `e2e/specs/11-tenant-isolation.spec.ts:81` (adminA login)
+- `e2e/specs/12-suggestion-seed-data.spec.ts:128, 294` (adminA / pageB login)
+- `e2e/specs/13-super-admin-dashboard.spec.ts:65, 254` (superAdmin / adminA login)
+
+全て `waitForProjectsReady(page)` 呼び出しに置換。
+
+#### 一般化できる教訓
+
+**`waitForURL` の条件式は「終端」を表す形にする** — 「中間状態」を表す negation (e.g.,
+`!includes('/login')`) は redirect chain の途中で勝手に抜ける。
+
+```ts
+// ❌ 中間状態で抜ける (race-prone)
+await page.waitForURL((url) => !url.pathname.includes('/login'));
+
+// ❌ 同様に「/login でなければ通す」式 (e.g., 正規表現で negation)
+await page.waitForURL((url) => !/\/login/.test(url.pathname));
+
+// ✅ 終端到達 (`/projects`) を明示
+await page.waitForURL('**/projects');
+// or
+await page.waitForURL((url) => url.pathname === '/projects');
+
+// ✅ さらに networkidle まで待つ (load chain 全体の完了)
+await page.waitForLoadState('networkidle');
+```
+
+#### 検出のしかた (本罠の症状チェックリスト)
+
+| 症状 | 切り分け |
+|---|---|
+| `Navigation to "X" is interrupted by another navigation to "Y"` | login 後の wait が早すぎて、redirect chain と次の goto が競合 |
+| 同 spec の一部 test だけ flaky に fail | 各 test の最初の goto がリダイレクトと race。共通 beforeAll の login wait が原因 |
+| `--workers=1` だと PASS、`--workers=4` で fail | 並列度が high なほど CPU 競合で redirect が遅延し、race が顕在化 |
+| main では PASS、PR のブランチで fail | PR の変更で application response time が微妙に変わって race が顕在化 |
+
+#### 関連
+
+- 関連 PR: PR #345 (security/auth-secret-hardening) — B-2 の rate limit 追加がトリガー、race を顕在化
+- 関連 ファイル:
+  - [e2e/fixtures/auth.ts](../../e2e/fixtures/auth.ts) — `waitForProjectsReady` の正規実装
+  - 修正 spec: 11-tenant-isolation / 12-suggestion-seed-data / 13-super-admin-dashboard
+- 関連 KDD パターン: docs/knowledge/KDD_PATTERNS.md §5.X+40 「`waitForURL` の条件式は終端を表す」一般化教訓
+
+---
+
 ## 8. 未解決課題 (将来 PR 候補)
 
 | 項目 | 理由 |
