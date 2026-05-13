@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { checkPermission, checkMembership } from '@/lib/permissions';
+import { isAdminOrAbove } from '@/lib/permissions/role';
 import type { Action, PermissionContext } from '@/lib/permissions';
 import type { SystemRole, ProjectRole, ProjectStatus } from '@/types';
 // PR-5 (2026-05-15): ストレージ容量 Pre-check (cached) — write API の入口で
@@ -30,12 +31,44 @@ export type AuthenticatedUser = {
 
 /**
  * 認証済みユーザを取得する。未認証の場合は 401 レスポンスを返す。
+ *
+ * 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効検証を追加。
+ *   JWT 内 tokenVersion vs DB の最新 user.tokenVersion を比較し、不一致なら 401。
+ *   admin がパスワード変更 / ロック解除 / ユーザ削除 / ロール変更で increment した瞬間に、
+ *   当該ユーザの既存 JWT は全て即時失効する (= 強制ログアウト)。
+ *
+ *   性能影響: API route ごとに `prisma.user.findUnique` が 1 回追加 (~5ms / Supabase Pooler 経由)。
+ *   全 API route で許容できる範囲。
+ *
+ *   middleware (Edge runtime) は DB アクセス不可のため検証できず、JWT 内の値のみで動作する
+ *   (= middleware で守るプラン期限・Storage Grace 判定は変わらず)。本ガードは API route 入口で
+ *   write 系操作を確実に弾く設計。
  */
 export async function getAuthenticatedUser(): Promise<AuthenticatedUser | NextResponse> {
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
   }
+
+  // L-1: tokenVersion 検証 (JWT 失効ガード)
+  const jwtTokenVersion = session.user.tokenVersion ?? 0;
+  const dbUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { tokenVersion: true, isActive: true, deletedAt: true },
+  });
+  if (
+    !dbUser
+    || dbUser.deletedAt !== null
+    || !dbUser.isActive
+    || dbUser.tokenVersion !== jwtTokenVersion
+  ) {
+    // 削除 / 無効化 / tokenVersion 不一致 = 既存 JWT は失効
+    return NextResponse.json(
+      { error: { code: 'SESSION_INVALIDATED', message: '再度ログインしてください' } },
+      { status: 401 },
+    );
+  }
+
   return {
     id: session.user.id,
     tenantId: session.user.tenantId,
@@ -88,10 +121,16 @@ export async function checkProjectPermission(
 }
 
 /**
- * システム管理者チェック
+ * システム管理者チェック (admin または super_admin を許可)。
+ *
+ * 2026-05-13 (security/auth-secret-hardening, B-3): super_admin が
+ * `/api/admin/**` 18 ファイルでアクセス不可だった運用バグを修正。
+ * `lib/permissions/role.ts:isAdminOrAbove` を採用し、admin と super_admin を
+ * 等しく許可する。テナント越境制御は呼出側の `requireSameTenantUser` が担う
+ * (super_admin は MANAGEMENT_TENANT 所属で明示的に bypass される設計)。
  */
 export function requireAdmin(user: AuthenticatedUser): NextResponse | null {
-  if (user.systemRole !== 'admin') {
+  if (!isAdminOrAbove(user)) {
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: 'この操作を実行する権限がありません' } },
       { status: 403 },

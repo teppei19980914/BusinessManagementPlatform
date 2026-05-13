@@ -258,7 +258,12 @@ export async function updateUserStatus(
 
   const user = await prisma.user.update({
     where: { id: userId },
-    data: { isActive },
+    data: {
+      isActive,
+      // 2026-05-13 (security/jwt-invalidation, L-1): isActive 切替で既存 JWT を失効。
+      //   無効化されたユーザは即時ログアウト、再有効化後も再ログイン強制。
+      tokenVersion: { increment: 1 },
+    },
   });
 
   // Phase 2-10: tenantId 必須化
@@ -345,7 +350,12 @@ export async function updateUserRole(
 
   const updated = await prisma.user.update({
     where: { id: userId },
-    data: { systemRole: newRole },
+    data: {
+      systemRole: newRole,
+      // 2026-05-13 (security/jwt-invalidation, L-1): ロール変更で既存 JWT を失効。
+      //   権限降格直後に旧 JWT で admin 操作されるリスクを排除。
+      tokenVersion: { increment: 1 },
+    },
   });
 
   // Phase 2-10: tenantId 必須化
@@ -423,6 +433,10 @@ export async function deleteUser(
         // セキュリティ上の念押し: 削除後の再利用/誤ログインを防ぐため MFA も外す
         mfaEnabled: false,
         mfaSecretEncrypted: null,
+        // 2026-05-13 (security/jwt-invalidation, L-1): 削除と同時に既存 JWT を失効。
+        //   論理削除後も 9 時間有効な JWT で API を叩かれる経路を完全に閉じる。
+        //   getAuthenticatedUser の deletedAt チェックでも止まるが、二重防御で念押し。
+        tokenVersion: { increment: 1 },
       },
     }),
     prisma.roleChangeLog.create({
