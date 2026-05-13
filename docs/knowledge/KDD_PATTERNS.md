@@ -8166,3 +8166,68 @@ nonce 自動付与が安定するまで様子見する。
   - [next.config.ts](../../next.config.ts) — pre-PR #349 の static CSP を復元
 - 関連 KDD: §5.X+43 (本罠の前段、`strict-dynamic` で hydration 全壊)
 - 関連 公式 docs: [CSP Level 3 仕様](https://www.w3.org/TR/CSP3/#allow-all-inline) — `'nonce-X'` 指定時の `'unsafe-inline'` 無視仕様
+
+---
+
+## 5.X+45 schema に User 列を追加した PR は **必ず `USER_PII_FIELDS` か `USER_EXPORT_FIELDS` の分類を更新する** ─ L-6 CI ガードが想定通り機能した例 (PR #350 で確認)
+
+### 罠の正体 (= CI ガードが意図通り検出した好例)
+
+PR #350 (security/jwt-invalidation) で User schema に `tokenVersion` 列を追加した。
+PR #348 でマージ済みの L-6 CI ガード (`USER_EXPORT_FIELDS ∪ USER_PII_FIELDS ===
+Prisma.UserScalarFieldEnum`) が以下で CI を fail させた:
+
+```
+FAIL src/services/data-export.service.test.ts
+  > User export PII whitelist CI guard (L-6)
+  > USER_EXPORT_FIELDS と USER_PII_FIELDS の和が UserScalarFieldEnum と完全一致する
+AssertionError: 新 User フィールドが追加されたが分類されていない。
+USER_EXPORT_FIELDS または USER_PII_FIELDS に追加してください:
+expected [ 'tokenVersion' ] to deeply equal []
+```
+
+これは **L-6 CI ガードが想定通り動作した** ことを示す重要な好例。
+
+PR #350 の `tokenVersion` は **JWT 失効カウンタ** で、顧客データ持ち出し export に
+含めるべきではない (内部認証情報)。だが PR #350 作業時に `data-export.service.ts` の
+`USER_PII_FIELDS` への追加を忘れていた。L-6 ガードがそれを **CI で必ず検出** することで、
+意図せず PII が JSON 出力に混入する事故を **構造的に防いだ**。
+
+### 教訓 (一般化)
+
+**CI ガードは「fail することで価値を発揮する」**。今回の fail は:
+- バグではなく **意図通りの検出**
+- 修正は単純 (`USER_PII_FIELDS` に列名を 1 行追加)
+- ガードがなければ schema 列追加と data-export 更新の漏れで PII 漏洩していた可能性
+
+### 修正パターン
+
+User schema に列を追加する PR では、以下を **必ず同時に実施**:
+
+1. `prisma/schema.prisma` に列を追加
+2. `prisma/migrations/` に migration を追加
+3. **`src/services/data-export.service.ts` の `USER_EXPORT_FIELDS` か `USER_PII_FIELDS`
+   に列名を追加** (どちらかは「顧客に export して良いか」で判定)
+4. `npx prisma generate` で型を再生成
+5. `pnpm test src/services/data-export.service.test.ts` で L-6 ガードが通ることを確認
+
+### 分類の判定ガイド
+
+新規 User 列が `USER_EXPORT_FIELDS` か `USER_PII_FIELDS` か:
+
+| 列の性質 | 分類 |
+|---|---|
+| 顧客の所有情報 (氏名・メール・ロール・テーマ等) | EXPORT |
+| 認証情報 (passwordHash / mfa secret / token) | PII |
+| ロック / 失敗カウンタ等の運用ステート | PII |
+| 内部フラグ (forcePasswordChange / tokenVersion 等) | PII |
+| 論理削除 (deletedAt 等) | PII (= 削除済の事実は顧客向け出力に不要) |
+
+迷う場合は **「顧客が export ZIP を受け取って役立つか」** で判断。
+役立たないなら PII (内部運用情報) として扱う方が安全。
+
+### 関連
+
+- 修正 PR: PR #350 (2026-05-13 / security/jwt-invalidation) — `tokenVersion` を `USER_PII_FIELDS` に追加
+- CI ガード元 PR: PR #348 (2026-05-13 / security/data-export-pii-ci-guard) — L-6 ガード自体の実装
+- 関連 KDD: §5.X+41 (`.gitignore` された generated の罠、本 PR では prisma generate 再実行で関連)
