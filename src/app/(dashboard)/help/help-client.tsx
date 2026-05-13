@@ -285,7 +285,7 @@ export function HelpClient({ isTenantAdmin }: Props) {
         <h2 className="text-base font-semibold">解決しなかった場合</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           ここで解決しない場合は、画面右上のアカウントメニューから{' '}
-          <strong>たすきばコミュニティ (Discord)</strong> にアクセスできます。
+          <strong>Discord</strong> にアクセスしていただき、開発者に直接聞くことができます。
           たすきば Discord は開発者と他のユーザが集まる場所で、次のように活用できます:
         </p>
         <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground">
