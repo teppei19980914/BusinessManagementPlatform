@@ -32,20 +32,16 @@ import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { lockInactiveUsers } from '@/services/user.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { prisma } from '@/lib/db';
-
-/**
- * 認可の 2 経路:
- *   1. 管理画面からの手動実行: セッション Cookie ありの admin ユーザ
- *   2. Vercel Cron: Authorization: Bearer <CRON_SECRET> ヘッダ
- *      (CRON_SECRET は Vercel Project 環境変数で設定)
- *   どちらかを通過すれば実行可能。不正呼び出し (匿名 POST) は 401 で拒否。
- */
-function isCronAuthorized(req: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-  const header = req.headers.get('authorization');
-  return header === `Bearer ${cronSecret}`;
-}
+// 2026-05-13 (security/auth-secret-hardening, B-6): 共通 cron 認可ヘルパに統一。
+//   旧実装は本ファイル内のローカル定義で `===` 文字列比較していたが、
+//   timingSafeEqual ベースの共通ヘルパへ移行。CRON_SECRET 最小長 32 文字も同時に強制。
+//
+// 認可の 2 経路:
+//   1. 管理画面からの手動実行: セッション Cookie ありの admin ユーザ
+//   2. Vercel Cron: Authorization: Bearer <CRON_SECRET> ヘッダ
+//      (CRON_SECRET は Vercel Project 環境変数で設定)
+//   どちらかを通過すれば実行可能。不正呼び出し (匿名 POST) は 401 で拒否。
+import { isCronAuthorized } from '@/lib/cron-auth';
 
 export async function POST(req: NextRequest) {
   // 経路 A: Vercel Cron (CRON_SECRET ヘッダ)
