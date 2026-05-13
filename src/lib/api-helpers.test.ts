@@ -9,9 +9,22 @@ vi.mock('@/lib/permissions', () => ({
   checkMembership: vi.fn(),
 }));
 
+// 2026-05-13 (security/jwt-invalidation, L-1): getAuthenticatedUser は DB 検証を行うため mock 必須
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    user: {
+      findUnique: vi.fn(),
+    },
+    projectMember: {
+      findFirst: vi.fn(),
+    },
+  },
+}));
+
 import { getAuthenticatedUser, checkProjectPermission, requireAdmin } from './api-helpers';
 import { auth } from '@/lib/auth';
 import { checkPermission, checkMembership } from '@/lib/permissions';
+import { prisma } from '@/lib/db';
 import type { SystemRole } from '@/types';
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
@@ -47,24 +60,104 @@ describe('getAuthenticatedUser', () => {
     expect(body.error.code).toBe('UNAUTHORIZED');
   });
 
-  it('セッションがあればユーザ情報を返す', async () => {
+  it('セッションがあり DB の tokenVersion が JWT と一致すればユーザ情報を返す', async () => {
     vi.mocked(auth).mockResolvedValue({
       user: {
         id: 'user-1',
+        tenantId: TEST_TENANT_ID,
         name: 'Alice',
         email: 'alice@example.com',
         systemRole: 'general',
+        tokenVersion: 0,
       },
+    } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: true,
+      deletedAt: null,
     } as never);
 
     const result = await getAuthenticatedUser();
 
     expect(result).toEqual({
       id: 'user-1',
+      tenantId: TEST_TENANT_ID,
       name: 'Alice',
       email: 'alice@example.com',
       systemRole: 'general',
     });
+  });
+
+  // 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効ガードの回帰テスト
+  it('JWT tokenVersion が DB と不一致なら 401 SESSION_INVALIDATED (L-1: admin 強制ログアウト経路)', async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: {
+        id: 'user-1',
+        tenantId: TEST_TENANT_ID,
+        name: 'Alice',
+        email: 'alice@example.com',
+        systemRole: 'general',
+        tokenVersion: 0, // JWT 側は 0
+      },
+    } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 1, // DB 側は 1 (admin が increment 済)
+      isActive: true,
+      deletedAt: null,
+    } as never);
+
+    const result = await getAuthenticatedUser();
+
+    expect(result).toBeInstanceOf(Response);
+    const body = await (result as Response).json();
+    expect(body.error.code).toBe('SESSION_INVALIDATED');
+    expect((result as Response).status).toBe(401);
+  });
+
+  it('対象ユーザが削除済 (deletedAt != null) なら 401', async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: {
+        id: 'user-1',
+        tenantId: TEST_TENANT_ID,
+        name: 'Alice',
+        email: 'alice@example.com',
+        systemRole: 'general',
+        tokenVersion: 0,
+      },
+    } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: true,
+      deletedAt: new Date(),
+    } as never);
+
+    const result = await getAuthenticatedUser();
+
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
+  });
+
+  it('対象ユーザが無効化 (isActive=false) なら 401', async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: {
+        id: 'user-1',
+        tenantId: TEST_TENANT_ID,
+        name: 'Alice',
+        email: 'alice@example.com',
+        systemRole: 'general',
+        tokenVersion: 0,
+      },
+    } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: false,
+      deletedAt: null,
+    } as never);
+
+    const result = await getAuthenticatedUser();
+
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
   });
 });
 
@@ -144,5 +237,20 @@ describe('requireAdmin', () => {
     const body = await (res as Response).json();
     expect(body.error.code).toBe('FORBIDDEN');
     expect((res as Response).status).toBe(403);
+  });
+
+  // 2026-05-13 (security/auth-secret-hardening, B-3): super_admin が requireAdmin を通る事を保証する。
+  //   旧実装は `user.systemRole !== 'admin'` で super_admin を 403 で弾いており、
+  //   /api/admin/users/** など 18 ファイルで super_admin が業務不能だった (運用バグ)。
+  //   isAdminOrAbove ヘルパに置換し、admin と super_admin を等しく許可する。
+  it('super_admin なら null (B-3: 旧実装で 403 だった運用バグの回帰テスト)', () => {
+    const superAdminUser = {
+      id: 'super-1',
+      tenantId: TEST_TENANT_ID,
+      name: 'Super',
+      email: 'super@example.com',
+      systemRole: 'super_admin' as SystemRole,
+    };
+    expect(requireAdmin(superAdminUser)).toBe(null);
   });
 });

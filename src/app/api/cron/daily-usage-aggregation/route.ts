@@ -26,13 +26,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runDailyUsageAggregation } from '@/services/usage-monitoring.service';
 import { sendBeginnerExpiryNotices } from '@/services/beginner-expiry.service';
 import { purgeExpiredBeginnerTenants } from '@/services/super-admin.service';
-
-function isCronAuthorized(req: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-  const header = req.headers.get('authorization');
-  return header === `Bearer ${cronSecret}`;
-}
+// 2026-05-13 (security/auth-secret-hardening, B-6): タイミング攻撃耐性のある共通 cron 認可ヘルパに統一。
+import { isCronAuthorized } from '@/lib/cron-auth';
 
 export async function POST(req: NextRequest) {
   if (!isCronAuthorized(req)) {

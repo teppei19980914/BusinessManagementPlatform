@@ -259,7 +259,12 @@ function RoleMatrix({ activeRole }: { activeRole: GuideRole }) {
     label: string;
     items: Array<'create' | 'edit' | 'view' | 'admin'>;
   }> = [
-    { role: 'admin', label: 'テナント管理者', items: ['admin', 'view'] },
+    // 2026-05-13 docs/guide-role-actions: 実装真実 (check-permission.ts) と一致させる修正。
+    //   旧マトリクスは admin が 'create' / 'edit' 非可能と表示していたが、これは誤り。
+    //   `admin` ロールは check-permission.ts:58 で全アクション (project:create / update / delete /
+    //   change_status / task:* / knowledge:* / risk:* / member:manage / admin:users 等) を許可済み。
+    //   ガイドが実装と乖離するとユーザが「admin はプロジェクトを作れない」と誤認するため修正。
+    { role: 'admin', label: 'テナント管理者', items: ['create', 'edit', 'view', 'admin'] },
     { role: 'pm', label: 'PM / PL', items: ['create', 'edit', 'view'] },
     { role: 'member', label: '一般メンバー', items: ['edit', 'view'] },
     { role: 'viewer', label: '閲覧者', items: ['view'] },
@@ -328,7 +333,7 @@ function AdminActions({ systemRole }: { systemRole: string }) {
   return (
     <div className="space-y-3 rounded-md border bg-card p-4">
       <p className="text-sm text-muted-foreground">
-        組織全体の設定・ユーザ管理・課金プランの調整を担当します。
+        組織全体の設定・ユーザ管理・課金プランの調整、および新規プロジェクトの立ち上げを担当します。
       </p>
       <ol className="list-decimal space-y-1.5 pl-6 text-sm">
         <li>
@@ -336,6 +341,16 @@ function AdminActions({ systemRole }: { systemRole: string }) {
             ユーザ管理
           </Link>{' '}
           からメンバーを招待 (メール送信)。受信者がパスワードを設定すると参加完了。
+        </li>
+        {/* 2026-05-13 docs/guide-role-actions: プロジェクト新規作成は admin の主要業務として明示。
+            実装真実 (check-permission.ts) では admin / pm_tl の両方が project:create 可能だが、
+            運用フロー上 admin がプロジェクトを立ち上げて PM/PL にメンバー権限を割り当てるのが
+            標準的。pm_tl も自身で作成可だが、組織管理の文脈では admin の役割が中心。 */}
+        <li>
+          <Link className="text-primary underline" href={PROJECTS_ROUTE}>
+            プロジェクト一覧
+          </Link>{' '}
+          で「+ 新規」を押して新しいプロジェクトを立ち上げ、PM/PL に運営権限を割り当て。
         </li>
         <li>
           <Link className="text-primary underline" href="/settings/tenant">
@@ -381,11 +396,15 @@ function PmActions() {
         プロジェクトの計画・進捗管理・人員配置・リスク統制を担います。
       </p>
       <ol className="list-decimal space-y-1.5 pl-6 text-sm">
+        {/* 2026-05-13 docs/guide-role-actions: 運用フローを反映。テナント管理者がプロジェクトを
+            立ち上げて PM/PL に権限割当するのが標準。pm_tl 自身もプロジェクト作成可だが (実装真実)、
+            ガイドとしては「割り当てられた直後の動き」を主軸に説明する方がユーザに伝わりやすい。 */}
         <li>
+          テナント管理者から割り当てられたプロジェクトを{' '}
           <Link className="text-primary underline" href={PROJECTS_ROUTE}>
             プロジェクト一覧
           </Link>{' '}
-          で「+ 新規」を押し、概要・期間・顧客を入力 → AI が自動でタグを抽出。
+          で開き、概要・期間・顧客を確認。自身で新たに立ち上げる場合は「+ 新規」を押せば、AI が自動でタグを抽出します。
         </li>
         <li>
           作成直後の <strong>「参考」タブ</strong> に並ぶ過去のリスク・課題・ナレッジを必ず確認 (見落とし防止)。

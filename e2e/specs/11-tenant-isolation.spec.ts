@@ -47,6 +47,7 @@
 
 import { test, expect, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { RUN_ID } from '../fixtures/run-id';
+import { waitForProjectsReady } from '../fixtures/auth';
 import {
   createTenantPair,
   cleanupTenants,
@@ -77,8 +78,10 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
     await adminAPage.getByLabel('メールアドレス').fill(tenantA.adminEmail);
     await adminAPage.getByLabel('パスワード').fill(tenantA.adminPassword);
     await adminAPage.getByRole('button', { name: 'ログイン' }).click();
-    // login 後の遷移先が動的なので、cookie が確立されたことだけを確認
-    await adminAPage.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 10_000 });
+    // 2026-05-13 (PR #345): redirect chain (login → / → /projects) の完全完了を待つ。
+    //   旧実装の `/login` でない判定だけだと redirect 途中で抜けて後続 goto と race する。
+    //   詳細: docs/test/E2E_LESSONS.md §4.55
+    await waitForProjectsReady(adminAPage);
 
     // 同 cookie を持つ APIRequestContext を作成 (fetch ベースの検証で使う)
     adminARequest = adminAContext.request;
