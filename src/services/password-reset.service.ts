@@ -18,7 +18,21 @@ function hashToken(token: string): string {
 }
 
 /**
+ * 2026-05-13 (security/auth-secret-hardening, L-2): タイミング差での enumeration 防止用ダミー hash。
+ *   bcrypt cost=12 の dummy hash で、user 不在時にも compare を 1 回走らせて
+ *   レスポンス時間差を消す。値は実在しない salt + 全 0 hash で、いかなる入力にもマッチしない。
+ *   ($2a$12$ プレフィックスで bcryptjs が format error を起こさず、常に false を返す。)
+ */
+const DUMMY_BCRYPT_HASH = '$2a$12$0000000000000000000000.00000000000000000000000000000000';
+
+/**
  * ステップ1: メールアドレス + リカバリーコードで本人確認し、リセットトークンを発行
+ *
+ * 2026-05-13 (security/auth-secret-hardening, L-2): タイミング攻撃面の縮小。
+ *   user 不在時にも bcrypt compare を 1 回実行し、user 存在の有無による応答時間差を消す。
+ *   元実装は `if (!user) return` で即 return しており、応答時間 0 ms / 50-200 ms の差で
+ *   攻撃者が email 在籍を確認できた。本対応で常に少なくとも 1 回 compare が走る。
+ *   PASSWORD_HISTORY_COUNT 件のループ平均化までは行わない (実害コスト vs 完全性の妥協)。
  */
 export async function verifyAndIssueResetToken(
   email: string,
@@ -29,6 +43,8 @@ export async function verifyAndIssueResetToken(
   });
 
   if (!user) {
+    // L-2: タイミング差消去のためダミー compare を実行 (戻り値は使わない)
+    await compare(recoveryCode, DUMMY_BCRYPT_HASH);
     return { success: false, error: 'メールアドレスまたはリカバリーコードが正しくありません' };
   }
 

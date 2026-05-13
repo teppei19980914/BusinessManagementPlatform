@@ -12,6 +12,15 @@
 
 import { vi } from 'vitest';
 
+// 2026-05-13 (security/auth-secret-hardening, B-1): mfa.service の NEXTAUTH_SECRET
+//   fail-closed 化に伴い、テスト環境では決定論的なテスト用 secret をセットする。
+//   本番環境のように未設定で fail させる挙動 (= encryption/decryption をテスト)
+//   は、必要であれば個別テスト内で `delete process.env.NEXTAUTH_SECRET` で再現できる。
+//   secret 値は 32 文字以上のテスト固定値 (= 本番値とは異なるため漏洩リスク無し)。
+if (!process.env.NEXTAUTH_SECRET) {
+  process.env.NEXTAUTH_SECRET = 'test-secret-for-vitest-only-32chars-long-aaaa';
+}
+
 vi.mock('next-intl/server', () => ({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   getTranslations: async (_namespace?: string) => {
