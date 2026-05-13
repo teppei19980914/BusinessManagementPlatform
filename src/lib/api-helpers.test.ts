@@ -238,4 +238,19 @@ describe('requireAdmin', () => {
     expect(body.error.code).toBe('FORBIDDEN');
     expect((res as Response).status).toBe(403);
   });
+
+  // 2026-05-13 (security/auth-secret-hardening, B-3): super_admin が requireAdmin を通る事を保証する。
+  //   旧実装は `user.systemRole !== 'admin'` で super_admin を 403 で弾いており、
+  //   /api/admin/users/** など 18 ファイルで super_admin が業務不能だった (運用バグ)。
+  //   isAdminOrAbove ヘルパに置換し、admin と super_admin を等しく許可する。
+  it('super_admin なら null (B-3: 旧実装で 403 だった運用バグの回帰テスト)', () => {
+    const superAdminUser = {
+      id: 'super-1',
+      tenantId: TEST_TENANT_ID,
+      name: 'Super',
+      email: 'super@example.com',
+      systemRole: 'super_admin' as SystemRole,
+    };
+    expect(requireAdmin(superAdminUser)).toBe(null);
+  });
 });

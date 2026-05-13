@@ -7538,3 +7538,631 @@ export type MailKind = (typeof MAIL_KINDS)[number];
 - 関連ファイル: [src/lib/mail/mail-provider.ts](../../src/lib/mail/mail-provider.ts) (union 定義), [src/services/beginner-expiry.service.ts](../../src/services/beginner-expiry.service.ts) (送信側)
 - 関連 migration: [prisma/migrations/20260516_beginner_auto_delete_notices/](../../prisma/migrations/20260516_beginner_auto_delete_notices/) (送信日時列追加のみ、type 制約変更無し)
 - 過去関連 KDD: §5.X+15 (tsc と build は別物、コミット前 build 実行必須)
+
+---
+
+## 5.X+39 セキュリティ強化 (rate limit / lockout / CAPTCHA) を追加するときは **E2E 並列実行が同一 IP で大量認証する** 性質と必ず衝突する ─ 環境変数で disable 経路を最初から用意する (PR #345 / 2026-05-13)
+
+### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で credential stuffing 対策として
+`middleware.ts` に login IP rate limit (`max=20 / 5min`) を追加した結果、
+E2E (Playwright) が CI で **15 件中 14 件以上の spec が ログイン直後の `waitForURL('**/projects')`
+で 15s timeout** という大量失敗を起こした。
+
+連鎖:
+1. E2E は CI で複数 worker (chromium / chromium-mobile 等) 並列実行
+2. 各 spec の beforeEach / fixtures/auth.ts:loginAs() で都度 login
+3. 同一 IP (localhost) から短時間に 60〜100 件の login POST が発生
+4. 21 件目以降が 429 で弾かれ、NextAuth は認証失敗扱い、ブラウザは /login に留まる
+5. spec 側は /projects への遷移を 15s 待って timeout
+
+**症状の見え方が誤誘導する**: 一見「テストデータ不正」「Prisma migration 失敗」と思える
+タイムアウトの大量発生だが、実態は middleware 層で 429 が出ているだけ。
+Playwright report の screenshot で /login 画面が映ること、auth_event_logs に
+login_failure が **記録されていない** (middleware で弾かれて authorize() に到達しない)
+ことが切り分けポイント。
+
+### 教訓 (一般化)
+
+**security 観点で「本番で正しい防御」が「テストでは過剰防御」になる対立** は構造的に存在する。
+以下の認証境界の追加は全て同じ罠を引き起こす:
+
+- IP / アカウント単位の rate limit
+- アカウントロック (失敗 N 回でロック)
+- CSRF / CAPTCHA / human verification
+- セッション固定攻撃対策 (ログイン直後の token rotation)
+- bot 検知 (User-Agent / JA3 fingerprint)
+- 短時間多発要求の検知 (Web Application Firewall)
+
+E2E は本番ユーザの **数百倍の頻度** で認証経路を叩く。security PR で本番向けの
+新しい防御を入れる時は、**最初から「テスト/負荷試験用の bypass 経路」を併設** する
+習慣を付ける。
+
+### 修正パターン (本 PR で適用)
+
+##### 1. 環境変数で middleware の rate limit を disable する経路
+
+```ts
+// src/middleware.ts
+const LOGIN_RATE_LIMIT_DISABLED = process.env.DISABLE_LOGIN_RATE_LIMIT === 'true';
+
+export default auth((req) => {
+  if (
+    req.nextUrl.pathname === '/api/auth/callback/credentials'
+    && req.method === 'POST'
+    && !LOGIN_RATE_LIMIT_DISABLED  // ← bypass 経路
+  ) {
+    const limited = applyRateLimit(req, { key: 'login', max: 20, windowMs: 5 * 60 * 1000 });
+    if (limited) return limited;
+  }
+});
+```
+
+##### 2. CI workflow にだけ env をセット (本番では未設定)
+
+`.github/workflows/e2e.yml`:
+```yaml
+env:
+  DISABLE_LOGIN_RATE_LIMIT: 'true'  # 本番 (Vercel) には絶対設定しない
+```
+
+##### 3. Playwright config の webServer.env に明示伝搬
+
+```ts
+// playwright.config.ts
+webServer: {
+  env: {
+    // ... 他 env
+    DISABLE_LOGIN_RATE_LIMIT: process.env.DISABLE_LOGIN_RATE_LIMIT || '',
+  },
+}
+```
+
+**忘れがち**: `webServer.env` は親 env を継承しないため、明示列挙が必要。
+新規 env を増やしたら playwright.config.ts も同時更新するチェックリストを習慣化する。
+
+### 横展開で漏らしやすい箇所
+
+新しい security 防御を入れる時、以下を **同時に** 確認する:
+
+- [ ] `src/middleware.ts` で防御するか? → bypass フラグを最初から付ける
+- [ ] アカウント単位のロック (lockout) → spec 側で別 user を使うか、reset API を用意
+- [ ] CSRF token → E2E でも取得経路をたどらせる (auto-form-submit ではない)
+- [ ] CAPTCHA → CI 専用 secret で常に pass する mock を用意
+- [ ] WAF / 短時間多発検知 → CI 専用に閾値を緩める or 完全 disable
+- [ ] `.github/workflows/e2e.yml`, `e2e-visual-baseline.yml` 両方の env を更新
+- [ ] `playwright.config.ts` の `webServer.env` も併せて更新
+- [ ] 本番 env (Vercel project settings) に **絶対に設定しない** ことを workflow コメントで明示
+
+### 検出のしかた (再発時の最短切り分け)
+
+| 観察できる症状 | 真因の可能性 |
+|---|---|
+| 多数 spec の login 後 waitForURL が同時 timeout | rate limit / lockout / CAPTCHA |
+| Playwright screenshot が /login 画面で停止 | login POST 後にリダイレクトされていない |
+| auth_event_logs に login_failure が **無い** | middleware 層で弾かれて authorize() に到達せず |
+| auth_event_logs に login_failure が **大量** | authorize() は呼ばれているが何らかの判定で reject |
+| 単独 spec を `--workers=1` で流すと PASS | 並列性が原因 (rate limit / 同一 IP しきい値) |
+
+### 関連
+
+- 修正 PR: PR #345 (2026-05-13 / security/auth-secret-hardening) — B-2 (credential stuffing 対策) で罠を作り、追加コミットで bypass 経路を作って解消
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — rate limit 適用と disable フラグ
+  - [src/lib/rate-limit.ts](../../src/lib/rate-limit.ts) — in-memory Map ベースの実装 + Vercel 分散の限界 (§13-21)
+  - [.github/workflows/e2e.yml](../../.github/workflows/e2e.yml) — `DISABLE_LOGIN_RATE_LIMIT: 'true'`
+  - [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml) — 同上
+  - [playwright.config.ts](../../playwright.config.ts) — `webServer.env` で子プロセスに伝搬
+- 関連 E2E_LESSONS: §4.54 (本罠の E2E 観点での詳細記述、本 KDD は一般化した教訓)
+- 本 KDD は **「rate limit / lockout / CAPTCHA 全般」** に一般化。他の認証境界追加でも本パターンを参照する。
+
+---
+
+## 5.X+40 Playwright `waitForURL` の条件式は **終端到達** を表す形にする ─ 「中間状態」を表す negation は redirect chain 途中で抜けて race を起こす (PR #345 で確立)
+
+### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で login rate limit を追加したところ、E2E spec の
+beforeAll で `page.goto('/admin/super')` が `/projects` への navigation に interrupt される
+race condition が顕在化した。原因は **`waitForURL` の条件式の書き方**:
+
+```ts
+// ❌ 中間状態 (= /login でない URL) で抜けるため race-prone
+await page.waitForURL((url) => !url.pathname.includes('/login'), {
+  timeout: 10_000,
+});
+```
+
+login 後の redirect chain `/login → / → /projects` のうち、`/` 到達時点で条件式が true に
+なり、wait が抜けてしまう。その後の test 本体の `page.goto('/admin/super')` と、まだ進行中の
+`/` → `/projects` server redirect が競合し、Playwright が "interrupted by another
+navigation" で fail する。
+
+### 教訓 (一般化)
+
+**`waitForURL` の条件式は「終端」を表す形にする**。
+
+| パターン | 評価 | 理由 |
+|---|---|---|
+| `await page.waitForURL((url) => !url.pathname.includes('/login'))` | ❌ race-prone | 「`/login` でない URL」は redirect 途中の `/` でも true |
+| `await page.waitForURL(/\/login/, { state: 'no-match' })` | ❌ 同上 | 同様に negation 系は中間状態でマッチする |
+| `await page.waitForURL('**/projects')` | ✅ 安定 | 終端 URL を glob で明示 |
+| `await page.waitForURL((url) => url.pathname === '/projects')` | ✅ 安定 | 終端 URL を厳密一致 |
+| `await page.waitForURL('**/projects'); await page.waitForLoadState('networkidle');` | ✅✅ 最強 | URL + load chain 完了 |
+
+### この罠が顕在化する状況
+
+- アプリ側の redirect chain が 2 段以上 (e.g., `/login` → `/` → `/projects`)
+- spec の `beforeAll` で login し、test 本体で別ページに `goto` する
+- アプリの応答タイミングが変わる変更 (rate limit / middleware 追加 / API 遅延等) で
+  「たまたま間に合っていた」race が顕在化
+
+### 修正パターン
+
+##### 1. 共通ヘルパーを 1 箇所に集約
+
+```ts
+// e2e/fixtures/auth.ts
+export async function waitForProjectsReady(page: Page): Promise<void> {
+  await page.waitForURL('**/projects', { timeout: 15_000 });
+  await page.waitForLoadState('networkidle');
+}
+```
+
+##### 2. spec 側は共通ヘルパーだけを呼ぶ (独自実装しない)
+
+```ts
+import { waitForProjectsReady } from '../fixtures/auth';
+
+test.beforeAll(async ({ browser }) => {
+  // ... login UI 操作 ...
+  await page.getByRole('button', { name: 'ログイン' }).click();
+  await waitForProjectsReady(page);  // ← 終端到達 + networkidle 保証
+});
+```
+
+### 横展開で漏らしやすい箇所
+
+- [ ] `e2e/specs/*.spec.ts` の各 `beforeAll` / `beforeEach` の login 後 wait
+- [ ] custom fixture (e.g., `fixtures/multi-tenant.ts`, `fixtures/super-admin.ts`) 内の login
+- [ ] retry / re-login パスでの wait
+- [ ] 新規 spec を書くときは **共通ヘルパー強制使用** をレビューで指摘する
+
+### 検出のしかた
+
+| 症状 | 切り分け |
+|---|---|
+| `Navigation to "X" is interrupted by another navigation to "Y"` | redirect chain との race。終端 wait に書き換える |
+| 同 spec の一部 test だけ flaky に fail | 共通 beforeAll の wait が早すぎる |
+| `--workers=1` で PASS、並列で fail | CPU 競合で redirect 遅延 → race 顕在化 |
+| main で PASS、PR ブランチで fail | PR の変更で response time が変わって race 顕在化 (= 本罠の典型) |
+
+### 関連
+
+- 修正 PR: PR #345 (2026-05-13 / security/auth-secret-hardening) — B-2 の rate limit 追加で race が顕在化、本 PR で全 spec を `waitForProjectsReady` に統一
+- 関連 ファイル:
+  - [e2e/fixtures/auth.ts](../../e2e/fixtures/auth.ts) — `waitForProjectsReady` 正規実装
+  - 修正対象 spec: 11-tenant-isolation / 12-suggestion-seed-data / 13-super-admin-dashboard
+- 関連 E2E_LESSONS: §4.55 (本罠の E2E 観点での具体記述)
+
+---
+
+## 5.X+41 `.gitignore` された Prisma `generated/` ディレクトリは ブランチ切替で同期されず、別ブランチの生成物が現ブランチに混入する罠 (PR #348 で遭遇)
+
+### 罠の正体
+
+PR #348 (security/data-export-pii-ci-guard) を main にリベース merge して CI ガードテストを
+動かしたところ、以下のエラーで fail:
+
+```
+AssertionError: 新 User フィールドが追加されたが分類されていない。
+USER_EXPORT_FIELDS または USER_PII_FIELDS に追加してください:
+expected [ 'tokenVersion' ] to deeply equal []
+```
+
+しかし `prisma/schema.prisma` に `tokenVersion` は **存在しない** (User モデルに無い)。
+それなのに `Prisma.UserScalarFieldEnum` には `tokenVersion` が含まれていた。
+
+根本原因:
+
+1. `prisma/schema.prisma` の generator 設定: `output = "../src/generated/prisma"`
+2. `.gitignore` に `/src/generated/prisma` (= 生成ディレクトリ全体を ignore)
+3. 別の PR ブランチ (PR #350 `security/jwt-invalidation`) で `User.tokenVersion` を schema に追加し、
+   `npx prisma generate` を実行 → `src/generated/prisma/internal/prismaNamespace.ts` に
+   `tokenVersion: 'tokenVersion'` が書き込まれた
+4. その後、別のブランチ (PR #348 `security/data-export-pii-ci-guard`) に `git checkout`
+   → schema.prisma は元に戻る (PR #350 の変更は別ブランチ) が、`src/generated/` は
+   **gitignored なので git の管理対象外** → ファイルシステム上に **PR #350 ブランチの
+   生成物がそのまま残る**
+5. PR #348 のテストが Prisma.UserScalarFieldEnum を真実とするため、現ブランチの schema と
+   矛盾する `tokenVersion` を検出して fail
+
+### 教訓 (一般化)
+
+**`.gitignore` されたファイルは「ブランチに属していない」 = ブランチ切替で同期されない**。
+特に以下のディレクトリで起こりやすい:
+
+- `src/generated/prisma` (Prisma client output)
+- `.next/` (Next.js ビルド成果物)
+- `node_modules/` (依存パッケージ)
+- `dist/` / `build/` (一般的なビルド成果物)
+
+これらが **schema 変更を含むブランチで生成され、その後別ブランチに切り替えた時** に古い
+生成物が残り、現ブランチの schema と矛盾する。テストが generated を真実とする場合 (本ケース)
+や、開発サーバが古い generated を読む場合に **デバッグ困難な不整合エラー** が発生する。
+
+### 修正パターン
+
+##### 1. ブランチ切替後の儀式: schema 関連変更がある場合は `prisma generate` を再実行
+
+```bash
+git checkout <new-branch>
+npx prisma generate           # ← schema と generated を一致させる
+pnpm install --frozen-lockfile  # ← package.json 変更時 (lockfile 不整合防止)
+```
+
+##### 2. 自動化: package.json の `postcheckout` フック (任意)
+
+```json
+// package.json (検討中、強制はしていない)
+"scripts": {
+  "postinstall": "prisma generate"
+}
+```
+
+`postinstall` は `pnpm install` 時に走るため、ブランチ切替で `lockfile` が変わるなら
+自動的に generate も走る。ただし lockfile が同じだと走らないため、明示的 `prisma generate`
+が確実。
+
+##### 3. CI では問題にならない (ephemeral environment)
+
+CI は毎回新しいランナーで `pnpm install` + `prisma generate` を行うため、本罠は **ローカル開発・
+PR merge 解決時に限定** される。ただしローカルで merge → push した PR が CI で初めて
+fail に気付くケースがある (本 PR がまさにそれ)。
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| `Prisma.XxxScalarFieldEnum` に schema に無い列が含まれる | 別ブランチの generate 残骸 |
+| TypeScript で `prisma.user.xxx` が schema に無い列を補完する | 同上 |
+| `prisma migrate dev` で「migration drift」エラー | schema と DB が乖離、generated とも乖離 |
+| ブランチ切替後に CI でだけ fail (ローカルで PASS) | ローカル generated が「進んだ」状態のまま、CI は schema 基準で生成 |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] Prisma schema を変更する PR は **PR description に「他ブランチでは `prisma generate` を再実行」** を明記
+- [ ] CI で `prisma generate` を **install 直後に必ず実行** (本リポジトリは `e2e.yml:100` で実施済)
+- [ ] generated を真実とするテストを書くときは、schema との不整合に気付ける明確な assertion メッセージを書く (本ケースの「USER_EXPORT_FIELDS または USER_PII_FIELDS に追加してください」)
+- [ ] generated ファイルは **PR の差分に出ないこと** を確認 (差分に出ると gitignore 設定漏れ)
+
+### 関連
+
+- 修正 PR: PR #348 (2026-05-13 / security/data-export-pii-ci-guard) — main を merge した時に発覚
+- 関連 ファイル:
+  - [.gitignore](../../.gitignore) (L59: `/src/generated/prisma`)
+  - [prisma/schema.prisma](../../prisma/schema.prisma) (generator output 設定)
+  - [src/services/data-export.service.test.ts](../../src/services/data-export.service.test.ts) — `Prisma.UserScalarFieldEnum` を真実とするテスト
+- 派生学び: 同一 test ファイル末尾に新規 describe を追加する複数 PR は merge conflict を起こす (PR #346 csvEscape + PR #348 USER_EXPORT_FIELDS が同 ファイル末尾で衝突)。**解決パターン**: 両方の describe を時系列順に並べて保持 (両方とも独立した責務なので除去・統合は不要)。
+
+---
+
+## 5.X+42 単一 middleware に複数の security 関心 (rate limit / CSP nonce / etc) を統合する時、各関心の **責務分離** + **return タイミング** で衝突を避ける (PR #345 ⨯ PR #349 で確立)
+
+### 罠の正体
+
+PR #349 (security/csp-nonce) のブランチを main に rebase merge する際、`src/middleware.ts` が
+**全面書き換え** の形で衝突した。具体的には:
+
+- main 側 (PR #345 マージ済): `/api/auth/callback/credentials` POST に IP rate limit (B-2)
+- HEAD 側 (PR #349): 全リクエストで CSP nonce 生成 + response header 設定 (L-5)
+
+両者は **`auth((req) => { ... })` callback 全体を上書き** する形で書かれており、git の
+3-way merge では自動結合できない (function body が完全に異なるため)。
+
+さらに、両者を素直に「`if (rate limit) { ... } if (CSP) { ... }`」と並べると **論理が複雑化** し、
+以下のような潜在バグを生む可能性:
+
+- login POST に対して CSP nonce を生成して response に付ける (= 不要、レスポンス body が無い)
+- CSP nonce 生成失敗時に rate limit を素通りさせる (= 不正な制御フロー)
+- `auth callback` で `NextResponse.next` を return すると **NextAuth の authorized callback が
+  skip される** 可能性 (= 認可境界の事故)
+
+### 教訓 (一般化)
+
+**single middleware に複数の security 関心を統合する時の設計原則**:
+
+1. **責務分離**: 各関心は **対象パスと method** で明確に分ける
+2. **早期 return**: 「自分の関心に該当するリクエスト」は処理して return、それ以外は次の関心へ
+3. **NextAuth 委譲のタイミング**: 「security チェックを通過した後の通常処理」は
+   `return;` (undefined) で NextAuth の authorized callback に委譲する
+4. **CSP nonce は最後のフォールバック**: 全 GET リクエストに必要なため、専用処理を持たない
+   path で実行する
+5. **コメントで分岐意図を明示**: 各 `if` ブロックの前に「何の処理で / なぜここで分岐するか」
+   を必ず書く (将来の merge conflict 解消時にも復元しやすい)
+
+### 修正パターン (本 PR で確立)
+
+```ts
+export default auth((req: NextRequest) => {
+  // 1. 特定エンドポイントの security チェック (early return)
+  if (
+    req.nextUrl.pathname === '/api/auth/callback/credentials'
+    && req.method === 'POST'
+    && !LOGIN_RATE_LIMIT_DISABLED
+  ) {
+    const limited = applyRateLimit(req, { key: 'login', max: 20, windowMs: 5 * 60 * 1000 });
+    if (limited) return limited;  // ← rate limit 引っかかったら 429 を返す
+    return;  // ← 通過時は NextAuth に委譲 (CSP nonce 不要)
+  }
+
+  // 2. 全リクエスト共通の処理 (CSP nonce)
+  const nonce = generateNonce();
+  // ... CSP header 構築 ...
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set('content-security-policy', csp);
+  return response;
+});
+```
+
+**重要な設計判断**:
+
+- **`return;` (undefined) と `return response` の使い分け**:
+  - `return;` → NextAuth の authorized callback が呼ばれ、認可結果で redirect / next を決定
+  - `return response` → middleware で完結 (authorized callback は呼ばれない可能性、要検証)
+- **rate limit 引っかかり時は `return limited`**: 429 NextResponse を返して即終了
+- **rate limit 通過時の login POST は `return;`**: NextAuth に委譲して通常の認証フローへ
+
+### 横展開で漏らしやすい箇所
+
+- [ ] middleware に新規 security 機能を追加する時、**既存の処理経路と干渉しないか** を確認
+- [ ] 各 `if` 分岐の **return タイミング** を明示 (early return / pass-through / response 返却)
+- [ ] **NextResponse.next を不必要に返さない** (authorized callback skip リスク)
+- [ ] 同じ middleware を **複数 PR で同時に変更しない** か、する場合は事前に conflict 解消方針をすり合わせる
+- [ ] middleware の挙動は **E2E でしか正確に検証できない** (unit test では NextAuth wrapper を完全に再現困難) → PR ごとに E2E 完走を必須化
+
+### 検出のしかた (再発時)
+
+| 症状 | 真因の可能性 |
+|---|---|
+| login POST が常に 429 で失敗 | rate limit ロジック誤り (window/max/key の設定) |
+| 認証なしで保護ページにアクセス可能 | `NextResponse.next` の return で authorized callback skip |
+| CSP nonce が response に付与されない | early return の条件が広すぎて CSP 処理に到達せず |
+| nonce が seed ごとに変わって Next.js の SSR で mismatch エラー | nonce 生成が SSR と middleware で重複実行 (本実装では middleware のみで生成 → OK) |
+
+### 関連
+
+- 修正 PR: PR #349 (2026-05-13 / security/csp-nonce) — main の PR #345 (rate limit) と conflict を解消
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — 統合実装 (rate limit + CSP nonce)
+  - [src/lib/rate-limit.ts](../../src/lib/rate-limit.ts) — rate limit ライブラリ
+  - [next.config.ts](../../next.config.ts) — middleware に移譲後の static security header
+- 関連 KDD: §5.X+39 (security 強化が E2E を壊す対立、本 KDD と同じく middleware に新規制限を入れた時の罠)
+- 関連 E2E_LESSONS: §4.54 (rate limit が E2E 並列 worker を 429 で全滅させる罠)
+
+---
+
+## 5.X+43 Next.js 16 の CSP nonce 自動付与は production で完全動作せず、`strict-dynamic` を使うと hydration が全壊する ─ graceful degradation で nonce + `unsafe-inline` 併存にする (PR #349 で確立)
+
+### 罠の正体
+
+PR #349 (security/csp-nonce) で xss-reviewer agent の指摘 (XSS 二次防御強化) に従い、
+middleware からリクエストごとに nonce を生成して以下のような厳格 CSP を設定した:
+
+```ts
+// production (NODE_ENV=production)
+script-src 'self' 'nonce-${nonce}' 'strict-dynamic'
+```
+
+公式 Next.js docs に従って:
+1. middleware で `x-nonce` request header と `Content-Security-Policy` request header に nonce を設定
+2. Next.js 16 が自動で `<script nonce={X}>` を SSR で付与する想定
+
+しかし E2E production CI で「Step 4: 一般ユーザが招待メールからパスワードを設定する」
+spec が以下の症状で失敗:
+
+- screenshot: 「**確認中...**」が表示されたまま停止 (SSR 結果は出ている)
+- expect: `getByText('たすきば', { exact: true })` が 10s timeout で見つからない
+- = SSR は完了したが、**React hydration が走らず、client-side useEffect が起動しない**
+
+#### 何が起きていたか (CSP 仕様の罠)
+
+`strict-dynamic` ディレクティブは:
+- `nonce-X` または `hash-XX` が指定された script は信頼し、その script が **動的に追加した**
+  script (= `document.createElement('script')` で append された Next.js chunks) も連鎖的に信頼
+- ただし **`'self'` と `'unsafe-inline'` を CSP 仕様で完全無効化** する (`strict-dynamic` 仕様
+  の意図的な挙動)
+
+Next.js 16 の nonce 自動付与は **SSR 時に生成する inline RSC payload** (`<script>(self.__next_f=...).push([...])</script>`)
+に nonce を付与すべきだが、本サービス環境では **付与に失敗していた** (機構の不安定さ、
+構築フローとの相互作用、または middleware → render 間での header 伝搬の rate condition)。
+
+結果:
+1. inline RSC payload に nonce が付与されない
+2. `strict-dynamic` のため `'self'` も `'unsafe-inline'` も無効
+3. CSP が **全 inline script を拒否**
+4. React の hydration bootstrap が動かない
+5. useEffect が走らず、初期 state「確認中...」のまま停止
+
+### 教訓 (一般化)
+
+**`strict-dynamic` は「nonce 自動付与が 100% 機能する」前提でしか使えない**。
+nonce 付与が失敗するケース (Next.js 16 / アプリ構成 / 構築フロー由来) では:
+
+- 完全な信頼チェーン破綻 → hydration 全停止
+- 古い browser は `strict-dynamic` を無視するが、modern browser は厳格適用 → どちらでも壊れる
+- 修正できないと **画面が真っ白** という最悪 UX を本番ユーザに見せる
+
+### 修正パターン (本 PR で確立)
+
+**Graceful degradation**: `strict-dynamic` を外し、`nonce-X` と `unsafe-inline` を併存:
+
+```ts
+// before (壊れる)
+script-src 'self' 'nonce-${nonce}' 'strict-dynamic'
+
+// after (graceful)
+script-src 'self' 'nonce-${nonce}' 'unsafe-inline'
+```
+
+CSP 仕様の挙動:
+- **modern browser + nonce 付与成功**: nonce based で評価 (= 強い防御、`unsafe-inline` は無視)
+- **modern browser + nonce 付与失敗 (本サービス症状)**: `unsafe-inline` で fallback (= pre-PR と同じ)
+- **古い browser**: `unsafe-inline` で動作 (= pre-PR と同じ)
+
+xss-reviewer 元評価でも「XSS 一次防御 (危険 API 使用ゼロ、`block-dangerous-edit.sh` hook で
+予防) が強固なので CSP `unsafe-inline` は二次防御として実害なし」と明示。
+**「壊さない最強の防御」** を選ぶのが正しい。
+
+### 一般化教訓 (security 強化を入れる時の鉄則)
+
+1. **「動作する CSP < 壊さない CSP」**: 厳格すぎる CSP は production で hydration 全壊を起こす。
+   理想は graceful degradation で、機能すれば追加防御、機能しなくても破壊しない。
+2. **`strict-dynamic` は最後の砦**: 「nonce が 100% 機能する」確証が無い限り使わない。
+   特に Next.js のような複雑な SSR/RSC フレームワークでは慎重に。
+3. **CSP は production build で必ず手動 + E2E 検証**: dev mode は HMR で常に `unsafe-` 系を
+   通すため検出できない。本症状は **CI E2E で初めて顕在化** した。
+4. **画面が真っ白** という最悪 UX は信用を一気に失う。security 強化が UX を破壊する逆転現象を
+   防ぐため、「security PR は production build で E2E 完走」を必須化する。
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| production build で SSR 結果は出るが hydration が走らない | CSP で inline script (RSC payload) が拒否されている |
+| dev mode では PASS、production build で fail | dev は HMR で `unsafe-` 系が常に許可されるため CSP の影響を受けない |
+| screenshot が「読み込み中」「確認中」など初期 state のまま停止 | client-side JS の bootstrap 失敗 (CSP 違反の典型) |
+| ブラウザ DevTools Console に `Refused to execute inline script` | CSP 違反の確定診断 |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] CSP に新規ディレクティブ (`strict-dynamic` / `require-trusted-types-for` 等) を追加する時、
+      **production build + 全主要画面の E2E** で動作確認
+- [ ] `unsafe-inline` を排除する時は **nonce 付与が完全動作する確証** を E2E で取る
+- [ ] middleware で CSP を動的生成する時、**`x-nonce` header の伝搬経路** が SSR で正しく
+      参照されるかを確認 (header name の case / Next.js バージョン依存)
+- [ ] graceful degradation を選ぶときは「機能しない時に破壊しない」かを `unsafe-inline` 系で確認
+- [ ] **dev / production の CSP 設定差分を最小化** (production 専用設定の検証コストが高いため)
+
+### 関連
+
+- 修正 PR: PR #349 (2026-05-13 / security/csp-nonce) — strict-dynamic を導入してから graceful degradation に切替
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — CSP 生成ロジック
+  - [next.config.ts](../../next.config.ts) — middleware に移譲後の static security header
+- 関連 KDD: §5.X+39 (security 強化が E2E を壊す対立) / §5.X+42 (単一 middleware に複数 security 統合)
+- 関連 E2E_LESSONS: §4.54 (rate limit が E2E を壊す類話) / §4.55 (security PR の応答タイミング変化で race が顕在化)
+- 関連 公式 docs: [Next.js CSP guide](https://nextjs.org/docs/app/guides/content-security-policy) — 本ガイドどおりに実装しても production で安定動作しない場合がある。 graceful degradation で受け止める。
+
+---
+
+## 5.X+44 「graceful degradation」が CSP 仕様の罠で機能しない時は 2 段階修正で粘らずに **完全 rollback** する勇気を持つ (PR #349 follow-up で確立)
+
+### 罠の正体
+
+§5.X+43 で「`strict-dynamic` を外し `nonce-X` + `unsafe-inline` 併存」を graceful degradation
+として採用した。理屈上は「nonce 機能時は強い防御、機能失敗時は `unsafe-inline` で fallback」
+の二段構えのはず。
+
+しかし CI E2E で再度同じ症状 (画面「確認中...」のまま停止) が発生:
+
+```
+[chromium] › e2e/specs/01-admin-and-member-setup.spec.ts:218:7 ›
+  Step 4: 一般ユーザが招待メールからパスワードを設定する
+Error: getByText('たすきば', { exact: true }).first() — Expected: visible
+       waiting for ... 10000ms — element(s) not found
+```
+
+#### 何が起きていたか (CSP 仕様の続きの罠)
+
+CSP 仕様 (CSP Level 2 以降):
+- **`script-src` に `'nonce-X'` が含まれる場合、modern browser は `'unsafe-inline'` を無視する**
+- 仕様の意図: nonce ベースの厳格 CSP を有効化したら、`unsafe-inline` の fallback は許さない
+
+つまり:
+- `script-src 'self' 'nonce-${nonce}' 'unsafe-inline'`
+- modern browser (Chromium / Firefox / Safari) はこれを **`script-src 'self' 'nonce-${nonce}'`** と解釈
+- `'unsafe-inline'` は **存在しないかのように扱われる**
+- nonce 付与失敗 = inline script 拒否 = hydration 全壊
+
+つまり、§5.X+43 の「graceful degradation」は **CSP 仕様上そもそも graceful ではない** という
+落とし穴があった。CSP Level 1 仕様時代の挙動 (`'unsafe-inline'` が fallback) を期待していたが、
+modern browser は Level 2/3 を実装しているため無視される。
+
+### 教訓 (一般化)
+
+**1 段階目の修正で同じ症状が再発したら、追加修正で粘らずに完全 rollback を検討する**。
+
+CSP / 認証 / hydration のような **仕様が複雑で挙動の予測が困難な領域** では:
+
+1. 1 段階目の修正で改善しない時、**「もう一段階の修正」で直る確証は無い**
+2. 「graceful degradation」を試したつもりが、仕様の罠で「graceful にならない」場合がある
+3. 本番ユーザに「画面が真っ白」を見せるリスクと、PR の価値 (二次防御強化) を比較すると、
+   後者が劣る場合は **prepare rollback の方が誠実**
+4. 「壊さない最強の防御」< 「機能する pre-PR の防御」 という順序で安全側に倒す
+
+### 修正パターン (本 PR で最終確定)
+
+**完全 rollback**: middleware の CSP nonce 生成ロジックを **全削除**、`next.config.ts` の
+static CSP (`'self' 'unsafe-inline'`) に戻す:
+
+```ts
+// src/middleware.ts (rollback 後)
+export default auth((req) => {
+  if (login POST) { rate limit check }
+  // CSP nonce 生成は削除、middleware は login rate limit のみ
+});
+
+// next.config.ts (pre-PR #349 状態に復元)
+const securityHeaders = [
+  { key: 'Content-Security-Policy', value: "...script-src 'self' 'unsafe-inline'..." },
+  // ...
+];
+```
+
+PR #349 は **実質的に no-op になる** が、ナレッジドキュメント (§5.X+43 / §5.X+44) は
+価値ある教訓として残す。CSP nonce 化は **post-MVP** に回し、Next.js のバージョン更新で
+nonce 自動付与が安定するまで様子見する。
+
+### 一般化: PR が機能しない時の判断フロー
+
+```
+[PR push 後 CI fail]
+    ↓
+1 段階目修正を試す
+    ↓
+[同症状で fail]
+    ↓
+仕様を再調査 → 別アプローチが現実的か?
+    ├─ Yes: 2 段階目修正
+    │      ↓
+    │   [PASS] → そのまま
+    │   [fail] → 同じ判断フローを繰り返し (3 回目失敗で必ず rollback)
+    │
+    └─ No: 完全 rollback して PR を no-op 化
+           ナレッジドキュメントで価値を残す
+           対象機能は post-MVP に回す
+```
+
+**重要**: 「3 回連続失敗で必ず rollback」というハードルールを設けると、無限に修正試行が
+続くのを防げる。本サービスでは「security 強化」「test infrastructure」のような
+仕様が複雑な領域でこのルールを適用する。
+
+### 横展開で漏らしやすい箇所
+
+- [ ] CSP nonce / strict-dynamic / require-trusted-types 等の **新規 CSP ディレクティブ追加** は
+      production build + E2E で必ず検証
+- [ ] 「graceful degradation」を採用する前に、**実際にどう degrade されるか** を CSP/HTTP/
+      browser 仕様で確認 (本罠は仕様読み不足が原因)
+- [ ] 1 段階目修正で改善しない時、「3 回ルール」で完全 rollback を強制
+- [ ] rollback で機能を諦めるのは「失敗」ではなく「正しい判断」。**PR を close / 縮小しても OK**
+
+### 関連
+
+- 修正 PR: PR #349 (2026-05-13 / security/csp-nonce) — middleware CSP nonce ロジックを全削除、static CSP に rollback
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — PR #345 の rate limit のみに rollback
+  - [next.config.ts](../../next.config.ts) — pre-PR #349 の static CSP を復元
+- 関連 KDD: §5.X+43 (本罠の前段、`strict-dynamic` で hydration 全壊)
+- 関連 公式 docs: [CSP Level 3 仕様](https://www.w3.org/TR/CSP3/#allow-all-inline) — `'nonce-X'` 指定時の `'unsafe-inline'` 無視仕様

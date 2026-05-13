@@ -177,6 +177,20 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
 }> {
   const today = todayInJst(now);
 
+  // 2026-05-13 (fix/notification-tenant-isolation):
+  //   cron 経路で task を全テナント横断取得した上で Notification を createMany する際、
+  //   Notification.tenantId を明示せず schema の DB DEFAULT (default-tenant) に落ちていた。
+  //   結果として 「テナント A の task に対する通知が default-tenant に書き込まれ、
+  //   listNotificationsForUser の where.tenantId フィルタにより本人に届かない」 機能不全。
+  //   親 task の project.tenantId を select で同時取得し、createMany.data に明示する。
+  type TaskRow = {
+    id: string;
+    name: string;
+    projectId: string;
+    assigneeId: string;
+    project: { tenantId: string };
+  };
+
   // ---- 開始通知 ----
   const startTasks = await prisma.task.findMany({
     where: {
@@ -186,11 +200,18 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
       status: 'not_started',
       plannedStartDate: today,
     },
-    select: { id: true, name: true, projectId: true, assigneeId: true },
+    select: {
+      id: true,
+      name: true,
+      projectId: true,
+      assigneeId: true,
+      project: { select: { tenantId: true } },
+    },
   });
   const startData = startTasks
-    .filter((t): t is { id: string; name: string; projectId: string; assigneeId: string } => t.assigneeId !== null)
+    .filter((t): t is TaskRow => t.assigneeId !== null)
     .map((t) => ({
+      tenantId: t.project.tenantId,
       userId: t.assigneeId,
       type: 'task_start_due' as const,
       entityType: 'task' as const,
@@ -212,11 +233,18 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
       status: { not: 'completed' },
       plannedEndDate: today,
     },
-    select: { id: true, name: true, projectId: true, assigneeId: true },
+    select: {
+      id: true,
+      name: true,
+      projectId: true,
+      assigneeId: true,
+      project: { select: { tenantId: true } },
+    },
   });
   const endData = endTasks
-    .filter((t): t is { id: string; name: string; projectId: string; assigneeId: string } => t.assigneeId !== null)
+    .filter((t): t is TaskRow => t.assigneeId !== null)
     .map((t) => ({
+      tenantId: t.project.tenantId,
       userId: t.assigneeId,
       type: 'task_end_due' as const,
       entityType: 'task' as const,
