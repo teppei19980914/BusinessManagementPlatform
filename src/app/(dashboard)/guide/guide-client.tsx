@@ -438,7 +438,7 @@ function PmActions() {
           <Link className="text-primary underline" href={KNOWLEDGE_ROUTE}>
             ナレッジ
           </Link>{' '}
-          として独立記録 (visibility=public で他プロジェクトからも参照可)。
+          として独立記録 (公開範囲を「公開」に設定すれば、テナント内の他プロジェクトからも参照できます)。
         </li>
       </ol>
     </div>
