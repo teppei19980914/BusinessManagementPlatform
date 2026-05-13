@@ -228,48 +228,175 @@ export function HelpClient({ isTenantAdmin }: Props) {
             />
           </FaqCategory>
 
-          {/* 生成 AI の仕組み (admin 限定で詳しく) */}
+          {/* 生成 AI の仕組み (admin 限定、難しい言葉を避けた説明)
+              2026-05-13: 「中学生でも分かる」表現に書き直し。実装ベースで embedding も課金対象として記載
+              (resolveCostForPlan は plan 単価をそのまま返すため、Voyage 呼出も Expert ¥10 / Pro ¥30 が加算される)。 */}
           <section className="rounded-lg border bg-card p-5">
             <h2 className="text-lg font-semibold">生成 AI の仕組みと注意事項 (テナント管理者向け)</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              組織全体のコスト管理とコンプライアンスを担う立場として、AI まわりの挙動を理解しておくと安心です。
+              組織全体のコスト管理を担う立場として、AI がどこで動いていて何にお金がかかるのかを知っておくと安心です。難しい言葉は避けてまとめました。
             </p>
-            <div className="mt-4 space-y-3 text-sm">
+
+            <div className="mt-5 space-y-6 text-sm">
+              {/* 1. AI を使っている機能の一覧 (中学生レベルの平易な説明) */}
               <div>
-                <h3 className="font-medium">どこに何を投げているか</h3>
-                <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                <h3 className="font-medium">このサービスで AI を使っている場所</h3>
+                <ul className="mt-2 list-disc space-y-2 pl-5">
                   <li>
-                    <strong>埋め込み (embedding)</strong>: Voyage AI の voyage-4-lite モデルに、
-                    プロジェクト概要・ナレッジ本文を送信。検索用ベクトル化のための裏方処理で <strong>課金対象外</strong>。
+                    <strong>タグの自動付け</strong>:
+                    プロジェクトを作ったとき、目的・背景・スコープに書いた文章を AI が読んで、「業種」「使う技術」「工程」のキーワードを自動で付けてくれます。後で似たプロジェクトを探すときの目印になります。
                   </li>
                   <li>
-                    <strong>タグ抽出 / 説明文生成</strong>: Anthropic Claude
-                    (Haiku または Sonnet) に、対象コンテンツを送信。Beginner/Expert は Haiku、Pro は Sonnet。
+                    <strong>文章の数値化 (検索の下準備)</strong>:
+                    プロジェクト・ナレッジ・リスク・課題・振り返りを保存するとき、AI が文章を「意味を表す数字の列」に変換して裏方で保管します。これがあるおかげで、後から「言い方は違うけれど内容が似ているもの」を見つけられます。ユーザが直接画面で触る場面はありません。
                   </li>
                   <li>
-                    <strong>送信されないもの</strong>: 個別ユーザのコメント本文・添付ファイル・パスワード等の認証情報。
+                    <strong>「なぜ参考になるか」の説明文</strong>:
+                    提案された過去資料の横にあるボタンを押すと、「なぜ今のプロジェクトに役立つのか」を AI が日本語で短くまとめてくれます。Pro プランでのみ使えます。
+                  </li>
+                  <li>
+                    <strong>似ているもの探し本体 (提案タブの並び順)</strong>:
+                    提案タブで過去資料を「似ている順」に並べる処理です。すでに保存してある「数値化」の結果を使うだけで、新たに AI を呼ばないので追加料金はかかりません。
                   </li>
                 </ul>
-              </div>
-              <div>
-                <h3 className="font-medium">課金単位 (per-API-call)</h3>
-                <p className="mt-1">
-                  「ユーザに見える 1 操作」が 1 回。プロジェクト作成時の自動タグ抽出 + 初回提案生成は内部的に複数モデル呼出ですが <strong>1 回</strong> としてカウント。embedding 生成は無料。
+                <p className="mt-2 text-xs text-muted-foreground">
+                  なお、パスワードなどの認証情報、コメントの本文、添付ファイルの中身は AI に送られていません。AI に送られるのは、プロジェクト概要やナレッジ本文といった業務テキストだけです。
                 </p>
               </div>
+
+              {/* 2. 課金対象 / 対象外のサマリ表 */}
               <div>
-                <h3 className="font-medium">月次予算と縮退モード</h3>
-                <p className="mt-1">
-                  予算超過 / Beginner 月 100 回到達時は <strong>縮退モード</strong>{' '}
-                  に自動切替。embedding ベース並びのみとなり、新たな AI 課金は発生しません。
+                <h3 className="font-medium">課金対象 / 対象外のまとめ</h3>
+                <div className="mt-2 overflow-x-auto rounded-md border">
+                  <table className="w-full border-collapse text-sm">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="border-b p-2 text-left">機能</th>
+                        <th className="border-b p-2 text-left">課金扱い</th>
+                        <th className="border-b p-2 text-left">「1 回」の数え方</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border-b p-2 align-top">タグの自動付け</td>
+                        <td className="border-b p-2 align-top text-amber-700 dark:text-amber-400">課金対象</td>
+                        <td className="border-b p-2 align-top">プロジェクトを作成・編集するたびに 1 回</td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">文章の数値化 (検索の下準備)</td>
+                        <td className="border-b p-2 align-top text-amber-700 dark:text-amber-400">課金対象</td>
+                        <td className="border-b p-2 align-top">
+                          プロジェクト / ナレッジ / リスク / 課題 / 振り返り / 外部データ取り込み を保存するたびに 1 回
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">「なぜ参考になるか」説明文 (Pro 限定)</td>
+                        <td className="border-b p-2 align-top text-amber-700 dark:text-amber-400">課金対象</td>
+                        <td className="border-b p-2 align-top">
+                          ボタンを押した瞬間に 1 回 (同じ組み合わせで 2 回目以降押した場合は保存済の結果が表示され、追加料金はかかりません)
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 align-top">似ているもの探し本体 (提案タブの並び順)</td>
+                        <td className="p-2 align-top text-emerald-700 dark:text-emerald-400">課金対象外</td>
+                        <td className="p-2 align-top">表示・並び替えだけでは AI を呼びません</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 3. プラン別 (Beginner / Expert / Pro) の対応表 */}
+              <div>
+                <h3 className="font-medium">プラン別の対応 (使えるもの・使う AI モデル・料金)</h3>
+                <div className="mt-2 overflow-x-auto rounded-md border">
+                  <table className="w-full border-collapse text-sm">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="border-b p-2 text-left">項目</th>
+                        <th className="border-b p-2 text-left">Beginner</th>
+                        <th className="border-b p-2 text-left">Expert</th>
+                        <th className="border-b p-2 text-left">Pro</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border-b p-2 align-top">席数</td>
+                        <td className="border-b p-2 align-top">5 人まで</td>
+                        <td className="border-b p-2 align-top">無制限</td>
+                        <td className="border-b p-2 align-top">無制限</td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">月の AI 呼出回数</td>
+                        <td className="border-b p-2 align-top">月 100 回まで</td>
+                        <td className="border-b p-2 align-top">無制限</td>
+                        <td className="border-b p-2 align-top">無制限</td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">1 回あたりの料金</td>
+                        <td className="border-b p-2 align-top">無料 (月 100 回まで)</td>
+                        <td className="border-b p-2 align-top">¥10 / 回</td>
+                        <td className="border-b p-2 align-top">¥30 / 回</td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">タグの自動付け で使う AI</td>
+                        <td className="border-b p-2 align-top">Claude Haiku</td>
+                        <td className="border-b p-2 align-top">Claude Haiku</td>
+                        <td className="border-b p-2 align-top">
+                          Claude Sonnet
+                          <span className="ml-1 text-xs text-muted-foreground">(より賢いモデル)</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">文章の数値化 で使う AI</td>
+                        <td className="border-b p-2 align-top" colSpan={3}>
+                          Voyage voyage-4-lite (全プラン共通)
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">「なぜ参考になるか」説明文</td>
+                        <td className="border-b p-2 align-top text-muted-foreground">使えません</td>
+                        <td className="border-b p-2 align-top text-muted-foreground">使えません</td>
+                        <td className="border-b p-2 align-top">
+                          使える
+                          <span className="ml-1 text-xs text-muted-foreground">(Claude Sonnet)</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">似ているもの探し本体 (提案タブ)</td>
+                        <td className="border-b p-2 align-top">使える</td>
+                        <td className="border-b p-2 align-top">使える</td>
+                        <td className="border-b p-2 align-top">使える</td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">月の予算上限の設定</td>
+                        <td className="border-b p-2 align-top text-muted-foreground">設定不可 (月 100 回で自動停止)</td>
+                        <td className="border-b p-2 align-top">設定可能</td>
+                        <td className="border-b p-2 align-top">設定可能</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 align-top">上限に達したとき</td>
+                        <td className="p-2 align-top" colSpan={3}>
+                          自動で「お休みモード」に切り替わります。すでに保存してある数値化結果を使った検索 (提案タブ) は止まらず、新しい AI 呼出 (= 新しい課金) だけが止まります。翌月 1 日にリセットされて元に戻ります。
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  ※ Expert / Pro の単価は初期値です。テナントごとに個別調整されている場合は{' '}
+                  <Link href="/settings/tenant" className="text-primary underline">
+                    テナント設定
+                  </Link>{' '}
+                  で実際の単価を確認できます。
                 </p>
               </div>
+
+              {/* 4. 利用状況の確認場所 */}
               <div>
-                <h3 className="font-medium">ログとトレーサビリティ</h3>
+                <h3 className="font-medium">「いつ・誰が・いくら使ったか」の確認</h3>
                 <p className="mt-1">
-                  すべての API 呼出は <code>ApiCallLog</code>{' '}
-                  に保存され、テナント管理者が「いつ・誰が・どの機能で・いくら」使ったかを設定画面で確認できます。
-                  クレーム対応・コスト最適化の根拠となります。
+                  すべての AI 呼出は記録されていて、「いつ」「誰が」「どの機能で」「いくら」使ったかをテナント設定画面から見られます。月末の精算やコスト見直しの根拠としてお使いください。
                 </p>
               </div>
             </div>
@@ -285,7 +412,7 @@ export function HelpClient({ isTenantAdmin }: Props) {
         <h2 className="text-base font-semibold">解決しなかった場合</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           ここで解決しない場合は、画面右上のアカウントメニューから{' '}
-          <strong>たすきばコミュニティ (Discord)</strong> にアクセスできます。
+          <strong>Discord</strong> にアクセスしていただき、開発者に直接聞くことができます。
           たすきば Discord は開発者と他のユーザが集まる場所で、次のように活用できます:
         </p>
         <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground">
