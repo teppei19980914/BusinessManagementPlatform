@@ -6,6 +6,7 @@
  * P-6 (2026-05-08): 最終ログイン日時 + 休眠日数を表示。休眠 (90 日以上) は警告色。
  */
 
+import type { ReactNode } from 'react';
 import { notFound } from 'next/navigation';
 import {
   getTenantDetail,
@@ -13,6 +14,12 @@ import {
 } from '@/services/super-admin.service';
 import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
 import { TenantDeleteButton } from './tenant-delete-button';
+// 2026-05-14: テナント詳細遷移時に該当テナントの DB 容量 + API 利用量を即時再集計。
+//   旧仕様 (cron 日次キャッシュ) はキャッシュ依存だったため、ここで明示的に最新化する。
+import { updateStorageBytesUsedForTenant } from '@/services/tenant-storage.service';
+import { reconcileTenantApiUsage } from '@/services/api-usage-recalc.service';
+import { RecalculateButton } from '@/components/recalculate-button';
+import { UsageDriftBadge } from '@/components/usage-drift-badge';
 
 export default async function SuperAdminTenantDetailPage({
   params,
@@ -20,7 +27,17 @@ export default async function SuperAdminTenantDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const tenant = await getTenantDetail(id);
+  // 2026-05-14: getTenantDetail でキャッシュ値を SELECT する前に最新値で書き戻す。
+  //   テナント不在 (= deletedAt 立ち / 改ざん) は updateStorageBytesUsedForTenant が
+  //   null を返し、後続の getTenantDetail も null を返して notFound() に到達する。
+  //   失敗時はキャッシュ値表示にフォールバック (= 既存挙動を維持)。
+  await Promise.allSettled([
+    updateStorageBytesUsedForTenant(id),
+  ]);
+  const [tenant, apiReconcile] = await Promise.all([
+    getTenantDetail(id),
+    reconcileTenantApiUsage(id).catch(() => null),
+  ]);
   if (!tenant) notFound();
 
   // P-6: 休眠状態は service 側で計算済 (render 中の Date.now() を回避)
@@ -31,26 +48,34 @@ export default async function SuperAdminTenantDetailPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">
-          {tenant.name}
-          {isDefaultTenant && (
-            <span className="ml-2 rounded bg-info/20 px-2 py-0.5 align-middle text-xs font-medium text-info">
-              運営者自身 / 請求対象外
-            </span>
-          )}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          tenantSeq: {tenant.tenantSeq ?? '-'} / slug: {tenant.slug} / 作成日:{' '}
-          {tenant.createdAt.toISOString().split('T')[0]}
-        </p>
-        {isDefaultTenant && (
-          <p className="mt-2 rounded border border-info/30 bg-info/5 p-2 text-xs text-info">
-            このテナントは運営者自身のテナント (Default) です。費用集計は内部記録値であり、
-            実際の請求は発生しません。顧客テナントの請求書合計には含まれません。
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-bold">
+            {tenant.name}
+            {isDefaultTenant && (
+              <span className="ml-2 rounded bg-info/20 px-2 py-0.5 align-middle text-xs font-medium text-info">
+                運営者自身 / 請求対象外
+              </span>
+            )}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            tenantSeq: {tenant.tenantSeq ?? '-'} / slug: {tenant.slug} / 作成日:{' '}
+            {tenant.createdAt.toISOString().split('T')[0]}
           </p>
-        )}
+        </div>
+        {/* 2026-05-14: テナント単体の DB 容量 + API 利用量を即時再集計 */}
+        <RecalculateButton
+          endpoint={`/api/admin/super/tenants/${tenant.id}/recalculate`}
+          label="このテナントを再集計"
+          size="default"
+        />
       </div>
+      {isDefaultTenant && (
+        <p className="rounded border border-info/30 bg-info/5 p-2 text-xs text-info">
+          このテナントは運営者自身のテナント (Default) です。費用集計は内部記録値であり、
+          実際の請求は発生しません。顧客テナントの請求書合計には含まれません。
+        </p>
+      )}
 
       {/* P-6 (2026-05-08): 休眠警告 */}
       {isDormant && (
@@ -92,7 +117,12 @@ export default async function SuperAdminTenantDetailPage({
           tooltip="当月の LLM/Embedding 呼出回数 (withMeteredLLM 経由)。月初 (UTC) にリセット"
         />
         <DetailCard
-          label={`今月 API 費用${nonBillableSuffix}`}
+          label={
+            <span>
+              {`今月 API 費用${nonBillableSuffix}`}
+              <UsageDriftBadge reconcile={apiReconcile} />
+            </span>
+          }
           value={`¥${tenant.currentMonthApiCostJpy.toLocaleString()}`}
           tooltip={
             isDefaultTenant
@@ -100,6 +130,21 @@ export default async function SuperAdminTenantDetailPage({
               : '当月の内部請求額 (プラン別固定単価)。Anthropic 実コストとは別系統'
           }
         />
+        {/* 2026-05-14: drift 検出時の詳細情報 (整合性検証) */}
+        {apiReconcile?.hasDrift && (
+          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs dark:bg-amber-900/30 sm:col-span-2 lg:col-span-3">
+            <p className="font-semibold text-amber-900 dark:text-amber-200">
+              ⚠ API 利用量の整合性 drift を検出 ({(apiReconcile.driftRatio * 100).toFixed(1)}%)
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Tenant counter: <strong>¥{apiReconcile.cachedCostJpy.toLocaleString()}</strong> ({apiReconcile.cachedCallCount.toLocaleString()} 回)
+              {' / '}
+              ApiCallLog SUM: <strong>¥{apiReconcile.reconciledCostJpy.toLocaleString()}</strong> ({apiReconcile.reconciledCallCount.toLocaleString()} 回)
+              {' / '}
+              差分: <strong>{apiReconcile.driftCostJpy >= 0 ? '+' : ''}¥{apiReconcile.driftCostJpy.toLocaleString()}</strong>
+            </p>
+          </div>
+        )}
         <DetailCard
           label="月次予算上限"
           value={tenant.monthlyBudgetCapJpy != null ? `¥${tenant.monthlyBudgetCapJpy.toLocaleString()}` : '無制限'}
@@ -145,7 +190,14 @@ export default async function SuperAdminTenantDetailPage({
 
       {/* Storage add-on (Phase 2 / 2026-05-08): 容量 + 課金統合表示 */}
       <section className="space-y-2" title="Storage add-on プラン (Phase 2 / 2026-05-08) と容量・月次課金の統合表示">
-        <h2 className="text-lg font-semibold">ストレージ + 月次課金</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold">ストレージ + 月次課金</h2>
+          {/* 2026-05-14: ストレージ単体の再集計 (= 同 endpoint だが UX 上明示) */}
+          <RecalculateButton
+            endpoint={`/api/admin/super/tenants/${tenant.id}/recalculate`}
+            label="ストレージを再集計"
+          />
+        </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <DetailCard
             label="ストレージプラン"
@@ -276,7 +328,8 @@ function DetailCard({
   highlight = false,
   tooltip,
 }: {
-  label: string;
+  // 2026-05-14: ReactNode 許容 (drift badge を label に併記するため)
+  label: ReactNode;
   value: string;
   /** P-6: 休眠警告などで強調表示したい場合 true */
   highlight?: boolean;

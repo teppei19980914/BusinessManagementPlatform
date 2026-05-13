@@ -18,7 +18,14 @@ import Link from 'next/link';
 import { LOGIN_ROUTE } from '@/config';
 import { isTenantAdmin } from '@/lib/permissions';
 import { getTenantSelfInfo } from '@/services/tenant-self.service';
-import { getStorageInfo } from '@/services/tenant-storage.service';
+import {
+  getStorageInfo,
+  updateStorageBytesUsedForTenant,
+} from '@/services/tenant-storage.service';
+import {
+  reconcileTenantApiUsage,
+  type ApiUsageReconcileResult,
+} from '@/services/api-usage-recalc.service';
 import { recordError } from '@/services/error-log.service';
 import { TenantSettingsClient } from './tenant-settings-client';
 
@@ -40,11 +47,19 @@ export default async function TenantSettingsPage() {
   //   インライン error 画面を直接描画する形を採る。
   let info: Awaited<ReturnType<typeof getTenantSelfInfo>> = null;
   let storageInfo: Awaited<ReturnType<typeof getStorageInfo>> = null;
+  let apiReconcile: ApiUsageReconcileResult | null = null;
   let dataLoadError = false;
   try {
+    // 2026-05-14: getStorageInfo (キャッシュ値) を読む前に最新値で書き戻す。
+    //   失敗は info / storageInfo の取得を妨げないよう Promise.allSettled で吸収。
+    //   reconcileTenantApiUsage は ApiCallLog からの整合性検証用。
+    await Promise.allSettled([
+      updateStorageBytesUsedForTenant(session.user.tenantId),
+    ]);
     info = await getTenantSelfInfo(session.user.tenantId);
     // Storage add-on (Phase 2 / 2026-05-08): Storage プラン選択セクション初期値
     storageInfo = await getStorageInfo(session.user.tenantId);
+    apiReconcile = await reconcileTenantApiUsage(session.user.tenantId).catch(() => null);
   } catch (error) {
     dataLoadError = true;
     await recordError({
@@ -95,5 +110,11 @@ export default async function TenantSettingsPage() {
       }
     : null;
 
-  return <TenantSettingsClient initialInfo={info} storageInitialInfo={storageInitialInfo} />;
+  return (
+    <TenantSettingsClient
+      initialInfo={info}
+      storageInitialInfo={storageInitialInfo}
+      apiReconcile={apiReconcile}
+    />
+  );
 }

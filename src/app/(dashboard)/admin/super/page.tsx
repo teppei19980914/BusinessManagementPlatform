@@ -11,6 +11,7 @@
  *   (300 通/日) 超過事故を未然に検知する。
  */
 
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import {
   getCrossTenantUsageSummary,
@@ -33,8 +34,29 @@ import { getDatabaseCapacityReport } from '@/services/db-capacity.service';
 import { getEmailSendStats } from '@/services/email-send-log.service';
 import type { DbCapacityStatus } from '@/config/db-capacity';
 import type { EmailLimitStatus } from '@/config/email-limit';
+// 2026-05-14: ダッシュボード遷移時に DB 容量 + API 利用量を即時再集計する。
+//   旧仕様 (cron 日次キャッシュ) では本番で storage_bytes_used_at = NULL のまま
+//   滞留する事象が発生したため、画面遷移を再集計トリガーに切替えた。
+import { updateAllStorageBytesUsed } from '@/services/tenant-storage.service';
+import {
+  reconcileAllTenantsApiUsage,
+  type ApiUsageReconcileResult,
+} from '@/services/api-usage-recalc.service';
+import { RecalculateButton } from '@/components/recalculate-button';
+import { UsageDriftBadge } from '@/components/usage-drift-badge';
 
 export default async function SuperAdminTopPage() {
+  // 2026-05-14: 表示前に全テナントの最新値を作る (請求根拠なのでキャッシュ依存しない)。
+  //   updateAllStorageBytesUsed は内部で個別失敗を吸収する。
+  //   reconcileAllTenantsApiUsage は Promise.allSettled で並列実行。
+  const [, apiReconciles] = await Promise.all([
+    updateAllStorageBytesUsed(),
+    reconcileAllTenantsApiUsage(),
+  ]);
+  const apiReconcileByTenant = new Map<string, ApiUsageReconcileResult>(
+    apiReconciles.map((r) => [r.tenantId, r]),
+  );
+
   const [summary, defaultTenant, capacity, dormant, emailStats, storageTop, voyage, anthropic, beginner] = await Promise.all([
     getCrossTenantUsageSummary(),
     getDefaultTenantOwnSummary(),
@@ -47,10 +69,25 @@ export default async function SuperAdminTopPage() {
     getAnthropicUsageSummary(),
     getBeginnerUsageSummary(),
   ]);
+  const defaultTenantReconcile = defaultTenant
+    ? apiReconcileByTenant.get(defaultTenant.id) ?? null
+    : null;
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">システム管理者ダッシュボード</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-2xl font-bold">システム管理者ダッシュボード</h1>
+        {/* 2026-05-14: 全テナントの DB 容量 + API 利用量を明示的に再集計 */}
+        <RecalculateButton
+          endpoint="/api/admin/super/recalculate-all"
+          label="全テナント再集計"
+          size="default"
+          variant="default"
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        DB 容量と API 利用量はこの画面を開いた時点で全テナントの最新値を集計しています。手動で再集計するには上のボタンを押してください。
+      </p>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {/* 2026-05-09 (PR E): 全項目に title 属性でツールチップ追加 */}
@@ -79,13 +116,13 @@ export default async function SuperAdminTopPage() {
       </section>
 
       {/* 2026-05-11: Default テナント (運営者自身) 専用セクション */}
-      <DefaultTenantSection defaultTenant={defaultTenant} />
+      <DefaultTenantSection defaultTenant={defaultTenant} reconcile={defaultTenantReconcile} />
 
       {/* 2026-05-09 (PR E / #12): Voyage AI 無料枠モニタ */}
       <VoyageUsageCard voyage={voyage} />
 
       {/* 2026-05-09 (PR E / #14): Anthropic 当月使用量 */}
-      <AnthropicUsageCard anthropic={anthropic} />
+      <AnthropicUsageCard anthropic={anthropic} apiReconciles={apiReconciles} />
 
       {/* 2026-05-09 (PR E / #15): Beginner プラン使用状況 */}
       <BeginnerUsageCard beginner={beginner} />
@@ -142,7 +179,8 @@ function SummaryCard({
   tooltip,
   subValue,
 }: {
-  label: string;
+  // 2026-05-14: ReactNode 許容 (drift badge を label に併記するため)
+  label: ReactNode;
   value: string;
   // 2026-05-09 (PR E): 全カードにツールチップ (title 属性 + cursor-help)
   tooltip?: string;
@@ -169,8 +207,10 @@ function SummaryCard({
  */
 function DefaultTenantSection({
   defaultTenant,
+  reconcile,
 }: {
   defaultTenant: DefaultTenantOwnSummary | null;
+  reconcile: ApiUsageReconcileResult | null;
 }) {
   if (!defaultTenant) {
     return (
@@ -190,12 +230,19 @@ function DefaultTenantSection({
     >
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold">Default テナント (運営者自身)</h2>
-        <Link
-          href={`/admin/super/tenants/${defaultTenant.id}`}
-          className="text-xs text-info hover:underline"
-        >
-          詳細を見る →
-        </Link>
+        <div className="flex items-center gap-2">
+          {/* 2026-05-14: Default テナント単体の再集計 */}
+          <RecalculateButton
+            endpoint={`/api/admin/super/tenants/${defaultTenant.id}/recalculate`}
+            label="このテナントを再集計"
+          />
+          <Link
+            href={`/admin/super/tenants/${defaultTenant.id}`}
+            className="text-xs text-info hover:underline"
+          >
+            詳細を見る →
+          </Link>
+        </div>
       </div>
       <p className="text-xs text-muted-foreground">
         運営者自身のテナント。顧客課金集計には含まれません (= 請求対象外)
@@ -217,9 +264,18 @@ function DefaultTenantSection({
           tooltip="当月の LLM/Embedding 呼出回数 (Default テナント内)"
         />
         <SummaryCard
-          label="今月の API 費用 (参考)"
+          label={
+            <span>
+              今月の API 費用 (参考)
+              <UsageDriftBadge reconcile={reconcile} />
+            </span>
+          }
           value={`¥${defaultTenant.currentMonthApiCostJpy.toLocaleString()}`}
-          subValue="(請求対象外)"
+          subValue={
+            reconcile?.hasDrift
+              ? `ApiCallLog SUM: ¥${reconcile.reconciledCostJpy.toLocaleString()} (差分 ¥${reconcile.driftCostJpy.toLocaleString()})`
+              : '(請求対象外)'
+          }
           tooltip="内部記録値。Default テナントは請求対象外のため実際の請求は発生しません"
         />
         <SummaryCard
@@ -263,18 +319,25 @@ function DatabaseCapacityCard({
         <h2 className="text-lg font-semibold" title="DB の物理容量を計測してプラン上限との対比を表示するモニタ (P-5a)">
           DB 容量モニタ
         </h2>
-        <span
-          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}
-          title={
-            capacity.status === 'alert'
-              ? '緊急: 上限に近接。直ちにアップグレード or データ削除を'
-              : capacity.status === 'warn'
-                ? '要注意: 80% 超過、推移を監視'
-                : '正常 (80% 未満)'
-          }
-        >
-          {STATUS_LABEL[capacity.status]}
-        </span>
+        <div className="flex items-center gap-2">
+          {/* 2026-05-14: pg_database_size は元々リアルタイムだが、RSC キャッシュ更新トリガとして配置 */}
+          <RecalculateButton
+            endpoint="/api/admin/super/recalculate-all"
+            label="DB 容量を再集計"
+          />
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}
+            title={
+              capacity.status === 'alert'
+                ? '緊急: 上限に近接。直ちにアップグレード or データ削除を'
+                : capacity.status === 'warn'
+                  ? '要注意: 80% 超過、推移を監視'
+                  : '正常 (80% 未満)'
+            }
+          >
+            {STATUS_LABEL[capacity.status]}
+          </span>
+        </div>
       </div>
 
       <div className="space-y-1">
@@ -610,16 +673,22 @@ function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
       className="space-y-2 rounded border p-4"
       title="顧客テナントのストレージ使用量 TOP 10 ランキング。Storage add-on プラン (standard / plus / pro_storage) と上限到達状態を表示"
     >
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold" title="Phase 2 (2026-05-08) で導入された Storage add-on のテナント別容量モニタ">
           ストレージ使用量 TOP 10
         </h2>
-        <p
-          className="text-xs text-muted-foreground"
-          title="⚠ = 80% 超 / 🚨 = 100% 超で Grace period 中 (7 日経過で write 停止)"
-        >
-          ⚠ 80% 超 / 🚨 100% 超 (Grace period 中)
-        </p>
+        <div className="flex items-center gap-3">
+          <p
+            className="text-xs text-muted-foreground"
+            title="⚠ = 80% 超 / 🚨 = 100% 超で Grace period 中 (7 日経過で write 停止)"
+          >
+            ⚠ 80% 超 / 🚨 100% 超 (Grace period 中)
+          </p>
+          <RecalculateButton
+            endpoint="/api/admin/super/recalculate-all"
+            label="ストレージ全件再集計"
+          />
+        </div>
       </div>
       <ul className="rounded border text-sm">
         {rows.map((r, idx) => {
@@ -648,19 +717,27 @@ function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
                   LLM: {r.llmPlan} / Storage: {r.storageAddonPlan}
                 </p>
               </div>
-              <div className="text-right">
-                <p className="text-xs">
-                  {formatBytes(r.storageBytesUsed)} / {formatBytes(r.storageLimitBytes)}
-                </p>
-                <p
-                  className={`text-xs font-semibold ${
-                    isOver ? "text-destructive" : isWarn ? "text-amber-700 dark:text-amber-400" : ""
-                  }`}
-                >
-                  {usagePct}%
-                  {r.graceState === "grace_active" && " ⚠"}
-                  {r.graceState === "write_blocked" && " 🚨"}
-                </p>
+              <div className="flex items-center gap-2">
+                <div className="text-right">
+                  <p className="text-xs">
+                    {formatBytes(r.storageBytesUsed)} / {formatBytes(r.storageLimitBytes)}
+                  </p>
+                  <p
+                    className={`text-xs font-semibold ${
+                      isOver ? "text-destructive" : isWarn ? "text-amber-700 dark:text-amber-400" : ""
+                    }`}
+                  >
+                    {usagePct}%
+                    {r.graceState === "grace_active" && " ⚠"}
+                    {r.graceState === "write_blocked" && " 🚨"}
+                  </p>
+                </div>
+                {/* 2026-05-14: 個別テナント再集計 */}
+                <RecalculateButton
+                  endpoint={`/api/admin/super/tenants/${r.id}/recalculate`}
+                  label="再集計"
+                  size="xs"
+                />
               </div>
             </li>
           );
@@ -757,17 +834,41 @@ function VoyageUsageCard({ voyage }: { voyage: VoyageUsageSummary }) {
 // 2026-05-09 (PR E / #14): Anthropic 当月使用量カード
 // ================================================================
 
-function AnthropicUsageCard({ anthropic }: { anthropic: AnthropicUsageSummary }) {
+function AnthropicUsageCard({
+  anthropic,
+  apiReconciles,
+}: {
+  anthropic: AnthropicUsageSummary;
+  apiReconciles: ApiUsageReconcileResult[];
+}) {
   const totalTokens = anthropic.currentMonthInputTokens + anthropic.currentMonthOutputTokens;
+  // 2026-05-14: ApiCallLog SUM と Tenant counter の drift がある全テナント数
+  const driftCount = apiReconciles.filter((r) => r.hasDrift).length;
 
   return (
     <section
       className="space-y-3 rounded border p-4"
       title="Anthropic Claude (LLM) の当月使用量。auto-tag-extract / suggestion-explanation の 2 経路のみで発火 (詳細: T-03 リリースノート Q6)"
     >
-      <h2 className="text-lg font-semibold" title="Anthropic Claude は自動タグ抽出 (プロジェクト作成/更新) と「なぜ?」説明文 (Pro 限定) の 2 経路で利用">
-        Anthropic 使用量 (当月)
-      </h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold" title="Anthropic Claude は自動タグ抽出 (プロジェクト作成/更新) と「なぜ?」説明文 (Pro 限定) の 2 経路で利用">
+          Anthropic 使用量 (当月)
+        </h2>
+        <div className="flex items-center gap-2">
+          {driftCount > 0 && (
+            <span
+              className="inline-flex items-center rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+              title={`${driftCount} テナントで Tenant counter と ApiCallLog SUM の差分が 5% 以上です。各テナント詳細画面で確認・修復してください`}
+            >
+              ⚠ drift {driftCount} テナント
+            </span>
+          )}
+          <RecalculateButton
+            endpoint="/api/admin/super/recalculate-all"
+            label="API 利用量を再集計"
+          />
+        </div>
+      </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard
           label="API 呼出回数"
