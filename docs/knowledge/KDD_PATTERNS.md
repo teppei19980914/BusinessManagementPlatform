@@ -7656,3 +7656,92 @@ webServer: {
   - [playwright.config.ts](../../playwright.config.ts) — `webServer.env` で子プロセスに伝搬
 - 関連 E2E_LESSONS: §4.54 (本罠の E2E 観点での詳細記述、本 KDD は一般化した教訓)
 - 本 KDD は **「rate limit / lockout / CAPTCHA 全般」** に一般化。他の認証境界追加でも本パターンを参照する。
+
+---
+
+## 5.X+40 Playwright `waitForURL` の条件式は **終端到達** を表す形にする ─ 「中間状態」を表す negation は redirect chain 途中で抜けて race を起こす (PR #345 で確立)
+
+### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で login rate limit を追加したところ、E2E spec の
+beforeAll で `page.goto('/admin/super')` が `/projects` への navigation に interrupt される
+race condition が顕在化した。原因は **`waitForURL` の条件式の書き方**:
+
+```ts
+// ❌ 中間状態 (= /login でない URL) で抜けるため race-prone
+await page.waitForURL((url) => !url.pathname.includes('/login'), {
+  timeout: 10_000,
+});
+```
+
+login 後の redirect chain `/login → / → /projects` のうち、`/` 到達時点で条件式が true に
+なり、wait が抜けてしまう。その後の test 本体の `page.goto('/admin/super')` と、まだ進行中の
+`/` → `/projects` server redirect が競合し、Playwright が "interrupted by another
+navigation" で fail する。
+
+### 教訓 (一般化)
+
+**`waitForURL` の条件式は「終端」を表す形にする**。
+
+| パターン | 評価 | 理由 |
+|---|---|---|
+| `await page.waitForURL((url) => !url.pathname.includes('/login'))` | ❌ race-prone | 「`/login` でない URL」は redirect 途中の `/` でも true |
+| `await page.waitForURL(/\/login/, { state: 'no-match' })` | ❌ 同上 | 同様に negation 系は中間状態でマッチする |
+| `await page.waitForURL('**/projects')` | ✅ 安定 | 終端 URL を glob で明示 |
+| `await page.waitForURL((url) => url.pathname === '/projects')` | ✅ 安定 | 終端 URL を厳密一致 |
+| `await page.waitForURL('**/projects'); await page.waitForLoadState('networkidle');` | ✅✅ 最強 | URL + load chain 完了 |
+
+### この罠が顕在化する状況
+
+- アプリ側の redirect chain が 2 段以上 (e.g., `/login` → `/` → `/projects`)
+- spec の `beforeAll` で login し、test 本体で別ページに `goto` する
+- アプリの応答タイミングが変わる変更 (rate limit / middleware 追加 / API 遅延等) で
+  「たまたま間に合っていた」race が顕在化
+
+### 修正パターン
+
+##### 1. 共通ヘルパーを 1 箇所に集約
+
+```ts
+// e2e/fixtures/auth.ts
+export async function waitForProjectsReady(page: Page): Promise<void> {
+  await page.waitForURL('**/projects', { timeout: 15_000 });
+  await page.waitForLoadState('networkidle');
+}
+```
+
+##### 2. spec 側は共通ヘルパーだけを呼ぶ (独自実装しない)
+
+```ts
+import { waitForProjectsReady } from '../fixtures/auth';
+
+test.beforeAll(async ({ browser }) => {
+  // ... login UI 操作 ...
+  await page.getByRole('button', { name: 'ログイン' }).click();
+  await waitForProjectsReady(page);  // ← 終端到達 + networkidle 保証
+});
+```
+
+### 横展開で漏らしやすい箇所
+
+- [ ] `e2e/specs/*.spec.ts` の各 `beforeAll` / `beforeEach` の login 後 wait
+- [ ] custom fixture (e.g., `fixtures/multi-tenant.ts`, `fixtures/super-admin.ts`) 内の login
+- [ ] retry / re-login パスでの wait
+- [ ] 新規 spec を書くときは **共通ヘルパー強制使用** をレビューで指摘する
+
+### 検出のしかた
+
+| 症状 | 切り分け |
+|---|---|
+| `Navigation to "X" is interrupted by another navigation to "Y"` | redirect chain との race。終端 wait に書き換える |
+| 同 spec の一部 test だけ flaky に fail | 共通 beforeAll の wait が早すぎる |
+| `--workers=1` で PASS、並列で fail | CPU 競合で redirect 遅延 → race 顕在化 |
+| main で PASS、PR ブランチで fail | PR の変更で response time が変わって race 顕在化 (= 本罠の典型) |
+
+### 関連
+
+- 修正 PR: PR #345 (2026-05-13 / security/auth-secret-hardening) — B-2 の rate limit 追加で race が顕在化、本 PR で全 spec を `waitForProjectsReady` に統一
+- 関連 ファイル:
+  - [e2e/fixtures/auth.ts](../../e2e/fixtures/auth.ts) — `waitForProjectsReady` 正規実装
+  - 修正対象 spec: 11-tenant-isolation / 12-suggestion-seed-data / 13-super-admin-dashboard
+- 関連 E2E_LESSONS: §4.55 (本罠の E2E 観点での具体記述)

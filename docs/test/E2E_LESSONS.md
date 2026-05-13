@@ -3428,6 +3428,110 @@ export default auth((req) => {
 
 ---
 
+### 4.55 `waitForURL((url) => !pathname.includes('/login'))` パターンは redirect chain 途中で抜けて race を起こす ─ 終端到達 (`/projects`) を条件にする (PR #345 で遭遇)
+
+#### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で middleware に login rate limit を追加した。
+rate limit 自体は CI 用 env (`DISABLE_LOGIN_RATE_LIMIT='true'`, §4.54) で bypass したが、
+**login 後の応答タイミングが微妙に変わった副作用で、別の race condition が顕在化** した:
+
+```
+[chromium] › e2e/specs/13-super-admin-dashboard.spec.ts:82:7
+Error: page.goto: Navigation to "/admin/super" is interrupted by
+       another navigation to "/projects"
+```
+
+問題のパターン (spec 11/12/13 で同じ):
+
+```ts
+// beforeAll で login
+await page.goto('/login');
+await page.fill(...).fill(...);
+await page.getByRole('button', { name: 'ログイン' }).click();
+// ↓↓↓ これが race の元 ↓↓↓
+await page.waitForURL((url) => !url.pathname.includes('/login'), {
+  timeout: 10_000,
+});
+```
+
+`!pathname.includes('/login')` は **「`/login` でない URL」** を条件にしているが、
+本サービスの login 後の redirect chain は `/login` → `/` → `/projects` の 2 段:
+
+1. NextAuth が POST 成功で `/` に redirect (302)
+2. `(dashboard)/page.tsx` が `redirect('/projects')` で更に redirect
+
+このとき、`/` 到達時点で **条件式は既に true** (`!pathname.includes('/login') === true`)
+になるため、`waitForURL` は **`/` で抜ける**。その後、test 本体で
+`page.goto('/admin/super')` を呼ぶと、まだ進行中だった `/` → `/projects` の server redirect が
+goto に割り込んで `/admin/super` への navigation を中断する。
+
+#### 採用したパターン
+
+`e2e/fixtures/auth.ts` に既存していた共通ヘルパー `waitForProjectsReady` に統一:
+
+```ts
+// e2e/fixtures/auth.ts
+export async function waitForProjectsReady(page: Page): Promise<void> {
+  await page.waitForURL('**/projects', { timeout: 15_000 });
+  await page.waitForLoadState('networkidle');
+}
+```
+
+**ポイント**:
+- **終端 URL (`/projects`) の到達** を待つ (= redirect chain が完全に終わってから抜ける)
+- `waitForLoadState('networkidle')` で初期 hydration / SWR fetch も落ち着くまで待つ
+- 既存 fixture (`loginAsAdminWithMfa` / `loginAsGeneral`) は既にこのヘルパーを使っていた。
+  spec 11/12/13 だけが独自実装で race-prone だった
+
+#### 横展開対象 (本 PR で全件修正)
+
+- `e2e/specs/11-tenant-isolation.spec.ts:81` (adminA login)
+- `e2e/specs/12-suggestion-seed-data.spec.ts:128, 294` (adminA / pageB login)
+- `e2e/specs/13-super-admin-dashboard.spec.ts:65, 254` (superAdmin / adminA login)
+
+全て `waitForProjectsReady(page)` 呼び出しに置換。
+
+#### 一般化できる教訓
+
+**`waitForURL` の条件式は「終端」を表す形にする** — 「中間状態」を表す negation (e.g.,
+`!includes('/login')`) は redirect chain の途中で勝手に抜ける。
+
+```ts
+// ❌ 中間状態で抜ける (race-prone)
+await page.waitForURL((url) => !url.pathname.includes('/login'));
+
+// ❌ 同様に「/login でなければ通す」式 (e.g., 正規表現で negation)
+await page.waitForURL((url) => !/\/login/.test(url.pathname));
+
+// ✅ 終端到達 (`/projects`) を明示
+await page.waitForURL('**/projects');
+// or
+await page.waitForURL((url) => url.pathname === '/projects');
+
+// ✅ さらに networkidle まで待つ (load chain 全体の完了)
+await page.waitForLoadState('networkidle');
+```
+
+#### 検出のしかた (本罠の症状チェックリスト)
+
+| 症状 | 切り分け |
+|---|---|
+| `Navigation to "X" is interrupted by another navigation to "Y"` | login 後の wait が早すぎて、redirect chain と次の goto が競合 |
+| 同 spec の一部 test だけ flaky に fail | 各 test の最初の goto がリダイレクトと race。共通 beforeAll の login wait が原因 |
+| `--workers=1` だと PASS、`--workers=4` で fail | 並列度が high なほど CPU 競合で redirect が遅延し、race が顕在化 |
+| main では PASS、PR のブランチで fail | PR の変更で application response time が微妙に変わって race が顕在化 |
+
+#### 関連
+
+- 関連 PR: PR #345 (security/auth-secret-hardening) — B-2 の rate limit 追加がトリガー、race を顕在化
+- 関連 ファイル:
+  - [e2e/fixtures/auth.ts](../../e2e/fixtures/auth.ts) — `waitForProjectsReady` の正規実装
+  - 修正 spec: 11-tenant-isolation / 12-suggestion-seed-data / 13-super-admin-dashboard
+- 関連 KDD パターン: docs/knowledge/KDD_PATTERNS.md §5.X+40 「`waitForURL` の条件式は終端を表す」一般化教訓
+
+---
+
 ## 8. 未解決課題 (将来 PR 候補)
 
 | 項目 | 理由 |
