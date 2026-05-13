@@ -147,10 +147,14 @@ export function GuideClient({ role, systemRole, userName }: Props) {
       </section>
 
       {/* 4. 末尾 CTA: LP / FAQ / Discord (旧 PR I では top にもあった重複を解消) */}
+      {/* 2026-05-13 docs/discord-community-positioning: Discord は「開発者へのサポート窓口」ではなく
+          開発者・ユーザが集まる「コミュニティ」と位置付ける。ユーザ同士の利用事例共有も発生する場であり、
+          単方向のサポートチャネルと誤認されないよう文言を統一する (横展開対象)。 */}
       <section className="rounded-lg border bg-muted/40 p-5">
         <h2 className="text-base font-semibold">関連リンク</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          サービスの背景は LP、よくある質問は FAQ、即時のサポートは Discord でどうぞ。
+          サービスの背景は LP、よくある質問は FAQ、開発者や他のユーザと話したいときは
+          Discord コミュニティでどうぞ (利用事例の共有・質問・バグ報告・要望)。
           画面右上のアカウントメニューからも常時アクセスできます。
         </p>
         <div className="mt-3 flex flex-wrap gap-2">

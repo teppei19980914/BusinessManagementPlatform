@@ -268,13 +268,23 @@ export function HelpClient({ isTenantAdmin }: Props) {
       )}
 
       {/* それでも解決しないとき */}
+      {/* 2026-05-13 docs/discord-community-positioning: Discord は「開発者へのサポート窓口」ではなく
+          開発者・ユーザが集まる「コミュニティ」と位置付ける。具体的な活用例 (質問 / 利用事例の共有) を
+          提示することで、ユーザ同士のやり取りが生まれることを伝える (横展開対象)。 */}
       <section className="rounded-lg border bg-muted/40 p-5">
         <h2 className="text-base font-semibold">解決しなかった場合</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           ここで解決しない場合は、画面右上のアカウントメニューから{' '}
-          <strong>Discord (開発者へ質問)</strong> や{' '}
-          <strong>サービス紹介ページ</strong> にアクセスできます。
-          機能改善のご要望は下記から直接お送りください。
+          <strong>Discord コミュニティ</strong> にアクセスできます。
+          Discord は開発者と他のユーザが集まる場所で、次のように活用できます:
+        </p>
+        <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground">
+          <li>Discord 上で開発者に対して直接質問してみましょう。</li>
+          <li>Discord 上で他のユーザに利用事例や運用のコツを聞いてみましょう。</li>
+          <li>バグ報告や機能改善のご要望もコミュニティ内で歓迎されています。</li>
+        </ul>
+        <p className="mt-3 text-sm text-muted-foreground">
+          サービス紹介や別途まとめてご要望をお送りいただく場合は、下記のリンクもご利用ください。
         </p>
         {featureRequest && (
           <div className="mt-3 flex flex-wrap gap-2">
