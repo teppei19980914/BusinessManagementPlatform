@@ -8231,3 +8231,130 @@ User schema に列を追加する PR では、以下を **必ず同時に実施*
 - 修正 PR: PR #350 (2026-05-13 / security/jwt-invalidation) — `tokenVersion` を `USER_PII_FIELDS` に追加
 - CI ガード元 PR: PR #348 (2026-05-13 / security/data-export-pii-ci-guard) — L-6 ガード自体の実装
 - 関連 KDD: §5.X+41 (`.gitignore` された generated の罠、本 PR では prisma generate 再実行で関連)
+
+---
+
+## 5.X+46 JWT 失効カウンタを **自分の操作で increment すると同セッションが即死** ─ 自/他操作で分ける設計原則 (PR #350 で確立)
+
+### 罠の正体
+
+PR #350 (security/jwt-invalidation) で `User.tokenVersion` を導入し、認可境界の操作で
+increment する設計を採用した:
+
+```ts
+// 当初の設計 (全パス共通で increment)
+await prisma.user.update({
+  data: {
+    passwordHash: newHash,
+    tokenVersion: { increment: 1 },  // ← 自分のパスワード変更でも increment
+  },
+});
+```
+
+しかし E2E spec 01 Step 2 が以下で fail した:
+- Step 1: 招待メール経由で **自分のパスワード設定** (`changePassword` 系)
+- Step 2: 設定画面で MFA を有効化しようとしたら、画面に **「再度ログインしてください」** が表示
+
+screenshot: MFA カードに赤字で「再度ログインしてください」のエラー表示、その下のはずの
+「手動入力用のシークレットキー」は不可視。
+
+#### 何が起きていたか (同セッション即死シナリオ)
+
+1. Step 1 のパスワード設定で `prisma.user.update` 実行 → DB.tokenVersion = 0 → 1
+2. JWT には login 時の **古い tokenVersion (= 0)** がそのまま残っている
+3. Step 2 で MFA setup API を呼ぶ
+4. API route 入口 `getAuthenticatedUser` で `dbUser.tokenVersion (=1) !== session.user.tokenVersion (=0)` → **401 SESSION_INVALIDATED**
+5. UI 側で「再度ログインしてください」表示、MFA setup は実行されず
+6. spec の `page.getByText('手動入力用のシークレットキー')` が永久に見つからず timeout
+
+つまり「自分のセッションを自分で殺す」というアンチパターン。本来 tokenVersion increment
+の目的は **「他デバイスからの強制ログアウト」** だが、自分の同セッションも巻き添えで殺していた。
+
+### 教訓 (一般化)
+
+**JWT 失効カウンタは「自分の操作 vs 他人の操作」で挙動を厳密に分ける**:
+
+| 操作 | 操作者 vs 対象 | tokenVersion increment | 理由 |
+|---|---|---|---|
+| `changePassword` (自分) | self → self | ❌ **しない** | 同セッション即死を防ぐ |
+| `unlockAccount` (admin が他人を) | admin → other | ✅ する | 対象 user の旧 JWT を失効 |
+| `updateUserStatus` / `updateUserRole` | admin → other | ✅ する | 権限変動を即時反映 |
+| `deleteUser` | admin → other | ✅ する | 削除済 user の JWT 即失効 |
+| 「全デバイスからログアウト」 (UI) | self → self | (将来) する + session.update で JWT 同期 | 別 UI を用意して同セッション維持 |
+
+### 修正パターン (本 PR で確立)
+
+```ts
+// changePassword: increment しない (自分の同セッション維持)
+await prisma.user.update({
+  where: { id: userId },
+  data: {
+    passwordHash: newHash,
+    forcePasswordChange: false,
+    // tokenVersion: { increment: 1 } を**意図的に書かない**
+  },
+});
+
+// admin 操作 (他人の session 失効): increment する
+await prisma.user.update({
+  where: { id: targetUserId },
+  data: {
+    systemRole: newRole,
+    tokenVersion: { increment: 1 },  // ← 他人なので OK
+  },
+});
+```
+
+### 回帰テストで保護する
+
+将来「やっぱり全デバイス強制ログアウトしたい」と PR で再度 increment が追加されるのを
+防ぐため、明示的な回帰テストを書く:
+
+```ts
+it('回帰: 自分のパスワード変更では tokenVersion を increment しない', async () => {
+  await changePassword('u1', 'current', 'brandnew');
+  const updateCall = vi.mocked(prisma.user.update).mock.calls[0]?.[0];
+  expect(updateCall?.data).not.toHaveProperty('tokenVersion');
+});
+```
+
+### 他デバイスログアウトを実装したい場合の正攻法
+
+ユーザが「他のデバイスからログアウトしたい」要件は別 UI で実装:
+
+1. 設定画面に「全デバイスからログアウト」ボタンを追加
+2. ボタン click で:
+   ```ts
+   // server: tokenVersion を increment
+   await prisma.user.update({ where: { id }, data: { tokenVersion: { increment: 1 } } });
+   // client: 自分の session も新 tokenVersion で更新
+   await session.update({ tokenVersion: newVersion });
+   ```
+3. session.update で JWT を再発行 → 自分の同セッションは新 tokenVersion で生存、他デバイスのみ失効
+
+この経路を実装するまで「他デバイス強制ログアウト」は **post-MVP** に回す。
+
+### 横展開で漏らしやすい箇所
+
+- [ ] tokenVersion increment を新規追加する PR は **「自分操作か他人操作か」** を明示的に区別
+- [ ] 「自分操作」では increment 禁止 (= 自滅を防ぐ)
+- [ ] 「自分操作」での回帰テスト (`expect(data).not.toHaveProperty('tokenVersion')`) を必ず追加
+- [ ] 「他デバイスログアウト」要件は別 UI + `session.update` で対応
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| 直近の操作 (パスワード変更等) の直後に API が 401 | 自分操作で tokenVersion increment による即死 |
+| 画面に「再度ログインしてください」が表示 | getAuthenticatedUser の SESSION_INVALIDATED |
+| E2E spec で「step N」が PASS、「step N+1」が「再ログイン」エラー | 直前 step での自セッション失効 |
+| screenshot で意図しないエラー表示 + 続く操作要素が不可視 | 認証境界での前段 failure が UI に伝播 |
+
+### 関連
+
+- 修正 PR: PR #350 (2026-05-13 / security/jwt-invalidation) — changePassword の tokenVersion increment を削除、admin 操作は維持
+- 関連 ファイル:
+  - [src/services/password.service.ts](../../src/services/password.service.ts) — changePassword (increment 削除)
+  - [src/services/user.service.ts](../../src/services/user.service.ts) — admin 操作 (increment 維持)
+  - [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) — getAuthenticatedUser で SESSION_INVALIDATED 検出
+- 関連 公式 docs: [NextAuth v5 session.update](https://authjs.dev/getting-started/session-management/protecting) — session 更新による JWT 同期
