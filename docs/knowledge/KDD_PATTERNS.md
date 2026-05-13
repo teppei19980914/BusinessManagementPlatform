@@ -7845,3 +7845,324 @@ fail に気付くケースがある (本 PR がまさにそれ)。
   - [prisma/schema.prisma](../../prisma/schema.prisma) (generator output 設定)
   - [src/services/data-export.service.test.ts](../../src/services/data-export.service.test.ts) — `Prisma.UserScalarFieldEnum` を真実とするテスト
 - 派生学び: 同一 test ファイル末尾に新規 describe を追加する複数 PR は merge conflict を起こす (PR #346 csvEscape + PR #348 USER_EXPORT_FIELDS が同 ファイル末尾で衝突)。**解決パターン**: 両方の describe を時系列順に並べて保持 (両方とも独立した責務なので除去・統合は不要)。
+
+---
+
+## 5.X+42 単一 middleware に複数の security 関心 (rate limit / CSP nonce / etc) を統合する時、各関心の **責務分離** + **return タイミング** で衝突を避ける (PR #345 ⨯ PR #349 で確立)
+
+### 罠の正体
+
+PR #349 (security/csp-nonce) のブランチを main に rebase merge する際、`src/middleware.ts` が
+**全面書き換え** の形で衝突した。具体的には:
+
+- main 側 (PR #345 マージ済): `/api/auth/callback/credentials` POST に IP rate limit (B-2)
+- HEAD 側 (PR #349): 全リクエストで CSP nonce 生成 + response header 設定 (L-5)
+
+両者は **`auth((req) => { ... })` callback 全体を上書き** する形で書かれており、git の
+3-way merge では自動結合できない (function body が完全に異なるため)。
+
+さらに、両者を素直に「`if (rate limit) { ... } if (CSP) { ... }`」と並べると **論理が複雑化** し、
+以下のような潜在バグを生む可能性:
+
+- login POST に対して CSP nonce を生成して response に付ける (= 不要、レスポンス body が無い)
+- CSP nonce 生成失敗時に rate limit を素通りさせる (= 不正な制御フロー)
+- `auth callback` で `NextResponse.next` を return すると **NextAuth の authorized callback が
+  skip される** 可能性 (= 認可境界の事故)
+
+### 教訓 (一般化)
+
+**single middleware に複数の security 関心を統合する時の設計原則**:
+
+1. **責務分離**: 各関心は **対象パスと method** で明確に分ける
+2. **早期 return**: 「自分の関心に該当するリクエスト」は処理して return、それ以外は次の関心へ
+3. **NextAuth 委譲のタイミング**: 「security チェックを通過した後の通常処理」は
+   `return;` (undefined) で NextAuth の authorized callback に委譲する
+4. **CSP nonce は最後のフォールバック**: 全 GET リクエストに必要なため、専用処理を持たない
+   path で実行する
+5. **コメントで分岐意図を明示**: 各 `if` ブロックの前に「何の処理で / なぜここで分岐するか」
+   を必ず書く (将来の merge conflict 解消時にも復元しやすい)
+
+### 修正パターン (本 PR で確立)
+
+```ts
+export default auth((req: NextRequest) => {
+  // 1. 特定エンドポイントの security チェック (early return)
+  if (
+    req.nextUrl.pathname === '/api/auth/callback/credentials'
+    && req.method === 'POST'
+    && !LOGIN_RATE_LIMIT_DISABLED
+  ) {
+    const limited = applyRateLimit(req, { key: 'login', max: 20, windowMs: 5 * 60 * 1000 });
+    if (limited) return limited;  // ← rate limit 引っかかったら 429 を返す
+    return;  // ← 通過時は NextAuth に委譲 (CSP nonce 不要)
+  }
+
+  // 2. 全リクエスト共通の処理 (CSP nonce)
+  const nonce = generateNonce();
+  // ... CSP header 構築 ...
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set('content-security-policy', csp);
+  return response;
+});
+```
+
+**重要な設計判断**:
+
+- **`return;` (undefined) と `return response` の使い分け**:
+  - `return;` → NextAuth の authorized callback が呼ばれ、認可結果で redirect / next を決定
+  - `return response` → middleware で完結 (authorized callback は呼ばれない可能性、要検証)
+- **rate limit 引っかかり時は `return limited`**: 429 NextResponse を返して即終了
+- **rate limit 通過時の login POST は `return;`**: NextAuth に委譲して通常の認証フローへ
+
+### 横展開で漏らしやすい箇所
+
+- [ ] middleware に新規 security 機能を追加する時、**既存の処理経路と干渉しないか** を確認
+- [ ] 各 `if` 分岐の **return タイミング** を明示 (early return / pass-through / response 返却)
+- [ ] **NextResponse.next を不必要に返さない** (authorized callback skip リスク)
+- [ ] 同じ middleware を **複数 PR で同時に変更しない** か、する場合は事前に conflict 解消方針をすり合わせる
+- [ ] middleware の挙動は **E2E でしか正確に検証できない** (unit test では NextAuth wrapper を完全に再現困難) → PR ごとに E2E 完走を必須化
+
+### 検出のしかた (再発時)
+
+| 症状 | 真因の可能性 |
+|---|---|
+| login POST が常に 429 で失敗 | rate limit ロジック誤り (window/max/key の設定) |
+| 認証なしで保護ページにアクセス可能 | `NextResponse.next` の return で authorized callback skip |
+| CSP nonce が response に付与されない | early return の条件が広すぎて CSP 処理に到達せず |
+| nonce が seed ごとに変わって Next.js の SSR で mismatch エラー | nonce 生成が SSR と middleware で重複実行 (本実装では middleware のみで生成 → OK) |
+
+### 関連
+
+- 修正 PR: PR #349 (2026-05-13 / security/csp-nonce) — main の PR #345 (rate limit) と conflict を解消
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — 統合実装 (rate limit + CSP nonce)
+  - [src/lib/rate-limit.ts](../../src/lib/rate-limit.ts) — rate limit ライブラリ
+  - [next.config.ts](../../next.config.ts) — middleware に移譲後の static security header
+- 関連 KDD: §5.X+39 (security 強化が E2E を壊す対立、本 KDD と同じく middleware に新規制限を入れた時の罠)
+- 関連 E2E_LESSONS: §4.54 (rate limit が E2E 並列 worker を 429 で全滅させる罠)
+
+---
+
+## 5.X+43 Next.js 16 の CSP nonce 自動付与は production で完全動作せず、`strict-dynamic` を使うと hydration が全壊する ─ graceful degradation で nonce + `unsafe-inline` 併存にする (PR #349 で確立)
+
+### 罠の正体
+
+PR #349 (security/csp-nonce) で xss-reviewer agent の指摘 (XSS 二次防御強化) に従い、
+middleware からリクエストごとに nonce を生成して以下のような厳格 CSP を設定した:
+
+```ts
+// production (NODE_ENV=production)
+script-src 'self' 'nonce-${nonce}' 'strict-dynamic'
+```
+
+公式 Next.js docs に従って:
+1. middleware で `x-nonce` request header と `Content-Security-Policy` request header に nonce を設定
+2. Next.js 16 が自動で `<script nonce={X}>` を SSR で付与する想定
+
+しかし E2E production CI で「Step 4: 一般ユーザが招待メールからパスワードを設定する」
+spec が以下の症状で失敗:
+
+- screenshot: 「**確認中...**」が表示されたまま停止 (SSR 結果は出ている)
+- expect: `getByText('たすきば', { exact: true })` が 10s timeout で見つからない
+- = SSR は完了したが、**React hydration が走らず、client-side useEffect が起動しない**
+
+#### 何が起きていたか (CSP 仕様の罠)
+
+`strict-dynamic` ディレクティブは:
+- `nonce-X` または `hash-XX` が指定された script は信頼し、その script が **動的に追加した**
+  script (= `document.createElement('script')` で append された Next.js chunks) も連鎖的に信頼
+- ただし **`'self'` と `'unsafe-inline'` を CSP 仕様で完全無効化** する (`strict-dynamic` 仕様
+  の意図的な挙動)
+
+Next.js 16 の nonce 自動付与は **SSR 時に生成する inline RSC payload** (`<script>(self.__next_f=...).push([...])</script>`)
+に nonce を付与すべきだが、本サービス環境では **付与に失敗していた** (機構の不安定さ、
+構築フローとの相互作用、または middleware → render 間での header 伝搬の rate condition)。
+
+結果:
+1. inline RSC payload に nonce が付与されない
+2. `strict-dynamic` のため `'self'` も `'unsafe-inline'` も無効
+3. CSP が **全 inline script を拒否**
+4. React の hydration bootstrap が動かない
+5. useEffect が走らず、初期 state「確認中...」のまま停止
+
+### 教訓 (一般化)
+
+**`strict-dynamic` は「nonce 自動付与が 100% 機能する」前提でしか使えない**。
+nonce 付与が失敗するケース (Next.js 16 / アプリ構成 / 構築フロー由来) では:
+
+- 完全な信頼チェーン破綻 → hydration 全停止
+- 古い browser は `strict-dynamic` を無視するが、modern browser は厳格適用 → どちらでも壊れる
+- 修正できないと **画面が真っ白** という最悪 UX を本番ユーザに見せる
+
+### 修正パターン (本 PR で確立)
+
+**Graceful degradation**: `strict-dynamic` を外し、`nonce-X` と `unsafe-inline` を併存:
+
+```ts
+// before (壊れる)
+script-src 'self' 'nonce-${nonce}' 'strict-dynamic'
+
+// after (graceful)
+script-src 'self' 'nonce-${nonce}' 'unsafe-inline'
+```
+
+CSP 仕様の挙動:
+- **modern browser + nonce 付与成功**: nonce based で評価 (= 強い防御、`unsafe-inline` は無視)
+- **modern browser + nonce 付与失敗 (本サービス症状)**: `unsafe-inline` で fallback (= pre-PR と同じ)
+- **古い browser**: `unsafe-inline` で動作 (= pre-PR と同じ)
+
+xss-reviewer 元評価でも「XSS 一次防御 (危険 API 使用ゼロ、`block-dangerous-edit.sh` hook で
+予防) が強固なので CSP `unsafe-inline` は二次防御として実害なし」と明示。
+**「壊さない最強の防御」** を選ぶのが正しい。
+
+### 一般化教訓 (security 強化を入れる時の鉄則)
+
+1. **「動作する CSP < 壊さない CSP」**: 厳格すぎる CSP は production で hydration 全壊を起こす。
+   理想は graceful degradation で、機能すれば追加防御、機能しなくても破壊しない。
+2. **`strict-dynamic` は最後の砦**: 「nonce が 100% 機能する」確証が無い限り使わない。
+   特に Next.js のような複雑な SSR/RSC フレームワークでは慎重に。
+3. **CSP は production build で必ず手動 + E2E 検証**: dev mode は HMR で常に `unsafe-` 系を
+   通すため検出できない。本症状は **CI E2E で初めて顕在化** した。
+4. **画面が真っ白** という最悪 UX は信用を一気に失う。security 強化が UX を破壊する逆転現象を
+   防ぐため、「security PR は production build で E2E 完走」を必須化する。
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| production build で SSR 結果は出るが hydration が走らない | CSP で inline script (RSC payload) が拒否されている |
+| dev mode では PASS、production build で fail | dev は HMR で `unsafe-` 系が常に許可されるため CSP の影響を受けない |
+| screenshot が「読み込み中」「確認中」など初期 state のまま停止 | client-side JS の bootstrap 失敗 (CSP 違反の典型) |
+| ブラウザ DevTools Console に `Refused to execute inline script` | CSP 違反の確定診断 |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] CSP に新規ディレクティブ (`strict-dynamic` / `require-trusted-types-for` 等) を追加する時、
+      **production build + 全主要画面の E2E** で動作確認
+- [ ] `unsafe-inline` を排除する時は **nonce 付与が完全動作する確証** を E2E で取る
+- [ ] middleware で CSP を動的生成する時、**`x-nonce` header の伝搬経路** が SSR で正しく
+      参照されるかを確認 (header name の case / Next.js バージョン依存)
+- [ ] graceful degradation を選ぶときは「機能しない時に破壊しない」かを `unsafe-inline` 系で確認
+- [ ] **dev / production の CSP 設定差分を最小化** (production 専用設定の検証コストが高いため)
+
+### 関連
+
+- 修正 PR: PR #349 (2026-05-13 / security/csp-nonce) — strict-dynamic を導入してから graceful degradation に切替
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — CSP 生成ロジック
+  - [next.config.ts](../../next.config.ts) — middleware に移譲後の static security header
+- 関連 KDD: §5.X+39 (security 強化が E2E を壊す対立) / §5.X+42 (単一 middleware に複数 security 統合)
+- 関連 E2E_LESSONS: §4.54 (rate limit が E2E を壊す類話) / §4.55 (security PR の応答タイミング変化で race が顕在化)
+- 関連 公式 docs: [Next.js CSP guide](https://nextjs.org/docs/app/guides/content-security-policy) — 本ガイドどおりに実装しても production で安定動作しない場合がある。 graceful degradation で受け止める。
+
+---
+
+## 5.X+44 「graceful degradation」が CSP 仕様の罠で機能しない時は 2 段階修正で粘らずに **完全 rollback** する勇気を持つ (PR #349 follow-up で確立)
+
+### 罠の正体
+
+§5.X+43 で「`strict-dynamic` を外し `nonce-X` + `unsafe-inline` 併存」を graceful degradation
+として採用した。理屈上は「nonce 機能時は強い防御、機能失敗時は `unsafe-inline` で fallback」
+の二段構えのはず。
+
+しかし CI E2E で再度同じ症状 (画面「確認中...」のまま停止) が発生:
+
+```
+[chromium] › e2e/specs/01-admin-and-member-setup.spec.ts:218:7 ›
+  Step 4: 一般ユーザが招待メールからパスワードを設定する
+Error: getByText('たすきば', { exact: true }).first() — Expected: visible
+       waiting for ... 10000ms — element(s) not found
+```
+
+#### 何が起きていたか (CSP 仕様の続きの罠)
+
+CSP 仕様 (CSP Level 2 以降):
+- **`script-src` に `'nonce-X'` が含まれる場合、modern browser は `'unsafe-inline'` を無視する**
+- 仕様の意図: nonce ベースの厳格 CSP を有効化したら、`unsafe-inline` の fallback は許さない
+
+つまり:
+- `script-src 'self' 'nonce-${nonce}' 'unsafe-inline'`
+- modern browser (Chromium / Firefox / Safari) はこれを **`script-src 'self' 'nonce-${nonce}'`** と解釈
+- `'unsafe-inline'` は **存在しないかのように扱われる**
+- nonce 付与失敗 = inline script 拒否 = hydration 全壊
+
+つまり、§5.X+43 の「graceful degradation」は **CSP 仕様上そもそも graceful ではない** という
+落とし穴があった。CSP Level 1 仕様時代の挙動 (`'unsafe-inline'` が fallback) を期待していたが、
+modern browser は Level 2/3 を実装しているため無視される。
+
+### 教訓 (一般化)
+
+**1 段階目の修正で同じ症状が再発したら、追加修正で粘らずに完全 rollback を検討する**。
+
+CSP / 認証 / hydration のような **仕様が複雑で挙動の予測が困難な領域** では:
+
+1. 1 段階目の修正で改善しない時、**「もう一段階の修正」で直る確証は無い**
+2. 「graceful degradation」を試したつもりが、仕様の罠で「graceful にならない」場合がある
+3. 本番ユーザに「画面が真っ白」を見せるリスクと、PR の価値 (二次防御強化) を比較すると、
+   後者が劣る場合は **prepare rollback の方が誠実**
+4. 「壊さない最強の防御」< 「機能する pre-PR の防御」 という順序で安全側に倒す
+
+### 修正パターン (本 PR で最終確定)
+
+**完全 rollback**: middleware の CSP nonce 生成ロジックを **全削除**、`next.config.ts` の
+static CSP (`'self' 'unsafe-inline'`) に戻す:
+
+```ts
+// src/middleware.ts (rollback 後)
+export default auth((req) => {
+  if (login POST) { rate limit check }
+  // CSP nonce 生成は削除、middleware は login rate limit のみ
+});
+
+// next.config.ts (pre-PR #349 状態に復元)
+const securityHeaders = [
+  { key: 'Content-Security-Policy', value: "...script-src 'self' 'unsafe-inline'..." },
+  // ...
+];
+```
+
+PR #349 は **実質的に no-op になる** が、ナレッジドキュメント (§5.X+43 / §5.X+44) は
+価値ある教訓として残す。CSP nonce 化は **post-MVP** に回し、Next.js のバージョン更新で
+nonce 自動付与が安定するまで様子見する。
+
+### 一般化: PR が機能しない時の判断フロー
+
+```
+[PR push 後 CI fail]
+    ↓
+1 段階目修正を試す
+    ↓
+[同症状で fail]
+    ↓
+仕様を再調査 → 別アプローチが現実的か?
+    ├─ Yes: 2 段階目修正
+    │      ↓
+    │   [PASS] → そのまま
+    │   [fail] → 同じ判断フローを繰り返し (3 回目失敗で必ず rollback)
+    │
+    └─ No: 完全 rollback して PR を no-op 化
+           ナレッジドキュメントで価値を残す
+           対象機能は post-MVP に回す
+```
+
+**重要**: 「3 回連続失敗で必ず rollback」というハードルールを設けると、無限に修正試行が
+続くのを防げる。本サービスでは「security 強化」「test infrastructure」のような
+仕様が複雑な領域でこのルールを適用する。
+
+### 横展開で漏らしやすい箇所
+
+- [ ] CSP nonce / strict-dynamic / require-trusted-types 等の **新規 CSP ディレクティブ追加** は
+      production build + E2E で必ず検証
+- [ ] 「graceful degradation」を採用する前に、**実際にどう degrade されるか** を CSP/HTTP/
+      browser 仕様で確認 (本罠は仕様読み不足が原因)
+- [ ] 1 段階目修正で改善しない時、「3 回ルール」で完全 rollback を強制
+- [ ] rollback で機能を諦めるのは「失敗」ではなく「正しい判断」。**PR を close / 縮小しても OK**
+
+### 関連
+
+- 修正 PR: PR #349 (2026-05-13 / security/csp-nonce) — middleware CSP nonce ロジックを全削除、static CSP に rollback
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — PR #345 の rate limit のみに rollback
+  - [next.config.ts](../../next.config.ts) — pre-PR #349 の static CSP を復元
+- 関連 KDD: §5.X+43 (本罠の前段、`strict-dynamic` で hydration 全壊)
+- 関連 公式 docs: [CSP Level 3 仕様](https://www.w3.org/TR/CSP3/#allow-all-inline) — `'nonce-X'` 指定時の `'unsafe-inline'` 無視仕様

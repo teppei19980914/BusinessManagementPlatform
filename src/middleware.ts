@@ -21,6 +21,21 @@
  *
  *   本番 env (Vercel) では当然このフラグを設定しない → rate limit は常時有効。
  *   バイパス可能であることは docs/test/E2E_LESSONS.md に明記して負債化を防ぐ。
+ *
+ * 2026-05-13 (security/csp-nonce, L-5) — 取り下げ:
+ *   CSP nonce 化を試みたが、Next.js 16 の nonce 自動付与が本サービス環境で
+ *   inline RSC payload に nonce を付与できず、production CI で hydration 全壊
+ *   (画面が「確認中...」のまま停止) する重大不具合を起こした。
+ *   2 段階の修正 (strict-dynamic 除去 / nonce + unsafe-inline 併存) でも改善せず、
+ *   CSP 仕様で nonce 指定時は modern browser が unsafe-inline を無視するため
+ *   nonce 付与失敗 = 全 block の挙動になることが確定。
+ *
+ *   方針:
+ *   - middleware の CSP nonce 生成ロジックを **完全に削除**
+ *   - CSP は next.config.ts の static header (`script-src 'self' 'unsafe-inline'`) に
+ *     戻す (= pre-PR #349 状態)
+ *   - CSP nonce 化は post-MVP で再挑戦 (Next.js のバージョン更新で改善するか様子見)
+ *   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+43 + §5.X+44
  */
 
 import NextAuth from 'next-auth';
@@ -36,7 +51,7 @@ const { auth } = NextAuth(authConfig);
 const LOGIN_RATE_LIMIT_DISABLED = process.env.DISABLE_LOGIN_RATE_LIMIT === 'true';
 
 export default auth((req) => {
-  // login POST に対する IP 単位レート制限 (B-2)
+  // login POST に対する IP 単位レート制限 (B-2 / PR #345)
   if (
     req.nextUrl.pathname === '/api/auth/callback/credentials'
     && req.method === 'POST'
