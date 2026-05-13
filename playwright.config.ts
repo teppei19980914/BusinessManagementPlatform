@@ -158,6 +158,12 @@ export default defineConfig({
           // inbox プロバイダを使用。INBOX_DIR 配下に 1 通 1 JSON で書き出される。
           MAIL_PROVIDER: 'inbox',
           INBOX_DIR,
+          // 2026-05-13 (security/auth-secret-hardening, B-2 follow-up):
+          //   E2E は並列 worker が同一 IP (localhost) から大量に login するため、
+          //   middleware の login IP rate limit (max=20 / 5min) が 429 を引き起こす。
+          //   CI 経由で渡された値を子プロセスに伝搬する (= e2e.yml の env に依存)。
+          //   未設定なら空文字 → middleware 内で 'true' チェックに falsy 扱い = rate limit 有効。
+          DISABLE_LOGIN_RATE_LIMIT: process.env.DISABLE_LOGIN_RATE_LIMIT || '',
         },
       }
     : undefined, // ローカルは開発者が pnpm dev を別途起動

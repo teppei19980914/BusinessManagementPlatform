@@ -85,6 +85,9 @@ jobs:
       INBOX_DIR: /tmp/tasukiba-e2e-inbox
       INITIAL_ADMIN_EMAIL: admin-e2e@example.com
       INITIAL_ADMIN_PASSWORD: 'E2eInitial!Pw_2026'
+      # 2026-05-13 (security/auth-secret-hardening, B-2 follow-up): E2E 並列 worker での
+      #   429 を回避するため login rate limit を CI で disable。本番では未設定 (= 有効)。
+      DISABLE_LOGIN_RATE_LIMIT: 'true'
       CI: 'true'
 
     steps:

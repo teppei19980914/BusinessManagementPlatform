@@ -3336,6 +3336,98 @@ estimates / tasks / project_members / tenants 自身など) で全 fail する�
 
 ---
 
+### 4.54 セキュリティ強化で追加した login IP rate limit が E2E 並列実行を 429 で全滅させる (PR #345 で遭遇)
+
+#### 罠の正体
+
+PR #345 (security/auth-secret-hardening) で **B-2: credential stuffing 対策** として
+`src/middleware.ts` に `/api/auth/callback/credentials` POST への IP 単位 rate limit
+(`applyRateLimit({ key: 'login', max: 20, windowMs: 5 * 60 * 1000 })`) を追加。
+本番では妥当な設定だが、CI で E2E (Playwright) を流すと **15 件中 14 件以上が
+ログイン直後の `waitForURL('**/projects')` で 15s timeout** という大量失敗を起こした。
+
+原因連鎖:
+
+1. **E2E は CI で複数 worker 並列実行**: e2e.yml は workers=4 (chromium / chromium-mobile 等)
+   で spec を並列消化する。
+2. **各 spec の beforeEach (or fixtures/auth.ts:loginAs) で都度 login**: 1 spec 平均 1〜2 回の
+   login。50 spec を 4 worker で流すと 5 分間に 60〜100 件の login POST が同一 IP (localhost) から発生。
+3. **rate limit 機構は in-memory Map で IP 単位カウント**: 同一プロセスから見ると
+   `localhost:port` は全 worker で同じ IP として記録される。20 件目以降の login POST が
+   429 Too Many Requests を返す。
+4. **NextAuth は 429 を「認証失敗」として扱い、ブラウザは /login に留まる**:
+   そのため `waitForURL('**/projects')` が 15s で timeout → spec が fail。
+
+#### 採用したパターン
+
+##### 1. 環境変数で middleware の rate limit を完全 disable できる経路を作る
+
+`src/middleware.ts` に **明示的にバイパス可能なフラグ** を追加 (`'true'` 文字列リテラル):
+
+```ts
+const LOGIN_RATE_LIMIT_DISABLED = process.env.DISABLE_LOGIN_RATE_LIMIT === 'true';
+
+export default auth((req) => {
+  if (
+    req.nextUrl.pathname === '/api/auth/callback/credentials'
+    && req.method === 'POST'
+    && !LOGIN_RATE_LIMIT_DISABLED  // ← ここ
+  ) {
+    const limited = applyRateLimit(req, { key: 'login', max: 20, windowMs: 5 * 60 * 1000 });
+    if (limited) return limited;
+  }
+});
+```
+
+##### 2. CI workflow にだけフラグをセットする (本番 env では未設定)
+
+`.github/workflows/e2e.yml` および `e2e-visual-baseline.yml` の `env:` に
+`DISABLE_LOGIN_RATE_LIMIT: 'true'` を追加。**Vercel 本番 env では絶対に設定しない**
+(設定すると credential stuffing 対策が無効化される) ことを workflow コメントで明示。
+
+##### 3. playwright.config.ts の webServer.env で子プロセスにも明示伝搬
+
+`webServer.env` は親プロセスの env を継承せず明示列挙が必要なため、
+`DISABLE_LOGIN_RATE_LIMIT: process.env.DISABLE_LOGIN_RATE_LIMIT || ''` を追加。
+これを忘れると workflow で env を設定しても **Next.js webServer 子プロセスに
+伝わらず rate limit が有効のまま** という見えにくいバグになる (実際に踏んだ罠)。
+
+#### 一般化できる教訓
+
+- **「本番で正しい防御」が「テストでは過剰防御」になる対立**: rate limit / アカウントロック /
+  CSRF / CAPTCHA などの認証境界の追加は、E2E が本番より遥かに高頻度の認証を行う性質と
+  必ず衝突する。security PR を出すときは **同時に E2E 影響を考慮し、env で disable できる
+  経路を最初から用意する** のが安全。
+- **CI と本番の env 差分は 1 箇所に集約・文書化する**: 「CI でのみ ON にする env」を増やすほど、
+  「本番に誤って設定したら何が壊れるか」が見えにくくなる。本 PR では middleware の冒頭 JSDoc
+  と workflow の env コメントに「本番では未設定 = rate limit 有効」を明記し、追跡可能にした。
+- **Playwright の webServer.env は親 env を継承しない**: NextAuth secret / DB URL を渡したい
+  時の通例なので意識されにくいが、新規 env を増やしたら **playwright.config.ts の env も同時に更新**
+  しないと CI で謎の挙動を引き起こす (本罠の二次バグ候補)。
+
+#### 検出のしかた
+
+- 症状: `waitForURL('**/projects')` の Timeout が 10 件以上同時発生 (rate limit のしきい値を
+  超えた worker 群が一斉に失敗する)
+- 確認: Playwright report の任意 fail spec の "page screenshot" に **/login 画面が映っている**
+  (= login 自体は POST されたが認証通過していない)
+- 切り分け: server log で `429 Too Many Requests` が `/api/auth/callback/credentials` に対して
+  並ぶことを確認。auth_event_logs テーブルには login_failure が記録されない (middleware で
+  弾かれているため authorize() を到達せず)
+
+#### 関連
+
+- 関連 PR: PR #345 (`security/auth-secret-hardening`) — 本罠を作り込んだ commit と本罠を修正した commit が同一 PR
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — rate limit 適用と disable フラグ
+  - [src/lib/rate-limit.ts](../../src/lib/rate-limit.ts) — in-memory Map ベースの実装と Vercel 分散の限界 (§13-21)
+  - [.github/workflows/e2e.yml](../../.github/workflows/e2e.yml) — `DISABLE_LOGIN_RATE_LIMIT: 'true'`
+  - [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml) — 同上
+  - [playwright.config.ts](../../playwright.config.ts) — webServer.env で子プロセスに伝搬
+- 関連メモ: docs/test/E2E_LESSONS.md §4.43 (in-memory Map が serverless 環境で挙動が変わる類話)
+
+---
+
 ## 8. 未解決課題 (将来 PR 候補)
 
 | 項目 | 理由 |
