@@ -7745,3 +7745,103 @@ test.beforeAll(async ({ browser }) => {
   - [e2e/fixtures/auth.ts](../../e2e/fixtures/auth.ts) — `waitForProjectsReady` 正規実装
   - 修正対象 spec: 11-tenant-isolation / 12-suggestion-seed-data / 13-super-admin-dashboard
 - 関連 E2E_LESSONS: §4.55 (本罠の E2E 観点での具体記述)
+
+---
+
+## 5.X+41 `.gitignore` された Prisma `generated/` ディレクトリは ブランチ切替で同期されず、別ブランチの生成物が現ブランチに混入する罠 (PR #348 で遭遇)
+
+### 罠の正体
+
+PR #348 (security/data-export-pii-ci-guard) を main にリベース merge して CI ガードテストを
+動かしたところ、以下のエラーで fail:
+
+```
+AssertionError: 新 User フィールドが追加されたが分類されていない。
+USER_EXPORT_FIELDS または USER_PII_FIELDS に追加してください:
+expected [ 'tokenVersion' ] to deeply equal []
+```
+
+しかし `prisma/schema.prisma` に `tokenVersion` は **存在しない** (User モデルに無い)。
+それなのに `Prisma.UserScalarFieldEnum` には `tokenVersion` が含まれていた。
+
+根本原因:
+
+1. `prisma/schema.prisma` の generator 設定: `output = "../src/generated/prisma"`
+2. `.gitignore` に `/src/generated/prisma` (= 生成ディレクトリ全体を ignore)
+3. 別の PR ブランチ (PR #350 `security/jwt-invalidation`) で `User.tokenVersion` を schema に追加し、
+   `npx prisma generate` を実行 → `src/generated/prisma/internal/prismaNamespace.ts` に
+   `tokenVersion: 'tokenVersion'` が書き込まれた
+4. その後、別のブランチ (PR #348 `security/data-export-pii-ci-guard`) に `git checkout`
+   → schema.prisma は元に戻る (PR #350 の変更は別ブランチ) が、`src/generated/` は
+   **gitignored なので git の管理対象外** → ファイルシステム上に **PR #350 ブランチの
+   生成物がそのまま残る**
+5. PR #348 のテストが Prisma.UserScalarFieldEnum を真実とするため、現ブランチの schema と
+   矛盾する `tokenVersion` を検出して fail
+
+### 教訓 (一般化)
+
+**`.gitignore` されたファイルは「ブランチに属していない」 = ブランチ切替で同期されない**。
+特に以下のディレクトリで起こりやすい:
+
+- `src/generated/prisma` (Prisma client output)
+- `.next/` (Next.js ビルド成果物)
+- `node_modules/` (依存パッケージ)
+- `dist/` / `build/` (一般的なビルド成果物)
+
+これらが **schema 変更を含むブランチで生成され、その後別ブランチに切り替えた時** に古い
+生成物が残り、現ブランチの schema と矛盾する。テストが generated を真実とする場合 (本ケース)
+や、開発サーバが古い generated を読む場合に **デバッグ困難な不整合エラー** が発生する。
+
+### 修正パターン
+
+##### 1. ブランチ切替後の儀式: schema 関連変更がある場合は `prisma generate` を再実行
+
+```bash
+git checkout <new-branch>
+npx prisma generate           # ← schema と generated を一致させる
+pnpm install --frozen-lockfile  # ← package.json 変更時 (lockfile 不整合防止)
+```
+
+##### 2. 自動化: package.json の `postcheckout` フック (任意)
+
+```json
+// package.json (検討中、強制はしていない)
+"scripts": {
+  "postinstall": "prisma generate"
+}
+```
+
+`postinstall` は `pnpm install` 時に走るため、ブランチ切替で `lockfile` が変わるなら
+自動的に generate も走る。ただし lockfile が同じだと走らないため、明示的 `prisma generate`
+が確実。
+
+##### 3. CI では問題にならない (ephemeral environment)
+
+CI は毎回新しいランナーで `pnpm install` + `prisma generate` を行うため、本罠は **ローカル開発・
+PR merge 解決時に限定** される。ただしローカルで merge → push した PR が CI で初めて
+fail に気付くケースがある (本 PR がまさにそれ)。
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| `Prisma.XxxScalarFieldEnum` に schema に無い列が含まれる | 別ブランチの generate 残骸 |
+| TypeScript で `prisma.user.xxx` が schema に無い列を補完する | 同上 |
+| `prisma migrate dev` で「migration drift」エラー | schema と DB が乖離、generated とも乖離 |
+| ブランチ切替後に CI でだけ fail (ローカルで PASS) | ローカル generated が「進んだ」状態のまま、CI は schema 基準で生成 |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] Prisma schema を変更する PR は **PR description に「他ブランチでは `prisma generate` を再実行」** を明記
+- [ ] CI で `prisma generate` を **install 直後に必ず実行** (本リポジトリは `e2e.yml:100` で実施済)
+- [ ] generated を真実とするテストを書くときは、schema との不整合に気付ける明確な assertion メッセージを書く (本ケースの「USER_EXPORT_FIELDS または USER_PII_FIELDS に追加してください」)
+- [ ] generated ファイルは **PR の差分に出ないこと** を確認 (差分に出ると gitignore 設定漏れ)
+
+### 関連
+
+- 修正 PR: PR #348 (2026-05-13 / security/data-export-pii-ci-guard) — main を merge した時に発覚
+- 関連 ファイル:
+  - [.gitignore](../../.gitignore) (L59: `/src/generated/prisma`)
+  - [prisma/schema.prisma](../../prisma/schema.prisma) (generator output 設定)
+  - [src/services/data-export.service.test.ts](../../src/services/data-export.service.test.ts) — `Prisma.UserScalarFieldEnum` を真実とするテスト
+- 派生学び: 同一 test ファイル末尾に新規 describe を追加する複数 PR は merge conflict を起こす (PR #346 csvEscape + PR #348 USER_EXPORT_FIELDS が同 ファイル末尾で衝突)。**解決パターン**: 両方の describe を時系列順に並べて保持 (両方とも独立した責務なので除去・統合は不要)。

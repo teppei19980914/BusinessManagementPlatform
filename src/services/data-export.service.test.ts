@@ -37,7 +37,13 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-import { exportTenantData, csvEscape } from './data-export.service';
+import {
+  exportTenantData,
+  csvEscape,
+  USER_EXPORT_FIELDS,
+  USER_PII_FIELDS,
+} from './data-export.service';
+import { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/db';
 
 const TENANT_ID = 'tenant-uuid-1';
@@ -287,5 +293,52 @@ describe('csvEscape (B-4: Formula Injection 対策)', () => {
     );
     // JSON.stringify は `{` で始まるので formula 対象外
     expect(csvEscape({ key: 'value' })).toBe(`"{""key"":""value""}"`);
+  });
+});
+
+// 2026-05-13 (security/data-export-pii-ci-guard, L-6): User schema の列追加で
+//   `stripUserPII` のホワイトリストを更新し忘れ → 意図せず PII が JSON 出力に混入する
+//   退行を CI で確実に検知する。Prisma の UserScalarFieldEnum から全列名を取得し、
+//   USER_EXPORT_FIELDS ∪ USER_PII_FIELDS が完全一致することを assert。
+//
+//   新フィールドが追加された PR は本テストが fail し、どちらか一方に分類するまで
+//   マージできない (= 「未分類列が PII として漏洩」「重要列が出力から漏れる」事故を防ぐ)。
+describe('User export PII whitelist CI guard (L-6)', () => {
+  it('USER_EXPORT_FIELDS と USER_PII_FIELDS の和が UserScalarFieldEnum と完全一致する', () => {
+    const allDbFields = new Set(Object.keys(Prisma.UserScalarFieldEnum));
+    const exportFields = new Set<string>(USER_EXPORT_FIELDS);
+    const piiFields = new Set<string>(USER_PII_FIELDS);
+
+    // 1. 出力と PII が重複していないこと
+    const intersection = [...exportFields].filter((f) => piiFields.has(f));
+    expect(intersection, '出力 fields と PII fields は重複してはいけない').toEqual([]);
+
+    // 2. 和集合が DB の全列と一致すること
+    const union = new Set([...exportFields, ...piiFields]);
+    const unclassified = [...allDbFields].filter((f) => !union.has(f));
+    expect(
+      unclassified,
+      '新 User フィールドが追加されたが分類されていない。USER_EXPORT_FIELDS または USER_PII_FIELDS に追加してください',
+    ).toEqual([]);
+
+    const ghosts = [...union].filter((f) => !allDbFields.has(f));
+    expect(
+      ghosts,
+      'USER_EXPORT_FIELDS / USER_PII_FIELDS に DB に存在しない列が記載されている',
+    ).toEqual([]);
+  });
+
+  it('USER_PII_FIELDS に重要 PII が含まれている (回帰防止)', () => {
+    const piiFields = new Set<string>(USER_PII_FIELDS);
+    // これらは絶対に削除してはいけない (顧客データ持ち出し時の機密保護の根幹)
+    expect(piiFields).toContain('passwordHash');
+    expect(piiFields).toContain('mfaSecretEncrypted');
+  });
+
+  it('USER_EXPORT_FIELDS に重要識別子が含まれている (回帰防止)', () => {
+    const exportFields = new Set<string>(USER_EXPORT_FIELDS);
+    expect(exportFields).toContain('id');
+    expect(exportFields).toContain('email');
+    expect(exportFields).toContain('name');
   });
 });
