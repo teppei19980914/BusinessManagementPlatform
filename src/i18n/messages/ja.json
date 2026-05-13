@@ -40,8 +40,8 @@
     "groupHelp": "ヘルプ",
     "guide": "使い方ガイド",
     "help": "よくある質問",
-    "contactDeveloper": "開発者と話す (Discord)",
-    "contactDeveloperTooltip": "Discord で開発者と直接話す (バグ報告・問い合わせ等)",
+    "contactDeveloper": "たすきばコミュニティで話す (Discord)",
+    "contactDeveloperTooltip": "たすきば Discord コミュニティで開発者や他ユーザと話す (質問・利用事例の共有・バグ報告・要望)",
     "featureRequest": "機能要望・案件依頼",
     "featureRequestTooltip": "新機能の要望や案件依頼を送る (Discord フォーラム)"
   },

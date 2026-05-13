@@ -40,8 +40,8 @@
     "groupHelp": "Help",
     "guide": "How to Use",
     "help": "FAQ",
-    "contactDeveloper": "Talk to the developer (Discord)",
-    "contactDeveloperTooltip": "Reach the developer on Discord (bugs, questions, etc.)",
+    "contactDeveloper": "Join the Tasukiba community (Discord)",
+    "contactDeveloperTooltip": "Talk with the developer and other users on the Tasukiba Discord community (questions, usage tips, bug reports, requests)",
     "featureRequest": "Feature requests / Custom work",
     "featureRequestTooltip": "Send a feature request or project inquiry (Discord forum)"
   },
