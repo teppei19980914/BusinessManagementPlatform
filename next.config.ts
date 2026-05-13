@@ -5,31 +5,18 @@ import createNextIntlPlugin from 'next-intl/plugin';
 // 各リクエスト時に locale と messages を読み込む。
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
-const isDev = process.env.NODE_ENV === 'development';
-
-// 開発時は React が必要とする unsafe-eval を script-src に追加
-const scriptSrc = isDev
-  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-  : "script-src 'self' 'unsafe-inline'";
-
+// 2026-05-13 (security/csp-nonce, L-5): Content-Security-Policy は
+//   src/middleware.ts でリクエストごとに nonce ベースで動的生成する設計に変更。
+//   旧実装はここで `script-src 'self' 'unsafe-inline'` を静的設定していたが、
+//   reflected XSS が混入した場合の二次防御として弱かった (xss-reviewer S2-1)。
+//   middleware で `'nonce-X' 'strict-dynamic'` に切り替え、'unsafe-inline' を撤廃。
+//   ここには CSP を含めない (middleware が必ず上書きするため、静的設定と
+//   動的設定の二重管理を避ける)。他のセキュリティヘッダはリクエスト独立で
+//   安価なので next.config.ts で静的設定を継続。
 const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  {
-    key: 'Content-Security-Policy',
-    value: [
-      "default-src 'self'",
-      scriptSrc,
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
-      "font-src 'self'",
-      "connect-src 'self'",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join('; '),
-  },
   {
     key: 'Strict-Transport-Security',
     value: 'max-age=63072000; includeSubDomains; preload',
