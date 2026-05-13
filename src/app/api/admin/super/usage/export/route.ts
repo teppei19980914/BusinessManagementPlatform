@@ -203,9 +203,16 @@ function buildHistoryCsv(rows: Awaited<ReturnType<typeof listMonthlyUsageHistory
 /**
  * CSV のエスケープ。カンマ・改行・ダブルクォートを含む値はダブルクォートで囲み、
  * 内部のダブルクォートは 2 連続にする (RFC 4180)。
+ *
+ * 2026-05-13 (security/csv-formula-injection, B-4): Excel/Google Sheets の
+ *   formula injection (CWE-1236) 対策。`=`/`+`/`-`/`@`/`\t`/`\r` で始まる値は
+ *   `'` (シングルクォート) を前置し、Excel に文字列として解釈させる。
+ *   data-export.service.ts の csvEscape と同じパターンで横展開。
  */
-function csvEscape(value: string): string {
+export function csvEscape(value: string): string {
   if (value === '') return '';
+  // B-4: Formula Injection 対策
+  if (/^[=+\-@\t\r]/.test(value)) value = "'" + value;
   if (/[",\r\n]/.test(value)) {
     return `"${value.replace(/"/g, '""')}"`;
   }

@@ -36,8 +36,12 @@ jobs:
         with:
           # 脆弱性レベル: high 以上で fail (low/moderate は警告のみ)
           fail-on-severity: high
-          # ライセンスポリシー (GPL / AGPL 等の strong copyleft を検知)
-          # deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, AGPL-1.0
-          # ↑ 既存依存で該当ライセンスがある場合は false positive 回避のため
-          #   Phase 2 で整備予定。一旦コメントアウトしておく。
+          # ライセンスポリシー (strong copyleft / 商用 SaaS 非互換)
+          # 2026-05-13 (security/config-hardening, L-8): dependency-reviewer agent 監査で
+          #   deny-licenses 未設定が指摘された。AGPL/SSPL/BUSL 等の新規依存が PR で
+          #   混入する経路を即時 block する。
+          #   既存依存に dual-license (e.g. jszip MIT OR GPL-3.0) があるが、
+          #   dependency-review-action は dual-license の場合に MIT 側を採用するため
+          #   GPL-3.0 でも本ポリシーで block されない (false positive なし)。
+          deny-licenses: GPL-2.0, GPL-2.0-only, GPL-3.0, GPL-3.0-only, AGPL-1.0, AGPL-1.0-only, AGPL-3.0, AGPL-3.0-only, SSPL-1.0, BUSL-1.1
           comment-summary-in-pr: on-failure

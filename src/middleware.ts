@@ -3,6 +3,25 @@
  * auth.config.ts の authorized コールバックで認証チェックを行う。
  * Prisma などの Node.js 依存を含まないため、Edge Runtime で動作する。
  *
+ * 2026-05-13 (security/auth-secret-hardening, B-2): Credential stuffing 対策。
+ *   NextAuth の Credentials provider POST に IP 単位の rate limit を入れる。
+ *   アカウントロック (5 回失敗 → 30 分) は被害者単位の防御で、攻撃者がメールリストを
+ *   ばらして低試行回数で広域に試す手口を防げない (1 アカウント 4 回 × 100 万件 = 400 万試行)。
+ *   本 IP 単位 rate limit と組み合わせる事で、攻撃者の試行コストを大幅に引き上げる。
+ *
+ *   Edge runtime + serverless instance 分散により完全な制限ではないが (rate-limit.ts §13-21
+ *   設計判断)、攻撃のコストを上げる多層防御の 1 層として機能する。
+ *
+ * 2026-05-13 (security/auth-secret-hardening, B-2 follow-up):
+ *   E2E (Playwright) は CI 上で複数 worker 並列実行され、各 spec が beforeEach で
+ *   loginAs() を呼ぶため、同一 IP (localhost) から短時間に大量の login が発生する。
+ *   max=20 / 5分 では 21 件目以降が 429 で弾かれ、E2E が失敗する (PR #345 で発覚)。
+ *   `DISABLE_LOGIN_RATE_LIMIT='true'` でバイパス可能にし、CI の e2e.yml と
+ *   e2e-visual-baseline.yml で明示的に有効化する。
+ *
+ *   本番 env (Vercel) では当然このフラグを設定しない → rate limit は常時有効。
+ *   バイパス可能であることは docs/test/E2E_LESSONS.md に明記して負債化を防ぐ。
+ *
  * 2026-05-13 (security/csp-nonce, L-5): CSP nonce 化。
  *   旧実装は next.config.ts の static headers で `script-src 'self' 'unsafe-inline'` を
  *   設定していた (二次防御として実害ないが、agent xss-reviewer S2-1 指摘どおり
@@ -21,14 +40,29 @@
  *     (X-Frame-Options / HSTS / Referrer-Policy 等) は next.config.ts 側で
  *     継続管理 (リクエスト独立、設定の分離保守性のため)。
  *   - prefetch 等の Next.js 内部スクリプトも nonce で許可される (strict-dynamic 経由)。
+ *
+ * 2026-05-13 (merge: PR #345 ⨯ PR #349 conflict resolution):
+ *   login rate limit (B-2) と CSP nonce (L-5) を併存させる構成。
+ *   - login POST: rate limit のみチェック (返り値が POST 用、CSP nonce は不要)
+ *   - それ以外の全リクエスト: CSP nonce を生成して response header に設定
+ *   - 両処理とも NextResponse を return するため、後段の authorized callback の
+ *     skip 影響を回避するため `NextResponse.next` を経由する。
+ *   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+42
  */
 
 import NextAuth from 'next-auth';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { authConfig } from '@/lib/auth.config';
+import { applyRateLimit } from '@/lib/rate-limit';
 
 const { auth } = NextAuth(authConfig);
+
+/**
+ * login rate limit を完全に無効化する環境変数フラグ。E2E / 負荷試験用。
+ * 本番では絶対に設定しないこと (= デフォルト未設定で rate limit 有効)。
+ */
+const LOGIN_RATE_LIMIT_DISABLED = process.env.DISABLE_LOGIN_RATE_LIMIT === 'true';
 
 /**
  * Content-Security-Policy ヘッダを生成する。
@@ -70,6 +104,26 @@ function generateNonce(): string {
 }
 
 export default auth((req: NextRequest) => {
+  // ----------------------------------------------------------------
+  // 1. login POST に対する IP 単位レート制限 (B-2 / PR #345)
+  // ----------------------------------------------------------------
+  if (
+    req.nextUrl.pathname === '/api/auth/callback/credentials'
+    && req.method === 'POST'
+    && !LOGIN_RATE_LIMIT_DISABLED
+  ) {
+    // max=20 / window=5 分: 通常利用 (1 ユーザが間違って 2-3 回試行 + 同一 NAT 内
+    // 数ユーザ) を吸収しつつ、credential stuffing は確実に弾く水準。
+    const limited = applyRateLimit(req, { key: 'login', max: 20, windowMs: 5 * 60 * 1000 });
+    if (limited) return limited;
+    // 通過時は CSP nonce 不要 (login POST レスポンスは NextAuth redirect のみ)。
+    // ここで明示的に return undefined すると NextAuth の authorized callback が走る。
+    return;
+  }
+
+  // ----------------------------------------------------------------
+  // 2. それ以外の全リクエスト: CSP nonce 生成 + response header 設定 (L-5 / PR #349)
+  // ----------------------------------------------------------------
   const nonce = generateNonce();
   const isDev = process.env.NODE_ENV === 'development';
   const csp = buildCspHeader(nonce, isDev);
