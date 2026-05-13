@@ -186,7 +186,7 @@
 | ヘルスチェック | `/api/health/route.ts` 新設 + テスト | #28 |
 | デプロイ設定 | `vercel.json` に日次 cron 保険 | #28 |
 | UI | `components/ui/skeleton.tsx` + 5 ルートの `loading.tsx` | #30 |
-| ドキュメント | `OPERATIONS.md` 新規 (PR #74 で `OPERATION.md` に統合) + `DESIGN.md §17.6` + `KNW-002` | #25, #28 |
+| ドキュメント | `OPERATIONS.md` 新規 (PR #74 で `OPERATION.md` に統合) + `DESIGN.md §17.6` | #25, #28 |
 | 計測データ | HAR / Trace 計測 (生バイナリは PR #101 で削除、分析 md に要約転写済み) | #26, #27, #30 |
 
 テスト件数: **216 → 219 件**（+3）、全合格を全 PR で確認。
@@ -229,7 +229,6 @@
 ## 7. 関連ドキュメント
 
 - [`after/次期プログラム/`](./after/次期プログラム/) — 改修 1 段階目 (PR #25) の個別分析レポート 3 本 (comparison-report / bottleneck-and-fixes / cold-start-and-data-growth-analysis)
-- [`../../knowledge/KNW-002_performance-optimization-patterns.md`](../../knowledge/KNW-002_performance-optimization-patterns.md) — アンチパターン詳細
 - [`../../DESIGN.md §17.6`](../../DESIGN.md) — 設計書反映版
 - [`../../../administrator/OPERATION.md`](../../../administrator/OPERATION.md) — 運用手順書（cron-job.org 設定含む）
 
