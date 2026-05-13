@@ -36,8 +36,11 @@ import {
   checkAndStartGracePeriod,
   applyScheduledStorageChanges,
   calculateTenantStorageBytes,
+  updateAllStorageBytesUsed,
+  updateStorageBytesUsedForTenant,
 } from './tenant-storage.service';
 import { prisma } from '@/lib/db';
+import { recordError } from '@/services/error-log.service';
 
 const TENANT_ID = 'tenant-uuid-1';
 const ONE_MB = 1024 * 1024;
@@ -391,5 +394,64 @@ describe('calculateTenantStorageBytes', () => {
     vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
     const result = await calculateTenantStorageBytes(TENANT_ID);
     expect(result).toBe(BigInt(0));
+  });
+});
+
+describe('updateStorageBytesUsedForTenant (2026-05-14)', () => {
+  it('正常系: テナント存在 → pg_column_size 集計値で書き戻して bigint を返す', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({ id: TENANT_ID } as never);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      { total_bytes: BigInt(771872) },
+    ] as never);
+    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+
+    const result = await updateStorageBytesUsedForTenant(TENANT_ID);
+    expect(result).toBe(BigInt(771872));
+    expect(prisma.tenant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: TENANT_ID },
+        data: expect.objectContaining({
+          storageBytesUsed: BigInt(771872),
+          storageBytesUsedAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it('テナント不在 (deletedAt=null フィルタで弾かれる) → null を返す + update を呼ばない', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(null as never);
+    const result = await updateStorageBytesUsedForTenant('non-existent');
+    expect(result).toBeNull();
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateAllStorageBytesUsed (recordError 防御 — 2026-05-14)', () => {
+  it('pg_column_size 失敗時に recordError 自体が throw しても処理継続', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      { id: 'tenant-a' },
+      { id: 'tenant-b' },
+    ] as never);
+    // tenant-a の集計は失敗、tenant-b は成功
+    vi.mocked(prisma.$queryRaw)
+      .mockRejectedValueOnce(new Error('SQL error'))
+      .mockResolvedValueOnce([{ total_bytes: BigInt(100) }] as never);
+    // recordError が落ちても上位は止まらないことを検証
+    vi.mocked(recordError).mockRejectedValueOnce(new Error('error_logs table missing'));
+    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const updated = await updateAllStorageBytesUsed();
+    expect(updated).toBe(1); // tenant-b のみ成功
+    // recordError が呼ばれたことを確認
+    expect(recordError).toHaveBeenCalled();
+    // recordError 失敗時に console.error にフォールバック
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[tenant-storage] recordError failed',
+      expect.any(Error),
+      'original:',
+      expect.any(Error),
+    );
+    consoleSpy.mockRestore();
   });
 });

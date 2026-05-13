@@ -336,10 +336,46 @@ export async function cancelScheduledStorageAddon(tenantId: string): Promise<voi
 // ================================================================
 
 /**
- * 全テナントの `storageBytesUsed` キャッシュを更新する (日次 cron 用)。
+ * 単一テナントの `storageBytesUsed` キャッシュを更新する。
+ *
+ * super_admin / テナント管理者の画面遷移時に on-demand で呼ばれる
+ * (= キャッシュの 24 時間ラグを排除する 2026-05-14 仕様)。
+ *
+ * 失敗時は呼出側に throw する (画面側でハンドリング)。複数テナントを連続実行する
+ * 場合は `updateAllStorageBytesUsed` を使い、個別失敗は内部で吸収される。
+ *
+ * @returns 更新したバイト数 (テナント不在時は null)
+ */
+export async function updateStorageBytesUsedForTenant(
+  tenantId: string,
+): Promise<bigint | null> {
+  const exists = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!exists) return null;
+
+  const bytes = await calculateTenantStorageBytes(tenantId);
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      storageBytesUsed: bytes,
+      storageBytesUsedAt: new Date(),
+    },
+  });
+  return bytes;
+}
+
+/**
+ * 全テナントの `storageBytesUsed` キャッシュを更新する (日次 cron + super_admin
+ * ダッシュボード遷移時の on-demand 用)。
  *
  * 動作: 削除済テナントは除外し、各テナントで `calculateTenantStorageBytes` を実行 →
  *   Tenant 行に書き戻す。失敗は recordError でログ取り、ループは継続。
+ *
+ * recordError 自体の失敗 (= error_logs テーブル不在等) は console.error
+ * にフォールバックして無視する (2026-05-14: 本番で error_logs 未 migrate
+ * の状況でも本処理を継続させる防御)。
  *
  * @returns 更新したテナント件数
  */
@@ -362,13 +398,18 @@ export async function updateAllStorageBytesUsed(): Promise<number> {
       });
       updated += 1;
     } catch (e) {
-      await recordError({
-        severity: 'error',
-        source: 'cron',
-        message: e instanceof Error ? e.message : String(e),
-        stack: e instanceof Error ? e.stack : undefined,
-        context: { kind: 'tenant_storage_calc', tenantId: t.id },
-      });
+      try {
+        await recordError({
+          severity: 'error',
+          source: 'cron',
+          message: e instanceof Error ? e.message : String(e),
+          stack: e instanceof Error ? e.stack : undefined,
+          context: { kind: 'tenant_storage_calc', tenantId: t.id },
+        });
+      } catch (logErr) {
+        // eslint-disable-next-line no-console -- error_logs テーブル不在等で recordError 自体が落ちた最終フォールバック
+        console.error('[tenant-storage] recordError failed', logErr, 'original:', e);
+      }
     }
   }
   return updated;

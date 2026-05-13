@@ -18,6 +18,10 @@ import { useToast } from '@/components/toast-provider';
 import { SUPPORTED_LOCALES, SELECTABLE_LOCALES } from '@/config';
 // PR-4 (2026-05-15): テナント TZ で日付を表示
 import { useFormatters } from '@/lib/use-formatters';
+// 2026-05-14: 自テナント DB 容量 + API 利用量の再集計ボタン + drift 警告
+import { RecalculateButton } from '@/components/recalculate-button';
+import { UsageDriftBadge } from '@/components/usage-drift-badge';
+import type { ApiUsageReconcileResult } from '@/services/api-usage-recalc.service';
 
 type TenantSelfInfo = {
   id: string;
@@ -99,9 +103,12 @@ type StorageInitialInfo = {
 export function TenantSettingsClient({
   initialInfo,
   storageInitialInfo,
+  apiReconcile,
 }: {
   initialInfo: TenantSelfInfo;
   storageInitialInfo: StorageInitialInfo | null;
+  /** 2026-05-14: 自テナントの API 利用量整合性チェック結果 (drift 警告用) */
+  apiReconcile: ApiUsageReconcileResult | null;
 }) {
   // PR-4 (2026-05-15): テナント TZ で日付を表示するため useFormatters を導入
   const { formatDate } = useFormatters();
@@ -220,17 +227,34 @@ export function TenantSettingsClient({
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">テナント設定</h1>
-      <p className="text-sm text-muted-foreground">
-        テナント名: {info.name}
-        {info.tenantSeq != null && <span className="ml-2">(テナント #{info.tenantSeq})</span>}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-bold">テナント設定</h1>
+          <p className="text-sm text-muted-foreground">
+            テナント名: {info.name}
+            {info.tenantSeq != null && <span className="ml-2">(テナント #{info.tenantSeq})</span>}
+          </p>
+        </div>
+        {/* 2026-05-14: 自テナント全体の再集計ボタン (画面遷移時は自動再集計済だが手動更新可) */}
+        <RecalculateButton
+          endpoint="/api/tenants/me/recalculate"
+          label="DB 容量 / API 利用量を再集計"
+          size="default"
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        DB 容量と API 利用量はこの画面を開いた時点で最新値を集計しています。
       </p>
 
       {/* P-B (2026-05-08): Beginner プラン期限バナー */}
       <BeginnerExpiryBanner info={info} />
 
       {/* 当月使用量 (PR-2 / 2026-05-15: plan 別タイル構成に切替) */}
-      <UsageSection info={info} budgetUsagePercent={budgetUsagePercent} />
+      <UsageSection
+        info={info}
+        budgetUsagePercent={budgetUsagePercent}
+        apiReconcile={apiReconcile}
+      />
 
       {/* 予約済プラン変更 (PR-4: テナント TZ で日付表示) */}
       {info.scheduledPlanChangeAt && info.scheduledNextPlan && (
@@ -343,7 +367,18 @@ export function TenantSettingsClient({
       />
 
       {/* Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理 */}
-      {storageInitialInfo && <StorageAddonSection initialInfo={storageInitialInfo} />}
+      {storageInitialInfo && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-base font-semibold">ストレージ使用量</h2>
+            <RecalculateButton
+              endpoint="/api/tenants/me/recalculate"
+              label="ストレージを再集計"
+            />
+          </div>
+          <StorageAddonSection initialInfo={storageInitialInfo} />
+        </div>
+      )}
 
       {/* 2026-05-09 (PR G / #24): シードデータ参照 toggle */}
       <SeedDataToggleSection
@@ -384,9 +419,12 @@ export function TenantSettingsClient({
 function UsageSection({
   info,
   budgetUsagePercent,
+  apiReconcile,
 }: {
   info: TenantSelfInfo;
   budgetUsagePercent: number | null;
+  /** 2026-05-14: ApiCallLog SUM との drift 結果。整合性検証用 */
+  apiReconcile: ApiUsageReconcileResult | null;
 }) {
   const isBeginner = info.plan === 'beginner';
   // Beginner プラン残数 (= 上限 - 当月既呼出)。負数にしないため Math.max(0, ...) で clamp。
@@ -400,7 +438,16 @@ function UsageSection({
       className="rounded border p-4"
       title="本テナントの当月使用量。月初 (テナント TZ) にリセット"
     >
-      <h2 className="mb-2 font-semibold">当月使用量</h2>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold">
+          当月使用量
+          <UsageDriftBadge reconcile={apiReconcile} />
+        </h2>
+        <RecalculateButton
+          endpoint="/api/tenants/me/recalculate"
+          label="API 利用量を再集計"
+        />
+      </div>
       <div
         className={
           isBeginner
