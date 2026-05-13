@@ -23,6 +23,14 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     projectMember: { findFirst: vi.fn() },
     task: { findMany: vi.fn() },
+    // 2026-05-13 (security/jwt-invalidation, L-1): getAuthenticatedUser が DB 検証するため mock
+    user: {
+      findUnique: vi.fn(async () => ({
+        tokenVersion: 0,
+        isActive: true,
+        deletedAt: null,
+      })),
+    },
   },
 }));
 

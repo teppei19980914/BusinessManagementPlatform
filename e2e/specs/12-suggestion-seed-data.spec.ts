@@ -33,6 +33,7 @@
 import { test, expect, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 import { RUN_ID } from '../fixtures/run-id';
+import { waitForProjectsReady } from '../fixtures/auth';
 import {
   createTenantPair,
   cleanupTenants,
@@ -125,7 +126,9 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
     await adminAPage.getByLabel('メールアドレス').fill(tenantA.adminEmail);
     await adminAPage.getByLabel('パスワード').fill(tenantA.adminPassword);
     await adminAPage.getByRole('button', { name: 'ログイン' }).click();
-    await adminAPage.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 10_000 });
+    // 2026-05-13 (PR #345): redirect chain (login → / → /projects) の完全完了を待つ。
+    //   詳細: docs/test/E2E_LESSONS.md §4.55
+    await waitForProjectsReady(adminAPage);
     adminARequest = adminAContext.request;
   });
 
@@ -291,7 +294,8 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
     await pageB.getByLabel('メールアドレス').fill(tenantB.adminEmail);
     await pageB.getByLabel('パスワード').fill(tenantB.adminPassword);
     await pageB.getByRole('button', { name: 'ログイン' }).click();
-    await pageB.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 10_000 });
+    // 2026-05-13 (PR #345): redirect chain (login → / → /projects) の完全完了を待つ。
+    await waitForProjectsReady(pageB);
     const reqB = ctxB.request;
 
     // B が seedDataEnabled=false にする (A は true のまま)

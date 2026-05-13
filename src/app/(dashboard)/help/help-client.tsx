@@ -139,11 +139,21 @@ export function HelpClient({ isTenantAdmin }: Props) {
         <FaqItem
           q="個人メモと全メモの違いは何ですか？"
           a={
-            <p>
-              <strong>個人メモ</strong> は自分だけが見える private メモ、
-              <strong>全メモ</strong> は visibility=public のメモ横断画面です。
-              メンションされたメモは「個人メモ」にも表示されます (=自分宛として届く)。
-            </p>
+            <>
+              <p>
+                <strong>個人メモ</strong> 画面は、あなた自身が作成したすべてのメモ
+                (公開・非公開どちらも) を管理・編集する場所です。
+              </p>
+              <p className="mt-2">
+                <strong>全メモ</strong> 画面は、同じテナントに所属する他のメンバーが
+                <strong>「公開」設定</strong> にしたメモを横断して読める場所です
+                (閲覧のみ、編集はそれぞれの作成者だけが可能)。
+              </p>
+              <p className="mt-2 text-muted-foreground">
+                補足: あなたがメンションされたメモは、自分宛として届くため
+                「個人メモ」にも自動的に表示されます。
+              </p>
+            </>
           }
         />
       </FaqCategory>

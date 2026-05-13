@@ -43,6 +43,7 @@ import {
   disconnectSuperAdminDb,
   type SuperAdminFixture,
 } from '../fixtures/super-admin';
+import { waitForProjectsReady } from '../fixtures/auth';
 
 let fixture: SuperAdminFixture | undefined;
 let superAdminContext: BrowserContext;
@@ -62,9 +63,15 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     await superAdminPage.getByLabel('メールアドレス').fill(fixture.superAdminEmail);
     await superAdminPage.getByLabel('パスワード').fill(fixture.superAdminPassword);
     await superAdminPage.getByRole('button', { name: 'ログイン' }).click();
-    await superAdminPage.waitForURL((url) => !url.pathname.includes('/login'), {
-      timeout: 10_000,
-    });
+    // 2026-05-13 (PR #345 security/auth-secret-hardening): 旧実装の
+    //   `waitForURL((url) => !url.pathname.includes('/login'))` は「`/login` でない」だけを
+    //   条件にしており、redirect chain (login → / → /projects) の途中、`/` 到達時点で
+    //   抜けてしまう。直後の `page.goto('/admin/super')` と `/` → `/projects` の
+    //   server redirect が race し、Playwright が "Navigation to /admin/super is
+    //   interrupted by another navigation to /projects" で fail (PR #345 CI で遭遇)。
+    //   共通ヘルパー `waitForProjectsReady` で /projects 着地 + networkidle まで保証する。
+    //   詳細: docs/test/E2E_LESSONS.md §4.54 + §4.55
+    await waitForProjectsReady(superAdminPage);
     superAdminRequest = superAdminContext.request;
   });
 
@@ -244,9 +251,9 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
         .getByLabel('パスワード')
         .fill(process.env.E2E_SUPER_ADMIN_PASSWORD ?? `E2eSuper!Pw_${RUN_ID}`);
       await adminPage.getByRole('button', { name: 'ログイン' }).click();
-      await adminPage.waitForURL((url) => !url.pathname.includes('/login'), {
-        timeout: 10_000,
-      });
+      // 2026-05-13 (PR #345): redirect chain (login → / → /projects) の完全完了を待つ。
+      //   旧実装は `/login` でない判定で抜けるため race を起こす。詳細: spec 13 beforeAll コメント。
+      await waitForProjectsReady(adminPage);
 
       // /admin/super にアクセスを試行 → / にリダイレクトされる
       // NOTE (PR #337 fix, KDD §5.X+35): layout の `redirect('/')` が goto 中に発火すると

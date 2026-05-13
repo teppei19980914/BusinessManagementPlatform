@@ -58,6 +58,11 @@ declare module 'next-auth' {
        * Grace 未開始は null。
        */
       tenantStorageGracePeriodStartedAt: string | null;
+      /**
+       * 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ。
+       * admin が increment した瞬間に既存 JWT は API route 入口で 401 になる。
+       */
+      tokenVersion: number;
     };
   }
 }
@@ -70,5 +75,7 @@ declare module 'next-auth/jwt' {
     tenantBeginnerEverUpgraded?: boolean;
     /** Storage add-on (Phase 2 / 2026-05-08): Grace period 開始日時 ISO (未開始は null) */
     tenantStorageGracePeriodStartedAt?: string | null;
+    /** 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ */
+    tokenVersion?: number;
   }
 }

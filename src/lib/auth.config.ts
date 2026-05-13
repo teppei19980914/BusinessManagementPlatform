@@ -199,6 +199,10 @@ export const authConfig: NextAuthConfig = {
         // PR #2-b (T-03): tenantId を JWT に格納し、session callback で session.user に
         //   伝播する。テナント境界チェック (requireSameTenant) の起点。
         token.tenantId = (user as unknown as { tenantId: string }).tenantId;
+        // 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ。
+        //   API route 入口の getAuthenticatedUser で DB 最新値と比較される。
+        //   admin が increment した瞬間に既存 JWT は全部 401 になる (= 強制ログアウト)。
+        token.tokenVersion = (user as unknown as { tokenVersion: number }).tokenVersion;
         // P-B (2026-05-08): Beginner プラン期限判定用の claim。
         //   middleware の authorized callback で Date.now() と比較して read-only 判定。
         token.tenantPlan = (user as unknown as { tenantPlan: string }).tenantPlan;
@@ -255,6 +259,9 @@ export const authConfig: NextAuthConfig = {
         // PR #2-b (T-03): JWT に格納された tenantId を session.user に公開。
         //   これ以降のサーバ側コードは session.user.tenantId を信頼源として参照する。
         session.user.tenantId = token.tenantId as string;
+        // 2026-05-13 (security/jwt-invalidation, L-1): tokenVersion を伝播。
+        //   getAuthenticatedUser が DB の最新値と比較する際の起点。
+        session.user.tokenVersion = (token.tokenVersion as number | undefined) ?? 0;
         session.user.systemRole = token.systemRole as string;
         session.user.forcePasswordChange = token.forcePasswordChange as boolean;
         session.user.mfaEnabled = (token.mfaEnabled as boolean | undefined) ?? false;

@@ -28,6 +28,18 @@ export function createMailProvider(): MailProvider {
         });
         return new ConsoleMailProvider();
       }
+      // 2026-05-13 (security/config-hardening, B-7): MAIL_FROM 必須化。
+      //   未設定で従来 'noreply@example.com' に落ちる挙動は DMARC fail を引き起こし、
+      //   ドメインレピュテーション損傷 + 大量バウンスのリスク。本番 (brevo) では
+      //   必ず正規ドメインの送信元を要求し、設定漏れなら console fallback で fail-safe にする。
+      if (!process.env.MAIL_FROM) {
+        void recordError({
+          severity: 'error',
+          source: 'mail',
+          message: '[MailProvider] MAIL_PROVIDER=brevo ですが MAIL_FROM が未設定。example.com フォールバック禁止のため console にフォールバック',
+        });
+        return new ConsoleMailProvider();
+      }
       return new BrevoMailProvider();
     case 'resend':
       if (!process.env.RESEND_API_KEY) {
@@ -35,6 +47,17 @@ export function createMailProvider(): MailProvider {
           severity: 'warn',
           source: 'mail',
           message: '[MailProvider] MAIL_PROVIDER=resend ですが RESEND_API_KEY が未設定。console にフォールバック',
+        });
+        return new ConsoleMailProvider();
+      }
+      // 2026-05-13 (security/config-hardening, B-7): MAIL_FROM 必須化 (同上)。
+      //   resend-provider のデフォルト 'onboarding@resend.dev' は Resend 公式テストドメインで、
+      //   本番運用では不適切 (送信制限 + 顧客向けには不自然)。
+      if (!process.env.MAIL_FROM) {
+        void recordError({
+          severity: 'error',
+          source: 'mail',
+          message: '[MailProvider] MAIL_PROVIDER=resend ですが MAIL_FROM が未設定。resend.dev フォールバック禁止のため console にフォールバック',
         });
         return new ConsoleMailProvider();
       }

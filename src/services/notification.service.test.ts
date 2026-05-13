@@ -117,7 +117,7 @@ describe('generateDailyNotifications (cron)', () => {
   it('開始通知: type=activity AND status=not_started AND plannedStartDate=today (JST) で抽出', async () => {
     vi.mocked(prisma.task.findMany)
       .mockResolvedValueOnce([
-        { id: 't1', name: 'Task A', projectId: 'p-1', assigneeId: 'u-1' },
+        { id: 't1', name: 'Task A', projectId: 'p-1', assigneeId: 'u-1', project: { tenantId: 'tenant-A' } },
       ] as never)
       .mockResolvedValueOnce([] as never);
     vi.mocked(prisma.notification.createMany).mockResolvedValue({ count: 1 } as never);
@@ -130,6 +130,10 @@ describe('generateDailyNotifications (cron)', () => {
       deletedAt: null,
       status: 'not_started',
     });
+    // 2026-05-13 (fix/notification-tenant-isolation): project.tenantId を select で同時取得
+    expect(startCall?.select).toMatchObject({
+      project: { select: { tenantId: true } },
+    });
     expect(r.startCreated).toBe(1);
   });
 
@@ -137,7 +141,7 @@ describe('generateDailyNotifications (cron)', () => {
     vi.mocked(prisma.task.findMany)
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([
-        { id: 't2', name: 'Task B', projectId: 'p-1', assigneeId: 'u-2' },
+        { id: 't2', name: 'Task B', projectId: 'p-1', assigneeId: 'u-2', project: { tenantId: 'tenant-A' } },
       ] as never);
     vi.mocked(prisma.notification.createMany).mockResolvedValue({ count: 1 } as never);
 
@@ -148,13 +152,17 @@ describe('generateDailyNotifications (cron)', () => {
       deletedAt: null,
       status: { not: 'completed' },
     });
+    // 2026-05-13 (fix/notification-tenant-isolation): project.tenantId を select で同時取得
+    expect(endCall?.select).toMatchObject({
+      project: { select: { tenantId: true } },
+    });
     expect(r.endCreated).toBe(1);
   });
 
   it('createMany に skipDuplicates: true (DB UNIQUE 制約による dedupe)', async () => {
     vi.mocked(prisma.task.findMany)
       .mockResolvedValueOnce([
-        { id: 't1', name: 'A', projectId: 'p-1', assigneeId: 'u-1' },
+        { id: 't1', name: 'A', projectId: 'p-1', assigneeId: 'u-1', project: { tenantId: 'tenant-A' } },
       ] as never)
       .mockResolvedValueOnce([] as never);
     vi.mocked(prisma.notification.createMany).mockResolvedValue({ count: 1 } as never);
@@ -172,6 +180,48 @@ describe('generateDailyNotifications (cron)', () => {
     expect(r.startCreated).toBe(0);
     expect(r.endCreated).toBe(0);
     expect(prisma.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  // 2026-05-13 (fix/notification-tenant-isolation): severity-1 テナント越境防止の回帰テスト。
+  //   cron が複数テナントの task を一度に処理する状況で、各 Notification.tenantId が
+  //   親 task の project.tenantId と一致する事を保証する。
+  //   退行例: createMany.data に tenantId を渡し忘れると schema の DB DEFAULT
+  //   (default-tenant UUID) に落ち、テナント A のユーザが listNotificationsForUser
+  //   (where.tenantId フィルタ) で自分の通知を見られなくなる機能不全になる。
+  it('複数テナント混在時、Notification.tenantId が親 task.project.tenantId と一致する (severity-1 回帰テスト)', async () => {
+    vi.mocked(prisma.task.findMany)
+      .mockResolvedValueOnce([
+        { id: 't-A1', name: 'A1', projectId: 'p-A', assigneeId: 'u-A1', project: { tenantId: 'tenant-A' } },
+        { id: 't-B1', name: 'B1', projectId: 'p-B', assigneeId: 'u-B1', project: { tenantId: 'tenant-B' } },
+      ] as never)
+      .mockResolvedValueOnce([
+        { id: 't-A2', name: 'A2', projectId: 'p-A', assigneeId: 'u-A2', project: { tenantId: 'tenant-A' } },
+        { id: 't-C1', name: 'C1', projectId: 'p-C', assigneeId: 'u-C1', project: { tenantId: 'tenant-C' } },
+      ] as never);
+    vi.mocked(prisma.notification.createMany)
+      .mockResolvedValueOnce({ count: 2 } as never)
+      .mockResolvedValueOnce({ count: 2 } as never);
+
+    await generateDailyNotifications(NOW_UTC);
+
+    // 開始通知側
+    const startCm = vi.mocked(prisma.notification.createMany).mock.calls[0][0];
+    const startData = startCm?.data as Array<{ tenantId: string; entityId: string }>;
+    expect(startData).toHaveLength(2);
+    expect(startData.find((d) => d.entityId === 't-A1')?.tenantId).toBe('tenant-A');
+    expect(startData.find((d) => d.entityId === 't-B1')?.tenantId).toBe('tenant-B');
+
+    // 終了通知側
+    const endCm = vi.mocked(prisma.notification.createMany).mock.calls[1][0];
+    const endData = endCm?.data as Array<{ tenantId: string; entityId: string }>;
+    expect(endData).toHaveLength(2);
+    expect(endData.find((d) => d.entityId === 't-A2')?.tenantId).toBe('tenant-A');
+    expect(endData.find((d) => d.entityId === 't-C1')?.tenantId).toBe('tenant-C');
+
+    // schema DB DEFAULT (default-tenant) に依存していない事を再確認:
+    // 全 data の tenantId は親 task.project.tenantId 由来であり、default-tenant UUID は出現しない。
+    const allTenantIds = [...startData, ...endData].map((d) => d.tenantId);
+    expect(allTenantIds).not.toContain('00000000-0000-0000-0000-000000000001');
   });
 });
 
