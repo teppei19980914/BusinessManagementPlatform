@@ -7940,3 +7940,117 @@ export default auth((req: NextRequest) => {
   - [next.config.ts](../../next.config.ts) — middleware に移譲後の static security header
 - 関連 KDD: §5.X+39 (security 強化が E2E を壊す対立、本 KDD と同じく middleware に新規制限を入れた時の罠)
 - 関連 E2E_LESSONS: §4.54 (rate limit が E2E 並列 worker を 429 で全滅させる罠)
+
+---
+
+## 5.X+43 Next.js 16 の CSP nonce 自動付与は production で完全動作せず、`strict-dynamic` を使うと hydration が全壊する ─ graceful degradation で nonce + `unsafe-inline` 併存にする (PR #349 で確立)
+
+### 罠の正体
+
+PR #349 (security/csp-nonce) で xss-reviewer agent の指摘 (XSS 二次防御強化) に従い、
+middleware からリクエストごとに nonce を生成して以下のような厳格 CSP を設定した:
+
+```ts
+// production (NODE_ENV=production)
+script-src 'self' 'nonce-${nonce}' 'strict-dynamic'
+```
+
+公式 Next.js docs に従って:
+1. middleware で `x-nonce` request header と `Content-Security-Policy` request header に nonce を設定
+2. Next.js 16 が自動で `<script nonce={X}>` を SSR で付与する想定
+
+しかし E2E production CI で「Step 4: 一般ユーザが招待メールからパスワードを設定する」
+spec が以下の症状で失敗:
+
+- screenshot: 「**確認中...**」が表示されたまま停止 (SSR 結果は出ている)
+- expect: `getByText('たすきば', { exact: true })` が 10s timeout で見つからない
+- = SSR は完了したが、**React hydration が走らず、client-side useEffect が起動しない**
+
+#### 何が起きていたか (CSP 仕様の罠)
+
+`strict-dynamic` ディレクティブは:
+- `nonce-X` または `hash-XX` が指定された script は信頼し、その script が **動的に追加した**
+  script (= `document.createElement('script')` で append された Next.js chunks) も連鎖的に信頼
+- ただし **`'self'` と `'unsafe-inline'` を CSP 仕様で完全無効化** する (`strict-dynamic` 仕様
+  の意図的な挙動)
+
+Next.js 16 の nonce 自動付与は **SSR 時に生成する inline RSC payload** (`<script>(self.__next_f=...).push([...])</script>`)
+に nonce を付与すべきだが、本サービス環境では **付与に失敗していた** (機構の不安定さ、
+構築フローとの相互作用、または middleware → render 間での header 伝搬の rate condition)。
+
+結果:
+1. inline RSC payload に nonce が付与されない
+2. `strict-dynamic` のため `'self'` も `'unsafe-inline'` も無効
+3. CSP が **全 inline script を拒否**
+4. React の hydration bootstrap が動かない
+5. useEffect が走らず、初期 state「確認中...」のまま停止
+
+### 教訓 (一般化)
+
+**`strict-dynamic` は「nonce 自動付与が 100% 機能する」前提でしか使えない**。
+nonce 付与が失敗するケース (Next.js 16 / アプリ構成 / 構築フロー由来) では:
+
+- 完全な信頼チェーン破綻 → hydration 全停止
+- 古い browser は `strict-dynamic` を無視するが、modern browser は厳格適用 → どちらでも壊れる
+- 修正できないと **画面が真っ白** という最悪 UX を本番ユーザに見せる
+
+### 修正パターン (本 PR で確立)
+
+**Graceful degradation**: `strict-dynamic` を外し、`nonce-X` と `unsafe-inline` を併存:
+
+```ts
+// before (壊れる)
+script-src 'self' 'nonce-${nonce}' 'strict-dynamic'
+
+// after (graceful)
+script-src 'self' 'nonce-${nonce}' 'unsafe-inline'
+```
+
+CSP 仕様の挙動:
+- **modern browser + nonce 付与成功**: nonce based で評価 (= 強い防御、`unsafe-inline` は無視)
+- **modern browser + nonce 付与失敗 (本サービス症状)**: `unsafe-inline` で fallback (= pre-PR と同じ)
+- **古い browser**: `unsafe-inline` で動作 (= pre-PR と同じ)
+
+xss-reviewer 元評価でも「XSS 一次防御 (危険 API 使用ゼロ、`block-dangerous-edit.sh` hook で
+予防) が強固なので CSP `unsafe-inline` は二次防御として実害なし」と明示。
+**「壊さない最強の防御」** を選ぶのが正しい。
+
+### 一般化教訓 (security 強化を入れる時の鉄則)
+
+1. **「動作する CSP < 壊さない CSP」**: 厳格すぎる CSP は production で hydration 全壊を起こす。
+   理想は graceful degradation で、機能すれば追加防御、機能しなくても破壊しない。
+2. **`strict-dynamic` は最後の砦**: 「nonce が 100% 機能する」確証が無い限り使わない。
+   特に Next.js のような複雑な SSR/RSC フレームワークでは慎重に。
+3. **CSP は production build で必ず手動 + E2E 検証**: dev mode は HMR で常に `unsafe-` 系を
+   通すため検出できない。本症状は **CI E2E で初めて顕在化** した。
+4. **画面が真っ白** という最悪 UX は信用を一気に失う。security 強化が UX を破壊する逆転現象を
+   防ぐため、「security PR は production build で E2E 完走」を必須化する。
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| production build で SSR 結果は出るが hydration が走らない | CSP で inline script (RSC payload) が拒否されている |
+| dev mode では PASS、production build で fail | dev は HMR で `unsafe-` 系が常に許可されるため CSP の影響を受けない |
+| screenshot が「読み込み中」「確認中」など初期 state のまま停止 | client-side JS の bootstrap 失敗 (CSP 違反の典型) |
+| ブラウザ DevTools Console に `Refused to execute inline script` | CSP 違反の確定診断 |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] CSP に新規ディレクティブ (`strict-dynamic` / `require-trusted-types-for` 等) を追加する時、
+      **production build + 全主要画面の E2E** で動作確認
+- [ ] `unsafe-inline` を排除する時は **nonce 付与が完全動作する確証** を E2E で取る
+- [ ] middleware で CSP を動的生成する時、**`x-nonce` header の伝搬経路** が SSR で正しく
+      参照されるかを確認 (header name の case / Next.js バージョン依存)
+- [ ] graceful degradation を選ぶときは「機能しない時に破壊しない」かを `unsafe-inline` 系で確認
+- [ ] **dev / production の CSP 設定差分を最小化** (production 専用設定の検証コストが高いため)
+
+### 関連
+
+- 修正 PR: PR #349 (2026-05-13 / security/csp-nonce) — strict-dynamic を導入してから graceful degradation に切替
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — CSP 生成ロジック
+  - [next.config.ts](../../next.config.ts) — middleware に移譲後の static security header
+- 関連 KDD: §5.X+39 (security 強化が E2E を壊す対立) / §5.X+42 (単一 middleware に複数 security 統合)
+- 関連 E2E_LESSONS: §4.54 (rate limit が E2E を壊す類話) / §4.55 (security PR の応答タイミング変化で race が顕在化)
+- 関連 公式 docs: [Next.js CSP guide](https://nextjs.org/docs/app/guides/content-security-policy) — 本ガイドどおりに実装しても production で安定動作しない場合がある。 graceful degradation で受け止める。

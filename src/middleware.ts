@@ -66,15 +66,31 @@ const LOGIN_RATE_LIMIT_DISABLED = process.env.DISABLE_LOGIN_RATE_LIMIT === 'true
 
 /**
  * Content-Security-Policy ヘッダを生成する。
- * `'unsafe-inline'` を script-src から排除し、nonce + strict-dynamic で固定。
  *
- * 本番 (production) のみ厳格。開発時は HMR / React Refresh の inline script を
- * 通すため緩める ('unsafe-eval' + 'unsafe-inline')。
+ * 2026-05-13 PR #349 follow-up (graceful degradation):
+ *   元実装は production で `script-src 'self' 'nonce-X' 'strict-dynamic'` にして
+ *   `unsafe-inline` を完全排除した。しかし Next.js 16 の nonce 自動付与は
+ *   inline RSC payload に nonce が付与されないケースがあり、E2E spec 01 Step 4
+ *   が production CI で hydration 失敗 (画面が「確認中...」で停止) する症状を起こした。
+ *
+ *   `strict-dynamic` は CSP 仕様で `self` と `unsafe-inline` を **無効化** する
+ *   ため、nonce 付与失敗 = 全 inline script 拒否 = hydration 完全停止という悪い
+ *   全壊シナリオを引き起こす。
+ *
+ *   対策: `strict-dynamic` を外し、`nonce-X` + `unsafe-inline` を併存させる。
+ *   - nonce 自動付与が機能する場合: modern browser は nonce based で評価 (= 強い防御)
+ *   - nonce 付与失敗時 / 旧 browser: `unsafe-inline` で fallback (= pre-PR と同等の挙動)
+ *   xss-reviewer 元評価でも「XSS 一次防御 (危険 API 使用ゼロ) が強固なので CSP は
+ *   二次防御として実害なし」と評価済。**「壊さない最強の防御」** を採用 (graceful degradation)。
+ *
+ *   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+43
  */
 function buildCspHeader(nonce: string, isDev: boolean): string {
+  // 開発・本番ともに nonce + unsafe-inline 併存。strict-dynamic は使わない。
+  // 開発時は HMR / React Refresh のため `unsafe-` 系の動的実行も追加で許可。
   const scriptSrc = isDev
     ? `script-src 'self' 'nonce-${nonce}' 'unsafe-inline' 'unsafe-eval'`
-    : `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`;
+    : `script-src 'self' 'nonce-${nonce}' 'unsafe-inline'`;
   // style は Tailwind 動的 class のため 'unsafe-inline' 維持 (本サービスの実用性優先)
   const styleSrc = "style-src 'self' 'unsafe-inline'";
   return [
