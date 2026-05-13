@@ -6,12 +6,26 @@ import { prisma } from '@/lib/db';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { recordAuthEvent } from './auth-event.service';
 
-const ENCRYPTION_KEY = process.env.NEXTAUTH_SECRET?.slice(0, 32).padEnd(32, '0') || '0'.repeat(32);
+// 2026-05-13 (security/auth-secret-hardening, B-1): 旧 fallback `|| '0'.repeat(32)` を削除し
+// fail-closed 化。NEXTAUTH_SECRET 未設定時に **公開定数で全テナントの TOTP secret を暗号化** する
+// 重大事故 (DB 漏洩時に MFA 全件解読) を防ぐ。
+// 独立した MFA_ENCRYPTION_KEY + AES-256-GCM への移行は post-MVP ロードマップ
+// (docs/archive/security/SECURITY-TASKS.md F-01) で実施。
+function resolveEncryptionKey(): string {
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      'MFA encryption requires NEXTAUTH_SECRET to be set and at least 32 characters. ' +
+        'Configure NEXTAUTH_SECRET in environment variables before starting the server.',
+    );
+  }
+  return secret.slice(0, 32);
+}
 const ALGORITHM = 'aes-256-cbc';
 
 function encrypt(text: string): string {
   const iv = randomBytes(16);
-  const cipher = createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY, 'utf-8'), iv);
+  const cipher = createCipheriv(ALGORITHM, Buffer.from(resolveEncryptionKey(), 'utf-8'), iv);
   let encrypted = cipher.update(text, 'utf-8', 'hex');
   encrypted += cipher.final('hex');
   return iv.toString('hex') + ':' + encrypted;
@@ -20,7 +34,7 @@ function encrypt(text: string): string {
 function decrypt(encryptedText: string): string {
   const [ivHex, encrypted] = encryptedText.split(':');
   const iv = Buffer.from(ivHex, 'hex');
-  const decipher = createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY, 'utf-8'), iv);
+  const decipher = createDecipheriv(ALGORITHM, Buffer.from(resolveEncryptionKey(), 'utf-8'), iv);
   let decrypted = decipher.update(encrypted, 'hex', 'utf-8');
   decrypted += decipher.final('utf-8');
   return decrypted;

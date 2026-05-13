@@ -12,7 +12,7 @@ const ORIGINAL_SECRET = process.env.CRON_SECRET;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.CRON_SECRET = 'test-cron-secret-xyz';
+  process.env.CRON_SECRET = 'test-cron-secret-xyz-32chars-or-more-xxxxxxxxxxxx';
 });
 
 afterEach(() => {
@@ -48,7 +48,7 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       purgedRowCount: 0,
     });
 
-    const res = await POST(makeReq('Bearer test-cron-secret-xyz'));
+    const res = await POST(makeReq('Bearer test-cron-secret-xyz-32chars-or-more-xxxxxxxxxxxx'));
 
     expect(res.status).toBe(200);
     const body = await res.json();
