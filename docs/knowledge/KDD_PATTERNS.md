@@ -8054,3 +8054,115 @@ xss-reviewer 元評価でも「XSS 一次防御 (危険 API 使用ゼロ、`bloc
 - 関連 KDD: §5.X+39 (security 強化が E2E を壊す対立) / §5.X+42 (単一 middleware に複数 security 統合)
 - 関連 E2E_LESSONS: §4.54 (rate limit が E2E を壊す類話) / §4.55 (security PR の応答タイミング変化で race が顕在化)
 - 関連 公式 docs: [Next.js CSP guide](https://nextjs.org/docs/app/guides/content-security-policy) — 本ガイドどおりに実装しても production で安定動作しない場合がある。 graceful degradation で受け止める。
+
+---
+
+## 5.X+44 「graceful degradation」が CSP 仕様の罠で機能しない時は 2 段階修正で粘らずに **完全 rollback** する勇気を持つ (PR #349 follow-up で確立)
+
+### 罠の正体
+
+§5.X+43 で「`strict-dynamic` を外し `nonce-X` + `unsafe-inline` 併存」を graceful degradation
+として採用した。理屈上は「nonce 機能時は強い防御、機能失敗時は `unsafe-inline` で fallback」
+の二段構えのはず。
+
+しかし CI E2E で再度同じ症状 (画面「確認中...」のまま停止) が発生:
+
+```
+[chromium] › e2e/specs/01-admin-and-member-setup.spec.ts:218:7 ›
+  Step 4: 一般ユーザが招待メールからパスワードを設定する
+Error: getByText('たすきば', { exact: true }).first() — Expected: visible
+       waiting for ... 10000ms — element(s) not found
+```
+
+#### 何が起きていたか (CSP 仕様の続きの罠)
+
+CSP 仕様 (CSP Level 2 以降):
+- **`script-src` に `'nonce-X'` が含まれる場合、modern browser は `'unsafe-inline'` を無視する**
+- 仕様の意図: nonce ベースの厳格 CSP を有効化したら、`unsafe-inline` の fallback は許さない
+
+つまり:
+- `script-src 'self' 'nonce-${nonce}' 'unsafe-inline'`
+- modern browser (Chromium / Firefox / Safari) はこれを **`script-src 'self' 'nonce-${nonce}'`** と解釈
+- `'unsafe-inline'` は **存在しないかのように扱われる**
+- nonce 付与失敗 = inline script 拒否 = hydration 全壊
+
+つまり、§5.X+43 の「graceful degradation」は **CSP 仕様上そもそも graceful ではない** という
+落とし穴があった。CSP Level 1 仕様時代の挙動 (`'unsafe-inline'` が fallback) を期待していたが、
+modern browser は Level 2/3 を実装しているため無視される。
+
+### 教訓 (一般化)
+
+**1 段階目の修正で同じ症状が再発したら、追加修正で粘らずに完全 rollback を検討する**。
+
+CSP / 認証 / hydration のような **仕様が複雑で挙動の予測が困難な領域** では:
+
+1. 1 段階目の修正で改善しない時、**「もう一段階の修正」で直る確証は無い**
+2. 「graceful degradation」を試したつもりが、仕様の罠で「graceful にならない」場合がある
+3. 本番ユーザに「画面が真っ白」を見せるリスクと、PR の価値 (二次防御強化) を比較すると、
+   後者が劣る場合は **prepare rollback の方が誠実**
+4. 「壊さない最強の防御」< 「機能する pre-PR の防御」 という順序で安全側に倒す
+
+### 修正パターン (本 PR で最終確定)
+
+**完全 rollback**: middleware の CSP nonce 生成ロジックを **全削除**、`next.config.ts` の
+static CSP (`'self' 'unsafe-inline'`) に戻す:
+
+```ts
+// src/middleware.ts (rollback 後)
+export default auth((req) => {
+  if (login POST) { rate limit check }
+  // CSP nonce 生成は削除、middleware は login rate limit のみ
+});
+
+// next.config.ts (pre-PR #349 状態に復元)
+const securityHeaders = [
+  { key: 'Content-Security-Policy', value: "...script-src 'self' 'unsafe-inline'..." },
+  // ...
+];
+```
+
+PR #349 は **実質的に no-op になる** が、ナレッジドキュメント (§5.X+43 / §5.X+44) は
+価値ある教訓として残す。CSP nonce 化は **post-MVP** に回し、Next.js のバージョン更新で
+nonce 自動付与が安定するまで様子見する。
+
+### 一般化: PR が機能しない時の判断フロー
+
+```
+[PR push 後 CI fail]
+    ↓
+1 段階目修正を試す
+    ↓
+[同症状で fail]
+    ↓
+仕様を再調査 → 別アプローチが現実的か?
+    ├─ Yes: 2 段階目修正
+    │      ↓
+    │   [PASS] → そのまま
+    │   [fail] → 同じ判断フローを繰り返し (3 回目失敗で必ず rollback)
+    │
+    └─ No: 完全 rollback して PR を no-op 化
+           ナレッジドキュメントで価値を残す
+           対象機能は post-MVP に回す
+```
+
+**重要**: 「3 回連続失敗で必ず rollback」というハードルールを設けると、無限に修正試行が
+続くのを防げる。本サービスでは「security 強化」「test infrastructure」のような
+仕様が複雑な領域でこのルールを適用する。
+
+### 横展開で漏らしやすい箇所
+
+- [ ] CSP nonce / strict-dynamic / require-trusted-types 等の **新規 CSP ディレクティブ追加** は
+      production build + E2E で必ず検証
+- [ ] 「graceful degradation」を採用する前に、**実際にどう degrade されるか** を CSP/HTTP/
+      browser 仕様で確認 (本罠は仕様読み不足が原因)
+- [ ] 1 段階目修正で改善しない時、「3 回ルール」で完全 rollback を強制
+- [ ] rollback で機能を諦めるのは「失敗」ではなく「正しい判断」。**PR を close / 縮小しても OK**
+
+### 関連
+
+- 修正 PR: PR #349 (2026-05-13 / security/csp-nonce) — middleware CSP nonce ロジックを全削除、static CSP に rollback
+- 関連 ファイル:
+  - [src/middleware.ts](../../src/middleware.ts) — PR #345 の rate limit のみに rollback
+  - [next.config.ts](../../next.config.ts) — pre-PR #349 の static CSP を復元
+- 関連 KDD: §5.X+43 (本罠の前段、`strict-dynamic` で hydration 全壊)
+- 関連 公式 docs: [CSP Level 3 仕様](https://www.w3.org/TR/CSP3/#allow-all-inline) — `'nonce-X'` 指定時の `'unsafe-inline'` 無視仕様

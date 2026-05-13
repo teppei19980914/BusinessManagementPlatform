@@ -5,18 +5,42 @@ import createNextIntlPlugin from 'next-intl/plugin';
 // 各リクエスト時に locale と messages を読み込む。
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
-// 2026-05-13 (security/csp-nonce, L-5): Content-Security-Policy は
-//   src/middleware.ts でリクエストごとに nonce ベースで動的生成する設計に変更。
-//   旧実装はここで `script-src 'self' 'unsafe-inline'` を静的設定していたが、
-//   reflected XSS が混入した場合の二次防御として弱かった (xss-reviewer S2-1)。
-//   middleware で `'nonce-X' 'strict-dynamic'` に切り替え、'unsafe-inline' を撤廃。
-//   ここには CSP を含めない (middleware が必ず上書きするため、静的設定と
-//   動的設定の二重管理を避ける)。他のセキュリティヘッダはリクエスト独立で
-//   安価なので next.config.ts で静的設定を継続。
+// 2026-05-13 (security/csp-nonce, L-5) — CSP nonce 化を取り下げ、static CSP に復帰:
+//   middleware で nonce ベース CSP を試行したが、Next.js 16 の nonce 自動付与が
+//   本サービス環境で inline RSC payload に nonce を付与できず、production CI で
+//   hydration 全壊する重大不具合を起こした (画面が「確認中...」のまま停止)。
+//   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+43, §5.X+44
+//
+// 結果: pre-PR と同じ `script-src 'self' 'unsafe-inline'` の static CSP に戻す。
+//   xss-reviewer 元評価では「XSS 一次防御 (危険 API 使用ゼロ、block-dangerous-edit
+//   hook で予防) が強固なので CSP `unsafe-inline` は二次防御として実害なし」と明示済。
+//   CSP nonce 化は post-MVP に回す (Next.js のバージョン更新で改善するか様子見)。
+
+const isDev = process.env.NODE_ENV === 'development';
+
+// 開発時は React の HMR が動的実行を要求するため `unsafe-` 系を追加で許可
+const scriptSrc = isDev
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline'";
+
 const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  {
+    key: 'Content-Security-Policy',
+    value: [
+      "default-src 'self'",
+      scriptSrc,
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "font-src 'self'",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; '),
+  },
   {
     key: 'Strict-Transport-Security',
     value: 'max-age=63072000; includeSubDomains; preload',
