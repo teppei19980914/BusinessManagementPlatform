@@ -779,3 +779,72 @@ describe('suggestion engine 緊急停止フラグ (SUGGESTION_ENGINE_DISABLED)',
     delete process.env.SUGGESTION_ENGINE_DISABLED;
   });
 });
+
+// ================================================================
+// PR #358 (2026-05-14): RiskIssue 候補に visibility='public' フィルタが必須
+//   (PR #357 案D との整合性 — draft な resolved RiskIssue を候補から除外)
+// ================================================================
+describe('PR #358: RiskIssue findMany に visibility: public フィルタ必須', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function setupProjectContext() {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'x',
+      background: '',
+      scope: '',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
+  }
+
+  it('suggestForProject の issue findMany where に visibility: public を含む', async () => {
+    setupProjectContext();
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([] as never);
+
+    await suggestForProject('p-1', 'tenant-A');
+
+    // riskIssue.findMany は issue クエリ + risk クエリの 2 回呼ばれる
+    expect(prisma.riskIssue.findMany).toHaveBeenCalledTimes(2);
+    const issueCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0];
+    if (!issueCall) throw new Error('issue findMany call missing');
+    const where = (issueCall[0] as { where: { type: string; visibility: string } }).where;
+    expect(where.type).toBe('issue');
+    expect(where.visibility).toBe('public');
+  });
+
+  it('suggestForProject の risk findMany where に visibility: public を含む', async () => {
+    setupProjectContext();
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([] as never);
+
+    await suggestForProject('p-1', 'tenant-A');
+
+    const riskCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[1];
+    if (!riskCall) throw new Error('risk findMany call missing');
+    const where = (riskCall[0] as { where: { type: string; visibility: string } }).where;
+    expect(where.type).toBe('risk');
+    expect(where.visibility).toBe('public');
+  });
+
+  it('suggestRelatedIssuesForText の findMany where に visibility: public を含む', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([] as never);
+
+    await suggestRelatedIssuesForText(
+      'これは関連 issue を探すための 30 文字以上の問い合わせ本文です',
+      'p-1',
+      'tenant-A',
+    );
+
+    expect(prisma.riskIssue.findMany).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0];
+    if (!call) throw new Error('searchPastIssues findMany call missing');
+    const where = (call[0] as { where: { type: string; state: string; visibility: string } }).where;
+    expect(where.type).toBe('issue');
+    expect(where.state).toBe('resolved');
+    expect(where.visibility).toBe('public');
+  });
+});

@@ -8595,3 +8595,29 @@ const shouldGenerateEmbedding =
   - [src/services/retrospective.service.ts](../../src/services/retrospective.service.ts) (create/update)
 - 提案エンジン側 filter: [src/services/suggestion.service.ts:319, 536](../../src/services/suggestion.service.ts) (visibility='public' 絞り込み = draft は候補外)
 
+### PR #358 フォローアップ修正記録 (2026-05-14)
+
+PR #357 マージ後のフルスキャンで以下の **取り込み漏れ 2 件** が判明し、PR #358 で修正:
+
+| # | 漏れ箇所 | 問題 | 修正 |
+|---|---|---|---|
+| 1 | `external-data-import.service.ts:applyImport` | CSV/XLSX 取り込みデータの visibility をチェックせず全件 embedding 生成 (案D 漏れ) | batchItems ループに `if ((k.visibility ?? 'company') === 'draft') continue;` を追加。`embeddingSkippedDraft` カウンタを `ApplyResult.summary` に新設し wizard 画面で「下書き N 件は課金対象外」表示 |
+| 2 | `suggestion.service.ts` の RiskIssue findMany 3 箇所 (line 387, 460, 758) | Knowledge / Retrospective は `visibility: 'public'` 絞り込み済だが RiskIssue だけ漏れ。draft な resolved RiskIssue が候補に出る可能性 (= 案D で embedding NULL のため score=0 表示の不整合) | 3 箇所の where 句に `visibility: 'public'` を追加 |
+
+### 横展開チェックリストの追加 (PR #358 で学んだ点)
+
+PR #357 の横展開でこのチェックを **書き込み側 (embedding 生成) のみ** 確認したが、**読み出し側 (検索クエリの visibility filter)** の整合性も併せて検証する必要があった。以下を将来の visibility 関連 PR で必ず実施:
+
+- [ ] **書き込み側**: create/update で `visibility='draft'` なら embedding 生成しない
+- [ ] **読み出し側**: 提案エンジン / 全件検索など、当該エンティティを SELECT する全クエリに `visibility: 'public'` フィルタを付与 (= `grep -n 'prisma\.<entity>\.findMany' src/services/`)
+- [ ] **import / bulk 取込経路**: 取込時データの visibility 別動作を明示。draft なら embedding 生成 skip + ユーザに「課金対象外件数」を可視化
+- [ ] **シードデータ確認**: `prisma/seed*.ts` の visibility 値が `public` であること (= visibility filter 追加で候補消失の事故を防ぐ)
+
+### 関連 (PR #358 追加)
+
+- PR #358 (2026-05-14): フォローアップ修正
+- 修正ファイル:
+  - [src/services/external-data-import.service.ts](../../src/services/external-data-import.service.ts) (applyImport の draft skip + embeddingSkippedDraft カウンタ)
+  - [src/services/suggestion.service.ts](../../src/services/suggestion.service.ts) (RiskIssue 3 箇所の visibility filter)
+  - [src/app/(dashboard)/settings/tenant/external-import/wizard-client.tsx](../../src/app/(dashboard)/settings/tenant/external-import/wizard-client.tsx) (下書き N 件表示)
+
