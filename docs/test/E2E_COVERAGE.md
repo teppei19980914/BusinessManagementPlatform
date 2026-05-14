@@ -101,6 +101,7 @@
 - [x] `/api/projects/[projectId]/tasks/*` — e2e/specs/06-wbs-tasks.spec.ts (PR #96 / POST WP + ACT / DELETE は UI 経由) ※ bulk/progress/export/import/recalculate/tree は後続 PR
 - [ ] `/api/projects/[projectId]/tasks/sync-import` — skip: feat/wbs-overwrite-import で新設。CRUD 単体テストは src/services/task-sync-import.service.test.ts で対応 (E2E は後続 PR)
 - [ ] `/api/projects/[projectId]/tasks/workload` — skip: PR H (#7 / 2026-05-09) で新設。担当者別日次工数集計を返す純関数 + Prisma findMany のみ。集計ロジックは src/services/task.service.test.ts の getAssigneeDailyWorkload で対応 (E2E は後続 PR)
+- [ ] `/api/projects/[projectId]/tasks/workload/preview` (GET) — skip: PR #361 (2026-05-14) WBS ACT 編集中の日次工数プレビュー API。assigneeId + startDate + endDate + plannedEffort + excludeTaskId? を query で受け、現プロジェクト範囲で当該担当者の他タスクと合算した 1 日あたり最大工数を返す。**テナント越境防止**は service 層の `project.tenantId` フィルタ + route 層の `checkProjectPermission(task:read)` で二重防御。サービステスト 7 件 + route テスト 7 件で担保 (うち越境 invariant テスト 2 件)。UI 側は PM/TL ロール (`canEditPmTl`) のみで表示
 - [x] `/api/projects/[projectId]/gantt` — e2e/specs/07-gantt-timeline.spec.ts (PR #96 / 画面経由で GET)
 
 ### ステークホルダー (PMBOK 13 / feat/stakeholder-management)

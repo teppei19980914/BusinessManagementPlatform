@@ -66,6 +66,9 @@ import { CommentSection } from '@/components/comments/comment-section';
 import { WbsSyncImportDialog } from '@/components/dialogs/wbs-sync-import-dialog';
 // 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ
 import { WorkloadDialog } from '@/components/dialogs/workload-dialog';
+// PR #361 (2026-05-14): ACT 編集中の日次工数プレビュー
+import { useWorkloadPreview } from '@/components/hooks/use-workload-preview';
+import { WorkloadPreviewLine } from '@/components/wbs/workload-preview-line';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -615,6 +618,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   }, [onReload, router]);
 
   const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
+  // PR #361 (2026-05-14): 日次工数プレビュー (= タスクを設定できる PM/TL ロールのみに表示)
+  //   edit dialog / create dialog 両方で使うため、トップレベルで 2 つの hook を呼ぶ
+  //   (条件付き呼出禁止、enabled flag で skip 制御)。
   // PR #87: member ロールでも「自分担当タスク」の実績系一括更新 (status / progressRate /
   // actualStartDate / actualEndDate) は可能。UI 側のチェックボックス列と一括パネル自体は
   // 表示し、操作できるボタンだけ絞り込む (pm_tl: 全機能 / member: 実績更新のみ)。
@@ -625,6 +631,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   //   引き続き pm_tl 以上。check-permission.ts の ROLE_PERMISSIONS と整合させる。
   const canCreateTask = canEditPmTl || projectRole === 'member';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // PR #361 (2026-05-14): 編集 dialog / 作成 dialog 用の日次工数プレビュー hook 呼び出し。
+  //   React の hook ルール (条件付き呼出禁止) のためトップレベルで 2 つ常時呼ぶ。
+  //   enabled flag で「PM/TL ロール かつ ACT type かつ form が開いている」とき以外は fetch スキップ。
 
   // --- 担当者フィルタ (PR #61: sessionStorage 永続化) ---
   // デフォルト: 全メンバー + 未アサインを選択済み（= 全タスク表示）。
@@ -1161,6 +1171,27 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     plannedEffort: 0,
   });
 
+  // PR #361 (2026-05-14): 日次工数プレビュー hook (edit / create 用、各々独立)。
+  //   React hook ルール上、条件付き呼出禁止のため両方とも常時呼ぶ。
+  //   enabled flag で PM/TL ロール + dialog 開閉 + ACT type を判定して fetch をスキップ。
+  const editWorkloadPreview = useWorkloadPreview({
+    projectId,
+    assigneeId: editForm?.assigneeId ?? '',
+    startDate: editForm?.plannedStartDate ?? '',
+    endDate: editForm?.plannedEndDate ?? '',
+    plannedEffort: editForm?.plannedEffort ?? 0,
+    excludeTaskId: editingTask?.id,
+    enabled: canEditPmTl && editingTask?.type === 'activity',
+  });
+  const createWorkloadPreview = useWorkloadPreview({
+    projectId,
+    assigneeId: form.assigneeId,
+    startDate: form.plannedStartDate,
+    endDate: form.plannedEndDate,
+    plannedEffort: form.plannedEffort,
+    enabled: canEditPmTl && isCreateOpen && createType === 'activity',
+  });
+
   // PR #67: 作成時にステージする添付 URL
   const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
 
@@ -1347,6 +1378,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <div className="space-y-2">
                       <Label>{t('plannedEffort')}</Label>
                       <NumberInput min={0.5} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
+                      {/* PR #361 (2026-05-14): 日次工数プレビュー (PM/TL のみ。enabled flag で fetch 制御) */}
+                      {canEditPmTl && (
+                        <WorkloadPreviewLine
+                          data={createWorkloadPreview.data}
+                          isLoading={createWorkloadPreview.isLoading}
+                        />
+                      )}
                     </div>
                     {/* 2026-04-30: ACT 作業内容。何をするかを具体的に記述する欄 (任意) */}
                     <div className="space-y-2">
@@ -1801,6 +1839,13 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <div className="space-y-2">
                         <Label>{t('estimatedEffort')}</Label>
                         <NumberInput min={0.5} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
+                        {/* PR #361 (2026-05-14): 日次工数プレビュー (PM/TL のみ) */}
+                        {canEditPmTl && (
+                          <WorkloadPreviewLine
+                            data={editWorkloadPreview.data}
+                            isLoading={editWorkloadPreview.isLoading}
+                          />
+                        )}
                       </div>
                       {/* 2026-04-30: ACT 作業内容 (任意)。何をするかを具体的に記述する欄 */}
                       <div className="space-y-2">
