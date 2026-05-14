@@ -8498,3 +8498,66 @@ pnpm e2e:coverage-check
 - ドキュメント: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md)
 - 修正コミット: `docs(e2e): PR #355 で追加した recalculate 系 3 endpoint を E2E_COVERAGE に追記`
 
+## 5.X+50 Supabase Data API は **デフォルトで public 全テーブルが anon に grant 済み** ─ Prisma 直結のみのプロジェクトでも放置すれば全件漏洩 (2026-05-14 で確立)
+
+### 背景
+
+2026-05-11 付の Supabase Security Advisor メールで `rls_disabled_in_public` (37 件) と `sensitive_columns_exposed` (sessions) が Critical Error として通知された。本プロジェクトは Prisma 直結のみで Data API (supabase-js / PostgREST) を未使用なので一見「無関係」だが、実は以下の構造的リスクがあった:
+
+- Supabase デフォルト privileges:
+  ```sql
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+    GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+  ```
+  により、Prisma migration が作成する全テーブルに **anon ロールへの GRANT ALL が自動付与**される。
+- RLS 無効状態なので、anon JWT (Supabase Dashboard で誰でも取得可) を提示すれば PostgREST `/rest/v1/users` 等から全件 read/insert/update/delete 可能。
+- 漏洩対象には `sessions.session_token` / `password_reset_tokens.token_hash` / `recovery_codes` / `password_histories` 等の **認証クリティカル情報**が含まれる。
+
+### 教訓
+
+**「Prisma を使っているから supabase-js は無関係」ではない**。Supabase に Postgres をホスティングしている時点で PostgREST/GraphQL は自動有効化されており、デフォルト privileges による暗黙の grant がアプリ経路と独立した攻撃面を作る。
+
+### 対策パターン (多層防御)
+
+| Layer | 場所 | 内容 | 効果 |
+|---|---|---|---|
+| **Layer 1 (主防御)** | Supabase Dashboard → Integrations → Data API → Settings | Exposed schemas から `public` を削除。可能なら Enable Data API も OFF | PostgREST/GraphQL 経由の全アクセスを遮断 (即時) |
+| **Layer 2** | Prisma migration | `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` を public 全テーブルに適用 (ポリシー未定義 = 完全 deny) | Dashboard 設定が誤って戻されても anon/authenticated は何も見えない |
+| **Layer 3** | Prisma migration | `REVOKE ALL ... FROM anon, authenticated` + `ALTER DEFAULT PRIVILEGES ... REVOKE` | 将来 migration で追加されるテーブルにも自動適用、grant 自体を剥がす |
+
+参照実装: [prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql](../../prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql)
+
+### Prisma との互換性 (重要)
+
+- Prisma は `DATABASE_URL` の `postgres` ロールで接続 = 全テーブルの owner
+- PostgreSQL 標準動作で **owner は RLS をバイパス** (※ `FORCE ROW LEVEL SECURITY` は絶対に使わない)
+- REVOKE / ALTER DEFAULT PRIVILEGES は anon/authenticated のみ対象、postgres ロール無影響
+- → アプリ動作・既存テスト 1700+ 件への影響はゼロ
+
+### ローカル DB との互換性 (重要)
+
+ローカル開発 DB (pure PostgreSQL on Docker / 直接実行) には `anon` / `authenticated` ロールが存在しない。**そのまま `REVOKE ... FROM anon` を書くと `role "anon" does not exist` で migration が失敗する**ため、必ず `DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN ... END IF; END $$;` で存在確認してから REVOKE する。E2E CI (`pgvector/pgvector:pg16`) も pure PostgreSQL なので同じ条件分岐が必要。
+
+### 横展開チェックリスト
+
+- [ ] **新規プロジェクト作成時**: Supabase Dashboard → Data API → Exposed schemas から `public` を削除 (Enable Data API OFF が理想)
+- [ ] **新規テーブル追加時**: `ALTER TABLE public.<new_table> ENABLE ROW LEVEL SECURITY` を migration に含める (Layer 3 で grant は阻止されているが、Layer 2 の防御層は手動で都度有効化が必要 — Postgres に "RLS デフォルト ON" 設定が存在しないため)
+- [ ] **AWS 移行時**: Supabase 由来のデフォルト privileges は不要になる。`anon` / `authenticated` ロールも作らないので Layer 3 の意味がなくなる。Layer 2 (RLS) も owner バイパスで実害ないが、移行時に検討
+- [ ] **Security Advisor 定期確認**: 月 1 回 Dashboard → Advisors → Security Advisor を確認 (新規テーブル追加で再発する可能性)
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| Supabase からの定期メール「These issues require your immediate attention」 | Security Advisor が Critical Error を検出 |
+| `rls_disabled_in_public` Advisor Error | RLS 無効テーブルが Exposed schemas に含まれている |
+| `sensitive_columns_exposed` Advisor Error | password / token 系カラムを含むテーブルが API exposed |
+
+### 関連
+
+- 適用 migration: [prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/](../../prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql)
+- 運用 runbook: [docs/operations/SECURITY_OPS.md §13.5](../operations/SECURITY_OPS.md) (Supabase Security Advisor 定期確認)
+- Supabase 公式: https://supabase.com/docs/guides/database/postgres/row-level-security
+- Supabase Default Privileges 仕様: https://supabase.com/docs/guides/database/postgres/roles-superuser
+- 関連 KDD: §5.42 (migration を含む PR の本番手動適用ルール)
+
