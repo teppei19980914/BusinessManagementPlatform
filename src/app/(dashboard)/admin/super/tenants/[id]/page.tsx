@@ -14,6 +14,7 @@ import {
 } from '@/services/super-admin.service';
 import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
 import { TenantDeleteButton } from './tenant-delete-button';
+import { TenantSuspendButton } from './tenant-suspend-button';
 // 2026-05-14: テナント詳細遷移時に該当テナントの DB 容量 + API 利用量を即時再集計。
 //   旧仕様 (cron 日次キャッシュ) はキャッシュ依存だったため、ここで明示的に最新化する。
 import { updateStorageBytesUsedForTenant } from '@/services/tenant-storage.service';
@@ -290,6 +291,27 @@ export default async function SuperAdminTenantDetailPage({
           >
             📦 データを ZIP でダウンロード (代行)
           </a>
+        </section>
+      )}
+
+      {/* PR #372 (2026-05-14): read-only 強制移行セクション (管理テナントは表示しない) */}
+      {tenant.id !== MANAGEMENT_TENANT_ID && (
+        <section className="space-y-2 rounded border border-amber-500/40 p-4">
+          <h2 className="text-lg font-semibold text-amber-700 dark:text-amber-300">
+            read-only 強制移行 (停止 / 再開)
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            支払い滞納 / 利用規約違反等で write 系操作を遮断します。停止中も閲覧・エクスポート・
+            プラン変更・セルフ解約は引き続き可能。削除より軽い措置として運用してください。
+          </p>
+          <div className="pt-2">
+            <TenantSuspendButton
+              tenantId={tenant.id}
+              tenantName={tenant.name}
+              suspendedAt={tenant.suspendedAt?.toISOString() ?? null}
+              suspendReason={tenant.suspendReason}
+            />
+          </div>
         </section>
       )}
 

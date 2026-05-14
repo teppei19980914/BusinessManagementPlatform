@@ -29,17 +29,25 @@ description: 実装完了時に lint + test + 観点チェックを一括実行�
 
 ## 手順
 
-### Step 1: 静的解析 + テスト
+### Step 1: 静的解析 + テスト + E2E カバレッジ
 
 ```bash
-# 並列で実行 (両者独立) — 約 25 秒
+# 並列で実行 (3 者独立) — 約 25 秒
 pnpm lint &
 LINT_PID=$!
 pnpm test &
 TEST_PID=$!
+pnpm e2e:coverage-check &
+COV_PID=$!
 wait $LINT_PID && echo "[lint] OK" || echo "[lint] FAILED"
 wait $TEST_PID && echo "[test] OK" || echo "[test] FAILED"
+wait $COV_PID && echo "[e2e-coverage] OK" || echo "[e2e-coverage] FAILED"
 ```
+
+> **2026-05-14 (PR #372) で追加**: 新規 route.ts / page.tsx を追加した場合、
+> `docs/test/E2E_COVERAGE.md` への追記漏れを CI が必ず止める ([KDD §5.X+58](../../docs/knowledge/KDD_PATTERNS.md))。
+> ローカルで先に検知するため `pnpm e2e:coverage-check` も Step 1 に含める。
+> route 変更のない PR では一瞬で通るためコスト無視可。
 
 ### Step 2: 観点チェック (4 項目に整理 / 旧 6 項目から 2 項目撤廃)
 

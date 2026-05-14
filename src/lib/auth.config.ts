@@ -118,6 +118,29 @@ export const authConfig: NextAuthConfig = {
       ]);
       const isReadOnlyBypass = READ_ONLY_BYPASS_PATHS.has(nextUrl.pathname);
       if (writeMethods.has(request.method) && !isReadOnlyBypass) {
+        // 2026-05-14 (PR #372): super_admin による read-only 強制移行。
+        //   Beginner 期限切れ / Storage Grace 期限切れと並ぶ独立した遮断条件。
+        //   suspendedAt が null でない間は無条件で write 系を 403 で弾く (経過日数判定なし、
+        //   解除されるまで継続)。例外パスは Beginner と同じ READ_ONLY_BYPASS_PATHS (= 顧客は
+        //   支払い後の解除待ち中でもプラン変更 / セルフ解約は可能、要は顧客側からの脱出経路を確保)。
+        const suspendedAtIso = auth.user.tenantSuspendedAt;
+        if (typeof suspendedAtIso === 'string' && suspendedAtIso.length > 0) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'TENANT_SUSPENDED',
+                message:
+                  'お支払いまたは利用規約の確認のため、現在テナントを閲覧専用 (read-only) モードにしています。' +
+                  '詳細はサポートまでお問い合わせください。',
+              },
+            }),
+            {
+              status: 403,
+              headers: { 'content-type': 'application/json' },
+            },
+          );
+        }
+
         const plan = auth.user.tenantPlan;
         const createdAtIso = auth.user.tenantCreatedAt;
         const everUpgraded = auth.user.tenantBeginnerEverUpgraded;
@@ -214,6 +237,10 @@ export const authConfig: NextAuthConfig = {
         token.tenantStorageGracePeriodStartedAt = (
           user as unknown as { tenantStorageGracePeriodStartedAt: string | null }
         ).tenantStorageGracePeriodStartedAt ?? null;
+        // 2026-05-14 (PR #372): read-only 強制移行フラグの ISO 文字列。
+        token.tenantSuspendedAt = (
+          user as unknown as { tenantSuspendedAt: string | null }
+        ).tenantSuspendedAt ?? null;
         token.systemRole = (user as unknown as { systemRole: string }).systemRole;
         token.forcePasswordChange = (user as unknown as { forcePasswordChange: boolean })
           .forcePasswordChange;
@@ -279,6 +306,9 @@ export const authConfig: NextAuthConfig = {
         // Storage add-on (Phase 2): Grace 開始日時を session に伝播 (middleware + UI 両方で使用)
         session.user.tenantStorageGracePeriodStartedAt =
           (token.tenantStorageGracePeriodStartedAt as string | null | undefined) ?? null;
+        // 2026-05-14 (PR #372): read-only 強制移行フラグを session に伝播
+        session.user.tenantSuspendedAt =
+          (token.tenantSuspendedAt as string | null | undefined) ?? null;
       }
       return session;
     },

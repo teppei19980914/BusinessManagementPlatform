@@ -94,6 +94,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 // Storage add-on (Phase 2 / 2026-05-08): Grace period 開始日時を JWT claim に
                 //   伝搬。middleware が write methods 時に NOW() と比較して 7 日経過判定。
                 storageGracePeriodStartedAt: true,
+                // 2026-05-14 (PR #372): read-only 強制移行フラグ。
+                //   middleware が write 系 HTTP method を 403 で遮断する判定に使う。
+                suspendedAt: true,
                 // PR-1 (2026-05-15): timezone / locale はテナント単位に集約。
                 //   従来 User.timezone / User.locale を JWT に載せていたが、テナント横断の
                 //   日付計算 (Beginner 残日数 / 月初リセット境界) で揺らがないようテナントの
@@ -235,6 +238,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           //   middleware で `NOW() - parse() >= 7 日` 判定 → write 系 403。
           tenantStorageGracePeriodStartedAt:
             user.tenant.storageGracePeriodStartedAt?.toISOString() ?? null,
+          // 2026-05-14 (PR #372): read-only 強制移行フラグの ISO 文字列、通常運用は null。
+          //   middleware が write 系 HTTP method を 403 TENANT_SUSPENDED で遮断する。
+          //   suspend 時には全ユーザの tokenVersion が increment されるため、既存セッションは
+          //   次リクエストで 401 SESSION_INVALIDATED となり再ログイン後に最新の claim が反映。
+          tenantSuspendedAt: user.tenant.suspendedAt?.toISOString() ?? null,
           name: user.name,
           email: user.email,
           systemRole: user.systemRole,
