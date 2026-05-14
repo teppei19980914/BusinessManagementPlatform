@@ -1,5 +1,5 @@
 /**
- * GET /api/admin/super/usage/export?yearMonth=YYYY-MM (P-5b / 2026-05-08)
+ * GET /api/admin/super/usage/export?yearMonth=YYYY-MM&includeDeleted=true (P-5b / 2026-05-08)
  *
  * 役割:
  *   super_admin が月次の請求業務を行うための CSV ダウンロード。
@@ -9,6 +9,11 @@
  *   - yearMonth 指定あり (過去月): 履歴テーブルから取得
  *     → `tenant_monthly_usage_history` から取得
  *
+ * クエリパラメタ:
+ *   - yearMonth: 'YYYY-MM' (省略時は当月)
+ *   - includeDeleted: 'true' を指定すると解約済テナントも CSV に含める
+ *     (2026-05-14 追加。月途中解約の請求漏れ検知用)
+ *
  * 認可:
  *   super_admin role 必須。それ以外は 403。
  *
@@ -16,13 +21,14 @@
  *   - Content-Type: text/csv; charset=utf-8
  *   - UTF-8 BOM 付き (Excel で日本語を文字化けさせないため)
  *   - 列: テナント連番 / テナント名 / プラン / API 呼出回数 / API 課金額 (円) /
- *         アクティブユーザ数 / 月次予算上限 (空欄=無制限)
+ *         アクティブユーザ数 / 月次予算上限 (空欄=無制限) / 解約日 (空欄=アクティブ)
  *   - ファイル名: tenant-usage-{yearMonth}.csv
  *
  * 関連:
  *   - 履歴サービス: src/services/super-admin.service.ts (listMonthlyUsageHistory)
  *   - 当月サービス: src/services/super-admin.service.ts (listAllTenants)
  *   - UI: src/app/(dashboard)/admin/super/usage/page.tsx
+ *   - 月次請求運用: docs/operations/BILLING_MONTHLY_OPERATIONS.md
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -52,18 +58,24 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const rawYearMonth = url.searchParams.get('yearMonth');
+  // 2026-05-14: 解約済テナント込みで取得するか (月途中解約の請求漏れ検知用)
+  const includeDeleted = url.searchParams.get('includeDeleted') === 'true';
 
   let csv: string;
   let filename: string;
 
   if (rawYearMonth == null || rawYearMonth === '') {
     // 当月分: 現在の Tenant 値を集計
-    const tenants = await listAllTenants();
+    const tenants = await listAllTenants({ includeDeleted });
     const currentYearMonth = formatCurrentYearMonth();
     csv = buildCurrentMonthCsv(tenants);
-    filename = `tenant-usage-${currentYearMonth}-current.csv`;
+    filename = includeDeleted
+      ? `tenant-usage-${currentYearMonth}-current-with-deleted.csv`
+      : `tenant-usage-${currentYearMonth}-current.csv`;
   } else {
-    // 過去月: 履歴テーブル
+    // 過去月: 履歴テーブル (履歴クエリは deletedAt フィルタが元々ないため
+    //   includeDeleted フラグの有無で結果は変わらないが、UI 経由の挙動を一貫させるため
+    //   ファイル名のみに反映する)
     const parsed = YearMonthSchema.safeParse(rawYearMonth);
     if (!parsed.success) {
       return NextResponse.json(
@@ -75,7 +87,9 @@ export async function GET(req: NextRequest) {
     const all = await listMonthlyUsageHistory(24);
     const filtered = all.filter((r) => r.yearMonth === parsed.data);
     csv = buildHistoryCsv(filtered);
-    filename = `tenant-usage-${parsed.data}.csv`;
+    filename = includeDeleted
+      ? `tenant-usage-${parsed.data}-with-deleted.csv`
+      : `tenant-usage-${parsed.data}.csv`;
   }
 
   // UTF-8 BOM 付与 (Excel での日本語文字化け回避)
@@ -113,6 +127,8 @@ const HEADERS_CURRENT = [
   'Storage使用量(バイト)',
   'Storage月額(円)',
   '合計月額(円)',
+  // 2026-05-14: 月途中解約の請求対象期間判別用 (空欄=アクティブ、ISO 日時=解約済)
+  '解約日',
   // P-G: 請求先情報 / PR C (2026-05-09 #5/#8/#10) で構造化
   '請求先種別',
   '会社名_法人名',
@@ -140,6 +156,8 @@ const HEADERS_HISTORY = [
   'Storage使用量(バイト)',
   'Storage月額(円)',
   '合計月額(円)',
+  // 2026-05-14: 月途中解約の請求対象期間判別用 (空欄=アクティブ、ISO 日時=解約済)
+  '解約日',
 ];
 
 function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>>): string {
@@ -159,6 +177,8 @@ function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>
         t.storageBytesUsed.toString(),
         t.storageAddonMonthlyJpy.toString(),
         t.totalCurrentMonthJpy.toString(),
+        // 2026-05-14: 解約日 (空欄=アクティブ)
+        t.deletedAt != null ? t.deletedAt.toISOString() : '',
         // P-G: 請求先列 / PR C (2026-05-09): 個人法人 + 構造化住所
         csvEscape(t.billingType === 'individual' ? '個人' : '法人'),
         csvEscape(t.billingCompanyName ?? ''),
@@ -194,6 +214,8 @@ function buildHistoryCsv(rows: Awaited<ReturnType<typeof listMonthlyUsageHistory
         r.storageBytesUsed.toString(),
         r.storageAddonJpy.toString(),
         r.totalJpy.toString(),
+        // 2026-05-14: 親テナントの解約日 (空欄=アクティブ)
+        r.tenantDeletedAt != null ? r.tenantDeletedAt.toISOString() : '',
       ].join(','),
     );
   }
