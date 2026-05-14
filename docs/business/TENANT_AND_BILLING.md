@@ -370,12 +370,32 @@ UI 上は「予算 ¥10,000 のうち、今月 ¥3,200 を使用 (32%)」のよ�
 
 第四に **機能別の内訳** で、「新規プロジェクト時の提案: N 回」「提案画面の再表示: M 回」「リスク起票時の関連 issue 検索: K 回」のように、`featureUnit` 単位で集計したテーブルを表示する。これによりユーザは「どの機能で多く使っているか」を理解し、利用パターンを最適化できる。
 
-これらは v1.x で完全実装する想定だが、**データ蓄積は v1 から開始する**。Tenant テーブルの集計フィールドと `ApiCallLog` テーブルを v1 から運用し、UI は v1.x で追加することで、UI 公開時点で過去 1 ヶ月分の履歴がすでに表示できる状態となる。
+**※ 2026-05-14 更新**: 本セクション以下に記載のうち、**「v1.x で UI 実装」と書かれていた次の項目は v1 (6/1) 時点で既に実装済み** となっている。
+
+- テナント管理者設定画面（`/settings/tenant`）: プラン情報表示・プラン変更・予算上限自己設定・リアルタイム使用量タイル（当月 API 呼出 / API 費用 / 月次予算上限 / 予算消化率プログレスバー）— [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx)
+- super_admin 向けの全テナント横断使用量サマリ（`/admin/super`）: 顧客テナント数 / 今月の API 呼出 / 今月の合計課金 / プラン別分布 / CSV 請求エクスポート — [src/app/(dashboard)/admin/super/](../../src/app/(dashboard)/admin/super/)
+- API 利用量再集計ボタン: `POST /api/tenants/me/recalculate` で ApiCallLog の SUM から再計算
+
+**残る v1.x の TODO**: Stripe Metered Billing 連携（月末自動請求 / Webhook 同期）、機能別 (`featureUnit`) 内訳ダッシュボード、過去 6 ヶ月の使用量履歴グラフ表示。
+
+---
+
+これらは段階的に実装してきており、**データ蓄積は v1 から開始済み**。Tenant テーブルの集計フィールドと `ApiCallLog` テーブルを v1 から運用しており、画面上でも当月分はリアルタイムに表示される。
 
 #### 34.14.8 v1 と v1.x の実装範囲
 
-**v1 (6月1日) で実装する範囲** は **データモデルと内部ロジック** に絞る。Tenant テーブルへの `plan`、`currentMonthApiCallCount`、`currentMonthApiCostJpy`、`monthlyBudgetCapJpy`、`beginnerMonthlyCallLimit`、`pricePerCallHaiku`、`pricePerCallSonnet` カラムの追加、ApiCallLog テーブルの新設、API 呼び出し直前にプランと使用量をチェックして適切に課金 / 縮退するミドルウェアロジック、Beginner プランの月間上限チェック、Vercel Cron による月初リセットバッチ、を含む。v1 時点ではすべてのテナント (実質 default-tenant のみ) は Beginner プラン扱いで稼働し、Expert / Pro への切替は admin が DB を直接更新する運用となる。ユーザ向け UI は v1 では公開しない。
+**v1 (6月1日) で実装する範囲**:
 
-**v1.x で実装する範囲** は **UI と Stripe 連携** で、テナント管理者設定画面 (プラン情報表示・変更ボタン・予算上限自己設定・リアルタイムダッシュボード)、Stripe との連携 (Subscription with Metered Billing、月末自動請求)、ダウングレード時の警告 UI と席数制約チェック、Webhook 経由のプラン状態同期、を順次追加する。
+- データモデル: Tenant への `plan`、`currentMonthApiCallCount`、`currentMonthApiCostJpy`、`monthlyBudgetCapJpy`、`beginnerMonthlyCallLimit`、`pricePerCallHaiku`、`pricePerCallSonnet` カラム、ApiCallLog テーブル
+- 内部ロジック: API 呼び出し直前にプラン・使用量をチェックして適切に課金 / 縮退するミドルウェア（`withMeteredLLM`）、Beginner プランの月間上限チェック、Vercel Cron による月初リセット
+- **UI（実装済み）**:
+  - テナント管理者設定画面: プラン情報・プラン変更・予算上限設定・当月使用量タイル（プラン別構成: Beginner は「API 呼出 + 残数」、Expert/Pro は「API 呼出 + API 費用 + 月次予算上限 + 予算消化率」）
+  - super_admin ダッシュボード: 全テナント横断の使用量サマリ + 請求業務用 CSV エクスポート
+
+**v1.x で実装する残りの範囲**:
+
+- **Stripe 連携**: Subscription with Metered Billing、月末自動請求、Webhook 経由のプラン状態同期
+- **機能別 (`featureUnit`) 内訳ダッシュボード**: 「自動タグ抽出: N 回」「embedding 生成: M 回」のように、内部の課金単位ごとの集計表示
+- **過去 6 ヶ月の使用量履歴**: 月初リセット時のスナップショットを月次累積したグラフ表示
 
 Stripe の Metered Billing は本ユースケースに完全に適合する機能で、各 API 呼び出し時に Stripe にイベント送信 (`stripe.subscriptionItems.createUsageRecord`) するだけで、月末に自動で請求額が確定し、ユーザに請求書が送られる。実装パターンが業界標準なので、トラブルシューティングも容易である。
