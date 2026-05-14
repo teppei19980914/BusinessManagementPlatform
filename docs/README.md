@@ -39,14 +39,15 @@
 
 | # | トピック | 参照先 |
 |---|---|---|
-| 1 | 核心機能 — 提案エンジンの仕組み | [design/SUGGESTION_ENGINE.md](./design/SUGGESTION_ENGINE.md) |
-| 2 | UI 共通パターン (テーブル / ダイアログ / 一覧フィルタ等) | [design/UI_PATTERNS.md](./design/UI_PATTERNS.md) |
-| 3 | インフラ構成 (Vercel / Supabase / Brevo / Voyage 等) | [design/INFRASTRUCTURE.md](./design/INFRASTRUCTURE.md) |
-| 4 | 脅威モデル (セキュリティ設計の背景) | [security/README.md](./security/) / [security/SUGGESTION_ENGINE_THREAT_MODEL.md](./security/SUGGESTION_ENGINE_THREAT_MODEL.md) |
-| 5 | 障害対応の初動手順 | [operations/INCIDENT_RESPONSE.md](./operations/INCIDENT_RESPONSE.md) |
-| 6 | DB マイグレーション手順 | [operations/DB_MIGRATION_PROCEDURE.md](./operations/DB_MIGRATION_PROCEDURE.md) |
-| 7 | 過去の罠と教訓 (E2E の落とし穴・横展開漏れ事例) | [test/E2E_LESSONS.md](./test/E2E_LESSONS.md) / [knowledge/README.md](./knowledge/) |
-| 8 | 今後のロードマップ | [roadmap/RELEASE_ROADMAP.md](./roadmap/RELEASE_ROADMAP.md) |
+| 1 | **主要設計判断の根拠** (なぜこの設計にしたか) | [adr/](./adr/README.md) (ADR-0001〜0005) |
+| 2 | 核心機能 — 提案エンジンの仕組み | [design/SUGGESTION_ENGINE.md](./design/SUGGESTION_ENGINE.md) |
+| 3 | UI 共通パターン (テーブル / ダイアログ / 一覧フィルタ等) | [design/UI_PATTERNS.md](./design/UI_PATTERNS.md) |
+| 4 | インフラ構成 (Vercel / Supabase / Brevo / Voyage 等) | [design/INFRASTRUCTURE.md](./design/INFRASTRUCTURE.md) |
+| 5 | 脅威モデル (セキュリティ設計の背景) | [security/README.md](./security/) / [security/SUGGESTION_ENGINE_THREAT_MODEL.md](./security/SUGGESTION_ENGINE_THREAT_MODEL.md) |
+| 6 | 障害対応の初動手順 | [operations/INCIDENT_RESPONSE.md](./operations/INCIDENT_RESPONSE.md) |
+| 7 | DB マイグレーション手順 | [operations/DB_MIGRATION_PROCEDURE.md](./operations/DB_MIGRATION_PROCEDURE.md) |
+| 8 | 過去の罠と教訓 (E2E の落とし穴・横展開漏れ事例) | [test/E2E_LESSONS.md](./test/E2E_LESSONS.md) / [knowledge/README.md](./knowledge/) |
+| 9 | 今後のロードマップ | [roadmap/RELEASE_ROADMAP.md](./roadmap/RELEASE_ROADMAP.md) |
 
 ---
 
@@ -60,6 +61,7 @@
 | [operations/](./operations/) | 運用・移行手順書 | デプロイ手順、DB マイグレーション、AWS/Azure 移行計画、障害対応、Cron 構成、環境変数 |
 | [test/](./test/) | テスト設計書 | テスト戦略、E2E カバレッジ、視覚回帰チェックリスト、E2E 教訓集 |
 | [developer-guide/](./developer-guide/) | 開発者手順書 | 初期セットアップ、機能追加手順 (テーマ・マスタデータ・画面)、コミット&デプロイワークフロー |
+| [adr/](./adr/) | Architecture Decision Record | 主要設計判断 (採用したライブラリ / 課金方式 / 認可方式等) の理由を時系列でログ化 |
 | [knowledge/](./knowledge/) | ナレッジ・教訓集 | 過去の失敗事例と解決パターン (KDD エントリ蓄積) |
 | [roadmap/](./roadmap/) | ロードマップ・計画書 | リリース計画、提案エンジン v2 計画、過去の MVP 計画記録 |
 | [security/](./security/) | セキュリティ設計・運用 | 脅威モデル、セキュリティタスク、セキュリティ運用手順 |
@@ -79,6 +81,7 @@
 - テスト: [test/STRATEGY.md](./test/STRATEGY.md) / [test/E2E_LESSONS.md](./test/E2E_LESSONS.md)
 - 開発者向け: [developer-guide/HOW_TO_ADD_FEATURES.md](./developer-guide/HOW_TO_ADD_FEATURES.md)
 - ナレッジ: [knowledge/README.md](./knowledge/README.md) (索引)
+- 設計判断の根拠 (ADR): [adr/README.md](./adr/README.md)
 - 思想・価値観 (なぜ作るのか): [vision/README.md](./vision/README.md)
 
 ---
