@@ -77,6 +77,14 @@ type NavItem = {
   adminOnly?: boolean;
   /** PR-X3 (2026-05-07): true なら systemRole='super_admin' のみに表示 */
   superAdminOnly?: boolean;
+  /**
+   * 2026-05-14: adminOnly 項目を super_admin にも表示する。
+   *   管理テナント (super_admin 所属) のシードデータ管理に既存 admin 画面を流用するため、
+   *   nav 上は admin と super_admin の両方に項目を露出させる必要がある。
+   *   サービス層は session.user.tenantId (= super_admin の場合 MANAGEMENT_TENANT_ID) で
+   *   自動的に管理テナントスコープとなるため、画面・API ロジック自体は変更不要。
+   */
+  visibleToSuperAdmin?: boolean;
 };
 
 type NavGroup = {
@@ -96,7 +104,14 @@ type NavGroupConfig = {
   labelKey: string;
   adminOnly?: boolean;
   superAdminOnly?: boolean;
-  items: { href: string; labelKey: string; adminOnly?: boolean; superAdminOnly?: boolean }[];
+  items: {
+    href: string;
+    labelKey: string;
+    adminOnly?: boolean;
+    superAdminOnly?: boolean;
+    /** 2026-05-14: adminOnly 項目を super_admin にも露出させるフラグ (NavItem 同義) */
+    visibleToSuperAdmin?: boolean;
+  }[];
 };
 
 const navGroupsConfig: NavGroupConfig[] = [
@@ -104,7 +119,8 @@ const navGroupsConfig: NavGroupConfig[] = [
     labelKey: 'groupProjects',
     items: [
       { href: PROJECTS_ROUTE, labelKey: 'allProjects' },
-      { href: CUSTOMERS_ROUTE, labelKey: 'allCustomers', adminOnly: true },
+      // 2026-05-14: super_admin にも露出。管理テナントの Customer シードを本画面で CRUD する。
+      { href: CUSTOMERS_ROUTE, labelKey: 'allCustomers', adminOnly: true, visibleToSuperAdmin: true },
     ],
   },
   {
@@ -150,7 +166,9 @@ const navGroupsConfig: NavGroupConfig[] = [
 /** 指定 item がユーザに表示可能か (adminOnly / superAdminOnly を考慮、PR-X3 拡張) */
 function isVisibleItem(item: NavItem, isAdmin: boolean, isSuperAdmin: boolean): boolean {
   if (item.superAdminOnly) return isSuperAdmin;
-  if (item.adminOnly) return isAdmin;
+  // 2026-05-14: visibleToSuperAdmin が true なら adminOnly でも super_admin に表示する。
+  //   管理テナントのシードデータ管理 (Customer 等) で既存 admin 画面を流用するため。
+  if (item.adminOnly) return isAdmin || (item.visibleToSuperAdmin === true && isSuperAdmin);
   return true;
 }
 
@@ -432,6 +450,8 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
           label: tNav(it.labelKey),
           adminOnly: it.adminOnly,
           superAdminOnly: it.superAdminOnly,
+          // 2026-05-14: 管理テナントのシード CRUD で super_admin にも露出させるフラグを伝搬
+          visibleToSuperAdmin: it.visibleToSuperAdmin,
         })),
       })),
     [tNav],

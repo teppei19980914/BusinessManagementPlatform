@@ -1,9 +1,10 @@
 /**
- * GET    /api/customers/[customerId]  - 顧客詳細取得 (admin 限定)
- * PATCH  /api/customers/[customerId]  - 顧客更新 (admin 限定)
- * DELETE /api/customers/[customerId]  - 顧客物理削除 (admin 限定、active Project 紐付きなし時のみ)
+ * GET    /api/customers/[customerId]  - 顧客詳細取得 (admin / super_admin 限定)
+ * PATCH  /api/customers/[customerId]  - 顧客更新 (admin / super_admin 限定)
+ * DELETE /api/customers/[customerId]  - 顧客物理削除 (admin / super_admin 限定、active Project 紐付きなし時のみ)
  *
- * 認可: すべて systemRole='admin' のみ。
+ * 認可: すべて systemRole='admin' または 'super_admin'。
+ *   2026-05-14: super_admin にも開放 (管理テナントのシード Customer 管理用)。
  *
  * 監査:
  *   - PATCH: audit_logs (action=UPDATE, entityType=customer) に beforeValue / afterValue 記録
@@ -19,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
+import { isAdminOrAbove } from '@/lib/permissions/role';
 import { updateCustomerSchema } from '@/lib/validators/customer';
 import {
   getCustomer,
@@ -50,7 +52,7 @@ export async function GET(
 ) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
-  if (user.systemRole !== 'admin') return await forbidden();
+  if (!isAdminOrAbove(user)) return await forbidden();
 
   const { customerId } = await params;
   const customer = await getCustomer(customerId, user.tenantId);
@@ -65,7 +67,7 @@ export async function PATCH(
 ) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
-  if (user.systemRole !== 'admin') return await forbidden();
+  if (!isAdminOrAbove(user)) return await forbidden();
 
   const { customerId } = await params;
 
@@ -110,7 +112,7 @@ export async function DELETE(
 ) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
-  if (user.systemRole !== 'admin') return await forbidden();
+  if (!isAdminOrAbove(user)) return await forbidden();
 
   const { customerId } = await params;
   const before = await getCustomer(customerId, user.tenantId);

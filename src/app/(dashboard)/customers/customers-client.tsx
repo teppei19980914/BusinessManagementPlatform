@@ -12,7 +12,8 @@
  *   - 顧客名クリックで詳細画面 (/customers/[id]) に遷移
  *   - 詳細画面側で編集 + カスケード削除 (active Project があっても cascade オプションで一括削除) 対応
  *
- * 認可: ページ側 (page.tsx) で systemRole='admin' を確認済の前提。
+ * 認可: ページ側 (page.tsx) で systemRole='admin' or 'super_admin' (isAdminOrAbove) を確認済の前提。
+ *   2026-05-14: super_admin にも開放 (管理テナントのシード Customer 管理用)。
  */
 
 import { useState } from 'react';
