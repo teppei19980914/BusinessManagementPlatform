@@ -357,7 +357,6 @@ const dayMarkers = useMemo(
 5. ✅ タブ / モーダル配下の UI 向けデータを eager 取得していないか？
 
 恒久化のため以下に配置済み:
-- `docs/knowledge/KNW-002_performance-optimization-patterns.md` — 詳細解説版
 - `docs/DESIGN.md` §17.6 — 設計書本体への反映
 - Claude Code メモリ: `feedback_perf_antipatterns.md` — 将来の会話で自動参照
 
@@ -371,6 +370,5 @@ const dayMarkers = useMemo(
 | `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx` | `TaskTreeNode` に `React.memo`・`isSelected` 親算出・`toggleSelect` を useCallback |
 | `src/services/task.service.test.ts` | `buildTree` 単体テスト 3 件追加 |
 | `docs/DESIGN.md` | §17.6 アンチパターン・チェックリスト追加 |
-| `docs/knowledge/KNW-002_performance-optimization-patterns.md` | 新規 |
 
 **検証結果**: `pnpm lint ✓` / `pnpm test ✓（216 件全合格）` / `pnpm build ✓`。

@@ -243,3 +243,26 @@ GDPR 等で個別ユーザの削除請求があった場合は **super_admin が
 | 🟢 低 | Beginner プランのアップセル誘導 UI | リリース後 4 ヶ月 |
 
 優先順位は [ROLE_REFACTORING_PLAN.md §7](../roadmap/ROLE_REFACTORING_PLAN.md) と [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) に基づく。
+
+---
+
+## 追加変更履歴
+
+### 2026-05-14: Embedding 生成コスト最適化 (PR #357 + #358)
+
+**運用者向け要約**: ユーザ負担削減のため Voyage AI 呼出回数を削減。既存データへの影響なし、新規操作のみに適用。
+
+| 変更 | 内容 | 影響 |
+|---|---|---|
+| 案A (PR #357) | 外部データ import (CSV/XLSX) の embedding 生成を **N 件 → 1 ApiCallLog** に集約 | テナント `currentMonthApiCallCount` の増分が import 単位で +1 となり、ユーザ視点の請求回数と実態が一致 |
+| 案D (PR #357) | Knowledge / RiskIssue / Retrospective の `visibility='draft'` (公開範囲: 自分のみ) では embedding 生成しない | 課金対象が「実際に提案エンジンに乗るデータ」に限定。draft → public 遷移時に初回生成 |
+| フォローアップ (PR #358) | 外部 import 経路と suggestion engine の RiskIssue クエリで visibility 整合性漏れを修正 | 「下書きで取込 → 課金された」「draft な resolved RiskIssue が提案候補に出る」事故を構造的に防止 |
+
+**ユーザ影響**: 既に生成済の embedding は保持。新規操作のみ動作変更。
+
+**監視ポイント**:
+- 本リリース後 1〜2 週間は `api_call_logs` テーブルの `feature_unit='external-import-embedding'` の件数が **減少傾向** となるはず (= 1 import 単位で 1 件)
+- `Tenant.currentMonthApiCallCount` の前月比が顕著に下がる可能性 (= 期待動作)
+- super_admin ダッシュボードの「今月の合計課金」も同様に減少傾向
+
+詳細は [KDD_PATTERNS.md §5.X+50 §5.X+51](../knowledge/KDD_PATTERNS.md) を参照。

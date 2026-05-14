@@ -1,4 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// PR #361 (2026-05-14): previewActivityWorkload テスト用に prisma を mock。
+//   既存の pure 関数テスト (buildTree など) には影響しない。
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    task: {
+      findMany: vi.fn(),
+    },
+  },
+}));
+
 import {
   parseCsvLine,
   buildTree,
@@ -6,11 +17,13 @@ import {
   normalizeActualDatesForStatus,
   normalizeProgressForStatus,
   isWpAggregationEqual,
+  previewActivityWorkload,
   type WpAggregationChild,
   type WpAggregationResult,
 } from './task.service';
 import type { TaskDTO } from './task.service';
 import type { Prisma } from '@/generated/prisma/client';
+import { prisma } from '@/lib/db';
 
 // Prisma.Decimal の代わりにテスト用の軽量代替を提供。
 // Number() で変換される前提なので primitive number / string どちらも受け付けられる。
@@ -428,5 +441,136 @@ describe('isWpAggregationEqual', () => {
     const result: WpAggregationResult = { ...baseResult, assigneeId: null };
     const current = { ...baseResult, assigneeId: null as string | null };
     expect(isWpAggregationEqual(current, result)).toBe(true);
+  });
+});
+
+// ================================================================
+// PR #361 (2026-05-14): previewActivityWorkload テスト
+// ================================================================
+
+describe('previewActivityWorkload', () => {
+  const TENANT_A = '11111111-1111-1111-1111-111111111111';
+  const PROJECT_ID = 'proj-1';
+  const ASSIGNEE = 'user-A';
+  const BASE_INPUT = {
+    projectId: PROJECT_ID,
+    assigneeId: ASSIGNEE,
+    viewerTenantId: TENANT_A,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('既存タスクなし + 新規入力 2 日 × 8h → 1 日 4h (= max=4.0, ok)', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+    const r = await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-15',
+      endDate: '2026-06-16',
+      plannedEffort: 8,
+    });
+    expect(r.maxDailyEffort).toBe(4);
+    expect(r.maxDailyDate).toBe('2026-06-15');
+    expect(r.level).toBe('ok');
+  });
+
+  it('既存と期間重複 → 重なる日の合算 max (alert)', async () => {
+    // 既存タスク: 2026-06-15 のみ 5h (1 日完結)
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      {
+        plannedStartDate: new Date('2026-06-15T00:00:00.000Z'),
+        plannedEndDate: new Date('2026-06-15T00:00:00.000Z'),
+        plannedEffort: 5,
+      },
+    ] as never);
+    // 入力: 2026-06-15〜06-16 で 8h (1 日 4h ずつ)
+    const r = await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-15',
+      endDate: '2026-06-16',
+      plannedEffort: 8,
+    });
+    // 06-15: 5 (既存) + 4 (新規) = 9.0h → alert (8h 超)
+    expect(r.maxDailyEffort).toBe(9);
+    expect(r.maxDailyDate).toBe('2026-06-15');
+    expect(r.level).toBe('alert');
+  });
+
+  it('期間重複なし → 各日の max が独立、新規分のみが max', async () => {
+    // 既存: 2026-06-10 のみ 3h
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      {
+        plannedStartDate: new Date('2026-06-10T00:00:00.000Z'),
+        plannedEndDate: new Date('2026-06-10T00:00:00.000Z'),
+        plannedEffort: 3,
+      },
+    ] as never);
+    // 入力: 2026-06-15 (1 日) × 7.5h
+    const r = await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-15',
+      endDate: '2026-06-15',
+      plannedEffort: 7.5,
+    });
+    // 既存 06-10 は入力期間外なので max に含まれない、06-15 は 7.5h
+    expect(r.maxDailyEffort).toBe(7.5);
+    expect(r.maxDailyDate).toBe('2026-06-15');
+    expect(r.level).toBe('warning'); // 7.5 > 7
+  });
+
+  it('excludeTaskId で自タスク除外 (編集時の二重カウント防止)', async () => {
+    // excludeTaskId='task-edit-self' を指定 → findMany の where に id: { not: 'task-edit-self' } が含まれること
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+    await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-15',
+      endDate: '2026-06-15',
+      plannedEffort: 4,
+      excludeTaskId: 'task-edit-self',
+    });
+    const call = vi.mocked(prisma.task.findMany).mock.calls[0]![0]!;
+    const where = call.where as { id?: { not: string } };
+    expect(where.id).toEqual({ not: 'task-edit-self' });
+  });
+
+  it('plannedEffort=0 → max=0 (ok)', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+    const r = await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-15',
+      endDate: '2026-06-15',
+      plannedEffort: 0,
+    });
+    expect(r.maxDailyEffort).toBe(0);
+    expect(r.level).toBe('ok');
+  });
+
+  it('startDate > endDate → max=0, maxDailyDate=null', async () => {
+    const r = await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-20',
+      endDate: '2026-06-15',
+      plannedEffort: 8,
+    });
+    expect(r.maxDailyEffort).toBe(0);
+    expect(r.maxDailyDate).toBeNull();
+    expect(r.level).toBe('ok');
+    // 不正期間は早期 return = findMany を呼ばない
+    expect(prisma.task.findMany).not.toHaveBeenCalled();
+  });
+
+  // ★ テナント分離 (severity-1): where 句に project.tenantId フィルタが必須
+  it('[テナント分離] findMany の where に project: { tenantId: viewerTenantId } を必須付与', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+    await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-15',
+      endDate: '2026-06-15',
+      plannedEffort: 4,
+    });
+    const call = vi.mocked(prisma.task.findMany).mock.calls[0]![0]!;
+    const where = call.where as { project?: { tenantId: string } };
+    expect(where.project).toEqual({ tenantId: TENANT_A });
   });
 });

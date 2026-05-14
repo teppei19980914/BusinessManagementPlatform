@@ -41,6 +41,11 @@ Knowledge / RiskIssue / Retrospective の主要 text フィールドから **Voy
 
 text が変更されない更新 (visibility のみの変更等) では Voyage は呼ばれない (LLM 課金回避設計)。
 
+**コスト最適化 (PR #357 + #358 / 2026-05-14)**:
+- **公開範囲: 自分のみ (`visibility='draft'`)** で作成・更新された資産は embedding を生成しない。draft は提案エンジンの検索対象外なので、生成しても永遠に利用されない。draft → public 遷移時に初回生成される (= 公開化時に提案候補に乗る)。
+- **外部 import (CSV/XLSX) で複数件取込** する場合、`withMeteredLLM` を **1 回だけ** ラップし、callback 内で Voyage を必要数バッチ分割呼出する設計。**N 件 import = 1 ApiCallLog = Tenant counter +1** に統一され、ユーザに見える課金回数と実態が一致する。
+- import に visibility='draft' の行が含まれる場合、当該行は embedding 生成・課金対象外。wizard 画面で「うち下書き N 件 (課金対象外)」と表示。
+
 #### B-3. 提案機能実行時 (トリガー③)
 
 Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 内で計算**。3 軸合算スコアで候補を並べ替え、上位 N 件を返す。**外部 API 呼び出しは発生しない**。

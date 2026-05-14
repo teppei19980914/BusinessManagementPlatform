@@ -18,7 +18,9 @@ vi.mock('@/lib/llm/voyage-client', () => ({
 
 import {
   MAX_INPUT_CHARS,
+  MAX_BATCH_SIZE,
   generateEmbedding,
+  generateBatchEmbeddings,
   persistEmbedding,
   searchSimilar,
 } from './embedding.service';
@@ -487,5 +489,150 @@ describe('searchSimilar', () => {
       const sql = joinTemplateStrings(vi.mocked(prisma.$queryRaw).mock.calls[0]!);
       expect(sql).toContain(`FROM "${table}"`);
     }
+  });
+});
+
+// ================================================================
+// PR #357 (2026-05-14): generateBatchEmbeddings (1 ApiCallLog に集約)
+// ================================================================
+describe('generateBatchEmbeddings (PR #357)', () => {
+  it('texts.length <= MAX_BATCH_SIZE: voyageEmbed が 1 回 / withMeteredLLM も 1 回', async () => {
+    const texts = ['text1', 'text2', 'text3'];
+    const fakes = texts.map(() => makeFakeEmbedding());
+
+    vi.mocked(withMeteredLLM).mockImplementation(async (_opts, call) => {
+      vi.mocked(voyageEmbed).mockResolvedValueOnce({
+        embeddings: fakes,
+        totalTokens: 30,
+      });
+      const r = await call({ modelName: 'voyage-4-lite', requestId: 'req-batch' });
+      return {
+        ok: true,
+        result: r.result,
+        costJpy: 5,
+        latencyMs: 80,
+        modelName: 'voyage-4-lite',
+        requestId: 'req-batch',
+      };
+    });
+
+    const result = await generateBatchEmbeddings({
+      texts,
+      featureUnit: 'test-batch',
+      tenantId: TENANT_A,
+      userId: USER_ID,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.embeddings).toHaveLength(3);
+      expect(result.costJpy).toBe(5);
+    }
+    expect(withMeteredLLM).toHaveBeenCalledTimes(1);
+    expect(voyageEmbed).toHaveBeenCalledTimes(1);
+  });
+
+  it('texts.length > MAX_BATCH_SIZE: voyageEmbed は内部で複数回呼ばれるが withMeteredLLM は 1 回', async () => {
+    const N = MAX_BATCH_SIZE + 50; // 178 件
+    const texts = new Array(N).fill(0).map((_, i) => `text${i}`);
+
+    let voyageCallCount = 0;
+    vi.mocked(withMeteredLLM).mockImplementation(async (_opts, call) => {
+      // バッチごとに voyageEmbed が呼ばれる
+      vi.mocked(voyageEmbed).mockImplementation(async (input) => {
+        voyageCallCount += 1;
+        return {
+          embeddings: input.texts.map(() => makeFakeEmbedding()),
+          totalTokens: input.texts.length * 10,
+        };
+      });
+      const r = await call({ modelName: 'voyage-4-lite', requestId: 'req-batch' });
+      return {
+        ok: true,
+        result: r.result,
+        costJpy: 7,
+        latencyMs: 200,
+        modelName: 'voyage-4-lite',
+        requestId: 'req-batch',
+      };
+    });
+
+    const result = await generateBatchEmbeddings({
+      texts,
+      featureUnit: 'test-batch',
+      tenantId: TENANT_A,
+      userId: USER_ID,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // texts と同じ件数の embedding を返す
+      expect(result.embeddings).toHaveLength(N);
+      // costJpy は withMeteredLLM が決める固定値 = 1 ApiCallLog 分
+      expect(result.costJpy).toBe(7);
+    }
+    // ApiCallLog / counter increment は 1 度のみ (ユーザ要件: 1 import = 1 API 呼出)
+    expect(withMeteredLLM).toHaveBeenCalledTimes(1);
+    // 内部 voyageEmbed は MAX_BATCH_SIZE 単位で 2 回呼ばれる
+    expect(voyageCallCount).toBe(2);
+  });
+
+  it('texts が空配列なら output_invalid を返し voyageEmbed を呼ばない', async () => {
+    const result = await generateBatchEmbeddings({
+      texts: [],
+      featureUnit: 'test',
+      tenantId: TENANT_A,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('output_invalid');
+    expect(withMeteredLLM).not.toHaveBeenCalled();
+    expect(voyageEmbed).not.toHaveBeenCalled();
+  });
+
+  it('空白のみの text が含まれる場合 output_invalid', async () => {
+    const result = await generateBatchEmbeddings({
+      texts: ['valid', '   '],
+      featureUnit: 'test',
+      tenantId: TENANT_A,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('output_invalid');
+    expect(withMeteredLLM).not.toHaveBeenCalled();
+  });
+
+  it('voyageEmbed が途中で失敗したら全体 llm_error (部分失敗を扱わない)', async () => {
+    const texts = new Array(MAX_BATCH_SIZE + 10).fill('x'); // 138 件 = 2 バッチ
+    vi.mocked(withMeteredLLM).mockImplementation(async (_opts, call) => {
+      let calls = 0;
+      vi.mocked(voyageEmbed).mockImplementation(async (input) => {
+        calls += 1;
+        if (calls === 2) throw new Error('voyage 2nd batch failed');
+        return {
+          embeddings: input.texts.map(() => makeFakeEmbedding()),
+          totalTokens: input.texts.length,
+        };
+      });
+      try {
+        const r = await call({ modelName: 'voyage-4-lite', requestId: 'req' });
+        return {
+          ok: true,
+          result: r.result,
+          costJpy: 0,
+          latencyMs: 0,
+          modelName: 'voyage-4-lite',
+          requestId: 'req',
+        };
+      } catch (e) {
+        return { ok: false, reason: 'llm_error', error: e, message: String(e) };
+      }
+    });
+
+    const result = await generateBatchEmbeddings({
+      texts,
+      featureUnit: 'test',
+      tenantId: TENANT_A,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('llm_error');
   });
 });

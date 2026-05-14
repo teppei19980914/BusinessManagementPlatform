@@ -390,21 +390,25 @@ export async function createKnowledge(
 
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存。
   //   失敗時はサイレントにスキップ (本体保存は成功、suggestion engine は 2 軸縮退モード)。
-  await generateAndPersistEntityEmbedding({
-    table: 'knowledges',
-    rowId: k.id,
-    tenantId,
-    userId,
-    text: composeKnowledgeText({
-      title: input.title,
-      background: input.background,
-      content: input.content,
-      result: input.result,
-      conclusion: input.conclusion ?? null,
-      recommendation: input.recommendation ?? null,
-    }),
-    featureUnit: 'knowledge-embedding',
-  });
+  // PR #357 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) は提案エンジン側で
+  //   filter 除外されるため、embedding を生成せず Voyage API 呼出 (= 課金) も発生させない。
+  if (k.visibility !== 'draft') {
+    await generateAndPersistEntityEmbedding({
+      table: 'knowledges',
+      rowId: k.id,
+      tenantId,
+      userId,
+      text: composeKnowledgeText({
+        title: input.title,
+        background: input.background,
+        content: input.content,
+        result: input.result,
+        conclusion: input.conclusion ?? null,
+        recommendation: input.recommendation ?? null,
+      }),
+      featureUnit: 'knowledge-embedding',
+    });
+  }
 
   return toKnowledgeDTO(k);
 }
@@ -471,6 +475,8 @@ export async function updateKnowledge(
       result: true,
       conclusion: true,
       recommendation: true,
+      // PR #357 (2026-05-14): visibility 遷移 (draft ↔ public) で embedding 生成判定
+      visibility: true,
     },
   });
   if (!existing) throw new Error('NOT_FOUND');
@@ -523,8 +529,19 @@ export async function updateKnowledge(
     },
   });
 
-  // PR #5-c: text 変更時のみ embedding を再生成 (変更なしは LLM 課金回避)
-  if (textFieldsChanging) {
+  // PR #5-c + PR #357 (2026-05-14): embedding 生成判定マトリクス:
+  //   - 新しい visibility が draft     → 生成しない (公開範囲: 自分のみは提案候補外)
+  //   - draft → public                → 生成 (text 変更不要、初回 embedding 化)
+  //   - public → public              → text 変更時のみ生成
+  //   - public → draft               → 生成しない (既存 embedding は保持)
+  const wasDraft = existing.visibility === 'draft';
+  const willBeDraft = (input.visibility ?? existing.visibility) === 'draft';
+  const becameVisible = wasDraft && !willBeDraft; // draft → public
+  const stayedVisible = !wasDraft && !willBeDraft; // public → public
+  const shouldGenerateEmbedding =
+    !willBeDraft && (becameVisible || (stayedVisible && textFieldsChanging));
+
+  if (shouldGenerateEmbedding) {
     await generateAndPersistEntityEmbedding({
       table: 'knowledges',
       rowId: knowledgeId,

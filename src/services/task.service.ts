@@ -52,6 +52,8 @@ import type { Prisma } from '@/generated/prisma/client';
 import type { UpdateProgressInput } from '@/lib/validators/task';
 import type { z } from 'zod/v4';
 import type { createTaskSchema, updateTaskSchema } from '@/lib/validators/task';
+// PR #361 (2026-05-14): 日次工数プレビュー閾値定数
+import { classifyWorkloadLevel, type WorkloadLevel } from '@/config/workload';
 
 type CreateTaskInput = z.infer<typeof createTaskSchema>;
 type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
@@ -380,6 +382,133 @@ function countInclusiveDays(start: Date, end: Date): number {
 function round(n: number, digits: number): number {
   const f = 10 ** digits;
   return Math.round(n * f) / f;
+}
+
+// ================================================================
+// PR #361 (2026-05-14): ACT 編集時の日次工数プレビュー
+// ================================================================
+
+export type WorkloadPreviewInput = {
+  projectId: string;
+  /** プレビュー対象の担当者 ID */
+  assigneeId: string;
+  /** 入力中のタスクの計画開始日 ('YYYY-MM-DD') */
+  startDate: string;
+  /** 入力中のタスクの計画終了日 ('YYYY-MM-DD') */
+  endDate: string;
+  /** 入力中のタスクの計画工数 (時間) */
+  plannedEffort: number;
+  /** 編集時に自タスクを既存集計から除外する。新規作成時は undefined */
+  excludeTaskId?: string;
+  /** テナント境界 (severity-1 越境防止) */
+  viewerTenantId: string;
+};
+
+export type WorkloadPreviewResult = {
+  /** 期間内の最大日工数 (時間、小数点 2 桁丸め) */
+  maxDailyEffort: number;
+  /** 最大日工数が現れる日付 ('YYYY-MM-DD')。入力範囲が無効なら null */
+  maxDailyDate: string | null;
+  /** UI 色付け用レベル (`classifyWorkloadLevel` の結果) */
+  level: WorkloadLevel;
+};
+
+/**
+ * ACT 作成・編集中の入力 (開始日・終了日・担当者・工数) から、
+ * 当該担当者の **現プロジェクト内** の日次工数を、既存タスク + 入力中タスクで
+ * 合算して 1 日あたりの最大値を返す。
+ *
+ * アルゴリズム:
+ *   - 既存 ACT (type='activity', assigneeId=X, 期間 + 工数あり) を取得
+ *   - excludeTaskId が指定されていれば除外 (= 編集時の自タスク二重カウント防止)
+ *   - 各既存タスクの工数を期間日数で均等按分し、日付 → 工数 の Map に集計
+ *   - 入力中タスクも同様に按分して同 Map に加算
+ *   - 入力期間内の各日について最大値を探索
+ *
+ * テナント分離 (severity-1):
+ *   - where 句に `project: { tenantId: viewerTenantId }` を必須付与
+ *   - 別テナントの task が混入しないことを invariant テストで保証
+ *
+ * @returns { maxDailyEffort, maxDailyDate, level } 入力が無効なら maxDailyEffort=0, maxDailyDate=null, level='ok'
+ */
+export async function previewActivityWorkload(
+  input: WorkloadPreviewInput,
+): Promise<WorkloadPreviewResult> {
+  const startDate = new Date(`${input.startDate}T00:00:00.000Z`);
+  const endDate = new Date(`${input.endDate}T00:00:00.000Z`);
+  const days = countInclusiveDays(startDate, endDate);
+  if (days <= 0 || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return { maxDailyEffort: 0, maxDailyDate: null, level: classifyWorkloadLevel(0) };
+  }
+
+  // 既存 ACT を取得 (severity-1: tenantId フィルタ必須)
+  const existingTasks = await prisma.task.findMany({
+    where: {
+      projectId: input.projectId,
+      deletedAt: null,
+      type: 'activity',
+      assigneeId: input.assigneeId,
+      plannedStartDate: { not: null },
+      plannedEndDate: { not: null },
+      project: { tenantId: input.viewerTenantId },
+      ...(input.excludeTaskId ? { id: { not: input.excludeTaskId } } : {}),
+    },
+    select: {
+      plannedStartDate: true,
+      plannedEndDate: true,
+      plannedEffort: true,
+    },
+  });
+
+  // 日付 → 工数 の集計 Map
+  const dailyMap = new Map<string, number>();
+
+  for (const t of existingTasks) {
+    if (!t.plannedStartDate || !t.plannedEndDate) continue;
+    const effort = Number(t.plannedEffort);
+    if (effort <= 0) continue;
+    const taskDays = countInclusiveDays(t.plannedStartDate, t.plannedEndDate);
+    if (taskDays <= 0) continue;
+    const perDay = effort / taskDays;
+    const cursor = new Date(t.plannedStartDate);
+    for (let i = 0; i < taskDays; i++) {
+      const ymd = cursor.toISOString().split('T')[0]!;
+      dailyMap.set(ymd, (dailyMap.get(ymd) ?? 0) + perDay);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+  }
+
+  // 入力中タスクを加算 (plannedEffort > 0 のみ。0 でも下記の max 探索で問題ないが早期 return)
+  if (input.plannedEffort > 0) {
+    const perDay = input.plannedEffort / days;
+    const cursor = new Date(startDate);
+    for (let i = 0; i < days; i++) {
+      const ymd = cursor.toISOString().split('T')[0]!;
+      dailyMap.set(ymd, (dailyMap.get(ymd) ?? 0) + perDay);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+  }
+
+  // 入力期間内の日付について最大値を探索
+  let maxEffort = 0;
+  let maxDate: string | null = null;
+  const cursor = new Date(startDate);
+  for (let i = 0; i < days; i++) {
+    const ymd = cursor.toISOString().split('T')[0]!;
+    const effort = dailyMap.get(ymd) ?? 0;
+    if (effort > maxEffort) {
+      maxEffort = effort;
+      maxDate = ymd;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  const rounded = round(maxEffort, 2);
+  return {
+    maxDailyEffort: rounded,
+    maxDailyDate: maxDate,
+    level: classifyWorkloadLevel(rounded),
+  };
 }
 
 /**

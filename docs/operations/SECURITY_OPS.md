@@ -92,7 +92,7 @@ Dashboard → Integrations → Data API → Settings で以下を確認:
 
 #### 関連
 
-- KDD ナレッジ: [docs/knowledge/KDD_PATTERNS.md §5.X+50](../knowledge/KDD_PATTERNS.md) (Supabase Data API デフォルト grant の罠)
+- KDD ナレッジ: [docs/knowledge/KDD_PATTERNS.md §5.X+53](../knowledge/KDD_PATTERNS.md) (Supabase Data API デフォルト grant の罠)
 - Migration: [prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql](../../prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql)
 - Supabase 公式 RLS: https://supabase.com/docs/guides/database/postgres/row-level-security
 

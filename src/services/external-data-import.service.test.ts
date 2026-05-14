@@ -50,8 +50,13 @@ vi.mock('@/lib/db', () => {
   };
 });
 
+// PR #357 (2026-05-14): apply 経路は単一テナント版から batch 版に切替
 vi.mock('@/services/embedding.service', () => ({
-  generateAndPersistEntityEmbedding: vi.fn(async () => undefined),
+  generateAndPersistBatchEmbeddings: vi.fn(async () => ({
+    generated: 0,
+    failed: 0,
+    costJpy: 0,
+  })),
 }));
 
 vi.mock('@/services/knowledge.service', () => ({
@@ -378,6 +383,11 @@ describe('applyImport', () => {
     userId?: string;
     expiresAt?: Date;
     knowledge?: number;
+    /** PR #357 (2026-05-14): RiskIssue 件数も指定可能に (バッチ embedding テスト用) */
+    riskIssue?: number;
+    /** PR #358 (2026-05-14): Knowledge / RiskIssue の visibility 上書き (draft skip テスト用) */
+    knowledgeVisibility?: 'draft' | 'public' | 'company';
+    riskIssueVisibility?: 'draft' | 'public';
   }) {
     return {
       id: 'preview-1',
@@ -394,9 +404,25 @@ describe('applyImport', () => {
           techTags: [],
           processTags: [],
           businessDomainTags: [],
-          visibility: 'company',
+          // PR #358 (2026-05-14): visibility 上書き可能に。デフォルトは embedding 生成対象の 'company'。
+          visibility: opts.knowledgeVisibility ?? 'company',
         })),
-        risksIssues: [],
+        risksIssues: Array.from({ length: opts.riskIssue ?? 0 }, (_, i) => ({
+          sourceRow: 100 + i,
+          type: 'issue' as const,
+          title: `R${i}`,
+          content: 'C',
+          cause: null,
+          impact: 'medium',
+          likelihood: null,
+          state: 'open',
+          lessonLearned: null,
+          // PR #358 (2026-05-14): 既存テストの整合性維持のためデフォルト public。
+          //   draft の skip 検証は専用テストケースで覆う (= 上書き引数 riskIssueVisibility 経由)。
+          visibility: opts.riskIssueVisibility ?? 'public',
+          riskNature: null,
+          projectId: 'proj-1',
+        })),
       },
       costEstimate: {},
       summary: {},
@@ -477,15 +503,208 @@ describe('applyImport', () => {
     tx.knowledge.create.mockResolvedValue({} as never);
     tx.tenantImportPreview.delete.mockResolvedValue({} as never);
 
+    // PR #357 (2026-05-14): バッチ helper は 1 件処理して 1 ApiCallLog 単価分を返す
+    const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+    vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
+      generated: 1,
+      failed: 0,
+      costJpy: 10,
+    });
+
     const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.summary.knowledgeCreated).toBe(1);
       expect(r.summary.risksIssuesCreated).toBe(0);
       expect(r.summary.embeddingGenerated).toBe(1);
-      expect(r.summary.totalCostJpy).toBe(10); // ¥10 × 1
+      expect(r.summary.totalCostJpy).toBe(10); // ¥10 × 1 ApiCallLog
     }
+    // PR #357 中核: N 件取込でも generateAndPersistBatchEmbeddings は **1 度だけ呼ばれる**
+    //   (= ApiCallLog 1 件 = Tenant counter +1 = 画面表示 +1 のユーザ要件を満たす)
+    expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
     expect(tx.tenantImportPreview.delete).toHaveBeenCalledWith({ where: { id: 'x' } });
+  });
+
+  // PR #357 (2026-05-14): 案 A の核心テスト
+  it('PR #357: Knowledge + RiskIssue 複数件取込でも generateAndPersistBatchEmbeddings は 1 度のみ呼ばれる (= 1 ApiCallLog)', async () => {
+    vi.mocked(prisma.tenantImportPreview.findUnique).mockResolvedValueOnce(
+      makeFakePreview({ knowledge: 3, riskIssue: 2 }),
+    );
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'expert',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      monthlyBudgetCapJpy: null,
+      beginnerMonthlyCallLimit: 100,
+      pricePerCallHaiku: 10,
+      pricePerCallSonnet: 30,
+      deletedAt: null,
+    } as never);
+    tx.knowledge.create.mockResolvedValue({ id: 'k-new' } as never);
+    tx.riskIssue.create.mockResolvedValue({ id: 'r-new' } as never);
+    tx.tenantImportPreview.delete.mockResolvedValue({} as never);
+
+    const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+    vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
+      generated: 5,
+      failed: 0,
+      costJpy: 10,
+    });
+
+    const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.summary.embeddingGenerated).toBe(5);
+      expect(r.summary.totalCostJpy).toBe(10); // N 件でも 1 ApiCallLog 分の課金
+    }
+    // 中核検証: バッチ helper は 1 度のみ呼ばれる
+    expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
+    // items 引数に Knowledge + RiskIssue が同一バッチで含まれること
+    const callArgs = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+    expect(callArgs.items).toHaveLength(5);
+    expect(callArgs.items.filter((it) => it.table === 'knowledges')).toHaveLength(3);
+    expect(callArgs.items.filter((it) => it.table === 'risks_issues')).toHaveLength(2);
+    expect(callArgs.featureUnit).toBe('external-import-embedding');
+    // PR #358 テナント分離 invariant: bulk helper への tenantId は単一値 = input.tenantId
+    expect(callArgs.tenantId).toBe(TENANT_ID);
+  });
+
+  // ================================================================
+  // PR #358 (2026-05-14): visibility='draft' は embedding 生成しない (案D 整合)
+  // ================================================================
+  describe('PR #358: visibility=draft の embedding skip', () => {
+    function setupCommonMocks() {
+      vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+        id: TENANT_ID,
+        plan: 'expert',
+        currentMonthApiCallCount: 0,
+        currentMonthApiCostJpy: 0,
+        monthlyBudgetCapJpy: null,
+        beginnerMonthlyCallLimit: 100,
+        pricePerCallHaiku: 10,
+        pricePerCallSonnet: 30,
+        deletedAt: null,
+      } as never);
+      tx.knowledge.create.mockResolvedValue({ id: 'k-new' } as never);
+      tx.riskIssue.create.mockResolvedValue({ id: 'r-new' } as never);
+      tx.tenantImportPreview.delete.mockResolvedValue({} as never);
+    }
+
+    it('Knowledge を draft で取込 → batch から除外 + embeddingSkippedDraft +1', async () => {
+      vi.mocked(prisma.tenantImportPreview.findUnique).mockResolvedValueOnce(
+        makeFakePreview({ knowledge: 1, riskIssue: 1, knowledgeVisibility: 'draft' }),
+      );
+      setupCommonMocks();
+
+      const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+      vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
+        generated: 1, // RiskIssue (public) のみ
+        failed: 0,
+        costJpy: 10,
+      });
+
+      const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.summary.embeddingSkippedDraft).toBe(1);
+        expect(r.summary.embeddingGenerated).toBe(1);
+      }
+      const callArgs = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      // batch には RiskIssue のみが含まれ、draft Knowledge は含まれない
+      expect(callArgs.items).toHaveLength(1);
+      expect(callArgs.items[0].table).toBe('risks_issues');
+    });
+
+    it('全件 draft なら generateAndPersistBatchEmbeddings は呼ばれない (= 0 ApiCallLog)', async () => {
+      vi.mocked(prisma.tenantImportPreview.findUnique).mockResolvedValueOnce(
+        makeFakePreview({
+          knowledge: 2,
+          riskIssue: 1,
+          knowledgeVisibility: 'draft',
+          riskIssueVisibility: 'draft',
+        }),
+      );
+      setupCommonMocks();
+
+      const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+      vi.mocked(generateAndPersistBatchEmbeddings).mockReset();
+
+      const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.summary.knowledgeCreated).toBe(2);
+        expect(r.summary.risksIssuesCreated).toBe(1);
+        expect(r.summary.embeddingSkippedDraft).toBe(3);
+        expect(r.summary.embeddingGenerated).toBe(0);
+        expect(r.summary.totalCostJpy).toBe(0); // 課金ゼロ
+      }
+      // 中核検証: 1 つも embedding 対象がないので bulk helper を呼ばない
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('default visibility: Knowledge 省略=company (生成対象) / RiskIssue 省略=draft (skip)', async () => {
+      // makeFakePreview のデフォルトを変えた (PR #358) ため、明示的に「省略時挙動」を検証
+      vi.mocked(prisma.tenantImportPreview.findUnique).mockResolvedValueOnce({
+        id: 'preview-1',
+        tenantId: TENANT_ID,
+        createdByUserId: USER_ID,
+        parsedJson: {
+          knowledge: [
+            // visibility 省略 → default 'company' → 生成対象
+            {
+              sourceRow: 2,
+              title: 'T',
+              knowledgeType: 'general',
+              background: 'B',
+              content: 'C',
+              result: 'R',
+              techTags: [],
+              processTags: [],
+              businessDomainTags: [],
+            },
+          ],
+          risksIssues: [
+            // visibility 省略 → default 'draft' → skip 対象
+            {
+              sourceRow: 100,
+              type: 'issue',
+              title: 'R',
+              content: 'C',
+              cause: null,
+              impact: 'medium',
+              likelihood: null,
+              state: 'open',
+              lessonLearned: null,
+              riskNature: null,
+              projectId: 'proj-1',
+            },
+          ],
+        },
+        costEstimate: {},
+        summary: {},
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        createdAt: new Date(),
+      } as never);
+      setupCommonMocks();
+
+      const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+      vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
+        generated: 1,
+        failed: 0,
+        costJpy: 10,
+      });
+
+      const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.summary.embeddingSkippedDraft).toBe(1); // RiskIssue (default draft)
+        expect(r.summary.embeddingGenerated).toBe(1); // Knowledge (default company)
+      }
+      const callArgs = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      expect(callArgs.items).toHaveLength(1);
+      expect(callArgs.items[0].table).toBe('knowledges');
+    });
   });
 });
 

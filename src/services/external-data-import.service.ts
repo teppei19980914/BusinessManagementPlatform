@@ -43,7 +43,10 @@
 import { randomUUID } from 'crypto';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from '@/services/embedding.service';
+// PR #357 (2026-05-14): 旧 generateAndPersistEntityEmbedding (= N 件で N ApiCallLog) を
+//   バッチ版 generateAndPersistBatchEmbeddings (= 1 ApiCallLog) に置換してコスト最適化。
+import { generateAndPersistBatchEmbeddings } from '@/services/embedding.service';
+import type { EmbeddingSearchTable } from '@/services/embedding.service';
 import { composeKnowledgeText } from '@/services/knowledge.service';
 // PR-3 (2026-05-15): 取込後の容量超過を検知してロールバックする
 import {
@@ -148,6 +151,12 @@ export type ApplyResult =
         risksIssuesCreated: number;
         embeddingGenerated: number;
         embeddingFailed: number;
+        /**
+         * PR #358 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) のため
+         * embedding 生成・課金対象外とした件数。Knowledge + RiskIssue の合算。
+         * PR #357 案D との整合性 (= draft は提案エンジンの検索対象外なので embedding 不要)。
+         */
+        embeddingSkippedDraft: number;
         totalCostJpy: number;
       };
     }
@@ -474,66 +483,72 @@ export async function applyImport(input: {
     throw error;
   }
 
-  // ============ embedding 生成 (transaction 外、各件独立) ============
-  let embeddingGenerated = 0;
-  let embeddingFailed = 0;
-  let totalCostJpy = 0;
+  // ============ embedding 生成 (PR #357 / 2026-05-14: 1 ApiCallLog に集約) ============
+  //
+  //  旧仕様: ループで N 件 = N 回の Voyage 呼出 = N 件の ApiCallLog
+  //  新仕様: Knowledge + RiskIssue を 1 バッチにまとめて 1 ApiCallLog のみ作成。
+  //          ユーザ要件 (PR #357): 「DB 登録の API 呼出回数 = 画面表示 = 実 API 呼出回数を統一」
+  //          内部で Voyage の token 上限超過時は MAX_BATCH_SIZE で分割するが、
+  //          withMeteredLLM のラップは 1 回のみのため Tenant counter +1, ApiCallLog 1 件で確定。
+  //
+  // PR #358 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) は提案エンジン側で
+  //   filter 除外されるため、embedding を生成せず Voyage API 課金も発生させない (案D 整合)。
+  //   skip 件数は embeddingSkippedDraft として summary に含め、wizard 画面で
+  //   「下書き分: N 件 (課金対象外)」と表示する。
+  const batchItems: Array<{ table: EmbeddingSearchTable; rowId: string; text: string }> = [];
+  let embeddingSkippedDraft = 0;
 
   for (const k of parsed.knowledge) {
     const newId = knowledgeIdMap.get(k.sourceRow);
     if (!newId) continue;
-    try {
-      await generateAndPersistEntityEmbedding({
-        table: 'knowledges',
-        rowId: newId,
-        tenantId: input.tenantId,
-        userId: input.userId,
-        text: composeKnowledgeText({
-          title: k.title,
-          background: k.background,
-          content: k.content,
-          result: k.result,
-          conclusion: k.conclusion ?? null,
-          recommendation: k.recommendation ?? null,
-        }),
-        featureUnit: 'external-import-embedding',
-      });
-      embeddingGenerated += 1;
-      // 単価 × 1 を加算 (実コストは ApiCallLog に記録される、ここはサマリ用)
-      totalCostJpy +=
-        tenant.plan === 'pro'
-          ? tenant.pricePerCallSonnet
-          : tenant.plan === 'expert'
-            ? tenant.pricePerCallHaiku
-            : 0;
-    } catch {
-      embeddingFailed += 1;
+    // PR #358: visibility='draft' は embedding 生成しない (PR #357 案D との整合性)
+    if ((k.visibility ?? 'company') === 'draft') {
+      embeddingSkippedDraft += 1;
+      continue;
     }
+    batchItems.push({
+      table: 'knowledges',
+      rowId: newId,
+      text: composeKnowledgeText({
+        title: k.title,
+        background: k.background,
+        content: k.content,
+        result: k.result,
+        conclusion: k.conclusion ?? null,
+        recommendation: k.recommendation ?? null,
+      }),
+    });
   }
 
   for (const r of parsed.risksIssues) {
     const newId = riskIssueIdMap.get(r.sourceRow);
     if (!newId) continue;
-    try {
-      const text = `${r.title}\n${r.content}\n${r.cause ?? ''}\n${r.lessonLearned ?? ''}`.trim();
-      await generateAndPersistEntityEmbedding({
-        table: 'risks_issues',
-        rowId: newId,
-        tenantId: input.tenantId,
-        userId: input.userId,
-        text,
-        featureUnit: 'external-import-embedding',
-      });
-      embeddingGenerated += 1;
-      totalCostJpy +=
-        tenant.plan === 'pro'
-          ? tenant.pricePerCallSonnet
-          : tenant.plan === 'expert'
-            ? tenant.pricePerCallHaiku
-            : 0;
-    } catch {
-      embeddingFailed += 1;
+    // PR #358: visibility='draft' は embedding 生成しない (RiskIssue デフォルトが 'draft' のため重要)
+    if ((r.visibility ?? 'draft') === 'draft') {
+      embeddingSkippedDraft += 1;
+      continue;
     }
+    batchItems.push({
+      table: 'risks_issues',
+      rowId: newId,
+      text: `${r.title}\n${r.content}\n${r.cause ?? ''}\n${r.lessonLearned ?? ''}`.trim(),
+    });
+  }
+
+  let embeddingGenerated = 0;
+  let embeddingFailed = 0;
+  let totalCostJpy = 0;
+
+  if (batchItems.length > 0) {
+    const batchResult = await generateAndPersistBatchEmbeddings({
+      items: batchItems,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      featureUnit: 'external-import-embedding',
+    });
+    embeddingGenerated = batchResult.generated;
+    embeddingFailed = batchResult.failed;
+    totalCostJpy = batchResult.costJpy;
   }
 
   return {
@@ -543,6 +558,7 @@ export async function applyImport(input: {
       risksIssuesCreated: riskIssueIdMap.size,
       embeddingGenerated,
       embeddingFailed,
+      embeddingSkippedDraft,
       totalCostJpy,
     },
   };

@@ -8498,7 +8498,165 @@ pnpm e2e:coverage-check
 - ドキュメント: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md)
 - 修正コミット: `docs(e2e): PR #355 で追加した recalculate 系 3 endpoint を E2E_COVERAGE に追記`
 
-## 5.X+50 Supabase Data API は **デフォルトで public 全テーブルが anon に grant 済み** ─ Prisma 直結のみのプロジェクトでも放置すれば全件漏洩 (2026-05-14 で確立)
+## 5.X+50 Bulk な LLM API 呼出を実装するときは **withMeteredLLM を 1 度だけラップ + callback 内で voyageEmbed を分割呼出** ─ ApiCallLog / 画面表示の API 呼出回数を統一する (PR #357 / 2026-05-14 で確立)
+
+### 背景
+
+ユーザ要件として「DB の `current_month_api_call_count` = 画面表示の『今月 API 呼出』= ユーザに見える実 API 呼出回数」を統一したい。旧 import 経路は ループで N 件 = N 回 voyageEmbed = N 件 ApiCallLog という設計で、5000 件 import すれば counter が +5000 されていた。これはユーザが請求書を見たときに「私のテナントは月 5000 呼出も?」と疑問を持つ UX 問題。
+
+### 解決パターン
+
+**「1 業務操作 = 1 ApiCallLog」原則**:
+
+```ts
+// 旧 (NG): N 件で N ApiCallLog
+for (const item of items) {
+  await generateAndPersistEntityEmbedding({ ... }); // 内部で withMeteredLLM(...) 呼出
+}
+
+// 新 (OK): 1 業務操作 = withMeteredLLM 1 度 = ApiCallLog 1 件
+const result = await withMeteredLLM(opts, async ({ requestId }) => {
+  // callback 内で voyageEmbed を必要な回数呼ぶ (Voyage 1 リクエスト制限を考慮)
+  const allEmbeddings = [];
+  let totalTokens = 0;
+  for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
+    const v = await voyageEmbed({ texts: texts.slice(i, i + MAX_BATCH_SIZE) });
+    allEmbeddings.push(...v.embeddings);
+    totalTokens += v.totalTokens;
+  }
+  return { result: allEmbeddings, usage: { embeddingTokens: totalTokens }, requestId };
+});
+```
+
+### 設計判断のポイント
+
+| 論点 | 判断 |
+|---|---|
+| バッチサイズ | 128 (Voyage 公式 1000 texts / 120K tokens の安全側) |
+| Voyage の 1 リクエスト超過 | callback 内で内部分割。**Tenant counter は 1 度のみ +1** |
+| 部分失敗 | 1 バッチ失敗で全体 `llm_error` (= 1 業務操作の単位を保つ。partial success は呼出側の複雑さを増す) |
+| costJpy | `withMeteredLLM` 側で plan 単価から固定算出 (= 1 LLM 呼出 = 1 単位課金) |
+| 課金分類 (featureUnit) | 業務単位で意味のある名前 (例: 'external-import-embedding') |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] **embedding 以外の Bulk LLM 操作** でも同パターンを適用すべき (例: 大量 auto-tag 抽出、suggestion 説明文一括生成)
+- [ ] **「Voyage 呼出回数 ≠ ApiCallLog 件数」を覚悟する**: withMeteredLLM の本来 1:1 設計から外れるが、ユーザ視点の請求単位は ApiCallLog 単位に揃える
+- [ ] **テストで件数検証を必ず書く**: `expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1)` + `items.length === N` の併記が再発防止に有効
+
+### 関連
+
+- PR #357 (2026-05-14): 本パターン確立
+- 修正ファイル: [src/services/embedding.service.ts](../../src/services/embedding.service.ts) (`generateBatchEmbeddings` / `generateAndPersistBatchEmbeddings`)
+- 適用ファイル: [src/services/external-data-import.service.ts](../../src/services/external-data-import.service.ts) (N 件 → 1 ApiCallLog)
+- 関連 公式 docs: [Voyage AI Embeddings API](https://docs.voyageai.com/reference/embeddings-api) (texts: array 入力対応)
+
+## 5.X+51 「公開範囲」(visibility) 概念のあるエンティティでは、**`visibility='draft' なら embedding 生成しない**」がコスト最適化の鉄則 ─ 提案エンジンに乗らないデータに課金しない (PR #357 / 2026-05-14 で確立)
+
+### 背景
+
+旧仕様は Knowledge / RiskIssue / Retrospective の create/update で **visibility に関わらず無条件で embedding 生成**していた。しかし suggestion engine 側は `visibility='public'` のみを検索対象 (= draft は提案候補に出ない)。つまり draft のデータに対する embedding 生成は **永遠に検索されない用途に Voyage API 課金を消費**していた。
+
+### 解決パターン (visibility 状態遷移マトリクス)
+
+| 遷移 | embedding 生成 |
+|---|---|
+| 新規 visibility=draft | × |
+| 新規 visibility=public | ○ |
+| update draft → draft | × (text 変更があっても課金しない) |
+| update draft → public | ○ (text 変更なしでも初回 embedding 化) |
+| update public → public | text 変更時のみ ○ |
+| update public → draft | × (既存 embedding は削除しない) |
+
+### 実装パターン
+
+```ts
+const wasDraft = existing.visibility === 'draft';
+const willBeDraft = (input.visibility ?? existing.visibility) === 'draft';
+const becameVisible = wasDraft && !willBeDraft;     // 公開化
+const stayedVisible = !wasDraft && !willBeDraft;    // 公開維持
+const shouldGenerateEmbedding =
+  !willBeDraft && (becameVisible || (stayedVisible && textFieldsChanging));
+```
+
+### 横展開で漏らしやすい箇所
+
+- [ ] visibility カラムを持つ全エンティティを網羅: 現状 Knowledge / RiskIssue / Retrospective。**Project には visibility がない** ので対象外
+- [ ] **既存 embedding の削除はしない**: ユーザ意図 (PR #357) に従い、draft 退行時も embedding を NULL に戻さない。提案エンジン側の visibility filter が候補から除外するので二重防御
+- [ ] `existing.visibility` を select に追加することを忘れない (= `undefined` だと判定がバグる)
+- [ ] テストで 5 ケース (新規 2 + 更新 4) を最低限カバー
+
+### 関連
+
+- PR #357 (2026-05-14): 本パターン確立
+- 修正ファイル:
+  - [src/services/knowledge.service.ts](../../src/services/knowledge.service.ts) (create/update)
+  - [src/services/risk.service.ts](../../src/services/risk.service.ts) (create/update)
+  - [src/services/retrospective.service.ts](../../src/services/retrospective.service.ts) (create/update)
+- 提案エンジン側 filter: [src/services/suggestion.service.ts:319, 536](../../src/services/suggestion.service.ts) (visibility='public' 絞り込み = draft は候補外)
+
+### PR #358 フォローアップ修正記録 (2026-05-14)
+
+PR #357 マージ後のフルスキャンで以下の **取り込み漏れ 2 件** が判明し、PR #358 で修正:
+
+| # | 漏れ箇所 | 問題 | 修正 |
+|---|---|---|---|
+| 1 | `external-data-import.service.ts:applyImport` | CSV/XLSX 取り込みデータの visibility をチェックせず全件 embedding 生成 (案D 漏れ) | batchItems ループに `if ((k.visibility ?? 'company') === 'draft') continue;` を追加。`embeddingSkippedDraft` カウンタを `ApplyResult.summary` に新設し wizard 画面で「下書き N 件は課金対象外」表示 |
+| 2 | `suggestion.service.ts` の RiskIssue findMany 3 箇所 (line 387, 460, 758) | Knowledge / Retrospective は `visibility: 'public'` 絞り込み済だが RiskIssue だけ漏れ。draft な resolved RiskIssue が候補に出る可能性 (= 案D で embedding NULL のため score=0 表示の不整合) | 3 箇所の where 句に `visibility: 'public'` を追加 |
+
+### 横展開チェックリストの追加 (PR #358 で学んだ点)
+
+PR #357 の横展開でこのチェックを **書き込み側 (embedding 生成) のみ** 確認したが、**読み出し側 (検索クエリの visibility filter)** の整合性も併せて検証する必要があった。以下を将来の visibility 関連 PR で必ず実施:
+
+- [ ] **書き込み側**: create/update で `visibility='draft'` なら embedding 生成しない
+- [ ] **読み出し側**: 提案エンジン / 全件検索など、当該エンティティを SELECT する全クエリに `visibility: 'public'` フィルタを付与 (= `grep -n 'prisma\.<entity>\.findMany' src/services/`)
+- [ ] **import / bulk 取込経路**: 取込時データの visibility 別動作を明示。draft なら embedding 生成 skip + ユーザに「課金対象外件数」を可視化
+- [ ] **シードデータ確認**: `prisma/seed*.ts` の visibility 値が `public` であること (= visibility filter 追加で候補消失の事故を防ぐ)
+
+### 関連 (PR #358 追加)
+
+- PR #358 (2026-05-14): フォローアップ修正
+- 修正ファイル:
+  - [src/services/external-data-import.service.ts](../../src/services/external-data-import.service.ts) (applyImport の draft skip + embeddingSkippedDraft カウンタ)
+  - [src/services/suggestion.service.ts](../../src/services/suggestion.service.ts) (RiskIssue 3 箇所の visibility filter)
+  - [src/app/(dashboard)/settings/tenant/external-import/wizard-client.tsx](../../src/app/(dashboard)/settings/tenant/external-import/wizard-client.tsx) (下書き N 件表示)
+
+## 5.X+52 form 入力連動の preview API は **debounce + AbortController + 共通 hook** で実装する (PR #361 / 2026-05-14)
+
+### 背景
+
+WBS 画面で ACT 作成・編集時に「担当者の日次工数オーバー」を事前検知したい要件で、入力中の (担当者 / 開始日 / 終了日 / 工数) 4 フィールドを debounce 監視して preview API を呼ぶ機能を実装。
+
+### 学んだパターン
+
+1. **共通 hook 化** (`useWorkloadPreview`): edit dialog と create dialog の **2 箇所で同じロジック** を使うため、カスタム hook 化が必須。useState + useEffect を内包し、API fetch を一元管理
+2. **React hook ルール**: 条件付き呼出禁止 (= 条件付き hook = error)。dialog の表示状態で hook を分岐させたい場合は **`enabled` flag** を引数に取り、内部で「skip 制御」する設計
+3. **AbortController**: 連続入力で前回 fetch が後勝ちになるのを防ぐ。debounce timer のクリアと controller.abort() を **両方** cleanup で実行する
+4. **debounce 値**: 既存 comment-section の 250ms と同オーダーの **300ms** を採用。短いと連打 API 呼出、長いとレスポンス遅延
+
+### 関連する罠
+
+- **zod の UUID 検証は variant ビットも要求**: テスト用に `22222222-2222-2222-2222-222222222222` のような「単純な repeat」UUID を使うと zod が reject (variant 桁が 8/9/a/b でないため)。テストでは valid な v4 UUID (例: `11111111-1111-4111-8111-111111111111`) を使う
+- **`react-hooks/set-state-in-effect` lint**: Next.js 16 で追加されたルール。「effect 内で setState」は通常避けるが、props 変化に追随した reset が必要な場合は `eslint-disable-next-line` で局所許容 (理由コメント必須)
+
+### 横展開で漏らしやすい箇所
+
+- [ ] 入力連動 preview を作るときは **必ず**: debounce + AbortController + 共通 hook の 3 点セット
+- [ ] preview API は GET でクエリパラメータ受け、zod で必須項目検証
+- [ ] **テナント分離 (severity-1)**: service 層 `project: { tenantId: viewerTenantId }` フィルタ + route 層 `checkProjectPermission` の二重防御
+- [ ] **UI 表示制御**: 該当機能の権限ロール (例: PM/TL) でガード。UI 側 `{canEditPmTl && <Preview />}` + API 側 task:read レベル認可
+
+### 関連
+
+- PR #361 (2026-05-14): 本パターン確立
+- 実装ファイル:
+  - [src/components/hooks/use-workload-preview.ts](../../src/components/hooks/use-workload-preview.ts) — debounce hook 共通実装
+  - [src/components/wbs/workload-preview-line.tsx](../../src/components/wbs/workload-preview-line.tsx) — 1 行表示コンポーネント
+  - [src/services/task.service.ts](../../src/services/task.service.ts) — previewActivityWorkload (集計ロジック)
+  - [src/app/api/projects/[projectId]/tasks/workload/preview/route.ts](../../src/app/api/projects/[projectId]/tasks/workload/preview/route.ts) — GET endpoint
+  - [src/config/workload.ts](../../src/config/workload.ts) — 閾値定数
+
+## 5.X+53 Supabase Data API は **デフォルトで public 全テーブルが anon に grant 済み** ─ Prisma 直結のみのプロジェクトでも放置すれば全件漏洩 (2026-05-14 で確立)
 
 ### 背景
 
@@ -8560,4 +8718,54 @@ pnpm e2e:coverage-check
 - Supabase 公式: https://supabase.com/docs/guides/database/postgres/row-level-security
 - Supabase Default Privileges 仕様: https://supabase.com/docs/guides/database/postgres/roles-superuser
 - 関連 KDD: §5.42 (migration を含む PR の本番手動適用ルール)
+
+## 5.X+54 KDD 末尾コンフリクトで **section 番号が両ブランチで衝突**するケース ─ §5.X+30 のサブパターン (PR #362 / 2026-05-14)
+
+### 罠の正体
+
+§5.X+30 は「両ブランチが KDD ファイル末尾に **異なる番号** の新セクションを足してコンフリクトする」パターンを記述するが、本 PR #362 では更に踏み込んだ事故が発生:
+
+- 開発開始時点の最大 section は `5.X+49` (PR #355 でコミット済)
+- HEAD (PR #362): `5.X+50` として Supabase Data API ナレッジを追加
+- main: PR #357 / #358 / #361 が並行マージされ、**同じ `5.X+50` 番号**で別トピック (Bulk LLM)、続けて `5.X+51` (visibility=draft)、`5.X+52` (workload-preview) を採番
+
+結果: コンフリクトマーカーで挟まれた両側が **同じ section 番号で別内容** という状態。素朴に「両方残す」(§5.X+30 流) と **同番号セクションが 2 つ並ぶ破損ドキュメント**になる。
+
+### 解消手順 (本 PR #362 で実践)
+
+1. **main 側を全保持 + HEAD 側をリナンバリング** が正解:
+   - main の `5.X+50` / `5.X+51` / `5.X+52` をそのまま採用 (歴史的経緯を保持)
+   - HEAD の `5.X+50` を **`5.X+53` にリナンバリング** (main の最大番号 + 1)
+2. **クロスリファレンスを同時更新**:
+   - 他ドキュメントから `§5.X+50` を参照していたら新番号に置換 (本 PR では [docs/operations/SECURITY_OPS.md §13.5](../operations/SECURITY_OPS.md))
+   - MEMORY.md / auto-memory に古い番号が残っていないかも grep で確認
+3. **本サブパターン自体を新セクション (`5.X+54`) として記録** — 次の衝突で同じ判断を再生できるよう
+
+### 検出のしかた
+
+| 症状 | 真因 |
+|---|---|
+| `git merge` で `KDD_PATTERNS.md` のみ conflict、他ファイルは clean | §5.X+30 末尾コンフリクト (典型) |
+| HEAD 側と main 側で **同じ `## 5.X+N` 見出し**が出現 | 番号衝突 (本サブパターン) ─ リナンバリング必須 |
+| 他ドキュメントから `§5.X+N` 参照を grep でヒット | クロスリファレンス更新が必要 |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] **リナンバリング後の cross-reference 一括 grep**: `grep -rn "§5\.X+50" docs/` で参照漏れを検出
+- [ ] **auto-memory (MEMORY.md / memory/\*.md) の参照**: KDD section 番号が memory に記載されていれば更新 (本 PR では該当なし)
+- [ ] **PR description の参照**: PR description 内に `§5.X+50` 等を書いていた場合は GitHub 上で edit
+- [ ] **本サブパターン記録**: 同じ事象が再発したら、本 §5.X+54 を更新 (再発事例の連番方式 ─ CLAUDE.md「§10.5 末尾追記コンフリクトの 5 例目まで」の前例に倣う)
+
+### 予防策 (§5.X+30 の表に追加)
+
+| 戦略 | 効果 | コスト |
+|---|---|---|
+| **KDD ファイル末尾編集前に `git fetch origin main && git log origin/main -- docs/knowledge/KDD_PATTERNS.md \| head -20` で最新採番を確認** | 番号衝突を事前検知 | 軽 (1 コマンド) |
+| **長期 PR でなくとも、main 高頻度マージ日 (例: PR #357-#361 が連続マージされた 2026-05-14) は必ず採番再確認** | 短期 PR でも番号衝突は起きる事実への対処 | 軽 (運用ルール) |
+
+### 関連
+
+- 親パターン: §5.X+30 (KDD 末尾コンフリクト・両方残す)
+- 修正例: PR #362 (本 PR で実体験)
+- 修正コミット: `fix(kdd): PR #362 で 5.X+50 が main と衝突、5.X+53 にリナンバリング + cross-reference 更新`
 

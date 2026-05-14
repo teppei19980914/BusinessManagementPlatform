@@ -356,7 +356,7 @@ describe('createKnowledge', () => {
 
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding helper が呼ばれる (fail-safe)
   it('createKnowledge: 本体作成後に generateAndPersistEntityEmbedding が呼ばれる', async () => {
-    vi.mocked(prisma.knowledge.create).mockResolvedValue(kRow({ id: 'k-new' }) as never);
+    vi.mocked(prisma.knowledge.create).mockResolvedValue(kRow({ id: 'k-new', visibility: 'public' }) as never);
     await createKnowledge(
       {
         title: 't',
@@ -385,6 +385,27 @@ describe('createKnowledge', () => {
     expect(args.text).toContain('b');
     expect(args.text).toContain('c');
     expect(args.text).toContain('r');
+  });
+
+  // PR #357 (2026-05-14): 「公開範囲: 自分のみ」(visibility='draft') では embedding 生成しない
+  it('createKnowledge: visibility=draft なら embedding を生成しない (Voyage API 課金を発生させない)', async () => {
+    vi.mocked(prisma.knowledge.create).mockResolvedValue(kRow({ id: 'k-draft', visibility: 'draft' }) as never);
+    await createKnowledge(
+      {
+        title: 't',
+        knowledgeType: 'pattern',
+        background: 'b',
+        content: 'c',
+        result: 'r',
+        techTags: [],
+        processTags: [],
+        businessDomainTags: [],
+        visibility: 'draft',
+      } as never,
+      'u-1',
+      TEST_TENANT_ID,
+    );
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 });
 
@@ -419,8 +440,12 @@ describe('updateKnowledge / deleteKnowledge', () => {
   });
 
   // PR #5-c: text フィールド変更時のみ embedding 再生成 (LLM 課金回避)
-  it('updateKnowledge: text フィールド変更時は embedding を再生成する', async () => {
-    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+  it('updateKnowledge: text フィールド変更時は embedding を再生成する (public → public)', async () => {
+    // PR #357 (2026-05-14): visibility が既に public のとき + text 変更で再生成 (現行仕様維持)
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      createdBy: 'u-1',
+      visibility: 'public',
+    } as never);
     vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
     await updateKnowledge('k-1', { title: 'new title' }, 'u-1', TEST_TENANT_ID);
 
@@ -431,9 +456,10 @@ describe('updateKnowledge / deleteKnowledge', () => {
     expect(args.tenantId).toBe(TEST_TENANT_ID);
   });
 
-  it('updateKnowledge: text フィールド非変更 (visibility のみ) は embedding 再生成しない', async () => {
+  it('updateKnowledge: public → public で text 非変更 (visibility 維持のみ) は embedding 再生成しない', async () => {
     // 2026-05-11: defense-in-depth が「public 化時に DB の既存 title が空でない」ことを要求するため、
     //   findFirst モックで非空 title を返す必要がある (テスト整合性のため)。
+    // PR #357: 既存 visibility=public 維持なら text 変更なしで再生成しない。
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
       createdBy: 'u-1',
       title: '既存タイトル',
@@ -442,6 +468,7 @@ describe('updateKnowledge / deleteKnowledge', () => {
       result: '',
       conclusion: null,
       recommendation: null,
+      visibility: 'public',
     } as never);
     vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
     await updateKnowledge('k-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID);
@@ -475,6 +502,71 @@ describe('updateKnowledge / deleteKnowledge', () => {
     await expect(
       updateKnowledge('k-1', { visibility: 'public', title: '   ' }, 'u-1', TEST_TENANT_ID),
     ).rejects.toThrow('PUBLIC_REQUIRES_TITLE');
+  });
+
+  // ================================================================
+  // PR #357 (2026-05-14): visibility 状態遷移 × embedding 生成マトリクス
+  // ================================================================
+  describe('PR #357: visibility 状態遷移 × embedding 生成判定', () => {
+    const baseExisting = {
+      createdBy: 'u-1',
+      title: '既存',
+      background: '既存背景',
+      content: '既存内容',
+      result: '既存結果',
+      conclusion: null,
+      recommendation: null,
+    };
+
+    it('draft → draft (text 変更なし) → 呼ばれない', async () => {
+      vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'draft',
+      } as never);
+      vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow({ visibility: 'draft' }) as never);
+      await updateKnowledge('k-1', { visibility: 'draft' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+    });
+
+    it('draft → draft (text 変更あり) → 呼ばれない (draft は提案候補外なので課金しない)', async () => {
+      vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'draft',
+      } as never);
+      vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow({ visibility: 'draft' }) as never);
+      await updateKnowledge('k-1', { title: '新タイトル', visibility: 'draft' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+    });
+
+    it('draft → public (text 変更なし) → 呼ばれる (公開化時の初回生成)', async () => {
+      vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'draft',
+      } as never);
+      vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow({ visibility: 'public' }) as never);
+      await updateKnowledge('k-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    });
+
+    it('public → public (text 変更あり) → 呼ばれる', async () => {
+      vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'public',
+      } as never);
+      vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow({ visibility: 'public' }) as never);
+      await updateKnowledge('k-1', { title: '新タイトル' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    });
+
+    it('public → draft (text 変更あり) → 呼ばれない (既存 embedding は保持)', async () => {
+      vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'public',
+      } as never);
+      vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow({ visibility: 'draft' }) as never);
+      await updateKnowledge(
+        'k-1',
+        { title: '新タイトル', visibility: 'draft' },
+        'u-1',
+        TEST_TENANT_ID,
+      );
+      expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+    });
   });
 
   it('deleteKnowledge: 存在しなければ NOT_FOUND', async () => {

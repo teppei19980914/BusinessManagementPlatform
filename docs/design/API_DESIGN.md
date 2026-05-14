@@ -398,7 +398,7 @@ MVP ではサーバサイドキャッシュ（Redis 等）は導入しない。T
 
 ### 17.6 パフォーマンス・アンチパターン（コミット前チェックリスト）
 
-再発防止のため、コード変更時は以下を自問する。詳細と背景は [KNW-002](./knowledge/KNW-002_performance-optimization-patterns.md) 参照。
+再発防止のため、コード変更時は以下を自問する。
 
 1. **同一テーブルへの重複 findMany** — Server Component の `Promise.all` に、同じエンティティに対する複数の findMany が入っていないか（tree/flat のような後処理違いでも 1 回に集約）
 2. **表示件数とクエリ limit の乖離** — `limit:` / `take:` が実際の表示件数（`slice(0, N)` 等）と一致しているか
