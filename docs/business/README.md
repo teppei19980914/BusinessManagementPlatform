@@ -11,3 +11,4 @@
 | [PAYMENT_TERMS.md](./PAYMENT_TERMS.md) | 請求書 / 銀行振込支払いの期日条件と滞納時の対外ルール (フェーズ 1〜4 / read-only 化 / 削除条件) | 新規 (2026-05-09) |
 | [USER_ROLES.md](./USER_ROLES.md) | システムロール (admin / general)・プロジェクトロール (pm_tl / member / viewer) の定義と権限制御方針 | SPECIFICATION.md §6 |
 | [MVP_SCOPE.md](./MVP_SCOPE.md) | MVP 必須機能一覧・対象外機能・管理項目一覧・要件定義全体 | REQUIREMENTS.md §1-§12 + SPECIFICATION.md §4-§5 |
+| [GLOSSARY.md](./GLOSSARY.md) | 業務用語辞書 (プロジェクト/テナント/プラン/提案エンジン/ロール 等の正式名と意味) | 新規 (2026-05-14) |

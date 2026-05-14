@@ -39,8 +39,8 @@ git add <changed files>
 git commit -m "変更内容を端的に記述"
 ```
 
-> Stop hook が自動で secret scan / 静的解析 / テストを実行し、テスト成功時のみ
-> 自動 commit & push を行う設定もあります (`.claude/.git-automation-config`)。
+> コミット前のチェックは [TEST_LINT_BUILD.md](./TEST_LINT_BUILD.md) を参照。
+> 機密情報スキャンは GitHub Actions (`.github/workflows/security.yml`) で PR 単位に自動実行されます。
 
 ### 10.3 PR 作成
 
