@@ -133,6 +133,8 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
     risksIssuesCreated: number;
     embeddingGenerated: number;
     embeddingFailed: number;
+    // PR #358 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) で課金対象外とした件数
+    embeddingSkippedDraft: number;
     totalCostJpy: number;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -733,6 +735,7 @@ function Step4Result(props: {
     risksIssuesCreated: number;
     embeddingGenerated: number;
     embeddingFailed: number;
+    embeddingSkippedDraft: number;
     totalCostJpy: number;
   };
 }) {
@@ -753,6 +756,12 @@ function Step4Result(props: {
               </span>
             )}
           </li>
+          {/* PR #358 (2026-05-14): 課金透明性 — 下書きで課金されなかった件数を明示 */}
+          {s.embeddingSkippedDraft > 0 && (
+            <li className="text-muted-foreground">
+              うち下書き ({s.embeddingSkippedDraft} 件) は「公開範囲: 自分のみ」のため embedding 生成・課金対象外
+            </li>
+          )}
           <li>当インポート分の生成 AI 課金: ¥{s.totalCostJpy.toLocaleString()}</li>
         </ul>
       </section>

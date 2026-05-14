@@ -389,6 +389,11 @@ export async function suggestForProject(
       deletedAt: null,
       type: 'issue',
       state: 'resolved',
+      // PR #358 (2026-05-14): draft は提案候補から除外 (PR #357 案D との整合性)。
+      //   Knowledge (line 319) / Retrospective (line 536) は適用済だが RiskIssue だけ
+      //   漏れていた取り込み漏れを修正。draft の embedding 生成も停止されているため、
+      //   仮に候補に出ても score=0 で表示する不整合を構造的に防ぐ。
+      visibility: 'public',
       ...excludeManagementTenant,
       NOT: { riskIssueProjects: { some: { projectId } } },
     },
@@ -462,6 +467,8 @@ export async function suggestForProject(
       deletedAt: null,
       type: 'risk',
       state: 'resolved',
+      // PR #358 (2026-05-14): draft は提案候補から除外 (PR #357 案D との整合性)
+      visibility: 'public',
       ...excludeManagementTenant,
       NOT: { riskIssueProjects: { some: { projectId } } },
     },
@@ -760,6 +767,9 @@ export async function suggestRelatedIssuesForText(
       deletedAt: null,
       type: 'issue',
       state: 'resolved',
+      // PR #358 (2026-05-14): draft は提案候補から除外 (PR #357 案D との整合性)。
+      //   inline 軽量サジェスト (起票中の入力に対する関連 issue 候補) も draft 除外する。
+      visibility: 'public',
       tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] },
       NOT: { riskIssueProjects: { some: { projectId: currentProjectId } } },
     },

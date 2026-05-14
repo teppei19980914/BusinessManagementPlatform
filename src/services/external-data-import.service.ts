@@ -151,6 +151,12 @@ export type ApplyResult =
         risksIssuesCreated: number;
         embeddingGenerated: number;
         embeddingFailed: number;
+        /**
+         * PR #358 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) のため
+         * embedding 生成・課金対象外とした件数。Knowledge + RiskIssue の合算。
+         * PR #357 案D との整合性 (= draft は提案エンジンの検索対象外なので embedding 不要)。
+         */
+        embeddingSkippedDraft: number;
         totalCostJpy: number;
       };
     }
@@ -484,11 +490,22 @@ export async function applyImport(input: {
   //          ユーザ要件 (PR #357): 「DB 登録の API 呼出回数 = 画面表示 = 実 API 呼出回数を統一」
   //          内部で Voyage の token 上限超過時は MAX_BATCH_SIZE で分割するが、
   //          withMeteredLLM のラップは 1 回のみのため Tenant counter +1, ApiCallLog 1 件で確定。
+  //
+  // PR #358 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) は提案エンジン側で
+  //   filter 除外されるため、embedding を生成せず Voyage API 課金も発生させない (案D 整合)。
+  //   skip 件数は embeddingSkippedDraft として summary に含め、wizard 画面で
+  //   「下書き分: N 件 (課金対象外)」と表示する。
   const batchItems: Array<{ table: EmbeddingSearchTable; rowId: string; text: string }> = [];
+  let embeddingSkippedDraft = 0;
 
   for (const k of parsed.knowledge) {
     const newId = knowledgeIdMap.get(k.sourceRow);
     if (!newId) continue;
+    // PR #358: visibility='draft' は embedding 生成しない (PR #357 案D との整合性)
+    if ((k.visibility ?? 'company') === 'draft') {
+      embeddingSkippedDraft += 1;
+      continue;
+    }
     batchItems.push({
       table: 'knowledges',
       rowId: newId,
@@ -506,6 +523,11 @@ export async function applyImport(input: {
   for (const r of parsed.risksIssues) {
     const newId = riskIssueIdMap.get(r.sourceRow);
     if (!newId) continue;
+    // PR #358: visibility='draft' は embedding 生成しない (RiskIssue デフォルトが 'draft' のため重要)
+    if ((r.visibility ?? 'draft') === 'draft') {
+      embeddingSkippedDraft += 1;
+      continue;
+    }
     batchItems.push({
       table: 'risks_issues',
       rowId: newId,
@@ -536,6 +558,7 @@ export async function applyImport(input: {
       risksIssuesCreated: riskIssueIdMap.size,
       embeddingGenerated,
       embeddingFailed,
+      embeddingSkippedDraft,
       totalCostJpy,
     },
   };
