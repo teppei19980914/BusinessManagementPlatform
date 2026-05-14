@@ -8621,3 +8621,38 @@ PR #357 の横展開でこのチェックを **書き込み側 (embedding 生成
   - [src/services/suggestion.service.ts](../../src/services/suggestion.service.ts) (RiskIssue 3 箇所の visibility filter)
   - [src/app/(dashboard)/settings/tenant/external-import/wizard-client.tsx](../../src/app/(dashboard)/settings/tenant/external-import/wizard-client.tsx) (下書き N 件表示)
 
+## 5.X+52 form 入力連動の preview API は **debounce + AbortController + 共通 hook** で実装する (PR #361 / 2026-05-14)
+
+### 背景
+
+WBS 画面で ACT 作成・編集時に「担当者の日次工数オーバー」を事前検知したい要件で、入力中の (担当者 / 開始日 / 終了日 / 工数) 4 フィールドを debounce 監視して preview API を呼ぶ機能を実装。
+
+### 学んだパターン
+
+1. **共通 hook 化** (`useWorkloadPreview`): edit dialog と create dialog の **2 箇所で同じロジック** を使うため、カスタム hook 化が必須。useState + useEffect を内包し、API fetch を一元管理
+2. **React hook ルール**: 条件付き呼出禁止 (= 条件付き hook = error)。dialog の表示状態で hook を分岐させたい場合は **`enabled` flag** を引数に取り、内部で「skip 制御」する設計
+3. **AbortController**: 連続入力で前回 fetch が後勝ちになるのを防ぐ。debounce timer のクリアと controller.abort() を **両方** cleanup で実行する
+4. **debounce 値**: 既存 comment-section の 250ms と同オーダーの **300ms** を採用。短いと連打 API 呼出、長いとレスポンス遅延
+
+### 関連する罠
+
+- **zod の UUID 検証は variant ビットも要求**: テスト用に `22222222-2222-2222-2222-222222222222` のような「単純な repeat」UUID を使うと zod が reject (variant 桁が 8/9/a/b でないため)。テストでは valid な v4 UUID (例: `11111111-1111-4111-8111-111111111111`) を使う
+- **`react-hooks/set-state-in-effect` lint**: Next.js 16 で追加されたルール。「effect 内で setState」は通常避けるが、props 変化に追随した reset が必要な場合は `eslint-disable-next-line` で局所許容 (理由コメント必須)
+
+### 横展開で漏らしやすい箇所
+
+- [ ] 入力連動 preview を作るときは **必ず**: debounce + AbortController + 共通 hook の 3 点セット
+- [ ] preview API は GET でクエリパラメータ受け、zod で必須項目検証
+- [ ] **テナント分離 (severity-1)**: service 層 `project: { tenantId: viewerTenantId }` フィルタ + route 層 `checkProjectPermission` の二重防御
+- [ ] **UI 表示制御**: 該当機能の権限ロール (例: PM/TL) でガード。UI 側 `{canEditPmTl && <Preview />}` + API 側 task:read レベル認可
+
+### 関連
+
+- PR #361 (2026-05-14): 本パターン確立
+- 実装ファイル:
+  - [src/components/hooks/use-workload-preview.ts](../../src/components/hooks/use-workload-preview.ts) — debounce hook 共通実装
+  - [src/components/wbs/workload-preview-line.tsx](../../src/components/wbs/workload-preview-line.tsx) — 1 行表示コンポーネント
+  - [src/services/task.service.ts](../../src/services/task.service.ts) — previewActivityWorkload (集計ロジック)
+  - [src/app/api/projects/[projectId]/tasks/workload/preview/route.ts](../../src/app/api/projects/[projectId]/tasks/workload/preview/route.ts) — GET endpoint
+  - [src/config/workload.ts](../../src/config/workload.ts) — 閾値定数
+
