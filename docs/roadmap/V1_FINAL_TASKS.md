@@ -147,9 +147,10 @@ URL: /settings (既存ページにタブ追加)
 - ラジオボタン: Beginner / Expert / Pro
 - 変更時の挙動:
   - **アップグレード** (Beginner → Expert / Pro、Expert → Pro): 即時反映 (確認 dialog → API → 即適用)
-  - **ダウングレード** (Pro → Expert / Beginner、Expert → Beginner): 翌月適用 (`scheduledPlanChangeAt` + `scheduledNextPlan` セット)
-  - **Beginner ダウングレード時**: 席数 ≤ 5 でないと UI で拒否 (確認 dialog で「先に席数を 5 以下に減らしてください」)
-  - **確認 dialog**: 「ダウングレードはこの月の月末から適用されます。当月分の従量課金は通常通り発生します」を明示
+  - **Expert ↔ Pro ダウングレード**: **即時反映** (2026-05-14 改修。旧仕様は翌月予約だったが業務仕様書 §F-13.11 と整合させ即時化)
+    - per-call 課金は呼出時点の単価で記録されるため、月途中切替でも当月分が ¥30/call と ¥10/call の混在で正しく記録される
+  - **Expert / Pro → Beginner ダウングレード**: BEGINNER_DOWNGRADE_FORBIDDEN で完全拒否 (P-B、Beginner 試用期間制限)
+  - **確認 dialog**: 「ダウングレードは即時反映されます。Pro 限定機能 (「なぜ?」AI 説明) が利用できなくなり、当月以降の API 呼出単価が切替後プランの単価に変わります」を明示
 
 #### 3. 月次予算上限 (`monthlyBudgetCapJpy`) 設定
 - 数値入力フォーム (例: 5000 円)
@@ -162,9 +163,11 @@ URL: /settings (既存ページにタブ追加)
 - 残予算金額表示
 - 80% / 100% / 150% 到達済の場合は警告バナー
 
-#### 5. 月次予約変更の取消
-- ダウングレード予約済の場合、「予約を取消す」ボタンを表示
-- 取消すと `scheduledPlanChangeAt = NULL` で月初 cron が動作しない
+#### 5. 月次予約変更の取消 (legacy)
+- 2026-05-14: Expert↔Pro ダウングレード即時化により、`updateTenantSelf` 経由で
+  新規に予約レコードが作られるパスは廃止。本セクションは **legacy DB レコード対策** として残存。
+- 旧仕様の予約 (DB に残った `scheduledPlanChangeAt` + `scheduledNextPlan`) がある場合、
+  UI に「予約を取消す」ボタンを表示し、取消すと `scheduledPlanChangeAt = NULL` で月初 cron が動作しない
 
 ### サーバ実装
 
@@ -175,7 +178,7 @@ URL: /settings (既存ページにタブ追加)
 ### テスト
 
 - 単体: API ルートの認可・バリデーション
-- 統合: 「アップグレードは即時反映」「ダウングレードは翌月適用」「席数超過時の拒否」のシナリオ
+- 統合: 「アップグレード即時反映」「**Expert↔Pro ダウングレード即時反映** (2026-05-14)」「Beginner ダウングレード完全禁止 (P-B)」のシナリオ
 
 ---
 
@@ -968,23 +971,24 @@ on-demand `pg_column_size` 集計で実装する案がある。設計確定後�
 **背景**:
 2026-05-08 検証で「プラン変更時の課金タイミング (アップグレード即時 / ダウングレード翌月適用)」は単体テストでは網羅されているが、**月跨ぎの cron + 単価切替まで通しで検証する統合テスト** はまだない。リリース直前に最終確認したい。
 
-**実装した検証シナリオ**:
+**実装した検証シナリオ** (2026-05-14 改修後):
 - 1 テストで 3 月分のシナリオを Date モック (`vi.useFakeTimers` + `vi.setSystemTime`) で進行:
   - **M1 (2026-05)**: Beginner で 30 回呼出 → ¥0 課金 (無料プラン)
   - **M1 後半**: アップグレード Beginner → Expert (即時、`beginnerEverUpgraded=true`) → Expert で 5 回呼出 ¥50 (¥10/call)
   - **M2 月初 cron (2026-06-01)**: snapshot 保存 (M1 = 35 回 / ¥50 / plan=expert) + カウンタリセット + `lastResetAt` 進行
-  - **M2 中**: P-B 整合性確認 (Beginner ダウングレード試行 → `BEGINNER_DOWNGRADE_FORBIDDEN` で拒否) → Expert → Pro アップグレード → Pro で 2 回呼出 ¥60 (¥30/call) → Pro → Expert ダウングレード予約 (M3 月初 UTC)
-  - **M3 月初 cron (2026-07-01)**: snapshot 保存 (M2 = 2 回 / ¥60 / plan=pro = 適用前の値で記録) + 予約ダウングレード適用 (plan=expert, scheduled* クリア)
-- 補助テスト 2 件:
+  - **M2 中**: P-B 整合性確認 (Beginner ダウングレード試行 → `BEGINNER_DOWNGRADE_FORBIDDEN` で拒否) → Expert → Pro アップグレード → Pro で 2 回呼出 ¥60 (¥30/call) → **Pro → Expert ダウングレード即時反映 (2026-05-14 改修)** → Expert で 3 回呼出 ¥30 (Haiku 単価)
+  - **M3 月初 cron (2026-07-01)**: snapshot 保存 (M2 = 5 回 / ¥90 / plan=expert = 即時ダウン後の最終状態で記録) + カウンタリセット + 予約適用 0 件 (Expert↔Pro 即時化により予約は発生しない)
+- 補助テスト 3 件:
   - 同日二度実行で冪等 (`lastResetAt` 当月初なので 2 回目は 0 件)
-  - ダウングレード予約をキャンセル → M3 cron で適用されず Pro のまま
+  - legacy 予約 (DB 直接セット相当) をキャンセル → M3 cron で適用されず Pro のまま (defensive 経路の維持)
+  - Pro→Expert 即時反映の単発確認 (`scheduledFor=null` / `plan` 即更新)
 
 **実装箇所**:
-- `src/services/plan-change-flow.e2e.test.ts` (新規、3 件)
+- `src/services/plan-change-flow.e2e.test.ts` (新規、4 件)
 
 **設計判断**:
 - 実 DB は使わず、prisma mock を「テナント 1 行の in-memory state」として実装。CI 高速 + 環境変数依存ゼロ。
-- 当初仕様の「M2 中ダウングレード Beginner 予約」は P-B (BEGINNER_DOWNGRADE_FORBIDDEN) で禁止されたため、`Pro → Expert` ダウングレード予約に変更。Beginner ダウングレード禁止の挙動は同テスト内で別途アサート。
+- 当初仕様の「M2 中ダウングレード Beginner 予約」は P-B (BEGINNER_DOWNGRADE_FORBIDDEN) で禁止されたため、`Pro → Expert` ダウングレードに変更。さらに 2026-05-14 改修で Pro→Expert も即時反映化したため、シナリオは月跨ぎ予約適用ではなく「M2 中即時切替 + M2 内の Haiku 単価課金」を検証する形に再構成した。
 
 ---
 

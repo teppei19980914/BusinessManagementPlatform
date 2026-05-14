@@ -182,7 +182,7 @@ API 呼び出し前のミドルウェア `withMeteredLLM()` を実装する。�
 
 すべての API ルートに対して、リクエストユーザの `tenantId` と操作対象データの `tenantId` が一致することを検証する標準パターンを導入する。`@/lib/permissions.ts` に `requireSameTenant(user, entity)` ユーティリティを新設し、認可ロジックの入り口として機能させる。NextAuth.js の session に `tenantId` を含めるよう拡張する。middleware で URL パスからテナント slug を解決するヘルパー (v1 では default-tenant に固定、v1.x で動的解決) を準備する。
 
-Vercel Cron で月初リセットバッチを動作させ、`lastResetAt` が前月以前のテナントを検出して `currentMonthApiCallCount = 0` / `currentMonthApiCostJpy = 0` にリセットする。同 Cron で `scheduledPlanChangeAt` が当日以前のテナントを検出してプラン適用 (Expert/Pro → Beginner ダウングレードの翌月適用) を実行する。
+Vercel Cron で月初リセットバッチを動作させ、`lastResetAt` が前月以前のテナントを検出して `currentMonthApiCallCount = 0` / `currentMonthApiCostJpy = 0` にリセットする。同 Cron で `scheduledPlanChangeAt` が当日以前のテナントを検出してプラン適用も実行する (2026-05-14 改修: Expert↔Pro 即時化 + Beginner ダウングレード完全禁止により新規予約は発生しなくなったが、legacy DB レコード対策として cron 側は継続稼働)。
 
 Upstash Redis を Vercel ダッシュボードから有効化し、`@upstash/ratelimit` パッケージを導入する。
 

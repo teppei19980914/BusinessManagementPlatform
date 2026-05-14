@@ -187,7 +187,7 @@
 - [ ] `/api/admin/users/lock-inactive` — skip: 時間経過 (30 日以上) が必要、手動テスト (旧 `/api/admin/users/cleanup-inactive`、feat/account-lock で改名 + 論理削除→ロック挙動変更)
 - [ ] `/api/admin/audit-logs` — skip: read-only
 - [ ] `/api/admin/role-change-logs` — skip: read-only
-- [ ] `/api/tenants/me` — skip: PR-X4 (テナント管理者プラン変更 API、admin 限定 GET/PATCH/DELETE)。core ロジック (アップグレード即時 / ダウングレード翌月予約 / Beginner 席数チェック / 予算上限更新) は src/services/tenant-self.service.ts に集約され、単体テストは PR-X4 のフォローアップで追加予定。E2E は V1.x 多テナント対応時に検討
+- [ ] `/api/tenants/me` — skip: PR-X4 (テナント管理者プラン変更 API、admin 限定 GET/PATCH/DELETE)。core ロジック (アップグレード即時 / **Expert↔Pro ダウングレード即時 / Beginner ダウングレード完全禁止** (2026-05-14 改修) / 予算上限更新) は src/services/tenant-self.service.ts に集約され、単体テスト + plan-change-flow.e2e.test.ts で網羅。E2E は V1.x 多テナント対応時に検討
 
 ### その他
 - [x] `GET /api/health` — e2e/specs/00-smoke.spec.ts (副次的に起動確認)

@@ -144,8 +144,12 @@ export function TenantSettingsClient({
       return;
     }
     if (isDowngrade) {
+      // 2026-05-14: Expert↔Pro ダウングレードは即時反映 (旧仕様の翌月予約から変更)。
+      //   Pro 限定機能 (「なぜ?」AI 説明等) が即座に使えなくなるため、明示確認は維持。
+      //   Beginner ダウングレードは API 側で BEGINNER_DOWNGRADE_FORBIDDEN なので
+      //   ここでは Expert↔Pro 想定の文言に統一。
       const ok = confirm(
-        'ダウングレードはこの月の月末から適用されます。当月分の従量課金は通常通り発生します。続行しますか?',
+        'ダウングレードは即時反映されます。Pro 限定機能 (「なぜ?」関連理由の AI 説明など) が利用できなくなり、当月以降の API 呼出単価が切替後プランの単価に変わります。続行しますか?',
       );
       if (!ok) return;
     }
@@ -192,7 +196,10 @@ export function TenantSettingsClient({
       if (json.data.appliedImmediately) {
         showSuccess('変更を即時反映しました');
       } else {
-        // PR-4 (2026-05-15): テナント TZ で日付表示
+        // 2026-05-14: LLM プラン変更は全て即時反映に統一されたため、本ブランチは
+        //   実運用では到達しない (API は appliedImmediately=true のみ返す)。
+        //   万一サーバ側の挙動が変わった場合の defensive 表示として残置。
+        //   PR-4 (2026-05-15): テナント TZ で日付表示。
         const date = formatDate(json.data.scheduledFor);
         showSuccess(`${date} に変更が適用されます`);
       }
@@ -286,7 +293,7 @@ export function TenantSettingsClient({
         <section className="rounded border p-4">
           <h2 className="mb-2 font-semibold">プラン</h2>
           <p className="mb-3 text-xs text-muted-foreground">
-            アップグレードは即時反映、ダウングレードは月末で予約反映されます。
+            アップグレード・ダウングレードともに即時反映されます (Expert ↔ Pro 切替)。Beginner プランへの変更はできません。
           </p>
           <div className="space-y-2">
             {PLAN_OPTIONS.map((p) => (

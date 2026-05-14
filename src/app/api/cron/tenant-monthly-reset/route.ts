@@ -5,8 +5,9 @@
  *
  * 処理内容 (詳細は src/services/tenant-monthly-reset.service.ts 参照):
  *   1. 月初を跨いだテナントの API 呼び出しカウンタ + 課金額を 0 にリセット
- *   2. scheduledPlanChangeAt 到達テナントに scheduledNextPlan を適用
- *      (Beginner ダウングレード等の翌月適用)
+ *   2. scheduledPlanChangeAt 到達テナントに scheduledNextPlan を適用 (legacy)
+ *      - 2026-05-14: Expert↔Pro 即時化 + Beginner ダウングレード完全禁止により、
+ *        新規にこの予約をセットするコードパスは廃止。本処理は legacy DB レコード対策。
  *
  * 認可:
  *   Vercel Cron 経由のみ (Authorization: Bearer <CRON_SECRET>)。不正呼び出しは 401。
