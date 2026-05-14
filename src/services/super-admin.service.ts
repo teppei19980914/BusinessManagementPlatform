@@ -73,6 +73,10 @@ export type TenantSummaryRow = {
   createdAt: Date;
   /** 2026-05-14: 解約日 (null = アクティブ、Date = 解約済)。請求対象期間の判別に使用 */
   deletedAt: Date | null;
+  /** 2026-05-14 (PR #372): 停止日 (null = 通常運用、Date = read-only 強制移行中) */
+  suspendedAt: Date | null;
+  /** 2026-05-14 (PR #372): 停止理由 ('payment_delinquent' / 'tos_violation' / 'other') */
+  suspendReason: string | null;
   // P-G (2026-05-08): 請求先情報 (CSV エクスポート + super_admin 一覧表示用) / PR C で拡張
   billingType: string;
   billingCompanyName: string | null;
@@ -128,6 +132,9 @@ export async function listAllTenants(
       createdAt: true,
       // 2026-05-14: 解約済テナント識別 (月途中解約の請求漏れ検知用)
       deletedAt: true,
+      // 2026-05-14 (PR #372): read-only 強制移行状態 (super_admin UI / CSV 表示用)
+      suspendedAt: true,
+      suspendReason: true,
       // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で拡張
       billingType: true,
       billingCompanyName: true,
@@ -172,6 +179,9 @@ export async function listAllTenants(
     createdAt: t.createdAt,
     // 2026-05-14: 解約日 (請求対象期間の判別用)
     deletedAt: t.deletedAt,
+    // 2026-05-14 (PR #372): read-only 強制移行状態
+    suspendedAt: t.suspendedAt,
+    suspendReason: t.suspendReason,
     // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09)
     billingType: t.billingType,
     billingCompanyName: t.billingCompanyName,
@@ -299,6 +309,9 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     // 2026-05-14: TenantSummaryRow 継承のため必須。getTenantDetail は deletedAt: null
     //   フィルタを当てているため、ここに来た時点で常に null。
     deletedAt: t.deletedAt,
+    // 2026-05-14 (PR #372): read-only 強制移行状態
+    suspendedAt: t.suspendedAt,
+    suspendReason: t.suspendReason,
     beginnerMonthlyCallLimit: t.beginnerMonthlyCallLimit,
     beginnerMaxSeats: t.beginnerMaxSeats,
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
@@ -1192,6 +1205,226 @@ export async function deleteTenant(
       comments: commentsUpdate.count,
       attachments: attachmentsUpdate.count,
     },
+  };
+}
+
+// ================================================================
+// テナント read-only 強制移行 (suspend / resume) — PR #372 / 2026-05-14
+// ================================================================
+
+/**
+ * 停止理由コード。`Tenant.suspendReason` カラムに保存される文字列値。
+ *
+ * 将来 enum 化を検討するが v1 では String + 集合定数で運用 (Prisma 7 の enum 制約回避 +
+ * 顧客向けメッセージで柔軟に切替えやすくするため)。
+ */
+export const SUSPEND_REASONS = [
+  /** 支払い滞納 (= PAYMENT_DELINQUENCY_SOP §3 フェーズ 2 から実行) */
+  'payment_delinquent',
+  /** 利用規約違反 (TOS 違反による緊急停止) */
+  'tos_violation',
+  /** その他 (= 営業判断、運営内部事情等)。本番運用では極力使わず、上記いずれかに分類する */
+  'other',
+] as const;
+
+export type SuspendReason = (typeof SUSPEND_REASONS)[number];
+
+export function isSuspendReason(value: unknown): value is SuspendReason {
+  return typeof value === 'string' && (SUSPEND_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * テナント read-only 強制移行 (suspend) — PR #372 / 2026-05-14
+ *
+ * 役割:
+ *   super_admin が支払い滞納 / TOS 違反等で対象テナントを **read-only モード** に強制移行する。
+ *   write 系 HTTP method (POST/PATCH/PUT/DELETE) は middleware で 403 TENANT_SUSPENDED 遮断、
+ *   GET 系 (閲覧・エクスポート) は引き続き可能。例外パス (self-delete / プラン変更) も従来通り通過。
+ *
+ * 処理内容 (単一 transaction):
+ *   1. tenant.suspendedAt = now, suspendReason, suspendedBy = performerId をセット
+ *   2. 配下の全 user (deletedAt=null) の tokenVersion を +1 increment
+ *      → 既存セッションは次リクエストの getAuthenticatedUser で 401 SESSION_INVALIDATED となり
+ *        再ログイン経路へ。再ログイン後の JWT には新 tenantSuspendedAt=ISO が乗り、以降の
+ *        write 系 HTTP method は middleware で 403 遮断される。
+ *   3. auditLog.create で「suspend」操作を記録
+ *
+ * 既に停止中のテナントへの再 suspend は ALREADY_SUSPENDED エラー (冪等性ではなく明示エラー)。
+ * 削除済 (deletedAt!=null) テナントへの suspend は TENANT_DELETED エラー。
+ *
+ * 関連:
+ *   - 解除: `resumeTenant`
+ *   - 対外ルール: docs/business/PAYMENT_TERMS.md §2.3
+ *   - 運用手順: docs/operations/PAYMENT_DELINQUENCY_SOP.md §3
+ *   - middleware: src/lib/auth.config.ts (tenantSuspendedAt claim 判定)
+ *   - JWT claim: src/lib/auth.ts (authorize の return に tenantSuspendedAt を含む)
+ *
+ * @param tenantId 停止対象テナント
+ * @param reason 停止理由コード ([[SuspendReason]])
+ * @param performerId 実行 super_admin の User.id (auditLog 記録 + tenant.suspendedBy)
+ * @throws Error('MANAGEMENT_TENANT_FORBIDDEN') 管理テナントの停止は禁止
+ * @throws Error('TENANT_NOT_FOUND') 対象テナント不在
+ * @throws Error('TENANT_DELETED') 既に削除済テナント
+ * @throws Error('ALREADY_SUSPENDED') 既に停止中
+ * @throws Error('INVALID_REASON') 不正な reason 文字列
+ */
+export type SuspendTenantResult = {
+  tenantId: string;
+  suspendedAt: Date;
+  suspendReason: SuspendReason;
+  /** tokenVersion を増やしたユーザ件数 (= 即時セッション失効対象) */
+  invalidatedSessionCount: number;
+};
+
+export async function suspendTenant(
+  tenantId: string,
+  reason: string,
+  performerId: string,
+): Promise<SuspendTenantResult> {
+  if (tenantId === MANAGEMENT_TENANT_ID) {
+    throw new Error('MANAGEMENT_TENANT_FORBIDDEN');
+  }
+  if (!isSuspendReason(reason)) {
+    throw new Error('INVALID_REASON');
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true, deletedAt: true, suspendedAt: true, name: true },
+  });
+  if (!tenant) {
+    throw new Error('TENANT_NOT_FOUND');
+  }
+  if (tenant.deletedAt != null) {
+    throw new Error('TENANT_DELETED');
+  }
+  if (tenant.suspendedAt != null) {
+    throw new Error('ALREADY_SUSPENDED');
+  }
+
+  const now = new Date();
+
+  // 単一 transaction で suspend + tokenVersion increment + auditLog を確定
+  const [, tokenIncrement] = await prisma.$transaction([
+    prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        suspendedAt: now,
+        suspendReason: reason,
+        suspendedBy: performerId,
+        // resumedAt は前回解除時刻を保持 (=今回の suspend では更新しない)
+      },
+    }),
+    // 配下 user の tokenVersion を全部 +1。 既存 JWT は次リクエストで 401。
+    prisma.user.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { tokenVersion: { increment: 1 } },
+    }),
+    prisma.auditLog.create({
+      data: {
+        tenantId,
+        userId: performerId,
+        action: 'UPDATE',
+        entityType: 'tenant',
+        entityId: tenantId,
+        beforeValue: { name: tenant.name, suspendedAt: null },
+        afterValue: {
+          name: tenant.name,
+          suspendedAt: now.toISOString(),
+          suspendReason: reason,
+        },
+      },
+    }),
+  ]);
+
+  return {
+    tenantId,
+    suspendedAt: now,
+    suspendReason: reason,
+    invalidatedSessionCount: tokenIncrement.count,
+  };
+}
+
+/**
+ * テナント read-only 解除 (resume) — PR #372 / 2026-05-14
+ *
+ * 役割:
+ *   入金確認 / 違反解消等で停止中テナントを通常運用へ復帰させる。
+ *
+ * 処理内容 (単一 transaction):
+ *   1. tenant.suspendedAt = null, suspendReason = null, resumedAt = now をセット
+ *      (suspendedBy は監査用に残す — 「直前に誰が停止したか」を resume 後も追跡可能にする)
+ *   2. 配下の全 user の tokenVersion を +1 increment (再ログイン強制 → 新しい JWT claim 反映)
+ *   3. auditLog.create で「resume」操作を記録
+ *
+ * 停止中でないテナントへの resume は NOT_SUSPENDED エラー (= 誤操作検知)。
+ *
+ * @throws Error('TENANT_NOT_FOUND')
+ * @throws Error('TENANT_DELETED')
+ * @throws Error('NOT_SUSPENDED') 停止中でないテナントへの resume
+ */
+export type ResumeTenantResult = {
+  tenantId: string;
+  resumedAt: Date;
+  /** tokenVersion を増やしたユーザ件数 (= 即時セッション失効対象) */
+  invalidatedSessionCount: number;
+};
+
+export async function resumeTenant(
+  tenantId: string,
+  performerId: string,
+): Promise<ResumeTenantResult> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true, deletedAt: true, suspendedAt: true, suspendReason: true, name: true },
+  });
+  if (!tenant) {
+    throw new Error('TENANT_NOT_FOUND');
+  }
+  if (tenant.deletedAt != null) {
+    throw new Error('TENANT_DELETED');
+  }
+  if (tenant.suspendedAt == null) {
+    throw new Error('NOT_SUSPENDED');
+  }
+
+  const now = new Date();
+
+  const [, tokenIncrement] = await prisma.$transaction([
+    prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        suspendedAt: null,
+        suspendReason: null,
+        resumedAt: now,
+        // suspendedBy は監査用に保持 (= 「直前に停止したのは誰か」を resume 後も追跡可能)
+      },
+    }),
+    prisma.user.updateMany({
+      where: { tenantId, deletedAt: null },
+      data: { tokenVersion: { increment: 1 } },
+    }),
+    prisma.auditLog.create({
+      data: {
+        tenantId,
+        userId: performerId,
+        action: 'UPDATE',
+        entityType: 'tenant',
+        entityId: tenantId,
+        beforeValue: {
+          name: tenant.name,
+          suspendedAt: tenant.suspendedAt.toISOString(),
+          suspendReason: tenant.suspendReason,
+        },
+        afterValue: { name: tenant.name, suspendedAt: null, resumedAt: now.toISOString() },
+      },
+    }),
+  ]);
+
+  return {
+    tenantId,
+    resumedAt: now,
+    invalidatedSessionCount: tokenIncrement.count,
   };
 }
 

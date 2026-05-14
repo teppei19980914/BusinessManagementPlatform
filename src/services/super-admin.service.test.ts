@@ -86,6 +86,10 @@ import {
   listAllTenants,
   listStorageUsageTop,
   getTenantDetail,
+  // 2026-05-14 (PR #372): read-only 強制移行
+  suspendTenant,
+  resumeTenant,
+  isSuspendReason,
 } from './super-admin.service';
 import { prisma } from '@/lib/db';
 
@@ -595,6 +599,207 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
         where: { tenantId: TENANT_ID, deletedAt: null },
       }),
     );
+  });
+});
+
+// ================================================================
+// 2026-05-14 (PR #372): suspendTenant / resumeTenant (read-only 強制移行)
+// ================================================================
+
+describe('suspendTenant (PR #372)', () => {
+  const TENANT_ID = '00000000-0000-0000-0000-000000000abc';
+  const PERFORMER_ID = 'super-admin-uuid';
+  const MANAGEMENT_TENANT_ID_VALUE = '00000000-0000-0000-0000-ffffffffffff';
+
+  beforeEach(() => vi.clearAllMocks());
+
+  function setupSuspendHappyPath() {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      deletedAt: null,
+      suspendedAt: null,
+      name: '滞納テナント',
+    } as never);
+    vi.mocked(prisma.tenant.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.user.updateMany).mockResolvedValueOnce({ count: 3 } as never);
+    vi.mocked(prisma.auditLog.create).mockResolvedValueOnce({} as never);
+  }
+
+  it('正常系: suspendedAt / suspendReason / suspendedBy をセットし配下 user の tokenVersion を increment', async () => {
+    setupSuspendHappyPath();
+
+    const result = await suspendTenant(TENANT_ID, 'payment_delinquent', PERFORMER_ID);
+
+    expect(result.tenantId).toBe(TENANT_ID);
+    expect(result.suspendReason).toBe('payment_delinquent');
+    expect(result.invalidatedSessionCount).toBe(3);
+
+    // tenant.update に suspendedAt / suspendReason / suspendedBy が渡る
+    expect(prisma.tenant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: TENANT_ID },
+        data: expect.objectContaining({
+          suspendedAt: expect.any(Date),
+          suspendReason: 'payment_delinquent',
+          suspendedBy: PERFORMER_ID,
+        }),
+      }),
+    );
+
+    // user.updateMany で tokenVersion を increment (= 即時セッション失効)
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_ID, deletedAt: null },
+      data: { tokenVersion: { increment: 1 } },
+    });
+
+    // 監査ログ
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: PERFORMER_ID,
+          action: 'UPDATE',
+          entityType: 'tenant',
+          entityId: TENANT_ID,
+        }),
+      }),
+    );
+  });
+
+  it('管理テナントは MANAGEMENT_TENANT_FORBIDDEN (自爆防止)', async () => {
+    await expect(
+      suspendTenant(MANAGEMENT_TENANT_ID_VALUE, 'payment_delinquent', PERFORMER_ID),
+    ).rejects.toThrow('MANAGEMENT_TENANT_FORBIDDEN');
+    // findUnique も呼ばれない (= 早期 return)
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('不正な reason は INVALID_REASON', async () => {
+    await expect(suspendTenant(TENANT_ID, 'invalid_reason_string', PERFORMER_ID)).rejects.toThrow(
+      'INVALID_REASON',
+    );
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('テナント不在は TENANT_NOT_FOUND', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+    await expect(suspendTenant(TENANT_ID, 'tos_violation', PERFORMER_ID)).rejects.toThrow(
+      'TENANT_NOT_FOUND',
+    );
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('削除済テナントへの suspend は TENANT_DELETED (= 削除が優先、二重状態防止)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      deletedAt: new Date('2026-04-01'),
+      suspendedAt: null,
+      name: '削除済',
+    } as never);
+
+    await expect(suspendTenant(TENANT_ID, 'tos_violation', PERFORMER_ID)).rejects.toThrow(
+      'TENANT_DELETED',
+    );
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('既に停止中のテナントへの再 suspend は ALREADY_SUSPENDED (誤操作検知)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      deletedAt: null,
+      suspendedAt: new Date('2026-05-10'),
+      name: '停止中',
+    } as never);
+
+    await expect(suspendTenant(TENANT_ID, 'tos_violation', PERFORMER_ID)).rejects.toThrow(
+      'ALREADY_SUSPENDED',
+    );
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('全 reason (payment_delinquent / tos_violation / other) が isSuspendReason で受理される', () => {
+    expect(isSuspendReason('payment_delinquent')).toBe(true);
+    expect(isSuspendReason('tos_violation')).toBe(true);
+    expect(isSuspendReason('other')).toBe(true);
+    expect(isSuspendReason('unknown')).toBe(false);
+    expect(isSuspendReason('')).toBe(false);
+    expect(isSuspendReason(null)).toBe(false);
+  });
+});
+
+describe('resumeTenant (PR #372)', () => {
+  const TENANT_ID = '00000000-0000-0000-0000-000000000abc';
+  const PERFORMER_ID = 'super-admin-uuid';
+
+  beforeEach(() => vi.clearAllMocks());
+
+  function setupResumeHappyPath() {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      deletedAt: null,
+      suspendedAt: new Date('2026-05-10T03:00:00Z'),
+      suspendReason: 'payment_delinquent',
+      name: '入金確認済',
+    } as never);
+    vi.mocked(prisma.tenant.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.user.updateMany).mockResolvedValueOnce({ count: 3 } as never);
+    vi.mocked(prisma.auditLog.create).mockResolvedValueOnce({} as never);
+  }
+
+  it('正常系: suspendedAt=null + resumedAt=now をセット + tokenVersion increment + auditLog', async () => {
+    setupResumeHappyPath();
+
+    const result = await resumeTenant(TENANT_ID, PERFORMER_ID);
+
+    expect(result.tenantId).toBe(TENANT_ID);
+    expect(result.invalidatedSessionCount).toBe(3);
+
+    expect(prisma.tenant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: TENANT_ID },
+        data: expect.objectContaining({
+          suspendedAt: null,
+          suspendReason: null,
+          resumedAt: expect.any(Date),
+        }),
+      }),
+    );
+
+    // suspendedBy は監査用に残す (data に含めない = update データに無いこと)
+    const updateCall = vi.mocked(prisma.tenant.update).mock.calls[0]![0]!;
+    expect(updateCall.data).not.toHaveProperty('suspendedBy');
+
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_ID, deletedAt: null },
+      data: { tokenVersion: { increment: 1 } },
+    });
+  });
+
+  it('テナント不在は TENANT_NOT_FOUND', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+    await expect(resumeTenant(TENANT_ID, PERFORMER_ID)).rejects.toThrow('TENANT_NOT_FOUND');
+  });
+
+  it('削除済テナントは TENANT_DELETED', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      deletedAt: new Date('2026-04-01'),
+      suspendedAt: new Date('2026-03-15'),
+      suspendReason: 'tos_violation',
+      name: '削除済',
+    } as never);
+    await expect(resumeTenant(TENANT_ID, PERFORMER_ID)).rejects.toThrow('TENANT_DELETED');
+  });
+
+  it('停止中でないテナントへの resume は NOT_SUSPENDED', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      deletedAt: null,
+      suspendedAt: null,
+      suspendReason: null,
+      name: '通常運用',
+    } as never);
+    await expect(resumeTenant(TENANT_ID, PERFORMER_ID)).rejects.toThrow('NOT_SUSPENDED');
   });
 });
 

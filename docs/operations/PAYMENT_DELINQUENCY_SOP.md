@@ -191,56 +191,73 @@
 {{super_admin_email}}
 ```
 
-### 3.3 read-only 移行操作 (技術手順)
+### 3.3 read-only 移行操作 (専用機能、PR #372 / 2026-05-14 以降)
 
-> **重要**: 専用フラグ (`Tenant.suspendedAt`) は v1.x で追加予定。**v1 (2026-06-01 リリース) 時点では以下の暫定手順** で対応。
+**v1.x で実装された専用機能** (`Tenant.suspendedAt`) を使用する。SQL 直接実行による暫定手順は
+不要 (= 過去 PR で記載されていた「Beginner 降格 + 上限超過セット」方式は **書き込み禁止が
+実装と整合しなかった** ため deprecate)。
 
-#### 暫定手順 (v1 期間限定)
+#### 正式手順 (PR #372 以降)
 
-1. Supabase SQL Editor で対象テナントを特定:
-   ```sql
-   SELECT id, slug, name, plan, beginner_ever_upgraded
-   FROM tenants
-   WHERE slug = '<tenant-slug>'
-     AND deleted_at IS NULL;
-   ```
-2. 現プランをメモ (解除時に戻す):
-   ```
-   テナント: <slug>
-   元プラン: <plan>          -- 例: 'expert' または 'pro'
-   beginnerEverUpgraded: <true/false>
-   ```
-3. **Beginner プランへの強制降格 + 月間上限超過状態の擬似再現** で read-only 化:
-   ```sql
-   -- ⚠️ 解除時に必ず元に戻すこと
-   UPDATE tenants
-   SET plan = 'beginner',
-       current_month_api_call_count = 9999999,  -- 上限超過状態にして縮退
-       updated_at = NOW()
-   WHERE slug = '<tenant-slug>';
-   ```
+1. super_admin として `/admin/super/tenants/[id]` を開く (URL は対象テナントの UUID)
+2. ページ下部の「**read-only 強制移行 (停止 / 再開)**」セクションを表示
+3. 「**⏸ テナントを停止 (read-only)**」ボタンを押下
+4. ダイアログで停止理由を選択:
+   - `payment_delinquent`: 支払い滞納 (本 SOP §3 フェーズ 2 から実行 = **標準ケース**)
+   - `tos_violation`: 利用規約違反
+   - `other`: その他 (営業判断、極力使わず分類する)
+5. 「停止を実行」ボタンを押下
+6. 内部処理 (single transaction):
+   - `tenant.suspendedAt = now`, `suspendReason = '...'`, `suspendedBy = super_admin.id` をセット
+   - 配下の全 user (deletedAt=null) の `tokenVersion` を +1 increment
+   - `audit_logs` に `action='UPDATE', entityType='tenant'` を記録
+7. **既存ログインユーザの挙動**: 次リクエスト (= ボタンクリック直後の画面遷移等) で
+   `getAuthenticatedUser` が DB の最新 tokenVersion と JWT を比較し不一致 →
+   401 SESSION_INVALIDATED → ログイン画面へリダイレクト
+8. **再ログイン後の挙動**: 新しい JWT claim `tenantSuspendedAt` がセットされ、middleware が
+   write 系 HTTP method (POST/PATCH/PUT/DELETE) を 403 `TENANT_SUSPENDED` で遮断
+9. **例外パス (顧客の脱出経路)**: 以下のパスは停止中も通過する
+   - `PATCH /api/tenants/me`: プラン変更 (= 顧客が支払い完了して上位プランへ変更したい場合に使用)
+   - `DELETE /api/tenants/me`: プラン変更予約のキャンセル
+   - `POST /api/tenants/me/self-delete`: セルフ解約 (= 顧客がサービス継続を諦めて引き上げる場合)
 
-   > **限界**: この方式では「書き込み禁止」までは強制できず、提案エンジンの縮退モードに留まる。完全な書き込み禁止は v1.x の `suspendedAt` 実装を待つ。
-   > 暫定的に厳格な制限が必要な場合は、後続手順 4 で `deletedAt` セット (= ログイン不可) も検討。
+#### API 直接呼出 (例: スクリプト連携時)
 
-4. **より厳しい措置 (ログイン不可)** を取る場合は、`deletedAt` を一時セット:
-   ```sql
-   -- ⚠️ ログイン不可。エクスポートも顧客自身では取れなくなる。
-   -- 顧客から事前に「データ引き上げ用エクスポート要請」が来た場合のみ実施。
-   UPDATE tenants SET deleted_at = NOW() WHERE slug = '<tenant-slug>';
-   ```
-   この場合は purge 対象になる前 (P-F: 削除後 90 日後物理削除) に解除すること。
+```bash
+curl -X POST https://<host>/api/admin/super/tenants/<tenant-id>/suspend \
+  -H "content-type: application/json" \
+  -H "cookie: <super_admin-session>" \
+  -d '{"reason": "payment_delinquent"}'
+```
 
-5. 移行通知メールを送信:
-   ```
-   件名: 【ご連絡】サービス利用制限を実施しました (請求書 No. {{invoice_no}})
+エラーレスポンス:
+- 400 `VALIDATION_ERROR` / `INVALID_REASON`: reason が enum 外
+- 403 `MANAGEMENT_TENANT_FORBIDDEN`: 管理テナント停止試行
+- 404 `TENANT_NOT_FOUND`
+- 409 `TENANT_DELETED`: 既に削除済テナントへの停止試行
+- 409 `ALREADY_SUSPENDED`: 既に停止中テナントへの再停止試行
 
-   {{billingContactName}} 様
+#### 移行通知メール送信 (停止と並行)
 
-   {{date}} より、貴テナントを閲覧専用モードに移行しました。
-   お支払い完了次第、即座に解除いたします。
-   {{super_admin_email}}
-   ```
+```
+件名: 【ご連絡】サービス利用制限を実施しました (請求書 No. {{invoice_no}})
+
+{{billingContactName}} 様
+
+{{date}} より、貴テナントを閲覧専用 (read-only) モードに移行しました。
+
+【現在の状態】
+- ログイン: 可能
+- 既存データ閲覧: 可能
+- データのエクスポート: 可能
+- 新規プロジェクト作成 / コメント投稿等の書き込み: **不可** (画面操作時に「TENANT_SUSPENDED」エラー)
+- プラン変更 / セルフ解約: 引き続き可能
+
+お支払いを確認次第、即座に解除いたします。
+
+何かご事情がございましたら、本メールにご返信ください。
+{{super_admin_email}}
+```
 
 ### 3.4 並行アクション (期日 +31 日 / +45 日)
 
@@ -251,29 +268,35 @@
 ### 3.5 解除手順 (入金確認後)
 
 1. 入金確認 (銀行口座 / Stripe で日付・金額を一致確認)
-2. 元のプランに戻す:
-   ```sql
-   UPDATE tenants
-   SET plan = '<元プラン>',                 -- 'expert' or 'pro'
-       current_month_api_call_count = <移行前の値 or 0>,  -- 値が分からなければ 0 にして月初リセット待ち
-       updated_at = NOW()
-   WHERE slug = '<tenant-slug>';
-   ```
-3. (deletedAt セットしていた場合) 解除:
-   ```sql
-   UPDATE tenants SET deleted_at = NULL WHERE slug = '<tenant-slug>';
-   ```
-4. 解除通知メール送信:
-   ```
-   件名: 【ご連絡】サービス利用再開のご案内
+2. super_admin として `/admin/super/tenants/[id]` を開く
+3. 停止中なら **「⏸ このテナントは現在 read-only モード」** セクションが表示されている
+4. 「**▶ 停止を解除 (通常運用へ復帰)**」ボタンを押下
+5. ダイアログで「解除を実行」を確定
+6. 内部処理 (single transaction):
+   - `tenant.suspendedAt = null`, `suspendReason = null`, `resumedAt = now` をセット
+   - `suspendedBy` は **監査用に保持** (= 直前に停止した super_admin の userId を resume 後も追跡可能)
+   - 配下 user の `tokenVersion` を +1 increment (再ログイン強制)
+   - `audit_logs` に resume 操作を記録
+7. 顧客は再ログイン後、通常の write 系操作が可能に戻る
 
-   {{billingContactName}} 様
+#### API 直接呼出
+```bash
+curl -X POST https://<host>/api/admin/super/tenants/<tenant-id>/resume \
+  -H "cookie: <super_admin-session>"
+```
 
-   お支払いを確認いたしましたので、貴テナントの利用制限を解除いたしました。
-   引き続きご活用いただけますと幸いです。
-   {{super_admin_email}}
-   ```
-5. 運用シートに「解除日 / 入金日 / 入金額」を記録
+#### 解除通知メール
+```
+件名: 【ご連絡】サービス利用再開のご案内
+
+{{billingContactName}} 様
+
+お支払いを確認いたしましたので、貴テナントの利用制限を解除いたしました。
+引き続きご活用いただけますと幸いです。
+{{super_admin_email}}
+```
+
+8. 運用シートに「解除日 / 入金日 / 入金額」を記録
 
 ---
 
@@ -486,3 +509,4 @@ super_admin は **毎月初** に経営層へ以下のレポートを提出す�
 |---|---|---|
 | 2026-05-09 | 初版策定。手運用前提・暫定 read-only 手順 (`current_month_api_call_count` 強制超過) を含む | (本 PR) |
 | 2026-05-14 | 請求サイクル確定 (月末締め + 翌月15日発行 + 翌月25日支払) に合わせ、§0 実施タイミングを「翌月16〜25日 入金確認 / 翌月26日朝 未入金確認」に変更。フェーズ判定基準日を「支払期限 (翌月25日) 起算」に明文化 | #371 |
+| 2026-05-14 | **§3.3 read-only 移行手順を SQL 直接実行の暫定手順から `Tenant.suspendedAt` 専用機能 + super_admin UI 操作に書き換え**。書き込み禁止が implementation と整合 (`TENANT_SUSPENDED` 403 で middleware 遮断)。§3.5 解除も SQL 不要に変更 | #372 |
