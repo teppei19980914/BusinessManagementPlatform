@@ -4,9 +4,12 @@
  * 検証対象:
  *   - getTenantSelfInfo: 取得 + 派生フィールド (Beginner 期限) 整形
  *   - updateBillingContact: 部分更新 + 個人プラン切替時の null クリア
- *   - updateTenantSelf: プラン変更 (アップグレード即時 / ダウングレード予約) +
- *     席数チェック + Beginner ダウングレード禁止 + 予算更新 + seedDataEnabled toggle
- *   - cancelScheduledPlanChange: 予約クリア
+ *   - updateTenantSelf: プラン変更 (全方向即時反映 / Beginner ダウングレード拒否) +
+ *     予算更新 + seedDataEnabled toggle
+ *   - cancelScheduledPlanChange: 予約クリア (legacy 予約レコード対策)
+ *
+ * 2026-05-14: Expert↔Pro ダウングレードを即時反映に統一。「Pro→Expert は翌月予約」
+ *   ケースを「Pro→Expert は即時反映」に更新。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -262,20 +265,29 @@ describe('updateTenantSelf', () => {
     });
   });
 
-  it('Pro → Expert ダウングレード: 翌月 1 日 (UTC) に予約', async () => {
+  it('Pro → Expert ダウングレード: 即時反映 (2026-05-14 改修)', async () => {
+    // 旧仕様では翌月 1 日 (テナント TZ 0:00) に予約されていたが、
+    // 業務仕様書 §F-13.11 (「Expert ↔ Pro の切替は即時反映」) と整合させるため即時化。
+    // per-call 課金は呼出時点の単価で記録されるため、月途中切替でも整合性は保たれる。
     vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({ ...baseTenant, plan: 'pro' } as never);
 
     const r = await updateTenantSelf(TENANT_ID, { plan: 'expert' });
 
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.appliedImmediately).toBe(false);
-      expect(r.scheduledFor).toBeInstanceOf(Date);
+      expect(r.appliedImmediately).toBe(true);
+      expect(r.scheduledFor).toBeNull();
     }
-    const callArg = vi.mocked(prisma.tenant.update).mock.calls[0]![0];
-    const data = callArg.data as { scheduledNextPlan?: string; scheduledPlanChangeAt?: Date };
-    expect(data.scheduledNextPlan).toBe('expert');
-    expect(data.scheduledPlanChangeAt).toBeInstanceOf(Date);
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: expect.objectContaining({
+        plan: 'expert',
+        scheduledPlanChangeAt: null,
+        scheduledNextPlan: null,
+        // beginnerEverUpgraded はアップグレード/ダウングレード問わず true セット (Beginner 戻し防止)
+        beginnerEverUpgraded: true,
+      }),
+    });
   });
 
   it('Expert → Beginner ダウングレード: BEGINNER_DOWNGRADE_FORBIDDEN', async () => {
@@ -288,14 +300,17 @@ describe('updateTenantSelf', () => {
     expect(prisma.tenant.update).not.toHaveBeenCalled();
   });
 
-  it('ダウングレード予約と同時に budget も指定できる', async () => {
+  it('ダウングレード (Pro→Expert 即時) と同時に budget も指定できる', async () => {
     vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({ ...baseTenant, plan: 'pro' } as never);
 
     await updateTenantSelf(TENANT_ID, { plan: 'expert', monthlyBudgetCapJpy: 2000 });
 
     const data = vi.mocked(prisma.tenant.update).mock.calls[0]![0].data as Record<string, unknown>;
     expect(data.monthlyBudgetCapJpy).toBe(2000);
-    expect(data.scheduledNextPlan).toBe('expert');
+    // 2026-05-14: 即時反映なので plan が直接更新され、予約フィールドは null クリア
+    expect(data.plan).toBe('expert');
+    expect(data.scheduledNextPlan).toBeNull();
+    expect(data.scheduledPlanChangeAt).toBeNull();
   });
 
   it('アップグレードと同時に budget も指定できる', async () => {

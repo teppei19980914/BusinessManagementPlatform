@@ -52,7 +52,9 @@ curl -X POST https://tasukiba.vercel.app/api/cron/daily-notifications \
 **処理内容** (1 リクエストで以下を順次実行):
 
 1. **月初リセット**: `lastResetAt < 当月初 (UTC)` のテナントの `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセットし、`lastResetAt` を当月初に更新
-2. **プラン変更予約適用**: `scheduledPlanChangeAt <= now` のテナントに `scheduledNextPlan` を `plan` として適用 (Beginner ダウングレードの翌月適用)。適用後は scheduled 列を NULL に戻す
+2. **プラン変更予約適用 (legacy)**: `scheduledPlanChangeAt <= now` のテナントに `scheduledNextPlan` を `plan` として適用。適用後は scheduled 列を NULL に戻す。
+   - 2026-05-14: 新規にこの予約をセットするコードパスは廃止 (Expert↔Pro は即時反映、Beginner ダウングレードは完全禁止)。
+   - 本処理は **legacy DB レコード対策** として残置。旧コード期間に作られた予約レコードがあれば月初 cron で適用される。新規テナントでは通常 0 件適用となる。
 
 **冪等性保証**: 再実行しても結果は同じ。Vercel Cron の at-least-once 配信仕様で複数回起動されても安全。
 

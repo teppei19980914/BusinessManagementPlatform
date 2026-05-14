@@ -8871,3 +8871,62 @@ grep -rn "systemRole !== 'admin'\|systemRole === 'admin'" src/app/api/<entity>/
 - nav 拡張: [src/components/dashboard-header.tsx](../../src/components/dashboard-header.tsx) `visibleToSuperAdmin` flag
 - seed 維持ガイド: [docs/developer-guide/SEED_DATA_MAINTENANCE.md §1-2 / §1-3](../developer-guide/SEED_DATA_MAINTENANCE.md)
 
+## 5.X+56 業務仕様書と実装で挙動が乖離していたら **仕様書を真実とみなして実装を寄せる** ─ Expert↔Pro ダウングレード即時化 (2026-05-14)
+
+### 罠の正体
+
+業務仕様書 ([docs/business/TENANT_AND_BILLING.md §F-13.11](../business/TENANT_AND_BILLING.md)) に:
+
+> 「**Expert ↔ Pro の切替は即時反映**」
+
+と明記されていたが、実装 ([src/services/tenant-self.service.ts](../../src/services/tenant-self.service.ts)) では:
+
+```ts
+if (isUpgrade(currentPlan, nextPlan)) { 即時 } else { 翌月予約 }
+```
+
+と「ダウングレード全般を一律で翌月予約」していた。結果、Pro→Expert ダウングレードが業務仕様書と異なる挙動 (= 翌月適用) で動作していた。
+
+ユーザ指摘で発覚するまで気付かれなかった。**仕様書と実装の乖離は、テストが「実装の現状」を検証してしまうとサイレントに固定化される** (本件の単体テスト [tenant-self.service.test.ts:265](../../src/services/tenant-self.service.test.ts) は「Pro → Expert ダウングレード: 翌月 1 日 (UTC) に予約」を期待していた)。
+
+### 真因と判断材料
+
+旧実装で「Pro→Expert も翌月適用」だった根拠は、ダウングレード共通の悪用防止策 ([§NF-13.15](../business/TENANT_AND_BILLING.md)):
+
+> 月末ぎりぎりにダウングレードして当月分を 0 円にする悪用を防ぐ
+
+を **Expert↔Pro にも適用してしまった** こと。しかし:
+
+- 課金モデルは **per-call 従量課金** (Expert ¥10/call / Pro ¥30/call、`withMeteredLLM` が呼出時点の plan で単価を確定)
+- 「月途中でダウングレードして当月分 0 円化」は **Beginner (¥0 / 月 100 回上限) への退避だけが該当**
+- Expert↔Pro 間は per-call 課金のため、月途中の切替でも当月分は ¥30/call + ¥10/call の混在で正しく課金記録される → 悪用が成立しない
+
+→ §NF-13.15 の射程は **Beginner ダウングレードのみ**。Expert↔Pro に適用したのは過剰防衛だった。
+
+### 横展開チェックリスト (「仕様 vs 実装」乖離検出)
+
+新規機能の挙動を回答するとき、または ユーザに仕様を説明するときは:
+
+- [ ] **必ず実コードを直接読む** (推測・記憶ベース回答禁止 / CLAUDE.md「情報源の信頼性ルール」)
+- [ ] **業務仕様書 (`docs/business/*`) も並行参照** し、コードと記述に齟齬がないか確認
+- [ ] 齟齬があれば「**業務仕様書を真実とみなして実装を寄せる**」を原則とする
+  - 例外: 仕様書側が古い / 安全側に振った決定が後から覆っていない場合のみ。明示確認すること
+- [ ] **既存テストの期待値も仕様 vs 実装乖離の証拠になる** ─ テストが「翌月予約」を assert していても、それが業務仕様と合致するか別チェック
+- [ ] 修正時は **ロードマップ文書 (V1_FINAL_TASKS.md)** + **業務仕様書 (TENANT_AND_BILLING.md)** + **既存テスト** の 3 点を同期更新
+
+### 修正のしかた (本件の実例)
+
+1. [tenant-self.service.ts](../../src/services/tenant-self.service.ts): `isUpgrade` 分岐を撤去し、`if (nextPlan === 'beginner') 拒否 else 即時更新` の 2 分岐に簡素化
+2. [tenant-self.service.test.ts](../../src/services/tenant-self.service.test.ts): 「Pro→Expert ダウングレード: 翌月予約」を「即時反映」に書き換え
+3. [plan-change-flow.e2e.test.ts](../../src/services/plan-change-flow.e2e.test.ts): 月跨ぎシナリオの「M3 cron で予約適用」を「M2 中即時 + cron での適用は 0 件」に書き換え + Pro→Expert 即時反映の単発テスト追加
+4. [tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx): 確認 dialog の「月末から適用」文言を「即時反映 + Pro 限定機能が即座に使えなくなる」文言に修正
+5. [V1_FINAL_TASKS.md §150](../roadmap/V1_FINAL_TASKS.md) / [TENANT_AND_BILLING.md §F-13.11 / §NF-13.15 / §357](../business/TENANT_AND_BILLING.md): 「翌月適用」記述を全消去し「Beginner downgrade は完全禁止、Expert↔Pro は即時」に統一
+6. 旧予約フィールド (`scheduledPlanChangeAt` / `scheduledNextPlan`) を新規にセットするコードパスを撤去。月初 cron 側 + `cancelScheduledPlanChange` は **legacy DB レコード対策** として残置
+
+### 関連
+
+- 業務仕様: [docs/business/TENANT_AND_BILLING.md §F-13.11 / §NF-13.15](../business/TENANT_AND_BILLING.md)
+- 課金モデル: [src/lib/llm/metered.ts](../../src/lib/llm/metered.ts) (withMeteredLLM が呼出時点の plan で単価を確定)
+- 単価解決: [src/config/llm.ts](../../src/config/llm.ts) `resolveCostForPlan` / `resolveModelForPlan`
+- 改修コミット: (本 PR)
+
