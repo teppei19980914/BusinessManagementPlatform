@@ -13,6 +13,8 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     tenantMonthlyUsageHistory: {
       findMany: vi.fn(),
+      // 2026-05-14: deleteTenant が月途中解約時にスナップショットを upsert する
+      upsert: vi.fn(),
     },
     // P-6 (2026-05-08): listDormantTenants で使用
     tenant: {
@@ -106,7 +108,7 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         storageAddonPlan: 'standard',
         storageAddonJpy: 0,
         totalJpy: 2500,
-        tenant: { tenantSeq: 2, name: 'カスタマーA' },
+        tenant: { tenantSeq: 2, name: 'カスタマーA', deletedAt: null },
       },
       {
         yearMonth: '2026-04',
@@ -119,7 +121,7 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         storageAddonPlan: 'plus',
         storageAddonJpy: 500,
         totalJpy: 45500,
-        tenant: { tenantSeq: 3, name: 'カスタマーB' },
+        tenant: { tenantSeq: 3, name: 'カスタマーB', deletedAt: null },
       },
     ] as never);
 
@@ -139,6 +141,7 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         storageAddonPlan: 'standard',
         storageAddonJpy: 0,
         totalJpy: 2500,
+        tenantDeletedAt: null,
       },
       {
         yearMonth: '2026-04',
@@ -153,8 +156,38 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         storageAddonPlan: 'plus',
         storageAddonJpy: 500,
         totalJpy: 45500,
+        tenantDeletedAt: null,
       },
     ]);
+  });
+
+  // 2026-05-14: 解約済テナントの履歴行も取得し、解約日が DTO に含まれる
+  it('解約済テナントの履歴も DTO に tenantDeletedAt が含まれる (月途中解約の請求検知)', async () => {
+    vi.mocked(prisma.tenantMonthlyUsageHistory.findMany).mockResolvedValueOnce([
+      {
+        yearMonth: '2026-05',
+        tenantId: 'tenant-cancelled',
+        plan: 'expert',
+        apiCallCount: 80,
+        apiCostJpy: 800,
+        activeUserCount: 2,
+        storageBytesUsed: BigInt(0),
+        storageAddonPlan: 'standard',
+        storageAddonJpy: 0,
+        totalJpy: 800,
+        // join で deletedAt が取れる (deleteTenant の upsert で記録された 5/20 解約)
+        tenant: {
+          tenantSeq: 7,
+          name: '5月途中解約',
+          deletedAt: new Date('2026-05-20T03:00:00Z'),
+        },
+      },
+    ] as never);
+
+    const rows = await listMonthlyUsageHistory(6);
+
+    expect(rows[0]!.tenantDeletedAt).toEqual(new Date('2026-05-20T03:00:00Z'));
+    expect(rows[0]!.tenantName).toBe('5月途中解約');
   });
 
   it('months=6 で過去 6 ヶ月の yearMonth を IN 句に渡す (当月含まない)', async () => {
@@ -351,9 +384,19 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
       id: TENANT_ID,
       deletedAt: null,
       name: 'テスト顧客',
+      // 2026-05-14: 解約時スナップショット用に必要なフィールド
+      plan: 'expert',
+      timezone: 'Asia/Tokyo',
+      currentMonthApiCallCount: 250,
+      currentMonthApiCostJpy: 2500,
+      storageAddonPlan: 'standard',
+      storageBytesUsed: BigInt(0),
     } as never);
 
-    // 各 updateMany / update / create の mock
+    // 2026-05-14: deleteTenant が解約時にアクティブユーザ数を事前取得 (transaction 外)
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(3 as never);
+
+    // 各 updateMany / update / create / upsert の mock
     const mkRes = (count: number) => ({ count });
     vi.mocked(prisma.user.updateMany).mockResolvedValueOnce(mkRes(3) as never);
     vi.mocked(prisma.project.updateMany).mockResolvedValueOnce(mkRes(2) as never);
@@ -365,6 +408,7 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
     vi.mocked(prisma.comment.updateMany).mockResolvedValueOnce(mkRes(15) as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValueOnce(mkRes(8) as never);
     vi.mocked(prisma.tenant.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValueOnce({} as never);
     vi.mocked(prisma.auditLog.create).mockResolvedValueOnce({} as never);
   }
 
@@ -429,6 +473,12 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
       id: TENANT_ID,
       deletedAt: new Date('2026-04-01'),
       name: '削除済',
+      plan: 'expert',
+      timezone: 'Asia/Tokyo',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      storageAddonPlan: 'standard',
+      storageBytesUsed: BigInt(0),
     } as never);
 
     await expect(deleteTenant(TENANT_ID, PERFORMER_ID)).rejects.toThrow('ALREADY_DELETED');
@@ -441,10 +491,91 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
     await deleteTenant(TENANT_ID, PERFORMER_ID);
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    // 11 オペ: users, projects, knowledges, risksIssues, retrospectives,
-    // memos, stakeholders, comments, attachments, tenant.update, auditLog.create
+    // 12 オペ: users, projects, knowledges, risksIssues, retrospectives,
+    // memos, stakeholders, comments, attachments, tenant.update,
+    // tenantMonthlyUsageHistory.upsert (2026-05-14), auditLog.create
     const txArg = vi.mocked(prisma.$transaction).mock.calls[0]![0] as unknown as unknown[];
-    expect(txArg).toHaveLength(11);
+    expect(txArg).toHaveLength(12);
+  });
+
+  // ================================================================
+  // 2026-05-14: 月途中解約スナップショット
+  // ================================================================
+  it('解約時に当月分の tenant_monthly_usage_history を upsert (= 月途中解約の請求漏れ防止)', async () => {
+    setupHappyPathMocks();
+
+    // 解約時刻: 2026-05-20 03:00 UTC = JST 2026-05-20 12:00
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-20T03:00:00Z'));
+
+    try {
+      await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+      expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId_yearMonth: { tenantId: TENANT_ID, yearMonth: '2026-05' },
+          },
+          create: expect.objectContaining({
+            tenantId: TENANT_ID,
+            yearMonth: '2026-05',
+            apiCallCount: 250,
+            apiCostJpy: 2500,
+            plan: 'expert',
+            activeUserCount: 3,
+            storageAddonPlan: 'standard',
+            // Storage standard プランは無料 (0 円)
+            storageAddonJpy: 0,
+            totalJpy: 2500,
+          }),
+          update: expect.objectContaining({
+            apiCallCount: 250,
+            apiCostJpy: 2500,
+            plan: 'expert',
+          }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('解約時のスナップショットは「当月の yearMonth」(getTenantCurrentYearMonth)', async () => {
+    setupHappyPathMocks();
+
+    // 2026-12-31 14:30 UTC = JST 2026-12-31 23:30 (= まだ 12 月)
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-12-31T14:30:00Z'));
+
+    try {
+      await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+      expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId_yearMonth: { tenantId: TENANT_ID, yearMonth: '2026-12' },
+          },
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('解約時の activeUserCount は user.updateMany の前に取得される (= 削除後の count=0 を避ける)', async () => {
+    setupHappyPathMocks();
+
+    await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+    // user.count (trsanction 外) で取得した値が upsert に渡る
+    expect(prisma.user.count).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_ID, isActive: true, deletedAt: null },
+    });
+    expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ activeUserCount: 3 }),
+      }),
+    );
   });
 
   it('既に user.deletedAt がセット済みの user は更新対象外 (where: deletedAt: null)', async () => {
@@ -1042,6 +1173,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        deletedAt: null,
       },
       // expert plan, plus storage (¥500): LLM ¥3000 + Storage ¥500 = ¥3500
       {
@@ -1054,6 +1186,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'credit_card',
         storageAddonPlan: 'plus', storageBytesUsed: BigInt(100 * 1024 * 1024),
+        deletedAt: null,
       },
       // pro plan, pro_storage (¥1500): LLM ¥30000 + Storage ¥1500 = ¥31500
       {
@@ -1066,6 +1199,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'pro_storage', storageBytesUsed: BigInt(500 * 1024 * 1024),
+        deletedAt: null,
       },
     ] as never);
     vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
@@ -1102,6 +1236,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'unknown_plan_value', // 想定外値
         storageBytesUsed: BigInt(0),
+        deletedAt: null,
       },
     ] as never);
     vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([] as never);
@@ -1121,6 +1256,62 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
     expect(rows).toEqual([]);
   });
 
+  // ================================================================
+  // 2026-05-14: includeDeleted フラグ (月途中解約の請求漏れ検知)
+  // ================================================================
+  it('includeDeleted=true で解約済テナント (deletedAt != null) も結果に含む', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: 'tenant-active', tenantSeq: 2, slug: 'active', name: 'Active', plan: 'expert',
+        currentMonthApiCallCount: 100, currentMonthApiCostJpy: 1000,
+        monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
+        billingType: 'corporate', billingCompanyName: 'X',
+        billingContactName: 'A', billingContactEmail: 'a@x.com',
+        billingAddress: null, billingPostalCode: null, billingPrefecture: null,
+        billingCity: null, billingStreetAddress: null, billingBuildingName: null,
+        billingPhoneNumber: null, paymentMethod: 'invoice',
+        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        deletedAt: null,
+      },
+      {
+        id: 'tenant-cancelled', tenantSeq: 3, slug: 'cancelled', name: 'Cancelled', plan: 'expert',
+        currentMonthApiCallCount: 50, currentMonthApiCostJpy: 500,
+        monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
+        billingType: 'corporate', billingCompanyName: 'Y',
+        billingContactName: 'B', billingContactEmail: 'b@y.com',
+        billingAddress: null, billingPostalCode: null, billingPrefecture: null,
+        billingCity: null, billingStreetAddress: null, billingBuildingName: null,
+        billingPhoneNumber: null, paymentMethod: 'invoice',
+        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        deletedAt: new Date('2026-05-20T03:00:00Z'),
+      },
+    ] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([] as never);
+
+    const rows = await listAllTenants({ includeDeleted: true });
+
+    // 解約済もアクティブも両方返る
+    expect(rows).toHaveLength(2);
+    // findMany の where に deletedAt: null フィルタが入らない
+    const where = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0]!.where!;
+    expect(where).not.toHaveProperty('deletedAt');
+    // 解約日が DTO に含まれる
+    const cancelled = rows.find((r) => r.id === 'tenant-cancelled')!;
+    expect(cancelled.deletedAt).toEqual(new Date('2026-05-20T03:00:00Z'));
+    const active = rows.find((r) => r.id === 'tenant-active')!;
+    expect(active.deletedAt).toBeNull();
+  });
+
+  it('includeDeleted を省略 (= false) すると従来通り deletedAt: null フィルタが当たる', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([] as never);
+
+    await listAllTenants();
+
+    const where = vi.mocked(prisma.tenant.findMany).mock.calls[0]![0]!.where!;
+    expect(where).toMatchObject({ deletedAt: null });
+  });
+
   it('ユーザ数集計で他テナントが交差しない (= where: tenantId IN [一覧] でフィルタ)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       {
@@ -1133,11 +1324,12 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        deletedAt: null,
       },
     ] as never);
     vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([] as never);
 
-    await listAllTenants();
+    await listAllTenants({});
 
     // user.groupBy が顧客テナントの ID のみで絞られていること (他テナント交差防止)
     const userCall = vi.mocked(prisma.user.groupBy).mock.calls[0]![0]!;
