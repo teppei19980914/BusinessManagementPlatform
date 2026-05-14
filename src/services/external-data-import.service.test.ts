@@ -181,8 +181,9 @@ describe('previewImport', () => {
       expect(r.summary.knowledge.totalRows).toBe(2);
       expect(r.summary.knowledge.validRows).toBe(2);
       expect(r.summary.knowledge.errorRows).toBe(0);
-      // Expert: ¥10 × 2 = ¥20
-      expect(r.costEstimate.estimatedJpy).toBe(20);
+      // PR #357 + #359 (2026-05-14): N 件取込でも 1 ApiCallLog に集約。Expert: ¥10 × 1 = ¥10
+      expect(r.costEstimate.voyageCalls).toBe(1);
+      expect(r.costEstimate.estimatedJpy).toBe(10);
       expect(r.costEstimate.warningCode).toBeNull();
     }
   });
@@ -213,16 +214,20 @@ describe('previewImport', () => {
       expect(r.summary.knowledge.validRows).toBe(1);
       expect(r.summary.knowledge.errorRows).toBe(1);
       expect(r.errors[0]?.field).toBe('title');
-      // 有効分の見積は 1 件分のみ
+      // PR #357 + #359: 有効 1 件あれば 1 ApiCallLog = ¥10 (Expert)
+      expect(r.costEstimate.voyageCalls).toBe(1);
       expect(r.costEstimate.estimatedJpy).toBe(10);
     }
   });
 
   it('Beginner プランで月次上限超過 → warningCode=BEGINNER_CALL_LIMIT_EXCEEDED', async () => {
+    // PR #357 + #359 (2026-05-14): N 件取込 = 1 ApiCallLog なので
+    //   100 件取込 + 既 95 = 96 でも 100 を超えない。
+    //   このため超過テストは「既 100、取込 1 件 → 101 件」のシナリオで再現。
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       plan: 'beginner',
-      currentMonthApiCallCount: 95,
+      currentMonthApiCallCount: 100,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
       beginnerMonthlyCallLimit: 100,
@@ -236,12 +241,6 @@ describe('previewImport', () => {
       userId: USER_ID,
       fileBuffer: buildKnowledgeCsv([
         { title: 'T1', background: 'B1', content: 'C1', result: 'R1' },
-        { title: 'T2', background: 'B2', content: 'C2', result: 'R2' },
-        { title: 'T3', background: 'B3', content: 'C3', result: 'R3' },
-        { title: 'T4', background: 'B4', content: 'C4', result: 'R4' },
-        { title: 'T5', background: 'B5', content: 'C5', result: 'R5' },
-        { title: 'T6', background: 'B6', content: 'C6', result: 'R6' },
-        { title: 'T7', background: 'B7', content: 'C7', result: 'R7' },
       ]),
       mappings: [
         {
@@ -257,18 +256,20 @@ describe('previewImport', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // 既 95 + 7 = 102 > 100
+      // 既 100 + 1 (集約) = 101 > 100
       expect(r.costEstimate.warningCode).toBe('BEGINNER_CALL_LIMIT_EXCEEDED');
       expect(r.costEstimate.warningMessage).toContain('Beginner');
     }
   });
 
   it('Expert プランで月次予算超過 → warningCode=BUDGET_CAP_EXCEEDED', async () => {
+    // PR #357 + #359 (2026-05-14): 1 ApiCallLog = ¥10 (Expert) なので
+    //   超過再現は「既 ¥4995 + ¥10 = ¥5005 > ¥5000」のシナリオに変更。
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       plan: 'expert',
       currentMonthApiCallCount: 0,
-      currentMonthApiCostJpy: 4950,
+      currentMonthApiCostJpy: 4995,
       monthlyBudgetCapJpy: 5000,
       beginnerMonthlyCallLimit: 100,
       pricePerCallHaiku: 10,
@@ -281,11 +282,6 @@ describe('previewImport', () => {
       userId: USER_ID,
       fileBuffer: buildKnowledgeCsv([
         { title: 'T1', background: 'B1', content: 'C1', result: 'R1' },
-        { title: 'T2', background: 'B2', content: 'C2', result: 'R2' },
-        { title: 'T3', background: 'B3', content: 'C3', result: 'R3' },
-        { title: 'T4', background: 'B4', content: 'C4', result: 'R4' },
-        { title: 'T5', background: 'B5', content: 'C5', result: 'R5' },
-        { title: 'T6', background: 'B6', content: 'C6', result: 'R6' },
       ]),
       mappings: [
         {
@@ -301,7 +297,7 @@ describe('previewImport', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // 既 ¥4950 + ¥10×6 = ¥5010 > ¥5000
+      // 既 ¥4995 + ¥10×1 (集約) = ¥5005 > ¥5000
       expect(r.costEstimate.warningCode).toBe('BUDGET_CAP_EXCEEDED');
     }
   });

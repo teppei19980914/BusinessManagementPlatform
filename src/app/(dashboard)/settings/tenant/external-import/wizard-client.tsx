@@ -55,8 +55,9 @@ type PreviewResponse = {
   ok: true;
   previewId: string;
   summary: {
-    knowledge: { totalRows: number; validRows: number; errorRows: number };
-    risksIssues: { totalRows: number; validRows: number; errorRows: number };
+    // PR #359 (2026-05-14): draftRows / publicRows を追加 (課金対象内訳)
+    knowledge: { totalRows: number; validRows: number; errorRows: number; draftRows: number; publicRows: number };
+    risksIssues: { totalRows: number; validRows: number; errorRows: number; draftRows: number; publicRows: number };
   };
   errors: PreviewError[];
   costEstimate: CostEstimate;
@@ -632,6 +633,20 @@ function Step3Preview(props: {
             <p className="font-semibold">Knowledge</p>
             <p>合計 {summary.knowledge.totalRows} 行</p>
             <p className="text-info">取込可能 {summary.knowledge.validRows} 行</p>
+            {/* PR #359 (2026-05-14): visibility 別内訳。draft は課金対象外を明示 */}
+            {summary.knowledge.validRows > 0 && (
+              <p className="text-xs text-muted-foreground">
+                内訳: 全メンバー公開 {summary.knowledge.publicRows} 行
+                {summary.knowledge.draftRows > 0 && (
+                  <>
+                    {' / '}
+                    <span className="text-emerald-700 dark:text-emerald-400">
+                      自分のみ {summary.knowledge.draftRows} 行 (課金対象外)
+                    </span>
+                  </>
+                )}
+              </p>
+            )}
             {summary.knowledge.errorRows > 0 && (
               <p className="text-destructive">エラー {summary.knowledge.errorRows} 行</p>
             )}
@@ -640,6 +655,19 @@ function Step3Preview(props: {
             <p className="font-semibold">RiskIssue</p>
             <p>合計 {summary.risksIssues.totalRows} 行</p>
             <p className="text-info">取込可能 {summary.risksIssues.validRows} 行</p>
+            {summary.risksIssues.validRows > 0 && (
+              <p className="text-xs text-muted-foreground">
+                内訳: 全メンバー公開 {summary.risksIssues.publicRows} 行
+                {summary.risksIssues.draftRows > 0 && (
+                  <>
+                    {' / '}
+                    <span className="text-emerald-700 dark:text-emerald-400">
+                      自分のみ {summary.risksIssues.draftRows} 行 (課金対象外)
+                    </span>
+                  </>
+                )}
+              </p>
+            )}
             {summary.risksIssues.errorRows > 0 && (
               <p className="text-destructive">エラー {summary.risksIssues.errorRows} 行</p>
             )}
@@ -649,8 +677,22 @@ function Step3Preview(props: {
         {/* コスト見積 */}
         <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
           <p className="font-semibold">⚠ 生成 AI 利用課金の見積</p>
+          {/* PR #357 + #359 (2026-05-14): 取込全件をまとめて 1 ApiCallLog に集約 (= 0 または 1 回) */}
           <p>
-            embedding 生成: <strong>{costEstimate.voyageCalls} 回</strong>
+            AI 呼出回数:{' '}
+            <strong>
+              {costEstimate.voyageCalls} 回
+            </strong>
+            {costEstimate.voyageCalls === 1 && (
+              <span className="ml-1 text-xs text-muted-foreground">
+                (取込全件をまとめて 1 回の API 呼出に集約)
+              </span>
+            )}
+            {costEstimate.voyageCalls === 0 && (
+              <span className="ml-1 text-xs text-muted-foreground">
+                (全件が「公開範囲: 自分のみ」または取込なしのため AI 呼出なし)
+              </span>
+            )}
           </p>
           {costEstimate.plan === 'beginner' ? (
             <p>

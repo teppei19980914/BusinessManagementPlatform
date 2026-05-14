@@ -442,7 +442,11 @@ function PmActions() {
           <Link className="text-primary underline" href={KNOWLEDGE_ROUTE}>
             ナレッジ
           </Link>{' '}
-          として独立記録 (公開範囲を「公開」に設定すれば、テナント内の他プロジェクトからも参照できます)。
+          として独立記録 (公開範囲を「全メンバー」に設定すれば、テナント内の他プロジェクトからも参照できます)。
+          {/* PR #359 (2026-05-14): 公開範囲とコストの関係を ana 化 */}
+          <span className="ml-1 text-xs text-muted-foreground">
+            公開範囲が「自分のみ」のうちは提案機能の候補にならず AI 課金もかかりません。「全メンバー」に変更したタイミングで初めて 1 回課金されます (リスク・課題・振り返りも同じ仕組み)。
+          </span>
         </li>
       </ol>
     </div>

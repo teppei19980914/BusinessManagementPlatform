@@ -160,6 +160,16 @@ export function RetrospectiveEditDialog({
             <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
               {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
+            {/* PR #359 (2026-05-14): 公開範囲とコストの関係をユーザに明示 */}
+            {form.visibility === 'draft' ? (
+              <p className="text-xs text-muted-foreground">
+                「自分のみ」では他プロジェクトの提案候補にならず、AI 課金 (文章の数値化) も発生しません。「全メンバー」に変更した瞬間に 1 回課金されます。
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                「全メンバー」では他プロジェクトの提案候補として表示されます。本文 (計画 / 実績 / 良かった点 / 課題 / 改善点 / 共有知見) を変更して保存するたびに AI 課金が 1 回発生します。
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label>
