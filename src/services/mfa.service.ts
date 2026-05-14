@@ -10,7 +10,7 @@ import { recordAuthEvent } from './auth-event.service';
 // fail-closed 化。NEXTAUTH_SECRET 未設定時に **公開定数で全テナントの TOTP secret を暗号化** する
 // 重大事故 (DB 漏洩時に MFA 全件解読) を防ぐ。
 // 独立した MFA_ENCRYPTION_KEY + AES-256-GCM への移行は post-MVP ロードマップ
-// (docs/archive/security/SECURITY-TASKS.md F-01) で実施。
+// (docs/security/SECURITY-TASKS.md F-01) で実施。
 function resolveEncryptionKey(): string {
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret || secret.length < 32) {

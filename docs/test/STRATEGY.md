@@ -100,7 +100,7 @@ PR #89 で cold start 分析をしているが、定期的に再計測が必要�
 - 秘匿情報の実送信 (NEXTAUTH_SECRET / DATABASE_URL が log に出ていないか)
 - OWASP Top 10 の人手チェックリスト
 
-定期 (四半期) で `/threat-model` skill による STRIDE 分析を実施する運用。
+定期 (四半期) に STRIDE 脅威モデリングを手動実施する運用 ([docs/security/](../security/) 参照)。
 
 ### 2.6 外部サービス連携の実疎通
 
@@ -198,7 +198,7 @@ PR #89 で cold start 分析をしているが、定期的に再計測が必要�
 - [ ] 累積データ量の把握 (DB サイズ / 行数)
 
 **四半期**:
-- [ ] `/threat-model` による STRIDE 脅威モデリング再実施
+- [ ] STRIDE 脅威モデリング再実施 (手動、[docs/security/](../security/) 参照)
 - [ ] ペネトレーションテスト (社内 or 外部)
 - [ ] 視覚回帰 baseline の全面再生成 (意図せぬ累積ドリフト解消)
 - [ ] 災害復旧訓練 (リストア手順の実地確認)

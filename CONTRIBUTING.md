@@ -5,9 +5,10 @@
 >
 > 関連:
 > - [README.md](./README.md) — プロジェクト概要
-> - [docs/developer/DEVELOPER_GUIDE.md](./docs/developer/DEVELOPER_GUIDE.md) — 改修・追加・削除の実務手順
-> - [docs/developer/DESIGN.md](./docs/developer/DESIGN.md) — 設計書 (情報源)
-> - [docs/administrator/OPERATION.md](./docs/administrator/OPERATION.md) — 運用・デプロイ手順
+> - [docs/README.md](./docs/README.md) — ドキュメント索引 (役割別)
+> - [docs/developer-guide/](./docs/developer-guide/) — 改修・追加・削除の実務手順
+> - [docs/design/](./docs/design/) — 設計書 (ARCHITECTURE / DATA_MODEL / API_DESIGN / SECURITY / INFRASTRUCTURE 等に分割)
+> - [docs/operations/](./docs/operations/) — 運用・デプロイ手順
 
 ---
 
@@ -25,7 +26,7 @@
 
 ## 1. コミット前チェックリスト
 
-すべてのコミット前に以下を必ず確認してください (`docs/developer/DEVELOPER_GUIDE.md` §9 参照)。
+すべてのコミット前に以下を必ず確認してください ([docs/developer-guide/TEST_LINT_BUILD.md](./docs/developer-guide/TEST_LINT_BUILD.md) 参照)。
 
 ```bash
 pnpm lint        # 静的解析エラーゼロ
@@ -37,9 +38,9 @@ pnpm build       # ビルド成功 (型エラー検出含む)
 
 ### コミット内容のチェック
 
-- [ ] **設計原則 (DESIGN.md §21.4) に違反していないか**: 業務的意味を持つ値を `src/config/` 経由でなくハードコードしていないか
-- [ ] **テストコードを追加・更新したか**: 機能追加時はテスト必須 (メモリ「テストコード必須ルール」)
-- [ ] **ドキュメントを更新したか**: 仕様変更時は SPECIFICATION.md / DESIGN.md / OPERATION.md / DEVELOPER_GUIDE.md の該当箇所
+- [ ] **設計原則に違反していないか**: 業務的意味を持つ値を `src/config/` 経由でなくハードコードしていないか ([docs/design/ARCHITECTURE.md](./docs/design/ARCHITECTURE.md) のハードコード禁止セクション参照)
+- [ ] **テストコードを追加・更新したか**: 機能追加時はテスト必須
+- [ ] **ドキュメントを更新したか**: 仕様変更時は [docs/specification/](./docs/specification/) / [docs/design/](./docs/design/) / [docs/operations/](./docs/operations/) / [docs/developer-guide/](./docs/developer-guide/) の該当ファイル
 - [ ] **横展開漏れがないか**: 同じパターンが他ファイルに残っていないか `grep` で確認
 - [ ] **機密情報を含めていないか**: `.env` 値 / API キー / パスワード / トークンを直書きしていない
 - [ ] **危険な動的コード実行 API を使っていないか**: ブロックフック (`.claude/hooks/block-dangerous-edit.sh`) で検知される系統 (具体的なリストは同フックを参照)
@@ -57,23 +58,18 @@ pnpm build       # ビルド成功 (型エラー検出含む)
 | ドキュメント | `docs/` | `docs/pr82-developer-guide` |
 | リファクタ (機能影響なし) | `refactor/` | `refactor/pr82-extract-validation-constants` |
 | 緊急修正 | `hotfix/` | `hotfix/pr82-database-connection` |
-| 当日作業ブランチ | `dev/YYYY-MM-DD` | `dev/2026-04-21` (Stop hook で自動生成) |
 
 PR 番号は事前に予約しておくと整理しやすい (例: `feat/pr85-...`)。
 
 ### 2.2 保護されたブランチ
 
-以下のブランチへの直接コミットは禁止 (`auto-commit.sh` が拒否):
+以下のブランチへの直接コミットは禁止:
 
 - `main`
 - `master`
 - `develop`
 - `release/*`
 - `hotfix/*` (例外的にレビュー後マージ)
-
-### 2.3 当日ブランチ
-
-`dev/YYYY-MM-DD` は SessionStart hook が自動で切り替えます (`.claude/.git-automation-config` 有効時)。
 
 ---
 
@@ -98,7 +94,7 @@ Co-Authored-By: ... (AI ペアプロ時のみ)
 ```
 プロジェクト一覧画面に状態フィルタを追加 (PR #82)
 ログイン失敗ロック回数を 5 → 3 に変更 (セキュリティ強化)
-docs/developer/DEVELOPER_GUIDE.md を更新 (i18n 移行手順を追記)
+docs/developer-guide/HOW_TO_ADD_FEATURES.md を更新 (i18n 移行手順を追記)
 ```
 
 悪い例:
@@ -161,7 +157,7 @@ WIP                     # コミット対象が曖昧
 1. **CI が全 pass**: `.github/workflows/ci.yml` (lint / test / build) すべて成功
 2. **セキュリティスキャン pass**: `.github/workflows/security.yml` (gitleaks / pnpm audit / CodeQL)
 3. **コードレビュー** (チームに 2 人以上いる場合は別メンバーの承認 1 件以上)
-4. **DB スキーマ変更を含む場合**: マージ前に Supabase で migration を手動実行 (OPERATION.md §3)
+4. **DB スキーマ変更を含む場合**: マージ前に Supabase で migration を手動実行 ([docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md))
 5. **視覚回帰**: UI 変更を含む場合は Vercel Preview Deployment で目視確認
 
 ### 4.4 マージ方式
@@ -217,7 +213,7 @@ WIP                     # コミット対象が曖昧
 
 ### 6.1 コード上の禁止
 
-- ❌ **業務的意味を持つ値のハードコード** (DESIGN.md §21.4)
+- ❌ **業務的意味を持つ値のハードコード** ([docs/design/ARCHITECTURE.md](./docs/design/ARCHITECTURE.md))
   - 色: `bg-gray-50` 等の Tailwind パレット → semantic token (`bg-muted` 等) を使う
   - 文字数上限: `maxLength={100}` 直書き → `src/config/validation.ts` の定数を使う
   - 画面遷移パス: `redirect('/login')` 直書き → `src/config/app-routes.ts` の定数を使う
@@ -230,7 +226,7 @@ WIP                     # コミット対象が曖昧
 ### 6.2 Git 運用上の禁止
 
 - ❌ **`main` への直接コミット**: 必ず PR 経由
-- ❌ **`--no-verify` でのコミット**: pre-commit hook 回避禁止 (Stop hook の検査をバイパスしない)
+- ❌ **`--no-verify` でのコミット**: pre-commit hook 回避禁止
 - ❌ **force push to main/master**: 共有ブランチの履歴改ざん禁止
 - ❌ **機密ファイルのコミット**: `.env` / `*.pem` / `*.key` / `credentials.*` / `secrets.*` (.gitignore 設定済)
 - ❌ **大規模リファクタと機能変更を同 PR**: レビュー困難になるため分離
@@ -241,13 +237,14 @@ WIP                     # コミット対象が曖昧
 
 | 困りごと | 参照先 |
 |---|---|
-| 開発環境を立ち上げたい | [docs/beginner/README.md](./docs/beginner/README.md) または [docs/administrator/OPERATION.md](./docs/administrator/OPERATION.md) §2 |
-| 新機能を追加したい | [docs/developer/DEVELOPER_GUIDE.md](./docs/developer/DEVELOPER_GUIDE.md) §4 |
-| テーマを追加したい | [docs/developer/DEVELOPER_GUIDE.md](./docs/developer/DEVELOPER_GUIDE.md) §2 |
-| DB スキーマを変更したい | [docs/developer/DEVELOPER_GUIDE.md](./docs/developer/DEVELOPER_GUIDE.md) §7 / [docs/administrator/OPERATION.md](./docs/administrator/OPERATION.md) §3 |
-| 設計の意図を知りたい | [docs/developer/DESIGN.md](./docs/developer/DESIGN.md) (4500+ 行、章立てから検索) |
-| デプロイ失敗時の対応 | [docs/administrator/OPERATION.md](./docs/administrator/OPERATION.md) §6 / §7 |
-| 過去の議論の経緯 | `git log` / GitHub 過去 PR (#54〜) |
+| 開発環境を立ち上げたい | [docs/beginner/README.md](./docs/beginner/README.md) または [docs/operations/SETUP_LOCAL.md](./docs/operations/SETUP_LOCAL.md) |
+| 新機能を追加したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) |
+| テーマを追加したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) |
+| DB スキーマを変更したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) / [docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md) |
+| 設計の意図を知りたい | [docs/design/](./docs/design/) (ARCHITECTURE / DATA_MODEL / API_DESIGN / SECURITY / INFRASTRUCTURE / SUGGESTION_ENGINE / UI_PATTERNS に分割) |
+| デプロイ失敗時の対応 | [docs/operations/DEPLOYMENT.md](./docs/operations/DEPLOYMENT.md) / [docs/operations/INCIDENT_RESPONSE.md](./docs/operations/INCIDENT_RESPONSE.md) |
+| 過去の議論の経緯 | `git log` / GitHub 過去 PR |
+| 過去の罠・教訓 | [docs/knowledge/](./docs/knowledge/) / [docs/test/E2E_LESSONS.md](./docs/test/E2E_LESSONS.md) |
 
 ---
 
