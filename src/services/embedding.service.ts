@@ -528,3 +528,237 @@ export async function generateAndPersistEntityEmbedding(args: {
     });
   }
 }
+
+// ================================================================
+// 公開関数: 複数 text を 1 ApiCallLog に集約 (PR #357 / 2026-05-14)
+// ================================================================
+
+/**
+ * Voyage AI の 1 リクエストの推奨上限 (公式: 1000 texts / 120K tokens) に対する安全側の
+ * バッチサイズ。1 件 MAX_INPUT_CHARS=8000 を考慮し、1 バッチ ~100K tokens に収まる値。
+ */
+export const MAX_BATCH_SIZE = 128;
+
+export interface GenerateBatchEmbeddingsInput {
+  /** ベクトル化する text 配列。空文字 / 空白のみは事前にフィルタすること */
+  texts: string[];
+  featureUnit: string;
+  tenantId: string;
+  userId?: string;
+  inputType?: 'document' | 'query';
+}
+
+export interface GenerateBatchEmbeddingsSuccess {
+  ok: true;
+  /** texts と同順の embedding 配列 (各要素は EMBEDDING_DIMENSIONS 次元) */
+  embeddings: number[][];
+  /** 合算課金額 (= Voyage の 1 ApiCallLog 単位) */
+  costJpy: number;
+  requestId: string;
+}
+
+export type GenerateBatchEmbeddingsResult =
+  | GenerateBatchEmbeddingsSuccess
+  | GenerateEmbeddingFailure;
+
+/**
+ * 複数 text の embedding を **1 件の ApiCallLog** に集約して生成する (PR #357)。
+ *
+ * 役割:
+ *   外部 import など N 件のデータを一括で embedding 化する経路で、
+ *   ApiCallLog / Tenant.currentMonthApiCallCount を **+1** に統一する。
+ *
+ * 動作:
+ *   1. 各 text を MAX_INPUT_CHARS で truncate、空文字を除外
+ *   2. withMeteredLLM を **1 回のみ** ラップ (= Tenant counter +1, ApiCallLog 1 件)
+ *   3. callback 内で texts を MAX_BATCH_SIZE 単位に分割し voyageEmbed を直列実行
+ *   4. 各バッチの tokens を合算して 1 件の ApiCallLog に記録
+ *
+ * **設計判断**:
+ *   - costJpy は withMeteredLLM が plan 単価から算出する固定値 (= 1 LLM 呼出 = 1 課金単位)。
+ *     N 件処理しても 1 件分の課金で済むのはユーザ要件 #2 (実呼出回数 = 表示数を統一)。
+ *   - 1 バッチでも voyageEmbed が失敗したら全体を `llm_error` で返す (部分失敗を扱う複雑さを避ける)。
+ *   - 失敗時はカウンタも進まない (= 料金発生なし、withMeteredLLM の Step 6 構造に依存)。
+ *
+ * @example 50 件の text を 1 ApiCallLog で処理
+ *   const r = await generateBatchEmbeddings({
+ *     texts: items.map((i) => i.composedText),
+ *     featureUnit: 'external-import-embedding',
+ *     tenantId, userId,
+ *   });
+ *   if (r.ok) {
+ *     // r.embeddings[i] が items[i] に対応
+ *   }
+ */
+export async function generateBatchEmbeddings(
+  input: GenerateBatchEmbeddingsInput,
+): Promise<GenerateBatchEmbeddingsResult> {
+  // truncate + 空文字フィルタは呼出側で済ませる前提だが、二重防御で truncate のみ実施
+  const truncated = input.texts.map((t) =>
+    t.length > MAX_INPUT_CHARS ? t.slice(0, MAX_INPUT_CHARS) : t,
+  );
+
+  if (truncated.length === 0) {
+    return {
+      ok: false,
+      reason: 'output_invalid',
+      message: '入力 texts が空のため embedding を生成できません',
+    };
+  }
+  if (truncated.some((t) => t.trim().length === 0)) {
+    return {
+      ok: false,
+      reason: 'output_invalid',
+      message: '入力 texts に空白のみのエントリが含まれています',
+    };
+  }
+
+  const result = await withMeteredLLM(
+    {
+      featureUnit: input.featureUnit,
+      tenantId: input.tenantId,
+      userId: input.userId,
+    },
+    async ({ requestId }) => {
+      // バッチ分割: MAX_BATCH_SIZE 単位で voyageEmbed を直列呼出。
+      // 並列にすると Voyage 側 rate limit を踏む可能性があるため逐次実行。
+      const allEmbeddings: number[][] = [];
+      let totalTokens = 0;
+      for (let i = 0; i < truncated.length; i += MAX_BATCH_SIZE) {
+        const slice = truncated.slice(i, i + MAX_BATCH_SIZE);
+        const v = await voyageEmbed({
+          texts: slice,
+          inputType: input.inputType ?? 'document',
+        });
+        allEmbeddings.push(...v.embeddings);
+        totalTokens += v.totalTokens;
+      }
+      return {
+        result: allEmbeddings,
+        usage: { embeddingTokens: totalTokens },
+        requestId,
+      };
+    },
+  );
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: result.reason,
+      message: 'message' in result ? result.message : 'embedding 生成に失敗しました',
+    };
+  }
+
+  // sanity check: 件数 + 次元
+  if (result.result.length !== truncated.length) {
+    return {
+      ok: false,
+      reason: 'output_invalid',
+      message: `embedding 件数異常: expected ${truncated.length}, got ${result.result.length}`,
+    };
+  }
+  for (const emb of result.result) {
+    if (emb.length !== EMBEDDING_DIMENSIONS) {
+      return {
+        ok: false,
+        reason: 'output_invalid',
+        message: `embedding 次元異常: expected ${EMBEDDING_DIMENSIONS}, got ${emb.length}`,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    embeddings: result.result,
+    costJpy: result.costJpy,
+    requestId: result.requestId,
+  };
+}
+
+/**
+ * 複数 (table, rowId, text) の embedding を 1 ApiCallLog に集約して生成 + DB 保存する。
+ * 外部 import など bulk 処理用の高レベル helper (PR #357)。
+ *
+ * 動作:
+ *   1. items のうち text が空のものを除外
+ *   2. generateBatchEmbeddings で **1 度の API 呼出** で全件取得
+ *   3. 各 item に対応する persistEmbedding を直列で UPDATE 実行 (= 課金外)
+ *   4. 失敗 items は failed カウンタに反映、本体トランザクションには伝播させない
+ *
+ * **失敗時の挙動**:
+ *   - 全体失敗 (`generateBatchEmbeddings` が ok=false) → `{ generated: 0, failed: items.length, costJpy: 0 }`
+ *   - 個別 persist 失敗 → recordError(error) でログ取り、failed をカウントして継続
+ *
+ * @returns 件数サマリ (呼出側で API 応答に反映)
+ */
+export async function generateAndPersistBatchEmbeddings(args: {
+  /** 各 item は同じ table でも複数 table の混在でも可 (mixed mode は次の引数を使う) */
+  items: Array<{ table: EmbeddingSearchTable; rowId: string; text: string }>;
+  tenantId: string;
+  userId?: string;
+  featureUnit: string;
+}): Promise<{ generated: number; failed: number; costJpy: number }> {
+  // 空 text のエントリは LLM 呼ばずに「失敗」扱い (ApiCallLog にも含めない)
+  const filtered = args.items.filter((it) => it.text.trim().length > 0);
+  const skippedEmpty = args.items.length - filtered.length;
+
+  if (filtered.length === 0) {
+    return { generated: 0, failed: skippedEmpty, costJpy: 0 };
+  }
+
+  const result = await generateBatchEmbeddings({
+    texts: filtered.map((it) => it.text),
+    featureUnit: args.featureUnit,
+    tenantId: args.tenantId,
+    userId: args.userId,
+  });
+
+  if (!result.ok) {
+    await recordError({
+      severity: 'warn',
+      source: 'server',
+      message: `batch embedding generation failed: ${result.reason}`,
+      userId: args.userId,
+      context: {
+        kind: 'batch_embedding_failure',
+        featureUnit: args.featureUnit,
+        tenantId: args.tenantId,
+        itemCount: filtered.length,
+        reason: result.reason,
+      },
+    });
+    return { generated: 0, failed: args.items.length, costJpy: 0 };
+  }
+
+  let generated = 0;
+  let persistFailed = 0;
+  for (let i = 0; i < filtered.length; i += 1) {
+    const item = filtered[i]!;
+    const emb = result.embeddings[i]!;
+    try {
+      await persistEmbedding(item.table, item.rowId, args.tenantId, emb);
+      generated += 1;
+    } catch (error) {
+      persistFailed += 1;
+      await recordError({
+        severity: 'error',
+        source: 'server',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        userId: args.userId,
+        context: {
+          kind: `${item.table}_embedding_persist_failure`,
+          table: item.table,
+          rowId: item.rowId,
+          tenantId: args.tenantId,
+        },
+      });
+    }
+  }
+
+  return {
+    generated,
+    failed: skippedEmpty + persistFailed,
+    costJpy: result.costJpy,
+  };
+}
