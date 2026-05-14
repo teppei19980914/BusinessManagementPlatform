@@ -359,7 +359,7 @@ describe('createRisk', () => {
 
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding helper が呼ばれる (fail-safe)
   it('createRisk: 本体作成後に generateAndPersistEntityEmbedding が呼ばれる', async () => {
-    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow({ id: 'r-new' }) as never);
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow({ id: 'r-new', visibility: 'public' }) as never);
     await createRisk(
       'p-1',
       {
@@ -379,6 +379,21 @@ describe('createRisk', () => {
     expect(args.featureUnit).toBe('risk-issue-embedding');
     expect(args.text).toContain('タイトル');
     expect(args.text).toContain('内容');
+  });
+
+  // PR #357 (2026-05-14): visibility=draft なら embedding 生成しない
+  it('createRisk: visibility=draft なら embedding を生成しない (Voyage API 課金を発生させない)', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow({ id: 'r-draft', visibility: 'draft' }) as never);
+    await createRisk(
+      'p-1',
+      {
+        type: 'risk', title: 'タイトル', content: '内容', impact: 'high', likelihood: 'low',
+        assigneeId: null, deadline: null, visibility: 'draft', riskNature: 'threat',
+      } as never,
+      'u-1',
+      TEST_TENANT_ID,
+    );
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 });
 
@@ -449,6 +464,47 @@ describe('updateRisk', () => {
     await updateRisk('r-1', { state: 'resolved', assigneeId: 'u-2' }, 'u-1', TEST_TENANT_ID);
 
     expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+  });
+
+  // ================================================================
+  // PR #357 (2026-05-14): visibility 状態遷移 × embedding 生成マトリクス
+  // ================================================================
+  describe('PR #357: visibility 状態遷移 × embedding 生成判定', () => {
+    const baseExisting = {
+      reporterId: 'u-1',
+      title: '既存',
+      content: '既存内容',
+      cause: null,
+      responsePolicy: null,
+      responseDetail: null,
+    };
+
+    it('draft → draft (text 変更あり) → 呼ばれない (draft は提案候補外なので課金しない)', async () => {
+      vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'draft',
+      } as never);
+      vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ visibility: 'draft' }) as never);
+      await updateRisk('r-1', { title: '新', visibility: 'draft' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+    });
+
+    it('draft → public (text 変更なし) → 呼ばれる (公開化時の初回生成)', async () => {
+      vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'draft',
+      } as never);
+      vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ visibility: 'public' }) as never);
+      await updateRisk('r-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    });
+
+    it('public → draft (text 変更あり) → 呼ばれない (既存 embedding は保持)', async () => {
+      vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'public',
+      } as never);
+      vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ visibility: 'draft' }) as never);
+      await updateRisk('r-1', { title: '新', visibility: 'draft' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+    });
   });
 });
 

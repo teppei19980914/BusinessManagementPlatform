@@ -8498,3 +8498,100 @@ pnpm e2e:coverage-check
 - ドキュメント: [docs/test/E2E_COVERAGE.md](../test/E2E_COVERAGE.md)
 - 修正コミット: `docs(e2e): PR #355 で追加した recalculate 系 3 endpoint を E2E_COVERAGE に追記`
 
+## 5.X+50 Bulk な LLM API 呼出を実装するときは **withMeteredLLM を 1 度だけラップ + callback 内で voyageEmbed を分割呼出** ─ ApiCallLog / 画面表示の API 呼出回数を統一する (PR #357 / 2026-05-14 で確立)
+
+### 背景
+
+ユーザ要件として「DB の `current_month_api_call_count` = 画面表示の『今月 API 呼出』= ユーザに見える実 API 呼出回数」を統一したい。旧 import 経路は ループで N 件 = N 回 voyageEmbed = N 件 ApiCallLog という設計で、5000 件 import すれば counter が +5000 されていた。これはユーザが請求書を見たときに「私のテナントは月 5000 呼出も?」と疑問を持つ UX 問題。
+
+### 解決パターン
+
+**「1 業務操作 = 1 ApiCallLog」原則**:
+
+```ts
+// 旧 (NG): N 件で N ApiCallLog
+for (const item of items) {
+  await generateAndPersistEntityEmbedding({ ... }); // 内部で withMeteredLLM(...) 呼出
+}
+
+// 新 (OK): 1 業務操作 = withMeteredLLM 1 度 = ApiCallLog 1 件
+const result = await withMeteredLLM(opts, async ({ requestId }) => {
+  // callback 内で voyageEmbed を必要な回数呼ぶ (Voyage 1 リクエスト制限を考慮)
+  const allEmbeddings = [];
+  let totalTokens = 0;
+  for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
+    const v = await voyageEmbed({ texts: texts.slice(i, i + MAX_BATCH_SIZE) });
+    allEmbeddings.push(...v.embeddings);
+    totalTokens += v.totalTokens;
+  }
+  return { result: allEmbeddings, usage: { embeddingTokens: totalTokens }, requestId };
+});
+```
+
+### 設計判断のポイント
+
+| 論点 | 判断 |
+|---|---|
+| バッチサイズ | 128 (Voyage 公式 1000 texts / 120K tokens の安全側) |
+| Voyage の 1 リクエスト超過 | callback 内で内部分割。**Tenant counter は 1 度のみ +1** |
+| 部分失敗 | 1 バッチ失敗で全体 `llm_error` (= 1 業務操作の単位を保つ。partial success は呼出側の複雑さを増す) |
+| costJpy | `withMeteredLLM` 側で plan 単価から固定算出 (= 1 LLM 呼出 = 1 単位課金) |
+| 課金分類 (featureUnit) | 業務単位で意味のある名前 (例: 'external-import-embedding') |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] **embedding 以外の Bulk LLM 操作** でも同パターンを適用すべき (例: 大量 auto-tag 抽出、suggestion 説明文一括生成)
+- [ ] **「Voyage 呼出回数 ≠ ApiCallLog 件数」を覚悟する**: withMeteredLLM の本来 1:1 設計から外れるが、ユーザ視点の請求単位は ApiCallLog 単位に揃える
+- [ ] **テストで件数検証を必ず書く**: `expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1)` + `items.length === N` の併記が再発防止に有効
+
+### 関連
+
+- PR #357 (2026-05-14): 本パターン確立
+- 修正ファイル: [src/services/embedding.service.ts](../../src/services/embedding.service.ts) (`generateBatchEmbeddings` / `generateAndPersistBatchEmbeddings`)
+- 適用ファイル: [src/services/external-data-import.service.ts](../../src/services/external-data-import.service.ts) (N 件 → 1 ApiCallLog)
+- 関連 公式 docs: [Voyage AI Embeddings API](https://docs.voyageai.com/reference/embeddings-api) (texts: array 入力対応)
+
+## 5.X+51 「公開範囲」(visibility) 概念のあるエンティティでは、**`visibility='draft' なら embedding 生成しない**」がコスト最適化の鉄則 ─ 提案エンジンに乗らないデータに課金しない (PR #357 / 2026-05-14 で確立)
+
+### 背景
+
+旧仕様は Knowledge / RiskIssue / Retrospective の create/update で **visibility に関わらず無条件で embedding 生成**していた。しかし suggestion engine 側は `visibility='public'` のみを検索対象 (= draft は提案候補に出ない)。つまり draft のデータに対する embedding 生成は **永遠に検索されない用途に Voyage API 課金を消費**していた。
+
+### 解決パターン (visibility 状態遷移マトリクス)
+
+| 遷移 | embedding 生成 |
+|---|---|
+| 新規 visibility=draft | × |
+| 新規 visibility=public | ○ |
+| update draft → draft | × (text 変更があっても課金しない) |
+| update draft → public | ○ (text 変更なしでも初回 embedding 化) |
+| update public → public | text 変更時のみ ○ |
+| update public → draft | × (既存 embedding は削除しない) |
+
+### 実装パターン
+
+```ts
+const wasDraft = existing.visibility === 'draft';
+const willBeDraft = (input.visibility ?? existing.visibility) === 'draft';
+const becameVisible = wasDraft && !willBeDraft;     // 公開化
+const stayedVisible = !wasDraft && !willBeDraft;    // 公開維持
+const shouldGenerateEmbedding =
+  !willBeDraft && (becameVisible || (stayedVisible && textFieldsChanging));
+```
+
+### 横展開で漏らしやすい箇所
+
+- [ ] visibility カラムを持つ全エンティティを網羅: 現状 Knowledge / RiskIssue / Retrospective。**Project には visibility がない** ので対象外
+- [ ] **既存 embedding の削除はしない**: ユーザ意図 (PR #357) に従い、draft 退行時も embedding を NULL に戻さない。提案エンジン側の visibility filter が候補から除外するので二重防御
+- [ ] `existing.visibility` を select に追加することを忘れない (= `undefined` だと判定がバグる)
+- [ ] テストで 5 ケース (新規 2 + 更新 4) を最低限カバー
+
+### 関連
+
+- PR #357 (2026-05-14): 本パターン確立
+- 修正ファイル:
+  - [src/services/knowledge.service.ts](../../src/services/knowledge.service.ts) (create/update)
+  - [src/services/risk.service.ts](../../src/services/risk.service.ts) (create/update)
+  - [src/services/retrospective.service.ts](../../src/services/retrospective.service.ts) (create/update)
+- 提案エンジン側 filter: [src/services/suggestion.service.ts:319, 536](../../src/services/suggestion.service.ts) (visibility='public' 絞り込み = draft は候補外)
+

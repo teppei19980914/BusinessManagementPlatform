@@ -205,7 +205,7 @@ describe('createRetrospective', () => {
 
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding helper が呼ばれる (fail-safe)
   it('createRetrospective: 本体作成後に generateAndPersistEntityEmbedding が呼ばれる', async () => {
-    vi.mocked(prisma.retrospective.create).mockResolvedValue(retRow({ id: 'ret-new' }) as never);
+    vi.mocked(prisma.retrospective.create).mockResolvedValue(retRow({ id: 'ret-new', visibility: 'public' }) as never);
 
     await createRetrospective(
       'p-1',
@@ -217,6 +217,7 @@ describe('createRetrospective', () => {
         problems: 'prob',
         improvements: 'imp',
         knowledgeToShare: 'share',
+        visibility: 'public',
       } as never,
       'u-1',
       TEST_TENANT_ID,
@@ -232,6 +233,23 @@ describe('createRetrospective', () => {
     expect(args.text).toContain('計画概要');
     expect(args.text).toContain('実績概要');
     expect(args.text).toContain('share');
+  });
+
+  // PR #357 (2026-05-14): visibility=draft なら embedding 生成しない
+  it('createRetrospective: visibility=draft なら embedding を生成しない (Voyage API 課金を発生させない)', async () => {
+    vi.mocked(prisma.retrospective.create).mockResolvedValue(retRow({ id: 'ret-draft', visibility: 'draft' }) as never);
+    await createRetrospective(
+      'p-1',
+      {
+        conductedDate: '2026-04-01',
+        planSummary: '計画', actualSummary: '実績', goodPoints: 'g', problems: 'p',
+        improvements: 'i', knowledgeToShare: null,
+        visibility: 'draft',
+      } as never,
+      'u-1',
+      TEST_TENANT_ID,
+    );
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 });
 
@@ -287,8 +305,11 @@ describe('updateRetrospective', () => {
     expect(args.tenantId).toBe(TEST_TENANT_ID);
   });
 
-  it('updateRetrospective: text フィールド非変更 (state/visibility のみ) は embedding 再生成しない', async () => {
-    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+  it('updateRetrospective: text フィールド非変更 (state/visibility 維持のみ) は embedding 再生成しない', async () => {
+    // PR #357: 既存 visibility=public 維持なら text 変更なしで再生成しない
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      createdBy: 'u-1', visibility: 'public',
+    } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow() as never);
 
     await updateRetrospective(
@@ -299,6 +320,53 @@ describe('updateRetrospective', () => {
     );
 
     expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+  });
+
+  // ================================================================
+  // PR #357 (2026-05-14): visibility 状態遷移 × embedding 生成マトリクス
+  // ================================================================
+  describe('PR #357: visibility 状態遷移 × embedding 生成判定', () => {
+    const baseExisting = {
+      createdBy: 'u-1',
+      planSummary: '既存計画',
+      actualSummary: '既存実績',
+      goodPoints: '既存good',
+      problems: '既存prob',
+      improvements: '既存imp',
+      knowledgeToShare: null,
+    };
+
+    it('draft → draft (text 変更あり) → 呼ばれない (draft は提案候補外なので課金しない)', async () => {
+      vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'draft',
+      } as never);
+      vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow({ visibility: 'draft' }) as never);
+      await updateRetrospective('ret-1', { planSummary: '新', visibility: 'draft' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+    });
+
+    it('draft → public (text 変更なし) → 呼ばれる (公開化時の初回生成)', async () => {
+      vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'draft',
+      } as never);
+      vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow({ visibility: 'public' }) as never);
+      await updateRetrospective('ret-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+    });
+
+    it('public → draft (text 変更あり) → 呼ばれない (既存 embedding は保持)', async () => {
+      vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'public',
+      } as never);
+      vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow({ visibility: 'draft' }) as never);
+      await updateRetrospective(
+        'ret-1',
+        { planSummary: '新', visibility: 'draft' },
+        'u-1',
+        TEST_TENANT_ID,
+      );
+      expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+    });
   });
 });
 
