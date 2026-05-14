@@ -8769,3 +8769,73 @@ WBS 画面で ACT 作成・編集時に「担当者の日次工数オーバー�
 - 修正例: PR #362 (本 PR で実体験)
 - 修正コミット: `fix(kdd): PR #362 で 5.X+50 が main と衝突、5.X+53 にリナンバリング + cross-reference 更新`
 
+## 5.X+55 「is_sample_data エンティティを管理テナントに移動する」migration は **親 FK エンティティの移動漏れに注意** ─ Project だけ移し Customer は残った例 (2026-05-14)
+
+### 罠の正体
+
+`20260513_seed_to_management_tenant` migration では `is_sample_data=TRUE` の **Project / Knowledge / RiskIssue / Retrospective** を default-tenant から management-tenant へ移動した。
+しかし **Project の親エンティティである Customer (`projects.customer_id` で参照)** はテーブルに `is_sample_data` 列が無いため対象選定から漏れ、default-tenant に残置された。
+
+結果として:
+
+- management-tenant の Project が default-tenant の Customer を `customer_id` で参照する **テナント越境 FK** 状態が継続。
+- 「テナント分離の不変条件: 1 リソースは 1 テナントに属する」を破る。
+- システム管理者 (super_admin / 管理テナント所属) が `/customers` 画面でシード Customer を編集しようとしても、自身の tenantId スコープ (= management-tenant) には該当 Customer が存在せず操作不能だった。
+
+機能的には提案エンジンが Customer フィールドを直接読まないため壊れていなかったが、**整合性違反が長期間放置** されていた。
+
+### 検出のしかた
+
+| 症状 | 真因 |
+|---|---|
+| sysadmin 画面に「シードデータ管理」が無いと感じる | 既存 admin 画面 (`/customers` 等) が super_admin に open されていない可能性 |
+| シード CRUD UI を入れようとすると「該当 Customer が見つからない」 | 親 FK エンティティが管理テナント未移行 (本パターン) |
+| `SELECT p.tenant_id, c.tenant_id FROM projects p JOIN customers c ON p.customer_id = c.id WHERE p.is_sample_data = TRUE` で **両者の tenant_id が異なる行が存在** | テナント越境 FK の決定的検出クエリ |
+
+### 解消手順 (本 PR / 2026-05-14 で実践)
+
+1. **追従 migration を発行**: `20260519_seed_customer_to_management_tenant` で、`management-tenant` の sample Project が `customer_id` で参照している default-tenant 残置 Customer を `UPDATE tenant_id` で移動。
+   ```sql
+   UPDATE customers SET tenant_id = '..ffffffffffff'
+   WHERE tenant_id = '..00000000001'
+     AND id IN (SELECT DISTINCT customer_id FROM projects WHERE tenant_id = '..ffffffffffff' AND is_sample_data = TRUE AND customer_id IS NOT NULL);
+   ```
+2. **冪等性**: WHERE 句で「default-tenant に残っているもの」だけを対象にする → 再実行 NO-OP。
+3. **横展開チェック**: 移行対象になったエンティティの **全 FK 親/子** を一覧化し、対応漏れがないか目視確認 (本ケースでは Customer のみだった)。
+
+### 横展開で漏らしやすい箇所
+
+- [ ] 「`is_sample_data` を持たない親エンティティ」(Customer のように) は **JOIN 経由でしか sample 識別できない**。`is_sample_data` flag だけを WHERE 条件にした migration は親を取りこぼす。
+- [ ] **テナント越境 FK 検出クエリ** を migration 追加時のセルフレビュー項目に入れる:
+  ```sql
+  -- 全主要 FK 関係について実行 (Project ↔ Customer / Risk ↔ Project / 等)
+  SELECT a.tenant_id AS a_tenant, b.tenant_id AS b_tenant, count(*)
+    FROM <child> a JOIN <parent> b ON a.<parent_id> = b.id
+   WHERE a.tenant_id <> b.tenant_id
+   GROUP BY 1, 2;
+  ```
+
+### sysadmin (super_admin) によるシード CRUD UI の最小実装パターン
+
+新たに `/admin/super/customers` 等の別 UI を作る必要は無い。**既存の admin 画面に super_admin を露出させる** だけで済む:
+
+| 変更箇所 | 内容 |
+|---|---|
+| 認可ガード (page + API route) | `systemRole !== 'admin'` を **`isAdminOrAbove(user)` ([src/lib/permissions/role.ts](../../src/lib/permissions/role.ts))** に置換。super_admin も通過する。 |
+| ナビ表示 | `adminOnly: true` の項目に **`visibleToSuperAdmin: true`** を併記。`isVisibleItem()` が super_admin に項目を表示する。 |
+| サービス層 | **変更不要**。super_admin の `session.user.tenantId = MANAGEMENT_TENANT_ID` がそのまま `where: { tenantId: viewerTenantId }` に渡り、管理テナントスコープになる。 |
+
+**設計判断の根拠**: テナント分離 (where に tenantId 必須) を厳守してきた service 層は、`session.user.tenantId` のみに依存している。super_admin の所属テナントを管理テナントに設定 ([prisma/seed.ts:227](../../prisma/seed.ts#L227)) しておけば、認可の壁さえ通せば既存ロジックがそのまま管理テナント運用ツールとして機能する。新規 service / 新規 API を増やさずに済むため、テスト工数と attack surface が最小化される。
+
+### 横展開: 他の admin-only 画面を super_admin に開放するとき
+
+他資産 (Project / Knowledge / RiskIssue / Retrospective) の sysadmin 直接編集が必要になった場合、上記 3 点 (auth gate / nav flag / service-layer 無改修) を **同じパターン** で適用する。本 PR では Customer のみ実装。
+
+### 関連
+
+- migration: [prisma/migrations/20260519_seed_customer_to_management_tenant/migration.sql](../../prisma/migrations/20260519_seed_customer_to_management_tenant/migration.sql)
+- 先行 migration: [prisma/migrations/20260513_seed_to_management_tenant/migration.sql](../../prisma/migrations/20260513_seed_to_management_tenant/migration.sql) (Customer 移行漏れの起点)
+- 認可ヘルパ: [src/lib/permissions/role.ts](../../src/lib/permissions/role.ts) `isAdminOrAbove`
+- nav 拡張: [src/components/dashboard-header.tsx](../../src/components/dashboard-header.tsx) `visibleToSuperAdmin` flag
+- seed 維持ガイド: [docs/developer-guide/SEED_DATA_MAINTENANCE.md §1-2 / §1-3](../developer-guide/SEED_DATA_MAINTENANCE.md)
+
