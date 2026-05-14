@@ -335,14 +335,14 @@ describe('suggestForProject', () => {
     expect(r.pastIssues[0].tagScore).toBeCloseTo(1.0, 5);
     expect(r.retrospectives[0].tagScore).toBeCloseTo(1 / 3, 5);
 
-    // PR #5-b: 3 軸合成 (tag 0.3 / text 0.2 / embedding 0.5)。embedding は本テストで
-    //   project.content_embedding が NULL のため 0、tagScore + textScore のみ寄与。
-    //   Issue: 0.3 * 1.0 + 0.2 * 0.5 + 0.5 * 0 = 0.4
-    //   Retro: 0.3 * (1/3) + 0.2 * 0.5 + 0.5 * 0 = 0.2
-    expect(r.pastIssues[0].score).toBeCloseTo(0.4, 5);
-    expect(r.retrospectives[0].score).toBeCloseTo(0.2, 5);
-    // tagScore=0 の旧実装は 0.2 * 0.5 = 0.1 だった → tagScore が確かに寄与している
-    expect(r.pastIssues[0].score).toBeGreaterThan(0.1);
+    // 2026-05-14 確定仕様: project.content_embedding が NULL の場合、per-candidate で
+    //   タグ:テキスト = 5:5 の縮退モード重み再配分が適用される。
+    //   Issue: 0.5 * 1.0 + 0.5 * 0.5 + 0 * 0 = 0.75
+    //   Retro: 0.5 * (1/3) + 0.5 * 0.5 + 0 * 0 ≈ 0.4167
+    expect(r.pastIssues[0].score).toBeCloseTo(0.75, 5);
+    expect(r.retrospectives[0].score).toBeCloseTo(1 / 3 / 2 + 0.5 / 2, 5);
+    // tagScore=0 の旧実装は 0.5 * 0.5 = 0.25 まで届かなかった → tagScore が確かに寄与
+    expect(r.pastIssues[0].score).toBeGreaterThan(0.25);
   });
 
   // ========================================================
@@ -393,7 +393,7 @@ describe('suggestForProject', () => {
     expect(k.score).toBeCloseTo(0.53, 5);
   });
 
-  it('Project に embedding がない場合、embedding 軸は 0 で 2 軸縮退モード', async () => {
+  it('Project に embedding がない場合、縮退モードでタグ:テキスト=5:5 再配分される', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       id: 'p-1',
       purpose: 'p',
@@ -428,8 +428,9 @@ describe('suggestForProject', () => {
 
     const k = r.knowledge[0];
     expect(k.embeddingScore).toBe(0);
-    // 2 軸縮退: 0.3 * 0 + 0.2 * 0.5 + 0.5 * 0 = 0.1 (= score = textScore * TEXT_WEIGHT)
-    expect(k.score).toBeCloseTo(0.1, 5);
+    // 縮退モード (タグ:テキスト = 5:5): 0.5 * 0 + 0.5 * 0.5 + 0 * 0 = 0.25
+    // (= ctx.embeddingText == null なので per-candidate 縮退が適用される)
+    expect(k.score).toBeCloseTo(0.25, 5);
   });
 
   it('候補側の embedding が NULL なら embeddingScore=0 (該当 id が結果セットに含まれない)', async () => {
@@ -483,8 +484,51 @@ describe('suggestForProject', () => {
     expect(r.knowledge[0].embeddingScore).toBeCloseTo(0.8, 5);
     expect(r.knowledge[1].id).toBe('k-no-emb');
     expect(r.knowledge[1].embeddingScore).toBe(0); // 除外されてスコア 0
-    // k-with-emb の方が高スコア (embedding 寄与で差がつく)
+    // k-with-emb (3 軸合成: 0.3*0 + 0.2*0.5 + 0.5*0.8 = 0.5)
+    // k-no-emb (縮退 5:5 再配分: 0.5*0 + 0.5*0.5 + 0*0 = 0.25)
+    expect(r.knowledge[0].score).toBeCloseTo(0.5, 5);
+    expect(r.knowledge[1].score).toBeCloseTo(0.25, 5);
     expect(r.knowledge[0].score).toBeGreaterThan(r.knowledge[1].score);
+  });
+
+  // 2026-05-14: 確定仕様 (タグ:テキスト=5:5 縮退) で同じデータが embedding ありなしで
+  // 概ね同等のスコアを得るかを確認する横断テスト。
+  it('縮退モード適用後: 同じ tag/text スコアなら embedding あり/なしでスコア差は限定的', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      purpose: 'p',
+      background: '',
+      scope: '',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      { id: 'k-with', title: 't', knowledgeType: 'l', content: 'c', techTags: [], processTags: [], businessDomainTags: [] },
+      { id: 'k-no', title: 't', knowledgeType: 'l', content: 'c', techTags: [], processTags: [], businessDomainTags: [] },
+    ] as never);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+
+    // text 0.6 / 両候補同点、 embedding は片方のみ 0.6 (= 同程度の意味類似)
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([{ embedding: '[0.1,0.2]' }] as never)
+      .mockResolvedValueOnce([
+        { id: 'k-with', score: 0.6 },
+        { id: 'k-no', score: 0.6 },
+      ] as never)
+      .mockResolvedValueOnce([{ id: 'k-with', score: 0.6 }] as never);
+
+    const r = await suggestForProject('p-1', 'tenant-A');
+    const withEmb = r.knowledge.find((x) => x.id === 'k-with')!;
+    const noEmb = r.knowledge.find((x) => x.id === 'k-no')!;
+    // 3 軸: 0.3*0 + 0.2*0.6 + 0.5*0.6 = 0.42
+    expect(withEmb.score).toBeCloseTo(0.42, 5);
+    // 縮退 5:5: 0.5*0 + 0.5*0.6 + 0*0 = 0.30
+    expect(noEmb.score).toBeCloseTo(0.30, 5);
+    // 旧仕様 (タグ 0.3 + テキスト 0.2 そのまま) なら 0.12 まで沈むところ、
+    // 縮退モード再配分により 0.30 まで持ち上がっている (= 50% の引き上げ効果)
+    expect(noEmb.score).toBeGreaterThan(0.12);
   });
 
   it('SuggestionScore 型に embeddingScore が含まれる', async () => {

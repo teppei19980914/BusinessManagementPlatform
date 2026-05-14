@@ -27,6 +27,11 @@ import {
   type ApiUsageReconcileResult,
 } from '@/services/api-usage-recalc.service';
 import { recordError } from '@/services/error-log.service';
+// Q5(3) (2026-05-14): 縮退モード状態 + embedding 未生成件数 UI 可視化
+import {
+  getDegradedModeState,
+  type DegradedModeState,
+} from '@/services/degraded-mode.service';
 import { TenantSettingsClient } from './tenant-settings-client';
 
 export default async function TenantSettingsPage() {
@@ -48,6 +53,7 @@ export default async function TenantSettingsPage() {
   let info: Awaited<ReturnType<typeof getTenantSelfInfo>> = null;
   let storageInfo: Awaited<ReturnType<typeof getStorageInfo>> = null;
   let apiReconcile: ApiUsageReconcileResult | null = null;
+  let degradedMode: DegradedModeState | null = null;
   let dataLoadError = false;
   try {
     // 2026-05-14: getStorageInfo (キャッシュ値) を読む前に最新値で書き戻す。
@@ -60,6 +66,8 @@ export default async function TenantSettingsPage() {
     // Storage add-on (Phase 2 / 2026-05-08): Storage プラン選択セクション初期値
     storageInfo = await getStorageInfo(session.user.tenantId);
     apiReconcile = await reconcileTenantApiUsage(session.user.tenantId).catch(() => null);
+    // Q5(3) (2026-05-14): 縮退モード状態 + embedding 未生成件数 (失敗は許容)
+    degradedMode = await getDegradedModeState(session.user.tenantId).catch(() => null);
   } catch (error) {
     dataLoadError = true;
     await recordError({
@@ -115,6 +123,7 @@ export default async function TenantSettingsPage() {
       initialInfo={info}
       storageInitialInfo={storageInitialInfo}
       apiReconcile={apiReconcile}
+      degradedMode={degradedMode}
     />
   );
 }

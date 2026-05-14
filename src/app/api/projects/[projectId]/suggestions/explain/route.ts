@@ -33,6 +33,9 @@ import {
   getOrGenerateSuggestionExplanation,
   type ExplainSuggestionDegraded,
 } from '@/services/suggestion-explanation.service';
+// Q1 (2026-05-14): 縮退モード時のエラーメッセージをロール別に出し分け
+import { getDegradedMessage, type DegradedReason } from '@/lib/degraded-error-messages';
+import type { SystemRole } from '@/config/master-data';
 
 const ExplainBodySchema = z.object({
   // 2026-05-09 (PR D / #21): 過去リスク 'risk' を追加
@@ -88,10 +91,13 @@ export async function POST(
     });
   }
 
-  return mapDegradedToHttp(result);
+  return mapDegradedToHttp(result, user.systemRole);
 }
 
-function mapDegradedToHttp(result: ExplainSuggestionDegraded): NextResponse {
+function mapDegradedToHttp(
+  result: ExplainSuggestionDegraded,
+  role: SystemRole,
+): NextResponse {
   switch (result.reason) {
     case 'project_not_found':
       return NextResponse.json(
@@ -108,41 +114,59 @@ function mapDegradedToHttp(result: ExplainSuggestionDegraded): NextResponse {
         { error: { code: 'CROSS_TENANT_FORBIDDEN', message: result.message } },
         { status: 403 },
       );
+    // 課金 / プラン系: ロール別メッセージに差し替える (Q1 / 2026-05-14)。
+    //   一般ユーザは「テナント管理者へ相談」、admin/super_admin は具体的対処手順を案内する。
     case 'rate_limited':
-      return NextResponse.json(
-        { error: { code: 'RATE_LIMITED', message: result.message } },
-        { status: 429 },
-      );
     case 'beginner_limit_exceeded':
-      return NextResponse.json(
-        { error: { code: 'BEGINNER_LIMIT_EXCEEDED', message: result.message } },
-        { status: 429 },
-      );
     case 'budget_exceeded':
-      return NextResponse.json(
-        { error: { code: 'BUDGET_EXCEEDED', message: result.message } },
-        { status: 429 },
-      );
     case 'tenant_inactive':
-      return NextResponse.json(
-        { error: { code: 'TENANT_INACTIVE', message: result.message } },
-        { status: 503 },
-      );
     case 'plan_invalid':
-      return NextResponse.json(
-        { error: { code: 'PLAN_INVALID', message: result.message } },
-        { status: 500 },
-      );
-    // 2026-05-09 (#22): Pro 限定機能のため Beginner/Expert は 403 PLAN_FORBIDDEN。
     case 'plan_forbidden':
-      return NextResponse.json(
-        { error: { code: 'PLAN_FORBIDDEN', message: result.message } },
-        { status: 403 },
-      );
     case 'llm_error':
       return NextResponse.json(
-        { error: { code: 'LLM_ERROR', message: result.message } },
-        { status: 502 },
+        {
+          error: {
+            code: degradedReasonToCode(result.reason),
+            message: getDegradedMessage(result.reason, role),
+          },
+        },
+        { status: degradedReasonToHttpStatus(result.reason) },
       );
+  }
+}
+
+function degradedReasonToCode(reason: DegradedReason): string {
+  switch (reason) {
+    case 'rate_limited':
+      return 'RATE_LIMITED';
+    case 'beginner_limit_exceeded':
+      return 'BEGINNER_LIMIT_EXCEEDED';
+    case 'budget_exceeded':
+      return 'BUDGET_EXCEEDED';
+    case 'tenant_inactive':
+      return 'TENANT_INACTIVE';
+    case 'plan_invalid':
+      return 'PLAN_INVALID';
+    case 'plan_forbidden':
+      return 'PLAN_FORBIDDEN';
+    case 'llm_error':
+      return 'LLM_ERROR';
+  }
+}
+
+function degradedReasonToHttpStatus(reason: DegradedReason): number {
+  switch (reason) {
+    case 'rate_limited':
+    case 'beginner_limit_exceeded':
+    case 'budget_exceeded':
+      return 429;
+    case 'tenant_inactive':
+      return 503;
+    case 'plan_invalid':
+      return 500;
+    case 'plan_forbidden':
+      return 403;
+    case 'llm_error':
+      return 502;
   }
 }

@@ -51,6 +51,9 @@ export async function POST(req: NextRequest) {
       // テナント物理削除 (2026-05-08): 90 日 Grace 経過後の物理削除件数 + 削除レコード総数
       purgedTenantCount: result.purgedTenantCount,
       purgedRowCount: result.purgedRowCount,
+      // 縮退モード確定仕様 (2026-05-14): 月初 embedding 補完バッチ結果
+      embeddingBackfillTenantCount: result.embeddingBackfillTenantCount,
+      embeddingBackfillGeneratedCount: result.embeddingBackfillGeneratedCount,
     },
   });
 }

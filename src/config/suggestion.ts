@@ -13,19 +13,21 @@
  *   - SUGGESTION_EMBEDDING_WEIGHT = 0.5 (embedding 意味類似度、用語のゆれ解消の主軸)
  *   合計 1.0。embedding が主軸 (50%) で、タグと pg_trgm は補助。
  *
- *   embedding が NULL の候補 (= まだ生成されていない or 縮退モード中に保存) の扱い:
+ *   embedding が NULL の候補 / クエリ (= 未生成 or 上限超過で生成停止) の扱い
+ *   (2026-05-14 確定仕様、PR #368 でコードレベル実装):
  *
- *   - PASSIVE 縮退 (実装済 / 個別候補の embedding 障害): embedding score = 0 で計算され、
- *     タグ + pg_trgm の 2 軸合計 0.5 で評価される。Voyage API 一時障害等の局所失敗向け。
+ *   - **ACTIVE 縮退** (per-candidate での重み再配分 / PR #368 実装):
+ *     クエリ embedding が NULL、または候補 content_embedding が NULL の場合、
+ *     `SUGGESTION_*_WEIGHT_DEGRADED` (タグ 0.5 + テキスト 0.5 + embedding 0 = 合計 1.0) で
+ *     スコアを計算する。embedding 軸の 0.5 を残り 2 軸に均等配分することで、最大スコアが
+ *     1.0 に揃い、embedding あり候補と公平にランキング・tier 分類される。
  *
- *   - ACTIVE 縮退 (確定仕様、コードレベル実装は TODO / docs/business/TENANT_AND_BILLING.md §34.14.4):
- *     上限超過 (Beginner 月100回 or Expert/Pro 予算上限) で保存された NULL 候補は、
- *     「タグ 0.5 + テキスト 0.5 = 合計 1.0」の重み再配分で評価される。
- *     embedding 軸の 0.5 を残り 2 軸に均等配分することで、最大スコアが 1.0 に揃い、
- *     embedding あり候補と公平にランキング・tier 分類される。
+ *   - **PASSIVE 縮退** (旧仕様 / もはや適用されない):
+ *     旧仕様では embedding score = 0 でそのまま 3 軸合成し、タグ + pg_trgm の合計 0.5 で
+ *     頭打ちになっていた。2026-05-14 で ACTIVE 縮退に統合済。
  *
- *   月初バッチ (毎月 1 日 UTC 00:00) で NULL エンティティを一括補完生成し、翌月には
- *   3 軸フル精度に完全回復する設計。
+ *   月初バッチ (テナント TZ 月初) で NULL エンティティを一括補完生成し、翌月には
+ *   3 軸フル精度に完全回復する設計 (`runMonthlyEmbeddingBackfill`)。
  */
 
 /** タグ交差 (Jaccard) のスコア寄与重み。 */
@@ -39,6 +41,23 @@ export const SUGGESTION_TEXT_WEIGHT = 0.2;
  * PR #5-b (T-03 Phase 2) で導入。embedding が主軸となる。
  */
 export const SUGGESTION_EMBEDDING_WEIGHT = 0.5;
+
+/**
+ * **縮退モード時** の重み再配分 (確定仕様 / 2026-05-14)。
+ *
+ * Embedding が利用不可能な候補に対しては、タグ:テキスト = 5:5 に再配分する。
+ * これにより「同じデータが embedding ありなしで概ね同等のスコアを得る」目標に近づく
+ * (= passive 縮退 = タグ 0.3 + テキスト 0.2 だと最大 0.5 で頭打ちになる問題の解消)。
+ *
+ * 適用条件 (per-candidate):
+ *   - クエリ embedding が NULL (生成失敗) → 全候補に適用
+ *   - 候補 content_embedding が NULL (未生成) → その候補のみに適用
+ *
+ * docs: TENANT_AND_BILLING.md §34.14.4 / SUGGESTION_ENGINE.md / SUGGESTION_FEATURE.md
+ */
+export const SUGGESTION_TAG_WEIGHT_DEGRADED = 0.5;
+export const SUGGESTION_TEXT_WEIGHT_DEGRADED = 0.5;
+export const SUGGESTION_EMBEDDING_WEIGHT_DEGRADED = 0;
 
 /**
  * 候補を最終的に残す閾値。

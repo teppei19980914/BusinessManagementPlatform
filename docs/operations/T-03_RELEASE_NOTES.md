@@ -136,7 +136,7 @@ UPDATE tenants SET monthly_budget_cap_jpy = 0 WHERE id = '<tenant-uuid>';
 
 ### Q2. embedding が NULL のままで効かない
 
-**A**: PR #5-c 以降は新規データに対して自動生成される。既存データに対しては別途 backfill が必要 (本リリース時点では backfill スクリプト未実装、必要に応じて後続 PR で対応)。
+**A**: PR #5-c 以降は新規データに対して自動生成される。既存データに対しては **PR #368 の月初バッチ** (`runMonthlyEmbeddingBackfill`) で自動補完される (テナント TZ 月初に Vercel Cron 実行)。手動再実行が必要な場合は `/api/cron/tenant-monthly-reset` を CRON_SECRET 付きで叩く。
 
 ただし embedding が NULL でも **重み再配分縮退モード (タグ：テキスト = 5：5、合計重み 1.0)** で動作するため、致命的ではない（詳細は [docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) 参照）。
 

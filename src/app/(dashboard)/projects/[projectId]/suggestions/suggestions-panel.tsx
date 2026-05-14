@@ -268,14 +268,17 @@ export function SuggestionsPanel({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         const code = json?.error?.code as string | undefined;
-        // 課金 / rate limit 系は固有メッセージで通知 (Beginner プラン上限の文脈を残す)
-        if (code === 'RATE_LIMITED') setExplainError(t('explainErrorRateLimited'));
-        else if (code === 'BEGINNER_LIMIT_EXCEEDED') setExplainError(t('explainErrorBeginnerLimit'));
-        else if (code === 'BUDGET_EXCEEDED') setExplainError(t('explainErrorBudgetExceeded'));
+        const apiMessage = json?.error?.message as string | undefined;
+        // Q1 (2026-05-14): 縮退モード系はサーバ側でロール別メッセージを返すため、
+        //   API メッセージがあればそれを優先する。非縮退系 / 旧 API で message が無い場合は
+        //   i18n key にフォールバックする。
+        if (code === 'RATE_LIMITED') setExplainError(apiMessage ?? t('explainErrorRateLimited'));
+        else if (code === 'BEGINNER_LIMIT_EXCEEDED') setExplainError(apiMessage ?? t('explainErrorBeginnerLimit'));
+        else if (code === 'BUDGET_EXCEEDED') setExplainError(apiMessage ?? t('explainErrorBudgetExceeded'));
         // 2026-05-09 (#22): Pro 限定機能の defense-in-depth エラー (UI で button を
         //   非表示にしているが直叩き / state 不整合に備える)
-        else if (code === 'PLAN_FORBIDDEN') setExplainError(t('explainErrorPlanForbidden'));
-        else if (code === 'LLM_ERROR') setExplainError(t('explainErrorLlm'));
+        else if (code === 'PLAN_FORBIDDEN') setExplainError(apiMessage ?? t('explainErrorPlanForbidden'));
+        else if (code === 'LLM_ERROR') setExplainError(apiMessage ?? t('explainErrorLlm'));
         else setExplainError(t('explainErrorGeneric'));
         return;
       }

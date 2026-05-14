@@ -423,11 +423,13 @@ Vercel Cron `/api/cron/tenant-monthly-reset` が毎月 1 日 UTC 00:00（JST 09:
 | キャッシュヒット非課金 | ✅ 実装済 (suggestion-explanation.service.ts L195) |
 | 月初リセット | ✅ 実装済 (tenant-monthly-reset.service.ts) |
 | 当月使用量 UI | ✅ 実装済 (tenant-settings-client.tsx UsageSection) |
-| **A. degraded フラグ返却 + entity 保存継続** | ⚠️ 未実装 (現在は HTTP 429 ハードカット) |
-| **B. NULL 候補の重み再配分 (5:5)** | ⚠️ 未実装 (現在は最大スコア 0.5) |
-| **C. 月初バッチでの embedding 補完** | ⚠️ 未実装 |
-| **D. UI 可視化（縮退バッジ・未生成件数・バナー）** | ⚠️ 未実装 |
+| **A. degraded フラグ返却 + entity 保存継続** | ✅ 実装済 (PR #368 / embedding.service.ts L496-510 で recordError → return、本体は継続) |
+| **B. NULL 候補の重み再配分 (5:5)** | ✅ 実装済 (PR #368 / suggestion.service.ts `combineWithDegradation` + `SUGGESTION_*_WEIGHT_DEGRADED`) |
+| **C. 月初バッチでの embedding 補完** | ✅ 実装済 (PR #368 / embedding-backfill.service.ts `runMonthlyEmbeddingBackfill`) |
+| **D. UI 可視化（縮退バッジ・未生成件数・バナー）** | ✅ 実装済 (PR #368 / dashboard layout 共通バナー + tenant-settings の DegradedModeSection) |
 | **E. FAQ 注意喚起** | ✅ 本ドキュメントおよび [docs/public/about.md](../public/about.md) Q8 に記載 |
+| **F. ロール別エラーメッセージ** (Q1) | ✅ 実装済 (PR #368 / lib/degraded-error-messages.ts、admin/general 別文言) |
+| **G. 予算アラート / 異常検知メール廃止** (Q4) | ✅ 実装済 (PR #368 / usage-monitoring.service.ts から削除、admin ダッシュボードで参照) |
 
 #### 34.14.5 月次予算上限の自己設定機能
 
