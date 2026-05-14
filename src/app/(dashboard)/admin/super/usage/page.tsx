@@ -105,72 +105,34 @@ export default async function SuperAdminUsagePage() {
         </table>
       </section>
 
-      {/* P-5b (2026-05-08): CSV エクスポート / 2026-05-14: 解約済テナント込みエクスポート追加 */}
+      {/* P-5b (2026-05-08): CSV エクスポート */}
       <section className="space-y-2 rounded border p-4">
         <h2 className="text-lg font-semibold">CSV エクスポート (請求業務用)</h2>
         <p className="text-xs text-muted-foreground">
           月次の請求業務向けに、テナント別使用量を CSV ダウンロードできます。Excel で開けるよう UTF-8 BOM 付き。
         </p>
-
-        {/* 通常 (アクティブテナントのみ) */}
-        <div className="space-y-1">
-          <p className="text-xs font-semibold text-muted-foreground">アクティブテナントのみ</p>
-          <div className="flex flex-wrap gap-2 text-sm">
+        <div className="flex flex-wrap gap-2 text-sm">
+          <a
+            href="/api/admin/super/usage/export"
+            className="inline-flex items-center rounded border px-3 py-1.5 hover:bg-accent"
+            download
+          >
+            📥 当月分 (現在値) をダウンロード
+          </a>
+          {yearMonths.map((ym) => (
             <a
-              href="/api/admin/super/usage/export"
+              key={ym}
+              href={`/api/admin/super/usage/export?yearMonth=${ym}`}
               className="inline-flex items-center rounded border px-3 py-1.5 hover:bg-accent"
               download
             >
-              📥 当月分 (現在値) をダウンロード
+              📥 {ym}
             </a>
-            {yearMonths.map((ym) => (
-              <a
-                key={ym}
-                href={`/api/admin/super/usage/export?yearMonth=${ym}`}
-                className="inline-flex items-center rounded border px-3 py-1.5 hover:bg-accent"
-                download
-              >
-                📥 {ym}
-              </a>
-            ))}
-          </div>
+          ))}
         </div>
-
-        {/* 2026-05-14: 解約済テナント込み (月途中解約の請求漏れ検知用) */}
-        <div className="mt-3 space-y-1 rounded border border-amber-300 bg-amber-50 p-3 dark:bg-amber-900/20">
-          <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">
-            🔍 解約済テナントも含む (月途中解約の請求漏れ検知)
-          </p>
-          <p className="text-xs text-muted-foreground">
-            「解約日」列が追加され、月の途中で解約されたテナントもこの CSV に含まれます。
-            解約日までの利用分を請求する運用に使用します。
-            詳細は <code className="text-xs">docs/operations/BILLING_MONTHLY_OPERATIONS.md</code> を参照。
-          </p>
-          <div className="flex flex-wrap gap-2 text-sm">
-            <a
-              href="/api/admin/super/usage/export?includeDeleted=true"
-              className="inline-flex items-center rounded border border-amber-400 bg-white px-3 py-1.5 hover:bg-accent dark:bg-amber-950/40"
-              download
-            >
-              📥 当月分 (現在値、解約済込み)
-            </a>
-            {yearMonths.map((ym) => (
-              <a
-                key={`with-deleted-${ym}`}
-                href={`/api/admin/super/usage/export?yearMonth=${ym}&includeDeleted=true`}
-                className="inline-flex items-center rounded border border-amber-400 bg-white px-3 py-1.5 hover:bg-accent dark:bg-amber-950/40"
-                download
-              >
-                📥 {ym} (解約済込み)
-              </a>
-            ))}
-          </div>
-        </div>
-
         {yearMonths.length === 0 && (
           <p className="text-xs text-muted-foreground">
             ℹ 過去月の履歴は月初リセット cron (毎月 1 日 00:00 UTC) 以降に蓄積されます。
-            月の途中で解約されたテナントは deleteTenant() のスナップショットで即座に履歴に記録されます (2026-05-14)。
           </p>
         )}
       </section>

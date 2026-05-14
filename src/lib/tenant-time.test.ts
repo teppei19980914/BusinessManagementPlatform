@@ -15,7 +15,6 @@ import {
   getTenantMonthStart,
   getTenantNextMonthStart,
   getTenantPreviousYearMonth,
-  getTenantCurrentYearMonth,
   getTenantTodayString,
 } from './tenant-time';
 
@@ -134,24 +133,6 @@ describe('getTenantPreviousYearMonth', () => {
 
   it('UTC: 2026-05 → "2026-04"', () => {
     expect(getTenantPreviousYearMonth(new Date('2026-05-15T03:00:00Z'), UTC)).toBe('2026-04');
-  });
-});
-
-describe('getTenantCurrentYearMonth', () => {
-  it('Asia/Tokyo: 2026-05-15 → "2026-05"', () => {
-    expect(getTenantCurrentYearMonth(new Date('2026-05-15T03:00:00Z'), TOKYO)).toBe('2026-05');
-  });
-
-  it('Asia/Tokyo: 2026-12-31 23:30 JST (UTC 14:30) は当月扱い "2026-12"', () => {
-    expect(getTenantCurrentYearMonth(new Date('2026-12-31T14:30:00Z'), TOKYO)).toBe('2026-12');
-  });
-
-  it('Asia/Tokyo: UTC 2026-12-31T15:30Z は JST 2027-01-01 00:30 → "2027-01" (年跨ぎ)', () => {
-    expect(getTenantCurrentYearMonth(new Date('2026-12-31T15:30:00Z'), TOKYO)).toBe('2027-01');
-  });
-
-  it('UTC: 2026-05-15 → "2026-05"', () => {
-    expect(getTenantCurrentYearMonth(new Date('2026-05-15T03:00:00Z'), UTC)).toBe('2026-05');
   });
 });
 

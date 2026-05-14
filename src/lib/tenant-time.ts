@@ -136,28 +136,6 @@ export function getTenantPreviousYearMonth(now: Date, timeZone: string): string 
 }
 
 /**
- * テナント TZ の「当月の YYYY-MM」文字列を返す (月途中解約時のスナップショット用)。
- *
- * 月初リセット cron は `getTenantPreviousYearMonth` で「リセット直前 = 前月分」を保存するが、
- * 解約時のスナップショットは「解約日が属する月 = 当月」を確定保存する必要がある。
- * 解約後はその月の追加利用が発生しないため、当月の値が最終確定値となる。
- *
- * @example
- *   getTenantCurrentYearMonth(new Date('2026-05-20T03:00:00Z'), 'Asia/Tokyo') // → '2026-05'
- *   getTenantCurrentYearMonth(new Date('2026-12-20T03:00:00Z'), 'Asia/Tokyo') // → '2026-12'
- */
-export function getTenantCurrentYearMonth(now: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-  }).formatToParts(now);
-  const year = parts.find((p) => p.type === 'year')?.value ?? '';
-  const month = parts.find((p) => p.type === 'month')?.value ?? '';
-  return `${year}-${month}`;
-}
-
-/**
  * テナント TZ ローカル日付 (年/月/日) を UTC Date に変換する内部ヘルパ。
  *
  * 戦略: 「TZ ローカルでの YYYY-MM-DD 00:00:00 が UTC で何時か」を逆算する。
