@@ -19,8 +19,7 @@ pnpm tsx scripts/security-check.ts
 
 > **2026-05-09 改訂**: ローカル必須実行は撤廃され、`.github/workflows/security.yml` の **CI 自動実行 (PR ごと、閾値 90/100)** に一本化されました。手動実行はユーザ依頼時 (大規模リファクタ後の追加検査 / CI で score 低下が報告された時) のみ。
 
-詳細手順は [.claude/skills/threat-model.md の「Mode B」セクション](../../.claude/skills/threat-model.md) と
-CLAUDE.md「コミット前チェック」セクションを参照。
+STRIDE 脅威モデリング手順は四半期ごとに手動実施します ([STRIDE_REVIEW_PROCEDURE.md](./STRIDE_REVIEW_PROCEDURE.md) — 別途作成予定)。それまでは過去の脅威モデル [SUGGESTION_ENGINE_THREAT_MODEL.md](./SUGGESTION_ENGINE_THREAT_MODEL.md) / [PHASE2_THREAT_MODEL.md](./PHASE2_THREAT_MODEL.md) を参考に同形式で実施してください。
 
 ## レポートの確認
 
@@ -65,6 +64,6 @@ xdg-open docs/security/security-report.html
 
 Security Score Gate (`scripts/security-check.ts`) のうち、**プロジェクト固有の設計パターン**
 (callbackUrl 検証 / SameSite / Rate-limit 等) は仕組み上ハードコード正規表現のため、
-新しい設計パターンを追加する際は Mode B-2 PR (`.claude/skills/threat-model.md` 参照) で
-check 関数を増やします。**ただし、汎用 OSS 脆弱性 / 一般 CWE パターンの検出は上記 1〜6 の
+新しい設計パターンを追加する際は、`scripts/security-check.ts` に check 関数を追記して
+スコア計算ロジックに組み込みます。**ただし、汎用 OSS 脆弱性 / 一般 CWE パターンの検出は上記 1〜6 の
 ジョブが自動でカバーする** 設計のため、本 Gate は固有要件の回帰防止に特化しています。
