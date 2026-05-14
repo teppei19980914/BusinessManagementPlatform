@@ -13,10 +13,21 @@
  *   - SUGGESTION_EMBEDDING_WEIGHT = 0.5 (embedding 意味類似度、用語のゆれ解消の主軸)
  *   合計 1.0。embedding が主軸 (50%) で、タグと pg_trgm は補助。
  *
- *   embedding が NULL の候補 / クエリ (= 未生成 or 上限超過で生成停止) は **縮退モード重み**
- *   (タグ:テキスト = 5:5、SUGGESTION_*_WEIGHT_DEGRADED) で再配分する (2026-05-14 確定仕様)。
- *   合計 1.0 を維持することで、embedding ありなしで同等程度のスコアを得る目標に近づく。
- *   月初バッチで NULL 候補は順次補完される (テナント月間上限に加算)。
+ *   embedding が NULL の候補 / クエリ (= 未生成 or 上限超過で生成停止) の扱い
+ *   (2026-05-14 確定仕様、PR #368 でコードレベル実装):
+ *
+ *   - **ACTIVE 縮退** (per-candidate での重み再配分 / PR #368 実装):
+ *     クエリ embedding が NULL、または候補 content_embedding が NULL の場合、
+ *     `SUGGESTION_*_WEIGHT_DEGRADED` (タグ 0.5 + テキスト 0.5 + embedding 0 = 合計 1.0) で
+ *     スコアを計算する。embedding 軸の 0.5 を残り 2 軸に均等配分することで、最大スコアが
+ *     1.0 に揃い、embedding あり候補と公平にランキング・tier 分類される。
+ *
+ *   - **PASSIVE 縮退** (旧仕様 / もはや適用されない):
+ *     旧仕様では embedding score = 0 でそのまま 3 軸合成し、タグ + pg_trgm の合計 0.5 で
+ *     頭打ちになっていた。2026-05-14 で ACTIVE 縮退に統合済。
+ *
+ *   月初バッチ (テナント TZ 月初) で NULL エンティティを一括補完生成し、翌月には
+ *   3 軸フル精度に完全回復する設計 (`runMonthlyEmbeddingBackfill`)。
  */
 
 /** タグ交差 (Jaccard) のスコア寄与重み。 */

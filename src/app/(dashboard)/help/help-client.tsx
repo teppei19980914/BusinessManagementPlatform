@@ -172,7 +172,7 @@ export function HelpClient({ isTenantAdmin }: Props) {
                   <ul className="list-disc space-y-1 pl-5">
                     <li>
                       <strong>Beginner (無料)</strong>: 5 席まで・月 100 回 API 呼出・Claude Haiku。
-                      上限到達で提案機能が縮退モード。
+                      上限到達で <strong>縮退モード</strong> (エンティティ作成・更新は継続、AI 裏方処理のみ一時停止)。
                     </li>
                     <li>
                       <strong>Expert (¥10/回)</strong>: 席数無制限・Claude Haiku・月間使用量上限なし
@@ -206,11 +206,21 @@ export function HelpClient({ isTenantAdmin }: Props) {
             <FaqItem
               q="月次予算上限を超えるとどうなりますか？"
               a={
-                <p>
-                  設定額に達した時点で <strong>提案エンジンが縮退モード</strong>{' '}
-                  に切り替わります (embedding ベース並びのみ・AI 説明なし)。
-                  既存データの閲覧・編集は影響を受けません。翌月 1 日にリセットされ通常モードに戻ります。
-                </p>
+                <>
+                  <p>
+                    設定額に達した時点で <strong>縮退モード</strong> に切り替わります。
+                    エンティティの作成・更新は HTTP 200 で継続でき、embedding 生成・auto-tag 抽出・
+                    AI 説明文生成 などの AI 裏方処理のみ一時停止します。
+                  </p>
+                  <p className="mt-2">
+                    提案エンジンでは embedding 未生成の候補を <strong>タグ：テキスト = 5：5 の重み再配分</strong>
+                    で評価し、可能な限り検索精度を維持します。
+                  </p>
+                  <p className="mt-2">
+                    翌月 1 日のリセットで上限が解除され、同時に <strong>月初バッチで embedding を一括補完生成</strong>
+                    して提案精度が完全回復します。月初を待たず即時復活する場合は予算上限の引き上げを行ってください。
+                  </p>
+                </>
               }
             />
             <FaqItem

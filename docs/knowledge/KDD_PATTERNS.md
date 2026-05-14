@@ -4649,7 +4649,7 @@ per-seat 課金モデル (1 席あたり N トークン) を中間案として�
 
 #### 確定した 3 プラン構成
 
-**Beginner プラン (無料)**: 最大 5 席、Claude Haiku、月間 100 回までの API 呼び出し上限。試験運用と上位プランへのアップセル誘導の入り口として機能する。100 回到達時は提案機能が縮退モード (embedding ベース並びのみ表示) に切り替わり、月初に自動リセット。
+**Beginner プラン (無料)**: 最大 5 席、Claude Haiku、月間 100 回までの API 呼び出し上限。試験運用と上位プランへのアップセル誘導の入り口として機能する。100 回到達時は **縮退モード**（[docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) / NF-13.14、エンティティ作成・更新は継続、AI 裏方処理のみ一時停止、提案エンジンは NULL 候補をタグ：テキスト = 5：5 で評価、月初バッチで補完）に切り替わり、月初に自動リセット。
 
 **Expert プラン (席数無制限・従量課金)**: Claude Haiku、API 呼び出し 1 回あたり ¥10 (初期値、運用中に調整)。月間使用量に上限なし。
 
@@ -4665,7 +4665,7 @@ API 呼び出しの「1 回」は **ユーザに見える機能単位** で定�
 
 #### 月次予算上限の自己設定とリアルタイム使用量ダッシュボード
 
-pure metered billing の最大の弱点である「請求額の予測不可能性」を、**ユーザ自身が月次予算上限を設定できる仕組み** で解消する。例: 「月最大 ¥10,000 まで」と設定すると、その金額に達した時点で API 呼び出しが縮退モードに自動切替される。法人ユーザの導入障壁を大きく下げる重要機能で、Stripe / Twilio など主要な従量課金 SaaS が採用する標準パターンである。
+pure metered billing の最大の弱点である「請求額の予測不可能性」を、**ユーザ自身が月次予算上限を設定できる仕組み** で解消する。例: 「月最大 ¥10,000 まで」と設定すると、その金額に達した時点で **縮退モード** に自動切替される（詳細は [docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) / NF-13.14 参照）。法人ユーザの導入障壁を大きく下げる重要機能で、Stripe / Twilio など主要な従量課金 SaaS が採用する標準パターンである。
 
 加えて **リアルタイム使用量ダッシュボード** をテナント管理者設定画面で公開し、当月の API 呼び出し回数・課金額・予算比率・日次推移グラフ・機能別内訳を可視化する。これにより、月末まで請求額が不明な不安を取り除き、突発的な使用量増加 (= 異常パターン) をユーザ自身が発見できる窓口を提供する。
 
@@ -8929,4 +8929,59 @@ if (isUpgrade(currentPlan, nextPlan)) { 即時 } else { 翌月予約 }
 - 課金モデル: [src/lib/llm/metered.ts](../../src/lib/llm/metered.ts) (withMeteredLLM が呼出時点の plan で単価を確定)
 - 単価解決: [src/config/llm.ts](../../src/config/llm.ts) `resolveCostForPlan` / `resolveModelForPlan`
 - 改修コミット: (本 PR)
+
+
+## 5.X+57 「**仕様確定 docs PR を先行マージせず**、実装 PR を後追いすると **同一ファイルで JSDoc コンフリクト** が発生する」 ─ PR #367 → PR #368 で実体験 (2026-05-14)
+
+### 罠の正体
+
+仕様確定〜実装の 2 段階リリースで「先に docs だけ更新する PR」と「後で実装する PR」を分けるパターンは整理が効くが、両 PR が **同じファイル (本件は `src/config/suggestion.ts`)** のコメント / 定数を触ると、後発 PR で merge conflict が起きる。本件 PR #368 は `feat/degraded-mode-impl` ブランチを `main` から切ったあとで PR #367 (docs/help-client.tsx + config コメント) が main にマージされ、JSDoc 部分でコンフリクトを起こした。
+
+- 本質: 「docs だけ」だと油断するが、`src/config/*` の **コメントは src 配下の "実装" ファイル** であり、`src/` 以下を両 PR が触ると競合する
+- PR #367 は ACTIVE 縮退を「TODO」とコメント、PR #368 はその TODO を実装して同じコメント領域を「実装済」に書き換える → 同行コンフリクト確定
+
+### 検出のしかた
+
+```bash
+# 仕様確定 docs PR (= 実装 TODO を明記する PR) と実装 PR の **両方で触れるファイル** を事前に列挙する
+gh pr view <docs-pr> --json files -q '.files[].path' > /tmp/docs.txt
+gh pr view <impl-pr> --json files -q '.files[].path' > /tmp/impl.txt
+sort /tmp/docs.txt /tmp/impl.txt | uniq -d
+# ↑ ここに出るファイル (本件は src/config/suggestion.ts) は コンフリクト確定の予備軍
+```
+
+`docs/` は方針が衝突しない限り conflict しないので大半は問題ない。**重要なのは `src/config/`、`src/lib/` 配下の "仕様コメント"** で、実装 PR で必ず変更されるため。
+
+### 解消手順 (本 PR #368 で実践)
+
+1. `git fetch origin main && git merge origin/main` で実コンフリクトを発生させる
+2. **コンフリクトの両側を読み比べる**: docs PR 側は「TODO」、impl PR 側は「実装済」と書いてある → 両者は時系列で整合する (docs PR が先 = TODO 時点の説明、impl PR が後 = 実装後の説明)
+3. **実装 PR 側を採用 + docs PR 側の用語 (PASSIVE / ACTIVE 縮退) を残す** ように手動マージ
+4. **実装状況テーブル (TENANT_AND_BILLING.md §34.14.4 H 等) の "⚠️ 未実装" を "✅ 実装済 (PR #368 / ...)" に書き換え** ─ ここを忘れると docs と実装が再び乖離する
+5. lint + tsc + test を再実行して検証
+6. `git commit` でマージコミット、`git push`
+
+### 横展開で漏らしやすい箇所
+
+| 場所 | 何を更新するか |
+|---|---|
+| `src/config/*.ts` JSDoc | docs PR が書いた「TODO」を「実装済 (PR #N)」に書き換え |
+| `docs/business/*.md` 実装状況表 | 「⚠️ 未実装」を「✅ 実装済」に書き換え |
+| `docs/operations/*_RELEASE_NOTES.md` Q&A | 「backfill スクリプト未実装」等の文言を「PR #N で実装」に書き換え |
+| `docs/roadmap/V1_FINAL_TASKS.md` | TODO ボックスをチェック (`[ ]` → `[x]`) |
+| 既存テスト | 旧仕様 (passive 縮退の score 0.1 等) で書かれた assertion を新仕様 (5:5 = 0.25 等) に更新 |
+
+### 予防策
+
+- **仕様確定 docs PR を立てる時点で、後続実装 PR の有無 / 担当者を決める**: 「いつかやる」では同一ファイルが長期間 TODO のまま放置され、別の修正で意図せず conflict する
+- **実装 PR の冒頭で `gh pr view <docs-pr>` を実行**: 直近マージされた仕様 PR があれば、自分の作業ブランチを切るタイミングを `git fetch && git rebase origin/main` で main 同期しておく
+- **docs PR 側のレビュー時に「実装 PR で同じ箇所を触るか」を必ず質問する**: docs だけの PR と思って rubber-stamp すると、後発 PR で必ず conflict 確認のラリーが発生する
+- **本 KDD パターンを認識する**: 「仕様 docs を一度に揃える」ことのトレードオフ (= 実装 PR の merge コストが上がる) を理解した上で、それでも先行マージするか判断する
+
+### 関連
+
+- PR #367 (docs/degraded-mode-spec): 縮退モード仕様の docs を確定、実装は TODO で残置
+- PR #368 (feat/degraded-mode-impl): TODO を実装、PR #367 の docs コメントとコンフリクト
+- 同型パターン (末尾追記 conflict): §5.X+30 末尾の「`### 関連` の末尾追記コンフリクト」
+- 衝突したファイル: [src/config/suggestion.ts](../../src/config/suggestion.ts) JSDoc 冒頭の「embedding NULL の扱い」段落
 
