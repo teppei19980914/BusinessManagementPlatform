@@ -43,7 +43,9 @@ import {
 import {
   ADDON_MONTHLY_JPY as SUPER_ADMIN_ADDON_MONTHLY_JPY,
   computeStorageLimitBytes,
+  isStorageAddonPlan,
 } from '@/config/storage-addon';
+import { getTenantCurrentYearMonth } from '@/lib/tenant-time';
 
 /**
  * 全テナント一覧 (super_admin ダッシュボード用)。
@@ -52,6 +54,11 @@ import {
  * 含めないもの: 管理テナント (運営内部) / 論理削除済み
  *
  * 各テナントには使用量集計とアクティブユーザ数を含める。
+ *
+ * 2026-05-14: 月途中解約テナントの請求漏れ検知用に `includeDeleted` フラグを追加。
+ *   true の場合は解約済テナント (deletedAt != null) も結果に含め、`deletedAt` をそのまま返す。
+ *   super_admin の月次請求業務で「解約日 = いつまで請求するか」の判別に使用する。
+ *   詳細: docs/operations/BILLING_MONTHLY_OPERATIONS.md
  */
 export type TenantSummaryRow = {
   id: string;
@@ -64,6 +71,8 @@ export type TenantSummaryRow = {
   monthlyBudgetCapJpy: number | null;
   activeUserCount: number;
   createdAt: Date;
+  /** 2026-05-14: 解約日 (null = アクティブ、Date = 解約済)。請求対象期間の判別に使用 */
+  deletedAt: Date | null;
   // P-G (2026-05-08): 請求先情報 (CSV エクスポート + super_admin 一覧表示用) / PR C で拡張
   billingType: string;
   billingCompanyName: string | null;
@@ -86,12 +95,25 @@ export type TenantSummaryRow = {
   totalCurrentMonthJpy: number;
 };
 
-export async function listAllTenants(): Promise<TenantSummaryRow[]> {
+export type ListAllTenantsOptions = {
+  /**
+   * 2026-05-14: 解約済テナント (deletedAt != null) も結果に含めるか。
+   * default false (= 従来通り、アクティブテナントのみ)。
+   * 月次請求業務で「月途中解約の取りこぼし防止」のため true で呼び出す。
+   */
+  includeDeleted?: boolean;
+};
+
+export async function listAllTenants(
+  options: ListAllTenantsOptions = {},
+): Promise<TenantSummaryRow[]> {
+  const includeDeleted = options.includeDeleted === true;
   const tenants = await prisma.tenant.findMany({
     where: {
       // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
       id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
-      deletedAt: null,
+      // 2026-05-14: includeDeleted=false の場合のみ deletedAt フィルタを適用
+      ...(includeDeleted ? {} : { deletedAt: null }),
     },
     orderBy: { tenantSeq: 'asc' },
     select: {
@@ -104,6 +126,8 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
       currentMonthApiCostJpy: true,
       monthlyBudgetCapJpy: true,
       createdAt: true,
+      // 2026-05-14: 解約済テナント識別 (月途中解約の請求漏れ検知用)
+      deletedAt: true,
       // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で拡張
       billingType: true,
       billingCompanyName: true,
@@ -146,6 +170,8 @@ export async function listAllTenants(): Promise<TenantSummaryRow[]> {
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     activeUserCount: userCountByTenant.get(t.id) ?? 0,
     createdAt: t.createdAt,
+    // 2026-05-14: 解約日 (請求対象期間の判別用)
+    deletedAt: t.deletedAt,
     // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09)
     billingType: t.billingType,
     billingCompanyName: t.billingCompanyName,
@@ -270,6 +296,9 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     activeUserCount,
     createdAt: t.createdAt,
+    // 2026-05-14: TenantSummaryRow 継承のため必須。getTenantDetail は deletedAt: null
+    //   フィルタを当てているため、ここに来た時点で常に null。
+    deletedAt: t.deletedAt,
     beginnerMonthlyCallLimit: t.beginnerMonthlyCallLimit,
     beginnerMaxSeats: t.beginnerMaxSeats,
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
@@ -743,6 +772,11 @@ export async function getBeginnerUsageSummary(): Promise<BeginnerUsageSummary> {
  * - 管理テナントは元から保存されていないので除外不要 (snapshot 側で MANAGEMENT_TENANT_ID を弾いている)
  * - 並び: yearMonth 降順 (新しい月から) → tenantSeq 昇順
  *
+ * 2026-05-14: 解約済テナント (tenant.deletedAt != null) の履歴行も取得する。
+ *   `tenant.deletedAt` は join で取得して DTO に含め、CSV 上で「解約日」列として
+ *   月途中解約の検知に使う。履歴クエリ自体は元々 tenant.deletedAt フィルタを
+ *   していないため、変更は include 句のみ。
+ *
  * @param months 取得月数 (1〜24 の範囲、それ以外はクランプ)
  * @returns 月次使用量履歴の配列
  */
@@ -761,6 +795,11 @@ export type MonthlyUsageHistoryRow = {
   storageAddonJpy: number;
   /** 当月の合計課金 (apiCostJpy + storageAddonJpy)。請求書根拠 */
   totalJpy: number;
+  /**
+   * 2026-05-14: 親テナントの解約日 (null = アクティブ、Date = 解約済)。
+   * 月途中解約された場合の請求対象期間判別に使用。
+   */
+  tenantDeletedAt: Date | null;
 };
 
 export async function listMonthlyUsageHistory(
@@ -782,6 +821,7 @@ export async function listMonthlyUsageHistory(
   //   のスナップショットは除外。過去 PR で saveMonthlyUsageSnapshots が DEFAULT_TENANT_ID
   //   を含めて保存していた期間があり、本番 DB に Default の履歴行が残っている可能性に
   //   備えて防御的に query 層でも除外する (二重防御)。
+  // 2026-05-14: include に tenant.deletedAt を追加し、解約日を CSV 列として返せるように。
   const rows = await prisma.tenantMonthlyUsageHistory.findMany({
     where: {
       yearMonth: { in: targetYearMonths },
@@ -790,7 +830,7 @@ export async function listMonthlyUsageHistory(
     orderBy: [{ yearMonth: 'desc' }, { tenantId: 'asc' }],
     include: {
       tenant: {
-        select: { tenantSeq: true, name: true },
+        select: { tenantSeq: true, name: true, deletedAt: true },
       },
     },
   });
@@ -809,6 +849,8 @@ export async function listMonthlyUsageHistory(
     storageAddonPlan: r.storageAddonPlan,
     storageAddonJpy: r.storageAddonJpy,
     totalJpy: r.totalJpy,
+    // 2026-05-14: 親テナントの解約日 (請求対象期間判別用)
+    tenantDeletedAt: r.tenant.deletedAt,
   }));
 }
 
@@ -949,6 +991,16 @@ export async function listDormantTenants(
  *   - TenantMonthlyUsageHistory (= 月次集計、請求書再現可能性)
  *   - AuditLog / AuthEventLog / RoleChangeLog / SystemErrorLog (= 監査ログ物理保持)
  *
+ * 解約時スナップショット (2026-05-14 追加):
+ *   月途中解約された場合、6/1 以降の月次 cron `saveMonthlyUsageSnapshots` は
+ *   `deletedAt: null` フィルタで該当テナントをスキップするため、当月分の利用料が
+ *   `tenant_monthly_usage_history` に永久に記録されない問題があった。
+ *   本関数は transaction 内で `tenantMonthlyUsageHistory.upsert` を行い、解約時点の
+ *   `currentMonthApiCallCount` / `currentMonthApiCostJpy` を **当月の yearMonth** で確定保存する。
+ *   - 解約後はその月の追加利用が発生しないため、解約時点の値 = 最終確定値
+ *   - upsert により月次 cron との競合 (同月 yearMonth) も安全
+ *   - 過去月 CSV エクスポート (listMonthlyUsageHistory) で取得可能になる
+ *
  * 設計判断:
  *   - **管理テナント (MANAGEMENT_TENANT_ID) は削除禁止** (= 自爆防止)
  *   - **既に削除済みテナント** への再削除は ALREADY_DELETED エラー (冪等性ではなく明示エラー
@@ -991,7 +1043,18 @@ export async function deleteTenant(
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
-    select: { id: true, deletedAt: true, name: true },
+    select: {
+      id: true,
+      deletedAt: true,
+      name: true,
+      // 2026-05-14: 解約時スナップショット (TenantMonthlyUsageHistory upsert) 用
+      plan: true,
+      timezone: true,
+      currentMonthApiCallCount: true,
+      currentMonthApiCostJpy: true,
+      storageAddonPlan: true,
+      storageBytesUsed: true,
+    },
   });
   if (!tenant) {
     throw new Error('TENANT_NOT_FOUND');
@@ -1002,8 +1065,21 @@ export async function deleteTenant(
 
   const now = new Date();
 
+  // 2026-05-14: 解約時スナップショット用にアクティブユーザ数を先に取得 (transaction 内で
+  // user.updateMany が deletedAt をセットしてしまうと count が 0 になるため事前取得)。
+  const activeUserCount = await prisma.user.count({
+    where: { tenantId, isActive: true, deletedAt: null },
+  });
+
+  // 解約時の yearMonth スナップショットに使うアドオン情報を計算 (TZ 含めて)
+  const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
+  const storageAddonPlanSafe = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
+  const storageAddonJpy = SUPER_ADMIN_ADDON_MONTHLY_JPY[storageAddonPlanSafe];
+  const totalJpy = tenant.currentMonthApiCostJpy + storageAddonJpy;
+  const yearMonth = getTenantCurrentYearMonth(now, tenant.timezone);
+
   // 単一 transaction で一気に論理削除 (途中失敗で部分削除の不整合を避ける)
-  // Tenant.update / auditLog.create の戻り値は破棄。
+  // Tenant.update / auditLog.create / tenantMonthlyUsageHistory.upsert の戻り値は破棄。
   const [
     usersUpdate,
     projectsUpdate,
@@ -1056,6 +1132,37 @@ export async function deleteTenant(
     prisma.tenant.update({
       where: { id: tenantId },
       data: { deletedAt: now },
+    }),
+    // 2026-05-14: 当月分の請求根拠を tenant_monthly_usage_history に確定保存。
+    //   月次 cron saveMonthlyUsageSnapshots は deletedAt: null フィルタで弾くため、
+    //   解約時にここで upsert しないと当月分が永久に履歴に残らない。
+    //   既存行がある場合 (前回解約復活等の特殊ケース) は最新値で上書きする。
+    prisma.tenantMonthlyUsageHistory.upsert({
+      where: {
+        tenantId_yearMonth: { tenantId, yearMonth },
+      },
+      create: {
+        tenantId,
+        yearMonth,
+        apiCallCount: tenant.currentMonthApiCallCount,
+        apiCostJpy: tenant.currentMonthApiCostJpy,
+        plan: tenant.plan,
+        activeUserCount,
+        storageBytesUsed: tenant.storageBytesUsed,
+        storageAddonPlan: storageAddonPlanSafe,
+        storageAddonJpy,
+        totalJpy,
+      },
+      update: {
+        apiCallCount: tenant.currentMonthApiCallCount,
+        apiCostJpy: tenant.currentMonthApiCostJpy,
+        plan: tenant.plan,
+        activeUserCount,
+        storageBytesUsed: tenant.storageBytesUsed,
+        storageAddonPlan: storageAddonPlanSafe,
+        storageAddonJpy,
+        totalJpy,
+      },
     }),
     // 監査ログを残す (物理保持テーブルなので今後復元・監査が可能)
     // Phase 2-10: tenantId は削除対象テナント (= tenantId) を使う

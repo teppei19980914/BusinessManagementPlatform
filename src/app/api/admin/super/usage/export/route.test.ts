@@ -112,6 +112,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingPhoneNumber: '03-1234-5678', paymentMethod: 'invoice',
         storageAddonPlan: 'plus', storageBytesUsed: 100 * 1024 * 1024,
         storageAddonMonthlyJpy: 500, totalCurrentMonthJpy: 3500,
+        deletedAt: null,
       },
     ] as never);
 
@@ -158,6 +159,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 0,
+        deletedAt: null,
       },
       {
         id: 't-b', tenantSeq: 2, slug: 'b', name: 'B', plan: 'pro',
@@ -171,6 +173,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'pro_storage', storageBytesUsed: 500 * 1024 * 1024,
         storageAddonMonthlyJpy: 1500, totalCurrentMonthJpy: 46500,
+        deletedAt: null,
       },
     ] as never);
 
@@ -199,6 +202,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 0,
+        deletedAt: null,
       },
     ] as never);
 
@@ -243,12 +247,14 @@ describe('過去月 CSV (= 履歴値、yearMonth=YYYY-MM 指定)', () => {
         plan: 'expert', apiCallCount: 200, apiCostJpy: 2000, activeUserCount: 3,
         storageBytesUsed: 50 * 1024 * 1024, storageAddonPlan: 'standard',
         storageAddonJpy: 0, totalJpy: 2000,
+        tenantDeletedAt: null,
       },
       {
         yearMonth: '2026-03', tenantId: 't-a', tenantSeq: 1, tenantName: 'A',
         plan: 'expert', apiCallCount: 100, apiCostJpy: 1000, activeUserCount: 3,
         storageBytesUsed: 30 * 1024 * 1024, storageAddonPlan: 'standard',
         storageAddonJpy: 0, totalJpy: 1000,
+        tenantDeletedAt: null,
       },
     ] as never);
 
@@ -314,6 +320,119 @@ describe('過去月 CSV (= 履歴値、yearMonth=YYYY-MM 指定)', () => {
 // ================================================================
 // テナント隔離 (Default 混入防止)
 // ================================================================
+
+// ================================================================
+// 2026-05-14: includeDeleted フラグ (月途中解約の請求漏れ検知)
+// ================================================================
+
+describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
+  beforeEach(() => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue(SUPER_ADMIN_USER);
+    vi.mocked(isSuperAdmin).mockReturnValue(true);
+  });
+
+  it('includeDeleted=true で listAllTenants に options.includeDeleted=true が渡る', async () => {
+    vi.mocked(listAllTenants).mockResolvedValue([] as never);
+
+    const req = new NextRequest(
+      'http://localhost/api/admin/super/usage/export?includeDeleted=true',
+    );
+    await GET(req);
+
+    expect(listAllTenants).toHaveBeenCalledWith({ includeDeleted: true });
+  });
+
+  it('includeDeleted 省略時は options.includeDeleted=false が渡る (後方互換)', async () => {
+    vi.mocked(listAllTenants).mockResolvedValue([] as never);
+
+    const req = new NextRequest('http://localhost/api/admin/super/usage/export');
+    await GET(req);
+
+    expect(listAllTenants).toHaveBeenCalledWith({ includeDeleted: false });
+  });
+
+  it('解約済テナントは CSV に「解約日」列が ISO 形式で出力される (当月分)', async () => {
+    vi.mocked(listAllTenants).mockResolvedValue([
+      {
+        id: 't-cancelled', tenantSeq: 5, slug: 'c', name: '5月途中解約', plan: 'expert',
+        currentMonthApiCallCount: 80, currentMonthApiCostJpy: 800,
+        monthlyBudgetCapJpy: null, activeUserCount: 0,
+        createdAt: new Date('2026-01-01'),
+        billingType: 'corporate', billingCompanyName: 'X社',
+        billingContactName: '担当', billingContactEmail: 'x@x.com',
+        billingAddress: null, billingPostalCode: null, billingPrefecture: null,
+        billingCity: null, billingStreetAddress: null, billingBuildingName: null,
+        billingPhoneNumber: null, paymentMethod: 'invoice',
+        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 800,
+        deletedAt: new Date('2026-05-20T03:00:00.000Z'),
+      },
+    ] as never);
+
+    const req = new NextRequest(
+      'http://localhost/api/admin/super/usage/export?includeDeleted=true',
+    );
+    const res = await GET(req);
+    const body = await res.text();
+
+    // ヘッダに「解約日」列が含まれる
+    expect(body).toContain('解約日');
+    // データ行に ISO 形式の解約日が含まれる (= 5/20 までの請求対象を判別可能)
+    expect(body).toContain('2026-05-20T03:00:00.000Z');
+    // ファイル名に -with-deleted サフィックスが付く
+    expect(res.headers.get('Content-Disposition')).toContain('with-deleted');
+  });
+
+  it('アクティブテナントは「解約日」列が空欄', async () => {
+    vi.mocked(listAllTenants).mockResolvedValue([
+      {
+        id: 't-active', tenantSeq: 2, slug: 'a', name: 'Active', plan: 'expert',
+        currentMonthApiCallCount: 100, currentMonthApiCostJpy: 1000,
+        monthlyBudgetCapJpy: null, activeUserCount: 3,
+        createdAt: new Date('2026-01-01'),
+        billingType: 'corporate', billingCompanyName: null,
+        billingContactName: null, billingContactEmail: null,
+        billingAddress: null, billingPostalCode: null, billingPrefecture: null,
+        billingCity: null, billingStreetAddress: null, billingBuildingName: null,
+        billingPhoneNumber: null, paymentMethod: 'invoice',
+        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 1000,
+        deletedAt: null,
+      },
+    ] as never);
+
+    const req = new NextRequest('http://localhost/api/admin/super/usage/export');
+    const res = await GET(req);
+    const body = await res.text();
+
+    // データ行を取り出し、解約日に該当する位置が空欄であることを確認
+    // (シンプルに ISO っぽい文字列が含まれないことで代用)
+    const dataLines = body.split('\r\n').filter((l) => l && !l.includes('テナント連番'));
+    expect(dataLines[0]).not.toMatch(/202\d-\d{2}-\d{2}T/);
+  });
+
+  it('過去月 CSV でも履歴に紐づくテナントの解約日 (tenantDeletedAt) が出力される', async () => {
+    vi.mocked(listMonthlyUsageHistory).mockResolvedValue([
+      {
+        yearMonth: '2026-05', tenantId: 't-c', tenantSeq: 7, tenantName: '解約済テナント',
+        plan: 'expert', apiCallCount: 80, apiCostJpy: 800, activeUserCount: 2,
+        storageBytesUsed: 0, storageAddonPlan: 'standard',
+        storageAddonJpy: 0, totalJpy: 800,
+        tenantDeletedAt: new Date('2026-05-20T03:00:00.000Z'),
+      },
+    ] as never);
+
+    const req = new NextRequest(
+      'http://localhost/api/admin/super/usage/export?yearMonth=2026-05',
+    );
+    const res = await GET(req);
+    const body = await res.text();
+
+    expect(body).toContain('解約日');
+    expect(body).toContain('2026-05-20T03:00:00.000Z');
+    expect(body).toContain('解約済テナント');
+  });
+});
 
 describe('テナント隔離 — Default テナントが請求 CSV に混入しないこと', () => {
   beforeEach(() => {
