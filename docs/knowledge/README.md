@@ -7,8 +7,6 @@
 | ファイル | 内容 |
 |---|---|
 | [KDD_PATTERNS.md](./KDD_PATTERNS.md) | KDD エントリの全体集 (約 60 サブセクション、§5.1〜§5.62)。元 DEVELOPER_GUIDE.md §5 全体を時系列で保存 |
-| [KNW-001_design-doc-quality-and-dev-speed.md](./KNW-001_design-doc-quality-and-dev-speed.md) | 設計ドキュメント品質と開発速度の関係 |
-| [KNW-002_performance-optimization-patterns.md](./KNW-002_performance-optimization-patterns.md) | パフォーマンス最適化パターン |
 
 ## 索引: 主要なテーマ別 KDD エントリ
 
