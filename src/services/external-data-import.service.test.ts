@@ -50,8 +50,13 @@ vi.mock('@/lib/db', () => {
   };
 });
 
+// PR #357 (2026-05-14): apply 経路は単一テナント版から batch 版に切替
 vi.mock('@/services/embedding.service', () => ({
-  generateAndPersistEntityEmbedding: vi.fn(async () => undefined),
+  generateAndPersistBatchEmbeddings: vi.fn(async () => ({
+    generated: 0,
+    failed: 0,
+    costJpy: 0,
+  })),
 }));
 
 vi.mock('@/services/knowledge.service', () => ({
@@ -378,6 +383,8 @@ describe('applyImport', () => {
     userId?: string;
     expiresAt?: Date;
     knowledge?: number;
+    /** PR #357 (2026-05-14): RiskIssue 件数も指定可能に (バッチ embedding テスト用) */
+    riskIssue?: number;
   }) {
     return {
       id: 'preview-1',
@@ -396,7 +403,20 @@ describe('applyImport', () => {
           businessDomainTags: [],
           visibility: 'company',
         })),
-        risksIssues: [],
+        risksIssues: Array.from({ length: opts.riskIssue ?? 0 }, (_, i) => ({
+          sourceRow: 100 + i,
+          type: 'issue' as const,
+          title: `R${i}`,
+          content: 'C',
+          cause: null,
+          impact: 'medium',
+          likelihood: null,
+          state: 'open',
+          lessonLearned: null,
+          visibility: 'draft',
+          riskNature: null,
+          projectId: 'proj-1',
+        })),
       },
       costEstimate: {},
       summary: {},
@@ -477,15 +497,69 @@ describe('applyImport', () => {
     tx.knowledge.create.mockResolvedValue({} as never);
     tx.tenantImportPreview.delete.mockResolvedValue({} as never);
 
+    // PR #357 (2026-05-14): バッチ helper は 1 件処理して 1 ApiCallLog 単価分を返す
+    const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+    vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
+      generated: 1,
+      failed: 0,
+      costJpy: 10,
+    });
+
     const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.summary.knowledgeCreated).toBe(1);
       expect(r.summary.risksIssuesCreated).toBe(0);
       expect(r.summary.embeddingGenerated).toBe(1);
-      expect(r.summary.totalCostJpy).toBe(10); // ¥10 × 1
+      expect(r.summary.totalCostJpy).toBe(10); // ¥10 × 1 ApiCallLog
     }
+    // PR #357 中核: N 件取込でも generateAndPersistBatchEmbeddings は **1 度だけ呼ばれる**
+    //   (= ApiCallLog 1 件 = Tenant counter +1 = 画面表示 +1 のユーザ要件を満たす)
+    expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
     expect(tx.tenantImportPreview.delete).toHaveBeenCalledWith({ where: { id: 'x' } });
+  });
+
+  // PR #357 (2026-05-14): 案 A の核心テスト
+  it('PR #357: Knowledge + RiskIssue 複数件取込でも generateAndPersistBatchEmbeddings は 1 度のみ呼ばれる (= 1 ApiCallLog)', async () => {
+    vi.mocked(prisma.tenantImportPreview.findUnique).mockResolvedValueOnce(
+      makeFakePreview({ knowledge: 3, riskIssue: 2 }),
+    );
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'expert',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      monthlyBudgetCapJpy: null,
+      beginnerMonthlyCallLimit: 100,
+      pricePerCallHaiku: 10,
+      pricePerCallSonnet: 30,
+      deletedAt: null,
+    } as never);
+    tx.knowledge.create.mockResolvedValue({ id: 'k-new' } as never);
+    tx.riskIssue.create.mockResolvedValue({ id: 'r-new' } as never);
+    tx.tenantImportPreview.delete.mockResolvedValue({} as never);
+
+    const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+    vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
+      generated: 5,
+      failed: 0,
+      costJpy: 10,
+    });
+
+    const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.summary.embeddingGenerated).toBe(5);
+      expect(r.summary.totalCostJpy).toBe(10); // N 件でも 1 ApiCallLog 分の課金
+    }
+    // 中核検証: バッチ helper は 1 度のみ呼ばれる
+    expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
+    // items 引数に Knowledge + RiskIssue が同一バッチで含まれること
+    const callArgs = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+    expect(callArgs.items).toHaveLength(5);
+    expect(callArgs.items.filter((it) => it.table === 'knowledges')).toHaveLength(3);
+    expect(callArgs.items.filter((it) => it.table === 'risks_issues')).toHaveLength(2);
+    expect(callArgs.featureUnit).toBe('external-import-embedding');
   });
 });
 

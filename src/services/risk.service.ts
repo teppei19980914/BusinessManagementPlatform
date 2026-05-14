@@ -421,20 +421,24 @@ export async function createRisk(
   });
 
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存 (fail-safe)
-  await generateAndPersistEntityEmbedding({
-    table: 'risks_issues',
-    rowId: r.id,
-    tenantId,
-    userId,
-    text: composeRiskText({
-      title: input.title,
-      content: input.content,
-      cause: input.cause ?? null,
-      responsePolicy: input.responsePolicy ?? null,
-      responseDetail: input.responseDetail ?? null,
-    }),
-    featureUnit: 'risk-issue-embedding',
-  });
+  // PR #357 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) は提案エンジン側で
+  //   filter 除外されるため、embedding を生成せず Voyage API 呼出 (= 課金) を発生させない。
+  if (r.visibility !== 'draft') {
+    await generateAndPersistEntityEmbedding({
+      table: 'risks_issues',
+      rowId: r.id,
+      tenantId,
+      userId,
+      text: composeRiskText({
+        title: input.title,
+        content: input.content,
+        cause: input.cause ?? null,
+        responsePolicy: input.responsePolicy ?? null,
+        responseDetail: input.responseDetail ?? null,
+      }),
+      featureUnit: 'risk-issue-embedding',
+    });
+  }
 
   return toRiskDTO(r);
 }
@@ -502,6 +506,8 @@ export async function updateRisk(
       cause: true,
       responsePolicy: true,
       responseDetail: true,
+      // PR #357 (2026-05-14): visibility 遷移 (draft ↔ public) で embedding 生成判定
+      visibility: true,
     },
   });
   if (!existing) throw new Error('NOT_FOUND');
@@ -573,8 +579,19 @@ export async function updateRisk(
     },
   });
 
-  // PR #5-c: text 変更時のみ embedding を再生成
-  if (textFieldsChanging) {
+  // PR #5-c + PR #357 (2026-05-14): embedding 生成判定マトリクス:
+  //   - 新しい visibility が draft → 生成しない (公開範囲: 自分のみは提案候補外)
+  //   - draft → public            → 生成 (text 変更不要、初回 embedding 化)
+  //   - public → public           → text 変更時のみ生成
+  //   - public → draft            → 生成しない (既存 embedding は保持)
+  const wasDraft = existing.visibility === 'draft';
+  const willBeDraft = (input.visibility ?? existing.visibility) === 'draft';
+  const becameVisible = wasDraft && !willBeDraft;
+  const stayedVisible = !wasDraft && !willBeDraft;
+  const shouldGenerateEmbedding =
+    !willBeDraft && (becameVisible || (stayedVisible && textFieldsChanging));
+
+  if (shouldGenerateEmbedding) {
     await generateAndPersistEntityEmbedding({
       table: 'risks_issues',
       rowId: riskId,
