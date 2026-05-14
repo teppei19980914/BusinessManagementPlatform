@@ -22,10 +22,26 @@ hit する** ことを目標として継続的に拡充する。
 
 | 配列名 | 内容 | 配置先 |
 |---|---|---|
-| `SEED_KNOWLEDGE` | 業務横断のベストプラクティス・教訓 (現 50 件) | default-tenant + 各テナント |
-| `SAMPLE_PROJECTS` | 業界横断のサンプルプロジェクト (10 件 / 業務アプリ・インフラ・コンサル・データ・医療・HR・モバイル等を網羅) | default-tenant + 各テナント (`isSampleData=true` で画面非表示・提案候補としてのみ可視) |
+| `SEED_KNOWLEDGE` | 業務横断のベストプラクティス・教訓 (現 50 件) | **management-tenant** (2026-05-09 PR G / 設計合意 B 以降) |
+| `SAMPLE_PROJECTS` | 業界横断のサンプルプロジェクト (10 件 / 業務アプリ・インフラ・コンサル・データ・医療・HR・モバイル等を網羅) | **management-tenant** (`isSampleData=true` で他テナントには画面非表示・提案候補としてのみ可視) |
 | `SAMPLE_ISSUES` | 各 sample project に紐付くサンプル課題 (40 件) | 同上 |
 | `SAMPLE_RETROSPECTIVES` | 各 sample project に紐付くサンプル振り返り (15 件) | 同上 |
+| `Customer` (SAMPLE_PROJECTS の親) | sample project に必須の親エンティティ。`customerName` 単位で自動作成 | **management-tenant** (2026-05-14 migration `20260519_seed_customer_to_management_tenant` で移行) |
+
+**2026-05-09 PR G / 設計合意 B**: シードデータは management-tenant (`MANAGEMENT_TENANT_ID = 00000000-0000-0000-0000-ffffffffffff`) に集中。一般テナントの提案エンジンは `tenant.seed_data_enabled = TRUE` 時に management-tenant の seed を **参照のみ** 行う (cross-tenant read)。
+
+**2026-05-14**: Customer は当初の `20260513_seed_to_management_tenant` で移行漏れだったため、`20260519_seed_customer_to_management_tenant` で追加移行。あわせてシステム管理者 (super_admin) が `/customers` 画面から management-tenant の Customer をそのまま CRUD できるよう認可ガードと nav 表示を調整 (`visibleToSuperAdmin: true`)。
+
+### 1-3. シードデータの編集 (システム管理者画面)
+
+`pnpm db:seed:suggestion` で投入したシードを、後から **画面操作で個別編集** したい場合:
+
+| ターゲット | 画面 | アクセス可能ロール |
+|---|---|---|
+| Customer | `/customers` および `/customers/[id]` | `admin` (自テナント) / `super_admin` (= management-tenant のシード Customer) |
+| Project / Risk / Issue / Retrospective / Knowledge | 各既存画面 (例: `/projects`, `/risks`) | `admin` / `super_admin` (super_admin は管理テナントスコープで操作される) |
+
+super_admin の `session.user.tenantId` は管理テナント (`MANAGEMENT_TENANT_ID`) のため、service 層のテナント分離 (where に `tenantId` 必須) はそのまま機能する。新規にシード専用 API を作る必要はない。
 
 ## 2. シードデータの変更手順
 
@@ -54,7 +70,9 @@ text フィールド (`title` / `background` / `content` / `result` / `conclusio
 pnpm db:seed:suggestion
 ```
 
-これで `default-tenant` に SEED_KNOWLEDGE / SAMPLE_PROJECTS / SAMPLE_ISSUES / SAMPLE_RETROSPECTIVES が投入される。冪等性により再実行可能。
+これで **management-tenant** に SEED_KNOWLEDGE / SAMPLE_PROJECTS / SAMPLE_ISSUES / SAMPLE_RETROSPECTIVES (+ 親 Customer) が投入される。冪等性により再実行可能。
+
+旧仕様 (default-tenant 投入) は `--tenant <DEFAULT_TENANT_ID>` 明示時のみ機能する。
 
 ### 2-4. 既存データへの embedding backfill (本番運用後の改修時のみ)
 
