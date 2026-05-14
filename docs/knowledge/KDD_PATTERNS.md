@@ -8656,3 +8656,116 @@ WBS 画面で ACT 作成・編集時に「担当者の日次工数オーバー�
   - [src/app/api/projects/[projectId]/tasks/workload/preview/route.ts](../../src/app/api/projects/[projectId]/tasks/workload/preview/route.ts) — GET endpoint
   - [src/config/workload.ts](../../src/config/workload.ts) — 閾値定数
 
+## 5.X+53 Supabase Data API は **デフォルトで public 全テーブルが anon に grant 済み** ─ Prisma 直結のみのプロジェクトでも放置すれば全件漏洩 (2026-05-14 で確立)
+
+### 背景
+
+2026-05-11 付の Supabase Security Advisor メールで `rls_disabled_in_public` (37 件) と `sensitive_columns_exposed` (sessions) が Critical Error として通知された。本プロジェクトは Prisma 直結のみで Data API (supabase-js / PostgREST) を未使用なので一見「無関係」だが、実は以下の構造的リスクがあった:
+
+- Supabase デフォルト privileges:
+  ```sql
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+    GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+  ```
+  により、Prisma migration が作成する全テーブルに **anon ロールへの GRANT ALL が自動付与**される。
+- RLS 無効状態なので、anon JWT (Supabase Dashboard で誰でも取得可) を提示すれば PostgREST `/rest/v1/users` 等から全件 read/insert/update/delete 可能。
+- 漏洩対象には `sessions.session_token` / `password_reset_tokens.token_hash` / `recovery_codes` / `password_histories` 等の **認証クリティカル情報**が含まれる。
+
+### 教訓
+
+**「Prisma を使っているから supabase-js は無関係」ではない**。Supabase に Postgres をホスティングしている時点で PostgREST/GraphQL は自動有効化されており、デフォルト privileges による暗黙の grant がアプリ経路と独立した攻撃面を作る。
+
+### 対策パターン (多層防御)
+
+| Layer | 場所 | 内容 | 効果 |
+|---|---|---|---|
+| **Layer 1 (主防御)** | Supabase Dashboard → Integrations → Data API → Settings | Exposed schemas から `public` を削除。可能なら Enable Data API も OFF | PostgREST/GraphQL 経由の全アクセスを遮断 (即時) |
+| **Layer 2** | Prisma migration | `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` を public 全テーブルに適用 (ポリシー未定義 = 完全 deny) | Dashboard 設定が誤って戻されても anon/authenticated は何も見えない |
+| **Layer 3** | Prisma migration | `REVOKE ALL ... FROM anon, authenticated` + `ALTER DEFAULT PRIVILEGES ... REVOKE` | 将来 migration で追加されるテーブルにも自動適用、grant 自体を剥がす |
+
+参照実装: [prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql](../../prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql)
+
+### Prisma との互換性 (重要)
+
+- Prisma は `DATABASE_URL` の `postgres` ロールで接続 = 全テーブルの owner
+- PostgreSQL 標準動作で **owner は RLS をバイパス** (※ `FORCE ROW LEVEL SECURITY` は絶対に使わない)
+- REVOKE / ALTER DEFAULT PRIVILEGES は anon/authenticated のみ対象、postgres ロール無影響
+- → アプリ動作・既存テスト 1700+ 件への影響はゼロ
+
+### ローカル DB との互換性 (重要)
+
+ローカル開発 DB (pure PostgreSQL on Docker / 直接実行) には `anon` / `authenticated` ロールが存在しない。**そのまま `REVOKE ... FROM anon` を書くと `role "anon" does not exist` で migration が失敗する**ため、必ず `DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN ... END IF; END $$;` で存在確認してから REVOKE する。E2E CI (`pgvector/pgvector:pg16`) も pure PostgreSQL なので同じ条件分岐が必要。
+
+### 横展開チェックリスト
+
+- [ ] **新規プロジェクト作成時**: Supabase Dashboard → Data API → Exposed schemas から `public` を削除 (Enable Data API OFF が理想)
+- [ ] **新規テーブル追加時**: `ALTER TABLE public.<new_table> ENABLE ROW LEVEL SECURITY` を migration に含める (Layer 3 で grant は阻止されているが、Layer 2 の防御層は手動で都度有効化が必要 — Postgres に "RLS デフォルト ON" 設定が存在しないため)
+- [ ] **AWS 移行時**: Supabase 由来のデフォルト privileges は不要になる。`anon` / `authenticated` ロールも作らないので Layer 3 の意味がなくなる。Layer 2 (RLS) も owner バイパスで実害ないが、移行時に検討
+- [ ] **Security Advisor 定期確認**: 月 1 回 Dashboard → Advisors → Security Advisor を確認 (新規テーブル追加で再発する可能性)
+
+### 検出のしかた
+
+| 症状 | 真因の可能性 |
+|---|---|
+| Supabase からの定期メール「These issues require your immediate attention」 | Security Advisor が Critical Error を検出 |
+| `rls_disabled_in_public` Advisor Error | RLS 無効テーブルが Exposed schemas に含まれている |
+| `sensitive_columns_exposed` Advisor Error | password / token 系カラムを含むテーブルが API exposed |
+
+### 関連
+
+- 適用 migration: [prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/](../../prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql)
+- 運用 runbook: [docs/operations/SECURITY_OPS.md §13.5](../operations/SECURITY_OPS.md) (Supabase Security Advisor 定期確認)
+- Supabase 公式: https://supabase.com/docs/guides/database/postgres/row-level-security
+- Supabase Default Privileges 仕様: https://supabase.com/docs/guides/database/postgres/roles-superuser
+- 関連 KDD: §5.42 (migration を含む PR の本番手動適用ルール)
+
+## 5.X+54 KDD 末尾コンフリクトで **section 番号が両ブランチで衝突**するケース ─ §5.X+30 のサブパターン (PR #362 / 2026-05-14)
+
+### 罠の正体
+
+§5.X+30 は「両ブランチが KDD ファイル末尾に **異なる番号** の新セクションを足してコンフリクトする」パターンを記述するが、本 PR #362 では更に踏み込んだ事故が発生:
+
+- 開発開始時点の最大 section は `5.X+49` (PR #355 でコミット済)
+- HEAD (PR #362): `5.X+50` として Supabase Data API ナレッジを追加
+- main: PR #357 / #358 / #361 が並行マージされ、**同じ `5.X+50` 番号**で別トピック (Bulk LLM)、続けて `5.X+51` (visibility=draft)、`5.X+52` (workload-preview) を採番
+
+結果: コンフリクトマーカーで挟まれた両側が **同じ section 番号で別内容** という状態。素朴に「両方残す」(§5.X+30 流) と **同番号セクションが 2 つ並ぶ破損ドキュメント**になる。
+
+### 解消手順 (本 PR #362 で実践)
+
+1. **main 側を全保持 + HEAD 側をリナンバリング** が正解:
+   - main の `5.X+50` / `5.X+51` / `5.X+52` をそのまま採用 (歴史的経緯を保持)
+   - HEAD の `5.X+50` を **`5.X+53` にリナンバリング** (main の最大番号 + 1)
+2. **クロスリファレンスを同時更新**:
+   - 他ドキュメントから `§5.X+50` を参照していたら新番号に置換 (本 PR では [docs/operations/SECURITY_OPS.md §13.5](../operations/SECURITY_OPS.md))
+   - MEMORY.md / auto-memory に古い番号が残っていないかも grep で確認
+3. **本サブパターン自体を新セクション (`5.X+54`) として記録** — 次の衝突で同じ判断を再生できるよう
+
+### 検出のしかた
+
+| 症状 | 真因 |
+|---|---|
+| `git merge` で `KDD_PATTERNS.md` のみ conflict、他ファイルは clean | §5.X+30 末尾コンフリクト (典型) |
+| HEAD 側と main 側で **同じ `## 5.X+N` 見出し**が出現 | 番号衝突 (本サブパターン) ─ リナンバリング必須 |
+| 他ドキュメントから `§5.X+N` 参照を grep でヒット | クロスリファレンス更新が必要 |
+
+### 横展開で漏らしやすい箇所
+
+- [ ] **リナンバリング後の cross-reference 一括 grep**: `grep -rn "§5\.X+50" docs/` で参照漏れを検出
+- [ ] **auto-memory (MEMORY.md / memory/\*.md) の参照**: KDD section 番号が memory に記載されていれば更新 (本 PR では該当なし)
+- [ ] **PR description の参照**: PR description 内に `§5.X+50` 等を書いていた場合は GitHub 上で edit
+- [ ] **本サブパターン記録**: 同じ事象が再発したら、本 §5.X+54 を更新 (再発事例の連番方式 ─ CLAUDE.md「§10.5 末尾追記コンフリクトの 5 例目まで」の前例に倣う)
+
+### 予防策 (§5.X+30 の表に追加)
+
+| 戦略 | 効果 | コスト |
+|---|---|---|
+| **KDD ファイル末尾編集前に `git fetch origin main && git log origin/main -- docs/knowledge/KDD_PATTERNS.md \| head -20` で最新採番を確認** | 番号衝突を事前検知 | 軽 (1 コマンド) |
+| **長期 PR でなくとも、main 高頻度マージ日 (例: PR #357-#361 が連続マージされた 2026-05-14) は必ず採番再確認** | 短期 PR でも番号衝突は起きる事実への対処 | 軽 (運用ルール) |
+
+### 関連
+
+- 親パターン: §5.X+30 (KDD 末尾コンフリクト・両方残す)
+- 修正例: PR #362 (本 PR で実体験)
+- 修正コミット: `fix(kdd): PR #362 で 5.X+50 が main と衝突、5.X+53 にリナンバリング + cross-reference 更新`
+

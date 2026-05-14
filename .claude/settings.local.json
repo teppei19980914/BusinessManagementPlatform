@@ -12,7 +12,11 @@
       "Skill(update-config)",
       "Skill(update-config:*)",
       "WebFetch(domain:google.github.io)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "PowerShell(Test-NetConnection -ComputerName localhost -Port 5433 -WarningAction SilentlyContinue)",
+      "PowerShell(pnpm lint 2>&1)",
+      "PowerShell(pnpm tsc --noEmit 2>&1)",
+      "PowerShell(pnpm test 2>&1)"
     ]
   }
 }

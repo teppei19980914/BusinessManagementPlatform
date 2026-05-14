@@ -62,5 +62,39 @@ LIMIT 20;
 3. 必要に応じて `NEXTAUTH_SECRET` をローテーションして全 JWT を無効化 (強制再ログイン)
 4. admin 監査ログ (`audit_logs`) も併せて確認し、異常アクセスパターンを検出
 
+### 13.5 Supabase Security Advisor 定期確認 (2026-05-14 で確立)
+
+Supabase は PostgREST/GraphQL を介した Data API をデフォルト有効化しており、`public` スキーマの全テーブルに anon ロールへの GRANT が自動付与される。本プロジェクトは Prisma 直結のみで Data API 未使用のため、以下の多層防御を設定済み (PR `20260518_revoke_data_api_grants_and_enable_rls`):
+
+- **Layer 1 (Dashboard)**: Data API → Settings → Exposed schemas から `public` を削除 + Enable Data API を OFF
+- **Layer 2 (SQL)**: public 全テーブルに RLS 有効化
+- **Layer 3 (SQL)**: anon/authenticated への grant を全 REVOKE + ALTER DEFAULT PRIVILEGES で将来分も自動 REVOKE
+
+#### 月次確認手順
+
+1. Supabase Dashboard → 左サイドバー **Advisors → Security Advisor** を開く
+2. **Errors タブが 0 件**であることを確認 (理想)
+3. もし Critical Error が再発した場合:
+   - `rls_disabled_in_public` → 新規テーブル追加時に RLS 有効化を忘れた可能性 (`ALTER TABLE public.<table> ENABLE ROW LEVEL SECURITY` を migration に追加)
+   - `sensitive_columns_exposed` → Data API が再有効化されていないか Layer 1 を再確認
+   - その他 → 内容を確認し、必要なら migration で対策
+4. Warnings タブの `Extension in Public` (`pg_trgm`) は **後回し可** ([src/lib/search/pg-trgm-provider.ts](../../src/lib/search/pg-trgm-provider.ts) で利用中。移動には search_path 調整が必要)
+
+#### Layer 1 が外れていないかの確認
+
+Dashboard → Integrations → Data API → Settings で以下を確認:
+
+| 項目 | 期待値 |
+|---|---|
+| Exposed schemas | `graphql_public` のみ (※ `public` が含まれていたら即削除) |
+| Enable Data API (Overview タブ) | OFF |
+| Exposed functions | 0 of N functions exposed |
+
+#### 関連
+
+- KDD ナレッジ: [docs/knowledge/KDD_PATTERNS.md §5.X+53](../knowledge/KDD_PATTERNS.md) (Supabase Data API デフォルト grant の罠)
+- Migration: [prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql](../../prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql)
+- Supabase 公式 RLS: https://supabase.com/docs/guides/database/postgres/row-level-security
+
 ---
 
