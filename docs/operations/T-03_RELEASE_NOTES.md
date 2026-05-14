@@ -138,7 +138,7 @@ UPDATE tenants SET monthly_budget_cap_jpy = 0 WHERE id = '<tenant-uuid>';
 
 **A**: PR #5-c 以降は新規データに対して自動生成される。既存データに対しては別途 backfill が必要 (本リリース時点では backfill スクリプト未実装、必要に応じて後続 PR で対応)。
 
-ただし embedding が NULL でも **2 軸縮退モード (タグ + pg_trgm)** で動作するため、致命的ではない。
+ただし embedding が NULL でも **重み再配分縮退モード (タグ：テキスト = 5：5、合計重み 1.0)** で動作するため、致命的ではない（詳細は [docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) 参照）。
 
 ### Q3. テナントを増やすには?
 

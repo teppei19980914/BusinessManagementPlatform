@@ -13,10 +13,19 @@
  *   - SUGGESTION_EMBEDDING_WEIGHT = 0.5 (embedding 意味類似度、用語のゆれ解消の主軸)
  *   合計 1.0。embedding が主軸 (50%) で、タグと pg_trgm は補助。
  *
- *   embedding が NULL の候補 (= まだ生成されていないデータ) は embedding score = 0 で
- *   計算されるため、自動的にタグ + pg_trgm の 2 軸 (合計 0.5) で評価される縮退モードに
- *   なる (= 既存運用と互換)。新規データから順次 embedding が付与されるにつれ提案精度が
- *   上昇する設計。
+ *   embedding が NULL の候補 (= まだ生成されていない or 縮退モード中に保存) の扱い:
+ *
+ *   - PASSIVE 縮退 (実装済 / 個別候補の embedding 障害): embedding score = 0 で計算され、
+ *     タグ + pg_trgm の 2 軸合計 0.5 で評価される。Voyage API 一時障害等の局所失敗向け。
+ *
+ *   - ACTIVE 縮退 (確定仕様、コードレベル実装は TODO / docs/business/TENANT_AND_BILLING.md §34.14.4):
+ *     上限超過 (Beginner 月100回 or Expert/Pro 予算上限) で保存された NULL 候補は、
+ *     「タグ 0.5 + テキスト 0.5 = 合計 1.0」の重み再配分で評価される。
+ *     embedding 軸の 0.5 を残り 2 軸に均等配分することで、最大スコアが 1.0 に揃い、
+ *     embedding あり候補と公平にランキング・tier 分類される。
+ *
+ *   月初バッチ (毎月 1 日 UTC 00:00) で NULL エンティティを一括補完生成し、翌月には
+ *   3 軸フル精度に完全回復する設計。
  */
 
 /** タグ交差 (Jaccard) のスコア寄与重み。 */
