@@ -187,7 +187,7 @@ git add src/config/security.ts <テストファイル>
 git commit -m "ログイン失敗ロック閾値を 5 → 3 回に変更"
 ```
 
-禁止事項 (**main / master / develop / release/* / hotfix/* への直接コミット禁止**) は `.claude/hooks/auto-commit.sh` で自動ブロックされます。
+禁止事項: **main / master / develop / release/* / hotfix/* への直接コミット禁止**。これらのブランチへ直接プッシュしないよう注意してください ([CONTRIBUTING.md §2.2](../../CONTRIBUTING.md) 参照)。
 
 ### 3.7 プッシュ + PR 作成
 
