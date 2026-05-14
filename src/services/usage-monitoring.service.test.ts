@@ -6,8 +6,8 @@
  *   - 異常検知の倍率閾値
  *   - 異常検知の対象外条件 (ローリング平均 < MIN_ROLLING_AVG_FOR_DETECTION)
  *   - 予算アラートの level 判定 (80% / 100% / 150%)
- *   - admin 通知のメール送信件数
- *   - 異常 0 件・予算アラート 0 件のときは通知しない
+ *
+ * **2026-05-14**: メール通知の廃止に伴い `notifyAdminsOfAlerts` 関連テストを削除。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -18,24 +18,13 @@ vi.mock('@/lib/db', () => ({
     tenant: {
       findMany: vi.fn(),
     },
-    user: {
-      findMany: vi.fn(),
-    },
   },
-}));
-
-const mockSend = vi.fn();
-vi.mock('@/lib/mail', () => ({
-  getMailProvider: () => ({ send: mockSend }),
 }));
 
 import {
   getDailyUsageByTenant,
   detectAnomalies,
   detectBudgetAlerts,
-  notifyAdminsOfAlerts,
-  type Anomaly,
-  type BudgetAlert,
 } from './usage-monitoring.service';
 import { prisma } from '@/lib/db';
 
@@ -45,7 +34,6 @@ import { prisma } from '@/lib/db';
 describe('getDailyUsageByTenant', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSend.mockReset();
   });
 
   it('raw SQL 行を DailyUsageRow にマッピングする (BigInt → Number 変換)', async () => {
@@ -101,7 +89,6 @@ describe('getDailyUsageByTenant', () => {
 describe('detectAnomalies', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSend.mockReset();
   });
 
   it('過去 7 日平均の 5 倍以上で異常検知 (5x ぴったりは閾値到達と判定)', async () => {
@@ -197,7 +184,6 @@ describe('detectAnomalies', () => {
 describe('detectBudgetAlerts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSend.mockReset();
   });
 
   it('80% / 100% / 150% の閾値で level を判定する', async () => {
@@ -225,70 +211,4 @@ describe('detectBudgetAlerts', () => {
   });
 });
 
-// ----------------------------------------------------------------
-// notifyAdminsOfAlerts
-// ----------------------------------------------------------------
-describe('notifyAdminsOfAlerts', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockSend.mockReset();
-  });
-
-  it('異常 0 件 + 予算アラート 0 件なら何も送らない', async () => {
-    const sent = await notifyAdminsOfAlerts([], []);
-    expect(sent).toBe(0);
-    expect(mockSend).not.toHaveBeenCalled();
-  });
-
-  it('admin 不在なら送らない (ユーザがいない環境)', async () => {
-    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
-    const a: Anomaly[] = [{ tenantId: 't', tenantName: 'T', todayCalls: 100, rollingAvg7d: 10, multiplier: 10 }];
-    const sent = await notifyAdminsOfAlerts(a, []);
-    expect(sent).toBe(0);
-    expect(mockSend).not.toHaveBeenCalled();
-  });
-
-  it('admin 全員にメール送信、件名と本文に異常情報が含まれる', async () => {
-    vi.mocked(prisma.user.findMany).mockResolvedValue([
-      { email: 'admin1@example.com', name: 'Admin 1' },
-      { email: 'admin2@example.com', name: 'Admin 2' },
-    ] as never);
-    mockSend.mockResolvedValue({ success: true });
-
-    const anomalies: Anomaly[] = [
-      { tenantId: 't', tenantName: 'Tenant X', todayCalls: 100, rollingAvg7d: 10, multiplier: 10 },
-    ];
-    const budgetAlerts: BudgetAlert[] = [
-      { tenantId: 't2', tenantName: 'Tenant Y', currentMonthCostJpy: 1500, monthlyBudgetCapJpy: 1000, utilizationRate: 1.5, level: 'overage_150' },
-    ];
-
-    const sent = await notifyAdminsOfAlerts(anomalies, budgetAlerts);
-    expect(sent).toBe(2);
-    expect(mockSend).toHaveBeenCalledTimes(2);
-
-    const firstCall = mockSend.mock.calls[0][0];
-    expect(firstCall.to).toBe('admin1@example.com');
-    expect(firstCall.subject).toContain('使用量アラート');
-    expect(firstCall.html).toContain('Tenant X');
-    expect(firstCall.html).toContain('10.0 倍');
-    expect(firstCall.html).toContain('Tenant Y');
-    expect(firstCall.html).toContain('overage_150');
-  });
-
-  it('メール送信失敗は sent カウントに含めない', async () => {
-    vi.mocked(prisma.user.findMany).mockResolvedValue([
-      { email: 'admin1@example.com', name: 'Admin 1' },
-      { email: 'admin2@example.com', name: 'Admin 2' },
-    ] as never);
-    mockSend
-      .mockResolvedValueOnce({ success: true })
-      .mockResolvedValueOnce({ success: false, error: 'smtp error' });
-
-    const anomalies: Anomaly[] = [
-      { tenantId: 't', tenantName: 'T', todayCalls: 100, rollingAvg7d: 10, multiplier: 10 },
-    ];
-
-    const sent = await notifyAdminsOfAlerts(anomalies, []);
-    expect(sent).toBe(1); // admin2 への送信失敗はカウントしない
-  });
-});
+// notifyAdminsOfAlerts は 2026-05-14 に廃止されたためテスト削除。

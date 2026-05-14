@@ -21,6 +21,12 @@ vi.mock('@/services/error-log.service', () => ({
   recordError: vi.fn(),
 }));
 
+// 2026-05-14: runMonthlyEmbeddingBackfill が外部 LLM API を呼ぶため、テストでは
+//   常に空結果を返すスタブを差し込む。
+vi.mock('@/services/embedding-backfill.service', () => ({
+  runMonthlyEmbeddingBackfill: vi.fn(async () => ({ tenantCount: 0, results: [] })),
+}));
+
 import {
   applyScheduledPlanChanges,
   getCurrentMonthStartUtc,
@@ -264,6 +270,9 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       storageAddonSkippedCount: 0,
       purgedTenantCount: 0,
       purgedRowCount: 0,
+      // 2026-05-14: 縮退モード確定仕様 — runMonthlyEmbeddingBackfill のスタブが空を返す
+      embeddingBackfillTenantCount: 0,
+      embeddingBackfillGeneratedCount: 0,
     });
   });
 });

@@ -13,10 +13,10 @@
  *   - SUGGESTION_EMBEDDING_WEIGHT = 0.5 (embedding 意味類似度、用語のゆれ解消の主軸)
  *   合計 1.0。embedding が主軸 (50%) で、タグと pg_trgm は補助。
  *
- *   embedding が NULL の候補 (= まだ生成されていないデータ) は embedding score = 0 で
- *   計算されるため、自動的にタグ + pg_trgm の 2 軸 (合計 0.5) で評価される縮退モードに
- *   なる (= 既存運用と互換)。新規データから順次 embedding が付与されるにつれ提案精度が
- *   上昇する設計。
+ *   embedding が NULL の候補 / クエリ (= 未生成 or 上限超過で生成停止) は **縮退モード重み**
+ *   (タグ:テキスト = 5:5、SUGGESTION_*_WEIGHT_DEGRADED) で再配分する (2026-05-14 確定仕様)。
+ *   合計 1.0 を維持することで、embedding ありなしで同等程度のスコアを得る目標に近づく。
+ *   月初バッチで NULL 候補は順次補完される (テナント月間上限に加算)。
  */
 
 /** タグ交差 (Jaccard) のスコア寄与重み。 */
@@ -30,6 +30,23 @@ export const SUGGESTION_TEXT_WEIGHT = 0.2;
  * PR #5-b (T-03 Phase 2) で導入。embedding が主軸となる。
  */
 export const SUGGESTION_EMBEDDING_WEIGHT = 0.5;
+
+/**
+ * **縮退モード時** の重み再配分 (確定仕様 / 2026-05-14)。
+ *
+ * Embedding が利用不可能な候補に対しては、タグ:テキスト = 5:5 に再配分する。
+ * これにより「同じデータが embedding ありなしで概ね同等のスコアを得る」目標に近づく
+ * (= passive 縮退 = タグ 0.3 + テキスト 0.2 だと最大 0.5 で頭打ちになる問題の解消)。
+ *
+ * 適用条件 (per-candidate):
+ *   - クエリ embedding が NULL (生成失敗) → 全候補に適用
+ *   - 候補 content_embedding が NULL (未生成) → その候補のみに適用
+ *
+ * docs: TENANT_AND_BILLING.md §34.14.4 / SUGGESTION_ENGINE.md / SUGGESTION_FEATURE.md
+ */
+export const SUGGESTION_TAG_WEIGHT_DEGRADED = 0.5;
+export const SUGGESTION_TEXT_WEIGHT_DEGRADED = 0.5;
+export const SUGGESTION_EMBEDDING_WEIGHT_DEGRADED = 0;
 
 /**
  * 候補を最終的に残す閾値。

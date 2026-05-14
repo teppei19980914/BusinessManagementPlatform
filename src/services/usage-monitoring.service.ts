@@ -4,7 +4,7 @@
  * 役割:
  *   1. **日次集計**: ApiCallLog をテナント別・日次で集計し、利用状況を把握
  *   2. **異常検知**: ローリング平均から突発的な spike (5x+) を検出
- *   3. **予算アラート通知**: 月次予算の 80%/100% 到達を admin/owner にメール通知
+ *   3. **予算アラート判定**: 月次予算の 80%/100%/150% 到達テナントを列挙
  *   4. **admin 用サマリ**: 全テナント横断の使用量を JSON で返す (super_admin ダッシュボード基盤)
  *
  * 設計判断:
@@ -16,8 +16,12 @@
  *       統計的に脆弱)。シンプルな倍率閾値の方がチューニングしやすい。
  *     - 5x は経験則: 通常運用の自然な揺れ (週末効果、月末スパイク) を許容しつつ、
  *       明らかな異常 (バグ・攻撃) のみを拾う。
- *   - **通知重複の防止**: 同日内に同テナントへの同種アラートは送らない (in-memory cache、
- *     Cron は 1 日 1 回実行のためメモリ消失問題なし)。
+ *
+ * **2026-05-14 (縮退モード仕様確定)**: メール通知を廃止。
+ *   旧仕様では `notifyAdminsOfAlerts` が systemRole='admin' に対して使用量アラートを
+ *   メール送信していたが、admin ダッシュボード (`/api/admin/usage-summary`) で同じ情報を
+ *   随時参照できるため二重通知の必要なし。メール送信単価が上限超過/縮退の意味付けと
+ *   矛盾するため (= 課金を抑える縮退モード起動下で別経路の出費を増やさない) 廃止する。
  *
  * 関連:
  *   - 計画: docs/roadmap/SUGGESTION_ENGINE_PLAN.md PR #7
@@ -27,7 +31,6 @@
  */
 
 import { prisma } from '@/lib/db';
-import { getMailProvider } from '@/lib/mail';
 
 // ================================================================
 // 公開型
@@ -287,100 +290,6 @@ export async function detectBudgetAlerts(): Promise<BudgetAlert[]> {
 }
 
 // ================================================================
-// 公開関数: メール通知
-// ================================================================
-
-/**
- * 異常 + 予算アラートを admin (systemRole='admin' のユーザ) にメール通知する。
- *
- * @returns 送信完了したメール件数
- */
-export async function notifyAdminsOfAlerts(
-  anomalies: Anomaly[],
-  budgetAlerts: BudgetAlert[],
-): Promise<number> {
-  if (anomalies.length === 0 && budgetAlerts.length === 0) return 0;
-
-  // 全 admin ユーザを通知対象とする (将来的には super_admin / per-tenant admin の分離あり)
-  const admins = await prisma.user.findMany({
-    where: { systemRole: 'admin', isActive: true, deletedAt: null },
-    select: { email: true, name: true },
-  });
-  if (admins.length === 0) return 0;
-
-  const subject = `[たすきば] 使用量アラート (${new Date().toISOString().split('T')[0]})`;
-  const html = renderAlertEmail(anomalies, budgetAlerts);
-  const text = renderAlertEmailText(anomalies, budgetAlerts);
-
-  const mail = getMailProvider();
-  let sent = 0;
-  for (const a of admins) {
-    // P-H (2026-05-08): 送信種別ラベル (ログ集計用)
-    const result = await mail.send({ to: a.email, subject, html, text, type: 'usage_alert' });
-    if (result.success) sent++;
-  }
-  return sent;
-}
-
-function renderAlertEmail(anomalies: Anomaly[], budgetAlerts: BudgetAlert[]): string {
-  const parts: string[] = ['<h1>使用量アラート</h1>'];
-
-  if (anomalies.length > 0) {
-    parts.push('<h2>異常スパイク検知</h2><ul>');
-    for (const a of anomalies) {
-      parts.push(
-        `<li><strong>${escapeHtml(a.tenantName)}</strong>: 本日 ${a.todayCalls} 呼び出し ` +
-        `(過去 7 日平均 ${a.rollingAvg7d.toFixed(1)} の <strong>${a.multiplier.toFixed(1)} 倍</strong>)</li>`,
-      );
-    }
-    parts.push('</ul>');
-  }
-
-  if (budgetAlerts.length > 0) {
-    parts.push('<h2>予算アラート</h2><ul>');
-    for (const b of budgetAlerts) {
-      const rate = (b.utilizationRate * 100).toFixed(1);
-      parts.push(
-        `<li><strong>${escapeHtml(b.tenantName)}</strong>: ` +
-        `${b.currentMonthCostJpy} 円 / 上限 ${b.monthlyBudgetCapJpy} 円 ` +
-        `(<strong>${rate}%</strong>, level=${b.level})</li>`,
-      );
-    }
-    parts.push('</ul>');
-  }
-
-  parts.push('<p>詳細は admin ダッシュボード <a href="/api/admin/usage-summary">/api/admin/usage-summary</a> を参照してください。</p>');
-  return parts.join('\n');
-}
-
-function renderAlertEmailText(anomalies: Anomaly[], budgetAlerts: BudgetAlert[]): string {
-  const parts: string[] = ['使用量アラート', ''];
-  if (anomalies.length > 0) {
-    parts.push('■ 異常スパイク検知');
-    for (const a of anomalies) {
-      parts.push(`  - ${a.tenantName}: 本日 ${a.todayCalls} 件 (7日平均 ${a.rollingAvg7d.toFixed(1)} の ${a.multiplier.toFixed(1)} 倍)`);
-    }
-    parts.push('');
-  }
-  if (budgetAlerts.length > 0) {
-    parts.push('■ 予算アラート');
-    for (const b of budgetAlerts) {
-      parts.push(`  - ${b.tenantName}: ${b.currentMonthCostJpy} / ${b.monthlyBudgetCapJpy} 円 (${(b.utilizationRate * 100).toFixed(1)}%, ${b.level})`);
-    }
-  }
-  return parts.join('\n');
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// ================================================================
 // 公開関数: admin 用ダッシュボード JSON
 // ================================================================
 
@@ -425,8 +334,10 @@ export async function getAdminUsageSummary(date?: Date): Promise<AdminUsageSumma
  *
  * 1. 昨日 (UTC) の使用量を集計
  * 2. 異常検知
- * 3. 予算アラート検出
- * 4. admin にメール通知
+ * 3. 予算アラート判定
+ *
+ * **2026-05-14**: メール通知は廃止 (admin ダッシュボードで随時参照可能)。
+ * 集計と検知の結果は返却値で把握できるため、本関数の責務は集計の実施のみ。
  *
  * @returns 実行結果サマリ
  */
@@ -437,13 +348,11 @@ export async function runDailyUsageAggregation(): Promise<{
   totalCostJpy: number;
   anomalyCount: number;
   budgetAlertCount: number;
-  emailsSent: number;
 }> {
   // 集計対象は「実行時点の昨日 UTC」
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   const summary = await getAdminUsageSummary(yesterday);
-  const emailsSent = await notifyAdminsOfAlerts(summary.anomalies, summary.budgetAlerts);
 
   return {
     date: summary.date,
@@ -452,6 +361,5 @@ export async function runDailyUsageAggregation(): Promise<{
     totalCostJpy: summary.total.costJpy,
     anomalyCount: summary.anomalies.length,
     budgetAlertCount: summary.budgetAlerts.length,
-    emailsSent,
   };
 }

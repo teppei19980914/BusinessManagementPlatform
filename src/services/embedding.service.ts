@@ -454,7 +454,8 @@ export async function searchSimilar(
  * **fail-safe 設計**:
  *   - embedding の生成 / 保存失敗は本体 INSERT/UPDATE をロールバックさせない
  *   - content_embedding NULL のまま運用継続を許容
- *   - suggestion engine が tag/pg_trgm 軸のみで動作する縮退モードに自動移行
+ *   - suggestion engine は per-candidate でタグ:テキスト=5:5 の縮退モード重み再配分
+ *     (2026-05-14 確定仕様) で動作。月初バッチで NULL は順次補完される
  *
  * @example
  *   await generateAndPersistEntityEmbedding({

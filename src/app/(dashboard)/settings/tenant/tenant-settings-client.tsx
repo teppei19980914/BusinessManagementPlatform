@@ -22,6 +22,8 @@ import { useFormatters } from '@/lib/use-formatters';
 import { RecalculateButton } from '@/components/recalculate-button';
 import { UsageDriftBadge } from '@/components/usage-drift-badge';
 import type { ApiUsageReconcileResult } from '@/services/api-usage-recalc.service';
+// Q5(3) (2026-05-14): 縮退モード状態 (Server Component で取得した snapshot を受け取る)
+import type { DegradedModeState } from '@/services/degraded-mode.service';
 
 type TenantSelfInfo = {
   id: string;
@@ -104,11 +106,14 @@ export function TenantSettingsClient({
   initialInfo,
   storageInitialInfo,
   apiReconcile,
+  degradedMode,
 }: {
   initialInfo: TenantSelfInfo;
   storageInitialInfo: StorageInitialInfo | null;
   /** 2026-05-14: 自テナントの API 利用量整合性チェック結果 (drift 警告用) */
   apiReconcile: ApiUsageReconcileResult | null;
+  /** Q5(3) (2026-05-14): 縮退モード状態 + embedding 未生成件数 (取得失敗時は null) */
+  degradedMode: DegradedModeState | null;
 }) {
   // PR-4 (2026-05-15): テナント TZ で日付を表示するため useFormatters を導入
   const { formatDate } = useFormatters();
@@ -255,6 +260,9 @@ export function TenantSettingsClient({
 
       {/* P-B (2026-05-08): Beginner プラン期限バナー */}
       <BeginnerExpiryBanner info={info} />
+
+      {/* Q5(3) (2026-05-14): 縮退モード起動中バナー + embedding 未生成件数 */}
+      {degradedMode && <DegradedModeSection state={degradedMode} />}
 
       {/* 当月使用量 (PR-2 / 2026-05-15: plan 別タイル構成に切替) */}
       <UsageSection
@@ -423,6 +431,76 @@ export function TenantSettingsClient({
  * 設計判断: Beginner では費用が常に 0 円のため「API 費用」タイルを出す意味がない。
  * 代わりに「残数」を見せる方が利用者にとっての操作の指針 (= あと何回呼べるか) として有用。
  */
+/**
+ * Q5(3) (2026-05-14): 縮退モード状態 + embedding 未生成件数の表示セクション。
+ *
+ * - state.active=true: 「縮退モード起動中」赤バナー + 原因を表示
+ * - state.active=false かつ nullEmbeddings.total > 0: 黄色 info で未生成件数を表示
+ *   (= 月初バッチで補完予定の件数を可視化)
+ * - state.active=false かつ nullEmbeddings.total === 0: 何も表示しない (UI ノイズ回避)
+ */
+function DegradedModeSection({ state }: { state: DegradedModeState }) {
+  const { nullEmbeddings } = state;
+
+  if (!state.active && nullEmbeddings.total === 0) return null;
+
+  if (state.active) {
+    const reasonText =
+      state.reason === 'beginner_limit_exceeded'
+        ? `Beginner プランの月間 API 呼び出し上限 (${state.beginnerMonthlyCallLimit} 回) に達しました。`
+        : state.reason === 'budget_exceeded'
+          ? `月次予算上限 (¥${state.monthlyBudgetCapJpy?.toLocaleString() ?? '?'}) に達しました。`
+          : 'API 呼び出しが停止しています。';
+
+    return (
+      <section className="rounded border border-destructive/40 bg-destructive/10 p-4 text-sm">
+        <p className="font-semibold text-destructive">⚠ 縮退モード起動中</p>
+        <p className="mt-1">{reasonText}</p>
+        <ul className="mt-2 list-disc space-y-0.5 pl-5 text-muted-foreground">
+          <li>
+            プロジェクト / ナレッジ / リスク・課題 / 振り返りの新規作成・更新は引き続き行えます
+            (embedding 生成のみ停止)。
+          </li>
+          <li>
+            提案エンジンは <strong>タグ：テキスト = 5：5</strong> の縮退モード重み再配分で動作します。
+          </li>
+          <li>
+            embedding 未生成件数:{' '}
+            <strong className="text-foreground">{nullEmbeddings.total} 件</strong>{' '}
+            (Project {nullEmbeddings.projects} / Knowledge {nullEmbeddings.knowledges}
+            {' / '}Risk・Issue {nullEmbeddings.risksIssues} / Retrospective{' '}
+            {nullEmbeddings.retrospectives})
+          </li>
+          <li>
+            月初 (テナント TZ) に embedding 補完バッチが自動実行され、来月分の枠で順次生成されます。
+            {state.reason === 'budget_exceeded' &&
+              '月次予算上限の引き上げで即時復活できます。'}
+            {state.reason === 'beginner_limit_exceeded' &&
+              ' Expert / Pro プランへのアップグレードで即時復活できます。'}
+          </li>
+        </ul>
+      </section>
+    );
+  }
+
+  // 縮退中ではないが、過去の縮退で残った未生成件数がある場合
+  return (
+    <section className="rounded border border-amber-300 bg-amber-50 p-4 text-sm dark:bg-amber-900/30">
+      <p className="font-semibold">
+        ℹ embedding 未生成のデータが <strong>{nullEmbeddings.total} 件</strong> あります
+      </p>
+      <p className="mt-1 text-muted-foreground">
+        Project {nullEmbeddings.projects} / Knowledge {nullEmbeddings.knowledges}{' '}
+        / Risk・Issue {nullEmbeddings.risksIssues} / Retrospective{' '}
+        {nullEmbeddings.retrospectives}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        これらは月初 (テナント TZ) のバッチで自動補完されます。補完は当月の API 利用枠を消費します。
+      </p>
+    </section>
+  );
+}
+
 function UsageSection({
   info,
   budgetUsagePercent,

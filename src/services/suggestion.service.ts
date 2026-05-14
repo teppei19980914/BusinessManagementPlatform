@@ -22,7 +22,8 @@
  *       Retro: problems+improvements に限定)
  *   - **embedding 意味類似度** (Voyage AI voyage-4-lite Cosine Similarity、重み 0.5):
  *       PR #5-b で導入。タグ表記ゆれ・シノニムの問題を意味的に解決。
- *       embedding が NULL の候補は score=0 として計算される (→ 自動的に 2 軸縮退)。
+ *       embedding が NULL の候補 / クエリは縮退モード重み (タグ:テキスト = 5:5) で
+ *       再配分する (2026-05-14 確定仕様。embedding ありなしで同程度のスコアを得る目的)。
  *
  * 重み (config/suggestion.ts):
  *   - SUGGESTION_TAG_WEIGHT       = 0.3
@@ -40,6 +41,9 @@ import {
   SUGGESTION_TAG_WEIGHT as TAG_WEIGHT,
   SUGGESTION_TEXT_WEIGHT as TEXT_WEIGHT,
   SUGGESTION_EMBEDDING_WEIGHT as EMBEDDING_WEIGHT,
+  SUGGESTION_TAG_WEIGHT_DEGRADED as TAG_WEIGHT_DEGRADED,
+  SUGGESTION_TEXT_WEIGHT_DEGRADED as TEXT_WEIGHT_DEGRADED,
+  SUGGESTION_EMBEDDING_WEIGHT_DEGRADED as EMBEDDING_WEIGHT_DEGRADED,
   SUGGESTION_SCORE_THRESHOLD as SCORE_THRESHOLD,
   SUGGESTION_DEFAULT_LIMIT as DEFAULT_LIMIT,
 } from '@/config';
@@ -133,7 +137,7 @@ type ProjectContext = {
   /**
    * PR #5-b (T-03 Phase 2): pgvector の `[1.234,...]` 文字列形式で取得した embedding。
    *   生成済なら content_embedding をそのまま使用、未生成 (NULL) なら null。
-   *   null の場合は embedding 軸スコア = 0 で 2 軸縮退モード。
+   *   null の場合は縮退モード (タグ:テキスト = 5:5 で再配分、2026-05-14 確定仕様)。
    */
   embeddingText: string | null;
   /**
@@ -253,6 +257,37 @@ async function computeEmbeddingSimilarities(
 }
 
 /**
+ * 縮退モード対応の重み付き 3 軸スコア合成 (2026-05-14 確定仕様)。
+ *
+ * embedding 軸の可用性に応じて per-candidate でタグ:テキスト = 5:5 へ再配分する:
+ *   - `embAvailable=true` (クエリ + 候補ともに embedding あり) → 0.3/0.2/0.5
+ *   - `embAvailable=false` (どちらか NULL) → 0.5/0.5/0 (タグ:テキスト = 5:5)
+ *
+ * これにより「同じデータが embedding ありなしで概ね同等のスコアを得る」目標に近づく。
+ *
+ * docs: TENANT_AND_BILLING.md §34.14.4 / SUGGESTION_ENGINE.md
+ */
+function combineWithDegradation(args: {
+  tagScore: number;
+  textScore: number;
+  embeddingScore: number;
+  embAvailable: boolean;
+}): number {
+  if (args.embAvailable) {
+    return combineScores([
+      { score: args.tagScore, weight: TAG_WEIGHT },
+      { score: args.textScore, weight: TEXT_WEIGHT },
+      { score: args.embeddingScore, weight: EMBEDDING_WEIGHT },
+    ]);
+  }
+  return combineScores([
+    { score: args.tagScore, weight: TAG_WEIGHT_DEGRADED },
+    { score: args.textScore, weight: TEXT_WEIGHT_DEGRADED },
+    { score: args.embeddingScore, weight: EMBEDDING_WEIGHT_DEGRADED },
+  ]);
+}
+
+/**
  * pg_trgm similarity() を使ってテキスト類似度を 1 クエリでまとめて取得する。
  * Prisma では similarity() を直接扱えないため $queryRaw を使う。
  * 引数はパラメータ化バインディング (Prisma.sql) で埋め込み、SQL インジェクションを防ぐ。
@@ -352,12 +387,16 @@ export async function suggestForProject(
     });
     const tagScore = jaccard(ctx.tags, kTags);
     const textScore = kText.get(k.id) ?? 0;
+    // 縮退モード: クエリ embedding NULL または候補側 embedding NULL のとき
+    //   embAvailable=false → タグ:テキスト = 5:5 で再配分。
+    const embAvailable = ctx.embeddingText != null && kEmb.has(k.id);
     const embeddingScore = kEmb.get(k.id) ?? 0;
-    const score = combineScores([
-      { score: tagScore, weight: TAG_WEIGHT },
-      { score: textScore, weight: TEXT_WEIGHT },
-      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
-    ]);
+    const score = combineWithDegradation({
+      tagScore,
+      textScore,
+      embeddingScore,
+      embAvailable,
+    });
     return {
       kind: 'knowledge' as const,
       id: k.id,
@@ -435,12 +474,14 @@ export async function suggestForProject(
     });
     const tagScore = jaccard(ctx.tags, issueProjectTags);
     const textScore = iText.get(i.id) ?? 0;
+    const embAvailable = ctx.embeddingText != null && iEmb.has(i.id);
     const embeddingScore = iEmb.get(i.id) ?? 0;
-    const score = combineScores([
-      { score: tagScore, weight: TAG_WEIGHT },
-      { score: textScore, weight: TEXT_WEIGHT },
-      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
-    ]);
+    const score = combineWithDegradation({
+      tagScore,
+      textScore,
+      embeddingScore,
+      embAvailable,
+    });
     return {
       kind: 'issue' as const,
       id: i.id,
@@ -507,12 +548,14 @@ export async function suggestForProject(
     });
     const tagScore = jaccard(ctx.tags, riskProjectTags);
     const textScore = riskText.get(r.id) ?? 0;
+    const embAvailable = ctx.embeddingText != null && riskEmb.has(r.id);
     const embeddingScore = riskEmb.get(r.id) ?? 0;
-    const score = combineScores([
-      { score: tagScore, weight: TAG_WEIGHT },
-      { score: textScore, weight: TEXT_WEIGHT },
-      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
-    ]);
+    const score = combineWithDegradation({
+      tagScore,
+      textScore,
+      embeddingScore,
+      embAvailable,
+    });
     return {
       kind: 'risk' as const,
       id: r.id,
@@ -582,12 +625,14 @@ export async function suggestForProject(
     });
     const tagScore = jaccard(ctx.tags, retroProjectTags);
     const textScore = rText.get(r.id) ?? 0;
+    const embAvailable = ctx.embeddingText != null && rEmb.has(r.id);
     const embeddingScore = rEmb.get(r.id) ?? 0;
-    const score = combineScores([
-      { score: tagScore, weight: TAG_WEIGHT },
-      { score: textScore, weight: TEXT_WEIGHT },
-      { score: embeddingScore, weight: EMBEDDING_WEIGHT },
-    ]);
+    const score = combineWithDegradation({
+      tagScore,
+      textScore,
+      embeddingScore,
+      embAvailable,
+    });
     return {
       kind: 'retrospective' as const,
       id: r.id,

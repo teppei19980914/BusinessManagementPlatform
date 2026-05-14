@@ -389,7 +389,8 @@ export async function createKnowledge(
   });
 
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存。
-  //   失敗時はサイレントにスキップ (本体保存は成功、suggestion engine は 2 軸縮退モード)。
+  //   失敗時はサイレントにスキップ (本体保存は成功、suggestion engine は
+  //   per-candidate でタグ:テキスト=5:5 の縮退モード重み再配分で動作する。2026-05-14)。
   // PR #357 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) は提案エンジン側で
   //   filter 除外されるため、embedding を生成せず Voyage API 呼出 (= 課金) も発生させない。
   if (k.visibility !== 'draft') {

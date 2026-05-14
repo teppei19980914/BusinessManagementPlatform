@@ -49,6 +49,8 @@ import { purgeOldDeletedTenants } from '@/services/super-admin.service';
 // PR-4 (2026-05-15): テナント TZ ベースの月初判定
 import { getTenantMonthStart, getTenantPreviousYearMonth } from '@/lib/tenant-time';
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
+// 2026-05-14: 縮退モード確定仕様 — 月初に embedding=NULL のエンティティを一括補完。
+import { runMonthlyEmbeddingBackfill } from '@/services/embedding-backfill.service';
 
 /**
  * 2026-05-11: 月次使用量履歴のスナップショット保存対象から **除外** するテナント。
@@ -76,6 +78,10 @@ export interface TenantMonthlyResetResult {
   purgedTenantCount: number;
   /** テナント物理削除: 削除した業務データレコード総数 (容量解放量の指標) */
   purgedRowCount: number;
+  /** 縮退モード確定仕様 (2026-05-14): 月初 embedding 補完で対象になったテナント件数。 */
+  embeddingBackfillTenantCount: number;
+  /** 縮退モード確定仕様 (2026-05-14): 月初 embedding 補完で生成成功した embedding 総数。 */
+  embeddingBackfillGeneratedCount: number;
 }
 
 /**
@@ -332,6 +338,33 @@ export async function runTenantMonthlyReset(
   const { applied, invalidSkipped } = await applyScheduledPlanChanges(now);
   // Storage add-on (Phase 2 / 2026-05-08): LLM プランと同様、ダウングレード予約を月初に適用
   const storageResult = await applyScheduledStorageChanges(now);
+  // 縮退モード確定仕様 (2026-05-14): counter リセット **後** に embedding=NULL の業務エンティティを
+  //   一括補完する (= 当月の予算枠を使うので、当月分の課金として記録される)。
+  //   テナント月間上限を超える分は次月の cron に持ち越され、過剰課金しない設計。
+  //   失敗してもテナント物理削除は実施するため、try/catch で囲んで結果のみ集計する。
+  let embeddingBackfillTenantCount = 0;
+  let embeddingBackfillGeneratedCount = 0;
+  try {
+    const backfill = await runMonthlyEmbeddingBackfill();
+    embeddingBackfillTenantCount = backfill.tenantCount;
+    embeddingBackfillGeneratedCount = backfill.results.reduce(
+      (sum, r) =>
+        sum +
+        (r.generated.projects ?? 0) +
+        (r.generated.knowledges ?? 0) +
+        (r.generated.risks_issues ?? 0) +
+        (r.generated.retrospectives ?? 0),
+      0,
+    );
+  } catch (error) {
+    await recordError({
+      severity: 'error',
+      source: 'cron',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      context: { kind: 'monthly_embedding_backfill' },
+    });
+  }
   // テナント物理削除 (2026-05-08): 論理削除から 90 日経過したテナントの業務データを物理削除
   //   (= 容量解放、課金根拠 + 監査ログは保護)
   const purgeResult = await purgeOldDeletedTenants(now);
@@ -344,5 +377,7 @@ export async function runTenantMonthlyReset(
     storageAddonSkippedCount: storageResult.skippedDueToUsage,
     purgedTenantCount: purgeResult.succeeded,
     purgedRowCount: purgeResult.totalRowsDeleted,
+    embeddingBackfillTenantCount,
+    embeddingBackfillGeneratedCount,
   };
 }
