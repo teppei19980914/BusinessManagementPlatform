@@ -5,14 +5,30 @@
  *   テナント管理者 (admin role) が自テナントのプラン・予算上限を self-service で変更する。
  *   呼出側で systemRole === 'admin' を確認する前提。
  *
- * プラン変更ルール (V1_FINAL_TASKS.md §PR-X4):
+ * プラン変更ルール:
  *   - アップグレード (Beginner → Expert / Pro、Expert → Pro): **即時反映**
- *   - ダウングレード (Pro → Expert / Beginner、Expert → Beginner): **翌月適用**
- *     (scheduledPlanChangeAt + scheduledNextPlan を設定、月初 cron で実反映)
- *   - Beginner ダウングレード時: 席数 ≤ 5 でないと拒否 (UI で事前警告 + API でも防御)
+ *   - **Expert ↔ Pro 切替 (上下方向問わず): 即時反映** (2026-05-14 修正)
+ *     - 当月分の従量課金は per-call 単価で個別記録されるため、月途中の即時切替でも
+ *       課金整合性が保たれる (切替前 ¥10 / 切替後 ¥30 が ApiCallLog に正しく記録される)。
+ *     - 業務仕様書 (docs/business/TENANT_AND_BILLING.md §F-13.11) が当初から
+ *       「Expert ↔ Pro の切替は即時反映」を要求しており、本ファイルの実装が
+ *       過剰に保守的だったのを修正。
+ *   - **Beginner ダウングレード**: BEGINNER_DOWNGRADE_FORBIDDEN で **完全拒否** (P-B)
+ *     - 上位プランから Beginner には戻せない (Beginner は初回 90 日試用限定のため)。
+ *     - 旧仕様では「翌月予約」だったが、P-B (2026-05-08) で完全禁止に変更。
+ *   - Beginner ダウングレード時: 席数 ≤ 5 でないと拒否 (Beginner 移行自体が禁止なので
+ *     現状は到達不能ガード。将来 P-B が緩和された場合の防御線として残置)
+ *
+ * 予約 (scheduled*) フィールドの扱い:
+ *   - 現仕様では `scheduledPlanChangeAt` / `scheduledNextPlan` を新規にセットする
+ *     コードパスは存在しない (Expert↔Pro 即時化 + Beginner downgrade 禁止のため)。
+ *   - ただし旧 DB レコードに残った予約や、将来 Beginner downgrade 緩和時のために
+ *     月初 cron 側 (tenant-monthly-reset.service.ts) の適用ロジックと
+ *     `cancelScheduledPlanChange` は引き続き残す。
  *
  * 関連:
  *   - 計画: docs/roadmap/V1_FINAL_TASKS.md PR-X4
+ *   - 業務仕様: docs/business/TENANT_AND_BILLING.md §F-13.11 / §NF-13.15
  *   - 月初 cron: scheduled_plan_change_at <= today に対して plan を scheduledNextPlan に更新
  */
 
@@ -23,19 +39,12 @@ import {
   getBeginnerDaysRemaining,
   type BeginnerExpiryState,
 } from './beginner-expiry.service';
-// PR-4 (2026-05-15): 翌月適用日をテナント TZ ベースで計算
-import { getTenantNextMonthStart } from '@/lib/tenant-time';
 
-/** プランの強さ順序 (アップグレード判定用) */
-const PLAN_ORDER: Record<TenantPlan, number> = {
-  beginner: 0,
-  expert: 1,
-  pro: 2,
-};
-
-function isUpgrade(current: TenantPlan, next: TenantPlan): boolean {
-  return PLAN_ORDER[next] > PLAN_ORDER[current];
-}
+// 2026-05-14: PLAN_ORDER / isUpgrade / getTenantNextMonthStart は撤去。
+//   全プラン変更を即時反映に統一したため、アップグレード/ダウングレードを区別する必要が
+//   無くなった (Beginner ダウングレードのみ事前拒否、それ以外は一律即時)。
+//   旧予約適用ロジック (月初 cron 側) は legacy DB レコード対策として
+//   tenant-monthly-reset.service.ts に残置。
 
 export type TenantSelfInfo = {
   id: string;
@@ -255,9 +264,10 @@ export type UpdateTenantSelfResult =
 /**
  * 自テナントのプラン / 予算上限を更新する。
  *
- * - プラン アップグレード時: 即時反映 (plan を直接更新)
- * - プラン ダウングレード時: scheduledPlanChangeAt + scheduledNextPlan を翌月 1 日に設定
- * - Beginner ダウングレード時: 席数 ≤ 5 でなければエラー
+ * - プラン アップグレード: 即時反映 (plan を直接更新)
+ * - **Expert ↔ Pro 切替 (上下双方向): 即時反映** (2026-05-14)
+ *   - per-call 課金は呼出時点の plan で単価が決まるため、月途中の切替でも整合する
+ * - Beginner ダウングレード: BEGINNER_DOWNGRADE_FORBIDDEN で拒否 (P-B)
  * - 予算上限: 即時反映 (non-negative or null)
  */
 export async function updateTenantSelf(
@@ -317,50 +327,36 @@ export async function updateTenantSelf(
     return { ok: true, appliedImmediately: true, scheduledFor: null };
   }
 
-  if (isUpgrade(currentPlan, nextPlan)) {
-    // アップグレード: 即時反映 + 予約をクリア + beginnerEverUpgraded フラグ立て
-    // P-B (2026-05-08): beginnerEverUpgraded=true にすることで、以後ダウングレード予約や
-    //   再アップグレードでも「Beginner 試用期間」の対象から外れる (Beginner に戻せない方針)。
-    await prisma.tenant.update({
-      where: { id: tenantId },
-      data: {
-        plan: nextPlan,
-        scheduledPlanChangeAt: null,
-        scheduledNextPlan: null,
-        beginnerEverUpgraded: true,
-        ...(input.monthlyBudgetCapJpy !== undefined
-          ? { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy }
-          : {}),
-      },
-    });
-    return { ok: true, appliedImmediately: true, scheduledFor: null };
-  }
-
   // P-B (2026-05-08): Beginner ダウングレード禁止 (Expert/Pro → Beginner は不可)。
   //   Beginner プランは「初回テナント作成から 90 日限定の試用」のため、上位プランに
-  //   一度上がったテナントは戻せない仕様。Expert ↔ Pro 間のダウングレードは引き続き可。
+  //   一度上がったテナントは戻せない仕様。
+  //   2026-05-14: 旧予約パスを廃止 (= ダウングレードを一律即時反映化) したため、
+  //   本ガードは「ダウングレードの中で Beginner だけは禁止」を表す唯一の入口になった。
   if (nextPlan === 'beginner') {
     return { ok: false, error: 'BEGINNER_DOWNGRADE_FORBIDDEN' };
   }
 
-  // PR-4 (2026-05-15): 翌月 1 日 (テナント TZ 0:00) に予約。
-  //   旧仕様は UTC 月初固定だったため、JST テナントでは「翌月 1 日 09:00 JST」適用で違和感あり。
-  //   tenant.timezone (PR-1 で追加) を使って TZ ローカルの月初を計算する。
-  const now = new Date();
-  const nextMonthStart = getTenantNextMonthStart(now, tenant.timezone);
-
+  // 2026-05-14: 全プラン変更を即時反映に統一。
+  //   - アップグレード (Beginner→Expert/Pro、Expert→Pro): 従来通り即時
+  //   - Expert ↔ Pro ダウングレード: 業務仕様 §F-13.11 に従い即時反映に変更
+  //     (旧実装は scheduledPlanChangeAt + 翌月 cron 適用だったが、per-call 課金モデルでは
+  //      月途中切替でも当月分課金が正しく分離されるため遅延の必要なし)
+  // beginnerEverUpgraded=true により、以後 Beginner 試用期間の対象から外れる。
+  // 旧予約 (DB に残存する `scheduledPlanChangeAt`) は強制クリアする
+  // (アップグレード/Expert↔Pro 変更を契機に予約をリセットするのは旧実装と同じ挙動)。
   await prisma.tenant.update({
     where: { id: tenantId },
     data: {
-      scheduledPlanChangeAt: nextMonthStart,
-      scheduledNextPlan: nextPlan,
+      plan: nextPlan,
+      scheduledPlanChangeAt: null,
+      scheduledNextPlan: null,
+      beginnerEverUpgraded: true,
       ...(input.monthlyBudgetCapJpy !== undefined
         ? { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy }
         : {}),
     },
   });
-
-  return { ok: true, appliedImmediately: false, scheduledFor: nextMonthStart };
+  return { ok: true, appliedImmediately: true, scheduledFor: null };
 }
 
 /**
