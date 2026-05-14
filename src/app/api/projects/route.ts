@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
+import { isAdminOrAbove } from '@/lib/permissions/role';
 import { createProjectSchema } from '@/lib/validators/project';
 import { listProjects, createProject } from '@/services/project.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
@@ -55,11 +56,12 @@ export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  // admin と pm_tl のみ作成可（pm_tl はプロジェクト未所属でも新規作成可）
-  if (user.systemRole !== 'admin') {
-    // 一般ユーザでも PM/TL ロールを持っていればプロジェクト作成可能
-    // ただし、ここではシステムロールで判断（プロジェクトスコープ外の操作のため）
-    // MVP-1a では admin のみに制限
+  // admin / super_admin のみ作成可。
+  //   - admin: 自テナント (user.tenantId) に Project を作成
+  //   - super_admin: 自身が所属する管理テナント (MANAGEMENT_TENANT_ID) に Project を作成。
+  //     管理テナントのシード Project (`isSampleData=true`) の追加投入や個別調整を UI から
+  //     行うために 2026-05-14 に開放 (Customer と同じ isAdminOrAbove 方針)。
+  if (!isAdminOrAbove(user)) {
     const t = await getTranslations('message');
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: t('forbidden') } },

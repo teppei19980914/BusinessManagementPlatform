@@ -8829,7 +8829,39 @@ WBS 画面で ACT 作成・編集時に「担当者の日次工数オーバー�
 
 ### 横展開: 他の admin-only 画面を super_admin に開放するとき
 
-他資産 (Project / Knowledge / RiskIssue / Retrospective) の sysadmin 直接編集が必要になった場合、上記 3 点 (auth gate / nav flag / service-layer 無改修) を **同じパターン** で適用する。本 PR では Customer のみ実装。
+他資産 (Project / Knowledge / RiskIssue / Retrospective) の sysadmin 直接編集が必要になった場合、上記 3 点 (auth gate / nav flag / service-layer 無改修) を **同じパターン** で適用する。
+
+**2026-05-14 追加対応 (PR #364 同梱)**: 横展開チェック中に「**Project POST だけが super_admin をハードブロック**」していることが判明した。
+
+| 操作 | Customer | **Project (修正前)** | **Project (修正後)** | Knowledge (seed=standalone) | Risk | Retrospective |
+|---|---|---|---|---|---|---|
+| CREATE | ✅ | ❌ ([api/projects/route.ts:59](../../src/app/api/projects/route.ts#L59) `systemRole !== 'admin'`) | ✅ `isAdminOrAbove` | ✅ | ✅ (via `checkProjectPermission`) | ✅ (via `checkProjectPermission`) |
+| UPDATE | ✅ | ✅ (`checkMembership` の super_admin 短絡) | ✅ | ✅ | ✅ | ✅ |
+| DELETE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+**根拠**:
+- Risk / Retrospective は project-scoped ルート (`/api/projects/[id]/risks` 等) が `checkProjectPermission` 経由で [src/lib/permissions/membership.ts:87](../../src/lib/permissions/membership.ts#L87) の super_admin → pm_tl 短絡を取り込むため、認可は素通りする。
+- Knowledge の seed は **standalone (projectIds 紐付けなし)** で投入される ([prisma/seed-suggestion.ts:2566-2596](../../prisma/seed-suggestion.ts)) ため、`/api/knowledge` POST のメンバーシップ検証経路 (line 79-86) には乗らない。
+- Project POST のみは API route 入口で `systemRole === 'admin'` 厳密判定があり、super_admin が落ちていた。MVP-1a 制約のコメント残置が原因。
+
+**横展開チェックリスト (`is_sample_data` を持つエンティティを sysadmin 開放するとき必須)**:
+
+- [ ] 一覧 page (例: `/customers/page.tsx`) の auth gate を `isAdminOrAbove`
+- [ ] 詳細 page (例: `/customers/[id]/page.tsx`) の auth gate を `isAdminOrAbove`
+- [ ] **collection API (`/api/<entity>` の GET/POST) の認可を `isAdminOrAbove`** ← Project はここが漏れていた
+- [ ] item API (`/api/<entity>/[id]` の GET/PATCH/DELETE) の認可を `isAdminOrAbove`
+- [ ] project-scoped ルート (`/api/projects/[id]/<child>`) は **`checkProjectPermission` 経由なら無改修**で super_admin 通過
+- [ ] nav 表示: `adminOnly: true` の場合は `visibleToSuperAdmin: true` を併記
+- [ ] super_admin POST/PATCH/DELETE のユニットテスト追加
+
+### 検出のしかた (Project POST 漏れの再発防止)
+
+```bash
+# super_admin に開放したいエンティティの全 route ファイルを grep。
+# admin 判定が「=== 'admin'」直書きなら漏れ候補:
+grep -rn "systemRole !== 'admin'\|systemRole === 'admin'" src/app/api/<entity>/
+# → 1 件でもヒットしたら isAdminOrAbove に置換 + テスト追加
+```
 
 ### 関連
 
