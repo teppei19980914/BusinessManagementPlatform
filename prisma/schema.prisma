@@ -164,6 +164,21 @@ model Tenant {
   createdAt                    DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt                    DateTime? @map("deleted_at") @db.Timestamptz
+  /// 2026-05-14 (PR #372): 支払い滞納等による read-only 強制移行フラグ。
+  ///   null = 通常運用 (= 書き込み可)
+  ///   not null = read-only モード (write系 HTTP method を middleware で 403 遮断)
+  ///   セット時刻 = super_admin が POST /api/admin/super/tenants/:id/suspend を実行した時刻
+  ///   解除は POST .../resume (suspendedAt=null, resumedAt=now をセット)
+  ///   関連: docs/business/PAYMENT_TERMS.md §2.3, docs/operations/PAYMENT_DELINQUENCY_SOP.md §3
+  suspendedAt                  DateTime? @map("suspended_at") @db.Timestamptz
+  /// 停止理由コード (例: 'payment_delinquent' / 'tos_violation' / 'other')。停止時に必須、解除時 null。
+  ///   将来的に enum 化を検討するが v1 では String で柔軟運用。
+  suspendReason                String?   @map("suspend_reason") @db.VarChar(50)
+  /// 停止を実行した super_admin の User.id (監査用)。auditLog にも別途記録するが、参照しやすさのため Tenant 自身にも保持。
+  suspendedBy                  String?   @map("suspended_by") @db.Uuid
+  /// 直近の解除時刻 (監査用)。null = 一度も停止 → 解除されていない。
+  ///   suspendedAt とのペア: (suspendedAt=null, resumedAt=2026-06-01) = 6/1 に解除済の通常運用状態
+  resumedAt                    DateTime? @map("resumed_at") @db.Timestamptz
 
   // Relations: 13 業務エンティティ + ApiCallLog + SuggestionExplanation (P-3) + monthlyUsageHistory (P-5b)
   // Phase 2-10 (2026-05-10): 監査・トークン系 7 model も back-relation を追加

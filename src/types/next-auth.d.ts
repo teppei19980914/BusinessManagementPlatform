@@ -59,6 +59,13 @@ declare module 'next-auth' {
        */
       tenantStorageGracePeriodStartedAt: string | null;
       /**
+       * 2026-05-14 (PR #372): super_admin による read-only 強制移行フラグ ISO 文字列。
+       * null = 通常運用、文字列 = read-only モード (= middleware が write 系 HTTP method を 403 遮断)。
+       * suspend 時に対象テナントの全ユーザ tokenVersion が increment されるため、既存セッションは
+       * 次リクエストで 401 SESSION_INVALIDATED となり再ログイン後にこの claim が反映される。
+       */
+      tenantSuspendedAt: string | null;
+      /**
        * 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ。
        * admin が increment した瞬間に既存 JWT は API route 入口で 401 になる。
        */
@@ -75,6 +82,8 @@ declare module 'next-auth/jwt' {
     tenantBeginnerEverUpgraded?: boolean;
     /** Storage add-on (Phase 2 / 2026-05-08): Grace period 開始日時 ISO (未開始は null) */
     tenantStorageGracePeriodStartedAt?: string | null;
+    /** 2026-05-14 (PR #372): read-only 強制移行フラグ ISO (通常運用は null) */
+    tenantSuspendedAt?: string | null;
     /** 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ */
     tokenVersion?: number;
   }

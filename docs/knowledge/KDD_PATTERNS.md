@@ -8985,3 +8985,73 @@ sort /tmp/docs.txt /tmp/impl.txt | uniq -d
 - 同型パターン (末尾追記 conflict): §5.X+30 末尾の「`### 関連` の末尾追記コンフリクト」
 - 衝突したファイル: [src/config/suggestion.ts](../../src/config/suggestion.ts) JSDoc 冒頭の「embedding NULL の扱い」段落
 
+## 5.X+58 PR push 前のセルフチェックリストに **`pnpm e2e:coverage-check` を含めないと CI でしか発覚しない** ─ メモリ / feedback ノートに記録するだけでは不十分 (PR #372 で実体験 / 2026-05-14)
+
+### 罠の正体
+
+PR #372 (Tenant.suspendedAt 実装) で、新規 API route 2 本 (`/api/admin/super/tenants/[id]/suspend` と `/resume`) を追加したが、`docs/test/E2E_COVERAGE.md` への追記を忘れて push。
+
+ローカルで実行したセルフチェックは:
+1. ✅ `pnpm test` (143 ファイル / 2156 件 PASS)
+2. ✅ `pnpm lint` (errors 0)
+3. ✅ `pnpm tsc --noEmit` (改修分は型エラー 0)
+
+しかし **`pnpm e2e:coverage-check` は実行していなかった**ため、CI の最初の job (Lint / Test / Build) で:
+
+```
+❌ docs/test/E2E_COVERAGE.md に未記載の機能があります:
+   - /api/admin/super/tenants/[id]/suspend
+   - /api/admin/super/tenants/[id]/resume
+
+対応方法:
+   docs/test/E2E_COVERAGE.md の該当セクションにエントリを追加してください。
+ELIFECYCLE  Command failed with exit code 1.
+```
+
+加えて、coverage-summary.json が生成されないため後続の `davelosert/vitest-coverage-report-action` も連鎖失敗。
+
+### 「メモリに記録があっても発動しない」根本問題
+
+このリポジトリで開発する Claude Code の user memory には、既に [feedback_e2e_coverage_gate.md](C:/Users/SF02512/.claude/projects/.../feedback_e2e_coverage_gate.md) として「新規 route.ts / page.tsx を追加したら pnpm e2e:coverage-check を必ずローカル実行」が登録されていた。
+
+それでも事故が起きた理由:
+- メモリは「想起ベース」: 関連キーワード (E2E / coverage / route 追加) が会話に出てこないと自動想起されない
+- 今回の PR は「機能追加 → テスト → ドキュメント → コミット → push」の流れで「**lint / tsc / test の 3 点セット**」を機械的に実行し、4 点目 (e2e:coverage-check) を漏らした
+- **チェックリストはコード (script) か CI に組み込まないと、人 / AI の認知に頼っている限り必ず漏れる**
+
+### 対応 (= 機械化しないチェックは信用しない)
+
+1. **既存の CI ガードを信頼**: 本ケースは CI が確実に止めてくれるため、最低保証はある (= 本番に流出しない)
+2. **ローカル実行は `pnpm` script 集約**: `pnpm pre-push` のようなコマンドで lint / tsc / test / e2e:coverage-check をまとめて実行できるよう script を集約しておく
+3. **PR テンプレートに必須項目化**: `.github/pull_request_template.md` の Test plan セクションに `[ ] pnpm e2e:coverage-check` 行を追加し、PR 作成時に必ず目に入るようにする
+4. **AI 用の checklist は memory ではなく CLAUDE.md / docs 内のチェックリストに記載**: memory は会話ごとに「想起されるとは限らない」ため、永続的な参照源 (= read される確率の高い場所) に置く
+
+### 推奨スクリプト構成 (= 将来追加候補)
+
+```json
+// package.json
+{
+  "scripts": {
+    "pre-push": "pnpm lint && pnpm tsc --noEmit && pnpm test --run --no-coverage && pnpm e2e:coverage-check"
+  }
+}
+```
+
+これで「push する前に毎回 1 コマンド」運用が可能。git hooks (husky) で `pre-push` フックに繋げると更に強固。
+
+### 派生・関連パターン
+
+| 教訓 | 対象 | 機械化方法 |
+|---|---|---|
+| 新規 route / page 追加時の E2E_COVERAGE.md 追記 | 本 §5.X+58 | `pnpm e2e:coverage-check` (既存 CI ガード) |
+| Default テナント / 削除済テナントのフィルタ 3 レイヤ同期 | §5.X+23 / §5.X+30 | サービス層テスト (3 レイヤすべて assert) |
+| 仕様 docs PR → 実装 PR の JSDoc コンフリクト | §5.X+57 | 実装 PR 作成時に `gh pr view <docs-pr>` |
+
+このパターン全般に共通する原則: **「人間 / AI の認知に頼る部分」を減らし、「自動的に止まる仕組み」に置き換える**。
+
+### 関連
+
+- PR #372: 本パターン発覚の元 PR (tenant suspend 機能追加)
+- 既存 §5.X+22 (PR #327 / PR-1 tenant-i18n): 同型の「新規 route 追加 → E2E_COVERAGE.md 更新」の確立パターン (本 §5.X+58 はそれを補強する立場、= 「memory + チェックリストでも 1 年経つと忘れる」事実)
+- 既存 memory: [feedback_e2e_coverage_gate.md](C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_e2e_coverage_gate.md)
+

@@ -31,6 +31,7 @@ function makeExpiredBeginnerAuth() {
       tenantCreatedAt: createdAt,
       tenantBeginnerEverUpgraded: false,
       tenantStorageGracePeriodStartedAt: null,
+      tenantSuspendedAt: null,
       mfaEnabled: false,
       mfaVerified: false,
     },
@@ -48,6 +49,7 @@ function makeActiveBeginnerAuth() {
       tenantCreatedAt: createdAt,
       tenantBeginnerEverUpgraded: false,
       tenantStorageGracePeriodStartedAt: null,
+      tenantSuspendedAt: null,
       mfaEnabled: false,
       mfaVerified: false,
     },
@@ -64,6 +66,7 @@ function makeExpertAuth() {
       tenantCreatedAt: new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString(),
       tenantBeginnerEverUpgraded: true,
       tenantStorageGracePeriodStartedAt: null,
+      tenantSuspendedAt: null,
       mfaEnabled: false,
       mfaVerified: false,
     },
@@ -167,6 +170,135 @@ describe('authorized callback - 期限制御対象外', () => {
   it('期限内 Beginner (Day 50) は POST 通る', async () => {
     const result = await authorized({
       auth: makeActiveBeginnerAuth(),
+      request: makeRequest('/api/projects', 'POST'),
+    } as never);
+
+    expect(result).toBe(true);
+  });
+});
+
+// ================================================================
+// PR #372 (2026-05-14): tenantSuspendedAt による read-only 強制移行ガード
+// ================================================================
+
+/**
+ * suspend 中の Expert テナント (= 通常運用なら 200 日経過でも write 通るが、suspendedAt
+ * セット済なので write は遮断される)。
+ */
+function makeSuspendedExpertAuth() {
+  return {
+    user: {
+      tenantPlan: 'expert',
+      tenantCreatedAt: new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString(),
+      tenantBeginnerEverUpgraded: true,
+      tenantStorageGracePeriodStartedAt: null,
+      tenantSuspendedAt: new Date('2026-05-14T10:00:00Z').toISOString(),
+      mfaEnabled: false,
+      mfaVerified: false,
+    },
+  };
+}
+
+describe('authorized callback - tenantSuspendedAt (read-only 強制移行) ガード', () => {
+  it('suspend 中 + POST /api/projects は 403 TENANT_SUSPENDED で弾かれる', async () => {
+    const result = await authorized({
+      auth: makeSuspendedExpertAuth(),
+      request: makeRequest('/api/projects', 'POST'),
+    } as never);
+
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      expect(result.status).toBe(403);
+      const body = await result.json();
+      expect(body.error.code).toBe('TENANT_SUSPENDED');
+    }
+  });
+
+  it('suspend 中 + PATCH /api/memos/[id] も 403 TENANT_SUSPENDED', async () => {
+    const result = await authorized({
+      auth: makeSuspendedExpertAuth(),
+      request: makeRequest('/api/memos/abc-123', 'PATCH'),
+    } as never);
+
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      expect(result.status).toBe(403);
+      const body = await result.json();
+      expect(body.error.code).toBe('TENANT_SUSPENDED');
+    }
+  });
+
+  it('suspend 中 + GET /api/projects は通る (= read-only でも閲覧可)', async () => {
+    const result = await authorized({
+      auth: makeSuspendedExpertAuth(),
+      request: makeRequest('/api/projects', 'GET'),
+    } as never);
+
+    expect(result).toBe(true);
+  });
+
+  it('suspend 中 + PATCH /api/tenants/me は通る (プラン変更による解約防止経路)', async () => {
+    const result = await authorized({
+      auth: makeSuspendedExpertAuth(),
+      request: makeRequest('/api/tenants/me', 'PATCH'),
+    } as never);
+
+    expect(result).toBe(true);
+  });
+
+  it('suspend 中 + POST /api/tenants/me/self-delete は通る (セルフ解約経路、顧客の脱出経路を確保)', async () => {
+    const result = await authorized({
+      auth: makeSuspendedExpertAuth(),
+      request: makeRequest('/api/tenants/me/self-delete', 'POST'),
+    } as never);
+
+    expect(result).toBe(true);
+  });
+
+  it('suspend が Beginner 期限切れより優先される (= TENANT_SUSPENDED が先に返る、両方該当時)', async () => {
+    // Beginner 期限切れ + suspend 同時該当ケース
+    const createdAt = new Date(Date.now() - 95 * 24 * 60 * 60 * 1000).toISOString();
+    const auth = {
+      user: {
+        tenantPlan: 'beginner',
+        tenantCreatedAt: createdAt,
+        tenantBeginnerEverUpgraded: false,
+        tenantStorageGracePeriodStartedAt: null,
+        tenantSuspendedAt: new Date('2026-05-14T10:00:00Z').toISOString(),
+        mfaEnabled: false,
+        mfaVerified: false,
+      },
+    };
+
+    const result = await authorized({
+      auth,
+      request: makeRequest('/api/projects', 'POST'),
+    } as never);
+
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      const body = await result.json();
+      // middleware の判定順序: suspend が先 → TENANT_SUSPENDED が返り、
+      // BEGINNER_EXPIRED_READ_ONLY には到達しない
+      expect(body.error.code).toBe('TENANT_SUSPENDED');
+    }
+  });
+
+  it('suspendedAt が空文字 / null は遮断しない (= 通常運用判定)', async () => {
+    const auth = {
+      user: {
+        tenantPlan: 'expert',
+        tenantCreatedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+        tenantBeginnerEverUpgraded: true,
+        tenantStorageGracePeriodStartedAt: null,
+        tenantSuspendedAt: null,
+        mfaEnabled: false,
+        mfaVerified: false,
+      },
+    };
+
+    const result = await authorized({
+      auth,
       request: makeRequest('/api/projects', 'POST'),
     } as never);
 

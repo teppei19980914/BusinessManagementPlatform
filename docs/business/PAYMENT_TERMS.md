@@ -108,7 +108,15 @@ super_admin は **翌月16日〜25日の入金期間中に随時** 銀行口座�
 - **書き込み**: 不可 (新規プロジェクト作成 / リスク起票 / コメント投稿 / インポート / API 提案生成すべて 403 / "service suspended due to unpaid invoice")
 - **エクスポート**: **可能** (顧客のデータ所有権を尊重し、解約時の引き上げ手段を担保)
 - **Beginner 90 日 read-only との違い**: Beginner は永続防止のためのアップセル誘導 ([TENANT_AND_BILLING.md §34.14.4](./TENANT_AND_BILLING.md))、本フェーズは滞納による商業的措置。**両者の挙動は同一だが、根拠と解除条件が異なる** (未入金解消 vs プラン変更)
-- **実装状況 (2026-05-09)**: 専用フラグは未実装。現状は `Tenant.plan = 'beginner'` への一時降格 + `Tenant.beginnerEverUpgraded = false` を強制セットで擬似的に実現可。**v1.x で `Tenant.suspendedAt` フラグを追加予定**
+- **実装状況 (2026-05-14 / PR #372)**: **専用フラグ `Tenant.suspendedAt` 実装済み**。
+  super_admin が `/admin/super/tenants/[id]` 画面の「⏸ テナントを停止」ボタン、または
+  `POST /api/admin/super/tenants/[id]/suspend { reason }` 経由で実行する。
+  停止時に配下の全ユーザの `tokenVersion` が increment され、既存セッションは次リクエストで
+  401 SESSION_INVALIDATED → 強制ログアウト。再ログイン後の JWT claim `tenantSuspendedAt` を
+  middleware (auth.config.ts) が判定し、write 系 HTTP method を 403 `TENANT_SUSPENDED` で遮断。
+  例外パス (`/api/tenants/me` PATCH/DELETE と `/api/tenants/me/self-delete` POST) は引き続き通過するため、
+  顧客は支払い後の解除を待たずプラン変更 / セルフ解約で能動的に脱出できる。
+  解除は `POST .../resume` で `suspendedAt=null` + `resumedAt=now` をセット + 再度 tokenVersion increment。
 
 ### 2.4 フェーズ 3: 連絡不通 (任意フェーズで +14 日連絡途絶)
 
