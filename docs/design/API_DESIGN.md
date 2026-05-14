@@ -386,15 +386,18 @@ export const prisma = new PrismaClient({ adapter });
 
 ### 17.5 キャッシュ方針
 
+> **注意**: 本節の TanStack Query 関連記述は **採用予定 (現時点で未導入)** の設計案である。
+> 現状の MVP は Next.js App Router の Server Components + Server Actions のみで構成されており、クライアントサイドキャッシュは導入していない。本表は将来のリッチ UI 化時の方針として残している。
+
 | 対象 | キャッシュ方式 | TTL | 無効化タイミング |
 |---|---|---|---|
-| セッション情報 | TanStack Query (staleTime) | 5 分 | ログアウト / 権限変更時 |
-| プロジェクト一覧 | TanStack Query (staleTime) | 1 分 | 作成・更新・削除時 |
+| セッション情報 | TanStack Query (staleTime) ※未導入 | 5 分 | ログアウト / 権限変更時 |
+| プロジェクト一覧 | TanStack Query (staleTime) ※未導入 | 1 分 | 作成・更新・削除時 |
 | マスタデータ（定数） | ビルド時埋め込み | なし | デプロイ時 |
-| ナレッジ検索結果 | TanStack Query (staleTime) | 30 秒 | 作成・更新・削除時 |
-| ガントチャートデータ | TanStack Query (staleTime) | 1 分 | タスク更新時 |
+| ナレッジ検索結果 | TanStack Query (staleTime) ※未導入 | 30 秒 | 作成・更新・削除時 |
+| ガントチャートデータ | TanStack Query (staleTime) ※未導入 | 1 分 | タスク更新時 |
 
-MVP ではサーバサイドキャッシュ（Redis 等）は導入しない。TanStack Query のクライアントサイドキャッシュで対応する。
+MVP ではサーバサイドキャッシュ（Redis 等）は導入しない。将来 TanStack Query を採用する際にクライアントサイドキャッシュで対応する想定。
 
 ### 17.6 パフォーマンス・アンチパターン（コミット前チェックリスト）
 

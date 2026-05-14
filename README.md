@@ -64,8 +64,11 @@
 | 認証 | NextAuth.js (Auth.js) 5 |
 | MFA | otplib（TOTP / RFC 6238） |
 | 全文検索 | pg_trgm（PostgreSQL 標準拡張） |
+| ベクトル検索 | pgvector（PostgreSQL 拡張、1024 次元） |
+| Embedding | Voyage AI `voyage-4-lite`（提案エンジン v2 の類似検索用） |
+| LLM | Anthropic Claude（`@anthropic-ai/sdk`、自動タグ抽出等） |
 | メール送信 | Brevo（MailProvider 抽象化で複数プロバイダ対応、console/inbox は開発・E2E 用） |
-| テスト | Vitest |
+| テスト | Vitest（単体）/ Playwright（E2E） |
 
 ## アーキテクチャ
 
@@ -91,6 +94,8 @@ graph TD
 | アプリケーション | Vercel Hobby | $0 |
 | データベース | Supabase Free | $0 |
 | メール送信 | Brevo Free | $0（300 通/日） |
+
+> **注意 (商用利用時)**: Vercel Hobby プランは規約上**商用利用不可**のため、外部公開・有償提供フェーズでは Vercel Pro ($20/月) への移行が必要です。Supabase Free / Brevo Free も無料枠の制約があり、スケール時は有償プランへ段階移行する想定です。詳細は [docs/design/INFRASTRUCTURE.md §10.3](docs/design/INFRASTRUCTURE.md) を参照。
 
 デプロイ手順・スキーマ変更時の運用・適用済みマイグレーション一覧は [docs/administrator/OPERATION.md](docs/administrator/OPERATION.md) を参照してください。
 
