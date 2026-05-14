@@ -45,9 +45,9 @@
 | フロントエンド | Next.js (App Router) | 16.x | SSR/SSG、API Routes 統合、React エコシステム |
 | UI ライブラリ | React | 19.x | コンポーネント指向、エコシステムの豊富さ |
 | UI コンポーネント | shadcn/ui + Tailwind CSS | - | カスタマイズ性、軽量、アクセシビリティ |
-| ガントチャート | @neodrag/gantt または自前実装 | - | MVP では読み取り専用のため軽量ライブラリで十分 |
-| 状態管理 | TanStack Query (React Query) | 5.x | サーバ状態管理、キャッシュ、楽観的更新 |
-| フォーム | React Hook Form + Zod | - | バリデーション共有（フロント/バック） |
+| ガントチャート | @neodrag/gantt または自前実装 ※**未導入 (採用予定)** | - | MVP では読み取り専用のため軽量ライブラリで十分 |
+| 状態管理 | TanStack Query (React Query) ※**未導入 (採用予定)** | 5.x | サーバ状態管理、キャッシュ、楽観的更新。現状は Server Components + Server Actions のみ |
+| フォーム | React Hook Form + Zod ※**React Hook Form 未導入 (採用予定)** | - | バリデーション共有（フロント/バック）。現状は Zod のみ採用済 |
 | ORM | Prisma | 7.x | 型安全なクエリ、マイグレーション管理、pg adapter 方式 |
 | データベース | PostgreSQL | 16.x | JSONB 対応、全文検索、信頼性 |
 | 認証 | NextAuth.js (Auth.js) | 5.x | Credentials + OAuth 対応、セッション管理 |

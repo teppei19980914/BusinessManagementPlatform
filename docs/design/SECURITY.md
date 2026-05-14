@@ -464,7 +464,7 @@ prisma.$use(async (params, next) => {
 
 | 層 | 責務 | 実装 |
 |---|---|---|
-| フロントエンド | UX 向上のための即時フィードバック | React Hook Form + Zod |
+| フロントエンド | UX 向上のための即時フィードバック | React Hook Form + Zod ※**React Hook Form 未導入 (採用予定)**。現状は Server Actions 経由で Route Handler/Server Action 側 Zod 検証のみ |
 | Route Handler | サーバサイドの型・形式検証（信頼の起点） | Zod（フロントと同一スキーマ） |
 | Service Layer | ビジネスルール検証 | 手続き的チェック |
 | DB | 制約による最終防衛線 | NOT NULL, CHECK, UNIQUE |
