@@ -287,6 +287,12 @@ export function HelpClient({ isTenantAdmin }: Props) {
                         <td className="border-b p-2 align-top text-amber-700 dark:text-amber-400">課金対象</td>
                         <td className="border-b p-2 align-top">
                           プロジェクト / ナレッジ / リスク / 課題 / 振り返り / 外部データ取り込み を保存するたびに 1 回
+                          <span className="mt-1 block text-xs text-emerald-700 dark:text-emerald-400">
+                            ✓ 例外: 公開範囲が「自分のみ」(下書き) のナレッジ・リスク・課題・振り返りは課金対象外 (= 提案機能の候補にならないため)。「全メンバー」に変更した瞬間に 1 回課金されます。
+                          </span>
+                          <span className="mt-1 block text-xs text-emerald-700 dark:text-emerald-400">
+                            ✓ 例外: 外部データ取り込み (CSV/XLSX) は 1 ファイル取り込み = 1 回課金 (件数によらず固定)。さらに「自分のみ」の行は 1 件としてもカウントされません。
+                          </span>
                         </td>
                       </tr>
                       <tr>

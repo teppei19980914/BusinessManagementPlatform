@@ -165,6 +165,16 @@ export function KnowledgeEditDialog({
               <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
                 {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
+              {/* PR #359 (2026-05-14): 公開範囲とコストの関係をユーザに明示 */}
+              {form.visibility === 'draft' ? (
+                <p className="text-xs text-muted-foreground">
+                  「自分のみ」では提案エンジンの候補にならず、AI 課金 (文章の数値化) も発生しません。「全メンバー」に変更したタイミングで 1 回課金されます。
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  「全メンバー」では他プロジェクトの提案機能でも候補として表示されます。本文を変更して保存するたびに AI 課金 (文章の数値化) が 1 回発生します。
+                </p>
+              )}
             </div>
           </div>
           {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も背景/内容/結果は任意 */}

@@ -124,8 +124,22 @@ export type PreviewResult =
       ok: true;
       previewId: string;
       summary: {
-        knowledge: { totalRows: number; validRows: number; errorRows: number };
-        risksIssues: { totalRows: number; validRows: number; errorRows: number };
+        knowledge: {
+          totalRows: number;
+          validRows: number;
+          errorRows: number;
+          /** PR #359 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) の件数 = 課金対象外 */
+          draftRows: number;
+          /** PR #359 (2026-05-14): visibility='public' 相当の件数 = 課金対象 (合算で 1 ApiCallLog) */
+          publicRows: number;
+        };
+        risksIssues: {
+          totalRows: number;
+          validRows: number;
+          errorRows: number;
+          draftRows: number;
+          publicRows: number;
+        };
       };
       errors: PreviewError[];
       costEstimate: CostEstimate;
@@ -275,7 +289,21 @@ export async function previewImport(input: PreviewInput): Promise<PreviewResult>
   }
 
   // コスト試算
-  const voyageCalls = validKnowledge.length + validRisksIssues.length;
+  // PR #359 (2026-05-14): visibility='draft' 行は embedding 対象外 (PR #358 整合)。
+  //   draft / public 別件数を summary に含め、wizard で「課金対象外」を可視化する。
+  const knowledgeDraftRows = validKnowledge.filter(
+    (k) => (k.visibility ?? 'company') === 'draft',
+  ).length;
+  const knowledgePublicRows = validKnowledge.length - knowledgeDraftRows;
+  const riskIssueDraftRows = validRisksIssues.filter(
+    (r) => (r.visibility ?? 'draft') === 'draft',
+  ).length;
+  const riskIssuePublicRows = validRisksIssues.length - riskIssueDraftRows;
+  const billableRows = knowledgePublicRows + riskIssuePublicRows;
+
+  // PR #357 (2026-05-14): 取込全件を 1 ApiCallLog に集約。billableRows が 0 なら課金なし、
+  //   1 件以上あれば 1 ApiCallLog 分の課金 (= voyageCalls = 0 or 1)。
+  const voyageCalls = billableRows > 0 ? 1 : 0;
   const costEstimate = computeCostEstimate({
     plan: tenant.plan as 'beginner' | 'expert' | 'pro',
     voyageCalls,
@@ -295,11 +323,17 @@ export async function previewImport(input: PreviewInput): Promise<PreviewResult>
       totalRows: knowledgeTotalRows,
       validRows: validKnowledge.length,
       errorRows: errors.filter((e) => e.entity === 'knowledge').length,
+      // PR #359: visibility 別内訳 (draft = 課金対象外)
+      draftRows: knowledgeDraftRows,
+      publicRows: knowledgePublicRows,
     },
     risksIssues: {
       totalRows: riskIssueTotalRows,
       validRows: validRisksIssues.length,
       errorRows: errors.filter((e) => e.entity === 'risksIssues').length,
+      // PR #359: visibility 別内訳 (draft = 課金対象外)
+      draftRows: riskIssueDraftRows,
+      publicRows: riskIssuePublicRows,
     },
   };
 

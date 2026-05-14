@@ -448,6 +448,10 @@ function UsageSection({
           label="API 利用量を再集計"
         />
       </div>
+      {/* PR #359 (2026-05-14): 公開範囲とコストの関係をユーザに明示 */}
+      <p className="mb-3 text-xs text-muted-foreground">
+        💡 公開範囲が「自分のみ」(下書き) のナレッジ・リスク・課題・振り返りは AI 呼出 (文章の数値化) の対象外で、本数値には含まれません。外部データ取り込み (CSV/XLSX) は 1 ファイル取込ごとに 1 回としてカウントされます。
+      </p>
       <div
         className={
           isBeginner
