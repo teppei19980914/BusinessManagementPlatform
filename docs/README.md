@@ -28,6 +28,7 @@
 | 4 | ユーザロール定義 | [business/USER_ROLES.md](./business/USER_ROLES.md) |
 | 5 | テナント・プラン・課金モデル | [business/TENANT_AND_BILLING.md](./business/TENANT_AND_BILLING.md) |
 | 5b | 業務用語辞書 (顧客 FB 読解時の足場) | [business/GLOSSARY.md](./business/GLOSSARY.md) |
+| 5c | 機能カタログ (機能 × 顧客課題 × ファイル) | [business/FEATURE_CATALOG.md](./business/FEATURE_CATALOG.md) |
 | 6 | 画面別権限マトリクス | [specification/PERMISSION_MATRIX.md](./specification/PERMISSION_MATRIX.md) |
 | 7 | 主要画面の操作仕様 (該当画面のみ抜粋) | [specification/SCREENS.md](./specification/SCREENS.md) |
 | 8 | API 設計 / セキュリティ設計 | [design/API_DESIGN.md](./design/API_DESIGN.md) / [design/SECURITY.md](./design/SECURITY.md) |
