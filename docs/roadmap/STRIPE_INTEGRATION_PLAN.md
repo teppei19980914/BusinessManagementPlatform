@@ -1,7 +1,10 @@
 # Stripe Metered Billing 連携 実装ロードマップ
 
 最終更新: 2026-05-14
-関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md)
+関連:
+- 仕様: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md)
+- **詳細技術設計**: [STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) (= 各 PR の実装時に参照、judgment 不要レベルまで詰めた設計)
+- 設計判断: [ADR-0006](../adr/0006-stripe-metered-billing-integration.md)
 
 本ドキュメントは、Stripe Metered Billing 連携 (= v1.x 主要機能) の **PR 単位の実装フェーズ分割と依存関係** を定義する。
 

@@ -2,7 +2,10 @@
 
 最終更新: 2026-05-14
 ステータス: **仕様確定 (実装前)**
-関連 ADR: [docs/adr/0006-stripe-metered-billing-integration.md](../adr/0006-stripe-metered-billing-integration.md)
+関連:
+- 詳細技術設計: [docs/design/STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) (= 本仕様の「how」レベル詳細)
+- 設計判断: [docs/adr/0006-stripe-metered-billing-integration.md](../adr/0006-stripe-metered-billing-integration.md)
+- 実装計画: [docs/roadmap/STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md)
 
 ## 概要
 
