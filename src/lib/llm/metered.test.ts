@@ -248,9 +248,9 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
-        currentMonthApiCostJpy: 950,
-        pricePerCallHaiku: 10,
-        monthlyBudgetCapJpy: 955, // 950 + 10 > 955 で拒否
+        currentMonthApiCostJpy: 998,
+        pricePerCallHaiku: 5, // 2026-05-15 改定後の単価
+        monthlyBudgetCapJpy: 1000, // 998 + 5 = 1003 > 1000 で拒否
       }) as never,
     );
     const call = vi.fn();
@@ -274,9 +274,9 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
-        currentMonthApiCostJpy: 990,
-        pricePerCallHaiku: 10,
-        monthlyBudgetCapJpy: 1000, // 990 + 10 = 1000 (>=ではなく > なので通る)
+        currentMonthApiCostJpy: 995,
+        pricePerCallHaiku: 5, // 2026-05-15 改定後の単価
+        monthlyBudgetCapJpy: 1000, // 995 + 5 = 1000 (>=ではなく > なので通る)
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'ok' });
@@ -322,7 +322,7 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
       makeTenant({
         plan: 'expert',
         currentMonthApiCostJpy: 95,
-        pricePerCallHaiku: 10, // plan 単価は 10
+        pricePerCallHaiku: 5, // plan 単価は ¥5 (2026-05-15 改定後)、ただし下記 predictedCostJpy が上書き
         monthlyBudgetCapJpy: 100,
       }) as never,
     );
