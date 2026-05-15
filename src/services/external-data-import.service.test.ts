@@ -110,8 +110,8 @@ beforeEach(() => {
     currentMonthApiCostJpy: 100,
     monthlyBudgetCapJpy: 5000,
     beginnerMonthlyCallLimit: 100,
-    pricePerCallHaiku: 10,
-    pricePerCallSonnet: 30,
+    pricePerCallHaiku: 5,
+    pricePerCallSonnet: 15,
     deletedAt: null,
   } as never);
   vi.mocked(prisma.project.findMany).mockResolvedValue([
@@ -181,8 +181,8 @@ describe('previewImport', () => {
       expect(r.summary.knowledge.totalRows).toBe(2);
       expect(r.summary.knowledge.validRows).toBe(2);
       expect(r.summary.knowledge.errorRows).toBe(0);
-      // Expert: ¥10 × 2 = ¥20
-      expect(r.costEstimate.estimatedJpy).toBe(20);
+      // Expert: ¥5 × 2 = ¥10 (2026-05-15 価格改定後)
+      expect(r.costEstimate.estimatedJpy).toBe(10);
       expect(r.costEstimate.warningCode).toBeNull();
     }
   });
@@ -213,8 +213,8 @@ describe('previewImport', () => {
       expect(r.summary.knowledge.validRows).toBe(1);
       expect(r.summary.knowledge.errorRows).toBe(1);
       expect(r.errors[0]?.field).toBe('title');
-      // 有効分の見積は 1 件分のみ
-      expect(r.costEstimate.estimatedJpy).toBe(10);
+      // 有効分の見積は 1 件分のみ (Expert ¥5 × 1 = ¥5、2026-05-15 価格改定後)
+      expect(r.costEstimate.estimatedJpy).toBe(5);
     }
   });
 
@@ -226,8 +226,8 @@ describe('previewImport', () => {
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
       beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 10,
-      pricePerCallSonnet: 30,
+      pricePerCallHaiku: 5,
+      pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
 
@@ -264,15 +264,16 @@ describe('previewImport', () => {
   });
 
   it('Expert プランで月次予算超過 → warningCode=BUDGET_CAP_EXCEEDED', async () => {
+    // 2026-05-15 価格改定後: Expert ¥5/call。6 行 = ¥30。budget cap=4990 で 4980+30>4990 で発火
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       plan: 'expert',
       currentMonthApiCallCount: 0,
-      currentMonthApiCostJpy: 4950,
+      currentMonthApiCostJpy: 4980,
       monthlyBudgetCapJpy: 5000,
       beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 10,
-      pricePerCallSonnet: 30,
+      pricePerCallHaiku: 5,
+      pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
 
@@ -478,8 +479,8 @@ describe('applyImport', () => {
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
       beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 10,
-      pricePerCallSonnet: 30,
+      pricePerCallHaiku: 5,
+      pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
     const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
@@ -498,8 +499,8 @@ describe('applyImport', () => {
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
       beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 10,
-      pricePerCallSonnet: 30,
+      pricePerCallHaiku: 5,
+      pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
     tx.knowledge.create.mockResolvedValue({} as never);
@@ -539,8 +540,8 @@ describe('applyImport', () => {
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
       beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 10,
-      pricePerCallSonnet: 30,
+      pricePerCallHaiku: 5,
+      pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
     tx.knowledge.create.mockResolvedValue({ id: 'k-new' } as never);
@@ -584,8 +585,8 @@ describe('applyImport', () => {
         currentMonthApiCostJpy: 0,
         monthlyBudgetCapJpy: null,
         beginnerMonthlyCallLimit: 100,
-        pricePerCallHaiku: 10,
-        pricePerCallSonnet: 30,
+        pricePerCallHaiku: 5,
+        pricePerCallSonnet: 15,
         deletedAt: null,
       } as never);
       tx.knowledge.create.mockResolvedValue({ id: 'k-new' } as never);

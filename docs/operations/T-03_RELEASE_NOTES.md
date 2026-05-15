@@ -275,8 +275,9 @@ GDPR 等で個別ユーザの削除請求があった場合は **super_admin が
 | 拡張 (PR #384 / 2026-05-15) | プロジェクト作成・更新を **`auto-tag-extract` + `project-embedding` 独立 2 ラップ → `project-upsert` 1 ラップに集約** | プロジェクト新規 1 件で ApiCallLog 1 件 / counter +1 (旧仕様は 2 件)。Beginner 月 100 回上限が実質 100 件 (旧 50 件) に正常化 |
 | 最適化 (2026-05-15) | **RiskIssue は `state='resolved'` のみ embedding 生成** に限定。state='open' / 'in_progress' / 'monitoring' では Voyage を呼ばない | 起票直後 (= 解消前) の Voyage 課金がゼロに。解消化遷移時に初回 embedding 生成、解消中の text 変更で再生成、再オープン時は既存保持。月 ¥120〜360 削減 (中規模テナント想定) |
 | 最適化 (2026-05-15) | **Project 作成・更新で purpose / background / scope が全て空文字なら早期 return** | `withMeteredLLM` 自体呼ばれず、Anthropic も Voyage も発火しない。テンプレート保存等の限定ケースで完全 ¥0 化 |
+| **価格改定 (2026-05-15)** | **per-API-call 単価を半額化: Expert ¥10 → ¥5 / Pro ¥30 → ¥15** | ユーザ採用ハードル削減。半額後でも粗利 73-75% を維持、ワーストでも 50%+ 確保。詳細は [ADR-0002 §プラン構成 (2026-05-15 改定版)](../adr/0002-tenant-billing-per-api-call.md) 参照 |
 
-**ユーザ影響**: 既に生成済の embedding は保持。新規操作のみ動作変更。
+**ユーザ影響**: 既に生成済の embedding は保持。新規操作のみ動作変更。**価格改定は即時適用**: migration が走るとデフォルト値を使っている全テナントの単価が ¥5/¥15 に更新される。既に発生した ApiCallLog の `costJpy` は変更されず (= 過去請求への影響なし)、migration 実行以降の新規 call から新単価が適用される。
 
 **監視ポイント**:
 - 本リリース後 1〜2 週間は `api_call_logs` テーブルの `feature_unit='external-import-embedding'` の件数が **減少傾向** となるはず (= 1 import 単位で 1 件)

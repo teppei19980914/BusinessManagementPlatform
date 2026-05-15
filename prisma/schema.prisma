@@ -66,8 +66,11 @@ model Tenant {
   beginnerMonthlyCallLimit     Int       @default(100) @map("beginner_monthly_call_limit")
   /// Beginner プランの最大席数 (default 5)。User.tenantId が同じカウントで判定。
   beginnerMaxSeats             Int       @default(5) @map("beginner_max_seats")
-  pricePerCallHaiku            Int       @default(10) @map("price_per_call_haiku")
-  pricePerCallSonnet           Int       @default(30) @map("price_per_call_sonnet")
+  /// per-API-call 単価 (円整数)。
+  /// 2026-05-15 改定: Expert ¥10 → ¥5 / Pro ¥30 → ¥15 (= 半額化、ユーザ採用ハードル削減)。
+  /// 半額後でも粗利 73-75% で事業継続性確保。詳細は ADR-0002。
+  pricePerCallHaiku            Int       @default(5) @map("price_per_call_haiku")
+  pricePerCallSonnet           Int       @default(15) @map("price_per_call_sonnet")
   /// P-G (2026-05-08): 請求先情報。super_admin の請求業務 (CSV エクスポート / 請求書手作成) で使用。
   ///   - 既存テナント (default-tenant / management) は migration 後 null のまま
   ///     (運営内部のため請求対象外、空 OK)。

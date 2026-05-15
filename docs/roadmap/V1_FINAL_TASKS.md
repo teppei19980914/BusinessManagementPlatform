@@ -148,7 +148,7 @@ URL: /settings (既存ページにタブ追加)
 - 変更時の挙動:
   - **アップグレード** (Beginner → Expert / Pro、Expert → Pro): 即時反映 (確認 dialog → API → 即適用)
   - **Expert ↔ Pro ダウングレード**: **即時反映** (2026-05-14 改修。旧仕様は翌月予約だったが業務仕様書 §F-13.11 と整合させ即時化)
-    - per-call 課金は呼出時点の単価で記録されるため、月途中切替でも当月分が ¥30/call と ¥10/call の混在で正しく記録される
+    - per-call 課金は呼出時点の単価で記録されるため、月途中切替でも当月分が異なる単価 (現行 ¥5 / ¥15) の混在で正しく記録される
   - **Expert / Pro → Beginner ダウングレード**: BEGINNER_DOWNGRADE_FORBIDDEN で完全拒否 (P-B、Beginner 試用期間制限)
   - **確認 dialog**: 「ダウングレードは即時反映されます。Pro 限定機能 (「なぜ?」AI 説明) が利用できなくなり、当月以降の API 呼出単価が切替後プランの単価に変わります」を明示
 
@@ -774,7 +774,7 @@ PR-X4 の `tenant-self.service.ts` ではダウングレード時の席数チェ
 
 #### P-3: 提案結果の "人間ライクな説明文" 生成 (Phase 3、推定 2-3 日) ✅ 完了 (PR #258)
 
-**背景**: V1 時点で **Pro プラン (¥30/call) の差別化機能はほぼゼロ** (自動タグ抽出での Sonnet 利用のみ)。提案体験そのものは 3 プラン共通のため、Pro プラン契約者が高単価を支払う理由が顧客視点で不明瞭。
+**背景**: V1 時点で **Pro プラン (¥15/call、2026-05-15 改定: ¥30 → ¥15) の差別化機能はほぼゼロ** (自動タグ抽出での Sonnet 利用のみ)。提案体験そのものは 3 プラン共通のため、Pro プラン契約者が高単価を支払う理由が顧客視点で不明瞭。
 
 **仕様**:
 - 提案結果の各候補 (knowledge / pastIssue / retrospective) に対して「なぜこのプロジェクトに関連するのか」の自然言語説明文を生成
@@ -974,9 +974,9 @@ on-demand `pg_column_size` 集計で実装する案がある。設計確定後�
 **実装した検証シナリオ** (2026-05-14 改修後):
 - 1 テストで 3 月分のシナリオを Date モック (`vi.useFakeTimers` + `vi.setSystemTime`) で進行:
   - **M1 (2026-05)**: Beginner で 30 回呼出 → ¥0 課金 (無料プラン)
-  - **M1 後半**: アップグレード Beginner → Expert (即時、`beginnerEverUpgraded=true`) → Expert で 5 回呼出 ¥50 (¥10/call)
+  - **M1 後半**: アップグレード Beginner → Expert (即時、`beginnerEverUpgraded=true`) → Expert で 5 回呼出 ¥25 (¥5/call、2026-05-15 改定後)
   - **M2 月初 cron (2026-06-01)**: snapshot 保存 (M1 = 35 回 / ¥50 / plan=expert) + カウンタリセット + `lastResetAt` 進行
-  - **M2 中**: P-B 整合性確認 (Beginner ダウングレード試行 → `BEGINNER_DOWNGRADE_FORBIDDEN` で拒否) → Expert → Pro アップグレード → Pro で 2 回呼出 ¥60 (¥30/call) → **Pro → Expert ダウングレード即時反映 (2026-05-14 改修)** → Expert で 3 回呼出 ¥30 (Haiku 単価)
+  - **M2 中**: P-B 整合性確認 (Beginner ダウングレード試行 → `BEGINNER_DOWNGRADE_FORBIDDEN` で拒否) → Expert → Pro アップグレード → Pro で 2 回呼出 ¥30 (¥15/call、2026-05-15 改定後) → **Pro → Expert ダウングレード即時反映 (2026-05-14 改修)** → Expert で 3 回呼出 ¥15 (Haiku 単価 ¥5)
   - **M3 月初 cron (2026-07-01)**: snapshot 保存 (M2 = 5 回 / ¥90 / plan=expert = 即時ダウン後の最終状態で記録) + カウンタリセット + 予約適用 0 件 (Expert↔Pro 即時化により予約は発生しない)
 - 補助テスト 3 件:
   - 同日二度実行で冪等 (`lastResetAt` 当月初なので 2 回目は 0 件)

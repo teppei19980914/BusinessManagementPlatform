@@ -157,8 +157,8 @@ APP_DEFAULT_LOCALE=en-US
 | `STRIPE_ENABLED` | `false` | **feature flag**。`'true'` で機能を有効化 (UI 表示、API 受付、Webhook 処理)。それ以外は無効。Stripe Dashboard 設定 + 動作確認後に `'true'` を設定して公開 |
 | `STRIPE_SECRET_KEY` | (未設定) | Stripe API キー (= サーバサイド)。テスト = `sk_test_xxx`、本番 = `sk_live_xxx`。Stripe Dashboard → Developers → API keys から取得。**絶対に GitHub にコミットしない** |
 | `STRIPE_WEBHOOK_SECRET` | (未設定) | Stripe Webhook の署名検証用 secret (`whsec_xxx`)。Stripe Dashboard → Developers → Webhooks → 該当エンドポイント詳細から取得。テスト/本番で別 |
-| `STRIPE_PRICE_HAIKU` | (未設定) | Expert per-call (Haiku) の Price ID (`price_xxx`)。Stripe Dashboard → Products で事前作成 (= 単価 ¥10、Metered) |
-| `STRIPE_PRICE_SONNET` | (未設定) | Pro per-call (Sonnet) の Price ID。¥30/call、Metered |
+| `STRIPE_PRICE_HAIKU` | (未設定) | Expert per-call (Haiku) の Price ID (`price_xxx`)。Stripe Dashboard → Products で事前作成 (= **単価 ¥5、Metered**、2026-05-15 改定: ¥10 → ¥5) |
+| `STRIPE_PRICE_SONNET` | (未設定) | Pro per-call (Sonnet) の Price ID。**¥15/call、Metered** (2026-05-15 改定: ¥30 → ¥15) |
 | `STRIPE_PRICE_STORAGE_PLUS` | (未設定) | Storage Plus add-on の Price ID。¥500/月、Recurring 固定 |
 | `STRIPE_PRICE_STORAGE_PRO` | (未設定) | Storage Pro add-on の Price ID。¥1,500/月、Recurring 固定 |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | (未設定) | Stripe Publishable Key (= ブラウザ側で使用、機密情報ではない)。テスト = `pk_test_xxx`、本番 = `pk_live_xxx`。Stripe Elements / Checkout で使用 |

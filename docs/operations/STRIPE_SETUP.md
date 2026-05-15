@@ -29,9 +29,9 @@ Dashboard → **Products** → **Add product**
 | 項目 | 値 |
 |---|---|
 | Name | `たすきば Expert API Call (Haiku)` |
-| Description | `Expert プランの API 呼び出し従量課金 (¥10/call)` |
+| Description | `Expert プランの API 呼び出し従量課金 (¥5/call、2026-05-15 改定: ¥10 → ¥5)` |
 | **Pricing model** | **Usage-based** |
-| Price | `¥10` per unit |
+| Price | **`¥5` per unit** (2026-05-15 改定) |
 | **Billing period** | Monthly |
 | **Usage type** | **Metered** |
 | **Aggregation method** | **Sum of usage during period** |
@@ -45,9 +45,9 @@ Dashboard → **Products** → **Add product**
 | 項目 | 値 |
 |---|---|
 | Name | `たすきば Pro API Call (Sonnet)` |
-| Description | `Pro プランの API 呼び出し従量課金 (¥30/call)` |
+| Description | `Pro プランの API 呼び出し従量課金 (¥15/call、2026-05-15 改定: ¥30 → ¥15)` |
 | Pricing model | Usage-based |
-| Price | `¥30` per unit |
+| Price | **`¥15` per unit** (2026-05-15 改定) |
 | Billing period | Monthly |
 | Usage type | Metered |
 | Aggregation method | Sum of usage during period |

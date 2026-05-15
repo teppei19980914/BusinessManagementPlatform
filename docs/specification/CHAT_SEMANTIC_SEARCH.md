@@ -173,7 +173,7 @@
 |---|---|---|
 | Voyage クエリ embedding | $0.02 / M token (Voyage 公式 [pricing](https://docs.voyageai.com/docs/pricing)) | 1 クエリ最大 8000 字 ≒ 12K token、超過分のみ |
 | Voyage 無料枠 | 200M token / 月 | Organization 全体で共有 (§5.4 参照) |
-| Anthropic LLM 要約 (V1 未実装) | Sonnet ¥30/call | Level 2 で Pro 限定として将来追加 |
+| Anthropic LLM 要約 (V1 未実装) | Sonnet ¥15/call (2026-05-15 改定後、旧 ¥30) | Level 2 で Pro 限定として将来追加 |
 
 ### 5.2 シナリオ A: リリース直後 (5-10 テナント / 月)
 

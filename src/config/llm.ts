@@ -79,8 +79,9 @@ export function resolveModelForPlan(plan: 'beginner' | 'expert' | 'pro'): string
 /**
  * Tenant の per-call 課金額を返す (円)。
  *   - beginner: ¥0 (無料、ただし月間呼び出し回数上限あり)
- *   - expert:   tenant.pricePerCallHaiku (default ¥10)
- *   - pro:      tenant.pricePerCallSonnet (default ¥30)
+ *   - expert:   tenant.pricePerCallHaiku (default ¥5、2026-05-15 改定で ¥10 → ¥5)
+ *   - pro:      tenant.pricePerCallSonnet (default ¥15、2026-05-15 改定で ¥30 → ¥15)
+ *   詳細は [ADR-0002](../../docs/adr/0002-tenant-billing-per-api-call.md) §2026-05-15 改定。
  */
 export function resolveCostForPlan(
   plan: 'beginner' | 'expert' | 'pro',
