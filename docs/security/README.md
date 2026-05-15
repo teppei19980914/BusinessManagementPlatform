@@ -19,7 +19,8 @@ pnpm tsx scripts/security-check.ts
 
 > **2026-05-09 改訂**: ローカル必須実行は撤廃され、`.github/workflows/security.yml` の **CI 自動実行 (PR ごと、閾値 90/100)** に一本化されました。手動実行はユーザ依頼時 (大規模リファクタ後の追加検査 / CI で score 低下が報告された時) のみ。
 
-STRIDE 脅威モデリング手順は四半期ごとに手動実施します ([STRIDE_REVIEW_PROCEDURE.md](./STRIDE_REVIEW_PROCEDURE.md) — 別途作成予定)。それまでは過去の脅威モデル [SUGGESTION_ENGINE_THREAT_MODEL.md](./SUGGESTION_ENGINE_THREAT_MODEL.md) / [PHASE2_THREAT_MODEL.md](./PHASE2_THREAT_MODEL.md) を参考に同形式で実施してください。
+STRIDE 脅威モデリング手順は四半期ごとに手動実施します。詳細は [STRIDE_REVIEW_PROCEDURE.md](./STRIDE_REVIEW_PROCEDURE.md) を参照。
+過去の脅威モデル例: [SUGGESTION_ENGINE_THREAT_MODEL.md](./SUGGESTION_ENGINE_THREAT_MODEL.md) / [PHASE2_THREAT_MODEL.md](./PHASE2_THREAT_MODEL.md)。
 
 ## レポートの確認
 
