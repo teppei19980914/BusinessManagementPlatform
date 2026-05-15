@@ -487,7 +487,10 @@ UI 上は「予算 ¥10,000 のうち、今月 ¥3,200 を使用 (32%)」のよ�
 
 **v1.x で実装する残りの範囲**:
 
-- **Stripe 連携**: Subscription with Metered Billing、月末自動請求、Webhook 経由のプラン状態同期
+- **Stripe 連携 (2026-05-14 仕様確定)**: Subscription with Metered Billing、月末自動請求、Webhook 経由のプラン状態同期
+  - 詳細仕様: [STRIPE_BILLING.md](./STRIPE_BILLING.md)
+  - 設計判断記録: [ADR-0006](../adr/0006-stripe-metered-billing-integration.md)
+  - 主要決定: デフォルト `invoice` で開始 → 顧客が任意で `credit_card` に切替 (並存方式) / 自社が手数料負担 / Stripe Tax でインボイス制度対応 / Smart Retries + PR #372 自動 suspend 連携
 - **機能別 (`featureUnit`) 内訳ダッシュボード**: 「自動タグ抽出: N 回」「embedding 生成: M 回」のように、内部の課金単位ごとの集計表示
 - **過去 6 ヶ月の使用量履歴**: 月初リセット時のスナップショットを月次累積したグラフ表示
 

@@ -1,0 +1,596 @@
+# Stripe Metered Billing 連携仕様 (v1.x)
+
+最終更新: 2026-05-14
+ステータス: **仕様確定 (実装前)**
+関連 ADR: [docs/adr/0006-stripe-metered-billing-integration.md](../adr/0006-stripe-metered-billing-integration.md)
+
+## 概要
+
+本ドキュメントは、たすきば Knowledge Relay における **クレジットカード払い + Stripe Metered Billing による自動引き落とし** の仕様を定義する。v1 (2026-06-01) でリリース済の **手動運用 (invoice / bank_transfer)** と **並存** する形で v1.x にて実装する。
+
+### スコープ
+
+**含めるもの (MVP)**:
+- クレジットカード登録 (Stripe Checkout)
+- 支払い方法切替 (`invoice` ↔ `credit_card`)
+- 月末確定 Metered Billing (リアルタイム Usage Record 送信 → 月末自動集計)
+- Stripe Customer Portal 埋め込み (カード更新・履歴閲覧)
+- Webhook 連携 (subscription / invoice / payment_method 系イベント)
+- **プラン変更時のカード検証** ($0 SetupIntent による有効性確認)
+- Smart Retries + 自動 suspend (引落失敗時、PR #372 の suspendTenant を Webhook 経由で自動呼出)
+- Stripe Tax (インボイス制度対応、JCT 登録番号自動表記)
+
+**除外するもの (v2 以降)**:
+- 同一テナントへの複数カード登録
+- 3D Secure 認証フローのカスタマイズ
+- 個別顧客の拒否ルール (= サブスク作成時の手動承認)
+- 複数通貨対応 (USD / EUR)
+
+---
+
+## §1. 用語定義
+
+| 用語 | 定義 |
+|---|---|
+| **Stripe Customer** | Stripe 上のテナント表現。`Tenant.stripeCustomerId` に保存 |
+| **Stripe Subscription** | Stripe 上のテナント契約。1 テナント = 1 Subscription |
+| **Subscription Item** | Subscription 内の課金単位 (= 「Haiku per-call」「Sonnet per-call」「Storage 月額」をそれぞれ 1 Item) |
+| **Usage Record** | Subscription Item に対する使用量レポート (= 各 API 呼び出しで送信) |
+| **Payment Method** | Stripe Customer に紐付くカード情報 |
+| **SetupIntent** | カード登録時のトークン化処理 (本仕様ではカード検証にも使用) |
+| **Invoice (Stripe)** | Stripe が月末に自動生成する請求書 |
+| **Smart Retries** | Stripe の自動再試行機能。引落失敗時に最大 4 回まで自動リトライ |
+
+---
+
+## §2. データモデル
+
+### 2.1 `Tenant` モデル追加カラム
+
+```prisma
+model Tenant {
+  // 既存 (PR #2 以降)
+  paymentMethod  String  @default("invoice")  // 'invoice' / 'bank_transfer' / 'credit_card'
+
+  // 新規 (本仕様、v1.x PR #X)
+  /// Stripe Customer ID。credit_card 払いに切替えた時点で作成。null = 未登録
+  stripeCustomerId               String?   @unique @map("stripe_customer_id") @db.VarChar(50)
+  /// Stripe Subscription ID。プラン契約時に作成、削除時に null へ
+  stripeSubscriptionId           String?   @unique @map("stripe_subscription_id") @db.VarChar(50)
+  /// Subscription の状態 ('active' / 'past_due' / 'canceled' / 'incomplete' 等)
+  stripeSubscriptionStatus       String?   @map("stripe_subscription_status") @db.VarChar(30)
+  /// Haiku (Expert) per-call Subscription Item ID。Metered Billing の Usage Record 送信先
+  stripeSubscriptionItemHaikuId  String?   @map("stripe_subscription_item_haiku_id") @db.VarChar(50)
+  /// Sonnet (Pro) per-call Subscription Item ID
+  stripeSubscriptionItemSonnetId String?   @map("stripe_subscription_item_sonnet_id") @db.VarChar(50)
+  /// Storage add-on (月固定額) Subscription Item ID
+  stripeSubscriptionItemStorageId String?  @map("stripe_subscription_item_storage_id") @db.VarChar(50)
+  /// Default Payment Method ID (= デフォルトの請求用カード)
+  stripeDefaultPaymentMethodId   String?   @map("stripe_default_payment_method_id") @db.VarChar(50)
+
+  /// 直近のカード検証成功時刻 (プラン変更時 / 月初に検証 cron が更新)
+  cardLastVerifiedAt             DateTime? @map("card_last_verified_at") @db.Timestamptz
+  /// カード検証状態: 'valid' / 'expired' / 'declined' / 'never_verified'
+  cardVerificationStatus         String?   @map("card_verification_status") @db.VarChar(20)
+  /// Smart Retries 全失敗後の自動 suspend 予定時刻 (= Webhook で payment_failed 受信時にセット)
+  ///   既存 PR #372 の suspendTenant() がこれを参照して自動実行
+  autoSuspendScheduledAt         DateTime? @map("auto_suspend_scheduled_at") @db.Timestamptz
+}
+```
+
+### 2.2 `StripeWebhookEvent` テーブル (新規、冪等性確保用)
+
+```prisma
+/// Stripe Webhook の **冪等性保証** + **再送 / リプレイ対応** のための受信イベント記録
+///   - Stripe は同じイベントを複数回送信する可能性がある (公式仕様)
+///   - 受信時に id (= Stripe event.id) で UNIQUE INSERT、既存ならスキップ
+///   - processedAt で「処理済」を判定、失敗時は再試行可能
+model StripeWebhookEvent {
+  id          String   @id @db.VarChar(50)  // = Stripe event.id (e.g. "evt_xxxxx")
+  type        String   @db.VarChar(60)       // 'customer.subscription.updated' 等
+  payloadJson Json     @map("payload_json")
+  receivedAt  DateTime @default(now()) @map("received_at") @db.Timestamptz
+  /// 処理完了時刻。null = 未処理 (受信のみ) / Date = 処理完了
+  processedAt DateTime? @map("processed_at") @db.Timestamptz
+  /// 処理失敗時のエラー (運用調査用)
+  errorMessage String? @map("error_message") @db.Text
+
+  @@index([type], map: "idx_stripe_webhook_events_type")
+  @@index([processedAt], map: "idx_stripe_webhook_events_processed_at")
+  @@map("stripe_webhook_events")
+}
+```
+
+### 2.3 `BillingHistory` テーブル (新規、課金履歴の統一管理)
+
+```prisma
+/// 請求履歴。invoice / bank_transfer / credit_card の **全支払い方法を統一管理**。
+///   - invoice / bank_transfer: super_admin が手動で `paid` に更新
+///   - credit_card: Stripe Webhook で自動更新
+///   - 既存 tenant_monthly_usage_history (= 使用量スナップショット) との違い:
+///     こちらは「請求書 / 決済」のライフサイクル管理、月次集計の確定値ではなく支払い状況の追跡
+model BillingHistory {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  /// "YYYY-MM" 形式の請求対象月
+  yearMonth       String   @map("year_month") @db.VarChar(7)
+  /// 支払い方法 ('invoice' / 'bank_transfer' / 'credit_card')
+  paymentMethod   String   @map("payment_method") @db.VarChar(20)
+  /// 課金額 (税抜、円整数)
+  amountJpy       Int      @map("amount_jpy")
+  /// 消費税額 (円整数)。Stripe Tax 計算結果を保存
+  taxAmountJpy    Int      @map("tax_amount_jpy")
+  /// 税込み合計 (= amount_jpy + tax_amount_jpy)
+  totalAmountJpy  Int      @map("total_amount_jpy")
+  /// 状態 ('pending' / 'paid' / 'failed' / 'refunded' / 'canceled')
+  status          String   @map("status") @db.VarChar(20)
+  /// Stripe Invoice ID (credit_card 払いのみ)
+  stripeInvoiceId String?  @map("stripe_invoice_id") @db.VarChar(50)
+  /// 入金確認日時 (status='paid' 時)
+  paidAt          DateTime? @map("paid_at") @db.Timestamptz
+  /// 失敗理由 ('card_declined' / 'insufficient_funds' / 'expired_card' 等)。Stripe failure_code を保存
+  failureReason   String?  @map("failure_reason") @db.VarChar(50)
+  /// Smart Retries の試行回数 (credit_card のみ、0〜4)
+  retryCount      Int      @default(0) @map("retry_count")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  /// (tenantId, yearMonth) は 1 件のみ
+  @@unique([tenantId, yearMonth], map: "uq_billing_history_tenant_month")
+  @@index([status], map: "idx_billing_history_status")
+  @@index([stripeInvoiceId], map: "idx_billing_history_stripe_invoice")
+  @@map("billing_history")
+}
+```
+
+---
+
+## §3. Stripe 側の事前セットアップ (運用者が手動実施)
+
+### 3.1 Stripe アカウント・Product・Price の作成
+
+実装前に super_admin が Stripe Dashboard で以下を手動セットアップする (詳細手順は [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) 参照):
+
+| Product 名 | Price ID 環境変数 | 課金タイプ | 単価 |
+|---|---|---|---|
+| Expert API Call (Haiku) | `STRIPE_PRICE_HAIKU` | Metered (per_unit) | ¥10 / call |
+| Pro API Call (Sonnet) | `STRIPE_PRICE_SONNET` | Metered (per_unit) | ¥30 / call |
+| Storage Add-on (Plus) | `STRIPE_PRICE_STORAGE_PLUS` | Recurring (固定) | ¥500 / 月 |
+| Storage Add-on (Pro Storage) | `STRIPE_PRICE_STORAGE_PRO` | Recurring (固定) | ¥1,500 / 月 |
+
+### 3.2 Webhook エンドポイント設定
+
+Stripe Dashboard → Developers → Webhooks → Add endpoint:
+
+- URL: `https://<host>/api/webhooks/stripe`
+- Signing secret: 環境変数 `STRIPE_WEBHOOK_SECRET` に保存
+- 受信イベント (購読する種類):
+  - `customer.subscription.created`
+  - `customer.subscription.updated`
+  - `customer.subscription.deleted`
+  - `invoice.created`
+  - `invoice.finalized`
+  - `invoice.paid`
+  - `invoice.payment_failed`
+  - `payment_method.attached`
+  - `payment_method.detached`
+  - `payment_method.updated` (= カード期限変更等)
+  - `customer.updated`
+
+### 3.3 Stripe Tax 有効化
+
+- Dashboard → Tax → Settings → "Enable Stripe Tax" を ON
+- JCT 登録番号 (適格請求書発行事業者番号) を登録
+- 商品 / Price ごとに Tax Code を設定 (SaaS なら `txcd_10000000` = digital services)
+
+---
+
+## §4. 主要フロー
+
+### 4.1 クレジットカード払いへの切替フロー (1 アクション完結 / 2026-05-14 確定)
+
+**設計方針**: カード登録 = クレジットカード払い切替確定。カード登録に失敗した場合は paymentMethod
+を変更しない (= 設定前の状態 invoice のまま) ことで、中間状態を排除し UX をシンプル化する。
+
+```
+[テナント管理者] /settings/tenant の支払い方法セクションで「💳 クレジットカード払いに切替」ボタン押下
+   ↓
+[API] POST /api/tenants/me/billing/stripe/setup
+   ↓
+[サーバ側]
+   - tenant.stripeCustomerId が null なら stripe.customers.create() で Customer 作成
+   - stripe.checkout.sessions.create() で SetupSession 生成 (mode='setup')
+     * success_url = /api/tenants/me/billing/stripe/setup/complete?session_id={CHECKOUT_SESSION_ID}
+       (= サーバ側の完了ハンドラ、自動的に paymentMethod 切替 + Subscription 作成を実行)
+     * cancel_url = /settings/tenant?stripe_setup=canceled
+   ↓
+[ブラウザ] Stripe Checkout 画面にリダイレクト
+   - 顧客がカード番号を入力 (= Stripe が PCI DSS 対応で受領)
+   ↓
+   ┌─────────────────────┬─────────────────────────────────┐
+   │ 成功 (カード登録 OK)  │ 失敗 (キャンセル / カード拒否)   │
+   └─────────────────────┴─────────────────────────────────┘
+   │                       │
+   ▼                       ▼
+[Webhook] payment_method.attached を受信
+   ↓
+[ブラウザ] success_url (= /api/.../setup/complete?session_id=cs_xxx) に Stripe からリダイレクト
+   ↓
+[サーバ完了ハンドラ]
+   1. stripe.checkout.sessions.retrieve(session_id) で SetupSession 情報を取得
+   2. setup_intent.payment_method を取得 (= pm_xxx)
+   3. **検証**: stripe.setupIntents.confirm() で $0 verification 試行
+      - 成功 → 次へ
+      - 失敗 → tenant.paymentMethod は変更せず、エラー画面へリダイレクト
+        /settings/tenant?stripe_setup=failed&reason=<failure_code>
+   4. **paymentMethod 自動切替 + Subscription 作成 (single transaction)**:
+      - tenant.stripeDefaultPaymentMethodId = pm_xxx
+      - tenant.cardLastVerifiedAt = now
+      - tenant.cardVerificationStatus = 'valid'
+      - tenant.paymentMethod = 'credit_card'
+      - stripe.subscriptions.create() で Subscription 作成
+        * items: Haiku / Sonnet / Storage の Subscription Item を作成
+        * default_payment_method = pm_xxx
+        * automatic_tax: { enabled: true } (Stripe Tax 有効)
+      - tenant.stripeSubscriptionId / SubscriptionItemHaikuId / ...Sonnet... / ...Storage... を更新
+      - tenant.stripeSubscriptionStatus = 'active'
+   5. 成功画面へリダイレクト: /settings/tenant?stripe_setup=success
+   ↓                       ↓
+[完了] 次回 API 呼出から   [ブラウザ] cancel_url または failed パラメタで着地
+Usage Record を Stripe へ送信   - paymentMethod は invoice のまま (= 設定前の状態を維持)
+                            - トースト表示: 「クレジットカード登録をキャンセルしました」
+                              または「カード登録に失敗しました (理由: <message>)」
+```
+
+#### 失敗時の挙動 (重要)
+
+| ケース | 着地 URL | tenant.paymentMethod | tenant.stripeCustomerId | UI 表示 |
+|---|---|---|---|---|
+| ユーザが Stripe Checkout で「戻る」 | `/settings/tenant?stripe_setup=canceled` | `invoice` (変更なし) | 既に作成されていれば残る (空 Customer) | 情報トースト「登録をキャンセルしました」 |
+| カード番号が誤り | Stripe Checkout 内でエラー表示、retry 可能 | `invoice` (変更なし) | 既に作成されていれば残る | (Stripe 側 UI のため自社で UI 制御不要) |
+| カード拒否 (期限切れ / 発行銀行拒否) | `/settings/tenant?stripe_setup=failed&reason=card_declined` | `invoice` (変更なし) | 残る | エラートースト「カード登録に失敗しました (カード拒否)」 |
+| 検証 SetupIntent 失敗 | 同上 | `invoice` (変更なし) | 残る | 同上 |
+
+**重要**: いずれの失敗ケースでも **`tenant.paymentMethod` を 'credit_card' に変更しない**。設定前 (= invoice)
+の状態を維持する。これにより「切り替えようとして失敗 → 元に戻す」という巻き戻しロジックは不要となる
+(= そもそも変更していない)。
+
+#### 空 Customer の取り扱い
+
+成功・失敗いずれの場合でも、Stripe 側に **Customer レコード** は作成済となる可能性がある (= setup session
+作成前に `createOrGetStripeCustomer` で作成するため)。失敗時もこの Customer は残る (= 削除しない) が、
+次回再試行時に再利用するため害はない。月次の Stripe 側に「カード未登録 Customer」がたまっても課金は
+発生しないため運用上の問題はなし。
+
+### 4.2 通常運用フロー (Metered Billing)
+
+```
+[テナント] API 呼び出し (= LLM 利用)
+   ↓
+[サーバ側] withMeteredLLM(...) でラップ
+   - 既存処理 (= Tenant.currentMonthApiCallCount / currentMonthApiCostJpy を更新)
+   - 追加: paymentMethod === 'credit_card' なら
+     * stripe.subscriptionItems.createUsageRecord(itemId, { quantity: 1, timestamp: now })
+     * Haiku 呼び出し → stripeSubscriptionItemHaikuId
+     * Sonnet 呼び出し → stripeSubscriptionItemSonnetId
+   ↓
+[月末: 自動]
+   - Stripe が Subscription Item の Usage Record を集計
+   - stripe.invoices.create() で Invoice を自動生成
+   ↓
+[Webhook] invoice.created を受信
+   ↓
+[サーバ側]
+   - billing_history テーブルに INSERT (yearMonth, paymentMethod='credit_card', amountJpy, taxAmountJpy, totalAmountJpy, status='pending', stripeInvoiceId)
+   ↓
+[月末: 数時間後] Stripe が default_payment_method で自動引き落とし実行
+   ↓
+[Webhook] invoice.paid を受信
+   ↓
+[サーバ側]
+   - billing_history.status = 'paid'
+   - billing_history.paidAt = now
+```
+
+### 4.3 引き落とし失敗フロー (Smart Retries + 自動 suspend)
+
+```
+[Webhook] invoice.payment_failed (1 回目失敗) を受信
+   ↓
+[サーバ側]
+   - billing_history.status = 'failed'
+   - billing_history.failureReason = event.data.object.last_finalization_error.code
+   - billing_history.retryCount = 1
+   - Stripe Smart Retries が自動的に次回再試行をスケジュール
+   ↓
+[1 日後] Stripe 自動リトライ → 成功 / 失敗
+[3 日後] Stripe 自動リトライ → 成功 / 失敗
+[5 日後] Stripe 自動リトライ → 成功 / 失敗
+[7 日後] Stripe 最終リトライ → 成功 / 失敗
+   ↓
+[7 日後の失敗時 = subscription.status='past_due']
+[Webhook] customer.subscription.updated (status: past_due) を受信
+   ↓
+[サーバ側]
+   - tenant.autoSuspendScheduledAt = now + 3 日 (= 合計 10 日後)
+   ↓
+[cron: 日次] checkAutoSuspendScheduled() を実行
+   - autoSuspendScheduledAt <= now のテナントに対し
+   - suspendTenant(tenantId, 'payment_delinquent', SYSTEM_USER_ID) を呼出 (PR #372 の既存実装を再利用)
+   ↓
+[テナント] 次回ログイン時に強制ログアウト → middleware で TENANT_SUSPENDED 表示
+```
+
+### 4.4 プラン変更時のカード検証フロー (新要件)
+
+ユーザの要望: 「プラン変更時、再度クレジットカード情報が誤っていないか、請求ができるかを確認する機能」
+
+```
+[テナント管理者] /settings/tenant でプラン変更 (Expert → Pro 等)
+   ↓
+[API] PATCH /api/tenants/me { plan: 'pro' }
+   ↓
+[サーバ側]
+   - paymentMethod === 'credit_card' なら、まずカード検証を実行
+   - verifyTenantCard(tenantId) を呼出
+     1. stripe.paymentMethods.retrieve(stripeDefaultPaymentMethodId)
+     2. カード期限切れチェック (= card.exp_year / exp_month が現在より前)
+     3. $0 SetupIntent で「請求テスト」(= Authorization-only での検証):
+        stripe.setupIntents.create({ customer, payment_method, confirm: true, usage: 'off_session' })
+     4. SetupIntent.status === 'succeeded' なら OK
+        SetupIntent.status === 'requires_action' なら 3D Secure 必要 → 顧客に通知
+        SetupIntent.status === 'requires_payment_method' なら拒否 → エラー返却
+   ↓
+[検証 OK]
+   - tenant.cardLastVerifiedAt = now
+   - tenant.cardVerificationStatus = 'valid'
+   - プラン変更を実行 (= tenant.plan = 'pro')
+[検証 NG]
+   - tenant.cardVerificationStatus = 'expired' / 'declined'
+   - エラー返却: 400 CARD_VERIFICATION_FAILED + 顧客へカード更新案内
+```
+
+### 4.5 Customer Portal アクセスフロー
+
+```
+[テナント管理者] /settings/tenant で「カード情報 / 請求履歴を管理」ボタン押下
+   ↓
+[API] POST /api/tenants/me/billing/stripe/portal
+   ↓
+[サーバ側]
+   - stripe.billingPortal.sessions.create({
+       customer: stripeCustomerId,
+       return_url: <host>/settings/tenant
+     })
+   ↓
+[ブラウザ] Stripe Customer Portal にリダイレクト
+   - 顧客がカード更新 / 履歴閲覧 / サブスク管理可能
+   ↓
+[完了時] return_url に自動リダイレクト
+```
+
+---
+
+## §5. API 設計
+
+### 5.1 新規 API エンドポイント
+
+| Method | Path | 認可 | 役割 |
+|---|---|---|---|
+| `POST` | `/api/tenants/me/billing/stripe/setup` | admin | Stripe Checkout Session (mode='setup') を作成しカード登録画面に誘導。`success_url` は `/api/tenants/me/billing/stripe/setup/complete?session_id={CHECKOUT_SESSION_ID}` を指定 |
+| `GET` | `/api/tenants/me/billing/stripe/setup/complete` | admin | Stripe Checkout 成功後の **自動完了ハンドラ**。検証 + paymentMethod 自動切替 + Subscription 作成を single transaction で実行し、`/settings/tenant?stripe_setup=success` (or `?stripe_setup=failed&reason=...`) へリダイレクト |
+| `POST` | `/api/tenants/me/billing/stripe/portal` | admin | Stripe Customer Portal Session を作成 |
+| `POST` | `/api/tenants/me/billing/stripe/verify` | admin | カード検証を実行 (プラン変更時の自動呼出 + 手動ボタン)。検証だけ実行し paymentMethod は変更しない |
+| `PATCH` | `/api/tenants/me/billing` | admin | paymentMethod を `credit_card` → `invoice` に戻す経路のみ (= 逆方向)。`invoice` → `credit_card` への切替は本 PATCH ではなく上記 `/setup` フローで自動実行される |
+| `POST` | `/api/webhooks/stripe` | **公開 (signature 検証必須)** | Stripe からの Webhook 受信 |
+
+#### 5.1.1 1 アクションフローの設計意図 (2026-05-14 確定)
+
+`POST /api/tenants/me/billing/stripe/setup` でカード登録を開始した時点で、ユーザは「クレジットカード払いに切り替えたい」意思表示を **1 回行っている**。中間状態 (= 「カード登録だけ済み、切替はまだ」) を持たず、`/setup/complete` ハンドラで **検証成功と同時に paymentMethod を 'credit_card' へ自動切替** することで:
+
+- ✅ ユーザの「切替忘れ」を防止
+- ✅ UI 状態モデルが A → C (成功) / A → A (失敗) の 2 経路のみで明快
+- ✅ 失敗時は `tenant.paymentMethod` を変更しないため「巻き戻しロジック」が不要
+
+#### 5.1.2 失敗時の paymentMethod 保持
+
+`/setup/complete` ハンドラで以下のいずれかが発生した場合、`tenant.paymentMethod` は **invoice のまま変更しない** (= 設定前の状態を維持):
+
+- Checkout Session が canceled 状態で返ってくる
+- SetupIntent の検証 ($0 verification) が失敗 (= `requires_payment_method` / `requires_action`)
+- カード Issuer が拒否 (`card_declined` / `expired_card` 等)
+- Subscription 作成が失敗 (= Stripe API 障害等)
+
+これにより「切替えようとしたら失敗 → 元に戻す」という補償ロジックは **不要**。
+
+### 5.2 既存 API への影響
+
+| ファイル | 変更内容 |
+|---|---|
+| `src/lib/llm/metered.ts` (`withMeteredLLM`) | paymentMethod === 'credit_card' のテナントは `stripe.subscriptionItems.createUsageRecord` を追加で呼ぶ。失敗時は **同期的に Throw せず非同期 queue に積む** (= LLM 呼び出し自体を止めない) |
+| `src/services/tenant-self.service.ts` (`updateTenantPlan`) | プラン変更前に `verifyTenantCard()` を呼出。失敗時は CARD_VERIFICATION_FAILED で拒否 |
+| `src/services/tenant-onboarding.service.ts` | 新規テナント作成時、デフォルト `paymentMethod = 'invoice'`、Stripe Customer は作成しない |
+
+---
+
+## §6. 失敗ハンドリング
+
+### 6.1 Usage Record 送信失敗
+
+`stripe.subscriptionItems.createUsageRecord` が失敗 (= ネットワークエラー / Stripe ダウン) した場合:
+
+- **LLM 呼び出し自体は止めない** (顧客体験優先)
+- 失敗した Usage Record は `stripe_usage_record_queue` (新規簡易テーブル) に積む
+- 5 分間隔の cron で再送 (idempotency_key で重複防止)
+
+### 6.2 Webhook 受信失敗
+
+- Stripe は 3 日間自動再送する (公式仕様)
+- 受信時は `StripeWebhookEvent` テーブルに INSERT (event.id で冪等性保証)
+- 処理失敗は `errorMessage` に保存し、運用調査
+- リカバリ: super_admin ダッシュボードに「未処理 Webhook 一覧」を追加 (MVP では SQL 直接照会で OK)
+
+### 6.3 Stripe Subscription 状態の不整合
+
+`Tenant.stripeSubscriptionStatus` と Stripe 側の真の状態が乖離した場合:
+
+- 月初 cron で `stripe.subscriptions.retrieve()` で全 credit_card テナントを照合
+- 不一致なら DB を Stripe 側に揃える (= Stripe を信頼源とする)
+
+---
+
+## §7. セキュリティ
+
+### 7.1 Webhook シグネチャ検証
+
+```typescript
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' });
+
+export async function POST(req: NextRequest) {
+  const signature = req.headers.get('stripe-signature');
+  const body = await req.text();
+  let event: Stripe.Event;
+  try {
+    event = stripe.webhooks.constructEvent(body, signature, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch {
+    return new Response('Invalid signature', { status: 400 });
+  }
+  // ... 処理
+}
+```
+
+### 7.2 環境変数管理
+
+| 環境変数 | 用途 | 環境ごとの分離 |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | Stripe API 認証 | テスト/本番でキー分離 (`sk_test_xxx` / `sk_live_xxx`) |
+| `STRIPE_WEBHOOK_SECRET` | Webhook 検証 | 同上 (`whsec_xxx`) |
+| `STRIPE_PRICE_HAIKU` | Haiku Price ID | テスト/本番で別 ID |
+| `STRIPE_PRICE_SONNET` | Sonnet Price ID | 同上 |
+| `STRIPE_PRICE_STORAGE_PLUS` | Storage Plus Price ID | 同上 |
+| `STRIPE_PRICE_STORAGE_PRO` | Storage Pro Price ID | 同上 |
+
+### 7.3 PCI DSS
+
+- カード番号は **Stripe Checkout / Customer Portal で受領** (自前で扱わない)
+- 自社サーバには `pm_xxx` (= PaymentMethod ID) のみ保存
+- これにより自社の PCI DSS スコープを **SAQ A レベルに最小化**
+
+---
+
+## §8. テスト戦略
+
+### 8.1 単体テスト
+
+- Stripe SDK のモック (`@stripe/stripe-mock` または `vi.mock`)
+- 各サービス層 (`stripe-billing.service.ts`) で正常系 / 失敗系のケース網羅
+- Webhook ハンドラの冪等性テスト (同じ event.id を 2 回送信 → 1 回しか処理されない)
+
+### 8.2 結合テスト
+
+- Stripe Test Mode を使った実通信テスト (CI では skip、ローカルで実行)
+- テスト用カード番号: `4242 4242 4242 4242` (= 成功)、`4000 0000 0000 0341` (= attach 後 charge 失敗)、`4000 0000 0000 9995` (= insufficient_funds)
+
+### 8.3 E2E テスト
+
+- E2E は Stripe Checkout を経由するため、複雑度が高い → v1.x では `[ ] skip: Stripe Test Mode 統合は v2 で検討` で E2E_COVERAGE.md に登録
+- 代わりに **サービス層テストで認可マトリクス + エラー変換を網羅**
+
+---
+
+## §9. 既存機能との整合
+
+### 9.1 PR #371 月次請求運用との統合
+
+- `BillingHistory` テーブルの paymentMethod カラムで `invoice` / `bank_transfer` / `credit_card` を区別
+- BILLING_MONTHLY_OPERATIONS.md の月次フローは:
+  - `invoice` / `bank_transfer` テナント: 既存の手動 CSV エクスポート + メール送付フロー継続
+  - `credit_card` テナント: 自動 (super_admin は何もしない、Stripe Dashboard / `BillingHistory` 一覧で確認のみ)
+
+### 9.2 PR #372 read-only 強制移行 (Tenant.suspendedAt) との統合
+
+- Stripe Smart Retries 全失敗 → 自動 `suspendTenant(reason='payment_delinquent')` 呼出
+- 入金完了で Webhook `invoice.paid` 受信時に自動 `resumeTenant()` 呼出
+- 手動運用と完全に同じ middleware ガード (= TENANT_SUSPENDED) を流用
+
+### 9.3 PAYMENT_DELINQUENCY_SOP.md (滞納 SOP) との統合
+
+- `credit_card` テナント: §0 (月次入金確認) は **不要** (= Stripe Webhook で自動検知)
+- フェーズ 1〜4 の判定も Stripe `customer.subscription.status` で自動 (`active` / `past_due` / `canceled`)
+- super_admin は **例外時のみ介入** (= Stripe 側で解決できないクレーム対応等)
+
+---
+
+## §10. 法的要件
+
+### 10.1 利用規約への追加
+
+v1.x リリース前に [docs/legal/TERMS.md](../legal/TERMS.md) (新規予定) に以下を追加:
+
+- **自動更新条項**: 月末締めの自動引き落とし、解約は前月末まで
+- **解約条件**: セルフ解約は当月末で有効、当月分は請求対象
+- **支払い手段変更条件**: いつでも変更可、変更月から適用
+- **データ削除タイミング**: 解約 90 日後に物理削除 (既存仕様継続)
+
+### 10.2 特定商取引法に基づく表記
+
+- 既存の [/legal/specified-commercial-transactions](https://...) に Stripe 決済の利用を追記
+- 「クレジットカード払い」「自動更新サブスクリプション」を明示
+
+### 10.3 個人情報保護法
+
+- カード番号は **自社で扱わない** (Stripe に委任) → 保護義務の対象外
+- Stripe Customer ID / PaymentMethod ID は内部識別子のため個人情報には該当しない
+
+### 10.4 インボイス制度
+
+- Stripe Tax を有効化することで、JCT 登録番号 (適格請求書発行事業者番号) を Invoice PDF に自動表記
+- 顧客が日本法人なら税額表示 + JCT 番号付きのインボイスが自動発行される
+
+---
+
+## §11. 運用への影響
+
+詳細手順は別ドキュメント:
+
+- [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md): Stripe Dashboard の事前セットアップ
+- [docs/operations/BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md) 更新: credit_card テナントの月次運用フロー
+- [docs/operations/PAYMENT_DELINQUENCY_SOP.md](../operations/PAYMENT_DELINQUENCY_SOP.md) 更新: §0 入金確認に Stripe 自動検知を追記
+
+---
+
+## §12. ロードマップ (PR 分割計画)
+
+実装は 5 PR に分割する想定:
+
+| PR | スコープ | 依存 |
+|---|---|---|
+| **PR #1: スキーマ + マイグレーション** | Tenant カラム追加、StripeWebhookEvent、BillingHistory テーブル | なし |
+| **PR #2: Stripe Service + 環境変数** | stripe-billing.service.ts (Customer / Subscription / Usage Record の薄いラッパー)、env vars 整備 | PR #1 |
+| **PR #3: API endpoints + UI** | /setup, /portal, /verify, PATCH /billing の各 route。/settings/tenant の UI 拡張 | PR #2 |
+| **PR #4: Webhook ハンドラ** | /api/webhooks/stripe (= 全イベント処理 + 冪等性) | PR #1, #2 |
+| **PR #5: 連携 + 自動 suspend** | withMeteredLLM への Usage Record 送信、自動 suspend cron、月次照合 cron | PR #2, #4 |
+
+各 PR は独立してマージ可能 + テストで担保 + Stripe Test Mode の動作確認を経てから次へ進む。
+
+---
+
+## §13. 既知の制約・将来課題
+
+- **同一テナント複数カード**: Stripe 上は可能だが、UI / DB は default のみ管理。v2 で複数カード対応検討
+- **複数通貨**: 全課金が JPY 固定。USD / EUR 対応は v2 で検討
+- **3D Secure フローのカスタマイズ**: 標準 Stripe フローに委任。EU 顧客等で問題が出たら v2 で再設計
+- **個別顧客の拒否ルール**: Stripe Radar で対応可能だが MVP では未設定。詐欺被害が出たら v2 で追加
+- **税率変更時の対応**: Stripe Tax が自動追従するため運用作業は不要
+
+---
+
+## 改修履歴
+
+| 日付 | 変更 | PR |
+|---|---|---|
+| 2026-05-14 | 初版策定 (v1.x 仕様確定) | docs/stripe-integration-spec |

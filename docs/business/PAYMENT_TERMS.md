@@ -17,13 +17,17 @@
 
 `Tenant.paymentMethod` は以下のいずれか:
 
-| 値 | 概要 | 滞納検知の主体 |
-|---|---|---|
-| `invoice` | 請求書送付 (PDF を `billingContactEmail` 宛にメール送信) | super_admin が入金確認 |
-| `bank_transfer` | 銀行振込 (請求書に振込先記載) | super_admin が入金確認 |
-| `credit_card` | 後続実装 (PR #1 で UI 上 disabled) | (未実装) |
+| 値 | 概要 | 滞納検知の主体 | v1.x ステータス |
+|---|---|---|---|
+| `invoice` | 請求書送付 (PDF を `billingContactEmail` 宛にメール送信) | super_admin が入金確認 | ✅ 受付中 (デフォルト) |
+| `bank_transfer` | 銀行振込 (請求書に振込先記載) | super_admin が入金確認 | ✅ 受付中 |
+| `credit_card` | Stripe Metered Billing による月末自動引き落とし | Stripe Webhook で自動検知 | 🟡 **v1.x で実装予定** ([ADR-0006](../adr/0006-stripe-metered-billing-integration.md) / [STRIPE_BILLING.md](./STRIPE_BILLING.md)) |
 
-クレジットカードは v1 では受け付けないため、本文書は `invoice` / `bank_transfer` の 2 方式のみを対象とする。
+**新規テナントのデフォルト**: `invoice` で作成。顧客が `/settings/tenant` でクレジットカード払いに任意切替可能。
+
+**支払い方法ごとの本文書の適用範囲**:
+- `invoice` / `bank_transfer`: 本文書 §0〜§3 のすべてが適用
+- `credit_card`: §2.3 (read-only 移行) は Stripe Webhook で自動実行、§0 (月次入金確認) は Stripe が自動消込のため運用作業不要
 
 ### 0.3 課金対象プラン
 
