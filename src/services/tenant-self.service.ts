@@ -85,6 +85,20 @@ export type TenantSelfInfo = {
   // PR-1 (2026-05-15): テナント単位の TZ / locale (旧 User.timezone/locale の集約先)
   timezone: string;
   locale: string;
+  // PR-S5 (2026-05-14): Stripe 連携情報 (admin 画面の「支払い方法」セクション表示用)。
+  //   credit_card 払いでない場合は全 null。
+  /** Stripe Customer ID (= テナントが Stripe に作成した顧客 ID) */
+  stripeCustomerId: string | null;
+  /** Stripe Subscription 状態 ('active' / 'past_due' / 'canceled' / 'incomplete' 等) */
+  stripeSubscriptionStatus: string | null;
+  /** Default Payment Method ID (= デフォルト引落カード) */
+  stripeDefaultPaymentMethodId: string | null;
+  /** カード検証状態 ('valid' / 'expired' / 'declined' / 'never_verified') */
+  cardVerificationStatus: string | null;
+  /** 直近のカード検証成功時刻 */
+  cardLastVerifiedAt: Date | null;
+  /** Smart Retries 全失敗後の自動 suspend 予定時刻 */
+  autoSuspendScheduledAt: Date | null;
 };
 
 /**
@@ -140,6 +154,13 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     // PR-1 (2026-05-15): テナント単位 TZ / locale
     timezone: t.timezone,
     locale: t.locale,
+    // PR-S5 (2026-05-14): Stripe 連携情報 (= UI 「支払い方法」セクション表示用)
+    stripeCustomerId: t.stripeCustomerId,
+    stripeSubscriptionStatus: t.stripeSubscriptionStatus,
+    stripeDefaultPaymentMethodId: t.stripeDefaultPaymentMethodId,
+    cardVerificationStatus: t.cardVerificationStatus,
+    cardLastVerifiedAt: t.cardLastVerifiedAt,
+    autoSuspendScheduledAt: t.autoSuspendScheduledAt,
   };
 }
 
