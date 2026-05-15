@@ -273,6 +273,8 @@ GDPR 等で個別ユーザの削除請求があった場合は **super_admin が
 | フォローアップ (PR #358) | 外部 import 経路と suggestion engine の RiskIssue クエリで visibility 整合性漏れを修正 | 「下書きで取込 → 課金された」「draft な resolved RiskIssue が提案候補に出る」事故を構造的に防止 |
 | 拡張 (PR #384 / 2026-05-15) | Memo に embedding 生成を追加。`visibility='public'` のみ対象、`visibility='private'` (= 「自分のみ」、他資産の 'draft' に相当) はスキップ。提案エンジン候補化 + 「なぜ?」説明文 (Pro 限定) 対応 | Memo が他資産と同じ仕様で提案エンジンに参加。`featureUnit='memo-embedding'` |
 | 拡張 (PR #384 / 2026-05-15) | プロジェクト作成・更新を **`auto-tag-extract` + `project-embedding` 独立 2 ラップ → `project-upsert` 1 ラップに集約** | プロジェクト新規 1 件で ApiCallLog 1 件 / counter +1 (旧仕様は 2 件)。Beginner 月 100 回上限が実質 100 件 (旧 50 件) に正常化 |
+| 最適化 (2026-05-15) | **RiskIssue は `state='resolved'` のみ embedding 生成** に限定。state='open' / 'in_progress' / 'monitoring' では Voyage を呼ばない | 起票直後 (= 解消前) の Voyage 課金がゼロに。解消化遷移時に初回 embedding 生成、解消中の text 変更で再生成、再オープン時は既存保持。月 ¥120〜360 削減 (中規模テナント想定) |
+| 最適化 (2026-05-15) | **Project 作成・更新で purpose / background / scope が全て空文字なら早期 return** | `withMeteredLLM` 自体呼ばれず、Anthropic も Voyage も発火しない。テンプレート保存等の限定ケースで完全 ¥0 化 |
 
 **ユーザ影響**: 既に生成済の embedding は保持。新規操作のみ動作変更。
 
@@ -280,5 +282,6 @@ GDPR 等で個別ユーザの削除請求があった場合は **super_admin が
 - 本リリース後 1〜2 週間は `api_call_logs` テーブルの `feature_unit='external-import-embedding'` の件数が **減少傾向** となるはず (= 1 import 単位で 1 件)
 - `Tenant.currentMonthApiCallCount` の前月比が顕著に下がる可能性 (= 期待動作)
 - super_admin ダッシュボードの「今月の合計課金」も同様に減少傾向
+- (2026-05-15 追加) `feature_unit='risk-issue-embedding'` のレコード件数も顕著に減少 (state='open' での発生がなくなるため)
 
-詳細は [KDD_PATTERNS.md §5.X+50 §5.X+51 §5.X+60 §5.X+61](../knowledge/KDD_PATTERNS.md) を参照 (§5.X+60 = `project-upsert` 集約、§5.X+61 = Memo の `visibility='private'` と他資産の 'draft' の差異)。
+詳細は [KDD_PATTERNS.md §5.X+50 §5.X+51 §5.X+60 §5.X+61 §5.X+62 §5.X+63](../knowledge/KDD_PATTERNS.md) を参照 (§5.X+62 = RiskIssue state='resolved' limitation、§5.X+63 = Project 全空 text 早期 return)。

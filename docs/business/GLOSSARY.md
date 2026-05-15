@@ -209,7 +209,9 @@ Anthropic Claude API でプロジェクト作成・更新時に自動的にタ�
 
 「自分のみ」のデータは作成者のみ閲覧可能、提案エンジンの候補にも乗らず、embedding 生成も行わない (Voyage API 課金回避)。「自分のみ → 全メンバー」遷移時に初回 embedding 生成。
 
-詳細: [USER_ROLES.md](./USER_ROLES.md) §6.5 / [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) §1.1
+**RiskIssue (リスク・課題) のみの追加条件 (2026-05-15)**: visibility='public' に加えて **`state='resolved'`** であることも embedding 生成の必須条件。state='open' / 'in_progress' / 'monitoring' (= 解消前の状態) では Voyage を呼ばない (= 解消するまで課金保留)。state が「resolved」に新たに遷移したタイミングで初回 embedding 化される。これは提案エンジンが「過去に解消された学び」のみを候補化する設計と整合させるためのコスト最適化 (KDD §5.X+62)。
+
+詳細: [USER_ROLES.md](./USER_ROLES.md) §6.5 / [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) §1.1 §3.2
 
 ---
 

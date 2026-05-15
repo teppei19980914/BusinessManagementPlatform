@@ -15,8 +15,8 @@
 | カテゴリ | 内容 | 提案候補化条件 |
 |---|---|---|
 | **Knowledge (ナレッジ)** | 過去プロジェクトで蓄積した教訓・パターン・調査結果 | `visibility='public'` (全メンバー公開) のみ |
-| **過去リスク (RiskIssue type='risk', state='resolved')** | 他プロジェクトで顕在化対応 / 計画通り収束したリスク。次案件の先回り設計の雛形として活用 | `visibility='public'` のみ |
-| **過去課題 (RiskIssue type='issue', state='resolved')** | 他プロジェクトで発生し解消済の課題。新規案件の事前リスク提示として活用 | `visibility='public'` のみ |
+| **過去リスク (RiskIssue type='risk', state='resolved')** | 他プロジェクトで顕在化対応 / 計画通り収束したリスク。次案件の先回り設計の雛形として活用 | `visibility='public'` **かつ** `state='resolved'` (= 「解消」に到達するまで embedding を生成しない、2026-05-15 最適化) |
+| **過去課題 (RiskIssue type='issue', state='resolved')** | 他プロジェクトで発生し解消済の課題。新規案件の事前リスク提示として活用 | `visibility='public'` **かつ** `state='resolved'` (同上) |
 | **振り返り (Retrospective)** | 過去プロジェクトの振り返り (KPT / 良かった点 / 問題 / 改善) | `visibility='public'` のみ |
 | **メモ (Memo)** (2026-05-15 追加) | 全メンバー公開で共有された個人ノート。プロジェクト非紐付きの汎用知見 | `visibility='public'` のみ。Memo は `visibility` 値が他資産と異なり `'private'` (= 「自分のみ」) / `'public'` (= 「全メンバー」) の 2 値 |
 
@@ -69,6 +69,8 @@
 
 **1 業務操作 = 1 ApiCallLog (2026-05-15)**: 内部的には Anthropic と Voyage の 2 API を呼ぶが、`extractTagsAndEmbedForProject()` が `withMeteredLLM` を 1 度だけラップして両者を実行する。ApiCallLog 1 件 / Tenant counter +1 / costJpy 1 回分のみ計上。`featureUnit='project-upsert'`。両 inner API が共に失敗した場合のみ throw され課金されない (どちらか 1 つ成功すれば 1 件計上)。
 
+**空 text 早期 return (2026-05-15)**: `purpose` / `background` / `scope` の **すべて** が空文字 (または空白のみ) の場合、`withMeteredLLM` 自体を呼ばずに `tags=null, embedding=null` で早期 return する。ApiCallLog / counter / costJpy のいずれも増分なし (= 完全な ¥0 操作)。
+
 ### 3.2 資産作成・更新時 (トリガー②)
 
 Knowledge / RiskIssue / Retrospective / Memo の主要 text フィールドから **Voyage が embedding を生成** し、Supabase pgvector に保存する (全プラン共通)。Anthropic は呼ばれない (自動タグ抽出は Project 限定機能)。
@@ -96,6 +98,21 @@ Knowledge / RiskIssue / Retrospective / Memo の主要 text フィールドか�
 | 更新 全メンバー → 全メンバー + 対象項目変更あり | ✅ 1 件計上 |
 | 更新 全メンバー → 全メンバー + 対象項目変更なし (タイトルだけ・タグだけ・ステータスだけ等) | ❌ 課金なし |
 | 更新 全メンバー → 自分のみ | ❌ 課金なし (既存 embedding は削除せず保持、提案エンジン側 filter で除外) |
+
+#### RiskIssue (リスク・課題) のみの追加条件: state='resolved' 限定 (2026-05-15)
+
+RiskIssue は提案エンジンが **`state='resolved'` のみを候補化** する設計のため、上記マトリクスに加えて **state も `'resolved'` でない限り embedding を生成しない**。
+
+| state 遷移ケース | embedding 生成 |
+|---|---|
+| 新規 state='open' / 'in_progress' / 'monitoring' (= 起票直後の通常状態) | ❌ 課金なし (resolved 化まで保留) |
+| 新規 state='resolved' (= 外部 import 等で初期から解消済) | ✅ 1 件計上 |
+| 更新 **state が 'resolved' に新たに遷移** | ✅ 1 件計上 (text 変更不要、初回 embedding 化) |
+| 更新 state='resolved' のまま text 変更 | ✅ 1 件計上 |
+| 更新 state='resolved' のまま text 変更なし | ❌ 課金なし |
+| 更新 state='resolved' → 'open' / 'in_progress' / 'monitoring' (再オープン) | ❌ 課金なし (既存 embedding は保持) |
+
+(= Knowledge / Retrospective / Memo には state 概念がないため、この追加条件は RiskIssue のみに適用される)
 
 ### 3.3 提案機能実行時 (トリガー③)
 

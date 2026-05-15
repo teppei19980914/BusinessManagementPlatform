@@ -310,8 +310,9 @@ per-API-call の「1 回」は **`featureUnit` 単位で 1 回** としてカウ
 （旧 featureUnit `auto-tag-extract` / `project-embedding` は backfill 経路の互換のため metered.ts 上では受理されるが、新規発行はされない。）
 
 **作成・更新時の課金単位 (1 業務操作 = 1 ApiCallLog ルール)**:
-- プロジェクトの作成・更新: **1 回** （auto-tag 抽出 + embedding 生成を統合）
-- ナレッジ・リスク・課題・振り返り・メモの作成・更新: **1 回** （対象項目変更時のみ embedding 生成）
+- プロジェクトの作成・更新: **1 回** （auto-tag 抽出 + embedding 生成を統合。purpose/background/scope が全空のときは **0 回** = 早期 return / 2026-05-15）
+- ナレッジ・振り返り・メモの作成・更新: **1 回** （対象項目変更時のみ embedding 生成）
+- **リスク・課題の作成・更新**: **1 回** （対象項目変更時のみ embedding 生成、**ただし `state='resolved'` のみ**。state='open' / 'in_progress' / 'monitoring' のときは embedding 生成しない / 2026-05-15）
 - 「自分のみ」公開範囲（Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`）のエンティティは embedding 生成しない → 課金なし。提案エンジン対象外。
 
 **課金対象外**:
@@ -319,6 +320,8 @@ per-API-call の「1 回」は **`featureUnit` 単位で 1 回** としてカウ
 - `SuggestionExplanation` テーブルのキャッシュヒット時の説明文返却 (再生成なし)
 - エンティティの削除、ログイン、招待などの管理操作
 - 「公開範囲: 自分のみ」のエンティティの作成・更新（提案エンジン対象外のため LLM 呼出なし）
+- **リスク・課題で `state='resolved'` 以外の作成・更新**（提案エンジン対象外のため、解消するまで Voyage 呼出なし / 2026-05-15）
+- **プロジェクト作成・更新で purpose/background/scope が全て空文字**（早期 return で `withMeteredLLM` 自体呼ばず / 2026-05-15）
 
 **失敗時の扱い**: LLM 呼び出しが失敗した場合はカウンタを増加させない (metered.ts L226-235)。プロジェクト作成では auto-tag と embedding のどちらか 1 つでも成功すれば 1 回計上、両方失敗の場合のみ計上なし。
 

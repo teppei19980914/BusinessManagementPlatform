@@ -358,8 +358,11 @@ describe('createRisk', () => {
   });
 
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding helper が呼ばれる (fail-safe)
-  it('createRisk: 本体作成後に generateAndPersistEntityEmbedding が呼ばれる', async () => {
-    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow({ id: 'r-new', visibility: 'public' }) as never);
+  // (2026-05-15) state='resolved' 限定に変更。state='open' (default) では生成されない。
+  it('createRisk: visibility=public && state=resolved で初期作成時に embedding が呼ばれる (import 経由)', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(
+      rRow({ id: 'r-new', visibility: 'public', state: 'resolved' }) as never,
+    );
     await createRisk(
       'p-1',
       {
@@ -379,6 +382,23 @@ describe('createRisk', () => {
     expect(args.featureUnit).toBe('risk-issue-embedding');
     expect(args.text).toContain('タイトル');
     expect(args.text).toContain('内容');
+  });
+
+  // (2026-05-15) 通常の create は state='open' (default) で起票されるため embedding 不要
+  it('createRisk: 通常起票 (state=open 既定) では embedding を生成しない (resolved 化まで保留)', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(
+      rRow({ id: 'r-open', visibility: 'public', state: 'open' }) as never,
+    );
+    await createRisk(
+      'p-1',
+      {
+        type: 'risk', title: 'タイトル', content: '内容', impact: 'high', likelihood: 'low',
+        assigneeId: null, deadline: null, visibility: 'public', riskNature: 'threat',
+      } as never,
+      'u-1',
+      TEST_TENANT_ID,
+    );
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 
   // PR #357 (2026-05-14): visibility=draft なら embedding 生成しない
@@ -444,9 +464,14 @@ describe('updateRisk', () => {
   });
 
   // PR #5-c: text フィールド変更時のみ embedding 再生成 (LLM 課金回避)
-  it('updateRisk: text フィールド変更時は embedding を再生成する', async () => {
-    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
-    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
+  // (2026-05-15) state='resolved' でないと embedding 生成しない
+  it('updateRisk: text フィールド変更時 (resolved の場合) は embedding を再生成する', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      reporterId: 'u-1', title: '旧', content: '旧内容',
+      cause: null, responsePolicy: null, responseDetail: null,
+      visibility: 'public', state: 'resolved',
+    } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ state: 'resolved' }) as never);
 
     await updateRisk('r-1', { title: 'new title' }, 'u-1', TEST_TENANT_ID);
 
@@ -457,19 +482,67 @@ describe('updateRisk', () => {
     expect(args.tenantId).toBe(TEST_TENANT_ID);
   });
 
-  it('updateRisk: text フィールド非変更 (state/assignee のみ) は embedding 再生成しない', async () => {
-    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
-    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
+  // (2026-05-15) state='resolved' のまま text 非変更 → 再生成しない (LLM 課金回避)
+  it('updateRisk: resolved のまま text 非変更 (assignee のみ) は embedding 再生成しない', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      reporterId: 'u-1', title: 't', content: 'c',
+      cause: null, responsePolicy: null, responseDetail: null,
+      visibility: 'public', state: 'resolved',
+    } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ state: 'resolved' }) as never);
 
-    await updateRisk('r-1', { state: 'resolved', assigneeId: 'u-2' }, 'u-1', TEST_TENANT_ID);
+    await updateRisk('r-1', { assigneeId: 'u-2' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+  });
+
+  // (2026-05-15) state='open' → 'resolved' 遷移: text 非変更でも initial embedding 生成
+  it('updateRisk: state が open → resolved に遷移 (text 非変更) → embedding 初回生成', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      reporterId: 'u-1', title: 't', content: 'c',
+      cause: null, responsePolicy: null, responseDetail: null,
+      visibility: 'public', state: 'open',
+    } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ state: 'resolved' }) as never);
+
+    await updateRisk('r-1', { state: 'resolved' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
+  });
+
+  // (2026-05-15) state='resolved' → 'open' (再オープン): 既存 embedding 保持、再生成なし
+  it('updateRisk: resolved → open (再オープン) は embedding 再生成しない (既存保持)', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      reporterId: 'u-1', title: 't', content: 'c',
+      cause: null, responsePolicy: null, responseDetail: null,
+      visibility: 'public', state: 'resolved',
+    } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ state: 'open' }) as never);
+
+    await updateRisk('r-1', { state: 'open', title: 'changed' }, 'u-1', TEST_TENANT_ID);
+
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+  });
+
+  // (2026-05-15) state='open' のまま text 変更 → 再生成しない (提案候補外なので Voyage 課金回避)
+  it('updateRisk: state=open のまま text 変更しても embedding 生成しない (提案候補外)', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+      reporterId: 'u-1', title: 't', content: 'c',
+      cause: null, responsePolicy: null, responseDetail: null,
+      visibility: 'public', state: 'open',
+    } as never);
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ state: 'open' }) as never);
+
+    await updateRisk('r-1', { title: 'new title' }, 'u-1', TEST_TENANT_ID);
 
     expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 
   // ================================================================
-  // PR #357 (2026-05-14): visibility 状態遷移 × embedding 生成マトリクス
+  // PR #357 (2026-05-14) + (2026-05-15): visibility × state × embedding 生成マトリクス
+  // 「visibility='public' AND state='resolved' AND (state 遷移 or text 変更)」のみ embedding
   // ================================================================
-  describe('PR #357: visibility 状態遷移 × embedding 生成判定', () => {
+  describe('visibility × state × embedding 生成判定', () => {
     const baseExisting = {
       reporterId: 'u-1',
       title: '既存',
@@ -481,16 +554,27 @@ describe('updateRisk', () => {
 
     it('draft → draft (text 変更あり) → 呼ばれない (draft は提案候補外なので課金しない)', async () => {
       vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
-        ...baseExisting, visibility: 'draft',
+        ...baseExisting, visibility: 'draft', state: 'resolved',
       } as never);
       vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ visibility: 'draft' }) as never);
       await updateRisk('r-1', { title: '新', visibility: 'draft' }, 'u-1', TEST_TENANT_ID);
       expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
     });
 
-    it('draft → public (text 変更なし) → 呼ばれる (公開化時の初回生成)', async () => {
+    // (2026-05-15) draft → public 遷移時、state='resolved' でなければ embedding 生成しない
+    it('draft → public + state=open → 呼ばれない (resolved でないので提案候補外)', async () => {
       vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
-        ...baseExisting, visibility: 'draft',
+        ...baseExisting, visibility: 'draft', state: 'open',
+      } as never);
+      vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ visibility: 'public' }) as never);
+      await updateRisk('r-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID);
+      expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+    });
+
+    // (2026-05-15) draft → public 遷移かつ state='resolved' なら initial embedding 生成
+    it('draft → public + state=resolved (text 変更なし) → 呼ばれる (公開化時の初回生成)', async () => {
+      vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
+        ...baseExisting, visibility: 'draft', state: 'resolved',
       } as never);
       vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ visibility: 'public' }) as never);
       await updateRisk('r-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID);
@@ -499,7 +583,7 @@ describe('updateRisk', () => {
 
     it('public → draft (text 変更あり) → 呼ばれない (既存 embedding は保持)', async () => {
       vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({
-        ...baseExisting, visibility: 'public',
+        ...baseExisting, visibility: 'public', state: 'resolved',
       } as never);
       vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow({ visibility: 'draft' }) as never);
       await updateRisk('r-1', { title: '新', visibility: 'draft' }, 'u-1', TEST_TENANT_ID);

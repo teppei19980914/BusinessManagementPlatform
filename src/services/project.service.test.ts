@@ -684,14 +684,10 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(prisma.project.create).toHaveBeenCalled();
   });
 
-  it('createProject: text が全て空文字なら voyageEmbed / persistEmbedding は呼ばれない (auto-tag のみ実行)', async () => {
+  it('createProject: text が全て空文字なら LLM が一切呼ばれない (withMeteredLLM 自体スキップ、課金ゼロ)', async () => {
+    // (2026-05-15) 早期 return で Anthropic/Voyage 共にスキップ + withMeteredLLM も呼ばれない
+    //   = ApiCallLog 0 件、Tenant counter / costJpy も増分なし。
     vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
-    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
-      tags: { businessDomainTags: [], techStackTags: [], processTags: [] },
-      llmInputTokens: 1,
-      llmOutputTokens: 1,
-    });
-    mockMeteredLLMSuccessRunCallback();
 
     await createProject(
       {
@@ -708,9 +704,60 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    // (2026-05-15) text 空 → embedding 側はスキップ、auto-tag だけ実行
+    expect(withMeteredLLM).not.toHaveBeenCalled();
+    expect(callAnthropicForAutoTagsInner).not.toHaveBeenCalled();
     expect(voyageEmbed).not.toHaveBeenCalled();
     expect(persistEmbedding).not.toHaveBeenCalled();
+    // 本体作成自体は成功する
+    expect(prisma.project.create).toHaveBeenCalled();
+  });
+
+  it('createProject: text の一部 (purpose のみ) でも非空なら LLM 呼出される (= 早期 return しない)', async () => {
+    vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
+      tags: { businessDomainTags: [], techStackTags: [], processTags: [] },
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
+    });
+    mockMeteredLLMSuccessRunCallback();
+
+    await createProject(
+      {
+        name: 'x',
+        customerId: 'cust-1',
+        purpose: 'P',
+        background: '',
+        scope: '',
+        devMethod: 'waterfall',
+        plannedStartDate: '2026-04-01',
+        plannedEndDate: '2026-12-31',
+      },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    expect(withMeteredLLM).toHaveBeenCalledTimes(1);
+  });
+
+  it('createProject: text が全て空白のみ (タブ/改行/全角空白) でも LLM 呼出されない', async () => {
+    vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+
+    await createProject(
+      {
+        name: 'x',
+        customerId: 'cust-1',
+        purpose: '   ',
+        background: '\t\n',
+        scope: '  ',
+        devMethod: 'waterfall',
+        plannedStartDate: '2026-04-01',
+        plannedEndDate: '2026-12-31',
+      },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    expect(withMeteredLLM).not.toHaveBeenCalled();
   });
 
   it('createProject: persistEmbedding が throw しても本体作成は成功 (recordError + 続行)', async () => {

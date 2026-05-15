@@ -39,17 +39,20 @@
 
 **ユーザ請求は 1 回** (2026-05-15 / 1 業務操作 = 1 ApiCallLog ルール): 内部的には Anthropic と Voyage の 2 種類の API を呼ぶが、`extractTagsAndEmbedForProject()` が `withMeteredLLM` を 1 度だけラップして両者を実行する。ApiCallLog 1 件 / Tenant counter +1 / costJpy 1 回分のみ。`featureUnit` は `project-upsert` を使用。両方失敗した場合は throw され課金されない (どちらか 1 つ成功すれば成功扱い)。
 
+**空 text 早期 return (2026-05-15 最適化)**: `purpose` / `background` / `scope` の全 3 フィールドが空文字 (or 空白のみ) のときは `withMeteredLLM` を呼ばず即座に `{ tags: null, embedding: null }` を返す。Anthropic も Voyage も呼ばれず、ApiCallLog / Tenant counter / costJpy すべて増分なし。
+
 #### B-2. 資産作成・更新時 (トリガー②)
 
 Knowledge / RiskIssue / Retrospective / Memo の主要 text フィールドから **Voyage が embedding を生成** し、Supabase pgvector に保存する (全プラン共通)。Anthropic は呼ばれない (自動タグ抽出は Project 限定機能)。
 
 text が変更されない更新 (visibility のみの変更等) では Voyage は呼ばれない (LLM 課金回避設計)。
 
-**コスト最適化 (PR #357 + #358 / 2026-05-14、Memo 追加 / 2026-05-15)**:
+**コスト最適化 (PR #357 + #358 / 2026-05-14、Memo 追加 / 2026-05-15、RiskIssue state 限定 / 2026-05-15)**:
 - **公開範囲: 自分のみ** (Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`) で作成・更新された資産は embedding を生成しない。draft / private は提案エンジンの検索対象外なので、生成しても永遠に利用されない。「自分のみ → 全メンバー」遷移時に初回生成される (= 公開化時に提案候補に乗る)。
 - **Memo 追加 (2026-05-15)**: Memo は title + content を embedding 対象項目とし、`visibility='public'` 時のみ生成。提案エンジンに Knowledge/RiskIssue/Retrospective と同等の候補として参加する。
+- **RiskIssue は state='resolved' のみ embedding 生成 (2026-05-15)**: 提案エンジンが `state='resolved'` のものだけを候補化するため、state='open' / 'in_progress' / 'monitoring' の段階では Voyage を呼ばない (= 解消するまで課金保留)。state が「resolved」に遷移したタイミングで初回 embedding 化、resolved 中の text 変更で再生成、resolved → open 等への退行は既存 embedding 保持。`createRisk` / `updateRisk` / 月初 backfill cron / 外部 import / 「なぜ?」説明文 のすべての経路で state='resolved' を強制。
 - **外部 import (CSV/XLSX) で複数件取込** する場合、`withMeteredLLM` を **1 回だけ** ラップし、callback 内で Voyage を必要数バッチ分割呼出する設計。**N 件 import = 1 ApiCallLog = Tenant counter +1** に統一され、ユーザに見える課金回数と実態が一致する。
-- import に visibility='draft' の行が含まれる場合、当該行は embedding 生成・課金対象外。wizard 画面で「うち下書き N 件 (課金対象外)」と表示。
+- import に visibility='draft' / state!='resolved' の行が含まれる場合、当該行は embedding 生成・課金対象外。wizard 画面で「うち下書き / 未解消 N 件 (課金対象外)」と表示。
 
 #### B-3. 提案機能実行時 (トリガー③)
 

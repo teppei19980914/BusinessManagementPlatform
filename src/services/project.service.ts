@@ -484,6 +484,20 @@ export async function extractTagsAndEmbedForProject(args: {
     scope: args.scope,
   });
   const willCallEmbedding = embeddingText.trim().length > 0;
+
+  // (2026-05-15) 3 フィールドすべて空文字 (or 空白のみ) のときは LLM を一切呼ばない。
+  //   - Anthropic auto-tag: 空入力に対して空タグ JSON を返すだけで、ユーザ価値ゼロ + 1 件課金
+  //   - Voyage embedding: そもそも text 空なので呼べない (`willCallEmbedding=false`)
+  //   早期 return することで `withMeteredLLM` 自体を呼ばず、ApiCallLog / Tenant counter
+  //   双方の増分を発生させない (= ユーザに完全に課金しない)。
+  const hasAnyContent =
+    args.purpose.trim().length > 0 ||
+    args.background.trim().length > 0 ||
+    args.scope.trim().length > 0;
+  if (!hasAnyContent) {
+    return { tags: null, embedding: null };
+  }
+
   const truncatedEmbeddingText =
     embeddingText.length > PROJECT_EMBEDDING_MAX_CHARS
       ? embeddingText.slice(0, PROJECT_EMBEDDING_MAX_CHARS)

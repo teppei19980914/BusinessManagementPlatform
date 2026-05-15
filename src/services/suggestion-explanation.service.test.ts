@@ -234,6 +234,50 @@ describe('getOrGenerateSuggestionExplanation', () => {
             tenantId: TENANT_ID,
             deletedAt: null,
             type: 'issue',
+            // (2026-05-15) state='resolved' を WHERE で強制 (提案候補側と整合)
+            state: 'resolved',
+          }),
+        }),
+      );
+    });
+
+    it('(2026-05-15) state=open の issue を直叩き → candidate_not_found (resolved 限定の WHERE で弾く)', async () => {
+      // 提案候補側は state='resolved' のみ表示するため、UI 経由では到達しない id だが、
+      // 万一 API を直接叩かれても state='resolved' 強制で findFirst が null を返す
+      vi.mocked(prisma.riskIssue.findFirst).mockResolvedValueOnce(null);
+
+      const result = await getOrGenerateSuggestionExplanation({
+        projectId: PROJECT_ID,
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        candidateKind: 'issue',
+        candidateId: CANDIDATE_ID,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('candidate_not_found');
+      expect(withMeteredLLM).not.toHaveBeenCalled();
+    });
+
+    it('(2026-05-15) state=open の risk を直叩き → candidate_not_found', async () => {
+      vi.mocked(prisma.riskIssue.findFirst).mockResolvedValueOnce(null);
+
+      const result = await getOrGenerateSuggestionExplanation({
+        projectId: PROJECT_ID,
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        candidateKind: 'risk',
+        candidateId: CANDIDATE_ID,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('candidate_not_found');
+      // (2026-05-15) risk の WHERE にも state='resolved' が含まれる
+      expect(prisma.riskIssue.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            type: 'risk',
+            state: 'resolved',
           }),
         }),
       );

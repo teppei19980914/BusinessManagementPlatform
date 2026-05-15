@@ -236,6 +236,10 @@ async function collectNullEmbeddingItems(
     }
 
     case 'risks_issues': {
+      // (2026-05-15) RiskIssue は提案エンジンが state='resolved' のみ候補化するため、
+      //   backfill 対象も state='resolved' に限定する。state='open' / 'in_progress' /
+      //   'monitoring' の embedding は永遠に検索されないため、補完しても無駄。
+      //   visibility も 'draft' は提案対象外のため除外 ('public' のみ対象に絞り込み)。
       const rows = await prisma.$queryRaw<
         Array<{
           id: string;
@@ -250,7 +254,8 @@ async function collectNullEmbeddingItems(
         FROM "risks_issues"
         WHERE tenant_id = ${tenantId}::uuid
           AND deleted_at IS NULL
-          AND visibility <> 'draft'
+          AND visibility = 'public'
+          AND state = 'resolved'
           AND content_embedding IS NULL
         ORDER BY created_at ASC
         LIMIT ${MAX_BACKFILL_PER_TENANT_PER_TABLE}
@@ -378,7 +383,8 @@ export async function countNullEmbeddings(
       FROM "risks_issues"
       WHERE tenant_id = ${tenantId}::uuid
         AND deleted_at IS NULL
-        AND visibility <> 'draft'
+        AND visibility = 'public'
+        AND state = 'resolved'
         AND content_embedding IS NULL
     UNION ALL
     SELECT 'retrospectives', COUNT(*)::bigint
