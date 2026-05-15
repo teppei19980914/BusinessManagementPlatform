@@ -32,6 +32,8 @@ import {
   getDegradedModeState,
   type DegradedModeState,
 } from '@/services/degraded-mode.service';
+// PR-S5 (2026-05-14): Stripe feature flag を Client Component に伝達
+import { isStripeEnabled } from '@/lib/stripe';
 import { TenantSettingsClient } from './tenant-settings-client';
 
 export default async function TenantSettingsPage() {
@@ -124,6 +126,7 @@ export default async function TenantSettingsPage() {
       storageInitialInfo={storageInitialInfo}
       apiReconcile={apiReconcile}
       degradedMode={degradedMode}
+      stripeEnabled={isStripeEnabled()}
     />
   );
 }
