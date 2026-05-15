@@ -1,6 +1,46 @@
 # 障害対応とロールバック (Operations)
 
-本ドキュメントは、本番障害発生時の対応手順とロールバック手順を集約する (OPERATION.md §6〜§7)。
+本ドキュメントは、本番障害発生時の対応手順とロールバック手順を集約する。
+
+> **2026-05-16 更新**: 1 人運用 (teppei) での 6/1 リリース後を想定した重大シナリオを追加。
+> 既存の §6.1〜§6.5 (ビルド / DB / migration / ローカル / ログイン) に加え、
+> §6.6〜§6.10 で **LLM コスト爆発 / テナント越境 / 月初 cron / Supabase 全停止 / データ漏洩疑い** を追加。
+
+---
+
+## §0. 初動の共通 3 ステップ
+
+障害発生通知を受けたら、どのシナリオでも **まずこの 3 ステップ** を実施。
+
+### Step 0-1: 状況の客観化 (5 分以内)
+
+- **何が起きているか**: ユーザ報告 / 監視通知 / 自分が気づいた、いずれか
+- **影響範囲**: 全テナント / 特定テナント / 特定ユーザ / 特定機能 / 特定画面
+- **発生時刻**: タイムスタンプを記録 (post-mortem の足場)
+- **緊急度の暫定判定**: §0-3 の重大度表に照らす
+
+### Step 0-2: タイムライン記録の開始
+
+post-mortem を後で書くために、対応中に行った操作・確認したログ・実行した SQL を全てメモ。
+最低限以下のフォーマットで時系列を残す:
+
+```
+HH:MM 通知受信: 内容
+HH:MM 確認: Vercel ログで X を確認、エラー数 Y 件
+HH:MM 対処: SQL `UPDATE ... SET ...` を実行 (影響行数 Z)
+HH:MM 結果: 通常動作確認 / 引き続き調査
+```
+
+### Step 0-3: 重大度分類
+
+| 重大度 | 定義 | 例 | 初動目標 |
+|---|---|---|---|
+| **S-1: 致命的** | 個人情報漏洩 / データ破壊 / 全テナント停止 | テナント越境バグ顕在化、Supabase 全停止、データ漏洩疑い | 30 分以内に応急対応開始 |
+| **S-2: 重大** | 主要機能停止 / 特定テナント全停止 / 経済的損失リスク | LLM コスト爆発、月初 cron 失敗、認証停止 | 2 時間以内に応急対応 |
+| **S-3: 中** | 一部機能不動 / 一部ユーザ影響 / 軽微な誤動作 | 特定画面のみ 500、特定機能のテスト失敗 | 当日中に対応 |
+| **S-4: 軽** | 機能には影響なし / 表示の崩れ等 | 軽微な UI ズレ、ログの警告 | 通常 PR で対応 |
+
+**判断に迷ったら 1 段階上に分類**。後から下げるのは安全だが、低く分類して放置すると事故になる。
 
 ---
 
@@ -159,6 +199,170 @@ await prisma.user.update({
 
 非活性アカウントは login UI で **「このアカウントは無効化されています」** と専用メッセージが出る (旧仕様: 「メールアドレスまたはパスワードが正しくありません」と誤表示で原因不明の状態だった)。`/api/auth/lock-status` が `status: 'inactive'` を返す経路で実現。
 
+### 6.6 LLM API コスト爆発 / レート超過 (S-2)
+
+#### 症状
+- Anthropic / Voyage の dashboard で当月使用量が異常急増
+- `ApiCallLog` テーブルで特定テナント / 特定 user の呼び出しが急増
+- 一部ユーザから「提案エンジンが遅い / エラー」報告
+
+#### 調査手順
+
+```sql
+-- 直近 24h で呼び出し数 TOP の tenant / user / featureUnit
+SELECT
+  tenant_id,
+  user_id,
+  feature_unit,
+  COUNT(*) AS call_count,
+  SUM(jpy_amount) AS total_jpy
+FROM api_call_logs
+WHERE created_at > now() - interval '24 hours'
+GROUP BY tenant_id, user_id, feature_unit
+ORDER BY call_count DESC
+LIMIT 20;
+```
+
+#### 対処
+
+| 状況 | 対処 |
+|---|---|
+| 特定 tenant の正常利用が想定を超えた | プラン上限到達後は **縮退モード** で自動停止 (ADR-0002)。tenant の `monthlyBudgetCapJpy` 設定を確認 |
+| 特定 user が連打 (悪用疑い) | Vercel Functions ログで `[suggest]` プレフィックスから IP / User-Agent 確認 → 必要なら admin 経由で user `is_active=false` |
+| Anthropic / Voyage 全体のレート超過 | プロバイダ dashboard で workspace 全体の月間ハード上限を一時的に引き下げ。サービス全体で提案エンジンを `503` 返却するフィーチャーフラグを検討 |
+| 想定外の bulk 呼出 (memory: feedback_bulk_llm_call_unit 違反) | 該当箇所の `withMeteredLLM` ラップ単位を確認、1 業務操作 = 1 ApiCallLog に集約されているか検証 |
+
+#### 予防
+
+- 監視: テナント単位の月次使用量を **毎日朝確認** (操作ルーチン化)
+- Anthropic workspace の月間ハード上限を想定使用量の 1.5〜2 倍に設定 ([STRIDE_REVIEW_PROCEDURE.md](../security/STRIDE_REVIEW_PROCEDURE.md) D-1 多重防御)
+
+### 6.7 テナント越境バグ顕在化 (S-1)
+
+**個人情報漏洩相当**。発覚した時点で平時の作業を中断し、本シナリオを最優先で実施。
+
+#### 症状
+
+- ユーザから「他テナントのデータが見えた」報告
+- 監査ログで「別 tenant_id の data に対する read 操作」を検知
+- E2E テストで cross-tenant fixture の漏洩を検出
+
+#### 対処 (時系列)
+
+1. **即時(30 分以内)**:
+   - 漏洩経路となった API ルート / Service 関数を特定
+   - 該当機能の **緊急停止** を判断: feature flag で OFF、もしくは Vercel Rollback で前バージョンに戻す
+   - 漏洩範囲の SQL 調査 (`audit_logs` から該当時刻周辺の cross-tenant access 件数を抽出)
+2. **当日中**:
+   - 影響を受けたユーザ・テナントの特定リストを作成
+   - 該当ユーザに **個別通知** (Slack の admin 直接連絡 or メール)
+   - 修正 PR を起票 ([ADR-0005](../adr/0005-rbac-two-stage-tenant-authorization.md) の 二段階認可に違反していないか再確認)
+3. **48 時間以内**:
+   - 法的対応の検討 (個人情報保護法に基づく報告義務の有無を判断)
+   - Post-mortem ドキュメント作成 (§9)
+   - 同型の越境バグが他箇所にないか **横展開チェック** ([CONTRIBUTING.md §5.1 + §5.2](../../CONTRIBUTING.md))
+
+#### 重要な対応原則
+
+- **データを消すな、隠せ**: 漏洩データを削除するのではなく、まず該当機能を停止して新規漏洩を止める
+- **証拠は保全**: `audit_logs` / Vercel Functions ログ / DB snapshot を即座にエクスポート (post-mortem と法的対応の根拠)
+- **隠蔽するな**: 1 人運用でも、影響ユーザへの通知は必ず行う
+
+#### 予防 (PR レビュー時)
+
+- 一覧系サービスに `viewerTenantId` の必須引数化 (memory: feedback_tenant_isolation)
+- E2E spec で「別テナントのデータが見えない」テストを各画面で必ず追加
+
+### 6.8 月初 cron バッチ失敗 (S-2)
+
+#### 影響
+
+毎月 1 日の cron バッチは以下を担当 (ADR-0002 / SUGGESTION_ENGINE.md §B-4):
+- 縮退モード中に生成されなかった NULL embedding の補完
+- プラン切替予約 (Beginner ダウングレード等) の適用
+- 当月の課金確定
+
+失敗するとテナント月次利用履歴が不整合になり、**誤請求 / 縮退モードからの復帰失敗** のリスク。
+
+#### 症状
+
+- Vercel Cron Dashboard でジョブが `Failed`
+- `tenant_monthly_usage_history` に当月行が無いテナントが残る
+- 提案エンジンで「Beginner プラン上限到達」が解除されない
+
+#### 対処
+
+```bash
+# Vercel Cron の手動再実行 (Dashboard から、または curl で endpoint を叩く)
+curl -X POST https://<production-domain>/api/cron/monthly-batch \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+スクリプト経由のリカバリ:
+
+```bash
+# 一部処理のみ手動実行する場合
+pnpm tsx scripts/backfill-monthly-embeddings.ts --tenant=<id>
+# (現状未実装。必要なら作成: scripts/README.md の「運用・緊急対応」カテゴリ)
+```
+
+#### 完了後の検証
+
+- 全テナントについて `tenant_monthly_usage_history` の当月行が存在
+- 課金確定後の合計値と `api_call_logs` の集計が一致 (memory: feedback_billing_data_realtime — ダッシュボード遷移時に再集計)
+- Beginner プランのテナントで縮退モードが解除されている
+
+### 6.9 Supabase 全面障害 (S-1)
+
+#### 症状
+
+- すべての DB 依存ページが 500
+- Supabase Status Page (https://status.supabase.com/) で障害告知
+- Vercel Functions ログに `Connection terminated unexpectedly` が大量
+
+#### 対処
+
+| フェーズ | 対応 |
+|---|---|
+| 初動 | Supabase Status Page で公式情報を確認。**焦って手元で何か触らない** (DB 接続バーストが復旧を遅らせる) |
+| 復旧待機 | Vercel Dashboard で `Maintenance mode` 表示の static page にフォールバックする feature flag を有効化 (要事前準備、未実装なら手動で `_offline.html` を出すルートを追加) |
+| 部分復旧 | Supabase が部分復旧したら read-only モードで動作確認。書き込みは Status Page が「Resolved」になるまで待つ |
+| 全面復旧 | `pnpm prisma migrate status` で migration 整合性確認、`SELECT count(*) FROM users` 等で接続性確認 |
+
+#### 連絡
+
+ユーザ向け告知が必要な規模なら、登録メール宛に **「障害発生 → 復旧見込み」** を送信 (テンプレートは §8 参照)。
+
+#### 予防 (将来検討)
+
+- AWS RDS / Azure Database for PostgreSQL への移行余地を確保 ([ADR-0004](../adr/0004-postgresql-prisma.md))
+- Supabase Pro プラン (point-in-time recovery + SLA) へのアップグレード判断
+
+### 6.10 データ漏洩疑い (S-1)
+
+外部からの「データが流出している」連絡、または社内で「これは漏れたかも」と気づいた場合。
+
+#### 即時対応 (1 時間以内)
+
+1. **証拠保全**: `audit_logs` / `auth_event_logs` / Vercel Functions ログを即座にエクスポート、別 storage に保管
+2. **侵入経路の遮断**: 疑わしい API キーがあれば即時 rotate (Vercel 環境変数で再生成)
+3. **影響範囲の特定**:
+   - SQL で漏洩疑いデータの read/write access 履歴を抽出
+   - 流出規模 (件数 / 機微度) の暫定見積もり
+
+#### 当日中
+
+- 影響を受けたユーザの特定リスト作成
+- 法的対応の必要性判断 (個人情報保護委員会への報告義務の有無)
+- 公的窓口の連絡先: [個人情報保護委員会 報告フォーム](https://www.ppc.go.jp/personalinfo/legal/leakAction/)
+
+#### 48 時間以内
+
+- 影響ユーザへの通知 (テンプレートは §8 参照)
+- Post-mortem ドキュメント作成 (§9)
+- セキュリティ強化 PR の起票
+- 再発防止策の検討 ([STRIDE_REVIEW_PROCEDURE.md](../security/STRIDE_REVIEW_PROCEDURE.md) を一時的に再実施)
+
 ---
 
 
@@ -214,6 +418,145 @@ Prisma の migrate には down マイグレーションの機能がない (`pris
 ### 7.3 全面復旧 (バックアップからのリストア)
 
 Supabase Dashboard → Database → **Backups** タブで過去のスナップショットから復旧する。要確認 (現プロジェクトで実施したことがあるか、本書では記録なし)。
+
+---
+
+## §8. エスカレーションと通知テンプレート
+
+### 8.1 連絡先 / エスカレーション先
+
+| 状況 | 連絡先 | 連絡手段 |
+|---|---|---|
+| プロダクトオーナー | teppei (本人) | — |
+| Supabase 障害 | Supabase Support (Pro プラン以上) | Dashboard → Support |
+| Anthropic API 障害 | Anthropic Support | https://support.anthropic.com/ |
+| Voyage AI 障害 | Voyage AI Support | support@voyageai.com |
+| Vercel 障害 | Vercel Status | https://www.vercel-status.com/ |
+| Brevo (メール) 障害 | Brevo Support | dashboard 内 |
+| Stripe 障害 | Stripe Status | https://status.stripe.com/ |
+| 法的対応 (個人情報漏洩) | 個人情報保護委員会 | https://www.ppc.go.jp/personalinfo/legal/leakAction/ |
+
+### 8.2 ユーザ通知テンプレート
+
+#### A. 障害発生時の初報 (発生中、復旧未定)
+
+> 件名: 【たすきば Knowledge Relay】サービス障害のお知らせ
+>
+> いつもご利用ありがとうございます。
+> 現在、〇〇機能において障害が発生しており、ご利用いただけない状態となっております。
+>
+> - 発生時刻: YYYY-MM-DD HH:MM (JST)
+> - 影響範囲: 〇〇機能 / 全機能
+> - 原因: 調査中
+> - 復旧見込み: 調査中 / HH:MM 頃見込み
+>
+> 復旧次第、改めてご連絡いたします。ご不便をおかけし誠に申し訳ございません。
+
+#### B. 復旧時の続報
+
+> 件名: 【たすきば Knowledge Relay】サービス障害復旧のお知らせ
+>
+> 〇〇 にてご連絡しておりました障害は、YYYY-MM-DD HH:MM に復旧いたしました。
+>
+> - 障害発生時刻: YYYY-MM-DD HH:MM
+> - 復旧時刻: YYYY-MM-DD HH:MM
+> - 影響範囲: 〇〇機能 / 全機能
+> - 原因: 簡潔に (例: DB 接続障害 / cron バッチ失敗 / 設定不備)
+> - 再発防止: 簡潔に (例: 〇〇監視を追加、〇〇手順を見直し)
+>
+> ご不便をおかけし誠に申し訳ございませんでした。今後とも、たすきば Knowledge Relay をよろしくお願いいたします。
+
+#### C. データ漏洩通知 (S-1、法的根拠を意識)
+
+データ漏洩が確定的になった場合のテンプレート。**送信前に法務確認推奨**。
+
+> 件名: 【重要】たすきば Knowledge Relay におけるお客様データの漏洩について
+>
+> 〇〇株式会社 〇〇様
+>
+> このたび、たすきば Knowledge Relay におきまして、お客様のデータが第三者から閲覧可能な状態にあったことが判明しました。深くお詫び申し上げます。
+>
+> - 発生時刻: YYYY-MM-DD HH:MM
+> - 発覚時刻: YYYY-MM-DD HH:MM
+> - 影響範囲のデータ項目: (具体的に: メールアドレス / プロジェクト名 / ナレッジ内容 等)
+> - 影響規模: 〇〇件
+> - 原因: 簡潔に
+> - 対応: 該当機能を即時停止しました。再発防止のため 〇〇 を実施します。
+> - お客様にお願いしたいこと: パスワード変更等
+>
+> 個人情報保護委員会への報告も併せて実施しております。
+> ご不安・ご質問は support@<domain> までお問い合わせください。
+
+---
+
+## §9. Post-mortem テンプレート
+
+S-1 / S-2 の障害対応完了後、48 時間以内に作成する。
+保存先: `docs/operations/post-mortems/YYYY-MM-DD-<short-slug>.md` (ディレクトリは初回作成時に追加)。
+
+```markdown
+# Post-mortem: <一行サマリ>
+
+- **日付**: YYYY-MM-DD
+- **重大度**: S-1 / S-2 / S-3
+- **対応者**: teppei
+- **影響時間**: HH:MM 〜 HH:MM (合計 〇分)
+- **影響範囲**: 〇〇テナント / 全テナント / 〇〇機能 等
+
+---
+
+## サマリ (3 行以内)
+
+<何が起き、どう対応したかの一行要約>
+
+## タイムライン
+
+| 時刻 | 出来事 |
+|---|---|
+| HH:MM | 通知受信: ... |
+| HH:MM | 確認: ... |
+| HH:MM | 対処: ... |
+| HH:MM | 復旧確認: ... |
+
+## 影響
+
+- ユーザ影響: 〇〇人 / 〇〇テナントが 〇〇 できない状態
+- データ影響: あり / なし (あれば詳細)
+- 金銭影響: 〇〇 円相当 (LLM 過剰呼出など)
+
+## 直接原因 (Direct Cause)
+
+<コードの何が問題だったか、技術的な root cause>
+
+## 根本原因 (Root Cause)
+
+<なぜそのバグが生まれ、検知されずに本番に出たか — プロセス / 設計 / レビュー観点>
+
+## 良かったこと
+
+- 検知が早かった / 復旧手順が確立されていた / 監査ログから経路追跡できた 等
+
+## 改善すべきこと (Action Items)
+
+| # | アクション | 担当 | 期限 | 関連 PR/Issue |
+|---|---|---|---|---|
+| 1 | 監視: 〇〇 メトリクスのアラート追加 | teppei | YYYY-MM-DD | #XXX |
+| 2 | レビュー観点: CONTRIBUTING.md §5.X に追記 | teppei | YYYY-MM-DD | #XXX |
+| 3 | ナレッジ追加: docs/knowledge/KDD_PATTERNS.md §5.X | teppei | YYYY-MM-DD | #XXX |
+
+## 関連
+
+- 障害対応中のログ: <URL or attachment>
+- 修正 PR: #XXX
+- 関連 ADR: ADR-XXXX
+- 関連脅威モデル: [docs/security/](../security/)
+```
+
+### Post-mortem の運用ルール
+
+- **責めない文化** (memory: project_overview の哲学): 「個人を責める」ではなく「仕組み / プロセスをどう改善するか」に集中
+- **Action Items は必ず PR / Issue に落とす**: 文書化だけで終わらせない
+- **3 ヶ月後にフォローアップ**: 改善策が実施されているか四半期 STRIDE レビュー時に確認
 
 ---
 
