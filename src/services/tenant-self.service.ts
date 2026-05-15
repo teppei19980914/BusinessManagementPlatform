@@ -39,6 +39,9 @@ import {
   getBeginnerDaysRemaining,
   type BeginnerExpiryState,
 } from './beginner-expiry.service';
+// PR-S3 (2026-05-14): Stripe 連携 — プラン変更時のカード検証
+import { isStripeEnabled } from '@/lib/stripe';
+import { verifyTenantCard } from './stripe-billing.service';
 
 // 2026-05-14: PLAN_ORDER / isUpgrade / getTenantNextMonthStart は撤去。
 //   全プラン変更を即時反映に統一したため、アップグレード/ダウングレードを区別する必要が
@@ -259,6 +262,13 @@ export type UpdateTenantSelfResult =
         // PR-2 (2026-05-15): Beginner プランは月次予算上限 (金額) を設定できない (=固定の月 100 回上限)。
         //   UI でフォーム自体は非表示だが、API 直叩きの迂回防止として明示的に拒否する。
         | 'BEGINNER_BUDGET_NOT_ALLOWED';
+    }
+  // PR-S3 (2026-05-14): credit_card 払いテナントのプラン変更時カード検証失敗
+  | {
+      ok: false;
+      error: 'CARD_VERIFICATION_FAILED';
+      cardStatus: 'expired' | 'declined';
+      failureReason?: string;
     };
 
 /**
@@ -334,6 +344,33 @@ export async function updateTenantSelf(
   //   本ガードは「ダウングレードの中で Beginner だけは禁止」を表す唯一の入口になった。
   if (nextPlan === 'beginner') {
     return { ok: false, error: 'BEGINNER_DOWNGRADE_FORBIDDEN' };
+  }
+
+  // PR-S3 (2026-05-14): credit_card 払いテナントはプラン変更前にカードを検証する。
+  //   詳細設計 §4.4 (= ユーザ確定の追加要件): 「プラン変更時、再度クレジットカード情報が
+  //   誤っていないか、請求ができるかを確認する」
+  //   - paymentMethod === 'credit_card' のときのみ実行
+  //   - feature flag STRIPE_ENABLED=true の時のみ実行 (= 未有効化環境では skip)
+  //   - 検証失敗時はプラン変更を拒否、顧客に Stripe ポータルでのカード更新を促す
+  if (tenant.paymentMethod === 'credit_card' && isStripeEnabled()) {
+    const verifyResult = await verifyTenantCard(tenantId);
+    if (!verifyResult.ok) {
+      // Stripe API 一時障害等 → プラン変更を遮断して再試行を促す (= 課金リスク回避)
+      return {
+        ok: false,
+        error: 'CARD_VERIFICATION_FAILED',
+        cardStatus: 'declined',
+        failureReason: 'verification_unavailable',
+      };
+    }
+    if (verifyResult.value.status !== 'valid') {
+      return {
+        ok: false,
+        error: 'CARD_VERIFICATION_FAILED',
+        cardStatus: verifyResult.value.status as 'expired' | 'declined',
+        failureReason: verifyResult.value.failureReason,
+      };
+    }
   }
 
   // 2026-05-14: 全プラン変更を即時反映に統一。

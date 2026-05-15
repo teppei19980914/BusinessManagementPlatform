@@ -185,7 +185,7 @@ describe('createOrGetStripeCustomer', () => {
 // ============================================================
 
 describe('createCheckoutSessionForCardSetup', () => {
-  it('成功時に Checkout Session URL を返す + success/cancel URL にクエリ付与', async () => {
+  it('成功時に Checkout Session URL を返す + success_url は complete ハンドラに向ける', async () => {
     vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
       id: TENANT_ID,
       name: 'T',
@@ -209,7 +209,11 @@ describe('createCheckoutSessionForCardSetup', () => {
     const params = mockStripeClient.checkout.sessions.create.mock.calls[0]![0]!;
     expect(params.mode).toBe('setup');
     expect(params.customer).toBe('cus_xxx');
-    expect(params.success_url).toContain('stripe_setup=success');
+    // success_url は complete ハンドラを指す (= Stripe が {CHECKOUT_SESSION_ID} を展開)
+    expect(params.success_url).toContain('/api/tenants/me/billing/stripe/setup/complete');
+    expect(params.success_url).toContain('{CHECKOUT_SESSION_ID}');
+    expect(params.success_url).toContain('return_to=');
+    // cancel_url は元の returnUrl + stripe_setup=canceled
     expect(params.cancel_url).toContain('stripe_setup=canceled');
     expect(params.locale).toBe('ja');
   });
