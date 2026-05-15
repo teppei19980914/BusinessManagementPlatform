@@ -180,6 +180,41 @@ model Tenant {
   ///   suspendedAt とのペア: (suspendedAt=null, resumedAt=2026-06-01) = 6/1 に解除済の通常運用状態
   resumedAt                    DateTime? @map("resumed_at") @db.Timestamptz
 
+  // ============================================================
+  // Stripe Metered Billing 連携 (PR-S1 / 2026-05-14)
+  // 関連: docs/business/STRIPE_BILLING.md / docs/design/STRIPE_TECHNICAL_DESIGN.md
+  //
+  // 設計方針:
+  //   - 全カラム NULLABLE (= invoice / bank_transfer テナントには影響なし、credit_card 切替時のみ値セット)
+  //   - feature flag (STRIPE_ENABLED 環境変数) が false なら、UI / API レベルで使用不可
+  //   - migration 適用後も既存テナントへの影響ゼロ
+  // ============================================================
+  /// Stripe Customer ID。credit_card 払いに切替えた時点で作成。null = 未登録。
+  ///   1 テナント = 1 Stripe Customer の前提 (UNIQUE 制約)
+  stripeCustomerId               String?   @unique @map("stripe_customer_id") @db.VarChar(50)
+  /// Stripe Subscription ID。プラン契約時に作成、削除時に null へ。
+  ///   1 テナント = 1 Active Subscription (UNIQUE 制約)
+  stripeSubscriptionId           String?   @unique @map("stripe_subscription_id") @db.VarChar(50)
+  /// Subscription の状態 ('active' / 'past_due' / 'canceled' / 'incomplete' / 'trialing' 等)。
+  ///   Webhook customer.subscription.updated で同期更新
+  stripeSubscriptionStatus       String?   @map("stripe_subscription_status") @db.VarChar(30)
+  /// Haiku (Expert plan) per-call Subscription Item ID。Metered Billing の Usage Record 送信先
+  stripeSubscriptionItemHaikuId  String?   @map("stripe_subscription_item_haiku_id") @db.VarChar(50)
+  /// Sonnet (Pro plan) per-call Subscription Item ID
+  stripeSubscriptionItemSonnetId String?   @map("stripe_subscription_item_sonnet_id") @db.VarChar(50)
+  /// Storage add-on (月固定額) Subscription Item ID。standard プランも形式的に存在
+  stripeSubscriptionItemStorageId String?  @map("stripe_subscription_item_storage_id") @db.VarChar(50)
+  /// Default Payment Method ID (= デフォルトの請求用カード)。Stripe Checkout 登録後に保存
+  stripeDefaultPaymentMethodId   String?   @map("stripe_default_payment_method_id") @db.VarChar(50)
+  /// 直近のカード検証成功時刻 (プラン変更時 + 月初検証 cron が更新)
+  cardLastVerifiedAt             DateTime? @map("card_last_verified_at") @db.Timestamptz
+  /// カード検証状態: 'valid' / 'expired' / 'declined' / 'never_verified'
+  cardVerificationStatus         String?   @map("card_verification_status") @db.VarChar(20)
+  /// Smart Retries 全失敗後の自動 suspend 予定時刻 (= Webhook customer.subscription.updated で
+  ///   status='past_due' 受信時に now+3日 をセット)
+  ///   日次 cron がこれを参照して既存 suspendTenant() を自動呼出
+  autoSuspendScheduledAt         DateTime? @map("auto_suspend_scheduled_at") @db.Timestamptz
+
   // Relations: 13 業務エンティティ + ApiCallLog + SuggestionExplanation (P-3) + monthlyUsageHistory (P-5b)
   // Phase 2-10 (2026-05-10): 監査・トークン系 7 model も back-relation を追加
   users                   User[]
@@ -206,8 +241,13 @@ model Tenant {
   passwordResetTokens     PasswordResetToken[]
   recoveryCodes           RecoveryCode[]
   passwordHistories       PasswordHistory[]
+  // Stripe 連携 (PR-S1 / 2026-05-14)
+  billingHistories        BillingHistory[]
+  stripeUsageRecordQueue  StripeUsageRecordQueue[]
 
   @@index([plan], map: "idx_tenants_plan")
+  // PR-S1: credit_card テナントの絞り込み用 (= Stripe 連携対象のクエリで使用)
+  @@index([stripeSubscriptionStatus], map: "idx_tenants_stripe_subscription_status")
   @@map("tenants")
 }
 
@@ -1376,4 +1416,142 @@ model EmailSendLog {
   @@index([sentAt(sort: Desc)], map: "idx_email_send_logs_sent_at")
   @@index([type, sentAt(sort: Desc)], map: "idx_email_send_logs_type")
   @@map("email_send_logs")
+}
+
+// ============================================================
+// Stripe Metered Billing 連携 (PR-S1 / 2026-05-14)
+// 関連:
+//   - 仕様: docs/business/STRIPE_BILLING.md
+//   - 詳細技術設計: docs/design/STRIPE_TECHNICAL_DESIGN.md
+//   - 設計判断: docs/adr/0006-stripe-metered-billing-integration.md
+//   - 実装計画: docs/roadmap/STRIPE_INTEGRATION_PLAN.md
+// ============================================================
+
+/// Stripe Webhook の冪等性保証 + 再送 / リプレイ対応のための受信イベント記録。
+///
+/// - Stripe は同じイベントを複数回送信する可能性がある (= 公式仕様、`At least once` 配信)
+/// - 受信時に id (= Stripe event.id) で UNIQUE INSERT、既存なら処理スキップ
+/// - processedAt で「処理済」を判定、失敗時は retryCount を増やして 5 分間隔 cron で再試行
+/// - 3 回失敗で DLQ 入り (= nextRetryAt=null)、super_admin 画面 /admin/super/stripe/dlq で手動再試行
+///
+/// 関連: STRIPE_TECHNICAL_DESIGN.md §B-2
+model StripeWebhookEvent {
+  /// = Stripe event.id (例: "evt_xxxxxxxxxxxxxx")。冪等性キー
+  id           String   @id @db.VarChar(50)
+  /// イベント種別 (例: "customer.subscription.updated", "invoice.payment_failed")
+  type         String   @db.VarChar(60)
+  /// 受信した payload 全体 (= JSON)。失敗時の調査・リプレイ用
+  payloadJson  Json     @map("payload_json")
+  /// Stripe からの受信時刻
+  receivedAt   DateTime @default(now()) @map("received_at") @db.Timestamptz
+  /// 処理完了時刻。null = 未処理 / Date = 処理完了
+  processedAt  DateTime? @map("processed_at") @db.Timestamptz
+  /// 処理失敗時のエラーメッセージ (運用調査用)
+  errorMessage String?   @map("error_message") @db.Text
+  /// 失敗試行回数 (0=初回失敗前 / 1=1回失敗 / ... / 3=DLQ入り)
+  retryCount   Int       @default(0) @map("retry_count")
+  /// 次回再試行スケジュール時刻 (null = DLQ 入り、再試行停止)
+  nextRetryAt  DateTime? @map("next_retry_at") @db.Timestamptz
+
+  // Indexes:
+  //   1. type で「特定イベント種別の履歴」を抽出
+  //   2. processedAt が null かつ nextRetryAt が今より前 = 再試行候補
+  //   3. processedAt が null かつ retryCount >= 3 = DLQ
+  @@index([type], map: "idx_stripe_webhook_events_type")
+  @@index([processedAt, nextRetryAt], map: "idx_stripe_webhook_events_retry_candidates")
+  @@map("stripe_webhook_events")
+}
+
+/// 請求履歴。invoice / bank_transfer / credit_card の **全支払い方法を統一管理**。
+///
+/// - `invoice` / `bank_transfer`: super_admin が手動で status='paid' に更新
+/// - `credit_card`: Stripe Webhook (invoice.created / invoice.paid / invoice.payment_failed) で自動更新
+/// - 月途中で invoice → credit_card 切替時、切替前のレコードは status='replaced_by_stripe' に
+///   更新して Stripe 一括請求に切替 (= 詳細技術設計 §C-1)
+///
+/// 既存 `tenant_monthly_usage_history` (使用量スナップショット) との違い:
+/// こちらは「請求書 / 決済」のライフサイクル管理、月次集計の確定値ではなく支払い状況の追跡。
+///
+/// 関連: STRIPE_TECHNICAL_DESIGN.md §C-1 / STRIPE_BILLING.md §2.3
+model BillingHistory {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  /// "YYYY-MM" 形式の請求対象月 (= テナント TZ ベースの月単位)
+  yearMonth       String   @map("year_month") @db.VarChar(7)
+  /// 支払い方法 ('invoice' / 'bank_transfer' / 'credit_card')
+  paymentMethod   String   @map("payment_method") @db.VarChar(20)
+  /// 課金額 (税抜、円整数)
+  amountJpy       Int      @map("amount_jpy")
+  /// 消費税額 (円整数)。Stripe Tax 計算結果を保存
+  taxAmountJpy    Int      @map("tax_amount_jpy")
+  /// 税込み合計 (= amount_jpy + tax_amount_jpy)
+  totalAmountJpy  Int      @map("total_amount_jpy")
+  /// 状態:
+  ///   'pending'             = 請求書発行待ち or Stripe Invoice 確定待ち
+  ///   'paid'                = 入金確認済 (invoice は手動消込、credit_card は Webhook 自動)
+  ///   'failed'              = 引落失敗 (credit_card のみ、Smart Retries 中)
+  ///   'refunded'            = 返金済
+  ///   'canceled'            = 請求取消 (= 顧客側の合意のもと)
+  ///   'replaced_by_stripe'  = 月途中で invoice → credit_card 切替時、invoice 側を Stripe 一括に置換
+  status          String   @map("status") @db.VarChar(20)
+  /// Stripe Invoice ID (credit_card 払いのみ)
+  stripeInvoiceId String?  @map("stripe_invoice_id") @db.VarChar(50)
+  /// 入金確認日時 (status='paid' 時)
+  paidAt          DateTime? @map("paid_at") @db.Timestamptz
+  /// 失敗理由 (= Stripe failure_code 等を保存)
+  failureReason   String?  @map("failure_reason") @db.VarChar(50)
+  /// Smart Retries の試行回数 (credit_card のみ、0〜4)
+  retryCount      Int      @default(0) @map("retry_count")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  /// (tenantId, yearMonth) は 1 件のみ。切替月は status='replaced_by_stripe' で
+  /// 既存レコードを更新 (= 物理削除せず監査用に残す)、新規レコードを追加しない設計
+  @@unique([tenantId, yearMonth], map: "uq_billing_history_tenant_month")
+  @@index([status], map: "idx_billing_history_status")
+  @@index([stripeInvoiceId], map: "idx_billing_history_stripe_invoice")
+  @@map("billing_history")
+}
+
+/// Stripe Usage Record 送信 queue。
+///
+/// `withMeteredLLM` で API 呼び出しのたびに INSERT し、5 分間隔の cron で順次 Stripe へ送信。
+///
+/// - 同期送信を避ける理由: Stripe API 障害時に LLM 呼び出しが止まる事を防ぐ
+/// - 冪等性: apiCallLogId を idempotency_key として Stripe に送信 → 同じ ApiCallLog から
+///   2 回送られても Stripe 側で 1 回扱い
+/// - 月途中切替時の backfill: 切替前 ApiCallLog をこのテーブルに一括 INSERT して遡及送信
+///
+/// 関連: STRIPE_TECHNICAL_DESIGN.md §B-3 / §C-1 / §D-1
+model StripeUsageRecordQueue {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  /// 'haiku' / 'sonnet' = Subscription Item の識別 (= tenant の subscriptionItemId を解決)
+  callType     String   @map("call_type") @db.VarChar(20)
+  /// 元の ApiCallLog.id (= idempotency_key として使用)
+  apiCallLogId String   @map("api_call_log_id") @db.Uuid
+  quantity     Int      @default(1)
+  /// 元の API 呼び出し時刻 (= Stripe Usage Record の timestamp として送信)
+  occurredAt   DateTime @map("occurred_at") @db.Timestamptz
+  /// 送信試行回数 (0〜5)
+  retryCount   Int      @default(0) @map("retry_count")
+  /// 次回送信予定時刻 (null = もう送らない = DLQ 入り)
+  ///   exponential backoff: 1, 5, 15, 60, 240 分
+  nextSendAt   DateTime? @map("next_send_at") @db.Timestamptz
+  /// 送信成功時刻 (null = 未送信、Date = 完了)
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz
+  /// 直近のエラーメッセージ
+  lastError    String?   @map("last_error") @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  // Indexes:
+  //   1. 送信候補抽出: sentAt が null かつ nextSendAt が今より前
+  //   2. テナント別の状況確認用
+  @@index([sentAt, nextSendAt], map: "idx_stripe_usage_queue_pending")
+  @@index([tenantId], map: "idx_stripe_usage_queue_tenant")
+  @@map("stripe_usage_record_queue")
 }
