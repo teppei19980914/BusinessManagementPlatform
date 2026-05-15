@@ -1,0 +1,80 @@
+# docs/ 配下のリンク切れ検出
+#
+# 目的:
+#   人間駆動運用への切替に伴い、ドキュメント参照リンクが壊れた状態を
+#   早期検知する。
+#   旧 docs 構造から役割別構造への移行 (2026-05-02) で大量の参照リンクが
+#   生まれており、片方を更新してもう片方が古い、というドリフトを防ぐ。
+#
+# 実行:
+#   1. PR push (.md / .yml の変更を含む PR のみ) で lychee が markdown 内
+#      リンクを検査
+#   2. 毎週月曜 03:00 UTC (= JST 12:00) で全体スキャン
+#
+# 動作:
+#   - 失敗時も PR を block しない (continue-on-error: true)
+#     → 外部 URL の一時的な不通で PR が止まるのを避けるため
+#   - 結果は workflow summary に表示。重要な切れがあれば PR コメントで議論
+#
+# 設定ファイル:
+#   - .github/lychee.toml — 除外パターン / タイムアウト / 並列度
+#
+# 参考:
+#   公式 GitHub Action: https://github.com/lycheeverse/lychee-action
+
+name: Docs Link Check
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".github/lychee.toml"
+      - ".github/workflows/docs-link-check.yml"
+  schedule:
+    # 毎週月曜 03:00 UTC (= JST 12:00)
+    - cron: "0 3 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write  # スケジュール実行時の issue 自動作成用
+
+jobs:
+  link-check:
+    name: Markdown Link Check (lychee)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run lychee
+        id: lychee
+        uses: lycheeverse/lychee-action@v2
+        continue-on-error: true
+        with:
+          # 対象: 全 markdown ファイル (リポジトリ全体)
+          args: >-
+            --config .github/lychee.toml
+            --no-progress
+            --verbose
+            './**/*.md'
+          # PR 時はコメント、スケジュール時は issue を作成
+          fail: false
+          format: markdown
+          output: ./lychee-report.md
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lychee-report
+          path: ./lychee-report.md
+          retention-days: 30
+
+      - name: Create or update issue on broken links (schedule only)
+        if: github.event_name == 'schedule' && steps.lychee.outputs.exit_code != '0'
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Docs Link Check — broken links detected"
+          content-filepath: ./lychee-report.md
+          labels: docs, link-check, automated
