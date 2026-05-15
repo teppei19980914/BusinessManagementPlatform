@@ -239,7 +239,7 @@ export async function withMeteredLLM<T>(
   // PR-S6 (2026-05-14): credit_card テナントは Stripe Usage Record queue にも 1 行追加。
   //   - apiCallLog.id を事前生成 → queue 行で参照 (= idempotency_key 用)
   //   - 同一 transaction で実行する事で「ApiCallLog 作成成功 / queue 未追加」の不整合を防ぐ
-  //   - cron (= /api/cron/stripe-usage-flush) が 5 分間隔で queue → Stripe Usage Record を実送信
+  //   - cron (= /api/cron/stripe-usage-flush) が日次で queue → Stripe Usage Record を実送信
   //   - callType は plan ベース判定: pro=sonnet / それ以外=haiku (= 価格表と一致)
   const apiCallLogId = randomUUID();
   const stripeCallType = plan === 'pro' ? 'sonnet' : 'haiku';
@@ -284,7 +284,7 @@ export async function withMeteredLLM<T>(
           apiCallLogId,
           quantity: 1,
           occurredAt: new Date(),
-          // nextSendAt=now で送信候補になる (= 5 分 cron が拾う)
+          // nextSendAt=now で送信候補になる (= 翌日の日次 cron が拾う)
           nextSendAt: new Date(),
         },
       }),

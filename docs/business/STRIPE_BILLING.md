@@ -426,7 +426,8 @@ Usage Record を Stripe へ送信   - paymentMethod は invoice のまま (= 設
 
 - **LLM 呼び出し自体は止めない** (顧客体験優先)
 - 失敗した Usage Record は `stripe_usage_record_queue` (新規簡易テーブル) に積む
-- 5 分間隔の cron で再送 (idempotency_key で重複防止)
+- 日次 cron (05:00 UTC) で再送 (idempotency_key で重複防止)
+- Vercel Hobby プランの cron 最小間隔制約「1 日 1 回」に合わせて日次運用。Stripe Usage Record の `timestamp` パラメタで実呼出時刻を送るため、翌日送信でも月末請求の正確性は維持される (= 35 日以内の過去 timestamp を Stripe が受領)。スケール後・ops 即時性要求が出たら Pro 化 + `*/5` 間隔に戻す
 
 ### 6.2 Webhook 受信失敗
 

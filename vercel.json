@@ -24,7 +24,7 @@
     },
     {
       "path": "/api/cron/stripe-usage-flush",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 5 * * *"
     },
     {
       "path": "/api/cron/stripe-auto-suspend",

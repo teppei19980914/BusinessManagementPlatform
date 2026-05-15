@@ -148,7 +148,7 @@
 
 ### 使用量監視 (PR #7 / T-03)
 - [ ] `/api/cron/daily-usage-aggregation` (POST) — skip: cron 認可 + 集計 + 異常検知 + 予算アラート + admin メール通知の単体テスト (`src/services/usage-monitoring.service.test.ts` 12 件) で担保。E2E の対象外 (Vercel Cron 経由のみで UI 経路なし)
-- [ ] `/api/cron/stripe-usage-flush` (POST) — skip: PR-S6 (2026-05-14) Stripe Usage Record queue flush cron (5 分間隔)。cron 認可 + queue 処理 (成功/失敗/DLQ/subscriptionItemId 不整合) は src/services/stripe-usage-flush.service.test.ts (8 件) + src/app/api/cron/stripe-usage-flush/route.test.ts (5 件) で担保。Stripe Test Mode との結合テストは v2 で検討
+- [ ] `/api/cron/stripe-usage-flush` (POST) — skip: PR-S6 (2026-05-14) Stripe Usage Record queue flush cron (日次、05:00 UTC)。Vercel Hobby プランの cron 最小間隔制約「1 日 1 回」に合わせて日次運用。Stripe Usage Record の timestamp パラメタで実呼出時刻を送るため翌日送信でも月末請求の正確性は維持。cron 認可 + queue 処理 (成功/失敗/DLQ/subscriptionItemId 不整合) は src/services/stripe-usage-flush.service.test.ts (8 件) + src/app/api/cron/stripe-usage-flush/route.test.ts (5 件) で担保。Stripe Test Mode との結合テストは v2 で検討
 - [ ] `/api/cron/stripe-auto-suspend` (POST) — skip: PR-S6 (2026-05-14) Stripe 引落失敗による自動 suspend cron (日次)。autoSuspendScheduledAt 到来テナントに `suspendTenant('payment_delinquent')` を呼出。cron 認可 + skip カウンタ (ALREADY_SUSPENDED 等) + errors 配列は src/services/stripe-auto-suspend.service.test.ts (7 件) + src/app/api/cron/stripe-auto-suspend/route.test.ts (5 件) で担保
 - [ ] `/api/admin/usage-summary` (GET) — skip: admin 認可 + JSON 集計返却の単体テストで担保。super_admin ダッシュボード UI (PR-X2) 実装時に E2E 化予定
 - [x] `/api/admin/super/usage/export` (GET) — e2e/specs/13-super-admin-dashboard.spec.ts (2026-05-11 / 当月 CSV: Storage 合算 / Default 除外 / 認可 403) + src/app/api/admin/super/usage/export/route.test.ts (12 ユニット: 当月・過去月・BOM・エスケープ・yearMonth バリデーション)

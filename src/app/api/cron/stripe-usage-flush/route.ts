@@ -3,7 +3,11 @@
  *
  * 役割:
  *   `stripe_usage_record_queue` の未送信行を Stripe Subscription Item の Usage Record として
- *   実送信する。Vercel Cron で 5 分間隔で実行。
+ *   実送信する。Vercel Cron で日次 (05:00 UTC = JST 14:00) で実行。
+ *
+ *   Vercel Hobby プラン制約により最小間隔が「1 日 1 回」のため日次運用に統一 (2026-05-14)。
+ *   Stripe Usage Record は timestamp パラメタで実際の呼出時刻を送るため、翌日送信でも
+ *   月末請求の正確性は保たれる (= 35 日以内の過去 timestamp を Stripe が受領)。
  *
  * 認可:
  *   `Authorization: Bearer <CRON_SECRET>` のみ通過 (= 共通 cron-auth ヘルパで定数時間検証)。
@@ -17,7 +21,7 @@
  *
  * 関連:
  *   - サービス: src/services/stripe-usage-flush.service.ts
- *   - vercel.json `crons` セクション (5 分間隔: `&#42;&#47;5 &#42; &#42; &#42; &#42;`)
+ *   - vercel.json `crons` セクション (日次: `0 5 * * *` = 05:00 UTC)
  *   - PUBLIC_PATHS: src/config/routes.ts
  */
 
