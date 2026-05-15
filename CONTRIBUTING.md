@@ -170,42 +170,100 @@ WIP                     # コミット対象が曖昧
 
 ## 5. コードレビューチェックリスト
 
-レビュー時は以下を確認してください。
+レビュー時は以下を確認してください。AI 駆動時代に並行 agent (auth / injection / xss / secret / dependency / performance / label) が担当していた観点を、人間レビュー用の単一チェックリストに統合しています。
+
+> 該当しない項目はスキップして構いません (純粋なドキュメント PR では 5.1-5.10 の大半は不要)。
 
 ### 5.1 横展開チェック (最重要)
 
 - [ ] 修正した問題と同じパターンが他ファイルに残っていないか (`grep` で全検索)
 - [ ] マスタデータの追加時、UI / バリデータ / DB すべてに反映されているか
 - [ ] テーマ追加時、`THEMES` / `THEME_DEFINITIONS` / `THEME_COLOR_SCHEMES` 3 ファイル全てに追記されているか
+- [ ] 価格定数・閾値・enum 等の変更時、`toLocaleString` 表示文字列 / 自然文 / Playwright spec assertions も全て更新済 (生値 grep だけだと取りこぼす)
 
-### 5.2 セキュリティチェック
+### 5.2 認可・テナント境界 (severity-1 リスク領域)
 
-- [ ] ユーザ入力のサニタイズ漏れなし (Zod バリデーション通過済か)
-- [ ] 生 SQL の使用なし (Prisma 経由か `$queryRawUnsafe` 不使用か)
-- [ ] 認可チェック実装あり (API ルートで `getAuthenticatedUser` + `checkProjectPermission` / `requireAdmin`)
-- [ ] 監査ログ記録あり (CREATE / UPDATE / DELETE 時に `recordAuditLog`)
+旧 auth-reviewer agent の観点を統合。詳細は [ADR-0001](./docs/adr/0001-multitenant-foundation.md) / [ADR-0005](./docs/adr/0005-rbac-two-stage-tenant-authorization.md)。
 
-### 5.3 パフォーマンスチェック
+- [ ] **テナント越境防止**: 一覧系サービスに `viewerTenantId` を必須引数化し、`where.tenantId` フィルタを強制
+- [ ] **詳細系認可**: `getById(id, viewerTenantId)` 形式で where に `tenantId` を含める
+- [ ] **API ルート認可**: `getAuthenticatedUser` + `checkProjectPermission` / `requireAdmin` を最初の行で実施
+- [ ] **super_admin の例外パス**: テナント境界バイパス時は必ず監査ログを残す
+- [ ] **session 改ざんへの耐性**: ロールや tenantId をクライアント信用 (JWT claim だけで判定) していない
+- [ ] **監査ログ記録**: CREATE / UPDATE / DELETE / 認証イベント時に `recordAuditLog` / `recordAuthEvent`
 
-- [ ] ループ内 DB クエリ (N+1) なし → `Promise.all` または JOIN を使う
-- [ ] 不要な再レンダーなし → `React.memo` / `useCallback` / `useMemo` の検討
-- [ ] 不要な Provider watch なし → 必要な部分だけ subscribe
+### 5.3 入力検証・SQL 安全性 (旧 injection-reviewer)
 
-### 5.4 テスト整合性
+- [ ] **入力バリデーション**: ユーザ入力は Zod スキーマで型・長さ・形式を検証
+- [ ] **生 SQL 不使用**: Prisma クエリビルダ経由のみ。`$queryRawUnsafe` にユーザ入力を直接渡していない
+- [ ] **`$queryRaw` 使用時はテンプレートリテラル**: パラメータバインディングを使い、文字列結合していない
+- [ ] **LLM プロンプトインジェクション対策**: ユーザ入力は `<user_input>` 等の XML タグで明示的に分離、LLM 出力は Zod で構造化検証
+- [ ] **LLM コンテキストに他ユーザ・admin・システム秘匿情報を含めない**
 
-- [ ] 変更箇所にテストが追加されているか
+### 5.4 XSS・出力エスケープ (旧 xss-reviewer)
+
+- [ ] **生 HTML 注入 API 不使用** (React の dSI 系 / `v-html` / `innerHTML` 系)。やむを得ない場合は DOMPurify 等で sanitize し、理由をコメントで残す
+- [ ] **`<a href>` の URL バリデーション**: ユーザ入力 URL に `javascript:` / `data:` を許容していない
+- [ ] **HTML 注入の経路**: Markdown レンダラ・SVG・テンプレート文字列でユーザ入力を生展開していない
+- [ ] **LLM 出力の表示**: React の自動エスケープに依存し、生 HTML 系 API で表示していない
+
+### 5.5 機密情報の取扱い (旧 secret-reviewer)
+
+- [ ] **API キー / 秘密鍵のハードコード無し** (gitleaks が CI で検知するが事前確認)
+- [ ] **`.env` / `*.pem` / `*.key` / `credentials.*` をコミットしていない** (`.gitignore` 設定済、`.claude/hooks/block-dangerous-edit.sh` が警戒)
+- [ ] **ログ出力時のシークレット redaction**: `recordError` / `console.error` で API キー・JWT・パスワード相当の文字列をマスク済
+- [ ] **エラーメッセージから内部情報を露呈していない**: stack trace やクエリ文字列がそのままユーザに返らない (`system_error_logs` に記録し画面は固定文言)
+
+### 5.6 パフォーマンス (旧 performance-reviewer)
+
+memory: `feedback_perf_antipatterns` の 5 パターンを変更時に自問する。
+
+- [ ] **N+1 クエリ無し**: ループ内 DB クエリは `Promise.all` または JOIN / `include` に集約
+- [ ] **重複 findMany 無し**: 同じデータを複数回 fetch していない (上流で 1 回取って渡す)
+- [ ] **`limit` 乖離無し**: ページネーション + count + offset のロジック整合
+- [ ] **React 再レンダー**: `React.memo` / `useCallback` / `useMemo` を必要箇所に適用
+- [ ] **Provider watch の局所化**: 必要な field のみ subscribe (Context 全体を見ない)
+- [ ] **eager fetch 回避**: 詳細画面で一覧用の集計を毎回取らない
+- [ ] **O(N×M) 背景処理**: cron バッチや bulk 処理で計算量が暴発しないか確認
+
+### 5.7 依存パッケージ (旧 dependency-reviewer)
+
+- [ ] **新規 npm 追加時の事前確認 4 点** (KDD §5.67):
+  - `npm view <pkg> time` で最終更新日 (1 年以内が望ましい)
+  - GitHub リポジトリの Issues / Releases 活発度
+  - `pnpm audit` / `snyk` で脆弱性事前確認
+  - OpenSSF Scorecard >= 3.0
+- [ ] **禁止リスト**: `xlsx` (npm 版、メンテ放棄)、SheetJS Pro 以外の Excel 系 → 代替: `csv-parse` / `exceljs`
+- [ ] **Dependabot PR**: CI 自動更新 PR にマージブロッカーがないか確認
+
+### 5.8 i18n・ラベル整合 (旧 label-checker)
+
+memory: `feedback_no_hardcoding`。
+
+- [ ] **UI 文字列のハードコード無し**: コンポーネント / ページに日本語文字列を直書きしていない
+- [ ] **ラベル定数は `src/labels/` に集約** (将来の i18n 対応のため)
+- [ ] **エラーメッセージ・プレースホルダ・ボタン文言も対象**
+
+### 5.9 テスト整合性
+
+- [ ] 変更箇所にテストが追加されているか (memory: `feedback_test_rule` テストコード必須)
 - [ ] テストコードに旧文言の残留がないか (リネーム後の取りこぼし防止)
-- [ ] テスト実行時間が極端に増えていないか
+- [ ] テスト数の増減が変更内容と整合
+- [ ] **E2E カバレッジ**: 新規 `page.tsx` / `route.ts` 追加時は `docs/test/E2E_COVERAGE.md` に追記、`pnpm e2e:coverage-check` で gap 検知 (CI でも強制)
+- [ ] テスト実行時間が極端に増えていない
 
-### 5.5 ドキュメント更新
+### 5.10 ドキュメント更新
 
-- [ ] 変更内容に応じて以下が更新されているか:
-  - `README.md` — プロジェクト概要 / セットアップ
-  - `OPERATION.md` — 運用 / デプロイ / 障害対応
-  - `REQUIREMENTS.md` — 要件定義
-  - `SPECIFICATION.md` — 機能仕様
-  - `DESIGN.md` — 設計
-  - `DEVELOPER_GUIDE.md` — 改修手順
+変更内容に応じて以下を更新:
+
+- [ ] [docs/business/](./docs/business/) — 業務ロジック (プロジェクトライフサイクル / 課金 / ロール / MVP スコープ)
+- [ ] [docs/specification/](./docs/specification/) — 画面仕様 / 権限マトリクス / UI 制御ルール
+- [ ] [docs/design/](./docs/design/) — アーキテクチャ / データモデル / API / セキュリティ / インフラ / UI パターン / 提案エンジン
+- [ ] [docs/operations/](./docs/operations/) — デプロイ / DB マイグレーション / 障害対応 / Cron / 環境変数
+- [ ] [docs/developer-guide/](./docs/developer-guide/) — 機能追加 / テスト lint build / コミット & デプロイ
+- [ ] [docs/test/](./docs/test/) — テスト戦略 / E2E カバレッジ / 教訓
+- [ ] [docs/security/](./docs/security/) — 脅威モデル / セキュリティタスク
+- [ ] [docs/adr/](./docs/adr/) — 後戻りコストが高い設計判断を伴う場合は新規 ADR 追加
 
 ---
 
