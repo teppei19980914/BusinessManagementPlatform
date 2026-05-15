@@ -1,0 +1,515 @@
+/**
+ * stripe-billing.service の単体テスト (PR-S2 / 2026-05-14)
+ *
+ * 検証観点 (詳細設計 §A-1 / §A-2 / §4 等):
+ *   1. createOrGetStripeCustomer: 既存 Customer 流用、新規作成、idempotency_key、テナント不在
+ *   2. createCheckoutSessionForCardSetup: success/cancel URL 構築、Customer 自動作成
+ *   3. createCustomerPortalSession: Customer 未登録時のエラー
+ *   4. verifyTenantCard: 期限切れ判定、$0 SetupIntent、検証成功時 DB 更新
+ *   5. createSubscriptionForTenant: Subscription Items (haiku/sonnet/storage), billing_cycle_anchor, idempotency
+ *   6. reportUsage: Usage Record 送信、idempotency_key
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Prisma モック
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    tenant: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+  },
+}));
+
+// Stripe SDK のモック (= getStripe() が返す client をモック化)
+const mockStripeClient = {
+  customers: {
+    create: vi.fn(),
+    retrieve: vi.fn(),
+  },
+  checkout: {
+    sessions: {
+      create: vi.fn(),
+    },
+  },
+  billingPortal: {
+    sessions: {
+      create: vi.fn(),
+    },
+  },
+  paymentMethods: {
+    retrieve: vi.fn(),
+  },
+  setupIntents: {
+    create: vi.fn(),
+  },
+  subscriptions: {
+    create: vi.fn(),
+  },
+  subscriptionItems: {
+    createUsageRecord: vi.fn(),
+  },
+};
+
+vi.mock('@/lib/stripe', () => ({
+  getStripe: () => mockStripeClient,
+  getStripePriceConfig: () => ({
+    haiku: 'price_haiku_test',
+    sonnet: 'price_sonnet_test',
+    storagePlus: 'price_storage_plus_test',
+    storagePro: 'price_storage_pro_test',
+  }),
+  getStoragePriceId: (plan: string) => {
+    if (plan === 'standard') return null;
+    if (plan === 'plus') return 'price_storage_plus_test';
+    if (plan === 'pro_storage') return 'price_storage_pro_test';
+    return null;
+  },
+}));
+
+import { prisma } from '@/lib/db';
+import {
+  createOrGetStripeCustomer,
+  createCheckoutSessionForCardSetup,
+  createCustomerPortalSession,
+  verifyTenantCard,
+  createSubscriptionForTenant,
+  reportUsage,
+} from './stripe-billing.service';
+
+const TENANT_ID = '00000000-0000-0000-0000-000000000abc';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+// ============================================================
+// §1. createOrGetStripeCustomer
+// ============================================================
+
+describe('createOrGetStripeCustomer', () => {
+  it('既存 Customer がある場合は再利用 (= API 呼出は retrieve のみ)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      name: 'TestCorp',
+      stripeCustomerId: 'cus_existing_123',
+      billingContactEmail: 'a@b.com',
+      billingCompanyName: 'TestCorp',
+      billingContactName: '担当',
+    } as never);
+    mockStripeClient.customers.retrieve.mockResolvedValueOnce({
+      id: 'cus_existing_123',
+      object: 'customer',
+    });
+
+    const result = await createOrGetStripeCustomer(TENANT_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.id).toBe('cus_existing_123');
+    expect(mockStripeClient.customers.retrieve).toHaveBeenCalledWith('cus_existing_123');
+    expect(mockStripeClient.customers.create).not.toHaveBeenCalled();
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('未登録テナントは新規 Customer 作成 + DB 保存', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      name: 'NewTenant',
+      stripeCustomerId: null,
+      billingContactEmail: 'new@x.com',
+      billingCompanyName: 'NewTenant Inc',
+      billingContactName: '担当者',
+    } as never);
+    mockStripeClient.customers.create.mockResolvedValueOnce({
+      id: 'cus_new_456',
+      object: 'customer',
+    });
+
+    const result = await createOrGetStripeCustomer(TENANT_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.id).toBe('cus_new_456');
+
+    // idempotency_key が tenantId ベースで一意
+    const createCall = mockStripeClient.customers.create.mock.calls[0]!;
+    expect(createCall[0]).toMatchObject({
+      name: 'NewTenant Inc',
+      email: 'new@x.com',
+      metadata: { tenantId: TENANT_ID },
+    });
+    expect(createCall[1]).toMatchObject({
+      idempotencyKey: `customer:create:${TENANT_ID}`,
+    });
+
+    // DB に Customer ID 保存
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { stripeCustomerId: 'cus_new_456' },
+    });
+  });
+
+  it('テナント不在は invalid_request 返却', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+    const result = await createOrGetStripeCustomer(TENANT_ID);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('invalid_request');
+      expect(result.userMessage).toContain('テナントが見つかりません');
+    }
+    expect(mockStripeClient.customers.create).not.toHaveBeenCalled();
+  });
+
+  it('Customer 作成失敗時は DB 保存しない', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      name: 'T',
+      stripeCustomerId: null,
+      billingContactEmail: null,
+      billingCompanyName: null,
+      billingContactName: null,
+    } as never);
+    mockStripeClient.customers.create.mockRejectedValueOnce(new Error('Stripe network error'));
+
+    const result = await createOrGetStripeCustomer(TENANT_ID);
+
+    expect(result.ok).toBe(false);
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// §2. createCheckoutSessionForCardSetup
+// ============================================================
+
+describe('createCheckoutSessionForCardSetup', () => {
+  it('成功時に Checkout Session URL を返す + success/cancel URL にクエリ付与', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      id: TENANT_ID,
+      name: 'T',
+      stripeCustomerId: 'cus_xxx',
+      billingContactEmail: null,
+      billingCompanyName: null,
+      billingContactName: null,
+    } as never);
+    mockStripeClient.customers.retrieve.mockResolvedValueOnce({ id: 'cus_xxx' });
+    mockStripeClient.checkout.sessions.create.mockResolvedValueOnce({
+      id: 'cs_test_123',
+      url: 'https://checkout.stripe.com/c/pay/cs_test_123',
+    });
+
+    const result = await createCheckoutSessionForCardSetup(
+      TENANT_ID,
+      'https://app.example/settings/tenant',
+    );
+
+    expect(result.ok).toBe(true);
+    const params = mockStripeClient.checkout.sessions.create.mock.calls[0]![0]!;
+    expect(params.mode).toBe('setup');
+    expect(params.customer).toBe('cus_xxx');
+    expect(params.success_url).toContain('stripe_setup=success');
+    expect(params.cancel_url).toContain('stripe_setup=canceled');
+    expect(params.locale).toBe('ja');
+  });
+
+  it('Customer 取得失敗時はそのまま伝播', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+    const result = await createCheckoutSessionForCardSetup(TENANT_ID, 'https://x.y');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('invalid_request');
+    expect(mockStripeClient.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// §3. createCustomerPortalSession
+// ============================================================
+
+describe('createCustomerPortalSession', () => {
+  it('成功時に Portal Session URL を返す', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: 'cus_xxx',
+    } as never);
+    mockStripeClient.billingPortal.sessions.create.mockResolvedValueOnce({
+      id: 'bps_123',
+      url: 'https://billing.stripe.com/p/session/xxx',
+    });
+
+    const result = await createCustomerPortalSession(TENANT_ID, 'https://app.example/settings/tenant');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.url).toContain('billing.stripe.com');
+    const params = mockStripeClient.billingPortal.sessions.create.mock.calls[0]![0]!;
+    expect(params.customer).toBe('cus_xxx');
+    expect(params.return_url).toContain('from=portal');
+  });
+
+  it('Customer 未登録なら invalid_request', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: null,
+    } as never);
+
+    const result = await createCustomerPortalSession(TENANT_ID, 'https://x.y');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('invalid_request');
+      expect(result.userMessage).toContain('未登録');
+    }
+    expect(mockStripeClient.billingPortal.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('テナント不在も invalid_request', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+    const result = await createCustomerPortalSession(TENANT_ID, 'https://x.y');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('invalid_request');
+  });
+});
+
+// ============================================================
+// §4. verifyTenantCard
+// ============================================================
+
+describe('verifyTenantCard', () => {
+  it('期限切れカード → status=expired (DB 更新、SetupIntent は呼ばない)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: 'cus_xxx',
+      stripeDefaultPaymentMethodId: 'pm_xxx',
+    } as never);
+    mockStripeClient.paymentMethods.retrieve.mockResolvedValueOnce({
+      id: 'pm_xxx',
+      card: {
+        exp_year: 2020, // 過去
+        exp_month: 12,
+      },
+    });
+
+    const result = await verifyTenantCard(TENANT_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.status).toBe('expired');
+      expect(result.value.failureReason).toBe('expired_card');
+    }
+    expect(mockStripeClient.setupIntents.create).not.toHaveBeenCalled();
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { cardVerificationStatus: 'expired' },
+    });
+  });
+
+  it('有効期限内 + SetupIntent succeeded → status=valid (= 検証成功、DB 更新)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: 'cus_xxx',
+      stripeDefaultPaymentMethodId: 'pm_xxx',
+    } as never);
+    mockStripeClient.paymentMethods.retrieve.mockResolvedValueOnce({
+      id: 'pm_xxx',
+      card: {
+        exp_year: 2099,
+        exp_month: 12,
+      },
+    });
+    mockStripeClient.setupIntents.create.mockResolvedValueOnce({
+      id: 'seti_xxx',
+      status: 'succeeded',
+    });
+
+    const result = await verifyTenantCard(TENANT_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.status).toBe('valid');
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: expect.objectContaining({
+        cardLastVerifiedAt: expect.any(Date),
+        cardVerificationStatus: 'valid',
+      }),
+    });
+  });
+
+  it('SetupIntent succeeded 以外の status → status=declined', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: 'cus_xxx',
+      stripeDefaultPaymentMethodId: 'pm_xxx',
+    } as never);
+    mockStripeClient.paymentMethods.retrieve.mockResolvedValueOnce({
+      id: 'pm_xxx',
+      card: { exp_year: 2099, exp_month: 12 },
+    });
+    mockStripeClient.setupIntents.create.mockResolvedValueOnce({
+      id: 'seti_xxx',
+      status: 'requires_action',
+      last_setup_error: { code: 'authentication_required' },
+    });
+
+    const result = await verifyTenantCard(TENANT_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.status).toBe('declined');
+      expect(result.value.failureReason).toBe('authentication_required');
+    }
+  });
+
+  it('カード未登録なら invalid_request', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: 'cus_xxx',
+      stripeDefaultPaymentMethodId: null,
+    } as never);
+
+    const result = await verifyTenantCard(TENANT_ID);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('invalid_request');
+      expect(result.detail).toBe('card_not_registered');
+    }
+  });
+});
+
+// ============================================================
+// §5. createSubscriptionForTenant
+// ============================================================
+
+describe('createSubscriptionForTenant', () => {
+  it('Subscription Items: haiku + sonnet + storage Plus が含まれる', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: 'cus_xxx',
+    } as never);
+    mockStripeClient.subscriptions.create.mockResolvedValueOnce({
+      id: 'sub_xxx',
+      status: 'active',
+    });
+
+    await createSubscriptionForTenant({
+      tenantId: TENANT_ID,
+      storageAddonPlan: 'plus',
+      billingCycleAnchor: 1717200000,
+      paymentMethodId: 'pm_xxx',
+    });
+
+    const params = mockStripeClient.subscriptions.create.mock.calls[0]![0]!;
+    expect(params.customer).toBe('cus_xxx');
+    expect(params.items).toEqual([
+      { price: 'price_haiku_test' },
+      { price: 'price_sonnet_test' },
+      { price: 'price_storage_plus_test' },
+    ]);
+    expect(params.default_payment_method).toBe('pm_xxx');
+    expect(params.automatic_tax).toEqual({ enabled: true });
+    expect(params.proration_behavior).toBe('none');
+    expect(params.billing_cycle_anchor).toBe(1717200000);
+    expect(params.metadata).toEqual({ tenantId: TENANT_ID });
+
+    // idempotency_key: tenantId ベース
+    const opts = mockStripeClient.subscriptions.create.mock.calls[0]![1]!;
+    expect(opts.idempotencyKey).toBe(`subscription:create:${TENANT_ID}`);
+  });
+
+  it('storage=standard なら storage Item は含めない (= ¥0、Subscription 不要)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: 'cus_xxx',
+    } as never);
+    mockStripeClient.subscriptions.create.mockResolvedValueOnce({ id: 'sub_xxx' });
+
+    await createSubscriptionForTenant({
+      tenantId: TENANT_ID,
+      storageAddonPlan: 'standard',
+      billingCycleAnchor: null,
+      paymentMethodId: 'pm_xxx',
+    });
+
+    const params = mockStripeClient.subscriptions.create.mock.calls[0]![0]!;
+    expect(params.items).toEqual([
+      { price: 'price_haiku_test' },
+      { price: 'price_sonnet_test' },
+    ]);
+    // billing_cycle_anchor null なら指定しない
+    expect(params.billing_cycle_anchor).toBeUndefined();
+  });
+
+  it('Customer 未登録なら invalid_request', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeCustomerId: null,
+    } as never);
+
+    const result = await createSubscriptionForTenant({
+      tenantId: TENANT_ID,
+      storageAddonPlan: 'standard',
+      billingCycleAnchor: null,
+      paymentMethodId: 'pm_xxx',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('invalid_request');
+    expect(mockStripeClient.subscriptions.create).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// §6. reportUsage
+// ============================================================
+
+describe('reportUsage', () => {
+  it('Usage Record 送信 + idempotency_key で重複防止', async () => {
+    mockStripeClient.subscriptionItems.createUsageRecord.mockResolvedValueOnce({
+      id: 'mbur_xxx',
+    });
+
+    const result = await reportUsage({
+      subscriptionItemId: 'si_haiku_xxx',
+      quantity: 1,
+      occurredAt: new Date('2026-06-15T10:00:00Z'),
+      apiCallLogId: 'apicall-uuid-1',
+    });
+
+    expect(result.ok).toBe(true);
+    const call = mockStripeClient.subscriptionItems.createUsageRecord.mock.calls[0]!;
+    expect(call[0]).toBe('si_haiku_xxx');
+    expect(call[1]).toEqual({
+      quantity: 1,
+      timestamp: Math.floor(new Date('2026-06-15T10:00:00Z').getTime() / 1000),
+      action: 'increment',
+    });
+    expect(call[2]).toMatchObject({
+      idempotencyKey: 'usage:si_haiku_xxx:apicall-uuid-1',
+    });
+  });
+
+  it('quantity > 1 で bulk 操作対応', async () => {
+    mockStripeClient.subscriptionItems.createUsageRecord.mockResolvedValueOnce({ id: 'mbur_x' });
+
+    await reportUsage({
+      subscriptionItemId: 'si_sonnet_xxx',
+      quantity: 5,
+      occurredAt: new Date(),
+      apiCallLogId: 'log-id',
+    });
+
+    const call = mockStripeClient.subscriptionItems.createUsageRecord.mock.calls[0]!;
+    expect((call[1] as { quantity: number }).quantity).toBe(5);
+  });
+
+  it('Stripe エラー時は Result.ok=false を伝播', async () => {
+    mockStripeClient.subscriptionItems.createUsageRecord.mockRejectedValueOnce(
+      new Error('network error'),
+    );
+
+    const result = await reportUsage({
+      subscriptionItemId: 'si_xxx',
+      quantity: 1,
+      occurredAt: new Date(),
+      apiCallLogId: 'log-id',
+    });
+
+    expect(result.ok).toBe(false);
+  });
+});
