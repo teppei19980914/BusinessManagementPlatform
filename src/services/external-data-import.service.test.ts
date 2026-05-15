@@ -415,7 +415,9 @@ describe('applyImport', () => {
           cause: null,
           impact: 'medium',
           likelihood: null,
-          state: 'open',
+          // (2026-05-15) state='resolved' をデフォルトに変更 (embedding 生成対象は resolved のみ。
+          //   既存 PR #357 batch テストは「embedding 生成される」前提なので resolved にする)。
+          state: 'resolved',
           lessonLearned: null,
           // PR #358 (2026-05-14): 既存テストの整合性維持のためデフォルト public。
           //   draft の skip 検証は専用テストケースで覆う (= 上書き引数 riskIssueVisibility 経由)。
@@ -704,6 +706,75 @@ describe('applyImport', () => {
       const callArgs = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
       expect(callArgs.items).toHaveLength(1);
       expect(callArgs.items[0].table).toBe('knowledges');
+    });
+
+    // (2026-05-15) RiskIssue は state='resolved' のみ embedding 生成 (= 提案エンジン候補化条件と整合)
+    it('RiskIssue を state=open で取込 (visibility=public) → embedding skip + skippedDraft +1', async () => {
+      vi.mocked(prisma.tenantImportPreview.findUnique).mockResolvedValueOnce({
+        id: 'preview-1',
+        tenantId: TENANT_ID,
+        createdByUserId: USER_ID,
+        parsedJson: {
+          knowledge: [],
+          risksIssues: [
+            {
+              sourceRow: 100,
+              type: 'issue',
+              title: 'open issue',
+              content: 'まだ解消されていない課題',
+              cause: null,
+              impact: 'medium',
+              likelihood: null,
+              state: 'open',
+              lessonLearned: null,
+              visibility: 'public',
+              riskNature: null,
+              projectId: 'proj-1',
+            },
+          ],
+        },
+        costEstimate: {},
+        summary: {},
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        createdAt: new Date(),
+      } as never);
+      setupCommonMocks();
+
+      const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+      vi.mocked(generateAndPersistBatchEmbeddings).mockReset();
+
+      const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.summary.risksIssuesCreated).toBe(1);
+        expect(r.summary.embeddingSkippedDraft).toBe(1); // state='open' は skip 対象
+        expect(r.summary.embeddingGenerated).toBe(0);
+      }
+      // batch 自体呼ばれない (= ApiCallLog 0 件、課金なし)
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('RiskIssue を state=resolved + visibility=public で取込 → embedding 生成 (= 課金対象)', async () => {
+      vi.mocked(prisma.tenantImportPreview.findUnique).mockResolvedValueOnce(
+        makeFakePreview({ riskIssue: 1, knowledge: 0 }), // makeFakePreview のデフォルト state は 'resolved'
+      );
+      setupCommonMocks();
+
+      const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+      vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
+        generated: 1,
+        failed: 0,
+        costJpy: 10,
+      });
+
+      const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.summary.embeddingGenerated).toBe(1);
+        expect(r.summary.embeddingSkippedDraft).toBe(0);
+      }
+      const callArgs = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      expect(callArgs.items[0].table).toBe('risks_issues');
     });
   });
 });

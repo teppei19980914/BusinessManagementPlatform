@@ -423,7 +423,11 @@ export async function createRisk(
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存 (fail-safe)
   // PR #357 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) は提案エンジン側で
   //   filter 除外されるため、embedding を生成せず Voyage API 呼出 (= 課金) を発生させない。
-  if (r.visibility !== 'draft') {
+  // (2026-05-15) RiskIssue は提案エンジンが `state='resolved'` のみ候補化するため、
+  //   さらに state='resolved' でないものは embedding 生成しない (= 解消するまで Voyage 課金回避)。
+  //   通常 createRisk は state='open' で起票されるためここでは生成されないが、import 経由など
+  //   で resolved 状態のレコードが直接作成された場合は initial embedding を生成する。
+  if (r.visibility === 'public' && r.state === 'resolved') {
     await generateAndPersistEntityEmbedding({
       table: 'risks_issues',
       rowId: r.id,
@@ -508,6 +512,8 @@ export async function updateRisk(
       responseDetail: true,
       // PR #357 (2026-05-14): visibility 遷移 (draft ↔ public) で embedding 生成判定
       visibility: true,
+      // (2026-05-15) state 遷移 (open → resolved 等) で embedding 生成判定
+      state: true,
     },
   });
   if (!existing) throw new Error('NOT_FOUND');
@@ -579,17 +585,29 @@ export async function updateRisk(
     },
   });
 
-  // PR #5-c + PR #357 (2026-05-14): embedding 生成判定マトリクス:
-  //   - 新しい visibility が draft → 生成しない (公開範囲: 自分のみは提案候補外)
-  //   - draft → public            → 生成 (text 変更不要、初回 embedding 化)
-  //   - public → public           → text 変更時のみ生成
-  //   - public → draft            → 生成しない (既存 embedding は保持)
-  const wasDraft = existing.visibility === 'draft';
+  // PR #5-c + PR #357 (2026-05-14) + (2026-05-15): embedding 生成判定マトリクス。
+  //   RiskIssue は提案エンジンが `visibility='public' AND state='resolved'` で候補化するため、
+  //   両条件を同時に満たすときのみ embedding を生成する。state='open' / 'in_progress' /
+  //   'monitoring' の段階では提案に乗らないため Voyage API を呼ばない (= 課金回避)。
+  //
+  //   生成パターン:
+  //     - 新しい visibility が draft           → 生成しない
+  //     - 新しい state が 'resolved' でない    → 生成しない
+  //     - state が新たに 'resolved' に遷移     → 生成 (text 変更不要、初回 embedding 化)
+  //     - 既に resolved のまま text 変更       → 再生成
+  //     - 既に resolved + visibility が draft → public 化 → 生成 (初回公開化)
+  //     - state='resolved' → 'open' 等への退行 → 生成しない (既存 embedding 保持)
   const willBeDraft = (input.visibility ?? existing.visibility) === 'draft';
-  const becameVisible = wasDraft && !willBeDraft;
-  const stayedVisible = !wasDraft && !willBeDraft;
+  const wasResolved = existing.state === 'resolved';
+  const willBeResolved = (input.state ?? existing.state) === 'resolved';
+  const wasDraft = existing.visibility === 'draft';
+  const becameResolved = !wasResolved && willBeResolved; // state: 解消への遷移
+  const becameVisible = wasDraft && !willBeDraft; // visibility: draft → public への遷移
+  const stayedEligible = !wasDraft && !willBeDraft && wasResolved && willBeResolved;
   const shouldGenerateEmbedding =
-    !willBeDraft && (becameVisible || (stayedVisible && textFieldsChanging));
+    !willBeDraft &&
+    willBeResolved &&
+    (becameResolved || becameVisible || (stayedEligible && textFieldsChanging));
 
   if (shouldGenerateEmbedding) {
     await generateAndPersistEntityEmbedding({

@@ -945,6 +945,17 @@ PR #127 でナビを **3 分類** にグループ化し、**画面幅でレイ�
 業務知見として有用かは人間の目で判断するため、Knowledge のような tech/process/businessDomain タグは持たせない。
 (将来 Knowledge 昇格機能で格上げ時に必要なら別 PR で追加)
 
+### 21.5.1 提案エンジン候補化と embedding (2026-05-15 追加)
+
+`visibility='public'` の Memo は他資産 (Knowledge / RiskIssue / Retrospective) と同様に **提案エンジンの候補** として扱われる。
+
+- **embedding 生成**: `visibility='public'` で `title` / `content` のいずれかが変更されたタイミングで Voyage AI による embedding 生成 (`featureUnit='memo-embedding'`)。「自分のみ」(`visibility='private'`) は embedding 生成しない (= Voyage API 課金回避)
+- **「自分のみ → 全メンバー」遷移時**: 初回 embedding 化される (= 公開化のタイミングで提案候補に乗る)
+- **タグなし設計のため**、提案エンジンの 3 軸スコアのうち tagScore は常に 0。textScore + embeddingScore の 2 軸で実用ランキング
+- **「なぜ?」説明文** (Pro プラン限定 / Phase 3) も Memo 対応 (candidateKind='memo')
+
+詳細: [docs/specification/SUGGESTION_FEATURE.md §1.1](./SUGGESTION_FEATURE.md) / [docs/design/SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md)
+
 ### 21.6 認可
 
 - **閲覧**: 作成者 OR visibility='public' のユーザ。**admin 特権なし**

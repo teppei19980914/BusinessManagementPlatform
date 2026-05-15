@@ -345,16 +345,20 @@ async function loadCandidate(
       return k ? { kind: 'knowledge', title: k.title, content: k.content } : null;
     }
     case 'issue': {
+      // (2026-05-15) 提案候補側 (suggestion.service.ts) と整合させ、state='resolved' を強制。
+      //   state='open' 等の Issue には embedding を生成しないため、説明文生成も同じ条件で
+      //   遮断する (= 仮に id を直叩きされても candidate_not_found を返す)。
       const i = await prisma.riskIssue.findFirst({
-        where: { id, tenantId, deletedAt: null, type: 'issue' },
+        where: { id, tenantId, deletedAt: null, type: 'issue', state: 'resolved' },
         select: { title: true, content: true },
       });
       return i ? { kind: 'issue', title: i.title, content: i.content } : null;
     }
     case 'risk': {
       // 2026-05-09 (PR D / #21): 過去 risk の説明文生成
+      // (2026-05-15) state='resolved' を強制 (上記 'issue' と同じ理由)
       const r = await prisma.riskIssue.findFirst({
-        where: { id, tenantId, deletedAt: null, type: 'risk' },
+        where: { id, tenantId, deletedAt: null, type: 'risk', state: 'resolved' },
         select: { title: true, content: true },
       });
       return r ? { kind: 'risk', title: r.title, content: r.content } : null;

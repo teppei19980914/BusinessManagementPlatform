@@ -9242,3 +9242,126 @@ embedding 生成の skip 条件 / 提案エンジンのスコープ条件を実�
 - prisma/schema.prisma: `Memo.visibility @default("private")` (line 1165)
 - prisma/schema.prisma: `Knowledge.visibility` / `RiskIssue.visibility` / `Retrospective.visibility` は `@default("draft")`
 
+## 5.X+62 **提案候補化に state 等の追加条件があるエンティティでは、作成・更新時の embedding 生成判定もその条件で絞る (RiskIssue state='resolved' / 2026-05-15)**
+
+### 罠の正体
+
+`visibility='public'` だけで embedding 生成を判定すると、提案エンジンが **さらに別軸でフィルタしているエンティティ** では「embedding を作ったのに永遠に検索されない」浪費が発生する。
+
+具体例: RiskIssue。提案エンジン ([src/services/suggestion.service.ts](../../src/services/suggestion.service.ts)) は過去課題・過去リスクの候補化条件として **`state='resolved'`** を必須にしている (= 「過去に解消された学び」のみ次案件の参考になる、という設計判断)。
+
+```typescript
+// suggestion.service.ts
+const issues = await prisma.riskIssue.findMany({
+  where: {
+    type: 'issue', state: 'resolved', visibility: 'public',
+    // ...
+  },
+});
+```
+
+ところが旧 `createRisk` / `updateRisk` は **`visibility !== 'draft'` だけで** embedding を生成していた:
+
+```typescript
+// 旧実装
+if (r.visibility !== 'draft') {
+  await generateAndPersistEntityEmbedding({ ... });
+}
+```
+
+結果:
+- `state='open'` で `visibility='public'` のリスクを起票 → embedding 生成 (Voyage 課金) → 提案エンジンには乗らない (state filter で落ちる)
+- 解消するまで text を編集すると毎回 embedding 再生成 → 全部ゴミ
+- 解消されずに deletedAt → 課金分が完全に無駄
+
+中規模テナント (月間 20 件、半分が中途状態で公開化) で **月 ¥120〜360** の無駄、年間 **¥1,500〜4,500** のコスト発生。
+
+### なぜ発生するか
+
+- 「visibility = 提案候補化条件」と思い込みやすい (Knowledge/Retrospective/Memo はそう)
+- RiskIssue だけ提案候補化に `state='resolved'` の追加条件があるが、create/update 時に意識されにくい
+- `state` フィールドは「業務的に処理が進む」軸であり、コード上で embedding 判定と結びつけるのは非直観的
+- 提案エンジン側 (read path) と embedding 生成側 (write path) の整合性が「同じ場所で書かれていない」ため、片方修正時にもう片方が漏れる
+
+### 推奨対応 (横展開チェック)
+
+エンティティが提案エンジンの候補化フィルタに **`visibility` 以外の WHERE 条件** を持つ場合、以下も embedding 生成判定に組み込む:
+
+1. **suggestion.service.ts の `where` 句を read してから判定を書く**
+2. 提案候補化条件 (例: `state='resolved'`) を満たす **遷移時** に embedding を生成 (初回 embedding 化)
+3. 既に条件を満たしている状態で対象 text が変更されたとき、再生成
+4. 条件を満たさなくなる遷移 (例: `resolved` → `open` 再オープン) では既存 embedding を保持 (削除しない、提案エンジン側 filter で除外される)
+5. **月初 backfill cron** の WHERE にも同じ条件を反映 (= NULL 補完対象を一致させる)
+6. **外部 import** で当該条件を満たさない行 (例: state='open' で import) も batch から除外
+7. **「なぜ?」説明文 (suggestion-explanation.service.ts)** の `loadCandidate` でも同条件を WHERE に強制 (= API 直叩きで state='open' な id が来ても候補拒否)
+
+### 本 PR での対処
+
+- `src/services/risk.service.ts`:
+  - `createRisk`: `r.visibility === 'public' && r.state === 'resolved'` のときのみ embedding 生成 (通常 create は state='open' 既定なので生成されない、import 経由など resolved 直接生成のみ embedding)
+  - `updateRisk`: `existing.state` を select に追加し、state 遷移マトリクスに従って判定
+    - state: open→resolved への遷移 (becameResolved) → text 変更不要で生成
+    - state: resolved→resolved + text 変更 → 再生成
+    - state: resolved→open (再オープン) → 生成しない (既存保持)
+- `src/services/embedding-backfill.service.ts`: 月初 cron の risks_issues WHERE に `state='resolved'` 追加 (collectNullEmbeddingItems / countNullEmbeddings の両方)
+- `src/services/external-data-import.service.ts`: import 行に `state!='resolved'` があれば batch から skip + embeddingSkippedDraft +1
+- `src/services/suggestion-explanation.service.ts`: `loadCandidate` の issue/risk ケースに `state: 'resolved'` を WHERE 強制
+- 単体テスト: 6 ケースの state 遷移マトリクスを risk.service.test.ts に追加
+
+### 関連
+
+- memory: `feedback_visibility_embedding.md` (visibility='draft' のエンティティには embedding 生成しない) — 本 KDD は state 軸への拡張
+- suggestion.service.ts: `where: { type: 'issue', state: 'resolved', visibility: 'public' }`
+- 同様パターンの将来候補: 「Retrospective に `conducted` 状態が追加される」「Knowledge に `approved` 状態が追加される」場合は同じく state 軸の embedding 判定が必要
+
+## 5.X+63 **作成時の入力が全空文字でも LLM を呼んでしまう罠 (Project 全空 text → Anthropic 課金 / 2026-05-15)**
+
+### 罠の正体
+
+`createProject` / `updateProject` の `extractTagsAndEmbedForProject()` は purpose / background / scope の text を Anthropic auto-tag + Voyage embedding に渡すが、**全 3 フィールドが空文字でも `withMeteredLLM` を呼び出す** 実装になっていた。
+
+- Voyage 側は `willCallEmbedding = embeddingText.trim().length > 0` で skip (OK)
+- **Anthropic 側はガードなし** で常に呼出 (NG)
+
+Anthropic は空入力に対しても空タグ JSON `{businessDomainTags:[], techStackTags:[], processTags:[]}` を正常返却するため、**`withMeteredLLM` の callback は成功** → ApiCallLog 1 件発行 + Tenant counter +1 + costJpy 1 回分課金。
+
+ユーザ価値ゼロ (空タグが返るだけ) なのに課金が発生する。
+
+### なぜ発生するか
+
+- 「embedding 側でガードしているから OK」と読み流しがち
+- Anthropic の auto-tag は「user 入力が空でもエラーにならず動く」性質を持つため、テストでも検出されにくい
+- 空入力でプロジェクトを作るユースケース (テンプレート保存、ドラフト挙動の保存) は実運用で発生する
+
+### 推奨対応
+
+`extractTagsAndEmbedForProject()` の冒頭で 3 フィールドの空チェックを行い、すべて空なら **`withMeteredLLM` 自体を呼ばずに早期 return**:
+
+```typescript
+const hasAnyContent =
+  args.purpose.trim().length > 0 ||
+  args.background.trim().length > 0 ||
+  args.scope.trim().length > 0;
+if (!hasAnyContent) {
+  return { tags: null, embedding: null };
+}
+```
+
+これで:
+- Anthropic も Voyage も呼ばれない
+- ApiCallLog 0 件、counter / costJpy も増分なし
+- 本体 INSERT/UPDATE は通常通り続行 (= ユーザ操作は成功扱い、ただし AI 処理は無し)
+
+### 本 PR での対処
+
+- `src/services/project.service.ts` の `extractTagsAndEmbedForProject()` に `hasAnyContent` ガードを追加
+- `src/services/project.service.test.ts` に 3 ケース追加:
+  - 3 フィールド全空 → `withMeteredLLM` 呼ばれない
+  - 1 フィールドのみ非空 → `withMeteredLLM` 呼ばれる (= 早期 return しない)
+  - 3 フィールド全空白のみ (タブ/改行/全角空白) → `withMeteredLLM` 呼ばれない
+
+### 関連
+
+- 削減見積もり: 月 ¥20〜50 程度 (テンプレ作成等の限定ケース) — 大きくないが実装コストもほぼゼロなので「ついで」に削減
+- 同型の罠を防ぐ一般則: **外部 API を呼ぶ前に「入力が空かどうか」をチェックする習慣をつける** (空入力 = ユーザ価値ゼロ ≒ 課金回避可能)
+

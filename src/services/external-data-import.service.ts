@@ -528,6 +528,14 @@ export async function applyImport(input: {
       embeddingSkippedDraft += 1;
       continue;
     }
+    // (2026-05-15) RiskIssue は提案エンジンが state='resolved' のみ候補化するため、
+    //   state!='resolved' (= 'open' / 'in_progress' / 'monitoring') の行は embedding 生成しない。
+    //   import の state デフォルトは 'open' (line 455) なので、CSV で明示的に 'resolved' を
+    //   指定した行のみ embedding 化される。
+    if ((r.state ?? 'open') !== 'resolved') {
+      embeddingSkippedDraft += 1;
+      continue;
+    }
     batchItems.push({
       table: 'risks_issues',
       rowId: newId,

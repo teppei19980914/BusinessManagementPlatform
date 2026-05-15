@@ -8,7 +8,7 @@
 
 ## Context
 
-たすきば Knowledge Relay の核心機能は「**過去プロジェクトで蓄積した資産 (Knowledge / RiskIssue / Retrospective / Project / Estimate) を、新しい判断時に再利用できるよう提案する**」こと。
+たすきば Knowledge Relay の核心機能は「**過去プロジェクトで蓄積した資産 (Knowledge / RiskIssue / Retrospective / Memo / Project) を、新しい判断時に再利用できるよう提案する**」こと (2026-05-15: Memo を提案候補に追加)。
 これは単なる検索機能ではなく、サービスの差別化点そのものである (memory: project_suggestion_engine_priority — 高再現率の網羅性が最重視される)。
 
 検討時の制約:
@@ -24,7 +24,7 @@
 
 ### 仕組みの 3 段階
 
-1. **Phase 1 — フィルタ**: テナント境界、状態、可視性 (`visibility != 'draft'`) で機械的に候補集合を絞る (DB クエリのみ、コストゼロ)
+1. **Phase 1 — フィルタ**: テナント境界、状態、可視性 (Knowledge/RiskIssue/Retrospective: `visibility='public'` / Memo: `visibility='public'`) で機械的に候補集合を絞る (DB クエリのみ、コストゼロ)
 2. **Phase 2 — タグベースマッチ**: LLM 自動タグ抽出 (Anthropic Claude API) で各エンティティに付与したタグと、検索コンテキストのタグの一致度で絞る (タグは作成時に 1 回抽出、検索時の API コストはゼロ)
 3. **Phase 3 — Embedding 類似度検索**: Voyage AI embedding (作成時に 1 回生成、`(tenantId, embedding)` 複合インデックスで pgvector cosine similarity 検索) で意味的近さでスコアリング
 
