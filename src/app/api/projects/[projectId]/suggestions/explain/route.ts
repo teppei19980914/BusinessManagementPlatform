@@ -39,7 +39,8 @@ import type { SystemRole } from '@/config/master-data';
 
 const ExplainBodySchema = z.object({
   // 2026-05-09 (PR D / #21): 過去リスク 'risk' を追加
-  candidateKind: z.enum(['knowledge', 'issue', 'risk', 'retrospective']),
+  // 2026-05-15: 'memo' を追加 (Memo を提案候補に含めるリファクタと同期)
+  candidateKind: z.enum(['knowledge', 'issue', 'risk', 'retrospective', 'memo']),
   candidateId: z.string().uuid(),
 });
 

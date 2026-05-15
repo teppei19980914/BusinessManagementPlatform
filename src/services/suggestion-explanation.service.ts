@@ -45,8 +45,9 @@ import type { TextBlock } from '@anthropic-ai/sdk/resources/messages';
 /**
  * 候補の種別。SuggestionExplanation.candidateKind の許容値と一致。
  * 2026-05-09 (PR D / #21): 'risk' を追加 (過去リスクの説明文生成)。
+ * 2026-05-15: 'memo' を追加 (全メンバー公開メモの説明文生成、Pro プラン限定)。
  */
-export type CandidateKind = 'knowledge' | 'issue' | 'risk' | 'retrospective';
+export type CandidateKind = 'knowledge' | 'issue' | 'risk' | 'retrospective' | 'memo';
 
 export interface ExplainSuggestionInput {
   /** 提案を受けたプロジェクト ID */
@@ -326,7 +327,9 @@ type CandidateRow =
   // 2026-05-09 (PR D / #21): risk は同じ riskIssue テーブルだが type='risk' で抽出。
   //   issue と同じ XML schema (title + content) を使い、prompt 側でタグ値だけ変える。
   | { kind: 'risk'; title: string; content: string }
-  | { kind: 'retrospective'; problems: string; improvements: string };
+  | { kind: 'retrospective'; problems: string; improvements: string }
+  // 2026-05-15: memo は title + content を持つシンプル構造 (Memo は visibility='public' のみ対象)。
+  | { kind: 'memo'; title: string; content: string };
 
 async function loadCandidate(
   kind: CandidateKind,
@@ -364,6 +367,15 @@ async function loadCandidate(
       return r
         ? { kind: 'retrospective', problems: r.problems, improvements: r.improvements }
         : null;
+    }
+    case 'memo': {
+      // 2026-05-15: 提案エンジン経由の memo は visibility='public' のみが候補化される設計のため
+      //   ここでも visibility='public' を WHERE で強制 (= 「自分のみ」メモへの説明生成を遮断)。
+      const m = await prisma.memo.findFirst({
+        where: { id, tenantId, deletedAt: null, visibility: 'public' },
+        select: { title: true, content: true },
+      });
+      return m ? { kind: 'memo', title: m.title, content: m.content } : null;
     }
   }
 }
@@ -442,6 +454,18 @@ function buildUserPrompt(args: {
         '<candidate_improvements>',
         escapeClosingTags(truncate(candidate.improvements, MAX_FIELD_CHARS)),
         '</candidate_improvements>',
+      ].join('\n');
+      break;
+    case 'memo':
+      // 2026-05-15: memo の説明文生成。issue/risk と同じ title + content schema。
+      candidateBlock = [
+        '<candidate_kind>memo</candidate_kind>',
+        '<candidate_title>',
+        escapeClosingTags(truncate(candidate.title, MAX_FIELD_CHARS)),
+        '</candidate_title>',
+        '<candidate_content>',
+        escapeClosingTags(truncate(candidate.content, MAX_FIELD_CHARS)),
+        '</candidate_content>',
       ].join('\n');
       break;
   }

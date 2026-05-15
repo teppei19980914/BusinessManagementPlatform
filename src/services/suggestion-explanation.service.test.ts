@@ -30,6 +30,10 @@ vi.mock('@/lib/db', () => ({
     retrospective: {
       findFirst: vi.fn(),
     },
+    // (2026-05-15) memo candidateKind を提案エンジン対象に追加 (Pro プラン限定)
+    memo: {
+      findFirst: vi.fn(),
+    },
     // 2026-05-09 (#22): プラン制限ゲート用 tenant.findFirst
     tenant: {
       findFirst: vi.fn(),
@@ -230,6 +234,41 @@ describe('getOrGenerateSuggestionExplanation', () => {
             tenantId: TENANT_ID,
             deletedAt: null,
             type: 'issue',
+          }),
+        }),
+      );
+    });
+
+    it('(2026-05-15) Memo 候補で memo.findFirst が visibility=public 限定で呼ばれる', async () => {
+      vi.mocked(prisma.memo.findFirst).mockResolvedValueOnce({
+        title: 'メモタイトル',
+        content: 'メモ本文',
+      } as never);
+      mockMeteredLLMSuccess('意味的に近いメモ内容です。', 'claude-sonnet-4-6');
+      vi.mocked(prisma.suggestionExplanation.upsert).mockResolvedValueOnce({
+        explanation: '意味的に近いメモ内容です。',
+        modelName: 'claude-sonnet-4-6',
+        generatedAt: new Date(),
+      } as never);
+
+      const result = await getOrGenerateSuggestionExplanation({
+        projectId: PROJECT_ID,
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        candidateKind: 'memo',
+        candidateId: CANDIDATE_ID,
+      });
+
+      expect(result.ok).toBe(true);
+      // (2026-05-15) Memo の説明文生成は visibility='public' を WHERE で強制
+      //   → 「自分のみ」メモ (private) への説明生成は遮断される
+      expect(prisma.memo.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: CANDIDATE_ID,
+            tenantId: TENANT_ID,
+            deletedAt: null,
+            visibility: 'public',
           }),
         }),
       );

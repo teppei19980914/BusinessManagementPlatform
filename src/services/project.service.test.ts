@@ -50,28 +50,47 @@ vi.mock('./state-machine', () => ({
   canTransition: vi.fn(),
 }));
 
-// PR #3-b: createProject / updateProject から呼ばれる auto-tag 抽出をモック。
-// 既定では「rate_limited で何も追加しない」モードにし、各テストで
-// vi.mocked(extractAutoTags).mockResolvedValueOnce(...) で上書きする。
+// (2026-05-15) auto-tag + embedding を 1 ApiCallLog に集約するリファクタ後のモック構成。
+//   extractTagsAndEmbedForProject (project.service 内) が withMeteredLLM の callback 内で
+//   callAnthropicForAutoTagsInner + voyageEmbed を順次呼び出す。テストではこの 3 つを差し替える:
+//     - withMeteredLLM: default は degraded(rate_limited) を返却 (callback 非呼出 = 旧 default の挙動と整合)
+//     - callAnthropicForAutoTagsInner: default は tags: null (検証失敗相当)
+//     - voyageEmbed: default は 1024 次元の dummy ベクトル返却
+//     - persistEmbedding: default は 1 行更新成功
 vi.mock('./auto-tag.service', () => ({
-  extractAutoTags: vi.fn().mockResolvedValue({
+  callAnthropicForAutoTagsInner: vi.fn().mockResolvedValue({
+    tags: null,
+    llmInputTokens: 0,
+    llmOutputTokens: 0,
+  }),
+}));
+
+vi.mock('./embedding.service', () => ({
+  persistEmbedding: vi.fn().mockResolvedValue(1),
+}));
+
+vi.mock('@/lib/llm/voyage-client', () => ({
+  voyageEmbed: vi.fn().mockResolvedValue({
+    embeddings: [new Array(1024).fill(0.5)],
+    totalTokens: 10,
+  }),
+}));
+
+vi.mock('@/lib/llm/metered', () => ({
+  withMeteredLLM: vi.fn().mockResolvedValue({
     ok: false,
     reason: 'rate_limited',
+    retryAfterSec: 60,
     message: 'default mock — テストごとに上書きする',
   }),
 }));
 
-// PR #5 (T-03 Phase 2): createProject / updateProject から呼ばれる embedding をモック。
-// 既定では「rate_limited で何もせず終了」モードにし、各テストで上書き可能。
-// embedding 自体は project.service の本体動作 (本体 INSERT/UPDATE) に影響しない fail-safe 設計のため、
-// テストでは generate と persist の呼び出し有無のみ検証する。
-vi.mock('./embedding.service', () => ({
-  generateEmbedding: vi.fn().mockResolvedValue({
-    ok: false,
-    reason: 'rate_limited',
-    message: 'default mock — テストごとに上書きする',
-  }),
-  persistEmbedding: vi.fn().mockResolvedValue(1),
+vi.mock('@/config/llm', () => ({
+  EMBEDDING_DIMENSIONS: 1024,
+  LLM_RATE_LIMIT: { PER_MINUTE: 10, PER_HOUR: 60 },
+  LLM_MODELS: { EMBEDDING: 'voyage-4-lite' },
+  resolveCostForPlan: vi.fn().mockReturnValue(0),
+  resolveModelForPlan: vi.fn().mockReturnValue('claude-haiku-4-5'),
 }));
 
 vi.mock('./error-log.service', () => ({
@@ -89,9 +108,44 @@ import {
 } from './project.service';
 import { prisma } from '@/lib/db';
 import { canTransition } from './state-machine';
-import { extractAutoTags } from './auto-tag.service';
-import { generateEmbedding, persistEmbedding } from './embedding.service';
+import { callAnthropicForAutoTagsInner } from './auto-tag.service';
+import { persistEmbedding } from './embedding.service';
+import { voyageEmbed } from '@/lib/llm/voyage-client';
+import { withMeteredLLM } from '@/lib/llm/metered';
 import { recordError } from './error-log.service';
+
+/**
+ * (2026-05-15) withMeteredLLM の "成功" モック helper。
+ *   - callback を実際に呼び出す (= callAnthropicForAutoTagsInner + voyageEmbed を経由)
+ *   - callback の戻り値 (result) を保持し、ApiCallLog 相当の成功レスポンスを返却
+ *
+ * 用途: 「LLM 呼出が 1 回だけ走り、結果を取得できる」ケースを再現する。
+ */
+function mockMeteredLLMSuccessRunCallback() {
+  vi.mocked(withMeteredLLM).mockImplementationOnce(async (_opts, call) => {
+    try {
+      const cb = await call({
+        modelName: 'claude-haiku-4-5',
+        requestId: 'req-test-merged',
+      });
+      return {
+        ok: true,
+        result: cb.result,
+        costJpy: 10,
+        latencyMs: 100,
+        modelName: 'claude-haiku-4-5',
+        requestId: 'req-test-merged',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'llm_error',
+        error,
+        message: error instanceof Error ? error.message : 'inner call failed',
+      };
+    }
+  });
+}
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -271,18 +325,18 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
   // PR #3-b (T-03 Phase 1): 自動タグ抽出フックの統合テスト
   // ========================================================
 
-  it('createProject: extractAutoTags 成功時、user-provided + auto-extracted を union で保存', async () => {
+  it('createProject: auto-tag 成功時、user-provided + auto-extracted を union で保存', async () => {
     vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
-    vi.mocked(extractAutoTags).mockResolvedValueOnce({
-      ok: true,
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
       tags: {
         businessDomainTags: ['EC', '物流'],
         techStackTags: ['Next.js'],
         processTags: ['設計'],
       },
-      costJpy: 0,
-      requestId: 'req-1',
+      llmInputTokens: 100,
+      llmOutputTokens: 50,
     });
+    mockMeteredLLMSuccessRunCallback();
 
     await createProject(
       {
@@ -311,13 +365,9 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(call.data.processTags).toEqual(['設計']);
   });
 
-  it('createProject: extractAutoTags が rate_limited 等で失敗時、user-provided のみで保存 (fail-safe)', async () => {
+  it('createProject: auto-tag が rate_limited 等で失敗時、user-provided のみで保存 (fail-safe)', async () => {
     vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
-    vi.mocked(extractAutoTags).mockResolvedValueOnce({
-      ok: false,
-      reason: 'rate_limited',
-      message: 'rate limit',
-    });
+    // withMeteredLLM 既定 mock = rate_limited (callback 非呼出)
 
     await createProject(
       {
@@ -341,14 +391,14 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(call.data.processTags).toEqual([]);
   });
 
-  it('createProject: extractAutoTags に正しい tenantId / userId / text が渡る', async () => {
+  it('createProject: extractTagsAndEmbedForProject の内部呼出に正しい入力 (purpose/background/scope/modelName) が渡る', async () => {
     vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
-    vi.mocked(extractAutoTags).mockResolvedValueOnce({
-      ok: true,
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
       tags: { businessDomainTags: [], techStackTags: [], processTags: [] },
-      costJpy: 0,
-      requestId: 'req-1',
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
     });
+    mockMeteredLLMSuccessRunCallback();
 
     await createProject(
       {
@@ -365,18 +415,22 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    expect(extractAutoTags).toHaveBeenCalledWith({
+    expect(callAnthropicForAutoTagsInner).toHaveBeenCalledWith({
       purpose: 'AAA',
       background: 'BBB',
       scope: 'CCC',
-      tenantId: TEST_TENANT_ID,
-      userId: 'u-1',
+      modelName: 'claude-haiku-4-5',
     });
+    // (2026-05-15) auto-tag + embedding を 1 業務操作 = 1 withMeteredLLM ラップに集約
+    expect(withMeteredLLM).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(withMeteredLLM).mock.calls[0]![0].featureUnit).toBe('project-upsert');
+    expect(vi.mocked(withMeteredLLM).mock.calls[0]![0].tenantId).toBe(TEST_TENANT_ID);
+    expect(vi.mocked(withMeteredLLM).mock.calls[0]![0].userId).toBe('u-1');
   });
 
-  it('updateProject: text フィールドが更新対象でなければ extractAutoTags は呼ばれない (LLM 課金回避)', async () => {
+  it('updateProject: text フィールドが更新対象でなければ LLM 呼出なし (LLM 課金回避)', async () => {
     // 2026-05-09 (PR D / #20): findUnique は常に呼ぶ (実値比較で更新判定するため)。
-    //   extractAutoTags は textFieldsChanging=false なら呼ばれない (LLM 課金回避は維持)。
+    //   withMeteredLLM は textFieldsChanging=false なら呼ばれない (LLM 課金回避は維持)。
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'cur p',
       background: 'cur b',
@@ -389,11 +443,13 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
 
     await updateProject('p-1', { name: 'new name' }, 'u-1', TEST_TENANT_ID);
 
-    expect(extractAutoTags).not.toHaveBeenCalled();
+    expect(withMeteredLLM).not.toHaveBeenCalled();
+    expect(callAnthropicForAutoTagsInner).not.toHaveBeenCalled();
+    expect(voyageEmbed).not.toHaveBeenCalled();
   });
 
   // 2026-05-09 (PR D / #20): 実値比較ガード — input.purpose が現行値と同じなら呼ばない
-  it('updateProject: input.purpose が現行値と同じなら extractAutoTags は呼ばれない (#20)', async () => {
+  it('updateProject: input.purpose が現行値と同じなら LLM 呼出なし (#20)', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'same purpose',
       background: 'cur b',
@@ -407,10 +463,10 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     // 同一値で送信
     await updateProject('p-1', { purpose: 'same purpose' }, 'u-1', TEST_TENANT_ID);
 
-    expect(extractAutoTags).not.toHaveBeenCalled();
+    expect(withMeteredLLM).not.toHaveBeenCalled();
   });
 
-  it('updateProject: purpose 更新時に extractAutoTags が呼ばれ、変更しない text は現行値で補完', async () => {
+  it('updateProject: purpose 更新時に LLM が呼ばれ、変更しない text は現行値で補完', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'old purpose', // 上書きされる
       background: 'EXISTING bg',
@@ -420,16 +476,16 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       processTags: ['old-pr'],
     } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
-    vi.mocked(extractAutoTags).mockResolvedValueOnce({
-      ok: true,
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
       tags: {
         businessDomainTags: ['NEW-BD'],
         techStackTags: ['NEW-TS'],
         processTags: ['NEW-PR'],
       },
-      costJpy: 0,
-      requestId: 'req-1',
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
     });
+    mockMeteredLLMSuccessRunCallback();
 
     await updateProject(
       'p-1',
@@ -438,13 +494,12 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    // extractAutoTags には更新後の purpose + 現行の bg/scope が渡る
-    expect(extractAutoTags).toHaveBeenCalledWith({
+    // callAnthropicForAutoTagsInner には更新後の purpose + 現行の bg/scope が渡る
+    expect(callAnthropicForAutoTagsInner).toHaveBeenCalledWith({
       purpose: 'NEW PURPOSE',
       background: 'EXISTING bg',
       scope: 'EXISTING sc',
-      tenantId: TEST_TENANT_ID,
-      userId: 'u-1',
+      modelName: 'claude-haiku-4-5',
     });
 
     // 既存タグ + 新 auto タグの union が保存される
@@ -464,16 +519,16 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       processTags: ['old-pr'],
     } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
-    vi.mocked(extractAutoTags).mockResolvedValueOnce({
-      ok: true,
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
       tags: {
         businessDomainTags: ['AUTO-BD'],
         techStackTags: [],
         processTags: [],
       },
-      costJpy: 0,
-      requestId: 'req-1',
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
     });
+    mockMeteredLLMSuccessRunCallback();
 
     await updateProject(
       'p-1',
@@ -493,7 +548,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(call.data.processTags).toEqual(['old-pr']);
   });
 
-  it('updateProject: text 更新 + extractAutoTags 失敗時、user 提供のみで更新 (fail-safe)', async () => {
+  it('updateProject: text 更新 + LLM 縮退時、user 提供のみで更新 (fail-safe)', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'old',
       background: 'old',
@@ -503,7 +558,8 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       processTags: [],
     } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
-    vi.mocked(extractAutoTags).mockResolvedValueOnce({
+    // withMeteredLLM 既定 mock = rate_limited / degraded
+    vi.mocked(withMeteredLLM).mockResolvedValueOnce({
       ok: false,
       reason: 'budget_exceeded',
       message: 'budget',
@@ -536,23 +592,27 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       updateProject('p-missing', { purpose: 'NEW' }, 'u-1', TEST_TENANT_ID),
     ).rejects.toThrow('NOT_FOUND');
 
-    expect(extractAutoTags).not.toHaveBeenCalled();
+    expect(withMeteredLLM).not.toHaveBeenCalled();
     // findFirst で先に弾くため update は呼ばれない
     expect(prisma.project.update).not.toHaveBeenCalled();
   });
 
   // ========================================================
-  // PR #5 (T-03 Phase 2): embedding 生成フックの統合テスト
+  // (2026-05-15) auto-tag + embedding を 1 ApiCallLog に集約する統合テスト
   // ========================================================
 
-  it('createProject: embedding 生成成功時、persistEmbedding が呼ばれる', async () => {
+  it('createProject: LLM 成功時、voyageEmbed + persistEmbedding が呼ばれる', async () => {
     vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
-    vi.mocked(generateEmbedding).mockResolvedValueOnce({
-      ok: true,
-      embedding: new Array(1024).fill(0.5),
-      costJpy: 0,
-      requestId: 'req-emb-1',
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
+      tags: { businessDomainTags: [], techStackTags: [], processTags: [] },
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
     });
+    vi.mocked(voyageEmbed).mockResolvedValueOnce({
+      embeddings: [new Array(1024).fill(0.5)],
+      totalTokens: 20,
+    });
+    mockMeteredLLMSuccessRunCallback();
 
     await createProject(
       {
@@ -569,16 +629,14 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    // generateEmbedding が project-embedding featureUnit で呼ばれる
-    expect(generateEmbedding).toHaveBeenCalledTimes(1);
-    const embedCall = vi.mocked(generateEmbedding).mock.calls[0]![0];
-    expect(embedCall.featureUnit).toBe('project-embedding');
-    expect(embedCall.tenantId).toBe(TEST_TENANT_ID);
-    expect(embedCall.userId).toBe('u-1');
-    // text は purpose + background + scope を改行結合
-    expect(embedCall.text).toContain('EC サイト構築');
-    expect(embedCall.text).toContain('既存システムの刷新');
-    expect(embedCall.text).toContain('フロント + 管理画面');
+    // (2026-05-15) auto-tag + embedding は 1 度の withMeteredLLM 内で実施 → ApiCallLog 1 件相当
+    expect(withMeteredLLM).toHaveBeenCalledTimes(1);
+    // voyageEmbed は purpose/background/scope を改行結合した text で呼ばれる
+    expect(voyageEmbed).toHaveBeenCalledTimes(1);
+    const voyageCall = vi.mocked(voyageEmbed).mock.calls[0]![0];
+    expect(voyageCall.texts[0]).toContain('EC サイト構築');
+    expect(voyageCall.texts[0]).toContain('既存システムの刷新');
+    expect(voyageCall.texts[0]).toContain('フロント + 管理画面');
 
     // 成功時は persistEmbedding が呼ばれる
     expect(persistEmbedding).toHaveBeenCalledTimes(1);
@@ -590,13 +648,9 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     );
   });
 
-  it('createProject: embedding 生成失敗時 (rate_limited 等) は recordError + 本体続行 (fail-safe)', async () => {
+  it('createProject: LLM 縮退時 (rate_limited 等) は recordError + 本体続行 (fail-safe)', async () => {
     vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
-    vi.mocked(generateEmbedding).mockResolvedValueOnce({
-      ok: false,
-      reason: 'rate_limited',
-      message: 'rate',
-    });
+    // withMeteredLLM 既定 mock = rate_limited
 
     await createProject(
       {
@@ -613,7 +667,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    // persistEmbedding は呼ばれない
+    // 縮退時は persistEmbedding は呼ばれない
     expect(persistEmbedding).not.toHaveBeenCalled();
     // 失敗ログが warn 重要度で記録される
     expect(recordError).toHaveBeenCalledWith(
@@ -621,8 +675,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
         severity: 'warn',
         source: 'server',
         context: expect.objectContaining({
-          kind: 'project_embedding_failure',
-          projectId: 'p-1',
+          kind: 'project_upsert_llm_failure',
           reason: 'rate_limited',
         }),
       }),
@@ -631,8 +684,14 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(prisma.project.create).toHaveBeenCalled();
   });
 
-  it('createProject: text が全て空文字なら embedding 呼び出しなし (LLM 課金回避)', async () => {
+  it('createProject: text が全て空文字なら voyageEmbed / persistEmbedding は呼ばれない (auto-tag のみ実行)', async () => {
     vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
+      tags: { businessDomainTags: [], techStackTags: [], processTags: [] },
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
+    });
+    mockMeteredLLMSuccessRunCallback();
 
     await createProject(
       {
@@ -649,19 +708,24 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    expect(generateEmbedding).not.toHaveBeenCalled();
+    // (2026-05-15) text 空 → embedding 側はスキップ、auto-tag だけ実行
+    expect(voyageEmbed).not.toHaveBeenCalled();
     expect(persistEmbedding).not.toHaveBeenCalled();
   });
 
   it('createProject: persistEmbedding が throw しても本体作成は成功 (recordError + 続行)', async () => {
     vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
-    vi.mocked(generateEmbedding).mockResolvedValueOnce({
-      ok: true,
-      embedding: new Array(1024).fill(0.1),
-      costJpy: 0,
-      requestId: 'req-emb-1',
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
+      tags: { businessDomainTags: [], techStackTags: [], processTags: [] },
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
+    });
+    vi.mocked(voyageEmbed).mockResolvedValueOnce({
+      embeddings: [new Array(1024).fill(0.1)],
+      totalTokens: 10,
     });
     vi.mocked(persistEmbedding).mockRejectedValueOnce(new Error('DB connection lost'));
+    mockMeteredLLMSuccessRunCallback();
 
     // 本体は throw せず通常通り完了
     await expect(
@@ -691,7 +755,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     );
   });
 
-  it('updateProject: text 変更なしなら embedding 呼び出しなし (LLM 課金回避)', async () => {
+  it('updateProject: text 変更なしなら voyageEmbed / persistEmbedding 呼出なし (LLM 課金回避)', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'p',
       background: 'b',
@@ -704,11 +768,12 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
 
     await updateProject('p-1', { name: 'new name' }, 'u-1', TEST_TENANT_ID);
 
-    expect(generateEmbedding).not.toHaveBeenCalled();
+    expect(withMeteredLLM).not.toHaveBeenCalled();
+    expect(voyageEmbed).not.toHaveBeenCalled();
     expect(persistEmbedding).not.toHaveBeenCalled();
   });
 
-  it('updateProject: text 変更時、embedding を再生成 + persist する', async () => {
+  it('updateProject: text 変更時、voyageEmbed + persistEmbedding が呼ばれる', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       purpose: 'old',
       background: 'old bg',
@@ -718,12 +783,16 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       processTags: [],
     } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
-    vi.mocked(generateEmbedding).mockResolvedValueOnce({
-      ok: true,
-      embedding: new Array(1024).fill(0.7),
-      costJpy: 0,
-      requestId: 'req-emb-update',
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
+      tags: { businessDomainTags: [], techStackTags: [], processTags: [] },
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
     });
+    vi.mocked(voyageEmbed).mockResolvedValueOnce({
+      embeddings: [new Array(1024).fill(0.7)],
+      totalTokens: 20,
+    });
+    mockMeteredLLMSuccessRunCallback();
 
     await updateProject(
       'p-1',
@@ -732,12 +801,12 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    // generateEmbedding に新しい purpose + 現行 background/scope が渡される
-    expect(generateEmbedding).toHaveBeenCalled();
-    const embedCall = vi.mocked(generateEmbedding).mock.calls[0]![0];
-    expect(embedCall.text).toContain('NEW PURPOSE');
-    expect(embedCall.text).toContain('old bg');
-    expect(embedCall.text).toContain('old sc');
+    // voyageEmbed に新しい purpose + 現行 background/scope が渡される
+    expect(voyageEmbed).toHaveBeenCalled();
+    const voyageCall = vi.mocked(voyageEmbed).mock.calls[0]![0];
+    expect(voyageCall.texts[0]).toContain('NEW PURPOSE');
+    expect(voyageCall.texts[0]).toContain('old bg');
+    expect(voyageCall.texts[0]).toContain('old sc');
 
     // persistEmbedding が当該 projectId + tenantId で呼ばれる
     expect(persistEmbedding).toHaveBeenCalledWith(
@@ -746,6 +815,35 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
       expect.arrayContaining([0.7]),
     );
+  });
+
+  it('(2026-05-15) createProject: 1 業務操作で withMeteredLLM ラップは 1 度だけ (ApiCallLog 1 件相当)', async () => {
+    // 旧仕様 (auto-tag-extract + project-embedding 各別ラップ) では 2 度呼ばれていた。
+    // 新仕様 (extractTagsAndEmbedForProject) では 1 度のみで auto-tag + embedding を統合。
+    vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+    vi.mocked(callAnthropicForAutoTagsInner).mockResolvedValueOnce({
+      tags: { businessDomainTags: [], techStackTags: [], processTags: [] },
+      llmInputTokens: 1,
+      llmOutputTokens: 1,
+    });
+    mockMeteredLLMSuccessRunCallback();
+
+    await createProject(
+      {
+        name: 'x',
+        customerId: 'cust-1',
+        purpose: 'P',
+        background: 'B',
+        scope: 'S',
+        devMethod: 'waterfall',
+        plannedStartDate: '2026-04-01',
+        plannedEndDate: '2026-12-31',
+      },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+
+    expect(withMeteredLLM).toHaveBeenCalledTimes(1);
   });
 
   it('deleteProject: deletedAt セット (論理削除)', async () => {

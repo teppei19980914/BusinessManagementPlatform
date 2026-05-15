@@ -9137,3 +9137,108 @@ README の「ファイル一覧テーブル」を以下のいずれかに置換:
 - PR #373 (CHAT_SEMANTIC_SEARCH): 先発 docs PR
 - PR #374 (STRIPE_BILLING): 後発 docs PR、本 conflict の発生源
 
+## 5.X+60 **「1 業務操作 = 1 ApiCallLog」ルールが新規エンティティ作成で抜けやすい — プロジェクト作成で 2 件発生し Beginner 上限が実質半分で枯渇 (2026-05-15)**
+
+### 罠の正体
+
+新しいエンティティの作成・更新フローを実装するとき、自動タグ抽出 (Anthropic) と embedding 生成 (Voyage) を **それぞれ独立して `withMeteredLLM` でラップしてしまう** 罠。
+
+`createProject` の旧実装:
+```typescript
+const autoTagResult = await extractAutoTags({...});  // withMeteredLLM (#1)
+const project = await prisma.project.create({...});
+await generateAndPersistProjectEmbedding(...);        // withMeteredLLM (#2)
+```
+
+結果:
+- ApiCallLog に **2 件** レコードが作られる
+- `Tenant.currentMonthApiCallCount` が **+2** される
+- `costJpy` も **2 回分** 課金される (Expert ¥20 / Pro ¥60 が、ユーザ視点では「1 操作 ¥20 / ¥60」と認識される)
+- Beginner プラン月 100 回上限が **実質 50 件** で枯渇する (= ユーザ仕様の半分)
+
+memory に保存していた **「Bulk な LLM 操作は『1 業務操作 = 1 ApiCallLog』に集約する」ルール** (PR #357 で外部 import 経路に適用済) が、平時 CRUD のプロジェクト作成では未適用だった事実が、課金体系フルスキャンで発覚した。
+
+### なぜ発生するか
+
+- `withMeteredLLM` は「LLM 呼出 1 回 = ApiCallLog 1 件」という素朴な対応で実装されており、デフォルトでは「業務操作 1 回 = ApiCallLog 1 件」を強制しない
+- サービス層で 2 種類の外部 API (Anthropic / Voyage) を逐次呼ぶ自然な実装が、自動的に 2 件の ApiCallLog を生み出す
+- Voyage 専用 `generateBatchEmbeddings` のようなバッチ集約は import 経路でのみ整備されており、平時の create/update では非適用
+- 課金根拠データ (ApiCallLog) は法的に重要だが、テナント月間カウンタとは独立した数字なので、UI 表示・テスト・ドキュメント整合の確認が後手に回りやすい
+
+### 推奨対応 (横展開チェック)
+
+新規エンティティの作成・更新フローを書く・レビューする際は以下を自問する:
+
+1. **複数の外部 API を呼んでいるか?** (Anthropic + Voyage 等)
+2. それぞれが独立して `withMeteredLLM` を呼んでいないか?
+3. 呼んでいる場合、ユーザ視点で 1 業務操作なら **1 度の `withMeteredLLM` ラップ内で全 API を実行** する設計にできないか?
+4. 内部 API のどれかが失敗してももう一方が成功すれば「業務として成功」扱いで課金する設計か?
+5. 全 inner API が失敗した場合は `throw` で `withMeteredLLM` の `llm_error` 経路に乗せ、課金させない設計か?
+
+実装パターン (`extractTagsAndEmbedForProject` / `generateBatchEmbeddings` 参照):
+
+```typescript
+const result = await withMeteredLLM({...}, async ({modelName, requestId}) => {
+  let opSucceededCount = 0;
+  try { /* Anthropic 呼出 */; opSucceededCount++; } catch { /* log */ }
+  try { /* Voyage 呼出 */;    opSucceededCount++; } catch { /* log */ }
+  if (opSucceededCount === 0) throw new Error('all inner ops failed');  // 課金なし
+  return { result, usage: { ...合算 }, requestId };
+});
+```
+
+### 本 PR での対処
+
+- `extractTagsAndEmbedForProject()` を [src/services/project.service.ts](../../src/services/project.service.ts) に新設し、`featureUnit='project-upsert'` で 1 度だけ `withMeteredLLM` をラップする実装に集約
+- `createProject` / `updateProject` 両方で旧 `extractAutoTags` + `generateAndPersistProjectEmbedding` の二重ラップを廃止
+- 旧 featureUnit (`auto-tag-extract` / `project-embedding`) は backfill 経路の互換のため metered.ts では受理を残す
+- 仕様書 [docs/business/TENANT_AND_BILLING.md §34.14.2](../business/TENANT_AND_BILLING.md) で「プロジェクト作成 = 1 回」を明文化
+- 単体テスト追加 ([src/services/project.service.test.ts](../../src/services/project.service.test.ts)): `withMeteredLLM.toHaveBeenCalledTimes(1)` で 1 件集約を assert
+
+### 関連
+
+- memory: `feedback_bulk_llm_call_unit.md` (PR #357 で外部 import に適用された同ルール)
+- PR #357 (2026-05-14): `generateBatchEmbeddings` で外部 import の bulk 集約を実装
+- 本 PR (2026-05-15): 平時 CRUD (プロジェクト作成・更新) に同ルールを横展開
+
+## 5.X+61 **「公開範囲: 自分のみ」の DB 表現が資産種別ごとに違う — Knowledge/RiskIssue/Retrospective は 'draft'、Memo は 'private' (2026-05-15)**
+
+### 罠の正体
+
+「公開範囲: 自分のみ」と「公開範囲: 全メンバー」というユーザ向け概念は、DB スキーマ上ではエンティティ種別ごとに異なる文字列で表現されている:
+
+| エンティティ | 「自分のみ」 | 「全メンバー」 |
+|---|---|---|
+| Knowledge | `visibility='draft'` | `visibility='public'` |
+| RiskIssue | `visibility='draft'` | `visibility='public'` |
+| Retrospective | `visibility='draft'` | `visibility='public'` |
+| **Memo** | **`visibility='private'`** (← 異なる!) | `visibility='public'` |
+
+embedding 生成の skip 条件 / 提案エンジンのスコープ条件を実装するとき、`visibility !== 'draft'` という条件で全資産を統一的に書くと **Memo だけ意図と逆の挙動になる** (Memo の private がスキップされず、Memo の draft が誤ってマッチする)。
+
+### なぜ発生するか
+
+- Memo は PR #70 で「タグを持たない個人ノート」として後発で追加され、Schema は他資産に揃えずに `private`/`public` の独自値を採用
+- `Memo` モデル定義 (`prisma/schema.prisma`) の `visibility @default("private")` が Knowledge/RiskIssue/Retrospective の `@default("draft")` と異なる
+- 「自分のみ = draft」と覚えていると、Memo を追加するときに無意識に同じ条件を書いてしまう
+
+### 推奨対応 (横展開チェック)
+
+エンティティ種別を跨いで visibility による条件分岐を書くときは:
+
+1. 対象エンティティの schema.prisma 定義を **確認してから** 条件式を書く
+2. 「公開範囲: 自分のみ」相当の文字列が複数ある場合、定数化 or `visibility !== 'public'` のような **「公開しているもの以外」反転条件** で書く
+3. テストで visibility 別の API 呼出有無を必ず両方検証する (draft / private / public / その他)
+
+### 本 PR での対処
+
+- Memo の `createMemo` / `updateMemo` では `visibility !== 'private'` を embedding 生成の判定軸に採用
+- 月初 backfill cron ([src/services/embedding-backfill.service.ts](../../src/services/embedding-backfill.service.ts)) では Memo は `visibility = 'public'` でフィルタ (= 他資産は `visibility <> 'draft'`)
+- 仕様書 ([docs/business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md)) に「Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`」を併記
+
+### 関連
+
+- memory: `feedback_visibility_embedding.md` (visibility='draft' のエンティティには embedding 生成しない)
+- prisma/schema.prisma: `Memo.visibility @default("private")` (line 1165)
+- prisma/schema.prisma: `Knowledge.visibility` / `RiskIssue.visibility` / `Retrospective.visibility` は `@default("draft")`
+

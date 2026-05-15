@@ -7,10 +7,38 @@
  *   - visibility='public': 全ログインユーザが「全メモ」画面で閲覧可
  *   - 編集/削除は常に作成者本人のみ (admin 特権なし)
  *   - タグは持たせない (業務知見判断は人間ベース、PR #70 要件)
+ *
+ * 2026-05-15:
+ *   - 他資産 (Knowledge / RiskIssue / Retrospective) と同様に embedding 生成 + 提案エンジン
+ *     候補化に対応 (本サービスでは memo-embedding featureUnit で課金カウント)。
+ *   - 「公開範囲: 自分のみ」(visibility='private') は提案エンジン対象外のため embedding
+ *     生成しない (Voyage API 課金回避)。Knowledge の draft 等価ロジック。
+ *   - 「公開範囲: 全メンバー」(visibility='public') かつ embedding 対象項目 (title / content)
+ *     変更時のみ embedding を生成 / 再生成する。
  */
 
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
 import type { CreateMemoInput, UpdateMemoInput } from '@/lib/validators/memo';
+
+/**
+ * (2026-05-15) Memo の embedding 用 text 合成 helper。
+ *
+ * 意味検索の質を高めるため、Memo の主要な意味を担う text フィールドを改行結合して
+ * Voyage AI に渡す。Memo は title + content のシンプルな構造で、提案エンジンでは
+ * 「title が要旨」「content が詳細」として両方を意味比較に投入する。
+ *
+ * 月初 backfill バッチ (embedding-backfill.service.ts) からも参照されるため export する。
+ */
+export function composeMemoText(fields: {
+  title: string;
+  content: string;
+}): string {
+  return [fields.title, fields.content]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join('\n\n');
+}
 
 export type MemoDTO = {
   id: string;
@@ -118,21 +146,44 @@ export async function createMemo(
   tenantId: string,
 ): Promise<MemoDTO> {
   // 2026-05-09 feedback Phase 2-4: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
+  const visibility = input.visibility ?? 'private';
   const created = await prisma.memo.create({
     data: {
       tenantId,
       userId,
       title: input.title,
       content: input.content,
-      visibility: input.visibility ?? 'private',
+      visibility,
     },
     include: { author: { select: { name: true } } },
   });
+
+  // (2026-05-15) 公開範囲='全メンバー' のときのみ embedding を生成 + 保存。
+  //   公開範囲='自分のみ' (private) は提案エンジン対象外 → Voyage API 課金回避。
+  //   失敗時はサイレントにスキップ (本体保存は成功、月初 backfill cron で補完)。
+  if (visibility === 'public') {
+    await generateAndPersistEntityEmbedding({
+      table: 'memos',
+      rowId: created.id,
+      tenantId,
+      userId,
+      text: composeMemoText({ title: input.title, content: input.content }),
+      featureUnit: 'memo-embedding',
+    });
+  }
+
   return toDTO(created, userId);
 }
 
 /**
  * 更新 (作成者のみ)。呼び出し側で認可済み前提だが、二重防御として userId 一致を確認。
+ *
+ * 2026-05-15: 他資産と同様に embedding を生成 / 再生成する。判定マトリクス:
+ *   - 新 visibility = private          → 生成しない (= API 呼出なし、課金なし)
+ *   - private → public                 → 生成 (初回 embedding 化)
+ *   - public → public + text 変更       → 再生成
+ *   - public → public + text 変更なし   → 生成しない (LLM 課金回避)
+ *   - public → private                 → 生成しない (既存 embedding は保持)
  */
 export async function updateMemo(
   memoId: string,
@@ -142,9 +193,10 @@ export async function updateMemo(
 ): Promise<MemoDTO | null> {
   // 2026-05-09 feedback Phase 2-4: 越境編集を遮断するため where に tenantId 必須化。
   // 2026-05-11: visibility 連動の title 必須チェックのため title も取得 (defense-in-depth)。
+  // 2026-05-15: embedding 再生成判定のため content と visibility も取得。
   const existing = await prisma.memo.findFirst({
     where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
-    select: { userId: true, title: true },
+    select: { userId: true, title: true, content: true, visibility: true },
   });
   if (!existing) return null;
   if (existing.userId !== userId) return null; // 他人のメモは編集不可
@@ -160,6 +212,12 @@ export async function updateMemo(
     }
   }
 
+  // 2026-05-15: text フィールドが「実値として変わったか」を比較で判定。
+  //   未指定 (undefined) または既存値と同一なら trigger しない (LLM 課金回避)。
+  const textFieldsChanging =
+    (input.title !== undefined && input.title !== existing.title) ||
+    (input.content !== undefined && input.content !== existing.content);
+
   const updated = await prisma.memo.update({
     where: { id: memoId },
     data: {
@@ -169,6 +227,30 @@ export async function updateMemo(
     },
     include: { author: { select: { name: true } } },
   });
+
+  // (2026-05-15) embedding 生成判定マトリクス。Knowledge/RiskIssue/Retrospective と同設計:
+  //   - 新 visibility が private (= draft 等価)     → 生成しない
+  //   - private → public                            → 生成 (初回)
+  //   - public → public                            → text 変更時のみ生成
+  //   - public → private                            → 生成しない
+  const wasPrivate = existing.visibility === 'private';
+  const willBePrivate = (input.visibility ?? existing.visibility) === 'private';
+  const becamePublic = wasPrivate && !willBePrivate;
+  const stayedPublic = !wasPrivate && !willBePrivate;
+  const shouldGenerateEmbedding =
+    !willBePrivate && (becamePublic || (stayedPublic && textFieldsChanging));
+
+  if (shouldGenerateEmbedding) {
+    await generateAndPersistEntityEmbedding({
+      table: 'memos',
+      rowId: memoId,
+      tenantId: viewerTenantId,
+      userId,
+      text: composeMemoText({ title: updated.title, content: updated.content }),
+      featureUnit: 'memo-embedding',
+    });
+  }
+
   return toDTO(updated, userId);
 }
 
