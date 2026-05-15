@@ -507,11 +507,12 @@ describe('applyImport', () => {
     tx.tenantImportPreview.delete.mockResolvedValue({} as never);
 
     // PR #357 (2026-05-14): バッチ helper は 1 件処理して 1 ApiCallLog 単価分を返す
+    // 2026-05-15 価格改定: Expert ¥10 → ¥5
     const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
     vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
       generated: 1,
       failed: 0,
-      costJpy: 10,
+      costJpy: 5,
     });
 
     const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
@@ -520,7 +521,7 @@ describe('applyImport', () => {
       expect(r.summary.knowledgeCreated).toBe(1);
       expect(r.summary.risksIssuesCreated).toBe(0);
       expect(r.summary.embeddingGenerated).toBe(1);
-      expect(r.summary.totalCostJpy).toBe(10); // ¥10 × 1 ApiCallLog
+      expect(r.summary.totalCostJpy).toBe(5); // ¥5 × 1 ApiCallLog (2026-05-15 価格改定後)
     }
     // PR #357 中核: N 件取込でも generateAndPersistBatchEmbeddings は **1 度だけ呼ばれる**
     //   (= ApiCallLog 1 件 = Tenant counter +1 = 画面表示 +1 のユーザ要件を満たす)

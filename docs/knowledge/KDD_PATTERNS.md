@@ -8897,9 +8897,9 @@ if (isUpgrade(currentPlan, nextPlan)) { 即時 } else { 翌月予約 }
 
 を **Expert↔Pro にも適用してしまった** こと。しかし:
 
-- 課金モデルは **per-call 従量課金** (Expert ¥10/call / Pro ¥30/call、`withMeteredLLM` が呼出時点の plan で単価を確定)
+- 課金モデルは **per-call 従量課金** (Expert ¥5/call / Pro ¥15/call、2026-05-15 改定後。`withMeteredLLM` が呼出時点の plan で単価を確定)
 - 「月途中でダウングレードして当月分 0 円化」は **Beginner (¥0 / 月 100 回上限) への退避だけが該当**
-- Expert↔Pro 間は per-call 課金のため、月途中の切替でも当月分は ¥30/call + ¥10/call の混在で正しく課金記録される → 悪用が成立しない
+- Expert↔Pro 間は per-call 課金のため、月途中の切替でも当月分は新旧単価の混在で正しく課金記録される → 悪用が成立しない
 
 → §NF-13.15 の射程は **Beginner ダウングレードのみ**。Expert↔Pro に適用したのは過剰防衛だった。
 

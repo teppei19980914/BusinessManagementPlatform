@@ -34,7 +34,7 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
 
 **第 3 境界: Voyage embedding 大量生成経路 (Phase 1 apply 段階)**
 - 入口: `POST /api/tenants/me/external-import/apply` (確定後の Voyage 呼出)
-- 出口: Voyage AI API (1 ファイル × 5,000 行 × ¥10-30/call)
+- 出口: Voyage AI API (1 ファイル × 5,000 行 × ¥5-15/call、2026-05-15 改定後)
 - リスク: ファイル巨大化 / Beginner 上限回避 / 予算上限回避によるコスト爆発
 
 ---

@@ -175,11 +175,11 @@ export function HelpClient({ isTenantAdmin }: Props) {
                       上限到達で <strong>縮退モード</strong> (エンティティ作成・更新は継続、AI 裏方処理のみ一時停止)。
                     </li>
                     <li>
-                      <strong>Expert (¥10/回)</strong>: 席数無制限・Claude Haiku・月間使用量上限なし
+                      <strong>Expert (¥5/回)</strong>: 席数無制限・Claude Haiku・月間使用量上限なし
                       (予算上限は自己設定可)。
                     </li>
                     <li>
-                      <strong>Pro (¥30/回)</strong>: 席数無制限・Claude Sonnet・AI 説明文付き提案。
+                      <strong>Pro (¥15/回)</strong>: 席数無制限・Claude Sonnet・AI 説明文付き提案。
                     </li>
                   </ul>
                   <p className="mt-2 text-muted-foreground">
@@ -240,7 +240,7 @@ export function HelpClient({ isTenantAdmin }: Props) {
 
           {/* 生成 AI の仕組み (admin 限定、難しい言葉を避けた説明)
               2026-05-13: 「中学生でも分かる」表現に書き直し。実装ベースで embedding も課金対象として記載
-              (resolveCostForPlan は plan 単価をそのまま返すため、Voyage 呼出も Expert ¥10 / Pro ¥30 が加算される)。 */}
+              (resolveCostForPlan は plan 単価をそのまま返すため、Voyage 呼出も Expert ¥5 / Pro ¥15 が加算される。2026-05-15 価格改定後)。 */}
           <section className="rounded-lg border bg-card p-5">
             <h2 className="text-lg font-semibold">生成 AI の仕組みと注意事項 (テナント管理者向け)</h2>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -345,8 +345,8 @@ export function HelpClient({ isTenantAdmin }: Props) {
                       <tr>
                         <td className="border-b p-2 align-top">1 回あたりの料金</td>
                         <td className="border-b p-2 align-top">無料 (月 100 回まで)</td>
-                        <td className="border-b p-2 align-top">¥10 / 回</td>
-                        <td className="border-b p-2 align-top">¥30 / 回</td>
+                        <td className="border-b p-2 align-top">¥5 / 回</td>
+                        <td className="border-b p-2 align-top">¥15 / 回</td>
                       </tr>
                       <tr>
                         <td className="border-b p-2 align-top">タグの自動付け で使う AI</td>

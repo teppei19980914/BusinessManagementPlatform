@@ -177,7 +177,7 @@ GET /api/admin/usage-summary?date=2026-06-01
 
 | 系統 | 計測対象 | 単価 | 反映タイミング | 反映先 |
 |---|---|---|---|---|
-| **内部請求 (本サービス)** | `withMeteredLLM` 越しの呼び出し回数 | プラン別固定単価 (Beginner ¥0 / Expert ¥10/call / Pro ¥30/call) | 呼び出し成功直後にアトミック increment | `Tenant.currentMonthApiCostJpy` + `ApiCallLog` |
+| **内部請求 (本サービス)** | `withMeteredLLM` 越しの呼び出し回数 | プラン別固定単価 (Beginner ¥0 / **Expert ¥5/call** / **Pro ¥15/call**、2026-05-15 改定後) | 呼び出し成功直後にアトミック increment | `Tenant.currentMonthApiCostJpy` + `ApiCallLog` |
 | **Anthropic 課金** | API key で発生した実トークン消費 | Anthropic 公式単価 (input/output トークン課金) | Anthropic 側で集計 | Anthropic Console |
 
 つまり「Anthropic クレジットが減らない」と感じる場合は **Anthropic API key が正しく設定されているか / call が実際に発火しているか** を確認する。観測ポイント:

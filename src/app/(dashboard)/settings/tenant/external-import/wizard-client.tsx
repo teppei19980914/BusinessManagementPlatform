@@ -662,7 +662,7 @@ function Step3Preview(props: {
           ) : (
             <>
               <p>
-                プラン: {costEstimate.plan === 'pro' ? 'Pro (¥30/call)' : 'Expert (¥10/call)'}
+                プラン: {costEstimate.plan === 'pro' ? 'Pro (¥15/call)' : 'Expert (¥5/call)'}
                 <br />
                 <strong>本インポート見積: ¥{costEstimate.estimatedJpy.toLocaleString()}</strong>
               </p>

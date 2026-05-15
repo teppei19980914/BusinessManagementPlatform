@@ -34,8 +34,8 @@ datasource db {
 //
 // 課金モデル (per-API-call、3 プラン構成):
 //   - Beginner: 月間 100 回上限・最大 5 席・無料・Claude Haiku
-//   - Expert:   無制限従量課金 (¥10/call)・Claude Haiku
-//   - Pro:      無制限従量課金 (¥30/call)・Claude Sonnet
+//   - Expert:   無制限従量課金 (¥5/call、2026-05-15 改定: ¥10 → ¥5)・Claude Haiku
+//   - Pro:      無制限従量課金 (¥15/call、2026-05-15 改定: ¥30 → ¥15)・Claude Sonnet
 //
 // 月初リセット: Vercel Cron が `lastResetAt < 当月初` のテナントの
 // `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセット。

@@ -8,14 +8,14 @@
  * 検証シナリオ (M1 → M2 → M3):
  *   - M1: Beginner プランで API 呼出 30 回 → ¥0 (Beginner は無料)
  *   - M1 後半: Beginner → Expert アップグレード (即時反映、beginnerEverUpgraded=true)
- *   - M1 後半: Expert で API 呼出 5 回 → ¥50 (¥10/call × 5)
+ *   - M1 後半: Expert で API 呼出 5 回 → ¥25 (¥5/call × 5、2026-05-15 改定後)
  *   - M2 月初 cron:
- *       - snapshot に M1 最終状態 (35 回, ¥50, plan=expert) が保存される
+ *       - snapshot に M1 最終状態 (35 回, ¥25, plan=expert) が保存される
  *       - currentMonth* カウンタが 0 にリセットされる
  *   - M2 中: Expert → Pro アップグレード (即時反映)
  *   - M2 中: Pro → Expert ダウングレード (**即時反映 / 2026-05-14 改修**)
  *     - 旧仕様では「翌月予約 + M3 cron 適用」だったが、業務仕様書 §F-13.11 と整合させ即時化。
- *     - 切替後の Expert 単価 ¥10/call で従量課金が継続することを検証。
+ *     - 切替後の Expert 単価 ¥5/call で従量課金が継続することを検証 (2026-05-15 改定後)。
  *   - M2 中の補足検証: P-B (Beginner downgrade 禁止) で Beginner への変更が拒否される
  *   - M3 月初 cron:
  *       - snapshot 保存 + カウンタリセットは継続。
