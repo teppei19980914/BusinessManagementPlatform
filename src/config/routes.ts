@@ -26,6 +26,11 @@ export const PUBLIC_PATHS = [
   // Authorization: Bearer <CRON_SECRET> で実行される。middleware のセッション検査は
   // 通過させ、route.ts 側で CRON_SECRET 検証 + admin 認証を行う。
   '/api/admin/users/lock-inactive',
+  // PR-S4 (2026-05-14): Stripe Webhook (= 外部から Stripe が POST)。
+  // Cookie 認証ではなく Stripe signature 検証が唯一の認可なので、middleware は通過させ
+  // route.ts 側で `stripe.webhooks.constructEvent()` で署名検証を行う。
+  // 詳細: docs/design/STRIPE_TECHNICAL_DESIGN.md §B-2 / docs/business/STRIPE_BILLING.md §7.1
+  '/api/webhooks/stripe',
 ] as const;
 
 /**

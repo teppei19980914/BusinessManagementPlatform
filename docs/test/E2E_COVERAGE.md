@@ -199,6 +199,13 @@
 - [x] `/api/cron/cleanup-accounts` — **削除済 (PR #115)**。`/api/admin/users/lock-inactive` (旧名 cleanup-inactive) に一本化
 - [ ] `/api/client-errors` — skip: クライアント error boundary 経由の log 送信エンドポイント (PR #115)。ログ送信の失敗はユーザ操作に影響しない (silent fail) 設計で、E2E で再現させる value が低い。単体テストで schema validation + DB 書込を担保
 
+### Stripe 連携 (PR-S2 / PR-S3 / PR-S4 / 2026-05-14, feature flag STRIPE_ENABLED=false で当面無効)
+- [ ] `/api/tenants/me/billing/stripe/setup` (POST) — skip: Stripe Test Mode との結合テスト必須、v2 で検討 (PR-S3)。単体テストで認可 + Stripe SDK モック網羅
+- [ ] `/api/tenants/me/billing/stripe/setup/complete` (GET, redirect handler) — skip: Stripe Checkout を経由した戻り URL ハンドラ、v2 で検討 (PR-S3)。単体テストでサニタイズ + Phase 1-4 ロジック網羅
+- [ ] `/api/tenants/me/billing/stripe/portal` (POST) — skip: Stripe Customer Portal リダイレクト経路、v2 で検討 (PR-S3)。単体テストで Customer 未登録時 + 認可を網羅
+- [ ] `/api/tenants/me/billing/stripe/verify` (POST) — skip: Stripe SetupIntent ベースのカード検証、v2 で検討 (PR-S3)。単体テストで verifyTenantCard を網羅
+- [ ] `/api/webhooks/stripe` (POST) — skip: Stripe からの外部 POST 受信のため E2E から起動できない (PR-S4)。**Stripe signature 検証が唯一の認可** (Cookie 認証を通さず PUBLIC_PATHS 経由)。単体テストで 503/400/200/500 + 冪等性 + retryCount + 全 event type ハンドラを網羅
+
 ---
 
 ## ★テナント分離 / 提案エンジン (severity-1 リグレッション防止) — PR feat/tenant-isolation-comprehensive-tests で追加 (2026-05-10)
