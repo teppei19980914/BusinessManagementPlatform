@@ -16,7 +16,18 @@
 請求サイクル: **月末締め + 翌月15日請求書発行 + 翌月25日支払**
 ([PAYMENT_TERMS.md §1.1](../business/PAYMENT_TERMS.md#11-請求サイクル-2026-05-14-確定-月末締め--翌月15日請求書発行--翌月25日支払))
 
-### 実施タイミング
+### 適用テナントの分岐 (2026-05-14 追記 / Stripe 連携 v1.x で導入予定)
+
+`Tenant.paymentMethod` の値ごとに本 §0 の適用範囲が異なる:
+
+| paymentMethod | §0 の適用 | 入金検知 | 滞納時の自動 suspend |
+|---|---|---|---|
+| `invoice` / `bank_transfer` | ✅ 全手順を実施 | super_admin が銀行口座を手動確認 | super_admin が PR #372 の UI で手動実行 |
+| `credit_card` (v1.x で実装) | ❌ 不要 | Stripe Webhook `invoice.paid` で自動消込 | Stripe Smart Retries 全失敗 + 3 日後に自動実行 ([STRIPE_BILLING.md §4.3](../business/STRIPE_BILLING.md)) |
+
+以下の手順は **`invoice` / `bank_transfer` テナントのみ** が対象。credit_card テナントは Stripe Webhook で完全自動化される ([詳細: STRIPE_BILLING.md](../business/STRIPE_BILLING.md))。
+
+### 実施タイミング (invoice / bank_transfer 限定)
 
 | 期間 | 作業内容 | 頻度 |
 |---|---|---|
@@ -27,11 +38,11 @@
 - 6/16〜6/25: 入金消込期間
 - 6/26 朝: 未入金検知 → 滞納テナントは §1 へ
 
-### 手順
+### 手順 (invoice / bank_transfer 限定)
 
 1. **銀行口座を確認**:
    - 銀行口座 (法人ネットバンキング) → 振込履歴を当月分チェック
-   - Stripe Dashboard (現状未連携。連携完了後に追記)
+   - Stripe Dashboard (v1.x で credit_card テナントの引落状況を確認、自動消込済のため監視のみ)
 2. **テナント別の入金消込**:
    - 別途運用シート (Google Sheets 等) で「請求書 No. / 顧客 / 期日 / 金額 / 入金日」を管理
    - 入金確認できた請求書に「✅ 消込済」を記録
@@ -39,7 +50,11 @@
    - 支払期限 (前月分なら当月25日) を過ぎているのに入金確認できていないものを特定 → §1 へ
    - フェーズ判定の経過日数は **「支払期限 (= 翌月25日) からの経過日数」** で計算する
 
-> Stripe Metered Billing 連携 ([../business/TENANT_AND_BILLING.md §34.14.8](../business/TENANT_AND_BILLING.md)) が完了後は、Stripe Webhook の `invoice.payment_failed` で自動検知に切替予定。本 SOP §0 はそれまでの暫定運用。
+### Stripe credit_card テナントの監視 (v1.x で導入予定)
+
+- 自動消込が正常稼働しているかは月初に `billing_history` テーブルで全 credit_card テナントの当月分 `status='paid'` を確認 (`pending` / `failed` が残っていれば調査)
+- Stripe Webhook で `invoice.payment_failed` を受信したテナントは自動的に Smart Retries が走り、7 日後の最終失敗時に `autoSuspendScheduledAt` がセットされ +3 日で自動 suspend へ
+- super_admin は **例外対応のみ** (= 顧客からのクレーム、カード期限切れ通知メール対応等)
 
 ---
 

@@ -10,3 +10,4 @@
 | [PERMISSION_MATRIX.md](./PERMISSION_MATRIX.md) | 画面 × 操作のロール別権限マトリクス | SPECIFICATION.md §7 |
 | [UI_RULES.md](./UI_RULES.md) | 共通 UI 制御ルール (画面横断のフォーム検証・確認 dialog 等) | SPECIFICATION.md §12 |
 | [SUGGESTION_FEATURE.md](./SUGGESTION_FEATURE.md) | **核心機能 (提案機能) の機能仕様 + コスト構造**。API 呼び出しトリガー / プラン別挙動 / 月次コスト試算 / 監視ポイント。事業継続判断の根拠資料 | 新規 (2026-05-03) |
+| [STRIPE_PAYMENT_UI.md](./STRIPE_PAYMENT_UI.md) | クレジットカード払い UI 仕様 (v1.x)。`/settings/tenant` 支払い方法セクション、Stripe Checkout 連携、Customer Portal 埋め込み、プラン変更時のカード検証 UI | 新規 (2026-05-14) |
