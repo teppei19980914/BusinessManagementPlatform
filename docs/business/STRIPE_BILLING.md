@@ -189,49 +189,80 @@ Stripe Dashboard → Developers → Webhooks → Add endpoint:
 
 ## §4. 主要フロー
 
-### 4.1 クレジットカード払いへの切替フロー
+### 4.1 クレジットカード払いへの切替フロー (1 アクション完結 / 2026-05-14 確定)
+
+**設計方針**: カード登録 = クレジットカード払い切替確定。カード登録に失敗した場合は paymentMethod
+を変更しない (= 設定前の状態 invoice のまま) ことで、中間状態を排除し UX をシンプル化する。
 
 ```
-[テナント管理者] /settings/tenant のクレジットカード払い設定セクションで「設定」ボタン押下
+[テナント管理者] /settings/tenant の支払い方法セクションで「💳 クレジットカード払いに切替」ボタン押下
    ↓
 [API] POST /api/tenants/me/billing/stripe/setup
    ↓
 [サーバ側]
    - tenant.stripeCustomerId が null なら stripe.customers.create() で Customer 作成
    - stripe.checkout.sessions.create() で SetupSession 生成 (mode='setup')
-     * success_url = /settings/tenant?stripe_setup=success
+     * success_url = /api/tenants/me/billing/stripe/setup/complete?session_id={CHECKOUT_SESSION_ID}
+       (= サーバ側の完了ハンドラ、自動的に paymentMethod 切替 + Subscription 作成を実行)
      * cancel_url = /settings/tenant?stripe_setup=canceled
    ↓
 [ブラウザ] Stripe Checkout 画面にリダイレクト
    - 顧客がカード番号を入力 (= Stripe が PCI DSS 対応で受領)
    ↓
+   ┌─────────────────────┬─────────────────────────────────┐
+   │ 成功 (カード登録 OK)  │ 失敗 (キャンセル / カード拒否)   │
+   └─────────────────────┴─────────────────────────────────┘
+   │                       │
+   ▼                       ▼
 [Webhook] payment_method.attached を受信
    ↓
-[サーバ側]
-   - tenant.stripeDefaultPaymentMethodId = pm_xxx
-   - tenant.cardLastVerifiedAt = now
-   - tenant.cardVerificationStatus = 'valid'
+[ブラウザ] success_url (= /api/.../setup/complete?session_id=cs_xxx) に Stripe からリダイレクト
    ↓
-[ブラウザ] success_url にリダイレクト
-   - 「クレジットカードを登録しました」トースト表示
-   ↓
-[テナント管理者] 「支払い方法をクレジットカードに切替」ボタンを押下
-   ↓
-[API] PATCH /api/tenants/me/billing { paymentMethod: 'credit_card' }
-   ↓
-[サーバ側]
-   - tenant.paymentMethod = 'credit_card'
-   - tenant.stripeSubscriptionId が null なら stripe.subscriptions.create() で Subscription 作成
-     * items: Haiku / Sonnet / Storage の Subscription Item を作成
-     * default_payment_method = pm_xxx
-     * automatic_tax: { enabled: true } (Stripe Tax 有効)
-   ↓
-[Webhook] customer.subscription.created を受信
-   - tenant.stripeSubscriptionItemHaikuId, ...Sonnet..., ...Storage... を更新
-   - tenant.stripeSubscriptionStatus = 'active'
-   ↓
-[完了] 次回 API 呼び出しから Usage Record が Stripe へ送信される
+[サーバ完了ハンドラ]
+   1. stripe.checkout.sessions.retrieve(session_id) で SetupSession 情報を取得
+   2. setup_intent.payment_method を取得 (= pm_xxx)
+   3. **検証**: stripe.setupIntents.confirm() で $0 verification 試行
+      - 成功 → 次へ
+      - 失敗 → tenant.paymentMethod は変更せず、エラー画面へリダイレクト
+        /settings/tenant?stripe_setup=failed&reason=<failure_code>
+   4. **paymentMethod 自動切替 + Subscription 作成 (single transaction)**:
+      - tenant.stripeDefaultPaymentMethodId = pm_xxx
+      - tenant.cardLastVerifiedAt = now
+      - tenant.cardVerificationStatus = 'valid'
+      - tenant.paymentMethod = 'credit_card'
+      - stripe.subscriptions.create() で Subscription 作成
+        * items: Haiku / Sonnet / Storage の Subscription Item を作成
+        * default_payment_method = pm_xxx
+        * automatic_tax: { enabled: true } (Stripe Tax 有効)
+      - tenant.stripeSubscriptionId / SubscriptionItemHaikuId / ...Sonnet... / ...Storage... を更新
+      - tenant.stripeSubscriptionStatus = 'active'
+   5. 成功画面へリダイレクト: /settings/tenant?stripe_setup=success
+   ↓                       ↓
+[完了] 次回 API 呼出から   [ブラウザ] cancel_url または failed パラメタで着地
+Usage Record を Stripe へ送信   - paymentMethod は invoice のまま (= 設定前の状態を維持)
+                            - トースト表示: 「クレジットカード登録をキャンセルしました」
+                              または「カード登録に失敗しました (理由: <message>)」
 ```
+
+#### 失敗時の挙動 (重要)
+
+| ケース | 着地 URL | tenant.paymentMethod | tenant.stripeCustomerId | UI 表示 |
+|---|---|---|---|---|
+| ユーザが Stripe Checkout で「戻る」 | `/settings/tenant?stripe_setup=canceled` | `invoice` (変更なし) | 既に作成されていれば残る (空 Customer) | 情報トースト「登録をキャンセルしました」 |
+| カード番号が誤り | Stripe Checkout 内でエラー表示、retry 可能 | `invoice` (変更なし) | 既に作成されていれば残る | (Stripe 側 UI のため自社で UI 制御不要) |
+| カード拒否 (期限切れ / 発行銀行拒否) | `/settings/tenant?stripe_setup=failed&reason=card_declined` | `invoice` (変更なし) | 残る | エラートースト「カード登録に失敗しました (カード拒否)」 |
+| 検証 SetupIntent 失敗 | 同上 | `invoice` (変更なし) | 残る | 同上 |
+
+**重要**: いずれの失敗ケースでも **`tenant.paymentMethod` を 'credit_card' に変更しない**。設定前 (= invoice)
+の状態を維持する。これにより「切り替えようとして失敗 → 元に戻す」という巻き戻しロジックは不要となる
+(= そもそも変更していない)。
+
+#### 空 Customer の取り扱い
+
+成功・失敗いずれの場合でも、Stripe 側に **Customer レコード** は作成済となる可能性がある (= setup session
+作成前に `createOrGetStripeCustomer` で作成するため)。失敗時もこの Customer は残る (= 削除しない) が、
+次回再試行時に再利用するため害はない。月次の Stripe 側に「カード未登録 Customer」がたまっても課金は
+発生しないため運用上の問題はなし。
 
 ### 4.2 通常運用フロー (Metered Billing)
 
@@ -348,11 +379,31 @@ Stripe Dashboard → Developers → Webhooks → Add endpoint:
 
 | Method | Path | 認可 | 役割 |
 |---|---|---|---|
-| `POST` | `/api/tenants/me/billing/stripe/setup` | admin | Stripe Checkout Session を作成しカード登録画面に誘導 |
+| `POST` | `/api/tenants/me/billing/stripe/setup` | admin | Stripe Checkout Session (mode='setup') を作成しカード登録画面に誘導。`success_url` は `/api/tenants/me/billing/stripe/setup/complete?session_id={CHECKOUT_SESSION_ID}` を指定 |
+| `GET` | `/api/tenants/me/billing/stripe/setup/complete` | admin | Stripe Checkout 成功後の **自動完了ハンドラ**。検証 + paymentMethod 自動切替 + Subscription 作成を single transaction で実行し、`/settings/tenant?stripe_setup=success` (or `?stripe_setup=failed&reason=...`) へリダイレクト |
 | `POST` | `/api/tenants/me/billing/stripe/portal` | admin | Stripe Customer Portal Session を作成 |
-| `POST` | `/api/tenants/me/billing/stripe/verify` | admin | カード検証を実行 (プラン変更時の自動呼出 + 手動ボタン) |
-| `PATCH` | `/api/tenants/me/billing` | admin | paymentMethod の切替 (`invoice` ↔ `credit_card`) |
+| `POST` | `/api/tenants/me/billing/stripe/verify` | admin | カード検証を実行 (プラン変更時の自動呼出 + 手動ボタン)。検証だけ実行し paymentMethod は変更しない |
+| `PATCH` | `/api/tenants/me/billing` | admin | paymentMethod を `credit_card` → `invoice` に戻す経路のみ (= 逆方向)。`invoice` → `credit_card` への切替は本 PATCH ではなく上記 `/setup` フローで自動実行される |
 | `POST` | `/api/webhooks/stripe` | **公開 (signature 検証必須)** | Stripe からの Webhook 受信 |
+
+#### 5.1.1 1 アクションフローの設計意図 (2026-05-14 確定)
+
+`POST /api/tenants/me/billing/stripe/setup` でカード登録を開始した時点で、ユーザは「クレジットカード払いに切り替えたい」意思表示を **1 回行っている**。中間状態 (= 「カード登録だけ済み、切替はまだ」) を持たず、`/setup/complete` ハンドラで **検証成功と同時に paymentMethod を 'credit_card' へ自動切替** することで:
+
+- ✅ ユーザの「切替忘れ」を防止
+- ✅ UI 状態モデルが A → C (成功) / A → A (失敗) の 2 経路のみで明快
+- ✅ 失敗時は `tenant.paymentMethod` を変更しないため「巻き戻しロジック」が不要
+
+#### 5.1.2 失敗時の paymentMethod 保持
+
+`/setup/complete` ハンドラで以下のいずれかが発生した場合、`tenant.paymentMethod` は **invoice のまま変更しない** (= 設定前の状態を維持):
+
+- Checkout Session が canceled 状態で返ってくる
+- SetupIntent の検証 ($0 verification) が失敗 (= `requires_payment_method` / `requires_action`)
+- カード Issuer が拒否 (`card_declined` / `expired_card` 等)
+- Subscription 作成が失敗 (= Stripe API 障害等)
+
+これにより「切替えようとしたら失敗 → 元に戻す」という補償ロジックは **不要**。
 
 ### 5.2 既存 API への影響
 

@@ -25,9 +25,20 @@
 
 「プラン変更」セクションと「テナント解約」セクションの **間** に新設。
 
-### 2.2 状態ごとの表示
+### 2.2 状態モデル (2026-05-14 確定: 1 アクション完結フロー)
 
-#### 状態 A: 未設定 (= paymentMethod === 'invoice' / 'bank_transfer'、stripeCustomerId === null)
+**設計方針**: 「カード登録」と「クレジットカード払い切替」を **1 アクションで一体化**。中間状態
+(= カード登録済だが切替前) は持たない。
+
+| 状態 | tenant.paymentMethod | stripeCustomerId | stripeDefaultPaymentMethodId | 遷移条件 |
+|---|---|---|---|---|
+| **A: 未設定** | `invoice` または `bank_transfer` | null または既存 (= 空 Customer) | null | (初期状態) |
+| **C: クレジットカード払い運用中** | `credit_card` | not null | not null | A から `/setup` → 検証成功 → C へ |
+| **D: カード期限切れ / 検証失敗** | `credit_card` | not null | not null (期限切れ) | C で月次検証失敗 → D へ |
+
+**失敗時の挙動**: A 状態で `/setup` を開始してもカード登録に失敗すれば、`tenant.paymentMethod` は変更されず A のまま (= 中間状態 B は存在しない)。
+
+#### 状態 A: 未設定 (= paymentMethod === 'invoice' / 'bank_transfer')
 
 ```
 ┌─ 支払い方法 ──────────────────────────────────────┐
@@ -40,26 +51,9 @@
 │ │ 💳 クレジットカード払いに切替                │ │
 │ └─────────────────────────────────────────────┘ │
 │                                                    │
-│ ※ Stripe (PCI DSS 準拠) でカード情報を安全に保管 │
-└────────────────────────────────────────────────────┘
-```
-
-#### 状態 B: カード登録済、まだ切替前 (= paymentMethod === 'invoice'、stripeCustomerId !== null)
-
-```
-┌─ 支払い方法 ──────────────────────────────────────┐
-│ 現在の支払い方法: 請求書送付 (銀行振込)           │
-│                                                    │
-│ ✅ クレジットカードを登録済                       │
-│    末尾: **** 4242 (Visa) / 有効期限: 12/29       │
-│                                                    │
-│ ┌─────────────────────────────────────────────┐ │
-│ │ 💳 クレジットカード払いに切替を実行          │ │
-│ └─────────────────────────────────────────────┘ │
-│                                                    │
-│ ┌─────────────────────────────────────────────┐ │
-│ │ 🔧 Stripe ポータルで管理 (カード変更等)       │ │
-│ └─────────────────────────────────────────────┘ │
+│ ※ ボタン押下 → Stripe Checkout (PCI DSS 準拠)    │
+│   でカード入力 → 検証成功時に自動切替            │
+│   失敗時 (キャンセル / 拒否) は現在の設定を維持   │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -102,20 +96,25 @@
 
 ### 2.3 ボタンごとの挙動
 
-| ボタン | API | 遷移先 |
+| ボタン | API / 遷移 | 挙動 |
 |---|---|---|
-| 💳 クレジットカード払いに切替 | `POST /api/tenants/me/billing/stripe/setup` | Stripe Checkout (= カード登録画面) → 完了後 `/settings/tenant?stripe_setup=success` に戻る |
-| 💳 クレジットカード払いに切替を実行 | `PATCH /api/tenants/me/billing { paymentMethod: 'credit_card' }` | 確認ダイアログ → 成功時はトースト + リロード |
-| 🔧 Stripe ポータルで管理 | `POST /api/tenants/me/billing/stripe/portal` | Stripe Customer Portal (= 新タブ or 同タブ) |
-| 📋 請求書送付に戻す | `PATCH /api/tenants/me/billing { paymentMethod: 'invoice' }` | 確認ダイアログ → 成功時はトースト + リロード (= Stripe Subscription は active のまま、課金経路だけ手動に戻す) |
+| 💳 クレジットカード払いに切替 (状態 A) | `POST /api/tenants/me/billing/stripe/setup` → Stripe Checkout → `GET /api/tenants/me/billing/stripe/setup/complete` (自動完了ハンドラ) | カード登録 + 検証 + paymentMethod 切替 + Subscription 作成を一括実行。成功時 `/settings/tenant?stripe_setup=success` (= 状態 C へ)、失敗時 `?stripe_setup=canceled` or `?stripe_setup=failed&reason=<code>` (= 状態 A のまま) |
+| 🔧 Stripe ポータルで管理 (状態 C / D) | `POST /api/tenants/me/billing/stripe/portal` | Stripe Customer Portal を新タブで開く (= カード更新 / 履歴閲覧) |
+| 📋 請求書送付に戻す (状態 C のみ) | `PATCH /api/tenants/me/billing { paymentMethod: 'invoice' }` | 確認ダイアログ → 成功時はトースト + リロード (= Stripe Subscription は active のまま、課金経路だけ手動に戻す。再切替時は再度 `/setup` フローを通る) |
 
 ### 2.4 確認ダイアログ (= 支払い方法切替時)
 
-**「請求書送付 → クレジットカード」切替時**:
+**「💳 クレジットカード払いに切替」押下時** (= 状態 A → C への遷移開始時):
 ```
 クレジットカード払いに切替えますか?
 
-【切替後の挙動】
+【手順】
+1. 次の画面 (Stripe Checkout) でクレジットカード情報を入力
+2. Stripe が即座にカードを検証 ($0 verification)
+3. 検証成功 → クレジットカード払いに自動切替
+   検証失敗 / キャンセル → 現在の請求書送付のまま (変更なし)
+
+【切替成功後の挙動】
 - 月末締めで Stripe が自動的に当月利用料を集計
 - 翌月初に登録カードから自動引き落とし
 - 領収書 PDF は Stripe から自動メール送付
@@ -125,8 +124,19 @@
 - 当月途中での切替は、その月の請求から自動引落に切り替わります
 - カード期限切れ等で引落失敗が続いた場合、サービスが自動停止することがあります
 
-[キャンセル] [切替を実行]
+[キャンセル] [カード入力画面へ進む]
 ```
+
+**Stripe Checkout 戻り時のトースト表示** (= /settings/tenant への着地時):
+
+| URL パラメタ | トースト |
+|---|---|
+| `?stripe_setup=success` | 🟢 成功: 「クレジットカード払いに切替えました」 |
+| `?stripe_setup=canceled` | 🔵 情報: 「クレジットカード登録をキャンセルしました (現在の設定: 請求書送付のまま)」 |
+| `?stripe_setup=failed&reason=card_declined` | 🔴 エラー: 「カード登録に失敗しました (カードが拒否されました)。設定は変更されていません」 |
+| `?stripe_setup=failed&reason=expired_card` | 🔴 エラー: 「カード登録に失敗しました (有効期限切れ)。設定は変更されていません」 |
+| `?stripe_setup=failed&reason=processing_error` | 🔴 エラー: 「カード登録に失敗しました (Stripe 処理エラー、時間をおいて再試行)。設定は変更されていません」 |
+| `?stripe_setup=failed&reason=verification_required` | 🟠 警告: 「カード追加認証が必要です。Stripe からのメールをご確認のうえ、再度お試しください」 |
 
 **「クレジットカード → 請求書送付」切替時**:
 ```

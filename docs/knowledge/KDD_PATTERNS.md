@@ -9055,3 +9055,85 @@ ELIFECYCLE  Command failed with exit code 1.
 - 既存 §5.X+22 (PR #327 / PR-1 tenant-i18n): 同型の「新規 route 追加 → E2E_COVERAGE.md 更新」の確立パターン (本 §5.X+58 はそれを補強する立場、= 「memory + チェックリストでも 1 年経つと忘れる」事実)
 - 既存 memory: [feedback_e2e_coverage_gate.md](C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_e2e_coverage_gate.md)
 
+## 5.X+59 **並列 docs PR が同じ README テーブルの末尾に行を追加すると、後発 PR で確実にコンフリクト** ─ §5.X+30 / §5.X+54 の再発 (PR #373 → PR #374 で実体験 / 2026-05-14)
+
+### 罠の正体
+
+`docs/specification/README.md` のような **「ファイル一覧テーブル」を持つ README ファイル** に対し、独立した 2 つの docs PR が並列で **末尾に新規行を追加** すると、後発 PR で必ず 3-way merge conflict が発生する。
+
+具体例: PR #373 (CHAT_SEMANTIC_SEARCH の docs) と PR #374 (STRIPE_PAYMENT_UI の docs) が時間差で進行:
+
+```
+共通祖先:
+| [SUGGESTION_FEATURE.md](./SUGGESTION_FEATURE.md) | ... |  ← 表の最終行
+
+PR #373 (先発):
+| [SUGGESTION_FEATURE.md](./SUGGESTION_FEATURE.md) | ... |
+| [CHAT_SEMANTIC_SEARCH.md](./CHAT_SEMANTIC_SEARCH.md) | ... |  ← 追加
+
+PR #374 (後発、main を取り込む前に作成):
+| [SUGGESTION_FEATURE.md](./SUGGESTION_FEATURE.md) | ... |
+| [STRIPE_PAYMENT_UI.md](./STRIPE_PAYMENT_UI.md) | ... |  ← 追加
+```
+
+PR #373 がマージされて main が更新された後、PR #374 で `git merge origin/main` を実行すると:
+
+```
+| [SUGGESTION_FEATURE.md](./SUGGESTION_FEATURE.md) | ... |
+<<<<<<< HEAD (PR #374 が追加)
+| [STRIPE_PAYMENT_UI.md](./STRIPE_PAYMENT_UI.md) | ... |
+=======
+| [CHAT_SEMANTIC_SEARCH.md](./CHAT_SEMANTIC_SEARCH.md) | ... | (PR #373 がマージ済)
+>>>>>>> origin/main
+```
+
+両者は内容的には独立した行で、両方とも残せば OK な「無害な conflict」だが、**機械的には解決できない** (= git は意味を理解しない)。
+
+### なぜこれが繰り返し発生するか
+
+- §5.X+30 (= 2026-04 / SUGGESTION_ENGINE 末尾追記)
+- §5.X+54 (= 2026-05 / KDD 末尾追記)
+- §5.X+57 (= 2026-05-14 / src/config 末尾追記)
+- **§5.X+59 (= 2026-05-14 / docs/specification/README.md 末尾追記)** ← 本パターン
+
+**4 回目の再発**。`README.md` のテーブル末尾追記は **発生確率がほぼ 100%** にもかかわらず、Claude Code も人間も「忘れる」 → KDD 化するだけでは効果が薄いことが判明。
+
+### 推奨対応 (段階的)
+
+#### Tier 1: 即時対応 (= 仕様 docs PR を立てる人がやる)
+
+1. **新規 docs PR を立てたら、`/docs/**/README.md` を編集する前に main 同期**:
+   ```bash
+   git fetch origin main
+   git rebase origin/main  # or git merge origin/main
+   ```
+2. README 編集後はすぐ commit + push (= 競合窓を狭める)
+3. PR レビュー期間が長引きそうなら、競合検知のために定期的に main 取込み
+
+#### Tier 2: ファイル構造の改善 (= 抜本的)
+
+README の「ファイル一覧テーブル」を以下のいずれかに置換:
+- (a) **glob 自動生成**: `docs/<category>/*.md` を読んでテーブルを自動生成する script + CI チェック
+- (b) **テーブルではなくサブセクション** (`### ファイル: SCREENS.md\n説明...` のような独立段落構造) で末尾追記 conflict を減らす
+- (c) **PR template で警告**: 「`docs/**/README.md` を編集した場合、main 取込み済みか?」をチェックリスト化
+
+#### Tier 3: 自動化 (= 究極系)
+
+- pre-commit hook で `docs/**/README.md` 変更を検出したら自動 fetch & rebase
+- GitHub Actions の job で「merge conflict の予兆」を PR にコメント
+
+### 本 PR (#374) での対処
+
+- conflict 解消: 両方の行 (= CHAT_SEMANTIC_SEARCH + STRIPE_PAYMENT_UI) を残してマージ
+- 本 KDD §5.X+59 を追記して、4 度目の再発の事実と段階的対応の方針を明文化
+- Tier 2 / Tier 3 の実装は v2 の改善タスクとして切り出し (= 本 PR スコープ外)
+
+### 関連
+
+- §5.X+30: 末尾追記 conflict の初出パターン
+- §5.X+54: KDD 自身の末尾追記 conflict (= meta な再発)
+- §5.X+57: src/config の JSDoc 末尾追記 conflict
+- 本パターンと §5.X+30 / §5.X+54 / §5.X+57 は **同一の根本問題** (= 「末尾追記 = 機械的競合」)
+- PR #373 (CHAT_SEMANTIC_SEARCH): 先発 docs PR
+- PR #374 (STRIPE_BILLING): 後発 docs PR、本 conflict の発生源
+

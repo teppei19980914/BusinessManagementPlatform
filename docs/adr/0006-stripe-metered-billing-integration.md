@@ -50,6 +50,10 @@
 6. **消費税**: Stripe Tax を有効化 (インボイス制度対応 + JCT 登録番号自動表記)
 7. **手数料負担**: 自社負担 (Stripe 3.6% + カードブランドごとの 0.4-1.0% を運営が吸収、顧客にはプラン料金グロスで請求)
 8. **Customer Portal 採用**: カード更新 / 履歴閲覧は Stripe 側 UI に委譲
+9. **1 アクション完結フロー (2026-05-14 追加確定)**: カード登録と支払い方法切替を **一体化**。
+   - `POST /api/tenants/me/billing/stripe/setup` 開始 → Stripe Checkout → `GET /api/.../setup/complete` (= 自動完了ハンドラ) → paymentMethod 自動切替 + Subscription 作成
+   - 失敗時 (= キャンセル / 検証失敗 / カード拒否) は `tenant.paymentMethod` を変更せず、設定前 (= invoice) のまま維持。「巻き戻しロジック」不要
+   - 中間状態 (= 「カード登録済だが切替前」) は **存在しない**。UI 状態モデルは A → C / A → A (失敗) の 2 経路のみ
 
 ### 適用範囲
 
