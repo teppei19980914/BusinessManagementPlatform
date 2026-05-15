@@ -17,3 +17,9 @@
 | [CRON.md](./CRON.md) | Vercel Cron + cron-job.org ウォームアップ + ヘルスチェック + 死活監視 | OPERATION.md §8-§11 |
 | [SECURITY_OPS.md](./SECURITY_OPS.md) | 運用上のセキュリティ手順 | OPERATION.md §13 |
 | [MIGRATION_TO_AWS.md](./MIGRATION_TO_AWS.md) | Vercel + Supabase から AWS / Azure / GCP への将来的移行計画 | DESIGN.md §34.13 |
+| [CUSTOMER_FEEDBACK_TRIAGE.md](./CUSTOMER_FEEDBACK_TRIAGE.md) | 顧客フィードバック トリアージプロセス (6 チャネル → GitHub Issues 集約、P0-P3 SLA、日次/週次/月次ルーチン) | 新規 (2026-05-16) |
+| [BACKUP_VERIFICATION.md](./BACKUP_VERIFICATION.md) | バックアップ検証手順 (四半期 + 臨時、Supabase/Vercel/Storage/環境変数の復元可能性確認) | 新規 (2026-05-16) |
+| [DEPENDENCY_VULNERABILITY_PROCESS.md](./DEPENDENCY_VULNERABILITY_PROCESS.md) | 依存パッケージ脆弱性対応プロセス (3 系統検知 / 重要度別 SLA / 対応方式 4 種 / 新規 npm 事前審査) | 新規 (2026-05-16) |
+| [DOGFOODING_PLAN.md](./DOGFOODING_PLAN.md) | Dogfooding 計画 (6/15 ± 1 週、AI 補助なし機能実装によるドキュメント検証) | 新規 (2026-05-16) |
+| [RELEASE_NOTES_v1.md](./RELEASE_NOTES_v1.md) | v1.0 リリースノート (ドラフト、5/30 確定版へ) | 新規 (2026-05-16) |
+| [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md) | 6/1 公開当日の時系列手順 (T-2 週 〜 T+1 営業日) + ロールバック条件 + B4 判断 | 新規 (2026-05-16) |
