@@ -8,14 +8,14 @@
  * 検証シナリオ (M1 → M2 → M3):
  *   - M1: Beginner プランで API 呼出 30 回 → ¥0 (Beginner は無料)
  *   - M1 後半: Beginner → Expert アップグレード (即時反映、beginnerEverUpgraded=true)
- *   - M1 後半: Expert で API 呼出 5 回 → ¥50 (¥10/call × 5)
+ *   - M1 後半: Expert で API 呼出 5 回 → ¥25 (¥5/call × 5、2026-05-15 改定後)
  *   - M2 月初 cron:
- *       - snapshot に M1 最終状態 (35 回, ¥50, plan=expert) が保存される
+ *       - snapshot に M1 最終状態 (35 回, ¥25, plan=expert) が保存される
  *       - currentMonth* カウンタが 0 にリセットされる
  *   - M2 中: Expert → Pro アップグレード (即時反映)
  *   - M2 中: Pro → Expert ダウングレード (**即時反映 / 2026-05-14 改修**)
  *     - 旧仕様では「翌月予約 + M3 cron 適用」だったが、業務仕様書 §F-13.11 と整合させ即時化。
- *     - 切替後の Expert 単価 ¥10/call で従量課金が継続することを検証。
+ *     - 切替後の Expert 単価 ¥5/call で従量課金が継続することを検証 (2026-05-15 改定後)。
  *   - M2 中の補足検証: P-B (Beginner downgrade 禁止) で Beginner への変更が拒否される
  *   - M3 月初 cron:
  *       - snapshot 保存 + カウンタリセットは継続。
@@ -69,8 +69,8 @@ const initialState = (): FakeTenant => ({
   monthlyBudgetCapJpy: null,
   beginnerMonthlyCallLimit: 100,
   beginnerMaxSeats: 5,
-  pricePerCallHaiku: 10,
-  pricePerCallSonnet: 30,
+  pricePerCallHaiku: 5,
+  pricePerCallSonnet: 15,
   scheduledPlanChangeAt: null,
   scheduledNextPlan: null,
   beginnerEverUpgraded: false,
@@ -213,10 +213,10 @@ describe('プラン変更 e2e: M1 → M2 → M3 (P-E / 2026-05-08)', () => {
     expect(state.plan).toBe('expert');
     expect(state.beginnerEverUpgraded).toBe(true);
 
-    // M1 後半: Expert で 5 回呼出 → ¥50
+    // M1 後半: Expert で 5 回呼出 → ¥25 (2026-05-15 価格改定で ¥5/call)
     simulateApiCall(5);
     expect(state.currentMonthApiCallCount).toBe(35);
-    expect(state.currentMonthApiCostJpy).toBe(50);
+    expect(state.currentMonthApiCostJpy).toBe(25);
 
     // ============ M2 月初 cron (2026-06-01) ============
     setUtc('2026-06-01T00:00:00Z');
@@ -229,7 +229,7 @@ describe('プラン変更 e2e: M1 → M2 → M3 (P-E / 2026-05-08)', () => {
     const m1Snapshot = snapshots.get('2026-05');
     expect(m1Snapshot).toEqual({
       apiCallCount: 35,
-      apiCostJpy: 50,
+      apiCostJpy: 25,
       plan: 'expert',
     });
 
@@ -254,10 +254,10 @@ describe('プラン変更 e2e: M1 → M2 → M3 (P-E / 2026-05-08)', () => {
     expect(proUpgrade.ok).toBe(true);
     expect(state.plan).toBe('pro');
 
-    // M2 中の Pro 呼出 → ¥30/call (Sonnet 単価)
+    // M2 中の Pro 呼出 → ¥15/call (Sonnet 単価、2026-05-15 価格改定後)
     simulateApiCall(2);
     expect(state.currentMonthApiCallCount).toBe(2);
-    expect(state.currentMonthApiCostJpy).toBe(60);
+    expect(state.currentMonthApiCostJpy).toBe(30);
 
     // ============ M2 後半: Pro → Expert ダウングレード (2026-05-14 即時化) ============
     setUtc('2026-06-20T00:00:00Z');
@@ -272,11 +272,11 @@ describe('プラン変更 e2e: M1 → M2 → M3 (P-E / 2026-05-08)', () => {
     expect(state.scheduledNextPlan).toBeNull();
     expect(state.scheduledPlanChangeAt).toBeNull();
 
-    // ダウングレード後の M2 中の Expert 呼出 → ¥10/call (Haiku 単価) で加算
-    //   = 当月分は「Pro 期間 2 回 ¥60 + Expert 期間 3 回 ¥30」が混在記録される
+    // ダウングレード後の M2 中の Expert 呼出 → ¥5/call (Haiku 単価) で加算
+    //   = 当月分は「Pro 期間 2 回 ¥30 + Expert 期間 3 回 ¥15」が混在記録される
     simulateApiCall(3);
     expect(state.currentMonthApiCallCount).toBe(5);
-    expect(state.currentMonthApiCostJpy).toBe(90); // ¥60 + ¥30
+    expect(state.currentMonthApiCostJpy).toBe(45); // ¥30 + ¥15
 
     // ============ M3 月初 cron (2026-07-01) ============
     setUtc('2026-07-01T00:00:00Z');
@@ -290,7 +290,7 @@ describe('プラン変更 e2e: M1 → M2 → M3 (P-E / 2026-05-08)', () => {
     const m2Snapshot = snapshots.get('2026-06');
     expect(m2Snapshot).toEqual({
       apiCallCount: 5,
-      apiCostJpy: 90,
+      apiCostJpy: 45,
       plan: 'expert', // 即時ダウングレード済なので Expert で記録される
     });
 
@@ -301,10 +301,10 @@ describe('プラン変更 e2e: M1 → M2 → M3 (P-E / 2026-05-08)', () => {
     expect(state.currentMonthApiCallCount).toBe(0);
     expect(state.currentMonthApiCostJpy).toBe(0);
 
-    // M3 序盤: Expert で呼出 → ¥10/call で課金される (Haiku 単価継続)
+    // M3 序盤: Expert で呼出 → ¥5/call で課金される (Haiku 単価継続、2026-05-15 価格改定後)
     simulateApiCall(3);
     expect(state.currentMonthApiCallCount).toBe(3);
-    expect(state.currentMonthApiCostJpy).toBe(30);
+    expect(state.currentMonthApiCostJpy).toBe(15);
   });
 
   it('cron が同日に二度実行されても冪等 (lastResetAt が当月初なので 0 件)', async () => {

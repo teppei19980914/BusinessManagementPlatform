@@ -103,8 +103,8 @@ export function getStripeWebhookSecret(): string {
 /**
  * Price ID 群 (= Stripe Dashboard で事前に作成、環境変数で参照する)。
  *
- * - Haiku per-call (Expert plan): ¥10/call、Metered
- * - Sonnet per-call (Pro plan): ¥30/call、Metered
+ * - Haiku per-call (Expert plan): ¥5/call、Metered (2026-05-15 改定: ¥10 → ¥5)
+ * - Sonnet per-call (Pro plan): ¥15/call、Metered (2026-05-15 改定: ¥30 → ¥15)
  * - Storage Plus: ¥500/月、Recurring 固定額
  * - Storage Pro: ¥1,500/月、Recurring 固定額
  *

@@ -4651,9 +4651,9 @@ per-seat 課金モデル (1 席あたり N トークン) を中間案として�
 
 **Beginner プラン (無料)**: 最大 5 席、Claude Haiku、月間 100 回までの API 呼び出し上限。試験運用と上位プランへのアップセル誘導の入り口として機能する。100 回到達時は **縮退モード**（[docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) / NF-13.14、エンティティ作成・更新は継続、AI 裏方処理のみ一時停止、提案エンジンは NULL 候補をタグ：テキスト = 5：5 で評価、月初バッチで補完）に切り替わり、月初に自動リセット。
 
-**Expert プラン (席数無制限・従量課金)**: Claude Haiku、API 呼び出し 1 回あたり ¥10 (初期値、運用中に調整)。月間使用量に上限なし。
+**Expert プラン (席数無制限・従量課金)**: Claude Haiku、API 呼び出し 1 回あたり ¥5 (2026-05-15 改定: ¥10 → ¥5)。月間使用量に上限なし。
 
-**Pro プラン (席数無制限・従量課金、Sonnet)**: Claude Sonnet、API 呼び出し 1 回あたり ¥30 (初期値)。深い説明文付きの最上位プラン。
+**Pro プラン (席数無制限・従量課金、Sonnet)**: Claude Sonnet、API 呼び出し 1 回あたり ¥15 (2026-05-15 改定: ¥30 → ¥15)。深い説明文付きの最上位プラン。
 
 価格は初期値であり、**実運用データを見ながら段階的に調整** する想定。Tenant テーブルの `pricePerCallHaiku` / `pricePerCallSonnet` カラムに保存し、admin による外部から調整可能。
 
@@ -8897,9 +8897,9 @@ if (isUpgrade(currentPlan, nextPlan)) { 即時 } else { 翌月予約 }
 
 を **Expert↔Pro にも適用してしまった** こと。しかし:
 
-- 課金モデルは **per-call 従量課金** (Expert ¥10/call / Pro ¥30/call、`withMeteredLLM` が呼出時点の plan で単価を確定)
+- 課金モデルは **per-call 従量課金** (Expert ¥5/call / Pro ¥15/call、2026-05-15 改定後。`withMeteredLLM` が呼出時点の plan で単価を確定)
 - 「月途中でダウングレードして当月分 0 円化」は **Beginner (¥0 / 月 100 回上限) への退避だけが該当**
-- Expert↔Pro 間は per-call 課金のため、月途中の切替でも当月分は ¥30/call + ¥10/call の混在で正しく課金記録される → 悪用が成立しない
+- Expert↔Pro 間は per-call 課金のため、月途中の切替でも当月分は新旧単価の混在で正しく課金記録される → 悪用が成立しない
 
 → §NF-13.15 の射程は **Beginner ダウングレードのみ**。Expert↔Pro に適用したのは過剰防衛だった。
 
@@ -9364,4 +9364,51 @@ if (!hasAnyContent) {
 
 - 削減見積もり: 月 ¥20〜50 程度 (テンプレ作成等の限定ケース) — 大きくないが実装コストもほぼゼロなので「ついで」に削減
 - 同型の罠を防ぐ一般則: **外部 API を呼ぶ前に「入力が空かどうか」をチェックする習慣をつける** (空入力 = ユーザ価値ゼロ ≒ 課金回避可能)
+
+## 5.X+64 **価格・定数の一括変更で「UI 表示文字列のテスト」が unit test grep から漏れる ─ Playwright spec の `toContainText('3,000')` が旧価格のまま CI で fail (2026-05-15)**
+
+### 罠の正体
+
+- PR #388 で per-API-call 単価を改定 (Expert ¥10→¥5 / Pro ¥30→¥15) する際、`pricePerCallHaiku` / `pricePerCallSonnet` を schema / migration / service / docs / mock 値 / CSV 行 (`',1500,'`) まで一通り更新したが、Playwright spec の **UI テーブル行アサーション** だけが旧値で残り、CI E2E が 1 件 fail。
+- 該当箇所:
+  ```ts
+  // e2e/specs/13-super-admin-dashboard.spec.ts:141 (修正前)
+  await expect(tenantARow).toContainText('3,000'); // 当月 LLM 費用 ¥3,000
+  ```
+  Fixture は `current_month_api_cost_jpy = 1500` に更新済 (= 300 calls × ¥5)、UI も `toLocaleString()` で `¥1,500` を描画する状態。**テスト側だけが旧 ¥3,000 を期待** していたため失敗した。
+
+### なぜ発生するか
+
+1. **複数表記の存在**: 同じ「価格 1500」が 3 通りで現れる。
+   - 生値: `1500` (fixture SQL, CSV row)
+   - 表示文字列: `1,500` / `¥1,500` (UI、`toLocaleString()`)
+   - JSDoc / コメントの自然文: `¥1500` / `¥1,500`
+   - **旧→新の grep を「旧の生値」だけで回すと、表示文字列側 (`3,000`) を取り逃す**。
+2. **検証経路の盲点**: `pnpm test` (Vitest unit) と `pnpm e2e:coverage-check` は通っても、**Playwright spec のテキスト一致アサーションは CI まで走らない**。ローカル人間駆動だと "全テスト pass = 安心" と誤認する。
+3. **過去の同型を踏襲**: §5.X+30 系で何度も指摘されている「片側 grep の罠」と本質同じ。
+
+### 推奨対応 (横展開チェック)
+
+価格・閾値・列挙値など **「同一意味の値が複数の文字列表現で現れる定数」** を一括変更したら、必ず以下を全部 grep:
+
+| 対象 | grep パターン例 (旧 ¥10/call → ¥5/call の場合) |
+|---|---|
+| 生値 (DB / CSV / fixture) | `\b10\b` `\b30\b` `\b3000\b` `\b22500\b` ... |
+| `toLocaleString` 表示文字列 (UI / Playwright) | `'3,000'` `'¥3,000'` `'¥30,000'` |
+| 自然文 (JSDoc / docs / LP) | `¥10/call` `¥30/call` `10 円/call` `30 円/call` |
+| マスター定義 (schema / migration / config) | `@default(10)` `@default(30)` `pricePerCall` |
+| アサーション系 (テスト) | `toContainText` `toContain.*[0-9],` `expect.*¥` |
+
+ローカル検証で **`pnpm test` の pass で確信せず、価格・UI 文字列を変えた PR は `pnpm test:e2e` (該当 spec だけでも) をローカルで走らせる**。最低限 grep スコープを `e2e/specs/` まで広げる。
+
+### 本 PR での対処
+
+- `e2e/specs/13-super-admin-dashboard.spec.ts:141` の `'3,000'` → `'1,500'` に修正、コメントも `¥1,500 (300 calls × ¥5)` で改定後仕様を明記。
+- 横展開 grep (`toContainText.*[0-9],` / `toContainText\(['"]3,?000` / `22,?500` / `30,?000`) で他 spec に同種残留なしを確認。
+
+### 関連
+
+- 似た罠: §5.X+30〜+35 系の「片側 grep / 同名重複 / 表記揺れ」テーマ。
+- 検証の盲点: §3.X+58 系の「lint/tsc/test/build の 4 点セットには含まれない別 CI ガード」。Playwright もここに含めるべき。
+- 一般則: **「ユーザに見える数値文字列」と「DB の生値」は別物として grep 対象を分ける**。表示層は `toLocaleString` でカンマが入るため、生値検索だけでは網羅できない。
 

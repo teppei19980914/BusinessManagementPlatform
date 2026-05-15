@@ -98,7 +98,7 @@ export type PreviewError = {
 export type CostEstimate = {
   voyageCalls: number;
   plan: 'beginner' | 'expert' | 'pro';
-  /** 当インポートで発生する見込課金 (Beginner=0、Expert=¥10×N、Pro=¥30×N) */
+  /** 当インポートで発生する見込課金 (Beginner=0、Expert=¥5×N、Pro=¥15×N、2026-05-15 改定後) */
   estimatedJpy: number;
   /** 当月既消費 (¥) */
   currentMonthJpy: number;

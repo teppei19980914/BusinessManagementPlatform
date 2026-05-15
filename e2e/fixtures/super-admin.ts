@@ -44,14 +44,14 @@ export type SuperAdminFixture = {
   superAdminId: string;
   superAdminEmail: string;
   superAdminPassword: string;
-  /** 顧客テナント 1 (expert / plus): LLM ¥3000 + Storage ¥500 = ¥3500 */
+  /** 顧客テナント 1 (expert / plus): LLM ¥1500 (300 calls × ¥5、2026-05-15 改定後) + Storage ¥500 = ¥2000 */
   customerTenantA: {
     id: string;
     name: string;
     slug: string;
     adminEmail: string;
   };
-  /** 顧客テナント 2 (pro / pro_storage): LLM ¥30000 + Storage ¥1500 = ¥31500 */
+  /** 顧客テナント 2 (pro / pro_storage): LLM ¥22500 (1500 calls × ¥15、2026-05-15 改定後) + Storage ¥1500 = ¥24000 */
   customerTenantB: {
     id: string;
     name: string;
@@ -86,7 +86,7 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   );
   const superAdminId = superAdminRes.rows[0]!.id;
 
-  // 2. 顧客テナント A: expert / plus = LLM ¥3000 + Storage ¥500
+  // 2. 顧客テナント A: expert / plus = LLM ¥1500 (300 calls × ¥5、2026-05-15 改定後) + Storage ¥500
   // NOTE (PR #337 fix): name にも suffix を付与する。slug だけ一意では不十分。
   //   playwright が同一 spec を chromium / chromium-mobile 両 project で実行する場合、
   //   同一 worker process なら RUN_ID が共有されるため、suffix 無しの name だと
@@ -101,7 +101,7 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
        billing_type, billing_company_name, billing_contact_name, billing_contact_email,
        payment_method, created_at, updated_at
      )
-     VALUES ($1, $2, 'expert', 300, 3000, 'plus', 0,
+     VALUES ($1, $2, 'expert', 300, 1500, 'plus', 0,
              'corporate', 'E2E Corp A', '担当者A', 'a@example.com',
              'invoice', NOW(), NOW())
      RETURNING id`,
@@ -121,7 +121,7 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
     [tenantAId, `Admin A ${runId}`, adminEmailA, passwordHash],
   );
 
-  // 3. 顧客テナント B: pro / pro_storage = LLM ¥30000 + Storage ¥1500
+  // 3. 顧客テナント B: pro / pro_storage = LLM ¥22500 (1500 calls × ¥15、2026-05-15 改定後) + Storage ¥1500
   const slugB = `e2e-sa-${runId}-${suffix}-b`;
   const nameB = `E2E Tenant B ${runId}-${suffix}`; // 名前にも suffix (上記 nameA と同理由)
   const tenantB = await pool.query<{ id: string }>(
@@ -131,7 +131,7 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
        billing_type, billing_company_name, billing_contact_name, billing_contact_email,
        payment_method, created_at, updated_at
      )
-     VALUES ($1, $2, 'pro', 1500, 30000, 'pro_storage', 524288000,
+     VALUES ($1, $2, 'pro', 1500, 22500, 'pro_storage', 524288000,
              'corporate', 'E2E Corp B', '担当者B', 'b@example.com',
              'invoice', NOW(), NOW())
      RETURNING id`,

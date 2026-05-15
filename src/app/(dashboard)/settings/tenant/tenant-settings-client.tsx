@@ -82,12 +82,12 @@ const PLAN_OPTIONS: PlanLabel[] = [
   {
     value: 'expert',
     label: 'Expert',
-    description: '無制限従量課金 (¥10/call)',
+    description: '無制限従量課金 (¥5/call)',
   },
   {
     value: 'pro',
     label: 'Pro',
-    description: '無制限従量課金 (¥30/call)・Claude Sonnet',
+    description: '無制限従量課金 (¥15/call)・Claude Sonnet',
   },
 ];
 
@@ -625,7 +625,7 @@ function UsageSection({
           <>
             <div
               className="cursor-help"
-              title="当月の内部請求額。Expert ¥10/call / Pro ¥30/call の固定単価で計算"
+              title="当月の内部請求額。Expert ¥5/call / Pro ¥15/call の固定単価で計算 (2026-05-15 改定後)"
             >
               <p className="text-xs text-muted-foreground">API 費用</p>
               <p className="text-xl font-bold">

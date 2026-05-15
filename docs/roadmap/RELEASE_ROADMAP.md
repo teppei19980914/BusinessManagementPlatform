@@ -161,7 +161,7 @@
 #### 6月1日リリース (v1) で投入
 
 - [ ] **マルチテナント基盤**: Tenant テーブル新設、全業務エンティティへの tenantId 追加、default-tenant への migration、認可境界の徹底
-- [ ] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant テーブルに `plan` ('beginner' | 'expert' | 'pro') / `currentMonthApiCallCount` / `currentMonthApiCostJpy` / `monthlyBudgetCapJpy` / `beginnerMonthlyCallLimit` (default 100) / `beginnerMaxSeats` (default 5) / `pricePerCallHaiku` (default ¥10) / `pricePerCallSonnet` (default ¥30) / `scheduledPlanChangeAt` / `scheduledNextPlan` を配置
+- [ ] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant テーブルに `plan` ('beginner' | 'expert' | 'pro') / `currentMonthApiCallCount` / `currentMonthApiCostJpy` / `monthlyBudgetCapJpy` / `beginnerMonthlyCallLimit` (default 100) / `beginnerMaxSeats` (default 5) / `pricePerCallHaiku` (default ¥5、2026-05-15 改定: ¥10 → ¥5) / `pricePerCallSonnet` (default ¥15、2026-05-15 改定: ¥30 → ¥15) / `scheduledPlanChangeAt` / `scheduledNextPlan` を配置
 - [ ] **ApiCallLog テーブル**: 各 API 呼び出しを (timestamp, tenantId, userId, featureUnit, modelName, costJpy, latencyMs, requestId) で記録 — 課金根拠データ
 - [ ] **`withMeteredLLM()` ミドルウェア**: 短期 rate limit + プラン判定 + Beginner 月間上限チェック + 予算上限チェック + LLM 呼び出し + カウンタ更新を統合
 - [ ] **月初リセットバッチ**: Vercel Cron で `currentMonthApiCallCount` / `currentMonthApiCostJpy` をリセット、`scheduledPlanChangeAt` 到達テナントのプラン適用

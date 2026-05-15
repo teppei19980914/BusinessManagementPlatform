@@ -156,9 +156,9 @@ export default async function SuperAdminTopPage() {
                   p.plan === 'beginner'
                     ? 'Beginner: 月 100 回上限・最大 5 席・無料・90 日試用'
                     : p.plan === 'expert'
-                      ? 'Expert: 無制限従量課金 (¥10/call)、Claude Haiku'
+                      ? 'Expert: 無制限従量課金 (¥5/call)、Claude Haiku'
                       : p.plan === 'pro'
-                        ? 'Pro: 無制限従量課金 (¥30/call)、Claude Sonnet、「なぜ?」機能限定'
+                        ? 'Pro: 無制限従量課金 (¥15/call)、Claude Sonnet、「なぜ?」機能限定'
                         : `プラン: ${p.plan}`
                 }
               >
@@ -888,7 +888,7 @@ function AnthropicUsageCard({
         <SummaryCard
           label="内部請求額"
           value={`¥${anthropic.currentMonthInternalCostJpy.toLocaleString()}`}
-          tooltip="プラン別固定単価で計算した内部請求額 (Beginner ¥0 / Expert ¥10/call / Pro ¥30/call)。Anthropic 実コストとは別系統"
+          tooltip="プラン別固定単価で計算した内部請求額 (Beginner ¥0 / Expert ¥5/call / Pro ¥15/call、2026-05-15 改定後)。Anthropic 実コストとは別系統"
         />
       </div>
       <p className="text-xs text-muted-foreground">

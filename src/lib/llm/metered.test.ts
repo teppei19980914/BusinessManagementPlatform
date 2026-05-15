@@ -39,8 +39,8 @@ function makeTenant(overrides: Partial<Record<string, unknown>> = {}) {
     monthlyBudgetCapJpy: null as number | null,
     beginnerMonthlyCallLimit: 100,
     beginnerMaxSeats: 5,
-    pricePerCallHaiku: 10,
-    pricePerCallSonnet: 30,
+    pricePerCallHaiku: 5,
+    pricePerCallSonnet: 15,
     scheduledPlanChangeAt: null,
     scheduledNextPlan: null,
     lastResetAt: null,
@@ -248,9 +248,9 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
-        currentMonthApiCostJpy: 950,
-        pricePerCallHaiku: 10,
-        monthlyBudgetCapJpy: 955, // 950 + 10 > 955 で拒否
+        currentMonthApiCostJpy: 998,
+        pricePerCallHaiku: 5, // 2026-05-15 改定後の単価
+        monthlyBudgetCapJpy: 1000, // 998 + 5 = 1003 > 1000 で拒否
       }) as never,
     );
     const call = vi.fn();
@@ -274,9 +274,9 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
-        currentMonthApiCostJpy: 990,
-        pricePerCallHaiku: 10,
-        monthlyBudgetCapJpy: 1000, // 990 + 10 = 1000 (>=ではなく > なので通る)
+        currentMonthApiCostJpy: 995,
+        pricePerCallHaiku: 5, // 2026-05-15 改定後の単価
+        monthlyBudgetCapJpy: 1000, // 995 + 5 = 1000 (>=ではなく > なので通る)
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'ok' });
@@ -322,7 +322,7 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
       makeTenant({
         plan: 'expert',
         currentMonthApiCostJpy: 95,
-        pricePerCallHaiku: 10, // plan 単価は 10
+        pricePerCallHaiku: 5, // plan 単価は ¥5 (2026-05-15 改定後)、ただし下記 predictedCostJpy が上書き
         monthlyBudgetCapJpy: 100,
       }) as never,
     );
@@ -433,8 +433,9 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
   });
 
   it('Expert プラン: model=Haiku, cost=pricePerCallHaiku', async () => {
+    // 2026-05-15 価格改定: Expert ¥10 → ¥5
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
-      makeTenant({ plan: 'expert', pricePerCallHaiku: 10 }) as never,
+      makeTenant({ plan: 'expert', pricePerCallHaiku: 5 }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'x' });
 
@@ -451,13 +452,14 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.modelName).toBe(LLM_MODELS.HAIKU);
-      expect(result.costJpy).toBe(10);
+      expect(result.costJpy).toBe(5);
     }
   });
 
   it('Pro プラン: model=Sonnet, cost=pricePerCallSonnet', async () => {
+    // 2026-05-15 価格改定: Pro ¥30 → ¥15
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
-      makeTenant({ plan: 'pro', pricePerCallSonnet: 30 }) as never,
+      makeTenant({ plan: 'pro', pricePerCallSonnet: 15 }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'x' });
 
@@ -474,7 +476,7 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.modelName).toBe(LLM_MODELS.SONNET);
-      expect(result.costJpy).toBe(30);
+      expect(result.costJpy).toBe(15);
     }
   });
 

@@ -34,7 +34,7 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
 
 **第 3 境界: Voyage embedding 大量生成経路 (Phase 1 apply 段階)**
 - 入口: `POST /api/tenants/me/external-import/apply` (確定後の Voyage 呼出)
-- 出口: Voyage AI API (1 ファイル × 5,000 行 × ¥10-30/call)
+- 出口: Voyage AI API (1 ファイル × 5,000 行 × ¥5-15/call、2026-05-15 改定後)
 - リスク: ファイル巨大化 / Beginner 上限回避 / 予算上限回避によるコスト爆発
 
 ---
@@ -198,7 +198,7 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
 #### D-4. Voyage 大量呼出によるコスト爆発 (Phase 1 apply)
 
 - **攻撃者**: テナント管理者
-- **シナリオ**: 5,000 行の CSV を Pro プラン (¥30/call) で apply → ¥150,000 のコスト発生 + Voyage rate limit 到達
+- **シナリオ**: 5,000 行の CSV を Pro プラン (¥15/call、2026-05-15 改定後) で apply → ¥75,000 のコスト発生 + Voyage rate limit 到達
 - **影響度**: 高 (= 攻撃者は自分のテナントの予算上限を引き上げる必要があるが、可能)
 - **発生確率**: 低
 - **既存対策**:

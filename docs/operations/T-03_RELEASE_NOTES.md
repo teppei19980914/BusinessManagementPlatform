@@ -177,7 +177,7 @@ GET /api/admin/usage-summary?date=2026-06-01
 
 | 系統 | 計測対象 | 単価 | 反映タイミング | 反映先 |
 |---|---|---|---|---|
-| **内部請求 (本サービス)** | `withMeteredLLM` 越しの呼び出し回数 | プラン別固定単価 (Beginner ¥0 / Expert ¥10/call / Pro ¥30/call) | 呼び出し成功直後にアトミック increment | `Tenant.currentMonthApiCostJpy` + `ApiCallLog` |
+| **内部請求 (本サービス)** | `withMeteredLLM` 越しの呼び出し回数 | プラン別固定単価 (Beginner ¥0 / **Expert ¥5/call** / **Pro ¥15/call**、2026-05-15 改定後) | 呼び出し成功直後にアトミック increment | `Tenant.currentMonthApiCostJpy` + `ApiCallLog` |
 | **Anthropic 課金** | API key で発生した実トークン消費 | Anthropic 公式単価 (input/output トークン課金) | Anthropic 側で集計 | Anthropic Console |
 
 つまり「Anthropic クレジットが減らない」と感じる場合は **Anthropic API key が正しく設定されているか / call が実際に発火しているか** を確認する。観測ポイント:
@@ -275,8 +275,9 @@ GDPR 等で個別ユーザの削除請求があった場合は **super_admin が
 | 拡張 (PR #384 / 2026-05-15) | プロジェクト作成・更新を **`auto-tag-extract` + `project-embedding` 独立 2 ラップ → `project-upsert` 1 ラップに集約** | プロジェクト新規 1 件で ApiCallLog 1 件 / counter +1 (旧仕様は 2 件)。Beginner 月 100 回上限が実質 100 件 (旧 50 件) に正常化 |
 | 最適化 (2026-05-15) | **RiskIssue は `state='resolved'` のみ embedding 生成** に限定。state='open' / 'in_progress' / 'monitoring' では Voyage を呼ばない | 起票直後 (= 解消前) の Voyage 課金がゼロに。解消化遷移時に初回 embedding 生成、解消中の text 変更で再生成、再オープン時は既存保持。月 ¥120〜360 削減 (中規模テナント想定) |
 | 最適化 (2026-05-15) | **Project 作成・更新で purpose / background / scope が全て空文字なら早期 return** | `withMeteredLLM` 自体呼ばれず、Anthropic も Voyage も発火しない。テンプレート保存等の限定ケースで完全 ¥0 化 |
+| **価格改定 (2026-05-15)** | **per-API-call 単価を半額化: Expert ¥10 → ¥5 / Pro ¥30 → ¥15** | ユーザ採用ハードル削減。半額後でも粗利 73-75% を維持、ワーストでも 50%+ 確保。詳細は [ADR-0002 §プラン構成 (2026-05-15 改定版)](../adr/0002-tenant-billing-per-api-call.md) 参照 |
 
-**ユーザ影響**: 既に生成済の embedding は保持。新規操作のみ動作変更。
+**ユーザ影響**: 既に生成済の embedding は保持。新規操作のみ動作変更。**価格改定は即時適用**: migration が走るとデフォルト値を使っている全テナントの単価が ¥5/¥15 に更新される。既に発生した ApiCallLog の `costJpy` は変更されず (= 過去請求への影響なし)、migration 実行以降の新規 call から新単価が適用される。
 
 **監視ポイント**:
 - 本リリース後 1〜2 週間は `api_call_logs` テーブルの `feature_unit='external-import-embedding'` の件数が **減少傾向** となるはず (= 1 import 単位で 1 件)

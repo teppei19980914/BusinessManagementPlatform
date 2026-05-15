@@ -160,10 +160,18 @@ model BillingHistory {
 
 | Product 名 | Price ID 環境変数 | 課金タイプ | 単価 |
 |---|---|---|---|
-| Expert API Call (Haiku) | `STRIPE_PRICE_HAIKU` | Metered (per_unit) | ¥10 / call |
-| Pro API Call (Sonnet) | `STRIPE_PRICE_SONNET` | Metered (per_unit) | ¥30 / call |
+| Expert API Call (Haiku) | `STRIPE_PRICE_HAIKU` | Metered (per_unit) | **¥5 / call** (2026-05-15 改定: ¥10 → ¥5) |
+| Pro API Call (Sonnet) | `STRIPE_PRICE_SONNET` | Metered (per_unit) | **¥15 / call** (2026-05-15 改定: ¥30 → ¥15) |
 | Storage Add-on (Plus) | `STRIPE_PRICE_STORAGE_PLUS` | Recurring (固定) | ¥500 / 月 |
 | Storage Add-on (Pro Storage) | `STRIPE_PRICE_STORAGE_PRO` | Recurring (固定) | ¥1,500 / 月 |
+
+> **重要 (2026-05-15 価格改定)**: 既に Stripe Price を作成済の場合、Stripe では一度作成した Price の単価変更ができません。**新規 Price を作成して Subscription Item を切り替える運用** が必要です。手順:
+> 1. Stripe Dashboard で新 Price (¥5 / ¥15) を作成
+> 2. 環境変数 `STRIPE_PRICE_HAIKU` / `STRIPE_PRICE_SONNET` を新 Price ID に更新
+> 3. 既存の credit_card テナントの Subscription Item を新 Price に migrate (super_admin が `stripe_billing.service` 経由で実施)
+> 4. 旧 Price は archive (削除不可、archive のみ)
+>
+> 移行中は新旧 Price が並行して Usage Record を受け取り得るが、`Subscription Item` の active 状態管理で防御。詳細手順は [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) を参照。
 
 ### 3.2 Webhook エンドポイント設定
 

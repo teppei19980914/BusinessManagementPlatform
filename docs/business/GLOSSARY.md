@@ -83,8 +83,8 @@
 | プラン | 月額固定 | 席数 | API 上限 | 単価 | モデル |
 |---|---|---|---|---|---|
 | Beginner | ¥0 | 5 席 | 月 100 回まで無料 (上限到達後は縮退) | — | Haiku |
-| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **¥10 / 1 API 呼び出し** | Haiku |
-| Pro | ¥0 | 無制限 | 無制限 (同上) | **¥30 / 1 API 呼び出し** | Sonnet |
+| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **¥5 / 1 API 呼び出し** (2026-05-15 改定: ¥10 → ¥5) | Haiku |
+| Pro | ¥0 | 無制限 | 無制限 (同上) | **¥15 / 1 API 呼び出し** (2026-05-15 改定: ¥30 → ¥15) | Sonnet |
 
 **「1 回の API 呼び出し」の定義 (1 業務操作 = 1 ApiCallLog ルール)**: ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、ApiCallLog / counter は **1 件 / +1** に集約される (例: プロジェクト新規作成は `featureUnit='project-upsert'` で Anthropic auto-tag + Voyage embedding を 1 件に集約)。
 

@@ -98,7 +98,7 @@ export type AutoTagResult = AutoTagSuccess | AutoTagDegraded;
  *   - 3 フィールド合計で ~9,000 tokens 入力 + 系列プロンプト ~500 tokens
  *   - 出力 ~500 tokens を上乗せして 1 リクエスト ~10,000 tokens 相当
  *   - Haiku 4.5: input $1 / 1M tokens、output $5 / 1M tokens で $0.0125/call (~¥2)
- *     → per-call 課金 ¥10 (Beginner 無料 / Expert) でも余裕で payback
+ *     → per-call 課金 ¥5 (Beginner 無料 / Expert、2026-05-15 改定後) でも余裕で payback
  *   - 本サービスがターゲットとする要件文書は通常 1〜2 段落、長くても数百文字なので
  *     2,000 文字でほぼ全件カバーできる
  */

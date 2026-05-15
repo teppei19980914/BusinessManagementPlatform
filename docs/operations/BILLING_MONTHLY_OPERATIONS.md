@@ -43,8 +43,8 @@
 | プラン | 月額 (基本) | 月額 (LLM) | Storage 月額 |
 |---|---|---|---|
 | Beginner | 無料 | 月間 100 回上限のため LLM 課金は発生しない | standard (0円) のみ |
-| Expert | なし | ¥10/call の従量課金 | standard / plus (¥500) / pro_storage (¥1,500) |
-| Pro | なし | ¥30/call の従量課金 | standard / plus / pro_storage |
+| Expert | なし | **¥5/call** の従量課金 (2026-05-15 改定: ¥10 → ¥5) | standard / plus (¥500) / pro_storage (¥1,500) |
+| Pro | なし | **¥15/call** の従量課金 (2026-05-15 改定: ¥30 → ¥15) | standard / plus / pro_storage |
 
 - LLM 課金は **日割り計算なし** (= 月途中で解約しても従量課金のため過払い・未払いなし)
 - Storage 月額は固定額。月途中で解約したら **その月の Storage 課金分は別途検討する必要あり**
