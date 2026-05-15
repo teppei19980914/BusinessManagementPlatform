@@ -9,7 +9,9 @@
 
 ## 概要
 
-本ドキュメントは、たすきば Knowledge Relay における **クレジットカード払い + Stripe Metered Billing による自動引き落とし** の仕様を定義する。v1 (2026-06-01) でリリース済の **手動運用 (invoice / bank_transfer)** と **並存** する形で v1.x にて実装する。
+本ドキュメントは、たすきば Knowledge Relay における **クレジットカード払い + Stripe Metered Billing による自動引き落とし** の仕様を定義する。v1 (2026-06-01) でリリース済の **手動運用 (`invoice` = 銀行振込)** と **並存** する形で v1.x にて実装する。
+
+> 2026-05-15: 旧 `bank_transfer` 値は `invoice` に統合済 (UI ラベル「銀行振込」)。本ドキュメント内の旧 `bank_transfer` 言及は履歴として残置するが、新規実装では `invoice` のみを参照すること。詳細 [ADR-0007](../adr/0007-unify-invoice-and-bank-transfer.md)。
 
 ### スコープ
 
@@ -53,7 +55,7 @@
 ```prisma
 model Tenant {
   // 既存 (PR #2 以降)
-  paymentMethod  String  @default("invoice")  // 'invoice' / 'bank_transfer' / 'credit_card'
+  paymentMethod  String  @default("invoice")  // 'invoice' (= 銀行振込) / 'credit_card'。2026-05-15 'bank_transfer' を 'invoice' に統合
 
   // 新規 (本仕様、v1.x PR #X)
   /// Stripe Customer ID。credit_card 払いに切替えた時点で作成。null = 未登録
@@ -107,8 +109,8 @@ model StripeWebhookEvent {
 ### 2.3 `BillingHistory` テーブル (新規、課金履歴の統一管理)
 
 ```prisma
-/// 請求履歴。invoice / bank_transfer / credit_card の **全支払い方法を統一管理**。
-///   - invoice / bank_transfer: super_admin が手動で `paid` に更新
+/// 請求履歴。invoice (= 銀行振込) / credit_card の **全支払い方法を統一管理**。
+///   - invoice (= 銀行振込): super_admin が手動で `paid` に更新
 ///   - credit_card: Stripe Webhook で自動更新
 ///   - 既存 tenant_monthly_usage_history (= 使用量スナップショット) との違い:
 ///     こちらは「請求書 / 決済」のライフサイクル管理、月次集計の確定値ではなく支払い状況の追跡
@@ -117,7 +119,7 @@ model BillingHistory {
   tenantId        String   @map("tenant_id") @db.Uuid
   /// "YYYY-MM" 形式の請求対象月
   yearMonth       String   @map("year_month") @db.VarChar(7)
-  /// 支払い方法 ('invoice' / 'bank_transfer' / 'credit_card')
+  /// 支払い方法 ('invoice' = 銀行振込 / 'credit_card')
   paymentMethod   String   @map("payment_method") @db.VarChar(20)
   /// 課金額 (税抜、円整数)
   amountJpy       Int      @map("amount_jpy")
@@ -510,9 +512,9 @@ export async function POST(req: NextRequest) {
 
 ### 9.1 PR #371 月次請求運用との統合
 
-- `BillingHistory` テーブルの paymentMethod カラムで `invoice` / `bank_transfer` / `credit_card` を区別
+- `BillingHistory` テーブルの paymentMethod カラムで `invoice` (= 銀行振込) / `credit_card` を区別
 - BILLING_MONTHLY_OPERATIONS.md の月次フローは:
-  - `invoice` / `bank_transfer` テナント: 既存の手動 CSV エクスポート + メール送付フロー継続
+  - `invoice` テナント (= 銀行振込): 既存の手動 CSV エクスポート + メール送付フロー継続
   - `credit_card` テナント: 自動 (super_admin は何もしない、Stripe Dashboard / `BillingHistory` 一覧で確認のみ)
 
 ### 9.2 PR #372 read-only 強制移行 (Tenant.suspendedAt) との統合

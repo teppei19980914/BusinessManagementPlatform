@@ -48,7 +48,9 @@ const BillingPatchSchema = z
     billingPhoneNumber: z.string().trim().max(20).nullable().optional(),
     // 2026-05-09 (#4): クレジットカードは UI 非活性 + API でも reject (defense-in-depth)。
     //   将来対応する際に 'credit_card' を再追加する。
-    paymentMethod: z.enum(['invoice', 'bank_transfer']).optional(),
+    // 2026-05-15: 'bank_transfer' を廃止し 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
+    //   旧 'bank_transfer' を送ってきた場合は VALIDATION_ERROR で reject (= 画面で再選択を促す)。
+    paymentMethod: z.enum(['invoice']).optional(),
   })
   // 2026-05-09 (PR C / #5): 法人切替 + 会社名を同時に送ってきた場合は会社名必須。
   //   billingType だけ切替えで会社名を送らないケース (= 既存値を維持) は許容する。
