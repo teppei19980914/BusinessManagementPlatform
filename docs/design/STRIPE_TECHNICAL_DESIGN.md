@@ -1,0 +1,846 @@
+# Stripe Metered Billing 詳細技術設計
+
+最終更新: 2026-05-14
+ステータス: **詳細設計確定 (実装前)**
+関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) (仕様) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) (設計判断) / [STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md) (実装計画)
+
+## 概要
+
+本ドキュメントは [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) で確定した仕様を **実装可能なレベル** まで詰めるための詳細設計を記録する。仕様書が「what / why」、本書が「how (実装手段)」を担う。
+
+実装担当者は本書を読んで判断保留なく PR-S1 から実装着手できる粒度を目標とする。
+
+---
+
+## §A. トランザクション境界 + 整合性保証
+
+### A-1. `setup/complete` ハンドラの 2-phase commit 問題
+
+#### 問題
+
+Stripe API 呼出 (= 外部 HTTP) と Prisma DB トランザクションは **アトミックにできない**。例えば:
+
+```
+1. stripe.subscriptions.create() → 成功 (sub_xxx 作成)
+2. prisma.tenant.update({ stripeSubscriptionId: 'sub_xxx', paymentMethod: 'credit_card' }) → 失敗
+   ↓ Stripe 側は subscription 残っているが、DB 側は古い状態
+   ↓ 次回 setup でも Stripe Customer は再作成され、 orphan subscription が積み上がる
+```
+
+#### 設計判断: **「DB 先行 + Stripe 後追い + 補償処理」方式**
+
+```typescript
+// src/services/stripe-billing.service.ts (擬似コード)
+export async function completeStripeSetup(tenantId: string, setupSessionId: string): Promise<Result> {
+  // Phase 1: Stripe Checkout Session の検証 (= Stripe からの状態取得のみ、書き込みなし)
+  const session = await stripe.checkout.sessions.retrieve(setupSessionId);
+  if (session.status !== 'complete') {
+    return { ok: false, reason: 'setup_not_complete' };
+  }
+  const customerId = session.customer as string;
+  const paymentMethodId = session.setup_intent
+    ? (await stripe.setupIntents.retrieve(session.setup_intent as string)).payment_method as string
+    : null;
+  if (!paymentMethodId) return { ok: false, reason: 'no_payment_method' };
+
+  // Phase 2: DB の暫定 commit (= 'pending' 状態)
+  //   この時点で tenant.paymentMethod はまだ 'invoice' のまま、'credit_card' へは切替えない。
+  //   stripeCustomerId / stripeDefaultPaymentMethodId だけ先に保存。
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      stripeCustomerId: customerId,
+      stripeDefaultPaymentMethodId: paymentMethodId,
+      // paymentMethod はまだ更新しない
+    },
+  });
+
+  // Phase 3: Stripe Subscription を作成 (= 外部呼出、idempotent)
+  let subscription: Stripe.Subscription;
+  try {
+    subscription = await stripe.subscriptions.create({
+      customer: customerId,
+      items: [
+        { price: STRIPE_PRICE_HAIKU },
+        { price: STRIPE_PRICE_SONNET },
+        { price: getStoragePriceId(tenant.storageAddonPlan) },
+      ],
+      default_payment_method: paymentMethodId,
+      automatic_tax: { enabled: true },
+    }, {
+      idempotencyKey: `subscription:create:${tenantId}`,
+    });
+  } catch (e) {
+    // 補償処理: Phase 2 で書いた stripeCustomerId/PaymentMethodId はそのまま残してよい
+    // (= 次回再試行時に再利用される。Customer/PaymentMethod の作成は idempotent)
+    return { ok: false, reason: stripe_error_code(e) };
+  }
+
+  // Phase 4: DB の最終 commit (= 'credit_card' 切替確定)
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      stripeSubscriptionId: subscription.id,
+      stripeSubscriptionStatus: subscription.status,
+      stripeSubscriptionItemHaikuId: subscription.items.data.find(i => i.price.id === STRIPE_PRICE_HAIKU)?.id,
+      stripeSubscriptionItemSonnetId: subscription.items.data.find(i => i.price.id === STRIPE_PRICE_SONNET)?.id,
+      stripeSubscriptionItemStorageId: subscription.items.data.find(i => i.price.id === getStoragePriceId(tenant.storageAddonPlan))?.id,
+      paymentMethod: 'credit_card',
+      cardLastVerifiedAt: new Date(),
+      cardVerificationStatus: 'valid',
+    },
+  });
+
+  return { ok: true };
+}
+```
+
+#### この設計の利点
+
+- **DB が信頼源**: 「paymentMethod === 'credit_card' なら Stripe Subscription が必ず存在する」が invariant
+- **Phase 4 失敗時のリカバリ**: Stripe Subscription は作成済だが DB は `paymentMethod='invoice'` のまま → 次回 setup 時に「既存 Subscription があれば再利用」のロジックで補正可能
+- **idempotency_key で重複作成防止**: `subscription:create:${tenantId}` で同一テナントへの 2 重作成を Stripe 側で防ぐ
+
+#### Phase 4 失敗時の検出と補償 cron
+
+```typescript
+// 日次 cron: 整合性チェック
+export async function reconcileStripeIntegrity(): Promise<void> {
+  // 「DB は invoice だが Stripe には Subscription が存在する」ケースを検出
+  const tenantsWithOrphan = await prisma.tenant.findMany({
+    where: {
+      stripeCustomerId: { not: null },
+      paymentMethod: { not: 'credit_card' },
+      // 直近 1 時間以内に更新されたものは setup 中の可能性あり、除外
+      updatedAt: { lt: new Date(Date.now() - 60 * 60 * 1000) },
+    },
+  });
+  for (const tenant of tenantsWithOrphan) {
+    const subs = await stripe.subscriptions.list({ customer: tenant.stripeCustomerId });
+    const active = subs.data.find(s => s.status === 'active');
+    if (active) {
+      // Phase 4 失敗のリカバリ: DB を Stripe に合わせて修正
+      await prisma.tenant.update({
+        where: { id: tenant.id },
+        data: { stripeSubscriptionId: active.id, paymentMethod: 'credit_card', ... },
+      });
+      // または、active を cancel して整合を取る (= 顧客に通知)
+    }
+  }
+}
+```
+
+### A-2. idempotency key の生成戦略
+
+#### 設計判断: **`<operation>:<scope>:<resource_id>` 形式 + UUID v4 サフィックス (再試行可能性に応じて)**
+
+| 操作 | idempotency_key 例 | 用途 |
+|---|---|---|
+| Stripe Customer 作成 | `customer:create:${tenantId}` | テナント単位で 1 度だけ |
+| Stripe Subscription 作成 | `subscription:create:${tenantId}` | 同上 |
+| Usage Record 送信 | `usage:${tenantId}:${callType}:${callId}` | API 呼び出しごとにユニーク (= ApiCallLog.id を `callId` に流用) |
+| Customer Portal Session | `portal:${tenantId}:${Date.now()}` | セッションは短命なので時刻含めて OK |
+| Checkout Session 作成 | `checkout:setup:${tenantId}:${randomUUID()}` | リトライ時に新しい UUID で重複防止 |
+
+#### 例外: 「同じ key で違う body」エラー対策
+
+Stripe は同じ `idempotency_key` で **異なる body** を送ると 400 エラーを返す。これを避けるため:
+
+- **operations: create 系** = 固定 key + 同一 body 保証 (例: テナント単位の Customer)
+- **operations: report 系** = ApiCallLog.id 等の **真にユニークな ID** を流用 (= 重複防止が主目的)
+- **operations: ephemeral** = `${tenantId}:${Date.now()}` で都度新規 (= idempotent 不要)
+
+---
+
+## §B. エラーハンドリング詳細
+
+### B-1. Stripe error code の全カバレッジ
+
+#### `card_declined` の decline_code マッピング
+
+Stripe 公式 [decline codes](https://docs.stripe.com/declines/codes) の主要パターンを UI 表示文言にマッピング:
+
+```typescript
+// src/lib/stripe-error-messages.ts
+export const STRIPE_DECLINE_CODE_MESSAGES: Record<string, { ja: string; severity: 'high' | 'medium' | 'low' }> = {
+  // 高: 顧客の対応が必要、明確にエラー
+  insufficient_funds:       { ja: 'カード残高が不足しています', severity: 'high' },
+  expired_card:             { ja: 'カードの有効期限が切れています', severity: 'high' },
+  incorrect_cvc:            { ja: 'セキュリティコード (CVC) が誤っています', severity: 'high' },
+  incorrect_number:         { ja: 'カード番号が誤っています', severity: 'high' },
+  invalid_cvc:              { ja: 'セキュリティコード (CVC) の形式が誤っています', severity: 'high' },
+  invalid_expiry_month:     { ja: 'カードの有効期限 (月) が誤っています', severity: 'high' },
+  invalid_expiry_year:      { ja: 'カードの有効期限 (年) が誤っています', severity: 'high' },
+  invalid_number:           { ja: 'カード番号の形式が誤っています', severity: 'high' },
+  lost_card:                { ja: 'カードが紛失届出済のため使用できません (カード会社にお問い合わせください)', severity: 'high' },
+  stolen_card:              { ja: 'カードが盗難届出済のため使用できません (カード会社にお問い合わせください)', severity: 'high' },
+  pickup_card:              { ja: 'カードが利用停止されています (カード会社にお問い合わせください)', severity: 'high' },
+  restricted_card:          { ja: 'このカードは制限されています (別のカードをお試しください)', severity: 'high' },
+  // 中: カードを変えれば解決する可能性あり
+  card_not_supported:       { ja: 'このカードは本サービスで利用できません (別のカードをお試しください)', severity: 'medium' },
+  currency_not_supported:   { ja: 'このカードは日本円決済に対応していません', severity: 'medium' },
+  duplicate_transaction:    { ja: '直近に同額の決済があります (重複の可能性)', severity: 'medium' },
+  fraudulent:               { ja: '不正の疑いがあるため拒否されました (カード会社にお問い合わせください)', severity: 'medium' },
+  generic_decline:          { ja: 'カードが拒否されました (カード会社にお問い合わせください)', severity: 'medium' },
+  // 低: 一時的、再試行で解決する可能性
+  issuer_not_available:     { ja: 'カード発行会社が一時的に応答していません (時間をおいて再試行)', severity: 'low' },
+  processing_error:         { ja: 'Stripe 側で処理エラーが発生しました (時間をおいて再試行)', severity: 'low' },
+  try_again_later:          { ja: '一時的なエラーです (時間をおいて再試行)', severity: 'low' },
+  // フォールバック
+  do_not_honor:             { ja: 'カードが拒否されました (詳細はカード会社にお問い合わせください)', severity: 'medium' },
+  unknown:                  { ja: 'カードが拒否されました (詳細不明、カード会社にお問い合わせください)', severity: 'medium' },
+};
+
+export function getDeclineMessage(declineCode: string | null | undefined): { ja: string; severity: string } {
+  if (!declineCode) return STRIPE_DECLINE_CODE_MESSAGES.generic_decline;
+  return STRIPE_DECLINE_CODE_MESSAGES[declineCode] ?? STRIPE_DECLINE_CODE_MESSAGES.unknown;
+}
+```
+
+#### Stripe API エラー全般のマッピング
+
+`card_declined` 以外の Stripe API エラー (= `StripeAPIError`, `StripeAuthenticationError`, `StripeRateLimitError`, `StripeInvalidRequestError`, `StripeConnectionError`) も統一フォーマットで処理:
+
+```typescript
+// src/lib/stripe-error-handler.ts
+export type StripeOperationResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; code: 'card_declined'; declineCode: string; userMessage: string }
+  | { ok: false; code: 'rate_limit'; retryAfterSec: number; userMessage: string }
+  | { ok: false; code: 'invalid_request'; userMessage: string }
+  | { ok: false; code: 'authentication'; userMessage: string }  // = 環境変数設定ミス、運営に通知
+  | { ok: false; code: 'connection'; userMessage: string }      // = ネットワーク、リトライ可
+  | { ok: false; code: 'api_error'; userMessage: string };      // = Stripe 側の 5xx
+
+export async function withStripeError<T>(fn: () => Promise<T>): Promise<StripeOperationResult<T>> {
+  try {
+    return { ok: true, value: await fn() };
+  } catch (e) {
+    if (e instanceof Stripe.errors.StripeCardError) {
+      const msg = getDeclineMessage(e.decline_code);
+      return { ok: false, code: 'card_declined', declineCode: e.decline_code ?? 'unknown', userMessage: msg.ja };
+    }
+    if (e instanceof Stripe.errors.StripeRateLimitError) {
+      return { ok: false, code: 'rate_limit', retryAfterSec: 5, userMessage: 'リクエストが集中しています' };
+    }
+    if (e instanceof Stripe.errors.StripeInvalidRequestError) {
+      return { ok: false, code: 'invalid_request', userMessage: e.message };
+    }
+    if (e instanceof Stripe.errors.StripeAuthenticationError) {
+      // 運営者ログ + アラート (= 環境変数設定ミスの可能性)
+      await recordError({ severity: 'critical', source: 'stripe', message: 'auth failed' });
+      return { ok: false, code: 'authentication', userMessage: '決済システムに一時的な問題が発生しています' };
+    }
+    if (e instanceof Stripe.errors.StripeConnectionError) {
+      return { ok: false, code: 'connection', userMessage: 'ネットワーク接続エラー (時間をおいて再試行)' };
+    }
+    return { ok: false, code: 'api_error', userMessage: 'Stripe 側で一時的なエラーが発生しています' };
+  }
+}
+```
+
+### B-2. Webhook 失敗時の DLQ (Dead Letter Queue) 戦略
+
+#### 設計判断: **「processedAt=null + retryCount で 3 段階」**
+
+```typescript
+// StripeWebhookEvent に追加カラム
+model StripeWebhookEvent {
+  // ...既存 (id, type, payloadJson, receivedAt, processedAt, errorMessage)
+  retryCount   Int      @default(0) @map("retry_count")
+  /// 次回再試行スケジュール時刻 (null = もう再試行しない、= DLQ 入り)
+  nextRetryAt  DateTime? @map("next_retry_at") @db.Timestamptz
+}
+```
+
+#### 再試行スケジュール
+
+| retryCount | nextRetryAt | アラート |
+|---|---|---|
+| 0 (= 初回) | 受信時刻 (即座に処理) | なし |
+| 1 (= 1 回失敗後) | 受信時刻 + 5 分 | なし |
+| 2 (= 2 回失敗後) | 受信時刻 + 30 分 | super_admin に通知 (= mail) |
+| 3 (= 3 回失敗後) | null (DLQ 入り、自動再試行停止) | super_admin に critical アラート |
+
+#### 5 分間隔の cron で再試行
+
+```typescript
+// src/app/api/cron/stripe-webhook-retry/route.ts
+export async function GET() {
+  const events = await prisma.stripeWebhookEvent.findMany({
+    where: {
+      processedAt: null,
+      nextRetryAt: { lte: new Date() },
+      retryCount: { lt: 3 },
+    },
+    take: 50,
+  });
+  for (const event of events) {
+    await dispatchWebhookEvent(event); // 成功時は processedAt セット、失敗時は retryCount++ & nextRetryAt 更新
+  }
+}
+```
+
+#### DLQ 入り (= retryCount >= 3) の取扱い
+
+- super_admin ダッシュボード `/admin/super/stripe/dlq` (新設) で一覧表示
+- 手動で「再試行」「破棄」「詳細表示」ボタン
+- 累積件数が 10 件超えたら critical アラート (= 何らかの体系的問題)
+
+### B-3. Stripe API ダウン時の挙動
+
+#### 設計判断: **「同期処理は短期リトライ、非同期処理は queue 化」**
+
+| 操作 | 失敗時の挙動 |
+|---|---|
+| **`/setup` ハンドラ** (= 顧客の同期リクエスト) | 即座にエラー返却。顧客に「時間をおいて再試行」案内。リトライは UI 側で実行 |
+| **Usage Record 送信** (= API 呼び出しの裏で実行) | LLM 呼び出し自体は止めず、Usage Record は `stripe_usage_record_queue` テーブルに積む |
+| **Webhook ハンドラ** (= Stripe からの非同期通知) | DB INSERT 後、処理失敗は §B-2 の retry queue へ |
+| **整合性 cron** (= 日次の reconcile) | 失敗テナントを記録、次回 cron で再試行 |
+
+#### Usage Record queue テーブル
+
+```prisma
+model StripeUsageRecordQueue {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  /// 'haiku' / 'sonnet' (= Subscription Item の識別、tenant の subscriptionItemId を解決)
+  callType        String   @map("call_type") @db.VarChar(20)
+  /// ApiCallLog.id (= idempotency_key として使う、UUID)
+  apiCallLogId    String   @map("api_call_log_id") @db.Uuid
+  quantity        Int      @default(1)
+  /// 元の API 呼び出し時刻 (= Usage Record の timestamp として送信)
+  occurredAt      DateTime @map("occurred_at") @db.Timestamptz
+  /// 送信試行回数
+  retryCount      Int      @default(0) @map("retry_count")
+  /// 次回送信予定時刻 (null = もう送らない = エラー扱い)
+  nextSendAt      DateTime? @map("next_send_at") @db.Timestamptz
+  /// 送信成功時刻 (null = 未送信、Date = 完了)
+  sentAt          DateTime? @map("sent_at") @db.Timestamptz
+  /// 直近のエラーメッセージ
+  lastError       String?   @map("last_error") @db.Text
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([sentAt, nextSendAt], map: "idx_stripe_usage_queue_pending")
+  @@index([tenantId], map: "idx_stripe_usage_queue_tenant")
+  @@map("stripe_usage_record_queue")
+}
+```
+
+#### 5 分間隔の送信 cron
+
+```typescript
+// src/app/api/cron/stripe-usage-record-flush/route.ts
+export async function GET() {
+  const pending = await prisma.stripeUsageRecordQueue.findMany({
+    where: {
+      sentAt: null,
+      nextSendAt: { lte: new Date() },
+      retryCount: { lt: 5 },
+    },
+    take: 100,
+  });
+  for (const record of pending) {
+    const tenant = await prisma.tenant.findUnique({ where: { id: record.tenantId } });
+    const subscriptionItemId = record.callType === 'haiku'
+      ? tenant.stripeSubscriptionItemHaikuId
+      : tenant.stripeSubscriptionItemSonnetId;
+    if (!subscriptionItemId) {
+      // テナントが既に credit_card じゃない (= invoice 戻し済) → queue から削除
+      await prisma.stripeUsageRecordQueue.delete({ where: { id: record.id } });
+      continue;
+    }
+    const result = await withStripeError(() =>
+      stripe.subscriptionItems.createUsageRecord(subscriptionItemId, {
+        quantity: record.quantity,
+        timestamp: Math.floor(record.occurredAt.getTime() / 1000),
+      }, {
+        idempotencyKey: `usage:${record.tenantId}:${record.callType}:${record.apiCallLogId}`,
+      })
+    );
+    if (result.ok) {
+      await prisma.stripeUsageRecordQueue.update({
+        where: { id: record.id },
+        data: { sentAt: new Date() },
+      });
+    } else {
+      await prisma.stripeUsageRecordQueue.update({
+        where: { id: record.id },
+        data: {
+          retryCount: { increment: 1 },
+          nextSendAt: nextRetryAt(record.retryCount + 1),
+          lastError: result.userMessage,
+        },
+      });
+    }
+  }
+}
+
+function nextRetryAt(retryCount: number): Date | null {
+  // exponential backoff: 1, 5, 15, 60, 240 分
+  const delays = [1, 5, 15, 60, 240];
+  const delayMin = delays[retryCount - 1];
+  if (delayMin == null) return null; // = DLQ 入り
+  return new Date(Date.now() + delayMin * 60 * 1000);
+}
+```
+
+---
+
+## §C. 課金計算の詳細
+
+### C-1. Proration (按分課金) の方針
+
+#### 設計判断: **「Stripe 一括方式」 — 当月の全 Usage を Stripe で請求 (顧客体験重視)**
+
+月途中で `invoice` → `credit_card` 切替時の挙動を以下のように確定 (ユーザ確定 2026-05-14):
+
+```
+2026-06-15 切替の例:
+- 6/1〜6/14: invoice 経由で利用 (= ApiCallLog 記録済、currentMonthApiCostJpy に計上済)
+- 6/15: credit_card に切替実行
+   ↓ 切替時に backfill 処理を実行 (Phase 3.5)
+   ↓ 6/1〜6/14 の全 ApiCallLog を Stripe Usage Record として遡及送信
+- 6/15〜6/30: credit_card 経由で利用 (= 通常通り Usage Record 送信)
+- 6/30 月末: Stripe が **当月の全 Usage (6/1〜6/30)** を集計 → 7月初に Invoice 自動生成 → 引落
+- 顧客は「当月の請求が 1 通だけ届く」体験
+```
+
+#### 二重計上の防止
+
+invoice 側で計上済の `BillingHistory` レコードは、切替時に **status='replaced_by_stripe' に更新** して請求対象外とする (= 物理削除せず監査用に残す)。
+
+```prisma
+// BillingHistory.status の値追加 (詳細設計確定時に拡張)
+//   'pending' / 'paid' / 'failed' / 'refunded' / 'canceled' / 'replaced_by_stripe'
+```
+
+UNIQUE 制約は当初の `(tenantId, yearMonth)` のまま維持可能 (= 同月 2 レコードを作らないため、§STRIPE_BILLING.md §2.3 の制約変更は不要)。
+
+#### 実装 (擬似コード)
+
+```typescript
+// completeStripeSetup() に Phase 3.5 (backfill) を追加
+async function completeStripeSetup(tenantId, setupSessionId) {
+  // Phase 1-2: Customer 検証 + DB 暫定 commit (既存)
+  // ...
+
+  // Phase 3: Subscription 作成 (= billing_cycle_anchor を JST 月初に固定)
+  const jstMonthStart = getJstMonthStartUnixSec(new Date());
+  const subscription = await stripe.subscriptions.create({
+    customer: customerId,
+    items: [...],
+    default_payment_method: paymentMethodId,
+    automatic_tax: { enabled: true },
+    billing_cycle_anchor: jstMonthStart, // 当月の月初に anchor
+    proration_behavior: 'none',
+  }, { idempotencyKey: `subscription:create:${tenantId}` });
+
+  // 【新規】Phase 3.5: 切替前の当月 Usage を Stripe に遡及送信
+  const jstMonthStartDate = new Date(jstMonthStart * 1000);
+  const apiCallLogs = await prisma.apiCallLog.findMany({
+    where: {
+      tenantId,
+      createdAt: { gte: jstMonthStartDate, lt: new Date() },
+      // 課金対象のもののみ (= LLM 系、embedding 系等の有償 featureUnit)
+      featureUnit: { in: getBillableFeatureUnits() },
+    },
+  });
+  // queue に積む (= 即時送信せず、5 分間隔 cron で順次送信)
+  const haikuItemId = subscription.items.data.find(i => i.price.id === STRIPE_PRICE_HAIKU)?.id;
+  const sonnetItemId = subscription.items.data.find(i => i.price.id === STRIPE_PRICE_SONNET)?.id;
+  for (const log of apiCallLogs) {
+    const callType = inferCallType(log); // 'haiku' or 'sonnet'
+    await prisma.stripeUsageRecordQueue.create({
+      data: {
+        tenantId,
+        callType,
+        apiCallLogId: log.id,           // = idempotency_key として使用
+        quantity: 1,
+        occurredAt: log.createdAt,       // 過去日時 (= Stripe は過去 35 日以内 OK)
+        nextSendAt: new Date(),
+      },
+    });
+  }
+
+  // Phase 4: 切替前の BillingHistory レコードを 'replaced_by_stripe' に更新
+  const currentYearMonth = getCurrentJstYearMonth();
+  await prisma.billingHistory.updateMany({
+    where: {
+      tenantId,
+      yearMonth: currentYearMonth,
+      paymentMethod: { in: ['invoice', 'bank_transfer'] },
+      status: 'pending', // まだ請求書発行前 (= 翌月15日まで)
+    },
+    data: { status: 'replaced_by_stripe' },
+  });
+
+  // Phase 5: tenant.paymentMethod = 'credit_card' に切替 (既存 Phase 4)
+  await prisma.tenant.update({ where: { id: tenantId }, data: { paymentMethod: 'credit_card', ... } });
+}
+```
+
+#### 注意: 切替タイミングと請求書発行タイミング
+
+| タイミング | 想定挙動 |
+|---|---|
+| **当月 1〜15 日に切替** | OK。invoice 側の請求書未発行 (= 翌月15日が発行期限) なので、`status='replaced_by_stripe'` で問題なし |
+| **当月 16〜31 日に切替** | OK。同上 (= 当月分の請求書は翌月15日以降に発行) |
+| **翌月 1〜15 日に切替** (= 前月分の請求書発行前) | OK。前月分の請求書発行待ちレコードを `replaced_by_stripe` に。Stripe 側で前月分の Usage を backfill 送信 |
+| **翌月 16 日以降に切替** (= 前月分の請求書発行後) | ⚠️ 既に invoice で請求書送付済 → 重複請求リスク。**切替時に「前月分は invoice で確定済、当月分のみ Stripe」と検知して backfill 範囲を制限** |
+
+#### Phase 3.5 実装時の補足
+
+- `inferCallType(log)`: ApiCallLog の `modelName` (`'claude-haiku-4-5'` / `'claude-sonnet-4-6'`) や `featureUnit` から判定
+- `getBillableFeatureUnits()`: 課金対象の feature 一覧 (= 'suggestion', 'auto_tag', 'embedding', etc.) 。一覧は `src/config/billing.ts` 等で集約管理
+- backfill 範囲外 (= 翌月 16 日以降切替時) は backfill しない
+
+### C-2. Subscription Item 動的管理 (プラン変更時)
+
+#### 設計判断: **「全アイテム並存、Usage Record 送信先のみ切替」**
+
+Beginner / Expert / Pro はすべて同じ Subscription 上に共存し、Usage Record の送信先 Subscription Item を切り替えるだけ。
+
+```
+Subscription (= 1 つのテナント契約)
+├─ Item Haiku (= STRIPE_PRICE_HAIKU)    ← Expert プラン時のみ Usage 送信
+├─ Item Sonnet (= STRIPE_PRICE_SONNET)  ← Pro プラン時のみ Usage 送信
+└─ Item Storage (= STRIPE_PRICE_STORAGE_*) ← 常時アクティブ
+```
+
+#### プラン変更時の挙動
+
+```typescript
+// Expert → Pro 変更時
+async function updateTenantPlan(tenantId: string, newPlan: 'expert' | 'pro') {
+  // Subscription Item の追加・削除なし
+  // 単に tenant.plan を更新するだけ
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: { plan: newPlan },
+  });
+  // 次回 API 呼び出しから、新 plan に応じた Subscription Item に Usage 送信される
+  //   - Expert → Haiku Item
+  //   - Pro → Sonnet Item
+}
+```
+
+#### Beginner プランの扱い
+
+Beginner は **Stripe 課金対象外** だが、Subscription 自体は active で保持:
+- Beginner プラン時は Usage Record を送信しない (= `withMeteredLLM` 内で plan チェック)
+- Storage Item のみ standard (¥0) で active
+
+これにより:
+- プラン切替が **Stripe API 呼び出しなしで瞬時に完了**
+- 月途中のプラン変更でも proration 計算不要
+
+### C-3. TZ 境界 (UTC vs Asia/Tokyo)
+
+#### 問題
+
+| システム | 月末判定 | 例 (5月分の締日) |
+|---|---|---|
+| たすきば (Tenant.timezone) | Asia/Tokyo 月末 | 2026-05-31 23:59:59 JST = 2026-05-31 14:59:59 UTC |
+| Stripe Subscription | UTC ベース (billing_cycle_anchor 起点) | 切替時刻によって変動 |
+
+これらが揃わないと、**当月の Usage が翌月扱いになる** リスクあり。
+
+#### 設計判断: **Subscription の billing_cycle_anchor を JST 月初に設定**
+
+```typescript
+// 切替時、billing_cycle_anchor を「翌月 JST 月初」に固定
+function getNextJstMonthStartUnixSec(now: Date): number {
+  // Asia/Tokyo の翌月 1 日 00:00:00 を UTC で表現
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const nextMonth = new Date(Date.UTC(
+    jstNow.getUTCFullYear(),
+    jstNow.getUTCMonth() + 1, // 0-indexed なので +1 で翌月
+    1, 0, 0, 0
+  ));
+  // JST 月初 (= UTC 前日 15:00) に補正
+  return Math.floor((nextMonth.getTime() - 9 * 60 * 60 * 1000) / 1000);
+}
+
+const subscription = await stripe.subscriptions.create({
+  customer: customerId,
+  items: [...],
+  billing_cycle_anchor: getNextJstMonthStartUnixSec(new Date()),
+  proration_behavior: 'none',
+  // ...
+});
+```
+
+これにより:
+- Stripe の月末判定が JST 月末と一致
+- 切替月は Stripe Subscription が start ~ JST 月末まで稼働 (= proration_behavior='none' で按分なし、切替月は半月分のみ請求)
+
+#### Usage Record の timestamp も JST ベースで送信
+
+```typescript
+// reportUsage で
+await stripe.subscriptionItems.createUsageRecord(itemId, {
+  quantity: 1,
+  // JST 時刻を Unix 秒に変換 → Stripe は受け取って自動で UTC として扱うが、
+  // 月末境界の判定で 9 時間ズレないよう、API 呼び出し時刻をそのまま (= UTC ベース) 送信
+  timestamp: Math.floor(Date.now() / 1000),
+  action: 'increment',
+});
+```
+
+注: Stripe は `timestamp` を UTC 基準で扱うため、API 呼び出し時刻をそのまま送れば、`billing_cycle_anchor` (= JST 月初 = UTC 前日 15:00) との一貫性が保たれる。
+
+---
+
+## §D. 既存実装との配線詳細
+
+### D-1. `withMeteredLLM` への配線箇所
+
+#### 既存実装
+
+`src/lib/llm/metered.ts` の `withMeteredLLM` は以下の流れ:
+
+```
+1. プラン上限チェック (= Beginner 月100回上限等)
+2. 予算上限チェック (= monthlyBudgetCapJpy)
+3. LLM 呼出 (= 実 API)
+4. ApiCallLog 記録
+5. Tenant.currentMonthApiCallCount / currentMonthApiCostJpy を increment
+```
+
+#### 配線位置: **Step 5 の直後**
+
+```typescript
+// src/lib/llm/metered.ts
+export async function withMeteredLLM(tenantId, callType, fn) {
+  // Step 1-3: 既存処理
+  const result = await fn();
+
+  // Step 4: ApiCallLog 記録 (既存)
+  const apiCallLog = await prisma.apiCallLog.create({...});
+
+  // Step 5: Tenant カウンタ更新 (既存)
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: { currentMonthApiCallCount: { increment: 1 }, ... },
+  });
+
+  // 【新規】Step 6: Stripe Usage Record 送信 (paymentMethod === 'credit_card' のみ)
+  if (tenant.paymentMethod === 'credit_card') {
+    // 同期送信は試みず、必ず queue 経由 (= LLM 呼び出しを止めない)
+    await prisma.stripeUsageRecordQueue.create({
+      data: {
+        tenantId,
+        callType,  // 'haiku' or 'sonnet'
+        apiCallLogId: apiCallLog.id,
+        quantity: 1,
+        occurredAt: apiCallLog.createdAt,
+        nextSendAt: new Date(), // 即送信予定
+      },
+    });
+  }
+
+  return result;
+}
+```
+
+#### 利点
+
+- **LLM 応答時間に影響しない**: Stripe API 呼び出しを同期実行しないため、ユーザは遅延を感じない
+- **Stripe ダウン耐性**: queue に積むだけなので、Stripe API ダウン時も LLM は引き続き利用可能
+- **完全性保証**: ApiCallLog.id が idempotency_key になるため、5 分間隔 cron での再送でも重複しない
+- **paymentMethod 切替に追従**: 月途中で invoice → credit_card 切替後は新規 LLM 呼び出しから queue 投入される
+
+### D-2. 自動 suspend cron の正確な動作
+
+#### 設計判断: **「`customer.subscription.updated` Webhook 受信時刻 + 3 日」**
+
+```typescript
+// Webhook ハンドラ
+async function handleSubscriptionUpdated(event: Stripe.Event) {
+  const subscription = event.data.object as Stripe.Subscription;
+  const tenant = await prisma.tenant.findFirst({
+    where: { stripeSubscriptionId: subscription.id },
+  });
+  if (!tenant) return;
+
+  // 状態を反映
+  await prisma.tenant.update({
+    where: { id: tenant.id },
+    data: { stripeSubscriptionStatus: subscription.status },
+  });
+
+  // past_due に遷移したら自動 suspend スケジュール
+  if (subscription.status === 'past_due' && tenant.stripeSubscriptionStatus !== 'past_due') {
+    const suspendAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 3 日後
+    await prisma.tenant.update({
+      where: { id: tenant.id },
+      data: { autoSuspendScheduledAt: suspendAt },
+    });
+  }
+
+  // active に戻ったら自動 suspend キャンセル + suspend 中なら resume
+  if (subscription.status === 'active' && tenant.stripeSubscriptionStatus !== 'active') {
+    await prisma.tenant.update({
+      where: { id: tenant.id },
+      data: { autoSuspendScheduledAt: null },
+    });
+    if (tenant.suspendedAt != null && tenant.suspendReason === 'payment_delinquent') {
+      // 入金完了で自動 resume (= 既存 PR #372 の resumeTenant() を呼出)
+      await resumeTenant(tenant.id, SYSTEM_USER_ID);
+    }
+  }
+}
+```
+
+#### 日次 cron で suspend 実行
+
+```typescript
+// src/app/api/cron/stripe-auto-suspend/route.ts
+export async function GET() {
+  const candidates = await prisma.tenant.findMany({
+    where: {
+      autoSuspendScheduledAt: { lte: new Date(), not: null },
+      suspendedAt: null, // まだ suspend されていない
+      deletedAt: null,
+    },
+  });
+  for (const tenant of candidates) {
+    try {
+      await suspendTenant(tenant.id, 'payment_delinquent', SYSTEM_USER_ID);
+      await prisma.tenant.update({
+        where: { id: tenant.id },
+        data: { autoSuspendScheduledAt: null },
+      });
+    } catch (e) {
+      // 既に suspended 等のエラーは無視
+      await recordError({ severity: 'warning', source: 'cron', message: e.message, context: { tenantId: tenant.id } });
+    }
+  }
+}
+```
+
+#### `SYSTEM_USER_ID` の取扱い
+
+Webhook や cron からの自動 suspend では、auditLog の `userId` に何を入れるか?
+
+**設計判断**: 専用の `system` ユーザを seed で作成し、その `id` を環境変数 `SYSTEM_USER_ID` に保存。
+
+```typescript
+// prisma/migrations/.../seed.sql
+INSERT INTO users (id, tenant_id, email, name, system_role, is_active, ...)
+VALUES (
+  '00000000-0000-0000-0000-systemsystemid',
+  '<MANAGEMENT_TENANT_ID>',
+  'system@internal',
+  'System (Auto)',
+  'super_admin',
+  false, -- ログイン不可
+  ...
+);
+```
+
+これにより:
+- auditLog で「誰が実行したか」が明確 (= `system@internal`)
+- 通常のログイン経路を持たない (= 不正利用防止)
+
+---
+
+## §E. その他の詳細設計事項
+
+### E-1. Customer Portal の return_url 設計
+
+```typescript
+// src/app/api/tenants/me/billing/stripe/portal/route.ts
+const session = await stripe.billingPortal.sessions.create({
+  customer: tenant.stripeCustomerId,
+  return_url: `${process.env.NEXTAUTH_URL}/settings/tenant?from=portal`,
+}, { idempotencyKey: `portal:${tenantId}:${Date.now()}` });
+return NextResponse.redirect(session.url);
+```
+
+UI 側で `?from=portal` を検知したらトーストで「Stripe ポータルから戻りました。最新の情報を表示しています」を表示 + 強制 refresh。
+
+### E-2. Webhook から Subscription Item ID を取得するロジック
+
+```typescript
+function extractSubscriptionItemIds(subscription: Stripe.Subscription): {
+  haikuItemId: string | null;
+  sonnetItemId: string | null;
+  storageItemId: string | null;
+} {
+  return {
+    haikuItemId:   subscription.items.data.find(i => i.price.id === process.env.STRIPE_PRICE_HAIKU)?.id ?? null,
+    sonnetItemId:  subscription.items.data.find(i => i.price.id === process.env.STRIPE_PRICE_SONNET)?.id ?? null,
+    storageItemId: subscription.items.data.find(i => i.price.id?.startsWith('price_storage_'))?.id ?? null,
+  };
+}
+```
+
+### E-3. 環境変数の追加 (詳細設計で確定)
+
+`STRIPE_BILLING.md §7.2` の環境変数に加え、以下を追加:
+
+| 環境変数 | 値の例 | 用途 |
+|---|---|---|
+| `SYSTEM_USER_ID` | `00000000-0000-0000-0000-systemsystemid` | 自動操作 (Webhook/cron) の userId |
+| `STRIPE_API_VERSION` | `2024-12-18.acacia` | コード側で固定参照する API バージョン |
+
+### E-4. Stripe Tax 利用時の `BillingHistory.taxAmountJpy` 反映
+
+```typescript
+// invoice.created ハンドラ内
+const invoice = event.data.object as Stripe.Invoice;
+await prisma.billingHistory.create({
+  data: {
+    tenantId,
+    yearMonth: getYearMonthFromInvoice(invoice),
+    paymentMethod: 'credit_card',
+    amountJpy: invoice.subtotal, // 税抜
+    taxAmountJpy: invoice.tax ?? 0, // Stripe Tax 計算結果
+    totalAmountJpy: invoice.total, // 税込
+    status: 'pending',
+    stripeInvoiceId: invoice.id,
+  },
+});
+```
+
+---
+
+## §F. 各 PR (実装フェーズ) との対応
+
+[STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md) の PR-S1〜S6 が本詳細設計のどこを参照するか:
+
+| PR | 本書で参照する箇所 |
+|---|---|
+| **PR-S1: スキーマ** | §B-2 (StripeWebhookEvent 拡張カラム) / §B-3 (StripeUsageRecordQueue) / §C-1 (BillingHistory UNIQUE 制約変更) |
+| **PR-S2: Service** | §A-1 (completeStripeSetup 擬似コード) / §A-2 (idempotency key) / §B-1 (エラーマッピング) / §C-2 (Subscription Item 動的管理) / §C-3 (TZ 境界) |
+| **PR-S3: API** | §A-1 (route での Phase 分割) / §B-1 (UI 表示用エラー変換) |
+| **PR-S4: Webhook** | §B-2 (DLQ 戦略) / §D-2 (Subscription Updated ハンドラ) / §E-4 (Invoice → BillingHistory) |
+| **PR-S5: UI** | §B-1 (各 decline_code のトースト文言) / §E-1 (return_url 処理) |
+| **PR-S6: 連携** | §D-1 (withMeteredLLM 配線) / §B-3 (Usage Record queue flush cron) / §D-2 (自動 suspend cron) |
+
+---
+
+## §G. 既存仕様への影響反映
+
+本詳細設計で確定した内容を踏まえ、以下の既存仕様書を後続で更新する想定:
+
+| ファイル | 更新内容 |
+|---|---|
+| `STRIPE_BILLING.md` §2.3 | `BillingHistory.status` の値に `'replaced_by_stripe'` を追加 (= invoice → credit_card 切替時の置換マーク) |
+| `STRIPE_BILLING.md` §6.1 | Usage Record queue テーブルの参照を追記 (= 本書 §B-3) |
+| `STRIPE_INTEGRATION_PLAN.md` PR-S1 | StripeUsageRecordQueue テーブル追加 + BillingHistory.status 拡張を明記 |
+| `STRIPE_INTEGRATION_PLAN.md` PR-S3 / S5 | 切替フローに Phase 3.5 (backfill) を追記 |
+
+UNIQUE 制約 `@@unique([tenantId, yearMonth])` は **維持** (= 同月 2 レコードを作らない、切替時は invoice 側を replaced_by_stripe に更新するため)。
+
+これらは本詳細設計レビュー完了後、別 commit で反映する。
+
+---
+
+## 改訂履歴
+
+| 日付 | 変更 | PR |
+|---|---|---|
+| 2026-05-14 | 初版 (詳細設計確定、10 項目 + 補助 4 項目) | docs/stripe-technical-design |
