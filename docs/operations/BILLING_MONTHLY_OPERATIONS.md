@@ -72,8 +72,9 @@ Vercel Cron が `tenant-monthly-reset` ジョブを実行し、以下を自動�
 1. `saveMonthlyUsageSnapshots()` — リセット直前の各テナント使用量を `tenant_monthly_usage_history` に保存 (= 前月分の確定スナップショット)
 2. `resetTenantMonthlyCounters()` — 各テナントの `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセット
 3. `applyScheduledPlanChanges()` — `scheduledPlanChangeAt <= now` のテナントにプラン変更を適用
-4. `purgeOldDeletedTenants()` — 論理削除から 90 日経過したテナントの業務データを物理削除
-5. その他 (embedding バックフィル等)
+4. `applyStorageAddon()` — Storage プラン変更予約があれば適用
+5. `runMonthlyEmbeddingBackfill()` — `content_embedding=NULL` の行を 5 テーブル (`projects` / `knowledges` / `risks_issues` / `retrospectives` / `memos`) から最大 128 件ずつ拾い、当月の予算枠で一括補完。「公開範囲: 自分のみ」は対象外。`generateAndPersistBatchEmbeddings` で **1 業務操作 = 1 ApiCallLog** に集約 (2026-05-15 で `memos` 追加)
+6. `purgeOldDeletedTenants()` — 論理削除から 90 日経過したテナントの業務データを物理削除
 
 **注意**: cron は `deletedAt: null` フィルタを当てているため、解約済テナントは月初 cron の対象外。
 月途中解約のテナントは `deleteTenant()` 内で `tenant_monthly_usage_history` に **即座に**

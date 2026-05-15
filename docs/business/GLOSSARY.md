@@ -78,15 +78,17 @@
 
 テナントごとに選択する料金プラン。本サービスは LLM プランと Storage プランの 2 軸で構成される。
 
-#### LLM プラン (提案エンジン API 利用枠)
+#### LLM プラン (提案エンジン API 利用枠) — 2026-05-15 確定版
 
-| プラン | 月額固定 | 月内無料枠 | 上限超過時 |
-|---|---|---|---|
-| Beginner | ¥0 | 100 回 | 縮退モード (fail-safe) |
-| Expert | ¥3,000 | 100 回 | ¥10/回 |
-| Pro | ¥10,000 | 500 回 | ¥30/回 |
+| プラン | 月額固定 | 席数 | API 上限 | 単価 | モデル |
+|---|---|---|---|---|---|
+| Beginner | ¥0 | 5 席 | 月 100 回まで無料 (上限到達後は縮退) | — | Haiku |
+| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **¥10 / 1 API 呼び出し** | Haiku |
+| Pro | ¥0 | 無制限 | 無制限 (同上) | **¥30 / 1 API 呼び出し** | Sonnet |
 
-詳細: [TENANT_AND_BILLING.md](./TENANT_AND_BILLING.md) §13.7
+**「1 回の API 呼び出し」の定義 (1 業務操作 = 1 ApiCallLog ルール)**: ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、ApiCallLog / counter は **1 件 / +1** に集約される (例: プロジェクト新規作成は `featureUnit='project-upsert'` で Anthropic auto-tag + Voyage embedding を 1 件に集約)。
+
+詳細: [TENANT_AND_BILLING.md Part 5](./TENANT_AND_BILLING.md) (確定版)
 
 #### Storage プラン (容量 add-on)
 
@@ -150,10 +152,12 @@ per-user / per-token / per-seat ではなく per-API-call を採用 ([ADR-0002](
 
 ### 提案エンジン
 
-過去プロジェクトの資産 (ナレッジ / リスク / 振り返り等) を、新しい判断時に再利用できるよう
+過去プロジェクトの資産 (ナレッジ / リスク / 課題 / 振り返り / メモ) を、新しい判断時に再利用できるよう
 **意味検索ベース** で提示する機能。本サービスの最大の差別化点。
 
-詳細: [SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md) / [ADR-0003](../adr/0003-embedding-based-suggestion-engine.md)
+提案候補のスコープは **一律「公開範囲: 全メンバー」(visibility='public')** に限定 (= 提案候補のソースは公開資産のみ)。「公開範囲: 自分のみ」(Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`) のデータは候補化しない / embedding 生成もしない (Voyage API 課金回避)。
+
+詳細: [SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md) / [ADR-0003](../adr/0003-embedding-based-suggestion-engine.md) / [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md)
 
 ### Embedding (埋め込みベクトル)
 
@@ -171,8 +175,10 @@ PostgreSQL のベクトル検索拡張。cosine similarity 等で類似ベクト
 
 ### LLM 自動タグ抽出
 
-Anthropic Claude API でエンティティ作成時に自動的にタグを抽出する機能。
+Anthropic Claude API でプロジェクト作成・更新時に自動的にタグ (businessDomainTags / techStackTags / processTags) を抽出する機能。
 作成時に 1 回呼ばれ、検索時は呼ばれない (コスト最適化)。
+
+2026-05-15 から、auto-tag と embedding 生成は `featureUnit='project-upsert'` の **1 度の `withMeteredLLM` ラップに集約** される (= 1 業務操作 = 1 ApiCallLog ルール)。旧 featureUnit (`auto-tag-extract` / `project-embedding`) は backfill 経路の互換のため metered.ts では受理を残すが、新規発行はされない。
 
 ### フェーズ分割提案 / 段階表示
 
@@ -192,15 +198,18 @@ Anthropic Claude API でエンティティ作成時に自動的にタグを抽�
 
 ### 可視性 (Visibility)
 
-ナレッジの公開範囲を制御する属性。
+資産の公開範囲を制御する属性。**「自分のみ」を表す DB 値は資産種別で異なる**ため、コードで visibility 判定する際は schema を要確認 (KDD §5.X+61)。
 
-| 値 | 意味 | 提案エンジン対象 |
+| 資産 | 「自分のみ」 (= 提案対象外) | 「全メンバー」 (= 提案対象) |
 |---|---|---|
-| draft | 下書き。作成者 + admin のみ閲覧可 | 対象外 (embedding 生成しない) |
-| project | プロジェクトメンバーに公開 | 対象 |
-| company | テナント内全員に公開 | 対象 |
+| Knowledge | `visibility='draft'` | `visibility='public'` |
+| RiskIssue (リスク / 課題) | `visibility='draft'` | `visibility='public'` |
+| Retrospective (振り返り) | `visibility='draft'` | `visibility='public'` |
+| **Memo (メモ)** (2026-05-15 追加) | **`visibility='private'`** (他資産の 'draft' に相当) | `visibility='public'` |
 
-詳細: [USER_ROLES.md](./USER_ROLES.md) §6.5
+「自分のみ」のデータは作成者のみ閲覧可能、提案エンジンの候補にも乗らず、embedding 生成も行わない (Voyage API 課金回避)。「自分のみ → 全メンバー」遷移時に初回 embedding 生成。
+
+詳細: [USER_ROLES.md](./USER_ROLES.md) §6.5 / [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) §1.1
 
 ---
 

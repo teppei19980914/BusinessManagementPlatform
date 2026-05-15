@@ -372,8 +372,8 @@ package.json:
 
 [D. 本番既存データの backfill (1 回限り、teppei さん側で実行)]
   → pnpm seed:generate-embeddings --backfill-existing を本番 DB 接続情報で実行
-  → 全 Knowledge / RiskIssue / Retrospective / Project を走査し、embedding=NULL の行に対して
-    Voyage API でベクトル生成 → DB へ直接書込
+  → 全 Knowledge / RiskIssue / Retrospective / Project / Memo を走査し、embedding=NULL の行に対して
+    Voyage API でベクトル生成 → DB へ直接書込 (Memo は 2026-05-15 追加、visibility='public' のみ対象)
   → 結果: 既存「請求書発行システム構築」プロジェクト等で提案が 0 件 → 多数件に改善
 ```
 

@@ -51,12 +51,16 @@ curl -X POST https://tasukiba.vercel.app/api/cron/daily-notifications \
 
 **処理内容** (1 リクエストで以下を順次実行):
 
-1. **月初リセット**: `lastResetAt < 当月初 (UTC)` のテナントの `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセットし、`lastResetAt` を当月初に更新
-2. **プラン変更予約適用 (legacy)**: `scheduledPlanChangeAt <= now` のテナントに `scheduledNextPlan` を `plan` として適用。適用後は scheduled 列を NULL に戻す。
+1. **前月分の snapshot 保存**: `tenant_monthly_usage_history` に当月リセット直前の値を保存 (請求書生成の正本データ)
+2. **月初リセット**: `lastResetAt < 当月初 (UTC)` のテナントの `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセットし、`lastResetAt` を当月初に更新
+3. **プラン変更予約適用 (legacy)**: `scheduledPlanChangeAt <= now` のテナントに `scheduledNextPlan` を `plan` として適用。適用後は scheduled 列を NULL に戻す。
    - 2026-05-14: 新規にこの予約をセットするコードパスは廃止 (Expert↔Pro は即時反映、Beginner ダウングレードは完全禁止)。
    - 本処理は **legacy DB レコード対策** として残置。旧コード期間に作られた予約レコードがあれば月初 cron で適用される。新規テナントでは通常 0 件適用となる。
+4. **Storage プラン適用** (legacy 同様、予約があれば適用)
+5. **embedding=NULL 一括補完バッチ**: 縮退モード中に embedding 生成を skip した行を、新しい月の予算枠で一括補完する。対象テーブル: **`projects` / `knowledges` / `risks_issues` / `retrospectives` / `memos`** (2026-05-15 で `memos` 追加)。「公開範囲: 自分のみ」(Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`) は補完対象外。1 テナント・1 テーブルあたり最大 128 件、`generateAndPersistBatchEmbeddings` で **1 業務操作 = 1 ApiCallLog** に集約する。featureUnit は `${tableName}-embedding-backfill` (例: `project-embedding-backfill`、`memo-embedding-backfill`)
+6. **テナント物理削除**: 90 日経過した削除済テナントの業務データを物理削除 (users は保持)
 
-**冪等性保証**: 再実行しても結果は同じ。Vercel Cron の at-least-once 配信仕様で複数回起動されても安全。
+**冪等性保証**: 再実行しても結果は同じ。Vercel Cron の at-least-once 配信仕様で複数回起動されても安全。embedding 補完は「既に embedding がある行」は候補に含まないため重複生成なし。
 
 **手動実行** (動作確認用):
 
@@ -65,14 +69,16 @@ curl -X POST https://tasukiba.vercel.app/api/cron/tenant-monthly-reset \
   -H "Authorization: Bearer ${CRON_SECRET}"
 ```
 
-レスポンス例 (3 テナントをリセット、1 テナントのプラン変更を適用):
+レスポンス例 (3 テナントをリセット、1 テナントのプラン変更を適用、embedding を 12 件補完):
 ```json
 {
   "data": {
     "source": "cron",
     "resetCount": 3,
     "planAppliedCount": 1,
-    "invalidPlanSkippedCount": 0
+    "invalidPlanSkippedCount": 0,
+    "embeddingBackfillTenantCount": 3,
+    "embeddingBackfillGeneratedCount": 12
   }
 }
 ```
@@ -80,6 +86,7 @@ curl -X POST https://tasukiba.vercel.app/api/cron/tenant-monthly-reset \
 **監視ポイント**:
 - `resetCount` が 0 が連続 → cron 落ち or 全テナントが既にリセット済 (= 当月内 2 回目以降の実行は正常 0)
 - `invalidPlanSkippedCount > 0` → DB 不整合の検知。`scheduledNextPlan` に未知の値が混入。`system_error_logs` で当該テナント ID を確認
+- `embeddingBackfillGeneratedCount` が増えない → 縮退モード中の NULL embedding が積み上がっている可能性。テナント単位の `Tenant.beginnerMonthlyCallLimit` / `monthlyBudgetCapJpy` の設定見直しを検討
 
 ### 「未使用アカウントロック」の挙動 (feat/account-lock 改修、2026-04-25)
 
