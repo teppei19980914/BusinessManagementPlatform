@@ -308,6 +308,10 @@ const TENANT_AGNOSTIC_MODELS = new Set([
   'taskProgressLog', // task 経由
   'task', // project 経由 (tenantId 列なし)
   'estimate', // project 経由
+  // PR-S4 (2026-05-14): Stripe Webhook 受信イベント記録。Stripe event.id (globally unique) で
+  // 冪等性確保が責務。テナント解決はハンドラ内で event payload から行うため、本テーブル自体に
+  // tenantId 列はない (= 越境リスクなし、global event log)。
+  'stripeWebhookEvent',
 ]);
 
 /** 越境を許す model (super_admin 専用集計など、CROSS_TENANT_ALLOWED_FILES とセット運用) */
