@@ -10,8 +10,6 @@
 
 たすきば Knowledge Relay は v1 (2026-06-01) で **per-API-call 従量課金** を採用してリリースした。v1 時点の支払い手段は `invoice` (請求書送付) / `bank_transfer` (銀行振込) のみで、いずれも **super_admin による手動運用** に依存している ([docs/business/PAYMENT_TERMS.md §0.2](../business/PAYMENT_TERMS.md))。
 
-> 2026-05-15 注記: `invoice` と `bank_transfer` はユーザ視点で同一フロー (請求書 PDF 受領 → 銀行振込) のため [ADR-0007](./0007-unify-invoice-and-bank-transfer.md) で `invoice` に統合済 (UI ラベル「銀行振込」)。本 ADR の以下の記述で `bank_transfer` が言及される箇所は履歴として残置するが、現在の内部値は `invoice` 単一である。
-
 ### 現状の課題
 
 1. **手動運用コスト**: super_admin が毎月以下を手動実行している

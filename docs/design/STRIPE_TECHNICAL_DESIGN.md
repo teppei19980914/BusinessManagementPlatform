@@ -469,7 +469,6 @@ async function completeStripeSetup(tenantId, setupSessionId) {
     where: {
       tenantId,
       yearMonth: currentYearMonth,
-      // 2026-05-15: 'bank_transfer' は 'invoice' に統合済。既存 DB レガシー値も拾うため両方含める。
       paymentMethod: { in: ['invoice', 'bank_transfer'] },
       status: 'pending', // まだ請求書発行前 (= 翌月15日まで)
     },

@@ -5,12 +5,9 @@
  * 状態判定の純関数 `deriveStripeState` だけテストする。
  *
  * 検証観点 (STRIPE_PAYMENT_UI.md §2.2):
- *   - 状態 A: invoice (= 銀行振込。旧 'bank_transfer' 値も同状態にフォールバック)
+ *   - 状態 A: invoice / bank_transfer
  *   - 状態 C: credit_card + cardVerificationStatus = 'valid' + autoSuspend なし
  *   - 状態 D: credit_card かつ「期限切れ / 拒否 / 未検証 / autoSuspend 予定あり」のいずれか
- *
- * 2026-05-15: 'bank_transfer' は 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
- *   既存 DB の旧 'bank_transfer' レコードも A_invoice にフォールバックすることを検証する。
  */
 
 import { describe, it, expect } from 'vitest';
@@ -34,10 +31,8 @@ describe('deriveStripeState', () => {
     expect(deriveStripeState(buildInfo({ paymentMethod: 'invoice' }))).toBe('A_invoice');
   });
 
-  it('paymentMethod=bank_transfer (旧値、既存 DB 互換) でも A_invoice にフォールバック', () => {
-    // 2026-05-15: 'bank_transfer' を 'invoice' に統合。
-    //   既存 DB に残存する旧 'bank_transfer' レコードも A_invoice (= 銀行振込 UI) になる。
-    expect(deriveStripeState(buildInfo({ paymentMethod: 'bank_transfer' }))).toBe('A_invoice');
+  it('paymentMethod=bank_transfer なら A_bank_transfer', () => {
+    expect(deriveStripeState(buildInfo({ paymentMethod: 'bank_transfer' }))).toBe('A_bank_transfer');
   });
 
   it('credit_card + valid + autoSuspend なし → C_active', () => {

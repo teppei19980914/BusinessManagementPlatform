@@ -49,14 +49,12 @@ export type StripePaymentMethodSectionProps = {
 /**
  * 状態判定: A / C / D のいずれか。
  *
- * - 'A_invoice': 銀行振込（請求書送付）= credit_card 以外の全値 (= 旧 'bank_transfer' 含む)
+ * - 'A_invoice' / 'A_bank_transfer': 未設定
  * - 'C_active': credit_card + 検証成功 + autoSuspend 予定なし
  * - 'D_attention': credit_card かつ「期限切れ / 拒否 / 未検証 / autoSuspend 予定あり」のいずれか
- *
- * 2026-05-15: 'bank_transfer' を 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
- *   既存 DB の 'bank_transfer' レコードは credit_card 以外なので A_invoice 扱い (= 銀行振込) になる。
  */
-export function deriveStripeState(info: StripePaymentInfo): 'A_invoice' | 'C_active' | 'D_attention' {
+export function deriveStripeState(info: StripePaymentInfo): 'A_invoice' | 'A_bank_transfer' | 'C_active' | 'D_attention' {
+  if (info.paymentMethod === 'bank_transfer') return 'A_bank_transfer';
   if (info.paymentMethod !== 'credit_card') return 'A_invoice';
   // credit_card 払い
   const verified = info.cardVerificationStatus === 'valid';
@@ -83,7 +81,7 @@ export function StripePaymentMethodSection({
       'クレジットカード払いに切替えますか?\n\n' +
         '次の画面 (Stripe Checkout) でカード情報を入力してください。\n' +
         '検証成功時は自動でクレジットカード払いに切り替わります。\n' +
-        '失敗 / キャンセル時は現在の銀行振込のままです。',
+        '失敗 / キャンセル時は現在の請求書送付のままです。',
     );
     if (!ok) return;
 
@@ -144,16 +142,13 @@ export function StripePaymentMethodSection({
   };
 
   /**
-   * 「🏦 銀行振込に戻す」ボタン (状態 C のみ) のハンドラ。
+   * 「📋 請求書送付に戻す」ボタン (状態 C のみ) のハンドラ。
    * PATCH /api/tenants/me/billing { paymentMethod: 'invoice' } で paymentMethod のみ反転。
    * Stripe Subscription は残したまま (= 再切替時に再利用)。
-   *
-   * 2026-05-15: 「請求書送付」表記から「銀行振込」表記に統一。
-   *   内部値は 'invoice' のままで UI 表記のみ「銀行振込」(= 旧 'bank_transfer' との統合)。
    */
-  const handleRevertToBankTransfer = async () => {
+  const handleRevertToInvoice = async () => {
     const ok = window.confirm(
-      '銀行振込に戻しますか?\n\n' +
+      '請求書送付 (銀行振込) に戻しますか?\n\n' +
         '当月以降の請求は super_admin が手動で請求書 PDF を作成し、請求担当者メール宛に送付します。\n' +
         '登録済のカード情報は Stripe 側に残り、Customer Portal で削除できます。',
     );
@@ -171,7 +166,7 @@ export function StripePaymentMethodSection({
         showError(json?.error?.message ?? '支払い方法の変更に失敗しました');
         return;
       }
-      showSuccess('銀行振込に戻しました');
+      showSuccess('請求書送付に戻しました');
       await onRefresh();
     } catch {
       showError('通信エラーが発生しました');
@@ -190,6 +185,28 @@ export function StripePaymentMethodSection({
       </h2>
 
       {state === 'A_invoice' && (
+        <div className="space-y-3 text-sm">
+          <p>現在の支払い方法: 📋 請求書送付</p>
+          <p className="text-muted-foreground">
+            月末締めの翌月25日支払で、毎月請求書 PDF を請求担当者メールにお送りしています。
+          </p>
+          <Button
+            type="button"
+            onClick={handleSetup}
+            disabled={!stripeEnabled || submitting}
+            aria-label="クレジットカード払いに切替"
+          >
+            {submitting ? '処理中...' : '💳 クレジットカード払いに切替'}
+          </Button>
+          {!stripeEnabled && (
+            <p className="text-xs text-muted-foreground">
+              ※ クレジットカード払いは現在準備中です (運営による有効化待ち)。
+            </p>
+          )}
+        </div>
+      )}
+
+      {state === 'A_bank_transfer' && (
         <div className="space-y-3 text-sm">
           <p>現在の支払い方法: 🏦 銀行振込</p>
           <p className="text-muted-foreground">
@@ -231,11 +248,11 @@ export function StripePaymentMethodSection({
             <Button
               type="button"
               variant="ghost"
-              onClick={handleRevertToBankTransfer}
+              onClick={handleRevertToInvoice}
               disabled={submitting}
-              aria-label="銀行振込に戻す"
+              aria-label="請求書送付に戻す"
             >
-              🏦 銀行振込に戻す
+              📋 請求書送付に戻す
             </Button>
           </div>
         </div>

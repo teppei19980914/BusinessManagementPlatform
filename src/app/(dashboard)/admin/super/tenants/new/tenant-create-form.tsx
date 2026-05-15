@@ -33,8 +33,7 @@ type FormState = {
   // (#10) 任意
   billingBuildingName: string;
   billingPhoneNumber: string;
-  // 2026-05-15: 'bank_transfer' は廃止し 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
-  paymentMethod: 'invoice' | 'credit_card';
+  paymentMethod: 'invoice' | 'bank_transfer' | 'credit_card';
   initialAdminName: string;
   initialAdminEmail: string;
 };
@@ -278,8 +277,8 @@ export function TenantCreateForm() {
             }
             className={nativeSelectClass}
           >
-            {/* 2026-05-15: 旧 'invoice'（請求書送付）と 'bank_transfer'（銀行振込）を「銀行振込」に統合 (内部値 'invoice')。 */}
-            <option value="invoice">銀行振込</option>
+            <option value="invoice">請求書送付</option>
+            <option value="bank_transfer">銀行振込</option>
             {/* 2026-05-09 (#4): クレジットカード決済は未対応のため非活性。 */}
             <option value="credit_card" disabled>クレジットカード (今後対応予定)</option>
           </select>

@@ -410,11 +410,10 @@ function BillingRow({
 }
 
 /** P-G (2026-05-08): paymentMethod の人間可読ラベル変換 */
-// 2026-05-15: 'bank_transfer' は廃止し 'invoice' に統合 (UI ラベル「銀行振込」)。
-//   既存 DB の旧 'bank_transfer' 値も「銀行振込」と表示するため case を残す。
 function paymentMethodLabel(method: string): string {
   switch (method) {
     case 'invoice':
+      return '請求書送付';
     case 'bank_transfer':
       return '銀行振込';
     case 'credit_card':

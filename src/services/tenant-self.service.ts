@@ -221,8 +221,7 @@ export type UpdateBillingContactInput = {
  * 請求先情報のみを更新する (テナント管理者画面の「請求先情報」セクション用)。
  *
  * - 各フィールドは optional: undefined なら変更なし、null なら値クリア
- * - paymentMethod は文字列だが、UI 側で enum (invoice / credit_card) を強制
- *   (旧 'bank_transfer' は 'invoice' に統合済 2026-05-15。UI ラベル「銀行振込」, 内部値 'invoice')
+ * - paymentMethod は文字列だが、UI 側で enum (invoice / bank_transfer / credit_card) を強制
  *
  * 2026-05-09 (PR C / #5): billingType='individual' に切替時は会社名を自動 null クリアする
  *   (UI で会社名フィールドが非表示になるが過去入力データを残さないようサーバ側でも保証)。

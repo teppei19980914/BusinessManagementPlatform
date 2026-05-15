@@ -1,8 +1,6 @@
 # 支払い滞納 対応 SOP (Payment Delinquency Standard Operating Procedure)
 
-本文書は、銀行振込払い (`paymentMethod='invoice'`) の顧客が支払いを遅延・滞納した場合の **super_admin の手順書** である。対外的なルール定義は [../business/PAYMENT_TERMS.md](../business/PAYMENT_TERMS.md) を参照。
-
-> 2026-05-15: 旧 `bank_transfer` 値は `invoice` に統合済 (UI ラベル「銀行振込」)。本 SOP の旧 `invoice / bank_transfer` 並記は履歴として残置するが、対象は単一 `invoice` テナントである。
+本文書は、請求書 / 銀行振込払いの顧客が支払いを遅延・滞納した場合の **super_admin の手順書** である。対外的なルール定義は [../business/PAYMENT_TERMS.md](../business/PAYMENT_TERMS.md) を参照。
 
 ## 想定読者と前提
 
@@ -24,12 +22,12 @@
 
 | paymentMethod | §0 の適用 | 入金検知 | 滞納時の自動 suspend |
 |---|---|---|---|
-| `invoice` (= 銀行振込) | ✅ 全手順を実施 | super_admin が銀行口座を手動確認 | super_admin が PR #372 の UI で手動実行 |
+| `invoice` / `bank_transfer` | ✅ 全手順を実施 | super_admin が銀行口座を手動確認 | super_admin が PR #372 の UI で手動実行 |
 | `credit_card` (v1.x で実装) | ❌ 不要 | Stripe Webhook `invoice.paid` で自動消込 | Stripe Smart Retries 全失敗 + 3 日後に自動実行 ([STRIPE_BILLING.md §4.3](../business/STRIPE_BILLING.md)) |
 
-以下の手順は **`invoice` テナント (= 銀行振込) のみ** が対象。credit_card テナントは Stripe Webhook で完全自動化される ([詳細: STRIPE_BILLING.md](../business/STRIPE_BILLING.md))。
+以下の手順は **`invoice` / `bank_transfer` テナントのみ** が対象。credit_card テナントは Stripe Webhook で完全自動化される ([詳細: STRIPE_BILLING.md](../business/STRIPE_BILLING.md))。
 
-### 実施タイミング (invoice = 銀行振込 限定)
+### 実施タイミング (invoice / bank_transfer 限定)
 
 | 期間 | 作業内容 | 頻度 |
 |---|---|---|
@@ -40,7 +38,7 @@
 - 6/16〜6/25: 入金消込期間
 - 6/26 朝: 未入金検知 → 滞納テナントは §1 へ
 
-### 手順 (invoice = 銀行振込 限定)
+### 手順 (invoice / bank_transfer 限定)
 
 1. **銀行口座を確認**:
    - 銀行口座 (法人ネットバンキング) → 振込履歴を当月分チェック
