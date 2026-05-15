@@ -27,11 +27,30 @@
 
 import { prisma } from '@/lib/db';
 import { canTransition } from './state-machine';
-import { extractAutoTags } from './auto-tag.service';
-import { generateEmbedding, persistEmbedding } from './embedding.service';
+import {
+  callAnthropicForAutoTagsInner,
+  type AutoTagAxes,
+} from './auto-tag.service';
+import { persistEmbedding } from './embedding.service';
 import { recordError } from './error-log.service';
+import { withMeteredLLM } from '@/lib/llm/metered';
+import { voyageEmbed } from '@/lib/llm/voyage-client';
+import { EMBEDDING_DIMENSIONS } from '@/config/llm';
 import type { Prisma } from '@/generated/prisma/client';
 import type { ProjectStatus } from '@/types';
+
+/**
+ * PR (2026-05-15): プロジェクト作成・更新の API 課金単位識別子。
+ * 旧仕様では auto-tag-extract + project-embedding の 2 回 ApiCallLog が記録されていたが、
+ * 「1 業務操作 = 1 ApiCallLog」ルール (KDD_PATTERNS.md) と整合させるため統合。
+ * 旧 featureUnit (auto-tag-extract / project-embedding) は単独実行・backfill 経路の互換のため残置。
+ */
+const PROJECT_UPSERT_FEATURE_UNIT = 'project-upsert';
+
+/**
+ * Voyage embedding 入力 text の最大文字数 (embedding.service.ts と同値、循環参照回避のため再定義)。
+ */
+const PROJECT_EMBEDDING_MAX_CHARS = 8000;
 
 export type ProjectDTO = {
   id: string;
@@ -196,10 +215,11 @@ export async function createProject(
   userId: string,
   tenantId: string,
 ): Promise<ProjectDTO> {
-  // PR #3-b (T-03 Phase 1): purpose / background / scope から自動タグ抽出。
+  // (2026-05-15) auto-tag 抽出 + embedding 生成を 1 ApiCallLog に集約する。
+  //   旧仕様: extractAutoTags + generateEmbedding が独立 withMeteredLLM (= 2 件 ApiCallLog)。
+  //   新仕様: extractTagsAndEmbedForProject が 1 withMeteredLLM 内で両方実行。
   //   失敗時 (rate_limited / llm_error 等) はサイレントに userInput 単独で続行 (fail-safe)。
-  //   詳細は src/services/auto-tag.service.ts コメント参照。
-  const autoTagResult = await extractAutoTags({
+  const llm = await extractTagsAndEmbedForProject({
     purpose: input.purpose,
     background: input.background,
     scope: input.scope,
@@ -212,7 +232,7 @@ export async function createProject(
       techStackTags: input.techStackTags ?? [],
       processTags: input.processTags ?? [],
     },
-    autoTagResult.ok ? autoTagResult.tags : null,
+    llm.tags,
   );
 
   // 2026-05-09 feedback Phase 2: data.tenantId を明示し、schema DB DEFAULT への暗黙依存を解消。
@@ -241,14 +261,10 @@ export async function createProject(
     include: { customer: { select: { name: true } } },
   });
 
-  // PR #5 (T-03 Phase 2): purpose / background / scope を結合した text の embedding を
-  //   非同期に生成 + 保存。失敗時はサイレントに content_embedding=NULL のまま続行 (fail-safe)。
-  //   生成中の例外で本体 INSERT がロールバックされないよう、create() の **後** に呼ぶ。
-  await generateAndPersistProjectEmbedding(project.id, tenantId, userId, {
-    purpose: input.purpose,
-    background: input.background,
-    scope: input.scope,
-  });
+  // (2026-05-15) embedding は LLM 呼出時に取得済。project.id が確定したここで DB に書く。
+  if (llm.embedding != null) {
+    await persistProjectEmbedding(project.id, tenantId, llm.embedding, userId);
+  }
 
   return toProjectDTO(project);
 }
@@ -314,41 +330,41 @@ export async function updateProject(
   );
 
   let mergedAutoTags: AutoTagAxes | null = null;
-  // PR #5 (T-03 Phase 2): text 変更時は embedding も再生成する。実テキストは
-  //   下記の resolved* に確定するため、後段で `generateAndPersistProjectEmbedding` に渡す。
+  // PR #5 (T-03 Phase 2): text 変更時は embedding も再生成する。
+  // (2026-05-15) auto-tag + embedding を 1 ApiCallLog に集約 (extractTagsAndEmbedForProject)。
   let resolvedPurpose: string | null = null;
   let resolvedBackground: string | null = null;
   let resolvedScope: string | null = null;
+  let embeddingFromLlm: number[] | null = null;
   if (textFieldsChanging) {
-    {
-      resolvedPurpose = input.purpose ?? current.purpose;
-      resolvedBackground = input.background ?? current.background;
-      resolvedScope = input.scope ?? current.scope;
-      const autoTagResult = await extractAutoTags({
-        purpose: resolvedPurpose,
-        background: resolvedBackground,
-        scope: resolvedScope,
-        tenantId,
-        userId,
-      });
-      if (autoTagResult.ok) {
-        // ユーザがタグも同時に更新している場合はそれを優先、更新していない軸は
-        // DB 現行値 (= 過去の手動入力 + 過去の auto-extract) を継承して merge する。
-        mergedAutoTags = mergeTags(
-          {
-            businessDomainTags:
-              input.businessDomainTags ??
-              ((current.businessDomainTags as string[] | null) ?? []),
-            techStackTags:
-              input.techStackTags ??
-              ((current.techStackTags as string[] | null) ?? []),
-            processTags:
-              input.processTags ?? ((current.processTags as string[] | null) ?? []),
-          },
-          autoTagResult.tags,
-        );
-      }
+    resolvedPurpose = input.purpose ?? current.purpose;
+    resolvedBackground = input.background ?? current.background;
+    resolvedScope = input.scope ?? current.scope;
+    const llm = await extractTagsAndEmbedForProject({
+      purpose: resolvedPurpose,
+      background: resolvedBackground,
+      scope: resolvedScope,
+      tenantId,
+      userId,
+    });
+    if (llm.tags != null) {
+      // ユーザがタグも同時に更新している場合はそれを優先、更新していない軸は
+      // DB 現行値 (= 過去の手動入力 + 過去の auto-extract) を継承して merge する。
+      mergedAutoTags = mergeTags(
+        {
+          businessDomainTags:
+            input.businessDomainTags ??
+            ((current.businessDomainTags as string[] | null) ?? []),
+          techStackTags:
+            input.techStackTags ??
+            ((current.techStackTags as string[] | null) ?? []),
+          processTags:
+            input.processTags ?? ((current.processTags as string[] | null) ?? []),
+        },
+        llm.tags,
+      );
     }
+    embeddingFromLlm = llm.embedding;
   }
 
   const data: Prisma.ProjectUpdateInput = { updatedBy: userId };
@@ -391,19 +407,10 @@ export async function updateProject(
     include: { customer: { select: { name: true } } },
   });
 
-  // PR #5 (T-03 Phase 2): text 変更時のみ embedding を再生成。
+  // (2026-05-15) text 変更時のみ embedding を再永続化。LLM 呼出は上で実施済。
   //   text 変更なし = 既存 embedding 流用 (= LLM 課金回避)。
-  if (
-    textFieldsChanging &&
-    resolvedPurpose != null &&
-    resolvedBackground != null &&
-    resolvedScope != null
-  ) {
-    await generateAndPersistProjectEmbedding(projectId, tenantId, userId, {
-      purpose: resolvedPurpose,
-      background: resolvedBackground,
-      scope: resolvedScope,
-    });
+  if (textFieldsChanging && embeddingFromLlm != null) {
+    await persistProjectEmbedding(projectId, tenantId, embeddingFromLlm, userId);
   }
 
   return toProjectDTO(project);
@@ -439,47 +446,177 @@ export function composeProjectText(fields: {
     .join('\n\n');
 }
 
-async function generateAndPersistProjectEmbedding(
-  projectId: string,
-  tenantId: string,
-  userId: string,
-  fields: { purpose: string; background: string; scope: string },
-): Promise<void> {
-  const text = composeProjectText(fields);
-
-  if (text.length === 0) {
-    // 全 text 空 (新規 + ユーザがいずれも空文字で送信) の場合は LLM 呼ばず終了
-    return;
-  }
-
-  const result = await generateEmbedding({
-    text,
-    featureUnit: 'project-embedding',
-    tenantId,
-    userId,
+/**
+ * (1 業務操作 = 1 ApiCallLog 集約 / 2026-05-15)
+ *
+ * プロジェクトの新規作成・更新における **auto-tag 抽出 + embedding 生成** を
+ * `withMeteredLLM` 1 ラップに集約する。旧仕様では `extractAutoTags()` と
+ * `generateEmbedding()` がそれぞれ別の `withMeteredLLM` を呼んでいたため、
+ * 1 プロジェクト作成あたり ApiCallLog 2 件 + Tenant.currentMonthApiCallCount +2 +
+ * costJpy 2 倍 という不整合があった (Beginner 100 回上限が実質 50 件で枯渇)。
+ *
+ * 新仕様:
+ *   - 1 業務操作 (= 1 プロジェクト作成 / 更新) で `withMeteredLLM` を 1 度だけラップ
+ *   - callback 内で Anthropic (auto-tag) + Voyage (embedding) を順次呼出
+ *   - ApiCallLog 1 件 / Tenant counter +1 / costJpy 1 回分のみ
+ *   - 内部 API のどちらかが失敗してももう一方が成功すれば「業務として成功」扱いで課金
+ *   - 両方失敗時は throw → withMeteredLLM が `llm_error` で **課金なし** に戻す
+ *
+ * fail-safe:
+ *   - tags が null (LLM 出力の JSON 検証失敗) → 既存タグを維持
+ *   - embedding が null (Voyage 失敗 or text 空) → content_embedding NULL のまま継続
+ *   - persistEmbedding 失敗 (DB 書き込み) → log のみ、本体 INSERT/UPDATE は rollback しない
+ *
+ * @returns 抽出された自動タグ (失敗 / 縮退時は null) + 生成された embedding (失敗 / 縮退時は null)。
+ *   embedding は caller が `persistProjectEmbedding()` で DB に永続化する責務を持つ
+ *   (新規作成時は project.id が決まる前に LLM を呼ぶケースに対応するため caller 責務に分離)。
+ */
+export async function extractTagsAndEmbedForProject(args: {
+  purpose: string;
+  background: string;
+  scope: string;
+  tenantId: string;
+  userId: string;
+}): Promise<{ tags: AutoTagAxes | null; embedding: number[] | null }> {
+  const embeddingText = composeProjectText({
+    purpose: args.purpose,
+    background: args.background,
+    scope: args.scope,
   });
+  const willCallEmbedding = embeddingText.trim().length > 0;
+  const truncatedEmbeddingText =
+    embeddingText.length > PROJECT_EMBEDDING_MAX_CHARS
+      ? embeddingText.slice(0, PROJECT_EMBEDDING_MAX_CHARS)
+      : embeddingText;
+
+  const result = await withMeteredLLM(
+    {
+      featureUnit: PROJECT_UPSERT_FEATURE_UNIT,
+      tenantId: args.tenantId,
+      userId: args.userId,
+    },
+    async ({ modelName, requestId }) => {
+      let tags: AutoTagAxes | null = null;
+      let llmInputTokens: number | undefined;
+      let llmOutputTokens: number | undefined;
+      let anthropicSucceeded = false;
+      try {
+        const inner = await callAnthropicForAutoTagsInner({
+          purpose: args.purpose,
+          background: args.background,
+          scope: args.scope,
+          modelName,
+        });
+        tags = inner.tags;
+        llmInputTokens = inner.llmInputTokens;
+        llmOutputTokens = inner.llmOutputTokens;
+        anthropicSucceeded = true;
+      } catch (error) {
+        await recordError({
+          severity: 'warn',
+          source: 'server',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'auto-tag inner LLM call failed',
+          stack: error instanceof Error ? error.stack : undefined,
+          userId: args.userId,
+          context: {
+            kind: 'project_auto_tag_failure',
+            tenantId: args.tenantId,
+          },
+        });
+      }
+
+      let embedding: number[] | null = null;
+      let embeddingTokens: number | undefined;
+      let voyageSucceeded = false;
+      if (willCallEmbedding) {
+        try {
+          const v = await voyageEmbed({
+            texts: [truncatedEmbeddingText],
+            inputType: 'document',
+          });
+          const first = v.embeddings[0];
+          if (first != null && first.length === EMBEDDING_DIMENSIONS) {
+            embedding = first;
+            embeddingTokens = v.totalTokens;
+            voyageSucceeded = true;
+          } else {
+            throw new Error(
+              `Voyage embedding dimensions mismatch: expected ${EMBEDDING_DIMENSIONS}, got ${first?.length ?? 'n/a'}`,
+            );
+          }
+        } catch (error) {
+          await recordError({
+            severity: 'warn',
+            source: 'server',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'voyage embedding inner call failed',
+            stack: error instanceof Error ? error.stack : undefined,
+            userId: args.userId,
+            context: {
+              kind: 'project_embedding_failure',
+              tenantId: args.tenantId,
+            },
+          });
+        }
+      }
+
+      // 業務として何も達成できなかったケースは throw → withMeteredLLM が llm_error
+      // に変換し、Tenant counter / ApiCallLog は記録しない (= ユーザに請求しない)。
+      // (willCallEmbedding=false なら voyageSucceeded=false なので
+      //  anthropic 失敗 = 全 inner 失敗で throw 条件成立する)
+      if (!anthropicSucceeded && !voyageSucceeded) {
+        throw new Error('project upsert LLM batch had no successful inner call');
+      }
+
+      return {
+        result: { tags, embedding },
+        usage: { llmInputTokens, llmOutputTokens, embeddingTokens },
+        requestId,
+      };
+    },
+  );
 
   if (!result.ok) {
-    // 失敗ログ (warn): rate_limited / budget_exceeded / llm_error 等は運用後追跡用
+    // 縮退 / 失敗時はサイレントに log のみ。本体 INSERT/UPDATE は続行。
     await recordError({
       severity: 'warn',
       source: 'server',
-      message: `embedding generation failed for project ${projectId}: ${result.reason}`,
-      userId,
+      message: `project upsert LLM degraded/failed: ${result.reason}`,
+      userId: args.userId,
       context: {
-        kind: 'project_embedding_failure',
-        projectId,
-        tenantId,
+        kind: 'project_upsert_llm_failure',
+        tenantId: args.tenantId,
         reason: result.reason,
       },
     });
-    return;
+    return { tags: null, embedding: null };
   }
 
+  return {
+    tags: result.result.tags,
+    embedding: result.result.embedding,
+  };
+}
+
+/**
+ * (2026-05-15) Project の embedding を DB に永続化する。
+ * `extractTagsAndEmbedForProject()` が返した embedding を、project.id が確定したタイミングで
+ * 呼び出す。書き込み失敗は warn ログのみで本体トランザクションには伝播させない (fail-safe)。
+ */
+export async function persistProjectEmbedding(
+  projectId: string,
+  tenantId: string,
+  embedding: number[],
+  userId: string,
+): Promise<void> {
   try {
-    await persistEmbedding('projects', projectId, tenantId, result.embedding);
+    await persistEmbedding('projects', projectId, tenantId, embedding);
   } catch (error) {
-    // 書き込み失敗 (DB 接続切れ等) もサイレントに record して続行
     await recordError({
       severity: 'error',
       source: 'server',
@@ -497,14 +634,8 @@ async function generateAndPersistProjectEmbedding(
 
 /**
  * PR #3-b (T-03 Phase 1): 3 軸タグの集約型 + 重複除去マージ helper。
- * createProject / updateProject 両方から呼ばれる。
+ * createProject / updateProject 両方から呼ばれる。AutoTagAxes 型は auto-tag.service.ts で集中管理。
  */
-type AutoTagAxes = {
-  businessDomainTags: string[];
-  techStackTags: string[];
-  processTags: string[];
-};
-
 function mergeTags(
   user: AutoTagAxes,
   auto: AutoTagAxes | null,

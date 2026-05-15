@@ -8,7 +8,9 @@
 
 本セクションは、**事業継続判断の根拠** (どの操作で課金が発生し、月次でいくらかかるか) を非エンジニアでも理解できる粒度で整理する。**コストは事業存続に直結する重要トピック**であり、機能仕様と一体で把握すべき情報として本ドキュメントに常設する。
 
-提案エンジンは「**過去の資産 (Knowledge / 過去課題 / 振り返り) を、新しいプロジェクトに自動で結びつける**」サービスの核心機能。3 つの外部サービス (Anthropic / Voyage / Supabase pgvector) を組み合わせて実現する。
+提案エンジンは「**過去の資産 (Knowledge / 過去課題 / 振り返り / メモ) を、新しいプロジェクトに自動で結びつける**」サービスの核心機能。3 つの外部サービス (Anthropic / Voyage / Supabase pgvector) を組み合わせて実現する。
+
+提案候補のスコープは一律 **「公開範囲: 全メンバー」** に限定する (Knowledge/RiskIssue/Retrospective: `visibility='public'` / Memo: `visibility='public'`)。「公開範囲: 自分のみ」のデータは提案エンジン対象外 (embedding 生成も行わない)。
 
 ### A. API 呼び出しトリガー (誰がいつ何を呼ぶか)
 
@@ -16,8 +18,8 @@
 
 | # | トリガー | 呼び出される API | 1 操作あたり呼び出し回数 |
 |---|---|---|---|
-| **①** | **Project 作成・更新時** (purpose/background/scope の text 変更時) | **Anthropic** + **Voyage** | Anthropic 1 回 + Voyage 1 回 = **2 回** |
-| **②** | **資産作成・更新時** (Knowledge / RiskIssue / Retrospective の text 変更時) | **Voyage** | Voyage **1 回** |
+| **①** | **Project 作成・更新時** (purpose/background/scope の text 変更時) | **Anthropic** + **Voyage** | 内部 2 種類 API を呼ぶが **ユーザ請求は 1 回に集約** (1 業務操作 = 1 ApiCallLog ルール、2026-05-15) |
+| **②** | **資産作成・更新時** (Knowledge / RiskIssue / Retrospective / Memo の embedding 対象項目変更時) | **Voyage** | Voyage **1 回** |
 | **③** | **提案機能実行時** (Project 作成後の提案モーダル / 参考タブ / 課題起票画面の inline 提示) | **Supabase pgvector のみ** (DB 内処理で完結) | **外部 API 呼び出しなし (¥0)** |
 
 **重要**: トリガー③ では **何度提案画面を開いても追加課金は発生しない**。Voyage は事前にトリガー①②で生成・保存済みの embedding を pgvector が読み出して比較するだけのため、検索・表示時に外部 API は不要。これが本サービスのアーキテクチャ上の優位性で、外部 API 障害時 (Voyage 全停止) でも提案機能は止まらない fail-safe 性を担保する。
@@ -35,14 +37,17 @@
 
 同時に **Voyage が text → 1024 次元 embedding を生成** し、Supabase pgvector の `content_embedding` 列に保存する (全プラン共通)。
 
+**ユーザ請求は 1 回** (2026-05-15 / 1 業務操作 = 1 ApiCallLog ルール): 内部的には Anthropic と Voyage の 2 種類の API を呼ぶが、`extractTagsAndEmbedForProject()` が `withMeteredLLM` を 1 度だけラップして両者を実行する。ApiCallLog 1 件 / Tenant counter +1 / costJpy 1 回分のみ。`featureUnit` は `project-upsert` を使用。両方失敗した場合は throw され課金されない (どちらか 1 つ成功すれば成功扱い)。
+
 #### B-2. 資産作成・更新時 (トリガー②)
 
-Knowledge / RiskIssue / Retrospective の主要 text フィールドから **Voyage が embedding を生成** し、Supabase pgvector に保存する (全プラン共通)。Anthropic は呼ばれない (自動タグ抽出は Project 限定機能)。
+Knowledge / RiskIssue / Retrospective / Memo の主要 text フィールドから **Voyage が embedding を生成** し、Supabase pgvector に保存する (全プラン共通)。Anthropic は呼ばれない (自動タグ抽出は Project 限定機能)。
 
 text が変更されない更新 (visibility のみの変更等) では Voyage は呼ばれない (LLM 課金回避設計)。
 
-**コスト最適化 (PR #357 + #358 / 2026-05-14)**:
-- **公開範囲: 自分のみ (`visibility='draft'`)** で作成・更新された資産は embedding を生成しない。draft は提案エンジンの検索対象外なので、生成しても永遠に利用されない。draft → public 遷移時に初回生成される (= 公開化時に提案候補に乗る)。
+**コスト最適化 (PR #357 + #358 / 2026-05-14、Memo 追加 / 2026-05-15)**:
+- **公開範囲: 自分のみ** (Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`) で作成・更新された資産は embedding を生成しない。draft / private は提案エンジンの検索対象外なので、生成しても永遠に利用されない。「自分のみ → 全メンバー」遷移時に初回生成される (= 公開化時に提案候補に乗る)。
+- **Memo 追加 (2026-05-15)**: Memo は title + content を embedding 対象項目とし、`visibility='public'` 時のみ生成。提案エンジンに Knowledge/RiskIssue/Retrospective と同等の候補として参加する。
 - **外部 import (CSV/XLSX) で複数件取込** する場合、`withMeteredLLM` を **1 回だけ** ラップし、callback 内で Voyage を必要数バッチ分割呼出する設計。**N 件 import = 1 ApiCallLog = Tenant counter +1** に統一され、ユーザに見える課金回数と実態が一致する。
 - import に visibility='draft' の行が含まれる場合、当該行は embedding 生成・課金対象外。wizard 画面で「うち下書き N 件 (課金対象外)」と表示。
 

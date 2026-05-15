@@ -16,6 +16,12 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
+// (2026-05-15) Memo に embedding 生成が追加されたためモック注入。
+//   visibility='public' のときのみ呼ばれることをテストで検証する。
+vi.mock('./embedding.service', () => ({
+  generateAndPersistEntityEmbedding: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   listMyMemos,
   listPublicMemos,
@@ -26,6 +32,7 @@ import {
   bulkUpdateMemosVisibilityFromList,
 } from './memo.service';
 import { prisma } from '@/lib/db';
+import { generateAndPersistEntityEmbedding } from './embedding.service';
 
 const now = new Date('2026-04-21T10:00:00Z');
 
@@ -287,5 +294,125 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
 
     expect(r.updatedIds).toEqual(['memo-empty']);
     expect(r.skippedEmptyTitle).toBe(0);
+  });
+});
+
+// (2026-05-15) Memo に embedding 生成が追加されたため、その visibility 別の API 呼出有無を検証する。
+describe('Memo embedding (2026-05-15: visibility=public のみ生成)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('createMemo: visibility=private なら generateAndPersistEntityEmbedding は呼ばれない', async () => {
+    vi.mocked(prisma.memo.create).mockResolvedValue(
+      memoRow({ id: 'm-priv', visibility: 'private' }) as never,
+    );
+    await createMemo(
+      { title: 'private memo', content: 'secret', visibility: 'private' },
+      'user-1',
+      'tenant-A',
+    );
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('createMemo: visibility=public なら memo-embedding featureUnit で生成される', async () => {
+    vi.mocked(prisma.memo.create).mockResolvedValue(
+      memoRow({ id: 'm-pub', visibility: 'public' }) as never,
+    );
+    await createMemo(
+      { title: '全員向けメモ', content: '共有内容', visibility: 'public' },
+      'user-1',
+      'tenant-A',
+    );
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledOnce();
+    const arg = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0]![0];
+    expect(arg.table).toBe('memos');
+    expect(arg.rowId).toBe('m-pub');
+    expect(arg.tenantId).toBe('tenant-A');
+    expect(arg.featureUnit).toBe('memo-embedding');
+    expect(arg.text).toContain('全員向けメモ');
+    expect(arg.text).toContain('共有内容');
+  });
+
+  it('updateMemo: private → private は embedding 呼出なし (LLM 課金回避)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      userId: 'user-1',
+      title: 'old',
+      content: 'old',
+      visibility: 'private',
+    } as never);
+    vi.mocked(prisma.memo.update).mockResolvedValue(
+      memoRow({ title: 'new', visibility: 'private' }) as never,
+    );
+
+    await updateMemo('memo-1', { title: 'new' }, 'user-1', 'tenant-A');
+
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('updateMemo: private → public は embedding 生成される (初回公開)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      userId: 'user-1',
+      title: 't',
+      content: 'c',
+      visibility: 'private',
+    } as never);
+    vi.mocked(prisma.memo.update).mockResolvedValue(
+      memoRow({ visibility: 'public' }) as never,
+    );
+
+    await updateMemo('memo-1', { visibility: 'public' }, 'user-1', 'tenant-A');
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledOnce();
+    expect(vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0]![0].featureUnit).toBe(
+      'memo-embedding',
+    );
+  });
+
+  it('updateMemo: public → public で title/content 変更時は embedding 再生成', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      userId: 'user-1',
+      title: 'old title',
+      content: 'old content',
+      visibility: 'public',
+    } as never);
+    vi.mocked(prisma.memo.update).mockResolvedValue(
+      memoRow({ title: 'new title', visibility: 'public' }) as never,
+    );
+
+    await updateMemo('memo-1', { title: 'new title' }, 'user-1', 'tenant-A');
+
+    expect(generateAndPersistEntityEmbedding).toHaveBeenCalledOnce();
+  });
+
+  it('updateMemo: public → public で対象項目変更なしなら embedding 呼出なし (LLM 課金回避)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      userId: 'user-1',
+      title: 'same',
+      content: 'same',
+      visibility: 'public',
+    } as never);
+    vi.mocked(prisma.memo.update).mockResolvedValue(
+      memoRow({ title: 'same', visibility: 'public' }) as never,
+    );
+
+    // title/content いずれも変更しない (visibility だけ送信 or 同値送信)
+    await updateMemo('memo-1', { title: 'same' }, 'user-1', 'tenant-A');
+
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('updateMemo: public → private は embedding 呼出なし (既存 embedding 保持)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue({
+      userId: 'user-1',
+      title: 't',
+      content: 'c',
+      visibility: 'public',
+    } as never);
+    vi.mocked(prisma.memo.update).mockResolvedValue(
+      memoRow({ visibility: 'private' }) as never,
+    );
+
+    await updateMemo('memo-1', { visibility: 'private' }, 'user-1', 'tenant-A');
+
+    expect(generateAndPersistEntityEmbedding).not.toHaveBeenCalled();
   });
 });

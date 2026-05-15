@@ -24,6 +24,7 @@ vi.mock('./embedding-backfill.service', () => ({
     knowledges: 0,
     risksIssues: 0,
     retrospectives: 0,
+    memos: 0, // (2026-05-15) Memo 追加
     total: 0,
   })),
 }));
@@ -112,6 +113,7 @@ describe('getDegradedModeState', () => {
       knowledges: 7,
       risksIssues: 2,
       retrospectives: 0,
+      memos: 0, // (2026-05-15) Memo 追加
       total: 12,
     });
 

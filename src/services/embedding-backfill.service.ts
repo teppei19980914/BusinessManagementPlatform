@@ -1,9 +1,9 @@
 /**
- * 月初 embedding 補完バッチ (縮退モード確定仕様 / 2026-05-14)
+ * 月初 embedding 補完バッチ (縮退モード確定仕様 / 2026-05-14、Memo 追加 / 2026-05-15)
  *
  * 役割:
  *   月跨ぎでテナント月間上限 / 月額予算がリセットされたタイミングで、`content_embedding=NULL`
- *   のまま蓄積した業務エンティティ (Project / Knowledge / RiskIssue / Retrospective) を
+ *   のまま蓄積した業務エンティティ (Project / Knowledge / RiskIssue / Retrospective / Memo) を
  *   一括で embedding 生成 + DB 永続化する。
  *
  * 起動契機:
@@ -52,6 +52,7 @@ import { composeKnowledgeText } from './knowledge.service';
 import { composeProjectText } from './project.service';
 import { composeRiskText } from './risk.service';
 import { composeRetrospectiveText } from './retrospective.service';
+import { composeMemoText } from './memo.service';
 
 /** 1 テナント 1 テーブル当たりの最大補完件数 (Voyage 1 リクエスト推奨上限と整合)。 */
 export const MAX_BACKFILL_PER_TENANT_PER_TABLE = 128;
@@ -119,6 +120,8 @@ export async function backfillTenant(
     'knowledges',
     'risks_issues',
     'retrospectives',
+    // (2026-05-15) Memo も提案エンジン対象になったため backfill 対象に追加。
+    'memos',
   ] as const) {
     const items = await collectNullEmbeddingItems(tenantId, table);
     if (items.length === 0) {
@@ -303,9 +306,28 @@ async function collectNullEmbeddingItems(
         .filter((it) => it.text.trim().length > 0);
     }
 
-    case 'memos':
-      // Memo は提案エンジン対象外のため補完対象としない。
-      return [];
+    case 'memos': {
+      // (2026-05-15) Memo は visibility='public' (= 全メンバー公開) のみ提案エンジン対象。
+      //   visibility='private' (= 自分のみ) は他資産の 'draft' 等価で補完対象外。
+      const rows = await prisma.$queryRaw<
+        Array<{ id: string; title: string; content: string }>
+      >`
+        SELECT id::text AS id, title, content
+        FROM "memos"
+        WHERE tenant_id = ${tenantId}::uuid
+          AND deleted_at IS NULL
+          AND visibility = 'public'
+          AND content_embedding IS NULL
+        ORDER BY created_at ASC
+        LIMIT ${MAX_BACKFILL_PER_TENANT_PER_TABLE}
+      `;
+      return rows
+        .map((r) => ({
+          rowId: r.id,
+          text: composeMemoText({ title: r.title, content: r.content }),
+        }))
+        .filter((it) => it.text.trim().length > 0);
+    }
 
     default: {
       const _exhaustive: never = table;
@@ -322,13 +344,16 @@ export interface NullEmbeddingCounts {
   knowledges: number;
   risksIssues: number;
   retrospectives: number;
+  /** 2026-05-15: Memo 追加 (visibility='public' のみ) */
+  memos: number;
   total: number;
 }
 
 /**
  * テナントの NULL 件数を集計する (UI 「embedding 未生成 N 件」表示用)。
  *
- * draft は提案エンジン対象外のため除外。
+ * 「自分のみ」(Knowledge/RiskIssue/Retrospective: visibility='draft' / Memo: visibility='private')
+ * は提案エンジン対象外のため除外。
  */
 export async function countNullEmbeddings(
   tenantId: string,
@@ -362,6 +387,13 @@ export async function countNullEmbeddings(
         AND deleted_at IS NULL
         AND visibility <> 'draft'
         AND content_embedding IS NULL
+    UNION ALL
+    SELECT 'memos', COUNT(*)::bigint
+      FROM "memos"
+      WHERE tenant_id = ${tenantId}::uuid
+        AND deleted_at IS NULL
+        AND visibility = 'public'
+        AND content_embedding IS NULL
   `;
 
   const map = new Map(rows.map((r) => [r.table_name, Number(r.count)]));
@@ -369,11 +401,13 @@ export async function countNullEmbeddings(
   const knowledges = map.get('knowledges') ?? 0;
   const risksIssues = map.get('risks_issues') ?? 0;
   const retrospectives = map.get('retrospectives') ?? 0;
+  const memos = map.get('memos') ?? 0;
   return {
     projects,
     knowledges,
     risksIssues,
     retrospectives,
-    total: projects + knowledges + risksIssues + retrospectives,
+    memos,
+    total: projects + knowledges + risksIssues + retrospectives + memos,
   };
 }

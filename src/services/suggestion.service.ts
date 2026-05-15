@@ -123,11 +123,30 @@ export type PastRiskSuggestion = SuggestionScore & {
   sourceProjectName: string | null;
 };
 
+/**
+ * (2026-05-15) Memo を推薦対象に追加 (= 他資産と同仕様)。
+ *   Memo は project に紐付かない個人ノートのため `sourceProjectId/Name` は持たない。
+ *   タグも持たないため tagScore は常に 0 (= 縮退モード重み再配分の対象、embedding と
+ *   text 類似度で実用ランキング)。
+ *   候補スコープは他資産と同様に `visibility='public'` のみ (= 全メンバー公開メモ)。
+ *   `visibility='private'` (自分のみ) は提案エンジン対象外。
+ */
+export type MemoSuggestion = SuggestionScore & {
+  kind: 'memo';
+  id: string;
+  title: string;
+  snippet: string;
+  /** 作成者のユーザ ID (UI で「誰のメモ?」表示用) */
+  authorUserId: string;
+};
+
 export type SuggestionsResult = {
   knowledge: KnowledgeSuggestion[];
   pastIssues: PastIssueSuggestion[];
   pastRisks: PastRiskSuggestion[];
   retrospectives: RetrospectiveSuggestion[];
+  /** (2026-05-15) 全メンバー公開の Memo 候補 (visibility='public' のみ) */
+  memos: MemoSuggestion[];
 };
 
 type ProjectContext = {
@@ -206,7 +225,11 @@ async function loadProjectContext(
  * テーブル名は TypeScript union + exhaustive switch で SQL injection リスクを排除
  * (PR #224 と同じパターン)。
  */
-type EmbeddingSimilarityTable = 'knowledges' | 'risks_issues' | 'retrospectives';
+type EmbeddingSimilarityTable =
+  | 'knowledges'
+  | 'risks_issues'
+  | 'retrospectives'
+  | 'memos'; // (2026-05-15) Memo 追加
 
 async function computeEmbeddingSimilarities(
   queryEmbeddingText: string | null,
@@ -241,6 +264,17 @@ async function computeEmbeddingSimilarities(
         SELECT id::text AS id,
                1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
         FROM "retrospectives"
+        WHERE id = ANY(${ids}::uuid[])
+          AND "content_embedding" IS NOT NULL
+      `;
+      break;
+    case 'memos':
+      // (2026-05-15) Memo 候補の embedding 類似度。tenantId / visibility='public' フィルタは
+      //   呼出元の prisma.memo.findMany 側で適用済 (= ids が既に絞り込み済の想定)。
+      rows = await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+        SELECT id::text AS id,
+               1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
+        FROM "memos"
         WHERE id = ANY(${ids}::uuid[])
           AND "content_embedding" IS NOT NULL
       `;
@@ -327,11 +361,11 @@ export async function suggestForProject(
 ): Promise<SuggestionsResult> {
   // PR #8 (T-03): 緊急停止フラグ。SUGGESTION_ENGINE_DISABLED=true で空配列を返す。
   if (isSuggestionEngineDisabled()) {
-    return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] };
+    return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [] };
   }
   const limit = options.limit ?? DEFAULT_LIMIT;
   const ctx = await loadProjectContext(projectId, viewerTenantId);
-  if (!ctx) return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] };
+  if (!ctx) return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [] };
 
   // 2026-05-09 feedback Phase 2-7: severity-1 越境対策。
   //   旧仕様は提案候補に他テナントのデータが混入する設計バグだった。
@@ -649,6 +683,62 @@ export async function suggestForProject(
     };
   });
 
+  // ---------- 全メンバー公開 Memo 候補 (2026-05-15) ----------
+  // 他資産と同じスコープ (visibility='public' + 自テナント or 管理シード) で候補化。
+  // Memo は project に紐付かない個人ノート (= 親 Project が無い) ため:
+  //   - tagScore は常に 0 (Memo 自身もタグなし、親 Project も存在しない)
+  //     → embedding と text 類似度で実用的にランキングする
+  //   - `NOT: { ... projectId }` のような自プロジェクト除外も不要
+  //   - 採用 (= 雛形複製) は提供しない、参照のみ (= Retrospective と同じ扱い)
+  const memos = await prisma.memo.findMany({
+    where: {
+      deletedAt: null,
+      visibility: 'public',
+      ...excludeManagementTenant,
+    },
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      userId: true,
+    },
+  });
+
+  const mText = await computeTextSimilarities(
+    ctx.text,
+    memos.map((m) => ({ id: m.id, text: `${m.title} ${m.content}` })),
+  );
+  const mEmb = await computeEmbeddingSimilarities(
+    ctx.embeddingText,
+    'memos',
+    memos.map((m) => m.id),
+  );
+
+  const memoScored: MemoSuggestion[] = memos.map((m) => {
+    const tagScore = 0; // Memo はタグを持たないため 0 固定
+    const textScore = mText.get(m.id) ?? 0;
+    const embAvailable = ctx.embeddingText != null && mEmb.has(m.id);
+    const embeddingScore = mEmb.get(m.id) ?? 0;
+    const score = combineWithDegradation({
+      tagScore,
+      textScore,
+      embeddingScore,
+      embAvailable,
+    });
+    return {
+      kind: 'memo' as const,
+      id: m.id,
+      title: m.title,
+      snippet: m.content.slice(0, 120),
+      authorUserId: m.userId,
+      score,
+      tagScore,
+      textScore,
+      embeddingScore,
+      tier: classifyTier(score),
+    };
+  });
+
   // PR-X6 (2026-05-07) + P-1 (2026-05-08): スコア降順 + 件数保証 + 件数上限 + パーセンタイル tier。
   //   1. スコア降順で全候補をソート
   //   2. applyMinimumGuarantee で「閾値以上の候補が最低件数未満なら、全候補から Top N を返す」
@@ -677,8 +767,12 @@ export async function suggestForProject(
   const retrospectives = assignPercentileTiers(
     applyMinimumGuarantee(sortByScore(retroScored), SCORE_THRESHOLD).slice(0, limit),
   );
+  // (2026-05-15) Memo は他資産と同様に tier 付与で返す。
+  const memoResult = assignPercentileTiers(
+    applyMinimumGuarantee(sortByScore(memoScored), SCORE_THRESHOLD).slice(0, limit),
+  );
 
-  return { knowledge, pastIssues, pastRisks, retrospectives };
+  return { knowledge, pastIssues, pastRisks, retrospectives, memos: memoResult };
 }
 
 /**

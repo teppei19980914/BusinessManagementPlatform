@@ -32,6 +32,16 @@ import { getAnthropicClient } from '@/lib/llm/anthropic-client';
 import type { TextBlock } from '@anthropic-ai/sdk/resources/messages';
 
 // ================================================================
+// 公開: tag 軸の集約型
+// ================================================================
+
+export type AutoTagAxes = {
+  businessDomainTags: string[];
+  techStackTags: string[];
+  processTags: string[];
+};
+
+// ================================================================
 // 公開型
 // ================================================================
 
@@ -182,24 +192,40 @@ const AUTO_TAG_SYSTEM_PROMPT = `あなたはソフトウェア開発プロジェ
 応答は output schema で指定された JSON 形式のみ返してください。説明文や前置きは不要です。`;
 
 // ================================================================
-// 公開関数
+// 公開関数: 内部ヘルパ (withMeteredLLM 非介在)
 // ================================================================
 
 /**
- * Project テキストから 3 軸タグを抽出する。
+ * (1 業務操作 = 1 ApiCallLog 集約 / 2026-05-15)
  *
- * - 入力長を MAX_FIELD_CHARS で truncate
- * - withMeteredLLM 経由で Haiku を呼び出し
- * - 出力を Zod で再検証
- * - 縮退時は呼び出し元が「既存タグを維持する」フォールバックを行うこと
+ * 与えられた `modelName` で Anthropic を直接呼び出し、3 軸タグを抽出する。
+ * **本関数は withMeteredLLM を経由しない** ため、単独で呼び出されたケースの課金処理は
+ * 行わない。`withMeteredLLM` の callback 内で他の LLM 呼出 (例: Voyage embedding) と
+ * 一緒に呼ぶことで「1 業務操作 = 1 ApiCallLog」を実現する用途で使う。
+ *
+ * 通常経路 (auto-tag 単独実行 = 提案エンジン以外で auto-tag だけ欲しい場合等) は
+ * `extractAutoTags()` を呼ぶこと。
+ *
+ * 失敗時の挙動:
+ *   - LLM が応答した text を JSON parse + Zod 検証に通せなかった → `tags: null` を返す
+ *   - LLM 呼出自体が throw した → throw を伝播 (caller の withMeteredLLM が捕捉)
+ *
+ * @returns tags (検証 OK) または null (検証失敗) + 入出力トークン数
  */
-export async function extractAutoTags(input: AutoTagInput): Promise<AutoTagResult> {
-  // ---------- 1. 入力 sanitize / truncate ----------
-  const purpose = truncate(input.purpose, MAX_FIELD_CHARS);
-  const background = truncate(input.background, MAX_FIELD_CHARS);
-  const scope = truncate(input.scope, MAX_FIELD_CHARS);
+export async function callAnthropicForAutoTagsInner(args: {
+  purpose: string;
+  background: string;
+  scope: string;
+  modelName: string;
+}): Promise<{
+  tags: AutoTagAxes | null;
+  llmInputTokens?: number;
+  llmOutputTokens?: number;
+}> {
+  const purpose = truncate(args.purpose, MAX_FIELD_CHARS);
+  const background = truncate(args.background, MAX_FIELD_CHARS);
+  const scope = truncate(args.scope, MAX_FIELD_CHARS);
 
-  // ---------- 2. user メッセージ構築 (XML タグで分離) ----------
   // XML タグ閉じ忘れ攻撃を防ぐため、入力中の </project_*> 文字列をエスケープ。
   const userPrompt = [
     '<project_purpose>',
@@ -215,7 +241,72 @@ export async function extractAutoTags(input: AutoTagInput): Promise<AutoTagResul
     '</project_scope>',
   ].join('\n');
 
-  // ---------- 3. withMeteredLLM 経由で LLM 呼び出し ----------
+  const client = getAnthropicClient();
+  const response = await client.messages.create({
+    model: args.modelName,
+    max_tokens: 1024,
+    system: [
+      {
+        type: 'text',
+        text: AUTO_TAG_SYSTEM_PROMPT,
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
+    messages: [{ role: 'user', content: userPrompt }],
+    output_config: {
+      format: {
+        type: 'json_schema',
+        schema: ANTHROPIC_OUTPUT_SCHEMA,
+      },
+    },
+  });
+
+  const llmInputTokens = response.usage.input_tokens;
+  const llmOutputTokens = response.usage.output_tokens;
+
+  const textBlock = response.content.find(
+    (b): b is TextBlock => b.type === 'text',
+  );
+  if (textBlock == null) {
+    throw new Error('Anthropic response had no text block');
+  }
+
+  let parsed: AutoTagOutput;
+  try {
+    const json: unknown = JSON.parse(textBlock.text);
+    parsed = AutoTagOutputSchema.parse(json);
+  } catch {
+    return { tags: null, llmInputTokens, llmOutputTokens };
+  }
+
+  return {
+    tags: {
+      businessDomainTags: dedup(parsed.businessDomainTags),
+      techStackTags: dedup(parsed.techStackTags),
+      processTags: dedup(parsed.processTags),
+    },
+    llmInputTokens,
+    llmOutputTokens,
+  };
+}
+
+// ================================================================
+// 公開関数
+// ================================================================
+
+/**
+ * Project テキストから 3 軸タグを抽出する。
+ *
+ * - 入力長を MAX_FIELD_CHARS で truncate
+ * - withMeteredLLM 経由で Haiku を呼び出し (= 1 ApiCallLog)
+ * - 出力を Zod で再検証
+ * - 縮退時は呼び出し元が「既存タグを維持する」フォールバックを行うこと
+ *
+ * **注意 (2026-05-15)**: createProject / updateProject では本関数 **ではなく**
+ * `extractTagsAndEmbedForProject()` を使うこと (auto-tag + embedding を 1 ApiCallLog
+ * に集約するため)。本関数は単独で auto-tag のみ欲しい用途のため残置。
+ */
+export async function extractAutoTags(input: AutoTagInput): Promise<AutoTagResult> {
   const result = await withMeteredLLM(
     {
       featureUnit: 'auto-tag-extract',
@@ -223,46 +314,24 @@ export async function extractAutoTags(input: AutoTagInput): Promise<AutoTagResul
       userId: input.userId,
     },
     async ({ modelName, requestId }) => {
-      const client = getAnthropicClient();
-      const response = await client.messages.create({
-        model: modelName,
-        max_tokens: 1024,
-        system: [
-          {
-            type: 'text',
-            text: AUTO_TAG_SYSTEM_PROMPT,
-            // 凍結 system prompt をキャッシュ (5 分 TTL)。
-            // ユーザ毎・テナント毎に同じ prefix なので高 hit 率を期待。
-            cache_control: { type: 'ephemeral' },
-          },
-        ],
-        messages: [{ role: 'user', content: userPrompt }],
-        // 構造化出力: JSON schema を強制し、prefill を使わずに形式担保
-        output_config: {
-          format: {
-            type: 'json_schema',
-            schema: ANTHROPIC_OUTPUT_SCHEMA,
-          },
-        },
+      const inner = await callAnthropicForAutoTagsInner({
+        purpose: input.purpose,
+        background: input.background,
+        scope: input.scope,
+        modelName,
       });
-
-      const usage = {
-        llmInputTokens: response.usage.input_tokens,
-        llmOutputTokens: response.usage.output_tokens,
+      return {
+        // tags が null (output_invalid) の場合は専用 sentinel を返し、後段で詰め替え
+        result: inner.tags,
+        usage: {
+          llmInputTokens: inner.llmInputTokens,
+          llmOutputTokens: inner.llmOutputTokens,
+        },
+        requestId,
       };
-
-      // 応答 content から text ブロックを 1 つだけ取り出す
-      const textBlock = response.content.find(
-        (b): b is TextBlock => b.type === 'text',
-      );
-      if (textBlock == null) {
-        throw new Error('Anthropic response had no text block');
-      }
-      return { result: textBlock.text, usage, requestId };
     },
   );
 
-  // ---------- 4. withMeteredLLM の縮退/失敗をそのまま伝播 ----------
   if (!result.ok) {
     return {
       ok: false,
@@ -274,12 +343,7 @@ export async function extractAutoTags(input: AutoTagInput): Promise<AutoTagResul
     };
   }
 
-  // ---------- 5. 出力を Zod で再検証 ----------
-  let parsed: AutoTagOutput;
-  try {
-    const json: unknown = JSON.parse(result.result);
-    parsed = AutoTagOutputSchema.parse(json);
-  } catch {
+  if (result.result == null) {
     return {
       ok: false,
       reason: 'output_invalid',
@@ -287,14 +351,9 @@ export async function extractAutoTags(input: AutoTagInput): Promise<AutoTagResul
     };
   }
 
-  // ---------- 6. 重複除去 + 空白 trim ----------
   return {
     ok: true,
-    tags: {
-      businessDomainTags: dedup(parsed.businessDomainTags),
-      techStackTags: dedup(parsed.techStackTags),
-      processTags: dedup(parsed.processTags),
-    },
+    tags: result.result,
     costJpy: result.costJpy,
     requestId: result.requestId,
   };

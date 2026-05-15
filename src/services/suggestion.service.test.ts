@@ -10,6 +10,8 @@ vi.mock('@/lib/db', () => ({
     knowledgeProject: { createMany: vi.fn() },
     riskIssue: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     retrospective: { findMany: vi.fn() },
+    // (2026-05-15) Memo を提案候補に追加
+    memo: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
   },
 }));
@@ -27,13 +29,15 @@ describe('suggestForProject', () => {
     vi.clearAllMocks();
     // 2026-05-09 (PR G / #24): デフォルトで seedDataEnabled=true (= 既存テスト互換)
     vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ seedDataEnabled: true } as never);
+    // (2026-05-15) Memo の既定モック (空配列) — 個別テストで上書き可
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([] as never);
   });
 
   it('プロジェクト不在なら空結果', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue(null);
 
     const r = await suggestForProject('missing', 'tenant-A');
-    expect(r).toEqual({ knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] });
+    expect(r).toEqual({ knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [] });
   });
 
   it('ctx 取得後、knowledge / issue / retro の各候補を取得し DTO で返す', async () => {
@@ -783,11 +787,12 @@ describe('suggestion engine 緊急停止フラグ (SUGGESTION_ENGINE_DISABLED)',
 
     const r = await suggestForProject('any-project-id', 'tenant-A');
 
-    expect(r).toEqual({ knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [] });
+    expect(r).toEqual({ knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [] });
     // DB が一切呼ばれないことを確認 (LLM 呼び出しゼロの担保)
     expect(prisma.project.findFirst).not.toHaveBeenCalled();
     expect(prisma.knowledge.findMany).not.toHaveBeenCalled();
     expect(prisma.riskIssue.findMany).not.toHaveBeenCalled();
+    expect(prisma.memo.findMany).not.toHaveBeenCalled();
 
     delete process.env.SUGGESTION_ENGINE_DISABLED;
   });

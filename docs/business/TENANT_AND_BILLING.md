@@ -297,24 +297,30 @@ admin はサービス内の `/admin/observability/llm` ダッシュボード (v1
 
 #### 34.14.2 「1 回の API 呼び出し」の定義 (課金単位)
 
-per-API-call の「1 回」は **`featureUnit` 単位で 1 回** としてカウントする (実装: [src/lib/llm/metered.ts](../../src/lib/llm/metered.ts) L68)。実装上の `featureUnit` は以下：
+per-API-call の「1 回」は **`featureUnit` 単位で 1 回** としてカウントする (実装: [src/lib/llm/metered.ts](../../src/lib/llm/metered.ts) L68)。**「1 業務操作 = 1 ApiCallLog」ルール** に従い、ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、課金単位は 1 回に集約する。実装上の `featureUnit` は以下：
 
-- `auto-tag-extract` — プロジェクト作成・更新時の自動タグ抽出
-- `project-embedding` — プロジェクト作成・更新時の embedding 生成
+- `project-upsert` — プロジェクト作成・更新（auto-tag 抽出 + embedding 生成を 1 ApiCallLog に集約 / 2026-05-15）
 - `knowledge-embedding` — ナレッジ作成・更新時の embedding 生成
 - `risk-issue-embedding` — リスク・課題作成・更新時の embedding 生成
 - `retrospective-embedding` — 振り返り作成・更新時の embedding 生成
+- `memo-embedding` — メモ作成・更新時の embedding 生成（2026-05-15 追加。Memo は visibility='public' 限定で対象）
 - `external-import-embedding` — CSV/XLSX インポート時の embedding 生成（1 ファイル 1 回）
-- `suggestion-explanation` — 提案説明文生成（Pro プラン限定）
+- `suggestion-explanation` — 提案説明文生成（Pro プラン限定。knowledge / issue / risk / retrospective / memo の全資産に対応 / 2026-05-15）
 
-新規プロジェクト作成時は `auto-tag-extract` + `project-embedding` の **2 回** とカウントされる。ナレッジ・リスク・課題・振り返りの作成・更新は **1 回** とカウントされる。
+（旧 featureUnit `auto-tag-extract` / `project-embedding` は backfill 経路の互換のため metered.ts 上では受理されるが、新規発行はされない。）
+
+**作成・更新時の課金単位 (1 業務操作 = 1 ApiCallLog ルール)**:
+- プロジェクトの作成・更新: **1 回** （auto-tag 抽出 + embedding 生成を統合）
+- ナレッジ・リスク・課題・振り返り・メモの作成・更新: **1 回** （対象項目変更時のみ embedding 生成）
+- 「自分のみ」公開範囲（Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`）のエンティティは embedding 生成しない → 課金なし。提案エンジン対象外。
 
 **課金対象外**:
 - 各画面・提案結果の **表示・再表示** (pgvector による DB 内検索のみ、LLM 呼び出しなし)
 - `SuggestionExplanation` テーブルのキャッシュヒット時の説明文返却 (再生成なし)
 - エンティティの削除、ログイン、招待などの管理操作
+- 「公開範囲: 自分のみ」のエンティティの作成・更新（提案エンジン対象外のため LLM 呼出なし）
 
-**失敗時の扱い**: LLM 呼び出しが失敗した場合はカウンタを増加させない (metered.ts L226-235)。
+**失敗時の扱い**: LLM 呼び出しが失敗した場合はカウンタを増加させない (metered.ts L226-235)。プロジェクト作成では auto-tag と embedding のどちらか 1 つでも成功すれば 1 回計上、両方失敗の場合のみ計上なし。
 
 この定義により、ユーザは「データ書き込み = 課金、閲覧・検索 = 無料」と直感的に予測できる。実装上のキャッシュ最適化が進んでもユーザの請求額には透明性が保たれる。
 

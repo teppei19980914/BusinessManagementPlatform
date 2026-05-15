@@ -43,9 +43,10 @@ describe('backfillTenant', () => {
   });
 
   it('各テーブルから NULL を取得し、空でないものを generateAndPersistBatchEmbeddings に渡す', async () => {
+    // (2026-05-15) Memo (5 テーブル目) も対象に追加。
     // projects: 2 件 NULL (うち 1 件は空 text → filter で除外)
     // knowledges: 1 件 NULL
-    // risks_issues / retrospectives: 0 件
+    // risks_issues / retrospectives / memos: 0 件
     vi.mocked(prisma.$queryRaw)
       .mockResolvedValueOnce([
         { id: 'p-1', purpose: 'プロジェクト目的', background: '', scope: '' },
@@ -62,6 +63,7 @@ describe('backfillTenant', () => {
           recommendation: null,
         },
       ] as never)
+      .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never);
 
@@ -89,10 +91,12 @@ describe('backfillTenant', () => {
     expect(result.generated.knowledges).toBe(1);
     expect(result.generated.risks_issues).toBe(0);
     expect(result.generated.retrospectives).toBe(0);
+    expect(result.generated.memos).toBe(0);
   });
 
   it('1 件も NULL がなければ batch 呼出は発生しない (テーブル別に 0 件)', async () => {
     vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never)
@@ -103,6 +107,7 @@ describe('backfillTenant', () => {
     expect(mockGenerateAndPersistBatch).not.toHaveBeenCalled();
     expect(result.generated.projects).toBe(0);
     expect(result.generated.knowledges).toBe(0);
+    expect(result.generated.memos).toBe(0);
   });
 
   it('LLM 縮退 (上限超過) で 1 度の batch が全件 failed を返したら集計に反映する', async () => {
@@ -110,6 +115,7 @@ describe('backfillTenant', () => {
       .mockResolvedValueOnce([
         { id: 'p-1', purpose: 'p', background: '', scope: '' },
       ] as never)
+      .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never);
@@ -124,6 +130,32 @@ describe('backfillTenant', () => {
 
     expect(result.generated.projects).toBe(0);
     expect(result.failed.projects).toBe(1);
+  });
+
+  it('(2026-05-15) Memo (visibility=public) も backfill 対象になる', async () => {
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([] as never) // projects
+      .mockResolvedValueOnce([] as never) // knowledges
+      .mockResolvedValueOnce([] as never) // risks_issues
+      .mockResolvedValueOnce([] as never) // retrospectives
+      .mockResolvedValueOnce([
+        { id: 'm-1', title: 'メモ', content: '本文' },
+      ] as never); // memos
+
+    mockGenerateAndPersistBatch.mockImplementation(async ({ items }) => ({
+      generated: items.length,
+      failed: 0,
+      costJpy: 10,
+    }));
+
+    const result = await backfillTenant('tenant-with-memos');
+
+    expect(mockGenerateAndPersistBatch).toHaveBeenCalledTimes(1);
+    const memoBatchCall = mockGenerateAndPersistBatch.mock.calls[0][0];
+    expect(memoBatchCall.featureUnit).toBe('memo-embedding-backfill');
+    expect(memoBatchCall.items).toHaveLength(1);
+    expect(memoBatchCall.items[0].rowId).toBe('m-1');
+    expect(result.generated.memos).toBe(1);
   });
 });
 
@@ -155,12 +187,13 @@ describe('countNullEmbeddings', () => {
     vi.clearAllMocks();
   });
 
-  it('4 テーブル分の SQL UNION 結果を集計し total を返す', async () => {
+  it('5 テーブル分の SQL UNION 結果を集計し total を返す', async () => {
     vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
       { table_name: 'projects', count: 3n },
       { table_name: 'knowledges', count: 5n },
       { table_name: 'risks_issues', count: 1n },
       { table_name: 'retrospectives', count: 0n },
+      { table_name: 'memos', count: 2n }, // (2026-05-15) Memo 追加
     ] as never);
 
     const counts = await countNullEmbeddings('tenant-a');
@@ -169,7 +202,8 @@ describe('countNullEmbeddings', () => {
       knowledges: 5,
       risksIssues: 1,
       retrospectives: 0,
-      total: 9,
+      memos: 2,
+      total: 11,
     });
   });
 
@@ -184,6 +218,7 @@ describe('countNullEmbeddings', () => {
       knowledges: 0,
       risksIssues: 0,
       retrospectives: 0,
+      memos: 0,
       total: 2,
     });
   });
