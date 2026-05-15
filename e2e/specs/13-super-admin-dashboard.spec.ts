@@ -204,25 +204,25 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     expect(text).toContain(fixture!.customerTenantA.name);
     expect(text).toContain(fixture!.customerTenantB.name);
 
-    // 顧客テナント A: LLM ¥3000 + Storage(plus) ¥500 = ¥3500
+    // 顧客テナント A: LLM ¥1500 (300 calls × ¥5、2026-05-15 改定後) + Storage(plus) ¥500 = ¥2000
     const lines = text.split('\r\n');
     const lineA = lines.find((l) => l.includes(fixture!.customerTenantA.name));
     expect(lineA, 'tenant-A 行が CSV に存在する').toBeDefined();
-    // 列順: ... plan(expert), 呼出数(300), 費用(3000), ユーザ数(1), 予算(空), Storage プラン(plus), 使用量(0), Storage月額(500), 合計月額(3500), ...
+    // 列順: ... plan(expert), 呼出数(300), 費用(1500), ユーザ数(1), 予算(空), Storage プラン(plus), 使用量(0), Storage月額(500), 合計月額(2000), ...
     expect(lineA).toContain(',expert,');
-    expect(lineA).toContain(',3000,'); // LLM 費用
+    expect(lineA).toContain(',1500,'); // LLM 費用 (300 calls × ¥5)
     expect(lineA).toContain(',plus,'); // Storage プラン
     expect(lineA).toContain(',500,'); // Storage 月額
-    expect(lineA).toContain(',3500,'); // 合計
+    expect(lineA).toContain(',2000,'); // 合計
 
-    // 顧客テナント B: LLM ¥30000 + Storage(pro_storage) ¥1500 = ¥31500
+    // 顧客テナント B: LLM ¥22500 (1500 calls × ¥15、2026-05-15 改定後) + Storage(pro_storage) ¥1500 = ¥24000
     const lineB = lines.find((l) => l.includes(fixture!.customerTenantB.name));
     expect(lineB, 'tenant-B 行が CSV に存在する').toBeDefined();
     expect(lineB).toContain(',pro,');
-    expect(lineB).toContain(',30000,');
+    expect(lineB).toContain(',22500,');
     expect(lineB).toContain(',pro_storage,');
     expect(lineB).toContain(',1500,');
-    expect(lineB).toContain(',31500,');
+    expect(lineB).toContain(',24000,');
 
     // 🚨 重要: Default テナント (= 'default' slug を持つテナント) は CSV に含まれない
     //   (= 請求 CSV に運営者自身のテナントが混入していたら売上計上ミスの原因になる)

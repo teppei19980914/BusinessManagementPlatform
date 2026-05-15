@@ -1380,10 +1380,10 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
         deletedAt: null,
       },
-      // expert plan, plus storage (¥500): LLM ¥3000 + Storage ¥500 = ¥3500
+      // expert plan, plus storage (¥500): LLM ¥1500 (300 calls × ¥5/call、2026-05-15 改定後) + Storage ¥500 = ¥2000
       {
         id: 'tenant-b', tenantSeq: 3, slug: 'b', name: 'B', plan: 'expert',
-        currentMonthApiCallCount: 300, currentMonthApiCostJpy: 3000,
+        currentMonthApiCallCount: 300, currentMonthApiCostJpy: 1500,
         monthlyBudgetCapJpy: 10000, createdAt: new Date('2026-02-01'),
         billingType: 'individual', billingCompanyName: null,
         billingContactName: '田中', billingContactEmail: 'b@b.com',
@@ -1393,10 +1393,10 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         storageAddonPlan: 'plus', storageBytesUsed: BigInt(100 * 1024 * 1024),
         deletedAt: null,
       },
-      // pro plan, pro_storage (¥1500): LLM ¥30000 + Storage ¥1500 = ¥31500
+      // pro plan, pro_storage (¥1500): LLM ¥15000 (1000 calls × ¥15/call、2026-05-15 改定後) + Storage ¥1500 = ¥16500
       {
         id: 'tenant-c', tenantSeq: 4, slug: 'c', name: 'C', plan: 'pro',
-        currentMonthApiCallCount: 1000, currentMonthApiCostJpy: 30000,
+        currentMonthApiCallCount: 1000, currentMonthApiCostJpy: 15000,
         monthlyBudgetCapJpy: 100000, createdAt: new Date('2026-03-01'),
         billingType: 'corporate', billingCompanyName: 'C社',
         billingContactName: '佐藤', billingContactEmail: 'c@c.com',
@@ -1420,12 +1420,12 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
     expect(rows[0]!.storageAddonMonthlyJpy).toBe(0);
     expect(rows[0]!.totalCurrentMonthJpy).toBe(800);
     expect(rows[0]!.activeUserCount).toBe(3);
-    // tenant-b: ¥3000 + ¥500 = ¥3500
+    // tenant-b: ¥1500 + ¥500 = ¥2000 (2026-05-15 価格改定後)
     expect(rows[1]!.storageAddonMonthlyJpy).toBe(500);
-    expect(rows[1]!.totalCurrentMonthJpy).toBe(3500);
-    // tenant-c: ¥30000 + ¥1500 = ¥31500
+    expect(rows[1]!.totalCurrentMonthJpy).toBe(2000);
+    // tenant-c: ¥15000 + ¥1500 = ¥16500 (2026-05-15 価格改定後)
     expect(rows[2]!.storageAddonMonthlyJpy).toBe(1500);
-    expect(rows[2]!.totalCurrentMonthJpy).toBe(31500);
+    expect(rows[2]!.totalCurrentMonthJpy).toBe(16500);
   });
 
   it('不正な storageAddonPlan は standard へフォールバック (DB 不整合への防御)', async () => {

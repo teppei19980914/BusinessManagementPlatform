@@ -302,7 +302,7 @@ describe('previewImport', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // 既 ¥4950 + ¥10×6 = ¥5010 > ¥5000
+      // 既 ¥4980 + ¥5×6 = ¥5010 > ¥5000 (2026-05-15 価格改定後)
       expect(r.costEstimate.warningCode).toBe('BUDGET_CAP_EXCEEDED');
     }
   });

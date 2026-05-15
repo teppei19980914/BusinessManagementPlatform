@@ -101,7 +101,8 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
     vi.mocked(listAllTenants).mockResolvedValue([
       {
         id: 't-a', tenantSeq: 2, slug: 'a', name: '顧客A', plan: 'expert',
-        currentMonthApiCallCount: 300, currentMonthApiCostJpy: 3000,
+        // 2026-05-15 価格改定後: Expert ¥5/call × 300 calls = ¥1500
+        currentMonthApiCallCount: 300, currentMonthApiCostJpy: 1500,
         monthlyBudgetCapJpy: 10000, activeUserCount: 5,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: 'A社',
@@ -111,7 +112,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingStreetAddress: '1-1', billingBuildingName: 'Aビル',
         billingPhoneNumber: '03-1234-5678', paymentMethod: 'invoice',
         storageAddonPlan: 'plus', storageBytesUsed: 100 * 1024 * 1024,
-        storageAddonMonthlyJpy: 500, totalCurrentMonthJpy: 3500,
+        storageAddonMonthlyJpy: 500, totalCurrentMonthJpy: 2000,
         deletedAt: null,
       },
     ] as never);
@@ -134,11 +135,11 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
     expect(body).toContain('Storage月額(円)');
     expect(body).toContain('合計月額(円)');
 
-    // 値が正確に記録されている (請求書の根拠)
+    // 値が正確に記録されている (請求書の根拠、2026-05-15 価格改定後の値)
     expect(body).toContain('顧客A');
-    expect(body).toContain('3000'); // LLM
+    expect(body).toContain('1500'); // LLM (300 calls × ¥5)
     expect(body).toContain('500'); // Storage
-    expect(body).toContain('3500'); // 合計 (LLM + Storage)
+    expect(body).toContain('2000'); // 合計 (LLM + Storage)
 
     // 請求先情報も含まれる
     expect(body).toContain('A社');
@@ -163,7 +164,8 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
       },
       {
         id: 't-b', tenantSeq: 2, slug: 'b', name: 'B', plan: 'pro',
-        currentMonthApiCallCount: 1500, currentMonthApiCostJpy: 45000,
+        // 2026-05-15 価格改定後: Pro ¥15/call × 1500 calls = ¥22500
+        currentMonthApiCallCount: 1500, currentMonthApiCostJpy: 22500,
         monthlyBudgetCapJpy: 100000, activeUserCount: 12,
         createdAt: new Date('2026-02-01'),
         billingType: 'corporate', billingCompanyName: null,
@@ -172,7 +174,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'pro_storage', storageBytesUsed: 500 * 1024 * 1024,
-        storageAddonMonthlyJpy: 1500, totalCurrentMonthJpy: 46500,
+        storageAddonMonthlyJpy: 1500, totalCurrentMonthJpy: 24000,
         deletedAt: null,
       },
     ] as never);
@@ -184,8 +186,8 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
     // 両テナントが CSV に含まれる
     expect(body).toContain('A,beginner');
     expect(body).toContain('B,pro');
-    expect(body).toContain('45000'); // tenant-b LLM cost
-    expect(body).toContain('46500'); // tenant-b 合計
+    expect(body).toContain('22500'); // tenant-b LLM cost (1500 calls × ¥15)
+    expect(body).toContain('24000'); // tenant-b 合計
   });
 
   it('カンマ・改行・ダブルクォートを含む名前は RFC 4180 でエスケープ', async () => {
@@ -355,7 +357,8 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
     vi.mocked(listAllTenants).mockResolvedValue([
       {
         id: 't-cancelled', tenantSeq: 5, slug: 'c', name: '5月途中解約', plan: 'expert',
-        currentMonthApiCallCount: 80, currentMonthApiCostJpy: 800,
+        // 2026-05-15 価格改定後: 80 calls × ¥5 = ¥400
+        currentMonthApiCallCount: 80, currentMonthApiCostJpy: 400,
         monthlyBudgetCapJpy: null, activeUserCount: 0,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: 'X社',
@@ -364,7 +367,7 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 800,
+        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 400,
         deletedAt: new Date('2026-05-20T03:00:00.000Z'),
       },
     ] as never);
@@ -387,7 +390,8 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
     vi.mocked(listAllTenants).mockResolvedValue([
       {
         id: 't-active', tenantSeq: 2, slug: 'a', name: 'Active', plan: 'expert',
-        currentMonthApiCallCount: 100, currentMonthApiCostJpy: 1000,
+        // 2026-05-15 価格改定後: 100 calls × ¥5 = ¥500
+        currentMonthApiCallCount: 100, currentMonthApiCostJpy: 500,
         monthlyBudgetCapJpy: null, activeUserCount: 3,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: null,
@@ -396,7 +400,7 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 1000,
+        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 500,
         deletedAt: null,
       },
     ] as never);
