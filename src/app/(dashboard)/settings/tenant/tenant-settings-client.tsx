@@ -10,8 +10,8 @@
  *   4. 予約済プラン変更の表示 + キャンセル
  */
 
-import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/toast-provider';
@@ -24,6 +24,8 @@ import { UsageDriftBadge } from '@/components/usage-drift-badge';
 import type { ApiUsageReconcileResult } from '@/services/api-usage-recalc.service';
 // Q5(3) (2026-05-14): 縮退モード状態 (Server Component で取得した snapshot を受け取る)
 import type { DegradedModeState } from '@/services/degraded-mode.service';
+// PR-S5 (2026-05-14): Stripe 支払い方法セクション
+import { StripePaymentMethodSection } from './stripe-payment-method-section';
 
 type TenantSelfInfo = {
   id: string;
@@ -60,6 +62,13 @@ type TenantSelfInfo = {
   // PR-1 (2026-05-15): テナント単位 TZ / locale (旧 User.timezone/locale の集約先)
   timezone: string;
   locale: string;
+  // PR-S5 (2026-05-14): Stripe 連携情報 (Server Component から Date は string で渡る)
+  stripeCustomerId: string | null;
+  stripeSubscriptionStatus: string | null;
+  stripeDefaultPaymentMethodId: string | null;
+  cardVerificationStatus: string | null;
+  cardLastVerifiedAt: Date | string | null;
+  autoSuspendScheduledAt: Date | string | null;
 };
 
 type PlanLabel = { value: 'beginner' | 'expert' | 'pro'; label: string; description: string };
@@ -107,6 +116,7 @@ export function TenantSettingsClient({
   storageInitialInfo,
   apiReconcile,
   degradedMode,
+  stripeEnabled,
 }: {
   initialInfo: TenantSelfInfo;
   storageInitialInfo: StorageInitialInfo | null;
@@ -114,10 +124,13 @@ export function TenantSettingsClient({
   apiReconcile: ApiUsageReconcileResult | null;
   /** Q5(3) (2026-05-14): 縮退モード状態 + embedding 未生成件数 (取得失敗時は null) */
   degradedMode: DegradedModeState | null;
+  /** PR-S5 (2026-05-14): Stripe feature flag (= STRIPE_ENABLED env var) */
+  stripeEnabled: boolean;
 }) {
   // PR-4 (2026-05-15): テナント TZ で日付を表示するため useFormatters を導入
   const { formatDate } = useFormatters();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { showSuccess, showError } = useToast();
   const [info, setInfo] = useState(initialInfo);
   const [selectedPlan, setSelectedPlan] = useState(initialInfo.plan);
@@ -126,6 +139,33 @@ export function TenantSettingsClient({
   );
   const [budgetUnlimited, setBudgetUnlimited] = useState(initialInfo.monthlyBudgetCapJpy == null);
   const [submitting, setSubmitting] = useState(false);
+
+  // PR-S5 (2026-05-14): Stripe Checkout / setup/complete から戻った時の URL query を捕捉し、
+  //   トーストで結果を通知 + URL を /settings/tenant にクリーニング。
+  //   一度だけ動作させるため、URL に該当パラメタが無くなった時点で再実行されない。
+  useEffect(() => {
+    const status = searchParams.get('stripe_setup');
+    if (status == null) return;
+    if (status === 'success') {
+      showSuccess('クレジットカード払いに切替えました');
+    } else if (status === 'canceled') {
+      showError('クレジットカード登録をキャンセルしました (現在の設定: 請求書送付のまま)');
+    } else if (status === 'failed') {
+      const reason = searchParams.get('reason') ?? '';
+      const reasonMessageMap: Record<string, string> = {
+        card_declined: 'カードが拒否されました',
+        expired_card: 'カードの有効期限が切れています',
+        processing_error: 'Stripe 処理エラー (時間をおいて再試行)',
+        verification_required: 'カード追加認証が必要です',
+      };
+      const reasonMessage = reasonMessageMap[reason] ?? '不明なエラー';
+      showError(`カード登録に失敗しました (${reasonMessage})。設定は変更されていません`);
+    }
+    // URL からクエリパラメタを除去 (= リロード時の重複トースト防止)
+    router.replace('/settings/tenant');
+    // showSuccess/showError は安定参照、router は安定。初回マウント時のみ実行されればよい。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const planChanged = selectedPlan !== info.plan;
   const isDowngrade =
@@ -405,6 +445,13 @@ export function TenantSettingsClient({
 
       {/* P-G (2026-05-08): 請求先情報の編集 */}
       <BillingContactSection initialInfo={info} />
+
+      {/* PR-S5 (2026-05-14): Stripe 支払い方法 (請求書 ↔ クレジットカード切替) */}
+      <StripePaymentMethodSection
+        info={info}
+        stripeEnabled={stripeEnabled}
+        onRefresh={refreshInfo}
+      />
 
       {/* P-C (2026-05-08): データエクスポート */}
       <DataExportSection />

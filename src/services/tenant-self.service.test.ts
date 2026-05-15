@@ -72,6 +72,17 @@ const baseTenant = {
   // PR-1 (2026-05-15): テナント単位 i18n
   timezone: 'Asia/Tokyo',
   locale: 'ja-JP',
+  // PR-S5 (2026-05-14): Stripe 連携情報 (= 既存 invoice テナントは全 null)
+  stripeCustomerId: null,
+  stripeSubscriptionId: null,
+  stripeSubscriptionStatus: null,
+  stripeSubscriptionItemHaikuId: null,
+  stripeSubscriptionItemSonnetId: null,
+  stripeSubscriptionItemStorageId: null,
+  stripeDefaultPaymentMethodId: null,
+  cardLastVerifiedAt: null,
+  cardVerificationStatus: null,
+  autoSuspendScheduledAt: null,
 };
 
 describe('getTenantSelfInfo', () => {
@@ -96,6 +107,47 @@ describe('getTenantSelfInfo', () => {
     // expert プランは Beginner 期限の対象外なので null
     expect(r.beginnerDaysRemaining).toBeNull();
     expect(r.beginnerExpiryState).toBe('active');
+  });
+
+  it('PR-S5: Stripe 連携情報を返す (= 既存テナントは全 null)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(baseTenant as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(0);
+
+    const r = await getTenantSelfInfo(TENANT_ID);
+
+    expect(r).not.toBeNull();
+    if (!r) return;
+    expect(r.stripeCustomerId).toBeNull();
+    expect(r.stripeSubscriptionStatus).toBeNull();
+    expect(r.stripeDefaultPaymentMethodId).toBeNull();
+    expect(r.cardVerificationStatus).toBeNull();
+    expect(r.cardLastVerifiedAt).toBeNull();
+    expect(r.autoSuspendScheduledAt).toBeNull();
+  });
+
+  it('PR-S5: credit_card 払いテナントは Stripe 連携情報をそのまま返す', async () => {
+    const cardVerifiedAt = new Date('2026-05-01T00:00:00Z');
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      ...baseTenant,
+      paymentMethod: 'credit_card',
+      stripeCustomerId: 'cus_test_123',
+      stripeSubscriptionStatus: 'active',
+      stripeDefaultPaymentMethodId: 'pm_test_456',
+      cardVerificationStatus: 'valid',
+      cardLastVerifiedAt: cardVerifiedAt,
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(0);
+
+    const r = await getTenantSelfInfo(TENANT_ID);
+
+    expect(r).not.toBeNull();
+    if (!r) return;
+    expect(r.paymentMethod).toBe('credit_card');
+    expect(r.stripeCustomerId).toBe('cus_test_123');
+    expect(r.stripeSubscriptionStatus).toBe('active');
+    expect(r.stripeDefaultPaymentMethodId).toBe('pm_test_456');
+    expect(r.cardVerificationStatus).toBe('valid');
+    expect(r.cardLastVerifiedAt).toEqual(cardVerifiedAt);
   });
 });
 
