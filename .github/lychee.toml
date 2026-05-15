@@ -1,0 +1,74 @@
+# lychee 設定ファイル
+# docs-link-check.yml workflow から参照される
+#
+# 公式リファレンス: https://lychee.cli.rs/configuration/
+
+# === 基本設定 ===
+
+# タイムアウト (秒)
+timeout = 20
+
+# 並列度 (同時に投げるリクエスト数)
+max_concurrency = 8
+
+# 同一ドメインへのリクエスト間隔 (ミリ秒) — rate limit 回避
+rate_limit = { default = { interval = "200ms" } }
+
+# 4xx を許容するか (デフォルト false: 404 等は失敗扱い)
+accept = [200, 201, 202, 203, 204, 206, 301, 302, 303, 307, 308]
+
+# === スキャン対象 ===
+
+# Markdown / YAML / JSON / TypeScript 内のリンクを検査
+# (デフォルトで Markdown は対象、その他は引数で指定)
+
+# === 除外パターン ===
+
+# 検査をスキップする URL パターン (正規表現)
+exclude = [
+  # localhost / プライベート IP
+  "^https?://localhost",
+  "^https?://127\\.0\\.0\\.1",
+  "^https?://0\\.0\\.0\\.0",
+  "^https?://192\\.168\\.",
+  "^https?://10\\.",
+
+  # 内部 example ドメイン
+  "^https?://example\\.com",
+  "^https?://example\\.org",
+  "^https?://([a-z0-9-]+\\.)*example\\.",
+
+  # 自己署名・プレースホルダ
+  "<your-",
+  "<YOUR_",
+  "REPLACE_ME",
+
+  # GitHub の commit SHA リンク (履歴依存で一時的不通になりやすい)
+  "github\\.com/[^/]+/[^/]+/commit/",
+
+  # KDD ナレッジ内の section anchor (Markdown 内アンカーは別解決)
+  "#§",
+
+  # メール mailto:
+  "^mailto:",
+]
+
+# ファイルパスでの除外
+exclude_path = [
+  "node_modules",
+  ".next",
+  "dist",
+  "build",
+  "coverage",
+  "playwright-report",
+  ".git",
+]
+
+# === 結果フォーマット ===
+
+# 成功した URL も詳細表示 (verbose) — debugging 用、本番では off にしてもよい
+verbose = "info"
+
+# キャッシュを有効化 (ビルドごとに同じ URL を再 fetch しない)
+cache = true
+max_cache_age = "1d"
