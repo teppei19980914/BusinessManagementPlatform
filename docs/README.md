@@ -40,7 +40,7 @@
 
 | # | トピック | 参照先 |
 |---|---|---|
-| 1 | **主要設計判断の根拠** (なぜこの設計にしたか) | [adr/](./adr/README.md) (ADR-0001〜0005) |
+| 1 | **主要設計判断の根拠** (なぜこの設計にしたか) | [adr/](./adr/README.md) (ADR-0001〜0007、順次追加) |
 | 2 | 核心機能 — 提案エンジンの仕組み | [design/SUGGESTION_ENGINE.md](./design/SUGGESTION_ENGINE.md) |
 | 3 | UI 共通パターン (テーブル / ダイアログ / 一覧フィルタ等) | [design/UI_PATTERNS.md](./design/UI_PATTERNS.md) |
 | 4 | インフラ構成 (Vercel / Supabase / Brevo / Voyage 等) | [design/INFRASTRUCTURE.md](./design/INFRASTRUCTURE.md) |
