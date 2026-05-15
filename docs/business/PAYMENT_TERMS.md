@@ -1,6 +1,6 @@
 # 支払い条件と滞納時の取扱い (Payment Terms)
 
-本ドキュメントは、本サービスの **請求書 / 銀行振込支払いに関する支払い条件と、滞納が発生した場合の対外的なルール** を定義する。
+本ドキュメントは、本サービスの **銀行振込（請求書送付）支払いに関する支払い条件と、滞納が発生した場合の対外的なルール** を定義する。
 
 実際の super_admin 手順は [../operations/PAYMENT_DELINQUENCY_SOP.md](../operations/PAYMENT_DELINQUENCY_SOP.md) を参照。本文書は「ユーザに対してどう案内するか」「どこから利用制限・解約に進むか」のルールを規定し、利用規約 / 個別契約の根拠となる。
 
@@ -17,16 +17,17 @@
 
 `Tenant.paymentMethod` は以下のいずれか:
 
-| 値 | 概要 | 滞納検知の主体 | v1.x ステータス |
-|---|---|---|---|
-| `invoice` | 請求書送付 (PDF を `billingContactEmail` 宛にメール送信) | super_admin が入金確認 | ✅ 受付中 (デフォルト) |
-| `bank_transfer` | 銀行振込 (請求書に振込先記載) | super_admin が入金確認 | ✅ 受付中 |
-| `credit_card` | Stripe Metered Billing による月末自動引き落とし | Stripe Webhook で自動検知 | 🟡 **v1.x で実装予定** ([ADR-0006](../adr/0006-stripe-metered-billing-integration.md) / [STRIPE_BILLING.md](./STRIPE_BILLING.md)) |
+| 値 | UI 表記 | 概要 | 滞納検知の主体 | v1.x ステータス |
+|---|---|---|---|---|
+| `invoice` | 銀行振込 | 請求書 PDF を `billingContactEmail` 宛にメール送信。顧客は請求書に記載の振込先へ銀行振込で支払い | super_admin が入金確認 | ✅ 受付中 (デフォルト) |
+| `credit_card` | クレジットカード | Stripe Metered Billing による月末自動引き落とし | Stripe Webhook で自動検知 | 🟡 **v1.x で実装予定** ([ADR-0006](../adr/0006-stripe-metered-billing-integration.md) / [STRIPE_BILLING.md](./STRIPE_BILLING.md)) |
 
-**新規テナントのデフォルト**: `invoice` で作成。顧客が `/settings/tenant` でクレジットカード払いに任意切替可能。
+**2026-05-15 統合**: 旧 `bank_transfer` 値は廃止し `invoice` に統合した (ユーザ視点では同一フロー = 請求書 PDF 受領 → 銀行振込)。UI ラベルは「銀行振込」に統一。詳細は [ADR-0007](../adr/0007-unify-invoice-and-bank-transfer.md) 参照。
+
+**新規テナントのデフォルト**: `invoice` (= 銀行振込) で作成。顧客が `/settings/tenant` でクレジットカード払いに任意切替可能。
 
 **支払い方法ごとの本文書の適用範囲**:
-- `invoice` / `bank_transfer`: 本文書 §0〜§3 のすべてが適用
+- `invoice` (= 銀行振込): 本文書 §0〜§3 のすべてが適用
 - `credit_card`: §2.3 (read-only 移行) は Stripe Webhook で自動実行、§0 (月次入金確認) は Stripe が自動消込のため運用作業不要
 
 ### 0.3 課金対象プラン
@@ -224,3 +225,4 @@ super_admin は **翌月16日〜25日の入金期間中に随時** 銀行口座�
 | 日付 | 改訂内容 | PR |
 |---|---|---|
 | 2026-05-09 | 初版策定。請求書 / 銀行振込のみ対象。手運用前提のフェーズ定義 | (本 PR) |
+| 2026-05-15 | `invoice` と `bank_transfer` を統合 (UI ラベル「銀行振込」, 内部値 `invoice`)。ユーザ視点で同一フロー (請求書 PDF 受領 → 銀行振込) のため | feat/unify-payment-method-invoice |

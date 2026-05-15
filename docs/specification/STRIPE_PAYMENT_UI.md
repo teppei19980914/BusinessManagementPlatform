@@ -32,17 +32,17 @@
 
 | 状態 | tenant.paymentMethod | stripeCustomerId | stripeDefaultPaymentMethodId | 遷移条件 |
 |---|---|---|---|---|
-| **A: 未設定** | `invoice` または `bank_transfer` | null または既存 (= 空 Customer) | null | (初期状態) |
+| **A: 未設定** | `invoice` (= 銀行振込。旧 `bank_transfer` も同状態にフォールバック) | null または既存 (= 空 Customer) | null | (初期状態) |
 | **C: クレジットカード払い運用中** | `credit_card` | not null | not null | A から `/setup` → 検証成功 → C へ |
 | **D: カード期限切れ / 検証失敗** | `credit_card` | not null | not null (期限切れ) | C で月次検証失敗 → D へ |
 
 **失敗時の挙動**: A 状態で `/setup` を開始してもカード登録に失敗すれば、`tenant.paymentMethod` は変更されず A のまま (= 中間状態 B は存在しない)。
 
-#### 状態 A: 未設定 (= paymentMethod === 'invoice' / 'bank_transfer')
+#### 状態 A: 未設定 (= paymentMethod !== 'credit_card'。旧 `bank_transfer` も含む)
 
 ```
 ┌─ 支払い方法 ──────────────────────────────────────┐
-│ 現在の支払い方法: 請求書送付 (銀行振込)           │
+│ 現在の支払い方法: 🏦 銀行振込                     │
 │                                                    │
 │ 月末締めの翌月25日支払で、毎月請求書 PDF を       │
 │ 請求担当者メールにお送りしています。              │
@@ -72,7 +72,7 @@
 │ └─────────────────────────────────────────────┘ │
 │                                                    │
 │ ┌─────────────────────────────────────────────┐ │
-│ │ 📋 請求書送付 (銀行振込) に戻す              │ │
+│ │ 🏦 銀行振込に戻す                            │ │
 │ └─────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────┘
 ```
@@ -100,7 +100,7 @@
 |---|---|---|
 | 💳 クレジットカード払いに切替 (状態 A) | `POST /api/tenants/me/billing/stripe/setup` → Stripe Checkout → `GET /api/tenants/me/billing/stripe/setup/complete` (自動完了ハンドラ) | カード登録 + 検証 + paymentMethod 切替 + Subscription 作成を一括実行。成功時 `/settings/tenant?stripe_setup=success` (= 状態 C へ)、失敗時 `?stripe_setup=canceled` or `?stripe_setup=failed&reason=<code>` (= 状態 A のまま) |
 | 🔧 Stripe ポータルで管理 (状態 C / D) | `POST /api/tenants/me/billing/stripe/portal` | Stripe Customer Portal を新タブで開く (= カード更新 / 履歴閲覧) |
-| 📋 請求書送付に戻す (状態 C のみ) | `PATCH /api/tenants/me/billing { paymentMethod: 'invoice' }` | 確認ダイアログ → 成功時はトースト + リロード (= Stripe Subscription は active のまま、課金経路だけ手動に戻す。再切替時は再度 `/setup` フローを通る) |
+| 🏦 銀行振込に戻す (状態 C のみ) | `PATCH /api/tenants/me/billing { paymentMethod: 'invoice' }` | 確認ダイアログ → 成功時はトースト + リロード (= Stripe Subscription は active のまま、課金経路だけ手動に戻す。再切替時は再度 `/setup` フローを通る) |
 
 ### 2.4 確認ダイアログ (= 支払い方法切替時)
 
@@ -112,7 +112,7 @@
 1. 次の画面 (Stripe Checkout) でクレジットカード情報を入力
 2. Stripe が即座にカードを検証 ($0 verification)
 3. 検証成功 → クレジットカード払いに自動切替
-   検証失敗 / キャンセル → 現在の請求書送付のまま (変更なし)
+   検証失敗 / キャンセル → 現在の銀行振込のまま (変更なし)
 
 【切替成功後の挙動】
 - 月末締めで Stripe が自動的に当月利用料を集計
@@ -132,15 +132,15 @@
 | URL パラメタ | トースト |
 |---|---|
 | `?stripe_setup=success` | 🟢 成功: 「クレジットカード払いに切替えました」 |
-| `?stripe_setup=canceled` | 🔵 情報: 「クレジットカード登録をキャンセルしました (現在の設定: 請求書送付のまま)」 |
+| `?stripe_setup=canceled` | 🔵 情報: 「クレジットカード登録をキャンセルしました (現在の設定: 銀行振込のまま)」 |
 | `?stripe_setup=failed&reason=card_declined` | 🔴 エラー: 「カード登録に失敗しました (カードが拒否されました)。設定は変更されていません」 |
 | `?stripe_setup=failed&reason=expired_card` | 🔴 エラー: 「カード登録に失敗しました (有効期限切れ)。設定は変更されていません」 |
 | `?stripe_setup=failed&reason=processing_error` | 🔴 エラー: 「カード登録に失敗しました (Stripe 処理エラー、時間をおいて再試行)。設定は変更されていません」 |
 | `?stripe_setup=failed&reason=verification_required` | 🟠 警告: 「カード追加認証が必要です。Stripe からのメールをご確認のうえ、再度お試しください」 |
 
-**「クレジットカード → 請求書送付」切替時**:
+**「クレジットカード → 銀行振込」切替時**:
 ```
-請求書送付 (銀行振込) に戻しますか?
+銀行振込に戻しますか?
 
 【戻した後の挙動】
 - 当月以降の請求は super_admin が手動で請求書 PDF を作成し、
@@ -148,7 +148,7 @@
 - 翌月25日が支払期限となります
 - 登録済のカード情報は Stripe 側に残ります (Customer Portal で削除可能)
 
-[キャンセル] [請求書送付に戻す]
+[キャンセル] [銀行振込に戻す]
 ```
 
 ---
@@ -246,7 +246,7 @@
 
 CSV のヘッダに以下を追加:
 
-- `支払い方法` 列 (= invoice / bank_transfer / credit_card)
+- `支払い方法` 列 (= invoice (= 銀行振込) / credit_card)
 - `Stripe Customer ID` 列 (= credit_card のみ値、他は空)
 - `引落状況` 列 (= credit_card のみ: pending / paid / failed、他は手動の status)
 
@@ -254,7 +254,7 @@ CSV のヘッダに以下を追加:
 - 🟢 緑: credit_card + paid
 - 🟡 黄: credit_card + pending (= 月末待ち)
 - 🔴 赤: credit_card + failed (= Smart Retries 中 / 自動 suspend 直前)
-- 🔵 青: invoice / bank_transfer (= 手動運用)
+- 🔵 青: invoice (= 銀行振込、手動運用)
 
 ---
 

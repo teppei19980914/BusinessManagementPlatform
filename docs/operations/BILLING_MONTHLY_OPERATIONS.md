@@ -56,12 +56,14 @@
 
 | paymentMethod | 月次請求書作成 | 入金確認 | 滞納検知 | 担当 |
 |---|---|---|---|---|
-| `invoice` / `bank_transfer` | super_admin が CSV → PDF → メール送付 (本ガイドの「§ 毎月 1〜15日」セクション) | 銀行口座を手動確認 | 翌月26日朝に未入金リスト | super_admin |
+| `invoice` (= 銀行振込) | super_admin が CSV → PDF → メール送付 (本ガイドの「§ 毎月 1〜15日」セクション) | 銀行口座を手動確認 | 翌月26日朝に未入金リスト | super_admin |
 | `credit_card` (v1.x で実装) | 不要 (Stripe が自動 Invoice 生成) | Stripe Webhook で自動消込 | Stripe Smart Retries + 自動 suspend | **完全自動** |
 
-**新規テナントのデフォルト**: `invoice`。顧客が `/settings/tenant` でクレジットカード払いに任意切替可能 ([詳細: STRIPE_BILLING.md](../business/STRIPE_BILLING.md))。
+> 2026-05-15: 旧 `bank_transfer` 値は `invoice` に統合済 (UI ラベル「銀行振込」)。詳細 [ADR-0007](../adr/0007-unify-invoice-and-bank-transfer.md)。
 
-以下の手順は **`invoice` / `bank_transfer` テナントのみ** を対象。credit_card テナントは Stripe 連携で完全自動化される。
+**新規テナントのデフォルト**: `invoice` (= 銀行振込)。顧客が `/settings/tenant` でクレジットカード払いに任意切替可能 ([詳細: STRIPE_BILLING.md](../business/STRIPE_BILLING.md))。
+
+以下の手順は **`invoice` テナント (= 銀行振込) のみ** を対象。credit_card テナントは Stripe 連携で完全自動化される。
 
 ## 標準オペレーションフロー (毎月)
 
@@ -222,7 +224,7 @@ prisma.tenantMonthlyUsageHistory.upsert({
 | 請求担当者 | 個人の場合は本人氏名 |
 | 請求先メール | 請求書送付先 |
 | 電話番号 | 連絡先 |
-| 支払い方法 | invoice / bank_transfer |
+| 支払い方法 | invoice (= 銀行振込) ※既存 DB の旧 bank_transfer は invoice 互換 |
 | 郵便番号 / 都道府県 / 市区町村 / 番地町名 / 建物名_部屋番号 | 構造化住所 |
 | 請求書送付先住所_legacy | 旧 単一テキスト形式の住所 (フォールバック表示用) |
 

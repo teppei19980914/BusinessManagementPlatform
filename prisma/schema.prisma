@@ -100,7 +100,9 @@ model Tenant {
   billingBuildingName          String?   @map("billing_building_name") @db.VarChar(200)
   /// 連絡先電話番号 (任意)
   billingPhoneNumber           String?   @map("billing_phone_number") @db.VarChar(20)
-  /// 支払い方法 ('invoice' = 請求書送付 / 'bank_transfer' = 銀行振込 / 'credit_card' = 後続実装)
+  /// 支払い方法 ('invoice' = 銀行振込（請求書送付） / 'credit_card' = 自動引落)。
+  /// 旧 'bank_transfer' は 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
+  /// 既存 'bank_transfer' 値は読み込み時 'invoice' と同等扱い、PATCH 時に invoice に正規化。
   paymentMethod                String    @default("invoice") @map("payment_method") @db.VarChar(30)
   /// プラン変更予約: ダウングレード時のみ翌月適用 (Expert/Pro → Beginner)。
   scheduledPlanChangeAt        DateTime? @map("scheduled_plan_change_at") @db.Timestamptz
@@ -1478,7 +1480,8 @@ model BillingHistory {
   tenantId        String   @map("tenant_id") @db.Uuid
   /// "YYYY-MM" 形式の請求対象月 (= テナント TZ ベースの月単位)
   yearMonth       String   @map("year_month") @db.VarChar(7)
-  /// 支払い方法 ('invoice' / 'bank_transfer' / 'credit_card')
+  /// 支払い方法 ('invoice' = 銀行振込（請求書送付） / 'credit_card' = 自動引落)。
+  /// 旧 'bank_transfer' 値は廃止し 'invoice' に統合済 (UI ラベルは「銀行振込」)。
   paymentMethod   String   @map("payment_method") @db.VarChar(20)
   /// 課金額 (税抜、円整数)
   amountJpy       Int      @map("amount_jpy")

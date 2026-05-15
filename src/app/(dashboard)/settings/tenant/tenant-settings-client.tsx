@@ -149,7 +149,7 @@ export function TenantSettingsClient({
     if (status === 'success') {
       showSuccess('クレジットカード払いに切替えました');
     } else if (status === 'canceled') {
-      showError('クレジットカード登録をキャンセルしました (現在の設定: 請求書送付のまま)');
+      showError('クレジットカード登録をキャンセルしました (現在の設定: 銀行振込のまま)');
     } else if (status === 'failed') {
       const reason = searchParams.get('reason') ?? '';
       const reasonMessageMap: Record<string, string> = {
@@ -1227,7 +1227,9 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
     billingStreetAddress: initialInfo.billingStreetAddress ?? '',
     billingBuildingName: initialInfo.billingBuildingName ?? '',
     billingPhoneNumber: initialInfo.billingPhoneNumber ?? '',
-    paymentMethod: initialInfo.paymentMethod || 'invoice',
+    // 2026-05-15: 旧 'bank_transfer' 値は 'invoice' に正規化 (UI ラベル「銀行振込」に統合)。
+    //   API バリデーションで bank_transfer は reject されるため、フォーム初期化時点で invoice に揃える。
+    paymentMethod: initialInfo.paymentMethod === 'bank_transfer' ? 'invoice' : (initialInfo.paymentMethod || 'invoice'),
   });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -1449,8 +1451,9 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
           value={form.paymentMethod}
           onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
         >
-          <option value="invoice">請求書送付</option>
-          <option value="bank_transfer">銀行振込</option>
+          {/* 2026-05-15: 旧 'invoice'（請求書送付）と 'bank_transfer'（銀行振込）を「銀行振込」に統合 (内部値 'invoice')。
+              ユーザから見て同じ運用フローのため 1 選択肢に集約。旧 bank_transfer レコードは初期化時に invoice 正規化。 */}
+          <option value="invoice">銀行振込</option>
           {/* 2026-05-09 (#4): クレジットカード決済は未対応のため非活性。選択肢としては
               将来対応を予告するため残す。サーバ側 zod でも 'credit_card' は reject。 */}
           <option value="credit_card" disabled>クレジットカード (今後対応予定)</option>

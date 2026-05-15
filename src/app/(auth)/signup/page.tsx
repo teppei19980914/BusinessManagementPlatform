@@ -39,7 +39,8 @@ type FormState = {
   // (#10) 建物名・部屋番号は任意
   billingBuildingName: string;
   billingPhoneNumber: string;
-  paymentMethod: 'invoice' | 'bank_transfer' | 'credit_card';
+  // 2026-05-15: 'bank_transfer' は廃止し 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
+  paymentMethod: 'invoice' | 'credit_card';
   initialAdminName: string;
   initialAdminEmail: string;
   /** Honeypot: bot が自動入力するフィールド。通常ユーザは空のまま */

@@ -24,8 +24,9 @@
  *     使われるため、tenant 作成と組み合わせる新コンテキストは別関数化したほうが分離が明確
  *   - **slug 衝突は P2002 ではなく事前チェック**: 並列リクエスト下では race するが、API 層の
  *     rate limit (signup 経路) + super_admin 単一実行 (admin 経路) で実用上は十分
- *   - **paymentMethod は文字列**: enum 化は将来 (現状 'invoice' / 'bank_transfer' / 'credit_card'
- *     の 3 値想定だが UI 側のバリデーションで担保)
+ *   - **paymentMethod は文字列**: enum 化は将来 (現状 'invoice' = 銀行振込（請求書送付） /
+ *     'credit_card' = 自動引落 の 2 値想定だが UI 側のバリデーションで担保。
+ *     旧 'bank_transfer' は 'invoice' に統合済 2026-05-15)
  *   - **tenantSeq は DB SEQUENCE で自動採番** (= PR-X1 で導入済) なので Tenant 作成時に
  *     明示指定しない
  *
@@ -85,7 +86,8 @@ export const TenantOnboardingInputSchema = z
     /** 任意 */
     billingPhoneNumber: z.string().trim().max(20).optional(),
     // 2026-05-09 (#4): クレジットカードは未対応のため API でも reject (UI も disabled)。
-    paymentMethod: z.enum(['invoice', 'bank_transfer']).default('invoice'),
+    // 2026-05-15: 'bank_transfer' を廃止し 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
+    paymentMethod: z.enum(['invoice']).default('invoice'),
 
     /** 初期 admin ユーザ (検証メール送付先 = ログイン用) */
     initialAdminName: z.string().trim().min(1).max(100),
