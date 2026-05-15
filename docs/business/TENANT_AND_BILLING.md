@@ -365,10 +365,10 @@ model Tenant {
 
 | 操作分類 | 挙動 | 備考 |
 |---|---|---|
-| ナレッジ / リスク / 課題 / 振り返り / プロジェクトの **作成・更新** | ✅ 継続（embedding = NULL で保存） | HTTP 200 + `degraded: true` フラグでレスポンス |
+| ナレッジ / リスク / 課題 / 振り返り / メモ / プロジェクトの **作成・更新** | ✅ 継続（embedding = NULL で保存） | HTTP 200 + `degraded: true` フラグでレスポンス |
 | CSV / XLSX インポート | ✅ 継続（embedding 生成スキップ） | 同上 |
-| AI 自動タグ抽出 (`auto-tag-extract`) | ⏸️ スキップ（タグなしで保存） | ユーザは手動でタグを付けられる |
-| Embedding 生成（各 entity） | ⏸️ スキップ（NULL のまま保存） | 月初バッチで補完 |
+| プロジェクトの自動タグ抽出 + embedding 生成 (`project-upsert`) | ⏸️ スキップ（タグなし・embedding NULL で保存） | 2026-05-15 統合。ユーザは手動でタグを付けられる |
+| Embedding 生成（Knowledge / RiskIssue / Retrospective / Memo） | ⏸️ スキップ（NULL のまま保存） | 月初バッチで 5 テーブル全てを補完 |
 | 提案説明文生成（`suggestion-explanation`、Pro のみ） | ⏸️ 新規生成スキップ、キャッシュは返却 | — |
 | 既存データの閲覧・検索 | ✅ 通常通り（LLM 不使用） | — |
 | プラン変更・解約・予算上限変更 | ✅ 通常通り | 縮退モード解除の唯一の能動手段 |
