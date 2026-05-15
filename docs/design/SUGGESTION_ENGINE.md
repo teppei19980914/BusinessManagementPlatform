@@ -69,7 +69,7 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 | **文字列類似度** | 0.2 | pg_trgm (3-gram 部分一致)。「請求書」⇔「請求」のような表記ゆれを拾う | purpose+background+scope / 候補の title+content |
 | **意味類似度** | 0.5 | Voyage embedding の Cosine 類似度。「請求書」⇔「インボイス」のような意味的な近さを拾う (本軸) | 各 entity の `content_embedding` (1024 次元) |
 
-**候補の絞り込み**: 各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.05` 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 10` 件まで返す → **各カテゴリ最大 10 件、3 カテゴリ合計最大 30 件**。
+**候補の絞り込み**: 各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.05` 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 10` 件まで返す → **各カテゴリ最大 10 件、5 カテゴリ (Knowledge / 過去リスク / 過去課題 / 振り返り / メモ) 合計最大 50 件** (2026-05-15: Memo 追加)。
 
 #### B-4. ハードキャップ超過時の挙動 (重要: 機能停止しない fail-safe 設計)
 
@@ -77,7 +77,7 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 
 | 操作 | 影響 |
 |---|---|
-| 新規 Project / Knowledge / RiskIssue / Retrospective 作成 | Anthropic / Voyage の呼び出しがブロック → embedding は **NULL のまま保存** (本体データは正常保存される fail-safe 設計) |
+| 新規 Project / Knowledge / RiskIssue / Retrospective / Memo 作成 | Anthropic / Voyage の呼び出しがブロック → embedding は **NULL のまま保存** (本体データは正常保存される fail-safe 設計)。月初 cron で 5 種類のテーブルから NULL を一括補完 |
 | 既存データの提案画面表示 | キャップ無関係で動作 (元々外部 API を呼ばないため) |
 | キャップ中に作成された新規データの提案画面表示 | **重み再配分縮退モード** (タグ：テキスト = 5：5、embedding 軸の重みを残り 2 軸に再配分し合計 1.0) に自動遷移 |
 

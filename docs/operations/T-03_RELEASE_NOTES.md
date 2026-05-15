@@ -183,7 +183,7 @@ GET /api/admin/usage-summary?date=2026-06-01
 つまり「Anthropic クレジットが減らない」と感じる場合は **Anthropic API key が正しく設定されているか / call が実際に発火しているか** を確認する。観測ポイント:
 
 1. **API key 設定**: Vercel 環境変数 `ANTHROPIC_API_KEY` が正しいか / 該当 key の Console を見ているか
-2. **呼び出し発火**: `ApiCallLog` テーブルに該当 `featureUnit` (`auto-tag-extract` / `suggestion-explanation`) のレコードが入っているか — 入っていれば呼び出しは成功しトークン消費もしているはず
+2. **呼び出し発火**: `ApiCallLog` テーブルに該当 `featureUnit` (`project-upsert` / `suggestion-explanation` 等) のレコードが入っているか — 入っていれば呼び出しは成功しトークン消費もしているはず (2026-05-15: `auto-tag-extract` + `project-embedding` は `project-upsert` に統合された)
 3. **集計タイミング**: Anthropic Console は数十秒〜数分の遅延があるため、即時反映を期待しない
 4. **無料クレジット**: 新規アカウントの無料クレジット枠から先に消費されるため、有償残高表示が動かないように見えることがある
 
@@ -195,23 +195,37 @@ GET /api/admin/usage-summary?date=2026-06-01
 
 | 経路 | トリガ | featureUnit | モデル分岐 | キャッシュ |
 |---|---|---|---|---|
-| **(a) 自動タグ抽出** | プロジェクトの **新規作成 / 編集** で `purpose` / `background` / `scope` が変わったとき | `auto-tag-extract` | Beginner/Expert: Haiku / Pro: Sonnet | なし (毎回呼ぶ。失敗しても fail-safe で続行) |
-| **(b) 「なぜ?」説明文** | 提案画面で「なぜ?」ボタンを **クリックしたとき** (Lazy 生成) | `suggestion-explanation` | Beginner/Expert: Haiku / Pro: Sonnet | DB 永続キャッシュ。`(projectId, candidateKind, candidateId)` で 2 回目以降は再課金しない |
+| **(a) プロジェクト作成・更新** | プロジェクトの **新規作成 / 編集** で `purpose` / `background` / `scope` が変わったとき (内部で Anthropic auto-tag + Voyage embedding を **1 ApiCallLog に集約**、2026-05-15 統合) | `project-upsert` | Beginner/Expert: Haiku / Pro: Sonnet | なし (毎回呼ぶ。失敗しても fail-safe で続行) |
+| **(b) 「なぜ?」説明文** | 提案画面で「なぜ?」ボタンを **クリックしたとき** (Lazy 生成、Pro プラン限定) | `suggestion-explanation` | Pro: Sonnet (Beginner/Expert は `plan_forbidden` で拒否) | DB 永続キャッシュ。`(projectId, candidateKind, candidateId)` で 2 回目以降は再課金しない |
 
 それ以外 (一覧表示 / WBS 作成 / Knowledge 作成 / 提案候補リスト取得 など) では **Anthropic は呼ばない**。リスト系の類似度計算は **Voyage AI embedding (別サービス)** + pg_trgm のローカル計算でまかなっている。
+
+なお Voyage AI (embedding) は `project-upsert` (a) と各資産 (Knowledge/RiskIssue/Retrospective/Memo) の作成・更新で呼ばれる。資産側 featureUnit は `knowledge-embedding` / `risk-issue-embedding` / `retrospective-embedding` / `memo-embedding`。「公開範囲: 自分のみ」(Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`) では Voyage を呼ばない。
 
 呼び出し有無の確認は `ApiCallLog` テーブルの `feature_unit` 列で行う:
 
 ```sql
--- 直近 24h で発火した Anthropic 呼び出し
-SELECT feature_unit, COUNT(*), SUM(llm_input_tokens), SUM(llm_output_tokens)
+-- 直近 24h で発火した LLM/Embedding 呼び出し (現行 featureUnit 一覧)
+SELECT feature_unit, COUNT(*), SUM(llm_input_tokens), SUM(llm_output_tokens), SUM(embedding_tokens)
   FROM api_call_logs
  WHERE created_at > NOW() - INTERVAL '24 hours'
-   AND feature_unit IN ('auto-tag-extract', 'suggestion-explanation')
+   AND feature_unit IN (
+     'project-upsert',
+     'knowledge-embedding',
+     'risk-issue-embedding',
+     'retrospective-embedding',
+     'memo-embedding',
+     'suggestion-explanation',
+     'external-import-embedding'
+   )
  GROUP BY feature_unit;
 ```
 
 > **2026-05-09 (#22) 改修**: 「なぜ?」説明文機能は **Pro プラン限定**になった。Beginner / Expert ではボタン非表示 + サーバ側で `plan_forbidden` を返す (defense-in-depth)。Anthropic 呼び出し量は Pro プラン契約者のなぜ?クリック数次第。
+>
+> **2026-05-15 (#384) 改修**:
+> - `auto-tag-extract` + `project-embedding` の独立 2 ラップを `project-upsert` (1 ラップに集約) に統合 (1 業務操作 = 1 ApiCallLog ルール)。旧 featureUnit は backfill 経路の互換のため metered.ts では受理を残すが、新規発行はされない。
+> - Memo (メモ) に embedding 生成を追加。提案エンジン候補化 + 「なぜ?」説明文 (Pro 限定) も Memo 対応。featureUnit は `memo-embedding`。「自分のみ」は Memo では `visibility='private'` (他資産の 'draft' に相当)。
 
 ### Q7. テナント解約後に user データはどれくらい保持されるか? (#18 / 2026-05-09)
 
@@ -257,6 +271,8 @@ GDPR 等で個別ユーザの削除請求があった場合は **super_admin が
 | 案A (PR #357) | 外部データ import (CSV/XLSX) の embedding 生成を **N 件 → 1 ApiCallLog** に集約 | テナント `currentMonthApiCallCount` の増分が import 単位で +1 となり、ユーザ視点の請求回数と実態が一致 |
 | 案D (PR #357) | Knowledge / RiskIssue / Retrospective の `visibility='draft'` (公開範囲: 自分のみ) では embedding 生成しない | 課金対象が「実際に提案エンジンに乗るデータ」に限定。draft → public 遷移時に初回生成 |
 | フォローアップ (PR #358) | 外部 import 経路と suggestion engine の RiskIssue クエリで visibility 整合性漏れを修正 | 「下書きで取込 → 課金された」「draft な resolved RiskIssue が提案候補に出る」事故を構造的に防止 |
+| 拡張 (PR #384 / 2026-05-15) | Memo に embedding 生成を追加。`visibility='public'` のみ対象、`visibility='private'` (= 「自分のみ」、他資産の 'draft' に相当) はスキップ。提案エンジン候補化 + 「なぜ?」説明文 (Pro 限定) 対応 | Memo が他資産と同じ仕様で提案エンジンに参加。`featureUnit='memo-embedding'` |
+| 拡張 (PR #384 / 2026-05-15) | プロジェクト作成・更新を **`auto-tag-extract` + `project-embedding` 独立 2 ラップ → `project-upsert` 1 ラップに集約** | プロジェクト新規 1 件で ApiCallLog 1 件 / counter +1 (旧仕様は 2 件)。Beginner 月 100 回上限が実質 100 件 (旧 50 件) に正常化 |
 
 **ユーザ影響**: 既に生成済の embedding は保持。新規操作のみ動作変更。
 
@@ -265,4 +281,4 @@ GDPR 等で個別ユーザの削除請求があった場合は **super_admin が
 - `Tenant.currentMonthApiCallCount` の前月比が顕著に下がる可能性 (= 期待動作)
 - super_admin ダッシュボードの「今月の合計課金」も同様に減少傾向
 
-詳細は [KDD_PATTERNS.md §5.X+50 §5.X+51](../knowledge/KDD_PATTERNS.md) を参照。
+詳細は [KDD_PATTERNS.md §5.X+50 §5.X+51 §5.X+60 §5.X+61](../knowledge/KDD_PATTERNS.md) を参照 (§5.X+60 = `project-upsert` 集約、§5.X+61 = Memo の `visibility='private'` と他資産の 'draft' の差異)。

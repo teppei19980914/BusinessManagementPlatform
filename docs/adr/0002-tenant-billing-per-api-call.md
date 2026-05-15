@@ -1,6 +1,6 @@
 # ADR-0002: テナント単位の従量課金モデル (per-API-call)
 
-- **Status**: Accepted
+- **Status**: Accepted (2026-04 初版 → 2026-05-15 料金構造を反映して改訂)
 - **Date**: 2026-04 (反復改訂を経て確定)
 - **Deciders**: teppei
 
@@ -23,15 +23,29 @@
 
 **3 プラン構成 + 提案エンジン API 呼び出しごとの従量課金** を採用する。
 
-### プラン構成
+### プラン構成 (2026-05-15 確定版)
 
-| プラン | 月額固定 | 提案 API 呼び出し | 上限超過時の単価 |
-|---|---|---|---|
-| Beginner | ¥0 | 月 100 回まで無料 | 縮退モード (上限到達で fail-safe) |
-| Expert | ¥3,000 | 月 100 回まで月額に含む | ¥10/回 |
-| Pro | ¥10,000 | 月 500 回まで月額に含む | ¥30/回 |
+| プラン | 月額固定 | 席数 | API 呼び出し上限 | 単価 | モデル |
+|---|---|---|---|---|---|
+| Beginner | ¥0 | 5 席 | 月 100 回まで無料 (上限到達後は縮退) | — | Haiku |
+| Expert | ¥0 | 無制限 | 無制限 (テナント管理者設定の `monthlyBudgetCapJpy` で上限) | **¥10 / 1 API 呼び出し** | Haiku |
+| Pro | ¥0 | 無制限 | 無制限 (同上) | **¥30 / 1 API 呼び出し** | Sonnet |
 
-詳細は [docs/business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md) §13.7 / §26.7 参照。
+旧仕様 (初版 ADR) では Expert ¥3,000/月 100 回含、Pro ¥10,000/月 500 回含のハイブリッドモデルだったが、**2026-05-15 反復改訂で月額固定を撤廃し純粋な従量課金に統一**。理由:
+- 月額固定 + 含み回数のハイブリッドは「無料枠の繰り越し」「含み回数の半端な余り」等の例外処理が UX を複雑化する
+- 純粋従量にすれば「使った分だけ」が完全に成立し、ダッシュボードでの予算管理 (`monthlyBudgetCapJpy`) が直感的に機能する
+- Beginner ¥0 / Expert・Pro 無料月額の構造は、初期定着の敷居を一段下げる効果がある
+
+詳細は [docs/business/TENANT_AND_BILLING.md Part 5 §34.14](../business/TENANT_AND_BILLING.md) (確定版) 参照。
+
+### 「1 回の API 呼び出し」の定義 (1 業務操作 = 1 ApiCallLog ルール、2026-05-15)
+
+ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、課金単位は 1 回に集約する。
+
+- **プロジェクト作成・更新**: `featureUnit='project-upsert'` (内部で Anthropic auto-tag + Voyage embedding を 1 度の `withMeteredLLM` ラップで集約)
+- **各資産 (Knowledge / RiskIssue / Retrospective / Memo) の作成・更新**: 資産種別ごとの featureUnit (`knowledge-embedding` / `risk-issue-embedding` / `retrospective-embedding` / `memo-embedding`) で **1 業務 = 1 ApiCallLog**
+- **「公開範囲: 自分のみ」(Knowledge/RiskIssue/Retrospective: `visibility='draft'` / Memo: `visibility='private'`)** は embedding 生成しない → 課金なし
+- **「公開範囲: 全メンバー」かつ embedding 対象項目の実値変更時** のみ Voyage 呼び出し → 1 件課金
 
 ### プラン切替ルール
 

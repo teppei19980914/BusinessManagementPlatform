@@ -8,15 +8,23 @@
 
 ## 1. 提案機能とは何か
 
-「**過去のプロジェクトで蓄積した資産 (ナレッジ・課題・振り返り) を、新規プロジェクトに自動で結びつけて提示する**」サービスの核心機能。ユーザが「過去にどこかで類似事例があった」を思い出す手間を**自動化**することで、抜け漏れゼロの企画立案を支援する。
+「**過去のプロジェクトで蓄積した資産 (ナレッジ・リスク・課題・振り返り・メモ) を、新規プロジェクトに自動で結びつけて提示する**」サービスの核心機能。ユーザが「過去にどこかで類似事例があった」を思い出す手間を**自動化**することで、抜け漏れゼロの企画立案を支援する。
 
-### 1.1 提案対象の 3 カテゴリ
+### 1.1 提案対象の 5 カテゴリ (2026-05-15: Memo / Risk を追加)
 
-| カテゴリ | 内容 |
-|---|---|
-| **Knowledge (ナレッジ)** | 過去プロジェクトで蓄積した教訓・パターン・調査結果 |
-| **過去課題 (RiskIssue type='issue', state='resolved')** | 他プロジェクトで発生し解消済の課題。新規案件の事前リスク提示として活用 |
-| **振り返り (Retrospective)** | 過去プロジェクトの振り返り (KPT / 良かった点 / 問題 / 改善) |
+| カテゴリ | 内容 | 提案候補化条件 |
+|---|---|---|
+| **Knowledge (ナレッジ)** | 過去プロジェクトで蓄積した教訓・パターン・調査結果 | `visibility='public'` (全メンバー公開) のみ |
+| **過去リスク (RiskIssue type='risk', state='resolved')** | 他プロジェクトで顕在化対応 / 計画通り収束したリスク。次案件の先回り設計の雛形として活用 | `visibility='public'` のみ |
+| **過去課題 (RiskIssue type='issue', state='resolved')** | 他プロジェクトで発生し解消済の課題。新規案件の事前リスク提示として活用 | `visibility='public'` のみ |
+| **振り返り (Retrospective)** | 過去プロジェクトの振り返り (KPT / 良かった点 / 問題 / 改善) | `visibility='public'` のみ |
+| **メモ (Memo)** (2026-05-15 追加) | 全メンバー公開で共有された個人ノート。プロジェクト非紐付きの汎用知見 | `visibility='public'` のみ。Memo は `visibility` 値が他資産と異なり `'private'` (= 「自分のみ」) / `'public'` (= 「全メンバー」) の 2 値 |
+
+**「公開範囲: 自分のみ」のデータは提案エンジン対象外**:
+- Knowledge / RiskIssue / Retrospective: `visibility='draft'` のとき
+- Memo: `visibility='private'` のとき
+
+これらは embedding 生成も行わず (Voyage API 課金回避)、提案候補にも乗らない。「自分のみ → 全メンバー」遷移時に初回 embedding 生成される (= 公開化のタイミングで提案エンジンに参加)。
 
 ### 1.2 提案を発動するタイミング
 
@@ -32,10 +40,10 @@
 
 提案機能の API 呼び出しは **3 つのトリガー** に分類される。これ以外の操作で外部 API は呼ばれない。
 
-| # | トリガー | 呼び出される API | 1 操作あたり呼び出し回数 |
+| # | トリガー | 呼び出される API | 1 業務操作あたりの ApiCallLog (= ユーザ請求回数) |
 |---|---|---|---|
-| **①** | **Project 作成・更新時** (purpose/background/scope の text 変更時) | **Anthropic** + **Voyage** | Anthropic 1 回 + Voyage 1 回 = **2 回** |
-| **②** | **資産作成・更新時** (Knowledge / RiskIssue / Retrospective の text 変更時) | **Voyage** | Voyage **1 回** |
+| **①** | **Project 作成・更新時** (purpose/background/scope の text 変更時) | **Anthropic** + **Voyage** | 内部 2 API を呼ぶが **1 回に集約** (`featureUnit='project-upsert'`、2026-05-15 統合 / 1 業務操作 = 1 ApiCallLog ルール) |
+| **②** | **資産作成・更新時** (Knowledge / RiskIssue / Retrospective / Memo の embedding 対象項目変更時) | **Voyage** | Voyage **1 回** (`featureUnit` は資産種別ごと: `knowledge-embedding` / `risk-issue-embedding` / `retrospective-embedding` / `memo-embedding`) |
 | **③** | **提案機能実行時** (Project 作成後の提案モーダル / 参考タブ / 課題起票画面の inline 提示) | **Supabase pgvector のみ** (DB 内処理で完結) | **外部 API 呼び出しなし (¥0)** |
 
 ### 2.1 設計上の重要点: 提案画面の表示は ¥0
@@ -59,11 +67,35 @@
 
 同時に **Voyage が text → 1024 次元 embedding を生成** し、Supabase pgvector の `content_embedding` 列に保存する (全プラン共通)。
 
+**1 業務操作 = 1 ApiCallLog (2026-05-15)**: 内部的には Anthropic と Voyage の 2 API を呼ぶが、`extractTagsAndEmbedForProject()` が `withMeteredLLM` を 1 度だけラップして両者を実行する。ApiCallLog 1 件 / Tenant counter +1 / costJpy 1 回分のみ計上。`featureUnit='project-upsert'`。両 inner API が共に失敗した場合のみ throw され課金されない (どちらか 1 つ成功すれば 1 件計上)。
+
 ### 3.2 資産作成・更新時 (トリガー②)
 
-Knowledge / RiskIssue / Retrospective の主要 text フィールドから **Voyage が embedding を生成** し、Supabase pgvector に保存する (全プラン共通)。Anthropic は呼ばれない (自動タグ抽出は Project 限定機能)。
+Knowledge / RiskIssue / Retrospective / Memo の主要 text フィールドから **Voyage が embedding を生成** し、Supabase pgvector に保存する (全プラン共通)。Anthropic は呼ばれない (自動タグ抽出は Project 限定機能)。
 
-text が変更されない更新 (visibility のみの変更等) では Voyage は呼ばれない (LLM 課金回避設計)。
+#### 各資産の embedding 対象項目
+
+| 資産 | embedding 対象項目 | featureUnit |
+|---|---|---|
+| Knowledge | title / background / content / result / conclusion / recommendation | `knowledge-embedding` |
+| RiskIssue (リスク / 課題) | title / content / cause / responsePolicy / responseDetail | `risk-issue-embedding` |
+| Retrospective | planSummary / actualSummary / goodPoints / problems / improvements / knowledgeToShare | `retrospective-embedding` |
+| **Memo** (2026-05-15 追加) | **title / content** | `memo-embedding` |
+
+#### embedding 生成 / 再生成のトリガー条件 (コスト最適化)
+
+「**公開範囲: 全メンバー** かつ **embedding 対象項目の実値が変更されたとき**」のみ Voyage が呼ばれる。それ以外は LLM 課金が発生しない (= ¥0)。
+
+| 遷移ケース | embedding 生成 |
+|---|---|
+| 新規作成「自分のみ」(draft / private) | ❌ 課金なし |
+| 新規作成「全メンバー」+ text あり | ✅ 1 件計上 |
+| 新規作成「全メンバー」+ text 空 | ❌ 課金なし (Voyage 呼ばず) |
+| 更新 自分のみ → 自分のみ | ❌ 課金なし |
+| 更新 **自分のみ → 全メンバー** | ✅ 1 件計上 (初回公開化、text 変更なしでも) |
+| 更新 全メンバー → 全メンバー + 対象項目変更あり | ✅ 1 件計上 |
+| 更新 全メンバー → 全メンバー + 対象項目変更なし (タイトルだけ・タグだけ・ステータスだけ等) | ❌ 課金なし |
+| 更新 全メンバー → 自分のみ | ❌ 課金なし (既存 embedding は削除せず保持、提案エンジン側 filter で除外) |
 
 ### 3.3 提案機能実行時 (トリガー③)
 
@@ -78,7 +110,9 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 - 文字列類似度 0.2: pg_trgm (3-gram 部分一致)。「請求書」⇔「請求」のような表記ゆれを拾う
 - 意味類似度 0.5: Voyage embedding の Cosine 類似度。「請求書」⇔「インボイス」のような意味的な近さを拾う (本軸)
 
-各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.05` 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 10` 件まで返す → **各カテゴリ最大 10 件、3 カテゴリ合計最大 30 件**。
+各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.05` 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 10` 件まで返す → **各カテゴリ最大 10 件、5 カテゴリ (Knowledge / 過去リスク / 過去課題 / 振り返り / メモ) 合計最大 50 件**。
+
+**Memo の tagScore は常に 0** (Memo はタグを持たない設計 + 親 Project もないため proxy にできない) → 縮退モード重み再配分の対象になり、text と embedding 類似度で実用ランキング。「なぜ?」説明文 (Phase 3) も Memo 対応済。
 
 ### 3.4 ハードキャップ超過時の挙動 (機能停止しない fail-safe 設計)
 
