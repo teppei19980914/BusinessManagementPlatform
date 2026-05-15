@@ -21,6 +21,14 @@
     {
       "path": "/api/cron/daily-usage-aggregation",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/stripe-usage-flush",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/stripe-auto-suspend",
+      "schedule": "0 4 * * *"
     }
   ]
 }

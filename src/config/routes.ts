@@ -31,6 +31,13 @@ export const PUBLIC_PATHS = [
   // route.ts 側で `stripe.webhooks.constructEvent()` で署名検証を行う。
   // 詳細: docs/design/STRIPE_TECHNICAL_DESIGN.md §B-2 / docs/business/STRIPE_BILLING.md §7.1
   '/api/webhooks/stripe',
+  // PR-S6 (2026-05-14): Stripe Usage Record queue flush cron (5 分間隔)。
+  // Vercel Cron から `Authorization: Bearer <CRON_SECRET>` で実行される。
+  // route.ts 側で CRON_SECRET 検証 (定数時間比較) を行う。
+  '/api/cron/stripe-usage-flush',
+  // PR-S6 (2026-05-14): Stripe 引落失敗による自動 suspend cron (日次)。
+  // autoSuspendScheduledAt 到来テナントに対し suspendTenant('payment_delinquent') を呼出。
+  '/api/cron/stripe-auto-suspend',
 ] as const;
 
 /**

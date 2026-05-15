@@ -10,6 +10,10 @@ vi.mock('@/lib/db', () => ({
     apiCallLog: {
       create: vi.fn(),
     },
+    // PR-S6 (2026-05-14): credit_card テナントの Stripe Usage Record queue
+    stripeUsageRecordQueue: {
+      create: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -41,6 +45,10 @@ function makeTenant(overrides: Partial<Record<string, unknown>> = {}) {
     scheduledNextPlan: null,
     lastResetAt: null,
     deletedAt: null,
+    // PR-S6 (2026-05-14): Stripe 関連フィールド (default: credit_card ではない invoice テナント)
+    paymentMethod: 'invoice',
+    stripeSubscriptionItemHaikuId: null as string | null,
+    stripeSubscriptionItemSonnetId: null as string | null,
     ...overrides,
   };
 }
@@ -564,5 +572,107 @@ describe('withMeteredLLM - requestId 生成と伝播', () => {
 
     const logCall = vi.mocked(prisma.apiCallLog.create).mock.calls[0]![0];
     expect(logCall.data.requestId).toBe(explicit);
+  });
+});
+
+// ================================================================
+// PR-S6 (2026-05-14): credit_card テナントの Stripe Usage Record queue
+// ================================================================
+
+describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
+  it('paymentMethod=invoice なら stripeUsageRecordQueue.create を呼ばない', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({ plan: 'expert', paymentMethod: 'invoice' }) as never,
+    );
+    const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+    await withMeteredLLM(
+      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      call,
+    );
+
+    expect(prisma.stripeUsageRecordQueue.create).not.toHaveBeenCalled();
+  });
+
+  it('paymentMethod=credit_card かつ stripeSubscriptionItemHaikuId 設定済 (expert plan) なら haiku で enqueue', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'expert',
+        paymentMethod: 'credit_card',
+        stripeSubscriptionItemHaikuId: 'si_haiku_test',
+      }) as never,
+    );
+    const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+    await withMeteredLLM(
+      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      call,
+    );
+
+    const enqueueCall = vi.mocked(prisma.stripeUsageRecordQueue.create).mock.calls[0]?.[0];
+    expect(enqueueCall).toBeDefined();
+    expect(enqueueCall?.data.tenantId).toBe(TENANT_ID);
+    expect(enqueueCall?.data.callType).toBe('haiku');
+    expect(enqueueCall?.data.quantity).toBe(1);
+    // ApiCallLog.id (= 同じ transaction で create) と一致するはず
+    const apiLogCall = vi.mocked(prisma.apiCallLog.create).mock.calls[0]?.[0];
+    expect(enqueueCall?.data.apiCallLogId).toBe(apiLogCall?.data.id);
+  });
+
+  it('paymentMethod=credit_card かつ pro plan なら sonnet で enqueue', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'pro',
+        paymentMethod: 'credit_card',
+        stripeSubscriptionItemSonnetId: 'si_sonnet_test',
+      }) as never,
+    );
+    const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+    await withMeteredLLM(
+      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      call,
+    );
+
+    const enqueueCall = vi.mocked(prisma.stripeUsageRecordQueue.create).mock.calls[0]?.[0];
+    expect(enqueueCall?.data.callType).toBe('sonnet');
+  });
+
+  it('paymentMethod=credit_card だが stripeSubscriptionItem* 未設定なら enqueue しない (= setup 未完了/不整合の保護)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'expert',
+        paymentMethod: 'credit_card',
+        stripeSubscriptionItemHaikuId: null,
+      }) as never,
+    );
+    const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+    await withMeteredLLM(
+      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      call,
+    );
+
+    expect(prisma.stripeUsageRecordQueue.create).not.toHaveBeenCalled();
+  });
+
+  it('LLM 呼出失敗時 (llm_error) は enqueue しない (= LLM 失敗で課金しない原則)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'expert',
+        paymentMethod: 'credit_card',
+        stripeSubscriptionItemHaikuId: 'si_haiku_test',
+      }) as never,
+    );
+    const call = vi.fn().mockRejectedValue(new Error('LLM down'));
+
+    const result = await withMeteredLLM(
+      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      call,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('llm_error');
+    expect(prisma.stripeUsageRecordQueue.create).not.toHaveBeenCalled();
   });
 });

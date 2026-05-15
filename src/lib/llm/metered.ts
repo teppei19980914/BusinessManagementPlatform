@@ -236,7 +236,22 @@ export async function withMeteredLLM<T>(
   const latencyMs = Date.now() - startMs;
 
   // ---------- Step 6: アトミック increment + ApiCallLog 記録 ----------
-  await prisma.$transaction([
+  // PR-S6 (2026-05-14): credit_card テナントは Stripe Usage Record queue にも 1 行追加。
+  //   - apiCallLog.id を事前生成 → queue 行で参照 (= idempotency_key 用)
+  //   - 同一 transaction で実行する事で「ApiCallLog 作成成功 / queue 未追加」の不整合を防ぐ
+  //   - cron (= /api/cron/stripe-usage-flush) が 5 分間隔で queue → Stripe Usage Record を実送信
+  //   - callType は plan ベース判定: pro=sonnet / それ以外=haiku (= 価格表と一致)
+  const apiCallLogId = randomUUID();
+  const stripeCallType = plan === 'pro' ? 'sonnet' : 'haiku';
+  const stripeItemId =
+    plan === 'pro'
+      ? tenant.stripeSubscriptionItemSonnetId
+      : tenant.stripeSubscriptionItemHaikuId;
+  const shouldEnqueueStripe =
+    tenant.paymentMethod === 'credit_card' && stripeItemId != null;
+
+  // Prisma の $transaction はオーバーロード (配列 / 関数) のため、明示的に配列型として扱う
+  const operations: unknown[] = [
     prisma.tenant.update({
       where: { id: options.tenantId },
       data: {
@@ -246,6 +261,7 @@ export async function withMeteredLLM<T>(
     }),
     prisma.apiCallLog.create({
       data: {
+        id: apiCallLogId,
         tenantId: options.tenantId,
         userId: options.userId,
         featureUnit: options.featureUnit,
@@ -258,7 +274,24 @@ export async function withMeteredLLM<T>(
         requestId,
       },
     }),
-  ]);
+  ];
+  if (shouldEnqueueStripe) {
+    operations.push(
+      prisma.stripeUsageRecordQueue.create({
+        data: {
+          tenantId: options.tenantId,
+          callType: stripeCallType,
+          apiCallLogId,
+          quantity: 1,
+          occurredAt: new Date(),
+          // nextSendAt=now で送信候補になる (= 5 分 cron が拾う)
+          nextSendAt: new Date(),
+        },
+      }),
+    );
+  }
+  // 配列形式の $transaction (= PrismaPromise の配列)。型は内部的に解決される。
+  await prisma.$transaction(operations as never);
 
   return {
     ok: true,
