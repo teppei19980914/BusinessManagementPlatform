@@ -111,15 +111,17 @@ export async function createOrGetStripeCustomer(
 /**
  * カード登録用の Stripe Checkout Session を作成 (= mode: 'setup')。
  *
- * フロー:
+ * フロー (詳細設計 §A-1):
  *   1. テナントの Stripe Customer を取得 or 作成
  *   2. Checkout Session を mode='setup' で作成 (= カード情報のトークン化のみ、課金しない)
  *   3. 顧客は session.url にリダイレクトされ、Stripe Checkout でカード入力
- *   4. 完了後、`return_url?stripe_setup=success` に戻る
- *   5. setup/complete ハンドラで session.setup_intent から payment_method を取得 → DB に保存
+ *   4. 完了後、success_url (= `/api/tenants/me/billing/stripe/setup/complete?session_id=...&return_to=...`)
+ *      に戻る → complete ハンドラで `completeStripeSetup()` を呼出
+ *   5. complete ハンドラが最終的に `return_to?stripe_setup=success` (or failed) にリダイレクト
  *
- * @param returnUrl Stripe Checkout 完了 (or キャンセル) 時の戻り先 URL
- *                  クエリ `?stripe_setup=success` / `?stripe_setup=canceled` が付与される
+ * @param returnUrl 最終的にユーザを戻す UI URL (= /settings/tenant)
+ *                  クエリ `?stripe_setup=success` / `?stripe_setup=canceled` / `?stripe_setup=failed&reason=...`
+ *                  が付与される
  */
 export async function createCheckoutSessionForCardSetup(
   tenantId: string,
@@ -129,7 +131,15 @@ export async function createCheckoutSessionForCardSetup(
   if (!customerResult.ok) return customerResult;
 
   const stripe = getStripe();
-  const successUrl = appendQuery(returnUrl, 'stripe_setup', 'success');
+
+  // success_url は complete ハンドラに向け、session_id を Stripe が自動で展開する
+  //   {CHECKOUT_SESSION_ID} は Stripe Checkout の標準 placeholder
+  //   complete ハンドラ側で session_id + return_to を取得 → 処理 → 最終 UI へリダイレクト
+  const baseOrigin = new URL(returnUrl).origin;
+  const successUrl =
+    `${baseOrigin}/api/tenants/me/billing/stripe/setup/complete` +
+    `?session_id={CHECKOUT_SESSION_ID}` +
+    `&return_to=${encodeURIComponent(returnUrl)}`;
   const cancelUrl = appendQuery(returnUrl, 'stripe_setup', 'canceled');
 
   return await withStripeError(() =>
@@ -148,6 +158,179 @@ export async function createCheckoutSessionForCardSetup(
       },
     ),
   );
+}
+
+// ============================================================
+// §2-bis. Setup 完了処理 (= Checkout 戻り後の Subscription 作成)
+// ============================================================
+
+export type CompleteStripeSetupSuccess = {
+  subscriptionId: string;
+  customerId: string;
+  paymentMethodId: string;
+};
+
+/**
+ * Stripe Checkout 完了後の最終処理 (詳細設計 §A-1 Phase 1-4)。
+ *
+ * - GET /api/tenants/me/billing/stripe/setup/complete (= success_url のハンドラ) から呼ばれる
+ * - session 検証 → PaymentMethod 取得 → DB 暫定保存 (Phase 2) → Subscription 作成 (Phase 3) → 確定 (Phase 4)
+ * - 失敗時は呼出側が UI へリダイレクトで失敗を伝える (= tenant.paymentMethod は変更しないまま)
+ *
+ * 冪等性: 同じ session_id で 2 回呼ばれた場合、tenant.paymentMethod 既に credit_card なら ok
+ *
+ * @param tenantId 自テナント ID (= session の authentication 済みユーザのテナント)
+ * @param sessionId Stripe Checkout Session ID
+ * @param billingCycleAnchor Subscription の billing_cycle_anchor (= JST 月初 UNIX 秒)
+ */
+export async function completeStripeSetup(
+  tenantId: string,
+  sessionId: string,
+  billingCycleAnchor: number | null,
+): Promise<StripeOperationResult<CompleteStripeSetupSuccess>> {
+  const stripe = getStripe();
+
+  // Step 1: Session 検証
+  const sessionResult = await withStripeError(() => stripe.checkout.sessions.retrieve(sessionId));
+  if (!sessionResult.ok) return sessionResult;
+  const session = sessionResult.value;
+
+  if (session.status !== 'complete') {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      userMessage: 'カード登録が完了していません',
+      detail: `session_status_${session.status ?? 'unknown'}`,
+    };
+  }
+  if (session.mode !== 'setup') {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      userMessage: 'Session の mode が不正です',
+      detail: 'session_mode_not_setup',
+    };
+  }
+
+  // session.customer をテナントの stripeCustomerId と照合 (= 越境防止)
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: {
+      paymentMethod: true,
+      stripeCustomerId: true,
+      storageAddonPlan: true,
+    },
+  });
+  if (tenant == null) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      userMessage: 'テナントが見つかりません',
+      detail: 'tenant_not_found',
+    };
+  }
+  const sessionCustomerId =
+    typeof session.customer === 'string' ? session.customer : session.customer?.id ?? null;
+  if (sessionCustomerId == null || sessionCustomerId !== tenant.stripeCustomerId) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      userMessage: 'カード登録セッションがテナントと一致しません',
+      detail: 'session_customer_mismatch',
+    };
+  }
+
+  // 既に credit_card に切替済なら冪等成功 (= setup 重複実行の安全側)
+  if (tenant.paymentMethod === 'credit_card') {
+    return {
+      ok: true,
+      value: {
+        subscriptionId: 'already_set_up',
+        customerId: sessionCustomerId,
+        paymentMethodId: 'already_set_up',
+      },
+    };
+  }
+
+  // Step 2: SetupIntent から PaymentMethod ID を取得
+  const setupIntentId =
+    typeof session.setup_intent === 'string' ? session.setup_intent : session.setup_intent?.id ?? null;
+  if (setupIntentId == null) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      userMessage: 'SetupIntent が見つかりません',
+      detail: 'setup_intent_missing',
+    };
+  }
+  const setupIntentResult = await withStripeError(() => stripe.setupIntents.retrieve(setupIntentId));
+  if (!setupIntentResult.ok) return setupIntentResult;
+  const paymentMethodId =
+    typeof setupIntentResult.value.payment_method === 'string'
+      ? setupIntentResult.value.payment_method
+      : setupIntentResult.value.payment_method?.id ?? null;
+  if (paymentMethodId == null) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      userMessage: 'PaymentMethod が取得できませんでした',
+      detail: 'payment_method_missing',
+    };
+  }
+
+  // Step 3: DB に暫定保存 (Phase 2 / 詳細設計 §A-1)
+  //   この時点で paymentMethod はまだ invoice のまま、Customer / PaymentMethod ID のみ保存
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      stripeDefaultPaymentMethodId: paymentMethodId,
+      cardLastVerifiedAt: new Date(),
+      cardVerificationStatus: 'valid',
+    },
+  });
+
+  // Step 4: Subscription 作成 (Phase 3)
+  const subscriptionResult = await createSubscriptionForTenant({
+    tenantId,
+    storageAddonPlan: tenant.storageAddonPlan ?? 'standard',
+    billingCycleAnchor,
+    paymentMethodId,
+  });
+  if (!subscriptionResult.ok) {
+    // 補償処理: tenant.stripeDefaultPaymentMethodId は残してよい (= 次回 setup 時に再利用)
+    return subscriptionResult;
+  }
+  const subscription = subscriptionResult.value;
+
+  // Step 5: paymentMethod 切替を確定 (Phase 4)
+  //   Subscription Item ID を抽出して保存
+  const prices = getStripePriceConfig();
+  const haikuItem = subscription.items.data.find((i) => i.price.id === prices.haiku);
+  const sonnetItem = subscription.items.data.find((i) => i.price.id === prices.sonnet);
+  const storageItem = subscription.items.data.find(
+    (i) => i.price.id === prices.storagePlus || i.price.id === prices.storagePro,
+  );
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      stripeSubscriptionId: subscription.id,
+      stripeSubscriptionStatus: subscription.status,
+      stripeSubscriptionItemHaikuId: haikuItem?.id ?? null,
+      stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
+      stripeSubscriptionItemStorageId: storageItem?.id ?? null,
+      paymentMethod: 'credit_card',
+    },
+  });
+
+  return {
+    ok: true,
+    value: {
+      subscriptionId: subscription.id,
+      customerId: sessionCustomerId,
+      paymentMethodId,
+    },
+  };
 }
 
 // ============================================================
