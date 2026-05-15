@@ -13,6 +13,7 @@
 | [INFRASTRUCTURE.md](./INFRASTRUCTURE.md) | Vercel + Supabase 構成・通知メール送信設計 | DESIGN.md §10, §18 |
 | [UI_PATTERNS.md](./UI_PATTERNS.md) | UI 共通コンポーネント・ダイアログパターン・テーマ・添付・WBS インポート等の UI 設計 | DESIGN.md §11, §21-§33 |
 | [SUGGESTION_ENGINE.md](./SUGGESTION_ENGINE.md) | 核心機能 (提案エンジン v1 + v2) の技術設計全体 | DESIGN.md §23, §34 |
+| [STRIPE_TECHNICAL_DESIGN.md](./STRIPE_TECHNICAL_DESIGN.md) | Stripe Metered Billing 連携の詳細技術設計 (= 「how」レベル、各 PR の実装時に参照する判断保留不要の粒度) | 新規 (2026-05-14) |
 | [RESPONSIVE_AUDIT.md](./RESPONSIVE_AUDIT.md) | レスポンシブ実装の網羅的監査 | 既存 |
 | [performance/](./performance/) | パフォーマンス調査・改善履歴 | 既存 |
 
