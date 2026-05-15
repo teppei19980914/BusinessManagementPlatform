@@ -9365,3 +9365,50 @@ if (!hasAnyContent) {
 - 削減見積もり: 月 ¥20〜50 程度 (テンプレ作成等の限定ケース) — 大きくないが実装コストもほぼゼロなので「ついで」に削減
 - 同型の罠を防ぐ一般則: **外部 API を呼ぶ前に「入力が空かどうか」をチェックする習慣をつける** (空入力 = ユーザ価値ゼロ ≒ 課金回避可能)
 
+## 5.X+64 **価格・定数の一括変更で「UI 表示文字列のテスト」が unit test grep から漏れる ─ Playwright spec の `toContainText('3,000')` が旧価格のまま CI で fail (2026-05-15)**
+
+### 罠の正体
+
+- PR #388 で per-API-call 単価を改定 (Expert ¥10→¥5 / Pro ¥30→¥15) する際、`pricePerCallHaiku` / `pricePerCallSonnet` を schema / migration / service / docs / mock 値 / CSV 行 (`',1500,'`) まで一通り更新したが、Playwright spec の **UI テーブル行アサーション** だけが旧値で残り、CI E2E が 1 件 fail。
+- 該当箇所:
+  ```ts
+  // e2e/specs/13-super-admin-dashboard.spec.ts:141 (修正前)
+  await expect(tenantARow).toContainText('3,000'); // 当月 LLM 費用 ¥3,000
+  ```
+  Fixture は `current_month_api_cost_jpy = 1500` に更新済 (= 300 calls × ¥5)、UI も `toLocaleString()` で `¥1,500` を描画する状態。**テスト側だけが旧 ¥3,000 を期待** していたため失敗した。
+
+### なぜ発生するか
+
+1. **複数表記の存在**: 同じ「価格 1500」が 3 通りで現れる。
+   - 生値: `1500` (fixture SQL, CSV row)
+   - 表示文字列: `1,500` / `¥1,500` (UI、`toLocaleString()`)
+   - JSDoc / コメントの自然文: `¥1500` / `¥1,500`
+   - **旧→新の grep を「旧の生値」だけで回すと、表示文字列側 (`3,000`) を取り逃す**。
+2. **検証経路の盲点**: `pnpm test` (Vitest unit) と `pnpm e2e:coverage-check` は通っても、**Playwright spec のテキスト一致アサーションは CI まで走らない**。ローカル人間駆動だと "全テスト pass = 安心" と誤認する。
+3. **過去の同型を踏襲**: §5.X+30 系で何度も指摘されている「片側 grep の罠」と本質同じ。
+
+### 推奨対応 (横展開チェック)
+
+価格・閾値・列挙値など **「同一意味の値が複数の文字列表現で現れる定数」** を一括変更したら、必ず以下を全部 grep:
+
+| 対象 | grep パターン例 (旧 ¥10/call → ¥5/call の場合) |
+|---|---|
+| 生値 (DB / CSV / fixture) | `\b10\b` `\b30\b` `\b3000\b` `\b22500\b` ... |
+| `toLocaleString` 表示文字列 (UI / Playwright) | `'3,000'` `'¥3,000'` `'¥30,000'` |
+| 自然文 (JSDoc / docs / LP) | `¥10/call` `¥30/call` `10 円/call` `30 円/call` |
+| マスター定義 (schema / migration / config) | `@default(10)` `@default(30)` `pricePerCall` |
+| アサーション系 (テスト) | `toContainText` `toContain.*[0-9],` `expect.*¥` |
+
+ローカル検証で **`pnpm test` の pass で確信せず、価格・UI 文字列を変えた PR は `pnpm test:e2e` (該当 spec だけでも) をローカルで走らせる**。最低限 grep スコープを `e2e/specs/` まで広げる。
+
+### 本 PR での対処
+
+- `e2e/specs/13-super-admin-dashboard.spec.ts:141` の `'3,000'` → `'1,500'` に修正、コメントも `¥1,500 (300 calls × ¥5)` で改定後仕様を明記。
+- 横展開 grep (`toContainText.*[0-9],` / `toContainText\(['"]3,?000` / `22,?500` / `30,?000`) で他 spec に同種残留なしを確認。
+
+### 関連
+
+- 似た罠: §5.X+30〜+35 系の「片側 grep / 同名重複 / 表記揺れ」テーマ。
+- 検証の盲点: §3.X+58 系の「lint/tsc/test/build の 4 点セットには含まれない別 CI ガード」。Playwright もここに含めるべき。
+- 一般則: **「ユーザに見える数値文字列」と「DB の生値」は別物として grep 対象を分ける**。表示層は `toLocaleString` でカンマが入るため、生値検索だけでは網羅できない。
+

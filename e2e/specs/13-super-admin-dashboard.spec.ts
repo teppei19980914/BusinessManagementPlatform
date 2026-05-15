@@ -133,12 +133,12 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     await expect(superAdminPage.getByText(fixture!.customerTenantA.name)).toBeVisible();
     await expect(superAdminPage.getByText(fixture!.customerTenantB.name)).toBeVisible();
 
-    // 顧客テナント A の費用 (¥3,000) が表示される
+    // 顧客テナント A の費用 (¥1,500) が表示される (2026-05-15 価格改定後)
     // (テーブル行内検索: 顧客テナント名を含む行に LLM 費用が表示される)
     const tenantARow = superAdminPage.locator('tr', {
       hasText: fixture!.customerTenantA.name,
     });
-    await expect(tenantARow).toContainText('3,000'); // 当月 LLM 費用 ¥3,000
+    await expect(tenantARow).toContainText('1,500'); // 当月 LLM 費用 ¥1,500 (300 calls × ¥5)
 
     // Default テナント (運営者自身) セクションが存在する
     await expect(
