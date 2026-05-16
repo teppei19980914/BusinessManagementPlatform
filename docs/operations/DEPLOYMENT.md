@@ -1,55 +1,99 @@
-# Vercel デプロイ手順 (Operations)
+# Netlify デプロイ手順 (Operations)
 
-本ドキュメントは、Vercel への本番デプロイ手順を集約する (OPERATION.md §5)。障害対応は [INCIDENT_RESPONSE.md](./INCIDENT_RESPONSE.md)、ロールバックは [ROLLBACK.md](./ROLLBACK.md) を参照。
+本ドキュメントは、Netlify への本番デプロイ手順を集約する (Vercel から 2026-05-18 に移行)。
+障害対応は [INCIDENT_RESPONSE.md](./INCIDENT_RESPONSE.md)、ロールバックは [ROLLBACK.md](./ROLLBACK.md) を参照。
+
+> **移行の背景**: Vercel Hobby プランは規約上商用利用不可のため、6/1 正式リリース (Expert/Pro 課金プラン稼働) に備えて Netlify Starter (商用 OK) へ移行した。詳細は [`docs/design/INFRASTRUCTURE.md §10`](../design/INFRASTRUCTURE.md) を参照。
 
 ---
 
-## 5. Vercel デプロイ手順
+## 1. Netlify 設定ファイル (`netlify.toml`)
 
-### 5.1 `vercel.json` の内容 (ファイル全文)
+リポジトリルートの [`netlify.toml`](../../netlify.toml) で全設定を一元管理。
 
-```json
-{
-  "installCommand": "pnpm install",
-  "buildCommand": "pnpm prisma generate && pnpm build",
-  "crons": [
-    {
-      "path": "/api/health",
-      "schedule": "0 0 * * *"
-    }
-  ]
-}
+```toml
+[build]
+  command = "pnpm build"                     # = "prisma generate && next build"
+  publish = ".next"
+  ignore = "bash scripts/netlify-ignore.sh"  # docs-only 変更は skip
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"          # Next.js 16 App Router 公式 Runtime
 ```
 
-- **buildCommand**: Prisma Client 生成 → Next.js ビルドのみ。`prisma migrate deploy` は**含まない** (§3.3 の理由による)
-- **crons**: `/api/health` を **毎日 00:00 UTC** にヒット (ウォームアップの保険。5 分間隔のウォームアップは外部 cron-job.org で別設定、詳細は §9)
+### 1.1 ビルドコマンド
 
-### 5.2 通常デプロイ (スキーマ変更を含まない場合)
+`package.json` の `"build"` スクリプトに `prisma generate` を含めているため、Netlify 側は `pnpm build` を呼ぶだけで OK。マイグレーション (`prisma migrate deploy`) は**含めない** — DB 変更はデプロイと分離して手動実行する (§4 参照)。
 
-**前提**: Vercel プロジェクトは GitHub リポジトリと接続済み (要確認: Vercel Dashboard で対象プロジェクトの Git 連携設定)。
+### 1.2 ビルド分節約 (`scripts/netlify-ignore.sh`)
+
+Starter プランの **300 分/月** 制約を効率消費するため、以下の変更だけならビルドを skip:
+
+- `docs/**`
+- `.github/**`
+- `.vscode/**`
+- ルートの `*.md`
+- `.gitignore` / `LICENSE` / `CODEOWNERS`
+
+詳細は [`scripts/netlify-ignore.sh`](../../scripts/netlify-ignore.sh) のコメント参照。
+
+---
+
+## 2. 環境変数
+
+Netlify ダッシュボード → Site configuration → Environment variables、または `netlify env:set` CLI で登録。
+全リストは [`docs/operations/ENV_VARS.md`](./ENV_VARS.md) を参照。
+
+### 2.1 Secret マーキング
+
+機密値 (DB パスワード / API キー / NEXTAUTH_SECRET / CRON_SECRET 等) は **Secret 扱い**で登録する:
 
 ```bash
-# 1. 機能ブランチで作業しコミット
+netlify env:set KEY_NAME "value" --secret \
+  --context production --context deploy-preview --context branch-deploy
+```
+
+> Netlify CLI v26 以降、`--secret` 利用時は **非 dev context を明示指定必須**。
+
+### 2.2 一括登録 (移行・引き継ぎ時)
+
+リポジトリ外に `.env.netlify-prod` を作成し、`netlify env:import` で一括投入する手順は [`docs/operations/ENV_VARS.md §3`](./ENV_VARS.md) を参照。
+
+---
+
+## 3. 通常デプロイ (スキーマ変更を含まない場合)
+
+**前提**: Netlify サイトは GitHub リポジトリと接続済み (Admin URL: <https://app.netlify.com/projects/tasukiba>)。
+
+```bash
+# 1. 機能ブランチで作業
 git checkout -b feat/xxx
 # ... 編集 ...
 git add .
-git commit -m "機能追加: xxx"
+git commit -m "feat: xxx"
 git push -u origin feat/xxx
 
-# 2. GitHub 上で Pull Request を作成
-#    → Vercel が PR ごとに Preview Deployment を自動生成
+# 2. GitHub で Pull Request を作成
+#    → Netlify が Deploy Preview を自動生成 (URL: deploy-preview-NNN--tasukiba.netlify.app)
+#    → 既存の docs だけの変更なら scripts/netlify-ignore.sh で skip される
 
-# 3. PR レビュー・動作確認後、main にマージ
-#    → Vercel が main ブランチの Production Deployment を自動生成
+# 3. レビュー後、main にマージ
+#    → Netlify が main の Production Deploy を自動生成
+#    → Locked Deploy 設定 (§5) が有効なら手動 Publish が必要
 
-# 4. 本番 URL (https://tasukiba.vercel.app) にアクセスし動作確認
+# 4. 本番 URL (https://tasukiba.netlify.app) にアクセスし動作確認
 ```
 
-### 5.3 スキーマ変更を含むデプロイ
+---
 
-手順の **順序が非常に重要**: **マイグレーション適用を先、デプロイを後** にしないと、新コードが旧スキーマのまま起動して `column X does not exist` 等のエラーになる。
+## 4. スキーマ変更を含むデプロイ
 
-#### 推奨手順
+手順の **順序が重要**: **マイグレーション適用を先、デプロイを後** にしないと、新コードが旧スキーマで起動して `column X does not exist` エラーになる。
+
+### 4.1 推奨手順
 
 ```bash
 # 1. 機能ブランチで開発 + ローカルマイグレーション作成
@@ -58,29 +102,127 @@ git checkout -b feat/xxx
 npx prisma migrate dev --name xxx
 # ... アプリコード修正 ...
 git add .
-git commit -m "スキーマ変更: xxx"
+git commit -m "feat: スキーマ変更 + xxx"
 git push -u origin feat/xxx
 
 # 2. PR 作成 → レビュー
 ```
 
-**マージ手順**:
+**マージ手順** (順序厳守):
 
-1. **本番 DB にマイグレーションを先に適用** (§3.3 の手順)
+1. **本番 DB にマイグレーションを先に適用**
    - Supabase ダッシュボード → SQL Editor → `migration.sql` 全文貼付 → Run
    - "Success" を確認
-2. マイグレーションが列追加 (ADD COLUMN) かつ `DEFAULT` 指定があるなら、旧コードも**既存のまま動く** (ADD COLUMN は互換性あり)
-3. 本番 DB 更新後、**GitHub で PR をマージ** → Vercel が自動デプロイ
-4. デプロイ完了後、<https://tasukiba.vercel.app> にアクセスし動作確認
+2. **追加カラムに `DEFAULT` がある場合**、旧コードも既存のまま動く (ADD COLUMN は互換性あり)
+3. 本番 DB 更新後、**GitHub で PR をマージ** → Netlify が自動デプロイ
+4. Locked Deploy が有効なら、Netlify UI で対象 deploy を選んで **「Publish deploy」**
+5. デプロイ完了後、<https://tasukiba.netlify.app> にアクセスし動作確認
 
-#### 破壊的変更 (DROP / RENAME) の場合
+### 4.2 破壊的変更 (DROP / RENAME) の場合
 
 旧コードと新コードがしばらく併存することを考慮し、**2 段デプロイ** を検討:
 - PR (a): 新旧両対応のコードをマージ + マイグレーションは後回し
 - Supabase で手動マイグレーション適用
 - PR (b): 旧列への参照を削除
 
-**要確認**: 本プロジェクトでは現状、破壊的変更の手順例は未定義。初回適用時にユーザメンテナンス時間を取ることを推奨。
+---
+
+## 5. Locked Deploy (本番事故防止)
+
+`main` ブランチへのマージで自動デプロイが走るが、**「Publish」 (本番反映) は手動承認制**にすることを推奨。
+
+### 5.1 設定手順 (一度だけ実施)
+
+1. Netlify Admin → **Site configuration → Build & deploy → Continuous deployment**
+2. **Production branch** = `main` を確認
+3. **Deploys → 最新の Ready deploy を選択 → 「Lock publish」**
+4. 以後、main マージで build は走るが publish は手動 click が必要
+
+### 5.2 Publish 操作
+
+1. Netlify Admin → Deploys タブ
+2. 公開したい deploy (typically 最新の Ready) を選択
+3. **「Publish deploy」** ボタン → 確認ダイアログ → 公開
 
 ---
 
+## 6. Cron Jobs (外部サービス)
+
+Netlify Scheduled Functions は使わず、**[cron-job.org](https://cron-job.org)** から `/api/cron/*` ルートを HTTP POST で叩く運用とする。
+
+### 6.1 設定対象 (7 件)
+
+旧 `vercel.json` から移行した cron schedule:
+
+| エンドポイント | schedule (UTC) | 用途 |
+|---|---|---|
+| `/api/health` | `0 0 * * *` (日次 00:00) | Supabase wake (Free Plan の 1 週間アイドル停止対策) |
+| `/api/admin/users/lock-inactive` | `0 3 * * *` (日次 03:00) | 30 日非アクティブユーザのロック |
+| `/api/cron/daily-notifications` | `0 22 * * *` (日次 22:00) | 通知メール集約配信 |
+| `/api/cron/daily-usage-aggregation` | `0 2 * * *` (日次 02:00) | 日次利用量集計 |
+| `/api/cron/tenant-monthly-reset` | `0 0 1 * *` (月初 00:00) | 月次テナント請求リセット |
+| `/api/cron/stripe-usage-flush` | `0 5 * * *` (日次 05:00) | Stripe 利用量 flush |
+| `/api/cron/stripe-auto-suspend` | `0 4 * * *` (日次 04:00) | 滞納テナント自動 suspend |
+
+### 6.2 cron-job.org 設定手順
+
+1. <https://cron-job.org/en/signup/> でアカウント作成 (無料、cron 数無制限)
+2. 「Create cronjob」を 7 件作成、各々以下を設定:
+   - **URL**: `https://tasukiba.netlify.app/api/cron/xxx`
+   - **Method**: POST (一部 GET、`/api/health` は GET)
+   - **Headers**: `Authorization: Bearer $CRON_SECRET` を追加
+     - `CRON_SECRET` は Netlify 環境変数と同じ値を使用
+   - **Schedule**: 上記表の cron 式を入力
+3. 各 cron の「Save & enable」を click
+4. 翌日 cron-job.org のダッシュボードで実行履歴を確認 (200 OK が確認できれば OK)
+
+### 6.3 手動実行 (debug 用)
+
+```powershell
+$cronSecret = "<CRON_SECRET の値>"
+curl -X POST `
+  -H "Authorization: Bearer $cronSecret" `
+  https://tasukiba.netlify.app/api/cron/daily-notifications
+```
+
+---
+
+## 7. ロールバック
+
+1. Netlify Admin → Deploys タブ
+2. 戻したい過去の Ready deploy を選択
+3. **「Publish deploy」** で即時切り戻し (前回 deploy の artifact がそのまま使われる)
+
+DB スキーマ変更を伴うロールバックは [`ROLLBACK.md`](./ROLLBACK.md) を参照。
+
+---
+
+## 8. Netlify CLI チートシート
+
+```bash
+# サイト紐付け確認
+netlify status
+
+# 環境変数の一覧 (本番 context)
+netlify env:list --context production
+
+# 環境変数の取得
+netlify env:get KEY --context production
+
+# 環境変数の追加 (機密)
+netlify env:set KEY "value" --secret \
+  --context production --context deploy-preview --context branch-deploy
+
+# 環境変数の削除
+netlify env:unset KEY
+
+# ローカルから手動デプロイ (CI/build 分を節約)
+netlify deploy --build              # draft URL に上がる
+netlify deploy --build --prod       # 本番反映
+
+# ビルドログの確認 (ローカルで Netlify ビルド再現)
+netlify build
+
+# 最新の deploy 一覧
+netlify deploy:list
+```

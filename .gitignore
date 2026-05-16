@@ -36,7 +36,10 @@ yarn-error.log*
 .env.production.local
 !.env.example
 
-# vercel
+# netlify (Netlify CLI が生成、site link 情報など)
+.netlify
+
+# vercel (移行前の Vercel 設定の名残り、歴史的経緯のため残置)
 .vercel
 
 # typescript
