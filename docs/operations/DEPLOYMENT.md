@@ -28,9 +28,13 @@
 
 `package.json` の `"build"` スクリプトに `prisma generate` を含めているため、Netlify 側は `pnpm build` を呼ぶだけで OK。マイグレーション (`prisma migrate deploy`) は**含めない** — DB 変更はデプロイと分離して手動実行する (§4 参照)。
 
-### 1.2 ビルド分節約 (`scripts/netlify-ignore.sh`)
+### 1.2 ビルド credits 節約 (`scripts/netlify-ignore.sh`)
 
-Starter プランの **300 分/月** 制約を効率消費するため、以下の変更だけならビルドを skip:
+> **重要 (2026 年モデル変更)**: Netlify は無料枠を「ビルド分」から「**統合 credits モデル**」に変更済 (Free plan = **300 credits/月**)。
+> 1 回の Production deploy がおおよそ **15 credits 消費** (本サービス実測 90 credits / 6 deploys = 15)。Web requests / Compute / Bandwidth / AI inference も微小ながら credits を消費する。**`no overage charges ever` の文言通り、300 を超えると新規 deploy / リクエスト処理が停止する** (課金されない代わりにサービスが止まる)。
+> 詳細は Netlify Admin → Usage & billing タブで実況可。
+
+300 credits/月 を効率消費するため、以下の変更だけならビルドを skip:
 
 - `docs/**`
 - `.github/**`
@@ -218,9 +222,26 @@ DB スキーマ変更を伴うロールバックは [`ROLLBACK.md`](./ROLLBACK.m
 - 詳細パターンは [docs/knowledge/KDD_PATTERNS.md §5.X+66](../knowledge/KDD_PATTERNS.md) を参照。
 - 障害対応手順は [INCIDENT_RESPONSE.md §6.11](./INCIDENT_RESPONSE.md) を参照。
 
-### 8.2 ビルド分制限 (300 分/月) の運用
+### 8.2 統合 credits 制限 (300 credits/月) の運用
 
-`scripts/netlify-ignore.sh` で docs-only 変更は skip 済。それでも月末に逼迫しそうな場合は §1.2 の節約戦略を参照。
+2026 年から Netlify Free plan の制限単位は「ビルド分」から「統合 credits」に変更された。Production deploy / Web requests / Compute / Bandwidth / AI inference のすべてが credits を消費する単一枠 (Free = 300/月)。
+
+| 主な consumer (実測ベース、本サービス) | 単位コスト | 月間想定 (6/1 リリース直後フェーズ) |
+|---|---|---|
+| Production deploy | ~15 credits/回 | 10-15 回 = 150-225 credits |
+| Deploy Preview (PR) | ~15 credits/回 | 5-10 回 = 75-150 credits |
+| Web requests | 0.25 credits/1000 req | 数万 req = 数 credits |
+| Bandwidth / Compute / AI | 微小 | 数 credits |
+
+**1 deploy あたり ~15 credits** が支配的なので、deploy 回数を抑える運用が credits 節約に直結する:
+
+- `scripts/netlify-ignore.sh` で docs-only PR は build を skip (= credits 0 消費)
+- WIP PR は draft 状態 / `[skip netlify]` で Deploy Preview を抑制
+- ローカル `pnpm dev` で済む変更は push しない
+
+残高は Netlify Admin → Usage & billing で実況可。**残 100 を下回ったら Pro plan ($19/月) 移行を即時判断** すること (= 300 超で deploy が止まる + 翌月 16 日まで復旧不可、リリース直前なら致命的)。
+
+> **注**: Netlify ドキュメントには「`no overage charges ever`」と明記。これは「上限超過時に課金されない代わりにサービスが停止する」意味であり、過去の build minutes と同様の停止挙動。
 
 ---
 
@@ -243,7 +264,7 @@ netlify env:set KEY "value" --secret \
 # 環境変数の削除
 netlify env:unset KEY
 
-# ローカルから手動デプロイ (CI/build 分を節約)
+# ローカルから手動デプロイ (Netlify credits を節約)
 netlify deploy --build              # draft URL に上がる
 netlify deploy --build --prod       # 本番反映
 

@@ -9,7 +9,8 @@
   command = "pnpm build"
   publish = ".next"
   # docs / .github / *.md のみの変更時はビルドをスキップ
-  # (Starter 300 分/月の制約を効率消費するため、PR #371 KDD §5.X+58 対策と同方針)
+  # (Starter 統合 credits 300/月の制約を効率消費するため。1 deploy ≈ 15 credits 消費)
+  # 2026 年以降の credits モデル詳細: docs/operations/DEPLOYMENT.md §8.2
   ignore = "bash scripts/netlify-ignore.sh"
 
 [build.environment]
