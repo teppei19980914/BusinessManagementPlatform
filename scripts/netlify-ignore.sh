@@ -6,7 +6,9 @@
 #
 # 本スクリプトは Netlify ビルド開始前に実行される。
 # 変更内容が docs / .md / .github / .vscode のみであればビルドをスキップして、
-# Starter プランの 300 分/月制約を効率的に使う。
+# Starter プランの統合 credits 枠 (300/月、1 deploy ≈ 15 credits 消費) を効率的に使う。
+# 2026 年から Netlify は "ビルド分" から "credits" 統合モデルに変更済。
+# 詳細: docs/operations/DEPLOYMENT.md §8.2
 #
 # 参考: https://docs.netlify.com/configure-builds/ignore-builds/
 # 関連: docs/operations/DEPLOYMENT.md §5 (ビルド分節約戦略)

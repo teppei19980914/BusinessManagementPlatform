@@ -67,7 +67,9 @@ git 履歴から過去記述を参照できる。
 │  - Global CDN                                                 │
 │  - 自動 SSL                                                   │
 │  - 帯域: 100GB/月                                             │
-│  - ビルド: 300 分/月 (docs-only 変更は ignore script で skip) │
+│  - 統合 credits: 300/月 (★ 2026 年以降の単一枠制)             │
+│    └─ Production deploy ~15 credits/回、PR Preview も同 ~15  │
+│    └─ Web req / Compute / Bandwidth は微小消費                │
 │  - Function 実行: 10 秒 (Sync) / 15 分 (Background)           │
 └──────────────┬───────────────────────────────────────────────┘
                | Connection Pooler (IPv4, port 6543)
@@ -102,7 +104,7 @@ git 履歴から過去記述を参照できる。
 
 | 制約 | 影響 | 対策 |
 |---|---|---|
-| Netlify Starter: ビルド 300 分/月 | PR を量産すると逼迫 | `scripts/netlify-ignore.sh` で docs-only 変更を skip、ローカル `pnpm dev` 中心の開発 |
+| Netlify Starter: **統合 credits 300/月** (1 deploy = ~15) | PR / 本番 deploy を量産すると逼迫、超過で**新規 deploy 停止** (`no overage charges ever` = 課金されない代わりにサービス停止) | `scripts/netlify-ignore.sh` で docs-only 変更を skip、ローカル `pnpm dev` 中心の開発。残 100 切ったら Pro 移行判断 (DEPLOYMENT.md §8.2 参照) |
 | Netlify Starter: Function 10 秒 | Bulk LLM 処理がタイムアウト | Background Functions (15 分) へ分離、または分割実行 ([feedback_bulk_llm_call_unit](../knowledge/) 参照) |
 | Netlify Starter: 日本リージョン未対応 | 日本ユーザに +50-150ms latency | 許容 (将来 Pro / Edge Functions で改善) |
 | Supabase Free: 500MB | 約3年で逼迫（ログ制御後） | ログ保持期間の厳格化で 5 年以上対応可 |
@@ -126,7 +128,7 @@ git 履歴から過去記述を参照できる。
 
 | トリガー | 移行先 | 追加コスト |
 |---|---|---|
-| ビルド 300分/月 逼迫 or 帯域 100GB 超 | Netlify Pro | +$19/月 |
+| 統合 credits 300/月 逼迫 (= deploy 20回超) or 帯域 100GB 超 | Netlify Pro (1,000 credits/月 + 1TB 帯域) | +$19/月 |
 | 日本リージョンでの低 latency が必要 | Vercel Pro (Tokyo リージョン) | +$20/月 |
 | DB 500MB 超過 or 直接接続が必要 | Supabase Pro | +$25/月 |
 | メール 300通/日超過 | Brevo Starter | +$9/月 |
