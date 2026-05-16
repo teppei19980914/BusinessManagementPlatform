@@ -9412,3 +9412,59 @@ if (!hasAnyContent) {
 - 検証の盲点: §3.X+58 系の「lint/tsc/test/build の 4 点セットには含まれない別 CI ガード」。Playwright もここに含めるべき。
 - 一般則: **「ユーザに見える数値文字列」と「DB の生値」は別物として grep 対象を分ける**。表示層は `toLocaleString` でカンマが入るため、生値検索だけでは網羅できない。
 
+
+## 5.X+65 **複数 PR 並行進行時に同一ファイルを変更する場合は事前の rebase 計画が必須 ─ docs/business/README.md で PR #391/#392 が衝突 (2026-05-17)**
+
+### 罠の正体
+
+- 人間駆動運用への切替準備で、複数の独立した小さい PR を並行進行させていた:
+  - PR #391: C1〜C5 + D3〜D6 の運用ドキュメント追加 (5/15-5/16 着手、5/17 マージ)
+  - PR #392: ドキュメント整理 Phase 1 (archive 再新設 + 横断索引、5/17 着手)
+- PR #391 が先にマージされた直後、PR #392 で **`docs/business/README.md` のコンフリクト** が発生:
+  - PR #391 が「ファイル一覧」表に `FEATURE_CATALOG.md` 行を追加 (`新規 (2026-05-16)`)
+  - PR #392 が「ファイル一覧」表の **直後** に「横断索引: Stripe / 課金関連」「横断索引: 提案エンジン関連」を追加
+  - 両方とも GLOSSARY.md 行の直後を編集対象としたため、git は両方を残せず conflict marker を出した
+- 内容的には **両方の変更が必要** (FEATURE_CATALOG 行は active な索引、横断索引はそれを補完) のため、片方を捨てる選択肢はない。
+
+### なぜ発生するか
+
+1. **役割別 README はホットスポット**: `docs/<area>/README.md` は新規ファイル追加のたびに索引行が増える。複数 PR が同時に「索引追加」を行うと容易に衝突する。
+2. **「末尾追記」を異なる粒度でやると衝突する**: PR #391 は「表に 1 行追加」 (末尾の表内追記)、PR #392 は「表の後に新セクション追加」 (ファイル末尾追記)。どちらも「ファイル末尾付近の編集」だが、編集対象範囲が **重なる**ため git が autoresolve できない。
+3. **本 KDD の §5.X+30 系「2 段構え PR の docs コンフリクト」と同型**: 仕様確定 docs PR → 実装 PR の時のコンフリクトパターンが、今回は「機能追加 docs PR → ドキュメント整理 PR」で再現した。
+
+### 推奨対応
+
+#### 着手前 (PR 設計時)
+
+1. **`gh pr list --search "in:title docs"` で進行中の docs PR を確認**: 進行中の他 PR が同一ディレクトリを触っているなら、マージ順を事前に取り決める
+2. **README の編集箇所が重なる可能性が高い場合は、片方を完了させてから着手** する (並行進行を諦める判断)
+3. **どうしても並行進行する場合は、編集対象セクションを明示的に分ける**:
+   - PR A: 表の中身を変更 (新規行追加)
+   - PR B: ファイル末尾に新セクション追加 (表の外)
+   - この場合でも「表の最終行」と「新セクション開始」の境界で衝突しうるため、空行を 2 行入れる等の防衛策が有効
+
+#### 衝突発生後 (rebase 時)
+
+1. **`git rebase origin/main`** で conflict を表面化
+2. **conflict marker (`<<<<<<<` / `=======` / `>>>>>>>`)** を確認、**両側の変更を残す** (普通は両方必要)
+3. 解消後 `git add <file>` → `git rebase --continue`
+4. **`git rebase --continue` が `You must edit all merge conflicts` で止まる場合の対処**:
+   - 実際には conflict が残っていないことを `git diff --diff-filter=U --name-only` で確認
+   - ワークツリーの **非関連の uncommitted 変更 (例: .claude/settings.json)** が rebase を妨げているケースがある → `git stash push <file>` で stash してから `git rebase --continue`
+   - エディタを開かせない場合は `GIT_EDITOR=":" git rebase --continue` で no-op editor を使う
+
+#### 一般則 (本サービスでの運用)
+
+- **同一 README を 2 つの PR で同時に触る予定があるなら、PR description に注意書きを書く** (例: "本 PR は PR #391 のマージ後に rebase が必要")
+- **「索引行追加」だけなら `docs:` プレフィックスで小粒に分ける** ことでマージ待ち時間を短縮し、衝突期間を最小化
+- **メンバー追加時の教育ポイント**: rebase コンフリクトの対処は最初の壁になるため、本エントリを参照させる
+
+### 検証経路
+
+- 本ケースで CI は通常通り通っていた (lychee リンクチェッカーも green)。
+- conflict は **GitHub PR 画面で目視確認するまで気づきにくい** ため、PR マージ後は他の open PR の `mergeStateStatus` を `gh pr list --json mergeStateStatus` で確認する習慣を持つ。
+
+### 過去の関連 KDD
+
+- §5.10 / §5.14: マージコンフリクトの一般パターン (末尾追記の衝突)
+- §5.X+30 系: 2 段構え PR (docs PR → 実装 PR) の docs/business/README.md コンフリクト
