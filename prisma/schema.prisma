@@ -1003,6 +1003,49 @@ model SystemErrorLog {
   @@map("system_error_logs")
 }
 
+/// PR feat/cron-execution-log (2026-05-18): cron 実行履歴を蓄積するテーブル。
+///
+/// 設計目的:
+///   1. **可観測性**: super_admin ダッシュボードから過去の cron 実行結果を確認可能にする
+///      (= cron-job.org の外部ダッシュボードに頼らず、社内で完結した監視導線)
+///   2. **timeout 検知**: Netlify Functions の 10 秒上限を超えた cron は `completedAt=null` の
+///      ままレコードが残るため、`status='running'` AND `startedAt < now()-30s` を検出すれば
+///      timeout 疑い (= 復旧 / chunk 化等の対応に着手できる)
+///   3. **失敗の根本原因追跡**: errorMessage / errorStack を Function logs と独立して保持
+///
+/// 設計判断:
+///   - **tenantId なし**: cron は全テナント横断 (システム運用) または management tenant の運用なので
+///     特定テナントへの帰属は意味を持たない。AuditLog のような tenant filter は不要
+///   - **userId なし**: cron は実行主体が「システム」固定。AuditLog 系との分離を明確にする
+///   - **payloadJson は結果サマリ**: 既存 cron route が返している `{ source: 'cron', ...result }`
+///     をそのまま保存する。詳細な per-record データは AuditLog 側に残す
+///   - **logging 失敗で cron 本体を fail させない**: withCronExecutionLogging ヘルパは
+///     log 書込みの try/catch を内包し、log 失敗時は console.warn して cron 本体は継続
+///
+/// 関連:
+///   - ヘルパ: src/lib/cron-execution-log.ts withCronExecutionLogging()
+///   - UI: src/app/(dashboard)/admin/super/cron-history/page.tsx
+///   - KDD: docs/knowledge/KDD_PATTERNS.md §5.X+72
+model CronExecutionLog {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cronName     String    @map("cron_name") @db.VarChar(64) // 'lock-inactive-users', 'daily-notifications', ...
+  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz // null = まだ実行中 or timeout
+  durationMs   Int?      @map("duration_ms") // 完了時のみ
+  status       String    @db.VarChar(20) // 'running' | 'success' | 'failure'
+  errorMessage String?   @map("error_message") @db.Text
+  errorStack   String?   @map("error_stack") @db.Text
+  // 結果サマリ JSON: cron route が NextResponse.json で返している data オブジェクトをそのまま保存
+  payloadJson  Json?     @map("payload_json") @db.JsonB
+  // 呼出元 IP (= cron-job.org のサーバ IP)。誤検知のセキュリティ調査用、PII ではないため保持可
+  invokerIp    String?   @map("invoker_ip") @db.VarChar(45)
+
+  @@index([cronName, startedAt(sort: Desc)], map: "idx_cron_exec_name_date")
+  @@index([status, startedAt(sort: Desc)], map: "idx_cron_exec_status_date")
+  @@index([startedAt(sort: Desc)], map: "idx_cron_exec_date")
+  @@map("cron_execution_logs")
+}
+
 model RoleChangeLog {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // Phase 2-10 (2026-05-10): 権限変更ログのテナント帰属 (= target user の tenant)。

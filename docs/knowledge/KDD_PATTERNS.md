@@ -9888,3 +9888,52 @@ export const config = {
 - §5.X+69: `/api/auth/mfa/verify` の middleware 除外 (本件の前段、限定的に書きすぎていた)
 - §5.X+70: routes 系設定ファイルの同期漏れパターン (PUBLIC_PATHS / matcher の漏れは同型問題)
 
+---
+
+## 5.X+72 **cron-job.org の外部監視に依存すると本番障害の発見が遅れる ─ アプリ内に cron 実行履歴テーブルを持ち super_admin から可視化する (PR feat/cron-execution-log で実装 / 2026-05-18)**
+
+### 罠の正体
+
+Vercel Cron 時代は Function logs を Vercel ダッシュボードで一元確認できた。Netlify + cron-job.org に移行後、cron の実行結果を確認するには:
+
+1. cron-job.org の外部ダッシュボード (= サードパーティ依存)
+2. Netlify CLI で `netlify logs --source functions` (= CLI 操作必須、リアルタイム性なし)
+
+社内に統合された監視導線が無く、特に **Netlify Functions の 10 秒 timeout で殺された Lambda** は Function logs にすら明確なエラーが残らない (Lambda 自体が SIGKILL される)。
+
+### 何が起きうるか
+
+具体的な失敗シナリオ:
+
+- 月末締めの `tenant-monthly-reset` が timeout で部分実行 → 翌月の請求金額が一部テナントで 0 円集計 → 誤請求
+- `daily-notifications` の途中で timeout → 通知が一部ユーザに届かず → リマインダ欠落
+- 失敗が連続しているのに気付かない → 監視画面を毎日見る運用者がいない (cron-job.org に習慣化しないと見ない)
+
+### 対策パターン
+
+1. **`cron_execution_logs` テーブル** を新設し、開始時 status='running' で書込 → 完了時に 'success'/'failure' に update
+2. **timeout 検知**: 終了の update が走らなければ `status='running'` のまま残るため、`now - startedAt > 30s AND status='running'` を「stale = timeout 疑い」として super_admin UI で警告色表示
+3. **動作概要を中央集約** (`src/config/cron-jobs.ts`): 各 cron の「何をする処理か」を 1 ファイルにまとめ、super_admin UI が一覧表示。開発者以外でも cron 失敗時の影響範囲を把握できる
+4. **logging 失敗で本体を fail させない (fail-soft)**: log 書込みエラーを try/catch で吸収。監視機能の故障で本番処理を巻き添えにしない
+
+### 実装の急所
+
+```ts
+// withCronExecutionLogging(name, req, async () => { ... })
+//   1. create({ status: 'running' })  ← timeout でもこのレコードが残る
+//   2. 本体実行
+//   3. update({ status: 'success'|'failure', durationMs, payloadJson|errorMessage })
+//   logging 部分は全て try/catch でくるみ、失敗時は console.warn のみで本体結果は返す
+```
+
+### 再発防止ルール
+
+- 新規 cron route を追加する際は **必ず `withCronExecutionLogging()` でラップ** する (= 監視盲点を作らない)
+- `src/config/cron-jobs.ts` に **動作概要 + スケジュール** を登録する (= 未登録 cron は UI で「(未登録の cron: ...)」と表示される)
+- super_admin ダッシュボードを **週次で確認**する運用 (= 監視疲れを避けるため日次ではなく週次、stale running が出たらアラート色で目立つ前提)
+
+### 過去の関連 KDD
+
+- §5.X+70: cron route の PUBLIC_PATHS / Stripe ガード漏れ (本件と同様、Netlify 移行で顕在化した cron 系の罠)
+- §5.X+68: helper の silent failure を fail-loud にする原則 (本件は逆に fail-soft = 監視機能ゆえの設計判断)
+

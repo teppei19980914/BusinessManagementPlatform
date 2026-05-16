@@ -25,7 +25,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runTenantMonthlyReset } from '@/services/tenant-monthly-reset.service';
 // 2026-05-13 (security/auth-secret-hardening, B-6): タイミング攻撃耐性のある共通 cron 認可ヘルパに統一。
+// 2026-05-18 (PR feat/cron-execution-log): 実行履歴を super_admin から確認可能にするためロギング組込。
 import { isCronAuthorized } from '@/lib/cron-auth';
+import { withCronExecutionLogging } from '@/lib/cron-execution-log';
 
 export async function POST(req: NextRequest) {
   if (!isCronAuthorized(req)) {
@@ -35,26 +37,28 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = await runTenantMonthlyReset();
+  return withCronExecutionLogging('tenant-monthly-reset', req, async () => {
+    const result = await runTenantMonthlyReset();
 
-  return NextResponse.json({
-    data: {
-      source: 'cron',
-      resetCount: result.resetCount,
-      planAppliedCount: result.planAppliedCount,
-      invalidPlanSkippedCount: result.invalidPlanSkippedCount,
-      // P-5b (2026-05-08): リセット直前のスナップショット保存件数
-      snapshotSavedCount: result.snapshotSavedCount,
-      // Storage add-on (Phase 2 / 2026-05-08): ダウングレード予約適用件数 / 使用量超過 skip 件数
-      storageAddonAppliedCount: result.storageAddonAppliedCount,
-      storageAddonSkippedCount: result.storageAddonSkippedCount,
-      // テナント物理削除 (2026-05-08): 90 日 Grace 経過後の物理削除件数 + 削除レコード総数
-      purgedTenantCount: result.purgedTenantCount,
-      purgedRowCount: result.purgedRowCount,
-      // 縮退モード確定仕様 (2026-05-14): 月初 embedding 補完バッチ結果
-      embeddingBackfillTenantCount: result.embeddingBackfillTenantCount,
-      embeddingBackfillGeneratedCount: result.embeddingBackfillGeneratedCount,
-    },
+    return {
+      data: {
+        source: 'cron',
+        resetCount: result.resetCount,
+        planAppliedCount: result.planAppliedCount,
+        invalidPlanSkippedCount: result.invalidPlanSkippedCount,
+        // P-5b (2026-05-08): リセット直前のスナップショット保存件数
+        snapshotSavedCount: result.snapshotSavedCount,
+        // Storage add-on (Phase 2 / 2026-05-08): ダウングレード予約適用件数 / 使用量超過 skip 件数
+        storageAddonAppliedCount: result.storageAddonAppliedCount,
+        storageAddonSkippedCount: result.storageAddonSkippedCount,
+        // テナント物理削除 (2026-05-08): 90 日 Grace 経過後の物理削除件数 + 削除レコード総数
+        purgedTenantCount: result.purgedTenantCount,
+        purgedRowCount: result.purgedRowCount,
+        // 縮退モード確定仕様 (2026-05-14): 月初 embedding 補完バッチ結果
+        embeddingBackfillTenantCount: result.embeddingBackfillTenantCount,
+        embeddingBackfillGeneratedCount: result.embeddingBackfillGeneratedCount,
+      },
+    };
   });
 }
 
