@@ -25,9 +25,15 @@
 | [0005](./0005-rbac-two-stage-tenant-authorization.md) | RBAC + 二段階テナント認可 (Service 層で統一) | Accepted | セキュリティ |
 | [0006](./0006-stripe-metered-billing-integration.md) | Stripe Metered Billing 連携によるクレジットカード自動引き落とし (v1.x) | Accepted | ビジネス・課金 |
 | [0007](./0007-unify-invoice-and-bank-transfer.md) | `invoice` と `bank_transfer` の支払い方法を統合 (UI ラベル「銀行振込」, 内部値 `invoice`) | Accepted | ビジネス・課金 |
+| [0008](./0008-graceful-degradation-mode.md) | 縮退モード (graceful degradation) — ハードカット 429 を採用しない | Accepted | 課金・UX |
+| [0009](./0009-nextauth-credentials-mfa-totp.md) | NextAuth.js (Credentials) + MFA (TOTP) を認証基盤に採用 | Accepted | セキュリティ・認証 |
+| [0010](./0010-project-state-machine.md) | プロジェクト状態マシン (7 状態 + 一方向遷移) を業務ロジックの中核 | Accepted | 業務ロジック |
+| [0011](./0011-soft-delete-and-audit-log.md) | 論理削除 (soft delete) + 全変更操作の監査ログ完全記録 | Accepted | データ管理・セキュリティ |
+| [0012](./0012-vercel-supabase-mvp-hosting.md) | Vercel + Supabase 無料枠を MVP 期のインフラに採用 (AWS 移行を視野) | Accepted | インフラ |
+| [0013](./0013-beginner-downgrade-prohibition.md) | Beginner プランへのダウングレード禁止 (悪用防止ルール) | Accepted | ビジネス・課金 |
 
-> 17 件の主要設計判断のうち、影響範囲が最も広い 7 件を ADR 化しています。
-> 未 ADR 化の判断 (例: NextAuth + MFA、Vercel + Supabase、論理削除、プロジェクト状態マシン、縮退モード設計 等) は、設計変更を検討する際に都度 ADR 化します。
+> 主要設計判断を時系列で ADR 化しています (現在 13 件)。
+> 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---
 

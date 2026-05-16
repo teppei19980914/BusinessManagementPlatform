@@ -1,0 +1,124 @@
+# 機能カタログ (Feature Catalog)
+
+本ドキュメントは、たすきば Knowledge Relay の **機能 × 顧客課題 × 関連ファイル** のマトリクスを提供する。
+
+> **使い方**: 顧客フィードバックを受けたときに、(1) どの顧客課題に関連するか、(2) どの機能に手を入れるか、(3) どのファイルを変更するか、を即座に判定するための参照点。
+
+---
+
+## カテゴリ分類
+
+| カテゴリ | 顧客課題 (中心テーマ) | 関連機能 |
+|---|---|---|
+| **A. プロジェクト運営** | プロジェクトの状態を可視化し、健全な運営を継続したい | プロジェクト管理 / WBS / ガント / 進捗管理 / リスク・課題 |
+| **B. 知見の再利用 (核心機能)** | 過去資産が次の判断に活きていない | 提案エンジン / ナレッジ / 振り返り / 自動タグ抽出 |
+| **C. 個人作業の管理** | 自分のタスクを横断して把握したい | マイタスク / メモ |
+| **D. チーム管理** | メンバーの権限・参加を柔軟に管理したい | プロジェクトメンバー / ユーザ管理 / ロール |
+| **E. テナント / 課金** | 利用量と料金を把握・予測したい | プラン管理 / 利用量集計 / 縮退モード / Stripe 決済 |
+| **F. セキュリティ・監査** | データの安全性と追跡可能性を保ちたい | 認証 (MFA) / 監査ログ / アカウントロック |
+| **G. 運用ツール** | システム管理者として運用判断したい | super_admin ダッシュボード / バックアップ / Cron |
+
+---
+
+## A. プロジェクト運営
+
+| 機能 | 顧客課題 | 主な変更先ファイル | 関連ドキュメント |
+|---|---|---|---|
+| **プロジェクト管理** (CRUD + 状態遷移) | 「企画 → 完了の流れを 1 つで管理したい」 | `src/services/project.service.ts` / `src/app/(dashboard)/projects/` | [SCREENS §11.1-11.2](../specification/SCREENS.md) / [PROJECT_LIFECYCLE.md](./PROJECT_LIFECYCLE.md) |
+| **見積もり管理** | 「過去実績を踏まえた見積もりを作りたい」 | `src/services/estimate.service.ts` / `src/app/(dashboard)/projects/[id]/estimates/` | [SCREENS §11.3](../specification/SCREENS.md) |
+| **WBS / タスク管理** | 「タスクの階層構造と進捗をシンプルに」 | `src/services/task.service.ts` / `src/app/(dashboard)/projects/[id]/tasks/` | [SCREENS §11.4](../specification/SCREENS.md) |
+| **ガントチャート** | 「スケジュールの遅延を時系列で把握したい」 | `src/app/(dashboard)/projects/[id]/gantt/` | [SCREENS §11.5](../specification/SCREENS.md) |
+| **進捗・実績更新** | 「日々の進捗をワンクリックで」 | `src/services/task.service.ts` (updateProgress 系) | [SCREENS §11.4 / §11.6](../specification/SCREENS.md) |
+| **リスク・課題管理** | 「リスクと課題を統一フローで起票・追跡したい」 | `src/services/risk-issue.service.ts` / `src/app/(dashboard)/projects/[id]/risks/` | [SCREENS §11.7](../specification/SCREENS.md) |
+
+---
+
+## B. 知見の再利用 (核心機能)
+
+| 機能 | 顧客課題 | 主な変更先ファイル | 関連ドキュメント |
+|---|---|---|---|
+| **提案エンジン (核心)** | 「過去のナレッジが埋もれて活用できない」「キーワード検索では取りこぼす」 | `src/services/suggestion.service.ts` / `src/lib/embedding.ts` | [SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md) / [ADR-0003](../adr/0003-embedding-based-suggestion-engine.md) / [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) |
+| **ナレッジ管理** | 「知見を構造化して残したい」「公開範囲を制御したい」 | `src/services/knowledge.service.ts` / `src/app/(dashboard)/knowledge/` | [SCREENS §11.8](../specification/SCREENS.md) / [USER_ROLES §6.5](./USER_ROLES.md) |
+| **振り返り (Retrospective)** | 「プロジェクト完了後の総括を残したい」 | `src/services/retrospective.service.ts` / `src/app/(dashboard)/projects/[id]/retrospective/` | [SCREENS §11.9](../specification/SCREENS.md) |
+| **LLM 自動タグ抽出** | 「タグ付けの手間を省きたい」 | `src/services/auto-tag.service.ts` / `src/lib/llm/metered.ts` | [GLOSSARY: LLM 自動タグ抽出](./GLOSSARY.md) / [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) |
+| **embedding バックフィル** | 「縮退モード中に生成されなかった embedding を月初に補完」 | `src/services/embedding-backfill.service.ts` / `src/app/api/cron/` | [SUGGESTION_ENGINE.md §B-4](../design/SUGGESTION_ENGINE.md) |
+
+---
+
+## C. 個人作業の管理
+
+| 機能 | 顧客課題 | 主な変更先ファイル | 関連ドキュメント |
+|---|---|---|---|
+| **マイタスク** | 「複数プロジェクトを横断して自分の作業を一覧したい」 | `src/services/my-task.service.ts` / `src/app/(dashboard)/my-tasks/` | [SCREENS §11.6](../specification/SCREENS.md) |
+| **メモ (Memo)** | 「個人的なメモも提案候補に乗せたい (公開範囲: 全メンバーのみ)」 | `src/services/memo.service.ts` / `src/app/(dashboard)/memos/` | [GLOSSARY: 可視性](./GLOSSARY.md) |
+
+---
+
+## D. チーム管理
+
+| 機能 | 顧客課題 | 主な変更先ファイル | 関連ドキュメント |
+|---|---|---|---|
+| **プロジェクトメンバー管理** | 「プロジェクトごとに参加メンバーを柔軟に」 | `src/services/project-member.service.ts` / `src/app/(dashboard)/projects/[id]/members/` | [SCREENS §11.10](../specification/SCREENS.md) |
+| **ユーザ管理 (テナント内)** | 「テナント管理者として、ユーザを追加・無効化したい」 | `src/services/user.service.ts` / `src/app/(dashboard)/settings/tenant/users/` | [SCREENS §11.11](../specification/SCREENS.md) / [USER_ROLES.md](./USER_ROLES.md) |
+| **顧客管理 (案件先)** | 「プロジェクトの顧客 (案件先) を統一管理」 | `src/services/customer.service.ts` / `src/app/(dashboard)/customers/` | [SCREENS §11.11b](../specification/SCREENS.md) |
+| **権限変更履歴** | 「誰がいつ権限を変更したかを追跡したい」 | `src/services/audit.service.ts` (role-change 種別) | [SCREENS §11.12](../specification/SCREENS.md) |
+
+---
+
+## E. テナント / 課金
+
+| 機能 | 顧客課題 | 主な変更先ファイル | 関連ドキュメント |
+|---|---|---|---|
+| **プラン管理 (LLM)** | 「Beginner / Expert / Pro の切替をスムーズに」 | `src/services/plan-change.service.ts` / `src/app/(dashboard)/settings/tenant/billing/` | [TENANT_AND_BILLING Part 5](./TENANT_AND_BILLING.md) / [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) |
+| **プラン管理 (Storage)** | 「容量だけ増やしたい (LLM プランは据え置き)」 | `src/services/storage-plan.service.ts` (該当) | [TENANT_AND_BILLING §34.14](./TENANT_AND_BILLING.md) |
+| **利用量集計 / 表示** | 「今月いくら使ったか即座に把握したい」 | `src/services/api-usage-recalc.service.ts` / `src/app/(dashboard)/settings/tenant/usage/` | [TENANT_AND_BILLING.md](./TENANT_AND_BILLING.md) / memory: feedback_billing_data_realtime |
+| **縮退モード** | 「Beginner 上限到達でも完全停止せず、月初に自動復帰」 | `src/services/degraded-mode.service.ts` | [GLOSSARY: 縮退モード](./GLOSSARY.md) / [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) |
+| **Stripe 決済 (v1.x)** | 「クレジットカードで自動引き落とし」 | `src/lib/stripe.ts` / `src/app/api/stripe/webhook/route.ts` | [STRIPE_BILLING.md](./STRIPE_BILLING.md) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) |
+| **請求書・銀行振込 (v1)** | 「最初は請求書発行・銀行振込のみで運用」 | `src/services/invoice.service.ts` (該当) | [PAYMENT_TERMS.md](./PAYMENT_TERMS.md) / [ADR-0007](../adr/0007-unify-invoice-and-bank-transfer.md) |
+| **月初 cron バッチ** | 「課金確定・embedding 補完・プラン切替予約適用」 | `src/app/api/cron/monthly-batch/route.ts` | [INCIDENT_RESPONSE.md §6.8](../operations/INCIDENT_RESPONSE.md) |
+
+---
+
+## F. セキュリティ・監査
+
+| 機能 | 顧客課題 | 主な変更先ファイル | 関連ドキュメント |
+|---|---|---|---|
+| **認証 (Email + Password)** | 「シンプルにメールアドレスでログインしたい」 | `src/lib/auth.ts` / `src/app/api/auth/` | [SECURITY.md](../design/SECURITY.md) |
+| **MFA (TOTP)** | 「admin は強制 / 一般ユーザは任意で多要素認証」 | `src/services/mfa.service.ts` / `src/app/(auth)/mfa/` | [GLOSSARY: MFA](./GLOSSARY.md) / [SECURITY.md](../design/SECURITY.md) |
+| **アカウントロック** | 「ブルートフォース攻撃を弾きたい」 | `src/services/account-lock.service.ts` (該当) | [INCIDENT_RESPONSE §6.5](../operations/INCIDENT_RESPONSE.md) |
+| **パスワード管理** | 「ポリシー / リセット / 履歴チェック」 | `src/services/password.service.ts` (該当) | [SECURITY.md](../design/SECURITY.md) |
+| **監査ログ** | 「全変更を追跡可能にしたい (WORM)」 | `src/services/audit.service.ts` | [GLOSSARY: 監査ログ](./GLOSSARY.md) |
+| **認証イベントログ** | 「ログイン失敗・MFA 試行を追跡したい」 | `src/services/auth-event.service.ts` | [INCIDENT_RESPONSE §6.5](../operations/INCIDENT_RESPONSE.md) |
+| **エラー集約 (system_error_logs)** | 「エラーは画面に出さず DB に記録、画面は固定文言」 | `src/services/system-error.service.ts` (該当) | [SECURITY.md](../design/SECURITY.md) |
+
+---
+
+## G. 運用ツール (super_admin)
+
+| 機能 | 顧客課題 | 主な変更先ファイル | 関連ドキュメント |
+|---|---|---|---|
+| **super_admin ダッシュボード** | 「テナント横断で利用状況をモニタしたい」 | `src/app/(dashboard)/admin/super/` | [SCREENS](../specification/SCREENS.md) |
+| **テナント管理** | 「テナント追加・削除・プラン変更」 | `src/services/super-admin.service.ts` | [TENANT_AND_BILLING Part 3](./TENANT_AND_BILLING.md) |
+| **利用量モニタ** | 「テナント別・featureUnit 別の API 呼出推移」 | `src/app/(dashboard)/admin/super/usage/` | [INCIDENT_RESPONSE §6.6](../operations/INCIDENT_RESPONSE.md) |
+| **DB 容量モニタ** | 「Supabase 無料枠到達リスクを早期検知」 | `src/services/db-capacity.service.ts` | [INCIDENT_RESPONSE §6.9](../operations/INCIDENT_RESPONSE.md) |
+| **データ移行 (外部 import)** | 「他システムから CSV で一括 import」 | `src/services/external-data-import.service.ts` | [DEPRECATED] — 旧 wizard 経路、現状は手動 SQL 推奨 |
+| **データエクスポート** | 「テナント解約時に全データを CSV で受け取れる」 | `src/services/data-export.service.ts` | — |
+
+---
+
+## 機能カタログの使い方 (顧客フィードバック受領時のフロー)
+
+1. **顧客の用語を辞書化** ([GLOSSARY.md](./GLOSSARY.md)): 顧客が言う「○○」が、本サービスのどのドメイン用語に対応するか確認
+2. **カテゴリ判定**: 上記 A〜G のどれに該当するか (複数該当もあり)
+3. **機能特定**: カテゴリ内のどの機能か (同名機能が複数カテゴリにまたがる場合あり)
+4. **影響ファイル列挙**: 「主な変更先ファイル」を起点に `grep` で関連箇所を網羅 ([CONTRIBUTING.md §5.1 横展開チェック](../../CONTRIBUTING.md))
+5. **設計判断の確認**: 関連する ADR があれば事前に読み、設計意図を守った修正にする ([docs/adr/](../adr/))
+
+---
+
+## カタログ更新ルール
+
+- 新規機能を追加した PR では本ファイルにも 1 行追加する (CONTRIBUTING.md §5.10 のチェックリスト対象)
+- 機能廃止時は **DEPRECATED** マークを付けて残す (履歴として参照されるため即削除しない)
+- 「主な変更先ファイル」は **代表的なエントリポイント** のみ。完全網羅は不要 (それは grep で行う)
+- カテゴリ分類が曖昧なら、複数カテゴリに重複記載してよい (発見性優先)
