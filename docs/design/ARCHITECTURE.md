@@ -188,3 +188,43 @@ src/
 
 ---
 
+## 4. リポジトリの主要ディレクトリ構造
+
+コードベースを最初に歩く際の俯瞰図。ファイル種別ごとに役割が明確に分離されている。
+
+| パス | 役割 |
+|---|---|
+| `src/app/(auth)/` | ログイン / パスワード設定 / MFA 画面(認証フロー) |
+| `src/app/(dashboard)/` | ログイン後の全画面(projects / tasks / gantt / estimates / risks / retrospectives / knowledge / memos / settings / admin) |
+| `src/app/api/` | REST API ルート(Next.js Route Handlers) |
+| `src/services/` | **ビジネスロジック**(DB 操作・認可・業務ルールはここに集約。テナント越境防止 + 二段階認可の中核、[ADR-0005](../adr/0005-rbac-two-stage-tenant-authorization.md)) |
+| `src/lib/` | 汎用ヘルパー(auth / db / permissions / validators) |
+| `src/components/` | 共通 UI コンポーネント(shadcn/ui ベース) |
+| `src/config/` | **業務的意味を持つ定数の集約場所**(マスタデータ / セキュリティ / validation / テーマ / ルーティング — ゼロハードコーディング原則の実装基盤) |
+| `prisma/` | DB schema(`schema.prisma`)+ migration 履歴(`migrations/`) |
+| `e2e/` | E2E テスト(Playwright spec + fixtures) |
+| `scripts/` | 補助スクリプト(CI / 開発 / 運用)— 役割別索引は [scripts/README.md](../../scripts/README.md) |
+| `.github/workflows/` | CI/CD ワークフロー(ci / e2e / security / dependency-review / docs-link-check / e2e-visual-baseline) |
+| `docs/` | プロジェクトドキュメント(役割別分割、入口は [docs/README.md](../README.md)) |
+
+### Service 層が中核な理由
+
+本サービスの認可ロジック(テナント越境防止)は **`src/services/` の各関数の引数 `viewerTenantId` の必須化と `where.tenantId` フィルタの強制** で実現されている。
+新規 Service 関数を追加する際は [ADR-0005](../adr/0005-rbac-two-stage-tenant-authorization.md) と [CONTRIBUTING.md §5.2](../../CONTRIBUTING.md) を必ず確認すること。
+
+### `src/config/` への定数集約
+
+業務的意味を持つ値(色 / 文字数上限 / パス / 認証定数等)は `src/config/` 配下に集約する。例:
+
+| ファイル | 集約対象 |
+|---|---|
+| `src/config/master-data.ts` | プロジェクト状態 / リスク種別 / 重要度 enum 等 |
+| `src/config/security.ts` | bcrypt cost / ログイン失敗ロック回数 / セッション有効期限 |
+| `src/config/validation.ts` | 文字数上限 / 入力長制約 |
+| `src/config/app-routes.ts` | 画面遷移パス |
+| `src/config/theme-definitions.ts` | テーマ色定義 |
+
+詳細: [docs/developer-guide/REFERENCE.md](../developer-guide/REFERENCE.md)(設計原則のリマインダ)
+
+---
+

@@ -15,7 +15,7 @@
 | 1 | このプロダクトは何で、なぜ存在するか | [../README.md](../README.md) → [vision/README.md](./vision/README.md) |
 | 2 | MVP の範囲・対象外 | [business/MVP_SCOPE.md](./business/MVP_SCOPE.md) |
 | 3 | ローカル環境を立ち上げる | [operations/SETUP_LOCAL.md](./operations/SETUP_LOCAL.md) |
-| 4 | 初めての変更〜PR 作成までを体験 | [beginner/README.md](./beginner/README.md) |
+| 4 | 環境構築から PR 作成・CI 確認まで | [../ONBOARDING.md](../ONBOARDING.md) |
 | 5 | コミット / PR の規約 | [../CONTRIBUTING.md](../CONTRIBUTING.md) |
 
 ### 1週目 (Week 1) — 「コード構造を把握し、簡単な機能追加ができる」
@@ -68,8 +68,9 @@
 | [roadmap/](./roadmap/) | ロードマップ・計画書 | リリース計画、提案エンジン v2 計画、過去の MVP 計画記録 |
 | [security/](./security/) | セキュリティ設計・運用 | 脅威モデル、セキュリティタスク、セキュリティ運用手順 |
 | [vision/](./vision/) | 思想・価値観 (抽象論) | 開発者本人の動機・目指す世界観・大切にする価値観・長期展望。意思決定のコンパス |
-| [beginner/](./beginner/) | 初心者向けガイド | 新規参入開発者向けセットアップ〜PR 作成までの一貫手順 |
 | [public/](./public/) | 外部ユーザ向け公開ドキュメント | 利用者（非エンジニア）向けの手順書。アカウント追加手順など。リリース時に外部公開する |
+
+> 新規参入者向けクイックスタートはリポジトリ直下の [ONBOARDING.md](../ONBOARDING.md) を参照(旧 `docs/beginner/README.md` は 2026-05-17 削除、内容は ONBOARDING.md と [design/ARCHITECTURE.md §4](./design/ARCHITECTURE.md) に統合)。
 
 ---
 
