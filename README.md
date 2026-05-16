@@ -144,9 +144,9 @@ pnpm dev                         # http://localhost:3000
 
 | 対象 | 入口 |
 |---|---|
-| **クローン直後の開発者** | [ONBOARDING.md](./ONBOARDING.md) — 30 分クイックスタート |
-| 初めて触る開発者 (詳細手順) | [docs/beginner/README.md](docs/beginner/README.md) — 環境構築から初めての PR 作成まで |
+| **クローン直後の開発者** | [ONBOARDING.md](./ONBOARDING.md) — 環境構築から PR 作成・CI 確認まで(自己完結) |
 | 段階的な深掘り (Day 1 / Week 1 / Month 1) | [docs/README.md](docs/README.md) — リーディングパス |
+| コードベースの歩き方(主要ディレクトリ) | [docs/design/ARCHITECTURE.md](docs/design/ARCHITECTURE.md) §4 |
 | 業務用語・機能の対応関係 | [docs/business/GLOSSARY.md](docs/business/GLOSSARY.md) / [docs/business/FEATURE_CATALOG.md](docs/business/FEATURE_CATALOG.md) |
 | 設計判断の根拠 (なぜこの設計か) | [docs/adr/](docs/adr/README.md) (ADR-0001〜0013) |
 | 運用・デプロイ・障害対応 | [docs/operations/](docs/operations/README.md) |

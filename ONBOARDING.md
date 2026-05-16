@@ -4,7 +4,7 @@
 >
 > - **背景・思想**: [README.md](./README.md) / [docs/vision/README.md](./docs/vision/README.md)
 > - **段階的な深掘り** (Day 1 / Week 1 / Month 1): [docs/README.md](./docs/README.md) のリーディングパス
-> - **より詳細な解説 (各ステップの背景)**: [docs/beginner/README.md](./docs/beginner/README.md)
+> - **コードベースの歩き方** (主要ディレクトリ構造): [docs/design/ARCHITECTURE.md](./docs/design/ARCHITECTURE.md) §4
 
 ---
 
