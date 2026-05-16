@@ -36,36 +36,64 @@ import { prisma } from '@/lib/db';
 //   旧実装は本ファイル内のローカル定義で `===` 文字列比較していたが、
 //   timingSafeEqual ベースの共通ヘルパへ移行。CRON_SECRET 最小長 32 文字も同時に強制。
 //
+// 2026-05-18 (PR feat/cron-execution-log): result type 化により失敗理由を診断可能に。
+//   cron-job.org 側の Bearer prefix 漏れ / secret 不一致を error.code で識別できる。
+//
 // 認可の 2 経路:
 //   1. 管理画面からの手動実行: セッション Cookie ありの admin ユーザ
-//   2. Vercel Cron: Authorization: Bearer <CRON_SECRET> ヘッダ
-//      (CRON_SECRET は Vercel Project 環境変数で設定)
-//   どちらかを通過すれば実行可能。不正呼び出し (匿名 POST) は 401 で拒否。
-import { isCronAuthorized } from '@/lib/cron-auth';
+//   2. cron-job.org 経由: Authorization: Bearer <CRON_SECRET> ヘッダ
+//      (CRON_SECRET は Netlify 環境変数で設定)
+//   どちらかを通過すれば実行可能。不正呼び出しは 401、Bearer の誤設定は専用 error code で 401。
+import { checkCronAuthorization } from '@/lib/cron-auth';
+import { withCronExecutionLogging } from '@/lib/cron-execution-log';
 
 export async function POST(req: NextRequest) {
-  // 経路 A: Vercel Cron (CRON_SECRET ヘッダ)
+  // 経路 A: cron 認可ヘッダ (CRON_SECRET)
   //   全テナント横断ロック (システム運用、意図的に tenantScope 指定なし)。
-  if (isCronAuthorized(req)) {
-    // cron 実行者は system (固定 UUID 相当)。監査ログは lockInactiveUsers 内で
-    // `userId=<最初の admin userId>` で残す。該当 admin が居なければ cron スキップ。
-    const firstAdmin = await prisma.user.findFirst({
-      where: { systemRole: 'admin', isActive: true, deletedAt: null },
-      select: { id: true },
+  const authResult = checkCronAuthorization(req);
+  if (authResult.ok) {
+    return withCronExecutionLogging('lock-inactive-users', req, async () => {
+      // cron 実行者は system (固定 UUID 相当)。監査ログは lockInactiveUsers 内で
+      // `userId=<最初の admin userId>` で残す。該当 admin が居なければ cron スキップ。
+      const firstAdmin = await prisma.user.findFirst({
+        where: { systemRole: 'admin', isActive: true, deletedAt: null },
+        select: { id: true },
+      });
+      if (!firstAdmin) {
+        const t = await getTranslations('message');
+        // withCronExecutionLogging が catch して failure ログを残せるよう throw する。
+        throw new Error(t('adminUserNotFoundCron'));
+      }
+      // tenantScope 省略 = 全テナント横断 (cron 仕様)
+      const result = await lockInactiveUsers(firstAdmin.id);
+      return { data: { source: 'cron', ...result } };
     });
-    if (!firstAdmin) {
-      const t = await getTranslations('message');
-      return NextResponse.json(
-        { error: { code: 'NO_ADMIN', message: t('adminUserNotFoundCron') } },
-        { status: 500 },
-      );
-    }
-    // tenantScope 省略 = 全テナント横断 (cron 仕様)
-    const result = await lockInactiveUsers(firstAdmin.id);
-    return NextResponse.json({ data: { source: 'cron', ...result } });
   }
 
-  // 経路 B: 管理画面からの手動実行
+  // 経路 A 失敗時: Bearer に関する誤設定を診断するため、reason が `server_secret_missing` /
+  //   `no_bearer_header` 以外なら専用 error code で 401 を返す (= cron-job.org 設定誤りを
+  //   レスポンス body から直接特定できる)。`no_bearer_header` は「Cookie 認証フォールバック対象」
+  //   なので経路 B に進む。
+  if (authResult.reason === 'invalid_bearer_format') {
+    return NextResponse.json(
+      { error: { code: 'CRON_BEARER_MALFORMED', message: 'Authorization header must start with "Bearer "' } },
+      { status: 401 },
+    );
+  }
+  if (authResult.reason === 'secret_mismatch') {
+    return NextResponse.json(
+      { error: { code: 'CRON_SECRET_MISMATCH', message: 'CRON_SECRET does not match' } },
+      { status: 401 },
+    );
+  }
+  if (authResult.reason === 'server_secret_missing') {
+    return NextResponse.json(
+      { error: { code: 'CRON_SECRET_MISCONFIGURED', message: 'CRON_SECRET env var is missing or too short on the server' } },
+      { status: 500 },
+    );
+  }
+
+  // 経路 B: 管理画面からの手動実行 (Authorization ヘッダ無し = no_bearer_header の場合のみ)
   //   2026-05-12 severity-1 修正: tenant admin (= systemRole='admin') は自テナント内のみ
   //   ロック可能。旧仕様は tenantScope 指定なしで `lockInactiveUsers(user.id)` を呼んでおり、
   //   tenant A の admin が tenant B のユーザを一斉ロックできるバグがあった。

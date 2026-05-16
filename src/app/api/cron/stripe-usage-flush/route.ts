@@ -27,6 +27,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { isCronAuthorized } from '@/lib/cron-auth';
+// 2026-05-18 (PR feat/cron-execution-log): 実行履歴を super_admin から確認可能にするためロギング組込。
+import { withCronExecutionLogging } from '@/lib/cron-execution-log';
 import { flushStripeUsageRecordQueue } from '@/services/stripe-usage-flush.service';
 
 export async function POST(req: NextRequest) {
@@ -37,8 +39,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = await flushStripeUsageRecordQueue();
-  return NextResponse.json({ data: { source: 'cron', ...result } });
+  return withCronExecutionLogging('stripe-usage-flush', req, async () => {
+    const result = await flushStripeUsageRecordQueue();
+    return { data: { source: 'cron', ...result } };
+  });
 }
 
 // 他の cron route 同様 GET は 405 で拒否 (= POST 一本化)

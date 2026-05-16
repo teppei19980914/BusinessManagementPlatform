@@ -112,6 +112,10 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   // 2026-05-11: /guide ロール判定。`userId` 単独で ProjectMember を引くため tenant 越境不可。
   //   user は単一 tenant にのみ所属するため、user-scoped クエリは構造的にテナント分離されている。
   'guide-role.service.ts',
+  // 2026-05-18 (PR feat/cron-execution-log): cron 実行履歴の集計・取得。
+  //   cron 自体が全テナント横断のシステム運用なのでテナント分離の概念が適用されない。
+  //   呼出側は super_admin role でガード済 (= テナント越境リスクは認可ロールで担保)。
+  'cron-history.service.ts',
 ]);
 
 /**

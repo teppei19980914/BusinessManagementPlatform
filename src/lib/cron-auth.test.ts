@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { NextRequest } from 'next/server';
-import { isCronAuthorized } from './cron-auth';
+import { isCronAuthorized, checkCronAuthorization } from './cron-auth';
 
 function makeReq(authHeader: string | null): NextRequest {
   return {
@@ -69,5 +69,84 @@ describe('isCronAuthorized', () => {
   it('プレフィックスのみ正しい (Bearer 抜け) は false', () => {
     process.env.CRON_SECRET = VALID_SECRET;
     expect(isCronAuthorized(makeReq(VALID_SECRET))).toBe(false);
+  });
+});
+
+// 2026-05-18 (PR feat/cron-execution-log): result type を返す新 API。
+//   route 側で「設定誤りの内訳」を診断できるようにするため、失敗理由を区別して返す。
+describe('checkCronAuthorization', () => {
+  let originalSecret: string | undefined;
+
+  beforeEach(() => {
+    originalSecret = process.env.CRON_SECRET;
+  });
+  afterEach(() => {
+    if (originalSecret === undefined) delete process.env.CRON_SECRET;
+    else process.env.CRON_SECRET = originalSecret;
+  });
+
+  it('server_secret_missing: CRON_SECRET 未設定', () => {
+    delete process.env.CRON_SECRET;
+    expect(checkCronAuthorization(makeReq(`Bearer ${VALID_SECRET}`))).toEqual({
+      ok: false,
+      reason: 'server_secret_missing',
+    });
+  });
+
+  it('server_secret_missing: CRON_SECRET が短すぎる', () => {
+    process.env.CRON_SECRET = 'short';
+    expect(checkCronAuthorization(makeReq('Bearer short'))).toEqual({
+      ok: false,
+      reason: 'server_secret_missing',
+    });
+  });
+
+  it('no_bearer_header: Authorization ヘッダなし', () => {
+    process.env.CRON_SECRET = VALID_SECRET;
+    expect(checkCronAuthorization(makeReq(null))).toEqual({
+      ok: false,
+      reason: 'no_bearer_header',
+    });
+  });
+
+  it('invalid_bearer_format: Bearer prefix が無い', () => {
+    // cron-job.org 設定で `Bearer ` プレフィックスを書き忘れた誤設定パターン
+    process.env.CRON_SECRET = VALID_SECRET;
+    expect(checkCronAuthorization(makeReq(VALID_SECRET))).toEqual({
+      ok: false,
+      reason: 'invalid_bearer_format',
+    });
+  });
+
+  it('invalid_bearer_format: 小文字 bearer は受理しない', () => {
+    process.env.CRON_SECRET = VALID_SECRET;
+    expect(checkCronAuthorization(makeReq(`bearer ${VALID_SECRET}`))).toEqual({
+      ok: false,
+      reason: 'invalid_bearer_format',
+    });
+  });
+
+  it('secret_mismatch: Bearer 形式 OK だが secret が違う (同長)', () => {
+    process.env.CRON_SECRET = VALID_SECRET;
+    const wrong = 'B'.repeat(40);
+    expect(checkCronAuthorization(makeReq(`Bearer ${wrong}`))).toEqual({
+      ok: false,
+      reason: 'secret_mismatch',
+    });
+  });
+
+  it('secret_mismatch: Bearer 形式 OK だが長さが違う', () => {
+    process.env.CRON_SECRET = VALID_SECRET;
+    expect(checkCronAuthorization(makeReq('Bearer short'))).toEqual({
+      ok: false,
+      reason: 'secret_mismatch',
+    });
+  });
+
+  it('ok=true: 完全一致', () => {
+    process.env.CRON_SECRET = VALID_SECRET;
+    expect(checkCronAuthorization(makeReq(`Bearer ${VALID_SECRET}`))).toEqual({
+      ok: true,
+    });
   });
 });

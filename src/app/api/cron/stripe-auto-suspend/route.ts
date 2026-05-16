@@ -25,6 +25,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { isCronAuthorized } from '@/lib/cron-auth';
+// 2026-05-18 (PR feat/cron-execution-log): 実行履歴を super_admin から確認可能にするためロギング組込。
+import { withCronExecutionLogging } from '@/lib/cron-execution-log';
 import { autoSuspendDelinquentTenants } from '@/services/stripe-auto-suspend.service';
 
 export async function POST(req: NextRequest) {
@@ -35,8 +37,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = await autoSuspendDelinquentTenants();
-  return NextResponse.json({ data: { source: 'cron', ...result } });
+  return withCronExecutionLogging('stripe-auto-suspend', req, async () => {
+    const result = await autoSuspendDelinquentTenants();
+    return { data: { source: 'cron', ...result } };
+  });
 }
 
 export async function GET() {
