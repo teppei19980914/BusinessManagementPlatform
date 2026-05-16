@@ -77,25 +77,41 @@ function getAuthSecret(): string {
   return secret;
 }
 
+/** 失敗種別。診断用に呼出側で識別できるようにする。 */
+export type ReissueFailureReason =
+  | 'cookie_missing'   // リクエストにセッショントークン cookie が無い
+  | 'decode_failed'    // cookie の中身を decode できなかった (secret 不一致 / 期限切れ / 改竄等)
+  | 'encode_failed';   // 新 JWT の encode に失敗 (NEXTAUTH_SECRET 未設定等の致命的状態)
+
+export type ReissueResult =
+  | { ok: true }
+  | { ok: false; reason: ReissueFailureReason };
+
 /**
  * リクエストから現在の JWT cookie を取り出し、指定の patch を適用して新しい cookie 値で
  * レスポンスに Set-Cookie する。
  *
- * 失敗ケース (cookie 未存在 / decode 失敗) では Set-Cookie を行わず `false` を返す。
- * 呼出側は通常 200 を返しつつ、ログ等で警告できる (UX 影響は次回ログインで自然回復)。
+ * 失敗時は **theme cookie のように silent fallback はしない**。MFA / TZ / Locale はミドルウェア
+ * や SSR が JWT を直接読むため、cookie 更新失敗を黙殺すると「クライアントは成功と思っているが
+ * 実態は古い JWT のまま」というユーザ体験上致命的なループに陥る (PR #396 後の本番で実観測)。
+ * 呼出側は本関数の戻り値を必ず check し、失敗時は 5xx を返してクライアントに通知すること。
  *
  * @param req   現在のリクエスト (cookies からセッショントークンを読む)
  * @param res   patch 後の Set-Cookie を追加するレスポンス (NextResponse)
  * @param patch 適用する claim
- * @returns 成功時 true / cookie 取得 or decode 失敗時 false
  */
 export async function reissueAuthJwtOnResponse(
   req: NextRequest,
   res: NextResponse,
   patch: JwtReissuePatch,
-): Promise<boolean> {
+): Promise<ReissueResult> {
   const raw = req.cookies.get(AUTH_SESSION_COOKIE_NAME)?.value;
-  if (!raw) return false;
+  if (!raw) {
+    logReissueFailure('cookie_missing', {
+      availableCookieNames: req.cookies.getAll().map((c) => c.name),
+    });
+    return { ok: false, reason: 'cookie_missing' };
+  }
 
   const secret = getAuthSecret();
   let decoded;
@@ -105,10 +121,22 @@ export async function reissueAuthJwtOnResponse(
       secret,
       salt: AUTH_SESSION_COOKIE_NAME,
     });
-  } catch {
-    return false;
+  } catch (e) {
+    logReissueFailure('decode_failed', {
+      error: e instanceof Error ? e.message : String(e),
+      cookieLength: raw.length,
+      cookieNameUsed: AUTH_SESSION_COOKIE_NAME,
+    });
+    return { ok: false, reason: 'decode_failed' };
   }
-  if (!decoded) return false;
+  if (!decoded) {
+    logReissueFailure('decode_failed', {
+      reason: 'decode_returned_null',
+      cookieLength: raw.length,
+      cookieNameUsed: AUTH_SESSION_COOKIE_NAME,
+    });
+    return { ok: false, reason: 'decode_failed' };
+  }
 
   // 許可された claim だけマージ (改竄防止: tenantId / id 等は触らせない)
   const nextToken = { ...decoded };
@@ -122,13 +150,34 @@ export async function reissueAuthJwtOnResponse(
     nextToken.locale = patch.locale;
   }
 
-  const newJwt = await encode({
-    token: nextToken,
-    secret,
-    salt: AUTH_SESSION_COOKIE_NAME,
-    maxAge: SESSION_JWT_MAX_AGE_SEC,
-  });
+  let newJwt: string;
+  try {
+    newJwt = await encode({
+      token: nextToken,
+      secret,
+      salt: AUTH_SESSION_COOKIE_NAME,
+      maxAge: SESSION_JWT_MAX_AGE_SEC,
+    });
+  } catch (e) {
+    logReissueFailure('encode_failed', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return { ok: false, reason: 'encode_failed' };
+  }
 
   res.cookies.set(AUTH_SESSION_COOKIE_NAME, newJwt, authSessionCookieOptions());
-  return true;
+  return { ok: true };
+}
+
+/** Netlify Functions logs に出る形で診断ログを出す。本番でも消さない (頻度は極小)。 */
+function logReissueFailure(
+  reason: ReissueFailureReason,
+  detail: Record<string, unknown>,
+): void {
+  // eslint-disable-next-line no-console
+  console.error('[auth-jwt-helper] reissue_failed', {
+    reason,
+    nodeEnv: process.env.NODE_ENV,
+    ...detail,
+  });
 }

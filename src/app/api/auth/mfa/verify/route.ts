@@ -84,7 +84,24 @@ export async function POST(req: NextRequest) {
   //   outcome.kind === 'success' でのみ到達。「validation 結果」が gate であり、
   //   user input は直接的には gate していない (CodeQL の user-controlled bypass 判定対象外)。
   const successResponse = NextResponse.json({ data: { success: true } });
-  await reissueAuthJwtOnResponse(req, successResponse, { mfaVerified: true });
+  const reissueResult = await reissueAuthJwtOnResponse(req, successResponse, {
+    mfaVerified: true,
+  });
+  if (!reissueResult.ok) {
+    // 2026-05-16 観測: reissue サイレント失敗 → クライアントは成功と判断して遷移 →
+    // middleware が旧 JWT (mfaVerified=false) を読み /login/mfa にリダイレクト → 永久ループ
+    // 失敗を明示的に 500 で通知することでクライアントが retry / 再ログインを判断できるようにする。
+    return NextResponse.json(
+      {
+        error: {
+          code: 'MFA_SESSION_REFRESH_FAILED',
+          message: t('mfaSessionRefreshFailed'),
+          reason: reissueResult.reason,
+        },
+      },
+      { status: 500 },
+    );
+  }
   return successResponse;
 }
 

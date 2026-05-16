@@ -227,6 +227,7 @@
     "mfaLockedDueToFailures": "認証コードの連続失敗によりロックされています",
     "mfaCodeInvalid": "コードが正しくありません",
     "mfaRecoveryCodeInvalid": "リカバリーコードが正しくありません",
+    "mfaSessionRefreshFailed": "MFA 検証は成功しましたが、セッションの更新に失敗しました。お手数ですが一度ログアウトして再度ログインしてください。問題が続く場合は管理者にお問い合わせください。",
     "cannotChangeOwnRole": "自分自身のロールは変更できません",
     "cannotDeleteSelf": "自分自身は削除できません",
     "userNotFoundOrDeleted": "対象ユーザが見つかりません (既に削除済みの可能性)",

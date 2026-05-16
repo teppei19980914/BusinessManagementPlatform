@@ -69,9 +69,15 @@ export async function PATCH(req: NextRequest) {
   // fix/jwt-resign-for-netlify: 呼出ユーザの JWT を再署名し、即時反映を保証する。
   // (旧仕様は useSession().update() に依存していたが、Netlify で Set-Cookie が反映されない事象あり)
   const response = NextResponse.json({ data: result });
-  await reissueAuthJwtOnResponse(req, response, {
+  const reissueResult = await reissueAuthJwtOnResponse(req, response, {
     timezone: result.timezone,
     locale: result.locale,
   });
+  if (!reissueResult.ok) {
+    // 2026-05-16 観測: reissue サイレント失敗時の対応。i18n は MFA ほどクリティカルではない
+    // (= 古い locale 表示で機能継続可能) ため DB 更新は成功扱いで返すが、診断のため警告 header を追加。
+    // 呼出側はこの header の有無で「次回ログインまでクライアント表示が更新されない」ことを警告できる。
+    response.headers.set('X-Jwt-Refresh-Failed', reissueResult.reason);
+  }
   return response;
 }

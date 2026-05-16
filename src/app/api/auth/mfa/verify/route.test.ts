@@ -51,7 +51,7 @@ vi.mock('@/lib/auth-jwt-helper', () => ({
   reissueAuthJwtOnResponse: vi.fn(async (_req, res, _patch) => {
     // テスト用に固定値の Set-Cookie を付けることで、ルート側が helper を呼び出したことを検証する
     res.cookies.set('__test-reissued', 'yes', { path: '/' });
-    return true;
+    return { ok: true };
   }),
 }));
 
@@ -164,5 +164,18 @@ describe('POST /api/auth/mfa/verify', () => {
     const res = await POST(makeReq({ userId: USER_ID }));
     expect(res.status).toBe(400);
     expect(reissueAuthJwtOnResponse).not.toHaveBeenCalled();
+  });
+
+  it('★ TOTP 検証成功でも reissue 失敗時は 500 + MFA_SESSION_REFRESH_FAILED を返す (永久ループ防止)', async () => {
+    vi.mocked(verifyTotp).mockResolvedValue(true);
+    vi.mocked(reissueAuthJwtOnResponse).mockResolvedValueOnce({
+      ok: false,
+      reason: 'decode_failed',
+    });
+    const res = await POST(makeReq({ userId: USER_ID, code: '123456' }));
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error?.code).toBe('MFA_SESSION_REFRESH_FAILED');
+    expect(body.error?.reason).toBe('decode_failed');
   });
 });
