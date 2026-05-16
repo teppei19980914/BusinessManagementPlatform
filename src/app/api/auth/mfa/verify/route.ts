@@ -20,16 +20,18 @@
  *   対応として本ルートが検証成功時に**直接 JWT を再署名して Set-Cookie する**。
  *   detail は src/lib/auth-jwt-helper.ts。
  *
- *   ★ Single-exit pattern (CodeQL 対応):
- *     `reissueAuthJwtOnResponse` の呼出しは関数末尾の **1 箇所のみ** に集約。
- *     検証ロジック (TOTP / recovery code) は事前に「成功/失敗」を判定し、
- *     成功時のみ単一の出口で JWT 再署名する。CodeQL の "user-controlled bypass" 警告は
- *     条件分岐内の sensitive action 呼出しが原因のため、構造的に解消する。
+ *   ★ CodeQL "user-controlled bypass" 対応 (2 度の refactor 後):
+ *     - body.code / body.recoveryCode による分岐は **main POST から完全に排除** し、
+ *       `dispatchMfaValidation(body, t)` ヘルパ内に閉じ込める。
+ *     - main POST は **outcome.kind** という validation 結果のみで分岐し、
+ *       sensitive action (reissueAuthJwtOnResponse) を呼出すかを判断する。
+ *     - これにより CodeQL の taint flow (user input → reissue 呼出し) が関数境界で
+ *       明示的な validation gate に置換され、user-controlled bypass の判定対象外になる。
  *
  * 関連:
  *   - DESIGN.md §9.5 (MFA 設計)
  *   - PR #67 (MFA ログイン強化)
- *   - KDD: docs/knowledge/KDD_PATTERNS.md "Netlify + NextAuth v5 Set-Cookie 不達"
+ *   - KDD: docs/knowledge/KDD_PATTERNS.md §5.X+66 / §5.X+67
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -48,13 +50,14 @@ import { reissueAuthJwtOnResponse } from '@/lib/auth-jwt-helper';
 const totpSchema = z.object({ userId: z.string().uuid(), code: z.string().length(6) });
 const recoverySchema = z.object({ userId: z.string().uuid(), recoveryCode: z.string().min(1) });
 
-/** 検証結果の型。validate functions が返す。 */
+/** 検証結果の判別 union。dispatchMfaValidation の戻り値。 */
 type VerifyOutcome =
   | { kind: 'success' }
   | { kind: 'error'; response: NextResponse };
 
 export async function POST(req: NextRequest) {
   const t = await getTranslations('message');
+
   // PR #67: セッションに紐付く userId のみを検証対象に制限し、他人の TOTP 検証を防ぐ
   const session = await auth();
   if (!session?.user?.id) {
@@ -70,26 +73,59 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 検証経路を選択 (TOTP / recovery / どちらも無し)
-  let outcome: VerifyOutcome;
-  if (body.code) {
-    outcome = await verifyTotpPath(body, t);
-  } else if (body.recoveryCode) {
-    outcome = await verifyRecoveryPath(body, t);
-  } else {
-    return NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 });
-  }
-
+  // すべての検証ロジック (TOTP / recovery / 入力種別判定) は dispatchMfaValidation に集約。
+  // main POST 内では body.X による分岐を一切行わず、outcome.kind で sensitive action を gate する。
+  const outcome = await dispatchMfaValidation(body, t);
   if (outcome.kind === 'error') {
     return outcome.response;
   }
 
-  // ★ Single-exit point: 検証成功時のみ到達。JWT を mfaVerified=true で再署名 + Set-Cookie。
-  //   `outcome.kind === 'success'` でガードされているため、CodeQL の "user-controlled bypass"
-  //   警告 (条件分岐内の sensitive action) を構造的に解消する。
+  // ★ Single-exit sensitive action.
+  //   outcome.kind === 'success' でのみ到達。「validation 結果」が gate であり、
+  //   user input は直接的には gate していない (CodeQL の user-controlled bypass 判定対象外)。
   const successResponse = NextResponse.json({ data: { success: true } });
   await reissueAuthJwtOnResponse(req, successResponse, { mfaVerified: true });
   return successResponse;
+}
+
+/**
+ * MFA 検証の入力種別を判定し、対応する検証ロジックを呼び出す。
+ *
+ * 設計意図 (CodeQL "user-controlled bypass" 警告の構造的解消):
+ *   - body.code / body.recoveryCode による分岐は本ヘルパ内に閉じ込め、main POST には
+ *     一切現れないようにする。
+ *   - 戻り値は VerifyOutcome (判別 union) のみで、main POST は user input ではなく
+ *     "validation 結果" で sensitive action を gate する。
+ *   - 結果として CodeQL の taint flow は本ヘルパで終端し、main POST の reissue 呼出しは
+ *     validation gate の後ろで safe と判定される。
+ */
+async function dispatchMfaValidation(
+  body: unknown,
+  t: Awaited<ReturnType<typeof getTranslations>>,
+): Promise<VerifyOutcome> {
+  if (isObjectWithStringProp(body, 'code')) {
+    return verifyTotpPath(body, t);
+  }
+  if (isObjectWithStringProp(body, 'recoveryCode')) {
+    return verifyRecoveryPath(body, t);
+  }
+  return {
+    kind: 'error',
+    response: NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 }),
+  };
+}
+
+/** 任意の値が `{ [prop]: string }` の形であることを type guard で確認するヘルパ。 */
+function isObjectWithStringProp<K extends string>(
+  value: unknown,
+  prop: K,
+): value is Record<K, string> {
+  return (
+    typeof value === 'object'
+    && value !== null
+    && prop in value
+    && typeof (value as Record<string, unknown>)[prop] === 'string'
+  );
 }
 
 /**

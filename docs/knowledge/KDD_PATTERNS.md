@@ -9545,6 +9545,8 @@ if (!hasAnyContent) {
 - 旧コードは `route.ts` が `JSON 応答のみ` (sensitive action なし) で、CodeQL は条件分岐をスルーしていた。
 - PR #396 で「条件分岐内に Set-Cookie する `reissueAuthJwtOnResponse` 呼出しを追加」した結果、CodeQL は user-input `body.code` / `body.recoveryCode` が sensitive action 経路を分岐させていると判定。
 - **`verifyTotp` / `compare` による validation gate を CodeQL は認識しない**。コードの「validation 後の sensitive action」というセマンティクスは、構造的に「validation 結果 (boolean / outcome 型) でガード」する形に書き換えないと CodeQL に伝わらない。
+- **★ 1 度目の single-exit refactor では不十分**: 検証関数 (`verifyTotpPath` / `verifyRecoveryPath`) を抽出して reissue を関数末尾の 1 箇所に集約しても、**main 関数内に `if (body.code)` / `else if (body.recoveryCode)` の分岐が残っていれば** CodeQL は依然として user-controlled bypass と判定する (PR #396 で実体験、line 75/77 で再警告)。
+- **2 度目の refactor (完全分離) で解消**: body.X による分岐を **main 関数から完全に排除** し、`dispatchMfaValidation(body, t)` などのヘルパ関数内に閉じ込める。main 関数は `outcome.kind === 'error'` という validation 結果のみで分岐させる。これにより CodeQL の taint flow が関数境界で validation gate に置換され、警告が消える。
 
 ### 推奨対応
 
@@ -9559,7 +9561,29 @@ if (!hasAnyContent) {
   - 検証ロジックを `verifyXxxPath(body): Promise<VerifyOutcome>` のような関数に分離
   - 戻り値型を `{ kind: 'success' } | { kind: 'error'; response }` の判別 union に
   - sensitive action 呼出しは関数末尾の **1 箇所**に集約し、`outcome.kind === 'success'` でガード
+  - **★ さらに**: `if (body.X)` / `else if (body.Y)` の分岐自体も `dispatchValidation(body)` のような**ヘルパ関数に完全分離**する。main 関数からは user input に基づく分岐を一切見せず、validation 結果 (kind: 'success' / 'error') だけで sensitive action を gate する。これにより CodeQL の interprocedural taint analysis が関数境界で停止し警告が消える。
 - ローカルでも CodeQL を簡易に再現したい場合: `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` で PR 起票後の警告を確認 (push 後 1-2 分)
+
+#### refactor で消えない場合の最終手段: alert の dismissal
+
+CodeQL は interprocedural taint を追跡するため、ヘルパ関数への分離でも追跡しきれる場合がある。3 度目の refactor でも警告が残るようなら **GitHub Security タブから dismissal**:
+
+```bash
+# PR の CodeQL alert 番号取得
+gh api repos/<owner>/<repo>/code-scanning/alerts \
+  --jq '.[] | select(.most_recent_instance.ref | endswith("<branch>")) | {n: .number, rule: .rule.id, path: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line}'
+
+# False positive として dismiss
+gh api repos/<owner>/<repo>/code-scanning/alerts/<N> -X PATCH \
+  -f state=dismissed \
+  -f dismissed_reason=false_positive \
+  -f dismissed_comment="<理由を明記。例: 検証ゲート (verifyTotp / bcrypt.compare) が ...>"
+```
+
+Dismissal の使用条件:
+- **真の false positive のみ**: 実コードが secure であることを別途レビューで確認済であること
+- **理由を必ず明記**: 将来のレビュー者・監査者が判断を追跡できるように
+- **横断罠**: 同じパターンが repo の別箇所で再発する可能性。検出時の対応手順を本 KDD に残しておく
 
 #### 発生後の対処
 
