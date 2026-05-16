@@ -9663,3 +9663,23 @@ PR #396 で導入した `reissueAuthJwtOnResponse(req, res, patch)` の初版は
 
 - §5.X+66: 本件の前提 (Netlify + NextAuth Set-Cookie 不達)。本エントリは「サーバが silent failure を許してはいけないケース」を整理
 - §5.X+58: CI 専用ガードの罠。本件は「ローカル単体テストで通るが本番でループする」という別種の "CI と本番の乖離"
+
+### 後日判明した真因 (PR #398 追跡調査 / 2026-05-18)
+
+PR #397 のサイレント失敗→明示通知化の後、Netlify Functions logs で実観測した結果、reissue 失敗は **`decode_failed` が原因** だった。さらに掘ると **cookie 名の auto-detect が NextAuth の判定と食い違っていた** ことが根本原因:
+
+| 主体 | 「secure cookie かどうか」の判定方法 |
+|---|---|
+| **NextAuth (`@auth/core`)** | `config.useSecureCookies ?? url.protocol === "https:"` (URL protocol) |
+| **本ヘルパ (旧実装)** | `process.env.NODE_ENV === 'production'` |
+
+Netlify Functions runtime で `NODE_ENV` が `'production'` でないケースがあり、両者の判定が食い違って:
+
+- NextAuth: signing 時に salt = `__Secure-authjs.session-token` (URL が https のため)
+- 本ヘルパ: decode 時に salt = `authjs.session-token` (NODE_ENV != production)
+
+→ HKDF の派生鍵が異なる → kid mismatch で "no matching decryption secret" エラー → decode 失敗 → MFA ループ。
+
+**修正**: 本ヘルパを **request の cookies に実在する名前を auto-detect** する方式に変更 (`detectAuthCookieName`)。検出した名前を decode/encode の salt と Set-Cookie の name の双方に使用することで、NextAuth がどちらの prefix で署名していても整合する。
+
+**一般則**: NextAuth と連携するコードで「secure context かどうか」を独自判定してはいけない。NextAuth の判定基準 (URL protocol) と環境変数 (`NODE_ENV`) は runtime によって食い違う可能性がある。実在 cookie 名 / NextAuth の `getToken()` API などで「NextAuth が決めた事実」を参照する。
