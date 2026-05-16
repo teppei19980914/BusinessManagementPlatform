@@ -20,9 +20,14 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-// stripe lib モック (getSystemUserId)
+// stripe lib モック (getSystemUserId / isStripeEnabled)
+// 2026-05-18 (fix/cron-public-paths-and-stripe-disabled-guard):
+//   既存テストは Stripe 有効 (= isStripeEnabled=true) 前提で動作確認しているので default は true。
+//   Stripe 無効時の no-op 挙動は専用 describe ブロックで isStripeEnabledMock を false に切替えて検証。
+const isStripeEnabledMock = vi.fn(() => true);
 vi.mock('@/lib/stripe', () => ({
   getSystemUserId: () => 'system-user-uuid',
+  isStripeEnabled: () => isStripeEnabledMock(),
 }));
 
 // super-admin.service モック (suspendTenant)
@@ -40,6 +45,8 @@ const TENANT_B = '00000000-0000-0000-0000-00000000000b';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 既存テストは Stripe 有効前提なので明示的に true に戻す
+  isStripeEnabledMock.mockReturnValue(true);
 });
 
 describe('autoSuspendDelinquentTenants', () => {
@@ -52,6 +59,25 @@ describe('autoSuspendDelinquentTenants', () => {
       skipped: 0,
       errors: [],
     });
+  });
+
+  // 2026-05-18 (fix/cron-public-paths-and-stripe-disabled-guard):
+  //   Netlify 環境で STRIPE_ENABLED 未設定 + SYSTEM_USER_ID 未設定だと cron が 500 になっていた。
+  //   兄弟関数 `flushStripeUsageRecordQueue` と整合性を取り、Stripe 無効時は no-op で早期 return する。
+  it('STRIPE_ENABLED=false なら DB に触れず skippedStripeDisabled=true で返却', async () => {
+    isStripeEnabledMock.mockReturnValue(false);
+
+    const result = await autoSuspendDelinquentTenants();
+
+    expect(result).toEqual({
+      candidates: 0,
+      suspended: 0,
+      skipped: 0,
+      errors: [],
+      skippedStripeDisabled: true,
+    });
+    expect(prisma.tenant.findMany).not.toHaveBeenCalled();
+    expect(mockSuspendTenant).not.toHaveBeenCalled();
   });
 
   it('成功時: suspendTenant 呼出 + autoSuspendScheduledAt クリア', async () => {

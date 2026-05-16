@@ -9697,7 +9697,7 @@ Set-Cookie [2]: ...; Path=/; Expires=...; HttpOnly; Secure; SameSite=Strict  ←
 
 ブラウザは **同名 cookie の最後の Set-Cookie を採用**する仕様のため、2 つ目 (NextAuth 由来) が勝ち、`mfaVerified=false` のまま記録される。次のリクエストで middleware が再び /login/mfa にリダイレクト → 永久ループ。
 
-i18n route (`/api/tenants/me/i18n`) では同じ helper を使っていても発生しなかった = NextAuth の auto-refresh は **`/api/auth/*` 配下にしか作用しない** という分岐挙動。
+**[2026-05-18 §5.X+71 で訂正]**: 当初は「NextAuth の auto-refresh は `/api/auth/*` 配下にしか作用しない」と書いていたが、実際は **matcher 対象の全 protected path で発生する**。PR #401 で `/api/tenants/me/i18n` でも同じ事象 (EN→JA 切替が UI に反映されない) を実観測。詳細は §5.X+71 を参照。
 
 ### なぜ発生するか
 
@@ -9750,3 +9750,141 @@ MFA verify は「これからログインしようとしているユーザ」が
 - §5.X+66: Netlify + NextAuth Set-Cookie 不達 (元問題)
 - §5.X+68: helper の silent failure を fail-loud に変更 (本件の発覚に寄与)
 - §5.X+67: PR レビューで E2E / CodeQL が顕在化する罠 (同型の "本番でしか分からない" 罠)
+
+---
+
+## 5.X+70 **外部 cron 移行で middleware の `PUBLIC_PATHS` 同期 + Stripe disabled 時の no-op ガードを忘れると本番 cron が 302/500 で全滅する (Vercel→Netlify 移行で実体験 / 2026-05-18)**
+
+### TL;DR
+
+- Vercel Cron (内部呼出) → cron-job.org (外部 HTTP) 移行で 7 件中 **4 件が失敗**した
+  - **3 件は 302 → `/login`**: `/api/cron/daily-notifications` / `/daily-usage-aggregation` / `/tenant-monthly-reset` が `PUBLIC_PATHS` 未登録のまま放置され、middleware の auth check が `LOGIN_PATH` に redirect
+  - **1 件は 500**: `/api/cron/stripe-auto-suspend` が `getSystemUserId()` を呼ぶが、Netlify env に `SYSTEM_USER_ID` 未設定で throw。兄弟関数 `flushStripeUsageRecordQueue` には `isStripeEnabled()` ガードがあったが本関数だけ漏れていた
+- **教訓**: 「外部 HTTP に晒される cron route」と「環境依存 env を内部呼出する service」は移行/有効化時に専用の checklist が無いと必ず漏れる
+
+### 何が起きたか (時系列)
+
+1. PR #394 で Vercel → Netlify 移行、cron は cron-job.org で外部 HTTP 化
+2. 7 件の cron を順次設定し test run 実施
+3. 結果:
+   - ✅ `health-check` (`/api/health` は PUBLIC_PATHS 登録済) / `lock-inactive-users` / `stripe-usage-flush` (= isStripeEnabled() ガード有 → no-op 200)
+   - ❌ 302 → `/login`: `daily-notifications` / `daily-usage-aggregation` / `tenant-monthly-reset` (`PUBLIC_PATHS` 未登録)
+   - ❌ 500: `stripe-auto-suspend` (Stripe 無効環境で `getSystemUserId()` throw)
+
+### 根本原因
+
+#### 不具合 A: PUBLIC_PATHS 同期漏れ
+
+[`src/config/routes.ts`](../../src/config/routes.ts) の `PUBLIC_PATHS` は「未認証で middleware 通過できるパス」一覧。Vercel Cron 時代は内部呼出 (= request に session cookie が付かないが Vercel-internal な header で別経路許可) で動いていた path が、外部 HTTP では通常の保護 path 扱いで [`auth.config.ts authorized`](../../src/lib/auth.config.ts#L69) の `LOGIN_PATH` redirect に乗ってしまう。
+
+Stripe 系 2 件 (`stripe-usage-flush` / `stripe-auto-suspend`) は PR-S6 (2026-05-14) で外部 HTTP を想定して `PUBLIC_PATHS` に登録されていたが、それより古い 3 件 (`daily-notifications` / `daily-usage-aggregation` / `tenant-monthly-reset`) は登録されないまま放置されていた。
+
+Vercel 時代は通っていた → 移行作業中もテストで気付かなかった → cron-job.org の test run で初めて顕在化。
+
+#### 不具合 B: Stripe disabled 時の cron no-op ガード漏れ
+
+[`autoSuspendDelinquentTenants`](../../src/services/stripe-auto-suspend.service.ts) は冒頭で `isStripeEnabled()` をチェックせず、いきなり `getSystemUserId()` を呼ぶ。Netlify env に `STRIPE_ENABLED` も `SYSTEM_USER_ID` も未設定 (= 6/1 MVP リリースは Stripe 無効スタート) のため、`getSystemUserId()` が `throw new Error('SYSTEM_USER_ID is not configured...')` → 500。
+
+兄弟関数 [`flushStripeUsageRecordQueue`](../../src/services/stripe-usage-flush.service.ts#L76) は同じ前提下でも `if (!isStripeEnabled()) return { ..., skipped: true }` で no-op 早期 return している。レビュー時に両関数を見比べていれば気付けたが、PR-S6 で本関数だけガードが入らないままマージされていた。
+
+### 修正
+
+```typescript
+// src/config/routes.ts (PUBLIC_PATHS)
+'/api/cron/daily-notifications',         // 追加
+'/api/cron/daily-usage-aggregation',     // 追加
+'/api/cron/tenant-monthly-reset',        // 追加
+
+// src/services/stripe-auto-suspend.service.ts
+export async function autoSuspendDelinquentTenants(): Promise<AutoSuspendResult> {
+  if (!isStripeEnabled()) {
+    return { candidates: 0, suspended: 0, skipped: 0, errors: [], skippedStripeDisabled: true };
+  }
+  // ... 既存処理
+}
+```
+
+### 再発防止ルール
+
+1. **外部 HTTP 化される cron route を追加/移行する際の Checklist**
+   - [ ] `PUBLIC_PATHS` (`src/config/routes.ts`) に登録したか
+   - [ ] route 側で `isCronAuthorized()` (`Authorization: Bearer <CRON_SECRET>` 定数時間比較) を呼んでいるか
+   - [ ] cron-job.org / 移行先 cron 管理画面で test run して **200 OK** を確認したか
+   - [ ] 外部からの POST/GET method を route の `export` と一致させたか
+   - [ ] 詳細手順は [`docs/operations/DEPLOYMENT.md §6`](../operations/DEPLOYMENT.md) を参照
+
+2. **環境依存 env を要求する service を cron から呼ぶ際の Checklist**
+   - [ ] その env が未設定の環境 (= dev / 機能 disabled 状態) でも throw しないか
+   - [ ] feature flag (`isStripeEnabled()` 等) で早期 return しているか
+   - [ ] 兄弟関数 (= 同じ env を読む他関数) のガードと整合しているか (= grep `getSystemUserId\|isStripeEnabled` で横展開チェック)
+
+3. **後付け検出 (= 横展開 grep の自動化)**
+
+   ```bash
+   # 「PUBLIC_PATHS に未登録の cron route があれば fail」を CI に組み込む候補
+   pnpm tsx scripts/check-cron-public-paths.ts  # 未整備、TODO
+   ```
+
+### 過去の関連 KDD
+
+- §5.X+58: 新規 route/page を追加した時の `pnpm e2e:coverage-check` ガード漏れ (= 同型の「設定ファイル同期漏れ」)
+- §5.X+66: Netlify 移行で顕在化したクラスの罠 (本件もその一種)
+- §5.X+69: middleware matcher の除外漏れ (= 同じ routes 系設定の同期問題)
+
+---
+
+## 5.X+71 **`Set-Cookie` で JWT を再署名するカスタム route は `/api/auth/*` 配下でなくとも middleware matcher から除外する ─ NextAuth `auth()` wrapper は protected な全 path で session refresh を打ち、我々の Set-Cookie を上書きする (PR #401 で実体験 / 2026-05-18)**
+
+### TL;DR
+
+- §5.X+69 で `/api/auth/mfa/verify` を middleware から除外したが、**同じ罠が `/api/tenants/me/i18n` でも顕在化**した
+- 症状: テナント設定画面で言語を EN → JA に切替 → API は 200 を返すが UI は EN のまま残る
+- 原因: NextAuth `auth()` middleware wrapper は **`/api/auth/*` 配下に限らず matcher 対象の全 path で** session refresh の Set-Cookie を打つ。route handler 側で `reissueAuthJwtOnResponse` した直後にこの refresh で旧 locale 値の cookie が上書きされる (= dual Set-Cookie の last-write-wins)
+- 対策: JWT 再署名する route は **`/api/auth/*` の内外を問わず matcher から除外**する。route 側は自前で `getAuthenticatedUser` 等の認可チェックを行う前提
+
+### 何が起きたか
+
+1. PR #395 で theme cookie 分離、PR #396 で MFA/TZ/Locale を `reissueAuthJwtOnResponse` ヘルパに統一
+2. PR #400 で `/api/auth/mfa/verify` を middleware 除外、MFA verify はループ解消
+3. しかし `/api/tenants/me/i18n` は `/api/auth/*` ではないので除外漏れ → 同じ症状 (UI に新 locale が反映されない) が残存
+4. PR #401 で `/api/tenants/me/i18n` も matcher 除外、解消
+
+### 根本原因 (§5.X+69 の補足)
+
+§5.X+69 では「`/api/auth/*` 配下で発生」と限定して書いていたが、実際は NextAuth v5 の `auth()` middleware wrapper は **matcher 対象の全 protected path で** 同じ動作をする (session のスライディング更新)。`/api/auth/*` の話に限らない。
+
+つまり「JWT 内 claim を route 側で再署名する」という設計を取る限り、**当該 route は middleware matcher の除外リストに追加する** ことが必須要件になる。
+
+### 修正
+
+```typescript
+// src/middleware.ts
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify|api/tenants/me/i18n).*)'],
+  // 新規追加: api/tenants/me/i18n
+};
+```
+
+### 再発防止ルール
+
+1. **JWT 再署名 (`reissueAuthJwtOnResponse`) を呼ぶ route を追加したら、middleware matcher の除外リストにも同 path を追加する**
+   - チェック方法: `grep -rn "reissueAuthJwtOnResponse" src/app/api` の結果と middleware matcher の除外リストを突き合わせる
+   - 漏れがあれば「200 だが UI に反映されない」という再現性のある罠が生まれる
+
+2. **route 側の自前認可チェックは省略しない**
+   - `await getAuthenticatedUser()` 等で middleware と等価の認可を route 内で実施
+   - middleware 除外 = "auth が無効" ではなく "auth は route 側で行う" 規律
+
+3. **CI ガードの整備 (TODO)**
+
+   ```bash
+   # 「reissueAuthJwtOnResponse を呼ぶ route が matcher 除外されているか」を grep で照合する CI 候補
+   pnpm tsx scripts/check-middleware-exclusions.ts  # 未整備、TODO
+   ```
+
+### 過去の関連 KDD
+
+- §5.X+66: NextAuth + Netlify Set-Cookie 不達 (元問題)
+- §5.X+69: `/api/auth/mfa/verify` の middleware 除外 (本件の前段、限定的に書きすぎていた)
+- §5.X+70: routes 系設定ファイルの同期漏れパターン (PUBLIC_PATHS / matcher の漏れは同型問題)
+

@@ -75,5 +75,12 @@ export const config = {
   //   ルート側で `await auth()` による自前認証チェックを行うため、middleware 除外しても
   //   セキュリティ要件 (本人のみ verify 可) は維持される。
   //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+69
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify).*)'],
+  //
+  // fix/cron-public-paths-and-stripe-disabled-guard (2026-05-18, bundle 修正):
+  //   `/api/tenants/me/i18n` も同じ理由で除外。EN→JA への切替時、本ルートが書く
+  //   Set-Cookie (新 locale claim) が middleware 側の auto-refresh で旧 locale 値に
+  //   上書きされ、UI 反映されない事象を実観測 (PR #401)。本ルートも `getAuthenticatedUser`
+  //   + `isTenantAdmin` で自前認証チェック済のため middleware 除外でも認可は維持。
+  //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+71
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify|api/tenants/me/i18n).*)'],
 };

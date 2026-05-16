@@ -111,11 +111,18 @@ export function SettingsClient({
   const [pwSuccess, setPwSuccess] = useState('');
 
   // MFA
-  const [mfaStep, setMfaStep] = useState<'idle' | 'setup' | 'verify'>('idle');
+  // 2026-05-18 (fix/cron-public-paths-and-stripe-disabled-guard, bundle 修正):
+  //   無効化フローは 2026-05-13 B-5 hardening により再認証 (現パスワード + 現 TOTP) 必須。
+  //   旧 UI は空 body を POST して 400 になっていたため、'disable-confirm' ステップを追加。
+  //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+70 / src/app/api/auth/mfa/disable/route.ts
+  const [mfaStep, setMfaStep] = useState<'idle' | 'setup' | 'verify' | 'disable-confirm'>('idle');
   const [qrCode, setQrCode] = useState('');
   const [mfaSecret, setMfaSecret] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [mfaError, setMfaError] = useState('');
+  // 無効化フロー用の入力 (B-5 再認証)
+  const [disableCurrentPassword, setDisableCurrentPassword] = useState('');
+  const [disableTotpCode, setDisableTotpCode] = useState('');
 
   async function handlePasswordChange(e: React.FormEvent) {
     e.preventDefault();
@@ -189,16 +196,70 @@ export function SettingsClient({
     router.refresh();
   }
 
-  async function handleMfaDisable() {
+  // 2026-05-18: 「MFA を無効化する」ボタン → 再認証フォームへ遷移するだけのハンドラ。
+  // 実際の disable 呼出は handleMfaDisableSubmit で行う。
+  function handleMfaDisableStart() {
+    setMfaError('');
+    setDisableCurrentPassword('');
+    setDisableTotpCode('');
+    setMfaStep('disable-confirm');
+  }
+
+  function handleMfaDisableCancel() {
+    setMfaError('');
+    setDisableCurrentPassword('');
+    setDisableTotpCode('');
+    setMfaStep('idle');
+  }
+
+  async function handleMfaDisableSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setMfaError('');
+
+    // mfaEnabled=true なら server 側で TOTP 必須 (= MFA_DISABLE_TOTP_REQUIRED の事前抑止)
+    if (mfaEnabled && disableTotpCode.length !== 6) {
+      setMfaError(tSetting('mfaDisableTotpRequired'));
+      return;
+    }
+
+    const body: { currentPassword: string; totpCode?: string } = {
+      currentPassword: disableCurrentPassword,
+    };
+    if (disableTotpCode.length === 6) body.totpCode = disableTotpCode;
+
     const res = await withLoading(() =>
-      fetch('/api/auth/mfa/disable', { method: 'POST' }),
+      fetch('/api/auth/mfa/disable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
     );
+
     if (res.ok) {
+      setMfaStep('idle');
+      setDisableCurrentPassword('');
+      setDisableTotpCode('');
       showSuccess('MFA を無効化しました');
       router.refresh();
-    } else {
-      showError('MFA の無効化に失敗しました');
+      return;
     }
+
+    // server から返る code に応じて i18n メッセージへマップ。message は fallback。
+    const json = await res.json().catch(() => ({}));
+    const code = json?.error?.code as string | undefined;
+    const fallbackMsg = json?.error?.message ?? tSetting('mfaDisableFailed');
+    if (code === 'INVALID_CREDENTIALS') {
+      setMfaError(tSetting('mfaDisableInvalidPassword'));
+    } else if (code === 'INVALID_TOTP') {
+      setMfaError(tSetting('mfaDisableInvalidTotp'));
+    } else if (code === 'TOTP_REQUIRED') {
+      setMfaError(tSetting('mfaDisableTotpRequired'));
+    } else if (code === 'MFA_LOCKED') {
+      setMfaError(tSetting('mfaDisableLocked'));
+    } else {
+      setMfaError(fallbackMsg);
+    }
+    showError('MFA の無効化に失敗しました');
   }
 
   return (
@@ -311,7 +372,51 @@ export function SettingsClient({
           )}
 
           {mfaStep === 'idle' && mfaEnabled && !isAdmin && (
-            <Button variant="destructive" onClick={handleMfaDisable}>{tSetting('mfaDisableButton')}</Button>
+            <Button variant="destructive" onClick={handleMfaDisableStart}>{tSetting('mfaDisableButton')}</Button>
+          )}
+
+          {mfaStep === 'disable-confirm' && (
+            // 2026-05-18: B-5 hardening により MFA 無効化は現パスワード + 現 TOTP 必須。
+            //   server schema: src/app/api/auth/mfa/disable/route.ts disableMfaSchema。
+            <form onSubmit={handleMfaDisableSubmit} className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {tSetting('mfaDisableReauthHint')}
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="mfa-disable-password">{tField('currentPassword')}</Label>
+                <Input
+                  id="mfa-disable-password"
+                  type="password"
+                  value={disableCurrentPassword}
+                  onChange={(e) => setDisableCurrentPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+              {mfaEnabled && (
+                <div className="space-y-2">
+                  <Label htmlFor="mfa-disable-totp">{tSetting('mfaDisableTotpLabel')}</Label>
+                  <Input
+                    id="mfa-disable-totp"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={disableTotpCode}
+                    onChange={(e) => setDisableTotpCode(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder={tSetting('mfaCodePlaceholder')}
+                    maxLength={6}
+                    className="w-32"
+                    required
+                  />
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button type="submit" variant="destructive">{tSetting('mfaDisableSubmit')}</Button>
+                <Button type="button" variant="outline" onClick={handleMfaDisableCancel}>
+                  {tSetting('cancel')}
+                </Button>
+              </div>
+            </form>
           )}
 
           {mfaStep === 'idle' && mfaEnabled && isAdmin && (

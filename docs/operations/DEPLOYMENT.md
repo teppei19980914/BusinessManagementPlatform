@@ -178,9 +178,23 @@ Netlify Scheduled Functions は使わず、**[cron-job.org](https://cron-job.org
      - `CRON_SECRET` は Netlify 環境変数と同じ値を使用
    - **Schedule**: 上記表の cron 式を入力
 3. 各 cron の「Save & enable」を click
-4. 翌日 cron-job.org のダッシュボードで実行履歴を確認 (200 OK が確認できれば OK)
+4. **各 cron で test run を実行 → 200 OK を確認** (302 / 500 を本番運用後に発見すると検知が遅れる)
+5. 翌日 cron-job.org のダッシュボードで実行履歴を確認 (200 OK が確認できれば OK)
 
-### 6.3 手動実行 (debug 用)
+### 6.3 cron route 追加・移行時の Checklist (KDD §5.X+70)
+
+外部 HTTP から呼ばれる cron route を追加する/Vercel Cron から移行する際は、必ず下記を確認:
+
+- [ ] route path を [`src/config/routes.ts`](../../src/config/routes.ts) の `PUBLIC_PATHS` に登録
+      (未登録だと middleware の auth check で `/login` へ 302 redirect される)
+- [ ] route ハンドラ冒頭で [`isCronAuthorized(req)`](../../src/lib/cron-auth.ts) を呼び `Authorization: Bearer <CRON_SECRET>` を定数時間比較
+- [ ] env 依存の service を呼ぶ場合、その env が未設定の環境でも throw しないか確認
+      (Stripe 系なら `if (!isStripeEnabled()) return early;` を冒頭に置く)
+- [ ] cron-job.org / 移行先 cron 管理画面で **test run → 200 OK** を確認 (本番運用前に発見できる唯一のタイミング)
+
+過去事例: KDD §5.X+70 (Vercel→Netlify 移行で 7 件中 4 件失敗、test run で発覚)
+
+### 6.4 手動実行 (debug 用)
 
 ```powershell
 $cronSecret = "<CRON_SECRET の値>"
