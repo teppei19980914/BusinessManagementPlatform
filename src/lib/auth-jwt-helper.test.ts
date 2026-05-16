@@ -68,23 +68,25 @@ function makeReqWithCookie(cookieValue?: string): NextRequest {
 }
 
 describe('reissueAuthJwtOnResponse', () => {
-  it('cookie 未存在: false を返し Set-Cookie しない', async () => {
+  it('cookie 未存在: { ok: false, reason: cookie_missing } を返し Set-Cookie しない', async () => {
     const req = makeReqWithCookie();
     const res = NextResponse.json({ ok: true });
-    const ok = await reissueAuthJwtOnResponse(req as never, res, {
+    const result = await reissueAuthJwtOnResponse(req as never, res, {
       mfaVerified: true,
     });
-    expect(ok).toBe(false);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('cookie_missing');
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
-  it('cookie 不正 (decode 失敗): false を返し Set-Cookie しない', async () => {
+  it('cookie 不正 (decode 失敗): { ok: false, reason: decode_failed } を返し Set-Cookie しない', async () => {
     const req = makeReqWithCookie('not-a-valid-jwt');
     const res = NextResponse.json({ ok: true });
-    const ok = await reissueAuthJwtOnResponse(req as never, res, {
+    const result = await reissueAuthJwtOnResponse(req as never, res, {
       mfaVerified: true,
     });
-    expect(ok).toBe(false);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('decode_failed');
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
@@ -92,10 +94,10 @@ describe('reissueAuthJwtOnResponse', () => {
     const original = await buildSignedJwt();
     const req = makeReqWithCookie(original);
     const res = NextResponse.json({ ok: true });
-    const ok = await reissueAuthJwtOnResponse(req as never, res, {
+    const result = await reissueAuthJwtOnResponse(req as never, res, {
       mfaVerified: true,
     });
-    expect(ok).toBe(true);
+    expect(result.ok).toBe(true);
 
     const setCookieHeader = res.headers.get('set-cookie');
     expect(setCookieHeader).not.toBeNull();
@@ -117,11 +119,11 @@ describe('reissueAuthJwtOnResponse', () => {
     const original = await buildSignedJwt();
     const req = makeReqWithCookie(original);
     const res = NextResponse.json({ ok: true });
-    const ok = await reissueAuthJwtOnResponse(req as never, res, {
+    const result = await reissueAuthJwtOnResponse(req as never, res, {
       timezone: 'America/New_York',
       locale: 'en-US',
     });
-    expect(ok).toBe(true);
+    expect(result.ok).toBe(true);
 
     const newJwt = res.headers
       .get('set-cookie')!
@@ -206,8 +208,8 @@ describe('reissueAuthJwtOnResponse', () => {
     const original = await buildSignedJwt();
     const req = makeReqWithCookie(original);
     const res = NextResponse.json({ ok: true });
-    const ok = await reissueAuthJwtOnResponse(req as never, res, {});
-    expect(ok).toBe(true);
+    const result = await reissueAuthJwtOnResponse(req as never, res, {});
+    expect(result.ok).toBe(true);
 
     const newJwt = res.headers
       .get('set-cookie')!

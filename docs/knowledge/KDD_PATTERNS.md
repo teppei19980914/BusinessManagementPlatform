@@ -9600,3 +9600,66 @@ Dismissal の使用条件:
 
 - §5.X+58: CI 専用ガード (E2E coverage check) の罠。本件も「ローカルで通って CI で fail」の典型
 - §5.X+66: 本件の前提となる Netlify + NextAuth Set-Cookie 問題。本エントリは「その fix を E2E + CodeQL に整合させる」付随作業の記録
+
+## 5.X+68 **「DB 更新成功 + cookie 再署名サイレント失敗 = 200 OK」の組合せは無限ループを生む ─ helper の戻り値型を boolean から判別 union に格上げして呼出側に強制 check させる (PR #397 で実体験 / 2026-05-18)**
+
+### 罠の正体
+
+PR #396 で導入した `reissueAuthJwtOnResponse(req, res, patch)` の初版は失敗時に `false` を silent return する設計だった (theme cookie 同様の安全側設計を意図)。
+本番デプロイ後、MFA 検証画面で「正しい TOTP コードを入れてもダッシュボードに辿り着けない」事象が発生:
+
+1. ユーザが TOTP コード入力 → `POST /api/auth/mfa/verify`
+2. サーバが `verifyTotp()` で DB 検証 ✓ 成功
+3. `reissueAuthJwtOnResponse(req, res, { mfaVerified: true })` 呼出し
+4. ヘルパが decode 失敗 (原因不明) で **silent `false` return**
+5. route は **200 OK + 何も Set-Cookie せず** を返す
+6. クライアントは `window.location.href = callbackUrl` で遷移
+7. middleware が旧 JWT (mfaVerified=false) を読み `/login/mfa` にリダイレクト
+8. ループ (5-7 を永遠に繰り返し)
+
+ユーザは正しいコードを入れているのに通れない、という UX 上致命的な状態。
+
+### なぜ発生するか
+
+- **`return false` 設計の意図は良かった**: 元々は「もし再署名できなくても DB は正しく更新されているので、次回ログインで自然回復する」という安全側 fallback。
+- **しかし MFA は特殊**: middleware が JWT を直接読んで `/login/mfa` への redirect を決めるため、cookie 更新失敗 = MFA 検証が永遠に成立しない。
+- **theme cookie とは性質が違う**: theme は SSR の `<html data-theme>` を決めるだけで、失敗しても「次回まで色が変わらない」程度。MFA は「失敗するとログインできない」。同じ helper の同じ失敗が、claim によって致命度がまったく違う。
+
+### 推奨対応 (本 PR で確立)
+
+1. **Helper の戻り値型を boolean から判別 union に**:
+   ```ts
+   export type ReissueResult =
+     | { ok: true }
+     | { ok: false; reason: 'cookie_missing' | 'decode_failed' | 'encode_failed' };
+   ```
+2. **呼出側で失敗を必ず check + 5xx で通知**:
+   ```ts
+   const r = await reissueAuthJwtOnResponse(req, res, patch);
+   if (!r.ok) {
+     return NextResponse.json({error: {code: 'MFA_SESSION_REFRESH_FAILED', reason: r.reason}}, {status: 500});
+   }
+   ```
+3. **ただし claim による criticality 差は設計判断**:
+   - **致命 (= middleware 経路) — MFA / mfaVerified**: 失敗時 5xx を返してクライアントにエラー表示。ユーザに再ログインを案内
+   - **非致命 (= 表示だけ) — i18n / timezone / locale**: DB は成功扱いで 200 を返しつつ `X-Jwt-Refresh-Failed` レスポンスヘッダで警告。次回ログインで自然回復
+4. **診断ログを `console.error` で必ず出す**: Netlify Functions logs に記録され、`netlify logs` で確認可能。`reason` + `nodeEnv` + `availableCookieNames` 等の context を添える
+
+### 検証経路
+
+- 単体テスト: helper の `{ ok: false, reason: ... }` パターンを判別 union ごとに assert (`src/lib/auth-jwt-helper.test.ts`)
+- 単体テスト: route の reissue 失敗時 5xx を assert (`src/app/api/auth/mfa/verify/route.test.ts` の `★ TOTP 検証成功でも reissue 失敗時は 500` ケース)
+- 実機: Netlify production で `netlify logs --tail` を見ながら MFA 検証フローを実行、`[auth-jwt-helper] reissue_failed` ログが出ないことを確認
+
+### 一般則
+
+「**サーバが成功と判断したがクライアントが古い状態のまま** という状態は、ループや UX 破綻の温床」。次の設計時にチェック:
+
+- Cookie / Header / Body の更新を「サーバ側成功 + クライアント反映失敗」で起こす可能性があるか
+- 反映失敗時に **次のリクエストが古い状態で処理される** か (= ループ要因)
+- そうなら、サーバ側で必ず失敗を 5xx で通知し、クライアントが retry / 再ログイン誘導できるようにする
+
+### 過去の関連 KDD
+
+- §5.X+66: 本件の前提 (Netlify + NextAuth Set-Cookie 不達)。本エントリは「サーバが silent failure を許してはいけないケース」を整理
+- §5.X+58: CI 専用ガードの罠。本件は「ローカル単体テストで通るが本番でループする」という別種の "CI と本番の乖離"

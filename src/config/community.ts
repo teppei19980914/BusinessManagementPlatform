@@ -23,7 +23,7 @@
  *     (招待 URL を切り替えるとき / 別環境で異なるサーバを使うときの上書き手段)。
  *   - 万一定数を空文字 / "disabled" に書き換えれば UI はボタン非表示にフォールバック。
  */
-export const DEFAULT_DISCORD_INVITE_URL = 'https://discord.com/invite/AYekewZg2S';
+export const DEFAULT_DISCORD_INVITE_URL = 'https://discord.com/invite/EqY82YvxuG';
 
 /**
  * Discord 招待リンクを返す。env 上書きがあればそれを、なければ {@link DEFAULT_DISCORD_INVITE_URL} を返す。

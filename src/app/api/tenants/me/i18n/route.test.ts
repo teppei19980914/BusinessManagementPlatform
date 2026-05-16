@@ -31,7 +31,7 @@ vi.mock('@/lib/api-helpers', () => ({
 vi.mock('@/lib/auth-jwt-helper', () => ({
   reissueAuthJwtOnResponse: vi.fn(async (_req, res, _patch) => {
     res.cookies.set('__test-reissued', 'yes', { path: '/' });
-    return true;
+    return { ok: true };
   }),
 }));
 

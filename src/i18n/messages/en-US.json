@@ -227,6 +227,7 @@
     "mfaLockedDueToFailures": "Locked out due to consecutive verification code failures",
     "mfaCodeInvalid": "The code is incorrect",
     "mfaRecoveryCodeInvalid": "The recovery code is incorrect",
+    "mfaSessionRefreshFailed": "MFA verification succeeded, but the session could not be refreshed. Please sign out and sign in again. Contact your administrator if the problem persists.",
     "cannotChangeOwnRole": "You cannot change your own role",
     "cannotDeleteSelf": "You cannot delete yourself",
     "userNotFoundOrDeleted": "User not found (may have already been deleted)",
