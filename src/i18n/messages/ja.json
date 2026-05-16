@@ -1051,7 +1051,16 @@
     "mfaScanHint": "認証アプリでこの QR コードをスキャンしてください。",
     "mfaManualSecret": "手動入力用のシークレットキー",
     "mfaCodePlaceholder": "6桁のコード",
-    "mfaVerifyAndEnable": "検証して有効化"
+    "mfaVerifyAndEnable": "検証して有効化",
+    "mfaDisableReauthHint": "セキュリティ確認のため、現在のパスワードと認証アプリのコードを再入力してください。",
+    "mfaDisableTotpLabel": "現在の MFA コード",
+    "mfaDisableSubmit": "MFA を無効化する",
+    "mfaDisableFailed": "MFA の無効化に失敗しました",
+    "mfaDisableInvalidPassword": "現在のパスワードが正しくありません",
+    "mfaDisableInvalidTotp": "MFA コードが正しくありません",
+    "mfaDisableTotpRequired": "6 桁の MFA コードを入力してください",
+    "mfaDisableLocked": "MFA 検証が一時的にロックされています。しばらくしてから再度お試しください。",
+    "cancel": "キャンセル"
   },
   "admin": {
     "users": {

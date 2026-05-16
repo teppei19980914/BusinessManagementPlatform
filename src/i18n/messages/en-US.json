@@ -1051,7 +1051,16 @@
     "mfaScanHint": "Scan this QR code with your authenticator app.",
     "mfaManualSecret": "Manual entry secret",
     "mfaCodePlaceholder": "6-digit code",
-    "mfaVerifyAndEnable": "Verify and enable"
+    "mfaVerifyAndEnable": "Verify and enable",
+    "mfaDisableReauthHint": "For security, re-enter your current password and authenticator code.",
+    "mfaDisableTotpLabel": "Current MFA code",
+    "mfaDisableSubmit": "Disable MFA",
+    "mfaDisableFailed": "Failed to disable MFA",
+    "mfaDisableInvalidPassword": "Current password is incorrect",
+    "mfaDisableInvalidTotp": "MFA code is incorrect",
+    "mfaDisableTotpRequired": "Enter the 6-digit MFA code",
+    "mfaDisableLocked": "MFA verification is temporarily locked. Please try again later.",
+    "cancel": "Cancel"
   },
   "admin": {
     "users": {
