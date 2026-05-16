@@ -89,11 +89,11 @@
 
 ```mermaid
 graph TD
-    Browser[ブラウザ] -->|HTTPS| Vercel[Vercel / Next.js]
-    Vercel -->|Pooler| Supabase[Supabase PostgreSQL]
-    Vercel -->|API| Brevo[Brevo メール送信]
+    Browser[ブラウザ] -->|HTTPS| Netlify[Netlify / Next.js]
+    Netlify -->|Pooler| Supabase[Supabase PostgreSQL]
+    Netlify -->|API| Brevo[Brevo メール送信]
 
-    subgraph Vercel
+    subgraph Netlify
         MW[Middleware 認証] --> RH[Route Handlers]
         RH --> SL[Service Layer]
         SL --> PA[Prisma + pg adapter]
@@ -102,15 +102,15 @@ graph TD
 
 ## デプロイ
 
-### 自社運用（Vercel + Supabase）
+### 自社運用（Netlify + Supabase）
 
 | コンポーネント | サービス | 月額 |
 |---|---|---|
-| アプリケーション | Vercel Hobby | $0 |
+| アプリケーション | Netlify Starter (Free) | $0 |
 | データベース | Supabase Free | $0 |
 | メール送信 | Brevo Free | $0（300 通/日） |
 
-> **注意 (商用利用時)**: Vercel Hobby プランは規約上**商用利用不可**のため、外部公開・有償提供フェーズでは Vercel Pro ($20/月) への移行が必要です。Supabase Free / Brevo Free も無料枠の制約があり、スケール時は有償プランへ段階移行する想定です。詳細は [docs/design/INFRASTRUCTURE.md §10.3](docs/design/INFRASTRUCTURE.md) を参照。
+> **2026-05-18 Vercel → Netlify 移行**: Vercel Hobby プランは規約上**商用利用不可**のため、6/1 正式リリース (Expert/Pro プラン課金) に備えて Netlify Starter (商用利用 OK) に移行しました。Supabase Free / Brevo Free も無料枠制約はあり、スケール時は有償プランへ段階移行します。詳細は [docs/design/INFRASTRUCTURE.md §10](docs/design/INFRASTRUCTURE.md) を参照。
 
 デプロイ手順は [docs/operations/DEPLOYMENT.md](docs/operations/DEPLOYMENT.md)、スキーマ変更時の運用は [docs/operations/DB_MIGRATION_PROCEDURE.md](docs/operations/DB_MIGRATION_PROCEDURE.md) を参照してください。
 

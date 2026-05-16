@@ -1,0 +1,57 @@
+# Netlify configuration — たすきば Knowledge Relay
+# Migrated from Vercel: 2026-05-18 (Vercel Hobby 商用不可のため Netlify Starter へ)
+# 詳細: docs/operations/DEPLOYMENT.md / docs/design/INFRASTRUCTURE.md §10
+
+[build]
+  # Prisma Client 生成 → Next.js ビルド
+  # 注: package.json の "build" スクリプトに `prisma generate` を含めているため、
+  #     ここは `pnpm build` のみで OK だが、明示してデバッグ性を上げる
+  command = "pnpm build"
+  publish = ".next"
+  # docs / .github / *.md のみの変更時はビルドをスキップ
+  # (Starter 300 分/月の制約を効率消費するため、PR #371 KDD §5.X+58 対策と同方針)
+  ignore = "bash scripts/netlify-ignore.sh"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # Prisma の telemetry を抑止
+  PRISMA_HIDE_UPDATE_MESSAGE = "true"
+  CHECKPOINT_DISABLE = "1"
+
+# Next.js Runtime (Netlify が自動検出するが、明示してバージョンを固定)
+# 参考: https://docs.netlify.com/frameworks/next-js/overview/
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# ============================================================
+# Cron jobs
+# ============================================================
+# 旧 vercel.json の crons (7 件) は Netlify Scheduled Functions ではなく
+# 外部 cron サービス (cron-job.org 推奨) で運用する。
+# 理由:
+#   1. Netlify Scheduled Functions は Function 呼び出し回数を消費する
+#      (Free 125k/月だが、デプロイサイズも増える)
+#   2. 既存の /api/cron/* ルートは CRON_SECRET Bearer 認証済のため、
+#      外部 HTTP POST で同じ動作を再現できる
+#   3. 障害対応時に外部から手動 trigger しやすい
+#
+# セットアップ手順:
+#   docs/operations/DEPLOYMENT.md §6 を参照
+# ============================================================
+
+# ============================================================
+# Function 設定 (Netlify Functions / Edge Functions)
+# ============================================================
+# Next.js Runtime が自動的に SSR / Server Actions / Route Handlers を
+# Lambda Function に変換するため、明示設定不要。
+# タイムアウトはデフォルト 10 秒 (Free Plan の上限)。
+# Bulk LLM 処理など 10 秒超の操作は Background Functions (15 分) に
+# 移行を検討 (関連: feedback_bulk_llm_call_unit memory)
+# ============================================================
+
+# ============================================================
+# Headers / Redirects
+# ============================================================
+# Next.js の next.config.ts で headers() を定義しているため、
+# Netlify 側で重複設定しない (CSP / HSTS / X-Frame-Options 等)
+# ============================================================

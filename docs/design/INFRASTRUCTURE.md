@@ -52,7 +52,8 @@ git 履歴から過去記述を参照できる。
 
 ### 10.2 運用環境構成（無料枠）
 
-初期フェーズでは Vercel Hobby + Supabase Free + Brevo Free の無料構成で運用する。
+6/1 正式リリース以降、本サービスは商用利用 (Expert/Pro 課金プラン稼働) フェーズに入る。
+**Vercel Hobby は規約上商用利用不可** のため、2026-05-18 に **Netlify Starter** へ移行した。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -60,47 +61,53 @@ git 履歴から過去記述を参照できる。
 └──────────────┬───────────────────────────────────────────────┘
                | HTTPS
 ┌──────────────┴───────────────────────────────────────────────┐
-│  Vercel Hobby (無料)                                          │
+│  Netlify Starter (無料・商用利用 OK)                          │
 │  - Next.js (App Router, Standalone)                          │
-│  - Edge Network (CDN)                                        │
-│  - 自動 SSL (Let's Encrypt)                                  │
-│  - 帯域: 100GB/月                                            │
-│  制約: 商用利用不可（個人の試験運用用途）                        │
+│  - @netlify/plugin-nextjs (Functions = AWS Lambda)            │
+│  - Global CDN                                                 │
+│  - 自動 SSL                                                   │
+│  - 帯域: 100GB/月                                             │
+│  - ビルド: 300 分/月 (docs-only 変更は ignore script で skip) │
+│  - Function 実行: 10 秒 (Sync) / 15 分 (Background)           │
 └──────────────┬───────────────────────────────────────────────┘
-               | Connection Pooler (IPv4)
+               | Connection Pooler (IPv4, port 6543)
 ┌──────────────┴───────────────────────────────────────────────┐
 │  Supabase Free (無料)                                         │
 │  - PostgreSQL 15                                              │
 │  - ストレージ: 500MB                                          │
-│  - Pooler 経由接続（Transaction mode）                        │
+│  - Pooler 経由接続（Transaction mode, ?pgbouncer=true）       │
 │  - 1週間無操作でプロジェクト一時停止（手動再開可）              │
-│  制約: 直接接続不可、バックアップは日次自動のみ                 │
+│  制約: バックアップは日次自動のみ                              │
 └──────────────────────────────────────────────────────────────┘
 
   メール送信: Brevo Free (300通/日)
+  Cron 実行: cron-job.org (外部、無料、§5 で詳述)
   CI/CD: GitHub Actions (無料枠: 2,000分/月)
-  ドメイン: Vercel サブドメイン (*.vercel.app)
+  ドメイン: Netlify サブドメイン (*.netlify.app)
 ```
 
 #### 月額コスト
 
 | コンポーネント | サービス | 月額 |
 |---|---|---|
-| アプリケーション | Vercel Hobby | $0 |
+| アプリケーション | Netlify Starter (Free) | $0 |
 | データベース | Supabase Free (500MB) | $0 |
 | メール送信 | Brevo Free (300通/日) | $0 |
+| Cron 実行 | cron-job.org (Free) | $0 |
 | CI/CD | GitHub Actions (2,000分/月) | $0 |
-| ドメイン | Vercel サブドメイン | $0 |
+| ドメイン | Netlify サブドメイン | $0 |
 | **合計** | | **$0/月** |
 
 #### 無料枠の制約と対策
 
 | 制約 | 影響 | 対策 |
 |---|---|---|
-| Vercel Hobby: 商用利用不可 | 試験運用フェーズのみ利用可 | 本格運用時に Pro ($20/月) へ移行 |
+| Netlify Starter: ビルド 300 分/月 | PR を量産すると逼迫 | `scripts/netlify-ignore.sh` で docs-only 変更を skip、ローカル `pnpm dev` 中心の開発 |
+| Netlify Starter: Function 10 秒 | Bulk LLM 処理がタイムアウト | Background Functions (15 分) へ分離、または分割実行 ([feedback_bulk_llm_call_unit](../knowledge/) 参照) |
+| Netlify Starter: 日本リージョン未対応 | 日本ユーザに +50-150ms latency | 許容 (将来 Pro / Edge Functions で改善) |
 | Supabase Free: 500MB | 約3年で逼迫（ログ制御後） | ログ保持期間の厳格化で 5 年以上対応可 |
-| Supabase Free: 1週間無操作で停止 | 長期休暇時にDBが停止 | ダッシュボードから手動再開、または定期的なヘルスチェック |
-| Supabase Free: Pooler 経由のみ | Prisma の一部機能に制約 | Transaction mode 対応の接続設定を使用 |
+| Supabase Free: 1週間無操作で停止 | 長期休暇時にDBが停止 | cron-job.org の health-check で日次アクセス維持 |
+| Supabase Free: Pooler 経由のみ | Prisma の一部機能に制約 | Transaction mode + `?pgbouncer=true` を使用 (`DATABASE_URL`) |
 | Brevo Free: 300通/日 | 初期フェーズでは十分 | ユーザ増加時に Starter ($9/月) へ移行 |
 
 #### データ量の見積もり（ログ制御後）
@@ -119,7 +126,8 @@ git 履歴から過去記述を参照できる。
 
 | トリガー | 移行先 | 追加コスト |
 |---|---|---|
-| 商用利用の開始 | Vercel Pro | +$20/月 |
+| ビルド 300分/月 逼迫 or 帯域 100GB 超 | Netlify Pro | +$19/月 |
+| 日本リージョンでの低 latency が必要 | Vercel Pro (Tokyo リージョン) | +$20/月 |
 | DB 500MB 超過 or 直接接続が必要 | Supabase Pro | +$25/月 |
 | メール 300通/日超過 | Brevo Starter | +$9/月 |
 | 独自ドメインが必要 | ドメイン取得 | +~$1/月 |
