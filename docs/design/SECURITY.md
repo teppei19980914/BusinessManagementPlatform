@@ -994,6 +994,12 @@ Console にも画面にも出さず、必ず DB (system_error_logs) に保存す
   - 使用したリカバリーコードを無効化
 ```
 
+> **MFA 検証成功時の JWT 更新方式** (PR #396 / 2026-05-18 改訂):
+>
+> 旧仕様はクライアント側の `useSession().update({ mfaVerified: true })` で JWT を更新していたが、NextAuth v5 0-beta.31 + @netlify/plugin-nextjs では `POST /api/auth/session` のレスポンス cookie がブラウザに反映されず MFA ループに陥る問題があった (KDD §5.X+66)。
+>
+> 現行は **`/api/auth/mfa/verify` ルート側で JWT を直接再署名 + Set-Cookie** する方式 (`src/lib/auth-jwt-helper.ts` の `reissueAuthJwtOnResponse`)。クライアント側 `update()` 呼出しは削除済。中間者にとっての改竄経路は増えていない (`reissueAuthJwtOnResponse` は許可された claim のみ patch を受け付ける = `JwtReissuePatch` 型ガード)。
+
 #### 9.17.4 MFA 関連データモデル
 
 users テーブルへのカラム追加:

@@ -12,7 +12,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useSession } from 'next-auth/react';
+// fix/jwt-resign-for-netlify (2026-05-18): useSession import を削除。
+//   旧コードは update() で JWT 反映していたが、サーバ側で再署名する設計に変更したため不要。
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/toast-provider';
 import { SUPPORTED_LOCALES, SELECTABLE_LOCALES } from '@/config';
@@ -1560,7 +1561,8 @@ function BeginnerExpiryBanner({ info }: { info: TenantSelfInfo }) {
  *
  * - 旧 `/settings` の i18n セクションを集約。
  * - 設定値は配下全ユーザの日付表示・残日数計算・月初リセット境界に適用される。
- * - 保存後は `useSession().update()` で JWT を即時更新し、再描画で反映する。
+ * - 保存後は `/api/tenants/me/i18n` が JWT を再署名 + Set-Cookie し、`router.refresh()` で SSR
+ *   経由の即時反映を行う (fix/jwt-resign-for-netlify、2026-05-18 以降)。
  */
 function TenantI18nSection({
   initialTimezone,
@@ -1573,7 +1575,8 @@ function TenantI18nSection({
 }) {
   const router = useRouter();
   const { showSuccess, showError } = useToast();
-  const { update: updateSession } = useSession();
+  // fix/jwt-resign-for-netlify (2026-05-18): useSession().update() は不要になった。
+  //   /api/tenants/me/i18n が JWT を再署名 + Set-Cookie するため、router.refresh() のみで反映可能。
   const [tz, setTz] = useState(initialTimezone);
   const [loc, setLoc] = useState(initialLocale);
   const [submitting, setSubmitting] = useState(false);
@@ -1622,9 +1625,11 @@ function TenantI18nSection({
         showError(json?.error?.message ?? '言語・タイムゾーン設定の保存に失敗しました');
         return;
       }
-      const json = await res.json();
-      // JWT 反映 (全ユーザが再ログインせずとも自分のセッションには即時反映)
-      await updateSession({ timezone: json.data.timezone, locale: json.data.locale });
+      // fix/jwt-resign-for-netlify (2026-05-18):
+      //   旧仕様は ここで useSession().update() を呼んで JWT を更新していたが、
+      //   NextAuth v5 + @netlify/plugin-nextjs で Set-Cookie が反映されない事象あり。
+      //   現在は API ルート側 (`/api/tenants/me/i18n`) が再署名 + Set-Cookie 済なので
+      //   クライアントは router.refresh() で SSR 経由の即時反映に依存する。
       showSuccess('言語・タイムゾーン設定を保存しました');
       await onUpdate();
       router.refresh();

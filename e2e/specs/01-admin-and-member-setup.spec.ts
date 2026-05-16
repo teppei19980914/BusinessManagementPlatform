@@ -168,26 +168,20 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.waitForURL(/\/login\/mfa/);
     await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
 
-    // LESSONS §4.18/§4.24: MfaForm.handleSubmit は verify API の直後に
-    // `await update({ mfaVerified: true })` (= POST /api/auth/session で JWT 再発行)
-    // を呼んでから `window.location.href = callbackUrl` を発火する。
-    // verify API だけ await しても session 更新 API を待てず、waitForURL の 15s
-    // budget が session 更新時間で消費されるケースがある (PR #98 CI で観測)。
-    // 対策: 両 API を click 前に並行予約し、両方 await してから遷移待ち。
+    // fix/jwt-resign-for-netlify (PR #396):
+    //   旧仕様は MfaForm が `await update({ mfaVerified: true })` (= POST /api/auth/session)
+    //   を呼んでから `window.location.href` で遷移していた。
+    //   現仕様は `/api/auth/mfa/verify` がレスポンス Set-Cookie で JWT を直接再署名するため、
+    //   POST /api/auth/session の wait は **不要 & 呼ばれない** (永久タイムアウトの原因)。
+    //   verify API のレスポンス OK 確認のみ行い、その後ダッシュボード遷移を待つ。
     const verifyRes = page.waitForResponse(
       (r) =>
         r.url().includes('/api/auth/mfa/verify')
         && r.request().method() === 'POST',
     );
-    const sessionRes = page.waitForResponse(
-      (r) =>
-        r.url().includes('/api/auth/session')
-        && r.request().method() === 'POST',
-    );
     await page.getByRole('button', { name: '検証' }).click();
     const res = await verifyRes;
     expect(res.ok(), `MFA verify failed: ${res.status()}`).toBeTruthy();
-    await sessionRes;
 
     await waitForProjectsReady(page);
   });
@@ -252,22 +246,18 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await page.waitForURL(/\/login\/mfa/);
     await page.getByLabel('認証コード').fill(generateTotpCode(mfaSecret));
 
-    // Step 2b と同じ理由で verify + session 両 API を予約 (LESSONS §4.18 / §4.24)。
-    // session 更新 API の待機が欠けると 15s waitForURL を消費する CI flake が出る。
+    // fix/jwt-resign-for-netlify (PR #396):
+    //   旧 LESSONS §4.18 / §4.24 の「verify + session 両 API 予約」パターンは廃止。
+    //   現仕様は `/api/auth/mfa/verify` 自体が Set-Cookie で JWT を再署名するため
+    //   `POST /api/auth/session` は呼ばれない (永久タイムアウトの原因)。
     const verifyRes = page.waitForResponse(
       (r) =>
         r.url().includes('/api/auth/mfa/verify')
         && r.request().method() === 'POST',
     );
-    const sessionRes = page.waitForResponse(
-      (r) =>
-        r.url().includes('/api/auth/session')
-        && r.request().method() === 'POST',
-    );
     await page.getByRole('button', { name: '検証' }).click();
     const mfaRes = await verifyRes;
     expect(mfaRes.ok(), `MFA verify failed: ${mfaRes.status()}`).toBeTruthy();
-    await sessionRes;
 
     await waitForProjectsReady(page);
 

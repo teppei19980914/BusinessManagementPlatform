@@ -9468,3 +9468,135 @@ if (!hasAnyContent) {
 
 - §5.10 / §5.14: マージコンフリクトの一般パターン (末尾追記の衝突)
 - §5.X+30 系: 2 段構え PR (docs PR → 実装 PR) の docs/business/README.md コンフリクト
+
+## 5.X+66 **NextAuth v5 + @netlify/plugin-nextjs では `useSession().update()` の Set-Cookie がブラウザに反映されない ─ Vercel → Netlify 移行で MFA・テーマ・i18n が同時に壊れた (PR #395 / PR #396 で実体験 / 2026-05-18)**
+
+### 罠の正体
+
+- Vercel Hobby の商用利用不可問題で Netlify Starter に移行 (PR #394) した直後、複数の機能が同時に「DB は更新されているが画面に反映されない」状態に陥った:
+  - **テーマ変更**: 設定画面でダークテーマを選択 → DB は `dark` だが `<html data-theme="light">` のまま (PR #395)
+  - **MFA TOTP 検証**: コード入力成功 → `/login/mfa` に戻されるループ (super_admin の場合ログイン不能、想定)
+  - **テナント TZ/Locale 変更**: 保存後も SSR が古い値で描画
+- 全てに共通する仕組み: **クライアントが `useSession().update({ X: ... })` を呼び、NextAuth が `POST /api/auth/session` でレスポンスに `Set-Cookie` を返す経路**を使っていた。
+- 現象: **DB 更新 ✓ / クライアント側 React state 更新 ✓ / 新しい `__Secure-authjs.session-token` cookie だけがブラウザに届いていない** → 次のリクエストで古い JWT が送られる → SSR / middleware が古い値を読む。
+- F5 (フルリロード) や `router.refresh()` でも回復せず (= cookie 自体が更新されていないため)。
+
+### なぜ発生するか
+
+- **`useSession().update()` の Set-Cookie 経路が Netlify の Function 応答パイプラインで吸収される** (一次ソース未検証だが、`POST /api/auth/session` のレスポンスにつく `Set-Cookie` ヘッダだけがブラウザに届かない事象を複数機能で再現確認)。
+- 同じ NextAuth ハンドラでも、**ログイン時の Set-Cookie は正常**に届く (= cookie set そのものが壊れているわけではなく、`/api/auth/session` 経由が特殊)。
+- Vercel 環境では同じコードで動いていたため、レビュー / E2E / 単体テストの**いずれでも検出できなかった**。
+
+### 推奨対応
+
+#### 即時 (本サービスでの fix)
+
+1. **テーマのような中継不要な値**: PATCH ルートが直接「専用 cookie (`tasukiba-theme` 等) を Set-Cookie」する設計に切替 (PR #395)。SSR layout は `cookies().get('tasukiba-theme')` を JWT より優先して読む。
+2. **JWT に乗せたままにしたい値 (mfaVerified / timezone / locale)**: API route が **NextAuth の encode/decode (`next-auth/jwt`) で JWT を直接再署名 + Set-Cookie** する設計に切替 (PR #396、`src/lib/auth-jwt-helper.ts`)。クライアント側の `useSession().update()` は削除。
+
+#### 設計原則
+
+- **「`useSession().update()` を新規コードで使わない」を本サービスの方針として確定**。同等の更新は以下のいずれかで実現する:
+  - **専用 cookie**: 値が独立で、`useSession()` で読まれていない場合 (= SSR / middleware のみが読む)。例: テーマ
+  - **JWT 直接再署名**: middleware / useSession / SSR の複数経路で読まれる場合。`reissueAuthJwtOnResponse(req, res, patch)` ヘルパに集約
+- **JWT 再署名時に許可する claim は型で絞る** (`JwtReissuePatch` 型)。`tenantId` / `id` / `systemRole` 等の機密 claim は patch 対象外にして改竄経路を作らない。
+- **テストで `set-cookie` ヘッダの存在を必ず assert する** (デグレ検出)。route テスト + helper の単体テストの両方で確認する (PR #396 では合計 26 ケース追加)。
+
+#### 引き継ぎチェックリスト (他 NextAuth + Netlify 環境)
+
+新規に `useSession().update()` パターンを見つけたら以下の手順:
+
+1. `grep -rE "useSession\(\)\.update|updateSession" src/` で全箇所を列挙
+2. 各箇所の用途を分類: 専用 cookie で良い / JWT 再署名が必要
+3. 該当 route handler に `reissueAuthJwtOnResponse` を追加、クライアント側の `update()` は削除
+4. `auth.config.ts` の jwt callback `trigger === 'update'` ハンドラは**残しておく** (将来 NextAuth / Netlify 側で fix された場合の二段構え)
+5. route テストに「`set-cookie` が含まれる」assertion を追加
+
+### 検証経路
+
+- **症状の最終確認は View Source の `<html data-theme="..."` / `<html lang="..."` 属性で実施可能** (JWT 内容が SSR 出力に直接表れる属性が存在する場合)。
+- 修正後の検証: ローカル `pnpm dev` では完全再現できない (Netlify Function ランタイムでのみ発生)。**Netlify Deploy Preview** で実機確認することが推奨手順 (KDD §5.X+58 と同方針)。
+- `reissueAuthJwtOnResponse` の単体テストは `src/lib/auth-jwt-helper.test.ts` で「既存 claim が消えない」「許可外 claim は無視」をカバー。デグレ検出ライン。
+
+### 過去の関連 KDD
+
+- §5.X+58: ローカル単体テストで検出できない CI 専用ガード (E2E coverage) の話。本件も**ローカル単体ではなくクラウド環境で初発覚**したという点で同型
+- §5.X+57: 環境差異が顕在化する PR 順序問題 (docs PR → 実装 PR)。本件は「Vercel → Netlify 移行」が引き金
+
+## 5.X+67 **`useSession().update()` を削除する PR は、E2E が `POST /api/auth/session` を await している箇所も同時に削除しないとタイムアウトで CI が落ちる + CodeQL の "user-controlled bypass" は条件分岐内の sensitive action 呼出しを単一出口に集約することで構造的に解消できる (PR #396 で実体験 / 2026-05-18)**
+
+### 罠の正体
+
+§5.X+66 の対応 (`useSession().update()` 削除 + サーバ側 JWT 再署名) を PR #396 で実装したところ、ローカル全 quality gate (lint / test / build) は green だったが **PR レビューで 2 種類の CI 失敗が発覚**した:
+
+1. **Playwright E2E (Step 2b)**: テストが旧仕様前提で `page.waitForResponse('/api/auth/session', POST)` を 10s 待っていた。PR #396 で update() を削除したため当該リクエストが永遠に来ず、テストがタイムアウトで fail。
+2. **CodeQL** ("This condition guards a sensitive action, but a user-provided value controls it." × 2 高 severity): `body.code` / `body.recoveryCode` (user-provided) が直接 `reissueAuthJwtOnResponse` 呼出しをガードする構造になっていた。条件分岐内の sensitive action 呼出しを「user-controlled bypass」と判定された。
+
+### なぜ発生するか
+
+#### E2E 側
+
+- 当時の MFA 検証フロー (PR #67) は **2 段階の API 呼出し** (`verify` → `session update`) で、片方だけ await すると `window.location.href` の遷移が間に合わず flake った経緯がある (LESSONS §4.18 / §4.24)。
+- PR #396 でクライアントの `update()` 呼出しを削除した瞬間、`POST /api/auth/session` の発火源が消滅。テスト側がこの API を待ち続けるとタイムアウトで fail する。
+- ローカル単体テストでは `useSession().update()` を mock しているため発覚しない。**E2E は Playwright を回す PR レビューでしか踏まない**。
+
+#### CodeQL 側
+
+- 旧コードは `route.ts` が `JSON 応答のみ` (sensitive action なし) で、CodeQL は条件分岐をスルーしていた。
+- PR #396 で「条件分岐内に Set-Cookie する `reissueAuthJwtOnResponse` 呼出しを追加」した結果、CodeQL は user-input `body.code` / `body.recoveryCode` が sensitive action 経路を分岐させていると判定。
+- **`verifyTotp` / `compare` による validation gate を CodeQL は認識しない**。コードの「validation 後の sensitive action」というセマンティクスは、構造的に「validation 結果 (boolean / outcome 型) でガード」する形に書き換えないと CodeQL に伝わらない。
+- **★ 1 度目の single-exit refactor では不十分**: 検証関数 (`verifyTotpPath` / `verifyRecoveryPath`) を抽出して reissue を関数末尾の 1 箇所に集約しても、**main 関数内に `if (body.code)` / `else if (body.recoveryCode)` の分岐が残っていれば** CodeQL は依然として user-controlled bypass と判定する (PR #396 で実体験、line 75/77 で再警告)。
+- **2 度目の refactor (完全分離) で解消**: body.X による分岐を **main 関数から完全に排除** し、`dispatchMfaValidation(body, t)` などのヘルパ関数内に閉じ込める。main 関数は `outcome.kind === 'error'` という validation 結果のみで分岐させる。これにより CodeQL の taint flow が関数境界で validation gate に置換され、警告が消える。
+
+### 推奨対応
+
+#### 着手前の予防策
+
+- **`useSession().update()` を削除する PR では必ず `e2e/specs/` と `e2e/fixtures/` を全 grep**:
+  ```bash
+  grep -rE "api/auth/session|/api/auth/session" e2e/
+  ```
+  該当 wait があれば**同 PR 内で削除**する。残すと CI で必ず timeout する。
+- **sensitive action (Set-Cookie / signed JWT / encrypted token 等) を route handler に追加する PR では、CodeQL を意識した構造を最初から採用**:
+  - 検証ロジックを `verifyXxxPath(body): Promise<VerifyOutcome>` のような関数に分離
+  - 戻り値型を `{ kind: 'success' } | { kind: 'error'; response }` の判別 union に
+  - sensitive action 呼出しは関数末尾の **1 箇所**に集約し、`outcome.kind === 'success'` でガード
+  - **★ さらに**: `if (body.X)` / `else if (body.Y)` の分岐自体も `dispatchValidation(body)` のような**ヘルパ関数に完全分離**する。main 関数からは user input に基づく分岐を一切見せず、validation 結果 (kind: 'success' / 'error') だけで sensitive action を gate する。これにより CodeQL の interprocedural taint analysis が関数境界で停止し警告が消える。
+- ローカルでも CodeQL を簡易に再現したい場合: `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` で PR 起票後の警告を確認 (push 後 1-2 分)
+
+#### refactor で消えない場合の最終手段: alert の dismissal
+
+CodeQL は interprocedural taint を追跡するため、ヘルパ関数への分離でも追跡しきれる場合がある。3 度目の refactor でも警告が残るようなら **GitHub Security タブから dismissal**:
+
+```bash
+# PR の CodeQL alert 番号取得
+gh api repos/<owner>/<repo>/code-scanning/alerts \
+  --jq '.[] | select(.most_recent_instance.ref | endswith("<branch>")) | {n: .number, rule: .rule.id, path: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line}'
+
+# False positive として dismiss
+gh api repos/<owner>/<repo>/code-scanning/alerts/<N> -X PATCH \
+  -f state=dismissed \
+  -f dismissed_reason=false_positive \
+  -f dismissed_comment="<理由を明記。例: 検証ゲート (verifyTotp / bcrypt.compare) が ...>"
+```
+
+Dismissal の使用条件:
+- **真の false positive のみ**: 実コードが secure であることを別途レビューで確認済であること
+- **理由を必ず明記**: 将来のレビュー者・監査者が判断を追跡できるように
+- **横断罠**: 同じパターンが repo の別箇所で再発する可能性。検出時の対応手順を本 KDD に残しておく
+
+#### 発生後の対処
+
+1. **CI fail を早期発見**: PR 起票後 5 分以内に `gh pr checks <PR#>` を確認。fail があれば即時調査する習慣 (CI fail を放置するとマージできず 6/1 期限に影響)
+2. **E2E timeout が `waitForResponse` 起因の場合**: ほぼ確実に「コードから当該 API 呼出しが消えた」が原因。spec / fixture の wait も削除する
+3. **CodeQL "user-controlled bypass" が出た場合**: 条件分岐内の sensitive action を単一出口に refactor する (本 PR の `verifyTotpPath` / `verifyRecoveryPath` 抽出が前例)
+
+#### 検証経路
+
+- 修正 push 後、`gh pr checks 396 --watch` で再 CI を確認
+- E2E は Playwright のローカル実行 (`pnpm test:e2e`) で MFA 経路を踏むテスト (`01-admin-and-member-setup.spec.ts Step 2b`) を事前回帰可能。Docker DB 立ち上げが要るので CI 任せが多いが、本 PR 規模の変更では手元で 1 回回すのが安全
+
+### 過去の関連 KDD
+
+- §5.X+58: CI 専用ガード (E2E coverage check) の罠。本件も「ローカルで通って CI で fail」の典型
+- §5.X+66: 本件の前提となる Netlify + NextAuth Set-Cookie 問題。本エントリは「その fix を E2E + CodeQL に整合させる」付随作業の記録
