@@ -9750,3 +9750,83 @@ MFA verify は「これからログインしようとしているユーザ」が
 - §5.X+66: Netlify + NextAuth Set-Cookie 不達 (元問題)
 - §5.X+68: helper の silent failure を fail-loud に変更 (本件の発覚に寄与)
 - §5.X+67: PR レビューで E2E / CodeQL が顕在化する罠 (同型の "本番でしか分からない" 罠)
+
+---
+
+## 5.X+70 **外部 cron 移行で middleware の `PUBLIC_PATHS` 同期 + Stripe disabled 時の no-op ガードを忘れると本番 cron が 302/500 で全滅する (Vercel→Netlify 移行で実体験 / 2026-05-18)**
+
+### TL;DR
+
+- Vercel Cron (内部呼出) → cron-job.org (外部 HTTP) 移行で 7 件中 **4 件が失敗**した
+  - **3 件は 302 → `/login`**: `/api/cron/daily-notifications` / `/daily-usage-aggregation` / `/tenant-monthly-reset` が `PUBLIC_PATHS` 未登録のまま放置され、middleware の auth check が `LOGIN_PATH` に redirect
+  - **1 件は 500**: `/api/cron/stripe-auto-suspend` が `getSystemUserId()` を呼ぶが、Netlify env に `SYSTEM_USER_ID` 未設定で throw。兄弟関数 `flushStripeUsageRecordQueue` には `isStripeEnabled()` ガードがあったが本関数だけ漏れていた
+- **教訓**: 「外部 HTTP に晒される cron route」と「環境依存 env を内部呼出する service」は移行/有効化時に専用の checklist が無いと必ず漏れる
+
+### 何が起きたか (時系列)
+
+1. PR #394 で Vercel → Netlify 移行、cron は cron-job.org で外部 HTTP 化
+2. 7 件の cron を順次設定し test run 実施
+3. 結果:
+   - ✅ `health-check` (`/api/health` は PUBLIC_PATHS 登録済) / `lock-inactive-users` / `stripe-usage-flush` (= isStripeEnabled() ガード有 → no-op 200)
+   - ❌ 302 → `/login`: `daily-notifications` / `daily-usage-aggregation` / `tenant-monthly-reset` (`PUBLIC_PATHS` 未登録)
+   - ❌ 500: `stripe-auto-suspend` (Stripe 無効環境で `getSystemUserId()` throw)
+
+### 根本原因
+
+#### 不具合 A: PUBLIC_PATHS 同期漏れ
+
+[`src/config/routes.ts`](../../src/config/routes.ts) の `PUBLIC_PATHS` は「未認証で middleware 通過できるパス」一覧。Vercel Cron 時代は内部呼出 (= request に session cookie が付かないが Vercel-internal な header で別経路許可) で動いていた path が、外部 HTTP では通常の保護 path 扱いで [`auth.config.ts authorized`](../../src/lib/auth.config.ts#L69) の `LOGIN_PATH` redirect に乗ってしまう。
+
+Stripe 系 2 件 (`stripe-usage-flush` / `stripe-auto-suspend`) は PR-S6 (2026-05-14) で外部 HTTP を想定して `PUBLIC_PATHS` に登録されていたが、それより古い 3 件 (`daily-notifications` / `daily-usage-aggregation` / `tenant-monthly-reset`) は登録されないまま放置されていた。
+
+Vercel 時代は通っていた → 移行作業中もテストで気付かなかった → cron-job.org の test run で初めて顕在化。
+
+#### 不具合 B: Stripe disabled 時の cron no-op ガード漏れ
+
+[`autoSuspendDelinquentTenants`](../../src/services/stripe-auto-suspend.service.ts) は冒頭で `isStripeEnabled()` をチェックせず、いきなり `getSystemUserId()` を呼ぶ。Netlify env に `STRIPE_ENABLED` も `SYSTEM_USER_ID` も未設定 (= 6/1 MVP リリースは Stripe 無効スタート) のため、`getSystemUserId()` が `throw new Error('SYSTEM_USER_ID is not configured...')` → 500。
+
+兄弟関数 [`flushStripeUsageRecordQueue`](../../src/services/stripe-usage-flush.service.ts#L76) は同じ前提下でも `if (!isStripeEnabled()) return { ..., skipped: true }` で no-op 早期 return している。レビュー時に両関数を見比べていれば気付けたが、PR-S6 で本関数だけガードが入らないままマージされていた。
+
+### 修正
+
+```typescript
+// src/config/routes.ts (PUBLIC_PATHS)
+'/api/cron/daily-notifications',         // 追加
+'/api/cron/daily-usage-aggregation',     // 追加
+'/api/cron/tenant-monthly-reset',        // 追加
+
+// src/services/stripe-auto-suspend.service.ts
+export async function autoSuspendDelinquentTenants(): Promise<AutoSuspendResult> {
+  if (!isStripeEnabled()) {
+    return { candidates: 0, suspended: 0, skipped: 0, errors: [], skippedStripeDisabled: true };
+  }
+  // ... 既存処理
+}
+```
+
+### 再発防止ルール
+
+1. **外部 HTTP 化される cron route を追加/移行する際の Checklist**
+   - [ ] `PUBLIC_PATHS` (`src/config/routes.ts`) に登録したか
+   - [ ] route 側で `isCronAuthorized()` (`Authorization: Bearer <CRON_SECRET>` 定数時間比較) を呼んでいるか
+   - [ ] cron-job.org / 移行先 cron 管理画面で test run して **200 OK** を確認したか
+   - [ ] 外部からの POST/GET method を route の `export` と一致させたか
+   - [ ] 詳細手順は [`docs/operations/DEPLOYMENT.md §6`](../operations/DEPLOYMENT.md) を参照
+
+2. **環境依存 env を要求する service を cron から呼ぶ際の Checklist**
+   - [ ] その env が未設定の環境 (= dev / 機能 disabled 状態) でも throw しないか
+   - [ ] feature flag (`isStripeEnabled()` 等) で早期 return しているか
+   - [ ] 兄弟関数 (= 同じ env を読む他関数) のガードと整合しているか (= grep `getSystemUserId\|isStripeEnabled` で横展開チェック)
+
+3. **後付け検出 (= 横展開 grep の自動化)**
+
+   ```bash
+   # 「PUBLIC_PATHS に未登録の cron route があれば fail」を CI に組み込む候補
+   pnpm tsx scripts/check-cron-public-paths.ts  # 未整備、TODO
+   ```
+
+### 過去の関連 KDD
+
+- §5.X+58: 新規 route/page を追加した時の `pnpm e2e:coverage-check` ガード漏れ (= 同型の「設定ファイル同期漏れ」)
+- §5.X+66: Netlify 移行で顕在化したクラスの罠 (本件もその一種)
+- §5.X+69: middleware matcher の除外漏れ (= 同じ routes 系設定の同期問題)

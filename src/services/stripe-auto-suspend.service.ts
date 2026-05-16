@@ -23,7 +23,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { getSystemUserId } from '@/lib/stripe';
+import { getSystemUserId, isStripeEnabled } from '@/lib/stripe';
 import { suspendTenant } from './super-admin.service';
 
 export type AutoSuspendResult = {
@@ -38,6 +38,12 @@ export type AutoSuspendResult = {
   skipped: number;
   /** 予期せぬエラーで失敗した件数 (= 運用調査対象) */
   errors: Array<{ tenantId: string; error: string }>;
+  /**
+   * 2026-05-18 (fix/cron-public-paths-and-stripe-disabled-guard):
+   *   Stripe 無効 (STRIPE_ENABLED!=='true') 環境で no-op として skip した事を示す。
+   *   兄弟の `flushStripeUsageRecordQueue` と同じパターン。
+   */
+  skippedStripeDisabled?: true;
 };
 
 /**
@@ -53,6 +59,22 @@ export type AutoSuspendResult = {
  *   5. それ以外は errors に追加 (= 全体は止まらない)
  */
 export async function autoSuspendDelinquentTenants(): Promise<AutoSuspendResult> {
+  // 2026-05-18 (fix/cron-public-paths-and-stripe-disabled-guard):
+  //   STRIPE_ENABLED 未設定環境 (= 6/1 MVP リリース時点) で `getSystemUserId()` が throw して
+  //   cron が 500 になっていた (cron-job.org test run で発覚)。兄弟関数
+  //   `flushStripeUsageRecordQueue` と同じく Stripe 無効時は no-op で early-return する。
+  //   STRIPE_ENABLED=true にして本機能を有効化する段階で SYSTEM_USER_ID も併せて env 設定する運用。
+  //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+70
+  if (!isStripeEnabled()) {
+    return {
+      candidates: 0,
+      suspended: 0,
+      skipped: 0,
+      errors: [],
+      skippedStripeDisabled: true,
+    };
+  }
+
   const now = new Date();
 
   const candidates = await prisma.tenant.findMany({

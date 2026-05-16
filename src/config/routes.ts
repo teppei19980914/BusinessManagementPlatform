@@ -38,6 +38,16 @@ export const PUBLIC_PATHS = [
   // PR-S6 (2026-05-14): Stripe 引落失敗による自動 suspend cron (日次)。
   // autoSuspendScheduledAt 到来テナントに対し suspendTenant('payment_delinquent') を呼出。
   '/api/cron/stripe-auto-suspend',
+  // 2026-05-18 (fix/cron-public-paths-and-stripe-disabled-guard):
+  //   Vercel → Netlify 移行 (PR #394) + cron-job.org 外部 cron 化に伴い、これらは外部から
+  //   `Authorization: Bearer <CRON_SECRET>` で呼ばれる。middleware の Cookie セッション検査は
+  //   通過させ、route.ts 側で `isCronAuthorized()` (定数時間比較) を行う。
+  //   Vercel Cron 時代は内部呼出だったため `/api/auth` 系で吸収できていたが、外部 HTTP では
+  //   通常の保護パス扱いで /login へ 302 redirect されていた (cron-job.org test run で発覚)。
+  //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+70
+  '/api/cron/daily-notifications',
+  '/api/cron/daily-usage-aggregation',
+  '/api/cron/tenant-monthly-reset',
 ] as const;
 
 /**
