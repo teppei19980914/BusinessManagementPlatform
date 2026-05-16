@@ -363,6 +363,45 @@ pnpm tsx scripts/backfill-monthly-embeddings.ts --tenant=<id>
 - セキュリティ強化 PR の起票
 - 再発防止策の検討 ([STRIDE_REVIEW_PROCEDURE.md](../security/STRIDE_REVIEW_PROCEDURE.md) を一時的に再実施)
 
+### 6.11 MFA 検証成功してもログインループ (S-2、Netlify 移行起因)
+
+MFA 有効ユーザが TOTP コードを正しく入力しても `/login/mfa` 画面に戻され続ける症状。super_admin はログイン不能に陥るためサービス継続に影響する S-2 障害。
+
+#### 既知の根本原因
+
+NextAuth v5 0-beta.31 + @netlify/plugin-nextjs の組合せで `POST /api/auth/session` の Set-Cookie がブラウザに反映されない事象 (KDD §5.X+66)。**2026-05-18 の PR #396 で JWT 直接再署名方式に切替え済**。再発した場合は本方式が壊れた可能性を疑う。
+
+#### 切り分け手順
+
+1. **発生条件の確認** (5 分):
+   - DevTools → Network タブで `POST /api/auth/mfa/verify` のレスポンスを開く
+   - **Response Headers に `set-cookie: __Secure-authjs.session-token=...`** が含まれているか確認
+   - 含まれていない → 6.11 のパターン確定。`src/lib/auth-jwt-helper.ts` の動作不良か、NextAuth `next-auth/jwt` API 変更を疑う
+   - 含まれている → 別原因 (middleware / `mfaPending` 判定ロジック等)
+
+2. **JWT 再署名の動作確認** (10 分):
+   ```bash
+   pnpm vitest run src/lib/auth-jwt-helper.test.ts
+   ```
+   8 件全 pass を確認。fail がある場合 → ヘルパに依存する全機能 (MFA / TZ / Locale) が影響を受けるため即時調査。
+
+3. **環境変数の検証** (5 分):
+   - Netlify 環境変数 `NEXTAUTH_SECRET` が設定されていることを確認 (helper 内で必須)
+   - 値が auth.config.ts の `secret` と一致しているか (Netlify UI で再確認)
+
+#### 暫定回避策 (本番ユーザ向け)
+
+JWT 再署名が壊れていてもユーザが脱出できる経路:
+
+- **recovery code を使う**: MFA TOTP の代わりにリカバリーコードを入力 → 成功すれば同じく JWT 再署名される (recovery code 経路も同ヘルパで再署名するため、TOTP 経路だけが特定の理由で壊れている場合は recovery code でも回避できない可能性あり)
+- **super_admin に手動で MFA をリセットしてもらう**: `POST /api/auth/mfa/disable` を super_admin が呼ぶ (該当ユーザ ID 指定)。MFA 強制対象 (super_admin 自身) には適用不可
+- **最悪ケース (super_admin 自身がロック)**: Supabase ダッシュボードで直接 `users` テーブルの `mfaEnabled` を false に SET。次回ログインで MFA をスキップしてサービス復旧。**事後に必ず MFA を再有効化する**こと。
+
+#### 恒久対応
+
+- NextAuth v5 GA 待ち → `useSession().update()` の Set-Cookie 反映を upstream で fix されたら再評価
+- 別ホスティング (Vercel Pro 等) への移行検討は `docs/design/INFRASTRUCTURE.md §10.3` のスケール時方針として整理済
+
 ---
 
 

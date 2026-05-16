@@ -12,9 +12,19 @@
  *
  * 監査: auth_event_logs に mfa_verified / mfa_failure / recovery_code_used を記録。
  *
+ * fix/jwt-resign-for-netlify (2026-05-18):
+ *   旧仕様はクライアント側の `useSession().update({ mfaVerified: true })` で JWT 更新していたが、
+ *   NextAuth v5 0-beta.31 + @netlify/plugin-nextjs では `POST /api/auth/session` の
+ *   Set-Cookie がブラウザに反映されない事象を確認 (MFA 検証ループの原因)。
+ *
+ *   対応として本ルートが検証成功時に**直接 JWT を再署名して Set-Cookie する**ように変更。
+ *   middleware の mfaPending 判定は新 JWT を読むため、副作用なく即時抜ける。
+ *   詳細は src/lib/auth-jwt-helper.ts の docblock を参照。
+ *
  * 関連:
  *   - DESIGN.md §9.5 (MFA 設計)
  *   - PR #67 (MFA ログイン強化)
+ *   - KDD: docs/knowledge/KDD_PATTERNS.md "Netlify + NextAuth v5 Set-Cookie 不達"
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -28,6 +38,7 @@ import { prisma } from '@/lib/db';
 import { compare } from 'bcryptjs';
 import { z } from 'zod/v4';
 import { auth } from '@/lib/auth';
+import { reissueAuthJwtOnResponse } from '@/lib/auth-jwt-helper';
 
 const totpSchema = z.object({ userId: z.string().uuid(), code: z.string().length(6) });
 const recoverySchema = z.object({ userId: z.string().uuid(), recoveryCode: z.string().min(1) });
@@ -80,7 +91,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ data: { success: true } });
+    // fix/jwt-resign-for-netlify: 検証成功で JWT を mfaVerified=true に再署名 + Set-Cookie。
+    // クライアントは update() を呼ばずに、本レスポンスの cookie だけで middleware を通過できる。
+    const successResponse = NextResponse.json({ data: { success: true } });
+    await reissueAuthJwtOnResponse(req, successResponse, { mfaVerified: true });
+    return successResponse;
   }
 
   // リカバリーコードでのフォールバック
@@ -101,7 +116,10 @@ export async function POST(req: NextRequest) {
         await prisma.recoveryCode.update({ where: { id: code.id }, data: { usedAt: new Date() } });
         // PR #116: recovery code 使用成功で MFA ロック・失敗カウントを同時にリセット
         await resetMfaLockOnRecoveryCodeUse(parsed.data.userId);
-        return NextResponse.json({ data: { success: true } });
+        // fix/jwt-resign-for-netlify: recovery code 経路も同様に JWT 再署名
+        const successResponse = NextResponse.json({ data: { success: true } });
+        await reissueAuthJwtOnResponse(req, successResponse, { mfaVerified: true });
+        return successResponse;
       }
     }
 

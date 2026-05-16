@@ -9468,3 +9468,57 @@ if (!hasAnyContent) {
 
 - §5.10 / §5.14: マージコンフリクトの一般パターン (末尾追記の衝突)
 - §5.X+30 系: 2 段構え PR (docs PR → 実装 PR) の docs/business/README.md コンフリクト
+
+## 5.X+66 **NextAuth v5 + @netlify/plugin-nextjs では `useSession().update()` の Set-Cookie がブラウザに反映されない ─ Vercel → Netlify 移行で MFA・テーマ・i18n が同時に壊れた (PR #395 / PR #396 で実体験 / 2026-05-18)**
+
+### 罠の正体
+
+- Vercel Hobby の商用利用不可問題で Netlify Starter に移行 (PR #394) した直後、複数の機能が同時に「DB は更新されているが画面に反映されない」状態に陥った:
+  - **テーマ変更**: 設定画面でダークテーマを選択 → DB は `dark` だが `<html data-theme="light">` のまま (PR #395)
+  - **MFA TOTP 検証**: コード入力成功 → `/login/mfa` に戻されるループ (super_admin の場合ログイン不能、想定)
+  - **テナント TZ/Locale 変更**: 保存後も SSR が古い値で描画
+- 全てに共通する仕組み: **クライアントが `useSession().update({ X: ... })` を呼び、NextAuth が `POST /api/auth/session` でレスポンスに `Set-Cookie` を返す経路**を使っていた。
+- 現象: **DB 更新 ✓ / クライアント側 React state 更新 ✓ / 新しい `__Secure-authjs.session-token` cookie だけがブラウザに届いていない** → 次のリクエストで古い JWT が送られる → SSR / middleware が古い値を読む。
+- F5 (フルリロード) や `router.refresh()` でも回復せず (= cookie 自体が更新されていないため)。
+
+### なぜ発生するか
+
+- **`useSession().update()` の Set-Cookie 経路が Netlify の Function 応答パイプラインで吸収される** (一次ソース未検証だが、`POST /api/auth/session` のレスポンスにつく `Set-Cookie` ヘッダだけがブラウザに届かない事象を複数機能で再現確認)。
+- 同じ NextAuth ハンドラでも、**ログイン時の Set-Cookie は正常**に届く (= cookie set そのものが壊れているわけではなく、`/api/auth/session` 経由が特殊)。
+- Vercel 環境では同じコードで動いていたため、レビュー / E2E / 単体テストの**いずれでも検出できなかった**。
+
+### 推奨対応
+
+#### 即時 (本サービスでの fix)
+
+1. **テーマのような中継不要な値**: PATCH ルートが直接「専用 cookie (`tasukiba-theme` 等) を Set-Cookie」する設計に切替 (PR #395)。SSR layout は `cookies().get('tasukiba-theme')` を JWT より優先して読む。
+2. **JWT に乗せたままにしたい値 (mfaVerified / timezone / locale)**: API route が **NextAuth の encode/decode (`next-auth/jwt`) で JWT を直接再署名 + Set-Cookie** する設計に切替 (PR #396、`src/lib/auth-jwt-helper.ts`)。クライアント側の `useSession().update()` は削除。
+
+#### 設計原則
+
+- **「`useSession().update()` を新規コードで使わない」を本サービスの方針として確定**。同等の更新は以下のいずれかで実現する:
+  - **専用 cookie**: 値が独立で、`useSession()` で読まれていない場合 (= SSR / middleware のみが読む)。例: テーマ
+  - **JWT 直接再署名**: middleware / useSession / SSR の複数経路で読まれる場合。`reissueAuthJwtOnResponse(req, res, patch)` ヘルパに集約
+- **JWT 再署名時に許可する claim は型で絞る** (`JwtReissuePatch` 型)。`tenantId` / `id` / `systemRole` 等の機密 claim は patch 対象外にして改竄経路を作らない。
+- **テストで `set-cookie` ヘッダの存在を必ず assert する** (デグレ検出)。route テスト + helper の単体テストの両方で確認する (PR #396 では合計 26 ケース追加)。
+
+#### 引き継ぎチェックリスト (他 NextAuth + Netlify 環境)
+
+新規に `useSession().update()` パターンを見つけたら以下の手順:
+
+1. `grep -rE "useSession\(\)\.update|updateSession" src/` で全箇所を列挙
+2. 各箇所の用途を分類: 専用 cookie で良い / JWT 再署名が必要
+3. 該当 route handler に `reissueAuthJwtOnResponse` を追加、クライアント側の `update()` は削除
+4. `auth.config.ts` の jwt callback `trigger === 'update'` ハンドラは**残しておく** (将来 NextAuth / Netlify 側で fix された場合の二段構え)
+5. route テストに「`set-cookie` が含まれる」assertion を追加
+
+### 検証経路
+
+- **症状の最終確認は View Source の `<html data-theme="..."` / `<html lang="..."` 属性で実施可能** (JWT 内容が SSR 出力に直接表れる属性が存在する場合)。
+- 修正後の検証: ローカル `pnpm dev` では完全再現できない (Netlify Function ランタイムでのみ発生)。**Netlify Deploy Preview** で実機確認することが推奨手順 (KDD §5.X+58 と同方針)。
+- `reissueAuthJwtOnResponse` の単体テストは `src/lib/auth-jwt-helper.test.ts` で「既存 claim が消えない」「許可外 claim は無視」をカバー。デグレ検出ライン。
+
+### 過去の関連 KDD
+
+- §5.X+58: ローカル単体テストで検出できない CI 専用ガード (E2E coverage) の話。本件も**ローカル単体ではなくクラウド環境で初発覚**したという点で同型
+- §5.X+57: 環境差異が顕在化する PR 順序問題 (docs PR → 実装 PR)。本件は「Vercel → Netlify 移行」が引き金

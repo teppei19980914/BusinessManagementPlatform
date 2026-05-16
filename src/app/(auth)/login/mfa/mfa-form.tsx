@@ -3,12 +3,17 @@
 /**
  * MFA 検証フォーム (PR #67 Client Component)。
  *
- * POST /api/auth/mfa/verify でコード検証 → 成功したら useSession().update()
- * で JWT を mfaVerified=true に更新し、callbackUrl へ遷移する。
+ * POST /api/auth/mfa/verify でコード検証 → 成功すると API 側で **JWT を再署名 + Set-Cookie**
+ * (fix/jwt-resign-for-netlify、2026-05-18 以降) → callbackUrl へフルページ遷移して反映。
+ *
+ * 旧仕様は `useSession().update({ mfaVerified: true })` 経由で JWT を更新していたが、
+ * NextAuth v5 + @netlify/plugin-nextjs では update() の Set-Cookie が反映されず MFA ループに
+ * 陥る事象を確認したため、サーバ側でのみ JWT 再署名する設計に変更した。
+ * 詳細: src/app/api/auth/mfa/verify/route.ts / src/lib/auth-jwt-helper.ts
  */
 
 import { useState } from 'react';
-import { useSession, signOut } from 'next-auth/react';
+import { signOut } from 'next-auth/react';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,7 +23,6 @@ import { sanitizeCallbackUrl } from '@/lib/url-utils';
 
 export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: string }) {
   const t = useTranslations('auth');
-  const { update } = useSession();
   const [code, setCode] = useState('');
   const [recoveryCode, setRecoveryCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
@@ -42,9 +46,8 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
         setError(json.error?.message || t('mfaInvalidCode'));
         return;
       }
-      // JWT を mfaVerified=true で再発行 (auth.config.ts jwt callback の trigger='update' 経由)
-      await update({ mfaVerified: true });
-      // フルページリロードで最新 cookie を確実に送る (ログインと同じパターン)。
+      // JWT は API 側で mfaVerified=true に再署名済 + Set-Cookie 完了。
+      // フルページ遷移で新 cookie を確実に送り、middleware の MFA gate を通過する。
       // PR #198: callbackUrl は CWE-601 対策で sanitize してから遷移する。
       window.location.href = sanitizeCallbackUrl(callbackUrl);
     } finally {

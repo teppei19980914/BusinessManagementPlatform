@@ -197,7 +197,34 @@ DB スキーマ変更を伴うロールバックは [`ROLLBACK.md`](./ROLLBACK.m
 
 ---
 
-## 8. Netlify CLI チートシート
+## 8. Netlify 固有の既知問題と対処
+
+### 8.1 NextAuth `useSession().update()` の Set-Cookie が反映されない (2026-05-18 確認)
+
+**症状**: クライアント側の `useSession().update({ X: ... })` で JWT を更新する経路で、レスポンスの `Set-Cookie` がブラウザに反映されず、JWT 内 claim が古いまま固定化される。MFA 検証 / テナント TZ-Locale 変更 / 画面テーマ変更で同時発覚。
+
+**根本原因**: NextAuth v5 0-beta.31 + @netlify/plugin-nextjs の組合せで `POST /api/auth/session` のレスポンス cookie がプロキシ層に吸収される (一次ソース未検証、ヘッダ観察で再現確認)。Vercel 環境では発生しない。
+
+**対応 (本サービスで実施済)**:
+
+- **PR #395**: 画面テーマは専用 cookie `tasukiba-theme` に分離。`src/app/api/settings/theme/route.ts` が DB 更新後に直接 Set-Cookie。
+- **PR #396**: MFA 検証 / テナント TZ-Locale は **JWT 直接再署名**方式に切替 (`src/lib/auth-jwt-helper.ts` の `reissueAuthJwtOnResponse`)。クライアント側の `update()` 呼出しは削除。
+
+**新規コードのルール**:
+
+- **`useSession().update()` を新規追加しない**。同等の更新は以下のいずれかで実現:
+  - **専用 cookie**: 値が SSR / middleware のみで読まれる場合 (例: テーマ)
+  - **JWT 直接再署名**: middleware / useSession / SSR の複数経路で読まれる場合 (例: MFA / TZ / Locale)
+- 詳細パターンは [docs/knowledge/KDD_PATTERNS.md §5.X+66](../knowledge/KDD_PATTERNS.md) を参照。
+- 障害対応手順は [INCIDENT_RESPONSE.md §6.11](./INCIDENT_RESPONSE.md) を参照。
+
+### 8.2 ビルド分制限 (300 分/月) の運用
+
+`scripts/netlify-ignore.sh` で docs-only 変更は skip 済。それでも月末に逼迫しそうな場合は §1.2 の節約戦略を参照。
+
+---
+
+## 9. Netlify CLI チートシート
 
 ```bash
 # サイト紐付け確認
