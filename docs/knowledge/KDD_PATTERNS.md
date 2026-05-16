@@ -9683,3 +9683,70 @@ Netlify Functions runtime で `NODE_ENV` が `'production'` でないケース�
 **修正**: 本ヘルパを **request の cookies に実在する名前を auto-detect** する方式に変更 (`detectAuthCookieName`)。検出した名前を decode/encode の salt と Set-Cookie の name の双方に使用することで、NextAuth がどちらの prefix で署名していても整合する。
 
 **一般則**: NextAuth と連携するコードで「secure context かどうか」を独自判定してはいけない。NextAuth の判定基準 (URL protocol) と環境変数 (`NODE_ENV`) は runtime によって食い違う可能性がある。実在 cookie 名 / NextAuth の `getToken()` API などで「NextAuth が決めた事実」を参照する。
+
+## 5.X+69 **`/api/auth/*` 配下にカスタム route を置くと、NextAuth middleware の auto-refresh が我々の Set-Cookie を上書きする ─ middleware matcher で当該 path を除外する (PR #400 で実体験 / 2026-05-18)**
+
+### 罠の正体
+
+PR #398 で MFA verify を JWT 直接再署名方式に移行した後、本番でユーザが正しい TOTP コードを入力しても /projects に到達できないループが継続した。DevTools の Network タブで `POST /api/auth/mfa/verify` レスポンスを観察すると **`Set-Cookie: __Secure-authjs.session-token=...` が 2 回**現れていた:
+
+```
+Set-Cookie [1]: ...; Path=/; Secure; HttpOnly; SameSite=strict        ← 本ヘルパ (mfaVerified=true)
+Set-Cookie [2]: ...; Path=/; Expires=...; HttpOnly; Secure; SameSite=Strict  ← NextAuth (古い値)
+```
+
+ブラウザは **同名 cookie の最後の Set-Cookie を採用**する仕様のため、2 つ目 (NextAuth 由来) が勝ち、`mfaVerified=false` のまま記録される。次のリクエストで middleware が再び /login/mfa にリダイレクト → 永久ループ。
+
+i18n route (`/api/tenants/me/i18n`) では同じ helper を使っていても発生しなかった = NextAuth の auto-refresh は **`/api/auth/*` 配下にしか作用しない** という分岐挙動。
+
+### なぜ発生するか
+
+NextAuth v5 の middleware ラッパ (`NextAuth(authConfig)` が返す `auth` 関数) は `/api/auth/*` 名前空間のリクエストを「自社の認証関連エンドポイント」として処理し、レスポンスにセッションリフレッシュの Set-Cookie を**自動付与**する。これは:
+
+- /api/auth/session : 標準的なセッション読取・更新エンドポイント
+- /api/auth/callback/* : OAuth callback
+- /api/auth/signin / signout : 認証フロー
+
+これらは NextAuth の本来の役割。しかし `/api/auth/mfa/verify` のような**カスタム route**もパス前方一致で「同じ扱い」になり、NextAuth が「セッション読んだから refresh しておく」とばかりに古い JWT で Set-Cookie を上書きする。
+
+カスタム route 側で `reissueAuthJwtOnResponse` を呼んで mfaVerified=true の cookie を書いても、middleware が後段で「気を利かせて」古い値で上書きしてしまうため、努力が無効化される。
+
+### 推奨対応
+
+**`middleware.ts` の matcher で当該 path を除外**する:
+
+```ts
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify).*)'],
+};
+```
+
+これで NextAuth の middleware が当該 path に介入せず、カスタム route が書いた Set-Cookie がそのままブラウザに届く。
+
+#### 除外しても security 要件は壊れないか
+
+カスタム route 内で以下を実施していれば middleware 除外しても安全:
+
+1. **`await auth()` で session を読み、未認証なら 401 を返す** (代替の認証チェック)
+2. **userId 一致確認** (他人の verify を防ぐ)
+3. **業務 gate (Beginner 期限切れ / Suspend 中など)** が auth flow を妨げない設計
+
+MFA verify は「これからログインしようとしているユーザ」が叩く endpoint であり、業務 gate (suspend / beginner) の適用対象外で構わないため、middleware bypass で問題なし。
+
+### 一般則 (本サービスで確立)
+
+- **`/api/auth/*` 配下にカスタム route を作るときは要注意**: NextAuth の名前空間に介入されることを前提に設計する
+- **理想**: カスタム auth-related route は `/api/auth/` 外 (例: `/api/mfa/verify`) に配置する。ただし既存 URL を変えると client / e2e の URL 更新コストが大きいため、本サービスでは middleware exclude を採用
+- **新規 `/api/auth/*` route 追加時のチェック**: レスポンスに想定外の Set-Cookie が含まれないかを Network タブで実機確認
+
+### 検証経路
+
+- Network タブで `POST /api/auth/mfa/verify` のレスポンスを開き、**`Set-Cookie` が 1 件のみ**であることを確認
+- TOTP 検証成功 → `/projects` に到達できることを実機確認
+- E2E `01-admin-and-member-setup.spec.ts Step 2b` が pass する (= 自動化された回帰検出)
+
+### 過去の関連 KDD
+
+- §5.X+66: Netlify + NextAuth Set-Cookie 不達 (元問題)
+- §5.X+68: helper の silent failure を fail-loud に変更 (本件の発覚に寄与)
+- §5.X+67: PR レビューで E2E / CodeQL が顕在化する罠 (同型の "本番でしか分からない" 罠)

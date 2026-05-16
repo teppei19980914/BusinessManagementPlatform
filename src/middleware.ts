@@ -66,5 +66,14 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // fix/mfa-verify-middleware-cookie-conflict (2026-05-18):
+  //   `/api/auth/mfa/verify` を middleware 対象外に追加。
+  //   理由: NextAuth v5 の auth() middleware wrapper が `/api/auth/*` 配下に対して
+  //   セッションリフレッシュ (旧 JWT 値で Set-Cookie 上書き) を行う場合があり、
+  //   本ルートの reissueAuthJwtOnResponse (mfaVerified=true) で書いた cookie が
+  //   middleware 側の Set-Cookie で上書きされて mfaVerified=false に戻る事象を実観測。
+  //   ルート側で `await auth()` による自前認証チェックを行うため、middleware 除外しても
+  //   セキュリティ要件 (本人のみ verify 可) は維持される。
+  //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+69
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify).*)'],
 };
