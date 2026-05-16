@@ -66,6 +66,9 @@
 | 移動日 | 元の場所 | 移動先 | 経緯 |
 |---|---|---|---|
 | 2026-05-17 | docs/roadmap/MVP_HISTORICAL.md | [roadmap/MVP_HISTORICAL.md](./roadmap/MVP_HISTORICAL.md) | MVP 構築計画 (2026-04 完了)、既に履歴ラベル付きだったため archive 化 |
+| 2026-05-19 | docs/roadmap/V1_FINAL_TASKS.md | [roadmap/V1_FINAL_TASKS.md](./roadmap/V1_FINAL_TASKS.md) | 6/1 リリース最終追加実装タスク。実装は完了、ロードマップ評価で archive 化判定 |
+| 2026-05-19 | docs/roadmap/SUGGESTION_ENGINE_PLAN.md | [roadmap/SUGGESTION_ENGINE_PLAN.md](./roadmap/SUGGESTION_ENGINE_PLAN.md) | T-03 提案エンジン v2 実装計画。PR #220-#226 で実装完了済 |
+| 2026-05-19 | docs/roadmap/ROLE_REFACTORING_PLAN.md | [roadmap/ROLE_REFACTORING_PLAN.md](./roadmap/ROLE_REFACTORING_PLAN.md) | ロール再構築計画。`src/lib/permissions/role.ts` (isSuperAdmin / isAdminOrAbove / requireSuperAdmin) で実装完了済 |
 
 ### audits/
 
@@ -83,13 +86,13 @@
 
 リリースが正常完了したら、関連する完了済 plan を archive へ移動:
 
-| 対象 | 移動先 | トリガ条件 |
-|---|---|---|
-| `docs/roadmap/V1_FINAL_TASKS.md` | `docs/archive/roadmap/V1_FINAL_TASKS.md` | 6/1 リリース完了、全 V1 タスク完了確認後 |
-| `docs/roadmap/ROLE_REFACTORING_PLAN.md` | `docs/archive/roadmap/ROLE_REFACTORING_PLAN.md` | ロール再構築リリース完了確認後 |
-| `docs/roadmap/SUGGESTION_ENGINE_PLAN.md` | `docs/archive/roadmap/SUGGESTION_ENGINE_PLAN.md` | T-03 リリース完了確認後 |
-| `docs/operations/SUGGESTION_ENGINE_VERIFICATION.md` | `docs/archive/verifications/SUGGESTION_ENGINE.md` | T-03 リリース後 1 ヶ月 (運用上問題なし確認) |
-| `docs/operations/T-03_RELEASE_NOTES.md` | `docs/archive/release-notes/T-03.md` | T-03 リリース後 1 ヶ月 |
+| 対象 | 移動先 | トリガ条件 | 状態 |
+|---|---|---|---|
+| ~~docs/roadmap/V1_FINAL_TASKS.md~~ | docs/archive/roadmap/V1_FINAL_TASKS.md | — | ✅ **2026-05-19 archive 完了**(前倒し実施、実装は完了済のため) |
+| ~~docs/roadmap/ROLE_REFACTORING_PLAN.md~~ | docs/archive/roadmap/ROLE_REFACTORING_PLAN.md | — | ✅ **2026-05-19 archive 完了** |
+| ~~docs/roadmap/SUGGESTION_ENGINE_PLAN.md~~ | docs/archive/roadmap/SUGGESTION_ENGINE_PLAN.md | — | ✅ **2026-05-19 archive 完了** |
+| `docs/operations/SUGGESTION_ENGINE_VERIFICATION.md` | `docs/archive/verifications/SUGGESTION_ENGINE.md` | T-03 リリース後 1 ヶ月 (運用上問題なし確認) | 待機中 |
+| `docs/operations/T-03_RELEASE_NOTES.md` | `docs/archive/release-notes/T-03.md` | T-03 リリース後 1 ヶ月 | 待機中 |
 
 ### Phase 3: Stripe v1.x リリース完了後
 

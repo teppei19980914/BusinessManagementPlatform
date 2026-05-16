@@ -23,3 +23,4 @@
 | [DOGFOODING_PLAN.md](./DOGFOODING_PLAN.md) | Dogfooding 計画 (6/15 ± 1 週、AI 補助なし機能実装によるドキュメント検証) | 新規 (2026-05-16) |
 | [RELEASE_NOTES_v1.md](./RELEASE_NOTES_v1.md) | v1.0 リリースノート (ドラフト、5/30 確定版へ) | 新規 (2026-05-16) |
 | [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md) | 6/1 公開当日の時系列手順 (T-2 週 〜 T+1 営業日) + ロールバック条件 + B4 判断 | 新規 (2026-05-16) |
+| [PUBLIC_LAUNCH_CHECKLIST.md](./PUBLIC_LAUNCH_CHECKLIST.md) | 公開前チェックリスト (法的書類 LICENSE/利用規約/プライバシーポリシー、公開ページ /login 案内/OG画像/robots.txt、運用準備) | 新規 (2026-05-19) |
