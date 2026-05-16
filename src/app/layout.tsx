@@ -27,11 +27,37 @@ const geistMono = Geist_Mono({
 
 // PR #175 Phase C-final: locale 連動の metadata。`getTranslations()` は
 // SSR 時に next-intl の locale (auth().user.locale or system default) を解決済。
+//
+// 2026-05-19 (docs/2026-05-19-roadmap-archive): OG metadata 追加。
+//   SNS シェア時のプレビュー対応。og-image.png (1200x630) は public/ に配置
+//   (現在はプレースホルダ、デザイン確定後に差し替え)。
+//   詳細: docs/operations/PUBLIC_LAUNCH_CHECKLIST.md §2.2
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('app');
+  const title = t('metaTitle');
+  const description = t('metaDescription');
   return {
-    title: t('metaTitle'),
-    description: t('metaDescription'),
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: 'website',
+      images: [
+        {
+          url: '/og-image.png',
+          width: 1200,
+          height: 630,
+          alt: title,
+        },
+      ],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: ['/og-image.png'],
+    },
   };
 }
 

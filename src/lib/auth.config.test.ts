@@ -316,6 +316,24 @@ describe('authorized callback - 未認証', () => {
     expect(result).toBe(true);
   });
 
+  it('PUBLIC_PATHS (/terms) は未認証でも通る (2026-05-19 追加)', async () => {
+    const result = await authorized({
+      auth: null,
+      request: makeRequest('/terms', 'GET'),
+    } as never);
+
+    expect(result).toBe(true);
+  });
+
+  it('PUBLIC_PATHS (/privacy) は未認証でも通る (2026-05-19 追加)', async () => {
+    const result = await authorized({
+      auth: null,
+      request: makeRequest('/privacy', 'GET'),
+    } as never);
+
+    expect(result).toBe(true);
+  });
+
   it('未認証で保護領域 (/api/projects) は LOGIN_PATH リダイレクト', async () => {
     const result = await authorized({
       auth: null,

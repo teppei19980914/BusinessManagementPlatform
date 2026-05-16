@@ -139,6 +139,30 @@ function LoginForm() {
           </form>
         </CardContent>
       </Card>
+
+      {/*
+       * 2026-05-19 (docs/2026-05-19-roadmap-archive): 初見訪問者向け案内 + フッタリンク。
+       *   外部ユーザがログイン画面に直接到達した場合の案内導線を提示。
+       *   詳細: docs/operations/PUBLIC_LAUNCH_CHECKLIST.md §2.1
+       */}
+      <div
+        data-testid="login-public-footer"
+        className="mt-6 w-full max-w-[min(90vw,28rem)] text-center text-xs text-muted-foreground"
+      >
+        <p className="mb-2">
+          本サービスは現在 <span className="font-semibold">招待制</span> です。
+          ご興味のある方はお問い合わせください。
+        </p>
+        <p>
+          <a href="/terms" className="mx-2 hover:underline">
+            利用規約
+          </a>
+          <span aria-hidden="true">|</span>
+          <a href="/privacy" className="mx-2 hover:underline">
+            プライバシーポリシー
+          </a>
+        </p>
+      </div>
     </div>
   );
 }
