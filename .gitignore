@@ -68,3 +68,6 @@ id_rsa.pub
 # 実行: pnpm tsx scripts/security-check.ts → docs/security/ に出力
 /docs/security/security-report.html
 /docs/security/SECURITY-TASKS.md
+
+# Local Netlify folder
+.netlify
