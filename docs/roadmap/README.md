@@ -11,7 +11,13 @@
 | [ROLE_REFACTORING_PLAN.md](./ROLE_REFACTORING_PLAN.md) | ロール再構築計画 (テナント管理者 + システム管理者の二層化、6/1 リリース目標) | 新規 (2026-05-03) |
 | [V1_FINAL_TASKS.md](./V1_FINAL_TASKS.md) | 6/1 リリース最終追加実装タスク (PR-X1〜X5 集約、明日以降着手) | 新規 (2026-05-03) |
 | [STRIPE_INTEGRATION_PLAN.md](./STRIPE_INTEGRATION_PLAN.md) | Stripe Metered Billing 連携の実装ロードマップ (v1.x、PR-S1〜S6 集約、約 9 営業日) | 新規 (2026-05-14) |
-| [MVP_HISTORICAL.md](./MVP_HISTORICAL.md) | MVP 構築時の計画 (2026-04-15 完了時点の履歴記録、固定化済) | PLAN.md |
+| [future/](./future/) | v2 以降の将来構想 (active な仕様と完了済履歴の中間配置) | 新規 (2026-05-17) |
+
+## archive 移動済 (履歴参照)
+
+| 旧パス | 現在の場所 | 移動日 |
+|---|---|---|
+| docs/roadmap/MVP_HISTORICAL.md | [../archive/roadmap/MVP_HISTORICAL.md](../archive/roadmap/MVP_HISTORICAL.md) | 2026-05-17 |
 
 ## 提案エンジン v2 の関連ドキュメント
 

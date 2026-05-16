@@ -2,6 +2,21 @@
 
 > 知見を残す。判断をつなぐ。プロジェクトを強くする。
 
+---
+
+## 🚀 はじめに / Getting Started
+
+**初めてリポジトリを触る開発者は、まず [`ONBOARDING.md`](./ONBOARDING.md) を開いてください。**
+
+`ONBOARDING.md` には:
+- 最初の 30 分でローカル環境を立ち上げる 7 ステップ手順
+- リーディングパス (初日 / 1 週目 / 1 ヶ月目) への入口
+- 開発フローの要点 + 困ったときの参照先
+
+を集約しています。本 README は「プロダクト概要 / 機能一覧 / 技術スタック」のリファレンスです。
+
+---
+
 ## 概要
 
 **たすきば Knowledge Relay** は、プロジェクトの知見を蓄積し、次の判断を強くする運営プラットフォームです。
@@ -50,7 +65,7 @@
 | エラー集約 | 全エラーを `system_error_logs` DB に記録し、画面には固定文言のみ表示（機密情報の漏洩面最小化） |
 | 未使用アカウント管理 | 30日未ログインで自動無効化、60日で物理削除 |
 
-セキュリティ実装の多層防御の詳細・限界は [`docs/developer/SPECIFICATION.md §25`](docs/developer/SPECIFICATION.md#25-セキュリティ実装の全体像-多層防御-pr-122-で整理) を参照。運用時の監視・MFA ロック対応は [`docs/administrator/OPERATION.md §13`](docs/administrator/OPERATION.md#13-セキュリティ運用-pr-122-で追加) を参照。
+セキュリティ実装の多層防御の詳細は [docs/design/SECURITY.md](docs/design/SECURITY.md) を参照。運用時の監視・MFA ロック対応は [docs/operations/SECURITY_OPS.md](docs/operations/SECURITY_OPS.md) と [docs/operations/INCIDENT_RESPONSE.md §6.5](docs/operations/INCIDENT_RESPONSE.md) を参照。
 
 ## 技術スタック
 
@@ -97,7 +112,7 @@ graph TD
 
 > **注意 (商用利用時)**: Vercel Hobby プランは規約上**商用利用不可**のため、外部公開・有償提供フェーズでは Vercel Pro ($20/月) への移行が必要です。Supabase Free / Brevo Free も無料枠の制約があり、スケール時は有償プランへ段階移行する想定です。詳細は [docs/design/INFRASTRUCTURE.md §10.3](docs/design/INFRASTRUCTURE.md) を参照。
 
-デプロイ手順・スキーマ変更時の運用・適用済みマイグレーション一覧は [docs/administrator/OPERATION.md](docs/administrator/OPERATION.md) を参照してください。
+デプロイ手順は [docs/operations/DEPLOYMENT.md](docs/operations/DEPLOYMENT.md)、スキーマ変更時の運用は [docs/operations/DB_MIGRATION_PROCEDURE.md](docs/operations/DB_MIGRATION_PROCEDURE.md) を参照してください。
 
 ## セットアップ
 
@@ -105,34 +120,23 @@ graph TD
 
 - Node.js 22 LTS
 - pnpm
-- Docker / Docker Compose（ローカル PostgreSQL 用）または Supabase アカウント
+- Docker / Docker Compose(ローカル PostgreSQL 用)または Supabase アカウント
 
-### ローカル開発（Supabase 接続）
+### クイックスタート
+
+詳細な手順は **[`ONBOARDING.md`](./ONBOARDING.md)** を参照してください。最短経路の概要のみ示します:
 
 ```bash
-# 1. リポジトリのクローン
 git clone <repository-url>
 cd BusinessManagementPlatform
-
-# 2. 依存パッケージのインストール
 pnpm install
-
-# 3. 環境変数の設定
-cp .env.example .env
-# .env を編集して DATABASE_URL, NEXTAUTH_SECRET 等を設定
-
-# 4. Prisma Client 生成 + マイグレーション
-npx prisma generate
-npx prisma migrate dev
-
-# 5. 初期管理者の作成
-pnpm db:seed
-
-# 6. 開発サーバの起動
-pnpm dev
+cp .env.example .env             # DATABASE_URL / NEXTAUTH_SECRET 等を設定
+npx prisma generate && npx prisma migrate dev
+pnpm db:seed                     # 初期管理者の作成
+pnpm dev                         # http://localhost:3000
 ```
 
-http://localhost:3000 でアクセスできます。
+詰まったら [docs/operations/SETUP_LOCAL.md](docs/operations/SETUP_LOCAL.md) のトラブルシューティング節へ。
 
 ## ドキュメント
 
@@ -140,9 +144,12 @@ http://localhost:3000 でアクセスできます。
 
 | 対象 | 入口 |
 |---|---|
-| このサービスを初めて触る**開発者** | [docs/beginner/](docs/beginner/README.md) — 開発環境構築から初めての PR 作成までの一貫手順 |
-| **開発者** (実装・テスト担当) | [docs/developer/](docs/README.md#developer--開発者向け) — 要件 / 仕様 / 設計 / 改修ガイド / テスト戦略 |
-| **運用管理者** (デプロイ・障害対応担当) | [docs/administrator/](docs/README.md#administrator--運用管理者向け) — デプロイ / 環境変数 / migration / 障害対応 / リリース計画 |
+| **クローン直後の開発者** | [ONBOARDING.md](./ONBOARDING.md) — 30 分クイックスタート |
+| 初めて触る開発者 (詳細手順) | [docs/beginner/README.md](docs/beginner/README.md) — 環境構築から初めての PR 作成まで |
+| 段階的な深掘り (Day 1 / Week 1 / Month 1) | [docs/README.md](docs/README.md) — リーディングパス |
+| 業務用語・機能の対応関係 | [docs/business/GLOSSARY.md](docs/business/GLOSSARY.md) / [docs/business/FEATURE_CATALOG.md](docs/business/FEATURE_CATALOG.md) |
+| 設計判断の根拠 (なぜこの設計か) | [docs/adr/](docs/adr/README.md) (ADR-0001〜0013) |
+| 運用・デプロイ・障害対応 | [docs/operations/](docs/operations/README.md) |
 | 全ドキュメント索引 | [docs/README.md](docs/README.md) |
 
 コミット / PR 規約・ブランチ運用は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
