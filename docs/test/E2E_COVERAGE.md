@@ -70,6 +70,7 @@
 - [ ] `/admin/super/tenants/[id]` — skip: PR-X2 (テナント詳細、運営者専用 read-only)。Default テナント表示時の「請求対象外」ラベル検証は src/services/super-admin.service.test.ts (getTenantDetail 系) で担保
 - [ ] `/admin/super/tenants/new` — skip: P-G (2026-05-08) super_admin 専用テナント手動払い出し画面。フォーム + 作成 API 連携は src/services/tenant-onboarding.service.test.ts (11 件) で担保
 - [x] `/admin/super/usage` — e2e/specs/13-super-admin-dashboard.spec.ts (2026-05-11 / 合計課金表示 + プラン別分布)
+- [ ] `/admin/super/cron-history` — skip: PR feat/cron-execution-log (2026-05-18) super_admin 限定 cron 実行履歴ビュー。SSR + Prisma 直接読みのため、ロジック検証はサービス層 (src/lib/cron-execution-log.test.ts 6 件) で担保。実画面の表示確認は手動 (= 日次 cron が蓄積したレコードを目視確認)
 
 ### その他
 - [ ] `/` (ルート) — skip: プロジェクト一覧へのリダイレクト、PR #B の /projects で間接カバー
@@ -156,6 +157,7 @@
 - [ ] `/api/cron/stripe-auto-suspend` (POST) — skip: PR-S6 (2026-05-14) Stripe 引落失敗による自動 suspend cron (日次)。autoSuspendScheduledAt 到来テナントに `suspendTenant('payment_delinquent')` を呼出。cron 認可 + skip カウンタ (ALREADY_SUSPENDED 等) + errors 配列は src/services/stripe-auto-suspend.service.test.ts (7 件) + src/app/api/cron/stripe-auto-suspend/route.test.ts (5 件) で担保
 - [ ] `/api/admin/usage-summary` (GET) — skip: admin 認可 + JSON 集計返却の単体テストで担保。super_admin ダッシュボード UI (PR-X2) 実装時に E2E 化予定
 - [x] `/api/admin/super/usage/export` (GET) — e2e/specs/13-super-admin-dashboard.spec.ts (2026-05-11 / 当月 CSV: Storage 合算 / Default 除外 / 認可 403) + src/app/api/admin/super/usage/export/route.test.ts (12 ユニット: 当月・過去月・BOM・エスケープ・yearMonth バリデーション)
+- [ ] `/api/admin/super/cron-history` (GET) — skip: PR feat/cron-execution-log (2026-05-18) super_admin 限定 cron 実行履歴 JSON API。本 API は super_admin ページの代替アクセス手段 (主経路は SSR ページ)。認可ロジック (isSuperAdmin) は src/lib/permissions/role.test.ts で担保、prisma クエリ部分は単純な findMany のためサービステスト不要
 - [ ] `/api/admin/super/tenants` (POST) — skip: P-G (2026-05-08) super_admin 専用テナント手動払い出し API。zod バリデーション + slug/email 重複検出 + compensating delete はサービステスト (tenant-onboarding.service.test.ts 11 件) で担保
 - [ ] `/api/admin/super/tenants/[id]` (DELETE) — skip: P-A (2026-05-08) super_admin 限定テナント論理削除。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / ALREADY_DELETED + カスケード (10 業務エンティティ + 監査ログ) は src/services/super-admin.service.test.ts (deleteTenant 6 テスト) で担保。E2E は V1.x で検討
 - [ ] `/api/admin/super/tenants/[id]/suspend` (POST) — skip: PR #372 (2026-05-14) super_admin 限定テナント read-only 強制移行。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / TENANT_DELETED / ALREADY_SUSPENDED / INVALID_REASON + tokenVersion increment による即時セッション失効は src/services/super-admin.service.test.ts (suspendTenant 7 テスト) + src/app/api/admin/super/tenants/[id]/suspend/route.test.ts (9 テスト) で担保。middleware 遮断は src/lib/auth.config.test.ts (TENANT_SUSPENDED 6 テスト) で担保。E2E は V1.x で検討 (= サブスクリプション中断の決定論性確保が難しい)

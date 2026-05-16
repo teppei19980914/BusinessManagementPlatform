@@ -32,6 +32,9 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         <Link href="/admin/super/usage" className="hover:underline">
           使用量サマリ
         </Link>
+        <Link href="/admin/super/cron-history" className="hover:underline">
+          cron 実行履歴
+        </Link>
       </nav>
       {children}
     </div>

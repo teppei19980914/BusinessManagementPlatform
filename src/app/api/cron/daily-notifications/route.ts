@@ -27,7 +27,9 @@ import {
   checkAndStartGracePeriod,
 } from '@/services/tenant-storage.service';
 // 2026-05-13 (security/auth-secret-hardening, B-6): タイミング攻撃耐性のある共通 cron 認可ヘルパに統一。
+// 2026-05-18 (PR feat/cron-execution-log): 実行履歴を super_admin から確認可能にするためロギング組込。
 import { isCronAuthorized } from '@/lib/cron-auth';
+import { withCronExecutionLogging } from '@/lib/cron-execution-log';
 
 export async function POST(req: NextRequest) {
   if (!isCronAuthorized(req)) {
@@ -37,29 +39,31 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const generated = await generateDailyNotifications();
-  const cleaned = await cleanupReadNotifications();
-  // Phase 1 (2026-05-08): 期限切れ tenant_import_preview を物理削除 (TTL 24h)
-  const expiredPreviewsDeleted = await deleteExpiredPreviews();
-  // Storage add-on (Phase 2 / 2026-05-08):
-  //   1. 全テナントの storageBytesUsed を pg_column_size 集計で更新 (キャッシュ刷新)
-  //   2. 上限超過/解消を検知して Grace period を開始/クリア
-  //   順序重要: 容量更新 → Grace 判定 (= 最新値で判定するため)
-  const storageBytesUpdated = await updateAllStorageBytesUsed();
-  const graceResult = await checkAndStartGracePeriod();
+  return withCronExecutionLogging('daily-notifications', req, async () => {
+    const generated = await generateDailyNotifications();
+    const cleaned = await cleanupReadNotifications();
+    // Phase 1 (2026-05-08): 期限切れ tenant_import_preview を物理削除 (TTL 24h)
+    const expiredPreviewsDeleted = await deleteExpiredPreviews();
+    // Storage add-on (Phase 2 / 2026-05-08):
+    //   1. 全テナントの storageBytesUsed を pg_column_size 集計で更新 (キャッシュ刷新)
+    //   2. 上限超過/解消を検知して Grace period を開始/クリア
+    //   順序重要: 容量更新 → Grace 判定 (= 最新値で判定するため)
+    const storageBytesUpdated = await updateAllStorageBytesUsed();
+    const graceResult = await checkAndStartGracePeriod();
 
-  return NextResponse.json({
-    data: {
-      source: 'cron',
-      generated,
-      cleaned,
-      expiredPreviewsDeleted,
-      storage: {
-        bytesUpdated: storageBytesUpdated,
-        graceStarted: graceResult.graceStartedCount,
-        graceCleared: graceResult.graceClearedCount,
+    return {
+      data: {
+        source: 'cron',
+        generated,
+        cleaned,
+        expiredPreviewsDeleted,
+        storage: {
+          bytesUpdated: storageBytesUpdated,
+          graceStarted: graceResult.graceStartedCount,
+          graceCleared: graceResult.graceClearedCount,
+        },
       },
-    },
+    };
   });
 }
 

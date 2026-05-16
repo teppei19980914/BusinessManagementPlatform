@@ -190,9 +190,26 @@ Netlify Scheduled Functions は使わず、**[cron-job.org](https://cron-job.org
 - [ ] route ハンドラ冒頭で [`isCronAuthorized(req)`](../../src/lib/cron-auth.ts) を呼び `Authorization: Bearer <CRON_SECRET>` を定数時間比較
 - [ ] env 依存の service を呼ぶ場合、その env が未設定の環境でも throw しないか確認
       (Stripe 系なら `if (!isStripeEnabled()) return early;` を冒頭に置く)
+- [ ] cron route 本体を [`withCronExecutionLogging(name, req, async () => {...})`](../../src/lib/cron-execution-log.ts) でラップ (= super_admin ダッシュボード上で実行履歴と timeout 検知が可能になる)
+- [ ] [`src/config/cron-jobs.ts`](../../src/config/cron-jobs.ts) の `CRON_JOBS` に動作概要 + スケジュールを登録
 - [ ] cron-job.org / 移行先 cron 管理画面で **test run → 200 OK** を確認 (本番運用前に発見できる唯一のタイミング)
 
-過去事例: KDD §5.X+70 (Vercel→Netlify 移行で 7 件中 4 件失敗、test run で発覚)
+過去事例: KDD §5.X+70 (Vercel→Netlify 移行で 7 件中 4 件失敗、test run で発覚) / KDD §5.X+72 (Netlify Functions 10s timeout の検知導線)
+
+### 6.4 cron 実行履歴ダッシュボード (PR feat/cron-execution-log)
+
+super_admin として `https://tasukiba.netlify.app/admin/super/cron-history` にアクセスすると、社内 dashboard で:
+
+- 直近 24h の成功 / 失敗 / 実行中 / **stale running (= timeout 疑い)** の集計
+- 登録 cron 一覧 (動作概要 + スケジュール)
+- 直近 100 件の実行履歴 (開始時刻 / 所要 ms / status / エラーメッセージ / 呼出元 IP)
+
+を確認できる。cron-job.org の外部ダッシュボードを補完する内部監視導線。
+
+**stale running 検知のロジック**:
+`status='running'` のまま 30 秒以上経過したレコードは Netlify Functions 10 秒上限を超過した可能性が高い (= timeout で Lambda が殺され `withCronExecutionLogging` の終了 update が走らなかった)。検出された場合は処理を chunk 化 / async 化する対応を検討。
+
+詳細: [KDD §5.X+72](../knowledge/KDD_PATTERNS.md)
 
 ### 6.4 手動実行 (debug 用)
 
