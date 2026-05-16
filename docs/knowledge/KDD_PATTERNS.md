@@ -9522,3 +9522,57 @@ if (!hasAnyContent) {
 
 - §5.X+58: ローカル単体テストで検出できない CI 専用ガード (E2E coverage) の話。本件も**ローカル単体ではなくクラウド環境で初発覚**したという点で同型
 - §5.X+57: 環境差異が顕在化する PR 順序問題 (docs PR → 実装 PR)。本件は「Vercel → Netlify 移行」が引き金
+
+## 5.X+67 **`useSession().update()` を削除する PR は、E2E が `POST /api/auth/session` を await している箇所も同時に削除しないとタイムアウトで CI が落ちる + CodeQL の "user-controlled bypass" は条件分岐内の sensitive action 呼出しを単一出口に集約することで構造的に解消できる (PR #396 で実体験 / 2026-05-18)**
+
+### 罠の正体
+
+§5.X+66 の対応 (`useSession().update()` 削除 + サーバ側 JWT 再署名) を PR #396 で実装したところ、ローカル全 quality gate (lint / test / build) は green だったが **PR レビューで 2 種類の CI 失敗が発覚**した:
+
+1. **Playwright E2E (Step 2b)**: テストが旧仕様前提で `page.waitForResponse('/api/auth/session', POST)` を 10s 待っていた。PR #396 で update() を削除したため当該リクエストが永遠に来ず、テストがタイムアウトで fail。
+2. **CodeQL** ("This condition guards a sensitive action, but a user-provided value controls it." × 2 高 severity): `body.code` / `body.recoveryCode` (user-provided) が直接 `reissueAuthJwtOnResponse` 呼出しをガードする構造になっていた。条件分岐内の sensitive action 呼出しを「user-controlled bypass」と判定された。
+
+### なぜ発生するか
+
+#### E2E 側
+
+- 当時の MFA 検証フロー (PR #67) は **2 段階の API 呼出し** (`verify` → `session update`) で、片方だけ await すると `window.location.href` の遷移が間に合わず flake った経緯がある (LESSONS §4.18 / §4.24)。
+- PR #396 でクライアントの `update()` 呼出しを削除した瞬間、`POST /api/auth/session` の発火源が消滅。テスト側がこの API を待ち続けるとタイムアウトで fail する。
+- ローカル単体テストでは `useSession().update()` を mock しているため発覚しない。**E2E は Playwright を回す PR レビューでしか踏まない**。
+
+#### CodeQL 側
+
+- 旧コードは `route.ts` が `JSON 応答のみ` (sensitive action なし) で、CodeQL は条件分岐をスルーしていた。
+- PR #396 で「条件分岐内に Set-Cookie する `reissueAuthJwtOnResponse` 呼出しを追加」した結果、CodeQL は user-input `body.code` / `body.recoveryCode` が sensitive action 経路を分岐させていると判定。
+- **`verifyTotp` / `compare` による validation gate を CodeQL は認識しない**。コードの「validation 後の sensitive action」というセマンティクスは、構造的に「validation 結果 (boolean / outcome 型) でガード」する形に書き換えないと CodeQL に伝わらない。
+
+### 推奨対応
+
+#### 着手前の予防策
+
+- **`useSession().update()` を削除する PR では必ず `e2e/specs/` と `e2e/fixtures/` を全 grep**:
+  ```bash
+  grep -rE "api/auth/session|/api/auth/session" e2e/
+  ```
+  該当 wait があれば**同 PR 内で削除**する。残すと CI で必ず timeout する。
+- **sensitive action (Set-Cookie / signed JWT / encrypted token 等) を route handler に追加する PR では、CodeQL を意識した構造を最初から採用**:
+  - 検証ロジックを `verifyXxxPath(body): Promise<VerifyOutcome>` のような関数に分離
+  - 戻り値型を `{ kind: 'success' } | { kind: 'error'; response }` の判別 union に
+  - sensitive action 呼出しは関数末尾の **1 箇所**に集約し、`outcome.kind === 'success'` でガード
+- ローカルでも CodeQL を簡易に再現したい場合: `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` で PR 起票後の警告を確認 (push 後 1-2 分)
+
+#### 発生後の対処
+
+1. **CI fail を早期発見**: PR 起票後 5 分以内に `gh pr checks <PR#>` を確認。fail があれば即時調査する習慣 (CI fail を放置するとマージできず 6/1 期限に影響)
+2. **E2E timeout が `waitForResponse` 起因の場合**: ほぼ確実に「コードから当該 API 呼出しが消えた」が原因。spec / fixture の wait も削除する
+3. **CodeQL "user-controlled bypass" が出た場合**: 条件分岐内の sensitive action を単一出口に refactor する (本 PR の `verifyTotpPath` / `verifyRecoveryPath` 抽出が前例)
+
+#### 検証経路
+
+- 修正 push 後、`gh pr checks 396 --watch` で再 CI を確認
+- E2E は Playwright のローカル実行 (`pnpm test:e2e`) で MFA 経路を踏むテスト (`01-admin-and-member-setup.spec.ts Step 2b`) を事前回帰可能。Docker DB 立ち上げが要るので CI 任せが多いが、本 PR 規模の変更では手元で 1 回回すのが安全
+
+### 過去の関連 KDD
+
+- §5.X+58: CI 専用ガード (E2E coverage check) の罠。本件も「ローカルで通って CI で fail」の典型
+- §5.X+66: 本件の前提となる Netlify + NextAuth Set-Cookie 問題。本エントリは「その fix を E2E + CodeQL に整合させる」付随作業の記録

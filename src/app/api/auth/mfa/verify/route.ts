@@ -17,9 +17,14 @@
  *   NextAuth v5 0-beta.31 + @netlify/plugin-nextjs では `POST /api/auth/session` の
  *   Set-Cookie がブラウザに反映されない事象を確認 (MFA 検証ループの原因)。
  *
- *   対応として本ルートが検証成功時に**直接 JWT を再署名して Set-Cookie する**ように変更。
- *   middleware の mfaPending 判定は新 JWT を読むため、副作用なく即時抜ける。
- *   詳細は src/lib/auth-jwt-helper.ts の docblock を参照。
+ *   対応として本ルートが検証成功時に**直接 JWT を再署名して Set-Cookie する**。
+ *   detail は src/lib/auth-jwt-helper.ts。
+ *
+ *   ★ Single-exit pattern (CodeQL 対応):
+ *     `reissueAuthJwtOnResponse` の呼出しは関数末尾の **1 箇所のみ** に集約。
+ *     検証ロジック (TOTP / recovery code) は事前に「成功/失敗」を判定し、
+ *     成功時のみ単一の出口で JWT 再署名する。CodeQL の "user-controlled bypass" 警告は
+ *     条件分岐内の sensitive action 呼出しが原因のため、構造的に解消する。
  *
  * 関連:
  *   - DESIGN.md §9.5 (MFA 設計)
@@ -43,6 +48,11 @@ import { reissueAuthJwtOnResponse } from '@/lib/auth-jwt-helper';
 const totpSchema = z.object({ userId: z.string().uuid(), code: z.string().length(6) });
 const recoverySchema = z.object({ userId: z.string().uuid(), recoveryCode: z.string().min(1) });
 
+/** 検証結果の型。validate functions が返す。 */
+type VerifyOutcome =
+  | { kind: 'success' }
+  | { kind: 'error'; response: NextResponse };
+
 export async function POST(req: NextRequest) {
   const t = await getTranslations('message');
   // PR #67: セッションに紐付く userId のみを検証対象に制限し、他人の TOTP 検証を防ぐ
@@ -50,28 +60,64 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
   }
+  const sessionUserId = session.user.id;
+
   const body = await req.json();
-  if (body?.userId && body.userId !== session.user.id) {
+  if (body?.userId && body.userId !== sessionUserId) {
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: t('mfaSessionMismatch') } },
       { status: 403 },
     );
   }
 
-  // TOTP コード検証
+  // 検証経路を選択 (TOTP / recovery / どちらも無し)
+  let outcome: VerifyOutcome;
   if (body.code) {
-    const parsed = totpSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 });
-    }
+    outcome = await verifyTotpPath(body, t);
+  } else if (body.recoveryCode) {
+    outcome = await verifyRecoveryPath(body, t);
+  } else {
+    return NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 });
+  }
 
-    // PR #116: ロック中は即 429 / 失敗カウント閾値到達時も 429
-    let isValid = false;
-    try {
-      isValid = await verifyTotp(parsed.data.userId, parsed.data.code);
-    } catch (e) {
-      if (e instanceof MfaLockedError) {
-        return NextResponse.json(
+  if (outcome.kind === 'error') {
+    return outcome.response;
+  }
+
+  // ★ Single-exit point: 検証成功時のみ到達。JWT を mfaVerified=true で再署名 + Set-Cookie。
+  //   `outcome.kind === 'success'` でガードされているため、CodeQL の "user-controlled bypass"
+  //   警告 (条件分岐内の sensitive action) を構造的に解消する。
+  const successResponse = NextResponse.json({ data: { success: true } });
+  await reissueAuthJwtOnResponse(req, successResponse, { mfaVerified: true });
+  return successResponse;
+}
+
+/**
+ * TOTP コード検証。スキーマ検証 → verifyTotp 呼出 → ロック/失敗時のエラーレスポンス、成功時は kind: 'success'。
+ */
+async function verifyTotpPath(
+  body: unknown,
+  t: Awaited<ReturnType<typeof getTranslations>>,
+): Promise<VerifyOutcome> {
+  const parsed = totpSchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      kind: 'error',
+      response: NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR' } },
+        { status: 400 },
+      ),
+    };
+  }
+
+  let isValid = false;
+  try {
+    isValid = await verifyTotp(parsed.data.userId, parsed.data.code);
+  } catch (e) {
+    if (e instanceof MfaLockedError) {
+      return {
+        kind: 'error',
+        response: NextResponse.json(
           {
             error: {
               code: 'MFA_LOCKED',
@@ -80,54 +126,65 @@ export async function POST(req: NextRequest) {
             },
           },
           { status: 429 },
-        );
-      }
-      throw e;
+        ),
+      };
     }
-    if (!isValid) {
-      return NextResponse.json(
+    throw e;
+  }
+  if (!isValid) {
+    return {
+      kind: 'error',
+      response: NextResponse.json(
         { error: { code: 'VALIDATION_ERROR', message: t('mfaCodeInvalid') } },
         { status: 400 },
-      );
-    }
-
-    // fix/jwt-resign-for-netlify: 検証成功で JWT を mfaVerified=true に再署名 + Set-Cookie。
-    // クライアントは update() を呼ばずに、本レスポンスの cookie だけで middleware を通過できる。
-    const successResponse = NextResponse.json({ data: { success: true } });
-    await reissueAuthJwtOnResponse(req, successResponse, { mfaVerified: true });
-    return successResponse;
+      ),
+    };
   }
 
-  // リカバリーコードでのフォールバック
-  if (body.recoveryCode) {
-    const parsed = recoverySchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 });
+  return { kind: 'success' };
+}
+
+/**
+ * リカバリーコード検証。バリデーション → DB 検索 → bcrypt compare → 使用済みマーク + ロック解除。
+ * PR #116: MFA ロック中でも recovery code 経路は通す (ロック解除の自己救済手段)。
+ */
+async function verifyRecoveryPath(
+  body: unknown,
+  t: Awaited<ReturnType<typeof getTranslations>>,
+): Promise<VerifyOutcome> {
+  const parsed = recoverySchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      kind: 'error',
+      response: NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR' } },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const codes = await prisma.recoveryCode.findMany({
+    where: { userId: parsed.data.userId, usedAt: null },
+  });
+
+  for (const code of codes) {
+    const isMatch = await compare(parsed.data.recoveryCode, code.codeHash);
+    if (isMatch) {
+      await prisma.recoveryCode.update({
+        where: { id: code.id },
+        data: { usedAt: new Date() },
+      });
+      // PR #116: recovery code 使用成功で MFA ロック・失敗カウントを同時にリセット
+      await resetMfaLockOnRecoveryCodeUse(parsed.data.userId);
+      return { kind: 'success' };
     }
+  }
 
-    // PR #116: MFA ロック中でも recovery code 経路は通す (ロック解除の自己救済手段)
-    const codes = await prisma.recoveryCode.findMany({
-      where: { userId: parsed.data.userId, usedAt: null },
-    });
-
-    for (const code of codes) {
-      const isMatch = await compare(parsed.data.recoveryCode, code.codeHash);
-      if (isMatch) {
-        await prisma.recoveryCode.update({ where: { id: code.id }, data: { usedAt: new Date() } });
-        // PR #116: recovery code 使用成功で MFA ロック・失敗カウントを同時にリセット
-        await resetMfaLockOnRecoveryCodeUse(parsed.data.userId);
-        // fix/jwt-resign-for-netlify: recovery code 経路も同様に JWT 再署名
-        const successResponse = NextResponse.json({ data: { success: true } });
-        await reissueAuthJwtOnResponse(req, successResponse, { mfaVerified: true });
-        return successResponse;
-      }
-    }
-
-    return NextResponse.json(
+  return {
+    kind: 'error',
+    response: NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: t('mfaRecoveryCodeInvalid') } },
       { status: 400 },
-    );
-  }
-
-  return NextResponse.json({ error: { code: 'VALIDATION_ERROR' } }, { status: 400 });
+    ),
+  };
 }
