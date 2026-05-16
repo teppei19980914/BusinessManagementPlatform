@@ -295,7 +295,7 @@ memory: `feedback_no_hardcoding`。
 
 | 困りごと | 参照先 |
 |---|---|
-| 開発環境を立ち上げたい | [docs/beginner/README.md](./docs/beginner/README.md) または [docs/operations/SETUP_LOCAL.md](./docs/operations/SETUP_LOCAL.md) |
+| 開発環境を立ち上げたい | [ONBOARDING.md](./ONBOARDING.md)(クイックスタート)または [docs/operations/SETUP_LOCAL.md](./docs/operations/SETUP_LOCAL.md)(詳細手順・トラブルシューティング) |
 | 新機能を追加したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) |
 | テーマを追加したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) |
 | DB スキーマを変更したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) / [docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md) |

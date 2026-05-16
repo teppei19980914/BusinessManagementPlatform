@@ -19,8 +19,8 @@ assignees: []
 <!-- 先に調べたドキュメント・検索キーワード・試した操作。 -->
 
 - [ ] [README.md](../../README.md) を確認した
-- [ ] [docs/beginner/README.md](../../docs/beginner/README.md) を確認した (初見開発者向け)
-- [ ] [docs/developer/](../../docs/developer/) / [docs/administrator/](../../docs/administrator/) の該当章を確認した
+- [ ] [ONBOARDING.md](../../ONBOARDING.md) を確認した(初見開発者向けクイックスタート)
+- [ ] [docs/README.md](../../docs/README.md) のリーディングパスから該当ディレクトリを確認した(`docs/business/` / `docs/specification/` / `docs/design/` / `docs/operations/` / `docs/adr/` 等)
 - [ ] 過去 Issue / PR を検索した
 
 ## 希望する回答形式

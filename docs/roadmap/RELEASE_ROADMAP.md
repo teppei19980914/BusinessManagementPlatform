@@ -75,12 +75,12 @@
 
 ### 1.3 README.md 刷新
 
-現状の README を **新規参入者視点** で読み直し、下記を明示 (PR #107 で docs/beginner/README.md を新設し役割分担済):
+現状の README を **新規参入者視点** で読み直し、下記を明示 (PR #107 で docs/beginner/README.md を新設し役割分担、2026-05-17 に [ONBOARDING.md](../../ONBOARDING.md) + [design/ARCHITECTURE.md](../design/ARCHITECTURE.md) §4 に統合し docs/beginner/ は削除):
 
 - [x] サービス概要 (1 画面で分かる) — ルート [README.md](../../README.md)
-- [x] 前提環境 (Node / pnpm / Docker バージョン) — [docs/beginner/README.md §1.1](../beginner/README.md)
-- [x] 3 コマンドで起動できる手順 (clone → install → dev) — [docs/beginner/README.md §1](../beginner/README.md)
-- [x] プロジェクト構造 (ディレクトリツリー + 各役割) — [docs/beginner/README.md §2.1](../beginner/README.md)
+- [x] 前提環境 (Node / pnpm / Docker バージョン) — [ONBOARDING.md §1](../../ONBOARDING.md)
+- [x] 3 コマンドで起動できる手順 (clone → install → dev) — [ONBOARDING.md §2-5](../../ONBOARDING.md)
+- [x] プロジェクト構造 (ディレクトリツリー + 各役割) — [design/ARCHITECTURE.md §4](../design/ARCHITECTURE.md)
 - [x] ドキュメント索引 — [docs/README.md](../README.md) が役割別索引を担当
 - [x] 貢献手順 — [CONTRIBUTING.md](../../CONTRIBUTING.md) へ誘導
 
@@ -95,7 +95,7 @@
 
 **個人開発範囲でクローズ (2026-04-23)**。チーム化時に残項目を再開。
 
-- [x] 新規開発者が README だけ見て 30 分以内に dev 環境立ち上げ可能 (PR #107 で docs/beginner/README.md 整備)
+- [x] 新規開発者が README だけ見て 30 分以内に dev 環境立ち上げ可能 (2026-05-17 に [ONBOARDING.md](../../ONBOARDING.md) として再整備)
 - [x] PR 作成時に template が自動挿入され、必須欄が空だと push が躊躇される (PR #108)
 - [ ] main ブランチが保護されていて直 push 不可 — **チーム化時に GitHub UI 設定 (§1.1 参照)**
 - [x] docs 配下のドキュメント索引がトップ README から辿れる (PR #107 の docs/README.md)

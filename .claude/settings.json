@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(*)",
-      "Read"
+      "Read",
+      "PowerShell(npm install -g netlify-cli 2>&1)",
+      "PowerShell(netlify --version)",
+      "PowerShell(& C:\\\\tmp\\\\netlify-env-setup.ps1)",
+      "PowerShell($file = \"C:\\\\tmp\\\\.env.netlify-prod\"; Write-Host \"File exists: $\\(Test-Path $file\\)\"; Write-Host \"File size: $\\(\\(Get-Item $file\\).Length\\) bytes\"; Write-Host \"Total lines: $\\(\\(Get-Content $file\\).Count\\)\"; Write-Host \"\"; Write-Host \"Lines starting with MAIL_FROM_NAME or INITIAL_ADMIN_PASSWORD:\"; Get-Content $file -Encoding UTF8 | Select-String -Pattern '^\\(MAIL_FROM_NAME|INITIAL_ADMIN_PASSWORD\\)' | ForEach-Object { $line = $_.Line; $eqIdx = $line.IndexOf\\('='\\); $key = $line.Substring\\(0, $eqIdx\\); $val = $line.Substring\\($eqIdx + 1\\); $len = $val.Length; Write-Host \"  $key= \\(value length: $len\\)\" })"
     ]
   },
   "hooks": {
