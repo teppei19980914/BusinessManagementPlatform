@@ -30,6 +30,10 @@
 - [x] `/setup-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 4, general ユーザ招待経路)
 - [ ] `/signup` — skip: P-G (2026-05-08) 公開セルフサインアップ画面。bot 対策 (rate limit + honeypot) は src/app/api/auth/signup/route.ts で対応、フォーム動作 + テナント作成は src/services/tenant-onboarding.service.test.ts (11 件) で担保。E2E は V1.x で検討
 
+### 公開ページ (未認証アクセス可、2026-05-19 追加)
+- [x] `/terms` — e2e/specs/00-smoke.spec.ts (ドラフトマーカー表示確認、未認証 200 OK)
+- [x] `/privacy` — e2e/specs/00-smoke.spec.ts (ドラフトマーカー表示確認、未認証 200 OK)
+
 ### ダッシュボード
 - [x] `/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 作成 + Step 6b 一般ユーザ閲覧)
 - [x] `/projects/[projectId]` — e2e/specs/02-project-detail-tabs.spec.ts (PR #93 / Step 7 タブ render + ロール差分)

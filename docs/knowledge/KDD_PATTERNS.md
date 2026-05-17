@@ -9937,3 +9937,108 @@ Vercel Cron 時代は Function logs を Vercel ダッシュボードで一元確
 - §5.X+70: cron route の PUBLIC_PATHS / Stripe ガード漏れ (本件と同様、Netlify 移行で顕在化した cron 系の罠)
 - §5.X+68: helper の silent failure を fail-loud にする原則 (本件は逆に fail-soft = 監視機能ゆえの設計判断)
 
+
+## 5.X+73 **UI 変更時に視覚回帰 baseline 更新を忘れて CI fail (2026-05-19)**
+
+### 罠の正体
+
+PR #403 で `src/app/(auth)/login/page.tsx` に「招待制案内」のフッタブロックを追加したが、視覚回帰 baseline (`e2e/visual/auth-screens.spec.ts:20:7` ログイン画面初期表示) を再生成していなかったため、CI の Playwright `toHaveScreenshot` で pixel diff が検出され fail。
+
+該当 spec:
+```
+[chromium]        e2e/visual/auth-screens.spec.ts:20:7 ログイン画面 初期表示
+[chromium-mobile] e2e/visual/auth-screens.spec.ts:20:7 ログイン画面 初期表示
+```
+
+両 viewport で baseline は別ファイル (`*-chromium-linux.png` / `*-chromium-mobile-linux.png`) のため、UI 変更時は **PC + Mobile 両方** で baseline 更新が必要。
+
+### なぜ発生するか
+
+1. **UI 変更が視覚回帰対象画面かの判断が漏れがち**: ログイン / 各ダッシュボード / テーマ 10 色等は `e2e/visual/*.spec.ts` で baseline が定義されているが、UI を触る側はその spec の存在を即座に思い出せない
+2. **`pnpm lint && pnpm tsc --noEmit && pnpm test && pnpm build` の 4 点セットには視覚回帰が含まれない**: 視覚回帰は CI でしか実行されず、ローカル検証では検出されない
+3. **PR レビュー時に「UI を変えた」事実 → 「視覚 baseline 更新必要」の連想が抜ける**
+
+### 推奨対応
+
+UI を変更したら(特に既存画面の見た目に影響する変更)、必ず以下を実行:
+
+```bash
+# 1. 空コミットで [gen-visual] タグ commit
+git commit --allow-empty -m "chore: regenerate visual baselines [gen-visual]"
+
+# 2. push → e2e-visual-baseline.yml が発火 → CI が baseline PNG を再生成して
+#    自動 commit する
+git push
+```
+
+`[gen-visual]` タグの仕組みは `.github/workflows/e2e-visual-baseline.yml` に集約されており、main マージ後は workflow_dispatch でも実行可能。
+
+### 検証対象画面 (2026-05-19 時点)
+
+`e2e/visual/` 配下の spec で visual regression baseline を持つ画面:
+
+- `auth-screens.spec.ts` — ログイン / パスワードリセット / 等
+- `customers-screens.spec.ts` — 顧客一覧 / 詳細
+- `dashboard-screens.spec.ts` — ダッシュボード各種
+- `settings-themes.spec.ts` — 10 テーマ × 主要画面
+
+これらの画面に **見える要素を 1 px でも変える** UI 変更を加えたら、必ず baseline 再生成。
+
+### 横展開: PR template / CONTRIBUTING への明示
+
+[CONTRIBUTING.md §5](../../CONTRIBUTING.md) の **横展開チェック** に以下を追加候補:
+- [ ] UI を変更した場合: `e2e/visual/` の該当 spec を確認し、必要なら `[gen-visual]` 空コミットで baseline 再生成
+
+### 同型の過去事例
+
+- §5.X+58 (E2E カバレッジゲート): 新規 `page.tsx` / `route.ts` 追加時の `pnpm e2e:coverage-check` 漏れと同じパターン (CI でしか検出されないゲートを認識し損ねる)
+
+## 5.X+74 **E2E fixture cleanup の foreign key 制約違反による flake (2026-05-19)**
+
+### 罠の正体
+
+PR #403 の E2E 実行で `e2e/specs/13-super-admin-dashboard.spec.ts:89:7` が `users_tenant_id_fkey` 制約違反で fail。エラー発生箇所は `e2e/fixtures/super-admin.ts:77` の super_admin user 作成時。
+
+cleanup ログ:
+```
+[e2e cleanup tenants] DELETE tenants 失敗 (継続):
+  update or delete on table "tenants" violates foreign key constraint
+  "users_tenant_id_fkey" on table "users"
+```
+
+**根本原因**: 前のテストの teardown で tenants 削除を試みた際、users が先に削除されておらず FK 制約違反で失敗。tenants が残り、その状態で次のテスト (13-super-admin-dashboard) の fixture が同 ID の user を作ろうとして衝突。
+
+### なぜ flake か
+
+- main 最新 (PR #402 マージ後) では同テストが **success**
+- PR 単発実行で散発的に再現
+- 並列実行順序やタイミングに依存
+
+### 推奨対応 (短期)
+
+CI を **Re-run failed jobs** で再実行。多くの場合これで成功する。
+
+### 推奨対応 (中長期、別 PR)
+
+`e2e/fixtures/super-admin.ts` および各 spec の teardown で、削除順序を **依存の逆順** で明示:
+
+```ts
+// 削除順序 (子から親へ):
+// 1. memos, knowledges, risks_issues, retrospectives, tasks, estimates
+// 2. project_members
+// 3. projects
+// 4. users
+// 5. tenants
+```
+
+または、各 spec の teardown で `try/catch` ではなく **CASCADE 削除** に切替も検討:
+```sql
+DELETE FROM tenants WHERE id = ANY($1) CASCADE;
+```
+
+ただし `ON DELETE CASCADE` 設定の有無に依存するため、schema 側との整合確認が必要。
+
+### 横展開
+
+E2E 全体の fixture cleanup を統一する基盤関数 (`e2e/fixtures/cleanup.ts` 等) を作る案が
+[docs/test/E2E_LESSONS.md](../../docs/test/E2E_LESSONS.md) で議論されているか確認 → 議論なしなら TODO 起票。

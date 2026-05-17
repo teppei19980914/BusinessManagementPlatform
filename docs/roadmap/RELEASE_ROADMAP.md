@@ -148,11 +148,11 @@
 
 ### 2.5 セキュリティ & コンプライアンス (公開前)
 
-- [ ] `SECURITY.md` に脆弱性報告窓口を明示 (外部からの reporter 対応)
-- [ ] `pnpm audit` の critical / high 脆弱性を解消
+- [x] `SECURITY.md` に脆弱性報告窓口を明示 (PR #97)
+- [x] `pnpm audit` で critical / high 脆弱性 0 件確認済 (2026-05-16、[DEPENDENCY_VULNERABILITY_PROCESS.md](../operations/DEPENDENCY_VULNERABILITY_PROCESS.md))
 - [ ] 依存ライブラリのライセンスを `pnpm licenses` で確認、商用利用不可のものが無いか
-- [ ] 四半期 threat-modeling (STRIDE) 実施 — **本リリースでは提案エンジン v2 の脅威モデル ([SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)) を必須実施**
-- [ ] 監査ログの改ざん耐性確認
+- [x] 提案エンジン v2 の脅威モデル ([SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)) 作成済。四半期定期 STRIDE は [STRIDE_REVIEW_PROCEDURE.md](../security/STRIDE_REVIEW_PROCEDURE.md) で 2026-07-06 初回実施予定
+- [x] 監査ログの改ざん耐性: WORM 性を [ADR-0011](../adr/0011-soft-delete-and-audit-log.md) で保証 (Service 層で UPDATE/DELETE 禁止)
 
 ### 2.6 提案エンジン v2 の実装 (T-03 / 6月1日リリース必達)
 
@@ -160,20 +160,26 @@
 
 #### 6月1日リリース (v1) で投入
 
-- [ ] **マルチテナント基盤**: Tenant テーブル新設、全業務エンティティへの tenantId 追加、default-tenant への migration、認可境界の徹底
-- [ ] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant テーブルに `plan` ('beginner' | 'expert' | 'pro') / `currentMonthApiCallCount` / `currentMonthApiCostJpy` / `monthlyBudgetCapJpy` / `beginnerMonthlyCallLimit` (default 100) / `beginnerMaxSeats` (default 5) / `pricePerCallHaiku` (default ¥5、2026-05-15 改定: ¥10 → ¥5) / `pricePerCallSonnet` (default ¥15、2026-05-15 改定: ¥30 → ¥15) / `scheduledPlanChangeAt` / `scheduledNextPlan` を配置
-- [ ] **ApiCallLog テーブル**: 各 API 呼び出しを (timestamp, tenantId, userId, featureUnit, modelName, costJpy, latencyMs, requestId) で記録 — 課金根拠データ
-- [ ] **`withMeteredLLM()` ミドルウェア**: 短期 rate limit + プラン判定 + Beginner 月間上限チェック + 予算上限チェック + LLM 呼び出し + カウンタ更新を統合
-- [ ] **月初リセットバッチ**: Vercel Cron で `currentMonthApiCallCount` / `currentMonthApiCostJpy` をリセット、`scheduledPlanChangeAt` 到達テナントのプラン適用
-- [ ] **Phase 1**: LLM (Claude Haiku) による自動タグ抽出
-- [ ] **Phase 2**: pgvector + Voyage AI Embedding による意味検索 (テナント内に閉じる)
-- [ ] **初期データ**: 資格試験事例・著名な法則を独自要約したナレッジ 30〜100 件 (default-tenant 投入 + テナント別シーディング機構)
-- [ ] **5 層悪用防止**: シークレット保護 / 認証強化 / テナント単位 rate limit + トークン上限 + 日次 LLM 呼び出しキャップ / プロンプトインジェクション対策 / workspace 上限
-- [ ] **コスト保護 (提案多用対策)**: Phase 3 の re-ranking 結果を 5〜10 分間 Postgres キャッシュ、テナント単位日次キャップで超過時 Phase 2 に縮退
-- [ ] **監視・異常検知 (最小実装)**: llm_call_log + token_usage_audit (tenant 単位) + 日次集計 + admin 通知
-- [ ] **AGPL ライセンス適用**: LICENSE ファイル更新
-- [ ] **git pre-commit hook**: gitleaks による API キー検知
-- [ ] **GitHub Push Protection 有効化**: repo 設定変更
+> **2026-05-19 ステータス更新**: 実装系項目は PR #216-#226 系列で完了。残作業は **公開準備** (法的書類 / 公開ページ) のみで、詳細は [docs/operations/PUBLIC_LAUNCH_CHECKLIST.md](../operations/PUBLIC_LAUNCH_CHECKLIST.md) に集約。
+
+- [x] **マルチテナント基盤** (PR #216-): Tenant テーブル新設、全業務エンティティへの tenantId 追加、default-tenant への migration 完了。詳細: [ADR-0001](../adr/0001-multitenant-foundation.md)
+- [x] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant schema に全カラム配置済 (PR #216 系)。詳細: [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) (2026-05-15 半額改定 Expert ¥5 / Pro ¥15 反映済)
+- [x] **ApiCallLog テーブル**: schema 実装済 (PR #218 系)
+- [x] **`withMeteredLLM()` ミドルウェア**: `src/lib/llm/metered.ts` で実装、テスト網羅済 (PR #218)
+- [x] **月初リセットバッチ**: Vercel Cron 実装済 (PR #219)。手順は [BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md)、障害時対応は [INCIDENT_RESPONSE.md §6.8](../operations/INCIDENT_RESPONSE.md)
+- [x] **Phase 1 (自動タグ抽出)**: PR #220-#223 で Anthropic Claude 自動タグ抽出を実装完了
+- [x] **Phase 2 (Embedding 意味検索)**: PR #224-#226 で Voyage AI + pgvector による 3 軸スコアリング完了
+- [ ] **初期データ**: テナント別シーディング機構は実装済、ナレッジ初期 30〜100 件の投入は運用時に判断
+- [x] **5 層悪用防止**: rate limit / token cap / シークレット保護 / プロンプトインジェクション対策 / workspace 上限すべて実装済。詳細: [SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md) / [INCIDENT_RESPONSE.md §6.6](../operations/INCIDENT_RESPONSE.md)
+- [x] **縮退モード**: ハードカット 429 ではなく fail-safe 設計を採用。詳細: [ADR-0008](../adr/0008-graceful-degradation-mode.md)
+- [x] **監視・異常検知 (最小実装)**: `audit_logs` / `auth_event_logs` / `token_usage_audit` schema 実装済。継続改善は [STRIDE_REVIEW_PROCEDURE.md](../security/STRIDE_REVIEW_PROCEDURE.md) で四半期レビュー
+- [x] **AGPL ライセンス適用**: LICENSE ファイル配置済 (2026-05-19、GNU 公式 AGPL-3.0 全文)
+- [x] **secret scan (gitleaks)**: GitHub Actions `security.yml` で PR / push 毎に CI 自動実行 (pre-commit hook は CI で代替)
+- [ ] **GitHub Push Protection 有効化**: GitHub repo 設定 (UI 操作のため公開直前に手動有効化)
+- [x] **robots.txt 配置**: 招待制中の noindex 設定 (2026-05-19、`public/robots.txt`)
+- [ ] **利用規約 / プライバシーポリシー**: 詳細は [PUBLIC_LAUNCH_CHECKLIST.md §1.2-1.3](../operations/PUBLIC_LAUNCH_CHECKLIST.md) (法務確認必須)
+- [ ] **`/login` 初見訪問者案内**: 詳細は [PUBLIC_LAUNCH_CHECKLIST.md §2.1](../operations/PUBLIC_LAUNCH_CHECKLIST.md)
+- [ ] **OG 画像**: 詳細は [PUBLIC_LAUNCH_CHECKLIST.md §2.2](../operations/PUBLIC_LAUNCH_CHECKLIST.md)
 
 #### v1.x バージョンアップで段階的に追加
 
@@ -206,7 +212,7 @@
 - [ ] on-prem Docker image が作れる (CI で検証)
 - [ ] `/login` が外部からも理解可能な案内になっている
 - [ ] 利用規約 / プライバシーポリシーが設置済
-- [ ] `SECURITY.md` 設置済
+- [x] `SECURITY.md` 設置済 (PR #97)
 - [ ] **提案エンジン v2 (Phase 1 + Phase 2) が安定動作**
 - [ ] **5 層悪用防止が完全実装され、threat model のすべての項目が対策済**
 - [ ] **Anthropic / Voyage AI の workspace 月間ハード上限が設定済**

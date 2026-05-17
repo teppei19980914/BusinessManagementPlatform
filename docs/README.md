@@ -149,6 +149,7 @@ docs/
 | [RELEASE_NOTES_v1.md](./operations/RELEASE_NOTES_v1.md) | v1.0 リリースノート (ドラフト、5/30 確定版へ) |
 | [T-03_RELEASE_NOTES.md](./operations/T-03_RELEASE_NOTES.md) | T-03 (提案エンジン v2) リリースノート |
 | [GO_LIVE_RUNBOOK.md](./operations/GO_LIVE_RUNBOOK.md) | 2026-06-01 外部公開当日の時系列手順 + ロールバック条件 |
+| [PUBLIC_LAUNCH_CHECKLIST.md](./operations/PUBLIC_LAUNCH_CHECKLIST.md) | 公開前チェックリスト (法的書類 / 公開ページ / 運用準備、6/1 前完了必須) |
 | [MIGRATION_TO_AWS.md](./operations/MIGRATION_TO_AWS.md) | Vercel + Supabase から AWS / Azure / GCP への将来的移行計画 |
 
 ### [test/](./test/) — テスト設計書
@@ -216,10 +217,9 @@ docs/
 |---|---|
 | [README.md](./roadmap/README.md) | roadmap/ ディレクトリ索引 |
 | [RELEASE_ROADMAP.md](./roadmap/RELEASE_ROADMAP.md) | リリースロードマップ全体 (Phase 1〜Phase 3) |
-| [V1_FINAL_TASKS.md](./roadmap/V1_FINAL_TASKS.md) | 6/1 リリース最終追加実装タスク (Phase 2 archive 予定) |
-| [SUGGESTION_ENGINE_PLAN.md](./roadmap/SUGGESTION_ENGINE_PLAN.md) | 提案エンジン v2 (T-03) の実装計画 (Phase 2 archive 予定) |
-| [ROLE_REFACTORING_PLAN.md](./roadmap/ROLE_REFACTORING_PLAN.md) | ロール再構築計画 (Phase 2 archive 予定) |
 | [STRIPE_INTEGRATION_PLAN.md](./roadmap/STRIPE_INTEGRATION_PLAN.md) | Stripe Metered Billing 連携の実装ロードマップ (v1.x、Phase 3 archive 予定) |
+
+> 実装完了済の plan (V1_FINAL_TASKS / SUGGESTION_ENGINE_PLAN / ROLE_REFACTORING_PLAN) は 2026-05-19 に [archive/roadmap/](./archive/) へ移動済。
 
 #### [roadmap/future/](./roadmap/future/) — v2 以降の将来構想
 
@@ -283,6 +283,7 @@ docs/
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | コミット / PR 規約 + コードレビュー観点 10 項目 |
 | [../CLAUDE.md](../CLAUDE.md) | Claude Code 運用ガイド (緊急時のみ利用) |
 | [../SECURITY.md](../SECURITY.md) | 脆弱性報告窓口 (public-facing) |
+| [../LICENSE](../LICENSE) | AGPL-3.0 ライセンス全文 (GNU 公式) |
 | [../scripts/README.md](../scripts/README.md) | 補助スクリプト索引 (CI/品質 / 開発・Seed / 運用・緊急対応) |
 | [../e2e/README.md](../e2e/README.md) | E2E テストガイド (人間向け) |
 

@@ -1,0 +1,10 @@
+# たすきば Knowledge Relay — robots.txt
+#
+# 2026-06-01 リリース時点は招待制サービスのため全クローラに対して
+# noindex / nofollow を指示する。一般公開フェーズに移行する際は
+# 本ファイルを更新するか、Next.js の app/robots.ts に移行する。
+#
+# 参考: https://developers.google.com/search/docs/crawling-indexing/robots/intro
+
+User-agent: *
+Disallow: /
