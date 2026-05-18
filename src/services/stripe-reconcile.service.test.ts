@@ -183,7 +183,8 @@ describe('reconcileStripeSubscriptions', () => {
       .mockRejectedValueOnce(
         new StripeImport.default.errors.StripeConnectionError({
           message: 'Connection refused',
-          type: 'api_connection_error',
+          // StripeConnectionError は RawErrorType に含まれない値を内部 type に持つため as never で型回避
+          type: 'api_connection_error' as never,
         }),
       )
       .mockResolvedValueOnce({ id: 'sub_yyy', status: 'active' });

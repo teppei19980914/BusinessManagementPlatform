@@ -619,7 +619,9 @@ describe('cancelTenantStripeSubscription', () => {
     mockStripeClient.subscriptions.cancel.mockRejectedValueOnce(
       new StripeImport.default.errors.StripeConnectionError({
         message: 'Connection refused',
-        type: 'api_connection_error',
+        // StripeConnectionError は RawErrorType に含まれない 'api_connection_error' を内部 type に持つが、
+        // 互換性のためコンストラクタは raw 値を受けるので as never で型回避 (テスト目的のみ)
+        type: 'api_connection_error' as never,
       }),
     );
 
