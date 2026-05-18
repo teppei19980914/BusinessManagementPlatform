@@ -658,6 +658,70 @@ export async function reportUsage(
 }
 
 // ============================================================
+// §7. Subscription キャンセル (PR-V7 #1 / #3 / 2026-05-19)
+// ============================================================
+
+/**
+ * テナントの Stripe Subscription をキャンセル (= 自動引落停止)。
+ *
+ * 呼出側のユースケース:
+ *   - #1 テナント解約 (`deleteTenant`): credit_card 払い顧客の解約時に引落を止めないと
+ *     Storage add-on 等の固定費が永続的に引き落とされ続けクレーム不可避
+ *   - #3 credit_card → invoice 戻し: 月途中で paymentMethod を invoice に戻した時、
+ *     Stripe Subscription を残すと当月の Stripe Invoice と運営手動 invoice の二重請求になる
+ *
+ * 設計判断:
+ *   - `invoice_now: true` で **未請求の Usage を最終 Invoice 化** (= revenue loss 防止)
+ *   - `prorate: false` で日割り計算なし (= proration_behavior と整合、Subscription 作成時の設定継続)
+ *   - 失敗時も throw せず Result 型で返却 (= 呼出側が成否を判断、テナント解約は失敗してもDB側は完了させる)
+ *   - 既に canceled の場合 (= Webhook 経由で既に canceled に倒れている) は invalid_request だが
+ *     呼出側で「キャンセル不要」として扱える
+ *
+ * @returns
+ *   `{ ok: true }`: キャンセル成功または「キャンセル不要」(= subscriptionId なし / 既 canceled)
+ *   `{ ok: false }`: Stripe API 失敗 (= 呼出側で auditLog + super_admin 通知すべき)
+ */
+export async function cancelTenantStripeSubscription(
+  tenantId: string,
+): Promise<StripeOperationResult<{ canceled: boolean; reason?: string }>> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { stripeSubscriptionId: true, stripeSubscriptionStatus: true, paymentMethod: true },
+  });
+  if (tenant == null) {
+    return { ok: true, value: { canceled: false, reason: 'tenant_not_found' } };
+  }
+  // Subscription が無ければキャンセル不要 (= 元から invoice 払い等)
+  if (tenant.stripeSubscriptionId == null) {
+    return { ok: true, value: { canceled: false, reason: 'no_subscription' } };
+  }
+  // 既に canceled なら何もしない (= Webhook 経由で先に倒れている可能性)
+  if (tenant.stripeSubscriptionStatus === 'canceled') {
+    return { ok: true, value: { canceled: false, reason: 'already_canceled' } };
+  }
+
+  const stripe = getStripe();
+  const result = await withStripeError(() =>
+    stripe.subscriptions.cancel(tenant.stripeSubscriptionId!, {
+      invoice_now: true, // 未請求の Usage を最終 Invoice 化
+      prorate: false,
+    }),
+  );
+
+  if (!result.ok) {
+    // 既に canceled だった場合 (= invalid_request) は成功扱い
+    if (result.code === 'invalid_request' && /canceled|no such subscription/i.test(result.detail)) {
+      return { ok: true, value: { canceled: false, reason: 'already_canceled_stripe_side' } };
+    }
+    return result;
+  }
+
+  // DB は Webhook 経由 (= customer.subscription.deleted) で stripeSubscriptionStatus='canceled' に倒れるが、
+  // Webhook 遅延を防ぐため呼出側で即時更新するなら個別に行う (= 本関数は Stripe API 呼出のみに責務集中)
+  return { ok: true, value: { canceled: true } };
+}
+
+// ============================================================
 // 内部ヘルパ
 // ============================================================
 

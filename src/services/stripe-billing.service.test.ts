@@ -46,6 +46,8 @@ const mockStripeClient = {
   },
   subscriptions: {
     create: vi.fn(),
+    // PR-V7 #1 (2026-05-19): Subscription キャンセル (= deleteTenant / revert from credit_card)
+    cancel: vi.fn(),
   },
   subscriptionItems: {
     createUsageRecord: vi.fn(),
@@ -76,6 +78,8 @@ import {
   verifyTenantCard,
   createSubscriptionForTenant,
   reportUsage,
+  // PR-V7 #1 (2026-05-19)
+  cancelTenantStripeSubscription,
 } from './stripe-billing.service';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000abc';
@@ -515,5 +519,107 @@ describe('reportUsage', () => {
     });
 
     expect(result.ok).toBe(false);
+  });
+});
+
+// ============================================================
+// §7. cancelTenantStripeSubscription (PR-V7 #1 / 2026-05-19)
+// ============================================================
+
+describe('cancelTenantStripeSubscription', () => {
+  it('テナント不在 → ok=true + canceled=false + reason=tenant_not_found', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+    const result = await cancelTenantStripeSubscription(TENANT_ID);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.canceled).toBe(false);
+      expect(result.value.reason).toBe('tenant_not_found');
+    }
+    expect(mockStripeClient.subscriptions.cancel).not.toHaveBeenCalled();
+  });
+
+  it('Subscription 未登録 → no-op (= 元から invoice 払い等)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeSubscriptionId: null,
+      stripeSubscriptionStatus: null,
+      paymentMethod: 'invoice',
+    } as never);
+    const result = await cancelTenantStripeSubscription(TENANT_ID);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.reason).toBe('no_subscription');
+    expect(mockStripeClient.subscriptions.cancel).not.toHaveBeenCalled();
+  });
+
+  it('既に canceled → no-op (= Webhook で先に倒れた可能性)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeSubscriptionId: 'sub_xxx',
+      stripeSubscriptionStatus: 'canceled',
+      paymentMethod: 'credit_card',
+    } as never);
+    const result = await cancelTenantStripeSubscription(TENANT_ID);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.reason).toBe('already_canceled');
+    expect(mockStripeClient.subscriptions.cancel).not.toHaveBeenCalled();
+  });
+
+  it('成功時: invoice_now: true + prorate: false で stripe.subscriptions.cancel を呼ぶ', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeSubscriptionId: 'sub_active_123',
+      stripeSubscriptionStatus: 'active',
+      paymentMethod: 'credit_card',
+    } as never);
+    mockStripeClient.subscriptions.cancel.mockResolvedValueOnce({
+      id: 'sub_active_123',
+      status: 'canceled',
+    });
+
+    const result = await cancelTenantStripeSubscription(TENANT_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.canceled).toBe(true);
+    expect(mockStripeClient.subscriptions.cancel).toHaveBeenCalledWith('sub_active_123', {
+      invoice_now: true,
+      prorate: false,
+    });
+  });
+
+  it('Stripe 側で既に canceled (invalid_request) → no-op として ok=true', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeSubscriptionId: 'sub_xxx',
+      stripeSubscriptionStatus: 'active',
+      paymentMethod: 'credit_card',
+    } as never);
+    const StripeImport = await import('stripe');
+    mockStripeClient.subscriptions.cancel.mockRejectedValueOnce(
+      new StripeImport.default.errors.StripeInvalidRequestError({
+        message: 'This subscription has already been canceled',
+        type: 'invalid_request_error',
+      }),
+    );
+
+    const result = await cancelTenantStripeSubscription(TENANT_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.reason).toBe('already_canceled_stripe_side');
+  });
+
+  it('Stripe API 失敗 (= connection error) → ok=false を伝播 (呼出側で auditLog 想定)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeSubscriptionId: 'sub_xxx',
+      stripeSubscriptionStatus: 'active',
+      paymentMethod: 'credit_card',
+    } as never);
+    const StripeImport = await import('stripe');
+    mockStripeClient.subscriptions.cancel.mockRejectedValueOnce(
+      new StripeImport.default.errors.StripeConnectionError({
+        message: 'Connection refused',
+        type: 'api_connection_error',
+      }),
+    );
+
+    const result = await cancelTenantStripeSubscription(TENANT_ID);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('connection');
   });
 });
