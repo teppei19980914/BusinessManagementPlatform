@@ -84,6 +84,16 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
     schedule: '日次 13:00 JST',
     endpoint: '/api/cron/stripe-auto-suspend',
   },
+  // PR-V7 #5 (2026-05-19): Stripe ↔ DB 状態照合
+  'stripe-reconcile': {
+    description:
+      'credit_card 払いテナント全件について Stripe Subscription 状態を取得し、'
+      + ' DB の tenant.stripeSubscriptionStatus と乖離があれば Stripe 値で上書き + auditLog 記録。'
+      + ' Webhook 配信遅延 / DLQ 永続失敗による DB-Stripe 乖離を月次で自動補正する。'
+      + ' STRIPE_ENABLED=false の環境では no-op 早期 return。',
+    schedule: '月初 1 日 15:00 JST',
+    endpoint: '/api/cron/stripe-reconcile',
+  },
 } as const;
 
 /**

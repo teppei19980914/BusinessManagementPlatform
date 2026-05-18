@@ -53,6 +53,10 @@ export const PUBLIC_PATHS = [
   '/api/cron/daily-notifications',
   '/api/cron/daily-usage-aggregation',
   '/api/cron/tenant-monthly-reset',
+  // PR-V7 #5 (2026-05-19): Stripe ↔ DB 状態照合 cron (月初)。
+  //   Webhook 配信遅延 / DLQ 永続失敗による DB-Stripe 乖離を自動補正する。
+  //   route.ts 側で isCronAuthorized() を行う。
+  '/api/cron/stripe-reconcile',
 ] as const;
 
 /**
