@@ -35,6 +35,10 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         <Link href="/admin/super/cron-history" className="hover:underline">
           cron 実行履歴
         </Link>
+        {/* PR-V7 #6 (2026-05-19): Stripe DLQ 監視 + 手動再投入 */}
+        <Link href="/admin/super/stripe-dlq" className="hover:underline">
+          Stripe DLQ
+        </Link>
       </nav>
       {children}
     </div>
