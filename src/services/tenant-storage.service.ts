@@ -43,6 +43,9 @@ import { isTenantPlan, type TenantPlan } from '@/lib/tenant';
 import { recordError } from '@/services/error-log.service';
 // PR-4 (2026-05-15): テナント TZ で翌月適用日を計算
 import { getTenantNextMonthStart } from '@/lib/tenant-time';
+// PR-V7 #2 (2026-05-19): Storage プラン変更を Stripe Subscription Item に同期
+import { isStripeEnabled } from '@/lib/stripe';
+import { syncStorageAddonToStripe } from './stripe-billing.service';
 
 // PR-3 (2026-05-15): computeStorageLimitBytes は LLM プラン非依存になったため、
 //   呼出側で llmPlan を解決する必要はなくなった。
@@ -291,6 +294,27 @@ export async function updateStorageAddonPlan(
         scheduledNextStorageAddon: null,
       },
     });
+    // PR-V7 #2 (2026-05-19): credit_card 払いテナントは Stripe Subscription Item も同期
+    //   失敗時は recordError で運用調査用にログだけ残し、ユーザ操作は成功扱い (= DB 更新は完了済)
+    if (isStripeEnabled()) {
+      const stripeResult = await syncStorageAddonToStripe(tenantId, currentAddon, nextPlan);
+      if (!stripeResult.ok) {
+        await recordError({
+          severity: 'error',
+          source: 'server',
+          message: `Storage upgrade Stripe sync failed (tenant=${tenantId})`,
+          context: {
+            kind: 'storage_addon_stripe_sync',
+            tenantId,
+            fromPlan: currentAddon,
+            toPlan: nextPlan,
+            errorCode: stripeResult.code,
+            errorMessage: stripeResult.userMessage,
+            severity: 'requires_manual_action',
+          },
+        });
+      }
+    }
     return { ok: true, appliedImmediately: true, scheduledFor: null };
   }
 
@@ -546,6 +570,10 @@ export async function applyScheduledStorageChanges(now: Date = new Date()): Prom
       continue;
     }
 
+    const previousPlan: StorageAddonPlan = isStorageAddonPlan(t.storageAddonPlan)
+      ? t.storageAddonPlan
+      : 'standard';
+
     await prisma.tenant.update({
       where: { id: t.id },
       data: {
@@ -554,6 +582,28 @@ export async function applyScheduledStorageChanges(now: Date = new Date()): Prom
         scheduledNextStorageAddon: null,
       },
     });
+    // PR-V7 #2 (2026-05-19): credit_card 払いテナントは Stripe Subscription Item も同期
+    //   ダウングレード適用 (例: plus → standard) は Stripe Item 削除に相当
+    //   失敗時は recordError で運用調査用にログだけ残し、cron 全体は止めない
+    if (isStripeEnabled()) {
+      const stripeResult = await syncStorageAddonToStripe(t.id, previousPlan, nextPlan);
+      if (!stripeResult.ok) {
+        await recordError({
+          severity: 'error',
+          source: 'cron',
+          message: `Storage downgrade Stripe sync failed (tenant=${t.id})`,
+          context: {
+            kind: 'storage_addon_stripe_sync',
+            tenantId: t.id,
+            fromPlan: previousPlan,
+            toPlan: nextPlan,
+            errorCode: stripeResult.code,
+            errorMessage: stripeResult.userMessage,
+            severity: 'requires_manual_action',
+          },
+        });
+      }
+    }
     applied += 1;
   }
 

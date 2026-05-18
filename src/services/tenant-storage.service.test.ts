@@ -28,6 +28,17 @@ vi.mock('@/services/error-log.service', () => ({
   recordError: vi.fn(),
 }));
 
+// PR-V7 #2 (2026-05-19): Storage プラン変更で Stripe Subscription Item sync を呼出
+// default は STRIPE_ENABLED=false で no-op 動作 (= 既存テストへの影響なし)
+vi.mock('@/lib/stripe', () => ({
+  isStripeEnabled: vi.fn(() => false),
+}));
+
+const mockSyncStorageAddonToStripe = vi.fn();
+vi.mock('./stripe-billing.service', () => ({
+  syncStorageAddonToStripe: (...args: unknown[]) => mockSyncStorageAddonToStripe(...args),
+}));
+
 import {
   getStorageInfo,
   isStorageWriteBlocked,
@@ -453,5 +464,100 @@ describe('updateAllStorageBytesUsed (recordError 防御 — 2026-05-14)', () => 
       expect.any(Error),
     );
     consoleSpy.mockRestore();
+  });
+});
+
+// ============================================================
+// PR-V7 #2 (2026-05-19): Stripe Subscription Item sync 連動
+// ============================================================
+
+describe('PR-V7 #2: Storage プラン変更 → Stripe Subscription Item sync', () => {
+  it('STRIPE_ENABLED=false ならアップグレード時に Stripe sync を呼ばない (既存挙動)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'expert',
+      storageAddonPlan: 'standard',
+      storageBytesUsed: BigInt(0),
+      timezone: 'Asia/Tokyo',
+    } as never);
+
+    const result = await updateStorageAddonPlan(TENANT_ID, 'plus');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.appliedImmediately).toBe(true);
+    expect(mockSyncStorageAddonToStripe).not.toHaveBeenCalled();
+  });
+
+  it('STRIPE_ENABLED=true でアップグレード → Stripe sync 呼出', async () => {
+    const stripeLib = await import('@/lib/stripe');
+    vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'expert',
+      storageAddonPlan: 'standard',
+      storageBytesUsed: BigInt(0),
+      timezone: 'Asia/Tokyo',
+    } as never);
+    mockSyncStorageAddonToStripe.mockResolvedValueOnce({
+      ok: true,
+      value: { action: 'created', itemId: 'si_xxx' },
+    });
+
+    await updateStorageAddonPlan(TENANT_ID, 'plus');
+
+    expect(mockSyncStorageAddonToStripe).toHaveBeenCalledWith(TENANT_ID, 'standard', 'plus');
+  });
+
+  it('Stripe sync 失敗時も DB 更新は成功扱いとし recordError でログ残し', async () => {
+    const stripeLib = await import('@/lib/stripe');
+    vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'expert',
+      storageAddonPlan: 'standard',
+      storageBytesUsed: BigInt(0),
+      timezone: 'Asia/Tokyo',
+    } as never);
+    mockSyncStorageAddonToStripe.mockResolvedValueOnce({
+      ok: false,
+      code: 'connection',
+      userMessage: 'Stripe 接続失敗',
+    });
+
+    const result = await updateStorageAddonPlan(TENANT_ID, 'plus');
+
+    expect(result.ok).toBe(true);
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        message: expect.stringContaining('Storage upgrade Stripe sync failed'),
+        context: expect.objectContaining({
+          kind: 'storage_addon_stripe_sync',
+          severity: 'requires_manual_action',
+        }),
+      }),
+    );
+  });
+
+  it('applyScheduledStorageChanges (= ダウングレード適用 cron) でも Stripe sync 呼出', async () => {
+    const stripeLib = await import('@/lib/stripe');
+    vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: TENANT_ID,
+        storageAddonPlan: 'plus',
+        storageBytesUsed: BigInt(0),
+        scheduledNextStorageAddon: 'standard',
+      },
+    ] as never);
+    mockSyncStorageAddonToStripe.mockResolvedValueOnce({
+      ok: true,
+      value: { action: 'deleted', itemId: null },
+    });
+
+    const result = await applyScheduledStorageChanges(new Date());
+
+    expect(result.applied).toBe(1);
+    expect(mockSyncStorageAddonToStripe).toHaveBeenCalledWith(TENANT_ID, 'plus', 'standard');
   });
 });
