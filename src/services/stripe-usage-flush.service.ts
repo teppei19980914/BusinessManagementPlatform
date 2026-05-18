@@ -80,10 +80,15 @@ export async function flushStripeUsageRecordQueue(): Promise<FlushStripeUsageRes
   const now = new Date();
 
   // 候補抽出 (= 送信可能な行)
+  // PR-V7 横展開 (2026-05-19): 削除済テナントの queue 行を弾く (= deletedAt: null フィルタ)。
+  //   deleteTenant 時点で #1 修正により Stripe Subscription はキャンセルされるため、
+  //   queue 行を送信しても Stripe 側で「No such subscription_item」エラーになり DLQ 入り
+  //   する。これは無駄な API 呼出 + DLQ 汚染なので、tenant 側で deletedAt フィルタして弾く。
   const candidates = await prisma.stripeUsageRecordQueue.findMany({
     where: {
       sentAt: null,
       nextSendAt: { not: null, lte: now },
+      tenant: { deletedAt: null },
     },
     include: {
       tenant: {

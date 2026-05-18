@@ -1754,6 +1754,32 @@ export async function purgeExpiredBeginnerTenants(
         }),
       ]);
 
+      // PR-V7 横展開 (2026-05-19): #1 と同じく Stripe Subscription 自動キャンセル。
+      //   Beginner ダウングレード禁止のため通常は credit_card 持ちの Beginner は存在しないが、
+      //   旧データ / 手動操作で生じた場合の defense in depth として cancel を試みる。
+      //   helper は `no_subscription` を no-op で返すので呼出コストは無害。
+      if (isStripeEnabled()) {
+        const cancelResult = await cancelTenantStripeSubscription(t.id);
+        if (!cancelResult.ok) {
+          await prisma.auditLog.create({
+            data: {
+              tenantId: t.id,
+              userId: t.id, // cron 実行 (system 相当)、entityId と同じ
+              action: 'DELETE',
+              entityType: 'tenant',
+              entityId: t.id,
+              afterValue: {
+                stripeCancelFailed: true,
+                errorCode: cancelResult.code,
+                errorMessage: cancelResult.userMessage,
+                severity: 'requires_manual_action',
+                action: 'beginner_auto_purge_stripe_cancel_failed',
+              },
+            },
+          });
+        }
+      }
+
       const subTotal =
         mentions.count +
         comments.count +

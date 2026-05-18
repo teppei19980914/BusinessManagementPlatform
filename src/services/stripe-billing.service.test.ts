@@ -17,6 +17,8 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     tenant: {
       findUnique: vi.fn(),
+      // PR-V7 横展開: 多くのヘルパは findUnique → findFirst (deletedAt: null) に変更されたため両方 mock 必要
+      findFirst: vi.fn(),
       update: vi.fn(),
     },
   },
@@ -100,7 +102,7 @@ beforeEach(() => {
 
 describe('createOrGetStripeCustomer', () => {
   it('既存 Customer がある場合は再利用 (= API 呼出は retrieve のみ)', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       name: 'TestCorp',
       stripeCustomerId: 'cus_existing_123',
@@ -123,7 +125,7 @@ describe('createOrGetStripeCustomer', () => {
   });
 
   it('未登録テナントは新規 Customer 作成 + DB 保存', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       name: 'NewTenant',
       stripeCustomerId: null,
@@ -160,7 +162,7 @@ describe('createOrGetStripeCustomer', () => {
   });
 
   it('テナント不在は invalid_request 返却', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null);
 
     const result = await createOrGetStripeCustomer(TENANT_ID);
 
@@ -173,7 +175,7 @@ describe('createOrGetStripeCustomer', () => {
   });
 
   it('Customer 作成失敗時は DB 保存しない', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       name: 'T',
       stripeCustomerId: null,
@@ -196,7 +198,7 @@ describe('createOrGetStripeCustomer', () => {
 
 describe('createCheckoutSessionForCardSetup', () => {
   it('成功時に Checkout Session URL を返す + success_url は complete ハンドラに向ける', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       name: 'T',
       stripeCustomerId: 'cus_xxx',
@@ -229,7 +231,7 @@ describe('createCheckoutSessionForCardSetup', () => {
   });
 
   it('Customer 取得失敗時はそのまま伝播', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null);
 
     const result = await createCheckoutSessionForCardSetup(TENANT_ID, 'https://x.y');
 
@@ -245,7 +247,7 @@ describe('createCheckoutSessionForCardSetup', () => {
 
 describe('createCustomerPortalSession', () => {
   it('成功時に Portal Session URL を返す', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: 'cus_xxx',
     } as never);
     mockStripeClient.billingPortal.sessions.create.mockResolvedValueOnce({
@@ -263,7 +265,7 @@ describe('createCustomerPortalSession', () => {
   });
 
   it('Customer 未登録なら invalid_request', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: null,
     } as never);
 
@@ -278,7 +280,7 @@ describe('createCustomerPortalSession', () => {
   });
 
   it('テナント不在も invalid_request', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null);
 
     const result = await createCustomerPortalSession(TENANT_ID, 'https://x.y');
 
@@ -293,7 +295,7 @@ describe('createCustomerPortalSession', () => {
 
 describe('verifyTenantCard', () => {
   it('期限切れカード → status=expired (DB 更新、SetupIntent は呼ばない)', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: 'cus_xxx',
       stripeDefaultPaymentMethodId: 'pm_xxx',
     } as never);
@@ -320,7 +322,7 @@ describe('verifyTenantCard', () => {
   });
 
   it('有効期限内 + SetupIntent succeeded → status=valid (= 検証成功、DB 更新)', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: 'cus_xxx',
       stripeDefaultPaymentMethodId: 'pm_xxx',
     } as never);
@@ -350,7 +352,7 @@ describe('verifyTenantCard', () => {
   });
 
   it('SetupIntent succeeded 以外の status → status=declined', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: 'cus_xxx',
       stripeDefaultPaymentMethodId: 'pm_xxx',
     } as never);
@@ -374,7 +376,7 @@ describe('verifyTenantCard', () => {
   });
 
   it('カード未登録なら invalid_request', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: 'cus_xxx',
       stripeDefaultPaymentMethodId: null,
     } as never);
@@ -395,7 +397,7 @@ describe('verifyTenantCard', () => {
 
 describe('createSubscriptionForTenant', () => {
   it('Subscription Items: haiku + sonnet + storage Plus が含まれる', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: 'cus_xxx',
     } as never);
     mockStripeClient.subscriptions.create.mockResolvedValueOnce({
@@ -429,7 +431,7 @@ describe('createSubscriptionForTenant', () => {
   });
 
   it('storage=standard なら storage Item は含めない (= ¥0、Subscription 不要)', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: 'cus_xxx',
     } as never);
     mockStripeClient.subscriptions.create.mockResolvedValueOnce({ id: 'sub_xxx' });
@@ -451,7 +453,7 @@ describe('createSubscriptionForTenant', () => {
   });
 
   it('Customer 未登録なら invalid_request', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: null,
     } as never);
 
@@ -532,6 +534,9 @@ describe('reportUsage', () => {
 // §7. cancelTenantStripeSubscription (PR-V7 #1 / 2026-05-19)
 // ============================================================
 
+// cancelTenantStripeSubscription は deleteTenant から「テナント論理削除直後」に呼ばれるため、
+// findFirst + deletedAt: null フィルタを付けると常に null 返却となり機能しなくなる。
+// よって本ヘルパは findUnique のまま (= deletedAt 関係なくテナントを引く) という設計判断。
 describe('cancelTenantStripeSubscription', () => {
   it('テナント不在 → ok=true + canceled=false + reason=tenant_not_found', async () => {
     vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
@@ -638,7 +643,7 @@ describe('cancelTenantStripeSubscription', () => {
 
 describe('syncStorageAddonToStripe', () => {
   it('paymentMethod=invoice (= 元から非 credit_card) → no-op', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       paymentMethod: 'invoice',
       stripeSubscriptionId: null,
       stripeSubscriptionItemStorageId: null,
@@ -652,7 +657,7 @@ describe('syncStorageAddonToStripe', () => {
   });
 
   it('standard → plus: subscriptionItems.create + DB に新 itemId 保存', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       paymentMethod: 'credit_card',
       stripeSubscriptionId: 'sub_xxx',
       stripeSubscriptionItemStorageId: null,
@@ -684,7 +689,7 @@ describe('syncStorageAddonToStripe', () => {
   });
 
   it('plus → standard: subscriptionItems.del + DB の itemId を null クリア', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       paymentMethod: 'credit_card',
       stripeSubscriptionId: 'sub_xxx',
       stripeSubscriptionItemStorageId: 'si_existing_plus',
@@ -708,7 +713,7 @@ describe('syncStorageAddonToStripe', () => {
   });
 
   it('plus → pro_storage: subscriptionItems.update で price 差替 (= itemId は同じ)', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       paymentMethod: 'credit_card',
       stripeSubscriptionId: 'sub_xxx',
       stripeSubscriptionItemStorageId: 'si_existing_plus',
@@ -732,7 +737,7 @@ describe('syncStorageAddonToStripe', () => {
   });
 
   it('standard → enterprise: 両方とも Stripe 対象外 → no-op (= enterprise は manual billing)', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       paymentMethod: 'credit_card',
       stripeSubscriptionId: 'sub_xxx',
       stripeSubscriptionItemStorageId: null,
@@ -746,7 +751,7 @@ describe('syncStorageAddonToStripe', () => {
   });
 
   it('DB 不整合 (plus → pro_storage で itemId=null) → 新規 create にフォールバック', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       paymentMethod: 'credit_card',
       stripeSubscriptionId: 'sub_xxx',
       stripeSubscriptionItemStorageId: null, // 本来あるべきだが欠落

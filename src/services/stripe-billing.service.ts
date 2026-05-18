@@ -53,8 +53,10 @@ import {
 export async function createOrGetStripeCustomer(
   tenantId: string,
 ): Promise<StripeOperationResult<Stripe.Customer>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントへの Stripe Customer 作成を防ぐため
+  //   findUnique → findFirst + deletedAt: null フィルタ。auth 経路では到達しない想定だが defense in depth。
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: {
       id: true,
       name: true,
@@ -213,8 +215,9 @@ export async function completeStripeSetup(
   }
 
   // session.customer をテナントの stripeCustomerId と照合 (= 越境防止)
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): completeStripeSetup で削除済テナントの setup 完了処理を防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: {
       paymentMethod: true,
       stripeCustomerId: true,
@@ -349,8 +352,9 @@ export async function createCustomerPortalSession(
   tenantId: string,
   returnUrl: string,
 ): Promise<StripeOperationResult<Stripe.BillingPortal.Session>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントの Portal アクセスを防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: { stripeCustomerId: true },
   });
   if (tenant == null || tenant.stripeCustomerId == null) {
@@ -405,8 +409,9 @@ export type VerifyCardResult = {
 export async function verifyTenantCard(
   tenantId: string,
 ): Promise<StripeOperationResult<VerifyCardResult>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントへの SetupIntent を防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: {
       stripeCustomerId: true,
       stripeDefaultPaymentMethodId: true,
@@ -564,8 +569,9 @@ export type SubscriptionCreationInput = {
 export async function createSubscriptionForTenant(
   input: SubscriptionCreationInput,
 ): Promise<StripeOperationResult<Stripe.Subscription>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: input.tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントの Subscription 作成を防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: input.tenantId, deletedAt: null },
     select: { stripeCustomerId: true },
   });
   if (tenant == null || tenant.stripeCustomerId == null) {
@@ -690,8 +696,9 @@ export async function syncStorageAddonToStripe(
   fromPlan: string,
   toPlan: string,
 ): Promise<StripeOperationResult<{ action: 'noop' | 'created' | 'updated' | 'deleted'; itemId: string | null }>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントへの Subscription Item 操作を防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: {
       paymentMethod: true,
       stripeSubscriptionId: true,
