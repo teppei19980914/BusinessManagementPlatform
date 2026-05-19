@@ -10399,3 +10399,62 @@ apiCostJpy: apiAgg._sum.costJpy ?? 0,
 - memory: `feedback_billing_invariant.md` (★最重要★ 全経路で SUM = 真値)
 - memory: `feedback_3layer_sync_filter.md` (現在値 / cron snapshot / 履歴クエリ の 3 層同期パターン)
 - PR #412 (PR-V8.1) で 3 大 HIGH 漏れ (cross-tenant summary / tenant detail 合計 / snapshot) を同時修正
+
+---
+
+## 5.X+80 **fixture で生 SQL INSERT する際は NOT NULL カラムを schema.prisma で確認する (Prisma Client なら型で防がれるが、生 SQL は実行時 fail) (2026-05-19 / PR #412)**
+
+### 事象
+
+PR #412 (PR-V8.1) で e2e fixture `super-admin.ts` に ApiCallLog seed を追加した時、以下の INSERT 文で `request_id` カラムを省略:
+
+```sql
+INSERT INTO api_call_logs (
+  tenant_id, feature_unit, model_name, cost_jpy, latency_ms, created_at
+) VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, NOW())
+```
+
+ローカル test は **vitest mock** で prisma を mock するため通過し、CI Playwright で **実 DB INSERT 時に初めて発覚**:
+
+```
+error: null value in column "request_id" of relation "api_call_logs" violates not-null constraint
+```
+
+### 根本原因
+
+- `prisma/schema.prisma` で `ApiCallLog.requestId` は `String @map("request_id") @db.VarChar(64)` (= NOT NULL、Optional でない)
+- 通常コードは `prisma.apiCallLog.create({ data: { ... } })` 経由で Prisma Client が型チェックする → IDE/tsc で漏れに気付ける
+- 一方、**E2E fixture は性能上の理由で `pool.query(SQL)` 経由の生 SQL** を使用 → 型チェックなし、ランタイム fail
+- ローカル vitest mock では実 DB に届かないため、コミット前に気付けない
+
+### 教訓
+
+1. **生 SQL を書く時は `prisma/schema.prisma` で対象 model の全カラムを確認**。特に `String @map(...)` の Optional vs Required を区別
+2. **既存実装の Prisma `create` 呼出をテンプレートにする**: 既存ファイル (例: `src/lib/llm/metered.ts:262-275` の `apiCallLog.create({ data: { id, tenantId, ..., requestId, ... }})`) を見れば必須フィールドが分かる
+3. **Local で `pnpm test:e2e` を回すコストが高い場合**、せめて生 SQL INSERT は `RETURNING *` 付きでリクエスト構造を確認するだけでもよい
+
+### 修正対応
+
+```sql
+-- 修正前
+INSERT INTO api_call_logs (tenant_id, ..., created_at) VALUES (...)
+
+-- 修正後
+INSERT INTO api_call_logs (tenant_id, ..., request_id, created_at)
+VALUES ($1, ..., $2, NOW())
+-- $2 = `e2e-sa-${runId}-${suffix}-a-req` (= 一意で人間可読な fixture 識別子)
+```
+
+`request_id` は VarChar(64) なのでテストでは UUID でなくとも一意文字列で OK。`gen_random_uuid()::text` でも可。
+
+### 横展開
+
+`grep -rn "INSERT INTO" e2e/fixtures/` で生 SQL を使う他 fixture を棚卸し:
+- `multi-tenant.ts` / `super-admin.ts` 等が該当
+- 各 INSERT の対象テーブルの NOT NULL カラムを再度 schema 突合
+
+将来的に **fixture も Prisma Client 経由に統一** すれば本問題は構造的に解消する。性能上問題なら部分的に。
+
+### 関連
+- KDD §5.X+78 (= 表示の真値ベース化に伴う fixture 修正 = 本件と同 PR 同一ファミリー)
+- 元 PR commit: PR #412 commit `901b159` (fixture INSERT 追加) → CI fail → 本 commit で `request_id` 追加
