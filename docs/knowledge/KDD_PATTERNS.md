@@ -10201,3 +10201,142 @@ find src/app -type d -name "[*]" | sort
 - PR #411 commit `63fb9ff` で C-5 (CSV export) を `[yearMonth]/export` で追加 → E2E fail → 本 commit で修正
 - Next.js 公式ドキュメント: [App Router - Dynamic Routes](https://nextjs.org/docs/app/building-your-application/routing/dynamic-routes)
 - KDD §5.X+75 (= 同 PR 内の別 CI fail) と併読推奨
+
+---
+
+## 5.X+77 **`prisma migrate deploy` を `package.json` の build script に組み込むと CI (dummy DATABASE_URL) で P1001 失敗 → CI と Netlify で build script を分離する (2026-05-19 / PR #412)**
+
+### 事象
+
+PR #412 (PR-V8.1) で **migration 適用漏れの構造的予防** を目的に `package.json` の `"build"` を以下に変更:
+
+```json
+"build": "prisma generate && prisma migrate deploy && next build"
+```
+
+→ GitHub Actions の `Lint / Test / Build` workflow で以下のエラーで失敗:
+
+```
+DATABASE_URL: ***localhost:5432/dummy
+...
+Datasource "db": PostgreSQL database "dummy", schema "public" at "localhost:5432"
+Error: P1001: Can't reach database server at `localhost:5432`
+```
+
+### 根本原因
+
+- CI ワークフロー (`.github/workflows/test.yml` 等) は **ビルドの artifact 生成のみが目的** で、実 DB に接続する必要がない
+- そのため `DATABASE_URL=postgresql://...localhost:5432/dummy` のダミー値を渡して `pnpm build` を実行する
+- `prisma generate` は `schema.prisma` のみ参照するため DB 不要 → OK
+- `prisma migrate deploy` は **実 DB に接続して `_prisma_migrations` を読み書きする** ため、ダミー URL では `P1001: Can't reach database server` で失敗
+
+### 教訓
+
+1. **`prisma migrate deploy` は CI には組み込めない (実 DB が必要)**
+2. **本番環境 (= Netlify) と CI では build script を分けるべき**
+3. ローカル `pnpm build` も同じ問題に遭遇する可能性 (= ローカル DB が起動していない開発者環境ではビルド失敗)
+
+### 修正対応
+
+`package.json` で 2 種類の build script を提供:
+
+```json
+"build":         "prisma generate && next build",                          // CI / ローカル開発用
+"build:netlify": "prisma generate && prisma migrate deploy && next build"  // Netlify 本番用
+```
+
+`netlify.toml` の `command` を `pnpm build:netlify` に変更し、Netlify でのみ migrate deploy が実行されるようにする。
+DEPLOYMENT.md §1.1 にも 2 種類の build script の使い分けを明記。
+
+### 横展開
+
+似たパターン (= 実 DB 接続が必要な処理を build に組み込む) は他にもないか確認:
+
+- `prisma db push` (= 開発時の schema sync) も同様の P1001 リスク
+- `prisma db seed` (= 本番でも seed したい場合) も実 DB 必要
+- 「DB に副作用がある任意のコマンドを build script に入れる前に CI 影響を考える」というルール化が望ましい
+
+### 関連
+- KDD §5.X+72 (cron-execution-log = 似た「ローカルでは出ない CI fail」事例) と併読推奨
+- DEPLOYMENT.md §1.1 (build script 2 種類の使い分け)
+- 元事故: PR-V7a で migration 適用忘れ → `billing-overdue-alert` cron 500 → PR-V8.1 で migrate 自動化を試みたが本件 CI fail を引き起こした
+
+---
+
+## 5.X+78 **画面表示の真値ベース化 (counter → ApiCallLog SUM) は E2E fixture の seed 整合性を破壊する → fixture も同時に整合させる (2026-05-19 / PR #412)**
+
+### 事象
+
+PR #412 (PR-V8.1) で、システム管理者ダッシュボードのテナント一覧画面表示を **`Tenant.currentMonthApiCallCount` (counter) → `ApiCallLog` SUM (真値)** に変更:
+
+```tsx
+// 旧 (PR-V8 以前):
+<td>{t.currentMonthApiCallCount.toLocaleString()}</td>
+<td>¥{t.currentMonthApiCostJpy.toLocaleString()}</td>
+
+// 新 (PR-V8.1):
+const r = reconcileByTenant.get(t.id);
+const sumCall = r?.reconciledCallCount ?? t.currentMonthApiCallCount;
+const sumCost = r?.reconciledCostJpy ?? t.currentMonthApiCostJpy;
+<td>{sumCall.toLocaleString()}</td>
+<td>¥{sumCost.toLocaleString()}</td>
+```
+
+→ E2E spec 13 (`13-super-admin-dashboard.spec.ts`) が `'1,500'` (= counter 値) を expect していたが、fixture は **counter のみ seed** していて **ApiCallLog を seed していなかった** ため、SUM=0 + drift 警告 `150000%` が表示されて fail:
+
+```
+Expected substring: "1,500"
+Received string:    "7E2E Tenant A ...expert0¥0⚠ 150000%12026-05-19"
+```
+
+### 根本原因
+
+- 旧 fixture は「counter に直接値を埋め込めば請求金額表示は正しく出る」という前提で書かれていた
+- これは **counter と ApiCallLog SUM が乖離している不健全な状態** を fixture で作っていたことを意味する
+- 本来あるべき姿は「ApiCallLog を seed し、counter は increment 動作で同期される」だが、E2E では性能上 ApiCallLog seed を省略していた
+- 表示が SUM ベースに変わった結果、この前提が崩れて test fail
+
+### 教訓
+
+1. **表示ロジックを `Tenant` 行直読みから `ApiCallLog` aggregation に変える時は fixture も同時に修正必須**
+2. **fixture は production 同型の不変条件 (= counter == SUM) を満たすべき**。「counter だけ seed」は production では絶対に起きない状態
+3. **drift 警告が出る fixture は「テスト用」ではなく「drift シナリオを意図したテスト」専用** であるべき
+
+### 修正対応
+
+各テナントに ApiCallLog を 1 行 seed し、counter を SUM と一致させる:
+
+```ts
+// テナント A: ¥1500 の請求金額を 1 件の代表 ApiCallLog で表現
+await pool.query(
+  `INSERT INTO api_call_logs (tenant_id, feature_unit, model_name, cost_jpy, latency_ms, created_at)
+   VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, NOW())`,
+  [tenantAId],
+);
+// counter を SUM (= 1 件 / ¥1500) と一致させる
+await pool.query(
+  `UPDATE tenants
+   SET current_month_api_call_count = 1, current_month_api_cost_jpy = 1500
+   WHERE id = $1`,
+  [tenantAId],
+);
+```
+
+代表 1 行で集計を表現する (= 300 行 INSERT は遅いので回避)。テストの assertion は呼出数ではなく費用 (¥1,500) を見ているため、件数を 1 にしても通る。
+
+### 横展開
+
+PR-V8.1 では以下の画面・経路で counter → SUM 変更を実施。それぞれの fixture / test がこのパターンに当てはまる可能性がある:
+
+- `/settings/tenant` (テナント管理者画面)
+- `/admin/super` top の Default テナントセクション
+- `/admin/super/tenants/[id]` 詳細
+- `/admin/super/tenants` 一覧
+- `/api/admin/super/usage/export` CSV
+
+将来、同様の「キャッシュ値 → 真値 SUM」リファクタを行う際は **fixture 棚卸し** を必須項目にする。
+
+### 関連
+- KDD §5.X+77 (= 同 PR 内の別 CI fail) と併読推奨
+- memory: `feedback_billing_invariant.md` (★最重要★ 請求 invariant = ApiCallLog SUM = 全画面表示 = 請求金額)
+- PR #412 (PR-V8.1) で「画面表示の真値ベース化」と「fixture 修正」を同 PR でカバー

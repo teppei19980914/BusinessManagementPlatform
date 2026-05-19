@@ -26,11 +26,22 @@
 
 ### 1.1 ビルドコマンド
 
-`package.json` の `"build"` スクリプトは `prisma generate && prisma migrate deploy && next build` の 3 段構成 (Netlify 側は `pnpm build` を呼ぶだけで OK)。
+build script は **CI と Netlify で分離**:
 
-**PR-V8.1 (2026-05-19) 改訂**: マイグレーションは **build に含める** (= 自動適用) に方針変更。
+| 環境 | スクリプト | 中身 |
+|------|----------|------|
+| CI (GitHub Actions) | `pnpm build` | `prisma generate && next build` |
+| Netlify | `pnpm build:netlify` | `prisma generate && prisma migrate deploy && next build` |
+
+**PR-V8.1 (2026-05-19) 改訂**: マイグレーションは Netlify build 時に **自動適用** (= `pnpm build:netlify`)。
 旧設計は「手動実行で慎重に」だったが、PR-V7a で migration 適用漏れにより `billing-overdue-alert` が 500 (`payment_due_date` カラム不在で SQL error) になる事故が発生。
 
+**なぜ build を 2 つに分けるか**:
+- CI の `Lint/Test/Build` workflow では `DATABASE_URL=localhost:5432/dummy` を渡している (= 実 DB 不要で次の build artifact だけ作る)
+- `prisma migrate deploy` は実 DB に接続するため、ダミー URL では `P1001: Can't reach database server` で失敗する
+- → CI では `pnpm build` (migrate なし)、Netlify では `pnpm build:netlify` (migrate あり) と分離する
+
+**運用ルール**:
 - ADD COLUMN / CREATE INDEX 等の **非破壊変更** は自動適用で問題なし (旧コード互換)
 - DROP / RENAME / NOT NULL 追加等の **破壊変更** は依然 §4.2 の「2 段 deploy」を踏むこと (= 先に新旧互換コードを merge → 本番 DB を手動で migration → 旧コード削除を merge)
 - `prisma migrate deploy` は idempotent (= 適用済みは skip) なので二重実行は無害

@@ -109,6 +109,26 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   );
   const tenantAId = tenantA.rows[0]!.id;
 
+  // PR-V8.1 (2026-05-19): super_admin 画面表示が ApiCallLog SUM (真値) ベースに変わったため、
+  //   tenant counter と整合する ApiCallLog レコードを seed する。counter (300 calls / ¥1500)
+  //   に揃えるが、表示は SUM (= COUNT * cost) に基づくため、件数と費用合計が一致するレコードを作る。
+  //   bulkInsert で 300 行入れると遅いため、1 行に集約せず代表 1 行で件数 = 1 / cost = 1500 で
+  //   counter を `1, 1500` に同時 update する (= drift なし状態)。
+  await pool.query(
+    `INSERT INTO api_call_logs (
+       tenant_id, feature_unit, model_name, cost_jpy, latency_ms, created_at
+     )
+     VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, NOW())`,
+    [tenantAId],
+  );
+  // counter を ApiCallLog SUM と一致させる (1 件 / ¥1500)
+  await pool.query(
+    `UPDATE tenants
+     SET current_month_api_call_count = 1, current_month_api_cost_jpy = 1500
+     WHERE id = $1`,
+    [tenantAId],
+  );
+
   // admin user (= activeUserCount=1 の検証用)
   const adminEmailA = `admin-sa-${runId}-${suffix}-a@example.com`.toLowerCase();
   await pool.query(
@@ -138,6 +158,22 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
     [slugB, nameB],
   );
   const tenantBId = tenantB.rows[0]!.id;
+
+  // PR-V8.1 (2026-05-19): tenantA と同様、ApiCallLog seed + counter 整合
+  //   pro プラン × 1500 calls × ¥15 = ¥22500 を代表 1 行で表現 (counter も 1 / ¥22500 に揃える)
+  await pool.query(
+    `INSERT INTO api_call_logs (
+       tenant_id, feature_unit, model_name, cost_jpy, latency_ms, created_at
+     )
+     VALUES ($1, 'project-embedding', 'claude-sonnet-4-6', 22500, 200, NOW())`,
+    [tenantBId],
+  );
+  await pool.query(
+    `UPDATE tenants
+     SET current_month_api_call_count = 1, current_month_api_cost_jpy = 22500
+     WHERE id = $1`,
+    [tenantBId],
+  );
 
   const adminEmailB = `admin-sa-${runId}-${suffix}-b@example.com`.toLowerCase();
   await pool.query(
