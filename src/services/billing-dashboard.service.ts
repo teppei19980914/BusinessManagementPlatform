@@ -76,6 +76,10 @@ export type BillingHistoryDetail = {
   paidAt: Date | null;
   failureReason: string | null;
   retryCount: number;
+  /** PR-V7a (C-1): credit_card Smart Retries 次回試行日時。失敗中のみ非 null */
+  nextPaymentAttempt: Date | null;
+  /** PR-V7a (B-3): invoice 払いの支払期日 (= 翌月25日)。credit_card は null */
+  paymentDueDate: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -242,6 +246,10 @@ export async function getMonthlyBillingDetail(
     paidAt: r.paidAt,
     failureReason: r.failureReason,
     retryCount: r.retryCount,
+    // PR-V7a (C-1): credit_card Smart Retries の次回試行日時 (UI 表示用)
+    nextPaymentAttempt: r.nextPaymentAttempt,
+    // PR-V7a (B-3): invoice 払いの支払期日 (= 翌月25日)
+    paymentDueDate: r.paymentDueDate,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   }));

@@ -14,6 +14,7 @@ import { NextRequest } from 'next/server';
 
 vi.mock('@/services/stripe-reconcile.service', () => ({
   reconcileStripeSubscriptions: vi.fn(),
+  reconcileBillingHistoryAmounts: vi.fn(),
 }));
 
 // cron-execution-log のラッパは実体を通す (= db への書込を mock)
@@ -27,7 +28,10 @@ vi.mock('@/lib/db', () => ({
 }));
 
 import { POST, GET } from './route';
-import { reconcileStripeSubscriptions } from '@/services/stripe-reconcile.service';
+import {
+  reconcileStripeSubscriptions,
+  reconcileBillingHistoryAmounts,
+} from '@/services/stripe-reconcile.service';
 
 const VALID_SECRET = 'test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx';
 
@@ -47,6 +51,14 @@ beforeEach(() => {
     matched: 0,
     corrected: 0,
     lostAndCanceled: 0,
+    errors: [],
+  });
+  // PR-V7a B-2: route が追加で呼出すようになった金額照合の mock
+  vi.mocked(reconcileBillingHistoryAmounts).mockResolvedValue({
+    candidates: 0,
+    matched: 0,
+    drifted: 0,
+    invoiceNotFound: 0,
     errors: [],
   });
 });
@@ -85,10 +97,13 @@ describe('POST /api/cron/stripe-reconcile', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.source).toBe('cron');
-    expect(json.data.candidates).toBe(5);
-    expect(json.data.matched).toBe(4);
-    expect(json.data.corrected).toBe(1);
+    // PR-V7a B-2 (2026-05-19): レスポンスは { subscriptions, amounts } で分離
+    expect(json.data.subscriptions.candidates).toBe(5);
+    expect(json.data.subscriptions.matched).toBe(4);
+    expect(json.data.subscriptions.corrected).toBe(1);
+    expect(json.data.amounts).toBeDefined();
     expect(reconcileStripeSubscriptions).toHaveBeenCalledTimes(1);
+    expect(reconcileBillingHistoryAmounts).toHaveBeenCalledTimes(1);
   });
 });
 

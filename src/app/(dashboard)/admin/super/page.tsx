@@ -635,6 +635,25 @@ function EmailSendMonitorCard({
         </p>
       )}
 
+      {/* PR-V7a (2026-05-19): 送付失敗 alert。1 件でも失敗していれば赤背景で詳細リンク表示 */}
+      {stats.dailyFailed > 0 && (
+        <div className="rounded border border-destructive/30 bg-destructive/10 p-2 text-sm">
+          <strong className="text-destructive">
+            ⚠️ 本日 {stats.dailyFailed.toLocaleString()} 件のメール送付に失敗しています
+          </strong>
+          <span className="ml-1 text-xs text-muted-foreground">
+            (招待 / 請求書送付 / 警告通知等の到達失敗。請求業務上は特に invoice テナントへの
+            請求書送付失敗を放置すると滞納に直結)
+          </span>
+          {' '}
+          <Link
+            href="/admin/super/email-failures"
+            className="font-medium text-info underline-offset-2 hover:underline"
+          >
+            詳細を確認 →
+          </Link>
+        </div>
+      )}
       {stats.dailyStatus === 'alert' && (
         <p className="text-sm font-medium text-destructive">
           ⚠️ 日次上限に近づいています ({dailyPercent}%)。上限到達後はメール送信が自動的に

@@ -82,8 +82,10 @@ export async function flushStripeUsageRecordQueue(): Promise<FlushStripeUsageRes
   // 候補抽出 (= 送信可能な行)
   // PR-V7 横展開 (2026-05-19): 削除済テナントの queue 行を弾く (= deletedAt: null フィルタ)。
   //   deleteTenant 時点で #1 修正により Stripe Subscription はキャンセルされるため、
-  //   queue 行を送信しても Stripe 側で「No such subscription_item」エラーになり DLQ 入り
+  //   queue 行を送信しても Stripe 側で「Customer の active Subscription なし」エラーで DLQ 入り
   //   する。これは無駄な API 呼出 + DLQ 汚染なので、tenant 側で deletedAt フィルタして弾く。
+  // PR-V8 (2026-05-19): Meter API 移行に伴い select を stripeCustomerId のみに変更。
+  //   旧 stripeSubscriptionItem*Id は使用しなくなった (= 削除はしないが select 不要)。
   const candidates = await prisma.stripeUsageRecordQueue.findMany({
     where: {
       sentAt: null,
@@ -93,8 +95,7 @@ export async function flushStripeUsageRecordQueue(): Promise<FlushStripeUsageRes
     include: {
       tenant: {
         select: {
-          stripeSubscriptionItemHaikuId: true,
-          stripeSubscriptionItemSonnetId: true,
+          stripeCustomerId: true,
         },
       },
     },
@@ -108,19 +109,17 @@ export async function flushStripeUsageRecordQueue(): Promise<FlushStripeUsageRes
   let dlq = 0;
 
   for (const row of candidates) {
-    // callType → subscriptionItemId の解決
-    const itemId =
-      row.callType === 'sonnet'
-        ? row.tenant.stripeSubscriptionItemSonnetId
-        : row.tenant.stripeSubscriptionItemHaikuId;
+    // PR-V8: callType は 'haiku' / 'sonnet' の型を維持 (= STRIPE_METER_EVENT_NAMES で変換)
+    const stripeCustomerId = row.tenant.stripeCustomerId;
+    const callType = row.callType === 'sonnet' ? 'sonnet' : 'haiku';
 
-    if (itemId == null) {
+    if (stripeCustomerId == null) {
       // テナント設定不整合 (= setup 未完了 / 解約後 など)。DLQ 入りで運用調査。
       await prisma.stripeUsageRecordQueue.update({
         where: { id: row.id },
         data: {
           nextSendAt: null,
-          lastError: `Stripe SubscriptionItem ID is null for callType=${row.callType}`,
+          lastError: `Stripe Customer ID is null (= setup not completed)`,
         },
       });
       dlq++;
@@ -128,7 +127,8 @@ export async function flushStripeUsageRecordQueue(): Promise<FlushStripeUsageRes
     }
 
     const result = await reportUsage({
-      subscriptionItemId: itemId,
+      stripeCustomerId,
+      callType,
       quantity: row.quantity,
       occurredAt: row.occurredAt,
       apiCallLogId: row.apiCallLogId,

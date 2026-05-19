@@ -16,6 +16,9 @@ export type MailParams = {
    *   - beginner_auto_delete_warning_150: テナント作成から 150 日 (= 自動削除 30 日前)
    *   - beginner_auto_delete_warning_170: テナント作成から 170 日 (= 自動削除 10 日前)
    *   email_send_logs.type 列 (text) はサービス側で値を組み立てるため DB 制約変更不要。
+   *
+   * 2026-05-19 (PR-V7a): super_admin 向けの運用 alert (= 期日超過 / cron 失敗 / 金額乖離 等)
+   *   - admin_alert: src/services/admin-alert.service.ts sendSuperAdminAlert 経由送信
    */
   type?:
     | 'invitation'
@@ -26,6 +29,7 @@ export type MailParams = {
     | 'beginner_expired'
     | 'beginner_auto_delete_warning_150'
     | 'beginner_auto_delete_warning_170'
+    | 'admin_alert'
     | 'unknown';
   /**
    * P-H (2026-05-08): 関連テナント ID (= ログの tenant_id 列に記録)。

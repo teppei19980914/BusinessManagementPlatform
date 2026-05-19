@@ -17,6 +17,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getMonthlyBillingDetail } from '@/services/billing-dashboard.service';
+import { ConfirmPaymentButton } from './confirm-payment-button';
 
 const STRIPE_DASHBOARD_BASE = 'https://dashboard.stripe.com';
 const VALID_YEAR_MONTH = /^\d{4}-\d{2}$/;
@@ -67,9 +68,26 @@ export default async function BillingDetailPage({
         </Link>
       </nav>
 
-      <h1 className="text-xl font-semibold">
-        請求詳細: <span className="font-mono">{yearMonth}</span>
-      </h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1 className="text-xl font-semibold">
+          請求詳細: <span className="font-mono">{yearMonth}</span>
+        </h1>
+        {/* PR-V7a (C-5): CSV エクスポート (= Next.js dynamic slug 衝突回避で export/[yearMonth] 形式) */}
+        <a
+          href={`/api/admin/super/billing/export/${yearMonth}${
+            status || paymentMethod
+              ? `?${new URLSearchParams({
+                  ...(status ? { status } : {}),
+                  ...(paymentMethod ? { paymentMethod } : {}),
+                }).toString()}`
+              : ''
+          }`}
+          download
+          className="rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent"
+        >
+          📥 CSV エクスポート
+        </a>
+      </div>
 
       {/* フィルタ (= GET form でクエリ string 反映) */}
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-md border p-3">
@@ -153,22 +171,47 @@ export default async function BillingDetailPage({
                   </td>
                   <td className="px-3 py-2 text-xs">
                     {r.failureReason ? (
-                      <code className="text-destructive">{r.failureReason}</code>
+                      <div className="space-y-0.5">
+                        <code className="text-destructive">{r.failureReason}</code>
+                        {/* PR-V7a (C-1): Smart Retries 次回試行日表示 */}
+                        {r.nextPaymentAttempt && r.status === 'failed' && (
+                          <div className="text-[10px] text-muted-foreground">
+                            次回リトライ: {formatDateTime(r.nextPaymentAttempt)}
+                          </div>
+                        )}
+                        {!r.nextPaymentAttempt && r.status === 'failed' && r.retryCount > 0 && (
+                          <div className="text-[10px] text-destructive">
+                            ⚠️ リトライ枯渇 (= past_due 確定)
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       '—'
                     )}
                   </td>
                   <td className="px-3 py-2 text-xs">
-                    {r.stripeInvoiceId && (
-                      <a
-                        href={`${STRIPE_DASHBOARD_BASE}/invoices/${r.stripeInvoiceId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-info underline-offset-2 hover:underline"
-                      >
-                        Stripe ↗
-                      </a>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {/* credit_card: Stripe Dashboard ディープリンク */}
+                      {r.stripeInvoiceId && (
+                        <a
+                          href={`${STRIPE_DASHBOARD_BASE}/invoices/${r.stripeInvoiceId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-info underline-offset-2 hover:underline"
+                        >
+                          Stripe ↗
+                        </a>
+                      )}
+                      {/* invoice/bank_transfer + pending: 手動消込ボタン (PR-V7a) */}
+                      {r.status === 'pending'
+                        && (r.paymentMethod === 'invoice'
+                          || r.paymentMethod === 'bank_transfer') && (
+                        <ConfirmPaymentButton
+                          billingHistoryId={r.id}
+                          tenantName={r.tenantName}
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

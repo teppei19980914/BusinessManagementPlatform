@@ -120,6 +120,20 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   //   全テナント横断の BillingHistory 集計が責務。MANAGEMENT_TENANT_ID は明示除外。
   //   呼出側は super_admin layout で role gate + Basic Auth で多層防御済。
   'billing-dashboard.service.ts',
+  // PR-V7a (2026-05-19): invoice 月次集計 cron が全テナント横断で aggregate を実行。
+  //   findMany / aggregate / findUnique / upsert の全クエリで tenantId は ROW 単位で
+  //   渡されるが、where 句には登場しない (= ループ内で per-tenant 実行)。
+  //   MANAGEMENT_TENANT_ID 除外 + paymentMethod IN (invoice/bank_transfer) で限定済。
+  'billing-aggregation.service.ts',
+  // PR-V7a (2026-05-19): super_admin への運用 alert (= 期日超過 / cron 失敗 通知)。
+  //   全テナント横断で BillingHistory.findMany + CronExecutionLog.findMany を実行。
+  //   呼出側は cron route で CRON_SECRET ガード済。
+  'admin-alert.service.ts',
+  // PR-V7a (2026-05-19): super_admin が invoice 手動消込 + 月途中切替時の置換を実行。
+  //   findUnique は id 引数のみ (= super_admin 操作なので tenant scope なし、
+  //   AuditLog には BillingHistory.tenantId を記録)。markPendingInvoiceAsReplacedByStripe
+  //   は tenantId 引数で限定。getTenantBillingHistory は viewerTenantId 必須。
+  'billing-management.service.ts',
 ]);
 
 /**

@@ -57,6 +57,17 @@ export const PUBLIC_PATHS = [
   //   Webhook 配信遅延 / DLQ 永続失敗による DB-Stripe 乖離を自動補正する。
   //   route.ts 側で isCronAuthorized() を行う。
   '/api/cron/stripe-reconcile',
+  // PR-V7a (2026-05-19): invoice/bank_transfer 月次集計 cron (月初 2 日)。
+  //   ApiCallLog + Storage add-on を集計して BillingHistory に upsert する。
+  //   credit_card は Stripe Webhook で別途同期されるため対象外。
+  '/api/cron/billing-monthly-aggregation',
+  // PR-V7a (2026-05-19): 銀行振込 期日超過 alert cron (日次)。
+  //   payment_due_date + 5 日超過 + status='pending' を検知し super_admin にメール通知。
+  //   24h dedup で同一行の連続通知を抑制。
+  '/api/cron/billing-overdue-alert',
+  // PR-V7a (2026-05-19): cron 失敗 alert cron (日次)。
+  //   直近 24h で status='failure' な cron を cron 名別集約して super_admin にメール通知。
+  '/api/cron/cron-failure-alert',
 ] as const;
 
 /**

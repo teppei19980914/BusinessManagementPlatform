@@ -37,10 +37,38 @@ export function isStripeEnabled(): boolean {
 }
 
 /**
- * Stripe API バージョン (= ADR-0006 で確定、メジャー変更時は影響範囲調査必須)。
- * `2024-12-18.acacia` は Stripe Subscription with Usage Records が安定した最新版。
+ * Stripe API バージョン (= ADR-0006 / PR-V8 で更新)。
+ *
+ * 2026-05-19 (PR-V8): 旧 `2024-12-18.acacia` から `2026-04-22.dahlia` に更新。
+ *   理由: 2025+ の Stripe Sandbox / Live 新規アカウントでは旧 API バージョンが選択不可。
+ *   合わせて Usage Record API を `subscriptionItems.createUsageRecord` (= legacy) から
+ *   `billing.meterEvents.create` (= Meter API) に移行 (reportUsage 関数を参照)。
  */
-export const STRIPE_API_VERSION = '2024-12-18.acacia' as const;
+export const STRIPE_API_VERSION = '2026-04-22.dahlia' as const;
+
+/**
+ * Stripe Meter event 名 (= Stripe Dashboard で Meter 作成時に設定した event_name と完全一致必須)。
+ *
+ * 旧 Subscription Item ID ベースの Usage Record API から、Meter API (= billing.meterEvents.create)
+ * への移行に伴い導入 (PR-V8 / 2026-05-19)。
+ *
+ * 設計:
+ *   - Stripe Dashboard 設定: 商品カタログ → メーター → 「イベント名」フィールド
+ *   - Haiku per-call (Expert plan) → 'tasukiba_haiku_api_call'
+ *   - Sonnet per-call (Pro plan)  → 'tasukiba_sonnet_api_call'
+ *   - Storage プランは定額なので Meter 不要
+ *
+ * 関連:
+ *   - 設定手順: docs/operations/STRIPE_SETUP.md §2 (Meter 作成)
+ *   - 送信側: src/services/stripe-billing.service.ts reportUsage()
+ *   - キュー: src/services/stripe-usage-flush.service.ts
+ */
+export const STRIPE_METER_EVENT_NAMES = {
+  haiku: 'tasukiba_haiku_api_call',
+  sonnet: 'tasukiba_sonnet_api_call',
+} as const;
+
+export type StripeMeterCallType = keyof typeof STRIPE_METER_EVENT_NAMES;
 
 /**
  * Stripe SDK の singleton インスタンス。

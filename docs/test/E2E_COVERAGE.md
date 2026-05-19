@@ -74,6 +74,8 @@
 - [ ] `/admin/super/stripe-dlq` — skip: PR-V7 #6 (2026-05-19) Stripe DLQ 監視 + 手動再投入。SSR + Prisma 直接読み + 再投入ボタンは client component で API 呼出。ロジック検証はサービス層 (src/services/stripe-dlq.service.test.ts 8 件) で担保。実画面 + 再投入挙動は手動確認 (= Stripe Test Mode で意図的に失敗させて DLQ に積み、再投入動作を確認)
 - [ ] `/admin/super/billing` — skip: PR-V7 #8 (2026-05-19) 請求ダッシュボード (サマリ画面、当月 + 直近 6 ヶ月推移)。SSR + Prisma 集計のみ。ロジック検証はサービス層 (src/services/billing-dashboard.service.test.ts 16 件) で担保
 - [ ] `/admin/super/billing/[yearMonth]` — skip: PR-V7 #8 (2026-05-19) 請求ダッシュボード月次詳細 (テナント別 BillingHistory 一覧 + status/paymentMethod フィルタ + Stripe Dashboard ディープリンク)。SSR + Prisma findMany のみ。同上のサービステストで担保
+- [ ] `/admin/super/email-failures` — skip: PR-V7a (2026-05-19) メール送付失敗一覧画面 (= 直近 N 時間の success=false な EmailSendLog を表示)。SSR + Prisma findMany。サービス層 (src/services/email-send-log.service.test.ts の getRecentFailedEmails 3 件) で担保
+- [ ] `/settings/tenant/billing` — skip: PR-V7a (2026-05-19) テナント管理者向け請求履歴表示。自テナント直近 6 ヶ月の BillingHistory + 入金日/期日/次回引落 表示。tenant-scoped クエリ (= viewerTenantId 必須)。サービス層 (src/services/billing-management.service.test.ts の getTenantBillingHistory 2 件) で担保
 
 ### その他
 - [ ] `/` (ルート) — skip: プロジェクト一覧へのリダイレクト、PR #B の /projects で間接カバー
@@ -164,6 +166,11 @@
 - [ ] `/api/admin/super/cron-history` (GET) — skip: PR feat/cron-execution-log (2026-05-18) super_admin 限定 cron 実行履歴 JSON API。本 API は super_admin ページの代替アクセス手段 (主経路は SSR ページ)。認可ロジック (isSuperAdmin) は src/lib/permissions/role.test.ts で担保、prisma クエリ部分は単純な findMany のためサービステスト不要
 - [ ] `/api/admin/super/stripe-dlq/webhook/[id]/retry` (POST) — skip: PR-V7 #6 (2026-05-19) Stripe Webhook DLQ 手動再投入。super_admin 認可 + 4xx エラーケース + retryCount リセット + auditLog 記録は src/services/stripe-dlq.service.test.ts + route.test.ts で担保
 - [ ] `/api/admin/super/stripe-dlq/usage/[id]/retry` (POST) — skip: PR-V7 #6 (2026-05-19) Stripe Usage Queue DLQ 手動再投入。同上のテストカバー
+- [ ] `/api/admin/super/billing/[id]/confirm-payment` (POST) — skip: PR-V7a (2026-05-19) 銀行振込手動消込。invoice/bank_transfer の pending → paid 遷移 + AuditLog 記録。credit_card は拒否。サービス層 (src/services/billing-management.service.test.ts 9 件) で担保
+- [ ] `/api/admin/super/billing/export/[yearMonth]` (GET) — skip: PR-V7a (2026-05-19) 月次請求履歴 CSV エクスポート。getMonthlyBillingDetail 経由 + UTF-8 BOM + 14 列 + status/paymentMethod フィルタ。サービス層 (billing-dashboard.service.test.ts 既存 16 件) で照会ロジック担保。**path 構造**: Next.js dynamic slug 衝突 (`[id]` vs `[yearMonth]`) 回避のため `[yearMonth]/export` ではなく `export/[yearMonth]` 形式
+- [ ] `/api/cron/billing-monthly-aggregation` (POST) — skip: PR-V7a (2026-05-19) invoice/bank_transfer 払いテナントの月次請求集計 cron。CRON_SECRET 認可 + per-tenant try/catch + status 別 upsert ガード。サービス層 (src/services/billing-aggregation.service.test.ts 10 件) で担保
+- [ ] `/api/cron/billing-overdue-alert` (POST) — skip: PR-V7a (2026-05-19) 銀行振込期日超過 alert cron (日次)。期日 + 5 日超過 + 24h dedup + super_admin メール送信。サービス層 (src/services/admin-alert.service.test.ts の detectAndAlertOverdueInvoices 3 件) で担保
+- [ ] `/api/cron/cron-failure-alert` (POST) — skip: PR-V7a (2026-05-19) cron 失敗 alert cron (日次)。直近 24h failure を cron 名別集約 + super_admin メール送信。サービス層 (src/services/admin-alert.service.test.ts の detectAndAlertCronFailures 2 件) で担保
 - [ ] `/api/admin/super/tenants` (POST) — skip: P-G (2026-05-08) super_admin 専用テナント手動払い出し API。zod バリデーション + slug/email 重複検出 + compensating delete はサービステスト (tenant-onboarding.service.test.ts 11 件) で担保
 - [ ] `/api/admin/super/tenants/[id]` (DELETE) — skip: P-A (2026-05-08) super_admin 限定テナント論理削除。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / ALREADY_DELETED + カスケード (10 業務エンティティ + 監査ログ) は src/services/super-admin.service.test.ts (deleteTenant 6 テスト) で担保。E2E は V1.x で検討
 - [ ] `/api/admin/super/tenants/[id]/suspend` (POST) — skip: PR #372 (2026-05-14) super_admin 限定テナント read-only 強制移行。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / TENANT_DELETED / ALREADY_SUSPENDED / INVALID_REASON + tokenVersion increment による即時セッション失効は src/services/super-admin.service.test.ts (suspendTenant 7 テスト) + src/app/api/admin/super/tenants/[id]/suspend/route.test.ts (9 テスト) で担保。middleware 遮断は src/lib/auth.config.test.ts (TENANT_SUSPENDED 6 テスト) で担保。E2E は V1.x で検討 (= サブスクリプション中断の決定論性確保が難しい)

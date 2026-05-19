@@ -10042,3 +10042,162 @@ DELETE FROM tenants WHERE id = ANY($1) CASCADE;
 
 E2E 全体の fixture cleanup を統一する基盤関数 (`e2e/fixtures/cleanup.ts` 等) を作る案が
 [docs/test/E2E_LESSONS.md](../../docs/test/E2E_LESSONS.md) で議論されているか確認 → 議論なしなら TODO 起票。
+
+---
+
+## 5.X+75 **Prisma schema 変更後の `prisma generate` 忘れで CI tsc が落ちる + 新 enum 値の MailParams.type 反映漏れ (2026-05-19 / PR #411)**
+
+### 発生背景
+
+PR #411 (= PR-V7a 請求業務横展開実装) で以下 2 つの種類の変更を加えた:
+
+1. **Schema 変更**: `BillingHistory` に 5 新規フィールド (paymentDueDate / overdueAlertSentAt / nextPaymentAttempt / confirmedBy / confirmedAt) を追加
+2. **新規 mail 種別**: `admin-alert.service.ts` から `provider.send({ type: 'admin_alert' })` で送信
+
+ローカルでは:
+- `pnpm test` (= vitest) は **通った** (= 2539/2539 pass)
+- `pnpm e2e:coverage-check` も通った
+- 私自身でも `pnpm tsc --noEmit` を実行したが、見た目「pre-existing errors のみ」で見落とした
+
+しかし **CI (GitHub Actions の Lint / Test / Build)** が失敗。原因 2 つ:
+
+#### 原因 A: Prisma 生成型が未更新
+
+```
+src/services/admin-alert.service.ts(123,11): error TS2353:
+  Object literal may only specify known properties, and 'overdueAlertSentAt'
+  does not exist in type 'BillingHistoryWhereInput'.
+```
+
+`src/generated/prisma/client.ts` が古いまま (= 5 月 19 日午前の schema 変更前のバージョン)。新規フィールドを参照するすべての `prisma.billingHistory.findMany` / `.update` / `.upsert` で TypeScript 型エラーが発生。
+
+**なぜローカルでは気付けなかったか**:
+- `pnpm test` (vitest) は **mock 経由** で Prisma を呼ぶため、generated 型の整合性をチェックしない
+- `pnpm tsc --noEmit` を実行すると本当はエラーが出るが、pre-existing errors (BigInt literal 等) が大量にあって紛れた
+- 私が `grep -v "BigInt"` で除外しなかったため見逃した
+
+#### 原因 B: `MailParams.type` union への新規値追加漏れ
+
+```
+src/services/admin-alert.service.ts(84,7): error TS2322:
+  Type '"admin_alert"' is not assignable to type
+  '"unknown" | "invitation" | ... | "beginner_auto_delete_warning_170" | undefined'.
+```
+
+`src/lib/mail/mail-provider.ts` の `MailParams.type` union literal は `'invitation' | 'password_reset' | ... | 'unknown'` で定義されている。`admin-alert.service.ts` で `type: 'admin_alert'` を渡したが、union に未追加だった。
+
+似たような型定義が `src/services/email-send-log.service.ts` の `EmailSendType` にもあり、こちらも更新漏れ (= 2 箇所同期が必要)。
+
+### 教訓
+
+1. **schema 変更時は必ず `pnpm prisma generate` を最初に実行**
+   - `prisma migrate dev` を使えば自動で generate されるが、migration SQL を手書きする場合は明示実行必須
+   - CI/CD は `pnpm build` 内の `prisma generate && next build` で都度生成するため CI では検知される
+   - ローカルでも tsc を信頼するには generate を先に走らせる必要あり
+
+2. **`pnpm tsc --noEmit` の出力は必ず grep 結果で「PR 関連の error 数」を確認**
+   - `grep -E "error TS" | grep -v "BigInt literals\|usage-monitoring.service.test\|user.service.test"` 等で pre-existing を除外して PR 由来の error 数を確認するワンライナーを使う
+
+3. **新規 mail 種別追加時は 2 箇所同期** (= 横展開チェック)
+   - `src/lib/mail/mail-provider.ts` の `MailParams.type` union
+   - `src/services/email-send-log.service.ts` の `EmailSendType`
+   - どちらか一方だけ更新すると CI で tsc が落ちる
+
+### 推奨対応
+
+#### 短期 (= 今回の PR で実施済)
+1. `pnpm prisma generate` を明示実行
+2. `MailParams.type` と `EmailSendType` 両方に `'admin_alert'` を追加
+3. `MailParams.html` (required) を満たすため、`admin-alert.service.ts` で `<pre>` ラップ HTML を生成
+
+#### 中長期
+- **pre-commit hook で `pnpm prisma generate` を schema 変更時に自動実行** する仕組み (husky + lint-staged 等) を検討
+- **`MailParams.type` と `EmailSendType` の type union を 1 箇所に集約** (= `src/config/mail-types.ts` 等) して同期漏れを物理的に防止する case を検討
+
+### 横展開
+
+- 他の生成型 (= Prisma 以外で `*.generated.*` 系がないか確認) → 該当なし
+- 似たような「union 型の 2 箇所同期」パターンがないか grep で確認推奨
+
+### 関連
+- PR #411 で発生・修正 (commit `5ea24a3` で `admin_alert` 導入 → CI fail → 本 commit で修正)
+- KDD §5.X+72 cron-execution-log (= 似た「ローカルでは出ない CI fail」事例) と併読推奨
+
+---
+
+## 5.X+76 **Next.js dynamic segment の slug 名衝突で WebServer が起動失敗 → E2E 全停止 (2026-05-19 / PR #411)**
+
+### 発生背景
+
+PR #411 (= PR-V7a 請求業務横展開実装) で同じ階層に 2 つの API route を追加:
+
+```
+src/app/api/admin/super/billing/
+  [id]/confirm-payment/route.ts        ← A-1 (PR-V7a)
+  [yearMonth]/export/route.ts          ← C-5 (PR-V7a)
+```
+
+E2E (Playwright) が WebServer 起動段階で大量のエラーを吐いて全停止:
+
+```
+[WebServer] Error: You cannot use different slug names for the same dynamic path
+            ('id' !== 'yearMonth').
+```
+
+### 根本原因
+
+**Next.js のルーティング制約**: 同じ階層 (= 同じ親ディレクトリ) にある dynamic segment (`[xxx]`) は、**すべて同一の slug 名でなければならない**。
+
+```
+api/admin/super/billing/[id]/confirm-payment       ← slug = "id"
+api/admin/super/billing/[yearMonth]/export          ← slug = "yearMonth"
+                       ^^^^^^^^^^^^
+                       同階層に異なる slug 名 → ERROR
+```
+
+これは Next.js App Router の制約で、Pages Router 時代から継続している仕様。
+ルーティングテーブル構築時に「`/billing/{動的}/...` のパラメタ名は何?」が一意に決まらないため。
+
+**なぜローカルテストでは気付けなかったか**:
+- `pnpm test` (vitest) は API route のルーティング解決を行わない
+- `pnpm tsc --noEmit` は型チェックのみで、Next.js のルーティング解析は行わない
+- `pnpm build` で **本来は検出される** が、私が「`pnpm build 2>&1 | grep -E "error|Error|..."`」で粗い grep をした際に
+  本エラーが grep にマッチせず取り漏らした (= "different slug" は error 文字列を含むが、私の filter で skip された)
+- CI の Playwright だけが「WebServer 実行時」に到達して発覚
+
+### 教訓
+
+1. **同階層の動的セグメントは slug 名を統一**: `[id]` と `[yearMonth]` を同階層に混在させない
+   - 解決策: いずれかを下層 (= 別ディレクトリ) に移動
+   - 例: `billing/export/[yearMonth]` (= `export` の下に `[yearMonth]` を置く)
+
+2. **`pnpm build` の出力は full text で確認**: grep で error 文字列を絞り込むと、Next.js 固有の特殊エラー文言 ("You cannot use different slug names...") を取り漏らす危険性がある
+   - 推奨: `pnpm build 2>&1 | tail -100` 等で末尾を直接読む、または `2>&1 | tee build.log` してログを残す
+
+3. **同階層に動的セグメントを 2 つ以上配置したくなった場合は path 構造を見直す**:
+   - 「リソース別の操作」(= `[id]/action1`, `[id]/action2`) = OK
+   - 「異なる識別子の操作」(= `[id]/...`, `[yearMonth]/...`) = NG、 階層を分ける
+
+### 修正対応
+
+`/api/admin/super/billing/[yearMonth]/export/` → `/api/admin/super/billing/export/[yearMonth]/` にリネーム移動。
+
+- UI 側 (= billing/[yearMonth]/page.tsx の CSV エクスポートボタンの href) も同期更新
+- E2E_COVERAGE.md の API 行を新 path に更新
+- route.ts の JSDoc に「slug 衝突回避のための path 構造」コメントを追加
+
+### 横展開
+
+たすきば内に同様のパターンがないか grep で確認:
+
+```bash
+find src/app -type d -name "[*]" | sort
+```
+
+同じ親ディレクトリの兄弟が `[xxx]` と `[yyy]` で異なる名前になっていないか棚卸し。
+現状 (本修正後) は問題なし。
+
+### 関連
+- PR #411 commit `63fb9ff` で C-5 (CSV export) を `[yearMonth]/export` で追加 → E2E fail → 本 commit で修正
+- Next.js 公式ドキュメント: [App Router - Dynamic Routes](https://nextjs.org/docs/app/building-your-application/routing/dynamic-routes)
+- KDD §5.X+75 (= 同 PR 内の別 CI fail) と併読推奨

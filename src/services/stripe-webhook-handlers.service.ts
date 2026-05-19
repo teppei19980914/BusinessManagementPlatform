@@ -297,6 +297,13 @@ async function handleInvoicePaymentFailed(
   const taxAmountJpy = invoice.tax ?? 0;
   const totalAmountJpy = invoice.total ?? 0;
   const failureReason = invoice.last_finalization_error?.code ?? 'payment_failed';
+  // PR-V7a (2026-05-19 / C-1): Smart Retries 次回試行時刻を保存。
+  //   Stripe は invoice.next_payment_attempt に UNIX 秒で次回スケジュールを返す。
+  //   全リトライ完了後は null (= 復帰不可、past_due 確定)。
+  const nextPaymentAttempt
+    = invoice.next_payment_attempt != null
+      ? new Date(invoice.next_payment_attempt * 1000)
+      : null;
 
   await prisma.billingHistory.upsert({
     where: {
@@ -313,6 +320,7 @@ async function handleInvoicePaymentFailed(
       stripeInvoiceId: invoice.id,
       failureReason,
       retryCount: 1,
+      nextPaymentAttempt,
     },
     update: {
       amountJpy,
@@ -322,6 +330,7 @@ async function handleInvoicePaymentFailed(
       stripeInvoiceId: invoice.id,
       failureReason,
       retryCount: { increment: 1 },
+      nextPaymentAttempt,
     },
   });
 

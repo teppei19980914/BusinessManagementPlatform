@@ -15,6 +15,7 @@ vi.mock('@/lib/db', () => ({
     emailSendLog: {
       create: vi.fn(),
       count: vi.fn(),
+      findMany: vi.fn(),
     },
   },
 }));
@@ -23,6 +24,7 @@ import {
   recordEmailSend,
   isDailyEmailLimitReached,
   getEmailSendStats,
+  getRecentFailedEmails,
 } from './email-send-log.service';
 import { prisma } from '@/lib/db';
 
@@ -212,5 +214,56 @@ describe('getEmailSendStats', () => {
       where: { sentAt: { gte: Date } };
     };
     expect(monthlyCallArg.where.sentAt.gte.toISOString()).toBe('2026-05-01T00:00:00.000Z');
+  });
+});
+
+describe('getRecentFailedEmails (PR-V7a)', () => {
+  it('hoursBack=24 で 24h 以内の success=false 行のみ降順取得', async () => {
+    vi.mocked(prisma.emailSendLog.findMany).mockResolvedValue([
+      {
+        id: 'log-1',
+        tenantId: 'tenant-a',
+        type: 'usage_alert',
+        recipientDomain: '@example.com',
+        errorMessage: 'invalid email',
+        providerName: 'brevo',
+        sentAt: new Date('2026-05-19T10:00:00Z'),
+      },
+    ] as never);
+
+    const NOW = new Date('2026-05-19T12:00:00Z');
+    const result = await getRecentFailedEmails(24, 100, NOW);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('log-1');
+
+    const callArg = vi.mocked(prisma.emailSendLog.findMany).mock.calls[0]![0] as {
+      where: { sentAt: { gte: Date }; success: boolean };
+      orderBy: { sentAt: 'desc' };
+      take: number;
+    };
+    expect(callArg.where.success).toBe(false);
+    expect(callArg.where.sentAt.gte.toISOString()).toBe('2026-05-18T12:00:00.000Z');
+    expect(callArg.orderBy.sentAt).toBe('desc');
+    expect(callArg.take).toBe(100);
+  });
+
+  it('hoursBack のデフォルトは 24h', async () => {
+    vi.mocked(prisma.emailSendLog.findMany).mockResolvedValue([] as never);
+    const NOW = new Date('2026-05-19T12:00:00Z');
+    await getRecentFailedEmails(undefined, undefined, NOW);
+
+    const callArg = vi.mocked(prisma.emailSendLog.findMany).mock.calls[0]![0] as {
+      where: { sentAt: { gte: Date } };
+      take: number;
+    };
+    expect(callArg.where.sentAt.gte.toISOString()).toBe('2026-05-18T12:00:00.000Z');
+    expect(callArg.take).toBe(100);
+  });
+
+  it('該当なしなら空配列', async () => {
+    vi.mocked(prisma.emailSendLog.findMany).mockResolvedValue([] as never);
+    const result = await getRecentFailedEmails(24, 100, new Date());
+    expect(result).toEqual([]);
   });
 });

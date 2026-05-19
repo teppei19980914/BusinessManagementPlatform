@@ -46,7 +46,9 @@ function makeTenant(overrides: Partial<Record<string, unknown>> = {}) {
     lastResetAt: null,
     deletedAt: null,
     // PR-S6 (2026-05-14): Stripe 関連フィールド (default: credit_card ではない invoice テナント)
+    // PR-V8 (2026-05-19): Meter API 移行で stripeCustomerId が判定キーに変更
     paymentMethod: 'invoice',
+    stripeCustomerId: null as string | null,
     stripeSubscriptionItemHaikuId: null as string | null,
     stripeSubscriptionItemSonnetId: null as string | null,
     ...overrides,
@@ -596,12 +598,12 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
     expect(prisma.stripeUsageRecordQueue.create).not.toHaveBeenCalled();
   });
 
-  it('paymentMethod=credit_card かつ stripeSubscriptionItemHaikuId 設定済 (expert plan) なら haiku で enqueue', async () => {
+  it('[PR-V8] paymentMethod=credit_card かつ stripeCustomerId 設定済 (expert plan) なら haiku で enqueue', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
         paymentMethod: 'credit_card',
-        stripeSubscriptionItemHaikuId: 'si_haiku_test',
+        stripeCustomerId: 'cus_test_xxx',
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'x' });
@@ -621,12 +623,12 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
     expect(enqueueCall?.data.apiCallLogId).toBe(apiLogCall?.data.id);
   });
 
-  it('paymentMethod=credit_card かつ pro plan なら sonnet で enqueue', async () => {
+  it('[PR-V8] paymentMethod=credit_card かつ pro plan なら sonnet で enqueue', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'pro',
         paymentMethod: 'credit_card',
-        stripeSubscriptionItemSonnetId: 'si_sonnet_test',
+        stripeCustomerId: 'cus_test_xxx',
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'x' });
@@ -640,12 +642,12 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
     expect(enqueueCall?.data.callType).toBe('sonnet');
   });
 
-  it('paymentMethod=credit_card だが stripeSubscriptionItem* 未設定なら enqueue しない (= setup 未完了/不整合の保護)', async () => {
+  it('[PR-V8] paymentMethod=credit_card だが stripeCustomerId 未設定なら enqueue しない (= setup 未完了/不整合の保護)', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
         paymentMethod: 'credit_card',
-        stripeSubscriptionItemHaikuId: null,
+        stripeCustomerId: null,
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'x' });
@@ -663,7 +665,7 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
       makeTenant({
         plan: 'expert',
         paymentMethod: 'credit_card',
-        stripeSubscriptionItemHaikuId: 'si_haiku_test',
+        stripeCustomerId: 'cus_test_xxx',
       }) as never,
     );
     const call = vi.fn().mockRejectedValue(new Error('LLM down'));
