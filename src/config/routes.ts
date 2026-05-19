@@ -57,6 +57,10 @@ export const PUBLIC_PATHS = [
   //   Webhook 配信遅延 / DLQ 永続失敗による DB-Stripe 乖離を自動補正する。
   //   route.ts 側で isCronAuthorized() を行う。
   '/api/cron/stripe-reconcile',
+  // PR-V7a (2026-05-19): invoice/bank_transfer 月次集計 cron (月初 2 日)。
+  //   ApiCallLog + Storage add-on を集計して BillingHistory に upsert する。
+  //   credit_card は Stripe Webhook で別途同期されるため対象外。
+  '/api/cron/billing-monthly-aggregation',
 ] as const;
 
 /**
