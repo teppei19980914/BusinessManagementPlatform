@@ -25,6 +25,9 @@ import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 import { getTenantMonthStart, getTenantNextMonthStart } from '@/lib/tenant-time';
 import { ADDON_MONTHLY_JPY, type StorageAddonPlan } from '@/config/storage-addon';
 import { calculateTaxJpy, calculateInvoiceDueDate } from '@/config/billing';
+// PR-V7a 再検証 round 2 (2026-05-19): per-tenant 失敗が cron status='success' に紛れて
+//   検知されない問題を解消するため、errors.length > 0 で active push を実施
+import { sendSuperAdminAlert } from './admin-alert.service';
 
 export type AggregateMonthlyBillingResult = {
   yearMonth: string;
@@ -152,6 +155,30 @@ export async function aggregateInvoiceBillingForMonth(
         reason: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // PR-V7a 再検証 round 2: per-tenant 失敗の active push (= stripe-reconcile と同パターン)
+  //   cron-execution-log は overall status='success' で返るため、
+  //   この alert がないと super_admin は /admin/super/cron-history を見るまで気付けない。
+  if (result.errors.length > 0) {
+    const errorLines = result.errors
+      .slice(0, 20)
+      .map((e) => `- tenant ${e.tenantId}: ${e.reason}`)
+      .join('\n');
+    const overflowSuffix
+      = result.errors.length > 20 ? `\n... (他 ${result.errors.length - 20} 件)` : '';
+    await sendSuperAdminAlert(
+      `[たすきば] ${yearMonth} の invoice 月次集計で ${result.errors.length} 件のエラー (= 部分失敗)`,
+      `billing-monthly-aggregation cron で per-tenant の集計が失敗しました。\n`
+        + `cron 全体は success で完走していますが、以下のテナント分の請求書は未生成です。\n\n`
+        + `集計対象: ${tenants.length} テナント\n`
+        + `成功: ${result.processedTenants} / skipped: ${result.skippedTenants} / 失敗: ${result.errors.length}\n\n`
+        + `エラー詳細:\n${errorLines}${overflowSuffix}\n\n`
+        + `対応:\n`
+        + `1. /admin/super/cron-history で billing-monthly-aggregation の payload を確認\n`
+        + `2. 失敗テナントの ApiCallLog / Storage 状態を点検\n`
+        + `3. 個別 fix 後、?yearMonth=${yearMonth} 付きで cron を手動再実行 (= idempotent)`,
+    );
   }
 
   return result;

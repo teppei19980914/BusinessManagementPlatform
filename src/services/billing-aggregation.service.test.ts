@@ -30,11 +30,19 @@ vi.mock('@/lib/tenant', () => ({
   MANAGEMENT_TENANT_ID: '00000000-0000-0000-0000-ffffffffffff',
 }));
 
+// PR-V7a 再検証 round 2: 部分失敗 alert の verify
+const mockSendSuperAdminAlert = vi.fn();
+vi.mock('./admin-alert.service', () => ({
+  sendSuperAdminAlert: (...args: unknown[]) => mockSendSuperAdminAlert(...args),
+}));
+
 import { prisma } from '@/lib/db';
 import { aggregateInvoiceBillingForMonth } from './billing-aggregation.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSendSuperAdminAlert.mockReset();
+  mockSendSuperAdminAlert.mockResolvedValue({ sentTo: ['admin@example.com'], failures: [] });
 });
 
 const TENANT_A = { id: 'tenant-a', timezone: 'Asia/Tokyo', storageAddonPlan: 'standard', deletedAt: null };
@@ -188,5 +196,38 @@ describe('aggregateInvoiceBillingForMonth', () => {
     expect(result.errors[0]?.tenantId).toBe('tenant-a');
     expect(result.processedTenants).toBe(1); // tenant-b のみ成功
     expect(result.upsertedRecords).toBe(1);
+  });
+
+  // PR-V7a 再検証 round 2: per-tenant 失敗の active push (= 真の改善)
+  it('[再検証 round 2] errors > 0 で sendSuperAdminAlert を呼出', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([TENANT_A, TENANT_B] as never);
+    vi.mocked(prisma.apiCallLog.aggregate)
+      .mockRejectedValueOnce(new Error('db error A'))
+      .mockResolvedValueOnce({ _sum: { costJpy: 500 } } as never);
+    vi.mocked(prisma.billingHistory.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.billingHistory.upsert).mockResolvedValue({} as never);
+
+    await aggregateInvoiceBillingForMonth('2026-05');
+
+    expect(mockSendSuperAdminAlert).toHaveBeenCalledTimes(1);
+    const [subject, body] = mockSendSuperAdminAlert.mock.calls[0]!;
+    expect(subject).toContain('invoice 月次集計で 1 件のエラー');
+    expect(subject).toContain('2026-05');
+    expect(body).toContain('tenant tenant-a');
+    expect(body).toContain('db error A');
+    expect(body).toContain('?yearMonth=2026-05'); // 手動再実行手順
+  });
+
+  it('[再検証 round 2] errors = 0 なら alert なし', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([TENANT_A] as never);
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValue({
+      _sum: { costJpy: 1000 },
+    } as never);
+    vi.mocked(prisma.billingHistory.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.billingHistory.upsert).mockResolvedValue({} as never);
+
+    await aggregateInvoiceBillingForMonth('2026-05');
+
+    expect(mockSendSuperAdminAlert).not.toHaveBeenCalled();
   });
 });

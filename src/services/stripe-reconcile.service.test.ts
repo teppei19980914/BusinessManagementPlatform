@@ -341,6 +341,41 @@ describe('reconcileBillingHistoryAmounts (PR-V7a B-2)', () => {
       expect.stringContaining('amount_reconcile_drift'),
     );
   });
+
+  // PR-V7a 再検証 round 2: invoiceNotFound > 0 alert の test 追加 (= Agent A 指摘)
+  it('[再検証 round 2] invoiceNotFound > 0 で sendSuperAdminAlert 呼出 (= 別 alert)', async () => {
+    vi.mocked(prisma.billingHistory.findMany).mockResolvedValue([
+      {
+        id: 'b1',
+        tenantId: TENANT_A,
+        stripeInvoiceId: 'in_lost',
+        amountJpy: 1000,
+        taxAmountJpy: 100,
+        totalAmountJpy: 1100,
+        yearMonth: '2026-05',
+      },
+    ] as never);
+    // Stripe 側で Invoice 削除済 → 実 Stripe SDK の InvalidRequestError を投げ、
+    // withStripeError 経由で code='invalid_request' + detail に "No such invoice" を含めて返却
+    const StripeImport = await import('stripe');
+    mockInvoiceRetrieve.mockRejectedValueOnce(
+      new StripeImport.default.errors.StripeInvalidRequestError({
+        message: 'No such invoice: in_lost',
+        type: 'invalid_request_error',
+      }),
+    );
+
+    const result = await reconcileBillingHistoryAmounts(3);
+
+    expect(result.invoiceNotFound).toBe(1);
+    expect(result.drifted).toBe(0);
+    expect(result.matched).toBe(0);
+    // invoiceNotFound alert が独立して送信される (= drifted alert とは別)
+    expect(sendSuperAdminAlert).toHaveBeenCalledWith(
+      expect.stringContaining('Invoice が見つからない件数 1 件'),
+      expect.stringContaining('Sandbox→Live 移行直後の典型'),
+    );
+  });
 });
 
 // PR-V7a 穴 E: reconcileStripeSubscriptions の errors.length > 0 → active push
