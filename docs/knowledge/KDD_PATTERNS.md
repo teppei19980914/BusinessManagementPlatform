@@ -10565,3 +10565,72 @@ PR-V8.1〜V8.3 で「ApiCallLog SUM (真値) → 全画面表示 + CSV + 請求�
 - KDD §5.X+79 (= 月次 snapshot を真値ベースに、請求 invariant チェーンの 1 つ)
 - memory: `feedback_billing_invariant.md` (★最重要★ 全経路で SUM = 真値)
 - PR-V8.4 (= 本件 + 日次 cron-push alert + Stripe UTC 月境界の docs 化)
+
+---
+
+## 5.X+82 **Supabase Direct connection (`db.*.supabase.co:5432`) は IPv6 のみ → Netlify build runner からの `prisma migrate deploy` が P1001 で失敗 → Session pooler (5432) を DIRECT_URL に設定する (2026-05-20 / PR #412 deploy 後)**
+
+### 事象
+
+PR #412 (PR-V8.1 で導入した `pnpm build:netlify` = `prisma generate && prisma migrate deploy && next build`) を Netlify が実行したところ、以下のエラーで deploy 失敗:
+
+```
+Error: P1001: Can't reach database server at `db.ejexwhjrnkttmmuvaxrh.supabase.co:5432`
+Please make sure your database server is running at `db.ejexwhjrnkttmmuvaxrh.supabase.co:5432`.
+ELIFECYCLE Command failed with exit code 1.
+"build.command" failed: pnpm build:netlify
+```
+
+ただしアプリ層 (= Netlify Functions の Prisma Client) は **既に同 DB に正常接続して動作中** (`billing-overdue-alert` cron 等が 200 OK)。つまり **DB は active、build runner からだけ到達不能** という非対称状態。
+
+### 根本原因
+
+Supabase は 2024 年に DB 接続の IPv4 提供を有料化:
+- **Direct connection** (`db.[ref].supabase.co:5432`): **IPv6 のみ**提供 (IPv4 add-on 有料)
+- **Transaction pooler** (`aws-0-[region].pooler.supabase.com:6543`): IPv4 対応 (Supavisor transaction mode)
+- **Session pooler** (`aws-0-[region].pooler.supabase.com:5432`): IPv4 対応 (Supavisor session mode)
+
+Netlify build runner は IPv4 経由で DNS 解決 → Supabase Direct connection の IPv6 アドレスに到達不能で P1001。
+Netlify Functions runtime は AWS Lambda 上で IPv6 サポートあり、または別 IP プールで Direct connection に到達可能なため、アプリ層は動作するが build 時のみ落ちる **非対称状態** が生じる。
+
+### 教訓
+
+1. **Supabase を本番で使う場合、Direct connection (`db.*.supabase.co:5432`) を直接使うのは避ける**。常に Pooler 経由にする
+2. **`prisma migrate deploy` は prepared statement に依存** → Transaction pooler (port 6543) では動かない → **Session pooler (port 5432)** を使う
+3. **`DATABASE_URL` と `DIRECT_URL` を分けて設定** することが Prisma + Supabase の標準パターン
+   - `DATABASE_URL` = Transaction pooler (port 6543、ランタイム用、prepared statement 自動回避)
+   - `DIRECT_URL` = Session pooler (port 5432、migrate 用、prepared statement OK)
+4. **アプリが動いている = DB が正常」とは限らない**。build 時の接続失敗は別経路の問題
+
+### 修正対応
+
+**コード変更不要** (本リポジトリは既に `prisma.config.ts` で `DIRECT_URL || DATABASE_URL` の優先順を実装済):
+```ts
+// prisma.config.ts
+datasource: {
+  url: process.env['DIRECT_URL'] || process.env['DATABASE_URL'],
+},
+```
+
+**Netlify env 設定のみ** (運用作業):
+1. Supabase Dashboard → Project Settings → Database → Connection string で 2 つの URL を取得:
+   - Transaction (6543): `postgresql://postgres.[ref]:[PW]@aws-0-[region].pooler.supabase.com:6543/postgres`
+   - Session (5432): `postgresql://postgres.[ref]:[PW]@aws-0-[region].pooler.supabase.com:5432/postgres`
+2. Netlify Dashboard → Environment variables で:
+   - `DATABASE_URL` を Transaction pooler URL に**変更** (= 既存値が `db.*.supabase.co:5432` なら必須)
+   - `DIRECT_URL` を Session pooler URL で**新規追加**
+3. Trigger deploy → 成功
+
+**docs 追記**: [DEPLOYMENT.md §2.0](../operations/DEPLOYMENT.md) で本パターンを明文化。
+
+### 横展開
+
+- 他の build 時 DB アクセスコマンド (`prisma db push` 等) も同じ問題に遭遇する → 全て DIRECT_URL 経由に
+- 将来 Supabase を別 PaaS (AWS RDS, Neon 等) に移行する場合、本問題は発生しない (IPv4/IPv6 両対応)
+- ローカル開発では `.env.local` の DATABASE_URL = `localhost:5432` で問題なし (= IPv6 制約なし)
+
+### 関連
+- KDD §5.X+77 (= 同じ PR #412 で build script を CI/Netlify 分離した、本件と同じ「build 時 DB 接続」が論点)
+- DEPLOYMENT.md §2.0 (= 本件の運用手順)
+- 元事象: PR #412 マージ直後の deploy log 6a0cf3e5
+- Supabase 公式: https://supabase.com/docs/guides/database/connecting-to-postgres
