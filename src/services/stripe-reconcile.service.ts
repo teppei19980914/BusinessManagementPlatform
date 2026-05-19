@@ -177,3 +177,150 @@ export async function reconcileStripeSubscriptions(): Promise<ReconcileResult> {
     errors,
   };
 }
+
+// ============================================================
+// §2. Stripe Invoice 金額 ↔ DB BillingHistory 金額の照合 (PR-V7a B-2 / 監査 C-G2)
+// ============================================================
+
+import { AMOUNT_RECONCILE_TOLERANCE_JPY } from '@/config/billing';
+
+export type AmountReconcileResult = {
+  /** 照合対象件数 (= 直近 N ヶ月の credit_card BillingHistory with stripeInvoiceId) */
+  candidates: number;
+  /** 金額が完全一致 (= ±tolerance 以内) */
+  matched: number;
+  /** 金額乖離検出件数 (= recordError 済、DB は触らない) */
+  drifted: number;
+  /** Stripe 側で Invoice が見つからなかった件数 */
+  invoiceNotFound: number;
+  /** 照合 / API 失敗 */
+  errors: Array<{ billingHistoryId: string; error: string }>;
+  skippedStripeDisabled?: true;
+};
+
+/**
+ * credit_card 払いの BillingHistory レコードと Stripe Invoice の金額を照合する。
+ *
+ * - 対象: 直近 monthsBack ヶ月分 (default 3) で stripeInvoiceId != null かつ status IN (paid, pending, failed)
+ * - 照合: subtotal / tax / total が ±AMOUNT_RECONCILE_TOLERANCE_JPY 以内なら一致
+ * - 乖離検出時: recordError で運用通知 (= DB は触らない、人間の判断で対応)
+ * - replaced_by_stripe / refunded / canceled は対象外 (= 既に最終状態)
+ *
+ * 監査 C-G2 (S 優先度) の照合機能。月初 cron (= 既存 stripe-reconcile cron と同タイミング) で
+ * 連続実行可能。
+ */
+export async function reconcileBillingHistoryAmounts(
+  monthsBack: number = 3,
+): Promise<AmountReconcileResult> {
+  if (!isStripeEnabled()) {
+    return {
+      candidates: 0,
+      matched: 0,
+      drifted: 0,
+      invoiceNotFound: 0,
+      errors: [],
+      skippedStripeDisabled: true,
+    };
+  }
+
+  // 「直近 N ヶ月」の起点 = 現在時刻 - N ヶ月の月初
+  const now = new Date();
+  const startDate = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsBack, 1),
+  );
+
+  const targets = await prisma.billingHistory.findMany({
+    where: {
+      paymentMethod: 'credit_card',
+      stripeInvoiceId: { not: null },
+      status: { in: ['paid', 'pending', 'failed'] },
+      createdAt: { gte: startDate },
+    },
+    select: {
+      id: true,
+      tenantId: true,
+      stripeInvoiceId: true,
+      amountJpy: true,
+      taxAmountJpy: true,
+      totalAmountJpy: true,
+      yearMonth: true,
+    },
+  });
+
+  const stripe = getStripe();
+  let matched = 0;
+  let drifted = 0;
+  let invoiceNotFound = 0;
+  const errors: AmountReconcileResult['errors'] = [];
+
+  for (const b of targets) {
+    if (b.stripeInvoiceId == null) continue;
+    try {
+      const result = await withStripeError<Stripe.Invoice>(() =>
+        stripe.invoices.retrieve(b.stripeInvoiceId!),
+      );
+      if (!result.ok) {
+        if (
+          result.code === 'invalid_request'
+          && /no such invoice/i.test(result.detail)
+        ) {
+          invoiceNotFound++;
+          await recordError({
+            severity: 'warn',
+            source: 'cron',
+            message: `Stripe Invoice not found for billing_history=${b.id}`,
+            context: { kind: 'amount_reconcile', billingHistoryId: b.id, stripeInvoiceId: b.stripeInvoiceId },
+          });
+          continue;
+        }
+        errors.push({ billingHistoryId: b.id, error: `${result.code}: ${result.userMessage}` });
+        continue;
+      }
+
+      const inv = result.value;
+      const stripeSubtotal = inv.subtotal ?? 0;
+      const stripeTax = inv.tax ?? 0;
+      const stripeTotal = inv.total ?? 0;
+
+      const subtotalDiff = Math.abs(stripeSubtotal - b.amountJpy);
+      const taxDiff = Math.abs(stripeTax - b.taxAmountJpy);
+      const totalDiff = Math.abs(stripeTotal - b.totalAmountJpy);
+
+      const isMatched
+        = subtotalDiff <= AMOUNT_RECONCILE_TOLERANCE_JPY
+        && taxDiff <= AMOUNT_RECONCILE_TOLERANCE_JPY
+        && totalDiff <= AMOUNT_RECONCILE_TOLERANCE_JPY;
+
+      if (isMatched) {
+        matched++;
+      } else {
+        drifted++;
+        await recordError({
+          severity: 'error',
+          source: 'cron',
+          message: `Billing amount drift detected: tenant=${b.tenantId} ym=${b.yearMonth}`,
+          context: {
+            kind: 'amount_reconcile_drift',
+            billingHistoryId: b.id,
+            tenantId: b.tenantId,
+            yearMonth: b.yearMonth,
+            stripe: { subtotal: stripeSubtotal, tax: stripeTax, total: stripeTotal },
+            db: { subtotal: b.amountJpy, tax: b.taxAmountJpy, total: b.totalAmountJpy },
+            diff: { subtotal: subtotalDiff, tax: taxDiff, total: totalDiff },
+          },
+        });
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      errors.push({ billingHistoryId: b.id, error: message });
+    }
+  }
+
+  return {
+    candidates: targets.length,
+    matched,
+    drifted,
+    invoiceNotFound,
+    errors,
+  };
+}

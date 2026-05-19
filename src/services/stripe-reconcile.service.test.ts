@@ -21,15 +21,20 @@ vi.mock('@/lib/db', () => ({
     auditLog: {
       create: vi.fn(),
     },
+    billingHistory: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
 let stripeEnabled = true;
 const mockRetrieve = vi.fn();
+const mockInvoiceRetrieve = vi.fn();
 vi.mock('@/lib/stripe', () => ({
   isStripeEnabled: () => stripeEnabled,
   getStripe: () => ({
     subscriptions: { retrieve: (...args: unknown[]) => mockRetrieve(...args) },
+    invoices: { retrieve: (...args: unknown[]) => mockInvoiceRetrieve(...args) },
   }),
 }));
 
@@ -39,7 +44,10 @@ vi.mock('@/services/error-log.service', () => ({
 
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
-import { reconcileStripeSubscriptions } from './stripe-reconcile.service';
+import {
+  reconcileStripeSubscriptions,
+  reconcileBillingHistoryAmounts,
+} from './stripe-reconcile.service';
 
 const TENANT_A = '00000000-0000-0000-0000-00000000000a';
 const TENANT_B = '00000000-0000-0000-0000-00000000000b';
@@ -198,5 +206,101 @@ describe('reconcileStripeSubscriptions', () => {
     expect(recordError).toHaveBeenCalledWith(
       expect.objectContaining({ context: expect.objectContaining({ tenantId: TENANT_A }) }),
     );
+  });
+});
+
+// ============================================================
+// PR-V7a B-2: 金額照合の test
+// ============================================================
+describe('reconcileBillingHistoryAmounts (PR-V7a B-2)', () => {
+  it('STRIPE_ENABLED=false → 即 return + skippedStripeDisabled', async () => {
+    stripeEnabled = false;
+    const result = await reconcileBillingHistoryAmounts(3);
+    expect(result.skippedStripeDisabled).toBe(true);
+    expect(result.candidates).toBe(0);
+  });
+
+  it('Stripe Invoice と DB が一致 → matched', async () => {
+    vi.mocked(prisma.billingHistory.findMany).mockResolvedValue([
+      {
+        id: 'b1',
+        tenantId: TENANT_A,
+        stripeInvoiceId: 'in_1',
+        amountJpy: 1000,
+        taxAmountJpy: 100,
+        totalAmountJpy: 1100,
+        yearMonth: '2026-05',
+      },
+    ] as never);
+    mockInvoiceRetrieve.mockResolvedValueOnce({
+      subtotal: 1000,
+      tax: 100,
+      total: 1100,
+    });
+
+    const result = await reconcileBillingHistoryAmounts(3);
+
+    expect(result.candidates).toBe(1);
+    expect(result.matched).toBe(1);
+    expect(result.drifted).toBe(0);
+    expect(recordError).not.toHaveBeenCalled();
+  });
+
+  it('金額乖離 → drifted + recordError', async () => {
+    vi.mocked(prisma.billingHistory.findMany).mockResolvedValue([
+      {
+        id: 'b1',
+        tenantId: TENANT_A,
+        stripeInvoiceId: 'in_1',
+        amountJpy: 1000,
+        taxAmountJpy: 100,
+        totalAmountJpy: 1100,
+        yearMonth: '2026-05',
+      },
+    ] as never);
+    // Stripe 側は ¥2000 (= 大幅乖離)
+    mockInvoiceRetrieve.mockResolvedValueOnce({
+      subtotal: 2000,
+      tax: 200,
+      total: 2200,
+    });
+
+    const result = await reconcileBillingHistoryAmounts(3);
+
+    expect(result.drifted).toBe(1);
+    expect(result.matched).toBe(0);
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        context: expect.objectContaining({
+          kind: 'amount_reconcile_drift',
+          billingHistoryId: 'b1',
+        }),
+      }),
+    );
+  });
+
+  it('±1 円以内の乖離は matched (= tolerance)', async () => {
+    vi.mocked(prisma.billingHistory.findMany).mockResolvedValue([
+      {
+        id: 'b1',
+        tenantId: TENANT_A,
+        stripeInvoiceId: 'in_1',
+        amountJpy: 1000,
+        taxAmountJpy: 100,
+        totalAmountJpy: 1100,
+        yearMonth: '2026-05',
+      },
+    ] as never);
+    // 1 円差は許容
+    mockInvoiceRetrieve.mockResolvedValueOnce({
+      subtotal: 1001,
+      tax: 100,
+      total: 1101,
+    });
+
+    const result = await reconcileBillingHistoryAmounts(3);
+    expect(result.matched).toBe(1);
+    expect(result.drifted).toBe(0);
   });
 });

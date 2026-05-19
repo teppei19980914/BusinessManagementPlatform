@@ -22,7 +22,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isCronAuthorized } from '@/lib/cron-auth';
 import { withCronExecutionLogging } from '@/lib/cron-execution-log';
-import { reconcileStripeSubscriptions } from '@/services/stripe-reconcile.service';
+import {
+  reconcileStripeSubscriptions,
+  reconcileBillingHistoryAmounts,
+} from '@/services/stripe-reconcile.service';
 
 export async function POST(req: NextRequest) {
   if (!isCronAuthorized(req)) {
@@ -33,8 +36,11 @@ export async function POST(req: NextRequest) {
   }
 
   return withCronExecutionLogging('stripe-reconcile', req, async () => {
-    const result = await reconcileStripeSubscriptions();
-    return { data: { source: 'cron', ...result } };
+    // 1. Subscription 状態の照合 (= 既存 PR-V7 #5)
+    const subscriptions = await reconcileStripeSubscriptions();
+    // 2. PR-V7a B-2 (2026-05-19): BillingHistory 金額の照合 (直近 3 ヶ月)
+    const amounts = await reconcileBillingHistoryAmounts(3);
+    return { data: { source: 'cron', subscriptions, amounts } };
   });
 }
 
