@@ -187,6 +187,54 @@ export async function getEmailSendStats(now: Date = new Date()): Promise<EmailSe
   };
 }
 
+/**
+ * 直近 N 時間で送信失敗したメールの明細を取得する (PR-V7a / 2026-05-19)。
+ *
+ * super_admin の請求業務監視で「銀行振込テナントへの請求書送付失敗」を可視化する用途。
+ * recipient はハッシュ化済のため、テナントとの紐付けは tenantId 経由でのみ実施。
+ *
+ * - 集計範囲: now - hoursBack 〜 now (UTC ベース)
+ * - 並び順: sentAt 降順 (= 最新の失敗が先頭)
+ *
+ * @param hoursBack 過去 N 時間 (= 24h 推奨)
+ * @param limit 返却件数上限 (= 100 推奨)
+ */
+export type RecentFailedEmail = {
+  id: string;
+  tenantId: string | null;
+  type: string;
+  recipientDomain: string;
+  errorMessage: string | null;
+  providerName: string;
+  sentAt: Date;
+};
+
+export async function getRecentFailedEmails(
+  hoursBack: number = 24,
+  limit: number = 100,
+  now: Date = new Date(),
+): Promise<RecentFailedEmail[]> {
+  const since = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
+  const rows = await prisma.emailSendLog.findMany({
+    where: {
+      sentAt: { gte: since },
+      success: false,
+    },
+    orderBy: { sentAt: 'desc' },
+    take: limit,
+    select: {
+      id: true,
+      tenantId: true,
+      type: true,
+      recipientDomain: true,
+      errorMessage: true,
+      providerName: true,
+      sentAt: true,
+    },
+  });
+  return rows;
+}
+
 // ================================================================
 // 内部ユーティリティ
 // ================================================================
