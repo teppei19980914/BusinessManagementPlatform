@@ -153,6 +153,9 @@ function DefaultTenantRow({
                   <span className="ml-2 text-xs text-muted-foreground">/ {defaultTenant.slug}</span>
                 </td>
                 <td className="p-2 capitalize">{defaultTenant.plan}</td>
+                {/* PR-V8.3 (2026-05-19): `defaultTenant.currentMonthApiCallCount/CostJpy` は
+                    `getDefaultTenantOwnSummary` 内で reconcile 経由の **ApiCallLog SUM (真値)**
+                    に置換済 (super-admin.service.ts:639-640)。フィールド名は counter だが実値は SUM。 */}
                 <td className="p-2 text-right">
                   {defaultTenant.currentMonthApiCallCount.toLocaleString()}
                 </td>
