@@ -54,9 +54,10 @@ function buildQueueRow(overrides: Record<string, unknown> = {}) {
     sentAt: null,
     lastError: null,
     createdAt: new Date('2026-05-14T10:00:30Z'),
+    // PR-V8 (2026-05-19): Meter API 移行に伴い stripeCustomerId に変更
+    //   (旧 stripeSubscriptionItem*Id は使用しなくなった)
     tenant: {
-      stripeSubscriptionItemHaikuId: 'si_haiku_test',
-      stripeSubscriptionItemSonnetId: 'si_sonnet_test',
+      stripeCustomerId: 'cus_test_xxx',
     },
     ...overrides,
   };
@@ -105,15 +106,17 @@ describe('flushStripeUsageRecordQueue', () => {
     expect(updateCall?.data.nextSendAt).toBeNull();
     expect(updateCall?.data.lastError).toBeNull();
 
+    // PR-V8 (2026-05-19): Meter API 移行 — stripeCustomerId + callType を渡す
     expect(mockReportUsage).toHaveBeenCalledWith({
-      subscriptionItemId: 'si_haiku_test',
+      stripeCustomerId: 'cus_test_xxx',
+      callType: 'haiku',
       quantity: 1,
       occurredAt: expect.any(Date),
       apiCallLogId: API_CALL_LOG_ID,
     });
   });
 
-  it('callType=sonnet なら sonnet 用 subscriptionItemId を参照', async () => {
+  it('callType=sonnet なら callType=sonnet で reportUsage 呼出 (PR-V8 Meter API)', async () => {
     vi.mocked(prisma.stripeUsageRecordQueue.findMany).mockResolvedValue([
       buildQueueRow({ callType: 'sonnet' }),
     ] as never);
@@ -123,15 +126,18 @@ describe('flushStripeUsageRecordQueue', () => {
     await flushStripeUsageRecordQueue();
 
     expect(mockReportUsage).toHaveBeenCalledWith(
-      expect.objectContaining({ subscriptionItemId: 'si_sonnet_test' }),
+      expect.objectContaining({
+        callType: 'sonnet',
+        stripeCustomerId: 'cus_test_xxx',
+      }),
     );
   });
 
-  it('subscriptionItemId 未設定 → DLQ (nextSendAt=null + lastError 記録)', async () => {
+  it('[PR-V8] stripeCustomerId 未設定 → DLQ (nextSendAt=null + lastError 記録)', async () => {
     vi.mocked(prisma.stripeUsageRecordQueue.findMany).mockResolvedValue([
       buildQueueRow({
         callType: 'haiku',
-        tenant: { stripeSubscriptionItemHaikuId: null, stripeSubscriptionItemSonnetId: null },
+        tenant: { stripeCustomerId: null },
       }),
     ] as never);
     vi.mocked(prisma.stripeUsageRecordQueue.update).mockResolvedValue({} as never);
@@ -144,7 +150,7 @@ describe('flushStripeUsageRecordQueue', () => {
 
     const updateCall = vi.mocked(prisma.stripeUsageRecordQueue.update).mock.calls[0]?.[0];
     expect(updateCall?.data.nextSendAt).toBeNull();
-    expect(updateCall?.data.lastError).toContain('SubscriptionItem ID is null');
+    expect(updateCall?.data.lastError).toContain('Stripe Customer ID is null');
   });
 
   it('送信失敗 (1 回目) → retryCount=1 + nextSendAt=now+1分', async () => {

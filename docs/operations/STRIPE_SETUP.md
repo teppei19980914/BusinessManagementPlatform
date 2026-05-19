@@ -138,7 +138,8 @@ Dashboard → **開発者** → **Webhook** → **送信先を追加**
 | API バージョン | **`2026-04-22.dahlia`** (2026-05-19 時点で Sandbox 新規アカウントの最新版) |
 | 説明 | `たすきば Webhook (Sandbox / Live)` |
 
-> ⚠️ **コード側との API バージョン不一致**: 現在のコード (`src/lib/stripe.ts`) は `2024-12-18.acacia` を指定。Stripe Sandbox 新規アカウントでは `2026-04-22.dahlia` のみ選択可。**PR-V8 でコード側を `2026-04-22.dahlia` + Meter API (`billing.meterEvents.create`) に更新予定**。
+> ✅ **PR-V8 (2026-05-19) で対応完了**: コード側 (`src/lib/stripe.ts`) も `STRIPE_API_VERSION = '2026-04-22.dahlia'` に更新済 + Usage Record 送信は `billing.meterEvents.create` (= Meter API) に移行済 (`src/services/stripe-billing.service.ts reportUsage`)。
+> Stripe Dashboard 側の Webhook 設定 API バージョン とコード側 API バージョンが一致 (Sandbox / Live ともに `2026-04-22.dahlia`)。
 
 ### 4.2 購読イベント (= 11 件)
 
@@ -376,7 +377,7 @@ Sandbox 動作確認 OK 後、Live mode で同じ設定を再構築:
 - [ ] Live mode の Smart Retries / メール通知設定を Sandbox と同じ値で構築
 - [ ] Live API キー (`sk_live_xxxx`) + Webhook secret (`whsec_xxxx`) を Netlify Live 環境変数に登録 (= 平文共有禁止、Dashboard 直接入力)
 - [ ] `STRIPE_PRICE_*` を Live mode の Price ID に置換 (= Sandbox Price ID と混同しないこと)
-- [ ] **PR-V8 マージ済**: コード側の API バージョン `2026-04-22.dahlia` + Meter API 対応完了
+- [x] **PR-V8 完了**: コード側の API バージョン `2026-04-22.dahlia` + Meter API 対応完了 (= PR #411 にバンドル merge 済)
 - [ ] 利用規約 / 特商法に Stripe 決済 / 自動更新条項が反映済
 - [ ] LP `#tokushoho` アンカーが Live mode の特商法 URL に設定済
 
@@ -387,8 +388,8 @@ Sandbox 動作確認 OK 後、Live mode で同じ設定を再構築:
 | 症状 | 原因候補 | 対処 |
 |---|---|---|
 | Webhook が受信されない | URL 設定ミス / signature 検証失敗 | Stripe Dashboard → Webhooks → 該当エンドポイント → Event log で配信履歴確認 |
-| Webhook が `400 Bad Request` で reject される | コード側 API バージョン不一致 | `src/lib/stripe.ts` の `STRIPE_API_VERSION` と Dashboard 側設定が一致するか確認 (PR-V8 で対応中) |
-| Usage Record が反映されない | Meter event_name 不一致 / API キー混同 | `tasukiba_haiku_api_call` / `tasukiba_sonnet_api_call` が Stripe Meter 側と完全一致するか確認 |
+| Webhook が `400 Bad Request` で reject される | コード側 API バージョン不一致 | `src/lib/stripe.ts` の `STRIPE_API_VERSION` と Dashboard 側設定が一致するか確認 (= PR-V8 で `2026-04-22.dahlia` に統一済) |
+| Usage Record (Meter Event) が反映されない | Meter event_name 不一致 / Stripe Customer ID 不在 | (1) `src/lib/stripe.ts` の `STRIPE_METER_EVENT_NAMES` (= `tasukiba_haiku_api_call` / `tasukiba_sonnet_api_call`) が Stripe Meter 側と完全一致するか<br/>(2) Tenant.stripeCustomerId が null でないか<br/>(3) Customer の active Subscription が当該 Meter の Price を含むか |
 | 金額が顧客の見ているものと違う | Tax Code 設定漏れ / 税込/税抜の混同 | Stripe Tax 設定 + Price の Tax behavior を **税抜** に統一 (= Stripe Tax 未使用時もこれ) |
 | 「期限超過」状態から復帰しない | カード更新後の retry 失敗 | 顧客に Customer Portal でカード再登録を依頼 / Dashboard で手動 retry |
 | Sandbox でカードが拒否される | 本番カードを使用 | テスト用カード番号 `4242 4242 4242 4242` (= 成功) を使用 |
@@ -402,6 +403,7 @@ Sandbox 動作確認 OK 後、Live mode で同じ設定を再構築:
 
 | 日付 | 変更 | PR |
 |---|---|---|
+| 2026-05-19 (PR-V8) | Stripe API バージョンを `2024-12-18.acacia` → `2026-04-22.dahlia` に更新 + Usage Record 送信を `subscriptionItems.createUsageRecord` (legacy) → `billing.meterEvents.create` (Meter API) に移行 | PR #411 (バンドル) |
 | 2026-05-19 (PR-V7a) | 請求業務横展開実装に伴う運用追加: invoice 手動消込 UI / 月次集計 cron / 期日超過 alert / cron 失敗 alert / 金額照合 / CSV エクスポート / 顧客向け請求金額表示 | PR #411 |
 | 2026-05-19 | Sandbox 設定完了反映: 個人事業主対応 / Netlify 移行 / Meter UI 必須化 / Smart Retries 8回2週間/期限超過保持 / Customer Portal 12 項目 / Public business info / Stripe Tax スキップ | (docs PR) |
 | 2026-05-14 | 初版策定 (v1.x Stripe 連携仕様確定に伴う) | docs/stripe-integration-spec |

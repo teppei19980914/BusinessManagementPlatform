@@ -58,6 +58,12 @@ const mockStripeClient = {
     update: vi.fn(),
     del: vi.fn(),
   },
+  // PR-V8 (2026-05-19): Meter API への移行で reportUsage の送信先が変更
+  billing: {
+    meterEvents: {
+      create: vi.fn(),
+    },
+  },
 };
 
 vi.mock('@/lib/stripe', () => ({
@@ -73,6 +79,11 @@ vi.mock('@/lib/stripe', () => ({
     if (plan === 'plus') return 'price_storage_plus_test';
     if (plan === 'pro_storage') return 'price_storage_pro_test';
     return null;
+  },
+  // PR-V8 (2026-05-19): Meter API event name 定数
+  STRIPE_METER_EVENT_NAMES: {
+    haiku: 'tasukiba_haiku_api_call',
+    sonnet: 'tasukiba_sonnet_api_call',
   },
 }));
 
@@ -474,53 +485,71 @@ describe('createSubscriptionForTenant', () => {
 // §6. reportUsage
 // ============================================================
 
-describe('reportUsage', () => {
-  it('Usage Record 送信 + idempotency_key で重複防止', async () => {
-    mockStripeClient.subscriptionItems.createUsageRecord.mockResolvedValueOnce({
-      id: 'mbur_xxx',
+describe('reportUsage (PR-V8: Meter API)', () => {
+  it('Meter event を送信 + identifier で重複防止', async () => {
+    mockStripeClient.billing.meterEvents.create.mockResolvedValueOnce({
+      identifier: 'usage:haiku:apicall-uuid-1',
     });
 
     const result = await reportUsage({
-      subscriptionItemId: 'si_haiku_xxx',
+      stripeCustomerId: 'cus_xxx',
+      callType: 'haiku',
       quantity: 1,
       occurredAt: new Date('2026-06-15T10:00:00Z'),
       apiCallLogId: 'apicall-uuid-1',
     });
 
     expect(result.ok).toBe(true);
-    const call = mockStripeClient.subscriptionItems.createUsageRecord.mock.calls[0]!;
-    expect(call[0]).toBe('si_haiku_xxx');
-    expect(call[1]).toEqual({
-      quantity: 1,
+    const call = mockStripeClient.billing.meterEvents.create.mock.calls[0]!;
+    expect(call[0]).toEqual({
+      event_name: 'tasukiba_haiku_api_call',
+      payload: {
+        stripe_customer_id: 'cus_xxx',
+        value: '1',
+      },
+      identifier: 'usage:haiku:apicall-uuid-1',
       timestamp: Math.floor(new Date('2026-06-15T10:00:00Z').getTime() / 1000),
-      action: 'increment',
-    });
-    expect(call[2]).toMatchObject({
-      idempotencyKey: 'usage:si_haiku_xxx:apicall-uuid-1',
     });
   });
 
-  it('quantity > 1 で bulk 操作対応', async () => {
-    mockStripeClient.subscriptionItems.createUsageRecord.mockResolvedValueOnce({ id: 'mbur_x' });
+  it('callType=sonnet で event_name が tasukiba_sonnet_api_call', async () => {
+    mockStripeClient.billing.meterEvents.create.mockResolvedValueOnce({ identifier: 'usage:sonnet:x' });
 
     await reportUsage({
-      subscriptionItemId: 'si_sonnet_xxx',
+      stripeCustomerId: 'cus_x',
+      callType: 'sonnet',
+      quantity: 1,
+      occurredAt: new Date(),
+      apiCallLogId: 'log-id',
+    });
+
+    const call = mockStripeClient.billing.meterEvents.create.mock.calls[0]!;
+    expect((call[0] as { event_name: string }).event_name).toBe('tasukiba_sonnet_api_call');
+  });
+
+  it('quantity > 1 で bulk 操作対応 (= payload.value で文字列で渡る)', async () => {
+    mockStripeClient.billing.meterEvents.create.mockResolvedValueOnce({ identifier: 'x' });
+
+    await reportUsage({
+      stripeCustomerId: 'cus_x',
+      callType: 'sonnet',
       quantity: 5,
       occurredAt: new Date(),
       apiCallLogId: 'log-id',
     });
 
-    const call = mockStripeClient.subscriptionItems.createUsageRecord.mock.calls[0]!;
-    expect((call[1] as { quantity: number }).quantity).toBe(5);
+    const call = mockStripeClient.billing.meterEvents.create.mock.calls[0]!;
+    expect((call[0] as { payload: { value: string } }).payload.value).toBe('5');
   });
 
   it('Stripe エラー時は Result.ok=false を伝播', async () => {
-    mockStripeClient.subscriptionItems.createUsageRecord.mockRejectedValueOnce(
+    mockStripeClient.billing.meterEvents.create.mockRejectedValueOnce(
       new Error('network error'),
     );
 
     const result = await reportUsage({
-      subscriptionItemId: 'si_xxx',
+      stripeCustomerId: 'cus_x',
+      callType: 'haiku',
       quantity: 1,
       occurredAt: new Date(),
       apiCallLogId: 'log-id',

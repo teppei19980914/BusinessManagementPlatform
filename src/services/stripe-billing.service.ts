@@ -31,6 +31,8 @@ import {
   getStripe,
   getStripePriceConfig,
   getStoragePriceId,
+  STRIPE_METER_EVENT_NAMES,
+  type StripeMeterCallType,
 } from '@/lib/stripe';
 import {
   withStripeError,
@@ -641,42 +643,58 @@ export async function createSubscriptionForTenant(
 // ============================================================
 
 export type ReportUsageInput = {
-  /** Stripe Subscription Item ID (= haiku or sonnet 用、tenant の subscriptionItemId を渡す) */
-  subscriptionItemId: string;
+  /**
+   * Stripe Customer ID (= tenant.stripeCustomerId)。
+   * PR-V8 (2026-05-19): 旧 Subscription Item ID ベースから Meter API ベースに移行。
+   * Meter API は Customer 単位で送信し、Stripe 側で active subscription を経由して課金される。
+   */
+  stripeCustomerId: string;
+  /** Meter event 名 ('haiku' or 'sonnet'、STRIPE_METER_EVENT_NAMES で event_name に変換) */
+  callType: StripeMeterCallType;
   /** 使用量 (通常 1、bulk 操作で N) */
   quantity: number;
-  /** 元の API 呼び出し時刻 (= Stripe Usage Record の timestamp、過去 35 日以内まで受領可) */
+  /** 元の API 呼び出し時刻 (= Meter event の timestamp、過去 35 日以内まで受領可) */
   occurredAt: Date;
-  /** idempotency_key として使う ApiCallLog.id (= 重複送信防止) */
+  /** identifier として使う ApiCallLog.id (= 重複送信防止 = Meter API の冪等性キー) */
   apiCallLogId: string;
 };
 
 /**
- * Stripe SubscriptionItem に Usage Record を送信。
+ * Stripe Meter Event を送信 (= PR-V8 / 2026-05-19 で旧 Usage Record API から移行)。
+ *
+ * 旧仕様 (= subscriptionItems.createUsageRecord):
+ *   - Subscription Item ID 単位で送信
+ *   - quantity + timestamp + action='increment'
+ *
+ * 新仕様 (= billing.meterEvents.create):
+ *   - Meter event_name + Customer ID 単位で送信
+ *   - Stripe は Customer の active Subscription を自動解決して課金
+ *   - identifier で重複送信を防ぐ (= 24h 以内の同一 identifier は無視される)
  *
  * 設計方針 (詳細設計 §D-1):
  *   - 同期送信 (= API 応答性を損なう) は避ける。本関数は cron / queue から呼ばれる
- *   - apiCallLogId を idempotency_key として送信 → 重複送信防止
- *   - timestamp は過去日時 OK (= 月途中切替時の backfill にも使う)
+ *   - apiCallLogId を identifier に使い重複送信防止
+ *   - timestamp は過去日時 OK (= 月途中切替時の backfill にも使う、過去 35 日以内)
  *
  * 注: withMeteredLLM からの直接呼出は禁止 (= stripe_usage_record_queue に積んで、cron で本関数を呼ぶ)
  */
 export async function reportUsage(
   input: ReportUsageInput,
-): Promise<StripeOperationResult<Stripe.UsageRecord>> {
+): Promise<StripeOperationResult<Stripe.Billing.MeterEvent>> {
   const stripe = getStripe();
+  const eventName = STRIPE_METER_EVENT_NAMES[input.callType];
   return await withStripeError(() =>
-    stripe.subscriptionItems.createUsageRecord(
-      input.subscriptionItemId,
-      {
-        quantity: input.quantity,
-        timestamp: Math.floor(input.occurredAt.getTime() / 1000),
-        action: 'increment',
+    stripe.billing.meterEvents.create({
+      event_name: eventName,
+      payload: {
+        stripe_customer_id: input.stripeCustomerId,
+        // Meter API の payload.value は文字列で渡す (= Stripe SDK の型定義)
+        value: String(input.quantity),
       },
-      {
-        idempotencyKey: `usage:${input.subscriptionItemId}:${input.apiCallLogId}`,
-      },
-    ),
+      // identifier で重複送信防止 (= Stripe 側で 24h 以内の同一 identifier は無視)
+      identifier: `usage:${input.callType}:${input.apiCallLogId}`,
+      timestamp: Math.floor(input.occurredAt.getTime() / 1000),
+    }),
   );
 }
 

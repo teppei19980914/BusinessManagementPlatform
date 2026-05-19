@@ -51,8 +51,8 @@ describe('isStripeEnabled', () => {
 });
 
 describe('STRIPE_API_VERSION', () => {
-  it("固定値 '2024-12-18.acacia' (= ADR-0006 準拠)", () => {
-    expect(STRIPE_API_VERSION).toBe('2024-12-18.acacia');
+  it("固定値 '2026-04-22.dahlia' (= PR-V8 / 2026-05-19 更新、Meter API 対応)", () => {
+    expect(STRIPE_API_VERSION).toBe('2026-04-22.dahlia');
   });
 });
 
