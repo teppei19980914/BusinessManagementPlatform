@@ -17,6 +17,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getMonthlyBillingDetail } from '@/services/billing-dashboard.service';
+import { ConfirmPaymentButton } from './confirm-payment-button';
 
 const STRIPE_DASHBOARD_BASE = 'https://dashboard.stripe.com';
 const VALID_YEAR_MONTH = /^\d{4}-\d{2}$/;
@@ -159,16 +160,28 @@ export default async function BillingDetailPage({
                     )}
                   </td>
                   <td className="px-3 py-2 text-xs">
-                    {r.stripeInvoiceId && (
-                      <a
-                        href={`${STRIPE_DASHBOARD_BASE}/invoices/${r.stripeInvoiceId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-info underline-offset-2 hover:underline"
-                      >
-                        Stripe ↗
-                      </a>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {/* credit_card: Stripe Dashboard ディープリンク */}
+                      {r.stripeInvoiceId && (
+                        <a
+                          href={`${STRIPE_DASHBOARD_BASE}/invoices/${r.stripeInvoiceId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-info underline-offset-2 hover:underline"
+                        >
+                          Stripe ↗
+                        </a>
+                      )}
+                      {/* invoice/bank_transfer + pending: 手動消込ボタン (PR-V7a) */}
+                      {r.status === 'pending'
+                        && (r.paymentMethod === 'invoice'
+                          || r.paymentMethod === 'bank_transfer') && (
+                        <ConfirmPaymentButton
+                          billingHistoryId={r.id}
+                          tenantName={r.tenantName}
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
