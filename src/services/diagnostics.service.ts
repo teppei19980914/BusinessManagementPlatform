@@ -56,6 +56,30 @@ export type DegradedTenantSummary = {
   monthlyBudgetCapJpy: number | null;
 };
 
+/**
+ * PR-V8.1 (2026-05-19) ★請求重要★: Stripe Usage Record 送信滞留 / DLQ。
+ *
+ * `StripeUsageRecordQueue` で `sentAt=null` のレコードは以下のいずれか:
+ *   - delayed: `nextSendAt < now() - 24h` (= 24h 以上送信遅延、cron 障害等)
+ *   - dlq: `nextSendAt = null` (= リトライ上限到達、永続的失敗)
+ *
+ * いずれも **Stripe 側で請求書に反映されない = 請求漏れ** に直結。
+ * 個人の貯金から負担になる致命傷のため診断ダッシュボードで監視必須。
+ */
+export type StripeUsageQueueIssue = {
+  category: 'delayed' | 'dlq';
+  count: number;
+  /** 滞留 / DLQ 行の中の代表サンプル (古い順、最大 10 件) */
+  samples: Array<{
+    id: string;
+    tenantId: string;
+    callType: string;
+    occurredAt: Date;
+    retryCount: number;
+    lastError: string | null;
+  }>;
+};
+
 /** alert 機構の空打ち警告 (super_admin 通知メールが宛先 0 で送れなかった履歴)。 */
 export type AlertNoRecipientWarning = {
   recordedAt: Date;
@@ -84,6 +108,12 @@ export type DiagnosticsSummary = {
 
   /** super_admin alert が宛先 0 で送れなかった警告 (直近 7 日) */
   alertNoRecipientWarnings: AlertNoRecipientWarning[];
+
+  /**
+   * PR-V8.1 (2026-05-19) ★請求重要★: Stripe Usage Record 滞留 / DLQ。
+   * 0 件配列なら正常、1 件以上で「請求漏れ」リスクとして赤強調表示する。
+   */
+  stripeUsageQueueIssues: StripeUsageQueueIssue[];
 };
 
 // ================================================================
@@ -108,22 +138,26 @@ export async function getDiagnosticsSummary(
     degradedTenants,
     recentFailedEmails,
     alertNoRecipientWarnings,
+    stripeUsageQueueIssues,
   ] = await Promise.all([
     reconcileAllTenantsApiUsage(now),
     checkAllCronHealth(now),
     listDegradedTenants(),
     getRecentFailedEmails(24, 50, now),
     listAlertNoRecipientWarnings(sevenDaysAgo),
+    listStripeUsageQueueIssues(now),
   ]);
 
   const driftedTenants = reconciles.filter((r) => r.hasDrift);
+  const stripeIssueRowCount = stripeUsageQueueIssues.reduce((s, i) => s + i.count, 0);
 
   const totalAnomalies =
     driftedTenants.length
     + cronHealth.filter((c) => c.isUnhealthy).length
     + degradedTenants.length
     + (recentFailedEmails.length > 0 ? 1 : 0) // 失敗メールは 1 カテゴリ = 1 件カウント
-    + alertNoRecipientWarnings.length;
+    + alertNoRecipientWarnings.length
+    + (stripeIssueRowCount > 0 ? 1 : 0); // Stripe queue 滞留も 1 カテゴリ = 1 件カウント
 
   return {
     measuredAt: now,
@@ -133,6 +167,7 @@ export async function getDiagnosticsSummary(
     degradedTenants,
     recentFailedEmails,
     alertNoRecipientWarnings,
+    stripeUsageQueueIssues,
   };
 }
 
@@ -195,6 +230,67 @@ export async function listDegradedTenants(): Promise<DegradedTenantSummary[]> {
  * `admin-alert.service.ts:sendSuperAdminAlert` が recordError(kind='admin_alert_no_recipients')
  * を呼んだ履歴を直近 7 日で取得し、alert 機構自体の健全性を担保する。
  */
+/**
+ * PR-V8.1 (2026-05-19) ★請求重要★: Stripe Usage Record 送信滞留 / DLQ を取得。
+ *
+ * - delayed: `sentAt IS NULL AND nextSendAt < now() - 24h` (= 24h 以上送信遅延)
+ * - dlq: `sentAt IS NULL AND nextSendAt IS NULL` (= リトライ上限到達)
+ *
+ * いずれも Stripe 側で請求書に反映されない = **請求漏れ = 個人の貯金から負担** に直結。
+ */
+export async function listStripeUsageQueueIssues(
+  now: Date = new Date(),
+): Promise<StripeUsageQueueIssue[]> {
+  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const [delayed, dlq] = await Promise.all([
+    prisma.stripeUsageRecordQueue.findMany({
+      where: {
+        sentAt: null,
+        nextSendAt: { not: null, lt: twentyFourHoursAgo },
+      },
+      orderBy: { occurredAt: 'asc' },
+      take: 10,
+      select: {
+        id: true,
+        tenantId: true,
+        callType: true,
+        occurredAt: true,
+        retryCount: true,
+        lastError: true,
+      },
+    }),
+    prisma.stripeUsageRecordQueue.findMany({
+      where: { sentAt: null, nextSendAt: null },
+      orderBy: { occurredAt: 'asc' },
+      take: 10,
+      select: {
+        id: true,
+        tenantId: true,
+        callType: true,
+        occurredAt: true,
+        retryCount: true,
+        lastError: true,
+      },
+    }),
+  ]);
+  const [delayedCount, dlqCount] = await Promise.all([
+    prisma.stripeUsageRecordQueue.count({
+      where: { sentAt: null, nextSendAt: { not: null, lt: twentyFourHoursAgo } },
+    }),
+    prisma.stripeUsageRecordQueue.count({
+      where: { sentAt: null, nextSendAt: null },
+    }),
+  ]);
+  const result: StripeUsageQueueIssue[] = [];
+  if (delayedCount > 0) {
+    result.push({ category: 'delayed', count: delayedCount, samples: delayed });
+  }
+  if (dlqCount > 0) {
+    result.push({ category: 'dlq', count: dlqCount, samples: dlq });
+  }
+  return result;
+}
+
 export async function listAlertNoRecipientWarnings(
   since: Date,
 ): Promise<AlertNoRecipientWarning[]> {

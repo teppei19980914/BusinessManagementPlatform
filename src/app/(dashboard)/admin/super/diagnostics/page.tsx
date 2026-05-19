@@ -218,7 +218,79 @@ export default async function DiagnosticsPage() {
         ))}
       </Section>
 
-      {/* ============ 4. メール送信失敗 (直近 24h) ============ */}
+      {/* ============ 4. ★請求重要★ Stripe Usage Record 送信滞留 / DLQ ============ */}
+      <Section
+        title="💸 Stripe Usage Record 送信滞留 / DLQ ★請求重要★"
+        description="ApiCallLog → Stripe 送信キュー (StripeUsageRecordQueue) で 24h 以上送信遅延 / リトライ上限到達のレコード。Stripe 側の請求書に反映されない = 請求漏れに直結します。"
+        count={summary.stripeUsageQueueIssues.reduce((s, i) => s + i.count, 0)}
+        emptyMessage="✅ Stripe Usage Record の滞留 / DLQ はありません (= 全 ApiCallLog が Stripe に送信済 or 送信予定)。"
+      >
+        {summary.stripeUsageQueueIssues.map((issue) => (
+          <div
+            key={issue.category}
+            className="rounded border border-red-400 bg-red-50 p-4 dark:border-red-600 dark:bg-red-900/30"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold text-red-900 dark:text-red-100">
+                  {issue.category === 'delayed' ? '⏳ 送信遅延 (24h+)' : '🪦 DLQ (リトライ上限到達)'}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {issue.category === 'delayed'
+                    ? 'cron 障害や Stripe API 障害が長時間続いている可能性。stripe-usage-flush cron の健全性確認 + 復旧後に再送信される'
+                    : 'Stripe Subscription Item ID 誤り / 既存キャンセル等で恒久失敗。手動 retry (/admin/super/stripe-dlq) または Stripe Dashboard で直接記録追加が必要'}
+                </div>
+              </div>
+              <div className="text-3xl font-bold text-red-700 dark:text-red-300">
+                {issue.count.toLocaleString()}
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded border bg-white text-sm dark:bg-black/30">
+              <table className="w-full">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="px-3 py-2 text-left">tenantId</th>
+                    <th className="px-3 py-2 text-left">callType</th>
+                    <th className="px-3 py-2 text-left">occurredAt</th>
+                    <th className="px-3 py-2 text-right">retry</th>
+                    <th className="px-3 py-2 text-left">エラー</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {issue.samples.map((s) => (
+                    <tr key={s.id} className="border-t">
+                      <td className="px-3 py-1 font-mono text-xs">{s.tenantId}</td>
+                      <td className="px-3 py-1">{s.callType}</td>
+                      <td className="px-3 py-1 font-mono text-xs">
+                        {s.occurredAt.toISOString()}
+                      </td>
+                      <td className="px-3 py-1 text-right">{s.retryCount}</td>
+                      <td className="px-3 py-1 text-xs text-red-700 dark:text-red-300">
+                        {s.lastError ?? '(エラーなし)'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {issue.count > issue.samples.length && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                {issue.count - issue.samples.length} 件 さらに存在 (上位 {issue.samples.length} 件のみ表示)
+                {issue.category === 'dlq' && (
+                  <>
+                    {' / '}
+                    <Link href="/admin/super/stripe-dlq" className="underline">
+                      Stripe DLQ 管理画面で全件確認 →
+                    </Link>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </Section>
+
+      {/* ============ 5. メール送信失敗 (直近 24h) ============ */}
       <Section
         title="📧 メール送信失敗 (直近 24h)"
         description="プロバイダ拒否 / 上限超過 / 一時障害などで送信失敗したメール。請求書送付やパスワードリセット等の業務メールは特に注意。"

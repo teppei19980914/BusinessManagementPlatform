@@ -282,25 +282,29 @@ function DefaultTenantSection({
           value={defaultTenant.activeUserCount.toString()}
           tooltip="Default テナント所属の isActive=true ユーザ数"
         />
-        <SummaryCard
-          label="今月の API 呼出"
-          value={defaultTenant.currentMonthApiCallCount.toLocaleString()}
-          tooltip="当月の LLM/Embedding 呼出回数 (Default テナント内)"
-        />
+        {/* ★ PR-V8.1 (2026-05-19) 請求 invariant: ApiCallLog SUM (真値) を表示。
+            counter 値とのズレが請求書根拠と画面表示の乖離を生むため、両画面 (テナント管理者
+            画面 + システム管理者画面) で同じ SUM 値を表示するよう統一。reconcile=null
+            (=削除済等) のときのみ counter にフォールバック。 */}
         <SummaryCard
           label={
             <span>
-              今月の API 費用 (参考)
-              <UsageDriftBadge reconcile={reconcile} />
+              今月の API 呼出
+              <UsageDriftBadge reconcile={reconcile} showDiagnosticsLink={true} />
             </span>
           }
-          value={`¥${defaultTenant.currentMonthApiCostJpy.toLocaleString()}`}
-          subValue={
-            reconcile?.hasDrift
-              ? `ApiCallLog SUM: ¥${reconcile.reconciledCostJpy.toLocaleString()} (差分 ¥${reconcile.driftCostJpy.toLocaleString()})`
-              : '(請求対象外)'
-          }
-          tooltip="内部記録値。Default テナントは請求対象外のため実際の請求は発生しません"
+          value={(
+            reconcile?.reconciledCallCount ?? defaultTenant.currentMonthApiCallCount
+          ).toLocaleString()}
+          tooltip="当月の LLM/Embedding 呼出回数 (ApiCallLog 集計 = 請求書根拠と同じ真値、PR-V8.1)"
+        />
+        <SummaryCard
+          label="今月の API 費用 (参考)"
+          value={`¥${(
+            reconcile?.reconciledCostJpy ?? defaultTenant.currentMonthApiCostJpy
+          ).toLocaleString()}`}
+          subValue="(請求対象外、ApiCallLog 集計値)"
+          tooltip="ApiCallLog 集計値。Default テナントは請求対象外のため実際の請求は発生しません (PR-V8.1)"
         />
         <SummaryCard
           label="Storage プラン"

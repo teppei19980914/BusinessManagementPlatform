@@ -23,6 +23,8 @@ import { useFormatters } from '@/lib/use-formatters';
 import { RecalculateButton } from '@/components/recalculate-button';
 import { UsageDriftBadge } from '@/components/usage-drift-badge';
 import type { ApiUsageReconcileResult } from '@/services/api-usage-recalc.service';
+// PR-V8.1 (2026-05-19) ★請求重要★: テナント管理者自身が drift を修復可能に
+import { RepairOwnDriftButton } from './repair-own-drift-button';
 // Q5(3) (2026-05-14): 縮退モード状態 (Server Component で取得した snapshot を受け取る)
 import type { DegradedModeState } from '@/services/degraded-mode.service';
 // PR-S5 (2026-05-14): Stripe 支払い方法セクション
@@ -560,10 +562,18 @@ function UsageSection({
   apiReconcile: ApiUsageReconcileResult | null;
 }) {
   const isBeginner = info.plan === 'beginner';
-  // Beginner プラン残数 (= 上限 - 当月既呼出)。負数にしないため Math.max(0, ...) で clamp。
+  // ★ PR-V8.1 (2026-05-19) 請求 invariant: ApiCallLog SUM (真値) を優先表示。
+  //   counter (info.currentMonthApiCallCount) は内部 cache。drift 時は壊れた値になり、
+  //   テナント管理者画面とシステム管理者画面の表示一致が壊れる + 請求書根拠とも乖離する。
+  //   apiReconcile が null (= 集計失敗) のときのみ counter にフォールバック。
+  const displayCallCount =
+    apiReconcile?.reconciledCallCount ?? info.currentMonthApiCallCount;
+  const displayCostJpy =
+    apiReconcile?.reconciledCostJpy ?? info.currentMonthApiCostJpy;
+  // Beginner プラン残数も真値ベースで計算 (= 上限 - SUM)。負数にしないため Math.max(0, ...) で clamp。
   const beginnerCallsRemaining = Math.max(
     0,
-    info.beginnerMonthlyCallLimit - info.currentMonthApiCallCount,
+    info.beginnerMonthlyCallLimit - displayCallCount,
   );
 
   return (
@@ -576,10 +586,14 @@ function UsageSection({
           当月使用量
           <UsageDriftBadge reconcile={apiReconcile} />
         </h2>
-        <RecalculateButton
-          endpoint="/api/tenants/me/recalculate"
-          label="API 利用量を再集計"
-        />
+        <div className="flex items-center gap-2">
+          <RecalculateButton
+            endpoint="/api/tenants/me/recalculate"
+            label="API 利用量を再集計"
+          />
+          {/* PR-V8.1: drift 検知時のみ修復ボタンを表示 */}
+          {apiReconcile?.hasDrift && <RepairOwnDriftButton />}
+        </div>
       </div>
       <div
         className={
@@ -590,11 +604,11 @@ function UsageSection({
       >
         <div
           className="cursor-help"
-          title="当月の LLM/Embedding 呼出回数 (withMeteredLLM 経由)"
+          title="当月の LLM/Embedding 呼出回数 (ApiCallLog 集計 = 請求書根拠と同じ真値)"
         >
           <p className="text-xs text-muted-foreground">API 呼出</p>
           <p className="text-xl font-bold">
-            {info.currentMonthApiCallCount.toLocaleString()}
+            {displayCallCount.toLocaleString()}
             {isBeginner && (
               <span className="ml-1 text-sm font-normal text-muted-foreground">
                 / {info.beginnerMonthlyCallLimit}
@@ -626,11 +640,11 @@ function UsageSection({
           <>
             <div
               className="cursor-help"
-              title="当月の内部請求額。Expert ¥5/call / Pro ¥15/call の固定単価で計算 (2026-05-15 改定後)"
+              title="当月の内部請求額 (ApiCallLog 集計 = 請求書根拠と同じ真値)。Expert ¥5/call / Pro ¥15/call の固定単価で計算 (2026-05-15 改定後)"
             >
               <p className="text-xs text-muted-foreground">API 費用</p>
               <p className="text-xl font-bold">
-                ¥{info.currentMonthApiCostJpy.toLocaleString()}
+                ¥{displayCostJpy.toLocaleString()}
               </p>
             </div>
             <div
