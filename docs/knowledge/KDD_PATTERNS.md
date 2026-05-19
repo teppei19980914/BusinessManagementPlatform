@@ -10634,3 +10634,85 @@ datasource: {
 - DEPLOYMENT.md §2.0 (= 本件の運用手順)
 - 元事象: PR #412 マージ直後の deploy log 6a0cf3e5
 - Supabase 公式: https://supabase.com/docs/guides/database/connecting-to-postgres
+
+---
+
+## 5.X+83 **migration を手動適用 (Supabase SQL Editor) すると `_prisma_migrations` に記録されず、後の `prisma migrate deploy` が P3018 で失敗する (2026-05-20 / PR #413 deploy 失敗 2 回目)**
+
+### 事象
+
+PR #413 (DEPLOYMENT.md 追記) マージ後、Netlify env を Pooler URL に変更して再 deploy したところ、前回の P1001 (= IPv6) は解消したが、新たに以下のエラーで失敗:
+
+```
+Error: P3018
+A migration failed to apply. New migrations cannot be applied before the error is recovered from.
+Migration name: 20260523_cron_execution_log
+Database error code: 42P07
+ERROR: relation "cron_execution_logs" already exists
+```
+
+つまり **テーブルは既に DB に存在するが、`_prisma_migrations` に適用記録がない** ため、Prisma が「未適用 migration」と判断して再実行 → `CREATE TABLE` で "already exists" エラー。
+
+### 根本原因
+
+`prisma/migrations/20260523_cron_execution_log/migration.sql` の冒頭コメント:
+
+```sql
+-- 手動適用 (Supabase SQL Editor):
+--   1. 本ファイル全体を SQL Editor に貼り付け → Run
+--   2. 「Success」を確認
+```
+
+→ **migration ファイルが「手動適用前提」で書かれていた**。過去 (= PR feat/cron-execution-log 時) に SQL Editor で適用されたが、`_prisma_migrations` への INSERT が行われなかった。これは Prisma migrate を介さず DB だけ更新した結果。
+
+PR #412 まで Netlify build は `prisma generate && next build` のみで `prisma migrate deploy` を実行していなかったため、本件の不整合は顕在化していなかった。PR-V8.1 で `build:netlify` に `prisma migrate deploy` を追加した瞬間に、過去の手動適用の負債が一斉に顕在化。
+
+実際、PR #412 マージ前の調査で `_prisma_migrations` を確認した時点で:
+- `20260524_billing_management_extensions` も同様の問題で「テーブル存在 / 記録なし」状態だった
+- 20260523 も同じ不整合だったが、当時は気付かなかった
+
+### 教訓
+
+1. **「手動適用」migration ファイルは Prisma の自動 migrate と相性が悪い**。Netlify build に `prisma migrate deploy` を組み込むと、過去の手動適用の負債が一斉に顕在化する
+2. **migration を SQL Editor で適用した場合、必ず `_prisma_migrations` に手動で INSERT する** (= 公式 `prisma migrate resolve --applied "<name>"` でも可)
+3. **`_prisma_migrations` の `checksum` カラム**: 手動適用時はダミー値 (= 64文字の `0` 等) で OK。Prisma は再適用時のみ checksum 照合するため、適用済として記録するだけなら影響なし
+4. **将来は SQL Editor 手動適用を廃止** し、すべてローカルからの `pnpm prisma migrate deploy` (DIRECT_URL 経由) に統一すべき
+
+### 修正対応
+
+**コード変更不要** (DB レコード追加のみ):
+
+```sql
+INSERT INTO "_prisma_migrations" (
+  id, checksum, finished_at, migration_name, logs,
+  rolled_back_at, started_at, applied_steps_count
+)
+VALUES (
+  gen_random_uuid()::text,
+  '0000000000000000000000000000000000000000000000000000000000000000',
+  NOW(),
+  '20260523_cron_execution_log',
+  '手動適用済を 2026-05-20 で記録化',
+  NULL,
+  NOW(),
+  1
+);
+```
+
+`prisma migrate resolve --applied` CLI でも可能:
+```bash
+DIRECT_URL="postgresql://...session-pooler:5432/postgres" \
+  pnpm prisma migrate resolve --applied "20260523_cron_execution_log"
+```
+
+### 横展開・予防
+
+1. **全 migration の `_prisma_migrations` 突合**: `SELECT migration_name FROM _prisma_migrations ORDER BY migration_name` の結果と `ls prisma/migrations/` の結果を比較し、欠番がないか確認
+2. **migration ファイルから「手動適用」コメントを削除**: 「自動化された `prisma migrate deploy` で適用される」を前提に書き換え
+3. **CONTRIBUTING.md / DEPLOYMENT.md に「migration は Prisma migrate 経由でのみ適用」を明記**
+
+### 関連
+- KDD §5.X+77 (= PR #412 で `prisma migrate deploy` を build に組み込んだ、本件の前提)
+- KDD §5.X+82 (= 同じ deploy が IPv6 で失敗、本件の前段)
+- DEPLOYMENT.md §4.1 (= migration の運用フロー、要更新)
+- Prisma 公式: https://pris.ly/d/migrate-resolve
