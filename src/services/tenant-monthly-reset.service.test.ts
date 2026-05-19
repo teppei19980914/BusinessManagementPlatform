@@ -20,6 +20,14 @@ vi.mock('@/lib/db', () => ({
     auditLog: {
       create: vi.fn(),
     },
+    // PR-V8.1 (2026-05-19): saveMonthlyUsageSnapshots が ApiCallLog SUM ベースに変更されたため、
+    //   apiCallLog.aggregate を mock 必須。デフォルトは「前月分 ApiCallLog 0 件」を返す。
+    //   個別 test で counter 値と一致する mock 値を上書き可能。
+    apiCallLog: {
+      aggregate: vi.fn(() =>
+        Promise.resolve({ _count: { _all: 0 }, _sum: { costJpy: null } }),
+      ),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -370,35 +378,54 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
     expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledTimes(2);
   });
 
-  it('リセット直前の値を yearMonth=前月 で snapshot 保存する', async () => {
+  it('★PR-V8.1★ 前月 ApiCallLog SUM (真値) を yearMonth=前月 で snapshot 保存する (counter ベースではない)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       {
         id: 'tenant-a',
         plan: 'expert',
         timezone: 'Asia/Tokyo',
         lastResetAt: null,
-        currentMonthApiCallCount: 100,
+        currentMonthApiCallCount: 100, // counter (= drift があれば真値と乖離する内部 cache)
         currentMonthApiCostJpy: 1000,
       },
     ] as never);
     vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([
       { tenantId: 'tenant-a', _count: { id: 5 } },
     ] as never);
+    // ★ PR-V8.1: ApiCallLog 集計 (真値) は counter と異なる値を返す → これが snapshot に書かれる
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _count: { _all: 95 }, // 真値 (counter 100 と乖離 = 5 件 drift)
+      _sum: { costJpy: 950 },
+    } as never);
     vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValue({} as never);
 
     // 2026-05-15 09:00 JST 時点で「前月 = 2026-04」を期待
     await saveMonthlyUsageSnapshots(new Date('2026-05-15T00:00:00Z'));
 
+    // ★ snapshot には ApiCallLog SUM (95 件 / ¥950) が書かれる (counter 値 100/¥1000 ではない)
     expect(prisma.tenantMonthlyUsageHistory.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { tenantId_yearMonth: { tenantId: 'tenant-a', yearMonth: '2026-04' } },
         create: expect.objectContaining({
           tenantId: 'tenant-a',
           yearMonth: '2026-04',
-          apiCallCount: 100,
-          apiCostJpy: 1000,
+          apiCallCount: 95, // ★ SUM
+          apiCostJpy: 950, // ★ SUM
           plan: 'expert',
           activeUserCount: 5,
+        }),
+      }),
+    );
+
+    // ApiCallLog.aggregate が「前月分の TZ 月初範囲」で呼ばれる
+    expect(prisma.apiCallLog.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-a',
+          createdAt: expect.objectContaining({
+            gte: expect.any(Date), // 前月初 (JST)
+            lt: expect.any(Date), // 当月初 (JST)
+          }),
         }),
       }),
     );

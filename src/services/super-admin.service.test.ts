@@ -1051,10 +1051,12 @@ describe('getBeginnerUsageSummary (PR E / #15)', () => {
 describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('LLM 費用 + Storage add-on 月額の合算 + 内訳を返す', async () => {
+  it('★PR-V8.1★ LLM 費用 + Storage add-on 月額の合算 + 内訳を返す (ApiCallLog SUM ベース)', async () => {
     vi.mocked(prisma.tenant.count).mockResolvedValueOnce(3 as never);
-    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
-      _sum: { currentMonthApiCallCount: 1200, currentMonthApiCostJpy: 8000 },
+    // ★ PR-V8.1: getCrossTenantUsageSummary は ApiCallLog.aggregate (真値) を呼ぶように変更
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _count: { _all: 1200 },
+      _sum: { costJpy: 8000 },
     } as never);
     vi.mocked(prisma.tenant.groupBy)
       .mockResolvedValueOnce([
@@ -1087,8 +1089,9 @@ describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () =>
 
   it('顧客テナント 0 件なら全 0 を返す', async () => {
     vi.mocked(prisma.tenant.count).mockResolvedValueOnce(0 as never);
-    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
-      _sum: { currentMonthApiCallCount: null, currentMonthApiCostJpy: null },
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _count: { _all: 0 },
+      _sum: { costJpy: null },
     } as never);
     vi.mocked(prisma.tenant.groupBy)
       .mockResolvedValueOnce([] as never)
@@ -1105,8 +1108,9 @@ describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () =>
 
   it('管理テナント + Default テナントを集計から除外する', async () => {
     vi.mocked(prisma.tenant.count).mockResolvedValueOnce(0 as never);
-    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
-      _sum: { currentMonthApiCallCount: null, currentMonthApiCostJpy: null },
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _count: { _all: 0 },
+      _sum: { costJpy: null },
     } as never);
     vi.mocked(prisma.tenant.groupBy)
       .mockResolvedValueOnce([] as never)
@@ -1129,6 +1133,16 @@ describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () =>
     expect(userWhere).toMatchObject({
       isActive: true,
       deletedAt: null,
+      tenantId: {
+        notIn: [
+          '00000000-0000-0000-0000-ffffffffffff',
+          '00000000-0000-0000-0000-000000000001',
+        ],
+      },
+    });
+    // ★ PR-V8.1: ApiCallLog aggregate にも除外フィルタが伝播していること
+    const apiCallArg = vi.mocked(prisma.apiCallLog.aggregate).mock.calls[0]![0]!;
+    expect(apiCallArg.where).toMatchObject({
       tenantId: {
         notIn: [
           '00000000-0000-0000-0000-ffffffffffff',
@@ -1820,8 +1834,10 @@ describe('getCrossTenantUsageSummary — 顧客全体の合算 (請求対象の�
 
   it('合計合算 = LLM 合計 + Storage 合計 (端数なし精度) ', async () => {
     vi.mocked(prisma.tenant.count).mockResolvedValueOnce(4 as never);
-    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
-      _sum: { currentMonthApiCallCount: 4567, currentMonthApiCostJpy: 12345 },
+    // ★ PR-V8.1: ApiCallLog SUM (真値) ベース
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _count: { _all: 4567 },
+      _sum: { costJpy: 12345 },
     } as never);
     vi.mocked(prisma.tenant.groupBy)
       .mockResolvedValueOnce([
@@ -1851,8 +1867,9 @@ describe('getCrossTenantUsageSummary — 顧客全体の合算 (請求対象の�
 
   it('不正な storageAddonPlan は standard として扱われる (= ¥0 加算)', async () => {
     vi.mocked(prisma.tenant.count).mockResolvedValueOnce(1 as never);
-    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
-      _sum: { currentMonthApiCallCount: 0, currentMonthApiCostJpy: 0 },
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _count: { _all: 0 },
+      _sum: { costJpy: 0 },
     } as never);
     vi.mocked(prisma.tenant.groupBy)
       .mockResolvedValueOnce([] as never)
@@ -1868,8 +1885,9 @@ describe('getCrossTenantUsageSummary — 顧客全体の合算 (請求対象の�
 
   it('groupBy 4 種類すべて (parallelism + Default 除外) が同時に発火する', async () => {
     vi.mocked(prisma.tenant.count).mockResolvedValueOnce(0 as never);
-    vi.mocked(prisma.tenant.aggregate).mockResolvedValueOnce({
-      _sum: { currentMonthApiCallCount: null, currentMonthApiCostJpy: null },
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _count: { _all: 0 },
+      _sum: { costJpy: null },
     } as never);
     vi.mocked(prisma.tenant.groupBy)
       .mockResolvedValueOnce([] as never)

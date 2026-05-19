@@ -218,13 +218,19 @@ export default async function SuperAdminTenantDetailPage({
             highlight={tenant.storageUsageRatio > 1.0}
             tooltip="添付ファイル合算サイズ。100% 超で Grace period (7 日)、未対応で write 停止"
           />
+          {/* ★ PR-V8.1 (2026-05-19) 請求 invariant: LLM 部分は ApiCallLog SUM (真値) を使う。
+              同画面の「今月 API 費用」(line 130-134) と一致させ、合算式も整合させる。 */}
           <DetailCard
             label={`当月予想合計課金${nonBillableSuffix}`}
-            value={`¥${tenant.totalCurrentMonthJpy.toLocaleString()} (LLM ¥${tenant.currentMonthApiCostJpy.toLocaleString()} + Storage ¥${tenant.storageAddonMonthlyJpy.toLocaleString()})`}
+            value={(() => {
+              const llmCost = apiReconcile?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
+              const total = llmCost + tenant.storageAddonMonthlyJpy;
+              return `¥${total.toLocaleString()} (LLM ¥${llmCost.toLocaleString()} + Storage ¥${tenant.storageAddonMonthlyJpy.toLocaleString()})`;
+            })()}
             tooltip={
               isDefaultTenant
-                ? '内部記録値。Default テナントは請求対象外のため顧客請求書合計には含まれません'
-                : 'LLM 部分 (従量課金) + Storage add-on (固定月額) の合算。請求書根拠'
+                ? 'ApiCallLog 集計値。Default テナントは請求対象外のため顧客請求書合計には含まれません (PR-V8.1)'
+                : 'ApiCallLog SUM (真値) + Storage add-on (固定月額) の合算 = 請求書根拠と完全一致 (PR-V8.1)'
             }
           />
         </div>

@@ -51,6 +51,9 @@ import { getTenantMonthStart, getTenantPreviousYearMonth } from '@/lib/tenant-ti
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
 // 2026-05-14: 縮退モード確定仕様 — 月初に embedding=NULL のエンティティを一括補完。
 import { runMonthlyEmbeddingBackfill } from '@/services/embedding-backfill.service';
+// PR-V8.1 (2026-05-19) ★請求重要★: snapshot を ApiCallLog SUM (真値) ベースに変更するため
+//   tenant-time の翌月初関数を追加 import (集計範囲の上限として使う)
+import { getTenantNextMonthStart } from '@/lib/tenant-time';
 
 /**
  * 2026-05-11: 月次使用量履歴のスナップショット保存対象から **除外** するテナント。
@@ -178,10 +181,34 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
     // PR-4: 各テナントの TZ で「前月の YYYY-MM」を計算
     const yearMonth = getTenantPreviousYearMonth(now, tenant.timezone);
     try {
+      // ★ PR-V8.1 (2026-05-19) 請求 invariant: snapshot は ApiCallLog SUM (真値) ベースで保存。
+      //   旧設計は counter (tenant.currentMonthApiCallCount/CostJpy) をそのまま snapshot に
+      //   書いていたため、counter が drift している場合、過去月の snapshot に drift が
+      //   永久固定され、過去月 CSV / 履歴表示で誤った金額が出る致命傷があった。
+      //   ApiCallLog から「前月の範囲」を SUM することで、counter の状態に関わらず真値を保存する。
+      //
+      //   集計範囲: 前月のテナント TZ 月初 〜 当月のテナント TZ 月初
+      //   例) Asia/Tokyo, 2026-05-19 実行時 → 2026-04-01 00:00 JST 〜 2026-05-01 00:00 JST
+      const currentMonthStart = getTenantMonthStart(now, tenant.timezone);
+      // 前月初を求めるため、月中の代表時刻として「前月15日 UTC」を使って per-tenant TZ 月初を計算
+      // (15 日なら UTC とテナント TZ がどちらでも同じ月になるため安全)
+      const prevMonthMid = new Date(currentMonthStart.getTime() - 16 * 24 * 60 * 60 * 1000);
+      const prevMonthStart = getTenantMonthStart(prevMonthMid, tenant.timezone);
+      const apiAgg = await prisma.apiCallLog.aggregate({
+        where: {
+          tenantId: tenant.id,
+          createdAt: { gte: prevMonthStart, lt: currentMonthStart },
+        },
+        _count: { _all: true },
+        _sum: { costJpy: true },
+      });
+      const reconciledCallCount = apiAgg._count._all;
+      const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
+
       const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
       const storageAddonPlan = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
       const storageAddonJpy = STORAGE_ADDON_MONTHLY_JPY[storageAddonPlan];
-      const totalJpy = tenant.currentMonthApiCostJpy + storageAddonJpy;
+      const totalJpy = reconciledCostJpy + storageAddonJpy;
 
       await prisma.tenantMonthlyUsageHistory.upsert({
         where: {
@@ -190,8 +217,8 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
         create: {
           tenantId: tenant.id,
           yearMonth,
-          apiCallCount: tenant.currentMonthApiCallCount,
-          apiCostJpy: tenant.currentMonthApiCostJpy,
+          apiCallCount: reconciledCallCount,
+          apiCostJpy: reconciledCostJpy,
           plan: tenant.plan,
           activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
           storageBytesUsed: tenant.storageBytesUsed,
@@ -200,8 +227,8 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           totalJpy,
         },
         update: {
-          apiCallCount: tenant.currentMonthApiCallCount,
-          apiCostJpy: tenant.currentMonthApiCostJpy,
+          apiCallCount: reconciledCallCount,
+          apiCostJpy: reconciledCostJpy,
           plan: tenant.plan,
           activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
           storageBytesUsed: tenant.storageBytesUsed,

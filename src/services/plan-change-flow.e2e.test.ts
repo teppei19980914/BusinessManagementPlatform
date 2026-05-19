@@ -157,6 +157,16 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
     },
     $transaction: vi.fn(),
+    // PR-V8.1 (2026-05-19): saveMonthlyUsageSnapshots は ApiCallLog SUM (真値) を使うように
+    //   変更されたため mock を追加。本 e2e test では simulateApiCall が counter を直接更新する
+    //   抽象モデルなので、aggregate は state の現在 counter 値を「前月の集計」として返す
+    //   (= リセット前の値を snapshot に書く、というロジック検証として等価)。
+    apiCallLog: {
+      aggregate: vi.fn(async () => ({
+        _count: { _all: state.currentMonthApiCallCount },
+        _sum: { costJpy: state.currentMonthApiCostJpy },
+      })),
+    },
   },
 }));
 

@@ -10340,3 +10340,62 @@ PR-V8.1 では以下の画面・経路で counter → SUM 変更を実施。そ�
 - KDD §5.X+77 (= 同 PR 内の別 CI fail) と併読推奨
 - memory: `feedback_billing_invariant.md` (★最重要★ 請求 invariant = ApiCallLog SUM = 全画面表示 = 請求金額)
 - PR #412 (PR-V8.1) で「画面表示の真値ベース化」と「fixture 修正」を同 PR でカバー
+
+---
+
+## 5.X+79 **月次 snapshot を `currentMonthApiCallCount` (counter) ベースで保存すると過去月の請求書根拠が永久に drift で固定される → ApiCallLog SUM ベースに統一 (2026-05-19 / PR #412)**
+
+### 事象
+
+`saveMonthlyUsageSnapshots` (= 月初 cron) が `tenant_monthly_usage_history` に snapshot を upsert する際、`Tenant.currentMonthApiCallCount` (= リアルタイム counter) をそのまま保存していた。
+counter が drift している月 (= 本件 Default テナント 1 vs SUM 8 のような状態) の月初を跨ぐと、**drift 状態のままの値が「過去月の請求書根拠」として永久に固定**される。
+
+過去月 CSV ダウンロード (`/api/admin/super/usage/export?yearMonth=YYYY-MM`)、UI 履歴テーブル、再請求調査の全経路で間違った金額が表示され、後から修復しようとしても snapshot が真値を上書きしているため診断不能。
+
+### 根本原因
+
+- snapshot は「請求書根拠の永続化」が目的だが、ソースが内部 cache (= counter) だった
+- 一方、当月 CSV / 当月画面表示は ApiCallLog SUM ベースに移行済 (PR-V8.1) → 過去月 (snapshot) と現在月 (SUM) で **同じ月を 2 種類の方法で見ると違う金額が出る** UX 不整合
+- counter drift 検知 + 修復は PR-V8.1 で診断ダッシュボードに実装したが、**月初 cron が走った瞬間に過去月 snapshot は永久確定** するため、月初前に drift を修復しないと取り返せない
+
+### 教訓
+
+1. **「永続化される数値」は必ず真値ソース (= 監査ログ的な不変テーブル) から計算すべき**。cache から派生させると cache 不整合が永続化される
+2. ApiCallLog のような append-only テーブルは集計コストが高い印象があるが、月 1 回の cron なら per-tenant aggregate でも実用範囲
+3. 「リアルタイム表示 = cache」「請求書根拠 = 真値」と層を分けるのが正しい
+
+### 修正対応
+
+`saveMonthlyUsageSnapshots` (`tenant-monthly-reset.service.ts:177-213`) を以下に変更:
+
+```ts
+// 旧: counter を snapshot に直接書く
+apiCallCount: tenant.currentMonthApiCallCount,
+apiCostJpy: tenant.currentMonthApiCostJpy,
+
+// 新: ApiCallLog SUM (前月の TZ 範囲) を取って snapshot に書く
+const prevMonthStart = getTenantMonthStart(prevMonthMid, tenant.timezone);
+const currentMonthStart = getTenantMonthStart(now, tenant.timezone);
+const apiAgg = await prisma.apiCallLog.aggregate({
+  where: { tenantId: tenant.id, createdAt: { gte: prevMonthStart, lt: currentMonthStart } },
+  _count: { _all: true },
+  _sum: { costJpy: true },
+});
+apiCallCount: apiAgg._count._all,
+apiCostJpy: apiAgg._sum.costJpy ?? 0,
+```
+
+集計範囲はテナント TZ 月初 〜 翌月初。`getTenantMonthStart(prevMonthMid, tz)` で「前月 15 日」を渡して per-tenant 月初を計算 (UTC とテナント TZ で月境界が違っても 15 日なら同じ月)。
+
+### 横展開
+
+「キャッシュ値を永続化テーブルに書いている」パターンを棚卸し:
+- 解約時 snapshot (`deleteTenant` 内): 同じ counter を書いている → 同じ修正を将来適用検討
+- `BillingHistory.totalAmountJpy`: 既に ApiCallLog SUM ベース ✅ (billing-aggregation.service.ts:91-104)
+- 他キャッシュ系 (`Tenant.storageBytesUsed`): cron で毎日 update されるが drift 検知未実装 → 別 PR で対応
+
+### 関連
+- KDD §5.X+78 (= 表示の真値ベース化 = 本件と同一ファミリー)
+- memory: `feedback_billing_invariant.md` (★最重要★ 全経路で SUM = 真値)
+- memory: `feedback_3layer_sync_filter.md` (現在値 / cron snapshot / 履歴クエリ の 3 層同期パターン)
+- PR #412 (PR-V8.1) で 3 大 HIGH 漏れ (cross-tenant summary / tenant detail 合計 / snapshot) を同時修正
