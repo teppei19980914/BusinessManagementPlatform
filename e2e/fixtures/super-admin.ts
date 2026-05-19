@@ -173,6 +173,17 @@ export async function cleanupSuperAdminFixture(
   fixture: SuperAdminFixture | undefined,
 ): Promise<void> {
   if (!fixture) return;
+  // PR-V8 (2026-05-19): 本番 DB に対する DELETE 事故を防ぐ最終ガード。
+  //   本 fixture は `DELETE FROM api_call_logs` / `audit_logs` 等の破壊的 SQL を含むため、
+  //   万が一 NODE_ENV=production で接続された場合に即 throw する。
+  //   通常運用では Playwright config が NODE_ENV='test' を強制するため通常は発火しない。
+  if (process.env['NODE_ENV'] === 'production') {
+    throw new Error(
+      '[super-admin fixture] cleanup を NODE_ENV=production で実行しようとしました。'
+      + ' 本 fixture は破壊的 DELETE を含むため本番 DB では絶対に実行できません。'
+      + ' Playwright config の NODE_ENV を確認してください。',
+    );
+  }
   const pool = getPool();
   const tenantIds = [fixture.customerTenantA.id, fixture.customerTenantB.id];
 

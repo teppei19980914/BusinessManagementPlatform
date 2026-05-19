@@ -43,6 +43,10 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         <Link href="/admin/super/billing" className="hover:underline">
           請求
         </Link>
+        {/* PR-V8 (2026-05-19): 診断ダッシュボード (= 想定外事象の検知 + 修復) */}
+        <Link href="/admin/super/diagnostics" className="hover:underline">
+          診断
+        </Link>
       </nav>
       {children}
     </div>

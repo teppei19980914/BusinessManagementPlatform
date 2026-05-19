@@ -87,7 +87,10 @@ describe('正常系', () => {
       reconciledCostJpy: 0,
       driftCallCount: 0,
       driftCostJpy: 0,
+      driftCallRatio: 0,
+      driftCostRatio: 0,
       driftRatio: 0,
+      monthStart: new Date('2026-05-01T00:00:00Z'),
       monthStartUtc: new Date('2026-05-01T00:00:00Z'),
       hasDrift: false,
     });

@@ -139,6 +139,9 @@ vi.mock('@/lib/db', () => ({
     user: {
       count: vi.fn(async () => 1), // 常に 1 名 (admin) で席数チェックは通る
       groupBy: vi.fn(async () => [{ tenantId: TENANT_ID, _count: { id: 1 } }]),
+      // PR-V8 (2026-05-19): resetTenantMonthlyCounters が systemUser を検索する。
+      //   本テストでは null (= audit なしパス) を返して既存挙動と互換にする。
+      findFirst: vi.fn(async () => null),
     },
     tenantMonthlyUsageHistory: {
       upsert: vi.fn(async ({ create }: { create: Record<string, unknown> }) => {
@@ -150,6 +153,10 @@ vi.mock('@/lib/db', () => ({
         return create;
       }),
     },
+    auditLog: {
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(),
   },
 }));
 

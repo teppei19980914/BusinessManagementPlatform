@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
@@ -11,6 +11,16 @@ vi.mock('@/lib/db', () => ({
 
 import { sanitizeForAudit, recordAuditLog, recordBulkAuditLogs } from './audit.service';
 import { prisma } from '@/lib/db';
+
+// PR-V8 (2026-05-19): UUID guard 追加に伴い、test 用 UUID を定数化
+const TENANT_A = '00000000-0000-0000-0000-00000000000a';
+const TENANT_X = '00000000-0000-0000-0000-00000000000c'; // customer-X
+const USER_1 = '00000000-0000-0000-0000-000000000001';
+const SUPER_ADMIN_USER = '00000000-0000-0000-0000-0000000000aa';
+const PROJECT_1 = '00000000-0000-0000-0000-000000000101';
+const TASK_1 = '00000000-0000-0000-0000-000000000201';
+const TASK_2 = '00000000-0000-0000-0000-000000000202';
+const TASK_3 = '00000000-0000-0000-0000-000000000203';
 
 describe('sanitizeForAudit', () => {
   it('passwordHash を [REDACTED] に置換する', () => {
@@ -73,20 +83,20 @@ describe('recordAuditLog', () => {
     vi.mocked(prisma.auditLog.create).mockResolvedValue({} as never);
 
     await recordAuditLog({
-      tenantId: 'tenant-A',
-      userId: 'u-1',
+      tenantId: TENANT_A,
+      userId: USER_1,
       action: 'CREATE',
       entityType: 'project',
-      entityId: 'p-1',
+      entityId: PROJECT_1,
     });
 
     expect(prisma.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        tenantId: 'tenant-A',
-        userId: 'u-1',
+        tenantId: TENANT_A,
+        userId: USER_1,
         action: 'CREATE',
         entityType: 'project',
-        entityId: 'p-1',
+        entityId: PROJECT_1,
       }),
     });
   });
@@ -95,11 +105,11 @@ describe('recordAuditLog', () => {
     vi.mocked(prisma.auditLog.create).mockResolvedValue({} as never);
 
     await recordAuditLog({
-      tenantId: 'tenant-A',
-      userId: 'u-1',
+      tenantId: TENANT_A,
+      userId: USER_1,
       action: 'UPDATE',
       entityType: 'project',
-      entityId: 'p-1',
+      entityId: PROJECT_1,
       beforeValue: { name: 'old' },
       afterValue: { name: 'new' },
       ipAddress: '10.0.0.1',
@@ -120,16 +130,16 @@ describe('recordAuditLog', () => {
     vi.mocked(prisma.auditLog.create).mockResolvedValue({} as never);
 
     await recordAuditLog({
-      tenantId: 'tenant-customer-X',
-      userId: 'u-1',
+      tenantId: TENANT_X,
+      userId: USER_1,
       action: 'CREATE',
       entityType: 'project',
-      entityId: 'p-1',
+      entityId: PROJECT_1,
     });
 
     // data.tenantId が必ずセットされている (= DB DEFAULT 暗黙依存していない) ことの保証
     const call = vi.mocked(prisma.auditLog.create).mock.calls[0][0];
-    expect(call.data).toHaveProperty('tenantId', 'tenant-customer-X');
+    expect(call.data).toHaveProperty('tenantId', TENANT_X);
   });
 
   it('★越境テスト★ super_admin が他テナントを操作する場合、target tenant の ID が記録されること', async () => {
@@ -137,16 +147,88 @@ describe('recordAuditLog', () => {
 
     // ケース: super_admin (management tenant 所属) がテナント X を代行 export
     await recordAuditLog({
-      tenantId: 'tenant-customer-X', // ← actor の tenant ではなく target の tenant
-      userId: 'super-admin-user-id',
+      tenantId: TENANT_X, // ← actor の tenant ではなく target の tenant
+      userId: SUPER_ADMIN_USER,
       action: 'EXPORT',
       entityType: 'tenant',
-      entityId: 'tenant-customer-X',
+      entityId: TENANT_X,
     });
 
     const call = vi.mocked(prisma.auditLog.create).mock.calls[0][0];
-    expect(call.data.tenantId).toBe('tenant-customer-X');
+    expect(call.data.tenantId).toBe(TENANT_X);
     // → このログは customer-X の admin が監査ログ画面で見られる (target tenant 視点で記録されるため)
+  });
+
+  // ==========================================================================
+  // PR-V8 (2026-05-19): UUID guard 追加 ─ 本件 (recalculate-all の entityId='all-tenants') の
+  //   silent fail を未然に防ぐ。
+  //
+  // 注: test 環境 (NODE_ENV='test') は既存 test 互換のため warn にとどまる。
+  //   guard 自体の動作検証は STRICT_AUDIT_UUID=true を上書きして強制 strict 化する。
+  // ==========================================================================
+
+  describe('UUID guard (STRICT_AUDIT_UUID=true で本番動作を模倣)', () => {
+    let originalStrict: string | undefined;
+    beforeEach(() => {
+      originalStrict = process.env['STRICT_AUDIT_UUID'];
+      process.env['STRICT_AUDIT_UUID'] = 'true';
+    });
+    afterEach(() => {
+      if (originalStrict === undefined) delete process.env['STRICT_AUDIT_UUID'];
+      else process.env['STRICT_AUDIT_UUID'] = originalStrict;
+    });
+
+    it('★PR-V8 UUID guard★ entityId が非 UUID なら throw (silent fail 防止)', async () => {
+      await expect(
+        recordAuditLog({
+          tenantId: TENANT_A,
+          userId: USER_1,
+          action: 'UPDATE',
+          entityType: 'system',
+          entityId: 'all-tenants', // ← 本件で silent fail していた合成キー
+        }),
+      ).rejects.toThrow(/entityId/);
+      // prisma.auditLog.create は呼ばれない (= service 入口で弾く)
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('★PR-V8 UUID guard★ tenantId が非 UUID なら throw', async () => {
+      await expect(
+        recordAuditLog({
+          tenantId: 'invalid-tenant',
+          userId: USER_1,
+          action: 'CREATE',
+          entityType: 'project',
+          entityId: PROJECT_1,
+        }),
+      ).rejects.toThrow(/tenantId/);
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('★PR-V8 UUID guard★ userId が非 UUID なら throw', async () => {
+      await expect(
+        recordAuditLog({
+          tenantId: TENANT_A,
+          userId: 'system',
+          action: 'CREATE',
+          entityType: 'project',
+          entityId: PROJECT_1,
+        }),
+      ).rejects.toThrow(/userId/);
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('★PR-V8 UUID guard★ "bulk:24" のような合成文字列は entityId として拒否', async () => {
+      await expect(
+        recordAuditLog({
+          tenantId: TENANT_A,
+          userId: USER_1,
+          action: 'SYNC_IMPORT',
+          entityType: 'task',
+          entityId: 'bulk:24',
+        }),
+      ).rejects.toThrow(/entityId/);
+    });
   });
 });
 
@@ -155,8 +237,8 @@ describe('recordBulkAuditLogs', () => {
 
   it('entityIds が空なら createMany を呼ばない (no-op)', async () => {
     await recordBulkAuditLogs({
-      tenantId: 'tenant-A',
-      userId: 'u-1',
+      tenantId: TENANT_A,
+      userId: USER_1,
       action: 'UPDATE',
       entityType: 'task',
       entityIds: [],
@@ -169,18 +251,18 @@ describe('recordBulkAuditLogs', () => {
     vi.mocked(prisma.auditLog.createMany).mockResolvedValue({ count: 3 } as never);
 
     await recordBulkAuditLogs({
-      tenantId: 'tenant-A',
-      userId: 'u-1',
+      tenantId: TENANT_A,
+      userId: USER_1,
       action: 'UPDATE',
       entityType: 'task',
-      entityIds: ['a', 'b', 'c'],
+      entityIds: [TASK_1, TASK_2, TASK_3],
       afterValue: { bulk: true, batchSize: 3 },
     });
 
     const call = vi.mocked(prisma.auditLog.createMany).mock.calls[0][0];
     expect(call.data).toHaveLength(3);
-    expect(call.data[0].entityId).toBe('a');
-    expect(call.data[2].entityId).toBe('c');
+    expect(call.data[0].entityId).toBe(TASK_1);
+    expect(call.data[2].entityId).toBe(TASK_3);
     expect(call.data[0].afterValue).toEqual({ bulk: true, batchSize: 3 });
   });
 
@@ -188,18 +270,43 @@ describe('recordBulkAuditLogs', () => {
     vi.mocked(prisma.auditLog.createMany).mockResolvedValue({ count: 3 } as never);
 
     await recordBulkAuditLogs({
-      tenantId: 'tenant-customer-X',
-      userId: 'u-1',
+      tenantId: TENANT_X,
+      userId: USER_1,
       action: 'UPDATE',
       entityType: 'task',
-      entityIds: ['t-1', 't-2', 't-3'],
+      entityIds: [TASK_1, TASK_2, TASK_3],
     });
 
     const call = vi.mocked(prisma.auditLog.createMany).mock.calls[0][0];
     expect(call.data).toHaveLength(3);
     // すべての行に tenantId が乗っていること
     for (const row of call.data) {
-      expect(row.tenantId).toBe('tenant-customer-X');
+      expect(row.tenantId).toBe(TENANT_X);
     }
+  });
+
+  describe('UUID guard (STRICT_AUDIT_UUID=true)', () => {
+    let originalStrict: string | undefined;
+    beforeEach(() => {
+      originalStrict = process.env['STRICT_AUDIT_UUID'];
+      process.env['STRICT_AUDIT_UUID'] = 'true';
+    });
+    afterEach(() => {
+      if (originalStrict === undefined) delete process.env['STRICT_AUDIT_UUID'];
+      else process.env['STRICT_AUDIT_UUID'] = originalStrict;
+    });
+
+    it('★PR-V8 UUID guard★ entityIds に非 UUID が含まれていたら throw', async () => {
+      await expect(
+        recordBulkAuditLogs({
+          tenantId: TENANT_A,
+          userId: USER_1,
+          action: 'UPDATE',
+          entityType: 'task',
+          entityIds: [TASK_1, 'invalid-id', TASK_3],
+        }),
+      ).rejects.toThrow(/entityId/);
+      expect(prisma.auditLog.createMany).not.toHaveBeenCalled();
+    });
   });
 });

@@ -13,7 +13,14 @@ vi.mock('@/lib/db', () => ({
     },
     user: {
       groupBy: vi.fn(),
+      // PR-V8 (2026-05-19): resetTenantMonthlyCounters が systemUser (super_admin) を
+      //   検索するために findFirst を呼ぶ。デフォルトで null (= audit なしパス) を返す。
+      findFirst: vi.fn(() => Promise.resolve(null)),
     },
+    auditLog: {
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(),
   },
 }));
 

@@ -1,10 +1,11 @@
 /**
- * cron ジョブのメタデータ定義 (PR feat/cron-execution-log / 2026-05-18)
+ * cron ジョブのメタデータ定義 (PR feat/cron-execution-log / 2026-05-18, PR-V8 2026-05-19 改修)
  *
  * 役割:
- *   各 cron の「人間向け説明」「スケジュール」「エンドポイント」を中央集約する。
+ *   各 cron の「人間向け説明」「スケジュール」「エンドポイント」「期待最大ギャップ」を中央集約する。
  *   super_admin ダッシュボードの cron 履歴画面で「この cron が何をしているか」を
  *   開発者以外でも一目で把握できるようにするための情報源。
+ *   PR-V8 で `expectedMaxGapHours` を追加 → cron 不実行 watchdog の閾値として使う。
  *
  * 設計判断:
  *   - **cron_execution_log.cron_name の文字列値と一致**: テーブル列の自由文字列ではなく、
@@ -14,11 +15,15 @@
  *     (詳細: docs/operations/DEPLOYMENT.md §6.1)
  *   - **endpoint は path のみ**: フルドメイン URL は環境依存のため含めない。表示時に必要なら
  *     画面側で `https://tasukiba.netlify.app` を結合する
+ *   - **expectedMaxGapHours** (PR-V8): 「最後の成功実行から N 時間以上経過していたら異常」の閾値。
+ *     daily は 25h (= 1 日 + 1h 余裕)、monthly は 35 日 * 24h = 840h (= 月跨ぎ + 余裕)。
+ *     診断ダッシュボードで「未登録 / 長期停止」を検知するために使う。
  *
  * 関連:
  *   - DB model: prisma/schema.prisma model CronExecutionLog
  *   - ヘルパ: src/lib/cron-execution-log.ts withCronExecutionLogging
  *   - 可視化 UI: src/app/(dashboard)/admin/super/cron-history/page.tsx
+ *   - watchdog: src/services/cron-health.service.ts (PR-V8 新設)
  *   - スケジュール仕様: docs/operations/DEPLOYMENT.md §6.1
  */
 
@@ -29,6 +34,15 @@ export type CronJobMetadata = {
   schedule: string;
   /** Netlify 上の path (フルドメインは含めない)。 */
   endpoint: string;
+  /**
+   * PR-V8 (2026-05-19): 最後の成功実行から何時間経過したら「長期停止」とみなすか。
+   *
+   * - daily cron: 25 (= 1 日 + 1h 余裕、cron-job.org 起動遅延を吸収)
+   * - monthly cron: 840 (= 35 日 * 24h、月跨ぎ + 余裕。月初実行が遅延しても 35 日以内に動けば OK)
+   *
+   * この値を超えると `cron-health.service.ts` の `detectStaleCron` が異常検知する。
+   */
+  expectedMaxGapHours: number;
 };
 
 /**
@@ -45,6 +59,7 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + 'ナレッジ参照のためアカウント自体は残し、ログインのみ不可にする。',
     schedule: '日次 21:00 JST',
     endpoint: '/api/admin/users/lock-inactive',
+    expectedMaxGapHours: 25,
   },
   'daily-notifications': {
     description:
@@ -53,6 +68,7 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + ' 全テナントの storage 容量更新 + Grace period 判定を併走実行する。',
     schedule: '日次 07:00 JST',
     endpoint: '/api/cron/daily-notifications',
+    expectedMaxGapHours: 25,
   },
   'daily-usage-aggregation': {
     description:
@@ -61,6 +77,7 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + ' Day 180 自動物理削除も併走。',
     schedule: '日次 11:00 JST',
     endpoint: '/api/cron/daily-usage-aggregation',
+    expectedMaxGapHours: 25,
   },
   'tenant-monthly-reset': {
     description:
@@ -69,6 +86,9 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + ' 月初 embedding 補完バッチも実行。',
     schedule: '月初 1 日 09:00 JST',
     endpoint: '/api/cron/tenant-monthly-reset',
+    // 月 1 回 → 35 日 (= 約 5 週) 以内に動いていなければ異常。
+    // 例: 月末解約・cron 失敗等で 1 ヶ月飛んでも次月で復旧できる猶予。
+    expectedMaxGapHours: 35 * 24,
   },
   'stripe-usage-flush': {
     description:
@@ -76,6 +96,7 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + ' 実送信する。STRIPE_ENABLED=false の環境では no-op 早期 return。',
     schedule: '日次 14:00 JST',
     endpoint: '/api/cron/stripe-usage-flush',
+    expectedMaxGapHours: 25,
   },
   'stripe-auto-suspend': {
     description:
@@ -83,6 +104,7 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + ' read-only モードへ強制移行。STRIPE_ENABLED=false の環境では no-op 早期 return。',
     schedule: '日次 13:00 JST',
     endpoint: '/api/cron/stripe-auto-suspend',
+    expectedMaxGapHours: 25,
   },
   // PR-V7 #5 (2026-05-19): Stripe ↔ DB 状態照合
   'stripe-reconcile': {
@@ -93,6 +115,24 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + ' STRIPE_ENABLED=false の環境では no-op 早期 return。',
     schedule: '月初 1 日 15:00 JST',
     endpoint: '/api/cron/stripe-reconcile',
+    expectedMaxGapHours: 35 * 24,
+  },
+  // PR-V7a (2026-05-19): 期日超過 alert / cron 失敗 alert
+  'billing-overdue-alert': {
+    description:
+      'BillingHistory.payment_due_date + 5日 超過の pending 行を検知し、super_admin にメール送信。'
+      + ' 24h 以内の重複送信を抑制 (overdueAlertSentAt で dedup)。',
+    schedule: '日次 10:00 JST',
+    endpoint: '/api/cron/billing-overdue-alert',
+    expectedMaxGapHours: 25,
+  },
+  'cron-failure-alert': {
+    description:
+      '直近 24h で status=failure の cron を集約し、super_admin にメール送信。'
+      + ' 自身 (cron-failure-alert) の前回成功 > 25h ならサイレント停止警告も付与。',
+    schedule: '日次 12:00 JST',
+    endpoint: '/api/cron/cron-failure-alert',
+    expectedMaxGapHours: 25,
   },
 } as const;
 

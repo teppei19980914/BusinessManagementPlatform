@@ -134,6 +134,13 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   //   AuditLog には BillingHistory.tenantId を記録)。markPendingInvoiceAsReplacedByStripe
   //   は tenantId 引数で限定。getTenantBillingHistory は viewerTenantId 必須。
   'billing-management.service.ts',
+  // PR-V8 (2026-05-19): cron 健全性 watchdog。CronExecutionLog は tenant 概念のない
+  //   システムテーブル (全テナント横断の運用記録)。呼出側 super_admin role gate で多層防御済。
+  'cron-health.service.ts',
+  // PR-V8 (2026-05-19): 診断ダッシュボード集約サービス。super_admin 専用、全テナント横断で
+  //   drift / cron 健全性 / メール失敗 / 縮退テナントを俯瞰。各個別 service が tenant 分離を
+  //   守っており本 service は集約のみ。呼出側 super_admin role gate で多層防御済。
+  'diagnostics.service.ts',
 ]);
 
 /**

@@ -23,6 +23,11 @@ import { isSuperAdmin } from '@/lib/permissions/role';
 import { updateAllStorageBytesUsed } from '@/services/tenant-storage.service';
 import { reconcileAllTenantsApiUsage } from '@/services/api-usage-recalc.service';
 import { recordAuditLog } from '@/services/audit.service';
+// PR-V8 (2026-05-19): audit_logs.entity_id は @db.Uuid のため、'all-tenants' のような
+//   文字列リテラルは 22P02 invalid input syntax for type uuid で silent fail する。
+//   全テナント横断操作は actor (super_admin) の所属する MANAGEMENT_TENANT_ID を entityId に
+//   入れ、afterValue 内で operation='recalculate-all' として識別する。
+import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 
 /**
  * 全テナント集計は Vercel Hobby 60s に収まらない可能性があるため最大値を確保。
@@ -51,12 +56,14 @@ export async function POST(_req: NextRequest) {
   ]);
 
   // 監査ログ: system 全体への操作として記録 (tenantId は actor の management tenant)
+  // PR-V8 (2026-05-19): entityId='all-tenants' は uuid 違反で silent fail していたため、
+  //   MANAGEMENT_TENANT_ID で記録する。afterValue.operation で識別可能。
   await recordAuditLog({
     tenantId: user.tenantId,
     userId: user.id,
     action: 'UPDATE',
     entityType: 'system',
-    entityId: 'all-tenants',
+    entityId: MANAGEMENT_TENANT_ID,
     afterValue: {
       operation: 'recalculate-all',
       storageTenantsUpdated: storageUpdated,

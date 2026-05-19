@@ -232,6 +232,10 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
  * - 結果: currentMonthApiCallCount=0, currentMonthApiCostJpy=0, lastResetAt=テナント TZ 月初
  * - 冪等: 一度適用済みのテナントは再対象外
  *
+ * **PR-V8 (2026-05-19) 改訂**: リセット前の counter 値を audit_log に記録するように変更。
+ *   これにより診断ダッシュボードで「いつ・どこから・どの値からリセットされたか」が追跡可能になる。
+ *   audit_log は cron 経由なので userId は MANAGEMENT_USER_ID 相当 (= system user) を使う。
+ *
  * 注意: cron は UTC ベースの起動時刻で動くが、判定はテナントごとの TZ ローカル月初。
  * cron を最低 hourly で動かせば各テナントの TZ 月初を逃さない。
  */
@@ -239,20 +243,72 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
   // PR-4: per-tenant TZ 判定のため findMany + filter + 個別 update に変更
   const allTenants = await prisma.tenant.findMany({
     where: { deletedAt: null },
-    select: { id: true, timezone: true, lastResetAt: true },
+    select: {
+      id: true,
+      timezone: true,
+      lastResetAt: true,
+      // PR-V8: audit_log の before 値として記録
+      currentMonthApiCallCount: true,
+      currentMonthApiCostJpy: true,
+    },
   });
+
+  // PR-V8: system user (= cron 実行主体) を audit_log の userId として記録。
+  //   存在しなければ audit を作らず update のみ実行する。
+  const systemUser = await prisma.user.findFirst({
+    where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
   let resetCount = 0;
   for (const t of allTenants) {
     const monthStart = getTenantMonthStart(now, t.timezone);
     if (t.lastResetAt == null || t.lastResetAt < monthStart) {
-      await prisma.tenant.update({
-        where: { id: t.id },
-        data: {
-          currentMonthApiCallCount: 0,
-          currentMonthApiCostJpy: 0,
-          lastResetAt: monthStart,
-        },
-      });
+      if (systemUser) {
+        // counter リセット + audit_log を 1 transaction で
+        await prisma.$transaction([
+          prisma.tenant.update({
+            where: { id: t.id },
+            data: {
+              currentMonthApiCallCount: 0,
+              currentMonthApiCostJpy: 0,
+              lastResetAt: monthStart,
+            },
+          }),
+          prisma.auditLog.create({
+            data: {
+              tenantId: t.id,
+              userId: systemUser.id,
+              action: 'UPDATE',
+              entityType: 'tenant',
+              entityId: t.id,
+              beforeValue: {
+                currentMonthApiCallCount: t.currentMonthApiCallCount,
+                currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+                lastResetAt: t.lastResetAt?.toISOString() ?? null,
+              },
+              afterValue: {
+                operation: 'monthly-reset',
+                currentMonthApiCallCount: 0,
+                currentMonthApiCostJpy: 0,
+                lastResetAt: monthStart.toISOString(),
+                timezone: t.timezone,
+              },
+            },
+          }),
+        ]);
+      } else {
+        // 既存テナントだけで super_admin user 不在のケース (= 初回起動時の seed 直後等)
+        await prisma.tenant.update({
+          where: { id: t.id },
+          data: {
+            currentMonthApiCallCount: 0,
+            currentMonthApiCostJpy: 0,
+            lastResetAt: monthStart,
+          },
+        });
+      }
       resetCount += 1;
     }
   }
