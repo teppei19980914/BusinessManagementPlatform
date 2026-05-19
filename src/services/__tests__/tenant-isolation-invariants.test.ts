@@ -116,6 +116,10 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   //   cron 自体が全テナント横断のシステム運用なのでテナント分離の概念が適用されない。
   //   呼出側は super_admin role でガード済 (= テナント越境リスクは認可ロールで担保)。
   'cron-history.service.ts',
+  // PR-V7 #8 (2026-05-19): super_admin 向け請求ダッシュボードの集計サービス。
+  //   全テナント横断の BillingHistory 集計が責務。MANAGEMENT_TENANT_ID は明示除外。
+  //   呼出側は super_admin layout で role gate + Basic Auth で多層防御済。
+  'billing-dashboard.service.ts',
 ]);
 
 /**

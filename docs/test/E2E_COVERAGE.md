@@ -72,6 +72,8 @@
 - [x] `/admin/super/usage` — e2e/specs/13-super-admin-dashboard.spec.ts (2026-05-11 / 合計課金表示 + プラン別分布)
 - [ ] `/admin/super/cron-history` — skip: PR feat/cron-execution-log (2026-05-18) super_admin 限定 cron 実行履歴ビュー。SSR + Prisma 直接読みのため、ロジック検証はサービス層 (src/lib/cron-execution-log.test.ts 6 件) で担保。実画面の表示確認は手動 (= 日次 cron が蓄積したレコードを目視確認)
 - [ ] `/admin/super/stripe-dlq` — skip: PR-V7 #6 (2026-05-19) Stripe DLQ 監視 + 手動再投入。SSR + Prisma 直接読み + 再投入ボタンは client component で API 呼出。ロジック検証はサービス層 (src/services/stripe-dlq.service.test.ts 8 件) で担保。実画面 + 再投入挙動は手動確認 (= Stripe Test Mode で意図的に失敗させて DLQ に積み、再投入動作を確認)
+- [ ] `/admin/super/billing` — skip: PR-V7 #8 (2026-05-19) 請求ダッシュボード (サマリ画面、当月 + 直近 6 ヶ月推移)。SSR + Prisma 集計のみ。ロジック検証はサービス層 (src/services/billing-dashboard.service.test.ts 16 件) で担保
+- [ ] `/admin/super/billing/[yearMonth]` — skip: PR-V7 #8 (2026-05-19) 請求ダッシュボード月次詳細 (テナント別 BillingHistory 一覧 + status/paymentMethod フィルタ + Stripe Dashboard ディープリンク)。SSR + Prisma findMany のみ。同上のサービステストで担保
 
 ### その他
 - [ ] `/` (ルート) — skip: プロジェクト一覧へのリダイレクト、PR #B の /projects で間接カバー

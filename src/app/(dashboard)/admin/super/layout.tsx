@@ -39,6 +39,10 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         <Link href="/admin/super/stripe-dlq" className="hover:underline">
           Stripe DLQ
         </Link>
+        {/* PR-V7 #8 (2026-05-19): 請求ダッシュボード (= 月次サマリ + 詳細) */}
+        <Link href="/admin/super/billing" className="hover:underline">
+          請求
+        </Link>
       </nav>
       {children}
     </div>
