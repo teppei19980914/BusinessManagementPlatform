@@ -204,11 +204,16 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     expect(text).toContain(fixture!.customerTenantA.name);
     expect(text).toContain(fixture!.customerTenantB.name);
 
-    // 顧客テナント A: LLM ¥1500 (300 calls × ¥5、2026-05-15 改定後) + Storage(plus) ¥500 = ¥2000
+    // 顧客テナント A: LLM ¥1500 + Storage(plus) ¥500 = ¥2000
+    // PR-V8.1 (2026-05-19): fixture が ApiCallLog 1 件 (¥1500) で counter と SUM を一致させているため、
+    //   呼出数=1 / 費用=1500 が出力される (旧 fixture は 300 calls × ¥5 = ¥1500 だったが、counter
+    //   が ApiCallLog SUM と乖離していたため drift 警告が出る fixture だった)。
     const lines = text.split('\r\n');
     const lineA = lines.find((l) => l.includes(fixture!.customerTenantA.name));
     expect(lineA, 'tenant-A 行が CSV に存在する').toBeDefined();
-    // 列順: ... plan(expert), 呼出数(300), 費用(1500), ユーザ数(1), 予算(空), Storage プラン(plus), 使用量(0), Storage月額(500), 合計月額(2000), ...
+    // 列順 (PR-V8.1 改訂): ..., plan(expert), API呼出回数(SUM=1), API課金額(SUM=1500), API呼出回数(counter=1),
+    //   API課金額(counter=1500), drift警告(空), drift呼出差分(+0), drift費用差分(+0),
+    //   ユーザ数(1), 予算(空), Storage プラン(plus), 使用量(0), Storage月額(500), 合計月額(2000), ...
     expect(lineA).toContain(',expert,');
     expect(lineA).toContain(',1500,'); // LLM 費用 (300 calls × ¥5)
     expect(lineA).toContain(',plus,'); // Storage プラン

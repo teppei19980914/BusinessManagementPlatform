@@ -601,10 +601,50 @@ v1.x リリース前に [docs/legal/TERMS.md](../legal/TERMS.md) (新規予定) 
 - **個別顧客の拒否ルール**: Stripe Radar で対応可能だが MVP では未設定。詐欺被害が出たら v2 で追加
 - **税率変更時の対応**: Stripe Tax が自動追従するため運用作業は不要
 
+### 13.1 Stripe Usage Record の月境界 (= UTC) と テナント TZ 月境界の差異 (PR-V8.4 / 2026-05-19)
+
+**設計判断**: Stripe Meter Event の `timestamp` は UTC ベースで Stripe 側に保存・集計される。
+一方、たすきば内部の請求業務 (= `BillingHistory` / `tenant_monthly_usage_history` / `/admin/super/usage` CSV) は **テナント TZ ベース** で月境界を判定する (PR-V8.2 で統一)。
+
+#### 起こりうる差異
+
+例: Asia/Tokyo テナントが **JST 6 月 1 日 05:00** (= **UTC 5 月 31 日 20:00**) に LLM 呼出を 100 回実行した場合:
+
+| 経路 | この 100 回はどの月に計上されるか |
+|------|------------------------------|
+| `BillingHistory.totalAmountJpy` (= invoice 請求書) | **6 月分** (テナント TZ 月境界基準) |
+| `tenant_monthly_usage_history` snapshot | **6 月分** (同上) |
+| `/admin/super/usage` CSV / 画面表示 | **6 月分** (同上) |
+| **Stripe Subscription Invoice** (credit_card 払いの月次請求書) | **5 月分** (UTC 月境界基準) |
+
+#### なぜ放置するか
+
+1. **整合の調整コストが極めて高い** — Stripe Meter は UTC 集計が仕様。テナント TZ 補正のために `MeterEvent.timestamp` を「テナント TZ の月末まで送らずバッファ」する設計は複雑かつ Stripe Webhook 遅延と干渉
+2. **顧客視点の実害は限定的** — 月跨ぎ ±9〜16h の境界に大量呼出があった場合のみ顕在化。1 ヶ月で見れば過不足ゼロ (= 単に「6 月分」が「5 月分」として課金されるだけで、合計金額は変わらない)
+3. **invoice 払いテナントには影響なし** — `billing-aggregation` cron はテナント TZ で集計、Stripe を経由しないため整合
+4. **credit_card 払いテナントは Stripe Invoice を真とする** — 顧客は Stripe Dashboard / メール通知で「Stripe からの請求書」を直接受け取るため、UI 表示と Stripe 請求書で月が違って見えることはない (= UI = `BillingHistory` 由来 = テナント TZ ベース、Stripe 請求書 = Stripe ベース)
+
+#### 監視
+
+`/admin/super/diagnostics` の以下の検知で間接観測可能:
+
+- **API 利用量 drift** (#1): ApiCallLog SUM (テナント TZ) と Tenant counter (テナント TZ で逐次 increment) の整合性
+- **Stripe Usage Record 滞留 / DLQ** (#6): ApiCallLog → Stripe 送信の整合性
+
+両者が正常な状態で、Stripe Subscription Invoice と `BillingHistory.totalAmountJpy` が月境界 ±9〜16h のズレで僅かに乖離するのは仕様 (= 想定内)。
+
+#### 将来課題 (v2 以降)
+
+- Stripe MeterEvent への送信を「テナント TZ の月初到達時にバッファ放出」する設計 (= Stripe MeterEventStream で部分実現可能性)
+- もしくは Stripe Meter を廃止し、月次の Stripe Invoice Item 一括登録 (`stripe.invoiceItems.create`) に切替
+
+ただしこれは「過不足ゼロ請求」の invariant 自体は壊さないため、優先度は低い。
+
 ---
 
 ## 改修履歴
 
 | 日付 | 変更 | PR |
 |---|---|---|
+| 2026-05-19 | §13.1 追加: Stripe UTC / テナント TZ 月境界差異の設計判断明文化 | PR #412 (PR-V8.4) |
 | 2026-05-14 | 初版策定 (v1.x 仕様確定) | docs/stripe-integration-spec |

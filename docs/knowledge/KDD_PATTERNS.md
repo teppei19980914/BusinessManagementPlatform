@@ -10201,3 +10201,367 @@ find src/app -type d -name "[*]" | sort
 - PR #411 commit `63fb9ff` で C-5 (CSV export) を `[yearMonth]/export` で追加 → E2E fail → 本 commit で修正
 - Next.js 公式ドキュメント: [App Router - Dynamic Routes](https://nextjs.org/docs/app/building-your-application/routing/dynamic-routes)
 - KDD §5.X+75 (= 同 PR 内の別 CI fail) と併読推奨
+
+---
+
+## 5.X+77 **`prisma migrate deploy` を `package.json` の build script に組み込むと CI (dummy DATABASE_URL) で P1001 失敗 → CI と Netlify で build script を分離する (2026-05-19 / PR #412)**
+
+### 事象
+
+PR #412 (PR-V8.1) で **migration 適用漏れの構造的予防** を目的に `package.json` の `"build"` を以下に変更:
+
+```json
+"build": "prisma generate && prisma migrate deploy && next build"
+```
+
+→ GitHub Actions の `Lint / Test / Build` workflow で以下のエラーで失敗:
+
+```
+DATABASE_URL: ***localhost:5432/dummy
+...
+Datasource "db": PostgreSQL database "dummy", schema "public" at "localhost:5432"
+Error: P1001: Can't reach database server at `localhost:5432`
+```
+
+### 根本原因
+
+- CI ワークフロー (`.github/workflows/test.yml` 等) は **ビルドの artifact 生成のみが目的** で、実 DB に接続する必要がない
+- そのため `DATABASE_URL=postgresql://...localhost:5432/dummy` のダミー値を渡して `pnpm build` を実行する
+- `prisma generate` は `schema.prisma` のみ参照するため DB 不要 → OK
+- `prisma migrate deploy` は **実 DB に接続して `_prisma_migrations` を読み書きする** ため、ダミー URL では `P1001: Can't reach database server` で失敗
+
+### 教訓
+
+1. **`prisma migrate deploy` は CI には組み込めない (実 DB が必要)**
+2. **本番環境 (= Netlify) と CI では build script を分けるべき**
+3. ローカル `pnpm build` も同じ問題に遭遇する可能性 (= ローカル DB が起動していない開発者環境ではビルド失敗)
+
+### 修正対応
+
+`package.json` で 2 種類の build script を提供:
+
+```json
+"build":         "prisma generate && next build",                          // CI / ローカル開発用
+"build:netlify": "prisma generate && prisma migrate deploy && next build"  // Netlify 本番用
+```
+
+`netlify.toml` の `command` を `pnpm build:netlify` に変更し、Netlify でのみ migrate deploy が実行されるようにする。
+DEPLOYMENT.md §1.1 にも 2 種類の build script の使い分けを明記。
+
+### 横展開
+
+似たパターン (= 実 DB 接続が必要な処理を build に組み込む) は他にもないか確認:
+
+- `prisma db push` (= 開発時の schema sync) も同様の P1001 リスク
+- `prisma db seed` (= 本番でも seed したい場合) も実 DB 必要
+- 「DB に副作用がある任意のコマンドを build script に入れる前に CI 影響を考える」というルール化が望ましい
+
+### 関連
+- KDD §5.X+72 (cron-execution-log = 似た「ローカルでは出ない CI fail」事例) と併読推奨
+- DEPLOYMENT.md §1.1 (build script 2 種類の使い分け)
+- 元事故: PR-V7a で migration 適用忘れ → `billing-overdue-alert` cron 500 → PR-V8.1 で migrate 自動化を試みたが本件 CI fail を引き起こした
+
+---
+
+## 5.X+78 **画面表示の真値ベース化 (counter → ApiCallLog SUM) は E2E fixture の seed 整合性を破壊する → fixture も同時に整合させる (2026-05-19 / PR #412)**
+
+### 事象
+
+PR #412 (PR-V8.1) で、システム管理者ダッシュボードのテナント一覧画面表示を **`Tenant.currentMonthApiCallCount` (counter) → `ApiCallLog` SUM (真値)** に変更:
+
+```tsx
+// 旧 (PR-V8 以前):
+<td>{t.currentMonthApiCallCount.toLocaleString()}</td>
+<td>¥{t.currentMonthApiCostJpy.toLocaleString()}</td>
+
+// 新 (PR-V8.1):
+const r = reconcileByTenant.get(t.id);
+const sumCall = r?.reconciledCallCount ?? t.currentMonthApiCallCount;
+const sumCost = r?.reconciledCostJpy ?? t.currentMonthApiCostJpy;
+<td>{sumCall.toLocaleString()}</td>
+<td>¥{sumCost.toLocaleString()}</td>
+```
+
+→ E2E spec 13 (`13-super-admin-dashboard.spec.ts`) が `'1,500'` (= counter 値) を expect していたが、fixture は **counter のみ seed** していて **ApiCallLog を seed していなかった** ため、SUM=0 + drift 警告 `150000%` が表示されて fail:
+
+```
+Expected substring: "1,500"
+Received string:    "7E2E Tenant A ...expert0¥0⚠ 150000%12026-05-19"
+```
+
+### 根本原因
+
+- 旧 fixture は「counter に直接値を埋め込めば請求金額表示は正しく出る」という前提で書かれていた
+- これは **counter と ApiCallLog SUM が乖離している不健全な状態** を fixture で作っていたことを意味する
+- 本来あるべき姿は「ApiCallLog を seed し、counter は increment 動作で同期される」だが、E2E では性能上 ApiCallLog seed を省略していた
+- 表示が SUM ベースに変わった結果、この前提が崩れて test fail
+
+### 教訓
+
+1. **表示ロジックを `Tenant` 行直読みから `ApiCallLog` aggregation に変える時は fixture も同時に修正必須**
+2. **fixture は production 同型の不変条件 (= counter == SUM) を満たすべき**。「counter だけ seed」は production では絶対に起きない状態
+3. **drift 警告が出る fixture は「テスト用」ではなく「drift シナリオを意図したテスト」専用** であるべき
+
+### 修正対応
+
+各テナントに ApiCallLog を 1 行 seed し、counter を SUM と一致させる:
+
+```ts
+// テナント A: ¥1500 の請求金額を 1 件の代表 ApiCallLog で表現
+await pool.query(
+  `INSERT INTO api_call_logs (tenant_id, feature_unit, model_name, cost_jpy, latency_ms, created_at)
+   VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, NOW())`,
+  [tenantAId],
+);
+// counter を SUM (= 1 件 / ¥1500) と一致させる
+await pool.query(
+  `UPDATE tenants
+   SET current_month_api_call_count = 1, current_month_api_cost_jpy = 1500
+   WHERE id = $1`,
+  [tenantAId],
+);
+```
+
+代表 1 行で集計を表現する (= 300 行 INSERT は遅いので回避)。テストの assertion は呼出数ではなく費用 (¥1,500) を見ているため、件数を 1 にしても通る。
+
+### 横展開
+
+PR-V8.1 では以下の画面・経路で counter → SUM 変更を実施。それぞれの fixture / test がこのパターンに当てはまる可能性がある:
+
+- `/settings/tenant` (テナント管理者画面)
+- `/admin/super` top の Default テナントセクション
+- `/admin/super/tenants/[id]` 詳細
+- `/admin/super/tenants` 一覧
+- `/api/admin/super/usage/export` CSV
+
+将来、同様の「キャッシュ値 → 真値 SUM」リファクタを行う際は **fixture 棚卸し** を必須項目にする。
+
+### 関連
+- KDD §5.X+77 (= 同 PR 内の別 CI fail) と併読推奨
+- memory: `feedback_billing_invariant.md` (★最重要★ 請求 invariant = ApiCallLog SUM = 全画面表示 = 請求金額)
+- PR #412 (PR-V8.1) で「画面表示の真値ベース化」と「fixture 修正」を同 PR でカバー
+
+---
+
+## 5.X+79 **月次 snapshot を `currentMonthApiCallCount` (counter) ベースで保存すると過去月の請求書根拠が永久に drift で固定される → ApiCallLog SUM ベースに統一 (2026-05-19 / PR #412)**
+
+### 事象
+
+`saveMonthlyUsageSnapshots` (= 月初 cron) が `tenant_monthly_usage_history` に snapshot を upsert する際、`Tenant.currentMonthApiCallCount` (= リアルタイム counter) をそのまま保存していた。
+counter が drift している月 (= 本件 Default テナント 1 vs SUM 8 のような状態) の月初を跨ぐと、**drift 状態のままの値が「過去月の請求書根拠」として永久に固定**される。
+
+過去月 CSV ダウンロード (`/api/admin/super/usage/export?yearMonth=YYYY-MM`)、UI 履歴テーブル、再請求調査の全経路で間違った金額が表示され、後から修復しようとしても snapshot が真値を上書きしているため診断不能。
+
+### 根本原因
+
+- snapshot は「請求書根拠の永続化」が目的だが、ソースが内部 cache (= counter) だった
+- 一方、当月 CSV / 当月画面表示は ApiCallLog SUM ベースに移行済 (PR-V8.1) → 過去月 (snapshot) と現在月 (SUM) で **同じ月を 2 種類の方法で見ると違う金額が出る** UX 不整合
+- counter drift 検知 + 修復は PR-V8.1 で診断ダッシュボードに実装したが、**月初 cron が走った瞬間に過去月 snapshot は永久確定** するため、月初前に drift を修復しないと取り返せない
+
+### 教訓
+
+1. **「永続化される数値」は必ず真値ソース (= 監査ログ的な不変テーブル) から計算すべき**。cache から派生させると cache 不整合が永続化される
+2. ApiCallLog のような append-only テーブルは集計コストが高い印象があるが、月 1 回の cron なら per-tenant aggregate でも実用範囲
+3. 「リアルタイム表示 = cache」「請求書根拠 = 真値」と層を分けるのが正しい
+
+### 修正対応
+
+`saveMonthlyUsageSnapshots` (`tenant-monthly-reset.service.ts:177-213`) を以下に変更:
+
+```ts
+// 旧: counter を snapshot に直接書く
+apiCallCount: tenant.currentMonthApiCallCount,
+apiCostJpy: tenant.currentMonthApiCostJpy,
+
+// 新: ApiCallLog SUM (前月の TZ 範囲) を取って snapshot に書く
+const prevMonthStart = getTenantMonthStart(prevMonthMid, tenant.timezone);
+const currentMonthStart = getTenantMonthStart(now, tenant.timezone);
+const apiAgg = await prisma.apiCallLog.aggregate({
+  where: { tenantId: tenant.id, createdAt: { gte: prevMonthStart, lt: currentMonthStart } },
+  _count: { _all: true },
+  _sum: { costJpy: true },
+});
+apiCallCount: apiAgg._count._all,
+apiCostJpy: apiAgg._sum.costJpy ?? 0,
+```
+
+集計範囲はテナント TZ 月初 〜 翌月初。`getTenantMonthStart(prevMonthMid, tz)` で「前月 15 日」を渡して per-tenant 月初を計算 (UTC とテナント TZ で月境界が違っても 15 日なら同じ月)。
+
+### 横展開
+
+「キャッシュ値を永続化テーブルに書いている」パターンを棚卸し:
+- 解約時 snapshot (`deleteTenant` 内): 同じ counter を書いている → 同じ修正を将来適用検討
+- `BillingHistory.totalAmountJpy`: 既に ApiCallLog SUM ベース ✅ (billing-aggregation.service.ts:91-104)
+- 他キャッシュ系 (`Tenant.storageBytesUsed`): cron で毎日 update されるが drift 検知未実装 → 別 PR で対応
+
+### 関連
+- KDD §5.X+78 (= 表示の真値ベース化 = 本件と同一ファミリー)
+- memory: `feedback_billing_invariant.md` (★最重要★ 全経路で SUM = 真値)
+- memory: `feedback_3layer_sync_filter.md` (現在値 / cron snapshot / 履歴クエリ の 3 層同期パターン)
+- PR #412 (PR-V8.1) で 3 大 HIGH 漏れ (cross-tenant summary / tenant detail 合計 / snapshot) を同時修正
+
+---
+
+## 5.X+80 **fixture で生 SQL INSERT する際は NOT NULL カラムを schema.prisma で確認する (Prisma Client なら型で防がれるが、生 SQL は実行時 fail) (2026-05-19 / PR #412)**
+
+### 事象
+
+PR #412 (PR-V8.1) で e2e fixture `super-admin.ts` に ApiCallLog seed を追加した時、以下の INSERT 文で `request_id` カラムを省略:
+
+```sql
+INSERT INTO api_call_logs (
+  tenant_id, feature_unit, model_name, cost_jpy, latency_ms, created_at
+) VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, NOW())
+```
+
+ローカル test は **vitest mock** で prisma を mock するため通過し、CI Playwright で **実 DB INSERT 時に初めて発覚**:
+
+```
+error: null value in column "request_id" of relation "api_call_logs" violates not-null constraint
+```
+
+### 根本原因
+
+- `prisma/schema.prisma` で `ApiCallLog.requestId` は `String @map("request_id") @db.VarChar(64)` (= NOT NULL、Optional でない)
+- 通常コードは `prisma.apiCallLog.create({ data: { ... } })` 経由で Prisma Client が型チェックする → IDE/tsc で漏れに気付ける
+- 一方、**E2E fixture は性能上の理由で `pool.query(SQL)` 経由の生 SQL** を使用 → 型チェックなし、ランタイム fail
+- ローカル vitest mock では実 DB に届かないため、コミット前に気付けない
+
+### 教訓
+
+1. **生 SQL を書く時は `prisma/schema.prisma` で対象 model の全カラムを確認**。特に `String @map(...)` の Optional vs Required を区別
+2. **既存実装の Prisma `create` 呼出をテンプレートにする**: 既存ファイル (例: `src/lib/llm/metered.ts:262-275` の `apiCallLog.create({ data: { id, tenantId, ..., requestId, ... }})`) を見れば必須フィールドが分かる
+3. **Local で `pnpm test:e2e` を回すコストが高い場合**、せめて生 SQL INSERT は `RETURNING *` 付きでリクエスト構造を確認するだけでもよい
+
+### 修正対応
+
+```sql
+-- 修正前
+INSERT INTO api_call_logs (tenant_id, ..., created_at) VALUES (...)
+
+-- 修正後
+INSERT INTO api_call_logs (tenant_id, ..., request_id, created_at)
+VALUES ($1, ..., $2, NOW())
+-- $2 = `e2e-sa-${runId}-${suffix}-a-req` (= 一意で人間可読な fixture 識別子)
+```
+
+`request_id` は VarChar(64) なのでテストでは UUID でなくとも一意文字列で OK。`gen_random_uuid()::text` でも可。
+
+### 横展開
+
+`grep -rn "INSERT INTO" e2e/fixtures/` で生 SQL を使う他 fixture を棚卸し:
+- `multi-tenant.ts` / `super-admin.ts` 等が該当
+- 各 INSERT の対象テーブルの NOT NULL カラムを再度 schema 突合
+
+将来的に **fixture も Prisma Client 経由に統一** すれば本問題は構造的に解消する。性能上問題なら部分的に。
+
+### 関連
+- KDD §5.X+78 (= 表示の真値ベース化に伴う fixture 修正 = 本件と同 PR 同一ファミリー)
+- 元 PR commit: PR #412 commit `901b159` (fixture INSERT 追加) → CI fail → 本 commit で `request_id` 追加
+
+---
+
+## 5.X+81 **E2E fixture は外部 seed 状態に依存しない (= 自己完結化する) ─ MANAGEMENT_TENANT_ID 等の前提テナントは fixture 自身が `ON CONFLICT DO NOTHING` で保証する (2026-05-19 / PR #412)**
+
+### 事象
+
+PR #412 (PR-V8.2) で別 spec (12-suggestion-seed-data) の cleanup が FK 違反で失敗した直後、13-super-admin-dashboard spec の fixture setup で以下のエラー:
+
+```
+error: insert or update on table "users" violates foreign key constraint "users_tenant_id_fkey"
+   at fixtures/super-admin.ts:77 (super_admin user INSERT)
+```
+
+`super_admin user` は `MANAGEMENT_TENANT_ID` (= `00000000-0000-0000-0000-ffffffffffff`) を tenant_id に指定するが、その瞬間に管理テナント行が DB に存在しない状態だった (= CI の並列実行・cleanup タイミング・seed タイミングの組み合わせで一時的に消えた)。
+
+### 根本原因
+
+- E2E fixture は「`pnpm db:seed` 完了済 = MANAGEMENT_TENANT_ID 等の system tenant が存在する」前提で書かれていた
+- ただし CI では:
+  - 並列 worker による複数 spec 同時実行
+  - 前 spec の cleanup が FK 違反等で部分失敗 → 状態が不確定
+  - db:reset + seed の途中に test が start する可能性
+- これらが組み合わさり「fixture 開始時に system tenant が存在しない瞬間」が発生
+
+### 教訓
+
+1. **E2E fixture は冪等 + 自己完結であるべき**。外部 state (seed 結果、別 spec の事後状態) に依存しない
+2. system tenant / system user 等の「前提として必要な行」は fixture 自身が `INSERT ... ON CONFLICT DO NOTHING` で保証する
+3. cleanup 失敗の影響を「次 spec の setup 失敗」に伝播させないため、setup 側で防御的にゼロ化する
+
+### 修正対応
+
+`e2e/fixtures/super-admin.ts` の `setupSuperAdminFixture` の冒頭に管理テナント保証 upsert を追加:
+
+```ts
+await pool.query(
+  `INSERT INTO tenants (
+     id, slug, name, plan, payment_method, created_at, updated_at
+   )
+   VALUES ($1, 'mgmt', 'Knowledge Relay Platform', 'pro', 'invoice', NOW(), NOW())
+   ON CONFLICT (id) DO NOTHING`,
+  [MANAGEMENT_TENANT_ID],
+);
+```
+
+`ON CONFLICT DO NOTHING` で既存があれば no-op、なければ INSERT する idempotent な seed。
+
+### 横展開
+
+他の fixture でも「seed 済を前提にしている」箇所がないか棚卸し:
+- `multi-tenant.ts`: DEFAULT_TENANT_ID 前提だが setup は新規テナントを作る (= 直接参照しないので OK)
+- `db.ts`: 共通 connection pool のみ
+- 各 spec 内の `beforeAll` で seed 系を呼び出していないか確認
+
+将来的に「全 fixture は ON CONFLICT 防御を持つ」のチェックリスト化が望ましい。
+
+### 関連
+- KDD §5.X+80 (= 同 PR 内の前 E2E fail = request_id NOT NULL 漏れ)
+- 元事故: CI run 26093793392 で `users_tenant_id_fkey` 違反 → 本修正で防御
+
+---
+
+## 5.X+81 **請求金額計算ロジック自体のバグは「保存値 vs 再計算値」突合でしか検知できない (2026-05-19 / PR #412 / PR-V8.4)**
+
+### 事象
+
+PR-V8.1〜V8.3 で「ApiCallLog SUM (真値) → 全画面表示 + CSV + 請求書根拠」の経路統一は完了したが、**`BillingHistory.totalAmountJpy` の計算ロジック自体** (= `amountJpy + taxAmountJpy` の単純和 / 消費税四捨五入 / 負値ガード) のバグは検知経路がなかった。
+
+例: `billing-aggregation` cron の改修で `taxAmountJpy` 計算式が誤って `Math.floor` (四捨五入ではなく切り捨て) になった場合、保存される `taxAmountJpy` は計算式通りで「内部的には整合」しているように見えるが、業務仕様 (= 四捨五入) に違反して **顧客から見て数円少なく徴収** されてしまう。
+
+### 根本原因
+
+- 不変条件 (invariant) `totalAmountJpy = amountJpy + taxAmountJpy` を **誰もチェックしていなかった**
+- 不変条件 `taxAmountJpy = Math.round(amountJpy * 0.10)` も同上
+- 「コードレビューで弾けば良い」では人為的な漏れに弱い
+
+### 教訓
+
+1. **「請求金額」のような金銭直結データは保存後にも不変条件チェックを実装する** (= 検知の二重化)
+2. **チェックロジックは「保存値」ではなく「再計算値」で行う** — 同じバグが計算と検知に潜むのを避ける (`amountJpy` と `taxAmountJpy` は **DB から SELECT した値**、それを基に **改めて `calculateTaxJpy()` を呼び直す**、その結果を保存値と比較)
+3. **直近 N ヶ月だけスキャン** — 全期間スキャンはコスト高、古い不整合は実害消滅済の可能性
+
+### 修正対応
+
+`src/services/billing-integrity.service.ts` 新設:
+- `detectBillingHistoryIntegrityIssues(monthsBack=6)`: 不変条件 4 種 (`total_mismatch` / `tax_mismatch` / `negative_amount` / `negative_total`) を走査
+- `status='canceled' / 'replaced_by_stripe'` は意図的不一致を許容するため対象外
+- 1 円差は `AMOUNT_RECONCILE_TOLERANCE_JPY` (= 1) で許容 (Stripe Tax 端数吸収用)
+
+診断ダッシュボード `/admin/super/diagnostics` に「請求書計算ロジック整合 ★請求最終防衛★」セクション追加。差分検出時は対応手順 (= `billing-aggregation` cron 再実行 or SQL 直接修正 + audit_log) をテキスト案内。
+
+加えて、ダッシュボード未閲覧期間の無音対策として **日次 cron `diagnostics-daily-alert`** (`admin-alert.service.ts:detectAndAlertDiagnosticsAnomalies`) を新設。`totalAnomalies > 0` で super_admin に push 通知。
+
+### 横展開
+
+「金銭直結データの不変条件チェック」棚卸し:
+- `StripeUsageRecordQueue.quantity = 1` 固定 → 違反検知の必要性検討
+- `Tenant.currentMonthApiCostJpy >= 0` → 既存 reconcile で間接カバー
+- `ApiCallLog.costJpy >= 0` → 同上
+
+将来的に「不変条件 DSL」を導入し、全 schema model に対して `CHECK 制約` (= DB レベル) を併用するのが理想。
+
+### 関連
+- KDD §5.X+79 (= 月次 snapshot を真値ベースに、請求 invariant チェーンの 1 つ)
+- memory: `feedback_billing_invariant.md` (★最重要★ 全経路で SUM = 真値)
+- PR-V8.4 (= 本件 + 日次 cron-push alert + Stripe UTC 月境界の docs 化)

@@ -3,10 +3,14 @@
 # 詳細: docs/operations/DEPLOYMENT.md / docs/design/INFRASTRUCTURE.md §10
 
 [build]
-  # Prisma Client 生成 → Next.js ビルド
-  # 注: package.json の "build" スクリプトに `prisma generate` を含めているため、
-  #     ここは `pnpm build` のみで OK だが、明示してデバッグ性を上げる
-  command = "pnpm build"
+  # PR-V8.1 (2026-05-19): Prisma migrate deploy を build 時に組み込み (適用漏れ事故予防)。
+  # 注: CI (GitHub Actions Lint/Test/Build) では DATABASE_URL がダミー (localhost:5432) の
+  #     ため `prisma migrate deploy` は P1001 で失敗する。よって CI と Netlify で
+  #     build script を分離:
+  #       - CI:        pnpm build         (= prisma generate + next build のみ)
+  #       - Netlify:   pnpm build:netlify (= prisma generate + migrate deploy + next build)
+  #     詳細: docs/operations/DEPLOYMENT.md §1.1 / docs/knowledge/KDD_PATTERNS.md (CI 起因の migrate deploy 失敗)
+  command = "pnpm build:netlify"
   publish = ".next"
   # docs / .github / *.md のみの変更時はビルドをスキップ
   # (Starter 統合 credits 300/月の制約を効率消費するため。1 deploy ≈ 15 credits 消費)

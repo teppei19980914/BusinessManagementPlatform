@@ -73,6 +73,22 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   const superAdminPassword = process.env.E2E_SUPER_ADMIN_PASSWORD ?? `E2eSuper!Pw_${runId}`;
   const passwordHash = await hash(superAdminPassword, BCRYPT_COST);
 
+  // PR-V8.2 (2026-05-19) ★fixture 自己完結化★: 管理テナント (MANAGEMENT_TENANT_ID) を保証する。
+  //   E2E は通常 `pnpm db:seed` で管理テナントが seed されている前提だが、CI で並列実行する
+  //   別 spec の cleanup 失敗 / DB reset タイミング / seed 未完了で MANAGEMENT_TENANT_ID 行が
+  //   存在しない瞬間があり、本 fixture の super_admin user INSERT が users_tenant_id_fkey で
+  //   FK 違反になる事象が発生 (CI run 26093793392)。
+  //   fixture は外部状態 (seed) に依存しないよう自己完結させるべき (= KDD §5.X+81)。
+  //   ON CONFLICT で既存行があれば no-op、なければ INSERT する idempotent な seed。
+  await pool.query(
+    `INSERT INTO tenants (
+       id, slug, name, plan, payment_method, created_at, updated_at
+     )
+     VALUES ($1, 'mgmt', 'Knowledge Relay Platform', 'pro', 'invoice', NOW(), NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [MANAGEMENT_TENANT_ID],
+  );
+
   // 1. super_admin user (管理テナント所属、forcePasswordChange=false)
   const superAdminRes = await pool.query<{ id: string }>(
     `INSERT INTO users (
@@ -109,6 +125,27 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   );
   const tenantAId = tenantA.rows[0]!.id;
 
+  // PR-V8.1 (2026-05-19): super_admin 画面表示が ApiCallLog SUM (真値) ベースに変わったため、
+  //   tenant counter と整合する ApiCallLog レコードを seed する。counter (300 calls / ¥1500)
+  //   に揃えるが、表示は SUM (= COUNT * cost) に基づくため、件数と費用合計が一致するレコードを作る。
+  //   bulkInsert で 300 行入れると遅いため、1 行に集約せず代表 1 行で件数 = 1 / cost = 1500 で
+  //   counter を `1, 1500` に同時 update する (= drift なし状態)。
+  // 2026-05-19: api_call_logs.request_id は NOT NULL (VarChar(64))。fixture でも明示必須。
+  await pool.query(
+    `INSERT INTO api_call_logs (
+       tenant_id, feature_unit, model_name, cost_jpy, latency_ms, request_id, created_at
+     )
+     VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, $2, NOW())`,
+    [tenantAId, `e2e-sa-${runId}-${suffix}-a-req`],
+  );
+  // counter を ApiCallLog SUM と一致させる (1 件 / ¥1500)
+  await pool.query(
+    `UPDATE tenants
+     SET current_month_api_call_count = 1, current_month_api_cost_jpy = 1500
+     WHERE id = $1`,
+    [tenantAId],
+  );
+
   // admin user (= activeUserCount=1 の検証用)
   const adminEmailA = `admin-sa-${runId}-${suffix}-a@example.com`.toLowerCase();
   await pool.query(
@@ -138,6 +175,23 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
     [slugB, nameB],
   );
   const tenantBId = tenantB.rows[0]!.id;
+
+  // PR-V8.1 (2026-05-19): tenantA と同様、ApiCallLog seed + counter 整合
+  //   pro プラン × 1500 calls × ¥15 = ¥22500 を代表 1 行で表現 (counter も 1 / ¥22500 に揃える)
+  // 2026-05-19: request_id は NOT NULL のため明示
+  await pool.query(
+    `INSERT INTO api_call_logs (
+       tenant_id, feature_unit, model_name, cost_jpy, latency_ms, request_id, created_at
+     )
+     VALUES ($1, 'project-embedding', 'claude-sonnet-4-6', 22500, 200, $2, NOW())`,
+    [tenantBId, `e2e-sa-${runId}-${suffix}-b-req`],
+  );
+  await pool.query(
+    `UPDATE tenants
+     SET current_month_api_call_count = 1, current_month_api_cost_jpy = 22500
+     WHERE id = $1`,
+    [tenantBId],
+  );
 
   const adminEmailB = `admin-sa-${runId}-${suffix}-b@example.com`.toLowerCase();
   await pool.query(
@@ -173,6 +227,17 @@ export async function cleanupSuperAdminFixture(
   fixture: SuperAdminFixture | undefined,
 ): Promise<void> {
   if (!fixture) return;
+  // PR-V8 (2026-05-19): 本番 DB に対する DELETE 事故を防ぐ最終ガード。
+  //   本 fixture は `DELETE FROM api_call_logs` / `audit_logs` 等の破壊的 SQL を含むため、
+  //   万が一 NODE_ENV=production で接続された場合に即 throw する。
+  //   通常運用では Playwright config が NODE_ENV='test' を強制するため通常は発火しない。
+  if (process.env['NODE_ENV'] === 'production') {
+    throw new Error(
+      '[super-admin fixture] cleanup を NODE_ENV=production で実行しようとしました。'
+      + ' 本 fixture は破壊的 DELETE を含むため本番 DB では絶対に実行できません。'
+      + ' Playwright config の NODE_ENV を確認してください。',
+    );
+  }
   const pool = getPool();
   const tenantIds = [fixture.customerTenantA.id, fixture.customerTenantB.id];
 

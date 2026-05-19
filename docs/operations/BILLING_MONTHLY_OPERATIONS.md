@@ -205,19 +205,26 @@ prisma.tenantMonthlyUsageHistory.upsert({
 
 ### 当月分 CSV (`yearMonth` 未指定)
 
+> **⚠️ PR-V8 (2026-05-19) ★請求重要★ 仕様変更**: 「API呼出回数」「API課金額」列は **ApiCallLog SUM (真値) を主軸** にしました。counter (リアルタイムカウンタ) が破損していた場合でも、CSV には ApiCallLog SUM が出力されます。counter 値は参考列として並記し、両者に差分がある場合は **drift警告** 列で明示します。
+
 | 列名 | 説明 |
 |---|---|
 | テナント連番 | 顧客に表示する人間可読 ID |
 | テナント名 | テナント表示名 |
 | プラン | beginner / expert / pro |
-| API呼出回数 | 月初リセット以降の合計コール数 |
-| API課金額(円) | LLM 従量課金の合計 |
+| **API呼出回数(ApiCallLog SUM=真値)** | **★ ApiCallLog 集計値 (= 請求書根拠の主軸、PR-V8)** |
+| **API課金額(ApiCallLog SUM=真値, 円)** | **★ ApiCallLog cost 合計 (= 請求書根拠の主軸、PR-V8)** |
+| API呼出回数(counter=参考) | リアルタイムカウンタ値 (drift 検出用の参考、PR-V8) |
+| API課金額(counter=参考, 円) | リアルタイムカウンタ値 (drift 検出用の参考、PR-V8) |
+| **drift警告** | **counter と SUM の乖離が 5% 超のとき "⚠ drift N.N%" を表示 (PR-V8)** |
+| drift呼出差分 | counter − SUM (件数、符号付き、PR-V8) |
+| drift費用差分(円) | counter − SUM (円、符号付き、PR-V8) |
 | アクティブユーザ数 | 当月時点でアクティブなユーザ数 |
 | 月次予算上限(円) | テナント側設定の上限 (空欄=無制限) |
 | Storageプラン | standard / plus / pro_storage |
 | Storage使用量(バイト) | 当月時点の使用量 |
 | Storage月額(円) | 該当プランの固定額 |
-| 合計月額(円) | API課金額 + Storage月額 |
+| 合計月額(円) | API課金額(SUM) + Storage月額 (PR-V8 で SUM ベースに変更) |
 | **解約日** | **空欄=アクティブ / ISO 日時=解約済 (2026-05-14 追加)** |
 | 請求先種別 | 個人 / 法人 |
 | 会社名_法人名 | 法人の場合のみ |
@@ -296,6 +303,12 @@ GROUP BY 1;
 
 ## 改修履歴
 
+- **2026-05-19 (PR-V8)**: ★請求重要★ 当月 CSV を ApiCallLog SUM (真値) ベースに変更
+  - counter (Tenant.currentMonthApiCallCount) が破損していた場合でも CSV には真値が出力される
+  - counter は参考列として並記、drift 警告列を新設 (Beginner プラン cost=0 でも call drift を検知)
+  - 過去月の `tenant_monthly_usage_history` も `regenerateMonthlyHistoryFromApiCallLog` で再生成可能 (super_admin の `/admin/super/tenants/[id]/diagnostics` から実行)
+  - 診断ダッシュボード `/admin/super/diagnostics` で drift / cron 健全性 / 縮退モード / メール失敗 / alert 機構を一画面で俯瞰
+  - 関連 service: src/services/api-usage-recalc.service.ts (driftRatio を call+cost max 化、月境界を テナント TZ に統一) / monthly-history-regenerate.service.ts (新設) / cron-health.service.ts (新設) / diagnostics.service.ts (新設)
 - **2026-05-14 (3rd)**: 請求サイクルを「月末締め + 翌月15日請求書発行 + 翌月25日支払」に確定。
   上部に「請求サイクル」セクション追加、「Step 3 支払期限」を「翌月25日固定」に変更、
   「Step 4 入金確認」を「翌月16〜25日 入金確認 + 翌月26日朝 未入金リスト確認」に分割。

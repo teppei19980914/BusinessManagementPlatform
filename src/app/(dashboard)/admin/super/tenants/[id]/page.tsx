@@ -112,23 +112,30 @@ export default async function SuperAdminTenantDetailPage({
           highlight={isDormant}
           tooltip="テナント内のいずれかのユーザの最新 lastLoginAt。90 日以上経過で「休眠テナント」候補"
         />
-        <DetailCard
-          label="今月 API 呼出"
-          value={tenant.currentMonthApiCallCount.toLocaleString()}
-          tooltip="当月の LLM/Embedding 呼出回数 (withMeteredLLM 経由)。月初 (UTC) にリセット"
-        />
+        {/* ★ PR-V8.1 (2026-05-19) 請求 invariant: ApiCallLog SUM (真値) を表示。
+            テナント管理者画面 + システム管理者画面で同じ SUM 値を共有し、表示乖離を防ぐ。
+            counter 値はテナント詳細画面 (本画面) のみ参考表示。 */}
         <DetailCard
           label={
             <span>
-              {`今月 API 費用${nonBillableSuffix}`}
-              <UsageDriftBadge reconcile={apiReconcile} />
+              今月 API 呼出
+              <UsageDriftBadge reconcile={apiReconcile} showDiagnosticsLink={true} />
             </span>
           }
-          value={`¥${tenant.currentMonthApiCostJpy.toLocaleString()}`}
+          value={(
+            apiReconcile?.reconciledCallCount ?? tenant.currentMonthApiCallCount
+          ).toLocaleString()}
+          tooltip="当月の LLM/Embedding 呼出回数 (ApiCallLog 集計 = 請求書根拠と同じ真値、PR-V8.1)"
+        />
+        <DetailCard
+          label={`今月 API 費用${nonBillableSuffix}`}
+          value={`¥${(
+            apiReconcile?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy
+          ).toLocaleString()}`}
           tooltip={
             isDefaultTenant
-              ? '内部記録値。Default テナントは請求対象外のため実際の請求は発生しません'
-              : '当月の内部請求額 (プラン別固定単価)。Anthropic 実コストとは別系統'
+              ? 'ApiCallLog 集計値。Default テナントは請求対象外のため実際の請求は発生しません (PR-V8.1)'
+              : 'ApiCallLog 集計値 = 請求書根拠と同じ真値。プラン別固定単価で計算 (PR-V8.1)'
           }
         />
         {/* 2026-05-14: drift 検出時の詳細情報 (整合性検証) */}
@@ -211,13 +218,19 @@ export default async function SuperAdminTenantDetailPage({
             highlight={tenant.storageUsageRatio > 1.0}
             tooltip="添付ファイル合算サイズ。100% 超で Grace period (7 日)、未対応で write 停止"
           />
+          {/* ★ PR-V8.1 (2026-05-19) 請求 invariant: LLM 部分は ApiCallLog SUM (真値) を使う。
+              同画面の「今月 API 費用」(line 130-134) と一致させ、合算式も整合させる。 */}
           <DetailCard
             label={`当月予想合計課金${nonBillableSuffix}`}
-            value={`¥${tenant.totalCurrentMonthJpy.toLocaleString()} (LLM ¥${tenant.currentMonthApiCostJpy.toLocaleString()} + Storage ¥${tenant.storageAddonMonthlyJpy.toLocaleString()})`}
+            value={(() => {
+              const llmCost = apiReconcile?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
+              const total = llmCost + tenant.storageAddonMonthlyJpy;
+              return `¥${total.toLocaleString()} (LLM ¥${llmCost.toLocaleString()} + Storage ¥${tenant.storageAddonMonthlyJpy.toLocaleString()})`;
+            })()}
             tooltip={
               isDefaultTenant
-                ? '内部記録値。Default テナントは請求対象外のため顧客請求書合計には含まれません'
-                : 'LLM 部分 (従量課金) + Storage add-on (固定月額) の合算。請求書根拠'
+                ? 'ApiCallLog 集計値。Default テナントは請求対象外のため顧客請求書合計には含まれません (PR-V8.1)'
+                : 'ApiCallLog SUM (真値) + Storage add-on (固定月額) の合算 = 請求書根拠と完全一致 (PR-V8.1)'
             }
           />
         </div>

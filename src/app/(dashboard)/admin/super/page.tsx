@@ -44,14 +44,18 @@ import {
 } from '@/services/api-usage-recalc.service';
 import { RecalculateButton } from '@/components/recalculate-button';
 import { UsageDriftBadge } from '@/components/usage-drift-badge';
+// PR-V8 (2026-05-19): 診断ダッシュボードへの誘導バナー
+import { getDiagnosticsSummary } from '@/services/diagnostics.service';
 
 export default async function SuperAdminTopPage() {
   // 2026-05-14: 表示前に全テナントの最新値を作る (請求根拠なのでキャッシュ依存しない)。
   //   updateAllStorageBytesUsed は内部で個別失敗を吸収する。
   //   reconcileAllTenantsApiUsage は Promise.allSettled で並列実行。
-  const [, apiReconciles] = await Promise.all([
+  // PR-V8 (2026-05-19): 診断ダッシュボードの異常件数を取得 (赤バナー表示用)
+  const [, apiReconciles, diagnostics] = await Promise.all([
     updateAllStorageBytesUsed(),
     reconcileAllTenantsApiUsage(),
+    getDiagnosticsSummary(),
   ]);
   const apiReconcileByTenant = new Map<string, ApiUsageReconcileResult>(
     apiReconciles.map((r) => [r.tenantId, r]),
@@ -88,6 +92,26 @@ export default async function SuperAdminTopPage() {
       <p className="text-xs text-muted-foreground">
         DB 容量と API 利用量はこの画面を開いた時点で全テナントの最新値を集計しています。手動で再集計するには上のボタンを押してください。
       </p>
+
+      {/* PR-V8 (2026-05-19): 診断ダッシュボードへの誘導バナー */}
+      {diagnostics.totalAnomalies > 0 && (
+        <Link
+          href="/admin/super/diagnostics"
+          className="block rounded border border-red-400 bg-red-50 p-4 text-red-900 hover:bg-red-100 dark:border-red-600 dark:bg-red-900/30 dark:text-red-100 dark:hover:bg-red-900/50"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-lg font-semibold">
+                ⚠️ {diagnostics.totalAnomalies} 件の異常を検知
+              </div>
+              <div className="mt-1 text-sm">
+                API drift / cron 健全性 / 縮退モード / メール失敗 / alert 機構 のいずれかで異常が発生しています。詳細を確認するにはクリック →
+              </div>
+            </div>
+            <div className="font-mono text-sm">/admin/super/diagnostics</div>
+          </div>
+        </Link>
+      )}
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {/* 2026-05-09 (PR E): 全項目に title 属性でツールチップ追加 */}
@@ -258,25 +282,29 @@ function DefaultTenantSection({
           value={defaultTenant.activeUserCount.toString()}
           tooltip="Default テナント所属の isActive=true ユーザ数"
         />
-        <SummaryCard
-          label="今月の API 呼出"
-          value={defaultTenant.currentMonthApiCallCount.toLocaleString()}
-          tooltip="当月の LLM/Embedding 呼出回数 (Default テナント内)"
-        />
+        {/* ★ PR-V8.1 (2026-05-19) 請求 invariant: ApiCallLog SUM (真値) を表示。
+            counter 値とのズレが請求書根拠と画面表示の乖離を生むため、両画面 (テナント管理者
+            画面 + システム管理者画面) で同じ SUM 値を表示するよう統一。reconcile=null
+            (=削除済等) のときのみ counter にフォールバック。 */}
         <SummaryCard
           label={
             <span>
-              今月の API 費用 (参考)
-              <UsageDriftBadge reconcile={reconcile} />
+              今月の API 呼出
+              <UsageDriftBadge reconcile={reconcile} showDiagnosticsLink={true} />
             </span>
           }
-          value={`¥${defaultTenant.currentMonthApiCostJpy.toLocaleString()}`}
-          subValue={
-            reconcile?.hasDrift
-              ? `ApiCallLog SUM: ¥${reconcile.reconciledCostJpy.toLocaleString()} (差分 ¥${reconcile.driftCostJpy.toLocaleString()})`
-              : '(請求対象外)'
-          }
-          tooltip="内部記録値。Default テナントは請求対象外のため実際の請求は発生しません"
+          value={(
+            reconcile?.reconciledCallCount ?? defaultTenant.currentMonthApiCallCount
+          ).toLocaleString()}
+          tooltip="当月の LLM/Embedding 呼出回数 (ApiCallLog 集計 = 請求書根拠と同じ真値、PR-V8.1)"
+        />
+        <SummaryCard
+          label="今月の API 費用 (参考)"
+          value={`¥${(
+            reconcile?.reconciledCostJpy ?? defaultTenant.currentMonthApiCostJpy
+          ).toLocaleString()}`}
+          subValue="(請求対象外、ApiCallLog 集計値)"
+          tooltip="ApiCallLog 集計値。Default テナントは請求対象外のため実際の請求は発生しません (PR-V8.1)"
         />
         <SummaryCard
           label="Storage プラン"

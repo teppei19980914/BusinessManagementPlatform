@@ -30,6 +30,11 @@ vi.mock('@/services/super-admin.service', () => ({
   listMonthlyUsageHistory: vi.fn(),
 }));
 
+// PR-V8 (2026-05-19): 当月 CSV は SUM ベースに切替えたため reconcile も mock 必要
+vi.mock('@/services/api-usage-recalc.service', () => ({
+  reconcileAllTenantsApiUsage: vi.fn(),
+}));
+
 import { GET } from './route';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { isSuperAdmin } from '@/lib/permissions/role';
@@ -37,6 +42,7 @@ import {
   listAllTenants,
   listMonthlyUsageHistory,
 } from '@/services/super-admin.service';
+import { reconcileAllTenantsApiUsage } from '@/services/api-usage-recalc.service';
 
 const SUPER_ADMIN_USER = {
   id: 'super-admin-uuid',
@@ -44,8 +50,36 @@ const SUPER_ADMIN_USER = {
   systemRole: 'super_admin',
 } as never;
 
+/**
+ * PR-V8: 「drift なし」reconcile 結果のヘルパ (= cached = reconciled)
+ *   既存テストで CSV に counter 値が出ることを期待しているケースで使う。
+ */
+function makeReconcileWithoutDrift(
+  tenantId: string,
+  callCount: number,
+  costJpy: number,
+): Awaited<ReturnType<typeof reconcileAllTenantsApiUsage>>[number] {
+  return {
+    tenantId,
+    cachedCallCount: callCount,
+    cachedCostJpy: costJpy,
+    reconciledCallCount: callCount,
+    reconciledCostJpy: costJpy,
+    driftCallCount: 0,
+    driftCostJpy: 0,
+    driftCallRatio: 0,
+    driftCostRatio: 0,
+    driftRatio: 0,
+    monthStart: new Date('2026-05-01T00:00:00Z'),
+    monthStartUtc: new Date('2026-05-01T00:00:00Z'),
+    hasDrift: false,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // PR-V8 (2026-05-19): デフォルトで「drift なし」を返す (= 既存テストとの互換性維持)
+  vi.mocked(reconcileAllTenantsApiUsage).mockResolvedValue([]);
 });
 
 // ================================================================
@@ -435,6 +469,143 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
     expect(body).toContain('解約日');
     expect(body).toContain('2026-05-20T03:00:00.000Z');
     expect(body).toContain('解約済テナント');
+  });
+});
+
+// ================================================================
+// PR-V8 (2026-05-19) ★請求重要 regression★
+//
+// 当月 CSV は ApiCallLog SUM (真値) を主軸とし、counter は参考値として並記する。
+// 本件 (Default テナント counter 1 / ApiCallLog SUM 8 のような drift) が起きた場合でも、
+// CSV の API 呼出回数列には真値の 8 が出力され、誤請求を未然に防ぐ必要がある。
+// ================================================================
+
+describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM を真値として出力', () => {
+  beforeEach(() => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue(SUPER_ADMIN_USER);
+    vi.mocked(isSuperAdmin).mockReturnValue(true);
+  });
+
+  it('drift がある場合 → CSV の API 呼出回数 / 課金額列には SUM (真値) が出力される', async () => {
+    vi.mocked(listAllTenants).mockResolvedValue([
+      {
+        id: 't-x', tenantSeq: 9, slug: 'x', name: 'DriftedX', plan: 'expert',
+        // counter は壊れた値 (drift)
+        currentMonthApiCallCount: 1, currentMonthApiCostJpy: 5,
+        monthlyBudgetCapJpy: null, activeUserCount: 1,
+        createdAt: new Date('2026-01-01'),
+        billingType: 'corporate', billingCompanyName: null,
+        billingContactName: null, billingContactEmail: null,
+        billingAddress: null, billingPostalCode: null, billingPrefecture: null,
+        billingCity: null, billingStreetAddress: null, billingBuildingName: null,
+        billingPhoneNumber: null, paymentMethod: 'invoice',
+        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 5,
+        deletedAt: null,
+      },
+    ] as never);
+    // reconcile で真値: 8 回 / ¥40 (= 7 件分の drift)
+    vi.mocked(reconcileAllTenantsApiUsage).mockResolvedValue([
+      {
+        tenantId: 't-x',
+        cachedCallCount: 1,
+        cachedCostJpy: 5,
+        reconciledCallCount: 8,
+        reconciledCostJpy: 40,
+        driftCallCount: -7,
+        driftCostJpy: -35,
+        driftCallRatio: 7 / 8,
+        driftCostRatio: 35 / 40,
+        driftRatio: 7 / 8,
+        monthStart: new Date('2026-04-30T15:00:00Z'),
+        monthStartUtc: new Date('2026-04-30T15:00:00Z'),
+        hasDrift: true,
+      },
+    ]);
+
+    const req = new NextRequest('http://localhost/api/admin/super/usage/export');
+    const res = await GET(req);
+    const body = await res.text();
+
+    // ★ CSV の主軸列に SUM (真値) = 8 / ¥40 が出力されることを assert
+    //   これが本件 (Default テナント) で誤請求を防ぐ最重要 invariant
+    const dataLines = body.split('\r\n').filter((l) => l && !l.includes('テナント連番'));
+    expect(dataLines).toHaveLength(1);
+    const cols = dataLines[0].split(',');
+    // 列順: 連番, name, plan, sumCallCount, sumCostJpy, counterCallCount, counterCostJpy, driftWarning, ...
+    expect(cols[3]).toBe('8'); // API呼出回数 (SUM)
+    expect(cols[4]).toBe('40'); // API課金額 (SUM)
+    expect(cols[5]).toBe('1'); // API呼出回数 (counter)
+    expect(cols[6]).toBe('5'); // API課金額 (counter)
+    // drift 警告列が含まれる
+    expect(cols[7]).toContain('drift');
+    expect(cols[8]).toBe('-7'); // drift呼出差分
+    expect(cols[9]).toBe('-35'); // drift費用差分
+  });
+
+  it('drift なし → counter と SUM が一致しているため両列とも同値', async () => {
+    vi.mocked(listAllTenants).mockResolvedValue([
+      {
+        id: 't-y', tenantSeq: 10, slug: 'y', name: 'CleanY', plan: 'expert',
+        currentMonthApiCallCount: 100, currentMonthApiCostJpy: 500,
+        monthlyBudgetCapJpy: null, activeUserCount: 2,
+        createdAt: new Date('2026-01-01'),
+        billingType: 'corporate', billingCompanyName: null,
+        billingContactName: null, billingContactEmail: null,
+        billingAddress: null, billingPostalCode: null, billingPrefecture: null,
+        billingCity: null, billingStreetAddress: null, billingBuildingName: null,
+        billingPhoneNumber: null, paymentMethod: 'invoice',
+        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 500,
+        deletedAt: null,
+      },
+    ] as never);
+    vi.mocked(reconcileAllTenantsApiUsage).mockResolvedValue([
+      makeReconcileWithoutDrift('t-y', 100, 500),
+    ]);
+
+    const req = new NextRequest('http://localhost/api/admin/super/usage/export');
+    const res = await GET(req);
+    const body = await res.text();
+
+    const dataLines = body.split('\r\n').filter((l) => l && !l.includes('テナント連番'));
+    const cols = dataLines[0].split(',');
+    expect(cols[3]).toBe('100'); // SUM call
+    expect(cols[4]).toBe('500'); // SUM cost
+    expect(cols[5]).toBe('100'); // counter call
+    expect(cols[6]).toBe('500'); // counter cost
+    expect(cols[7]).toBe(''); // drift 警告なし (空文字)
+  });
+
+  it('reconcile に該当エントリがない (削除済等) → counter 値にフォールバック (後方互換)', async () => {
+    vi.mocked(listAllTenants).mockResolvedValue([
+      {
+        id: 't-z', tenantSeq: 11, slug: 'z', name: 'NoReconcileZ', plan: 'expert',
+        currentMonthApiCallCount: 50, currentMonthApiCostJpy: 250,
+        monthlyBudgetCapJpy: null, activeUserCount: 1,
+        createdAt: new Date('2026-01-01'),
+        billingType: 'corporate', billingCompanyName: null,
+        billingContactName: null, billingContactEmail: null,
+        billingAddress: null, billingPostalCode: null, billingPrefecture: null,
+        billingCity: null, billingStreetAddress: null, billingBuildingName: null,
+        billingPhoneNumber: null, paymentMethod: 'invoice',
+        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 250,
+        deletedAt: null,
+      },
+    ] as never);
+    // reconcile は他テナント分のみ
+    vi.mocked(reconcileAllTenantsApiUsage).mockResolvedValue([]);
+
+    const req = new NextRequest('http://localhost/api/admin/super/usage/export');
+    const res = await GET(req);
+    const body = await res.text();
+
+    const dataLines = body.split('\r\n').filter((l) => l && !l.includes('テナント連番'));
+    const cols = dataLines[0].split(',');
+    expect(cols[3]).toBe('50'); // SUM 列にフォールバック値 (= counter)
+    expect(cols[5]).toBe('50'); // counter 列
+    expect(cols[7]).toBe(''); // drift 警告なし
   });
 });
 

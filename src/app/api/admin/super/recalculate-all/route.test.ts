@@ -91,8 +91,9 @@ describe('正常系 (super_admin)', () => {
   it('updateAllStorageBytesUsed + reconcileAllTenantsApiUsage を呼び、結果を返す', async () => {
     vi.mocked(updateAllStorageBytesUsed).mockResolvedValue(5);
     vi.mocked(reconcileAllTenantsApiUsage).mockResolvedValue([
-      { tenantId: 't1', cachedCallCount: 0, cachedCostJpy: 0, reconciledCallCount: 0, reconciledCostJpy: 0, driftCallCount: 0, driftCostJpy: 0, driftRatio: 0, monthStartUtc: new Date(), hasDrift: false },
-      { tenantId: 't2', cachedCallCount: 100, cachedCostJpy: 1000, reconciledCallCount: 90, reconciledCostJpy: 900, driftCallCount: 10, driftCostJpy: 100, driftRatio: 0.11, monthStartUtc: new Date(), hasDrift: true },
+      // PR-V8 (2026-05-19): driftCallRatio / driftCostRatio / monthStart フィールド追加
+      { tenantId: 't1', cachedCallCount: 0, cachedCostJpy: 0, reconciledCallCount: 0, reconciledCostJpy: 0, driftCallCount: 0, driftCostJpy: 0, driftCallRatio: 0, driftCostRatio: 0, driftRatio: 0, monthStart: new Date(), monthStartUtc: new Date(), hasDrift: false },
+      { tenantId: 't2', cachedCallCount: 100, cachedCostJpy: 1000, reconciledCallCount: 90, reconciledCostJpy: 900, driftCallCount: 10, driftCostJpy: 100, driftCallRatio: 0.11, driftCostRatio: 0.11, driftRatio: 0.11, monthStart: new Date(), monthStartUtc: new Date(), hasDrift: true },
     ]);
 
     const req = new NextRequest('http://localhost/api/admin/super/recalculate-all', { method: 'POST' });
@@ -113,13 +114,15 @@ describe('正常系 (super_admin)', () => {
     const req = new NextRequest('http://localhost/api/admin/super/recalculate-all', { method: 'POST' });
     await POST(req);
 
+    // PR-V8 (2026-05-19): entityId は uuid 制約のため MANAGEMENT_TENANT_ID に変更
+    //   (旧 'all-tenants' は uuid 違反で silent fail していた)
     expect(recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: 'mgmt-tenant',
         userId: 'super-admin-uuid',
         action: 'UPDATE',
         entityType: 'system',
-        entityId: 'all-tenants',
+        entityId: '00000000-0000-0000-0000-ffffffffffff', // = MANAGEMENT_TENANT_ID
       }),
     );
   });

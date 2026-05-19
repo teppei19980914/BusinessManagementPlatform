@@ -84,7 +84,10 @@ describe('正常系 (tenant admin)', () => {
       reconciledCostJpy: 50,
       driftCallCount: 0,
       driftCostJpy: 0,
+      driftCallRatio: 0,
+      driftCostRatio: 0,
       driftRatio: 0,
+      monthStart: new Date(),
       monthStartUtc: new Date(),
       hasDrift: false,
     });
@@ -121,7 +124,10 @@ describe('[テナント越境防止] URL params / body で他テナント id を
       reconciledCostJpy: 0,
       driftCallCount: 0,
       driftCostJpy: 0,
+      driftCallRatio: 0,
+      driftCostRatio: 0,
       driftRatio: 0,
+      monthStart: new Date(),
       monthStartUtc: new Date(),
       hasDrift: false,
     });

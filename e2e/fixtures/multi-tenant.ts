@@ -348,6 +348,15 @@ export async function createTenantPair(runId: string): Promise<{
  */
 export async function cleanupTenants(tenantIds: string[]): Promise<void> {
   if (tenantIds.length === 0) return;
+  // PR-V8 (2026-05-19): 本番 DB に対する DELETE 事故を防ぐ最終ガード。
+  //   本 fixture は破壊的 SQL を多数含むため、NODE_ENV=production では即 throw する。
+  if (process.env['NODE_ENV'] === 'production') {
+    throw new Error(
+      '[multi-tenant fixture] cleanupTenants を NODE_ENV=production で実行しようとしました。'
+      + ' 本 fixture は破壊的 DELETE を含むため本番 DB では絶対に実行できません。'
+      + ' Playwright config の NODE_ENV を確認してください。',
+    );
+  }
   const pool = getPool();
   // NOTE: トランザクションは使わない。PostgreSQL は **transaction 内で 1 つでも文が失敗すると、
   //   後続の文はすべて "current transaction is aborted, commands ignored until end of

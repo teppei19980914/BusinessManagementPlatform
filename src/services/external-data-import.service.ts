@@ -43,6 +43,8 @@
 import { randomUUID } from 'crypto';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { prisma } from '@/lib/db';
+// PR-V8.2 (2026-05-19) ★請求 invariant★: 予算 gate は counter ではなく ApiCallLog SUM (真値) で判定
+import { reconcileTenantApiUsage } from './api-usage-recalc.service';
 // PR #357 (2026-05-14): 旧 generateAndPersistEntityEmbedding (= N 件で N ApiCallLog) を
 //   バッチ版 generateAndPersistBatchEmbeddings (= 1 ApiCallLog) に置換してコスト最適化。
 import { generateAndPersistBatchEmbeddings } from '@/services/embedding.service';
@@ -275,12 +277,19 @@ export async function previewImport(input: PreviewInput): Promise<PreviewResult>
   }
 
   // コスト試算
+  // ★ PR-V8.2 (2026-05-19) 請求 invariant: 予算 gate は ApiCallLog SUM (真値) ベースで判定。
+  //   旧設計は counter (currentMonthApiCallCount/CostJpy) を使っていたため、drift 時
+  //   (counter < SUM) に予算超過 import が gate を通過 = 過剰請求発生のリスクがあった。
   const voyageCalls = validKnowledge.length + validRisksIssues.length;
+  const reconcileForGate = await reconcileTenantApiUsage(tenant.id).catch(() => null);
+  const gateCallCount =
+    reconcileForGate?.reconciledCallCount ?? tenant.currentMonthApiCallCount;
+  const gateCostJpy = reconcileForGate?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
   const costEstimate = computeCostEstimate({
     plan: tenant.plan as 'beginner' | 'expert' | 'pro',
     voyageCalls,
-    currentMonthCallCount: tenant.currentMonthApiCallCount,
-    currentMonthCostJpy: tenant.currentMonthApiCostJpy,
+    currentMonthCallCount: gateCallCount,
+    currentMonthCostJpy: gateCostJpy,
     monthlyBudgetCapJpy: tenant.monthlyBudgetCapJpy,
     beginnerCallLimit: tenant.beginnerMonthlyCallLimit,
     pricePerCallHaiku: tenant.pricePerCallHaiku,
@@ -374,11 +383,17 @@ export async function applyImport(input: {
   const voyageCalls = parsed.knowledge.length + parsed.risksIssues.length;
 
   // 二重防御: apply 直前で再度コストチェック
+  // ★ PR-V8.2 (2026-05-19) 請求 invariant: apply 直前でも ApiCallLog SUM (真値) で gate
+  const reEstimateReconcile = await reconcileTenantApiUsage(tenant.id).catch(() => null);
+  const reGateCallCount =
+    reEstimateReconcile?.reconciledCallCount ?? tenant.currentMonthApiCallCount;
+  const reGateCostJpy =
+    reEstimateReconcile?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
   const reEstimate = computeCostEstimate({
     plan: tenant.plan as 'beginner' | 'expert' | 'pro',
     voyageCalls,
-    currentMonthCallCount: tenant.currentMonthApiCallCount,
-    currentMonthCostJpy: tenant.currentMonthApiCostJpy,
+    currentMonthCallCount: reGateCallCount,
+    currentMonthCostJpy: reGateCostJpy,
     monthlyBudgetCapJpy: tenant.monthlyBudgetCapJpy,
     beginnerCallLimit: tenant.beginnerMonthlyCallLimit,
     pricePerCallHaiku: tenant.pricePerCallHaiku,

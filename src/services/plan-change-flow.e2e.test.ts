@@ -139,6 +139,9 @@ vi.mock('@/lib/db', () => ({
     user: {
       count: vi.fn(async () => 1), // 常に 1 名 (admin) で席数チェックは通る
       groupBy: vi.fn(async () => [{ tenantId: TENANT_ID, _count: { id: 1 } }]),
+      // PR-V8 (2026-05-19): resetTenantMonthlyCounters が systemUser を検索する。
+      //   本テストでは null (= audit なしパス) を返して既存挙動と互換にする。
+      findFirst: vi.fn(async () => null),
     },
     tenantMonthlyUsageHistory: {
       upsert: vi.fn(async ({ create }: { create: Record<string, unknown> }) => {
@@ -149,6 +152,20 @@ vi.mock('@/lib/db', () => ({
         });
         return create;
       }),
+    },
+    auditLog: {
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(),
+    // PR-V8.1 (2026-05-19): saveMonthlyUsageSnapshots は ApiCallLog SUM (真値) を使うように
+    //   変更されたため mock を追加。本 e2e test では simulateApiCall が counter を直接更新する
+    //   抽象モデルなので、aggregate は state の現在 counter 値を「前月の集計」として返す
+    //   (= リセット前の値を snapshot に書く、というロジック検証として等価)。
+    apiCallLog: {
+      aggregate: vi.fn(async () => ({
+        _count: { _all: state.currentMonthApiCallCount },
+        _sum: { costJpy: state.currentMonthApiCostJpy },
+      })),
     },
   },
 }));

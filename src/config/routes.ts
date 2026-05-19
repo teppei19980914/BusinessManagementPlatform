@@ -68,6 +68,10 @@ export const PUBLIC_PATHS = [
   // PR-V7a (2026-05-19): cron 失敗 alert cron (日次)。
   //   直近 24h で status='failure' な cron を cron 名別集約して super_admin にメール通知。
   '/api/cron/cron-failure-alert',
+  // PR-V8.4 (2026-05-19): 診断ダッシュボード anomalies 日次 push alert (日次)。
+  //   getDiagnosticsSummary を実行し totalAnomalies > 0 なら super_admin にメール通知。
+  //   ダッシュボード未閲覧期間の無音対策。
+  '/api/cron/diagnostics-daily-alert',
 ] as const;
 
 /**

@@ -39,6 +39,10 @@ import {
   listAllTenants,
   listMonthlyUsageHistory,
 } from '@/services/super-admin.service';
+// PR-V8 (2026-05-19) ★請求重要★: 当月 CSV は counter 値ではなく ApiCallLog SUM を
+//   真値として書き出す (= drift があっても請求書根拠は真値で出力)。drift があれば
+//   警告列で明示する。
+import { reconcileAllTenantsApiUsage } from '@/services/api-usage-recalc.service';
 
 /** "YYYY-MM" 形式 (1-12 月の 0 埋め必須)。 */
 const YearMonthSchema = z
@@ -67,8 +71,11 @@ export async function GET(req: NextRequest) {
   if (rawYearMonth == null || rawYearMonth === '') {
     // 当月分: 現在の Tenant 値を集計
     const tenants = await listAllTenants({ includeDeleted });
+    // PR-V8 ★請求重要★: ApiCallLog SUM (真値) を別途取得し、CSV では SUM を主軸にする
+    const reconciles = await reconcileAllTenantsApiUsage();
+    const reconcileByTenant = new Map(reconciles.map((r) => [r.tenantId, r]));
     const currentYearMonth = formatCurrentYearMonth();
-    csv = buildCurrentMonthCsv(tenants);
+    csv = buildCurrentMonthCsv(tenants, reconcileByTenant);
     filename = includeDeleted
       ? `tenant-usage-${currentYearMonth}-current-with-deleted.csv`
       : `tenant-usage-${currentYearMonth}-current.csv`;
@@ -118,8 +125,15 @@ const HEADERS_CURRENT = [
   'テナント連番',
   'テナント名',
   'プラン',
-  'API呼出回数',
-  'API課金額(円)',
+  // PR-V8 ★請求重要★: API 呼出回数 / 課金額は **ApiCallLog SUM を主軸** にする (drift があっても真値で出力)。
+  //   counter 値も並記し、drift があれば警告列で明示する。
+  'API呼出回数(ApiCallLog SUM=真値)',
+  'API課金額(ApiCallLog SUM=真値, 円)',
+  'API呼出回数(counter=参考)',
+  'API課金額(counter=参考, 円)',
+  'drift警告',
+  'drift呼出差分',
+  'drift費用差分(円)',
   'アクティブユーザ数',
   '月次予算上限(円)',
   // Storage add-on (Phase 2 / 2026-05-08): 容量と追加課金 + 合計
@@ -160,23 +174,46 @@ const HEADERS_HISTORY = [
   '解約日',
 ];
 
-function buildCurrentMonthCsv(tenants: Awaited<ReturnType<typeof listAllTenants>>): string {
+function buildCurrentMonthCsv(
+  tenants: Awaited<ReturnType<typeof listAllTenants>>,
+  reconcileByTenant: Map<
+    string,
+    Awaited<ReturnType<typeof reconcileAllTenantsApiUsage>>[number]
+  >,
+): string {
   const lines = [HEADERS_CURRENT.join(',')];
   for (const t of tenants) {
+    // PR-V8 ★請求重要★: SUM 値を真値として書き出す。reconcile が null (= 削除済等で取れない) の場合は
+    //   counter 値にフォールバック (= 過去動作と同じ)。
+    const reconcile = reconcileByTenant.get(t.id);
+    const sumCallCount = reconcile?.reconciledCallCount ?? t.currentMonthApiCallCount;
+    const sumCostJpy = reconcile?.reconciledCostJpy ?? t.currentMonthApiCostJpy;
+    const driftWarning = reconcile?.hasDrift
+      ? `⚠ drift ${(reconcile.driftRatio * 100).toFixed(1)}%`
+      : '';
+    const driftCallDiff = reconcile?.driftCallCount ?? 0;
+    const driftCostDiff = reconcile?.driftCostJpy ?? 0;
     lines.push(
       [
         t.tenantSeq?.toString() ?? '',
         csvEscape(t.name),
         csvEscape(t.plan),
+        // PR-V8: SUM 主軸 + counter 並記
+        sumCallCount.toString(),
+        sumCostJpy.toString(),
         t.currentMonthApiCallCount.toString(),
         t.currentMonthApiCostJpy.toString(),
+        csvEscape(driftWarning),
+        (driftCallDiff >= 0 ? '+' : '') + driftCallDiff.toString(),
+        (driftCostDiff >= 0 ? '+' : '') + driftCostDiff.toString(),
         t.activeUserCount.toString(),
         t.monthlyBudgetCapJpy?.toString() ?? '',
         // Storage add-on
         csvEscape(t.storageAddonPlan),
         t.storageBytesUsed.toString(),
         t.storageAddonMonthlyJpy.toString(),
-        t.totalCurrentMonthJpy.toString(),
+        // 合計月額: SUM ベースで再計算 (= drift 分を反映)
+        (sumCostJpy + t.storageAddonMonthlyJpy).toString(),
         // 2026-05-14: 解約日 (空欄=アクティブ)
         t.deletedAt != null ? t.deletedAt.toISOString() : '',
         // P-G: 請求先列 / PR C (2026-05-09): 個人法人 + 構造化住所
