@@ -34,6 +34,8 @@
 
 import { prisma } from '@/lib/db';
 import type { TenantPlan } from '@/lib/tenant';
+// PR-V8.2 (2026-05-19) ★請求 invariant★: getTenantSelfInfo を ApiCallLog SUM 真値で返却
+import { reconcileTenantApiUsage } from './api-usage-recalc.service';
 import {
   getBeginnerExpiryState,
   getBeginnerDaysRemaining,
@@ -118,6 +120,13 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     where: { tenantId, isActive: true, deletedAt: null },
   });
 
+  // ★ PR-V8.2 (2026-05-19) 請求 invariant: 関数返却値も ApiCallLog SUM (真値) ベースに統一。
+  //   旧実装は counter (Tenant.currentMonthApi*) をそのまま返していたため、UI 側で別途
+  //   reconcile を被せる必要があった。/api/tenants/me GET レスポンスや /admin/users page 等で
+  //   counter 値が露出する設計欠陥になっていたため、関数内で reconcile して真値で返す。
+  //   reconcile が null (= 不在 / 集計失敗) のときのみ counter にフォールバック。
+  const reconcile = await reconcileTenantApiUsage(tenantId).catch(() => null);
+
   // P-B (2026-05-08): Beginner プラン期限の判定 (純関数なので副作用なし)
   const expiryInput = {
     plan: t.plan,
@@ -135,8 +144,9 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     beginnerMaxSeats: t.beginnerMaxSeats,
     beginnerMonthlyCallLimit: t.beginnerMonthlyCallLimit,
-    currentMonthApiCallCount: t.currentMonthApiCallCount,
-    currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+    // ★ PR-V8.2: ApiCallLog SUM (真値) を優先。counter フォールバックは reconcile null のみ。
+    currentMonthApiCallCount: reconcile?.reconciledCallCount ?? t.currentMonthApiCallCount,
+    currentMonthApiCostJpy: reconcile?.reconciledCostJpy ?? t.currentMonthApiCostJpy,
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
     activeUserCount,

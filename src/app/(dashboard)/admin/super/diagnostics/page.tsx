@@ -290,6 +290,63 @@ export default async function DiagnosticsPage() {
         ))}
       </Section>
 
+      {/* ============ 4.1 ★請求重要★ プラン変更予約の過去日付滞留 ============ */}
+      <Section
+        title="📅 プラン変更予約の過去日付滞留 ★請求重要★"
+        description="scheduledPlanChangeAt が過去日付なのに反映されていないテナント。tenant-monthly-reset cron 失敗時の典型症状で、旧プランで課金継続 = 過剰/過少請求に直結します。"
+        count={summary.stalledPlanChanges.length}
+        emptyMessage="✅ プラン変更予約の滞留はありません。"
+      >
+        {summary.stalledPlanChanges.map((p) => (
+          <div
+            key={p.tenantId}
+            className="rounded border border-red-300 bg-red-50 p-4 dark:border-red-700 dark:bg-red-900/20"
+          >
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="font-semibold">{p.tenantName}</div>
+              <Link
+                href={`/admin/super/tenants/${p.tenantId}/diagnostics`}
+                className="rounded border px-3 py-1 text-xs hover:bg-background"
+              >
+                詳細を見る
+              </Link>
+            </div>
+            <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+              <Stat label="現在プラン" value={p.currentPlan} />
+              <Stat label="予約プラン" value={p.scheduledNextPlan} emphasis />
+              <Stat label="予約日時" value={p.scheduledAt.toISOString()} />
+              <Stat
+                label="経過時間"
+                value={`${p.hoursSinceScheduled.toFixed(1)} 時間`}
+                emphasis
+              />
+            </dl>
+            <p className="mt-2 text-xs text-muted-foreground">
+              対応: tenant-monthly-reset cron を手動実行するか、tenants テーブルを直接更新してください。
+            </p>
+          </div>
+        ))}
+      </Section>
+
+      {/* ============ 4.2 super_admin 数 ≤ 1 警告 ============ */}
+      {summary.superAdminCountStatus.isAtRisk && (
+        <Section
+          title={`👤 super_admin user 数の警告 (現在: ${summary.superAdminCountStatus.count} 人)`}
+          description="super_admin が 0 人 / 1 人だと alert 機構の単一障害点になります。退職 / lock / 端末紛失等で全 alert が無音化するため、冗長化必須。"
+          count={1}
+          emptyMessage=""
+        >
+          <div className="rounded border border-amber-400 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-900/20">
+            <div className="font-semibold text-amber-900 dark:text-amber-100">
+              ⚠️ {summary.superAdminCountStatus.warningMessage}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              対応: /admin/users から新規 super_admin user を追加してください。
+            </p>
+          </div>
+        </Section>
+      )}
+
       {/* ============ 5. メール送信失敗 (直近 24h) ============ */}
       <Section
         title="📧 メール送信失敗 (直近 24h)"

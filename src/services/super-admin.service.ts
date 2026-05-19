@@ -49,7 +49,9 @@ import {
   computeStorageLimitBytes,
   isStorageAddonPlan,
 } from '@/config/storage-addon';
-import { getTenantCurrentYearMonth } from '@/lib/tenant-time';
+import { getTenantCurrentYearMonth, getTenantMonthStart } from '@/lib/tenant-time';
+// PR-V8.2 (2026-05-19) ★請求 invariant★: getDefaultTenantOwnSummary / deleteTenant で SUM 真値
+import { reconcileTenantApiUsage } from './api-usage-recalc.service';
 
 /**
  * 全テナント一覧 (super_admin ダッシュボード用)。
@@ -608,9 +610,14 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
   });
   if (!t) return null;
 
-  const activeUserCount = await prisma.user.count({
-    where: { tenantId: DEFAULT_TENANT_ID, isActive: true, deletedAt: null },
-  });
+  const [activeUserCount, reconcile] = await Promise.all([
+    prisma.user.count({
+      where: { tenantId: DEFAULT_TENANT_ID, isActive: true, deletedAt: null },
+    }),
+    // ★ PR-V8.2 (2026-05-19) 請求 invariant: Default テナント表示も ApiCallLog SUM (真値) ベース。
+    //   Default は請求対象外だが、運営者自身の使用量を正確に把握する目的があるため真値で揃える。
+    reconcileTenantApiUsage(DEFAULT_TENANT_ID).catch(() => null),
+  ]);
 
   // PR-3 (§5.X+27, 2026-05-15): computeStorageLimitBytes は LLM プランから切り離され
   //   `addonPlan` (Standard 20MB + add-on extra) のみで計算する 1 引数シグネチャ。
@@ -628,8 +635,9 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
     plan: t.plan,
     createdAt: t.createdAt,
     activeUserCount,
-    currentMonthApiCallCount: t.currentMonthApiCallCount,
-    currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+    // ★ PR-V8.2: ApiCallLog SUM (真値) を優先。
+    currentMonthApiCallCount: reconcile?.reconciledCallCount ?? t.currentMonthApiCallCount,
+    currentMonthApiCostJpy: reconcile?.reconciledCostJpy ?? t.currentMonthApiCostJpy,
     storageAddonPlan: addonPlan,
     storageBytesUsed: usedBytes,
     storageLimitBytes: limitBytes,
@@ -1109,8 +1117,25 @@ export async function deleteTenant(
   const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
   const storageAddonPlanSafe = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
   const storageAddonJpy = SUPER_ADMIN_ADDON_MONTHLY_JPY[storageAddonPlanSafe];
-  const totalJpy = tenant.currentMonthApiCostJpy + storageAddonJpy;
   const yearMonth = getTenantCurrentYearMonth(now, tenant.timezone);
+
+  // ★ PR-V8.2 (2026-05-19) 請求 invariant: 解約時 snapshot も ApiCallLog SUM (真値) ベース。
+  //   旧設計は counter (tenant.currentMonthApiCostJpy) をそのまま snapshot に書いていたが、
+  //   counter が drift している場合、解約テナントの最終請求金額が drift で永久固定され
+  //   過剰/過少請求になる致命傷があった (= saveMonthlyUsageSnapshots と同型問題、PR-V8.2 で fix)。
+  //   集計範囲: 当月のテナント TZ 月初 〜 now (= 解約時刻)。
+  const currentMonthStart = getTenantMonthStart(now, tenant.timezone);
+  const apiAgg = await prisma.apiCallLog.aggregate({
+    where: {
+      tenantId,
+      createdAt: { gte: currentMonthStart, lte: now },
+    },
+    _count: { _all: true },
+    _sum: { costJpy: true },
+  });
+  const reconciledCallCount = apiAgg._count._all;
+  const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
+  const totalJpy = reconciledCostJpy + storageAddonJpy;
 
   // 単一 transaction で一気に論理削除 (途中失敗で部分削除の不整合を避ける)
   // Tenant.update / auditLog.create / tenantMonthlyUsageHistory.upsert の戻り値は破棄。
@@ -1178,8 +1203,8 @@ export async function deleteTenant(
       create: {
         tenantId,
         yearMonth,
-        apiCallCount: tenant.currentMonthApiCallCount,
-        apiCostJpy: tenant.currentMonthApiCostJpy,
+        apiCallCount: reconciledCallCount, // ★ PR-V8.2: ApiCallLog SUM (真値)
+        apiCostJpy: reconciledCostJpy, // ★ PR-V8.2: ApiCallLog SUM (真値)
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
@@ -1188,8 +1213,8 @@ export async function deleteTenant(
         totalJpy,
       },
       update: {
-        apiCallCount: tenant.currentMonthApiCallCount,
-        apiCostJpy: tenant.currentMonthApiCostJpy,
+        apiCallCount: reconciledCallCount, // ★ PR-V8.2: ApiCallLog SUM (真値)
+        apiCostJpy: reconciledCostJpy, // ★ PR-V8.2: ApiCallLog SUM (真値)
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,

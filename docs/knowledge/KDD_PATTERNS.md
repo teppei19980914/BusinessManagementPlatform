@@ -10458,3 +10458,63 @@ VALUES ($1, ..., $2, NOW())
 ### 関連
 - KDD §5.X+78 (= 表示の真値ベース化に伴う fixture 修正 = 本件と同 PR 同一ファミリー)
 - 元 PR commit: PR #412 commit `901b159` (fixture INSERT 追加) → CI fail → 本 commit で `request_id` 追加
+
+---
+
+## 5.X+81 **E2E fixture は外部 seed 状態に依存しない (= 自己完結化する) ─ MANAGEMENT_TENANT_ID 等の前提テナントは fixture 自身が `ON CONFLICT DO NOTHING` で保証する (2026-05-19 / PR #412)**
+
+### 事象
+
+PR #412 (PR-V8.2) で別 spec (12-suggestion-seed-data) の cleanup が FK 違反で失敗した直後、13-super-admin-dashboard spec の fixture setup で以下のエラー:
+
+```
+error: insert or update on table "users" violates foreign key constraint "users_tenant_id_fkey"
+   at fixtures/super-admin.ts:77 (super_admin user INSERT)
+```
+
+`super_admin user` は `MANAGEMENT_TENANT_ID` (= `00000000-0000-0000-0000-ffffffffffff`) を tenant_id に指定するが、その瞬間に管理テナント行が DB に存在しない状態だった (= CI の並列実行・cleanup タイミング・seed タイミングの組み合わせで一時的に消えた)。
+
+### 根本原因
+
+- E2E fixture は「`pnpm db:seed` 完了済 = MANAGEMENT_TENANT_ID 等の system tenant が存在する」前提で書かれていた
+- ただし CI では:
+  - 並列 worker による複数 spec 同時実行
+  - 前 spec の cleanup が FK 違反等で部分失敗 → 状態が不確定
+  - db:reset + seed の途中に test が start する可能性
+- これらが組み合わさり「fixture 開始時に system tenant が存在しない瞬間」が発生
+
+### 教訓
+
+1. **E2E fixture は冪等 + 自己完結であるべき**。外部 state (seed 結果、別 spec の事後状態) に依存しない
+2. system tenant / system user 等の「前提として必要な行」は fixture 自身が `INSERT ... ON CONFLICT DO NOTHING` で保証する
+3. cleanup 失敗の影響を「次 spec の setup 失敗」に伝播させないため、setup 側で防御的にゼロ化する
+
+### 修正対応
+
+`e2e/fixtures/super-admin.ts` の `setupSuperAdminFixture` の冒頭に管理テナント保証 upsert を追加:
+
+```ts
+await pool.query(
+  `INSERT INTO tenants (
+     id, slug, name, plan, payment_method, created_at, updated_at
+   )
+   VALUES ($1, 'mgmt', 'Knowledge Relay Platform', 'pro', 'invoice', NOW(), NOW())
+   ON CONFLICT (id) DO NOTHING`,
+  [MANAGEMENT_TENANT_ID],
+);
+```
+
+`ON CONFLICT DO NOTHING` で既存があれば no-op、なければ INSERT する idempotent な seed。
+
+### 横展開
+
+他の fixture でも「seed 済を前提にしている」箇所がないか棚卸し:
+- `multi-tenant.ts`: DEFAULT_TENANT_ID 前提だが setup は新規テナントを作る (= 直接参照しないので OK)
+- `db.ts`: 共通 connection pool のみ
+- 各 spec 内の `beforeAll` で seed 系を呼び出していないか確認
+
+将来的に「全 fixture は ON CONFLICT 防御を持つ」のチェックリスト化が望ましい。
+
+### 関連
+- KDD §5.X+80 (= 同 PR 内の前 E2E fail = request_id NOT NULL 漏れ)
+- 元事故: CI run 26093793392 で `users_tenant_id_fkey` 違反 → 本修正で防御

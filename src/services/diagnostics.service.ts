@@ -57,6 +57,38 @@ export type DegradedTenantSummary = {
 };
 
 /**
+ * PR-V8.2 (2026-05-19): プラン変更予約の過去日付滞留。
+ *
+ * `Tenant.scheduledPlanChangeAt` が現在より過去なのに `scheduledNextPlan` が NULL になって
+ * いない = `tenant-monthly-reset` cron の適用が失敗もしくは未実行で「予約は残っているが
+ * 反映されていない」状態。旧プランで課金が続いていれば過剰/過少請求に直結。
+ */
+export type ScheduledPlanChangeStalled = {
+  tenantId: string;
+  tenantName: string;
+  currentPlan: string;
+  scheduledNextPlan: string;
+  scheduledAt: Date;
+  /** scheduledAt から経過した時間 (時間) */
+  hoursSinceScheduled: number;
+};
+
+/**
+ * PR-V8.2 (2026-05-19): super_admin 数が単一障害点リスクに達している警告。
+ *
+ * - 0 人: alert メール送信先 0 (= `admin-alert.service.ts` の no_recipients warning と重複)
+ * - 1 人: そのユーザが退職・lock すると alert 機構が即無音化する単一障害点
+ *
+ * 2 人以上が冗長性確保。
+ */
+export type SuperAdminCountStatus = {
+  count: number;
+  isAtRisk: boolean;
+  /** 推奨: 2 人以上、警告閾値: 1 人以下 */
+  warningMessage: string | null;
+};
+
+/**
  * PR-V8.1 (2026-05-19) ★請求重要★: Stripe Usage Record 送信滞留 / DLQ。
  *
  * `StripeUsageRecordQueue` で `sentAt=null` のレコードは以下のいずれか:
@@ -114,6 +146,17 @@ export type DiagnosticsSummary = {
    * 0 件配列なら正常、1 件以上で「請求漏れ」リスクとして赤強調表示する。
    */
   stripeUsageQueueIssues: StripeUsageQueueIssue[];
+
+  /**
+   * PR-V8.2 (2026-05-19) ★請求重要★: プラン変更予約が過去日付で未適用のテナント。
+   * cron 失敗で旧プランのまま課金継続 = 過剰/過少請求リスク。
+   */
+  stalledPlanChanges: ScheduledPlanChangeStalled[];
+
+  /**
+   * PR-V8.2 (2026-05-19): super_admin 数の単一障害点警告 (0 or 1 人なら isAtRisk)。
+   */
+  superAdminCountStatus: SuperAdminCountStatus;
 };
 
 // ================================================================
@@ -139,6 +182,8 @@ export async function getDiagnosticsSummary(
     recentFailedEmails,
     alertNoRecipientWarnings,
     stripeUsageQueueIssues,
+    stalledPlanChanges,
+    superAdminCountStatus,
   ] = await Promise.all([
     reconcileAllTenantsApiUsage(now),
     checkAllCronHealth(now),
@@ -146,6 +191,8 @@ export async function getDiagnosticsSummary(
     getRecentFailedEmails(24, 50, now),
     listAlertNoRecipientWarnings(sevenDaysAgo),
     listStripeUsageQueueIssues(now),
+    listStalledPlanChanges(now),
+    checkSuperAdminCount(),
   ]);
 
   const driftedTenants = reconciles.filter((r) => r.hasDrift);
@@ -157,7 +204,9 @@ export async function getDiagnosticsSummary(
     + degradedTenants.length
     + (recentFailedEmails.length > 0 ? 1 : 0) // 失敗メールは 1 カテゴリ = 1 件カウント
     + alertNoRecipientWarnings.length
-    + (stripeIssueRowCount > 0 ? 1 : 0); // Stripe queue 滞留も 1 カテゴリ = 1 件カウント
+    + (stripeIssueRowCount > 0 ? 1 : 0) // Stripe queue 滞留も 1 カテゴリ = 1 件カウント
+    + stalledPlanChanges.length
+    + (superAdminCountStatus.isAtRisk ? 1 : 0);
 
   return {
     measuredAt: now,
@@ -168,7 +217,76 @@ export async function getDiagnosticsSummary(
     recentFailedEmails,
     alertNoRecipientWarnings,
     stripeUsageQueueIssues,
+    stalledPlanChanges,
+    superAdminCountStatus,
   };
+}
+
+/**
+ * PR-V8.2 (2026-05-19): プラン変更予約の過去日付滞留検知。
+ *
+ * `tenant-monthly-reset` cron の `applyScheduledPlanChanges` が失敗 or skip した場合、
+ * `scheduledPlanChangeAt < now()` AND `scheduledNextPlan IS NOT NULL` のレコードが滞留。
+ * 旧プランで課金継続 = 過剰/過少請求リスクのため診断ダッシュボードで可視化。
+ */
+export async function listStalledPlanChanges(
+  now: Date = new Date(),
+): Promise<ScheduledPlanChangeStalled[]> {
+  const rows = await prisma.tenant.findMany({
+    where: {
+      deletedAt: null,
+      scheduledPlanChangeAt: { lt: now, not: null },
+      scheduledNextPlan: { not: null },
+    },
+    select: {
+      id: true,
+      name: true,
+      plan: true,
+      scheduledPlanChangeAt: true,
+      scheduledNextPlan: true,
+    },
+  });
+  return rows
+    .filter(
+      (r): r is typeof r & { scheduledPlanChangeAt: Date; scheduledNextPlan: string } =>
+        r.scheduledPlanChangeAt != null && r.scheduledNextPlan != null,
+    )
+    .map((r) => ({
+      tenantId: r.id,
+      tenantName: r.name,
+      currentPlan: r.plan,
+      scheduledNextPlan: r.scheduledNextPlan,
+      scheduledAt: r.scheduledPlanChangeAt,
+      hoursSinceScheduled:
+        (now.getTime() - r.scheduledPlanChangeAt.getTime()) / (60 * 60 * 1000),
+    }));
+}
+
+/**
+ * PR-V8.2 (2026-05-19): super_admin 数の単一障害点警告。
+ * 0 人 / 1 人で警告。alert 機構の冗長性確保のため 2 人以上を推奨。
+ */
+export async function checkSuperAdminCount(): Promise<SuperAdminCountStatus> {
+  const count = await prisma.user.count({
+    where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+  });
+  if (count === 0) {
+    return {
+      count,
+      isAtRisk: true,
+      warningMessage:
+        'super_admin user が 0 人です。alert メール送信不能 + 緊急時の修復操作が誰もできません。即座に super_admin を作成してください。',
+    };
+  }
+  if (count === 1) {
+    return {
+      count,
+      isAtRisk: true,
+      warningMessage:
+        'super_admin user が 1 人のみです (単一障害点)。退職 / アカウント lock / 端末紛失等で alert 機構が無音化するリスクがあります。冗長化のため 2 人以上の登録を推奨します。',
+    };
+  }
+  return { count, isAtRisk: false, warningMessage: null };
 }
 
 /**

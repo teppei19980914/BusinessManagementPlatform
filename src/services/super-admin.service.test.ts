@@ -49,7 +49,13 @@ vi.mock('@/lib/db', () => ({
     attachment: { updateMany: vi.fn(), deleteMany: vi.fn() },
     auditLog: { create: vi.fn() },
     // 2026-05-09 (PR E / #12 #14): Voyage / Anthropic 集計で使用
-    apiCallLog: { aggregate: vi.fn() },
+    // PR-V8.2 (2026-05-19): deleteTenant / getCrossTenantUsageSummary も呼ぶように変更。
+    //   default を「ApiCallLog 0 件」にしておき、個別 test で mockResolvedValueOnce で上書き可能。
+    apiCallLog: {
+      aggregate: vi.fn(() =>
+        Promise.resolve({ _count: { _all: 0 }, _sum: { costJpy: null } }),
+      ),
+    },
     // 2026-05-09 (PR F / #18): purgeOldDeletedTenants で参照する追加テーブル
     mention: { deleteMany: vi.fn() },
     knowledgeProject: { deleteMany: vi.fn() },
@@ -566,8 +572,14 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
   // ================================================================
   // 2026-05-14: 月途中解約スナップショット
   // ================================================================
-  it('解約時に当月分の tenant_monthly_usage_history を upsert (= 月途中解約の請求漏れ防止)', async () => {
+  it('★PR-V8.2★ 解約時に当月分の tenant_monthly_usage_history を ApiCallLog SUM (真値) で upsert', async () => {
     setupHappyPathMocks();
+    // ★ PR-V8.2: 解約時 snapshot は ApiCallLog SUM (真値) ベース。counter 250/2500 ではなく
+    //   ApiCallLog の集計値 (= mock で返した値) が snapshot に書かれることを検証。
+    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
+      _count: { _all: 250 },
+      _sum: { costJpy: 2500 },
+    } as never);
 
     // 解約時刻: 2026-05-20 03:00 UTC = JST 2026-05-20 12:00
     vi.useFakeTimers();
@@ -584,8 +596,8 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
           create: expect.objectContaining({
             tenantId: TENANT_ID,
             yearMonth: '2026-05',
-            apiCallCount: 250,
-            apiCostJpy: 2500,
+            apiCallCount: 250, // ★ SUM 真値
+            apiCostJpy: 2500, // ★ SUM 真値
             plan: 'expert',
             activeUserCount: 3,
             storageAddonPlan: 'standard',

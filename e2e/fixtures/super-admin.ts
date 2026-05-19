@@ -73,6 +73,22 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   const superAdminPassword = process.env.E2E_SUPER_ADMIN_PASSWORD ?? `E2eSuper!Pw_${runId}`;
   const passwordHash = await hash(superAdminPassword, BCRYPT_COST);
 
+  // PR-V8.2 (2026-05-19) ★fixture 自己完結化★: 管理テナント (MANAGEMENT_TENANT_ID) を保証する。
+  //   E2E は通常 `pnpm db:seed` で管理テナントが seed されている前提だが、CI で並列実行する
+  //   別 spec の cleanup 失敗 / DB reset タイミング / seed 未完了で MANAGEMENT_TENANT_ID 行が
+  //   存在しない瞬間があり、本 fixture の super_admin user INSERT が users_tenant_id_fkey で
+  //   FK 違反になる事象が発生 (CI run 26093793392)。
+  //   fixture は外部状態 (seed) に依存しないよう自己完結させるべき (= KDD §5.X+81)。
+  //   ON CONFLICT で既存行があれば no-op、なければ INSERT する idempotent な seed。
+  await pool.query(
+    `INSERT INTO tenants (
+       id, slug, name, plan, payment_method, created_at, updated_at
+     )
+     VALUES ($1, 'mgmt', 'Knowledge Relay Platform', 'pro', 'invoice', NOW(), NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [MANAGEMENT_TENANT_ID],
+  );
+
   // 1. super_admin user (管理テナント所属、forcePasswordChange=false)
   const superAdminRes = await pool.query<{ id: string }>(
     `INSERT INTO users (
