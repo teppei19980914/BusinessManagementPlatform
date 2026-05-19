@@ -189,6 +189,79 @@ export async function detectAndAlertOverdueInvoices(
 }
 
 // ============================================================
+// §B-5 (PR-V8.4 / 2026-05-19): 診断ダッシュボード anomalies の日次 push 通知
+// ============================================================
+
+export type DiagnosticsAnomaliesAlertResult = {
+  /** 検知された全異常件数 (= getDiagnosticsSummary.totalAnomalies) */
+  totalAnomalies: number;
+  /** カテゴリ別件数 (= subject / body の数字源) */
+  categoryBreakdown: Record<string, number>;
+  /** alert メール送信したか (= totalAnomalies > 0 で true) */
+  alertSent: boolean;
+  recipientsCount: number;
+};
+
+/**
+ * 診断ダッシュボード anomalies を集約し、1 件以上あれば super_admin にメール通知。
+ *
+ * 設計判断:
+ *   - **ダッシュボード未閲覧期間の無音対策**: super_admin がダッシュボードを開かない期間も
+ *     重要事象 (API drift / Stripe queue 滞留 / 計算ミス等) に気付けるよう push 通知。
+ *   - **日次 1 回**: 同日内の重複検知は同一メールに集約 (= inbox 爆破防止)。
+ *   - **0 件なら送信せず**: 健全な日は通知ノイズを出さない設計。
+ *
+ * cron での実行を想定。subject に件数、body にカテゴリ別件数と詳細リンクを含める。
+ */
+export async function detectAndAlertDiagnosticsAnomalies(
+  now: Date = new Date(),
+): Promise<DiagnosticsAnomaliesAlertResult> {
+  // 循環 import 回避のため動的 import (diagnostics.service → admin-alert.service の依存方向)
+  const { getDiagnosticsSummary } = await import('./diagnostics.service');
+  const summary = await getDiagnosticsSummary(now);
+
+  const stripeQueueRows = summary.stripeUsageQueueIssues.reduce((s, i) => s + i.count, 0);
+  const categoryBreakdown: Record<string, number> = {
+    'API 利用量 drift': summary.driftedTenants.length,
+    'cron 健全性異常': summary.cronHealth.filter((c) => c.isUnhealthy).length,
+    '縮退モード突入テナント': summary.degradedTenants.length,
+    'メール送信失敗 (24h)': summary.recentFailedEmails.length,
+    'alert 機構の空打ち (7d)': summary.alertNoRecipientWarnings.length,
+    'Stripe Usage Record 滞留 / DLQ': stripeQueueRows,
+    'プラン変更滞留': summary.stalledPlanChanges.length,
+    'super_admin 数 ≤1 警告': summary.superAdminCountStatus.isAtRisk ? 1 : 0,
+    '請求書計算ミス (BillingHistory)': summary.billingIntegrityIssues.length,
+  };
+
+  const result: DiagnosticsAnomaliesAlertResult = {
+    totalAnomalies: summary.totalAnomalies,
+    categoryBreakdown,
+    alertSent: false,
+    recipientsCount: 0,
+  };
+
+  if (summary.totalAnomalies === 0) return result;
+
+  const lines = Object.entries(categoryBreakdown)
+    .filter(([, count]) => count > 0)
+    .map(([cat, count]) => `- ${cat}: ${count} 件`);
+
+  const subject = `[たすきば] 診断ダッシュボード ${summary.totalAnomalies} 件の異常を検知`;
+  const body =
+    `診断ダッシュボードで以下の異常を検知しました。\n\n`
+    + `合計: ${summary.totalAnomalies} 件\n\n`
+    + `カテゴリ別:\n${lines.join('\n')}\n\n`
+    + `対応: super_admin → /admin/super/diagnostics で各セクションを確認、修復ボタン / 個別診断画面で原因究明と対応を実施してください。\n`
+    + `特に「請求書計算ミス」「API 利用量 drift」「Stripe Usage Record 滞留 / DLQ」は事業継続性 (= 過不足ゼロ請求) に直結するため最優先で対応してください。\n\n`
+    + `本メールは日次 cron で 1 度だけ送信されます (= 同日内の重複検知は本メールに集約)。`;
+
+  const { sentTo } = await sendSuperAdminAlert(subject, body);
+  result.alertSent = sentTo.length > 0;
+  result.recipientsCount = sentTo.length;
+  return result;
+}
+
+// ============================================================
 // §B-4: cron 失敗 alert
 // ============================================================
 

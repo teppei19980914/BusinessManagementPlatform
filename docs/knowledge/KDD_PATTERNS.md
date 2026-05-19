@@ -10518,3 +10518,50 @@ await pool.query(
 ### 関連
 - KDD §5.X+80 (= 同 PR 内の前 E2E fail = request_id NOT NULL 漏れ)
 - 元事故: CI run 26093793392 で `users_tenant_id_fkey` 違反 → 本修正で防御
+
+---
+
+## 5.X+81 **請求金額計算ロジック自体のバグは「保存値 vs 再計算値」突合でしか検知できない (2026-05-19 / PR #412 / PR-V8.4)**
+
+### 事象
+
+PR-V8.1〜V8.3 で「ApiCallLog SUM (真値) → 全画面表示 + CSV + 請求書根拠」の経路統一は完了したが、**`BillingHistory.totalAmountJpy` の計算ロジック自体** (= `amountJpy + taxAmountJpy` の単純和 / 消費税四捨五入 / 負値ガード) のバグは検知経路がなかった。
+
+例: `billing-aggregation` cron の改修で `taxAmountJpy` 計算式が誤って `Math.floor` (四捨五入ではなく切り捨て) になった場合、保存される `taxAmountJpy` は計算式通りで「内部的には整合」しているように見えるが、業務仕様 (= 四捨五入) に違反して **顧客から見て数円少なく徴収** されてしまう。
+
+### 根本原因
+
+- 不変条件 (invariant) `totalAmountJpy = amountJpy + taxAmountJpy` を **誰もチェックしていなかった**
+- 不変条件 `taxAmountJpy = Math.round(amountJpy * 0.10)` も同上
+- 「コードレビューで弾けば良い」では人為的な漏れに弱い
+
+### 教訓
+
+1. **「請求金額」のような金銭直結データは保存後にも不変条件チェックを実装する** (= 検知の二重化)
+2. **チェックロジックは「保存値」ではなく「再計算値」で行う** — 同じバグが計算と検知に潜むのを避ける (`amountJpy` と `taxAmountJpy` は **DB から SELECT した値**、それを基に **改めて `calculateTaxJpy()` を呼び直す**、その結果を保存値と比較)
+3. **直近 N ヶ月だけスキャン** — 全期間スキャンはコスト高、古い不整合は実害消滅済の可能性
+
+### 修正対応
+
+`src/services/billing-integrity.service.ts` 新設:
+- `detectBillingHistoryIntegrityIssues(monthsBack=6)`: 不変条件 4 種 (`total_mismatch` / `tax_mismatch` / `negative_amount` / `negative_total`) を走査
+- `status='canceled' / 'replaced_by_stripe'` は意図的不一致を許容するため対象外
+- 1 円差は `AMOUNT_RECONCILE_TOLERANCE_JPY` (= 1) で許容 (Stripe Tax 端数吸収用)
+
+診断ダッシュボード `/admin/super/diagnostics` に「請求書計算ロジック整合 ★請求最終防衛★」セクション追加。差分検出時は対応手順 (= `billing-aggregation` cron 再実行 or SQL 直接修正 + audit_log) をテキスト案内。
+
+加えて、ダッシュボード未閲覧期間の無音対策として **日次 cron `diagnostics-daily-alert`** (`admin-alert.service.ts:detectAndAlertDiagnosticsAnomalies`) を新設。`totalAnomalies > 0` で super_admin に push 通知。
+
+### 横展開
+
+「金銭直結データの不変条件チェック」棚卸し:
+- `StripeUsageRecordQueue.quantity = 1` 固定 → 違反検知の必要性検討
+- `Tenant.currentMonthApiCostJpy >= 0` → 既存 reconcile で間接カバー
+- `ApiCallLog.costJpy >= 0` → 同上
+
+将来的に「不変条件 DSL」を導入し、全 schema model に対して `CHECK 制約` (= DB レベル) を併用するのが理想。
+
+### 関連
+- KDD §5.X+79 (= 月次 snapshot を真値ベースに、請求 invariant チェーンの 1 つ)
+- memory: `feedback_billing_invariant.md` (★最重要★ 全経路で SUM = 真値)
+- PR-V8.4 (= 本件 + 日次 cron-push alert + Stripe UTC 月境界の docs 化)

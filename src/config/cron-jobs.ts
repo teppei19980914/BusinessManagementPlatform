@@ -134,6 +134,15 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
     endpoint: '/api/cron/cron-failure-alert',
     expectedMaxGapHours: 25,
   },
+  // PR-V8.4 (2026-05-19): 診断ダッシュボード anomalies の日次 push 通知
+  'diagnostics-daily-alert': {
+    description:
+      '診断ダッシュボードの 9 検知 (API drift / cron 健全性 / 縮退モード / メール失敗 / alert 空打ち / Stripe queue / plan 滞留 / super_admin 数 / 請求書計算ミス) を集約し、'
+      + ' 1 件以上あれば super_admin にメール通知。ダッシュボード未閲覧期間の無音対策。',
+    schedule: '日次 11:30 JST',
+    endpoint: '/api/cron/diagnostics-daily-alert',
+    expectedMaxGapHours: 25,
+  },
 } as const;
 
 /**

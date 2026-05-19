@@ -39,6 +39,11 @@ import {
   getRecentFailedEmails,
   type RecentFailedEmail,
 } from './email-send-log.service';
+// PR-V8.4 (2026-05-19) ★請求最終防衛★: BillingHistory 計算ミス検知
+import {
+  detectBillingHistoryIntegrityIssues,
+  type BillingIntegrityIssue,
+} from './billing-integrity.service';
 
 // ================================================================
 // 公開型
@@ -157,6 +162,14 @@ export type DiagnosticsSummary = {
    * PR-V8.2 (2026-05-19): super_admin 数の単一障害点警告 (0 or 1 人なら isAtRisk)。
    */
   superAdminCountStatus: SuperAdminCountStatus;
+
+  /**
+   * PR-V8.4 (2026-05-19) ★請求最終防衛★: BillingHistory 計算不整合。
+   * `totalAmountJpy = amountJpy + taxAmountJpy` の単純和違反 or 消費税計算ミス検知。
+   * 0 件配列なら正常、1 件以上で「請求金額計算ロジックバグ」として最優先対応。
+   * 直近 6 ヶ月の BillingHistory が走査対象。
+   */
+  billingIntegrityIssues: BillingIntegrityIssue[];
 };
 
 // ================================================================
@@ -184,6 +197,7 @@ export async function getDiagnosticsSummary(
     stripeUsageQueueIssues,
     stalledPlanChanges,
     superAdminCountStatus,
+    billingIntegrityIssues,
   ] = await Promise.all([
     reconcileAllTenantsApiUsage(now),
     checkAllCronHealth(now),
@@ -193,6 +207,8 @@ export async function getDiagnosticsSummary(
     listStripeUsageQueueIssues(now),
     listStalledPlanChanges(now),
     checkSuperAdminCount(),
+    // PR-V8.4: 直近 6 ヶ月の BillingHistory で計算ロジックの不変条件違反を検知
+    detectBillingHistoryIntegrityIssues(6, now),
   ]);
 
   const driftedTenants = reconciles.filter((r) => r.hasDrift);
@@ -206,7 +222,8 @@ export async function getDiagnosticsSummary(
     + alertNoRecipientWarnings.length
     + (stripeIssueRowCount > 0 ? 1 : 0) // Stripe queue 滞留も 1 カテゴリ = 1 件カウント
     + stalledPlanChanges.length
-    + (superAdminCountStatus.isAtRisk ? 1 : 0);
+    + (superAdminCountStatus.isAtRisk ? 1 : 0)
+    + billingIntegrityIssues.length; // PR-V8.4: 計算ミスは 1 行 = 1 件 (個別対応必須のため集約しない)
 
   return {
     measuredAt: now,
@@ -219,6 +236,7 @@ export async function getDiagnosticsSummary(
     stripeUsageQueueIssues,
     stalledPlanChanges,
     superAdminCountStatus,
+    billingIntegrityIssues,
   };
 }
 

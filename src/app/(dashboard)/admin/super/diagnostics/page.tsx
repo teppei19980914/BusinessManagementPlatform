@@ -218,6 +218,67 @@ export default async function DiagnosticsPage() {
         ))}
       </Section>
 
+      {/* ============ 3.5 ★請求最終防衛★ BillingHistory 計算整合 ============ */}
+      <Section
+        title="🧮 請求書計算ロジック整合 ★請求最終防衛★"
+        description="BillingHistory の `totalAmountJpy = amountJpy + taxAmountJpy` 単純和違反 / 消費税四捨五入計算違反 / 負値を検知。直近 6 ヶ月対象。これが発火したら請求金額計算ロジック自体のバグであり、再発防止と該当行の手動修復が最優先。"
+        count={summary.billingIntegrityIssues.length}
+        emptyMessage="✅ 直近 6 ヶ月の BillingHistory 全行で計算整合が保たれています (= totalAmountJpy = amountJpy + taxAmountJpy で消費税四捨五入も正常)。"
+      >
+        {summary.billingIntegrityIssues.map((issue) => (
+          <div
+            key={issue.billingHistoryId}
+            className="rounded border border-red-400 bg-red-50 p-4 dark:border-red-600 dark:bg-red-900/30"
+          >
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-base font-semibold text-red-900 dark:text-red-100">
+                  {issue.yearMonth} / {issue.paymentMethod} / {issue.status}
+                </div>
+                <div className="font-mono text-xs text-muted-foreground">
+                  tenantId={issue.tenantId} / billingHistoryId={issue.billingHistoryId}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {issue.issueKinds.map((k) => (
+                  <span
+                    key={k}
+                    className="rounded bg-red-200 px-2 py-0.5 text-xs font-semibold text-red-900 dark:bg-red-800 dark:text-red-100"
+                  >
+                    {k}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+              <Stat label="amount (税抜、保存値)" value={`¥${issue.storedAmountJpy.toLocaleString()}`} />
+              <Stat
+                label="tax (保存値)"
+                value={`¥${issue.storedTaxAmountJpy.toLocaleString()}`}
+                emphasis={issue.storedTaxAmountJpy !== issue.expectedTaxAmountJpy}
+              />
+              <Stat
+                label="tax (期待値=10% 四捨五入)"
+                value={`¥${issue.expectedTaxAmountJpy.toLocaleString()}`}
+              />
+              <Stat
+                label="total (保存値)"
+                value={`¥${issue.storedTotalAmountJpy.toLocaleString()}`}
+                emphasis={issue.storedTotalAmountJpy !== issue.expectedTotalAmountJpy}
+              />
+              <Stat
+                label="total (期待値=amount+tax)"
+                value={`¥${issue.expectedTotalAmountJpy.toLocaleString()}`}
+              />
+            </dl>
+            <div className="mt-2 text-xs text-muted-foreground">
+              対応: <code>billing-aggregation</code> cron を該当月で再実行するか、Supabase で
+              該当 BillingHistory 行を SQL で直接修正 + audit_log に記録。
+            </div>
+          </div>
+        ))}
+      </Section>
+
       {/* ============ 4. ★請求重要★ Stripe Usage Record 送信滞留 / DLQ ============ */}
       <Section
         title="💸 Stripe Usage Record 送信滞留 / DLQ ★請求重要★"
