@@ -19,6 +19,10 @@
 
 import { prisma } from '@/lib/db';
 import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
+// PR-V7 #1 (2026-05-19): credit_card 払いテナント解約時に Stripe Subscription を停止し
+//   Storage add-on 等の固定費が永続引落されるのを防ぐため。
+import { isStripeEnabled } from '@/lib/stripe';
+import { cancelTenantStripeSubscription } from './stripe-billing.service';
 
 /**
  * super_admin ダッシュボードの **顧客集計** (=請求対象テナントの合算) から除外するテナント。
@@ -1192,6 +1196,38 @@ export async function deleteTenant(
     }),
   ]);
 
+  // PR-V7 #1 (2026-05-19): Stripe Subscription キャンセル (= credit_card 払いテナントの引落停止)
+  //
+  // 設計判断:
+  //   - **DB 削除 transaction の外側で実行**: Stripe API 失敗で DB 削除を巻き戻すと整合性問題が悪化する
+  //     ため、DB 削除を最優先で確定 (= ユーザ可視の解約は完了) → Stripe API を best-effort で呼ぶ
+  //   - **失敗時も throw しない**: 解約 API 全体としては成功扱いにし、Stripe 失敗は auditLog で残す
+  //     (super_admin が auditLog 監視 + 必要なら Stripe Dashboard 手動キャンセル)
+  //   - **isStripeEnabled() 早期 return**: 環境設定不備 / MVP 期間中の安全策
+  //   - **MANAGEMENT_TENANT は最初の guard で reject 済**なのでここまで来ない
+  if (isStripeEnabled()) {
+    const cancelResult = await cancelTenantStripeSubscription(tenantId);
+    if (!cancelResult.ok) {
+      // Stripe API 失敗を auditLog に記録 (= super_admin 監査参照用)
+      await prisma.auditLog.create({
+        data: {
+          tenantId,
+          userId: performerId,
+          action: 'DELETE',
+          entityType: 'tenant',
+          entityId: tenantId,
+          afterValue: {
+            stripeCancelFailed: true,
+            errorCode: cancelResult.code,
+            errorMessage: cancelResult.userMessage,
+            severity: 'requires_manual_action',
+            action: 'tenant_deleted_but_stripe_subscription_still_active',
+          },
+        },
+      });
+    }
+  }
+
   return {
     tenantId,
     deletedCounts: {
@@ -1717,6 +1753,32 @@ export async function purgeExpiredBeginnerTenants(
           data: { deletedAt: now, isActive: false },
         }),
       ]);
+
+      // PR-V7 横展開 (2026-05-19): #1 と同じく Stripe Subscription 自動キャンセル。
+      //   Beginner ダウングレード禁止のため通常は credit_card 持ちの Beginner は存在しないが、
+      //   旧データ / 手動操作で生じた場合の defense in depth として cancel を試みる。
+      //   helper は `no_subscription` を no-op で返すので呼出コストは無害。
+      if (isStripeEnabled()) {
+        const cancelResult = await cancelTenantStripeSubscription(t.id);
+        if (!cancelResult.ok) {
+          await prisma.auditLog.create({
+            data: {
+              tenantId: t.id,
+              userId: t.id, // cron 実行 (system 相当)、entityId と同じ
+              action: 'DELETE',
+              entityType: 'tenant',
+              entityId: t.id,
+              afterValue: {
+                stripeCancelFailed: true,
+                errorCode: cancelResult.code,
+                errorMessage: cancelResult.userMessage,
+                severity: 'requires_manual_action',
+                action: 'beginner_auto_purge_stripe_cancel_failed',
+              },
+            },
+          });
+        }
+      }
 
       const subTotal =
         mentions.count +

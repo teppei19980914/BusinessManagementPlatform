@@ -40,8 +40,12 @@ import {
   type BeginnerExpiryState,
 } from './beginner-expiry.service';
 // PR-S3 (2026-05-14): Stripe 連携 — プラン変更時のカード検証
+// PR-V7 #3 (2026-05-19): credit_card → invoice 戻し時の Stripe Subscription キャンセル
 import { isStripeEnabled } from '@/lib/stripe';
-import { verifyTenantCard } from './stripe-billing.service';
+import {
+  verifyTenantCard,
+  cancelTenantStripeSubscription,
+} from './stripe-billing.service';
 
 // 2026-05-14: PLAN_ORDER / isUpgrade / getTenantNextMonthStart は撤去。
 //   全プラン変更を即時反映に統一したため、アップグレード/ダウングレードを区別する必要が
@@ -227,6 +231,13 @@ export type UpdateBillingContactInput = {
  * 2026-05-09 (PR C / #5): billingType='individual' に切替時は会社名を自動 null クリアする
  *   (UI で会社名フィールドが非表示になるが過去入力データを残さないようサーバ側でも保証)。
  *
+ * **PR-V7 #3 (2026-05-19): credit_card → invoice 戻し時の Stripe Subscription キャンセル**
+ *   仕様: docs/specification/STRIPE_PAYMENT_UI.md §2.3 + STRIPE_BILLING.md §C-1
+ *   credit_card 払いから invoice 戻しを行うと、Stripe Subscription はそのまま active のままだと
+ *   Storage add-on の固定費が二重に引落される (Stripe 引落 + 運営手動 invoice)。これを防ぐため、
+ *   paymentMethod 遷移 credit_card → invoice を検出したら Stripe Subscription を即時キャンセル。
+ *   キャンセル失敗時は auditLog に記録し super_admin に運用対応を促す。
+ *
  * 設計判断: updateTenantSelf (プラン変更) と分離。プラン変更ロジックは複雑 (即時/翌月予約) で、
  * 請求先情報の単純な update と一緒にすると条件分岐が散漫になるため、別関数化。
  */
@@ -257,10 +268,54 @@ export async function updateBillingContact(
 
   if (Object.keys(data).length === 0) return; // 何も指定がなければ noop
 
+  // PR-V7 #3: paymentMethod 遷移 (credit_card → invoice) を事前検知するため現在値を取得
+  let stripeCancelNeeded = false;
+  if (input.paymentMethod !== undefined && input.paymentMethod !== 'credit_card') {
+    const current = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { paymentMethod: true, stripeSubscriptionId: true },
+    });
+    if (
+      current?.paymentMethod === 'credit_card' &&
+      current.stripeSubscriptionId != null
+    ) {
+      stripeCancelNeeded = true;
+    }
+  }
+
   await prisma.tenant.update({
     where: { id: tenantId },
     data,
   });
+
+  // PR-V7 #3: DB 更新成功後に Stripe Subscription をキャンセル (= best-effort)
+  //   失敗時は auditLog に記録 → super_admin が Stripe Dashboard で手動対応する運用
+  if (stripeCancelNeeded && isStripeEnabled()) {
+    const result = await cancelTenantStripeSubscription(tenantId);
+    if (!result.ok) {
+      await prisma.auditLog.create({
+        data: {
+          tenantId,
+          // updateBillingContact は呼出側 user 情報を持たないため、エンティティとしての操作主体不明。
+          //   API route 経由なので呼出 user は存在するが本 service は user 引数を取らない設計。
+          //   audit log 用に system user 相当の UUID をフォールバック ('00000000-...' ではなく
+          //   呼出側 route で audit を残すべきだが、ここでも 1 件残して二重防御)。
+          userId: tenantId, // entity 主体相当、tenantId を流用
+          action: 'UPDATE',
+          entityType: 'tenant',
+          entityId: tenantId,
+          afterValue: {
+            stripeCancelFailed: true,
+            transition: 'credit_card_to_invoice',
+            errorCode: result.code,
+            errorMessage: result.userMessage,
+            severity: 'requires_manual_action',
+            action: 'paymentMethod_reverted_but_stripe_subscription_still_active',
+          },
+        },
+      });
+    }
+  }
 }
 
 export type UpdateTenantSelfInput = {

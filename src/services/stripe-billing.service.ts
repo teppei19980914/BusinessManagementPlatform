@@ -53,8 +53,10 @@ import {
 export async function createOrGetStripeCustomer(
   tenantId: string,
 ): Promise<StripeOperationResult<Stripe.Customer>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントへの Stripe Customer 作成を防ぐため
+  //   findUnique → findFirst + deletedAt: null フィルタ。auth 経路では到達しない想定だが defense in depth。
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: {
       id: true,
       name: true,
@@ -213,8 +215,9 @@ export async function completeStripeSetup(
   }
 
   // session.customer をテナントの stripeCustomerId と照合 (= 越境防止)
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): completeStripeSetup で削除済テナントの setup 完了処理を防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: {
       paymentMethod: true,
       stripeCustomerId: true,
@@ -349,8 +352,9 @@ export async function createCustomerPortalSession(
   tenantId: string,
   returnUrl: string,
 ): Promise<StripeOperationResult<Stripe.BillingPortal.Session>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントの Portal アクセスを防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: { stripeCustomerId: true },
   });
   if (tenant == null || tenant.stripeCustomerId == null) {
@@ -405,8 +409,9 @@ export type VerifyCardResult = {
 export async function verifyTenantCard(
   tenantId: string,
 ): Promise<StripeOperationResult<VerifyCardResult>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントへの SetupIntent を防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
     select: {
       stripeCustomerId: true,
       stripeDefaultPaymentMethodId: true,
@@ -564,8 +569,9 @@ export type SubscriptionCreationInput = {
 export async function createSubscriptionForTenant(
   input: SubscriptionCreationInput,
 ): Promise<StripeOperationResult<Stripe.Subscription>> {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: input.tenantId },
+  // PR-V7 横展開 (2026-05-19): 削除済テナントの Subscription 作成を防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: input.tenantId, deletedAt: null },
     select: { stripeCustomerId: true },
   });
   if (tenant == null || tenant.stripeCustomerId == null) {
@@ -655,6 +661,208 @@ export async function reportUsage(
       },
     ),
   );
+}
+
+// ============================================================
+// §7. Storage Add-on プラン変更 → Stripe Subscription Item sync (PR-V7 #2 / 2026-05-19)
+// ============================================================
+
+/**
+ * Storage add-on プラン変更を Stripe Subscription Item に反映する。
+ *
+ * 仕様: docs/business/STRIPE_BILLING.md §1 + storage-addon.ts ADDON_MONTHLY_JPY
+ *   - 'standard' (¥0) = Stripe Subscription Item なし
+ *   - 'plus' (¥500/月) = STRIPE_PRICE_STORAGE_PLUS の Item
+ *   - 'pro_storage' (¥1500/月) = STRIPE_PRICE_STORAGE_PRO の Item
+ *   - 'enterprise' (¥5000/月) = Stripe Item なし (= manual billing)
+ *
+ * 動作:
+ *   - 元 standard / enterprise + 新 plus/pro_storage → 新 Item を `subscriptionItems.create`
+ *   - 元 plus/pro_storage + 新 standard / enterprise → 既存 Item を `subscriptionItems.del`
+ *   - 元 plus + 新 pro_storage (または逆) → 既存 Item を `subscriptionItems.update` で price 差替
+ *   - 元 = 新 → no-op
+ *
+ * proration_behavior: 'none' (= Subscription 作成時の設定と整合、日割りなし)
+ *
+ * 副作用:
+ *   - tenant.stripeSubscriptionItemStorageId を新 Item ID で更新 (削除時は null)
+ *
+ * 呼出側ユースケース:
+ *   - updateStorageAddonPlan (= アップグレード即時反映)
+ *   - applyScheduledStorageChanges (= ダウングレード月初 cron 適用時)
+ */
+export async function syncStorageAddonToStripe(
+  tenantId: string,
+  fromPlan: string,
+  toPlan: string,
+): Promise<StripeOperationResult<{ action: 'noop' | 'created' | 'updated' | 'deleted'; itemId: string | null }>> {
+  // PR-V7 横展開 (2026-05-19): 削除済テナントへの Subscription Item 操作を防ぐ
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+    select: {
+      paymentMethod: true,
+      stripeSubscriptionId: true,
+      stripeSubscriptionItemStorageId: true,
+    },
+  });
+  if (tenant == null) {
+    return { ok: false, code: 'invalid_request', userMessage: 'テナントが見つかりません', detail: 'tenant_not_found' };
+  }
+  // credit_card 払いでない / Subscription 未登録 → no-op
+  if (tenant.paymentMethod !== 'credit_card' || tenant.stripeSubscriptionId == null) {
+    return { ok: true, value: { action: 'noop', itemId: tenant.stripeSubscriptionItemStorageId } };
+  }
+
+  const fromPriceId = getStoragePriceId(fromPlan);
+  const toPriceId = getStoragePriceId(toPlan);
+
+  // 両方とも Stripe 対象外 (= standard / enterprise) → no-op
+  if (fromPriceId == null && toPriceId == null) {
+    return { ok: true, value: { action: 'noop', itemId: null } };
+  }
+
+  const stripe = getStripe();
+  const idempotencyBase = `storage:${tenantId}:${fromPlan}_to_${toPlan}`;
+
+  // Case A: 新規 Item 作成 (= 元 standard/enterprise → 新 plus/pro_storage)
+  if (fromPriceId == null && toPriceId != null) {
+    const result = await withStripeError(() =>
+      stripe.subscriptionItems.create(
+        {
+          subscription: tenant.stripeSubscriptionId!,
+          price: toPriceId,
+          proration_behavior: 'none',
+        },
+        { idempotencyKey: `${idempotencyBase}:create` },
+      ),
+    );
+    if (!result.ok) return result;
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: { stripeSubscriptionItemStorageId: result.value.id },
+    });
+    return { ok: true, value: { action: 'created', itemId: result.value.id } };
+  }
+
+  // Case B: 既存 Item 削除 (= 元 plus/pro_storage → 新 standard/enterprise)
+  if (fromPriceId != null && toPriceId == null) {
+    if (tenant.stripeSubscriptionItemStorageId == null) {
+      // DB と Stripe の状態不整合: 元 plus/pro なのに ItemId が null。no-op + 警告 (= 既に削除済の想定)
+      return { ok: true, value: { action: 'noop', itemId: null } };
+    }
+    const result = await withStripeError(() =>
+      stripe.subscriptionItems.del(tenant.stripeSubscriptionItemStorageId!, {
+        proration_behavior: 'none',
+      }),
+    );
+    if (!result.ok) return result;
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: { stripeSubscriptionItemStorageId: null },
+    });
+    return { ok: true, value: { action: 'deleted', itemId: null } };
+  }
+
+  // Case C: 既存 Item の price 変更 (= plus ↔ pro_storage)
+  if (fromPriceId != null && toPriceId != null && fromPriceId !== toPriceId) {
+    if (tenant.stripeSubscriptionItemStorageId == null) {
+      // DB 不整合: ItemId なし + plan は plus/pro_storage → 新規 create にフォールバック
+      const result = await withStripeError(() =>
+        stripe.subscriptionItems.create(
+          {
+            subscription: tenant.stripeSubscriptionId!,
+            price: toPriceId,
+            proration_behavior: 'none',
+          },
+          { idempotencyKey: `${idempotencyBase}:fallback_create` },
+        ),
+      );
+      if (!result.ok) return result;
+      await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { stripeSubscriptionItemStorageId: result.value.id },
+      });
+      return { ok: true, value: { action: 'created', itemId: result.value.id } };
+    }
+    const result = await withStripeError(() =>
+      stripe.subscriptionItems.update(tenant.stripeSubscriptionItemStorageId!, {
+        price: toPriceId,
+        proration_behavior: 'none',
+      }),
+    );
+    if (!result.ok) return result;
+    return {
+      ok: true,
+      value: { action: 'updated', itemId: tenant.stripeSubscriptionItemStorageId },
+    };
+  }
+
+  // fromPriceId === toPriceId (= 同一 Price ID) → no-op
+  return { ok: true, value: { action: 'noop', itemId: tenant.stripeSubscriptionItemStorageId } };
+}
+
+// ============================================================
+// §8. Subscription キャンセル (PR-V7 #1 / #3 / 2026-05-19)
+// ============================================================
+
+/**
+ * テナントの Stripe Subscription をキャンセル (= 自動引落停止)。
+ *
+ * 呼出側のユースケース:
+ *   - #1 テナント解約 (`deleteTenant`): credit_card 払い顧客の解約時に引落を止めないと
+ *     Storage add-on 等の固定費が永続的に引き落とされ続けクレーム不可避
+ *   - #3 credit_card → invoice 戻し: 月途中で paymentMethod を invoice に戻した時、
+ *     Stripe Subscription を残すと当月の Stripe Invoice と運営手動 invoice の二重請求になる
+ *
+ * 設計判断:
+ *   - `invoice_now: true` で **未請求の Usage を最終 Invoice 化** (= revenue loss 防止)
+ *   - `prorate: false` で日割り計算なし (= proration_behavior と整合、Subscription 作成時の設定継続)
+ *   - 失敗時も throw せず Result 型で返却 (= 呼出側が成否を判断、テナント解約は失敗してもDB側は完了させる)
+ *   - 既に canceled の場合 (= Webhook 経由で既に canceled に倒れている) は invalid_request だが
+ *     呼出側で「キャンセル不要」として扱える
+ *
+ * @returns
+ *   `{ ok: true }`: キャンセル成功または「キャンセル不要」(= subscriptionId なし / 既 canceled)
+ *   `{ ok: false }`: Stripe API 失敗 (= 呼出側で auditLog + super_admin 通知すべき)
+ */
+export async function cancelTenantStripeSubscription(
+  tenantId: string,
+): Promise<StripeOperationResult<{ canceled: boolean; reason?: string }>> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { stripeSubscriptionId: true, stripeSubscriptionStatus: true, paymentMethod: true },
+  });
+  if (tenant == null) {
+    return { ok: true, value: { canceled: false, reason: 'tenant_not_found' } };
+  }
+  // Subscription が無ければキャンセル不要 (= 元から invoice 払い等)
+  if (tenant.stripeSubscriptionId == null) {
+    return { ok: true, value: { canceled: false, reason: 'no_subscription' } };
+  }
+  // 既に canceled なら何もしない (= Webhook 経由で先に倒れている可能性)
+  if (tenant.stripeSubscriptionStatus === 'canceled') {
+    return { ok: true, value: { canceled: false, reason: 'already_canceled' } };
+  }
+
+  const stripe = getStripe();
+  const result = await withStripeError(() =>
+    stripe.subscriptions.cancel(tenant.stripeSubscriptionId!, {
+      invoice_now: true, // 未請求の Usage を最終 Invoice 化
+      prorate: false,
+    }),
+  );
+
+  if (!result.ok) {
+    // 既に canceled だった場合 (= invalid_request) は成功扱い
+    if (result.code === 'invalid_request' && /canceled|no such subscription/i.test(result.detail)) {
+      return { ok: true, value: { canceled: false, reason: 'already_canceled_stripe_side' } };
+    }
+    return result;
+  }
+
+  // DB は Webhook 経由 (= customer.subscription.deleted) で stripeSubscriptionStatus='canceled' に倒れるが、
+  // Webhook 遅延を防ぐため呼出側で即時更新するなら個別に行う (= 本関数は Stripe API 呼出のみに責務集中)
+  return { ok: true, value: { canceled: true } };
 }
 
 // ============================================================

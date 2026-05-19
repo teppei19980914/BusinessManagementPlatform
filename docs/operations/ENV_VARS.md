@@ -175,3 +175,31 @@ APP_DEFAULT_LOCALE=en-US
 
 ---
 
+### 1.10 super_admin 画面 Basic Auth (PR-V7 / 2026-05-19 / クレ協 1.1 対応)
+
+割賦販売法に基づくクレジット取引セキュリティ対策協議会 (クレ協) チェックリスト 1.1
+「管理者画面のアクセス制限」要件への対応。Stripe 申請時の必須セキュリティ対策。
+
+| 環境変数 | 既定値 | 用途 |
+|---|---|---|
+| `ADMIN_SUPER_BASIC_AUTH_USER` | (未設定) | `/admin/super/*` および `/api/admin/super/*` 配下に適用される Basic Auth のユーザ名。例: `admin` |
+| `ADMIN_SUPER_BASIC_AUTH_PASS` | (未設定) | 同 Basic Auth のパスワード。**32 文字以上推奨**。`openssl rand -base64 48` 等で生成 |
+
+**動作**:
+- 両方 set → Basic Auth 有効 (= super_admin 画面アクセス時にブラウザがプロンプト表示)
+- 両方 unset → Basic Auth 無効 (= 開発 / E2E モード、既存挙動維持)
+- 片方のみ set → fail-closed (= 設定ミス検知用に絶対通らない状態へ)
+
+**設計意図**:
+- 多層防御: Basic Auth (本層) + NextAuth セッション + super_admin role gate の 3 段
+- Edge runtime (middleware) で動作するため Node.js Buffer 不使用、Web 標準 `btoa` を使用
+- constant-time 比較でタイミング攻撃を防止
+
+**運用**:
+- 個人開発者は **Bitwarden 等のパスワードマネージャに保存** → ロケーション問わずアクセス可
+- 失念時は Netlify Dashboard で env 値を再生成 → 再デプロイで反映
+
+**実装**: [src/lib/basic-auth.ts](../../src/lib/basic-auth.ts) / [src/middleware.ts](../../src/middleware.ts)
+
+---
+

@@ -167,11 +167,12 @@ Netlify Scheduled Functions は使わず、**[cron-job.org](https://cron-job.org
 | `/api/cron/tenant-monthly-reset` | `0 0 1 * *` (月初 00:00) | 月次テナント請求リセット |
 | `/api/cron/stripe-usage-flush` | `0 5 * * *` (日次 05:00) | Stripe 利用量 flush |
 | `/api/cron/stripe-auto-suspend` | `0 4 * * *` (日次 04:00) | 滞納テナント自動 suspend |
+| `/api/cron/stripe-reconcile` | `0 6 1 * *` (月初 06:00) | Stripe ↔ DB 状態照合 (PR-V7 #5 / 2026-05-19) |
 
 ### 6.2 cron-job.org 設定手順
 
 1. <https://cron-job.org/en/signup/> でアカウント作成 (無料、cron 数無制限)
-2. 「Create cronjob」を 7 件作成、各々以下を設定:
+2. 「Create cronjob」を 8 件作成、各々以下を設定:
    - **URL**: `https://tasukiba.netlify.app/api/cron/xxx`
    - **Method**: POST (一部 GET、`/api/health` は GET)
    - **Headers**: `Authorization: Bearer $CRON_SECRET` を追加

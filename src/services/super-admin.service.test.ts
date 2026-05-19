@@ -66,6 +66,18 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
+// PR-V7 #1 (2026-05-19): deleteTenant が credit_card テナントの Stripe Subscription を停止するため、
+//   stripe lib と stripe-billing.service をモックする。default は STRIPE_ENABLED=false で no-op 動作。
+vi.mock('@/lib/stripe', () => ({
+  isStripeEnabled: vi.fn(() => false),
+}));
+
+const mockCancelTenantStripeSubscription = vi.fn();
+vi.mock('./stripe-billing.service', () => ({
+  cancelTenantStripeSubscription: (tenantId: string) =>
+    mockCancelTenantStripeSubscription(tenantId),
+}));
+
 import {
   listMonthlyUsageHistory,
   listDormantTenants,
@@ -453,6 +465,55 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
         }),
       }),
     );
+  });
+
+  // PR-V7 #1 (2026-05-19): Stripe Subscription キャンセル連動
+  it('STRIPE_ENABLED=false なら cancelTenantStripeSubscription を呼ばない (= 既存挙動維持)', async () => {
+    setupHappyPathMocks();
+    mockCancelTenantStripeSubscription.mockClear();
+
+    await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+    expect(mockCancelTenantStripeSubscription).not.toHaveBeenCalled();
+  });
+
+  it('STRIPE_ENABLED=true なら cancelTenantStripeSubscription を呼ぶ', async () => {
+    const stripeLib = await import('@/lib/stripe');
+    vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+    setupHappyPathMocks();
+    mockCancelTenantStripeSubscription.mockResolvedValueOnce({
+      ok: true,
+      value: { canceled: true },
+    });
+
+    await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+    expect(mockCancelTenantStripeSubscription).toHaveBeenCalledWith(TENANT_ID);
+  });
+
+  it('Stripe cancel 失敗時も deleteTenant は成功扱い + auditLog に Stripe 失敗が追加記録', async () => {
+    const stripeLib = await import('@/lib/stripe');
+    vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+    setupHappyPathMocks();
+    // 失敗 auditLog 用に追加 mock
+    vi.mocked(prisma.auditLog.create).mockResolvedValueOnce({} as never);
+    mockCancelTenantStripeSubscription.mockResolvedValueOnce({
+      ok: false,
+      code: 'connection',
+      userMessage: 'Stripe connection failed',
+    });
+
+    const result = await deleteTenant(TENANT_ID, PERFORMER_ID);
+
+    // 削除自体は成功 (= ユーザは解約完了体験)
+    expect(result.tenantId).toBe(TENANT_ID);
+    // Stripe 失敗 auditLog (= 1 件目 DELETE + 2 件目 Stripe 失敗 = 計 2 件 create 呼出)
+    expect(prisma.auditLog.create).toHaveBeenCalledTimes(2);
+    const secondCall = vi.mocked(prisma.auditLog.create).mock.calls[1]?.[0];
+    expect(secondCall?.data.afterValue).toMatchObject({
+      stripeCancelFailed: true,
+      severity: 'requires_manual_action',
+    });
   });
 
   it('管理テナント (MANAGEMENT_TENANT_ID) を削除しようとすると MANAGEMENT_TENANT_FORBIDDEN', async () => {

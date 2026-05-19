@@ -41,6 +41,12 @@
 import NextAuth from 'next-auth';
 import { authConfig } from '@/lib/auth.config';
 import { applyRateLimit } from '@/lib/rate-limit';
+// PR-V7 (2026-05-19): クレ協 1.1 対応の Basic Auth (super_admin 画面のアクセス制御)
+import {
+  verifyBasicAuth,
+  getAdminSuperBasicAuthConfig,
+  buildBasicAuthChallenge,
+} from '@/lib/basic-auth';
 
 const { auth } = NextAuth(authConfig);
 
@@ -51,6 +57,31 @@ const { auth } = NextAuth(authConfig);
 const LOGIN_RATE_LIMIT_DISABLED = process.env.DISABLE_LOGIN_RATE_LIMIT === 'true';
 
 export default auth((req) => {
+  // PR-V7 (2026-05-19): /admin/super/* + /api/admin/super/* への Basic Auth ガード
+  //
+  // 割賦販売法に基づくクレジット取引セキュリティ対策協議会 (クレ協) チェックリスト 1.1
+  // 「管理者画面のアクセス制限」要件への対応。super_admin はカード取引関連データ
+  // (BillingHistory / 売上集計 / Stripe DLQ 等) を参照できるため、パスワード認証に加えて
+  // ネットワークレベルでのアクセス制御 (= IP 制限 or Basic Auth) の実装が必須。
+  //
+  // 多層防御:
+  //   1. Basic Auth (本層、middleware で NextAuth より先に検証)
+  //   2. NextAuth セッション (= ログイン必須)
+  //   3. layout.tsx の isSuperAdmin チェック (= role gate)
+  //
+  // 環境変数 ADMIN_SUPER_BASIC_AUTH_USER / _PASS 両方 set で有効化。
+  // 未設定 (= 開発/E2E モード) はスキップ (= 既存テストへの影響ゼロ)。
+  const path = req.nextUrl.pathname;
+  if (path.startsWith('/admin/super') || path.startsWith('/api/admin/super')) {
+    const config = getAdminSuperBasicAuthConfig();
+    if (config.enabled) {
+      const authHeader = req.headers.get('authorization');
+      if (!verifyBasicAuth(authHeader, config.user, config.pass)) {
+        return buildBasicAuthChallenge('Super Admin Area');
+      }
+    }
+  }
+
   // login POST に対する IP 単位レート制限 (B-2 / PR #345)
   if (
     req.nextUrl.pathname === '/api/auth/callback/credentials'

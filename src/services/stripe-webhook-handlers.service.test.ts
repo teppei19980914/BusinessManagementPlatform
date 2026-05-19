@@ -151,7 +151,7 @@ describe('dispatchStripeWebhookEvent', () => {
   });
 
   it('customer.subscription.created を handleSubscriptionUpdated に dispatch する', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
     const event = {
       id: 'evt_sub_created',
@@ -170,7 +170,7 @@ describe('dispatchStripeWebhookEvent', () => {
 
 describe('handleSubscriptionUpdated', () => {
   it('status=past_due → autoSuspendScheduledAt が now+3日にセットされる', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
 
     const sub = buildSubscription({ status: 'past_due' });
@@ -190,7 +190,7 @@ describe('handleSubscriptionUpdated', () => {
   });
 
   it('status=active → autoSuspendScheduledAt が null にクリアされる', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
 
     const sub = buildSubscription({ status: 'active' });
@@ -201,7 +201,7 @@ describe('handleSubscriptionUpdated', () => {
   });
 
   it('status=active かつ payment_delinquent で suspend 中なら resumeTenant が呼ばれる', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       buildTenant({ suspendedAt: new Date(), suspendReason: 'payment_delinquent' }) as never,
     );
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
@@ -213,7 +213,7 @@ describe('handleSubscriptionUpdated', () => {
   });
 
   it('status=active でも別 reason (tos_violation) で suspend 中なら resumeTenant は呼ばれない', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       buildTenant({ suspendedAt: new Date(), suspendReason: 'tos_violation' }) as never,
     );
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
@@ -224,7 +224,6 @@ describe('handleSubscriptionUpdated', () => {
   });
 
   it('テナント未紐付け (metadata なし + customerId 不一致) → tenant_not_found を返す', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(null);
 
     const sub = buildSubscription({ metadata: {} });
@@ -232,6 +231,22 @@ describe('handleSubscriptionUpdated', () => {
 
     expect(result.action).toBe('tenant_not_found');
     expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  // PR-V7 (2026-05-19): #4 deletedAt フィルタ検証
+  it('論理削除済テナント (= findFirst が null 返却) には webhook を反映しない', async () => {
+    // 全 lookup (metadata.tenantId / stripeSubscriptionId / stripeCustomerId) で deletedAt: null
+    // フィルタにより null が返るので tenant_not_found 扱い
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(null);
+
+    const sub = buildSubscription({ status: 'past_due' });
+    const result = await handleSubscriptionUpdated(sub);
+
+    expect(result.action).toBe('tenant_not_found');
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+    // findFirst 呼出時に where に deletedAt: null が含まれることを検証
+    const firstCall = vi.mocked(prisma.tenant.findFirst).mock.calls[0]?.[0];
+    expect(firstCall?.where).toMatchObject({ deletedAt: null });
   });
 });
 
@@ -241,7 +256,7 @@ describe('handleSubscriptionUpdated', () => {
 
 describe('handleSubscriptionDeleted', () => {
   it('stripeSubscriptionStatus を canceled に更新する', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
 
     const result = await handleSubscriptionDeleted(buildSubscription({ status: 'canceled' }));
@@ -259,7 +274,7 @@ describe('handleSubscriptionDeleted', () => {
 
 describe('handleInvoiceCreatedOrFinalized', () => {
   it('BillingHistory を upsert する (新規作成側)', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
     vi.mocked(prisma.billingHistory.upsert).mockResolvedValue({} as never);
 
     const result = await handleInvoiceCreatedOrFinalized(buildInvoice({ status: 'open' }));
@@ -283,7 +298,7 @@ describe('handleInvoiceCreatedOrFinalized', () => {
 
 describe('handleInvoicePaid', () => {
   it('status=paid + paidAt をセットする', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
     vi.mocked(prisma.billingHistory.upsert).mockResolvedValue({} as never);
 
     const invoice = buildInvoice({
@@ -300,7 +315,7 @@ describe('handleInvoicePaid', () => {
   });
 
   it('payment_delinquent で suspend 中なら resumeTenant が呼ばれる', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       buildTenant({ suspendedAt: new Date(), suspendReason: 'payment_delinquent' }) as never,
     );
     vi.mocked(prisma.billingHistory.upsert).mockResolvedValue({} as never);
@@ -312,7 +327,7 @@ describe('handleInvoicePaid', () => {
   });
 
   it('resumeTenant が NOT_SUSPENDED でも throw しない (= 冪等性)', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       buildTenant({ suspendedAt: new Date(), suspendReason: 'payment_delinquent' }) as never,
     );
     vi.mocked(prisma.billingHistory.upsert).mockResolvedValue({} as never);
@@ -330,7 +345,7 @@ describe('handleInvoicePaid', () => {
 
 describe('handleInvoicePaymentFailed', () => {
   it('status=failed + retryCount=1 + failureReason を upsert.create で設定', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
     vi.mocked(prisma.billingHistory.upsert).mockResolvedValue({} as never);
 
     const invoice = buildInvoice({

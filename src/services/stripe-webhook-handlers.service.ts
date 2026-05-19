@@ -438,21 +438,25 @@ const TENANT_RESOLVE_SELECT = {
  *   1. subscription.metadata.tenantId (= 作成時に埋めている)
  *   2. tenant.stripeSubscriptionId == subscription.id
  *   3. tenant.stripeCustomerId == subscription.customer
+ *
+ * PR-V7 (2026-05-19): すべての検索条件に `deletedAt: null` を追加。
+ *   論理削除済テナントへの Webhook 配信 (= 解約直後の遅延 event 等) で削除済 DB が更新されるのを防ぐ。
+ *   削除済テナント宛て event は `tenant_not_found` (= 200 OK) として無害化される。
  */
 async function resolveTenantBySubscription(
   subscription: Stripe.Subscription,
 ): Promise<ResolvedTenant | null> {
   const metadataTenantId = subscription.metadata?.['tenantId'];
   if (metadataTenantId != null && metadataTenantId.length > 0) {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: metadataTenantId },
+    const tenant = await prisma.tenant.findFirst({
+      where: { id: metadataTenantId, deletedAt: null },
       select: TENANT_RESOLVE_SELECT,
     });
     if (tenant != null) return tenant;
   }
 
   const bySubId = await prisma.tenant.findFirst({
-    where: { stripeSubscriptionId: subscription.id },
+    where: { stripeSubscriptionId: subscription.id, deletedAt: null },
     select: TENANT_RESOLVE_SELECT,
   });
   if (bySubId != null) return bySubId;
@@ -461,7 +465,7 @@ async function resolveTenantBySubscription(
     ? subscription.customer
     : subscription.customer.id;
   return await prisma.tenant.findFirst({
-    where: { stripeCustomerId: customerId },
+    where: { stripeCustomerId: customerId, deletedAt: null },
     select: TENANT_RESOLVE_SELECT,
   });
 }
@@ -470,13 +474,15 @@ async function resolveTenantBySubscription(
  * Invoice からテナントを解決:
  *   1. invoice.subscription_details.metadata.tenantId
  *   2. tenant.stripeCustomerId == invoice.customer
+ *
+ * PR-V7 (2026-05-19): すべての検索条件に `deletedAt: null` を追加。理由は同上。
  */
 async function resolveTenantByInvoice(invoice: Stripe.Invoice): Promise<ResolvedTenant | null> {
   // Subscription 経由のメタデータ (= Stripe が subscription の metadata を invoice に転載)
   const metadataTenantId = invoice.subscription_details?.metadata?.['tenantId'];
   if (metadataTenantId != null && metadataTenantId.length > 0) {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: metadataTenantId },
+    const tenant = await prisma.tenant.findFirst({
+      where: { id: metadataTenantId, deletedAt: null },
       select: TENANT_RESOLVE_SELECT,
     });
     if (tenant != null) return tenant;
@@ -485,7 +491,7 @@ async function resolveTenantByInvoice(invoice: Stripe.Invoice): Promise<Resolved
   if (invoice.customer == null) return null;
   const customerId = typeof invoice.customer === 'string' ? invoice.customer : invoice.customer.id;
   return await prisma.tenant.findFirst({
-    where: { stripeCustomerId: customerId },
+    where: { stripeCustomerId: customerId, deletedAt: null },
     select: TENANT_RESOLVE_SELECT,
   });
 }
@@ -493,6 +499,8 @@ async function resolveTenantByInvoice(invoice: Stripe.Invoice): Promise<Resolved
 /**
  * PaymentMethod からテナントを解決:
  *   - pm.customer 経由でテナント逆引き (= 必ず Customer attached 後に発火する前提)
+ *
+ * PR-V7 (2026-05-19): 検索条件に `deletedAt: null` を追加。理由は同上。
  */
 async function resolveTenantByPaymentMethod(
   pm: Stripe.PaymentMethod,
@@ -500,7 +508,7 @@ async function resolveTenantByPaymentMethod(
   if (pm.customer == null) return null;
   const customerId = typeof pm.customer === 'string' ? pm.customer : pm.customer.id;
   return await prisma.tenant.findFirst({
-    where: { stripeCustomerId: customerId },
+    where: { stripeCustomerId: customerId, deletedAt: null },
     select: TENANT_RESOLVE_SELECT,
   });
 }

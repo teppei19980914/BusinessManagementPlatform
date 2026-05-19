@@ -19,12 +19,30 @@ vi.mock('@/lib/db', () => ({
     tenant: {
       findFirst: vi.fn(),
       findFirstOrThrow: vi.fn(),
+      findUnique: vi.fn(),
       update: vi.fn(),
     },
     user: {
       count: vi.fn(),
     },
+    // PR-V7 #3 (2026-05-19): credit_card → invoice 戻し時の Stripe 失敗 auditLog
+    auditLog: {
+      create: vi.fn(),
+    },
   },
+}));
+
+// PR-S3 (2026-05-14) / PR-V7 #3 (2026-05-19): Stripe lib + billing service モック
+vi.mock('@/lib/stripe', () => ({
+  isStripeEnabled: vi.fn(() => false),
+}));
+
+const mockVerifyTenantCard = vi.fn();
+const mockCancelTenantStripeSubscription = vi.fn();
+vi.mock('./stripe-billing.service', () => ({
+  verifyTenantCard: (tenantId: string) => mockVerifyTenantCard(tenantId),
+  cancelTenantStripeSubscription: (tenantId: string) =>
+    mockCancelTenantStripeSubscription(tenantId),
 }));
 
 import {
@@ -191,6 +209,94 @@ describe('updateBillingContact', () => {
     expect(prisma.tenant.update).toHaveBeenCalledWith({
       where: { id: TENANT_ID },
       data: { billingPhoneNumber: null },
+    });
+  });
+
+  // PR-V7 #3 (2026-05-19): credit_card → invoice revert で Stripe Subscription キャンセル
+  describe('PR-V7 #3: paymentMethod revert (credit_card → invoice)', () => {
+    it('STRIPE_ENABLED=false なら cancelTenantStripeSubscription を呼ばない (= 既存挙動維持)', async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        paymentMethod: 'credit_card',
+        stripeSubscriptionId: 'sub_xxx',
+      } as never);
+
+      await updateBillingContact(TENANT_ID, { paymentMethod: 'invoice' });
+
+      expect(prisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { paymentMethod: 'invoice' },
+      });
+      expect(mockCancelTenantStripeSubscription).not.toHaveBeenCalled();
+    });
+
+    it('STRIPE_ENABLED=true + credit_card → invoice + stripeSubscriptionId あり → Stripe cancel 呼出', async () => {
+      const stripeLib = await import('@/lib/stripe');
+      vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        paymentMethod: 'credit_card',
+        stripeSubscriptionId: 'sub_xxx',
+      } as never);
+      mockCancelTenantStripeSubscription.mockResolvedValueOnce({
+        ok: true,
+        value: { canceled: true },
+      });
+
+      await updateBillingContact(TENANT_ID, { paymentMethod: 'invoice' });
+
+      expect(mockCancelTenantStripeSubscription).toHaveBeenCalledWith(TENANT_ID);
+      // 失敗 auditLog は記録されない (= 成功時)
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('元から invoice (= 遷移なし) なら Stripe cancel を呼ばない', async () => {
+      const stripeLib = await import('@/lib/stripe');
+      vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        paymentMethod: 'invoice',
+        stripeSubscriptionId: null,
+      } as never);
+
+      await updateBillingContact(TENANT_ID, { paymentMethod: 'invoice' });
+
+      expect(mockCancelTenantStripeSubscription).not.toHaveBeenCalled();
+    });
+
+    it('credit_card で stripeSubscriptionId なし (= setup 失敗等) → cancel 不要', async () => {
+      const stripeLib = await import('@/lib/stripe');
+      vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        paymentMethod: 'credit_card',
+        stripeSubscriptionId: null,
+      } as never);
+
+      await updateBillingContact(TENANT_ID, { paymentMethod: 'invoice' });
+
+      expect(mockCancelTenantStripeSubscription).not.toHaveBeenCalled();
+    });
+
+    it('Stripe cancel 失敗時は auditLog に記録するが、DB 更新自体は成功扱い', async () => {
+      const stripeLib = await import('@/lib/stripe');
+      vi.mocked(stripeLib.isStripeEnabled).mockReturnValueOnce(true);
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        paymentMethod: 'credit_card',
+        stripeSubscriptionId: 'sub_xxx',
+      } as never);
+      mockCancelTenantStripeSubscription.mockResolvedValueOnce({
+        ok: false,
+        code: 'connection',
+        userMessage: 'Stripe 接続失敗',
+      });
+
+      await updateBillingContact(TENANT_ID, { paymentMethod: 'invoice' });
+
+      expect(prisma.tenant.update).toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalled();
+      const call = vi.mocked(prisma.auditLog.create).mock.calls[0]?.[0];
+      expect(call?.data.afterValue).toMatchObject({
+        stripeCancelFailed: true,
+        transition: 'credit_card_to_invoice',
+        severity: 'requires_manual_action',
+      });
     });
   });
 });
