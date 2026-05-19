@@ -69,6 +69,31 @@ build script は **CI と Netlify で分離**:
 Netlify ダッシュボード → Site configuration → Environment variables、または `netlify env:set` CLI で登録。
 全リストは [`docs/operations/ENV_VARS.md`](./ENV_VARS.md) を参照。
 
+### 2.0 ★必須★ DB 接続 URL は 2 つ設定する (Supabase 制約)
+
+PR #412 マージ後の deploy で `prisma migrate deploy` が `P1001: Can't reach database server at db.*.supabase.co:5432` で失敗する事象が発生。Supabase の **Direct connection (`db.[ref].supabase.co:5432`) は IPv6 のみ提供** で、Netlify build runner (IPv4 経由) から到達不能なため。詳細: [KDD §5.X+82](../knowledge/KDD_PATTERNS.md)
+
+以下の 2 つを **両方** 設定すること:
+
+| 環境変数 | 用途 | Supabase 連携元 | URL 形式 |
+|---|---|---|---|
+| `DATABASE_URL` | Application runtime (Netlify Functions の Prisma Client) | Database → Connection string → **Transaction (port 6543)** | `postgresql://postgres.[ref]:[PW]@aws-0-[region].pooler.supabase.com:6543/postgres` |
+| `DIRECT_URL` | `prisma migrate deploy` (build 時) | Database → Connection string → **Session (port 5432)** | `postgresql://postgres.[ref]:[PW]@aws-0-[region].pooler.supabase.com:5432/postgres` |
+
+両方とも `--secret` 扱いで Netlify env に登録する。`prisma.config.ts` が `DIRECT_URL || DATABASE_URL` の優先順で接続先を決定するため、`DIRECT_URL` が未設定だと `DATABASE_URL` を fallback で使用 → Transaction pooler は prepared statement 非対応で migrate が壊れる、または上記 Direct connection で IPv6 制約に当たる。
+
+```bash
+# Transaction pooler (= ランタイム用、prepared statement 自動回避)
+netlify env:set DATABASE_URL "postgresql://postgres.xxxxx:****@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres" --secret \
+  --context production --context deploy-preview --context branch-deploy
+
+# Session pooler (= migrate 用、prepared statement OK + IPv4 対応)
+netlify env:set DIRECT_URL "postgresql://postgres.xxxxx:****@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres" --secret \
+  --context production --context deploy-preview --context branch-deploy
+```
+
+> **既存設定の確認方法**: Netlify Dashboard → Site configuration → Environment variables で `DATABASE_URL` の値を表示。`db.[ref].supabase.co:5432` (Direct connection) を指している場合は **必ず Pooler URL に変更** すること。
+
 ### 2.1 Secret マーキング
 
 機密値 (DB パスワード / API キー / NEXTAUTH_SECRET / CRON_SECRET 等) は **Secret 扱い**で登録する:
