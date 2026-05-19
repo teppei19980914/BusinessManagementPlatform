@@ -50,6 +50,9 @@ export type EmailSendType =
   | 'beginner_warning_60'
   | 'beginner_warning_75'
   | 'beginner_expired'
+  | 'beginner_auto_delete_warning_150'
+  | 'beginner_auto_delete_warning_170'
+  | 'admin_alert'
   | 'unknown';
 
 export type EmailSendLogInput = {

@@ -10042,3 +10042,83 @@ DELETE FROM tenants WHERE id = ANY($1) CASCADE;
 
 E2E 全体の fixture cleanup を統一する基盤関数 (`e2e/fixtures/cleanup.ts` 等) を作る案が
 [docs/test/E2E_LESSONS.md](../../docs/test/E2E_LESSONS.md) で議論されているか確認 → 議論なしなら TODO 起票。
+
+---
+
+## 5.X+75 **Prisma schema 変更後の `prisma generate` 忘れで CI tsc が落ちる + 新 enum 値の MailParams.type 反映漏れ (2026-05-19 / PR #411)**
+
+### 発生背景
+
+PR #411 (= PR-V7a 請求業務横展開実装) で以下 2 つの種類の変更を加えた:
+
+1. **Schema 変更**: `BillingHistory` に 5 新規フィールド (paymentDueDate / overdueAlertSentAt / nextPaymentAttempt / confirmedBy / confirmedAt) を追加
+2. **新規 mail 種別**: `admin-alert.service.ts` から `provider.send({ type: 'admin_alert' })` で送信
+
+ローカルでは:
+- `pnpm test` (= vitest) は **通った** (= 2539/2539 pass)
+- `pnpm e2e:coverage-check` も通った
+- 私自身でも `pnpm tsc --noEmit` を実行したが、見た目「pre-existing errors のみ」で見落とした
+
+しかし **CI (GitHub Actions の Lint / Test / Build)** が失敗。原因 2 つ:
+
+#### 原因 A: Prisma 生成型が未更新
+
+```
+src/services/admin-alert.service.ts(123,11): error TS2353:
+  Object literal may only specify known properties, and 'overdueAlertSentAt'
+  does not exist in type 'BillingHistoryWhereInput'.
+```
+
+`src/generated/prisma/client.ts` が古いまま (= 5 月 19 日午前の schema 変更前のバージョン)。新規フィールドを参照するすべての `prisma.billingHistory.findMany` / `.update` / `.upsert` で TypeScript 型エラーが発生。
+
+**なぜローカルでは気付けなかったか**:
+- `pnpm test` (vitest) は **mock 経由** で Prisma を呼ぶため、generated 型の整合性をチェックしない
+- `pnpm tsc --noEmit` を実行すると本当はエラーが出るが、pre-existing errors (BigInt literal 等) が大量にあって紛れた
+- 私が `grep -v "BigInt"` で除外しなかったため見逃した
+
+#### 原因 B: `MailParams.type` union への新規値追加漏れ
+
+```
+src/services/admin-alert.service.ts(84,7): error TS2322:
+  Type '"admin_alert"' is not assignable to type
+  '"unknown" | "invitation" | ... | "beginner_auto_delete_warning_170" | undefined'.
+```
+
+`src/lib/mail/mail-provider.ts` の `MailParams.type` union literal は `'invitation' | 'password_reset' | ... | 'unknown'` で定義されている。`admin-alert.service.ts` で `type: 'admin_alert'` を渡したが、union に未追加だった。
+
+似たような型定義が `src/services/email-send-log.service.ts` の `EmailSendType` にもあり、こちらも更新漏れ (= 2 箇所同期が必要)。
+
+### 教訓
+
+1. **schema 変更時は必ず `pnpm prisma generate` を最初に実行**
+   - `prisma migrate dev` を使えば自動で generate されるが、migration SQL を手書きする場合は明示実行必須
+   - CI/CD は `pnpm build` 内の `prisma generate && next build` で都度生成するため CI では検知される
+   - ローカルでも tsc を信頼するには generate を先に走らせる必要あり
+
+2. **`pnpm tsc --noEmit` の出力は必ず grep 結果で「PR 関連の error 数」を確認**
+   - `grep -E "error TS" | grep -v "BigInt literals\|usage-monitoring.service.test\|user.service.test"` 等で pre-existing を除外して PR 由来の error 数を確認するワンライナーを使う
+
+3. **新規 mail 種別追加時は 2 箇所同期** (= 横展開チェック)
+   - `src/lib/mail/mail-provider.ts` の `MailParams.type` union
+   - `src/services/email-send-log.service.ts` の `EmailSendType`
+   - どちらか一方だけ更新すると CI で tsc が落ちる
+
+### 推奨対応
+
+#### 短期 (= 今回の PR で実施済)
+1. `pnpm prisma generate` を明示実行
+2. `MailParams.type` と `EmailSendType` 両方に `'admin_alert'` を追加
+3. `MailParams.html` (required) を満たすため、`admin-alert.service.ts` で `<pre>` ラップ HTML を生成
+
+#### 中長期
+- **pre-commit hook で `pnpm prisma generate` を schema 変更時に自動実行** する仕組み (husky + lint-staged 等) を検討
+- **`MailParams.type` と `EmailSendType` の type union を 1 箇所に集約** (= `src/config/mail-types.ts` 等) して同期漏れを物理的に防止する case を検討
+
+### 横展開
+
+- 他の生成型 (= Prisma 以外で `*.generated.*` 系がないか確認) → 該当なし
+- 似たような「union 型の 2 箇所同期」パターンがないか grep で確認推奨
+
+### 関連
+- PR #411 で発生・修正 (commit `5ea24a3` で `admin_alert` 導入 → CI fail → 本 commit で修正)
+- KDD §5.X+72 cron-execution-log (= 似た「ローカルでは出ない CI fail」事例) と併読推奨

@@ -76,10 +76,13 @@ export async function sendSuperAdminAlert(
   const provider = getMailProvider();
   const sentTo: string[] = [];
   const failures: string[] = [];
+  // alert は plain text 中心。html 必須のため text を <pre> でラップ (= 改行と等幅を維持)
+  const html = `<pre style="font-family:monospace;white-space:pre-wrap;">${escapeHtml(body)}</pre>`;
   for (const to of recipients) {
     const result = await provider.send({
       to,
       subject,
+      html,
       text: body,
       type: 'admin_alert',
     });
@@ -87,6 +90,15 @@ export async function sendSuperAdminAlert(
     else failures.push(to);
   }
   return { sentTo, failures };
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ============================================================
