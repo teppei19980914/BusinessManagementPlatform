@@ -36,6 +36,8 @@ import {
   withStripeError,
   type StripeOperationResult,
 } from '@/lib/stripe-error-handler';
+import { getTenantCurrentYearMonth } from '@/lib/tenant-time';
+import { markPendingInvoiceAsReplacedByStripe } from './billing-management.service';
 
 // ============================================================
 // §1. Stripe Customer の作成・取得
@@ -222,6 +224,8 @@ export async function completeStripeSetup(
       paymentMethod: true,
       stripeCustomerId: true,
       storageAddonPlan: true,
+      // PR-V7a (2026-05-19): 二重課金防止のため、テナント TZ で「現在の年月」を判定
+      timezone: true,
     },
   });
   if (tenant == null) {
@@ -307,6 +311,10 @@ export async function completeStripeSetup(
 
   // Step 5: paymentMethod 切替を確定 (Phase 4)
   //   Subscription Item ID を抽出して保存
+  //   PR-V7a (2026-05-19): 同一トランザクション内で「二重課金防止」も実施。
+  //     月途中で invoice → credit_card 切替時、テナント TZ 基準の「現在月」に
+  //     pending 状態の invoice/bank_transfer BillingHistory があれば
+  //     status='replaced_by_stripe' に更新 (= Stripe Subscription 側で同月分が請求される)。
   const prices = getStripePriceConfig();
   const haikuItem = subscription.items.data.find((i) => i.price.id === prices.haiku);
   const sonnetItem = subscription.items.data.find((i) => i.price.id === prices.sonnet);
@@ -314,16 +322,25 @@ export async function completeStripeSetup(
     (i) => i.price.id === prices.storagePlus || i.price.id === prices.storagePro,
   );
 
-  await prisma.tenant.update({
-    where: { id: tenantId },
-    data: {
-      stripeSubscriptionId: subscription.id,
-      stripeSubscriptionStatus: subscription.status,
-      stripeSubscriptionItemHaikuId: haikuItem?.id ?? null,
-      stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
-      stripeSubscriptionItemStorageId: storageItem?.id ?? null,
-      paymentMethod: 'credit_card',
-    },
+  const currentYearMonth = getTenantCurrentYearMonth(
+    new Date(),
+    tenant.timezone ?? 'Asia/Tokyo',
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.tenant.update({
+      where: { id: tenantId },
+      data: {
+        stripeSubscriptionId: subscription.id,
+        stripeSubscriptionStatus: subscription.status,
+        stripeSubscriptionItemHaikuId: haikuItem?.id ?? null,
+        stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
+        stripeSubscriptionItemStorageId: storageItem?.id ?? null,
+        paymentMethod: 'credit_card',
+      },
+    });
+    // PR-V7a (2026-05-19): 二重課金防止 (= billing-management.service の helper を経由)
+    await markPendingInvoiceAsReplacedByStripe(tx, tenantId, currentYearMonth);
   });
 
   return {

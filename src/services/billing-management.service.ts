@@ -12,9 +12,54 @@
 
 import { prisma } from '@/lib/db';
 
+/**
+ * Prisma の $transaction callback で渡される tx 型 (= billingHistory.updateMany を持つ最小限)。
+ * 完全な PrismaClient 型を引きずると tx と prisma の互換が壊れるため、必要な model だけ宣言。
+ */
+type BillingHistoryTx = {
+  billingHistory: {
+    updateMany: (args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) => Promise<{ count: number }>;
+  };
+};
+
 export type ConfirmInvoicePaymentResult =
   | { ok: true; id: string; paidAt: Date }
   | { ok: false; error: 'NOT_FOUND' | 'INVALID_PAYMENT_METHOD' | 'INVALID_STATUS' };
+
+/**
+ * 月途中で invoice → credit_card 切替時に、当月の pending 状態 invoice/bank_transfer 履歴を
+ * `replaced_by_stripe` に置き換える (PR-V7a / 監査 G-4 二重課金防止)。
+ *
+ * 使用想定:
+ *   - completeStripeSetup の Step 5 内で同一トランザクション内呼出 (= 整合性確保)
+ *   - 将来的に super_admin が手動で切替えるケースでも再利用可
+ *
+ * @param tx Prisma の transaction client (= 同一トランザクション内呼出を強制)
+ * @param tenantId 対象テナント
+ * @param currentYearMonth テナント TZ 基準の現在月 (= 'YYYY-MM')
+ * @returns 更新件数 (通常 0〜1、yearMonth UNIQUE 制約のため理論上 1 件まで)
+ */
+export async function markPendingInvoiceAsReplacedByStripe(
+  tx: BillingHistoryTx,
+  tenantId: string,
+  currentYearMonth: string,
+): Promise<number> {
+  const result = await tx.billingHistory.updateMany({
+    where: {
+      tenantId,
+      yearMonth: currentYearMonth,
+      paymentMethod: { in: ['invoice', 'bank_transfer'] },
+      status: 'pending',
+    },
+    data: {
+      status: 'replaced_by_stripe',
+    },
+  });
+  return result.count;
+}
 
 /**
  * 銀行振込 (invoice / bank_transfer) 請求書の入金確認を手動で実行する。

@@ -154,7 +154,20 @@ export default async function BillingDetailPage({
                   </td>
                   <td className="px-3 py-2 text-xs">
                     {r.failureReason ? (
-                      <code className="text-destructive">{r.failureReason}</code>
+                      <div className="space-y-0.5">
+                        <code className="text-destructive">{r.failureReason}</code>
+                        {/* PR-V7a (C-1): Smart Retries 次回試行日表示 */}
+                        {r.nextPaymentAttempt && r.status === 'failed' && (
+                          <div className="text-[10px] text-muted-foreground">
+                            次回リトライ: {formatDateTime(r.nextPaymentAttempt)}
+                          </div>
+                        )}
+                        {!r.nextPaymentAttempt && r.status === 'failed' && r.retryCount > 0 && (
+                          <div className="text-[10px] text-destructive">
+                            ⚠️ リトライ枯渇 (= past_due 確定)
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       '—'
                     )}
