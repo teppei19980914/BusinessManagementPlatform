@@ -354,7 +354,10 @@ Dashboard → **設定** → **Billing** → **サブスクリプションとメ
 ### 10.5 cron 動作確認
 - `/api/cron/stripe-usage-flush` (= 5 分間隔、Vercel Hobby 制約で日次に変更済)
 - `/api/cron/stripe-auto-suspend` (= 日次 05:00 UTC)
-- `/api/cron/stripe-reconcile` (= 月初 06:00 UTC、PR-V7 #5)
+- `/api/cron/stripe-reconcile` (= 月初 06:00 UTC、PR-V7 #5、Subscription + Amount 照合 PR-V7a B-2)
+- `/api/cron/billing-monthly-aggregation` (= 月初 2 日 00:00 UTC、PR-V7a B-1: invoice 月次集計)
+- `/api/cron/billing-overdue-alert` (= 日次 08:00 UTC、PR-V7a B-3: 期日超過督促)
+- `/api/cron/cron-failure-alert` (= 日次 09:00 UTC、PR-V7a B-4: cron 失敗集約通知)
 - cron-job.org で実行履歴を確認
 
 ---
@@ -399,5 +402,6 @@ Sandbox 動作確認 OK 後、Live mode で同じ設定を再構築:
 
 | 日付 | 変更 | PR |
 |---|---|---|
+| 2026-05-19 (PR-V7a) | 請求業務横展開実装に伴う運用追加: invoice 手動消込 UI / 月次集計 cron / 期日超過 alert / cron 失敗 alert / 金額照合 / CSV エクスポート / 顧客向け請求金額表示 | PR #411 |
 | 2026-05-19 | Sandbox 設定完了反映: 個人事業主対応 / Netlify 移行 / Meter UI 必須化 / Smart Retries 8回2週間/期限超過保持 / Customer Portal 12 項目 / Public business info / Stripe Tax スキップ | (docs PR) |
 | 2026-05-14 | 初版策定 (v1.x Stripe 連携仕様確定に伴う) | docs/stripe-integration-spec |
