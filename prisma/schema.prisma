@@ -1551,6 +1551,24 @@ model BillingHistory {
   failureReason   String?  @map("failure_reason") @db.VarChar(50)
   /// Smart Retries の試行回数 (credit_card のみ、0〜4)
   retryCount      Int      @default(0) @map("retry_count")
+  /// PR-V7a (2026-05-19): 銀行振込の支払期日 (= 翌月 25 日 JST 23:59:59)。
+  ///   credit_card の場合は null (= Stripe Smart Retries が管理)。
+  ///   src/config/billing.ts calculateInvoiceDueDate() で算出して保存。
+  paymentDueDate  DateTime? @map("payment_due_date") @db.Timestamptz
+  /// PR-V7a (2026-05-19): 期日超過 alert を super_admin に最後に送信した日時。
+  ///   毎日 cron で「dueDate + OVERDUE_ALERT_THRESHOLD_DAYS 超過 AND status='pending'」を検知、
+  ///   このフィールドが 24h 以内ならスキップ (= dedup)。
+  overdueAlertSentAt DateTime? @map("overdue_alert_sent_at") @db.Timestamptz
+  /// PR-V7a (2026-05-19): credit_card Smart Retries の次回試行予定時刻。
+  ///   invoice.payment_failed Webhook の invoice.next_payment_attempt をそのまま保存。
+  ///   super_admin の billing 詳細画面で「次回リトライ: YYYY-MM-DD」を表示。
+  nextPaymentAttempt DateTime? @map("next_payment_attempt") @db.Timestamptz
+  /// PR-V7a (2026-05-19): 銀行振込の手動消込実行者 User ID (= AuditLog にも記録、こちらは参照用)。
+  ///   credit_card の場合は null (= Webhook 自動更新)。
+  confirmedBy     String?  @map("confirmed_by") @db.Uuid
+  /// PR-V7a (2026-05-19): 手動消込実行時刻 (paidAt とは区別。paidAt は status=paid 移行時刻全般、
+  ///   confirmedAt は super_admin の操作時刻のみ)。
+  confirmedAt     DateTime? @map("confirmed_at") @db.Timestamptz
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -1561,6 +1579,8 @@ model BillingHistory {
   @@unique([tenantId, yearMonth], map: "uq_billing_history_tenant_month")
   @@index([status], map: "idx_billing_history_status")
   @@index([stripeInvoiceId], map: "idx_billing_history_stripe_invoice")
+  /// PR-V7a: 期日超過検知 cron 用 (= status='pending' AND payment_due_date < now)
+  @@index([paymentDueDate, status], map: "idx_billing_history_due_date")
   @@map("billing_history")
 }
 
