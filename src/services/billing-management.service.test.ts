@@ -18,6 +18,7 @@ vi.mock('@/lib/db', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      findMany: vi.fn(),
     },
     auditLog: {
       create: vi.fn(),
@@ -30,6 +31,7 @@ import { prisma } from '@/lib/db';
 import {
   confirmInvoicePayment,
   markPendingInvoiceAsReplacedByStripe,
+  getTenantBillingHistory,
 } from './billing-management.service';
 
 const SUPER_ADMIN_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -204,5 +206,37 @@ describe('markPendingInvoiceAsReplacedByStripe (PR-V7a / A-3 二重課金防止)
     expect(where.paymentMethod).toEqual({ in: ['invoice', 'bank_transfer'] });
     // pending のみ対象 (paid/failed/refunded/canceled/replaced_by_stripe は触らない)
     expect(where.status).toBe('pending');
+  });
+});
+
+describe('getTenantBillingHistory (PR-V7a / C-4 顧客向け表示)', () => {
+  it('テナント自身の BillingHistory を yearMonth desc で取得', async () => {
+    vi.mocked(prisma.billingHistory.findMany).mockResolvedValue([
+      { id: 'b1', yearMonth: '2026-05', status: 'pending' },
+      { id: 'b2', yearMonth: '2026-04', status: 'paid' },
+    ] as never);
+
+    const result = await getTenantBillingHistory(TENANT_ID, 6);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]?.yearMonth).toBe('2026-05');
+
+    const args = vi.mocked(prisma.billingHistory.findMany).mock.calls[0]?.[0] as {
+      where: { tenantId: string };
+      orderBy: Array<{ yearMonth: string }>;
+      take: number;
+    };
+    // テナント越境防止: where.tenantId が必須
+    expect(args.where.tenantId).toBe(TENANT_ID);
+    expect(args.orderBy[0]?.yearMonth).toBe('desc');
+    expect(args.take).toBe(6);
+  });
+
+  it('monthCount デフォルトは 6', async () => {
+    vi.mocked(prisma.billingHistory.findMany).mockResolvedValue([] as never);
+    await getTenantBillingHistory(TENANT_ID);
+
+    const args = vi.mocked(prisma.billingHistory.findMany).mock.calls[0]?.[0] as { take: number };
+    expect(args.take).toBe(6);
   });
 });

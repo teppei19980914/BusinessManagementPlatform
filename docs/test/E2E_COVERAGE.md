@@ -75,6 +75,7 @@
 - [ ] `/admin/super/billing` — skip: PR-V7 #8 (2026-05-19) 請求ダッシュボード (サマリ画面、当月 + 直近 6 ヶ月推移)。SSR + Prisma 集計のみ。ロジック検証はサービス層 (src/services/billing-dashboard.service.test.ts 16 件) で担保
 - [ ] `/admin/super/billing/[yearMonth]` — skip: PR-V7 #8 (2026-05-19) 請求ダッシュボード月次詳細 (テナント別 BillingHistory 一覧 + status/paymentMethod フィルタ + Stripe Dashboard ディープリンク)。SSR + Prisma findMany のみ。同上のサービステストで担保
 - [ ] `/admin/super/email-failures` — skip: PR-V7a (2026-05-19) メール送付失敗一覧画面 (= 直近 N 時間の success=false な EmailSendLog を表示)。SSR + Prisma findMany。サービス層 (src/services/email-send-log.service.test.ts の getRecentFailedEmails 3 件) で担保
+- [ ] `/settings/tenant/billing` — skip: PR-V7a (2026-05-19) テナント管理者向け請求履歴表示。自テナント直近 6 ヶ月の BillingHistory + 入金日/期日/次回引落 表示。tenant-scoped クエリ (= viewerTenantId 必須)。サービス層 (src/services/billing-management.service.test.ts の getTenantBillingHistory 2 件) で担保
 
 ### その他
 - [ ] `/` (ルート) — skip: プロジェクト一覧へのリダイレクト、PR #B の /projects で間接カバー

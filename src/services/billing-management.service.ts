@@ -61,6 +61,58 @@ export async function markPendingInvoiceAsReplacedByStripe(
   return result.count;
 }
 
+// ============================================================
+// PR-V7a (C-4 / 監査 C-G6): 顧客向け請求金額表示
+// ============================================================
+
+export type TenantBillingHistoryRow = {
+  id: string;
+  yearMonth: string;
+  paymentMethod: string;
+  amountJpy: number;
+  taxAmountJpy: number;
+  totalAmountJpy: number;
+  status: string;
+  paidAt: Date | null;
+  paymentDueDate: Date | null;
+  nextPaymentAttempt: Date | null;
+  failureReason: string | null;
+};
+
+/**
+ * テナント自身向けに直近 N ヶ月の請求履歴を取得する (= 顧客が自分の請求金額を確認可能)。
+ *
+ * tenant-scoped クエリ (= 自テナントの BillingHistory のみ)。テナント越境防止のため
+ * tenantId フィルタを必須とする。
+ *
+ * @param tenantId 自テナント ID (= viewerTenantId)
+ * @param monthCount 取得月数 (default 6)
+ */
+export async function getTenantBillingHistory(
+  tenantId: string,
+  monthCount: number = 6,
+): Promise<TenantBillingHistoryRow[]> {
+  const records = await prisma.billingHistory.findMany({
+    where: { tenantId },
+    orderBy: [{ yearMonth: 'desc' }],
+    take: monthCount,
+    select: {
+      id: true,
+      yearMonth: true,
+      paymentMethod: true,
+      amountJpy: true,
+      taxAmountJpy: true,
+      totalAmountJpy: true,
+      status: true,
+      paidAt: true,
+      paymentDueDate: true,
+      nextPaymentAttempt: true,
+      failureReason: true,
+    },
+  });
+  return records;
+}
+
 /**
  * 銀行振込 (invoice / bank_transfer) 請求書の入金確認を手動で実行する。
  *
