@@ -42,8 +42,17 @@ vi.mock('@/services/error-log.service', () => ({
   recordError: vi.fn(),
 }));
 
+// PR-V7a 穴 D/E 修正: alert を mock
+vi.mock('./admin-alert.service', () => ({
+  sendSuperAdminAlert: vi.fn().mockResolvedValue({
+    sentTo: ['admin@example.com'],
+    failures: [],
+  }),
+}));
+
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
+import { sendSuperAdminAlert } from './admin-alert.service';
 import {
   reconcileStripeSubscriptions,
   reconcileBillingHistoryAmounts,
@@ -302,5 +311,56 @@ describe('reconcileBillingHistoryAmounts (PR-V7a B-2)', () => {
     const result = await reconcileBillingHistoryAmounts(3);
     expect(result.matched).toBe(1);
     expect(result.drifted).toBe(0);
+    // alert は送信されない
+    expect(sendSuperAdminAlert).not.toHaveBeenCalled();
+  });
+
+  // PR-V7a 穴 D: drifted > 0 で active push (sendSuperAdminAlert)
+  it('[穴 D] drifted > 0 で sendSuperAdminAlert 呼出 (= active push)', async () => {
+    vi.mocked(prisma.billingHistory.findMany).mockResolvedValue([
+      {
+        id: 'b1',
+        tenantId: TENANT_A,
+        stripeInvoiceId: 'in_1',
+        amountJpy: 1000,
+        taxAmountJpy: 100,
+        totalAmountJpy: 1100,
+        yearMonth: '2026-05',
+      },
+    ] as never);
+    mockInvoiceRetrieve.mockResolvedValueOnce({
+      subtotal: 5000,
+      tax: 500,
+      total: 5500,
+    });
+
+    await reconcileBillingHistoryAmounts(3);
+
+    expect(sendSuperAdminAlert).toHaveBeenCalledWith(
+      expect.stringContaining('金額乖離 1 件'),
+      expect.stringContaining('amount_reconcile_drift'),
+    );
+  });
+});
+
+// PR-V7a 穴 E: reconcileStripeSubscriptions の errors.length > 0 → active push
+describe('reconcileStripeSubscriptions errors → alert (PR-V7a 穴 E)', () => {
+  it('[穴 E] errors.length > 0 で sendSuperAdminAlert 呼出', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      {
+        id: TENANT_A,
+        stripeSubscriptionId: 'sub_xxx',
+        stripeSubscriptionStatus: 'active',
+      },
+    ] as never);
+    // 不明なエラー (= rate limit / API 障害想定)
+    mockRetrieve.mockRejectedValueOnce(new Error('rate_limit_exceeded'));
+
+    await reconcileStripeSubscriptions();
+
+    expect(sendSuperAdminAlert).toHaveBeenCalledWith(
+      expect.stringContaining('Stripe Subscription 照合で 1 件のエラー'),
+      expect.stringContaining(`tenant ${TENANT_A}`),
+    );
   });
 });

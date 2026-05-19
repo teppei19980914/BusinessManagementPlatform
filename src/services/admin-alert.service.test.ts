@@ -15,7 +15,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     user: { findMany: vi.fn() },
     billingHistory: { findMany: vi.fn(), updateMany: vi.fn() },
-    cronExecutionLog: { findMany: vi.fn() },
+    cronExecutionLog: { findMany: vi.fn(), findFirst: vi.fn() },
   },
 }));
 
@@ -28,12 +28,17 @@ vi.mock('@/lib/tenant', () => ({
   MANAGEMENT_TENANT_ID: '00000000-0000-0000-0000-ffffffffffff',
 }));
 
+vi.mock('./error-log.service', () => ({
+  recordError: vi.fn(),
+}));
+
 import { prisma } from '@/lib/db';
 import {
   sendSuperAdminAlert,
   detectAndAlertOverdueInvoices,
   detectAndAlertCronFailures,
 } from './admin-alert.service';
+import { recordError } from './error-log.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -86,6 +91,31 @@ describe('sendSuperAdminAlert', () => {
 
     expect(result.sentTo).toEqual(['ok@example.com']);
     expect(result.failures).toEqual(['fail@example.com']);
+  });
+
+  // PR-V7a 穴 A 修正: recipients=0 + env なし → silent fail を防ぐ
+  it('[穴 A] super_admin 0 人 + env なし → noRecipientsWarning=true + recordError', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
+    // env も未設定 (= beforeEach で delete 済)
+
+    const result = await sendSuperAdminAlert('subj', 'body');
+
+    expect(result).toEqual({
+      sentTo: [],
+      failures: [],
+      noRecipientsWarning: true,
+    });
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        source: 'cron',
+        context: expect.objectContaining({
+          kind: 'admin_alert_no_recipients',
+          subject: 'subj',
+        }),
+      }),
+    );
   });
 });
 
@@ -173,6 +203,10 @@ describe('detectAndAlertCronFailures', () => {
         errorMessage: 'rate_limit',
       },
     ] as never);
+    // PR-V7a 穴 C: 自身の前回成功 (= 24h 以内 = OK)
+    vi.mocked(prisma.cronExecutionLog.findFirst).mockResolvedValue({
+      startedAt: new Date('2026-05-18T18:00:00Z'),
+    } as never);
     vi.mocked(prisma.user.findMany).mockResolvedValue([
       { email: 'admin@example.com' },
     ] as never);
@@ -182,6 +216,7 @@ describe('detectAndAlertCronFailures', () => {
 
     expect(result.failedCount).toBe(3);
     expect(result.alertSent).toBe(true);
+    expect(result.selfDeliveryGapWarning).toBeUndefined();
     expect(mockSend).toHaveBeenCalledTimes(1);
     const sendArgs = mockSend.mock.calls[0]?.[0];
     expect(sendArgs.subject).toContain('cron 実行失敗 3 件');
@@ -189,13 +224,60 @@ describe('detectAndAlertCronFailures', () => {
     expect(sendArgs.text).toContain('stripe-usage-flush: 1 回失敗');
   });
 
-  it('失敗 0 件ならメール送信なし', async () => {
+  it('失敗 0 件 + 自身も正常 → メール送信なし', async () => {
     vi.mocked(prisma.cronExecutionLog.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.cronExecutionLog.findFirst).mockResolvedValue({
+      startedAt: new Date(Date.now() - 60 * 60 * 1000), // 1h 前 = OK
+    } as never);
 
     const result = await detectAndAlertCronFailures(new Date());
 
     expect(result.failedCount).toBe(0);
     expect(result.alertSent).toBe(false);
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  // PR-V7a 穴 C: 自身の前回成功 > 25h → watchdog 警告
+  it('[穴 C] 自身の前回成功が 25h 以上前 → selfDeliveryGapWarning + 復旧通知メール', async () => {
+    const now = new Date('2026-05-19T10:00:00Z');
+    vi.mocked(prisma.cronExecutionLog.findMany).mockResolvedValue([] as never);
+    // 30h 前 = サイレント停止
+    vi.mocked(prisma.cronExecutionLog.findFirst).mockResolvedValue({
+      startedAt: new Date(now.getTime() - 30 * 60 * 60 * 1000),
+    } as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { email: 'admin@example.com' },
+    ] as never);
+    mockSend.mockResolvedValue({ success: true });
+
+    const result = await detectAndAlertCronFailures(now);
+
+    expect(result.selfDeliveryGapWarning).toBeDefined();
+    expect(result.selfDeliveryGapWarning?.hoursSince).toBe(30);
+    expect(result.alertSent).toBe(true);
+    const sendArgs = mockSend.mock.calls[0]?.[0];
+    expect(sendArgs.subject).toContain('30h サイレント停止');
+    expect(sendArgs.subject).toContain('alert 機構復旧通知');
+    expect(sendArgs.text).toContain('alert 連鎖 watchdog 警告');
+  });
+
+  it('[穴 C] 自身の前回成功が記録なし (= 初回 or 履歴消失) → 警告メール', async () => {
+    const now = new Date();
+    vi.mocked(prisma.cronExecutionLog.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.cronExecutionLog.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { email: 'admin@example.com' },
+    ] as never);
+    mockSend.mockResolvedValue({ success: true });
+
+    const result = await detectAndAlertCronFailures(now);
+
+    expect(result.selfDeliveryGapWarning).toEqual({
+      lastSuccessAt: null,
+      hoursSince: null,
+    });
+    expect(result.alertSent).toBe(true);
+    const sendArgs = mockSend.mock.calls[0]?.[0];
+    expect(sendArgs.subject).toContain('alert 機構初回 or 履歴消失');
   });
 });

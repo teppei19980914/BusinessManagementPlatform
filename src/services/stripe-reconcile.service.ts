@@ -28,6 +28,8 @@ import { prisma } from '@/lib/db';
 import { isStripeEnabled, getStripe } from '@/lib/stripe';
 import { withStripeError } from '@/lib/stripe-error-handler';
 import { recordError } from './error-log.service';
+// PR-V7a 穴 D/E 修正 (2026-05-19): 金額乖離 / API 失敗時に super_admin へ active push
+import { sendSuperAdminAlert } from './admin-alert.service';
 
 export type ReconcileResult = {
   /** 照合対象テナント数 (= credit_card + stripeSubscriptionId あり) */
@@ -167,6 +169,25 @@ export async function reconcileStripeSubscriptions(): Promise<ReconcileResult> {
         context: { kind: 'stripe_reconcile', tenantId: t.id, error: message },
       });
     }
+  }
+
+  // PR-V7a 穴 E 修正 (2026-05-19): errors.length > 0 を active push
+  //   per-tenant の Stripe API 失敗が累積していると rate limit / 障害の兆候。
+  //   従来は recordError 経由で system_error_logs に記録するのみ (= passive pull) だった。
+  if (errors.length > 0) {
+    const errorLines = errors
+      .slice(0, 20)
+      .map((e) => `- tenant ${e.tenantId}: ${e.error}`)
+      .join('\n');
+    const overflowSuffix = errors.length > 20 ? `\n... (他 ${errors.length - 20} 件)` : '';
+    await sendSuperAdminAlert(
+      `[たすきば] Stripe Subscription 照合で ${errors.length} 件のエラー (= API 障害の可能性)`,
+      `月次 stripe-reconcile cron で per-tenant Stripe API 呼出が失敗しました。\n`
+        + `合計 ${candidates.length} テナント中 ${errors.length} 件失敗 / ${matched} 件一致 / ${corrected} 件修正。\n\n`
+        + `エラー詳細:\n${errorLines}${overflowSuffix}\n\n`
+        + `対応: rate limit / 一時障害なら次回 cron で自動回復。`
+        + `継続するなら Stripe API key の権限 / Stripe ステータスページ確認。`,
+    );
   }
 
   return {
@@ -314,6 +335,32 @@ export async function reconcileBillingHistoryAmounts(
       const message = e instanceof Error ? e.message : String(e);
       errors.push({ billingHistoryId: b.id, error: message });
     }
+  }
+
+  // PR-V7a 穴 D 修正 (2026-05-19): drifted > 0 を active push
+  //   従来は乖離検出時 recordError で system_error_logs 記録のみ (= passive pull)。
+  //   月初 1 回しか走らない cron なので、メール通知がないと最大 30 日放置リスク。
+  if (drifted > 0) {
+    await sendSuperAdminAlert(
+      `[たすきば] Stripe ↔ DB 金額乖離 ${drifted} 件 (= 月次照合で検出)`,
+      `Stripe Invoice と DB BillingHistory の金額が乖離しています。\n\n`
+        + `照合対象: ${targets.length} 件 (直近 3 ヶ月の credit_card 請求)\n`
+        + `一致: ${matched} 件 / 乖離: ${drifted} 件 / Invoice 不見当: ${invoiceNotFound} 件\n\n`
+        + `対応:\n`
+        + `1. /admin/super/cron-history で詳細 (error_log) を確認\n`
+        + `2. lookup: system_error_logs WHERE context->>'kind' = 'amount_reconcile_drift'\n`
+        + `3. Stripe Invoice 側を信頼源として手動で BillingHistory を補正、または逆\n`
+        + `4. 原因究明: Usage Record 二重送信 / Stripe Tax 計算ロジック変更 / 月跨ぎ等を疑う`,
+    );
+  }
+  if (invoiceNotFound > 0) {
+    await sendSuperAdminAlert(
+      `[たすきば] Stripe Invoice が見つからない件数 ${invoiceNotFound} 件`,
+      `DB BillingHistory に stripeInvoiceId が記録されているが、Stripe 側で Invoice が見つかりません。\n`
+        + `(= Stripe 側の手動削除 / アカウント切替 / Sandbox→Live 移行直後の典型)\n\n`
+        + `照合対象: ${targets.length} / 不見当: ${invoiceNotFound}\n`
+        + `対応: /admin/super/billing で該当 BillingHistory を特定、stripeInvoiceId クリア or 再設定`,
+    );
   }
 
   return {
