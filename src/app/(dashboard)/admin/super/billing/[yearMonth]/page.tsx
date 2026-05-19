@@ -68,9 +68,26 @@ export default async function BillingDetailPage({
         </Link>
       </nav>
 
-      <h1 className="text-xl font-semibold">
-        請求詳細: <span className="font-mono">{yearMonth}</span>
-      </h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1 className="text-xl font-semibold">
+          請求詳細: <span className="font-mono">{yearMonth}</span>
+        </h1>
+        {/* PR-V7a (C-5): CSV エクスポート */}
+        <a
+          href={`/api/admin/super/billing/${yearMonth}/export${
+            status || paymentMethod
+              ? `?${new URLSearchParams({
+                  ...(status ? { status } : {}),
+                  ...(paymentMethod ? { paymentMethod } : {}),
+                }).toString()}`
+              : ''
+          }`}
+          download
+          className="rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent"
+        >
+          📥 CSV エクスポート
+        </a>
+      </div>
 
       {/* フィルタ (= GET form でクエリ string 反映) */}
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-md border p-3">
