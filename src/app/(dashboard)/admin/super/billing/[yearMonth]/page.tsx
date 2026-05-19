@@ -72,9 +72,9 @@ export default async function BillingDetailPage({
         <h1 className="text-xl font-semibold">
           請求詳細: <span className="font-mono">{yearMonth}</span>
         </h1>
-        {/* PR-V7a (C-5): CSV エクスポート */}
+        {/* PR-V7a (C-5): CSV エクスポート (= Next.js dynamic slug 衝突回避で export/[yearMonth] 形式) */}
         <a
-          href={`/api/admin/super/billing/${yearMonth}/export${
+          href={`/api/admin/super/billing/export/${yearMonth}${
             status || paymentMethod
               ? `?${new URLSearchParams({
                   ...(status ? { status } : {}),

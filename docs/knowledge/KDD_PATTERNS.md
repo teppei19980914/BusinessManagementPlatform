@@ -10122,3 +10122,82 @@ src/services/admin-alert.service.ts(84,7): error TS2322:
 ### 関連
 - PR #411 で発生・修正 (commit `5ea24a3` で `admin_alert` 導入 → CI fail → 本 commit で修正)
 - KDD §5.X+72 cron-execution-log (= 似た「ローカルでは出ない CI fail」事例) と併読推奨
+
+---
+
+## 5.X+76 **Next.js dynamic segment の slug 名衝突で WebServer が起動失敗 → E2E 全停止 (2026-05-19 / PR #411)**
+
+### 発生背景
+
+PR #411 (= PR-V7a 請求業務横展開実装) で同じ階層に 2 つの API route を追加:
+
+```
+src/app/api/admin/super/billing/
+  [id]/confirm-payment/route.ts        ← A-1 (PR-V7a)
+  [yearMonth]/export/route.ts          ← C-5 (PR-V7a)
+```
+
+E2E (Playwright) が WebServer 起動段階で大量のエラーを吐いて全停止:
+
+```
+[WebServer] Error: You cannot use different slug names for the same dynamic path
+            ('id' !== 'yearMonth').
+```
+
+### 根本原因
+
+**Next.js のルーティング制約**: 同じ階層 (= 同じ親ディレクトリ) にある dynamic segment (`[xxx]`) は、**すべて同一の slug 名でなければならない**。
+
+```
+api/admin/super/billing/[id]/confirm-payment       ← slug = "id"
+api/admin/super/billing/[yearMonth]/export          ← slug = "yearMonth"
+                       ^^^^^^^^^^^^
+                       同階層に異なる slug 名 → ERROR
+```
+
+これは Next.js App Router の制約で、Pages Router 時代から継続している仕様。
+ルーティングテーブル構築時に「`/billing/{動的}/...` のパラメタ名は何?」が一意に決まらないため。
+
+**なぜローカルテストでは気付けなかったか**:
+- `pnpm test` (vitest) は API route のルーティング解決を行わない
+- `pnpm tsc --noEmit` は型チェックのみで、Next.js のルーティング解析は行わない
+- `pnpm build` で **本来は検出される** が、私が「`pnpm build 2>&1 | grep -E "error|Error|..."`」で粗い grep をした際に
+  本エラーが grep にマッチせず取り漏らした (= "different slug" は error 文字列を含むが、私の filter で skip された)
+- CI の Playwright だけが「WebServer 実行時」に到達して発覚
+
+### 教訓
+
+1. **同階層の動的セグメントは slug 名を統一**: `[id]` と `[yearMonth]` を同階層に混在させない
+   - 解決策: いずれかを下層 (= 別ディレクトリ) に移動
+   - 例: `billing/export/[yearMonth]` (= `export` の下に `[yearMonth]` を置く)
+
+2. **`pnpm build` の出力は full text で確認**: grep で error 文字列を絞り込むと、Next.js 固有の特殊エラー文言 ("You cannot use different slug names...") を取り漏らす危険性がある
+   - 推奨: `pnpm build 2>&1 | tail -100` 等で末尾を直接読む、または `2>&1 | tee build.log` してログを残す
+
+3. **同階層に動的セグメントを 2 つ以上配置したくなった場合は path 構造を見直す**:
+   - 「リソース別の操作」(= `[id]/action1`, `[id]/action2`) = OK
+   - 「異なる識別子の操作」(= `[id]/...`, `[yearMonth]/...`) = NG、 階層を分ける
+
+### 修正対応
+
+`/api/admin/super/billing/[yearMonth]/export/` → `/api/admin/super/billing/export/[yearMonth]/` にリネーム移動。
+
+- UI 側 (= billing/[yearMonth]/page.tsx の CSV エクスポートボタンの href) も同期更新
+- E2E_COVERAGE.md の API 行を新 path に更新
+- route.ts の JSDoc に「slug 衝突回避のための path 構造」コメントを追加
+
+### 横展開
+
+たすきば内に同様のパターンがないか grep で確認:
+
+```bash
+find src/app -type d -name "[*]" | sort
+```
+
+同じ親ディレクトリの兄弟が `[xxx]` と `[yyy]` で異なる名前になっていないか棚卸し。
+現状 (本修正後) は問題なし。
+
+### 関連
+- PR #411 commit `63fb9ff` で C-5 (CSV export) を `[yearMonth]/export` で追加 → E2E fail → 本 commit で修正
+- Next.js 公式ドキュメント: [App Router - Dynamic Routes](https://nextjs.org/docs/app/building-your-application/routing/dynamic-routes)
+- KDD §5.X+75 (= 同 PR 内の別 CI fail) と併読推奨

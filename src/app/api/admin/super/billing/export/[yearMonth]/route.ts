@@ -1,5 +1,5 @@
 /**
- * GET /api/admin/super/billing/[yearMonth]/export (PR-V7a / 2026-05-19)
+ * GET /api/admin/super/billing/export/[yearMonth] (PR-V7a / 2026-05-19)
  *
  * 役割:
  *   super_admin 向け 月次請求履歴 CSV エクスポート (= 監査 C-G7)。
@@ -16,6 +16,11 @@
  *   - UTF-8 BOM 付き (Excel で日本語文字化け防止)
  *   - 14 列 (= 主要情報 + 期日 + Smart Retries 状況)
  *   - ファイル名: billing-detail-{yearMonth}.csv
+ *
+ * **path 構造**: `billing/[yearMonth]/export` ではなく `billing/export/[yearMonth]` 形式。
+ *   同階層に `billing/[id]/confirm-payment` (= UUID id) が存在し、Next.js は同レベルの
+ *   dynamic segment に異なる slug 名 (`[id]` vs `[yearMonth]`) を許可しないため。
+ *   KDD docs/knowledge/KDD_PATTERNS.md §5.X+76 参照。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
