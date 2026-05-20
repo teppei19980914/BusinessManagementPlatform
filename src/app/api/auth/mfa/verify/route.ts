@@ -65,6 +65,28 @@ export async function POST(req: NextRequest) {
   }
   const sessionUserId = session.user.id;
 
+  // fix/session-clearance follow-up (2026-05-20): tokenVersion 検証を追加 (KDD §5.X+84)。
+  //   元々は本 route の MFA verify 成功で発行される新 JWT が旧 tokenVersion を引き継ぐため
+  //   下流の dashboard 描画で必ず弾かれていたが、整合性のため API route 入口でも
+  //   getAuthenticatedUser と同じ防御を行う。
+  //   これにより stale JWT での MFA verify 自体を 401 SESSION_INVALIDATED で蹴る。
+  const jwtTokenVersion = session.user.tokenVersion ?? 0;
+  const dbUser = await prisma.user.findUnique({
+    where: { id: sessionUserId },
+    select: { tokenVersion: true, isActive: true, deletedAt: true },
+  });
+  if (
+    !dbUser
+    || dbUser.deletedAt !== null
+    || !dbUser.isActive
+    || dbUser.tokenVersion !== jwtTokenVersion
+  ) {
+    return NextResponse.json(
+      { error: { code: 'SESSION_INVALIDATED', message: '再度ログインしてください' } },
+      { status: 401 },
+    );
+  }
+
   const body = await req.json();
   if (body?.userId && body.userId !== sessionUserId) {
     return NextResponse.json(

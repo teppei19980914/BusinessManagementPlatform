@@ -725,8 +725,14 @@ function SelfDeleteTenantSection({ tenantName }: { tenantName: string }) {
         return;
       }
       showSuccess('テナントを解約しました。ログアウトしています...');
-      // セルフサインアウト → ログイン画面へリダイレクト
-      await fetch('/api/auth/signout', { method: 'POST' }).catch(() => undefined);
+      // fix/session-clearance (2026-05-20): NextAuth 既定 `/api/auth/signout` を自前
+      //   `/api/auth/explicit-signout` に統一 (KDD §5.X+84)。
+      //   テナント解約時はサーバ側でユーザの deletedAt も同時にセットされるため
+      //   `getAuthenticatedUser` / `requireAuthForLayout` が deletedAt 検査で確実に弾くが、
+      //   一貫性 + UX (cookie 完全削除) のため明示的にこちらを使う。
+      //   fetch 失敗時もテナント自体は削除済み (server-side で認証無効) のため、
+      //   navigate は実施する (上記 logout button とは事故影響度が異なる)。
+      await fetch('/api/auth/explicit-signout', { method: 'POST' }).catch(() => undefined);
       router.replace('/login');
       router.refresh();
     } finally {

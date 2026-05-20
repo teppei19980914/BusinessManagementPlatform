@@ -6,13 +6,15 @@
  * (== Next.js では 403 を返すより redirect 推奨。情報漏洩を最小化)。
  */
 
-import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { requireAuthForLayout } from '@/lib/page-auth';
 
 export default async function SuperAdminLayout({ children }: { children: React.ReactNode }) {
-  const session = await auth();
-  if (!session || session.user.systemRole !== 'super_admin') {
+  // fix/session-clearance (2026-05-20): 親 dashboard layout 同様、tokenVersion 検証付きヘルパに切替。
+  //   role check は本層の責務として残す (= 親で認証検証 / 本層で role 検証の二段構え)。
+  const user = await requireAuthForLayout();
+  if (user.systemRole !== 'super_admin') {
     redirect('/');
   }
 

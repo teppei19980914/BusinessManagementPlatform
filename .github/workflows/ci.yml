@@ -64,6 +64,14 @@ jobs:
         # E2E 範囲の横展開漏れを構造的に防止する。
         run: pnpm e2e:coverage-check
 
+      - name: Banned auth patterns check (fix/session-clearance / PR #415)
+        # NextAuth 既定 signOut の Set-Cookie 脱落で誤ユーザログイン事故が起きた
+        # 経緯から、`signOut` import / `/api/auth/signout` 直接 fetch /
+        # Server Component の `await auth()` 直接呼出を CI で機械的に検出する。
+        # 退行 (= 新規開発者が「ふつうの signOut でいいでしょ」と書く) を防止する。
+        # 詳細: docs/knowledge/KDD_PATTERNS.md §5.X+84
+        run: pnpm check:banned-auth-patterns
+
       - name: Test (vitest + coverage)
         # PR #83: --coverage で v8 プロバイダが coverage-final.json / coverage-summary.json
         # / lcov.info を coverage/ 配下に出力する。

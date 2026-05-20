@@ -1,26 +1,24 @@
-import { auth } from '@/lib/auth';
-import { redirect } from 'next/navigation';
+import { requireAuthForLayout } from '@/lib/page-auth';
 import { DashboardHeader } from '@/components/dashboard-header';
 import { LoadingProvider } from '@/components/loading-overlay';
 // 2026-04-30 (Task 2): リクエスト成功/失敗を画面下部の帯で通知する共通基盤
 import { ToastProvider } from '@/components/toast-provider';
-import { LOGIN_ROUTE } from '@/config';
 // Q5(3) (2026-05-14): 縮退モード起動時に dashboard 全体で表示する小バナー
 import { getDegradedModeState } from '@/services/degraded-mode.service';
 import { DegradedModeBanner } from '@/components/degraded-mode-banner';
 import type { SystemRole } from '@/config/master-data';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const session = await auth();
-
-  if (!session) {
-    redirect(LOGIN_ROUTE);
-  }
+  // fix/session-clearance (2026-05-20): tokenVersion 検証付きヘルパに切替。
+  //   旧 `auth()` は JWT 署名検証のみで通すため、explicit-signout で increment された
+  //   tokenVersion を検出できず、旧 cookie 残留時に「他人の tenantId で listProjects 等が
+  //   走り、画面に出てしまう」事故が起きうる。本ヘルパで DB 照合 → redirect で防ぐ。
+  const user = await requireAuthForLayout();
 
   // Q5(3): 縮退モード状態を取得し banner で表示する。
   //   - 取得失敗は許容 (バナー表示は best-effort、画面遷移を妨げない)
   //   - admin / general 双方に共通で表示 (内容は role で出し分けない、リンク先のみ admin/一般で差別)
-  const degradedMode = await getDegradedModeState(session.user.tenantId).catch(
+  const degradedMode = await getDegradedModeState(user.tenantId).catch(
     () => null,
   );
 
@@ -28,11 +26,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <LoadingProvider>
       <ToastProvider>
         <div className="min-h-screen bg-muted">
-          <DashboardHeader user={session.user} />
+          <DashboardHeader user={user} />
           {degradedMode?.active && (
             <DegradedModeBanner
               reason={degradedMode.reason}
-              systemRole={session.user.systemRole as SystemRole}
+              systemRole={user.systemRole as SystemRole}
             />
           )}
           {/*

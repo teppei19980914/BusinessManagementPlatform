@@ -13,7 +13,6 @@
  */
 
 import { useState } from 'react';
-import { signOut } from 'next-auth/react';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,7 +55,26 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
   }
 
   async function handleCancel() {
-    await signOut({ callbackUrl: '/login', redirect: true });
+    // fix/session-clearance (2026-05-20): NextAuth 既定 signOut の Set-Cookie 脱落対策。
+    //   自前 route で tokenVersion increment + cookie 削除 → フルリロードで /login に遷移。
+    //
+    // 2026-05-20 follow-up (Severity-1): fetch 応答 OK を**必ず確認**してから navigate する。
+    //   失敗時は alert で再試行を促し、navigate しない (server-side 無効化されていない状態で
+    //   /login 画面に飛ばすと「ユーザはログアウト済」と誤認するため)。
+    //   詳細: KDD §5.X+84
+    let res: Response | null = null;
+    try {
+      res = await fetch('/api/auth/explicit-signout', { method: 'POST' });
+    } catch {
+      // network error
+    }
+    if (!res || !res.ok) {
+      window.alert(
+        'ログアウト処理に失敗しました。ネットワーク接続を確認のうえ、ページを再読み込みしてから再度お試しください。',
+      );
+      return;
+    }
+    window.location.href = '/login';
   }
 
   return (
