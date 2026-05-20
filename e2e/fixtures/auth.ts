@@ -20,9 +20,11 @@ export async function waitForProjectsReady(page: Page): Promise<void> {
 
 /**
  * ADR-0016 (2026-05-20): multi-tenant 対応で 組織 ID (tenantSlug) を共通入力ヘルパとして抽出。
- *   テスト fixture が tenantSlug を渡さない場合は seed の MANAGEMENT_TENANT_SLUG を使う。
+ *   テスト fixture が tenantSlug を渡さない場合は default-tenant ('default') を使う。
+ *   理由: ensureInitialAdmin が users.tenant_id の DB DEFAULT = DEFAULT_TENANT_ID
+ *         (= '00000000-0000-0000-0000-000000000001') に admin を作成するため。
  */
-const DEFAULT_E2E_TENANT_SLUG = process.env.E2E_TENANT_SLUG ?? 'management';
+const DEFAULT_E2E_TENANT_SLUG = process.env.E2E_TENANT_SLUG ?? 'default';
 
 async function fillLoginForm(
   page: Page,

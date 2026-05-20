@@ -41,8 +41,9 @@ const ADMIN_INITIAL_PW = process.env.INITIAL_ADMIN_PASSWORD || 'E2eInitial!Pw_20
 const ADMIN_NEW_PW = 'E2eNew!Pw_2026_Changed';
 
 // ADR-0016 (2026-05-20): multi-tenant 対応で 組織 ID 必須化。
-//   ensureInitialAdmin は MANAGEMENT_TENANT_SLUG = 'management' に admin を作成する。
-const TENANT_SLUG = process.env.E2E_TENANT_SLUG ?? 'management';
+//   ensureInitialAdmin は users.tenant_id の DB DEFAULT (= DEFAULT_TENANT_ID) で
+//   default-tenant に admin を作成する (PR #2 multi-tenant base migration 参照)。
+const TENANT_SLUG = process.env.E2E_TENANT_SLUG ?? 'default';
 
 const MEMBER_EMAIL = `${withRunId('member')}@example.com`.toLowerCase();
 const MEMBER_NAME = withRunId('メンバー');

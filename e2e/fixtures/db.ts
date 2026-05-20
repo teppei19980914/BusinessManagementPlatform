@@ -67,6 +67,9 @@ export async function ensureInitialAdmin(
   const pool = getPool();
   const passwordHash = await hash(password, BCRYPT_COST);
   // updated_at は Prisma @updatedAt でアプリ側更新する契約 (DB デフォルト無し)。
+  // ADR-0016 (2026-05-20): User.email を tenant-scoped 一意化したことに伴い、
+  //   ON CONFLICT は (tenant_id, email) 複合 index = idx_users_tenant_email を参照する。
+  //   tenant_id は INSERT 時に省略すると DB DEFAULT (= DEFAULT_TENANT_ID) が入る。
   const res = await pool.query(
     `INSERT INTO users (
        name, email, password_hash, system_role, is_active, force_password_change,
@@ -75,7 +78,7 @@ export async function ensureInitialAdmin(
        updated_at
      )
      VALUES ($1, $2, $3, 'admin', true, $4, false, NULL, NULL, 0, NULL, false, NOW())
-     ON CONFLICT (email) DO UPDATE SET
+     ON CONFLICT (tenant_id, email) DO UPDATE SET
        password_hash = EXCLUDED.password_hash,
        is_active = true,
        force_password_change = EXCLUDED.force_password_change,
@@ -103,6 +106,7 @@ export async function ensureGeneralUser(
 ): Promise<string> {
   const pool = getPool();
   const passwordHash = await hash(password, BCRYPT_COST);
+  // ADR-0016 (2026-05-20): ON CONFLICT も (tenant_id, email) に変更
   const res = await pool.query(
     `INSERT INTO users (
        name, email, password_hash, system_role, is_active, force_password_change,
@@ -111,7 +115,7 @@ export async function ensureGeneralUser(
        updated_at
      )
      VALUES ($1, $2, $3, 'general', true, false, false, NULL, NULL, 0, NULL, false, NOW())
-     ON CONFLICT (email) DO UPDATE SET
+     ON CONFLICT (tenant_id, email) DO UPDATE SET
        name = EXCLUDED.name,
        password_hash = EXCLUDED.password_hash,
        is_active = true,
