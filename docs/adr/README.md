@@ -31,8 +31,10 @@
 | [0011](./0011-soft-delete-and-audit-log.md) | 論理削除 (soft delete) + 全変更操作の監査ログ完全記録 | Accepted | データ管理・セキュリティ |
 | [0012](./0012-vercel-supabase-mvp-hosting.md) | Vercel + Supabase 無料枠を MVP 期のインフラに採用 (AWS 移行を視野) | Accepted | インフラ |
 | [0013](./0013-beginner-downgrade-prohibition.md) | Beginner プランへのダウングレード禁止 (悪用防止ルール) | Accepted | ビジネス・課金 |
+| [0014](./0014-crud-permission-redesign.md) | CRUD 設計刷新 — UI=API 認可一致原則 + PM/TL 自律権限 + 自己ロール変更禁止 (2026-05-20 採択) | Accepted | セキュリティ・業務ロジック |
+| [0015](./0015-cascade-delete-idempotent-design.md) | deleteProjectCascade / deleteCustomerCascade の冪等設計 + 段階別 transaction (2026-05-20 採択) | Accepted | データ管理・運用 |
 
-> 主要設計判断を時系列で ADR 化しています (現在 13 件)。
+> 主要設計判断を時系列で ADR 化しています (現在 15 件)。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---
