@@ -402,6 +402,66 @@ JWT 再署名が壊れていてもユーザが脱出できる経路:
 - NextAuth v5 GA 待ち → `useSession().update()` の Set-Cookie 反映を upstream で fix されたら再評価
 - 別ホスティング (Vercel Pro 等) への移行検討は `docs/design/INFRASTRUCTURE.md §10.3` のスケール時方針として整理済
 
+### 6.12 誤ユーザログイン事象を観測 (S-1、Netlify Set-Cookie 脱落起因)
+
+ユーザ A でログアウト後、別ユーザ B の credentials を入力してログインしたつもりが、**ユーザ A の状態 (テナント / 権限) でログイン継続される**症状。個人情報漏洩リスクのある S-1 障害。
+
+#### 既知の根本原因
+
+NextAuth v5 0-beta.31 + @netlify/plugin-nextjs の組合せで `POST /api/auth/signout` の `Set-Cookie: Max-Age=0` がブラウザに反映されない事象 (KDD §5.X+84、§5.X+66 の派生)。**2026-05-20 の PR #415 で `POST /api/auth/explicit-signout` + DB `tokenVersion` increment + login pre-clear の三重防御に切替済**。再発した場合は本方式が壊れた可能性を疑う。
+
+#### 切り分け手順
+
+1. **再発状況の確認** (5 分):
+   - 報告ユーザに「ログアウト後、DevTools > Application > Cookies で `__Secure-authjs.session-token` / `authjs.session-token` / `tasukiba-theme` が消えているか」を確認依頼
+   - 消えていない → §6.12 のパターン確定 (Set-Cookie 脱落復活)
+   - 消えている → 別経路 (例: 別端末 / 別ブラウザでの古いセッション温存) を疑う
+
+2. **server-side 失効が動作しているかの確認** (5 分):
+   - 該当ユーザの `user.tokenVersion` を Supabase で確認:
+     ```sql
+     SELECT id, email, token_version, last_login_at, updated_at
+     FROM users WHERE email = '<該当ユーザ>';
+     ```
+   - 報告時刻の前後で `token_version` が **+1 されていれば**: server-side では正しく失効されている (= cookie 残留はあっても次回 API で 401)。報告ユーザがブラウザを再起動すれば解消の可能性高い
+   - **+1 されていない** → explicit-signout route 自体が失敗している。Netlify Functions logs で `[explicit-signout] failed` 行を検索
+
+3. **CI ガード状況の確認** (3 分):
+   - 最近のマージ PR で `pnpm check:banned-auth-patterns` が緑だったか確認
+   - 直近で `signOut from 'next-auth/react'` や `/api/auth/signout` 直接 fetch が混入していないか (ガード回避コメント `// banned-auth-allow:` の濫用も含めて)
+
+#### 応急対応
+
+- **個人情報漏洩リスクの確認**: `auth_event_logs` テーブルで報告時刻前後の `logout` / `login_success` イベントを抽出し、誰のセッションがどう推移したかを再現
+  ```sql
+  SELECT event_type, user_id, tenant_id, email, ip_address, created_at
+  FROM auth_event_logs
+  WHERE created_at >= '<報告時刻-1時間>'
+    AND created_at <= '<報告時刻+1時間>'
+  ORDER BY created_at;
+  ```
+- **影響ユーザの強制ログアウト**: 該当ユーザ全員の `token_version` を一括 +1 (= 全セッション無効化)
+  ```sql
+  UPDATE users SET token_version = token_version + 1
+   WHERE id IN ('<影響ユーザ ID list>');
+  ```
+- **PR 単位の rollback 判断**: 直近の認証関連 PR がトリガになっていないか、`git log --oneline -- src/app/api/auth/ src/lib/page-auth.ts src/middleware.ts` で確認
+
+#### 恒久対応
+
+- explicit-signout route + requireAuthForLayout の組合せが壊れていないか整合性確認 (KDD §5.X+84 参照)
+- 必要なら CI ガード `scripts/check-banned-auth-patterns.ts` の検出パターンを強化
+- 中長期: DB セッション (NextAuth `strategy: 'database'`) への移行検討 (MVP 後ロードマップ)
+
+#### Post-mortem 必須事項
+
+S-1 のため、解決後は以下を必ず実施:
+
+- 影響ユーザへの通知 (テンプレートは §8 参照)。**「ユーザ A の操作がユーザ B のデータに影響した可能性」を正直に開示**
+- `auth_event_logs` + `audit_logs` から、影響期間中の write 操作を全件レビューしデータ整合性を確認
+- Post-mortem ドキュメント作成 (§9)
+- 個人情報保護法上の通報要否を法務観点で確認 (本サービスは個人情報を扱うため、漏洩確証時は個人情報保護委員会への報告義務あり)
+
 ---
 
 

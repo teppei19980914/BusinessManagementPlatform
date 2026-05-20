@@ -22,6 +22,10 @@ vi.mock('@/lib/db', () => ({
       findMany: vi.fn(),
       update: vi.fn(),
     },
+    // fix/session-clearance follow-up (2026-05-20): tokenVersion 検証用 (KDD §5.X+84)
+    user: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -80,7 +84,13 @@ describe('POST /api/auth/mfa/verify', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth).mockResolvedValue({
-      user: { id: USER_ID },
+      user: { id: USER_ID, tokenVersion: 0 },
+    } as never);
+    // fix/session-clearance follow-up (2026-05-20): tokenVersion 検証用の DB mock を既定で成功状態に
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: true,
+      deletedAt: null,
     } as never);
   });
 
@@ -96,6 +106,43 @@ describe('POST /api/auth/mfa/verify', () => {
       makeReq({ userId: '22222222-2222-2222-2222-222222222222', code: '123456' }),
     );
     expect(res.status).toBe(403);
+    expect(reissueAuthJwtOnResponse).not.toHaveBeenCalled();
+  });
+
+  // fix/session-clearance follow-up (2026-05-20): tokenVersion 検証 (KDD §5.X+84)
+  it('JWT tokenVersion が DB と不一致なら 401 SESSION_INVALIDATED (explicit-signout 経由 increment)', async () => {
+    vi.mocked(auth).mockResolvedValue({ user: { id: USER_ID, tokenVersion: 0 } } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 1, // DB 側は logout で increment 済
+      isActive: true,
+      deletedAt: null,
+    } as never);
+    const res = await POST(makeReq({ userId: USER_ID, code: '123456' }));
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error.code).toBe('SESSION_INVALIDATED');
+    expect(reissueAuthJwtOnResponse).not.toHaveBeenCalled();
+  });
+
+  it('対象ユーザが削除済 (deletedAt != null) なら 401', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: true,
+      deletedAt: new Date(),
+    } as never);
+    const res = await POST(makeReq({ userId: USER_ID, code: '123456' }));
+    expect(res.status).toBe(401);
+    expect(reissueAuthJwtOnResponse).not.toHaveBeenCalled();
+  });
+
+  it('対象ユーザが無効化済 (isActive=false) なら 401', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      tokenVersion: 0,
+      isActive: false,
+      deletedAt: null,
+    } as never);
+    const res = await POST(makeReq({ userId: USER_ID, code: '123456' }));
+    expect(res.status).toBe(401);
     expect(reissueAuthJwtOnResponse).not.toHaveBeenCalled();
   });
 

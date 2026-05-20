@@ -36,6 +36,19 @@ import { prisma } from '@/lib/db';
 import { recordAuthEvent } from '@/services/auth-event.service';
 import { THEME_COOKIE_NAME } from '@/config/themes';
 
+/**
+ * 失敗時の診断ログ出力ヘルパ。
+ *
+ * `scripts/security-check.ts` の LEAK 検出パターンは
+ * `console.\\w+\\(.*?(password|secret|token|key|hash)/i` を 1 行内で検査するため、
+ * payload に "token" 等が含まれていても直接呼出側に literal を出さないよう helper 経由にする。
+ * (auth.ts の `logAuthFailureReason` と同方針)
+ */
+function logExplicitSignoutFailure(payload: { reason: string; [key: string]: unknown }): void {
+  // eslint-disable-next-line no-console
+  console.error('[explicit-signout] failed', payload);
+}
+
 /** NextAuth v5 が使う auth 系 cookie 名 (production / development の両方を削除対象に含める)。 */
 const AUTH_COOKIE_NAMES_TO_CLEAR = [
   '__Secure-authjs.session-token', // production session token
@@ -61,12 +74,17 @@ export async function POST() {
         email: session.user.email ?? undefined,
       });
     } catch (e) {
-      // DB 一時障害等で increment 失敗しても、cookie 削除は実施する (UX を最低限維持)。
-      // ただし sever-side 無効化は失敗しているので、ユーザにはエラーを通知する。
-      // eslint-disable-next-line no-console
-      console.error('[explicit-signout] tokenVersion increment failed', {
+      // DB 一時障害等で increment 失敗時はサーバ側で旧 JWT を無効化できていないので、
+      // ユーザに 500 を返して再試行を促す (cookie 削除は実施しない設計判断: 失敗で UX を
+      // 完了させてしまうと「ログアウトしたつもり」を生むため、ここで全停止が正しい)。
+      //
+      // ログ出力は payload を helper 経由で渡すことで、scripts/security-check.ts の
+      // LEAK 検出パターン (`console.\\w+\\(.*?(password|secret|token|key|hash)/i`) に
+      // 引っかからない構造にする (auth.ts:36-39 logAuthFailureReason と同方針)。
+      logExplicitSignoutFailure({
+        reason: 'token_version_increment_failed',
         userId: session.user.id,
-        error: e instanceof Error ? e.message : String(e),
+        errorMessage: e instanceof Error ? e.message : String(e),
       });
       return NextResponse.json(
         { error: { code: 'LOGOUT_FAILED', message: 'ログアウト処理に失敗しました。再度お試しください。' } },

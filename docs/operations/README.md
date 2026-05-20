@@ -16,6 +16,7 @@
 | [STRIPE_SETUP.md](./STRIPE_SETUP.md) | Stripe Dashboard 事前セットアップ手順 (Product / Price / Webhook / Tax / API キー、v1.x 実装前に必須) | 新規 (2026-05-14) |
 | [CRON.md](./CRON.md) | Vercel Cron + cron-job.org ウォームアップ + ヘルスチェック + 死活監視 | OPERATION.md §8-§11 |
 | [SECURITY_OPS.md](./SECURITY_OPS.md) | 運用上のセキュリティ手順 | OPERATION.md §13 |
+| [SECURITY_ASSESSMENT.md](./SECURITY_ASSESSMENT.md) | OWASP Top 10 観点でのセキュリティ実装状況スナップショット + 四半期再評価手順 + ペネトレーションテスト推奨 | 新規 (2026-05-20 / PR #415) |
 | [MIGRATION_TO_AWS.md](./MIGRATION_TO_AWS.md) | Vercel + Supabase から AWS / Azure / GCP への将来的移行計画 | DESIGN.md §34.13 |
 | [CUSTOMER_FEEDBACK_TRIAGE.md](./CUSTOMER_FEEDBACK_TRIAGE.md) | 顧客フィードバック トリアージプロセス (6 チャネル → GitHub Issues 集約、P0-P3 SLA、日次/週次/月次ルーチン) | 新規 (2026-05-16) |
 | [BACKUP_VERIFICATION.md](./BACKUP_VERIFICATION.md) | バックアップ検証手順 (四半期 + 臨時、Supabase/Vercel/Storage/環境変数の復元可能性確認) | 新規 (2026-05-16) |

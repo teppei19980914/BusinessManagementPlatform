@@ -78,11 +78,16 @@ export const PUBLIC_PATHS = [
  * PR #67: MFA 検証フロー中だけアクセスを許可するパス。
  *   /login/mfa ページ本体と TOTP 検証 API を含む。
  *   セッションは必要だが mfaVerified=false でもアクセス可能。
+ *
+ * fix/session-clearance follow-up (2026-05-20): MFA 検証中のキャンセル経路は
+ *   `mfa-form.tsx` で `/api/auth/explicit-signout` を fetch するパターンに統一済 (KDD §5.X+84)。
+ *   旧 `/api/auth/signout` (NextAuth 既定) は本サービスのコードから一切呼ばれなくなったため
+ *   MFA_PENDING_PATHS からも除去。
  */
 export const MFA_PENDING_PATHS = [
   '/login/mfa',
   '/api/auth/mfa/verify',
-  '/api/auth/signout', // MFA 検証中にログアウトできるように
+  '/api/auth/explicit-signout', // MFA 検証中にログアウト (=キャンセル) できるように
 ] as const;
 
 /** 認証失敗時 / 未認証時のリダイレクト先。 */
