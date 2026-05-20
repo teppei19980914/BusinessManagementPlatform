@@ -183,6 +183,23 @@ export async function listAllRetrospectivesForViewer(
   });
 }
 
+/**
+ * feat/crud-permission-redesign (2026-05-20): linkedProjects[].name の per-link gate ヘルパ。
+ * `listAllRetrospectivesForViewer` だけでなく `listRetrospectives` (project tab) / `getRetrospective`
+ * (個別 GET) からも呼ばれ、非メンバーには紐付け先プロジェクト名を null で秘匿する。
+ */
+function gateLinkedProjectsName(
+  links: { id: string; name: string | null; deleted: boolean }[],
+  memberProjectIds: Set<string>,
+  isAdmin: boolean,
+): { id: string; name: string | null; deleted: boolean }[] {
+  return links.map((l) => ({
+    id: l.id,
+    name: isAdmin || memberProjectIds.has(l.id) ? l.name : null,
+    deleted: isAdmin ? l.deleted : false,
+  }));
+}
+
 export async function listRetrospectives(
   projectId: string,
   viewerUserId: string,
@@ -221,28 +238,40 @@ export async function listRetrospectives(
     orderBy: { conductedDate: 'desc' },
   });
 
-  return retros.map((r) => ({
-    id: r.id,
-    projectId: r.projectId,
-    linkedProjectIds: r.retrospectiveProjects.map((rp) => rp.projectId),
-    linkedProjects: r.retrospectiveProjects
+  // feat/crud-permission-redesign (2026-05-20): linkedProjects[].name を per-link gate (severity-1 修正)
+  const memberships = isAdmin
+    ? []
+    : (await prisma.projectMember.findMany({
+        where: { userId: viewerUserId },
+        select: { projectId: true },
+      })) ?? [];
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
+
+  return retros.map((r) => {
+    const rawLinks = r.retrospectiveProjects
       .filter((rp) => rp.project != null)
       .map((rp) => ({
         id: rp.project!.id,
-        name: rp.project!.name,
+        name: rp.project!.name as string | null,
         deleted: rp.project!.deletedAt != null,
-      })),
-    conductedDate: r.conductedDate.toISOString().split('T')[0],
-    planSummary: r.planSummary,
-    actualSummary: r.actualSummary,
-    goodPoints: r.goodPoints,
-    problems: r.problems,
-    improvements: r.improvements,
-    state: r.state,
-    visibility: r.visibility,
-    createdBy: r.createdBy,
-    createdAt: r.createdAt.toISOString(),
-  }));
+      }));
+    return {
+      id: r.id,
+      projectId: r.projectId,
+      linkedProjectIds: r.retrospectiveProjects.map((rp) => rp.projectId),
+      linkedProjects: gateLinkedProjectsName(rawLinks, memberProjectIds, isAdmin),
+      conductedDate: r.conductedDate.toISOString().split('T')[0],
+      planSummary: r.planSummary,
+      actualSummary: r.actualSummary,
+      goodPoints: r.goodPoints,
+      problems: r.problems,
+      improvements: r.improvements,
+      state: r.state,
+      visibility: r.visibility,
+      createdBy: r.createdBy,
+      createdAt: r.createdAt.toISOString(),
+    };
+  });
 }
 
 export async function createRetrospective(

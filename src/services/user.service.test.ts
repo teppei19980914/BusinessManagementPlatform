@@ -20,6 +20,8 @@ vi.mock('@/lib/db', () => ({
     },
     roleChangeLog: {
       create: vi.fn(),
+      // feat/crud-permission-redesign (2026-05-20): deleteUser で project_role 解除を bulk 記録
+      createMany: vi.fn().mockResolvedValue({ count: 0 } as never),
       deleteMany: vi.fn(),
     },
     emailVerificationToken: {
@@ -29,7 +31,8 @@ vi.mock('@/lib/db', () => ({
       deleteMany: vi.fn(),
     },
     // PR #89: deleteUser が以下を物理削除する
-    projectMember: { deleteMany: vi.fn() },
+    // feat/crud-permission-redesign (2026-05-20): findMany 追加 (role_change_logs 個別記録のため)
+    projectMember: { deleteMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     session: { deleteMany: vi.fn() },
     passwordResetToken: { deleteMany: vi.fn() },
     passwordHistory: { deleteMany: vi.fn() },

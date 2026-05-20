@@ -394,11 +394,15 @@ export async function applyRetrospectiveSyncImport(
 
       if (row.id) {
         // 2026-05-10 Phase 2-8: 二重防御 - 自テナント所有確認後に update
+        // feat/crud-permission-redesign (2026-05-20): 作成者本人のみ update 可。他人作成は silent skip。
         const owned = await prisma.retrospective.findFirst({
           where: { id: row.id, tenantId: viewerTenantId },
-          select: { id: true },
+          select: { id: true, createdBy: true },
         });
         if (!owned) throw new Error(`IMPORT_VALIDATION_ERROR:ID "${row.id}" が見つかりません`);
+        if (owned.createdBy !== userId) {
+          continue;
+        }
         await prisma.retrospective.update({ where: { id: row.id }, data });
         updatedIds.push(row.id);
       } else {
@@ -419,8 +423,9 @@ export async function applyRetrospectiveSyncImport(
       for (const r of diff.rows) {
         if (r.action === 'REMOVE_CANDIDATE' && r.id && !r.hasProgress) {
           // 2026-05-10 Phase 2-8: tenantId フィルタ付き update で二重防御
+          // feat/crud-permission-redesign (2026-05-20): 作成者本人のみ soft-delete 可。
           const updated = await prisma.retrospective.updateMany({
-            where: { id: r.id, tenantId: viewerTenantId },
+            where: { id: r.id, tenantId: viewerTenantId, createdBy: userId },
             data: { deletedAt: new Date(), updatedBy: userId },
           });
           if (updated.count === 1) softDeletedIds.push(r.id);

@@ -202,7 +202,8 @@ describe('applyRetrospectiveSyncImport (T-22 Phase 22b)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
-    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ id: 'r-1' } as never);
+    // feat/crud-permission-redesign (2026-05-20): creator gating のため createdBy を含める
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ id: 'r-1', createdBy: 'u-1' } as never);
   });
 
   it('canExecute=false なら IMPORT_VALIDATION_ERROR を投げる', async () => {

@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
-import { checkMembership } from '@/lib/permissions';
+import { checkMembership, isAdminOrAbove } from '@/lib/permissions';
 import { updateAttachmentSchema } from '@/lib/validators/attachment';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import {
@@ -57,7 +57,8 @@ async function authorizeForAttachment(
     return null;
   }
 
-  if (user.systemRole === 'admin') return null;
+  // feat/crud-permission-redesign (2026-05-20): super_admin も含めて短絡 (UI/API ヘルパ統一)
+  if (isAdminOrAbove(user)) return null;
 
   const projectIds = await resolveProjectIds(entityType, entityId, user.tenantId);
   if (projectIds === null) {

@@ -4,11 +4,13 @@ import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/db';
 // PR #117 → PR #119: session 連携フォーマッタ (ユーザ個別 TZ/locale を反映)
 import { getServerFormatters } from '@/lib/server-formatters';
+import { isAdminOrAbove } from '@/lib/permissions';
 import { RoleChangesTable, type RoleChangeRow } from './role-changes-table';
 
 export default async function RoleChangesPage() {
   const session = await auth();
-  if (!session || session.user.systemRole !== 'admin') redirect('/');
+  // feat/crud-permission-redesign (2026-05-20): API 側 requireAdmin と整合 (admin + super_admin)
+  if (!session || !isAdminOrAbove(session.user)) redirect('/');
 
   const t = await getTranslations('admin.roleChanges');
   const { formatDateTimeFull } = await getServerFormatters();

@@ -414,6 +414,14 @@ export async function deleteUser(
   });
   if (!user) throw new Error('NOT_FOUND');
 
+  // feat/crud-permission-redesign (2026-05-20): 監査要件 (severity-2 修正)。
+  //   削除前に ProjectMember 行を取得して role_change_logs に解除記録を残す。
+  //   PM/TL ガード (FORBIDDEN_PMTL_ROLE) は admin による削除であり既に admin で許可済なのでスキップ。
+  const memberships = await prisma.projectMember.findMany({
+    where: { userId },
+    select: { id: true, projectId: true, projectRole: true },
+  });
+
   // ProjectMember / Session / RecoveryCode 等を物理削除 + User 本体に deletedAt セット
   // Phase 2-10: 各 deleteMany に tenantId フィルタを併記して二重防御
   const [removedMembers] = await prisma.$transaction([
@@ -450,6 +458,24 @@ export async function deleteUser(
         reason: 'ユーザ削除',
       },
     }),
+    // feat/crud-permission-redesign (2026-05-20): 各 ProjectMember 行の解除を role_change_logs に個別記録。
+    //   旧実装は project_role 解除履歴が抜けていた (system_role 削除のみ記録)。
+    ...(memberships.length > 0
+      ? [
+          prisma.roleChangeLog.createMany({
+            data: memberships.map((m) => ({
+              tenantId: viewerTenantId,
+              changedBy: deleterId,
+              targetUserId: userId,
+              changeType: 'project_role',
+              projectId: m.projectId,
+              beforeRole: m.projectRole,
+              afterRole: 'removed',
+              reason: 'ユーザ削除によるメンバー解除',
+            })),
+          }),
+        ]
+      : []),
   ]);
 
   return {

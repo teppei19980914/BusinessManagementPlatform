@@ -176,6 +176,28 @@ function toRiskDTO(r: {
   };
 }
 
+/**
+ * feat/crud-permission-redesign (2026-05-20): linkedProjects[].name の per-link `isMember` gate を
+ * 横断ビュー (`listAllRisksForViewer`) だけでなくプロジェクト内 list/get でも適用するための共通ヘルパ。
+ *
+ *   - viewer が紐付け先プロジェクトのメンバー: そのリンクの name/deleted を真値で返す
+ *   - viewer が非メンバー: name=null / deleted=false で機微情報を秘匿 (admin は全公開)
+ *
+ * `toRiskDTO` の linkedProjects は無条件で name を返す素 DTO なので、各呼出元で post-process する。
+ * RiskIssue/Retrospective 両方で同じパターンが必要なため独立 helper として export 候補だが、当面 service 内に閉じる。
+ */
+function gateLinkedProjectsName(
+  links: { id: string; name: string | null; deleted: boolean }[],
+  memberProjectIds: Set<string>,
+  isAdmin: boolean,
+): { id: string; name: string | null; deleted: boolean }[] {
+  return links.map((l) => ({
+    id: l.id,
+    name: isAdmin || memberProjectIds.has(l.id) ? l.name : null,
+    deleted: isAdmin ? l.deleted : false,
+  }));
+}
+
 export async function listRisks(
   projectId: string,
   viewerUserId: string,
@@ -219,8 +241,25 @@ export async function listRisks(
     },
     orderBy: { createdAt: 'desc' },
   });
+  // feat/crud-permission-redesign (2026-05-20): linkedProjects[].name を per-link gate。
+  //   project X のリスクタブで、X 以外の紐付け先プロジェクト名を非メンバーには秘匿する (severity-1 横展開漏洩修正)。
+  const memberships = isAdmin
+    ? []
+    : (await prisma.projectMember.findMany({
+        where: { userId: viewerUserId },
+        select: { projectId: true },
+      })) ?? [];
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
+
   // PR #165: プロジェクト「リスク/課題一覧」での一括編集対象判定。viewerIsCreator を DTO に乗せる。
-  return risks.map((r) => ({ ...toRiskDTO(r), viewerIsCreator: r.reporterId === viewerUserId }));
+  return risks.map((r) => {
+    const dto = toRiskDTO(r);
+    return {
+      ...dto,
+      linkedProjects: gateLinkedProjectsName(dto.linkedProjects, memberProjectIds, isAdmin),
+      viewerIsCreator: r.reporterId === viewerUserId,
+    };
+  });
 }
 
 /**
@@ -312,20 +351,11 @@ export async function listAllRisksForViewer(
     const projectDeleted = r.project?.deletedAt != null;
     // feat/crud-permission-redesign (2026-05-20): per-link で「自分がメンバーであるプロジェクト」のみ
     //   name を返す。それ以外は null にし UI 側で「非公開のプロジェクト」表示。
-    //   toRiskDTO は無条件で全プロジェクト名を返すため、横断ビューでは linkedProjects を上書きする。
-    const linkedProjectsGated = (r.riskIssueProjects ?? [])
-      .filter((rp) => rp.project != null)
-      .map((rp) => {
-        const isLinkedMember = isAdmin || memberProjectIds.has(rp.projectId);
-        return {
-          id: rp.project!.id,
-          name: isLinkedMember ? rp.project!.name : null,
-          deleted: isAdmin ? rp.project!.deletedAt != null : false,
-        };
-      });
+    //   toRiskDTO の linkedProjects を gateLinkedProjectsName で post-process する。
+    const dto = toRiskDTO(r);
     return {
-      ...toRiskDTO(r),
-      linkedProjects: linkedProjectsGated,
+      ...dto,
+      linkedProjects: gateLinkedProjectsName(dto.linkedProjects, memberProjectIds, isAdmin),
       projectName: isMember ? r.project?.name ?? null : null,
       projectDeleted: isAdmin ? projectDeleted : false, // admin 以外には削除状態を秘匿
       // 孤児プロジェクト (deleted) への詳細リンクは admin 以外は許可しない
@@ -379,17 +409,28 @@ export async function getRisk(
   });
   if (!r) return null;
 
-  // 認可オフの内部呼び出し (viewerUserId 未指定) はそのまま返す
+  // 認可オフの内部呼び出し (viewerUserId 未指定) はそのまま返す (cascade 削除確認等)。
   if (viewerUserId === undefined) return toRiskDTO(r);
 
-  if (r.visibility === 'public') return toRiskDTO(r);
-
-  // draft: 作成者本人 or admin のみ参照可
+  // draft 認可: public は全員参照可、draft は作成者本人 or admin のみ
   const isCreator = r.reporterId === viewerUserId;
   const isAdmin = viewerSystemRole === 'admin';
-  if (isCreator || isAdmin) return toRiskDTO(r);
+  if (r.visibility !== 'public' && !isCreator && !isAdmin) return null;
 
-  return null;
+  // feat/crud-permission-redesign (2026-05-20): linkedProjects[].name を per-link gate。
+  //   個別 GET で他プロジェクト名を非メンバーに露出させないため (severity-1 横展開漏洩修正)。
+  const memberships = isAdmin
+    ? []
+    : (await prisma.projectMember.findMany({
+        where: { userId: viewerUserId },
+        select: { projectId: true },
+      })) ?? [];
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
+  const dto = toRiskDTO(r);
+  return {
+    ...dto,
+    linkedProjects: gateLinkedProjectsName(dto.linkedProjects, memberProjectIds, isAdmin),
+  };
 }
 
 export async function createRisk(

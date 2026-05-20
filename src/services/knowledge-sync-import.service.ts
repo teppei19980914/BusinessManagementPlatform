@@ -404,11 +404,18 @@ export async function applyKnowledgeSyncImport(
 
       if (row.id) {
         // 2026-05-10 Phase 2-8: 二重防御 - 自テナント所有確認後に update
+        // feat/crud-permission-redesign (2026-05-20): 作成者本人のみ update 可。
+        //   旧実装は同テナント所有のみで他人作成も上書きできた (PM/TL の bulk 編集経路の認可ホール)。
+        //   project 経路 PATCH と整合させるため createdBy 一致を必須化、不一致は silent skip。
         const owned = await prisma.knowledge.findFirst({
           where: { id: row.id, tenantId: viewerTenantId },
-          select: { id: true },
+          select: { id: true, createdBy: true },
         });
         if (!owned) throw new Error(`IMPORT_VALIDATION_ERROR:ID "${row.id}" が見つかりません`);
+        if (owned.createdBy !== userId) {
+          // 他人作成は silent skip (bulk update と同じパターン)
+          continue;
+        }
         await prisma.knowledge.update({ where: { id: row.id }, data });
         updatedIds.push(row.id);
       } else {
@@ -428,8 +435,10 @@ export async function applyKnowledgeSyncImport(
       for (const r of diff.rows) {
         if (r.action === 'REMOVE_CANDIDATE' && r.id && !r.hasProgress) {
           // 2026-05-10 Phase 2-8: 二重防御 - tenantId フィルタ付きで update
+          // feat/crud-permission-redesign (2026-05-20): 作成者本人のみ soft-delete 可。
+          //   project 経路 DELETE (context='project') と整合させ、他人作成は silent skip。
           const updated = await prisma.knowledge.updateMany({
-            where: { id: r.id, tenantId: viewerTenantId },
+            where: { id: r.id, tenantId: viewerTenantId, createdBy: userId },
             data: { deletedAt: new Date(), updatedBy: userId },
           });
           if (updated.count === 1) softDeletedIds.push(r.id);
@@ -517,13 +526,25 @@ function escapeCsv(v: string | null | undefined): string {
 export async function exportKnowledgeSync(
   projectId: string,
   viewerTenantId: string,
+  viewerUserId: string,
+  viewerSystemRole: string,
 ): Promise<string> {
   // 2026-05-10 Phase 2-8: 越境 export を遮断するため tenantId 二重防御
+  // feat/crud-permission-redesign (2026-05-20): severity-1 漏洩修正。
+  //   旧実装は visibility フィルタ無しで他人 draft の機微情報 (タイトル/本文/結論/推奨事項) を
+  //   CSV ダウンロード可能だった。非 admin には「自分の draft + public」のみに絞る。
+  //   risk/retrospective の sync export と同じ filter パターン (exportRisksSync 等を参照)。
+  const isAdmin = viewerSystemRole === 'admin';
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
+
   const knowledges = await prisma.knowledge.findMany({
     where: {
       deletedAt: null,
       tenantId: viewerTenantId,
       knowledgeProjects: { some: { projectId } },
+      ...visibilityWhere,
     },
     orderBy: { createdAt: 'desc' },
   });

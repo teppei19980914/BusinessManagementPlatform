@@ -87,6 +87,29 @@ export async function POST(req: NextRequest) {
     data: { isActive: false, deletedAt: new Date() },
   });
 
+  // feat/crud-permission-redesign (2026-05-20): 監査要件 (severity-2 修正)。
+  //   旧実装は projectMember.deleteMany 直叩きで role_change_logs を記録せず、
+  //   PM/TL がアカウント削除した場合のメンバーシップ解除履歴が残らなかった。
+  //   ユーザ自身による自己削除であれば pm_tl 不在化チェックはスキップ (本人の権利優先)。
+  const memberships = await prisma.projectMember.findMany({
+    where: { userId: user.id },
+    select: { id: true, projectId: true, projectRole: true },
+  });
+  if (memberships.length > 0) {
+    await prisma.roleChangeLog.createMany({
+      data: memberships.map((m) => ({
+        tenantId: user.tenantId,
+        changedBy: user.id,
+        targetUserId: user.id,
+        changeType: 'project_role',
+        projectId: m.projectId,
+        beforeRole: m.projectRole,
+        afterRole: 'removed',
+        reason: 'アカウント削除によるメンバー解除',
+      })),
+    });
+  }
+
   // プロジェクトメンバーシップ解除
   await prisma.projectMember.deleteMany({ where: { userId: user.id } });
 
