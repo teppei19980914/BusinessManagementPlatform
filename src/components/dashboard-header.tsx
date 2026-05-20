@@ -31,7 +31,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { signOut } from 'next-auth/react';
 import { useTranslations } from 'next-intl';
 import { Menu } from '@base-ui/react/menu';
 import { ChevronDownIcon } from 'lucide-react';
@@ -333,9 +332,14 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
             type="button"
             role="menuitem"
             className="block w-full px-4 py-2 text-left text-sm text-foreground hover:bg-accent"
-            onClick={() => {
+            onClick={async () => {
+              // fix/session-clearance (2026-05-20): NextAuth 既定の signOut() は Netlify で
+              //   Set-Cookie が脱落して旧 cookie 残留 → 誤ユーザログイン事故を起こすため、
+              //   自前 route で tokenVersion increment + cookie 削除 (auth 4 + theme 1) を実施。
+              //   詳細: KDD §5.X+72
               setOpen(false);
-              signOut({ callbackUrl: LOGIN_ROUTE });
+              await fetch('/api/auth/explicit-signout', { method: 'POST' });
+              window.location.href = LOGIN_ROUTE;
             }}
           >
             {tAuth('signOut')}

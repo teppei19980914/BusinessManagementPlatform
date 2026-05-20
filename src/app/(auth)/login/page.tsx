@@ -36,6 +36,19 @@ function LoginForm() {
     setError('');
     setIsLoading(true);
 
+    // fix/session-clearance (2026-05-20): signIn 前に旧 cookie を必ず破棄する (defense-in-depth)。
+    //   Netlify で signOut の Set-Cookie が脱落して /login に旧 cookie が持ち越されている場合、
+    //   このまま signIn すると新 cookie の Set-Cookie も脱落するシナリオで「他人になりすます」
+    //   事故が発生しうる。先に explicit-signout で物理削除 + tokenVersion increment しておけば、
+    //   仮に新 cookie が届かなくても最悪「ログイン失敗 → /login に戻される」で済む。
+    //   詳細: KDD §5.X+72
+    const clearRes = await fetch('/api/auth/explicit-signout', { method: 'POST' });
+    if (!clearRes.ok) {
+      setError('セッションのクリアに失敗しました。ページを再読み込みしてから再度お試しください。');
+      setIsLoading(false);
+      return;
+    }
+
     const result = await signIn('credentials', {
       email,
       password,

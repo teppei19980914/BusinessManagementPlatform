@@ -10725,3 +10725,75 @@ DIRECT_URL="postgresql://...session-pooler:5432/postgres" \
 - DEPLOYMENT.md §4.1 (= migration の運用フロー、要更新)
 - Prisma 公式: https://pris.ly/d/migrate-resolve
 - memory: `feedback_post_merge_branch_push.md` (= 本件対応中、PR #413 マージ後にブランチに追加 push して orphan commit を作る同種ミスも体験)
+
+## 5.X+84 **NextAuth v5 + Netlify の Set-Cookie 脱落は signOut にも及ぶ ─ Cookie 削除に依存せず tokenVersion increment + layout 層 DB 照合で「実質削除」を達成、explicit-signout route も middleware matcher 除外必須 (2026-05-20 / PR fix/session-clearance)**
+
+### 罠の正体
+
+KDD §5.X+66 で「NextAuth v5 0-beta.31 + @netlify/plugin-nextjs では `useSession().update()` 経路の Set-Cookie がブラウザに脱落する」事象を記録済だった。当時は「ログイン時の Set-Cookie は正常」と書かれていたが、**signOut も同じ Function 応答パイプラインを通る**ため、`signOut()` (POST /api/auth/signout) が返す `Set-Cookie: Max-Age=0` も同様に脱落する事象を本番で実観測:
+
+1. ユーザ A (テナント管理者) でログイン
+2. ログアウトボタン → `signOut({ callbackUrl: LOGIN_ROUTE })` → POST /api/auth/signout
+3. **サーバは正常に Set-Cookie で cookie 削除を返すが、Netlify Function 応答パイプラインで脱落** → ブラウザに旧 cookie が残留
+4. /login 画面が表示される (= ユーザは「ログアウトできた」と認識)
+5. ユーザ B (システム管理者) の credentials で `signIn('credentials', { redirect: false })`
+6. **`signIn` の Set-Cookie も同経路で脱落するシナリオでは、旧 cookie が温存される**
+7. `window.location.href = callbackUrl` → middleware は旧 JWT を検証 (= 署名は valid) → **ユーザ A のテナント管理者として着地** ← 「他人になりすます」事故
+
+`(dashboard)/layout.tsx` の `auth()` も JWT 署名検証のみで通すため、旧 cookie 残留時に Server Component が**ユーザ A の tenantId で `listProjects()` 等を実行して画面に出してしまう**。
+
+### なぜ発生するか
+
+- NextAuth v5 の JWT セッションは**サーバ側で都度検証されない設計** (JWT 署名さえ通れば信用)。
+- `tenantId` / `systemRole` は JWT claim に焼き込まれているのみで、middleware・layout 層では DB 照合が行われない。
+- Netlify Function 応答パイプラインの仕様で `/api/auth/*` 系の Set-Cookie が一部脱落する (KDD §5.X+66 と同根)。
+
+### 推奨対応 (本 PR で確立)
+
+**「Cookie 削除に依存しない」設計に倒す**。Cookie が残っても無意味化する。
+
+1. **自前 `POST /api/auth/explicit-signout` route を新設** ([src/app/api/auth/explicit-signout/route.ts](../../src/app/api/auth/explicit-signout/route.ts)):
+   - **【P0】 `user.tokenVersion` を increment** (既存パターン `src/services/user.service.ts` を踏襲)。
+     これで旧 JWT は API route (`getAuthenticatedUser`) / Server Component layout (`requireAuthForLayout`) 双方で 401 / redirect に倒れる
+   - **【P0】 auth 系 4 cookie (`__Secure-authjs.session-token` / `authjs.session-token` / `__Host-authjs.csrf-token` / `authjs.csrf-token`) を `Max-Age=0` で削除** (両環境名を網羅して salt 判定ズレ事故を回避)
+   - **【P1】 UI preference cookie (`tasukiba-theme`) も削除** (ユーザ要望: ログアウトでテーマもデフォルトに戻る)
+     - 副作用なし: DB の `themePreference` は維持され、再ログイン時に [src/app/layout.tsx](../../src/app/layout.tsx) の `cookie > JWT > 'light' fallback` で復元
+   - **べき等性**: 未認証 POST でも cookie 削除 Set-Cookie は付与 (残留 cookie 防御)
+   - **失敗時は 500** で明示エラー (silent fail = ユーザに「ログアウトできた」誤認させない)
+
+2. ★ **`/api/auth/explicit-signout` を middleware matcher から除外必須** ([src/middleware.ts](../../src/middleware.ts)):
+   - KDD §5.X+69 / §5.X+71 と同型の罠。NextAuth v5 の `auth()` middleware wrapper が `/api/auth/*` 配下に対して**セッションリフレッシュ (旧 JWT 値で Set-Cookie 上書き) を行う**ことがあり、本 route の cookie 削除が打ち消される
+   - 既存除外 (`api/auth/mfa/verify` / `api/tenants/me/i18n`) に `api/auth/explicit-signout` を追加
+   - 本 route 自身が `await auth()` で認証チェック + DB tokenVersion increment を行うため、middleware 除外でも認証要件は維持
+
+3. **Server Component 層に `requireAuthForLayout()` ヘルパを導入** ([src/lib/page-auth.ts](../../src/lib/page-auth.ts)):
+   - `getAuthenticatedUser` ([src/lib/api-helpers.ts](../../src/lib/api-helpers.ts)) と同等の tokenVersion + isActive + deletedAt 検証を行い、失敗時は `redirect(LOGIN_ROUTE)`
+   - `(dashboard)/layout.tsx` と `(dashboard)/admin/super/layout.tsx` の `auth()` 呼出を本ヘルパに差し替え
+   - layout 配下の 28 page.tsx は個別修正不要 (Next.js は layout が redirect すれば配下の page を描画しない)
+
+4. **`signIn` の前にも `explicit-signout` を pre-clear で呼ぶ** ([src/app/(auth)/login/page.tsx](../../src/app/(auth)/login/page.tsx)):
+   - 旧 cookie が `/login` 着地時点で残留しているシナリオを想定。signIn 前に確実に破棄
+   - pre-clear が失敗したら signIn を実行しない (= 中途半端な状態で signIn しない)
+
+5. **既存の `signOut()` 呼出 2 箇所を全廃**:
+   - [src/components/dashboard-header.tsx](../../src/components/dashboard-header.tsx) (ログアウトボタン)
+   - [src/app/(auth)/login/mfa/mfa-form.tsx](../../src/app/(auth)/login/mfa/mfa-form.tsx) (MFA キャンセル)
+   - いずれも `fetch('/api/auth/explicit-signout', { method: 'POST' }) + window.location.href` に置換
+
+### 検証経路
+
+- **単体テスト**: `src/app/api/auth/explicit-signout/route.test.ts` で「**5 種類の cookie 全てに Set-Cookie が含まれる**」を assert (KDD §5.X+66 の「set-cookie 存在を必ず assert」原則)
+- **単体テスト**: `src/lib/page-auth.test.ts` で tokenVersion 不一致 / isActive=false / deletedAt!=null → `redirect(LOGIN_ROUTE)` を網羅
+- **Netlify Deploy Preview** で実機確認 (ローカルでは Netlify 脱落を再現できないため必須):
+  1. テナント admin でログイン → ログアウト
+  2. DevTools > Application > Cookies で 5 cookie 全消去を確認
+  3. /login がデフォルト light テーマで表示される (= テーマ cookie 削除確認)
+  4. システム admin でログイン → 管理テナントに着地 (テナント admin のデータが一切表示されない)
+  5. (失敗ケース) cookie 残留時でも `requireAuthForLayout` の tokenVersion 不一致検出で `/login` リダイレクト
+
+### 過去の関連 KDD
+
+- §5.X+66: 本件の前提となる Netlify + NextAuth Set-Cookie 脱落の初発見 (`useSession().update()` 経路)
+- §5.X+68: 本件と同じく「DB 更新成功 + cookie サイレント失敗 = 200 OK」の組合せが致命的になる設計教訓 (helper 戻り値型を判別 union にする原則)
+- §5.X+69: middleware の matcher 除外が必要な NextAuth `/api/auth/*` 経路の罠 (= 本件の `api/auth/explicit-signout` 除外の根拠)
+- §5.X+71: 同型の罠で `api/tenants/me/i18n` を matcher 除外した前例

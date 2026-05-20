@@ -113,5 +113,13 @@ export const config = {
   //   上書きされ、UI 反映されない事象を実観測 (PR #401)。本ルートも `getAuthenticatedUser`
   //   + `isTenantAdmin` で自前認証チェック済のため middleware 除外でも認可は維持。
   //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+71
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify|api/tenants/me/i18n).*)'],
+  //
+  // fix/session-clearance (2026-05-20):
+  //   `/api/auth/explicit-signout` も同じ理由で除外必須。本ルートは cookie 削除
+  //   (Max-Age=0) の Set-Cookie を返すが、middleware 側 auth() wrapper の auto-refresh
+  //   が旧 JWT 値で Set-Cookie を**上書き**して削除が打ち消される (= 修正全体が無効化)。
+  //   本ルート自身が `await auth()` + DB tokenVersion increment で認証チェック + 失効を
+  //   行うため、middleware 除外でも認証要件は維持。
+  //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+72
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify|api/tenants/me/i18n|api/auth/explicit-signout).*)'],
 };
