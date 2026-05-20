@@ -23,12 +23,16 @@ test.describe('@feature:auth:login スモーク', () => {
     // settle して成功)。hydration 完了まで待ってから assertion する。
     await page.waitForLoadState('networkidle');
     await expect(page.getByText('たすきば', { exact: true }).first()).toBeVisible();
+    // ADR-0016 (2026-05-20): 組織 ID 入力欄が必須化
+    await expect(page.getByLabel('組織 ID')).toBeVisible();
     await expect(page.getByLabel('メールアドレス')).toBeVisible();
     await expect(page.getByLabel('パスワード')).toBeVisible();
   });
 
   test('不正なメールアドレスでログイン失敗 (enumeration 対策: 一般エラー文言)', async ({ page }) => {
     await page.goto('/login');
+    // ADR-0016 (2026-05-20): 存在しない tenantSlug でも汎用エラーで返る (enumeration 対策)
+    await page.getByLabel('組織 ID').fill('management');
     await page.getByLabel('メールアドレス').fill('nobody@example.com');
     await page.getByLabel('パスワード').fill('wrong-password');
     await page.getByRole('button', { name: 'ログイン' }).click();

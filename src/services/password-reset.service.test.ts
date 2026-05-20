@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
+    // ADR-0016 (2026-05-20): tenant.findFirst (slug → id 解決) を追加 mock
+    tenant: { findFirst: vi.fn() },
     user: { findFirst: vi.fn(), update: vi.fn() },
     // Phase 2-10: tenantId 併記の二重防御で updateMany を使う
     recoveryCode: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
@@ -27,40 +29,57 @@ import { compare } from 'bcryptjs';
 describe('verifyAndIssueResetToken', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  // ADR-0016 (2026-05-20): tenant.findFirst を共通 mock (slug → id 解決)
+  const mockTenantFound = () =>
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({ id: 'tenant-A' } as never);
+
+  it('テナント不在の場合は汎用エラー (テナント存在漏洩防止)', async () => {
+    // ADR-0016: tenantSlug が存在しない場合のテストケース
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(null);
+
+    const res = await verifyAndIssueResetToken('a@b.co', 'code', 'nonexistent-tenant');
+
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('正しくありません');
+  });
+
   it('ユーザ不在の場合は汎用エラー (ユーザ存在漏洩防止)', async () => {
+    mockTenantFound();
     vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
 
-    const res = await verifyAndIssueResetToken('nobody@example.com', 'code');
+    const res = await verifyAndIssueResetToken('nobody@example.com', 'code', 'tenant-a');
 
     expect(res.success).toBe(false);
     expect(res.error).toContain('正しくありません');
   });
 
   it('リカバリーコード不一致は汎用エラー + 監査ログ', async () => {
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u1' } as never);
+    mockTenantFound();
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u1', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.recoveryCode.findMany).mockResolvedValue([
       { id: 'c1', codeHash: 'h1' },
     ] as never);
-    vi.mocked(compare).mockResolvedValue(false);
+    vi.mocked(compare).mockResolvedValue(false as never);
 
-    const res = await verifyAndIssueResetToken('a@b.co', 'wrongcode');
+    const res = await verifyAndIssueResetToken('a@b.co', 'wrongcode', 'tenant-a');
 
     expect(res.success).toBe(false);
     expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
   });
 
   it('成功: リカバリーコード使用済みマーク + トークン発行', async () => {
+    mockTenantFound();
     // Phase 2-10: user.findFirst 結果に tenantId を含める (recoveryCode 系の where に使用)
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u1', tenantId: 'tenant-A' } as never);
     vi.mocked(prisma.recoveryCode.findMany).mockResolvedValue([
       { id: 'c1', codeHash: 'h1' },
     ] as never);
-    vi.mocked(compare).mockResolvedValueOnce(true);
+    vi.mocked(compare).mockResolvedValueOnce(true as never);
     // Phase 2-10: updateMany で tenantId 二重防御
     vi.mocked(prisma.recoveryCode.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.passwordResetToken.create).mockResolvedValue({} as never);
 
-    const res = await verifyAndIssueResetToken('a@b.co', 'goodcode');
+    const res = await verifyAndIssueResetToken('a@b.co', 'goodcode', 'tenant-a');
 
     expect(res.success).toBe(true);
     expect(res.token).toMatch(/^[a-f0-9]{64}$/);
@@ -119,7 +138,7 @@ describe('resetPassword', () => {
     vi.mocked(prisma.passwordHistory.findMany).mockResolvedValue([
       { passwordHash: 'h_old' },
     ] as never);
-    vi.mocked(compare).mockResolvedValueOnce(true);
+    vi.mocked(compare).mockResolvedValueOnce(true as never);
 
     const res = await resetPassword('any', 'reused');
 

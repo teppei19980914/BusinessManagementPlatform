@@ -93,7 +93,7 @@ export function TenantCreateForm() {
       const code = json?.error?.code as string | undefined;
       const message = json?.error?.message as string | undefined;
       if (code === 'SLUG_CONFLICT') setError('この組織 ID は既に使用されています。別の ID を入力してください。');
-      else if (code === 'EMAIL_CONFLICT') setError('このメールアドレスは既に他のテナントで使用されています。');
+      // ADR-0016 (2026-05-20): EMAIL_CONFLICT は廃止 (tenant-scoped 一意化で発生不能)
       else if (code === 'EMAIL_SEND_FAILED') setError('招待メール送信に失敗したためテナント作成を取り消しました。メールアドレスを確認のうえ再試行してください。');
       else if (code === 'VALIDATION_ERROR') setError(message ?? '入力内容に誤りがあります。');
       else setError(message ?? '作成に失敗しました。');

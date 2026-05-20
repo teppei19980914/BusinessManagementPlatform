@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
+    // ADR-0016 (2026-05-20): sendVerificationEmail が tenant.slug を解決するため mock 追加
+    tenant: {
+      findUnique: vi.fn(),
+    },
     emailVerificationToken: {
       updateMany: vi.fn(),
       create: vi.fn(),
@@ -62,6 +66,8 @@ describe('sendVerificationEmail', () => {
     vi.clearAllMocks();
     vi.mocked(prisma.emailVerificationToken.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.emailVerificationToken.create).mockResolvedValue({} as never);
+    // ADR-0016 (2026-05-20): tenant slug 解決のための共通 mock
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ slug: 'tenant-a' } as never);
   });
 
   it('メール送信成功時は正常に完了する', async () => {

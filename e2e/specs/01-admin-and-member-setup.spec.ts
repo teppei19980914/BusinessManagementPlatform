@@ -40,6 +40,10 @@ const ADMIN_EMAIL = process.env.INITIAL_ADMIN_EMAIL || 'admin-e2e@example.com';
 const ADMIN_INITIAL_PW = process.env.INITIAL_ADMIN_PASSWORD || 'E2eInitial!Pw_2026';
 const ADMIN_NEW_PW = 'E2eNew!Pw_2026_Changed';
 
+// ADR-0016 (2026-05-20): multi-tenant 対応で 組織 ID 必須化。
+//   ensureInitialAdmin は MANAGEMENT_TENANT_SLUG = 'management' に admin を作成する。
+const TENANT_SLUG = process.env.E2E_TENANT_SLUG ?? 'management';
+
 const MEMBER_EMAIL = `${withRunId('member')}@example.com`.toLowerCase();
 const MEMBER_NAME = withRunId('メンバー');
 const MEMBER_PW = 'E2eMember!Pw_2026';
@@ -92,6 +96,8 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
   test('Step 1: 初期 admin でログインしてパスワードを変更する', async () => {
     const page = sharedPage;
     await page.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 入力欄が必須化
+    await page.getByLabel('組織 ID').fill(TENANT_SLUG);
     await page.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await page.getByLabel('パスワード').fill(ADMIN_INITIAL_PW);
     await page.getByRole('button', { name: 'ログイン' }).click();
@@ -161,6 +167,8 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     const page = sharedPage;
     await sharedContext.clearCookies();
     await page.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    await page.getByLabel('組織 ID').fill(TENANT_SLUG);
     await page.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await page.getByLabel('パスワード').fill(ADMIN_NEW_PW);
     await page.getByRole('button', { name: 'ログイン' }).click();
@@ -240,6 +248,8 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     // admin セッションを復元 (MFA 通過後)
     await sharedContext.clearCookies();
     await page.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    await page.getByLabel('組織 ID').fill(TENANT_SLUG);
     await page.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await page.getByLabel('パスワード').fill(ADMIN_NEW_PW);
     await page.getByRole('button', { name: 'ログイン' }).click();
@@ -322,6 +332,8 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     const page = sharedPage;
     await sharedContext.clearCookies();
     await page.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化 (member は admin と同じ TENANT_SLUG に所属)
+    await page.getByLabel('組織 ID').fill(TENANT_SLUG);
     await page.getByLabel('メールアドレス').fill(MEMBER_EMAIL);
     await page.getByLabel('パスワード').fill(MEMBER_PW);
     await page.getByRole('button', { name: 'ログイン' }).click();

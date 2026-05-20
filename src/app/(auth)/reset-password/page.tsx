@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,18 +9,34 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function ResetPasswordPage() {
+  return (
+    <Suspense>
+      <ResetPasswordForm />
+    </Suspense>
+  );
+}
+
+function ResetPasswordForm() {
   const t = useTranslations('auth');
   // PR #170 hotfix: 共通フィールド名 (newPassword / newPasswordConfirm) は field scope を使う。
   // auth scope に同名キーを重複定義するのは i18n キーの単一源泉性を破る (Stop hook §10.10.1 で検出)。
   const tField = useTranslations('field');
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // ADR-0016 (2026-05-20): tenantSlug を URL クエリから初期値取得 (= メールリンク経由のケース)
+  const initialTenantSlug = searchParams.get('tenant') ?? '';
   const [step, setStep] = useState<'verify' | 'reset'>('verify');
   const [resetToken, setResetToken] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const [verifyForm, setVerifyForm] = useState({ email: '', recoveryCode: '' });
+  const [verifyForm, setVerifyForm] = useState({
+    email: '',
+    recoveryCode: '',
+    // ADR-0016 (2026-05-20): tenantSlug を verify 段階で必須化
+    tenantSlug: initialTenantSlug,
+  });
   const [resetForm, setResetForm] = useState({ newPassword: '', confirmPassword: '' });
 
   async function handleVerify(e: React.FormEvent) {
@@ -90,6 +106,18 @@ export default function ResetPasswordPage() {
           ) : step === 'verify' ? (
             <form onSubmit={handleVerify} className="space-y-4">
               {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+              {/* ADR-0016 (2026-05-20): multi-tenant 対応で 組織 ID を必須化 */}
+              <div className="space-y-2">
+                <Label>組織 ID</Label>
+                <Input
+                  type="text"
+                  value={verifyForm.tenantSlug}
+                  onChange={(e) => setVerifyForm({ ...verifyForm, tenantSlug: e.target.value })}
+                  placeholder="your-organization"
+                  required
+                  autoComplete="organization"
+                />
+              </div>
               <div className="space-y-2">
                 <Label>{t('email')}</Label>
                 <Input

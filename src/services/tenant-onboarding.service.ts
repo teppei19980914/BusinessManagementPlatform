@@ -117,7 +117,9 @@ export type TenantOnboardingFailure = {
   reason:
     | 'VALIDATION_ERROR'
     | 'SLUG_CONFLICT'
-    | 'EMAIL_CONFLICT'
+    // ADR-0016 (2026-05-20): 'EMAIL_CONFLICT' を削除。
+    //   email は tenant-scoped 一意化されたため、新規テナント作成時の email 重複は
+    //   そもそも発生しない (= 同一個人が複数テナントに所属可能になる、本 ADR の主目的)。
     | 'EMAIL_SEND_FAILED'
     // P-B (2026-05-08): 解約済テナントの請求先メールで Beginner プラン再登録を拒否
     | 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING';

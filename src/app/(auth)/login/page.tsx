@@ -26,6 +26,9 @@ function LoginForm() {
   // PR #198: CWE-601 オープンリダイレクト対策。外部 URL / スキーマ相対 URL は拒否し、
   //   同一オリジンパスのみ許可する (詳細は src/lib/url-utils.ts)。
   const callbackUrl = sanitizeCallbackUrl(searchParams.get('callbackUrl'));
+  // ADR-0016 (2026-05-20): tenantSlug を URL クエリから初期値取得 (= メールリンク経由のケース)
+  const initialTenantSlug = searchParams.get('tenant') ?? '';
+  const [tenantSlug, setTenantSlug] = useState(initialTenantSlug);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -52,6 +55,8 @@ function LoginForm() {
     const result = await signIn('credentials', {
       email,
       password,
+      // ADR-0016 (2026-05-20): tenantSlug を credential として送信
+      tenantSlug,
       redirect: false,
     });
 
@@ -63,7 +68,8 @@ function LoginForm() {
       const lockRes = await fetch('/api/auth/lock-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        // ADR-0016 (2026-05-20): multi-tenant 対応で tenantSlug を併送
+        body: JSON.stringify({ email, tenantSlug }),
       }).catch(() => null);
       const lock = lockRes && lockRes.ok
         ? (await lockRes.json().catch(() => null) as
@@ -111,6 +117,26 @@ function LoginForm() {
             {error && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
             )}
+            {/* ADR-0016 (2026-05-20): 組織 ID (= tenantSlug) を入力。
+                同じメールアドレスが複数の組織に所属しうるため、
+                どの組織にログインするかをここで指定する。
+                メールリンク経由のサインアップ/招待では URL クエリ `?tenant=...` から
+                初期値が自動入力されるため、通常ユーザはそのままログインできる。 */}
+            <div className="space-y-2">
+              <Label htmlFor="tenantSlug">組織 ID</Label>
+              <Input
+                id="tenantSlug"
+                type="text"
+                value={tenantSlug}
+                onChange={(e) => setTenantSlug(e.target.value)}
+                placeholder="your-organization"
+                required
+                autoComplete="organization"
+              />
+              <p className="text-xs text-muted-foreground">
+                組織管理者から伝えられた ID を入力してください。
+              </p>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="email">{t('email')}</Label>
               <Input

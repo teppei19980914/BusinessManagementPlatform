@@ -28,9 +28,11 @@ import { verifyAndIssueResetToken, resetPassword } from '@/services/password-res
 // PR #198: 公開認証エンドポイントのブルートフォース防御 (CWE-307)
 import { applyRateLimit } from '@/lib/rate-limit';
 
+// ADR-0016 (2026-05-20): multi-tenant 対応で tenantSlug 必須化
 const verifySchema = z.object({
   email: z.email(),
   recoveryCode: z.string().min(1),
+  tenantSlug: z.string().min(1).max(60),
 });
 
 const resetSchema = z.object({
@@ -55,7 +57,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await verifyAndIssueResetToken(parsed.data.email, parsed.data.recoveryCode);
+    const result = await verifyAndIssueResetToken(
+      parsed.data.email,
+      parsed.data.recoveryCode,
+      parsed.data.tenantSlug,
+    );
 
     if (!result.success) {
       return NextResponse.json(
