@@ -10634,3 +10634,94 @@ datasource: {
 - DEPLOYMENT.md §2.0 (= 本件の運用手順)
 - 元事象: PR #412 マージ直後の deploy log 6a0cf3e5
 - Supabase 公式: https://supabase.com/docs/guides/database/connecting-to-postgres
+
+---
+
+## 5.X+83 **`prisma migrate deploy` 失敗時の `_prisma_migrations.finished_at=NULL` 残骸が次回 deploy で「未完了」と再解釈され、永久に同じエラーで失敗し続ける (2026-05-20 / PR #413 deploy 後)**
+
+### 事象
+
+PR #413 (Netlify env を Pooler URL に変更) 後の deploy で P1001 (IPv6) は解消したが、新たに以下のエラーで失敗:
+
+```
+Error: P3018
+A migration failed to apply. New migrations cannot be applied before the error is recovered from.
+Migration name: 20260523_cron_execution_log
+Database error code: 42P07
+ERROR: relation "cron_execution_logs" already exists
+```
+
+`_prisma_migrations` を確認すると **`20260523_cron_execution_log` は既に行として存在しているが `finished_at=NULL`** の状態。同様に **`20260416_add_actual_dates` も NULL 残骸が重複存在** (= 同名の完了済レコードが別途あるのに NULL 行も並存)。
+
+### 根本原因
+
+`prisma migrate deploy` の挙動:
+1. migration 実行開始時に `INSERT INTO _prisma_migrations (started_at=NOW, finished_at=NULL, ...)`
+2. SQL 実行
+3. 成功 → `UPDATE _prisma_migrations SET finished_at=NOW WHERE id=...`
+4. **失敗 → finished_at は NULL のまま放置** (rollback もされず、ただの「未完了」状態のレコードが永久に残る)
+5. 次回 deploy 時は NULL 行を見て「**まだ完了していない migration がある**」と判断し、同じ migration を再実行 → 同じエラー (= 永久ループ)
+
+本件 `20260523_cron_execution_log` は元々 `migration.sql` 冒頭コメントに「**手動適用 (Supabase SQL Editor):**」と書かれており、過去に手動適用された経緯がある。その時点では Netlify build に `prisma migrate deploy` が組み込まれていなかったため不整合は顕在化しなかったが、PR-V8.1 で `build:netlify` に migrate deploy を追加した瞬間に過去の負債が一斉に顕在化。
+
+PR-V8.1 マージ直後の 1 回目 deploy で `prisma migrate deploy` が 20260523 を「未適用」と判定 → INSERT して CREATE TABLE → 失敗 → NULL 残骸生成。それが次回 deploy でも繰り返し参照される構造。
+
+### 教訓
+
+1. **`prisma migrate deploy` の失敗時、`_prisma_migrations` には NULL 残骸が残る**。これは Prisma の標準挙動で、自動 rollback しない
+2. **「手動適用 (SQL Editor)」前提の migration は `_prisma_migrations` への INSERT も必須**。Prisma migrate を介さない DB 変更は記録漏れを生む
+3. **NULL 残骸の修復は INSERT ではなく UPDATE (= 既存行の補正)**。INSERT を試みると主キー衝突や一意制約違反になる可能性
+4. **重複 NULL 残骸 (= 同名の完了済が別途存在) は DELETE で安全に削除可**
+
+### 修正対応
+
+**コード変更不要**。DB レコード補正のみ:
+
+```sql
+-- ============ Step 1: 全 NULL 残骸を確認 ============
+SELECT migration_name, started_at
+FROM _prisma_migrations
+WHERE finished_at IS NULL;
+
+-- ============ Step 2: 既存 NULL を「適用済」に補正 (UPDATE) ============
+-- 該当 migration の SQL が DB に既に反映されている場合
+UPDATE _prisma_migrations
+SET finished_at = NOW(),
+    logs = '手動適用済 / NULL 残骸補正',
+    applied_steps_count = 1
+WHERE migration_name = '20260523_cron_execution_log'
+  AND finished_at IS NULL;
+
+-- ============ Step 3: 重複 NULL 残骸を DELETE ============
+-- 同名の完了済レコードが別途存在する場合 (= 過去の失敗試行の残骸)
+DELETE FROM _prisma_migrations
+WHERE migration_name = '20260416_add_actual_dates'
+  AND finished_at IS NULL;
+
+-- ============ Step 4: 全 NULL が解消されたことを確認 (0 行が期待) ============
+SELECT migration_name, started_at
+FROM _prisma_migrations
+WHERE finished_at IS NULL;
+```
+
+Step 4 で 0 行が返ったら Netlify Trigger deploy → 成功。
+
+または `prisma migrate resolve --applied` CLI でも可能 (NULL 行があれば finished_at 補正):
+```bash
+DIRECT_URL="postgresql://...session-pooler:5432/postgres" \
+  pnpm prisma migrate resolve --applied "20260523_cron_execution_log"
+```
+
+### 横展開・予防
+
+1. **過去の手動適用 migration を全て棚卸し**: `prisma/migrations/*/migration.sql` で「手動適用 (SQL Editor)」コメントを grep → 該当全件で `_prisma_migrations` の記録有無を確認
+2. **将来は SQL Editor 手動適用を廃止**: すべて `pnpm prisma migrate deploy` (= `DIRECT_URL` 経由) で適用に統一
+3. **CONTRIBUTING.md / DEPLOYMENT.md に「migration は Prisma migrate CLI 経由でのみ適用」を明記**
+4. **deploy 失敗時のロールバック手順を docs 化**: `_prisma_migrations` の NULL 残骸検知 + 修復 SQL をすぐ実行できるよう運用ガイド整備
+
+### 関連
+- KDD §5.X+77 (= PR #412 で `prisma migrate deploy` を build に組み込んだ、本件の前提)
+- KDD §5.X+82 (= 同じ deploy が IPv6 で失敗、本件の前段)
+- DEPLOYMENT.md §4.1 (= migration の運用フロー、要更新)
+- Prisma 公式: https://pris.ly/d/migrate-resolve
+- memory: `feedback_post_merge_branch_push.md` (= 本件対応中、PR #413 マージ後にブランチに追加 push して orphan commit を作る同種ミスも体験)
