@@ -10871,3 +10871,78 @@ UI=API 一致原則で API ハンドラを削除する PR では、以下を必�
 - PR #416 (feat/crud-permission-redesign): 本件の原因コミット
 - KDD §5.X+57 (E2E 期待値網羅性): 期待値配列に必要なステータスコードを漏らさない原則
 - ADR-0005 (RBAC + 二段階テナント認可): 越境防御の設計根拠
+
+## 5.X+86 **security-check.ts の SQL injection ガードはコメント内のキーワードも文字列マッチで CRITICAL 検出する ─ Prisma の unsafe 系 API 名はコード本体だけでなくコメントからも除去する (2026-05-20 / PR #416)**
+
+### 発生事象
+
+PR #416 (feat/crud-permission-redesign) で 2 巡目検証 S1-G1 として、cron の duplicate execution gate に PostgreSQL advisory lock を追加した:
+
+```ts
+const result = await prisma.$queryRawUnsafe<{ pg_try_advisory_lock: boolean }[]>(
+  `SELECT pg_try_advisory_lock(${key.toString()}) AS pg_try_advisory_lock`,
+);
+```
+
+CI の Security Score Gate で CRITICAL 1 件検出 → スコア 80/100 で 90 閾値割れ:
+
+```
+F-01: SQLインジェクションリスク: $queryRawUnsafe / $executeRawUnsafe の使用
+File: src/lib/cron-execution-log.ts (line 205)
+Severity: CRITICAL
+```
+
+修正として `prisma.$queryRaw` タグドテンプレート (自動パラメータ化) に置換:
+
+```ts
+const result = await prisma.$queryRaw<{ pg_try_advisory_lock: boolean }[]>`
+  SELECT pg_try_advisory_lock(${key}) AS pg_try_advisory_lock
+`;
+```
+
+再実行も **スコア 80/100 のまま**。検出位置が `line 205` から `line 206` に変わっただけで再検出。
+
+### 根本原因
+
+`scripts/security-check.ts:402-405` の SQL injection 検出ロジック:
+
+```ts
+function checkUnsafeRawQuery() {
+  const files = findFiles('src', f => f.endsWith('.ts') || f.endsWith('.tsx'));
+  const pattern = /\$queryRawUnsafe|\$executeRawUnsafe/;
+  for (const file of files) {
+    const content = readFile(file);
+    ...
+```
+
+**ファイル全体に対する単純な正規表現マッチ**で `$queryRawUnsafe` / `$executeRawUnsafe` を検出している。コード本体だけでなく **コメント内の同名キーワードもマッチ**してしまう。
+
+私の修正コミットでは「旧実装は `$queryRawUnsafe` で…」というコメントを残していたため、Prisma 呼び出し自体は安全な `$queryRaw` に置換済みでも CRITICAL が消えなかった。
+
+### 教訓
+
+**Prisma の unsafe 系 raw query API 名 (`$queryRawUnsafe` / `$executeRawUnsafe`) は、コード本体だけでなくコメント / docstring / 変更履歴コメントからも完全に除去する**。代替表記:
+
+- 「unsafe 系 raw query API」
+- 「raw 文字列補間版」「タグドテンプレート版」と対比的に呼ぶ
+- 必要なら `$queryRaw` + 別行で `*Unsafe* 系` のように分断
+
+### 検証手順
+
+PR で raw query を扱う実装を追加・修正するときは、**ローカルで `pnpm tsx scripts/security-check.ts --min-score=90` を必ず実行**してから push する。CI まで気付かないと re-run コスト + レビューブロックが発生する。
+
+### スクリプト側の改善余地 (本 PR スコープ外)
+
+`security-check.ts` の検出パターンを改善する案:
+1. コメント行 (`//`, `/* */`) を除外してから正規表現マッチ
+2. AST ベース検出 (typescript-eslint や ts-morph 経由) に変更
+3. 検出パターンを「関数呼び出し形式」(`$queryRawUnsafe(...)`)  に限定: `/\$queryRawUnsafe\s*\(/`
+
+ただしいずれも本 PR スコープ外。当面は **コメントから unsafe API 名を除去する運用** で回避する。
+
+### 関連 KDD / PR
+
+- PR #416 (feat/crud-permission-redesign): 本件の原因コミット (S1-G1 advisory lock 追加)
+- `.github/workflows/security.yml`: 90 点閾値の CI ガード
+- `scripts/security-check.ts`: 検出ロジック
+- KDD §5.X+85 (UI=API 一致原則によるハンドラ削除と E2E 期待値追従): 同 PR で発見された別の CI fail パターン

@@ -202,9 +202,14 @@ function hashCronNameToBigint(cronName: string): bigint {
  */
 async function tryAcquireAdvisoryLock(key: bigint): Promise<boolean> {
   try {
-    const result = await prisma.$queryRawUnsafe<{ pg_try_advisory_lock: boolean }[]>(
-      `SELECT pg_try_advisory_lock(${key.toString()}) AS pg_try_advisory_lock`,
-    );
+    // feat/crud-permission-redesign (2026-05-20, KDD §5.X+86): タグドテンプレート版の
+    //   `$queryRaw` を採用 (Prisma が引数を自動パラメータ化するため SQL injection 構造的に不能)。
+    //   旧実装は raw 文字列補間版 (unsafe 系 raw API) を使っていたが、key が数値で実害は無いものの
+    //   security-check.ts が unsafe API 名の文字列マッチで CRITICAL 検出してスコア -10 だったため
+    //   タグドテンプレート版へ置換し、コメント内にも該当キーワードを残さない。
+    const result = await prisma.$queryRaw<{ pg_try_advisory_lock: boolean }[]>`
+      SELECT pg_try_advisory_lock(${key}) AS pg_try_advisory_lock
+    `;
     return result[0]?.pg_try_advisory_lock === true;
   } catch (e) {
     // eslint-disable-next-line no-console
