@@ -61,8 +61,9 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     superAdminPage = await superAdminContext.newPage();
     await superAdminPage.goto('/login');
     // ADR-0016 (2026-05-20): 組織 ID 必須化
-    //   super_admin は MANAGEMENT_TENANT (slug='mgmt') 所属 (= super-admin.ts fixture 参照)
-    await superAdminPage.getByLabel('組織 ID').fill('mgmt');
+    //   super_admin は MANAGEMENT_TENANT (slug='platform-admin') 所属
+    //   (= super-admin.ts fixture / production seed.ts / src/lib/tenant.ts:MANAGEMENT_TENANT_SLUG)
+    await superAdminPage.getByLabel('組織 ID').fill('platform-admin');
     await superAdminPage.getByLabel('メールアドレス').fill(fixture.superAdminEmail);
     await superAdminPage.getByLabel('パスワード').fill(fixture.superAdminPassword);
     await superAdminPage.getByRole('button', { name: 'ログイン' }).click();

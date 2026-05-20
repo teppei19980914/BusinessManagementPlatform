@@ -84,7 +84,10 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
     `INSERT INTO tenants (
        id, slug, name, plan, payment_method, created_at, updated_at
      )
-     VALUES ($1, 'mgmt', 'Knowledge Relay Platform', 'pro', 'invoice', NOW(), NOW())
+     -- ADR-0016 (2026-05-20): production seed.ts と同じ slug='platform-admin' に統一。
+     --   旧 'mgmt' は spec 12 が 'platform-admin' で先に INSERT した場合に ON CONFLICT
+     --   DO NOTHING で残るため、spec 13 が tenantSlug='mgmt' でログインすると tenant_not_found。
+     VALUES ($1, 'platform-admin', 'Knowledge Relay Platform', 'pro', 'invoice', NOW(), NOW())
      ON CONFLICT (id) DO NOTHING`,
     [MANAGEMENT_TENANT_ID],
   );
