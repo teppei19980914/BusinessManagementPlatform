@@ -11152,3 +11152,47 @@ HAVING COUNT(DISTINCT tenant_id) > 1;
 - ADR-0016: [docs/adr/0016-multi-tenant-user-membership.md](../adr/0016-multi-tenant-user-membership.md) (設計判断記録)
 - 検証手順: [docs/operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md](../operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md)
 - KDD §5.X+72 (前提): セッション解除パターン (tokenVersion increment 設計)
+
+## 5.X+90 **multi-tenant 化 + データ import API がある SaaS で「Beginner 90日試用」を提供すると import 経由の半永久 abuse が成立する ─ 既登録 email は Beginner 払い出し不可化 + UI で事前ヒント (Phase 10 / ADR-0016 強化)**
+
+### 発生事象
+
+ADR-0016 で同一個人が複数テナントに所属可能になったことで、以下の abuse パターンが浮上:
+
+1. テナント A (Beginner) を email=X で開設
+2. 90日経過直前にデータを ZIP エクスポート
+3. テナント A 削除
+4. 同 email=X で テナント B (Beginner) を新規払い出し
+5. 旧 ZIP を import → 過去蓄積を引き継ぎ
+6. **新たな 90日試用枠を獲得** (= 1〜5 を繰り返せば半永久に Beginner)
+
+### 根本原因
+
+- ADR-0016 で email 共存を許可した結果、「同一個人が複数 Beginner テナント開設」が物理的に可能になった
+- データ import API (`POST /api/tenants/me/import`) は plan 区別なくフル機能を提供していた
+- 旧 P-B (BEGINNER_NOT_AVAILABLE_FOR_RETURNING) は **「解約済テナント (deletedAt: not null) 限定」** のチェックで、現役テナント並行運用での abuse は防げなかった
+
+### 解決策
+
+1. **P-B 強化**: tenant-onboarding.service.ts の判定を「`deletedAt: { not: null }` フィルタ削除」=
+   **過去/現在を問わず**どこかに登録履歴のある email は Beginner 不可 (`BEGINNER_REQUIRES_UPGRADE`)
+2. **UI 事前ヒント**: 新規 API `POST /api/auth/check-tenant-eligibility` (UI 専用) で
+   メール入力時 onBlur で Beginner 可否を判定。Beginner radio を disable + Expert/Pro 誘導 CTA を表示
+3. **Defense-in-depth**: サーバ層が `BEGINNER_REQUIRES_UPGRADE` を必ず返す (UI チェック bypass されても安全)
+4. **既登録判定対象**: tenants.billing_contact_email / users.email の OR (削除済 user 含む) =
+   旧 P-B の 4 axis 維持 (= billingContactEmail / initialAdminEmail の組み合わせ)
+
+### 教訓
+
+1. **multi-tenant 化と「無料試用」プランは abuse 設計上の衝突点**: import 機能がある場合は特に
+   既存ユーザ判定を厳格化しないと無限延長が成立する
+2. **削除済データだけ見る abuse-prevention は不十分**: 現役並行運用での重複も同じリスク (= ZIP 持ち回せる)
+3. **エラー vs UI 誘導の分離**: 「BEGINNER_NOT_AVAILABLE エラーで詰まる」UX は離脱要因。
+   フロント側で事前判定してプラン選択 UI を変化させると、ユーザは即座に Expert/Pro を選択できる
+4. **defense-in-depth で UI 層を信頼しない**: UI は速度/UX 最適化のためのヒントで、最終判定はサーバ層
+
+### 関連 KDD / PR
+
+- PR feat/multi-tenant-user-membership (本 PR Phase 10): 原因 + 修正
+- KDD §5.X+89 (前段): ADR-0016 本体の multi-tenant 設計
+- ADR-0016 §Risk: 本 abuse パターンの記録

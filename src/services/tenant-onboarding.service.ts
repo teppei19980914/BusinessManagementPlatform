@@ -121,8 +121,8 @@ export type TenantOnboardingFailure = {
     //   email は tenant-scoped 一意化されたため、新規テナント作成時の email 重複は
     //   そもそも発生しない (= 同一個人が複数テナントに所属可能になる、本 ADR の主目的)。
     | 'EMAIL_SEND_FAILED'
-    // P-B (2026-05-08): 解約済テナントの請求先メールで Beginner プラン再登録を拒否
-    | 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING';
+    // P-B 強化 (2026-05-20 / ADR-0016): 過去/現在を問わず登録履歴のある email は Beginner 不可
+    | 'BEGINNER_REQUIRES_UPGRADE';
   message: string;
 };
 
@@ -203,20 +203,24 @@ async function createTenantInternal(
   //   Prisma が P2002 を throw → 呼出側 (createTenantBySuperAdmin/Signup) で catch → 4xx 化。
   //   ただし新規テナント作成では物理的に同一テナント内重複は発生しないため発火条件なし。
 
-  // P-B (2026-05-08): 解約済テナントの billingContactEmail で Beginner 再登録を拒否
-  //   - 「Beginner プランは本当に初めてのユーザのみ 90 日限定」方針
-  //   - 同じ請求先メールで過去に解約 (= deletedAt セット) されたテナントがあれば、
-  //     再登録時は Expert/Pro 必須にする
-  //   - billingContactEmail も initialAdminEmail も両方チェック (= 一方を変えて回避を防ぐ)
-  // 2026-05-09 (#18 強化): users 行を永続保持する方針 (purgeOldDeletedTenants で削除しない)
-  //   に伴い、過去テナントの user.email でも abuse-prevention 判定する (defense-in-depth)。
-  //   1 つのメアドが「テナント請求先」でも「テナント内 admin ユーザ」でもなかったとしても、
-  //   過去にどこかのテナントに登録されていれば Beginner 再契約を拒否する。
+  // P-B (2026-05-08 → 2026-05-20 強化): Beginner プランは「初回ユーザ専用 90日試用」方針
+  //   ADR-0016 (2026-05-20): import API による抜け道塞ぎとして、**過去/現在を問わず**
+  //   どこかのテナントに同 email が登録されていれば Beginner 不可 (Expert/Pro 誘導)。
+  //
+  //   旧 P-B は「解約済テナント (deletedAt: not null) 限定」のチェックだったが、
+  //   現役テナントに居るユーザが「別組織」を Beginner で開設 → import API で過去蓄積を
+  //   持ち込み → 90日試用を半永久延長する abuse が成立してしまうため、削除状態を問わず
+  //   過去登録履歴全体を判定対象とする。
+  //
+  //   チェック対象 (= OR 条件、いずれか 1 つでも該当すれば Beginner 拒否):
+  //   - tenants.billing_contact_email = billingContactEmail
+  //   - tenants.billing_contact_email = initialAdminEmail
+  //   - users.email = billingContactEmail (deleted 含む)
+  //   - users.email = initialAdminEmail (deleted 含む)
   if (input.plan === 'beginner') {
-    const [previousDeletedTenants, previousDeletedUsers] = await Promise.all([
+    const [previousTenants, previousUser] = await Promise.all([
       prisma.tenant.findMany({
         where: {
-          deletedAt: { not: null },
           OR: [
             { billingContactEmail: input.billingContactEmail },
             { billingContactEmail: input.initialAdminEmail },
@@ -224,10 +228,8 @@ async function createTenantInternal(
         },
         select: { id: true },
       }),
-      // 2026-05-09 (#18): 解約済テナントに所属していた user の email で同 email 再登録を拒否
       prisma.user.findFirst({
         where: {
-          deletedAt: { not: null },
           OR: [
             { email: input.billingContactEmail },
             { email: input.initialAdminEmail },
@@ -236,12 +238,12 @@ async function createTenantInternal(
         select: { id: true },
       }),
     ]);
-    if (previousDeletedTenants.length > 0 || previousDeletedUsers != null) {
+    if (previousTenants.length > 0 || previousUser != null) {
       return {
         ok: false,
-        reason: 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING',
+        reason: 'BEGINNER_REQUIRES_UPGRADE',
         message:
-          'このメールアドレスは過去に解約されたテナントで使用されており、Beginner プランでの再登録はできません。Expert または Pro プランをご検討ください。',
+          'このメールアドレスは既に登録履歴があるため、Beginner プランでの新規払い出しはできません。Expert または Pro プランをご選択ください。',
       };
     }
   }

@@ -279,33 +279,30 @@ describe('createTenantBySignup', () => {
   });
 });
 
-describe('P-B (2026-05-08): Beginner プラン再登録防止 + beginnerEverUpgraded セット', () => {
-  it('解約済テナントの billingContactEmail で Beginner 再登録すると BEGINNER_NOT_AVAILABLE_FOR_RETURNING', async () => {
+describe('P-B 強化 (ADR-0016 / 2026-05-20): Beginner プラン abuse 防止 (削除/有効 問わず)', () => {
+  it('過去/現役テナントの billingContactEmail で Beginner 登録すると BEGINNER_REQUIRES_UPGRADE', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
-      { id: 'past-deleted-tenant' },
+      { id: 'past-tenant' },
     ] as never);
 
     const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('BEGINNER_NOT_AVAILABLE_FOR_RETURNING');
+    if (!result.ok) expect(result.reason).toBe('BEGINNER_REQUIRES_UPGRADE');
     expect(prisma.tenant.create).not.toHaveBeenCalled();
   });
 
-  // 2026-05-09 (#18): 解約済 user の email でも Beginner 再登録を拒否 (defense-in-depth)
-  // ADR-0016 (2026-05-20): tenant-onboarding から global email 重複検査が削除された結果、
-  //   user.findFirst の呼出は abuse check (1 回のみ) になった。
-  it('解約済 user の email で Beginner 再登録すると BEGINNER_NOT_AVAILABLE_FOR_RETURNING (#18)', async () => {
-    // tenant.findMany は空 (= 過去テナントなし) だが、user.findFirst (abuse check) が hit するパス
+  // ADR-0016 (2026-05-20): 削除状態を問わず user.email で同 email 検出すれば拒否 (import 抜け道封鎖)
+  it('登録済 user の email で Beginner 登録すると BEGINNER_REQUIRES_UPGRADE', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
-      id: 'soft-deleted-user',
+      id: 'registered-user',
     } as never);
 
     const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('BEGINNER_NOT_AVAILABLE_FOR_RETURNING');
+    if (!result.ok) expect(result.reason).toBe('BEGINNER_REQUIRES_UPGRADE');
     expect(prisma.tenant.create).not.toHaveBeenCalled();
   });
 

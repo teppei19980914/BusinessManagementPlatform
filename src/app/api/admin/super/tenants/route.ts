@@ -90,9 +90,9 @@ function mapFailureToHttp(result: TenantOnboardingFailure): NextResponse {
         { error: { code: 'EMAIL_SEND_FAILED', message: result.message } },
         { status: 502 },
       );
-    case 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING':
+    case 'BEGINNER_REQUIRES_UPGRADE':
       return NextResponse.json(
-        { error: { code: 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING', message: result.message } },
+        { error: { code: 'BEGINNER_REQUIRES_UPGRADE', message: result.message } },
         { status: 409 },
       );
   }

@@ -7,7 +7,7 @@
  * 入力項目: 表示名 / slug / プラン / 請求先 4 項目 / 任意 (電話 + 支払方法) / 初期 admin。
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -65,6 +65,42 @@ export function TenantCreateForm() {
 
   const [form, setForm] = useState<FormState>(INITIAL);
   const [error, setError] = useState('');
+  // ADR-0016 (2026-05-20): 既登録 email チェック (Beginner abuse 防止 + UI 誘導)
+  const [beginnerAvailable, setBeginnerAvailable] = useState<boolean | null>(null);
+  const [eligibilityHint, setEligibilityHint] = useState('');
+
+  useEffect(() => {
+    const billing = form.billingContactEmail.trim();
+    const admin = form.initialAdminEmail.trim();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(billing) || !emailPattern.test(admin)) {
+      // ADR-0016: 不正 email では何もしない。reset は onChange で行う (lint: set-state-in-effect 回避)
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const res = await fetch('/api/auth/check-tenant-eligibility', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ billingContactEmail: billing, initialAdminEmail: admin }),
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        setBeginnerAvailable(null);
+        setEligibilityHint('');
+        return;
+      }
+      const json = (await res.json().catch(() => null)) as
+        | { beginnerAvailable: boolean; reason?: string; message?: string }
+        | null;
+      if (!json) return;
+      setBeginnerAvailable(json.beginnerAvailable);
+      setEligibilityHint(json.beginnerAvailable ? '' : (json.message ?? ''));
+      if (!json.beginnerAvailable && form.plan === 'beginner') {
+        setForm((prev) => ({ ...prev, plan: 'expert' }));
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.billingContactEmail, form.initialAdminEmail]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -94,6 +130,8 @@ export function TenantCreateForm() {
       const message = json?.error?.message as string | undefined;
       if (code === 'SLUG_CONFLICT') setError('この組織 ID は既に使用されています。別の ID を入力してください。');
       // ADR-0016 (2026-05-20): EMAIL_CONFLICT は廃止 (tenant-scoped 一意化で発生不能)
+      // ADR-0016 (2026-05-20): BEGINNER_REQUIRES_UPGRADE = サーバ側 defense-in-depth
+      else if (code === 'BEGINNER_REQUIRES_UPGRADE') setError(message ?? 'このメールアドレスは既に登録履歴があるため、Expert または Pro プランをご選択ください。');
       else if (code === 'EMAIL_SEND_FAILED') setError('招待メール送信に失敗したためテナント作成を取り消しました。メールアドレスを確認のうえ再試行してください。');
       else if (code === 'VALIDATION_ERROR') setError(message ?? '入力内容に誤りがあります。');
       else setError(message ?? '作成に失敗しました。');
@@ -147,13 +185,26 @@ export function TenantCreateForm() {
             onChange={(e) => setForm({ ...form, plan: e.target.value as FormState['plan'] })}
             className={nativeSelectClass}
           >
-            <option value="beginner">Beginner (¥0、月 100 回上限、5 席、90 日試用)</option>
+            <option value="beginner" disabled={beginnerAvailable === false}>
+              Beginner (¥0、月 100 回上限、5 席、90 日試用)
+              {beginnerAvailable === false ? ' — このメールは既登録のため選択不可' : ''}
+            </option>
             <option value="expert">Expert (¥5/call)</option>
             <option value="pro">Pro (¥15/call、Sonnet 説明文付)</option>
           </select>
+          {beginnerAvailable === false && eligibilityHint && (
+            <p
+              className="rounded-md bg-info/10 p-2 text-xs text-info"
+              data-testid="beginner-unavailable-hint"
+            >
+              ℹ {eligibilityHint}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
-            <strong>P-B (2026-05-08) 注意</strong>: Beginner で作成 → 試用 90 日後に読み取り専用モードに移行。
+            {/* ADR-0016 (2026-05-20): P-B 強化 — 既登録 email は Beginner 不可 (abuse 防止) */}
+            <strong>注意</strong>: Beginner で作成 → 試用 90 日後に読み取り専用モードに移行。
             Expert / Pro で作成 → 例外的に Beginner 試用対象外として開設 (= 後で Beginner にダウングレード不可)。
+            既登録メールアドレスの場合は Beginner 選択不可 (Expert/Pro のみ)。
           </p>
         </div>
       </fieldset>

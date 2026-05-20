@@ -143,6 +143,13 @@ export function buildLoginUrl(tenantSlug: string, baseUrl: string): string {
   - 対策: grep で正確絞り込み、Phase 6 で集中対応
 - ⚠️ **NextAuth v5 + Netlify の Set-Cookie 罠** (= KDD §5.X+33) に再衝突する可能性
   - 対策: tenantSlug は JWT claim ではなく URL query 経由で取得 (= cookie 差替え不要)
+- ⚠️ **import API による 90日 Beginner abuse** (Phase 10 追記 / 2026-05-20)
+  - リスク: テナント解約 → 同 email で新規 Beginner 払い出し → 旧テナントのエクスポート ZIP を import →
+    90日試用を半永久延長できる abuse パターン (Voyage embedding コストが運営者負担で膨張)
+  - 対策: **P-B 強化** — Beginner プラン払い出し時に **削除/有効を問わず** どこかに登録履歴のある email を拒否
+    (`BEGINNER_REQUIRES_UPGRADE` エラー)。UI は Beginner radio を disable + Expert/Pro 誘導 CTA を提示。
+    新規 API `POST /api/auth/check-tenant-eligibility` は UI ヒント専用で、サーバ層が
+    `tenant-onboarding.service.ts` で defense-in-depth で最終判定する
 
 ---
 
