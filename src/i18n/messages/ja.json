@@ -66,7 +66,8 @@
     "unlinkButtonTitle": "このプロジェクトから紐付けを解除",
     "unlinkConfirm": "「{name}」の紐付けを解除します。よろしいですか? (資産本体は他プロジェクトの参照が残っていれば削除されません)",
     "unlinkSuccess": "「{name}」の紐付けを解除しました",
-    "unlinkFailed": "紐付けの解除に失敗しました"
+    "unlinkFailed": "紐付けの解除に失敗しました",
+    "privateProject": "非公開のプロジェクト"
   },
   "comment": {
     "section": "コメント",
@@ -245,6 +246,7 @@
     "cannotEditFixedEstimate": "確定済みの見積もりは編集できません",
     "userNotFound": "ユーザが見つかりません",
     "alreadyMember": "既にメンバーに追加されています",
+    "cannotManagePmTl": "PM/TL ロールの追加・削除・変更はテナント管理者のみ実行できます",
     "noCommentPermission": "コメント投稿権限がありません (viewer 不可)",
     "bulkProgressOwnTasksOnly": "一括実績更新は自分が担当のタスクのみ対象にできます",
     "invalidAssigneeMember": "指定された担当者はプロジェクトメンバーではありません"

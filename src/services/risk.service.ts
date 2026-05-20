@@ -79,8 +79,11 @@ export type RiskDTO = {
   /** 紐付け済プロジェクトの id 一覧 (M:N)。ここに含まれる project でアクセス権が発生する。 */
   linkedProjectIds: string[];
   /** PR feat/asset-multi-linking-ui (Phase 2): UI 表示用の紐付け済プロジェクト詳細
-   *  (id + 表示名 + 削除状態)。ダイアログ「紐付けプロジェクト」セクションで使用。 */
-  linkedProjects: { id: string; name: string; deleted: boolean }[];
+   *  (id + 表示名 + 削除状態)。ダイアログ「紐付けプロジェクト」セクションで使用。
+   *  feat/crud-permission-redesign (2026-05-20): 「全リスク/全課題」横断ビューで非 ProjectMember には
+   *  紐付け先プロジェクト名を秘匿するため、`name` を `string | null` に変更。
+   *  null の場合 UI 側で「非公開のプロジェクト」プレースホルダ表示し、詳細リンクは無効化する。 */
+  linkedProjects: { id: string; name: string | null; deleted: boolean }[];
   type: string;
   title: string;
   content: string;
@@ -307,8 +310,22 @@ export async function listAllRisksForViewer(
     const linkedProjectIds = r.riskIssueProjects?.map((rp) => rp.projectId) ?? [];
     const isMember = isAdmin || linkedProjectIds.some((pid) => memberProjectIds.has(pid));
     const projectDeleted = r.project?.deletedAt != null;
+    // feat/crud-permission-redesign (2026-05-20): per-link で「自分がメンバーであるプロジェクト」のみ
+    //   name を返す。それ以外は null にし UI 側で「非公開のプロジェクト」表示。
+    //   toRiskDTO は無条件で全プロジェクト名を返すため、横断ビューでは linkedProjects を上書きする。
+    const linkedProjectsGated = (r.riskIssueProjects ?? [])
+      .filter((rp) => rp.project != null)
+      .map((rp) => {
+        const isLinkedMember = isAdmin || memberProjectIds.has(rp.projectId);
+        return {
+          id: rp.project!.id,
+          name: isLinkedMember ? rp.project!.name : null,
+          deleted: isAdmin ? rp.project!.deletedAt != null : false,
+        };
+      });
     return {
       ...toRiskDTO(r),
+      linkedProjects: linkedProjectsGated,
       projectName: isMember ? r.project?.name ?? null : null,
       projectDeleted: isAdmin ? projectDeleted : false, // admin 以外には削除状態を秘匿
       // 孤児プロジェクト (deleted) への詳細リンクは admin 以外は許可しない

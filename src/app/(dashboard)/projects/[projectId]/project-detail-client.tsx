@@ -210,7 +210,10 @@ export function ProjectDetailClient({
   // 全プロジェクトのナレッジを表示するが、どちらも同一 knowledge テーブルを参照する
   // ため、一方での CRUD がもう一方に即座に反映される (連動)。
   const knowledges = useLazyFetch<KnowledgeDTO[]>(`/api/projects/${project.id}/knowledge`);
-  const allUsers = useLazyFetch<UserDTO[]>(`/api/admin/users`);
+  // feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー追加可になったため、
+  //   admin only の /api/admin/users ではなく project-scoped で member:manage 認可の
+  //   /api/projects/[id]/available-users を叩く。
+  const allUsers = useLazyFetch<UserDTO[]>(`/api/projects/${project.id}/available-users`);
   // feat/stakeholder-management: ステークホルダー一覧 (PM/TL + admin のみ取得・表示)
   const stakeholders = useLazyFetch<StakeholderDTO[]>(`/api/projects/${project.id}/stakeholders`);
 
@@ -266,7 +269,8 @@ export function ProjectDetailClient({
         break;
       case 'members':
         members.load();
-        if (systemRole === 'admin') allUsers.load();
+        // feat/crud-permission-redesign (2026-05-20): admin/pm_tl の両方でメンバー追加候補をロード。
+        if (systemRole === 'admin' || projectRole === 'pm_tl') allUsers.load();
         break;
       case 'stakeholders':
         // 内部メンバー紐付けプルダウン用に members も取得
@@ -276,7 +280,7 @@ export function ProjectDetailClient({
       default:
         break;
     }
-  }, [estimates, tasks, members, risks, retros, knowledges, stakeholders, allUsers, systemRole]);
+  }, [estimates, tasks, members, risks, retros, knowledges, stakeholders, allUsers, systemRole, projectRole]);
 
   function handleTabChange(value: string) {
     setActiveTab(value);
@@ -1026,36 +1030,26 @@ export function ProjectDetailClient({
           <SuggestionsPanel projectId={project.id} canAdopt={canCreate} tenantPlan={tenantPlan} />
         </TabsContent>
 
-        {/* メンバータブ（admin/pm_tl のみ、admin なら allUsers も必要）*/}
-        {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+        {/* メンバータブ（admin/pm_tl のみ表示、両方 allUsers が必要）
+            feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー管理可能になったため、
+            canManage=admin||pm_tl + canManagePmTl=admin の 2 軸で UI を制御。 */}
+        {(isSystemAdmin || projectRole === 'pm_tl') && (
           <TabsContent value="members" className="mt-4">
             <LazyTabContent state={members.state}>
-              {(membersData) => {
-                if (systemRole === 'admin') {
-                  return (
-                    <LazyTabContent state={allUsers.state}>
-                      {(allUsersData) => (
-                        <MembersClient
-                          projectId={project.id}
-                          members={membersData}
-                          allUsers={allUsersData}
-                          isAdmin={true}
-                          onReload={reloadMembers}
-                        />
-                      )}
-                    </LazyTabContent>
-                  );
-                }
-                return (
-                  <MembersClient
-                    projectId={project.id}
-                    members={membersData}
-                    allUsers={[]}
-                    isAdmin={false}
-                    onReload={reloadMembers}
-                  />
-                );
-              }}
+              {(membersData) => (
+                <LazyTabContent state={allUsers.state}>
+                  {(allUsersData) => (
+                    <MembersClient
+                      projectId={project.id}
+                      members={membersData}
+                      allUsers={allUsersData}
+                      canManage={true}
+                      canManagePmTl={isSystemAdmin}
+                      onReload={reloadMembers}
+                    />
+                  )}
+                </LazyTabContent>
+              )}
             </LazyTabContent>
           </TabsContent>
         )}

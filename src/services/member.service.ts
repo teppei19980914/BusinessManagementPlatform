@@ -16,7 +16,12 @@
  *
  * 認可:
  *   呼び出し元 API ルート (/api/projects/[projectId]/members/...) で
- *   checkProjectPermission('member:*') を実施済みの前提。
+ *   checkProjectPermission('member:manage') を実施済みの前提。
+ *
+ *   feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー管理可能になったため、
+ *   「PM/TL ロール」を扱う操作 (PM/TL 追加・PM/TL 削除・PM/TL からのロール変更・
+ *   PM/TL へのロール昇格) は admin/super_admin のみに制限する細粒度ガードを本層で実施。
+ *   throw 'FORBIDDEN_PMTL_ROLE' で route 層にハンドリングさせる。
  *
  * 関連ドキュメント:
  *   - DESIGN.md §5 (テーブル定義: project_members)
@@ -24,6 +29,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { isAdminOrAbove } from '@/lib/permissions/role';
 
 export type MemberDTO = {
   id: string;
@@ -66,7 +72,15 @@ export async function addMember(
   projectRole: string,
   assignedBy: string,
   viewerTenantId: string,
+  actorSystemRole: string,
 ): Promise<MemberDTO> {
+  // feat/crud-permission-redesign (2026-05-20): PM/TL ロールの追加は admin/super_admin のみ。
+  //   PM/TL 自身が「自分の代わり」となる別 PM/TL を勝手に増やせると権限委譲リスクが残るため、
+  //   PM/TL → PM/TL の追加経路を遮断する。member/viewer の追加は PM/TL も実行可。
+  if (projectRole === 'pm_tl' && !isAdminOrAbove({ systemRole: actorSystemRole })) {
+    throw new Error('FORBIDDEN_PMTL_ROLE');
+  }
+
   // 2026-05-09 feedback Phase 2-6: 権限昇格攻撃を遮断するため:
   //   1. project が viewer の tenant に属することを verify
   //   2. user が同 tenant に属することを verify
@@ -123,6 +137,7 @@ export async function updateMemberRole(
   newRole: string,
   changedBy: string,
   viewerTenantId: string,
+  actorSystemRole: string,
 ): Promise<MemberDTO> {
   // 2026-05-09 feedback Phase 2-6: 越境ロール変更を遮断するため findFirst + project tenant 検証。
   const member = await prisma.projectMember.findFirst({
@@ -130,6 +145,15 @@ export async function updateMemberRole(
     include: { user: { select: { name: true, email: true } } },
   });
   if (!member) throw new Error('NOT_FOUND');
+
+  // feat/crud-permission-redesign (2026-05-20): 「PM/TL ロール」を扱うロール変更は admin only。
+  //   - PM/TL → member/viewer (降格): admin only (PM/TL 自身による「自己降格→PM/TL 不在化」を防止)
+  //   - member/viewer → PM/TL (昇格): admin only (権限委譲リスク回避)
+  //   member ↔ viewer の相互変更は PM/TL も実行可。
+  const isPmTlInvolved = member.projectRole === 'pm_tl' || newRole === 'pm_tl';
+  if (isPmTlInvolved && !isAdminOrAbove({ systemRole: actorSystemRole })) {
+    throw new Error('FORBIDDEN_PMTL_ROLE');
+  }
 
   const updated = await prisma.projectMember.update({
     where: { id: memberId },
@@ -165,12 +189,19 @@ export async function removeMember(
   memberId: string,
   changedBy: string,
   viewerTenantId: string,
+  actorSystemRole: string,
 ): Promise<void> {
   // 2026-05-09 feedback Phase 2-6: 越境メンバー解除を遮断するため findFirst + project tenant 検証。
   const member = await prisma.projectMember.findFirst({
     where: { id: memberId, project: { tenantId: viewerTenantId } },
   });
   if (!member) throw new Error('NOT_FOUND');
+
+  // feat/crud-permission-redesign (2026-05-20): PM/TL の削除は admin/super_admin のみ。
+  //   member/viewer の削除は PM/TL も実行可能だが、PM/TL 同士の解除は権限委譲リスク回避のため admin only。
+  if (member.projectRole === 'pm_tl' && !isAdminOrAbove({ systemRole: actorSystemRole })) {
+    throw new Error('FORBIDDEN_PMTL_ROLE');
+  }
 
   await prisma.projectMember.delete({ where: { id: memberId } });
 

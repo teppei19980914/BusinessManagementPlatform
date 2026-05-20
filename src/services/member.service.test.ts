@@ -56,7 +56,7 @@ describe('addMember', () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
 
-    await expect(addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A')).rejects.toThrow('USER_NOT_FOUND');
+    await expect(addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A', 'admin')).rejects.toThrow('USER_NOT_FOUND');
     expect(prisma.projectMember.create).not.toHaveBeenCalled();
   });
 
@@ -65,7 +65,7 @@ describe('addMember', () => {
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-1' } as never);
     vi.mocked(prisma.projectMember.findFirst).mockResolvedValue({ id: 'existing' } as never);
 
-    await expect(addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A')).rejects.toThrow('ALREADY_MEMBER');
+    await expect(addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A', 'admin')).rejects.toThrow('ALREADY_MEMBER');
   });
 
   it('成功: メンバー作成 + roleChangeLog に記録', async () => {
@@ -75,7 +75,7 @@ describe('addMember', () => {
     vi.mocked(prisma.projectMember.create).mockResolvedValue(mRow() as never);
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
 
-    const r = await addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A');
+    const r = await addMember('p-1', 'u-1', 'member', 'admin-1', 'tenant-A', 'admin');
 
     expect(r.userId).toBe('u-1');
     expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
@@ -88,6 +88,41 @@ describe('addMember', () => {
       }),
     );
   });
+
+  // feat/crud-permission-redesign (2026-05-20): pm_tl ロール扱いの細粒度ガード
+  it('PM/TL ロールの追加を一般ユーザ (general systemRole) が実行 → FORBIDDEN_PMTL_ROLE', async () => {
+    // 注: API route 側で member:manage を許可された後にサービス層へ到達する想定。
+    //   actorSystemRole='general' は API route が pm_tl の projectRole で通過させた場合
+    //   (service 層の最終防衛線)。
+    await expect(
+      addMember('p-1', 'u-1', 'pm_tl', 'actor-pm', 'tenant-A', 'general'),
+    ).rejects.toThrow('FORBIDDEN_PMTL_ROLE');
+    expect(prisma.projectMember.create).not.toHaveBeenCalled();
+  });
+
+  it('PM/TL ロールの追加を admin が実行 → 成功', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-1' } as never);
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.projectMember.create).mockResolvedValue(
+      mRow({ projectRole: 'pm_tl' }) as never,
+    );
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    const r = await addMember('p-1', 'u-1', 'pm_tl', 'admin-1', 'tenant-A', 'admin');
+    expect(r.projectRole).toBe('pm_tl');
+  });
+
+  it('member 追加は PM/TL アクター (general systemRole + pm_tl 経路) でも成功', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-1' } as never);
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.projectMember.create).mockResolvedValue(mRow() as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    const r = await addMember('p-1', 'u-1', 'member', 'pm-actor', 'tenant-A', 'general');
+    expect(r.projectRole).toBe('member');
+  });
 });
 
 describe('updateMemberRole', () => {
@@ -96,7 +131,7 @@ describe('updateMemberRole', () => {
   it('存在しなければ NOT_FOUND', async () => {
     // 2026-05-09 feedback Phase 2-6: findUnique → findFirst (project tenant 検証付き) に変更
     vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(null);
-    await expect(updateMemberRole('x', 'pm_tl', 'admin-1', 'tenant-A')).rejects.toThrow('NOT_FOUND');
+    await expect(updateMemberRole('x', 'pm_tl', 'admin-1', 'tenant-A', 'admin')).rejects.toThrow('NOT_FOUND');
   });
 
   it('ロール変更 + beforeRole/afterRole を記録', async () => {
@@ -108,7 +143,7 @@ describe('updateMemberRole', () => {
     );
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
 
-    const r = await updateMemberRole('m-1', 'pm_tl', 'admin-1', 'tenant-A');
+    const r = await updateMemberRole('m-1', 'pm_tl', 'admin-1', 'tenant-A', 'admin');
 
     expect(r.projectRole).toBe('pm_tl');
     expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(
@@ -117,6 +152,40 @@ describe('updateMemberRole', () => {
       }),
     );
   });
+
+  // feat/crud-permission-redesign (2026-05-20): pm_tl ロール扱いの細粒度ガード
+  it('PM/TL への昇格を一般ユーザ (general systemRole) が実行 → FORBIDDEN_PMTL_ROLE', async () => {
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(
+      mRow({ projectRole: 'member' }) as never,
+    );
+    await expect(
+      updateMemberRole('m-1', 'pm_tl', 'actor-pm', 'tenant-A', 'general'),
+    ).rejects.toThrow('FORBIDDEN_PMTL_ROLE');
+    expect(prisma.projectMember.update).not.toHaveBeenCalled();
+  });
+
+  it('PM/TL からの降格を一般ユーザ (general systemRole) が実行 → FORBIDDEN_PMTL_ROLE', async () => {
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(
+      mRow({ projectRole: 'pm_tl' }) as never,
+    );
+    await expect(
+      updateMemberRole('m-1', 'member', 'actor-pm', 'tenant-A', 'general'),
+    ).rejects.toThrow('FORBIDDEN_PMTL_ROLE');
+    expect(prisma.projectMember.update).not.toHaveBeenCalled();
+  });
+
+  it('member ↔ viewer のロール変更は PM/TL アクター (general systemRole) でも成功', async () => {
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(
+      mRow({ projectRole: 'member' }) as never,
+    );
+    vi.mocked(prisma.projectMember.update).mockResolvedValue(
+      mRow({ projectRole: 'viewer' }) as never,
+    );
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    const r = await updateMemberRole('m-1', 'viewer', 'pm-actor', 'tenant-A', 'general');
+    expect(r.projectRole).toBe('viewer');
+  });
 });
 
 describe('removeMember', () => {
@@ -124,8 +193,30 @@ describe('removeMember', () => {
 
   it('存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(null);
-    await expect(removeMember('x', 'admin-1', 'tenant-A')).rejects.toThrow('NOT_FOUND');
+    await expect(removeMember('x', 'admin-1', 'tenant-A', 'admin')).rejects.toThrow('NOT_FOUND');
     expect(prisma.projectMember.delete).not.toHaveBeenCalled();
+  });
+
+  // feat/crud-permission-redesign (2026-05-20): PM/TL 削除は admin only
+  it('PM/TL の削除を一般ユーザ (general systemRole) が実行 → FORBIDDEN_PMTL_ROLE', async () => {
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(
+      mRow({ projectRole: 'pm_tl' }) as never,
+    );
+    await expect(
+      removeMember('m-1', 'actor-pm', 'tenant-A', 'general'),
+    ).rejects.toThrow('FORBIDDEN_PMTL_ROLE');
+    expect(prisma.projectMember.delete).not.toHaveBeenCalled();
+  });
+
+  it('member/viewer の削除は PM/TL アクター (general systemRole) でも成功', async () => {
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(
+      mRow({ projectRole: 'member' }) as never,
+    );
+    vi.mocked(prisma.projectMember.delete).mockResolvedValue({} as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    await removeMember('m-1', 'pm-actor', 'tenant-A', 'general');
+    expect(prisma.projectMember.delete).toHaveBeenCalled();
   });
 
   it('物理削除 + removed ログ', async () => {
@@ -133,7 +224,7 @@ describe('removeMember', () => {
     vi.mocked(prisma.projectMember.delete).mockResolvedValue({} as never);
     vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
 
-    await removeMember('m-1', 'admin-1', 'tenant-A');
+    await removeMember('m-1', 'admin-1', 'tenant-A', 'admin');
 
     expect(prisma.projectMember.delete).toHaveBeenCalledWith({ where: { id: 'm-1' } });
     expect(prisma.roleChangeLog.create).toHaveBeenCalledWith(

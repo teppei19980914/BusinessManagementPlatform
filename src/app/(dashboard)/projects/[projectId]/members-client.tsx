@@ -7,9 +7,11 @@
  *   プロジェクトメンバー一覧 + 追加 + ロール変更 + 除外を管理する。
  *   1 ユーザ × 1 プロジェクトに対して 1 ロール (PM/TL / メンバー / 閲覧者)。
  *
- * 認可:
- *   メンバー追加 / ロール変更 / 除外は **システム管理者のみ** (権限委譲リスク回避)。
- *   PM/TL でも他メンバーの編集はできない (member.service / API ルート側で再判定)。
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 で改訂):
+ *   - メンバー追加 / 削除 / ロール変更: PM/TL + admin
+ *   - ただし「PM/TL ロール」を扱う操作 (PM/TL 追加・PM/TL 削除・PM/TL ↔ それ以外の
+ *     ロール変更) は admin/super_admin のみ (権限委譲リスク回避)
+ *   - UI props: `canManage` (admin || pm_tl) + `canManagePmTl` (admin のみ) の 2 軸で表示制御
  *
  * API: /api/projects/[id]/members (GET/POST), /api/projects/[id]/members/[memberId] (PATCH/DELETE)
  *
@@ -48,12 +50,15 @@ type Props = {
   projectId: string;
   members: MemberDTO[];
   allUsers: UserDTO[];
-  isAdmin: boolean;
+  /** メンバー追加 / 削除 / ロール変更を実行できるか (admin || pm_tl) */
+  canManage: boolean;
+  /** 「PM/TL ロール」を扱う操作 (PM/TL 追加・PM/TL 削除・PM/TL ↔ それ以外のロール変更) を実行できるか (admin のみ) */
+  canManagePmTl: boolean;
   /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
   onReload?: () => Promise<void> | void;
 };
 
-export function MembersClient({ projectId, members, allUsers, isAdmin, onReload }: Props) {
+export function MembersClient({ projectId, members, allUsers, canManage, canManagePmTl, onReload }: Props) {
   const router = useRouter();
   const t = useTranslations('member');
   const { withLoading } = useLoading();
@@ -141,7 +146,7 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
       {/* Phase A 要件 6: h3 タブタイトル削除 (タブ名と重複のため)。件数のみ右寄せで維持。 */}
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">{t('countOnly', { count: members.length })}</span>
-        {isAdmin && (
+        {canManage && (
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
             <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
               {t('addButton')}
@@ -175,9 +180,14 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
                 <div className="space-y-2">
                   <Label>{t('projectRoleLabel')}</Label>
                   <select value={addForm.projectRole} onChange={(e) => setAddForm({ ...addForm, projectRole: e.target.value })} className={nativeSelectClass}>
-                    {Object.entries(PROJECT_ROLES).map(([key, label]) => (
-                      <option key={key} value={key}>{label}</option>
-                    ))}
+                    {Object.entries(PROJECT_ROLES)
+                      // feat/crud-permission-redesign (2026-05-20): PM/TL 追加は admin のみ。
+                      //   PM/TL 操作可否は canManagePmTl で判定し option から除外。
+                      //   API レイヤでも service の FORBIDDEN_PMTL_ROLE で二重防御済。
+                      .filter(([key]) => key !== 'pm_tl' || canManagePmTl)
+                      .map(([key, label]) => (
+                        <option key={key} value={key}>{label}</option>
+                      ))}
                   </select>
                 </div>
                 <Button type="submit" className="w-full">{t('addSubmit')}</Button>
@@ -194,57 +204,69 @@ export function MembersClient({ projectId, members, allUsers, isAdmin, onReload 
             <TableHead>{t('colEmail')}</TableHead>
             <TableHead>{t('colRole')}</TableHead>
             <TableHead>{t('colAddedAt')}</TableHead>
-            {isAdmin && <TableHead className="w-24">{t('colActions')}</TableHead>}
+            {canManage && <TableHead className="w-24">{t('colActions')}</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {members.map((m) => (
-            <TableRow key={m.id}>
-              <TableCell className="font-medium">{m.userName}</TableCell>
-              <TableCell>{m.userEmail}</TableCell>
-              <TableCell>
-                {isAdmin ? (
-                  // Phase A 要件 9: ロールトグルの選択後表示が内部名 (manager/member 等) になる問題を修正。
-                  //   SelectValue の children render 関数で PROJECT_ROLES から表示名にマップする。
-                  <Select
-                    value={m.projectRole}
-                    onValueChange={(v) => v && handleRoleChange(m.id, v)}
-                  >
-                    <SelectTrigger className="w-32">
-                      <SelectValue>
-                        {(value) => PROJECT_ROLES[value as keyof typeof PROJECT_ROLES] || value}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(PROJECT_ROLES).map(([key, label]) => (
-                        <SelectItem key={key} value={key}>{label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Badge variant="secondary">
-                    {PROJECT_ROLES[m.projectRole as keyof typeof PROJECT_ROLES] || m.projectRole}
-                  </Badge>
-                )}
-              </TableCell>
-              <TableCell>{formatDate(m.createdAt)}</TableCell>
-              {isAdmin && (
+          {members.map((m) => {
+            // feat/crud-permission-redesign (2026-05-20): 行ごとの「PM/TL 操作可否」を判定。
+            //   - 対象行が pm_tl → ロール変更・削除とも admin のみ可
+            //   - 対象行が member/viewer → PM/TL も操作可
+            const isPmTlRow = m.projectRole === 'pm_tl';
+            const canEditThisRow = canManage && (!isPmTlRow || canManagePmTl);
+            return (
+              <TableRow key={m.id}>
+                <TableCell className="font-medium">{m.userName}</TableCell>
+                <TableCell>{m.userEmail}</TableCell>
                 <TableCell>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-destructive"
-                    onClick={() => handleRemove(m.id, m.userName)}
-                  >
-                    {t('removeButton')}
-                  </Button>
+                  {canEditThisRow ? (
+                    // Phase A 要件 9: ロールトグルの選択後表示が内部名 (manager/member 等) になる問題を修正。
+                    //   SelectValue の children render 関数で PROJECT_ROLES から表示名にマップする。
+                    <Select
+                      value={m.projectRole}
+                      onValueChange={(v) => v && handleRoleChange(m.id, v)}
+                    >
+                      <SelectTrigger className="w-32">
+                        <SelectValue>
+                          {(value) => PROJECT_ROLES[value as keyof typeof PROJECT_ROLES] || value}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(PROJECT_ROLES)
+                          // PM/TL への昇格は admin のみ。それ以外のロールは PM/TL も選択可。
+                          .filter(([key]) => key !== 'pm_tl' || canManagePmTl)
+                          .map(([key, label]) => (
+                            <SelectItem key={key} value={key}>{label}</SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant="secondary">
+                      {PROJECT_ROLES[m.projectRole as keyof typeof PROJECT_ROLES] || m.projectRole}
+                    </Badge>
+                  )}
                 </TableCell>
-              )}
-            </TableRow>
-          ))}
+                <TableCell>{formatDate(m.createdAt)}</TableCell>
+                {canManage && (
+                  <TableCell>
+                    {canEditThisRow && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-destructive"
+                        onClick={() => handleRemove(m.id, m.userName)}
+                      >
+                        {t('removeButton')}
+                      </Button>
+                    )}
+                  </TableCell>
+                )}
+              </TableRow>
+            );
+          })}
           {members.length === 0 && (
             <TableRow>
-              <TableCell colSpan={isAdmin ? 5 : 4} className="py-8 text-center text-muted-foreground">
+              <TableCell colSpan={canManage ? 5 : 4} className="py-8 text-center text-muted-foreground">
                 {t('listEmpty')}
               </TableCell>
             </TableRow>

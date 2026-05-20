@@ -66,7 +66,8 @@
     "unlinkButtonTitle": "Unlink from this project",
     "unlinkConfirm": "Unlink \"{name}\"? The asset itself remains as long as another project references it.",
     "unlinkSuccess": "Unlinked from \"{name}\"",
-    "unlinkFailed": "Failed to unlink"
+    "unlinkFailed": "Failed to unlink",
+    "privateProject": "Private project"
   },
   "comment": {
     "section": "Comments",
@@ -245,6 +246,7 @@
     "cannotEditFixedEstimate": "A finalized estimate cannot be edited",
     "userNotFound": "User not found",
     "alreadyMember": "Already a member",
+    "cannotManagePmTl": "Only tenant administrators can add, remove, or change PM/TL roles",
     "noCommentPermission": "No permission to post comments (viewer not allowed)",
     "bulkProgressOwnTasksOnly": "Bulk progress update is allowed only for your own tasks",
     "invalidAssigneeMember": "The specified assignee is not a project member"

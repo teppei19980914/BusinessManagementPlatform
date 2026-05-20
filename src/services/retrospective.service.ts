@@ -42,8 +42,11 @@ export type RetroDTO = {
   projectId: string | null;
   /** 紐付け済プロジェクトの id 一覧 (M:N)。 */
   linkedProjectIds: string[];
-  /** PR feat/asset-multi-linking-ui (Phase 2): UI 表示用の紐付け済プロジェクト詳細。 */
-  linkedProjects: { id: string; name: string; deleted: boolean }[];
+  /** PR feat/asset-multi-linking-ui (Phase 2): UI 表示用の紐付け済プロジェクト詳細。
+   *  feat/crud-permission-redesign (2026-05-20): 「全振り返り」横断ビューで非 ProjectMember には
+   *  紐付け先プロジェクト名を秘匿するため、`name` を `string | null` に変更。
+   *  null の場合 UI 側で「非公開のプロジェクト」プレースホルダ表示し、詳細リンクは無効化する。 */
+  linkedProjects: { id: string; name: string | null; deleted: boolean }[];
   conductedDate: string;
   planSummary: string;
   actualSummary: string;
@@ -136,13 +139,20 @@ export async function listAllRetrospectivesForViewer(
   return retros.map((r) => {
     // PR feat/asset-multi-project-linking: 紐付け済プロジェクトのいずれかのメンバーなら isMember 扱い
     const linkedProjectIds = r.retrospectiveProjects.map((rp) => rp.projectId);
+    // feat/crud-permission-redesign (2026-05-20): per-link で「自分がメンバーであるプロジェクト」のみ
+    //   name を返す。それ以外のプロジェクト名は null にし、UI 側で「非公開のプロジェクト」表示にする。
+    //   旧実装は無条件で全プロジェクト名を返しており、複数紐付けの場合に非メンバープロジェクト名が
+    //   横断「全振り返り」画面で漏洩していた (severity-1 個人情報漏洩リスク)。
     const linkedProjects = r.retrospectiveProjects
       .filter((rp) => rp.project != null)
-      .map((rp) => ({
-        id: rp.project!.id,
-        name: rp.project!.name,
-        deleted: rp.project!.deletedAt != null,
-      }));
+      .map((rp) => {
+        const isLinkedMember = isAdmin || memberProjectIds.has(rp.projectId);
+        return {
+          id: rp.project!.id,
+          name: isLinkedMember ? rp.project!.name : null,
+          deleted: isAdmin ? rp.project!.deletedAt != null : false,
+        };
+      });
     const isMember = isAdmin || linkedProjectIds.some((pid) => memberProjectIds.has(pid));
     const projectDeleted = r.project?.deletedAt != null;
     return {

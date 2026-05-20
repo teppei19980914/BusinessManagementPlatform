@@ -1,14 +1,16 @@
 /**
  * GET  /api/projects/[projectId]/members - プロジェクトメンバー一覧取得
- * POST /api/projects/[projectId]/members - メンバー追加 (システム管理者のみ)
+ * POST /api/projects/[projectId]/members - メンバー追加 (PM/TL + admin)
  *
  * 役割:
  *   メンバー管理画面の表示と新規追加。GET は WBS / リスク等の担当者
  *   ドロップダウン用にも参照される。
  *
  * 認可:
- *   - GET: project:read (担当者選択 UI のためメンバー全員に許可)
- *   - POST: requireAdmin (権限委譲リスク回避でシステム管理者のみ)
+ *   - GET:  project:read     (担当者選択 UI のためメンバー全員に許可)
+ *   - POST: member:manage    (PM/TL + admin)。ただし projectRole='pm_tl' の追加は
+ *                            service 層で admin/super_admin のみに細粒度ガード。
+ *                            feat/crud-permission-redesign (2026-05-20) で開放。
  *
  * 監査: POST 時に audit_logs と role_change_logs に記録。
  *
@@ -20,7 +22,6 @@ import { getTranslations } from 'next-intl/server';
 import {
   getAuthenticatedUser,
   checkProjectPermission,
-  requireAdmin,
   requireStorageQuotaForWrite,
 } from '@/lib/api-helpers';
 import { listMembers, addMember } from '@/services/member.service';
@@ -56,10 +57,12 @@ export async function POST(
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const forbidden = requireAdmin(user);
+  const { projectId } = await params;
+  // feat/crud-permission-redesign (2026-05-20): admin 限定から member:manage (PM/TL + admin) に開放。
+  //   PM/TL 自身が projectRole='pm_tl' を追加することは service 層で FORBIDDEN_PMTL_ROLE として弾く。
+  const forbidden = await checkProjectPermission(user, projectId, 'member:manage');
   if (forbidden) return forbidden;
 
-  const { projectId } = await params;
   const body = await req.json();
   const parsed = addMemberSchema.safeParse(body);
   if (!parsed.success) {
@@ -83,6 +86,7 @@ export async function POST(
       parsed.data.projectRole,
       user.id,
       user.tenantId,
+      user.systemRole,
     );
 
     await recordAuditLog({
@@ -109,6 +113,14 @@ export async function POST(
         return NextResponse.json(
           { error: { code: 'VALIDATION_ERROR', message: t('alreadyMember') } },
           { status: 409 },
+        );
+      }
+      // feat/crud-permission-redesign (2026-05-20): PM/TL ロール操作の細粒度ガード違反
+      if (e.message === 'FORBIDDEN_PMTL_ROLE') {
+        const t = await getTranslations('message');
+        return NextResponse.json(
+          { error: { code: 'FORBIDDEN', message: t('cannotManagePmTl') } },
+          { status: 403 },
         );
       }
     }

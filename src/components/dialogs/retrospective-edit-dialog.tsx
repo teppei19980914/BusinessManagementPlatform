@@ -34,7 +34,8 @@ type RetroLike = {
   improvements: string;
   visibility: string;
   // PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト一覧
-  linkedProjects?: { id: string; name: string; deleted: boolean }[];
+  // feat/crud-permission-redesign (2026-05-20): 横断ビューで非 ProjectMember は name=null
+  linkedProjects?: { id: string; name: string | null; deleted: boolean }[];
 };
 
 /**

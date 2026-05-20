@@ -170,6 +170,71 @@ describe('listAllRetrospectivesForViewer', () => {
     const adminCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
     expect(adminCall.where.visibility).toBe('public');
   });
+
+  // feat/crud-permission-redesign (2026-05-20): severity-1 情報漏洩修正の回帰防止。
+  //   旧実装は linkedProjects[].name を非 ProjectMember にも露出していた。
+  //   per-link で memberProjectIds を判定し、メンバー外プロジェクトの name を null にする。
+  it('linkedProjects: per-link gate (非メンバーは全 name=null)', async () => {
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      {
+        ...retRow(),
+        project: { id: 'p-1', name: 'PJ-1', deletedAt: null },
+        retrospectiveProjects: [
+          { projectId: 'p-1', project: { id: 'p-1', name: 'PJ-1', deletedAt: null } },
+          { projectId: 'p-2', project: { id: 'p-2', name: 'PJ-2', deletedAt: null } },
+        ],
+      },
+    ] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    const r = await listAllRetrospectivesForViewer('u-99', 'general', 'tenant-A');
+
+    expect(r[0].linkedProjects).toHaveLength(2);
+    expect(r[0].linkedProjects[0]).toMatchObject({ id: 'p-1', name: null });
+    expect(r[0].linkedProjects[1]).toMatchObject({ id: 'p-2', name: null });
+  });
+
+  it('linkedProjects: per-link gate (一部のみメンバー → メンバー側のみ name 表示)', async () => {
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([
+      { projectId: 'p-1' },
+    ] as never);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      {
+        ...retRow(),
+        project: { id: 'p-1', name: 'PJ-1', deletedAt: null },
+        retrospectiveProjects: [
+          { projectId: 'p-1', project: { id: 'p-1', name: 'PJ-1', deletedAt: null } },
+          { projectId: 'p-2', project: { id: 'p-2', name: 'PJ-2', deletedAt: null } },
+        ],
+      },
+    ] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    const r = await listAllRetrospectivesForViewer('u-1', 'general', 'tenant-A');
+
+    expect(r[0].linkedProjects[0]).toMatchObject({ id: 'p-1', name: 'PJ-1' });
+    expect(r[0].linkedProjects[1]).toMatchObject({ id: 'p-2', name: null });
+  });
+
+  it('linkedProjects: admin は全 name 表示 (per-link gate 対象外)', async () => {
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      {
+        ...retRow(),
+        project: { id: 'p-1', name: 'PJ-1', deletedAt: null },
+        retrospectiveProjects: [
+          { projectId: 'p-1', project: { id: 'p-1', name: 'PJ-1', deletedAt: null } },
+          { projectId: 'p-2', project: { id: 'p-2', name: 'PJ-2', deletedAt: null } },
+        ],
+      },
+    ] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    const r = await listAllRetrospectivesForViewer('admin-1', 'admin', 'tenant-A');
+
+    expect(r[0].linkedProjects[0]).toMatchObject({ id: 'p-1', name: 'PJ-1' });
+    expect(r[0].linkedProjects[1]).toMatchObject({ id: 'p-2', name: 'PJ-2' });
+  });
 });
 
 describe('createRetrospective', () => {
