@@ -9,17 +9,16 @@ import { useToast } from '@/components/toast-provider';
 
 /**
  * 全振り返り画面で admin 向けに表示する削除ボタン。
- * 既存の /api/projects/[projectId]/retrospectives/[retroId] DELETE を叩く。
+ * feat/crud-permission-redesign (2026-05-20): 横断 DELETE 専用ルート /api/retrospectives/[retroId] を叩く。
+ *   旧実装は project 経路を兼用していたが、一覧経路と横断経路で admin 削除権限を分けるため独立ルートに分離。
  *
  * 論理削除 (deletedAt セット) のため、同一テーブルを参照する
  * プロジェクト詳細「振り返り一覧」にも即座に反映される。
  */
 export function AdminRetrospectiveDeleteButton({
-  projectId,
   retroId,
   label,
 }: {
-  projectId: string;
   retroId: string;
   label: string;
 }) {
@@ -38,7 +37,7 @@ export function AdminRetrospectiveDeleteButton({
       onClick={async () => {
         if (!confirm(tCommon('adminDeleteConfirmRetrospective', { date: label }))) return;
         const res = await withLoading(() =>
-          fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, { method: 'DELETE' }),
+          fetch(`/api/retrospectives/${retroId}`, { method: 'DELETE' }),
         );
         if (!res.ok) {
           showError('振り返りの削除に失敗しました');

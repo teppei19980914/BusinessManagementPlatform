@@ -128,8 +128,11 @@
 - [ ] `/api/projects/[projectId]/knowledge/*` — skip: PR #C
 - [ ] `/api/projects/[projectId]/suggestions/*` — skip: PR #C (提案型サービス、核心機能)
 - [x] `/api/projects/[projectId]/members/*` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 6a POST, GET は画面経由)
+- [ ] `/api/projects/[projectId]/available-users` — skip: feat/crud-permission-redesign (2026-05-20) で新設。PM/TL のメンバー追加候補リスト取得用。単体テストで認可と tenantId 絞り込みを検証
 - [ ] `/api/risks` (全リスク) — skip: PR #C
+- [ ] `/api/risks/[riskId]` (横断 DELETE) — skip: feat/crud-permission-redesign (2026-05-20) で新設。admin のみの全リスク/課題画面モデレーション削除。単体テスト (service の context='global') で認可検証
 - [ ] `/api/retrospectives` (全振り返り) — skip: PR #C
+- [ ] `/api/retrospectives/[retroId]` (横断 DELETE) — skip: feat/crud-permission-redesign (2026-05-20) で新設。admin のみの全振り返り画面モデレーション削除。単体テスト (service の context='global') で認可検証
 - [ ] `/api/knowledge` (全ナレッジ) — skip: PR #C
 - [ ] `/api/knowledge/[knowledgeId]` — skip: PR #C
 - [x] `/api/projects/[projectId]/risks/bulk` (PATCH 一括更新, PR #161 → PR #165 で project-scoped に移し替え) — e2e/specs/10-project-list-bulk-update.spec.ts (FILTER_REQUIRED 二重防御 + 200 構造検証)

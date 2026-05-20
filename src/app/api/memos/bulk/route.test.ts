@@ -25,6 +25,10 @@ vi.mock('@/lib/db', () => ({
         deletedAt: null,
       })),
     },
+    // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-A1): bulk audit log 追加に対応
+    auditLog: {
+      create: vi.fn(async () => ({})),
+    },
   },
 }));
 

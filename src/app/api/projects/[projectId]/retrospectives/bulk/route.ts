@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { bulkUpdateRetrospectivesVisibilityFromList } from '@/services/retrospective.service';
 import { bulkUpdateRetrospectiveVisibilitySchema } from '@/lib/validators/cross-list-bulk-visibility';
+import { recordAuditLog } from '@/services/audit.service';
 
 /**
  * プロジェクト「振り返り一覧」からの一括 visibility 更新エンドポイント (PR #165 で
@@ -49,6 +50,24 @@ export async function PATCH(
     user.id,
     user.tenantId,
   );
+
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-A1): ADR-0011 全 mutation 記録に従う。
+  if (result.updatedIds.length > 0) {
+    await recordAuditLog({
+      tenantId: user.tenantId,
+      userId: user.id,
+      action: 'BULK_UPDATE',
+      entityType: 'retrospective',
+      entityId: projectId,
+      afterValue: {
+        projectId,
+        visibility: parsed.data.visibility,
+        updatedIds: result.updatedIds,
+        skippedNotOwned: result.skippedNotOwned,
+        skippedNotFound: result.skippedNotFound,
+      },
+    });
+  }
 
   return NextResponse.json({ data: result });
 }

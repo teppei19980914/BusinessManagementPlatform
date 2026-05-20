@@ -347,7 +347,13 @@ function shallowEqual(a: unknown, b: unknown): boolean {
 // applySyncImport
 // ============================================================
 
-export type KnowledgeSyncImportResult = { added: number; updated: number; removed: number };
+export type KnowledgeSyncImportResult = {
+  added: number;
+  updated: number;
+  removed: number;
+  /** feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-C1-UX): 他人作成のため silent skip された件数 */
+  skippedNotOwned: number;
+};
 
 export async function applyKnowledgeSyncImport(
   projectId: string,
@@ -382,6 +388,10 @@ export async function applyKnowledgeSyncImport(
   const createdIds: string[] = [];
   const updatedIds: string[] = [];
   const softDeletedIds: string[] = [];
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-C1-UX): silent skip された件数を
+  //   呼出元に返して UI で表示可能にする (旧実装は silent skip でも updated カウンタが下振れする
+  //   だけで「成功 5 件」と表示されていた)。
+  let skippedNotOwned = 0;
 
   try {
     for (const row of csvRows) {
@@ -404,11 +414,19 @@ export async function applyKnowledgeSyncImport(
 
       if (row.id) {
         // 2026-05-10 Phase 2-8: 二重防御 - 自テナント所有確認後に update
+        // feat/crud-permission-redesign (2026-05-20): 作成者本人のみ update 可。
+        //   旧実装は同テナント所有のみで他人作成も上書きできた (PM/TL の bulk 編集経路の認可ホール)。
+        //   project 経路 PATCH と整合させるため createdBy 一致を必須化、不一致は silent skip。
         const owned = await prisma.knowledge.findFirst({
           where: { id: row.id, tenantId: viewerTenantId },
-          select: { id: true },
+          select: { id: true, createdBy: true },
         });
         if (!owned) throw new Error(`IMPORT_VALIDATION_ERROR:ID "${row.id}" が見つかりません`);
+        if (owned.createdBy !== userId) {
+          // 他人作成は silent skip (bulk update と同じパターン)
+          skippedNotOwned += 1;
+          continue;
+        }
         await prisma.knowledge.update({ where: { id: row.id }, data });
         updatedIds.push(row.id);
       } else {
@@ -428,16 +446,29 @@ export async function applyKnowledgeSyncImport(
       for (const r of diff.rows) {
         if (r.action === 'REMOVE_CANDIDATE' && r.id && !r.hasProgress) {
           // 2026-05-10 Phase 2-8: 二重防御 - tenantId フィルタ付きで update
+          // feat/crud-permission-redesign (2026-05-20): 作成者本人のみ soft-delete 可。
+          //   project 経路 DELETE (context='project') と整合させ、他人作成は silent skip。
           const updated = await prisma.knowledge.updateMany({
-            where: { id: r.id, tenantId: viewerTenantId },
+            where: { id: r.id, tenantId: viewerTenantId, createdBy: userId },
             data: { deletedAt: new Date(), updatedBy: userId },
           });
-          if (updated.count === 1) softDeletedIds.push(r.id);
+          if (updated.count === 1) {
+            softDeletedIds.push(r.id);
+          } else {
+            // 他人作成 (createdBy !== userId) は updateMany 0 件で silent skip
+            skippedNotOwned += 1;
+          }
         }
       }
     }
 
-    return { added: createdIds.length, updated: updatedIds.length, removed: softDeletedIds.length };
+    return {
+      added: createdIds.length,
+      updated: updatedIds.length,
+      removed: softDeletedIds.length,
+      // S2-C1-UX: 他人作成行が skip された件数 (UI で「N 件は他人作成のためスキップしました」を表示)
+      skippedNotOwned,
+    };
   } catch (e) {
     // 2026-05-12 severity-1 防御: rollback 経路にも viewerTenantId を渡す
     await rollbackToSnapshot(
@@ -517,13 +548,25 @@ function escapeCsv(v: string | null | undefined): string {
 export async function exportKnowledgeSync(
   projectId: string,
   viewerTenantId: string,
+  viewerUserId: string,
+  viewerSystemRole: string,
 ): Promise<string> {
   // 2026-05-10 Phase 2-8: 越境 export を遮断するため tenantId 二重防御
+  // feat/crud-permission-redesign (2026-05-20): severity-1 漏洩修正。
+  //   旧実装は visibility フィルタ無しで他人 draft の機微情報 (タイトル/本文/結論/推奨事項) を
+  //   CSV ダウンロード可能だった。非 admin には「自分の draft + public」のみに絞る。
+  //   risk/retrospective の sync export と同じ filter パターン (exportRisksSync 等を参照)。
+  const isAdmin = viewerSystemRole === 'admin';
+  const visibilityWhere = isAdmin
+    ? {}
+    : { OR: [{ visibility: 'public' }, { visibility: 'draft', createdBy: viewerUserId }] };
+
   const knowledges = await prisma.knowledge.findMany({
     where: {
       deletedAt: null,
       tenantId: viewerTenantId,
       knowledgeProjects: { some: { projectId } },
+      ...visibilityWhere,
     },
     orderBy: { createdAt: 'desc' },
   });

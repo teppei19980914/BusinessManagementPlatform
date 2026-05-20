@@ -5,7 +5,10 @@
  *   - 個人メモ (Memo) はプロジェクトに紐付かない個人のノート置き場
  *   - visibility='private' (既定): 作成者のみ閲覧可、admin も含め他者不可視
  *   - visibility='public': 全ログインユーザが「全メモ」画面で閲覧可
- *   - 編集/削除は常に作成者本人のみ (admin 特権なし)
+ *   - 編集は常に作成者本人のみ (admin 特権なし)
+ *   - 削除: 作成者本人 OR admin (ただし admin は visibility='public' の他人メモに限る、
+ *     全メモ画面のモデレーション用。feat/crud-permission-redesign, 2026-05-20 で追加)
+ *   - admin であっても他人の visibility='private' メモは参照不可・削除不可 (プライバシー保護)
  *   - タグは持たせない (業務知見判断は人間ベース、PR #70 要件)
  *
  * 2026-05-15:
@@ -313,18 +316,35 @@ export async function bulkUpdateMemosVisibilityFromList(
   return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, skippedEmptyTitle };
 }
 
+/**
+ * メモを論理削除する。
+ *
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂):
+ *   - 作成者本人: 自分のメモ (visibility='private' / 'public' 問わず) は削除可
+ *   - admin: 自テナント内の **visibility='public' な他人メモ** に限り削除可 (全メモ画面のモデレーション用途)
+ *   - admin であっても他人の visibility='private' なメモは削除不可 (プライバシー保護)
+ *   - admin 以外の第三者は削除不可
+ *
+ * @returns 削除成功なら true、対象が存在しない or 認可不足なら false (404 / 情報漏洩防止のため例外を投げない)
+ */
 export async function deleteMemo(
   memoId: string,
   userId: string,
   viewerTenantId: string,
+  systemRole: string,
 ): Promise<boolean> {
   // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
+  // feat/crud-permission-redesign (2026-05-20): admin の public モデレーション削除のため
+  //   visibility カラムも select する。
   const existing = await prisma.memo.findFirst({
     where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
-    select: { userId: true },
+    select: { userId: true, visibility: true },
   });
   if (!existing) return false;
-  if (existing.userId !== userId) return false;
+  const isCreator = existing.userId === userId;
+  const isAdmin = systemRole === 'admin';
+  const isAdminModeration = isAdmin && existing.visibility === 'public';
+  if (!isCreator && !isAdminModeration) return false;
 
   // PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児データ防止)
   const now = new Date();

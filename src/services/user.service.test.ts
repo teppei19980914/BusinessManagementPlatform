@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // モック設定
-vi.mock('@/lib/db', () => ({
-  prisma: {
+vi.mock('@/lib/db', () => {
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-D5):
+  //   lockInactiveUsers の transaction 化に対応するため、prismaMock を outer 参照可能にし、
+  //   $transaction が callback 形式 (interactive transaction) で呼ばれた場合と
+  //   配列形式 (`$transaction([ops])`) で呼ばれた場合の両対応にする。
+  const prismaMock = {
     user: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -11,35 +15,34 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
-      // P-2 (2026-05-08): 席数上限チェック用 (count of active users)
       count: vi.fn(),
     },
-    // P-2 (2026-05-08): 席数上限チェック用 (plan + beginnerMaxSeats 取得)
-    tenant: {
-      findUnique: vi.fn(),
-    },
+    tenant: { findUnique: vi.fn() },
     roleChangeLog: {
       create: vi.fn(),
+      createMany: vi.fn().mockResolvedValue({ count: 0 } as never),
       deleteMany: vi.fn(),
     },
-    emailVerificationToken: {
-      deleteMany: vi.fn(),
-    },
-    recoveryCode: {
-      deleteMany: vi.fn(),
-    },
-    // PR #89: deleteUser が以下を物理削除する
-    projectMember: { deleteMany: vi.fn() },
+    emailVerificationToken: { deleteMany: vi.fn() },
+    recoveryCode: { deleteMany: vi.fn() },
+    projectMember: { deleteMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     session: { deleteMany: vi.fn() },
     passwordResetToken: { deleteMany: vi.fn() },
     passwordHistory: { deleteMany: vi.fn() },
-    // 2026-04-24: deleteUser が Memo もカスケード物理削除する
     memo: { deleteMany: vi.fn() },
-    // feat/account-lock: lockInactiveUsers が audit_log を直接記録する
     auditLog: { create: vi.fn(), createMany: vi.fn() },
-    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
-  },
-}));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    $transaction: vi.fn(async (arg: any) => {
+      if (typeof arg === 'function') {
+        // interactive transaction (callback 形式): tx に prismaMock を渡す
+        return arg(prismaMock);
+      }
+      // 配列形式: 全 promise を解決
+      return Promise.all(arg);
+    }),
+  };
+  return { prisma: prismaMock };
+});
 
 vi.mock('./email-verification.service', async () => {
   class EmailSendError extends Error {
@@ -620,6 +623,69 @@ describe('deleteUser (PR #89)', () => {
     // Memo.deleteMany が userId=u-1 + tenantId 二重防御で 1 回呼ばれたこと (Phase 2-10)
     expect(prisma.memo.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u-1', tenantId: 'tenant-A' } });
     expect(prisma.memo.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 Test-G2): membership あり時の
+  //   roleChangeLog.createMany 呼出を検証 (PM/TL ユーザ削除時の解除履歴記録の回帰防止)
+  it('membership あり時に roleChangeLog.createMany で project_role 解除が記録される', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(baseUserRow as never);
+    // 削除対象が 2 つの projectMember を保有
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([
+      { id: 'pm-1', projectId: 'p-1', projectRole: 'pm_tl' },
+      { id: 'pm-2', projectId: 'p-2', projectRole: 'member' },
+    ] as never);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.session.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.recoveryCode.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.emailVerificationToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordResetToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordHistory.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.memo.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.roleChangeLog.createMany).mockResolvedValue({ count: 2 } as never);
+
+    await deleteUser('u-1', 'admin-1', 'tenant-A');
+
+    // bulk createMany で project_role 解除が 2 件記録された
+    expect(prisma.roleChangeLog.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            tenantId: 'tenant-A',
+            changedBy: 'admin-1',
+            targetUserId: 'u-1',
+            changeType: 'project_role',
+            projectId: 'p-1',
+            beforeRole: 'pm_tl',
+            afterRole: 'removed',
+          }),
+          expect.objectContaining({
+            projectId: 'p-2',
+            beforeRole: 'member',
+            afterRole: 'removed',
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('membership 0 件時は roleChangeLog.createMany は呼ばれない (空配列 createMany 回避)', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(baseUserRow as never);
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.projectMember.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.session.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.recoveryCode.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.emailVerificationToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordResetToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.passwordHistory.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.memo.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+
+    await deleteUser('u-1', 'admin-1', 'tenant-A');
+
+    expect(prisma.roleChangeLog.createMany).not.toHaveBeenCalled();
   });
 });
 

@@ -64,8 +64,12 @@ describe('checkPermission', () => {
       expect(checkPermission('admin:audit_logs', c).allowed).toBe(false);
     });
 
-    it('メンバー管理は拒否される（admin のみ）', () => {
-      expect(checkPermission('member:manage', ctx({ projectRole: 'pm_tl' })).allowed).toBe(false);
+    // feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー管理可能に開放。
+    //   ただし「PM/TL ロール」を扱う細粒度判定 (pm_tl 追加・削除・昇格・降格) は
+    //   check-permission.ts の単純な Set では表現できないため member.service.ts に委譲。
+    //   本テストは「Action 列レベルで member:manage を pm_tl が持つ」ことのみ検証する。
+    it('メンバー管理は許可される（細粒度ガードは service 層）', () => {
+      expect(checkPermission('member:manage', ctx({ projectRole: 'pm_tl' })).allowed).toBe(true);
     });
   });
 

@@ -20,17 +20,26 @@ import { useFormatters } from '@/lib/use-formatters';
 /**
  * ユーザ編集ダイアログ (PR #59 Req 3)。
  * API: PATCH /api/admin/users/:userId (システム管理者のみ)。
+ *
+ * feat/crud-permission-redesign (2026-05-20 追加要件):
+ *   - 通常のテナント管理画面では「システム管理者 (super_admin)」を選択不可
+ *     (super_admin は管理テナント所属で、テナント側からの昇格は禁止)
+ *   - 自分自身のシステムロール変更は禁止 (他ユーザが必ず変更する設計)。
+ *     UI 上は select を disabled にし、サーバー側でも 403 で弾く (api-helpers / route 層)
  */
 export function UserEditDialog({
   user,
   open,
   onOpenChange,
   onSaved,
+  currentUserId,
 }: {
   user: UserDTO | null;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
+  /** ログイン中ユーザ自身の id。自己編集時にロール変更を禁止するため必須 */
+  currentUserId: string;
 }) {
   const tAction = useTranslations('action');
   const tField = useTranslations('field');
@@ -174,11 +183,21 @@ export function UserEditDialog({
               value={form.systemRole}
               onChange={(e) => setForm({ ...form, systemRole: e.target.value as 'admin' | 'general' })}
               className={nativeSelectClass}
+              // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止
+              disabled={user.id === currentUserId}
+              title={user.id === currentUserId ? t('selfRoleEditForbidden') : undefined}
             >
-              {Object.entries(SYSTEM_ROLES).map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
+              {/* feat/crud-permission-redesign (2026-05-20 追加要件): super_admin は管理テナント所属で
+                  テナント側 UI からの選択を禁止 (option 自体を出さない) */}
+              {Object.entries(SYSTEM_ROLES)
+                .filter(([key]) => key !== 'super_admin')
+                .map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
             </select>
+            {user.id === currentUserId && (
+              <p className="text-xs text-muted-foreground">{t('selfRoleEditForbidden')}</p>
+            )}
           </div>
           <div className="space-y-2">
             <Label>{t('fieldAccountStatus')}</Label>

@@ -195,20 +195,50 @@ describe('deleteMemo', () => {
 
   it('存在しなければ false', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
-    expect(await deleteMemo('x', 'user-1')).toBe(false);
+    expect(await deleteMemo('x', 'user-1', 'tenant-A', 'general')).toBe(false);
   });
 
-  it('他人のメモは false', async () => {
-    vi.mocked(prisma.memo.findFirst).mockResolvedValue({ userId: 'user-2' } as never);
-    expect(await deleteMemo('memo-1', 'user-1')).toBe(false);
+  it('他人のメモは false (一般ユーザ)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-2', visibility: 'private' } as never,
+    );
+    expect(await deleteMemo('memo-1', 'user-1', 'tenant-A', 'general')).toBe(false);
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
 
+  // feat/crud-permission-redesign (2026-05-20): admin の public モデレーション削除
+  it('admin は他人の public メモを削除可', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-2', visibility: 'public' } as never,
+    );
+    vi.mocked(prisma.memo.update).mockResolvedValue({} as never);
+    expect(await deleteMemo('memo-1', 'admin-x', 'tenant-A', 'admin')).toBe(true);
+    expect(prisma.memo.update).toHaveBeenCalled();
+  });
+
+  it('admin であっても他人の private メモは削除不可 (プライバシー保護)', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-2', visibility: 'private' } as never,
+    );
+    expect(await deleteMemo('memo-1', 'admin-x', 'tenant-A', 'admin')).toBe(false);
+    expect(prisma.memo.update).not.toHaveBeenCalled();
+  });
+
+  it('本人なら自分の private メモも削除可', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-1', visibility: 'private' } as never,
+    );
+    vi.mocked(prisma.memo.update).mockResolvedValue({} as never);
+    expect(await deleteMemo('memo-1', 'user-1', 'tenant-A', 'general')).toBe(true);
+  });
+
   it('本人なら論理削除して true', async () => {
-    vi.mocked(prisma.memo.findFirst).mockResolvedValue({ userId: 'user-1' } as never);
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-1', visibility: 'public' } as never,
+    );
     vi.mocked(prisma.memo.update).mockResolvedValue({} as never);
 
-    expect(await deleteMemo('memo-1', 'user-1')).toBe(true);
+    expect(await deleteMemo('memo-1', 'user-1', 'tenant-A', 'general')).toBe(true);
     expect(prisma.memo.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'memo-1' },

@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
-import { checkMembership } from '@/lib/permissions';
+import { checkMembership, isAdminOrAbove } from '@/lib/permissions';
 import { createAttachmentSchema, ATTACHMENT_ENTITY_TYPES } from '@/lib/validators/attachment';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import {
@@ -79,7 +79,8 @@ async function authorizeProjectScopedEntity(
 ): Promise<NextResponse | null> {
   const t = await getTranslations('message');
 
-  if (user.systemRole === 'admin') return null;
+  // feat/crud-permission-redesign (2026-05-20): super_admin も含めて短絡
+  if (isAdminOrAbove(user)) return null;
 
   // PR #213 / 2026-05-01: visibility-aware read 認可。
   //   public な risk/retrospective/knowledge の添付は cross-list 画面で非メンバーが

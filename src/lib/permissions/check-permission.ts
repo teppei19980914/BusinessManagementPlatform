@@ -76,7 +76,11 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     'task:create', 'task:read', 'task:update', 'task:update_progress', 'task:delete',
     'knowledge:create', 'knowledge:read', 'knowledge:update', 'knowledge:delete', 'knowledge:publish',
     'risk:create', 'risk:read', 'risk:update', 'risk:delete',
-    'member:read',
+    // feat/crud-permission-redesign (2026-05-20): PM/TL にメンバー管理を開放。
+    //   member/viewer の追加・削除・ロール変更は PM/TL 実行可、ただし「PM/TL ロール」を
+    //   扱う操作 (PM/TL 追加・削除、PM/TL↔それ以外のロール変更) は admin only とする。
+    //   後者の細粒度判定は check-permission.ts では表現できないため member.service.ts で実施。
+    'member:read', 'member:manage',
     // ステークホルダー: PM/TL のみ全 CRUD 可 (人物評を含むため member 以下は閲覧不可)
     'stakeholder:read', 'stakeholder:create', 'stakeholder:update', 'stakeholder:delete',
   ]),

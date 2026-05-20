@@ -3,11 +3,13 @@ import { redirect } from 'next/navigation';
 import { listUsers } from '@/services/user.service';
 import { getTenantSelfInfo } from '@/services/tenant-self.service';
 import { recordError } from '@/services/error-log.service';
+import { isAdminOrAbove } from '@/lib/permissions';
 import { UsersClient } from './users-client';
 
 export default async function UsersPage() {
   const session = await auth();
-  if (!session || session.user.systemRole !== 'admin') {
+  // feat/crud-permission-redesign (2026-05-20): API 側 requireAdmin と整合 (admin + super_admin)
+  if (!session || !isAdminOrAbove(session.user)) {
     redirect('/');
   }
 
@@ -58,6 +60,8 @@ export default async function UsersPage() {
       activeUserCount={tenantInfo?.activeUserCount ?? 0}
       beginnerMaxSeats={tenantInfo?.beginnerMaxSeats ?? 5}
       dataLoadError={dataLoadError}
+      // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止のため
+      currentUserId={session.user.id}
     />
   );
 }

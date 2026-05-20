@@ -23,13 +23,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { getAdminUsageSummary } from '@/services/usage-monitoring.service';
+import { isAdminOrAbove } from '@/lib/permissions';
 
 export async function GET(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  // 現状は admin に限定。super_admin 導入後は isSuperAdmin() に切替予定。
-  if (user.systemRole !== 'admin') {
+  // feat/crud-permission-redesign (2026-05-20): 旧 `=== 'admin'` 厳密比較を isAdminOrAbove に統一。
+  //   旧コメント「super_admin 導入後は isSuperAdmin() に切替予定」 → 他の admin API (audit-logs,
+  //   role-change-logs 等) と同じく super_admin も通過させる方向で確定 (UI/API 認可一致)。
+  if (!isAdminOrAbove(user)) {
     return NextResponse.json(
       { error: { code: 'FORBIDDEN' } },
       { status: 403 },

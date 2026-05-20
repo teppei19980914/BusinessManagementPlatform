@@ -170,6 +170,71 @@ describe('listAllRetrospectivesForViewer', () => {
     const adminCall = vi.mocked(prisma.retrospective.findMany).mock.calls[0][0];
     expect(adminCall.where.visibility).toBe('public');
   });
+
+  // feat/crud-permission-redesign (2026-05-20): severity-1 情報漏洩修正の回帰防止。
+  //   旧実装は linkedProjects[].name を非 ProjectMember にも露出していた。
+  //   per-link で memberProjectIds を判定し、メンバー外プロジェクトの name を null にする。
+  it('linkedProjects: per-link gate (非メンバーは全 name=null)', async () => {
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      {
+        ...retRow(),
+        project: { id: 'p-1', name: 'PJ-1', deletedAt: null },
+        retrospectiveProjects: [
+          { projectId: 'p-1', project: { id: 'p-1', name: 'PJ-1', deletedAt: null } },
+          { projectId: 'p-2', project: { id: 'p-2', name: 'PJ-2', deletedAt: null } },
+        ],
+      },
+    ] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    const r = await listAllRetrospectivesForViewer('u-99', 'general', 'tenant-A');
+
+    expect(r[0].linkedProjects).toHaveLength(2);
+    expect(r[0].linkedProjects[0]).toMatchObject({ id: 'p-1', name: null });
+    expect(r[0].linkedProjects[1]).toMatchObject({ id: 'p-2', name: null });
+  });
+
+  it('linkedProjects: per-link gate (一部のみメンバー → メンバー側のみ name 表示)', async () => {
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue([
+      { projectId: 'p-1' },
+    ] as never);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      {
+        ...retRow(),
+        project: { id: 'p-1', name: 'PJ-1', deletedAt: null },
+        retrospectiveProjects: [
+          { projectId: 'p-1', project: { id: 'p-1', name: 'PJ-1', deletedAt: null } },
+          { projectId: 'p-2', project: { id: 'p-2', name: 'PJ-2', deletedAt: null } },
+        ],
+      },
+    ] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    const r = await listAllRetrospectivesForViewer('u-1', 'general', 'tenant-A');
+
+    expect(r[0].linkedProjects[0]).toMatchObject({ id: 'p-1', name: 'PJ-1' });
+    expect(r[0].linkedProjects[1]).toMatchObject({ id: 'p-2', name: null });
+  });
+
+  it('linkedProjects: admin は全 name 表示 (per-link gate 対象外)', async () => {
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      {
+        ...retRow(),
+        project: { id: 'p-1', name: 'PJ-1', deletedAt: null },
+        retrospectiveProjects: [
+          { projectId: 'p-1', project: { id: 'p-1', name: 'PJ-1', deletedAt: null } },
+          { projectId: 'p-2', project: { id: 'p-2', name: 'PJ-2', deletedAt: null } },
+        ],
+      },
+    ] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    const r = await listAllRetrospectivesForViewer('admin-1', 'admin', 'tenant-A');
+
+    expect(r[0].linkedProjects[0]).toMatchObject({ id: 'p-1', name: 'PJ-1' });
+    expect(r[0].linkedProjects[1]).toMatchObject({ id: 'p-2', name: 'PJ-2' });
+  });
 });
 
 describe('createRetrospective', () => {
@@ -386,14 +451,17 @@ describe('confirmRetrospective / deleteRetrospective', () => {
 
   it('delete 存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(null);
-    await expect(deleteRetrospective('x', 'u-1', 'general')).rejects.toThrow('NOT_FOUND');
+    await expect(
+      deleteRetrospective('x', 'u-1', 'general', 'tenant-A', 'project'),
+    ).rejects.toThrow('NOT_FOUND');
   });
 
-  it('delete 作成者本人は削除 OK', async () => {
+  // feat/crud-permission-redesign (2026-05-20): context 別に削除権限が変わる
+  it('delete (context=project): 作成者本人は削除 OK', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
-    await deleteRetrospective('ret-1', 'u-1', 'general');
+    await deleteRetrospective('ret-1', 'u-1', 'general', 'tenant-A', 'project');
 
     expect(prisma.retrospective.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -402,19 +470,34 @@ describe('confirmRetrospective / deleteRetrospective', () => {
     );
   });
 
-  it('delete admin は他人の振り返りも削除可 (管理削除)', async () => {
+  it('delete (context=project): admin も他人作成は FORBIDDEN', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(
+      deleteRetrospective('ret-1', 'admin-x', 'admin', 'tenant-A', 'project'),
+    ).rejects.toThrow('FORBIDDEN');
+    expect(prisma.retrospective.update).not.toHaveBeenCalled();
+  });
+
+  it('delete (context=global): admin は他人作成も削除可 (管理削除)', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
-    await deleteRetrospective('ret-1', 'admin-x', 'admin');
+    await deleteRetrospective('ret-1', 'admin-x', 'admin', 'tenant-A', 'global');
     expect(prisma.retrospective.update).toHaveBeenCalled();
   });
 
-  it('delete 非 admin の第三者は FORBIDDEN', async () => {
+  it('delete (context=global): 非 admin (作成者本人) も FORBIDDEN', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
-    await expect(deleteRetrospective('ret-1', 'u-other', 'general')).rejects.toThrow(
-      'FORBIDDEN',
-    );
+    await expect(
+      deleteRetrospective('ret-1', 'u-1', 'general', 'tenant-A', 'global'),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('delete (context=project): 非 admin の第三者は FORBIDDEN', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(
+      deleteRetrospective('ret-1', 'u-other', 'general', 'tenant-A', 'project'),
+    ).rejects.toThrow('FORBIDDEN');
   });
 });
 

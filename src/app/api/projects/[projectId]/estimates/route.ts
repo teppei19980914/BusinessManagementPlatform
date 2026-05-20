@@ -30,7 +30,9 @@ export async function GET(
   if (user instanceof NextResponse) return user;
 
   const { projectId } = await params;
-  const forbidden = await checkProjectPermission(user, projectId, 'project:read');
+  // feat/crud-permission-redesign (2026-05-20): 見積タブは PM/TL + admin のみ。
+  //   旧仕様は project:read (member/viewer 含む) だったが、UI=API 一致原則に従い project:update に統一。
+  const forbidden = await checkProjectPermission(user, projectId, 'project:update');
   if (forbidden) return forbidden;
 
   const estimates = await listEstimates(projectId, user.tenantId);

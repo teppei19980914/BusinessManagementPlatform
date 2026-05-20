@@ -571,14 +571,15 @@ describe('updateKnowledge / deleteKnowledge', () => {
 
   it('deleteKnowledge: 存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(null);
-    await expect(deleteKnowledge('x', 'u-1', 'general')).rejects.toThrow('NOT_FOUND');
+    await expect(deleteKnowledge('x', 'u-1', 'general', TEST_TENANT_ID, 'project')).rejects.toThrow('NOT_FOUND');
   });
 
-  it('deleteKnowledge: 作成者本人は deletedAt セット', async () => {
+  // feat/crud-permission-redesign (2026-05-20): context='project' = 作成者本人のみ可
+  it('deleteKnowledge (context=project): 作成者本人は deletedAt セット', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.knowledge.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
-    await deleteKnowledge('k-1', 'u-1', 'general');
+    await deleteKnowledge('k-1', 'u-1', 'general', TEST_TENANT_ID, 'project');
 
     expect(prisma.knowledge.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -587,17 +588,35 @@ describe('updateKnowledge / deleteKnowledge', () => {
     );
   });
 
-  it('deleteKnowledge: admin は他人のナレッジも削除可', async () => {
+  it('deleteKnowledge (context=project): admin も他人作成は FORBIDDEN', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(
+      deleteKnowledge('k-1', 'admin-x', 'admin', TEST_TENANT_ID, 'project'),
+    ).rejects.toThrow('FORBIDDEN');
+    expect(prisma.knowledge.update).not.toHaveBeenCalled();
+  });
+
+  it('deleteKnowledge (context=global): admin は他人作成も削除可', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.knowledge.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
-    await deleteKnowledge('k-1', 'admin-x', 'admin');
+    await deleteKnowledge('k-1', 'admin-x', 'admin', TEST_TENANT_ID, 'global');
     expect(prisma.knowledge.update).toHaveBeenCalled();
   });
 
-  it('deleteKnowledge: 非 admin の第三者は FORBIDDEN', async () => {
+  it('deleteKnowledge (context=global): 非 admin (作成者本人) も FORBIDDEN', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
-    await expect(deleteKnowledge('k-1', 'u-other', 'general')).rejects.toThrow('FORBIDDEN');
+    await expect(
+      deleteKnowledge('k-1', 'u-1', 'general', TEST_TENANT_ID, 'global'),
+    ).rejects.toThrow('FORBIDDEN');
+    expect(prisma.knowledge.update).not.toHaveBeenCalled();
+  });
+
+  it('deleteKnowledge (context=project): 非 admin の第三者は FORBIDDEN', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(
+      deleteKnowledge('k-1', 'u-other', 'general', TEST_TENANT_ID, 'project'),
+    ).rejects.toThrow('FORBIDDEN');
   });
 });
 

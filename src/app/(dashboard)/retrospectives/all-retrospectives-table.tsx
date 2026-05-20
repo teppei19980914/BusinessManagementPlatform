@@ -189,14 +189,12 @@ export function AllRetrospectivesTable({
               </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  {/* PR feat/asset-multi-project-linking: orphan は admin 手動 cleanup の想定 */}
-                  {(r.projectId ?? r.linkedProjectIds[0]) ? (
-                    <AdminRetrospectiveDeleteButton
-                      projectId={(r.projectId ?? r.linkedProjectIds[0])!}
-                      retroId={r.id}
-                      label={r.conductedDate}
-                    />
-                  ) : null}
+                  {/* feat/crud-permission-redesign (2026-05-20): 横断 DELETE 専用ルートに変更。
+                      projectId fallback は不要 (orphan も削除可能になった) */}
+                  <AdminRetrospectiveDeleteButton
+                    retroId={r.id}
+                    label={r.conductedDate}
+                  />
                 </TableCell>
               )}
             </ClickableRow>

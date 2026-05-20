@@ -23,6 +23,7 @@ import { getAuthenticatedUser, requireAdmin, requireSameTenantUser } from '@/lib
 import { isSuperAdmin } from '@/lib/permissions';
 import { updateUser, deleteUser } from '@/services/user.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
+import { prisma } from '@/lib/db';
 
 // PR-X1 (2026-05-07): validator では super_admin も許容するが、route handler 側で
 // 「呼出者が super_admin でない限り super_admin への昇格は不可」のガードを追加。
@@ -118,6 +119,13 @@ export async function DELETE(
 
   const t = await getTranslations('message');
 
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-A2): beforeValue 記録のため
+  //   削除前に対象 user の主要フィールドを取得 (sanitizeForAudit で機微フィールドは redact)。
+  const beforeUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, email: true, systemRole: true, isActive: true, deletedAt: true },
+  });
+
   try {
     const result = await deleteUser(userId, user.id, user.tenantId);
     await recordAuditLog({
@@ -126,6 +134,7 @@ export async function DELETE(
       action: 'DELETE',
       entityType: 'user',
       entityId: userId,
+      beforeValue: beforeUser ? sanitizeForAudit(beforeUser as unknown as Record<string, unknown>) : null,
       afterValue: {
         deletedUserId: result.deletedUserId,
         removedMemberships: result.removedMemberships,

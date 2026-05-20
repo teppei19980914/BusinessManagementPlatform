@@ -83,10 +83,25 @@
 - プロジェクト限定: 当該プロジェクト参加者のみ閲覧可
 - 社内公開: 全ログインユーザが閲覧可
 
-### 6.6 削除方針
+### 6.6 削除方針 (feat/crud-permission-redesign 2026-05-20 改訂)
 
-- 削除は物理削除ではなく論理削除とする
-- メンバーおよび閲覧者は削除不可
-- PM/TL とシステム管理者のみ削除可
+- 削除は物理削除ではなく論理削除とする (Memo / Knowledge / RiskIssue / Retrospective / Project)
+- 経路別認可:
+  - **「○○一覧」(プロジェクト内)** からの削除: **作成者本人のみ** (PM/TL も admin も他人作成は不可)
+  - **「全○○」(横断)** からの削除: **テナント管理者 (admin) のみ** (モデレーション用途)
+- 経路は API レベルで分離 (`/api/projects/[id]/{resource}/[id]` vs `/api/{resource}/[id]`)
+- メモは特殊: admin は **public のメモのみ** モデレーション削除可、private は admin にも非可視
+- service 層では `context: 'project' | 'global'` 引数で経路別の権限を enforce
+
+### 6.6.1 メンバー管理 (feat/crud-permission-redesign 2026-05-20 改訂)
+
+- 旧仕様: メンバーの追加・解除・ロール変更は **システム管理者のみ**
+- 新仕様: **PM/TL も実行可** (運営責任者として「自プロジェクト内のメンバー補充」を可能に)
+- ただし「PM/TL ロール」を扱う以下 4 操作は引き続き **admin のみ** (権限委譲リスク回避):
+  - PM/TL の新規追加
+  - PM/TL の削除
+  - PM/TL への昇格 (member/viewer → PM/TL)
+  - PM/TL からの降格 (PM/TL → member/viewer)
+- 細粒度判定は `src/services/member.service.ts` で実施 (`FORBIDDEN_PMTL_ROLE`)
 
 ---

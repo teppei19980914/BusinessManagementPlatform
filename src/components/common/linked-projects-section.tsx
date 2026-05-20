@@ -36,7 +36,9 @@ import { useToast } from '@/components/toast-provider';
 
 type LinkedProject = {
   id: string;
-  name: string;
+  /** feat/crud-permission-redesign (2026-05-20): 「全○○」横断ビューで非 ProjectMember には null。
+   *  null の場合 chip は「非公開のプロジェクト」プレースホルダ表示、詳細リンク・解除操作とも無効化。 */
+  name: string | null;
   deleted: boolean;
 };
 
@@ -104,24 +106,32 @@ export function LinkedProjectsSection({
       <ul className="flex flex-wrap gap-2">
         {linkedProjects.map((p) => {
           const isCurrent = p.id === currentProjectId;
+          // feat/crud-permission-redesign (2026-05-20): name=null は「非公開のプロジェクト」表示。
+          //   非 ProjectMember には紐付け先プロジェクト名を秘匿し、詳細リンクも無効化する。
+          const isPrivate = p.name == null;
+          const displayName = isPrivate ? t('privateProject') : p.name!;
           return (
             <li
               key={p.id}
               className={`flex max-w-full items-center gap-1.5 overflow-hidden rounded-full border px-2.5 py-1 text-xs ${
-                p.deleted ? 'bg-muted text-muted-foreground line-through' : 'bg-card'
+                p.deleted
+                  ? 'bg-muted text-muted-foreground line-through'
+                  : isPrivate
+                    ? 'bg-muted text-muted-foreground italic'
+                    : 'bg-card'
               }`}
-              title={p.deleted ? t('deletedProjectTitle') : p.name}
+              title={p.deleted ? t('deletedProjectTitle') : displayName}
             >
-              {p.deleted ? (
-                <span className="min-w-0 flex-1 truncate">{p.name}</span>
+              {p.deleted || isPrivate ? (
+                <span className="min-w-0 flex-1 truncate">{displayName}</span>
               ) : (
                 <Link
                   href={`/projects/${p.id}`}
                   className="min-w-0 flex-1 truncate hover:underline"
                   onClick={(e) => e.stopPropagation()}
-                  title={p.name}
+                  title={displayName}
                 >
-                  {p.name}
+                  {displayName}
                 </Link>
               )}
               {isCurrent && (
@@ -129,13 +139,13 @@ export function LinkedProjectsSection({
                   {t('currentBadge')}
                 </Badge>
               )}
-              {isCurrent && !p.deleted && (
+              {isCurrent && !p.deleted && !isPrivate && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
                   className="ml-0.5 h-4 w-4 shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => handleUnlink(p.id, p.name)}
+                  onClick={() => handleUnlink(p.id, displayName)}
                   title={t('unlinkButtonTitle')}
                   aria-label={t('unlinkButtonTitle')}
                 >

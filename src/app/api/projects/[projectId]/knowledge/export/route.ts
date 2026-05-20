@@ -19,7 +19,9 @@ export async function GET(
   const forbidden = await checkProjectPermission(user, projectId, 'knowledge:read');
   if (forbidden) return forbidden;
 
-  const csv = await exportKnowledgeSync(projectId, user.tenantId);
+  // feat/crud-permission-redesign (2026-05-20): viewer の userId/systemRole を渡して
+  //   visibility フィルタを適用 (非 admin は他人 draft 除外)。severity-1 漏洩修正。
+  const csv = await exportKnowledgeSync(projectId, user.tenantId, user.id, user.systemRole);
   return new NextResponse(csv, {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',

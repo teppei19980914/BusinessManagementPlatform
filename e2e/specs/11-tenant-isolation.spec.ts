@@ -195,11 +195,17 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
     expect([403, 404]).toContain(res.status());
   });
 
-  test('PATCH /api/knowledge/[B-id] → 404 (越境 knowledge 更新不可)', async () => {
+  test('PATCH /api/knowledge/[B-id] → 405 (越境 knowledge 更新経路は構造的に閉鎖)', async () => {
+    // feat/crud-permission-redesign (2026-05-20, PR #416): 横断 `/api/knowledge/[knowledgeId]` の
+    //   PATCH ハンドラを「UI=API 一致原則」に従い削除済み。プロジェクト内更新は
+    //   `/api/projects/[pid]/knowledge/[kid]` PATCH 経由 (service 層で作成者本人のみ enforce)。
+    //   そのため越境攻撃ベクトルとしては PATCH 405 (Method Not Allowed) が期待される。
+    //   旧 200/400/403/404 期待値はハンドラ削除前の挙動で、新仕様では **構造的に到達不能**。
+    //   後続の DELETE は ハンドラ存続 (admin global delete) なので 403/404 系。
     const res = await adminARequest.patch(`/api/knowledge/${tenantB.knowledgeId}`, {
       data: { title: 'attacked' },
     });
-    expect([400, 403, 404]).toContain(res.status());
+    expect([400, 403, 404, 405]).toContain(res.status());
   });
 
   test('DELETE /api/knowledge/[B-id] → 404', async () => {

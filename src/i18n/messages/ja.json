@@ -66,7 +66,8 @@
     "unlinkButtonTitle": "このプロジェクトから紐付けを解除",
     "unlinkConfirm": "「{name}」の紐付けを解除します。よろしいですか? (資産本体は他プロジェクトの参照が残っていれば削除されません)",
     "unlinkSuccess": "「{name}」の紐付けを解除しました",
-    "unlinkFailed": "紐付けの解除に失敗しました"
+    "unlinkFailed": "紐付けの解除に失敗しました",
+    "privateProject": "非公開のプロジェクト"
   },
   "comment": {
     "section": "コメント",
@@ -245,6 +246,8 @@
     "cannotEditFixedEstimate": "確定済みの見積もりは編集できません",
     "userNotFound": "ユーザが見つかりません",
     "alreadyMember": "既にメンバーに追加されています",
+    "cannotManagePmTl": "PM/TL ロールの追加・削除・変更はテナント管理者のみ実行できます",
+    "cannotChangeOwnProjectRole": "自分自身のプロジェクトロールは変更できません。他のメンバーに依頼してください。",
     "noCommentPermission": "コメント投稿権限がありません (viewer 不可)",
     "bulkProgressOwnTasksOnly": "一括実績更新は自分が担当のタスクのみ対象にできます",
     "invalidAssigneeMember": "指定された担当者はプロジェクトメンバーではありません"
@@ -995,7 +998,9 @@
     "colUpdatedAt": "更新日時",
     "colAttachments": "添付",
     "colActions": "操作",
-    "count": "{count} 件"
+    "count": "{count} 件",
+    "deleteSuccess": "メモを削除しました",
+    "deleteFailed": "メモの削除に失敗しました"
   },
   "myTask": {
     "title": "マイタスク",
@@ -1126,7 +1131,8 @@
       "dangerZoneDescription": "ユーザを削除すると即時ログイン不可となり、全プロジェクトのメンバー情報から削除されます。過去の作業履歴 (担当タスク・起票リスク等) は保全されます。",
       "deleteButton": "このユーザを削除",
       "deleteConfirm": "「{name}」({email}) を削除しますか？\n\nこの操作でユーザは即時ログイン不可となり、全プロジェクトの\nメンバー情報から削除されます。\n\n※ 過去のタスク担当・リスク起票等の履歴は保全されます。",
-      "deleteDone": "削除しました (紐づくプロジェクトメンバー {count} 件も削除)"
+      "deleteDone": "削除しました (紐づくプロジェクトメンバー {count} 件も削除)",
+      "selfRoleEditForbidden": "自分自身のロールは変更できません。他のテナント管理者に依頼してください。"
     },
     "auditLogs": {
       "title": "監査ログ",

@@ -92,7 +92,10 @@ export async function PATCH(
 }
 
 /**
- * DELETE /api/memos/:id — 作成者本人のみ論理削除可。
+ * DELETE /api/memos/:id —
+ *   - 作成者本人: 自分のメモ (private/public 問わず) 論理削除可
+ *   - admin: visibility='public' な他人メモのみ論理削除可 (feat/crud-permission-redesign, 2026-05-20)
+ *   - admin であっても他人の private メモは削除不可 (プライバシー保護)
  */
 export async function DELETE(
   _req: NextRequest,
@@ -103,7 +106,7 @@ export async function DELETE(
 
   const { id } = await params;
   const t = await getTranslations('message');
-  const ok = await deleteMemo(id, user.id, user.tenantId);
+  const ok = await deleteMemo(id, user.id, user.tenantId, user.systemRole);
   if (!ok) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },

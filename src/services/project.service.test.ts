@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
+// feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-D2):
+//   deleteProjectCascade の強制削除セクションを interactive transaction で囲ったため、
+//   $transaction が callback 形式で呼ばれた場合に tx に prismaMock を渡せるようにする。
+vi.mock('@/lib/db', () => {
+  const prismaMock = {
     project: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
@@ -13,7 +16,6 @@ vi.mock('@/lib/db', () => ({
     },
     riskIssue: { findMany: vi.fn(), deleteMany: vi.fn(), delete: vi.fn() },
     retrospective: { findMany: vi.fn(), deleteMany: vi.fn(), delete: vi.fn() },
-    // PR feat/asset-multi-project-linking: M:N 中間テーブルのモック追加
     riskIssueProject: {
       findMany: vi.fn(),
       count: vi.fn(),
@@ -38,13 +40,20 @@ vi.mock('@/lib/db', () => ({
     taskProgressLog: { deleteMany: vi.fn() },
     estimate: { findMany: vi.fn(), deleteMany: vi.fn() },
     projectMember: { deleteMany: vi.fn() },
-    // PR #89: deleteProject + deleteProjectCascade は attachment を扱う
     attachment: { updateMany: vi.fn(), deleteMany: vi.fn() },
-    // 2026-05-09 hotfix: deleteProjectCascade は SuggestionExplanation も cleanup
     suggestionExplanation: { deleteMany: vi.fn() },
-    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
-  },
-}));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    $transaction: vi.fn(async (arg: any) => {
+      if (typeof arg === 'function') {
+        // interactive transaction (callback): tx に prismaMock を渡す
+        return arg(prismaMock);
+      }
+      // 配列形式
+      return Promise.all(arg);
+    }),
+  };
+  return { prisma: prismaMock };
+});
 
 vi.mock('./state-machine', () => ({
   canTransition: vi.fn(),

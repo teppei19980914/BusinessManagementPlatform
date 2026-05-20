@@ -4,11 +4,14 @@ import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/db';
 // PR #117 → PR #119: session 連携フォーマッタ (ユーザ個別 TZ/locale を反映)
 import { getServerFormatters } from '@/lib/server-formatters';
+import { isAdminOrAbove } from '@/lib/permissions';
 import { AuditLogsTable, type AuditLogRow } from './audit-logs-table';
 
 export default async function AuditLogsPage() {
   const session = await auth();
-  if (!session || session.user.systemRole !== 'admin') redirect('/');
+  // feat/crud-permission-redesign (2026-05-20): API 側の requireAdmin (admin + super_admin) と整合。
+  //   旧実装は `=== 'admin'` 厳密比較で super_admin が UI に到達できなかった (UI/API ズレ)。
+  if (!session || !isAdminOrAbove(session.user)) redirect('/');
 
   const t = await getTranslations('admin.auditLogs');
   const { formatDateTimeFull } = await getServerFormatters();

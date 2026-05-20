@@ -270,6 +270,19 @@ export async function deleteCustomerCascade(
       knowledgeUnlinked: number;
       attachmentsDeleted: number;
     }
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-D3): partial 失敗時
+  | {
+      ok: false;
+      reason?: undefined;
+      projectsDeleted: number;
+      risksDeleted: number;
+      issuesDeleted: number;
+      retrospectivesDeleted: number;
+      knowledgeDeleted: number;
+      knowledgeUnlinked: number;
+      attachmentsDeleted: number;
+      failedProjects: { projectId: string; error: string }[];
+    }
 > {
   // 2026-05-09 feedback: 越境カスケード削除を遮断するため where に tenantId を必ず含める。
   const existing = await prisma.customer.findFirst({
@@ -295,17 +308,43 @@ export async function deleteCustomerCascade(
     attachmentsDeleted: 0,
   };
 
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-D3): severity-1 部分カスケード対策。
+  //   旧実装は loop 中の例外で customer 残存 (partial state) するリスクがあった。
+  //
+  //   設計判断: deleteProjectCascade は 200 行超の処理で interactive transaction (max 60s)
+  //   に収めるとロック範囲が広すぎる + N project ぶんを 1 tx に入れると timeout 超過リスク。
+  //   代わりに「冪等設計 (再実行で残りを完了)」+「部分失敗時 audit log」で対応:
+  //
+  //   1. activeProjects query は `deletedAt: null` で絞り込みのため、再実行で論理削除済 project
+  //      は自然に除外され冪等
+  //   2. loop の各 iteration を try/catch で囲み、失敗時は audit log に記録して次へ進む
+  //      (1 件失敗で残り N-1 件が止まる損失を防ぐ)
+  //   3. customer.delete は最後に独立 await。loop が完了しない限り customer は残るため
+  //      再実行で残り project を片付けてから customer 削除に到達する
+  const failedProjects: { projectId: string; error: string }[] = [];
   for (const p of activeProjects) {
-    const r = await deleteProjectCascade(p.id, viewerTenantId, options);
-    totals.projectsDeleted += 1;
-    totals.risksDeleted += r.risks;
-    totals.issuesDeleted += r.issues;
-    totals.retrospectivesDeleted += r.retrospectives;
-    totals.knowledgeDeleted += r.knowledgeDeleted;
-    totals.knowledgeUnlinked += r.knowledgeUnlinked;
-    totals.attachmentsDeleted += r.attachmentsDeleted;
+    try {
+      const r = await deleteProjectCascade(p.id, viewerTenantId, options);
+      totals.projectsDeleted += 1;
+      totals.risksDeleted += r.risks;
+      totals.issuesDeleted += r.issues;
+      totals.retrospectivesDeleted += r.retrospectives;
+      totals.knowledgeDeleted += r.knowledgeDeleted;
+      totals.knowledgeUnlinked += r.knowledgeUnlinked;
+      totals.attachmentsDeleted += r.attachmentsDeleted;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      failedProjects.push({ projectId: p.id, error: msg });
+      // 1 件失敗しても残り project を処理 (冪等再実行で取り戻し可能)
+    }
   }
 
-  await prisma.customer.delete({ where: { id: customerId } });
-  return { ok: true, ...totals };
+  // 全 project の cascade が成功した場合のみ customer を物理削除。
+  //   1 件でも失敗すれば customer を残し再実行可能な状態に。
+  if (failedProjects.length === 0) {
+    await prisma.customer.delete({ where: { id: customerId } });
+    return { ok: true, ...totals };
+  }
+  // 部分失敗: customer 残置 + 失敗詳細を返す (呼出元で audit log 記録 / 再試行判断)
+  return { ok: false, ...totals, failedProjects } as const;
 }

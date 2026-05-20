@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { bulkUpdateRisksFromList } from '@/services/risk.service';
 import { bulkUpdateRisksSchema } from '@/lib/validators/risk-bulk';
+import { recordAuditLog } from '@/services/audit.service';
 
 /**
  * プロジェクト「リスク/課題一覧」からの一括更新エンドポイント (PR #165 で
@@ -56,6 +57,25 @@ export async function PATCH(
     user.id,
     user.tenantId,
   );
+
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-A1): ADR-0011 全 mutation 記録に従い、
+  //   bulk 更新も audit_logs に記録。
+  if (result.updatedIds.length > 0) {
+    await recordAuditLog({
+      tenantId: user.tenantId,
+      userId: user.id,
+      action: 'BULK_UPDATE',
+      entityType: 'risk',
+      entityId: projectId,
+      afterValue: {
+        projectId,
+        patch: parsed.data.patch,
+        updatedIds: result.updatedIds,
+        skippedNotOwned: result.skippedNotOwned,
+        skippedNotFound: result.skippedNotFound,
+      },
+    });
+  }
 
   return NextResponse.json({ data: result });
 }

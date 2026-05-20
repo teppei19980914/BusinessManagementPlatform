@@ -210,7 +210,10 @@ export function ProjectDetailClient({
   // 全プロジェクトのナレッジを表示するが、どちらも同一 knowledge テーブルを参照する
   // ため、一方での CRUD がもう一方に即座に反映される (連動)。
   const knowledges = useLazyFetch<KnowledgeDTO[]>(`/api/projects/${project.id}/knowledge`);
-  const allUsers = useLazyFetch<UserDTO[]>(`/api/admin/users`);
+  // feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー追加可になったため、
+  //   admin only の /api/admin/users ではなく project-scoped で member:manage 認可の
+  //   /api/projects/[id]/available-users を叩く。
+  const allUsers = useLazyFetch<UserDTO[]>(`/api/projects/${project.id}/available-users`);
   // feat/stakeholder-management: ステークホルダー一覧 (PM/TL + admin のみ取得・表示)
   const stakeholders = useLazyFetch<StakeholderDTO[]>(`/api/projects/${project.id}/stakeholders`);
 
@@ -266,7 +269,8 @@ export function ProjectDetailClient({
         break;
       case 'members':
         members.load();
-        if (systemRole === 'admin') allUsers.load();
+        // feat/crud-permission-redesign (2026-05-20): admin/pm_tl の両方でメンバー追加候補をロード。
+        if (systemRole === 'admin' || projectRole === 'pm_tl') allUsers.load();
         break;
       case 'stakeholders':
         // 内部メンバー紐付けプルダウン用に members も取得
@@ -276,7 +280,7 @@ export function ProjectDetailClient({
       default:
         break;
     }
-  }, [estimates, tasks, members, risks, retros, knowledges, stakeholders, allUsers, systemRole]);
+  }, [estimates, tasks, members, risks, retros, knowledges, stakeholders, allUsers, systemRole, projectRole]);
 
   function handleTabChange(value: string) {
     setActiveTab(value);
@@ -643,8 +647,11 @@ export function ProjectDetailClient({
           <TabsTrigger value="issues" className="hidden lg:inline-flex">{t('tabIssues')}</TabsTrigger>
           <TabsTrigger value="retrospectives" className="hidden lg:inline-flex">{t('tabRetrospectives')}</TabsTrigger>
           <TabsTrigger value="knowledge" className="hidden lg:inline-flex">{t('tabKnowledge')}</TabsTrigger>
-          {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案 */}
-          <TabsTrigger value="suggestions" className="hidden lg:inline-flex">{t('tabSuggestions')}</TabsTrigger>
+          {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案。
+              feat/crud-permission-redesign (2026-05-20): PM/TL + admin のみ。adopt 操作も PM/TL 判断のため。 */}
+          {canEdit && (
+            <TabsTrigger value="suggestions" className="hidden lg:inline-flex">{t('tabSuggestions')}</TabsTrigger>
+          )}
           {/* Mobile 表示: 資産プルダウン (lg-)。配下の値が active なら親も active 表示。 */}
           <Menu.Root>
             <Menu.Trigger
@@ -673,7 +680,8 @@ export function ProjectDetailClient({
                     { value: 'issues', label: t('tabIssues') },
                     { value: 'retrospectives', label: t('tabRetrospectives') },
                     { value: 'knowledge', label: t('tabKnowledge') },
-                    { value: 'suggestions', label: t('tabSuggestions') },
+                    // feat/crud-permission-redesign (2026-05-20): suggestions は PM/TL + admin のみ
+                    ...(canEdit ? [{ value: 'suggestions', label: t('tabSuggestions') }] : []),
                   ].map((opt) => (
                     <Menu.Item
                       key={opt.value}
@@ -1021,41 +1029,38 @@ export function ProjectDetailClient({
           参考タブ (PR #65 核心機能): 過去プロジェクトから流用可能な
           ナレッジ・課題を類似度スコア付きで表示し、採用操作を提供する。
           本タブは独自の fetch (SuggestionsPanel 内) を持つため LazyTabContent 不要。
+          feat/crud-permission-redesign (2026-05-20): PM/TL + admin のみ表示。
+          canAdopt は canCreate (member 含む) ではなく canEdit (admin/pm_tl) に変更し、
+          採用 (プロジェクト紐付け) 権限を PM/TL 判断に統一。
         */}
-        <TabsContent value="suggestions" className="mt-4">
-          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} tenantPlan={tenantPlan} />
-        </TabsContent>
+        {canEdit && (
+          <TabsContent value="suggestions" className="mt-4">
+            <SuggestionsPanel projectId={project.id} canAdopt={canEdit} tenantPlan={tenantPlan} />
+          </TabsContent>
+        )}
 
-        {/* メンバータブ（admin/pm_tl のみ、admin なら allUsers も必要）*/}
-        {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+        {/* メンバータブ（admin/pm_tl のみ表示、両方 allUsers が必要）
+            feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー管理可能になったため、
+            canManage=admin||pm_tl + canManagePmTl=admin の 2 軸で UI を制御。 */}
+        {(isSystemAdmin || projectRole === 'pm_tl') && (
           <TabsContent value="members" className="mt-4">
             <LazyTabContent state={members.state}>
-              {(membersData) => {
-                if (systemRole === 'admin') {
-                  return (
-                    <LazyTabContent state={allUsers.state}>
-                      {(allUsersData) => (
-                        <MembersClient
-                          projectId={project.id}
-                          members={membersData}
-                          allUsers={allUsersData}
-                          isAdmin={true}
-                          onReload={reloadMembers}
-                        />
-                      )}
-                    </LazyTabContent>
-                  );
-                }
-                return (
-                  <MembersClient
-                    projectId={project.id}
-                    members={membersData}
-                    allUsers={[]}
-                    isAdmin={false}
-                    onReload={reloadMembers}
-                  />
-                );
-              }}
+              {(membersData) => (
+                <LazyTabContent state={allUsers.state}>
+                  {(allUsersData) => (
+                    <MembersClient
+                      projectId={project.id}
+                      members={membersData}
+                      allUsers={allUsersData}
+                      canManage={true}
+                      canManagePmTl={isSystemAdmin}
+                      onReload={reloadMembers}
+                      // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止
+                      currentUserId={userId}
+                    />
+                  )}
+                </LazyTabContent>
+              )}
             </LazyTabContent>
           </TabsContent>
         )}
@@ -1099,7 +1104,9 @@ export function ProjectDetailClient({
               {t('suggestionsModalDescription')}
             </DialogDescription>
           </DialogHeader>
-          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} tenantPlan={tenantPlan} />
+          {/* feat/crud-permission-redesign (2026-05-20): adopt は PM/TL + admin のみ。
+              新規作成直後の suggestions モーダルでも canEdit に揃える (member 自身が adopt できないため)。 */}
+          <SuggestionsPanel projectId={project.id} canAdopt={canEdit} tenantPlan={tenantPlan} />
           <div className="mt-4 flex justify-end">
             <Button variant="outline" onClick={closeSuggestionsModal}>
               {tAction('close')}

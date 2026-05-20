@@ -722,7 +722,6 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         readOnly={
           editingRisk != null
           && editingRisk.reporterId !== currentUserId
-          && systemRole !== 'admin'
         }
       />
 

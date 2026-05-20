@@ -137,8 +137,9 @@ export async function DELETE(
   }
 
   try {
-    // 2026-04-24: 削除は作成者本人 OR admin (service 層で enforce)。
-    await deleteKnowledge(knowledgeId, user.id, user.systemRole, user.tenantId);
+    // feat/crud-permission-redesign (2026-05-20): project 経路は作成者本人のみ削除可。
+    //   admin も「○○一覧」上では削除不可 (横断「全○○」経路で削除する)。
+    await deleteKnowledge(knowledgeId, user.id, user.systemRole, user.tenantId, 'project');
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

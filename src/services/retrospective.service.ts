@@ -42,8 +42,11 @@ export type RetroDTO = {
   projectId: string | null;
   /** 紐付け済プロジェクトの id 一覧 (M:N)。 */
   linkedProjectIds: string[];
-  /** PR feat/asset-multi-linking-ui (Phase 2): UI 表示用の紐付け済プロジェクト詳細。 */
-  linkedProjects: { id: string; name: string; deleted: boolean }[];
+  /** PR feat/asset-multi-linking-ui (Phase 2): UI 表示用の紐付け済プロジェクト詳細。
+   *  feat/crud-permission-redesign (2026-05-20): 「全振り返り」横断ビューで非 ProjectMember には
+   *  紐付け先プロジェクト名を秘匿するため、`name` を `string | null` に変更。
+   *  null の場合 UI 側で「非公開のプロジェクト」プレースホルダ表示し、詳細リンクは無効化する。 */
+  linkedProjects: { id: string; name: string | null; deleted: boolean }[];
   conductedDate: string;
   planSummary: string;
   actualSummary: string;
@@ -136,13 +139,20 @@ export async function listAllRetrospectivesForViewer(
   return retros.map((r) => {
     // PR feat/asset-multi-project-linking: 紐付け済プロジェクトのいずれかのメンバーなら isMember 扱い
     const linkedProjectIds = r.retrospectiveProjects.map((rp) => rp.projectId);
+    // feat/crud-permission-redesign (2026-05-20): per-link で「自分がメンバーであるプロジェクト」のみ
+    //   name を返す。それ以外のプロジェクト名は null にし、UI 側で「非公開のプロジェクト」表示にする。
+    //   旧実装は無条件で全プロジェクト名を返しており、複数紐付けの場合に非メンバープロジェクト名が
+    //   横断「全振り返り」画面で漏洩していた (severity-1 個人情報漏洩リスク)。
     const linkedProjects = r.retrospectiveProjects
       .filter((rp) => rp.project != null)
-      .map((rp) => ({
-        id: rp.project!.id,
-        name: rp.project!.name,
-        deleted: rp.project!.deletedAt != null,
-      }));
+      .map((rp) => {
+        const isLinkedMember = isAdmin || memberProjectIds.has(rp.projectId);
+        return {
+          id: rp.project!.id,
+          name: isLinkedMember ? rp.project!.name : null,
+          deleted: isAdmin ? rp.project!.deletedAt != null : false,
+        };
+      });
     const isMember = isAdmin || linkedProjectIds.some((pid) => memberProjectIds.has(pid));
     const projectDeleted = r.project?.deletedAt != null;
     return {
@@ -171,6 +181,23 @@ export async function listAllRetrospectivesForViewer(
       updatedByName: userMap.get(r.updatedBy) ?? null,
     };
   });
+}
+
+/**
+ * feat/crud-permission-redesign (2026-05-20): linkedProjects[].name の per-link gate ヘルパ。
+ * `listAllRetrospectivesForViewer` だけでなく `listRetrospectives` (project tab) / `getRetrospective`
+ * (個別 GET) からも呼ばれ、非メンバーには紐付け先プロジェクト名を null で秘匿する。
+ */
+function gateLinkedProjectsName(
+  links: { id: string; name: string | null; deleted: boolean }[],
+  memberProjectIds: Set<string>,
+  isAdmin: boolean,
+): { id: string; name: string | null; deleted: boolean }[] {
+  return links.map((l) => ({
+    id: l.id,
+    name: isAdmin || memberProjectIds.has(l.id) ? l.name : null,
+    deleted: isAdmin ? l.deleted : false,
+  }));
 }
 
 export async function listRetrospectives(
@@ -211,28 +238,40 @@ export async function listRetrospectives(
     orderBy: { conductedDate: 'desc' },
   });
 
-  return retros.map((r) => ({
-    id: r.id,
-    projectId: r.projectId,
-    linkedProjectIds: r.retrospectiveProjects.map((rp) => rp.projectId),
-    linkedProjects: r.retrospectiveProjects
+  // feat/crud-permission-redesign (2026-05-20): linkedProjects[].name を per-link gate (severity-1 修正)
+  const memberships = isAdmin
+    ? []
+    : (await prisma.projectMember.findMany({
+        where: { userId: viewerUserId },
+        select: { projectId: true },
+      })) ?? [];
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
+
+  return retros.map((r) => {
+    const rawLinks = r.retrospectiveProjects
       .filter((rp) => rp.project != null)
       .map((rp) => ({
         id: rp.project!.id,
-        name: rp.project!.name,
+        name: rp.project!.name as string | null,
         deleted: rp.project!.deletedAt != null,
-      })),
-    conductedDate: r.conductedDate.toISOString().split('T')[0],
-    planSummary: r.planSummary,
-    actualSummary: r.actualSummary,
-    goodPoints: r.goodPoints,
-    problems: r.problems,
-    improvements: r.improvements,
-    state: r.state,
-    visibility: r.visibility,
-    createdBy: r.createdBy,
-    createdAt: r.createdAt.toISOString(),
-  }));
+      }));
+    return {
+      id: r.id,
+      projectId: r.projectId,
+      linkedProjectIds: r.retrospectiveProjects.map((rp) => rp.projectId),
+      linkedProjects: gateLinkedProjectsName(rawLinks, memberProjectIds, isAdmin),
+      conductedDate: r.conductedDate.toISOString().split('T')[0],
+      planSummary: r.planSummary,
+      actualSummary: r.actualSummary,
+      goodPoints: r.goodPoints,
+      problems: r.problems,
+      improvements: r.improvements,
+      state: r.state,
+      visibility: r.visibility,
+      createdBy: r.createdBy,
+      createdAt: r.createdAt.toISOString(),
+    };
+  });
 }
 
 export async function createRetrospective(
@@ -464,17 +503,19 @@ export async function updateRetrospective(
 /**
  * 振り返りを論理削除する (deletedAt をセット)。
  *
- * 2026-04-24: 作成者本人 OR admin のみ許可。admin は「全振り返り」画面からの
- * 管理削除を想定。
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂):
+ *   - context='project' (○○一覧経由): 作成者本人のみ削除可。admin も他人作成は削除不可。
+ *   - context='global' (全○○経由): admin のみ削除可。
  *
  * @throws {Error} 'NOT_FOUND' — 振り返りが存在しない or 既に削除済み
- * @throws {Error} 'FORBIDDEN' — 作成者でなく admin でもない
+ * @throws {Error} 'FORBIDDEN' — context に応じた条件を満たさない
  */
 export async function deleteRetrospective(
   retroId: string,
   userId: string,
   systemRole: string,
   viewerTenantId: string,
+  context: 'project' | 'global',
 ): Promise<void> {
   // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.retrospective.findFirst({
@@ -484,7 +525,11 @@ export async function deleteRetrospective(
   if (!existing) throw new Error('NOT_FOUND');
   const isCreator = existing.createdBy === userId;
   const isAdmin = systemRole === 'admin';
-  if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
+  if (context === 'project') {
+    if (!isCreator) throw new Error('FORBIDDEN');
+  } else {
+    if (!isAdmin) throw new Error('FORBIDDEN');
+  }
 
   const now = new Date();
   // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)

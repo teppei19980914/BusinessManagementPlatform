@@ -10797,3 +10797,302 @@ KDD §5.X+66 で「NextAuth v5 0-beta.31 + @netlify/plugin-nextjs では `useSes
 - §5.X+68: 本件と同じく「DB 更新成功 + cookie サイレント失敗 = 200 OK」の組合せが致命的になる設計教訓 (helper 戻り値型を判別 union にする原則)
 - §5.X+69: middleware の matcher 除外が必要な NextAuth `/api/auth/*` 経路の罠 (= 本件の `api/auth/explicit-signout` 除外の根拠)
 - §5.X+71: 同型の罠で `api/tenants/me/i18n` を matcher 除外した前例
+
+## 5.X+85 **UI=API 一致原則で API ハンドラを削除すると 405 が返るようになり、テナント越境 E2E の期待値配列に 405 を追加する必要がある (2026-05-20 / PR #416 E2E fail)**
+
+### 発生事象
+
+PR #416 (feat/crud-permission-redesign) で Phase 4「○○一覧/全○○ 削除の経路別認可」の一環として、横断 `/api/knowledge/[knowledgeId]` の PATCH ハンドラを **UI=API 一致原則** (UI から到達できない経路は API でも 403) に従い、**ハンドラごと削除**した。プロジェクト内更新は `/api/projects/[pid]/knowledge/[kid]` PATCH 経由で creator-only enforce される設計で、横断更新の経路は不要と判断。
+
+CI で 1 件だけ E2E が失敗:
+
+```
+[chromium] › e2e/specs/11-tenant-isolation.spec.ts:198:7
+  › PATCH /api/knowledge/[B-id] → 404 (越境 knowledge 更新不可)
+  Error: expect(received).toContain(expected)
+  Expected value: 405
+  Received array: [400, 403, 404]
+```
+
+### 根本原因
+
+旧仕様の挙動:
+- 横断 `PATCH /api/knowledge/[knowledgeId]` は service 層 (`updateKnowledge`) で `existing.createdBy !== userId` → `FORBIDDEN` を throw → route が 403 を返す
+- tenant 越境 (`findFirst` の `tenantId` フィルタで不一致) → `NOT_FOUND` → 404
+- → 越境攻撃に対する期待値は `[400, 403, 404]`
+
+新仕様 (PR #416 Phase 4):
+- 横断 PATCH ハンドラ自体を削除 → Next.js の App Router は**未定義 HTTP method に対して自動的に 405 Method Not Allowed を返す**
+- 越境攻撃を試行しても route がそもそも PATCH を受け付けないため 405
+
+これは設計的により厳密な防御 (越境かどうか判定する前段でメソッド自体が閉鎖されている = fail-closed) だが、E2E テストが旧仕様の期待値配列 `[400, 403, 404]` のままだったため失敗。
+
+### 教訓
+
+UI=API 一致原則で **API ハンドラを削除する PR では、その endpoint を targeting している E2E テストの期待値配列に必ず 405 を追加する**。特に以下のテスト群:
+
+- `e2e/specs/11-tenant-isolation.spec.ts` (越境攻撃)
+- `e2e/specs/13-cross-tenant-defense.spec.ts` (もしあれば、tenant-isolation 系)
+- `e2e/specs/*-security-*.spec.ts` (セキュリティ regression)
+
+これらは「**越境攻撃 → 403 or 404 が返ることを期待**」の構造で書かれていることが多く、ハンドラ削除で 405 になると失敗する。期待値配列に 405 を含めて「method 自体閉鎖 = より厳密な防御」を明示するコメントを併記する。
+
+### 適用された修正
+
+`e2e/specs/11-tenant-isolation.spec.ts:198-211`:
+```ts
+test('PATCH /api/knowledge/[B-id] → 405 (越境 knowledge 更新経路は構造的に閉鎖)', async () => {
+  // feat/crud-permission-redesign (2026-05-20, PR #416): 横断 `/api/knowledge/[knowledgeId]` の
+  //   PATCH ハンドラを「UI=API 一致原則」に従い削除済み。プロジェクト内更新は
+  //   `/api/projects/[pid]/knowledge/[kid]` PATCH 経由 (service 層で作成者本人のみ enforce)。
+  //   そのため越境攻撃ベクトルとしては PATCH 405 (Method Not Allowed) が期待される。
+  //   旧 200/400/403/404 期待値はハンドラ削除前の挙動で、新仕様では **構造的に到達不能**。
+  const res = await adminARequest.patch(`/api/knowledge/${tenantB.knowledgeId}`, {
+    data: { title: 'attacked' },
+  });
+  expect([400, 403, 404, 405]).toContain(res.status());
+});
+```
+
+### 検証チェックリスト (E2E 期待値追従)
+
+UI=API 一致原則で API ハンドラを削除する PR では、以下を必ず確認:
+
+1. **ハンドラ削除した route を targeting する E2E spec を `grep` で全件抽出**
+   - `grep -rn "fetch\|request\.\(get\|post\|patch\|put\|delete\)" e2e/specs/ | grep "<削除した path>"`
+2. **各テストの期待値配列を確認**
+   - `[200|201|400|403|404|409]` 系で書かれている場合、削除したメソッドのケースだけ `405` に置換または追加
+3. **コメントで「ハンドラ削除済み = 構造的に到達不能」を明示**
+   - 次回読者がテストの意図を誤解しないため
+4. **`docs/test/E2E_LESSONS.md` に追記** (本 KDD と相互参照)
+
+### 関連 KDD / PR
+
+- PR #416 (feat/crud-permission-redesign): 本件の原因コミット
+- KDD §5.X+57 (E2E 期待値網羅性): 期待値配列に必要なステータスコードを漏らさない原則
+- ADR-0005 (RBAC + 二段階テナント認可): 越境防御の設計根拠
+
+## 5.X+86 **security-check.ts の SQL injection ガードはコメント内のキーワードも文字列マッチで CRITICAL 検出する ─ Prisma の unsafe 系 API 名はコード本体だけでなくコメントからも除去する (2026-05-20 / PR #416)**
+
+### 発生事象
+
+PR #416 (feat/crud-permission-redesign) で 2 巡目検証 S1-G1 として、cron の duplicate execution gate に PostgreSQL advisory lock を追加した:
+
+```ts
+const result = await prisma.$queryRawUnsafe<{ pg_try_advisory_lock: boolean }[]>(
+  `SELECT pg_try_advisory_lock(${key.toString()}) AS pg_try_advisory_lock`,
+);
+```
+
+CI の Security Score Gate で CRITICAL 1 件検出 → スコア 80/100 で 90 閾値割れ:
+
+```
+F-01: SQLインジェクションリスク: $queryRawUnsafe / $executeRawUnsafe の使用
+File: src/lib/cron-execution-log.ts (line 205)
+Severity: CRITICAL
+```
+
+修正として `prisma.$queryRaw` タグドテンプレート (自動パラメータ化) に置換:
+
+```ts
+const result = await prisma.$queryRaw<{ pg_try_advisory_lock: boolean }[]>`
+  SELECT pg_try_advisory_lock(${key}) AS pg_try_advisory_lock
+`;
+```
+
+再実行も **スコア 80/100 のまま**。検出位置が `line 205` から `line 206` に変わっただけで再検出。
+
+### 根本原因
+
+`scripts/security-check.ts:402-405` の SQL injection 検出ロジック:
+
+```ts
+function checkUnsafeRawQuery() {
+  const files = findFiles('src', f => f.endsWith('.ts') || f.endsWith('.tsx'));
+  const pattern = /\$queryRawUnsafe|\$executeRawUnsafe/;
+  for (const file of files) {
+    const content = readFile(file);
+    ...
+```
+
+**ファイル全体に対する単純な正規表現マッチ**で `$queryRawUnsafe` / `$executeRawUnsafe` を検出している。コード本体だけでなく **コメント内の同名キーワードもマッチ**してしまう。
+
+私の修正コミットでは「旧実装は `$queryRawUnsafe` で…」というコメントを残していたため、Prisma 呼び出し自体は安全な `$queryRaw` に置換済みでも CRITICAL が消えなかった。
+
+### 教訓
+
+**Prisma の unsafe 系 raw query API 名 (`$queryRawUnsafe` / `$executeRawUnsafe`) は、コード本体だけでなくコメント / docstring / 変更履歴コメントからも完全に除去する**。代替表記:
+
+- 「unsafe 系 raw query API」
+- 「raw 文字列補間版」「タグドテンプレート版」と対比的に呼ぶ
+- 必要なら `$queryRaw` + 別行で `*Unsafe* 系` のように分断
+
+### 検証手順
+
+PR で raw query を扱う実装を追加・修正するときは、**ローカルで `pnpm tsx scripts/security-check.ts --min-score=90` を必ず実行**してから push する。CI まで気付かないと re-run コスト + レビューブロックが発生する。
+
+### スクリプト側の改善余地 (本 PR スコープ外)
+
+`security-check.ts` の検出パターンを改善する案:
+1. コメント行 (`//`, `/* */`) を除外してから正規表現マッチ
+2. AST ベース検出 (typescript-eslint や ts-morph 経由) に変更
+3. 検出パターンを「関数呼び出し形式」(`$queryRawUnsafe(...)`)  に限定: `/\$queryRawUnsafe\s*\(/`
+
+ただしいずれも本 PR スコープ外。当面は **コメントから unsafe API 名を除去する運用** で回避する。
+
+### 関連 KDD / PR
+
+- PR #416 (feat/crud-permission-redesign): 本件の原因コミット (S1-G1 advisory lock 追加)
+- `.github/workflows/security.yml`: 90 点閾値の CI ガード
+- `scripts/security-check.ts`: 検出ロジック
+- KDD §5.X+85 (UI=API 一致原則によるハンドラ削除と E2E 期待値追従): 同 PR で発見された別の CI fail パターン
+
+## 5.X+87 **再帰 sanitize 関数で `Object.entries` の key を信頼して書き込むと CodeQL が Remote property injection (prototype pollution) を HIGH 検出する ─ `Object.create(null)` + 特殊キー除外で二重防御する (2026-05-20 / PR #416)**
+
+### 発生事象
+
+PR #416 (feat/crud-permission-redesign) で 2 巡目検証 S2-E1 として `sanitizeForAudit` を以下のように拡張した:
+
+```ts
+export function sanitizeForAudit(
+  obj: Record<string, unknown>,
+  depth = 0,
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (SENSITIVE_FIELDS.has(key)) {
+      sanitized[key] = '[REDACTED]';
+    } else if (depth < 5 && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      sanitized[key] = sanitizeForAudit(value as Record<string, unknown>, depth + 1);
+    } else if (...) {
+      sanitized[key] = value.map(...);
+    }
+  }
+  return sanitized;
+}
+```
+
+CI の CodeQL が **HIGH severity × 2** を検出:
+
+```
+CodeQL: 2 new alerts including 2 high severity security vulnerabilities
+src/services/audit.service.ts:179 - Remote property injection
+src/services/audit.service.ts:181 - Remote property injection
+```
+
+### 根本原因
+
+`Object.entries(obj)` の `key` は外部入力 (audit_logs に渡される DTO に含まれる user data) 由来の可能性がある。`sanitized[key] = ...` の動的キー書き込みで、攻撃者が以下のような payload を送ると **prototype pollution 攻撃** が成立し得る:
+
+```json
+{ "__proto__": { "isAdmin": true } }
+```
+
+これが `sanitized.__proto__` に書き込まれると、**JavaScript の全 object に対して `isAdmin = true` が伝播**する (Object.prototype に汚染が及ぶため)。後続のコードで `if (user.isAdmin)` が予期しない true を返し、認可 bypass や情報漏洩につながる。
+
+CodeQL の `js/prototype-polluting-assignment` ルール (Remote property injection) は、**動的キー書き込み + key が untrusted source 由来** の組み合わせを HIGH として検出する。
+
+### 教訓 + 修正パターン
+
+外部入力の key を動的にプロパティとして使う関数は、**以下 3 つの防御を必ず実装する**:
+
+#### 1. `Object.create(null)` で prototype-less object を作る
+親プロトタイプチェーンを持たない pure dictionary にすると、`__proto__` への書き込みが Object.prototype に伝播しない。
+
+```ts
+const sanitized: Record<string, unknown> = Object.create(null);
+```
+
+#### 2. 特殊キーを書き込み対象から完全除外
+`__proto__` / `constructor` / `prototype` の 3 つは prototype pollution の典型的な攻撃ベクトル。早期 continue で無視する。
+
+```ts
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+for (const [key, value] of Object.entries(obj)) {
+  if (FORBIDDEN_KEYS.has(key)) continue;
+  // ...
+}
+```
+
+#### 3. `Object.defineProperty` で書き込み (CodeQL の警告を更に減らす)
+`sanitized[key] = value` ではなく `Object.defineProperty(sanitized, key, { value, ... })` を使うと、prototype チェーン経由の setter 攻撃も防げる。
+
+```ts
+Object.defineProperty(sanitized, key, {
+  value: ..., writable: true, enumerable: true, configurable: true,
+});
+```
+
+### 検証手順
+
+PR で動的キー書き込み (`obj[key] = ...`) を含む関数を追加・修正したら、**ローカルで CodeQL チェックは難しいため、push 後に PR の checks 画面で CodeQL の結果を確認**する。GitHub Advanced Security の有料機能のため、organizations によっては自前で `semgrep` / `eslint-plugin-security` で検出する代替手段も検討。
+
+### 関連 KDD / PR
+
+- PR #416 (feat/crud-permission-redesign): 本件の原因コミット (S2-E1 sanitizeForAudit 拡張)
+- CodeQL ルール: `js/prototype-polluting-assignment` (CWE-915 Improperly Controlled Modification of Dynamically-Determined Object Attributes)
+- KDD §5.X+85 (UI=API 一致原則のハンドラ削除 + E2E 期待値): 同 PR の別 CI fail
+- KDD §5.X+86 (security-check.ts のコメント文字列マッチ問題): 同 PR の別 CI fail
+
+## 5.X+88 **CodeQL の Remote property injection は `Object.defineProperty` でも依然 HIGH 検出する ─ 動的キー書き込みを使わず JSON.stringify(obj, replacer) で sanitize する (2026-05-20 / PR #416)**
+
+### 発生事象
+
+KDD §5.X+87 で報告した CodeQL Remote property injection 警告に対し、以下の 3 重防御で対策した:
+
+1. `Object.create(null)` で prototype-less object
+2. `FORBIDDEN_KEYS` (`__proto__` / `constructor` / `prototype`) を `continue` で除外
+3. `sanitized[key] = value` を `Object.defineProperty(sanitized, key, { value, ... })` に変更
+
+しかし **CodeQL は依然 HIGH × 3 を検出**:
+
+```
+src/services/audit.service.ts:194 - Remote property injection
+src/services/audit.service.ts:199 - Remote property injection
+src/services/audit.service.ts:208 - Remote property injection
+```
+
+`Object.defineProperty` の第 2 引数も「動的に決まるキー」として CodeQL の dataflow 解析が追跡してしまう。前段の `FORBIDDEN_KEYS` ガードは static 解析では「外部入力起因の key」を tainted のままとして扱うため、警告が解除されない。
+
+### 根本原因
+
+CodeQL の `js/prototype-polluting-assignment` ルールは **「動的キー書き込み + key が外部由来」** という静的パターンで検出する。実行時に FORBIDDEN_KEYS でフィルタしても、CodeQL の解析時点では dataflow が切れないため検出される。
+
+`Object.defineProperty(target, key, descriptor)` の `key` 引数も同様に「動的なプロパティ書き込み」として CodeQL は警告対象に含める。
+
+### 解決策
+
+**動的キー書き込みを完全に廃止し、`JSON.stringify` の replacer 関数 + `JSON.parse` で sanitize**:
+
+```ts
+export function sanitizeForAudit(obj: Record<string, unknown>): Record<string, unknown> {
+  const json = JSON.stringify(obj, (key, value) => {
+    if (key === '') return value; // root
+    if (FORBIDDEN_KEYS.has(key)) return undefined; // 完全除外
+    if (SENSITIVE_FIELDS.has(key)) return '[REDACTED]'; // 機微フィールド redact
+    return value;
+  });
+  const parsed = json ? JSON.parse(json) : {};
+  return (typeof parsed === 'object' && parsed !== null) ? parsed : {};
+}
+```
+
+利点:
+- `JSON.stringify` の replacer は **each key で呼ばれ、`undefined` を返すと該当 key を出力から省略**
+- nested object / 配列も replacer が **再帰的に呼ばれる**ため独自再帰実装不要
+- 結果の `JSON.parse` は plain object を生成し、`__proto__` 等の特殊キーは自然に脱落
+- **動的プロパティ書き込みが発生しない**ため CodeQL の警告を構造的に回避
+
+### 教訓
+
+1. **CodeQL Remote property injection の検出ルールは厳しい**: runtime ガード (FORBIDDEN_KEYS filter) を入れても dataflow 解析は警告解除しない
+2. **`Object.defineProperty` も dataflow 上は動的キー書き込みと同等**: 修正アプローチとしては効かない
+3. **JSON.stringify の replacer は dataflow を切る**: replacer で key を見て分岐するパターンは CodeQL の解析範囲外
+4. **将来の検出対策**: 動的キー書き込みを必要とする場面では JSON ベース実装を第 1 候補に
+5. **trade-off**: JSON.stringify/parse のオーバーヘッドは audit log のような低頻度処理では無視できる。ホットパスでは別パターンを検討
+
+### 関連 KDD / PR
+
+- PR #416 (feat/crud-permission-redesign): 本件の原因コミット (S2-E1 拡張 → §5.X+87 修正 → 本件の §5.X+88 修正)
+- KDD §5.X+87 (前段): `Object.create(null)` + FORBIDDEN_KEYS による初回対策 (CodeQL は依然警告)
+- CodeQL ルール: `js/prototype-polluting-assignment` (CWE-915)

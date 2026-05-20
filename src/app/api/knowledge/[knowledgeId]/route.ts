@@ -1,23 +1,23 @@
 /**
- * GET    /api/knowledge/[knowledgeId] - 単一ナレッジ取得
- * PATCH  /api/knowledge/[knowledgeId] - ナレッジ編集
- * DELETE /api/knowledge/[knowledgeId] - ナレッジ論理削除
+ * GET    /api/knowledge/[knowledgeId] - 単一ナレッジ取得 (横断)
+ * DELETE /api/knowledge/[knowledgeId] - ナレッジ論理削除 (全ナレッジ画面経由、admin only)
  *
- * 認可 (2026-04-24 改修):
- *   GET: public はログイン済全員。draft は作成者本人 + admin のみ。
- *   PATCH: **作成者本人のみ** (admin でも他人のは不可)。サービス層で enforce。
- *   DELETE: 作成者本人 OR admin (全ナレッジ画面からの管理削除)。サービス層で enforce。
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂):
+ *   - GET: public はログイン済全員。draft は作成者本人 + admin のみ。
+ *   - DELETE: context='global' (admin only)。「全ナレッジ」画面からの管理削除のみ。
+ *     ○○一覧経由の作成者本人削除は /api/projects/[id]/knowledge/[knowledgeId] DELETE を使う。
+ *   - PATCH ハンドラは削除済み: 横断 UI から更新する経路は存在しないため、UI=API 一致原則に従い
+ *     ハンドラごと削除。プロジェクト内編集は /api/projects/[id]/knowledge/[knowledgeId] PATCH を使う。
  *
- * 監査: PATCH/DELETE 時に audit_logs に before/after を記録。
+ * 監査: DELETE 時に audit_logs に before を記録。
  *
  * 関連: DESIGN.md §5 / §8.3 (権限制御)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
-import { updateKnowledgeSchema } from '@/lib/validators/knowledge';
-import { getKnowledge, updateKnowledge, deleteKnowledge } from '@/services/knowledge.service';
+import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { getKnowledge, deleteKnowledge } from '@/services/knowledge.service';
 import { recordAuditLog, sanitizeForAudit } from '@/services/audit.service';
 
 export async function GET(
@@ -42,83 +42,6 @@ export async function GET(
   return NextResponse.json({ data: knowledge });
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ knowledgeId: string }> },
-) {
-  const user = await getAuthenticatedUser();
-  if (user instanceof NextResponse) return user;
-
-  const { knowledgeId } = await params;
-  const t = await getTranslations('message');
-  // 内部呼び出し (認可オフ) で生行を取得してから service 層で判定させる
-  const existing = await getKnowledge(knowledgeId, undefined, undefined, user.tenantId);
-
-  if (!existing) {
-    return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
-      { status: 404 },
-    );
-  }
-
-  const body = await req.json();
-  const parsed = updateKnowledgeSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', details: parsed.error.issues } },
-      { status: 400 },
-    );
-  }
-
-  // PR-5 (2026-05-15): ストレージ容量 Pre-check
-  const quotaErr = await requireStorageQuotaForWrite(
-    user.tenantId,
-    JSON.stringify(parsed.data).length,
-  );
-  if (quotaErr) return quotaErr;
-
-  let knowledge;
-  try {
-    knowledge = await updateKnowledge(knowledgeId, parsed.data, user.id, user.tenantId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg === 'FORBIDDEN') {
-      return NextResponse.json(
-        { error: { code: 'FORBIDDEN', message: t('creatorOnlyEdit') } },
-        { status: 403 },
-      );
-    }
-    if (msg === 'NOT_FOUND') {
-      return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
-    }
-    // 2026-05-11 defense-in-depth: 「全メンバー」化を試みたが title が空 (input + DB 共に) のケース
-    if (msg === 'PUBLIC_REQUIRES_TITLE') {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'PUBLIC_REQUIRES_TITLE',
-            message: '「全メンバー」に公開する場合はタイトルを入力してください',
-          },
-        },
-        { status: 400 },
-      );
-    }
-    throw e;
-  }
-
-  await recordAuditLog({
-    tenantId: user.tenantId,
-    userId: user.id,
-    action: 'UPDATE',
-    entityType: 'knowledge',
-    entityId: knowledgeId,
-    beforeValue: sanitizeForAudit(existing as unknown as Record<string, unknown>),
-    afterValue: sanitizeForAudit(knowledge as unknown as Record<string, unknown>),
-  });
-
-  return NextResponse.json({ data: knowledge });
-}
-
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ knowledgeId: string }> },
@@ -137,9 +60,10 @@ export async function DELETE(
     );
   }
 
-  // 2026-04-24: 削除は作成者本人 OR admin (service 層で enforce)。
+  // feat/crud-permission-redesign (2026-05-20): 横断「全ナレッジ」画面経由は admin のみ削除可。
+  //   作成者本人削除は /api/projects/[id]/knowledge/[knowledgeId] DELETE 経由で行う。
   try {
-    await deleteKnowledge(knowledgeId, user.id, user.systemRole, user.tenantId);
+    await deleteKnowledge(knowledgeId, user.id, user.systemRole, user.tenantId, 'global');
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

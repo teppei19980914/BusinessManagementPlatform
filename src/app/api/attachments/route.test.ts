@@ -14,6 +14,8 @@ vi.mock('@/lib/api-helpers', () => ({
 
 vi.mock('@/lib/permissions', () => ({
   checkMembership: vi.fn(),
+  // feat/crud-permission-redesign (2026-05-20): super_admin 含めた認可判定に拡張
+  isAdminOrAbove: (u: { systemRole?: string }) => u.systemRole === 'admin' || u.systemRole === 'super_admin',
 }));
 
 vi.mock('@/services/attachment.service', () => ({

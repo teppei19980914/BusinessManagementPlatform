@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, requireStorageQuotaForWrite } from '@/lib/api-helpers';
 import { bulkUpdateMemosVisibilityFromList } from '@/services/memo.service';
 import { bulkUpdateMemoVisibilitySchema } from '@/lib/validators/cross-list-bulk-visibility';
+import { recordAuditLog } from '@/services/audit.service';
 
 /**
  * 個人「メモ一覧」(/memos) からの一括 visibility 更新 (PR #165 で /memos に移し替え、
@@ -49,6 +50,24 @@ export async function PATCH(req: NextRequest) {
     user.id,
     user.tenantId,
   );
+
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-A1): ADR-0011 全 mutation 記録に従う。
+  //   個人メモのため entityId は本人 userId、scope は viewerUserId 自身のみ。
+  if (result.updatedIds.length > 0) {
+    await recordAuditLog({
+      tenantId: user.tenantId,
+      userId: user.id,
+      action: 'BULK_UPDATE',
+      entityType: 'memo',
+      entityId: user.id,
+      afterValue: {
+        visibility: parsed.data.visibility,
+        updatedIds: result.updatedIds,
+        skippedNotOwned: result.skippedNotOwned,
+        skippedNotFound: result.skippedNotFound,
+      },
+    });
+  }
 
   return NextResponse.json({ data: result });
 }

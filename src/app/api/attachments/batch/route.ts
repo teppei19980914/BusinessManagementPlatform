@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { isAdminOrAbove } from '@/lib/permissions';
 import { prisma } from '@/lib/db';
 import { ATTACHMENT_ENTITY_TYPES } from '@/lib/validators/attachment';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
@@ -98,7 +99,8 @@ export async function POST(req: NextRequest) {
   // PR #115 (2026-04-24 2 巡目監査 C-1): 全 entityType について閲覧可能性を確認してから
   // attachment を返す。旧実装では memo 以外「一覧クエリで除外済み前提」としていたが、
   // 攻撃者が UUID を推測して他プロジェクトの添付 URL を取得できる IDOR 経路だった。
-  const isAdmin = user.systemRole === 'admin';
+  // feat/crud-permission-redesign (2026-05-20): super_admin も含めて短絡 (UI/API ヘルパ統一)
+  const isAdmin = isAdminOrAbove(user);
   let filteredIds: string[];
 
   if (entityType === 'memo') {

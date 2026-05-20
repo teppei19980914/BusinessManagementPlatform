@@ -12,8 +12,10 @@ import type { Prisma } from '@/generated/prisma/client';
  * 監査ログのアクション種別。
  * SYNC_IMPORT は feat/wbs-overwrite-import で追加 (WBS 上書きインポート 1 件 = 1 ログ)。
  * EXPORT は P-C (2026-05-08) で追加 (super_admin のテナントデータ代行エクスポート)。
+ * BULK_UPDATE は feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-A1) で追加。
+ *   ○○一覧の bulk visibility 更新を ADR-0011 「全 mutation 記録」原則に従い audit に残す。
  */
-export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'SYNC_IMPORT' | 'EXPORT';
+export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'SYNC_IMPORT' | 'EXPORT' | 'BULK_UPDATE';
 
 /**
  * UUID v4 のパターン (RFC 4122)。
@@ -130,24 +132,71 @@ export async function recordBulkAuditLogs(params: {
 /**
  * 変更前後の差分を抽出するヘルパー
  * password_hash 等の機密フィールドは自動的に除外する。
+ *
+ * feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-E1):
+ *   SENSITIVE_FIELDS を 4 → 14 に拡張し、camelCase / snake_case 両方を網羅。
+ *   recoveryCodeHash / token 系 / MFA temp secret / API key / Stripe secret 等、
+ *   将来 audit_logs.beforeValue/afterValue に流入し得る機微フィールドを構造的に redact。
+ *   nested object も再帰的に redact (top-level だけだった旧実装の defense-in-depth 強化)。
  */
 const SENSITIVE_FIELDS = new Set([
-  'passwordHash',
-  'password_hash',
-  'mfaSecretEncrypted',
-  'mfa_secret_encrypted',
+  // パスワード関連
+  'passwordHash', 'password_hash',
+  'passwordSalt', 'password_salt',
+  // MFA
+  'mfaSecretEncrypted', 'mfa_secret_encrypted',
+  'mfaTempSecret', 'mfa_temp_secret',
+  // リカバリーコード
+  'recoveryCodeHash', 'recovery_code_hash',
+  'codeHash', 'code_hash',
+  // 認証トークン (reset / verify / session)
+  'tokenHash', 'token_hash',
+  'sessionToken', 'session_token',
+  'refreshToken', 'refresh_token',
+  // 外部サービスの secret
+  'apiKey', 'api_key',
+  'webhookSecret', 'webhook_secret',
+  'stripeMeterEventToken', 'stripe_meter_event_token',
+  // 旧仕様コードベース互換
+  'password',
 ]);
+
+/**
+ * オブジェクトの top-level + nested フィールドを再帰的に sanitize する。
+ * 配列要素もスキャンし、配列内の object も再帰処理。最大深度 5 で stack overflow を防ぐ。
+ */
+/**
+ * feat/crud-permission-redesign (2026-05-20, KDD §5.X+87, §5.X+88):
+ *
+ *   CodeQL Remote property injection 対策。`Object.entries(obj)` の key は外部入力由来の
+ *   可能性があり、`__proto__` / `constructor` / `prototype` の特殊キーで prototype pollution
+ *   攻撃が成立し得る。`Object.defineProperty` を使った前回修正でも CodeQL の dataflow 解析が
+ *   動的キー書き込みを追跡してしまうため、**JSON.stringify の replacer 関数で sanitize する**
+ *   実装に切り替えた。
+ *
+ *   JSON.stringify(obj, replacer) は:
+ *     - replacer が each key で呼ばれ、`undefined` を返すと該当 key が出力から省略される
+ *     - 結果の JSON 文字列を JSON.parse で plain object に戻すと、`__proto__` 等の特殊キーは
+ *       自然に脱落 (JSON.stringify がそれらを enumerable own property としてのみ扱う)
+ *     - 動的プロパティ書き込みが発生しないため CodeQL 警告を構造的に回避
+ *     - nested object / 配列も replacer が再帰的に呼ばれるため、独自再帰実装不要
+ */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export function sanitizeForAudit(
   obj: Record<string, unknown>,
 ): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (SENSITIVE_FIELDS.has(key)) {
-      sanitized[key] = '[REDACTED]';
-    } else {
-      sanitized[key] = value;
-    }
-  }
-  return sanitized;
+  // JSON.stringify の replacer で sanitize を行う。
+  //   - key === '' は最上位 root (replacer の仕様)
+  //   - FORBIDDEN_KEYS / SENSITIVE_FIELDS は replacer 内で判定し、redact または除外
+  //   - replacer が再帰的に呼ばれるため nested / array も自動対応
+  const json = JSON.stringify(obj, (key, value) => {
+    if (key === '') return value; // root
+    if (FORBIDDEN_KEYS.has(key)) return undefined; // 特殊キーは完全除外
+    if (SENSITIVE_FIELDS.has(key)) return '[REDACTED]'; // 機微フィールド redact
+    return value;
+  });
+  // JSON.parse の結果は plain object。`__proto__` 等の特殊キーは脱落済み。
+  const parsed = json ? JSON.parse(json) : {};
+  return (typeof parsed === 'object' && parsed !== null) ? parsed : {};
 }

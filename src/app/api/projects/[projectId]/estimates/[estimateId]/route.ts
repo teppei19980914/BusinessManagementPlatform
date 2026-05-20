@@ -33,7 +33,8 @@ export async function GET(
   if (user instanceof NextResponse) return user;
 
   const { projectId, estimateId } = await params;
-  const forbidden = await checkProjectPermission(user, projectId, 'project:read');
+  // feat/crud-permission-redesign (2026-05-20): 見積タブは PM/TL + admin のみ。
+  const forbidden = await checkProjectPermission(user, projectId, 'project:update');
   if (forbidden) return forbidden;
 
   const estimate = await getEstimate(estimateId, user.tenantId);

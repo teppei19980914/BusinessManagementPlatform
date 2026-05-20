@@ -6,7 +6,10 @@
  *   プロジェクトメンバーのロール変更/除外。除外は物理削除 (member.service の判断)。
  *   ロール変更は role_change_logs にも履歴記録される。
  *
- * 認可: requireAdmin (システム管理者のみ。PM/TL は対象外。理由は権限委譲リスク回避)
+ * 認可: member:manage (PM/TL + admin)。
+ *   feat/crud-permission-redesign (2026-05-20) で admin 限定から PM/TL も実行可に開放。
+ *   ただし「PM/TL ロール」を扱う操作 (PM/TL 削除・PM/TL↔それ以外のロール変更) は
+ *   service 層で admin/super_admin のみに細粒度ガード (FORBIDDEN_PMTL_ROLE)。
  * 監査:
  *   - audit_logs (action=UPDATE/DELETE, entityType=project_member)
  *   - role_change_logs (changeType=project_role)
@@ -16,9 +19,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
-import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
+import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateMemberRole, removeMember } from '@/services/member.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { prisma } from '@/lib/db';
 import { z } from 'zod/v4';
 
 const updateRoleSchema = z.object({
@@ -32,10 +36,10 @@ export async function PATCH(
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const forbidden = requireAdmin(user);
+  const { projectId, memberId } = await params;
+  const forbidden = await checkProjectPermission(user, projectId, 'member:manage');
   if (forbidden) return forbidden;
 
-  const { memberId } = await params;
   const body = await req.json();
   const parsed = updateRoleSchema.safeParse(body);
   if (!parsed.success) {
@@ -46,7 +50,13 @@ export async function PATCH(
   }
 
   try {
-    const member = await updateMemberRole(memberId, parsed.data.projectRole, user.id, user.tenantId);
+    const member = await updateMemberRole(
+      memberId,
+      parsed.data.projectRole,
+      user.id,
+      user.tenantId,
+      user.systemRole,
+    );
 
     await recordAuditLog({
       tenantId: user.tenantId,
@@ -59,12 +69,29 @@ export async function PATCH(
 
     return NextResponse.json({ data: member });
   } catch (e) {
-    if (e instanceof Error && e.message === 'NOT_FOUND') {
-      const t = await getTranslations('message');
-      return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: t('memberNotFound') } },
-        { status: 404 },
-      );
+    if (e instanceof Error) {
+      if (e.message === 'NOT_FOUND') {
+        const t = await getTranslations('message');
+        return NextResponse.json(
+          { error: { code: 'NOT_FOUND', message: t('memberNotFound') } },
+          { status: 404 },
+        );
+      }
+      if (e.message === 'FORBIDDEN_PMTL_ROLE') {
+        const t = await getTranslations('message');
+        return NextResponse.json(
+          { error: { code: 'FORBIDDEN', message: t('cannotManagePmTl') } },
+          { status: 403 },
+        );
+      }
+      // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止
+      if (e.message === 'CANNOT_CHANGE_OWN_PROJECT_ROLE') {
+        const t = await getTranslations('message');
+        return NextResponse.json(
+          { error: { code: 'FORBIDDEN', message: t('cannotChangeOwnProjectRole') } },
+          { status: 403 },
+        );
+      }
     }
     throw e;
   }
@@ -77,13 +104,18 @@ export async function DELETE(
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
 
-  const forbidden = requireAdmin(user);
+  const { projectId, memberId } = await params;
+  const forbidden = await checkProjectPermission(user, projectId, 'member:manage');
   if (forbidden) return forbidden;
 
-  const { memberId } = await params;
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-A2): beforeValue 記録のため削除前に取得
+  const beforeMember = await prisma.projectMember.findUnique({
+    where: { id: memberId },
+    select: { id: true, userId: true, projectId: true, projectRole: true, createdAt: true },
+  });
 
   try {
-    await removeMember(memberId, user.id, user.tenantId);
+    await removeMember(memberId, user.id, user.tenantId, user.systemRole);
 
     await recordAuditLog({
       tenantId: user.tenantId,
@@ -91,16 +123,26 @@ export async function DELETE(
       action: 'DELETE',
       entityType: 'project_member',
       entityId: memberId,
+      beforeValue: beforeMember ? (beforeMember as unknown as Record<string, unknown>) : null,
     });
 
     return NextResponse.json({ data: { success: true } });
   } catch (e) {
-    if (e instanceof Error && e.message === 'NOT_FOUND') {
-      const t = await getTranslations('message');
-      return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: t('memberNotFound') } },
-        { status: 404 },
-      );
+    if (e instanceof Error) {
+      if (e.message === 'NOT_FOUND') {
+        const t = await getTranslations('message');
+        return NextResponse.json(
+          { error: { code: 'NOT_FOUND', message: t('memberNotFound') } },
+          { status: 404 },
+        );
+      }
+      if (e.message === 'FORBIDDEN_PMTL_ROLE') {
+        const t = await getTranslations('message');
+        return NextResponse.json(
+          { error: { code: 'FORBIDDEN', message: t('cannotManagePmTl') } },
+          { status: 403 },
+        );
+      }
     }
     throw e;
   }
