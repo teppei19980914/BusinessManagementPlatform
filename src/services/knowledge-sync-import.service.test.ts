@@ -204,4 +204,29 @@ describe('applyKnowledgeSyncImport (T-22 Phase 22c)', () => {
       }),
     );
   });
+
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 Test-G3): 他人作成 silent skip 回帰防止
+  it('UPDATE 行で他人作成 (createdBy !== userId) は silent skip + skippedNotOwned カウント', async () => {
+    // 既存 knowledge は other-user が作成、import 実行ユーザは u-1
+    // baseDbKnowledge をベースに id と createdBy を上書きして使う (tag 配列等の必須 fields 確保)
+    const otherUserDbKnowledge = { ...baseDbKnowledge, id: 'k-existing', createdBy: 'other-user' };
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([otherUserDbKnowledge] as never);
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      id: 'k-existing',
+      createdBy: 'other-user',
+    } as never);
+
+    const result = await applyKnowledgeSyncImport(
+      projectId,
+      [csvRow({ id: 'k-existing', title: '上書き試行' })],
+      'keep',
+      'u-1',
+      'tenant-A',
+    );
+
+    // update は呼ばれず、updated カウントは 0、skippedNotOwned が 1
+    expect(prisma.knowledge.update).not.toHaveBeenCalled();
+    expect(result.updated).toBe(0);
+    expect(result.skippedNotOwned).toBe(1);
+  });
 });

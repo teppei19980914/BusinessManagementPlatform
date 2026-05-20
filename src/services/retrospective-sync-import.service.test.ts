@@ -225,4 +225,28 @@ describe('applyRetrospectiveSyncImport (T-22 Phase 22b)', () => {
     expect(result.added).toBe(1);
     expect(result.updated).toBe(1);
   });
+
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 Test-G3): 他人作成 silent skip 回帰防止
+  it('UPDATE 行で他人作成 (createdBy !== userId) は silent skip + skippedNotOwned カウント', async () => {
+    // findFirst で他人作成 (createdBy: 'other-user') を返す
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
+      id: 'r-1',
+      createdBy: 'other-user',
+    } as never);
+    // findMany には full snapshot row が必要 (diff 計算で tag や date を参照)
+    const otherUserDbRetro = { ...baseDbRetro, id: 'r-1', createdBy: 'other-user' };
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([otherUserDbRetro] as never);
+
+    const result = await applyRetrospectiveSyncImport(
+      projectId,
+      [csvRow({ id: 'r-1', improvements: '他人作成への上書き試行' })],
+      'keep',
+      'u-1',
+      'tenant-A',
+    );
+
+    expect(prisma.retrospective.update).not.toHaveBeenCalled();
+    expect(result.updated).toBe(0);
+    expect(result.skippedNotOwned).toBe(1);
+  });
 });

@@ -991,46 +991,59 @@ export async function deleteProjectCascade(
   }
 
   // ---------- 強制削除: Task / Estimate / ProjectMember / Project + Attachments ----------
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-D2): 段階別 transaction (案 B)
+  //   旧実装は全 deleteMany が独立 await で、途中で例外 (DB 切断 / lambda 強制終了) が起きると
+  //   partial cascade (Task は消えたが Estimate は残った、Attachment 孤児等) が残るリスクがあった。
+  //   強制削除セクション全体を interactive transaction で囲い、全 deleteMany + project.delete を
+  //   atomic 化。timeout 30s で大規模 project でも対応 (Prisma default 5s)。
+  //
+  //   前段の knowledge/risk/retrospective cascade (line 870-991) は本 transaction に含めない設計:
+  //     - 各 entity 削除は独立に冪等 (再実行時に既削除分は skip される)
+  //     - 1 つの transaction に入れると lock 範囲が広すぎる + timeout リスク増
+  //     - 冪等性を活用し、partial 失敗時は次回 deleteCustomerCascade で残りを完了する
+  //
   // 2026-05-12: 多層防御として全 deleteMany に tenantId を明示。projectId 経由でも
   //   tenant は転写されているが、Attachment / Comment / TaskProgressLog のような
   //   tenantId 列を持つ entity は直接フィルタを併記する。
-  if (taskIds.length > 0) {
-    // TaskProgressLog は task 経由で project に紐付くため task の親 projectId+tenantId で検証
-    await prisma.taskProgressLog.deleteMany({
-      where: { taskId: { in: taskIds }, task: { project: { tenantId: viewerTenantId } } },
+  await prisma.$transaction(async (tx) => {
+    if (taskIds.length > 0) {
+      // TaskProgressLog は task 経由で project に紐付くため task の親 projectId+tenantId で検証
+      await tx.taskProgressLog.deleteMany({
+        where: { taskId: { in: taskIds }, task: { project: { tenantId: viewerTenantId } } },
+      });
+      const attTaskRes = await tx.attachment.deleteMany({
+        where: { tenantId: viewerTenantId, entityType: 'task', entityId: { in: taskIds } },
+      });
+      attachmentsDeleted += attTaskRes.count;
+      // PR fix/visibility-auth-matrix: task comments も cascade 物理削除 (§5.51)
+      await tx.comment.deleteMany({
+        where: { tenantId: viewerTenantId, entityType: 'task', entityId: { in: taskIds } },
+      });
+    }
+    if (estimateIds.length > 0) {
+      const attEstRes = await tx.attachment.deleteMany({
+        where: { tenantId: viewerTenantId, entityType: 'estimate', entityId: { in: estimateIds } },
+      });
+      attachmentsDeleted += attEstRes.count;
+    }
+    const attProjRes = await tx.attachment.deleteMany({
+      where: { tenantId: viewerTenantId, entityType: 'project', entityId: projectId },
     });
-    const attTaskRes = await prisma.attachment.deleteMany({
-      where: { tenantId: viewerTenantId, entityType: 'task', entityId: { in: taskIds } },
-    });
-    attachmentsDeleted += attTaskRes.count;
-    // PR fix/visibility-auth-matrix: task comments も cascade 物理削除 (§5.51)
-    await prisma.comment.deleteMany({
-      where: { tenantId: viewerTenantId, entityType: 'task', entityId: { in: taskIds } },
-    });
-  }
-  if (estimateIds.length > 0) {
-    const attEstRes = await prisma.attachment.deleteMany({
-      where: { tenantId: viewerTenantId, entityType: 'estimate', entityId: { in: estimateIds } },
-    });
-    attachmentsDeleted += attEstRes.count;
-  }
-  const attProjRes = await prisma.attachment.deleteMany({
-    where: { tenantId: viewerTenantId, entityType: 'project', entityId: projectId },
-  });
-  attachmentsDeleted += attProjRes.count;
+    attachmentsDeleted += attProjRes.count;
 
-  // Task / Estimate / ProjectMember は projectId 経由で tenant 転写済 (project は検証済)。
-  // ProjectMember は tenantId 列を持たないため projectId 一致のみで十分。
-  await prisma.task.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
-  await prisma.estimate.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
-  await prisma.projectMember.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
-  // 2026-05-09 hotfix: SuggestionExplanation の FK (suggestion_explanations_project_id_fkey)
-  //   が ON DELETE CASCADE 未指定のため、project.delete 前に明示削除しないと P2003 エラー。
-  //   P-3 (2026-05-08) で SuggestionExplanation テーブルを追加したが、deleteProjectCascade
-  //   に対応する cleanup を追加し忘れていた本番事象を修正 (KDD §5.X+6)。
-  //   2026-05-12: 多層防御として tenantId 明示。
-  await prisma.suggestionExplanation.deleteMany({ where: { tenantId: viewerTenantId, projectId } });
-  await prisma.project.delete({ where: { id: projectId } });
+    // Task / Estimate / ProjectMember は projectId 経由で tenant 転写済 (project は検証済)。
+    // ProjectMember は tenantId 列を持たないため projectId 一致のみで十分。
+    await tx.task.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
+    await tx.estimate.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
+    await tx.projectMember.deleteMany({ where: { projectId, project: { tenantId: viewerTenantId } } });
+    // 2026-05-09 hotfix: SuggestionExplanation の FK (suggestion_explanations_project_id_fkey)
+    //   が ON DELETE CASCADE 未指定のため、project.delete 前に明示削除しないと P2003 エラー。
+    //   P-3 (2026-05-08) で SuggestionExplanation テーブルを追加したが、deleteProjectCascade
+    //   に対応する cleanup を追加し忘れていた本番事象を修正 (KDD §5.X+6)。
+    //   2026-05-12: 多層防御として tenantId 明示。
+    await tx.suggestionExplanation.deleteMany({ where: { tenantId: viewerTenantId, projectId } });
+    await tx.project.delete({ where: { id: projectId } });
+  }, { timeout: 30_000 });
 
   return {
     risks: risksCount,
