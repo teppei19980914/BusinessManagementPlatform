@@ -10797,3 +10797,77 @@ KDD §5.X+66 で「NextAuth v5 0-beta.31 + @netlify/plugin-nextjs では `useSes
 - §5.X+68: 本件と同じく「DB 更新成功 + cookie サイレント失敗 = 200 OK」の組合せが致命的になる設計教訓 (helper 戻り値型を判別 union にする原則)
 - §5.X+69: middleware の matcher 除外が必要な NextAuth `/api/auth/*` 経路の罠 (= 本件の `api/auth/explicit-signout` 除外の根拠)
 - §5.X+71: 同型の罠で `api/tenants/me/i18n` を matcher 除外した前例
+
+## 5.X+85 **UI=API 一致原則で API ハンドラを削除すると 405 が返るようになり、テナント越境 E2E の期待値配列に 405 を追加する必要がある (2026-05-20 / PR #416 E2E fail)**
+
+### 発生事象
+
+PR #416 (feat/crud-permission-redesign) で Phase 4「○○一覧/全○○ 削除の経路別認可」の一環として、横断 `/api/knowledge/[knowledgeId]` の PATCH ハンドラを **UI=API 一致原則** (UI から到達できない経路は API でも 403) に従い、**ハンドラごと削除**した。プロジェクト内更新は `/api/projects/[pid]/knowledge/[kid]` PATCH 経由で creator-only enforce される設計で、横断更新の経路は不要と判断。
+
+CI で 1 件だけ E2E が失敗:
+
+```
+[chromium] › e2e/specs/11-tenant-isolation.spec.ts:198:7
+  › PATCH /api/knowledge/[B-id] → 404 (越境 knowledge 更新不可)
+  Error: expect(received).toContain(expected)
+  Expected value: 405
+  Received array: [400, 403, 404]
+```
+
+### 根本原因
+
+旧仕様の挙動:
+- 横断 `PATCH /api/knowledge/[knowledgeId]` は service 層 (`updateKnowledge`) で `existing.createdBy !== userId` → `FORBIDDEN` を throw → route が 403 を返す
+- tenant 越境 (`findFirst` の `tenantId` フィルタで不一致) → `NOT_FOUND` → 404
+- → 越境攻撃に対する期待値は `[400, 403, 404]`
+
+新仕様 (PR #416 Phase 4):
+- 横断 PATCH ハンドラ自体を削除 → Next.js の App Router は**未定義 HTTP method に対して自動的に 405 Method Not Allowed を返す**
+- 越境攻撃を試行しても route がそもそも PATCH を受け付けないため 405
+
+これは設計的により厳密な防御 (越境かどうか判定する前段でメソッド自体が閉鎖されている = fail-closed) だが、E2E テストが旧仕様の期待値配列 `[400, 403, 404]` のままだったため失敗。
+
+### 教訓
+
+UI=API 一致原則で **API ハンドラを削除する PR では、その endpoint を targeting している E2E テストの期待値配列に必ず 405 を追加する**。特に以下のテスト群:
+
+- `e2e/specs/11-tenant-isolation.spec.ts` (越境攻撃)
+- `e2e/specs/13-cross-tenant-defense.spec.ts` (もしあれば、tenant-isolation 系)
+- `e2e/specs/*-security-*.spec.ts` (セキュリティ regression)
+
+これらは「**越境攻撃 → 403 or 404 が返ることを期待**」の構造で書かれていることが多く、ハンドラ削除で 405 になると失敗する。期待値配列に 405 を含めて「method 自体閉鎖 = より厳密な防御」を明示するコメントを併記する。
+
+### 適用された修正
+
+`e2e/specs/11-tenant-isolation.spec.ts:198-211`:
+```ts
+test('PATCH /api/knowledge/[B-id] → 405 (越境 knowledge 更新経路は構造的に閉鎖)', async () => {
+  // feat/crud-permission-redesign (2026-05-20, PR #416): 横断 `/api/knowledge/[knowledgeId]` の
+  //   PATCH ハンドラを「UI=API 一致原則」に従い削除済み。プロジェクト内更新は
+  //   `/api/projects/[pid]/knowledge/[kid]` PATCH 経由 (service 層で作成者本人のみ enforce)。
+  //   そのため越境攻撃ベクトルとしては PATCH 405 (Method Not Allowed) が期待される。
+  //   旧 200/400/403/404 期待値はハンドラ削除前の挙動で、新仕様では **構造的に到達不能**。
+  const res = await adminARequest.patch(`/api/knowledge/${tenantB.knowledgeId}`, {
+    data: { title: 'attacked' },
+  });
+  expect([400, 403, 404, 405]).toContain(res.status());
+});
+```
+
+### 検証チェックリスト (E2E 期待値追従)
+
+UI=API 一致原則で API ハンドラを削除する PR では、以下を必ず確認:
+
+1. **ハンドラ削除した route を targeting する E2E spec を `grep` で全件抽出**
+   - `grep -rn "fetch\|request\.\(get\|post\|patch\|put\|delete\)" e2e/specs/ | grep "<削除した path>"`
+2. **各テストの期待値配列を確認**
+   - `[200|201|400|403|404|409]` 系で書かれている場合、削除したメソッドのケースだけ `405` に置換または追加
+3. **コメントで「ハンドラ削除済み = 構造的に到達不能」を明示**
+   - 次回読者がテストの意図を誤解しないため
+4. **`docs/test/E2E_LESSONS.md` に追記** (本 KDD と相互参照)
+
+### 関連 KDD / PR
+
+- PR #416 (feat/crud-permission-redesign): 本件の原因コミット
+- KDD §5.X+57 (E2E 期待値網羅性): 期待値配列に必要なステータスコードを漏らさない原則
+- ADR-0005 (RBAC + 二段階テナント認可): 越境防御の設計根拠
