@@ -10946,3 +10946,90 @@ PR で raw query を扱う実装を追加・修正するときは、**ローカ�
 - `.github/workflows/security.yml`: 90 点閾値の CI ガード
 - `scripts/security-check.ts`: 検出ロジック
 - KDD §5.X+85 (UI=API 一致原則によるハンドラ削除と E2E 期待値追従): 同 PR で発見された別の CI fail パターン
+
+## 5.X+87 **再帰 sanitize 関数で `Object.entries` の key を信頼して書き込むと CodeQL が Remote property injection (prototype pollution) を HIGH 検出する ─ `Object.create(null)` + 特殊キー除外で二重防御する (2026-05-20 / PR #416)**
+
+### 発生事象
+
+PR #416 (feat/crud-permission-redesign) で 2 巡目検証 S2-E1 として `sanitizeForAudit` を以下のように拡張した:
+
+```ts
+export function sanitizeForAudit(
+  obj: Record<string, unknown>,
+  depth = 0,
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (SENSITIVE_FIELDS.has(key)) {
+      sanitized[key] = '[REDACTED]';
+    } else if (depth < 5 && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      sanitized[key] = sanitizeForAudit(value as Record<string, unknown>, depth + 1);
+    } else if (...) {
+      sanitized[key] = value.map(...);
+    }
+  }
+  return sanitized;
+}
+```
+
+CI の CodeQL が **HIGH severity × 2** を検出:
+
+```
+CodeQL: 2 new alerts including 2 high severity security vulnerabilities
+src/services/audit.service.ts:179 - Remote property injection
+src/services/audit.service.ts:181 - Remote property injection
+```
+
+### 根本原因
+
+`Object.entries(obj)` の `key` は外部入力 (audit_logs に渡される DTO に含まれる user data) 由来の可能性がある。`sanitized[key] = ...` の動的キー書き込みで、攻撃者が以下のような payload を送ると **prototype pollution 攻撃** が成立し得る:
+
+```json
+{ "__proto__": { "isAdmin": true } }
+```
+
+これが `sanitized.__proto__` に書き込まれると、**JavaScript の全 object に対して `isAdmin = true` が伝播**する (Object.prototype に汚染が及ぶため)。後続のコードで `if (user.isAdmin)` が予期しない true を返し、認可 bypass や情報漏洩につながる。
+
+CodeQL の `js/prototype-polluting-assignment` ルール (Remote property injection) は、**動的キー書き込み + key が untrusted source 由来** の組み合わせを HIGH として検出する。
+
+### 教訓 + 修正パターン
+
+外部入力の key を動的にプロパティとして使う関数は、**以下 3 つの防御を必ず実装する**:
+
+#### 1. `Object.create(null)` で prototype-less object を作る
+親プロトタイプチェーンを持たない pure dictionary にすると、`__proto__` への書き込みが Object.prototype に伝播しない。
+
+```ts
+const sanitized: Record<string, unknown> = Object.create(null);
+```
+
+#### 2. 特殊キーを書き込み対象から完全除外
+`__proto__` / `constructor` / `prototype` の 3 つは prototype pollution の典型的な攻撃ベクトル。早期 continue で無視する。
+
+```ts
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+for (const [key, value] of Object.entries(obj)) {
+  if (FORBIDDEN_KEYS.has(key)) continue;
+  // ...
+}
+```
+
+#### 3. `Object.defineProperty` で書き込み (CodeQL の警告を更に減らす)
+`sanitized[key] = value` ではなく `Object.defineProperty(sanitized, key, { value, ... })` を使うと、prototype チェーン経由の setter 攻撃も防げる。
+
+```ts
+Object.defineProperty(sanitized, key, {
+  value: ..., writable: true, enumerable: true, configurable: true,
+});
+```
+
+### 検証手順
+
+PR で動的キー書き込み (`obj[key] = ...`) を含む関数を追加・修正したら、**ローカルで CodeQL チェックは難しいため、push 後に PR の checks 画面で CodeQL の結果を確認**する。GitHub Advanced Security の有料機能のため、organizations によっては自前で `semgrep` / `eslint-plugin-security` で検出する代替手段も検討。
+
+### 関連 KDD / PR
+
+- PR #416 (feat/crud-permission-redesign): 本件の原因コミット (S2-E1 sanitizeForAudit 拡張)
+- CodeQL ルール: `js/prototype-polluting-assignment` (CWE-915 Improperly Controlled Modification of Dynamically-Determined Object Attributes)
+- KDD §5.X+85 (UI=API 一致原則のハンドラ削除 + E2E 期待値): 同 PR の別 CI fail
+- KDD §5.X+86 (security-check.ts のコメント文字列マッチ問題): 同 PR の別 CI fail

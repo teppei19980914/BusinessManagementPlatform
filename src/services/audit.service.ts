@@ -165,26 +165,49 @@ const SENSITIVE_FIELDS = new Set([
  * オブジェクトの top-level + nested フィールドを再帰的に sanitize する。
  * 配列要素もスキャンし、配列内の object も再帰処理。最大深度 5 で stack overflow を防ぐ。
  */
+/**
+ * feat/crud-permission-redesign (2026-05-20, KDD §5.X+87): CodeQL Remote property injection 対策。
+ *   `Object.entries(obj)` の key は外部入力 (audit DTO に含まれる user data) 由来の可能性があり、
+ *   `__proto__` / `constructor` / `prototype` のような特殊キーを攻撃者が含めると prototype pollution
+ *   攻撃が成立し得る。これらは sanitize 対象から **完全除外** (writing しない) + `Object.create(null)` で
+ *   prototype-less object を使い、二重防御する。
+ */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function sanitizeForAudit(
   obj: Record<string, unknown>,
   depth = 0,
 ): Record<string, unknown> {
   const MAX_DEPTH = 5;
-  const sanitized: Record<string, unknown> = {};
+  // prototype pollution 防止: 親 prototype を持たない pure dictionary を使う
+  const sanitized: Record<string, unknown> = Object.create(null);
   for (const [key, value] of Object.entries(obj)) {
+    // 1. prototype pollution 防止 (二重防御): 特殊キーを書き込み対象から除外
+    if (FORBIDDEN_KEYS.has(key)) continue;
+    // 2. 機微フィールド redact
     if (SENSITIVE_FIELDS.has(key)) {
-      sanitized[key] = '[REDACTED]';
+      Object.defineProperty(sanitized, key, {
+        value: '[REDACTED]', writable: true, enumerable: true, configurable: true,
+      });
     } else if (depth < MAX_DEPTH && value !== null && typeof value === 'object' && !Array.isArray(value)) {
       // nested object は再帰的に redact (S2-E1: shallow だった旧実装の盲点を解消)
-      sanitized[key] = sanitizeForAudit(value as Record<string, unknown>, depth + 1);
+      Object.defineProperty(sanitized, key, {
+        value: sanitizeForAudit(value as Record<string, unknown>, depth + 1),
+        writable: true, enumerable: true, configurable: true,
+      });
     } else if (depth < MAX_DEPTH && Array.isArray(value)) {
-      sanitized[key] = value.map((item) =>
-        item !== null && typeof item === 'object' && !Array.isArray(item)
-          ? sanitizeForAudit(item as Record<string, unknown>, depth + 1)
-          : item,
-      );
+      Object.defineProperty(sanitized, key, {
+        value: value.map((item) =>
+          item !== null && typeof item === 'object' && !Array.isArray(item)
+            ? sanitizeForAudit(item as Record<string, unknown>, depth + 1)
+            : item,
+        ),
+        writable: true, enumerable: true, configurable: true,
+      });
     } else {
-      sanitized[key] = value;
+      Object.defineProperty(sanitized, key, {
+        value, writable: true, enumerable: true, configurable: true,
+      });
     }
   }
   return sanitized;
