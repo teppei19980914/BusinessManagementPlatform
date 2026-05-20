@@ -50,17 +50,18 @@
 | メソッド | パス | 説明 | ロール |
 |---|---|---|---|
 | GET | /api/projects/:id/members | メンバー一覧 | admin, pm_tl |
-| POST | /api/projects/:id/members | メンバー追加 | admin |
-| PATCH | /api/projects/:id/members/:userId | ロール変更 | admin |
-| DELETE | /api/projects/:id/members/:userId | メンバー解除 | admin |
+| GET | /api/projects/:id/available-users | **メンバー追加候補ユーザ一覧** (PR #416 新規)。同 tenantId の isActive ユーザのうち、未参加者のみ返す。select は `{ id, name, email, isActive }` のみで機微情報除外 | admin, pm_tl |
+| POST | /api/projects/:id/members | メンバー追加 | admin, pm_tl (PR #416: `requireAdmin` → `checkProjectPermission('member:manage')`。ただし PM/TL ロール追加は service 層で admin only enforce) |
+| PATCH | /api/projects/:id/members/:userId | ロール変更 | admin, pm_tl (PR #416: 同上。PM/TL ↔ それ以外のロール変更は service 層で `FORBIDDEN_PMTL_ROLE`。自己ロール変更は `CANNOT_CHANGE_OWN_PROJECT_ROLE`) |
+| DELETE | /api/projects/:id/members/:userId | メンバー解除 | admin, pm_tl (PR #416: 同上。PM/TL ロールの解除は service 層で admin only enforce) |
 
 #### 見積もり
 
 | メソッド | パス | 説明 | ロール |
 |---|---|---|---|
-| GET | /api/projects/:id/estimates | 一覧取得 | admin, pm_tl |
+| GET | /api/projects/:id/estimates | 一覧取得 | admin, pm_tl (PR #416: `project:read` → `project:update` に変更、member/viewer は閲覧不可) |
 | POST | /api/projects/:id/estimates | 新規作成 | admin, pm_tl |
-| GET | /api/projects/:id/estimates/:estimateId | 詳細取得 | admin, pm_tl |
+| GET | /api/projects/:id/estimates/:estimateId | 詳細取得 | admin, pm_tl (PR #416: 同上) |
 | PATCH | /api/projects/:id/estimates/:estimateId | 更新 | admin, pm_tl |
 | DELETE | /api/projects/:id/estimates/:estimateId | 論理削除 | admin, pm_tl |
 | PATCH | /api/projects/:id/estimates/:estimateId/confirm | 確定 | admin, pm_tl |
@@ -102,9 +103,10 @@
 | POST | /api/projects/:id/risks | 新規起票 | admin, pm_tl, member |
 | GET | /api/projects/:id/risks/:riskId | 詳細取得 | 全ロール |
 | PATCH | /api/projects/:id/risks/:riskId | 更新 | admin, pm_tl, 担当/起票 member |
-| DELETE | /api/projects/:id/risks/:riskId | 論理削除 | admin, pm_tl |
+| DELETE | /api/projects/:id/risks/:riskId | 論理削除 (PR #416: service 層に `context: 'project'` 引数追加、作成者本人のみ削除可) | admin, pm_tl, 作成者 member |
 | GET | /api/projects/:id/risks/export | CSV エクスポート | admin, pm_tl |
 | GET | /api/risks | 全プロジェクト横断一覧（列: プロジェクト・種別・件名・担当者・影響度・発生可能性・優先度・作成/更新日時・作成/更新者。非メンバーは機微項目マスク） | 認証済み全ユーザ |
+| DELETE | /api/risks/:riskId | **横断「全リスク/課題」画面からの admin 削除専用** (PR #416 新規)。service 層に `context: 'global'` を渡して admin only enforce | admin |
 
 #### ナレッジ
 
@@ -113,8 +115,8 @@
 | GET | /api/knowledge | 横断検索（全ナレッジ） | 全ロール（公開範囲制御あり） |
 | POST | /api/knowledge | 新規作成（プロジェクト紐付けなし） | admin, pm_tl, member |
 | GET | /api/knowledge/:id | 詳細取得 | 公開範囲に応じる |
-| PATCH | /api/knowledge/:id | 更新 | admin, pm_tl, 作成者 member |
-| DELETE | /api/knowledge/:id | 論理削除 | admin, pm_tl |
+| ~~PATCH~~ | ~~/api/knowledge/:id~~ | **廃止 (PR #416)** — UI=API 一致原則に従い route handler 削除 (Next.js が 405 Method Not Allowed を返す)。横断「全ナレッジ」画面に編集 UI が無いため。プロジェクト内更新は `/api/projects/:id/knowledge/:knowledgeId` PATCH 経由 (creator-only) のみ | — |
+| DELETE | /api/knowledge/:id | **横断「全ナレッジ」画面からの admin 削除専用** (PR #416 で context='global' 化、admin only enforce) | admin |
 | PATCH | /api/knowledge/:id/publish | 公開 | admin, pm_tl |
 | GET | /api/projects/:id/knowledge | プロジェクト紐付けナレッジ一覧 | ProjectMember |
 | POST | /api/projects/:id/knowledge | 作成（当該 projectId を自動紐付け） | ProjectMember |
@@ -132,8 +134,24 @@
 | PATCH | /api/projects/:id/retrospectives/:retroId/confirm | 確定 | admin, pm_tl |
 | POST | /api/projects/:id/retrospectives/:retroId/comments | コメント投稿 | admin, pm_tl, member |
 | PATCH | /api/projects/:id/retrospectives/:retroId | 更新 (行クリック編集ダイアログ経由) | ProjectMember |
-| DELETE | /api/projects/:id/retrospectives/:retroId | 論理削除 | admin, pm_tl |
+| DELETE | /api/projects/:id/retrospectives/:retroId | 論理削除 (PR #416: service 層に `context: 'project'` 引数追加、作成者本人のみ削除可) | admin, pm_tl, 作成者 |
 | GET | /api/retrospectives | 全プロジェクト横断一覧（列: プロジェクト・実施日・計画総括・実績総括・良かった点・次回以前事項・作成/更新日時・作成/更新者。非メンバーは機微項目マスク） | 認証済み全ユーザ |
+| DELETE | /api/retrospectives/:retroId | **横断「全振り返り」画面からの admin 削除専用** (PR #416 新規)。service 層に `context: 'global'` を渡して admin only enforce | admin |
+
+#### 提案エンジン (Suggestions)
+
+| メソッド | パス | 説明 | ロール |
+|---|---|---|---|
+| GET | /api/projects/:id/suggestions | 提案一覧 | admin, pm_tl (PR #416: `project:read` → `project:update`、member/viewer 不可) |
+| POST | /api/projects/:id/suggestions/adopt | 提案採用 | admin, pm_tl (PR #416: 同上) |
+| GET | /api/projects/:id/suggestions/related-issues | 関連 risk/issue 表示 | admin, pm_tl (PR #416: 同上) |
+| GET | /api/projects/:id/suggestions/explain | 採用根拠 (explainability) | admin, pm_tl (PR #416: 同上) |
+
+#### メモ (Memo)
+
+| メソッド | パス | 説明 | ロール |
+|---|---|---|---|
+| DELETE | /api/memos/:id | メモ削除。**自分のメモ** = 自由に削除可、**他人の public メモ** = service 層に `systemRole` 引数を渡し admin のみモデレーション削除 (PR #416) | 全ロール (自分のメモ) / admin (他人の public メモ) |
 
 #### システム管理
 
@@ -145,7 +163,7 @@
 | DELETE | /api/admin/users/:userId | ユーザ削除 (論理削除 + ProjectMember 物理カスケード、PR #89) | admin |
 | POST | /api/admin/users/:userId/unlock | ロック解除 (PR #85) | admin |
 | POST | /api/admin/users/lock-inactive | 非アクティブユーザ一括ロック (PR #89 で導入、feat/account-lock で **論理削除 → ロック (isActive=false)** に方針変更、日次 cron + 手動) | admin or Vercel Cron |
-| PATCH | /api/admin/users/:userId/role | ロール変更 | admin |
+| PATCH | /api/admin/users/:userId/role | ロール変更 (PR #416: 自己ロール変更は `CANNOT_CHANGE_OWN_ROLE` で 403、super_admin 行は UI 非表示) | admin |
 | PATCH | /api/admin/users/:userId/status | 有効/無効切替 | admin |
 | GET | /api/admin/audit-logs | 監査ログ一覧 | admin |
 | GET | /api/admin/role-change-logs | 権限変更履歴 | admin |
