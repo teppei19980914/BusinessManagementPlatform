@@ -336,9 +336,26 @@ function AccountMenu({ user }: { user: DashboardHeaderProps['user'] }) {
               // fix/session-clearance (2026-05-20): NextAuth 既定の signOut() は Netlify で
               //   Set-Cookie が脱落して旧 cookie 残留 → 誤ユーザログイン事故を起こすため、
               //   自前 route で tokenVersion increment + cookie 削除 (auth 4 + theme 1) を実施。
-              //   詳細: KDD §5.X+72
+              //
+              // 2026-05-20 follow-up (フルスキャン Severity-1): fetch 応答 OK を**必ず確認**してから navigate する。
+              //   応答失敗 (DB 一時障害で tokenVersion increment 失敗等) で 500 が返った場合に
+              //   そのまま navigate すると「ユーザは log out したつもりだが server 側は無効化されていない」
+              //   状態に陥り、本 PR の P0 目標 (誤ユーザ login 防止) を達成できないため。
+              //   詳細: KDD §5.X+84
               setOpen(false);
-              await fetch('/api/auth/explicit-signout', { method: 'POST' });
+              let res: Response | null = null;
+              try {
+                res = await fetch('/api/auth/explicit-signout', { method: 'POST' });
+              } catch {
+                // network error
+              }
+              if (!res || !res.ok) {
+                // alert で UX 上明示。ユーザが再試行できるよう navigate しない
+                window.alert(
+                  'ログアウト処理に失敗しました。ネットワーク接続を確認のうえ、ページを再読み込みしてから再度お試しください。',
+                );
+                return;
+              }
               window.location.href = LOGIN_ROUTE;
             }}
           >
