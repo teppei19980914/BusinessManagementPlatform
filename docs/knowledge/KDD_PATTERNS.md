@@ -11033,3 +11033,66 @@ PR で動的キー書き込み (`obj[key] = ...`) を含む関数を追加・修
 - CodeQL ルール: `js/prototype-polluting-assignment` (CWE-915 Improperly Controlled Modification of Dynamically-Determined Object Attributes)
 - KDD §5.X+85 (UI=API 一致原則のハンドラ削除 + E2E 期待値): 同 PR の別 CI fail
 - KDD §5.X+86 (security-check.ts のコメント文字列マッチ問題): 同 PR の別 CI fail
+
+## 5.X+88 **CodeQL の Remote property injection は `Object.defineProperty` でも依然 HIGH 検出する ─ 動的キー書き込みを使わず JSON.stringify(obj, replacer) で sanitize する (2026-05-20 / PR #416)**
+
+### 発生事象
+
+KDD §5.X+87 で報告した CodeQL Remote property injection 警告に対し、以下の 3 重防御で対策した:
+
+1. `Object.create(null)` で prototype-less object
+2. `FORBIDDEN_KEYS` (`__proto__` / `constructor` / `prototype`) を `continue` で除外
+3. `sanitized[key] = value` を `Object.defineProperty(sanitized, key, { value, ... })` に変更
+
+しかし **CodeQL は依然 HIGH × 3 を検出**:
+
+```
+src/services/audit.service.ts:194 - Remote property injection
+src/services/audit.service.ts:199 - Remote property injection
+src/services/audit.service.ts:208 - Remote property injection
+```
+
+`Object.defineProperty` の第 2 引数も「動的に決まるキー」として CodeQL の dataflow 解析が追跡してしまう。前段の `FORBIDDEN_KEYS` ガードは static 解析では「外部入力起因の key」を tainted のままとして扱うため、警告が解除されない。
+
+### 根本原因
+
+CodeQL の `js/prototype-polluting-assignment` ルールは **「動的キー書き込み + key が外部由来」** という静的パターンで検出する。実行時に FORBIDDEN_KEYS でフィルタしても、CodeQL の解析時点では dataflow が切れないため検出される。
+
+`Object.defineProperty(target, key, descriptor)` の `key` 引数も同様に「動的なプロパティ書き込み」として CodeQL は警告対象に含める。
+
+### 解決策
+
+**動的キー書き込みを完全に廃止し、`JSON.stringify` の replacer 関数 + `JSON.parse` で sanitize**:
+
+```ts
+export function sanitizeForAudit(obj: Record<string, unknown>): Record<string, unknown> {
+  const json = JSON.stringify(obj, (key, value) => {
+    if (key === '') return value; // root
+    if (FORBIDDEN_KEYS.has(key)) return undefined; // 完全除外
+    if (SENSITIVE_FIELDS.has(key)) return '[REDACTED]'; // 機微フィールド redact
+    return value;
+  });
+  const parsed = json ? JSON.parse(json) : {};
+  return (typeof parsed === 'object' && parsed !== null) ? parsed : {};
+}
+```
+
+利点:
+- `JSON.stringify` の replacer は **each key で呼ばれ、`undefined` を返すと該当 key を出力から省略**
+- nested object / 配列も replacer が **再帰的に呼ばれる**ため独自再帰実装不要
+- 結果の `JSON.parse` は plain object を生成し、`__proto__` 等の特殊キーは自然に脱落
+- **動的プロパティ書き込みが発生しない**ため CodeQL の警告を構造的に回避
+
+### 教訓
+
+1. **CodeQL Remote property injection の検出ルールは厳しい**: runtime ガード (FORBIDDEN_KEYS filter) を入れても dataflow 解析は警告解除しない
+2. **`Object.defineProperty` も dataflow 上は動的キー書き込みと同等**: 修正アプローチとしては効かない
+3. **JSON.stringify の replacer は dataflow を切る**: replacer で key を見て分岐するパターンは CodeQL の解析範囲外
+4. **将来の検出対策**: 動的キー書き込みを必要とする場面では JSON ベース実装を第 1 候補に
+5. **trade-off**: JSON.stringify/parse のオーバーヘッドは audit log のような低頻度処理では無視できる。ホットパスでは別パターンを検討
+
+### 関連 KDD / PR
+
+- PR #416 (feat/crud-permission-redesign): 本件の原因コミット (S2-E1 拡張 → §5.X+87 修正 → 本件の §5.X+88 修正)
+- KDD §5.X+87 (前段): `Object.create(null)` + FORBIDDEN_KEYS による初回対策 (CodeQL は依然警告)
+- CodeQL ルール: `js/prototype-polluting-assignment` (CWE-915)

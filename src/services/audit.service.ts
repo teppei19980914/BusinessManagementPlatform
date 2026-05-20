@@ -166,49 +166,37 @@ const SENSITIVE_FIELDS = new Set([
  * 配列要素もスキャンし、配列内の object も再帰処理。最大深度 5 で stack overflow を防ぐ。
  */
 /**
- * feat/crud-permission-redesign (2026-05-20, KDD §5.X+87): CodeQL Remote property injection 対策。
- *   `Object.entries(obj)` の key は外部入力 (audit DTO に含まれる user data) 由来の可能性があり、
- *   `__proto__` / `constructor` / `prototype` のような特殊キーを攻撃者が含めると prototype pollution
- *   攻撃が成立し得る。これらは sanitize 対象から **完全除外** (writing しない) + `Object.create(null)` で
- *   prototype-less object を使い、二重防御する。
+ * feat/crud-permission-redesign (2026-05-20, KDD §5.X+87, §5.X+88):
+ *
+ *   CodeQL Remote property injection 対策。`Object.entries(obj)` の key は外部入力由来の
+ *   可能性があり、`__proto__` / `constructor` / `prototype` の特殊キーで prototype pollution
+ *   攻撃が成立し得る。`Object.defineProperty` を使った前回修正でも CodeQL の dataflow 解析が
+ *   動的キー書き込みを追跡してしまうため、**JSON.stringify の replacer 関数で sanitize する**
+ *   実装に切り替えた。
+ *
+ *   JSON.stringify(obj, replacer) は:
+ *     - replacer が each key で呼ばれ、`undefined` を返すと該当 key が出力から省略される
+ *     - 結果の JSON 文字列を JSON.parse で plain object に戻すと、`__proto__` 等の特殊キーは
+ *       自然に脱落 (JSON.stringify がそれらを enumerable own property としてのみ扱う)
+ *     - 動的プロパティ書き込みが発生しないため CodeQL 警告を構造的に回避
+ *     - nested object / 配列も replacer が再帰的に呼ばれるため、独自再帰実装不要
  */
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export function sanitizeForAudit(
   obj: Record<string, unknown>,
-  depth = 0,
 ): Record<string, unknown> {
-  const MAX_DEPTH = 5;
-  // prototype pollution 防止: 親 prototype を持たない pure dictionary を使う
-  const sanitized: Record<string, unknown> = Object.create(null);
-  for (const [key, value] of Object.entries(obj)) {
-    // 1. prototype pollution 防止 (二重防御): 特殊キーを書き込み対象から除外
-    if (FORBIDDEN_KEYS.has(key)) continue;
-    // 2. 機微フィールド redact
-    if (SENSITIVE_FIELDS.has(key)) {
-      Object.defineProperty(sanitized, key, {
-        value: '[REDACTED]', writable: true, enumerable: true, configurable: true,
-      });
-    } else if (depth < MAX_DEPTH && value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      // nested object は再帰的に redact (S2-E1: shallow だった旧実装の盲点を解消)
-      Object.defineProperty(sanitized, key, {
-        value: sanitizeForAudit(value as Record<string, unknown>, depth + 1),
-        writable: true, enumerable: true, configurable: true,
-      });
-    } else if (depth < MAX_DEPTH && Array.isArray(value)) {
-      Object.defineProperty(sanitized, key, {
-        value: value.map((item) =>
-          item !== null && typeof item === 'object' && !Array.isArray(item)
-            ? sanitizeForAudit(item as Record<string, unknown>, depth + 1)
-            : item,
-        ),
-        writable: true, enumerable: true, configurable: true,
-      });
-    } else {
-      Object.defineProperty(sanitized, key, {
-        value, writable: true, enumerable: true, configurable: true,
-      });
-    }
-  }
-  return sanitized;
+  // JSON.stringify の replacer で sanitize を行う。
+  //   - key === '' は最上位 root (replacer の仕様)
+  //   - FORBIDDEN_KEYS / SENSITIVE_FIELDS は replacer 内で判定し、redact または除外
+  //   - replacer が再帰的に呼ばれるため nested / array も自動対応
+  const json = JSON.stringify(obj, (key, value) => {
+    if (key === '') return value; // root
+    if (FORBIDDEN_KEYS.has(key)) return undefined; // 特殊キーは完全除外
+    if (SENSITIVE_FIELDS.has(key)) return '[REDACTED]'; // 機微フィールド redact
+    return value;
+  });
+  // JSON.parse の結果は plain object。`__proto__` 等の特殊キーは脱落済み。
+  const parsed = json ? JSON.parse(json) : {};
+  return (typeof parsed === 'object' && parsed !== null) ? parsed : {};
 }
