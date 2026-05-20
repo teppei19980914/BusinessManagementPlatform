@@ -30,6 +30,15 @@ export async function sendVerificationEmail(
     data: { usedAt: new Date() },
   });
 
+  // ADR-0016 (2026-05-20): tenant slug 解決 (= URL に埋め込む)
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { slug: true },
+  });
+  if (!tenant) {
+    throw new Error(`Tenant not found for id=${tenantId}`);
+  }
+
   // トークン生成
   const token = randomBytes(32).toString('hex');
   const tokenHash = hashToken(token);
@@ -44,8 +53,9 @@ export async function sendVerificationEmail(
     },
   });
 
-  // パスワード設定 URL
-  const setupUrl = `${baseUrl}/setup-password?token=${token}`;
+  // ADR-0016 (2026-05-20): url-builder 経由で生成 (= 将来 Option A 移行容易化)
+  const { buildSetupPasswordUrl } = await import('@/lib/url-builder');
+  const setupUrl = buildSetupPasswordUrl(tenant.slug, token, baseUrl);
 
   // 招待メール送信
   const mailProvider = getMailProvider();

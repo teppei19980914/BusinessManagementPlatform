@@ -191,28 +191,15 @@ async function createTenantInternal(
     };
   }
 
-  // 2026-05-20: deletedAt フィルタを削除。理由:
-  //   旧コードは「論理削除されたユーザの email」を見落とし、後続の prisma.user.create で
-  //   DB UNIQUE 制約違反 → 500 エラーで abort していた (= ユーザ離脱に直結)。
-  //   ここで明示的に検知し、4xx で「再利用不可」と通知する。
+  // ADR-0016 (2026-05-20): User.email は tenant-scoped 一意 (= @@unique([tenantId, email])) に変更。
+  //   新規テナント作成時は、その新テナントの中で email は新規 (= 当然) なので、
+  //   グローバル / 他テナントでの email 重複検査は不要。
+  //   (= 同一個人が複数テナントに所属可能になる、本 ADR の主目的を満たす)
   //
-  //   ※ Phase 2 (PR #418) で User.email を tenant-scoped 一意 (= @@unique([tenantId, email]))
-  //   に変更後、本チェックは「同一テナント内の重複検知」に意味が変わる
-  //   (= 他テナントへの再登録は許可)。
-  const existingEmail = await prisma.user.findFirst({
-    where: { email: input.initialAdminEmail },
-    select: { id: true, deletedAt: true },
-  });
-  if (existingEmail != null) {
-    return {
-      ok: false,
-      reason: 'EMAIL_CONFLICT',
-      message:
-        existingEmail.deletedAt != null
-          ? 'このメールアドレスは過去に使用されているため、現在の DB 設計では再利用できません'
-          : 'このメールアドレスは既に他のテナントで使用されています',
-    };
-  }
+  //   旧コードは email グローバル UNIQUE 前提の検査だったが、Schema 変更後は不要のため削除。
+  //   万一同一テナント内で重複した場合、DB UNIQUE 制約 (tenantId, email) で違反 →
+  //   Prisma が P2002 を throw → 呼出側 (createTenantBySuperAdmin/Signup) で catch → 4xx 化。
+  //   ただし新規テナント作成では物理的に同一テナント内重複は発生しないため発火条件なし。
 
   // P-B (2026-05-08): 解約済テナントの billingContactEmail で Beginner 再登録を拒否
   //   - 「Beginner プランは本当に初めてのユーザのみ 90 日限定」方針

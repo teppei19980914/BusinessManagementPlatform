@@ -41,8 +41,10 @@ import { prisma } from '@/lib/db';
 // PR #198: 公開エンドポイントでメール存在列挙を狙う大量リクエストを抑制 (CWE-307)
 import { applyRateLimit } from '@/lib/rate-limit';
 
+// ADR-0016 (2026-05-20): multi-tenant 対応で tenantSlug 必須化
 const requestSchema = z.object({
   email: z.string().email(),
+  tenantSlug: z.string().min(1).max(60),
 });
 
 export async function POST(req: NextRequest) {
@@ -56,8 +58,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: 'none' });
   }
 
+  // ADR-0016: tenantSlug → tenantId 解決 (不存在も「none」で隠蔽)
+  const tenant = await prisma.tenant.findFirst({
+    where: { slug: parsed.data.tenantSlug, deletedAt: null },
+    select: { id: true },
+  });
+  if (!tenant) {
+    return NextResponse.json({ status: 'none' });
+  }
+
   const user = await prisma.user.findFirst({
-    where: { email: parsed.data.email, deletedAt: null },
+    where: { email: parsed.data.email, tenantId: tenant.id, deletedAt: null },
     select: { permanentLock: true, lockedUntil: true, isActive: true },
   });
 
