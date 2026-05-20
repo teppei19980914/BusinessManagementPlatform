@@ -1537,7 +1537,8 @@ export async function resumeTenant(
  *     **Beginner プラン乱用防止** (= 解約 → Beginner 再契約の繰り返し回避) を優先するため、
  *     users 行は permanent に保持する。soft-delete 状態 (isActive=false / deletedAt=now)
  *     のままで、ログインは不可だが email + role は abuse-prevention check の根拠として残す。
- *     - tenant-onboarding.service.ts の `BEGINNER_NOT_AVAILABLE_FOR_RETURNING` 判定で参照
+ *     - tenant-onboarding.service.ts の `BEGINNER_REQUIRES_UPGRADE` 判定で参照
+ *       (ADR-0016 Phase 10 / 2026-05-20: 旧 BEGINNER_NOT_AVAILABLE_FOR_RETURNING から rename + 「削除/有効問わず」に強化)
  *     - GDPR 等の個別削除請求は super_admin が手動で対応する運用 (cron 自動削除しない)
  *   - **冪等性**: 同一テナントの 2 回目以降は対象データが既に空なので no-op。
  *     失敗時はテナントごとに try/catch、cron 全体は止めない。
