@@ -191,6 +191,140 @@ CREATE INDEX idx_tasks_planned_end_due ON tasks (planned_end_date)
   `$transaction` に含める。振り返り/ナレッジ等「組織の資産」を残す方針と対照的に、メモは
   退職者分を残す意味がないためカスケード削除で掃除する (2026-04-24)
 
+### 8.4 PR #416 で導入された認可機構 (CRUD 設計刷新)
+
+PR #416 (feat/crud-permission-redesign) で導入された認可機構の設計原則と実装パターン。
+既存の §8.3.x の補強として、UI=API 一致原則 / context-aware service / 細粒度ロールガード /
+監査ログ秘匿化 / cron 重複実行防止 / transaction 化を整理する。
+
+#### 8.4.1 UI=API 認可一致原則
+
+> **UI から到達できない経路は API でも 403 を返す**。Method Not Allowed (405) も含め、
+> route handler 自体を削除することで「UI には無いが API は通る」という IDOR の温床を断つ。
+
+**例: 横断 `/api/knowledge/[knowledgeId]` の PATCH ハンドラ削除**:
+- 横断「全ナレッジ」画面は read-only / 削除のみで、編集 UI は存在しない
+- 旧仕様では PATCH route が残っていたため、curl 直叩きで他人のナレッジ更新が可能だった
+- PR #416 で **PATCH ハンドラ自体を route.ts から削除** → Next.js が **405 Method Not Allowed** を自動応答
+- プロジェクト内更新は `/api/projects/[id]/knowledge/[knowledgeId]` PATCH 経由 (creator-only enforce) のみに集約
+
+**設計判断**: 「UI から呼ばれないなら API も用意しない」を原則化。横断系 (cross-list) の API は
+GET (一覧/詳細) と DELETE (admin global moderation) のみ提供し、CREATE/UPDATE は project-scoped route に限定する。
+
+#### 8.4.2 削除 service の context 引数 (project / global)
+
+`deleteKnowledge` / `deleteRisk` / `deleteRetrospective` の 3 service に
+`context: 'project' | 'global'` 引数を追加し、route 層から経路を明示する設計に変更。
+
+| context | 呼出元 route | 認可ルール |
+|---|---|---|
+| `'project'` | `/api/projects/[id]/{knowledge,risks,retrospectives}/[childId]` DELETE | **作成者本人のみ** (admin でも他人の記事は削除不可、UI ボタン非表示と一致) |
+| `'global'` | `/api/{knowledge,risks,retrospectives}/[childId]` DELETE | **admin only** (横断「全○○」画面からのモデレーション削除専用) |
+
+**狙い**: route 層が経路情報を service に明示することで、「同じ delete 関数でも経路により認可が異なる」
+ロジックを service 層に集約。route 層は context を渡すだけで判定責任を持たず、テスタビリティが向上する
+(service 単体テストで context ごとの認可分岐を網羅可能)。
+
+**実装**: service 層で context に応じて `if (context === 'global' && systemRole !== 'admin') throw FORBIDDEN`
+と早期 return。`context === 'project'` の場合のみ creator 一致チェックを実施。
+
+#### 8.4.3 PM/TL のメンバー管理開放 + 細粒度ガード
+
+`member:manage` 権限を **pm_tl にも付与** し、メンバー追加 / メンバー解除 / ロール変更を
+PM/TL でも実施可能とした。ただし「PM/TL ロール」を扱う操作は **service 層で別途 admin only enforce**。
+
+**細粒度ガード対象 (`FORBIDDEN_PMTL_ROLE` で 403)**:
+- PM/TL ロールでのメンバー追加 (`addMember` で `role='pm_tl'` を指定)
+- PM/TL からそれ以外のロール (member/viewer) への変更
+- それ以外のロールから PM/TL への昇格
+- PM/TL ロールの解除 (`removeMember` で対象が PM/TL)
+
+**狙い**: PM/TL が現場の member/viewer を機動的に追加/外す運用を可能にしつつ、
+**「PM/TL の任命権」だけは admin に集中** させる。組織階層の境界線を守る設計。
+
+**実装**: `member.service.ts` の各関数で対象/現在ロールが `pm_tl` の場合に systemRole を再チェック。
+route 層は `checkProjectPermission('member:manage')` のみで通し、PM/TL 特例は service 層に集約する。
+
+#### 8.4.4 自己ロール変更禁止
+
+以下 3 経路で「自分自身の権限を自分で変更する」操作をブロック:
+
+| 経路 | エラーコード | 対象操作 |
+|---|---|---|
+| `/api/admin/users/[userId]/role` | `CANNOT_CHANGE_OWN_ROLE` | admin が自分自身の systemRole を変更しようとする |
+| `/api/projects/[id]/members/[userId]` PATCH | `CANNOT_CHANGE_OWN_PROJECT_ROLE` | プロジェクトメンバーが自分の projectRole を変更しようとする |
+| `/admin/users` UI | super_admin の行を非表示 (UI レベルガード) | super_admin は admin UI から操作不可、システム所有者として保護 |
+
+**狙い**: ロックアウト防止 (誤って自分の admin 権限を剥奪して操作不能になるのを防ぐ)
++ 権限昇格攻撃の遮断 (一旦取得した低権限を自己昇格できないように)。
+
+#### 8.4.5 `sanitizeForAudit` の JSON.stringify replacer 方式
+
+監査ログ (`AuditLog.details` 等) の機密フィールド秘匿化を、`JSON.stringify(obj, replacer)` の
+replacer 関数で実装する設計に変更 (PR #416 で再実装)。
+
+**プロトタイプ汚染防御**:
+- `Object.hasOwn(obj, key)` で own property のみを処理
+- `__proto__` / `constructor` / `prototype` の key は明示的にスキップ
+- 入力オブジェクトに対する `Object.create(null)` ベースのコピーは不要 (stringify が新規 string を生成するため副作用なし)
+
+**nested 機微フィールド再帰 redact**:
+- replacer は depth に関係なく全 key に呼ばれるため、ネスト構造でも漏れなく処理可能
+- 配列要素にも再帰適用 (`Array.isArray` の特別扱い不要)
+
+**SENSITIVE_FIELDS (14 種)**:
+`passwordHash`, `mfaSecretEncrypted`, `recoveryCodeHash`, `tokenHash`, `sessionToken`,
+`refreshToken`, `apiKey`, `webhookSecret`, `stripeMeterEventToken`, `password`,
+`secret`, `apiToken`, `accessToken`, `clientSecret` (実装は src/lib/sanitize-audit.ts 参照)。
+
+**Redact 後の値**: `'[REDACTED]'` (固定文字列) を返却。null/undefined にしないことで、
+「フィールドが存在したが秘匿された」と「フィールドが存在しなかった」をログ上で区別可能。
+
+#### 8.4.6 cron advisory lock (PostgreSQL `pg_try_advisory_lock`)
+
+cron job の重複実行 (Netlify cron + 手動トリガ + 別 region 並走など) を防ぐため、
+PostgreSQL の `pg_try_advisory_lock(bigint)` を採用。
+
+**Lock key 算出**:
+1. `cronName` (例: `'daily-notifications'`, `'lock-inactive-users'`) を文字列で受け取る
+2. **djb2 hash** で 32bit 整数に縮約 (`hash = ((hash << 5) + hash) + char` を全 char 累積)
+3. BigInt にキャストして PostgreSQL に渡す (advisory lock は bigint 引数を取る)
+
+**ロック取得失敗時**: 即座に return (HTTP 200, body に `'already-running'` 等を返す)。
+他インスタンスが処理中なら自分は何もしない `at-most-once` セマンティクス。
+
+**ロック解放**: `pg_advisory_unlock(key)` を finally 句で必ず呼出。
+セッション断絶時も PostgreSQL 側が session-level lock を自動解放するためデッドロック耐性あり。
+
+**狙い**: Netlify cron は分散実行されるため、同 cron が複数 region で同時起動するリスクが
+ある (DB レベル idempotency を担保しない処理では二重実行による不整合が発生する)。
+
+#### 8.4.7 transaction 化された経路
+
+PR #416 で新たに `$transaction` 化した service 経路一覧。
+**いずれも「複数テーブル更新 + 失敗時の部分コミット排除」** が目的。
+
+| service | 含まれる操作 |
+|---|---|
+| `deleteAccount` (user self-delete) | User soft-delete + Memo 物理削除 + ProjectMember 物理削除 + Session 物理削除 |
+| `deleteUser` (admin) | 同上 + AuditLog 記録 |
+| `addMember` | ProjectMember 作成 + AuditLog 記録 + (新規 PM/TL なら) RoleChangeLog 記録 |
+| `updateMemberRole` | ProjectMember 更新 + AuditLog 記録 + RoleChangeLog 記録 |
+| `removeMember` | ProjectMember 削除 + 該当ユーザ起票の draft 強制取扱判定 + AuditLog 記録 |
+| `lockInactiveUsers` (cron) | 対象ユーザ列の isActive=false 一括更新 + Session 一括無効化 + AuditLog 一括記録 |
+| `deleteProjectCascade` (強制削除) | Project + 配下全 entity 物理削除 + Comment 物理削除 + Knowledge 物理削除 + AuditLog 記録 |
+
+**設計判断**: いずれも「権限変更 / 削除 / cascade 系」で、部分コミットが残ると
+**監査証跡と実データの矛盾** を生む。よって route 層ではなく **service 層内で `prisma.$transaction([...])`** を呼出し、
+呼出側からは単一 promise として扱える設計に揃える。
+
+#### 8.4.8 参照
+
+- ADR-0014: CRUD 設計刷新 (本 §8.4 全体の意思決定背景)
+- ADR-0015: cascade 削除冪等設計 (§8.4.7 transaction 化と `deleteProjectCascade` の方針)
+- KDD §5.X+85〜+88: PR #416 開発中に発見された罠と教訓
+- FOLLOW_UP_AFTER_PR416.md: PR #416 マージ後の残課題 / 後続対応一覧
+
 ---
 
 

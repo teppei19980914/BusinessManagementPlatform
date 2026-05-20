@@ -19,7 +19,7 @@ docs/
 ├── test/             テスト戦略 (戦略 / E2E カバレッジ / 視覚回帰 / E2E 教訓)
 ├── developer-guide/  開発者手順 (機能追加 / テスト・lint・build / コミット&デプロイ / Seed メンテ)
 ├── knowledge/        ナレッジ蓄積 (KDD パターン集 — 過去の罠と教訓)
-├── adr/              設計判断記録 (ADR-0001〜0013 — なぜこの設計か)
+├── adr/              設計判断記録 (ADR-0001〜0015 — なぜこの設計か)
 ├── roadmap/          ロードマップ・計画書 (リリース計画 / 機能別 plan / future/)
 ├── security/         セキュリティ (脅威モデル / STRIDE 手順 / セキュリティタスク)
 ├── vision/           思想・価値観 (なぜ作るのか、長期展望)
@@ -65,7 +65,7 @@ docs/
 
 | # | トピック | 参照先 |
 |---|---|---|
-| 1 | **主要設計判断の根拠** (なぜこの設計にしたか) | [adr/](./adr/README.md) (ADR-0001〜0013、順次追加) |
+| 1 | **主要設計判断の根拠** (なぜこの設計にしたか) | [adr/](./adr/README.md) (ADR-0001〜0015、順次追加) |
 | 2 | 核心機能 — 提案エンジンの仕組み | [design/SUGGESTION_ENGINE.md](./design/SUGGESTION_ENGINE.md) |
 | 3 | UI 共通パターン (テーブル / ダイアログ / 一覧フィルタ等) | [design/UI_PATTERNS.md](./design/UI_PATTERNS.md) |
 | 4 | インフラ構成 (Vercel / Supabase / Brevo / Voyage 等) | [design/INFRASTRUCTURE.md](./design/INFRASTRUCTURE.md) |
@@ -189,7 +189,7 @@ docs/
 
 ### [adr/](./adr/) — Architecture Decision Record
 
-主要設計判断の理由を時系列でログ化 (現在 13 件)。
+主要設計判断の理由を時系列でログ化 (現在 15 件)。
 
 | ファイル | 内容 |
 |---|---|
@@ -208,6 +208,8 @@ docs/
 | [0011-soft-delete-and-audit-log.md](./adr/0011-soft-delete-and-audit-log.md) | 論理削除 + 全変更操作の監査ログ完全記録 |
 | [0012-vercel-supabase-mvp-hosting.md](./adr/0012-vercel-supabase-mvp-hosting.md) | Vercel + Supabase 無料枠を MVP 期に採用 (AWS 移行を視野) |
 | [0013-beginner-downgrade-prohibition.md](./adr/0013-beginner-downgrade-prohibition.md) | Beginner プランへのダウングレード禁止 (悪用防止) |
+| [0014-crud-permission-redesign.md](./adr/0014-crud-permission-redesign.md) | CRUD 設計刷新 — UI=API 認可一致原則 + PM/TL 自律権限 + 自己ロール変更禁止 (2026-05-20) |
+| [0015-cascade-delete-idempotent-design.md](./adr/0015-cascade-delete-idempotent-design.md) | deleteProjectCascade / deleteCustomerCascade の冪等設計 + 段階別 transaction (2026-05-20) |
 
 ### [roadmap/](./roadmap/) — ロードマップ・計画書
 
