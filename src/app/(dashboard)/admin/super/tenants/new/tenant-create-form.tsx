@@ -132,7 +132,7 @@ export function TenantCreateForm() {
             value={form.slug}
             onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })}
             placeholder="例: customer-abc"
-            pattern="[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?"
+            pattern="[a-z0-9](?:[-a-z0-9]{1,58}[a-z0-9])?"
             required
           />
           <p className="text-xs text-muted-foreground">

@@ -178,7 +178,8 @@ export default function SignupPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="slug">組織 ID *</Label>
-                <Input id="slug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })} placeholder="例: my-company" pattern="[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?" required />
+                {/* 2026-05-20: dash を [文字クラス先頭] に移動 (= Chrome v flag 互換、SyntaxError 回避) */}
+                <Input id="slug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })} placeholder="例: my-company" pattern="[a-z0-9](?:[-a-z0-9]{1,58}[a-z0-9])?" required />
                 <p className="text-xs text-muted-foreground">英小文字・数字・ハイフンのみ、3〜60 文字</p>
               </div>
             </fieldset>

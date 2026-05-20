@@ -191,15 +191,26 @@ async function createTenantInternal(
     };
   }
 
+  // 2026-05-20: deletedAt フィルタを削除。理由:
+  //   旧コードは「論理削除されたユーザの email」を見落とし、後続の prisma.user.create で
+  //   DB UNIQUE 制約違反 → 500 エラーで abort していた (= ユーザ離脱に直結)。
+  //   ここで明示的に検知し、4xx で「再利用不可」と通知する。
+  //
+  //   ※ Phase 2 (PR #418) で User.email を tenant-scoped 一意 (= @@unique([tenantId, email]))
+  //   に変更後、本チェックは「同一テナント内の重複検知」に意味が変わる
+  //   (= 他テナントへの再登録は許可)。
   const existingEmail = await prisma.user.findFirst({
-    where: { email: input.initialAdminEmail, deletedAt: null },
-    select: { id: true },
+    where: { email: input.initialAdminEmail },
+    select: { id: true, deletedAt: true },
   });
   if (existingEmail != null) {
     return {
       ok: false,
       reason: 'EMAIL_CONFLICT',
-      message: 'このメールアドレスは既に他のテナントで使用されています',
+      message:
+        existingEmail.deletedAt != null
+          ? 'このメールアドレスは過去に使用されているため、現在の DB 設計では再利用できません'
+          : 'このメールアドレスは既に他のテナントで使用されています',
     };
   }
 
@@ -289,8 +300,8 @@ async function createTenantInternal(
         passwordHash: placeholderHash,
         systemRole: 'admin',
         // 検証メール経由でパスワード設定するまで非アクティブ
+        // (isActive: false で十分。deletedAt セットは NG = 過去 typo を 2026-05-20 削除)
         isActive: false,
-        deletedAt: new Date(),
         forcePasswordChange: false,
       },
       select: { id: true },
