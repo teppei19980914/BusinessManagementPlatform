@@ -24,3 +24,10 @@ DROP INDEX IF EXISTS "idx_users_email";
 
 -- Step 2: 新複合 UNIQUE index を CREATE
 CREATE UNIQUE INDEX "idx_users_tenant_email" ON "users"("tenant_id", "email");
+
+-- Step 3: ADR-0016 適用直後の全ユーザを強制ログアウト
+--   旧 schema 想定の JWT は (global email) → userId 解決を内部で持つ可能性があるため、
+--   schema 切替直後に全 session を破棄する (= 再ログインで multi-tenant 経路に乗せる)。
+--   tokenVersion increment で layout DB 照合が失敗 → middleware が自動 logout する。
+--   関連: [feedback_session_clearance_pattern.md](docs/knowledge/KDD §5.X+72)
+UPDATE "users" SET "token_version" = "token_version" + 1;

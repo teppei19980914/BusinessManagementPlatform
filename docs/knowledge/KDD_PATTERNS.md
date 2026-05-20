@@ -11096,3 +11096,59 @@ export function sanitizeForAudit(obj: Record<string, unknown>): Record<string, u
 - PR #416 (feat/crud-permission-redesign): 本件の原因コミット (S2-E1 拡張 → §5.X+87 修正 → 本件の §5.X+88 修正)
 - KDD §5.X+87 (前段): `Object.create(null)` + FORBIDDEN_KEYS による初回対策 (CodeQL は依然警告)
 - CodeQL ルール: `js/prototype-polluting-assignment` (CWE-915)
+
+## 5.X+89 **`User.email` を global UNIQUE のまま運用すると tenant 削除直後の email 再利用 / 同個人の複数 tenant 所属で UNIQUE 違反 500 になる ─ `@@unique([tenantId, email])` に組み替え、pre-auth フローは全て tenantSlug 必須化する (2026-05-20 / PR feat/multi-tenant-user-membership)**
+
+### 発生事象
+
+- 旧 schema (`@@unique([email])`) では「テナント A を解約 → 同 email でテナント B を新規作成」が UNIQUE 違反で 500
+- 「同一個人が 顧客テナント + 自社運営テナント の両方に所属する」業務要件にも対応不可
+- 既存のテナント削除運用 (= soft-delete) では email row が残るため、 再利用すると Prisma が P2002 を返却 → API が 500
+
+### 根本原因
+
+- 旧仕様は B2C SaaS 想定 (1 person = 1 email = 1 account) を引きずっていた
+- B2B multi-tenant の標準は **`(tenant, email)` の複合一意** (Slack / Notion / GitHub Org)
+- email を tenant 跨ぎ一意にすると、複数組織所属が必要なシナリオで詰む
+
+### 解決策
+
+1. **Schema 変更**: `@@unique([email])` → `@@unique([tenantId, email])`
+2. **Pre-auth フローを全て tenantSlug 必須化**:
+   - login (`/login` UI に 組織 ID 入力欄追加 / NextAuth authorize で `(email, tenantId)` 複合検索)
+   - lock-status (`/api/auth/lock-status`: tenantSlug 必須)
+   - password-reset (`verifyAndIssueResetToken` 第 3 引数で tenantSlug 必須化)
+   - email-verification (send 時に `tenant.slug` を URL に埋め込み)
+3. **enumeration 防止**: tenant 不存在 / user 不存在は **同一の汎用エラー** (`{status: 'none'}` or 「正しくありません」) を返す
+4. **migration**: 全 user の `tokenVersion` を +1 して既存セッションを失効 (= multi-tenant 経路に再ログインで乗せる)
+5. **URL helper の抽出**: `src/lib/url-builder.ts` (= 将来 Option A = subdomain 移行を容易化)
+6. **EMAIL_CONFLICT 廃止**: tenant-onboarding の union 型から削除 (発生不能になったため)
+
+### 教訓
+
+1. **B2B SaaS で email を global UNIQUE にしてはいけない**: 同個人の複数組織所属が物理的に不可になる
+2. **multi-tenant 移行は `(tenant, X) 複合化` + `pre-auth フロー再設計` の 2 段構え**: schema だけ変えても pre-auth が email 単独検索のままだと AmbiguousMembership で別 tenant の user を返す事故が起きる
+3. **enumeration 攻撃面の維持**: tenant 不存在 / user 不存在を同一エラーで返さないと、攻撃者がメール在籍を絞り込み可能になる
+4. **JWT は schema 切替時に必ず invalidate**: 旧 schema 想定の token が残ると次のログイン時の挙動が予測不能 (= tokenVersion increment が最小コスト)
+5. **将来の subdomain 移行を考慮**: URL builder を一元化しておくと、`/login?tenant=foo` → `foo.app.example.com/login` への切替が helper 差し替えだけで済む
+6. **メール URL に tenant 埋め込み**: `?tenant=<slug>` を URL クエリに付与しないと、新規招待メール経由でログイン UI が空欄になる UX バグになる
+
+### 検証手順
+
+```sql
+-- 移行可能性チェック (期待値: 0 件)
+SELECT email, COUNT(DISTINCT tenant_id) AS tenants
+FROM users
+WHERE deleted_at IS NULL
+GROUP BY email
+HAVING COUNT(DISTINCT tenant_id) > 1;
+```
+
+詳細な検証手順は [docs/operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md](../operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md) 参照。
+
+### 関連 KDD / PR
+
+- PR feat/multi-tenant-user-membership (本 PR): 原因コミット + ADR-0016
+- ADR-0016: [docs/adr/0016-multi-tenant-user-membership.md](../adr/0016-multi-tenant-user-membership.md) (設計判断記録)
+- 検証手順: [docs/operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md](../operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md)
+- KDD §5.X+72 (前提): セッション解除パターン (tokenVersion increment 設計)
