@@ -647,8 +647,11 @@ export function ProjectDetailClient({
           <TabsTrigger value="issues" className="hidden lg:inline-flex">{t('tabIssues')}</TabsTrigger>
           <TabsTrigger value="retrospectives" className="hidden lg:inline-flex">{t('tabRetrospectives')}</TabsTrigger>
           <TabsTrigger value="knowledge" className="hidden lg:inline-flex">{t('tabKnowledge')}</TabsTrigger>
-          {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案 */}
-          <TabsTrigger value="suggestions" className="hidden lg:inline-flex">{t('tabSuggestions')}</TabsTrigger>
+          {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案。
+              feat/crud-permission-redesign (2026-05-20): PM/TL + admin のみ。adopt 操作も PM/TL 判断のため。 */}
+          {canEdit && (
+            <TabsTrigger value="suggestions" className="hidden lg:inline-flex">{t('tabSuggestions')}</TabsTrigger>
+          )}
           {/* Mobile 表示: 資産プルダウン (lg-)。配下の値が active なら親も active 表示。 */}
           <Menu.Root>
             <Menu.Trigger
@@ -677,7 +680,8 @@ export function ProjectDetailClient({
                     { value: 'issues', label: t('tabIssues') },
                     { value: 'retrospectives', label: t('tabRetrospectives') },
                     { value: 'knowledge', label: t('tabKnowledge') },
-                    { value: 'suggestions', label: t('tabSuggestions') },
+                    // feat/crud-permission-redesign (2026-05-20): suggestions は PM/TL + admin のみ
+                    ...(canEdit ? [{ value: 'suggestions', label: t('tabSuggestions') }] : []),
                   ].map((opt) => (
                     <Menu.Item
                       key={opt.value}
@@ -1025,10 +1029,15 @@ export function ProjectDetailClient({
           参考タブ (PR #65 核心機能): 過去プロジェクトから流用可能な
           ナレッジ・課題を類似度スコア付きで表示し、採用操作を提供する。
           本タブは独自の fetch (SuggestionsPanel 内) を持つため LazyTabContent 不要。
+          feat/crud-permission-redesign (2026-05-20): PM/TL + admin のみ表示。
+          canAdopt は canCreate (member 含む) ではなく canEdit (admin/pm_tl) に変更し、
+          採用 (プロジェクト紐付け) 権限を PM/TL 判断に統一。
         */}
-        <TabsContent value="suggestions" className="mt-4">
-          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} tenantPlan={tenantPlan} />
-        </TabsContent>
+        {canEdit && (
+          <TabsContent value="suggestions" className="mt-4">
+            <SuggestionsPanel projectId={project.id} canAdopt={canEdit} tenantPlan={tenantPlan} />
+          </TabsContent>
+        )}
 
         {/* メンバータブ（admin/pm_tl のみ表示、両方 allUsers が必要）
             feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー管理可能になったため、
@@ -1093,7 +1102,9 @@ export function ProjectDetailClient({
               {t('suggestionsModalDescription')}
             </DialogDescription>
           </DialogHeader>
-          <SuggestionsPanel projectId={project.id} canAdopt={canCreate} tenantPlan={tenantPlan} />
+          {/* feat/crud-permission-redesign (2026-05-20): adopt は PM/TL + admin のみ。
+              新規作成直後の suggestions モーダルでも canEdit に揃える (member 自身が adopt できないため)。 */}
+          <SuggestionsPanel projectId={project.id} canAdopt={canEdit} tenantPlan={tenantPlan} />
           <div className="mt-4 flex justify-end">
             <Button variant="outline" onClick={closeSuggestionsModal}>
               {tAction('close')}

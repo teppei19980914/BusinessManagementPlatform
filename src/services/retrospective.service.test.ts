@@ -451,14 +451,17 @@ describe('confirmRetrospective / deleteRetrospective', () => {
 
   it('delete 存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(null);
-    await expect(deleteRetrospective('x', 'u-1', 'general')).rejects.toThrow('NOT_FOUND');
+    await expect(
+      deleteRetrospective('x', 'u-1', 'general', 'tenant-A', 'project'),
+    ).rejects.toThrow('NOT_FOUND');
   });
 
-  it('delete 作成者本人は削除 OK', async () => {
+  // feat/crud-permission-redesign (2026-05-20): context 別に削除権限が変わる
+  it('delete (context=project): 作成者本人は削除 OK', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
-    await deleteRetrospective('ret-1', 'u-1', 'general');
+    await deleteRetrospective('ret-1', 'u-1', 'general', 'tenant-A', 'project');
 
     expect(prisma.retrospective.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -467,19 +470,34 @@ describe('confirmRetrospective / deleteRetrospective', () => {
     );
   });
 
-  it('delete admin は他人の振り返りも削除可 (管理削除)', async () => {
+  it('delete (context=project): admin も他人作成は FORBIDDEN', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(
+      deleteRetrospective('ret-1', 'admin-x', 'admin', 'tenant-A', 'project'),
+    ).rejects.toThrow('FORBIDDEN');
+    expect(prisma.retrospective.update).not.toHaveBeenCalled();
+  });
+
+  it('delete (context=global): admin は他人作成も削除可 (管理削除)', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
-    await deleteRetrospective('ret-1', 'admin-x', 'admin');
+    await deleteRetrospective('ret-1', 'admin-x', 'admin', 'tenant-A', 'global');
     expect(prisma.retrospective.update).toHaveBeenCalled();
   });
 
-  it('delete 非 admin の第三者は FORBIDDEN', async () => {
+  it('delete (context=global): 非 admin (作成者本人) も FORBIDDEN', async () => {
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
-    await expect(deleteRetrospective('ret-1', 'u-other', 'general')).rejects.toThrow(
-      'FORBIDDEN',
-    );
+    await expect(
+      deleteRetrospective('ret-1', 'u-1', 'general', 'tenant-A', 'global'),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('delete (context=project): 非 admin の第三者は FORBIDDEN', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    await expect(
+      deleteRetrospective('ret-1', 'u-other', 'general', 'tenant-A', 'project'),
+    ).rejects.toThrow('FORBIDDEN');
   });
 });
 

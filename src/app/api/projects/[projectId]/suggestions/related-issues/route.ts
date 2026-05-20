@@ -24,7 +24,9 @@ export async function POST(
   if (user instanceof NextResponse) return user;
 
   const { projectId } = await params;
-  const forbidden = await checkProjectPermission(user, projectId, 'project:read');
+  // feat/crud-permission-redesign (2026-05-20): 参考タブ系は PM/TL + admin のみ。
+  //   suggestions UI から呼ばれるため、参考タブと同じ project:update に統一。
+  const forbidden = await checkProjectPermission(user, projectId, 'project:update');
   if (forbidden) return forbidden;
 
   const body = await req.json().catch(() => ({}));

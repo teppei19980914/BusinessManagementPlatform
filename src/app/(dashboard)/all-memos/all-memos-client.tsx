@@ -20,8 +20,13 @@
  */
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { useLoading } from '@/components/loading-overlay';
+import { useToast } from '@/components/toast-provider';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -62,9 +67,17 @@ function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
   }
 }
 
-export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
+export function AllMemosClient({
+  memos,
+  currentSystemRole,
+}: {
+  memos: MemoDTO[];
+  currentSystemRole: string;
+}) {
   const tField = useTranslations('field');
   const tMemo = useTranslations('memo');
+  const tCommon = useTranslations('common');
+  const tAction = useTranslations('action');
   const VISIBILITY_LABELS: Record<string, string> = {
     private: tMemo('visibilityPrivate'),
     public: tMemo('visibilityPublic'),
@@ -72,6 +85,23 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
   const { formatDateTime } = useFormatters();
   const [viewing, setViewing] = useState<MemoDTO | null>(null);
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
+  // feat/crud-permission-redesign (2026-05-20): admin の public メモモデレーション削除
+  const router = useRouter();
+  const { withLoading } = useLoading();
+  const { showSuccess, showError } = useToast();
+  const isAdmin = currentSystemRole === 'admin';
+  async function handleAdminDelete(memoId: string, title: string) {
+    if (!confirm(tCommon('adminDeleteConfirm', { label: title }))) return;
+    const res = await withLoading(() =>
+      fetch(`/api/memos/${memoId}`, { method: 'DELETE' }),
+    );
+    if (!res.ok) {
+      showError(tMemo('deleteFailed'));
+      return;
+    }
+    showSuccess(tMemo('deleteSuccess'));
+    router.refresh();
+  }
 
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort('sort:all-memos');
@@ -101,6 +131,9 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
               <SortableResizableHead columnKey="author" defaultWidth={140} label={tMemo('colAuthor')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="updatedAt" defaultWidth={140} label={tMemo('colUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
               <ResizableHead columnKey="attachments" defaultWidth={200}>{tMemo('colAttachments')}</ResizableHead>
+              {isAdmin && (
+                <ResizableHead columnKey="adminActions" defaultWidth={80}>{tMemo('colActions')}</ResizableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -123,11 +156,28 @@ export function AllMemosClient({ memos }: { memos: MemoDTO[] }) {
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
                 </TableCell>
+                {isAdmin && (
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    {/* admin は他人の public メモのモデレーション削除可。自分のメモは /memos で削除する想定 */}
+                    {!m.isMine && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-destructive hover:text-destructive"
+                        title={tCommon('adminDeleteTitle', { label: m.title })}
+                        aria-label={tAction('delete')}
+                        onClick={() => handleAdminDelete(m.id, m.title)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </TableCell>
+                )}
               </ClickableRow>
             ))}
             {sortedMemos.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={isAdmin ? 6 : 5} className="py-8 text-center text-muted-foreground">
                   {tMemo('emptyPublic')}
                   <span className="ml-1 text-xs">{tMemo('emptyPublicHint')}</span>
                 </TableCell>

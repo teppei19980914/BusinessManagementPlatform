@@ -107,7 +107,9 @@ export async function DELETE(
   if (forbidden) return forbidden;
 
   try {
-    await deleteRetrospective(retroId, user.id, user.systemRole, user.tenantId);
+    // feat/crud-permission-redesign (2026-05-20): project 経路は作成者本人のみ削除可。
+    //   admin も「振り返り一覧」上では削除不可 (横断「全振り返り」経路で削除する)。
+    await deleteRetrospective(retroId, user.id, user.systemRole, user.tenantId, 'project');
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === 'FORBIDDEN') {

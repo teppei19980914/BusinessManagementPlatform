@@ -15,13 +15,18 @@ export default async function EstimatesPage({ params }: Props) {
   const membership = await checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId);
   if (!membership.isMember) notFound();
 
+  // feat/crud-permission-redesign (2026-05-20): 見積タブは PM/TL + admin のみアクセス可。
+  //   URL 直打ち防止のため、member/viewer は 404 で弾く (UI=API 一致原則)。
+  const canEdit = session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl';
+  if (!canEdit) notFound();
+
   const estimates = await listEstimates(projectId, session.user.tenantId);
 
   return (
     <EstimatesClient
       projectId={projectId}
       estimates={estimates}
-      canEdit={session.user.systemRole === 'admin' || membership.projectRole === 'pm_tl'}
+      canEdit={canEdit}
     />
   );
 }

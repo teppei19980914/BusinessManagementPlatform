@@ -997,7 +997,9 @@
     "colUpdatedAt": "Updated",
     "colAttachments": "Attachments",
     "colActions": "Actions",
-    "count": "{count} item(s)"
+    "count": "{count} item(s)",
+    "deleteSuccess": "Memo deleted",
+    "deleteFailed": "Failed to delete memo"
   },
   "myTask": {
     "title": "My Tasks",

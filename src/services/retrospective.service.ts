@@ -474,17 +474,19 @@ export async function updateRetrospective(
 /**
  * 振り返りを論理削除する (deletedAt をセット)。
  *
- * 2026-04-24: 作成者本人 OR admin のみ許可。admin は「全振り返り」画面からの
- * 管理削除を想定。
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂):
+ *   - context='project' (○○一覧経由): 作成者本人のみ削除可。admin も他人作成は削除不可。
+ *   - context='global' (全○○経由): admin のみ削除可。
  *
  * @throws {Error} 'NOT_FOUND' — 振り返りが存在しない or 既に削除済み
- * @throws {Error} 'FORBIDDEN' — 作成者でなく admin でもない
+ * @throws {Error} 'FORBIDDEN' — context に応じた条件を満たさない
  */
 export async function deleteRetrospective(
   retroId: string,
   userId: string,
   systemRole: string,
   viewerTenantId: string,
+  context: 'project' | 'global',
 ): Promise<void> {
   // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.retrospective.findFirst({
@@ -494,7 +496,11 @@ export async function deleteRetrospective(
   if (!existing) throw new Error('NOT_FOUND');
   const isCreator = existing.createdBy === userId;
   const isAdmin = systemRole === 'admin';
-  if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
+  if (context === 'project') {
+    if (!isCreator) throw new Error('FORBIDDEN');
+  } else {
+    if (!isAdmin) throw new Error('FORBIDDEN');
+  }
 
   const now = new Date();
   // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)

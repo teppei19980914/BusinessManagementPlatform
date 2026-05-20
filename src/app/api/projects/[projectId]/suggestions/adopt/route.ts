@@ -51,10 +51,10 @@ export async function POST(
     );
   }
 
-  // kind に応じて要求権限を切り替え
-  const requiredPermission =
-    parsed.data.kind === 'knowledge' ? 'project:update' : 'risk:update';
-  const forbidden = await checkProjectPermission(user, projectId, requiredPermission);
+  // feat/crud-permission-redesign (2026-05-20): kind 別認可を撤廃し全て project:update に統一。
+  //   旧仕様 (knowledge: project:update, risk/issue/retro: risk:update) では member も risk/issue/retro を
+  //   adopt 可能だったが、新仕様ではプロジェクトへの紐付けは PM/TL 判断のため admin/pm_tl のみに限定。
+  const forbidden = await checkProjectPermission(user, projectId, 'project:update');
   if (forbidden) return forbidden;
 
   try {

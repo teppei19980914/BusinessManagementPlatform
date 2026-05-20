@@ -662,15 +662,18 @@ describe('deleteRisk', () => {
 
   it('存在しなければ NOT_FOUND', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(null);
-    await expect(deleteRisk('x', 'u-1', 'general', TEST_TENANT_ID)).rejects.toThrow('NOT_FOUND');
+    await expect(
+      deleteRisk('x', 'u-1', 'general', TEST_TENANT_ID, 'project'),
+    ).rejects.toThrow('NOT_FOUND');
   });
 
-  it('作成者本人は削除できる', async () => {
+  // feat/crud-permission-redesign (2026-05-20): context 別に削除権限が変わる
+  it('(context=project): 作成者本人は削除できる', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
     vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
 
-    await deleteRisk('r-1', 'u-1', 'general', TEST_TENANT_ID);
+    await deleteRisk('r-1', 'u-1', 'general', TEST_TENANT_ID, 'project');
 
     expect(prisma.riskIssue.update).toHaveBeenCalledWith({
       where: { id: 'r-1' },
@@ -678,19 +681,36 @@ describe('deleteRisk', () => {
     });
   });
 
-  it('admin は他人のリスクも削除できる (全リスク画面からの管理削除)', async () => {
+  it('(context=project): admin も他人作成は FORBIDDEN', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    await expect(
+      deleteRisk('r-1', 'admin-x', 'admin', TEST_TENANT_ID, 'project'),
+    ).rejects.toThrow('FORBIDDEN');
+    expect(prisma.riskIssue.update).not.toHaveBeenCalled();
+  });
+
+  it('(context=global): admin は他人作成も削除可 (全リスク画面からの管理削除)', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
     vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
     vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
 
-    await deleteRisk('r-1', 'admin-x', 'admin', TEST_TENANT_ID);
+    await deleteRisk('r-1', 'admin-x', 'admin', TEST_TENANT_ID, 'global');
 
     expect(prisma.riskIssue.update).toHaveBeenCalled();
   });
 
-  it('非 admin の第三者は FORBIDDEN', async () => {
+  it('(context=global): 非 admin (作成者本人) も FORBIDDEN', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
-    await expect(deleteRisk('r-1', 'u-other', 'general', TEST_TENANT_ID)).rejects.toThrow('FORBIDDEN');
+    await expect(
+      deleteRisk('r-1', 'u-1', 'general', TEST_TENANT_ID, 'global'),
+    ).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('(context=project): 非 admin の第三者は FORBIDDEN', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    await expect(
+      deleteRisk('r-1', 'u-other', 'general', TEST_TENANT_ID, 'project'),
+    ).rejects.toThrow('FORBIDDEN');
   });
 });
 

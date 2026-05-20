@@ -566,17 +566,20 @@ export async function updateKnowledge(
 /**
  * ナレッジを論理削除する。
  *
- * 2026-04-24: 作成者本人 OR admin のみ許可。admin は「全ナレッジ」画面からの
- * 管理削除を想定。
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂):
+ *   - context='project' (○○一覧経由): 作成者本人のみ削除可。admin も他人作成は削除不可。
+ *   - context='global' (全○○経由): admin のみ削除可。
+ *   UI=API 一致原則に従い、route 層から context を渡して経路別の権限を service 層で enforce する。
  *
  * @throws {Error} 'NOT_FOUND' — ナレッジが存在しない or 既に削除済み
- * @throws {Error} 'FORBIDDEN' — 作成者でなく admin でもない
+ * @throws {Error} 'FORBIDDEN' — context に応じた条件を満たさない
  */
 export async function deleteKnowledge(
   knowledgeId: string,
   userId: string,
   systemRole: string,
   viewerTenantId: string,
+  context: 'project' | 'global',
 ): Promise<void> {
   // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.knowledge.findFirst({
@@ -586,7 +589,13 @@ export async function deleteKnowledge(
   if (!existing) throw new Error('NOT_FOUND');
   const isCreator = existing.createdBy === userId;
   const isAdmin = systemRole === 'admin';
-  if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
+  if (context === 'project') {
+    // ○○一覧経路: 作成者本人のみ削除可。admin も他人作成は削除不可 (一覧 UI に admin の削除ボタンを置かない設計と整合)
+    if (!isCreator) throw new Error('FORBIDDEN');
+  } else {
+    // 全○○経路: admin のみ削除可。作成者本人であっても横断経路では削除させない (作成者削除は project 経路で行う)
+    if (!isAdmin) throw new Error('FORBIDDEN');
+  }
 
   // PR #89: 紐づく Attachment も同時に論理削除 (孤児データ防止)
   // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)

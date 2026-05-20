@@ -9,8 +9,9 @@ import { SUGGESTION_DEFAULT_LIMIT } from '@/config/suggestion';
  * プロジェクトに対する提案型サービス (核心機能, PR #65 Phase 1)。
  * レスポンス: { data: { knowledge: KnowledgeSuggestion[]; pastIssues: PastIssueSuggestion[]; retrospectives: RetrospectiveSuggestion[] } }
  *
- * 認可: プロジェクトの read 権限が必要 (メンバー or admin)。
- *   → 他プロジェクトの情報を含むため「そのプロジェクトのメンバー」に閲覧を限定する。
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂): project:update (PM/TL + admin) のみ。
+ *   旧仕様は project:read (member/viewer 含む) だったが、参考タブを PM/TL 判断の道具として位置付けし、
+ *   UI=API 一致原則に従って API も PM/TL + admin に限定。
  *   過去 Issue の sourceProjectName は project の deletedAt 判定で null マスクしてから返す。
  */
 const SUGGESTIONS_API_MAX_LIMIT = 100;
@@ -23,7 +24,7 @@ export async function GET(
   if (user instanceof NextResponse) return user;
 
   const { projectId } = await params;
-  const forbidden = await checkProjectPermission(user, projectId, 'project:read');
+  const forbidden = await checkProjectPermission(user, projectId, 'project:update');
   if (forbidden) return forbidden;
 
   // PR-X6 (2026-05-07): limit のデフォルトを SUGGESTION_DEFAULT_LIMIT (=50) に拡大、

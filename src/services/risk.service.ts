@@ -720,17 +720,19 @@ export async function bulkUpdateRisksFromList(
 /**
  * リスク/課題を論理削除する。
  *
- * 2026-04-24: 作成者本人 OR admin のみ許可。admin は「全リスク / 全課題」画面から
- * 管理削除できるユースケースを想定。
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂):
+ *   - context='project' (○○一覧経由): 作成者本人のみ削除可。admin も他人作成は削除不可。
+ *   - context='global' (全○○経由): admin のみ削除可。
  *
  * @throws {Error} 'NOT_FOUND' — リスク/課題が存在しない or 既に削除済み
- * @throws {Error} 'FORBIDDEN' — 作成者でなく admin でもない
+ * @throws {Error} 'FORBIDDEN' — context に応じた条件を満たさない
  */
 export async function deleteRisk(
   riskId: string,
   userId: string,
   systemRole: string,
   viewerTenantId: string,
+  context: 'project' | 'global',
 ): Promise<void> {
   // 2026-05-09 feedback Phase 2-3: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.riskIssue.findFirst({
@@ -740,7 +742,11 @@ export async function deleteRisk(
   if (!existing) throw new Error('NOT_FOUND');
   const isCreator = existing.reporterId === userId;
   const isAdmin = systemRole === 'admin';
-  if (!isCreator && !isAdmin) throw new Error('FORBIDDEN');
+  if (context === 'project') {
+    if (!isCreator) throw new Error('FORBIDDEN');
+  } else {
+    if (!isAdmin) throw new Error('FORBIDDEN');
+  }
 
   // PR #89: 紐づく Attachment も論理削除 (UI からアクセス不可になる孤児データ防止)
   // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete。

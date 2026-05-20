@@ -276,16 +276,12 @@ export function AllRisksTable({
               </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  {/* PR feat/asset-multi-project-linking: 作成元が削除済 (projectId=null)
-                      の場合は紐付け済プロジェクトから 1 件 fallback を使う。両方無い orphan は
-                      admin が手動 cleanup する想定で本ボタンは出さない。 */}
-                  {(r.projectId ?? r.linkedProjectIds[0]) ? (
-                    <AdminRiskDeleteButton
-                      projectId={(r.projectId ?? r.linkedProjectIds[0])!}
-                      riskId={r.id}
-                      label={r.title}
-                    />
-                  ) : null}
+                  {/* feat/crud-permission-redesign (2026-05-20): 横断 DELETE 専用ルートに変更。
+                      projectId fallback は不要 (riskId 単独で削除可能、orphan も削除可能になった) */}
+                  <AdminRiskDeleteButton
+                    riskId={r.id}
+                    label={r.title}
+                  />
                 </TableCell>
               )}
             </ClickableRow>

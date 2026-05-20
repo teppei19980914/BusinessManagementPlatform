@@ -997,7 +997,9 @@
     "colUpdatedAt": "更新日時",
     "colAttachments": "添付",
     "colActions": "操作",
-    "count": "{count} 件"
+    "count": "{count} 件",
+    "deleteSuccess": "メモを削除しました",
+    "deleteFailed": "メモの削除に失敗しました"
   },
   "myTask": {
     "title": "マイタスク",
