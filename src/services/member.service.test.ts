@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
+vi.mock('@/lib/db', () => {
+  const prismaMock = {
     user: { findFirst: vi.fn() },
     // 2026-05-09 feedback Phase 2-6: addMember で project tenant 検証用
     project: { findFirst: vi.fn() },
@@ -14,8 +14,13 @@ vi.mock('@/lib/db', () => ({
       delete: vi.fn(),
     },
     roleChangeLog: { create: vi.fn() },
-  },
-}));
+    // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-D4): $transaction を mock
+    // (handler に prismaMock 自身を渡して create/update/delete を中で呼べるようにする)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    $transaction: vi.fn(async (cb: any) => cb(prismaMock)),
+  };
+  return { prisma: prismaMock };
+});
 
 import { listMembers, addMember, updateMemberRole, removeMember } from './member.service';
 import { prisma } from '@/lib/db';

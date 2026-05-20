@@ -132,21 +132,57 @@ export async function recordBulkAuditLogs(params: {
 /**
  * 変更前後の差分を抽出するヘルパー
  * password_hash 等の機密フィールドは自動的に除外する。
+ *
+ * feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-E1):
+ *   SENSITIVE_FIELDS を 4 → 14 に拡張し、camelCase / snake_case 両方を網羅。
+ *   recoveryCodeHash / token 系 / MFA temp secret / API key / Stripe secret 等、
+ *   将来 audit_logs.beforeValue/afterValue に流入し得る機微フィールドを構造的に redact。
+ *   nested object も再帰的に redact (top-level だけだった旧実装の defense-in-depth 強化)。
  */
 const SENSITIVE_FIELDS = new Set([
-  'passwordHash',
-  'password_hash',
-  'mfaSecretEncrypted',
-  'mfa_secret_encrypted',
+  // パスワード関連
+  'passwordHash', 'password_hash',
+  'passwordSalt', 'password_salt',
+  // MFA
+  'mfaSecretEncrypted', 'mfa_secret_encrypted',
+  'mfaTempSecret', 'mfa_temp_secret',
+  // リカバリーコード
+  'recoveryCodeHash', 'recovery_code_hash',
+  'codeHash', 'code_hash',
+  // 認証トークン (reset / verify / session)
+  'tokenHash', 'token_hash',
+  'sessionToken', 'session_token',
+  'refreshToken', 'refresh_token',
+  // 外部サービスの secret
+  'apiKey', 'api_key',
+  'webhookSecret', 'webhook_secret',
+  'stripeMeterEventToken', 'stripe_meter_event_token',
+  // 旧仕様コードベース互換
+  'password',
 ]);
 
+/**
+ * オブジェクトの top-level + nested フィールドを再帰的に sanitize する。
+ * 配列要素もスキャンし、配列内の object も再帰処理。最大深度 5 で stack overflow を防ぐ。
+ */
 export function sanitizeForAudit(
   obj: Record<string, unknown>,
+  depth = 0,
 ): Record<string, unknown> {
+  const MAX_DEPTH = 5;
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if (SENSITIVE_FIELDS.has(key)) {
       sanitized[key] = '[REDACTED]';
+    } else if (depth < MAX_DEPTH && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      // nested object は再帰的に redact (S2-E1: shallow だった旧実装の盲点を解消)
+      sanitized[key] = sanitizeForAudit(value as Record<string, unknown>, depth + 1);
+    } else if (depth < MAX_DEPTH && Array.isArray(value)) {
+      sanitized[key] = value.map((item) =>
+        item !== null && typeof item === 'object' && !Array.isArray(item)
+          ? sanitizeForAudit(item as Record<string, unknown>, depth + 1)
+          : item,
+      );
     } else {
       sanitized[key] = value;
     }

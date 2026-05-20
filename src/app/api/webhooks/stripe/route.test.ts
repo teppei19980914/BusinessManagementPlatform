@@ -13,12 +13,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Prisma モック
+// feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-C1-Stripe):
+//   route が findUnique+create から upsert に変更されたため、upsert を mock 追加。
+//   findUnique/create は他経路で残っているため互換性のため維持。
 vi.mock('@/lib/db', () => ({
   prisma: {
     stripeWebhookEvent: {
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      upsert: vi.fn(),
     },
   },
 }));
@@ -87,9 +91,12 @@ describe('POST /api/webhooks/stripe', () => {
     expect(json.error.message).toContain('No matching signature');
   });
 
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-C1-Stripe):
+  //   route が findUnique+create から upsert に変更されたため、すべての test で
+  //   upsert を mock する。upsert は「既存があれば既存行 / 無ければ新規作成行」を返す。
   it('既存 event で processedAt != null → 200 already_processed (= 冪等性)', async () => {
     mockConstructEvent.mockReturnValue({ id: 'evt_dup', type: 'customer.subscription.updated', data: { object: {} } });
-    vi.mocked(prisma.stripeWebhookEvent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.stripeWebhookEvent.upsert).mockResolvedValue({
       id: 'evt_dup',
       processedAt: new Date(),
       retryCount: 0,
@@ -102,10 +109,13 @@ describe('POST /api/webhooks/stripe', () => {
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 
-  it('新規 event → create + dispatch + processedAt 更新 → 200 processed', async () => {
+  it('新規 event → upsert + dispatch + processedAt 更新 → 200 processed', async () => {
     mockConstructEvent.mockReturnValue({ id: 'evt_new', type: 'invoice.paid', data: { object: {} } });
-    vi.mocked(prisma.stripeWebhookEvent.findUnique).mockResolvedValue(null);
-    vi.mocked(prisma.stripeWebhookEvent.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.stripeWebhookEvent.upsert).mockResolvedValue({
+      id: 'evt_new',
+      processedAt: null,
+      retryCount: 0,
+    } as never);
     vi.mocked(prisma.stripeWebhookEvent.update).mockResolvedValue({} as never);
     mockDispatch.mockResolvedValue({ ok: true, action: 'invoice_paid' });
 
@@ -115,10 +125,9 @@ describe('POST /api/webhooks/stripe', () => {
     expect(json.data.status).toBe('processed');
     expect(json.data.action).toBe('invoice_paid');
 
-    // create が呼ばれた
-    const createCall = vi.mocked(prisma.stripeWebhookEvent.create).mock.calls[0]?.[0];
-    expect(createCall?.data.id).toBe('evt_new');
-    expect(createCall?.data.type).toBe('invoice.paid');
+    // upsert が呼ばれた
+    const upsertCall = vi.mocked(prisma.stripeWebhookEvent.upsert).mock.calls[0]?.[0];
+    expect(upsertCall?.where).toEqual({ id: 'evt_new' });
 
     // update の processedAt がセットされた
     const updateCall = vi.mocked(prisma.stripeWebhookEvent.update).mock.calls[0]?.[0];
@@ -129,8 +138,11 @@ describe('POST /api/webhooks/stripe', () => {
 
   it('handler throw → errorMessage 記録 + retryCount=1 + 500', async () => {
     mockConstructEvent.mockReturnValue({ id: 'evt_fail', type: 'invoice.paid', data: { object: {} } });
-    vi.mocked(prisma.stripeWebhookEvent.findUnique).mockResolvedValue(null);
-    vi.mocked(prisma.stripeWebhookEvent.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.stripeWebhookEvent.upsert).mockResolvedValue({
+      id: 'evt_fail',
+      processedAt: null,
+      retryCount: 0,
+    } as never);
     vi.mocked(prisma.stripeWebhookEvent.update).mockResolvedValue({} as never);
     mockDispatch.mockRejectedValue(new Error('DB connection lost'));
 
@@ -149,7 +161,7 @@ describe('POST /api/webhooks/stripe', () => {
 
   it('既存 event で processedAt=null かつ retryCount=3 → handler 再実行で retryCount=4 + nextRetryAt=null (= DLQ)', async () => {
     mockConstructEvent.mockReturnValue({ id: 'evt_retry', type: 'invoice.paid', data: { object: {} } });
-    vi.mocked(prisma.stripeWebhookEvent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.stripeWebhookEvent.upsert).mockResolvedValue({
       id: 'evt_retry',
       processedAt: null,
       retryCount: 3,
@@ -159,9 +171,6 @@ describe('POST /api/webhooks/stripe', () => {
 
     const res = await POST(buildRequest('{}') as never);
     expect(res.status).toBe(500);
-
-    // 既存レコードなので create は呼ばれない
-    expect(prisma.stripeWebhookEvent.create).not.toHaveBeenCalled();
 
     // retryCount は既存 3 → 4 へ
     const updateCall = vi.mocked(prisma.stripeWebhookEvent.update).mock.calls[0]?.[0];

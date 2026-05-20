@@ -77,27 +77,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // §3. 冪等性確保 (= event.id ベース)
-  //   - 既に processedAt != null なら早期 return (= Stripe 再送への対応)
-  //   - レコード新規作成時は payloadJson に event 全体を保存
-  const existing = await prisma.stripeWebhookEvent.findUnique({
+  // §3. 冪等性確保 (= event.id ベース) — feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-C1):
+  //   旧実装は findUnique → create の 2 step で race condition があった (同時 2 配信で両方 existing=null
+  //   → 両方 create → 2 個目が P2002、catch で update を試みても P2025 で 500 → Stripe が再送ループ)。
+  //   upsert に統一して race を構造的に解消し、retryCount は race 時に元値を保持。
+  const existing = await prisma.stripeWebhookEvent.upsert({
     where: { id: event.id },
+    create: {
+      id: event.id,
+      type: event.type,
+      payloadJson: event as unknown as object,
+      retryCount: 0,
+    },
+    update: {}, // 既存行は触らない (processedAt / errorMessage / retryCount は後続 update で更新)
     select: { id: true, processedAt: true, retryCount: true },
   });
 
-  if (existing != null && existing.processedAt != null) {
+  if (existing.processedAt != null) {
     return NextResponse.json({ data: { status: 'already_processed', eventId: event.id } });
-  }
-
-  if (existing == null) {
-    await prisma.stripeWebhookEvent.create({
-      data: {
-        id: event.id,
-        type: event.type,
-        payloadJson: event as unknown as object,
-        retryCount: 0,
-      },
-    });
   }
 
   // §4. ハンドラ dispatch
@@ -120,7 +117,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } catch (e) {
     // §6. 処理失敗: errorMessage + retryCount を記録、5xx で Stripe に再送を促す
     const message = e instanceof Error ? e.message : String(e);
-    const nextRetryCount = (existing?.retryCount ?? 0) + 1;
+    const nextRetryCount = existing.retryCount + 1;
     // exponential backoff: 1, 5, 15 分 (= 4 回目で DLQ 入り)
     const backoffMin = [1, 5, 15][nextRetryCount - 1] ?? null;
     const nextRetryAt = backoffMin != null ? new Date(Date.now() + backoffMin * 60 * 1000) : null;

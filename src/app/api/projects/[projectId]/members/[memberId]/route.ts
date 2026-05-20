@@ -22,6 +22,7 @@ import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { updateMemberRole, removeMember } from '@/services/member.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { prisma } from '@/lib/db';
 import { z } from 'zod/v4';
 
 const updateRoleSchema = z.object({
@@ -107,6 +108,12 @@ export async function DELETE(
   const forbidden = await checkProjectPermission(user, projectId, 'member:manage');
   if (forbidden) return forbidden;
 
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-A2): beforeValue 記録のため削除前に取得
+  const beforeMember = await prisma.projectMember.findUnique({
+    where: { id: memberId },
+    select: { id: true, userId: true, projectId: true, projectRole: true, createdAt: true },
+  });
+
   try {
     await removeMember(memberId, user.id, user.tenantId, user.systemRole);
 
@@ -116,6 +123,7 @@ export async function DELETE(
       action: 'DELETE',
       entityType: 'project_member',
       entityId: memberId,
+      beforeValue: beforeMember ? (beforeMember as unknown as Record<string, unknown>) : null,
     });
 
     return NextResponse.json({ data: { success: true } });

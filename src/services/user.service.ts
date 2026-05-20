@@ -29,6 +29,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import type { Prisma } from '@/generated/prisma/client';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import type { CreateUserInput } from '@/lib/validators/auth';
@@ -550,27 +551,40 @@ export async function lockInactiveUsers(
 
   for (const c of candidates) {
     try {
+      // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-D5): per-user の user.update +
+      //   recordAuditLog を transaction 化。旧実装は逐次 await で、DB 切断時に「update 済だが
+      //   audit_log 未記録」状態が残り得た (cron try/catch で握りつぶしのため検知不能)。
+      //   transaction で両者を atomic に。
       // isActive=false に更新 (論理削除はしない)。
       // User モデルは updatedBy 列を持たない設計 (self-referential 回避)。
       // ロック実行者の追跡は audit_log の userId=systemTriggerId で行う。
-      await prisma.user.update({
-        where: { id: c.id },
-        data: { isActive: false },
-      });
-      // 監査ログ: 削除 (DELETE) ではなく更新 (UPDATE) として記録
-      // Phase 2-10: tenantId は **lock 対象 user の所属 tenant** を使う (cron 横断処理のため)
-      await recordAuditLog({
-        tenantId: c.tenantId,
-        userId: systemTriggerId,
-        action: 'UPDATE',
-        entityType: 'user',
-        entityId: c.id,
-        beforeValue: sanitizeForAudit({ isActive: true }),
-        afterValue: sanitizeForAudit({ isActive: false, reason: '30 日無アクティブ自動ロック' }),
+      await prisma.$transaction(async (tx) => {
+        await tx.user.update({
+          where: { id: c.id },
+          data: { isActive: false },
+        });
+        // 監査ログ: 削除 (DELETE) ではなく更新 (UPDATE) として記録。
+        // Phase 2-10: tenantId は **lock 対象 user の所属 tenant** を使う (cron 横断処理のため)。
+        // 注: recordAuditLog 内部は prisma.auditLog.create を使うため tx ではなく独立 connection だが、
+        //   $transaction の commit 失敗で audit log だけ残るケースは Prisma の interactive
+        //   transaction の挙動上発生しない (handler 中の例外で rollback)。
+        await tx.auditLog.create({
+          data: {
+            tenantId: c.tenantId,
+            userId: systemTriggerId,
+            action: 'UPDATE',
+            entityType: 'user',
+            entityId: c.id,
+            // Prisma JSON column への型キャスト (recordAuditLog ヘルパと同じパターン)
+            beforeValue: sanitizeForAudit({ isActive: true }) as Prisma.InputJsonValue,
+            afterValue: sanitizeForAudit({ isActive: false, reason: '30 日無アクティブ自動ロック' }) as Prisma.InputJsonValue,
+          },
+        });
       });
       lockedUserIds.push(c.id);
     } catch {
-      // 個別失敗は握りつぶし、他のユーザロックを継続 (cron の信頼性優先)
+      // 個別失敗は握りつぶし、他のユーザロックを継続 (cron の信頼性優先)。
+      // transaction 化で「update 済 + audit_log 未記録」の inconsistent state は構造的に発生しない。
     }
   }
 

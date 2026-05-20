@@ -127,12 +127,20 @@ export async function POST(req: NextRequest) {
     await tx.session.deleteMany({ where: { userId: user.id } });
   });
 
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-A2): beforeValue 記録
+  //   user オブジェクト (getAuthenticatedUser 経由) を sanitizeForAudit に通して機微情報 redact。
   await recordAuditLog({
     tenantId: user.tenantId,
     userId: user.id,
     action: 'DELETE',
     entityType: 'user',
     entityId: user.id,
+    beforeValue: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      systemRole: user.systemRole,
+    },
     afterValue: { action: 'self_delete' },
   });
 

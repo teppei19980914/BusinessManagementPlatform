@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // モック設定
-vi.mock('@/lib/db', () => ({
-  prisma: {
+vi.mock('@/lib/db', () => {
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-D5):
+  //   lockInactiveUsers の transaction 化に対応するため、prismaMock を outer 参照可能にし、
+  //   $transaction が callback 形式 (interactive transaction) で呼ばれた場合と
+  //   配列形式 (`$transaction([ops])`) で呼ばれた場合の両対応にする。
+  const prismaMock = {
     user: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -11,38 +15,34 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
-      // P-2 (2026-05-08): 席数上限チェック用 (count of active users)
       count: vi.fn(),
     },
-    // P-2 (2026-05-08): 席数上限チェック用 (plan + beginnerMaxSeats 取得)
-    tenant: {
-      findUnique: vi.fn(),
-    },
+    tenant: { findUnique: vi.fn() },
     roleChangeLog: {
       create: vi.fn(),
-      // feat/crud-permission-redesign (2026-05-20): deleteUser で project_role 解除を bulk 記録
       createMany: vi.fn().mockResolvedValue({ count: 0 } as never),
       deleteMany: vi.fn(),
     },
-    emailVerificationToken: {
-      deleteMany: vi.fn(),
-    },
-    recoveryCode: {
-      deleteMany: vi.fn(),
-    },
-    // PR #89: deleteUser が以下を物理削除する
-    // feat/crud-permission-redesign (2026-05-20): findMany 追加 (role_change_logs 個別記録のため)
+    emailVerificationToken: { deleteMany: vi.fn() },
+    recoveryCode: { deleteMany: vi.fn() },
     projectMember: { deleteMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     session: { deleteMany: vi.fn() },
     passwordResetToken: { deleteMany: vi.fn() },
     passwordHistory: { deleteMany: vi.fn() },
-    // 2026-04-24: deleteUser が Memo もカスケード物理削除する
     memo: { deleteMany: vi.fn() },
-    // feat/account-lock: lockInactiveUsers が audit_log を直接記録する
     auditLog: { create: vi.fn(), createMany: vi.fn() },
-    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
-  },
-}));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    $transaction: vi.fn(async (arg: any) => {
+      if (typeof arg === 'function') {
+        // interactive transaction (callback 形式): tx に prismaMock を渡す
+        return arg(prismaMock);
+      }
+      // 配列形式: 全 promise を解決
+      return Promise.all(arg);
+    }),
+  };
+  return { prisma: prismaMock };
+});
 
 vi.mock('./email-verification.service', async () => {
   class EmailSendError extends Error {

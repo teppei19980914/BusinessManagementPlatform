@@ -103,23 +103,27 @@ export async function addMember(
   });
   if (existing) throw new Error('ALREADY_MEMBER');
 
-  const member = await prisma.projectMember.create({
-    data: { projectId, userId, projectRole, assignedBy },
-    include: { user: { select: { name: true, email: true } } },
-  });
-
-  // 権限変更ログ (Phase 2-10: tenantId 必須化)
-  await prisma.roleChangeLog.create({
-    data: {
-      tenantId: viewerTenantId,
-      changedBy: assignedBy,
-      targetUserId: userId,
-      changeType: 'project_role',
-      projectId,
-      beforeRole: null,
-      afterRole: projectRole,
-      reason: 'プロジェクトメンバー追加',
-    },
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-D4): create + roleChangeLog を
+  //   1 transaction に集約。旧実装は両者が独立 await で後者が失敗すると「メンバーは作られたが
+  //   履歴は残らない」inconsistent state が残るリスクがあった。
+  const member = await prisma.$transaction(async (tx) => {
+    const created = await tx.projectMember.create({
+      data: { projectId, userId, projectRole, assignedBy },
+      include: { user: { select: { name: true, email: true } } },
+    });
+    await tx.roleChangeLog.create({
+      data: {
+        tenantId: viewerTenantId,
+        changedBy: assignedBy,
+        targetUserId: userId,
+        changeType: 'project_role',
+        projectId,
+        beforeRole: null,
+        afterRole: projectRole,
+        reason: 'プロジェクトメンバー追加',
+      },
+    });
+    return created;
   });
 
   return {
@@ -163,24 +167,26 @@ export async function updateMemberRole(
     throw new Error('FORBIDDEN_PMTL_ROLE');
   }
 
-  const updated = await prisma.projectMember.update({
-    where: { id: memberId },
-    data: { projectRole: newRole },
-    include: { user: { select: { name: true, email: true } } },
-  });
-
-  // Phase 2-10: tenantId 必須化
-  await prisma.roleChangeLog.create({
-    data: {
-      tenantId: viewerTenantId,
-      changedBy,
-      targetUserId: member.userId,
-      changeType: 'project_role',
-      projectId: member.projectId,
-      beforeRole: member.projectRole,
-      afterRole: newRole,
-      reason: 'プロジェクトロール変更',
-    },
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-D4): update + roleChangeLog を transaction 化
+  const updated = await prisma.$transaction(async (tx) => {
+    const u = await tx.projectMember.update({
+      where: { id: memberId },
+      data: { projectRole: newRole },
+      include: { user: { select: { name: true, email: true } } },
+    });
+    await tx.roleChangeLog.create({
+      data: {
+        tenantId: viewerTenantId,
+        changedBy,
+        targetUserId: member.userId,
+        changeType: 'project_role',
+        projectId: member.projectId,
+        beforeRole: member.projectRole,
+        afterRole: newRole,
+        reason: 'プロジェクトロール変更',
+      },
+    });
+    return u;
   });
 
   return {
@@ -211,19 +217,20 @@ export async function removeMember(
     throw new Error('FORBIDDEN_PMTL_ROLE');
   }
 
-  await prisma.projectMember.delete({ where: { id: memberId } });
-
-  // Phase 2-10: tenantId 必須化
-  await prisma.roleChangeLog.create({
-    data: {
-      tenantId: viewerTenantId,
-      changedBy,
-      targetUserId: member.userId,
-      changeType: 'project_role',
-      projectId: member.projectId,
-      beforeRole: member.projectRole,
-      afterRole: 'removed',
-      reason: 'プロジェクトメンバー解除',
-    },
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-D4): delete + roleChangeLog を transaction 化
+  await prisma.$transaction(async (tx) => {
+    await tx.projectMember.delete({ where: { id: memberId } });
+    await tx.roleChangeLog.create({
+      data: {
+        tenantId: viewerTenantId,
+        changedBy,
+        targetUserId: member.userId,
+        changeType: 'project_role',
+        projectId: member.projectId,
+        beforeRole: member.projectRole,
+        afterRole: 'removed',
+        reason: 'プロジェクトメンバー解除',
+      },
+    });
   });
 }

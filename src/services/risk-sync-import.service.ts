@@ -466,6 +466,8 @@ export type RiskSyncImportResult = {
   added: number;
   updated: number;
   removed: number;
+  /** feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-C1-UX): 他人作成のため silent skip された件数 */
+  skippedNotOwned: number;
 };
 
 /**
@@ -526,6 +528,8 @@ export async function applyRiskSyncImport(
   const createdIds: string[] = [];
   const updatedIds: string[] = [];
   const softDeletedIds: string[] = [];
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S2-C1-UX)
+  let skippedNotOwned = 0;
 
   try {
     // members lookup
@@ -573,6 +577,7 @@ export async function applyRiskSyncImport(
         });
         if (!owned) throw new Error(`IMPORT_VALIDATION_ERROR:ID "${row.id}" が見つかりません`);
         if (owned.reporterId !== userId) {
+          skippedNotOwned += 1;
           continue;
         }
         await prisma.riskIssue.update({
@@ -605,7 +610,11 @@ export async function applyRiskSyncImport(
             where: { id: r.id, tenantId: viewerTenantId, reporterId: userId },
             data: { deletedAt: new Date(), updatedBy: userId },
           });
-          if (updated.count === 1) softDeletedIds.push(r.id);
+          if (updated.count === 1) {
+            softDeletedIds.push(r.id);
+          } else {
+            skippedNotOwned += 1;
+          }
         }
       }
     }
@@ -614,6 +623,7 @@ export async function applyRiskSyncImport(
       added: createdIds.length,
       updated: updatedIds.length,
       removed: softDeletedIds.length,
+      skippedNotOwned,
     };
   } catch (e) {
     // rollback (2026-05-12 severity-1 防御: viewerTenantId を渡す)
