@@ -45,6 +45,8 @@ test.describe('@visual:dashboard ダッシュボード主要画面', () => {
     sharedPage = await sharedContext.newPage();
 
     await sharedPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    await sharedPage.getByLabel('組織 ID').fill('default');
     await sharedPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
     await sharedPage.getByRole('button', { name: 'ログイン' }).click();

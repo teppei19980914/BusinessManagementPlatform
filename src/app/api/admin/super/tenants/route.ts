@@ -10,7 +10,7 @@
  *   - 400: VALIDATION_ERROR
  *   - 401: 未認証
  *   - 403: super_admin 以外
- *   - 409: SLUG_CONFLICT / EMAIL_CONFLICT
+ *   - 409: SLUG_CONFLICT (ADR-0016: EMAIL_CONFLICT は廃止 — tenant-scoped 一意化で発生不能)
  *   - 502: EMAIL_SEND_FAILED (テナント作成は compensating delete でロールバック済)
  *
  * 関連:
@@ -84,19 +84,15 @@ function mapFailureToHttp(result: TenantOnboardingFailure): NextResponse {
         { error: { code: 'SLUG_CONFLICT', message: result.message } },
         { status: 409 },
       );
-    case 'EMAIL_CONFLICT':
-      return NextResponse.json(
-        { error: { code: 'EMAIL_CONFLICT', message: result.message } },
-        { status: 409 },
-      );
+    // ADR-0016 (2026-05-20): EMAIL_CONFLICT は tenant-scoped 一意化で発生不能になったため削除
     case 'EMAIL_SEND_FAILED':
       return NextResponse.json(
         { error: { code: 'EMAIL_SEND_FAILED', message: result.message } },
         { status: 502 },
       );
-    case 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING':
+    case 'BEGINNER_REQUIRES_UPGRADE':
       return NextResponse.json(
-        { error: { code: 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING', message: result.message } },
+        { error: { code: 'BEGINNER_REQUIRES_UPGRADE', message: result.message } },
         { status: 409 },
       );
   }

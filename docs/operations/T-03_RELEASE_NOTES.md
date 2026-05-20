@@ -231,7 +231,8 @@ SELECT feature_unit, COUNT(*), SUM(llm_input_tokens), SUM(llm_output_tokens), SU
 
 **A**: テナント解約 → 90 日経過後の物理削除 cron (`purgeOldDeletedTenants`) は **業務データ (Project / Knowledge / RiskIssue / Retrospective / Memo / 添付など) のみ削除し、users 行は永続保持** する仕様 (#18 / 2026-05-09 で方針変更)。
 
-理由: **Beginner プラン乱用防止**。「Beginner で 90 日試用 → 解約 → 別 email で再契約 → また 90 日試用」という抜け道を防ぐため、過去の解約済テナントに紐付く user.email を `BEGINNER_NOT_AVAILABLE_FOR_RETURNING` 判定 (`tenant-onboarding.service.ts`) で参照する。
+理由: **Beginner プラン乱用防止**。「Beginner で 90 日試用 → 解約 → 別 email で再契約 → また 90 日試用」という抜け道を防ぐため、過去の解約済テナントに紐付く user.email を `BEGINNER_REQUIRES_UPGRADE` 判定 (`tenant-onboarding.service.ts`) で参照する。
+(ADR-0016 Phase 10 / 2026-05-20: 旧 `BEGINNER_NOT_AVAILABLE_FOR_RETURNING` から rename し、判定条件を「削除/有効問わず」に強化して import API 経由の半永久 abuse も封鎖)
 
 | 項目 | 解約直後 | 90 日後 (cron 実行後) |
 |---|---|---|

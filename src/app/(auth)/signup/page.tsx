@@ -15,7 +15,7 @@
  *   - パスワード未送信 (= 仮登録、検証メール経由でパスワード設定)
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -72,6 +72,48 @@ export default function SignupPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // ADR-0016 (2026-05-20): 既登録 email チェック結果。Beginner 不可なら radio disable + 注釈
+  const [beginnerAvailable, setBeginnerAvailable] = useState<boolean | null>(null);
+  const [eligibilityHint, setEligibilityHint] = useState('');
+
+  // ADR-0016: 両方のメール (billingContactEmail / initialAdminEmail) が valid になった時点で
+  //   check-tenant-eligibility を debounced 呼び出し。既登録ならフォーム submit 前に
+  //   Beginner radio を disable し、Expert/Pro に強制切替する。
+  useEffect(() => {
+    const billing = form.billingContactEmail.trim();
+    const admin = form.initialAdminEmail.trim();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(billing) || !emailPattern.test(admin)) {
+      // ADR-0016: 不正 email の段階では何もしない (= debounce cancel で API 呼出も発生しない)
+      //   reset は onChange で行うことで cascade render を避ける (lint: set-state-in-effect 回避)
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const res = await fetch('/api/auth/check-tenant-eligibility', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ billingContactEmail: billing, initialAdminEmail: admin }),
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        // 失敗時は UI ヒント無効化 (サーバ側の最終判定 BEGINNER_REQUIRES_UPGRADE が defense-in-depth で動く)
+        setBeginnerAvailable(null);
+        setEligibilityHint('');
+        return;
+      }
+      const json = (await res.json().catch(() => null)) as
+        | { beginnerAvailable: boolean; reason?: string; message?: string }
+        | null;
+      if (!json) return;
+      setBeginnerAvailable(json.beginnerAvailable);
+      setEligibilityHint(json.beginnerAvailable ? '' : (json.message ?? ''));
+      // Beginner 不可の場合、Beginner 選択中なら自動で Expert に切替
+      if (!json.beginnerAvailable && form.plan === 'beginner') {
+        setForm((prev) => ({ ...prev, plan: 'expert' }));
+      }
+    }, 500); // debounce
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.billingContactEmail, form.initialAdminEmail]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -99,7 +141,10 @@ export default function SignupPage() {
         const code = json?.error?.code as string | undefined;
         const message = json?.error?.message as string | undefined;
         if (code === 'SLUG_CONFLICT') setError('この組織 ID は既に使用されています。別の ID を入力してください。');
-        else if (code === 'EMAIL_CONFLICT') setError('このメールアドレスは既に他のテナントで使用されています。');
+        // ADR-0016 (2026-05-20): EMAIL_CONFLICT は廃止 (tenant-scoped 一意化で発生不能)
+        // ADR-0016 (2026-05-20): BEGINNER_REQUIRES_UPGRADE = サーバ側 defense-in-depth
+        //   (UI チェックが bypass された場合のみ到達)
+        else if (code === 'BEGINNER_REQUIRES_UPGRADE') setError(message ?? 'このメールアドレスは既に登録履歴があるため、Expert または Pro プランをご選択ください。');
         else if (code === 'EMAIL_SEND_FAILED') setError('招待メール送信に失敗したため登録を取り消しました。メールアドレスを確認のうえ再度お試しください。');
         else if (code === 'RATE_LIMITED') setError('短時間に多くの申込がありました。1 時間後に再度お試しください。');
         else setError(message ?? '登録に失敗しました。');
@@ -145,9 +190,9 @@ export default function SignupPage() {
         <CardHeader>
           <CardTitle>たすきば サインアップ</CardTitle>
           <CardDescription>
-            新規テナント (組織) を開設します。<strong>Beginner プラン (90 日試用、月 100 回まで無料)</strong>{' '}
-            で開始されます。期限後は読み取り専用モードに移行します (データのエクスポート機能は引き続きご利用いただけます)。
-            引き続きご利用の場合は試用期間内に Expert / Pro プランへのアップグレードをお願いします。
+            新規テナント (組織) を開設します。プランをご選択ください。<strong>Beginner</strong>{' '}
+            は 90 日試用 (月 100 回まで無料)、期限後は読み取り専用モードに移行します
+            (データのエクスポート機能は引き続きご利用いただけます)。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -170,6 +215,79 @@ export default function SignupPage() {
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
             )}
 
+            {/* ADR-0016 (2026-05-20): プラン選択 UI。Beginner は初回ユーザ限定 (90日試用 abuse 防止)。
+                既登録 email の場合は Beginner radio を disable し Expert/Pro 必須にする。 */}
+            <fieldset className="space-y-3 rounded border p-4">
+              <legend className="px-1 text-sm font-semibold">プラン選択 *</legend>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <label
+                  className={`flex cursor-pointer items-start gap-2 rounded border p-3 text-sm ${
+                    form.plan === 'beginner'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-input hover:bg-muted/40'
+                  } ${beginnerAvailable === false ? 'cursor-not-allowed opacity-50' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="plan"
+                    value="beginner"
+                    checked={form.plan === 'beginner'}
+                    onChange={() => setForm({ ...form, plan: 'beginner' })}
+                    disabled={beginnerAvailable === false}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <div className="font-semibold">Beginner</div>
+                    <div className="text-xs text-muted-foreground">90日試用 / 月100call / 5席</div>
+                  </div>
+                </label>
+                <label
+                  className={`flex cursor-pointer items-start gap-2 rounded border p-3 text-sm ${
+                    form.plan === 'expert' ? 'border-primary bg-primary/5' : 'border-input hover:bg-muted/40'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="plan"
+                    value="expert"
+                    checked={form.plan === 'expert'}
+                    onChange={() => setForm({ ...form, plan: 'expert' })}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <div className="font-semibold">Expert</div>
+                    <div className="text-xs text-muted-foreground">¥5/call 従量課金</div>
+                  </div>
+                </label>
+                <label
+                  className={`flex cursor-pointer items-start gap-2 rounded border p-3 text-sm ${
+                    form.plan === 'pro' ? 'border-primary bg-primary/5' : 'border-input hover:bg-muted/40'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="plan"
+                    value="pro"
+                    checked={form.plan === 'pro'}
+                    onChange={() => setForm({ ...form, plan: 'pro' })}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <div className="font-semibold">Pro</div>
+                    <div className="text-xs text-muted-foreground">¥15/call 高精度モデル</div>
+                  </div>
+                </label>
+              </div>
+              {beginnerAvailable === false && eligibilityHint && (
+                <p
+                  className="rounded-md bg-info/10 p-2 text-xs text-info"
+                  data-testid="beginner-unavailable-hint"
+                >
+                  ℹ {eligibilityHint}
+                </p>
+              )}
+            </fieldset>
+
             <fieldset className="space-y-3 rounded border p-4">
               <legend className="px-1 text-sm font-semibold">テナント (組織) 情報</legend>
               <div className="space-y-1.5">
@@ -178,7 +296,8 @@ export default function SignupPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="slug">組織 ID *</Label>
-                <Input id="slug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })} placeholder="例: my-company" pattern="[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?" required />
+                {/* 2026-05-20: dash を [文字クラス先頭] に移動 (= Chrome v flag 互換、SyntaxError 回避) */}
+                <Input id="slug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })} placeholder="例: my-company" pattern="[a-z0-9](?:[-a-z0-9]{1,58}[a-z0-9])?" required />
                 <p className="text-xs text-muted-foreground">英小文字・数字・ハイフンのみ、3〜60 文字</p>
               </div>
             </fieldset>

@@ -45,6 +45,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       credentials: {
         email: {},
         password: {},
+        // ADR-0016 (2026-05-20): multi-tenant user membership 対応で tenantSlug 必須化
+        tenantSlug: {},
       },
       async authorize(credentials) {
         // fix/auth-diagnostics (2026-05-15): authorize() 全体を try/catch で囲み、
@@ -53,7 +55,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         //   従来は throw すると next-auth が generic CredentialsSignin error を返すだけで、
         //   DB には何の痕跡も残らず「ログインできない、ログも無い」状態になっていた。
         try {
-        if (!credentials?.email || !credentials?.password) {
+        // ADR-0016 (2026-05-20): tenantSlug も missing_credentials 判定に追加
+        if (!credentials?.email || !credentials?.password || !credentials?.tenantSlug) {
           // PR fix/login-failure (2026-05-03): logAuthFailureReason() ヘルパ経由で
           //   Vercel ログに記録 (DB 接続失敗時の最終手段)。認証情報は出さない。
           logAuthFailureReason({ reason: 'missing_credentials' });
@@ -72,10 +75,26 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         const email = credentials.email as string;
         const password = credentials.password as string;
+        const tenantSlug = credentials.tenantSlug as string;
         const maskedEmail = maskEmailForLog(email);
 
+        // ADR-0016: tenantSlug → tenantId を解決 (= 不存在 / 削除済なら login_failure)
+        const tenant = await prisma.tenant.findFirst({
+          where: { slug: tenantSlug, deletedAt: null },
+          select: { id: true },
+        });
+        if (!tenant) {
+          logAuthFailureReason({ reason: 'tenant_not_found', email: maskedEmail });
+          await recordAuthEvent({
+            eventType: 'login_failure',
+            email,
+            detail: { reason: 'tenant_not_found', tenantSlug },
+          });
+          return null;
+        }
+
         const user = await prisma.user.findFirst({
-          where: { email, deletedAt: null },
+          where: { email, tenantId: tenant.id, deletedAt: null },
           // P-A (2026-05-08): テナント論理削除時のログイン即時遮断 (defense in depth)。
           //   通常 deleteTenant() は user.deletedAt も併せて set するため
           //   `deletedAt: null` 条件で弾けるが、何らかの理由で user 側のカスケードが

@@ -416,9 +416,15 @@ PR #416 で新たに `$transaction` 化した service 経路一覧。
 
 #### 9.4.1 認証方式
 
-- **認証プロバイダ**: NextAuth.js Credentials Provider（メール + パスワード）
+- **認証プロバイダ**: NextAuth.js Credentials Provider（**組織 ID + メール + パスワード** — ADR-0016 / 2026-05-20）
 - **パスワードハッシュ**: bcrypt（cost factor: 12）
 - **セッション戦略**: サーバサイド DB セッション（JWT ではなく DB ストア）
+
+> **ADR-0016 (2026-05-20) 多テナント対応**: `User.email` を **tenant-scoped 一意** (`@@unique([tenantId, email])`) に変更。
+>   同一個人が複数テナントに同じ email で所属可能になった (Slack / Notion / GitHub Org 系の標準設計)。
+>   pre-auth フロー (login / lock-status / password-reset / email-verification) は全て **tenantSlug 必須**。
+>   tenantSlug 不存在 / user 不存在は **同一の汎用エラー**を返す (= enumeration 攻撃防止)。
+>   詳細: [docs/adr/0016-multi-tenant-user-membership.md](../adr/0016-multi-tenant-user-membership.md)
 
 #### 9.4.2 パスワードポリシー
 

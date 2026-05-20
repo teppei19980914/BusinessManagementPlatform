@@ -60,6 +60,10 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     superAdminContext = await browser.newContext();
     superAdminPage = await superAdminContext.newPage();
     await superAdminPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    //   super_admin は MANAGEMENT_TENANT (slug='platform-admin') 所属
+    //   (= super-admin.ts fixture / production seed.ts / src/lib/tenant.ts:MANAGEMENT_TENANT_SLUG)
+    await superAdminPage.getByLabel('組織 ID').fill('platform-admin');
     await superAdminPage.getByLabel('メールアドレス').fill(fixture.superAdminEmail);
     await superAdminPage.getByLabel('パスワード').fill(fixture.superAdminPassword);
     await superAdminPage.getByRole('button', { name: 'ログイン' }).click();
@@ -250,6 +254,8 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     try {
       const adminPage = await adminContext.newPage();
       await adminPage.goto('/login');
+      // ADR-0016 (2026-05-20): 組織 ID 必須化 (顧客テナント A の slug)
+      await adminPage.getByLabel('組織 ID').fill(fixture!.customerTenantA.slug);
       await adminPage.getByLabel('メールアドレス').fill(fixture!.customerTenantA.adminEmail);
       // fixture と同じパスワード
       await adminPage

@@ -228,14 +228,17 @@ describe('createTenantBySuperAdmin', () => {
     expect(sendVerificationEmail).not.toHaveBeenCalled();
   });
 
-  it('初期 admin メール重複なら EMAIL_CONFLICT', async () => {
-    vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'existing-user' } as never);
-
+  // ADR-0016 (2026-05-20): EMAIL_CONFLICT は廃止された (tenant-scoped 一意化で発生不能)。
+  //   新規テナント作成時、初期 admin email は新テナント内で唯一なので、
+  //   旧仕様の global email 重複検査は意味を失った。
+  //   代わりに「他テナントに同 email が居ても作成できる」ことを保証する。
+  it('ADR-0016: 他テナントに同 email が存在しても作成可能 (multi-tenant membership)', async () => {
+    // 他テナントに同 email が存在することを示すために user.findFirst を mock しても、
+    // tenant-onboarding はもはや global email 検査をしないので create 成功する。
     const result = await createTenantBySuperAdmin(VALID_INPUT, BASE_URL);
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('EMAIL_CONFLICT');
-    expect(prisma.tenant.create).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(prisma.tenant.create).toHaveBeenCalled();
   });
 
   it('入力バリデーション失敗は VALIDATION_ERROR', async () => {
@@ -276,33 +279,30 @@ describe('createTenantBySignup', () => {
   });
 });
 
-describe('P-B (2026-05-08): Beginner プラン再登録防止 + beginnerEverUpgraded セット', () => {
-  it('解約済テナントの billingContactEmail で Beginner 再登録すると BEGINNER_NOT_AVAILABLE_FOR_RETURNING', async () => {
+describe('P-B 強化 (ADR-0016 / 2026-05-20): Beginner プラン abuse 防止 (削除/有効 問わず)', () => {
+  it('過去/現役テナントの billingContactEmail で Beginner 登録すると BEGINNER_REQUIRES_UPGRADE', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
-      { id: 'past-deleted-tenant' },
+      { id: 'past-tenant' },
     ] as never);
 
     const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('BEGINNER_NOT_AVAILABLE_FOR_RETURNING');
+    if (!result.ok) expect(result.reason).toBe('BEGINNER_REQUIRES_UPGRADE');
     expect(prisma.tenant.create).not.toHaveBeenCalled();
   });
 
-  // 2026-05-09 (#18): 解約済 user の email でも Beginner 再登録を拒否 (defense-in-depth)
-  it('解約済 user の email で Beginner 再登録すると BEGINNER_NOT_AVAILABLE_FOR_RETURNING (#18)', async () => {
-    // tenant.findMany は空 (= 過去テナントなし) だが、user.findFirst が hit するパス
+  // ADR-0016 (2026-05-20): 削除状態を問わず user.email で同 email 検出すれば拒否 (import 抜け道封鎖)
+  it('登録済 user の email で Beginner 登録すると BEGINNER_REQUIRES_UPGRADE', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
-    // 通常 mock: user.findFirst (line ~98 の重複チェック) は active user なし → null
-    // → 2 回目: user.findFirst (#18 abuse check) で過去 soft-deleted user が見つかる
-    vi.mocked(prisma.user.findFirst)
-      .mockResolvedValueOnce(null) // 1 回目: メール重複チェック (deletedAt=null フィルタ)
-      .mockResolvedValueOnce({ id: 'soft-deleted-user' } as never); // 2 回目: abuse check
+    vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
+      id: 'registered-user',
+    } as never);
 
     const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('BEGINNER_NOT_AVAILABLE_FOR_RETURNING');
+    if (!result.ok) expect(result.reason).toBe('BEGINNER_REQUIRES_UPGRADE');
     expect(prisma.tenant.create).not.toHaveBeenCalled();
   });
 

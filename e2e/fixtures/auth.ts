@@ -19,22 +19,42 @@ export async function waitForProjectsReady(page: Page): Promise<void> {
 }
 
 /**
+ * ADR-0016 (2026-05-20): multi-tenant 対応で 組織 ID (tenantSlug) を共通入力ヘルパとして抽出。
+ *   テスト fixture が tenantSlug を渡さない場合は default-tenant ('default') を使う。
+ *   理由: ensureInitialAdmin が users.tenant_id の DB DEFAULT = DEFAULT_TENANT_ID
+ *         (= '00000000-0000-0000-0000-000000000001') に admin を作成するため。
+ */
+const DEFAULT_E2E_TENANT_SLUG = process.env.E2E_TENANT_SLUG ?? 'default';
+
+async function fillLoginForm(
+  page: Page,
+  params: { email: string; password: string; tenantSlug?: string },
+): Promise<void> {
+  // ADR-0016: 組織 ID 欄を最初に入力 (URL クエリ `?tenant=...` でも自動入力されるが
+  //   テストでは明示的に入力する方が読みやすい)。
+  await page.getByLabel('組織 ID').fill(params.tenantSlug ?? DEFAULT_E2E_TENANT_SLUG);
+  await page.getByLabel('メールアドレス').fill(params.email);
+  await page.getByLabel('パスワード').fill(params.password);
+}
+
+/**
  * admin ユーザで UI ログインし、MFA コードを入力して /projects に着地するまで。
  *
  * 前提:
  *   - sharedContext / sharedPage が `beforeAll` で作成済み
  *   - MFA シークレットは既に発行済 (呼び出し側が `mfaSecret` を保持)
  *   - 呼び出し前に `context.clearCookies()` で前セッションを破棄
+ *
+ * ADR-0016 (2026-05-20): tenantSlug を任意パラメータとして追加 (デフォルトは MANAGEMENT_TENANT_SLUG)
  */
 export async function loginAsAdminWithMfa(
   page: Page,
   context: BrowserContext,
-  params: { email: string; password: string; mfaSecret: string },
+  params: { email: string; password: string; mfaSecret: string; tenantSlug?: string },
 ): Promise<void> {
   await context.clearCookies();
   await page.goto('/login');
-  await page.getByLabel('メールアドレス').fill(params.email);
-  await page.getByLabel('パスワード').fill(params.password);
+  await fillLoginForm(page, params);
   await page.getByRole('button', { name: 'ログイン' }).click();
 
   await page.waitForURL(/\/login\/mfa/);
@@ -58,16 +78,17 @@ export async function loginAsAdminWithMfa(
 
 /**
  * general ユーザ (MFA 無し) の UI ログイン。
+ *
+ * ADR-0016 (2026-05-20): tenantSlug を任意パラメータとして追加。
  */
 export async function loginAsGeneral(
   page: Page,
   context: BrowserContext,
-  params: { email: string; password: string },
+  params: { email: string; password: string; tenantSlug?: string },
 ): Promise<void> {
   await context.clearCookies();
   await page.goto('/login');
-  await page.getByLabel('メールアドレス').fill(params.email);
-  await page.getByLabel('パスワード').fill(params.password);
+  await fillLoginForm(page, params);
   await page.getByRole('button', { name: 'ログイン' }).click();
   await waitForProjectsReady(page);
 }

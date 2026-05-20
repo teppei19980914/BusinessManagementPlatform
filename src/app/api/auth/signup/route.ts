@@ -16,7 +16,7 @@
  *
  * エラー:
  *   - 400: VALIDATION_ERROR
- *   - 409: SLUG_CONFLICT / EMAIL_CONFLICT
+ *   - 409: SLUG_CONFLICT (ADR-0016: EMAIL_CONFLICT は廃止 — tenant-scoped 一意化で発生不能)
  *   - 429: RATE_LIMITED (短時間に 5 回超過)
  *   - 502: EMAIL_SEND_FAILED
  *
@@ -114,19 +114,15 @@ export async function POST(req: NextRequest) {
         { error: { code: 'SLUG_CONFLICT', message: result.message } },
         { status: 409 },
       );
-    case 'EMAIL_CONFLICT':
-      return NextResponse.json(
-        { error: { code: 'EMAIL_CONFLICT', message: result.message } },
-        { status: 409 },
-      );
+    // ADR-0016 (2026-05-20): EMAIL_CONFLICT は tenant-scoped 一意化で発生不能になったため削除
     case 'EMAIL_SEND_FAILED':
       return NextResponse.json(
         { error: { code: 'EMAIL_SEND_FAILED', message: result.message } },
         { status: 502 },
       );
-    case 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING':
+    case 'BEGINNER_REQUIRES_UPGRADE':
       return NextResponse.json(
-        { error: { code: 'BEGINNER_NOT_AVAILABLE_FOR_RETURNING', message: result.message } },
+        { error: { code: 'BEGINNER_REQUIRES_UPGRADE', message: result.message } },
         { status: 409 },
       );
   }

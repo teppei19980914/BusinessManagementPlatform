@@ -337,9 +337,15 @@ model User {
   // PR #2: tenant への back relation
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
-  @@unique([email], map: "idx_users_email")
+  // ADR-0016 (2026-05-20): User.email を tenant-scoped 一意に変更
+  //   旧 @@unique([email]) はグローバル一意 → 同一個人が複数テナント所属不可、
+  //   テナント削除後の email 再利用で UNIQUE 違反 → 500 等の問題があった。
+  //   tenant-scoped にすることで Slack/Notion/GitHub Org 系の標準設計に整合。
+  @@unique([tenantId, email], map: "idx_users_tenant_email")
   @@index([isActive, lastLoginAt], map: "idx_users_active")
   @@index([tenantId], map: "idx_users_tenant")
+  // ADR-0016: tenant ambiguity 防止のため email 単独検索を廃止
+  //   (= グローバル email lookup は不可能 = pre-auth フローで tenantId 必須化)
   @@map("users")
 }
 

@@ -77,9 +77,13 @@ export async function waitForMail(
 
 /**
  * 招待メール HTML から setup-password トークン URL を抽出する。
+ *
+ * ADR-0016 (2026-05-20): multi-tenant 対応で URL に `?tenant=<slug>&token=<hash>` が
+ *   付与されるようになった。クエリの順序 (tenant 先 / token 先) どちらでも拾えるよう
+ *   `\?` 以降の任意の文字列を許容する正規表現に緩めた。
  */
 export function extractSetupPasswordUrl(mail: InboxMail): string {
-  const match = mail.html.match(/href="([^"]*\/setup-password\?token=[^"]+)"/);
+  const match = mail.html.match(/href="([^"]*\/setup-password\?[^"]+)"/);
   if (!match) {
     throw new Error(`招待メール本文から setup-password URL を抽出できません: ${mail.html.slice(0, 200)}`);
   }

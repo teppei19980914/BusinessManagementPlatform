@@ -60,8 +60,11 @@ async function main() {
     //   PR-X1 (2026-05-07): 管理テナント + super_admin の seed は **既存初期管理者の有無に関わらず実行**。
     //   旧実装では `if (existing) return;` で早期 return していたため、初期 admin 投入済の本番で
     //   2 回目以降の seed が super_admin を作成しないバグがあった。
+    // ADR-0016 (2026-05-20): User.email を tenant-scoped 一意化したため、
+    //   email 単独検索は別テナントの同 email を誤判定する。初期管理者は DEFAULT_TENANT に
+    //   作成する設計なので tenantId フィルタを併用する。
     const existing = await prisma.user.findFirst({
-      where: { email, deletedAt: null },
+      where: { email, tenantId: DEFAULT_TENANT_ID, deletedAt: null },
     });
 
     if (existing) {
@@ -196,8 +199,10 @@ async function seedManagementTenantAndSuperAdmin(prisma: PrismaClient): Promise<
   }
 
   // 3. super_admin user を冪等作成
+  // ADR-0016 (2026-05-20): super_admin は MANAGEMENT_TENANT 所属のため tenantId フィルタを併用
+  //   (= 顧客テナントに同 email の admin が居ても誤判定しない)
   const existingSuperAdmin = await prisma.user.findFirst({
-    where: { email: superAdminEmail, deletedAt: null },
+    where: { email: superAdminEmail, tenantId: MANAGEMENT_TENANT_ID, deletedAt: null },
   });
 
   if (existingSuperAdmin) {

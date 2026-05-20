@@ -34,6 +34,8 @@ test.describe('@feature:project:global-lists Step 7 全横断一覧', () => {
 
     // admin UI ログイン (MFA 無し)
     await sharedPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    await sharedPage.getByLabel('組織 ID').fill('default');
     await sharedPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
     await sharedPage.getByRole('button', { name: 'ログイン' }).click();

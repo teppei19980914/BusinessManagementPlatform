@@ -37,9 +37,23 @@ const DUMMY_BCRYPT_HASH = '$2a$12$0000000000000000000000.00000000000000000000000
 export async function verifyAndIssueResetToken(
   email: string,
   recoveryCode: string,
+  tenantSlug: string,
 ): Promise<{ success: boolean; token?: string; error?: string }> {
+  // ADR-0016 (2026-05-20): multi-tenant user membership 対応で tenantSlug 必須化
+  //   旧コードは email 単独で findFirst → 複数 tenant に同 email 存在で ambiguous
+  //   token 越境セキュリティリスクがあったため、tenantSlug → tenantId 解決で限定
+  const tenant = await prisma.tenant.findFirst({
+    where: { slug: tenantSlug, deletedAt: null },
+    select: { id: true },
+  });
+  if (!tenant) {
+    // L-2: タイミング差消去のためダミー compare を実行
+    await compare(recoveryCode, DUMMY_BCRYPT_HASH);
+    return { success: false, error: 'メールアドレスまたはリカバリーコードが正しくありません' };
+  }
+
   const user = await prisma.user.findFirst({
-    where: { email, deletedAt: null },
+    where: { email, tenantId: tenant.id, deletedAt: null },
   });
 
   if (!user) {
@@ -100,6 +114,11 @@ export async function resetPassword(
 ): Promise<{ success: boolean; error?: string }> {
   const tokenHash = hashToken(token);
 
+  // ADR-0016 (2026-05-20): tokenHash + tenantId で検索 (= 越境防止)
+  //   ただし resetPassword は token のみが route から渡るため、ここでは tokenHash で
+  //   検索し、record.tenantId が呼出側 (= URL の tenant query) と一致するか
+  //   route 層で別途検証する設計とする。
+  //   route 層は src/app/api/auth/reset-password/route.ts で対応。
   const record = await prisma.passwordResetToken.findFirst({
     where: { tokenHash },
   });
