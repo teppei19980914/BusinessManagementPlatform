@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers';
 import { bulkUpdateKnowledgeVisibilityFromList } from '@/services/knowledge.service';
 import { bulkUpdateKnowledgeVisibilitySchema } from '@/lib/validators/cross-list-bulk-visibility';
+import { recordAuditLog } from '@/services/audit.service';
 
 /**
  * プロジェクト「ナレッジ一覧」からの一括 visibility 更新エンドポイント (PR #165 で
@@ -49,6 +50,26 @@ export async function PATCH(
     user.id,
     user.tenantId,
   );
+
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-A1): ADR-0011 全 mutation 記録に従い、
+  //   bulk visibility 更新も audit_logs に記録。旧実装は service 層で per-row 作成者判定 + silent skip
+  //   していたが route 層から audit_logs を残さず、誰が何件公開化したかが追跡不能だった。
+  if (result.updatedIds.length > 0) {
+    await recordAuditLog({
+      tenantId: user.tenantId,
+      userId: user.id,
+      action: 'BULK_UPDATE',
+      entityType: 'knowledge',
+      entityId: projectId,
+      afterValue: {
+        projectId,
+        visibility: parsed.data.visibility,
+        updatedIds: result.updatedIds,
+        skippedNotOwned: result.skippedNotOwned,
+        skippedNotFound: result.skippedNotFound,
+      },
+    });
+  }
 
   return NextResponse.json({ data: result });
 }

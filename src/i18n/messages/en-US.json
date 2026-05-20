@@ -247,6 +247,7 @@
     "userNotFound": "User not found",
     "alreadyMember": "Already a member",
     "cannotManagePmTl": "Only tenant administrators can add, remove, or change PM/TL roles",
+    "cannotChangeOwnProjectRole": "You cannot change your own project role. Please ask another member.",
     "noCommentPermission": "No permission to post comments (viewer not allowed)",
     "bulkProgressOwnTasksOnly": "Bulk progress update is allowed only for your own tasks",
     "invalidAssigneeMember": "The specified assignee is not a project member"
@@ -1130,7 +1131,8 @@
       "dangerZoneDescription": "Deleting the user immediately disables sign-in and removes them from all project memberships. Past activity (assigned tasks, raised risks, etc.) is preserved.",
       "deleteButton": "Delete this user",
       "deleteConfirm": "Delete \"{name}\" ({email})?\n\nThis will immediately disable sign-in and remove the user from all\nproject memberships.\n\nNote: Past task assignments, raised risks, and other history are preserved.",
-      "deleteDone": "Deleted (removed {count} project memberships)"
+      "deleteDone": "Deleted (removed {count} project memberships)",
+      "selfRoleEditForbidden": "You cannot change your own role. Please ask another tenant administrator."
     },
     "auditLogs": {
       "title": "Audit Log",

@@ -12,8 +12,10 @@ import type { Prisma } from '@/generated/prisma/client';
  * 監査ログのアクション種別。
  * SYNC_IMPORT は feat/wbs-overwrite-import で追加 (WBS 上書きインポート 1 件 = 1 ログ)。
  * EXPORT は P-C (2026-05-08) で追加 (super_admin のテナントデータ代行エクスポート)。
+ * BULK_UPDATE は feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-A1) で追加。
+ *   ○○一覧の bulk visibility 更新を ADR-0011 「全 mutation 記録」原則に従い audit に残す。
  */
-export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'SYNC_IMPORT' | 'EXPORT';
+export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'SYNC_IMPORT' | 'EXPORT' | 'BULK_UPDATE';
 
 /**
  * UUID v4 のパターン (RFC 4122)。

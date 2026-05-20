@@ -63,6 +63,27 @@ export async function withCronExecutionLogging(
   const startedAtMs = Date.now();
   const invokerIp = extractInvokerIp(req);
 
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-G1): duplicate execution gate。
+  //   旧実装は同 cron が cron-job.org + 手動 admin から並列起動された場合 (= Netlify edge の
+  //   at-least-once 配送 + 手動再実行) に同時実行され、audit_logs / snapshot に重複痕跡が残る
+  //   問題があった。PostgreSQL の **advisory lock (pg_try_advisory_lock)** で同 cronName の
+  //   並列実行を非ブロッキング判定で防ぐ。lock 取得失敗 (= 既に running) 時は 409 を返し
+  //   cron 本体をスキップする。lock はトランザクション lock ではなく session lock なので
+  //   接続終了時に自動解放、deadlock 時の停滞リスクなし。
+  //
+  //   ハッシュ計算: cronName 文字列を 32-bit 整数に hash して pg_try_advisory_lock(bigint) に渡す。
+  //   衝突 (異なる cron 名で同じ hash) は理論上発生し得るが、cron 数 ~20 で確率は無視できる。
+  const lockKey = hashCronNameToBigint(cronName);
+  const lockAcquired = await tryAcquireAdvisoryLock(lockKey);
+  if (!lockAcquired) {
+    // 既に同名 cron が走行中。本実行はスキップ (= skip 用の log を残す)。
+    await safeCreateRunningLog(cronName, invokerIp, 'skipped_concurrent');
+    return NextResponse.json(
+      { error: { code: 'CRON_ALREADY_RUNNING', cronName } },
+      { status: 409 },
+    );
+  }
+
   // 開始記録 (status='running'): 後で update する。失敗しても log なしで本体は継続。
   const logId = await safeCreateRunningLog(cronName, invokerIp);
 
@@ -110,14 +131,25 @@ function extractInvokerIp(req: NextRequest): string | null {
 
 /**
  * status='running' レコードを作成する。失敗時は null を返し log を諦める (= cron 本体は続行)。
+ *
+ * feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-G1):
+ * advisory lock 取得失敗時 (= 重複起動検知) は status='skipped_concurrent' で記録する。
  */
 async function safeCreateRunningLog(
   cronName: string,
   invokerIp: string | null,
+  status: 'running' | 'skipped_concurrent' = 'running',
 ): Promise<string | null> {
   try {
     const created = await prisma.cronExecutionLog.create({
-      data: { cronName, status: 'running', invokerIp },
+      data: {
+        cronName,
+        status,
+        invokerIp,
+        ...(status === 'skipped_concurrent'
+          ? { completedAt: new Date(), durationMs: 0 }
+          : {}),
+      },
       select: { id: true },
     });
     return created.id;
@@ -125,9 +157,61 @@ async function safeCreateRunningLog(
     // eslint-disable-next-line no-console
     console.warn('[cron-execution-log] failed to create running record', {
       cronName,
+      status,
       error: e instanceof Error ? e.message : String(e),
     });
     return null;
+  }
+}
+
+/**
+ * feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-G1):
+ * cronName を 64-bit 整数に hash して PostgreSQL advisory lock のキーとして使う。
+ *
+ * 設計:
+ *   - djb2 hash (FNV-1a 系) を BigInt で実装。32-bit に丸めて bigint advisory lock key にする
+ *     (Postgres の pg_try_advisory_lock(bigint) 引数)。
+ *   - 衝突確率: cron 数 ~20 で 32-bit space (4B) との衝突は実質ゼロ。
+ *   - 非暗号学的だが「同じ cronName が同じ key を生成する」決定性のみが要件なので OK。
+ */
+function hashCronNameToBigint(cronName: string): bigint {
+  // ES2020 BigInt リテラル `5381n` / `33n` を tsconfig target が下回る環境でも使えるよう
+  // BigInt() コンストラクタで生成する。実行時挙動は等価。
+  let hash = BigInt(5381);
+  const MULTIPLIER = BigInt(33);
+  const MASK_32BIT = BigInt('0xffffffff');
+  for (let i = 0; i < cronName.length; i++) {
+    hash = (hash * MULTIPLIER + BigInt(cronName.charCodeAt(i))) & MASK_32BIT;
+  }
+  return hash;
+}
+
+/**
+ * feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-G1):
+ * PostgreSQL advisory lock を非ブロッキング取得する。
+ *
+ * - `pg_try_advisory_lock(key)` は同 session 内で同 key の lock を再帰取得可、
+ *   別 session からの取得は競合してブロック (本実装では try 版なので即時 false 返却)。
+ * - lock は **session lock** (transaction lock ではない) のため、コネクション終了時に自動解放。
+ *   = Netlify Functions の各実行は独立コネクションなので、Lambda 終了で確実に解放される。
+ * - lock 失敗時 (= 既に同 cron が走行中) は false を返し、本体実行をスキップさせる。
+ *
+ * 例外時は **fail-safe** で true を返す (lock 取れない = 重複している、と判断するより、
+ *   lock 機構自体が壊れていても本処理は走らせる方が業務影響が小さい)。
+ *   monitoring は cronExecutionLog 側で「stale running」を検出する別経路で行う。
+ */
+async function tryAcquireAdvisoryLock(key: bigint): Promise<boolean> {
+  try {
+    const result = await prisma.$queryRawUnsafe<{ pg_try_advisory_lock: boolean }[]>(
+      `SELECT pg_try_advisory_lock(${key.toString()}) AS pg_try_advisory_lock`,
+    );
+    return result[0]?.pg_try_advisory_lock === true;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[cron-execution-log] advisory lock check failed, fail-safe to allow execution', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return true;
   }
 }
 

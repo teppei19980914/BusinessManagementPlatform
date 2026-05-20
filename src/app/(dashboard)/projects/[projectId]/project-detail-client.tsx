@@ -1055,6 +1055,8 @@ export function ProjectDetailClient({
                       canManage={true}
                       canManagePmTl={isSystemAdmin}
                       onReload={reloadMembers}
+                      // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止
+                      currentUserId={userId}
                     />
                   )}
                 </LazyTabContent>

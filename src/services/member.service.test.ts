@@ -174,6 +174,18 @@ describe('updateMemberRole', () => {
     expect(prisma.projectMember.update).not.toHaveBeenCalled();
   });
 
+  // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のプロジェクトロール変更禁止
+  it('自分自身のプロジェクトロール変更は CANNOT_CHANGE_OWN_PROJECT_ROLE', async () => {
+    vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(
+      // userId と changedBy が同じ = 自己編集
+      mRow({ userId: 'self-user', projectRole: 'member' }) as never,
+    );
+    await expect(
+      updateMemberRole('m-1', 'viewer', 'self-user', 'tenant-A', 'admin'),
+    ).rejects.toThrow('CANNOT_CHANGE_OWN_PROJECT_ROLE');
+    expect(prisma.projectMember.update).not.toHaveBeenCalled();
+  });
+
   it('member ↔ viewer のロール変更は PM/TL アクター (general systemRole) でも成功', async () => {
     vi.mocked(prisma.projectMember.findFirst).mockResolvedValue(
       mRow({ projectRole: 'member' }) as never,

@@ -60,6 +60,8 @@ export default async function UsersPage() {
       activeUserCount={tenantInfo?.activeUserCount ?? 0}
       beginnerMaxSeats={tenantInfo?.beginnerMaxSeats ?? 5}
       dataLoadError={dataLoadError}
+      // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止のため
+      currentUserId={session.user.id}
     />
   );
 }

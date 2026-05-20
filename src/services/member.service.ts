@@ -146,6 +146,14 @@ export async function updateMemberRole(
   });
   if (!member) throw new Error('NOT_FOUND');
 
+  // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のプロジェクトロール変更禁止。
+  //   admin/users 画面と同じ原則で「ロール変更は他ユーザに依頼する」設計。
+  //   admin/super_admin であっても自分自身のプロジェクトロールを変えると意図しない権限上下や
+  //   PM/TL 不在化が発生し得るため、自己編集経路を構造的に閉鎖する。
+  if (member.userId === changedBy) {
+    throw new Error('CANNOT_CHANGE_OWN_PROJECT_ROLE');
+  }
+
   // feat/crud-permission-redesign (2026-05-20): 「PM/TL ロール」を扱うロール変更は admin only。
   //   - PM/TL → member/viewer (降格): admin only (PM/TL 自身による「自己降格→PM/TL 不在化」を防止)
   //   - member/viewer → PM/TL (昇格): admin only (権限委譲リスク回避)

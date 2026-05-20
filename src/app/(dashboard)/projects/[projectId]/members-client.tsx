@@ -56,9 +56,12 @@ type Props = {
   canManagePmTl: boolean;
   /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
   onReload?: () => Promise<void> | void;
+  // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止のため、
+  //   ログイン中ユーザの id を受け取る。
+  currentUserId: string;
 };
 
-export function MembersClient({ projectId, members, allUsers, canManage, canManagePmTl, onReload }: Props) {
+export function MembersClient({ projectId, members, allUsers, canManage, canManagePmTl, onReload, currentUserId }: Props) {
   const router = useRouter();
   const t = useTranslations('member');
   const { withLoading } = useLoading();
@@ -212,8 +215,10 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
             // feat/crud-permission-redesign (2026-05-20): 行ごとの「PM/TL 操作可否」を判定。
             //   - 対象行が pm_tl → ロール変更・削除とも admin のみ可
             //   - 対象行が member/viewer → PM/TL も操作可
+            // 2026-05-20 追加要件: 自分自身のロール変更/削除も禁止 (他メンバーに依頼する設計)
             const isPmTlRow = m.projectRole === 'pm_tl';
-            const canEditThisRow = canManage && (!isPmTlRow || canManagePmTl);
+            const isSelfRow = m.userId === currentUserId;
+            const canEditThisRow = canManage && (!isPmTlRow || canManagePmTl) && !isSelfRow;
             return (
               <TableRow key={m.id}>
                 <TableCell className="font-medium">{m.userName}</TableCell>

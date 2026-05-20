@@ -83,6 +83,14 @@ export async function PATCH(
           { status: 403 },
         );
       }
+      // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止
+      if (e.message === 'CANNOT_CHANGE_OWN_PROJECT_ROLE') {
+        const t = await getTranslations('message');
+        return NextResponse.json(
+          { error: { code: 'FORBIDDEN', message: t('cannotChangeOwnProjectRole') } },
+          { status: 403 },
+        );
+      }
     }
     throw e;
   }

@@ -81,40 +81,51 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 論理削除
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { isActive: false, deletedAt: new Date() },
-  });
-
-  // feat/crud-permission-redesign (2026-05-20): 監査要件 (severity-2 修正)。
-  //   旧実装は projectMember.deleteMany 直叩きで role_change_logs を記録せず、
-  //   PM/TL がアカウント削除した場合のメンバーシップ解除履歴が残らなかった。
-  //   ユーザ自身による自己削除であれば pm_tl 不在化チェックはスキップ (本人の権利優先)。
-  const memberships = await prisma.projectMember.findMany({
-    where: { userId: user.id },
-    select: { id: true, projectId: true, projectRole: true },
-  });
-  if (memberships.length > 0) {
-    await prisma.roleChangeLog.createMany({
-      data: memberships.map((m) => ({
-        tenantId: user.tenantId,
-        changedBy: user.id,
-        targetUserId: user.id,
-        changeType: 'project_role',
-        projectId: m.projectId,
-        beforeRole: m.projectRole,
-        afterRole: 'removed',
-        reason: 'アカウント削除によるメンバー解除',
-      })),
+  // feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-D1): severity-1 transaction 化。
+  //   旧実装は 4 ステップ (user.update / findMany / createMany / deleteMany) すべて transaction 外で
+  //   process crash により中間状態残存 (deletedAt=true だが projectMember 残存等) のリスクがあった。
+  //   user 論理削除 + メンバー解除履歴記録 + メンバー解除 + session 無効化を 1 transaction に集約し、
+  //   失敗時は全ロールバックすることで監査ログ消失パスを構造的に排除する。
+  //
+  //   memberships の findMany も transaction 内に移動し、findMany ↔ deleteMany 間の race も排除
+  //   (並列で admin が projectMember を作成しても、transaction の SERIALIZABLE 等価で
+  //    新行は次回再試行サイクルで反映される)。
+  //
+  //   recordAuditLog / recordAuthEvent は副作用 (audit_logs / auth_event_logs への INSERT) のみで
+  //   失敗しても本処理は通すべき (= 削除完了優先) ため、transaction の外側に維持。
+  await prisma.$transaction(async (tx) => {
+    // 論理削除
+    await tx.user.update({
+      where: { id: user.id },
+      data: { isActive: false, deletedAt: new Date() },
     });
-  }
 
-  // プロジェクトメンバーシップ解除
-  await prisma.projectMember.deleteMany({ where: { userId: user.id } });
+    // プロジェクトメンバーシップ取得 → role_change_logs に解除記録
+    const memberships = await tx.projectMember.findMany({
+      where: { userId: user.id },
+      select: { id: true, projectId: true, projectRole: true },
+    });
+    if (memberships.length > 0) {
+      await tx.roleChangeLog.createMany({
+        data: memberships.map((m) => ({
+          tenantId: user.tenantId,
+          changedBy: user.id,
+          targetUserId: user.id,
+          changeType: 'project_role',
+          projectId: m.projectId,
+          beforeRole: m.projectRole,
+          afterRole: 'removed',
+          reason: 'アカウント削除によるメンバー解除',
+        })),
+      });
+    }
 
-  // セッション無効化
-  await prisma.session.deleteMany({ where: { userId: user.id } });
+    // プロジェクトメンバーシップ解除
+    await tx.projectMember.deleteMany({ where: { userId: user.id } });
+
+    // セッション無効化
+    await tx.session.deleteMany({ where: { userId: user.id } });
+  });
 
   await recordAuditLog({
     tenantId: user.tenantId,

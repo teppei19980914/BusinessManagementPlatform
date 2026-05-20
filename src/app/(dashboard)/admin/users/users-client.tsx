@@ -62,6 +62,9 @@ type Props = {
   // fix/admin-users-defensive-render (2026-05-15): server 側 data 取得が失敗した時に
   //   表示する警告バナーの可否。デフォルト false (= 正常)。
   dataLoadError?: boolean;
+  // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止のため、
+  //   ログイン中ユーザの id を server から受け取り UserEditDialog へ伝播する。
+  currentUserId: string;
 };
 
 function getUserSortValue(u: UserDTO, columnKey: string): unknown {
@@ -75,7 +78,7 @@ function getUserSortValue(u: UserDTO, columnKey: string): unknown {
   }
 }
 
-export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginnerMaxSeats, dataLoadError = false }: Props) {
+export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginnerMaxSeats, dataLoadError = false, currentUserId }: Props) {
   const tAction = useTranslations('action');
   const t = useTranslations('admin.users');
   const router = useRouter();
@@ -264,9 +267,13 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
                   <div className="space-y-2">
                     <Label htmlFor="role">{t('fieldSystemRole')}</Label>
                     <select value={form.systemRole} onChange={(e) => setForm({ ...form, systemRole: e.target.value as 'admin' | 'general' })} className={nativeSelectClass}>
-                      {Object.entries(SYSTEM_ROLES).map(([key, label]) => (
-                        <option key={key} value={key}>{label}</option>
-                      ))}
+                      {/* feat/crud-permission-redesign (2026-05-20 追加要件): super_admin は管理テナント所属で
+                          テナント側 UI からの招待を禁止 (option 自体を出さない)。 */}
+                      {Object.entries(SYSTEM_ROLES)
+                        .filter(([key]) => key !== 'super_admin')
+                        .map(([key, label]) => (
+                          <option key={key} value={key}>{label}</option>
+                        ))}
                     </select>
                   </div>
                   <Button type="submit" className="w-full">
@@ -408,6 +415,7 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
         open={editingUser != null}
         onOpenChange={(v) => { if (!v) setEditingUser(null); }}
         onSaved={async () => { router.refresh(); }}
+        currentUserId={currentUserId}
       />
     </div>
   );
