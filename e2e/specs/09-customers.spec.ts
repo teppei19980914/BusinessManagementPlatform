@@ -52,6 +52,8 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     adminContext = await browser.newContext();
     adminPage = await adminContext.newPage();
     await adminPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    await adminPage.getByLabel('組織 ID').fill('default');
     await adminPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await adminPage.getByLabel('パスワード').fill(ADMIN_PW);
     await adminPage.getByRole('button', { name: 'ログイン' }).click();
@@ -60,6 +62,8 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     generalContext = await browser.newContext();
     generalPage = await generalContext.newPage();
     await generalPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    await generalPage.getByLabel('組織 ID').fill('default');
     await generalPage.getByLabel('メールアドレス').fill(GENERAL_EMAIL);
     await generalPage.getByLabel('パスワード').fill(GENERAL_PW);
     await generalPage.getByRole('button', { name: 'ログイン' }).click();

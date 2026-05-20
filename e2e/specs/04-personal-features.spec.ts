@@ -70,6 +70,8 @@ test.describe('@feature:personal Step 8 個人機能', () => {
 
     // admin UI ログイン (MFA 無し)
     await sharedPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    await sharedPage.getByLabel('組織 ID').fill('default');
     await sharedPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
     await sharedPage.getByRole('button', { name: 'ログイン' }).click();

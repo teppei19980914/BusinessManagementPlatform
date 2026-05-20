@@ -50,6 +50,8 @@ test.describe('@visual:themes 設定画面 10 テーマ マトリクス', () => 
     sharedPage = await sharedContext.newPage();
 
     await sharedPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化
+    await sharedPage.getByLabel('組織 ID').fill('default');
     await sharedPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
     await sharedPage.getByRole('button', { name: 'ログイン' }).click();

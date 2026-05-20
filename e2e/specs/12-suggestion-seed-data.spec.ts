@@ -123,6 +123,8 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
     adminAContext = await browser.newContext();
     adminAPage = await adminAContext.newPage();
     await adminAPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化 (multi-tenant fixture から slug 取得)
+    await adminAPage.getByLabel('組織 ID').fill(tenantA.tenantSlug);
     await adminAPage.getByLabel('メールアドレス').fill(tenantA.adminEmail);
     await adminAPage.getByLabel('パスワード').fill(tenantA.adminPassword);
     await adminAPage.getByRole('button', { name: 'ログイン' }).click();
@@ -291,6 +293,8 @@ test.describe('@feature:suggestion:seed-data 提案機能のシードデータ�
     const ctxB = await browser.newContext();
     const pageB = await ctxB.newPage();
     await pageB.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化 (multi-tenant fixture から slug 取得)
+    await pageB.getByLabel('組織 ID').fill(tenantB.tenantSlug);
     await pageB.getByLabel('メールアドレス').fill(tenantB.adminEmail);
     await pageB.getByLabel('パスワード').fill(tenantB.adminPassword);
     await pageB.getByRole('button', { name: 'ログイン' }).click();

@@ -75,6 +75,8 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
     adminAContext = await browser.newContext();
     adminAPage = await adminAContext.newPage();
     await adminAPage.goto('/login');
+    // ADR-0016 (2026-05-20): 組織 ID 必須化 (multi-tenant fixture から slug 取得)
+    await adminAPage.getByLabel('組織 ID').fill(tenantA.tenantSlug);
     await adminAPage.getByLabel('メールアドレス').fill(tenantA.adminEmail);
     await adminAPage.getByLabel('パスワード').fill(tenantA.adminPassword);
     await adminAPage.getByRole('button', { name: 'ログイン' }).click();

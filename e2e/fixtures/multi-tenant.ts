@@ -51,6 +51,9 @@ export async function disconnectMultiTenantDb(): Promise<void> {
  */
 export type TenantFixture = {
   tenantId: string;
+  // ADR-0016 (2026-05-20): multi-tenant 対応で login UI に 組織 ID 必須化、
+  //   slug を fixture 戻り値に追加 (spec 11/12/13 が tenant 別 admin login で使用)
+  tenantSlug: string;
   adminId: string;
   generalId: string;
   adminEmail: string;
@@ -309,6 +312,7 @@ export async function createTenantWithFullDataset(
 
   return {
     tenantId,
+    tenantSlug: slug, // ADR-0016 (2026-05-20)
     adminId,
     generalId,
     adminEmail,
