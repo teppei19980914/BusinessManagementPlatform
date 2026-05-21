@@ -26,7 +26,14 @@ import { logUnknownError } from '@/services/error-log.service';
 export const runtime = 'nodejs';
 
 const bodySchema = z.object({
-  taskIds: z.array(z.string().uuid()).min(1).max(MAX_DUPLICATE_AT_ONCE),
+  taskIds: z
+    .array(z.string().uuid())
+    .min(1)
+    .max(MAX_DUPLICATE_AT_ONCE)
+    // [SEC] 同じ taskId が複数入っていると意図せず多重複製される。zod 段階で弾く。
+    .refine((arr) => new Set(arr).size === arr.length, {
+      message: 'taskIds に重複があります',
+    }),
   targetParentId: z.string().uuid().nullable(),
 });
 

@@ -438,4 +438,49 @@ describe('pickNonConflictingName', () => {
       pickNonConflictingName('Foo', new Set(['Foo', 'Foo (コピー)', 'Foo (コピー 2)'])),
     ).toBe('Foo (コピー 3)');
   });
+
+  it('[FIX] VARCHAR(100) 超過防止: 95 文字 name + 衝突 → base が truncate されて 100 文字以内に収まる', () => {
+    // " (コピー)" は 8 文字。95 文字 + 8 = 103 文字 → DB INSERT で失敗していた問題の修正検証
+    const longName = 'a'.repeat(95);
+    const result = pickNonConflictingName(longName, new Set([longName]));
+    expect(result.length).toBeLessThanOrEqual(100);
+    expect(result.endsWith(' (コピー)')).toBe(true);
+  });
+
+  it('[FIX] VARCHAR(100) 超過防止: 100 文字 name + 連番衝突でも 100 以内', () => {
+    const longName = 'b'.repeat(100);
+    // 連続衝突で suffix が長くなっても 100 文字を超えない
+    const taken = new Set([longName, `${'b'.repeat(88)} (コピー)`]);
+    const result = pickNonConflictingName(longName, taken);
+    expect(result.length).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('[FIX] bulk-duplicate findMany に projectId フィルタが入る (enumeration 防止)', () => {
+  it('他 project の task ID は missing 扱いになり、cross-project 情報を露出しない', async () => {
+    // mock: findMany(where) を観察し、projectId が where に含まれているか確認
+    let observedWhere: unknown = null;
+    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+      const w = (args as { where: { id?: { in: string[] }; projectId?: string } }).where;
+      if (w.id?.in) {
+        observedWhere = w;
+        // projectId フィルタで弾かれて空が返る (実 DB 想定)
+        return [] as never;
+      }
+      return [] as never;
+    });
+
+    await expect(
+      duplicateTasks({
+        projectId,
+        taskIds: ['other-proj-task'],
+        targetParentId: null,
+        userId,
+        viewerTenantId: tenantId,
+      }),
+    ).rejects.toThrow('TASKS_NOT_FOUND'); // cross-project でなく not-found
+
+    // [SEC] projectId フィルタが where に渡っていることを確認
+    expect((observedWhere as { projectId?: string })?.projectId).toBe(projectId);
+  });
 });

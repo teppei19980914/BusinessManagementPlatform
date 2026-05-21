@@ -100,10 +100,12 @@ export async function duplicateTasks(input: DuplicateTasksInput): Promise<Duplic
   }
 
   // -----------------------------------------------------------
-  // 3. 選択 task を取得 (projectId フィルタで cross-project 混入を防ぐ)
+  // 3. 選択 task を取得。
+  //   [SEC] projectId を where に含めることで「他プロジェクトの task ID 存在判定」
+  //   を timing/error で漏らさない。別 project の task ID は単に missing 扱い。
   // -----------------------------------------------------------
   const sources: SourceTask[] = await prisma.task.findMany({
-    where: { id: { in: taskIds }, deletedAt: null },
+    where: { id: { in: taskIds }, projectId, deletedAt: null },
     select: {
       id: true,
       projectId: true,
@@ -127,6 +129,7 @@ export async function duplicateTasks(input: DuplicateTasksInput): Promise<Duplic
     const missing = taskIds.filter((id) => !sources.some((s) => s.id === id));
     throw new Error(`TASKS_NOT_FOUND:${missing.join(',')}`);
   }
+  // [SEC] 上の projectId フィルタでこの check には到達しない設計だが、defense-in-depth で残す。
   if (sources.some((s) => s.projectId !== projectId)) {
     throw new Error('TASKS_CROSS_PROJECT');
   }
@@ -326,24 +329,37 @@ async function fetchChildrenNames(projectId: string, parentId: string | null): P
   return children.map((c) => c.name);
 }
 
+/** tasks.name の DB 列幅 (VARCHAR(100))。本 const 以上の長さは INSERT 失敗。 */
+const TASK_NAME_MAX_LENGTH = 100;
+
 /**
  * 衝突しない名前を返す。
  * - taken に元の name が無ければそのまま使用
  * - あれば "(コピー)", "(コピー 2)", "(コピー 3)" を順に試す
  *
- * 上限: 連番が 1000 まで行ったら fallback で UUID 断片を付ける (実用上ほぼ起こらない)
+ * 上限: 連番が 1000 まで行ったら fallback で UUID 断片を付ける (実用上ほぼ起こらない)。
+ *
+ * [SEC/CORRECTNESS] DB の VARCHAR(100) 制約を超えないよう、suffix を付ける際は
+ * base を必要なだけ truncate する (95+ 文字の name でも DB 挿入が失敗しない)。
  */
 export function pickNonConflictingName(originalName: string, taken: Set<string>): string {
-  if (!taken.has(originalName)) return originalName;
+  if (!taken.has(originalName)) {
+    // 元 name 自体が DB 列幅以下である前提 (source は既に DB に存在するため必ず ≤100)
+    return originalName;
+  }
+  function withSuffix(suffix: string): string {
+    const maxBase = TASK_NAME_MAX_LENGTH - suffix.length;
+    const base = originalName.length > maxBase ? originalName.slice(0, maxBase) : originalName;
+    return base + suffix;
+  }
   // 1st: " (コピー)"
-  const firstCandidate = `${originalName} (コピー)`;
+  const firstCandidate = withSuffix(' (コピー)');
   if (!taken.has(firstCandidate)) return firstCandidate;
   // 2nd onwards: " (コピー N)"
   for (let n = 2; n <= 1000; n++) {
-    const candidate = `${originalName} (コピー ${n})`;
+    const candidate = withSuffix(` (コピー ${n})`);
     if (!taken.has(candidate)) return candidate;
   }
   // Fallback (極限ケース)
-  const suffix = Math.random().toString(36).slice(2, 8);
-  return `${originalName} (コピー ${suffix})`;
+  return withSuffix(` (コピー ${Math.random().toString(36).slice(2, 8)})`);
 }
