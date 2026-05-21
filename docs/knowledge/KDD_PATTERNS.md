@@ -11555,3 +11555,99 @@ git push
 - PR #420 feat/wbs-import-uplift (本事例): run 26202164194 で baseline 生成成功 + push 拒否 → artifact 経由で手動配置
 - KDD §5.X+97 (前段): `[gen-visual]` workflow の基本動作
 - `.github/workflows/e2e-visual-baseline.yml`
+
+## 5.X+99 **Netlify Deploy Preview で Stripe Checkout 完了後の戻り先が本番 URL に飛ぶ ─ `NEXTAUTH_URL` を build wrapper で deploy context に同期 + `sanitizeReturnTo` で env URL も許可オリジンに追加 (2026-05-21 / PR #425 Stripe staging UAT)**
+
+### 発生事象
+
+Stripe Checkout のカード登録フローを Deploy Preview (`deploy-preview-NNN--tasukiba.netlify.app`) で実行すると、Stripe 側のカード登録自体は成功するが、完了後のブラウザリダイレクト先が **本番 URL** (`tasukiba.netlify.app/login`) に飛んでしまう。本番にはログインしていないため `/login` 画面に強制遷移し、staging 環境での UAT が完結できない。
+
+同じ問題はログイン関連でも発生: Deploy Preview URL を叩いたユーザがログイン直後に本番 URL にリダイレクトされる。
+
+### 根本原因 (2 段階)
+
+**段階 A: NextAuth が本番 URL を canonical として使用**
+
+NextAuth は `trustHost: true` 設定でも `NEXTAUTH_URL` env var が定義されていればそちらを優先する。Netlify Dashboard で `NEXTAUTH_URL` を全 context (Production / Deploy Preview / Branch Deploy) に共通の本番 URL 値で設定していたため、Deploy Preview 環境でも canonical URL が本番扱いになり、ログイン経路で本番 URL にリダイレクトされていた。
+
+**段階 B: sanitizeReturnTo の origin チェックが本番 URL に固定**
+
+Stripe Checkout の戻り先ハンドラ (`/api/tenants/me/billing/stripe/setup/complete/route.ts`) の `sanitizeReturnTo()` で、`req.url` の origin と returnTo の origin を比較してオープンリダイレクト対策していた。Netlify Functions では `req.url` の origin が canonical URL (= 本番) に固定されるケースがあり、Deploy Preview URL から来た returnTo が「異なる origin」として弾かれて本番 URL にフォールバックする (= 本番 `/settings/tenant` → 未ログインなので `/login` へ)。
+
+### 解決策
+
+**段階 A 対策: build wrapper で NEXTAUTH_URL を deploy context に同期**
+
+`scripts/netlify-build.sh` を作成し、Netlify が build 時に自動設定する `URL` env var を `NEXTAUTH_URL` に注入してから build を実行。
+
+```bash
+#!/usr/bin/env bash
+export NEXTAUTH_URL="${URL:-${NEXTAUTH_URL:-https://tasukiba.netlify.app}}"
+exec pnpm build:netlify
+```
+
+`netlify.toml` の build command を `bash scripts/netlify-build.sh` に変更。
+
+`URL` env var は Netlify が deploy context に応じて以下を自動設定:
+- Production: `https://tasukiba.netlify.app`
+- Deploy Preview: `https://deploy-preview-NNN--tasukiba.netlify.app`
+- Branch Deploy: `https://<branch>--tasukiba.netlify.app`
+
+**段階 B 対策: sanitizeReturnTo に env URL を許可オリジンとして追加**
+
+```ts
+function sanitizeReturnTo(returnTo: string | null, reqUrl: string): string {
+  const reqOrigin = new URL(reqUrl).origin;
+  // Netlify URL env var (deploy context に応じて自動切替) も許可
+  const envOrigin = process.env.URL ? new URL(process.env.URL).origin : null;
+  const allowedOrigins = new Set<string>([reqOrigin]);
+  if (envOrigin) allowedOrigins.add(envOrigin);
+  // フォールバック先も envOrigin を優先 (= req.url が本番固定でも正しい URL を返す)
+  const primaryOrigin = envOrigin ?? reqOrigin;
+
+  if (returnTo == null || returnTo.length === 0) return `${primaryOrigin}/settings/tenant`;
+  try {
+    const parsed = new URL(returnTo);
+    if (!allowedOrigins.has(parsed.origin)) return `${primaryOrigin}/settings/tenant`;
+    return parsed.toString();
+  } catch {
+    return `${primaryOrigin}/settings/tenant`;
+  }
+}
+```
+
+オープンリダイレクト対策 (= 任意の URL への redirect を禁止) は維持しつつ、Deploy Preview / Branch Deploy の正規 URL も許可される。
+
+### 教訓
+
+1. **NextAuth の trustHost は十分条件ではない**: `NEXTAUTH_URL` が定義されていれば優先される。Multi-environment 運用では env var そのものを deploy context ごとに切替える必要がある
+2. **Netlify env vars の context override は値の固定値しか持てない**: PR ごとに変わる URL を Dashboard で context override するのは運用負荷が高い。build wrapper で `URL` env var を `NEXTAUTH_URL` に注入する方が clean
+3. **`URL` / `DEPLOY_PRIME_URL` / `DEPLOY_URL` を活用する**: Netlify は build 時にこれらの env vars を自動設定。`URL` は deploy context に応じて値が変化するので最も使い勝手が良い
+4. **オープンリダイレクト対策の origin チェックは「許可リスト」設計に**: 単一 origin 比較だと multi-environment で誤って弾く。Set ベースの allowed origins で柔軟に対応
+5. **`req.url` の origin は Netlify Functions で canonical に固定されることがある**: Next.js + Netlify Functions の組み合わせで、host header が本番 URL に書き換えられるケースあり。フォールバック先には `process.env.URL` を優先する
+6. **Stripe UAT は Deploy Preview で実施するのが正解**: 本番 Stripe Test mode 環境を借りる必要がなく、本番 DB も汚染しない。ただし上記 NextAuth + sanitizeReturnTo の罠を踏むので事前対策必須
+
+### 検証手順
+
+```
+1. Netlify Deploy Preview にアクセス: https://deploy-preview-NNN--tasukiba.netlify.app/login
+   → アドレスバーが本番 URL に置換されないこと (= 段階 A 対策確認)
+
+2. ログイン → /settings/tenant の「クレジットカード払いに切替」ボタンクリック
+   → Stripe Checkout 画面に遷移
+
+3. テストカード 4242 4242 4242 4242 を入力 → 保存
+
+4. Stripe Checkout 完了後の戻り先
+   → アドレスバーが Deploy Preview URL のまま (= 段階 B 対策確認)
+   → /settings/tenant?stripe_setup=success が表示される
+```
+
+### 関連 KDD / PR
+
+- PR #425 fix/seed-vercel-to-netlify (本事例): Stripe staging UAT 中に検出 + 修正
+- 関連修正ファイル:
+  - `scripts/netlify-build.sh` (新規、build wrapper)
+  - `netlify.toml` (build command 変更)
+  - `src/app/api/tenants/me/billing/stripe/setup/complete/route.ts` (sanitizeReturnTo 修正)
+- 関連 KDD §5.X+72 (前提): セッション解除パターン (NextAuth + Netlify の cookie 罠)
