@@ -11196,3 +11196,209 @@ ADR-0016 で同一個人が複数テナントに所属可能になったこと�
 - PR feat/multi-tenant-user-membership (本 PR Phase 10): 原因 + 修正
 - KDD §5.X+89 (前段): ADR-0016 本体の multi-tenant 設計
 - ADR-0016 §Risk: 本 abuse パターンの記録
+
+## 5.X+91 **WBS のような階層エンティティで「同階層名称重複」を level + name で判定すると別 WP 配下の同名 ACT を誤ブロックする ─ parent (parentRowIndex / parentTaskId) を含めたキーで判定する (2026-05-25 / PR #420 [A1/A2])**
+
+### 発生事象
+
+WBS タスク CSV インポートで、以下のような正当なユースケースがブロッカー判定されてプレビュー画面から進めない事象が報告された:
+
+```
+WP-A
+├ AACT
+├ BACT
+├ CACT
+└ DACT
+WP-B
+├ AACT  ← 同階層 (level=2) で同名だが別 WP 配下
+├ BACT  ← (実務でよくある「設計レビュー」「結合テスト」等の繰り返し)
+├ CACT
+└ DACT
+```
+
+エラー: 「同階層・同名のタスクが CSV 内に複数あります」
+
+### 根本原因
+
+`task-sync-import.service.ts` の duplicateNames 判定キーが `${level}::${name}` だった。コードコメント自身が「本来は level+parent+name で判定すべき」と認める実装簡略化。
+
+DB 既存タスクとの「誤コピー検知」も同様に `existingByName` が name 単独 Map で、project 全体スコープで「他 WP 配下の同名」も誤検知していた。
+
+### 解決策
+
+1. **parser 拡張**: `SyncImportRow` に `parentRowIndex: number | null` を必須フィールド化。`parseSyncImportCsv` 内で level スタックから動的に決定して埋め込む
+2. **CSV 内重複キー**: `${parentRowIndex ?? '__root__'}::${name}` で判定 (= 同一親配下のみ重複扱い)
+3. **DB 既存重複キー**: `existingByParentAndName: Map<string, DbTaskSnapshot[]>` で `(parentTaskId, name)` インデックス
+4. **CREATE 親が CREATE の場合**: `parentIsCsvCreate=true` で DB 照合をスキップ
+5. **3 経路の整合性**: CSV 内 / DB 既存 / 仕様書 (SCREENS.md) の文言を全て「同一親配下」に統一
+
+### 教訓
+
+1. **階層エンティティの重複判定は必ず parent + name のスコープで行う**: level + name は構造上の妥協であり、実務シナリオを誤検知する
+2. **コードコメントの「本来は～すべき」は技術負債のフラグ**: 簡略化を選ぶ場合、ユーザ影響をレビューで検出して直す
+3. **DB 制約 (UNIQUE) と app 層検知の二重防御を整合させる**: スコープを揃えないと「app 層 OK / DB NG」or「app 層 NG / DB OK」のズレが発生
+4. **横展開先**: 将来 Knowledge / Retrospective 等にも親子関係を持たせる場合、同じ pattern で実装する
+
+### 関連 KDD / PR
+
+- PR #420 feat/wbs-import-uplift (本 PR): 修正コミット 6d49e49
+- ADR-0017 (本 PR で追加): WBS sync-import と bulk-duplicate の設計決定
+- KDD §5.X+92 (関連): WBS 一括複製での集計再計算順序
+- KDD §5.X+93 (関連): OCC (Optimistic Concurrency Control) パターン
+
+## 5.X+92 **PgBouncer 制約で $transaction が使えない環境では bulk INSERT 後の集計再計算を「呼出順序に依存しない idempotent な recalc」で組み立てる ─ task-duplicate.service.ts の WP 集計漏れ修正 (2026-05-25 / PR #420)**
+
+### 発生事象
+
+WBS タスク一括複製 (`POST /api/projects/.../tasks/bulk-duplicate`) で、WP + ACT を同時に複製した時、新規 WP の `plannedEffort` が 0 のまま DB に残るバグが発生。
+
+例: ユーザが `WP-A (effort=5, 子 ACT-X effort=3 + ACT-Y effort=2)` を含む 3 件選択 → root に複製 → 結果:
+- WP-A' (effort=0) ← **本来は 5 になるべき**
+- ACT-X' (effort=3)
+- ACT-Y' (effort=2)
+
+### 根本原因
+
+`task-duplicate.service.ts` のステップ 10 で `recalculateAncestorsPublic(targetParent.id)` を呼出していたが、これは「targetParent の集計と上方伝播」のみ。新規作成 WP の集計はトリガされていなかった。
+
+加えて `recalculateAncestors` の挙動として:
+- **WP 引数**: 自身を recalc + 親に伝播
+- **ACT 引数**: **no-op** (親に伝播もしない!)
+
+→ 新規 ACT 子から自動 rollup される、ということは無い。
+
+### 解決策
+
+```typescript
+// 影響を受ける全 WP を集めて recalc を呼ぶ (順不同で OK)
+const affectedWpIds = new Set<string>();
+for (const s of sortedSources) {
+  if (s.type === 'work_package') {
+    const newId = oldToNewId.get(s.id);
+    if (newId) affectedWpIds.add(newId);
+  }
+}
+if (targetParent) affectedWpIds.add(targetParent.id);
+
+// 順不同で OK: 各 call が自身を recalc → 親に伝播するので最終整合する
+for (const wpId of affectedWpIds) {
+  await recalculateAncestorsPublic(wpId);
+}
+```
+
+### 教訓
+
+1. **`recalculateAncestors` のメンタルモデルを誤らない**: 「先祖を再計算」だが、ACT 引数では何もせず、WP 引数では自身も含めて再計算する非対称仕様。利用箇所では必ず WP id を渡す
+2. **PgBouncer 制約 (`$transaction` 不可) 環境での bulk INSERT 後処理は idempotent に**
+3. **集計対象を Set で集める + 順不同実行**: 順序が誤って outer-first になっても上方伝播で最終整合する
+4. **テストで affected WP の recalc 呼出を verify**: spy/mock で `recalculateAncestorsPublic.toHaveBeenCalledWith(<newWpId>)` を assert
+
+### 関連 KDD / PR
+
+- PR #420 feat/wbs-import-uplift commit 596f17b
+- src/services/task-duplicate.service.ts:316-329
+
+## 5.X+93 **PgBouncer 制約で advisory lock も使えない環境では「dry-run snapshot の最大 updatedAt を client → header 経由で apply に持ち回す OCC」で並行編集を検出する (2026-05-25 / PR #420 [C2])**
+
+### 発生事象
+
+WBS sync-import の dry-run (プレビュー) と本実行の間に、別ユーザが同じ project の task を更新すると、本実行が「ユーザが見ていない最新 DB 状態」に対して適用されて意図しない差分になる可能性。
+
+通常の RDB なら `SELECT ... FOR UPDATE` や `pg_advisory_xact_lock` で防げるが、本プロジェクトは PgBouncer transaction mode を採用しており **`prisma.$transaction` も advisory lock も使用不可**。
+
+### 解決策
+
+OCC (Optimistic Concurrency Control) を採用:
+
+1. **dry-run**: `computeSyncDiff` が project 配下 task の **最大 `updatedAt`** を `snapshotAt` として返す
+2. **client**: dry-run response の snapshotAt を保持し、本実行時に `x-import-snapshot-at` HTTP header に添えて送信
+3. **本実行**: server 側で再取得した `snapshotAt` と header の `expectedSnapshotAt` を比較
+4. **不一致**: `IMPORT_CONCURRENT_EDIT` (HTTP 409) を返して中断 (= 他ユーザが dry-run 後に更新したことを検出)
+5. **旧 UI (header 未送信)**: best-effort で OCC スキップ (= 移行期の互換性)
+
+### 教訓
+
+1. **PgBouncer 環境では transaction-level lock を諦め、application-level OCC で並行制御**
+2. **snapshot キーには `max(updatedAt)` が最適**: 全タスクの updatedAt を取得済なので追加 query 不要、かつどの行が変わっても snapshot が変わる
+3. **best-effort skip で migration 期間を吸収**: header 未送信は OCC skip。旧 UI が混在しても error にならない
+4. **複数 application instance でも OK**: app 側で lock 状態を共有不要 (= 全部 DB 経由で確認するため)
+
+### 関連 KDD / PR
+
+- PR #420 feat/wbs-import-uplift commit 6d49e49 (C2 OCC 実装)
+- src/services/task-sync-import.service.ts (snapshotAt 取得 + apply 時比較)
+- ADR-0017 (本 PR): 設計決定の記録
+
+## 5.X+94 **localStorage で「過去ログイン履歴」を保持する場合、保存値の型・形状・期限を読込時に全件検証して XSS 由来の改竄を破棄する (2026-05-25 / PR #420 ログイン UX 改修)**
+
+### 発生事象
+
+ログイン画面で組織 ID (tenantSlug) の手入力負担を減らすため、localStorage に直近 5 件の `(slug, name, lastUsedAt)` を LRU 保存する機能を追加。`<datalist>` でプルダウン候補表示する。
+
+XSS が万一発生したら攻撃者が localStorage に細工データを書き込み、次回ログイン時に組織名のなりすまし (フィッシング誘導) が可能になる懸念。
+
+### 解決策
+
+`src/lib/tenant-history.ts` の `validateEntry()` で **読込時に全件検証**:
+
+- slug pattern (lowercase + digit + hyphen, 1-63 chars)
+- name 長 (1-100 chars)
+- lastUsedAt は ISO8601 parsable + 90 日以内
+- 未来日時 (1 分以上先) も拒否 (時計巻き戻し / 改竄対策)
+
+**読込時の浄化**: 不正データを発見したら `safeWrite(valid)` で localStorage を書き戻し、後続呼出で再検証が走らないようにする。
+
+**XSS DOM 経路の遮断**: 表示は React JSX のテキストノード経由 (`<option value={entry.slug}>{entry.name}</option>`) で自動 escape。innerHTML 系 API 不使用を担保。
+
+### 教訓
+
+1. **localStorage は「ユーザブラウザの中の信頼境界」**: 自サイトの過去状態だが、XSS で攻撃者に書き換えられる可能性ありとして読込時に検証
+2. **保存値の検証 5 軸**: 型 / 形状 (regex) / 長さ / 時系列 (ISO8601 + 範囲) / 個数 (LRU 上限)
+3. **`mockResolvedValueOnce` で test mock leak を防ぐ**: 「count を 1 にする」テストの直後に「default 0」前提のテストが続くと、`mockResolvedValue` が leak して別テストが落ちる
+4. **post-auth で tenantName を取得**: pre-auth で `/api/tenants/by-slug` 等を作ると email enumeration の email → tenant マッピング露出に近い問題が出る。`GET /api/auth/current-tenant-info` (認証必須、自テナントのみ) を post-auth で 1 度だけ呼んで `(slug, name)` を localStorage に焼き付ける
+
+### 関連 KDD / PR
+
+- PR #420 feat/wbs-import-uplift commit e445433 (localStorage 履歴実装)
+- src/lib/tenant-history.ts (CRUD + 検証)
+- src/lib/tenant-history.test.ts (15 ケース)
+- src/app/api/auth/current-tenant-info/route.ts (post-auth name 取得 endpoint)
+
+## 5.X+95 **DB UNIQUE 制約を追加するときは「app 層の既存全 INSERT/UPDATE 経路」を網羅し、全経路で事前検知 → 400 に変換する。さもないと P2002 → 500 で UX が壊れる (2026-05-25 / PR #420 [C3])**
+
+### 発生事象
+
+PR #420 で `tasks(project_id, parent_task_id, name) WHERE deleted_at IS NULL` の部分 UNIQUE インデックスを追加。本 PR の新規経路 (sync-import / bulk-duplicate) では app 層で事前にリネーム or 検知していたが、**既存の `POST /tasks` 単一作成 / `PATCH /tasks/[id]` 単一編集** には事前チェックがなく、UI から同名タスクを操作すると Prisma P2002 → 500 エラーで UX が破壊される退行リスクが残存していた。
+
+(本問題は 3 回目のフルレビューで検出。マージ前に救済修正済)
+
+### 解決策
+
+`src/services/task.service.ts` に共通ヘルパ `assertTaskNameUniqueInParent` を追加し、`prisma.task.count` で事前検知。`createTask` (name+parent 指定時) と `updateTask` (name/parent 変更時、自身除外) に挿入。route.ts で try/catch して `TASK_NAME_DUPLICATE_IN_PARENT` を 400 + ユーザフレンドリーメッセージに変換。
+
+**`findFirst` を避けて `count` を使う理由**: 既存テストの `findFirst` mock と衝突して false positive を起こすため。`count` は他箇所であまり mock されないので衝突しにくい。
+
+### 全 INSERT/UPDATE 経路の網羅性確認
+
+| 経路 | app 層防護 |
+|---|---|
+| `POST /tasks` | ✅ createTask で assertTaskNameUniqueInParent |
+| `PATCH /tasks/[id]` | ✅ updateTask で assertTaskNameUniqueInParent |
+| `PATCH /tasks/bulk-update` | ✅ name 非対応 (zod schema で受け付けない) |
+| `PATCH /tasks/[id]/progress` | ✅ name 非対応 |
+| `POST /tasks/sync-import` | ✅ computeSyncDiff の dry-run 検証 (A1/A2) |
+| `POST /tasks/bulk-duplicate` | ✅ pickNonConflictingName で自動リネーム |
+
+### 教訓
+
+1. **DB 制約追加は app 層の全経路レビューが必須**: 新規機能 (sync-import / duplicate) だけでなく **既存の単一作成・編集・bulk 系・cron** 等まで網羅して P2002 → 500 を防ぐ
+2. **新規 PR でレビューを 3 回繰り返したら 1 件ずつ追加 bug が出るのは想定内**: PR scope が大きい場合、横断的影響は 1 回のレビューで全部は見つからない。マルチパスレビューを許容する
+3. **テスト mock の leak 防止**: `mockResolvedValue` ではなく `mockResolvedValueOnce`、あるいは default 値を mock factory で設定
+4. **エラーメッセージは業務文言で**: 「TASK_NAME_DUPLICATE_IN_PARENT」ではなく「同じ親 WP の配下に同じ名称のタスクが既に存在します」と返す
+
+### 関連 KDD / PR
+
+- PR #420 feat/wbs-import-uplift commit f7bf8f2 (本修正)
+- KDD §5.X+91 (関連): 階層重複判定の親スコープ化
+- KDD §5.X+93 (関連): OCC で並行編集検出
+- ADR-0017 (本 PR): 設計決定の記録

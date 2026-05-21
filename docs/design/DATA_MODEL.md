@@ -598,6 +598,14 @@ User ──< project_members >── Project
 - `idx_tasks_project` (project_id, WHERE deleted_at IS NULL)
 - `idx_tasks_assignee` (assignee_id, WHERE deleted_at IS NULL)
 - `idx_tasks_parent` (parent_task_id, WHERE deleted_at IS NULL)
+- **`idx_tasks_project_parent_name_unique`** — 部分 UNIQUE インデックス (PR #420 [#C3] / migration `20260525_tasks_unique_parent_name`)
+  - 定義: `(project_id, COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), name) WHERE deleted_at IS NULL`
+  - 目的: 同一親配下 (root を含む) に同名タスクの重複を DB レベルでブロック
+  - Prisma の `@@unique` は WHERE 句を表現できないため raw SQL migration として追加
+  - NULL parent は COALESCE センチネル UUID にマップ (Postgres の NULL≠NULL 仕様を回避し、ルートレベルでも一意性を担保)
+  - migration の `DO $$ ... $$` ブロックで既存重複を事前検出。1 組でも duplicate があれば `RAISE EXCEPTION` で migration 停止
+  - 本番事前確認スクリプト: `scripts/check-task-name-duplicates.ts`
+  - app 層 defense: sync-import (computeSyncDiff) / bulk-duplicate (pickNonConflictingName) / createTask (assertTaskNameUniqueInParent) / updateTask (同左) で先に検知 → 400 を返す多層防御
 
 ### 5.6 task_progress_logs（進捗・実績ログ）
 
@@ -820,7 +828,7 @@ INSERT 後、旧テーブルを DROP する。
 |---|---|---|---|---|
 | id | UUID | NO | gen_random_uuid() | 主キー |
 | user_id | UUID | NO | - | 操作者（FK: users.id） |
-| action | VARCHAR(50) | NO | - | 操作内容（CREATE / UPDATE / DELETE 等） |
+| action | VARCHAR(50) | NO | - | 操作内容。AuditAction TypeScript 型: `'CREATE' \| 'UPDATE' \| 'DELETE' \| 'SYNC_IMPORT' \| 'EXPORT' \| 'BULK_UPDATE' \| 'BULK_DUPLICATE'` (PR #420 で `BULK_DUPLICATE` 追加) |
 | entity_type | VARCHAR(50) | NO | - | 対象エンティティ種別 |
 | entity_id | UUID | NO | - | 対象エンティティ ID |
 | before_value | JSONB | YES | NULL | 変更前の値 |
