@@ -267,7 +267,7 @@
     "tenantSlugHint": "Enter the ID provided by your tenant administrator.",
     "tenantSlugUnknownHint": "If you don't know your Organization ID, please contact your tenant administrator.",
     "tenantHistoryListLabel": "Previously signed-in organizations",
-    "tenantHistoryClearLink": "Clear sign-in history",
+    "tenantHistoryClearLink": "Clear history",
     "tenantHistoryClearConfirm": "Delete the saved organization ID history ({count} entries). Continue?",
     "tenantHistorySharedPcWarn": "We recommend clearing history when using a shared PC.",
     "backToLogin": "Back to sign in",

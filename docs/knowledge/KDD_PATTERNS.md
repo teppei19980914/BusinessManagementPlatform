@@ -11402,3 +11402,106 @@ PR #420 で `tasks(project_id, parent_task_id, name) WHERE deleted_at IS NULL` �
 - KDD §5.X+91 (関連): 階層重複判定の親スコープ化
 - KDD §5.X+93 (関連): OCC で並行編集検出
 - ADR-0017 (本 PR): 設計決定の記録
+
+## 5.X+96 **ログイン画面に「ログイン」を含む文言のボタンを追加すると既存 E2E の `getByRole('button', { name: 'ログイン' })` (substring match) が strict mode 違反になる ─ ボタン文言から「ログイン」を除く + fixture を `{ exact: true }` 化する (2026-05-25 / PR #420 CI 失敗修正)**
+
+### 発生事象
+
+PR #420 でログイン画面に「ログイン履歴をクリア」リンクボタンを追加した結果、CI の Playwright E2E が 5 件失敗:
+
+1. `e2e/specs/01-admin-and-member-setup.spec.ts:167` (MFA 再ログイン)
+2. `e2e/specs/02-project-detail-tabs.spec.ts:186` (chromium / chromium-mobile)
+3. `e2e/visual/auth-screens.spec.ts:20` (visual baseline、後述 §5.X+97 参照)
+
+エラー (上位 2 種):
+```
+Error: locator.click: Error: strict mode violation:
+getByRole('button', { name: 'ログイン' }) resolved to 2 elements:
+    1) <button type="button">ログイン履歴をクリア</button>
+    2) <button type="submit">ログイン</button>
+```
+
+### 根本原因
+
+Playwright の `getByRole('button', { name: 'ログイン' })` は **デフォルトで substring match** (= name に「ログイン」を含む全要素にマッチ)。既存 E2E (18 ファイル / `e2e/fixtures/auth.ts:92`) はログイン送信ボタンが唯一の「ログイン」を含むボタンであることに依存していた。
+
+PR #420 で「ログイン履歴をクリア」リンクボタンを追加 → name に「ログイン」を含む 2 つの button が共存 → strict mode violation。
+
+### 解決策
+
+**Fix 1 (主)**: i18n の `tenantHistoryClearLink` を「履歴をクリア」に変更し、「ログイン」を含む文言の重複を解消
+- `src/i18n/messages/ja.json`: `"ログイン履歴をクリア"` → `"履歴をクリア"`
+- `src/i18n/messages/en-US.json`: `"Clear sign-in history"` → `"Clear history"`
+- これで substring match で submit ボタンのみ一致
+
+**Fix 2 (防御)**: `e2e/fixtures/auth.ts` の loginAsGeneral helper に `{ exact: true }` を追加
+- 将来「ログイン...」を含む新規ボタンが追加されても破綻しない
+- 既存の 17 spec ファイルは fixture 経由なので Fix 1 だけで通る (= 個別修正不要)
+
+### 教訓
+
+1. **`getByRole({ name })` は substring match がデフォルト**: 「ログイン」のような汎用語を name に持つ要素は将来衝突しやすい。新ボタンを追加する際は既存 E2E の locator 戦略をチェックする
+2. **i18n 文言設計は E2E 影響を考慮する**: ユーザに見せる文言として「ログイン履歴」は自然だが、E2E テスト的には「ログイン」を含む文言は脆弱性となる。short prefix と context 依存表現で衝突を避ける
+3. **fixture には `{ exact: true }` を予防的に付ける**: テキストが完全一致前提のところは exact を明示すると、将来 i18n 変更や UI 追加で破綻しない
+4. **対称的に: aria-label / datalist / option 等は `getByRole('button', ...)` にマッチしないので「ログインした組織」のような文言は安全**: 要素の role を理解して命名する
+
+### 横展開チェック (新 UI 追加時の self-review)
+
+新規 button / link を追加する際、以下を確認:
+- 既存 E2E で `getByRole('button', { name: '<短い単語>' })` (substring) が使われているか grep
+- 追加ボタン名がその単語を含むなら、文言変更 or fixture 側を `{ exact: true }` 化
+- 特に頻出キーワード: 「ログイン」「保存」「削除」「キャンセル」「実行」「適用」「OK」「閉じる」
+
+### 関連 KDD / PR
+
+- PR #420 feat/wbs-import-uplift commit <次の修正 commit>
+- KDD §5.X+97 (続き): Visual regression baseline 再生成パターン
+
+## 5.X+97 **ログイン画面の UI を変更したら visual regression test の baseline 画像が outdated になる ─ `[gen-visual]` タグ付き commit で baseline 自動再生成 workflow を発火する (2026-05-25 / PR #420 CI 失敗修正)**
+
+### 発生事象
+
+PR #420 でログイン画面の UI を変更:
+- 「組織 ID がわからない場合は管理者へ問合せ」ヒント追加
+- 「共用 PC では履歴を残さないことを推奨」注意喚起追加
+- 「履歴をクリア」リンクボタン追加
+- datalist プルダウン用の組織 ID 入力欄調整
+
+CI の visual regression test が 2 件失敗:
+- `[chromium] e2e/visual/auth-screens.spec.ts:20:7 ログイン画面 初期表示` (13580 pixels diff, ratio 0.06)
+- `[chromium-mobile]` 同上 (13580 pixels diff)
+
+### 根本原因
+
+`e2e/visual/auth-screens.spec.ts` が `toHaveScreenshot('login.png')` で過去の baseline 画像と比較している。UI 変更で実画面と baseline が乖離。
+
+### 解決策
+
+本プロジェクトには `.github/workflows/e2e-visual-baseline.yml` (baseline 自動再生成 workflow) が用意されている:
+
+1. **発火条件**: push trigger + commit message に `[gen-visual]` タグを含む
+2. **動作**: Linux CI 環境 (Ubuntu + Chromium) で baseline PNG を再生成し、同ブランチに「chore: regenerate visual baselines...」commit を自動 push
+3. **誤発火防止**: tag が無い通常 commit では発火しない
+
+**運用手順**:
+```bash
+git commit --allow-empty -m "chore: regenerate visual baselines for <reason> [gen-visual]"
+git push
+# → workflow が新 baseline を生成して同ブランチに自動 commit
+# → 次回 E2E が新 baseline 比較で PASS
+```
+
+または UI 変更 commit のメッセージに `[gen-visual]` を含めても OK (本修正で採用)。
+
+### 教訓
+
+1. **UI 変更時は visual baseline 再生成を忘れない**: PR #420 のように UI を改修したら、CI の visual diff が出るのは当然。`[gen-visual]` 発火を含めると CI を待たずに baseline 更新できる
+2. **Linux CI で生成した baseline を使う**: 開発者のローカル OS (Windows / Mac) で生成するとフォント / レンダリングの差で baseline が壊れる。**必ず CI 経由で再生成**
+3. **baseline 更新 commit は別に分けないでよい**: 元 commit と baseline 更新 commit が同 PR に混在しても問題ない (= 仕様変更と baseline 更新が timeline 的に近いほうが追跡しやすい)
+4. **ベースライン更新を main に直接送らない**: review 通過後の PR 内で更新 → PR merge で main 反映 (= 直接 main commit を避ける)
+
+### 関連 KDD / PR
+
+- PR #420 feat/wbs-import-uplift CI 失敗 → baseline 再生成
+- `.github/workflows/e2e-visual-baseline.yml`
+- 過去事例: ADR-0016 login UI でも同 workflow を使用 (commit `d96e256 [gen-visual]`)

@@ -55,7 +55,8 @@ export async function loginAsAdminWithMfa(
   await context.clearCookies();
   await page.goto('/login');
   await fillLoginForm(page, params);
-  await page.getByRole('button', { name: 'ログイン' }).click();
+  // PR #420: ログイン画面に「履歴をクリア」ボタン追加で substring match 衝突するため exact 化 (KDD §5.X+96)
+  await page.getByRole('button', { name: 'ログイン', exact: true }).click();
 
   await page.waitForURL(/\/login\/mfa/);
   await page.getByLabel('認証コード').fill(generateTotpCode(params.mfaSecret));
@@ -89,6 +90,10 @@ export async function loginAsGeneral(
   await context.clearCookies();
   await page.goto('/login');
   await fillLoginForm(page, params);
-  await page.getByRole('button', { name: 'ログイン' }).click();
+  // PR #420: ログイン画面に "履歴をクリア" ボタンを追加した際、
+  //   { name: 'ログイン' } の substring match と衝突した。{ exact: true } で
+  //   submit ボタンのみ厳密マッチさせる (= 将来「ログイン...」を含む新ボタンが追加されても破綻しない)。
+  //   KDD §5.X+96 参照
+  await page.getByRole('button', { name: 'ログイン', exact: true }).click();
   await waitForProjectsReady(page);
 }

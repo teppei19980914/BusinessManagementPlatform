@@ -267,7 +267,7 @@
     "tenantSlugHint": "組織管理者から伝えられた ID を入力してください。",
     "tenantSlugUnknownHint": "組織 ID がわからない場合は、組織管理者にお問い合わせください。",
     "tenantHistoryListLabel": "過去にログインした組織",
-    "tenantHistoryClearLink": "ログイン履歴をクリア",
+    "tenantHistoryClearLink": "履歴をクリア",
     "tenantHistoryClearConfirm": "保存している組織 ID の履歴 ({count} 件) を削除します。よろしいですか?",
     "tenantHistorySharedPcWarn": "共用 PC では履歴を残さないことを推奨します。",
     "backToLogin": "ログインに戻る",
