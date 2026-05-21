@@ -11,7 +11,10 @@
       "PowerShell(Write-Host \"=== Check secret keys in PRODUCTION context ===\"; @\\(\"NEXTAUTH_SECRET\",\"CRON_SECRET\",\"BREVO_API_KEY\",\"ANTHROPIC_API_KEY\",\"VOYAGE_API_KEY\",\"INITIAL_ADMIN_PASSWORD\",\"SUPER_ADMIN_INITIAL_PASSWORD\"\\) | ForEach-Object { Write-Host -NoNewline \"  $_ : \"; $out = netlify env:get $_ --context production 2>&1; if \\($out -match \"No value set\"\\) { Write-Host \"NOT SET\" -ForegroundColor Red } else { Write-Host \"SET\" -ForegroundColor Green } })",
       "PowerShell(& C:\\\\tmp\\\\netlify-env-secrets-fix.ps1)",
       "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\docs\\\\design\" | ForEach-Object { $_.FullName })",
-      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\docs\\\\specification\" | ForEach-Object { $_.FullName })"
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\docs\\\\specification\" | ForEach-Object { $_.FullName })",
+      "Read(//c/Program Files/Docker/Docker/**)",
+      "PowerShell($cpu = Get-WmiObject Win32_Processor; Write-Host \"CPU VirtualizationFirmwareEnabled: $\\($cpu.VirtualizationFirmwareEnabled\\)\"; Write-Host \"CPU SecondLevelAddressTranslationExtensions: $\\($cpu.SecondLevelAddressTranslationExtensions\\)\"; Write-Host \"---\"; $hv = Get-ComputerInfo -Property HyperVisorPresent,WindowsProductName,OsArchitecture; $hv | Format-List; Write-Host \"---\"; wsl --status 2>&1 | Select-Object -First 10)",
+      "WebFetch(domain:tasukiba.netlify.app)"
     ]
   },
   "hooks": {
