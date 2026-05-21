@@ -92,6 +92,7 @@
 - [ ] `/api/auth/explicit-signout` — skip: fix/session-clearance (2026-05-20) で導入。Netlify 固有の Set-Cookie 脱落対策のため E2E (Playwright) では再現不能。単体テスト (src/app/api/auth/explicit-signout/route.test.ts 5 ケース) + Netlify Deploy Preview の実機確認で担保 (KDD §5.X+84)
 - [ ] `/api/auth/lock-status` — skip: PR #E (ロック誘発シナリオは非決定的で後回し)
 - [ ] `/api/auth/check-tenant-eligibility` — skip: ADR-0016 (2026-05-20) で導入。UI ヒント専用 API (= bypass されても tenant-onboarding.service.ts の BEGINNER_REQUIRES_UPGRADE が defense-in-depth で動作)。単体テスト (src/app/api/auth/check-tenant-eligibility/route.test.ts 5 ケース) で担保
+- [ ] `/api/auth/current-tenant-info` — skip: PR #420 (2026-05-25) login 画面の localStorage 履歴用に slug + name を post-auth 返却 (列挙不可、認証必須)。tenant-history.ts (src/lib/tenant-history.test.ts 15 ケース) と組み合わせ UI 経由で挙動確認。専用 E2E は将来検討
 - [x] `/api/auth/mfa/setup` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2)
 - [x] `/api/auth/mfa/enable` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2)
 - [ ] `/api/auth/mfa/disable` — skip: PR #D (admin は無効化不可 / 一般ユーザ経路は設定画面)
@@ -113,6 +114,7 @@
 
 ### タスク (WBS) / ガント
 - [x] `/api/projects/[projectId]/tasks/*` — e2e/specs/06-wbs-tasks.spec.ts (PR #96 / POST WP + ACT / DELETE は UI 経由) ※ bulk/progress/export/import/recalculate/tree は後続 PR
+- [ ] `/api/projects/[projectId]/tasks/bulk-duplicate` — skip: PR #420 (2026-05-25) WBS タスク一括複製 API。階層保持 + 名称衝突自動リネーム + 実績リセットの service ロジックは src/services/task-duplicate.service.test.ts (17 ケース) で担保。専用 E2E は将来検討
 - [ ] `/api/projects/[projectId]/tasks/sync-import` — skip: feat/wbs-overwrite-import で新設。CRUD 単体テストは src/services/task-sync-import.service.test.ts で対応 (E2E は後続 PR)
 - [ ] `/api/projects/[projectId]/tasks/workload` — skip: PR H (#7 / 2026-05-09) で新設。担当者別日次工数集計を返す純関数 + Prisma findMany のみ。集計ロジックは src/services/task.service.test.ts の getAssigneeDailyWorkload で対応 (E2E は後続 PR)
 - [ ] `/api/projects/[projectId]/tasks/workload/preview` (GET) — skip: PR #361 (2026-05-14) WBS ACT 編集中の日次工数プレビュー API。assigneeId + startDate + endDate + plannedEffort + excludeTaskId? を query で受け、現プロジェクト範囲で当該担当者の他タスクと合算した 1 日あたり最大工数を返す。**テナント越境防止**は service 層の `project.tenantId` フィルタ + route 層の `checkProjectPermission(task:read)` で二重防御。サービステスト 7 件 + route テスト 7 件で担保 (うち越境 invariant テスト 2 件)。UI 側は PM/TL ロール (`canEditPmTl`) のみで表示

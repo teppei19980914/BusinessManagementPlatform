@@ -224,33 +224,25 @@
 - インポートバリデーション: 親参照整合性（存在しない親の検出）、tempId 重複、循環参照、親種別チェック
 - エラー時: トランザクションにより全タスクがロールバック（不正データは残らない）
 
-#### WBS 上書きインポート仕様 (feat/wbs-overwrite-import / 新規追加)
+#### WBS 上書きインポート仕様 (feat/wbs-overwrite-import / PR #420 で UX 全面改修)
 
 **目的**: 同一プロジェクト内の WBS を 「export → Excel 編集 → re-import」の往復編集サイクルで管理可能にする。旧テンプレート流用フローとは別系統で並走する。
 
-**CSV フォーマット (新形式、17 列)**:
+**CSV フォーマット (T-19 で 7 列に削減)**:
 
 | # | 列名 | 必須/任意 | 区分 | import 動作 |
 |---|---|---|---|---|
 | 1 | ID | 任意 | 突合 | UUID。値あり=既存と突合し UPDATE、空欄=新規作成 |
-| 2 | レベル | 必須 | 階層 | 1〜N、行順序と組合せで階層を再構築 |
-| 3 | 種別 | 必須 | 階層 | WP / ACT。WP↔ACT 切替は dry-run でエラー扱い |
-| 4 | 名称 | 必須 | 計画 | UPDATE 反映 |
-| 5 | WBS番号 | 任意 | 計画 | UPDATE 反映 |
-| 6 | 担当者氏名 | 任意 | 計画 | ProjectMember 内で氏名一意 lookup、複数該当 / 不在=エラー |
-| 7 | 予定開始日 | 任意 | 計画 | UPDATE 反映 (ACT のみ。WP は子から自動算出のため CSV 側を無視) |
-| 8 | 予定終了日 | 任意 | 計画 | UPDATE 反映 (ACT のみ) |
-| 9 | 見積工数 | 任意 | 計画 | UPDATE 反映 (ACT のみ) |
-| 10 | 優先度 | 任意 | 計画 | `low` / `medium` / `high` |
-| 11 | マイルストーン | 任意 | 計画 | `○` / 空 |
-| 12 | 備考 | 任意 | 計画 | UPDATE 反映 |
-| 13 | ステータス ※read-only | - | 進捗 | import 時は無視 (DB と異なる場合は dry-run で warn) |
-| 14 | 進捗率 ※read-only | - | 進捗 | 同上 |
-| 15 | 実績工数 ※read-only | - | 進捗 | 同上 |
-| 16 | 実績開始日 ※read-only | - | 進捗 | 同上 |
-| 17 | 実績終了日 ※read-only | - | 進捗 | 同上 |
+| 2 | 種別 | 必須 | 階層 | WP / ACT。WP↔ACT 切替は dry-run でエラー扱い |
+| 3 | 名称 | 必須 | 計画 | UPDATE 反映、最大 100 文字 (VARCHAR(100)) |
+| 4 | レベル | 必須 | 階層 | 1〜N、行順序と組合せで階層を再構築。**親は level スタックから推論** (= 同一親配下の判定に使用) |
+| 5 | 予定開始日 | 任意 | 計画 | UPDATE 反映 (ACT のみ。WP は子から自動算出のため CSV 側を無視) |
+| 6 | 予定終了日 | 任意 | 計画 | UPDATE 反映 (ACT のみ) |
+| 7 | 予定工数 | 任意 | 計画 | UPDATE 反映 (ACT のみ) |
 
-ヘッダー行に `※read-only (import 時無視)` の注記を 13〜17 列に明示する。BOM 付き UTF-8 で出力 (Excel 対応)。
+担当者 / 優先度 / マイルストーン / 備考 / WBS 番号 / 進捗系列は CSV 経由で扱わない (CSV の用途を「計画調整」に絞り、それ以外は UI 個別編集に集約)。BOM 付き UTF-8 で出力・受入 (Excel 対応)。
+
+**ヘッダー検証** (PR #420 [A3]): 列名・列順・列数 (≥4) を厳格チェック。不一致は dry-run の `globalErrors` でブロッカー化。旧実装は silent skip で原因不明エラーになっていた問題を解消。
 
 **エクスポート仕様 (新形式)**:
 - エンドポイント: 既存 `POST /api/projects/[id]/tasks/export` を拡張 (後方互換維持のため `mode='sync'` パラメータで新形式を返す)
@@ -269,19 +261,26 @@
    - 成功 → import 件数サマリを返す
    - 失敗 → インポート前の状態に完全復元 (audit_log の beforeValue から)
 
-**画面操作**:
+**画面操作** (PR #420 で UX 全面改修):
 - タスク一覧画面に「IDを表示」トグルボタンを追加 (既定 OFF、ON で先頭に ID 列表示)
 - 「WBSをエクスポート」「WBSを上書きインポート」ボタンを別途追加 (PM/TL + admin のみ表示)
 - 上書きインポートは dry-run プレビューダイアログを必ず経由する 2 ステップ UX
-  - サマリ + 行ごと差分テーブル + 削除候補セクション (赤強調)
-  - 「削除モード」ラジオボタン (保持 / 警告のみ / 削除実行)
-  - 「確定実行」ボタンで本 API 呼び出し
+
+**ダイアログ UI (PR #420 で追加された UX 機能)**:
+- **CSV テンプレート DL ボタン** [W1] — Step 1 でクリック 1 回でヘッダー + サンプル 3 行を BOM 付き UTF-8 でダウンロード
+- **D&D アップロード対応** [B4] — ファイル選択 input をクリックする以外に、ドロップゾーンに CSV を D&D 可。非 CSV は明示拒否
+- **ファイル選択時の自動 dry-run** [W2] — 「プレビュー生成」ボタン廃止。選択直後にプレビュー画面へ遷移
+- **エラー / 警告 / 全件 フィルタトグル** [B1] — 大量行でも問題行を見つけやすくする
+- **REMOVE_CANDIDATE 行のテーブル内ハイライト** [B5] — 進捗あり=赤、進捗なし=黄。別セクションと併せて二重表示で重要性を強調
+- **削除モード=delete 実行直前の確認ダイアログ** [W3] — 削除対象タスク名を列挙してユーザに確認させる
+- **エラーメッセージのガイダンス化** [B2] — 技術文言ではなく業務文言 + 修正ヒント (例: 「親レベル N-1 が直前にありません」→ 「親 WP を CSV の上行に配置してください」)
+- **サマリ grid / ボタンの sm: breakpoint レスポンシブ対応** [B7] — モバイル幅でも操作可能
 
 **エラー分類**:
 
 | 重大度 | 条件 | 動作 |
 |---|---|---|
-| ブロッカー | ヘッダー不正 / 必須列空 / 種別不正 / 親不在 / WP↔ACT 切替 / ID 不一致だが名称一致 / 担当者氏名がメンバー外 or 複数該当 / CSV 内 ID 重複 / CSV 内同階層名称重複 / 循環参照 / 進捗あり削除候補 (削除モード時) | dry-run でエラー、実行不可 |
+| ブロッカー | ヘッダー不正 (列名・列順) / 必須列空 / 種別不正 / 親不在 / WP↔ACT 切替 / ID 不一致だが同一親配下に同名 (誤コピー検知) / 担当者氏名がメンバー外 or 複数該当 / CSV 内 ID 重複 / CSV 内**同一親配下**の名称重複 / 並行編集検出 (OCC) / 進捗あり削除候補 (削除モード時) | dry-run でエラー、実行不可 |
 | 警告 | 進捗系列の値が DB と異なる / 削除候補が存在する (warn モード) / read-only 列を編集している | 実行可、確認後 OK |
 | 情報 | 追加 / 更新 / 名称変更 / 親変更 | 表示のみ |
 
@@ -295,10 +294,63 @@
 
 **上限**: 500 件/インポート (テンプレート版と同等)
 
+**並行編集検出 (OCC, PR #420 [C2])**:
+- dry-run 時点で `project` 配下 task の最大 `updatedAt` を `snapshotAt` として返す
+- 本実行は client が `x-import-snapshot-at` header に snapshotAt を添えて送信
+- server 側で再取得した snapshotAt と比較し、不一致なら `IMPORT_CONCURRENT_EDIT` (HTTP 409) で中断 (= 他ユーザが dry-run 後にタスクを更新したことを検出)
+- 旧 UI (header 未送信) は best-effort で OCC スキップ
+
+**DB レベル制約 (PR #420 [C3])**:
+- tasks に `(project_id, parent_task_id, name) WHERE deleted_at IS NULL` の **部分 UNIQUE インデックス** を追加 (raw SQL migration `20260525_tasks_unique_parent_name`)
+- アプリ層 (sync-import / bulk-duplicate / createTask / updateTask) で先に重複検知して 400 を返すが、何らかの bypass 経路が出現した場合の defense-in-depth として DB で最終ガード
+- migration の `DO $$ ... $$` ブロックで既存重複を事前検出。1 組でも duplicate があれば `RAISE EXCEPTION` で migration 停止 → `scripts/check-task-name-duplicates.ts` で本番事前確認必須
+
 **スコープ外 (将来 PR 候補)**:
 - 列名のヘッダーゆらぎ吸収
-- Undo (実行後の取り消し)
+- プレビュー画面でのインライン編集 [B3 defer]
+- 部分成功・警告のみ強制実行オプション [B6 defer]
+- インポート履歴 (直近 5 件) のダイアログ内表示 [W4 defer]
 - 進捗系列を書き戻し可能にする上級モード
+
+#### WBS タスク一括複製仕様 (PR #420 で新規追加)
+
+**目的**: WBS 一覧でチェック ON のタスクを **指定の親 WP (または ルート) 配下に階層保持で複製** する。インポート手順を経ずに画面上で複数作成する導線。
+
+**画面操作**:
+- WBS 一覧でタスクにチェックを入れた状態で bulk action bar 内「**複製**」ボタンが活性化 (PM/TL + admin のみ表示、一括編集と同等権限)
+- ボタンクリックで親選択ダイアログを開く
+- 「複製先の親 WP」プルダウン (`ルート / プロジェクト直下` + 既存全 WP)
+- 確認用に動作仕様を 3 行表示
+- 「複製を実行」ボタンで API 呼び出し
+
+**動作仕様 (確定 4 項目)**:
+
+| 項目 | 動作 |
+|---|---|
+| **名称衝突** | 自動リネーム "(コピー)", "(コピー 2)" suffix。VARCHAR(100) を超えないよう base を truncate |
+| **階層保持** | 選択範囲内の親子関係は維持。選択外を親とするタスクは target parent 直下に移動 |
+| **計画情報のコピー** | name / type / description / category / assignee / planned 開始終了日 / plannedEffort / priority / isMilestone / notes |
+| **実績情報のリセット** | `status='not_started'` / `progressRate=0` / `actualStartDate=null` / `actualEndDate=null` / TaskProgressLog 非複製 |
+
+**バリデーション (ブロッカー)**:
+- `PROJECT_NOT_FOUND`: テナント越境チェック
+- `TASKS_OUT_OF_RANGE`: 0 件 / 101 件以上
+- `TASKS_NOT_FOUND:<ids>`: 指定 ID が当該 project に存在しない (= 他 project の ID も同扱いで enumeration 防止)
+- `TARGET_PARENT_NOT_FOUND` / `TARGET_PARENT_NOT_WP`: target parent が削除済 or ACT
+- `ACT_CANNOT_BE_ROOT:<names>`: ACT を root or ACT の配下に置こうとした
+
+**集計再計算**:
+- 新規作成 WP 自身も `recalculateAncestorsPublic` の対象 (= 新規 ACT 子の plannedEffort が WP に rollup される)
+- 加えて target parent も再計算 (= 配下が増えたため)
+
+**監査ログ**:
+- `audit_logs` に 1 件追加 (action=`BULK_DUPLICATE`, entityType=`task`, entityId=projectId, afterValue=`{ targetParentId, sourceTaskIds, added, renamedCount, createdIds }`)
+
+**上限**: 100 件 (既存 bulk-edit と揃える)
+
+**スコープ外 (将来 PR 候補)**:
+- リネーム接尾辞のカスタマイズ (現在 "(コピー)" 固定)
+- 複製対象に進捗ログまで含める高度モード
 | 進捗更新 | △ | ○ | △ | 担当者本人のみ (役割問わず、PR #88 改訂) |
 | 実績入力 | △ | ○ | △ | 担当者本人のみ (役割問わず、PR #88 改訂) |
 | コメント入力 | △ | ○ | △ | システム管理者、PM/TL、担当メンバー |

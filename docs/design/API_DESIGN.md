@@ -33,6 +33,7 @@
 | POST | /api/auth/mfa/enable | 設定画面経由の MFA 有効化 (TOTP 検証) | 必要 |
 | POST | /api/auth/mfa/disable | MFA 無効化 (**admin は 403、PR #91**) | 必要 |
 | POST | /api/auth/mfa/verify | ログイン中の TOTP 検証 (MFA pending session) | 部分的 (MFA 未検証セッション) |
+| GET | /api/auth/current-tenant-info | **認証済ユーザの自テナント { slug, name } のみ返却** (PR #420)。ログイン成功直後に呼び localStorage の組織 ID 履歴 (LRU 5 件) に記録するための軽量 endpoint。列挙不可 (自テナントのみ)、admin 不要 | 必要 |
 
 #### プロジェクト
 
@@ -78,9 +79,10 @@
 | GET | /api/projects/:id/tasks/:taskId/progress | 進捗履歴取得 | 全ロール |
 | POST | /api/projects/:id/tasks/:taskId/progress | 進捗更新 | admin, pm_tl, 担当 member |
 | PATCH | /api/projects/:id/tasks/bulk-update | 一括更新 (計画系=admin/pm_tl, 実績系=+member 自分担当) | admin, pm_tl, 担当 member (実績系のみ) |
+| POST | /api/projects/:id/tasks/bulk-duplicate | **WBS タスク一括複製** (PR #420)。階層保持で複製、名称衝突は `(コピー)` suffix で自動リネーム、実績情報はリセット。body: `{ taskIds: uuid[], targetParentId: uuid \| null }`、上限 100 件 | admin, pm_tl |
 | POST | /api/projects/:id/tasks/export | WBSテンプレートエクスポート（CSV）。`mode='sync'` で新形式 (ID + 進捗列込み、feat/wbs-overwrite-import) | 全ロール |
 | POST | /api/projects/:id/tasks/import | WBSテンプレートインポート（旧フロー: 別プロジェクトへの雛形流用、新規 ID で全件 INSERT） | admin, pm_tl |
-| POST | /api/projects/:id/tasks/sync-import | **WBS 上書きインポート (Sync by ID)**。`?dryRun=1` でプレビュー、無しで本実行 (feat/wbs-overwrite-import) | admin, pm_tl |
+| POST | /api/projects/:id/tasks/sync-import | **WBS 上書きインポート (Sync by ID)**。`?dryRun=1` でプレビュー、無しで本実行 (feat/wbs-overwrite-import / PR #420 で UX 全面改修)。本実行は `x-import-snapshot-at` header を併送し OCC で並行編集を検出 | admin, pm_tl |
 | POST | /api/projects/:id/tasks/recalculate | 全WP集計再計算（修復ツール） | admin, pm_tl |
 
 #### ガントチャート
@@ -204,6 +206,15 @@
 | NOT_FOUND | 404 | リソースが見つからない |
 | STATE_CONFLICT | 409 | 状態遷移条件を満たさない |
 | INTERNAL_ERROR | 500 | サーバ内部エラー |
+| **TASK_NAME_DUPLICATE_IN_PARENT** | **400** | **同一親 WP 配下に同名タスクが既存 (PR #420 [#C3])。`POST /tasks` 単一作成・`PATCH /tasks/[id]` 単一編集で発生。`(project_id, parent_task_id, name)` の部分 UNIQUE 制約に対する app 層事前ガード** |
+| **IMPORT_VALIDATION_ERROR** | **400** | **sync-import 本実行で dry-run と同じ blocker が再検出された (CSV 改竄 / DB 状態変動)** |
+| **IMPORT_REMOVE_BLOCKED** | **400** | **sync-import 本実行で removeMode=delete + 進捗ありタスクの削除が要求された** |
+| **IMPORT_CONCURRENT_EDIT** | **409** | **sync-import の OCC 並行編集検出 (PR #420 [#C2])。`x-import-snapshot-at` header と現在の最大 updatedAt が不一致** |
+| **TASKS_OUT_OF_RANGE** | **400** | **bulk-duplicate (PR #420): 件数が 0 または 101 以上** |
+| **TASKS_NOT_FOUND** | **404** | **bulk-duplicate: 指定 ID が当該 project に存在しない (= 他 project の ID も同扱いで enumeration 防止)** |
+| **TARGET_PARENT_NOT_FOUND** | **404** | **bulk-duplicate: 複製先 parent が削除済 or 存在しない** |
+| **TARGET_PARENT_NOT_WP** | **400** | **bulk-duplicate: 複製先 parent が ACT (WP でない)** |
+| **ACT_CANNOT_BE_ROOT** | **400** | **bulk-duplicate: ACT を root or ACT 配下に置こうとした** |
 
 ---
 

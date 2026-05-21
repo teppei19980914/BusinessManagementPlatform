@@ -629,6 +629,9 @@ model Task {
   @@index([assigneeId, status], map: "idx_tasks_assignee")
   @@index([parentTaskId], map: "idx_tasks_parent")
   @@index([projectId, plannedStartDate, plannedEndDate], map: "idx_tasks_gantt")
+  // 2026-05-25 [C3]: (project_id, parent_task_id, name) WHERE deleted_at IS NULL の部分 UNIQUE
+  //   インデックスを raw SQL migration (20260525_tasks_unique_parent_name) で追加済。
+  //   Prisma の @@unique は WHERE 句を表現できないため schema 側ではコメント記録のみ。
   @@map("tasks")
 }
 

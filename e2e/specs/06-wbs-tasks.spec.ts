@@ -170,6 +170,84 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
     await snapshotStep(page, 'wbs-with-wp-and-act');
   });
 
+  /**
+   * 2026-05-25 [A1+A2] WBS Sync-Import: 別 WP 配下の同名 ACT を許可する。
+   *
+   * 旧バグ: 同階層 (level=2) で同名のタスクは別親でも重複ブロッカーになり、
+   *   「WPA/AACT, BACT」「WPB/AACT, BACT」のような実務的な CSV がインポートできなかった。
+   *
+   * 本テストは bug fix の golden path 検証:
+   *   - 2 つの WP を API で作成
+   *   - CSV (UTF-8 BOM 付) を作り、各 WP 配下に同名 ACT を 2 つずつ配置
+   *   - dry-run で canExecute=true (ブロッカー 0)
+   *   - 本実行で added=2 + WP 2件分の親 update
+   *   - DB 上に 同名 ACT が 2 つ別 parent で作られていること
+   */
+  test('[Bug Fix] 別 WP 配下の同名 ACT を sync-import で作成できる (PR #wbs-import-uplift)', async () => {
+    const page = sharedPage;
+
+    // 既存 WP に加えてもう 1 つ WP を API で作成
+    const wpBName = withRunId('WorkPackage-second');
+    const wpBRes = await page.request.post(`/api/projects/${projectId}/tasks`, {
+      data: { type: 'work_package', name: wpBName },
+    });
+    expect(wpBRes.ok(), `WP B create: ${await wpBRes.text()}`).toBeTruthy();
+    const wpBId = (await wpBRes.json()).data.id;
+
+    // CSV を構築 (BOM 付 UTF-8, 7 列):
+    //   行 2: WP A (UPDATE, id=workPackageId)
+    //   行 3: 共通レビュー (ACT, 新規, parent=WP A)
+    //   行 4: WP B (UPDATE, id=wpBId)
+    //   行 5: 共通レビュー (ACT, 新規, parent=WP B)  ← 同名だが別 WP 配下
+    const BOM = '﻿';
+    const header = 'ID,種別,名称,レベル,予定開始日,予定終了日,予定工数';
+    const csv = [
+      header,
+      `${workPackageId},WP,${WP_NAME},1,,,`,
+      `,ACT,共通レビュー,2,2026-06-01,2026-06-02,2`,
+      `${wpBId},WP,${wpBName},1,,,`,
+      `,ACT,共通レビュー,2,2026-06-03,2026-06-04,2`,
+    ].join('\n');
+    const csvBody = BOM + csv + '\n';
+
+    // dry-run プレビュー
+    const dryRes = await page.request.post(
+      `/api/projects/${projectId}/tasks/sync-import?dryRun=1`,
+      { multipart: { file: { name: 'wbs.csv', mimeType: 'text/csv', buffer: Buffer.from(csvBody, 'utf-8') } } },
+    );
+    expect(dryRes.ok(), `dry-run: ${await dryRes.text()}`).toBeTruthy();
+    const dryJson = await dryRes.json();
+    expect(dryJson.data.canExecute, `dry-run canExecute=true: ${JSON.stringify(dryJson.data.globalErrors)}`).toBe(true);
+    expect(dryJson.data.summary.blockedErrors).toBe(0);
+    expect(dryJson.data.summary.added).toBe(2); // 2 ACT 新規
+
+    // 本実行 (snapshotAt を添えて OCC をパス)
+    const applyRes = await page.request.post(
+      `/api/projects/${projectId}/tasks/sync-import`,
+      {
+        headers: dryJson.data.snapshotAt ? { 'x-import-snapshot-at': dryJson.data.snapshotAt } : {},
+        multipart: {
+          file: { name: 'wbs.csv', mimeType: 'text/csv', buffer: Buffer.from(csvBody, 'utf-8') },
+          removeMode: 'keep',
+        },
+      },
+    );
+    expect(applyRes.ok(), `apply: ${await applyRes.text()}`).toBeTruthy();
+    const applyJson = await applyRes.json();
+    expect(applyJson.data.added).toBe(2);
+
+    // DB 上に同名 ACT が 2 つ別 parent で作られていることを API で確認
+    const listRes = await page.request.get(`/api/projects/${projectId}/tasks`);
+    expect(listRes.ok()).toBeTruthy();
+    const list = await listRes.json();
+    const samenameActs = (list.data ?? list).filter(
+      (t: { name: string; type: string }) => t.name === '共通レビュー' && t.type === 'activity',
+    );
+    expect(samenameActs.length).toBe(2);
+    const parents = new Set(samenameActs.map((t: { parentTaskId: string }) => t.parentTaskId));
+    expect(parents.size).toBe(2); // 異なる parent 配下
+  });
+
   test('Activity を UI から削除できる (confirm 承諾)', async () => {
     const page = sharedPage;
     // /tasks ページが開いている前提 (直前 test の状態)

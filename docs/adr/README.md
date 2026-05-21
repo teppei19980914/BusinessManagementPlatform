@@ -33,8 +33,10 @@
 | [0013](./0013-beginner-downgrade-prohibition.md) | Beginner プランへのダウングレード禁止 (悪用防止ルール) | Accepted | ビジネス・課金 |
 | [0014](./0014-crud-permission-redesign.md) | CRUD 設計刷新 — UI=API 認可一致原則 + PM/TL 自律権限 + 自己ロール変更禁止 (2026-05-20 採択) | Accepted | セキュリティ・業務ロジック |
 | [0015](./0015-cascade-delete-idempotent-design.md) | deleteProjectCascade / deleteCustomerCascade の冪等設計 + 段階別 transaction (2026-05-20 採択) | Accepted | データ管理・運用 |
+| [0016](./0016-multi-tenant-user-membership.md) | User.email を tenant-scoped 一意化 + 組織 ID 明示入力 (2026-05-20 採択) | Accepted | アーキテクチャ・認証 |
+| [0017](./0017-wbs-import-uplift-and-task-duplicate.md) | WBS sync-import 親スコープ重複判定 + OCC + DB UNIQUE + 一括複製 + ログイン UX (2026-05-25 採択 / PR #420) | Accepted | 業務ロジック・UX・データ管理 |
 
-> 主要設計判断を時系列で ADR 化しています (現在 15 件)。
+> 主要設計判断を時系列で ADR 化しています (現在 17 件)。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---

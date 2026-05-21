@@ -105,18 +105,29 @@ export async function POST(
     );
   }
 
-  // CSV パース
-  const csvRows = parseSyncImportCsv(csvText);
+  // CSV パース ([A3] ヘッダー検証は parser 内で実施し、errors を computeSyncDiff に伝搬)
+  const { rows: csvRows, headerErrors } = parseSyncImportCsv(csvText);
 
   if (isDryRun) {
     // dry-run: diff を計算して返す (副作用なし)
-    const diff = await computeSyncDiff(projectId, csvRows, user.tenantId);
+    const diff = await computeSyncDiff(projectId, csvRows, user.tenantId, { headerErrors });
     return NextResponse.json({ data: diff });
   }
 
-  // 本実行
+  // 本実行 ([C2] OCC: dry-run の snapshotAt と本実行時点を比較するため、UI から渡された snapshot を受領)
+  const expectedSnapshotAt = (() => {
+    const raw = (req.headers.get('x-import-snapshot-at') ?? '').trim();
+    return raw || undefined;
+  })();
   try {
-    const result = await applySyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
+    const result = await applySyncImport(
+      projectId,
+      csvRows,
+      removeMode,
+      user.id,
+      user.tenantId,
+      { headerErrors, expectedSnapshotAt },
+    );
 
     await recordAuditLog({
       tenantId: user.tenantId,
@@ -149,6 +160,18 @@ export async function POST(
           },
         },
         { status: 400 },
+      );
+    }
+    // [C2] OCC: dry-run 後に並行編集が検出された
+    if (e instanceof Error && e.message.startsWith('IMPORT_CONCURRENT_EDIT:')) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'IMPORT_CONCURRENT_EDIT',
+            message: e.message.replace('IMPORT_CONCURRENT_EDIT:', ''),
+          },
+        },
+        { status: 409 },
       );
     }
 

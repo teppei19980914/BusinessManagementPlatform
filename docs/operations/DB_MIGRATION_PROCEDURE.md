@@ -314,5 +314,39 @@ Prisma Migrate を使用する。マイグレーションファイル（SQL）�
 | 本番環境での `prisma migrate reset` | 全データが消失する |
 | 本番環境での `prisma db push` | マイグレーション履歴をバイパスする |
 
+### 14.5 raw SQL migration の事例
+
+Prisma の `@@unique` / `@@index` では表現不可な制約 (例: 部分 UNIQUE インデックス) は raw SQL ファイルを `prisma/migrations/<timestamp>_<name>/migration.sql` に直接配置する。
+
+#### 事例: `20260525_tasks_unique_parent_name` (PR #420, ADR-0017)
+
+**目的**: tasks に `(project_id, parent_task_id, name) WHERE deleted_at IS NULL` の部分 UNIQUE インデックスを追加し、同一親 WP 配下に同名タスクが作成されないよう DB 層で defense。
+
+**特徴**:
+- Prisma の `@@unique` は WHERE 句を表現不可のため raw SQL migration
+- NULL parent (root レベル) は `COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid)` でセンチネル UUID にマップ (Postgres の NULL≠NULL 仕様を回避)
+- 削除済 (deleted_at NOT NULL) は対象外 (undo 操作で UNIQUE 違反になるのを回避)
+
+**事前検証 DO ブロック**: migration.sql 冒頭で既存重複を検出し、1 組でも duplicate があれば `RAISE EXCEPTION` で migration 停止する。本番事前確認スクリプト `scripts/check-task-name-duplicates.ts` で 0 件確認してから deploy する運用。
+
+**本番事前確認手順**:
+1. `pnpm tsx scripts/check-task-name-duplicates.ts` を本番 DB に向けて実行
+2. または psql で確認:
+   ```sql
+   SELECT COUNT(*) FROM (
+     SELECT project_id, parent_task_id, name FROM tasks
+     WHERE deleted_at IS NULL
+     GROUP BY 1, 2, 3 HAVING COUNT(*) > 1
+   ) d;
+   ```
+3. 結果が 0 件であることを確認 → deploy 安全
+4. duplicate あり → タスク編集 UI で名称変更 or 親変更で解消 → 再確認 → deploy
+
+**ロールバック**: `prisma/migrations/20260525_tasks_unique_parent_name/rollback.sql` の `DROP INDEX IF EXISTS "idx_tasks_project_parent_name_unique";` を手動実行。
+
+**関連**:
+- ADR-0017: WBS sync-import + UNIQUE 制約の設計決定
+- KDD §5.X+95: DB UNIQUE 制約追加時の app 層全経路 defense パターン
+
 ---
 
