@@ -108,13 +108,38 @@ export async function GET(req: NextRequest) {
  *   Branch Deploy でも正しい戻り先 URL にリダイレクトできる。
  */
 function sanitizeReturnTo(returnTo: string | null, reqUrl: string): string {
-  const reqOrigin = new URL(reqUrl).origin;
-  // Netlify の URL env var (deploy context に応じて自動切替) も許可オリジンに追加
-  const envOrigin = process.env.URL ? new URL(process.env.URL).origin : null;
-  const allowedOrigins = new Set<string>([reqOrigin]);
-  if (envOrigin) allowedOrigins.add(envOrigin);
-  // 優先 origin: env (= Netlify deploy context) が信頼できる正しい URL なのでこちらを優先
-  const primaryOrigin = envOrigin ?? reqOrigin;
+  // PR #425 (2026-05-21): 複数の host source から候補を集める。
+  //   Netlify Functions runtime では req.url の origin が canonical (= 本番) に固定される
+  //   ケースがあり、また process.env.URL は build 時のみ有効で runtime では undefined。
+  //   対策: 信頼できる複数 source から allowed origins を構築する。
+  const allowedOrigins = new Set<string>();
+  const candidateSources: Array<string | undefined | null> = [
+    reqUrl, // req.url
+    process.env.NEXTAUTH_URL, // build wrapper で deploy context に同期済 (= runtime でも有効)
+    process.env.URL, // Netlify 自動設定 (build 時のみ有効、runtime では undefined の可能性)
+    process.env.DEPLOY_PRIME_URL, // Netlify 自動設定 (deploy preview URL、build 時のみ)
+  ];
+  for (const source of candidateSources) {
+    if (source) {
+      try {
+        allowedOrigins.add(new URL(source).origin);
+      } catch {
+        // 不正な URL は無視
+      }
+    }
+  }
+
+  // primaryOrigin: NEXTAUTH_URL (= deploy context に同期済) を最優先
+  const primaryOrigin = (() => {
+    if (process.env.NEXTAUTH_URL) {
+      try {
+        return new URL(process.env.NEXTAUTH_URL).origin;
+      } catch {
+        // fallthrough
+      }
+    }
+    return new URL(reqUrl).origin;
+  })();
 
   if (returnTo == null || returnTo.length === 0) {
     return `${primaryOrigin}/settings/tenant`;
