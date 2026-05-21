@@ -11505,3 +11505,53 @@ git push
 - PR #420 feat/wbs-import-uplift CI 失敗 → baseline 再生成
 - `.github/workflows/e2e-visual-baseline.yml`
 - 過去事例: ADR-0016 login UI でも同 workflow を使用 (commit `d96e256 [gen-visual]`)
+
+## 5.X+98 **`e2e-visual-baseline.yml` workflow の baseline 自動 push が他者の同時 push で fast-forward 拒否される ─ artifact から PNG を取得して手動配置する fallback 経路を確保する (2026-05-25 / PR #420)**
+
+### 発生事象
+
+PR #420 で `[gen-visual]` タグ付き commit を push して baseline workflow を発火。workflow は:
+
+1. ブランチを checkout (= push 時点の HEAD)
+2. Linux CI で baseline PNG 再生成 (約 2 分 49 秒)
+3. `git add e2e/visual/* && git commit && git push` を試行
+
+しかし step 3 で「`! [rejected] feat/wbs-import-uplift -> feat/wbs-import-uplift (fetch first)`」エラー。
+
+**原因**: workflow checkout から push 試行の間 (~3 分) に、別セッション (今回はユーザの別作業) が同ブランチへ直接 commit を push。workflow 側の local が古い HEAD のため fast-forward 失敗。
+
+CI の E2E では baseline が更新されていないので visual diff 2 件失敗が継続。
+
+### 解決策
+
+**Fallback 経路**: workflow の "Upload generated PNGs as artifact" step は push 失敗後も実行され成功している (artifact name: `visual-baselines-<run-id>`)。これを手動取得して配置:
+
+```bash
+# 1. workflow の artifact をダウンロード
+gh run download <run-id> -n visual-baselines-<run-id> -D /tmp/baseline-extract
+
+# 2. プロジェクトの e2e/visual/ にコピー
+cp -rf /tmp/baseline-extract/* e2e/visual/
+
+# 3. 変更ファイルを確認 (実際に差分があった png のみ表示される)
+git status --short
+
+# 4. commit + push (今回は workflow を再発火させない)
+git add e2e/visual/
+git commit -m "chore: baseline png 手動配置 (artifact <run-id> 由来)"
+git push
+```
+
+### 教訓
+
+1. **workflow auto-push は他者の push で fail することがある**: 単独 PR 作業中でも、別セッション・別人・別 bot が同ブランチに push すれば衝突する
+2. **artifact upload を fail-safe にする**: workflow は push fail でも artifact upload は続行する設計 (`if: always()` 相当) にしておくと、後から手動回収できる
+3. **`[gen-visual]` 再実行で済むケースもある**: workflow 自体は冪等 (同じ内容を再生成するだけ)。再 push しても baseline は同じ結果になる。ただし 3 分掛かるので artifact から取った方が速い
+4. **commit memo "コミット" のような曖昧 message は混乱の元**: 何を commit したか後で追跡できなくなる。意図的でなければ commit を整理 (squash / amend) すべき
+5. **PR 進行中ブランチへの直接 push を控える**: 特に CI が走っている最中の直接 push は workflow との競合リスクが高い。コードレビュー前の WIP は別ブランチに分離するのが安全
+
+### 関連 KDD / PR
+
+- PR #420 feat/wbs-import-uplift (本事例): run 26202164194 で baseline 生成成功 + push 拒否 → artifact 経由で手動配置
+- KDD §5.X+97 (前段): `[gen-visual]` workflow の基本動作
+- `.github/workflows/e2e-visual-baseline.yml`
