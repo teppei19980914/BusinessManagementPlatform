@@ -36,6 +36,7 @@ vi.mock('./task.service', async () => {
 
 import { duplicateTasks, pickNonConflictingName } from './task-duplicate.service';
 import { prisma } from '@/lib/db';
+import { recalculateAncestorsPublic } from './task.service';
 
 const projectId = 'proj-1';
 const userId = 'user-1';
@@ -312,6 +313,79 @@ describe('duplicateTasks: 階層保持 + 実行', () => {
     });
     expect(r.added).toBe(1);
     expect(created[0].parentTaskId).toBe('target-wp'); // 元 unselected-wp ではなく target-wp 配下
+  });
+
+  it('[FIX] 新規作成 WP 自身の plannedEffort を集計再計算する (WP + ACT 同時複製時の漏れ防止)', async () => {
+    // バグ: target parent のみ recalc していたが、新規 WP は plannedEffort=0 で作成された後に
+    //   ACT 子が追加されても集計されないため、WP の planned_effort が 0 のまま残る問題があった。
+    // 修正: 新規 WP 自身を affectedWpIds に含めて recalc を呼ぶ。
+    const wp = { ...baseTask, id: 'wp-1', name: 'WP-A', type: 'work_package' };
+    const act = {
+      ...baseTask,
+      id: 'act-1',
+      name: 'ACT-X',
+      type: 'activity',
+      parentTaskId: 'wp-1',
+      plannedEffort: 3,
+    };
+    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+      const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
+      if (w.id?.in) return [wp, act] as never;
+      return [] as never;
+    });
+    let createCount = 0;
+    vi.mocked(prisma.task.create).mockImplementation(async () => {
+      createCount += 1;
+      return { id: `new-${createCount}` } as never;
+    });
+
+    // target parent: null (root) で複製 → target に対する recalc は呼ばれない
+    const r = await duplicateTasks({
+      projectId,
+      taskIds: ['wp-1', 'act-1'],
+      targetParentId: null,
+      userId,
+      viewerTenantId: tenantId,
+    });
+    expect(r.added).toBe(2);
+    // 新規 WP (new-1) に対して recalc が呼ばれていること = この修正の本質
+    expect(recalculateAncestorsPublic).toHaveBeenCalledWith('new-1');
+    // 新規 ACT (new-2) は WP ではないが、現実装では affectedWpIds に含めないので呼ばれない
+    expect(recalculateAncestorsPublic).not.toHaveBeenCalledWith('new-2');
+  });
+
+  it('[FIX] target parent (WP) + 新規 WP 両方が recalc される', async () => {
+    const wp = { ...baseTask, id: 'wp-1', name: 'WP-A', type: 'work_package' };
+    const act = {
+      ...baseTask,
+      id: 'act-1',
+      name: 'ACT-X',
+      type: 'activity',
+      parentTaskId: 'wp-1',
+      plannedEffort: 3,
+    };
+    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+      const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
+      if (w.id?.in) return [wp, act] as never;
+      return [] as never;
+    });
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 'target-wp', type: 'work_package' } as never);
+    let createCount = 0;
+    vi.mocked(prisma.task.create).mockImplementation(async () => {
+      createCount += 1;
+      return { id: `new-${createCount}` } as never;
+    });
+
+    await duplicateTasks({
+      projectId,
+      taskIds: ['wp-1', 'act-1'],
+      targetParentId: 'target-wp',
+      userId,
+      viewerTenantId: tenantId,
+    });
+    // target-wp と新規 WP (new-1) の両方が recalc される
+    expect(recalculateAncestorsPublic).toHaveBeenCalledWith('target-wp');
+    expect(recalculateAncestorsPublic).toHaveBeenCalledWith('new-1');
   });
 
   it('同じ名前の WP を 2 件同時複製: 2 件目は "(コピー)" でリネーム', async () => {

@@ -282,11 +282,26 @@ export async function duplicateTasks(input: DuplicateTasksInput): Promise<Duplic
   }
 
   // -----------------------------------------------------------
-  // 10. WP 集計再計算: target parent が WP なら、その配下が増えたので再計算
-  //   selected 内の WP コピーは新規作成直後で子が空なので、再計算は target parent のみで十分
+  // 10. WP 集計再計算: 影響を受ける全 WP に対して呼ぶ。
+  //   - 新規作成された WP 自身 (= 新規 ACT 子を抱える可能性があるため自身の plannedEffort を集計)
+  //   - target parent (= 新規子が増えたため再集計が必要)
+  //
+  //   recalculateAncestors は「ACT 引数では no-op + parent 伝播もしない」仕様なので、
+  //   新規 WP 自身を呼ばないと、ACT 子の effort が WP 親の plannedEffort に反映されない。
+  //   呼出順は不問 (各呼出が自身を集計 → 親へ伝播するので、どの順でも最終整合する)。
   // -----------------------------------------------------------
+  const affectedWpIds = new Set<string>();
+  for (const s of sortedSources) {
+    if (s.type === 'work_package') {
+      const newId = oldToNewId.get(s.id);
+      if (newId) affectedWpIds.add(newId);
+    }
+  }
   if (targetParent) {
-    await recalculateAncestorsPublic(targetParent.id);
+    affectedWpIds.add(targetParent.id);
+  }
+  for (const wpId of affectedWpIds) {
+    await recalculateAncestorsPublic(wpId);
   }
 
   return {
