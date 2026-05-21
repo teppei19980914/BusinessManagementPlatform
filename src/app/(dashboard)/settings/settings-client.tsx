@@ -335,6 +335,9 @@ export function SettingsClient({
               <dt className="text-muted-foreground">{tSetting('accountInfoSystemRole')}</dt>
               <dd data-testid="account-info-system-role">
                 <Badge variant="outline">
+                  {/* `systemRole` は schema 上 VarChar(20) で enum 制限が無いため、
+                      予期しない値 (運用ミスでの insert 等) は最終フォールバックとして
+                      「一般ユーザ」表示にする。安全側の fail-safe を優先。 */}
                   {accountInfo.systemRole === 'super_admin'
                     ? tSetting('systemRoleSuperAdmin')
                     : accountInfo.systemRole === 'admin'
@@ -347,6 +350,16 @@ export function SettingsClient({
                 {accountInfo.lastLoginAt
                   ? formatDateTimeFull(accountInfo.lastLoginAt)
                   : tSetting('accountInfoLastLoginNever')}
+              </dd>
+              <dt className="text-muted-foreground">{tSetting('accountInfoMfaEnabledAt')}</dt>
+              <dd data-testid="account-info-mfa-enabled-at">
+                {accountInfo.mfaEnabledAt
+                  ? formatDateTimeFull(accountInfo.mfaEnabledAt)
+                  : tSetting('accountInfoMfaEnabledAtNever')}
+              </dd>
+              <dt className="text-muted-foreground">{tSetting('accountInfoCreatedAt')}</dt>
+              <dd data-testid="account-info-created-at">
+                {formatDateTimeFull(accountInfo.createdAt)}
               </dd>
             </dl>
             <p className="mt-3 text-xs text-muted-foreground">

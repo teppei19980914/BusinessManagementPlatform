@@ -162,6 +162,24 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     await snapshotStep(page, 'all-memos-with-public');
   });
 
+  // feat/settings-tenant-identity (ADR-0018 / 2026-05-21): アカウント情報セクション。
+  //   ログイン入力 tenantSlug='default' + ADMIN_EMAIL の組合が画面に反映されることを確認。
+  //   テナント識別子 (slug + name) は一般ユーザの自己解決手段としての唯一の入口のため、
+  //   E2E で「表示されている」ことを担保する。
+  test('設定画面 (/settings) にアカウント情報が表示される (組織 ID + メール + ロール)', async () => {
+    const page = sharedPage;
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByTestId('account-info-section')).toBeVisible({ timeout: 10_000 });
+    // 組織 ID は login で入力した slug と一致 (= ADR-0016 で必須化された組織 ID)
+    await expect(page.getByTestId('account-info-tenant-slug')).toHaveText('default');
+    // メールアドレスはログインに使用した値
+    await expect(page.getByTestId('account-info-email')).toHaveText(ADMIN_EMAIL);
+    // beforeAll で ensureInitialAdmin により admin として作成されている
+    await expect(page.getByTestId('account-info-system-role')).toContainText('テナント管理者');
+  });
+
   test('設定画面 (/settings) でテーマを変更できる', async () => {
     const page = sharedPage;
     await page.goto('/settings');
