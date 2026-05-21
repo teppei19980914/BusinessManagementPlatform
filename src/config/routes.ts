@@ -20,11 +20,9 @@ export const PUBLIC_PATHS = [
   // P-G (2026-05-08): 外部ユーザのセルフサインアップ。テナント未所属でアクセスする
   // 唯一の経路。Rate limit + honeypot で bot 投稿を抑止。
   '/signup',
-  // 2026-05-19 (docs/2026-05-19-roadmap-archive): 公開ページ群 (利用規約・プライバシーポリシー)。
-  //   未認証ユーザがフッタリンクからアクセスする経路。
-  //   本文は src/app/(public)/{terms,privacy}/page.tsx で配信 (現在はドラフト)。
-  '/terms',
-  '/privacy',
+  // 2026-05-21 (feat/legal-pages-lp-integration): 利用規約・プライバシーポリシーは
+  //   外部 LP (HomePage) に集約し、本サービス内の /terms /privacy ページは廃止。
+  //   フッタ等のリンク先は LP の #terms / #privacy アンカーへ直接遷移する。
   '/api/auth',
   '/api/health', // 外部 cron から定期 ping されるため認証不要
   // PR #89 (feat/account-lock で endpoint rename): Vercel Cron から

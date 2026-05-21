@@ -42,6 +42,11 @@ import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { sendVerificationEmail, EmailSendError } from './email-verification.service';
 import { BCRYPT_COST } from '@/config';
+import {
+  CURRENT_TERMS_VERSION,
+  CURRENT_PRIVACY_VERSION,
+  CONSENT_TYPES,
+} from '@/config/legal-versions';
 import type { TenantPlan } from '@/lib/tenant';
 
 // ================================================================
@@ -92,6 +97,19 @@ export const TenantOnboardingInputSchema = z
     /** 初期 admin ユーザ (検証メール送付先 = ログイン用) */
     initialAdminName: z.string().trim().min(1).max(100),
     initialAdminEmail: z.string().trim().email().max(255),
+
+    // feat/legal-pages-lp-integration (2026-05-21):
+    //   規約・プラポリへの同意取得 (民法 548 条の 2 / 定型約款の組入合意)。
+    //   UI 側で 2 つの checkbox を required 強制し、true のみが許容される。
+    //   server 側で false は VALIDATION_ERROR で reject、サインアップ完了を阻止する。
+    /** 利用規約への同意 (= true 必須) */
+    acceptedTerms: z.literal(true, {
+      message: '利用規約への同意が必要です',
+    }),
+    /** プライバシーポリシーへの同意 (= true 必須) */
+    acceptedPrivacy: z.literal(true, {
+      message: 'プライバシーポリシーへの同意が必要です',
+    }),
   })
   // 2026-05-09 (PR C / #5): 法人プランのみ会社名必須。
   //   個人プランで誤入力された会社名は許容 (UI 非表示なので通常は空) し、
@@ -143,8 +161,9 @@ export type TenantOnboardingResult = TenantOnboardingSuccess | TenantOnboardingF
 export async function createTenantBySuperAdmin(
   input: unknown,
   baseUrl: string,
+  consentMeta?: ConsentMeta,
 ): Promise<TenantOnboardingResult> {
-  return createTenantInternal(input, baseUrl);
+  return createTenantInternal(input, baseUrl, consentMeta);
 }
 
 /**
@@ -153,13 +172,22 @@ export async function createTenantBySuperAdmin(
  * - 内部実装は super_admin 経路と同一 (= バリデーション + Tenant + 初期 admin)
  * - 上位 API ルート側で rate limit / honeypot などのスパム対策を実施する前提
  *   (本サービス層では検証しない = テストしやすさ + 関心の分離)
+ * - feat/legal-pages-lp-integration (2026-05-21): consentMeta で同意取得時の
+ *   IP / User-Agent を渡し、TenantConsentLog に証跡として保存する
  */
 export async function createTenantBySignup(
   input: unknown,
   baseUrl: string,
+  consentMeta?: ConsentMeta,
 ): Promise<TenantOnboardingResult> {
-  return createTenantInternal(input, baseUrl);
+  return createTenantInternal(input, baseUrl, consentMeta);
 }
+
+/** 同意取得時のメタ情報 (証跡用、API 層が req から抽出して渡す) */
+export type ConsentMeta = {
+  ipAddress?: string;
+  userAgent?: string;
+};
 
 // ================================================================
 // 内部
@@ -168,6 +196,7 @@ export async function createTenantBySignup(
 async function createTenantInternal(
   rawInput: unknown,
   baseUrl: string,
+  consentMeta?: ConsentMeta,
 ): Promise<TenantOnboardingResult> {
   // ---------- 1. zod バリデーション ----------
   const parsed = TenantOnboardingInputSchema.safeParse(rawInput);
@@ -311,6 +340,32 @@ async function createTenantInternal(
       },
     });
 
+    // feat/legal-pages-lp-integration (2026-05-21):
+    //   規約・プラポリへの同意ログ (民法 548 条の 2 の組入合意証跡)。
+    //   サインアップ時の同意は不可変ログとして保存する。
+    //   tenantId + consentType + version の UNIQUE で重複防止 (= 同一バージョンへの
+    //   多重同意は最初の 1 回のみ記録される)。
+    await tx.tenantConsentLog.createMany({
+      data: [
+        {
+          tenantId: t.id,
+          userId: u.id,
+          consentType: CONSENT_TYPES.TERMS,
+          version: CURRENT_TERMS_VERSION,
+          ipAddress: consentMeta?.ipAddress ?? null,
+          userAgent: consentMeta?.userAgent ?? null,
+        },
+        {
+          tenantId: t.id,
+          userId: u.id,
+          consentType: CONSENT_TYPES.PRIVACY,
+          version: CURRENT_PRIVACY_VERSION,
+          ipAddress: consentMeta?.ipAddress ?? null,
+          userAgent: consentMeta?.userAgent ?? null,
+        },
+      ],
+    });
+
     return { tenant: t, user: u };
   });
 
@@ -321,7 +376,10 @@ async function createTenantInternal(
   } catch (e) {
     // テナント + ユーザを物理削除 (テナント作成直後のため整合性検査は最小限)
     // Phase 2-10: tenantId フィルタで二重防御
+    // feat/legal-pages-lp-integration (2026-05-21): TenantConsentLog も同時削除
+    //   (= サインアップ未成立なので、同意ログを残しても意味がない)
     await prisma.$transaction([
+      prisma.tenantConsentLog.deleteMany({ where: { tenantId: tenant.id } }),
       prisma.emailVerificationToken.deleteMany({ where: { userId: user.id, tenantId: tenant.id } }),
       prisma.roleChangeLog.deleteMany({ where: { targetUserId: user.id, tenantId: tenant.id } }),
       prisma.user.delete({ where: { id: user.id } }),

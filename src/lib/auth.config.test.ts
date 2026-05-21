@@ -316,23 +316,9 @@ describe('authorized callback - 未認証', () => {
     expect(result).toBe(true);
   });
 
-  it('PUBLIC_PATHS (/terms) は未認証でも通る (2026-05-19 追加)', async () => {
-    const result = await authorized({
-      auth: null,
-      request: makeRequest('/terms', 'GET'),
-    } as never);
-
-    expect(result).toBe(true);
-  });
-
-  it('PUBLIC_PATHS (/privacy) は未認証でも通る (2026-05-19 追加)', async () => {
-    const result = await authorized({
-      auth: null,
-      request: makeRequest('/privacy', 'GET'),
-    } as never);
-
-    expect(result).toBe(true);
-  });
+  // 2026-05-21 (feat/legal-pages-lp-integration): /terms /privacy は LP に集約され
+  //   本サービス内のページは廃止。PUBLIC_PATHS から外したため未認証アクセスは
+  //   LOGIN_PATH リダイレクト挙動になる (本ケースの独立テストは不要)。
 
   it('未認証で保護領域 (/api/projects) は LOGIN_PATH リダイレクト', async () => {
     const result = await authorized({

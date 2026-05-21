@@ -156,4 +156,6 @@ pnpm dev                         # http://localhost:3000
 
 ## ライセンス
 
-Private
+本サービスのソースコードは **GNU Affero General Public License v3.0 (AGPL-3.0-or-later)** の下で公開されています。詳細は [LICENSE](LICENSE) を参照してください。
+
+ホスティング版のサービス利用は別途定める [利用規約](https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms) に従います。ソースコードを取得して自己ホストする場合は AGPL-3.0 のみが適用されます (詳細は利用規約 第20条)。
