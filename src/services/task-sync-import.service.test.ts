@@ -254,6 +254,98 @@ describe('computeSyncDiff (T-19)', () => {
     expect(r.canExecute).toBe(true); // ブロッカーなし
   });
 
+  it('[A2] 親も CSV 内の CREATE (DB id 未確定) のとき誤コピー検知をスキップする', async () => {
+    // DB は空。CSV で WP も ACT も新規作成。
+    // resolveNewParentDbId は parentIsCsvCreate=true を返し、existingByParentAndName 照合をスキップ。
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+
+    const r = await computeSyncDiff(
+      projectId,
+      [
+        csvRow({ tempRowIndex: 2, level: 1, name: '新規 WP' }), // CREATE 親
+        csvRow({
+          tempRowIndex: 3,
+          level: 2,
+          type: 'activity',
+          name: '新規 ACT',
+          parentRowIndex: 2,
+        }), // CREATE 子 (親も CREATE)
+      ],
+      'tenant-A',
+    );
+    expect(r.canExecute).toBe(true);
+    expect(r.summary.added).toBe(2);
+    expect(r.rows[0].action).toBe('CREATE');
+    expect(r.rows[1].action).toBe('CREATE');
+    expect(r.rows.every((row) => !row.errors)).toBe(true);
+  });
+
+  it('[A1] level=3 (WP→sub-WP→ACT) で別 sub-WP 配下の同名 ACT は許可', async () => {
+    // 階層構造: WP-A / sub-WP-A / ACT-X, WP-B / sub-WP-B / ACT-X
+    // 旧バグでは level=3 + name で重複判定されていたが、parentRowIndex 含みなら別 sub-WP 配下の同名は許可される。
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+
+    const r = await computeSyncDiff(
+      projectId,
+      [
+        csvRow({ tempRowIndex: 2, level: 1, name: 'WP-A' }),
+        csvRow({ tempRowIndex: 3, level: 2, name: 'sub-WP-A', parentRowIndex: 2 }),
+        csvRow({
+          tempRowIndex: 4,
+          level: 3,
+          type: 'activity',
+          name: 'ACT-X',
+          parentRowIndex: 3,
+        }),
+        csvRow({ tempRowIndex: 5, level: 1, name: 'WP-B' }),
+        csvRow({ tempRowIndex: 6, level: 2, name: 'sub-WP-B', parentRowIndex: 5 }),
+        csvRow({
+          tempRowIndex: 7,
+          level: 3,
+          type: 'activity',
+          name: 'ACT-X',
+          parentRowIndex: 6,
+        }),
+      ],
+      'tenant-A',
+    );
+    expect(r.canExecute).toBe(true);
+    expect(r.summary.added).toBe(6);
+    expect(r.summary.blockedErrors).toBe(0);
+  });
+
+  it('[A1] level=3 で同一 sub-WP 配下の同名 ACT はブロック', async () => {
+    // 同 sub-WP-A 配下に ACT-X が 2 つ → ブロック
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+
+    const r = await computeSyncDiff(
+      projectId,
+      [
+        csvRow({ tempRowIndex: 2, level: 1, name: 'WP-A' }),
+        csvRow({ tempRowIndex: 3, level: 2, name: 'sub-WP-A', parentRowIndex: 2 }),
+        csvRow({
+          tempRowIndex: 4,
+          level: 3,
+          type: 'activity',
+          name: 'ACT-X',
+          parentRowIndex: 3,
+        }),
+        csvRow({
+          tempRowIndex: 5,
+          level: 3,
+          type: 'activity',
+          name: 'ACT-X',
+          parentRowIndex: 3,
+        }),
+      ],
+      'tenant-A',
+    );
+    expect(r.canExecute).toBe(false);
+    expect(
+      r.rows.some((row) => row.errors?.some((e) => e.includes('同一親配下に同じ名称'))),
+    ).toBe(true);
+  });
+
   it('[A1] CSV 内: 別 WP 配下の同名 ACT は許可、同一 WP 配下の同名 ACT のみブロック', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
 

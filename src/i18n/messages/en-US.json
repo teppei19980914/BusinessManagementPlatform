@@ -456,9 +456,7 @@
       "deleteConfirmTitle": "Confirm Removal",
       "deleteConfirmDesc": "The following {count} tasks will be removed. Continue? (Tasks missing from the CSV with no progress/actuals are eligible.)",
       "deleteConfirmExecute": "Delete and Run",
-      "concurrentEditDetected": "Another user updated this project's tasks. Please reload and re-import.",
-      "executeWithProgress": "Running... ({count} tasks)",
-      "deferredFeatures": "This update covers: header validation / concurrent-edit detection / same-name ACT allowed across different WPs"
+      "concurrentEditDetected": "Another user updated this project's tasks. Please reload and re-import."
     }
   },
   "gantt": {

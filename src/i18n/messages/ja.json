@@ -456,9 +456,7 @@
       "deleteConfirmTitle": "削除候補の確定",
       "deleteConfirmDesc": "以下 {count} 件のタスクを削除します。よろしいですか? (CSV から消えたタスクで、進捗・実績がないものが対象)",
       "deleteConfirmExecute": "削除して実行",
-      "concurrentEditDetected": "他のユーザがこのプロジェクトのタスクを更新しました。最新状態を確認してから再度インポートしてください。",
-      "executeWithProgress": "実行中... ({count} 件処理)",
-      "deferredFeatures": "今回の更新で対応済: ヘッダー検証 / 並行編集検出 / 別 WP 配下同名 ACT の許可"
+      "concurrentEditDetected": "他のユーザがこのプロジェクトのタスクを更新しました。最新状態を確認してから再度インポートしてください。"
     }
   },
   "gantt": {
