@@ -3,6 +3,10 @@ import { redirect } from 'next/navigation';
 import { LOGIN_ROUTE } from '@/config';
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
+import {
+  getUserSelfAccountInfo,
+  type UserSelfAccountInfo,
+} from '@/services/user-self.service';
 import { SettingsClient } from './settings-client';
 
 export default async function SettingsPage() {
@@ -22,16 +26,23 @@ export default async function SettingsPage() {
     themePreference: string;
   } | null;
   let user: SettingsUser = null;
+  let accountInfo: UserSelfAccountInfo | null = null;
   let dataLoadError = false;
   try {
-    user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: {
-        mfaEnabled: true,
-        systemRole: true,
-        themePreference: true,
-      },
-    });
+    // feat/settings-tenant-identity (2026-05-21): MFA/テーマ取得と並行してアカウント情報を取得。
+    //   いずれか失敗すれば dataLoadError バナーで警告し、settings-client 側は null props で
+    //   フォールバック描画 (アカウント情報セクションは hidden) する。
+    [user, accountInfo] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: {
+          mfaEnabled: true,
+          systemRole: true,
+          themePreference: true,
+        },
+      }),
+      getUserSelfAccountInfo(session.user.id),
+    ]);
   } catch (error) {
     dataLoadError = true;
     await recordError({
@@ -56,12 +67,30 @@ export default async function SettingsPage() {
   //   出す条件であり、新仕様ではこれを super_admin に対してのみ true にする。
   const isMfaForced = user?.systemRole === 'super_admin';
 
+  // feat/settings-tenant-identity (2026-05-21): Date → ISO string で Client Component 境界を越える。
+  //   Server → Client へ Date オブジェクトを直接渡すとシリアライズ警告が出るため、
+  //   呼出側で string に正規化して props 型も string で揃える。
+  const accountInfoProp = accountInfo
+    ? {
+        id: accountInfo.id,
+        name: accountInfo.name,
+        email: accountInfo.email,
+        systemRole: accountInfo.systemRole,
+        mfaEnabled: accountInfo.mfaEnabled,
+        mfaEnabledAt: accountInfo.mfaEnabledAt?.toISOString() ?? null,
+        lastLoginAt: accountInfo.lastLoginAt?.toISOString() ?? null,
+        createdAt: accountInfo.createdAt.toISOString(),
+        tenant: accountInfo.tenant,
+      }
+    : null;
+
   return (
     <SettingsClient
       mfaEnabled={user?.mfaEnabled || false}
       isAdmin={isMfaForced}
       currentTheme={user?.themePreference ?? 'light'}
       dataLoadError={dataLoadError}
+      accountInfo={accountInfoProp}
     />
   );
 }

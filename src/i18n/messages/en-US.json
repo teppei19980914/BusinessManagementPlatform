@@ -1097,7 +1097,23 @@
     "mfaDisableInvalidTotp": "MFA code is incorrect",
     "mfaDisableTotpRequired": "Enter the 6-digit MFA code",
     "mfaDisableLocked": "MFA verification is temporarily locked. Please try again later.",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "accountInfoTitle": "Account Information",
+    "accountInfoDescription": "Review the organization ID you use to sign in and your registered account details.",
+    "accountInfoTenantSlug": "Organization ID",
+    "accountInfoTenantName": "Tenant Display Name",
+    "accountInfoEmail": "Email",
+    "accountInfoName": "Name",
+    "accountInfoSystemRole": "Role",
+    "accountInfoLastLogin": "Last Login",
+    "accountInfoLastLoginNever": "Never",
+    "accountInfoMfaEnabledAt": "MFA Enabled At",
+    "accountInfoMfaEnabledAtNever": "Not configured",
+    "accountInfoCreatedAt": "Account Created At",
+    "accountInfoHint": "Use the Organization ID above when signing in from another browser or when handing over access to a colleague.",
+    "systemRoleSuperAdmin": "System Admin",
+    "systemRoleAdmin": "Tenant Admin",
+    "systemRoleGeneral": "Member"
   },
   "admin": {
     "users": {

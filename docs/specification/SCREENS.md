@@ -1121,6 +1121,35 @@ PR #127 でナビを **3 分類** にグループ化し、**画面幅でレイ�
 ---
 
 
+## アカウント情報 (feat/settings-tenant-identity 2026-05-21 追加)
+
+### 22.A 表示する項目
+
+ユーザ個別設定 `/settings` の最上部に「アカウント情報」セクションを配置。一般ユーザでも、次回ログイン時に必要な組織 ID や自身の登録情報を自己解決で確認できる。
+
+| 表示項目 | バックエンド | 編集 | 用途 |
+|---|---|---|---|
+| 組織 ID | `Tenant.slug` | × | ログイン画面の「組織 ID」欄に入力する値 (ADR-0016) |
+| テナント表示名 | `Tenant.name` | × | 自分の所属組織の認識 |
+| メールアドレス | `User.email` | × | ログイン入力 + パスワードリセット受信先 |
+| 氏名 | `User.name` | × | 本人確認 |
+| ロール | `User.systemRole` | × | super_admin / admin / general を業務文言バッジで表示 |
+| 最終ログイン | `User.lastLoginAt` | × | セキュリティ確認 (見覚えのないログインを発見できる) |
+
+### 22.A.1 設計判断
+
+- テナント識別子は **`slug` + `name` のみ** を載せる。`tenantSeq` / UUID は管理者向けの `/settings/tenant` に留め、一般ユーザの認知負荷を上げない (ADR-0018)。
+- 解約済テナント (`Tenant.deletedAt` セット) のユーザでは本セクションを描画しない (`getUserSelfAccountInfo()` が null 返却)。
+- PR #420 で追加された localStorage 履歴 (LRU 5 件 / 90 日 expire) と相補的に機能: 履歴がない・履歴クリア後・別ブラウザでも組織 ID を確認できる。
+
+### 22.A.2 関連
+
+- ADR: [ADR-0018](../adr/0018-tenant-identifier-user-visibility.md)
+- サービス: `src/services/user-self.service.ts` (`getUserSelfAccountInfo()`)
+- 画面: `src/app/(dashboard)/settings/settings-client.tsx` (`AccountInfoProp` セクション)
+
+---
+
 ## 画面テーマ設定 (PR #72 追加)
 
 ## 23. 画面テーマ設定 (PR #72 追加)

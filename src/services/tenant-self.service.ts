@@ -57,8 +57,20 @@ import {
 
 export type TenantSelfInfo = {
   id: string;
+  /** Tenant.slug (= 組織 ID)。ログイン画面の「組織 ID」入力欄に対応。
+   *  管理者がユーザに伝える正規の識別子として、設定画面で独立ラベル表示する (2026-05-21)。 */
+  slug: string;
   tenantSeq: number | null;
   name: string;
+  /** テナント作成日時 (運用期間把握 + Beginner 期限の起点)。 */
+  createdAt: Date;
+  /** プラン別の per-call 単価 (円整数)。2026-05-15 改定: Haiku ¥5 / Sonnet ¥15。 */
+  pricePerCallHaiku: number;
+  pricePerCallSonnet: number;
+  /** テナント停止状態 (= read-only モード)。null = 通常運用。 */
+  suspendedAt: Date | null;
+  /** 停止理由コード ('payment_delinquent' / 'tos_violation' / 'other' 等)。 */
+  suspendReason: string | null;
   plan: TenantPlan;
   monthlyBudgetCapJpy: number | null;
   beginnerMaxSeats: number;
@@ -138,8 +150,14 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
 
   return {
     id: t.id,
+    slug: t.slug,
     tenantSeq: t.tenantSeq,
     name: t.name,
+    createdAt: t.createdAt,
+    pricePerCallHaiku: t.pricePerCallHaiku,
+    pricePerCallSonnet: t.pricePerCallSonnet,
+    suspendedAt: t.suspendedAt,
+    suspendReason: t.suspendReason,
     plan: t.plan as TenantPlan,
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     beginnerMaxSeats: t.beginnerMaxSeats,
