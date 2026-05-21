@@ -11564,7 +11564,7 @@ Stripe Checkout のカード登録フローを Deploy Preview (`deploy-preview-N
 
 同じ問題はログイン関連でも発生: Deploy Preview URL を叩いたユーザがログイン直後に本番 URL にリダイレクトされる。
 
-### 根本原因 (2 段階)
+### 根本原因 (3 段階)
 
 **段階 A: NextAuth が本番 URL を canonical として使用**
 
@@ -11573,6 +11573,31 @@ NextAuth は `trustHost: true` 設定でも `NEXTAUTH_URL` env var が定義さ�
 **段階 B: sanitizeReturnTo の origin チェックが本番 URL に固定**
 
 Stripe Checkout の戻り先ハンドラ (`/api/tenants/me/billing/stripe/setup/complete/route.ts`) の `sanitizeReturnTo()` で、`req.url` の origin と returnTo の origin を比較してオープンリダイレクト対策していた。Netlify Functions では `req.url` の origin が canonical URL (= 本番) に固定されるケースがあり、Deploy Preview URL から来た returnTo が「異なる origin」として弾かれて本番 URL にフォールバックする (= 本番 `/settings/tenant` → 未ログインなので `/login` へ)。
+
+**段階 C: Stripe `success_url` は client → server → Stripe の経路で origin が伝播し、UI の `window.location.origin` が起点になる**
+
+段階 A / B を修正しても、staging DB の `paymentMethod` / `stripeSubscriptionId` が更新されず、ブラウザは本番 URL に着地する事象が継続。詳細追跡で判明したのは:
+
+```
+[UI] stripe-payment-method-section.tsx L92
+  const returnUrl = `${window.location.origin}/settings/tenant`;
+       ↓ fetch POST /api/tenants/me/billing/stripe/setup { returnUrl }
+[Server] route.ts → createCheckoutSessionForCardSetup(tenantId, returnUrl)
+[Server] stripe-billing.service.ts L144
+  const baseOrigin = new URL(returnUrl).origin;
+  const successUrl = `${baseOrigin}/api/tenants/me/billing/stripe/setup/complete?...&return_to=${returnUrl}`;
+       ↓ Stripe Checkout Session 作成
+[Stripe] カード登録成功後、success_url にブラウザを redirect
+```
+
+= UI が居る origin (= `window.location.origin`) が **唯一の真値** として全経路に伝播する。途中の env var (`URL` / `NEXTAUTH_URL`) は一切関与しない。
+
+**従って origin が本番になるのは UI 側のいずれか**:
+- (C-1) ユーザが本番 URL でログイン → 本番 `/settings/tenant` で「切替」を押した (= 単純に Deploy Preview URL でアクセスしていない)
+- (C-2) NextAuth middleware / redirect が Deploy Preview URL → 本番 URL に書き換えている (= 段階 A 不完全)
+- (C-3) ログイン後の callbackUrl 解決で本番 URL を返している (NextAuth の `authorize` / `signIn` callback)
+
+段階 A の build wrapper は build 時の `URL` env var 値を `NEXTAUTH_URL` に注入するが、**Next.js は env var を build 時に bundle に baking するわけではない** ため runtime 値は正しいはず。一方 NextAuth 自体は session token 内に hostname を含めず、`headers().host` を信頼する `trustHost: true` 設計のため、再ログインせず古い session を使うと本番 hostname を持ったまま動作する可能性がある (要検証)。
 
 ### 解決策
 
@@ -11618,6 +11643,27 @@ function sanitizeReturnTo(returnTo: string | null, reqUrl: string): string {
 
 オープンリダイレクト対策 (= 任意の URL への redirect を禁止) は維持しつつ、Deploy Preview / Branch Deploy の正規 URL も許可される。
 
+**段階 C 対策 (検証中 / 2026-05-21 時点)**
+
+`window.location.origin` の値を切り分けるため UI / Server 双方にデバッグログを追加 (PR #425 検証用、確定後削除):
+
+```ts
+// UI: stripe-payment-method-section.tsx handleSetup 内
+console.log('[stripe-ui] returnUrl=', returnUrl, 'origin=', window.location.origin);
+
+// Server: route.ts POST /setup 入口 / GET /setup/complete 入口
+console.log('[stripe-setup-complete] debug', {
+  reqUrl: req.url, returnTo, safeReturnTo,
+  env_NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+  env_URL: process.env.URL,
+  env_DEPLOY_PRIME_URL: process.env.DEPLOY_PRIME_URL,
+  env_CONTEXT: process.env.CONTEXT,
+});
+```
+
+ログから origin が本番に書き換わる地点 (C-1 / C-2 / C-3) を特定 → 対応する fix を入れる。
+ログだけで判明しない場合は、ログイン直後の `callbackUrl` 解決と middleware の host 判定を追加調査する。
+
 ### 教訓
 
 1. **NextAuth の trustHost は十分条件ではない**: `NEXTAUTH_URL` が定義されていれば優先される。Multi-environment 運用では env var そのものを deploy context ごとに切替える必要がある
@@ -11626,6 +11672,8 @@ function sanitizeReturnTo(returnTo: string | null, reqUrl: string): string {
 4. **オープンリダイレクト対策の origin チェックは「許可リスト」設計に**: 単一 origin 比較だと multi-environment で誤って弾く。Set ベースの allowed origins で柔軟に対応
 5. **`req.url` の origin は Netlify Functions で canonical に固定されることがある**: Next.js + Netlify Functions の組み合わせで、host header が本番 URL に書き換えられるケースあり。フォールバック先には `process.env.URL` を優先する
 6. **Stripe UAT は Deploy Preview で実施するのが正解**: 本番 Stripe Test mode 環境を借りる必要がなく、本番 DB も汚染しない。ただし上記 NextAuth + sanitizeReturnTo の罠を踏むので事前対策必須
+7. **Stripe `success_url` の origin は client → server → Stripe の経路で決まる (段階 C)**: server 側で env URL を fallback に使っても上書きされない。**真値は UI 起点の `window.location.origin` ただ一つ**。途中で本番 URL になっているなら UI が居る origin を疑う (= NextAuth redirect / middleware / 単純なアクセスミス)
+8. **Deploy Preview で外部サービス連携をテストする時はブラウザの URL を必ず確認**: 「Deploy Preview にアクセスしたつもり」が「本番にリダイレクトされて気づかず操作」になっていないか、外部サービスへ遷移する直前にアドレスバーをスクリーンショットすると原因切り分けが早い
 
 ### 検証手順
 
@@ -11633,14 +11681,23 @@ function sanitizeReturnTo(returnTo: string | null, reqUrl: string): string {
 1. Netlify Deploy Preview にアクセス: https://deploy-preview-NNN--tasukiba.netlify.app/login
    → アドレスバーが本番 URL に置換されないこと (= 段階 A 対策確認)
 
-2. ログイン → /settings/tenant の「クレジットカード払いに切替」ボタンクリック
-   → Stripe Checkout 画面に遷移
+2. ログイン → アドレスバーが依然 Deploy Preview URL であることを確認 (= 段階 A 完全性確認)
+   → 本番にリダイレクトされていたらここで段階 A 不完全
 
-3. テストカード 4242 4242 4242 4242 を入力 → 保存
+3. /settings/tenant の「クレジットカード払いに切替」ボタンを押す直前にアドレスバーを再確認
+   → ここで Deploy Preview URL でないと段階 C が発火する
 
-4. Stripe Checkout 完了後の戻り先
-   → アドレスバーが Deploy Preview URL のまま (= 段階 B 対策確認)
+4. ボタンクリック → Stripe Checkout 画面に遷移
+
+5. テストカード 4242 4242 4242 4242 を入力 → 保存
+
+6. Stripe Checkout 完了後の戻り先
+   → アドレスバーが Deploy Preview URL のまま (= 段階 B + 段階 C 対策確認)
    → /settings/tenant?stripe_setup=success が表示される
+
+7. DB 状態を確認:
+   npx tsx scripts/check-tenant-stripe-state.ts
+   期待: paymentMethod='credit_card' / stripeSubscriptionId='sub_*' / cardVerificationStatus='valid'
 ```
 
 ### 関連 KDD / PR

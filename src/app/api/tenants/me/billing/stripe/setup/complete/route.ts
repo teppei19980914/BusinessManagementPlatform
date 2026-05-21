@@ -53,6 +53,18 @@ export async function GET(req: NextRequest) {
   // 安全な戻り先 URL を決定 (= return_to が不正なら /settings/tenant に固定)
   const safeReturnTo = sanitizeReturnTo(returnTo, req.url);
 
+  // PR #425 デバッグ: Deploy Preview redirect 不具合の原因究明用 (検証完了後に削除)
+  // eslint-disable-next-line no-console
+  console.log('[stripe-setup-complete] debug', {
+    reqUrl: req.url,
+    returnTo,
+    safeReturnTo,
+    env_NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+    env_URL: process.env.URL,
+    env_DEPLOY_PRIME_URL: process.env.DEPLOY_PRIME_URL,
+    env_CONTEXT: process.env.CONTEXT,
+  });
+
   if (sessionId == null || sessionId.length === 0) {
     // session_id 欠落: 想定外 (Stripe placeholder 展開失敗 or 直接アクセス)
     return NextResponse.redirect(appendQuery(safeReturnTo, { stripe_setup: 'failed', reason: 'session_id_missing' }));

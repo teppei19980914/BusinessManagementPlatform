@@ -46,11 +46,14 @@ const BillingPatchSchema = z
     billingBuildingName: z.string().trim().max(200).nullable().optional(),
     // 任意項目: null クリアも許可
     billingPhoneNumber: z.string().trim().max(20).nullable().optional(),
-    // 2026-05-09 (#4): クレジットカードは UI 非活性 + API でも reject (defense-in-depth)。
-    //   将来対応する際に 'credit_card' を再追加する。
+    // 2026-05-21 (PR #425): クレジットカード払い対応に伴い 'credit_card' を許可。
+    //   - invoice → credit_card: paymentMethod のみ DB 更新。実カード登録は別途
+    //     「クレジットカード情報更新」ボタン → POST /api/tenants/me/billing/stripe/setup へ
+    //   - credit_card → invoice: updateBillingContact 側で Stripe Subscription を即時 cancel
+    //     (= 当月分は運営手動 invoice。Storage add-on の二重引落防止)
     // 2026-05-15: 'bank_transfer' を廃止し 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
     //   旧 'bank_transfer' を送ってきた場合は VALIDATION_ERROR で reject (= 画面で再選択を促す)。
-    paymentMethod: z.enum(['invoice']).optional(),
+    paymentMethod: z.enum(['invoice', 'credit_card']).optional(),
   })
   // 2026-05-09 (PR C / #5): 法人切替 + 会社名を同時に送ってきた場合は会社名必須。
   //   billingType だけ切替えで会社名を送らないケース (= 既存値を維持) は許容する。

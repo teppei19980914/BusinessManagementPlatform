@@ -148,6 +148,15 @@ export async function createCheckoutSessionForCardSetup(
     `&return_to=${encodeURIComponent(returnUrl)}`;
   const cancelUrl = appendQuery(returnUrl, 'stripe_setup', 'canceled');
 
+  // PR #425 デバッグ: success_url 本番化問題の最終確認用 (検証完了後に削除)
+  // eslint-disable-next-line no-console
+  console.log('[stripe-checkout-create] debug', {
+    receivedReturnUrl: returnUrl,
+    baseOrigin,
+    successUrl,
+    cancelUrl,
+  });
+
   return await withStripeError(() =>
     stripe.checkout.sessions.create(
       {

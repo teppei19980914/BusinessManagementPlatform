@@ -107,6 +107,12 @@ export type TenantSelfInfo = {
   //   credit_card 払いでない場合は全 null。
   /** Stripe Customer ID (= テナントが Stripe に作成した顧客 ID) */
   stripeCustomerId: string | null;
+  /**
+   * Stripe Subscription ID。null の場合は「カード未登録」(= 初回 setup 必要)。
+   * PR #425 (2026-05-21): UI で「クレジットカード情報更新」ボタンの動作分岐に使用
+   * (null → Stripe Checkout setup、非 null → Customer Portal)。
+   */
+  stripeSubscriptionId: string | null;
   /** Stripe Subscription 状態 ('active' / 'past_due' / 'canceled' / 'incomplete' 等) */
   stripeSubscriptionStatus: string | null;
   /** Default Payment Method ID (= デフォルト引落カード) */
@@ -188,6 +194,7 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     locale: t.locale,
     // PR-S5 (2026-05-14): Stripe 連携情報 (= UI 「支払い方法」セクション表示用)
     stripeCustomerId: t.stripeCustomerId,
+    stripeSubscriptionId: t.stripeSubscriptionId,
     stripeSubscriptionStatus: t.stripeSubscriptionStatus,
     stripeDefaultPaymentMethodId: t.stripeDefaultPaymentMethodId,
     cardVerificationStatus: t.cardVerificationStatus,

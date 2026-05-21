@@ -78,6 +78,8 @@ type TenantSelfInfo = {
   locale: string;
   // PR-S5 (2026-05-14): Stripe 連携情報 (Server Component から Date は string で渡る)
   stripeCustomerId: string | null;
+  /** PR #425 (2026-05-21): UI 「クレジットカード情報更新」ボタンの動作分岐に使用 (null → setup、非 null → portal) */
+  stripeSubscriptionId: string | null;
   stripeSubscriptionStatus: string | null;
   stripeDefaultPaymentMethodId: string | null;
   cardVerificationStatus: string | null;
@@ -161,9 +163,11 @@ export function TenantSettingsClient({
     const status = searchParams.get('stripe_setup');
     if (status == null) return;
     if (status === 'success') {
-      showSuccess('クレジットカード払いに切替えました');
+      // PR #425 (2026-05-21): paymentMethod 切替は別操作 (請求先情報フォーム) に分離されたため、
+      //   本処理は「カード情報の登録/更新成功」の通知に文言を統一。
+      showSuccess('クレジットカード情報を登録しました');
     } else if (status === 'canceled') {
-      showError('クレジットカード登録をキャンセルしました (現在の設定: 銀行振込のまま)');
+      showError('クレジットカード情報の登録をキャンセルしました');
     } else if (status === 'failed') {
       const reason = searchParams.get('reason') ?? '';
       const reasonMessageMap: Record<string, string> = {
@@ -1596,9 +1600,10 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
           {/* 2026-05-15: 旧 'invoice'（請求書送付）と 'bank_transfer'（銀行振込）を「銀行振込」に統合 (内部値 'invoice')。
               ユーザから見て同じ運用フローのため 1 選択肢に集約。旧 bank_transfer レコードは初期化時に invoice 正規化。 */}
           <option value="invoice">銀行振込</option>
-          {/* 2026-05-09 (#4): クレジットカード決済は未対応のため非活性。選択肢としては
-              将来対応を予告するため残す。サーバ側 zod でも 'credit_card' は reject。 */}
-          <option value="credit_card" disabled>クレジットカード (今後対応予定)</option>
+          {/* PR #425 (2026-05-21): クレジットカード払いを正式対応。選択 + 保存で paymentMethod が
+              credit_card に切り替わり、下部「クレジットカード情報更新」ボタンが活性化される。
+              credit_card → invoice 戻しは server 側で Stripe Subscription を即時 cancel。 */}
+          <option value="credit_card">クレジットカード</option>
         </select>
       </div>
 

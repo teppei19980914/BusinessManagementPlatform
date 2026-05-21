@@ -100,6 +100,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // PR #425 デバッグ: success_url 本番化問題の origin 切り分け用 (検証完了後に削除)
+  // eslint-disable-next-line no-console
+  console.log('[stripe-setup-post] debug', {
+    reqUrl: req.url,
+    receivedReturnUrl: parsed.data.returnUrl,
+    env_NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+    env_URL: process.env.URL,
+    env_DEPLOY_PRIME_URL: process.env.DEPLOY_PRIME_URL,
+    env_CONTEXT: process.env.CONTEXT,
+  });
+
   // Stripe Checkout Session 作成 (= Customer も同時に自動作成)
   // 詳細設計 §A-1 Phase 1-2: Customer は事前作成して DB に保存、Checkout は setup mode で session のみ
   const result = await createCheckoutSessionForCardSetup(user.tenantId, parsed.data.returnUrl);
