@@ -193,7 +193,119 @@ PR を作成すると **自動的に** Deploy Preview が build される。こ�
 
 **PR ごとに URL が変わる**ため Stripe Webhook 等の固定 URL 要求機能とは相性が悪い。その場合は §3.3 の Branch Deploy を併用する。
 
-### 3.5 Credit 浪費防止 Tips
+#### 同一 PR ブランチへの追加 push の挙動
+
+ご認識のとおり、PR 作成後に同じブランチへ追加 push すると **Netlify が自動で Deploy Preview を rebuild** する。手動操作は一切不要。
+
+```
+[10:00] PR 作成 / push   → Deploy Preview build #1 (~15 credits)
+                          URL: deploy-preview-NNN--tasukiba.netlify.app
+
+[10:30] レビュー修正 push → Deploy Preview build #2 (~15 credits)
+                          URL: 同じ (build artifact のみ更新)
+                          env vars も Deploy Preview context が継続使用される (= 上書き再設定不要)
+
+[11:00] さらに修正 push  → build #3 (~15 credits)
+                          URL: 同じ
+```
+
+| 項目 | 挙動 |
+|---|---|
+| 手動操作 | ❌ 不要 (git push するだけ) |
+| URL | ✅ 同じ URL を維持 (`deploy-preview-NNN--tasukiba.netlify.app`) — ブックマークも有効 |
+| env vars | ✅ Deploy Preview context が自動継承 (= §3.4「§5.X+XX env vars 設定は初回のみ」原則) |
+| build credits | ⚠️ **push 回数 × ~15 credits 消費** (= 浪費注意 → §3.5 参照) |
+
+### 3.5 同一 PR 内の追加 push を抑制する手段 (= credits 浪費防止)
+
+push 1 回 = 1 build = ~15 credits 消費。試行錯誤の細かい push は credits 浪費の最大要因。以下 4 段階の抑制策を組み合わせる。
+
+#### 抑制策 1: そもそも push しない (= 0 credits)
+
+push 前にローカルで全部検証する。**最も効果が高い**。
+
+```powershell
+# 1 回の push で 1 回の build に集約する
+pnpm lint
+pnpm test
+pnpm tsc --noEmit
+# ↑ 全部 pass してから push
+git push
+```
+
+#### 抑制策 2: 連続 push の auto-cancel (= Netlify 自動機構)
+
+同一ブランチへ短時間に複数 push すると、Netlify は **進行中の build を自動 cancel** して最新 push の build だけを完走させる。**設定不要**、デフォルト挙動。
+
+```
+[10:00:00] push A → build A 開始 (build minutes 計測中)
+[10:00:30] push B → ★ build A を auto-cancel ★ → build B 開始
+[10:00:45] push C → ★ build B を auto-cancel ★ → build C 開始
+[10:05:30] build C 完走 (~15 credits)
+
+結果: 3 回 push したが消費は build C 分のみ (= ~15 credits, 45 ではない)
+```
+
+ただし **「最初の build が完走してから次の push」** だと両方完走するので注意:
+
+```
+[10:00] push A → build A (5 分)
+[10:06] push B → build B (5 分) ← build A はもう完走しているので cancel されない
+→ 消費: ~30 credits
+```
+
+#### 抑制策 3: コミットメッセージで事前 skip
+
+特定の commit について明示的に build をスキップする 2 つのフラグ:
+
+| フラグ | 効果 | 推奨用途 |
+|---|---|---|
+| **`[skip ci]`** | **CI (GitHub Actions) + Netlify build の両方を skip** | 「動作確認も lint/test も不要」が確信できる commit (= 例: typo 修正、コメントのみ変更) |
+| **`[skip netlify]`** | **Netlify build のみ skip** (CI は実行される) | 「lint/test は確認したいが Netlify deploy は不要」な commit (= 例: テストコードのみ変更、CI で lint/test 結果を見たい) |
+
+##### 使用例
+
+```bash
+# 例 A: docs だけの typo 修正 → Netlify も CI も skip
+git commit -m "docs: README typo 修正 [skip ci]"
+
+# 例 B: src/services/foo.test.ts 修正 → 単体テスト結果は GitHub Actions で見たい、deploy は不要
+git commit -m "test: add edge case for foo service [skip netlify]"
+```
+
+⚠️ **`[skip ci]` の注意点**: GitHub Actions の lint/test/build も skip されるため、レビュアーが PR で「lint pass / test pass」を確認できなくなる。レビューが必要な commit には付けないこと。
+
+#### 抑制策 4: 既存の `scripts/netlify-ignore.sh` (= path ベース skip)
+
+本プロジェクトに導入済の Netlify Ignore Build 設定で、以下の path だけの変更なら **自動で build skip** (= フラグ不要):
+
+- `docs/**`
+- `.github/**`
+- `.vscode/**`
+- ルートの `*.md`
+- `.gitignore` / `LICENSE` / `CODEOWNERS`
+
+詳細は §1.2 参照。
+
+#### 抑制策 5: 手動 cancel (= 不要 push に気付いた直後)
+
+push 後 / build 進行中に「不要だった」と気付いた場合、Netlify Dashboard から手動キャンセル可能:
+
+1. https://app.netlify.com/projects/tasukiba → **Deploys** タブ
+2. 進行中の build (status: `Building` or `Initializing`) を選択
+3. 右上の **「Cancel deploy」** ボタン → 確認
+
+⚠️ **すでに消費した credits は戻らない** (= 早く気付くほど節約効果が高い):
+
+| cancel タイミング | 消費目安 |
+|---|---|
+| 0-30 秒 | ~1 credit |
+| 1-2 分 | ~5 credits |
+| 4-5 分 | ~15 credits (= 完走と同じ) |
+
+→ **不要 push に気付いたら即 cancel** が原則。
+
+### 3.6 Credit 浪費防止 Tips (全体まとめ)
 
 Netlify Free plan は **300 credits/月** (= Production deploy 20 回相当)。リリース直後のフェーズでは消費が増えやすいので、以下を徹底する。
 
@@ -203,14 +315,16 @@ Netlify Free plan は **300 credits/月** (= Production deploy 20 回相当)。�
 | **docs だけの変更は scripts/netlify-ignore.sh で自動 skip** | docs PR = 0 credits | 自動 (`docs/**`, `*.md`, `.github/**` 等は build skip) |
 | **連続 push の auto-cancel に任せる** | 同一ブランチに新 push が来ると進行中 build を自動 cancel | Netlify 標準機能、設定不要 |
 | **WIP PR は draft 状態にする** | Draft PR は Deploy Preview を build しない設定可 | Netlify Admin → Build & deploy → Skip drafts |
-| **commit メッセージに `[skip ci]` または `[skip netlify]`** | 強制 build skip | コミット時に手動 |
+| **commit メッセージに `[skip ci]`** | CI + Netlify build の **両方** skip (動作確認不要 commit 用) | コミット時に手動 |
+| **commit メッセージに `[skip netlify]`** | **Netlify のみ** skip、CI は実行 (test だけ見たい場合) | コミット時に手動 |
+| **不要 push に気付いたら即 cancel** | Netlify Dashboard → Deploys → Cancel deploy (早いほど消費少) | 手動 |
 | **複数の修正をまとめて 1 PR に bundle** | PR 数 = build 回数を削減 | 検証が独立に行える限り bundle (= [feedback_bundle_under_credit_pressure.md](../../CLAUDE.md) 参照) |
 | **ローカル `pnpm dev` で済む検証は push しない** | 軽微な UI 修正は localhost で確認 | Netlify への push を最小化 |
 | **残 100 credits で Pro plan ($19/月) 移行を即時判断** | 300 超過すると deploy 停止 (翌月 16 日まで復旧不可) | Netlify Admin → Usage & billing で実況可 |
 
 > **判断基準**: 「本番事故 → hotfix を 3 回連発」= 3 × 15 = **45 credits 一気消費** + 信頼失墜。Deploy Preview で事前検証していれば 15 credits + 安全。**事前検証の credit 消費 < 事故時の hotfix 連鎖消費** という発想で判断する。
 
-### 3.6 開発フロー サマリ (= リリース後の標準運用)
+### 3.7 開発フロー サマリ (= リリース後の標準運用)
 
 ```
 [ローカル]

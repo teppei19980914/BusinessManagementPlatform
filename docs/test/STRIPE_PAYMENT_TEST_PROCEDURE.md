@@ -194,7 +194,25 @@ Stripe 公式のテストカードを使用する。実カード番号を入力�
 
 ## 5. Webhook 系 (TC-4, TC-5)
 
-Stripe からの非同期イベント受信を検証するテスト。共通フローと違い、**Stripe Dashboard で Webhook endpoint を都度登録** する必要がある。
+> ## ⚠️ 本セクションは **TC-4 / TC-5 を実施する PR でのみ必要**
+>
+> Stripe からの非同期イベント受信を検証するテストです。**通常 PR (TC-4, 5 を実施しない場合) では §5 全体をスキップして構いません**。
+>
+> ### 通常 PR と Webhook PR の手順比較
+>
+> | 手順 | 通常 PR (TC-4, 5 なし) | Webhook PR (TC-4, 5 あり) |
+> |---|---|---|
+> | 1. 開発 + ローカル検証 | ✅ 共通 | ✅ 共通 |
+> | 2. PR 作成 → Deploy Preview build | ✅ 共通 (自動) | ✅ 共通 (自動) |
+> | **2-extra. Deploy Preview URL を Stripe Dashboard に Webhook endpoint 登録** | ❌ 不要 | ✅ **追加で必要** (§5.1 Step 2) |
+> | **2-extra. STRIPE_WEBHOOK_SECRET を Deploy Preview context に上書き + redeploy** | ❌ 不要 | ✅ **追加で必要** (§5.1 Step 3) |
+> | 3. ステージング動作確認 | ✅ TC-1, 2, 3, 6, 7, 8, 9, 10 | ✅ 通常分 + TC-4, 5 |
+> | **3-extra. テスト完了後の掃除 (endpoint 削除 + WEBHOOK_SECRET 戻し)** | ❌ 不要 | ✅ **追加で必要** (§5.1 Step 4) |
+> | 4. main merge | ✅ 共通 | ✅ 共通 |
+>
+> → **Webhook PR では §5.1 の 4 ステップ (Step 1-4) を追加実施** することで、PR ごとに変動する Deploy Preview URL の制約に対応する。
+
+共通フローと違い、**Stripe Dashboard で Webhook endpoint を都度登録** する必要がある。
 
 ### 5.1 事前準備 (Webhook 系 共通)
 
@@ -227,11 +245,28 @@ Branch Deploy の場合: `https://<branch-name>--tasukiba.netlify.app`
 2. Netlify Admin → Site configuration → Environment variables の `STRIPE_WEBHOOK_SECRET` を **Deploy Preview context** (or Branch Deploy context) で更新
 3. **Redeploy** が必要 (= env vars 変更を反映するため Netlify Admin から手動 Trigger deploy)
 
-#### Step 4: テスト終了後の掃除
+#### Step 4: テスト終了後の掃除 (= TC-4, 5 完了後に必ず実施)
 
-テスト完了後、Stripe Dashboard で作成した endpoint を **削除** すること:
-- 残しておくと PR close 後も Stripe が send-retry で webhook を投げ続け、Stripe Dashboard が「配信失敗」アラートまみれになる
-- 不要 endpoint の蓄積も避ける (= 月次レポートが汚染される)
+TC-4, 5 完了後、以下の **2 種類の掃除** を実施する。怠ると次回 Webhook PR で混乱の元になる。
+
+##### 4-a. Stripe Dashboard で endpoint を削除
+
+1. Stripe Dashboard → **Developers → Webhooks**
+2. Step 2 で作成した PR 専用 endpoint (`deploy-preview-NNN--...`) を選択
+3. 右上の `...` メニュー → **`Delete endpoint`**
+
+削除しないと以下の問題が起きる:
+- PR が close されると Deploy Preview URL は無効化される → Stripe が send-retry で webhook を投げ続けて失敗
+- Stripe Dashboard が「配信失敗」アラートまみれになる
+- 不要 endpoint が蓄積し月次レポートが汚染される
+
+##### 4-b. Netlify env vars の STRIPE_WEBHOOK_SECRET を Deploy Preview context で **空 or 本番値に戻す**
+
+1. Netlify Admin → Site configuration → Environment variables → `STRIPE_WEBHOOK_SECRET`
+2. **Deploy Preview context** の値を本番と同じ secret に戻す (or `Use the same value as production` を選択)
+3. Save
+
+理由: 削除した endpoint の signing secret が残っていると、次回 別 PR で TC-4, 5 を実施するとき に古い secret で署名検証エラーになる。
 
 ### 5.2 TC-4: Webhook 検証 (succeeded + 冪等性)
 
