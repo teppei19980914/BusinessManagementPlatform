@@ -412,7 +412,7 @@
       "previewSuffix": "(プレビュー)",
       "description": "CSV を読み込んで既存 WBS と差分を表示し、確認後に実行します。進捗・実績データは保全 (CSV 上は read-only) されます。",
       "csvFile": "CSV ファイル",
-      "csvFormatHint": "17 列フォーマット (ID + 階層 + 計画 + 進捗系 read-only)。先に「エクスポート」でダウンロードした CSV を Excel で編集してご利用ください。",
+      "csvFormatHint": "7 列フォーマット: ID / 種別 / 名称 / レベル / 予定開始日 / 予定終了日 / 予定工数。下の「テンプレート DL」または既存 WBS の「エクスポート」から取得した CSV を Excel で編集してご利用ください。",
       "previewGenerate": "プレビュー生成",
       "previewFailed": "プレビュー生成に失敗しました",
       "fileRequired": "ファイルを選択してください",
@@ -442,7 +442,23 @@
       "actionUpdate": "更新",
       "actionNoChange": "変更なし",
       "actionRemoveCandidate": "削除候補",
-      "importComplete": "インポート完了: 追加 {added} / 更新 {updated} / 削除 {removed}"
+      "importComplete": "インポート完了: 追加 {added} / 更新 {updated} / 削除 {removed}",
+      "downloadTemplate": "テンプレート DL",
+      "downloadTemplateAria": "CSV テンプレートをダウンロード (ヘッダー + サンプル 3 行)",
+      "dndHint": "ここに CSV ファイルをドラッグ&ドロップ、またはクリックして選択",
+      "dndDropHere": "ドロップしてアップロード",
+      "dndInvalidFile": "CSV ファイル (.csv) のみ受け付けます",
+      "filterLabel": "表示",
+      "filterAll": "全件 ({count})",
+      "filterErrors": "エラーのみ ({count})",
+      "filterWarnings": "警告のみ ({count})",
+      "filterNoMatch": "条件に一致する行がありません",
+      "deleteConfirmTitle": "削除候補の確定",
+      "deleteConfirmDesc": "以下 {count} 件のタスクを削除します。よろしいですか? (CSV から消えたタスクで、進捗・実績がないものが対象)",
+      "deleteConfirmExecute": "削除して実行",
+      "concurrentEditDetected": "他のユーザがこのプロジェクトのタスクを更新しました。最新状態を確認してから再度インポートしてください。",
+      "executeWithProgress": "実行中... ({count} 件処理)",
+      "deferredFeatures": "今回の更新で対応済: ヘッダー検証 / 並行編集検出 / 別 WP 配下同名 ACT の許可"
     }
   },
   "gantt": {

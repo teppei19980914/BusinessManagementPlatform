@@ -30,6 +30,7 @@ vi.mock('./task.service', async () => {
 import {
   parseSyncImportCsv,
   computeSyncDiff,
+  applySyncImport,
 } from './task-sync-import.service';
 import { prisma } from '@/lib/db';
 
@@ -42,7 +43,9 @@ const HEADER_7 = 'ID,種別,名称,レベル,予定開始日,予定終了日,予
 
 describe('parseSyncImportCsv (T-19)', () => {
   it('ヘッダーのみは空配列を返す', () => {
-    expect(parseSyncImportCsv(HEADER_7)).toEqual([]);
+    const r = parseSyncImportCsv(HEADER_7);
+    expect(r.rows).toEqual([]);
+    expect(r.headerErrors).toEqual([]);
   });
 
   it('ID あり行は id を文字列で持ち、空欄は null になる', () => {
@@ -52,16 +55,19 @@ describe('parseSyncImportCsv (T-19)', () => {
       ',ACT,要件ヒアリング,2,2026-05-01,2026-05-10,5',
     ].join('\n');
 
-    const rows = parseSyncImportCsv(csv);
+    const { rows, headerErrors } = parseSyncImportCsv(csv);
+    expect(headerErrors).toEqual([]);
     expect(rows).toHaveLength(2);
     expect(rows[0].id).toBe('abc-123');
     expect(rows[0].type).toBe('work_package');
     expect(rows[0].name).toBe('設計');
     expect(rows[0].level).toBe(1);
+    expect(rows[0].parentRowIndex).toBe(null); // root
     expect(rows[1].id).toBe(null);
     expect(rows[1].type).toBe('activity');
     expect(rows[1].name).toBe('要件ヒアリング');
     expect(rows[1].level).toBe(2);
+    expect(rows[1].parentRowIndex).toBe(2); // 1行目 (csv row 2) が親
     expect(rows[1].plannedStartDate).toBe('2026-05-01');
     expect(rows[1].plannedEndDate).toBe('2026-05-10');
     expect(rows[1].plannedEffort).toBe(5);
@@ -70,29 +76,70 @@ describe('parseSyncImportCsv (T-19)', () => {
   it('BOM 付きでも先頭文字を読み飛ばしてパースできる', () => {
     const bom = '﻿';
     const csv = bom + [HEADER_7, ',WP,A,1,,,0'].join('\n');
-    const rows = parseSyncImportCsv(csv);
+    const { rows } = parseSyncImportCsv(csv);
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe('A');
   });
 
   it('予定工数が空欄なら null', () => {
     const csv = [HEADER_7, ',WP,A,1,,,'].join('\n');
-    const rows = parseSyncImportCsv(csv);
+    const { rows } = parseSyncImportCsv(csv);
     expect(rows[0].plannedEffort).toBe(null);
   });
 
   it('レベルが数値変換できない行はスキップされる', () => {
     const csv = [HEADER_7, ',WP,有効,1,,,0', ',WP,無効,abc,,,0'].join('\n');
-    const rows = parseSyncImportCsv(csv);
+    const { rows } = parseSyncImportCsv(csv);
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe('有効');
   });
 
   it('名称が空欄の行はスキップされる', () => {
     const csv = [HEADER_7, ',WP,,1,,,0', ',WP,有効,1,,,0'].join('\n');
-    const rows = parseSyncImportCsv(csv);
+    const { rows } = parseSyncImportCsv(csv);
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe('有効');
+  });
+
+  // [A1] parentRowIndex 推論
+  it('[A1] 別 WP 配下の同名 ACT は別の parentRowIndex を持つ', () => {
+    const csv = [
+      HEADER_7,
+      ',WP,WPA,1,,,0',
+      ',ACT,AACT,2,,,0',
+      ',ACT,BACT,2,,,0',
+      ',WP,WPB,1,,,0',
+      ',ACT,AACT,2,,,0',
+      ',ACT,BACT,2,,,0',
+    ].join('\n');
+    const { rows } = parseSyncImportCsv(csv);
+    expect(rows).toHaveLength(6);
+    // WPA 配下の AACT の parent は WPA (csv row 2)
+    expect(rows[1].name).toBe('AACT');
+    expect(rows[1].parentRowIndex).toBe(2);
+    // WPB 配下の AACT の parent は WPB (csv row 5)
+    expect(rows[4].name).toBe('AACT');
+    expect(rows[4].parentRowIndex).toBe(5);
+  });
+
+  // [A3] ヘッダー検証
+  it('[A3] ヘッダーが期待と異なれば headerErrors を返す', () => {
+    const csv = ['Id,種別,名称,レベル,予定開始日,予定終了日,予定工数', ',WP,A,1,,,0'].join('\n');
+    const r = parseSyncImportCsv(csv);
+    expect(r.headerErrors.length).toBeGreaterThan(0);
+    expect(r.headerErrors[0]).toContain('1 列目');
+  });
+
+  it('[A3] ヘッダー列順違いを検出する', () => {
+    const csv = ['種別,ID,名称,レベル,予定開始日,予定終了日,予定工数', ',WP,A,1,,,0'].join('\n');
+    const r = parseSyncImportCsv(csv);
+    expect(r.headerErrors.some((e) => e.includes('1 列目'))).toBe(true);
+  });
+
+  it('[A3] ヘッダー列数不足を検出する (4 列未満)', () => {
+    const csv = ['ID,種別,名称', ',WP,A'].join('\n');
+    const r = parseSyncImportCsv(csv);
+    expect(r.headerErrors.some((e) => e.includes('列数が不足'))).toBe(true);
   });
 });
 
@@ -136,6 +183,7 @@ function csvRow(overrides: Record<string, unknown> = {}) {
     plannedStartDate: null,
     plannedEndDate: null,
     plannedEffort: null,
+    parentRowIndex: null,
     ...overrides,
   } as Parameters<typeof computeSyncDiff>[1][number];
 }
@@ -173,12 +221,72 @@ describe('computeSyncDiff (T-19)', () => {
     expect(r.rows[0].errors).toBeUndefined();
   });
 
-  it('ID 空欄 + DB に同名タスクあり → blocker (誤コピー検知)', async () => {
+  it('[A2] ID 空欄 + DB に「同一親配下の同名」タスクあり → blocker (誤コピー検知)', async () => {
+    // baseDbTask: parentTaskId=null (root), name='設計'
     vi.mocked(prisma.task.findMany).mockResolvedValue([baseDbTask] as never);
 
-    const r = await computeSyncDiff(projectId,[csvRow({ name: '設計' })], 'tenant-A');
+    // CSV: root level の '設計' を新規作成しようとする → 同一親 (どちらも root) で衝突
+    const r = await computeSyncDiff(projectId, [csvRow({ name: '設計' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
-    expect(r.rows[0].errors?.[0]).toContain('ID 空欄ですが同名のタスクが既存');
+    expect(r.rows[0].errors?.[0]).toContain('同一親配下に同名のタスクが既存');
+  });
+
+  it('[A2] 別の親配下なら同名でも CREATE 許可 (旧実装の過剰制限を解消)', async () => {
+    // DB: 既存 root に '設計' タスク (parentTaskId=null) が存在
+    vi.mocked(prisma.task.findMany).mockResolvedValue([baseDbTask] as never);
+
+    // CSV: 'WPA' (root, id=db-1 = baseDbTask) 配下に '設計' (CREATE) を作る
+    //   baseDbTask の id を流用し UPDATE 行として親を作る + その配下に CREATE を置く
+    const r = await computeSyncDiff(
+      projectId,
+      [
+        csvRow({ id: 'db-1', tempRowIndex: 2, level: 1, name: '設計' }),
+        csvRow({
+          tempRowIndex: 3,
+          level: 2,
+          type: 'activity',
+          name: '設計', // 同名だが親が違う (root の '設計' は別物)
+          parentRowIndex: 2,
+        }),
+      ],
+      'tenant-A',
+    );
+    expect(r.canExecute).toBe(true); // ブロッカーなし
+  });
+
+  it('[A1] CSV 内: 別 WP 配下の同名 ACT は許可、同一 WP 配下の同名 ACT のみブロック', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+
+    // WPA / AACT, BACT + WPB / AACT, BACT (別 WP 配下の同名は OK)
+    const r1 = await computeSyncDiff(
+      projectId,
+      [
+        csvRow({ tempRowIndex: 2, level: 1, name: 'WPA' }),
+        csvRow({ tempRowIndex: 3, level: 2, type: 'activity', name: 'AACT', parentRowIndex: 2 }),
+        csvRow({ tempRowIndex: 4, level: 2, type: 'activity', name: 'BACT', parentRowIndex: 2 }),
+        csvRow({ tempRowIndex: 5, level: 1, name: 'WPB' }),
+        csvRow({ tempRowIndex: 6, level: 2, type: 'activity', name: 'AACT', parentRowIndex: 5 }),
+        csvRow({ tempRowIndex: 7, level: 2, type: 'activity', name: 'BACT', parentRowIndex: 5 }),
+      ],
+      'tenant-A',
+    );
+    expect(r1.canExecute).toBe(true);
+    expect(r1.summary.blockedErrors).toBe(0);
+
+    // 同一 WPA 配下に AACT が 2 つ → ブロック
+    const r2 = await computeSyncDiff(
+      projectId,
+      [
+        csvRow({ tempRowIndex: 2, level: 1, name: 'WPA' }),
+        csvRow({ tempRowIndex: 3, level: 2, type: 'activity', name: 'AACT', parentRowIndex: 2 }),
+        csvRow({ tempRowIndex: 4, level: 2, type: 'activity', name: 'AACT', parentRowIndex: 2 }),
+      ],
+      'tenant-A',
+    );
+    expect(r2.canExecute).toBe(false);
+    expect(
+      r2.rows.some((row) => row.errors?.some((e) => e.includes('同一親配下に同じ名称'))),
+    ).toBe(true);
   });
 
   it('ID 一致 → UPDATE、変更がなければ NO_CHANGE', async () => {
@@ -207,7 +315,9 @@ describe('computeSyncDiff (T-19)', () => {
 
     const r = await computeSyncDiff(projectId,[csvRow({ id: 'unknown-id', name: 'X' })], 'tenant-A');
     expect(r.canExecute).toBe(false);
-    expect(r.rows[0].errors?.[0]).toContain('ID "unknown-id" が DB に存在しません');
+    // [B2] エラーメッセージはガイダンス化済 — 「ID 〜 のタスクが〜存在しません」
+    expect(r.rows[0].errors?.[0]).toContain('ID「unknown-id」');
+    expect(r.rows[0].errors?.[0]).toContain('存在しません');
   });
 
   it('WP↔ACT 切替は blocker', async () => {
@@ -228,7 +338,8 @@ describe('computeSyncDiff (T-19)', () => {
       csvRow({ id: 'db-1', name: '設計2', tempRowIndex: 3 }),
     ], 'tenant-A');
     expect(r.canExecute).toBe(false);
-    expect(r.rows[0].errors?.some((e) => e.includes('CSV 内で ID'))).toBe(true);
+    // [B2] エラーメッセージはガイダンス化済 — 「CSV 内に同じ ID〜を持つ行が複数あります」
+    expect(r.rows[0].errors?.some((e) => e.includes('同じ ID') && e.includes('db-1'))).toBe(true);
   });
 
   it('CSV から消えたタスク → REMOVE_CANDIDATE 行を追加', async () => {
@@ -246,6 +357,18 @@ describe('computeSyncDiff (T-19)', () => {
     expect(removeRow?.hasProgress).toBe(false);
   });
 
+  it('[C2] snapshotAt が dry-run 時点の最大 updatedAt を返す', async () => {
+    const t1 = new Date('2026-05-01T00:00:00Z');
+    const t2 = new Date('2026-05-21T10:30:00Z');
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      { ...baseDbTask, id: 'db-1', updatedAt: t1 },
+      { ...baseDbTask, id: 'db-2', name: '別', updatedAt: t2 },
+    ] as never);
+
+    const r = await computeSyncDiff(projectId, [csvRow({ id: 'db-1', name: '設計' })], 'tenant-A');
+    expect(r.snapshotAt).toBe(t2.toISOString());
+  });
+
   it('進捗ありタスクの REMOVE_CANDIDATE は ERROR レベル', async () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([
       baseDbTask,
@@ -258,5 +381,61 @@ describe('computeSyncDiff (T-19)', () => {
     const removeRow = r.rows.find((row) => row.action === 'REMOVE_CANDIDATE');
     expect(removeRow?.hasProgress).toBe(true);
     expect(removeRow?.warningLevel).toBe('ERROR');
+  });
+});
+
+// ============================================================
+// applySyncImport — [C2] OCC concurrent edit detection
+// ============================================================
+
+describe('applySyncImport [C2] OCC', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
+  });
+
+  it('expectedSnapshotAt と現在の snapshotAt が一致しなければ IMPORT_CONCURRENT_EDIT を throw', async () => {
+    const tNow = new Date('2026-05-21T12:00:00Z');
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      { ...baseDbTask, id: 'db-1', updatedAt: tNow },
+    ] as never);
+
+    // client が送る expectedSnapshotAt は古いタイムスタンプ
+    const stale = '2026-05-21T11:00:00.000Z';
+
+    await expect(
+      applySyncImport(
+        projectId,
+        [csvRow({ id: 'db-1', name: '設計' })],
+        'keep',
+        'user-1',
+        'tenant-A',
+        { expectedSnapshotAt: stale },
+      ),
+    ).rejects.toThrow(/IMPORT_CONCURRENT_EDIT/);
+  });
+
+  it('expectedSnapshotAt が一致すれば OCC をパスする (dry-run/再計算 → snapshotAt 同一)', async () => {
+    const tNow = new Date('2026-05-21T12:00:00Z');
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      { ...baseDbTask, id: 'db-1', updatedAt: tNow },
+    ] as never);
+    vi.mocked(prisma.task.update).mockResolvedValue({ id: 'db-1' } as never);
+    vi.mocked(prisma.task.findUnique).mockResolvedValue({ type: 'work_package', parentTaskId: null } as never);
+
+    // expectedSnapshotAt は現在の最大 updatedAt と一致
+    const expected = tNow.toISOString();
+
+    // 同名 UPDATE (変更なし) なので OCC のみ検証できる
+    const result = await applySyncImport(
+      projectId,
+      [csvRow({ id: 'db-1', name: '設計' })],
+      'keep',
+      'user-1',
+      'tenant-A',
+      { expectedSnapshotAt: expected },
+    );
+    // NO_CHANGE 扱いになるが、OCC throw されないことが本テストの主目的
+    expect(result).toBeDefined();
   });
 });

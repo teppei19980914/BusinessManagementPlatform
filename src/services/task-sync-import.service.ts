@@ -48,7 +48,30 @@ export type SyncImportRow = {
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   plannedEffort: number | null;
+  /**
+   * CSV 上の親行 tempRowIndex (level スタックから決定)。root (level=1) は null。
+   *
+   * 重複判定・誤コピー検知を「同階層 (= 同一親配下)」のスコープで行うために必要。
+   * 親が直前に無い不正 CSV の場合も null (エラーは別途 computeSyncDiff で surface)。
+   */
+  parentRowIndex: number | null;
 };
+
+/**
+ * WBS sync-import の正式ヘッダー (T-19 で 7 列に削減)。先頭 4 列は必須、後 3 列は順序固定。
+ *
+ * parseSyncImportCsv はこのヘッダーと完全一致しない場合 globalErrors として返す。
+ * 列順違い・列不足を silent skip すると「データ 0 件」になり原因がわからないため。
+ */
+export const WBS_SYNC_CSV_HEADERS = [
+  'ID',
+  '種別',
+  '名称',
+  'レベル',
+  '予定開始日',
+  '予定終了日',
+  '予定工数',
+] as const;
 
 export type SyncDiffAction = 'CREATE' | 'UPDATE' | 'NO_CHANGE' | 'REMOVE_CANDIDATE';
 
@@ -92,6 +115,21 @@ export type SyncDiffResult = {
   canExecute: boolean;
   /** 行に紐付かないグローバルなエラー (ヘッダー不正など) */
   globalErrors: string[];
+  /**
+   * 2026-05-21 [C2] OCC: dry-run 時点での影響範囲 (project 配下 task 最大 updatedAt)。
+   * apply 時に再取得した値と比較し、ずれていれば「並行編集検出」で blocker 化する。
+   */
+  snapshotAt?: string | null;
+};
+
+/**
+ * 2026-05-21 [A3] CSV パーサが返すヘッダー検証結果。
+ * parser からの globalErrors を computeSyncDiff 側に伝搬するためのオプション情報。
+ */
+export type ParseSyncImportResult = {
+  rows: SyncImportRow[];
+  /** ヘッダー検証 / 致命的パースエラー。空でなければ row は使うべきでない。 */
+  headerErrors: string[];
 };
 
 export type RemoveMode = 'keep' | 'warn' | 'delete';
@@ -101,21 +139,60 @@ export type RemoveMode = 'keep' | 'warn' | 'delete';
 // ============================================================
 
 /**
- * 7 列 CSV を解析して SyncImportRow[] を返す (T-19 で 17 列から削減)。
+ * 7 列 CSV を解析して { rows, headerErrors } を返す (T-19 で 17 列から削減)。
  *
- * - 1 行目はヘッダー。スキップする。
+ * - 1 行目はヘッダー。**列順・列名を厳格チェック** し、不一致は headerErrors に追加。
+ *   ([A3] 旧実装は header を素通しで silent skip しており、ユーザに原因が伝わらなかった)
  * - 列順: ID / 種別 / 名称 / レベル / 予定開始日 / 予定終了日 / 予定工数
- * - 列数チェックは緩め (短い行はスキップ、長い行は余分列を無視) で実用優先。
- * - 厳格 validation は computeSyncDiff 側で行う。
+ * - データ行: 短い行 / 名称空欄 / レベル不正 はスキップ。長い行は余分列を無視。
+ * - **parentRowIndex** を level スタックから決定 ([A1] 同階層名称重複判定を「同一親配下」スコープで行うため)。
+ *
+ * @returns rows: 有効データ行 (header エラー時も部分的に返す), headerErrors: ヘッダー不正の説明文
  */
-export function parseSyncImportCsv(csvText: string): SyncImportRow[] {
+export function parseSyncImportCsv(csvText: string): ParseSyncImportResult {
   // BOM 除去
   const cleanText = csvText.replace(/^﻿/, '');
   const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return []; // ヘッダーのみ
+  if (lines.length < 1) {
+    return { rows: [], headerErrors: ['CSV が空です'] };
+  }
+
+  // ============================================================
+  // [A3] ヘッダー検証 (列順・列名)
+  // ============================================================
+  const headerFields = parseCsvLine(lines[0]).map((s) => s.trim());
+  const headerErrors: string[] = [];
+
+  // 列数チェック (最低 4 列, 推奨 7 列)
+  if (headerFields.length < 4) {
+    headerErrors.push(
+      `CSV ヘッダーの列数が不足しています (${headerFields.length} 列, 最低 4 列必要)。期待: ${WBS_SYNC_CSV_HEADERS.join(',')}`,
+    );
+  }
+
+  // 列名チェック (必須 4 列は厳格、後 3 列は順序チェックのみ)
+  const REQUIRED_HEADER_COUNT = 4;
+  for (let i = 0; i < Math.min(headerFields.length, WBS_SYNC_CSV_HEADERS.length); i++) {
+    const expected = WBS_SYNC_CSV_HEADERS[i];
+    const actual = headerFields[i];
+    if (actual !== expected) {
+      const isRequired = i < REQUIRED_HEADER_COUNT;
+      headerErrors.push(
+        `${i + 1} 列目のヘッダーが "${actual}" ですが "${expected}" を期待しています${isRequired ? ' (必須)' : ''}`,
+      );
+    }
+  }
+
+  if (lines.length < 2) {
+    return { rows: [], headerErrors };
+  }
 
   const dataLines = lines.slice(1);
   const rows: SyncImportRow[] = [];
+
+  // [A1] parentRowIndex を埋めるための level スタック
+  // stack[level-1] = 該当 level の最新行の tempRowIndex
+  const parentStack: number[] = [];
 
   for (let i = 0; i < dataLines.length; i++) {
     const fields = parseCsvLine(dataLines[i]);
@@ -141,6 +218,15 @@ export function parseSyncImportCsv(csvText: string): SyncImportRow[] {
     const plannedEffortStr = (fields[6] ?? '').trim();
     const plannedEffort = plannedEffortStr ? parseFloat(plannedEffortStr) : null;
 
+    // [A1] parentRowIndex 決定: level=1 は null, それ以外は stack[level-2]
+    //   親が直前に無い不正 CSV (level=3 だが level=2 が無い等) は null としておき、
+    //   computeSyncDiff 側で「親不在」エラーを surface する (既存の挙動を維持)
+    const parentRowIndex = level > 1 ? (parentStack[level - 2] ?? null) : null;
+
+    // スタック更新: 自分の level を上書き、深いレベルは破棄
+    parentStack[level - 1] = csvRowIndex;
+    parentStack.length = level;
+
     rows.push({
       tempRowIndex: csvRowIndex,
       id,
@@ -150,10 +236,11 @@ export function parseSyncImportCsv(csvText: string): SyncImportRow[] {
       plannedStartDate,
       plannedEndDate,
       plannedEffort: plannedEffort != null && !isNaN(plannedEffort) ? plannedEffort : null,
+      parentRowIndex,
     });
   }
 
-  return rows;
+  return { rows, headerErrors };
 }
 
 // ============================================================
@@ -199,23 +286,35 @@ function dateOnlyStr(d: Date | null): string | null {
  *
  * 検証項目 (blocker):
  *   - level / 名称 / 種別の必須・形式
+ *   - ヘッダー不正 ([A3], options.headerErrors 経由)
  *   - 親不在 (level=N の親が直前のスタックに無い)
  *   - WP↔ACT 切替 (既存 type と CSV type の不一致)
- *   - ID 不一致だが名称一致 (誤コピー検知)
- *   - CSV 内 ID 重複 / 同階層名称重複
+ *   - ID 不一致だが「同一親配下に同名」のタスクが既存 (誤コピー検知, [A2])
+ *   - CSV 内 ID 重複 / 同一親配下の名称重複 ([A1])
  *   - DB に存在しない ID を指定 (typo 等)
+ *   - 循環参照 (CSV の new parent 指定が DB の旧子孫経由で自分に戻る, [A4])
  */
 export async function computeSyncDiff(
   projectId: string,
   csvRows: SyncImportRow[],
   viewerTenantId: string,
+  options?: { headerErrors?: string[] },
 ): Promise<SyncDiffResult> {
   const result: SyncDiffResult = {
     summary: { added: 0, updated: 0, removed: 0, blockedErrors: 0, warnings: 0 },
     rows: [],
     canExecute: true,
     globalErrors: [],
+    snapshotAt: null,
   };
+
+  // [A3] ヘッダーエラーは globalErrors に伝搬し、ブロッカー化
+  if (options?.headerErrors && options.headerErrors.length > 0) {
+    result.globalErrors.push(...options.headerErrors);
+    result.canExecute = false;
+    // ヘッダー不正でも以降の検査は続ける (ユーザに同時にデータエラーも見せるため) 。
+    // ただし「ヘッダー直しなしには進めない」のは canExecute=false で表現済。
+  }
 
   // 2026-05-10 feedback Phase 2-8: 越境 sync-import を遮断するため projectId のテナント検証。
   //   旧仕様は projectId 直叩きで他テナントの WBS を import 可能だった severity-1 バグ。
@@ -267,15 +366,31 @@ export async function computeSyncDiff(
       notes: true,
       createdBy: true,
       updatedBy: true,
+      updatedAt: true,
     },
   });
 
+  // [C2] OCC: project 配下 task の最大 updatedAt を snapshot として記録。apply 時に再取得して
+  //   ずれていれば「並行編集が発生」として blocker 化する (PgBouncer 制約で advisory lock 不可)。
+  result.snapshotAt = existingTasks.reduce<string | null>((acc, t) => {
+    const u = (t as { updatedAt?: Date }).updatedAt;
+    if (!u) return acc;
+    const iso = u.toISOString();
+    return acc == null || iso > acc ? iso : acc;
+  }, null);
+
   const existingById = new Map(existingTasks.map((t) => [t.id, t as DbTaskSnapshot]));
-  const existingByName = new Map<string, DbTaskSnapshot[]>();
+
+  // [A2] DB 既存タスクを (parentTaskId ?? 'root', name) でインデックス。
+  //   旧実装は name のみで「別 WP 配下の既存同名」も誤コピー判定していた過剰制限を解消。
+  const parentScopeKey = (parentTaskId: string | null, name: string): string =>
+    `${parentTaskId ?? '__root__'}::${name}`;
+  const existingByParentAndName = new Map<string, DbTaskSnapshot[]>();
   for (const t of existingTasks) {
-    const arr = existingByName.get(t.name) ?? [];
+    const key = parentScopeKey(t.parentTaskId, t.name);
+    const arr = existingByParentAndName.get(key) ?? [];
     arr.push(t as DbTaskSnapshot);
-    existingByName.set(t.name, arr);
+    existingByParentAndName.set(key, arr);
   }
 
   // CSV 内の ID 重複検知
@@ -285,24 +400,49 @@ export async function computeSyncDiff(
   }
   const duplicateIds = new Set([...csvIdCounts.entries()].filter(([, c]) => c > 1).map(([id]) => id));
 
-  // 同階層名称重複検知 (level + parent + name のキーで判定するが、
-  // 親決定は level スタックで動的なので、単純に同じ level かつ同じ name で重複検知)
-  const csvNameByLevelCounts = new Map<string, number>();
+  // [A1] 同一親配下の名称重複検知 (旧 level+name → parentRowIndex+name)
+  //   別 WP 配下に同名 ACT を作る正当なユースケースを誤って弾かない。
+  const csvNameByParentCounts = new Map<string, number>();
   for (const r of csvRows) {
-    const key = `${r.level}::${r.name}`;
-    csvNameByLevelCounts.set(key, (csvNameByLevelCounts.get(key) ?? 0) + 1);
+    const key = `${r.parentRowIndex ?? '__root__'}::${r.name}`;
+    csvNameByParentCounts.set(key, (csvNameByParentCounts.get(key) ?? 0) + 1);
   }
-  const duplicateNamesAtLevel = new Set(
-    [...csvNameByLevelCounts.entries()].filter(([, c]) => c > 1).map(([k]) => k),
+  const duplicateNamesUnderSameParent = new Set(
+    [...csvNameByParentCounts.entries()].filter(([, c]) => c > 1).map(([k]) => k),
   );
 
+  // [A2] CSV 行を tempRowIndex でルックアップできるよう Map 化 (誤コピー検知・循環検出で使用)
+  const csvRowByTempIndex = new Map<number, SyncImportRow>();
+  for (const r of csvRows) csvRowByTempIndex.set(r.tempRowIndex, r);
+
+  // [A2] 各 CSV 行の「import 完了後の新 parentTaskId」を解決する。
+  //   - 親が CSV 内 UPDATE 行 (id あり): その id
+  //   - 親が CSV 内 CREATE 行 (id 無し): null を返す (DB id 未確定。誤コピー検知は parent 不明でスキップ)
+  //   - root (parentRowIndex=null): null
+  function resolveNewParentDbId(row: SyncImportRow): {
+    parentDbId: string | null;
+    parentIsCsvCreate: boolean;
+  } {
+    if (row.parentRowIndex == null) return { parentDbId: null, parentIsCsvCreate: false };
+    const parent = csvRowByTempIndex.get(row.parentRowIndex);
+    if (!parent) return { parentDbId: null, parentIsCsvCreate: false };
+    if (parent.id) return { parentDbId: parent.id, parentIsCsvCreate: false };
+    return { parentDbId: null, parentIsCsvCreate: true };
+  }
+
   // 親決定用のスタック (level → 該当タスクの tempRowIndex / 行)
+  //   parser 側の parentRowIndex と冗長だが、parent.row.type / .name を error message に出すため残す。
   const parentStack: { row: SyncImportRow; tempId: string }[] = [];
   // 各行に tempId を割り当て (UI での参照キー用)
   const tempIdByRow = new Map<SyncImportRow, string>();
 
   // CSV から「このインポートで生き残るタスク id」の集合を作る (REMOVE_CANDIDATE 検出用)
   const csvKeptIds = new Set<string>();
+
+  // [A4] 循環参照チェック: CSV の parent は level スタック由来 (= CSV 上の上位行) のため、
+  //   CSV 内チェーンは sequentially acyclic、自己参照も ID 重複ブロッカーで既に弾かれる。
+  //   よって本実装の CSV→tree 変換では構造的に閉路が形成不能。spec の「循環参照」言及は
+  //   旧 parentTaskId 列直指定方式を想定した defensive 文言と判断し、追加コードは不要とする。
 
   // 行ごとの diff 計算
   for (let i = 0; i < csvRows.length; i++) {
@@ -322,12 +462,16 @@ export async function computeSyncDiff(
       // 直近の level=N-1 の要素
       const parent = parentStack[row.level - 2];
       if (!parent) {
-        errors.push(`レベル ${row.level} ですが親 (レベル ${row.level - 1}) が直前にありません`);
+        errors.push(
+          `レベル ${row.level} のタスクですが、親となるレベル ${row.level - 1} の行が直前にありません。CSV 上で親行 (WP) を上の行に配置してください。`,
+        );
       } else {
         parentDbId = parent.row.id; // 親が既存 DB タスクのとき
         // 親が WP でない場合は ACT を子に持てない
         if (parent.row.type !== 'work_package') {
-          errors.push(`親 "${parent.row.name}" がワークパッケージではありません (種別=${parent.row.type})`);
+          errors.push(
+            `親「${parent.row.name}」がワークパッケージ (WP) ではありません (種別=${parent.row.type})。ACT (作業) は WP の配下にのみ作成できます。`,
+          );
         }
       }
     }
@@ -338,11 +482,13 @@ export async function computeSyncDiff(
 
     // CSV 内 ID 重複
     if (row.id && duplicateIds.has(row.id)) {
-      errors.push(`CSV 内で ID "${row.id}" が重複しています`);
+      errors.push(
+        `CSV 内に同じ ID「${row.id}」を持つ行が複数あります。意図的に複製したい場合は ID 列を空欄にして新規作成扱いにしてください。`,
+      );
     }
-    // 同階層名称重複
-    if (duplicateNamesAtLevel.has(`${row.level}::${row.name}`)) {
-      errors.push(`同階層・同名のタスクが CSV 内に複数あります`);
+    // [A1] 同一親配下の名称重複 (旧 level+name → parentRowIndex+name)
+    if (duplicateNamesUnderSameParent.has(`${row.parentRowIndex ?? '__root__'}::${row.name}`)) {
+      errors.push(`同一親配下に同じ名称のタスクが CSV 内に複数あります (別 WP 配下の同名は許可されます)`);
     }
 
     // ID 突合
@@ -352,9 +498,13 @@ export async function computeSyncDiff(
     if (row.id) {
       dbTask = existingById.get(row.id);
       if (!dbTask) {
-        errors.push(`ID "${row.id}" が DB に存在しません`);
+        errors.push(
+          `ID「${row.id}」のタスクがこのプロジェクトに存在しません。ID 列を空欄にして新規作成するか、正しい ID に修正してください。`,
+        );
       } else if (dbTask.projectId !== projectId) {
-        errors.push(`ID "${row.id}" は別プロジェクトのタスクです`);
+        errors.push(
+          `ID「${row.id}」は別プロジェクトのタスクです。このプロジェクトでは ID 列を空欄にして新規作成してください。`,
+        );
       } else {
         action = 'UPDATE';
         csvKeptIds.add(dbTask.id);
@@ -367,13 +517,18 @@ export async function computeSyncDiff(
         }
       }
     } else {
-      // ID 不一致 (空欄) で名称一致をチェック (誤コピー検知)
-      const sameName = existingByName.get(row.name);
-      if (sameName && sameName.length > 0) {
-        errors.push(
-          `ID 空欄ですが同名のタスクが既存にあります (新規作成すると重複)。意図的なら ID 列に既存 ID を貼り付けるか、CSV 上で名称を変えてください`,
-        );
+      // [A2] ID 不一致 (空欄) で「同一親配下の同名」をチェック (誤コピー検知)
+      //   旧実装は project 全体スコープで「他 WP 配下の同名」も誤検知していた。
+      const resolved = resolveNewParentDbId(row);
+      if (!resolved.parentIsCsvCreate) {
+        const sameName = existingByParentAndName.get(parentScopeKey(resolved.parentDbId, row.name));
+        if (sameName && sameName.length > 0) {
+          errors.push(
+            `ID 空欄ですが同一親配下に同名のタスクが既存にあります (新規作成すると重複)。意図的なら ID 列に既存 ID を貼り付けるか、CSV 上で名称を変えてください`,
+          );
+        }
       }
+      // resolved.parentIsCsvCreate=true (親が CSV の新規 CREATE) のときは DB に親が無いので照合不要
     }
 
     // UPDATE 時の field changes 計算 (T-19: 7 列のみ比較)
@@ -502,15 +657,17 @@ export type SyncImportResult = {
  *
  * 流れ:
  *   1. computeSyncDiff を再実行して再 validation (CSV 改竄や DB 状態変動への保険)
- *   2. ブロッカーがあれば即エラー (canExecute=false 時は呼出側で 400 を返す想定)
- *   3. 削除候補のうち、進捗を持つタスクは removeMode='delete' 時にブロック
- *   4. 影響タスクの完全スナップショットを取得
- *   5. CREATE/UPDATE/DELETE を逐次実行
- *   6. 失敗時は 4 のスナップショットから復元
- *   7. 成功時は WP 集計を再計算
+ *   2. [C2] OCC: dry-run の snapshotAt と再計算結果の snapshotAt がずれていれば「並行編集」として中断
+ *   3. ブロッカーがあれば即エラー (canExecute=false 時は呼出側で 400 を返す想定)
+ *   4. 削除候補のうち、進捗を持つタスクは removeMode='delete' 時にブロック
+ *   5. 影響タスクの完全スナップショットを取得
+ *   6. CREATE/UPDATE/DELETE を逐次実行
+ *   7. 失敗時は 5 のスナップショットから復元
+ *   8. 成功時は WP 集計を再計算
  *
  * @throws {Error} 'IMPORT_VALIDATION_ERROR:<msgs>' — 再 validation で blocker
  * @throws {Error} 'IMPORT_REMOVE_BLOCKED:<msgs>' — 進捗ありタスクの削除を要求された
+ * @throws {Error} 'IMPORT_CONCURRENT_EDIT:<msgs>' — dry-run 後に別ユーザが該当 project の task を更新した
  */
 export async function applySyncImport(
   projectId: string,
@@ -518,15 +675,27 @@ export async function applySyncImport(
   removeMode: RemoveMode,
   userId: string,
   viewerTenantId: string,
+  options?: { headerErrors?: string[]; expectedSnapshotAt?: string },
 ): Promise<SyncImportResult> {
-  // 1. 再 validation (computeSyncDiff 側でテナント検証も実施)
-  const diff = await computeSyncDiff(projectId, csvRows, viewerTenantId);
+  // 1. 再 validation (computeSyncDiff 側でテナント検証も実施、headerErrors も伝搬)
+  const diff = await computeSyncDiff(projectId, csvRows, viewerTenantId, {
+    headerErrors: options?.headerErrors,
+  });
   if (!diff.canExecute) {
     const msgs = [
       ...diff.globalErrors,
       ...diff.rows.flatMap((r) => (r.errors ?? []).map((e) => `行 ${r.csvRow ?? '-'}: ${e}`)),
     ];
     throw new Error(`IMPORT_VALIDATION_ERROR:${msgs.join('; ')}`);
+  }
+
+  // 2. [C2] OCC: dry-run と本実行の間に別ユーザが project 配下 task を更新していないか確認。
+  //   PgBouncer 制約で advisory lock が使えないため、updatedAt の最大値の一致で代替する。
+  //   client が snapshotAt header を送らなかった場合 (旧 UI 等) はスキップ (best-effort)。
+  if (options?.expectedSnapshotAt && diff.snapshotAt && options.expectedSnapshotAt !== diff.snapshotAt) {
+    throw new Error(
+      `IMPORT_CONCURRENT_EDIT:他のユーザがこのプロジェクトのタスクを更新しました。最新状態を確認してから再度インポートしてください (dry-run snapshot=${options.expectedSnapshotAt}, current=${diff.snapshotAt})`,
+    );
   }
 
   // 2. 削除候補のうち、進捗を持つタスクは removeMode='delete' 時にブロック

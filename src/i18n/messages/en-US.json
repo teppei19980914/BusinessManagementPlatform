@@ -412,7 +412,7 @@
       "previewSuffix": "(Preview)",
       "description": "Load a CSV to display the diff against the existing WBS, then run import after review. Progress and actual data are preserved (read-only on CSV).",
       "csvFile": "CSV File",
-      "csvFormatHint": "17-column format (ID + hierarchy + plan + read-only progress columns). Download the CSV from \"Export\" first, edit it in Excel, and use it here.",
+      "csvFormatHint": "7-column format: ID / Type / Name / Level / Planned Start / Planned End / Planned Effort. Download a template below or export the existing WBS, edit it in Excel, and upload it here.",
       "previewGenerate": "Generate Preview",
       "previewFailed": "Failed to generate preview",
       "fileRequired": "Please select a file",
@@ -442,7 +442,23 @@
       "actionUpdate": "Update",
       "actionNoChange": "No Change",
       "actionRemoveCandidate": "Remove Candidate",
-      "importComplete": "Import complete: added {added} / updated {updated} / removed {removed}"
+      "importComplete": "Import complete: added {added} / updated {updated} / removed {removed}",
+      "downloadTemplate": "Download Template",
+      "downloadTemplateAria": "Download CSV template (header + 3 sample rows)",
+      "dndHint": "Drag & drop a CSV file here, or click to select",
+      "dndDropHere": "Drop to upload",
+      "dndInvalidFile": "Only CSV files (.csv) are accepted",
+      "filterLabel": "Show",
+      "filterAll": "All ({count})",
+      "filterErrors": "Errors only ({count})",
+      "filterWarnings": "Warnings only ({count})",
+      "filterNoMatch": "No rows match the filter",
+      "deleteConfirmTitle": "Confirm Removal",
+      "deleteConfirmDesc": "The following {count} tasks will be removed. Continue? (Tasks missing from the CSV with no progress/actuals are eligible.)",
+      "deleteConfirmExecute": "Delete and Run",
+      "concurrentEditDetected": "Another user updated this project's tasks. Please reload and re-import.",
+      "executeWithProgress": "Running... ({count} tasks)",
+      "deferredFeatures": "This update covers: header validation / concurrent-edit detection / same-name ACT allowed across different WPs"
     }
   },
   "gantt": {
