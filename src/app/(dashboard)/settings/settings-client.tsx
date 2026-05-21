@@ -35,6 +35,31 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { THEMES, toSafeThemeId, type ThemeId } from '@/types';
 import { THEME_DEFINITIONS } from '@/config';
+// feat/settings-tenant-identity (2026-05-21): JST 固定フォーマット (ハイドレーション安全)
+import { formatDateTimeFull } from '@/lib/format';
+
+/**
+ * feat/settings-tenant-identity (2026-05-21):
+ *   ユーザ個別の「アカウント情報」セクション表示用 DTO。
+ *   page.tsx (Server Component) で Date を ISO string にシリアライズ済み。
+ */
+export type AccountInfoProp = {
+  id: string;
+  name: string;
+  email: string;
+  systemRole: string;
+  mfaEnabled: boolean;
+  /** ISO 8601 文字列 (null = MFA 無効) */
+  mfaEnabledAt: string | null;
+  /** ISO 8601 文字列 (null = 初回ログイン中) */
+  lastLoginAt: string | null;
+  /** ISO 8601 文字列 (アカウント作成日時) */
+  createdAt: string;
+  tenant: {
+    slug: string;
+    name: string;
+  };
+};
 
 type Props = {
   mfaEnabled: boolean;
@@ -51,6 +76,12 @@ type Props = {
    * 本 Client から prop 受領しなくなった。テナント側設定は /settings/tenant で行う。
    */
   dataLoadError?: boolean;
+  /**
+   * feat/settings-tenant-identity (2026-05-21): 自分のアカウント情報。
+   * null = data load 失敗 (バナー表示) または getUserSelfAccountInfo が null を返した状態 →
+   * アカウント情報セクションを描画しない。
+   */
+  accountInfo?: AccountInfoProp | null;
 };
 
 export function SettingsClient({
@@ -58,6 +89,7 @@ export function SettingsClient({
   isAdmin,
   currentTheme,
   dataLoadError = false,
+  accountInfo = null,
 }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
@@ -276,6 +308,53 @@ export function SettingsClient({
         </div>
       )}
       <h2 className="text-xl font-semibold">{tSetting('title')}</h2>
+
+      {/* feat/settings-tenant-identity (2026-05-21): アカウント情報セクション。
+          一般ユーザが「次回ログイン時の組織 ID」「自分のメール / 氏名 / ロール」を
+          管理者に問い合わせずに確認できるようにする。テナント識別子は slug + name のみ
+          (UUID / tenantSeq は管理者向けで /settings/tenant に留める)。
+          ADR-0017 (2026-05-21) 参照。 */}
+      {accountInfo && (
+        <Card data-testid="account-info-section">
+          <CardHeader>
+            <CardTitle className="text-lg">{tSetting('accountInfoTitle')}</CardTitle>
+            <CardDescription>{tSetting('accountInfoDescription')}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-[max-content_1fr]">
+              <dt className="text-muted-foreground">{tSetting('accountInfoTenantSlug')}</dt>
+              <dd className="font-mono" data-testid="account-info-tenant-slug">
+                {accountInfo.tenant.slug}
+              </dd>
+              <dt className="text-muted-foreground">{tSetting('accountInfoTenantName')}</dt>
+              <dd data-testid="account-info-tenant-name">{accountInfo.tenant.name}</dd>
+              <dt className="text-muted-foreground">{tSetting('accountInfoEmail')}</dt>
+              <dd data-testid="account-info-email">{accountInfo.email}</dd>
+              <dt className="text-muted-foreground">{tSetting('accountInfoName')}</dt>
+              <dd data-testid="account-info-name">{accountInfo.name}</dd>
+              <dt className="text-muted-foreground">{tSetting('accountInfoSystemRole')}</dt>
+              <dd data-testid="account-info-system-role">
+                <Badge variant="outline">
+                  {accountInfo.systemRole === 'super_admin'
+                    ? tSetting('systemRoleSuperAdmin')
+                    : accountInfo.systemRole === 'admin'
+                      ? tSetting('systemRoleAdmin')
+                      : tSetting('systemRoleGeneral')}
+                </Badge>
+              </dd>
+              <dt className="text-muted-foreground">{tSetting('accountInfoLastLogin')}</dt>
+              <dd data-testid="account-info-last-login">
+                {accountInfo.lastLoginAt
+                  ? formatDateTimeFull(accountInfo.lastLoginAt)
+                  : tSetting('accountInfoLastLoginNever')}
+              </dd>
+            </dl>
+            <p className="mt-3 text-xs text-muted-foreground">
+              {tSetting('accountInfoHint')}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* PR #72: テーマ設定 */}
       <Card>

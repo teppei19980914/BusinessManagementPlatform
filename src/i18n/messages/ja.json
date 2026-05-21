@@ -1097,7 +1097,20 @@
     "mfaDisableInvalidTotp": "MFA コードが正しくありません",
     "mfaDisableTotpRequired": "6 桁の MFA コードを入力してください",
     "mfaDisableLocked": "MFA 検証が一時的にロックされています。しばらくしてから再度お試しください。",
-    "cancel": "キャンセル"
+    "cancel": "キャンセル",
+    "accountInfoTitle": "アカウント情報",
+    "accountInfoDescription": "ログイン時に使用する組織 ID やご自身の登録情報を確認できます。",
+    "accountInfoTenantSlug": "組織 ID",
+    "accountInfoTenantName": "テナント表示名",
+    "accountInfoEmail": "メールアドレス",
+    "accountInfoName": "氏名",
+    "accountInfoSystemRole": "ロール",
+    "accountInfoLastLogin": "最終ログイン",
+    "accountInfoLastLoginNever": "—",
+    "accountInfoHint": "「組織 ID」は次回ログイン時に「組織 ID」欄へ入力する値です。引継ぎ時や別ブラウザからのログイン時にご活用ください。",
+    "systemRoleSuperAdmin": "システム管理者",
+    "systemRoleAdmin": "テナント管理者",
+    "systemRoleGeneral": "一般ユーザ"
   },
   "admin": {
     "users": {

@@ -32,8 +32,19 @@ import { StripePaymentMethodSection } from './stripe-payment-method-section';
 
 type TenantSelfInfo = {
   id: string;
+  /** feat/settings-tenant-identity (2026-05-21): Tenant.slug。ログイン入力の正規 ID。
+   *  管理者が一般ユーザに伝える値であり、ヘッダーで独立ラベル表示する。 */
+  slug: string;
   tenantSeq: number | null;
   name: string;
+  /** feat/settings-tenant-identity (2026-05-21): テナント作成日時 (詳細欄表示用)。 */
+  createdAt: Date | string;
+  /** feat/settings-tenant-identity (2026-05-21): per-call 単価 (¥5 Haiku / ¥15 Sonnet)。 */
+  pricePerCallHaiku: number;
+  pricePerCallSonnet: number;
+  /** feat/settings-tenant-identity (2026-05-21): テナント停止状態 (PR #372)。 */
+  suspendedAt: Date | string | null;
+  suspendReason: string | null;
   plan: 'beginner' | 'expert' | 'pro';
   monthlyBudgetCapJpy: number | null;
   beginnerMaxSeats: number;
@@ -289,6 +300,14 @@ export function TenantSettingsClient({
             テナント名: {info.name}
             {info.tenantSeq != null && <span className="ml-2">(テナント #{info.tenantSeq})</span>}
           </p>
+          {/* feat/settings-tenant-identity (2026-05-21): 組織 ID (slug) を独立ラベルで明示。
+              ユーザのログイン入力に対応する値であり、管理者が招待時にユーザに伝える正規の識別子。 */}
+          <p className="text-sm text-muted-foreground">
+            組織 ID:{' '}
+            <span className="font-mono" data-testid="tenant-settings-slug">
+              {info.slug}
+            </span>
+          </p>
         </div>
         {/* 2026-05-14: 自テナント全体の再集計ボタン (画面遷移時は自動再集計済だが手動更新可) */}
         <RecalculateButton
@@ -300,6 +319,10 @@ export function TenantSettingsClient({
       <p className="text-xs text-muted-foreground">
         DB 容量と API 利用量はこの画面を開いた時点で最新値を集計しています。
       </p>
+
+      {/* feat/settings-tenant-identity (2026-05-21): テナント停止中バナー (PR #372 = 支払滞納等で read-only)。
+          停止理由の可視化は管理者が即座に状況把握する目的。一般ユーザには露出しない (本画面は admin 限定)。 */}
+      {info.suspendedAt && <SuspendedBanner info={info} />}
 
       {/* P-B (2026-05-08): Beginner プラン期限バナー */}
       <BeginnerExpiryBanner info={info} />
@@ -462,10 +485,108 @@ export function TenantSettingsClient({
       {/* P-D (2026-05-08): データインポート */}
       <DataImportSection />
 
+      {/* feat/settings-tenant-identity (2026-05-21): 詳細識別情報 (折りたたみ)。
+          UUID / カード検証日時 / 自動停止予定 / プラン単価 / 作成日時 等のデバッグ・サポート
+          用途の情報を 1 箇所に集約。常時表示する必要は薄いため <details> で隠す。 */}
+      <TenantIdentityDetailsSection info={info} />
+
       {/* テナント解約 (2026-05-08): 危険な操作なので末尾配置 + 名称一致確認 */}
       <SelfDeleteTenantSection tenantName={info.name} />
     </div>
   );
+}
+
+// ================================================================
+// feat/settings-tenant-identity (2026-05-21)
+// ================================================================
+
+/**
+ * テナント停止中バナー (PR #372)。
+ *
+ * 停止理由を即座に把握できるよう、停止理由コードを業務文言に翻訳して表示する。
+ * 解除フローは super_admin 操作 (POST /api/admin/super/tenants/:id/resume) のため、
+ * 本画面 (テナント管理者向け) は read-only 表示のみ。
+ */
+function SuspendedBanner({ info }: { info: TenantSelfInfo }) {
+  const reasonText =
+    info.suspendReason === 'payment_delinquent'
+      ? '支払いの滞納が確認されました。Stripe / 請求書のお支払い状況をご確認ください。'
+      : info.suspendReason === 'tos_violation'
+        ? '利用規約違反が確認されました。サポートまでお問い合わせください。'
+        : '管理者による停止操作が行われています。詳細は運営サポートまでお問い合わせください。';
+  return (
+    <section
+      data-testid="tenant-suspended-banner"
+      className="rounded border border-destructive/40 bg-destructive/10 p-4 text-sm"
+    >
+      <p className="font-semibold text-destructive">⚠ テナント停止中 (read-only モード)</p>
+      <p className="mt-1">{reasonText}</p>
+      <p className="mt-2 text-xs text-muted-foreground">
+        この状態では作成・更新・削除等の書き込み操作が制限されます (閲覧は可)。
+      </p>
+    </section>
+  );
+}
+
+/**
+ * テナント詳細識別情報 (折りたたみ)。
+ *
+ * 一般運用では参照する必要が薄いが、サポート問い合わせや内部デバッグで有用な情報を
+ * 1 箇所にまとめる。UUID / プラン単価 / 作成日時 / カード検証 / 自動停止予定。
+ */
+function TenantIdentityDetailsSection({ info }: { info: TenantSelfInfo }) {
+  const cardLastVerifiedAt =
+    info.cardLastVerifiedAt == null
+      ? null
+      : typeof info.cardLastVerifiedAt === 'string'
+        ? info.cardLastVerifiedAt
+        : info.cardLastVerifiedAt.toISOString();
+  const autoSuspendScheduledAt =
+    info.autoSuspendScheduledAt == null
+      ? null
+      : typeof info.autoSuspendScheduledAt === 'string'
+        ? info.autoSuspendScheduledAt
+        : info.autoSuspendScheduledAt.toISOString();
+  const createdAt =
+    typeof info.createdAt === 'string' ? info.createdAt : info.createdAt.toISOString();
+  return (
+    <details
+      data-testid="tenant-identity-details"
+      className="rounded border p-4 text-sm"
+    >
+      <summary className="cursor-pointer font-semibold">詳細情報 (サポート用)</summary>
+      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-[max-content_1fr]">
+        <dt className="text-muted-foreground">テナント UUID</dt>
+        <dd className="font-mono text-xs">{info.id}</dd>
+        <dt className="text-muted-foreground">テナント作成日時</dt>
+        <dd>{formatDateTime(createdAt)}</dd>
+        <dt className="text-muted-foreground">単価 (Haiku)</dt>
+        <dd>¥{info.pricePerCallHaiku}/call</dd>
+        <dt className="text-muted-foreground">単価 (Sonnet)</dt>
+        <dd>¥{info.pricePerCallSonnet}/call</dd>
+        {cardLastVerifiedAt && (
+          <>
+            <dt className="text-muted-foreground">カード検証成功日時</dt>
+            <dd>{formatDateTime(cardLastVerifiedAt)}</dd>
+          </>
+        )}
+        {autoSuspendScheduledAt && (
+          <>
+            <dt className="text-muted-foreground">自動停止予定日時</dt>
+            <dd className="text-destructive">{formatDateTime(autoSuspendScheduledAt)}</dd>
+          </>
+        )}
+      </dl>
+    </details>
+  );
+}
+
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  // テナント TZ は parent component の useFormatters で取れるが、ここではサポート用の
+  // 詳細欄なので JST 固定で簡潔に表示する (タイムゾーンを文字列で明示)。
+  return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) + ' JST';
 }
 
 // ================================================================

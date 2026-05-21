@@ -35,8 +35,9 @@
 | [0015](./0015-cascade-delete-idempotent-design.md) | deleteProjectCascade / deleteCustomerCascade の冪等設計 + 段階別 transaction (2026-05-20 採択) | Accepted | データ管理・運用 |
 | [0016](./0016-multi-tenant-user-membership.md) | User.email を tenant-scoped 一意化 + 組織 ID 明示入力 (2026-05-20 採択) | Accepted | アーキテクチャ・認証 |
 | [0017](./0017-wbs-import-uplift-and-task-duplicate.md) | WBS sync-import 親スコープ重複判定 + OCC + DB UNIQUE + 一括複製 + ログイン UX (2026-05-25 採択 / PR #420) | Accepted | 業務ロジック・UX・データ管理 |
+| [0018](./0018-tenant-identifier-user-visibility.md) | テナント識別子のユーザ可視化 + 設定画面の情報分離 (2026-05-21 採択) | Accepted | UX・セキュリティ |
 
-> 主要設計判断を時系列で ADR 化しています (現在 17 件)。
+> 主要設計判断を時系列で ADR 化しています (現在 18 件)。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---

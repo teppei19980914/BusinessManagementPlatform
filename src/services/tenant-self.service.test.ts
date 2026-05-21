@@ -62,6 +62,12 @@ beforeEach(() => {
 
 const baseTenant = {
   id: TENANT_ID,
+  // feat/settings-tenant-identity (2026-05-21): slug + 価格定数 + 停止状態を DTO に追加
+  slug: 'test-tenant',
+  pricePerCallHaiku: 5,
+  pricePerCallSonnet: 15,
+  suspendedAt: null,
+  suspendReason: null,
   tenantSeq: 1,
   name: 'テストテナント',
   plan: 'expert',
@@ -125,6 +131,38 @@ describe('getTenantSelfInfo', () => {
     // expert プランは Beginner 期限の対象外なので null
     expect(r.beginnerDaysRemaining).toBeNull();
     expect(r.beginnerExpiryState).toBe('active');
+  });
+
+  // feat/settings-tenant-identity (2026-05-21): slug + 価格定数 + 停止状態を返す
+  it('feat/settings-tenant-identity: slug / pricePerCallHaiku / pricePerCallSonnet / suspendedAt / suspendReason / createdAt を返す', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(baseTenant as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(0);
+
+    const r = await getTenantSelfInfo(TENANT_ID);
+
+    expect(r).not.toBeNull();
+    if (!r) return;
+    expect(r.slug).toBe('test-tenant');
+    expect(r.pricePerCallHaiku).toBe(5);
+    expect(r.pricePerCallSonnet).toBe(15);
+    expect(r.suspendedAt).toBeNull();
+    expect(r.suspendReason).toBeNull();
+    expect(r.createdAt).toEqual(new Date('2026-01-01T00:00:00Z'));
+  });
+
+  it('feat/settings-tenant-identity: 停止中テナントは suspendedAt + suspendReason を返す', async () => {
+    const suspendedAt = new Date('2026-05-19T00:00:00Z');
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      ...baseTenant,
+      suspendedAt,
+      suspendReason: 'payment_delinquent',
+    } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(0);
+
+    const r = await getTenantSelfInfo(TENANT_ID);
+
+    expect(r?.suspendedAt).toEqual(suspendedAt);
+    expect(r?.suspendReason).toBe('payment_delinquent');
   });
 
   it('PR-S5: Stripe 連携情報を返す (= 既存テナントは全 null)', async () => {
