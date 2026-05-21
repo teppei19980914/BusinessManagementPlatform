@@ -14,6 +14,8 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      // 2026-05-25 (PR #420 #C3): createTask / updateTask の name uniqueness 事前チェック用
+      count: vi.fn().mockResolvedValue(0),
     },
     // 2026-05-09 feedback Phase 2: createTask / bulkUpdateTasks の冒頭で project tenant 検証するため findFirst も mock
     project: { findMany: vi.fn(), findFirst: vi.fn() },
@@ -227,6 +229,29 @@ describe('createTask', () => {
     expect(call.data.plannedEffort).toBe(0);
     expect(call.data.priority).toBe(null);
   });
+
+  it('[FIX] 同一親配下に同名タスクが既存 → TASK_NAME_DUPLICATE_IN_PARENT を throw', async () => {
+    // 2026-05-25 (PR #420 #C3): DB UNIQUE 制約適用後、createTask が DB error 500 にならず
+    //   app 層で 400 相当のエラーを投げる挙動を検証
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    // 名称衝突あり (count=1)。**Once 版**で次テストに leak しないよう注意。
+    vi.mocked(prisma.task.count).mockResolvedValueOnce(1 as never);
+
+    await expect(
+      createTask(
+        'p-1',
+        {
+          type: 'work_package',
+          name: '設計',
+          parentTaskId: null,
+        } as Parameters<typeof createTask>[1],
+        'u-1',
+        't-1',
+      ),
+    ).rejects.toThrow('TASK_NAME_DUPLICATE_IN_PARENT');
+    // create は呼ばれていない (事前に弾かれている)
+    expect(prisma.task.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('deleteTask', () => {
@@ -421,6 +446,44 @@ describe('updateTask (主要分岐)', () => {
     const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
     expect(updateCall.data.actualStartDate).toBe(null);
     expect(updateCall.data.actualEndDate).toBe(null);
+  });
+
+  it('[FIX] name 変更で同一親配下に同名が既存 → TASK_NAME_DUPLICATE_IN_PARENT を throw', async () => {
+    // 2026-05-25 (PR #420 #C3): UNIQUE 制約適用後の DB error 500 を防ぐ事前チェック
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
+    vi.mocked(prisma.task.findUnique).mockResolvedValue({
+      projectId: 'p-1',
+      parentTaskId: null,
+      name: '元の名前',
+    } as never);
+    // 衝突あり (count=1)。**Once 版**で次テストに leak しないよう注意。
+    vi.mocked(prisma.task.count).mockResolvedValueOnce(1 as never);
+
+    await expect(
+      updateTask('t-1', { name: '既存名' } as never, 'u-1', 'tenant-A'),
+    ).rejects.toThrow('TASK_NAME_DUPLICATE_IN_PARENT');
+    // update は呼ばれない
+    expect(prisma.task.update).not.toHaveBeenCalled();
+  });
+
+  it('[FIX] name を「現在の名前と同じ」に編集すると uniqueness check はスキップされる (自身は除外)', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
+    vi.mocked(prisma.task.findUnique).mockResolvedValue({
+      projectId: 'p-1',
+      parentTaskId: null,
+      name: '元の名前',
+    } as never);
+    // 衝突があっても自身を除外しているので count 0 のはずだが、敢えて 0 を返す
+    vi.mocked(prisma.task.count).mockResolvedValue(0 as never);
+    vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
+
+    // 名前そのまま (= 何も変わらない) で update
+    await updateTask('t-1', { name: '元の名前' } as never, 'u-1', 'tenant-A');
+
+    // count は呼ばれない (isSamePosition で skip)
+    expect(prisma.task.count).not.toHaveBeenCalled();
+    // update は呼ばれる
+    expect(prisma.task.update).toHaveBeenCalled();
   });
 
   it('status=on_hold に変えると actualEndDate のみ null、actualStartDate は維持', async () => {

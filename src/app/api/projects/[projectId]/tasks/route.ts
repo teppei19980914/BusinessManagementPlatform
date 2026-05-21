@@ -64,7 +64,24 @@ export async function POST(
   );
   if (quotaErr) return quotaErr;
 
-  const task = await createTask(projectId, parsed.data, user.id, user.tenantId);
+  let task;
+  try {
+    task = await createTask(projectId, parsed.data, user.id, user.tenantId);
+  } catch (e) {
+    // 2026-05-25 (PR #420 #C3): 同一親配下に同名タスクが既存 → 400 で user-friendly に返す
+    if (e instanceof Error && e.message === 'TASK_NAME_DUPLICATE_IN_PARENT') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'TASK_NAME_DUPLICATE_IN_PARENT',
+            message: '同じ親 WP の配下に同じ名称のタスクが既に存在します。名称を変えるか、別の親 WP を選択してください。',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     tenantId: user.tenantId,

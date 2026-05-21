@@ -556,6 +556,42 @@ export async function getTask(taskId: string, viewerTenantId: string): Promise<T
  *
  * 認可: 呼び出し元 API ルートで checkProjectPermission('task:create') 実施済の前提。
  */
+/**
+ * 2026-05-25 (PR #420 #C3): tasks に追加された
+ *   (project_id, parent_task_id, name) WHERE deleted_at IS NULL 部分 UNIQUE 制約に対し、
+ *   createTask / updateTask の app 層で事前チェックを行うヘルパ。
+ *
+ * - 制約が無効な値 (= 名称重複) を DB に送ると Prisma が P2002 を throw し、
+ *   呼出側で 500 になって UX が壊れる。本ヘルパで先に弾き、400 + わかりやすい
+ *   メッセージで返せるようにする。
+ *
+ * @param projectId
+ * @param parentTaskId null = root level
+ * @param name タスク名
+ * @param excludeTaskId update 時に自身を除外する (= 名前そのまま編集を許す)
+ * @throws Error('TASK_NAME_DUPLICATE_IN_PARENT') 既に同一親配下に同名タスクがある
+ */
+async function assertTaskNameUniqueInParent(
+  projectId: string,
+  parentTaskId: string | null,
+  name: string,
+  excludeTaskId?: string,
+): Promise<void> {
+  // count を使用 (findFirst だと他チェックの mock と衝突するため + semantic にも合致)
+  const conflictCount = await prisma.task.count({
+    where: {
+      projectId,
+      parentTaskId,
+      name,
+      deletedAt: null,
+      ...(excludeTaskId ? { NOT: { id: excludeTaskId } } : {}),
+    },
+  });
+  if (conflictCount > 0) {
+    throw new Error('TASK_NAME_DUPLICATE_IN_PARENT');
+  }
+}
+
 export async function createTask(
   projectId: string,
   input: CreateTaskInput,
@@ -571,6 +607,10 @@ export async function createTask(
     select: { id: true },
   });
   if (!project) throw new Error('NOT_FOUND');
+
+  // 2026-05-25 (PR #420 #C3): name uniqueness 事前チェック (= 部分 UNIQUE 制約の defense)。
+  //   DB エラー (P2002) を 500 にせず 400 で user-friendly に返す。
+  await assertTaskNameUniqueInParent(projectId, input.parentTaskId ?? null, input.name);
 
   const isActivity = input.type === 'activity';
 
@@ -701,6 +741,23 @@ export async function updateTask(
     select: { id: true },
   });
   if (!owned) throw new Error('NOT_FOUND');
+
+  // 2026-05-25 (PR #420 #C3): name または parentTaskId が変わるとき name uniqueness を事前チェック。
+  //   両方変わる場合 / どちらか変わる場合は、現在値と input を合成した「変更後の (parent, name)」で照合する。
+  if (input.name !== undefined || input.parentTaskId !== undefined) {
+    const current = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { projectId: true, parentTaskId: true, name: true },
+    });
+    if (!current) throw new Error('NOT_FOUND');
+    const nextParent = input.parentTaskId !== undefined ? (input.parentTaskId ?? null) : current.parentTaskId;
+    const nextName = input.name !== undefined ? input.name : current.name;
+    // 元の (parent, name) と同じなら check 不要 (自身を除外する意味と等しい)
+    const isSamePosition = nextParent === current.parentTaskId && nextName === current.name;
+    if (!isSamePosition) {
+      await assertTaskNameUniqueInParent(current.projectId, nextParent, nextName, taskId);
+    }
+  }
 
   const data: Prisma.TaskUpdateInput = { updatedBy: userId };
 
