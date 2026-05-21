@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Netlify build wrapper: deploy context に応じて NEXTAUTH_URL を自動同期
+# PR #425: STRIPE_ENABLED env vars 変更後の rebuild トリガー用 (本コメント追記でファイル diff 生成)
 #
 # 背景:
 #   Netlify は build 時に `URL` env var を自動設定する (deploy context に応じて値が変化):
