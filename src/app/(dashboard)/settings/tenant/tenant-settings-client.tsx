@@ -473,8 +473,12 @@ export function TenantSettingsClient({
         }}
       />
 
-      {/* P-G (2026-05-08): 請求先情報の編集 */}
-      <BillingContactSection initialInfo={info} />
+      {/* P-G (2026-05-08): 請求先情報の編集
+          PR #425 (2026-05-22) ★severity-1★: paymentMethod 変更後に Client state (info) を
+          即座に再取得しないと、StripePaymentMethodSection の活性条件 (info.paymentMethod) が
+          古いままで「クレジットカード情報更新」ボタンが非活性となり、credit_card 払いにも
+          関わらずカード登録できない = 請求漏れ発生。refreshInfo を必ず渡す。 */}
+      <BillingContactSection initialInfo={info} onUpdate={refreshInfo} />
 
       {/* PR-S5 (2026-05-14): Stripe 支払い方法 (請求書 ↔ クレジットカード切替) */}
       <StripePaymentMethodSection
@@ -1357,7 +1361,18 @@ function SeedDataToggleSection({
 // P-G: 請求先情報の編集セクション
 // ================================================================
 
-function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo }) {
+function BillingContactSection({
+  initialInfo,
+  onUpdate,
+}: {
+  initialInfo: TenantSelfInfo;
+  /**
+   * PR #425 (2026-05-22) ★severity-1★: 更新成功後に親の info state を再取得する callback。
+   * paymentMethod 変更が StripePaymentMethodSection のボタン活性条件に即時反映されないと
+   * 「credit_card 払いだがカード未登録」状態が放置され請求漏れ発生する。
+   */
+  onUpdate: () => Promise<void>;
+}) {
   const router = useRouter();
   const { showSuccess, showError } = useToast();
 
@@ -1414,6 +1429,11 @@ function BillingContactSection({ initialInfo }: { initialInfo: TenantSelfInfo })
       }
 
       showSuccess('請求先情報を更新しました');
+      // PR #425 (2026-05-22) ★severity-1★: 親の info state を再取得して paymentMethod を即時反映。
+      //   router.refresh() だけでは Client Component の useState 値は変わらないため、
+      //   StripePaymentMethodSection の活性条件 (info.paymentMethod === 'credit_card') に
+      //   反映されず、credit_card 払いなのにカード未登録のまま放置される請求漏れリスクが発生する。
+      await onUpdate();
       router.refresh();
     } finally {
       setSubmitting(false);

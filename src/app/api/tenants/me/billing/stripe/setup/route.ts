@@ -83,17 +83,25 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 既に credit_card 払いなら拒否 (= 二重 setup を防止)
+  // PR #425 (2026-05-22): ガード基準を paymentMethod → stripeSubscriptionId に変更。
+  //   新仕様では「請求先情報フォームで paymentMethod を credit_card に切替 →
+  //   別途『クレジットカード情報更新』ボタンで本 endpoint を呼ぶ」のが正常フローのため、
+  //   paymentMethod=credit_card の状態で本 endpoint に来ること自体は許容する。
+  //   ただし stripeSubscriptionId が既に存在する場合は Customer Portal で更新すべきなので reject
+  //   (= UI バイパスの誤呼出 / 二重 Subscription 作成防止)。
+  //   ★severity-1★ この判定を paymentMethod ベースに戻すと、carad 未登録の credit_card 払い
+  //   テナントが Stripe 自動引落の前提を満たさずに運用され、請求漏れの直接原因になる。
   const tenant = await prisma.tenant.findUnique({
     where: { id: user.tenantId },
-    select: { paymentMethod: true },
+    select: { stripeSubscriptionId: true },
   });
-  if (tenant?.paymentMethod === 'credit_card') {
+  if (tenant?.stripeSubscriptionId != null) {
     return NextResponse.json(
       {
         error: {
-          code: 'ALREADY_CREDIT_CARD',
-          message: '既にクレジットカード払いに設定されています',
+          code: 'ALREADY_HAS_SUBSCRIPTION',
+          message:
+            'カードは既に登録されています。カード情報の変更は「Stripe ポータルで管理」から行ってください。',
         },
       },
       { status: 409 },

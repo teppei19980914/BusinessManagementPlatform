@@ -123,29 +123,51 @@ describe('バリデーション', () => {
   });
 });
 
-describe('既に credit_card 払い', () => {
+describe('既に Stripe Subscription 作成済 (PR #425)', () => {
+  // PR #425 (2026-05-22): ガード基準を paymentMethod → stripeSubscriptionId に変更。
+  //   paymentMethod=credit_card + Subscription 未作成は「新規 setup の正常フロー」のため許容、
+  //   Subscription 作成済は Customer Portal 経由で更新すべきなので 409 で reject。
+  //   ★severity-1★ paymentMethod ベースに戻すと credit_card 払いなのに setup が走らず請求漏れ発生。
   beforeEach(() => {
     vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
   });
 
-  it('paymentMethod === credit_card → 409 ALREADY_CREDIT_CARD', async () => {
+  it('stripeSubscriptionId 既存 → 409 ALREADY_HAS_SUBSCRIPTION', async () => {
     vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
-      paymentMethod: 'credit_card',
+      stripeSubscriptionId: 'sub_existing_test',
     } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.error.code).toBe('ALREADY_CREDIT_CARD');
+    expect(body.error.code).toBe('ALREADY_HAS_SUBSCRIPTION');
     expect(createCheckoutSessionForCardSetup).not.toHaveBeenCalled();
+  });
+
+  it('stripeSubscriptionId=null (paymentMethod 問わず) → setup 正常実行', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      stripeSubscriptionId: null,
+    } as never);
+    vi.mocked(createCheckoutSessionForCardSetup).mockResolvedValueOnce({
+      ok: true,
+      value: { id: 'cs_test', url: 'https://checkout.stripe.com/c/pay/cs_test' } as never,
+    });
+
+    const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
+
+    expect(res.status).toBe(200);
+    expect(createCheckoutSessionForCardSetup).toHaveBeenCalled();
   });
 });
 
 describe('正常系', () => {
   beforeEach(() => {
     vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ paymentMethod: 'invoice' } as never);
+    // PR #425: ガード判定が stripeSubscriptionId に変更されたため mock も更新
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+      stripeSubscriptionId: null,
+    } as never);
   });
 
   it('成功時 200 + checkoutUrl を返す', async () => {

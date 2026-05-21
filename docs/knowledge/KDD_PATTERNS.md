@@ -11708,3 +11708,107 @@ console.log('[stripe-setup-complete] debug', {
   - `netlify.toml` (build command 変更)
   - `src/app/api/tenants/me/billing/stripe/setup/complete/route.ts` (sanitizeReturnTo 修正)
 - 関連 KDD §5.X+72 (前提): セッション解除パターン (NextAuth + Netlify の cookie 罠)
+
+---
+
+## 5.X+100 **★severity-1★ Stripe 払い設定切替 UI で client state 同期漏れ + 旧 server ガード残置が「credit_card 払いなのにカード未登録」放置 = 請求漏れリスク直結 (2026-05-22 / PR #425 Stripe UI 改修)**
+
+### 発生事象
+
+PR #425 で `paymentMethod` セレクト (請求書 ↔ クレジットカード) + 独立した「クレジットカード情報更新」ボタンの 2 ステップ式に UI を変更したところ、TC-1 (Beginner→Pro アップグレード) で以下の致命的な問題が連続発生:
+
+1. **問題 1**: 「支払い方法」を invoice → credit_card に変更して「請求先情報を更新」を押したが、「クレジットカード情報更新」ボタンが **非活性のまま** で次に進めない (画面リロードすると活性化される)
+2. **問題 2**: リロード後にボタンを押すと **409 `ALREADY_CREDIT_CARD`** で reject され、Stripe Checkout に遷移できない
+
+両者放置すると **テナントの DB 上 `paymentMethod='credit_card'` だが Stripe Subscription が作成されない** 状態が継続 → 月次の自動引落が発生せず、運営側も「カード払いに切替済」と認識して請求書を送らない → **無料運用化 (請求漏れ)**。これは事業継続性に直結する severity-1 のリグレッション。
+
+### 根本原因
+
+**原因 1: Client Component の useState 値が `router.refresh()` だけでは更新されない**
+
+`BillingContactSection.handleSubmit` 内で `router.refresh()` のみを呼んでいたが、これは Server Component の再レンダリングをトリガーするのみで、親 `TenantSettingsClient` が持つ `info` state (= `useState<TenantSelfInfo>`) は変わらない。
+結果として `StripePaymentMethodSection` props.info.paymentMethod は旧値 (`'invoice'`) のままで活性条件を満たさず、ボタンが非活性。
+
+**原因 2: 旧仕様の defense-in-depth ガードが新フローで誤発火**
+
+POST `/api/tenants/me/billing/stripe/setup` には旧仕様時 (= 「切替ボタン押下 = 1 ステップで paymentMethod 変更 + Stripe Checkout 起動」) の二重 setup 防止ガードが残っていた:
+
+```ts
+if (tenant?.paymentMethod === 'credit_card') {
+  return ... 409 ALREADY_CREDIT_CARD;
+}
+```
+
+新仕様は **paymentMethod 変更と setup が別 step** なので、setup を呼ぶ時点で paymentMethod は既に credit_card になっている。このガードが新仕様の正常フローを誤って弾く。
+
+### 解決策
+
+**修正 1: 親の info state を再取得する callback を BillingContactSection に渡す**
+
+```tsx
+// tenant-settings-client.tsx
+<BillingContactSection initialInfo={info} onUpdate={refreshInfo} />
+
+function BillingContactSection({ initialInfo, onUpdate }: {...}) {
+  async function handleSubmit(...) {
+    ...
+    showSuccess('請求先情報を更新しました');
+    await onUpdate();   // ★ ここで親の info state を再取得
+    router.refresh();
+  }
+}
+```
+
+`refreshInfo` は GET `/api/tenants/me` を叩いて info / selectedPlan / budgetCap を全部最新化する既存 helper を再利用。これで paymentMethod 変更が即座に `StripePaymentMethodSection` に伝播し、ボタンが活性化される。
+
+**修正 2: ガード基準を `paymentMethod` → `stripeSubscriptionId` に変更**
+
+```ts
+// route.ts
+const tenant = await prisma.tenant.findUnique({
+  where: { id: user.tenantId },
+  select: { stripeSubscriptionId: true },
+});
+if (tenant?.stripeSubscriptionId != null) {
+  return ... 409 ALREADY_HAS_SUBSCRIPTION;
+}
+```
+
+「Subscription 作成済の場合は Customer Portal で更新すべき」という新仕様の二重 setup 防止に意味的に正しい基準。UI 側は `stripeSubscriptionId` の有無で setup/portal を分岐するため、UI 経由の正常フローではこのガードは発火せず、UI バイパス (curl 直叩き等) のみを弾く。
+
+### 教訓
+
+1. **★最重要★ Client Component の useState 値は `router.refresh()` で更新されない** — Server Component が返す新しい props は描画されるが、子 Client Component が `useState(initialInfo)` で抱えている state は初期化時の値のまま。**親が持つ Client state を更新したい場合は明示的な refetch callback (例: `onUpdate: () => Promise<void>`) を子に渡し、子から呼び出させる必要がある**
+2. **2 ステップ式 UI に変更したら server 側の defense-in-depth ガードを 1 ステップ前提のまま放置すると正常フローを弾く** — 「変更前は X、変更後は Y」と判定軸自体が変わるので、ガード条件式も同期更新する。横展開チェックで「同じ判定軸を使う他の経路 (= POST /portal、PATCH /billing 等) も巻き込んでいないか」を必ず確認
+3. **★severity-1★「カード払いだがカード未登録」状態を許容する設計 / バグは即時請求漏れリスク** — `feedback_billing_invariant` (請求 invariant: ApiCallLog SUM = 画面 = 請求書 = Stripe) の前提として「credit_card 払いなら必ず active Subscription が存在する」インバリアントを死守すべき。画面遷移失敗・API ガード誤発火等で「カード未登録 credit_card 払い」が DB に出現する経路は全て塞ぐ
+4. **defense-in-depth ガードのコメントには「廃止条件」も明記する** — `ALREADY_CREDIT_CARD` ガードのコメントは「二重 setup 防止」とだけ書かれており、旧仕様前提だと分からなかった。「現行 UI フローでは X の判定で代替、UI バイパスのみ対象」のように **判定軸の変更時に同時改修すべき意図** を残す
+
+### 検証手順 (再発防止用)
+
+```
+事前: scripts/reset-default-tenant-to-beginner.ts を実行 (= invoice / stripeSubscriptionId=null)
+
+1. /settings/tenant を開く → 「請求先情報」セクションの「支払い方法」を「クレジットカード」に変更
+2. 「請求先情報を更新」ボタンクリック
+   → 直後に「支払い方法」セクションの表示が「💳 クレジットカード (カード未登録)」に変わる ★リロード不要★
+   → 「クレジットカード情報更新」ボタンが活性化される ★リロード不要★
+3. 「クレジットカード情報更新」ボタンクリック
+   → 確認ダイアログ「OK」
+   → Stripe Checkout (checkout.stripe.com/...) に遷移する ★409 が出ない★
+4. テストカード 4242 4242 4242 4242 で完了
+5. DB 状態確認: paymentMethod='credit_card' + stripeSubscriptionId='sub_*' + cardVerificationStatus='valid'
+```
+
+各ステップで「リロード不要で次に進める」「途中で 409 が出ない」を確認。1 つでも崩れたら本 KDD §5.X+100 の再発と判断。
+
+### 関連 KDD / PR / feedback
+
+- PR #425 fix/seed-vercel-to-netlify (本事例): TC-1 UAT 中に検出
+- 関連修正ファイル:
+  - `src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx` (onUpdate 追加)
+  - `src/app/api/tenants/me/billing/stripe/setup/route.ts` (409 ガード判定軸変更)
+  - `src/app/api/tenants/me/billing/stripe/setup/route.test.ts` (ガードのテスト変更)
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★ 請求 invariant)
+  - `feedback_netlify_nextauth_set_cookie` (Client state 更新の罠、本件と類似構造)
+- 関連 KDD §5.X+99 (前提): Stripe Deploy Preview redirect 問題
