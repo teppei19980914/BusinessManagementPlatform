@@ -89,7 +89,13 @@ export async function POST(req: NextRequest) {
   //   顧客は super_admin による手動払い出し経路を使ってもらう。
   onboardingInput.plan = 'beginner';
 
-  const result = await createTenantBySignup(onboardingInput, baseUrl);
+  // feat/legal-pages-lp-integration (2026-05-21):
+  //   規約・プラポリ同意ログの IP / User-Agent を抽出 (証跡用)。
+  //   x-forwarded-for の最初の IP (= 直接の client) を使用。
+  const userAgent = req.headers.get('user-agent') ?? undefined;
+  const consentMeta = { ipAddress: ip === 'unknown' ? undefined : ip, userAgent };
+
+  const result = await createTenantBySignup(onboardingInput, baseUrl, consentMeta);
 
   if (result.ok) {
     return NextResponse.json(

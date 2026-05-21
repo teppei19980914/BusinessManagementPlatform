@@ -31,6 +31,11 @@ vi.mock('@/lib/db', () => ({
     emailVerificationToken: {
       deleteMany: vi.fn(),
     },
+    // feat/legal-pages-lp-integration (2026-05-21): 規約・プラポリ同意ログ
+    tenantConsentLog: {
+      createMany: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     $transaction: vi.fn(async (callback: unknown) => {
       // callback 形式 (function) の場合は txClient として prisma 自身を渡す
       if (typeof callback === 'function') {
@@ -92,6 +97,9 @@ const VALID_INPUT = {
   paymentMethod: 'invoice' as const,
   initialAdminName: 'admin Yamada',
   initialAdminEmail: 'admin@customer-a.example',
+  // feat/legal-pages-lp-integration (2026-05-21): 規約・プラポリ同意は必須 (= true 強制)
+  acceptedTerms: true as const,
+  acceptedPrivacy: true as const,
 };
 
 const BASE_URL = 'https://example.com';
@@ -105,6 +113,8 @@ beforeEach(() => {
   vi.mocked(prisma.tenant.create).mockResolvedValue({ id: 'tenant-uuid' } as never);
   vi.mocked(prisma.user.create).mockResolvedValue({ id: 'user-uuid' } as never);
   vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
+  // feat/legal-pages-lp-integration: 同意ログ createMany は count 戻りを期待
+  vi.mocked(prisma.tenantConsentLog.createMany).mockResolvedValue({ count: 2 } as never);
   vi.mocked(sendVerificationEmail).mockResolvedValue();
 });
 
@@ -178,6 +188,27 @@ describe('TenantOnboardingInputSchema', () => {
     delete (noBuilding as Partial<typeof noBuilding>).billingBuildingName;
     const r = TenantOnboardingInputSchema.safeParse(noBuilding);
     expect(r.success).toBe(true);
+  });
+
+  // feat/legal-pages-lp-integration (2026-05-21): 規約・プラポリ同意は true 強制
+  it('acceptedTerms=false は reject (規約同意必須)', () => {
+    const bad = { ...VALID_INPUT, acceptedTerms: false };
+    expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it('acceptedPrivacy=false は reject (プラポリ同意必須)', () => {
+    const bad = { ...VALID_INPUT, acceptedPrivacy: false };
+    expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it('acceptedTerms / acceptedPrivacy 欠落は reject', () => {
+    const noTerms = { ...VALID_INPUT };
+    delete (noTerms as Partial<typeof noTerms>).acceptedTerms;
+    expect(TenantOnboardingInputSchema.safeParse(noTerms).success).toBe(false);
+
+    const noPrivacy = { ...VALID_INPUT };
+    delete (noPrivacy as Partial<typeof noPrivacy>).acceptedPrivacy;
+    expect(TenantOnboardingInputSchema.safeParse(noPrivacy).success).toBe(false);
   });
 });
 
@@ -276,6 +307,58 @@ describe('createTenantBySignup', () => {
     expect(prisma.tenant.create).toHaveBeenCalled();
     expect(prisma.user.create).toHaveBeenCalled();
     expect(sendVerificationEmail).toHaveBeenCalled();
+  });
+});
+
+// feat/legal-pages-lp-integration (2026-05-21):
+// 規約・プラポリ同意ログを TenantConsentLog に保存する (民法 548 条の 2 / 定型約款の組入合意証跡)。
+describe('TenantConsentLog 同意ログ記録', () => {
+  it('正常系で terms と privacy の 2 件が createMany で記録される', async () => {
+    await createTenantBySignup(VALID_INPUT, BASE_URL, {
+      ipAddress: '203.0.113.42',
+      userAgent: 'Mozilla/5.0 (Test)',
+    });
+
+    expect(prisma.tenantConsentLog.createMany).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(prisma.tenantConsentLog.createMany).mock.calls[0]?.[0];
+    expect(call?.data).toEqual([
+      expect.objectContaining({
+        tenantId: 'tenant-uuid',
+        userId: 'user-uuid',
+        consentType: 'terms',
+        version: '1.0',
+        ipAddress: '203.0.113.42',
+        userAgent: 'Mozilla/5.0 (Test)',
+      }),
+      expect.objectContaining({
+        tenantId: 'tenant-uuid',
+        userId: 'user-uuid',
+        consentType: 'privacy',
+        version: '1.0',
+        ipAddress: '203.0.113.42',
+        userAgent: 'Mozilla/5.0 (Test)',
+      }),
+    ]);
+  });
+
+  it('consentMeta を渡さない場合は ipAddress / userAgent が null になる', async () => {
+    await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+    const call = vi.mocked(prisma.tenantConsentLog.createMany).mock.calls[0]?.[0];
+    // data は単一 or 配列だが、本サービスは常に配列で渡すため narrow する
+    const rows = Array.isArray(call?.data) ? call.data : [];
+    expect(rows[0]).toMatchObject({ ipAddress: null, userAgent: null });
+    expect(rows[1]).toMatchObject({ ipAddress: null, userAgent: null });
+  });
+
+  it('メール送信失敗時の compensating delete で tenantConsentLog も削除される', async () => {
+    vi.mocked(sendVerificationEmail).mockRejectedValueOnce(new EmailSendError('Provider down'));
+
+    await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+    expect(prisma.tenantConsentLog.deleteMany).toHaveBeenCalledWith({
+      where: { tenantId: 'tenant-uuid' },
+    });
   });
 });
 

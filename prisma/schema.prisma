@@ -249,6 +249,8 @@ model Tenant {
   // Stripe 連携 (PR-S1 / 2026-05-14)
   billingHistories        BillingHistory[]
   stripeUsageRecordQueue  StripeUsageRecordQueue[]
+  // 規約・プラポリ同意ログ (feat/legal-pages-lp-integration / 2026-05-21)
+  consentLogs             TenantConsentLog[]
 
   @@index([plan], map: "idx_tenants_plan")
   // PR-S1: credit_card テナントの絞り込み用 (= Stripe 連携対象のクエリで使用)
@@ -1632,4 +1634,41 @@ model StripeUsageRecordQueue {
   @@index([sentAt, nextSendAt], map: "idx_stripe_usage_queue_pending")
   @@index([tenantId], map: "idx_stripe_usage_queue_tenant")
   @@map("stripe_usage_record_queue")
+}
+
+/// テナント作成時の利用規約・プライバシーポリシーへの同意ログ
+///
+/// 法的根拠 (民法 548 条の 2 / 定型約款の組入合意) のため、サインアップ時に
+/// 利用規約・プライバシーポリシーへの同意を取得し、本テーブルに不可変ログとして
+/// 残す。後日「同意していない」と争われた際の証跡となる。
+///
+/// 設計:
+///   - tenantId + consentType + version の組合せで一意化 (再同意の重複防止)
+///   - acceptedAt は immutable (UPDATE 禁止、論理削除のみ可)
+///   - 規約・プラポリは外部 LP (HomePage / tasukiba-user.md) に集約しているため、
+///     version は LP 側で管理 (本テーブルでは「いつ・どのバージョンに同意したか」を記録)
+///
+/// feat/legal-pages-lp-integration (2026-05-21)
+model TenantConsentLog {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  /// 同意したユーザの ID (sign up 時の初期 admin)。User は作成と同時に作られるため tenant 作成後に確定。
+  /// 直接の FK は張らず String 保持 (User の物理削除と独立に証跡を保つ)。
+  userId        String   @map("user_id") @db.Uuid
+  /// 'terms' | 'privacy'
+  consentType   String   @map("consent_type") @db.VarChar(20)
+  /// 同意した規約・プラポリのバージョン (例: '1.0')。LP 側の version 表記と一致。
+  version       String   @db.VarChar(20)
+  /// 同意取得時の IP アドレス (証跡)
+  ipAddress     String?  @map("ip_address") @db.VarChar(45)
+  /// 同意取得時の User-Agent (証跡)
+  userAgent     String?  @map("user_agent") @db.Text
+  acceptedAt    DateTime @default(now()) @map("accepted_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  // 同一テナント・同一タイプ・同一バージョンの重複同意を防止 (= 1 回サインアップ = 各 type 1 行)
+  @@unique([tenantId, consentType, version])
+  @@index([tenantId], map: "idx_tenant_consent_logs_tenant")
+  @@map("tenant_consent_logs")
 }
