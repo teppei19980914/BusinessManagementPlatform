@@ -41,38 +41,28 @@ test.describe('@feature:auth:login スモーク', () => {
     ).toBeVisible();
   });
 
-  // 2026-05-19 (docs/2026-05-19-roadmap-archive): 初見訪問者案内 + 利用規約 /
-  //   プライバシーポリシーへの導線が表示されることを検証
-  test('@feature:public ログイン画面に招待制案内と公開ページリンクが表示される', async ({ page }) => {
+  // 2026-05-21 (feat/legal-pages-lp-integration): 利用規約・プライバシーポリシーは
+  //   外部 LP (HomePage / tasukiba-user.md) に集約済み。フッタリンクは LP の
+  //   #terms / #privacy アンカーに直接遷移する。本テストでは href 値が LP の URL に
+  //   なっていることのみを検証 (実 LP の到達性は HomePage repo 側で担保)。
+  test('@feature:public ログイン画面に招待制案内と LP リンクが表示される', async ({ page }) => {
     await page.goto('/login');
     await page.waitForLoadState('networkidle');
     const footer = page.getByTestId('login-public-footer');
     await expect(footer).toBeVisible();
     await expect(footer).toContainText('招待制');
-    await expect(footer.getByRole('link', { name: '利用規約' })).toHaveAttribute('href', '/terms');
+    await expect(footer.getByRole('link', { name: '利用規約' })).toHaveAttribute(
+      'href',
+      'https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms',
+    );
     await expect(footer.getByRole('link', { name: 'プライバシーポリシー' })).toHaveAttribute(
       'href',
-      '/privacy',
+      'https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#privacy',
     );
-  });
-});
-
-// 2026-05-19 (docs/2026-05-19-roadmap-archive): 公開ページ (利用規約 / プライバシー
-//   ポリシー) は未認証で到達可能であること + ドラフトマーカーが表示されることを検証
-test.describe('@feature:public 利用規約 / プライバシーポリシー', () => {
-  test('/terms にアクセスできドラフト表記が見える', async ({ page }) => {
-    const response = await page.goto('/terms');
-    expect(response?.status()).toBe(200);
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: '利用規約', level: 1 })).toBeVisible();
-    await expect(page.getByText('ドラフト版 - 法務監修待ち')).toBeVisible();
-  });
-
-  test('/privacy にアクセスできドラフト表記が見える', async ({ page }) => {
-    const response = await page.goto('/privacy');
-    expect(response?.status()).toBe(200);
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: 'プライバシーポリシー', level: 1 })).toBeVisible();
-    await expect(page.getByText('ドラフト版 - 法務監修待ち')).toBeVisible();
+    // 外部リンクは新タブで開く
+    for (const name of ['利用規約', 'プライバシーポリシー']) {
+      await expect(footer.getByRole('link', { name })).toHaveAttribute('target', '_blank');
+      await expect(footer.getByRole('link', { name })).toHaveAttribute('rel', 'noopener noreferrer');
+    }
   });
 });

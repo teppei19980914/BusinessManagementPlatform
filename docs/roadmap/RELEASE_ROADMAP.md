@@ -177,8 +177,8 @@
 - [x] **secret scan (gitleaks)**: GitHub Actions `security.yml` で PR / push 毎に CI 自動実行 (pre-commit hook は CI で代替)
 - [ ] **GitHub Push Protection 有効化**: GitHub repo 設定 (UI 操作のため公開直前に手動有効化)
 - [x] **robots.txt 配置**: 招待制中の noindex 設定 (2026-05-19、`public/robots.txt`)
-- [ ] **利用規約 / プライバシーポリシー**: 詳細は [PUBLIC_LAUNCH_CHECKLIST.md §1.2-1.3](../operations/PUBLIC_LAUNCH_CHECKLIST.md) (法務確認必須)
-- [ ] **`/login` 初見訪問者案内**: 詳細は [PUBLIC_LAUNCH_CHECKLIST.md §2.1](../operations/PUBLIC_LAUNCH_CHECKLIST.md)
+- [x] **利用規約 / プライバシーポリシー**: 外部 LP (HomePage / tasukiba-user.md) の `#terms` / `#privacy` に集約完了 (2026-05-21 / feat/legal-pages-lp-integration)。サインアップ同意取得 + TenantConsentLog 証跡保存も実装済
+- [x] **`/login` 初見訪問者案内**: PUBLIC_LAUNCH_CHECKLIST.md §2.1 で完了報告済、フッタは LP の `#terms` / `#privacy` に遷移
 - [ ] **OG 画像**: 詳細は [PUBLIC_LAUNCH_CHECKLIST.md §2.2](../operations/PUBLIC_LAUNCH_CHECKLIST.md)
 
 #### v1.x バージョンアップで段階的に追加

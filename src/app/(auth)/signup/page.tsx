@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { TERMS_URL, PRIVACY_URL } from '@/config/legal-versions';
 
 type FormState = {
   name: string;
@@ -43,6 +44,10 @@ type FormState = {
   paymentMethod: 'invoice' | 'credit_card';
   initialAdminName: string;
   initialAdminEmail: string;
+  // feat/legal-pages-lp-integration (2026-05-21): 規約・プラポリ同意
+  //   2 つを別々に持つことで、後日「規約だけ更新 → 規約だけ再同意」のフローに拡張可能。
+  acceptedTerms: boolean;
+  acceptedPrivacy: boolean;
   /** Honeypot: bot が自動入力するフィールド。通常ユーザは空のまま */
   hp_url: string;
 };
@@ -64,6 +69,8 @@ const INITIAL: FormState = {
   paymentMethod: 'invoice',
   initialAdminName: '',
   initialAdminEmail: '',
+  acceptedTerms: false,
+  acceptedPrivacy: false,
   hp_url: '',
 };
 
@@ -405,7 +412,63 @@ export default function SignupPage() {
               </div>
             </fieldset>
 
-            <Button type="submit" className="w-full" disabled={submitting}>
+            {/* feat/legal-pages-lp-integration (2026-05-21):
+                規約・プラポリ同意。両方必須 (= submit ボタンが disabled)。
+                LP の外部 URL を新タブで開かせる (target="_blank" + rel="noopener noreferrer")。
+                同意の証跡 (民法 548 条の 2 / 定型約款の組入合意) は
+                サーバ側 tenant-onboarding.service が TenantConsentLog テーブルに記録する。 */}
+            <fieldset className="space-y-2 rounded border p-4">
+              <legend className="px-1 text-sm font-semibold">同意事項 *</legend>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={form.acceptedTerms}
+                  onChange={(e) => setForm({ ...form, acceptedTerms: e.target.checked })}
+                  required
+                  data-testid="signup-accept-terms"
+                />
+                <span>
+                  <a
+                    href={TERMS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-info hover:underline"
+                  >
+                    利用規約
+                  </a>
+                  に同意します
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={form.acceptedPrivacy}
+                  onChange={(e) => setForm({ ...form, acceptedPrivacy: e.target.checked })}
+                  required
+                  data-testid="signup-accept-privacy"
+                />
+                <span>
+                  <a
+                    href={PRIVACY_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-info hover:underline"
+                  >
+                    プライバシーポリシー
+                  </a>
+                  に同意します
+                </span>
+              </label>
+            </fieldset>
+
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={submitting || !form.acceptedTerms || !form.acceptedPrivacy}
+              data-testid="signup-submit"
+            >
               {submitting ? '送信中...' : 'サインアップ'}
             </Button>
 

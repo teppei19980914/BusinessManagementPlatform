@@ -219,11 +219,11 @@ Dashboard → **設定** → **ビジネス** → **ビジネスの詳細** → 
 
 | 項目 | 値 |
 |---|---|
-| 利用規約 URL | `https://tasukiba.netlify.app/terms` |
-| プライバシーポリシー URL | `https://tasukiba.netlify.app/privacy` |
+| 利用規約 URL | `https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms` |
+| プライバシーポリシー URL | `https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#privacy` |
 | 特定商取引法に基づく表記 URL | `https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#tokushoho` |
 
-> **特商法 URL のアンカー**: LP 末尾の「特定商取引法に基づく表記」セクションに `id="tokushoho"` を設定 (= HomePage リポジトリの `src/content/product/ja/tasukiba-user.md`)。
+> **LP アンカー**: 利用規約・プライバシーポリシー・特定商取引法に基づく表記の本文は、HomePage リポジトリの `src/content/product/ja/tasukiba-user.md` の `#terms` / `#privacy` / `#tokushoho` セクションに集約されています (2026-05-21 / feat/legal-pages-lp-integration)。
 
 ### 7.2 Live mode 切替前の追加対応
 

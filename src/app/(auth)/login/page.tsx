@@ -268,7 +268,9 @@ function LoginForm() {
       {/*
        * 2026-05-19 (docs/2026-05-19-roadmap-archive): 初見訪問者向け案内 + フッタリンク。
        *   外部ユーザがログイン画面に直接到達した場合の案内導線を提示。
-       *   詳細: docs/operations/PUBLIC_LAUNCH_CHECKLIST.md §2.1
+       * 2026-05-21 (feat/legal-pages-lp-integration): 利用規約・プラポリは外部 LP
+       *   (HomePage / tasukiba-user.md) に集約。本サービス内の /terms /privacy ページは廃止。
+       *   フッタリンクは LP の #terms / #privacy アンカーへ直接遷移する。
        */}
       <div
         data-testid="login-public-footer"
@@ -279,11 +281,21 @@ function LoginForm() {
           ご興味のある方はお問い合わせください。
         </p>
         <p>
-          <a href="/terms" className="mx-2 hover:underline">
+          <a
+            href="https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mx-2 hover:underline"
+          >
             利用規約
           </a>
           <span aria-hidden="true">|</span>
-          <a href="/privacy" className="mx-2 hover:underline">
+          <a
+            href="https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mx-2 hover:underline"
+          >
             プライバシーポリシー
           </a>
         </p>
