@@ -111,27 +111,121 @@ netlify env:set KEY_NAME "value" --secret \
 
 ---
 
-## 3. 通常デプロイ (スキーマ変更を含まない場合)
+## 3. 開発フロー (ローカル → ステージング → 本番)
 
 **前提**: Netlify サイトは GitHub リポジトリと接続済み (Admin URL: <https://app.netlify.com/projects/tasukiba>)。
 
+### 3.1 3 種類の build context
+
+Netlify は GitHub への push を検知して、状況に応じて 3 種類の build を生成する:
+
+| Context | トリガー | URL | 主用途 |
+|---|---|---|---|
+| **Production build** | `main` への push (= PR merge) | `https://tasukiba.netlify.app` | 本番リリース (外部ユーザ向け) |
+| **Branch Deploy** | 指定ブランチ (例: `staging`) への push | `https://<branch-name>--tasukiba.netlify.app` | **ブランチ単位の途中経過確認**、他者共有可 |
+| **Deploy Preview** | PR の作成 / 更新 | `https://deploy-preview-<PR番号>--tasukiba.netlify.app` | **PR マージ判断のステージング検証**、レビュアー共有 |
+
+**ポイント**:
+- 3 種類とも **同じ credits 枠 (Free plan = 300/月)** から消費される。「本番用 credits」「ステージング用 credits」のように分離はされない
+- Production build 以外は **`main` に反映されない** ため、Branch Deploy / Deploy Preview でいくら検証しても外部ユーザには影響しない
+- Stripe Webhook 等の固定 URL を要求する機能は Branch Deploy 推奨 (= URL が固定される)、PR 単位の個別検証は Deploy Preview 推奨
+
+### 3.2 標準フロー (= スキーマ変更を含まない通常開発)
+
 ```bash
-# 1. 機能ブランチで作業
+# 1. 機能ブランチで作業 (ローカル検証)
 git checkout -b feat/xxx
 # ... 編集 ...
+pnpm lint && pnpm test     # ローカルで型・lint・単体テスト確認
 git add .
 git commit -m "feat: xxx"
 git push -u origin feat/xxx
 
-# 2. GitHub で Pull Request を作成
-#    → Netlify が Deploy Preview を自動生成 (URL: deploy-preview-NNN--tasukiba.netlify.app)
-#    → 既存の docs だけの変更なら scripts/netlify-ignore.sh で skip される
+# 2. GitHub で Pull Request を作成 (→ Deploy Preview build 自動発火 = ~15 credits)
+#    → URL: https://deploy-preview-NNN--tasukiba.netlify.app
+#    → このプレビュー URL で「ステージング動作確認」を実施 (= マージ判断)
+#    → docs だけの変更なら scripts/netlify-ignore.sh で skip される (= credits 0)
 
-# 3. レビュー後、main にマージ
-#    → Netlify が main の Production Deploy を自動生成
+# 3. レビュー + 動作確認 OK → main にマージ (→ Production build 自動発火 = ~15 credits)
+#    → URL: https://tasukiba.netlify.app
 #    → Locked Deploy 設定 (§5) が有効なら手動 Publish が必要
 
-# 4. 本番 URL (https://tasukiba.netlify.app) にアクセスし動作確認
+# 4. 本番動作確認 (smoke test)
+```
+
+### 3.3 Branch Deploy を使う場面
+
+Branch Deploy は **PR を作成せずに動作確認したい** ケースで使う:
+
+- **同じ URL で繰り返し検証したい** (Stripe Webhook 等の固定 URL 要求機能)
+- **PR を作る前に他者にレビュー依頼したい** (= まだ wip / draft 段階)
+- **複数 PR を統合した状態で UAT したい** (= 機能横断の挙動検証)
+
+#### Branch Deploy の有効化
+
+1. Netlify Admin → **Site configuration → Build & deploy → Branches and deploy contexts**
+2. **Branch deploys** セクションで `Add additional branches` をクリック
+3. 対象ブランチ名 (例: `staging`) を入力
+
+#### Branch Deploy の発火
+
+```bash
+# 対象ブランチに push するだけで build が走る
+git push origin staging   # → ~15 credits 消費、URL: staging--tasukiba.netlify.app
+```
+
+> **注意**: Branch Deploy したブランチで env vars を別途設定したい場合は、Netlify Admin → Environment variables の各変数の `Edit` で **「Branch deploys」context** を選び、対象ブランチ専用の値を登録する (= 本番 context とは別の値を与えられる)。
+
+### 3.4 Deploy Preview の挙動詳細
+
+PR を作成すると **自動的に** Deploy Preview が build される。これがユーザの言う「ステージング環境」に最も近い:
+
+```
+[PR 作成 / push] → Deploy Preview build (~15 credits)
+                  → URL: deploy-preview-NNN--tasukiba.netlify.app
+                  ↓
+                  動作確認 (= ステージング検証)
+                  ↓
+                  OK なら main merge → Production build
+                  ↓
+                  Deploy Preview URL は PR close で無効化
+```
+
+**PR ごとに URL が変わる**ため Stripe Webhook 等の固定 URL 要求機能とは相性が悪い。その場合は §3.3 の Branch Deploy を併用する。
+
+### 3.5 Credit 浪費防止 Tips
+
+Netlify Free plan は **300 credits/月** (= Production deploy 20 回相当)。リリース直後のフェーズでは消費が増えやすいので、以下を徹底する。
+
+| Tip | 効果 | 適用方法 |
+|---|---|---|
+| **ローカルで lint / test / 型チェックしてから push** | 失敗 build を削減 | `pnpm lint && pnpm test && pnpm tsc --noEmit` |
+| **docs だけの変更は scripts/netlify-ignore.sh で自動 skip** | docs PR = 0 credits | 自動 (`docs/**`, `*.md`, `.github/**` 等は build skip) |
+| **連続 push の auto-cancel に任せる** | 同一ブランチに新 push が来ると進行中 build を自動 cancel | Netlify 標準機能、設定不要 |
+| **WIP PR は draft 状態にする** | Draft PR は Deploy Preview を build しない設定可 | Netlify Admin → Build & deploy → Skip drafts |
+| **commit メッセージに `[skip ci]` または `[skip netlify]`** | 強制 build skip | コミット時に手動 |
+| **複数の修正をまとめて 1 PR に bundle** | PR 数 = build 回数を削減 | 検証が独立に行える限り bundle (= [feedback_bundle_under_credit_pressure.md](../../CLAUDE.md) 参照) |
+| **ローカル `pnpm dev` で済む検証は push しない** | 軽微な UI 修正は localhost で確認 | Netlify への push を最小化 |
+| **残 100 credits で Pro plan ($19/月) 移行を即時判断** | 300 超過すると deploy 停止 (翌月 16 日まで復旧不可) | Netlify Admin → Usage & billing で実況可 |
+
+> **判断基準**: 「本番事故 → hotfix を 3 回連発」= 3 × 15 = **45 credits 一気消費** + 信頼失墜。Deploy Preview で事前検証していれば 15 credits + 安全。**事前検証の credit 消費 < 事故時の hotfix 連鎖消費** という発想で判断する。
+
+### 3.6 開発フロー サマリ (= リリース後の標準運用)
+
+```
+[ローカル]
+  ├ pnpm lint && pnpm test && pnpm tsc --noEmit  (credits 0)
+  └ ローカルの単体検証で OK なら push
+
+[Deploy Preview (= ステージング検証)]
+  ├ PR 作成 → 自動 build (~15 credits)
+  └ deploy-preview-NNN--tasukiba.netlify.app で人間が UAT
+  
+[Production deploy (= main merge)]
+  ├ レビュー + UAT 通過 → main merge → 自動 build (~15 credits)
+  └ tasukiba.netlify.app に反映、外部ユーザ公開
+
+合計: ~30 credits / 1 機能 (修正なし時) / Free plan 月 10 機能ペース
 ```
 
 ---
