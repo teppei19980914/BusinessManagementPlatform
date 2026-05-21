@@ -10,3 +10,4 @@
 | [E2E_COVERAGE.md](./E2E_COVERAGE.md) | E2E テストの画面別カバレッジ追跡 | 既存 |
 | [VISUAL_REGRESSION_CHECKLIST.md](./VISUAL_REGRESSION_CHECKLIST.md) | 視覚回帰テストのチェックリスト | 既存 |
 | [E2E_LESSONS.md](./E2E_LESSONS.md) | E2E テスト実装で発見した罠と解決パターン (約 50 件) | E2E_LESSONS_LEARNED.md |
+| [STRIPE_PAYMENT_TEST_PROCEDURE.md](./STRIPE_PAYMENT_TEST_PROCEDURE.md) | クレジットカード払い動作確認手順 (TC-1〜TC-10、Webhook 系と共通フローの分岐) | 新規 (2026-05-21) |

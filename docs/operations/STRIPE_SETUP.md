@@ -127,6 +127,8 @@ Dashboard → **商品カタログ** → **商品を追加**
 
 ## §4. Webhook エンドポイント設定
 
+> **クレジットカード払いの動作確認 (TC-1〜TC-10) を実施する場合は [`docs/test/STRIPE_PAYMENT_TEST_PROCEDURE.md`](../test/STRIPE_PAYMENT_TEST_PROCEDURE.md) を参照。本セクションは本番運用向けの Webhook 設定であり、Deploy Preview / Branch Deploy での検証用 Webhook は別途登録する。**
+
 Dashboard → **開発者** → **Webhook** → **送信先を追加**
 
 ### 4.1 エンドポイント情報
