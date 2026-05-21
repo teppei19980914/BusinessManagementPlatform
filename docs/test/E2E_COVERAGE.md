@@ -114,6 +114,7 @@
 
 ### タスク (WBS) / ガント
 - [x] `/api/projects/[projectId]/tasks/*` — e2e/specs/06-wbs-tasks.spec.ts (PR #96 / POST WP + ACT / DELETE は UI 経由) ※ bulk/progress/export/import/recalculate/tree は後続 PR
+- [ ] `/api/projects/[projectId]/tasks/bulk-duplicate` — skip: PR #420 (2026-05-25) WBS タスク一括複製 API。階層保持 + 名称衝突自動リネーム + 実績リセットの service ロジックは src/services/task-duplicate.service.test.ts (17 ケース) で担保。専用 E2E は将来検討
 - [ ] `/api/projects/[projectId]/tasks/sync-import` — skip: feat/wbs-overwrite-import で新設。CRUD 単体テストは src/services/task-sync-import.service.test.ts で対応 (E2E は後続 PR)
 - [ ] `/api/projects/[projectId]/tasks/workload` — skip: PR H (#7 / 2026-05-09) で新設。担当者別日次工数集計を返す純関数 + Prisma findMany のみ。集計ロジックは src/services/task.service.test.ts の getAssigneeDailyWorkload で対応 (E2E は後続 PR)
 - [ ] `/api/projects/[projectId]/tasks/workload/preview` (GET) — skip: PR #361 (2026-05-14) WBS ACT 編集中の日次工数プレビュー API。assigneeId + startDate + endDate + plannedEffort + excludeTaskId? を query で受け、現プロジェクト範囲で当該担当者の他タスクと合算した 1 日あたり最大工数を返す。**テナント越境防止**は service 層の `project.tenantId` フィルタ + route 層の `checkProjectPermission(task:read)` で二重防御。サービステスト 7 件 + route テスト 7 件で担保 (うち越境 invariant テスト 2 件)。UI 側は PM/TL ロール (`canEditPmTl`) のみで表示

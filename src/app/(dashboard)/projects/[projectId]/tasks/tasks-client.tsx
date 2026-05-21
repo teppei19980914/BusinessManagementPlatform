@@ -983,6 +983,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const [bulkActualValues, setBulkActualValues] = useState<BulkActualValues>(bulkActualInitialValues);
   const [bulkActualError, setBulkActualError] = useState('');
 
+  // --- 一括複製 (PR #420 2026-05-25) ダイアログ用 state ---
+  //   target parent: '' = root, それ以外は WP の task id
+  const [isBulkDuplicateOpen, setIsBulkDuplicateOpen] = useState(false);
+  const [bulkDuplicateTargetId, setBulkDuplicateTargetId] = useState<string>('');
+  const [bulkDuplicateError, setBulkDuplicateError] = useState('');
+
   // ダイアログを開くタイミングで state を初期化する共通ハンドラ。
   // onOpenChange に直接束縛することで「開くたびに初期値に戻る」挙動を保証する。
   const handleBulkEditOpenChange = useCallback(
@@ -1010,6 +1016,65 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+
+  // PR #420: 一括複製ダイアログを開閉する。開くたびに target = root に初期化。
+  const handleBulkDuplicateOpenChange = useCallback(
+    (open: boolean) => {
+      setIsBulkDuplicateOpen(open);
+      if (open) {
+        setBulkDuplicateTargetId('');
+        setBulkDuplicateError('');
+      }
+    },
+    [],
+  );
+
+  /**
+   * PR #420: 一括複製を実行。
+   * - selectedIds の task を target parent (= '' なら null/root) 配下に複製する。
+   * - 名称衝突は service 側で "(コピー)" suffix にリネームされる。
+   * - 成功時はトーストと再読込で UI を真値同期。
+   */
+  async function handleBulkDuplicateSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBulkDuplicateError('');
+    if (selectedIds.size === 0) return;
+
+    const total = selectedIds.size;
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/tasks/bulk-duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskIds: [...selectedIds],
+          targetParentId: bulkDuplicateTargetId || null,
+        }),
+      }),
+    );
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      const msg =
+        json.error?.message
+        || json.error?.details?.[0]?.message
+        || '一括複製に失敗しました';
+      setBulkDuplicateError(msg);
+      showError(msg);
+      return;
+    }
+    const json = await res.json();
+    setIsBulkDuplicateOpen(false);
+    setSelectedIds(new Set());
+    const added = json.data?.added ?? 0;
+    const renamed = json.data?.renamedCount ?? 0;
+    if (renamed > 0) {
+      showSuccess(`${added} 件のタスクを複製しました (${renamed} 件は名称衝突のためリネーム)`);
+    } else {
+      showSuccess(`${added} 件のタスクを複製しました`);
+    }
+    await reload();
+    // total はトーストには出さない (renamed 件数の方がユーザに有用)
+    void total;
+  }
 
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
@@ -1623,6 +1688,52 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               </form>
             </DialogContent>
           </Dialog>
+          {/* PR #420 2026-05-25: 一括複製。チェック ON のタスクを「target parent」配下に階層
+              保持でコピーする。名称衝突は service 側で "(コピー)" suffix にリネーム。
+              PM/TL+ のみ (task:update 相当)。 */}
+          {canEditPmTl && (
+            <Dialog open={isBulkDuplicateOpen} onOpenChange={handleBulkDuplicateOpenChange}>
+              <DialogTrigger render={<Button variant="outline" size="sm" />}>{t('bulkDuplicate')}</DialogTrigger>
+              <DialogContent className="max-w-[min(90vw,32rem)] max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>{t('bulkDuplicateTitle', { count: selectedIds.size })}</DialogTitle>
+                  <DialogDescription>{t('bulkDuplicateDescription')}</DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleBulkDuplicateSubmit} className="space-y-4">
+                  {bulkDuplicateError && (
+                    <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                      {bulkDuplicateError}
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="bulkDuplicateTarget">{t('bulkDuplicateTargetLabel')}</Label>
+                    <select
+                      id="bulkDuplicateTarget"
+                      value={bulkDuplicateTargetId}
+                      onChange={(e) => setBulkDuplicateTargetId(e.target.value)}
+                      className={nativeSelectClass}
+                    >
+                      <option value="">{t('bulkDuplicateTargetRoot')}</option>
+                      {parentOptions.map((p) => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      {t('bulkDuplicateTargetHint')}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground space-y-1">
+                    <p>{t('bulkDuplicatePolicyHierarchy')}</p>
+                    <p>{t('bulkDuplicatePolicyRename')}</p>
+                    <p>{t('bulkDuplicatePolicyReset')}</p>
+                  </div>
+                  <Button type="submit" className="w-full">
+                    {t('bulkDuplicateExecute')}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
           {canEditPmTl && (
             <Button variant="outline" size="sm" className="text-destructive" onClick={handleBulkDelete}>{t('bulkDelete')}</Button>
           )}
