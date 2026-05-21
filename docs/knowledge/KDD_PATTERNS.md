@@ -11603,6 +11603,13 @@ Stripe Checkout の戻り先ハンドラ (`/api/tenants/me/billing/stripe/setup/
 
 **段階 A 対策: build wrapper で NEXTAUTH_URL を deploy context に同期**
 
+> ⚠️ **2026-05-22 追記 (KDD §5.X+101 参照)**: 本対策は **実質効果なし**だったことが判明。
+> Next.js は `NEXT_PUBLIC_*` 以外の server-side env var を build 時に bundle へ焼き込まないため、
+> build script で `export NEXTAUTH_URL=...` しても **Netlify Function runtime には届かない**。
+> 真の根本解決は **Netlify Dashboard で NEXTAUTH_URL を context override** (Production のみ固定、
+> Deploy preview / Branch deploys では未設定にして `trustHost: true` でフォールバック)。
+> 詳細は KDD §5.X+101 を参照。
+
 `scripts/netlify-build.sh` を作成し、Netlify が build 時に自動設定する `URL` env var を `NEXTAUTH_URL` に注入してから build を実行。
 
 ```bash
@@ -11812,3 +11819,102 @@ if (tenant?.stripeSubscriptionId != null) {
   - `feedback_billing_invariant` (★最重要★ 請求 invariant)
   - `feedback_netlify_nextauth_set_cookie` (Client state 更新の罠、本件と類似構造)
 - 関連 KDD §5.X+99 (前提): Stripe Deploy Preview redirect 問題
+
+---
+
+## 5.X+101 **★severity-1★ Netlify Deploy Preview の本番 URL リダイレクト問題 — KDD §5.X+99 段階 A 対策の認識誤りと真の根本解決 (NEXTAUTH_URL の context 分離 + trustHost フォールバック) (2026-05-22 / PR #425 Stripe UAT)**
+
+### 発生事象
+
+KDD §5.X+99 で「段階 A 対策: build wrapper で `NEXTAUTH_URL` を deploy context に同期」を実装したつもりだったが、**Deploy Preview URL (`deploy-preview-425--tasukiba.netlify.app/`) にアクセスすると本番 URL (`tasukiba.netlify.app/`) に即座にリダイレクトされる事象が続発**。`/` 以外の保護領域 (例: `/settings/tenant`) でも middleware 経由で `/login` に redirect する瞬間に本番 origin に書き換わる。
+
+これにより:
+- Deploy Preview での UAT が完結できない
+- 本番ログインしていないユーザは本番 `/login` 画面に着地 → 検証中断
+- Stripe Checkout 完了後の戻り先も本番 URL に固定 (= KDD §5.X+99 と同根)
+
+### 根本原因 (KDD §5.X+99 段階 A 対策の認識誤り)
+
+**Next.js は server-side env var を build 時に bundle へ焼き込まない** (`NEXT_PUBLIC_*` プレフィックス付きのものを除く)。`process.env.NEXTAUTH_URL` は **Netlify Function runtime で都度評価される**。
+
+KDD §5.X+99 で導入した `scripts/netlify-build.sh` の以下:
+
+```bash
+export NEXTAUTH_URL="${URL:-${NEXTAUTH_URL:-https://tasukiba.netlify.app}}"
+exec pnpm build:netlify
+```
+
+の `export NEXTAUTH_URL=...` は **build プロセス内の子プロセス (`pnpm build:netlify`) にのみ伝播する**。Next.js の `next build` がこの env var を読んで bundle に焼き込めば runtime に伝わるが、`process.env.NEXTAUTH_URL` のような **`NEXT_PUBLIC_` 以外の env var は焼き込まれない** ため、build wrapper の export は **runtime には一切届かない**。
+
+結果として:
+- Netlify Function runtime での `process.env.NEXTAUTH_URL` は **Netlify Dashboard で設定された値** (= 全 scope 共通の本番 URL) になる
+- NextAuth v5 は `trustHost: true` でも **`NEXTAUTH_URL` が定義されていればそちらを優先する** 仕様
+- → NextAuth の base URL が本番固定 → middleware の `Response.redirect(new URL(LOGIN_PATH, nextUrl))` 等で `nextUrl` を信頼しても、NextAuth 内部で発火する redirect は本番 URL になる
+
+これが「Netlify build wrapper を入れても効かない」真因。
+
+### 解決策 (根本解決)
+
+**Netlify Dashboard で `NEXTAUTH_URL` の context override を行う**:
+
+| Deploy context | NEXTAUTH_URL の値 |
+|---|---|
+| Production | `https://tasukiba.netlify.app` (既存固定値) |
+| Deploy preview | **未設定 (= Delete)** |
+| Branch deploys | **未設定 (= Delete)** |
+
+これで:
+- Production runtime: NEXTAUTH_URL=本番 URL → NextAuth が本番 URL を base に使用 (既存挙動)
+- Deploy preview runtime: NEXTAUTH_URL=undefined → NextAuth が `trustHost: true` で host header (= Deploy Preview URL) を base に使用
+- Branch deploy runtime: 同上
+
+**操作手順 (Netlify Dashboard)**:
+1. Site configuration → Environment variables
+2. `NEXTAUTH_URL` を選択 → Edit
+3. 「Different value for each deploy context」を選択
+4. Production 欄: 本番 URL を維持
+5. **Deploy previews 欄: 値を空にして保存 (= context override で undefined)**
+6. **Branch deploys 欄: 値を空にして保存**
+7. 保存 → 該当 PR の Deploy Preview を再 build (Trigger deploy)
+
+### 並行修正: build wrapper の NEXTAUTH_URL 注入を削除
+
+`scripts/netlify-build.sh` の `export NEXTAUTH_URL=...` 行は **実質効果なし** のため削除。残しておくと後続改修者が「build wrapper で対処済」と誤認するリスクが高い (= 本事例の再発を招く)。
+
+ただし wrapper script 自体は `netlify.toml` の build command として参照されており、空コミットでも build トリガーする目的でも使われているため、ファイル自体は維持し **NEXTAUTH_URL 行のみ削除 + コメントで「build wrapper では env var は runtime に届かない、Dashboard の context override を使え」と警告**。
+
+### 教訓
+
+1. **★最重要★ Next.js は `NEXT_PUBLIC_*` 以外の server-side env var を build 時に bundle へ焼き込まない** — Runtime で都度 `process.env.X` が評価される。よって「build script で env var を export する」は **`NEXT_PUBLIC_*` 以外には効果がない**。Runtime に値を伝えたければホスティング層 (Netlify Dashboard / Vercel Env / docker env) の context-specific 設定を使うのが正解
+2. **NextAuth v5 の `trustHost: true` は `NEXTAUTH_URL` 未定義時のフォールバック** — `NEXTAUTH_URL` が定義されていれば常に優先される。Multi-environment 運用では本番のみ `NEXTAUTH_URL` を固定し、preview/branch では未定義にして `trustHost` 経由で host header から動的取得させる
+3. **build wrapper 内の `export X=...` の伝播範囲は build プロセス内に限定** — Netlify Function (= 別 Lambda 実行環境) には届かない。「build 時に何かを env に注入したい」は ほぼ常に間違い。本当に必要なのは bundle に焼き込む (= `NEXT_PUBLIC_*` 化) か、Dashboard 設定で context 分離するか
+4. **「対策実装した」と「実際に効いている」を切り分けて検証する** — KDD §5.X+99 では build wrapper を「段階 A 対策」として記録したが、効果検証 (= Deploy Preview で actually 本番 URL に飛ばないか) を実機確認しないまま「対応済」扱いになっていた。**fix を入れたら必ず原問題が再現しないかを実機で再現テスト**。コードレビュー / ローカル test PASS は十分条件ではない
+5. **「効かないコードを残置」は積み重なって混乱を生む** — 効かないと分かったら即削除 + KDD で「過去に試したが効かなかった」を明記。残しておくと後続改修者が「対策済」と誤認して同じ問題を再発させる
+
+### 検証手順 (Netlify Dashboard 設定後の再現確認)
+
+```
+1. Netlify Dashboard で NEXTAUTH_URL の Deploy preview / Branch deploys を空に設定
+2. PR #425 の最新 Deploy Preview を Trigger deploy (or Clear cache and deploy)
+3. ビルド完了後、ブラウザで以下を順にアクセス:
+   a. https://deploy-preview-NNN--tasukiba.netlify.app/  → /projects (or /login) に redirect
+      → アドレスバーが deploy-preview-NNN--... のままであることを確認 ★
+   b. https://deploy-preview-NNN--tasukiba.netlify.app/login → ログイン
+      → ログイン後も deploy-preview-NNN--... のままであることを確認 ★
+   c. /settings/tenant → 「クレジットカード情報更新」ボタン → Stripe Checkout
+      → カード登録完了後、deploy-preview-NNN--... に戻ることを確認 ★
+4. DB 状態: paymentMethod='credit_card' + stripeSubscriptionId='sub_*'
+```
+
+各ステップで ★ が崩れた場合、本 KDD §5.X+101 の再発と判断。Netlify Dashboard 設定を再確認。
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-1 UAT 中、KDD §5.X+99 段階 A 対策不発を再検出 + 真の根本解決を実装
+- 関連修正ファイル:
+  - `scripts/netlify-build.sh` (NEXTAUTH_URL inject 行削除 + 警告コメント追加)
+  - `docs/knowledge/KDD_PATTERNS.md` §5.X+99 段階 A 部分 (不発の旨を明記)
+- 関連 KDD §5.X+99 (前提だが対策不発): Stripe Deploy Preview redirect 問題
+- 関連 feedback `feedback_netlify_nextauth_set_cookie` (NextAuth + Netlify の罠系)
+- Netlify 公式: [Environment variables - Deploy contexts](https://docs.netlify.com/configure-builds/environment-variables/#deploy-contexts)
+- NextAuth v5 公式: [Trust Host (`trustHost`)](https://authjs.dev/reference/core#trusthost)
