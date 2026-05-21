@@ -133,7 +133,7 @@ async function main() {
  *   2. SUPER_ADMIN_INITIAL_EMAIL/PASSWORD/NAME が揃っていれば super_admin user を upsert
  *   3. user は管理テナントに所属、forcePasswordChange=true (初回ログイン時に強制変更)
  *
- * 環境変数 (Vercel に登録):
+ * 環境変数 (Netlify に登録):
  *   - SUPER_ADMIN_INITIAL_EMAIL  (例: admin@knowledge-relay-platform.admin)
  *   - SUPER_ADMIN_INITIAL_PASSWORD (強固な初期パスワード)
  *   - SUPER_ADMIN_INITIAL_NAME   (例: Platform Admin)
@@ -174,7 +174,7 @@ async function seedManagementTenantAndSuperAdmin(prisma: PrismaClient): Promise<
     console.log(
       'ℹ super_admin user は作成スキップ (SUPER_ADMIN_INITIAL_EMAIL/PASSWORD/NAME 環境変数が未設定)',
     );
-    console.log('  Vercel に環境変数を登録後、再実行してください:');
+    console.log('  Netlify に環境変数を登録後、再実行してください:');
     console.log('    SUPER_ADMIN_INITIAL_EMAIL=admin@knowledge-relay-platform.admin');
     console.log('    SUPER_ADMIN_INITIAL_PASSWORD=<強固な初期パスワード>');
     console.log('    SUPER_ADMIN_INITIAL_NAME=Platform Admin');

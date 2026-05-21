@@ -2988,7 +2988,7 @@ function printConnectionRefusedHelp(target: string): void {
   console.error('     → 解決: .env.local に本番接続情報を一時設定して再実行');
   console.error('             postgresql://postgres.[ref]:[pw]@aws-1-[region].pooler.supabase.com:6543/postgres?pgbouncer=true');
   console.error('             ※ 必ず Session Pooler (aws-1-...pooler.supabase.com) を使用');
-  console.error('             ※ Direct connection (db.[ref].supabase.co) は IPv6 only で Vercel 不可');
+  console.error('             ※ Direct connection (db.[ref].supabase.co) は IPv6 only で Netlify 不可');
   console.error('     → 完了後は .env.local を必ず削除 (誤操作防止)');
   console.error('');
   console.error('  3. Supabase 側で firewall や network 設定が変更されている');
@@ -3021,7 +3021,7 @@ function printAuthenticationFailedHelp(target: string): void {
   console.error('');
   console.error('  3. Supabase でパスワードがリセットされた');
   console.error('     → 解決: Supabase Dashboard → Settings → Database → Reset database password');
-  console.error('             その後 Vercel 環境変数も新パスワードに更新');
+  console.error('             その後 Netlify 環境変数も新パスワードに更新');
   console.error('');
   console.error('  4. .env.local を作成・保存後に DB ターゲットが切り替わっていない');
   console.error('     → 解決: 同じシェルで再実行する。新しい PowerShell では .env.local を再読込する');
