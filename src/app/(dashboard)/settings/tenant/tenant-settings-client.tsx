@@ -982,36 +982,46 @@ function SelfDeleteTenantSection({ tenantName }: { tenantName: string }) {
   }
 
   return (
-    <section className="mt-8 space-y-3 rounded border border-destructive/40 p-4">
-      <h2 className="text-lg font-semibold text-destructive">テナント解約 (危険な操作)</h2>
-      <p className="text-sm text-muted-foreground">
-        本テナントを解約します。解約後は全ユーザーがログイン不可となり、業務データへのアクセスができなくなります。
-      </p>
-      <ul className="ml-4 list-disc text-xs text-muted-foreground">
-        <li>解約直後: テナント本体 + 配下の業務データ (プロジェクト/ナレッジ/課題等) を **論理削除**</li>
-        <li>90 日経過後: 業務データを **物理削除** (= 復元不可、データ容量解放)</li>
-        <li>監査ログ・課金根拠データ (api_call_logs / 月次履歴) は保持</li>
-        <li>解約前に <a href="#" className="text-info underline">データエクスポート</a> 実施を強く推奨</li>
-      </ul>
+    // feat/tenant-settings-tabs (2026-05-22): 「概要内のまま折りたたみ」のユーザ確定方針に従い、
+    //   <details> でラップしデフォルト閉じる。誤クリック防止 + 概要タブの視覚的圧縮を兼ねる。
+    //   summary を destructive 色で明示し、解約導線が隠れていないことを示す。
+    <details
+      className="mt-8 rounded border border-destructive/40 [&[open]>summary]:border-b [&[open]>summary]:border-destructive/40"
+      data-testid="self-delete-tenant-section"
+    >
+      <summary className="cursor-pointer p-4 text-lg font-semibold text-destructive select-none">
+        ⚠ テナント解約 (危険な操作) — クリックで展開
+      </summary>
+      <div className="space-y-3 p-4">
+        <p className="text-sm text-muted-foreground">
+          本テナントを解約します。解約後は全ユーザーがログイン不可となり、業務データへのアクセスができなくなります。
+        </p>
+        <ul className="ml-4 list-disc text-xs text-muted-foreground">
+          <li>解約直後: テナント本体 + 配下の業務データ (プロジェクト/ナレッジ/課題等) を **論理削除**</li>
+          <li>90 日経過後: 業務データを **物理削除** (= 復元不可、データ容量解放)</li>
+          <li>監査ログ・課金根拠データ (api_call_logs / 月次履歴) は保持</li>
+          <li>解約前に <a href="#" className="text-info underline">データエクスポート</a> 実施を強く推奨</li>
+        </ul>
 
-      <form onSubmit={handleSubmit} className="mt-3 space-y-2">
-        <label className="block text-sm font-medium">
-          確認のため、現在のテナント名「<span className="font-mono">{tenantName}</span>」を正確に入力してください
-        </label>
-        <input
-          type="text"
-          value={confirmName}
-          onChange={(e) => setConfirmName(e.target.value)}
-          placeholder={tenantName}
-          className="block w-full rounded border p-2 text-sm"
-          disabled={submitting}
-        />
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <Button type="submit" variant="destructive" disabled={submitting || !isMatch}>
-          {submitting ? '解約処理中...' : '🗑 テナントを解約する'}
-        </Button>
-      </form>
-    </section>
+        <form onSubmit={handleSubmit} className="mt-3 space-y-2">
+          <label className="block text-sm font-medium">
+            確認のため、現在のテナント名「<span className="font-mono">{tenantName}</span>」を正確に入力してください
+          </label>
+          <input
+            type="text"
+            value={confirmName}
+            onChange={(e) => setConfirmName(e.target.value)}
+            placeholder={tenantName}
+            className="block w-full rounded border p-2 text-sm"
+            disabled={submitting}
+          />
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <Button type="submit" variant="destructive" disabled={submitting || !isMatch}>
+            {submitting ? '解約処理中...' : '🗑 テナントを解約する'}
+          </Button>
+        </form>
+      </div>
+    </details>
   );
 }
 
