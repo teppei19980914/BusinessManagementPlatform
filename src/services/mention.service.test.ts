@@ -209,8 +209,17 @@ describe('getMentionContext', () => {
 });
 
 describe('generateMentionNotifications', () => {
-  it('受信者ごとに Notification を一括 createMany', async () => {
-    vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectId: 'p-1', assigneeId: null } as never);
+  it('受信者ごとに Notification を一括 createMany + PR #425: title に entity 情報を含む', async () => {
+    // PR #425 (2026-05-22): mock に name / parentTask / project.name を追加。
+    //   resolveEntityLabelForMention が同じ prisma.task.findFirst を呼ぶため、
+    //   getMentionContext と兼用できるよう必要なフィールドを mock 値に含める。
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({
+      projectId: 'p-1',
+      assigneeId: null,
+      name: 'ACT2 設計レビュー',
+      parentTask: { name: 'WP1 要件定義' },
+      project: { name: 'Project A' },
+    } as never);
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([
       { userId: 'u-a' }, { userId: 'u-b' },
     ] as never);
@@ -231,8 +240,45 @@ describe('generateMentionNotifications', () => {
     expect(data).toHaveLength(2);
     expect(data.every((n) => n.type === 'comment_mention')).toBe(true);
     expect(data.every((n) => n.dedupeKey.startsWith('comment_mention:c-1:'))).toBe(true);
-    expect(data[0].title).toContain('田中');
+    // PR #425: 新文言「[プロジェクト名] タスク「親WP / ACT名」で {sender}さんがコメントでメンションしました」
+    expect(data[0].title).toBe(
+      '[Project A] タスク「WP1 要件定義 / ACT2 設計レビュー」で 田中さんがコメントでメンションしました',
+    );
     expect(call?.skipDuplicates).toBe(true);
+  });
+
+  // PR #425 (2026-05-22): buildMentionNotificationTitle ヘルパの単体テスト
+  it('buildMentionNotificationTitle: entityLabel が null ならフォールバック旧文言', async () => {
+    const { buildMentionNotificationTitle } = await import('./mention.service');
+    expect(
+      buildMentionNotificationTitle({
+        senderLabel: '田中',
+        entityLabel: null,
+        projectName: null,
+      }),
+    ).toBe('田中さんがコメントであなたをメンションしました');
+  });
+
+  it('buildMentionNotificationTitle: projectName が null/空 なら接頭辞省略', async () => {
+    const { buildMentionNotificationTitle } = await import('./mention.service');
+    expect(
+      buildMentionNotificationTitle({
+        senderLabel: '田中',
+        entityLabel: 'ナレッジ「テストナレッジ」',
+        projectName: null,
+      }),
+    ).toBe('ナレッジ「テストナレッジ」で 田中さんがコメントでメンションしました');
+  });
+
+  it('buildMentionNotificationTitle: project + entity 両方あれば完全形', async () => {
+    const { buildMentionNotificationTitle } = await import('./mention.service');
+    expect(
+      buildMentionNotificationTitle({
+        senderLabel: '田中',
+        entityLabel: 'リスク「サーバ停止」',
+        projectName: 'Project A',
+      }),
+    ).toBe('[Project A] リスク「サーバ停止」で 田中さんがコメントでメンションしました');
   });
 
   it('mentions 空なら DB に触らない (early return)', async () => {

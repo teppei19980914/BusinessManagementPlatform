@@ -6,9 +6,39 @@ import { listCustomers } from '@/services/customer.service';
 import { recordError } from '@/services/error-log.service';
 import { ProjectsClient } from './projects-client';
 
-export default async function ProjectsPage() {
+/**
+ * PR #425 (2026-05-22): 検索ボタンが効かない不具合 (★severity-1 UX バグ★) の修正。
+ *
+ * 旧版は params 固定の `{ page: 1, limit: 20 }` で listProjects を呼んでいたため、
+ * client 側で router.push で URL params を更新しても page.tsx の searchParams が
+ * 反映されず「検索ボタンを押しても一覧が変わらない」状態だった。
+ *
+ * App Router の `searchParams` prop を受け取り、URL クエリを listProjects の
+ * keyword / status / customerName / customerId に伝播させることで、router.push
+ * → page 再実行 → listProjects の where に反映 → 新 initialProjects で再描画
+ * の経路を完成させる。
+ */
+type SearchParams = Promise<{
+  keyword?: string;
+  status?: string;
+  customerName?: string;
+  customerId?: string;
+}>;
+
+export default async function ProjectsPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
+
+  // Next.js 15: searchParams は Promise なので await が必須
+  const sp = await searchParams;
+  const listParams = {
+    page: 1,
+    limit: 20,
+    ...(sp.keyword ? { keyword: sp.keyword } : {}),
+    ...(sp.status ? { status: sp.status } : {}),
+    ...(sp.customerName ? { customerName: sp.customerName } : {}),
+    ...(sp.customerId ? { customerId: sp.customerId } : {}),
+  };
 
   // fix/admin-users-defensive-render 横展開 (2026-05-15): /projects はログイン直後の
   //   デフォルト遷移先のため、server data fetch が throw した場合に
@@ -21,7 +51,7 @@ export default async function ProjectsPage() {
   try {
     [result, customers] = await Promise.all([
       listProjects(
-        { page: 1, limit: 20 },
+        listParams,
         session.user.id,
         session.user.systemRole,
         session.user.tenantId,
@@ -54,6 +84,10 @@ export default async function ProjectsPage() {
       isAdmin={session.user.systemRole === 'admin'}
       customers={customers.map((c) => ({ id: c.id, name: c.name }))}
       dataLoadError={dataLoadError}
+      // PR #425 (2026-05-22): リロード時 / 検索後 URL 共有時に input が空に戻らないよう、
+      // URL params から初期値を Client Component に伝播させる。
+      initialKeyword={sp.keyword ?? ''}
+      initialStatusFilter={sp.status ?? ''}
     />
   );
 }

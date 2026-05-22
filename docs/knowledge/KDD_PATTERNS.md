@@ -11918,3 +11918,120 @@ exec pnpm build:netlify
 - 関連 feedback `feedback_netlify_nextauth_set_cookie` (NextAuth + Netlify の罠系)
 - Netlify 公式: [Environment variables - Deploy contexts](https://docs.netlify.com/configure-builds/environment-variables/#deploy-contexts)
 - NextAuth v5 公式: [Trust Host (`trustHost`)](https://authjs.dev/reference/core#trusthost)
+
+---
+
+## 5.X+102 **★UX severity-1★ 一覧画面の検索ボタン不発 + ソート client-side 化問題の横断調査 — `/projects` 即時修正 + 残 13 画面の段階改修ロードマップ (2026-05-22 / PR #425)**
+
+### 発生事象
+
+`/projects` 画面で検索ボタンを押しても **絞り込みが反映されない**。URL は `?keyword=xxx` に変わるが一覧は変化しない。テスト中のユーザが PR レビュー時に検出。
+
+横断調査の結果、**たすきば全 16 一覧画面のうち 13 画面が同じ構造的問題** を抱えていることが判明:
+
+| 画面 | 検索 UI | 検索動作 | ソート UI | ソート動作 |
+|---|---|---|---|---|
+| /projects | ✓ あり | ❌ 効かない (← 本 PR で修正) | ✓ あり | client-side memory sort のみ |
+| /knowledge, /memos, /all-memos, /customers, /my-tasks, /admin/users 等 | なし | client-side filter | ✓ あり | client-side memory sort のみ |
+| /risks, /issues, /retrospectives + project 配下版 | (table 内 filter) | client-side filter | ✓ あり | client-side memory sort のみ |
+| /admin/super/tenants | なし | 機能無し | なし | 機能無し |
+| /projects/[id]/stakeholders 等 | なし | client-side filter | なし | 機能無し |
+
+### 根本原因 (構造的)
+
+3 つのパターンが共通して発生:
+
+**パターン A: `page.tsx` が `searchParams` を受け取らない**
+```tsx
+// page.tsx (BAD)
+export default async function ProjectsPage() {
+  const result = await listProjects({ page: 1, limit: 20 }, ...); // ← 固定 params
+  ...
+}
+```
+↓
+URL params 更新 → page 再実行されるが、固定 params で listProjects を呼ぶため where 条件が変わらず同じ結果。
+
+**パターン B: Client Component が `initialProjects` を `useState` で保持していない**
+→ props 変更時の挙動として OK (= props 直接使用ならリレンダで反映) だが、`useState(initialData)` で初期化していると **props 更新が state に反映されない** (= useState の initialValue は初回のみ評価)。
+
+**パターン C: client-side `multiSort` / `useState` filter で済ませている**
+→ 件数が少ない MVP 初期は問題なし。だが Beginner プラン上限の 100 件を超え、Expert/Pro でデータが増えると **クライアント側でメモリ持ち + ソート/フィルタ計算で UI が遅延** する。また「サーバ side pagination」と整合しない (= 1 ページだけ取って client で sort → 「2 ページ目に欲しいレコードがあった」事故)。
+
+### 解決策
+
+**今 PR (#425) で修正 (= severity-1 UX バグ部分のみ)**:
+
+1. `/projects` の page.tsx に `searchParams` 受け取りを追加
+2. `listProjects` に keyword / status / customerName / customerId を伝播
+3. projects-client.tsx の `useState(initialKeyword)` で URL からの初期値復元 (リロード時 input 復元)
+4. handleSearch の `router.refresh()` を撤去 (= `router.push` だけで page 再実行)
+
+これで:
+- 検索ボタン押下 → URL params 更新 → page.tsx 再実行 → 新 initialProjects → 表示更新 ✓
+- リロード/共有 URL → input に検索条件が復元 ✓
+
+**今 PR では対応しない (= 別 PR で段階改修)**:
+
+ソートの server-side 化 + 他 13 画面の server-side filter 化は **3 段階 20-26h 規模** で大きく、Stripe UAT 中の PR #425 にバンドルすると検証範囲が爆発する。別 PR で対応する:
+
+| 段階 | 対象 | 推定工数 | 優先度 |
+|---|---|---|---|
+| Phase 1 | `/projects` ソートの server-side 化 (orderBy URL param + service / API 対応) | 4-6h | 中 |
+| Phase 2 | `/risks` `/issues` `/retrospectives` の server-side filter 化 (共通 table コンポーネント) | 6-8h | 中 |
+| Phase 3 | `/memos` `/all-memos` `/knowledge` 等 7+ 画面の統一改修 + `useListSearchParams()` 共通 hook 化 | 10-12h | 低 |
+
+### 教訓 (再発防止)
+
+1. **★最重要★ Next.js App Router で URL params フィルタを実装する標準パターン**:
+   ```tsx
+   // page.tsx (Server Component)
+   export default async function Page({ searchParams }: { searchParams: Promise<SearchParams> }) {
+     const sp = await searchParams;  // Next 15+ は Promise
+     const result = await listX({ keyword: sp.keyword, ... });
+     return <Client initial={result} initialKeyword={sp.keyword ?? ''} />;
+   }
+   ```
+   ↓
+   ```tsx
+   // *-client.tsx (Client Component)
+   async function handleSearch() {
+     const params = new URLSearchParams();
+     if (keyword) params.set('keyword', keyword);
+     router.push(`?${params.toString()}`); // ← refresh() は不要、push が page を再実行
+   }
+   ```
+   **`router.refresh()` だけでは page.tsx の searchParams は変わらない**。`router.push()` が必須。
+
+2. **`useState(initialProps)` の罠**: Client Component で `useState(initialKeyword)` のように props を初期値にすると、props 更新時に state が変わらない。これは React 仕様。回避策は ① props を直接使う ② useEffect で props 変更時に setState する ③ key prop でコンポーネントを再マウントする
+3. **client-side ソート/フィルタは「件数上限が確実に小さい」ケースのみ許容**: テナント越境はしないが、Expert/Pro プランでデータが 1000 件超に達すると UI 遅延 + メモリ消費が顕在化する。最低でも「Beginner 100 件上限を超える可能性のあるエンティティ」は server-side 化する
+4. **検索 UI / ソート UI / 実装の不一致をスクリーンキャプチャ E2E で検出** — 「UI ボタンは存在するが効かない」はユーザ視点での最悪 UX。「クリック → 一覧変化を assertion」する E2E spec を追加すれば即検出可能。本件は手動 UAT で初めて検出された
+5. **横断調査は Agent 並行実行 + 表形式報告で時間短縮**: 16 画面の検索/ソート状態を 1 つの Agent タスクで一覧化させ、改修対象/規模を即座に判定。共通根本原因が浮かび上がる利点もある (= 個別調査では「単発の不具合」に見えていたものが構造的問題と判明)
+
+### 検証手順 (再発防止用)
+
+```
+1. /projects ページを開く
+2. 検索 input に「Stripe」等の文字を入力 → 検索ボタンクリック
+   → URL が ?keyword=Stripe になる ★
+   → 一覧が「Stripe」を含むプロジェクトに絞り込まれる ★ (本 KDD §5.X+102 の主修正)
+3. ブラウザ F5 でリロード
+   → URL の keyword 維持 ★
+   → input に「Stripe」が復元される ★
+   → 一覧は絞り込み状態維持 ★
+4. URL を別タブで共有してアクセス
+   → 同じ絞り込み結果が表示される ★
+```
+
+各 ★ が崩れた場合、本 KDD §5.X+102 の再発と判断。
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): `/projects` 即時修正
+- 後続 PR 予定 (Phase 1-3): `/projects` ソート + `/risks` `/issues` `/retrospectives` + `/memos` `/knowledge` 等
+- 関連修正ファイル (本 PR):
+  - `src/app/(dashboard)/projects/page.tsx` (searchParams 受け取り)
+  - `src/app/(dashboard)/projects/projects-client.tsx` (handleSearch から refresh() 撤去 + initialKeyword 受け取り)
+- 関連 feedback:
+  - `feedback_tenant_isolation` (★最重要★ テナント越境防止、本件と同じく一覧 service の必須前提)
+  - `feedback_billing_data_realtime` (DB 容量・API 利用量等は cron キャッシュ依存を避ける、本件と同じく一覧の整合性方針)

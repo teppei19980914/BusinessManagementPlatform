@@ -1878,6 +1878,22 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
             <DialogTitle>
               {editingTask?.type === 'work_package' ? t('editWorkPackageTitle') : t('editActivityTitle')}
             </DialogTitle>
+            {/* PR #425 (2026-05-22): 「どの WP の ACT を編集しているか」一目で分かるよう
+                親 WP 名 / タスク名を DialogTitle の直下に明示する。
+                旧仕様では「WPを編集」「アクティビティを編集」しか出ておらず、複数 ACT を
+                順に編集する際にどれを開いているか UI で判別できないという問題があった。
+                親が無い (= ルート WP) 場合は親パートを省略。 */}
+            {editingTask && (
+              <p className="text-sm font-normal text-muted-foreground" data-testid="task-edit-dialog-breadcrumb">
+                {editingTask.parentTaskName && (
+                  <>
+                    <span>{editingTask.parentTaskName}</span>
+                    <span className="mx-1.5 text-muted-foreground/60">/</span>
+                  </>
+                )}
+                <span className="font-medium text-foreground">{editingTask.name}</span>
+              </p>
+            )}
             <DialogDescription>
               {editingCanUpdatePm && editingCanUpdateActual
                 ? t('editDescriptionBoth')

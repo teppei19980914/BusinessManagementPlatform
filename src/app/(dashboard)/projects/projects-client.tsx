@@ -79,6 +79,10 @@ type Props = {
   // fix/admin-users-defensive-render 横展開 (2026-05-15): server 側 data 取得が失敗した時に
   //   表示する警告バナーの可否。デフォルト false (= 正常)。
   dataLoadError?: boolean;
+  // PR #425 (2026-05-22): URL params から初期化する検索 input の初期値。
+  //   検索後リロードや URL 共有時に input が空にならないようにする。
+  initialKeyword?: string;
+  initialStatusFilter?: string;
 };
 
 // PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
@@ -110,13 +114,16 @@ export function ProjectsClient({
   isAdmin,
   customers,
   dataLoadError = false,
+  initialKeyword = '',
+  initialStatusFilter = '',
 }: Props) {
   const router = useRouter();
   const t = useTranslations('project');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
-  const [keyword, setKeyword] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  // PR #425 (2026-05-22): URL params から初期化 (検索後リロード/共有時の input 復元)
+  const [keyword, setKeyword] = useState(initialKeyword);
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
@@ -148,12 +155,18 @@ export function ProjectsClient({
   // プロジェクト作成成功後に entityId を使って一括 POST する。
   const [stagedAttachments, setStagedAttachments] = useState<StagedAttachment[]>([]);
 
+  // PR #425 (2026-05-22) ★severity-1 UX バグ修正★:
+  //   旧版は URL params を更新するだけで、page.tsx 側が searchParams を受け取らず固定 params
+  //   で listProjects を呼んでいたため、router.push しても結果が変わらなかった。
+  //   page.tsx 側が searchParams を読むように修正済 (page.tsx PR #425)。これで router.push 後に
+  //   page.tsx が再実行され、新しい keyword / status で絞り込んだ initialProjects が描画される。
+  //   router.refresh() は不要 (push が page 再実行を発火させる)。
   async function handleSearch() {
     const params = new URLSearchParams();
     if (keyword) params.set('keyword', keyword);
     if (statusFilter) params.set('status', statusFilter);
-    router.push(`/projects?${params.toString()}`);
-    router.refresh();
+    const queryString = params.toString();
+    router.push(queryString ? `/projects?${queryString}` : '/projects');
   }
 
   async function handleCreate(e: React.FormEvent) {

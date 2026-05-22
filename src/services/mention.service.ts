@@ -289,6 +289,13 @@ export async function generateMentionNotifications(params: {
   if (recipients.size === 0) return { created: 0 };
 
   const senderLabel = mentionerName ?? '誰か';
+
+  // PR #425 (2026-05-22): 通知文言から「どこで誰がメンションしたか」が分かるよう entity 情報を含める。
+  //   旧文言: 「○○さんがコメントであなたをメンションしました」 (= どの comment か不明)
+  //   新文言: 「[プロジェクト名] タスク「親WP / ACT名」で ○○さんがコメントでメンションしました」
+  //   entity 削除済 等で取得失敗時は旧文言にフォールバック (= 通知生成自体は止めない)。
+  const entityCtx = await resolveEntityLabelForMention(comment.entityType, comment.entityId);
+
   // 2026-05-09 feedback Phase 2-7: notification.createMany の data に tenantId を明示。
   const data = Array.from(recipients).map((userId) => ({
     tenantId: resolvedTenantId!,
@@ -296,12 +303,150 @@ export async function generateMentionNotifications(params: {
     type: 'comment_mention' as const,
     entityType: comment.entityType,
     entityId: comment.entityId,
-    title: `${senderLabel}さんがコメントであなたをメンションしました`,
+    title: buildMentionNotificationTitle({
+      senderLabel,
+      entityLabel: entityCtx?.entityLabel ?? null,
+      projectName: entityCtx?.projectName ?? null,
+    }),
     link,
     dedupeKey: `comment_mention:${commentId}:${userId}`,
   }));
   const r = await prisma.notification.createMany({ data, skipDuplicates: true });
   return { created: r.count };
+}
+
+/**
+ * PR #425 (2026-05-22): メンション通知文言を「[プロジェクト名] entityLabel で {sender}さんがコメントでメンションしました」
+ * 形式で生成する純関数。
+ *
+ * - projectName が null/空 の場合は接頭辞を省略 (= テナント直下の entity)
+ * - entityLabel が null の場合 (= entity 削除済等) は旧形式にフォールバック
+ * - Notification.title VARCHAR(200) を超える場合は末尾を切り詰める
+ */
+export function buildMentionNotificationTitle(input: {
+  senderLabel: string;
+  entityLabel: string | null;
+  projectName: string | null;
+}): string {
+  if (!input.entityLabel) {
+    // entity 取得失敗時のフォールバック (旧文言)
+    return `${input.senderLabel}さんがコメントであなたをメンションしました`;
+  }
+  const projectPrefix = input.projectName && input.projectName.trim().length > 0
+    ? `[${input.projectName}] `
+    : '';
+  const raw = `${projectPrefix}${input.entityLabel}で ${input.senderLabel}さんがコメントでメンションしました`;
+  if (raw.length <= 200) return raw;
+  return `${raw.slice(0, 199)}…`;
+}
+
+/**
+ * PR #425 (2026-05-22): entity から表示用ラベル (entityLabel + projectName) を取得する内部ヘルパー。
+ *   メンション通知文言の組立に使用。entity 種別ごとに「name」「title」フィールドが異なるため
+ *   ここで吸収する。entity が見つからない (削除済等) なら null。
+ *
+ * Schema 出典:
+ *   - Task:           name + parentTask.name + project.name
+ *   - RiskIssue:      title + project.name (project は nullable)
+ *   - Retrospective:  title + project.name (project は nullable)
+ *   - Knowledge:      title のみ (projectId 列なし、M:N の KnowledgeProject 経由)
+ *   - Stakeholder:    name + project.name
+ *   - Customer:       name のみ (projectId 列なし)
+ *   - Memo:           title のみ (projectId 列なし)
+ */
+async function resolveEntityLabelForMention(
+  entityType: CommentEntityType,
+  entityId: string,
+): Promise<{ entityLabel: string; projectName: string | null } | null> {
+  switch (entityType) {
+    case 'task': {
+      const t = await prisma.task.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: {
+          name: true,
+          parentTask: { select: { name: true } },
+          project: { select: { name: true } },
+        },
+      });
+      if (!t) return null;
+      const parentPart = t.parentTask?.name ? `${t.parentTask.name} / ` : '';
+      return {
+        entityLabel: `タスク「${parentPart}${t.name}」`,
+        projectName: t.project?.name ?? null,
+      };
+    }
+    case 'issue':
+    case 'risk': {
+      const r = await prisma.riskIssue.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: {
+          title: true,
+          project: { select: { name: true } },
+        },
+      });
+      if (!r) return null;
+      const kindLabel = entityType === 'risk' ? 'リスク' : '課題';
+      return {
+        entityLabel: `${kindLabel}「${r.title}」`,
+        projectName: r.project?.name ?? null,
+      };
+    }
+    case 'retrospective': {
+      const retro = await prisma.retrospective.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { title: true, project: { select: { name: true } } },
+      });
+      if (!retro) return null;
+      return {
+        entityLabel: `振り返り「${retro.title}」`,
+        projectName: retro.project?.name ?? null,
+      };
+    }
+    case 'knowledge': {
+      const k = await prisma.knowledge.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { title: true },
+      });
+      if (!k) return null;
+      return {
+        entityLabel: `ナレッジ「${k.title}」`,
+        projectName: null, // Knowledge は tenant-wide (M:N で project を持つ)
+      };
+    }
+    case 'stakeholder': {
+      const s = await prisma.stakeholder.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { name: true, project: { select: { name: true } } },
+      });
+      if (!s) return null;
+      return {
+        entityLabel: `ステークホルダー「${s.name}」`,
+        projectName: s.project?.name ?? null,
+      };
+    }
+    case 'customer': {
+      const c = await prisma.customer.findFirst({
+        where: { id: entityId },
+        select: { name: true },
+      });
+      if (!c) return null;
+      return {
+        entityLabel: `顧客「${c.name}」`,
+        projectName: null,
+      };
+    }
+    case 'memo': {
+      const m = await prisma.memo.findFirst({
+        where: { id: entityId, deletedAt: null },
+        select: { title: true },
+      });
+      if (!m) return null;
+      return {
+        entityLabel: `メモ「${m.title}」`,
+        projectName: null,
+      };
+    }
+  }
 }
 
 /**
