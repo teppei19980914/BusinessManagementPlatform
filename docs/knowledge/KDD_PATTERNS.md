@@ -13032,3 +13032,88 @@ KDD §5.X+102 当初の Phase 1 (`/projects` ソート server-side 化) は **�
   - 7 画面の page.tsx + client.tsx
 - 関連 KDD §5.X+102 (`/projects` 即時修正 + ロードマップ。本 PR で「server-side 化は別 PR 扱い」に方針変更)
 - 関連 feedback `feedback_perf_antipatterns` (client-side filter/sort はデータ量増加で UI 遅延の起点になる)
+
+---
+
+## 5.X+113 **★severity-1 仕様整合性★ ADR 採択後の dead code 残置が「UI 自動切替」と「API plan 強制上書き」を同時並行させ、UI で Expert を選んでも Beginner で processed される矛盾を 2 週間放置 (2026-05-22 / ADR-0016 Revised)**
+
+### 発覚
+
+2026-05-22 動作確認で、Default テナント所属ユーザ (teppei.suyama@pwc.com) が `/signup` から自前テナントを Expert プランで払い出そうとした際、UI で Expert を選択している (= ADR-0016 採択時に追加した「Beginner radio disable + Expert/Pro 自動切替」の挙動) にも関わらず、**`BEGINNER_REQUIRES_UPGRADE` エラーで詰む** 不具合が発覚。
+
+### 根本原因 (確度 100%)
+
+`/api/auth/signup` ハンドラに、ADR-0016 (2026-05-20) 採択前の旧 P-B (2026-05-08) 由来の **plan 強制上書き** が残置されていた:
+
+```ts
+// src/app/api/auth/signup/route.ts (L87-L90 / before fix)
+// P-B (2026-05-08): 公開セルフサインアップは **強制的に Beginner プラン**。
+//   ユーザが入力で plan: 'pro' 等を送ってきても無視。
+onboardingInput.plan = 'beginner';
+```
+
+旧 P-B 方針: 「公開 signup は Beginner 限定、上位プランは super_admin 経由」だった。
+
+ADR-0016 (2026-05-20) で **方針転換**:
+- UI 側に「Beginner radio disable + Expert/Pro 自動切替」を入れた
+- サーバ側コメントには「BEGINNER_REQUIRES_UPGRADE = 防御層 (UI bypass 時のみ到達)」と書いた
+- にも関わらず、`/api/auth/signup` の `onboardingInput.plan = 'beginner';` を **撤去し忘れた**
+
+結果:
+1. UI: `plan: 'expert'` を送信 (新方針通り)
+2. `/api/auth/signup`: `onboardingInput.plan = 'beginner'` で上書き (旧方針残置)
+3. `tenant-onboarding.service`: `if (input.plan === 'beginner')` → 既存 user 判定 → `BEGINNER_REQUIRES_UPGRADE`
+4. UI: 「Beginner プランでの新規払い出しはできません。Expert または Pro プランをご選択ください」(= 矛盾エラー文言)
+
+### 教訓 (パターン化)
+
+**A. 仕様転換時の dead code 残置**
+
+「上書きを撤去する」変更は、**API ハンドラと UI を同じ PR でセットにする**こと。片方だけ撤去すると、逆方向の整合性破壊が生じる。
+
+検出シグナル:
+- ADR 採択直後の動作確認では、表面挙動が「UI 起点では新方針通り、API 起点では旧方針通り」と微妙に分岐するため気付きにくい
+- ADR 文中の「= サーバ側 defense-in-depth (UI bypass 時のみ到達)」というコメントは、本来「サーバが新方針を理解した上での補助防御」を意味するが、上書きを残したまま書くと **サーバが旧方針のままで UI 上書き** という逆転構造になる
+
+**B. 4 コネクタ OR 判定の false positive リスク**
+
+ADR-0016 オリジナルでは「`tenants.billing_contact_email` ∪ `users.email`」× 「`billingContactEmail` ∪ `initialAdminEmail`」の 4 条件 OR で「過去登録履歴あり」を判定していた。これは:
+
+- **abuse 防止効果は低い**: abuse 側は email を変えれば回避可能
+- **false positive 損失は大きい**: 共有 billing email (会計士代行 / 経理代表アドレス) の正当用途を誤 block
+
+検出強度を OR で増やすと、防御限界利益よりも legitimate user の誤 block 損失の方が大きいケースが多い。**3 層化 (識別キー単独 + 状態分岐)** の方がシンプルかつ false positive 抑制が効く。
+
+**C. シンプル設計の力**
+
+ADR-0016 Revised では「1 user = 1 email = 1 owned tenant」の概念で簡潔に表現:
+
+- 層 1: 自前テナント保有 → 公開フォーム完全不可 (admin 問合せ)
+- 層 2: 招待 / Default のみ → Beginner 不可 (Expert/Pro 誘導)
+- 層 3: 完全新規 → 全プラン可
+
+3 値 (signupAllowed / beginnerAvailable / reason) を API レスポンスに乗せることで、UI 説明も実装テストもクリーンに収まる。
+
+### 検証手順 (再発防止用)
+
+```
+仕様転換 (= 旧ロジックの撤去 + 新ロジックの導入) PR で以下を満たすこと:
+
+1. 旧 vs 新の境界条件を表で整理してから着手 (= どこが「これまで」「これから」かを明文化)
+2. ハンドラ層 (API route) と UI 層 を **同一 PR / 同一 commit** で変更
+3. 「サーバ defense-in-depth」を残す場合は、それが「新方針を理解した上での補助検査」になっていることをコメントで明示
+4. 採択直後の動作確認で、UI 起点 / API 起点 / curl 起点 の **3 経路同時テスト** を実施 (= 旧方針残置を発見できる経路を強制)
+5. 「過去/現在を問わず判定」のような OR 連結条件は、false positive の正当ユースケースを 1 件以上挙げてから採用
+```
+
+### 関連 KDD / PR / feedback
+
+- ADR-0016 Revised (2026-05-22): [docs/adr/0016-multi-tenant-user-membership.md#revised-2026-05-22](../adr/0016-multi-tenant-user-membership.md)
+- 修正範囲:
+  - `src/app/api/auth/signup/route.ts` (plan 強制上書き削除 + OWNED_TENANT_EXISTS 追加)
+  - `src/services/tenant-onboarding.service.ts` (3 層判定 + skipEligibilityCheck + createdByUserId セット)
+  - `src/app/api/auth/check-tenant-eligibility/route.ts` (3 値返却)
+  - `src/app/(auth)/signup/page.tsx` (層 1 でフォーム全体 disable + Discord 動線)
+  - `prisma/schema.prisma` + migration `20260527_tenants_created_by_user_id_tracking`
+- 仕様: `docs/business/TENANT_AND_BILLING.md` §34.14.5b
+- 関連 feedback: `feedback_docs_then_impl_conflict` (= 仕様確定 docs と実装の同期失敗パターン)、`feedback_3layer_sync_filter` (= 複数経路で同一フィルタを保つ必要性)

@@ -28,7 +28,7 @@
 - [x] `/reset-password` — e2e/visual/auth-screens.spec.ts (視覚回帰のみ、機能は PR #E 以降)
 - [x] `/login/mfa` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2b + Step 5)
 - [x] `/setup-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 4, general ユーザ招待経路)
-- [ ] `/signup` — skip: P-G (2026-05-08) 公開セルフサインアップ画面。bot 対策 (rate limit + honeypot) は src/app/api/auth/signup/route.ts で対応、フォーム動作 + テナント作成は src/services/tenant-onboarding.service.test.ts (11 件) で担保。E2E は V1.x で検討
+- [x] `/signup` — e2e/specs/14-signup-3tier-eligibility.spec.ts (ADR-0016 Revised / 2026-05-22 / 3 層 eligibility 判定: 層 1 自前テナント保有 → フォーム disable + 問合せ動線 / 層 3 完全新規 → Beginner 活性 / フォーム render smoke)。送信完了まで踏み込まず UI 判定挙動のみを検証 (DB 汚染回避)。サインアップ完了動作は単体テスト src/app/api/auth/signup/route.test.ts (9 件) + src/services/tenant-onboarding.service.test.ts (3 層判定 + SA-2) で担保
 
 ### 公開ページ (未認証アクセス可)
 - (2026-05-21 / feat/legal-pages-lp-integration): 利用規約・プライバシーポリシーは外部 LP
@@ -93,7 +93,7 @@
 - [x] `/api/auth/signout` — e2e/specs/05-teardown-and-residuals.spec.ts (PR #95 / Step 9 UI ログアウト経由)
 - [ ] `/api/auth/explicit-signout` — skip: fix/session-clearance (2026-05-20) で導入。Netlify 固有の Set-Cookie 脱落対策のため E2E (Playwright) では再現不能。単体テスト (src/app/api/auth/explicit-signout/route.test.ts 5 ケース) + Netlify Deploy Preview の実機確認で担保 (KDD §5.X+84)
 - [ ] `/api/auth/lock-status` — skip: PR #E (ロック誘発シナリオは非決定的で後回し)
-- [ ] `/api/auth/check-tenant-eligibility` — skip: ADR-0016 (2026-05-20) で導入。UI ヒント専用 API (= bypass されても tenant-onboarding.service.ts の BEGINNER_REQUIRES_UPGRADE が defense-in-depth で動作)。単体テスト (src/app/api/auth/check-tenant-eligibility/route.test.ts 5 ケース) で担保
+- [ ] `/api/auth/check-tenant-eligibility` — skip: ADR-0016 Revised (2026-05-22) で 3 値返却 (signupAllowed / beginnerAvailable / reason) に拡張。UI ヒント専用 API (= bypass されても tenant-onboarding.service.ts の 3 層判定が defense-in-depth で動作)。単体テスト (src/app/api/auth/check-tenant-eligibility/route.test.ts 6 ケース) で担保。E2E /signup spec が間接的に API レスポンスを検証
 - [ ] `/api/auth/current-tenant-info` — skip: PR #420 (2026-05-25) login 画面の localStorage 履歴用に slug + name を post-auth 返却 (列挙不可、認証必須)。tenant-history.ts (src/lib/tenant-history.test.ts 15 ケース) と組み合わせ UI 経由で挙動確認。専用 E2E は将来検討
 - [x] `/api/auth/mfa/setup` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2)
 - [x] `/api/auth/mfa/enable` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2)
@@ -187,7 +187,7 @@
 - [ ] `/api/admin/super/tenants/[id]` (DELETE) — skip: P-A (2026-05-08) super_admin 限定テナント論理削除。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / ALREADY_DELETED + カスケード (10 業務エンティティ + 監査ログ) は src/services/super-admin.service.test.ts (deleteTenant 6 テスト) で担保。E2E は V1.x で検討
 - [ ] `/api/admin/super/tenants/[id]/suspend` (POST) — skip: PR #372 (2026-05-14) super_admin 限定テナント read-only 強制移行。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / TENANT_DELETED / ALREADY_SUSPENDED / INVALID_REASON + tokenVersion increment による即時セッション失効は src/services/super-admin.service.test.ts (suspendTenant 7 テスト) + src/app/api/admin/super/tenants/[id]/suspend/route.test.ts (9 テスト) で担保。middleware 遮断は src/lib/auth.config.test.ts (TENANT_SUSPENDED 6 テスト) で担保。E2E は V1.x で検討 (= サブスクリプション中断の決定論性確保が難しい)
 - [ ] `/api/admin/super/tenants/[id]/resume` (POST) — skip: PR #372 (2026-05-14) super_admin 限定テナント read-only 解除。TENANT_NOT_FOUND / TENANT_DELETED / NOT_SUSPENDED + suspendedBy 監査保持は src/services/super-admin.service.test.ts (resumeTenant 4 テスト) + src/app/api/admin/super/tenants/[id]/resume/route.test.ts (5 テスト) で担保
-- [ ] `/api/auth/signup` (POST) — skip: P-G (2026-05-08) 公開セルフサインアップ。IP-based rate limit (5/hour) + honeypot (hp_url) + サービステスト (11 件) で担保。E2E は V1.x で検討
+- [ ] `/api/auth/signup` (POST) — skip: 公開セルフサインアップ。IP-based rate limit (5/hour) + honeypot (hp_url) + ルート単体テスト src/app/api/auth/signup/route.test.ts (9 件: plan 上書き削除検証 + OWNED_TENANT_EXISTS / BEGINNER_REQUIRES_UPGRADE / SLUG_CONFLICT / EMAIL_SEND_FAILED ハンドリング) + サービステスト src/services/tenant-onboarding.service.test.ts (3 層判定 + SA-2 + createdByUserId 紐付け) で担保。完全送信動作は DB 汚染回避のため E2E 対象外、UI 挙動は 14-signup-3tier-eligibility.spec.ts で部分カバー
 - [ ] `/api/tenants/me/billing` (PATCH) — skip: P-G (2026-05-08) テナント管理者の請求先情報編集。zod バリデーション + サービステスト (tenant-self.service.test.ts) で担保
 - [ ] `/api/tenants/me/billing/stripe/setup` (POST) — skip: PR-S3 (2026-05-14) クレジットカード払い切替の Stripe Checkout Session 作成 API。認可 (admin → 通過、general → 403) + feature flag (STRIPE_ENABLED) + 既に credit_card で 409 + Stripe API エラー変換 は src/app/api/tenants/me/billing/stripe/setup/route.test.ts (10 ユニット) で担保。Stripe Test Mode 経由の E2E は v2 で検討
 - [ ] `/api/tenants/me/billing/stripe/setup/complete` (GET) — skip: PR-S3 (2026-05-14) Stripe Checkout 完了後の Subscription 作成 + paymentMethod 切替ハンドラ。session_id 検証 / オープンリダイレクト対策 / failure reason マッピング は src/app/api/tenants/me/billing/stripe/setup/complete/route.test.ts (12 ユニット) で担保

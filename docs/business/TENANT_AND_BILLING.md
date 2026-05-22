@@ -450,6 +450,34 @@ Vercel Cron `/api/cron/tenant-monthly-reset` が毎月 1 日 UTC 00:00（JST 09:
 
 UI 上は「予算 ¥10,000 のうち、今月 ¥3,200 を使用 (32%)」のような可視化を行い、ユーザが現在地と予算をいつでも確認できるようにする (詳細は §34.14.7 で詳述)。
 
+#### 34.14.5b テナント払い出し時の 3 層 eligibility 判定 (ADR-0016 Revised / 2026-05-22)
+
+公開セルフサインアップ (`/signup`) におけるテナント新規払い出しは、入力された **初期管理者メール (`initialAdminEmail`)** をキーとして以下の 3 層で判定される。判定キーは `initialAdminEmail` の 1 つのみで、`billingContactEmail` は付随情報扱いで対象外。
+
+| 層 | 判定条件 | 払い出し | エラー / UX |
+|---|---|---|---|
+| **層 1: 自前テナント保有** | `users.email = initialAdminEmail` を持つ user が、いずれかの `tenants.created_by_user_id` に紐付く (論理削除/物理削除問わず) | ❌ **公開フォーム完全不可** | API: `OWNED_TENANT_EXISTS` (HTTP 409) / UI: フォーム全体 disable + 「システム管理者へお問い合わせください」+ Discord 動線 |
+| **層 2: 招待 / Default 所属のみ** | `users.email = initialAdminEmail` あり、ただし層 1 ではない (= 招待された member、Default テナント所属など) | ✅ **Expert / Pro のみ** | API (`plan='beginner'` 時): `BEGINNER_REQUIRES_UPGRADE` (HTTP 409) / UI: Beginner radio disable + Expert/Pro 誘導注釈、Beginner 選択中なら自動で Expert に切替 |
+| **層 3: 完全な新規** | `users.email = initialAdminEmail` が一切なし | ✅ **Beginner / Expert / Pro 全プラン可** | 制約なし |
+
+**設計意図**:
+
+- **abuse 防止**: 層 1 はテナント管理者の自己問合せ経由 (= super_admin 経路) を必須化することで、同一個人が「自前テナント」を雪だるま式に増やすことを阻止。複数の自前テナント保有自体は禁じないが、**ユーザ自身による公開フォームでの追加払い出しを禁止** し、必ず admin の手動審査を通すモデル。
+- **false positive 抑止**: 旧 4 条件 OR 判定 (ADR-0016 オリジナル / 2026-05-20) は `billingContactEmail` の重複も Beginner 不可条件にしていたため、会計士代行 / 共有 billing email を使う正当用途で false positive が発生していた。本 Revised では `initialAdminEmail` 単一キーに絞ることで実害なく緩和。
+- **defense-in-depth**: UI ヒントは `/api/auth/check-tenant-eligibility` で事前に 3 値判定を返し、サーバ最終判定は `tenant-onboarding.service.ts` の `OWNED_TENANT_EXISTS` / `BEGINNER_REQUIRES_UPGRADE` で同等の検査を行う (UI bypass されても block)。
+
+**super_admin による手動払い出し** (`/admin/super/tenants/new`) は **SA-2** ルールにより 3 層判定を **完全スキップ** する (= `skipEligibilityCheck=true`)。これは「層 1 該当ユーザの問合せに応じて、admin 判断で例外発行する経路」を運用上の正規ルートとして提供するため。1 ユーザが super_admin 経由で複数の自前テナントを保有することは許容するが、その後ユーザ自身が公開フォームで追加するパスは依然として閉じられる。
+
+**テナント削除** は層判定の制約外 (= 自前テナント保有ユーザでも自分のテナントを削除可能)。削除後の再払い出しは依然 admin 問合せ必須 (層 1 維持)。
+
+**実装ファイル**:
+
+- 判定ロジック: [src/services/tenant-onboarding.service.ts](../../src/services/tenant-onboarding.service.ts) (3 層判定 + `skipEligibilityCheck`)
+- UI ヒント API: [src/app/api/auth/check-tenant-eligibility/route.ts](../../src/app/api/auth/check-tenant-eligibility/route.ts) (3 値返却: `signupAllowed` / `beginnerAvailable` / `reason`)
+- サインアップ UI: [src/app/(auth)/signup/page.tsx](../../src/app/(auth)/signup/page.tsx) (層 1 でフォーム全体 disable + Discord 動線)
+- DB schema: [prisma/schema.prisma](../../prisma/schema.prisma) `Tenant.createdByUserId` (migration: `20260527_tenants_created_by_user_id_tracking`)
+- ADR: [ADR-0016 Revised section](../adr/0016-multi-tenant-user-membership.md#revised-2026-05-22)
+
 #### 34.14.6 プラン変更フローと制御ロジック
 
 テナント管理者は自テナントのシステム管理者設定画面からプランを変更できる。変更フローは方向によって異なる挙動とする。
