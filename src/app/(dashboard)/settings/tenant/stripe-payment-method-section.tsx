@@ -261,8 +261,11 @@ export function StripePaymentMethodSection({
         {/* PR #425 (2026-05-22): Stripe 登録カード情報の可視化。
             「画面に出ているカード = 毎月引落されるカード」の一貫性を担保するため、
             Stripe API から取得した値 (brand/last4/exp) を表示する。
-            cardSummary=null は「カード未登録」or「Stripe API 取得失敗」or「Stripe disabled」。 */}
-        {cardSummary && (
+            cardSummary=null は「カード未登録」or「Stripe API 取得失敗」or「Stripe disabled」。
+            ★severity-1 UX★ 銀行振込モード (= state==='invoice_only') のときは Stripe 側に
+            カード履歴が残っていても表示しない (= 「画面のカード = 請求カード」一貫性の維持)。
+            銀行振込時にカード情報を表示すると「カードに請求される?」とユーザが誤解する。 */}
+        {cardSummary && state !== 'invoice_only' && (
           <div
             className="rounded border border-info/40 bg-info/5 p-3"
             data-testid="stripe-card-summary"
