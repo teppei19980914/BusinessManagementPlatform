@@ -68,7 +68,15 @@ async function main() {
     });
 
     if (existing) {
-      console.log(`スキップ: ${email} は既に登録済みです (初期管理者作成は飛ばします)`);
+      // ADR-0016 Revised (2026-05-22): 冪等再実行時も DEFAULT_TENANT.createdByUserId を担保。
+      //   migration backfill が 'admin' / 'super_admin' を対象とするが、過去の seed 実行時点で
+      //   初期 admin が作られていても backfill 走行前のスナップショットでは紐付け漏れがありうる。
+      //   既存 initial admin を「自前テナント保有」として明示的に紐付け、層 1 判定の integrity を担保。
+      await prisma.tenant.update({
+        where: { id: DEFAULT_TENANT_ID },
+        data: { createdByUserId: existing.id },
+      });
+      console.log(`スキップ: ${email} は既に登録済みです (createdByUserId を再紐付け済)`);
     } else {
       // パスワードハッシュ化
       const passwordHash = await hash(password, BCRYPT_COST);
@@ -98,6 +106,15 @@ async function main() {
             ),
           },
         },
+      });
+
+      // ADR-0016 Revised (2026-05-22): DEFAULT_TENANT の created_by_user_id を初期 admin に紐付け。
+      //   新規環境 seed では migration backfill 後に user.create するため、backfill 時点では NULL の
+      //   ままだった可能性。ここで明示的に上書きすることで「初期 admin の email で公開 /signup を
+      //   試した際の層 1 判定」が正しく block するようになる。
+      await prisma.tenant.update({
+        where: { id: DEFAULT_TENANT_ID },
+        data: { createdByUserId: user.id },
       });
 
       console.log('');

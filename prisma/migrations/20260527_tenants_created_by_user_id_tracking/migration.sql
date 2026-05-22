@@ -34,14 +34,18 @@ ALTER TABLE "tenants"
   ADD COLUMN "created_by_user_id" UUID;
 
 -- Step 2: backfill — 各テナントの最古 admin / super_admin user を created_by_user_id にセット
---   注: 管理テナント (MANAGEMENT) は systemRole='super_admin' のため、
---       'admin' だけだと NULL のまま残る。'super_admin' を含めることで管理テナントも対象化。
+--   注 1: 管理テナント (MANAGEMENT) は systemRole='super_admin' のため、
+--         'admin' だけだと NULL のまま残る。'super_admin' を含めることで管理テナントも対象化。
+--   注 2: deleted_at IS NULL を必須にする。削除済みユーザを「初期 admin」と推定してしまうと、
+--         層 1 判定の参照先が削除済 user.id になり「users.email = X」クエリでヒットしない →
+--         実質的に「自前テナント保有」が誤って解除される silent fail に直結する。
 UPDATE "tenants" t
 SET "created_by_user_id" = (
   SELECT u.id
   FROM "users" u
   WHERE u.tenant_id = t.id
     AND u.system_role IN ('admin', 'super_admin')
+    AND u.deleted_at IS NULL
   ORDER BY u.created_at ASC
   LIMIT 1
 )
