@@ -140,32 +140,33 @@ export function StripePaymentMethodSection({
   const [submitting, setSubmitting] = useState(false);
   const state = deriveStripeState(info);
   const buttonActive = state !== 'invoice_only';
-  // 押下時の動作: Subscription 未作成 → setup、作成済 → portal
-  const action: 'setup' | 'portal' | 'disabled' =
-    state === 'invoice_only'
-      ? 'disabled'
-      : state === 'credit_card_unregistered'
-        ? 'setup'
-        : 'portal';
 
   /**
-   * 「クレジットカード情報更新」ボタンのハンドラ。
-   * state に応じて Stripe Checkout setup or Customer Portal に分岐。
+   * PR #425 (2026-05-22) ★severity-1 一貫性★: 「クレジットカード情報更新」ボタンのハンドラ。
+   *
+   * 旧: state によって Stripe Checkout setup (新規) or Customer Portal (= デフォルト変更) に分岐
+   * 新: **常に Stripe Checkout setup に統一** (= ユーザの直感「カード変更 = カード入力画面」に合致)
+   *
+   * 理由: Customer Portal で「デフォルト変更」してもStripe 仕様上 既存 Subscription の
+   *      `default_payment_method` は更新されない (= ユーザが Portal で Mastercard に変えても
+   *      引落は Visa から、というズレ事故が発生)。
+   *      本ハンドラは常に Stripe Checkout で新カードを入力させ、completeStripeSetup の
+   *      「カード変更モード」 (= 既存 Subscription を維持しつつ default_payment_method を update)
+   *      に統一する。これで「画面 = Customer Portal デフォルト = 実引落カード」3 点完全一致。
    */
   const handleClick = async () => {
-    if (action === 'disabled') return;
-    if (action === 'setup') {
-      const ok = window.confirm(
-        '新しいクレジットカードを登録しますか?\n\n' +
+    if (state === 'invoice_only') return;
+    const confirmMsg =
+      state === 'credit_card_unregistered'
+        ? '新しいクレジットカードを登録しますか?\n\n' +
           '次の画面 (Stripe Checkout) でカード情報を入力してください。\n' +
-          '検証成功時は自動的にカード払いの引落準備が完了します。\n' +
-          '失敗 / キャンセル時は支払い方法はクレジットカード設定のままです (カード未登録)。',
-      );
-      if (!ok) return;
-      await callSetup();
-    } else {
-      await callPortal();
-    }
+          '検証成功時は自動的にカード払いの引落準備が完了します。'
+        : 'クレジットカード情報を変更しますか?\n\n' +
+          '次の画面 (Stripe Checkout) で新しいカード情報を入力してください。\n' +
+          '完了時、次回以降の月次引落は新しいカードから行われます (= サブスクリプションは維持されます)。';
+    const ok = window.confirm(confirmMsg);
+    if (!ok) return;
+    await callSetup();
     await onRefresh();
   };
 
@@ -180,7 +181,7 @@ export function StripePaymentMethodSection({
       });
       const json = await res.json();
       if (!res.ok) {
-        showError(json?.error?.message ?? 'カード登録の開始に失敗しました');
+        showError(json?.error?.message ?? 'カード登録画面の起動に失敗しました');
         return;
       }
       if (json.data?.checkoutUrl == null) {
@@ -188,32 +189,6 @@ export function StripePaymentMethodSection({
         return;
       }
       window.location.href = json.data.checkoutUrl;
-    } catch {
-      showError('通信エラーが発生しました');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const callPortal = async () => {
-    setSubmitting(true);
-    try {
-      const returnUrl = `${window.location.origin}/settings/tenant`;
-      const res = await fetch('/api/tenants/me/billing/stripe/portal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ returnUrl }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        showError(json?.error?.message ?? 'ポータル URL の取得に失敗しました');
-        return;
-      }
-      if (json.data?.portalUrl == null) {
-        showError('Stripe ポータル URL の取得に失敗しました');
-        return;
-      }
-      window.open(json.data.portalUrl, '_blank', 'noopener,noreferrer');
     } catch {
       showError('通信エラーが発生しました');
     } finally {
@@ -318,14 +293,24 @@ export function StripePaymentMethodSection({
           </div>
         )}
 
-        <Button
-          type="button"
-          onClick={handleClick}
-          disabled={!buttonActive || !stripeEnabled || submitting}
-          aria-label="クレジットカード情報更新"
-        >
-          {submitting ? '処理中...' : '💳 クレジットカード情報更新'}
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            onClick={handleClick}
+            disabled={!buttonActive || !stripeEnabled || submitting}
+            aria-label="クレジットカード情報更新"
+          >
+            {submitting ? '処理中...' : '💳 クレジットカード情報更新'}
+          </Button>
+          {/* PR #425 (2026-05-22): 請求履歴閲覧リンク (既存の /settings/tenant/billing への遷移)。
+              Customer Portal を撤去したため、請求履歴閲覧の導線をここに集約する。 */}
+          <a
+            href="/settings/tenant/billing"
+            className="text-sm text-info underline"
+          >
+            📋 請求履歴を見る
+          </a>
+        </div>
 
         {!stripeEnabled && (
           <p className="text-xs text-muted-foreground">

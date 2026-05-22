@@ -31,7 +31,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
-import { prisma } from '@/lib/db';
 import { isStripeEnabled } from '@/lib/stripe';
 import { createCheckoutSessionForCardSetup } from '@/services/stripe-billing.service';
 
@@ -83,30 +82,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // PR #425 (2026-05-22): ガード基準を paymentMethod → stripeSubscriptionId に変更。
-  //   新仕様では「請求先情報フォームで paymentMethod を credit_card に切替 →
-  //   別途『クレジットカード情報更新』ボタンで本 endpoint を呼ぶ」のが正常フローのため、
-  //   paymentMethod=credit_card の状態で本 endpoint に来ること自体は許容する。
-  //   ただし stripeSubscriptionId が既に存在する場合は Customer Portal で更新すべきなので reject
-  //   (= UI バイパスの誤呼出 / 二重 Subscription 作成防止)。
-  //   ★severity-1★ この判定を paymentMethod ベースに戻すと、carad 未登録の credit_card 払い
-  //   テナントが Stripe 自動引落の前提を満たさずに運用され、請求漏れの直接原因になる。
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: user.tenantId },
-    select: { stripeSubscriptionId: true },
-  });
-  if (tenant?.stripeSubscriptionId != null) {
-    return NextResponse.json(
-      {
-        error: {
-          code: 'ALREADY_HAS_SUBSCRIPTION',
-          message:
-            'カードは既に登録されています。カード情報の変更は「Stripe ポータルで管理」から行ってください。',
-        },
-      },
-      { status: 409 },
-    );
-  }
+  // PR #425 (2026-05-22) 再改修: ガードを撤去 (= カード変更モード対応)。
+  //
+  // 旧ガード (= stripeSubscriptionId 既存で 409 ALREADY_HAS_SUBSCRIPTION) は、Customer Portal で
+  // カード管理する前提だったが、Stripe 仕様で「Customer Portal のデフォルト変更は既存
+  // Subscription の引落カードに反映されない」事故が発生した (= ユーザが Portal で変えたつもりが
+  // 古いカードに引落)。
+  //
+  // 新動線: 「クレジットカード情報更新」ボタン → 本 endpoint → Stripe Checkout (新カード入力) →
+  // completeStripeSetup の「カード変更モード」分岐で Subscription.default_payment_method を直接 update。
+  // この経路を許容するため、stripeSubscriptionId 既存でも setup は許可する。
+  //
+  // completeStripeSetup 側で:
+  //   - Subscription 未作成 (= TC-1 初回 / TC-7 後の再設定) → 新規 Subscription 作成
+  //   - Subscription 既存 (= カード変更モード) → default_payment_method update のみ (Subscription 維持)
+  // に分岐するため、UI バイパス / 二重 Subscription 作成のリスクは completeStripeSetup 側で吸収する。
 
   // Stripe Checkout Session 作成 (= Customer も同時に自動作成)
   // 詳細設計 §A-1 Phase 1-2: Customer は事前作成して DB に保存、Checkout は setup mode で session のみ

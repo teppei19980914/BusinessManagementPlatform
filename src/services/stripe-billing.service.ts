@@ -338,11 +338,13 @@ export async function completeStripeSetup(
 
   // session.customer をテナントの stripeCustomerId と照合 (= 越境防止)
   // PR-V7 横展開 (2026-05-19): completeStripeSetup で削除済テナントの setup 完了処理を防ぐ
+  // PR #425 (2026-05-22): stripeSubscriptionId も取得 (= 「カード変更モード」分岐判定に使用)
   const tenant = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
     select: {
       paymentMethod: true,
       stripeCustomerId: true,
+      stripeSubscriptionId: true,
       storageAddonPlan: true,
       // PR-V7a (2026-05-19): 二重課金防止のため、テナント TZ で「現在の年月」を判定
       timezone: true,
@@ -364,18 +366,6 @@ export async function completeStripeSetup(
       code: 'invalid_request',
       userMessage: 'カード登録セッションがテナントと一致しません',
       detail: 'session_customer_mismatch',
-    };
-  }
-
-  // 既に credit_card に切替済なら冪等成功 (= setup 重複実行の安全側)
-  if (tenant.paymentMethod === 'credit_card') {
-    return {
-      ok: true,
-      value: {
-        subscriptionId: 'already_set_up',
-        customerId: sessionCustomerId,
-        paymentMethodId: 'already_set_up',
-      },
     };
   }
 
@@ -402,6 +392,64 @@ export async function completeStripeSetup(
       code: 'invalid_request',
       userMessage: 'PaymentMethod が取得できませんでした',
       detail: 'payment_method_missing',
+    };
+  }
+
+  // PR #425 (2026-05-22) ★severity-1 一貫性★: 「カード変更モード」分岐。
+  //
+  // 既に Subscription が active な状態でユーザが「クレジットカード情報更新」ボタンを
+  // 押した場合 (= カード差替え)、Subscription を再作成せず default_payment_method のみ
+  // update する。これにより:
+  //   - Subscription 維持 (= 当月以降の請求すべて新カードに、二重請求なし)
+  //   - 3 点完全一致 (= アプリ画面 = Customer Portal デフォルト = 実引落カード)
+  //   - ユーザの直感「カード変更したら次の引落も新カードに」を満たす
+  //
+  // 注意: Customer Portal の「デフォルト変更」では Subscription.default_payment_method は
+  //       更新されないため、ユーザが「Portal で変えたつもりが古いカードに引落」事故を防ぐ。
+  //       本サービスでは Customer Portal リンクを削除し、本ボタン経由でのみカード変更を許す。
+  if (tenant.paymentMethod === 'credit_card' && tenant.stripeSubscriptionId != null) {
+    // Step A: PaymentMethod が Customer に未 attach なら attach する (= 冪等的にエラー無視)
+    const attachResult = await withStripeError(() =>
+      stripe.paymentMethods.attach(paymentMethodId, { customer: sessionCustomerId }),
+    );
+    // 既に attach 済 (invalid_request) は無視。それ以外のエラーは本処理は続行可能なので継続。
+    if (!attachResult.ok && attachResult.code !== 'invalid_request') {
+      // eslint-disable-next-line no-console
+      console.warn('[completeStripeSetup card-change-mode] paymentMethods.attach failed', attachResult.code);
+    }
+
+    // Step B: Subscription の default_payment_method を新カードに update
+    const updateSubResult = await withStripeError(() =>
+      stripe.subscriptions.update(tenant.stripeSubscriptionId!, {
+        default_payment_method: paymentMethodId,
+      }),
+    );
+    if (!updateSubResult.ok) return updateSubResult;
+
+    // Step C: Customer.invoice_settings.default_payment_method も同期 (KDD §5.X+108 同様)
+    await withStripeError(() =>
+      stripe.customers.update(sessionCustomerId, {
+        invoice_settings: { default_payment_method: paymentMethodId },
+      }),
+    );
+
+    // Step D: DB の stripeDefaultPaymentMethodId + cardVerificationStatus 更新
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        stripeDefaultPaymentMethodId: paymentMethodId,
+        cardLastVerifiedAt: new Date(),
+        cardVerificationStatus: 'valid',
+      },
+    });
+
+    return {
+      ok: true,
+      value: {
+        subscriptionId: tenant.stripeSubscriptionId,
+        customerId: sessionCustomerId,
+        paymentMethodId,
+      },
     };
   }
 

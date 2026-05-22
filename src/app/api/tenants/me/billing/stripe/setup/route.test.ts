@@ -123,32 +123,31 @@ describe('バリデーション', () => {
   });
 });
 
-describe('既に Stripe Subscription 作成済 (PR #425)', () => {
-  // PR #425 (2026-05-22): ガード基準を paymentMethod → stripeSubscriptionId に変更。
-  //   paymentMethod=credit_card + Subscription 未作成は「新規 setup の正常フロー」のため許容、
-  //   Subscription 作成済は Customer Portal 経由で更新すべきなので 409 で reject。
-  //   ★severity-1★ paymentMethod ベースに戻すと credit_card 払いなのに setup が走らず請求漏れ発生。
+describe('Subscription 既存テナント (PR #425 再改修: カード変更モード対応)', () => {
+  // PR #425 (2026-05-22) 再改修: 旧 ALREADY_HAS_SUBSCRIPTION 409 ガードを撤去。
+  //   理由: Customer Portal でカード変更しても Subscription.default_payment_method は更新されない
+  //         (Stripe 仕様)。本サービスでは「クレジットカード情報更新」ボタンから常に Stripe Checkout
+  //         に遷移し、completeStripeSetup の「カード変更モード」で Subscription を維持しつつ
+  //         default_payment_method のみ update する設計に変更。
+  //   そのため stripeSubscriptionId 既存でも setup は許可する。
+  //   分岐 (新規作成 vs カード変更モード) は completeStripeSetup 側で吸収。
   beforeEach(() => {
     vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
   });
 
-  it('stripeSubscriptionId 既存 → 409 ALREADY_HAS_SUBSCRIPTION', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
-      stripeSubscriptionId: 'sub_existing_test',
-    } as never);
+  it('stripeSubscriptionId 既存でも setup を許可 (= カード変更モード経路)', async () => {
+    vi.mocked(createCheckoutSessionForCardSetup).mockResolvedValueOnce({
+      ok: true,
+      value: { id: 'cs_test', url: 'https://checkout.stripe.com/c/pay/cs_test' } as never,
+    });
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body.error.code).toBe('ALREADY_HAS_SUBSCRIPTION');
-    expect(createCheckoutSessionForCardSetup).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(createCheckoutSessionForCardSetup).toHaveBeenCalled();
   });
 
-  it('stripeSubscriptionId=null (paymentMethod 問わず) → setup 正常実行', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
-      stripeSubscriptionId: null,
-    } as never);
+  it('stripeSubscriptionId=null でも setup 正常実行 (= 新規 setup 経路)', async () => {
     vi.mocked(createCheckoutSessionForCardSetup).mockResolvedValueOnce({
       ok: true,
       value: { id: 'cs_test', url: 'https://checkout.stripe.com/c/pay/cs_test' } as never,
@@ -164,10 +163,6 @@ describe('既に Stripe Subscription 作成済 (PR #425)', () => {
 describe('正常系', () => {
   beforeEach(() => {
     vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
-    // PR #425: ガード判定が stripeSubscriptionId に変更されたため mock も更新
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
-      stripeSubscriptionId: null,
-    } as never);
   });
 
   it('成功時 200 + checkoutUrl を返す', async () => {

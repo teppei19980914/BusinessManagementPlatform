@@ -12687,3 +12687,97 @@ Customer デフォルトは「ズレるだけ」で課金事故にはならな�
 6. **「3 点完全一致」を invariant に追加** — アプリ画面 = Customer Portal = 実引落カードの 3 点
    が常に一致するよう、Subscription 作成時に Customer デフォルトも同期する。これにより
    「画面と Customer Portal で別の表示」というユーザの不安を構造的に排除
+
+---
+
+## 5.X+109 **★severity-1 一貫性★ Stripe Customer Portal でデフォルト変更しても既存 Subscription の引落カードは変わらない仕様への根本対策 — カード変更動線を Portal から Stripe Checkout 直 update に統一 (2026-05-22 / PR #425 TC-3 反復検証中)**
+
+### 発生事象
+
+KDD §5.X+108 で「Subscription 作成時に Customer.invoice_settings.default_payment_method を同期」した後も、**ユーザが Customer Portal で別カードをデフォルトに変更** すると以下のズレ事故が発生:
+
+- ✅ Customer.invoice_settings.default_payment_method = ユーザが Portal で選んだカード (= Mastercard)
+- ❌ **Subscription.default_payment_method = 旧カードのまま (= Visa)**
+- → アプリ画面は Subscription を優先表示 (= KDD §5.X+108) のため Visa 表示
+- → ユーザ視点: 「Portal でデフォルトを Mastercard にしたのに、画面が Visa を表示」「次の引落も Visa から発生」
+
+ユーザは **「Portal でデフォルト変更 = 実引落カード変更」と認識** しているが、Stripe 仕様では「Customer デフォルト = 新規 Subscription の初期値」「Subscription デフォルト = その Subscription の引落カード」と独立しており、Portal の操作では既存 Subscription は更新されない。
+
+### 根本原因
+
+Stripe 仕様の不一致:
+- Customer Portal の UI: 「デフォルトに設定」ボタンで Customer.invoice_settings.default_payment_method のみ更新
+- 既存 Subscription の引落カード変更: API `stripe.subscriptions.update({ default_payment_method })` を別途呼ぶ必要あり
+- これは Portal UI には存在しない (= 開発者が API で実装する必要あり)
+
+本サービスでは旧設計で「クレジットカード情報更新」ボタン → Customer Portal を新タブで開く動線にしていた。ユーザは Portal でカード追加 + デフォルト設定するが、Subscription への反映が起こらず混乱事故が発生。
+
+### 解決策
+
+**「クレジットカード情報更新」ボタンの動線を Customer Portal から Stripe Checkout (新カード入力) に統一** + completeStripeSetup に「カード変更モード」分岐追加:
+
+```ts
+// completeStripeSetup の Step 2.5 (新規追加): カード変更モード分岐
+if (tenant.paymentMethod === 'credit_card' && tenant.stripeSubscriptionId != null) {
+  // Step A: PaymentMethod を Customer に attach (冪等)
+  await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
+  // Step B: 既存 Subscription の default_payment_method を新カードに update
+  await stripe.subscriptions.update(subId, { default_payment_method: paymentMethodId });
+  // Step C: Customer.invoice_settings.default_payment_method も同期 (3 点完全一致のため)
+  await stripe.customers.update(customerId, {
+    invoice_settings: { default_payment_method: paymentMethodId },
+  });
+  // Step D: DB 更新
+  await prisma.tenant.update({ where: { id: tenantId }, data: { stripeDefaultPaymentMethodId, cardLastVerifiedAt, cardVerificationStatus: 'valid' } });
+  // Subscription 維持 (= 当月以降の請求すべて新カードに、二重請求なし)
+  return { ok: true, value: { subscriptionId, customerId, paymentMethodId } };
+}
+// それ以外 (= Subscription 未作成) は従来通り新規 Subscription 作成
+```
+
+UI 側変更:
+- 「クレジットカード情報更新」ボタンは常に Stripe Checkout (setup mode) を起動
+- Customer Portal リンクは撤去 (= MVP では不要、請求履歴は別途 `/settings/tenant/billing` で表示)
+- 「請求履歴を見る」リンクを Customer Portal リンクの代わりに配置
+
+POST /setup の旧 ALREADY_HAS_SUBSCRIPTION 409 ガード (= KDD §5.X+100) は撤去 (= カード変更モード経路を許容するため)。
+
+### 教訓
+
+1. **★最重要★ 「Customer Portal でカード管理」を前提とした設計は Stripe 仕様の罠を踏みやすい** — Portal の「デフォルト変更」「カード追加」操作は Customer レベルのみで、既存 Subscription の引落カードは別途 API で更新する必要がある。アプリ側で全て制御する設計の方が UX 一貫性を保てる
+2. **「ユーザの直感」を最優先する設計判断** — 技術的に正しい (= 画面 = Subscription = 実引落) 状態でも、ユーザの認識「Portal で変更したら引落も変わる」とズレるなら、UX 問題として修正する必要がある。Portal 経由のカード変更ではなく、アプリ画面のボタン経由でのみカード変更を許す設計に統一する
+3. **「カード変更モード」と「新規 setup モード」を 1 つの handler に統合する** — completeStripeSetup の Step 2.5 として「Subscription 既存ならカード変更、未作成なら新規作成」に分岐することで、UI 側は単一ボタン (= 「クレジットカード情報更新」) で両方の動線を吸収できる
+4. **PR #100 で導入した「ALREADY_HAS_SUBSCRIPTION 409 ガード」のような防御策は将来の設計変更時に撤去要否を必ず再評価する** — 当時は Customer Portal でカード管理する前提で必要だったが、設計変更でカード変更動線が変わったら不要になる。KDD §5.X+100 / §5.X+109 のクロスリンクで撤去履歴を追える
+
+### 検証手順 (再発防止用)
+
+```
+事前: TC-1 完了済 (Visa 4242 で初回登録、Subscription active)
+
+シナリオ A: カード変更モード (新動線)
+1. /settings/tenant の「クレジットカード情報更新」ボタンを押下
+2. 確認ダイアログ「クレジットカード情報を変更しますか?」→ OK
+3. Stripe Checkout に遷移 (= 新カード入力画面)
+4. 別カード (例 Mastercard 5555 5555 5555 4444) で「保存」
+5. 戻り URL: /settings/tenant?stripe_setup=success ★
+6. アプリ画面「請求に使用されるカード」: Mastercard •••• 4444 ★
+7. Customer Portal 「決済手段 / デフォルト」: Mastercard •••• 4444 ★ (= 3 点完全一致)
+8. DB 確認: stripeSubscriptionId は同じ ID 維持 (= 再作成されていない) ★
+9. DB 確認: stripeDefaultPaymentMethodId は新 Mastercard pm_* ★
+
+シナリオ B: 「請求履歴を見る」リンク
+10. 「クレジットカード情報更新」ボタン横の「📋 請求履歴を見る」リンクをクリック
+11. /settings/tenant/billing に遷移 ★ (= 直近 6 ヶ月の請求履歴一覧)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-3 反復検証中、Customer Portal でカード変更しても画面 / 引落が変わらない混乱を検出
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts` (completeStripeSetup に Step 2.5 カード変更モード分岐追加)
+  - `src/app/api/tenants/me/billing/stripe/setup/route.ts` (ALREADY_HAS_SUBSCRIPTION 409 ガード撤去)
+  - `src/app/(dashboard)/settings/tenant/stripe-payment-method-section.tsx` (Portal 経路撤去、Checkout 統一、請求履歴リンク追加)
+- 関連 KDD:
+  - §5.X+100 (旧 ALREADY_HAS_SUBSCRIPTION ガード導入、本 KDD で撤去)
+  - §5.X+108 (Customer / Subscription default 同期、本 KDD はその完全版)
+- 関連 feedback `feedback_billing_invariant` (★最重要★)
