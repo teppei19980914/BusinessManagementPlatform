@@ -12,6 +12,12 @@
 > - 「画面のカード = 請求カード」一貫性原則を invariant として明文化 (KDD §5.X+103/§5.X+108)
 >
 > 旧 §2 の 3 状態モデルは §11 (改訂履歴) に履歴として残置。
+>
+> **2026-05-22 (PR #425 / KDD §5.X+109) 追加改修**: **Customer Portal 経路を撤去**。
+> - Stripe 仕様で「Customer Portal の『デフォルトに設定』では既存 Subscription の引落カードが更新されない」事故を受け、本 UI から `POST /api/.../stripe/portal` 呼出を撤去
+> - 「💳 クレジットカード情報更新」ボタンは **常に Stripe Checkout (新カード入力)** に遷移し、`completeStripeSetup` の「カード変更モード」で既存 Subscription の `default_payment_method` を直接 update する設計に変更
+> - 「📋 請求履歴を見る」リンクを追加 (= `/settings/tenant/billing` への遷移、旧 Customer Portal の請求履歴閲覧用途を代替)
+> - 本ドキュメントの本文中に残る「🔧 Stripe ポータルで管理」ボタン記述 (§2.5 ボタン表 / §3 D 状態モックアップ等) は **撤去済 (= UI に存在しない)**。本文の全網羅書き換えは後続 doc 改修 PR で実施。
 
 ---
 

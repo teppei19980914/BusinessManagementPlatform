@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>たすきば セキュリティレポート 2026-05-21</title>
+<title>たすきば セキュリティレポート 2026-05-22</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0a0c10;color:#e2e8f0;font-family:'Segoe UI',sans-serif;font-size:14px;line-height:1.7}
@@ -40,25 +40,39 @@ footer{padding:16px 40px;border-top:1px solid #1e2330;font-family:monospace;font
 <div class="header">
   <div class="header-tag">// SECURITY AUDIT REPORT</div>
   <h1>たすきば セキュリティチェックレポート</h1>
-  <div class="header-meta">生成日時: <span>2026/5/21 15:56:18</span> &nbsp;|&nbsp; スタック: <span>Next.js / NextAuth v5 / Prisma / PostgreSQL</span></div>
+  <div class="header-meta">生成日時: <span>2026/5/22 14:19:51</span> &nbsp;|&nbsp; スタック: <span>Next.js / NextAuth v5 / Prisma / PostgreSQL</span></div>
 </div>
 <div class="summary">
   <div class="score-box">
-    <div class="score-num">100</div>
+    <div class="score-num">98</div>
     <div class="score-label">/ 100</div>
   </div>
   <div class="counts">
     <div class="cnt"><div class="n" style="color:#ff4d4d">0</div><div class="l">CRITICAL</div></div>
     <div class="cnt"><div class="n" style="color:#f59e0b">0</div><div class="l">HIGH</div></div>
     <div class="cnt"><div class="n" style="color:#60a5fa">0</div><div class="l">MEDIUM</div></div>
-    <div class="cnt"><div class="n" style="color:#34d399">0</div><div class="l">LOW</div></div>
-    <div class="cnt"><div class="n" style="color:#94a3b8">0</div><div class="l">TOTAL</div></div>
+    <div class="cnt"><div class="n" style="color:#34d399">1</div><div class="l">LOW</div></div>
+    <div class="cnt"><div class="n" style="color:#94a3b8">1</div><div class="l">TOTAL</div></div>
     <div class="cnt"><div class="n" style="color:#94a3b8">2</div><div class="l">ACCEPTED</div></div>
   </div>
 </div>
 <div class="section">
   <h2>// 検出項目</h2>
-  <p style="color:#34d399">✓ 検出された問題はありません</p>
+  
+    <div class="finding" style="border-left:3px solid #34d399">
+      <div class="finding-head">
+        <span class="badge" style="background:rgba(52,211,153,0.1);color:#34d399">LOW</span>
+        <span class="fid">F-01</span>
+        <span class="cat">AUTH</span>
+        <strong class="ftitle">セッション Cookie の SameSite が Strict でなく Lax</strong>
+      </div>
+      <div class="floc">📄 src/lib/auth.config.ts (L63)</div>
+      <p class="fdesc">SameSite=Lax は GET トップレベルナビゲーション時に Cookie を送信します。外部サイトからの誘導後も認証状態を維持する必要がなければ Strict が推奨です。</p>
+      <pre class="code">sameSite: 'lax',</pre>
+      <div class="fix"><strong>💡 推奨対策</strong><p>sameSite: 'strict' に変更してください。</p></div>
+      <pre class="code ok">sameSite: 'strict',</pre>
+      <div class="test"><strong>🧪 テスト要件</strong><p>変更後にログインフロー（通常ログイン・MFA ログイン）の E2E テストが通過すること。</p></div>
+    </div>
 </div>
 <div class="section">
   <h2>// 受容済み (Accept-list、score 計算対象外)</h2>
@@ -88,6 +102,6 @@ footer{padding:16px 40px;border-top:1px solid #1e2330;font-family:monospace;font
 </div>
 <footer>
   <span>docs/security/security-report.html</span>
-  <span>2026-05-21 — たすきば自動セキュリティチェック</span>
+  <span>2026-05-22 — たすきば自動セキュリティチェック</span>
 </footer>
 </body></html>

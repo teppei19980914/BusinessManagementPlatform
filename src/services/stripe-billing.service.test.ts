@@ -395,9 +395,12 @@ describe('verifyTenantCard', () => {
     const result = await verifyTenantCard(TENANT_ID);
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe('invalid_request');
+    // PR #425 (2026-05-22): TypeScript narrow のため code 判定を if 内に組み込む
+    //   (= StripeOperationResult union 全体では `detail` は invalid_request バリアントのみ)
+    if (!result.ok && result.code === 'invalid_request') {
       expect(result.detail).toBe('card_not_registered');
+    } else {
+      throw new Error('expected invalid_request code');
     }
   });
 });
