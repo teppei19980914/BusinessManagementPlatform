@@ -77,41 +77,60 @@ export async function POST(req: NextRequest) {
 
   // ADR-0016 Revised (2026-05-22): tenant-onboarding.service.ts の 3 層判定と同条件。
   //   判定キーは initialAdminEmail のみ (billingContactEmail は対象外)。
-  const usersWithSameEmail = await prisma.user.findMany({
-    where: { email: parsed.data.initialAdminEmail },
-    select: { id: true },
-  });
+  //   DB 接続失敗時は fail-open (= reason='none' で UI ヒント無効化) で返す。本 API は UI ヒント専用で、
+  //   サーバ層の最終判定 (tenant-onboarding.service.ts) が同じ DB クエリを実行するため、DB が落ちていれば
+  //   そちらでも 5xx で reject される。client が「層 1 user に signup できる気にさせる」誤動作を一瞬
+  //   起こしても、サーバ最終判定で確実に block される (defense-in-depth)。
+  try {
+    const usersWithSameEmail = await prisma.user.findMany({
+      where: { email: parsed.data.initialAdminEmail },
+      select: { id: true },
+    });
 
-  if (usersWithSameEmail.length === 0) {
-    // 層 3: 完全な新規
+    if (usersWithSameEmail.length === 0) {
+      // 層 3: 完全な新規
+      return NextResponse.json({
+        signupAllowed: true,
+        beginnerAvailable: true,
+        reason: 'none',
+      });
+    }
+
+    const userIds = usersWithSameEmail.map((u) => u.id);
+    // 層 1 判定: createdByUserId IS NOT NULL かつ user.id IN (...) のテナントが存在するか。
+    //   `createdByUserId: { in: userIds }` は NULL を自動除外するため、backfill 漏れの NULL tenant は
+    //   ここに hit しない (= soft relaxation 経路。migration の RAISE WARNING で運用者通知。
+    //   詳細は ADR-0016 Revised 「運用注意 D. backfill NULL 残置」)。
+    const ownedTenant = await prisma.tenant.findFirst({
+      where: { createdByUserId: { in: userIds } },
+      select: { id: true },
+    });
+
+    if (ownedTenant != null) {
+      // 層 1: 自前テナント保有 (= 公開フォーム完全不可)
+      return NextResponse.json({
+        signupAllowed: false,
+        beginnerAvailable: false,
+        reason: 'owned',
+        message: OWNED_TENANT_MESSAGE,
+      });
+    }
+
+    // 層 2: users に email あり (招待 / Default 所属) → Beginner 不可、Expert/Pro 可
+    return NextResponse.json({
+      signupAllowed: true,
+      beginnerAvailable: false,
+      reason: 'past_email_found',
+      message: BEGINNER_REQUIRES_UPGRADE_MESSAGE,
+    });
+  } catch {
+    // DB error 時は fail-open (= サーバ最終判定の defense-in-depth に委ねる)
+    //   client UI が「層 3 表示」になっても、submit 時の /api/auth/signup が同じ DB クエリで弾くため
+    //   実害なし。500 を出さないことで client の form 表示自体は維持。
     return NextResponse.json({
       signupAllowed: true,
       beginnerAvailable: true,
       reason: 'none',
     });
   }
-
-  const userIds = usersWithSameEmail.map((u) => u.id);
-  const ownedTenant = await prisma.tenant.findFirst({
-    where: { createdByUserId: { in: userIds } },
-    select: { id: true },
-  });
-
-  if (ownedTenant != null) {
-    // 層 1: 自前テナント保有 (= 公開フォーム完全不可)
-    return NextResponse.json({
-      signupAllowed: false,
-      beginnerAvailable: false,
-      reason: 'owned',
-      message: OWNED_TENANT_MESSAGE,
-    });
-  }
-
-  // 層 2: users に email あり (招待 / Default 所属) → Beginner 不可、Expert/Pro 可
-  return NextResponse.json({
-    signupAllowed: true,
-    beginnerAvailable: false,
-    reason: 'past_email_found',
-    message: BEGINNER_REQUIRES_UPGRADE_MESSAGE,
-  });
 }

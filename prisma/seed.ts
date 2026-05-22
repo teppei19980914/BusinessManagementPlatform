@@ -189,12 +189,18 @@ async function seedManagementTenantAndSuperAdmin(prisma: PrismaClient): Promise<
   if (!superAdminEmail || !superAdminPassword || !superAdminName) {
     console.log('');
     console.log(
-      'ℹ super_admin user は作成スキップ (SUPER_ADMIN_INITIAL_EMAIL/PASSWORD/NAME 環境変数が未設定)',
+      '⚠ super_admin user は作成スキップ (SUPER_ADMIN_INITIAL_EMAIL/PASSWORD/NAME 環境変数が未設定)',
     );
     console.log('  Netlify に環境変数を登録後、再実行してください:');
     console.log('    SUPER_ADMIN_INITIAL_EMAIL=admin@knowledge-relay-platform.admin');
     console.log('    SUPER_ADMIN_INITIAL_PASSWORD=<強固な初期パスワード>');
     console.log('    SUPER_ADMIN_INITIAL_NAME=Platform Admin');
+    // ADR-0016 Revised (2026-05-22): super_admin user 未作成 = MANAGEMENT_TENANT.createdByUserId が
+    //   NULL のまま残る可能性 (= migration backfill の対象が居ない)。後続で env 設定 + seed 再実行で
+    //   超管理者作成パスが走り、createdByUserId は明示更新される。それまで MANAGEMENT を払い出した
+    //   admin が公開 /signup で識別されない soft relaxation が発生するが、運営者 (super_admin) 自身が
+    //   そもそも /signup 経路を使わないため実害なし。
+    console.log('  注意: MANAGEMENT_TENANT.createdByUserId が NULL のままになります (= 後続再実行で解消)');
     console.log('================================');
     console.log('');
     return;

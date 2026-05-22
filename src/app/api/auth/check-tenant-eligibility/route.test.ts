@@ -117,4 +117,19 @@ describe('POST /api/auth/check-tenant-eligibility (ADR-0016 Revised / 3 層判�
     expect(body.signupAllowed).toBe(true);
     expect(body.beginnerAvailable).toBe(true);
   });
+
+  it('DB error 時は fail-open (= reason=none 返却、サーバ最終判定に委ねる)', async () => {
+    vi.mocked(prisma.user.findMany).mockRejectedValueOnce(
+      new Error('database connection refused'),
+    );
+
+    const res = await POST(
+      makeReq({ initialAdminEmail: 'whatever@example.com' }) as never,
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.signupAllowed).toBe(true);
+    expect(body.beginnerAvailable).toBe(true);
+    expect(body.reason).toBe('none');
+  });
 });

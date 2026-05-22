@@ -328,3 +328,32 @@ export function buildLoginUrl(tenantSlug: string, baseUrl: string): string {
 **C. MANAGEMENT テナントの seed integrity**
 
 MANAGEMENT テナントの初期 admin (= super_admin) は `systemRole='super_admin'` であり 'admin' ではないため、migration backfill SQL は `('admin', 'super_admin')` の双方を含める必要がある (= 2026-05-22 migration で対応済)。新規環境 initialization 時は `prisma/seed.ts` が super_admin user 作成後 (or 既存検出時) に `MANAGEMENT.createdByUserId` を **明示的に上書き** する設計で integrity を担保している。
+
+**D. backfill NULL 残置の運用者対処 (3 回目点検で新規認識)**
+
+migration backfill SQL は「systemRole='admin' or 'super_admin' かつ deletedAt=null の最古 user」を推定して `created_by_user_id` にセットする。以下のケースで NULL のまま残る:
+
+- 既存テナントに **admin / super_admin が 1 人もいない** (= 全員 deletedAt セット済 / general user のみ)
+- 過去のデータ事故・運用ミスで admin 不在の tenant が残った
+
+**silent fail の影響範囲**: 
+
+NULL 残置 tenant の過去 admin email で公開 `/signup` を試行した場合、層 1 判定が空振り (= `createdByUserId IS NOT NULL` の query で hit しない)。しかしその email は `users.email` には残っているため **層 2 判定が catch** し、Beginner 不可 + Expert/Pro 自己発行は可能 (= soft relaxation)。情報漏洩には繋がらないが、「ユーザ自身による 2 つ目以降の公開フォーム払い出しは不可」の spec 厳格性が一時的に崩れる。
+
+**運用者の対処**:
+
+1. **migration 適用直後**: `RAISE WARNING` ログを確認し、NULL 残置 tenant の有無を把握 (= 20260527 migration で追加済)
+2. **NULL 残置確認 SQL**:
+   ```sql
+   SELECT id, slug, name FROM tenants
+   WHERE created_by_user_id IS NULL AND deleted_at IS NULL;
+   ```
+3. **手動 backfill**: 該当 tenant について「払い出し元 user」を業務的に特定し、以下を実行:
+   ```sql
+   UPDATE tenants SET created_by_user_id = '<user-uuid>' WHERE id = '<tenant-uuid>';
+   ```
+4. **判別不能な場合**: 当該 tenant に対する層 1 判定は永続的に空振りになる。許容するか、当該 tenant を物理削除して再払い出しするかの運用判断。
+
+**E. /api/auth/check-tenant-eligibility の DB error 時挙動**
+
+UI ヒント API が DB error に遭遇した場合、fail-open (= reason='none' 返却) する設計。client は UI 上で「層 3 表示」になるが、サーバ最終判定 (tenant-onboarding.service.ts) が同じ DB クエリを実行するため、DB が落ちていればそちらも reject する (= defense-in-depth)。client が短時間「層 1 user に signup できる気にさせる」誤動作を起こしても、submit 時に確実に block される。

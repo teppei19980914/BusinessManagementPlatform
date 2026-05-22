@@ -265,6 +265,14 @@ async function createTenantInternal(
   //
   //   super_admin 経路 (createTenantBySuperAdmin) は skipEligibilityCheck=true で本ブロックを完全
   //   スキップする (SA-2: 「問合せ → 例外発行」窓口、admin 判断で多テナント発行を許容)。
+  //
+  //   Race condition について (= 同 email で同時 signup):
+  //   本ブロックの判定は transaction 外で実行されるため、判定 → tenant.create の間に race window
+  //   が存在する。ただし最終的に **slug UNIQUE constraint** ([prisma/schema.prisma の Tenant.slug])
+  //   が同 slug の二重作成を拒否するため、実用上は問題にならない (= UI で email → slug を auto-suggest
+  //   する設計のもとでは衝突確率は極低)。rate limit 5 req/hour も race 抑止に寄与。
+  //   将来「同 user に同時に複数の 自前テナントが作られる」abuse が顕在化した場合は、本判定を
+  //   prisma.$transaction の serializable isolation 内に移動する。
   if (!options.skipEligibilityCheck) {
     // 層 1 判定: initialAdminEmail で users を引き、その user.id が tenants.created_by_user_id に
     //   紐付いていれば「自前テナント保有」。OWNED_TENANT_EXISTS で公開フォーム完全不可。

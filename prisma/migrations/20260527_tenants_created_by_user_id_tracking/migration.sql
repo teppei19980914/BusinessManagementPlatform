@@ -55,3 +55,27 @@ WHERE t.created_by_user_id IS NULL;
 CREATE INDEX "idx_tenants_created_by_user_id_partial"
   ON "tenants" ("created_by_user_id")
   WHERE "created_by_user_id" IS NOT NULL;
+
+-- Step 4: backfill 後の NULL 残置検知 (= 運用 visibility)
+--   既存テナントに admin/super_admin (deletedAt=null) が 1 人もいない場合、Step 2 の subquery が NULL を返し
+--   created_by_user_id が NULL のまま残る。このとき層 1 判定が silent fail し、当該テナントの過去 admin email で
+--   公開 /signup を試した user に Expert/Pro 自己発行を許す soft relaxation が発生する。
+--   migration 実行ログに NOTICE を残し、運用者が手動修正できるようにする。
+--   (= 完全自動修復は不可能。general user のみのテナントを「誰が払い出したか」DB から判別不能のため。)
+DO $$
+DECLARE
+  null_count INT;
+BEGIN
+  SELECT COUNT(*) INTO null_count
+  FROM "tenants"
+  WHERE "created_by_user_id" IS NULL
+    AND "deleted_at" IS NULL;
+  IF null_count > 0 THEN
+    RAISE WARNING
+      'ADR-0016 Revised backfill: created_by_user_id が NULL のまま残った tenant が % 件あります。'
+      ' 当該テナントは admin/super_admin (deletedAt=null) を持たない可能性があります。'
+      ' 層 1 判定の整合性確保のため、手動で UPDATE tenants SET created_by_user_id = <該当 user.id> を実施してください。'
+      ' 該当 tenant 一覧: SELECT id, slug FROM tenants WHERE created_by_user_id IS NULL AND deleted_at IS NULL;',
+      null_count;
+  END IF;
+END $$;
