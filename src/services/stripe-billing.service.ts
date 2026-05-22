@@ -374,6 +374,36 @@ export async function completeStripeSetup(
     await markPendingInvoiceAsReplacedByStripe(tx, tenantId, currentYearMonth);
   });
 
+  // PR #425 (2026-05-22) ★severity-1 一貫性★ Step 6: Customer の invoice_settings.default_payment_method も同期。
+  //
+  // Stripe では Customer.default_payment_method と Subscription.default_payment_method は独立した別概念で、
+  // Subscription 作成時に Customer 側のデフォルトは自動更新されない。本サービスではユーザに混乱を与えないよう
+  // 「Subscription 引落カード = Customer デフォルトカード」を常に一致させる方針を取る。
+  //
+  // 効果:
+  //   - Customer Portal で「現在のデフォルト」が必ず Subscription と同じカード
+  //   - アプリ画面 (= getStripeCardSummary) = Customer Portal = 実引落カード の 3 点完全一致
+  //
+  // Customer Portal でユーザが手動でデフォルト変更した場合はその選択を尊重 (= 上書きしない)
+  // が、次回 setup (= 新規 Subscription 作成) 時には新カードに同期される。
+  //
+  // 失敗時の挙動: 同期失敗は console.warn のみで続行 (= Subscription は既に作成成功している、
+  //                Customer デフォルトは「ズレるだけ」で課金事故にはならない)
+  const customerSyncResult = await withStripeError(() =>
+    stripe.customers.update(sessionCustomerId, {
+      invoice_settings: {
+        default_payment_method: paymentMethodId,
+      },
+    }),
+  );
+  if (!customerSyncResult.ok) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[completeStripeSetup] failed to sync Customer.invoice_settings.default_payment_method',
+      customerSyncResult.code,
+    );
+  }
+
   return {
     ok: true,
     value: {

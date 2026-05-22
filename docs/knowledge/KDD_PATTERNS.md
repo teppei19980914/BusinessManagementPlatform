@@ -12646,3 +12646,44 @@ async function getStripeCardSummary(tenantId) {
 - 関連 feedback `feedback_billing_invariant` (★最重要★)
 - 関連 Stripe 公式: [Subscription default_payment_method](https://docs.stripe.com/api/subscriptions/object#subscription_object-default_payment_method)
 - 関連 Stripe 公式: [Customer invoice_settings](https://docs.stripe.com/api/customers/object#customer_object-invoice_settings)
+
+### 追加修正 (2026-05-22 / 同日中の追加発見): Subscription 作成時に Customer.invoice_settings.default_payment_method も同期する
+
+§5.X+108 の修正でアプリ画面と Subscription の引落カードは一致するようになったが、ユーザ
+Customer Portal を開くと **「決済手段 / デフォルト」が Subscription の引落カードと違うカード**
+(= 過去に Customer Portal で手動設定したまま) のため、ユーザ視点では「DB と Stripe が同期して
+いない」 = 混乱を招く UX。
+
+技術的には Stripe 仕様通り (Subscription レベルと Customer レベルは独立した別概念) だが、
+ユーザの自然な期待 「Subscription のカード = Customer Portal のデフォルトカード」を満たすため、
+`completeStripeSetup` の Step 6 として Customer の `invoice_settings.default_payment_method`
+を Subscription の `default_payment_method` と一致させる API 呼出を追加:
+
+```ts
+// completeStripeSetup の Step 5 (DB 更新) 後
+await stripe.customers.update(sessionCustomerId, {
+  invoice_settings: {
+    default_payment_method: paymentMethodId,
+  },
+});
+```
+
+これにより以下 3 点が **完全一致**:
+1. アプリ画面 (= `getStripeCardSummary` の戻り値 = Subscription.default_payment_method)
+2. Stripe Customer Portal の「決済手段 / デフォルト」
+3. 実際の月次引落カード (= Subscription.default_payment_method)
+
+Customer Portal でユーザが手動でデフォルト変更した場合はその選択を尊重 (= 上書きしない)。
+次回 setup (= 新規 Subscription 作成) 時にまた新カードに同期される。
+
+失敗時の挙動: 同期失敗は `console.warn` のみで続行 (= Subscription は既に作成成功している、
+Customer デフォルトは「ズレるだけ」で課金事故にはならない)。
+
+### 追加教訓
+
+5. **「Stripe 仕様通りで正しい挙動」と「ユーザ視点での自然な期待」は別物** — 技術的に正しくても
+   ユーザが混乱するなら UX 改善で寄せる。本件は「Subscription = Customer デフォルト」を強制的に
+   同期する選択を取った
+6. **「3 点完全一致」を invariant に追加** — アプリ画面 = Customer Portal = 実引落カードの 3 点
+   が常に一致するよう、Subscription 作成時に Customer デフォルトも同期する。これにより
+   「画面と Customer Portal で別の表示」というユーザの不安を構造的に排除
