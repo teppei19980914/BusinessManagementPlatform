@@ -12531,3 +12531,118 @@ async function cancelAllActiveStripeSubscriptionsForCustomer(customerId: string)
 - 関連 feedback:
   - `feedback_billing_invariant` (★最重要★)
   - `feedback_drift_detection_design` (= 本件は「修復」軸の実装)
+
+---
+
+## 5.X+108 **★severity-1 一貫性★ Stripe `Customer.invoice_settings.default_payment_method` ≠ `Subscription.default_payment_method` — 「画面のカード = 請求カード」一貫性のため Subscription 側を優先取得する (2026-05-22 / PR #425 TC-3 検証中)**
+
+### 発生事象
+
+PR #425 TC-3 (3D Secure 認証) の検証中、新規 3DS Visa `4000 0027 6000 3184` でカード登録 → Stripe Checkout 完了 → アプリ DB は `stripeDefaultPaymentMethodId='pm_新Visa'` で正常更新。
+
+ただしアプリ画面の「請求に使用されるカード」表示は **古い `Mastercard •••• 4444`** のまま。Stripe Customer Portal で確認すると:
+
+- 「現在の Subscription」: **Visa •••• 3184** (= 実際の請求カード = TC-3 の新規 Visa)
+- 「決済手段 / デフォルト」: **Mastercard •••• 4444** (= Customer Portal で過去に設定)
+
+つまりアプリ画面が **Customer のデフォルト (Mastercard)** を表示している一方、**実際の月次請求は Subscription のデフォルト (Visa)** から発生する状態。**「画面に出ているカード ≠ 実際に請求されるカード」** という KDD §5.X+103 で死守すべき一貫性が破綻。
+
+### 根本原因
+
+Stripe の **2 つの異なる default_payment_method** の混同:
+
+| フィールド | 意味 | 設定経路 |
+|---|---|---|
+| `Customer.invoice_settings.default_payment_method` | 新規 Subscription / 単発決済の **初期値** | Customer Portal の「デフォルトに設定」/ Customer 作成時 / 開発者が API で明示設定 |
+| `Subscription.default_payment_method` | **その Subscription 固有の引落カード** (= 実際の請求カード) | Subscription 作成時の引数 / API で別途設定 |
+
+**新規 Subscription を作っても Customer のデフォルトは自動更新されない**。テナント運用では:
+
+1. TC-1: 初回 Stripe Checkout で `default_payment_method=Visa pm_A` で Subscription 作成 → Customer のデフォルトも (Subscription 作成時に自動的に) Visa に
+2. ユーザが Customer Portal で **Mastercard をデフォルトに変更** → `Customer.invoice_settings.default_payment_method = Mastercard pm`
+3. ただし既存 Subscription の引落は Visa のまま (= Stripe 仕様、Subscription レベルが優先)
+4. ユーザが TC-7 で銀行振込戻し → Subscription cancel
+5. 再度 TC-3 で新規 3DS Visa で setup → 新規 Subscription 作成 (`default_payment_method=新Visa pm`)
+6. `Customer.invoice_settings.default_payment_method` は依然として Mastercard (= ステップ 2 のまま、新 Subscription 作成では更新されない)
+7. **アプリ画面**: getStripeCardSummary が Customer.invoice_settings を見る → Mastercard 表示 (= 古い)
+8. **実際の請求**: 新 Subscription.default_payment_method = 新 Visa → Visa から引落
+
+ユーザは画面を信頼しているため「Mastercard に請求が来る」と思っているが、実際は「Visa に請求が来る」状態。**信用問題に直結する severity-1 不具合**。
+
+### 解決策
+
+`getStripeCardSummary` を **「Subscription があれば Subscription.default_payment_method 優先、なければ Customer.invoice_settings.default_payment_method」** の fallback 設計に変更:
+
+```ts
+async function getStripeCardSummary(tenantId) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { stripeCustomerId: true, stripeSubscriptionId: true },
+  });
+  if (!tenant?.stripeCustomerId) return null;
+  const stripe = getStripe();
+
+  // 優先: Subscription.default_payment_method (= 実際の請求カード)
+  if (tenant.stripeSubscriptionId) {
+    const subResult = await withStripeError(() =>
+      stripe.subscriptions.retrieve(tenant.stripeSubscriptionId!, {
+        expand: ['default_payment_method'],
+      }),
+    );
+    if (subResult.ok) {
+      const pm = subResult.value.default_payment_method;
+      if (pm && typeof pm !== 'string' && pm.type === 'card' && pm.card) {
+        return { brand: pm.card.brand, last4: pm.card.last4, expMonth: pm.card.exp_month, expYear: pm.card.exp_year };
+      }
+    }
+  }
+
+  // フォールバック: Customer.invoice_settings.default_payment_method
+  //   - Subscription 未作成テナント (= setup 前)
+  //   - Subscription はあるが default_payment_method 未設定 (Stripe 仕様で Customer レベルが請求カード)
+  const customerResult = await withStripeError(() =>
+    stripe.customers.retrieve(tenant.stripeCustomerId!, { expand: ['invoice_settings.default_payment_method'] }),
+  );
+  if (!customerResult.ok || customerResult.value.deleted) return null;
+  const pm = customerResult.value.invoice_settings?.default_payment_method;
+  if (!pm || typeof pm === 'string' || pm.type !== 'card' || !pm.card) return null;
+  return { brand: pm.card.brand, last4: pm.card.last4, expMonth: pm.card.exp_month, expYear: pm.card.exp_year };
+}
+```
+
+これで「アプリ画面のカード = 実際に毎月引落されるカード」の一貫性が完全に担保される。
+
+### 教訓
+
+1. **★最重要★ Stripe `Customer.default_payment_method` と `Subscription.default_payment_method` は別物** — 同じ API ドキュメントに並んでいるため混同しやすいが、Customer 側は「新規作成時の初期値」、Subscription 側は「実際の引落カード」。**請求カードを画面に出すなら必ず Subscription 側**。Customer 側は「ユーザが Customer Portal でいじれるデフォルト」と理解する
+2. **「Customer Portal でデフォルトを変更してもアプリ Subscription の引落カードは変わらない」** — これは Stripe 仕様。Customer Portal の「デフォルト」UI は新規 Subscription 作成時にしか効かない。既存 Subscription のカード変更は Subscription 単位で別途更新が必要 (= Stripe API `stripe.subscriptions.update({default_payment_method})`)
+3. **「画面と実体のズレ」は signing 経由でしか検出できない** — Customer Portal でカード変更 + 既存 Subscription 残置のシナリオは、TC-1 単発では出ない。「Customer Portal で操作してから再度アプリ画面を開く」テストパターンを E2E に組込むべき
+4. **3DS カード setup 検証は「複数カードが Customer に attach された状態」を必ず作る** — 1 枚目だけだと Customer デフォルト = Subscription デフォルトで一致する偶然があり、本件のような乖離が顕在化しない
+
+### 検証手順 (再発防止用)
+
+```
+事前: TC-1 完了済 (Mastercard を Customer Portal でデフォルトに設定済) + 銀行振込戻し済
+
+1. 「請求先情報」セクションで支払い方法を「クレジットカード」 → 「請求先情報を更新」
+2. Stripe Checkout で別カード (= 3DS Visa 4000 0027 6000 3184) 入力 → 「保存」 → 3DS 認証 COMPLETE
+3. 戻り URL: /settings/tenant?stripe_setup=success ★
+4. アプリ画面「請求に使用されるカード」表示確認:
+   → Visa •••• 3184 表示 ★ (= 新規 Subscription の引落カード、本 KDD §5.X+108 修正後)
+   (旧実装は Mastercard •••• 4444 表示 → 本 KDD 再発)
+5. Customer Portal で確認:
+   → 「現在の Subscription」: Visa •••• 3184 ★ (= アプリ画面と一致)
+   → 「決済手段 / デフォルト」: Mastercard •••• 4444 (= Customer Portal レベルのデフォルト、これはアプリ画面と無関係で OK)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-3 検証中、Customer Portal で実体確認して検出
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts` (`getStripeCardSummary` を Subscription 優先に変更)
+- 関連 KDD:
+  - §5.X+103 (「画面のカード = 請求カード」一貫性原則)
+  - §5.X+107 (二重 Subscription 防止)
+- 関連 feedback `feedback_billing_invariant` (★最重要★)
+- 関連 Stripe 公式: [Subscription default_payment_method](https://docs.stripe.com/api/subscriptions/object#subscription_object-default_payment_method)
+- 関連 Stripe 公式: [Customer invoice_settings](https://docs.stripe.com/api/customers/object#customer_object-invoice_settings)

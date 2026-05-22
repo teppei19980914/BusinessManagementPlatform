@@ -1044,12 +1044,40 @@ export type StripeCardSummary = {
 export async function getStripeCardSummary(tenantId: string): Promise<StripeCardSummary | null> {
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
-    select: { stripeCustomerId: true },
+    select: { stripeCustomerId: true, stripeSubscriptionId: true },
   });
   if (tenant?.stripeCustomerId == null) return null;
 
   const stripe = getStripe();
-  // Stripe Customer の invoice_settings.default_payment_method を expand 付きで取得 (= 1 API call で PaymentMethod まで取れる)
+
+  // ★severity-1 一貫性★ 「実際に月次請求されるカード」は Subscription.default_payment_method。
+  // Customer.invoice_settings.default_payment_method は新規 Subscription 作成時の初期値であり、
+  // 既存 Subscription の引落カードとは独立 (= ズレる可能性あり)。
+  // 「画面のカード = 請求カード」一貫性のため、Subscription があれば必ずそちらを優先する。
+  if (tenant.stripeSubscriptionId != null) {
+    const subResult = await withStripeError(() =>
+      stripe.subscriptions.retrieve(tenant.stripeSubscriptionId!, {
+        expand: ['default_payment_method'],
+      }),
+    );
+    if (subResult.ok) {
+      const pm = subResult.value.default_payment_method;
+      if (pm && typeof pm !== 'string' && pm.type === 'card' && pm.card) {
+        return {
+          brand: pm.card.brand,
+          last4: pm.card.last4,
+          expMonth: pm.card.exp_month,
+          expYear: pm.card.exp_year,
+        };
+      }
+      // Subscription.default_payment_method が null の場合は Customer フォールバックへ
+      // (= Stripe 仕様: Subscription レベル未設定なら Customer レベルが請求カードになる)
+    }
+  }
+
+  // フォールバック: Customer.invoice_settings.default_payment_method
+  //   - Subscription 未作成テナント (= setup 前)
+  //   - Subscription はあるが default_payment_method を設定していない (= Customer レベルから引落)
   const customerResult = await withStripeError(() =>
     stripe.customers.retrieve(tenant.stripeCustomerId!, {
       expand: ['invoice_settings.default_payment_method'],
@@ -1057,12 +1085,9 @@ export async function getStripeCardSummary(tenantId: string): Promise<StripeCard
   );
   if (!customerResult.ok) return null;
   const customer = customerResult.value;
-  // Stripe.DeletedCustomer の場合は invoice_settings 等にアクセス不可
   if (customer.deleted) return null;
   const pm = customer.invoice_settings?.default_payment_method;
-  // 期待値: PaymentMethod object (expand 結果)。string や null なら表示できない
-  if (!pm || typeof pm === 'string') return null;
-  if (pm.type !== 'card' || !pm.card) return null;
+  if (!pm || typeof pm === 'string' || pm.type !== 'card' || !pm.card) return null;
   return {
     brand: pm.card.brand,
     last4: pm.card.last4,
