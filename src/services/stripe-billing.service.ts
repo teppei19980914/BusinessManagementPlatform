@@ -307,6 +307,26 @@ export async function completeStripeSetup(
     },
   });
 
+  // PR #425 (2026-05-22) ★severity-1 請求堅牢性★ Step 3.5: 既存 active Subscription を全 cancel。
+  //
+  // 目的: 「同一 Stripe Customer に複数 active Subscription が並存 → 月次請求二重発生」を防ぐ。
+  //
+  // 発生シナリオ:
+  //   - TC-7 (UI cancel) を通らずに DB 直書きで paymentMethod='invoice' に変更されたケース
+  //   - Webhook 同期遅延中の race condition (= cancel と再 setup の往復)
+  //   - DB drift (= DB は sub_id=null、Stripe は active が残る)
+  //
+  //   いずれも completeStripeSetup を呼ぶ時点で Stripe Customer に古い active Subscription が
+  //   残っていれば新規 Subscription と並存し、月次で両方から引落される事故が発生する。
+  //
+  // 対策: Step 4 で新規 Subscription を作成する前に、Stripe API で
+  //       「同 Customer の active Subscription 一覧」を取得し、すべて cancel する。
+  //       これにより DB drift があっても Stripe 側を強制的にクリーン化してから新規作成できる。
+  //
+  // 失敗時の挙動: cancel が失敗しても続行 (= Webhook で後追い cancel される可能性 / 多くは既 canceled)。
+  //               Step 4 の Subscription 作成が成功すれば最終的に新 sub_id が DB に書き込まれる。
+  await cancelAllActiveStripeSubscriptionsForCustomer(sessionCustomerId);
+
   // Step 4: Subscription 作成 (Phase 3)
   const subscriptionResult = await createSubscriptionForTenant({
     tenantId,
@@ -921,6 +941,48 @@ export async function cancelTenantStripeSubscription(
   //   呼出側で即時クリアすることで Webhook 同期の有無に関わらず「クリーンな初期状態」を保証する。
   await clearTenantStripeSubscriptionFields(tenantId);
   return { ok: true, value: { canceled: true } };
+}
+
+/**
+ * PR #425 (2026-05-22) ★severity-1 請求堅牢性★: 同一 Stripe Customer の全 active Subscription を cancel する。
+ *
+ * completeStripeSetup の Step 3.5 から呼ばれる「DB drift 修復 + 二重 Subscription 防止」用ヘルパ。
+ * DB の stripeSubscriptionId が null でも Stripe 側に active が残っているケースを救う。
+ *
+ * 挙動:
+ *   1. Stripe API で同 Customer の active Subscription を全件取得 (limit=100 で十分、通常は 0-1 件)
+ *   2. 各 Subscription に対して cancel() を呼出 (失敗しても続行 = 既 canceled の冪等性ケース等)
+ *   3. 全体的なエラーも throw しない (= 後続の Subscription 作成が本筋、cancel 失敗は warning レベル)
+ *
+ * 失敗時の挙動: 各 cancel 失敗は console.warn のみ (= 監視は別途 KDD §5.X+104 Phase 2 で reconcile cron 化予定)
+ */
+async function cancelAllActiveStripeSubscriptionsForCustomer(customerId: string): Promise<void> {
+  const stripe = getStripe();
+  const listResult = await withStripeError(() =>
+    stripe.subscriptions.list({
+      customer: customerId,
+      status: 'active',
+      limit: 100,
+    }),
+  );
+  if (!listResult.ok) {
+    // eslint-disable-next-line no-console
+    console.warn('[completeStripeSetup] active subscription list failed', listResult.code);
+    return;
+  }
+  for (const sub of listResult.value.data) {
+    const cancelResult = await withStripeError(() =>
+      stripe.subscriptions.cancel(sub.id, { invoice_now: true, prorate: false }),
+    );
+    if (!cancelResult.ok) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[completeStripeSetup] failed to cancel orphan subscription',
+        sub.id,
+        cancelResult.code,
+      );
+    }
+  }
 }
 
 /**

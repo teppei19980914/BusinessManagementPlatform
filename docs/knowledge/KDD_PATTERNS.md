@@ -12424,3 +12424,110 @@ stripe.subscriptions.create(params, {
 - 関連 feedback:
   - `feedback_billing_invariant` (★最重要★)
 - 関連 Stripe 公式: [Idempotent requests - Idempotency keys](https://docs.stripe.com/api/idempotent_requests)
+
+---
+
+## 5.X+107 **★severity-1 請求堅牢性★ Stripe Customer に「複数 active Subscription」が並存して二重課金リスク — setup 直前に全 active を強制 cancel して DB drift を自動修復する (2026-05-22 / PR #425 TC-1 反復検証中)**
+
+### 発生事象
+
+PR #425 TC-1 を複数回繰返し検証中、Stripe Customer Portal を開いたユーザが **「現在のサブスクリプション」が 2 つ並んで表示されている** ことを発見:
+
+- Subscription 1: 「Haiku per-call + Sonnet per-call」 — default Visa •••• 4242
+- Subscription 2: 「Haiku per-call + Sonnet per-call」 — default Mastercard •••• 4444
+
+→ **同 Customer に active な Subscription が 2 つ並存 = 月次で両方から引落される二重課金状態**。たすきば DB の `stripeSubscriptionId` は 1 つだけ知っているため、もう一方の請求は「アプリ層が知らない請求」として運営側に届く (= ユーザ視点では「いくら払わされたかわからない」UX 災害、運営視点では「コスト超過のクレーム不可避」)。
+
+### 根本原因
+
+setup 経路に「**setup 前に同 Customer の active Subscription を cancel する**」ガードが無かったため、以下のシナリオで二重作成が起きる:
+
+1. TC-1 (1 回目): Subscription A 作成 (Mastercard) — Stripe + DB 整合
+2. **DB drift 発生** (= 以下のいずれか):
+   - 開発者が `script` で `paymentMethod='invoice'` を直書き
+   - TC-7 (UI cancel) を経由しても Webhook 遅延中に再 setup
+   - 何らかの障害で `cancelTenantStripeSubscription` が呼ばれず DB だけ書き換わった
+3. 再 TC-1 (UI): DB の `stripeSubscriptionId=null` を見て「新規作成」フローに入る
+4. `createSubscriptionForTenant` は Stripe API を叩いて新 Subscription B 作成 (Visa) — 既存 A は無関係に並存
+5. → Stripe Customer に Subscription A + B が並存
+6. 月次 cron / Stripe 自動引落で **両方から請求**
+
+### 解決策
+
+`completeStripeSetup` の Step 3.5 として「同 Customer の active Subscription を全 cancel」を追加:
+
+```ts
+// Step 3.5 (新規追加): 既存 active Subscription を全 cancel (DB drift 修復 + 二重防止)
+await cancelAllActiveStripeSubscriptionsForCustomer(sessionCustomerId);
+
+// Step 4 (既存): 新規 Subscription 作成
+const subscriptionResult = await createSubscriptionForTenant({...});
+```
+
+実装:
+```ts
+async function cancelAllActiveStripeSubscriptionsForCustomer(customerId: string): Promise<void> {
+  const stripe = getStripe();
+  const listResult = await withStripeError(() =>
+    stripe.subscriptions.list({ customer: customerId, status: 'active', limit: 100 }),
+  );
+  if (!listResult.ok) return;
+  for (const sub of listResult.value.data) {
+    await withStripeError(() =>
+      stripe.subscriptions.cancel(sub.id, { invoice_now: true, prorate: false }),
+    );
+    // 失敗時は console.warn のみで続行 (= 既 canceled / Webhook 経由で最終整合)
+  }
+}
+```
+
+これにより:
+- DB に sub_id が無くても、Stripe 側に active があれば必ず先に cancel される
+- DB drift が自動修復される (= 過去の残骸を毎回クリーンアップ)
+- 二重 Subscription が並存する状態が **構造的に発生不可** になる
+
+### 教訓
+
+1. **★最重要★ 「アプリ層のクリーンアップ」と「Stripe 側の状態」は別物。両方を毎回見る** — DB に「subscription_id 持っていません」と書いてあっても Stripe 側に active があるかもしれない。setup のような「副作用大」な操作の前に Stripe 側を実体確認する習慣
+2. **DB drift 修復ロジックは「能動的なクリーンアップ」が必要** — Webhook で「いずれ同期される」を期待してはいけない。Webhook は障害発生 / 設定漏れ / 遅延が常にある。重要な状態遷移の前後で能動的に Stripe API を叩いて整合性を保証する
+3. **TC-1 を反復実行すると初めて顕在化する** — 単発の TC-1 では Subscription A だけが作成されるので問題は見えない。「同じ TC を何度も実行する」「DB を直接操作してから TC を実行する」等の **異常パターン** をテスト設計に組込むことで早期発見できる (= KDD §5.X+106 と同様の教訓)
+4. **「現状の Customer Portal を開く」習慣** — Stripe Dashboard の Customer Portal で実体確認するクセを TC 中に毎回つける。アプリ画面と乖離していたら drift の証拠
+
+### 検証手順 (再発防止用)
+
+```
+事前: TC-1 完了済 (paymentMethod='credit_card', sub_id='sub_A', Mastercard 登録)
+
+シナリオ A: 直接 DB 操作で DB drift を発生させる (= 異常系再現)
+1. scripts で paymentMethod='invoice' に直書き (= TC-7 UI を経由しない)
+   → DB: paymentMethod='invoice', stripeSubscriptionId=null
+   → Stripe: Subscription A は active のまま
+
+2. UI で「クレジットカード」に再切替 → 「請求先情報を更新」 → Stripe Checkout → 別カード入力
+3. 戻り URL: /settings/tenant?stripe_setup=success ★
+
+4. Stripe Dashboard で Customer の Subscription を確認:
+   → Subscription A (Mastercard) は Canceled ★ (= 本 KDD §5.X+107 修正による Step 3.5)
+   → Subscription B (Visa) のみ Active ★
+   (旧実装は A + B が並存 → 本 KDD 再発)
+
+シナリオ B: Customer Portal でカード変更 (二重作成しないことの確認)
+1. Customer Portal で別カード追加 → デフォルトに変更
+2. アプリ側で何もしない (= setup 経路を通らない)
+3. Stripe Subscription は 1 件のまま ★ (= Customer Portal の操作だけでは新規 Subscription は作られない)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-1 反復検証中に Customer Portal で実体確認して検出
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts`
+    - `completeStripeSetup` Step 3.5 として `cancelAllActiveStripeSubscriptionsForCustomer` 呼出
+    - 新規 内部ヘルパ `cancelAllActiveStripeSubscriptionsForCustomer`
+- 関連 KDD:
+  - §5.X+105 (cancel 時 DB 即時クリア)
+  - §5.X+106 (idempotencyKey)
+  - 上記 2 件と組み合わせて TC-1 反復 / TC-7 race condition / DB drift すべてに対応
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★)
+  - `feedback_drift_detection_design` (= 本件は「修復」軸の実装)
