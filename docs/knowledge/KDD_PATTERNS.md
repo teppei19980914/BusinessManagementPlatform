@@ -12781,3 +12781,81 @@ POST /setup の旧 ALREADY_HAS_SUBSCRIPTION 409 ガード (= KDD §5.X+100) は�
   - §5.X+100 (旧 ALREADY_HAS_SUBSCRIPTION ガード導入、本 KDD で撤去)
   - §5.X+108 (Customer / Subscription default 同期、本 KDD はその完全版)
 - 関連 feedback `feedback_billing_invariant` (★最重要★)
+
+---
+
+## 5.X+110 **★severity-2 品質ゲート★ bash pipe で exit code を誤判定 → CI が fail するのに「ローカルでは PASS」と錯覚する罠 + 新規 API route で `e2e:coverage-check` 漏れ (2026-05-22 / PR #425 CI fail 検出)**
+
+### 発生事象
+
+PR #425 のマージ前最終 quality gates 確認で、ローカル `pnpm e2e:coverage-check | tail -10` の結果を「✅ PASS」と判定して push したが、GitHub Actions の **Lint / Test / Build** ジョブが exit code 1 で失敗:
+
+```
+❌ docs/test/E2E_COVERAGE.md に未記載の機能があります:
+   - /api/tenants/me/billing/stripe/setup-with-existing-card
+ELIFECYCLE  Command failed with exit code 1.
+```
+
+新規追加した API route (`setup-with-existing-card`) を `docs/test/E2E_COVERAGE.md` に追記し忘れていた。CI の `pnpm e2e:coverage-check` で正しく検出されたが、**ローカル確認は通っていると誤認識** していた。
+
+### 根本原因
+
+Bash の **pipe 末尾コマンドの exit code が全体の exit code として返される** 仕様:
+
+```bash
+pnpm e2e:coverage-check | tail -10
+# exit code は tail のもの (= 通常 0)、pnpm 本体の exit code は失われる
+```
+
+`pnpm e2e:coverage-check` が exit 1 (= 失敗) でも、`tail` は通常 exit 0 を返すため、シェルレベルでは「成功」と判定される。本セッション中の quality gate 確認 (= 全 commit の lint / tsc / test / build) はすべてこの pipe で実行していたため、tsc / test ファイルの型 drift / e2e カバレッジ漏れが見落とされた状態で commit が積まれた。
+
+実は本 PR 開始前にも複数の既存テスト型エラー (= `ApiUsageReconcileResult` / `TenantMonthlyResetResult` の drift) が存在しており、本 PR では検出できなかったため別 PR に持ち越しとなる。
+
+### 解決策
+
+#### 即時対応 (= 本 PR で対応済)
+- `docs/test/E2E_COVERAGE.md` に `/api/tenants/me/billing/stripe/setup-with-existing-card` の skip エントリ追加
+- 「`pnpm e2e:coverage-check; echo "EXIT: $?"`」で exit code を明示出力する確認方法に切替
+
+#### 再発防止 (= 今後の運用)
+
+**Quality gate コマンドを実行する時は、必ず以下のいずれかで exit code を保証**:
+
+| 方法 | 例 | 用途 |
+|---|---|---|
+| **A (推奨)**: コマンド単体実行 + `echo $?` で exit code 明示 | `pnpm lint; echo "EXIT: $?"` | 単発確認 |
+| B: `set -o pipefail` で pipe 全体の最大 exit を採用 | `set -o pipefail; pnpm lint \| tail -5` | スクリプト内 |
+| C: 出力を一旦ファイルに保存して exit を確認 | `pnpm lint > /tmp/lint.out 2>&1; echo "EXIT: $?"; tail -20 /tmp/lint.out` | 長い出力時 |
+| D: バックグラウンド実行 (= タスク完了通知に exit code 含まれる) | Claude Code Bash tool の `run_in_background` | バックグラウンド |
+
+特に Claude Code の Bash tool は **バックグラウンドコマンドの実際の exit code をタスク完了通知に含めて返す** (= `Background command "xxx" completed (exit code 1)`)。pipe で見た目を整形する前に、まず exit code を取得することが重要。
+
+### 教訓
+
+1. **★最重要★ `pnpm xxx | tail -5` パターンは exit code 誤認識の温床** — `tail` / `head` / `grep` 等の filter コマンドは pnpm 本体の失敗を隠す。Quality gate 確認では必ず exit code を別途取得する
+2. **CI で初めて検出される問題は「ローカル品質ゲートの誤認識」が原因のことが多い** — ローカルで PASS と判定したのに CI で fail する場合、まず「ローカル判定が正しかったか」を疑う (= pipe / バックグラウンド実行 / キャッシュ等)
+3. **新規 page.tsx / route.ts 追加時は必ず `docs/test/E2E_COVERAGE.md` も更新** — `pnpm e2e:coverage-check` の CI gate に弾かれる前に手元で対応 (= feedback_e2e_coverage_gate)
+4. **`netlify-ignore.sh` の docs-only skip 判定を活用する** — docs/test/E2E_COVERAGE.md の追加修正だけ push する場合、Netlify Deploy Preview の rebuild は skip され credit 消費なし
+
+### 検証手順 (再発防止用)
+
+```
+新規 page.tsx / route.ts 追加 → commit 前に必ず:
+1. pnpm e2e:coverage-check; echo "EXIT: $?"
+2. EXIT が 0 でない場合、出力に従い docs/test/E2E_COVERAGE.md を更新
+3. 再度 pnpm e2e:coverage-check; echo "EXIT: $?" で EXIT 0 確認
+4. commit & push
+
+CI fail を疑似再現するには:
+1. 適当な API route を新規作成して docs に追記せずに commit
+2. push 後の GitHub Actions ログで「Lint / Test / Build」が exit 1 で fail することを確認
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): マージ前最終 quality gates で発覚
+- 関連修正ファイル:
+  - `docs/test/E2E_COVERAGE.md` (`/api/tenants/me/billing/stripe/setup-with-existing-card` skip エントリ追加)
+- 関連 KDD §5.X+102 (検索/ソート横断問題、同じく「CI gate で初めて検出」事案)
+- 関連 feedback `feedback_e2e_coverage_gate` (新規 route.ts / page.tsx を追加したら pnpm e2e:coverage-check を必ずローカル実行)
+- 関連 doc `docs/developer-guide/LOCAL_TEST_GUIDE.md` (= 本 PR で新規作成、quality gate 実行時の注意事項として本 KDD 内容を追記検討)
