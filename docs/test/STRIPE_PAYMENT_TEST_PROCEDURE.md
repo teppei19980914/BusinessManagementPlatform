@@ -196,23 +196,61 @@ STRIPE_ENABLED         = true
 - 両テナント別の Stripe Customer ID が作成される (= テナント別課金)
 - 同 email でも別請求書が発行される
 
-### 4.8 TC-9: P-B 強化 (ADR-0016 Phase 10): 既登録は Beginner 不可 → Pro 誘導
+### 4.8 TC-9: ADR-0016 Revised (2026-05-22): 3 層 eligibility 判定
 
-**目的**: Beginner abuse 防止ロジックが UI / サーバ層の両方で動作することを確認
+**目的**: 3 層判定 (層 1 = 自前テナント保有 / 層 2 = 招待 or Default 所属 / 層 3 = 完全新規) が UI / サーバ層の両方で動作することを確認
+
+**判定キー**: `initialAdminEmail` のみ (= 「初期管理者メール」フィールド)。`billingContactEmail` は判定対象外 (= 共有 billing email の false positive を抑止)。
+
+#### TC-9-a 層 1: 自前テナント保有ユーザ (= 公開フォーム完全不可)
 
 **手順**:
-1. テナント A (任意プラン) を email = X で利用中
-2. `/signup` で同 email = X を入力して payload 送信を試行 (Beginner)
+1. テナント A の初期 admin (`tenants.created_by_user_id` に紐付く user) が email = X
+2. `/signup` で `initialAdminEmail = X` を入力
 
-**期待結果 (UI 側)**:
-- メール入力 onBlur で `/api/auth/check-tenant-eligibility` 呼出
-- Beginner radio が disable + 「既登録のため Expert/Pro をご選択ください」CTA 表示
-- プラン選択が自動で Expert に切替
+**期待結果 (UI)**:
+- `/api/auth/check-tenant-eligibility` が `{ signupAllowed: false, beginnerAvailable: false, reason: 'owned' }` を返す
+- フォーム全体に「自前テナント保有」警告 + Discord 問合せリンク (`data-testid="owned-tenant-warning"`)
+- submit ボタン disable
 
-**期待結果 (サーバ側 = UI bypass 想定 = curl 直叩き)**:
-- `plan=beginner` で POST → 409 `BEGINNER_REQUIRES_UPGRADE` エラー
+**期待結果 (サーバ = UI bypass)**:
+- `plan=expert` でも `plan=pro` でも `plan=beginner` でも、すべて 409 `OWNED_TENANT_EXISTS` で reject
 
-**正常系 (= Pro 選択)**: Pro 選択して submit → 正常払い出し + Stripe Pro subscription 作成
+#### TC-9-b 層 2: 招待 / Default 所属のみ (= Beginner 不可、Expert/Pro 可)
+
+**手順**:
+1. ユーザ Y は Default テナント所属 (or 他テナントに招待された member)、ただしテナントを払い出した履歴なし
+2. `/signup` で `initialAdminEmail = Y.email` を入力
+
+**期待結果 (UI)**:
+- `/api/auth/check-tenant-eligibility` が `{ signupAllowed: true, beginnerAvailable: false, reason: 'past_email_found' }` を返す
+- Beginner radio disable + 「Expert または Pro をご選択ください」ヒント (`data-testid="beginner-unavailable-hint"`)
+- Beginner 選択中なら自動で Expert に切替
+
+**期待結果 (サーバ)**:
+- `plan=beginner` で POST → 409 `BEGINNER_REQUIRES_UPGRADE`
+- `plan=expert` or `plan=pro` で POST → 201 (正常払い出し + Stripe subscription 作成)
+
+#### TC-9-c 層 3: 完全な新規 email (= 全プラン可)
+
+**手順**:
+1. `/signup` で `initialAdminEmail` に完全に新規な email を入力
+
+**期待結果**:
+- `/api/auth/check-tenant-eligibility` が `{ signupAllowed: true, beginnerAvailable: true, reason: 'none' }` を返す
+- Beginner / Expert / Pro いずれも選択可
+- 任意のプランで submit → 201 正常払い出し
+
+#### TC-9-d super_admin による手動払い出し (SA-2)
+
+**手順**:
+1. 層 1 該当 email (= 自前テナント保有ユーザ) で `/admin/super/tenants/new` から払い出しを試行
+
+**期待結果**:
+- 3 層判定スキップ (= `skipEligibilityCheck=true`) で plan 自由選択 + 払い出し成功
+- 「1 ユーザが複数の自前テナント保有」を super_admin 判断で許容する経路
+
+> 関連: [ADR-0016 Revised section](../adr/0016-multi-tenant-user-membership.md#revised-2026-05-22) / [TENANT_AND_BILLING.md §34.14.5b](../business/TENANT_AND_BILLING.md)
 
 ### 4.9 TC-10: 90日 expiry 後の write 制限
 
