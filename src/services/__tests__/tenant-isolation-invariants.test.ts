@@ -141,6 +141,10 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   //   drift / cron 健全性 / メール失敗 / 縮退テナントを俯瞰。各個別 service が tenant 分離を
   //   守っており本 service は集約のみ。呼出側 super_admin role gate で多層防御済。
   'diagnostics.service.ts',
+  // PR #425 (2026-05-22): Netlify 外部 API client。Netlify Site 全体のビルド消費を取得するため
+  //   tenantId 概念が存在しない (= テナント DB アクセスなし、外部 SaaS のグローバル metrics)。
+  //   呼出側は super_admin Diagnostics ダッシュボードのみ (= role gate で多層防御済)。
+  'netlify-metrics.service.ts',
 ]);
 
 /**

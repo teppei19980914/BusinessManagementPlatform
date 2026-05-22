@@ -12859,3 +12859,91 @@ CI fail を疑似再現するには:
 - 関連 KDD §5.X+102 (検索/ソート横断問題、同じく「CI gate で初めて検出」事案)
 - 関連 feedback `feedback_e2e_coverage_gate` (新規 route.ts / page.tsx を追加したら pnpm e2e:coverage-check を必ずローカル実行)
 - 関連 doc `docs/developer-guide/LOCAL_TEST_GUIDE.md` (= 本 PR で新規作成、quality gate 実行時の注意事項として本 KDD 内容を追記検討)
+
+---
+
+## 5.X+111 **★severity-2 品質ゲート★ 「実装側の契約変更 (idempotencyKey スキーマ拡張)」と「invariants test の exemption 漏れ (新規 service ファイル追加)」の 2 件同時 CI fail (2026-05-22 / PR #425 2 回目 CI fail)**
+
+### 発生事象
+
+§5.X+110 の対応 (`docs/test/E2E_COVERAGE.md` 追記) を push した後、**Lint / Test / Build** ジョブが再度 fail。`pnpm test --coverage` で 2 件の test failure:
+
+1. `src/services/stripe-billing.service.test.ts > createSubscriptionForTenant > Subscription Items: haiku + sonnet + storage Plus が含まれる`
+   ```
+   AssertionError: expected 'subscription:create:00000000-0000-000…' to be 'subscription:create:00000000-0000-000…'
+   Expected: "subscription:create:00000000-0000-0000-0000-000000000abc"
+   Received: "subscription:create:00000000-0000-0000-0000-000000000abc:pm_xxx"
+   ```
+2. `src/services/__tests__/tenant-isolation-invariants.test.ts > ★テナント分離 リグレッション防止 — Service 層★ > .../src/services/netlify-metrics.service.ts に tenantId / viewerTenantId フィルタが含まれている`
+   ```
+   AssertionError: expected false to be true
+   ```
+
+ローカル `pnpm test -- --run | tail -5` の pipe で再び exit code が tail 0 に隠された (= §5.X+110 で記録したばかりの罠を **同セッション内で再踏み**)。
+
+### 根本原因
+
+#### 失敗 1: 実装側の契約変更が test mock に未反映
+
+PR #425 KDD §5.X+106 で **idempotencyKey に `paymentMethodId` を追加** (= カード再登録時の Stripe reject 回避) する変更を `stripe-billing.service.ts` に入れたが、対応する test の `expect(opts.idempotencyKey).toBe(...)` を旧形式 `subscription:create:${TENANT_ID}` のまま放置していた。
+
+```typescript
+// src/services/stripe-billing.service.ts:860 (PR #425 で変更)
+idempotencyKey: `subscription:create:${input.tenantId}:${input.paymentMethodId}`
+
+// src/services/stripe-billing.service.test.ts:444 (旧契約のまま)
+expect(opts.idempotencyKey).toBe(`subscription:create:${TENANT_ID}`);  // ❌
+```
+
+「実装と一緒に test も更新する」原則を満たしておらず、レビュー時にも気付かれなかった。
+
+#### 失敗 2: invariants test の exemption 漏れ
+
+PR #425 で新規追加した `src/services/netlify-metrics.service.ts` は **Netlify 外部 API client** (= テナント DB アクセスなし、外部 SaaS のグローバル metrics 取得) のため tenantId / viewerTenantId フィルタが構造的に存在しないが、`tenant-isolation-invariants.test.ts` が `src/services/` 配下を全件スキャンして「`tenantId:` 等の文字列が含まれること」を要求する仕様のため、新規ファイルが追加された瞬間に fail。
+
+`CROSS_TENANT_ALLOWED_FILES` の許可リストへの追加が必要だった。
+
+### 解決策
+
+#### 即時対応 (= 本 commit で対応済)
+
+1. **test mock 更新**: `expect(opts.idempotencyKey).toBe(\`subscription:create:${TENANT_ID}:pm_xxx\`)` に変更。`pm_xxx` を input にしているので mock 側も追従。
+2. **invariants exemption 追加**: `CROSS_TENANT_ALLOWED_FILES` Set に `'netlify-metrics.service.ts'` を追加 + 「Netlify 外部 API client (= テナント DB アクセスなし、super_admin Diagnostics 用)」コメント。
+3. **§5.X+110 の運用ルールを再徹底**: 本セッション内で pipe 罠を再踏みしたため、quality gate 確認は **必ず `; echo "EXIT: $?"` 付き** で実行する。
+
+#### 再発防止 (= 今後の運用)
+
+| 観点 | チェックポイント |
+|---|---|
+| **A. 実装契約変更 (= 関数シグネチャ / 戻り値形式 / 副作用)** | 変更直後に対象 test ファイルを必ず `pnpm test --run <test-file>; echo "EXIT: $?"` で実行する。「実装と一緒に test も更新する」を **同一 commit 内で完結** |
+| **B. 新規 service ファイル追加** | `src/services/` 配下に新規 .ts を追加したら、`tenant-isolation-invariants.test.ts` の `CROSS_TENANT_ALLOWED_FILES` に追加するか、`viewerTenantId` フィルタを実装する。**追加先の判断基準**: テナント DB アクセスがあるか? あれば実装する側、なければ exemption に追加 |
+| **C. CI gate 確認** | `pnpm test --run; echo "EXIT: $?"` で **pipe を使わずに exit code 直接取得**。`tail` / `head` / `grep` 等を経由しない |
+
+### 教訓
+
+1. **★最重要★ 同セッション内で pipe 罠を再踏みした** — §5.X+110 で記録したばかりの罠を **直後の確認で再度踏んだ**。記録するだけでなく **次の Bash tool 実行時に意識的に避ける** こと。教訓のメタ教訓: 「KDD に書いただけで対策完了」ではない、**次の実行で意識せよ**
+2. **新規 service ファイル追加時は invariants test の許可リスト適合性を必ず確認** — `CROSS_TENANT_ALLOWED_FILES` の追加可否を判断 (= テナント DB アクセスの有無で機械的に判定可能)
+3. **「契約変更 (idempotencyKey スキーマ拡張)」と「test 更新」を分離してはいけない** — 契約変更 commit に必ず該当 test 更新を含める。レビューで指摘されなくても自分でチェック
+4. **CI fail のログは表面 (PR コメントの coverage action ENOENT) ではなく upstream の `pnpm test --coverage` ステップを最初に見る** — `vitest-coverage-report-action` の ENOENT は upstream test 失敗の **symptom (= coverage-summary.json が生成されない)** であり真の原因ではない
+
+### 検証手順 (再発防止用)
+
+```
+新規 service.ts 追加 / 既存 service.ts シグネチャ変更時:
+1. pnpm test --run src/services/__tests__/tenant-isolation-invariants.test.ts; echo "EXIT: $?"
+2. pnpm test --run <変更した service の test ファイル>; echo "EXIT: $?"
+3. pnpm test --run; echo "EXIT: $?"  ← 全体回帰
+4. 全部 EXIT 0 を確認してから commit
+
+★全 quality gate 確認は必ず pipe を使わずに `; echo "EXIT: $?"` 付きで実行 (§5.X+110 の罠回避)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): §5.X+110 push 後の 2 回目 CI fail
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.test.ts` (L444 idempotencyKey expectation 更新)
+  - `src/services/__tests__/tenant-isolation-invariants.test.ts` (`CROSS_TENANT_ALLOWED_FILES` に `netlify-metrics.service.ts` 追加)
+- 関連 KDD §5.X+106 (idempotencyKey に paymentMethodId を含める設計判断)
+- 関連 KDD §5.X+110 (bash pipe exit code 罠 — 本件で **同セッション内で再踏み**)
+- 関連 feedback `feedback_tenant_isolation` (invariants test の役割 = severity-1 個人情報漏洩リスク予防)
