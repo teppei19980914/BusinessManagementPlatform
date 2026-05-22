@@ -505,6 +505,7 @@ UI 上は「予算 ¥10,000 のうち、今月 ¥3,200 を使用 (32%)」のよ�
 **※ 2026-05-14 更新**: 本セクション以下に記載のうち、**「v1.x で UI 実装」と書かれていた次の項目は v1 (6/1) 時点で既に実装済み** となっている。
 
 - テナント管理者設定画面（`/settings/tenant`）: プラン情報表示・プラン変更・予算上限自己設定・リアルタイム使用量タイル（当月 API 呼出 / API 費用 / 月次予算上限 / 予算消化率プログレスバー）— [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx)
+    - **feat/tenant-settings-tabs (2026-05-22)**: 1949 行のモノリスから 3 タブ (概要 / 使用量 / 請求) 構成に再編。URL クエリ `?tab=overview|usage|billing` で active tab を持続させ、Stripe Checkout 戻り後も請求タブが選択された状態を維持する。共通ヘッダー (テナント名 / 組織 ID / 再集計ボタン / Beginner 期限バナー / 停止中バナー) はタブ外固定。請求タブ内に既存 `/settings/tenant/billing` (請求履歴) への動線リンクを併設。
 - super_admin 向けの全テナント横断使用量サマリ（`/admin/super`）: 顧客テナント数 / 今月の API 呼出 / 今月の合計課金 / プラン別分布 / CSV 請求エクスポート — [src/app/(dashboard)/admin/super/](../../src/app/(dashboard)/admin/super/)
 - API 利用量再集計ボタン: `POST /api/tenants/me/recalculate` で ApiCallLog の SUM から再計算
 

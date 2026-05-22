@@ -535,6 +535,11 @@
     "deleteConfirm": "この見積もりを削除しますか？",
     "noItems": "見積もり項目がありません"
   },
+  "tenantSettings": {
+    "tabOverview": "概要",
+    "tabUsage": "使用量",
+    "tabBilling": "請求"
+  },
   "project": {
     "listTitle": "プロジェクト一覧",
     "listEmpty": "プロジェクトがありません",
