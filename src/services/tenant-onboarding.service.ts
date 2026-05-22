@@ -139,7 +139,11 @@ export type TenantOnboardingFailure = {
     //   email は tenant-scoped 一意化されたため、新規テナント作成時の email 重複は
     //   そもそも発生しない (= 同一個人が複数テナントに所属可能になる、本 ADR の主目的)。
     | 'EMAIL_SEND_FAILED'
-    // P-B 強化 (2026-05-20 / ADR-0016): 過去/現在を問わず登録履歴のある email は Beginner 不可
+    // ADR-0016 Revised (2026-05-22): 3 層判定
+    //   - 層 1: 自前テナント保有あり → 公開フォーム完全不可 (システム管理者問合せ必須)
+    //   - 層 2: 他テナント (Default 含む) の users に email あり → Beginner 不可 (Expert/Pro 可)
+    //   - 層 3: 履歴一切なし → 全プラン可
+    | 'OWNED_TENANT_EXISTS'
     | 'BEGINNER_REQUIRES_UPGRADE';
   message: string;
 };
@@ -163,7 +167,10 @@ export async function createTenantBySuperAdmin(
   baseUrl: string,
   consentMeta?: ConsentMeta,
 ): Promise<TenantOnboardingResult> {
-  return createTenantInternal(input, baseUrl, consentMeta);
+  // ADR-0016 Revised (2026-05-22): super_admin 経路は層 1/層 2 判定を全スキップ (= SA-2)。
+  //   「自前テナント保有ユーザの追加払い出しはシステム管理者問合せ」の問合せ受け窓口がこの経路。
+  //   1 ユーザに対して複数の自前テナント発行を admin 判断で実施可。
+  return createTenantInternal(input, baseUrl, consentMeta, { skipEligibilityCheck: true });
 }
 
 /**
@@ -189,6 +196,15 @@ export type ConsentMeta = {
   userAgent?: string;
 };
 
+/** ADR-0016 Revised (2026-05-22): 内部オプション */
+type CreateTenantInternalOptions = {
+  /**
+   * true で 3 層 eligibility 判定 (層 1 OWNED_TENANT_EXISTS / 層 2 BEGINNER_REQUIRES_UPGRADE)
+   * を完全スキップ。super_admin 手動払い出し経路 (SA-2) でのみ true に設定する。
+   */
+  skipEligibilityCheck?: boolean;
+};
+
 // ================================================================
 // 内部
 // ================================================================
@@ -197,6 +213,7 @@ async function createTenantInternal(
   rawInput: unknown,
   baseUrl: string,
   consentMeta?: ConsentMeta,
+  options: CreateTenantInternalOptions = {},
 ): Promise<TenantOnboardingResult> {
   // ---------- 1. zod バリデーション ----------
   const parsed = TenantOnboardingInputSchema.safeParse(rawInput);
@@ -232,49 +249,55 @@ async function createTenantInternal(
   //   Prisma が P2002 を throw → 呼出側 (createTenantBySuperAdmin/Signup) で catch → 4xx 化。
   //   ただし新規テナント作成では物理的に同一テナント内重複は発生しないため発火条件なし。
 
-  // P-B (2026-05-08 → 2026-05-20 強化): Beginner プランは「初回ユーザ専用 90日試用」方針
-  //   ADR-0016 (2026-05-20): import API による抜け道塞ぎとして、**過去/現在を問わず**
-  //   どこかのテナントに同 email が登録されていれば Beginner 不可 (Expert/Pro 誘導)。
+  // ADR-0016 Revised (2026-05-22): 3 層 eligibility 判定。
+  //   判定キーは **initialAdminEmail のみ** (= テナントを払い出す user 本人の email)。
+  //   billingContactEmail は付随情報扱いで対象外 (= 共有 billing email の false positive を抑止)。
   //
-  //   旧 P-B は「解約済テナント (deletedAt: not null) 限定」のチェックだったが、
-  //   現役テナントに居るユーザが「別組織」を Beginner で開設 → import API で過去蓄積を
-  //   持ち込み → 90日試用を半永久延長する abuse が成立してしまうため、削除状態を問わず
-  //   過去登録履歴全体を判定対象とする。
+  //   - 層 1: 自前テナント保有 (= 過去に initialAdminUser として払い出した tenant が存在)
+  //           → OWNED_TENANT_EXISTS (= 公開フォーム完全不可、admin 問合せ必須)
+  //   - 層 2: 他テナント (Default / 招待先 含む) の users に email あり
+  //           → plan='beginner' なら BEGINNER_REQUIRES_UPGRADE (= Expert/Pro へ誘導)
+  //   - 層 3: 履歴一切なし → 全プラン可
   //
-  //   チェック対象 (= OR 条件、いずれか 1 つでも該当すれば Beginner 拒否):
-  //   - tenants.billing_contact_email = billingContactEmail
-  //   - tenants.billing_contact_email = initialAdminEmail
-  //   - users.email = billingContactEmail (deleted 含む)
-  //   - users.email = initialAdminEmail (deleted 含む)
-  if (input.plan === 'beginner') {
-    const [previousTenants, previousUser] = await Promise.all([
-      prisma.tenant.findMany({
-        where: {
-          OR: [
-            { billingContactEmail: input.billingContactEmail },
-            { billingContactEmail: input.initialAdminEmail },
-          ],
-        },
+  //   旧 P-B (2026-05-08) の plan='beginner' 強制上書きおよび ADR-0016 (2026-05-20) の 4 条件 OR
+  //   判定は本 Revised で収束。tenant.deletedAt は問わず (= 論理削除 / 物理削除関係なく
+  //   tenants.created_by_user_id に紐付く限り「自前テナント保有」とみなす)。
+  //
+  //   super_admin 経路 (createTenantBySuperAdmin) は skipEligibilityCheck=true で本ブロックを完全
+  //   スキップする (SA-2: 「問合せ → 例外発行」窓口、admin 判断で多テナント発行を許容)。
+  if (!options.skipEligibilityCheck) {
+    // 層 1 判定: initialAdminEmail で users を引き、その user.id が tenants.created_by_user_id に
+    //   紐付いていれば「自前テナント保有」。OWNED_TENANT_EXISTS で公開フォーム完全不可。
+    const usersWithSameEmail = await prisma.user.findMany({
+      where: { email: input.initialAdminEmail },
+      select: { id: true },
+    });
+
+    if (usersWithSameEmail.length > 0) {
+      const userIds = usersWithSameEmail.map((u) => u.id);
+      const ownedTenant = await prisma.tenant.findFirst({
+        where: { createdByUserId: { in: userIds } },
         select: { id: true },
-      }),
-      prisma.user.findFirst({
-        where: {
-          OR: [
-            { email: input.billingContactEmail },
-            { email: input.initialAdminEmail },
-          ],
-        },
-        select: { id: true },
-      }),
-    ]);
-    if (previousTenants.length > 0 || previousUser != null) {
-      return {
-        ok: false,
-        reason: 'BEGINNER_REQUIRES_UPGRADE',
-        message:
-          'このメールアドレスは既に登録履歴があるため、Beginner プランでの新規払い出しはできません。Expert または Pro プランをご選択ください。',
-      };
+      });
+      if (ownedTenant != null) {
+        return {
+          ok: false,
+          reason: 'OWNED_TENANT_EXISTS',
+          message:
+            '入力された初期管理者メールは、既に「自前テナント」を保有しているユーザのものです。追加のテナント払い出しはシステム管理者へお問い合わせください。',
+        };
+      }
+      // 層 2 判定: users に email あり (但し createdByUserId にはなっていない) → 招待 / Default 所属
+      if (input.plan === 'beginner') {
+        return {
+          ok: false,
+          reason: 'BEGINNER_REQUIRES_UPGRADE',
+          message:
+            'このメールアドレスは既に登録履歴があるため、Beginner プランでの新規払い出しはできません。Expert または Pro プランをご選択ください。',
+        };
+      }
     }
+    // 層 3: usersWithSameEmail.length === 0 → 完全な新規 → 制約なし
   }
 
   // ---------- 3. transaction: Tenant + initial admin User + roleChangeLog ----------
@@ -338,6 +361,15 @@ async function createTenantInternal(
         afterRole: 'admin',
         reason: '新規テナント作成 (P-G)',
       },
+    });
+
+    // ADR-0016 Revised (2026-05-22): 払い出し直後の初期 admin User.id を Tenant に紐付け。
+    //   created_by_user_id は「自前テナント保有」3 層判定 (層 1) で参照される。
+    //   tenant.create 時点では User がまだ存在しないため、user.create 後の update で紐付ける。
+    //   transaction 内で実行することで rollback 時の整合性を担保。
+    await tx.tenant.update({
+      where: { id: t.id },
+      data: { createdByUserId: u.id },
     });
 
     // feat/legal-pages-lp-integration (2026-05-21):

@@ -90,10 +90,21 @@ function mapFailureToHttp(result: TenantOnboardingFailure): NextResponse {
         { error: { code: 'EMAIL_SEND_FAILED', message: result.message } },
         { status: 502 },
       );
+    // ADR-0016 Revised (2026-05-22): super_admin 経路 (createTenantBySuperAdmin) は
+    //   skipEligibilityCheck=true で 3 層判定 (層 1 OWNED_TENANT_EXISTS / 層 2
+    //   BEGINNER_REQUIRES_UPGRADE) を完全スキップするため、本 switch には到達しない。
+    //   ただし型安全性のため case 自体は残置 (exhaustive switch を維持して将来の追加 reason を
+    //   コンパイラに検知させる)。500 系で defense-in-depth する。
     case 'BEGINNER_REQUIRES_UPGRADE':
+    case 'OWNED_TENANT_EXISTS':
       return NextResponse.json(
-        { error: { code: 'BEGINNER_REQUIRES_UPGRADE', message: result.message } },
-        { status: 409 },
+        {
+          error: {
+            code: 'UNEXPECTED_ELIGIBILITY_FAILURE',
+            message: 'super_admin 経路で予期せぬ eligibility 失敗が発生しました (server bug 可能性)',
+          },
+        },
+        { status: 500 },
       );
   }
 }

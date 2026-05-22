@@ -218,3 +218,84 @@ export function buildLoginUrl(tenantSlug: string, baseUrl: string): string {
 - 関連 KDD: [§5.X+77 multi-tenant 移行の教訓](../knowledge/KDD_PATTERNS.md)
 - 関連 PR: PR #418 想定 (= 本 ADR の実装、PR 番号は作成時に確定)
 - 過去の課題発生: 2026-05-20 動作確認で `/admin/super/tenants` が 500 で失敗
+
+---
+
+## Revised: 2026-05-22 — 3 層 eligibility 判定 (4 条件 OR → initialAdminEmail 単独キー化)
+
+### 背景
+
+2026-05-22 動作確認で、Default テナント所属ユーザ (teppei.suyama@pwc.com) が `/signup` から自テナントを Expert プランで払い出そうとした際、UI で Expert を選択しているにも関わらず **`BEGINNER_REQUIRES_UPGRADE` エラーで詰む** 不具合が発覚した。
+
+原因解析の結果、本 ADR (オリジナル / 2026-05-20) には 2 種類の dead code 残置が共存していた:
+
+1. **`/api/auth/signup` 経路の plan 強制上書き** (`onboardingInput.plan = 'beginner';` @ `src/app/api/auth/signup/route.ts:90`)
+   - 旧 P-B (2026-05-08) で導入。「公開セルフサインアップは Beginner 限定」方針。
+   - 本 ADR 採択 (2026-05-20) で UI 側に「Expert/Pro 誘導 CTA」を入れた際に **削除すべきだったが、route.ts 側の対応が漏れた**。
+   - 結果: UI が `plan: 'expert'` を送信しても route.ts が `plan: 'beginner'` に書き換えてしまう dead path 化。
+
+2. **4 条件 OR 判定の false positive リスク**
+   - 本 ADR (オリジナル) では「`tenants.billing_contact_email` ∪ `users.email`」× 「`billingContactEmail` ∪ `initialAdminEmail`」の 4 条件 OR で「過去登録履歴あり」を判定。
+   - 共有 billing email (会計士代行 / 経理代表アドレス) を使う legitimate user に false positive を発生させていた。
+   - 検出強度を上げても、abuse 側は email を変えれば回避可能なため、防御効果と false positive のトレードオフが悪い。
+
+### 仕様変更
+
+**1. プラン強制上書きの撤廃**
+
+`/api/auth/signup` から `onboardingInput.plan = 'beginner';` を削除。`plan` は Zod enum (`beginner` | `expert` | `pro`) と本 Revised の 3 層判定で正規化する。
+
+**2. 4 条件 OR → 3 層 (initialAdminEmail のみ)**
+
+判定キーを `initialAdminEmail` 単独に絞り、検出粒度を **3 層** に拡張:
+
+| 層 | 判定条件 | 公開フォーム挙動 |
+|---|---|---|
+| 層 1 | `users.email = initialAdminEmail` を持つ user が、いずれかの `tenants.created_by_user_id` に紐付き (= 自前テナント保有) | **完全不可** (`OWNED_TENANT_EXISTS`) → admin 問合せ動線 |
+| 層 2 | `users.email = initialAdminEmail` あり (= 招待 / Default 所属のみ) | **Expert / Pro のみ** (`BEGINNER_REQUIRES_UPGRADE`) |
+| 層 3 | `users.email = initialAdminEmail` なし | 全プラン可 |
+
+`billingContactEmail` の重複は判定対象外。
+
+**3. SA-2: super_admin 経路は判定全スキップ**
+
+`createTenantBySuperAdmin` は `skipEligibilityCheck=true` で 3 層判定を完全バイパス。これは「層 1 該当ユーザの問合せに応じた admin による例外発行」を運用ルートとして提供するため。1 ユーザの複数自前テナント保有を super_admin 経由で許容するが、ユーザ自身の追加公開払い出しは禁止のまま。
+
+**4. Schema 拡張**
+
+`tenants.created_by_user_id String?` (Uuid) を追加。`Tenant.suspendedBy` と同じ設計 (= User.id への FK にしない、nullable で safe margin)。
+
+- migration: `20260527_tenants_created_by_user_id_tracking`
+- backfill: 各 tenant の `systemRole='admin'` の最古 user を `created_by_user_id` にセット (= MANAGEMENT / Default を含む既存 2 テナントを対応)
+- 新規テナント作成は `tenant-onboarding.service.ts` が transaction 内で `tenant.update` でセット
+
+### Trade-offs
+
+**喪失する検出 (3 層 Revised では block されなくなる)**:
+
+- A: 過去 Beginner で開設した billingContactEmail で、新 admin email を使って再申込
+- B: 共有 billing email (会計士 / 代行業者) で複数テナント開設 — ただしこれは **正当用途の false positive 抑制** が目的
+- C: ある admin email が過去に「請求先メール」として登録された後、その email でテナント開設 (レアケース)
+
+**維持される検出**:
+
+- D: 退会済テナントの admin email で再申込 (Beginner 90 日 abuse の本丸) — 層 2 で block (Expert/Pro 誘導)
+- E: Default テナントの所属ユーザが自前テナント払い出し — 層 2 で block
+
+**残る abuse 経路** (本 Revised でも防止不可、技術的限界):
+
+- email を変えて 90 日試用を使い回す (gmail エイリアス、捨てメール) — 完全防止不可能
+
+### 影響範囲
+
+- バックエンド: `tenant-onboarding.service.ts` / `signup/route.ts` / `admin/super/tenants/route.ts` / `check-tenant-eligibility/route.ts`
+- フロントエンド: `(auth)/signup/page.tsx` (層 1 でフォーム全体 disable + Discord 動線)
+- DB schema: `Tenant.createdByUserId` 追加 + 既存 2 テナント backfill
+- テスト: 3 層判定の単体テスト (service / check-tenant-eligibility / signup route) + E2E (`e2e/specs/14-signup-3tier-eligibility.spec.ts`)
+- ドキュメント: `docs/business/TENANT_AND_BILLING.md` §34.14.5b に正仕様
+
+### 教訓
+
+1. **仕様転換時の dead code 残置**: 上書きロジックを廃止する際、API ハンドラと UI を **同じ PR でセット変更** すること。片方だけ撤去すると逆方向の整合性破壊が生じる。
+2. **4 コネクタ OR の false positive リスク**: 検出条件を OR で増やすと、abuse 防止の限界利益よりも legitimate user の誤 block 損失の方が大きいケースが多い。
+3. **シンプル設計の力**: 「1 user = 1 email = 1 owned tenant」の概念で簡潔に表現することで、UX 説明も実装テストもクリーンに収まる。

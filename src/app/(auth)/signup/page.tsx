@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TERMS_URL, PRIVACY_URL } from '@/config/legal-versions';
+import { getDiscordInviteUrl } from '@/config/community';
 
 type FormState = {
   name: string;
@@ -79,53 +80,61 @@ export default function SignupPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // ADR-0016 (2026-05-20): 既登録 email チェック結果。Beginner 不可なら radio disable + 注釈
+  // ADR-0016 Revised (2026-05-22): 3 層判定。
+  //   - signupAllowed=false (層 1): フォーム全体 disable + admin 問合せ動線
+  //   - beginnerAvailable=false (層 2): Beginner radio disable + Expert/Pro 自動切替
+  //   - 両方 true (層 3): 全プラン選択可
+  const [signupAllowed, setSignupAllowed] = useState<boolean>(true);
   const [beginnerAvailable, setBeginnerAvailable] = useState<boolean | null>(null);
   const [eligibilityHint, setEligibilityHint] = useState('');
+  const discordUrl = getDiscordInviteUrl();
 
-  // ADR-0016: 両方のメール (billingContactEmail / initialAdminEmail) が valid になった時点で
-  //   check-tenant-eligibility を debounced 呼び出し。既登録ならフォーム submit 前に
-  //   Beginner radio を disable し、Expert/Pro に強制切替する。
+  // ADR-0016 Revised (2026-05-22): initialAdminEmail が valid になった時点で
+  //   check-tenant-eligibility を debounced 呼び出し。
+  //   - 層 1 (signupAllowed=false): フォーム submit ボタン disable + 問合せ動線表示
+  //   - 層 2 (beginnerAvailable=false): Beginner radio disable + Expert/Pro 自動切替
+  //   判定キーは initialAdminEmail のみ (billingContactEmail は ADR-0016 Revised で対象外)。
   useEffect(() => {
-    const billing = form.billingContactEmail.trim();
     const admin = form.initialAdminEmail.trim();
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailPattern.test(billing) || !emailPattern.test(admin)) {
-      // ADR-0016: 不正 email の段階では何もしない (= debounce cancel で API 呼出も発生しない)
-      //   reset は onChange で行うことで cascade render を避ける (lint: set-state-in-effect 回避)
+    if (!emailPattern.test(admin)) {
       return;
     }
     const timer = setTimeout(async () => {
       const res = await fetch('/api/auth/check-tenant-eligibility', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ billingContactEmail: billing, initialAdminEmail: admin }),
+        body: JSON.stringify({ initialAdminEmail: admin }),
       }).catch(() => null);
       if (!res || !res.ok) {
-        // 失敗時は UI ヒント無効化 (サーバ側の最終判定 BEGINNER_REQUIRES_UPGRADE が defense-in-depth で動く)
+        // 失敗時は UI ヒント無効化 (サーバ側の 3 層判定が defense-in-depth で動く)
+        setSignupAllowed(true);
         setBeginnerAvailable(null);
         setEligibilityHint('');
         return;
       }
       const json = (await res.json().catch(() => null)) as
-        | { beginnerAvailable: boolean; reason?: string; message?: string }
+        | {
+            signupAllowed: boolean;
+            beginnerAvailable: boolean;
+            reason?: 'owned' | 'past_email_found' | 'none';
+            message?: string;
+          }
         | null;
       if (!json) return;
+      setSignupAllowed(json.signupAllowed);
       setBeginnerAvailable(json.beginnerAvailable);
-      setEligibilityHint(json.beginnerAvailable ? '' : (json.message ?? ''));
-      // Beginner 不可の場合、Beginner 選択中なら自動で Expert に切替
-      if (!json.beginnerAvailable && form.plan === 'beginner') {
+      setEligibilityHint(
+        !json.signupAllowed || !json.beginnerAvailable ? (json.message ?? '') : '',
+      );
+      // 層 2: Beginner 選択中なら自動で Expert に切替
+      if (json.signupAllowed && !json.beginnerAvailable && form.plan === 'beginner') {
         setForm((prev) => ({ ...prev, plan: 'expert' }));
       }
-    // PR #425 (2026-05-22): debounce 500ms → 300ms に短縮 (= ユーザ体感のラグ削減)。
-    //   500ms だとメール入力 → 直後に郵便番号入力等で focus 移動した時点で初めて Beginner radio が
-    //   非活性化される体感があり、ユーザが「変わる前に submit してしまう」可能性があった。
-    //   300ms に短縮することで「メール入力ほぼ直後 (1 回タイプ分の余裕)」に判定される。
-    //   サーバ側 BEGINNER_REQUIRES_UPGRADE ガードは defense-in-depth として維持。
     }, 300); // debounce
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.billingContactEmail, form.initialAdminEmail]);
+  }, [form.initialAdminEmail]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -154,8 +163,8 @@ export default function SignupPage() {
         const message = json?.error?.message as string | undefined;
         if (code === 'SLUG_CONFLICT') setError('この組織 ID は既に使用されています。別の ID を入力してください。');
         // ADR-0016 (2026-05-20): EMAIL_CONFLICT は廃止 (tenant-scoped 一意化で発生不能)
-        // ADR-0016 (2026-05-20): BEGINNER_REQUIRES_UPGRADE = サーバ側 defense-in-depth
-        //   (UI チェックが bypass された場合のみ到達)
+        // ADR-0016 Revised (2026-05-22): 3 層判定のサーバ側 defense-in-depth エラー
+        else if (code === 'OWNED_TENANT_EXISTS') setError(message ?? '入力された初期管理者メールは、既に自前テナントを保有しているユーザのものです。追加のテナント払い出しはシステム管理者へお問い合わせください。');
         else if (code === 'BEGINNER_REQUIRES_UPGRADE') setError(message ?? 'このメールアドレスは既に登録履歴があるため、Expert または Pro プランをご選択ください。');
         else if (code === 'EMAIL_SEND_FAILED') setError('招待メール送信に失敗したため登録を取り消しました。メールアドレスを確認のうえ再度お試しください。');
         else if (code === 'RATE_LIMITED') setError('短時間に多くの申込がありました。1 時間後に再度お試しください。');
@@ -225,6 +234,36 @@ export default function SignupPage() {
 
             {error && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+            )}
+
+            {/* ADR-0016 Revised (2026-05-22): 層 1 (signupAllowed=false) のとき
+                = 入力された初期管理者メールが既に自前テナント保有ユーザ。公開フォーム不可。
+                admin (Discord) 問合せ動線を強調表示し、submit を disable する。 */}
+            {!signupAllowed && (
+              <div
+                className="rounded-md border border-warning/40 bg-warning/10 p-4 text-sm"
+                data-testid="owned-tenant-warning"
+              >
+                <p className="font-semibold">
+                  既に自前テナントを保有しているメールアドレスです
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  {eligibilityHint ||
+                    '入力された初期管理者メールは、既に自前テナントを保有しているユーザのものです。追加のテナント払い出しはシステム管理者へお問い合わせください。'}
+                </p>
+                {discordUrl && (
+                  <p className="mt-2">
+                    <a
+                      href={discordUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-info hover:underline"
+                    >
+                      Discord でシステム管理者に問い合わせる
+                    </a>
+                  </p>
+                )}
+              </div>
             )}
 
             {/* ADR-0016 (2026-05-20): プラン選択 UI。Beginner は初回ユーザ限定 (90日試用 abuse 防止)。
@@ -471,7 +510,13 @@ export default function SignupPage() {
             <Button
               type="submit"
               className="w-full"
-              disabled={submitting || !form.acceptedTerms || !form.acceptedPrivacy}
+              disabled={
+                submitting ||
+                !form.acceptedTerms ||
+                !form.acceptedPrivacy ||
+                // ADR-0016 Revised (2026-05-22): 層 1 = 公開フォーム完全不可
+                !signupAllowed
+              }
               data-testid="signup-submit"
             >
               {submitting ? '送信中...' : 'サインアップ'}

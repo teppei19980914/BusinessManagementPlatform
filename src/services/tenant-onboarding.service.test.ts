@@ -14,12 +14,19 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     tenant: {
       findUnique: vi.fn(),
-      // P-B (2026-05-08): 解約済テナントの billingContactEmail で Beginner 再登録拒否
+      // ADR-0016 Revised (2026-05-22): 層 1 判定で tenants.created_by_user_id を引く
+      findFirst: vi.fn(),
+      // (legacy) ADR-0016 (2026-05-20) の 4 条件 OR 判定で billingContactEmail を引いていた経路。
+      //   Revised 後は使われないが、他テストとの互換維持のため定義は残す。
       findMany: vi.fn(),
       create: vi.fn(),
+      // ADR-0016 Revised (2026-05-22): transaction 内で createdByUserId をセットする tx.tenant.update
+      update: vi.fn(),
       delete: vi.fn(),
     },
     user: {
+      // ADR-0016 Revised (2026-05-22): 層 1/2 判定で initialAdminEmail から users を引く
+      findMany: vi.fn(),
       findFirst: vi.fn(),
       create: vi.fn(),
       delete: vi.fn(),
@@ -108,9 +115,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   // デフォルトでは slug 重複なし、メール重複なし、解約済テナントなし (P-B)
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
+  vi.mocked(prisma.tenant.findFirst).mockResolvedValue(null); // ADR-0016 Revised: 層 1 default = なし
   vi.mocked(prisma.tenant.findMany).mockResolvedValue([]);
+  vi.mocked(prisma.user.findMany).mockResolvedValue([]); // ADR-0016 Revised: 層 2 default = なし
   vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
   vi.mocked(prisma.tenant.create).mockResolvedValue({ id: 'tenant-uuid' } as never);
+  vi.mocked(prisma.tenant.update).mockResolvedValue({ id: 'tenant-uuid' } as never);
   vi.mocked(prisma.user.create).mockResolvedValue({ id: 'user-uuid' } as never);
   vi.mocked(prisma.roleChangeLog.create).mockResolvedValue({} as never);
   // feat/legal-pages-lp-integration: 同意ログ createMany は count 戻りを期待
@@ -362,54 +372,153 @@ describe('TenantConsentLog 同意ログ記録', () => {
   });
 });
 
-describe('P-B 強化 (ADR-0016 / 2026-05-20): Beginner プラン abuse 防止 (削除/有効 問わず)', () => {
-  it('過去/現役テナントの billingContactEmail で Beginner 登録すると BEGINNER_REQUIRES_UPGRADE', async () => {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
-      { id: 'past-tenant' },
-    ] as never);
+describe('ADR-0016 Revised (2026-05-22): 3 層判定 (initialAdminEmail のみで判定)', () => {
+  // 層 1: 自前テナント保有 = users.email = initialAdminEmail かつ tenants.createdByUserId に紐付き
+  describe('層 1: OWNED_TENANT_EXISTS (= 公開フォーム完全不可)', () => {
+    it('initialAdminEmail を持つ user が tenants.createdByUserId に紐付くと OWNED_TENANT_EXISTS', async () => {
+      vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+        { id: 'creator-user' },
+      ] as never);
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+        id: 'owned-tenant',
+      } as never);
 
-    const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+      const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('BEGINNER_REQUIRES_UPGRADE');
-    expect(prisma.tenant.create).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('OWNED_TENANT_EXISTS');
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it('層 1 は plan=expert/pro でも block (= 公開フォームは全プラン不可)', async () => {
+      vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+        { id: 'creator-user' },
+      ] as never);
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+        id: 'owned-tenant',
+      } as never);
+
+      const result = await createTenantBySignup(
+        { ...VALID_INPUT, plan: 'expert' },
+        BASE_URL,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('OWNED_TENANT_EXISTS');
+    });
   });
 
-  // ADR-0016 (2026-05-20): 削除状態を問わず user.email で同 email 検出すれば拒否 (import 抜け道封鎖)
-  it('登録済 user の email で Beginner 登録すると BEGINNER_REQUIRES_UPGRADE', async () => {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([] as never);
-    vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({
-      id: 'registered-user',
-    } as never);
+  // 層 2: 招待 / Default 所属のみ = users.email = initialAdminEmail だが createdByUserId 未紐付
+  describe('層 2: BEGINNER_REQUIRES_UPGRADE (= Beginner 不可、Expert/Pro 可)', () => {
+    it('initialAdminEmail を持つ user は存在するが自前テナント未保有なら Beginner 不可', async () => {
+      vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+        { id: 'member-user' },
+      ] as never);
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null); // 層 1 該当なし
 
-    const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+      const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('BEGINNER_REQUIRES_UPGRADE');
-    expect(prisma.tenant.create).not.toHaveBeenCalled();
-  });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('BEGINNER_REQUIRES_UPGRADE');
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
 
-  it('plan=expert/pro なら解約再登録チェックは実施されず作成可能 + beginnerEverUpgraded=true で初期化', async () => {
-    // 注: findMany を mockResolvedValueOnce で「解約済あり」にしても、plan=expert なので
-    // そもそも findMany が呼ばれない (= プランで早期に bypass する)。明示的に未呼出を verify。
+    it('層 2 でも plan=expert なら作成可能 + beginnerEverUpgraded=true で初期化', async () => {
+      vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+        { id: 'member-user' },
+      ] as never);
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null);
 
-    const result = await createTenantBySuperAdmin(
-      { ...VALID_INPUT, plan: 'expert' },
-      BASE_URL,
-    );
+      const result = await createTenantBySignup(
+        { ...VALID_INPUT, plan: 'expert' },
+        BASE_URL,
+      );
 
-    expect(result.ok).toBe(true);
-    expect(prisma.tenant.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          plan: 'expert',
-          // 上位プランで作成 → beginnerEverUpgraded=true で初期化 (= 後で Beginner ダウングレード不可)
-          beginnerEverUpgraded: true,
+      expect(result.ok).toBe(true);
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            plan: 'expert',
+            beginnerEverUpgraded: true,
+          }),
         }),
-      }),
-    );
-    // findMany は呼ばれない (= Beginner 再登録チェックを skip)
-    expect(prisma.tenant.findMany).not.toHaveBeenCalled();
+      );
+    });
+  });
+
+  // 層 3: 完全な新規 = users.email = initialAdminEmail が一切なし
+  describe('層 3: 完全な新規 (= 全プラン可)', () => {
+    it('users.email = initialAdminEmail が無ければ Beginner で作成可能', async () => {
+      vi.mocked(prisma.user.findMany).mockResolvedValueOnce([] as never);
+
+      const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+      expect(result.ok).toBe(true);
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            plan: 'beginner',
+            beginnerEverUpgraded: false,
+          }),
+        }),
+      );
+    });
+
+    it('billingContactEmail が他テナントの user.email と被っていても層判定に影響しない', async () => {
+      // billingContactEmail = billing@customer-a.example, initialAdminEmail = admin@customer-a.example
+      // initialAdminEmail のみで判定するため、billingContactEmail の重複は無視される。
+      // user.findMany は initialAdminEmail のみで呼ばれ、結果 [] (= 層 3) のまま。
+      vi.mocked(prisma.user.findMany).mockResolvedValueOnce([] as never);
+
+      const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+      expect(result.ok).toBe(true);
+      // 確認: user.findMany は initialAdminEmail で呼ばれた
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { email: 'admin@customer-a.example' },
+        }),
+      );
+    });
+  });
+
+  // SA-2 (2026-05-22): super_admin 経路は 3 層判定を完全スキップ
+  describe('SA-2: createTenantBySuperAdmin は 3 層判定を完全スキップ', () => {
+    // 注: SA-2 では eligibility check が走らないため `mockResolvedValueOnce` を
+    //   仕掛けても消費されず、次の test に **leak** する罠がある。
+    //   よって SA-2 テストでは判定 hot path mock の事前セットアップを **意図的に省略** し、
+    //   「呼ばれないこと」のみを assertion で検証する。
+    it('super_admin 経由は user.findMany / tenant.findFirst を一切呼ばずに作成成功', async () => {
+      const result = await createTenantBySuperAdmin(VALID_INPUT, BASE_URL);
+
+      expect(result.ok).toBe(true);
+      // 3 層判定の hot path クエリ (user.findMany / tenant.findFirst) は呼ばれない
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
+      expect(prisma.tenant.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('super_admin 経由は Beginner プラン指定で beginnerEverUpgraded=false で作成', async () => {
+      const result = await createTenantBySuperAdmin(VALID_INPUT, BASE_URL);
+
+      expect(result.ok).toBe(true);
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ plan: 'beginner', beginnerEverUpgraded: false }),
+        }),
+      );
+    });
+  });
+
+  // ADR-0016 Revised: 払い出し時に Tenant.createdByUserId を初期 admin に紐付ける
+  describe('createdByUserId 紐付け', () => {
+    it('正常系: transaction 内で tenant.update が createdByUserId=u.id でコールされる', async () => {
+      await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+      expect(prisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: 'tenant-uuid' },
+        data: { createdByUserId: 'user-uuid' },
+      });
+    });
   });
 
   it('Beginner プランで作成すると beginnerEverUpgraded=false (= 試用開始)', async () => {

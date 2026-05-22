@@ -84,10 +84,11 @@ export async function POST(req: NextRequest) {
   // honeypot 以外のフィールドのみを onboarding service に渡す
   const onboardingInput = bodyObj == null ? {} : { ...bodyObj };
   if (onboardingInput && 'hp_url' in onboardingInput) delete onboardingInput.hp_url;
-  // P-B (2026-05-08): 公開セルフサインアップは **強制的に Beginner プラン**。
-  //   ユーザが入力で plan: 'pro' 等を送ってきても無視。最初から上位プランで開設したい
-  //   顧客は super_admin による手動払い出し経路を使ってもらう。
-  onboardingInput.plan = 'beginner';
+  // ADR-0016 Revised (2026-05-22): plan は service の 3 層判定に委譲する (旧 P-B の強制
+  //   'beginner' 上書きは削除)。UI で Expert/Pro を選択した既存ユーザが上書きで
+  //   'beginner' に書き換えられ BEGINNER_REQUIRES_UPGRADE で詰む不整合を解消。
+  //   Zod enum (beginner|expert|pro) と 3 層判定 (OWNED_TENANT_EXISTS / BEGINNER_REQUIRES_UPGRADE)
+  //   でサーバ defense-in-depth する。
 
   // feat/legal-pages-lp-integration (2026-05-21):
   //   規約・プラポリ同意ログの IP / User-Agent を抽出 (証跡用)。
@@ -129,6 +130,12 @@ export async function POST(req: NextRequest) {
     case 'BEGINNER_REQUIRES_UPGRADE':
       return NextResponse.json(
         { error: { code: 'BEGINNER_REQUIRES_UPGRADE', message: result.message } },
+        { status: 409 },
+      );
+    // ADR-0016 Revised (2026-05-22): 自前テナント保有ユーザの追加払い出しは admin 問合せ必須 (層 1)
+    case 'OWNED_TENANT_EXISTS':
+      return NextResponse.json(
+        { error: { code: 'OWNED_TENANT_EXISTS', message: result.message } },
         { status: 409 },
       );
   }

@@ -185,6 +185,16 @@ model Tenant {
   ///   suspendedAt とのペア: (suspendedAt=null, resumedAt=2026-06-01) = 6/1 に解除済の通常運用状態
   resumedAt                    DateTime? @map("resumed_at") @db.Timestamptz
 
+  /// ADR-0016 Revised (2026-05-22): テナント払い出し時の初期 admin User.id を保持。
+  ///   公開セルフサインアップ (/api/auth/signup) からの「自前テナント保有」3 層判定で参照される。
+  ///   - 公開 /signup と super_admin /admin/super/tenants 両経路で onboarding service が必ずセット
+  ///   - 既存テナント (MANAGEMENT / Default) は migration 同梱の backfill SQL で最古 admin を設定
+  ///   - User.id への FK にしない (= suspendedBy と同じ設計。User 物理削除時に宙吊りになっても
+  ///     既に「自前テナント保有」のフラグ自体は残るため層判定に支障なし)
+  ///   - NULLABLE: backfill が漏れたテナントを silent fail させないため、最終的に NOT NULL 化は
+  ///     将来 ADR で検討 (本 migration では既存運用への影響回避を優先)
+  createdByUserId              String?   @map("created_by_user_id") @db.Uuid
+
   // ============================================================
   // Stripe Metered Billing 連携 (PR-S1 / 2026-05-14)
   // 関連: docs/business/STRIPE_BILLING.md / docs/design/STRIPE_TECHNICAL_DESIGN.md
