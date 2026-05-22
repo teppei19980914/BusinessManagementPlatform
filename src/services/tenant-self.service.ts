@@ -276,6 +276,22 @@ export type UpdateBillingContactInput = {
  * 設計判断: updateTenantSelf (プラン変更) と分離。プラン変更ロジックは複雑 (即時/翌月予約) で、
  * 請求先情報の単純な update と一緒にすると条件分岐が散漫になるため、別関数化。
  */
+/**
+ * PR #425 (2026-05-22) ★severity-1★: updateBillingContact のエラー型。
+ *
+ * カード未登録 (stripeSubscriptionId=null) のテナントが paymentMethod='credit_card' に
+ * 切替えようとする UI バイパス操作を server-side で reject するために導入。
+ * 正常 UI フローでは「請求先情報を更新」ボタン押下時に Stripe Checkout に強制遷移し、
+ * 成功後に completeStripeSetup が paymentMethod を credit_card に書き込むため、本エラーは
+ * 発生しない (= curl 直叩き等のバイパスのみが対象)。
+ */
+export class CreditCardNotRegisteredError extends Error {
+  constructor() {
+    super('クレジットカードが登録されていないため、支払い方法をクレジットカードに変更できません。');
+    this.name = 'CreditCardNotRegisteredError';
+  }
+}
+
 export async function updateBillingContact(
   tenantId: string,
   input: UpdateBillingContactInput,
@@ -304,13 +320,24 @@ export async function updateBillingContact(
   if (Object.keys(data).length === 0) return; // 何も指定がなければ noop
 
   // PR-V7 #3: paymentMethod 遷移 (credit_card → invoice) を事前検知するため現在値を取得
+  // PR #425 (2026-05-22) ★severity-1★: invoice → credit_card 切替時のガードも兼用する。
   let stripeCancelNeeded = false;
-  if (input.paymentMethod !== undefined && input.paymentMethod !== 'credit_card') {
+  if (input.paymentMethod !== undefined) {
     const current = await prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { paymentMethod: true, stripeSubscriptionId: true },
     });
+    // 非 credit_card → credit_card: カード未登録なら reject (UI バイパス防御)
     if (
+      input.paymentMethod === 'credit_card' &&
+      current?.paymentMethod !== 'credit_card' &&
+      current?.stripeSubscriptionId == null
+    ) {
+      throw new CreditCardNotRegisteredError();
+    }
+    // credit_card → 非 credit_card: Stripe Subscription cancel が必要
+    if (
+      input.paymentMethod !== 'credit_card' &&
       current?.paymentMethod === 'credit_card' &&
       current.stripeSubscriptionId != null
     ) {

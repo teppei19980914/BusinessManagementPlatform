@@ -909,6 +909,45 @@ export async function cancelTenantStripeSubscription(
   return { ok: true, value: { canceled: true } };
 }
 
+/**
+ * PR #425 (2026-05-22): テナント画面表示用のカード情報サマリ取得。
+ *
+ * 目的: テナント管理者が「どのクレジットカードに毎月引き落とされるか」を画面で視認できるようにし、
+ *       Stripe ダッシュボード側との一貫性 (= 画面に出ているカード = 実際に請求されるカード) を担保する。
+ *
+ * - stripeDefaultPaymentMethodId が null (= カード未登録) なら null を返す
+ * - Stripe API 失敗時も null を返す (= 画面遷移自体は止めない、UI 側でフォールバック表示)
+ * - 戻り値はカード末尾 4 桁 + ブランド + 有効期限のみ (= PCI DSS 対象外の表示可能フィールド)
+ *
+ * 表示 UI: stripe-payment-method-section.tsx
+ */
+export type StripeCardSummary = {
+  brand: string; // 'visa' | 'mastercard' | 'amex' | 'jcb' | 'diners' | 'discover' | 'unionpay' | 'unknown'
+  last4: string; // '4242' 等
+  expMonth: number; // 1-12
+  expYear: number; // YYYY
+};
+
+export async function getStripeCardSummary(tenantId: string): Promise<StripeCardSummary | null> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { stripeDefaultPaymentMethodId: true },
+  });
+  if (tenant?.stripeDefaultPaymentMethodId == null) return null;
+
+  const stripe = getStripe();
+  const result = await withStripeError(() =>
+    stripe.paymentMethods.retrieve(tenant.stripeDefaultPaymentMethodId!),
+  );
+  if (!result.ok || result.value.type !== 'card' || !result.value.card) return null;
+  return {
+    brand: result.value.card.brand,
+    last4: result.value.card.last4,
+    expMonth: result.value.card.exp_month,
+    expYear: result.value.card.exp_year,
+  };
+}
+
 // ============================================================
 // 内部ヘルパ
 // ============================================================

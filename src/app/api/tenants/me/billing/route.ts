@@ -23,7 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
-import { updateBillingContact } from '@/services/tenant-self.service';
+import { updateBillingContact, CreditCardNotRegisteredError } from '@/services/tenant-self.service';
 
 // 2026-05-09 (PR C / #5/#8/#10): 個人法人切替 + 住所サブフィールド化。
 //   PATCH 用なので各フィールドはすべて optional。送られてきた fields のみ update する。
@@ -96,7 +96,20 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  await updateBillingContact(user.tenantId, parsed.data);
+  try {
+    await updateBillingContact(user.tenantId, parsed.data);
+  } catch (e) {
+    // PR #425 (2026-05-22) ★severity-1★: カード未登録で credit_card 切替を試みた UI バイパス
+    //   は 422 で reject。正常 UI フローでは BillingContactSection が事前に Stripe Checkout
+    //   へ強制遷移するため、本エラーは UI 経由では発生しない (= curl 直叩き等が対象)。
+    if (e instanceof CreditCardNotRegisteredError) {
+      return NextResponse.json(
+        { error: { code: 'CREDIT_CARD_NOT_REGISTERED', message: e.message } },
+        { status: 422 },
+      );
+    }
+    throw e;
+  }
 
   return NextResponse.json({ data: { ok: true } });
 }

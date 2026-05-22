@@ -34,6 +34,8 @@ import {
 } from '@/services/degraded-mode.service';
 // PR-S5 (2026-05-14): Stripe feature flag を Client Component に伝達
 import { isStripeEnabled } from '@/lib/stripe';
+// PR #425 (2026-05-22): Stripe 登録カード情報を画面表示 (テナント管理者が請求カードを視認するため)
+import { getStripeCardSummary } from '@/services/stripe-billing.service';
 import { TenantSettingsClient } from './tenant-settings-client';
 
 export default async function TenantSettingsPage() {
@@ -56,6 +58,10 @@ export default async function TenantSettingsPage() {
   let storageInfo: Awaited<ReturnType<typeof getStorageInfo>> = null;
   let apiReconcile: ApiUsageReconcileResult | null = null;
   let degradedMode: DegradedModeState | null = null;
+  // PR #425 (2026-05-22): Stripe 登録カード情報 (brand/last4/exp) を画面表示するため取得。
+  //   Stripe API 失敗 / カード未登録なら null (= UI 側でフォールバック表示)。
+  //   isStripeEnabled が false なら呼出しない (Stripe 環境変数なしのローカル想定)。
+  let cardSummary: Awaited<ReturnType<typeof getStripeCardSummary>> = null;
   let dataLoadError = false;
   try {
     // 2026-05-14: getStorageInfo (キャッシュ値) を読む前に最新値で書き戻す。
@@ -70,6 +76,10 @@ export default async function TenantSettingsPage() {
     apiReconcile = await reconcileTenantApiUsage(session.user.tenantId).catch(() => null);
     // Q5(3) (2026-05-14): 縮退モード状態 + embedding 未生成件数 (失敗は許容)
     degradedMode = await getDegradedModeState(session.user.tenantId).catch(() => null);
+    // PR #425 (2026-05-22): Stripe 登録カード取得 (API 失敗時は null、表示しないだけで画面は維持)
+    if (isStripeEnabled()) {
+      cardSummary = await getStripeCardSummary(session.user.tenantId).catch(() => null);
+    }
   } catch (error) {
     dataLoadError = true;
     await recordError({
@@ -127,6 +137,7 @@ export default async function TenantSettingsPage() {
       apiReconcile={apiReconcile}
       degradedMode={degradedMode}
       stripeEnabled={isStripeEnabled()}
+      cardSummary={cardSummary}
     />
   );
 }

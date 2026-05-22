@@ -50,13 +50,56 @@ export type StripePaymentInfo = {
   autoSuspendScheduledAt: Date | string | null;
 };
 
+/**
+ * PR #425 (2026-05-22): Stripe 登録カード情報サマリ。
+ * 「画面に表示しているカード = 実際に請求されるカード」の一貫性を担保するため、
+ * Stripe API から取得した値をそのまま使う (= キャッシュなし)。
+ * PCI DSS 対象外の表示可能フィールドのみ含む (= 末尾 4 桁 + ブランド + 有効期限のみ)。
+ */
+export type StripeCardSummaryProp = {
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+};
+
 export type StripePaymentMethodSectionProps = {
   info: StripePaymentInfo;
   /** feature flag。false なら「クレジットカード情報更新」ボタンは無効化 */
   stripeEnabled: boolean;
   /** アクション成功後に親の info を更新するためのコールバック */
   onRefresh: () => Promise<void>;
+  /**
+   * PR #425 (2026-05-22): Stripe 登録カード情報。null = 未登録 / API 失敗 / Stripe disabled。
+   * テナント管理者が「このカードに毎月請求される」と画面で確認できるようにする。
+   */
+  cardSummary: StripeCardSummaryProp | null;
 };
+
+/**
+ * PR #425 (2026-05-22): カードブランド表示用ラベル (Stripe API の brand 値からマッピング)。
+ */
+function formatCardBrand(brand: string): string {
+  const map: Record<string, string> = {
+    visa: 'Visa',
+    mastercard: 'Mastercard',
+    amex: 'American Express',
+    jcb: 'JCB',
+    diners: 'Diners Club',
+    discover: 'Discover',
+    unionpay: 'UnionPay',
+  };
+  return map[brand.toLowerCase()] ?? brand;
+}
+
+/**
+ * PR #425 (2026-05-22): カード有効期限を MM/YY 形式で表示。
+ */
+function formatCardExpiry(expMonth: number, expYear: number): string {
+  const mm = String(expMonth).padStart(2, '0');
+  const yy = String(expYear).slice(-2);
+  return `${mm}/${yy}`;
+}
 
 /**
  * 状態判定 (PR #425 改修後): paymentMethod と Stripe 状態から表示を決定する。
@@ -91,6 +134,7 @@ export function StripePaymentMethodSection({
   info,
   stripeEnabled,
   onRefresh,
+  cardSummary,
 }: StripePaymentMethodSectionProps): React.ReactElement {
   const { showError } = useToast();
   const [submitting, setSubmitting] = useState(false);
@@ -177,23 +221,25 @@ export function StripePaymentMethodSection({
     }
   };
 
+  // PR #425 (2026-05-22): 「クレジットカード払いが有効か」が一目で分かる表示に改善。
+  //   状態バッジ (✅ 有効 / ⚠ 未登録 / ❌ 要対応 / 🏦 銀行振込) を currentLabel に明示。
   const currentLabel =
     state === 'invoice_only'
       ? '🏦 銀行振込'
       : state === 'credit_card_unregistered'
-        ? '💳 クレジットカード (カード未登録)'
+        ? '⚠ クレジットカード払い (カード未登録 = 自動請求不可)'
         : state === 'credit_card_active'
-          ? '💳 クレジットカード (自動引落)'
-          : '⚠️ クレジットカード (要対応)';
+          ? '✅ クレジットカード払い (有効・自動引落)'
+          : '❌ クレジットカード払い (要対応 = 引落停止リスクあり)';
 
   const description =
     state === 'invoice_only'
       ? '月末締めの翌月25日支払で、毎月請求書 PDF を請求担当者メールにお送りしています。' +
         ' クレジットカード払いに切替えるには、上の請求先情報フォームで「支払い方法」を' +
-        '「クレジットカード」に変更して「請求先情報を更新」を押してください。'
+        '「クレジットカード」に変更して「請求先情報を更新」を押してください (自動でカード登録画面に進みます)。'
       : state === 'credit_card_unregistered'
-        ? '支払い方法はクレジットカードに設定されていますが、まだカードが登録されていません。' +
-          ' 「クレジットカード情報更新」ボタンから新規登録してください。'
+        ? '★ご注意★ 支払い方法はクレジットカードに設定されていますが、まだカードが登録されていないため自動請求できません。' +
+          ' 「クレジットカード情報更新」ボタンから今すぐ登録してください。'
         : state === 'credit_card_active'
           ? '毎月末締めで Stripe が自動的に利用料を集計し、翌月初に登録カードから引き落とします。' +
             ' 領収書 PDF は Stripe から自動メール送付されます。'
@@ -211,6 +257,44 @@ export function StripePaymentMethodSection({
       <div className="space-y-3 text-sm">
         <p>現在の支払い方法: {currentLabel}</p>
         {description && <p className="text-muted-foreground">{description}</p>}
+
+        {/* PR #425 (2026-05-22): Stripe 登録カード情報の可視化。
+            「画面に出ているカード = 毎月引落されるカード」の一貫性を担保するため、
+            Stripe API から取得した値 (brand/last4/exp) を表示する。
+            cardSummary=null は「カード未登録」or「Stripe API 取得失敗」or「Stripe disabled」。 */}
+        {cardSummary && (
+          <div
+            className="rounded border border-info/40 bg-info/5 p-3"
+            data-testid="stripe-card-summary"
+          >
+            <p className="text-xs font-medium text-muted-foreground">請求に使用されるカード (Stripe 登録情報)</p>
+            <p className="mt-1 font-mono text-sm">
+              {formatCardBrand(cardSummary.brand)} •••• {cardSummary.last4}
+              <span className="ml-3 text-muted-foreground">
+                有効期限 {formatCardExpiry(cardSummary.expMonth, cardSummary.expYear)}
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              このカードに毎月の利用料が自動引落されます。
+              変更したい場合は「クレジットカード情報更新」ボタンをご利用ください。
+            </p>
+          </div>
+        )}
+        {!cardSummary && state === 'credit_card_active' && (
+          // 異常パターン: DB は credit_card_active なのに Stripe からカード取得できない
+          // (= API 通信エラー / Stripe 側で detach 等)。請求漏れリスクなので明示警告。
+          <div
+            className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30"
+            role="alert"
+            data-testid="stripe-card-summary-missing"
+          >
+            <p className="font-semibold">⚠ カード情報を Stripe から取得できませんでした</p>
+            <p className="text-muted-foreground">
+              ネットワーク一時障害の可能性があります。少し待ってからページを再読込してください。
+              繰り返し表示される場合は「クレジットカード情報更新」からカード再登録をお願いします。
+            </p>
+          </div>
+        )}
 
         {state === 'credit_card_attention' && (
           <div

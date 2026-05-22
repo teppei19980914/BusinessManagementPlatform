@@ -12035,3 +12035,214 @@ URL params 更新 → page 再実行されるが、固定 params で listProject
 - 関連 feedback:
   - `feedback_tenant_isolation` (★最重要★ テナント越境防止、本件と同じく一覧 service の必須前提)
   - `feedback_billing_data_realtime` (DB 容量・API 利用量等は cron キャッシュ依存を避ける、本件と同じく一覧の整合性方針)
+
+---
+
+## 5.X+103 **★severity-1 請求堅牢性★ Stripe Checkout コールバックを sameSite='strict' cookie が壊す + paymentMethod 切替の 1 ステップ強制遷移化 (2026-05-22 / PR #425)**
+
+### 発生事象
+
+PR #198 で session cookie の `sameSite` を `'lax'` → `'strict'` に強化していたが、Stripe Checkout を導入した PR #425 検証で以下の致命的問題が判明:
+
+1. `/settings/tenant` → 「クレジットカード情報更新」→ Stripe Checkout でカード入力 → 「保存」
+2. Stripe が `success_url` (= `/api/tenants/me/billing/stripe/setup/complete?...`) にブラウザリダイレクト
+3. **sameSite='strict' により session cookie が外部 origin (checkout.stripe.com) からの戻りで送信されない**
+4. `/api/.../complete` handler が未認証扱いになり `/login` に強制 redirect
+5. ユーザは「カード登録成功 → ログイン画面」という不可解な遷移を体験
+6. DB は `paymentMethod='credit_card' + stripeSubscriptionId=null` の **「カード未登録 credit_card」状態** に陥り、月次自動引落が走らず請求漏れ
+
+さらにユーザ調査で:
+7. `paymentMethod` 切替が「フォーム更新 → 別途カード登録ボタン」の **2 ステップ** で、ユーザが (4) のような途中失敗時に **DB に credit_card だけ書き込まれて放置** されるリスクが構造的に存在することも判明。事業継続性に関わる severity-1 問題。
+
+### 根本原因
+
+**原因 1: PR #198 当時の前提 (= 外部 origin からのコールバック無し) が崩れた**
+
+PR #198 のコメント:
+> 'lax' → 'strict' に強化 (CWE-1275 対策)。
+> 本サービスは Credentials provider のみで OAuth/SSO のクロスサイトコールバックが無く...
+
+Stripe Checkout の導入で「外部 origin からの top-level GET redirect」が定常的に発生するようになったが、その時 cookie 設定の見直しが漏れていた。
+
+**原因 2: paymentMethod 変更と Stripe Checkout が独立した 2 ステップ**
+
+旧設計:
+```
+Step A: フォームで paymentMethod=credit_card 選択 → 「請求先情報を更新」 → DB に書き込み
+Step B: 「クレジットカード情報更新」ボタン → Stripe Checkout
+```
+
+ユーザが Step A だけ完了して Step B をスキップ (= タブを閉じる、Stripe で失敗、コールバック失敗) すると、DB は `paymentMethod='credit_card' + stripeSubscriptionId=null` の不整合状態に。
+
+### 解決策
+
+**解決 1: `sameSite='lax'` に戻す**
+
+```ts
+// auth.config.ts
+sessionToken: {
+  options: {
+    sameSite: 'lax', // PR #425 で 'strict' → 'lax' に再緩和
+    ...
+  },
+},
+```
+
+`'lax'` は top-level GET (= リンククリック / form 遷移以外) で cookie 送信を許可するため、Stripe Checkout からの戻りで session が維持される。GET 経由の CSRF は副作用が無いため脅威にならない。POST に対する CSRF 対策は CSRF token + CORS で別途防御。
+
+**解決 2: paymentMethod 切替を 1 ステップ強制遷移化**
+
+```tsx
+// BillingContactSection.handleSubmit
+const isInvoiceToCreditCardTransition =
+  previousPaymentMethod !== 'credit_card' && form.paymentMethod === 'credit_card';
+
+if (isInvoiceToCreditCardTransition) {
+  // 1) paymentMethod を除外して住所等だけ DB 更新
+  delete (bodyForPatch as Partial<typeof bodyForPatch>).paymentMethod;
+  await fetch('/api/tenants/me/billing', { ..., body: JSON.stringify(bodyForPatch) });
+
+  // 2) Stripe Checkout setup URL を取得して強制遷移
+  const setupRes = await fetch('/api/tenants/me/billing/stripe/setup', { ... });
+  window.location.href = setupRes.data.checkoutUrl;
+  // → カード登録成功時のみ /api/.../complete が paymentMethod='credit_card' を書き込む
+  // → 失敗/キャンセル時は paymentMethod は invoice のまま (= 状態が壊れない)
+}
+```
+
+これと併せて server-side ガード:
+```ts
+// tenant-self.service.ts updateBillingContact
+if (
+  input.paymentMethod === 'credit_card' &&
+  current?.paymentMethod !== 'credit_card' &&
+  current?.stripeSubscriptionId == null
+) {
+  throw new CreditCardNotRegisteredError(); // 422 で API reject
+}
+```
+
+UI バイパス (= curl 直叩き) でも DB に `credit_card + sub_id=null` が書けないことを保証。
+
+**解決 3: UI 表示で「請求準備状態」を明示化**
+
+```ts
+// stripe-payment-method-section.tsx
+const currentLabel =
+  state === 'invoice_only'           ? '🏦 銀行振込'
+  : state === 'credit_card_active'   ? '✅ クレジットカード払い (有効・自動引落)'
+  : state === 'credit_card_unregistered' ? '⚠ クレジットカード払い (カード未登録 = 自動請求不可)'
+  : '❌ クレジットカード払い (要対応 = 引落停止リスクあり)';
+```
+
+「有効」「未登録」「要対応」の状態バッジで、ユーザが画面遷移直後に請求準備状態を即判断できる。
+
+### 教訓
+
+1. **★最重要★ 外部 origin からのコールバックを伴う機能を追加したら cookie sameSite を必ず見直す** — 旧設計の前提条件 (=「外部コールバック無し」) が後から崩れることは頻繁。Stripe, OAuth, OIDC, パスキー等を導入する際は強い候補
+2. **「DB に書き込んで途中で離脱できる」設計は請求 invariant を壊す** — paymentMethod のようなクリティカルな状態変更は「成功した時のみ DB に書き込む」設計に統一。途中放置で「半分だけ変更された」状態が DB に残ると後続全部が破綻する
+3. **server-side ガードは UI バイパス前提で書く** — UI で導線を整えても、curl/Postman での直叩きで同じ不整合は作れる。重要な不変条件 (= invariant) は service 層で例外を throw して reject
+4. **状態を「✓ / ⚠ / ❌」記号で表示する** — ユーザに「異常/正常」を一目で伝える最速の手段。文字だけの「(自動引落)」より「✅ 有効・自動引落」のほうが視認性 3 倍以上
+
+### 検証手順 (再発防止用)
+
+```
+事前: scripts/reset-default-tenant-to-beginner.ts を実行 (paymentMethod='invoice', sub_id=null)
+
+シナリオ A: 1 ステップ強制遷移成功パス
+1. /settings/tenant の「請求先情報」セクションで「支払い方法」を「クレジットカード」に変更
+2. 「請求先情報を更新」ボタン押下
+   → 「請求先情報を保存しました。続けてカード登録画面に移動します」トースト ★
+   → 自動で Stripe Checkout (checkout.stripe.com) に遷移 ★
+3. 4242 4242 4242 4242 で「保存」
+4. Stripe からの戻り URL: /settings/tenant?stripe_setup=success ★
+   (= /login に飛ばない、deploy-preview-... のまま、本番 URL に書き換わらない)
+5. 「支払い方法」セクションが「✅ クレジットカード払い (有効・自動引落)」表示 ★
+6. DB 確認: paymentMethod='credit_card' + stripeSubscriptionId='sub_*' + cardVerificationStatus='valid' ★
+
+シナリオ B: server-side ガード (UI バイパス)
+1. curl で直接 PATCH /api/tenants/me/billing with body {"paymentMethod":"credit_card"}
+   → 422 CREDIT_CARD_NOT_REGISTERED ★
+   → DB の paymentMethod は invoice のまま ★
+
+シナリオ C: Stripe Checkout キャンセル時の安全性
+1. シナリオ A の手順 3 で Stripe Checkout の「← 戻る」を押下
+2. /settings/tenant?stripe_setup=canceled に戻る
+3. DB 確認: paymentMethod='invoice' のまま ★ (= 状態が壊れない)
+```
+
+各 ★ が崩れた場合、本 KDD §5.X+103 の再発と判断。
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-1 UAT 中に検出 + 即時修正
+- 関連修正ファイル:
+  - `src/lib/auth.config.ts` (sameSite='lax' に戻す)
+  - `src/services/tenant-self.service.ts` (CreditCardNotRegisteredError + ガード追加)
+  - `src/app/api/tenants/me/billing/route.ts` (422 エラーマッピング)
+  - `src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx` (BillingContactSection 強制遷移)
+  - `src/app/(dashboard)/settings/tenant/stripe-payment-method-section.tsx` (表示文言改善)
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★ 請求 invariant の根本原則)
+  - `feedback_session_clearance_pattern` (cookie 周りの罠系)
+- 関連 KDD §5.X+99 (前提): Stripe Deploy Preview redirect 問題
+- 関連 KDD §5.X+101 (前提): NEXTAUTH_URL context 分離
+
+---
+
+## 5.X+104 **Stripe 自動請求の堅牢性 多層防御 — 現状の実装状況と段階改修ロードマップ (2026-05-22 / PR #425 横断調査)**
+
+### 背景
+
+ユーザフィードバック「カード情報登録/更新が制御されていないと請求業務が漏れ、事業継続性が損なわれる」を受けて、Stripe 自動請求の多層防御を横断調査した結果。
+
+### 現状の防御層 (実装済み)
+
+| 層 | 既存実装 |
+|---|---|
+| **UI** | paymentMethod 切替制御 + Stripe Checkout 強制遷移 (本 PR で完成) |
+| **Service** | `verifyTenantCard()` (期限切れチェック含む) / `completeStripeSetup()` (Subscription 作成 + 二重課金防止) / `cancelTenantStripeSubscription()` |
+| **DB** | `Tenant.stripeCustomerId / stripeSubscriptionId / cardVerificationStatus / autoSuspendScheduledAt` 等 20+ カラム |
+| **Webhook** | **11 イベント対応** (invoice.payment_failed, customer.subscription.updated, payment_method.detached 等) |
+| **Cron** | `stripe-reconcile` (月次 Stripe DB 照合) / `stripe-auto-suspend` (日次自動 suspend) / `stripe-usage-flush` (Usage 送信) |
+| **可視化** | super_admin の請求画面 (`/admin/super/billing/[yearMonth]`) で BillingHistory 表示 |
+| **通知** | `autoSuspend` 時の auditLog 記録 |
+
+### 残存リスクシナリオと推奨改修
+
+| 優先度 | リスク | 現防御 | 不足/推奨 |
+|---|---|---|---|
+| **高** | カード期限切れの「静かな見過ごし」 | `verifyTenantCard()` 実装済だが呼出が「カード登録時のみ」 | **月次 cron `stripe-verify-all-cards` 追加** (3-5h) — 期限切れ 30 日前 admin/user 通知 |
+| **高** | プラン変更時のカード再検証無し | プラン変更ハンドラに `verifyTenantCard()` 明示呼出なし | プラン変更時 hook 追加 (1-2h) — 失敗時はプラン変更 reject |
+| **中** | DB 整合性 drift (`paymentMethod='credit_card' AND sub_id IS NULL` 等) | `stripe-reconcile` は Stripe API 経由の照合のみ | DB 内整合性チェック追加 (4-6h) — 異常 SQL 検出 + admin 通知 |
+| **中** | ユーザ向けカード期限切れ警告 UI | StripePaymentMethodSection で表示済 (本 PR で改善) | より早期の banner 表示 (2-3h) — 設定画面以外のヘッダー領域 |
+| **中** | super_admin 向け「カード状態異常テナント」一覧 | super_admin 画面に専用 filter 無し | filter + ハイライト追加 (3-4h) |
+| **低** | `charge.dispute` / `charge.refunded` Webhook 未対応 | invoice.* のみ対応 | edge case のため当面対応不要 |
+
+**未対応の合計**: 13-20h 規模 (= 別 PR で段階改修)
+
+### 段階改修ロードマップ
+
+**今 PR (#425) で完成**: UI 強制遷移 + server-side ガード + cookie sameSite 修正 + 表示明示化 (=「カード未登録 credit_card」状態の構造的予防)
+
+**Sprint N+1 (= 次の請求改修 PR)**:
+- 月次 `stripe-verify-all-cards` cron (= 期限切れ早期検知)
+- プラン変更時のカード事前検証 (= プラン UP 時の不整合予防)
+
+**Sprint N+2**:
+- DB 整合性チェック cron + admin 通知
+- ユーザ向け早期警告 banner
+
+### 教訓
+
+1. **多層防御は「既存層がカバーしていない隙間」を埋める** — 本サービスは既に Webhook + cron + service で 7 割の防御が完成しており、PR #425 の修正 + 残り 2-3 件の追加で完全な堅牢性に到達する
+2. **「fix も大事だが、何が既に守られているか」の認識共有も重要** — 場当たり対応ではなく、横断調査で全体像を把握してから改修対象を絞ると最小コストで最大効果
+3. **段階改修ロードマップを KDD に残す** — 次の Sprint で何を優先するかが翌日継続時にも明確になる
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): 横断調査 + 即時改修
+- 後続 PR 予定 (Sprint N+1): `stripe-verify-all-cards` cron + プラン変更時カード検証
+- 後続 PR 予定 (Sprint N+2): DB 整合性 cron + UI 警告 banner + admin filter
+- 関連 feedback `feedback_billing_invariant` (★最重要★ 請求 invariant)
+- 関連 feedback `feedback_cron_watchdog_pattern` (cron 監視は「failure 検知」と「期待スケジュールに対し N 時間記録なし」の 2 段構え) — 新規 cron 追加時の前提

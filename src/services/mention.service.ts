@@ -294,7 +294,12 @@ export async function generateMentionNotifications(params: {
   //   旧文言: 「○○さんがコメントであなたをメンションしました」 (= どの comment か不明)
   //   新文言: 「[プロジェクト名] タスク「親WP / ACT名」で ○○さんがコメントでメンションしました」
   //   entity 削除済 等で取得失敗時は旧文言にフォールバック (= 通知生成自体は止めない)。
-  const entityCtx = await resolveEntityLabelForMention(comment.entityType, comment.entityId);
+  //   ★severity-1★ tenantId を渡してテナント越境防止 (= 他テナントの entity 名を漏洩させない)
+  const entityCtx = await resolveEntityLabelForMention(
+    comment.entityType,
+    comment.entityId,
+    resolvedTenantId,
+  );
 
   // 2026-05-09 feedback Phase 2-7: notification.createMany の data に tenantId を明示。
   const data = Array.from(recipients).map((userId) => ({
@@ -357,11 +362,14 @@ export function buildMentionNotificationTitle(input: {
 async function resolveEntityLabelForMention(
   entityType: CommentEntityType,
   entityId: string,
+  tenantId: string,
 ): Promise<{ entityLabel: string; projectName: string | null } | null> {
+  // ★severity-1★ 全 findFirst に tenantId フィルタを必須 (テナント越境防止 invariant)
   switch (entityType) {
     case 'task': {
+      // Task は tenantId 列を持たないため project.tenantId で絞る
       const t = await prisma.task.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, project: { tenantId } },
         select: {
           name: true,
           parentTask: { select: { name: true } },
@@ -378,7 +386,7 @@ async function resolveEntityLabelForMention(
     case 'issue':
     case 'risk': {
       const r = await prisma.riskIssue.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId },
         select: {
           title: true,
           project: { select: { name: true } },
@@ -393,7 +401,7 @@ async function resolveEntityLabelForMention(
     }
     case 'retrospective': {
       const retro = await prisma.retrospective.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId },
         select: { title: true, project: { select: { name: true } } },
       });
       if (!retro) return null;
@@ -404,7 +412,7 @@ async function resolveEntityLabelForMention(
     }
     case 'knowledge': {
       const k = await prisma.knowledge.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId },
         select: { title: true },
       });
       if (!k) return null;
@@ -415,7 +423,7 @@ async function resolveEntityLabelForMention(
     }
     case 'stakeholder': {
       const s = await prisma.stakeholder.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId },
         select: { name: true, project: { select: { name: true } } },
       });
       if (!s) return null;
@@ -426,7 +434,7 @@ async function resolveEntityLabelForMention(
     }
     case 'customer': {
       const c = await prisma.customer.findFirst({
-        where: { id: entityId },
+        where: { id: entityId, tenantId },
         select: { name: true },
       });
       if (!c) return null;
@@ -437,7 +445,7 @@ async function resolveEntityLabelForMention(
     }
     case 'memo': {
       const m = await prisma.memo.findFirst({
-        where: { id: entityId, deletedAt: null },
+        where: { id: entityId, deletedAt: null, tenantId },
         select: { title: true },
       });
       if (!m) return null;

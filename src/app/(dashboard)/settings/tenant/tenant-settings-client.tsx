@@ -28,7 +28,7 @@ import { RepairOwnDriftButton } from './repair-own-drift-button';
 // Q5(3) (2026-05-14): 縮退モード状態 (Server Component で取得した snapshot を受け取る)
 import type { DegradedModeState } from '@/services/degraded-mode.service';
 // PR-S5 (2026-05-14): Stripe 支払い方法セクション
-import { StripePaymentMethodSection } from './stripe-payment-method-section';
+import { StripePaymentMethodSection, type StripeCardSummaryProp } from './stripe-payment-method-section';
 
 type TenantSelfInfo = {
   id: string;
@@ -133,6 +133,7 @@ export function TenantSettingsClient({
   apiReconcile,
   degradedMode,
   stripeEnabled,
+  cardSummary,
 }: {
   initialInfo: TenantSelfInfo;
   storageInitialInfo: StorageInitialInfo | null;
@@ -142,6 +143,11 @@ export function TenantSettingsClient({
   degradedMode: DegradedModeState | null;
   /** PR-S5 (2026-05-14): Stripe feature flag (= STRIPE_ENABLED env var) */
   stripeEnabled: boolean;
+  /**
+   * PR #425 (2026-05-22): Stripe 登録カード情報サマリ (brand/last4/exp)。
+   * カード未登録 / Stripe API 失敗 / Stripe disabled なら null。
+   */
+  cardSummary: StripeCardSummaryProp | null;
 }) {
   // PR-4 (2026-05-15): テナント TZ で日付を表示するため useFormatters を導入
   const { formatDate } = useFormatters();
@@ -480,11 +486,13 @@ export function TenantSettingsClient({
           関わらずカード登録できない = 請求漏れ発生。refreshInfo を必ず渡す。 */}
       <BillingContactSection initialInfo={info} onUpdate={refreshInfo} />
 
-      {/* PR-S5 (2026-05-14): Stripe 支払い方法 (請求書 ↔ クレジットカード切替) */}
+      {/* PR-S5 (2026-05-14): Stripe 支払い方法 (請求書 ↔ クレジットカード切替)
+          PR #425 (2026-05-22): cardSummary を渡して登録カード情報を可視化 */}
       <StripePaymentMethodSection
         info={info}
         stripeEnabled={stripeEnabled}
         onRefresh={refreshInfo}
+        cardSummary={cardSummary}
       />
 
       {/* P-C (2026-05-08): データエクスポート */}
@@ -1400,22 +1408,49 @@ function BillingContactSection({
     setError('');
     setSubmitting(true);
 
+    // PR #425 (2026-05-22) ★severity-1 請求堅牢性★:
+    //   paymentMethod を「非 credit_card → credit_card」に変更した場合、
+    //   その瞬間に Stripe Checkout setup に強制遷移する。これにより
+    //   「カード未登録だが DB は credit_card」という請求漏れ状態が構造的に発生しない。
+    //
+    //   フロー:
+    //     1) フォーム送信ボタン押下
+    //     2) paymentMethod 以外のフィールドだけ DB に保存 (= 住所変更も同時に救う)
+    //     3) POST /api/.../stripe/setup → Checkout URL 取得
+    //     4) window.location.href で Stripe Checkout に遷移
+    //     5) カード登録成功 → /api/.../stripe/setup/complete が
+    //        completeStripeSetup() を呼び出し、その中で paymentMethod='credit_card' を DB に書き込む
+    //     6) /settings/tenant?stripe_setup=success に戻り、StripePaymentMethodSection が「✓有効」表示
+    //
+    //   失敗/キャンセル時: paymentMethod は invoice のまま (= 何も壊れない)
+    const previousPaymentMethod =
+      initialInfo.paymentMethod === 'bank_transfer' ? 'invoice' : (initialInfo.paymentMethod || 'invoice');
+    const isInvoiceToCreditCardTransition =
+      previousPaymentMethod !== 'credit_card' && form.paymentMethod === 'credit_card';
+
     try {
+      // 共通: paymentMethod 以外のフィールドを DB 更新
+      //   credit_card への切替時は paymentMethod を body から除外して
+      //   server-side ガード (CreditCardNotRegisteredError) を回避する。
+      //   その後 Stripe Checkout 遷移で completeStripeSetup が paymentMethod を書き込む。
+      const bodyForPatch = {
+        ...form,
+        billingCompanyName:
+          form.billingType === 'individual'
+            ? null
+            : form.billingCompanyName.trim() || null,
+        billingBuildingName: form.billingBuildingName.trim() || null,
+        billingPhoneNumber: form.billingPhoneNumber.trim() || null,
+      };
+      if (isInvoiceToCreditCardTransition) {
+        // paymentMethod は完了経路で書き込むので、ここでは送らない
+        delete (bodyForPatch as Partial<typeof bodyForPatch>).paymentMethod;
+      }
+
       const res = await fetch('/api/tenants/me/billing', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          // 2026-05-09 (PR C / #5): 個人プラン時は会社名を null クリア (UI 非表示でも残値防止)
-          billingCompanyName:
-            form.billingType === 'individual'
-              ? null
-              : form.billingCompanyName.trim() || null,
-          // (#10) 建物名は任意 (空文字は null クリア)
-          billingBuildingName: form.billingBuildingName.trim() || null,
-          // 空文字は null に正規化 (= 値クリア)
-          billingPhoneNumber: form.billingPhoneNumber.trim() || null,
-        }),
+        body: JSON.stringify(bodyForPatch),
       });
 
       const json = await res.json().catch(() => ({}));
@@ -1423,8 +1458,35 @@ function BillingContactSection({
         const code = json?.error?.code as string | undefined;
         const message = json?.error?.message as string | undefined;
         if (code === 'VALIDATION_ERROR') setError(message ?? '入力内容に誤りがあります');
-        else setError(message ?? '更新に失敗しました');
+        else if (code === 'CREDIT_CARD_NOT_REGISTERED') {
+          setError(
+            message ??
+              'クレジットカードが未登録です。「請求先情報を更新」を押すと自動でカード登録画面に進みます。',
+          );
+        } else setError(message ?? '更新に失敗しました');
         showError('請求先情報の更新に失敗しました');
+        return;
+      }
+
+      // PR #425 (2026-05-22) 強制遷移: 非 credit_card → credit_card 変更時
+      if (isInvoiceToCreditCardTransition) {
+        const returnUrl = `${window.location.origin}/settings/tenant`;
+        const setupRes = await fetch('/api/tenants/me/billing/stripe/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ returnUrl }),
+        });
+        const setupJson = await setupRes.json().catch(() => ({}));
+        if (!setupRes.ok || setupJson.data?.checkoutUrl == null) {
+          showError(setupJson?.error?.message ?? 'カード登録画面の起動に失敗しました');
+          // paymentMethod は DB 上 invoice のままなので状態は壊れていない
+          await onUpdate();
+          router.refresh();
+          return;
+        }
+        // 住所等は既に保存済みである旨を伝えてから遷移
+        showSuccess('請求先情報を保存しました。続けてカード登録画面に移動します');
+        window.location.href = setupJson.data.checkoutUrl;
         return;
       }
 

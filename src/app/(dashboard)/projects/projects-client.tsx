@@ -19,7 +19,7 @@
  *   - DESIGN.md §23 (核心機能 / 新規作成時の提案サジェスト連動)
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
@@ -128,7 +128,10 @@ export function ProjectsClient({
   const [error, setError] = useState('');
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
   const { sortState, setSortColumn } = useMultiSort('sort:projects');
-  const sortedProjects = multiSort(initialProjects, sortState, getProjectSortValue);
+  // PR #425 (2026-05-22): client-side filter 適用後にソート (= 表示順序の最終確定)
+  // multiSort は client-side memory sort のため、Beginner プラン上限 100 件規模では十分高速。
+  // 大規模化時の server-side ソート化は別 PR (KDD §5.X+102 Phase 1) で対応。
+  // filteredProjects は本ブロックより下で useMemo 定義しているため、参照位置を末尾に移動。
 
   const [form, setForm] = useState({
     name: '',
@@ -155,19 +158,29 @@ export function ProjectsClient({
   // プロジェクト作成成功後に entityId を使って一括 POST する。
   const [stagedAttachments, setStagedAttachments] = useState<StagedAttachment[]>([]);
 
-  // PR #425 (2026-05-22) ★severity-1 UX バグ修正★:
-  //   旧版は URL params を更新するだけで、page.tsx 側が searchParams を受け取らず固定 params
-  //   で listProjects を呼んでいたため、router.push しても結果が変わらなかった。
-  //   page.tsx 側が searchParams を読むように修正済 (page.tsx PR #425)。これで router.push 後に
-  //   page.tsx が再実行され、新しい keyword / status で絞り込んだ initialProjects が描画される。
-  //   router.refresh() は不要 (push が page 再実行を発火させる)。
-  async function handleSearch() {
-    const params = new URLSearchParams();
-    if (keyword) params.set('keyword', keyword);
-    if (statusFilter) params.set('status', statusFilter);
-    const queryString = params.toString();
-    router.push(queryString ? `/projects?${queryString}` : '/projects');
-  }
+  // PR #425 (2026-05-22) 検索 UI を「全○○」と同じ debounceless client-side filter に統一:
+  //   旧版は検索ボタン押下式 (= router.push で server-side fetch) だったが、UI 設計を
+  //   /all-memos /knowledge /customers 等の「入力即フィルタ」スタイルに揃えた。
+  //   下記 filteredProjects (useMemo) で initialProjects に対する client-side filter を実施。
+  //   検索ボタン / handleSearch は撤去。filter は input/select の onChange で即時反映。
+  const filteredProjects = useMemo(() => {
+    let result = initialProjects;
+    if (statusFilter) {
+      result = result.filter((p) => p.status === statusFilter);
+    }
+    if (keyword) {
+      const lower = keyword.toLowerCase();
+      result = result.filter(
+        (p) =>
+          p.name.toLowerCase().includes(lower) ||
+          (p.customerName ?? '').toLowerCase().includes(lower) ||
+          (p.purpose ?? '').toLowerCase().includes(lower),
+      );
+    }
+    return result;
+  }, [initialProjects, keyword, statusFilter]);
+  // filter 適用後にソート (= 表示順序の最終確定)
+  const sortedProjects = multiSort(filteredProjects, sortState, getProjectSortValue);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -450,14 +463,15 @@ export function ProjectsClient({
         )}
       </div>
 
-      {/* 検索・フィルタ */}
+      {/* 検索・フィルタ
+          PR #425 (2026-05-22): /all-memos /knowledge /customers 等の「入力即フィルタ」UI に統一。
+          検索ボタンを撤去し、input/select の onChange で即時 client-side filter。 */}
       <div className="flex gap-4">
         <Input
           placeholder={t('searchPlaceholder')}
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           className="max-w-xs"
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
         />
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? '')}>
           <SelectTrigger className="w-40">
@@ -472,9 +486,6 @@ export function ProjectsClient({
             ))}
           </SelectContent>
         </Select>
-        <Button variant="outline" onClick={handleSearch}>
-          {t('searchButton')}
-        </Button>
       </div>
 
       {/*
