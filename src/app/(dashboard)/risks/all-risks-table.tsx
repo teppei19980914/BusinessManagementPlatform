@@ -49,6 +49,7 @@ import { SortableResizableHead } from '@/components/sort/sortable-resizable-head
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
+import { useListSearchParams } from '@/components/common/use-list-search-params';
 
 const typeColors: Record<string, 'default' | 'destructive' | 'outline'> = {
   risk: 'outline',
@@ -77,11 +78,18 @@ export function AllRisksTable({
   risks,
   isAdmin,
   typeFilter,
+  initialKeyword = '',
+  initialState = '',
+  initialPriority = '',
 }: {
   risks: AllRiskDTO[];
   isAdmin: boolean;
   /** PR #60 #1: 'risk' / 'issue' で絞り込み (未指定なら両方表示) */
   typeFilter?: 'risk' | 'issue';
+  /** PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=&state=&priority= 復元用 */
+  initialKeyword?: string;
+  initialState?: string;
+  initialPriority?: string;
 }) {
   const router = useRouter();
   const tRisk = useTranslations('risk');
@@ -90,8 +98,12 @@ export function AllRisksTable({
   const [members, setMembers] = useState<MemberDTO[]>([]);
 
   // PR-δ / 項目 12: 全リスク/全課題に検索 (keyword) + state/priority フィルタを追加。
-  // ○○一覧と同等の絞り込み機能を「全○○」にも横展開し、「同じ意味の画面は同じ機能」を実現。
-  const [filter, setFilter] = useState({ keyword: '', state: '', priority: '' });
+  // PR #425 (2026-05-22) KDD §5.X+102: URL 同期に書き換え (= リロード時に検索条件復元)。
+  //   state / priority は select 即時 push、keyword は 300ms debounce で URL push。
+  const { keyword, setKeyword, filters, setFilter } = useListSearchParams<{ state: string; priority: string }>({
+    initialKeyword,
+    initialFilters: { state: initialState, priority: initialPriority },
+  });
 
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
   // typeFilter ごとに保存先を分けて、リスク/課題タブでソート設定を独立させる。
@@ -101,12 +113,12 @@ export function AllRisksTable({
 
   const filteredRisks = useMemo(() => {
     let xs = typeFilter ? risks.filter((r) => r.type === typeFilter) : risks;
-    if (filter.state) xs = xs.filter((r) => r.state === filter.state);
-    if (filter.priority) xs = xs.filter((r) => r.priority === filter.priority);
-    if (filter.keyword.trim()) {
+    if (filters.state) xs = xs.filter((r) => r.state === filters.state);
+    if (filters.priority) xs = xs.filter((r) => r.priority === filters.priority);
+    if (keyword.trim()) {
       // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
       xs = xs.filter((r) =>
-        matchesAnyKeyword(filter.keyword, [
+        matchesAnyKeyword(keyword, [
           r.title,
           r.content,
           r.assigneeName,
@@ -115,7 +127,7 @@ export function AllRisksTable({
       );
     }
     return multiSort(xs, sortState, getRiskSortValue);
-  }, [risks, typeFilter, filter, sortState]);
+  }, [risks, typeFilter, keyword, filters, sortState]);
 
   const attachmentsByEntity = useBatchAttachments(
     'risk',
@@ -159,8 +171,8 @@ export function AllRisksTable({
             <Label htmlFor={`all-risks-filter-keyword-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('keyword')}</Label>
             <Input
               id={`all-risks-filter-keyword-${typeFilter ?? 'all'}`}
-              value={filter.keyword}
-              onChange={(e) => setFilter((f) => ({ ...f, keyword: e.target.value }))}
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
               placeholder={tRisk('keywordPlaceholder')}
             />
           </div>
@@ -168,8 +180,8 @@ export function AllRisksTable({
             <Label htmlFor={`all-risks-filter-state-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('state')}</Label>
             <select
               id={`all-risks-filter-state-${typeFilter ?? 'all'}`}
-              value={filter.state}
-              onChange={(e) => setFilter((f) => ({ ...f, state: e.target.value }))}
+              value={filters.state}
+              onChange={(e) => setFilter('state', e.target.value)}
               className={nativeSelectClass}
             >
               <option value="">{tRisk('all')}</option>
@@ -180,8 +192,8 @@ export function AllRisksTable({
             <Label htmlFor={`all-risks-filter-priority-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('priority')}</Label>
             <select
               id={`all-risks-filter-priority-${typeFilter ?? 'all'}`}
-              value={filter.priority}
-              onChange={(e) => setFilter((f) => ({ ...f, priority: e.target.value }))}
+              value={filters.priority}
+              onChange={(e) => setFilter('priority', e.target.value)}
               className={nativeSelectClass}
             >
               <option value="">{tRisk('all')}</option>

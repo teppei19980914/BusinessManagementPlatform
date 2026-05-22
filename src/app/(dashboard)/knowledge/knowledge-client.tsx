@@ -59,6 +59,7 @@ import { SortableResizableHead } from '@/components/sort/sortable-resizable-head
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
+import { useListSearchParams } from '@/components/common/use-list-search-params';
 import { AdminKnowledgeDeleteButton } from './admin-delete-button';
 
 function getKnowledgeSortValue(k: AllKnowledgeDTO, columnKey: string): unknown {
@@ -79,15 +80,23 @@ function getKnowledgeSortValue(k: AllKnowledgeDTO, columnKey: string): unknown {
 type Props = {
   initialKnowledge: AllKnowledgeDTO[];
   systemRole: string;
+  /** PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=&type= 復元用 */
+  initialKeyword?: string;
+  initialTypeFilter?: string;
 };
 
-export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
+export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword = '', initialTypeFilter = '' }: Props) {
   const router = useRouter();
   const tKnowledge = useTranslations('knowledge');
   const { formatDateTime } = useFormatters();
   const isAdmin = systemRole === 'admin';
-  const [keyword, setKeyword] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  // PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword=&type= 永続化
+  const { keyword, setKeyword, filters, setFilter } = useListSearchParams<{ type: string }>({
+    initialKeyword,
+    initialFilters: { type: initialTypeFilter },
+  });
+  const typeFilter = filters.type;
+  const setTypeFilter = (v: string) => setFilter('type', v);
   const [editingKnowledge, setEditingKnowledge] = useState<AllKnowledgeDTO | null>(null);
 
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
@@ -126,9 +135,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole }: Props) {
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           className="max-w-[min(90vw,28rem)]"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') router.refresh();
-          }}
+          data-testid="knowledge-search-input"
         />
         {/* Phase A 要件 15: 種別フィルタの選択後表示が内部名になる問題を修正。
             SelectValue の children render 関数で KNOWLEDGE_TYPES から表示名にマップする。 */}

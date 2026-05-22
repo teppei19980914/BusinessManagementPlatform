@@ -643,6 +643,7 @@
     "fieldRelatedProjects": "Linked Projects",
     "fieldActions": "Actions",
     "projectCount": "{count}",
+    "searchPlaceholder": "Search by name, department, contact person",
     "detailBreadcrumb": "Customer Detail",
     "editDialogTitle": "Edit Customer",
     "editDialogDescription": "Update customer information.",
@@ -1023,6 +1024,7 @@
     "empty": "No memos yet. Use \"New Memo\" in the upper right to add one.",
     "emptyPublic": "No public memos.",
     "emptyPublicHint": "(Setting visibility to \"All members\" on the Memos screen will show it here.)",
+    "searchPlaceholder": "Search title and body (space-separated OR / `-foo` to exclude)",
     "mineSuffix": "(you)",
     "mineBadge": "My memo",
     "createdAt": "Created: {date}",
@@ -1153,7 +1155,8 @@
       "pwFailedBadge": "PW failures {count}/5",
       "pwFailedBadgeTitle": "Login password failure count (5 failures = 30-min temporary lock)",
       "mfaFailedBadge": "MFA failures {count}/3",
-      "mfaFailedBadgeTitle": "MFA code failure count (3 failures = 30-min temporary lock)"
+      "mfaFailedBadgeTitle": "MFA code failure count (3 failures = 30-min temporary lock)",
+      "searchPlaceholder": "Search by name or email"
     },
     "userEdit": {
       "title": "Edit User",

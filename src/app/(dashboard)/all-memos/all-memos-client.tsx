@@ -19,9 +19,11 @@
  *   - /all-memos は read-only、責務を明確にする
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useListSearchParams } from '@/components/common/use-list-search-params';
+import { matchesAnyKeyword } from '@/lib/text-search';
 import { Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -70,9 +72,12 @@ function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
 export function AllMemosClient({
   memos,
   currentSystemRole,
+  initialKeyword = '',
 }: {
   memos: MemoDTO[];
   currentSystemRole: string;
+  /** PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword= 復元用 */
+  initialKeyword?: string;
 }) {
   const tField = useTranslations('field');
   const tMemo = useTranslations('memo');
@@ -103,9 +108,18 @@ export function AllMemosClient({
     router.refresh();
   }
 
+  // PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword= 永続化
+  const { keyword, setKeyword } = useListSearchParams({ initialKeyword });
+  const filteredMemos = useMemo(() => {
+    if (!keyword.trim()) return memos;
+    return memos.filter((m) =>
+      matchesAnyKeyword(keyword, [m.title, m.content, m.authorName]),
+    );
+  }, [memos, keyword]);
+
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort('sort:all-memos');
-  const sortedMemos = multiSort(memos, sortState, getMemoSortValue);
+  const sortedMemos = multiSort(filteredMemos, sortState, getMemoSortValue);
 
   const attachmentsByEntity = useBatchAttachments('memo', sortedMemos.map((m) => m.id));
 
@@ -119,8 +133,16 @@ export function AllMemosClient({
   return (
     <div className="space-y-6">
       {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
-      <div className="flex justify-end">
-        <span className="text-sm text-muted-foreground">{tMemo('count', { count: memos.length })}</span>
+      <div className="flex items-center justify-between gap-4">
+        {/* PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword= 永続化 */}
+        <Input
+          placeholder={tMemo('searchPlaceholder')}
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          className="max-w-md"
+          data-testid="all-memos-search-input"
+        />
+        <span className="text-sm text-muted-foreground">{tMemo('count', { count: filteredMemos.length })}</span>
       </div>
 
       <ResizableTableShell tableKey="all-memos-readonly">

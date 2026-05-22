@@ -9,10 +9,14 @@ import { KnowledgeClient } from './knowledge-client';
  *   listKnowledge (visibility ベース旧フロー) → listAllKnowledgeForViewer に切替。
  *   プロジェクト紐付け情報・更新者氏名を含む AllKnowledgeDTO を渡す。
  */
-export default async function KnowledgePage() {
+// PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=&type= 永続化
+type SearchParams = Promise<{ keyword?: string; type?: string }>;
+
+export default async function KnowledgePage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
 
+  const sp = await searchParams;
   const knowledges = await listAllKnowledgeForViewer(
     session.user.id,
     session.user.systemRole,
@@ -23,6 +27,8 @@ export default async function KnowledgePage() {
     <KnowledgeClient
       initialKnowledge={knowledges}
       systemRole={session.user.systemRole}
+      initialKeyword={sp.keyword ?? ''}
+      initialTypeFilter={sp.type ?? ''}
     />
   );
 }

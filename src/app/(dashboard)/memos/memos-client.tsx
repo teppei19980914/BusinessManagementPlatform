@@ -35,6 +35,7 @@ import { SortableResizableHead } from '@/components/sort/sortable-resizable-head
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { useListSearchParams } from '@/components/common/use-list-search-params';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 // PR #213 (2026-05-01): 個人メモ画面にもコメント機能を追加
 import { CommentSection } from '@/components/comments/comment-section';
@@ -60,7 +61,6 @@ import type { MemoDTO } from '@/services/memo.service';
 // PR #165: 個人「メモ一覧」での一括 visibility 変更機能 (cross-list /all-memos から移し替え)
 import {
   CrossListBulkVisibilityToolbar,
-  EMPTY_FILTER,
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
 
@@ -80,6 +80,8 @@ export function MemosClient({
   memos: initialMemos,
   viewerUserId,
   dataLoadError = false,
+  initialKeyword = '',
+  initialMineOnly = false,
 }: {
   memos: MemoDTO[];
   viewerUserId: string;
@@ -88,6 +90,9 @@ export function MemosClient({
    * 表示する警告バナーの可否。デフォルト false (= 正常)。
    */
   dataLoadError?: boolean;
+  /** PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=&mineOnly= 復元用 */
+  initialKeyword?: string;
+  initialMineOnly?: boolean;
 }) {
   const tAction = useTranslations('action');
   const tField = useTranslations('field');
@@ -130,7 +135,23 @@ export function MemosClient({
   // PR #165 + Phase C 要件 18 (2026-04-28): 個人「メモ一覧」での一括 visibility 変更。
   // フィルター必須要件は撤廃し、checkbox 列とツールバーは常時表示。Memo は元から
   // isMine=true のものだけ編集できるため、checkbox は isMine=true 行のみ active。
-  const [bulkFilter, setBulkFilter] = useState<CrossListFilterState>(EMPTY_FILTER);
+  //
+  // PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=&mineOnly= 永続化に切替。
+  //   useListSearchParams で keyword + mineOnly (string 'true'/'') を管理。
+  //   bulkFilter は派生 state として CrossListFilterState 形に変換して渡す。
+  const { keyword: kwState, setKeyword: setKwState, filters: bulkFilters, setFilter: setBulkFilterParam } = useListSearchParams<{ mineOnly: string }>({
+    initialKeyword,
+    initialFilters: { mineOnly: initialMineOnly ? 'true' : '' },
+  });
+  const bulkFilter: CrossListFilterState = useMemo(
+    () => ({ keyword: kwState, mineOnly: bulkFilters.mineOnly === 'true' }),
+    [kwState, bulkFilters.mineOnly],
+  );
+  const setBulkFilter = useCallback((next: CrossListFilterState) => {
+    if (next.keyword !== kwState) setKwState(next.keyword);
+    const nextMineOnlyParam = next.mineOnly ? 'true' : '';
+    if (nextMineOnlyParam !== bulkFilters.mineOnly) setBulkFilterParam('mineOnly', nextMineOnlyParam);
+  }, [kwState, bulkFilters.mineOnly, setKwState, setBulkFilterParam]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
   const { sortState, setSortColumn } = useMultiSort('sort:memos');

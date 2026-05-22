@@ -11973,6 +11973,8 @@ URL params 更新 → page 再実行されるが、固定 params で listProject
 
 **今 PR では対応しない (= 別 PR で段階改修)**:
 
+**2026-05-22 更新**: 同 PR #425 で **入力即フィルタ + URL 永続化 + ソート視認改善 + sticky header** を 7 画面 (= /customers, /admin/users, /risks, /issues, /retrospectives, /all-memos, /knowledge, /memos) に取り込み完了 ([KDD §5.X+112](#5x112) 参照)。下記 server-side 化は **「データ量がプラン上限を超えた時点」** の別 PR 扱いに方針変更。
+
 ソートの server-side 化 + 他 13 画面の server-side filter 化は **3 段階 20-26h 規模** で大きく、Stripe UAT 中の PR #425 にバンドルすると検証範囲が爆発する。別 PR で対応する:
 
 | 段階 | 対象 | 推定工数 | 優先度 |
@@ -12947,3 +12949,86 @@ PR #425 で新規追加した `src/services/netlify-metrics.service.ts` は **Ne
 - 関連 KDD §5.X+106 (idempotencyKey に paymentMethodId を含める設計判断)
 - 関連 KDD §5.X+110 (bash pipe exit code 罠 — 本件で **同セッション内で再踏み**)
 - 関連 feedback `feedback_tenant_isolation` (invariants test の役割 = severity-1 個人情報漏洩リスク予防)
+
+---
+
+## 5.X+112 **★UX severity-1★ 一覧画面の検索・ソート・スティッキーヘッダ横展開 — 入力即フィルタ + URL 永続化 + sticky DashboardHeader (2026-05-22 / PR #425 / KDD §5.X+102 Phase 1-3 取り込み)**
+
+### 背景
+
+KDD §5.X+102 で `/projects` 検索ボタン不発バグの即時修正 + 残 13 画面の段階改修ロードマップを定義 (Phase 1-3、20-26h 規模)。ユーザ追加要望:
+
+1. 検索 UI を **「全ナレッジ画面と同様、検索条件設定で瞬時に絞り込み」** (= 入力即フィルタ) に統一
+2. ソートはカラム名にマウスオーバーで「昇順・降順・リセット」プルダウン、ソート済みカラムに**種類 + 順序を視認表示**
+3. **長いページでもナビ (全ナレッジ等) にスクロールせずアクセス**できるようヘッダを画面固定 (sticky)
+
+### 実装内容 (本 PR で取り込み)
+
+#### 1. 共通基盤
+- `src/components/sort/sortable-header.tsx`: **hover オープン** 追加 (mouseenter で開く、200ms 遅延 close)、ソート済みバッジを **rounded badge (矢印 + 優先度番号)** に視認性強化
+- `src/components/common/use-list-search-params.ts` (新規): URL `?keyword=&xxx=` 同期の **共通 hook**。keyword は 300ms debounce、select 系 filter は即時 push、`router.replace` で履歴を汚さない
+- `src/components/dashboard-header.tsx`: `<header>` に `sticky top-0 z-40` 追加。AccountMenu dropdown (z-50) 配下、SortableHeader dropdown (z-30) より前面に積層
+
+#### 2. 各画面の URL 永続化 + 入力即フィルタ統合 (7 画面)
+
+| 画面 | 改修内容 |
+|---|---|
+| `/customers` | 検索 input 新設 (顧客名/部門/担当者/Email) + URL `?keyword=` 永続化 |
+| `/admin/users` | 検索 input 新設 (氏名/Email) + URL `?keyword=` 永続化 |
+| `/risks` `/issues` | 既存 FilterBar の keyword/state/priority を URL `?keyword=&state=&priority=` 同期 |
+| `/retrospectives` | 既存検索 keyword を URL `?keyword=` 同期 |
+| `/all-memos` | 検索 input 新設 (タイトル/本文/著者) + URL `?keyword=` 永続化 |
+| `/knowledge` | 既存検索 keyword/type を URL `?keyword=&type=` 同期、router.refresh() による Enter 検索を撤去 (= debounce push 経路に統一) |
+| `/memos` | bulkFilter (CrossListFilterState) を useListSearchParams 派生 state に変換、URL `?keyword=&mineOnly=` 永続化 |
+
+### 設計判断 — server-side 化は別 PR 扱いに変更
+
+KDD §5.X+102 当初の Phase 1 (`/projects` ソート server-side 化) は **現状の「入力即フィルタ」UI と本質的に不整合** (= ソート push で page 再 fetch → 入力中 keyword が URL に乗らず検索状態消失)。**全 input に debounce 入れて URL 駆動に揃える**抜本改修が必要だが、PR #425 のスコープを爆発させる。
+
+**最終判断**: server-side 化は **「Beginner プラン 100 件上限を超えるデータ量に到達した時点」** の別 PR 扱いに変更。本 PR は **「入力即 client-side filter + URL 永続化 + ソート視認改善 + ヘッダ固定」** の UX 改善 4 点セットを取り込む。
+
+### 本 PR で取り込まれなかった画面 (Phase 3 持ち越し)
+
+以下 4 画面は **CrossListFilterState + bulk operation** という追加複雑性があるため、本 PR では取り込まない (= 別 PR で対応):
+
+| 画面 | 理由 |
+|---|---|
+| `/projects/[id]/risks` | `risks-client.tsx`: bulk visibility + multi state filter、bulk operation との結合度高 |
+| `/projects/[id]/issues` | 同上 (risks-client を typeFilter='issue' で再利用) |
+| `/projects/[id]/retrospectives` | 同上 + retrospective specific |
+| `/projects/[id]/knowledge` | project-knowledge-client が bulk linking + filter を持つ |
+| `/my-tasks` | 複数 status filter + 階層 WBS ツリー展開 toggle が複雑 |
+
+これらは「次回データ量増加に伴う server-side 化 PR」とまとめて対応するのが効率的 (= 同時に bulkFilter 周りの設計を見直す)。
+
+### 教訓 / 再発防止
+
+1. **★最重要★ 「テンプレート画面」を最初に確立してから横展開する** — `/projects` PR #425 で確立した「page.tsx searchParams 受け取り → service 引数 → client.tsx props 初期値 → useState 復元 → onChange で URL push」の経路を `useListSearchParams` hook に抽象化し、7 画面に統一適用。**個別最適化より共通基盤化が後の保守を楽にする**
+2. **debounce + URL replace の組合せが「入力即フィルタ」と「URL 共有」を両立** — 即時 client-side filter で UX は高速、URL は 300ms 後に同期されるため履歴を汚さず共有可能。input 更新時に history.push すると戻るボタンで 1 文字ずつ戻る現象になるため必ず `router.replace`
+3. **sticky header の z-index は dropdown 階層を意識** — z-30 (SortableHeader) < z-40 (sticky header) < z-50 (AccountMenu dropdown / 内部) の積層が崩れると hover プルダウンがヘッダで隠れる/逆にヘッダ越しに表示される事故になる。LoadingProvider / Toast も z-50+ 想定で配置
+4. **bulk operation との結合度が高い画面は段階移行する** — `/memos` は bulkFilter を派生 state にすることで URL 同期に乗せたが、project 配下系は bulk + project scope + multi-state filter が複雑化するため別 PR が現実的
+5. **CrossListFilterState 等の独自 state 設計は URL 同期を後付けしづらい** — 新規一覧画面では **最初から `useListSearchParams` を使う** ことで後の URL 永続化要望に対応しやすくなる (= 技術的負債の予防)
+
+### 検証手順 (再発防止用)
+
+```
+新規 / 既存の一覧画面で以下を満たすことを確認:
+1. 検索 input に文字を打つと **即座に一覧が絞り込まれる** (= debounce なしの client filter)
+2. 入力後 300ms で URL ?keyword=xxx に同期される
+3. リロード (F5) で input + 一覧が復元される
+4. URL を別タブで開いて同じ絞り込み結果になる
+5. ソート列ヘッダにマウスを乗せるとプルダウン (昇順/降順/クリア) が開く
+6. ソート適用後、列ヘッダに矢印 + 優先度番号の rounded badge が表示される
+7. ページを長くスクロールしてもヘッダ (全ナレッジ等のナビ) が画面上部に固定表示
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): §5.X+102 Phase 1-3 取り込み
+- 関連修正ファイル:
+  - `src/components/sort/sortable-header.tsx` (hover オープン + badge)
+  - `src/components/common/use-list-search-params.ts` (新規共通 hook)
+  - `src/components/dashboard-header.tsx` (sticky top-0)
+  - 7 画面の page.tsx + client.tsx
+- 関連 KDD §5.X+102 (`/projects` 即時修正 + ロードマップ。本 PR で「server-side 化は別 PR 扱い」に方針変更)
+- 関連 feedback `feedback_perf_antipatterns` (client-side filter/sort はデータ量増加で UI 遅延の起点になる)

@@ -19,13 +19,22 @@ import { listCustomers } from '@/services/customer.service';
 import { isAdminOrAbove } from '@/lib/permissions/role';
 import { CustomersClient } from './customers-client';
 
-export default async function CustomersPage() {
+/**
+ * PR #425 (2026-05-22) KDD §5.X+102 Phase: URL 永続化対応。
+ *   searchParams.keyword を Client Component に渡し、リロード / 共有時に
+ *   検索条件が復元されるようにする。listCustomers のシグネチャは変更せず
+ *   (= client-side filter で対応、件数が増えた際は別 PR で server-side 化)。
+ */
+type SearchParams = Promise<{ keyword?: string }>;
+
+export default async function CustomersPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session || !isAdminOrAbove(session.user)) {
     redirect('/');
   }
 
+  const sp = await searchParams;
   const customers = await listCustomers(session.user.tenantId);
 
-  return <CustomersClient initialCustomers={customers} />;
+  return <CustomersClient initialCustomers={customers} initialKeyword={sp.keyword ?? ''} />;
 }
