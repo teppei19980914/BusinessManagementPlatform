@@ -12337,3 +12337,90 @@ async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<vo
 - 関連 feedback:
   - `feedback_billing_invariant` (★最重要★ 請求 invariant)
   - `feedback_drift_detection_design` (drift 検知設計は両軸の max + 画面表示 + audit + 修復経路の 4 点セット) — 本件は「即時 DB 同期で drift を起こさない」という別アプローチ
+
+---
+
+## 5.X+106 **★severity-1 請求堅牢性★ Stripe `idempotencyKey` を固定 tenantId のみで構成すると「カード再登録」フローが永久に壊れる — paymentMethodId を含めて試行ごとに区別する (2026-05-22 / PR #425 TC-7 再検証中)**
+
+### 発生事象
+
+KDD §5.X+105 の修正 (cancel 時の DB 即時クリア) を適用後も、`/settings/tenant` で「銀行振込 → クレジットカード」切替フローを **2 回目以降** 実行すると、Stripe Checkout でカード入力後の `completeStripeSetup` Step 4 (Subscription 作成) が **`processing_error`** で失敗。Stripe API のエラーメッセージは:
+
+> Keys for idempotent requests can only be reused with the same parameters they were first used with.
+
+### 根本原因
+
+`createSubscriptionForTenant` の `idempotencyKey` が **テナント ID のみ** で構成されていた:
+
+```ts
+stripe.subscriptions.create(params, {
+  idempotencyKey: `subscription:create:${input.tenantId}`,
+});
+```
+
+Stripe の冪等性 (idempotency) 仕様:
+- 同じ `idempotencyKey` + **同じ parameters** → 1 回目の結果を返す (= 副作用は 1 回)
+- 同じ `idempotencyKey` + **異なる parameters** → **エラーで reject** (= 違反扱い)
+
+カード再登録フローでは:
+- 1 回目 (TC-1): `idempotencyKey = subscription:create:00000000-...` で `default_payment_method=pm_VISA_xxx`
+- 2 回目 (cancel 後の再切替): 同じ `idempotencyKey` だが `default_payment_method=pm_新カード_yyy`
+- → Stripe API が「異なる parameters での再利用」と判定して reject
+- → アプリ層で `processing_error` にラップされてユーザに「Stripe 処理エラー (時間をおいて再試行)」表示
+
+つまり **1 つのテナントは生涯 1 回しか Subscription を作れない実装** になっていた。テナント解約 → 再契約 / カード払い ↔ 銀行振込の往復 / 試行錯誤 等の **正常なユースケース** すべてで Stripe 処理エラーが発生。
+
+### 解決策
+
+`idempotencyKey` に `paymentMethodId` を含めて「同一試行 (= 同じカード) なら冪等 / 異なる試行 (= 異なるカード) なら新規作成」に変更:
+
+```ts
+stripe.subscriptions.create(params, {
+  idempotencyKey: `subscription:create:${input.tenantId}:${input.paymentMethodId}`,
+});
+```
+
+これにより:
+- ネットワーク失敗時のリトライ (= 同じ tenantId + 同じ paymentMethodId) → 1 回目の結果を返す (= 二重課金なし)
+- カード再登録 (= 同じ tenantId + 異なる paymentMethodId) → 新規 Subscription を作成
+
+### 教訓
+
+1. **★最重要★ Stripe `idempotencyKey` は「リトライしたい単位」で組み立てる** — `tenantId` だけだと「テナントの生涯 1 回」の制約になる。正しくは「retry したい行為」を表す key (= テナント + 試行を区別する変数)。Subscription 作成なら `tenantId + paymentMethodId`、決済なら `tenantId + invoiceId + amount` 等
+2. **冪等性の目的は「ネットワーク失敗時の二重実行を防ぐ」こと** — 「同じ tenantId は永久に同じ subscription」ではない。冪等性キーの設計時に「retry したい単位」を明確化する
+3. **エラーメッセージ「processing_error (時間をおいて再試行)」では原因が永久に分からない** — Stripe API のエラーレスポンス全文を `auditLog` / `console.error` に残す改善 (KDD §5.X+104 Sprint N+1 候補) は本件で再認識。今 PR の debug log 削除前にここも検討
+4. **TC-1 だけでは検出できない罠** — 1 回目の setup は idempotencyKey の保護が新規作成なので成功する。2 回目以降の操作 (= TC-7 cancel 後の再切替) で初めて顕在化する。**「同じユーザ操作を 2 回繰り返すテストパターン」を E2E に組込むべき** (= 「冪等性 / state machine の往復」を網羅するテスト設計)
+
+### 検証手順 (再発防止用)
+
+```
+事前: reset-default-tenant-to-beginner.ts で完全初期化
+
+シナリオ A: 1 回目の setup (TC-1 標準フロー、本 KDD 修正なしでも成功)
+1. /settings/tenant で支払い方法を「クレジットカード」に変更 → 「請求先情報を更新」
+2. Stripe Checkout で Visa 4242 → 「保存」
+3. 戻り URL: /settings/tenant?stripe_setup=success ★
+4. DB: paymentMethod='credit_card' + stripeSubscriptionId='sub_*' (= Visa)
+
+シナリオ B: 2 回目の setup (★本 KDD 修正の真価検証★)
+5. シナリオ A 完了後、支払い方法を「銀行振込」に変更 → 「請求先情報を更新」
+   → KDD §5.X+105 修正で DB の sub_id / pm_id がクリアされる
+6. すぐに支払い方法を「クレジットカード」に再変更 → 「請求先情報を更新」
+7. Stripe Checkout で 別カード (例 Mastercard 5555 5555 5555 4444) → 「保存」
+8. 戻り URL: /settings/tenant?stripe_setup=success ★ (本 KDD 修正なしだと processing_error)
+9. DB: 新 sub_id + Mastercard pm_id
+
+シナリオ B が成功すれば本 KDD §5.X+106 の修正が機能。
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-7 再検証中に検出 + 即時修正
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts` (`createSubscriptionForTenant` の idempotencyKey)
+- 関連 KDD:
+  - §5.X+105 (前提): cancel 時の DB 即時クリア (本 KDD が直接の後続事案)
+  - §5.X+103, §5.X+104 (Stripe 堅牢性 系列)
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★)
+- 関連 Stripe 公式: [Idempotent requests - Idempotency keys](https://docs.stripe.com/api/idempotent_requests)

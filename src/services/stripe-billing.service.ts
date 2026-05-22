@@ -640,9 +640,17 @@ export async function createSubscriptionForTenant(
     params.billing_cycle_anchor = input.billingCycleAnchor;
   }
 
+  // PR #425 (2026-05-22) ★severity-1 請求堅牢性★: idempotencyKey に paymentMethodId を含める。
+  //
+  // 旧キー `subscription:create:${tenantId}` だと、同テナントでカード再登録 (= 銀行振込→カード切替を
+  // 繰り返す) するたびに「同じキー + 異なる default_payment_method」になり Stripe が
+  // 「Keys for idempotent requests can only be reused with the same parameters」エラーで reject
+  // (= ユーザ表示は processing_error)。本来のリトライ防止意図は「ネットワーク失敗時の同一リクエスト
+  // 多重実行を防ぐ」ことなので、paymentMethodId が同じ = 同一試行とみなして冪等、paymentMethodId が
+  // 異なる = 別試行とみなして新規作成、にする。これでカード切替フローが何度でも安全に動く。
   return await withStripeError(() =>
     stripe.subscriptions.create(params, {
-      idempotencyKey: `subscription:create:${input.tenantId}`,
+      idempotencyKey: `subscription:create:${input.tenantId}:${input.paymentMethodId}`,
     }),
   );
 }
