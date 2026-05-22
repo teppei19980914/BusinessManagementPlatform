@@ -124,6 +124,16 @@ export async function createTenantWithFullDataset(
   );
   const adminId = adminRes.rows[0].id;
 
+  // ADR-0016 Revised (2026-05-22): 「自前テナント保有」3 層判定で参照される created_by_user_id を
+  //   admin user.id に紐付ける。本番の onboarding service と同じ「tenant 作成 → admin user 作成
+  //   → tenant.update で紐付け」の流れを E2E fixture でも再現する (= layer 1 判定の integrity 担保)。
+  //   未セットだと「fixture で作られた tenant の admin が再度 /signup を叩いた際、layer 1 判定が
+  //   silently bypass される」silent fail に直結する。
+  await pool.query(
+    `UPDATE tenants SET created_by_user_id = $1 WHERE id = $2`,
+    [adminId, tenantId],
+  );
+
   // 3. General user
   const generalRes = await pool.query<{ id: string }>(
     `INSERT INTO users (

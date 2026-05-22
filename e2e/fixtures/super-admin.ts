@@ -105,6 +105,16 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   );
   const superAdminId = superAdminRes.rows[0]!.id;
 
+  // ADR-0016 Revised (2026-05-22): MANAGEMENT テナントの created_by_user_id を super_admin に紐付け。
+  //   ON CONFLICT DO NOTHING で MANAGEMENT 行は冪等に作成されるが、created_by_user_id は migration の
+  //   backfill SQL に委ねられる。fixture では super_admin user を新規 INSERT する都度、最新の id へ
+  //   明示的に上書きすることで「fixture 自己完結化」を担保 (= 3 層判定の integrity 担保)。
+  //   既に他 fixture が createdBy をセット済みの場合も最新の super_admin を指すように上書きする。
+  await pool.query(
+    `UPDATE tenants SET created_by_user_id = $1 WHERE id = $2`,
+    [superAdminId, MANAGEMENT_TENANT_ID],
+  );
+
   // 2. 顧客テナント A: expert / plus = LLM ¥1500 (300 calls × ¥5、2026-05-15 改定後) + Storage ¥500
   // NOTE (PR #337 fix): name にも suffix を付与する。slug だけ一意では不十分。
   //   playwright が同一 spec を chromium / chromium-mobile 両 project で実行する場合、
@@ -151,14 +161,20 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
 
   // admin user (= activeUserCount=1 の検証用)
   const adminEmailA = `admin-sa-${runId}-${suffix}-a@example.com`.toLowerCase();
-  await pool.query(
+  const adminARes = await pool.query<{ id: string }>(
     `INSERT INTO users (
        tenant_id, name, email, password_hash, system_role,
        is_active, force_password_change, mfa_enabled,
        failed_login_count, permanent_lock, updated_at
      )
-     VALUES ($1, $2, $3, $4, 'admin', true, false, false, 0, false, NOW())`,
+     VALUES ($1, $2, $3, $4, 'admin', true, false, false, 0, false, NOW())
+     RETURNING id`,
     [tenantAId, `Admin A ${runId}`, adminEmailA, passwordHash],
+  );
+  // ADR-0016 Revised (2026-05-22): tenantA の created_by_user_id を admin A に紐付け (3 層判定担保)
+  await pool.query(
+    `UPDATE tenants SET created_by_user_id = $1 WHERE id = $2`,
+    [adminARes.rows[0]!.id, tenantAId],
   );
 
   // 3. 顧客テナント B: pro / pro_storage = LLM ¥22500 (1500 calls × ¥15、2026-05-15 改定後) + Storage ¥1500
@@ -197,14 +213,20 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   );
 
   const adminEmailB = `admin-sa-${runId}-${suffix}-b@example.com`.toLowerCase();
-  await pool.query(
+  const adminBRes = await pool.query<{ id: string }>(
     `INSERT INTO users (
        tenant_id, name, email, password_hash, system_role,
        is_active, force_password_change, mfa_enabled,
        failed_login_count, permanent_lock, updated_at
      )
-     VALUES ($1, $2, $3, $4, 'admin', true, false, false, 0, false, NOW())`,
+     VALUES ($1, $2, $3, $4, 'admin', true, false, false, 0, false, NOW())
+     RETURNING id`,
     [tenantBId, `Admin B ${runId}`, adminEmailB, passwordHash],
+  );
+  // ADR-0016 Revised (2026-05-22): tenantB の created_by_user_id を admin B に紐付け (3 層判定担保)
+  await pool.query(
+    `UPDATE tenants SET created_by_user_id = $1 WHERE id = $2`,
+    [adminBRes.rows[0]!.id, tenantBId],
   );
 
   return {

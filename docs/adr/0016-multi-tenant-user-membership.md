@@ -299,3 +299,32 @@ export function buildLoginUrl(tenantSlug: string, baseUrl: string): string {
 1. **仕様転換時の dead code 残置**: 上書きロジックを廃止する際、API ハンドラと UI を **同じ PR でセット変更** すること。片方だけ撤去すると逆方向の整合性破壊が生じる。
 2. **4 コネクタ OR の false positive リスク**: 検出条件を OR で増やすと、abuse 防止の限界利益よりも legitimate user の誤 block 損失の方が大きいケースが多い。
 3. **シンプル設計の力**: 「1 user = 1 email = 1 owned tenant」の概念で簡潔に表現することで、UX 説明も実装テストもクリーンに収まる。
+
+### 運用注意 (将来の保守者向け)
+
+**A. user 物理削除時の created_by_user_id 孤立リスク**
+
+`tenants.created_by_user_id` は `User.id` への soft pointer (FK 不使用) のため、user 物理削除で **宙吊り** になる。すると:
+
+- 当該 email を持つ user が DB から消える
+- `users.email = X` クエリが空になり、層 1 判定が「該当なし」と返す
+- 結果: 「過去に自前テナントを作成した email」で 層 3 (新規) 扱いされてしまう (security-relaxing)
+
+**現状の影響**: 既存運用では user の論理削除 (`deletedAt` セット) のみで物理削除はしない設計のため顕在化しない。Beginner expiry cron で tenant 物理削除を実行する経路はあるが、user は tenant.delete cascade で消える流れ。
+
+**将来の対策候補**:
+1. user 物理削除を実装する際、`tenants.created_by_user_id = u.id` の tenant が存在すれば削除を拒否、または created_by_user_id を NULL に明示更新するロジックを追加
+2. `Tenant.createdByUserId` を `User.id` への FK + `ON DELETE RESTRICT` にする (= user 削除を tenant 経由で物理ブロック)
+3. user 削除時に「該当 email のハッシュを別 tombstone テーブルに保管」し層 1 判定で参照
+
+**B. email 変更経路追加時の整合性**
+
+現状 user.email は immutable (変更 API なし) のため、層 1 判定は安定して動作する。将来 email 変更機能を追加する場合は、以下のいずれかが必要:
+
+1. 旧 email の tombstone を保持し、層 1 判定で「過去使用していた email」も対象にする
+2. 層 1 判定キーを email から user.id ベースに切替 (= 「現在ログイン中の user.id が created_by_user_id に含まれるか」で判定。ただし未ログイン状態の signup には適用不可)
+3. email 変更時に「変更前 email を持つ user は別レコードとして残し、新 email の user を別に作る」モデルへ (= 設計大改修)
+
+**C. MANAGEMENT テナントの seed integrity**
+
+MANAGEMENT テナントの初期 admin (= super_admin) は `systemRole='super_admin'` であり 'admin' ではないため、migration backfill SQL は `('admin', 'super_admin')` の双方を含める必要がある (= 2026-05-22 migration で対応済)。新規環境 initialization 時は `prisma/seed.ts` が super_admin user 作成後 (or 既存検出時) に `MANAGEMENT.createdByUserId` を **明示的に上書き** する設計で integrity を担保している。

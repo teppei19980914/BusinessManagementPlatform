@@ -206,7 +206,15 @@ async function seedManagementTenantAndSuperAdmin(prisma: PrismaClient): Promise<
   });
 
   if (existingSuperAdmin) {
-    console.log(`スキップ: super_admin user (${superAdminEmail}) は既に登録済みです`);
+    // ADR-0016 Revised (2026-05-22): 冪等再実行時も MANAGEMENT.createdByUserId を担保。
+    //   migration backfill が 'admin' / 'super_admin' を対象とするが、過去の migration 適用
+    //   時点で super_admin user が居なかったケース、運用での tenant 物理削除 + 復元、等で
+    //   createdByUserId が NULL のまま残るケースを補正する。
+    await prisma.tenant.update({
+      where: { id: MANAGEMENT_TENANT_ID },
+      data: { createdByUserId: existingSuperAdmin.id },
+    });
+    console.log(`スキップ: super_admin user (${superAdminEmail}) は既に登録済みです (createdByUserId を再紐付け済)`);
     return;
   }
 
@@ -235,6 +243,17 @@ async function seedManagementTenantAndSuperAdmin(prisma: PrismaClient): Promise<
         ),
       },
     },
+  });
+
+  // ADR-0016 Revised (2026-05-22): 管理テナントの created_by_user_id を super_admin に紐付け。
+  //   migration の backfill SQL は「systemRole='admin' の最古 user」を推定するロジックだが、
+  //   super_admin の systemRole は 'super_admin' (= 'admin' ではない) のため backfill 対象外。
+  //   よって seed.ts で **明示的に super_admin user.id へ更新する**。これにより
+  //   「super_admin email で公開 /signup を試した際の層 1 判定」が正しく block するようになる。
+  //   既に backfill 等で別 user (顧客 admin 等) を指している可能性も考慮し、無条件で上書き。
+  await prisma.tenant.update({
+    where: { id: MANAGEMENT_TENANT_ID },
+    data: { createdByUserId: superAdminUser.id },
   });
 
   console.log('');

@@ -33,13 +33,15 @@
 ALTER TABLE "tenants"
   ADD COLUMN "created_by_user_id" UUID;
 
--- Step 2: backfill — 各テナントの最古 admin user を created_by_user_id にセット
+-- Step 2: backfill — 各テナントの最古 admin / super_admin user を created_by_user_id にセット
+--   注: 管理テナント (MANAGEMENT) は systemRole='super_admin' のため、
+--       'admin' だけだと NULL のまま残る。'super_admin' を含めることで管理テナントも対象化。
 UPDATE "tenants" t
 SET "created_by_user_id" = (
   SELECT u.id
   FROM "users" u
   WHERE u.tenant_id = t.id
-    AND u.system_role = 'admin'
+    AND u.system_role IN ('admin', 'super_admin')
   ORDER BY u.created_at ASC
   LIMIT 1
 )
