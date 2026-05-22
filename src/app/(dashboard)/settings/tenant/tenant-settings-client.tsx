@@ -380,7 +380,19 @@ export function TenantSettingsClient({
             アップグレード・ダウングレードともに即時反映されます (Expert ↔ Pro 切替)。Beginner プランへの変更はできません。
           </p>
           <div className="space-y-2">
-            {PLAN_OPTIONS.map((p) => (
+            {PLAN_OPTIONS
+              // PR #425 (2026-05-22) ★UX 改善★: Expert/Pro 契約中は Beginner ラジオを完全非表示。
+              //   旧 UI は Beginner ラジオを表示 → 選択可能 → 「変更を保存」確認ダイアログまで進める → API で
+              //   BEGINNER_DOWNGRADE_FORBIDDEN 拒否、というユーザを混乱させる挙動だった。
+              //   サーバ側ガード (tenant-self.service.ts BEGINNER_DOWNGRADE_FORBIDDEN) は維持する
+              //   (= UI バイパスの defense-in-depth)。
+              .filter((p) => {
+                if ((info.plan === 'expert' || info.plan === 'pro') && p.value === 'beginner') {
+                  return false;
+                }
+                return true;
+              })
+              .map((p) => (
               <label
                 key={p.value}
                 className="flex cursor-pointer items-start gap-2 rounded border p-3 hover:bg-muted/30"
@@ -1470,6 +1482,23 @@ function BillingContactSection({
 
       // PR #425 (2026-05-22) 強制遷移: 非 credit_card → credit_card 変更時
       if (isInvoiceToCreditCardTransition) {
+        // PR #425 (2026-05-22) UX 改善: まず「既存カード」での再 setup を試みる。
+        //   既存カード (= Stripe Customer の invoice_settings.default_payment_method) があれば、
+        //   Stripe Checkout を経由せず即 Subscription を作成 (= 1 クリックで完了)。
+        //   既存カードなし (= 404 NO_EXISTING_CARD) なら通常の Stripe Checkout 強制遷移にフォールバック。
+        const existingCardRes = await fetch('/api/tenants/me/billing/stripe/setup-with-existing-card', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const existingCardJson = await existingCardRes.json().catch(() => ({}));
+        if (existingCardRes.ok && existingCardJson.data?.ok) {
+          // 既存カードで Subscription 作成成功 → UI 更新のみ
+          showSuccess('過去に登録したクレジットカードで自動引落契約を作成しました');
+          await onUpdate();
+          router.refresh();
+          return;
+        }
+        // 既存カードなし or 失敗 → Stripe Checkout 強制遷移にフォールバック
         const returnUrl = `${window.location.origin}/settings/tenant`;
         const setupRes = await fetch('/api/tenants/me/billing/stripe/setup', {
           method: 'POST',

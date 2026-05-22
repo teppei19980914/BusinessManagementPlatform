@@ -1,7 +1,7 @@
 # Stripe Metered Billing 連携仕様 (v1.x)
 
-最終更新: 2026-05-14
-ステータス: **仕様確定 (実装前)**
+最終更新: 2026-05-22
+ステータス: **仕様確定 + 実装済 (PR #425 で UAT 検出問題群を反映)**
 関連:
 - 詳細技術設計: [docs/design/STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) (= 本仕様の「how」レベル詳細)
 - 設計判断: [docs/adr/0006-stripe-metered-billing-integration.md](../adr/0006-stripe-metered-billing-integration.md)
@@ -202,25 +202,33 @@ Stripe Dashboard → Developers → Webhooks → Add endpoint:
 
 ## §4. 主要フロー
 
-### 4.1 クレジットカード払いへの切替フロー (1 アクション完結 / 2026-05-14 確定)
+### 4.1 クレジットカード払いへの切替フロー (1 ステップ強制遷移 / 2026-05-22 PR #425 確定版)
 
-**設計方針**: カード登録 = クレジットカード払い切替確定。カード登録に失敗した場合は paymentMethod
-を変更しない (= 設定前の状態 invoice のまま) ことで、中間状態を排除し UX をシンプル化する。
+**設計方針** (KDD §5.X+103):
+- 「請求先情報フォーム」で paymentMethod を `credit_card` に変更して保存した瞬間に、サーバ側が **自動で Stripe Checkout に強制遷移**
+- カード登録 + Stripe での検証 + Subscription 作成 が成功した時のみ DB の `paymentMethod` が `credit_card` に確定する (= 失敗時は invoice のまま、中間状態を作らない)
+- カード未登録で `paymentMethod='credit_card'` に書き換える経路は、service 層の `CreditCardNotRegisteredError` (422) で UI / API バイパス双方を構造的に拒絶
+- Subscription 作成と同時に **Customer.invoice_settings.default_payment_method** も同期 (= 3 点完全一致: アプリ画面 = Customer Portal = 実引落カード) (KDD §5.X+108)
 
 ```
-[テナント管理者] /settings/tenant の支払い方法セクションで「💳 クレジットカード払いに切替」ボタン押下
+[テナント管理者] /settings/tenant の「請求先情報」セクションで
+                 「支払い方法」を「クレジットカード」に変更 → 「請求先情報を更新」ボタン押下
    ↓
-[API] POST /api/tenants/me/billing/stripe/setup
+[クライアント (BillingContactSection.handleSubmit)]
+   isInvoiceToCreditCardTransition === true を検知:
+   1. paymentMethod を除外して住所等だけ PATCH /api/tenants/me/billing で更新
+   2. POST /api/tenants/me/billing/stripe/setup で Stripe Checkout URL を取得
+   3. window.location.href = checkoutUrl (= 強制遷移)
    ↓
-[サーバ側]
+[サーバ /setup]
+   - tenant.stripeSubscriptionId が既に存在 → 409 ALREADY_HAS_SUBSCRIPTION (= Customer Portal で更新すべき)
+     (旧ガード paymentMethod === 'credit_card' は新 2 ステップに対応するため判定軸を sub_id に変更、KDD §5.X+100)
    - tenant.stripeCustomerId が null なら stripe.customers.create() で Customer 作成
    - stripe.checkout.sessions.create() で SetupSession 生成 (mode='setup')
      * success_url = /api/tenants/me/billing/stripe/setup/complete?session_id={CHECKOUT_SESSION_ID}
-       (= サーバ側の完了ハンドラ、自動的に paymentMethod 切替 + Subscription 作成を実行)
      * cancel_url = /settings/tenant?stripe_setup=canceled
    ↓
-[ブラウザ] Stripe Checkout 画面にリダイレクト
-   - 顧客がカード番号を入力 (= Stripe が PCI DSS 対応で受領)
+[ブラウザ] Stripe Checkout 画面 — 顧客がカード番号を入力 (Stripe が PCI DSS 対応で受領)
    ↓
    ┌─────────────────────┬─────────────────────────────────┐
    │ 成功 (カード登録 OK)  │ 失敗 (キャンセル / カード拒否)   │
@@ -229,33 +237,62 @@ Stripe Dashboard → Developers → Webhooks → Add endpoint:
    ▼                       ▼
 [Webhook] payment_method.attached を受信
    ↓
-[ブラウザ] success_url (= /api/.../setup/complete?session_id=cs_xxx) に Stripe からリダイレクト
+[ブラウザ] success_url に Stripe からリダイレクト
    ↓
-[サーバ完了ハンドラ]
-   1. stripe.checkout.sessions.retrieve(session_id) で SetupSession 情報を取得
-   2. setup_intent.payment_method を取得 (= pm_xxx)
-   3. **検証**: stripe.setupIntents.confirm() で $0 verification 試行
-      - 成功 → 次へ
-      - 失敗 → tenant.paymentMethod は変更せず、エラー画面へリダイレクト
-        /settings/tenant?stripe_setup=failed&reason=<failure_code>
-   4. **paymentMethod 自動切替 + Subscription 作成 (single transaction)**:
-      - tenant.stripeDefaultPaymentMethodId = pm_xxx
-      - tenant.cardLastVerifiedAt = now
-      - tenant.cardVerificationStatus = 'valid'
-      - tenant.paymentMethod = 'credit_card'
+[サーバ /setup/complete ハンドラ (= 6 ステップ)]
+   Step 1: stripe.checkout.sessions.retrieve(session_id) で SetupSession 情報を取得
+   Step 2: setup_intent.payment_method を取得 (= pm_xxx)
+   Step 3: **検証**: stripe.setupIntents.confirm() で $0 verification 試行
+      - 失敗 → /settings/tenant?stripe_setup=failed&reason=<failure_code> へリダイレクト
+              tenant.paymentMethod は invoice のまま (= 状態不変)
+   Step 3.5 (★PR #425 / KDD §5.X+107★): cancelAllActiveStripeSubscriptionsForCustomer
+      - 同 Customer の active な Subscription を **全 cancel**
+      - 目的: DB drift (= DB は sub_id=null だが Stripe に active 残置) の自動修復 + 二重 Subscription 防止
+      - 失敗は console.warn のみで続行 (= 既 canceled / Webhook で最終整合)
+   Step 4: createSubscriptionForTenant
       - stripe.subscriptions.create() で Subscription 作成
         * items: Haiku / Sonnet / Storage の Subscription Item を作成
         * default_payment_method = pm_xxx
-        * automatic_tax: { enabled: true } (Stripe Tax 有効)
-      - tenant.stripeSubscriptionId / SubscriptionItemHaikuId / ...Sonnet... / ...Storage... を更新
+        * automatic_tax: { enabled: true }
+        * idempotencyKey = `subscription:create:${tenantId}:${paymentMethodId}` (★PR #425 / KDD §5.X+106★)
+          - 旧 key (= tenantId のみ) では「テナント生涯 1 回」の制約になり、カード差替で
+            「Keys for idempotent requests can only be reused with the same parameters」エラー
+   Step 5: DB の最終 commit (= 'credit_card' 切替確定)
+      - tenant.stripeSubscriptionId / SubscriptionItemHaikuId / ...Sonnet... / ...Storage...
+      - tenant.stripeDefaultPaymentMethodId = pm_xxx
+      - tenant.paymentMethod = 'credit_card'
+      - tenant.cardLastVerifiedAt = now
+      - tenant.cardVerificationStatus = 'valid'
       - tenant.stripeSubscriptionStatus = 'active'
-   5. 成功画面へリダイレクト: /settings/tenant?stripe_setup=success
+   Step 6 (★PR #425 / KDD §5.X+108★): stripe.customers.update で
+      Customer.invoice_settings.default_payment_method = pm_xxx を同期
+      - 目的: アプリ画面 / Customer Portal / 実引落カード の 3 点完全一致
+      - 失敗は console.warn のみで続行 (= Subscription は既に成功、Customer デフォルトは「ズレる」だけで課金事故にはならない)
+   → /settings/tenant?stripe_setup=success へリダイレクト
    ↓                       ↓
 [完了] 次回 API 呼出から   [ブラウザ] cancel_url または failed パラメタで着地
 Usage Record を Stripe へ送信   - paymentMethod は invoice のまま (= 設定前の状態を維持)
                             - トースト表示: 「クレジットカード登録をキャンセルしました」
                               または「カード登録に失敗しました (理由: <message>)」
 ```
+
+> 旧仕様 (= 「支払い方法」セクション内の独立ボタン「💳 クレジットカード払いに切替」を起点とする 2 ステップフロー) は本 PR で廃止。`/settings/tenant` の paymentMethod 操作起点を「請求先情報」フォームに集約することで、Step A (DB 書込) と Step B (Stripe Checkout) の中間でユーザが離脱して `paymentMethod='credit_card' + sub_id=null` の不整合 (= `credit_card_unregistered` 状態) に陥る経路を構造的に塞いだ (KDD §5.X+100/§5.X+103)。
+
+#### server-side ガード: `CreditCardNotRegisteredError` (PR #425 / KDD §5.X+103)
+
+UI 経由でなく curl / Postman で `PATCH /api/tenants/me/billing { paymentMethod: 'credit_card' }` を直接叩いた場合も、`tenant-self.service.ts` の `updateBillingContact` が以下を発火:
+
+```ts
+if (
+  input.paymentMethod === 'credit_card' &&
+  current?.paymentMethod !== 'credit_card' &&
+  current?.stripeSubscriptionId == null
+) {
+  throw new CreditCardNotRegisteredError(); // 422 reject
+}
+```
+
+これにより「カード未登録 credit_card」の状態を DB に作る経路は **構造的に存在しない** ことが保証される。事業継続性 (= 月次自動引落の確実性) に直結する severity-1 invariant。
 
 #### 失敗時の挙動 (重要)
 
@@ -265,10 +302,13 @@ Usage Record を Stripe へ送信   - paymentMethod は invoice のまま (= 設
 | カード番号が誤り | Stripe Checkout 内でエラー表示、retry 可能 | `invoice` (変更なし) | 既に作成されていれば残る | (Stripe 側 UI のため自社で UI 制御不要) |
 | カード拒否 (期限切れ / 発行銀行拒否) | `/settings/tenant?stripe_setup=failed&reason=card_declined` | `invoice` (変更なし) | 残る | エラートースト「カード登録に失敗しました (カード拒否)」 |
 | 検証 SetupIntent 失敗 | 同上 | `invoice` (変更なし) | 残る | 同上 |
+| UI バイパス (curl) で `paymentMethod='credit_card'` を直接 PATCH | 422 `CREDIT_CARD_NOT_REGISTERED` | `invoice` (変更なし) | (変化なし) | `CreditCardNotRegisteredError` で reject |
 
 **重要**: いずれの失敗ケースでも **`tenant.paymentMethod` を 'credit_card' に変更しない**。設定前 (= invoice)
 の状態を維持する。これにより「切り替えようとして失敗 → 元に戻す」という巻き戻しロジックは不要となる
 (= そもそも変更していない)。
+
+> 詳細フローは [STRIPE_TECHNICAL_DESIGN.md §A-1](../design/STRIPE_TECHNICAL_DESIGN.md) を参照。PR #425 / KDD §5.X+99〜§5.X+108。
 
 #### 空 Customer の取り扱い
 
@@ -383,6 +423,51 @@ Usage Record を Stripe へ送信   - paymentMethod は invoice のまま (= 設
    ↓
 [完了時] return_url に自動リダイレクト
 ```
+
+### 4.6 銀行振込戻し (= credit_card → invoice cancel) フロー (PR #425 / KDD §5.X+105 確定)
+
+**設計方針**: cancel 経路は **Webhook を待たずアプリ層で即時 DB を更新する**。
+Webhook (`customer.subscription.deleted`) は冗長 (= 整合性二重チェック) として位置付ける。
+
+#### 旧設計の問題
+
+旧 `cancelTenantStripeSubscription` は Stripe API でのみ cancel を呼び、DB の `stripeSubscriptionId` 等の
+クリアは `customer.subscription.deleted` Webhook 経由で行っていた。これにより:
+
+- **staging 環境** (Webhook 未設定): DB に `sub_id='sub_xxx'` が永久に残る → 再 setup 時に二重作成エラー
+- **本番環境**: Webhook 同期の数秒〜数分の遅延中に「銀行振込戻し → 即カード払い再切替」を実行すると同じ race condition
+
+```
+[テナント管理者] /settings/tenant の「請求先情報」セクションで支払い方法を「銀行振込」に変更 → 「請求先情報を更新」
+   ↓
+[サーバ tenant-self.service.updateBillingContact]
+   - paymentMethod が credit_card → invoice に変わった場合:
+     1. stripe.subscriptions.cancel(stripeSubscriptionId, { invoice_now: true, prorate: false })
+     2. **成功時 / 既 canceled 時 (= invalid_request 系) いずれも DB を即時クリア**:
+        - stripeSubscriptionId = null
+        - stripeSubscriptionStatus = 'canceled'
+        - stripeSubscriptionItemHaikuId / SonnetId / StorageId = null
+        - stripeDefaultPaymentMethodId = null
+        - cardVerificationStatus = null
+        - cardLastVerifiedAt = null
+        - autoSuspendScheduledAt = null
+        - stripeCustomerId は **保持** (= 再 setup 時に再利用、Customer 削除は別 API)
+     3. paymentMethod = 'invoice' を確定
+   ↓
+[Webhook] customer.subscription.deleted を後追いで受信 — DB は既にクリア済のため no-op
+```
+
+#### 「再切替」の正常動作保証
+
+cancel 直後 (= 秒単位) に「invoice → credit_card」へ再切替しても:
+- DB の `stripeSubscriptionId=null` を見て `/setup` フローに入り、KDD §5.X+107 の Step 3.5
+  (`cancelAllActiveStripeSubscriptionsForCustomer`) で念のため Stripe 側の残骸も cancel
+- `createSubscriptionForTenant` の idempotencyKey に paymentMethodId を含む (KDD §5.X+106) ため、
+  新カードでの新規 Subscription として作成される
+
+これにより「銀行振込戻し → 即カード払い再切替」は **構造的に常に成功** する normal use case として保証。
+
+> 詳細フローは [STRIPE_TECHNICAL_DESIGN.md §A-1](../design/STRIPE_TECHNICAL_DESIGN.md) を参照。PR #425 / KDD §5.X+105。
 
 ---
 
@@ -649,7 +734,8 @@ v1.x で Stripe (クレジットカード自動引落) を導入する際、利�
 
 ## 改修履歴
 
-| 日付 | 変更 | PR |
+| 日付 | 変更 | PR / KDD |
 |---|---|---|
+| 2026-05-22 | §4.1 抜本改修 (1 ステップ強制遷移 + Step 3.5/Step 6 追加 + CreditCardNotRegisteredError + idempotencyKey 設計) + §4.6 新規追加 (cancel 時 DB 即時クリア + 二重 Subscription 構造的予防 + 「銀行振込戻し → 即カード払い再切替」の正常動作保証) | PR #425 / KDD §5.X+99〜§5.X+108 |
 | 2026-05-19 | §13.1 追加: Stripe UTC / テナント TZ 月境界差異の設計判断明文化 | PR #412 (PR-V8.4) |
 | 2026-05-14 | 初版策定 (v1.x 仕様確定) | docs/stripe-integration-spec |

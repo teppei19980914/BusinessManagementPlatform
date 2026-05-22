@@ -176,6 +176,124 @@ export async function createCheckoutSessionForCardSetup(
 }
 
 // ============================================================
+// §2-ter. 既存カードでの再 setup (= Stripe Checkout を経由しない自動 Subscription 作成)
+// ============================================================
+
+/**
+ * PR #425 (2026-05-22): 過去に登録したカード (= Stripe Customer の invoice_settings.default_payment_method)
+ * を使って、Stripe Checkout を経由せず Subscription を即座に作成する UX 改善 API。
+ *
+ * 目的: 「銀行振込 → 一度 cancel → 再度カード払いに戻す」操作の度に
+ *       新規 Stripe Checkout で同じカード番号を再入力させるのは UX が悪い。
+ *       既に Customer に登録済の default_payment_method があれば、それで Subscription を再作成する。
+ *
+ * フロー:
+ *   1. Stripe Customer の `invoice_settings.default_payment_method` を確認
+ *   2. なければ null 返却 (= 呼出側で Stripe Checkout setup に強制遷移)
+ *   3. あれば既存 active Subscription を全 cancel (= 二重 Subscription 防止、KDD §5.X+107)
+ *   4. 新規 Subscription 作成 (= completeStripeSetup と同じロジック)
+ *   5. DB に paymentMethod='credit_card' + sub_id + 関連 ID を保存
+ *
+ * 呼出側: POST /api/tenants/me/billing/stripe/setup-with-existing-card
+ *
+ * @returns 成功なら CompleteStripeSetupSuccess、既存カード無しなら null (= 呼出側で Checkout 強制遷移)
+ */
+export async function setupSubscriptionWithExistingCard(
+  tenantId: string,
+  billingCycleAnchor: number | null,
+): Promise<StripeOperationResult<CompleteStripeSetupSuccess | null>> {
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+    select: {
+      stripeCustomerId: true,
+      storageAddonPlan: true,
+      timezone: true,
+    },
+  });
+  if (tenant == null || tenant.stripeCustomerId == null) {
+    // Customer 未作成 → そもそも既存カードが存在しない
+    return { ok: true, value: null };
+  }
+
+  const stripe = getStripe();
+
+  // Step 1: Customer の invoice_settings.default_payment_method を確認
+  const customerResult = await withStripeError(() =>
+    stripe.customers.retrieve(tenant.stripeCustomerId!, {
+      expand: ['invoice_settings.default_payment_method'],
+    }),
+  );
+  if (!customerResult.ok) return customerResult;
+  if (customerResult.value.deleted) return { ok: true, value: null };
+  const pm = customerResult.value.invoice_settings?.default_payment_method;
+  if (!pm || typeof pm === 'string' || pm.type !== 'card' || !pm.card) {
+    // 既存カードなし → 呼出側で Checkout 強制遷移
+    return { ok: true, value: null };
+  }
+  const paymentMethodId = pm.id;
+
+  // Step 2: 既存 active Subscription を全 cancel (KDD §5.X+107)
+  await cancelAllActiveStripeSubscriptionsForCustomer(tenant.stripeCustomerId);
+
+  // Step 3: 新規 Subscription 作成
+  const subscriptionResult = await createSubscriptionForTenant({
+    tenantId,
+    storageAddonPlan: tenant.storageAddonPlan ?? 'standard',
+    billingCycleAnchor,
+    paymentMethodId,
+  });
+  if (!subscriptionResult.ok) return subscriptionResult;
+  const subscription = subscriptionResult.value;
+
+  // Step 4: paymentMethod 切替を確定 (completeStripeSetup の Step 5 と同じ処理)
+  const prices = getStripePriceConfig();
+  const haikuItem = subscription.items.data.find((i) => i.price.id === prices.haiku);
+  const sonnetItem = subscription.items.data.find((i) => i.price.id === prices.sonnet);
+  const storageItem = subscription.items.data.find(
+    (i) => i.price.id === prices.storagePlus || i.price.id === prices.storagePro,
+  );
+  const currentYearMonth = getTenantCurrentYearMonth(
+    new Date(),
+    tenant.timezone ?? 'Asia/Tokyo',
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.tenant.update({
+      where: { id: tenantId },
+      data: {
+        stripeSubscriptionId: subscription.id,
+        stripeSubscriptionStatus: subscription.status,
+        stripeSubscriptionItemHaikuId: haikuItem?.id ?? null,
+        stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
+        stripeSubscriptionItemStorageId: storageItem?.id ?? null,
+        stripeDefaultPaymentMethodId: paymentMethodId,
+        cardLastVerifiedAt: new Date(),
+        cardVerificationStatus: 'valid',
+        paymentMethod: 'credit_card',
+      },
+    });
+    await markPendingInvoiceAsReplacedByStripe(tx, tenantId, currentYearMonth);
+  });
+
+  // Step 5: Customer デフォルト同期 (KDD §5.X+108) は既に invoice_settings.default_payment_method が
+  //         今回の paymentMethodId なので不要。ただし冪等性のため update を呼ぶ。
+  await withStripeError(() =>
+    stripe.customers.update(tenant.stripeCustomerId!, {
+      invoice_settings: { default_payment_method: paymentMethodId },
+    }),
+  );
+
+  return {
+    ok: true,
+    value: {
+      subscriptionId: subscription.id,
+      customerId: tenant.stripeCustomerId,
+      paymentMethodId,
+    },
+  };
+}
+
+// ============================================================
 // §2-bis. Setup 完了処理 (= Checkout 戻り後の Subscription 作成)
 // ============================================================
 

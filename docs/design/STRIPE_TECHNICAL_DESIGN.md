@@ -1,7 +1,7 @@
 # Stripe Metered Billing 詳細技術設計
 
-最終更新: 2026-05-14
-ステータス: **詳細設計確定 (実装前)**
+最終更新: 2026-05-22
+ステータス: **詳細設計確定 + 実装済 (PR #425 で UAT 検出問題群を反映)**
 関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) (仕様) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) (設計判断) / [STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md) (実装計画)
 
 ## 概要
@@ -27,12 +27,18 @@ Stripe API 呼出 (= 外部 HTTP) と Prisma DB トランザクションは **�
    ↓ 次回 setup でも Stripe Customer は再作成され、 orphan subscription が積み上がる
 ```
 
-#### 設計判断: **「DB 先行 + Stripe 後追い + 補償処理」方式**
+#### 設計判断: **「DB 先行 + Stripe 後追い + 補償処理 + Step 3.5/Step 6 で 3 点完全一致」方式 (PR #425 / KDD §5.X+103/§5.X+107/§5.X+108)**
+
+PR #425 の UAT で以下 3 件の severity-1 問題を検出 / 修正し、Phase 1-5 → **Phase 1-6 (= Step 1 + 2 + 3 + 3.5 + 4 + 5 + 6)** に拡張:
+
+- **Step 3.5 追加** (KDD §5.X+107): DB drift で「Stripe Customer に active Subscription が並存 → 二重課金」を構造的に予防。setup 直前に同 Customer の active Subscription を **全 cancel**
+- **idempotencyKey に paymentMethodId を含める** (KDD §5.X+106): 旧 `subscription:create:${tenantId}` は「テナント生涯 1 回しか Subscription を作れない」制約。カード差替のたびに `Keys for idempotent requests can only be reused with the same parameters` エラーで永久に失敗
+- **Step 6 追加** (KDD §5.X+108): Subscription 作成時に Customer.invoice_settings.default_payment_method も同期 (= アプリ画面 / Customer Portal / 実引落カード の 3 点完全一致)
 
 ```typescript
 // src/services/stripe-billing.service.ts (擬似コード)
 export async function completeStripeSetup(tenantId: string, setupSessionId: string): Promise<Result> {
-  // Phase 1: Stripe Checkout Session の検証 (= Stripe からの状態取得のみ、書き込みなし)
+  // Step 1: Stripe Checkout Session の検証 (= Stripe からの状態取得のみ、書き込みなし)
   const session = await stripe.checkout.sessions.retrieve(setupSessionId);
   if (session.status !== 'complete') {
     return { ok: false, reason: 'setup_not_complete' };
@@ -43,7 +49,7 @@ export async function completeStripeSetup(tenantId: string, setupSessionId: stri
     : null;
   if (!paymentMethodId) return { ok: false, reason: 'no_payment_method' };
 
-  // Phase 2: DB の暫定 commit (= 'pending' 状態)
+  // Step 2: DB の暫定 commit (= 'pending' 状態)
   //   この時点で tenant.paymentMethod はまだ 'invoice' のまま、'credit_card' へは切替えない。
   //   stripeCustomerId / stripeDefaultPaymentMethodId だけ先に保存。
   await prisma.tenant.update({
@@ -55,7 +61,19 @@ export async function completeStripeSetup(tenantId: string, setupSessionId: stri
     },
   });
 
-  // Phase 3: Stripe Subscription を作成 (= 外部呼出、idempotent)
+  // Step 3: SetupIntent の $0 verification (= カード有効性確認)
+  //   失敗 → tenant.paymentMethod 不変で error reason 返却
+
+  // 【新規 / PR #425 / KDD §5.X+107】 Step 3.5: 既存 active Subscription を全 cancel
+  //   目的: DB drift (= DB は sub_id=null だが Stripe に active 残置) の自動修復 + 二重 Subscription 防止
+  //   - 開発者が script で paymentMethod を直書きしたケース
+  //   - cancelTenantStripeSubscription が呼ばれず DB だけ書き換わったケース
+  //   - TC-7 (UI cancel) を経由しても Webhook 遅延中に再 setup したケース
+  //   いずれも Customer に active 残骸がある状態で新規 setup されると Subscription A + B が並存し
+  //   月次で両方から引落される severity-1 事故。これを構造的に防ぐ。
+  await cancelAllActiveStripeSubscriptionsForCustomer(customerId);
+
+  // Step 4: Stripe Subscription を作成 (= 外部呼出、idempotent)
   let subscription: Stripe.Subscription;
   try {
     subscription = await stripe.subscriptions.create({
@@ -68,15 +86,20 @@ export async function completeStripeSetup(tenantId: string, setupSessionId: stri
       default_payment_method: paymentMethodId,
       automatic_tax: { enabled: true },
     }, {
-      idempotencyKey: `subscription:create:${tenantId}`,
+      // 【変更 / PR #425 / KDD §5.X+106】 paymentMethodId を含めて「カード単位の冪等性」に
+      //   旧 `subscription:create:${tenantId}` は「テナント生涯 1 回」の制約になり
+      //   カード再登録フロー (= TC-7 cancel 後 / カード差替) で Stripe API が
+      //   「Keys for idempotent requests can only be reused with the same parameters」で reject。
+      //   新 key は「同 tenantId + 同 paymentMethodId なら冪等 (リトライ安全)」「異なる paymentMethodId なら新規作成」
+      idempotencyKey: `subscription:create:${tenantId}:${paymentMethodId}`,
     });
   } catch (e) {
-    // 補償処理: Phase 2 で書いた stripeCustomerId/PaymentMethodId はそのまま残してよい
+    // 補償処理: Step 2 で書いた stripeCustomerId/PaymentMethodId はそのまま残してよい
     // (= 次回再試行時に再利用される。Customer/PaymentMethod の作成は idempotent)
     return { ok: false, reason: stripe_error_code(e) };
   }
 
-  // Phase 4: DB の最終 commit (= 'credit_card' 切替確定)
+  // Step 5: DB の最終 commit (= 'credit_card' 切替確定)
   await prisma.tenant.update({
     where: { id: tenantId },
     data: {
@@ -91,9 +114,72 @@ export async function completeStripeSetup(tenantId: string, setupSessionId: stri
     },
   });
 
+  // 【新規 / PR #425 / KDD §5.X+108】 Step 6: Customer.invoice_settings.default_payment_method を同期
+  //   目的: 3 点完全一致 (アプリ画面 = Stripe Customer Portal = 実際の月次引落カード)
+  //   - Customer.default_payment_method は新規 Subscription / 単発決済の「初期値」
+  //   - Subscription.default_payment_method はその Subscription 固有の引落カード (= 実引落)
+  //   - 新規 Subscription を作っても Customer のデフォルトは自動更新されない (Stripe 仕様)
+  //   → ユーザが Customer Portal を開くと「決済手段のデフォルト」が古いカードのままで混乱
+  //   → アプリ画面と Customer Portal の表示が乖離して「ユーザは画面を信用していいか?」の不安
+  //   ここで Customer 側も同期して、3 経路 (アプリ画面 / Portal / 実引落) で常に同じカードが表示されるようにする
+  //   失敗時は console.warn のみで続行 (= Subscription は既に成功、Customer デフォルトは「ズレる」だけで課金事故にはならない)
+  try {
+    await stripe.customers.update(customerId, {
+      invoice_settings: { default_payment_method: paymentMethodId },
+    });
+  } catch (e) {
+    console.warn('[stripe] Customer.invoice_settings sync failed', { tenantId, error: e });
+  }
+
   return { ok: true };
 }
+
+// 【新規 / PR #425 / KDD §5.X+107】 同 Customer の active Subscription を全 cancel
+async function cancelAllActiveStripeSubscriptionsForCustomer(customerId: string): Promise<void> {
+  const stripe = getStripe();
+  const listResult = await withStripeError(() =>
+    stripe.subscriptions.list({ customer: customerId, status: 'active', limit: 100 }),
+  );
+  if (!listResult.ok) return;
+  for (const sub of listResult.value.data) {
+    await withStripeError(() =>
+      stripe.subscriptions.cancel(sub.id, { invoice_now: true, prorate: false }),
+    );
+    // 失敗時は console.warn のみで続行 (= 既 canceled / Webhook 経由で最終整合)
+  }
+}
 ```
+
+#### 「銀行振込戻し → 即カード払い再切替」の正常動作保証 (PR #425 / KDD §5.X+105)
+
+`cancelTenantStripeSubscription` は Stripe API での cancel 成功時 + 既 canceled 検知時の双方で
+`clearTenantStripeSubscriptionFields` を呼んで DB の Stripe 関連フィールドを即時クリア (= Webhook 待ちなし)。
+
+```typescript
+async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<void> {
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      stripeSubscriptionId: null,
+      stripeSubscriptionStatus: 'canceled',
+      stripeSubscriptionItemHaikuId: null,
+      stripeSubscriptionItemSonnetId: null,
+      stripeSubscriptionItemStorageId: null,
+      stripeDefaultPaymentMethodId: null,
+      cardVerificationStatus: null,
+      cardLastVerifiedAt: null,
+      autoSuspendScheduledAt: null,
+      // stripeCustomerId は保持 (= 再 setup 時に再利用)
+    },
+  });
+}
+```
+
+これにより:
+- **staging** (Webhook 未設定) でも DB drift が起きない
+- **本番** で「TC-7 cancel → 即 TC-1 再切替」の race condition が発生しない
+
+cancel 後の再 setup は KDD §5.X+106 (= idempotencyKey に paymentMethodId 含む) + §5.X+107 (= Step 3.5 で残骸 cancel) と組合さって、新カードで新規 Subscription として **必ず成功** する normal use case として保証される。
 
 #### この設計の利点
 
@@ -130,25 +216,48 @@ export async function reconcileStripeIntegrity(): Promise<void> {
 }
 ```
 
-### A-2. idempotency key の生成戦略
+### A-2. idempotency key の生成戦略 (PR #425 / KDD §5.X+106 で Subscription を「カード単位」に変更)
 
-#### 設計判断: **`<operation>:<scope>:<resource_id>` 形式 + UUID v4 サフィックス (再試行可能性に応じて)**
+#### 設計判断: **`<operation>:<scope>:<resource_id>` 形式 + 「リトライしたい単位」で組み立てる**
 
-| 操作 | idempotency_key 例 | 用途 |
+| 操作 | idempotency_key | 用途 |
 |---|---|---|
-| Stripe Customer 作成 | `customer:create:${tenantId}` | テナント単位で 1 度だけ |
-| Stripe Subscription 作成 | `subscription:create:${tenantId}` | 同上 |
+| Stripe Customer 作成 | `customer:create:${tenantId}` | テナント単位で 1 度だけ (= Customer はテナントに 1 対 1) |
+| Stripe Subscription 作成 | **`subscription:create:${tenantId}:${paymentMethodId}`** (★ PR #425 で `tenantId` のみ → `tenantId + paymentMethodId` に変更) | **「同じカードでの再試行」は冪等 / 「異なるカードでの再 setup」は新規作成** (= TC-7 cancel 後の再切替 / カード差替 / 試行錯誤など正常 use case 全てで成功) |
 | Usage Record 送信 | `usage:${tenantId}:${callType}:${callId}` | API 呼び出しごとにユニーク (= ApiCallLog.id を `callId` に流用) |
-| Customer Portal Session | `portal:${tenantId}:${Date.now()}` | セッションは短命なので時刻含めて OK |
-| Checkout Session 作成 | `checkout:setup:${tenantId}:${randomUUID()}` | リトライ時に新しい UUID で重複防止 |
+| Customer Portal Session | `portal:${tenantId}:${cryptoRandom()}` | セッションは短命なので毎回新規 |
+| Checkout Session 作成 | `checkout:setup:${tenantId}:${cryptoRandom()}` | リトライ時に新しい random で重複防止 |
+| カード verify (= プラン変更時) | `card:verify:${tenantId}:${year}:${month}` | 月次最大 1 回まで冪等 |
+
+#### Subscription 作成の idempotencyKey 設計詳説 (PR #425 / KDD §5.X+106)
+
+**旧設計** `subscription:create:${tenantId}` の致命的欠陥:
+- Stripe 冪等性仕様: 同じ `idempotencyKey` + **異なる parameters** → **エラーで reject**
+- 1 回目: `default_payment_method=pm_VISA_xxx` で OK
+- 2 回目 (= cancel 後の再切替で別カード): 同じ key だが `default_payment_method=pm_新カード_yyy` → Stripe API が「異なる parameters での再利用」と判定して reject
+- → アプリ層で `processing_error` にラップ → ユーザに「Stripe 処理エラー (時間をおいて再試行)」表示 (= 永久に成功しない)
+- 実質「1 テナント = 生涯 1 回しか Subscription を作れない」制約
+
+**新設計** `subscription:create:${tenantId}:${paymentMethodId}`:
+- **ネットワーク失敗時のリトライ** (= 同じ tenantId + 同じ paymentMethodId): Stripe が 1 回目の結果を返す (= 二重課金なし、冪等性が機能)
+- **カード再登録** (= 同じ tenantId + 異なる paymentMethodId): 新規 idempotency space となり、新規 Subscription を作成
+
+#### 一般原則 (= 「Stripe `idempotencyKey` は『リトライしたい単位』で組み立てる」)
+
+冪等性の目的は **「ネットワーク失敗時の二重実行を防ぐ」** こと。
+「同じテナントは永久に同じリソース」ではない。冪等性キーの設計時に「retry したい単位」を明確化する:
+
+- Subscription 作成 → `tenantId + paymentMethodId` (= 同じカードでの再試行)
+- 決済 → `tenantId + invoiceId + amount` (= 同じ請求書の同額再試行)
+- Usage Record → `tenantId + callType + ApiCallLog.id` (= 同じ API 呼び出しの再送)
 
 #### 例外: 「同じ key で違う body」エラー対策
 
 Stripe は同じ `idempotency_key` で **異なる body** を送ると 400 エラーを返す。これを避けるため:
 
-- **operations: create 系** = 固定 key + 同一 body 保証 (例: テナント単位の Customer)
+- **operations: create 系** = 「リトライしたい単位」を key に含める (例: Subscription = tenantId + paymentMethodId)
 - **operations: report 系** = ApiCallLog.id 等の **真にユニークな ID** を流用 (= 重複防止が主目的)
-- **operations: ephemeral** = `${tenantId}:${Date.now()}` で都度新規 (= idempotent 不要)
+- **operations: ephemeral** = `${tenantId}:${cryptoRandom()}` で都度新規 (= idempotent 不要)
 
 ---
 
@@ -808,6 +917,159 @@ await prisma.billingHistory.create({
 
 ---
 
+## §H. Session cookie `sameSite='lax'` 設計根拠 (PR #425 / KDD §5.X+103)
+
+### 背景
+
+PR #198 (2026-04-30) で `sameSite='lax'` → `'strict'` に強化済 (= CWE-1275 対策)。
+当時の前提:
+
+> 本サービスは Credentials provider のみで OAuth/SSO のクロスサイトコールバックが無く...
+
+しかし PR #425 で Stripe Checkout (= 外部 origin `checkout.stripe.com` からの top-level GET redirect) を
+本格運用に乗せたことで、当時の前提が崩れた。
+
+### 発生事象
+
+1. `/settings/tenant` → 「クレジットカード情報更新」→ Stripe Checkout
+2. Stripe が `success_url` (= `/api/tenants/me/billing/stripe/setup/complete?...`) にブラウザリダイレクト
+3. **sameSite='strict' により session cookie が外部 origin からの戻りで送信されない**
+4. `/api/.../complete` handler が未認証扱いになり `/login` に強制 redirect
+5. ユーザは「カード登録成功 → ログイン画面」という不可解な遷移を体験
+6. DB は `paymentMethod='credit_card' + stripeSubscriptionId=null` の **「カード未登録 credit_card」状態** に陥り、月次自動引落が走らず請求漏れ → 事業継続性に直結する severity-1
+
+### 設計判断: **`sameSite='lax'` に戻す** (`src/lib/auth.config.ts`)
+
+```typescript
+sessionToken: {
+  options: {
+    // PR #198 (2026-04-30): 'lax' → 'strict' に強化 (CWE-1275 対策)。
+    // PR #425 (2026-05-22) ★severity-1★: 'strict' → 'lax' に戻す。
+    //   理由: Stripe Checkout を新規導入したため、外部 origin (checkout.stripe.com) から
+    //         自 origin への top-level GET redirect (= success_url) で sameSite='strict' は
+    //         cookie を送らない → /api/.../complete handler が未認証扱い → /login に強制遷移
+    //         → カード登録完了したのに UI 上は失敗扱い
+    //         → DB は paymentMethod='credit_card' + sub_id=null の不整合状態に陥り請求漏れ。
+    //   PR #198 当時の前提「外部 origin からのコールバックは無い」が崩れたための再緩和。
+    //   GET 経由の CSRF 対策は不要 (= 副作用なし)。POST には CSRF token + CORS で別途防御。
+    sameSite: 'lax',
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+  },
+},
+```
+
+### CSRF 対策の代替防御
+
+`'lax'` 緩和に伴い CSRF リスクが理論上 (= top-level GET 経由) 発生するが:
+- **GET 経由の副作用なし**: 状態変更系 API は全て POST/PATCH/DELETE で実装
+- **POST/PATCH/DELETE には CSRF token + CORS** で別途防御 (= Next.js App Router の form action + Origin header 検証)
+- 外部 origin からの POST top-level navigation は `sameSite='lax'` でも cookie 送信されない (= ブラウザ仕様)
+
+### 一般原則
+
+**外部 origin からのコールバックを伴う機能を追加したら cookie sameSite を必ず見直す**。
+旧設計の前提条件 (=「外部コールバック無し」) が後から崩れることは頻繁。Stripe / OAuth / OIDC / パスキー等を導入する際は強い候補。
+
+---
+
+## §I. `getStripeCardSummary` 設計: Subscription 優先取得で「画面のカード = 請求カード」一貫性を担保 (PR #425 / KDD §5.X+108)
+
+### 背景
+
+Stripe には **2 つの異なる default_payment_method** が存在し、混同しやすい:
+
+| フィールド | 意味 | 設定経路 |
+|---|---|---|
+| `Customer.invoice_settings.default_payment_method` | 新規 Subscription / 単発決済の **初期値** | Customer Portal の「デフォルトに設定」/ Customer 作成時 / 開発者が API で明示設定 |
+| `Subscription.default_payment_method` | **その Subscription 固有の引落カード** (= 実際の請求カード) | Subscription 作成時の引数 / API で別途設定 |
+
+新規 Subscription を作っても Customer のデフォルトは自動更新されない。これにより:
+
+1. TC-1 初回 setup: `default_payment_method=Visa pm_A` で Subscription 作成 → Customer デフォルトも Visa に
+2. ユーザが Customer Portal で **Mastercard をデフォルトに変更** → `Customer.invoice_settings.default_payment_method = Mastercard`
+3. ただし既存 Subscription の引落は Visa のまま (= Stripe 仕様、Subscription レベルが優先)
+4. TC-7 で銀行振込戻し → Subscription cancel
+5. 再度 TC-3 で新規 3DS Visa で setup → 新規 Subscription 作成 (`default_payment_method=新Visa`)
+6. **`Customer.invoice_settings.default_payment_method` は依然として Mastercard** (= ステップ 2 のまま)
+7. **アプリ画面**: 旧 `getStripeCardSummary` が Customer.invoice_settings を見る → Mastercard 表示 (= 古い)
+8. **実際の請求**: 新 Subscription.default_payment_method = 新 Visa → Visa から引落
+
+ユーザは画面を信頼しているため「Mastercard に請求が来る」と思っているが、実際は「Visa に請求が来る」状態。
+**「画面のカード ≠ 実際に請求されるカード」** = KDD §5.X+103 で死守すべき一貫性が破綻 = severity-1 信用問題。
+
+### 設計判断: **Subscription 優先 + Customer フォールバック** (`src/services/stripe-billing.service.ts`)
+
+```typescript
+async function getStripeCardSummary(tenantId): Promise<StripeCardSummary | null> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { stripeCustomerId: true, stripeSubscriptionId: true },
+  });
+  if (!tenant?.stripeCustomerId) return null;
+  const stripe = getStripe();
+
+  // 優先: Subscription.default_payment_method (= 実際の請求カード)
+  //   - これがユーザに対する「あなたのカードに毎月請求が来ます」の真実
+  //   - expand で payment_method 全フィールドを取得
+  if (tenant.stripeSubscriptionId) {
+    const subResult = await withStripeError(() =>
+      stripe.subscriptions.retrieve(tenant.stripeSubscriptionId!, {
+        expand: ['default_payment_method'],
+      }),
+    );
+    if (subResult.ok) {
+      const pm = subResult.value.default_payment_method;
+      if (pm && typeof pm !== 'string' && pm.type === 'card' && pm.card) {
+        return {
+          brand: pm.card.brand,
+          last4: pm.card.last4,
+          expMonth: pm.card.exp_month,
+          expYear: pm.card.exp_year,
+        };
+      }
+    }
+  }
+
+  // フォールバック: Customer.invoice_settings.default_payment_method
+  //   - Subscription 未作成テナント (= setup 前)
+  //   - Subscription はあるが default_payment_method 未設定の特殊ケース
+  const customerResult = await withStripeError(() =>
+    stripe.customers.retrieve(tenant.stripeCustomerId!, {
+      expand: ['invoice_settings.default_payment_method'],
+    }),
+  );
+  if (!customerResult.ok || customerResult.value.deleted) return null;
+  const pm = customerResult.value.invoice_settings?.default_payment_method;
+  if (!pm || typeof pm === 'string' || pm.type !== 'card' || !pm.card) return null;
+  return {
+    brand: pm.card.brand,
+    last4: pm.card.last4,
+    expMonth: pm.card.exp_month,
+    expYear: pm.card.exp_year,
+  };
+}
+```
+
+### Step 6 (= Customer 同期) と組み合わせて 3 点完全一致を実現
+
+`completeStripeSetup` Step 6 (§A-1 参照) で `stripe.customers.update({ invoice_settings: { default_payment_method } })` を実行することで、以下 3 点が **常に一致**:
+
+1. **アプリ画面** (= `getStripeCardSummary` の戻り値 = Subscription.default_payment_method)
+2. **Stripe Customer Portal** の「決済手段 / デフォルト」(= Customer.invoice_settings.default_payment_method)
+3. **実際の月次引落カード** (= Subscription.default_payment_method)
+
+Customer Portal でユーザが手動でデフォルト変更した場合はその選択を尊重 (= 上書きしない)。
+次回 setup (= 新規 Subscription 作成) 時にまた新カードに同期される。
+
+### UI 側 (`stripe-payment-method-section.tsx`) の表示制御
+
+- `state === 'invoice_only'` のときは Stripe 側にカード履歴があっても **表示しない** (= 「画面のカード = 請求カード」一貫性の維持。銀行振込時にカード情報を表示すると「カードに請求される?」とユーザ誤解)
+- `state === 'credit_card_active'` なのに `cardSummary === null` (= API 取得失敗等) のときは警告 alert を表示 (= 「⚠ カード情報を Stripe から取得できませんでした」)
+- `credit_card_active` / `credit_card_attention` で `cardSummary` が取れた場合は「請求に使用されるカード (Stripe 登録情報)」として brand / last4 / 有効期限を表示
+
+---
+
 ## §F. 各 PR (実装フェーズ) との対応
 
 [STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md) の PR-S1〜S6 が本詳細設計のどこを参照するか:
@@ -818,8 +1080,9 @@ await prisma.billingHistory.create({
 | **PR-S2: Service** | §A-1 (completeStripeSetup 擬似コード) / §A-2 (idempotency key) / §B-1 (エラーマッピング) / §C-2 (Subscription Item 動的管理) / §C-3 (TZ 境界) |
 | **PR-S3: API** | §A-1 (route での Phase 分割) / §B-1 (UI 表示用エラー変換) |
 | **PR-S4: Webhook** | §B-2 (DLQ 戦略) / §D-2 (Subscription Updated ハンドラ) / §E-4 (Invoice → BillingHistory) |
-| **PR-S5: UI** | §B-1 (各 decline_code のトースト文言) / §E-1 (return_url 処理) |
+| **PR-S5: UI** | §B-1 (各 decline_code のトースト文言) / §E-1 (return_url 処理) / §I (`getStripeCardSummary` の表示制御) |
 | **PR-S6: 連携** | §D-1 (withMeteredLLM 配線) / §B-3 (Usage Record queue flush cron) / §D-2 (自動 suspend cron) |
+| **PR #425 後追い改修** | §A-1 Step 3.5/6 (二重 Subscription 防止 + Customer デフォルト同期) / §A-2 idempotencyKey paymentMethodId 化 / §H (sameSite='lax') / §I (`getStripeCardSummary` Subscription 優先) |
 
 ---
 
@@ -842,6 +1105,7 @@ UNIQUE 制約 `@@unique([tenantId, yearMonth])` は **維持** (= 同月 2 レ�
 
 ## 改訂履歴
 
-| 日付 | 変更 | PR |
+| 日付 | 変更 | PR / KDD |
 |---|---|---|
+| 2026-05-22 | §A-1 抜本改修 (Phase 1-5 → Step 1-6 + Step 3.5 全 active cancel + Step 6 Customer デフォルト同期 + cancel 時 DB 即時クリア) + §A-2 idempotencyKey に paymentMethodId 追加 + §H 新規 (cookie sameSite='lax' 根拠) + §I 新規 (getStripeCardSummary Subscription 優先取得) | PR #425 / KDD §5.X+103/§5.X+105/§5.X+106/§5.X+107/§5.X+108 |
 | 2026-05-14 | 初版 (詳細設計確定、10 項目 + 補助 4 項目) | docs/stripe-technical-design |

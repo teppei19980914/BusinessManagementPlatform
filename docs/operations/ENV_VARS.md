@@ -6,7 +6,10 @@
 
 ## 1. 環境変数一覧
 
-`.env.example` に定義されている全変数。ローカル開発は `cp .env.example .env` して編集する。本番 (Vercel) は Vercel ダッシュボードの Project Settings → Environment Variables に設定する。
+`.env.example` に定義されている全変数。ローカル開発は `cp .env.example .env` して編集する。
+本番・ステージングは **Netlify Dashboard → Site configuration → Environment variables** に設定する (2026-05-18 Vercel から Netlify へ移行済)。
+
+> ★必須★ env var の中には **Production / Deploy preview / Branch deploys / Local development の deploy context ごとに別値を設定すべきもの** がある (`NEXTAUTH_URL`, `STRIPE_*` 系等)。全 context 共通設定だと本番事故 (Stripe 本番カードへの誤課金、Deploy Preview から本番 URL へのリダイレクト等) に直結するため、**§2 の context 別設定マトリクスを必ず確認** すること。
 
 ### 1.1 ポート設定
 
@@ -38,7 +41,7 @@
 
 | 変数名 | 例 | 用途 | 取得方法 |
 |---|---|---|---|
-| `NEXTAUTH_URL` | `http://localhost:3000` (ローカル) / `https://tasukiba.vercel.app` (本番) | NextAuth がリダイレクト先の URL 解決に使う | アプリが公開される URL |
+| `NEXTAUTH_URL` | `http://localhost:3000` (ローカル) / `https://tasukiba.netlify.app` (Netlify Production のみ) | NextAuth がリダイレクト先の URL 解決に使う | Production は固定 URL。**Deploy preview / Branch deploys では未設定 (Delete) にして trustHost フォールバックを使う** (§2 参照、KDD §5.X+101) |
 | `NEXTAUTH_SECRET` | (32 バイトのランダム文字列) | JWT の署名鍵 | ```openssl rand -base64 32``` で生成 |
 
 > **ローテーション時の注意**: `NEXTAUTH_SECRET` を変更すると全ユーザのセッション JWT が即時無効化され、強制的に再ログインとなる。
@@ -46,6 +49,16 @@
 > **セッション有効期限** (`src/config/security.ts` の `SESSION_JWT_MAX_AGE_SEC`): **9 時間**
 >   (PR #124 で 24h→9h 短縮)。日本の通常就業時間 (8h + 休憩 1h) を超えて無操作なら強制ログアウト。
 >   NextAuth JWT 戦略は各リクエストで token を再署名する sliding 挙動のため、実質「最後の操作から 9 時間」。
+>
+> **NEXTAUTH_URL の context 分離 (PR #425 / KDD §5.X+101 / 2026-05-22)**:
+>   - **Production**: `https://tasukiba.netlify.app` (固定)
+>   - **Deploy preview / Branch deploys**: **未設定** (= Netlify Dashboard 上で値を空に保存)
+>     → NextAuth v5 が `trustHost: true` でリクエスト host header から base URL を動的に決定する。
+>   - **全 context 共通で本番 URL を入れると、Deploy Preview → 本番 URL に即リダイレクトされ UAT 不能になる**。
+>   - **`scripts/netlify-build.sh` 内で `export NEXTAUTH_URL=...` するのは無効** (Next.js が `NEXT_PUBLIC_*` 以外の env を bundle に焼かないため Function runtime に届かない / 再追加禁止コメントあり)。
+>   - 設定操作は [`DEPLOYMENT.md §2.3`](./DEPLOYMENT.md) を参照。
+>
+> **Cookie sameSite 設定** (`src/lib/auth.config.ts`): **`'lax'`** を維持 (PR #425 / KDD §5.X+103 で `'strict'` → `'lax'` に再緩和)。Stripe Checkout コールバックで session 切れを起こさないため。env var ではないが「セキュリティ強化」と称して `'strict'` に戻さないこと (= 請求 invariant 破壊)。
 
 ### 1.4 メール送信
 
@@ -154,24 +167,30 @@ APP_DEFAULT_LOCALE=en-US
 
 | 変数名 | 既定値 (未設定時) | 用途 |
 |---|---|---|
-| `STRIPE_ENABLED` | `false` | **feature flag**。`'true'` で機能を有効化 (UI 表示、API 受付、Webhook 処理)。それ以外は無効。Stripe Dashboard 設定 + 動作確認後に `'true'` を設定して公開 |
-| `STRIPE_SECRET_KEY` | (未設定) | Stripe API キー (= サーバサイド)。テスト = `sk_test_xxx`、本番 = `sk_live_xxx`。Stripe Dashboard → Developers → API keys から取得。**絶対に GitHub にコミットしない** |
-| `STRIPE_WEBHOOK_SECRET` | (未設定) | Stripe Webhook の署名検証用 secret (`whsec_xxx`)。Stripe Dashboard → Developers → Webhooks → 該当エンドポイント詳細から取得。テスト/本番で別 |
-| `STRIPE_PRICE_HAIKU` | (未設定) | Expert per-call (Haiku) の Price ID (`price_xxx`)。Stripe Dashboard → Products で事前作成 (= **単価 ¥5、Metered**、2026-05-15 改定: ¥10 → ¥5) |
-| `STRIPE_PRICE_SONNET` | (未設定) | Pro per-call (Sonnet) の Price ID。**¥15/call、Metered** (2026-05-15 改定: ¥30 → ¥15) |
-| `STRIPE_PRICE_STORAGE_PLUS` | (未設定) | Storage Plus add-on の Price ID。¥500/月、Recurring 固定 |
-| `STRIPE_PRICE_STORAGE_PRO` | (未設定) | Storage Pro add-on の Price ID。¥1,500/月、Recurring 固定 |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | (未設定) | Stripe Publishable Key (= ブラウザ側で使用、機密情報ではない)。テスト = `pk_test_xxx`、本番 = `pk_live_xxx`。Stripe Elements / Checkout で使用 |
+| `STRIPE_ENABLED` | `false` | **feature flag**。値が文字列 `'true'` (大小区別) の場合のみ機能を有効化 (UI 表示、API 受付、Webhook 処理)。それ以外 (未設定 / `'false'` / 任意文字列) は OFF。`'1'` や bool は不可。判定実装: [`src/lib/stripe.ts`](../../src/lib/stripe.ts) の `isStripeEnabled()` |
+| `STRIPE_SECRET_KEY` | (未設定) | Stripe API キー (= サーバサイド)。**Test mode = `sk_test_xxx` / Live mode = `sk_live_xxx`**。Stripe Dashboard → Developers → API keys から取得。**絶対に GitHub にコミットしない**。Production context のみ Live key、Deploy preview / Branch deploys / Local は必ず Test key |
+| `STRIPE_WEBHOOK_SECRET` | (未設定) | Stripe Webhook の署名検証用 secret (`whsec_xxx`)。Stripe Dashboard → Developers → Webhooks → 該当エンドポイント詳細から取得。**Test / Live で必ず別エンドポイントを作成**し、それぞれの secret を context 別に設定 |
+| `STRIPE_PRICE_HAIKU` | (未設定) | Expert per-call (Haiku) の Price ID (`price_xxx`)。Stripe Dashboard → Products で事前作成 (= **単価 ¥5、Metered**、2026-05-15 改定: ¥10 → ¥5)。Test / Live で別 Price ID |
+| `STRIPE_PRICE_SONNET` | (未設定) | Pro per-call (Sonnet) の Price ID。**¥15/call、Metered** (2026-05-15 改定: ¥30 → ¥15)。Test / Live で別 |
+| `STRIPE_PRICE_STORAGE_PLUS` | (未設定) | Storage Plus add-on の Price ID。¥500/月、Recurring 固定。Test / Live で別 |
+| `STRIPE_PRICE_STORAGE_PRO` | (未設定) | Storage Pro add-on の Price ID。¥1,500/月、Recurring 固定。Test / Live で別 |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | (未設定) | Stripe Publishable Key (= ブラウザ側で使用、機密情報ではない)。**Test mode = `pk_test_xxx` / Live mode = `pk_live_xxx`**。Stripe Elements / Checkout で使用。SECRET_KEY とペアで context 別に切替 |
 | `SYSTEM_USER_ID` | (未設定) | 自動操作 (Webhook ハンドラ / cron) で auditLog の `userId` に記録するシステムユーザ UUID。専用 seed (= `system@internal`、`isActive=false`) で作成済 |
 
 **設計意図**:
 - `STRIPE_ENABLED=false` (default) でデプロイすれば、コードはマージ済でも顧客には機能が見えない (= 段階的ロールアウト)
 - Stripe Dashboard 設定が完了 + 動作確認 OK のテナントで初めて `STRIPE_ENABLED=true` に切替
 - テスト/本番でキーを厳密分離し、`STRIPE_SECRET_KEY` の値 (sk_test / sk_live) で Stripe SDK が自動的に環境を判別
+- **Deploy preview でも `STRIPE_ENABLED=true` + Test key 一式** をセットしておくと、PR Deploy Preview 上で TC が完走できる (PR #425 TC 実行時の運用)
+- **Production / Deploy preview で同じ Live key を使う事故** は致命 (= 本番カードに誤課金) のため、context override 必須
+
+**context 別設定マトリクス**: §2 参照。
 
 **設定手順詳細**: [docs/operations/STRIPE_SETUP.md](./STRIPE_SETUP.md)
 **仕様詳細**: [docs/business/STRIPE_BILLING.md](../business/STRIPE_BILLING.md) §7.2
 **実装詳細**: [docs/design/STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) §E-3
+
+> **関連**: PR #425 / KDD §5.X+99, §5.X+100, §5.X+103 (Stripe 堅牢性系列) / `feedback_billing_invariant`
 
 ---
 
@@ -200,6 +219,81 @@ APP_DEFAULT_LOCALE=en-US
 - 失念時は Netlify Dashboard で env 値を再生成 → 再デプロイで反映
 
 **実装**: [src/lib/basic-auth.ts](../../src/lib/basic-auth.ts) / [src/middleware.ts](../../src/middleware.ts)
+
+---
+
+## 2. Deploy context 別設定値マトリクス (Netlify) — PR #425 / KDD §5.X+101, §5.X+103
+
+Netlify Dashboard → Site configuration → Environment variables では **同一 env を deploy context ごとに別値で持てる** (「Different value for each deploy context」)。
+誤って全 context 共通設定にすると本番事故 (誤課金、本番 URL リダイレクト等) になるため、以下のマトリクスを基準に必ず分離設定すること。
+
+### 2.1 context 別設定が必須の変数
+
+| 変数名 | Production | Deploy preview | Branch deploys | Local development | 補足 |
+|---|---|---|---|---|---|
+| `NEXTAUTH_URL` | `https://tasukiba.netlify.app` | **未設定 (Delete)** | **未設定 (Delete)** | `http://localhost:3000` | preview/branch を未設定にすると `trustHost: true` で host header から動的取得。KDD §5.X+101 |
+| `NEXTAUTH_SECRET` | (Live secret) | (同左 / Test 用に別でも可) | (同左) | 開発用 secret | Production と preview を分けるとログイン session が context 間で持ち越せない |
+| `STRIPE_ENABLED` | `true` (リリース後) | `true` (TC 実行時) | `true` / `false` 任意 | `false` (通常) / `true` (Stripe 確認時) | 値は文字列 `'true'` で評価 |
+| `STRIPE_SECRET_KEY` | `sk_live_xxx` | `sk_test_xxx` | `sk_test_xxx` | `sk_test_xxx` | Live を preview に共有すると本番カードに誤課金リスク |
+| `STRIPE_WEBHOOK_SECRET` | Live endpoint の `whsec_xxx` | Test endpoint の `whsec_xxx` | Test endpoint の `whsec_xxx` | (Stripe CLI listen で都度発行) | Stripe Dashboard 上で Test / Live は別 endpoint |
+| `STRIPE_PRICE_HAIKU` | Live `price_xxx` | Test `price_xxx` | Test `price_xxx` | Test `price_xxx` | Test / Live で Product ごと別 |
+| `STRIPE_PRICE_SONNET` | 同上 | 同上 | 同上 | 同上 | 〃 |
+| `STRIPE_PRICE_STORAGE_PLUS` | 同上 | 同上 | 同上 | 同上 | 〃 |
+| `STRIPE_PRICE_STORAGE_PRO` | 同上 | 同上 | 同上 | 同上 | 〃 |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_xxx` | `pk_test_xxx` | `pk_test_xxx` | `pk_test_xxx` | SECRET_KEY とペアで切替 |
+| `MAIL_PROVIDER` | `brevo` (実送信) | `console` or `inbox` (=実送信回避) | 任意 | `console` | preview で実送信すると Brevo 無料枠 300/日を浪費 |
+| `BREVO_API_KEY` | Live key | (未設定 or sandbox) | (同左) | (未設定) | preview で誤送信防止 |
+
+### 2.2 全 context 共通でよい変数 (= context override 不要)
+
+| 変数名 | 共通値の例 | 補足 |
+|---|---|---|
+| `DATABASE_URL` | Supabase Transaction Pooler URL | preview も本番と同じ DB を見る (= staging DB なしの単一環境運用)。詳細: [`DEPLOYMENT.md §2.0`](./DEPLOYMENT.md) |
+| `DIRECT_URL` | Supabase Session Pooler URL | 同上 (migrate 用) |
+| `CRON_SECRET` | (ランダム値) | cron は Production にしか叩かれない想定だが、preview にも同値を設定して動作確認可能にしておく |
+| `ADMIN_SUPER_BASIC_AUTH_USER` / `_PASS` | 共通値 | 全 context で `/admin/super/*` 保護 |
+| `EMAIL_DAILY_LIMIT` / `EMAIL_MONTHLY_LIMIT` | 共通値 | プロバイダ別の上限値 |
+| `DB_CAPACITY_LIMIT_BYTES` | Supabase プラン値 | 共通値 |
+| `APP_DEFAULT_TIMEZONE` / `APP_DEFAULT_LOCALE` | 共通値 | 拠点ごとに切替する場合のみ context 分離 |
+| `SYSTEM_USER_ID` | 共通値 | seed で生成する単一 UUID |
+| `NEXT_PUBLIC_DISCORD_INVITE_URL` / `_FEATURE_REQUEST_URL` | 共通値 | client 側で参照 |
+
+### 2.3 Netlify Dashboard 操作手順 (context override 設定)
+
+詳細は [`DEPLOYMENT.md §2.3`](./DEPLOYMENT.md) を参照。要約:
+
+1. **Site configuration → Environment variables** で対象 env の **Edit** をクリック
+2. **"Different value for each deploy context"** をチェック
+3. 各 context (Production / Deploy previews / Branch deploys / Local development) ごとに値を入力
+   - **空欄保存で undefined として伝播** (= `NEXTAUTH_URL` の trustHost フォールバック発火用)
+4. Save → 即時反映 (次回 build 以降に有効)
+5. 対象 PR の Deploy Preview を **Trigger deploy** で再 build → 反映確認
+
+CLI 経由 (一例):
+```bash
+# Production だけ Live key、preview/branch は Test key
+netlify env:set STRIPE_SECRET_KEY "sk_live_xxx" --secret --context production
+netlify env:set STRIPE_SECRET_KEY "sk_test_xxx" --secret --context deploy-preview
+netlify env:set STRIPE_SECRET_KEY "sk_test_xxx" --secret --context branch-deploy
+
+# Production だけ NEXTAUTH_URL を固定、preview/branch は削除 (= trustHost フォールバック)
+netlify env:set NEXTAUTH_URL "https://tasukiba.netlify.app" --context production
+netlify env:unset NEXTAUTH_URL --context deploy-preview
+netlify env:unset NEXTAUTH_URL --context branch-deploy
+```
+
+> **関連**: PR #425 / KDD §5.X+99, §5.X+101, §5.X+103 / [`DEPLOYMENT.md §2.3-2.5`](./DEPLOYMENT.md)
+
+---
+
+## 3. 補足 (`build wrapper` 経由の env 注入は不可)
+
+`scripts/netlify-build.sh` 内で `export NEXTAUTH_URL=...` のような env 注入を **行わない**。
+理由: Next.js は `NEXT_PUBLIC_*` プレフィックス付きの env のみを build 時に bundle へ焼き込むため、それ以外の env は **build プロセス内に閉じ、Netlify Function runtime (= 別 Lambda 実行環境) には一切伝播しない**。
+
+→ runtime に context 別の値を届けたい場合は **§2.3 の Netlify Dashboard context override が唯一の正解**。
+
+KDD §5.X+101 で実証済み + `scripts/netlify-build.sh` 冒頭に再追加禁止コメントあり。
 
 ---
 

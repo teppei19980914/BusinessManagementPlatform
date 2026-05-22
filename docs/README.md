@@ -171,6 +171,10 @@ docs/
 | ファイル | 内容 |
 |---|---|
 | [README.md](./developer-guide/README.md) | developer-guide/ ディレクトリ索引 |
+| [DEVELOPMENT_FLOW.md](./developer-guide/DEVELOPMENT_FLOW.md) | 開発着手 → リリースまでの全工程手順書 (Phase 1〜8 + トラブルシューティング) |
+| [LOCAL_TEST_GUIDE.md](./developer-guide/LOCAL_TEST_GUIDE.md) | vitest 単体テスト Tips + mock パターン集 + よくある罠 |
+| [E2E_TEST_GUIDE.md](./developer-guide/E2E_TEST_GUIDE.md) | Playwright E2E Tips + カバレッジ維持 + 視覚回帰 baseline 運用 |
+| [SECURITY_CHECK_GUIDE.md](./developer-guide/SECURITY_CHECK_GUIDE.md) | セキュリティチェック CI の弾かれ対処 + 典型パターン |
 | [HOW_TO_ADD_FEATURES.md](./developer-guide/HOW_TO_ADD_FEATURES.md) | 機能追加手順 (テーマ / マスタデータ / 画面追加 / DB 変更 / i18n 等) |
 | [TEST_LINT_BUILD.md](./developer-guide/TEST_LINT_BUILD.md) | テスト・lint・build 実行ガイド |
 | [COMMIT_AND_DEPLOY.md](./developer-guide/COMMIT_AND_DEPLOY.md) | コミットとデプロイ ワークフロー |

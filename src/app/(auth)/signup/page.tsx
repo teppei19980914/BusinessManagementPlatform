@@ -117,7 +117,12 @@ export default function SignupPage() {
       if (!json.beginnerAvailable && form.plan === 'beginner') {
         setForm((prev) => ({ ...prev, plan: 'expert' }));
       }
-    }, 500); // debounce
+    // PR #425 (2026-05-22): debounce 500ms → 300ms に短縮 (= ユーザ体感のラグ削減)。
+    //   500ms だとメール入力 → 直後に郵便番号入力等で focus 移動した時点で初めて Beginner radio が
+    //   非活性化される体感があり、ユーザが「変わる前に submit してしまう」可能性があった。
+    //   300ms に短縮することで「メール入力ほぼ直後 (1 回タイプ分の余裕)」に判定される。
+    //   サーバ側 BEGINNER_REQUIRES_UPGRADE ガードは defense-in-depth として維持。
+    }, 300); // debounce
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.billingContactEmail, form.initialAdminEmail]);
