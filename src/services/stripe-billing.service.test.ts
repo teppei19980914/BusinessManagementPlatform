@@ -395,9 +395,12 @@ describe('verifyTenantCard', () => {
     const result = await verifyTenantCard(TENANT_ID);
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe('invalid_request');
+    // PR #425 (2026-05-22): TypeScript narrow のため code 判定を if 内に組み込む
+    //   (= StripeOperationResult union 全体では `detail` は invalid_request バリアントのみ)
+    if (!result.ok && result.code === 'invalid_request') {
       expect(result.detail).toBe('card_not_registered');
+    } else {
+      throw new Error('expected invalid_request code');
     }
   });
 });
@@ -436,9 +439,11 @@ describe('createSubscriptionForTenant', () => {
     expect(params.billing_cycle_anchor).toBe(1717200000);
     expect(params.metadata).toEqual({ tenantId: TENANT_ID });
 
-    // idempotency_key: tenantId ベース
+    // idempotency_key: tenantId + paymentMethodId ベース
+    //   PR #425 (2026-05-22) KDD §5.X+106: カード再登録時の「同キー + 異 default_payment_method」
+    //   による Stripe reject を回避するため、paymentMethodId をキーに含める。
     const opts = mockStripeClient.subscriptions.create.mock.calls[0]![1]!;
-    expect(opts.idempotencyKey).toBe(`subscription:create:${TENANT_ID}`);
+    expect(opts.idempotencyKey).toBe(`subscription:create:${TENANT_ID}:pm_xxx`);
   });
 
   it('storage=standard なら storage Item は含めない (= ¥0、Subscription 不要)', async () => {

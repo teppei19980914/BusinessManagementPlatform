@@ -5,12 +5,16 @@ import { LOGIN_ROUTE } from '@/config';
 import { listAllRetrospectivesForViewer } from '@/services/retrospective.service';
 import { AllRetrospectivesTable } from './all-retrospectives-table';
 
-export default async function AllRetrospectivesPage() {
+// PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword= 永続化
+type SearchParams = Promise<{ keyword?: string }>;
+
+export default async function AllRetrospectivesPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
 
   // Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため)
   const tCommon = await getTranslations('common');
+  const sp = await searchParams;
   const retros = await listAllRetrospectivesForViewer(
     session.user.id,
     session.user.systemRole,
@@ -23,7 +27,11 @@ export default async function AllRetrospectivesPage() {
       <div className="flex justify-end">
         <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: retros.length })}</span>
       </div>
-      <AllRetrospectivesTable retros={retros} isAdmin={isAdmin} />
+      <AllRetrospectivesTable
+        retros={retros}
+        isAdmin={isAdmin}
+        initialKeyword={sp.keyword ?? ''}
+      />
     </div>
   );
 }

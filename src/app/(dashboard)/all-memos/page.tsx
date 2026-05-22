@@ -12,15 +12,20 @@ import { AllMemosClient } from './all-memos-client';
  *   - admin に限り「他人 public メモを削除可」(モデレーション用途、
  *     feat/crud-permission-redesign 2026-05-20 で追加)
  */
-export default async function AllMemosPage() {
+// PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword= 永続化
+type SearchParams = Promise<{ keyword?: string }>;
+
+export default async function AllMemosPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session?.user) redirect(LOGIN_ROUTE);
 
+  const sp = await searchParams;
   const memos = await listPublicMemos(session.user.id, session.user.tenantId);
   return (
     <AllMemosClient
       memos={memos}
       currentSystemRole={session.user.systemRole}
+      initialKeyword={sp.keyword ?? ''}
     />
   );
 }

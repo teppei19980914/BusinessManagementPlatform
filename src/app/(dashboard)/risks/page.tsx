@@ -12,11 +12,15 @@ import { AllRisksTable } from './all-risks-table';
  * 2026-04-28 (Phase A 要件 6): h2 ページタイトルはナビタブ名と重複するため削除、
  * 件数表示のみ右寄せで表示する。
  */
-export default async function AllRisksPage() {
+// PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=&state=&priority= 永続化
+type SearchParams = Promise<{ keyword?: string; state?: string; priority?: string }>;
+
+export default async function AllRisksPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
 
   const tCommon = await getTranslations('common');
+  const sp = await searchParams;
   const risks = await listAllRisksForViewer(
     session.user.id,
     session.user.systemRole,
@@ -30,7 +34,14 @@ export default async function AllRisksPage() {
       <div className="flex justify-end">
         <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filtered.length })}</span>
       </div>
-      <AllRisksTable risks={risks} isAdmin={isAdmin} typeFilter="risk" />
+      <AllRisksTable
+        risks={risks}
+        isAdmin={isAdmin}
+        typeFilter="risk"
+        initialKeyword={sp.keyword ?? ''}
+        initialState={sp.state ?? ''}
+        initialPriority={sp.priority ?? ''}
+      />
     </div>
   );
 }

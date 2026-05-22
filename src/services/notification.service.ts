@@ -162,6 +162,37 @@ function buildDedupeKey(type: NotificationType, taskId: string, date: Date): str
 }
 
 /**
+ * PR #425 (2026-05-22): タスク日付通知の文言を「[プロジェクト名] 親WP名 / タスク名 {接尾辞}」形式で生成する純関数。
+ *
+ * 旧文言「タスク『${name}』の予定終了日です」では「どの WP の ACT か」「どのプロジェクトか」が伝わらず、
+ * 通知一覧から該当タスクを特定できないユーザフィードバックを受けて改修。
+ *
+ * 例:
+ *   - 親 WP あり:   「[Project A] WP1 / ACT2 の予定終了日です」
+ *   - 親 WP なし:   「[Project A] ACT2 の予定終了日です」 (= WP 直下 ACT が無いツリー構造)
+ *   - project 名空: 「ACT2 の予定終了日です」 (= 防御的、空白なら省略)
+ *
+ * Notification.title の DB 制限 (200 字、prisma schema 参照) を超えそうな場合は末尾を切り詰める。
+ */
+export function buildTaskNotificationTitle(input: {
+  projectName: string;
+  parentTaskName: string | null;
+  taskName: string;
+  suffix: string;
+}): string {
+  const projectPrefix = input.projectName.trim().length > 0 ? `[${input.projectName}] ` : '';
+  const parentPart = input.parentTaskName && input.parentTaskName.trim().length > 0
+    ? `${input.parentTaskName} / `
+    : '';
+  const raw = `${projectPrefix}${parentPart}${input.taskName} ${input.suffix}`;
+  // Notification.title VARCHAR(200) を超えそうなら末尾の suffix を保持しつつ中央を切り詰める
+  if (raw.length <= 200) return raw;
+  const reserveSuffix = ` ${input.suffix}`;
+  const head = raw.slice(0, 200 - reserveSuffix.length - 1); // - 1 で省略記号分
+  return `${head}…${reserveSuffix}`;
+}
+
+/**
  * 日次 cron 本体: 当日朝に発火する通知を ACT に対して生成する。
  *
  * クエリ:
@@ -183,12 +214,16 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
   //   結果として 「テナント A の task に対する通知が default-tenant に書き込まれ、
   //   listNotificationsForUser の where.tenantId フィルタにより本人に届かない」 機能不全。
   //   親 task の project.tenantId を select で同時取得し、createMany.data に明示する。
+  // PR #425 (2026-05-22): 通知文言「タスク『ACT名』」だけでは「どの WP / どのプロジェクトの ACT か」
+  //   がユーザに伝わらない問題があったため、project.name と parentTask.name も同時取得し
+  //   buildTaskNotificationTitle() で「[プロジェクト名] WP名 / ACT名 」形式に整形する。
   type TaskRow = {
     id: string;
     name: string;
     projectId: string;
     assigneeId: string;
-    project: { tenantId: string };
+    project: { tenantId: string; name: string };
+    parentTask: { name: string } | null;
   };
 
   // ---- 開始通知 ----
@@ -205,7 +240,8 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
       name: true,
       projectId: true,
       assigneeId: true,
-      project: { select: { tenantId: true } },
+      project: { select: { tenantId: true, name: true } },
+      parentTask: { select: { name: true } },
     },
   });
   const startData = startTasks
@@ -216,7 +252,12 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
       type: 'task_start_due' as const,
       entityType: 'task' as const,
       entityId: t.id,
-      title: `タスク「${t.name}」の予定開始日です`,
+      title: buildTaskNotificationTitle({
+        projectName: t.project.name,
+        parentTaskName: t.parentTask?.name ?? null,
+        taskName: t.name,
+        suffix: 'の予定開始日です',
+      }),
       link: `/projects/${t.projectId}/tasks?taskId=${t.id}`,
       dedupeKey: buildDedupeKey('task_start_due', t.id, today),
     }));
@@ -238,7 +279,8 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
       name: true,
       projectId: true,
       assigneeId: true,
-      project: { select: { tenantId: true } },
+      project: { select: { tenantId: true, name: true } },
+      parentTask: { select: { name: true } },
     },
   });
   const endData = endTasks
@@ -249,7 +291,12 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
       type: 'task_end_due' as const,
       entityType: 'task' as const,
       entityId: t.id,
-      title: `タスク「${t.name}」の予定終了日です`,
+      title: buildTaskNotificationTitle({
+        projectName: t.project.name,
+        parentTaskName: t.parentTask?.name ?? null,
+        taskName: t.name,
+        suffix: 'の予定終了日です',
+      }),
       link: `/projects/${t.projectId}/tasks?taskId=${t.id}`,
       dedupeKey: buildDedupeKey('task_end_due', t.id, today),
     }));

@@ -37,22 +37,46 @@ STRIPE_ENABLED         = true
 
 ## 2. Stripe Test Cards (公式)
 
-Stripe 公式のテストカードを使用する。実カード番号を入力しないこと。
+> **公式リファレンス**: https://docs.stripe.com/testing#cards
+>
+> 本サービスは Stripe Test mode (= サンドボックス) でのカード検証に **公式テストカード番号のみ** を使用します。
+> 実カード番号を Test mode で入力すると Stripe が「テストカードではない」エラーで弾きます (= 安全装置)。
+> 本番運用では実カードのみが使えます (= Live mode key と Test mode key を環境変数で切替)。
 
-| カード番号 | 用途 | 期待挙動 |
-|---|---|---|
-| `4242 4242 4242 4242` | 通常成功 | `succeeded` |
-| `4000 0000 0000 0002` | カード拒否 (汎用) | `card_declined` |
-| `4000 0000 0000 9995` | 残高不足 | `insufficient_funds` |
-| `4000 0027 6000 3184` | 3D Secure 認証必須 | 認証画面後 succeeded |
-| `4000 0000 0000 0341` | 添付成功 / 課金拒否 | webhook `invoice.payment_failed` |
+### 2.1 主要テストカード (= 本サービスの TC で使用)
 
-| その他フィールド | 値 |
+| カード番号 | ブランド | 用途 | 期待挙動 |
+|---|---|---|---|
+| `4242 4242 4242 4242` | Visa | 通常成功 | `succeeded` |
+| `5555 5555 5555 4444` | Mastercard | 通常成功 | `succeeded` |
+| `3782 822463 10005` | AMEX | 通常成功 | `succeeded` |
+| `3566 0020 2036 0505` | JCB | 通常成功 | `succeeded` |
+| `4000 0000 0000 0002` | Visa | カード拒否 (汎用) | `card_declined` |
+| `4000 0000 0000 9995` | Visa | 残高不足 | `insufficient_funds` |
+| `4000 0027 6000 3184` | Visa | 3D Secure 認証必須 | 認証画面後 `succeeded` |
+| `4000 0000 0000 0341` | Visa | 添付成功 / 月次課金拒否 | webhook `invoice.payment_failed` |
+| `4000 0025 0000 3155` | Visa | 3DS 認証必須 (代替) | 認証画面後 `succeeded` |
+
+### 2.2 その他テストカード (= 必要に応じて使用)
+
+| カード番号 | 用途 |
 |---|---|
-| 有効期限 | 任意未来日 (例: `12/30`) |
-| CVC | 任意 3 桁 (例: `123`) |
+| `4000 0000 0000 0069` | カード有効期限切れ |
+| `4000 0000 0000 0127` | 不正な CVC |
+| `4000 0000 0000 0119` | 処理中エラー (= processing_error) |
+| `4000 0000 0000 0259` | 3DS 認証失敗 (= ユーザが認証を拒否したケース) |
+
+→ より網羅的なテストカードは公式 https://docs.stripe.com/testing#cards 参照。
+
+### 2.3 その他フィールド (= テストモード時の入力値、すべて任意)
+
+| フィールド | 入力例 |
+|---|---|
+| 有効期限 | 任意未来日 (例: `12/34`, `05/55`) |
+| CVC | 任意 3 桁 (例: `123`, `555`) |
 | 郵便番号 | 任意 (例: `100-0001`) |
-| 氏名 | 任意 |
+| カード名義 | 任意ローマ字 (例: `test`, `TEST USER`) |
+| 国/地域 | 日本 (デフォルト) |
 
 ---
 
@@ -151,6 +175,18 @@ Stripe 公式のテストカードを使用する。実カード番号を入力�
 
 **目的**: multi-tenant 設計で同一個人が複数テナントを別 Stripe Customer として持てることを確認
 
+> ⚠️ **PR #425 (2026-05-22) 時点: 未実施**
+>
+> 理由: staging 環境に super_admin ユーザが seed されておらず、新規組織払い出し操作ができないため。
+> 本 PR の修正は paymentMethod 切替系のみで multi-tenant 分離ロジックには触れていない (= 構造的に回帰リスクなし)。
+> 「同 email 別組織は別 Stripe Customer」は以下のコードレベルで既に保証:
+> - `createOrGetStripeCustomer(tenantId)` がテナント単位で Customer 作成 ([stripe-billing.service.ts:57](../../src/services/stripe-billing.service.ts#L57))
+> - `Tenant.stripeCustomerId` がテナント単位で独立保持 (schema)
+> - Webhook 逆引きが `metadata.tenantId` で一意 (stripe-webhook-handlers.service.ts)
+> - テナント越境テスト `tenant-isolation-invariants.test.ts` で全 list 系 service が tenantId フィルタ強制
+>
+> **将来の super_admin E2E 整備 PR で必ず実機実施**。それまで本 TC は「コード保証 + 実機未実施」状態。
+
 **手順**:
 1. ユーザ X が テナント A (Pro) 利用中
 2. 同 email で別組織 テナント B を Pro で新規払い出し (super_admin 経由)
@@ -182,6 +218,20 @@ Stripe 公式のテストカードを使用する。実カード番号を入力�
 
 **目的**: Beginner 90日経過後の read-only モードで import 等の write 系が遮断されることを確認
 
+> ⚠️ **PR #425 (2026-05-22) 時点: 未実施**
+>
+> 理由: 本 PR の修正範囲は paymentMethod 切替系のみで Beginner 90日 expiry ロジック
+> (`getBeginnerExpiryState` / middleware の write block) には触れておらず、回帰リスクなし。
+> 検証には現役 Pro テナントを一時的に Beginner にバックデートする操作が必要で、
+> 検証後に Pro へ戻す手間と DB 整合性リスクが大きい。
+>
+> **コード保証**:
+> - `src/services/tenant-self.service.ts`: `getBeginnerExpiryState(plan, createdAt, beginnerEverUpgraded)` で 4 状態判定 (active / warning_60 / warning_75 / expired)
+> - `src/middleware.ts`: expired 状態のテナントから write 系 HTTP method (POST/PATCH/PUT/DELETE) を弾く
+> - `src/services/tenant-self.service.test.ts`: 上記ロジックを単体テストで保証
+>
+> **将来の super_admin E2E 整備 PR で必ず実機実施**。それまで本 TC は「コード保証 + 実機未実施」状態。
+
 **手順**:
 1. テナント A (Beginner) で 90日経過状態を再現 (Supabase Dashboard で `tenant.createdAt` を 91 日前にバックデート)
 2. `POST /api/tenants/me/import` で任意 ZIP を送信試行
@@ -193,6 +243,22 @@ Stripe 公式のテストカードを使用する。実カード番号を入力�
 ---
 
 ## 5. Webhook 系 (TC-4, TC-5)
+
+> ⚠️ **PR #425 (2026-05-22) 時点: 未実施**
+>
+> 理由: 本 PR の修正範囲は paymentMethod 切替系のみで Webhook handler
+> (`stripe-webhook-handlers.service.ts`, `/api/webhooks/stripe/route.ts`) には触れておらず、
+> 回帰リスクなし。staging で Webhook endpoint 設定 + `STRIPE_WEBHOOK_SECRET` 連携 + Stripe CLI
+> セットアップが必要で、検証後の片付け工数も大きい。
+>
+> **コード保証**:
+> - `src/services/stripe-webhook-handlers.service.ts`: 11 イベント (invoice.payment_failed,
+>   customer.subscription.updated/deleted, payment_method.attached/detached, charge.succeeded 等)
+>   の handler 実装済
+> - `src/services/stripe-webhook-handlers.service.test.ts`: 各 handler のユニットテストで動作保証
+> - `src/app/api/webhooks/stripe/route.ts`: 署名検証 + 冪等性 (= 同一 event_id 二重処理防止) + dispatch
+>
+> **将来の super_admin E2E 整備 PR で必ず実機実施**。それまで本 TC は「コード保証 + 実機未実施」状態。
 
 > ## ⚠️ 本セクションは **TC-4 / TC-5 を実施する PR でのみ必要**
 >

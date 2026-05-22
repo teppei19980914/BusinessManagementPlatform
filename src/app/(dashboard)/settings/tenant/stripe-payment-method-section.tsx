@@ -1,26 +1,33 @@
 'use client';
 
 /**
- * Stripe 支払い方法セクション (PR-S5 / 2026-05-14)
+ * Stripe 支払い方法セクション (PR-S5 / 2026-05-14, PR #425 / 2026-05-21 改修)
  *
- * 役割:
- *   `/settings/tenant` の「支払い方法」セクション。現状の paymentMethod に応じて
- *   状態 A / C / D を表示し、Checkout (= カード登録 + 切替) / Customer Portal / invoice 復帰の
- *   3 つのアクションを提供する。
+ * 役割 (PR #425 改修後):
+ *   `/settings/tenant` の「支払い方法」セクション。**現在の支払い方法の表示と、
+ *   クレジットカード情報の登録/更新ボタンの提供のみ** を担う。
  *
- * 状態モデル (STRIPE_PAYMENT_UI.md §2.2):
- *   - A (未設定): paymentMethod = 'invoice' or 'bank_transfer'
- *   - C (運用中): paymentMethod = 'credit_card' + cardVerificationStatus = 'valid'
- *   - D (要対応): paymentMethod = 'credit_card' + cardVerificationStatus != 'valid' or autoSuspendScheduledAt != null
+ *   支払い方法 (invoice / credit_card) の切替は別セクション (請求先情報フォーム) で
+ *   `paymentMethod` セレクトボックス + 「請求先情報を更新」ボタンで行う。本セクションは
+ *   その切替結果を読み取って表示・ボタン活性条件にする。
+ *
+ * 表示モデル (PR #425):
+ *   - paymentMethod = 'invoice' 等: 「現在: 銀行振込」表示 + ボタン非活性
+ *   - paymentMethod = 'credit_card':
+ *       - stripeSubscriptionId = null: ボタン押下で Stripe Checkout setup (= 新規カード登録)
+ *       - stripeSubscriptionId != null: ボタン押下で Stripe Customer Portal (= カード情報更新)
+ *
+ *   D 状態 (= カード期限切れ / 拒否 / autoSuspend 予定) のときは警告メッセージを併記。
  *
  * 親 (TenantSettingsClient) から渡されるもの:
- *   - info: 自テナントの Stripe 関連情報
+ *   - info: 自テナントの Stripe 関連情報 (= paymentMethod / stripeSubscriptionId 等)
  *   - stripeEnabled: feature flag (= 環境変数 STRIPE_ENABLED の値)
  *   - onRefresh: アクション後にテナント情報を再取得するコールバック
  *
  * 関連:
- *   - 仕様: docs/specification/STRIPE_PAYMENT_UI.md §2
- *   - API: src/app/api/tenants/me/billing/stripe/*
+ *   - 仕様: docs/specification/STRIPE_PAYMENT_UI.md §2 (PR #425 改修反映済)
+ *   - API: src/app/api/tenants/me/billing/stripe/setup (新規登録) / portal (更新)
+ *   - 切替元: tenant-settings-client.tsx BillingContactSection (paymentMethod セレクト)
  */
 
 import { useState } from 'react';
@@ -30,6 +37,11 @@ import { useToast } from '@/components/toast-provider';
 export type StripePaymentInfo = {
   paymentMethod: string;
   stripeCustomerId: string | null;
+  /**
+   * PR #425 (2026-05-21): null = カード未登録、非 null = カード登録済。
+   * ボタン押下時の動作分岐に使用 (null → setup、非 null → portal)。
+   */
+  stripeSubscriptionId: string | null;
   stripeSubscriptionStatus: string | null;
   stripeDefaultPaymentMethodId: string | null;
   cardVerificationStatus: string | null;
@@ -38,55 +50,127 @@ export type StripePaymentInfo = {
   autoSuspendScheduledAt: Date | string | null;
 };
 
+/**
+ * PR #425 (2026-05-22): Stripe 登録カード情報サマリ。
+ * 「画面に表示しているカード = 実際に請求されるカード」の一貫性を担保するため、
+ * Stripe API から取得した値をそのまま使う (= キャッシュなし)。
+ * PCI DSS 対象外の表示可能フィールドのみ含む (= 末尾 4 桁 + ブランド + 有効期限のみ)。
+ */
+export type StripeCardSummaryProp = {
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+};
+
 export type StripePaymentMethodSectionProps = {
   info: StripePaymentInfo;
-  /** feature flag。false なら「クレジットカード払いに切替」ボタンは無効化 */
+  /** feature flag。false なら「クレジットカード情報更新」ボタンは無効化 */
   stripeEnabled: boolean;
   /** アクション成功後に親の info を更新するためのコールバック */
   onRefresh: () => Promise<void>;
+  /**
+   * PR #425 (2026-05-22): Stripe 登録カード情報。null = 未登録 / API 失敗 / Stripe disabled。
+   * テナント管理者が「このカードに毎月請求される」と画面で確認できるようにする。
+   */
+  cardSummary: StripeCardSummaryProp | null;
 };
 
 /**
- * 状態判定: A / C / D のいずれか。
- *
- * - 'A_invoice': 銀行振込（請求書送付）= credit_card 以外の全値 (= 旧 'bank_transfer' 含む)
- * - 'C_active': credit_card + 検証成功 + autoSuspend 予定なし
- * - 'D_attention': credit_card かつ「期限切れ / 拒否 / 未検証 / autoSuspend 予定あり」のいずれか
- *
- * 2026-05-15: 'bank_transfer' を 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
- *   既存 DB の 'bank_transfer' レコードは credit_card 以外なので A_invoice 扱い (= 銀行振込) になる。
+ * PR #425 (2026-05-22): カードブランド表示用ラベル (Stripe API の brand 値からマッピング)。
  */
-export function deriveStripeState(info: StripePaymentInfo): 'A_invoice' | 'C_active' | 'D_attention' {
-  if (info.paymentMethod !== 'credit_card') return 'A_invoice';
-  // credit_card 払い
+function formatCardBrand(brand: string): string {
+  const map: Record<string, string> = {
+    visa: 'Visa',
+    mastercard: 'Mastercard',
+    amex: 'American Express',
+    jcb: 'JCB',
+    diners: 'Diners Club',
+    discover: 'Discover',
+    unionpay: 'UnionPay',
+  };
+  return map[brand.toLowerCase()] ?? brand;
+}
+
+/**
+ * PR #425 (2026-05-22): カード有効期限を MM/YY 形式で表示。
+ */
+function formatCardExpiry(expMonth: number, expYear: number): string {
+  const mm = String(expMonth).padStart(2, '0');
+  const yy = String(expYear).slice(-2);
+  return `${mm}/${yy}`;
+}
+
+/**
+ * 状態判定 (PR #425 改修後): paymentMethod と Stripe 状態から表示を決定する。
+ *
+ * - 'invoice_only': paymentMethod != 'credit_card' (= 銀行振込)
+ *   → ボタン非活性、「銀行振込」表示
+ * - 'credit_card_unregistered': paymentMethod = 'credit_card' かつ stripeSubscriptionId = null
+ *   → ボタン活性 (新規カード登録 = setup へ)、「カード未登録」表示
+ * - 'credit_card_active': paymentMethod = 'credit_card' + Subscription 有り + 検証成功 + autoSuspend 予定なし
+ *   → ボタン活性 (情報更新 = portal へ)
+ * - 'credit_card_attention': paymentMethod = 'credit_card' + Subscription 有り + 検証 NG or autoSuspend 予定あり
+ *   → ボタン活性 (要対応、portal で更新を促す)
+ *
+ * 2026-05-15: 旧 'bank_transfer' は paymentMethod = 'invoice' に統合済。
+ */
+export type StripeUiState =
+  | 'invoice_only'
+  | 'credit_card_unregistered'
+  | 'credit_card_active'
+  | 'credit_card_attention';
+
+export function deriveStripeState(info: StripePaymentInfo): StripeUiState {
+  if (info.paymentMethod !== 'credit_card') return 'invoice_only';
+  if (info.stripeSubscriptionId == null) return 'credit_card_unregistered';
   const verified = info.cardVerificationStatus === 'valid';
   const autoSuspendPending = info.autoSuspendScheduledAt != null;
-  if (verified && !autoSuspendPending) return 'C_active';
-  return 'D_attention';
+  if (verified && !autoSuspendPending) return 'credit_card_active';
+  return 'credit_card_attention';
 }
 
 export function StripePaymentMethodSection({
   info,
   stripeEnabled,
   onRefresh,
+  cardSummary,
 }: StripePaymentMethodSectionProps): React.ReactElement {
-  const { showSuccess, showError } = useToast();
+  const { showError } = useToast();
   const [submitting, setSubmitting] = useState(false);
   const state = deriveStripeState(info);
+  const buttonActive = state !== 'invoice_only';
 
   /**
-   * 「💳 クレジットカード払いに切替」ボタン (状態 A) のハンドラ。
-   * POST /api/tenants/me/billing/stripe/setup → Stripe Checkout へ window.location リダイレクト。
+   * PR #425 (2026-05-22) ★severity-1 一貫性★: 「クレジットカード情報更新」ボタンのハンドラ。
+   *
+   * 旧: state によって Stripe Checkout setup (新規) or Customer Portal (= デフォルト変更) に分岐
+   * 新: **常に Stripe Checkout setup に統一** (= ユーザの直感「カード変更 = カード入力画面」に合致)
+   *
+   * 理由: Customer Portal で「デフォルト変更」してもStripe 仕様上 既存 Subscription の
+   *      `default_payment_method` は更新されない (= ユーザが Portal で Mastercard に変えても
+   *      引落は Visa から、というズレ事故が発生)。
+   *      本ハンドラは常に Stripe Checkout で新カードを入力させ、completeStripeSetup の
+   *      「カード変更モード」 (= 既存 Subscription を維持しつつ default_payment_method を update)
+   *      に統一する。これで「画面 = Customer Portal デフォルト = 実引落カード」3 点完全一致。
    */
-  const handleSetup = async () => {
-    const ok = window.confirm(
-      'クレジットカード払いに切替えますか?\n\n' +
-        '次の画面 (Stripe Checkout) でカード情報を入力してください。\n' +
-        '検証成功時は自動でクレジットカード払いに切り替わります。\n' +
-        '失敗 / キャンセル時は現在の銀行振込のままです。',
-    );
+  const handleClick = async () => {
+    if (state === 'invoice_only') return;
+    const confirmMsg =
+      state === 'credit_card_unregistered'
+        ? '新しいクレジットカードを登録しますか?\n\n' +
+          '次の画面 (Stripe Checkout) でカード情報を入力してください。\n' +
+          '検証成功時は自動的にカード払いの引落準備が完了します。'
+        : 'クレジットカード情報を変更しますか?\n\n' +
+          '次の画面 (Stripe Checkout) で新しいカード情報を入力してください。\n' +
+          '完了時、次回以降の月次引落は新しいカードから行われます (= サブスクリプションは維持されます)。';
+    const ok = window.confirm(confirmMsg);
     if (!ok) return;
+    await callSetup();
+    await onRefresh();
+  };
 
+  const callSetup = async () => {
     setSubmitting(true);
     try {
       const returnUrl = `${window.location.origin}/settings/tenant`;
@@ -97,7 +181,7 @@ export function StripePaymentMethodSection({
       });
       const json = await res.json();
       if (!res.ok) {
-        showError(json?.error?.message ?? 'カード登録の開始に失敗しました');
+        showError(json?.error?.message ?? 'カード登録画面の起動に失敗しました');
         return;
       }
       if (json.data?.checkoutUrl == null) {
@@ -112,73 +196,29 @@ export function StripePaymentMethodSection({
     }
   };
 
-  /**
-   * 「🔧 Stripe ポータルで管理」ボタン (状態 C / D) のハンドラ。
-   * POST /api/tenants/me/billing/stripe/portal → Customer Portal URL に新タブで遷移。
-   */
-  const handlePortal = async () => {
-    setSubmitting(true);
-    try {
-      const returnUrl = `${window.location.origin}/settings/tenant`;
-      const res = await fetch('/api/tenants/me/billing/stripe/portal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ returnUrl }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        showError(json?.error?.message ?? 'ポータル URL の取得に失敗しました');
-        return;
-      }
-      if (json.data?.portalUrl == null) {
-        showError('Stripe ポータル URL の取得に失敗しました');
-        return;
-      }
-      // 新タブで開く (= ユーザが /settings/tenant に戻ってこられるように)
-      window.open(json.data.portalUrl, '_blank', 'noopener,noreferrer');
-    } catch {
-      showError('通信エラーが発生しました');
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  // PR #425 (2026-05-22): 「クレジットカード払いが有効か」が一目で分かる表示に改善。
+  //   状態バッジ (✅ 有効 / ⚠ 未登録 / ❌ 要対応 / 🏦 銀行振込) を currentLabel に明示。
+  const currentLabel =
+    state === 'invoice_only'
+      ? '🏦 銀行振込'
+      : state === 'credit_card_unregistered'
+        ? '⚠ クレジットカード払い (カード未登録 = 自動請求不可)'
+        : state === 'credit_card_active'
+          ? '✅ クレジットカード払い (有効・自動引落)'
+          : '❌ クレジットカード払い (要対応 = 引落停止リスクあり)';
 
-  /**
-   * 「🏦 銀行振込に戻す」ボタン (状態 C のみ) のハンドラ。
-   * PATCH /api/tenants/me/billing { paymentMethod: 'invoice' } で paymentMethod のみ反転。
-   * Stripe Subscription は残したまま (= 再切替時に再利用)。
-   *
-   * 2026-05-15: 「請求書送付」表記から「銀行振込」表記に統一。
-   *   内部値は 'invoice' のままで UI 表記のみ「銀行振込」(= 旧 'bank_transfer' との統合)。
-   */
-  const handleRevertToBankTransfer = async () => {
-    const ok = window.confirm(
-      '銀行振込に戻しますか?\n\n' +
-        '当月以降の請求は super_admin が手動で請求書 PDF を作成し、請求担当者メール宛に送付します。\n' +
-        '登録済のカード情報は Stripe 側に残り、Customer Portal で削除できます。',
-    );
-    if (!ok) return;
-
-    setSubmitting(true);
-    try {
-      const res = await fetch('/api/tenants/me/billing', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paymentMethod: 'invoice' }),
-      });
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        showError(json?.error?.message ?? '支払い方法の変更に失敗しました');
-        return;
-      }
-      showSuccess('銀行振込に戻しました');
-      await onRefresh();
-    } catch {
-      showError('通信エラーが発生しました');
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const description =
+    state === 'invoice_only'
+      ? '月末締めの翌月25日支払で、毎月請求書 PDF を請求担当者メールにお送りしています。' +
+        ' クレジットカード払いに切替えるには、上の請求先情報フォームで「支払い方法」を' +
+        '「クレジットカード」に変更して「請求先情報を更新」を押してください (自動でカード登録画面に進みます)。'
+      : state === 'credit_card_unregistered'
+        ? '★ご注意★ 支払い方法はクレジットカードに設定されていますが、まだカードが登録されていないため自動請求できません。' +
+          ' 「クレジットカード情報更新」ボタンから今すぐ登録してください。'
+        : state === 'credit_card_active'
+          ? '毎月末締めで Stripe が自動的に利用料を集計し、翌月初に登録カードから引き落とします。' +
+            ' 領収書 PDF は Stripe から自動メール送付されます。'
+          : '';
 
   return (
     <section
@@ -189,87 +229,95 @@ export function StripePaymentMethodSection({
         支払い方法
       </h2>
 
-      {state === 'A_invoice' && (
-        <div className="space-y-3 text-sm">
-          <p>現在の支払い方法: 🏦 銀行振込</p>
-          <p className="text-muted-foreground">
-            月末締めの翌月25日支払で、毎月請求書 PDF を請求担当者メールにお送りしています。
-          </p>
-          <Button
-            type="button"
-            onClick={handleSetup}
-            disabled={!stripeEnabled || submitting}
-            aria-label="クレジットカード払いに切替"
+      <div className="space-y-3 text-sm">
+        <p>現在の支払い方法: {currentLabel}</p>
+        {description && <p className="text-muted-foreground">{description}</p>}
+
+        {/* PR #425 (2026-05-22): Stripe 登録カード情報の可視化。
+            「画面に出ているカード = 毎月引落されるカード」の一貫性を担保するため、
+            Stripe API から取得した値 (brand/last4/exp) を表示する。
+            cardSummary=null は「カード未登録」or「Stripe API 取得失敗」or「Stripe disabled」。
+            ★severity-1 UX★ 銀行振込モード (= state==='invoice_only') のときは Stripe 側に
+            カード履歴が残っていても表示しない (= 「画面のカード = 請求カード」一貫性の維持)。
+            銀行振込時にカード情報を表示すると「カードに請求される?」とユーザが誤解する。 */}
+        {cardSummary && state !== 'invoice_only' && (
+          <div
+            className="rounded border border-info/40 bg-info/5 p-3"
+            data-testid="stripe-card-summary"
           >
-            {submitting ? '処理中...' : '💳 クレジットカード払いに切替'}
-          </Button>
-          {!stripeEnabled && (
-            <p className="text-xs text-muted-foreground">
-              ※ クレジットカード払いは現在準備中です (運営による有効化待ち)。
+            <p className="text-xs font-medium text-muted-foreground">請求に使用されるカード (Stripe 登録情報)</p>
+            <p className="mt-1 font-mono text-sm">
+              {formatCardBrand(cardSummary.brand)} •••• {cardSummary.last4}
+              <span className="ml-3 text-muted-foreground">
+                有効期限 {formatCardExpiry(cardSummary.expMonth, cardSummary.expYear)}
+              </span>
             </p>
-          )}
-        </div>
-      )}
-
-      {state === 'C_active' && (
-        <div className="space-y-3 text-sm">
-          <p>現在の支払い方法: 💳 クレジットカード (自動引落)</p>
-          <p className="text-muted-foreground">
-            毎月末締めで Stripe が自動的に利用料を集計し、翌月初に登録カードから引き落とします。
-            領収書 PDF は Stripe から自動メール送付されます。
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={handlePortal}
-              disabled={submitting}
-              aria-label="Stripe ポータルで管理"
-            >
-              {submitting ? '処理中...' : '🔧 Stripe ポータルで管理 (カード変更 / 履歴)'}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={handleRevertToBankTransfer}
-              disabled={submitting}
-              aria-label="銀行振込に戻す"
-            >
-              🏦 銀行振込に戻す
-            </Button>
+            <p className="mt-1 text-xs text-muted-foreground">
+              このカードに毎月の利用料が自動引落されます。
+              変更したい場合は「クレジットカード情報更新」ボタンをご利用ください。
+            </p>
           </div>
-        </div>
-      )}
+        )}
+        {!cardSummary && state === 'credit_card_active' && (
+          // 異常パターン: DB は credit_card_active なのに Stripe からカード取得できない
+          // (= API 通信エラー / Stripe 側で detach 等)。請求漏れリスクなので明示警告。
+          <div
+            className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30"
+            role="alert"
+            data-testid="stripe-card-summary-missing"
+          >
+            <p className="font-semibold">⚠ カード情報を Stripe から取得できませんでした</p>
+            <p className="text-muted-foreground">
+              ネットワーク一時障害の可能性があります。少し待ってからページを再読込してください。
+              繰り返し表示される場合は「クレジットカード情報更新」からカード再登録をお願いします。
+            </p>
+          </div>
+        )}
 
-      {state === 'D_attention' && (
-        <div
-          className="space-y-3 rounded border border-destructive/40 bg-destructive/10 p-3 text-sm"
-          role="alert"
-        >
-          <p className="font-semibold text-destructive">
-            ⚠️ 現在の支払い方法: クレジットカード (要対応)
-          </p>
-          <p className="text-muted-foreground">
-            {info.cardVerificationStatus === 'expired' &&
-              'カードの有効期限が切れています。Stripe ポータルからカード情報を更新してください。'}
-            {info.cardVerificationStatus === 'declined' &&
-              'カードが拒否されています。別のカードへの変更を Stripe ポータルから行ってください。'}
-            {info.cardVerificationStatus === 'never_verified' &&
-              'カードがまだ検証されていません。Stripe ポータルでカードを確認してください。'}
-            {info.autoSuspendScheduledAt != null &&
-              ' 引落失敗が続いており、まもなくサービスが自動停止する予定です。'}
-          </p>
+        {state === 'credit_card_attention' && (
+          <div
+            className="rounded border border-destructive/40 bg-destructive/10 p-3 text-sm"
+            role="alert"
+          >
+            <p className="font-semibold text-destructive">⚠️ カードの状態を確認してください</p>
+            <p className="text-muted-foreground">
+              {info.cardVerificationStatus === 'expired' &&
+                'カードの有効期限が切れています。Stripe ポータルからカード情報を更新してください。'}
+              {info.cardVerificationStatus === 'declined' &&
+                'カードが拒否されています。別のカードへの変更を Stripe ポータルから行ってください。'}
+              {info.cardVerificationStatus === 'never_verified' &&
+                'カードがまだ検証されていません。Stripe ポータルでカードを確認してください。'}
+              {info.autoSuspendScheduledAt != null &&
+                ' 引落失敗が続いており、まもなくサービスが自動停止する予定です。'}
+            </p>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
-            variant="default"
-            onClick={handlePortal}
-            disabled={submitting}
-            aria-label="Stripe ポータルでカードを更新"
+            onClick={handleClick}
+            disabled={!buttonActive || !stripeEnabled || submitting}
+            aria-label="クレジットカード情報更新"
           >
-            {submitting ? '処理中...' : '🔧 Stripe ポータルでカードを更新する'}
+            {submitting ? '処理中...' : '💳 クレジットカード情報更新'}
           </Button>
+          {/* PR #425 (2026-05-22): 請求履歴閲覧リンク (既存の /settings/tenant/billing への遷移)。
+              Customer Portal を撤去したため、請求履歴閲覧の導線をここに集約する。 */}
+          <a
+            href="/settings/tenant/billing"
+            className="text-sm text-info underline"
+          >
+            📋 請求履歴を見る
+          </a>
         </div>
-      )}
+
+        {!stripeEnabled && (
+          <p className="text-xs text-muted-foreground">
+            ※ クレジットカード払いは現在準備中です (運営による有効化待ち)。
+          </p>
+        )}
+      </div>
     </section>
   );
 }

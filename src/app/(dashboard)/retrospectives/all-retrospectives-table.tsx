@@ -44,6 +44,7 @@ import { SortableResizableHead } from '@/components/sort/sortable-resizable-head
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
+import { useListSearchParams } from '@/components/common/use-list-search-params';
 
 function getRetroSortValue(r: AllRetroDTO, columnKey: string): unknown {
   switch (columnKey) {
@@ -64,9 +65,12 @@ function getRetroSortValue(r: AllRetroDTO, columnKey: string): unknown {
 export function AllRetrospectivesTable({
   retros,
   isAdmin,
+  initialKeyword = '',
 }: {
   retros: AllRetroDTO[];
   isAdmin: boolean;
+  /** PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword= 復元用 */
+  initialKeyword?: string;
 }) {
   const router = useRouter();
   const tRetro = useTranslations('retro');
@@ -74,18 +78,18 @@ export function AllRetrospectivesTable({
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
 
   // PR-δ / 項目 12: 全振り返りに検索 (keyword) フィルタを追加。
-  // 振り返り画面 (RetrospectivesClient) と同様にキーワードで本文/良かった点/改善点を絞り込み。
-  const [filter, setFilter] = useState({ keyword: '' });
+  // PR #425 (2026-05-22) KDD §5.X+102: URL 同期に書き換え (= リロード時に検索条件復元)。
+  const { keyword, setKeyword } = useListSearchParams({ initialKeyword });
 
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort('sort:all-retrospectives');
 
   const filteredRetros = useMemo(() => {
     let xs = retros;
-    if (filter.keyword.trim()) {
+    if (keyword.trim()) {
       // Phase C 要件 19 (2026-04-28): 空白区切りで OR 検索
       xs = xs.filter((r) =>
-        matchesAnyKeyword(filter.keyword, [
+        matchesAnyKeyword(keyword, [
           r.planSummary,
           r.actualSummary,
           r.goodPoints,
@@ -94,7 +98,7 @@ export function AllRetrospectivesTable({
       );
     }
     return multiSort(xs, sortState, getRetroSortValue);
-  }, [retros, filter, sortState]);
+  }, [retros, keyword, sortState]);
 
   const attachmentsByEntity = useBatchAttachments(
     'retrospective',
@@ -116,8 +120,8 @@ export function AllRetrospectivesTable({
           <Label htmlFor="all-retros-filter-keyword" className="text-xs">{tRetro('keyword')}</Label>
           <Input
             id="all-retros-filter-keyword"
-            value={filter.keyword}
-            onChange={(e) => setFilter({ keyword: e.target.value })}
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
             placeholder={tRetro('keywordPlaceholder')}
           />
         </div>

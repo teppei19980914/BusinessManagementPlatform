@@ -16,7 +16,7 @@
  *   2026-05-14: super_admin にも開放 (管理テナントのシード Customer 管理用)。
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -46,9 +46,12 @@ import type { CustomerDTO } from '@/services/customer.service';
 import { SortableHeader } from '@/components/sort/sortable-header';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
+import { useListSearchParams } from '@/components/common/use-list-search-params';
 
 type Props = {
   initialCustomers: CustomerDTO[];
+  /** PR #425 KDD §5.X+102: URL ?keyword=xxx から復元する検索 input 初期値 */
+  initialKeyword?: string;
 };
 
 function getCustomerSortValue(c: CustomerDTO, columnKey: string): unknown {
@@ -78,7 +81,7 @@ const emptyForm: FormState = {
   notes: '',
 };
 
-export function CustomersClient({ initialCustomers }: Props) {
+export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props) {
   const router = useRouter();
   const t = useTranslations('customer');
   const tAction = useTranslations('action');
@@ -88,9 +91,24 @@ export function CustomersClient({ initialCustomers }: Props) {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [error, setError] = useState('');
 
+  // PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword=xxx 永続化
+  const { keyword, setKeyword } = useListSearchParams({ initialKeyword });
+
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort('sort:customers');
-  const sortedCustomers = multiSort(initialCustomers, sortState, getCustomerSortValue);
+
+  // PR #425 (2026-05-22): keyword での client-side filter → multiSort の順で適用
+  const filteredCustomers = useMemo(() => {
+    if (!keyword) return initialCustomers;
+    const lower = keyword.toLowerCase();
+    return initialCustomers.filter((c) =>
+      c.name.toLowerCase().includes(lower)
+      || (c.department ?? '').toLowerCase().includes(lower)
+      || (c.contactPerson ?? '').toLowerCase().includes(lower)
+      || (c.contactEmail ?? '').toLowerCase().includes(lower),
+    );
+  }, [initialCustomers, keyword]);
+  const sortedCustomers = multiSort(filteredCustomers, sortState, getCustomerSortValue);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -148,7 +166,15 @@ export function CustomersClient({ initialCustomers }: Props) {
   return (
     <div className="space-y-6">
       {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-4">
+        {/* PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ (debounce で URL 同期) */}
+        <Input
+          placeholder={t('searchPlaceholder')}
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          className="max-w-xs"
+          data-testid="customers-search-input"
+        />
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
             {t('createButton')}

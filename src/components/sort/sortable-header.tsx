@@ -1,15 +1,16 @@
 'use client';
 
 /**
- * SortableHeader (PR feat/sortable-columns / 2026-05-01)。
+ * SortableHeader (PR feat/sortable-columns / 2026-05-01, PR #425 hover 拡張 2026-05-22)。
  *
  * 列ヘッダの内側にレンダーする「ソート操作 UI」コンポーネント。
  *
- * 仕様 (Q4-1〜Q4-5):
- *   - クリックで「昇順 / 降順 / クリア」のドロップダウン表示 (Q4-5: ユーザ提案)
- *   - 現在のソート状態は ↑¹ ↓² のように矢印 + 優先度数字 (sup) で表示 (Q4-5: バッジ表示)
- *   - クリック外でドロップダウン閉じる
- *   - ESC キーでも閉じる
+ * 仕様 (Q4-1〜Q4-5 + PR #425 UX 改善):
+ *   - **マウスオーバー OR クリック** でドロップダウン表示 (= hover で即開く、touch / キーボードは click)
+ *   - メニュー項目: 「↑ 昇順 / ↓ 降順 / × クリア (リセット)」
+ *   - 現在のソート状態はカラム内に **矢印 + 優先度番号バッジ** で常時表示 (例: `↑ 1` `↓ 2`)
+ *     - 複数列ソート時の優先度を視認可能 (= 番号小 = 先に適用される)
+ *   - ドロップダウンは「メニュー外クリック / ESC キー / メニュー領域から離れる (mouseleave with delay)」で閉じる
  *
  * 使い方:
  *   <ResizableHead columnKey="title" defaultWidth={240}>
@@ -42,6 +43,9 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
   const t = useTranslations('sort');
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
+  // PR #425 (2026-05-22): hover からプルダウン領域に移動する時間を確保するため
+  //   mouseleave で即時 close せず、200ms 遅延後に close する。
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const current = getColumnSort(sortState, columnKey);
 
   // ドロップダウン外クリック / ESC でクローズ
@@ -61,6 +65,11 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
     };
   }, [open]);
 
+  // cleanup: 親 unmount 時に timer を確実に解放
+  useEffect(() => () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  }, []);
+
   const arrow = current?.direction === 'asc' ? '↑' : current?.direction === 'desc' ? '↓' : '';
 
   function handleSelect(dir: SortDir | 'clear') {
@@ -68,12 +77,31 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
     setOpen(false);
   }
 
+  function handleMouseEnter() {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setOpen(true);
+  }
+
+  function handleMouseLeave() {
+    // 200ms 後に close。途中で再度 mouseenter があれば cancel される。
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => setOpen(false), 200);
+  }
+
   return (
-    <div className={`relative inline-flex ${className ?? ''}`} ref={ref}>
+    <div
+      className={`relative inline-flex ${className ?? ''}`}
+      ref={ref}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-0.5 hover:text-info focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded px-0.5"
+        className="inline-flex items-center gap-1 hover:text-info focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded px-0.5"
         aria-haspopup="menu"
         aria-expanded={open}
         title={
@@ -86,9 +114,15 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
       >
         <span className="truncate">{label}</span>
         {current && (
-          <span className="ml-0.5 text-xs text-info" aria-label={`${arrow}${current.priority}`}>
-            {arrow}
-            <sup>{current.priority}</sup>
+          <span
+            className="inline-flex items-center gap-0.5 rounded-md bg-info/15 px-1.5 py-0.5 text-xs font-semibold leading-none text-info"
+            aria-label={`${current.direction === 'asc' ? t('asc') : t('desc')} ${t('priority')} ${current.priority}`}
+            data-testid="sortable-header-badge"
+            data-direction={current.direction}
+            data-priority={current.priority}
+          >
+            <span aria-hidden="true">{arrow}</span>
+            <span className="text-[10px] opacity-80">{current.priority}</span>
           </span>
         )}
       </button>

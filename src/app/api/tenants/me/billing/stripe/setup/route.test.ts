@@ -123,29 +123,46 @@ describe('バリデーション', () => {
   });
 });
 
-describe('既に credit_card 払い', () => {
+describe('Subscription 既存テナント (PR #425 再改修: カード変更モード対応)', () => {
+  // PR #425 (2026-05-22) 再改修: 旧 ALREADY_HAS_SUBSCRIPTION 409 ガードを撤去。
+  //   理由: Customer Portal でカード変更しても Subscription.default_payment_method は更新されない
+  //         (Stripe 仕様)。本サービスでは「クレジットカード情報更新」ボタンから常に Stripe Checkout
+  //         に遷移し、completeStripeSetup の「カード変更モード」で Subscription を維持しつつ
+  //         default_payment_method のみ update する設計に変更。
+  //   そのため stripeSubscriptionId 既存でも setup は許可する。
+  //   分岐 (新規作成 vs カード変更モード) は completeStripeSetup 側で吸収。
   beforeEach(() => {
     vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
   });
 
-  it('paymentMethod === credit_card → 409 ALREADY_CREDIT_CARD', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
-      paymentMethod: 'credit_card',
-    } as never);
+  it('stripeSubscriptionId 既存でも setup を許可 (= カード変更モード経路)', async () => {
+    vi.mocked(createCheckoutSessionForCardSetup).mockResolvedValueOnce({
+      ok: true,
+      value: { id: 'cs_test', url: 'https://checkout.stripe.com/c/pay/cs_test' } as never,
+    });
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body.error.code).toBe('ALREADY_CREDIT_CARD');
-    expect(createCheckoutSessionForCardSetup).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(createCheckoutSessionForCardSetup).toHaveBeenCalled();
+  });
+
+  it('stripeSubscriptionId=null でも setup 正常実行 (= 新規 setup 経路)', async () => {
+    vi.mocked(createCheckoutSessionForCardSetup).mockResolvedValueOnce({
+      ok: true,
+      value: { id: 'cs_test', url: 'https://checkout.stripe.com/c/pay/cs_test' } as never,
+    });
+
+    const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
+
+    expect(res.status).toBe(200);
+    expect(createCheckoutSessionForCardSetup).toHaveBeenCalled();
   });
 });
 
 describe('正常系', () => {
   beforeEach(() => {
     vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ paymentMethod: 'invoice' } as never);
   });
 
   it('成功時 200 + checkoutUrl を返す', async () => {

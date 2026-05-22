@@ -6,12 +6,19 @@ import { recordError } from '@/services/error-log.service';
 import { isAdminOrAbove } from '@/lib/permissions';
 import { UsersClient } from './users-client';
 
-export default async function UsersPage() {
+/**
+ * PR #425 (2026-05-22) KDD §5.X+102: URL 永続化対応。
+ *   searchParams.keyword を Client Component に渡し、リロード時に検索条件を復元。
+ */
+type SearchParams = Promise<{ keyword?: string }>;
+
+export default async function UsersPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   // feat/crud-permission-redesign (2026-05-20): API 側 requireAdmin と整合 (admin + super_admin)
   if (!session || !isAdminOrAbove(session.user)) {
     redirect('/');
   }
+  const sp = await searchParams;
 
   // fix/admin-users-defensive-render (2026-05-15): Promise.all を try/catch で囲い
   //   `system_error_logs` に "Server Components render" だけ残って原因が掴めない
@@ -62,6 +69,8 @@ export default async function UsersPage() {
       dataLoadError={dataLoadError}
       // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止のため
       currentUserId={session.user.id}
+      // PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=xxx から初期値復元
+      initialKeyword={sp.keyword ?? ''}
     />
   );
 }

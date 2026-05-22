@@ -11555,3 +11555,1480 @@ git push
 - PR #420 feat/wbs-import-uplift (本事例): run 26202164194 で baseline 生成成功 + push 拒否 → artifact 経由で手動配置
 - KDD §5.X+97 (前段): `[gen-visual]` workflow の基本動作
 - `.github/workflows/e2e-visual-baseline.yml`
+
+## 5.X+99 **Netlify Deploy Preview で Stripe Checkout 完了後の戻り先が本番 URL に飛ぶ ─ `NEXTAUTH_URL` を build wrapper で deploy context に同期 + `sanitizeReturnTo` で env URL も許可オリジンに追加 (2026-05-21 / PR #425 Stripe staging UAT)**
+
+### 発生事象
+
+Stripe Checkout のカード登録フローを Deploy Preview (`deploy-preview-NNN--tasukiba.netlify.app`) で実行すると、Stripe 側のカード登録自体は成功するが、完了後のブラウザリダイレクト先が **本番 URL** (`tasukiba.netlify.app/login`) に飛んでしまう。本番にはログインしていないため `/login` 画面に強制遷移し、staging 環境での UAT が完結できない。
+
+同じ問題はログイン関連でも発生: Deploy Preview URL を叩いたユーザがログイン直後に本番 URL にリダイレクトされる。
+
+### 根本原因 (3 段階)
+
+**段階 A: NextAuth が本番 URL を canonical として使用**
+
+NextAuth は `trustHost: true` 設定でも `NEXTAUTH_URL` env var が定義されていればそちらを優先する。Netlify Dashboard で `NEXTAUTH_URL` を全 context (Production / Deploy Preview / Branch Deploy) に共通の本番 URL 値で設定していたため、Deploy Preview 環境でも canonical URL が本番扱いになり、ログイン経路で本番 URL にリダイレクトされていた。
+
+**段階 B: sanitizeReturnTo の origin チェックが本番 URL に固定**
+
+Stripe Checkout の戻り先ハンドラ (`/api/tenants/me/billing/stripe/setup/complete/route.ts`) の `sanitizeReturnTo()` で、`req.url` の origin と returnTo の origin を比較してオープンリダイレクト対策していた。Netlify Functions では `req.url` の origin が canonical URL (= 本番) に固定されるケースがあり、Deploy Preview URL から来た returnTo が「異なる origin」として弾かれて本番 URL にフォールバックする (= 本番 `/settings/tenant` → 未ログインなので `/login` へ)。
+
+**段階 C: Stripe `success_url` は client → server → Stripe の経路で origin が伝播し、UI の `window.location.origin` が起点になる**
+
+段階 A / B を修正しても、staging DB の `paymentMethod` / `stripeSubscriptionId` が更新されず、ブラウザは本番 URL に着地する事象が継続。詳細追跡で判明したのは:
+
+```
+[UI] stripe-payment-method-section.tsx L92
+  const returnUrl = `${window.location.origin}/settings/tenant`;
+       ↓ fetch POST /api/tenants/me/billing/stripe/setup { returnUrl }
+[Server] route.ts → createCheckoutSessionForCardSetup(tenantId, returnUrl)
+[Server] stripe-billing.service.ts L144
+  const baseOrigin = new URL(returnUrl).origin;
+  const successUrl = `${baseOrigin}/api/tenants/me/billing/stripe/setup/complete?...&return_to=${returnUrl}`;
+       ↓ Stripe Checkout Session 作成
+[Stripe] カード登録成功後、success_url にブラウザを redirect
+```
+
+= UI が居る origin (= `window.location.origin`) が **唯一の真値** として全経路に伝播する。途中の env var (`URL` / `NEXTAUTH_URL`) は一切関与しない。
+
+**従って origin が本番になるのは UI 側のいずれか**:
+- (C-1) ユーザが本番 URL でログイン → 本番 `/settings/tenant` で「切替」を押した (= 単純に Deploy Preview URL でアクセスしていない)
+- (C-2) NextAuth middleware / redirect が Deploy Preview URL → 本番 URL に書き換えている (= 段階 A 不完全)
+- (C-3) ログイン後の callbackUrl 解決で本番 URL を返している (NextAuth の `authorize` / `signIn` callback)
+
+段階 A の build wrapper は build 時の `URL` env var 値を `NEXTAUTH_URL` に注入するが、**Next.js は env var を build 時に bundle に baking するわけではない** ため runtime 値は正しいはず。一方 NextAuth 自体は session token 内に hostname を含めず、`headers().host` を信頼する `trustHost: true` 設計のため、再ログインせず古い session を使うと本番 hostname を持ったまま動作する可能性がある (要検証)。
+
+### 解決策
+
+**段階 A 対策: build wrapper で NEXTAUTH_URL を deploy context に同期**
+
+> ⚠️ **2026-05-22 追記 (KDD §5.X+101 参照)**: 本対策は **実質効果なし**だったことが判明。
+> Next.js は `NEXT_PUBLIC_*` 以外の server-side env var を build 時に bundle へ焼き込まないため、
+> build script で `export NEXTAUTH_URL=...` しても **Netlify Function runtime には届かない**。
+> 真の根本解決は **Netlify Dashboard で NEXTAUTH_URL を context override** (Production のみ固定、
+> Deploy preview / Branch deploys では未設定にして `trustHost: true` でフォールバック)。
+> 詳細は KDD §5.X+101 を参照。
+
+`scripts/netlify-build.sh` を作成し、Netlify が build 時に自動設定する `URL` env var を `NEXTAUTH_URL` に注入してから build を実行。
+
+```bash
+#!/usr/bin/env bash
+export NEXTAUTH_URL="${URL:-${NEXTAUTH_URL:-https://tasukiba.netlify.app}}"
+exec pnpm build:netlify
+```
+
+`netlify.toml` の build command を `bash scripts/netlify-build.sh` に変更。
+
+`URL` env var は Netlify が deploy context に応じて以下を自動設定:
+- Production: `https://tasukiba.netlify.app`
+- Deploy Preview: `https://deploy-preview-NNN--tasukiba.netlify.app`
+- Branch Deploy: `https://<branch>--tasukiba.netlify.app`
+
+**段階 B 対策: sanitizeReturnTo に env URL を許可オリジンとして追加**
+
+```ts
+function sanitizeReturnTo(returnTo: string | null, reqUrl: string): string {
+  const reqOrigin = new URL(reqUrl).origin;
+  // Netlify URL env var (deploy context に応じて自動切替) も許可
+  const envOrigin = process.env.URL ? new URL(process.env.URL).origin : null;
+  const allowedOrigins = new Set<string>([reqOrigin]);
+  if (envOrigin) allowedOrigins.add(envOrigin);
+  // フォールバック先も envOrigin を優先 (= req.url が本番固定でも正しい URL を返す)
+  const primaryOrigin = envOrigin ?? reqOrigin;
+
+  if (returnTo == null || returnTo.length === 0) return `${primaryOrigin}/settings/tenant`;
+  try {
+    const parsed = new URL(returnTo);
+    if (!allowedOrigins.has(parsed.origin)) return `${primaryOrigin}/settings/tenant`;
+    return parsed.toString();
+  } catch {
+    return `${primaryOrigin}/settings/tenant`;
+  }
+}
+```
+
+オープンリダイレクト対策 (= 任意の URL への redirect を禁止) は維持しつつ、Deploy Preview / Branch Deploy の正規 URL も許可される。
+
+**段階 C 対策 (検証中 / 2026-05-21 時点)**
+
+`window.location.origin` の値を切り分けるため UI / Server 双方にデバッグログを追加 (PR #425 検証用、確定後削除):
+
+```ts
+// UI: stripe-payment-method-section.tsx handleSetup 内
+console.log('[stripe-ui] returnUrl=', returnUrl, 'origin=', window.location.origin);
+
+// Server: route.ts POST /setup 入口 / GET /setup/complete 入口
+console.log('[stripe-setup-complete] debug', {
+  reqUrl: req.url, returnTo, safeReturnTo,
+  env_NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+  env_URL: process.env.URL,
+  env_DEPLOY_PRIME_URL: process.env.DEPLOY_PRIME_URL,
+  env_CONTEXT: process.env.CONTEXT,
+});
+```
+
+ログから origin が本番に書き換わる地点 (C-1 / C-2 / C-3) を特定 → 対応する fix を入れる。
+ログだけで判明しない場合は、ログイン直後の `callbackUrl` 解決と middleware の host 判定を追加調査する。
+
+### 教訓
+
+1. **NextAuth の trustHost は十分条件ではない**: `NEXTAUTH_URL` が定義されていれば優先される。Multi-environment 運用では env var そのものを deploy context ごとに切替える必要がある
+2. **Netlify env vars の context override は値の固定値しか持てない**: PR ごとに変わる URL を Dashboard で context override するのは運用負荷が高い。build wrapper で `URL` env var を `NEXTAUTH_URL` に注入する方が clean
+3. **`URL` / `DEPLOY_PRIME_URL` / `DEPLOY_URL` を活用する**: Netlify は build 時にこれらの env vars を自動設定。`URL` は deploy context に応じて値が変化するので最も使い勝手が良い
+4. **オープンリダイレクト対策の origin チェックは「許可リスト」設計に**: 単一 origin 比較だと multi-environment で誤って弾く。Set ベースの allowed origins で柔軟に対応
+5. **`req.url` の origin は Netlify Functions で canonical に固定されることがある**: Next.js + Netlify Functions の組み合わせで、host header が本番 URL に書き換えられるケースあり。フォールバック先には `process.env.URL` を優先する
+6. **Stripe UAT は Deploy Preview で実施するのが正解**: 本番 Stripe Test mode 環境を借りる必要がなく、本番 DB も汚染しない。ただし上記 NextAuth + sanitizeReturnTo の罠を踏むので事前対策必須
+7. **Stripe `success_url` の origin は client → server → Stripe の経路で決まる (段階 C)**: server 側で env URL を fallback に使っても上書きされない。**真値は UI 起点の `window.location.origin` ただ一つ**。途中で本番 URL になっているなら UI が居る origin を疑う (= NextAuth redirect / middleware / 単純なアクセスミス)
+8. **Deploy Preview で外部サービス連携をテストする時はブラウザの URL を必ず確認**: 「Deploy Preview にアクセスしたつもり」が「本番にリダイレクトされて気づかず操作」になっていないか、外部サービスへ遷移する直前にアドレスバーをスクリーンショットすると原因切り分けが早い
+
+### 検証手順
+
+```
+1. Netlify Deploy Preview にアクセス: https://deploy-preview-NNN--tasukiba.netlify.app/login
+   → アドレスバーが本番 URL に置換されないこと (= 段階 A 対策確認)
+
+2. ログイン → アドレスバーが依然 Deploy Preview URL であることを確認 (= 段階 A 完全性確認)
+   → 本番にリダイレクトされていたらここで段階 A 不完全
+
+3. /settings/tenant の「クレジットカード払いに切替」ボタンを押す直前にアドレスバーを再確認
+   → ここで Deploy Preview URL でないと段階 C が発火する
+
+4. ボタンクリック → Stripe Checkout 画面に遷移
+
+5. テストカード 4242 4242 4242 4242 を入力 → 保存
+
+6. Stripe Checkout 完了後の戻り先
+   → アドレスバーが Deploy Preview URL のまま (= 段階 B + 段階 C 対策確認)
+   → /settings/tenant?stripe_setup=success が表示される
+
+7. DB 状態を確認:
+   npx tsx scripts/check-tenant-stripe-state.ts
+   期待: paymentMethod='credit_card' / stripeSubscriptionId='sub_*' / cardVerificationStatus='valid'
+```
+
+### 関連 KDD / PR
+
+- PR #425 fix/seed-vercel-to-netlify (本事例): Stripe staging UAT 中に検出 + 修正
+- 関連修正ファイル:
+  - `scripts/netlify-build.sh` (新規、build wrapper)
+  - `netlify.toml` (build command 変更)
+  - `src/app/api/tenants/me/billing/stripe/setup/complete/route.ts` (sanitizeReturnTo 修正)
+- 関連 KDD §5.X+72 (前提): セッション解除パターン (NextAuth + Netlify の cookie 罠)
+
+---
+
+## 5.X+100 **★severity-1★ Stripe 払い設定切替 UI で client state 同期漏れ + 旧 server ガード残置が「credit_card 払いなのにカード未登録」放置 = 請求漏れリスク直結 (2026-05-22 / PR #425 Stripe UI 改修)**
+
+### 発生事象
+
+PR #425 で `paymentMethod` セレクト (請求書 ↔ クレジットカード) + 独立した「クレジットカード情報更新」ボタンの 2 ステップ式に UI を変更したところ、TC-1 (Beginner→Pro アップグレード) で以下の致命的な問題が連続発生:
+
+1. **問題 1**: 「支払い方法」を invoice → credit_card に変更して「請求先情報を更新」を押したが、「クレジットカード情報更新」ボタンが **非活性のまま** で次に進めない (画面リロードすると活性化される)
+2. **問題 2**: リロード後にボタンを押すと **409 `ALREADY_CREDIT_CARD`** で reject され、Stripe Checkout に遷移できない
+
+両者放置すると **テナントの DB 上 `paymentMethod='credit_card'` だが Stripe Subscription が作成されない** 状態が継続 → 月次の自動引落が発生せず、運営側も「カード払いに切替済」と認識して請求書を送らない → **無料運用化 (請求漏れ)**。これは事業継続性に直結する severity-1 のリグレッション。
+
+### 根本原因
+
+**原因 1: Client Component の useState 値が `router.refresh()` だけでは更新されない**
+
+`BillingContactSection.handleSubmit` 内で `router.refresh()` のみを呼んでいたが、これは Server Component の再レンダリングをトリガーするのみで、親 `TenantSettingsClient` が持つ `info` state (= `useState<TenantSelfInfo>`) は変わらない。
+結果として `StripePaymentMethodSection` props.info.paymentMethod は旧値 (`'invoice'`) のままで活性条件を満たさず、ボタンが非活性。
+
+**原因 2: 旧仕様の defense-in-depth ガードが新フローで誤発火**
+
+POST `/api/tenants/me/billing/stripe/setup` には旧仕様時 (= 「切替ボタン押下 = 1 ステップで paymentMethod 変更 + Stripe Checkout 起動」) の二重 setup 防止ガードが残っていた:
+
+```ts
+if (tenant?.paymentMethod === 'credit_card') {
+  return ... 409 ALREADY_CREDIT_CARD;
+}
+```
+
+新仕様は **paymentMethod 変更と setup が別 step** なので、setup を呼ぶ時点で paymentMethod は既に credit_card になっている。このガードが新仕様の正常フローを誤って弾く。
+
+### 解決策
+
+**修正 1: 親の info state を再取得する callback を BillingContactSection に渡す**
+
+```tsx
+// tenant-settings-client.tsx
+<BillingContactSection initialInfo={info} onUpdate={refreshInfo} />
+
+function BillingContactSection({ initialInfo, onUpdate }: {...}) {
+  async function handleSubmit(...) {
+    ...
+    showSuccess('請求先情報を更新しました');
+    await onUpdate();   // ★ ここで親の info state を再取得
+    router.refresh();
+  }
+}
+```
+
+`refreshInfo` は GET `/api/tenants/me` を叩いて info / selectedPlan / budgetCap を全部最新化する既存 helper を再利用。これで paymentMethod 変更が即座に `StripePaymentMethodSection` に伝播し、ボタンが活性化される。
+
+**修正 2: ガード基準を `paymentMethod` → `stripeSubscriptionId` に変更**
+
+```ts
+// route.ts
+const tenant = await prisma.tenant.findUnique({
+  where: { id: user.tenantId },
+  select: { stripeSubscriptionId: true },
+});
+if (tenant?.stripeSubscriptionId != null) {
+  return ... 409 ALREADY_HAS_SUBSCRIPTION;
+}
+```
+
+「Subscription 作成済の場合は Customer Portal で更新すべき」という新仕様の二重 setup 防止に意味的に正しい基準。UI 側は `stripeSubscriptionId` の有無で setup/portal を分岐するため、UI 経由の正常フローではこのガードは発火せず、UI バイパス (curl 直叩き等) のみを弾く。
+
+### 教訓
+
+1. **★最重要★ Client Component の useState 値は `router.refresh()` で更新されない** — Server Component が返す新しい props は描画されるが、子 Client Component が `useState(initialInfo)` で抱えている state は初期化時の値のまま。**親が持つ Client state を更新したい場合は明示的な refetch callback (例: `onUpdate: () => Promise<void>`) を子に渡し、子から呼び出させる必要がある**
+2. **2 ステップ式 UI に変更したら server 側の defense-in-depth ガードを 1 ステップ前提のまま放置すると正常フローを弾く** — 「変更前は X、変更後は Y」と判定軸自体が変わるので、ガード条件式も同期更新する。横展開チェックで「同じ判定軸を使う他の経路 (= POST /portal、PATCH /billing 等) も巻き込んでいないか」を必ず確認
+3. **★severity-1★「カード払いだがカード未登録」状態を許容する設計 / バグは即時請求漏れリスク** — `feedback_billing_invariant` (請求 invariant: ApiCallLog SUM = 画面 = 請求書 = Stripe) の前提として「credit_card 払いなら必ず active Subscription が存在する」インバリアントを死守すべき。画面遷移失敗・API ガード誤発火等で「カード未登録 credit_card 払い」が DB に出現する経路は全て塞ぐ
+4. **defense-in-depth ガードのコメントには「廃止条件」も明記する** — `ALREADY_CREDIT_CARD` ガードのコメントは「二重 setup 防止」とだけ書かれており、旧仕様前提だと分からなかった。「現行 UI フローでは X の判定で代替、UI バイパスのみ対象」のように **判定軸の変更時に同時改修すべき意図** を残す
+
+### 検証手順 (再発防止用)
+
+```
+事前: scripts/reset-default-tenant-to-beginner.ts を実行 (= invoice / stripeSubscriptionId=null)
+
+1. /settings/tenant を開く → 「請求先情報」セクションの「支払い方法」を「クレジットカード」に変更
+2. 「請求先情報を更新」ボタンクリック
+   → 直後に「支払い方法」セクションの表示が「💳 クレジットカード (カード未登録)」に変わる ★リロード不要★
+   → 「クレジットカード情報更新」ボタンが活性化される ★リロード不要★
+3. 「クレジットカード情報更新」ボタンクリック
+   → 確認ダイアログ「OK」
+   → Stripe Checkout (checkout.stripe.com/...) に遷移する ★409 が出ない★
+4. テストカード 4242 4242 4242 4242 で完了
+5. DB 状態確認: paymentMethod='credit_card' + stripeSubscriptionId='sub_*' + cardVerificationStatus='valid'
+```
+
+各ステップで「リロード不要で次に進める」「途中で 409 が出ない」を確認。1 つでも崩れたら本 KDD §5.X+100 の再発と判断。
+
+### 関連 KDD / PR / feedback
+
+- PR #425 fix/seed-vercel-to-netlify (本事例): TC-1 UAT 中に検出
+- 関連修正ファイル:
+  - `src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx` (onUpdate 追加)
+  - `src/app/api/tenants/me/billing/stripe/setup/route.ts` (409 ガード判定軸変更)
+  - `src/app/api/tenants/me/billing/stripe/setup/route.test.ts` (ガードのテスト変更)
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★ 請求 invariant)
+  - `feedback_netlify_nextauth_set_cookie` (Client state 更新の罠、本件と類似構造)
+- 関連 KDD §5.X+99 (前提): Stripe Deploy Preview redirect 問題
+
+---
+
+## 5.X+101 **★severity-1★ Netlify Deploy Preview の本番 URL リダイレクト問題 — KDD §5.X+99 段階 A 対策の認識誤りと真の根本解決 (NEXTAUTH_URL の context 分離 + trustHost フォールバック) (2026-05-22 / PR #425 Stripe UAT)**
+
+### 発生事象
+
+KDD §5.X+99 で「段階 A 対策: build wrapper で `NEXTAUTH_URL` を deploy context に同期」を実装したつもりだったが、**Deploy Preview URL (`deploy-preview-425--tasukiba.netlify.app/`) にアクセスすると本番 URL (`tasukiba.netlify.app/`) に即座にリダイレクトされる事象が続発**。`/` 以外の保護領域 (例: `/settings/tenant`) でも middleware 経由で `/login` に redirect する瞬間に本番 origin に書き換わる。
+
+これにより:
+- Deploy Preview での UAT が完結できない
+- 本番ログインしていないユーザは本番 `/login` 画面に着地 → 検証中断
+- Stripe Checkout 完了後の戻り先も本番 URL に固定 (= KDD §5.X+99 と同根)
+
+### 根本原因 (KDD §5.X+99 段階 A 対策の認識誤り)
+
+**Next.js は server-side env var を build 時に bundle へ焼き込まない** (`NEXT_PUBLIC_*` プレフィックス付きのものを除く)。`process.env.NEXTAUTH_URL` は **Netlify Function runtime で都度評価される**。
+
+KDD §5.X+99 で導入した `scripts/netlify-build.sh` の以下:
+
+```bash
+export NEXTAUTH_URL="${URL:-${NEXTAUTH_URL:-https://tasukiba.netlify.app}}"
+exec pnpm build:netlify
+```
+
+の `export NEXTAUTH_URL=...` は **build プロセス内の子プロセス (`pnpm build:netlify`) にのみ伝播する**。Next.js の `next build` がこの env var を読んで bundle に焼き込めば runtime に伝わるが、`process.env.NEXTAUTH_URL` のような **`NEXT_PUBLIC_` 以外の env var は焼き込まれない** ため、build wrapper の export は **runtime には一切届かない**。
+
+結果として:
+- Netlify Function runtime での `process.env.NEXTAUTH_URL` は **Netlify Dashboard で設定された値** (= 全 scope 共通の本番 URL) になる
+- NextAuth v5 は `trustHost: true` でも **`NEXTAUTH_URL` が定義されていればそちらを優先する** 仕様
+- → NextAuth の base URL が本番固定 → middleware の `Response.redirect(new URL(LOGIN_PATH, nextUrl))` 等で `nextUrl` を信頼しても、NextAuth 内部で発火する redirect は本番 URL になる
+
+これが「Netlify build wrapper を入れても効かない」真因。
+
+### 解決策 (根本解決)
+
+**Netlify Dashboard で `NEXTAUTH_URL` の context override を行う**:
+
+| Deploy context | NEXTAUTH_URL の値 |
+|---|---|
+| Production | `https://tasukiba.netlify.app` (既存固定値) |
+| Deploy preview | **未設定 (= Delete)** |
+| Branch deploys | **未設定 (= Delete)** |
+
+これで:
+- Production runtime: NEXTAUTH_URL=本番 URL → NextAuth が本番 URL を base に使用 (既存挙動)
+- Deploy preview runtime: NEXTAUTH_URL=undefined → NextAuth が `trustHost: true` で host header (= Deploy Preview URL) を base に使用
+- Branch deploy runtime: 同上
+
+**操作手順 (Netlify Dashboard)**:
+1. Site configuration → Environment variables
+2. `NEXTAUTH_URL` を選択 → Edit
+3. 「Different value for each deploy context」を選択
+4. Production 欄: 本番 URL を維持
+5. **Deploy previews 欄: 値を空にして保存 (= context override で undefined)**
+6. **Branch deploys 欄: 値を空にして保存**
+7. 保存 → 該当 PR の Deploy Preview を再 build (Trigger deploy)
+
+### 並行修正: build wrapper の NEXTAUTH_URL 注入を削除
+
+`scripts/netlify-build.sh` の `export NEXTAUTH_URL=...` 行は **実質効果なし** のため削除。残しておくと後続改修者が「build wrapper で対処済」と誤認するリスクが高い (= 本事例の再発を招く)。
+
+ただし wrapper script 自体は `netlify.toml` の build command として参照されており、空コミットでも build トリガーする目的でも使われているため、ファイル自体は維持し **NEXTAUTH_URL 行のみ削除 + コメントで「build wrapper では env var は runtime に届かない、Dashboard の context override を使え」と警告**。
+
+### 教訓
+
+1. **★最重要★ Next.js は `NEXT_PUBLIC_*` 以外の server-side env var を build 時に bundle へ焼き込まない** — Runtime で都度 `process.env.X` が評価される。よって「build script で env var を export する」は **`NEXT_PUBLIC_*` 以外には効果がない**。Runtime に値を伝えたければホスティング層 (Netlify Dashboard / Vercel Env / docker env) の context-specific 設定を使うのが正解
+2. **NextAuth v5 の `trustHost: true` は `NEXTAUTH_URL` 未定義時のフォールバック** — `NEXTAUTH_URL` が定義されていれば常に優先される。Multi-environment 運用では本番のみ `NEXTAUTH_URL` を固定し、preview/branch では未定義にして `trustHost` 経由で host header から動的取得させる
+3. **build wrapper 内の `export X=...` の伝播範囲は build プロセス内に限定** — Netlify Function (= 別 Lambda 実行環境) には届かない。「build 時に何かを env に注入したい」は ほぼ常に間違い。本当に必要なのは bundle に焼き込む (= `NEXT_PUBLIC_*` 化) か、Dashboard 設定で context 分離するか
+4. **「対策実装した」と「実際に効いている」を切り分けて検証する** — KDD §5.X+99 では build wrapper を「段階 A 対策」として記録したが、効果検証 (= Deploy Preview で actually 本番 URL に飛ばないか) を実機確認しないまま「対応済」扱いになっていた。**fix を入れたら必ず原問題が再現しないかを実機で再現テスト**。コードレビュー / ローカル test PASS は十分条件ではない
+5. **「効かないコードを残置」は積み重なって混乱を生む** — 効かないと分かったら即削除 + KDD で「過去に試したが効かなかった」を明記。残しておくと後続改修者が「対策済」と誤認して同じ問題を再発させる
+
+### 検証手順 (Netlify Dashboard 設定後の再現確認)
+
+```
+1. Netlify Dashboard で NEXTAUTH_URL の Deploy preview / Branch deploys を空に設定
+2. PR #425 の最新 Deploy Preview を Trigger deploy (or Clear cache and deploy)
+3. ビルド完了後、ブラウザで以下を順にアクセス:
+   a. https://deploy-preview-NNN--tasukiba.netlify.app/  → /projects (or /login) に redirect
+      → アドレスバーが deploy-preview-NNN--... のままであることを確認 ★
+   b. https://deploy-preview-NNN--tasukiba.netlify.app/login → ログイン
+      → ログイン後も deploy-preview-NNN--... のままであることを確認 ★
+   c. /settings/tenant → 「クレジットカード情報更新」ボタン → Stripe Checkout
+      → カード登録完了後、deploy-preview-NNN--... に戻ることを確認 ★
+4. DB 状態: paymentMethod='credit_card' + stripeSubscriptionId='sub_*'
+```
+
+各ステップで ★ が崩れた場合、本 KDD §5.X+101 の再発と判断。Netlify Dashboard 設定を再確認。
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-1 UAT 中、KDD §5.X+99 段階 A 対策不発を再検出 + 真の根本解決を実装
+- 関連修正ファイル:
+  - `scripts/netlify-build.sh` (NEXTAUTH_URL inject 行削除 + 警告コメント追加)
+  - `docs/knowledge/KDD_PATTERNS.md` §5.X+99 段階 A 部分 (不発の旨を明記)
+- 関連 KDD §5.X+99 (前提だが対策不発): Stripe Deploy Preview redirect 問題
+- 関連 feedback `feedback_netlify_nextauth_set_cookie` (NextAuth + Netlify の罠系)
+- Netlify 公式: [Environment variables - Deploy contexts](https://docs.netlify.com/configure-builds/environment-variables/#deploy-contexts)
+- NextAuth v5 公式: [Trust Host (`trustHost`)](https://authjs.dev/reference/core#trusthost)
+
+---
+
+## 5.X+102 **★UX severity-1★ 一覧画面の検索ボタン不発 + ソート client-side 化問題の横断調査 — `/projects` 即時修正 + 残 13 画面の段階改修ロードマップ (2026-05-22 / PR #425)**
+
+### 発生事象
+
+`/projects` 画面で検索ボタンを押しても **絞り込みが反映されない**。URL は `?keyword=xxx` に変わるが一覧は変化しない。テスト中のユーザが PR レビュー時に検出。
+
+横断調査の結果、**たすきば全 16 一覧画面のうち 13 画面が同じ構造的問題** を抱えていることが判明:
+
+| 画面 | 検索 UI | 検索動作 | ソート UI | ソート動作 |
+|---|---|---|---|---|
+| /projects | ✓ あり | ❌ 効かない (← 本 PR で修正) | ✓ あり | client-side memory sort のみ |
+| /knowledge, /memos, /all-memos, /customers, /my-tasks, /admin/users 等 | なし | client-side filter | ✓ あり | client-side memory sort のみ |
+| /risks, /issues, /retrospectives + project 配下版 | (table 内 filter) | client-side filter | ✓ あり | client-side memory sort のみ |
+| /admin/super/tenants | なし | 機能無し | なし | 機能無し |
+| /projects/[id]/stakeholders 等 | なし | client-side filter | なし | 機能無し |
+
+### 根本原因 (構造的)
+
+3 つのパターンが共通して発生:
+
+**パターン A: `page.tsx` が `searchParams` を受け取らない**
+```tsx
+// page.tsx (BAD)
+export default async function ProjectsPage() {
+  const result = await listProjects({ page: 1, limit: 20 }, ...); // ← 固定 params
+  ...
+}
+```
+↓
+URL params 更新 → page 再実行されるが、固定 params で listProjects を呼ぶため where 条件が変わらず同じ結果。
+
+**パターン B: Client Component が `initialProjects` を `useState` で保持していない**
+→ props 変更時の挙動として OK (= props 直接使用ならリレンダで反映) だが、`useState(initialData)` で初期化していると **props 更新が state に反映されない** (= useState の initialValue は初回のみ評価)。
+
+**パターン C: client-side `multiSort` / `useState` filter で済ませている**
+→ 件数が少ない MVP 初期は問題なし。だが Beginner プラン上限の 100 件を超え、Expert/Pro でデータが増えると **クライアント側でメモリ持ち + ソート/フィルタ計算で UI が遅延** する。また「サーバ side pagination」と整合しない (= 1 ページだけ取って client で sort → 「2 ページ目に欲しいレコードがあった」事故)。
+
+### 解決策
+
+**今 PR (#425) で修正 (= severity-1 UX バグ部分のみ)**:
+
+1. `/projects` の page.tsx に `searchParams` 受け取りを追加
+2. `listProjects` に keyword / status / customerName / customerId を伝播
+3. projects-client.tsx の `useState(initialKeyword)` で URL からの初期値復元 (リロード時 input 復元)
+4. handleSearch の `router.refresh()` を撤去 (= `router.push` だけで page 再実行)
+
+これで:
+- 検索ボタン押下 → URL params 更新 → page.tsx 再実行 → 新 initialProjects → 表示更新 ✓
+- リロード/共有 URL → input に検索条件が復元 ✓
+
+**今 PR では対応しない (= 別 PR で段階改修)**:
+
+**2026-05-22 更新**: 同 PR #425 で **入力即フィルタ + URL 永続化 + ソート視認改善 + sticky header** を 7 画面 (= /customers, /admin/users, /risks, /issues, /retrospectives, /all-memos, /knowledge, /memos) に取り込み完了 ([KDD §5.X+112](#5x112) 参照)。下記 server-side 化は **「データ量がプラン上限を超えた時点」** の別 PR 扱いに方針変更。
+
+ソートの server-side 化 + 他 13 画面の server-side filter 化は **3 段階 20-26h 規模** で大きく、Stripe UAT 中の PR #425 にバンドルすると検証範囲が爆発する。別 PR で対応する:
+
+| 段階 | 対象 | 推定工数 | 優先度 |
+|---|---|---|---|
+| Phase 1 | `/projects` ソートの server-side 化 (orderBy URL param + service / API 対応) | 4-6h | 中 |
+| Phase 2 | `/risks` `/issues` `/retrospectives` の server-side filter 化 (共通 table コンポーネント) | 6-8h | 中 |
+| Phase 3 | `/memos` `/all-memos` `/knowledge` 等 7+ 画面の統一改修 + `useListSearchParams()` 共通 hook 化 | 10-12h | 低 |
+
+### 教訓 (再発防止)
+
+1. **★最重要★ Next.js App Router で URL params フィルタを実装する標準パターン**:
+   ```tsx
+   // page.tsx (Server Component)
+   export default async function Page({ searchParams }: { searchParams: Promise<SearchParams> }) {
+     const sp = await searchParams;  // Next 15+ は Promise
+     const result = await listX({ keyword: sp.keyword, ... });
+     return <Client initial={result} initialKeyword={sp.keyword ?? ''} />;
+   }
+   ```
+   ↓
+   ```tsx
+   // *-client.tsx (Client Component)
+   async function handleSearch() {
+     const params = new URLSearchParams();
+     if (keyword) params.set('keyword', keyword);
+     router.push(`?${params.toString()}`); // ← refresh() は不要、push が page を再実行
+   }
+   ```
+   **`router.refresh()` だけでは page.tsx の searchParams は変わらない**。`router.push()` が必須。
+
+2. **`useState(initialProps)` の罠**: Client Component で `useState(initialKeyword)` のように props を初期値にすると、props 更新時に state が変わらない。これは React 仕様。回避策は ① props を直接使う ② useEffect で props 変更時に setState する ③ key prop でコンポーネントを再マウントする
+3. **client-side ソート/フィルタは「件数上限が確実に小さい」ケースのみ許容**: テナント越境はしないが、Expert/Pro プランでデータが 1000 件超に達すると UI 遅延 + メモリ消費が顕在化する。最低でも「Beginner 100 件上限を超える可能性のあるエンティティ」は server-side 化する
+4. **検索 UI / ソート UI / 実装の不一致をスクリーンキャプチャ E2E で検出** — 「UI ボタンは存在するが効かない」はユーザ視点での最悪 UX。「クリック → 一覧変化を assertion」する E2E spec を追加すれば即検出可能。本件は手動 UAT で初めて検出された
+5. **横断調査は Agent 並行実行 + 表形式報告で時間短縮**: 16 画面の検索/ソート状態を 1 つの Agent タスクで一覧化させ、改修対象/規模を即座に判定。共通根本原因が浮かび上がる利点もある (= 個別調査では「単発の不具合」に見えていたものが構造的問題と判明)
+
+### 検証手順 (再発防止用)
+
+```
+1. /projects ページを開く
+2. 検索 input に「Stripe」等の文字を入力 → 検索ボタンクリック
+   → URL が ?keyword=Stripe になる ★
+   → 一覧が「Stripe」を含むプロジェクトに絞り込まれる ★ (本 KDD §5.X+102 の主修正)
+3. ブラウザ F5 でリロード
+   → URL の keyword 維持 ★
+   → input に「Stripe」が復元される ★
+   → 一覧は絞り込み状態維持 ★
+4. URL を別タブで共有してアクセス
+   → 同じ絞り込み結果が表示される ★
+```
+
+各 ★ が崩れた場合、本 KDD §5.X+102 の再発と判断。
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): `/projects` 即時修正
+- 後続 PR 予定 (Phase 1-3): `/projects` ソート + `/risks` `/issues` `/retrospectives` + `/memos` `/knowledge` 等
+- 関連修正ファイル (本 PR):
+  - `src/app/(dashboard)/projects/page.tsx` (searchParams 受け取り)
+  - `src/app/(dashboard)/projects/projects-client.tsx` (handleSearch から refresh() 撤去 + initialKeyword 受け取り)
+- 関連 feedback:
+  - `feedback_tenant_isolation` (★最重要★ テナント越境防止、本件と同じく一覧 service の必須前提)
+  - `feedback_billing_data_realtime` (DB 容量・API 利用量等は cron キャッシュ依存を避ける、本件と同じく一覧の整合性方針)
+
+---
+
+## 5.X+103 **★severity-1 請求堅牢性★ Stripe Checkout コールバックを sameSite='strict' cookie が壊す + paymentMethod 切替の 1 ステップ強制遷移化 (2026-05-22 / PR #425)**
+
+### 発生事象
+
+PR #198 で session cookie の `sameSite` を `'lax'` → `'strict'` に強化していたが、Stripe Checkout を導入した PR #425 検証で以下の致命的問題が判明:
+
+1. `/settings/tenant` → 「クレジットカード情報更新」→ Stripe Checkout でカード入力 → 「保存」
+2. Stripe が `success_url` (= `/api/tenants/me/billing/stripe/setup/complete?...`) にブラウザリダイレクト
+3. **sameSite='strict' により session cookie が外部 origin (checkout.stripe.com) からの戻りで送信されない**
+4. `/api/.../complete` handler が未認証扱いになり `/login` に強制 redirect
+5. ユーザは「カード登録成功 → ログイン画面」という不可解な遷移を体験
+6. DB は `paymentMethod='credit_card' + stripeSubscriptionId=null` の **「カード未登録 credit_card」状態** に陥り、月次自動引落が走らず請求漏れ
+
+さらにユーザ調査で:
+7. `paymentMethod` 切替が「フォーム更新 → 別途カード登録ボタン」の **2 ステップ** で、ユーザが (4) のような途中失敗時に **DB に credit_card だけ書き込まれて放置** されるリスクが構造的に存在することも判明。事業継続性に関わる severity-1 問題。
+
+### 根本原因
+
+**原因 1: PR #198 当時の前提 (= 外部 origin からのコールバック無し) が崩れた**
+
+PR #198 のコメント:
+> 'lax' → 'strict' に強化 (CWE-1275 対策)。
+> 本サービスは Credentials provider のみで OAuth/SSO のクロスサイトコールバックが無く...
+
+Stripe Checkout の導入で「外部 origin からの top-level GET redirect」が定常的に発生するようになったが、その時 cookie 設定の見直しが漏れていた。
+
+**原因 2: paymentMethod 変更と Stripe Checkout が独立した 2 ステップ**
+
+旧設計:
+```
+Step A: フォームで paymentMethod=credit_card 選択 → 「請求先情報を更新」 → DB に書き込み
+Step B: 「クレジットカード情報更新」ボタン → Stripe Checkout
+```
+
+ユーザが Step A だけ完了して Step B をスキップ (= タブを閉じる、Stripe で失敗、コールバック失敗) すると、DB は `paymentMethod='credit_card' + stripeSubscriptionId=null` の不整合状態に。
+
+### 解決策
+
+**解決 1: `sameSite='lax'` に戻す**
+
+```ts
+// auth.config.ts
+sessionToken: {
+  options: {
+    sameSite: 'lax', // PR #425 で 'strict' → 'lax' に再緩和
+    ...
+  },
+},
+```
+
+`'lax'` は top-level GET (= リンククリック / form 遷移以外) で cookie 送信を許可するため、Stripe Checkout からの戻りで session が維持される。GET 経由の CSRF は副作用が無いため脅威にならない。POST に対する CSRF 対策は CSRF token + CORS で別途防御。
+
+**解決 2: paymentMethod 切替を 1 ステップ強制遷移化**
+
+```tsx
+// BillingContactSection.handleSubmit
+const isInvoiceToCreditCardTransition =
+  previousPaymentMethod !== 'credit_card' && form.paymentMethod === 'credit_card';
+
+if (isInvoiceToCreditCardTransition) {
+  // 1) paymentMethod を除外して住所等だけ DB 更新
+  delete (bodyForPatch as Partial<typeof bodyForPatch>).paymentMethod;
+  await fetch('/api/tenants/me/billing', { ..., body: JSON.stringify(bodyForPatch) });
+
+  // 2) Stripe Checkout setup URL を取得して強制遷移
+  const setupRes = await fetch('/api/tenants/me/billing/stripe/setup', { ... });
+  window.location.href = setupRes.data.checkoutUrl;
+  // → カード登録成功時のみ /api/.../complete が paymentMethod='credit_card' を書き込む
+  // → 失敗/キャンセル時は paymentMethod は invoice のまま (= 状態が壊れない)
+}
+```
+
+これと併せて server-side ガード:
+```ts
+// tenant-self.service.ts updateBillingContact
+if (
+  input.paymentMethod === 'credit_card' &&
+  current?.paymentMethod !== 'credit_card' &&
+  current?.stripeSubscriptionId == null
+) {
+  throw new CreditCardNotRegisteredError(); // 422 で API reject
+}
+```
+
+UI バイパス (= curl 直叩き) でも DB に `credit_card + sub_id=null` が書けないことを保証。
+
+**解決 3: UI 表示で「請求準備状態」を明示化**
+
+```ts
+// stripe-payment-method-section.tsx
+const currentLabel =
+  state === 'invoice_only'           ? '🏦 銀行振込'
+  : state === 'credit_card_active'   ? '✅ クレジットカード払い (有効・自動引落)'
+  : state === 'credit_card_unregistered' ? '⚠ クレジットカード払い (カード未登録 = 自動請求不可)'
+  : '❌ クレジットカード払い (要対応 = 引落停止リスクあり)';
+```
+
+「有効」「未登録」「要対応」の状態バッジで、ユーザが画面遷移直後に請求準備状態を即判断できる。
+
+### 教訓
+
+1. **★最重要★ 外部 origin からのコールバックを伴う機能を追加したら cookie sameSite を必ず見直す** — 旧設計の前提条件 (=「外部コールバック無し」) が後から崩れることは頻繁。Stripe, OAuth, OIDC, パスキー等を導入する際は強い候補
+2. **「DB に書き込んで途中で離脱できる」設計は請求 invariant を壊す** — paymentMethod のようなクリティカルな状態変更は「成功した時のみ DB に書き込む」設計に統一。途中放置で「半分だけ変更された」状態が DB に残ると後続全部が破綻する
+3. **server-side ガードは UI バイパス前提で書く** — UI で導線を整えても、curl/Postman での直叩きで同じ不整合は作れる。重要な不変条件 (= invariant) は service 層で例外を throw して reject
+4. **状態を「✓ / ⚠ / ❌」記号で表示する** — ユーザに「異常/正常」を一目で伝える最速の手段。文字だけの「(自動引落)」より「✅ 有効・自動引落」のほうが視認性 3 倍以上
+
+### 検証手順 (再発防止用)
+
+```
+事前: scripts/reset-default-tenant-to-beginner.ts を実行 (paymentMethod='invoice', sub_id=null)
+
+シナリオ A: 1 ステップ強制遷移成功パス
+1. /settings/tenant の「請求先情報」セクションで「支払い方法」を「クレジットカード」に変更
+2. 「請求先情報を更新」ボタン押下
+   → 「請求先情報を保存しました。続けてカード登録画面に移動します」トースト ★
+   → 自動で Stripe Checkout (checkout.stripe.com) に遷移 ★
+3. 4242 4242 4242 4242 で「保存」
+4. Stripe からの戻り URL: /settings/tenant?stripe_setup=success ★
+   (= /login に飛ばない、deploy-preview-... のまま、本番 URL に書き換わらない)
+5. 「支払い方法」セクションが「✅ クレジットカード払い (有効・自動引落)」表示 ★
+6. DB 確認: paymentMethod='credit_card' + stripeSubscriptionId='sub_*' + cardVerificationStatus='valid' ★
+
+シナリオ B: server-side ガード (UI バイパス)
+1. curl で直接 PATCH /api/tenants/me/billing with body {"paymentMethod":"credit_card"}
+   → 422 CREDIT_CARD_NOT_REGISTERED ★
+   → DB の paymentMethod は invoice のまま ★
+
+シナリオ C: Stripe Checkout キャンセル時の安全性
+1. シナリオ A の手順 3 で Stripe Checkout の「← 戻る」を押下
+2. /settings/tenant?stripe_setup=canceled に戻る
+3. DB 確認: paymentMethod='invoice' のまま ★ (= 状態が壊れない)
+```
+
+各 ★ が崩れた場合、本 KDD §5.X+103 の再発と判断。
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-1 UAT 中に検出 + 即時修正
+- 関連修正ファイル:
+  - `src/lib/auth.config.ts` (sameSite='lax' に戻す)
+  - `src/services/tenant-self.service.ts` (CreditCardNotRegisteredError + ガード追加)
+  - `src/app/api/tenants/me/billing/route.ts` (422 エラーマッピング)
+  - `src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx` (BillingContactSection 強制遷移)
+  - `src/app/(dashboard)/settings/tenant/stripe-payment-method-section.tsx` (表示文言改善)
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★ 請求 invariant の根本原則)
+  - `feedback_session_clearance_pattern` (cookie 周りの罠系)
+- 関連 KDD §5.X+99 (前提): Stripe Deploy Preview redirect 問題
+- 関連 KDD §5.X+101 (前提): NEXTAUTH_URL context 分離
+
+---
+
+## 5.X+104 **Stripe 自動請求の堅牢性 多層防御 — 現状の実装状況と段階改修ロードマップ (2026-05-22 / PR #425 横断調査)**
+
+### 背景
+
+ユーザフィードバック「カード情報登録/更新が制御されていないと請求業務が漏れ、事業継続性が損なわれる」を受けて、Stripe 自動請求の多層防御を横断調査した結果。
+
+### 現状の防御層 (実装済み)
+
+| 層 | 既存実装 |
+|---|---|
+| **UI** | paymentMethod 切替制御 + Stripe Checkout 強制遷移 (本 PR で完成) |
+| **Service** | `verifyTenantCard()` (期限切れチェック含む) / `completeStripeSetup()` (Subscription 作成 + 二重課金防止) / `cancelTenantStripeSubscription()` |
+| **DB** | `Tenant.stripeCustomerId / stripeSubscriptionId / cardVerificationStatus / autoSuspendScheduledAt` 等 20+ カラム |
+| **Webhook** | **11 イベント対応** (invoice.payment_failed, customer.subscription.updated, payment_method.detached 等) |
+| **Cron** | `stripe-reconcile` (月次 Stripe DB 照合) / `stripe-auto-suspend` (日次自動 suspend) / `stripe-usage-flush` (Usage 送信) |
+| **可視化** | super_admin の請求画面 (`/admin/super/billing/[yearMonth]`) で BillingHistory 表示 |
+| **通知** | `autoSuspend` 時の auditLog 記録 |
+
+### 残存リスクシナリオと推奨改修
+
+| 優先度 | リスク | 現防御 | 不足/推奨 |
+|---|---|---|---|
+| **高** | カード期限切れの「静かな見過ごし」 | `verifyTenantCard()` 実装済だが呼出が「カード登録時のみ」 | **月次 cron `stripe-verify-all-cards` 追加** (3-5h) — 期限切れ 30 日前 admin/user 通知 |
+| **高** | プラン変更時のカード再検証無し | プラン変更ハンドラに `verifyTenantCard()` 明示呼出なし | プラン変更時 hook 追加 (1-2h) — 失敗時はプラン変更 reject |
+| **中** | DB 整合性 drift (`paymentMethod='credit_card' AND sub_id IS NULL` 等) | `stripe-reconcile` は Stripe API 経由の照合のみ | DB 内整合性チェック追加 (4-6h) — 異常 SQL 検出 + admin 通知 |
+| **中** | ユーザ向けカード期限切れ警告 UI | StripePaymentMethodSection で表示済 (本 PR で改善) | より早期の banner 表示 (2-3h) — 設定画面以外のヘッダー領域 |
+| **中** | super_admin 向け「カード状態異常テナント」一覧 | super_admin 画面に専用 filter 無し | filter + ハイライト追加 (3-4h) |
+| **低** | `charge.dispute` / `charge.refunded` Webhook 未対応 | invoice.* のみ対応 | edge case のため当面対応不要 |
+
+**未対応の合計**: 13-20h 規模 (= 別 PR で段階改修)
+
+### 段階改修ロードマップ
+
+**今 PR (#425) で完成**: UI 強制遷移 + server-side ガード + cookie sameSite 修正 + 表示明示化 (=「カード未登録 credit_card」状態の構造的予防)
+
+**Sprint N+1 (= 次の請求改修 PR)**:
+- 月次 `stripe-verify-all-cards` cron (= 期限切れ早期検知)
+- プラン変更時のカード事前検証 (= プラン UP 時の不整合予防)
+
+**Sprint N+2**:
+- DB 整合性チェック cron + admin 通知
+- ユーザ向け早期警告 banner
+
+### 教訓
+
+1. **多層防御は「既存層がカバーしていない隙間」を埋める** — 本サービスは既に Webhook + cron + service で 7 割の防御が完成しており、PR #425 の修正 + 残り 2-3 件の追加で完全な堅牢性に到達する
+2. **「fix も大事だが、何が既に守られているか」の認識共有も重要** — 場当たり対応ではなく、横断調査で全体像を把握してから改修対象を絞ると最小コストで最大効果
+3. **段階改修ロードマップを KDD に残す** — 次の Sprint で何を優先するかが翌日継続時にも明確になる
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): 横断調査 + 即時改修
+- 後続 PR 予定 (Sprint N+1): `stripe-verify-all-cards` cron + プラン変更時カード検証
+- 後続 PR 予定 (Sprint N+2): DB 整合性 cron + UI 警告 banner + admin filter
+- 関連 feedback `feedback_billing_invariant` (★最重要★ 請求 invariant)
+- 関連 feedback `feedback_cron_watchdog_pattern` (cron 監視は「failure 検知」と「期待スケジュールに対し N 時間記録なし」の 2 段構え) — 新規 cron 追加時の前提
+
+---
+
+## 5.X+105 **★severity-1 請求堅牢性★ Stripe Subscription cancel 直後の「DB sub_id 残置」が「銀行振込戻し → カード払い再切替」の二重 Subscription エラーを引き起こす — Webhook 待ちを止めて呼出側で即時クリアする (2026-05-22 / PR #425 TC-7 検証中)**
+
+### 発生事象
+
+TC-7 (credit_card → invoice 戻し) を「DB 直書き or UI 操作」のいずれかで実施したテナントが、すぐに「invoice → credit_card 再切替」を試みると、Stripe Checkout でカード入力後の `completeStripeSetup` Step 4 (Subscription 作成) で **「Stripe 処理エラー (時間をおいて再試行)」** で失敗する。
+
+UI 上は「カード登録に失敗しました」と表示されるが、Stripe Dashboard 側ではカードは正常に登録されている (= 半端な状態が残る)。
+
+### 根本原因
+
+`cancelTenantStripeSubscription` の旧実装が **DB の `stripeSubscriptionId` 等を即時クリアせず Webhook (customer.subscription.deleted) 経由で同期する設計** だったため、
+
+| 環境 | 結果 |
+|---|---|
+| **staging** (Webhook 未設定) | 永久に `stripeSubscriptionId='sub_xxx'` が DB に残る → 再 setup 時に「既存 Subscription 残置」と認識されない / Stripe API レベルで二重作成エラー |
+| **本番** (Webhook あり) | Webhook 同期の数秒〜数分のラグ中に銀行振込戻し → 即カード払い再切替の race condition で同じエラー |
+
+`completeStripeSetup` Step 4 で `createSubscriptionForTenant` が呼ばれた時、テナントは Stripe 側に既に active な `sub_xxx` を持っているため、新規 Subscription 作成 API が duplicate / invalid_request 系のエラーを返す。エラーは `processing_error` にラップされてユーザには「時間をおいて再試行」と表示されるが、根本は二重 Subscription 作成試行。
+
+### 解決策
+
+`cancelTenantStripeSubscription` を「Stripe API 呼出 + 成功時に DB の Stripe 関連フィールド即時クリア」に拡張:
+
+```ts
+async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<void> {
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      stripeSubscriptionId: null,
+      stripeSubscriptionStatus: 'canceled',
+      stripeSubscriptionItemHaikuId: null,
+      stripeSubscriptionItemSonnetId: null,
+      stripeSubscriptionItemStorageId: null,
+      stripeDefaultPaymentMethodId: null,
+      cardVerificationStatus: null,
+      cardLastVerifiedAt: null,
+      autoSuspendScheduledAt: null,
+    },
+  });
+}
+```
+
+`cancel()` 成功時 + 「既に canceled だった」(invalid_request 系) ケース 双方でクリアを呼び出すことで、Webhook 同期の有無 / 遅延に関わらず **常にクリーンな初期状態** に戻る。
+
+`stripeCustomerId` だけはクリアしない (= 再 setup 時に再利用するため保持。Customer 削除は別 API)。
+
+### 教訓
+
+1. **★最重要★ Webhook を「DB 同期の主経路」にする設計は脆い** — Webhook は障害発生 / 設定漏れ / 遅延が常にある。重要な状態遷移 (Subscription cancel / カード変更等) は **呼出元 (アプリ層)** で即時 DB を更新する設計にし、Webhook は冗長 (= 整合性二重チェック) として位置付ける
+2. **「銀行振込戻し → 即カード払い」は normal use case** — ユーザは試行錯誤するため秒単位の再操作は当たり前。「Webhook が来るまで待ってください」は UX として成立しない
+3. **DB drift は静かに進行する** — 「Stripe Dashboard は canceled だが DB は active」のような状態は単発では問題にならないが、再 setup 等の関連操作と組み合わさると爆発する。即時クリアで drift を起こさないことが最優先
+4. **エラーメッセージ「processing_error」では原因が見えない** — 「二重 Subscription 作成試行」が裏で起きていることはユーザにもサポートにも見えない。Stripe API のエラーレスポンス全文を auditLog に残す改善も Sprint N+1 候補
+
+### 検証手順 (再発防止用)
+
+```
+事前: TC-1 完了済 (paymentMethod='credit_card', sub_id='sub_xxx', default_pm='pm_*')
+
+シナリオ A: UI 操作 (TC-7)
+1. /settings/tenant の「請求先情報」セクションで支払い方法を「銀行振込」に変更
+2. 「請求先情報を更新」ボタン押下
+3. DB 確認:
+   npx tsx scripts/check-tenant-stripe-state.ts
+   期待 (★本 KDD 修正後): paymentMethod='invoice' + stripeSubscriptionId=null + stripeDefaultPaymentMethodId=null
+                        + cardVerificationStatus=null
+   (旧実装は staging で sub_id が残る → 本 KDD 再発)
+4. Stripe Dashboard で sub_xxx が Canceled になっているか確認
+
+シナリオ B: 銀行振込戻し → 即カード払い再切替 (race condition 検証)
+1. シナリオ A 完了後、すぐに「請求先情報」で支払い方法を「クレジットカード」に戻す
+2. 「請求先情報を更新」ボタン → 強制 Stripe Checkout 遷移
+3. 別カード (例: 5555 5555 5555 4444) で「保存」
+4. 期待: 戻り先 /settings/tenant?stripe_setup=success + 新カード表示 ★
+   (旧実装はここで Stripe 処理エラー → 本 KDD 再発)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-7 検証中に検出 + 即時修正
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts`
+    - `cancelTenantStripeSubscription` (cancel 成功時 / 既 canceled 時に DB クリア呼出)
+    - `clearTenantStripeSubscriptionFields` (新規 内部ヘルパ)
+- 関連 KDD §5.X+103 (前提): 「カード未登録 credit_card」状態の構造的予防
+- 関連 KDD §5.X+104 (前提): 請求堅牢性多層防御
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★ 請求 invariant)
+  - `feedback_drift_detection_design` (drift 検知設計は両軸の max + 画面表示 + audit + 修復経路の 4 点セット) — 本件は「即時 DB 同期で drift を起こさない」という別アプローチ
+
+---
+
+## 5.X+106 **★severity-1 請求堅牢性★ Stripe `idempotencyKey` を固定 tenantId のみで構成すると「カード再登録」フローが永久に壊れる — paymentMethodId を含めて試行ごとに区別する (2026-05-22 / PR #425 TC-7 再検証中)**
+
+### 発生事象
+
+KDD §5.X+105 の修正 (cancel 時の DB 即時クリア) を適用後も、`/settings/tenant` で「銀行振込 → クレジットカード」切替フローを **2 回目以降** 実行すると、Stripe Checkout でカード入力後の `completeStripeSetup` Step 4 (Subscription 作成) が **`processing_error`** で失敗。Stripe API のエラーメッセージは:
+
+> Keys for idempotent requests can only be reused with the same parameters they were first used with.
+
+### 根本原因
+
+`createSubscriptionForTenant` の `idempotencyKey` が **テナント ID のみ** で構成されていた:
+
+```ts
+stripe.subscriptions.create(params, {
+  idempotencyKey: `subscription:create:${input.tenantId}`,
+});
+```
+
+Stripe の冪等性 (idempotency) 仕様:
+- 同じ `idempotencyKey` + **同じ parameters** → 1 回目の結果を返す (= 副作用は 1 回)
+- 同じ `idempotencyKey` + **異なる parameters** → **エラーで reject** (= 違反扱い)
+
+カード再登録フローでは:
+- 1 回目 (TC-1): `idempotencyKey = subscription:create:00000000-...` で `default_payment_method=pm_VISA_xxx`
+- 2 回目 (cancel 後の再切替): 同じ `idempotencyKey` だが `default_payment_method=pm_新カード_yyy`
+- → Stripe API が「異なる parameters での再利用」と判定して reject
+- → アプリ層で `processing_error` にラップされてユーザに「Stripe 処理エラー (時間をおいて再試行)」表示
+
+つまり **1 つのテナントは生涯 1 回しか Subscription を作れない実装** になっていた。テナント解約 → 再契約 / カード払い ↔ 銀行振込の往復 / 試行錯誤 等の **正常なユースケース** すべてで Stripe 処理エラーが発生。
+
+### 解決策
+
+`idempotencyKey` に `paymentMethodId` を含めて「同一試行 (= 同じカード) なら冪等 / 異なる試行 (= 異なるカード) なら新規作成」に変更:
+
+```ts
+stripe.subscriptions.create(params, {
+  idempotencyKey: `subscription:create:${input.tenantId}:${input.paymentMethodId}`,
+});
+```
+
+これにより:
+- ネットワーク失敗時のリトライ (= 同じ tenantId + 同じ paymentMethodId) → 1 回目の結果を返す (= 二重課金なし)
+- カード再登録 (= 同じ tenantId + 異なる paymentMethodId) → 新規 Subscription を作成
+
+### 教訓
+
+1. **★最重要★ Stripe `idempotencyKey` は「リトライしたい単位」で組み立てる** — `tenantId` だけだと「テナントの生涯 1 回」の制約になる。正しくは「retry したい行為」を表す key (= テナント + 試行を区別する変数)。Subscription 作成なら `tenantId + paymentMethodId`、決済なら `tenantId + invoiceId + amount` 等
+2. **冪等性の目的は「ネットワーク失敗時の二重実行を防ぐ」こと** — 「同じ tenantId は永久に同じ subscription」ではない。冪等性キーの設計時に「retry したい単位」を明確化する
+3. **エラーメッセージ「processing_error (時間をおいて再試行)」では原因が永久に分からない** — Stripe API のエラーレスポンス全文を `auditLog` / `console.error` に残す改善 (KDD §5.X+104 Sprint N+1 候補) は本件で再認識。今 PR の debug log 削除前にここも検討
+4. **TC-1 だけでは検出できない罠** — 1 回目の setup は idempotencyKey の保護が新規作成なので成功する。2 回目以降の操作 (= TC-7 cancel 後の再切替) で初めて顕在化する。**「同じユーザ操作を 2 回繰り返すテストパターン」を E2E に組込むべき** (= 「冪等性 / state machine の往復」を網羅するテスト設計)
+
+### 検証手順 (再発防止用)
+
+```
+事前: reset-default-tenant-to-beginner.ts で完全初期化
+
+シナリオ A: 1 回目の setup (TC-1 標準フロー、本 KDD 修正なしでも成功)
+1. /settings/tenant で支払い方法を「クレジットカード」に変更 → 「請求先情報を更新」
+2. Stripe Checkout で Visa 4242 → 「保存」
+3. 戻り URL: /settings/tenant?stripe_setup=success ★
+4. DB: paymentMethod='credit_card' + stripeSubscriptionId='sub_*' (= Visa)
+
+シナリオ B: 2 回目の setup (★本 KDD 修正の真価検証★)
+5. シナリオ A 完了後、支払い方法を「銀行振込」に変更 → 「請求先情報を更新」
+   → KDD §5.X+105 修正で DB の sub_id / pm_id がクリアされる
+6. すぐに支払い方法を「クレジットカード」に再変更 → 「請求先情報を更新」
+7. Stripe Checkout で 別カード (例 Mastercard 5555 5555 5555 4444) → 「保存」
+8. 戻り URL: /settings/tenant?stripe_setup=success ★ (本 KDD 修正なしだと processing_error)
+9. DB: 新 sub_id + Mastercard pm_id
+
+シナリオ B が成功すれば本 KDD §5.X+106 の修正が機能。
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-7 再検証中に検出 + 即時修正
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts` (`createSubscriptionForTenant` の idempotencyKey)
+- 関連 KDD:
+  - §5.X+105 (前提): cancel 時の DB 即時クリア (本 KDD が直接の後続事案)
+  - §5.X+103, §5.X+104 (Stripe 堅牢性 系列)
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★)
+- 関連 Stripe 公式: [Idempotent requests - Idempotency keys](https://docs.stripe.com/api/idempotent_requests)
+
+---
+
+## 5.X+107 **★severity-1 請求堅牢性★ Stripe Customer に「複数 active Subscription」が並存して二重課金リスク — setup 直前に全 active を強制 cancel して DB drift を自動修復する (2026-05-22 / PR #425 TC-1 反復検証中)**
+
+### 発生事象
+
+PR #425 TC-1 を複数回繰返し検証中、Stripe Customer Portal を開いたユーザが **「現在のサブスクリプション」が 2 つ並んで表示されている** ことを発見:
+
+- Subscription 1: 「Haiku per-call + Sonnet per-call」 — default Visa •••• 4242
+- Subscription 2: 「Haiku per-call + Sonnet per-call」 — default Mastercard •••• 4444
+
+→ **同 Customer に active な Subscription が 2 つ並存 = 月次で両方から引落される二重課金状態**。たすきば DB の `stripeSubscriptionId` は 1 つだけ知っているため、もう一方の請求は「アプリ層が知らない請求」として運営側に届く (= ユーザ視点では「いくら払わされたかわからない」UX 災害、運営視点では「コスト超過のクレーム不可避」)。
+
+### 根本原因
+
+setup 経路に「**setup 前に同 Customer の active Subscription を cancel する**」ガードが無かったため、以下のシナリオで二重作成が起きる:
+
+1. TC-1 (1 回目): Subscription A 作成 (Mastercard) — Stripe + DB 整合
+2. **DB drift 発生** (= 以下のいずれか):
+   - 開発者が `script` で `paymentMethod='invoice'` を直書き
+   - TC-7 (UI cancel) を経由しても Webhook 遅延中に再 setup
+   - 何らかの障害で `cancelTenantStripeSubscription` が呼ばれず DB だけ書き換わった
+3. 再 TC-1 (UI): DB の `stripeSubscriptionId=null` を見て「新規作成」フローに入る
+4. `createSubscriptionForTenant` は Stripe API を叩いて新 Subscription B 作成 (Visa) — 既存 A は無関係に並存
+5. → Stripe Customer に Subscription A + B が並存
+6. 月次 cron / Stripe 自動引落で **両方から請求**
+
+### 解決策
+
+`completeStripeSetup` の Step 3.5 として「同 Customer の active Subscription を全 cancel」を追加:
+
+```ts
+// Step 3.5 (新規追加): 既存 active Subscription を全 cancel (DB drift 修復 + 二重防止)
+await cancelAllActiveStripeSubscriptionsForCustomer(sessionCustomerId);
+
+// Step 4 (既存): 新規 Subscription 作成
+const subscriptionResult = await createSubscriptionForTenant({...});
+```
+
+実装:
+```ts
+async function cancelAllActiveStripeSubscriptionsForCustomer(customerId: string): Promise<void> {
+  const stripe = getStripe();
+  const listResult = await withStripeError(() =>
+    stripe.subscriptions.list({ customer: customerId, status: 'active', limit: 100 }),
+  );
+  if (!listResult.ok) return;
+  for (const sub of listResult.value.data) {
+    await withStripeError(() =>
+      stripe.subscriptions.cancel(sub.id, { invoice_now: true, prorate: false }),
+    );
+    // 失敗時は console.warn のみで続行 (= 既 canceled / Webhook 経由で最終整合)
+  }
+}
+```
+
+これにより:
+- DB に sub_id が無くても、Stripe 側に active があれば必ず先に cancel される
+- DB drift が自動修復される (= 過去の残骸を毎回クリーンアップ)
+- 二重 Subscription が並存する状態が **構造的に発生不可** になる
+
+### 教訓
+
+1. **★最重要★ 「アプリ層のクリーンアップ」と「Stripe 側の状態」は別物。両方を毎回見る** — DB に「subscription_id 持っていません」と書いてあっても Stripe 側に active があるかもしれない。setup のような「副作用大」な操作の前に Stripe 側を実体確認する習慣
+2. **DB drift 修復ロジックは「能動的なクリーンアップ」が必要** — Webhook で「いずれ同期される」を期待してはいけない。Webhook は障害発生 / 設定漏れ / 遅延が常にある。重要な状態遷移の前後で能動的に Stripe API を叩いて整合性を保証する
+3. **TC-1 を反復実行すると初めて顕在化する** — 単発の TC-1 では Subscription A だけが作成されるので問題は見えない。「同じ TC を何度も実行する」「DB を直接操作してから TC を実行する」等の **異常パターン** をテスト設計に組込むことで早期発見できる (= KDD §5.X+106 と同様の教訓)
+4. **「現状の Customer Portal を開く」習慣** — Stripe Dashboard の Customer Portal で実体確認するクセを TC 中に毎回つける。アプリ画面と乖離していたら drift の証拠
+
+### 検証手順 (再発防止用)
+
+```
+事前: TC-1 完了済 (paymentMethod='credit_card', sub_id='sub_A', Mastercard 登録)
+
+シナリオ A: 直接 DB 操作で DB drift を発生させる (= 異常系再現)
+1. scripts で paymentMethod='invoice' に直書き (= TC-7 UI を経由しない)
+   → DB: paymentMethod='invoice', stripeSubscriptionId=null
+   → Stripe: Subscription A は active のまま
+
+2. UI で「クレジットカード」に再切替 → 「請求先情報を更新」 → Stripe Checkout → 別カード入力
+3. 戻り URL: /settings/tenant?stripe_setup=success ★
+
+4. Stripe Dashboard で Customer の Subscription を確認:
+   → Subscription A (Mastercard) は Canceled ★ (= 本 KDD §5.X+107 修正による Step 3.5)
+   → Subscription B (Visa) のみ Active ★
+   (旧実装は A + B が並存 → 本 KDD 再発)
+
+シナリオ B: Customer Portal でカード変更 (二重作成しないことの確認)
+1. Customer Portal で別カード追加 → デフォルトに変更
+2. アプリ側で何もしない (= setup 経路を通らない)
+3. Stripe Subscription は 1 件のまま ★ (= Customer Portal の操作だけでは新規 Subscription は作られない)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-1 反復検証中に Customer Portal で実体確認して検出
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts`
+    - `completeStripeSetup` Step 3.5 として `cancelAllActiveStripeSubscriptionsForCustomer` 呼出
+    - 新規 内部ヘルパ `cancelAllActiveStripeSubscriptionsForCustomer`
+- 関連 KDD:
+  - §5.X+105 (cancel 時 DB 即時クリア)
+  - §5.X+106 (idempotencyKey)
+  - 上記 2 件と組み合わせて TC-1 反復 / TC-7 race condition / DB drift すべてに対応
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★)
+  - `feedback_drift_detection_design` (= 本件は「修復」軸の実装)
+
+---
+
+## 5.X+108 **★severity-1 一貫性★ Stripe `Customer.invoice_settings.default_payment_method` ≠ `Subscription.default_payment_method` — 「画面のカード = 請求カード」一貫性のため Subscription 側を優先取得する (2026-05-22 / PR #425 TC-3 検証中)**
+
+### 発生事象
+
+PR #425 TC-3 (3D Secure 認証) の検証中、新規 3DS Visa `4000 0027 6000 3184` でカード登録 → Stripe Checkout 完了 → アプリ DB は `stripeDefaultPaymentMethodId='pm_新Visa'` で正常更新。
+
+ただしアプリ画面の「請求に使用されるカード」表示は **古い `Mastercard •••• 4444`** のまま。Stripe Customer Portal で確認すると:
+
+- 「現在の Subscription」: **Visa •••• 3184** (= 実際の請求カード = TC-3 の新規 Visa)
+- 「決済手段 / デフォルト」: **Mastercard •••• 4444** (= Customer Portal で過去に設定)
+
+つまりアプリ画面が **Customer のデフォルト (Mastercard)** を表示している一方、**実際の月次請求は Subscription のデフォルト (Visa)** から発生する状態。**「画面に出ているカード ≠ 実際に請求されるカード」** という KDD §5.X+103 で死守すべき一貫性が破綻。
+
+### 根本原因
+
+Stripe の **2 つの異なる default_payment_method** の混同:
+
+| フィールド | 意味 | 設定経路 |
+|---|---|---|
+| `Customer.invoice_settings.default_payment_method` | 新規 Subscription / 単発決済の **初期値** | Customer Portal の「デフォルトに設定」/ Customer 作成時 / 開発者が API で明示設定 |
+| `Subscription.default_payment_method` | **その Subscription 固有の引落カード** (= 実際の請求カード) | Subscription 作成時の引数 / API で別途設定 |
+
+**新規 Subscription を作っても Customer のデフォルトは自動更新されない**。テナント運用では:
+
+1. TC-1: 初回 Stripe Checkout で `default_payment_method=Visa pm_A` で Subscription 作成 → Customer のデフォルトも (Subscription 作成時に自動的に) Visa に
+2. ユーザが Customer Portal で **Mastercard をデフォルトに変更** → `Customer.invoice_settings.default_payment_method = Mastercard pm`
+3. ただし既存 Subscription の引落は Visa のまま (= Stripe 仕様、Subscription レベルが優先)
+4. ユーザが TC-7 で銀行振込戻し → Subscription cancel
+5. 再度 TC-3 で新規 3DS Visa で setup → 新規 Subscription 作成 (`default_payment_method=新Visa pm`)
+6. `Customer.invoice_settings.default_payment_method` は依然として Mastercard (= ステップ 2 のまま、新 Subscription 作成では更新されない)
+7. **アプリ画面**: getStripeCardSummary が Customer.invoice_settings を見る → Mastercard 表示 (= 古い)
+8. **実際の請求**: 新 Subscription.default_payment_method = 新 Visa → Visa から引落
+
+ユーザは画面を信頼しているため「Mastercard に請求が来る」と思っているが、実際は「Visa に請求が来る」状態。**信用問題に直結する severity-1 不具合**。
+
+### 解決策
+
+`getStripeCardSummary` を **「Subscription があれば Subscription.default_payment_method 優先、なければ Customer.invoice_settings.default_payment_method」** の fallback 設計に変更:
+
+```ts
+async function getStripeCardSummary(tenantId) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { stripeCustomerId: true, stripeSubscriptionId: true },
+  });
+  if (!tenant?.stripeCustomerId) return null;
+  const stripe = getStripe();
+
+  // 優先: Subscription.default_payment_method (= 実際の請求カード)
+  if (tenant.stripeSubscriptionId) {
+    const subResult = await withStripeError(() =>
+      stripe.subscriptions.retrieve(tenant.stripeSubscriptionId!, {
+        expand: ['default_payment_method'],
+      }),
+    );
+    if (subResult.ok) {
+      const pm = subResult.value.default_payment_method;
+      if (pm && typeof pm !== 'string' && pm.type === 'card' && pm.card) {
+        return { brand: pm.card.brand, last4: pm.card.last4, expMonth: pm.card.exp_month, expYear: pm.card.exp_year };
+      }
+    }
+  }
+
+  // フォールバック: Customer.invoice_settings.default_payment_method
+  //   - Subscription 未作成テナント (= setup 前)
+  //   - Subscription はあるが default_payment_method 未設定 (Stripe 仕様で Customer レベルが請求カード)
+  const customerResult = await withStripeError(() =>
+    stripe.customers.retrieve(tenant.stripeCustomerId!, { expand: ['invoice_settings.default_payment_method'] }),
+  );
+  if (!customerResult.ok || customerResult.value.deleted) return null;
+  const pm = customerResult.value.invoice_settings?.default_payment_method;
+  if (!pm || typeof pm === 'string' || pm.type !== 'card' || !pm.card) return null;
+  return { brand: pm.card.brand, last4: pm.card.last4, expMonth: pm.card.exp_month, expYear: pm.card.exp_year };
+}
+```
+
+これで「アプリ画面のカード = 実際に毎月引落されるカード」の一貫性が完全に担保される。
+
+### 教訓
+
+1. **★最重要★ Stripe `Customer.default_payment_method` と `Subscription.default_payment_method` は別物** — 同じ API ドキュメントに並んでいるため混同しやすいが、Customer 側は「新規作成時の初期値」、Subscription 側は「実際の引落カード」。**請求カードを画面に出すなら必ず Subscription 側**。Customer 側は「ユーザが Customer Portal でいじれるデフォルト」と理解する
+2. **「Customer Portal でデフォルトを変更してもアプリ Subscription の引落カードは変わらない」** — これは Stripe 仕様。Customer Portal の「デフォルト」UI は新規 Subscription 作成時にしか効かない。既存 Subscription のカード変更は Subscription 単位で別途更新が必要 (= Stripe API `stripe.subscriptions.update({default_payment_method})`)
+3. **「画面と実体のズレ」は signing 経由でしか検出できない** — Customer Portal でカード変更 + 既存 Subscription 残置のシナリオは、TC-1 単発では出ない。「Customer Portal で操作してから再度アプリ画面を開く」テストパターンを E2E に組込むべき
+4. **3DS カード setup 検証は「複数カードが Customer に attach された状態」を必ず作る** — 1 枚目だけだと Customer デフォルト = Subscription デフォルトで一致する偶然があり、本件のような乖離が顕在化しない
+
+### 検証手順 (再発防止用)
+
+```
+事前: TC-1 完了済 (Mastercard を Customer Portal でデフォルトに設定済) + 銀行振込戻し済
+
+1. 「請求先情報」セクションで支払い方法を「クレジットカード」 → 「請求先情報を更新」
+2. Stripe Checkout で別カード (= 3DS Visa 4000 0027 6000 3184) 入力 → 「保存」 → 3DS 認証 COMPLETE
+3. 戻り URL: /settings/tenant?stripe_setup=success ★
+4. アプリ画面「請求に使用されるカード」表示確認:
+   → Visa •••• 3184 表示 ★ (= 新規 Subscription の引落カード、本 KDD §5.X+108 修正後)
+   (旧実装は Mastercard •••• 4444 表示 → 本 KDD 再発)
+5. Customer Portal で確認:
+   → 「現在の Subscription」: Visa •••• 3184 ★ (= アプリ画面と一致)
+   → 「決済手段 / デフォルト」: Mastercard •••• 4444 (= Customer Portal レベルのデフォルト、これはアプリ画面と無関係で OK)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-3 検証中、Customer Portal で実体確認して検出
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts` (`getStripeCardSummary` を Subscription 優先に変更)
+- 関連 KDD:
+  - §5.X+103 (「画面のカード = 請求カード」一貫性原則)
+  - §5.X+107 (二重 Subscription 防止)
+- 関連 feedback `feedback_billing_invariant` (★最重要★)
+- 関連 Stripe 公式: [Subscription default_payment_method](https://docs.stripe.com/api/subscriptions/object#subscription_object-default_payment_method)
+- 関連 Stripe 公式: [Customer invoice_settings](https://docs.stripe.com/api/customers/object#customer_object-invoice_settings)
+
+### 追加修正 (2026-05-22 / 同日中の追加発見): Subscription 作成時に Customer.invoice_settings.default_payment_method も同期する
+
+§5.X+108 の修正でアプリ画面と Subscription の引落カードは一致するようになったが、ユーザ
+Customer Portal を開くと **「決済手段 / デフォルト」が Subscription の引落カードと違うカード**
+(= 過去に Customer Portal で手動設定したまま) のため、ユーザ視点では「DB と Stripe が同期して
+いない」 = 混乱を招く UX。
+
+技術的には Stripe 仕様通り (Subscription レベルと Customer レベルは独立した別概念) だが、
+ユーザの自然な期待 「Subscription のカード = Customer Portal のデフォルトカード」を満たすため、
+`completeStripeSetup` の Step 6 として Customer の `invoice_settings.default_payment_method`
+を Subscription の `default_payment_method` と一致させる API 呼出を追加:
+
+```ts
+// completeStripeSetup の Step 5 (DB 更新) 後
+await stripe.customers.update(sessionCustomerId, {
+  invoice_settings: {
+    default_payment_method: paymentMethodId,
+  },
+});
+```
+
+これにより以下 3 点が **完全一致**:
+1. アプリ画面 (= `getStripeCardSummary` の戻り値 = Subscription.default_payment_method)
+2. Stripe Customer Portal の「決済手段 / デフォルト」
+3. 実際の月次引落カード (= Subscription.default_payment_method)
+
+Customer Portal でユーザが手動でデフォルト変更した場合はその選択を尊重 (= 上書きしない)。
+次回 setup (= 新規 Subscription 作成) 時にまた新カードに同期される。
+
+失敗時の挙動: 同期失敗は `console.warn` のみで続行 (= Subscription は既に作成成功している、
+Customer デフォルトは「ズレるだけ」で課金事故にはならない)。
+
+### 追加教訓
+
+5. **「Stripe 仕様通りで正しい挙動」と「ユーザ視点での自然な期待」は別物** — 技術的に正しくても
+   ユーザが混乱するなら UX 改善で寄せる。本件は「Subscription = Customer デフォルト」を強制的に
+   同期する選択を取った
+6. **「3 点完全一致」を invariant に追加** — アプリ画面 = Customer Portal = 実引落カードの 3 点
+   が常に一致するよう、Subscription 作成時に Customer デフォルトも同期する。これにより
+   「画面と Customer Portal で別の表示」というユーザの不安を構造的に排除
+
+---
+
+## 5.X+109 **★severity-1 一貫性★ Stripe Customer Portal でデフォルト変更しても既存 Subscription の引落カードは変わらない仕様への根本対策 — カード変更動線を Portal から Stripe Checkout 直 update に統一 (2026-05-22 / PR #425 TC-3 反復検証中)**
+
+### 発生事象
+
+KDD §5.X+108 で「Subscription 作成時に Customer.invoice_settings.default_payment_method を同期」した後も、**ユーザが Customer Portal で別カードをデフォルトに変更** すると以下のズレ事故が発生:
+
+- ✅ Customer.invoice_settings.default_payment_method = ユーザが Portal で選んだカード (= Mastercard)
+- ❌ **Subscription.default_payment_method = 旧カードのまま (= Visa)**
+- → アプリ画面は Subscription を優先表示 (= KDD §5.X+108) のため Visa 表示
+- → ユーザ視点: 「Portal でデフォルトを Mastercard にしたのに、画面が Visa を表示」「次の引落も Visa から発生」
+
+ユーザは **「Portal でデフォルト変更 = 実引落カード変更」と認識** しているが、Stripe 仕様では「Customer デフォルト = 新規 Subscription の初期値」「Subscription デフォルト = その Subscription の引落カード」と独立しており、Portal の操作では既存 Subscription は更新されない。
+
+### 根本原因
+
+Stripe 仕様の不一致:
+- Customer Portal の UI: 「デフォルトに設定」ボタンで Customer.invoice_settings.default_payment_method のみ更新
+- 既存 Subscription の引落カード変更: API `stripe.subscriptions.update({ default_payment_method })` を別途呼ぶ必要あり
+- これは Portal UI には存在しない (= 開発者が API で実装する必要あり)
+
+本サービスでは旧設計で「クレジットカード情報更新」ボタン → Customer Portal を新タブで開く動線にしていた。ユーザは Portal でカード追加 + デフォルト設定するが、Subscription への反映が起こらず混乱事故が発生。
+
+### 解決策
+
+**「クレジットカード情報更新」ボタンの動線を Customer Portal から Stripe Checkout (新カード入力) に統一** + completeStripeSetup に「カード変更モード」分岐追加:
+
+```ts
+// completeStripeSetup の Step 2.5 (新規追加): カード変更モード分岐
+if (tenant.paymentMethod === 'credit_card' && tenant.stripeSubscriptionId != null) {
+  // Step A: PaymentMethod を Customer に attach (冪等)
+  await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
+  // Step B: 既存 Subscription の default_payment_method を新カードに update
+  await stripe.subscriptions.update(subId, { default_payment_method: paymentMethodId });
+  // Step C: Customer.invoice_settings.default_payment_method も同期 (3 点完全一致のため)
+  await stripe.customers.update(customerId, {
+    invoice_settings: { default_payment_method: paymentMethodId },
+  });
+  // Step D: DB 更新
+  await prisma.tenant.update({ where: { id: tenantId }, data: { stripeDefaultPaymentMethodId, cardLastVerifiedAt, cardVerificationStatus: 'valid' } });
+  // Subscription 維持 (= 当月以降の請求すべて新カードに、二重請求なし)
+  return { ok: true, value: { subscriptionId, customerId, paymentMethodId } };
+}
+// それ以外 (= Subscription 未作成) は従来通り新規 Subscription 作成
+```
+
+UI 側変更:
+- 「クレジットカード情報更新」ボタンは常に Stripe Checkout (setup mode) を起動
+- Customer Portal リンクは撤去 (= MVP では不要、請求履歴は別途 `/settings/tenant/billing` で表示)
+- 「請求履歴を見る」リンクを Customer Portal リンクの代わりに配置
+
+POST /setup の旧 ALREADY_HAS_SUBSCRIPTION 409 ガード (= KDD §5.X+100) は撤去 (= カード変更モード経路を許容するため)。
+
+### 教訓
+
+1. **★最重要★ 「Customer Portal でカード管理」を前提とした設計は Stripe 仕様の罠を踏みやすい** — Portal の「デフォルト変更」「カード追加」操作は Customer レベルのみで、既存 Subscription の引落カードは別途 API で更新する必要がある。アプリ側で全て制御する設計の方が UX 一貫性を保てる
+2. **「ユーザの直感」を最優先する設計判断** — 技術的に正しい (= 画面 = Subscription = 実引落) 状態でも、ユーザの認識「Portal で変更したら引落も変わる」とズレるなら、UX 問題として修正する必要がある。Portal 経由のカード変更ではなく、アプリ画面のボタン経由でのみカード変更を許す設計に統一する
+3. **「カード変更モード」と「新規 setup モード」を 1 つの handler に統合する** — completeStripeSetup の Step 2.5 として「Subscription 既存ならカード変更、未作成なら新規作成」に分岐することで、UI 側は単一ボタン (= 「クレジットカード情報更新」) で両方の動線を吸収できる
+4. **PR #100 で導入した「ALREADY_HAS_SUBSCRIPTION 409 ガード」のような防御策は将来の設計変更時に撤去要否を必ず再評価する** — 当時は Customer Portal でカード管理する前提で必要だったが、設計変更でカード変更動線が変わったら不要になる。KDD §5.X+100 / §5.X+109 のクロスリンクで撤去履歴を追える
+
+### 検証手順 (再発防止用)
+
+```
+事前: TC-1 完了済 (Visa 4242 で初回登録、Subscription active)
+
+シナリオ A: カード変更モード (新動線)
+1. /settings/tenant の「クレジットカード情報更新」ボタンを押下
+2. 確認ダイアログ「クレジットカード情報を変更しますか?」→ OK
+3. Stripe Checkout に遷移 (= 新カード入力画面)
+4. 別カード (例 Mastercard 5555 5555 5555 4444) で「保存」
+5. 戻り URL: /settings/tenant?stripe_setup=success ★
+6. アプリ画面「請求に使用されるカード」: Mastercard •••• 4444 ★
+7. Customer Portal 「決済手段 / デフォルト」: Mastercard •••• 4444 ★ (= 3 点完全一致)
+8. DB 確認: stripeSubscriptionId は同じ ID 維持 (= 再作成されていない) ★
+9. DB 確認: stripeDefaultPaymentMethodId は新 Mastercard pm_* ★
+
+シナリオ B: 「請求履歴を見る」リンク
+10. 「クレジットカード情報更新」ボタン横の「📋 請求履歴を見る」リンクをクリック
+11. /settings/tenant/billing に遷移 ★ (= 直近 6 ヶ月の請求履歴一覧)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-3 反復検証中、Customer Portal でカード変更しても画面 / 引落が変わらない混乱を検出
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts` (completeStripeSetup に Step 2.5 カード変更モード分岐追加)
+  - `src/app/api/tenants/me/billing/stripe/setup/route.ts` (ALREADY_HAS_SUBSCRIPTION 409 ガード撤去)
+  - `src/app/(dashboard)/settings/tenant/stripe-payment-method-section.tsx` (Portal 経路撤去、Checkout 統一、請求履歴リンク追加)
+- 関連 KDD:
+  - §5.X+100 (旧 ALREADY_HAS_SUBSCRIPTION ガード導入、本 KDD で撤去)
+  - §5.X+108 (Customer / Subscription default 同期、本 KDD はその完全版)
+- 関連 feedback `feedback_billing_invariant` (★最重要★)
+
+---
+
+## 5.X+110 **★severity-2 品質ゲート★ bash pipe で exit code を誤判定 → CI が fail するのに「ローカルでは PASS」と錯覚する罠 + 新規 API route で `e2e:coverage-check` 漏れ (2026-05-22 / PR #425 CI fail 検出)**
+
+### 発生事象
+
+PR #425 のマージ前最終 quality gates 確認で、ローカル `pnpm e2e:coverage-check | tail -10` の結果を「✅ PASS」と判定して push したが、GitHub Actions の **Lint / Test / Build** ジョブが exit code 1 で失敗:
+
+```
+❌ docs/test/E2E_COVERAGE.md に未記載の機能があります:
+   - /api/tenants/me/billing/stripe/setup-with-existing-card
+ELIFECYCLE  Command failed with exit code 1.
+```
+
+新規追加した API route (`setup-with-existing-card`) を `docs/test/E2E_COVERAGE.md` に追記し忘れていた。CI の `pnpm e2e:coverage-check` で正しく検出されたが、**ローカル確認は通っていると誤認識** していた。
+
+### 根本原因
+
+Bash の **pipe 末尾コマンドの exit code が全体の exit code として返される** 仕様:
+
+```bash
+pnpm e2e:coverage-check | tail -10
+# exit code は tail のもの (= 通常 0)、pnpm 本体の exit code は失われる
+```
+
+`pnpm e2e:coverage-check` が exit 1 (= 失敗) でも、`tail` は通常 exit 0 を返すため、シェルレベルでは「成功」と判定される。本セッション中の quality gate 確認 (= 全 commit の lint / tsc / test / build) はすべてこの pipe で実行していたため、tsc / test ファイルの型 drift / e2e カバレッジ漏れが見落とされた状態で commit が積まれた。
+
+実は本 PR 開始前にも複数の既存テスト型エラー (= `ApiUsageReconcileResult` / `TenantMonthlyResetResult` の drift) が存在しており、本 PR では検出できなかったため別 PR に持ち越しとなる。
+
+### 解決策
+
+#### 即時対応 (= 本 PR で対応済)
+- `docs/test/E2E_COVERAGE.md` に `/api/tenants/me/billing/stripe/setup-with-existing-card` の skip エントリ追加
+- 「`pnpm e2e:coverage-check; echo "EXIT: $?"`」で exit code を明示出力する確認方法に切替
+
+#### 再発防止 (= 今後の運用)
+
+**Quality gate コマンドを実行する時は、必ず以下のいずれかで exit code を保証**:
+
+| 方法 | 例 | 用途 |
+|---|---|---|
+| **A (推奨)**: コマンド単体実行 + `echo $?` で exit code 明示 | `pnpm lint; echo "EXIT: $?"` | 単発確認 |
+| B: `set -o pipefail` で pipe 全体の最大 exit を採用 | `set -o pipefail; pnpm lint \| tail -5` | スクリプト内 |
+| C: 出力を一旦ファイルに保存して exit を確認 | `pnpm lint > /tmp/lint.out 2>&1; echo "EXIT: $?"; tail -20 /tmp/lint.out` | 長い出力時 |
+| D: バックグラウンド実行 (= タスク完了通知に exit code 含まれる) | Claude Code Bash tool の `run_in_background` | バックグラウンド |
+
+特に Claude Code の Bash tool は **バックグラウンドコマンドの実際の exit code をタスク完了通知に含めて返す** (= `Background command "xxx" completed (exit code 1)`)。pipe で見た目を整形する前に、まず exit code を取得することが重要。
+
+### 教訓
+
+1. **★最重要★ `pnpm xxx | tail -5` パターンは exit code 誤認識の温床** — `tail` / `head` / `grep` 等の filter コマンドは pnpm 本体の失敗を隠す。Quality gate 確認では必ず exit code を別途取得する
+2. **CI で初めて検出される問題は「ローカル品質ゲートの誤認識」が原因のことが多い** — ローカルで PASS と判定したのに CI で fail する場合、まず「ローカル判定が正しかったか」を疑う (= pipe / バックグラウンド実行 / キャッシュ等)
+3. **新規 page.tsx / route.ts 追加時は必ず `docs/test/E2E_COVERAGE.md` も更新** — `pnpm e2e:coverage-check` の CI gate に弾かれる前に手元で対応 (= feedback_e2e_coverage_gate)
+4. **`netlify-ignore.sh` の docs-only skip 判定を活用する** — docs/test/E2E_COVERAGE.md の追加修正だけ push する場合、Netlify Deploy Preview の rebuild は skip され credit 消費なし
+
+### 検証手順 (再発防止用)
+
+```
+新規 page.tsx / route.ts 追加 → commit 前に必ず:
+1. pnpm e2e:coverage-check; echo "EXIT: $?"
+2. EXIT が 0 でない場合、出力に従い docs/test/E2E_COVERAGE.md を更新
+3. 再度 pnpm e2e:coverage-check; echo "EXIT: $?" で EXIT 0 確認
+4. commit & push
+
+CI fail を疑似再現するには:
+1. 適当な API route を新規作成して docs に追記せずに commit
+2. push 後の GitHub Actions ログで「Lint / Test / Build」が exit 1 で fail することを確認
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): マージ前最終 quality gates で発覚
+- 関連修正ファイル:
+  - `docs/test/E2E_COVERAGE.md` (`/api/tenants/me/billing/stripe/setup-with-existing-card` skip エントリ追加)
+- 関連 KDD §5.X+102 (検索/ソート横断問題、同じく「CI gate で初めて検出」事案)
+- 関連 feedback `feedback_e2e_coverage_gate` (新規 route.ts / page.tsx を追加したら pnpm e2e:coverage-check を必ずローカル実行)
+- 関連 doc `docs/developer-guide/LOCAL_TEST_GUIDE.md` (= 本 PR で新規作成、quality gate 実行時の注意事項として本 KDD 内容を追記検討)
+
+---
+
+## 5.X+111 **★severity-2 品質ゲート★ 「実装側の契約変更 (idempotencyKey スキーマ拡張)」と「invariants test の exemption 漏れ (新規 service ファイル追加)」の 2 件同時 CI fail (2026-05-22 / PR #425 2 回目 CI fail)**
+
+### 発生事象
+
+§5.X+110 の対応 (`docs/test/E2E_COVERAGE.md` 追記) を push した後、**Lint / Test / Build** ジョブが再度 fail。`pnpm test --coverage` で 2 件の test failure:
+
+1. `src/services/stripe-billing.service.test.ts > createSubscriptionForTenant > Subscription Items: haiku + sonnet + storage Plus が含まれる`
+   ```
+   AssertionError: expected 'subscription:create:00000000-0000-000…' to be 'subscription:create:00000000-0000-000…'
+   Expected: "subscription:create:00000000-0000-0000-0000-000000000abc"
+   Received: "subscription:create:00000000-0000-0000-0000-000000000abc:pm_xxx"
+   ```
+2. `src/services/__tests__/tenant-isolation-invariants.test.ts > ★テナント分離 リグレッション防止 — Service 層★ > .../src/services/netlify-metrics.service.ts に tenantId / viewerTenantId フィルタが含まれている`
+   ```
+   AssertionError: expected false to be true
+   ```
+
+ローカル `pnpm test -- --run | tail -5` の pipe で再び exit code が tail 0 に隠された (= §5.X+110 で記録したばかりの罠を **同セッション内で再踏み**)。
+
+### 根本原因
+
+#### 失敗 1: 実装側の契約変更が test mock に未反映
+
+PR #425 KDD §5.X+106 で **idempotencyKey に `paymentMethodId` を追加** (= カード再登録時の Stripe reject 回避) する変更を `stripe-billing.service.ts` に入れたが、対応する test の `expect(opts.idempotencyKey).toBe(...)` を旧形式 `subscription:create:${TENANT_ID}` のまま放置していた。
+
+```typescript
+// src/services/stripe-billing.service.ts:860 (PR #425 で変更)
+idempotencyKey: `subscription:create:${input.tenantId}:${input.paymentMethodId}`
+
+// src/services/stripe-billing.service.test.ts:444 (旧契約のまま)
+expect(opts.idempotencyKey).toBe(`subscription:create:${TENANT_ID}`);  // ❌
+```
+
+「実装と一緒に test も更新する」原則を満たしておらず、レビュー時にも気付かれなかった。
+
+#### 失敗 2: invariants test の exemption 漏れ
+
+PR #425 で新規追加した `src/services/netlify-metrics.service.ts` は **Netlify 外部 API client** (= テナント DB アクセスなし、外部 SaaS のグローバル metrics 取得) のため tenantId / viewerTenantId フィルタが構造的に存在しないが、`tenant-isolation-invariants.test.ts` が `src/services/` 配下を全件スキャンして「`tenantId:` 等の文字列が含まれること」を要求する仕様のため、新規ファイルが追加された瞬間に fail。
+
+`CROSS_TENANT_ALLOWED_FILES` の許可リストへの追加が必要だった。
+
+### 解決策
+
+#### 即時対応 (= 本 commit で対応済)
+
+1. **test mock 更新**: `expect(opts.idempotencyKey).toBe(\`subscription:create:${TENANT_ID}:pm_xxx\`)` に変更。`pm_xxx` を input にしているので mock 側も追従。
+2. **invariants exemption 追加**: `CROSS_TENANT_ALLOWED_FILES` Set に `'netlify-metrics.service.ts'` を追加 + 「Netlify 外部 API client (= テナント DB アクセスなし、super_admin Diagnostics 用)」コメント。
+3. **§5.X+110 の運用ルールを再徹底**: 本セッション内で pipe 罠を再踏みしたため、quality gate 確認は **必ず `; echo "EXIT: $?"` 付き** で実行する。
+
+#### 再発防止 (= 今後の運用)
+
+| 観点 | チェックポイント |
+|---|---|
+| **A. 実装契約変更 (= 関数シグネチャ / 戻り値形式 / 副作用)** | 変更直後に対象 test ファイルを必ず `pnpm test --run <test-file>; echo "EXIT: $?"` で実行する。「実装と一緒に test も更新する」を **同一 commit 内で完結** |
+| **B. 新規 service ファイル追加** | `src/services/` 配下に新規 .ts を追加したら、`tenant-isolation-invariants.test.ts` の `CROSS_TENANT_ALLOWED_FILES` に追加するか、`viewerTenantId` フィルタを実装する。**追加先の判断基準**: テナント DB アクセスがあるか? あれば実装する側、なければ exemption に追加 |
+| **C. CI gate 確認** | `pnpm test --run; echo "EXIT: $?"` で **pipe を使わずに exit code 直接取得**。`tail` / `head` / `grep` 等を経由しない |
+
+### 教訓
+
+1. **★最重要★ 同セッション内で pipe 罠を再踏みした** — §5.X+110 で記録したばかりの罠を **直後の確認で再度踏んだ**。記録するだけでなく **次の Bash tool 実行時に意識的に避ける** こと。教訓のメタ教訓: 「KDD に書いただけで対策完了」ではない、**次の実行で意識せよ**
+2. **新規 service ファイル追加時は invariants test の許可リスト適合性を必ず確認** — `CROSS_TENANT_ALLOWED_FILES` の追加可否を判断 (= テナント DB アクセスの有無で機械的に判定可能)
+3. **「契約変更 (idempotencyKey スキーマ拡張)」と「test 更新」を分離してはいけない** — 契約変更 commit に必ず該当 test 更新を含める。レビューで指摘されなくても自分でチェック
+4. **CI fail のログは表面 (PR コメントの coverage action ENOENT) ではなく upstream の `pnpm test --coverage` ステップを最初に見る** — `vitest-coverage-report-action` の ENOENT は upstream test 失敗の **symptom (= coverage-summary.json が生成されない)** であり真の原因ではない
+
+### 検証手順 (再発防止用)
+
+```
+新規 service.ts 追加 / 既存 service.ts シグネチャ変更時:
+1. pnpm test --run src/services/__tests__/tenant-isolation-invariants.test.ts; echo "EXIT: $?"
+2. pnpm test --run <変更した service の test ファイル>; echo "EXIT: $?"
+3. pnpm test --run; echo "EXIT: $?"  ← 全体回帰
+4. 全部 EXIT 0 を確認してから commit
+
+★全 quality gate 確認は必ず pipe を使わずに `; echo "EXIT: $?"` 付きで実行 (§5.X+110 の罠回避)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): §5.X+110 push 後の 2 回目 CI fail
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.test.ts` (L444 idempotencyKey expectation 更新)
+  - `src/services/__tests__/tenant-isolation-invariants.test.ts` (`CROSS_TENANT_ALLOWED_FILES` に `netlify-metrics.service.ts` 追加)
+- 関連 KDD §5.X+106 (idempotencyKey に paymentMethodId を含める設計判断)
+- 関連 KDD §5.X+110 (bash pipe exit code 罠 — 本件で **同セッション内で再踏み**)
+- 関連 feedback `feedback_tenant_isolation` (invariants test の役割 = severity-1 個人情報漏洩リスク予防)
+
+---
+
+## 5.X+112 **★UX severity-1★ 一覧画面の検索・ソート・スティッキーヘッダ横展開 — 入力即フィルタ + URL 永続化 + sticky DashboardHeader (2026-05-22 / PR #425 / KDD §5.X+102 Phase 1-3 取り込み)**
+
+### 背景
+
+KDD §5.X+102 で `/projects` 検索ボタン不発バグの即時修正 + 残 13 画面の段階改修ロードマップを定義 (Phase 1-3、20-26h 規模)。ユーザ追加要望:
+
+1. 検索 UI を **「全ナレッジ画面と同様、検索条件設定で瞬時に絞り込み」** (= 入力即フィルタ) に統一
+2. ソートはカラム名にマウスオーバーで「昇順・降順・リセット」プルダウン、ソート済みカラムに**種類 + 順序を視認表示**
+3. **長いページでもナビ (全ナレッジ等) にスクロールせずアクセス**できるようヘッダを画面固定 (sticky)
+
+### 実装内容 (本 PR で取り込み)
+
+#### 1. 共通基盤
+- `src/components/sort/sortable-header.tsx`: **hover オープン** 追加 (mouseenter で開く、200ms 遅延 close)、ソート済みバッジを **rounded badge (矢印 + 優先度番号)** に視認性強化
+- `src/components/common/use-list-search-params.ts` (新規): URL `?keyword=&xxx=` 同期の **共通 hook**。keyword は 300ms debounce、select 系 filter は即時 push、`router.replace` で履歴を汚さない
+- `src/components/dashboard-header.tsx`: `<header>` に `sticky top-0 z-40` 追加。AccountMenu dropdown (z-50) 配下、SortableHeader dropdown (z-30) より前面に積層
+
+#### 2. 各画面の URL 永続化 + 入力即フィルタ統合 (7 画面)
+
+| 画面 | 改修内容 |
+|---|---|
+| `/customers` | 検索 input 新設 (顧客名/部門/担当者/Email) + URL `?keyword=` 永続化 |
+| `/admin/users` | 検索 input 新設 (氏名/Email) + URL `?keyword=` 永続化 |
+| `/risks` `/issues` | 既存 FilterBar の keyword/state/priority を URL `?keyword=&state=&priority=` 同期 |
+| `/retrospectives` | 既存検索 keyword を URL `?keyword=` 同期 |
+| `/all-memos` | 検索 input 新設 (タイトル/本文/著者) + URL `?keyword=` 永続化 |
+| `/knowledge` | 既存検索 keyword/type を URL `?keyword=&type=` 同期、router.refresh() による Enter 検索を撤去 (= debounce push 経路に統一) |
+| `/memos` | bulkFilter (CrossListFilterState) を useListSearchParams 派生 state に変換、URL `?keyword=&mineOnly=` 永続化 |
+
+### 設計判断 — server-side 化は別 PR 扱いに変更
+
+KDD §5.X+102 当初の Phase 1 (`/projects` ソート server-side 化) は **現状の「入力即フィルタ」UI と本質的に不整合** (= ソート push で page 再 fetch → 入力中 keyword が URL に乗らず検索状態消失)。**全 input に debounce 入れて URL 駆動に揃える**抜本改修が必要だが、PR #425 のスコープを爆発させる。
+
+**最終判断**: server-side 化は **「Beginner プラン 100 件上限を超えるデータ量に到達した時点」** の別 PR 扱いに変更。本 PR は **「入力即 client-side filter + URL 永続化 + ソート視認改善 + ヘッダ固定」** の UX 改善 4 点セットを取り込む。
+
+### 本 PR で取り込まれなかった画面 (Phase 3 持ち越し)
+
+以下 4 画面は **CrossListFilterState + bulk operation** という追加複雑性があるため、本 PR では取り込まない (= 別 PR で対応):
+
+| 画面 | 理由 |
+|---|---|
+| `/projects/[id]/risks` | `risks-client.tsx`: bulk visibility + multi state filter、bulk operation との結合度高 |
+| `/projects/[id]/issues` | 同上 (risks-client を typeFilter='issue' で再利用) |
+| `/projects/[id]/retrospectives` | 同上 + retrospective specific |
+| `/projects/[id]/knowledge` | project-knowledge-client が bulk linking + filter を持つ |
+| `/my-tasks` | 複数 status filter + 階層 WBS ツリー展開 toggle が複雑 |
+
+これらは「次回データ量増加に伴う server-side 化 PR」とまとめて対応するのが効率的 (= 同時に bulkFilter 周りの設計を見直す)。
+
+### 教訓 / 再発防止
+
+1. **★最重要★ 「テンプレート画面」を最初に確立してから横展開する** — `/projects` PR #425 で確立した「page.tsx searchParams 受け取り → service 引数 → client.tsx props 初期値 → useState 復元 → onChange で URL push」の経路を `useListSearchParams` hook に抽象化し、7 画面に統一適用。**個別最適化より共通基盤化が後の保守を楽にする**
+2. **debounce + URL replace の組合せが「入力即フィルタ」と「URL 共有」を両立** — 即時 client-side filter で UX は高速、URL は 300ms 後に同期されるため履歴を汚さず共有可能。input 更新時に history.push すると戻るボタンで 1 文字ずつ戻る現象になるため必ず `router.replace`
+3. **sticky header の z-index は dropdown 階層を意識** — z-30 (SortableHeader) < z-40 (sticky header) < z-50 (AccountMenu dropdown / 内部) の積層が崩れると hover プルダウンがヘッダで隠れる/逆にヘッダ越しに表示される事故になる。LoadingProvider / Toast も z-50+ 想定で配置
+4. **bulk operation との結合度が高い画面は段階移行する** — `/memos` は bulkFilter を派生 state にすることで URL 同期に乗せたが、project 配下系は bulk + project scope + multi-state filter が複雑化するため別 PR が現実的
+5. **CrossListFilterState 等の独自 state 設計は URL 同期を後付けしづらい** — 新規一覧画面では **最初から `useListSearchParams` を使う** ことで後の URL 永続化要望に対応しやすくなる (= 技術的負債の予防)
+
+### 検証手順 (再発防止用)
+
+```
+新規 / 既存の一覧画面で以下を満たすことを確認:
+1. 検索 input に文字を打つと **即座に一覧が絞り込まれる** (= debounce なしの client filter)
+2. 入力後 300ms で URL ?keyword=xxx に同期される
+3. リロード (F5) で input + 一覧が復元される
+4. URL を別タブで開いて同じ絞り込み結果になる
+5. ソート列ヘッダにマウスを乗せるとプルダウン (昇順/降順/クリア) が開く
+6. ソート適用後、列ヘッダに矢印 + 優先度番号の rounded badge が表示される
+7. ページを長くスクロールしてもヘッダ (全ナレッジ等のナビ) が画面上部に固定表示
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): §5.X+102 Phase 1-3 取り込み
+- 関連修正ファイル:
+  - `src/components/sort/sortable-header.tsx` (hover オープン + badge)
+  - `src/components/common/use-list-search-params.ts` (新規共通 hook)
+  - `src/components/dashboard-header.tsx` (sticky top-0)
+  - 7 画面の page.tsx + client.tsx
+- 関連 KDD §5.X+102 (`/projects` 即時修正 + ロードマップ。本 PR で「server-side 化は別 PR 扱い」に方針変更)
+- 関連 feedback `feedback_perf_antipatterns` (client-side filter/sort はデータ量増加で UI 遅延の起点になる)

@@ -10,7 +10,11 @@
   #       - CI:        pnpm build         (= prisma generate + next build のみ)
   #       - Netlify:   pnpm build:netlify (= prisma generate + migrate deploy + next build)
   #     詳細: docs/operations/DEPLOYMENT.md §1.1 / docs/knowledge/KDD_PATTERNS.md (CI 起因の migrate deploy 失敗)
-  command = "pnpm build:netlify"
+  # PR #425 (2026-05-21): build wrapper 経由で NEXTAUTH_URL を deploy context に同期。
+  #   Netlify 自動設定の URL env var (= Production / Deploy Preview / Branch Deploy で値が変化)
+  #   を NEXTAUTH_URL に注入し、ステージング URL → 本番 URL リダイレクト事象を回避する。
+  #   詳細: scripts/netlify-build.sh のコメント
+  command = "bash scripts/netlify-build.sh"
   publish = ".next"
   # docs / .github / *.md のみの変更時はビルドをスキップ
   # (Starter 統合 credits 300/月の制約を効率消費するため。1 deploy ≈ 15 credits 消費)

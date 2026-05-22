@@ -46,16 +46,20 @@ import { RecalculateButton } from '@/components/recalculate-button';
 import { UsageDriftBadge } from '@/components/usage-drift-badge';
 // PR-V8 (2026-05-19): 診断ダッシュボードへの誘導バナー
 import { getDiagnosticsSummary } from '@/services/diagnostics.service';
+// PR #425 (2026-05-22): Netlify ビルドクレジット消費の可視化
+import { getNetlifyMetrics, type NetlifyMetrics as NetlifyMetricsType } from '@/services/netlify-metrics.service';
 
 export default async function SuperAdminTopPage() {
   // 2026-05-14: 表示前に全テナントの最新値を作る (請求根拠なのでキャッシュ依存しない)。
   //   updateAllStorageBytesUsed は内部で個別失敗を吸収する。
   //   reconcileAllTenantsApiUsage は Promise.allSettled で並列実行。
   // PR-V8 (2026-05-19): 診断ダッシュボードの異常件数を取得 (赤バナー表示用)
-  const [, apiReconciles, diagnostics] = await Promise.all([
+  const [, apiReconciles, diagnostics, netlifyMetrics] = await Promise.all([
     updateAllStorageBytesUsed(),
     reconcileAllTenantsApiUsage(),
     getDiagnosticsSummary(),
+    // PR #425 (2026-05-22): Netlify ビルドクレジット消費を取得 (= API 失敗時は空メトリクス + error メッセージで継続)
+    getNetlifyMetrics(),
   ]);
   const apiReconcileByTenant = new Map<string, ApiUsageReconcileResult>(
     apiReconciles.map((r) => [r.tenantId, r]),
@@ -150,6 +154,9 @@ export default async function SuperAdminTopPage() {
 
       {/* 2026-05-09 (PR E / #15): Beginner プラン使用状況 */}
       <BeginnerUsageCard beginner={beginner} />
+
+      {/* PR #425 (2026-05-22): Netlify ビルドクレジット消費モニタ */}
+      <NetlifyMetricsCard metrics={netlifyMetrics} />
 
       {/* P-5a: DB 容量モニタ */}
       <DatabaseCapacityCard capacity={capacity} />
@@ -988,6 +995,116 @@ function BeginnerUsageCard({ beginner }: { beginner: BeginnerUsageSummary }) {
           tooltip="Beginner プランの当月 API 呼出総数 (各テナント 100 回上限)"
         />
       </div>
+    </section>
+  );
+}
+
+/**
+ * PR #425 (2026-05-22): Netlify ビルドクレジット消費モニタ。
+ *
+ * Netlify Starter Plan の integration credits 300/月 を超過しないようリアルタイム可視化する。
+ * - 今月のビルド回数 (= JST 月初〜現在)
+ * - 推定 credits 消費量 (= ビルド数 × 15、Netlify 公式値ではなく概算)
+ * - 残 credits (= 300 - 推定消費量)
+ * - 最新ビルドの状態 + コンテキスト
+ *
+ * API 失敗時 (= NETLIFY_API_TOKEN 未設定 / 通信エラー) は警告メッセージのみ表示し画面遷移を妨げない。
+ *
+ * 関連 KDD §5.X+104: 請求堅牢性多層防御 (= 本タイルは外部サービス consumed の早期検知)
+ */
+function NetlifyMetricsCard({ metrics }: { metrics: NetlifyMetricsType }) {
+  const usagePercent = metrics.estimatedCreditsUsed > 0
+    ? Math.min(100, Math.round((metrics.estimatedCreditsUsed / 300) * 100))
+    : 0;
+  const isWarning = usagePercent >= 70 && usagePercent < 90;
+  const isCritical = usagePercent >= 90;
+  const headerColor = isCritical
+    ? 'border-destructive bg-destructive/10'
+    : isWarning
+      ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/30'
+      : 'border-border';
+
+  return (
+    <section
+      className={`space-y-3 rounded border p-4 ${headerColor}`}
+      title="Netlify Starter Plan の integration credits (300/月) 消費を可視化。70% 超過で警告、90% 超過で critical 表示"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold">Netlify ビルド credits</h2>
+        <a
+          href="https://app.netlify.com/projects/tasukiba/deploys"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-info underline"
+        >
+          Netlify Dashboard を開く ↗
+        </a>
+      </div>
+
+      {metrics.error ? (
+        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
+          <p className="font-semibold">⚠ メトリクス取得失敗</p>
+          <p className="text-muted-foreground">{metrics.error}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Netlify Personal Access Token を発行 (https://app.netlify.com/user/applications#personal-access-tokens)
+            し、Netlify env vars に `NETLIFY_API_TOKEN` + `NETLIFY_SITE_ID` を設定してください。
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div
+              className="cursor-help"
+              title="JST 月初〜現在のビルド総数 (Production + Deploy Preview + Branch deploy 合算)"
+            >
+              <p className="text-xs text-muted-foreground">今月のビルド回数</p>
+              <p className="text-xl font-bold">{metrics.buildsThisMonth.toLocaleString()}</p>
+            </div>
+            <div
+              className="cursor-help"
+              title="推定 integration credits 消費量 (= ビルド数 × 15、Netlify 公開仕様外の概算値)"
+            >
+              <p className="text-xs text-muted-foreground">推定 credits 消費</p>
+              <p className={`text-xl font-bold ${isCritical ? 'text-destructive' : isWarning ? 'text-amber-600' : ''}`}>
+                {metrics.estimatedCreditsUsed.toLocaleString()} / 300
+              </p>
+            </div>
+            <div
+              className="cursor-help"
+              title="残り credits (= Starter Plan の今月の残量目安)"
+            >
+              <p className="text-xs text-muted-foreground">残 credits</p>
+              <p className={`text-xl font-bold ${isCritical ? 'text-destructive' : isWarning ? 'text-amber-600' : 'text-info'}`}>
+                {metrics.estimatedCreditsRemaining.toLocaleString()}
+              </p>
+            </div>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded bg-muted">
+            <div
+              className={`h-full ${isCritical ? 'bg-destructive' : isWarning ? 'bg-amber-500' : 'bg-info'}`}
+              style={{ width: `${usagePercent}%` }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            消化率 {usagePercent}%
+            {metrics.latestBuildAt && (
+              <span className="ml-3">
+                最新ビルド: {new Date(metrics.latestBuildAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST
+                {metrics.latestBuildContext && ` (${metrics.latestBuildContext})`}
+                {' / 状態: '}
+                <span className={metrics.latestBuildState === 'ready' ? 'text-info' : metrics.latestBuildState === 'error' ? 'text-destructive' : ''}>
+                  {metrics.latestBuildState}
+                </span>
+              </span>
+            )}
+          </p>
+          {isCritical && (
+            <p className="rounded bg-destructive/10 p-2 text-xs text-destructive" role="alert">
+              ⚠️ credits 90% 超過。今月のビルドを控える / 月跨ぎを待つ等を検討してください。
+            </p>
+          )}
+        </>
+      )}
     </section>
   );
 }

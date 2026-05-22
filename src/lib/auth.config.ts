@@ -51,11 +51,16 @@ export const authConfig: NextAuthConfig = {
       options: {
         httpOnly: true,
         // PR #198 (2026-04-30): 'lax' → 'strict' に強化 (CWE-1275 対策)。
-        //   本サービスは Credentials provider のみで OAuth/SSO のクロスサイトコールバック
-        //   が無く、メール内リンクからのトップレベル遷移 (パスワード再設定 / 招待) は
-        //   遷移先で別途認証フローを通すため、'strict' でも UX 影響なし。
-        //   外部サイトからのトップレベル GET 遷移後でも認証が維持される必要がない。
-        sameSite: 'strict',
+        // PR #425 (2026-05-22) ★severity-1★: 'strict' → 'lax' に戻す。
+        //   理由: Stripe Checkout を新規導入したため、外部 origin (checkout.stripe.com) から
+        //         自 origin への top-level GET redirect (= success_url) で sameSite='strict' は
+        //         cookie を送らない → /api/tenants/me/billing/stripe/setup/complete handler が
+        //         未認証扱い → /login に強制遷移 → カード登録完了したのに UI 上は失敗扱い
+        //         → ユーザは「もう一度カード登録?」と混乱 + DB は paymentMethod='credit_card'
+        //         + stripeSubscriptionId=null の「カード未登録 credit_card」状態に陥り請求漏れ。
+        //   PR #198 当時の前提「外部 origin からのコールバックは無い」が崩れたための再緩和。
+        //   GET 経由の CSRF 対策は不要 (= 副作用なし)。POST には CSRF token + CORS で別途防御。
+        sameSite: 'lax',
         path: '/',
         secure: process.env.NODE_ENV === 'production',
         // maxAge を指定しない → セッション cookie (タブ/ブラウザ閉じで失効)

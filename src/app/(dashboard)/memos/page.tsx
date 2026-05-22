@@ -12,9 +12,13 @@ import { MemosClient } from './memos-client';
  *   - 作成・編集・削除すべて可能
  *   - visibility='public' にしたメモは `/all-memos` 画面で他ユーザからも閲覧される
  */
-export default async function MemosPage() {
+// PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=&mineOnly= 永続化
+type SearchParams = Promise<{ keyword?: string; mineOnly?: string }>;
+
+export default async function MemosPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session?.user) redirect(LOGIN_ROUTE);
+  const sp = await searchParams;
 
   // fix/admin-users-defensive-render 横展開 (2026-05-15): ユーザメニューから到達する画面
   //   のため、listMyMemos の throw が dashboard error.tsx に飛んで「ログインできない」体験を
@@ -47,6 +51,8 @@ export default async function MemosPage() {
       memos={memos}
       viewerUserId={session.user.id}
       dataLoadError={dataLoadError}
+      initialKeyword={sp.keyword ?? ''}
+      initialMineOnly={sp.mineOnly === 'true'}
     />
   );
 }

@@ -11,12 +11,16 @@ import { AllRisksTable } from '../risks/all-risks-table';
  * リスク/課題は同一テーブル (risks_issues) に格納されているため、
  * 共通の listAllRisksForViewer を呼び出し type でフィルタする。
  */
-export default async function AllIssuesPage() {
+// PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=&state=&priority= 永続化
+type SearchParams = Promise<{ keyword?: string; state?: string; priority?: string }>;
+
+export default async function AllIssuesPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
 
   // Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため)
   const tCommon = await getTranslations('common');
+  const sp = await searchParams;
   const risks = await listAllRisksForViewer(
     session.user.id,
     session.user.systemRole,
@@ -30,7 +34,14 @@ export default async function AllIssuesPage() {
       <div className="flex justify-end">
         <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filtered.length })}</span>
       </div>
-      <AllRisksTable risks={risks} isAdmin={isAdmin} typeFilter="issue" />
+      <AllRisksTable
+        risks={risks}
+        isAdmin={isAdmin}
+        typeFilter="issue"
+        initialKeyword={sp.keyword ?? ''}
+        initialState={sp.state ?? ''}
+        initialPriority={sp.priority ?? ''}
+      />
     </div>
   );
 }

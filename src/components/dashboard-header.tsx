@@ -479,7 +479,11 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
   );
 
   return (
-    <header className="border-b bg-card">
+    // PR #425 (2026-05-22) KDD §5.X+112: 長いページでもヘッダ (全ナレッジ/全メモ等) に
+    //   常にアクセスできるよう sticky top-0 + z-40 で固定。
+    //   - z-40: AccountMenu 内 dropdown (z-50) 配下、SortableHeader dropdown (z-30) より前面。
+    //   - 親 (DashboardLayout) は overflow を設定していないので sticky が効く。
+    <header className="sticky top-0 z-40 border-b bg-card">
       <div className="flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-6">
           <Link href={PROJECTS_ROUTE} className="text-lg font-semibold">

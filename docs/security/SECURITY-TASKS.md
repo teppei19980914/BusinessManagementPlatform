@@ -1,8 +1,8 @@
 # SECURITY-TASKS.md
-> 生成日時: 2026/5/21 15:56:18
+> 生成日時: 2026/5/22 14:19:51
 > スクリプト: `tsx scripts/security-check.ts`
-> 総合スコア: **100/100**
-> 検出件数: CRITICAL 0 / HIGH 0 / MEDIUM 0 / LOW 0
+> 総合スコア: **98/100**
+> 検出件数: CRITICAL 0 / HIGH 0 / MEDIUM 0 / LOW 1
 
 ## Claude Code への指示
 
@@ -20,7 +20,44 @@
 # ✅ CRITICAL / HIGH は検出されませんでした
 
 
+# 📋 通常対応 (MEDIUM / LOW)
 
+## F-01: セッション Cookie の SameSite が Strict でなく Lax
+
+**Severity**: LOW
+**Category**: AUTH
+**File**: `src/lib/auth.config.ts` (line 63)
+
+### 問題
+
+SameSite=Lax は GET トップレベルナビゲーション時に Cookie を送信します。外部サイトからの誘導後も認証状態を維持する必要がなければ Strict が推奨です。
+
+**問題のあるコード:**
+```typescript
+sameSite: 'lax',
+```
+
+### 修正要件
+
+sameSite: 'strict' に変更してください。
+
+**修正後のコード例:**
+```typescript
+sameSite: 'strict',
+```
+
+### テスト要件 (必須)
+
+変更後にログインフロー（通常ログイン・MFA ログイン）の E2E テストが通過すること。
+
+### 完了条件
+
+- [ ] 上記の修正要件を満たすコードが実装されている
+- [ ] テスト要件を満たすテストコードが追加・通過している
+- [ ] 同じパターンが他ファイルに横展開していないか検索済み
+- [ ] `pnpm test` が全件通過している
+
+---
 
 # 📝 受容済み (Accept-list、score 計算対象外)
 

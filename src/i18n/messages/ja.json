@@ -643,6 +643,7 @@
     "fieldRelatedProjects": "紐付プロジェクト",
     "fieldActions": "操作",
     "projectCount": "{count} 件",
+    "searchPlaceholder": "顧客名・部門・担当者で検索",
     "detailBreadcrumb": "顧客詳細",
     "editDialogTitle": "顧客情報編集",
     "editDialogDescription": "顧客情報を更新します。",
@@ -1023,6 +1024,7 @@
     "empty": "メモがありません。右上の「メモ作成」から登録してください。",
     "emptyPublic": "公開メモがありません。",
     "emptyPublicHint": "(「メモ」画面で公開範囲を「全メンバー」にすると、このページに表示されます)",
+    "searchPlaceholder": "タイトル・本文で検索 (空白区切りで OR / `-完了` で除外)",
     "mineSuffix": "(自分)",
     "mineBadge": "自分のメモ",
     "createdAt": "作成: {date}",
@@ -1153,7 +1155,8 @@
       "pwFailedBadge": "PW 失敗 {count}/5",
       "pwFailedBadgeTitle": "ログインパスワード失敗カウント (5 回で 30 分一時ロック)",
       "mfaFailedBadge": "MFA 失敗 {count}/3",
-      "mfaFailedBadgeTitle": "MFA コード失敗カウント (3 回で 30 分一時ロック)"
+      "mfaFailedBadgeTitle": "MFA コード失敗カウント (3 回で 30 分一時ロック)",
+      "searchPlaceholder": "氏名・メールアドレスで検索"
     },
     "userEdit": {
       "title": "ユーザ編集",

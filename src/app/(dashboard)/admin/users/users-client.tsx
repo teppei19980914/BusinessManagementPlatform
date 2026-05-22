@@ -15,9 +15,10 @@
  * 関連: SPECIFICATION.md (ユーザ管理画面)
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useListSearchParams } from '@/components/common/use-list-search-params';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
@@ -65,6 +66,8 @@ type Props = {
   // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止のため、
   //   ログイン中ユーザの id を server から受け取り UserEditDialog へ伝播する。
   currentUserId: string;
+  // PR #425 (2026-05-22) KDD §5.X+102: URL ?keyword=xxx 初期値
+  initialKeyword?: string;
 };
 
 function getUserSortValue(u: UserDTO, columnKey: string): unknown {
@@ -78,7 +81,7 @@ function getUserSortValue(u: UserDTO, columnKey: string): unknown {
   }
 }
 
-export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginnerMaxSeats, dataLoadError = false, currentUserId }: Props) {
+export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginnerMaxSeats, dataLoadError = false, currentUserId, initialKeyword = '' }: Props) {
   const tAction = useTranslations('action');
   const t = useTranslations('admin.users');
   const router = useRouter();
@@ -98,7 +101,17 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
 
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort('sort:admin-users');
-  const sortedUsers = multiSort(initialUsers, sortState, getUserSortValue);
+
+  // PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword=xxx 永続化
+  const { keyword, setKeyword } = useListSearchParams({ initialKeyword });
+  const filteredUsers = useMemo(() => {
+    if (!keyword) return initialUsers;
+    const lower = keyword.toLowerCase();
+    return initialUsers.filter((u) =>
+      u.name.toLowerCase().includes(lower) || u.email.toLowerCase().includes(lower),
+    );
+  }, [initialUsers, keyword]);
+  const sortedUsers = multiSort(filteredUsers, sortState, getUserSortValue);
 
   const [form, setForm] = useState({
     name: '',
@@ -285,6 +298,17 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
           </DialogContent>
         </Dialog>
         </div>
+      </div>
+
+      {/* PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword=xxx 永続化 */}
+      <div>
+        <Input
+          placeholder={t('searchPlaceholder')}
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          className="max-w-xs"
+          data-testid="admin-users-search-input"
+        />
       </div>
 
       <Table>

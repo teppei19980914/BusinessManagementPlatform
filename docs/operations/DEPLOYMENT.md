@@ -13,7 +13,7 @@
 
 ```toml
 [build]
-  command = "pnpm build"                     # = "prisma generate && next build"
+  command = "bash scripts/netlify-build.sh"  # = pnpm build:netlify を実行する薄いラッパー
   publish = ".next"
   ignore = "bash scripts/netlify-ignore.sh"  # docs-only 変更は skip
 
@@ -24,14 +24,20 @@
   package = "@netlify/plugin-nextjs"          # Next.js 16 App Router 公式 Runtime
 ```
 
+> **build wrapper (`scripts/netlify-build.sh`) の現状の役割** (PR #425 / KDD §5.X+101 で訂正済):
+> - `pnpm build:netlify` (= `prisma generate && prisma migrate deploy && next build`) を呼び出す薄いラッパー
+> - `scripts/netlify-ignore.sh` の path-based skip で「scripts/ 配下の変更」として検出されるためのトリガーファイル兼用
+> - **NEXTAUTH_URL 等の env var を `export` しない** (= 旧版で試みたが Function runtime に届かず不発だったため削除済 / 再追加禁止)
+> - runtime env を context 別に届けたい場合は §2.3 の Netlify Dashboard context override を使うのが唯一の正解
+
 ### 1.1 ビルドコマンド
 
 build script は **CI と Netlify で分離**:
 
-| 環境 | スクリプト | 中身 |
+| 環境 | エントリ | 中身 |
 |------|----------|------|
 | CI (GitHub Actions) | `pnpm build` | `prisma generate && next build` |
-| Netlify | `pnpm build:netlify` | `prisma generate && prisma migrate deploy && next build` |
+| Netlify | `bash scripts/netlify-build.sh` → `pnpm build:netlify` | `prisma generate && prisma migrate deploy && next build` |
 
 **PR-V8.1 (2026-05-19) 改訂**: マイグレーションは Netlify build 時に **自動適用** (= `pnpm build:netlify`)。
 旧設計は「手動実行で慎重に」だったが、PR-V7a で migration 適用漏れにより `billing-overdue-alert` が 500 (`payment_due_date` カラム不在で SQL error) になる事故が発生。
@@ -108,6 +114,81 @@ netlify env:set KEY_NAME "value" --secret \
 ### 2.2 一括登録 (移行・引き継ぎ時)
 
 リポジトリ外に `.env.netlify-prod` を作成し、`netlify env:import` で一括投入する手順は [`docs/operations/ENV_VARS.md §3`](./ENV_VARS.md) を参照。
+
+### 2.3 ★必須★ Deploy context ごとに値を分ける env var (context override)
+
+Netlify は **同一 env var を deploy context (Production / Deploy preview / Branch deploys / Local development) ごとに別値で持てる**。
+全 context 共通だと壊れる代表例:
+
+| 変数名 | Production | Deploy preview | Branch deploys | 理由 |
+|---|---|---|---|---|
+| `NEXTAUTH_URL` | `https://tasukiba.netlify.app` | **未設定 (Delete)** | **未設定 (Delete)** | preview/branch は URL が動的に変わるため、本番 URL を共有設定すると NextAuth が本番 origin にリダイレクトしてしまう (= KDD §5.X+101 で実害)。未設定にすれば `trustHost: true` で host header から動的取得 |
+| `STRIPE_ENABLED` | `true` (リリース後) | `true` (TC 実行用) | `false` または `true` (検証目的に応じ) | プレビューでも Stripe 動作を検証する必要があれば `true` を上書き設定 |
+| `STRIPE_SECRET_KEY` | `sk_live_xxx` (Live key) | `sk_test_xxx` (Test mode) | `sk_test_xxx` (Test mode) | 本番のみ Live mode、preview/branch は必ず Test mode key を使用 (誤って本番カードに課金しないため) |
+| `STRIPE_WEBHOOK_SECRET` | Live mode endpoint の `whsec_xxx` | Test mode endpoint の `whsec_xxx` | Test mode endpoint の `whsec_xxx` | Stripe Dashboard 上でも Test / Live で別エンドポイントを作成すること |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_xxx` | `pk_test_xxx` | `pk_test_xxx` | SECRET_KEY とペアで切替 |
+
+#### Netlify Dashboard での context override 操作手順
+
+1. **Site configuration → Environment variables** を開く
+2. 対象 env (例: `NEXTAUTH_URL`) の **Edit** をクリック
+3. **"Different value for each deploy context"** をチェック
+4. 各 context (Production / Deploy previews / Branch deploys / Local development) ごとに値を入力
+   - **空欄にすると "undefined" として伝わる** (= NextAuth の `trustHost: true` フォールバックを発火させる用途等で重要)
+5. Save をクリック → 即時反映 (= 次回 build 以降に有効)
+6. 反映確認のため対象 PR の Deploy Preview を **Trigger deploy** (or Clear cache and deploy)
+
+> ⚠️ **build wrapper (`scripts/netlify-build.sh`) 内の `export NEXTAUTH_URL=...` は実質効果なし** (= Next.js は `NEXT_PUBLIC_*` 以外を build 時に bundle に焼き込まないため、Function runtime に伝わらない)。KDD §5.X+101 で実証済み・再追加禁止コメントあり。runtime に env を context 別に届けたければ **Netlify Dashboard の context override が唯一の正解**。
+
+#### CLI 経由で context override する方法
+
+特定 context にだけ値を入れる:
+```bash
+# Production context のみ NEXTAUTH_URL を固定
+netlify env:set NEXTAUTH_URL "https://tasukiba.netlify.app" --context production
+
+# Deploy Preview / Branch deploy では削除 (= undefined にして trustHost を活かす)
+netlify env:unset NEXTAUTH_URL --context deploy-preview
+netlify env:unset NEXTAUTH_URL --context branch-deploy
+```
+
+全 context まとめて確認:
+```bash
+netlify env:list --context production
+netlify env:list --context deploy-preview
+netlify env:list --context branch-deploy
+```
+
+> **関連**: PR #425 / KDD §5.X+101 (NEXTAUTH_URL context 分離) / KDD §5.X+99 (Stripe Deploy Preview redirect)
+
+### 2.4 Stripe feature flag (`STRIPE_ENABLED`) の運用切替
+
+`STRIPE_ENABLED` は文字列 `'true'` の場合にのみ Stripe 機能 (UI 表示 / API 受付 / Webhook 処理) が有効化される **feature flag**。Stripe 関連の全 service / route / cron 冒頭で `isStripeEnabled()` (`src/lib/stripe.ts`) を経由してチェックする。
+
+| 値 | 挙動 |
+|---|---|
+| `'true'` | Stripe 機能 ON (Checkout / Webhook / Metered billing / 自動 suspend / reconcile すべて稼働) |
+| 未設定 / `'false'` / その他 | Stripe 機能 OFF (UI から関連セクションが消える + Webhook は 503 / cron は no-op 早期 return) |
+
+**TC 実行手順との連携**:
+
+1. 新規 Deploy Preview を立てる前に Netlify Dashboard で **Deploy preview context の `STRIPE_ENABLED=true`** を確認
+2. 同時に **`STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRICE_*` も Test mode 値** がセットされていることを確認
+3. PR 作成 / push → Deploy Preview build → Stripe UAT 実施
+4. 本番リリース時は Production context で `STRIPE_ENABLED=true` + Live mode key 一式に切替
+
+> ⚠️ **本番切替前のチェックリスト**: Stripe Dashboard 側で Live mode の Product / Price / Webhook endpoint がすべて作成済かを確認。詳細は [`STRIPE_SETUP.md`](./STRIPE_SETUP.md) と [`docs/business/STRIPE_BILLING.md`](../business/STRIPE_BILLING.md)。
+
+> **関連**: PR #425 / KDD §5.X+99, §5.X+100, §5.X+103
+
+### 2.5 Cookie `sameSite` 設定の注意 (Stripe Checkout 戻り対応)
+
+`src/lib/auth.config.ts` の session cookie `sameSite` は **`'lax'` を維持** (PR #425 で `'strict'` → `'lax'` に再緩和)。
+理由: Stripe Checkout の `success_url` 経由で外部 origin (`checkout.stripe.com`) から自 origin に top-level GET redirect される際、`'strict'` だと session cookie が送信されず、コールバック handler が未認証扱いで `/login` に飛ばされてしまうため (= 「カード登録したのに失敗扱い」+ `paymentMethod='credit_card' / sub_id=null` の請求漏れ状態)。
+
+env var 直接設定ではなく **コード内定数** だが、運用者が「セキュリティ強化」と称して `'strict'` に戻すと請求 invariant が壊れるため、**変更禁止コメント** を必ず確認。
+
+> **関連**: PR #425 / KDD §5.X+103 / `feedback_billing_invariant`
 
 ---
 
