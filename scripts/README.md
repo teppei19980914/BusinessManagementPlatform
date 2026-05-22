@@ -30,6 +30,19 @@
 | [recover-prisma-migrations.ts](./recover-prisma-migrations.ts) | 失敗した migration の `_prisma_migrations` テーブル不整合を復旧 | `pnpm db:recover` | migration の途中で fail した場合、または `relation already exists` (42P07) が出た場合 ([docs/operations/DB_MIGRATION_PROCEDURE.md](../docs/operations/DB_MIGRATION_PROCEDURE.md)) |
 | [cleanup-orphan-user.ts](./cleanup-orphan-user.ts) | テナント削除時に残った孤立ユーザを物理削除 | `tsx scripts/cleanup-orphan-user.ts` | テナント削除運用後の整合性チェック |
 
+### Stripe / TC 検証 (staging/dev 専用、PR #425 で追加)
+
+| スクリプト | 用途 | 実行コマンド | 想定シナリオ |
+|---|---|---|---|
+| [check-tenants.ts](./check-tenants.ts) | 全テナント + 全ユーザの一覧 (slug / role / email / tenantId) を表示 | `tsx scripts/check-tenants.ts` | テナント slug / super_admin email の確認、ユーザ越境状況の調査 |
+| [check-tenant-stripe-state.ts](./check-tenant-stripe-state.ts) | default テナントの Stripe 関連フィールド (plan / paymentMethod / stripeCustomerId / stripeSubscriptionId / cardVerificationStatus 等) を表示 | `tsx scripts/check-tenant-stripe-state.ts` | TC 実施中の DB 状態確認 (= 「画面 = 請求カード」の DB 側裏付け検証) |
+| [reset-default-tenant-to-beginner.ts](./reset-default-tenant-to-beginner.ts) | default テナントを Beginner プラン + 銀行振込 + Stripe 関連全クリアに **完全初期化** (= TC やり直し用) | `tsx scripts/reset-default-tenant-to-beginner.ts` | TC-1 / TC-2 / TC-3 等を最初からやり直したい時。stripeCustomerId は保持 (= 再 setup で既存 Customer 再利用) |
+
+**注意**:
+- 上記 Stripe 系 script は **staging / dev 環境専用**。本番 DB に対しては絶対実行しないこと
+- `DATABASE_URL` / `DIRECT_URL` を staging Supabase の Connection string に切り替えてから実行する
+- 詳細は [docs/test/STRIPE_PAYMENT_TEST_PROCEDURE.md](../docs/test/STRIPE_PAYMENT_TEST_PROCEDURE.md) §4.1 (事前準備) 参照
+
 ---
 
 ## 新規スクリプト追加時のルール
