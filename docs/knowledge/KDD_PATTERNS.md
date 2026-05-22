@@ -12246,3 +12246,94 @@ const currentLabel =
 - 後続 PR 予定 (Sprint N+2): DB 整合性 cron + UI 警告 banner + admin filter
 - 関連 feedback `feedback_billing_invariant` (★最重要★ 請求 invariant)
 - 関連 feedback `feedback_cron_watchdog_pattern` (cron 監視は「failure 検知」と「期待スケジュールに対し N 時間記録なし」の 2 段構え) — 新規 cron 追加時の前提
+
+---
+
+## 5.X+105 **★severity-1 請求堅牢性★ Stripe Subscription cancel 直後の「DB sub_id 残置」が「銀行振込戻し → カード払い再切替」の二重 Subscription エラーを引き起こす — Webhook 待ちを止めて呼出側で即時クリアする (2026-05-22 / PR #425 TC-7 検証中)**
+
+### 発生事象
+
+TC-7 (credit_card → invoice 戻し) を「DB 直書き or UI 操作」のいずれかで実施したテナントが、すぐに「invoice → credit_card 再切替」を試みると、Stripe Checkout でカード入力後の `completeStripeSetup` Step 4 (Subscription 作成) で **「Stripe 処理エラー (時間をおいて再試行)」** で失敗する。
+
+UI 上は「カード登録に失敗しました」と表示されるが、Stripe Dashboard 側ではカードは正常に登録されている (= 半端な状態が残る)。
+
+### 根本原因
+
+`cancelTenantStripeSubscription` の旧実装が **DB の `stripeSubscriptionId` 等を即時クリアせず Webhook (customer.subscription.deleted) 経由で同期する設計** だったため、
+
+| 環境 | 結果 |
+|---|---|
+| **staging** (Webhook 未設定) | 永久に `stripeSubscriptionId='sub_xxx'` が DB に残る → 再 setup 時に「既存 Subscription 残置」と認識されない / Stripe API レベルで二重作成エラー |
+| **本番** (Webhook あり) | Webhook 同期の数秒〜数分のラグ中に銀行振込戻し → 即カード払い再切替の race condition で同じエラー |
+
+`completeStripeSetup` Step 4 で `createSubscriptionForTenant` が呼ばれた時、テナントは Stripe 側に既に active な `sub_xxx` を持っているため、新規 Subscription 作成 API が duplicate / invalid_request 系のエラーを返す。エラーは `processing_error` にラップされてユーザには「時間をおいて再試行」と表示されるが、根本は二重 Subscription 作成試行。
+
+### 解決策
+
+`cancelTenantStripeSubscription` を「Stripe API 呼出 + 成功時に DB の Stripe 関連フィールド即時クリア」に拡張:
+
+```ts
+async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<void> {
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      stripeSubscriptionId: null,
+      stripeSubscriptionStatus: 'canceled',
+      stripeSubscriptionItemHaikuId: null,
+      stripeSubscriptionItemSonnetId: null,
+      stripeSubscriptionItemStorageId: null,
+      stripeDefaultPaymentMethodId: null,
+      cardVerificationStatus: null,
+      cardLastVerifiedAt: null,
+      autoSuspendScheduledAt: null,
+    },
+  });
+}
+```
+
+`cancel()` 成功時 + 「既に canceled だった」(invalid_request 系) ケース 双方でクリアを呼び出すことで、Webhook 同期の有無 / 遅延に関わらず **常にクリーンな初期状態** に戻る。
+
+`stripeCustomerId` だけはクリアしない (= 再 setup 時に再利用するため保持。Customer 削除は別 API)。
+
+### 教訓
+
+1. **★最重要★ Webhook を「DB 同期の主経路」にする設計は脆い** — Webhook は障害発生 / 設定漏れ / 遅延が常にある。重要な状態遷移 (Subscription cancel / カード変更等) は **呼出元 (アプリ層)** で即時 DB を更新する設計にし、Webhook は冗長 (= 整合性二重チェック) として位置付ける
+2. **「銀行振込戻し → 即カード払い」は normal use case** — ユーザは試行錯誤するため秒単位の再操作は当たり前。「Webhook が来るまで待ってください」は UX として成立しない
+3. **DB drift は静かに進行する** — 「Stripe Dashboard は canceled だが DB は active」のような状態は単発では問題にならないが、再 setup 等の関連操作と組み合わさると爆発する。即時クリアで drift を起こさないことが最優先
+4. **エラーメッセージ「processing_error」では原因が見えない** — 「二重 Subscription 作成試行」が裏で起きていることはユーザにもサポートにも見えない。Stripe API のエラーレスポンス全文を auditLog に残す改善も Sprint N+1 候補
+
+### 検証手順 (再発防止用)
+
+```
+事前: TC-1 完了済 (paymentMethod='credit_card', sub_id='sub_xxx', default_pm='pm_*')
+
+シナリオ A: UI 操作 (TC-7)
+1. /settings/tenant の「請求先情報」セクションで支払い方法を「銀行振込」に変更
+2. 「請求先情報を更新」ボタン押下
+3. DB 確認:
+   npx tsx scripts/check-tenant-stripe-state.ts
+   期待 (★本 KDD 修正後): paymentMethod='invoice' + stripeSubscriptionId=null + stripeDefaultPaymentMethodId=null
+                        + cardVerificationStatus=null
+   (旧実装は staging で sub_id が残る → 本 KDD 再発)
+4. Stripe Dashboard で sub_xxx が Canceled になっているか確認
+
+シナリオ B: 銀行振込戻し → 即カード払い再切替 (race condition 検証)
+1. シナリオ A 完了後、すぐに「請求先情報」で支払い方法を「クレジットカード」に戻す
+2. 「請求先情報を更新」ボタン → 強制 Stripe Checkout 遷移
+3. 別カード (例: 5555 5555 5555 4444) で「保存」
+4. 期待: 戻り先 /settings/tenant?stripe_setup=success + 新カード表示 ★
+   (旧実装はここで Stripe 処理エラー → 本 KDD 再発)
+```
+
+### 関連 KDD / PR / feedback
+
+- PR #425 (本事例): TC-7 検証中に検出 + 即時修正
+- 関連修正ファイル:
+  - `src/services/stripe-billing.service.ts`
+    - `cancelTenantStripeSubscription` (cancel 成功時 / 既 canceled 時に DB クリア呼出)
+    - `clearTenantStripeSubscriptionFields` (新規 内部ヘルパ)
+- 関連 KDD §5.X+103 (前提): 「カード未登録 credit_card」状態の構造的予防
+- 関連 KDD §5.X+104 (前提): 請求堅牢性多層防御
+- 関連 feedback:
+  - `feedback_billing_invariant` (★最重要★ 請求 invariant)
+  - `feedback_drift_detection_design` (drift 検知設計は両軸の max + 画面表示 + audit + 修復経路の 4 点セット) — 本件は「即時 DB 同期で drift を起こさない」という別アプローチ

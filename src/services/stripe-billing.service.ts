@@ -897,16 +897,50 @@ export async function cancelTenantStripeSubscription(
   );
 
   if (!result.ok) {
-    // 既に canceled だった場合 (= invalid_request) は成功扱い
+    // 既に canceled だった場合 (= invalid_request) は成功扱い → DB クリアまで進む
     if (result.code === 'invalid_request' && /canceled|no such subscription/i.test(result.detail)) {
+      await clearTenantStripeSubscriptionFields(tenantId);
       return { ok: true, value: { canceled: false, reason: 'already_canceled_stripe_side' } };
     }
     return result;
   }
 
-  // DB は Webhook 経由 (= customer.subscription.deleted) で stripeSubscriptionStatus='canceled' に倒れるが、
-  // Webhook 遅延を防ぐため呼出側で即時更新するなら個別に行う (= 本関数は Stripe API 呼出のみに責務集中)
+  // PR #425 (2026-05-22) ★severity-1★: DB の Stripe Subscription / PaymentMethod フィールドを即時クリア。
+  //   旧実装は Webhook (customer.subscription.deleted) で同期する設計だったが:
+  //     - staging では Webhook 未設定 → 永久に sub_id が残る
+  //     - 本番でも Webhook 同期の秒〜分単位ラグ中に再 setup を試みると Stripe 側で
+  //       「既存 active Subscription あり」エラー → 「カード払い再切替不可」体験になる
+  //   呼出側で即時クリアすることで Webhook 同期の有無に関わらず「クリーンな初期状態」を保証する。
+  await clearTenantStripeSubscriptionFields(tenantId);
   return { ok: true, value: { canceled: true } };
+}
+
+/**
+ * PR #425 (2026-05-22): Subscription cancel 直後に DB の Stripe 関連フィールドをクリアする内部ヘルパ。
+ *
+ * クリア対象:
+ *   - stripeSubscriptionId / stripeSubscriptionStatus / stripeSubscriptionItem*
+ *   - stripeDefaultPaymentMethodId / cardVerificationStatus / cardLastVerifiedAt
+ *   - autoSuspendScheduledAt (= 自動 suspend 予定もクリア。Subscription 自体が消えた前提)
+ *
+ * クリアしない対象:
+ *   - stripeCustomerId (= 再 setup 時に再利用するため保持。Customer 削除は別 API)
+ */
+async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<void> {
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      stripeSubscriptionId: null,
+      stripeSubscriptionStatus: 'canceled',
+      stripeSubscriptionItemHaikuId: null,
+      stripeSubscriptionItemSonnetId: null,
+      stripeSubscriptionItemStorageId: null,
+      stripeDefaultPaymentMethodId: null,
+      cardVerificationStatus: null,
+      cardLastVerifiedAt: null,
+      autoSuspendScheduledAt: null,
+    },
+  });
 }
 
 /**
