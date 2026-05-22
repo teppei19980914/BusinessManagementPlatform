@@ -915,7 +915,16 @@ export async function cancelTenantStripeSubscription(
  * 目的: テナント管理者が「どのクレジットカードに毎月引き落とされるか」を画面で視認できるようにし、
  *       Stripe ダッシュボード側との一貫性 (= 画面に出ているカード = 実際に請求されるカード) を担保する。
  *
- * - stripeDefaultPaymentMethodId が null (= カード未登録) なら null を返す
+ * ★severity-1 重要設計★ Stripe Customer の `invoice_settings.default_payment_method` を
+ * **リアルタイム取得** する (= DB キャッシュ `Tenant.stripeDefaultPaymentMethodId` は使わない)。
+ * 理由: Customer Portal でカード変更 → Webhook で DB 同期、の経路は staging では Webhook 未設定で
+ *       停止し、本番でも秒〜分単位の遅延がある。その間「画面のカード ≠ 請求カード」になり
+ *       「カード変えたつもりが古いカードに引落された」事故が発生する。
+ *       常に Stripe API から取得することで Webhook 同期の有無に関わらず一貫性を担保する。
+ *
+ * パフォーマンス: テナント設定画面表示時の 1 回呼出のみ。コスト微々たるもの (Stripe API 1 call)。
+ *
+ * - stripeCustomerId が null (= 未登録) なら null を返す
  * - Stripe API 失敗時も null を返す (= 画面遷移自体は止めない、UI 側でフォールバック表示)
  * - 戻り値はカード末尾 4 桁 + ブランド + 有効期限のみ (= PCI DSS 対象外の表示可能フィールド)
  *
@@ -931,20 +940,30 @@ export type StripeCardSummary = {
 export async function getStripeCardSummary(tenantId: string): Promise<StripeCardSummary | null> {
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
-    select: { stripeDefaultPaymentMethodId: true },
+    select: { stripeCustomerId: true },
   });
-  if (tenant?.stripeDefaultPaymentMethodId == null) return null;
+  if (tenant?.stripeCustomerId == null) return null;
 
   const stripe = getStripe();
-  const result = await withStripeError(() =>
-    stripe.paymentMethods.retrieve(tenant.stripeDefaultPaymentMethodId!),
+  // Stripe Customer の invoice_settings.default_payment_method を expand 付きで取得 (= 1 API call で PaymentMethod まで取れる)
+  const customerResult = await withStripeError(() =>
+    stripe.customers.retrieve(tenant.stripeCustomerId!, {
+      expand: ['invoice_settings.default_payment_method'],
+    }),
   );
-  if (!result.ok || result.value.type !== 'card' || !result.value.card) return null;
+  if (!customerResult.ok) return null;
+  const customer = customerResult.value;
+  // Stripe.DeletedCustomer の場合は invoice_settings 等にアクセス不可
+  if (customer.deleted) return null;
+  const pm = customer.invoice_settings?.default_payment_method;
+  // 期待値: PaymentMethod object (expand 結果)。string や null なら表示できない
+  if (!pm || typeof pm === 'string') return null;
+  if (pm.type !== 'card' || !pm.card) return null;
   return {
-    brand: result.value.card.brand,
-    last4: result.value.card.last4,
-    expMonth: result.value.card.exp_month,
-    expYear: result.value.card.exp_year,
+    brand: pm.card.brand,
+    last4: pm.card.last4,
+    expMonth: pm.card.exp_month,
+    expYear: pm.card.exp_year,
   };
 }
 
