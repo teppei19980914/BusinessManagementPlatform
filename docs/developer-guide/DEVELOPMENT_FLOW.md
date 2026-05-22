@@ -207,6 +207,9 @@ PR description に **Summary / Test plan / 関連 PR・KDD** の 3 セクショ�
 | Deploy Preview の Stripe 戻り先が本番 URL になる | `NEXTAUTH_URL` の context 分離漏れ — [KDD §5.X+99 / §5.X+101](../knowledge/KDD_PATTERNS.md) |
 | Set-Cookie が脱落して signOut が効かない | Netlify Set-Cookie 罠 — [KDD §5.X+ feedback_session_clearance_pattern](../knowledge/KDD_PATTERNS.md) |
 | build が成功しているのに rebuild が走らない | `scripts/netlify-ignore.sh` の path-based skip 判定 — [DEPLOYMENT.md §1.2](../operations/DEPLOYMENT.md) |
+| commit message に `[skip netlify]` を入れても Deploy Preview が走ってしまう | **Deploy Preview は PR タイトルが判定対象** (commit message は無視される)。`gh pr edit <N> --title "...[skip netlify]"` で PR タイトル側に入れる — [DEPLOYMENT.md §3.5](../operations/DEPLOYMENT.md) / [KDD §5.X+114](../knowledge/KDD_PATTERNS.md) |
+
+> **Deploy Preview (= ステージング) を明示的に skip したい場合** (= credit 浪費抑制): **PR タイトル末尾に `[skip netlify]`** を付与する。詳細は [DEPLOYMENT.md §3.5 抑制策 3](../operations/DEPLOYMENT.md)。
 
 ---
 

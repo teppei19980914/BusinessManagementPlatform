@@ -13117,3 +13117,180 @@ ADR-0016 Revised では「1 user = 1 email = 1 owned tenant」の概念で簡潔
   - `prisma/schema.prisma` + migration `20260527_tenants_created_by_user_id_tracking`
 - 仕様: `docs/business/TENANT_AND_BILLING.md` §34.14.5b
 - 関連 feedback: `feedback_docs_then_impl_conflict` (= 仕様確定 docs と実装の同期失敗パターン)、`feedback_3layer_sync_filter` (= 複数経路で同一フィルタを保つ必要性)
+
+---
+
+## 5.X+114 **★credits 浪費★ `[skip netlify]` の配置場所を「commit message」と思い込み Deploy Preview が走り続けた (2026-05-22 / PR #425 整理)**
+
+### 発覚
+
+PR #425 (= `fix/seed-vercel-to-netlify` ブランチ) のレビュー中、Deploy Preview を skip しているつもりが **複数 commit で実際にはデプロイされていた** ことが判明:
+
+| Commit | Commit message subject に `[skip netlify]` | 実際の Deploy Preview |
+|---|---|---|
+| e63fdef | ✅ あり (= `... [skip netlify]`) | **❌ デプロイされた** (= ~15 credits 消費) |
+| 16d3f9e | ✅ あり | **❌ デプロイされた** |
+| 6a9adb4 | ❌ なし | ✅ Cancelled (= `scripts/netlify-ignore.sh` の path-based skip が docs-only を検出) |
+| f44546a | ❌ なし | デプロイされた |
+| bd0d898 | ❌ なし | デプロイされた |
+
+`[skip netlify]` を入れた 2 commit が走り、入れていない 6a9adb4 だけが skip された逆転現象に「フラグが効いていない / 公式機能ではないのでは?」と一時誤判断したが、本当の原因は配置場所の誤り。
+
+### 根本原因 (確度 100%)
+
+**Netlify 公式仕様** ([docs.netlify.com/site-deploys/manage-deploys/](https://docs.netlify.com/site-deploys/manage-deploys/) → "Skip a deploy" セクション):
+
+| Deploy 種別 | `[skip ci]` / `[skip netlify]` の有効な配置場所 |
+|---|---|
+| **Deploy Preview (= PR / MR)** | **PR / MR のタイトル**。commit message は **参照されない** |
+| Branch deploy / Production deploy (= push 直行) | commit message のどこか |
+
+本プロジェクトの「ステージング環境」= GitHub PR の Deploy Preview なので、**PR タイトルに書かないとフラグが効かない**。
+
+PR #425 では「commit message に書けば skip される」と誤認識していたため、commit message にだけ `[skip netlify]` を入れていた → Netlify は PR タイトルを見るので無視 → Deploy Preview が走る → credits 消費。`docs/operations/DEPLOYMENT.md §3.5` の旧版 doc 自体も「コミットメッセージで事前 skip」と書かれており、PR タイトル必須の記載が欠落していた (= doc が誤導していた)。
+
+6a9adb4 が Cancelled だったのは `[skip netlify]` ではなく `scripts/netlify-ignore.sh` の path-based skip (= docs-only 変更を検出) が効いた別経路。これが「フラグが効いているように見える」誤った観測を補強してしまった。
+
+### 教訓 (パターン化)
+
+1. **★最重要★ Netlify の `[skip *]` フラグは「PR タイトル」と「commit message」で参照箇所が異なる** — PR の Deploy Preview を skip したいなら **PR タイトル** に書く。push 直行 deploy を skip したいなら commit message に書く。
+2. **公式 docs を読まずに「コミットメッセージで skip できる」と汎化記憶**しないこと。CI 系の慣習 (`[skip ci]` は GitHub Actions が commit message を見る) に引きずられて Netlify も同じだと思い込んだのが直接原因。
+3. **「観測 vs 仕様」の食い違いに気付いたら一次ソースを当たる** — `[skip netlify]` 付き commit がデプロイされた事実を見た時点で「効いていない」と結論する前に Netlify 公式 docs を確認すべきだった。最初は WebFetch を 1 回で済ませて推測結論に飛び、ユーザに二度訂正させてしまった。
+4. **doc 側で「PR タイトル必須」を明記しないと、運用者が皆同じ罠を踏む** — Deploy 系の skip 文言は「どこに書くか」が最重要メタデータ。`docs/operations/DEPLOYMENT.md` §3.5 を本 KDD と同時に改修。
+
+### 検証手順 (再発防止用)
+
+```
+PR の Deploy Preview を明示的に skip したい場合:
+
+1. PR タイトル末尾に [skip netlify] を追記
+   gh pr edit <N> --title "<元のタイトル> [skip netlify]"
+
+2. 次の push (= force push でも通常 push でも) 以降、Deploy Preview が skip される
+
+3. Netlify Dashboard → Deploys タブで該当 commit の build エントリが
+   - Cancelled (= skip 成功)、または
+   - そもそもエントリが生成されない (= push 後 1-2 分待っても新規 build が出てこない)
+   ことを確認
+
+★注意: commit message にだけ [skip netlify] を入れても PR コンテキストでは無視される。
+       「flag を書いた = skip された」を観測なしに信じない。
+```
+
+### ★追加の罠★ commit message **body 内** の `[skip ci]` が GitHub Actions に skip 扱いされる (本 PR #428 で踏んだ)
+
+本 doc 整合化 PR (= 本 PR) を作成した直後、**全 GitHub Actions workflow が 1 つも走らない** 事象が発生。`gh run list --branch <branch>` も空。原因:
+
+commit message を以下のように書いていた:
+
+```
+docs(deploy): Netlify skip フラグの「PR タイトル必須」を明文化 + KDD §5.X+114 [skip netlify]
+
+## 修正内容
+- 「commit メッセージに `[skip ci]` / `[skip netlify]`」2 行を、…
+- 「PR タイトル `[skip ci]`」「commit message 系」3 行に再構成
+...
+```
+
+subject の `[skip netlify]` は Netlify skip を意図したもの (= GitHub Actions は通常認識しない)。しかし **body 内に doc の引用として `[skip ci]` を 2 箇所含めて** いた (markdown のバックティック内であっても生文字列としては `[skip ci]`)。
+
+GitHub Actions のスキャナは **commit message 全文 (subject + body)** を見る挙動を取り、bracket / quote 内かどうかを判別せずに `[skip ci]` を検出した結果、**全 workflow を skip** した。
+
+公式 docs ([Skipping workflow runs](https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/skipping-workflow-runs)) は「the commit message in a push, or the HEAD commit of a pull request」とだけ書かれていて「subject か body か」「コードブロック内を除外するか」を明示していないため、実装挙動を観測で把握するしかない。
+
+**回避策**:
+
+1. **commit message subject に skip キーワードを書く時は body から同種文字列を完全に排除する** — body で言及したい場合は鉤括弧 (`「skip ci」`) / バックスラッシュエスケープ (`\[skip ci\]`) / 大文字化 (`[SKIP CI]`) 等で区別する
+2. doc 引用は `commit-message に skip キーワードを入れる場合は ...` のように言い換える (= 角括弧 + 半角アルファベットの組み合わせを避ける)
+3. PR 作成後すぐに `gh run list --branch <branch>` で workflow が走り出したことを確認する (= 走っていなければ即 amend + force push で復旧)
+
+### ★さらに重大な罠★ Netlify も commit body の skip キーワードを認識 + squash merge で main commit に持ち越されて Production deploy が連続 skip された (本 PR #428 で本番未反映として発覚)
+
+PR #428 のレビュー中、ユーザから「本番 (tasukiba.netlify.app) で PR #425 の sticky header が反映されていない」と指摘。コードでは [src/components/dashboard-header.tsx](../../src/components/dashboard-header.tsx) に `sticky top-0 z-40` が確かに存在するのに、本番 HTML には `class="border-b bg-card"` (= sticky 抜け) が配信されていた。
+
+調査の結果、**本番にデプロイされている artifact が PR #424 マージ時点 (= 2026-05-21) のまま、PR #425 以降の 3 連続 push に対して Netlify Production build が走っていなかった** ことが判明:
+
+| main commit | PR | squash 後 message body に含まれた `[skip netlify]` | Netlify Production build |
+|---|---|---|---|
+| `1807973` | #425 (sticky 含む) | 2 箇所 (PR 内ローカル commit subject の `[skip netlify]`) | ❌ skipped |
+| `cc5211c` | #426 (signup 3 層判定 / severity-1) | 4 箇所 | ❌ skipped |
+| `f0cfe4e` | #427 (docs only) | 1 箇所 + netlify-ignore.sh の path-based skip | ❌ skipped (意図通り) |
+
+つまり **PR #425 / PR #426 は実装含むのに本番未反映** という事業継続性 severity-1 状況だった (= signup 修正 = 課金・テナント割当ロジックが本番で旧仕様のまま稼働)。
+
+#### 根本原因 (確度 100%)
+
+1. **Netlify も commit message body 全体をスキャンする** — Skip a deploy 仕様 (= `[skip netlify]` を「anywhere in the Git commit message」で検出) は subject に限らず body 全文に適用される
+2. **GitHub の squash merge は PR 内の全 commit message を 1 つの commit に結合する** — PR 内のローカル commit (= `e63fdef feat(ui)★UX★: ... [skip netlify]` 等) の subject ごと結合され、squash 後の main commit message body に `[skip netlify]` が **複数箇所** 残る
+3. 結果、main の push commit message に `[skip netlify]` が含まれ → Netlify は Production deploy を skip → 本番 artifact が古いまま
+
+#### 仕組み的な再発防止策 (本 PR で運用ルール化)
+
+| ルール | 対象 | 適用箇所 |
+|---|---|---|
+| ★最重要★ **ローカル commit message に `[skip netlify]` / `[skip ci]` を絶対に書かない** | 全開発者 | feature ブランチで commit する時 |
+| Deploy Preview を skip したい場合は **PR タイトルにだけ書く** | 開発者 | PR 作成・編集時 |
+| **squash merge UI で commit subject から `[skip *]` を必ず削除する** | reviewer / maintainer | GitHub の "Confirm squash and merge" 画面で subject 行を編集 |
+| 同様に squash UI で **body 部分の `[skip *]` も削除** (PR description プレビューに残っている分) | reviewer / maintainer | "Confirm squash and merge" 画面で body 全文を編集 |
+| 自動回帰: `src/components/dashboard-header.test.tsx` で sticky の生存検証 | 開発者 | CI 自動実行 |
+
+具体的な reviewer 手順は [`CONTRIBUTING.md`](../../CONTRIBUTING.md) §4.4 / [`DEPLOYMENT.md`](../operations/DEPLOYMENT.md) §3.5 を参照。
+
+#### 復旧手順 (本 PR #428 で実施)
+
+1. PR #428 のタイトルから `[skip netlify]` を削除
+2. PR #428 の commit message body から `[skip netlify]` の生文字列を完全排除 (= GitHub Actions の罠と同じ要領で鉤括弧化等)
+3. `src/components/dashboard-header.test.tsx` 新規追加 (= src/ 配下のコード変更 → netlify-ignore.sh の path-based skip も回避)
+4. main へマージ → Netlify Production rebuild が trigger され、PR #425〜#428 の全変更がまとめて本番反映
+
+### 検証手順 (再発防止用)
+
+```
+PR の Deploy Preview を明示的に skip したい場合:
+
+1. PR タイトル末尾に [skip netlify] を追記
+   gh pr edit <N> --title "<元のタイトル> [skip netlify]"
+
+2. 次の push (= force push でも通常 push でも) 以降、Deploy Preview が skip される
+
+3. Netlify Dashboard → Deploys タブで該当 commit の build エントリが
+   - Cancelled (= skip 成功)、または
+   - そもそもエントリが生成されない (= push 後 1-2 分待っても新規 build が出てこない)
+   ことを確認
+
+★注意 1: commit message にだけ [skip netlify] を入れても PR コンテキストでは無視される。
+        「flag を書いた = skip された」を観測なしに信じない。
+
+★注意 2: commit message subject に [skip netlify] を書く場合、body 内に
+        [skip ci] / [ci skip] / [no ci] / [skip actions] / [actions skip] の
+        生文字列を含めない (= GitHub Actions が誤検知して全 workflow を skip する)。
+        doc 引用したい場合は 「skip ci」 / \[skip ci\] のように区別する。
+
+★注意 3: PR 作成後すぐに gh run list --branch <branch> で workflow が走り出したことを確認。
+        空 (= 何も走っていない) の場合は ★注意 2 を疑う。
+
+★注意 4 (= 本 PR #428 で発覚 / 最重要):
+        ローカル commit message に [skip netlify] / [skip ci] を書くと
+        squash merge で main commit に持ち越され、Netlify Production deploy が
+        意図せず skip される。書くなら PR タイトルだけ。reviewer は squash UI で
+        commit subject / body から [skip *] を削除する。
+
+★注意 5 (= マージ後の確認):
+        main マージ後、Netlify Dashboard → Deploys タブで該当 commit の
+        Production deploy が Building / Ready になっていることを必ず確認する。
+        Skipped になっていたら ★注意 4 の罠。即時 "Trigger deploy" で復旧する
+        (= 過去分の変更がまとめて反映される)。
+```
+
+### 関連 KDD / PR / feedback
+
+- 公式仕様:
+  - Netlify: <https://docs.netlify.com/site-deploys/manage-deploys/> ("Skip a deploy" セクション)
+  - GitHub Actions: <https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/skipping-workflow-runs>
+- 修正範囲:
+  - [`docs/operations/DEPLOYMENT.md`](../operations/DEPLOYMENT.md) §3.5 抑制策 3 (PR タイトル vs commit message の使い分け + squash merge UI での削除手順) / §3.6 まとめ表 / §8.2
+  - [`docs/developer-guide/DEVELOPMENT_FLOW.md`](../developer-guide/DEVELOPMENT_FLOW.md) §5.4 典型パターン表に「flag が効かない時の対処」追加
+  - [`CONTRIBUTING.md`](../../CONTRIBUTING.md) §4.4 マージ方式に「squash merge 時の `[skip *]` キーワード削除」運用ルール追加
+  - [`src/components/dashboard-header.test.tsx`](../../src/components/dashboard-header.test.tsx) 新規 — sticky 実装の回帰検証 (= 本番未反映の再発防止)
+- 関連 PR: #425 (= Netlify skip 罠を踏んだ実 PR / sticky 実装含む) / #426 (= 同じ罠で signup 修正が本番未反映) / 本 PR #428 (= doc 整合化 + GitHub Actions skip 罠 + Netlify squash merge 罠 を発覚・修復)
+- 関連 feedback: `feedback_netlify_build_skip` (= 本件の学びを memory に固定化、squash merge 罠を反映予定)、`feedback_bundle_under_credit_pressure` (= credit 逼迫時の運用方針 — flag 誤用で credit 浪費すると bundle 戦略も崩れる)

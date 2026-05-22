@@ -166,6 +166,32 @@ WIP                     # コミット対象が曖昧
 - **大規模 PR で履歴を残したい場合**: Merge commit
 - **小型修正のみ**: Rebase merge (履歴を直線化)
 
+#### ★最重要★ Squash merge 時の `[skip ci]` / `[skip netlify]` キーワード扱い (= 本番 deploy 事故防止)
+
+> **背景**: 2026-05-22 に PR #425 / #426 のマージで Netlify Production deploy が 3 連続 skip され、**sticky header / signup 3 層判定 (severity-1)** が約 1 日本番未反映となる事故が発生。原因はローカル commit message に書かれた `[skip netlify]` が squash merge で main commit に持ち越され、Netlify が main の push commit を skip した。詳細: [KDD §5.X+114](./docs/knowledge/KDD_PATTERNS.md) / [DEPLOYMENT.md §3.5](./docs/operations/DEPLOYMENT.md)
+
+##### 開発者ルール
+
+- **ローカル commit message には `[skip ci]` / `[skip netlify]` を絶対に書かない**
+- Deploy Preview を skip したい場合は **PR タイトル末尾にだけ書く** (`gh pr edit <N> --title "...[skip netlify]"`)
+- commit message body 内に doc 引用として `[skip ci]` / `[skip netlify]` 等を書くのも禁止 (生文字列が GitHub Actions / Netlify に検出される) — 必要なら鉤括弧 `「skip ci」` / バックスラッシュエスケープ `\[skip ci\]` で記述
+
+##### reviewer / maintainer ルール (Squash merge 直前に必ず実施)
+
+GitHub の **「Confirm squash and merge」** 画面で:
+
+1. **commit title 入力欄** から `[skip ci]` / `[ci skip]` / `[no ci]` / `[skip actions]` / `[actions skip]` / `[skip netlify]` を **意図的に残す場合を除いて削除**
+2. **commit body 入力欄** からも上記キーワードの **生文字列** を **全件削除** (= 元の PR description / 各 commit message の自動連結で残りがち)
+   - 例: 「`commit メッセージに [skip ci] を入れる場合は...`」のような doc 引用文も対象 (= GitHub Actions / Netlify は markdown を解さず生文字列マッチする)
+3. マージ実行
+4. **マージ後 1-2 分以内に Netlify Dashboard → Deploys タブで該当 commit の Production deploy が `Building` / `Ready` になっていることを確認**
+   - `Skipped` になっていたら手順 1-2 の漏れ → 即時「Trigger deploy → Deploy site」で復旧 (過去分の変更がまとめて反映される)
+
+##### 「Skip キーワードを意図的に残す」ケース (= 本番反映不要を確信している場合)
+
+- docs-only PR で credits を温存したい場合: `scripts/netlify-ignore.sh` の path-based skip が自動で発動するため、`[skip netlify]` 付与は **冗長 (= 書かない方が安全)**
+- `[skip ci]` を main commit に残す: GitHub Actions すべてが skip される (= レビュー後の post-merge regression 検知も走らない) ため **原則禁止**。例外的に許可するのは「リポジトリ整理コミット」等で reviewer が責任を取る場合のみ
+
 ---
 
 ## 5. コードレビューチェックリスト
