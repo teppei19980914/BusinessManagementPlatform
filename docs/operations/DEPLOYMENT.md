@@ -461,6 +461,47 @@ git push -u origin feat/xxx
 - Supabase で手動マイグレーション適用
 - PR (b): 旧列への参照を削除
 
+### 4.3 backfill UPDATE を含む migration の運用 (ADR-0016 Revised / 2026-05-22 で確立)
+
+新規 column 追加 + 既存行への backfill UPDATE を伴う migration では、**「自動推定で値が決まらない行」が NULL 残置するシナリオ**が常に存在する。例: `20260527_tenants_created_by_user_id_tracking` (PR #426) では「admin/super_admin user が居ない tenant」が NULL 残置候補。
+
+**推奨パターン**: migration の最後に **`RAISE WARNING`** で残置件数を出力し、運用者が deploy ログから検知できるようにする:
+
+```sql
+DO $$
+DECLARE
+  null_count INT;
+BEGIN
+  SELECT COUNT(*) INTO null_count
+  FROM "<table>" WHERE "<new_column>" IS NULL AND "deleted_at" IS NULL;
+  IF null_count > 0 THEN
+    RAISE WARNING
+      '<migration_name>: <new_column> が NULL のまま残った行が % 件あります。'
+      ' 手動で UPDATE してください。 該当行検索: SELECT id FROM <table> WHERE <new_column> IS NULL AND deleted_at IS NULL;',
+      null_count;
+  END IF;
+END $$;
+```
+
+**deploy 後の確認手順**:
+
+1. **Netlify build ログ確認**: `prisma migrate deploy` 出力に `WARNING` が含まれていないか
+2. **NULL 残置の SQL 確認** (= Supabase SQL Editor で実行):
+   ```sql
+   SELECT id, slug FROM <table>
+   WHERE <new_column> IS NULL AND deleted_at IS NULL;
+   ```
+3. **0 件返却が期待値**。1 件以上返ったら業務的に主体を特定して手動 UPDATE:
+   ```sql
+   UPDATE <table> SET <new_column> = '<value>' WHERE id = '<id>';
+   ```
+
+**この設計の利点**:
+
+- 自動修復不可能なケース (= 業務文脈に依存する値) を **silent fail させず必ず可視化**
+- migration 自体は冪等 (= 再実行で WARNING も再出力される)
+- 該当行が 0 件なら DO ブロックは何も出力しない (= 通常運用時のノイズなし)
+
 ---
 
 ## 5. Locked Deploy (本番事故防止)
