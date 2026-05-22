@@ -10,11 +10,14 @@
  *   4. 予約済プラン変更の表示 + キャンセル
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 // fix/jwt-resign-for-netlify (2026-05-18): useSession import を削除。
 //   旧コードは update() で JWT 反映していたが、サーバ側で再署名する設計に変更したため不要。
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/toast-provider';
 import { SUPPORTED_LOCALES, SELECTABLE_LOCALES } from '@/config';
 // PR-4 (2026-05-15): テナント TZ で日付を表示
@@ -29,6 +32,12 @@ import { RepairOwnDriftButton } from './repair-own-drift-button';
 import type { DegradedModeState } from '@/services/degraded-mode.service';
 // PR-S5 (2026-05-14): Stripe 支払い方法セクション
 import { StripePaymentMethodSection, type StripeCardSummaryProp } from './stripe-payment-method-section';
+// feat/tenant-settings-tabs (2026-05-22): タブ識別子 + URL ヘルパ (純粋関数、testable)
+import {
+  buildStripeCleanedUrl,
+  pickInitialTab,
+  type TenantSettingsTab,
+} from './tab-helpers';
 
 type TenantSelfInfo = {
   id: string;
@@ -154,6 +163,7 @@ export function TenantSettingsClient({
   const router = useRouter();
   const searchParams = useSearchParams();
   const { showSuccess, showError } = useToast();
+  const t = useTranslations('tenantSettings');
   const [info, setInfo] = useState(initialInfo);
   const [selectedPlan, setSelectedPlan] = useState(initialInfo.plan);
   const [budgetCap, setBudgetCap] = useState<string>(
@@ -162,9 +172,38 @@ export function TenantSettingsClient({
   const [budgetUnlimited, setBudgetUnlimited] = useState(initialInfo.monthlyBudgetCapJpy == null);
   const [submitting, setSubmitting] = useState(false);
 
+  // feat/tenant-settings-tabs (2026-05-22): 3 タブ (概要/使用量/請求) 構成。
+  //   URL クエリ ?tab= で active tab を持続させ、ブックマーク / Stripe Checkout 戻り後の
+  //   タブ復元を可能にする。不正値は overview にフォールバック。
+  const initialTabFromUrl = pickInitialTab(searchParams.get('tab'));
+  const [activeTab, setActiveTab] = useState<TenantSettingsTab>(initialTabFromUrl);
+
+  // BillingContactSection の入力中フラグ (タブ切替時の取りこぼし防止)。
+  //   state ではなく ref で持つ理由: ガード判定で参照するだけで再 render 不要。
+  const billingFormDirtyRef = useRef(false);
+
+  const handleTabChange = useCallback(
+    (value: string) => {
+      const next = pickInitialTab(value);
+      if (billingFormDirtyRef.current && next !== activeTab) {
+        const ok = confirm('請求先情報に未保存の変更があります。タブを切り替えると入力内容は失われます。続行しますか?');
+        if (!ok) return;
+        // タブを離れたら dirty 扱いを解除 (再入力で再度立つ)
+        billingFormDirtyRef.current = false;
+      }
+      setActiveTab(next);
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === 'overview') params.delete('tab');
+      else params.set('tab', next);
+      const queryString = params.toString();
+      router.replace(queryString ? `/settings/tenant?${queryString}` : '/settings/tenant');
+    },
+    [activeTab, router, searchParams],
+  );
+
   // PR-S5 (2026-05-14): Stripe Checkout / setup/complete から戻った時の URL query を捕捉し、
-  //   トーストで結果を通知 + URL を /settings/tenant にクリーニング。
-  //   一度だけ動作させるため、URL に該当パラメタが無くなった時点で再実行されない。
+  //   トーストで結果を通知 + URL から stripe_setup / reason だけ除去 (tab クエリは保持)。
+  //   feat/tenant-settings-tabs (2026-05-22): tab を残すため URL クリーニングを部分削除に変更。
   useEffect(() => {
     const status = searchParams.get('stripe_setup');
     if (status == null) return;
@@ -185,8 +224,7 @@ export function TenantSettingsClient({
       const reasonMessage = reasonMessageMap[reason] ?? '不明なエラー';
       showError(`カード登録に失敗しました (${reasonMessage})。設定は変更されていません`);
     }
-    // URL からクエリパラメタを除去 (= リロード時の重複トースト防止)
-    router.replace('/settings/tenant');
+    router.replace(buildStripeCleanedUrl(searchParams));
     // showSuccess/showError は安定参照、router は安定。初回マウント時のみ実行されればよい。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -303,6 +341,11 @@ export function TenantSettingsClient({
 
   return (
     <div className="space-y-6">
+      {/* ============================================================
+          feat/tenant-settings-tabs (2026-05-22): 共通ヘッダー (タブ外)
+          テナント識別 / 再集計ボタン / 状態系バナーはどのタブからでも
+          見える必要があるため Tabs の外に配置。
+          ============================================================ */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold">テナント設定</h1>
@@ -330,196 +373,245 @@ export function TenantSettingsClient({
         DB 容量と API 利用量はこの画面を開いた時点で最新値を集計しています。
       </p>
 
-      {/* feat/settings-tenant-identity (2026-05-21): テナント停止中バナー (PR #372 = 支払滞納等で read-only)。
-          停止理由の可視化は管理者が即座に状況把握する目的。一般ユーザには露出しない (本画面は admin 限定)。 */}
+      {/* feat/settings-tenant-identity (2026-05-21): テナント停止中バナー (PR #372 = 支払滞納等で read-only)。 */}
       {info.suspendedAt && <SuspendedBanner info={info} />}
 
-      {/* P-B (2026-05-08): Beginner プラン期限バナー */}
+      {/* P-B (2026-05-08): Beginner プラン期限バナー (= ユーザ確定方針で全タブ常時表示) */}
       <BeginnerExpiryBanner info={info} />
 
-      {/* Q5(3) (2026-05-14): 縮退モード起動中バナー + embedding 未生成件数 */}
-      {degradedMode && <DegradedModeSection state={degradedMode} />}
+      {/* ============================================================
+          feat/tenant-settings-tabs (2026-05-22): 3 タブ構成
+          - overview: プラン / 設定 / データ管理 / 解約
+          - usage   : 当月使用量 / ストレージ / 縮退モード警告
+          - billing : 請求先 / 支払い方法 / 請求履歴リンク
+          ============================================================ */}
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList className="h-auto flex-wrap [&>*]:flex-none" data-testid="tenant-settings-tabs">
+          <TabsTrigger value="overview" data-testid="tab-overview">
+            {t('tabOverview')}
+          </TabsTrigger>
+          <TabsTrigger value="usage" data-testid="tab-usage">
+            {t('tabUsage')}
+          </TabsTrigger>
+          <TabsTrigger value="billing" data-testid="tab-billing">
+            {t('tabBilling')}
+          </TabsTrigger>
+        </TabsList>
 
-      {/* 当月使用量 (PR-2 / 2026-05-15: plan 別タイル構成に切替) */}
-      <UsageSection
-        info={info}
-        budgetUsagePercent={budgetUsagePercent}
-        apiReconcile={apiReconcile}
-      />
-
-      {/* 予約済プラン変更 (PR-4: テナント TZ で日付表示) */}
-      {info.scheduledPlanChangeAt && info.scheduledNextPlan && (
-        <section className="rounded border border-amber-300 bg-amber-50 p-4 text-sm dark:bg-amber-900/30">
-          <p>
-            <strong>プラン変更予約あり:</strong>{' '}
-            {formatDate(
-              typeof info.scheduledPlanChangeAt === 'string'
-                ? info.scheduledPlanChangeAt
-                : info.scheduledPlanChangeAt.toISOString(),
-            )} に{' '}
-            <span className="font-mono">{info.scheduledNextPlan}</span> へ変更予定
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="mt-2"
-            onClick={handleCancelScheduled}
-            disabled={submitting}
-          >
-            予約をキャンセル
-          </Button>
-        </section>
-      )}
-
-      {/* プラン変更 + 予算上限 */}
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <section className="rounded border p-4">
-          <h2 className="mb-2 font-semibold">プラン</h2>
-          <p className="mb-3 text-xs text-muted-foreground">
-            アップグレード・ダウングレードともに即時反映されます (Expert ↔ Pro 切替)。Beginner プランへの変更はできません。
-          </p>
-          <div className="space-y-2">
-            {PLAN_OPTIONS
-              // PR #425 (2026-05-22) ★UX 改善★: Expert/Pro 契約中は Beginner ラジオを完全非表示。
-              //   旧 UI は Beginner ラジオを表示 → 選択可能 → 「変更を保存」確認ダイアログまで進める → API で
-              //   BEGINNER_DOWNGRADE_FORBIDDEN 拒否、というユーザを混乱させる挙動だった。
-              //   サーバ側ガード (tenant-self.service.ts BEGINNER_DOWNGRADE_FORBIDDEN) は維持する
-              //   (= UI バイパスの defense-in-depth)。
-              .filter((p) => {
-                if ((info.plan === 'expert' || info.plan === 'pro') && p.value === 'beginner') {
-                  return false;
-                }
-                return true;
-              })
-              .map((p) => (
-              <label
-                key={p.value}
-                className="flex cursor-pointer items-start gap-2 rounded border p-3 hover:bg-muted/30"
+        {/* --- 概要タブ --- */}
+        <TabsContent value="overview" className="mt-4 space-y-6">
+          {/* 予約済プラン変更 (PR-4: テナント TZ で日付表示) */}
+          {info.scheduledPlanChangeAt && info.scheduledNextPlan && (
+            <section className="rounded border border-amber-300 bg-amber-50 p-4 text-sm dark:bg-amber-900/30">
+              <p>
+                <strong>プラン変更予約あり:</strong>{' '}
+                {formatDate(
+                  typeof info.scheduledPlanChangeAt === 'string'
+                    ? info.scheduledPlanChangeAt
+                    : info.scheduledPlanChangeAt.toISOString(),
+                )} に{' '}
+                <span className="font-mono">{info.scheduledNextPlan}</span> へ変更予定
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={handleCancelScheduled}
+                disabled={submitting}
               >
-                <input
-                  type="radio"
-                  name="plan"
-                  value={p.value}
-                  checked={selectedPlan === p.value}
-                  onChange={() => setSelectedPlan(p.value)}
-                  className="mt-1"
-                />
-                <div>
-                  <p className="font-medium">{p.label}</p>
-                  <p className="text-xs text-muted-foreground">{p.description}</p>
-                  {info.plan === p.value && (
-                    <p className="mt-1 text-xs text-info">現在のプラン</p>
-                  )}
-                </div>
-              </label>
-            ))}
-          </div>
-          {beginnerSeatsExceeded && (
-            <p className="mt-2 text-sm text-destructive">
-              ⚠ Beginner プランは最大 {info.beginnerMaxSeats} 席までです。現在 {info.activeUserCount} 名のため、先に席数を減らす必要があります。
-            </p>
+                予約をキャンセル
+              </Button>
+            </section>
           )}
-        </section>
 
-        {/* PR-2 (2026-05-15): Beginner プランでは月次予算上限フォームを非表示。
-            Beginner は固定の月 100 回上限で運用するため、テナント管理者が金額の上限を
-            設定する余地がない。Expert/Pro のみ表示。 */}
-        {selectedPlan !== 'beginner' && (
-          <section className="rounded border p-4">
-            <h2 className="mb-2 font-semibold">月次予算上限</h2>
-            <p className="mb-3 text-xs text-muted-foreground">
-              上限を超えそうな時に LLM 呼出を停止します (金額ベース)。
-            </p>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={budgetUnlimited}
-                onChange={(e) => setBudgetUnlimited(e.target.checked)}
-              />
-              <span>予算上限を設定しない (無制限)</span>
-            </label>
-            {!budgetUnlimited && (
-              <div className="mt-2">
-                <input
-                  type="number"
-                  min={0}
-                  value={budgetCap}
-                  onChange={(e) => setBudgetCap(e.target.value)}
-                  className="w-48 rounded border p-2"
-                  placeholder="例: 5000"
-                />
-                <span className="ml-2 text-sm text-muted-foreground">円 / 月</span>
+          {/* プラン変更 + 予算上限 */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <section className="rounded border p-4">
+              <h2 className="mb-2 font-semibold">プラン</h2>
+              <p className="mb-3 text-xs text-muted-foreground">
+                アップグレード・ダウングレードともに即時反映されます (Expert ↔ Pro 切替)。Beginner プランへの変更はできません。
+              </p>
+              <div className="space-y-2">
+                {PLAN_OPTIONS
+                  // PR #425 (2026-05-22) ★UX 改善★: Expert/Pro 契約中は Beginner ラジオを完全非表示。
+                  //   旧 UI は Beginner ラジオを表示 → 選択可能 → 「変更を保存」確認ダイアログまで進める → API で
+                  //   BEGINNER_DOWNGRADE_FORBIDDEN 拒否、というユーザを混乱させる挙動だった。
+                  //   サーバ側ガード (tenant-self.service.ts BEGINNER_DOWNGRADE_FORBIDDEN) は維持する
+                  //   (= UI バイパスの defense-in-depth)。
+                  .filter((p) => {
+                    if ((info.plan === 'expert' || info.plan === 'pro') && p.value === 'beginner') {
+                      return false;
+                    }
+                    return true;
+                  })
+                  .map((p) => (
+                  <label
+                    key={p.value}
+                    className="flex cursor-pointer items-start gap-2 rounded border p-3 hover:bg-muted/30"
+                  >
+                    <input
+                      type="radio"
+                      name="plan"
+                      value={p.value}
+                      checked={selectedPlan === p.value}
+                      onChange={() => setSelectedPlan(p.value)}
+                      className="mt-1"
+                    />
+                    <div>
+                      <p className="font-medium">{p.label}</p>
+                      <p className="text-xs text-muted-foreground">{p.description}</p>
+                      {info.plan === p.value && (
+                        <p className="mt-1 text-xs text-info">現在のプラン</p>
+                      )}
+                    </div>
+                  </label>
+                ))}
               </div>
+              {beginnerSeatsExceeded && (
+                <p className="mt-2 text-sm text-destructive">
+                  ⚠ Beginner プランは最大 {info.beginnerMaxSeats} 席までです。現在 {info.activeUserCount} 名のため、先に席数を減らす必要があります。
+                </p>
+              )}
+            </section>
+
+            {/* PR-2 (2026-05-15): Beginner プランでは月次予算上限フォームを非表示。
+                Beginner は固定の月 100 回上限で運用するため、テナント管理者が金額の上限を
+                設定する余地がない。Expert/Pro のみ表示。 */}
+            {selectedPlan !== 'beginner' && (
+              <section className="rounded border p-4">
+                <h2 className="mb-2 font-semibold">月次予算上限</h2>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  上限を超えそうな時に LLM 呼出を停止します (金額ベース)。
+                </p>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={budgetUnlimited}
+                    onChange={(e) => setBudgetUnlimited(e.target.checked)}
+                  />
+                  <span>予算上限を設定しない (無制限)</span>
+                </label>
+                {!budgetUnlimited && (
+                  <div className="mt-2">
+                    <input
+                      type="number"
+                      min={0}
+                      value={budgetCap}
+                      onChange={(e) => setBudgetCap(e.target.value)}
+                      className="w-48 rounded border p-2"
+                      placeholder="例: 5000"
+                    />
+                    <span className="ml-2 text-sm text-muted-foreground">円 / 月</span>
+                  </div>
+                )}
+              </section>
             )}
+
+            <Button type="submit" disabled={submitting || beginnerSeatsExceeded}>
+              {submitting ? '更新中...' : '変更を保存'}
+            </Button>
+          </form>
+
+          {/* PR-1 (2026-05-15): テナント単位の言語・タイムゾーン設定 */}
+          <TenantI18nSection
+            initialTimezone={info.timezone}
+            initialLocale={info.locale}
+            onUpdate={async () => {
+              await refreshInfo();
+            }}
+          />
+
+          {/* 2026-05-09 (PR G / #24): シードデータ参照 toggle */}
+          <SeedDataToggleSection
+            initialEnabled={info.seedDataEnabled}
+            onUpdate={async () => {
+              await refreshInfo();
+            }}
+          />
+
+          {/* P-C (2026-05-08): データエクスポート */}
+          <DataExportSection />
+
+          {/* P-D (2026-05-08): データインポート */}
+          <DataImportSection />
+
+          {/* feat/settings-tenant-identity (2026-05-21): 詳細識別情報 (折りたたみ)。 */}
+          <TenantIdentityDetailsSection info={info} />
+
+          {/* テナント解約 (2026-05-08): 危険な操作なので末尾配置 + 名称一致確認 */}
+          <SelfDeleteTenantSection tenantName={info.name} />
+        </TabsContent>
+
+        {/* --- 使用量タブ --- */}
+        <TabsContent value="usage" className="mt-4 space-y-6">
+          {/* Q5(3) (2026-05-14): 縮退モード起動中バナー + embedding 未生成件数 */}
+          {degradedMode && <DegradedModeSection state={degradedMode} />}
+
+          {/* 当月使用量 (PR-2 / 2026-05-15: plan 別タイル構成) */}
+          <UsageSection
+            info={info}
+            budgetUsagePercent={budgetUsagePercent}
+            apiReconcile={apiReconcile}
+          />
+
+          {/* Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理 */}
+          {storageInitialInfo && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="text-base font-semibold">ストレージ使用量</h2>
+                <RecalculateButton
+                  endpoint="/api/tenants/me/recalculate"
+                  label="ストレージを再集計"
+                />
+              </div>
+              <StorageAddonSection initialInfo={storageInitialInfo} />
+            </div>
+          )}
+        </TabsContent>
+
+        {/* --- 請求タブ --- */}
+        <TabsContent value="billing" className="mt-4 space-y-6">
+          {/* P-G (2026-05-08): 請求先情報の編集
+              PR #425 (2026-05-22) ★severity-1★: paymentMethod 変更後に Client state (info) を
+              即座に再取得しないと、StripePaymentMethodSection の活性条件 (info.paymentMethod) が
+              古いままで「クレジットカード情報更新」ボタンが非活性となり、credit_card 払いにも
+              関わらずカード登録できない = 請求漏れ発生。refreshInfo を必ず渡す。
+              feat/tenant-settings-tabs (2026-05-22): タブ切替時の取りこぼし防止に onDirtyChange も渡す。 */}
+          <BillingContactSection
+            initialInfo={info}
+            onUpdate={refreshInfo}
+            onDirtyChange={(dirty) => {
+              billingFormDirtyRef.current = dirty;
+            }}
+          />
+
+          {/* PR-S5 (2026-05-14): Stripe 支払い方法 (請求書 ↔ クレジットカード切替)
+              PR #425 (2026-05-22): cardSummary を渡して登録カード情報を可視化 */}
+          <StripePaymentMethodSection
+            info={info}
+            stripeEnabled={stripeEnabled}
+            onRefresh={refreshInfo}
+            cardSummary={cardSummary}
+          />
+
+          {/* feat/tenant-settings-tabs (2026-05-22): 請求履歴ページへの動線。
+              現状 stripe-payment-method-section 内にもリンクがあるが、銀行振込ユーザでも
+              履歴は参照する必要があるため請求タブ末尾に独立セクションとして配置。 */}
+          <section className="rounded border p-4 text-sm">
+            <h2 className="mb-2 text-lg font-semibold">請求履歴</h2>
+            <p className="mb-3 text-xs text-muted-foreground">
+              直近 6 ヶ月の請求金額・入金状況 (Stripe 自動引落 / 銀行振込) は別画面で確認できます。
+            </p>
+            <Link
+              href="/settings/tenant/billing"
+              className="inline-flex items-center justify-center rounded-md border bg-background px-3 py-1.5 text-sm font-medium shadow-xs hover:bg-muted/30"
+            >
+              📋 請求履歴を見る
+            </Link>
           </section>
-        )}
-
-        <Button type="submit" disabled={submitting || beginnerSeatsExceeded}>
-          {submitting ? '更新中...' : '変更を保存'}
-        </Button>
-      </form>
-
-      {/* PR-1 (2026-05-15): テナント単位の言語・タイムゾーン設定 */}
-      <TenantI18nSection
-        initialTimezone={info.timezone}
-        initialLocale={info.locale}
-        onUpdate={async () => {
-          await refreshInfo();
-        }}
-      />
-
-      {/* Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理 */}
-      {storageInitialInfo && (
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-base font-semibold">ストレージ使用量</h2>
-            <RecalculateButton
-              endpoint="/api/tenants/me/recalculate"
-              label="ストレージを再集計"
-            />
-          </div>
-          <StorageAddonSection initialInfo={storageInitialInfo} />
-        </div>
-      )}
-
-      {/* 2026-05-09 (PR G / #24): シードデータ参照 toggle */}
-      <SeedDataToggleSection
-        initialEnabled={info.seedDataEnabled}
-        onUpdate={async () => {
-          await refreshInfo();
-        }}
-      />
-
-      {/* P-G (2026-05-08): 請求先情報の編集
-          PR #425 (2026-05-22) ★severity-1★: paymentMethod 変更後に Client state (info) を
-          即座に再取得しないと、StripePaymentMethodSection の活性条件 (info.paymentMethod) が
-          古いままで「クレジットカード情報更新」ボタンが非活性となり、credit_card 払いにも
-          関わらずカード登録できない = 請求漏れ発生。refreshInfo を必ず渡す。 */}
-      <BillingContactSection initialInfo={info} onUpdate={refreshInfo} />
-
-      {/* PR-S5 (2026-05-14): Stripe 支払い方法 (請求書 ↔ クレジットカード切替)
-          PR #425 (2026-05-22): cardSummary を渡して登録カード情報を可視化 */}
-      <StripePaymentMethodSection
-        info={info}
-        stripeEnabled={stripeEnabled}
-        onRefresh={refreshInfo}
-        cardSummary={cardSummary}
-      />
-
-      {/* P-C (2026-05-08): データエクスポート */}
-      <DataExportSection />
-
-      {/* P-D (2026-05-08): データインポート */}
-      <DataImportSection />
-
-      {/* feat/settings-tenant-identity (2026-05-21): 詳細識別情報 (折りたたみ)。
-          UUID / カード検証日時 / 自動停止予定 / プラン単価 / 作成日時 等のデバッグ・サポート
-          用途の情報を 1 箇所に集約。常時表示する必要は薄いため <details> で隠す。 */}
-      <TenantIdentityDetailsSection info={info} />
-
-      {/* テナント解約 (2026-05-08): 危険な操作なので末尾配置 + 名称一致確認 */}
-      <SelfDeleteTenantSection tenantName={info.name} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -890,36 +982,46 @@ function SelfDeleteTenantSection({ tenantName }: { tenantName: string }) {
   }
 
   return (
-    <section className="mt-8 space-y-3 rounded border border-destructive/40 p-4">
-      <h2 className="text-lg font-semibold text-destructive">テナント解約 (危険な操作)</h2>
-      <p className="text-sm text-muted-foreground">
-        本テナントを解約します。解約後は全ユーザーがログイン不可となり、業務データへのアクセスができなくなります。
-      </p>
-      <ul className="ml-4 list-disc text-xs text-muted-foreground">
-        <li>解約直後: テナント本体 + 配下の業務データ (プロジェクト/ナレッジ/課題等) を **論理削除**</li>
-        <li>90 日経過後: 業務データを **物理削除** (= 復元不可、データ容量解放)</li>
-        <li>監査ログ・課金根拠データ (api_call_logs / 月次履歴) は保持</li>
-        <li>解約前に <a href="#" className="text-info underline">データエクスポート</a> 実施を強く推奨</li>
-      </ul>
+    // feat/tenant-settings-tabs (2026-05-22): 「概要内のまま折りたたみ」のユーザ確定方針に従い、
+    //   <details> でラップしデフォルト閉じる。誤クリック防止 + 概要タブの視覚的圧縮を兼ねる。
+    //   summary を destructive 色で明示し、解約導線が隠れていないことを示す。
+    <details
+      className="mt-8 rounded border border-destructive/40 [&[open]>summary]:border-b [&[open]>summary]:border-destructive/40"
+      data-testid="self-delete-tenant-section"
+    >
+      <summary className="cursor-pointer p-4 text-lg font-semibold text-destructive select-none">
+        ⚠ テナント解約 (危険な操作) — クリックで展開
+      </summary>
+      <div className="space-y-3 p-4">
+        <p className="text-sm text-muted-foreground">
+          本テナントを解約します。解約後は全ユーザーがログイン不可となり、業務データへのアクセスができなくなります。
+        </p>
+        <ul className="ml-4 list-disc text-xs text-muted-foreground">
+          <li>解約直後: テナント本体 + 配下の業務データ (プロジェクト/ナレッジ/課題等) を **論理削除**</li>
+          <li>90 日経過後: 業務データを **物理削除** (= 復元不可、データ容量解放)</li>
+          <li>監査ログ・課金根拠データ (api_call_logs / 月次履歴) は保持</li>
+          <li>解約前に <a href="#" className="text-info underline">データエクスポート</a> 実施を強く推奨</li>
+        </ul>
 
-      <form onSubmit={handleSubmit} className="mt-3 space-y-2">
-        <label className="block text-sm font-medium">
-          確認のため、現在のテナント名「<span className="font-mono">{tenantName}</span>」を正確に入力してください
-        </label>
-        <input
-          type="text"
-          value={confirmName}
-          onChange={(e) => setConfirmName(e.target.value)}
-          placeholder={tenantName}
-          className="block w-full rounded border p-2 text-sm"
-          disabled={submitting}
-        />
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <Button type="submit" variant="destructive" disabled={submitting || !isMatch}>
-          {submitting ? '解約処理中...' : '🗑 テナントを解約する'}
-        </Button>
-      </form>
-    </section>
+        <form onSubmit={handleSubmit} className="mt-3 space-y-2">
+          <label className="block text-sm font-medium">
+            確認のため、現在のテナント名「<span className="font-mono">{tenantName}</span>」を正確に入力してください
+          </label>
+          <input
+            type="text"
+            value={confirmName}
+            onChange={(e) => setConfirmName(e.target.value)}
+            placeholder={tenantName}
+            className="block w-full rounded border p-2 text-sm"
+            disabled={submitting}
+          />
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <Button type="submit" variant="destructive" disabled={submitting || !isMatch}>
+            {submitting ? '解約処理中...' : '🗑 テナントを解約する'}
+          </Button>
+        </form>
+      </div>
+    </details>
   );
 }
 
@@ -1384,6 +1486,7 @@ function SeedDataToggleSection({
 function BillingContactSection({
   initialInfo,
   onUpdate,
+  onDirtyChange,
 }: {
   initialInfo: TenantSelfInfo;
   /**
@@ -1392,6 +1495,12 @@ function BillingContactSection({
    * 「credit_card 払いだがカード未登録」状態が放置され請求漏れ発生する。
    */
   onUpdate: () => Promise<void>;
+  /**
+   * feat/tenant-settings-tabs (2026-05-22): 親 (TenantSettingsClient) に「請求先情報フォームに
+   * 未保存変更があるか」を通知する callback。タブ切替前の確認ダイアログ表示に使う。
+   * 親の ref を更新するだけのため、引数は単純な boolean。
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const router = useRouter();
   const { showSuccess, showError } = useToast();
@@ -1414,6 +1523,17 @@ function BillingContactSection({
   });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // feat/tenant-settings-tabs (2026-05-22): タブ切替ガード用の dirty 通知。
+  //   baseline は「最後に保存成功した値」とし、submit 成功時に form 自身で更新する。
+  //   useRef なので比較自体は再 render を発生させず、副次的に effect が走るのは
+  //   onDirtyChange (= 親 ref の代入) を呼ぶ瞬間のみ。
+  const baselineFormRef = useRef(form);
+  useEffect(() => {
+    if (!onDirtyChange) return;
+    const dirty = JSON.stringify(form) !== JSON.stringify(baselineFormRef.current);
+    onDirtyChange(dirty);
+  }, [form, onDirtyChange]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1499,7 +1619,8 @@ function BillingContactSection({
           return;
         }
         // 既存カードなし or 失敗 → Stripe Checkout 強制遷移にフォールバック
-        const returnUrl = `${window.location.origin}/settings/tenant`;
+        // feat/tenant-settings-tabs (2026-05-22): カード登録完了後は請求タブへ戻す。
+        const returnUrl = `${window.location.origin}/settings/tenant?tab=billing`;
         const setupRes = await fetch('/api/tenants/me/billing/stripe/setup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1515,11 +1636,19 @@ function BillingContactSection({
         }
         // 住所等は既に保存済みである旨を伝えてから遷移
         showSuccess('請求先情報を保存しました。続けてカード登録画面に移動します');
+        // feat/tenant-settings-tabs (2026-05-22): Stripe 遷移直前で baseline を更新しておく。
+        //   万一遷移が阻まれた場合 (browser dialog cancel など) でも dirty 扱いを残さない。
+        baselineFormRef.current = form;
+        onDirtyChange?.(false);
         window.location.href = setupJson.data.checkoutUrl;
         return;
       }
 
       showSuccess('請求先情報を更新しました');
+      // feat/tenant-settings-tabs (2026-05-22): 保存成功 = baseline 更新。
+      //   以降の編集が再び dirty 扱いになる。
+      baselineFormRef.current = form;
+      onDirtyChange?.(false);
       // PR #425 (2026-05-22) ★severity-1★: 親の info state を再取得して paymentMethod を即時反映。
       //   router.refresh() だけでは Client Component の useState 値は変わらないため、
       //   StripePaymentMethodSection の活性条件 (info.paymentMethod === 'credit_card') に

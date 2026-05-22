@@ -173,7 +173,10 @@ export function StripePaymentMethodSection({
   const callSetup = async () => {
     setSubmitting(true);
     try {
-      const returnUrl = `${window.location.origin}/settings/tenant`;
+      // feat/tenant-settings-tabs (2026-05-22): カード登録完了後は請求タブへ戻す。
+      //   complete/route.ts:sanitizeReturnTo はクエリ込み URL を保持できる設計のため、
+      //   ?tab=billing が剥がれることはない。
+      const returnUrl = `${window.location.origin}/settings/tenant?tab=billing`;
       const res = await fetch('/api/tenants/me/billing/stripe/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
