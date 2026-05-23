@@ -114,6 +114,67 @@
     "metaTitle": "Tasukiba Knowledge Relay",
     "metaDescription": "Capture knowledge. Connect decisions. Strengthen projects."
   },
+  "footer": {
+    "operatorPrefix": "Operator",
+    "version": "Version",
+    "lastUpdated": "Last updated",
+    "terms": "Terms",
+    "privacy": "Privacy",
+    "changelog": "Changelog",
+    "announcements": "Announcements",
+    "about": "About",
+    "contact": "Contact",
+    "copyright": "© {year} {operator}"
+  },
+  "about": {
+    "pageTitle": "About this service",
+    "pageDescription": "Operator and version information for Tasukiba Knowledge Relay",
+    "sectionService": "Service",
+    "serviceName": "Service name",
+    "serviceDescription": "Description",
+    "sectionVersion": "Version",
+    "currentVersion": "Current version",
+    "releaseDate": "Release date",
+    "viewChangelog": "View changelog",
+    "sectionOperator": "Operator",
+    "operatorName": "Operator",
+    "operatorForm": "Business form",
+    "operatorFormValue": "Sole proprietor",
+    "sectionContact": "Contact",
+    "contactGeneral": "General inquiries",
+    "contactGeneralLink": "Contact form",
+    "contactSecurity": "Security report",
+    "contactSecurityLink": "GitHub Security Advisory",
+    "sectionLegal": "Legal",
+    "termsLink": "Terms of Service",
+    "privacyLink": "Privacy Policy"
+  },
+  "changelogPage": {
+    "pageTitle": "Changelog",
+    "pageDescription": "Release notes for Tasukiba Knowledge Relay",
+    "intro": "Changes per release, newest first.",
+    "backToTop": "Back to top",
+    "viewAnnouncements": "View announcements",
+    "noEntries": "No changelog entries yet."
+  },
+  "announcementsPage": {
+    "pageTitle": "Announcements",
+    "pageDescription": "Service updates, incidents, and notices from the operator",
+    "intro": "Announcements from the service.",
+    "noEntries": "No announcements at the moment.",
+    "publishedAt": "Published",
+    "categoryInfo": "Notice",
+    "categoryWarning": "Warning",
+    "categoryCritical": "Important",
+    "categoryMaintenance": "Maintenance",
+    "readMore": "Read more",
+    "backToList": "Back to list",
+    "notFound": "Announcement not found"
+  },
+  "announcementBanner": {
+    "dismissAriaLabel": "Dismiss this announcement",
+    "viewAll": "All announcements"
+  },
   "sort": {
     "asc": "Ascending",
     "desc": "Descending",

@@ -23,6 +23,12 @@ export const PUBLIC_PATHS = [
   // 2026-05-21 (feat/legal-pages-lp-integration): 利用規約・プライバシーポリシーは
   //   外部 LP (HomePage) に集約し、本サービス内の /terms /privacy ページは廃止。
   //   フッタ等のリンク先は LP の #terms / #privacy アンカーへ直接遷移する。
+  // 2026-05-23 (feat/app-version-changelog-footer): バージョン更新履歴・お知らせは
+  //   サービスが健全に運営されていることを潜在ユーザにも示すため認証外で公開する。
+  //   /settings/about (= サービス情報) は機微情報を含まないが既存設定画面のサブパス
+  //   として認証配下に置く (= dashboard route group の自動認証で守られる)。
+  '/changelog',
+  '/announcements',
   '/api/auth',
   '/api/health', // 外部 cron から定期 ping されるため認証不要
   // PR #89 (feat/account-lock で endpoint rename): Vercel Cron から

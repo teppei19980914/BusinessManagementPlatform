@@ -23,6 +23,7 @@
  */
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { useTranslations } from 'next-intl';
@@ -307,7 +308,22 @@ export function SettingsClient({
           </p>
         </div>
       )}
-      <h2 className="text-xl font-semibold">{tSetting('title')}</h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-xl font-semibold">{tSetting('title')}</h2>
+        {/*
+          feat/app-version-changelog-footer (2026-05-23):
+            「設定画面に運営側情報を表示」の入口として /settings/about への明示リンクを置く。
+            フッタからも到達できるが、設定画面内に直接の動線を設けることで「サービスの素性」が
+            ここから確認できることを示す。
+        */}
+        <Link
+          href="/settings/about"
+          className="text-sm text-muted-foreground hover:text-foreground hover:underline"
+          data-testid="settings-about-link"
+        >
+          サービス情報 →
+        </Link>
+      </div>
 
       {/* feat/settings-tenant-identity (2026-05-21): アカウント情報セクション。
           一般ユーザが「次回ログイン時の組織 ID」「自分のメール / 氏名 / ロール」を
