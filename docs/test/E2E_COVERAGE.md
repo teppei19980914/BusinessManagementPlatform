@@ -105,6 +105,7 @@
 - [ ] `/api/auth/delete-account` — skip: セルフ削除は UI 無く、テストには recoveryCode が必要 (招待フロー経由の general のみ保有)。PR #95 では admin による他ユーザ削除 (`/api/admin/users/[userId]` DELETE) で teardown 代替
 - [x] `/api/auth/verify-email` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / 招待メール + setup-password で間接カバー)
 - [ ] `/api/auth/setup-mfa-initial` — skip: PR #D (admin 招待 + 初期 MFA 経路、PR #91 追加)
+- [ ] `/api/auth/resend-verification` — skip: Phase 1 (2026-05-23 / feat/signup-email-resend-ux) サインアップ成功画面からの招待メール再送 API。3 軸 Rate Limit (IP 3/h + tenant 3/h + email 5/day) + enumeration 防止 + zod 検証は src/app/api/auth/resend-verification/route.test.ts (10 ケース) + src/services/email-verification.service.test.ts の resendVerificationEmail 群 (6 ケース) で担保。E2E は V1.x で検討 (= signup E2E 自体が未対応のため間接カバー対象外)
 
 ### プロジェクト
 - [x] `GET /api/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 + 6b 画面表示)

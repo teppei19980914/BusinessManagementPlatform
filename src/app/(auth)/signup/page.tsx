@@ -89,6 +89,70 @@ export default function SignupPage() {
   const [eligibilityHint, setEligibilityHint] = useState('');
   const discordUrl = getDiscordInviteUrl();
 
+  // Phase 1 (2026-05-23 / feat/signup-email-resend-ux): 招待メール再送 UX 用 state。
+  //   配送 fail 時 (Brevo 拒否 / 受信側 DMARC fail / spam 振分等) に顧客が自己解決できるよう、
+  //   成功画面に「再送ボタン + クールダウン + 残り回数表示」を提供する。
+  //   サーバ側 Rate Limit (IP 3/h + tenant 3/h + email 5/day) と同期した UI 制御。
+  const [resendCount, setResendCount] = useState(0);
+  const [resendStatus, setResendStatus] = useState<
+    'idle' | 'sending' | 'success' | 'rate_limited' | 'failed'
+  >('idle');
+  const [resendMessage, setResendMessage] = useState('');
+  const [resendCooldownSec, setResendCooldownSec] = useState(0);
+
+  // クールダウンタイマー (= 連打防止 + 適度な配送待機時間を確保)
+  useEffect(() => {
+    if (resendCooldownSec <= 0) return;
+    const id = setInterval(() => {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setResendCooldownSec((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [resendCooldownSec]);
+
+  async function handleResend() {
+    if (resendStatus === 'sending') return;
+    if (resendCooldownSec > 0) return;
+    setResendStatus('sending');
+    setResendMessage('');
+    try {
+      const res = await fetch('/api/auth/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: form.initialAdminEmail,
+          tenantSlug: form.slug,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        data?: { message?: string };
+        error?: { code?: string; message?: string };
+      };
+      if (res.ok) {
+        setResendStatus('success');
+        setResendCount((c) => c + 1);
+        setResendMessage(json.data?.message ?? '招待メールを再送しました。');
+        // UX 上、再送直後の連打防止に 60 秒のフロント側クールダウンを設ける
+        // (= サーバ側 Rate Limit とは独立、操作ミス防止が目的)
+        setResendCooldownSec(60);
+      } else if (res.status === 429) {
+        setResendStatus('rate_limited');
+        setResendMessage(json.error?.message ?? '再送回数の上限に達しました。');
+        // Retry-After ヘッダがあれば優先、なければ 1 時間表示
+        const retryAfter = res.headers.get('Retry-After');
+        setResendCooldownSec(retryAfter ? parseInt(retryAfter, 10) : 3600);
+      } else {
+        setResendStatus('failed');
+        setResendMessage(
+          json.error?.message ?? '再送に失敗しました。時間をおいて再度お試しください。',
+        );
+      }
+    } catch {
+      setResendStatus('failed');
+      setResendMessage('通信エラーが発生しました。ネットワーク接続をご確認ください。');
+    }
+  }
+
   // ADR-0016 Revised (2026-05-22): initialAdminEmail が valid になった時点で
   //   check-tenant-eligibility を debounced 呼び出し。
   //   - 層 1 (signupAllowed=false): フォーム submit ボタン disable + 問合せ動線表示
@@ -179,8 +243,11 @@ export default function SignupPage() {
   }
 
   if (success) {
+    // Phase 1 (2026-05-23 / feat/signup-email-resend-ux):
+    //   配送失敗時の自己解決 UX。入力メールアドレスを明示、トラブルシュート列挙、
+    //   再送ボタン、最終的に運営お問い合わせ動線まで含めた包括的なサポート画面。
     return (
-      <div className="mx-auto my-12 max-w-md px-4">
+      <div className="mx-auto my-8 max-w-md px-4">
         <Card>
           <CardHeader>
             <CardTitle>招待メールを送信しました</CardTitle>
@@ -189,13 +256,97 @@ export default function SignupPage() {
               メール本文のリンクをクリックしてパスワードを設定すると、ログインできるようになります。
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              メールが届かない場合は、迷惑メールフォルダもご確認ください。
-            </p>
+          <CardContent className="space-y-5">
+            {/* 1. 入力メールアドレスの明示表示 (= typo 確認誘導) */}
+            <div className="rounded-md border border-info/30 bg-info/5 p-3 text-sm">
+              <p className="m-0 text-muted-foreground">送信先</p>
+              <p
+                className="m-0 mt-1 font-mono text-base break-all"
+                data-testid="signup-success-email"
+              >
+                {form.initialAdminEmail}
+              </p>
+              <p className="m-0 mt-2 text-xs text-muted-foreground">
+                上記アドレスに誤りがある場合は、ログイン画面に戻り、サインアップをやり直してください。
+              </p>
+            </div>
+
+            {/* 2. トラブルシュートチェックリスト */}
+            <div className="space-y-2">
+              <p className="text-sm font-semibold">メールが届かない場合の確認手順</p>
+              <ol className="ml-5 list-decimal space-y-1 text-sm text-muted-foreground">
+                <li>受信箱に届いていない場合は、迷惑メール / スパムフォルダもご確認ください。</li>
+                <li>1〜2 分待ってから受信箱を更新してください。</li>
+                <li>
+                  法人メールをご利用の場合、受信制限・フィルタ設定をご確認ください
+                  (情シス担当者への確認が必要な場合があります)。
+                </li>
+                <li>
+                  上記でも届かない場合は、下記の「メールを再送する」ボタンからご再送いただくか、
+                  運営までお問い合わせください。
+                </li>
+              </ol>
+            </div>
+
+            {/* 3. 再送ボタン + 状態表示 */}
+            <div className="space-y-2">
+              {resendStatus !== 'idle' && resendMessage && (
+                <p
+                  className={`rounded-md p-2 text-sm ${
+                    resendStatus === 'success'
+                      ? 'bg-success/10 text-success'
+                      : resendStatus === 'rate_limited' || resendStatus === 'failed'
+                        ? 'bg-destructive/10 text-destructive'
+                        : 'bg-muted text-muted-foreground'
+                  }`}
+                  data-testid="resend-status"
+                >
+                  {resendStatus === 'success' && `✅ ${resendMessage}`}
+                  {resendStatus === 'rate_limited' && `⚠️ ${resendMessage}`}
+                  {resendStatus === 'failed' && `❌ ${resendMessage}`}
+                  {resendStatus === 'sending' && resendMessage}
+                </p>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handleResend}
+                disabled={resendStatus === 'sending' || resendCooldownSec > 0}
+                data-testid="resend-button"
+              >
+                {resendStatus === 'sending'
+                  ? '再送中...'
+                  : resendCooldownSec > 0
+                    ? `メールを再送する (${resendCooldownSec} 秒後に再操作可)`
+                    : resendCount > 0
+                      ? `メールを再送する (再送済 ${resendCount} 回)`
+                      : 'メールを再送する'}
+              </Button>
+            </div>
+
+            {/* 4. 最終的に解決しない場合の運営お問い合わせ動線 */}
+            <div className="rounded-md border border-muted-foreground/20 bg-muted/30 p-3 text-sm">
+              <p className="m-0 font-semibold">それでも解決しない場合</p>
+              <p className="m-0 mt-1 text-muted-foreground">
+                以下のお問い合わせフォームより、運営までご連絡ください。お問い合わせ種別は
+                <span className="font-semibold"> 「たすきばに関するお問い合わせ」</span>
+                を選択してください。
+              </p>
+              <a
+                href="https://teppei19980914.github.io/HomePage/ja/contact/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block text-info hover:underline"
+                data-testid="contact-link"
+              >
+                お問い合わせフォームを開く (新しいタブで開きます) ↗
+              </a>
+            </div>
+
             <Link
               href="/login"
-              className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+              className="inline-flex h-9 w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
             >
               ログイン画面へ
             </Link>

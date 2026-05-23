@@ -53,6 +53,7 @@
 
 - [x] **「このサービスは招待制です」** の明示文言(2026-05-19、`src/app/(auth)/login/page.tsx` のフッタブロック)
 - [x] **利用規約 / プライバシーポリシーへのリンク**(2026-05-21 更新: 外部 LP `tasukiba-user.md` の `#terms` / `#privacy` アンカーに `target="_blank"` で遷移)
+- [x] **招待メール配送失敗時の UX サポート**(2026-05-23 / Phase 1 / feat/signup-email-resend-ux): サインアップ成功画面に「入力メールアドレス表示 + トラブルシュートチェックリスト + 再送ボタン + LP お問い合わせ動線」を実装。`POST /api/auth/resend-verification` (Rate Limit 多軸 + enumeration 防止) で再送を制御。Gmail Freemail 由来の配送 fail シナリオへの暫定対応 (= 独自ドメイン取得まで)。SOP 影響: 顧客からの「メールが届かない」問合せが LP `/contact/` 経由で流入する可能性 → CUSTOMER_FEEDBACK_TRIAGE.md に「お問い合わせ種別: たすきば」の分類処理ルートを将来追加
 - [ ] **問い合わせ導線**(`support@<domain>` または問合せフォーム)— 連絡先確定後に追記
 - [ ] **「サービス概要を見る」リンク** → `/about` (公開ページ、必要なら追加)
 
