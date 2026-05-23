@@ -13402,3 +13402,130 @@ git push
 - 関連 PR: PR #432 (チャット意味検索実装)
 - 関連 KDD: §4.52 (dashboard-header に top-nav 追加 → 同類パターン)、§4.43 / §4.53 #14 (mobile baseline drift)
 - 関連 feedback: `feedback_visual_baseline_gen` (Claude memory)
+
+---
+
+## 5.X+117 **★severity-2 CI 突発 fail★ CodeQL が「regex で boundary validate された文字列」を stored XSS と誤検出する罠 + `statSync` → `readFileSync` の TOCTOU 警告 (2026-05-23 / PR #433)**
+
+PR #433 (feat/app-version-changelog-footer / バージョン基盤 + /changelog + /announcements + AppFooter) で **CodeQL** が 4 件の high severity アラートを出して red になった。ローカル `pnpm lint` `pnpm tsc` `pnpm test` `pnpm build` は全 PASS、`CodeQL Analysis (javascript-typescript)` (= 分析ジョブ自体) も別途 pass しており、**「分析は完走したが脆弱性報告で fail する」** という挙動を初観測。
+
+```
+× CodeQL (4s)  ← 4 件の new alert 報告 = fail
+✓ CodeQL Analysis (javascript-typescript) (1m58s)  ← 分析ジョブは成功
+✓ Lint / Test / Build (2m9s)
+```
+
+CodeQL の指摘内容:
+
+1. `src/app/(public)/announcements/page.tsx:69` — `<Link href={`/announcements/${a.slug}`}>` を **stored XSS** と判定
+2. `src/app/(public)/announcements/page.tsx:90` — 同上 (一覧内 readMore リンク)
+3. `src/components/announcement-banner.tsx:109` — 同上 (バナーの詳細リンク)
+4. `src/lib/announcements.ts:116` — `statSync(fullPath).isFile()` → `readFileSync(fullPath, ...)` を **TOCTOU race condition** と判定
+
+### 根本原因
+
+#### 1. Stored XSS 誤検出 (3 件)
+
+`slug` の取得経路:
+
+```ts
+// src/lib/announcements.ts
+const FILENAME_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\.md$/;
+const entries = readdirSync(ANNOUNCEMENTS_DIR);
+for (const filename of entries) {
+  const match = FILENAME_PATTERN.exec(filename);
+  if (!match) continue;
+  const filenameSlug = match[2]; // ← [a-z0-9-]+ に必ず一致
+  announcements.push({ slug: filenameSlug, ... });
+}
+```
+
+`slug` は regex capture group `[a-z0-9-]+` で **構造的に validate 済**。URL-unsafe な文字 (`/`, `:`, `?`, `#`, 制御文字、unicode) は通過不可能。`<Link href>` (= 最終的に `<a href>`) として描画されるが、React が attribute 値を自動 escape するため XSS は実害なし。
+
+しかし CodeQL の taint 分析は **regex capture の制約を追跡しない** (一般論として regex pattern matching を sanitizer と認めない)。 結果として:
+
+```
+[source: filesystem (readdirSync)] → filename → match → match[2] → slug → <Link href>
+                                                                              ↑
+                                                              [sink: href interpolation]
+```
+
+の taint flow が「フィルタなし」と判定され、stored XSS 警告となる。
+
+#### 2. TOCTOU race condition (1 件)
+
+```ts
+if (!statSync(fullPath).isFile()) continue;  // ← 時刻 T1: ファイルである確認
+const raw = readFileSync(fullPath, 'utf-8'); // ← 時刻 T2: 実際に読む
+```
+
+T1 と T2 の間にファイルが置き換わるとシンボリックリンク追跡などで意図しないファイル読み込みが起き得る (古典的 TOCTOU)。実際の運用では `docs/public/announcements/` は git 管理 + 起動中に変更されない想定だが、CodeQL は一般論として警告する。
+
+### 修正方針
+
+#### 3 件の Stored XSS
+
+(A) **boundary validation を明示関数化** して CodeQL に sanitizer signal を出す:
+
+```ts
+// src/lib/announcements.ts
+export function isSafeAnnouncementSlug(s: string): boolean {
+  return /^[a-z0-9-]+$/.test(s);
+}
+
+// loadAnnouncements 内
+if (!isSafeAnnouncementSlug(filenameSlug)) continue;
+```
+
+(B) **href 構築時に `encodeURIComponent`** を明示適用して taint flow に sanitizer node を挿入:
+
+```tsx
+// src/app/(public)/announcements/page.tsx
+const detailHref = `/announcements/${encodeURIComponent(a.slug)}`;
+// <Link href={detailHref}>...</Link>
+```
+
+`encodeURIComponent` は CodeQL の標準 sanitizer ライブラリで認識される。実用上 `[a-z0-9-]+` は変換不要だが、defense in depth + CI signal の二重目的で適用。
+
+#### TOCTOU
+
+`statSync` の事前チェックを廃止し、`readFileSync` 直叩き + 既存の `try/catch` で全エラー (`EISDIR` ディレクトリ / `ENOENT` 不在 / `EACCES` 権限不足) を一括処理:
+
+```ts
+// before
+if (!statSync(fullPath).isFile()) continue;
+const raw = readFileSync(fullPath, 'utf-8');
+
+// after
+try {
+  const raw = readFileSync(fullPath, 'utf-8');
+  // ...
+} catch {
+  continue; // ディレクトリ / 不在 / 権限不足 をまとめて skip
+}
+```
+
+### 学び
+
+1. **CodeQL の `CodeQL` チェックと `CodeQL Analysis (...)` チェックは別物**:
+   - 後者: 分析ジョブ自体 (分析が走れば pass)
+   - 前者: 分析結果に new alert があれば fail (PR ガード)
+   - 「Analysis pass」を見て安心しない、`CodeQL` 単体の状態を必ず確認
+2. **regex で validate された文字列でも CodeQL は信用しない**: branded type / 明示的 helper function (`isSafeX`) で sanitizer 関数を切り出し、ガード経路を追跡可能にする
+3. **`encodeURIComponent` を href 構築時に必ず使う**: 実害ゼロでも CodeQL の標準 sanitizer リストに入っているため、taint flow が必ず遮断される。今後の新規 `<Link href={...path/${var}...}>` 系は全て `encodeURIComponent` で包む方針
+4. **`statSync` + `readFileSync` の 2 段呼出は CodeQL TOCTOU 警告対象**: 例外で代替できる場合 `try/catch` 一本化が推奨パターン
+5. **ローカル PASS で push 直前にも CodeQL は走らない**: `pnpm lint` `pnpm tsc` `pnpm test` `pnpm build` の 4 点セットでは CodeQL は検出できず、push 後 PR の CI で初めて見える。push 後 5 分は PR checks を必ず確認する運用
+
+### 修正範囲
+
+- `src/lib/announcements.ts`: `isSafeAnnouncementSlug` 追加、`statSync` 廃止、boundary validation 追加
+- `src/lib/announcements.test.ts`: `isSafeAnnouncementSlug` のテスト 2 件追加
+- `src/app/(public)/announcements/page.tsx`: `encodeURIComponent(a.slug)` で href 構築
+- `src/components/announcement-banner.tsx`: 同上
+
+### 関連
+
+- 関連 PR: PR #433 (バージョン基盤 + フッタ + /changelog + /announcements)
+- 関連 KDD: §5.X+115 (CodeQL 系の別罠 — OSV-Scanner と pnpm audit の判定基準ズレ)
+- 関連 feedback: [[feedback-standalone-fs-tracing]] (本 PR で発見した standalone build 罠), [[feedback-tenant-isolation]] (boundary validation の同類パターン)
+- 関連 doc: 本 §5.X+117 を以後の新規 markdown 駆動ページ実装時の参照点とする (boundary validation + encodeURIComponent + try/catch 一本化が標準パターン)

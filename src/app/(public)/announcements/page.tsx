@@ -57,43 +57,44 @@ export default async function AnnouncementsPage() {
         </p>
       ) : (
         <ul className="space-y-4">
-          {announcements.map((a) => (
-            <li
-              key={a.slug}
-              className="space-y-2 rounded-lg border border-border bg-card p-5"
-              data-testid={`announcement-${a.slug}`}
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="text-lg font-semibold">
-                  <Link
-                    href={`/announcements/${a.slug}`}
-                    className="hover:underline"
-                  >
-                    {a.title}
-                  </Link>
-                </h2>
-                <div className="flex items-center gap-2 text-xs">
-                  <span
-                    className={`rounded border px-2 py-0.5 ${severityBadgeClasses(a.severity)}`}
-                  >
-                    {severityLabel[a.severity]}
-                  </span>
-                  <time className="text-muted-foreground" dateTime={a.publishedAt}>
-                    {a.publishedAt}
-                  </time>
-                </div>
-              </div>
-              {a.summary && (
-                <p className="text-sm text-muted-foreground">{a.summary}</p>
-              )}
-              <Link
-                href={`/announcements/${a.slug}`}
-                className="text-xs text-primary hover:underline"
+          {announcements.map((a) => {
+            // CodeQL stored XSS 対策: slug は loadAnnouncementMetas() の boundary で
+            //   isSafeAnnouncementSlug() を通過した英数+ハイフンのみだが、CodeQL の
+            //   taint 分析が regex 制約を追跡しないため、href 構築時に encodeURIComponent
+            //   を明示適用して sanitizer signal を出す。実害ゼロでも CI を緑にする目的。
+            const detailHref = `/announcements/${encodeURIComponent(a.slug)}`;
+            return (
+              <li
+                key={a.slug}
+                className="space-y-2 rounded-lg border border-border bg-card p-5"
+                data-testid={`announcement-${a.slug}`}
               >
-                {t('readMore')} →
-              </Link>
-            </li>
-          ))}
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 className="text-lg font-semibold">
+                    <Link href={detailHref} className="hover:underline">
+                      {a.title}
+                    </Link>
+                  </h2>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span
+                      className={`rounded border px-2 py-0.5 ${severityBadgeClasses(a.severity)}`}
+                    >
+                      {severityLabel[a.severity]}
+                    </span>
+                    <time className="text-muted-foreground" dateTime={a.publishedAt}>
+                      {a.publishedAt}
+                    </time>
+                  </div>
+                </div>
+                {a.summary && (
+                  <p className="text-sm text-muted-foreground">{a.summary}</p>
+                )}
+                <Link href={detailHref} className="text-xs text-primary hover:underline">
+                  {t('readMore')} →
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </article>

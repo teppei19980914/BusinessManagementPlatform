@@ -26,7 +26,7 @@
  * build-time 利用に限定する。
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export type AnnouncementSeverity = 'info' | 'warning' | 'critical' | 'maintenance';
@@ -52,6 +52,19 @@ const ANNOUNCEMENTS_DIR = resolve(process.cwd(), 'docs/public/announcements');
  * tsconfig.json `target: ES2017` 制約により positional group を使用 ([1]=date, [2]=slug).
  */
 const FILENAME_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\.md$/;
+
+/**
+ * slug が URL safe な英数 + ハイフンのみであることを明示的に validate する。
+ * CodeQL の taint 分析は regex.exec の capture group の制約を追跡しないため、
+ * 「filesystem 由来 → URL 文字列」のチェーンを stored XSS と誤検出する。
+ * 本関数で boundary を sanitizer として明示し、taint flow を遮断する。
+ *
+ * 設計上 FILENAME_PATTERN の `[a-z0-9-]+` capture と同じ制約。
+ * `^[a-z0-9-]+$` 厳密一致のみ true (空文字 / .. / 制御文字 / unicode はすべて拒否)。
+ */
+export function isSafeAnnouncementSlug(s: string): boolean {
+  return /^[a-z0-9-]+$/.test(s);
+}
 
 /**
  * frontmatter `---` 〜 `---` を切り出し、key:value をパースする。
@@ -110,9 +123,14 @@ export function loadAnnouncements(): Announcement[] {
     if (!match) continue;
     const filenameDate = match[1];
     const filenameSlug = match[2];
+    // CodeQL stored XSS 対策 (boundary validation): regex で捕捉済だが taint 分析が
+    //   capture group の制約を追跡しないため、ここで明示的に sanitizer を通す。
+    //   失敗ケースは FILENAME_PATTERN を通った時点で論理的に発生しないが念のため skip.
+    if (!isSafeAnnouncementSlug(filenameSlug)) continue;
     const fullPath = join(ANNOUNCEMENTS_DIR, filename);
+    // CodeQL TOCTOU 対策: statSync の事前チェックは race condition を生むため
+    //   readFileSync を直接呼び、ディレクトリ / 不在 / 権限不足のいずれも try/catch で一括処理する。
     try {
-      if (!statSync(fullPath).isFile()) continue;
       const raw = readFileSync(fullPath, 'utf-8');
       const { data, body } = parseFrontmatter(raw);
       const publishedAt =
@@ -128,7 +146,8 @@ export function loadAnnouncements(): Announcement[] {
         body: body.trim(),
       });
     } catch {
-      // 個別ファイルの読み出し失敗はスキップ (全体を止めない)
+      // ディレクトリだった / シンボリックリンクが切れた / 読込権限なし 等は個別 skip
+      // (全体を止めない、欠落は UI 側で「該当 slug なし」として現れる)
       continue;
     }
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFrontmatter } from './announcements';
+import { isSafeAnnouncementSlug, parseFrontmatter } from './announcements';
 
 /**
  * Announcement frontmatter パーサの単体テスト。
@@ -73,5 +73,31 @@ describe('parseFrontmatter', () => {
     ].join('\n');
     const { data } = parseFrontmatter(raw);
     expect(data).toEqual({ title: '正常', publishedAt: '2026-06-01' });
+  });
+});
+
+/**
+ * CodeQL stored XSS 対策で導入した slug boundary validation のテスト。
+ * filesystem 由来文字列が URL に到達する手前で「英数+ハイフンのみ」に厳密化する。
+ */
+describe('isSafeAnnouncementSlug', () => {
+  it('英数 + ハイフン のみで構成される slug は true', () => {
+    expect(isSafeAnnouncementSlug('launch')).toBe(true);
+    expect(isSafeAnnouncementSlug('2026-06-01-launch')).toBe(true);
+    expect(isSafeAnnouncementSlug('a-b-c-1-2-3')).toBe(true);
+    expect(isSafeAnnouncementSlug('abc123')).toBe(true);
+  });
+
+  it('空文字 / 制御文字 / unicode / 大文字 / 特殊記号は false (= stored XSS 防御)', () => {
+    expect(isSafeAnnouncementSlug('')).toBe(false);
+    expect(isSafeAnnouncementSlug('Launch')).toBe(false); // 大文字
+    expect(isSafeAnnouncementSlug('リリース')).toBe(false); // 全角
+    expect(isSafeAnnouncementSlug('launch/../etc')).toBe(false); // path traversal
+    expect(isSafeAnnouncementSlug('launch?x=1')).toBe(false); // query
+    expect(isSafeAnnouncementSlug('launch#frag')).toBe(false); // fragment
+    expect(isSafeAnnouncementSlug('javascript:alert(1)')).toBe(false); // pseudo-protocol
+    expect(isSafeAnnouncementSlug('a b')).toBe(false); // 空白
+    expect(isSafeAnnouncementSlug('a\nb')).toBe(false); // 改行
+    expect(isSafeAnnouncementSlug('a.b')).toBe(false); // ドット
   });
 });

@@ -94,6 +94,11 @@ export function AnnouncementBanner({ announcement }: AnnouncementBannerProps) {
     }
   };
 
+  // CodeQL stored XSS 対策: 詳細ページの href 構築時に encodeURIComponent を明示適用。
+  //   slug は loadAnnouncementMetas() で isSafeAnnouncementSlug() 通過済だが、CodeQL の
+  //   taint 分析が boundary validation を追跡しないため sanitizer signal を出す。
+  const detailHref = `/announcements/${encodeURIComponent(announcement.slug)}`;
+
   return (
     <div
       role="status"
@@ -106,7 +111,7 @@ export function AnnouncementBanner({ announcement }: AnnouncementBannerProps) {
           {announcement.publishedAt}
         </span>
         <Link
-          href={`/announcements/${announcement.slug}`}
+          href={detailHref}
           className="flex-1 font-medium hover:underline"
           data-testid="banner-title"
         >
