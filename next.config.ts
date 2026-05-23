@@ -85,8 +85,19 @@ const nextConfig: NextConfig = {
   // 出力に含まれない → SSR 時 "Cannot find module" で全ページ 500 になっていた。
   // 明示的に include してトレース対象に含める (Next.js 公式手順)。
   // 参考: https://nextjs.org/docs/app/api-reference/next-config-js/output
+  //
+  // feat/app-version-changelog-footer (2026-05-23): 同じ罠を `fs.readFileSync` でも踏むため
+  //   CHANGELOG.md と docs/public/announcements/**/* も明示包含する。
+  //   - src/lib/changelog.ts → `resolve(process.cwd(), 'CHANGELOG.md')` で読み込み
+  //   - src/lib/announcements.ts → `resolve(process.cwd(), 'docs/public/announcements')` を読み込み
+  //   いずれも Server Component から request 時に呼ばれるため、standalone 出力に
+  //   ファイルが無いと /changelog /announcements が 500 で全滅する。
   outputFileTracingIncludes: {
-    '/**/*': ['./src/i18n/messages/**/*'],
+    '/**/*': [
+      './src/i18n/messages/**/*',
+      './CHANGELOG.md',
+      './docs/public/announcements/**/*',
+    ],
   },
   async headers() {
     return [

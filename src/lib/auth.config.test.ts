@@ -333,4 +333,67 @@ describe('authorized callback - 未認証', () => {
       expect(result.headers.get('location')).toContain('/login');
     }
   });
+
+  // feat/app-version-changelog-footer (2026-05-23): PUBLIC_PATHS prefix match を
+  //   `startsWith(path)` から `pathname === path || startsWith(path + '/')` に厳密化。
+  //   将来 `/loginAdmin` `/changelog-internal` のような派生パスを追加した際に
+  //   意図せず公開化されないことを担保する (前方互換性 + 攻撃面減).
+  it('PUBLIC_PATHS の prefix match は path 完全一致 OR 直下サブパスのみ許容', async () => {
+    // /login (exact)
+    expect(
+      await authorized({
+        auth: null,
+        request: makeRequest('/login', 'GET'),
+      } as never),
+    ).toBe(true);
+    // /login/mfa (sub-path) は MFA 検証フロー用、PUBLIC_PATHS の '/login' で通る想定
+    expect(
+      await authorized({
+        auth: null,
+        request: makeRequest('/login/mfa', 'GET'),
+      } as never),
+    ).toBe(true);
+    // /api/auth/signin (sub-path) — PUBLIC_PATHS の '/api/auth' エントリで通る
+    expect(
+      await authorized({
+        auth: null,
+        request: makeRequest('/api/auth/signin', 'POST'),
+      } as never),
+    ).toBe(true);
+    // /changelog (exact)
+    expect(
+      await authorized({
+        auth: null,
+        request: makeRequest('/changelog', 'GET'),
+      } as never),
+    ).toBe(true);
+    // /announcements/2026-06-01-launch (sub-path) — '/announcements' エントリで通る
+    expect(
+      await authorized({
+        auth: null,
+        request: makeRequest('/announcements/2026-06-01-launch', 'GET'),
+      } as never),
+    ).toBe(true);
+  });
+
+  it('PUBLIC_PATHS の派生 prefix (loginAdmin / changelog-internal 等) は public 扱いにならない', async () => {
+    // 旧 startsWith ロジックでは公開化されていた可能性のあるパス群が
+    // 厳密化後は LOGIN_PATH リダイレクトされることを担保。
+    const derivedPaths = [
+      '/loginAdmin', // ← 旧ロジックでは /login の startsWith で通っていた
+      '/changelog-internal', // ← 旧ロジックでは /changelog の startsWith で通っていた
+      '/announcementsBypass', // ← 旧ロジックでは /announcements の startsWith で通っていた
+      '/signupExploit', // ← 旧ロジックでは /signup の startsWith で通っていた
+    ];
+    for (const path of derivedPaths) {
+      const result = await authorized({
+        auth: null,
+        request: makeRequest(path, 'GET'),
+      } as never);
+      expect(result, `${path} は public 扱いになってはいけない`).toBeInstanceOf(Response);
+      if (result instanceof Response) {
+        expect(result.headers.get('location')).toContain('/login');
+      }
+    }
+  });
 });
