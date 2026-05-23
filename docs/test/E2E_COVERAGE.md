@@ -145,6 +145,9 @@
 - [x] `/api/projects/[projectId]/retrospectives/bulk` (PATCH 一括 visibility, PR #162 → PR #165) — e2e/specs/10-project-list-bulk-update.spec.ts
 - [x] `/api/projects/[projectId]/knowledge/bulk` (PATCH 一括 visibility, PR #162 → PR #165) — e2e/specs/10-project-list-bulk-update.spec.ts
 
+### チャット意味検索 (PR #373 仕様 / 本機能で新設)
+- [ ] `/api/chat/search` (POST) — skip: PR feat/chat-semantic-search (2026-05-23) で新設。5 資産横断意味検索の API。認証・seedDataEnabled・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + src/app/api/chat/search/route.test.ts で担保 (10 ケース)。E2E は FAB クリック → サイドパネル展開 → 検索結果 tier 表示の経路を後続 PR で追加検討 (UI 動作は src/components/chat-semantic-search/* で別途検証想定)
+
 ### メモ
 - [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)
 - [x] `/api/memos/[id]` (PATCH/DELETE) — e2e/specs/04-personal-features.spec.ts (PR #94 / DELETE のみ UI 経由でカバー、PATCH は後続 PR)

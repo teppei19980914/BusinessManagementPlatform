@@ -13361,3 +13361,44 @@ PR #430 (`fix/readonly-markdown-render` — readOnly モードの Markdown 表�
 - 関連 PR: 本 PR #430
 - 関連 docs: `.github/workflows/security.yml` (ジョブ構成全体) / `docs/security/SECURITY-TASKS.md` (security check 結果)
 - 関連 feedback: `feedback_quality_gate_exit_code` (= 同じ「ローカル green / CI red」系統の罠。今回は CVE 由来でローカル再現できない別系統)
+
+
+---
+
+## 5.X+116 **★severity-2 visual regression★ 全ページに常時表示するグローバル UI 要素 (FAB) を追加すると、dashboard 系の chromium-mobile visual baseline が一斉に fail する罠 (2026-05-23 / PR #432)**
+
+PR #432 (チャット意味検索) で `ChatSemanticSearchFab` を `(dashboard)/layout.tsx` に統合し全ページの右下 (`fixed right-4 bottom-4`、48×48px) に常時表示する設計を採用。CI Playwright Visual で `customers-screens.spec.ts` の chromium-mobile が **2968 pixel diff (ratio 0.02)** で fail した。
+
+### 根本原因
+
+- 既存の visual baseline は FAB 追加前 (PR #432 マージ前) に生成済
+- FAB の 48×48px + shadow ≒ 2968 pixel が、chromium-mobile (iPhone 13 / 390×664) では全体に対する比率が 2% を超え、許容閾値 (おそらく `maxDiffPixelRatio < 0.02`) を超過
+- chromium (desktop 1280×720) では同じ pixel 数でも比率 ~0.5% で閾値内
+- `dashboard-screens.spec.ts` の他テストは §4.43 / §4.52 / §4.53 #14 で chromium-mobile から個別 skip 済のため不発、customers-screens.spec.ts が事実上「mobile dashboard 視覚回帰の最後の砦」だった
+
+### 修正方針
+
+`[gen-visual]` を commit message に含めた空コミットで `E2E Visual Baseline` workflow を発火し、全 baseline を新規 (FAB 含む状態) に再生成する。
+
+```bash
+git commit --allow-empty -m "chore: regenerate visual baselines for chat FAB [gen-visual]"
+git push
+```
+
+### 学び
+
+- **(dashboard)/layout.tsx レベルで render される全ページ共通 UI を追加する PR では、visual baseline 再生成 が必須**: Toast / DashboardHeader / FAB / Banner 等
+- **chromium-mobile の許容 threshold は desktop より厳しい** (相対 pixel 比率が viewport サイズに依存): desktop で pass = mobile でも pass、ではない
+- **mask による除外も選択肢だが、初回 [gen-visual] が結局必要**: `data-testid="chat-fab"` を mask に加える設計もあるが、stable な小要素なら baseline に含める方が変更時の影響が局所化されてシンプル
+- **`(dashboard)/layout.tsx` 編集 PR では `pnpm e2e --project=chromium-mobile -g 'visual'` を必ずローカル実行する** (push 後 CI で気づくと credit 浪費)
+
+### 修正範囲
+
+- 本 PR では `[gen-visual]` 空コミットで baseline 再生成のみ
+- 詳細な技術的解析は [docs/test/E2E_LESSONS.md §4.56](../test/E2E_LESSONS.md) を参照
+
+### 関連
+
+- 関連 PR: PR #432 (チャット意味検索実装)
+- 関連 KDD: §4.52 (dashboard-header に top-nav 追加 → 同類パターン)、§4.43 / §4.53 #14 (mobile baseline drift)
+- 関連 feedback: `feedback_visual_baseline_gen` (Claude memory)

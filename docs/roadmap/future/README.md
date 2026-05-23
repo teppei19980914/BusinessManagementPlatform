@@ -9,9 +9,7 @@
 
 ## ファイル一覧
 
-| ファイル | 内容 | 想定リリース時期 |
-|---|---|---|
-| [CHAT_SEMANTIC_SEARCH.md](./CHAT_SEMANTIC_SEARCH.md) | チャットボット意味検索機能の機能仕様 (旧 docs/specification/CHAT_SEMANTIC_SEARCH.md、2026-05-17 移動) | v2 (未定) |
+(現在、本ディレクトリに active なファイルはありません。`CHAT_SEMANTIC_SEARCH.md` は 2026-05-23 に v1 実装決定により [../../specification/CHAT_SEMANTIC_SEARCH.md](../../specification/CHAT_SEMANTIC_SEARCH.md) に復帰しました。)
 
 ---
 

@@ -3428,6 +3428,64 @@ export default auth((req) => {
 
 ---
 
+### 4.56 全ページに常時表示するグローバル UI 要素 (FAB / floating button) を追加すると、dashboard 系の全 visual baseline がモバイル viewport で fail する (PR #432 で遭遇)
+
+#### 罠の正体
+
+PR #432 (チャット意味検索) で `ChatSemanticSearchFab` を `(dashboard)/layout.tsx` に統合し、全ページの右下 (`fixed right-4 bottom-4`、48×48px の 💬 ボタン + shadow) に常時表示する設計を採用。すると CI の Playwright Visual で:
+
+```
+✘ [chromium-mobile] › e2e/visual/customers-screens.spec.ts:76:7 顧客詳細画面 (light テーマ)
+  - 2968 pixels (ratio 0.02 of all image pixels) are different.
+- 184 passed | 1 failed | 1 skipped
+```
+
+の単一失敗が発生 (PR review CI runs/26326867431)。chromium project (desktop 1280×720) では FAB が全体に占める比率が ~0.5% に留まり閾値内、chromium-mobile (iPhone 13 / 390×664) では同じ 2968 px が **2% を超え** baseline (FAB 追加前) との diff threshold を超過する。
+
+#### なぜ単一テストだけ失敗したか
+
+- `dashboard-screens.spec.ts` (`/settings`, project-detail): **chromium-mobile から skip** されている (project-detail は §4.43 / 4.53 #14 baseline drift、settings は §4.52 で個別判断)
+- `auth-screens.spec.ts`: 未認証画面 → FAB レンダリングなし
+- `customers-screens.spec.ts` ← **chromium-mobile + dashboard 系で唯一 fullPage 撮影が活きている** → ヒット
+
+つまり「mobile の dashboard 系 fullPage 視覚回帰の単一カバーが customers-screens.spec.ts」という構造的事情と FAB 追加が交差した結果。
+
+#### 教訓
+
+- [ ] **全ページに常時表示するグローバル UI 要素を追加する PR では、visual baseline の `[gen-visual]` 再生成が必須**:
+      Toast / DashboardHeader nav / FAB / Banner 等、`(dashboard)/layout.tsx` レベルで render される
+      全ページ共通要素は、`e2e/visual/` の baseline (FAB 追加前) と必ず差分を生む
+- [ ] **chromium-mobile の許容 threshold は desktop より厳しい** (相対 pixel 比率が viewport に依存):
+      desktop で 0.5% は許容されても mobile で 2% は弾かれる。「PR 内 desktop visual pass = mobile も pass」と推定してはいけない
+- [ ] **代替案として「mask で除外」も技術的には可能だが、初回 [gen-visual] が結局必要**:
+      `data-testid="chat-fab"` を付けて各 visual spec の `mask: [...]` に追加する手もあるが、baseline は
+      mask 適用なしで取られた状態なので、結局 [gen-visual] で再生成しないと一致しない。
+      stable な小要素なら baseline に含める方が変更時の影響が局所化されシンプル
+- [ ] **dashboard 系視覚回帰の mobile カバーが薄い**点も同時に認識 (§4.43 / 4.52 / 4.53 #14 で
+      chromium-mobile から多くの spec が skip 済)。customers-screens.spec.ts は事実上の「mobile dashboard 視覚回帰の最後の砦」
+
+#### 横展開チェック
+
+```bash
+# (dashboard)/layout.tsx レベルでグローバル UI を追加した時:
+# 1. 必ず chromium-mobile で fullPage 視覚回帰を実行
+pnpm e2e --project=chromium-mobile -g 'visual'
+
+# 2. 差分が出たら [gen-visual] 空コミットで baseline 再生成
+git commit --allow-empty -m "chore: regenerate visual baselines for new global UI [gen-visual]"
+git push
+```
+
+#### 関連
+
+- §4.52 (dashboard-header に top-nav 追加 → mobile overflow で baseline 不一致) — 類似パターンの先行事例
+- §4.43 / 4.53 #14 (chromium-mobile baseline 1px drift) — mobile が dashboard 系視覚回帰でしばしば skip される背景
+- `[feedback_visual_baseline_gen.md]` (Claude memory) — 同パターンの即時対応手順
+- src/app/(dashboard)/layout.tsx の `<ChatSemanticSearchFab />`
+- src/components/chat-semantic-search/chat-fab.tsx (`fixed right-4 bottom-4 z-40`)
+
+---
+
 ### 4.55 `waitForURL((url) => !pathname.includes('/login'))` パターンは redirect chain 途中で抜けて race を起こす ─ 終端到達 (`/projects`) を条件にする (PR #345 で遭遇)
 
 #### 罠の正体

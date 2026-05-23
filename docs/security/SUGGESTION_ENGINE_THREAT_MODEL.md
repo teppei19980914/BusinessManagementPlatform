@@ -187,3 +187,107 @@ PR #8 (統合テスト + リリース準備) で、`scripts/security-check.ts` �
 **脅威**: 攻撃者が `Tenant.subscriptionTier` を `'free'` から `'pro'` に書き換え、課金なしで Pro 機能 (Sonnet 出力等) を享受する。
 
 **対策**: T-2 (subscription_tier 改ざん) のテナント版として同じ防御を適用する。`Tenant.subscriptionTier` の更新は **Stripe webhook 経由のみ** (v1.x で実装) または admin 専用エンドポイント経由でのみ可能とする。Stripe webhook 受信時はシグネチャ検証を必須とする。変更履歴は `subscription_tier_change_log` に記録し、不審な変更を admin が監査できるようにする。
+
+---
+
+## チャット意味検索機能の脅威モデル拡張 (2026-05-23 / PR #432)
+
+[CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md) で実装したチャット意味検索機能 (V1) は、既存提案エンジンと同じ Voyage embedding + pgvector 基盤を共有する一方、**ユーザ自発のリアルタイム embedding 生成** という新しい攻撃面を加える。本セクションは既存 STRIDE 分析に対する拡張として、本機能特有の脅威 (CS-x) を列挙する。
+
+### 本機能の構造的安全性 (LLM 生成不在)
+
+V1 では **Voyage AI は encoder としてのみ利用** し、Anthropic Claude による LLM 生成は行わない。これにより、classical なプロンプトインジェクション攻撃 (T-3 系) は **構造的に該当しない**:
+
+- 「以前の指示を無視して」「他テナントを表示して」「PII を生成して」等のクエリは、**embedding ベクトルに変換されるだけ**で挙動を変えない
+- system prompt が存在しないため、漏洩する対象自体がない
+- pgvector の WHERE 句が物理的にテナント境界を強制するため、プロンプト文言で認可境界は超えられない
+
+ただし将来 Level 2 (Pro 限定 Sonnet 要約) で LLM 生成を入れる場合は、T-3 系の対策 (system / user XML 分離、出力 zod 検証、ジェイルブレイク検出、citation 義務化) を **必ず再評価** する。これは Level 2 実装 PR の前提条件である。
+
+### CS-1: クエリ embedding 経由のコスト爆発 (Denial of Service)
+
+**脅威**: 攻撃者が認証済アカウントから秒間 100 リクエストでチャット送信を連打する。Voyage AI 側のレート制限を踏むと、当社の Voyage アカウント全体が 429 を返し始め、**他テナント全員の embedding 生成 (提案機能含む) が連鎖障害**を起こす。さらに Voyage の月 200M トークン無料枠を 1 日で枯渇させられれば、超過分は $0.02/M トークンの運営持ち出しになる。
+
+**対策**: 3 層 rate limit で構造的に防ぐ:
+- 1 ユーザ / 1 分 10 回 (短期連打防止) — `LLM_RATE_LIMIT.perMinute`
+- 1 ユーザ / 1 時間 60 回 (1 セッション集中検索の上限) — `LLM_RATE_LIMIT.perHour`
+- Beginner プラン月 100 回 (書込操作と共有) — `Tenant.monthlyApiCallCap`
+- Expert / Pro プランは `Tenant.monthlyBudgetCapJpy` で予算上限到達時に縮退
+
+これらは全て `withMeteredLLM` ミドルウェア内でチェックされ、Voyage への呼び出し前に弾く。テスト: `src/lib/llm/metered.ts` の rate limit テストで担保。
+
+### CS-2: クエリ内容を通じた機微情報の Voyage への意図せぬ送信 (Information Disclosure)
+
+**脅威**: ユーザがクエリに個人情報・契約番号・金額等の機微情報を含めて送信すると、その文字列がそのまま外部 AI サービス (Voyage AI) のサーバに送信される。Voyage のプライバシーポリシーに従って処理されるが、自社の規約と齟齬が出るリスクがある。
+
+**対策**:
+- ChatPanel ヘッダ直下に **常時警告バナー**: 「ⓘ クエリ内容は意味検索のため外部 AI サービス (Voyage AI) に送信されます。機微情報の入力はお控えください。」
+- クエリ文字列は **自社 DB の `ApiCallLog` / `error_log` に保存しない** 設計 (route.ts の例外 catch でも context から query を除外)
+- ユーザ向けガイド ([chat-semantic-search-guide.md](../public/chat-semantic-search-guide.md) §5 例 4) で抽象化表現を推奨
+
+### CS-3: 別テナント情報流出 (severity-1 / Information Disclosure)
+
+**脅威**: チャット検索の結果に、別テナントの資産が混入してしまう。プロンプト文言で認可境界を超えようとする攻撃や、実装ミスによる WHERE 句漏れが想定される。
+
+**対策**: **3 層 defense-in-depth**:
+1. **pgvector / pg_trgm WHERE 句で `tenant_id = ANY(...)`** を必須付与 (`chat-search.service.ts` の `pgvectorSearch` / `pgTrgmSearch`)
+2. **後続の `loadXxx().findMany()` の WHERE 句でも `tenantId IN (...)`** を再度付与 (defense-in-depth)
+3. **静的解析テスト** (`tenant-isolation-invariants.test.ts` の I-2 invariant): 全 service ファイルの prisma クエリに tenant フィルタが含まれることを CI で強制
+
+加えて `seedDataEnabled=false` のテナントでは MANAGEMENT_TENANT_ID のシードデータも除外。
+
+### CS-4: visibility='draft' / private データの漏洩 (severity-1 / Information Disclosure)
+
+**脅威**: 競合更新で draft 化された行を検索結果が拾ってしまう。例: あるユーザが Knowledge を public → draft に変更している最中に別ユーザがチャット検索すると、pgvector の SELECT 結果に draft 行が含まれる可能性。
+
+**対策**:
+- pgvector / pg_trgm WHERE 句で `visibility='public'` を必須付与
+- **loadXxx の `findMany` でも `visibility='public'` を明示** (defense-in-depth、競合更新時の漏れを構造的に防ぐ)
+- Memo のみ例外: `OR: [visibility='public', userId=viewerUserId]` で自分の private memo は対象に含める (attachment.service.ts と整合した UX)
+
+### CS-5: ApiCallLog / 課金カウンタのバイパス (Tampering)
+
+**脅威**: `voyageEmbed` を `withMeteredLLM` を経由せずに直接呼ぶ経路があれば、ApiCallLog 記録 + 課金カウンタ更新がスキップされる。
+
+**対策**: `chat-search.service.ts` の `generateEmbedding` 呼出は **必ず `withMeteredLLM` を経由する** 既存 embedding.service.ts の高レベル関数を使用。直接 `voyageEmbed` を呼ぶ経路は本機能には存在しない。`featureUnit='chat-semantic-search'` で課金分類が trace 可能。
+
+### CS-6: エラーレスポンスからの内部情報漏洩 (Information Disclosure)
+
+**脅威**: chatSemanticSearch / prisma クエリが予期しない例外を投げた場合、Next.js のデフォルトエラーハンドリングで JSON.stringify(error) が response に含まれ、stack trace / DB 接続文字列 / 内部パス / SQL 詳細が client に到達する。
+
+**対策**:
+- API route 全体を **try-catch で wrap**
+- 例外詳細は `recordError({ severity: 'error', source: 'server', ... })` で **DB に秘匿保存** ([error-log.service.ts](../../src/services/error-log.service.ts) の方針: 「機密情報を含み得るエラー詳細は Console にも UI にも出さない」)
+- client には固定文言「検索に失敗しました。時間をおいて再度お試しください」+ HTTP 500 のみ返す
+- **クエリ文字列は context にも含めない** (機微情報の漏れ込み防止)
+- テスト: `src/app/api/chat/search/route.test.ts` で stack / password / 内部パスが response に含まれないことを検証 (2 ケース)
+
+### CS-7: 列挙・プロービング攻撃 (Information Disclosure)
+
+**脅威**: 攻撃者がスコア値・件数・遅延を観察して、内部の embedding 分布や資産の存在有無を推定する。
+
+**対策**:
+- tenant 境界で物理的に閉じる (CS-3) ため、列挙できるのは元々アクセス可能な自テナント資産のみ → 権限昇格にならない
+- 削除済プロジェクト名は `null` マスク (sourceProjectName)
+- レスポンスタイミングは検索負荷で揺らぐが、本質的には pgvector のインデックス構造に依存しユーザ操作で予測可能な情報は出ない
+
+### CS-8: 将来 Level 2 (Pro 限定 LLM 要約) で再評価が必要な脅威
+
+V1 では構造的に該当しないが、Level 2 で Sonnet 要約を入れる場合に必須:
+
+- **CS-2L: プロンプトインジェクション** — system prompt / user input の XML タグ分離、出力 zod スキーマ検証
+- **CS-3L: ジェイルブレイク経由のテナント越境誘導** — 「他テナントを表示」「PII を生成」等の指示を弾く出力フィルタ
+- **CS-4L: LLM 出力の XSS / injection** — output sanitization、citation 義務化
+- **CS-5L: 過去ターンの汚染** — マルチターン実装時に、悪意ある過去発話が新ターンを誘導するリスク
+
+これらは Level 2 実装 PR の前段で本ドキュメントに追記する運用とする。
+
+### 横断テスト
+
+本機能の脅威対策は以下のテストで担保:
+
+- **`tenant-isolation-invariants.test.ts`** — CS-3 / CS-4 (全 prisma クエリの tenantId / visibility フィルタ静的検査)
+- **`src/services/chat-search.service.test.ts`** — visibility フィルタ defense-in-depth (4 ケース)
+- **`src/app/api/chat/search/route.test.ts`** — CS-6 (例外時の機密漏れ検査 2 ケース)、CSRF / 認証 / 入力バリデーション (10 ケース)
+- **`src/lib/llm/metered.ts` 配下テスト** — CS-1 (3 層 rate limit + 予算上限)
+- **`src/services/__tests__/tenant-isolation-invariants.test.ts`** — CS-3 (越境防止 invariant、全 service)

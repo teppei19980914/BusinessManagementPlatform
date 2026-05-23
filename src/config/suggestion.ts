@@ -265,3 +265,24 @@ export function applyMinimumGuarantee<T extends { score: number }>(
 export function isSuggestionEngineDisabled(): boolean {
   return process.env.SUGGESTION_ENGINE_DISABLED === 'true';
 }
+
+// ================================================================
+// チャット意味検索機能 (PR #373 仕様確定 / 実装は本 PR)
+// ================================================================
+
+/**
+ * チャット意味検索の入力上限文字数 (仕様 §3.2)。
+ *
+ * Voyage embedding の MAX_INPUT_CHARS (embedding.service.ts) と同値を独立で持つ。
+ * Client Component からも import できるよう @/config/suggestion に配置する
+ * (embedding.service.ts は Prisma を引き込むため Client から触れない)。
+ */
+export const CHAT_SEARCH_INPUT_MAX_CHARS = 8000;
+
+/**
+ * チャット意味検索の警告表示閾値 (仕様 §3.2)。
+ *
+ * これ未満の文字数では検索精度が下がるため、UI 上で「⚠️ クエリが短いと検索精度が
+ * 下がる可能性があります」と警告を表示する。送信自体は可能 (UX 低下を避ける設計)。
+ */
+export const CHAT_SEARCH_INPUT_WARN_THRESHOLD = 10;

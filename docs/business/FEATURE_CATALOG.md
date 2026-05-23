@@ -38,6 +38,7 @@
 | 機能 | 顧客課題 | 主な変更先ファイル | 関連ドキュメント |
 |---|---|---|---|
 | **提案エンジン (核心)** | 「過去のナレッジが埋もれて活用できない」「キーワード検索では取りこぼす」 | `src/services/suggestion.service.ts` / `src/lib/embedding.ts` | [SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md) / [ADR-0003](../adr/0003-embedding-based-suggestion-engine.md) / [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) |
+| **チャット意味検索 (核心)** | 「会議中に過去事例を即座に呼び出したい」「全文検索では絞り込めない」 | `src/services/chat-search.service.ts` / `src/app/api/chat/search/` / `src/components/chat-semantic-search/` | [CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md) / [chat-semantic-search-guide.md](../public/chat-semantic-search-guide.md) |
 | **ナレッジ管理** | 「知見を構造化して残したい」「公開範囲を制御したい」 | `src/services/knowledge.service.ts` / `src/app/(dashboard)/knowledge/` | [SCREENS §11.8](../specification/SCREENS.md) / [USER_ROLES §6.5](./USER_ROLES.md) |
 | **振り返り (Retrospective)** | 「プロジェクト完了後の総括を残したい」 | `src/services/retrospective.service.ts` / `src/app/(dashboard)/projects/[id]/retrospective/` | [SCREENS §11.9](../specification/SCREENS.md) |
 | **LLM 自動タグ抽出** | 「タグ付けの手間を省きたい」 | `src/services/auto-tag.service.ts` / `src/lib/llm/metered.ts` | [GLOSSARY: LLM 自動タグ抽出](./GLOSSARY.md) / [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) |
