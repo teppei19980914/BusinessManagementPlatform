@@ -186,7 +186,11 @@ jobs:
           # - 末尾の `.` はスキャン対象ディレクトリ
           # 注: v1 系の `--skip-git` は v2 で削除された (PR #296 続編で観測)。
           # v2 はデフォルトで `--include-git-root=false` のため、git scanning は明示無効化不要。
-          # CRITICAL/HIGH 検出時に exit 1 で fail
+          #
+          # 失敗判定: OSV-Scanner は **severity 関係なく vuln が 1 件でもあれば exit 1**
+          # (= Medium / Low でも fail)。これは pnpm-audit (`--audit-level=high`) より厳格。
+          # 既知の transitive CVE は `pnpm.overrides` で fix version に固定する運用
+          # (KDD §5.X+115 参照、PR #430 で確立)。
           osv-scanner scan source --lockfile=pnpm-lock.yaml --recursive .
 
   # ============================================================

@@ -13294,3 +13294,70 @@ PR の Deploy Preview を明示的に skip したい場合:
   - [`src/components/dashboard-header.test.tsx`](../../src/components/dashboard-header.test.tsx) 新規 — sticky 実装の回帰検証 (= 本番未反映の再発防止)
 - 関連 PR: #425 (= Netlify skip 罠を踏んだ実 PR / sticky 実装含む) / #426 (= 同じ罠で signup 修正が本番未反映) / 本 PR #428 (= doc 整合化 + GitHub Actions skip 罠 + Netlify squash merge 罠 を発覚・修復)
 - 関連 feedback: `feedback_netlify_build_skip` (= 本件の学びを memory に固定化、squash merge 罠を反映予定)、`feedback_bundle_under_credit_pressure` (= credit 逼迫時の運用方針 — flag 誤用で credit 浪費すると bundle 戦略も崩れる)
+
+---
+
+## 5.X+115 **★severity-2 CI 突発 fail★ 新規 CVE が公開された日に過去 green だった PR が突然 red になる罠 + OSV-Scanner と pnpm-audit の判定基準ズレ (2026-05-23 / PR #430)**
+
+### 事象
+PR #430 (`fix/readonly-markdown-render` — readOnly モードの Markdown 表示バグ修正) を push し品質ゲート (lint / tsc / test / e2e-cov / build) 全 pass を確認後、**CI の OSV-Scanner ジョブが exit 1 で fail**。
+
+```
++-------------------------------------+------+-----------+---------+---------+---------------+----------------+
+| OSV URL                             | CVSS | ECOSYSTEM | PACKAGE | VERSION | FIXED VERSION | SOURCE         |
++-------------------------------------+------+-----------+---------+---------+---------------+----------------+
+| https://osv.dev/GHSA-q8mj-m7cp-5q26 | 6.3  | npm       | qs      | 6.15.1  | 6.15.2        | pnpm-lock.yaml |
++-------------------------------------+------+-----------+---------+---------+---------------+----------------+
+##[error]Process completed with exit code 1.
+```
+
+- 検出された脆弱性: `GHSA-q8mj-m7cp-5q26` (qs の prototype pollution、CVSS 6.3 = Medium)
+- 同じ pnpm-lock.yaml は前日 (2026-05-22) の main で **全 7 セキュリティジョブ green** だった
+- 今回の PR は dialog の `.tsx` 修正 + 新規 `.test.ts` のみで、`package.json` / `pnpm-lock.yaml` は **未変更**
+- `qs@6.15.1` の出所は `stripe@17.7.0` 直接依存 + `shadcn@4.7.0` (devDep) → `@modelcontextprotocol/sdk` → `express` → `body-parser` → `qs` の 2 経路
+
+### 根本原因 (2 層)
+
+**層 1: 新規 CVE の即時 fail**
+- OSV.dev に `GHSA-q8mj-m7cp-5q26` が **PR push と CI 実行の間に公開された**
+- OSV-Scanner v2 のデフォルト behavior は **severity 関係なく vuln 検出で exit 1** (Medium / Low でも fail)
+- そのため、コード変更ゼロでも前日 green だった lockfile が翌日 red になる
+- これは「毎日新規 CVE が公開される」OSS エコシステムの宿命であり、**運用上避けられない事象** (= シングル PR の責任ではない)
+
+**層 2: workflow コメントと実装の不整合**
+- `.github/workflows/security.yml` の OSV-Scanner ステップに `# CRITICAL/HIGH 検出時に exit 1 で fail` とコメント記載
+- だが実装はフィルタなし (= 全 severity で exit 1)
+- これは pnpm-audit (`--audit-level=high`) と判定基準が異なる:
+
+  | ツール | severity threshold | デフォルト behavior |
+  |---|---|---|
+  | `pnpm audit --audit-level=high` | high 以上で fail | low / moderate は警告のみ |
+  | `osv-scanner scan source` | **全 severity で fail** | --severity フラグなし (v2 のデフォルト) |
+  | Trivy (`--severity CRITICAL,HIGH`) | high / critical で fail | --ignore-unfixed で fix なし除外 |
+
+  → コメントを信じて「Medium だから OK」と判断するとミスマッチを起こす
+
+### 修正
+1. **CVE 自体の解消** (= 真のセキュリティ修正): `package.json` の `pnpm.overrides` に `"qs": ">=6.15.2"` を追加し `pnpm install` で lockfile 更新
+   - 上位パッケージ (stripe / express / body-parser) の release を待たずに transitive dep を即時 patch
+   - 既存の `@hono/node-server` / `postcss` / `ip-address` 等と同じパターン (このプロジェクトの確立された運用)
+2. **コメント誤りの修正**: security.yml の OSV-Scanner step に「全 severity で fail」を明記し、pnpm-audit との判定基準差を併記
+3. **本ナレッジの記録** (= 本セクション)
+
+### 学び
+- **新規 CVE の突発 fail は仕様**: code change ゼロでも CI が red になる。コミット直前の green を信用しすぎない。push 後の CI 結果を都度確認する習慣を継続する
+- **OSV-Scanner と pnpm-audit は判定基準が違う**: pnpm-audit は high 以上のみだが OSV-Scanner は **全 severity で fail**。Medium だから安心と思わない
+- **transitive CVE は pnpm overrides で即時 patch**: 上位 release を待つ間に CI が止まる。`>=fix_version` の semver range で固定するのが最小コストの恒久対策 (上位 release 後も overrides は無害)
+- **workflow コメントと実装の整合性チェック**: 「コードを信じる、コメントは参考」が原則だが、CI fail を誤判定しないよう、判定基準を変える時は両方を同時更新する
+- **pnpm.overrides の維持コスト**: 追加した override は半年ごとに見直し (上位パッケージが fix version 以上を要求するようになったら overrides を撤去できる)。今は伸びる一方なので、Q4 cleanup タスクとして溜める
+
+### 修正範囲
+- [`package.json`](../../package.json) `pnpm.overrides` に `qs: >=6.15.2` 追加
+- [`pnpm-lock.yaml`](../../pnpm-lock.yaml) `pnpm install` で qs 6.15.1 → 6.15.2 に更新
+- [`.github/workflows/security.yml`](../../.github/workflows/security.yml) OSV-Scanner step コメント修正 (全 severity fail の明記)
+- 本 KDD §5.X+115 (本セクション)
+
+### 関連
+- 関連 PR: 本 PR #430
+- 関連 docs: `.github/workflows/security.yml` (ジョブ構成全体) / `docs/security/SECURITY-TASKS.md` (security check 結果)
+- 関連 feedback: `feedback_quality_gate_exit_code` (= 同じ「ローカル green / CI red」系統の罠。今回は CVE 由来でローカル再現できない別系統)

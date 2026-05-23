@@ -22,7 +22,11 @@ import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
-import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
+// readOnly 時は MarkdownTextarea ではなく MarkdownDisplay を直接使う
+// (理由: <fieldset disabled> は子孫の <button> もネイティブ disabled にするため、
+//  プレビュー/差分トグルが効かず、Markdown が生ソースのまま表示される問題があった。
+//  AllMemosClient と同じパターンに揃える)
+import { MarkdownTextarea, MarkdownDisplay } from '@/components/ui/markdown-textarea';
 
 /**
  * リスク/課題の編集に必要な最小限の形状。RiskDTO / AllRiskDTO 両方と互換。
@@ -226,13 +230,19 @@ export function RiskEditDialog({
           <div className="space-y-2">
             <Label>{tField('content')} <span className="text-xs text-muted-foreground">{tRisk('optional')}</span></Label>
             {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も内容は任意 */}
-            <MarkdownTextarea
-              value={form.content}
-              onChange={(v) => setForm({ ...form, content: v })}
-              previousValue={risk.content}
-              rows={4}
-              maxLength={MEDIUM_TEXT_MAX_LENGTH}
-            />
+            {readOnly ? (
+              <div className="rounded-md border border-input bg-background px-3 py-2 text-sm">
+                <MarkdownDisplay value={form.content} />
+              </div>
+            ) : (
+              <MarkdownTextarea
+                value={form.content}
+                onChange={(v) => setForm({ ...form, content: v })}
+                previousValue={risk.content}
+                rows={4}
+                maxLength={MEDIUM_TEXT_MAX_LENGTH}
+              />
+            )}
           </div>
           {/*
             PR-γ / 項目 5/6: type=issue では impact ラベルを「重要度」、likelihood ラベルを「緊急度」に。

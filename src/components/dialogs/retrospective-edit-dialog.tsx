@@ -20,7 +20,11 @@ import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
-import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
+// readOnly 時は MarkdownTextarea ではなく MarkdownDisplay を直接使う
+// (理由: <fieldset disabled> は子孫の <button> もネイティブ disabled にするため、
+//  プレビュー/差分トグルが効かず、Markdown が生ソースのまま表示される問題があった。
+//  AllMemosClient と同じパターンに揃える)
+import { MarkdownTextarea, MarkdownDisplay } from '@/components/ui/markdown-textarea';
 
 type RetroLike = {
   id: string;
@@ -187,13 +191,19 @@ export function RetrospectiveEditDialog({
           ] as const).map(({ key, label, rows }) => (
             <div key={key} className="space-y-2">
               <Label>{label} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
-              <MarkdownTextarea
-                value={form[key]}
-                onChange={(v) => setForm({ ...form, [key]: v })}
-                previousValue={retro[key]}
-                rows={rows}
-                maxLength={3000}
-              />
+              {readOnly ? (
+                <div className="rounded-md border border-input bg-background px-3 py-2 text-sm">
+                  <MarkdownDisplay value={form[key]} />
+                </div>
+              ) : (
+                <MarkdownTextarea
+                  value={form[key]}
+                  onChange={(v) => setForm({ ...form, [key]: v })}
+                  previousValue={retro[key]}
+                  rows={rows}
+                  maxLength={3000}
+                />
+              )}
             </div>
           ))}
           </fieldset>
