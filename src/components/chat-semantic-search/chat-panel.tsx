@@ -102,6 +102,15 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         </button>
       </header>
 
+      {/*
+        Voyage への外部送信を明示告知 (about.md §Q5 と整合)。
+        ユーザがクエリ文の機微情報を含めるリスクを認識できるよう、常時表示する。
+      */}
+      <div className="border-b border-border bg-muted/50 px-4 py-2 text-xs text-muted-foreground">
+        ⓘ クエリ内容は意味検索のため外部 AI サービス (Voyage AI)
+        に送信されます。機微情報の入力はお控えください。
+      </div>
+
       <div className="flex-1 overflow-y-auto p-4 text-sm">
         {result?.degraded && result.degradeReason && (
           <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs">

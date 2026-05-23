@@ -256,6 +256,118 @@ describe('chatSemanticSearch — Memo author 表示', () => {
   });
 });
 
+describe('chatSemanticSearch — defense-in-depth visibility フィルタ', () => {
+  it('loadKnowledges の where 句に visibility="public" が含まれる', async () => {
+    mockedGenerateEmbedding.mockResolvedValueOnce({
+      ok: true,
+      embedding: Array.from({ length: 1024 }, () => 0.1),
+      costJpy: 10,
+      requestId: 'req-vis-1',
+    });
+
+    mockedQueryRaw
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([{ id: 'k-1', score: 0.5 }] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+
+    mockedKnowledgeFindMany.mockResolvedValueOnce([] as never);
+
+    await chatSemanticSearch({ query: 'q', ...INPUT });
+
+    expect(mockedKnowledgeFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: { in: expect.any(Array) },
+          deletedAt: null,
+          visibility: 'public',
+        }),
+      }),
+    );
+  });
+
+  it('loadRisksIssues の where 句に visibility="public" が含まれる', async () => {
+    mockedGenerateEmbedding.mockResolvedValueOnce({
+      ok: true,
+      embedding: Array.from({ length: 1024 }, () => 0.1),
+      costJpy: 10,
+      requestId: 'req-vis-2',
+    });
+
+    mockedQueryRaw
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([{ id: 'r-1', score: 0.5 }] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+
+    mockedRiskIssueFindMany.mockResolvedValueOnce([] as never);
+
+    await chatSemanticSearch({ query: 'q', ...INPUT });
+
+    expect(mockedRiskIssueFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ visibility: 'public' }),
+      }),
+    );
+  });
+
+  it('loadRetrospectives の where 句に visibility="public" が含まれる', async () => {
+    mockedGenerateEmbedding.mockResolvedValueOnce({
+      ok: true,
+      embedding: Array.from({ length: 1024 }, () => 0.1),
+      costJpy: 10,
+      requestId: 'req-vis-3',
+    });
+
+    mockedQueryRaw
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([{ id: 'rt-1', score: 0.5 }] as never)
+      .mockResolvedValueOnce([] as never);
+
+    mockedRetrospectiveFindMany.mockResolvedValueOnce([] as never);
+
+    await chatSemanticSearch({ query: 'q', ...INPUT });
+
+    expect(mockedRetrospectiveFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ visibility: 'public' }),
+      }),
+    );
+  });
+
+  it('loadMemos の where 句に OR: [visibility="public", userId=viewerUserId] が含まれる (自分の private は対象)', async () => {
+    mockedGenerateEmbedding.mockResolvedValueOnce({
+      ok: true,
+      embedding: Array.from({ length: 1024 }, () => 0.1),
+      costJpy: 10,
+      requestId: 'req-vis-4',
+    });
+
+    mockedQueryRaw
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([{ id: 'm-1', score: 0.5 }] as never);
+
+    mockedMemoFindMany.mockResolvedValueOnce([] as never);
+
+    await chatSemanticSearch({ query: 'q', ...INPUT });
+
+    expect(mockedMemoFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [{ visibility: 'public' }, { userId: INPUT.viewerUserId }],
+        }),
+      }),
+    );
+  });
+});
+
 describe('chatSemanticSearch — 削除済プロジェクト名のマスク', () => {
   it('source project が deletedAt != null なら sourceProjectName は null', async () => {
     mockedGenerateEmbedding.mockResolvedValueOnce({

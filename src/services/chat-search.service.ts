@@ -8,7 +8,8 @@
  *
  * 設計判断:
  *   - generateEmbedding ({ inputType: 'query' }) で 1 ApiCallLog 計上
- *     (Beginner は月100回枠と共有、Expert ¥10、Pro ¥30、書込と同単価)
+ *     (Beginner は月100回枠と共有、Expert ¥5、Pro ¥15、書込と同単価。
+ *      実単価は Tenant.pricePerCallHaiku / pricePerCallSonnet を `withMeteredLLM` 経由で参照)
  *   - 5 資産は並列 (Promise.all) で pgvector Cosine 検索
  *   - 各資産で SUGGESTION_DEFAULT_LIMIT (= 50) 件取得、assignPercentileTiers
  *     で tier 分類、weak は UI 側で折りたたみ
@@ -296,8 +297,10 @@ async function loadProjects(hits: RawHit[], tenantIds: string[]): Promise<ChatSe
 async function loadKnowledges(hits: RawHit[], tenantIds: string[]): Promise<ChatSearchHit[]> {
   if (hits.length === 0) return [];
   const ids = hits.map((h) => h.id);
+  // defense-in-depth: pgvector / pg_trgm で visibility='public' に絞ったが、
+  // 競合更新で draft 化された行を絶対に通さないため findMany でも明示
   const rows = await prisma.knowledge.findMany({
-    where: { id: { in: ids }, tenantId: { in: tenantIds }, deletedAt: null },
+    where: { id: { in: ids }, tenantId: { in: tenantIds }, deletedAt: null, visibility: 'public' },
     select: { id: true, title: true, content: true },
   });
   const byId = new Map(rows.map((r) => [r.id, r] as const));
@@ -321,8 +324,10 @@ async function loadKnowledges(hits: RawHit[], tenantIds: string[]): Promise<Chat
 async function loadRisksIssues(hits: RawHit[], tenantIds: string[]): Promise<ChatSearchHit[]> {
   if (hits.length === 0) return [];
   const ids = hits.map((h) => h.id);
+  // defense-in-depth: pgvector / pg_trgm で visibility='public' に絞ったが、
+  // 競合更新で draft 化された行を絶対に通さないため findMany でも明示
   const rows = await prisma.riskIssue.findMany({
-    where: { id: { in: ids }, tenantId: { in: tenantIds }, deletedAt: null },
+    where: { id: { in: ids }, tenantId: { in: tenantIds }, deletedAt: null, visibility: 'public' },
     select: {
       id: true,
       type: true,
@@ -353,8 +358,10 @@ async function loadRisksIssues(hits: RawHit[], tenantIds: string[]): Promise<Cha
 async function loadRetrospectives(hits: RawHit[], tenantIds: string[]): Promise<ChatSearchHit[]> {
   if (hits.length === 0) return [];
   const ids = hits.map((h) => h.id);
+  // defense-in-depth: pgvector / pg_trgm で visibility='public' に絞ったが、
+  // 競合更新で draft 化された行を絶対に通さないため findMany でも明示
   const rows = await prisma.retrospective.findMany({
-    where: { id: { in: ids }, tenantId: { in: tenantIds }, deletedAt: null },
+    where: { id: { in: ids }, tenantId: { in: tenantIds }, deletedAt: null, visibility: 'public' },
     select: {
       id: true,
       conductedDate: true,
@@ -383,11 +390,22 @@ async function loadRetrospectives(hits: RawHit[], tenantIds: string[]): Promise<
   });
 }
 
-async function loadMemos(hits: RawHit[], tenantIds: string[]): Promise<ChatSearchHit[]> {
+async function loadMemos(
+  hits: RawHit[],
+  tenantIds: string[],
+  viewerUserId: string,
+): Promise<ChatSearchHit[]> {
   if (hits.length === 0) return [];
   const ids = hits.map((h) => h.id);
+  // defense-in-depth: pgvector / pg_trgm で visibility='public' OR userId=viewerUserId
+  // に絞ったが、競合更新で private 化された他人のメモを絶対に通さないため findMany でも明示
   const rows = await prisma.memo.findMany({
-    where: { id: { in: ids }, tenantId: { in: tenantIds }, deletedAt: null },
+    where: {
+      id: { in: ids },
+      tenantId: { in: tenantIds },
+      deletedAt: null,
+      OR: [{ visibility: 'public' }, { userId: viewerUserId }],
+    },
     select: { id: true, title: true, content: true, userId: true },
   });
   const byId = new Map(rows.map((r) => [r.id, r] as const));
@@ -465,7 +483,7 @@ export async function chatSemanticSearch(
       loadKnowledges(knowledgeHits, tenantIds).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
       loadRisksIssues(riskIssueHits, tenantIds).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
       loadRetrospectives(retroHits, tenantIds).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
-      loadMemos(memoHits, tenantIds).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
+      loadMemos(memoHits, tenantIds, input.viewerUserId).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
     ]);
 
     return {
@@ -490,7 +508,7 @@ export async function chatSemanticSearch(
     loadKnowledges(knowledgeHits, tenantIds).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
     loadRisksIssues(riskIssueHits, tenantIds).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
     loadRetrospectives(retroHits, tenantIds).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
-    loadMemos(memoHits, tenantIds).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
+    loadMemos(memoHits, tenantIds, input.viewerUserId).then((arr) => assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD))),
   ]);
 
   return {
