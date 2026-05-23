@@ -16,6 +16,9 @@ vi.mock('@/lib/db', () => ({
       update: vi.fn(),
       // PR #91: setupPassword が admin 判定のために findUnique を使用
       findUnique: vi.fn(),
+      // Phase 1 (2026-05-23 / feat/signup-email-resend-ux):
+      //   resendVerificationEmail が pending verification user を tenant-scoped に検索
+      findFirst: vi.fn(),
     },
     recoveryCode: {
       createMany: vi.fn(),
@@ -56,6 +59,7 @@ import {
   validateToken,
   setupPassword,
   setupInitialMfa,
+  resendVerificationEmail,
   EmailSendError,
 } from './email-verification.service';
 import { prisma } from '@/lib/db';
@@ -78,6 +82,13 @@ describe('sendVerificationEmail', () => {
     ).resolves.toBeUndefined();
 
     expect(mockSend).toHaveBeenCalledOnce();
+    // Phase 1 (2026-05-23 / feat/signup-email-resend-ux):
+    //   ログイン時のロックアウト事故を防ぐため、招待メール本文に組織 ID (tenant.slug) を必ず含める
+    const sendArgs = mockSend.mock.calls[0]?.[0];
+    expect(sendArgs?.html).toContain('tenant-a'); // mock の tenant.slug = 'tenant-a'
+    expect(sendArgs?.html).toContain('組織 ID');
+    expect(sendArgs?.text).toContain('tenant-a');
+    expect(sendArgs?.text).toContain('組織 ID');
     expect(mockSend.mock.calls[0][0].to).toBe('test@example.com');
   });
 
@@ -447,5 +458,163 @@ describe('setupInitialMfa (PR #91)', () => {
     expect(prisma.$transaction).toHaveBeenCalled();
     const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
     expect(txCall).toHaveLength(2); // token update + user update
+  });
+});
+
+// ================================================================
+// Phase 1 (2026-05-23 / feat/signup-email-resend-ux):
+//   招待メール再送ロジック
+// ================================================================
+
+describe('resendVerificationEmail (Phase 1 / signup-email-resend-ux)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.emailVerificationToken.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.emailVerificationToken.create).mockResolvedValue({} as never);
+  });
+
+  it('正常系: pending verification user 宛に再送し ok=sent を返す', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+      id: 'tenant-uuid',
+      deletedAt: null,
+      slug: 'customer-a',
+    } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-uuid' } as never);
+    mockSend.mockResolvedValue({ success: true, messageId: 'msg-resend-1' });
+
+    const r = await resendVerificationEmail(
+      'admin@customer-a.example',
+      'customer-a',
+      'https://example.com',
+    );
+
+    expect(r).toEqual({ ok: true, reason: 'sent' });
+    expect(mockSend).toHaveBeenCalledOnce();
+    // 既存 token 無効化 + 新規 token 作成が動いていること
+    expect(prisma.emailVerificationToken.updateMany).toHaveBeenCalled();
+    expect(prisma.emailVerificationToken.create).toHaveBeenCalled();
+  });
+
+  it('enumeration 防止: tenant 不在でも silent_skip で 200 相当を返す (メール送信なし)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
+
+    const r = await resendVerificationEmail(
+      'admin@customer-a.example',
+      'nonexistent-tenant',
+      'https://example.com',
+    );
+
+    expect(r).toEqual({ ok: true, reason: 'silent_skip' });
+    expect(mockSend).not.toHaveBeenCalled();
+    // user.findFirst も呼ばれない (= tenant 解決失敗段階で早期 return)
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('enumeration 防止: 削除済 tenant も silent_skip', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+      id: 'tenant-uuid',
+      deletedAt: new Date(),
+      slug: 'deleted-tenant',
+    } as never);
+
+    const r = await resendVerificationEmail(
+      'admin@customer-a.example',
+      'deleted-tenant',
+      'https://example.com',
+    );
+
+    expect(r).toEqual({ ok: true, reason: 'silent_skip' });
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('enumeration 防止: user 不在も silent_skip (= 攻撃者は email の存在を知れない)', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+      id: 'tenant-uuid',
+      deletedAt: null,
+      slug: 'customer-a',
+    } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+
+    const r = await resendVerificationEmail(
+      'nonexistent@example.com',
+      'customer-a',
+      'https://example.com',
+    );
+
+    expect(r).toEqual({ ok: true, reason: 'silent_skip' });
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('enumeration 防止: 既に活性化済ユーザ (isActive=true) は user.findFirst の条件で除外され silent_skip', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+      id: 'tenant-uuid',
+      deletedAt: null,
+      slug: 'customer-a',
+    } as never);
+    // findFirst の where 条件 (isActive: false) で除外されるため null が返る想定
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+
+    const r = await resendVerificationEmail(
+      'active-user@example.com',
+      'customer-a',
+      'https://example.com',
+    );
+
+    expect(r).toEqual({ ok: true, reason: 'silent_skip' });
+  });
+
+  it('メール送信失敗時は ok=false / reason=EMAIL_SEND_FAILED を返す', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+      id: 'tenant-uuid',
+      deletedAt: null,
+      slug: 'customer-a',
+    } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-uuid' } as never);
+    mockSend.mockResolvedValue({ success: false, error: 'Brevo rejected' });
+
+    const r = await resendVerificationEmail(
+      'admin@customer-a.example',
+      'customer-a',
+      'https://example.com',
+    );
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('EMAIL_SEND_FAILED');
+      expect(r.message).toContain('メール送信に失敗しました');
+    }
+  });
+
+  it('user.findFirst の where 条件が tenant-scoped + pending verification 限定であること', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+      id: 'tenant-uuid',
+      deletedAt: null,
+      slug: 'customer-a',
+    } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-uuid' } as never);
+    mockSend.mockResolvedValue({ success: true });
+
+    await resendVerificationEmail(
+      'admin@customer-a.example',
+      'customer-a',
+      'https://example.com',
+    );
+
+    const call = vi.mocked(prisma.user.findFirst).mock.calls[0]?.[0] as {
+      where?: {
+        tenantId?: string;
+        email?: string;
+        isActive?: boolean;
+        deletedAt?: null;
+      };
+    };
+    expect(call?.where).toEqual(
+      expect.objectContaining({
+        tenantId: 'tenant-uuid',
+        email: 'admin@customer-a.example',
+        isActive: false,
+        deletedAt: null,
+      }),
+    );
   });
 });

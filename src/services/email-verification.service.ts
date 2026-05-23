@@ -58,6 +58,11 @@ export async function sendVerificationEmail(
   const setupUrl = buildSetupPasswordUrl(tenant.slug, token, baseUrl);
 
   // 招待メール送信
+  // Phase 1 (2026-05-23 / feat/signup-email-resend-ux):
+  //   組織 ID (tenant.slug) を本文に明示。ログイン時の組織 ID 必須化 (ADR-0016) で
+  //   「自分の組織 ID を覚えていない」ロックアウト事故を防ぐ。
+  //   - メール本文は永続的に受信者の inbox に残るため、ブラウザ閉じ後でも再確認可能
+  //   - 「【重要】保存推奨」表記で重要性を強調
   const mailProvider = getMailProvider();
   const result = await mailProvider.send({
     to: email,
@@ -67,11 +72,26 @@ export async function sendVerificationEmail(
     html: `
       <h2>たすきば へようこそ</h2>
       <p>あなたのアカウントが作成されました。以下のリンクからパスワードを設定してください。</p>
+      <div style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; margin: 16px 0; background-color: #f9fafb;">
+        <p style="margin: 0 0 8px 0; font-weight: bold; color: #d97706;">【重要】組織 ID は再ログイン時に必要です</p>
+        <p style="margin: 0 0 4px 0;">あなたの組織 ID:</p>
+        <p style="margin: 0; font-family: monospace; font-size: 18px; font-weight: bold;">${tenant.slug}</p>
+        <p style="margin: 8px 0 0 0; font-size: 12px; color: #6b7280;">本メールは大切に保存してください。ログイン画面で組織 ID の入力が必要になります。</p>
+      </div>
       <p><a href="${setupUrl}">パスワードを設定する</a></p>
       <p>このリンクは ${TOKEN_EXPIRY_HOURS} 時間有効です。</p>
       <p>心当たりがない場合は、このメールを無視してください。</p>
     `,
-    text: `たすきば へようこそ\n\nあなたのアカウントが作成されました。以下のURLからパスワードを設定してください。\n${setupUrl}\n\nこのリンクは${TOKEN_EXPIRY_HOURS}時間有効です。`,
+    text:
+      `たすきば へようこそ\n\n` +
+      `あなたのアカウントが作成されました。\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `【重要】組織 ID は再ログイン時に必要です\n` +
+      `あなたの組織 ID: ${tenant.slug}\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `本メールは大切に保存してください。ログイン画面で組織 ID の入力が必要になります。\n\n` +
+      `以下のURLからパスワードを設定してください。\n${setupUrl}\n\n` +
+      `このリンクは${TOKEN_EXPIRY_HOURS}時間有効です。`,
   });
 
   if (!result.success) {
@@ -86,6 +106,79 @@ export class EmailSendError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'EmailSendError';
+  }
+}
+
+// ================================================================
+// 招待メール再送 (Phase 1 / feat/signup-email-resend-ux / 2026-05-23)
+// ================================================================
+
+export type ResendVerificationResult =
+  | { ok: true; reason: 'sent' }
+  /**
+   * enumeration 防止のため、サインアップ完了済 / 該当ユーザ不在 / 既に有効化済等の
+   * 「再送が成立しないケース」は呼出側に詳細を伝えず ok=true で返す。
+   * 内部処理としては「何もしなかった」を表すが、UI には「再送しました」と
+   * 同等の体感で返すことで、悪意ある列挙者に対する手がかりを与えない。
+   */
+  | { ok: true; reason: 'silent_skip' }
+  | { ok: false; reason: 'EMAIL_SEND_FAILED'; message: string };
+
+/**
+ * 招待メールを再送する (Phase 1 / feat/signup-email-resend-ux)。
+ *
+ * 設計:
+ *   - **enumeration 防止**: tenant 不在 / user 不在 / 既に活性化済の場合も silent_skip で 200 を返す
+ *   - **既存 sendVerificationEmail を再利用**: 内部で旧 token を usedAt=now で無効化し新 token を発行する
+ *   - **Rate Limit は呼出側 (route) で実施**: 本サービスはビジネスロジックのみに集中
+ *
+ * 制約:
+ *   - User.isActive=false (= まだメール検証していない) ユーザのみが対象
+ *   - 既に isActive=true のユーザは silent_skip (= サインアップ完了済として何もしない)
+ */
+export async function resendVerificationEmail(
+  email: string,
+  tenantSlug: string,
+  baseUrl: string,
+): Promise<ResendVerificationResult> {
+  // 1. tenant 解決
+  const tenant = await prisma.tenant.findUnique({
+    where: { slug: tenantSlug },
+    select: { id: true, deletedAt: true },
+  });
+  // enumeration 防止: tenant 不在 / 削除済テナントは silent_skip
+  if (!tenant || tenant.deletedAt != null) {
+    return { ok: true, reason: 'silent_skip' };
+  }
+
+  // 2. user 解決 (tenant-scoped + isActive=false の pending verification ユーザに限定)
+  const user = await prisma.user.findFirst({
+    where: {
+      tenantId: tenant.id,
+      email,
+      isActive: false,
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  // enumeration 防止: user 不在 / 既に isActive=true は silent_skip
+  if (!user) {
+    return { ok: true, reason: 'silent_skip' };
+  }
+
+  // 3. 既存 sendVerificationEmail を呼ぶ (= 旧 token 無効化 + 新 token 発行 + メール送信)
+  try {
+    await sendVerificationEmail(user.id, tenant.id, email, baseUrl);
+    return { ok: true, reason: 'sent' };
+  } catch (e) {
+    if (e instanceof EmailSendError) {
+      return {
+        ok: false,
+        reason: 'EMAIL_SEND_FAILED',
+        message: 'メール送信に失敗しました。時間をおいて再度お試しください。',
+      };
+    }
+    throw e;
   }
 }
 
