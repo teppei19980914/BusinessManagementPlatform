@@ -6,6 +6,8 @@ import { ToastProvider } from '@/components/toast-provider';
 // Q5(3) (2026-05-14): 縮退モード起動時に dashboard 全体で表示する小バナー
 import { getDegradedModeState } from '@/services/degraded-mode.service';
 import { DegradedModeBanner } from '@/components/degraded-mode-banner';
+// PR #373 / chat-semantic-search: 全ページ右下のチャット意味検索 FAB
+import { ChatSemanticSearchFab } from '@/components/chat-semantic-search';
 import type { SystemRole } from '@/config/master-data';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -41,6 +43,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           */}
           <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
         </div>
+        <ChatSemanticSearchFab />
       </ToastProvider>
     </LoadingProvider>
   );
