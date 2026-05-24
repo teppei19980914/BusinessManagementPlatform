@@ -9,9 +9,14 @@
  *   - 結果表示: tier (strong/medium/weak) 段階表示、weak は折りたたみ
  *   - 縮退モード時は注意バナー表示
  *   - 会話履歴は永続化なし (Client State のみ)
+ *
+ * PR fix/chat-search-and-auto-open (2026-05-24) で追加された UX 改善:
+ *   - C-2: 連続送信時の AbortController で前回 fetch を破棄 (race 解消)
+ *   - C-3: 結果カードクリック時の navigation pending 状態を useTransition で表現
+ *   - C-4: useSession().status === 'loading' 中は memo カードを disable (誤遷移防止)
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import {
@@ -43,15 +48,38 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [weakExpanded, setWeakExpanded] = useState(false);
-  // memo の hit が「自分のメモ」か「他人 public」かで遷移先を分けるための viewerUserId。
-  // session 未取得の間は undefined → 安全側で /all-memos に倒れる (chat-search-link.ts)。
-  const viewerUserId = useSession().data?.user?.id;
+  // C-3: 結果カードクリック後の navigation 中フラグ。useTransition の isPending で
+  //   「click → auto-open dialog 表示」の間ユーザに視覚フィードバックを返す。
+  const [isNavigating, startNavigation] = useTransition();
+  // C-2: 連続送信時のレース解消用 AbortController を保持。新規送信時に前回をキャンセル。
+  //   旧実装は AbortController なしで、後着 fetch が先着 fetch を上書きする race があった
+  //   (検索結果がクエリと不整合になる UX バグ)。
+  const inFlightAbortRef = useRef<AbortController | null>(null);
+  // C-4: session 取得状態。'loading' 中は viewerUserId が undefined のため、
+  //   memo カードクリックで「自分の private memo」が誤って /all-memos に倒れる罠を避ける。
+  const session = useSession();
+  const viewerUserId = session.data?.user?.id;
+  const sessionLoading = session.status === 'loading';
 
   const showWarning = query.length > 0 && query.length < CHAT_SEARCH_INPUT_WARN_THRESHOLD;
   const tooLong = query.length > CHAT_SEARCH_INPUT_MAX_CHARS;
 
+  // unmount 時 (= パネル閉じる) に in-flight fetch を確実に abort する。
+  // 閉じた後にレスポンスが返ってきても setState で memory leak / warning が出ない。
+  useEffect(() => {
+    return () => {
+      inFlightAbortRef.current?.abort();
+    };
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     if (submitting || query.trim().length === 0 || tooLong) return;
+
+    // C-2: 前回 in-flight があれば abort。連投時に「後着結果が先着結果に勝つ race」防止。
+    inFlightAbortRef.current?.abort();
+    const ac = new AbortController();
+    inFlightAbortRef.current = ac;
+
     setSubmitting(true);
     setError(null);
     setSubmittedQuery(query);
@@ -61,6 +89,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
+        signal: ac.signal,
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
@@ -71,10 +100,20 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         setResult(body.data);
       }
     } catch (e) {
+      // abort された fetch は AbortError を throw する。意図的な cancel なので
+      // ユーザに「失敗しました」を出さない (新しい検索が走っている)。
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        return;
+      }
       setError(e instanceof Error ? e.message : '検索に失敗しました');
       setResult(null);
     } finally {
-      setSubmitting(false);
+      // 別 fetch が abort されて入れ替わっていたら、setSubmitting は新しい fetch が
+      // 管理しているため触らない。ref 上の AbortController が一致するときのみ完了処理。
+      if (inFlightAbortRef.current === ac) {
+        setSubmitting(false);
+        inFlightAbortRef.current = null;
+      }
     }
   }, [query, submitting, tooLong]);
 
@@ -87,6 +126,16 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
     },
     [handleSubmit],
   );
+
+  // C-3: 結果カードに渡す onCardClick。Link の遷移を startTransition で wrap し、
+  //   isPending=true の間 UI で「読み込み中」を見せる。
+  //   Link の prefetch / 既定の navigation 動作は壊さない (e.preventDefault しない)。
+  const handleCardClick = useCallback(() => {
+    startNavigation(() => {
+      // body は空でも startTransition の登録自体が isPending を立てる。
+      // Link の onClick で startTransition を呼ぶと React が遷移を transition として扱う。
+    });
+  }, []);
 
   return (
     <aside
@@ -141,12 +190,25 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
+        {/* C-3: 遷移中の global pending インジケータ */}
+        {isNavigating && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mb-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+          >
+            ⏳ 詳細を開いています...
+          </div>
+        )}
+
         {result && !error && (
           <ChatResults
             result={result}
             viewerUserId={viewerUserId}
+            sessionLoading={sessionLoading}
             weakExpanded={weakExpanded}
             onToggleWeak={() => setWeakExpanded((v) => !v)}
+            onCardClick={handleCardClick}
           />
         )}
 
@@ -203,13 +265,17 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
 function ChatResults({
   result,
   viewerUserId,
+  sessionLoading,
   weakExpanded,
   onToggleWeak,
+  onCardClick,
 }: {
   result: ChatSearchResult;
   viewerUserId: string | undefined;
+  sessionLoading: boolean;
   weakExpanded: boolean;
   onToggleWeak: () => void;
+  onCardClick: () => void;
 }) {
   const allHits: ChatSearchHit[] = [
     ...result.results.projects,
@@ -232,6 +298,13 @@ function ChatResults({
   const medium = allHits.filter((h) => h.tier === 'medium').sort((a, b) => b.score - a.score);
   const weak = allHits.filter((h) => h.tier === 'weak').sort((a, b) => b.score - a.score);
 
+  // C-4: session 読み込み中は memo リンクを disable する判定関数。
+  //   memo の hit は viewerUserId 比較で /memos vs /all-memos を振り分けるが、
+  //   viewerUserId 未取得時は安全側で /all-memos に倒れる。これだと「自分の private memo」が
+  //   /all-memos に表示されない (= 開いても見つからない) UX 事故になるため、
+  //   session 取得完了まで memo カードクリック自体を抑止する。
+  const isCardDisabled = (hit: ChatSearchHit): boolean => sessionLoading && hit.kind === 'memo';
+
   return (
     <div>
       <div className="mb-3 text-xs text-muted-foreground">
@@ -245,7 +318,13 @@ function ChatResults({
           </h3>
           <div className="flex flex-col gap-2">
             {strong.map((hit) => (
-              <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} viewerUserId={viewerUserId} />
+              <ChatSearchResultCard
+                key={`${hit.kind}-${hit.id}`}
+                hit={hit}
+                viewerUserId={viewerUserId}
+                disabled={isCardDisabled(hit)}
+                onClick={onCardClick}
+              />
             ))}
           </div>
         </section>
@@ -258,7 +337,13 @@ function ChatResults({
           </h3>
           <div className="flex flex-col gap-2">
             {medium.map((hit) => (
-              <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} viewerUserId={viewerUserId} />
+              <ChatSearchResultCard
+                key={`${hit.kind}-${hit.id}`}
+                hit={hit}
+                viewerUserId={viewerUserId}
+                disabled={isCardDisabled(hit)}
+                onClick={onCardClick}
+              />
             ))}
           </div>
         </section>
@@ -277,7 +362,13 @@ function ChatResults({
           {weakExpanded && (
             <div className="flex flex-col gap-2">
               {weak.map((hit) => (
-                <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} viewerUserId={viewerUserId} />
+                <ChatSearchResultCard
+                  key={`${hit.kind}-${hit.id}`}
+                  hit={hit}
+                  viewerUserId={viewerUserId}
+                  disabled={isCardDisabled(hit)}
+                  onClick={onCardClick}
+                />
               ))}
             </div>
           )}

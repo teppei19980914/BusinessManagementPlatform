@@ -4282,7 +4282,7 @@ stakeholder は `requiredRole: 'pm_tl'`、task は `requiredRole: 'any'` を返�
 - [ ] **mention 通知の to は必ず該当画面にアクセスできる**: mention 認可で「投稿可能な人」= 「to を受け取り得る人」が完全に project / role / admin スコープに含まれることを設計時に確認する
 - [ ] **link 構築 (entity-link.ts) と認可 (route layer) は対の設計**: link を変更したら認可マトリクスを再確認、認可を変更したら link を再確認
 - [ ] **deep link は受信者が絶対にアクセスできる URL を返す**: 「項目が見つからない時は list ページに fallback」「list ページ自体は誰でも見える」が deep link の基本要件
-- [ ] **auto-open は 1 度きり**: filter / sort 変動で再発火しないよう `useRef` でガード、開いたら URL クリーンアップで再 open を防ぐ
+- [ ] **auto-open の重複発火抑止は「id 単位」で行う**: PR fix/chat-search-and-auto-open (2026-05-24) で `triggeredRef: boolean` → `lastTriggeredIdRef: string \| null` に修正。旧仕様は同一マウント内で 1 度きり発火に固定されていたため、チャット検索の連続クリック (A→B) で 2 件目以降が無反応になる UX バグ (URL は変わるが dialog が出ない) を抱えていた。同 id 連続発火抑止 + 別 id 遷移時再発火 + URL クリーン後 reset の 3 条件で対応。invariant は `src/components/common/use-auto-open-dialog.test.ts` (source-pattern) で固定
 - [ ] **UI gating は防衛的パターンとして prop 化しておく**: 現在使ってなくても将来の経路拡張で必要になる可能性が高い、コストはほぼゼロ
 - [ ] **page/tab レベルと API レベルの二重防御**: UI 制御を変えただけでは抜けられる経路 (URL 直打ち / 直接 fetch / 開発者ツール) が必ず残るため、両方で同じマトリクスを enforce する
 
