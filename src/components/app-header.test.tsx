@@ -62,11 +62,17 @@ describe('AppHeader の auto-hide 実装 invariant', () => {
     expect(source).toMatch(/menuOpenCount\s*===\s*0/);
   });
 
-  it('メニュー閉じ直後の即時 hide を抑止するベースライン (menuClosedAtScrollY + TOLERANCE_AFTER_MENU_CLOSE) を持つ', () => {
+  it('メニュー閉じ直後の即時 hide を抑止するベースライン (menuClosedAtScrollY state + TOLERANCE_AFTER_MENU_CLOSE) を持つ', () => {
     // 下スクロール中にメニュー open → close 直後に stale direction='down' で hide される
     // 違和感を防ぐためのガード。実装が消えると UAT で違和感報告されるため source-pattern で確保。
-    expect(source).toMatch(/menuClosedAtScrollYRef/);
+    // 2026-05-24 (KDD §5.X+122): refs-during-render rule 対応で useRef → useState に変更済。
+    //   render で読む値は state、useEffect 内のみ参照する値は ref と使い分ける invariant。
+    expect(source).toMatch(/menuClosedAtScrollY\b/);
+    expect(source).toMatch(/setMenuClosedAtScrollY\b/);
     expect(source).toMatch(/TOLERANCE_AFTER_MENU_CLOSE/);
+    // refs-during-render 回帰防止: menuClosedAtScrollYRef.current 形式の ref 読出が
+    // 復活していないこと
+    expect(source).not.toMatch(/menuClosedAtScrollYRef\.current/);
   });
 
   it('useReportHeaderMenuOpen を export している (NotificationBell など外部子コンポーネントから利用)', () => {
@@ -97,10 +103,10 @@ describe('AccountMenu — Microsoft 風 アカウントメニュー invariant', 
   it('メニュー開放時にアカウント情報セクション (氏名 + ロール + email) を表示する', () => {
     // 旧実装はトリガに名前を出していたが、Microsoft 風に menu 上部に集約。
     // 氏名は見出し、ロールとメールはアカウント情報として配置する。
-    expect(source).toMatch(/data-testid="account-info-section"/);
-    expect(source).toMatch(/data-testid="account-info-name"/);
-    expect(source).toMatch(/data-testid="account-info-email"/);
-    expect(source).toMatch(/data-testid="account-info-role"/);
+    expect(source).toMatch(/data-testid="header-account-info-section"/);
+    expect(source).toMatch(/data-testid="header-account-info-name"/);
+    expect(source).toMatch(/data-testid="header-account-info-email"/);
+    expect(source).toMatch(/data-testid="header-account-info-role"/);
     expect(source).toMatch(/\{user\.email\}/);
   });
 

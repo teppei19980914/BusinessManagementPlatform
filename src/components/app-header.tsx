@@ -332,28 +332,28 @@ function AccountMenu({ user }: { user: AppHeaderUser }) {
               小さく並べる。長い氏名は break-words で複数行に折り返し、見切れさせない。
               email は selectAll しやすいよう selectable 維持 (user-select 既定)。
           */}
-          <div className="border-b border-border/60 px-4 py-3" data-testid="account-info-section">
+          <div className="border-b border-border/60 px-4 py-3" data-testid="header-account-info-section">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
                 <User className="size-5" />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="break-words text-sm font-semibold text-foreground" data-testid="account-info-name">
+                <div className="break-words text-sm font-semibold text-foreground" data-testid="header-account-info-name">
                   {user.name}
                 </div>
                 {user.systemRole === 'super_admin' && (
-                  <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" data-testid="account-info-role">
+                  <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" data-testid="header-account-info-role">
                     <Crown className="size-3" />
                     {tNav('superAdminBadge')}
                   </div>
                 )}
                 {user.systemRole === 'admin' && (
-                  <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-info" data-testid="account-info-role">
+                  <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-info" data-testid="header-account-info-role">
                     <Shield className="size-3" />
                     {tNav('adminBadge')}
                   </div>
                 )}
-                <div className="mt-0.5 break-all text-xs text-muted-foreground" data-testid="account-info-email">
+                <div className="mt-0.5 break-all text-xs text-muted-foreground" data-testid="header-account-info-email">
                   {user.email}
                 </div>
               </div>
@@ -581,15 +581,22 @@ export function AppHeader({ user }: AppHeaderProps) {
   //   stale なので hidden = true になりヘッダが消える UX 違和感。
   //   対策: menuOpenCount が >0 → 0 に遷移したタイミングの scrollY を記録し、その scrollY
   //   よりさらに下にスクロール (= 新規 'down' 動作) するまでは hide しない。
-  const menuClosedAtScrollYRef = useRef<number | null>(null);
+  //
+  // 実装ノート (eslint-plugin-react-hooks 7.x の refs-during-render 対応 / KDD §5.X+122):
+  //   旧実装は menuClosedAtScrollY を useRef 管理していたが、`refs-during-render` rule で
+  //   「render 中の ref.current 読出」が CI fail を起こすため useState に変更。
+  //   prevMenuOpenCount は **render 中に読まない** ため useRef のまま (useEffect 内のみ参照)。
+  const [menuClosedAtScrollY, setMenuClosedAtScrollY] = useState<number | null>(null);
   const prevMenuOpenCountRef = useRef(0);
   useEffect(() => {
     if (prevMenuOpenCountRef.current > 0 && menuOpenCount === 0) {
       // 開→閉の遷移。現在の scrollY を baseline として記録。
-      menuClosedAtScrollYRef.current = scrollY;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMenuClosedAtScrollY(scrollY);
     } else if (menuOpenCount > 0) {
       // メニュー開放中は baseline をクリアしておく (= 次回 close 時の値を待つ)。
-      menuClosedAtScrollYRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMenuClosedAtScrollY(null);
     }
     prevMenuOpenCountRef.current = menuOpenCount;
   }, [menuOpenCount, scrollY]);
@@ -598,12 +605,11 @@ export function AppHeader({ user }: AppHeaderProps) {
   //          (メニュー閉じ直後の場合は閉じた scrollY より新規に下スクロールしている)
   // 先頭付近では常に visible にすることで、ページロード直後のチラつきとモバイルで「上に
   // 戻る → 一瞬隠れる」事故を防ぐ。
-  const baseline = menuClosedAtScrollYRef.current;
   const hidden =
     scrollY > SCROLL_DIRECTION_THRESHOLD
     && direction === 'down'
     && menuOpenCount === 0
-    && (baseline === null || scrollY > baseline + TOLERANCE_AFTER_MENU_CLOSE);
+    && (menuClosedAtScrollY === null || scrollY > menuClosedAtScrollY + TOLERANCE_AFTER_MENU_CLOSE);
 
   /* --- ログイン状態分岐 ------------------------------------------------ */
   const isLoggedIn = user !== null;

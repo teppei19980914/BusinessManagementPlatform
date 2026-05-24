@@ -13891,3 +13891,63 @@ PR #439 で AppHeader / AppFooter 統合の初期 commit (938ee23) 直後に `[g
 - 関連 KDD: [§5.X+114](#5x114) (sticky header z-40 の積層仕様 + `[skip netlify]` squash merge 罠) / [§5.X+116](#5x116) (グローバル UI 要素追加 → chromium-mobile baseline 一斉 fail の類例) / [§4.43](#443) / [§4.53](#453) (chromium-mobile 特有の不安定性、E2E_LESSONS)
 - 関連 feedback: [[feedback-visual-baseline-gen]] (UI 変更時の `[gen-visual]` 必須運用)
 - 関連 file: [`e2e/visual/`](../../e2e/visual/) (auth-screens / customers-screens / dashboard-screens / settings-themes) / [`e2e/specs/05-teardown-and-residuals.spec.ts`](../../e2e/specs/05-teardown-and-residuals.spec.ts) / [`e2e/specs/09-customers.spec.ts`](../../e2e/specs/09-customers.spec.ts)
+
+## 5.X+122 **★severity-2 CI fail★ eslint-plugin-react-hooks 7.x の `refs-during-render` rule + testid 衝突: ローカル lint で見落として CI で 10 件 error + 3 重 testid 衝突を audit で発見 (2026-05-24 / PR #439)**
+
+### 発生事象
+
+PR #439 で AccountMenu Microsoft 風 redesign + hidden 判定の baseline state を追加した直後、CI の Lint step が:
+
+```
+src/components/app-header.tsx:601:20  error  Error: Cannot access refs during render
+src/components/app-header.tsx:603:5   error  Error: Cannot access refs during render
+... (合計 10 errors)
+✖ 25 problems (10 errors, 15 warnings)
+```
+
+同時に audit (3 回目) で `account-info-section / -name / -email` testid が `src/components/app-header.tsx` (新規) と `src/app/(dashboard)/settings/settings-client.tsx:334,348,350` (既存) で **3 重衝突** を発見。Playwright の strict mode `getByTestId` は「2 elements found」で例外を投げるため、`/settings` 画面で AccountMenu を開く E2E spec を後日書いた瞬間に CI が落ちる時限爆弾だった。
+
+### 根本原因 (≠ 表層原因)
+
+#### Lint fail
+- **表層**: `const baseline = menuClosedAtScrollYRef.current;` を render 中に実行していた
+- **真の原因**: `eslint-plugin-react-hooks` v7.1.1 (本 repo 利用版) で新規追加された [`react-hooks/refs-during-render`](https://react.dev/reference/react/useRef#caveats) rule。`useRef.current` を **render phase で読むのは React 公式に non-recommended**:
+  - render が pure であるべき原則違反
+  - Concurrent Mode で stale 値が返る
+  - React Compiler が memoize できない
+- **ローカル lint で気付けなかった**: pnpm-lock の eslint-plugin-react-hooks は 7.1.1 だが、最初の lint 実行時は plugin の cache が古い rule set で動作していた疑い。clean install 後の CI 環境では新しい rule が確実に発火
+
+#### testid 衝突
+- 「`account-` という prefix が広範囲で再利用される命名」が問題。AccountMenu 専用なら `account-menu-*` か AppHeader 起点で `header-*` にすべきだったが、最初の実装で安易に `account-info-*` と命名 → 既存 `/settings` 画面の `<Card data-testid="account-info-section">` (アカウント情報カード) と完全一致
+
+### 対応 (本 PR の hotfix commit)
+
+#### Lint fix
+- `menuClosedAtScrollYRef: React.RefObject<number | null>` → `const [menuClosedAtScrollY, setMenuClosedAtScrollY] = useState<number | null>(null)` に変換
+- 値更新は useEffect 内 `setMenuClosedAtScrollY()` 経由 (`// eslint-disable-next-line react-hooks/set-state-in-effect` で意図的許可)
+- `prevMenuOpenCountRef` は **render 中に読まない** ため `useRef` のまま (useEffect 内のみ参照)
+
+#### testid rename
+- `account-info-section / -name / -email / -role` → **`header-account-info-section / -name / -email / -role`** に変更
+- `header-` prefix で「AppHeader 内のアカウント情報」と意味的に明示、settings 画面 (`account-info-*`) と棲み分け
+
+### 再発防止
+
+- **render 中の `.current` 読出は禁止**。値が render 結果に影響するなら useState、しないなら useEffect 内のみで参照
+- **testid 命名は「コンポーネント起点の prefix」を強制**: `header-*` / `dashboard-*` / `settings-*` / `dialog-*` 等で衝突を構造的に防ぐ
+- **`pnpm lint` をローカルで疑う癖**: ローカルで pass しても push 前に `pnpm install --frozen-lockfile && pnpm lint` で plugin cache をクリーンにする手順を考慮 (将来 pre-push hook 化検討)
+- **新規 testid 追加時の grep**: 同 testid を `e2e/` 配下も含めて全 grep してから commit する
+
+### 教訓 (転用可能)
+
+- **`eslint-plugin-react-hooks` メジャー版アップでは新 rule が静かに増える**。lock file 更新後の CI 失敗は plugin 自体の rule set 変更を疑う
+- **`useRef` は「render に影響しない可変値」用**、`useState` は「render に影響する値」用、というのが React 公式が明文化した境界線。本 PR のように「effect で書き、render で読む」値は **必ず useState**
+- **testid 衝突は audit で発見されないと潜伏する**: 単体テストでは衝突が即座には顕在化せず、E2E 追加時にだけ突発的に壊れる。Playwright `getByTestId` の strict mode が「2 elements found」で fail する仕様
+- **lint plugin の rule set 変動を local-only ゲートで防ぐのは困難**。CI を最終ガードとして信頼し、CI fail を恥じない (本件で 1 サイクル無駄になったが防御層として機能した)
+
+### 関連
+
+- 関連 PR: PR #439 (本事例 / 2026-05-24)
+- 関連 KDD: [§5.X+120](#5x120) (banned-auth-patterns、CI 専用ガード罠) / [§5.X+121](#5x121) (`[gen-visual]` baseline staleness) — 同 PR で発覚した CI ガード 3 連発
+- 関連 React docs: [useRef caveats](https://react.dev/reference/react/useRef#caveats) (render 中の `.current` 読出禁止)
+- 関連 file: [`src/components/app-header.tsx`](../../src/components/app-header.tsx) / [`src/app/(dashboard)/settings/settings-client.tsx`](../../src/app/(dashboard)/settings/settings-client.tsx) (testid 衝突相手) / [`eslint.config.mjs`](../../eslint.config.mjs)
