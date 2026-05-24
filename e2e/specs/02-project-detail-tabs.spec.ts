@@ -155,10 +155,12 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
 
     if (isMobile) {
       // 2026-04-30 (Task 1) mobile: 進捗管理プルダウン経由で WBS管理 / ガントチャート を選択
+      // KDD §5.X+126: chromium-mobile DPR=3 で dropdown menu trigger / menuitem click も
+      //   hit-test 誤判定の対象 (Dialog / AppHeader と同根)。先回りで { force: true } を適用。
       const progressTabsViaMenu = ['WBS管理', 'ガントチャート'];
       for (const name of progressTabsViaMenu) {
-        await page.getByRole('button', { name: '進捗管理メニューを開く' }).click();
-        await page.getByRole('menuitem', { name }).click();
+        await page.getByRole('button', { name: '進捗管理メニューを開く' }).click({ force: true });
+        await page.getByRole('menuitem', { name }).click({ force: true });
         // PR #167 hotfix 2 と同様: hidden lg:inline-flex で display:none の要素を
         // CSS セレクタ + filter(hasText) で取得し aria-selected を検証する。
         const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
@@ -167,8 +169,8 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
       // PR #167 mobile: 資産プルダウン経由で配下タブを選択
       const assetTabsViaMenu = ['リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
       for (const name of assetTabsViaMenu) {
-        await page.getByRole('button', { name: '資産メニューを開く' }).click();
-        await page.getByRole('menuitem', { name }).click();
+        await page.getByRole('button', { name: '資産メニューを開く' }).click({ force: true });
+        await page.getByRole('menuitem', { name }).click({ force: true });
         const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
         await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
       }

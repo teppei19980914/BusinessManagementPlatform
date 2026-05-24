@@ -1,54 +1,52 @@
 /**
- * 全画面共通フッタ (feat/app-version-changelog-footer / 2026-05-23)。
+ * 全画面共通フッタ
+ * (初版 feat/app-version-changelog-footer / 2026-05-23,
+ *  改 feat/app-header-footer-unification / 2026-05-24).
  *
  * 表示位置: root layout の <body> 直下、children の **後** に配置する。
  * <body> は `flex min-h-full flex-col` のため、本コンポーネントの `mt-auto` で
  * 画面下に押し下げられる。children 側に `flex-1` を持たせる必要はない。
  *
- * 構成意図:
- *   - 「サービスが健全に運営されていることが一目で分かる」ことが目的 (PR 起票時の方針)
- *   - そのため「バージョン + 最終更新日 + 運営者」をひとまとめに最初の段に出す
- *   - リンク類は別段に分け、視線移動を 1 → 2 段で完結させる
- *   - text-xs + muted で本文より目立たず、しかし常に視認できる距離感を保つ
+ * 構成意図 (2026-05-24 改訂):
+ *   - 「画面上の表示項目を極力減らし UX 向上に寄せる」方針に沿ってコンテンツを削減
+ *   - 1 段目 (旧: サービス名 + バージョン + 運営者) は削除 → 高さ圧縮
+ *   - 2 段目 (リンク群) は **サービス情報 / お知らせ** の 2 リンクのみに削減
+ *     - 旧 1 段目の情報 (サービス名 / バージョン / 運営者) と
+ *       旧 2 段目の他リンク (更新履歴 / 利用規約 / プライバシー / お問い合わせ) は
+ *       全て `/settings/about` (サービス情報) ページに集約済 → footer は「玄関」のみ提供
+ *   - 3 段目 (copyright + 最終更新日) は維持
+ *     - 「健全運営シグナル」(© 運営者 + 最終更新日) は footer に残す。ユーザがどのページに
+ *       いてもサービスが稼働中であることが一目で分かる UX を保つ。
+ *
+ * auto-hide 対象外 (案 B / 2026-05-24):
+ *   フッタは fixed/sticky ではなく document 末尾の自然位置に置く (mt-auto)。
+ *   理由は「コンテンツ領域を圧迫しない」設計選択。AppHeader と挙動が非対称に見えるが、
+ *   そもそも下スクロール時にはフッタは既に画面外なので「隠す」対象が存在しない。
+ *   将来 fixed-bottom 化を検討する際は ChatSemanticSearchFab (fixed bottom-4) と
+ *   Toast (fixed bottom-0 z-50) との重なり調整が必須。一貫性を理由に勝手に変更しないこと。
  *
  * 外部リンク:
- *   利用規約 / プライバシーは LP (HomePage) の anchor URL 経由 (src/config/legal-versions.ts)。
- *   問い合わせは LP contact form (src/config/operator.ts の CONTACT_FORM_URL)。
+ *   footer からは全廃。利用規約 / プライバシーポリシー / お問い合わせは /settings/about へ集約。
  *
  * Server Component で実装 (state 不要、SEO / 初回描画速度を優先)。
  */
 
 import Link from 'next/link';
 import { getTranslations } from 'next-intl/server';
-import { OPERATOR_LABEL, OPERATOR_NAME, CONTACT_FORM_URL } from '@/config/operator';
-import { PRIVACY_URL, TERMS_URL } from '@/config/legal-versions';
-import { formatVersionLabel, getReleaseDate } from '@/lib/app-version';
+import { OPERATOR_LABEL } from '@/config/operator';
+import { getReleaseDate } from '@/lib/app-version';
 
 export async function AppFooter() {
   const t = await getTranslations('footer');
-  const tApp = await getTranslations('app');
   const year = new Date().getFullYear();
 
   return (
     <footer
-      className="mt-auto border-t border-border bg-background/50 px-4 py-4 text-xs text-muted-foreground sm:px-6 lg:px-8"
+      className="mt-auto border-t border-border bg-background/50 px-4 py-3 text-xs text-muted-foreground sm:px-6 lg:px-8"
       data-testid="app-footer"
     >
-      <div className="mx-auto flex max-w-7xl flex-col gap-2">
-        {/* 1 段目: サービス名 + バージョン + 運営者. flex-wrap でモバイル対応. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="font-medium text-foreground/80">
-            {tApp('metaTitle')}
-          </span>
-          <span aria-hidden="true">·</span>
-          <span data-testid="footer-version">{formatVersionLabel()}</span>
-          <span aria-hidden="true">·</span>
-          <span>
-            {t('operatorPrefix')}: {OPERATOR_NAME}
-          </span>
-        </div>
-
-        {/* 2 段目: 主要リンク. 内部リンクと外部リンクが混在するため rel/target を明示. */}
+      <div className="mx-auto flex max-w-7xl flex-col gap-1">
+        {/* 1 段目: 主要リンク (about / announcements の 2 件のみ) */}
         <nav
           className="flex flex-wrap items-center gap-x-3 gap-y-1"
           aria-label={t('about')}
@@ -57,47 +55,16 @@ export async function AppFooter() {
             {t('about')}
           </Link>
           <span aria-hidden="true">·</span>
-          <Link href="/changelog" className="hover:underline">
-            {t('changelog')}
-          </Link>
-          <span aria-hidden="true">·</span>
           <Link href="/announcements" className="hover:underline">
             {t('announcements')}
           </Link>
-          <span aria-hidden="true">·</span>
-          <a
-            href={TERMS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:underline"
-          >
-            {t('terms')}
-          </a>
-          <span aria-hidden="true">·</span>
-          <a
-            href={PRIVACY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:underline"
-          >
-            {t('privacy')}
-          </a>
-          <span aria-hidden="true">·</span>
-          <a
-            href={CONTACT_FORM_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:underline"
-          >
-            {t('contact')}
-          </a>
         </nav>
 
-        {/* 3 段目: copyright + 最終更新日. 「健全運営」の継続性アピールを担う. */}
+        {/* 2 段目: copyright + 最終更新日 ("健全運営シグナル" の最小単位) */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
           <span>{t('copyright', { year, operator: OPERATOR_LABEL })}</span>
           <span aria-hidden="true">·</span>
-          <span>
+          <span data-testid="footer-last-updated">
             {t('lastUpdated')}: {getReleaseDate()}
           </span>
         </div>

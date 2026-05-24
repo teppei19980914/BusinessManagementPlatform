@@ -115,15 +115,9 @@
     "metaDescription": "Capture knowledge. Connect decisions. Strengthen projects."
   },
   "footer": {
-    "operatorPrefix": "Operator",
-    "version": "Version",
     "lastUpdated": "Last updated",
-    "terms": "Terms",
-    "privacy": "Privacy",
-    "changelog": "Changelog",
     "announcements": "Announcements",
     "about": "About",
-    "contact": "Contact",
     "copyright": "© {year} {operator}"
   },
   "about": {
@@ -170,10 +164,6 @@
     "readMore": "Read more",
     "backToList": "Back to list",
     "notFound": "Announcement not found"
-  },
-  "announcementBanner": {
-    "dismissAriaLabel": "Dismiss this announcement",
-    "viewAll": "All announcements"
   },
   "sort": {
     "asc": "Ascending",

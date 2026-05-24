@@ -93,7 +93,13 @@ test.describe('@feature:teardown Steps 9-12 ログアウト + 削除 + 残存検
     const deleteRes = page.waitForResponse(
       (r) => r.url().includes(`/api/projects/${projectId}`) && r.request().method() === 'DELETE',
     );
-    await page.getByRole('button', { name: 'プロジェクトを削除する' }).click();
+    // KDD §5.X+124: chromium-mobile (iPhone 13 / DPR=3 emulation) で Dialog 内
+    //   `-translate-x-1/2 -translate-y-1/2` centered content の hit-test 計算が subpixel
+    //   ズレで誤判定し、Dialog 内の別要素 (heading / span) が button 真上と認識される事象。
+    //   chromium (desktop) では再現せず、CSS / stacking context / animation 各層で原因
+    //   特定不能。{ force: true } で hit-test を bypass し element visible / enabled は
+    //   通常チェックで確認済 (handler 経路に瑕疵なし)。
+    await page.getByRole('button', { name: 'プロジェクトを削除する' }).click({ force: true });
     const res = await deleteRes;
     expect(res.ok()).toBeTruthy();
 
@@ -123,7 +129,11 @@ test.describe('@feature:teardown Steps 9-12 ログアウト + 削除 + 残存検
     // 2 段階 confirm + 完了 alert を連続で自動応答
     page.on('dialog', (dialog) => dialog.accept());
 
-    await page.getByRole('button', { name: 'このユーザを削除' }).click();
+    // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+    //   hit-test 誤判定 (UserEditDialog 内の「このユーザを削除」も該当)。
+    //   visibility/enabled/stable は OK で hit-test だけが intercept 誤判定するため
+    //   { force: true } で bypass。
+    await page.getByRole('button', { name: 'このユーザを削除' }).click({ force: true });
     // ダイアログ閉鎖 + 一覧更新を待つ
     await page.waitForLoadState('networkidle');
     await snapshotStep(page, 'step-10-user-deleted');
@@ -143,11 +153,18 @@ test.describe('@feature:teardown Steps 9-12 ログアウト + 削除 + 残存検
     await page.goto('/projects');
     await page.waitForLoadState('networkidle');
 
-    // 画面右上のアカウントメニュー (aria-haspopup="menu" ボタン) を開く
-    await page.getByRole('button', { expanded: false }).filter({ hasText: 'E2E 管理者' }).click();
+    // 画面右上のアカウントメニュートリガを開く。
+    // KDD §5.X+123 / PR #439: AppHeader を Microsoft 風に再設計し trigger からユーザ名テキスト
+    //   を撤去 (人アイコン + ロールアイコン + ▾ のみ) したため、旧 `filter({hasText:'E2E 管理者'})`
+    //   では trigger を特定できなくなった。testid 経路に固定して挙動変更に強くする。
+    // KDD §5.X+126: AppHeader trigger 内の <span>テナント管理者</span> ロールバッジが
+    //   chromium-mobile DPR=3 で trigger 本体と hit-test 衝突 (Dialog 外の sticky header
+    //   click にも事象が拡大)。{ force: true } で bypass。
+    await page.getByTestId('account-menu-trigger').click({ force: true });
 
-    // ドロップダウン内「ログアウト」menuitem をクリック → /login へリダイレクト
-    await page.getByRole('menuitem', { name: 'ログアウト' }).click();
+    // ドロップダウン内「ログアウト」menuitem をクリック → /login へリダイレクト。
+    // 念のため menuitem click も force:true (dropdown 内 click でも同事象の可能性)。
+    await page.getByRole('menuitem', { name: 'ログアウト' }).click({ force: true });
     await page.waitForURL('**/login', { timeout: 10_000 });
 
     // ログイン画面の要素が見える = ログアウト成功

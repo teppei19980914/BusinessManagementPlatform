@@ -45,6 +45,8 @@
 
 ## T-1 営業日前 (2026-05-30 金) — 最終確認
 
+- [ ] **リリース真値ファイルの最終更新** — [`RELEASE_PROCEDURE.md`](./RELEASE_PROCEDURE.md) §1 / §2.1 の (1)-(4) を確認
+  - `CHANGELOG.md` に `## [1.0.0] — 2026-06-01` セクションが完成 / `package.json.version` が `1.0.0` / Netlify `NEXT_PUBLIC_RELEASE_DATE=2026-06-01` 設定済 / `/announcements/2026-06-01-launch.md` 完成
 - [ ] **本番デプロイ前の最終 commit**: main の最新コミット SHA を記録
 - [ ] **本番環境変数の再確認**: Vercel Dashboard で全変数の値を目視 (typo / 改行混入チェック)
 - [ ] **ステージング環境で最終 dry-run**:

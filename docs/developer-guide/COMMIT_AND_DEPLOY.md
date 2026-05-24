@@ -62,6 +62,19 @@ PR 本文には以下を含めると後の引き継ぎがスムーズです:
 3. Vercel が `main` ブランチを自動デプロイ
 4. 本番 URL で動作確認
 
+#### 10.4.1 リリース (= ユーザに告知して公開する単位) を出す場合の追加手順
+
+日常の機能 PR をまとめて新バージョン (SemVer の MAJOR / MINOR / PATCH) として **告知付きで公開する** 場合は、上記の手順に加えて以下を必ず実施 (= 真値ファイルの更新漏れがあると `/changelog` / `/announcements` / `/settings/about` で旧情報が表示され続ける):
+
+1. [`CHANGELOG.md`](../../CHANGELOG.md) の新バージョンエントリを追記 (Keep a Changelog 形式)
+2. [`package.json`](../../package.json) の `version` を bump
+3. Netlify Site settings で `NEXT_PUBLIC_RELEASE_DATE` をリリース日に更新
+4. 告知が必要なら [`docs/public/announcements/{YYYY-MM-DD}-{slug}.md`](../public/announcements/) を新規作成
+5. 本番 deploy 後に `/changelog` `/announcements` `/settings/about` を目視で反映確認
+
+**完全な手順とチェックリストは [docs/operations/RELEASE_PROCEDURE.md](../operations/RELEASE_PROCEDURE.md) を参照**。
+bug fix 1 件だけの hot fix では 1 / 2 のみ、メジャーリリース時は更に [PUBLIC_LAUNCH_CHECKLIST.md](../operations/PUBLIC_LAUNCH_CHECKLIST.md) も実施する等、リリース規模で必要手順が異なるため必ず元ドキュメントで判断する。
+
 ### 10.5 並行 PR でコンフリクトが出た場合の解消手順 (PR #115 で得た知見)
 
 複数 PR が同時進行中に **同一ファイルを触る** と、先にマージされた PR の内容が

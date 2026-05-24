@@ -115,15 +115,9 @@
     "metaDescription": "知見を残す。判断をつなぐ。プロジェクトを強くする。"
   },
   "footer": {
-    "operatorPrefix": "運営",
-    "version": "バージョン",
     "lastUpdated": "最終更新",
-    "terms": "利用規約",
-    "privacy": "プライバシー",
-    "changelog": "更新履歴",
     "announcements": "お知らせ",
     "about": "サービス情報",
-    "contact": "お問い合わせ",
     "copyright": "© {year} {operator}"
   },
   "about": {
@@ -170,10 +164,6 @@
     "readMore": "続きを読む",
     "backToList": "一覧に戻る",
     "notFound": "お知らせが見つかりません"
-  },
-  "announcementBanner": {
-    "dismissAriaLabel": "このお知らせを閉じる",
-    "viewAll": "お知らせ一覧"
   },
   "sort": {
     "asc": "昇順",

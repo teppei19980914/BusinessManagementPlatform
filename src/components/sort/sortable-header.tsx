@@ -207,7 +207,7 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
           ref={menuRef}
           id={menuDomId}
           role="menu"
-          // z-50: dashboard-header (z-40) より前面、Dialog overlay (z-50) と同層。
+          // z-50: AppHeader (z-40) より前面、Dialog overlay (z-50) と同層。
           // 位置は trigger の bottom + 4px (旧 mt-1 相当)。Portal なので任意祖先の overflow から独立。
           className="fixed z-50 min-w-[120px] rounded-md border bg-card shadow-md"
           style={{ top: coords.top, left: coords.left }}

@@ -204,7 +204,9 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await dialog.getByLabel('ユーザ名').fill(MEMBER_NAME);
     await dialog.getByLabel('メールアドレス').fill(MEMBER_EMAIL);
     // systemRole は default='general' のまま
-    await dialog.getByRole('button', { name: '招待メールを送信' }).click();
+    // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+    //   hit-test 誤判定 (ユーザ招待 dialog 「招待メールを送信」も該当)。{ force: true } で bypass。
+    await dialog.getByRole('button', { name: '招待メールを送信' }).click({ force: true });
 
     // 2026-04-30: ToastProvider 導入で Toast「ユーザを登録し、招待メールを送信しました」も
     //   表示されるため `getByText('招待メールを送信しました')` が strict mode 違反になる。

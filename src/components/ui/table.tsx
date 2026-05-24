@@ -18,7 +18,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   //   対して固定 → wrapper は実際にはスクロールしないので何も起きない、という症状だった。
   //   修正: `max-h-[calc(100vh-12rem)] overflow-auto` で wrapper を真の縦スクロールコンテナ化。
   //   結果: テーブル領域内をスクロールすると thead が固定、データ行のみ流れる Excel 風 UX。
-  //   max-h は DashboardHeader (3.5rem) + main padding (3rem) + 余白の概算で 12rem 確保。
+  //   max-h は AppHeader (3.5rem) + main padding (3rem) + 余白の概算で 12rem 確保。
   //   テーブル外側のフィルター/見出し領域はそのままページ内で残る。
   return (
     <div
@@ -39,8 +39,9 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
     <thead
       data-slot="table-header"
       // 2026-05-01 (PR feat/sticky-table-headers): Excel 風のヘッダー固定化。
-      //   - `sticky top-0`: 縦スクロール時にヘッダー行を viewport 上端 (DashboardHeader が
-      //     非 sticky なので、スクロールすると DashboardHeader が消えた後の上端) に固定。
+      //   - `sticky top-0`: 縦スクロール時にヘッダー行を viewport 上端 (AppHeader 自体は
+      //     sticky だが auto-hide で隠れる瞬間があり、その下の table thead を 2 段目の
+      //     固定ヘッダとして見せる) に固定。
       //   - `bg-card`: 下の行が透けないため必須 (sticky element に背景色がないと裏が透ける)。
       //   - `z-10`: dropdown (z-50) / Toast (z-50) / Dialog overlay (z-50) より下に固定。
       //     行内の元々ある要素 (リンク等) より上にする目的。

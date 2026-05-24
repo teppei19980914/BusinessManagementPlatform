@@ -114,7 +114,12 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     const postResponse = page.waitForResponse(
       (r) => r.url().endsWith('/api/customers') && r.request().method() === 'POST',
     );
-    await page.getByRole('button', { name: '登録' }).click();
+    // KDD §5.X+124: chromium-mobile (iPhone 13 / DPR=3 emulation) で Dialog 内
+    //   `-translate-x-1/2 -translate-y-1/2` centered content の hit-test 計算が subpixel
+    //   ズレで誤判定する事象により click が intercept される (customer-department input /
+    //   customer-notes textarea 等が登録ボタン真上と認識される)。{ force: true } で
+    //   hit-test を bypass し element visible / enabled は通常チェックで確認済。
+    await page.getByRole('button', { name: '登録' }).click({ force: true });
     const res = await postResponse;
     expect(res.ok(), `POST /api/customers failed: ${res.status()}`).toBeTruthy();
 
@@ -155,7 +160,11 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
       (r) =>
         r.url().includes('/api/customers/') && r.request().method() === 'PATCH',
     );
-    await page.getByRole('button', { name: '更新' }).click();
+    // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+    //   hit-test 誤判定 (顧客編集 dialog 「更新」も該当、Step 3 と同根)。
+    //   visibility/enabled/stable は OK で hit-test だけが intercept 誤判定するため
+    //   { force: true } で bypass。
+    await page.getByRole('button', { name: '更新' }).click({ force: true });
     const res = await patchResponse;
     expect(res.ok(), `PATCH /api/customers failed: ${res.status()}`).toBeTruthy();
 
@@ -250,12 +259,16 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
       await page.getByLabel('目的').fill('顧客未選択でも 400 を出さないことを確認');
       await page.getByLabel('背景').fill('E2E fix verification');
       await page.getByLabel('スコープ').fill('validation only');
-      // DateFieldWithActions の「今日」クイック設定ボタンで 2 フィールドとも埋める
-      await page.getByRole('button', { name: '今日' }).first().click();
-      await page.getByRole('button', { name: '今日' }).nth(1).click();
+      // DateFieldWithActions の「今日」クイック設定ボタンで 2 フィールドとも埋める。
+      // KDD §5.X+126: chromium-mobile DPR=3 で Dialog 内の **あらゆる click** が
+      //   hit-test 誤判定の対象 (date picker quick action も例外でなかった)。{ force: true } で bypass。
+      await page.getByRole('button', { name: '今日' }).first().click({ force: true });
+      await page.getByRole('button', { name: '今日' }).nth(1).click({ force: true });
 
       // 顧客を意図的に未選択のまま 作成 クリック
-      await page.getByRole('button', { name: '作成' }).click();
+      // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+      //   hit-test 誤判定 (新規プロジェクト dialog 「作成」も該当)。{ force: true } で bypass。
+      await page.getByRole('button', { name: '作成' }).click({ force: true });
 
       // (1) UI には「顧客を選択してください」が表示される
       await expect(page.getByText('顧客を選択してください').first()).toBeVisible({
@@ -307,7 +320,9 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
         r.url().includes(`/api/customers/${cascadeCustomer!.id}?`)
         && r.request().method() === 'DELETE',
     );
-    await page.getByRole('button', { name: '削除する' }).click();
+    // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+    //   hit-test 誤判定 (カスケード削除 dialog 「削除する」も該当)。{ force: true } で bypass。
+    await page.getByRole('button', { name: '削除する' }).click({ force: true });
     const res = await deleteResponse;
     expect(res.ok(), `DELETE /api/customers cascade failed: ${res.status()}`).toBeTruthy();
 

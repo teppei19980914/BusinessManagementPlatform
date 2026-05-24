@@ -34,8 +34,10 @@ test.describe('@feature:public バージョン / お知らせ 公開ページ', 
     await expect(
       page.getByTestId('changelog-entry-1.0.0').getByRole('heading', { name: 'v1.0.0' }),
     ).toBeVisible();
-    // 公開ページ共通ヘッダのアプリ名リンクが見える (= /(public)/layout.tsx 経由)
-    await expect(page.getByTestId('public-header-home')).toBeVisible();
+    // feat/app-header-footer-unification (2026-05-24):
+    //   全画面共通の AppHeader (testid="app-header-home") に統合済。
+    //   旧 testid `public-header-home` は廃止。
+    await expect(page.getByTestId('app-header-home')).toBeVisible();
   });
 
   test('`/announcements` が 2026-06-01-launch エントリのリンクを render する', async ({ page }) => {

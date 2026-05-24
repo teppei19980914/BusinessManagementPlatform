@@ -969,8 +969,10 @@ admin ログイン時のナビ並びは左から順に:
   プロジェクトより左に置く。ユーザ管理等の運用管理メニューは従来通り末尾にまとめる。
 - **非 admin 表示**: 顧客管理 / ユーザ管理 / 監査ログ / 権限変更はすべて非表示。
   ナビは「プロジェクト」から開始する。
-- **実装**: `src/components/dashboard-header.tsx` で `leadingAdminNavItems` (顧客管理)
-  と `adminNavItems` (運用管理 3 項目) の 2 配列に分割し、描画順を制御。
+- **実装** (feat/app-header-footer-unification 2026-05-24 以降): `src/components/app-header.tsx`
+  の `navGroupsConfig` で「プロジェクト」「資産」「システム管理者」「super_admin」の 4 グループに
+  分類し、admin 用項目は `adminOnly` フラグで描画制御。旧 `dashboard-header.tsx` は AppHeader に
+  統合済 (= ログイン前後の表示分岐 + auto-hide + nowrap 等を含む)。
 
 ### 20.4 3 分類ハイブリッドナビ (PR #127)
 
@@ -1018,11 +1020,12 @@ PR #127 でナビを **3 分類** にグループ化し、**画面幅でレイ�
 
 #### 実装
 
-`src/components/dashboard-header.tsx`:
-- `navGroups: NavGroup[]` に 3 分類の階層構造
-- `FlatNavLink` コンポーネント: lg 以上用
-- `GroupMenu` コンポーネント: lg 未満用、Base UI `Menu.Root/Trigger/Portal/Positioner/Popup/Item` で構築
-- `hidden lg:flex` / `lg:hidden` のレスポンシブクラスで切替
+`src/components/app-header.tsx` (旧 `dashboard-header.tsx`、feat/app-header-footer-unification 2026-05-24 で統合):
+- `navGroupsConfig: NavGroupConfig[]` に 3 分類 + super_admin 1 分類の階層構造
+- `FlatNavLink` コンポーネント: xl 以上用 (1280px。旧 lg: 1024px ではラベルが 2 行折返ししたため引き上げ)
+- `GroupMenu` コンポーネント: xl 未満用、Base UI `Menu.Root/Trigger/Portal/Positioner/Popup/Item` で構築
+- `hidden xl:flex` / `xl:hidden` のレスポンシブクラスで切替
+- 全 nav リンクに `whitespace-nowrap` を付与しラベルの 1 行表示を担保
 
 ---
 
