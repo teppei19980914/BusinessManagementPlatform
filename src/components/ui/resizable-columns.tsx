@@ -137,9 +137,12 @@ export function ResizableHead({
 
   // 既存 TableHead と同じベーススタイルを踏襲しつつ、relative + 折返し制御を追加。
   // 2026-05-01 (PR feat/sortable-columns): outer の `overflow-hidden` を削除。
-  //   テキスト truncation は子の `<div className="truncate pr-2">` で完結するため、
-  //   th 外側の overflow-hidden は不要。SortableHeader のドロップダウン (絶対配置) が
-  //   th 外側にはみ出る必要があるため、ここを visible に。
+  //   ただし子の `<div className="truncate pr-2">` の `truncate` 自体が overflow:hidden を
+  //   含むため、絶対配置の dropdown は依然としてクリップされる構造だった。
+  // 2026-05-24 (PR fix/sortable-header-dropdown-portal): SortableHeader を createPortal で
+  //   `document.body` 直下に出すことで、本ファイルの truncate / 親 Table の overflow-auto
+  //   双方の clip から完全に独立化。truncate は label の ellipsis 表示のため意図的に維持する
+  //   (= 隣カラムへの文字侵入を防ぐ)。
   const baseClass
     = 'relative h-8 px-1.5 md:h-10 md:px-2 text-left align-middle font-medium text-foreground '
     + 'whitespace-nowrap';

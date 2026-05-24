@@ -3590,6 +3590,69 @@ await page.waitForLoadState('networkidle');
 
 ---
 
+### 4.57 「state は更新されるが視覚的に隠れる UI バグ」は単体テストでは検知不能 ─ dropdown / popover / tooltip 系は必ず E2E で visibility を assert する (PR fix/sortable-header-dropdown-portal で遭遇)
+
+#### 症状
+
+PR feat/sortable-columns (2026-05-01) で全 13 一覧画面に列ソート機能を導入。`src/lib/multi-sort.test.ts` は純関数 (applySort / multiSort / compareValues) を 20 件カバーし全 green。しかし **実際にユーザがソート操作しようとすると dropdown が見えず、項目選択ができない** という重大 UX バグが 2026-05-24 にユーザ報告で判明 (= 3 週間放置されていた)。
+
+根本原因は親 `ResizableHead` の `<div className="truncate pr-2">` の `truncate` が `overflow:hidden` を含んでおり、絶対配置の dropdown が content box でクリップされて完全不可視になっていたこと。詳細は [`docs/knowledge/KDD_PATTERNS.md` §5.X+119](../knowledge/KDD_PATTERNS.md) 参照。
+
+#### なぜ単体テストで検知できなかったか
+
+- `useState(open)` の遷移は `setOpen(true)` → state は確かに `true` になる
+- 関数の引数渡し (`onSortChange(columnKey, dir)`) も呼ばれる正しいパス
+- `applySort` / `multiSort` も期待通り動作 → 一覧の `filtered` 配列は正しく並ぶ
+- 単体テストはこれら全てを green で報告する
+
+つまり **「state も計算ロジックも正しい」が「ユーザはその UI を操作できない」** という、テストレイヤ間の隙間に落ちる典型的なバグ。jsdom 環境なしの本プロジェクトでは render テストでも捕捉困難 (Portal 化前は dom 構造が同一で bbox 計測も判別不能)。
+
+#### 対策 — E2E visibility assert の必須化
+
+dropdown / popover / tooltip 系の新規 UI を追加するときは、**「state が open になるか」ではなく「ユーザに見えているか」を E2E で assert する**。
+
+```ts
+// ✅ 正解パターン (e2e/specs/16-column-sort.spec.ts で採用)
+const trigger = page.locator('[data-testid="sortable-header-button"]').first();
+await trigger.click();
+
+const menu = page.locator('[data-testid="sortable-header-menu"]').first();
+await expect(menu).toBeVisible({ timeout: 2_000 });    // ① 視覚的に見えるか
+
+// ② bbox の高さ/幅が > 0 (overflow:hidden クリップを double-check)
+const box = await menu.boundingBox();
+expect(box!.height).toBeGreaterThan(0);
+expect(box!.width).toBeGreaterThan(0);
+
+// ③ Portal なら body 直下にあること = table の overflow から独立
+const isOutsideTable = await menu.evaluate(
+  (el) => el.closest('[data-slot="table-container"]') === null,
+);
+expect(isOutsideTable).toBe(true);
+```
+
+`toBeVisible()` は Playwright の組み込み判定で `display:none`, `visibility:hidden`, `opacity:0`, `bbox=0×0` を全て non-visible として弾くため、これだけでも overflow:hidden 起因の不可視は捕捉できる (bbox=0×0 になるため)。
+
+#### 適用範囲
+
+UI が **「state は更新されるが視覚的に隠れる可能性のある」** カテゴリの場合、全て本パターンを適用する:
+
+| カテゴリ | 該当例 | 隠れる典型原因 |
+|---|---|---|
+| dropdown menu | SortableHeader, AccountMenu, MultiSelectFilter | 親 overflow:hidden / 親 overflow:auto / 親要素の clip-path |
+| popover | tooltip, hover info | 同上 + z-index 衝突 |
+| portal modal | Dialog, Sheet, Toast | mount/unmount race (open=true だが portal target が DOM 未挿入) |
+| 浮動要素 | floating action button | viewport 端で見切れ、scroll-clip |
+
+#### 関連
+
+- 関連 PR: PR fix/sortable-header-dropdown-portal (本事例 / 2026-05-24)
+- 関連 KDD: [§5.X+119](../knowledge/KDD_PATTERNS.md) (CSS 仕様レベルの根本原因と Portal 化必須サブ機能 6 点)
+- 関連 spec: [e2e/specs/16-column-sort.spec.ts](../../e2e/specs/16-column-sort.spec.ts) (本パターンの reference 実装)
+- 関連 feedback: [[feedback-e2e-coverage-gate]] (UI 系の新規実装は E2E ガード必須の方針)
+
+---
+
 ## 8. 未解決課題 (将来 PR 候補)
 
 | 項目 | 理由 |
