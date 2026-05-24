@@ -28,6 +28,10 @@ import { useTranslations } from 'next-intl';
 import { Bell } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
 import { formatDateTimeFull } from '@/lib/format';
+// feat/app-header-footer-unification (2026-05-24): dropdown open 中は AppHeader の
+//   auto-hide を抑止する。これがないと「通知ベルを開く → スクロール → ヘッダごと dropdown が
+//   画面外へフェードアウト」する UX 違和感が出る (AccountMenu / GroupMenu と同等の保護)。
+import { useReportHeaderMenuOpen } from '@/components/app-header';
 import type { NotificationDTO } from '@/services/notification.service';
 
 const POLL_INTERVAL_OPEN_MS = 30 * 1000; // 30 秒
@@ -42,6 +46,8 @@ export function NotificationBell() {
   const { showError } = useToast();
   const [state, setState] = useState<FetchState>({ loaded: false });
   const [open, setOpen] = useState(false);
+  // AppHeader auto-hide 抑止: dropdown が開いている間はヘッダ全体を画面に残す。
+  useReportHeaderMenuOpen(open);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   const reload = useCallback(async () => {

@@ -44,6 +44,9 @@ export function useScrollDirection(): { direction: ScrollDirection; scrollY: num
   useEffect(() => {
     let lastY = window.scrollY;
     let ticking = false;
+    // 最後に enqueue した rAF handle。unmount 時に cancel して「unmount 後に
+    // update() が呼ばれて setState される」warning + 軽微メモリ保持を防ぐ。
+    let rafId = 0;
 
     const update = () => {
       const y = window.scrollY;
@@ -62,7 +65,7 @@ export function useScrollDirection(): { direction: ScrollDirection; scrollY: num
 
     const onScroll = () => {
       if (!ticking) {
-        window.requestAnimationFrame(update);
+        rafId = window.requestAnimationFrame(update);
         ticking = true;
       }
     };
@@ -75,6 +78,9 @@ export function useScrollDirection(): { direction: ScrollDirection; scrollY: num
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       window.removeEventListener('scroll', onScroll);
+      // pending な rAF コールバックを破棄。残しておくと unmount 後の setState で
+      // React の warning が出る (本来は無害だが将来 strict mode で問題化し得る)。
+      if (rafId !== 0) window.cancelAnimationFrame(rafId);
     };
   }, []);
 

@@ -55,7 +55,7 @@ export async function requireAuthForLayout(): Promise<Session['user']> {
 
 /**
  * 公開ページ (認証不要) layout 向けに「あれば検証済 user、なければ null」を返す
- * (feat/app-header-footer-unification / 2026-05-24 / KDD §5.X+121)。
+ * (feat/app-header-footer-unification / 2026-05-24 / KDD §5.X+120)。
  *
  * 用途:
  *   /changelog, /announcements 等の (public) ページ群。これらは未認証でも閲覧可能だが、

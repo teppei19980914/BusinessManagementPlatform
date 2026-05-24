@@ -126,7 +126,7 @@ describe('requireAuthForLayout', () => {
 });
 
 /**
- * optionalAuthForLayout (KDD §5.X+121 / feat/app-header-footer-unification 2026-05-24)
+ * optionalAuthForLayout (KDD §5.X+120 / feat/app-header-footer-unification 2026-05-24)
  *
  * (public) layout 専用。未認証でも redirect せず null を返すが、tokenVersion 検証は
  * requireAuthForLayout と同水準で行い、失効済 cookie を「ログイン状態」扱いしない。

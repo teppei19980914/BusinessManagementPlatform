@@ -51,7 +51,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Menu } from '@base-ui/react/menu';
-import { ChevronDownIcon } from 'lucide-react';
+import { ChevronDownIcon, Crown, Shield, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import {
@@ -78,6 +78,14 @@ import {
   HELP_ROUTE,
   PRODUCT_LP_URL,
 } from '@/config';
+
+/**
+ * メニューを閉じた直後の「即時 hide」を防ぐための追加スクロール許容量 (px)。
+ * メニュー close 時の scrollY からこの値以上さらに下にスクロールしないと hidden=true に
+ * しない。10px 程度あれば「閉じた瞬間にチラッと隠れる」違和感を確実に消せ、かつ
+ * 「閉じてからゆっくり下スクロール」開始時の隠れ動作は通常通り発火する。
+ */
+const TOLERANCE_AFTER_MENU_CLOSE = 10;
 
 export type AppHeaderUser = {
   name: string;
@@ -203,8 +211,16 @@ const HeaderMenuContext = createContext<HeaderMenuContextValue | null>(null);
  * 子コンポーネントが open/close 状態を AppHeader へ通知するためのフック。
  *
  * @param open - 現在の open 状態。true → false への遷移で notifyClose、その逆で notifyOpen を呼ぶ。
+ *
+ * **使用箇所**:
+ *   - AccountMenu / GroupMenu (本ファイル内)
+ *   - NotificationBell (外部 / src/components/notifications/notification-bell.tsx)
+ *
+ *   AppHeader 内部実装でも外部子コンポーネントでも、AppHeader 配下の dropdown が
+ *   open している間は auto-hide を抑止したいので、本フックを **export** している。
+ *   HeaderMenuContext を直接触らせず、フック経由に統一することで「通知忘れ」を防ぐ。
  */
-function useReportHeaderMenuOpen(open: boolean): void {
+export function useReportHeaderMenuOpen(open: boolean): void {
   const ctx = useContext(HeaderMenuContext);
   useEffect(() => {
     if (!ctx) return;
@@ -248,31 +264,101 @@ function AccountMenu({ user }: { user: AppHeaderUser }) {
 
   return (
     <div className="relative" ref={menuRef}>
+      {/*
+        トリガ (Microsoft Office 365 / Teams パターン):
+          ヘッダ右上には「人アイコン + ロールアイコン + ▾」のみ表示し、名前 / メール /
+          ロール文言など可変長要素は menu 開放時の「アカウント情報セクション」に集約。
+          これにより narrow viewport でも見切れず、ナビ折返し事故と独立した安定 UI に。
+
+        a11y: aria-label にロールラベルを含め、screen reader でも開く前に身元判別可能。
+      */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent"
+        className="flex items-center gap-1 rounded-md p-1.5 hover:bg-accent"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={(() => {
+          const roleLabel = user.systemRole === 'super_admin'
+            ? tNav('superAdminBadge')
+            : user.systemRole === 'admin'
+              ? tNav('adminBadge')
+              : '';
+          return roleLabel ? `${user.name} (${roleLabel})` : user.name;
+        })()}
+        title={user.name}
+        data-testid="account-menu-trigger"
       >
-        <span className="whitespace-nowrap">{user.name}</span>
+        {/* 人アイコン (avatar 風)。将来 user.avatarUrl 対応する余地を残す */}
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <User className="size-4" />
+        </span>
+        {/* ロールアイコン (admin/super_admin のみ)。一般ユーザは表示なし */}
         {user.systemRole === 'super_admin' && (
-          <span className="rounded bg-amber-200/70 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">
-            {tNav('superAdminBadge')}
+          <span
+            role="img"
+            aria-label={tNav('superAdminBadge')}
+            title={tNav('superAdminBadge')}
+            className="inline-flex shrink-0 items-center text-amber-600 dark:text-amber-400"
+            data-testid="role-icon-super-admin"
+          >
+            <Crown className="size-4" />
+            <span className="sr-only">{tNav('superAdminBadge')}</span>
           </span>
         )}
         {user.systemRole === 'admin' && (
-          <span className="rounded bg-info/20 px-1.5 py-0.5 text-xs text-info">
-            {tNav('adminBadge')}
+          <span
+            role="img"
+            aria-label={tNav('adminBadge')}
+            title={tNav('adminBadge')}
+            className="inline-flex shrink-0 items-center text-info"
+            data-testid="role-icon-admin"
+          >
+            <Shield className="size-4" />
+            <span className="sr-only">{tNav('adminBadge')}</span>
           </span>
         )}
-        <span className="text-xs text-muted-foreground">▾</span>
+        <ChevronDownIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-md border bg-card shadow-md"
+          className="absolute right-0 top-full z-50 mt-1 min-w-[240px] rounded-md border bg-card shadow-md"
+          data-testid="account-menu-popup"
         >
+          {/*
+            アカウント情報セクション (Microsoft 風 menu header):
+              氏名を見出しとして表示し、その下にアカウント情報 = ロール + メールアドレス を
+              小さく並べる。長い氏名は break-words で複数行に折り返し、見切れさせない。
+              email は selectAll しやすいよう selectable 維持 (user-select 既定)。
+          */}
+          <div className="border-b border-border/60 px-4 py-3" data-testid="account-info-section">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <User className="size-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="break-words text-sm font-semibold text-foreground" data-testid="account-info-name">
+                  {user.name}
+                </div>
+                {user.systemRole === 'super_admin' && (
+                  <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" data-testid="account-info-role">
+                    <Crown className="size-3" />
+                    {tNav('superAdminBadge')}
+                  </div>
+                )}
+                {user.systemRole === 'admin' && (
+                  <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-info" data-testid="account-info-role">
+                    <Shield className="size-3" />
+                    {tNav('adminBadge')}
+                  </div>
+                )}
+                <div className="mt-0.5 break-all text-xs text-muted-foreground" data-testid="account-info-email">
+                  {user.email}
+                </div>
+              </div>
+            </div>
+          </div>
           <Link
             href={MY_TASKS_ROUTE}
             role="menuitem"
@@ -488,11 +574,36 @@ export function AppHeader({ user }: AppHeaderProps) {
     }),
     [],
   );
-  // hidden = (先頭 64px より下) かつ (下スクロール中) かつ (メニュー開放なし)
+
+  // 「メニューを閉じた直後の即時 hide」を防ぐためのベースライン。
+  //   シナリオ: ユーザが下スクロール (direction='down') 中にメニューを開き、しばらく
+  //   操作してから閉じる → menuOpenCount が 0 になった瞬間、direction は依然 'down' で
+  //   stale なので hidden = true になりヘッダが消える UX 違和感。
+  //   対策: menuOpenCount が >0 → 0 に遷移したタイミングの scrollY を記録し、その scrollY
+  //   よりさらに下にスクロール (= 新規 'down' 動作) するまでは hide しない。
+  const menuClosedAtScrollYRef = useRef<number | null>(null);
+  const prevMenuOpenCountRef = useRef(0);
+  useEffect(() => {
+    if (prevMenuOpenCountRef.current > 0 && menuOpenCount === 0) {
+      // 開→閉の遷移。現在の scrollY を baseline として記録。
+      menuClosedAtScrollYRef.current = scrollY;
+    } else if (menuOpenCount > 0) {
+      // メニュー開放中は baseline をクリアしておく (= 次回 close 時の値を待つ)。
+      menuClosedAtScrollYRef.current = null;
+    }
+    prevMenuOpenCountRef.current = menuOpenCount;
+  }, [menuOpenCount, scrollY]);
+
+  // hidden = (先頭 64px より下) かつ (下スクロール中) かつ (メニュー開放なし) かつ
+  //          (メニュー閉じ直後の場合は閉じた scrollY より新規に下スクロールしている)
   // 先頭付近では常に visible にすることで、ページロード直後のチラつきとモバイルで「上に
   // 戻る → 一瞬隠れる」事故を防ぐ。
+  const baseline = menuClosedAtScrollYRef.current;
   const hidden =
-    scrollY > SCROLL_DIRECTION_THRESHOLD && direction === 'down' && menuOpenCount === 0;
+    scrollY > SCROLL_DIRECTION_THRESHOLD
+    && direction === 'down'
+    && menuOpenCount === 0
+    && (baseline === null || scrollY > baseline + TOLERANCE_AFTER_MENU_CLOSE);
 
   /* --- ログイン状態分岐 ------------------------------------------------ */
   const isLoggedIn = user !== null;

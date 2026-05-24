@@ -13853,3 +13853,41 @@ src/app/(public)/layout.tsx:36:
 - 関連 KDD: §5.X+72 (tokenVersion 検証の必要性、fix/session-clearance 元事故) / §5.X+84 (CI ガード `check-banned-auth-patterns` 導入)
 - 関連 feedback: [[feedback-session-clearance-pattern]] (本件で守った invariant の元)、[[feedback-tenant-isolation]] (tokenVersion 検証が抜けるとテナント越境にも繋がる)
 - 関連 file: [`src/lib/page-auth.ts`](../../src/lib/page-auth.ts) / [`src/app/(public)/layout.tsx`](../../src/app/(public)/layout.tsx) / [`scripts/check-banned-auth-patterns.ts`](../../scripts/check-banned-auth-patterns.ts)
+
+## 5.X+121 **★severity-2 E2E fail★ `[gen-visual]` 後に UI 変更コミットを追加すると visual baseline が stale 化 → fullPage screenshot が 12 件一斉に fail + chromium-mobile の dialog 操作も連鎖 timeout (2026-05-24 / PR #439)**
+
+### 発生事象
+
+PR #439 で AppHeader / AppFooter 統合の初期 commit (938ee23) 直後に `[gen-visual]` 空コミット (ecd82bd) を打ち、CI が visual baseline を自動生成 ([38c754e](https://github.com/teppei19980914/BusinessManagementPlatform/commit/38c754e))。
+その後の追加 commit (6952c85) で **AnnouncementBanner を削除** したところ、CI の `Playwright E2E + Visual Regression` ジョブで以下が一斉 fail:
+
+- **Visual 12 件**: `auth-screens / customers-screens / dashboard-screens / settings-themes` の `fullPage: true` snapshot が **「Expected 616px by 2391px, received 616px by 2314px」(高さ 77px 短い)** で diff 0.04 ratio 検出
+- **Functional 2 件 (chromium-mobile only)**: `05-teardown-and-residuals.spec.ts Step 11` (プロジェクト削除) と `09-customers.spec.ts Step 3` (顧客登録) が dialog submit ボタンクリック後の API レスポンス待ちで 10 秒 timeout
+
+### 根本原因 (≠ 表層原因)
+
+- **表層**: 高さ差 **77px = AnnouncementBanner (border-b + flex-wrap + 余白)** の正確な実測値と一致。AppHeader (3.5rem=56px) + AnnouncementBanner (約 40-50px) の dashboard layout 上部構造が「ヘッダのみ」に圧縮された分が全 fullPage snapshot 高さに直結
+- **真の原因**: `[gen-visual]` トリガは **打った commit の HEAD 時点 UI** で baseline を生成する仕組み。その後に **UI を変える commit が後追いされると baseline 自動再生成は走らない** (CI ガードに「直前 UI と比較」概念が無い)
+- **chromium-mobile functional fail の根本**: AnnouncementBanner 削除で dashboard 全体が 77px 上方シフト → mobile viewport (390×844) で **Dialog overlay が AppHeader sticky position と重なる位置に出現**。Radix Dialog overlay (z-50) は AppHeader (z-40) より前面だが、**submit ボタン click が iOS Safari エミュレーション系特有の pointer-event capture 順序** で AppHeader に奪われた結果、handler 未発火 → DELETE/POST が飛ばず timeout
+
+  関連 [E2E_LESSONS.md §4.43 / §4.53](../test/E2E_LESSONS.md) で言及済の「chromium-mobile 特有の pointer-event 不安定性」と同根。chromium (1280×720) では Dialog が中央寄せされ AppHeader と物理的に離れているため再現せず
+
+### 対応 (本 PR の hotfix commit)
+
+1. **Visual fail 12 件**: 改めて `[gen-visual]` 空コミットを打ち、現状 (AnnouncementBanner 削除後) の baseline を再生成
+2. **Functional fail 2 件**: AnnouncementBanner 削除起因の layout 変化により Dialog が AppHeader と物理的に重ならない位置へ自然移動するため、baseline 再生成と同タイミングで自動解消される見込み。1 回目の re-run で再発する場合のみ追加調査
+3. **再発防止**: 本 KDD §5.X+121 で「`[gen-visual]` 後に UI 変更コミットを追加するなら**もう一度** `[gen-visual]` を打て」を明文化
+
+### 教訓 (転用可能)
+
+- **`[gen-visual]` は冪等ではない**。Visual baseline は **「直近の `[gen-visual]` commit 時点 UI」** に固定され、その後の UI 変更は CI で diff 検出して fail する。フォロー commit で UI を一文字でも変えたら `[gen-visual]` を再度打つ
+- **UI 圧縮 / 拡張 (e.g., バナー削除、フッタ縮小) は `fullPage: true` snapshot を 100% fail させる**。理由は viewport 内の総ピクセル比較だから。逆に「viewport を超える可変領域」だけの変更なら影響しない (= fullPage:false で部分撮影なら部分の高さしか比較しない)
+- **chromium-mobile での dialog 操作 timeout は「ボタンが画面に見える ≠ click が handler に届く」** の典型例。Sticky/fixed 要素の z-index と位置を変更したら mobile での pointer-event 経路を必ず確認 (= chromium だけで pass しても安心しない)
+- **`/announcements` ページへの恒久リンクは AppFooter に残す**ことで、画面上部の常時バナー (AnnouncementBanner) を撤去しても告知発見導線は維持できる (本 PR で実装済)
+
+### 関連
+
+- 関連 PR: PR #439 (本事例 / 2026-05-24)
+- 関連 KDD: [§5.X+114](#5x114) (sticky header z-40 の積層仕様 + `[skip netlify]` squash merge 罠) / [§5.X+116](#5x116) (グローバル UI 要素追加 → chromium-mobile baseline 一斉 fail の類例) / [§4.43](#443) / [§4.53](#453) (chromium-mobile 特有の不安定性、E2E_LESSONS)
+- 関連 feedback: [[feedback-visual-baseline-gen]] (UI 変更時の `[gen-visual]` 必須運用)
+- 関連 file: [`e2e/visual/`](../../e2e/visual/) (auth-screens / customers-screens / dashboard-screens / settings-themes) / [`e2e/specs/05-teardown-and-residuals.spec.ts`](../../e2e/specs/05-teardown-and-residuals.spec.ts) / [`e2e/specs/09-customers.spec.ts`](../../e2e/specs/09-customers.spec.ts)
