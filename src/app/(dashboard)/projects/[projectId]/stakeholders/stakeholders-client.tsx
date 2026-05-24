@@ -127,7 +127,10 @@ export function StakeholdersClient({
 
   // PR feat/notification-deep-link-completion (2026-05-01): 通知 deep link
   // (`?tab=stakeholders&stakeholderId=...`) から着地した際、URL の stakeholderId を読み取って
-  // dialog を 1 度だけ auto-open する。useAutoOpenDialog 内部で URL クリーンアップ済 (再発火しない)。
+  // dialog を auto-open する。
+  // PR fix/chat-search-and-auto-open (2026-05-24): useAutoOpenDialog の重複抑止を
+  // boolean ref から「同 id 単位」に変更したため、別 stakeholder への遷移時は再発火、
+  // 同 id の連続発火は引き続き抑止される (URL クリーンアップ → ref reset で次回着地に備える)。
   // initialOpenStakeholderId prop は ssr 互換性のための受け取り口で、実際の URL parse は hook 内。
   useAutoOpenDialog<StakeholderDTO>({
     queryKey: 'stakeholderId',
