@@ -13801,3 +13801,55 @@ Portal 化により **13 画面すべてが同時救済** される (truncate / 
 - 関連 KDD: §5.58 (誤前提を含む元 PR の記述を本セクションで訂正)、§5.X+114 (sticky header z-40 の積層仕様 — 本件 z-50 はこれを上回るため一貫性確認済)
 - 関連 feedback: [[feedback-e2e-coverage-gate]] (UI 系の新規実装は E2E ガード必須の方針)、[[feedback-test-rule]] (実装時に必ずテスト作成、本件は test 不足で 3 週間気付けなかった)
 - 関連 doc: 本 §5.X+119 を以後の dropdown / tooltip / popover 系 UI の標準参照点 (Portal 化 + 必須サブ機能 6 点 + E2E visibility assert)
+
+## 5.X+120 **★severity-2 CI fail★ 公開ページ layout の `await auth()` 直接呼出が `check-banned-auth-patterns` で fail + `requireAuthForLayout` は redirect するため転用不可 → `optionalAuthForLayout()` を新設 (2026-05-24 / PR #439)**
+
+### 発生事象
+
+PR #439 (AppHeader / AppFooter 統合) の CI 1 回目で `Banned auth patterns check` step が以下を fail させた:
+
+```
+src/app/(public)/layout.tsx:36:
+  [BANNED_DIRECT_AUTH_IN_SERVER_COMPONENT]
+  Server Component (page.tsx / layout.tsx) での `await auth()` 直接呼出は禁止
+  src/lib/page-auth.ts の `requireAuthForLayout()` を経由して tokenVersion 検証を必ず行うこと
+```
+
+該当行は `(public)` layout で「ログイン済ならナビ表示、未ログインならログイン CTA 表示」のために session を optional に読み取っていた箇所。
+
+### 根本原因 (≠ 表層原因)
+
+- **表層**: ローカルでは [`scripts/check-banned-auth-patterns.ts`](../../scripts/check-banned-auth-patterns.ts) を `pnpm test` / `pnpm build` 等のゲートに含めて回していなかった (CI のみで実行される step)
+- **真の原因**: 「Server Component で session を optional に取得したい」ユースケースが共通ヘルパに存在しなかった
+  - `requireAuthForLayout()` は未認証時に `/login` へ redirect するため (public) ページに使うと閲覧不能になる
+  - `await auth()` 直接呼出は CI ガード (= fix/session-clearance §5.X+84) で禁止
+  - 結果として「両方を満たす中間ヘルパが存在しない」状態でユーザに「await auth() を書く以外の選択肢」が無かった
+
+### 対応 (PR #439)
+
+[`src/lib/page-auth.ts`](../../src/lib/page-auth.ts) に **`optionalAuthForLayout()`** を新設。動作:
+
+1. 未認証 (`session=null`): **redirect せず null を返す** → AppHeader は `user=null` モードでログイン CTA を表示
+2. 認証済 + tokenVersion 一致 + isActive + 削除されていない: `session.user` を返す → AppHeader はログイン後モード
+3. 認証済 だが tokenVersion 不一致 / 失効 / 退会済: **null を返す (redirect しない)** → public ページ閲覧は許可、ただし「ログイン状態」として表示しない (安全側に倒す)
+
+ポイントは **tokenVersion 検証だけは `requireAuthForLayout()` と同水準で行う** こと。これにより §5.X+72 (Netlify Set-Cookie 脱落 → 旧 cookie 残留 → 他人なりすまし) で塞いだ穴が (public) 側で復活しない。
+
+### 再発防止 (今回入れた仕掛け)
+
+- `optionalAuthForLayout()` は [`src/lib/page-auth.test.ts`](../../src/lib/page-auth.test.ts) で 6 ケース (未認証 / tokenVersion 不一致 / 削除済 / 無効化 / 全て OK / DB 不在) を網羅
+- 本 KDD に「(public) layout は `requireAuthForLayout` ではなく `optionalAuthForLayout` を使え」と明示
+- `check-banned-auth-patterns.ts` に exempt path を追加するのではなく **正規ヘルパを増やす方針** で対応 (= ガードを弱めない)
+
+### 教訓 (転用可能)
+
+- **CI 専用ガード script は「自分が気付かないうちに CI で初めて失敗する」典型**。PR 内で新規 layout / Server Component を追加するときは事前に [`scripts/`](../../scripts/) 配下の検査スクリプトを一通り目視するか、ローカルゲートに組み込む
+- **「禁止パターン → 例外コメント追加」で逃げる前に、「同じ要件を満たす正規 API が存在しないだけでは?」を疑う**。今回は `optionalAuthForLayout` を作る方が 5 分早く・安全に解決できた
+- 認証関連ヘルパは「redirect する版」「null を返す版」を **対** で持つのが API 設計として自然 (`requireXxx` / `getOptionalXxx` のような対称性)
+
+### 関連
+
+- 関連 PR: PR #439 (本事例 / 2026-05-24)
+- 関連 KDD: §5.X+72 (tokenVersion 検証の必要性、fix/session-clearance 元事故) / §5.X+84 (CI ガード `check-banned-auth-patterns` 導入)
+- 関連 feedback: [[feedback-session-clearance-pattern]] (本件で守った invariant の元)、[[feedback-tenant-isolation]] (tokenVersion 検証が抜けるとテナント越境にも繋がる)
+- 関連 file: [`src/lib/page-auth.ts`](../../src/lib/page-auth.ts) / [`src/app/(public)/layout.tsx`](../../src/app/(public)/layout.tsx) / [`scripts/check-banned-auth-patterns.ts`](../../scripts/check-banned-auth-patterns.ts)

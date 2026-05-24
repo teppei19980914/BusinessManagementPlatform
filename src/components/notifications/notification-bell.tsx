@@ -3,7 +3,8 @@
 /**
  * NotificationBell (PR feat/notifications-mvp)
  *
- * DashboardHeader の右側 (アカウント名の左) に配置するベル UI。
+ * AppHeader (旧 DashboardHeader、feat/app-header-footer-unification 2026-05-24 で統合) の
+ * 右側 (アカウント名の左) に配置するベル UI。
  *
  * 仕様:
  *   - 未読 0 件 → ベルアイコンのみ。≥ 1 件 → 赤丸バッジに件数。
@@ -18,7 +19,7 @@
  *
  * 関連:
  *   - src/services/notification.service.ts
- *   - DashboardHeader (本コンポーネントを mount)
+ *   - AppHeader (本コンポーネントを mount)
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';

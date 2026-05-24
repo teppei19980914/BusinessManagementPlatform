@@ -327,6 +327,7 @@ memory: `feedback_no_hardcoding`。
 | DB スキーマを変更したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) / [docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md) |
 | 設計の意図を知りたい | [docs/design/](./docs/design/) (ARCHITECTURE / DATA_MODEL / API_DESIGN / SECURITY / INFRASTRUCTURE / SUGGESTION_ENGINE / UI_PATTERNS に分割) |
 | デプロイ失敗時の対応 | [docs/operations/DEPLOYMENT.md](./docs/operations/DEPLOYMENT.md) / [docs/operations/INCIDENT_RESPONSE.md](./docs/operations/INCIDENT_RESPONSE.md) |
+| **新バージョンをリリースしたい (CHANGELOG / お知らせ / version bump 等)** | **[docs/operations/RELEASE_PROCEDURE.md](./docs/operations/RELEASE_PROCEDURE.md)** |
 | 過去の議論の経緯 | `git log` / GitHub 過去 PR |
 | 過去の罠・教訓 | [docs/knowledge/](./docs/knowledge/) / [docs/test/E2E_LESSONS.md](./docs/test/E2E_LESSONS.md) |
 

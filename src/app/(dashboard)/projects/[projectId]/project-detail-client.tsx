@@ -640,7 +640,7 @@ export function ProjectDetailClient({
             画面幅 lg+ では各「○○一覧」を従来通り独立タブとして表示、
             画面幅 lg- (1024px 未満) では「資産 ▼」プルダウン 1 つに集約する
             (ナビ全体: 概要 / 見積もり / WBS管理 / 資産▼ / メンバー / ステークホルダー)。
-            dashboard-header.tsx の 3 分類プルダウン pattern と同じ仕組み。
+            app-header.tsx の 3 分類プルダウン pattern と同じ仕組み。
           */}
           {/* PC 表示: 個別タブ (lg+) */}
           <TabsTrigger value="risks" className="hidden lg:inline-flex">{t('tabRisks')}</TabsTrigger>

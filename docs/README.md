@@ -150,6 +150,7 @@ docs/
 | [T-03_RELEASE_NOTES.md](./operations/T-03_RELEASE_NOTES.md) | T-03 (提案エンジン v2) リリースノート |
 | [GO_LIVE_RUNBOOK.md](./operations/GO_LIVE_RUNBOOK.md) | 2026-06-01 外部公開当日の時系列手順 + ロールバック条件 |
 | [PUBLIC_LAUNCH_CHECKLIST.md](./operations/PUBLIC_LAUNCH_CHECKLIST.md) | 公開前チェックリスト (法的書類 / 公開ページ / 運用準備、6/1 前完了必須) |
+| [RELEASE_PROCEDURE.md](./operations/RELEASE_PROCEDURE.md) | リリース時の真値ファイル更新手順 (CHANGELOG / お知らせ / version / リリース日) + チェックリスト |
 | [MIGRATION_TO_AWS.md](./operations/MIGRATION_TO_AWS.md) | Vercel + Supabase から AWS / Azure / GCP への将来的移行計画 |
 
 ### [test/](./test/) — テスト設計書
