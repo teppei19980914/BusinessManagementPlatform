@@ -13,9 +13,10 @@
  *
  * カバーする invariant:
  *   - <header> 要素に sticky / top-0 / z-40 の 3 クラスが付与されている
- *   - z-40 が「z-30 (SortableHeader dropdown) と z-50 (AccountMenu dropdown) の
- *     間」という積層仕様 (= dropdown が header に被らない、AccountMenu が
- *     header 上に開く) を維持している
+ *   - z-40 が「ヘッダ自身 (z-40) と AccountMenu dropdown (z-50) の積層仕様」を維持。
+ *     SortableHeader dropdown は PR fix/sortable-header-dropdown-portal (2026-05-24) で
+ *     Portal 化 + z-50 に変更されたため、ヘッダ (z-40) より前面に出る (KDD §5.X+119)。
+ *     本テストは header z-40 の不変性のみ確認し、dropdown 側の積層は別ファイルで担保。
  *
  * 失敗時の対応:
  *   sticky クラスが消えたコミットがマージ対象になっている可能性が高い。

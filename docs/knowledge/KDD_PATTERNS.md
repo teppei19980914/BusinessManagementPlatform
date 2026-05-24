@@ -4186,7 +4186,7 @@ export type SortState = SortEntry[]; // index 0 が最優先
 
 ##### 不可視のハマりどころ
 
-- **`ResizableHead` の `overflow-hidden` 削除**: `SortableHeader` のドロップダウン (絶対配置) が th 外側にはみ出す必要があるため、`resizable-columns.tsx` の th 外側 `overflow-hidden` を削除した。テキスト truncation は子の `<div className="truncate pr-2">` で完結するので不要。
+- **`ResizableHead` の `overflow-hidden` 削除**: `SortableHeader` のドロップダウン (絶対配置) が th 外側にはみ出す必要があるため、`resizable-columns.tsx` の th 外側 `overflow-hidden` を削除した。〜 **(2026-05-24 追記)** ただし子の `<div className="truncate pr-2">` の `truncate` クラスが Tailwind 仕様で `overflow:hidden + text-overflow:ellipsis + white-space:nowrap` を含んでおり、絶対配置子要素の dropdown は依然として content box でクリップされ完全不可視になっていた。詳細とリカバリは **§5.X+119 (Portal 化対応)** を参照。
 - **storageKey の一意性**: `sort:all-risks` と `sort:project-risks` は別キー。`typeFilter` で risk/issue タブを分けている画面 (all-risks-table) は `sort:all-risks:${typeFilter}` のように suffix を付与し、タブごとに独立させる。
 - **`useMemo` の依存に `sortState` を必ず追加**: filter useMemo で `multiSort(xs, sortState, ...)` を呼ぶなら `sortState` を deps に入れないと再ソートされない。
 - **`my-tasks-client.tsx` の階層**: 各 `pg.tree` の **top-level** だけソートし `children` の順序は維持する (子タスクの順序を崩すと WBS の意味が壊れる)。
@@ -13643,3 +13643,161 @@ it('YYYY-MM-DD-{slug}.md の slug は **全体** (例: 2026-06-01-launch)', () =
 - 関連 KDD: §5.X+117 (本事例の前段、CodeQL 対応で `isSafeAnnouncementSlug` 導入時に regex 分解までは踏み込まなかった見落とし)
 - 関連 feedback: [[feedback-e2e-coverage-gate]] (新規 page/route は E2E 必須の運用ルール)、[[feedback-standalone-fs-tracing]] (本 PR の standalone build 罠)
 - 関連 doc: 本 §5.X+118 を以後の filename-driven 機能実装時の参照点 (純関数切り出し + 回帰テストが標準パターン)
+
+## 5.X+119 **★severity-1 UX dead★ Tailwind `truncate` の `overflow:hidden` が絶対配置 dropdown を完全クリップ → 全 13 一覧画面のソート機能が dead 化、createPortal で `<body>` 直下に逃がして救済 (2026-05-24 / PR fix/sortable-header-dropdown-portal)**
+
+### 症状
+
+`SortableHeader` の dropdown (↑昇順 / ↓降順 / ×クリア) が **クリックしても全く表示されない**。aria-expanded は `true` になっており state 上は open だが、視覚的に完全不可視。結果、ユーザは項目選択できず **全 13 一覧画面のソート機能が完全 dead 化** していた状態が 3 週間放置 (§5.58 PR 投入 2026-05-01 → 2026-05-24 ユーザ報告)。
+
+### 根本原因 (CSS 仕様レベル)
+
+`position: absolute` 子要素は、祖先に `overflow: hidden` がある場合 **content box でクリップ** される (CSS spec: 「containing block が overflow box の子孫なら clip される」)。
+
+`SortableHeader` の dropdown は `<ul absolute top-full>`、その containing block は同コンポーネント内 `<div relative inline-flex>`。**親の `ResizableHead` の `<div className="truncate pr-2">` が overflow:hidden を持つ** ため、dropdown は ヘッダ 1 行分 (~24px) の領域でクリップされ、下方向にはみ出した menu 本体が完全不可視になった。
+
+`truncate` は Tailwind 4 系で `overflow:hidden + text-overflow:ellipsis + white-space:nowrap` の **3 つ同梱** がポイント。`overflow-hidden` の名前で grep しても出てこないので、見落とされやすい。
+
+### なぜ §5.58 (元 PR) で気付かなかったか
+
+§5.58 では「`ResizableHead` の th 外側 `overflow-hidden` を削除した」と書かれており、それで dropdown が出るはずという誤前提があった。しかし削除したのは `<th>` 外側だけで、**子の `<div className="truncate">` の overflow:hidden は残ったまま** だった。コードコメントもそのまま「テキスト truncation は子の truncate で完結するので th 外側の overflow-hidden は不要」と書いており、「子の truncate 自体に overflow:hidden が同梱されている」という事実を見落としていた。
+
+加えて以下のテスト盲点で 3 週間気付けなかった:
+
+- `src/lib/multi-sort.test.ts` は純関数 `applySort` / `multiSort` / `compareValues` のみカバー → state 遷移は green、UI 統合は素通り
+- E2E spec が 0 件 (`grep -rn sortable e2e/` で出ない) → 「click → menu visible → 項目選択 → 行順変化」のフローが検証されていない
+- 開発者が手動で操作する際は **hover で開いた一瞬の dropdown 描画** を視覚的に確認できなかった (overflow:hidden 内に出るため最初から不可視)
+- 単体テストが「state が open になるか」を間接的にしか確認できなかった (jsdom 環境がない + Portal 化前は dom-tree も同一構造のため bbox 計測しても判別困難)
+
+### 修正方針 (案 A/B/C から選定)
+
+- **案 A (truncate を分解 → overflow:visible)**: ellipsis を失い、固定幅 `ResizableHead` 内で長文 label が隣カラムにはみ出す UX 崩壊
+- **案 B (SortableHeader を含む列だけ truncate を外す)**: 案 A と同じ崩壊が sort 列で発生、children inspection も複雑
+- **案 C (createPortal で `<body>` 直下に dropdown を逃がす)**: 任意祖先 overflow から独立、ellipsis 維持、修正影響は `sortable-header.tsx` 1 ファイル ← **採用**
+
+セキュリティ観点は 3 案同等 (XSS / CSP / DOM clobbering とも影響なし、label は React 自動エスケープ済)。UX 観点で案 C が圧倒的優位。
+
+### 採用パターン (Portal 化の必須サブ機能)
+
+```tsx
+// src/components/sort/sortable-header.tsx 抜粋
+const [mounted, setMounted] = useState(false);
+const triggerRef = useRef<HTMLDivElement | null>(null);
+const menuRef = useRef<HTMLUListElement | null>(null);
+
+useEffect(() => setMounted(true), []);  // SSR ガード
+
+useEffect(() => {
+  if (!open) return;
+  function onDocMouseDown(e: MouseEvent) {
+    const t = e.target as Node;
+    // Portal で menu は trigger の DOM 子孫ではない → 両方を check 必須
+    const inTrigger = triggerRef.current?.contains(t) ?? false;
+    const inMenu = menuRef.current?.contains(t) ?? false;
+    if (!inTrigger && !inMenu) setOpen(false);
+  }
+  function onScrollOrResize() { setOpen(false); }  // 座標陳腐化対策
+  document.addEventListener('mousedown', onDocMouseDown);
+  window.addEventListener('scroll', onScrollOrResize, true);  // capture: 内部スクロールも捕捉
+  window.addEventListener('resize', onScrollOrResize);
+  // ...
+}, [open]);
+
+return (
+  <>
+    <div ref={triggerRef}>...</div>
+    {mounted && open && coords && createPortal(
+      <ul ref={menuRef} className="fixed z-50 ..." style={{ top, left }}>...</ul>,
+      document.body,
+    )}
+  </>
+);
+```
+
+#### 必須サブ機能チェックリスト
+
+- [x] **SSR ガード**: `mounted` flag。createPortal は server で `document` 不在のため
+- [x] **2 つの ref + 両方を contains チェック**: trigger と menu。片方だけだと menu 内クリックが「外」誤判定
+- [x] **z-50**: `dashboard-header` (z-40) より前面に積層。z-30 のままだと body 直下で header 背後に隠れる
+- [x] **scroll/resize で close**: capture: true で table-container 等の内部スクロールも捕捉。座標再計算より単純
+- [x] **fixed + getBoundingClientRect**: viewport 座標系で統一。absolute だと positioning ancestor 探索が複雑化
+- [x] **ESC key 対応**: 標準 a11y、変更前から存在するが Portal 化でも維持
+
+### 再発防止策
+
+#### テストレイヤ追加
+
+- **`src/components/sort/sortable-header.test.tsx` 新設**: source-pattern で「Portal 化の必須要素 11 項目」を invariant 化。createPortal import / document.body target / 2 ref / 両方 contains / z-50 / mounted flag / scroll-capture / resize / ESC / data-testid `sortable-header-menu` / fixed + getBoundingClientRect。誰かが Portal を巻き戻すと test が落ちる
+- **`e2e/specs/16-column-sort.spec.ts` 新設**: 2 パターン両方 (`/customers` の plain `<TableHead><SortableHeader/>` + `/risks` の `SortableResizableHead` 経路) で「click → menu visible → menu が `<body>` 直下 (= table-container の外)」を assert。bbox 計測で高さ/幅 > 0 を double-check
+
+#### 抽出したルール
+
+- [ ] **Tailwind `truncate` = overflow:hidden 同梱 を常に意識**: 一行省略表示を入れた要素の内側に絶対配置 dropdown / tooltip を置く設計は要再考。Portal 化が安全
+- [ ] **新規 dropdown 系 UI は **必ず E2E で visibility を assert**: `state は open だが視覚的に見えない` は単体テストの盲点
+- [ ] **Portal 化を採用したら必須サブ機能 6 点を漏れなく実装** (上記チェックリスト)。click-outside 判定の修正漏れは「menu 開いた瞬間に閉じる」機能不全になる
+- [ ] **既存コードコメントの「不要」「完結」表現は疑え**: §5.58 の元コメント「テキスト truncation は子の truncate で完結するので不要」が本件の温床。truncate ユーティリティの中身を確認せずに書かれた誤前提
+
+### 追加発覚バグ: hover+click 時の setOpen toggle 競合 (PR #435 CI で検出)
+
+Portal 化と同 PR で **second bug** が発覚。CI 上の Playwright E2E で `/customers` `/risks` の menu 可視テストが timeout fail。
+
+#### 根本原因
+
+`.click()` (Playwright および実ユーザの hover→click 操作) は **mouseenter → click の順** でイベント発火する。旧 click ハンドラ `setOpen((v) => !v)` (toggle) が:
+
+```
+1. mouseenter → handleTriggerEnter → setOpen(true)         → open=true → menu 描画
+2. click      → onClick → setOpen(prev => !prev)
+              → React 19 batched flush で prev=true → !true=false → open=false → menu 即削除
+```
+
+の競合により、menu が描画された瞬間に即削除される。Playwright の `toBeVisible({ timeout: 2_000 })` でも捕捉できない (フレーム単位で消える)。
+
+#### なぜ Portal 化前は気付かれなかったか
+
+- Portal 化前は menu が `overflow:hidden` でクリップされ **そもそも視覚的に見えなかった** ため、「toggle されて閉じている」のか「クリップで見えない」のか判別不能だった
+- 普通の hover-and-pick 操作 (= menuitem を直接クリック) では発生しない (trigger を click しないため)
+- ユーザが「念のため trigger を click」した場合や、Playwright `.click()` で初めて顕在化
+- E2E spec が今回まで存在しなかったため、CI でも検出機会がなかった
+
+#### 修正パターン
+
+**click は「開く専用」に統一** (toggle を廃止)。close は仕様通り 5 経路に集約:
+
+```tsx
+// ❌ 旧 (hover+click で即閉じる)
+onClick={() => setOpen((v) => !v)}
+
+// ✅ 新 (idempotent open、close は他経路)
+onClick={() => setOpen(true)}
+```
+
+close 経路 (JSDoc 仕様):
+1. メニュー外クリック (mousedown listener)
+2. ESC キー (keydown listener)
+3. mouseleave with 200ms delay (trigger / menu 両方)
+4. scroll / resize (capture: true で内部スクロールも)
+5. menuitem 選択時 (handleSelect 内 `setOpen(false)`)
+
+#### 抽出した一般化ルール
+
+- [ ] **hover-then-click を併用する trigger は click を toggle 形式にしない**: `setOpen((v) => !v)` は hover オープン UI と組み合わさると競合する。`setOpen(true)` で「idempotent open」にし、close は明示的な close 経路に統一する
+- [ ] **dropdown の close 経路は明示的に列挙してドキュメント化**: 「click が close も兼ねる」は曖昧。JSDoc に close 経路を列挙し、click はそのうちのいずれかに該当するか明示する
+- [ ] **E2E spec の `.click()` は `mouseenter → click` シーケンスとして扱う**: Playwright `.click()` は mouse simulation を伴うため、hover 系 handler も同時発火することを念頭に置く。toggle 系 trigger をテストする場合は `.dispatchEvent('click')` で hover 非経由にする選択肢もある
+
+### 影響範囲 (修正前の dead 化スコープ)
+
+primary (truncate clip で完全不可視) — 9 画面:
+- `/memos` `/knowledge` `/all-memos` `/retrospectives` `/risks` `/projects` `/projects/[id]/risks` `/projects/[id]/stakeholders` `/my-tasks`
+
+secondary (truncate 解消後も table-container `overflow-auto` で右端カラム部分クリップの懸念) — 4 画面:
+- `/customers` `/admin/users` `/admin/audit-logs` `/admin/role-changes`
+
+Portal 化により **13 画面すべてが同時救済** される (truncate / table-container 双方の overflow から独立)。
+
+### 関連
+
+- 関連 PR: PR fix/sortable-header-dropdown-portal (本事例 / 2026-05-24)
+- 関連 KDD: §5.58 (誤前提を含む元 PR の記述を本セクションで訂正)、§5.X+114 (sticky header z-40 の積層仕様 — 本件 z-50 はこれを上回るため一貫性確認済)
+- 関連 feedback: [[feedback-e2e-coverage-gate]] (UI 系の新規実装は E2E ガード必須の方針)、[[feedback-test-rule]] (実装時に必ずテスト作成、本件は test 不足で 3 週間気付けなかった)
+- 関連 doc: 本 §5.X+119 を以後の dropdown / tooltip / popover 系 UI の標準参照点 (Portal 化 + 必須サブ機能 6 点 + E2E visibility assert)

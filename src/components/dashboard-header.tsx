@@ -481,7 +481,10 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
   return (
     // PR #425 (2026-05-22) KDD §5.X+112: 長いページでもヘッダ (全ナレッジ/全メモ等) に
     //   常にアクセスできるよう sticky top-0 + z-40 で固定。
-    //   - z-40: AccountMenu 内 dropdown (z-50) 配下、SortableHeader dropdown (z-30) より前面。
+    //   - z-40: AccountMenu 内 dropdown (z-50) 配下。SortableHeader dropdown は元々 z-30
+    //     だったが PR fix/sortable-header-dropdown-portal (2026-05-24) で Portal 化 + z-50
+    //     に変更 (KDD §5.X+119)。本ヘッダ (z-40) よりは前面、AccountMenu dropdown (z-50) と
+    //     同層で last-rendered-wins の規則で重なる。
     //   - 親 (DashboardLayout) は overflow を設定していないので sticky が効く。
     <header className="sticky top-0 z-40 border-b bg-card">
       <div className="flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8">

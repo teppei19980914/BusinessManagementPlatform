@@ -50,7 +50,7 @@
 - [ ] `/projects/[projectId]/retrospectives` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
 - [ ] `/projects/[projectId]/knowledge` — skip: CRUD 詳細は後続 PR (タブ表示は PR #93 で render smoke 済)
 - [ ] `/projects/[projectId]/stakeholders` — skip: feat/stakeholder-management で新設、CRUD 詳細 + PM/TL 限定タブ表示の E2E は後続 PR (タブ自体は project-detail-client 内でレンダリング、独立 page.tsx は持たない)
-- [x] `/risks` (全リスク) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
+- [x] `/risks` (全リスク) — e2e/specs/03-global-entity-lists.spec.ts (PR #93) + e2e/specs/16-column-sort.spec.ts (PR fix/sortable-header-dropdown-portal / 2026-05-24 / SortableResizableHead パターンの sort dropdown 可視性)
 - [x] `/issues` (全課題) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
 - [x] `/retrospectives` (全振り返り) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
 - [x] `/knowledge` (全ナレッジ) — e2e/specs/03-global-entity-lists.spec.ts (PR #93)
@@ -66,7 +66,7 @@
 - [x] `/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 招待)
 - [ ] `/admin/audit-logs` — skip: 監査ログ閲覧、read-only で優先度低
 - [ ] `/admin/role-changes` — skip: 権限変更履歴、read-only で優先度低
-- [x] `/customers` — e2e/specs/09-customers.spec.ts (PR #111-2 / admin 専用画面の新規登録 + 一覧削除)。視覚回帰は並列テストで tbody 行数が変動するため対象外 (LESSONS §4.15 / §4.31 / settings-themes でテーマ回帰はカバー)
+- [x] `/customers` — e2e/specs/09-customers.spec.ts (PR #111-2 / admin 専用画面の新規登録 + 一覧削除) + e2e/specs/16-column-sort.spec.ts (PR fix/sortable-header-dropdown-portal / 2026-05-24 / plain TableHead パターンの sort dropdown 可視性 + body Portal 検証)。視覚回帰は並列テストで tbody 行数が変動するため対象外 (LESSONS §4.15 / §4.31 / settings-themes でテーマ回帰はカバー)
 - [x] `/customers/[customerId]` — e2e/specs/09-customers.spec.ts (PR #111-2 / 詳細画面編集 + active Project 紐付きカスケード削除) + e2e/visual/customers-screens.spec.ts (PR #111-2 / light テーマ詳細、単独スコープで決定化)
 - [ ] `/settings/tenant` — skip: PR-X4 (テナント管理者プラン変更 UI、admin 限定)。CRUD 単体テストは src/services/tenant-self.service.test.ts で対応 (E2E は V1.x 多テナント対応時に追加検討)
 
