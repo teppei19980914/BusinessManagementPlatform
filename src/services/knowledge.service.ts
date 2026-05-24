@@ -32,7 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { CreateKnowledgeInput } from '@/lib/validators/knowledge';
 
@@ -638,14 +638,18 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
   skippedNotFound: number;
   /** 2026-05-11: 「全メンバー」公開を試みた行のうち、タイトル空のためスキップした件数 */
   skippedEmptyTitle: number;
+  /** 2026-05-24: draft→public 遷移で batch 生成した embedding 件数 */
+  embeddingsGenerated: number;
 }> {
   if (ids.length === 0) {
-    return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0 };
+    return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0, embeddingsGenerated: 0 };
   }
 
   // PR #165: project-scoped。当該プロジェクトに紐付くナレッジのみ対象 (多対多 中間テーブル経由)
   // 2026-05-09 feedback Phase 2-4: 越境一括更新を遮断するため tenantId フィルタを併記。
   // 2026-05-11: title を取得して、'public' 化時に空タイトルをスキップ判定に使う。
+  // PR feat/project-list-section-unification (2026-05-24, embedding 追補):
+  //   draft→public 遷移行のみ embedding 対象になるため、visibility + text フィールドも select。
   const targets = await prisma.knowledge.findMany({
     where: {
       id: { in: ids },
@@ -653,7 +657,17 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
       tenantId: viewerTenantId,
       knowledgeProjects: { some: { projectId } },
     },
-    select: { id: true, createdBy: true, title: true },
+    select: {
+      id: true,
+      createdBy: true,
+      title: true,
+      visibility: true,
+      background: true,
+      content: true,
+      result: true,
+      conclusion: true,
+      recommendation: true,
+    },
   });
   const skippedNotFound = ids.length - targets.length;
   const owned = targets.filter((t) => t.createdBy === viewerUserId);
@@ -672,7 +686,7 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
   const ownedIds = eligible.map((t) => t.id);
 
   if (ownedIds.length === 0) {
-    return { updatedIds: [], skippedNotOwned, skippedNotFound, skippedEmptyTitle };
+    return { updatedIds: [], skippedNotOwned, skippedNotFound, skippedEmptyTitle, embeddingsGenerated: 0 };
   }
 
   // updateMany は relation connect 構文を受け付けないため scalar `updatedBy` を直接セットする
@@ -683,5 +697,36 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
     data: { visibility, updatedBy: viewerUserId },
   });
 
-  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, skippedEmptyTitle };
+  // PR feat/project-list-section-unification (2026-05-24): 一括 visibility 変更に伴う embedding
+  //   再生成 (コスト最適化版)。単発 updateKnowledge と整合する判定マトリクス:
+  //     - visibility='draft' (公開取り下げ)        → 生成しない (提案エンジン対象外)
+  //     - visibility='public' へ昇格 + 旧 draft   → batch で 1 ApiCallLog 集約して生成
+  //     - public→public はそもそも text 変更なし → 生成しない (LLM 課金回避)
+  let embeddingsGenerated = 0;
+  if (visibility === 'public') {
+    const eligibleForEmbedding = eligible.filter((t) => t.visibility === 'draft');
+    if (eligibleForEmbedding.length > 0) {
+      const items = eligibleForEmbedding.map((t) => ({
+        table: 'knowledges' as const,
+        rowId: t.id,
+        text: composeKnowledgeText({
+          title: t.title,
+          background: t.background,
+          content: t.content,
+          result: t.result,
+          conclusion: t.conclusion,
+          recommendation: t.recommendation,
+        }),
+      }));
+      const res = await generateAndPersistBatchEmbeddings({
+        items,
+        tenantId: viewerTenantId,
+        userId: viewerUserId,
+        featureUnit: 'knowledge-embedding',
+      });
+      embeddingsGenerated = res.generated;
+    }
+  }
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, skippedEmptyTitle, embeddingsGenerated };
 }

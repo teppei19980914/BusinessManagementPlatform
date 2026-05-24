@@ -32,7 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 // Prisma types used for Decimal handling in toRiskDTO
 import type { CreateRiskInput } from '@/lib/validators/risk';
 import type { Priority } from '@/types';
@@ -714,9 +714,12 @@ export async function bulkUpdateRisksVisibilityFromList(
   visibility: 'draft' | 'public',
   viewerUserId: string,
   viewerTenantId: string,
-): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
-  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number; embeddingsGenerated: number }> {
+  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, embeddingsGenerated: 0 };
 
+  // PR feat/project-list-section-unification (2026-05-24, embedding 追補):
+  //   draft→public 遷移 + state='resolved' の行のみ embedding 対象になるため、
+  //   text フィールド + visibility + state を select に含める。
   const targets = await prisma.riskIssue.findMany({
     where: {
       id: { in: ids },
@@ -724,14 +727,25 @@ export async function bulkUpdateRisksVisibilityFromList(
       tenantId: viewerTenantId,
       riskIssueProjects: { some: { projectId } },
     },
-    select: { id: true, reporterId: true },
+    select: {
+      id: true,
+      reporterId: true,
+      visibility: true,
+      state: true,
+      title: true,
+      content: true,
+      cause: true,
+      responsePolicy: true,
+      responseDetail: true,
+    },
   });
   const skippedNotFound = ids.length - targets.length;
-  const ownedIds = targets.filter((t) => t.reporterId === viewerUserId).map((t) => t.id);
-  const skippedNotOwned = targets.length - ownedIds.length;
+  const owned = targets.filter((t) => t.reporterId === viewerUserId);
+  const skippedNotOwned = targets.length - owned.length;
+  const ownedIds = owned.map((t) => t.id);
 
   if (ownedIds.length === 0) {
-    return { updatedIds: [], skippedNotOwned, skippedNotFound };
+    return { updatedIds: [], skippedNotOwned, skippedNotFound, embeddingsGenerated: 0 };
   }
 
   await prisma.riskIssue.updateMany({
@@ -739,7 +753,42 @@ export async function bulkUpdateRisksVisibilityFromList(
     data: { visibility, updatedBy: viewerUserId },
   });
 
-  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
+  // PR feat/project-list-section-unification (2026-05-24): 一括 visibility 変更に伴う embedding
+  //   再生成 (コスト最適化版)。単発 updateRisk と整合する判定マトリクス:
+  //     - visibility='draft' (公開取り下げ)  → 生成しない (提案エンジン対象外)
+  //     - visibility='public' へ昇格
+  //         AND wasDraft (= draft→public 遷移)
+  //         AND state='resolved' (RiskIssue は public + resolved のみ提案候補)
+  //       → 対象行を batch で 1 ApiCallLog 集約して生成 (feedback_bulk_llm_call_unit 準拠)
+  //   public→public のままや draft 維持時は API 呼出ゼロ (= Voyage 課金回避)。
+  let embeddingsGenerated = 0;
+  if (visibility === 'public') {
+    const eligibleForEmbedding = owned.filter(
+      (t) => t.visibility === 'draft' && t.state === 'resolved',
+    );
+    if (eligibleForEmbedding.length > 0) {
+      const items = eligibleForEmbedding.map((t) => ({
+        table: 'risks_issues' as const,
+        rowId: t.id,
+        text: composeRiskText({
+          title: t.title,
+          content: t.content,
+          cause: t.cause,
+          responsePolicy: t.responsePolicy,
+          responseDetail: t.responseDetail,
+        }),
+      }));
+      const res = await generateAndPersistBatchEmbeddings({
+        items,
+        tenantId: viewerTenantId,
+        userId: viewerUserId,
+        featureUnit: 'risk-issue-embedding',
+      });
+      embeddingsGenerated = res.generated;
+    }
+  }
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, embeddingsGenerated };
 }
 
 /**

@@ -31,6 +31,7 @@ vi.mock('@/lib/db', () => ({
 // PR #5-c (T-03 Phase 2): createRisk / updateRisk から呼ばれる embedding helper をモック
 vi.mock('./embedding.service', () => ({
   generateAndPersistEntityEmbedding: vi.fn().mockResolvedValue(undefined),
+  generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
 import {
@@ -47,7 +48,7 @@ import {
   type RiskDTO,
 } from './risk.service';
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -777,7 +778,7 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
   it('ids が空配列なら updateMany を呼ばずに 0 件で返す', async () => {
     const r = await bulkUpdateRisksVisibilityFromList('p-1', [], 'public', 'u-1', TEST_TENANT_ID);
-    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
+    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, embeddingsGenerated: 0 });
     expect(prisma.riskIssue.updateMany).not.toHaveBeenCalled();
   });
 
@@ -848,6 +849,66 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
     expect(r.updatedIds).toEqual([]);
     expect(r.skippedNotOwned).toBe(1);
     expect(prisma.riskIssue.updateMany).not.toHaveBeenCalled();
+  });
+
+  // UI_PATTERNS §35 (2026-05-24): bulk visibility 経路の embedding コスト最適化テスト。
+  // 単発 updateRisk の判定マトリクスと整合: draft→public + state='resolved' のみ embedding 対象。
+  describe('embedding 生成 (コスト最適化)', () => {
+    it('visibility=draft への変更は embedding を生成しない (Voyage 課金回避)', async () => {
+      vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+        { id: 'r-1', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't', content: 'c', cause: null, responsePolicy: null, responseDetail: null },
+      ] as never);
+      vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateRisksVisibilityFromList('p-1', ['r-1'], 'draft', 'u-1', TEST_TENANT_ID);
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('public→public のままなら embedding を生成しない (text 変更なしのため)', async () => {
+      vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+        { id: 'r-1', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't', content: 'c', cause: null, responsePolicy: null, responseDetail: null },
+      ] as never);
+      vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateRisksVisibilityFromList('p-1', ['r-1'], 'public', 'u-1', TEST_TENANT_ID);
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('draft→public でも state≠resolved なら embedding を生成しない (提案エンジン対象外)', async () => {
+      vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+        { id: 'r-1', reporterId: 'u-1', visibility: 'draft', state: 'open', title: 't', content: 'c', cause: null, responsePolicy: null, responseDetail: null },
+      ] as never);
+      vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateRisksVisibilityFromList('p-1', ['r-1'], 'public', 'u-1', TEST_TENANT_ID);
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('draft→public 遷移 + state=resolved の行のみ batch で 1 ApiCallLog 集約', async () => {
+      vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+        { id: 'r-1', reporterId: 'u-1', visibility: 'draft', state: 'resolved', title: 't1', content: 'c1', cause: null, responsePolicy: null, responseDetail: null },
+        { id: 'r-2', reporterId: 'u-1', visibility: 'draft', state: 'resolved', title: 't2', content: 'c2', cause: null, responsePolicy: null, responseDetail: null },
+        // 既に public な行は除外される (text 変更なしのため)
+        { id: 'r-3', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't3', content: 'c3', cause: null, responsePolicy: null, responseDetail: null },
+        // state≠resolved も除外される (提案エンジン対象外)
+        { id: 'r-4', reporterId: 'u-1', visibility: 'draft', state: 'in_progress', title: 't4', content: 'c4', cause: null, responsePolicy: null, responseDetail: null },
+      ] as never);
+      vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 4 } as never);
+      vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValue({ generated: 2, failed: 0, costJpy: 1 });
+
+      const r = await bulkUpdateRisksVisibilityFromList('p-1', ['r-1', 'r-2', 'r-3', 'r-4'], 'public', 'u-1', TEST_TENANT_ID);
+
+      expect(r.embeddingsGenerated).toBe(2);
+      expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1); // 1 ApiCallLog 集約
+      const args = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      expect(args.items).toHaveLength(2);
+      expect(args.items.map((i) => i.rowId)).toEqual(['r-1', 'r-2']);
+      expect(args.featureUnit).toBe('risk-issue-embedding');
+      expect(args.tenantId).toBe(TEST_TENANT_ID);
+    });
   });
 });
 

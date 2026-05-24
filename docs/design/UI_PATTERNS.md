@@ -1375,6 +1375,33 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
 - visibility (draft / public) の切替が最頻ユースケース (公開タイミング制御)
 - state / assignee / deadline の一括変更は per-row dialog で明示的に行うほうが事故が少ない
 
+#### 35.4.1 一括 visibility 変更時の embedding 再生成 (コスト最適化)
+
+4 つの bulk visibility サービス
+(`bulkUpdateRisksVisibilityFromList` / `bulkUpdateKnowledgeVisibilityFromList` /
+ `bulkUpdateRetrospectivesVisibilityFromList` / `bulkUpdateMemosVisibilityFromList`) は、
+**単発 update の `generateAndPersistEntityEmbedding` パターンと整合する判定マトリクス** を適用し、
+**遷移行のみ batch 集約で 1 ApiCallLog に embedding 生成** する。
+
+**判定マトリクス** (単発 update と同条件):
+
+| 旧 visibility | 新 visibility | embedding 生成 | 理由 |
+|---|---|---|---|
+| draft (private) | draft (private) | しない | 提案エンジン対象外、API 課金回避 |
+| public | draft (private) | しない | 公開取り下げ、既存 embedding は保持 |
+| public | public | しない | text 変更なし (bulk は visibility のみ更新) |
+| **draft (private)** | **public** | **生成 (batch)** | 初回公開化、提案エンジン対象に新規追加 |
+
+**Risk のみ追加条件**: `state='resolved'` 必須 (提案エンジンが `public + resolved` で候補化するため)。
+
+**コスト最適化の実装**:
+- `generateAndPersistBatchEmbeddings` を 1 度だけ呼び出し、Voyage embedding API を batch 集約
+- ApiCallLog は **1 業務操作 = 1 record** ([feedback_bulk_llm_call_unit](memory/feedback_bulk_llm_call_unit.md) 準拠)
+- 遷移行ゼロ件なら API 呼出ゼロ (テナント間の課金ノイズ防止)
+
+**返り値拡張**:
+全 4 サービスの戻り値に `embeddingsGenerated: number` フィールドを追加。
+
 ### 35.5 testid 命名規約
 
 - `project-risks-search-input` (RisksClient typeFilter='risk' 時)

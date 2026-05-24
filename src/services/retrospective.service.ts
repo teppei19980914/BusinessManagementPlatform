@@ -32,7 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { CreateRetrospectiveInput } from '@/lib/validators/retrospective';
 
 export type RetroDTO = {
@@ -562,12 +562,14 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
   visibility: 'draft' | 'public',
   viewerUserId: string,
   viewerTenantId: string,
-): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
-  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number; embeddingsGenerated: number }> {
+  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, embeddingsGenerated: 0 };
 
   // PR #165: where に projectId 追加 (他プロジェクトの行が ids に混ざってもサーバ側で除外)
   // PR feat/asset-multi-project-linking: scope は M:N (retrospectiveProjects) 経由で判定する。
   // 2026-05-09 feedback Phase 2-4: 越境一括更新を遮断するため tenantId 併記。
+  // PR feat/project-list-section-unification (2026-05-24, embedding 追補):
+  //   draft→public 遷移行のみ embedding 対象になるため、visibility + text フィールドも select。
   const targets = await prisma.retrospective.findMany({
     where: {
       id: { in: ids },
@@ -575,14 +577,25 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
       tenantId: viewerTenantId,
       retrospectiveProjects: { some: { projectId } },
     },
-    select: { id: true, createdBy: true },
+    select: {
+      id: true,
+      createdBy: true,
+      visibility: true,
+      planSummary: true,
+      actualSummary: true,
+      goodPoints: true,
+      problems: true,
+      improvements: true,
+      knowledgeToShare: true,
+    },
   });
   const skippedNotFound = ids.length - targets.length;
-  const ownedIds = targets.filter((t) => t.createdBy === viewerUserId).map((t) => t.id);
-  const skippedNotOwned = targets.length - ownedIds.length;
+  const owned = targets.filter((t) => t.createdBy === viewerUserId);
+  const skippedNotOwned = targets.length - owned.length;
+  const ownedIds = owned.map((t) => t.id);
 
   if (ownedIds.length === 0) {
-    return { updatedIds: [], skippedNotOwned, skippedNotFound };
+    return { updatedIds: [], skippedNotOwned, skippedNotFound, embeddingsGenerated: 0 };
   }
 
   await prisma.retrospective.updateMany({
@@ -591,7 +604,38 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
     data: { visibility, updatedBy: viewerUserId },
   });
 
-  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
+  // PR feat/project-list-section-unification (2026-05-24): 一括 visibility 変更に伴う embedding
+  //   再生成 (コスト最適化版)。単発 updateRetrospective と整合する判定マトリクス:
+  //     - visibility='draft' (公開取り下げ)        → 生成しない (提案エンジン対象外)
+  //     - visibility='public' へ昇格 + 旧 draft   → batch で 1 ApiCallLog 集約して生成
+  //     - public→public はそもそも text 変更なし → 生成しない (LLM 課金回避)
+  let embeddingsGenerated = 0;
+  if (visibility === 'public') {
+    const eligibleForEmbedding = owned.filter((t) => t.visibility === 'draft');
+    if (eligibleForEmbedding.length > 0) {
+      const items = eligibleForEmbedding.map((t) => ({
+        table: 'retrospectives' as const,
+        rowId: t.id,
+        text: composeRetrospectiveText({
+          planSummary: t.planSummary,
+          actualSummary: t.actualSummary,
+          goodPoints: t.goodPoints,
+          problems: t.problems,
+          improvements: t.improvements,
+          knowledgeToShare: t.knowledgeToShare,
+        }),
+      }));
+      const res = await generateAndPersistBatchEmbeddings({
+        items,
+        tenantId: viewerTenantId,
+        userId: viewerUserId,
+        featureUnit: 'retrospective-embedding',
+      });
+      embeddingsGenerated = res.generated;
+    }
+  }
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, embeddingsGenerated };
 }
 
 /**
