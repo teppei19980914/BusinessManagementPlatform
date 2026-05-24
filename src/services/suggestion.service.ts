@@ -189,11 +189,15 @@ async function loadProjectContext(
 
   // PR G (#24): プロジェクトの所属テナントの seedDataEnabled を取得。
   //   この値で管理テナントのシードを提案候補に含めるかを判定する。
+  // PR fix/chat-search-and-auto-open (2026-05-24): tenant lookup が null を返す異常系では
+  //   fail-closed 方針で `?? false` に倒す。旧 `?? true` は MANAGEMENT_TENANT_ID のシード
+  //   漏洩リスクをはらむフェイルオープン。正常系では tenant は常に存在するため UX 影響なし
+  //   (提案候補が一時的に減るのみ)。
   const tenant = await prisma.tenant.findUnique({
     where: { id: p.tenantId },
     select: { seedDataEnabled: true },
   });
-  const seedDataEnabled = tenant?.seedDataEnabled ?? true;
+  const seedDataEnabled = tenant?.seedDataEnabled ?? false;
   const tags = unifyProjectTags({
     businessDomainTags: (p.businessDomainTags as string[]) ?? [],
     techStackTags: (p.techStackTags as string[]) ?? [],

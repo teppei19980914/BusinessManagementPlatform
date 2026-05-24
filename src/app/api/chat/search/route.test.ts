@@ -24,6 +24,7 @@ import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';
 import { chatSemanticSearch } from '@/services/chat-search.service';
 import { recordError } from '@/services/error-log.service';
+import { _resetRateLimitBucketsForTest } from '@/lib/rate-limit';
 
 const mockedGetAuth = vi.mocked(getAuthenticatedUser);
 const mockedTenantFind = vi.mocked(prisma.tenant.findUnique);
@@ -47,6 +48,9 @@ function postReq(body: unknown): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // route が applyRateLimit を呼ぶため、テスト間で bucket を必ずクリアする。
+  // 共有しないと前テストで消費したカウンタが次テストで 429 を誘発する。
+  _resetRateLimitBucketsForTest();
   mockedGetAuth.mockResolvedValue(VALID_USER);
   mockedTenantFind.mockResolvedValue({ seedDataEnabled: true } as never);
   mockedChatSearch.mockResolvedValue({
@@ -144,12 +148,15 @@ describe('POST /api/chat/search — 正常系', () => {
     );
   });
 
-  it('Tenant が見つからない場合は seedDataEnabled=true 扱い (既存提案機能と整合)', async () => {
+  it('Tenant が見つからない場合は seedDataEnabled=false 扱い (fail-closed: PR fix/chat-search-and-auto-open)', async () => {
+    // 旧仕様: `?? true` で fail-open (管理テナント MANAGEMENT_TENANT_ID のシード漏洩リスク)
+    // 新仕様: `?? false` で fail-closed (異常系では「シード参照しない」=より厳しい側に倒す)
+    // 正常系では tenant は常に存在するため UX 影響なし
     mockedTenantFind.mockResolvedValueOnce(null);
     await POST(postReq({ query: 'q' }));
 
     expect(mockedChatSearch).toHaveBeenCalledWith(
-      expect.objectContaining({ viewerSeedDataEnabled: true }),
+      expect.objectContaining({ viewerSeedDataEnabled: false }),
     );
   });
 
@@ -195,12 +202,15 @@ describe('POST /api/chat/search — 正常系', () => {
     expect(serialized).not.toContain('client.ts');
 
     // recordError は呼ばれている (server side で詳細は秘匿保存)
+    // PR fix/chat-search-and-auto-open: tenantId は top-level field (RecordErrorInput.tenantId)
+    // に移動。context は kind のみ持つ。
     expect(mockedRecordError).toHaveBeenCalledWith(
       expect.objectContaining({
         severity: 'error',
         source: 'server',
         userId: VALID_USER.id,
-        context: expect.objectContaining({ kind: 'chat_search_unexpected_error', tenantId: VALID_USER.tenantId }),
+        tenantId: VALID_USER.tenantId,
+        context: expect.objectContaining({ kind: 'chat_search_unexpected_error' }),
       }),
     );
 
@@ -234,5 +244,132 @@ describe('POST /api/chat/search — 正常系', () => {
     const body = await res.json();
     expect(body.data.degraded).toBe(true);
     expect(body.data.degradeReason).toBe('rate_limited');
+  });
+});
+
+describe('POST /api/chat/search — IP レート制限 (PR fix/chat-search-and-auto-open)', () => {
+  // 背景: 認証済ユーザが UI gate を迂回して連投すると、縮退モードの pg_trgm 経路は
+  // withMeteredLLM の rate_limited で守られないため DB DoS が成立する。
+  // route 側で applyRateLimit(key: 'chat-search', max: 30, windowMs: 60_000) を適用する。
+
+  // ヘルパ: x-forwarded-for を持たせて bucket を明示分離可能にする
+  function postReqWithIp(body: unknown, ip: string): NextRequest {
+    return new NextRequest('http://localhost/api/chat/search', {
+      method: 'POST',
+      headers: { 'x-forwarded-for': ip },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('同一 IP から 30 リクエストまでは通過、31 回目で 429 を返す', async () => {
+    const ip = '203.0.113.10';
+    for (let i = 0; i < 30; i++) {
+      const res = await POST(postReqWithIp({ query: 'q' }, ip));
+      expect(res.status).toBe(200);
+    }
+    const overflow = await POST(postReqWithIp({ query: 'q' }, ip));
+    expect(overflow.status).toBe(429);
+    const body = await overflow.json();
+    expect(body.error.code).toBe('TOO_MANY_REQUESTS');
+  });
+
+  it('別 IP からのリクエストは独立カウントされる', async () => {
+    const ipA = '203.0.113.20';
+    const ipB = '203.0.113.21';
+    for (let i = 0; i < 30; i++) {
+      await POST(postReqWithIp({ query: 'q' }, ipA));
+    }
+    // ipA は 30/30 で次は 429 だが、ipB は別 bucket なので通る
+    const resB = await POST(postReqWithIp({ query: 'q' }, ipB));
+    expect(resB.status).toBe(200);
+  });
+
+  it('未認証は rate limit を消費しない (認証チェックが先で安価に弾く)', async () => {
+    mockedGetAuth.mockResolvedValue(
+      NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 }),
+    );
+    const ip = '203.0.113.30';
+    // 50 回未認証アクセスしても rate limit に到達せず 401 を返し続ける
+    for (let i = 0; i < 50; i++) {
+      const res = await POST(postReqWithIp({ query: 'q' }, ip));
+      expect(res.status).toBe(401);
+    }
+    // 認証成功した最初のリクエストは通る (rate limit カウンタが消費されていない証拠)
+    mockedGetAuth.mockResolvedValue(VALID_USER);
+    const res = await POST(postReqWithIp({ query: 'q' }, ip));
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('POST /api/chat/search — error sanitize (PR fix/chat-search-and-auto-open)', () => {
+  // 背景: Prisma / Voyage SDK が parameter/payload を error.message に含めるケースで、
+  // ユーザのクエリ文字列 (機微情報の可能性あり) が自社 DB の error_log に保存される懸念。
+  // sanitizeErrorForLog でクエリ verbatim を `[REDACTED_QUERY]` に置換する。
+
+  it('error.message にクエリ文字列が含まれていれば redact してから recordError に渡す', async () => {
+    const userQuery = '社外秘プロジェクト Alpha の進捗状況と課題';  // 10 字以上の機微クエリ
+    mockedChatSearch.mockRejectedValueOnce(
+      new Error(`Prisma query failed with params: { query: "${userQuery}" }`),
+    );
+
+    await POST(postReq({ query: userQuery }));
+
+    const recordCallArg = mockedRecordError.mock.calls[0]?.[0];
+    expect(recordCallArg).toBeDefined();
+    // クエリ verbatim が message に含まれていない
+    expect(recordCallArg?.message).not.toContain(userQuery);
+    // 代わりに [REDACTED_QUERY] が含まれている
+    expect(recordCallArg?.message).toContain('[REDACTED_QUERY]');
+    // エラークラス名は trace 用に残す
+    expect(recordCallArg?.message).toContain('Error:');
+  });
+
+  it('error.stack にクエリ文字列が含まれていれば redact してから recordError に渡す', async () => {
+    const userQuery = '機密情報を含む長いクエリ文字列サンプル';
+    const err = new Error('boom');
+    err.stack = `Error: boom\n    at someFunc (line includes query: ${userQuery})\n    at next (file.ts:1:1)`;
+    mockedChatSearch.mockRejectedValueOnce(err);
+
+    await POST(postReq({ query: userQuery }));
+
+    const recordCallArg = mockedRecordError.mock.calls[0]?.[0];
+    expect(recordCallArg?.stack).toBeDefined();
+    expect(recordCallArg?.stack).not.toContain(userQuery);
+    expect(recordCallArg?.stack).toContain('[REDACTED_QUERY]');
+  });
+
+  it('短いクエリ (10 字未満) は false positive 回避のため redact しない', async () => {
+    // 'abc' のような短い文字列を redact 対象にすると、message 内の普通の単語まで
+    // 巻き添えで置換される false positive が起きる。defense-in-depth として 10 字未満は除外。
+    const shortQuery = 'abc';
+    mockedChatSearch.mockRejectedValueOnce(new Error(`error contains abc somewhere`));
+
+    await POST(postReq({ query: shortQuery }));
+
+    const recordCallArg = mockedRecordError.mock.calls[0]?.[0];
+    expect(recordCallArg?.message).toContain('abc');
+    expect(recordCallArg?.message).not.toContain('[REDACTED_QUERY]');
+  });
+
+  it('error.message が異常に長くても上限カット (DB / レビューア負荷防止)', async () => {
+    const huge = 'X'.repeat(10000);
+    mockedChatSearch.mockRejectedValueOnce(new Error(huge));
+
+    await POST(postReq({ query: 'q' }));
+
+    const recordCallArg = mockedRecordError.mock.calls[0]?.[0];
+    // sanitize 上限 500 字 + 'Error: ' プレフィックスなので 600 字未満で収まる
+    expect(recordCallArg?.message.length).toBeLessThan(600);
+  });
+
+  it('recordError の context.tenantId と top-level tenantId 両方に user.tenantId が入る', async () => {
+    // tenantId は context (旧仕様) と top-level (新仕様) 両方に渡す。
+    // 旧 system_error_logs の集計クエリと、新しい tenantId 別フィルタの両方を壊さない。
+    mockedChatSearch.mockRejectedValueOnce(new Error('boom'));
+
+    await POST(postReq({ query: 'q' }));
+
+    const recordCallArg = mockedRecordError.mock.calls[0]?.[0];
+    expect(recordCallArg?.tenantId).toBe(VALID_USER.tenantId);
   });
 });

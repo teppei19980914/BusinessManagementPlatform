@@ -156,6 +156,35 @@ describe('suggestForProject', () => {
     });
   });
 
+  // 2026-05-24 (PR fix/chat-search-and-auto-open): tenant lookup が null を返す異常系で
+  // fail-closed = 自テナントのみで動作。旧仕様の `?? true` は MANAGEMENT_TENANT_ID のシード
+  // を漏洩させうるフェイルオープンだったため修正。
+  it('tenant lookup が null のとき seedDataEnabled=false 扱いで自テナントのみに絞る (fail-closed)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      id: 'p-1',
+      tenantId: 'tenant-customer',
+      purpose: 'p',
+      background: 'b',
+      scope: 's',
+      businessDomainTags: [],
+      techStackTags: [],
+      processTags: [],
+    } as never);
+    // tenant 自体が見つからない (削除中 race / DB 異常等)
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
+
+    await suggestForProject('p-1', 'tenant-customer');
+
+    // 旧仕様なら `{ in: ['tenant-customer', MANAGEMENT_TENANT_ID] }` だが、
+    // fail-closed では自テナントのみ
+    const knowledgeCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    expect(knowledgeCall?.where?.tenantId).toBe('tenant-customer');
+  });
+
   // 2026-05-09 (PR D / #21): 過去リスクが提案結果に含まれる
   it('過去 Risk を提案結果に含める (#21)', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({

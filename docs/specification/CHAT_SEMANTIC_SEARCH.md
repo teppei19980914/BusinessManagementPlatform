@@ -198,13 +198,30 @@ V1 では構造的に該当しないが、Level 2 で LLM 生成を入れる場�
 
 ## 6. レート制限 (確定)
 
-既存 `LLM_RATE_LIMIT` ([src/config/llm.ts](../../src/config/llm.ts)) をそのまま流用:
+複数層で防御する:
 
-| 制限 | 値 | 目的 |
-|---|---|---|
-| ユーザ単位・分次 | **1 分 10 回** | Voyage 側 429 / 連鎖障害防止 |
-| ユーザ単位・時間次 | **1 時間 60 回** | 1 セッション集中検索の上限 |
-| Beginner プラン | **月 100 回 (書込と共有)** | Voyage 無料枠 DoS 防御 + 自己制御 |
+| 層 | 制限 | 適用箇所 | 目的 |
+|---|---|---|---|
+| **API route (IP 単位)** | **1 分 30 リクエスト / IP** | `applyRateLimit(key: 'chat-search')` (route.ts 冒頭、認証直後) | **pg_trgm fallback の DB DoS 防御** (PR fix/chat-search-and-auto-open / 2026-05-24)。`withMeteredLLM` の rate_limited は LLM 経路にのみ作用し、縮退モードで pg_trgm が無防備になる弱点を route 側で塞ぐ |
+| ユーザ単位・分次 | **1 分 10 回** | `LLM_RATE_LIMIT` ([src/config/llm.ts](../../src/config/llm.ts)) | Voyage 側 429 / 連鎖障害防止 |
+| ユーザ単位・時間次 | **1 時間 60 回** | 同上 | 1 セッション集中検索の上限 |
+| Beginner プラン | **月 100 回 (書込と共有)** | 同上 | Voyage 無料枠 DoS 防御 + 自己制御 |
+
+### 6.1 fail-closed 方針 (シードデータ参照)
+
+`viewerSeedDataEnabled` の決定は `tenant?.seedDataEnabled ?? false` (PR fix/chat-search-and-auto-open / 2026-05-24)。
+旧仕様 `?? true` は tenant lookup が null を返す異常系 (削除中 race / DB 異常) で
+`MANAGEMENT_TENANT_ID` のシードデータを意図せず露出させうるフェイルオープンだった。
+正常系では tenant は常に存在するため UX 影響なし (シード参照が一時的に止まるのみ)。
+同方針を `src/services/suggestion.service.ts` (既存提案エンジン) にも適用済。
+
+### 6.2 error_log への redact
+
+`recordError` への `message` / `stack` には、ユーザ query 文字列が含まれていれば
+`[REDACTED_QUERY]` トークンに置換してから渡す ([sanitizeErrorForLog](../../src/app/api/chat/search/route.ts))。
+Prisma / Voyage SDK が parameter / payload をエラーメッセージに含める場合に、
+機微情報の可能性があるクエリ文字列が自社 DB の error_log に保存される事故を防ぐ。
+10 字未満のクエリは false positive 回避のため redact 対象外 (defense-in-depth)。
 
 ---
 
