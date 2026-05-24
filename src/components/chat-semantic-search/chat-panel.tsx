@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import {
   CHAT_SEARCH_INPUT_MAX_CHARS,
@@ -42,6 +43,9 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [weakExpanded, setWeakExpanded] = useState(false);
+  // memo の hit が「自分のメモ」か「他人 public」かで遷移先を分けるための viewerUserId。
+  // session 未取得の間は undefined → 安全側で /all-memos に倒れる (chat-search-link.ts)。
+  const viewerUserId = useSession().data?.user?.id;
 
   const showWarning = query.length > 0 && query.length < CHAT_SEARCH_INPUT_WARN_THRESHOLD;
   const tooLong = query.length > CHAT_SEARCH_INPUT_MAX_CHARS;
@@ -138,7 +142,12 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         )}
 
         {result && !error && (
-          <ChatResults result={result} weakExpanded={weakExpanded} onToggleWeak={() => setWeakExpanded((v) => !v)} />
+          <ChatResults
+            result={result}
+            viewerUserId={viewerUserId}
+            weakExpanded={weakExpanded}
+            onToggleWeak={() => setWeakExpanded((v) => !v)}
+          />
         )}
 
         {!submittedQuery && !error && (
@@ -193,10 +202,12 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
 
 function ChatResults({
   result,
+  viewerUserId,
   weakExpanded,
   onToggleWeak,
 }: {
   result: ChatSearchResult;
+  viewerUserId: string | undefined;
   weakExpanded: boolean;
   onToggleWeak: () => void;
 }) {
@@ -234,7 +245,7 @@ function ChatResults({
           </h3>
           <div className="flex flex-col gap-2">
             {strong.map((hit) => (
-              <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} />
+              <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} viewerUserId={viewerUserId} />
             ))}
           </div>
         </section>
@@ -247,7 +258,7 @@ function ChatResults({
           </h3>
           <div className="flex flex-col gap-2">
             {medium.map((hit) => (
-              <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} />
+              <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} viewerUserId={viewerUserId} />
             ))}
           </div>
         </section>
@@ -266,7 +277,7 @@ function ChatResults({
           {weakExpanded && (
             <div className="flex flex-col gap-2">
               {weak.map((hit) => (
-                <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} />
+                <ChatSearchResultCard key={`${hit.kind}-${hit.id}`} hit={hit} viewerUserId={viewerUserId} />
               ))}
             </div>
           )}

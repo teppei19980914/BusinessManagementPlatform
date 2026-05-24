@@ -16,7 +16,12 @@
       "PowerShell($cpu = Get-WmiObject Win32_Processor; Write-Host \"CPU VirtualizationFirmwareEnabled: $\\($cpu.VirtualizationFirmwareEnabled\\)\"; Write-Host \"CPU SecondLevelAddressTranslationExtensions: $\\($cpu.SecondLevelAddressTranslationExtensions\\)\"; Write-Host \"---\"; $hv = Get-ComputerInfo -Property HyperVisorPresent,WindowsProductName,OsArchitecture; $hv | Format-List; Write-Host \"---\"; wsl --status 2>&1 | Select-Object -First 10)",
       "WebFetch(domain:tasukiba.netlify.app)",
       "WebFetch(domain:open-api.netlify.com)",
-      "WebFetch(domain:www.netlify.com)"
+      "WebFetch(domain:www.netlify.com)",
+      "WebFetch(domain:api.brevo.com)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\" -Directory | ForEach-Object { $_.Name })",
+      "PowerShell(grep -r \"NEXT_PUBLIC_APP_VERSION\\\\|process.env.NEXT_PUBLIC\" \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\" 2>$null)",
+      "PowerShell(head -10)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\" -Name | Where-Object { $_ -match 'auth|public' })"
     ],
     "additionalDirectories": [
       "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\product\\ja",

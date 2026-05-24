@@ -63,6 +63,9 @@ import {
   CrossListBulkVisibilityToolbar,
   type CrossListFilterState,
 } from '@/components/cross-list-bulk-visibility-toolbar';
+// fix/chat-search-result-links: チャット意味検索の結果カードから `/memos?memoId=...` で
+// 自分の memo (private 含む) を auto-open するために追加。同パターンは /all-memos 側にも実装済。
+import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 
 // PR feat/sortable-columns: カラム列キー → 行値の getter。multiSort の比較に使う。
 function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
@@ -155,6 +158,15 @@ export function MemosClient({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)。
   const { sortState, setSortColumn } = useMultiSort('sort:memos');
+
+  // fix/chat-search-result-links: チャット意味検索が「自分のメモ」(public/private 問わず) を
+  // 検索結果に含むため、`/memos?memoId=...` で該当 memo の編集ダイアログを auto-open する。
+  // listMyMemos が viewer 自身のメモのみ返すため、`items: memos` に対する find で常にヒットする。
+  useAutoOpenDialog<MemoDTO>({
+    queryKey: 'memoId',
+    items: memos,
+    onOpen: (m) => setEditing(m),
+  });
 
   const filteredMemos = useMemo(() => {
     let xs: MemoDTO[] = memos;
