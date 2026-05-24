@@ -13737,6 +13737,54 @@ return (
 - [ ] **Portal 化を採用したら必須サブ機能 6 点を漏れなく実装** (上記チェックリスト)。click-outside 判定の修正漏れは「menu 開いた瞬間に閉じる」機能不全になる
 - [ ] **既存コードコメントの「不要」「完結」表現は疑え**: §5.58 の元コメント「テキスト truncation は子の truncate で完結するので不要」が本件の温床。truncate ユーティリティの中身を確認せずに書かれた誤前提
 
+### 追加発覚バグ: hover+click 時の setOpen toggle 競合 (PR #435 CI で検出)
+
+Portal 化と同 PR で **second bug** が発覚。CI 上の Playwright E2E で `/customers` `/risks` の menu 可視テストが timeout fail。
+
+#### 根本原因
+
+`.click()` (Playwright および実ユーザの hover→click 操作) は **mouseenter → click の順** でイベント発火する。旧 click ハンドラ `setOpen((v) => !v)` (toggle) が:
+
+```
+1. mouseenter → handleTriggerEnter → setOpen(true)         → open=true → menu 描画
+2. click      → onClick → setOpen(prev => !prev)
+              → React 19 batched flush で prev=true → !true=false → open=false → menu 即削除
+```
+
+の競合により、menu が描画された瞬間に即削除される。Playwright の `toBeVisible({ timeout: 2_000 })` でも捕捉できない (フレーム単位で消える)。
+
+#### なぜ Portal 化前は気付かれなかったか
+
+- Portal 化前は menu が `overflow:hidden` でクリップされ **そもそも視覚的に見えなかった** ため、「toggle されて閉じている」のか「クリップで見えない」のか判別不能だった
+- 普通の hover-and-pick 操作 (= menuitem を直接クリック) では発生しない (trigger を click しないため)
+- ユーザが「念のため trigger を click」した場合や、Playwright `.click()` で初めて顕在化
+- E2E spec が今回まで存在しなかったため、CI でも検出機会がなかった
+
+#### 修正パターン
+
+**click は「開く専用」に統一** (toggle を廃止)。close は仕様通り 5 経路に集約:
+
+```tsx
+// ❌ 旧 (hover+click で即閉じる)
+onClick={() => setOpen((v) => !v)}
+
+// ✅ 新 (idempotent open、close は他経路)
+onClick={() => setOpen(true)}
+```
+
+close 経路 (JSDoc 仕様):
+1. メニュー外クリック (mousedown listener)
+2. ESC キー (keydown listener)
+3. mouseleave with 200ms delay (trigger / menu 両方)
+4. scroll / resize (capture: true で内部スクロールも)
+5. menuitem 選択時 (handleSelect 内 `setOpen(false)`)
+
+#### 抽出した一般化ルール
+
+- [ ] **hover-then-click を併用する trigger は click を toggle 形式にしない**: `setOpen((v) => !v)` は hover オープン UI と組み合わさると競合する。`setOpen(true)` で「idempotent open」にし、close は明示的な close 経路に統一する
+- [ ] **dropdown の close 経路は明示的に列挙してドキュメント化**: 「click が close も兼ねる」は曖昧。JSDoc に close 経路を列挙し、click はそのうちのいずれかに該当するか明示する
+- [ ] **E2E spec の `.click()` は `mouseenter → click` シーケンスとして扱う**: Playwright `.click()` は mouse simulation を伴うため、hover 系 handler も同時発火することを念頭に置く。toggle 系 trigger をテストする場合は `.dispatchEvent('click')` で hover 非経由にする選択肢もある
+
 ### 影響範囲 (修正前の dead 化スコープ)
 
 primary (truncate clip で完全不可視) — 9 画面:

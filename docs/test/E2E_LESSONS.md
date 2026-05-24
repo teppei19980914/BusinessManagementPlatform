@@ -3653,6 +3653,95 @@ UI が **「state は更新されるが視覚的に隠れる可能性のある�
 
 ---
 
+### 4.58 Playwright `.click()` は mouseenter → click を一連で発火する ─ hover で open する trigger に `setOpen(v=>!v)` toggle を併用すると menu が即閉じる (PR fix/sortable-header-dropdown-portal で遭遇)
+
+#### 症状
+
+PR #435 (SortableHeader Portal 化) で新規追加した e2e/specs/16-column-sort.spec.ts が CI 上で全件 fail:
+
+```
+✘ /customers (plain TableHead パターン) で sortable-header クリック後に menu が visible (3.0s)
+Error: expect(locator).toBeVisible() failed
+Locator: locator('[data-testid="sortable-header-menu"][data-column-key="name"]')
+Expected: visible / Timeout: 2000ms / Error: element(s) not found
+```
+
+ローカル開発時の手動操作 (hover で menu が開き、そのまま menuitem を選ぶ) では全く問題ないため、Portal 化作業中は気付かなかった。CI 初回実行で発覚。
+
+#### 根本原因
+
+Playwright `locator.click()` は内部で `page.mouse` を使うため、以下のシーケンスを自動的に発火する:
+
+```
+mousemove → mouseover → mouseenter → mousedown → mouseup → click
+```
+
+`SortableHeader` は trigger に **両方** の handler を付けていた:
+
+```tsx
+<div onMouseEnter={handleTriggerEnter} ...>
+  <button onClick={() => setOpen((v) => !v)} ...>...</button>
+</div>
+```
+
+実行順:
+
+| 順 | event | handler | state 変化 |
+|---|---|---|---|
+| 1 | mouseenter (div) | handleTriggerEnter | setOpen(true) → open=true → menu 描画 |
+| 2 | click (button) | onClick | setOpen(prev => !prev) → !true=false → open=false → menu 即削除 |
+
+React 19 の batched flush で、event 間 (1→2 の間) に state は flush される。click handler は **最新の state (true)** を読んで `!true=false` で閉じる。結果: menu は描画 → 即削除 (1 frame 未満)。Playwright の `toBeVisible({ timeout: 2_000 })` でも捕捉できない。
+
+#### なぜ単体テストでも気付けなかったか
+
+- 本プロジェクトは vitest `environment: node` で jsdom 非導入、render 系 interaction テスト不可
+- source-pattern test (sortable-header.test.tsx) は「onClick が存在する」までしか検証していなかった
+- 単体テストで唯一可能だったのは「`setOpen((v) => !v)` の文字列マッチ」をアンチパターンとして禁止する static check (今回追加)
+
+#### 修正パターン
+
+**hover で open する trigger は click を「idempotent open」に統一する**。toggle (`setOpen(v => !v)`) は使わない。
+
+```tsx
+// ❌ hover handler と組み合わせると競合
+onClick={() => setOpen((v) => !v)}
+
+// ✅ click は常に open、close は外クリック / ESC / mouseleave / menuitem 選択 / scroll
+onClick={() => setOpen(true)}
+```
+
+#### 検証パターン (E2E)
+
+`.click()` の代わりに hover を経由しない手段で test する選択肢もある:
+
+```ts
+// 案 A (推奨): handler 修正後は普通の .click() でも OK
+await trigger.click();
+await expect(menu).toBeVisible();
+
+// 案 B (hover を意図的に避けたい場合): dispatch event だけ送る
+await trigger.dispatchEvent('click');
+
+// 案 C (タッチ device 想定): tap simulation
+await trigger.tap();
+```
+
+#### 抽出したルール
+
+- [ ] **hover で開く UI を試験するときは Playwright `.click()` が hover を伴うことを意識する**: 関連 handler 群が同時発火する想定で実装する
+- [ ] **trigger の click は toggle にしない**: 特に hover handler も付ける場合、`setOpen((v) => !v)` は競合のもと。`setOpen(true)` で開く専用に統一し、close は明示的な経路に集約
+- [ ] **「ローカルで動くのに CI で fail」は event simulation の差分を疑う**: 手動操作と Playwright simulation は event 順序が同じでも、間に React の commit / flush が挟まる timing が異なるため再現性が変わる
+
+#### 関連
+
+- 関連 PR: PR #435 (本事例 / 2026-05-24)
+- 関連 KDD: [§5.X+119 「追加発覚バグ」セクション](../knowledge/KDD_PATTERNS.md) (CI で発覚した本事例の根本原因解析)
+- 関連 spec: [e2e/specs/16-column-sort.spec.ts](../../e2e/specs/16-column-sort.spec.ts) (`.click()` を使う本テスト群)
+- 関連 test: [src/components/sort/sortable-header.test.tsx](../../src/components/sort/sortable-header.test.tsx) (toggle 形式への退行を防ぐ static invariant 1 件)
+
+---
+
 ## 8. 未解決課題 (将来 PR 候補)
 
 | 項目 | 理由 |

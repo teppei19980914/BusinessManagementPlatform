@@ -113,6 +113,18 @@ describe('SortableHeader Portal 化 invariant', () => {
     expect(source).toMatch(/getBoundingClientRect/);
   });
 
+  it('click ハンドラは「開く専用」(toggle ではない) ─ hover+click 順序競合で menu が即閉じる E2E バグ防止', () => {
+    // 旧実装は `setOpen((v) => !v)` で toggle だったが、Playwright .click() および実ユーザの
+    // hover→click 操作で:
+    //   1. mouseenter → setOpen(true)     (handleTriggerEnter)
+    //   2. click → setOpen(prev => !prev) = setOpen(false)   ← menu 即閉じる
+    // という競合により menu が表示されない UX バグになる。
+    // 修正後は click は常に `setOpen(true)` (= 開く専用)、close は他経路に統一。
+    // 本テストが落ちた場合、誰かが toggle 形式に戻している可能性が高いので即ブロック。
+    expect(source).toMatch(/onClick=\{\(\)\s*=>\s*setOpen\(true\)\}/);
+    expect(source).not.toMatch(/onClick=\{\(\)\s*=>\s*setOpen\(\(v\)\s*=>\s*!v\)\}/);
+  });
+
   it('a11y: trigger button に aria-controls / menu に id を付与し、Portal でも関連付けを明示する', () => {
     // Portal で menu が trigger の DOM 子孫でなくなるため、スクリーンリーダーが「どの
     // 要素が menu か」を静的 DOM から推論できない。aria-controls (open 時のみ) で明示する。

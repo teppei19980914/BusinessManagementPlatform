@@ -8,11 +8,14 @@
  *
  * 仕様 (Q4-1〜Q4-5 + PR #425 UX 改善):
  *   - **マウスオーバー OR クリック** でドロップダウン表示 (= hover で即開く、touch / キーボードは click)
+ *   - **click は「開く専用」、toggle ではない** (旧 PR では setOpen(v=>!v) の toggle だったが、
+ *     hover→click の連続操作で「mouseenter で open=true → click で !true=false」の競合により
+ *     menu が即閉じる UX バグになっていた。close 条件は下記の 4 経路のみに統一)
  *   - メニュー項目: 「↑ 昇順 / ↓ 降順 / × クリア (リセット)」
  *   - 現在のソート状態はカラム内に **矢印 + 優先度番号バッジ** で常時表示 (例: `↑ 1` `↓ 2`)
  *     - 複数列ソート時の優先度を視認可能 (= 番号小 = 先に適用される)
  *   - ドロップダウンは「メニュー外クリック / ESC キー / メニュー領域から離れる (mouseleave with delay) /
- *     scroll / window resize」で閉じる
+ *     scroll / window resize」で閉じる (+ menuitem 選択時に自動 close)
  *
  * 使い方:
  *   <ResizableHead columnKey="title" defaultWidth={240}>
@@ -167,7 +170,11 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
       >
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          // click は「開く専用」: toggle にすると hover で open=true になった直後の click が
+          // !true=false で即閉じる UX バグになる (Playwright .click() でも mouseenter→click の
+          // 順に発火するため E2E が fail する根本原因)。close は外クリック / ESC / mouseleave /
+          // scroll / menuitem 選択の 5 経路に統一されているため、click が close を兼ねる必要はない。
+          onClick={() => setOpen(true)}
           className="inline-flex items-center gap-1 hover:text-info focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded px-0.5"
           aria-haspopup="menu"
           aria-expanded={open}
