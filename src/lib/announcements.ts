@@ -48,10 +48,24 @@ export interface Announcement extends AnnouncementMeta {
 const ANNOUNCEMENTS_DIR = resolve(process.cwd(), 'docs/public/announcements');
 
 /**
- * ファイル名先頭の `YYYY-MM-DD-` を捕捉して slug 部分を抽出。
- * tsconfig.json `target: ES2017` 制約により positional group を使用 ([1]=date, [2]=slug).
+ * ファイル名から slug (= 拡張子を除いた全体) と日付を抽出。
+ *
+ * 例: `2026-06-01-launch.md` → slug=`2026-06-01-launch`, date=`2026-06-01`
+ *
+ * 設計判断:
+ *   - URL は `/announcements/2026-06-01-launch` の形になることを期待 (人間が読んで
+ *     公開日と内容を一目で判別可能なため)。**slug = ファイル名全体 (拡張子除く)** が原則。
+ *   - 日付は frontmatter `publishedAt` が真値だが、書き忘れに備え filename 先頭からも抽出。
+ *
+ * tsconfig.json `target: ES2017` 制約により positional group を使用:
+ *   - match[1] = 全 slug ("2026-06-01-launch")
+ *   - match[2] = 日付部分のみ ("2026-06-01")
+ *
+ * 注意: 旧版 (2026-05-23 初版) は `/^(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\.md$/` で
+ *   match[2] が「日付の後ろ」(= "launch") になり、URL 設計と乖離する重大バグだった (PR #433 E2E fail で発覚)。
+ *   新版は外側 group で全 slug を捕捉する。
  */
-const FILENAME_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\.md$/;
+const FILENAME_PATTERN = /^((\d{4}-\d{2}-\d{2})-[a-z0-9-]+)\.md$/;
 
 /**
  * slug が URL safe な英数 + ハイフンのみであることを明示的に validate する。
@@ -64,6 +78,26 @@ const FILENAME_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\.md$/;
  */
 export function isSafeAnnouncementSlug(s: string): boolean {
   return /^[a-z0-9-]+$/.test(s);
+}
+
+/**
+ * ファイル名 (例: `2026-06-01-launch.md`) から slug と日付を抽出する。
+ * 形式に一致しない / slug が unsafe (`isSafeAnnouncementSlug` 不合格) なら null.
+ *
+ * 切り出した理由:
+ *   - 純関数なので I/O モックなしでテスト可能
+ *   - PR #433 で `match[2]` が「日付の後ろ部分」になる regex バグを起こし
+ *     E2E でしか検出できなかったため、回帰テスト容易化のため独立関数化
+ */
+export function parseAnnouncementFilename(
+  filename: string,
+): { slug: string; date: string } | null {
+  const match = FILENAME_PATTERN.exec(filename);
+  if (!match) return null;
+  const slug = match[1];
+  const date = match[2];
+  if (!isSafeAnnouncementSlug(slug)) return null;
+  return { slug, date };
 }
 
 /**
@@ -119,14 +153,9 @@ export function loadAnnouncements(): Announcement[] {
 
   const announcements: Announcement[] = [];
   for (const filename of entries) {
-    const match = FILENAME_PATTERN.exec(filename);
-    if (!match) continue;
-    const filenameDate = match[1];
-    const filenameSlug = match[2];
-    // CodeQL stored XSS 対策 (boundary validation): regex で捕捉済だが taint 分析が
-    //   capture group の制約を追跡しないため、ここで明示的に sanitizer を通す。
-    //   失敗ケースは FILENAME_PATTERN を通った時点で論理的に発生しないが念のため skip.
-    if (!isSafeAnnouncementSlug(filenameSlug)) continue;
+    const parsed = parseAnnouncementFilename(filename);
+    if (!parsed) continue;
+    const { slug: filenameSlug, date: filenameDate } = parsed;
     const fullPath = join(ANNOUNCEMENTS_DIR, filename);
     // CodeQL TOCTOU 対策: statSync の事前チェックは race condition を生むため
     //   readFileSync を直接呼び、ディレクトリ / 不在 / 権限不足のいずれも try/catch で一括処理する。

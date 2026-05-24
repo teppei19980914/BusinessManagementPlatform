@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isSafeAnnouncementSlug, parseFrontmatter } from './announcements';
+import {
+  isSafeAnnouncementSlug,
+  parseAnnouncementFilename,
+  parseFrontmatter,
+} from './announcements';
 
 /**
  * Announcement frontmatter パーサの単体テスト。
@@ -100,4 +104,56 @@ describe('isSafeAnnouncementSlug', () => {
     expect(isSafeAnnouncementSlug('a\nb')).toBe(false); // 改行
     expect(isSafeAnnouncementSlug('a.b')).toBe(false); // ドット
   });
+});
+
+/**
+ * PR #433 の E2E fail を引き起こした「FILENAME_PATTERN regex で match[2] が
+ * 日付の後ろ部分のみ抜き出してしまい、URL slug 設計と乖離するバグ」の回帰テスト。
+ *
+ * 期待挙動: ファイル名全体 (.md 除く) を slug として返す。
+ *   `2026-06-01-launch.md` → slug=`2026-06-01-launch`, date=`2026-06-01`
+ *
+ * このテストが存在することで、今後 regex を変更した際に
+ * 「ファイル名 = slug」原則が誤って壊れるのを単体テストで catch できる。
+ */
+describe('parseAnnouncementFilename', () => {
+  it('YYYY-MM-DD-{slug}.md の slug は **全体** (例: 2026-06-01-launch)', () => {
+    // ★最重要★ slug は filename 全体から `.md` を除いたもの。
+    // 旧版 (PR #433 初版) は slug='launch' を返す regex バグで E2E が fail した。
+    expect(parseAnnouncementFilename('2026-06-01-launch.md')).toEqual({
+      slug: '2026-06-01-launch',
+      date: '2026-06-01',
+    });
+  });
+
+  it('複数ハイフン区切りの slug 部分も正しく取り込む', () => {
+    expect(parseAnnouncementFilename('2026-12-31-year-end-notice.md')).toEqual({
+      slug: '2026-12-31-year-end-notice',
+      date: '2026-12-31',
+    });
+  });
+
+  it('数字のみの slug 部分も OK (例: 2026-06-01-001)', () => {
+    expect(parseAnnouncementFilename('2026-06-01-001.md')).toEqual({
+      slug: '2026-06-01-001',
+      date: '2026-06-01',
+    });
+  });
+
+  it('形式に合わないファイル名は null', () => {
+    // 日付欠落
+    expect(parseAnnouncementFilename('launch.md')).toBeNull();
+    // 拡張子違い
+    expect(parseAnnouncementFilename('2026-06-01-launch.txt')).toBeNull();
+    // 大文字含む (CodeQL boundary validation が弾く)
+    expect(parseAnnouncementFilename('2026-06-01-Launch.md')).toBeNull();
+    // 全角文字
+    expect(parseAnnouncementFilename('2026-06-01-リリース.md')).toBeNull();
+    // path traversal
+    expect(parseAnnouncementFilename('../etc/passwd')).toBeNull();
+  });
+
+  // 注: 日付の値妥当性 (例: 月が 13) は parseAnnouncementFilename の責務外。
+  //   regex は「YYYY-MM-DD 形式」を見るのみ。実カレンダー上の妥当性は
+  //   別レイヤ (frontmatter の publishedAt validation) で担当。
 });
