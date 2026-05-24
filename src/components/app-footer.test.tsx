@@ -1,20 +1,16 @@
 /**
- * AppFooter のソースパターン回帰テスト (feat/app-version-changelog-footer / 2026-05-23)。
+ * AppFooter のソースパターン回帰テスト
+ * (初版 feat/app-version-changelog-footer / 2026-05-23,
+ *  改 feat/app-header-footer-unification / 2026-05-24).
  *
  * 採用理由:
- *   vitest 設定が `environment: 'node'` で jsdom 非導入のため、React Component の
- *   render 系テストは別途依存追加が必要。本ファッターは Server Component (`async` +
- *   `getTranslations`) で、コミットメッセージや translation 注入を伴わずに render 検証
- *   するハードルが高い。同等の方針で `dashboard-header.test.tsx` が source-pattern で
- *   sticky invariant を担保している (KDD §5.X+114) 先例があるため、本ファイルもそれに
- *   倣う。
+ *   vitest 設定が environment='node' で jsdom 非導入。同等方針で他 component test も
+ *   source-pattern 検証している (KDD §5.X+114)。
  *
- * カバーする invariant:
- *   - <footer> タグが存在する (semantic HTML)
- *   - `mt-auto` クラスが付与されている (root layout の flex-col で最下段に押し下げる仕組み)
- *   - 内部リンク (/settings/about, /changelog, /announcements) が含まれる
- *   - 外部リンク (TERMS_URL, PRIVACY_URL, CONTACT_FORM_URL) が rel="noopener noreferrer" 付きで含まれる
- *   - バージョン表示ヘルパ formatVersionLabel と運営者定数 OPERATOR_NAME を参照している
+ * 2026-05-24 リライト方針:
+ *   コンテンツ削減でリンク群と表示要素が大幅に変わったため、旧テストの「外部リンクは
+ *   _blank + rel noopener」「version helper を参照」等は意味を失った。新仕様の
+ *   invariant に書き換え、「画面圧迫を防ぐため何を削ったか」を明示的にテストで縛る。
  */
 
 import { describe, it, expect } from 'vitest';
@@ -24,42 +20,67 @@ import { join } from 'node:path';
 const FOOTER_FILE = join(__dirname, 'app-footer.tsx');
 const source = readFileSync(FOOTER_FILE, 'utf8');
 
-describe('AppFooter の構造 invariant', () => {
+describe('AppFooter の構造 invariant (2026-05-24 改訂仕様)', () => {
   it('<footer> 要素を持つ (semantic HTML)', () => {
     expect(source).toMatch(/<footer\b/);
   });
 
   it('mt-auto クラスを持つ (root layout の flex-col で最下段に押し下げる)', () => {
-    // body の `flex min-h-full flex-col` 構造に依存し、children に flex-1 を要求しない
+    // body の `flex min-h-full flex-col` 構造に依存し children に flex-1 を要求しない
     // ことが本コンポーネントの設計上の前提。`mt-auto` が消えると children が短い画面で
-    // フッターが画面中央に浮く layout 不具合になる。
+    // footer が中央に浮く layout 不具合になる。
     expect(source).toMatch(/\bmt-auto\b/);
   });
 
-  it('内部リンク /settings/about /changelog /announcements を含む', () => {
+  it('内部リンクは /settings/about と /announcements の 2 件のみ (削減仕様)', () => {
     expect(source).toMatch(/href="\/settings\/about"/);
-    expect(source).toMatch(/href="\/changelog"/);
     expect(source).toMatch(/href="\/announcements"/);
   });
 
-  it('外部リンクは target="_blank" rel="noopener noreferrer" を持つ (tabnabbing 対策)', () => {
-    // 外部リンクは少なくとも 3 つ (TERMS / PRIVACY / CONTACT) 想定。
-    // rel="noopener noreferrer" の付与漏れは reverse tabnabbing の入口になる。
-    const externalAnchorMatches = source.match(/<a\s+[^>]*target="_blank"[^>]*>/g) ?? [];
-    expect(externalAnchorMatches.length).toBeGreaterThanOrEqual(3);
-    for (const tag of externalAnchorMatches) {
-      expect(tag).toMatch(/rel="noopener noreferrer"/);
-    }
+  it('copyright + 最終更新日を残す (健全運営シグナルの最小単位)', () => {
+    expect(source).toMatch(/copyright/);
+    expect(source).toMatch(/lastUpdated/);
+    expect(source).toMatch(/getReleaseDate/);
+    expect(source).toMatch(/OPERATOR_LABEL/);
+  });
+});
+
+describe('AppFooter から削減された要素 (退行防止)', () => {
+  it('旧 1 段目 (サービス名 / バージョン / 運営者) が footer に再出現していない', () => {
+    // ユーザ要望「画面上の表示項目を極力減らす」に従い 1 段目は完全削除済。
+    // 「一貫性のため」「健全運営アピールのため」等の理由で誰かが復活させた場合に検知する。
+    expect(source).not.toMatch(/formatVersionLabel/);
+    expect(source).not.toMatch(/OPERATOR_NAME\b/); // OPERATOR_LABEL (copyright 用) は OK
+    expect(source).not.toMatch(/operatorPrefix/);
   });
 
-  it('バージョン表示と運営者定数を参照している', () => {
-    expect(source).toMatch(/formatVersionLabel/);
-    expect(source).toMatch(/OPERATOR_NAME/);
+  it('旧 2 段目の外部リンク (TERMS / PRIVACY / CONTACT) が footer に再出現していない', () => {
+    // これらは /settings/about (サービス情報) に集約されており、footer からは導線を提供
+    // しないことが「玄関だけ提供」設計の核心。
+    expect(source).not.toMatch(/TERMS_URL/);
+    expect(source).not.toMatch(/PRIVACY_URL/);
+    expect(source).not.toMatch(/CONTACT_FORM_URL/);
   });
 
-  it('TERMS_URL / PRIVACY_URL / CONTACT_FORM_URL を直接 import している (URL hardcode を避ける)', () => {
-    expect(source).toMatch(/TERMS_URL/);
-    expect(source).toMatch(/PRIVACY_URL/);
-    expect(source).toMatch(/CONTACT_FORM_URL/);
+  it('旧 2 段目の内部リンク /changelog が footer から消えている (about に集約済)', () => {
+    expect(source).not.toMatch(/href="\/changelog"/);
+  });
+
+  it('外部リンク (target="_blank") が 1 つも残っていない', () => {
+    // footer から外部リンクを全廃した結果、tabnabbing リスクの面でも安全になった。
+    expect(source).not.toMatch(/target="_blank"/);
+  });
+});
+
+describe('AppFooter の docblock 設計意図 (将来の drift 防止)', () => {
+  it('auto-hide 対象外の理由を docblock に明記している', () => {
+    // 「ヘッダと挙動が非対称」を理由に勝手に fixed-bottom + auto-hide 化されるのを防ぐ。
+    // ChatFab / Toast との重なり対応が必須な点を明示している。
+    expect(source).toMatch(/auto-hide 対象外/);
+    expect(source).toMatch(/ChatSemanticSearchFab|fixed bottom/);
+  });
+
+  it('about ページへの集約意図を docblock に明記している', () => {
+    expect(source).toMatch(/集約/);
   });
 });

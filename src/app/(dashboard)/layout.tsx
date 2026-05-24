@@ -1,5 +1,7 @@
 import { requireAuthForLayout } from '@/lib/page-auth';
-import { DashboardHeader } from '@/components/dashboard-header';
+// feat/app-header-footer-unification (2026-05-24): DashboardHeader を AppHeader に統合。
+// 同一コンポーネントを (public) / (auth) でも user=null で再利用し「同じ役割は同じ UI」を担保。
+import { AppHeader } from '@/components/app-header';
 import { LoadingProvider } from '@/components/loading-overlay';
 // 2026-04-30 (Task 2): リクエスト成功/失敗を画面下部の帯で通知する共通基盤
 import { ToastProvider } from '@/components/toast-provider';
@@ -36,7 +38,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <LoadingProvider>
       <ToastProvider>
         <div className="min-h-screen bg-muted">
-          <DashboardHeader user={user} />
+          <AppHeader user={user} />
           {degradedMode?.active && (
             <DegradedModeBanner
               reason={degradedMode.reason}

@@ -10,7 +10,7 @@
  * 設計:
  *   - 失敗時は `NextResponse` ではなく `redirect()` を throw する (Server Component の規約)
  *   - 戻り値: 後方互換のため `session.user` 全体を返す。dashboard layout は user object を
- *     そのまま `<DashboardHeader user={...} />` に渡しており、形状変更は局所差し替えにとどめる
+ *     そのまま `<AppHeader user={...} />` に渡しており、形状変更は局所差し替えにとどめる
  *   - 性能影響: layout レンダリング毎に `prisma.user.findUnique` が 1 回追加 (~5ms / Pooler)
  *
  * 関連:
