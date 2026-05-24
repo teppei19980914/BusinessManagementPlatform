@@ -13856,6 +13856,10 @@ src/app/(public)/layout.tsx:36:
 
 ## 5.X+121 **★severity-2 E2E fail★ `[gen-visual]` 後に UI 変更コミットを追加すると visual baseline が stale 化 → fullPage screenshot が 12 件一斉に fail + chromium-mobile の dialog 操作も連鎖 timeout (2026-05-24 / PR #439)**
 
+> **【2026-05-24 訂正】 本セクションの chromium-mobile dialog timeout 部分 ("functional fail の根本") は AnnouncementBanner 削除起因と誤帰着していた。
+> 正しい根本原因は AppHeader auto-hide CSS (`translate-y-0` + `will-change-transform`) が常時 stacking context を生成していたことで、**詳細は [§5.X+123](#5x123-severity-1-ux-dead-auto-hide-ヘッダの-translate-y-0--will-change-transform-が常時-stacking-context-を生成--chromium-mobile-で-dialog-内-click-が完全-dead--同-pr-の-accountmenu-redesign-で-e2e-spec-の-trigger-特定が崩壊-2026-05-24--pr-439) を参照のこと**。
+> 本セクションの visual baseline staleness (77px 一斉 fail) 部分は引き続き正しい分析として有効。
+
 ### 発生事象
 
 PR #439 で AppHeader / AppFooter 統合の初期 commit (938ee23) 直後に `[gen-visual]` 空コミット (ecd82bd) を打ち、CI が visual baseline を自動生成 ([38c754e](https://github.com/teppei19980914/BusinessManagementPlatform/commit/38c754e))。
