@@ -97,6 +97,7 @@ export function ProjectKnowledgeClient({
   onReload,
 }: Props) {
   const tKnowledge = useTranslations('knowledge');
+  const tCommon = useTranslations('common');
   const KNOWLEDGE_VISIBILITY_OPTIONS = buildKnowledgeVisibilityOptions(tKnowledge);
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
@@ -243,7 +244,7 @@ export function ProjectKnowledgeClient({
 
       {/* PR fix/list-export-and-filter (2026-05-01): 他「○○一覧」(risks / retrospectives 等)
           と UI を揃えるため、justify-end (ボタン右寄せのみ) + size 既定 (sm 不使用) に統一。
-          countUnit 表示は他一覧では出していないため本行から削除。 */}
+          件数表示は他一覧では出していないため本行から削除。 */}
       <div className="flex items-center justify-end">
         <div className="flex gap-2">
         {/* T-22 Phase 22c: sync-import (往復編集) */}
@@ -382,7 +383,7 @@ export function ProjectKnowledgeClient({
           onToggleAll={toggleAllKnowledge}
           ariaLabel={tKnowledge('selectAllOwn')}
         />
-        {tKnowledge('selectAllOwn')} ({tKnowledge('countUnit', { count: selectableKnowledgeIds.length })})
+        {tKnowledge('selectAllOwn')} ({tCommon('itemCount', { count: selectableKnowledgeIds.length })})
       </div>
 
       {filteredKnowledges.length === 0 ? (

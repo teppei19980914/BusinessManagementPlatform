@@ -1011,6 +1011,7 @@
     "updatedBy": "Updated By",
     "actions": "Actions",
     "all": "All Types",
+    "keyword": "Keyword",
     "searchPlaceholder": "Search keyword (title / background / content / result)",
     "primarySourceUrl": "Primary Source URL",
     "officialDoc": "Official Documentation",
@@ -1027,8 +1028,7 @@
     "private": "(Private)",
     "notLinked": "(Not linked)",
     "deleted": "(Deleted)",
-    "optional": "(optional)",
-    "countUnit": "{count} items"
+    "optional": "(optional)"
   },
   "memo": {
     "listTitle": "Memos",
@@ -1090,6 +1090,7 @@
     "empty": "No memos yet. Use \"New Memo\" in the upper right to add one.",
     "emptyPublic": "No public memos.",
     "emptyPublicHint": "(Setting visibility to \"All members\" on the Memos screen will show it here.)",
+    "keyword": "Keyword",
     "searchPlaceholder": "Search title and body (space-separated OR / `-foo` to exclude)",
     "mineSuffix": "(you)",
     "mineBadge": "My memo",
@@ -1098,7 +1099,6 @@
     "colUpdatedAt": "Updated",
     "colAttachments": "Attachments",
     "colActions": "Actions",
-    "count": "{count} item(s)",
     "deleteSuccess": "Memo deleted",
     "deleteFailed": "Failed to delete memo"
   },

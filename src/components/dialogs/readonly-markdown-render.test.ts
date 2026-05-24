@@ -118,11 +118,14 @@ describe('readOnly モードで Markdown プレビューが効かない回帰バ
     });
   }
 
-  it('AllMemosClient (見本実装) が同様のパターンを維持している (横展開元の保護)', () => {
-    // 修正の見本にした AllMemosClient が将来書き換えられて見本パターンが失われていない
+  it('MemoViewDialog (見本実装) が同様のパターンを維持している (横展開元の保護)', () => {
+    // 修正の見本にした全メモ画面の参照ダイアログが将来書き換えられて見本パターンが失われていない
     // ことを確認。失われた場合、本テストが落ちて修正方針の根拠が消えたことに気付ける。
+    //
+    // 2026-05-24 (feat/all-list-section-unification): all-memos-client.tsx 内の `<Dialog>` 直書きを
+    // 専用 component (MemoViewDialog) に抽出した。本テストの参照先もそれに追随。
     const memoSource = readFileSync(
-      join(DIALOG_DIR, '../../app/(dashboard)/all-memos/all-memos-client.tsx'),
+      join(DIALOG_DIR, '../../app/(dashboard)/all-memos/memo-view-dialog.tsx'),
       'utf8',
     );
     expect(memoSource).toMatch(/<fieldset\s+disabled\b/);

@@ -1148,3 +1148,94 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
 
 ---
 
+## DESIGN §34. 「全○○」横断一覧画面の統一レイアウト規約
+
+## 34. 「全○○」横断一覧画面の統一レイアウト規約 (feat/all-list-section-unification, 2026-05-24)
+
+### 34.1 背景
+
+ナビ「資産」グループ配下の 5 画面 (全リスク / 全課題 / 全振り返り / 全ナレッジ / 全メモ) は
+いずれも「プロジェクト横断 + visibility='public' + 読み取り専用」という共通責務を持つ。
+
+しかし歴史的経緯から、件数表示の位置 / 母数 / i18n キー / 検索フィルタ部の外観 /
+詳細ダイアログと管理操作の共通化 が画面ごとに揺れていた。
+§21 ノンデザイナーズ・デザインブック「そろえる / 繰り返す」の原則に照らし、本 PR で統一する。
+
+### 34.2 統一規約 (5 画面で必ず守る)
+
+クライアントコンポーネントは以下の順序で配置する:
+
+```tsx
+<div className="space-y-6">
+  {/* 1. 件数行 — フィルタ後件数を common.itemCount で右寄せ */}
+  <div className="flex justify-end">
+    <span className="text-sm text-muted-foreground">
+      {tCommon('itemCount', { count: filteredXxx.length })}
+    </span>
+  </div>
+
+  {/* 2. FilterBar — 検索 / フィルタ部。中身の軸数は画面固有でよい */}
+  <FilterBar>
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-N">
+      <div>
+        <Label htmlFor="all-{entity}-filter-keyword" className="text-xs">{t('keyword')}</Label>
+        <Input
+          id="all-{entity}-filter-keyword"
+          data-testid="all-{entity}-search-input"
+          ...
+        />
+      </div>
+      {/* 画面固有の追加フィルタ (state / priority / type 等) は本 grid 内に追加 */}
+    </div>
+  </FilterBar>
+
+  {/* 3. ResizableTableShell — テーブル本体 */}
+  <ResizableTableShell tableKey="all-{entity}"> ... </ResizableTableShell>
+
+  {/* 4. 詳細ダイアログ (read-only) — 専用コンポーネントを使う */}
+  <XxxEditDialog ... readOnly={true} />
+  {/* または MemoViewDialog のような専用 read-only ダイアログ */}
+</div>
+```
+
+### 34.3 各セクションの規約詳細
+
+| セクション | 統一規約 | 理由 |
+|---|---|---|
+| **件数行** | client 側に置く / フィルタ後件数 (filteredXxx.length) / `tCommon('itemCount', { count })` で右寄せ | ユーザは「今見えている件数」を期待する。i18n キーも 1 つに集約して保守性向上 |
+| **FilterBar** | 全画面 `<FilterBar>` でラップ。`<Label>` + `id` で a11y 担保。検索入力には `data-testid="all-{entity}-search-input"` を付与 | フィルタ軸数は画面ごとに違ってよいが、外側の見た目 (rounded-md border bg-muted/30) と Label 配置は揃える |
+| **テーブル本体** | `ResizableTableShell` + `SortableResizableHead` + `ClickableRow` + `useBatchAttachments` + admin 列で `Admin{Entity}DeleteButton` | 既に統一済 (全メモも本 PR で `AdminMemoDeleteButton` 抽出により統一) |
+| **詳細ダイアログ** | 既存の `XxxEditDialog` を `readOnly={true}` で再利用。memo のみ専用 `MemoViewDialog` を使う | knowledge / risks / retrospectives は CRUD 用ダイアログを共有できるが、memo は /memos 個人画面の編集ダイアログと表示要素が異なるため独立 |
+
+### 34.4 検索入力 testid 命名規約
+
+- `all-knowledge-search-input`
+- `all-risks-search-input` (typeFilter='risk' 時)
+- `all-issues-search-input` (typeFilter='issue' 時)
+- `all-retrospectives-search-input`
+- `all-memos-search-input`
+
+`{entity}` は **複数形** (リスクは risks)。E2E spec で `getByTestId(...)` する際の前提。
+
+### 34.5 i18n キーの集約
+
+- ❌ `knowledge.countUnit` (削除済)
+- ❌ `memo.count` (削除済)
+- ✅ `common.itemCount` に統一 (全画面で使用)
+
+横断的に「N 件」を表示する箇所は `common.itemCount` を使う。
+画面固有の文脈 (例: マイタスク `myTask.count` の `(N 件)` 括弧付き) は独自キーを維持してよい。
+
+### 34.6 違反検知
+
+`src/app/(dashboard)/knowledge/knowledge-client.test.tsx` 等の source-pattern テストで
+以下を assert する:
+
+- 5 画面とも `tCommon('itemCount', { count: filteredXxx.length })` を含む
+- 5 画面とも `<FilterBar>` を含む
+- 5 画面とも `data-testid="all-{entity}-search-input"` を含む
+
+これにより誰かが偶発的にレイアウト規約を巻き戻した場合、PR 段階で検出できる。
+
+---
+

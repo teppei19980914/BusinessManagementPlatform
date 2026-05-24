@@ -30,6 +30,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
   TableBody,
@@ -49,8 +50,9 @@ import { KNOWLEDGE_TYPES } from '@/types';
 import type { AllKnowledgeDTO } from '@/services/knowledge.service';
 import { useFormatters } from '@/lib/use-formatters';
 import { matchesAnyKeyword } from '@/lib/text-search';
-// Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック + フィルタバー部品
 import { ClickableRow } from '@/components/common/clickable-row';
+import { FilterBar } from '@/components/common/filter-bar';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { ResizableHead } from '@/components/ui/resizable-columns';
@@ -88,6 +90,7 @@ type Props = {
 export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword = '', initialTypeFilter = '' }: Props) {
   const router = useRouter();
   const tKnowledge = useTranslations('knowledge');
+  const tCommon = useTranslations('common');
   const { formatDateTime } = useFormatters();
   const isAdmin = systemRole === 'admin';
   // PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword=&type= 永続化
@@ -124,38 +127,50 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
 
   return (
     <div className="space-y-6">
-      {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
+      {/* feat/all-list-section-unification (2026-05-24): 全○○ 5 画面共通レイアウト規約
+          1. 件数行 (justify-end / フィルタ後件数 / common.itemCount)
+          2. FilterBar (検索・フィルタ、軸数は画面固有)
+          3. ResizableTableShell (テーブル本体)
+          4. 詳細ダイアログ (read-only) */}
       <div className="flex justify-end">
-        <span className="text-sm text-muted-foreground">{tKnowledge('countUnit', { count: filtered.length })}</span>
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filtered.length })}</span>
       </div>
 
-      <div className="flex gap-4">
-        <Input
-          placeholder={tKnowledge('searchPlaceholder')}
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          className="max-w-[min(90vw,28rem)]"
-          data-testid="knowledge-search-input"
-        />
-        {/* Phase A 要件 15: 種別フィルタの選択後表示が内部名になる問題を修正。
-            SelectValue の children render 関数で KNOWLEDGE_TYPES から表示名にマップする。 */}
-        <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter((v ?? '__all__') === '__all__' ? '' : (v ?? ''))}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder={tKnowledge('all')}>
-              {(value) => {
-                if (!value || value === '__all__') return tKnowledge('all');
-                return KNOWLEDGE_TYPES[value as keyof typeof KNOWLEDGE_TYPES] || value;
-              }}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">{tKnowledge('all')}</SelectItem>
-            {Object.entries(KNOWLEDGE_TYPES).map(([key, label]) => (
-              <SelectItem key={key} value={key}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <FilterBar>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+          <div className="md:col-span-2">
+            <Label htmlFor="all-knowledge-filter-keyword" className="text-xs">{tKnowledge('keyword')}</Label>
+            <Input
+              id="all-knowledge-filter-keyword"
+              placeholder={tKnowledge('searchPlaceholder')}
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              data-testid="all-knowledge-search-input"
+            />
+          </div>
+          <div>
+            <Label htmlFor="all-knowledge-filter-type" className="text-xs">{tKnowledge('kind')}</Label>
+            {/* Phase A 要件 15: 種別フィルタの選択後表示が内部名になる問題を修正。
+                SelectValue の children render 関数で KNOWLEDGE_TYPES から表示名にマップする。 */}
+            <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter((v ?? '__all__') === '__all__' ? '' : (v ?? ''))}>
+              <SelectTrigger id="all-knowledge-filter-type">
+                <SelectValue placeholder={tKnowledge('all')}>
+                  {(value) => {
+                    if (!value || value === '__all__') return tKnowledge('all');
+                    return KNOWLEDGE_TYPES[value as keyof typeof KNOWLEDGE_TYPES] || value;
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">{tKnowledge('all')}</SelectItem>
+                {Object.entries(KNOWLEDGE_TYPES).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </FilterBar>
 
       <ResizableTableShell tableKey="all-knowledge">
           <TableHeader>
