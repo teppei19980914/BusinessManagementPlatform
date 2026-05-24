@@ -13951,3 +13951,77 @@ src/components/app-header.tsx:603:5   error  Error: Cannot access refs during re
 - 関連 KDD: [§5.X+120](#5x120) (banned-auth-patterns、CI 専用ガード罠) / [§5.X+121](#5x121) (`[gen-visual]` baseline staleness) — 同 PR で発覚した CI ガード 3 連発
 - 関連 React docs: [useRef caveats](https://react.dev/reference/react/useRef#caveats) (render 中の `.current` 読出禁止)
 - 関連 file: [`src/components/app-header.tsx`](../../src/components/app-header.tsx) / [`src/app/(dashboard)/settings/settings-client.tsx`](../../src/app/(dashboard)/settings/settings-client.tsx) (testid 衝突相手) / [`eslint.config.mjs`](../../eslint.config.mjs)
+
+## 5.X+123 **★severity-1 UX dead★ auto-hide ヘッダの `translate-y-0` + `will-change-transform` が常時 stacking context を生成 → chromium-mobile で Dialog 内 click が完全 dead + 同 PR の AccountMenu redesign で E2E spec の trigger 特定が崩壊 (2026-05-24 / PR #439)**
+
+### 発生事象
+
+PR #439 で AppHeader auto-hide を導入 ([§5.X+121](#5x121)) + AccountMenu を Microsoft 風に redesign したところ、E2E `Playwright E2E + Visual Regression` ジョブで以下が連続 fail:
+
+#### Fail 1 — chromium 05 Step 9 (ログアウト操作)
+```
+TimeoutError: locator.click: Timeout 10000ms exceeded.
+e2e/specs/05-teardown-and-residuals.spec.ts:147
+  await page.getByRole('button', { expanded: false }).filter({ hasText: 'E2E 管理者' }).click();
+```
+
+trigger button が見つからず click が 10s で timeout。
+
+#### Fail 2/3 — chromium-mobile 05 Step 11 (プロジェクト削除 dialog) / 09 Step 3 (顧客登録 dialog)
+```
+TimeoutError: page.waitForResponse: Timeout 10000ms exceeded while waiting for event "response"
+e2e/specs/05-teardown-and-residuals.spec.ts:93 (delete button click)
+e2e/specs/09-customers.spec.ts:117 (submit button click)
+```
+
+Dialog の submit button click は成功 (locator.click は通る) するが、後続の API (DELETE/POST) が一切飛ばず response 待ちが timeout。chromium (desktop) では同じ test が pass、**chromium-mobile (390×844) のみ fail**。
+
+### 根本原因 (≠ 表層原因)
+
+#### Fail 1 (chromium 05 Step 9)
+- **表層**: テストが `filter({hasText:'E2E 管理者'})` で AccountMenu trigger を特定
+- **真の原因**: 同 PR の 828a54b で AccountMenu を Microsoft 風 redesign し、trigger を「人アイコン + ロールアイコン + ▾」だけに圧縮。**user.name テキストが trigger から消えた**ため、テキスト経路の探索が必ず失敗する。実装側に `data-testid="account-menu-trigger"` を新設していたが、E2E spec を追従させ忘れた
+
+#### Fail 2/3 (chromium-mobile dialog click 事故)
+- **表層**: Dialog submit ボタンを click しても backend API call が発火しない
+- **真の原因**: AppHeader の auto-hide CSS が **常時 stacking context を生成** していた
+  - `transform: translateY(0)` (`translate-y-0` クラス) — transform: none 以外の値は stacking context を生成
+  - `will-change: transform` (`will-change-transform` クラス) — 専用 compositing layer の生成 = stacking context
+  - 両者が visible 状態の AppHeader に常時付与されていた
+- **mobile only な事象の理由**: Radix Dialog overlay は z-50 / fixed で AppHeader (z-40) より前面にあるはずだが、**chromium-mobile (touch 環境)** では GPU compositing 順序とタッチイベント hit-testing 経路が desktop と異なり、stacking context を持つ要素 (AppHeader) が overlay の click target を奪うケースが発生
+- **MVPで影響度甚大**: Dialog 操作は CRUD 系画面で必須経路。本事象が main にマージされると外部ユーザのモバイル利用で「削除/登録ボタンが効かない」silent fail が発生し、severity-1 (UX dead)
+
+[§5.X+121](#5x121) で hypothesis 立て済だったが本 PR 内では未対応 / KDD §5.X+121 は AnnouncementBanner 削除起因と誤帰着していた。本セクションで正しい原因 (auto-hide CSS の stacking context) を特定。
+
+### 対応 (本 PR の hotfix commit)
+
+#### Fail 1
+- `e2e/specs/05-teardown-and-residuals.spec.ts:147` を `page.getByTestId('account-menu-trigger').click()` に変更
+- testid 経路は UI 変更に強い (= aria-label / hasText 等のテキスト経路は将来も同じ罠に陥り得る)
+
+#### Fail 2/3
+- `src/components/app-header.tsx:649-661` の AppHeader className を以下に変更:
+  - `will-change-transform` を削除 (stacking context 生成源を除去)
+  - `translate-y-0` を削除し、`hidden && '-translate-y-full'` に短絡 (visible 時は transform 未指定 = stacking context 作らない)
+- transition は `transition-transform duration-200` のみで保持。CSS spec で `transform: none ↔ translateY(-100%)` は `matrix()` 経由で補間されるため smooth animation は維持される
+
+### 再発防止 (今回入れた仕掛け)
+
+- **`app-header.test.tsx` invariant に negative match を追加**:
+  - `translate-y-0` が visible 状態 class として復活していないこと
+  - `will-change-transform` が復活していないこと
+- 本 KDD §5.X+123 に **「transform / will-change-* を常時付与すると stacking context を作る」原則と E2E への影響** を明文化
+
+### 教訓 (転用可能)
+
+- **CSS `transform`, `filter`, `perspective`, `opacity < 1`, `will-change` は全て stacking context を生成する**。auto-hide / fade 系アニメーションを sticky / fixed 要素に組み込む際は「visible 状態で transform を未指定にする」設計を選ぶ
+- **stacking context の差異は chromium (desktop) では問題化しないが chromium-mobile (touch) では hit-testing 経路が違うため一気に dead な UX を生む**。chromium だけで pass しても安心しない。chromium-mobile の dialog 操作テストは **stacking context の最終ガード**
+- **trigger UI を redesign する際は同 PR 内で E2E spec の selector を必ず追従**。grep `filter({hasText:` / `getByRole.*name:` をプロジェクト全体で行い、影響範囲を網羅。testid 経路への移行を併せて推奨
+- **`will-change` は performance hint だが副作用 (stacking context 生成) があり、本当に必要な場合 (実測で jank がある場合) のみ付与する**。先回り最適化として常時付与すると今回のような事故を招く
+
+### 関連
+
+- 関連 PR: PR #439 (本事例 / 2026-05-24)
+- 関連 KDD: [§5.X+121](#5x121) (AnnouncementBanner 削除起因と誤帰着していた前回分析の訂正) / [§5.X+114](#5x114) (sticky header z-40 積層仕様) / [§5.X+119](#5x119) (Portal 化で UI dead 救済の類例)
+- 関連 React/CSS docs: [MDN: stacking context](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioning/Understanding_z_index/The_stacking_context) / [will-change caveats](https://developer.mozilla.org/en-US/docs/Web/CSS/will-change#optimizations)
+- 関連 file: [`src/components/app-header.tsx`](../../src/components/app-header.tsx) / [`e2e/specs/05-teardown-and-residuals.spec.ts`](../../e2e/specs/05-teardown-and-residuals.spec.ts) / [`e2e/specs/09-customers.spec.ts`](../../e2e/specs/09-customers.spec.ts)

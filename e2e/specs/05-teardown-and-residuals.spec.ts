@@ -143,8 +143,11 @@ test.describe('@feature:teardown Steps 9-12 ログアウト + 削除 + 残存検
     await page.goto('/projects');
     await page.waitForLoadState('networkidle');
 
-    // 画面右上のアカウントメニュー (aria-haspopup="menu" ボタン) を開く
-    await page.getByRole('button', { expanded: false }).filter({ hasText: 'E2E 管理者' }).click();
+    // 画面右上のアカウントメニュートリガを開く。
+    // KDD §5.X+123 / PR #439: AppHeader を Microsoft 風に再設計し trigger からユーザ名テキスト
+    //   を撤去 (人アイコン + ロールアイコン + ▾ のみ) したため、旧 `filter({hasText:'E2E 管理者'})`
+    //   では trigger を特定できなくなった。testid 経路に固定して挙動変更に強くする。
+    await page.getByTestId('account-menu-trigger').click();
 
     // ドロップダウン内「ログアウト」menuitem をクリック → /login へリダイレクト
     await page.getByRole('menuitem', { name: 'ログアウト' }).click();

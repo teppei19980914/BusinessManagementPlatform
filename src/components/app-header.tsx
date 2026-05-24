@@ -654,11 +654,20 @@ export function AppHeader({ user }: AppHeaderProps) {
           // dropdown (z-50) と同層で last-rendered-wins。
           'sticky top-0 z-40 border-b bg-card',
           // auto-hide: transition で滑らかに、translate-y-full で完全に画面外へ。
-          // will-change-transform は描画レイヤを分離して jank を防ぐ。
-          'transition-transform duration-200 will-change-transform',
-          // motion-reduce 環境では transition を切る (即時切替で違和感を最小化)
+          // motion-reduce 環境では transition を切る (即時切替で違和感を最小化)。
+          //
+          // KDD §5.X+123 / PR #439 chromium-mobile hotfix:
+          //   旧実装は visible 状態で `translate-y-0` + `will-change-transform` を常時付与していたが、
+          //   どちらも CSS stacking context を生成するため (transform != none / will-change == transform)、
+          //   chromium-mobile viewport で Radix Dialog overlay (z-50) の click が AppHeader に
+          //   奪われる pointer-event 順序事故が起きた (Step 11 削除 dialog / Step 3 顧客登録 dialog)。
+          //   修正方針: visible 時は transform プロパティを設定せず stacking context を作らない。
+          //   hidden 時のみ transform を適用 (auto-hide アニメは scroll 中なので Dialog と共存しない)。
+          //   transition は `transition-transform` だけ残し、`none` ↔ `translateY(-100%)` の補間は
+          //   ブラウザが matrix() 変換で扱えるため smooth animation は維持される。
+          'transition-transform duration-200',
           'motion-reduce:transition-none',
-          hidden ? '-translate-y-full' : 'translate-y-0',
+          hidden && '-translate-y-full',
         )}
         data-testid="app-header"
         data-hidden={hidden ? 'true' : 'false'}

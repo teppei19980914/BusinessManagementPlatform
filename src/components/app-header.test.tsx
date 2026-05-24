@@ -42,14 +42,23 @@ describe('AppHeader の auto-hide 実装 invariant', () => {
     expect(source).toMatch(/SCROLL_DIRECTION_THRESHOLD/);
   });
 
-  it('hidden 時は -translate-y-full、表示時は translate-y-0 を適用する', () => {
+  it('hidden 時のみ -translate-y-full を適用、visible 時は transform 未指定 (stacking context 回避)', () => {
+    // KDD §5.X+123 / PR #439: visible 状態で translate-y-0 + will-change-transform を付与すると
+    // CSS stacking context が生成され、chromium-mobile で Dialog overlay (z-50) との pointer-event
+    // 順序が崩れて click が AppHeader に奪われる事故 (Step 11 / Step 3) が発生。
+    // visible 時は transform を一切設定しない方針へ変更。
     expect(source).toMatch(/-translate-y-full/);
-    expect(source).toMatch(/translate-y-0/);
+    // translate-y-0 / will-change-transform が **className 文字列 (シングルクォート囲い)** として
+    // 復活していないこと。docblock のバッククォート (`...`) は歴史記述として残るため対象外。
+    expect(source).not.toMatch(/'translate-y-0'/);
+    expect(source).not.toMatch(/'will-change-transform'/);
   });
 
-  it('transition-transform + will-change-transform で jank を避ける', () => {
+  it('transition-transform で滑らかなアニメーション (will-change は意図的に未指定)', () => {
+    // will-change-transform は stacking context を生成してしまうため明示的に外している。
+    // transition-transform 単体でも transform: none ↔ translateY(-100%) の補間は
+    // ブラウザが matrix() 経由で扱える。
     expect(source).toMatch(/transition-transform/);
-    expect(source).toMatch(/will-change-transform/);
   });
 
   it('motion-reduce 環境では transition を切る', () => {
