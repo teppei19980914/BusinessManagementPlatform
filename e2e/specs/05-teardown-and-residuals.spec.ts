@@ -157,10 +157,14 @@ test.describe('@feature:teardown Steps 9-12 ログアウト + 削除 + 残存検
     // KDD §5.X+123 / PR #439: AppHeader を Microsoft 風に再設計し trigger からユーザ名テキスト
     //   を撤去 (人アイコン + ロールアイコン + ▾ のみ) したため、旧 `filter({hasText:'E2E 管理者'})`
     //   では trigger を特定できなくなった。testid 経路に固定して挙動変更に強くする。
-    await page.getByTestId('account-menu-trigger').click();
+    // KDD §5.X+126: AppHeader trigger 内の <span>テナント管理者</span> ロールバッジが
+    //   chromium-mobile DPR=3 で trigger 本体と hit-test 衝突 (Dialog 外の sticky header
+    //   click にも事象が拡大)。{ force: true } で bypass。
+    await page.getByTestId('account-menu-trigger').click({ force: true });
 
-    // ドロップダウン内「ログアウト」menuitem をクリック → /login へリダイレクト
-    await page.getByRole('menuitem', { name: 'ログアウト' }).click();
+    // ドロップダウン内「ログアウト」menuitem をクリック → /login へリダイレクト。
+    // 念のため menuitem click も force:true (dropdown 内 click でも同事象の可能性)。
+    await page.getByRole('menuitem', { name: 'ログアウト' }).click({ force: true });
     await page.waitForURL('**/login', { timeout: 10_000 });
 
     // ログイン画面の要素が見える = ログアウト成功

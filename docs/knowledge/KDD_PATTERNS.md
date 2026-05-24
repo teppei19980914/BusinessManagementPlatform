@@ -14177,3 +14177,79 @@ await page.getByRole('button', { name: 'プロジェクトを削除する' }).cl
 - 関連 PR: PR #439 (本事例 / 2026-05-24)
 - 関連 KDD: [§5.X+124](#5x124) (前回 fix の根本原因確定、本セクションはそれの系統性実証 + 全 spec への展開)
 - 関連 file (本 PR で force:true 化した 5 件): [`e2e/specs/05-teardown-and-residuals.spec.ts:99,138`](../../e2e/specs/05-teardown-and-residuals.spec.ts) / [`e2e/specs/09-customers.spec.ts:122,167,272,324`](../../e2e/specs/09-customers.spec.ts) / [`e2e/specs/01-admin-and-member-setup.spec.ts:209`](../../e2e/specs/01-admin-and-member-setup.spec.ts)
+
+## 5.X+126 **★severity-2 CI 連鎖 fail★ §5.X+125 の「Dialog 内 click」限定の事象範囲推定が誤りで、AppHeader 内 click + date picker quick action も対象 → 事象範囲を「chromium-mobile + sticky/fixed/transform 配下 click 全般」に拡大 (2026-05-24 / PR #439)**
+
+### 発生事象
+
+§5.X+125 で「Dialog 内 click 全般」と分類し 5 件の click を force:true 化した次の CI run で、**Dialog 内すらない別の 2 件が新たに同パターンで fail**:
+
+#### Fail 1 — 05 Step 9 (ログアウト)
+```
+- waiting for getByTestId('account-menu-trigger')
+- locator resolved to <button ... data-testid="account-menu-trigger" ...>
+- attempting click action
+- <span>テナント管理者</span> from <div class="flex items-center gap-6">…</div> 
+  subtree intercepts pointer events
+```
+
+**AppHeader 内の AccountMenu trigger** の click で、同じ trigger 内のロールバッジ `<span>テナント管理者</span>` が intercept と報告される。**Dialog ですらない sticky header の click で発生**。
+
+#### Fail 2 — 09 Step 6b (顧客未選択 submit)
+```
+- waiting for getByRole('button', { name: '今日' }).first()
+- attempting click action
+- <div ...dialog-overlay></div> intercepts pointer events
+- <select id="project-create-devmethod">…</select> intercepts pointer events
+- <textarea id="project-create-scope">…</textarea> intercepts pointer events
+```
+
+date picker の「今日」クイック設定 button click で intercept。Dialog 内だが §5.X+125 で「date-picker は問題なし」と楽観視して未対処だった click。
+
+### 根本原因 (≠ 表層原因)
+
+#### 真の事象範囲
+
+§5.X+125 の「Dialog 内 click 全般」では狭すぎた。実際の事象範囲は:
+
+- **chromium-mobile project (iPhone 13 emulation / DPR=3) における DOM hit-test 計算ズレ**
+- 影響対象: **sticky / fixed / transform を含む UI コンテナ配下の click 全般**
+  - Dialog (centered transform) → §5.X+125 で対処済
+  - **AppHeader (sticky top-0) → 本 §5.X+126 で新規発覚**
+  - **Dialog 内のあらゆる click (submit/confirm に限らず date picker 等も)** → 本 §5.X+126 で範囲拡張
+- 影響しない: Dialog/sticky 外の通常 click (table row 内 button 等)
+
+#### なぜ §5.X+125 で見落としたか
+
+- §5.X+125 で「Dialog 内 submit/confirm 系」と類型化したが、**事象の根本原因 (transform 配下 hit-test 計算ズレ)** は click target の種類 (submit / confirm / picker action) に依存しない
+- date picker の「今日」 button や AppHeader 内 sticky button は「submit/confirm でない」ため対象外と判定したが、**root cause 観点では同等**
+- 「特定 click」→「Dialog 内 click」→「sticky/transform 配下 click 全般」と **事象範囲が CI ラウンド毎に拡大** している経緯
+
+### 対応 (本 PR の最終 hotfix の最終 hotfix の最終 hotfix)
+
+#### 直接的な fail 2 件
+- `05 Step 9:163` `account-menu-trigger` click → `{ force: true }` + 念のため menuitem click も同様
+- `09 Step 6b:265-266` `'今日'` button click × 2 (first/nth(1)) → `{ force: true }`
+
+#### 事象範囲の最終確定
+KDD §5.X+125 の「Dialog 内 click 全般」分類を **「chromium-mobile + sticky/fixed/transform 配下 click 全般」** に拡張。
+
+### 再発防止 (今回入れた仕掛け)
+
+- 新規 E2E spec 作成時の checklist に「**sticky/fixed/transform 配下 click は最初から force:true 検討**」を追加 (Dialog 限定でなく)
+- 既存 click の事前 grep で「`AppHeader`/`Dialog`/`Popover`/`Menu`/`Tooltip` 等 transform-based UI 配下の click」も含めて先回り対処
+- **CI fail 1 件で同 UI コンテナ配下の全 click を一括対処** (1 件直す → CI → 別の click fail のループを避ける)
+
+### 教訓 (転用可能)
+
+- **事象範囲の類型化は CI fail で段階的に検証していくしかないが、毎回 CI 1 ラウンド費やす**。本 PR では 5 ラウンド (§5.X+124 で 2 件 → §5.X+125 で 5 件 → §5.X+126 で 2 件) かけて事象範囲を確定した
+- **「特定 click」→「Dialog 内 click」→「transform 配下 click 全般」と段階的に拡張**するパターンは将来も発生し得る。**初回 fail で root cause 観点から想定し得る最大範囲に展開する**のが理想 (本件で §5.X+124 時点で transform 配下全般と確定できれば 4 ラウンド削減できた)
+- **chromium-mobile project は CI コスト + 不安定性の両面で重い負荷**。MVP 段階では本 project の縮小 / 廃止 / 別 CI lane への分離を検討する余地 (本 PR スコープ外、将来課題)
+- **「楽観視」が連鎖 fail の元凶**: §5.X+125 で date picker や AppHeader click を「対象外」と判断したが、これは事象の root cause を限定的に解釈したため。**最悪ケースで全部対処** > 「賢く絞り込む」が CI ラウンド数最適化の観点で正解
+
+### 関連
+
+- 関連 PR: PR #439 (本事例 / 2026-05-24)
+- 関連 KDD: [§5.X+124](#5x124) (根本原因の最初の確定) / [§5.X+125](#5x125) (Dialog 内 click と狭く限定した分類、本セクションで範囲拡張)
+- 関連 file (本 §5.X+126 で追加 force:true 化した 4 件): [`e2e/specs/05-teardown-and-residuals.spec.ts:160-165`](../../e2e/specs/05-teardown-and-residuals.spec.ts) (account-menu-trigger + logout menuitem) / [`e2e/specs/09-customers.spec.ts:265-266`](../../e2e/specs/09-customers.spec.ts) (今日 button × 2)
+- 累計 force:true 化件数: §5.X+124 で 2 + §5.X+125 で 3 (先回り) + §5.X+125 直接 fail 2 + §5.X+126 で 4 = **計 11 件**

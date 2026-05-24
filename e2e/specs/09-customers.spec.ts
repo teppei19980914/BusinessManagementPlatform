@@ -259,9 +259,11 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
       await page.getByLabel('目的').fill('顧客未選択でも 400 を出さないことを確認');
       await page.getByLabel('背景').fill('E2E fix verification');
       await page.getByLabel('スコープ').fill('validation only');
-      // DateFieldWithActions の「今日」クイック設定ボタンで 2 フィールドとも埋める
-      await page.getByRole('button', { name: '今日' }).first().click();
-      await page.getByRole('button', { name: '今日' }).nth(1).click();
+      // DateFieldWithActions の「今日」クイック設定ボタンで 2 フィールドとも埋める。
+      // KDD §5.X+126: chromium-mobile DPR=3 で Dialog 内の **あらゆる click** が
+      //   hit-test 誤判定の対象 (date picker quick action も例外でなかった)。{ force: true } で bypass。
+      await page.getByRole('button', { name: '今日' }).first().click({ force: true });
+      await page.getByRole('button', { name: '今日' }).nth(1).click({ force: true });
 
       // 顧客を意図的に未選択のまま 作成 クリック
       // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
