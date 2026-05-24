@@ -157,4 +157,23 @@ describe('「プロジェクト配下 CRUD 一覧」3 画面の統一レイア�
         .not.toMatch(/export\s+async\s+function\s+bulkUpdateRisksFromList\b/);
     });
   });
+
+  // UI_PATTERNS §35.4.1 (2026-05-24): bulk visibility 4 route は audit_logs.afterValue に
+  //   embeddingsGenerated を含めること (Voyage API cost center 追跡 / 月次請求額アトリビューション)。
+  describe('4 bulk route は audit_logs に embeddingsGenerated を残す', () => {
+    const ROUTE_FILES = [
+      ['risks', join(ROOT, '..', '..', '..', '..', 'app', 'api', 'projects', '[projectId]', 'risks', 'bulk', 'route.ts')],
+      ['knowledge', join(ROOT, '..', '..', '..', '..', 'app', 'api', 'projects', '[projectId]', 'knowledge', 'bulk', 'route.ts')],
+      ['retrospectives', join(ROOT, '..', '..', '..', '..', 'app', 'api', 'projects', '[projectId]', 'retrospectives', 'bulk', 'route.ts')],
+      ['memos', join(ROOT, '..', '..', '..', '..', 'app', 'api', 'memos', 'bulk', 'route.ts')],
+    ] as const;
+
+    for (const [name, path] of ROUTE_FILES) {
+      it(`${name}/bulk: recordAuditLog の afterValue に embeddingsGenerated を含む`, () => {
+        const src = readFileSync(path, 'utf8');
+        expect(src, `${name}/bulk/route.ts は afterValue に embeddingsGenerated を含むべき`)
+          .toMatch(/embeddingsGenerated:\s*result\.embeddingsGenerated/);
+      });
+    }
+  });
 });

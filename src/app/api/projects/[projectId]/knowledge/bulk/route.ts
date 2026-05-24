@@ -67,6 +67,9 @@ export async function PATCH(
         updatedIds: result.updatedIds,
         skippedNotOwned: result.skippedNotOwned,
         skippedNotFound: result.skippedNotFound,
+        // UI_PATTERNS §35.4.1 (2026-05-24): draft→public 遷移行を batch 集約で embedding 生成した件数。
+        //   Voyage API cost center のアトリビューション + 月次請求額追跡のため audit に残す。
+        embeddingsGenerated: result.embeddingsGenerated,
       },
     });
   }
