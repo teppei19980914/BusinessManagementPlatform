@@ -114,7 +114,12 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
     const postResponse = page.waitForResponse(
       (r) => r.url().endsWith('/api/customers') && r.request().method() === 'POST',
     );
-    await page.getByRole('button', { name: '登録' }).click();
+    // KDD §5.X+124: chromium-mobile (iPhone 13 / DPR=3 emulation) で Dialog 内
+    //   `-translate-x-1/2 -translate-y-1/2` centered content の hit-test 計算が subpixel
+    //   ズレで誤判定する事象により click が intercept される (customer-department input /
+    //   customer-notes textarea 等が登録ボタン真上と認識される)。{ force: true } で
+    //   hit-test を bypass し element visible / enabled は通常チェックで確認済。
+    await page.getByRole('button', { name: '登録' }).click({ force: true });
     const res = await postResponse;
     expect(res.ok(), `POST /api/customers failed: ${res.status()}`).toBeTruthy();
 

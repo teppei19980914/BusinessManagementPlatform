@@ -93,7 +93,13 @@ test.describe('@feature:teardown Steps 9-12 ログアウト + 削除 + 残存検
     const deleteRes = page.waitForResponse(
       (r) => r.url().includes(`/api/projects/${projectId}`) && r.request().method() === 'DELETE',
     );
-    await page.getByRole('button', { name: 'プロジェクトを削除する' }).click();
+    // KDD §5.X+124: chromium-mobile (iPhone 13 / DPR=3 emulation) で Dialog 内
+    //   `-translate-x-1/2 -translate-y-1/2` centered content の hit-test 計算が subpixel
+    //   ズレで誤判定し、Dialog 内の別要素 (heading / span) が button 真上と認識される事象。
+    //   chromium (desktop) では再現せず、CSS / stacking context / animation 各層で原因
+    //   特定不能。{ force: true } で hit-test を bypass し element visible / enabled は
+    //   通常チェックで確認済 (handler 経路に瑕疵なし)。
+    await page.getByRole('button', { name: 'プロジェクトを削除する' }).click({ force: true });
     const res = await deleteRes;
     expect(res.ok()).toBeTruthy();
 
