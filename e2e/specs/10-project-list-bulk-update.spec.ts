@@ -93,14 +93,16 @@ test.describe('@feature:project-list-bulk PR #165 「○○一覧」一括更新
     await disconnectDb();
   });
 
-  // -------- /api/projects/[projectId]/risks/bulk (PR #161 → PR #165) --------
+  // -------- /api/projects/[projectId]/risks/bulk (PR #161 → PR #165 → UI_PATTERNS §35) --------
+  // UI_PATTERNS §35 (2026-05-24): 5 一覧画面の一括編集を visibility-only に統一。
+  // 旧 patch: { state / assigneeId / deadline } 複合 schema は撤廃済。
 
-  test('PATCH /api/projects/[projectId]/risks/bulk: filterFingerprint 空でも 200 (Phase C 要件 18)', async () => {
+  test('PATCH /api/projects/[projectId]/risks/bulk: filterFingerprint 空 + visibility 指定で 200 (Phase C 要件 18)', async () => {
     const res = await sharedPage.request.patch(`/api/projects/${projectId}/risks/bulk`, {
       data: {
         ids: [FAKE_UUID],
         filterFingerprint: {},
-        patch: { state: 'in_progress' },
+        visibility: 'draft',
       },
     });
     expect(res.status()).toBe(200);
@@ -108,12 +110,12 @@ test.describe('@feature:project-list-bulk PR #165 「○○一覧」一括更新
     expect(body.data.skippedNotFound).toBe(1);
   });
 
-  test('PATCH /api/projects/[projectId]/risks/bulk: type=risk フィルター → 200 OK (構造検証)', async () => {
+  test('PATCH /api/projects/[projectId]/risks/bulk: visibility=public + フィルター付き → 200 OK (構造検証)', async () => {
     const res = await sharedPage.request.patch(`/api/projects/${projectId}/risks/bulk`, {
       data: {
         ids: [FAKE_UUID],
-        filterFingerprint: { type: 'risk' },
-        patch: { state: 'in_progress' },
+        filterFingerprint: { keyword: 'test', mineOnly: true },
+        visibility: 'public',
       },
     });
     expect(res.status()).toBe(200);
@@ -123,6 +125,29 @@ test.describe('@feature:project-list-bulk PR #165 「○○一覧」一括更新
     expect(body.data).toHaveProperty('skippedNotFound');
     // 実存しない UUID なので skippedNotFound=1
     expect(body.data.skippedNotFound).toBe(1);
+  });
+
+  test('PATCH /api/projects/[projectId]/risks/bulk: 旧 patch.state 形式は 400 (visibility-only に統一済)', async () => {
+    // UI_PATTERNS §35: 旧複合 patch を送信しても visibility 必須により 400
+    const res = await sharedPage.request.patch(`/api/projects/${projectId}/risks/bulk`, {
+      data: {
+        ids: [FAKE_UUID],
+        filterFingerprint: { type: 'risk' },
+        patch: { state: 'in_progress' },
+      },
+    });
+    expect(res.status()).toBe(400);
+  });
+
+  test('PATCH /api/projects/[projectId]/risks/bulk: visibility="private" は 400 (Risk/Issue は draft/public のみ)', async () => {
+    const res = await sharedPage.request.patch(`/api/projects/${projectId}/risks/bulk`, {
+      data: {
+        ids: [FAKE_UUID],
+        filterFingerprint: {},
+        visibility: 'private', // RiskIssue schema では未定義値
+      },
+    });
+    expect(res.status()).toBe(400);
   });
 
   // -------- /api/projects/[projectId]/retrospectives/bulk (PR #162 → PR #165) --------
@@ -224,7 +249,7 @@ test.describe('@feature:project-list-bulk PR #165 「○○一覧」一括更新
 
   test('PR #165 で旧 path /api/risks/bulk は削除済 (Next.js は通常 405 を返す)', async () => {
     const res = await sharedPage.request.patch('/api/risks/bulk', {
-      data: { ids: [FAKE_UUID], filterFingerprint: { type: 'risk' }, patch: { state: 'open' } },
+      data: { ids: [FAKE_UUID], filterFingerprint: {}, visibility: 'draft' },
     });
     // Next.js App Router は存在しない route handler に対して 404/405 を返す。
     expect([404, 405]).toContain(res.status());

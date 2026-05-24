@@ -21,7 +21,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { CreateMemoInput, UpdateMemoInput } from '@/lib/validators/memo';
 
 /**
@@ -275,16 +275,20 @@ export async function bulkUpdateMemosVisibilityFromList(
   skippedNotFound: number;
   /** 2026-05-11: 「全メンバー」公開を試みた行のうち、タイトル空のためスキップした件数 */
   skippedEmptyTitle: number;
+  /** 2026-05-24: private→public 遷移で batch 生成した embedding 件数 */
+  embeddingsGenerated: number;
 }> {
   if (ids.length === 0) {
-    return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0 };
+    return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0, embeddingsGenerated: 0 };
   }
 
   // 2026-05-09 feedback Phase 2-4: 越境一括更新を遮断するため tenantId 併記。
   // 2026-05-11: title を取得して、'public' 化時に空タイトルをスキップ判定に使う。
+  // PR feat/project-list-section-unification (2026-05-24, embedding 追補):
+  //   private→public 遷移行のみ embedding 対象になるため、visibility + content も select。
   const targets = await prisma.memo.findMany({
     where: { id: { in: ids }, deletedAt: null, tenantId: viewerTenantId },
-    select: { id: true, userId: true, title: true },
+    select: { id: true, userId: true, title: true, visibility: true, content: true },
   });
   const skippedNotFound = ids.length - targets.length;
   const owned = targets.filter((t) => t.userId === viewerUserId);
@@ -303,7 +307,7 @@ export async function bulkUpdateMemosVisibilityFromList(
   const ownedIds = eligible.map((t) => t.id);
 
   if (ownedIds.length === 0) {
-    return { updatedIds: [], skippedNotOwned, skippedNotFound, skippedEmptyTitle };
+    return { updatedIds: [], skippedNotOwned, skippedNotFound, skippedEmptyTitle, embeddingsGenerated: 0 };
   }
 
   await prisma.memo.updateMany({
@@ -313,7 +317,31 @@ export async function bulkUpdateMemosVisibilityFromList(
     data: { visibility },
   });
 
-  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, skippedEmptyTitle };
+  // PR feat/project-list-section-unification (2026-05-24): 一括 visibility 変更に伴う embedding
+  //   再生成 (コスト最適化版)。単発 updateMemo と整合する判定マトリクス:
+  //     - visibility='private' (公開取り下げ)       → 生成しない (提案エンジン対象外)
+  //     - visibility='public' へ昇格 + 旧 private  → batch で 1 ApiCallLog 集約して生成
+  //     - public→public はそもそも text 変更なし  → 生成しない (LLM 課金回避)
+  let embeddingsGenerated = 0;
+  if (visibility === 'public') {
+    const eligibleForEmbedding = eligible.filter((t) => t.visibility === 'private');
+    if (eligibleForEmbedding.length > 0) {
+      const items = eligibleForEmbedding.map((t) => ({
+        table: 'memos' as const,
+        rowId: t.id,
+        text: composeMemoText({ title: t.title, content: t.content }),
+      }));
+      const res = await generateAndPersistBatchEmbeddings({
+        items,
+        tenantId: viewerTenantId,
+        userId: viewerUserId,
+        featureUnit: 'memo-embedding',
+      });
+      embeddingsGenerated = res.generated;
+    }
+  }
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, skippedEmptyTitle, embeddingsGenerated };
 }
 
 /**

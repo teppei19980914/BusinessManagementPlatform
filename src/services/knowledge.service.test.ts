@@ -25,6 +25,7 @@ vi.mock('@/lib/db', () => ({
 // 各テストで `vi.mocked(generateAndPersistEntityEmbedding).mockClear()` 等で呼び出し検証可能。
 vi.mock('./embedding.service', () => ({
   generateAndPersistEntityEmbedding: vi.fn().mockResolvedValue(undefined),
+  generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
 import {
@@ -38,7 +39,7 @@ import {
   bulkUpdateKnowledgeVisibilityFromList,
 } from './knowledge.service';
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -631,6 +632,7 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
       skippedNotOwned: 0,
       skippedNotFound: 0,
       skippedEmptyTitle: 0,
+      embeddingsGenerated: 0,
     });
     expect(prisma.knowledge.updateMany).not.toHaveBeenCalled();
   });
@@ -681,5 +683,51 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
 
     expect(r.updatedIds).toEqual(['k-1']);
     expect(r.skippedEmptyTitle).toBe(1);
+  });
+
+  // UI_PATTERNS §35 (2026-05-24): bulk visibility 経路の embedding コスト最適化テスト。
+  // 単発 updateKnowledge の判定マトリクスと整合: draft→public 遷移のみ embedding 対象。
+  describe('embedding 生成 (コスト最適化)', () => {
+    it('visibility=draft への変更は embedding を生成しない (Voyage 課金回避)', async () => {
+      vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+        { id: 'k-1', createdBy: 'u-1', title: 't', visibility: 'public', background: 'b', content: 'c', result: 'r', conclusion: null, recommendation: null },
+      ] as never);
+      vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', ['k-1'], 'draft', 'u-1', 't-1');
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('public→public のままなら embedding を生成しない (text 変更なしのため)', async () => {
+      vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+        { id: 'k-1', createdBy: 'u-1', title: 't', visibility: 'public', background: 'b', content: 'c', result: 'r', conclusion: null, recommendation: null },
+      ] as never);
+      vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', ['k-1'], 'public', 'u-1', 't-1');
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('draft→public 遷移行のみ batch で 1 ApiCallLog 集約 (既 public は除外)', async () => {
+      vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+        { id: 'k-1', createdBy: 'u-1', title: 't1', visibility: 'draft', background: 'b1', content: 'c1', result: 'r1', conclusion: null, recommendation: null },
+        { id: 'k-2', createdBy: 'u-1', title: 't2', visibility: 'draft', background: 'b2', content: 'c2', result: 'r2', conclusion: null, recommendation: null },
+        // 既に public な行は除外される (text 変更なしのため)
+        { id: 'k-3', createdBy: 'u-1', title: 't3', visibility: 'public', background: 'b3', content: 'c3', result: 'r3', conclusion: null, recommendation: null },
+      ] as never);
+      vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 3 } as never);
+      vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValue({ generated: 2, failed: 0, costJpy: 1 });
+
+      const r = await bulkUpdateKnowledgeVisibilityFromList('p-1', ['k-1', 'k-2', 'k-3'], 'public', 'u-1', 't-1');
+
+      expect(r.embeddingsGenerated).toBe(2);
+      expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
+      const args = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      expect(args.items).toHaveLength(2);
+      expect(args.items.map((i) => i.rowId)).toEqual(['k-1', 'k-2']);
+      expect(args.featureUnit).toBe('knowledge-embedding');
+    });
   });
 });

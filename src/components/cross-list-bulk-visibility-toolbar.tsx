@@ -64,6 +64,14 @@ type Props = {
    * mineOnly フィルターが冗長になる画面で使う。
    */
   hideMineOnlyFilter?: boolean;
+  /**
+   * UI_PATTERNS §35 (2026-05-24): 呼び出し側が独自の FilterBar を持つ場合 (リスク/課題は
+   * state + priority を持つ画面固有 FilterBar が存在) に true を指定すると、本コンポーネント
+   * 内蔵の FilterBar (keyword + mineOnly) を描画しない。
+   * 内蔵 FilterBar を抑止しても filter state (keyword/mineOnly) は呼び出し側で
+   * onFilterChange と一緒に管理し、bulk PATCH の filterFingerprint に同梱される。
+   */
+  hideFilterBar?: boolean;
 };
 
 export function CrossListBulkVisibilityToolbar({
@@ -77,6 +85,7 @@ export function CrossListBulkVisibilityToolbar({
   entityLabel,
   onApplied,
   hideMineOnlyFilter = false,
+  hideFilterBar = false,
 }: Props) {
   const t = useTranslations('bulkVisibility');
   const tAction = useTranslations('action');
@@ -120,33 +129,36 @@ export function CrossListBulkVisibilityToolbar({
 
   return (
     <>
-      {/* フィルター UI (Phase E 共通化: FilterBar shell に集約) */}
-      <FilterBar title={t('filterTitle')}>
-        <div className={hideMineOnlyFilter ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-1 gap-2 md:grid-cols-3'}>
-          <div className={hideMineOnlyFilter ? '' : 'md:col-span-2'}>
-            <Label htmlFor={`${formIdPrefix}-filter-keyword`} className="text-xs">{t('keywordLabel')}</Label>
-            <Input
-              id={`${formIdPrefix}-filter-keyword`}
-              value={filter.keyword}
-              onChange={(e) => onFilterChange({ ...filter, keyword: e.target.value })}
-              placeholder={t('keywordPlaceholder')}
-            />
-          </div>
-          {!hideMineOnlyFilter && (
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 pb-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={filter.mineOnly}
-                  onChange={(e) => onFilterChange({ ...filter, mineOnly: e.target.checked })}
-                  className="rounded"
-                />
-                {t('mineOnly')}
-              </label>
+      {/* フィルター UI (Phase E 共通化: FilterBar shell に集約)。
+          UI_PATTERNS §35: 呼び出し側が画面固有 FilterBar を持つ場合は hideFilterBar=true で抑止可。 */}
+      {!hideFilterBar && (
+        <FilterBar title={t('filterTitle')}>
+          <div className={hideMineOnlyFilter ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-1 gap-2 md:grid-cols-3'}>
+            <div className={hideMineOnlyFilter ? '' : 'md:col-span-2'}>
+              <Label htmlFor={`${formIdPrefix}-filter-keyword`} className="text-xs">{t('keywordLabel')}</Label>
+              <Input
+                id={`${formIdPrefix}-filter-keyword`}
+                value={filter.keyword}
+                onChange={(e) => onFilterChange({ ...filter, keyword: e.target.value })}
+                placeholder={t('keywordPlaceholder')}
+              />
             </div>
-          )}
-        </div>
-      </FilterBar>
+            {!hideMineOnlyFilter && (
+              <div className="flex items-end">
+                <label className="flex items-center gap-2 pb-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={filter.mineOnly}
+                    onChange={(e) => onFilterChange({ ...filter, mineOnly: e.target.checked })}
+                    className="rounded"
+                  />
+                  {t('mineOnly')}
+                </label>
+              </div>
+            )}
+          </div>
+        </FilterBar>
+      )}
 
       {/* 一括編集ツールバー (Phase C 要件 18: フィルター有無に関わらず常時表示) */}
       <div className="flex items-center justify-between gap-2 py-2">

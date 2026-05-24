@@ -3,6 +3,7 @@ import {
   bulkUpdateRetrospectiveVisibilitySchema,
   bulkUpdateKnowledgeVisibilitySchema,
   bulkUpdateMemoVisibilitySchema,
+  bulkUpdateRiskVisibilitySchema,
 } from './cross-list-bulk-visibility';
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
@@ -52,6 +53,49 @@ describe('bulkUpdateMemoVisibilitySchema', () => {
     expect(bulkUpdateMemoVisibilitySchema.safeParse({ ...base, visibility: 'public' }).success).toBe(true);
     // Memo は draft が無い (Retrospective/Knowledge とは異なる値域)
     expect(bulkUpdateMemoVisibilitySchema.safeParse({ ...base, visibility: 'draft' }).success).toBe(false);
+  });
+});
+
+// UI_PATTERNS §35 (2026-05-24): Risk/Issue の一括編集も visibility-only に統一。
+// 旧 risk-bulk.ts の state+assigneeId+deadline 複合 patch は撤廃済。
+describe('bulkUpdateRiskVisibilitySchema', () => {
+  it('Risk/Issue は visibility=draft / public のみ受理 (DB schema に準拠)', () => {
+    const base = { ids: [VALID_UUID], filterFingerprint: { keyword: 'a' } };
+    expect(bulkUpdateRiskVisibilitySchema.safeParse({ ...base, visibility: 'draft' }).success).toBe(true);
+    expect(bulkUpdateRiskVisibilitySchema.safeParse({ ...base, visibility: 'public' }).success).toBe(true);
+    // Risk/Issue は private が無い (Memo とは異なる値域)
+    expect(bulkUpdateRiskVisibilitySchema.safeParse({ ...base, visibility: 'private' }).success).toBe(false);
+  });
+
+  it('ids が空配列なら拒否', () => {
+    expect(
+      bulkUpdateRiskVisibilitySchema.safeParse({
+        ids: [],
+        filterFingerprint: {},
+        visibility: 'public',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('ids 上限 500 件超なら拒否', () => {
+    expect(
+      bulkUpdateRiskVisibilitySchema.safeParse({
+        ids: Array.from({ length: 501 }, () => VALID_UUID),
+        filterFingerprint: {},
+        visibility: 'public',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('旧 patch.state / patch.assigneeId / patch.deadline の複合フィールドは受理しない (上位スキーマが strict ではないが visibility が必須なので別経路は不可)', () => {
+    // 旧形式 { ids, filterFingerprint, patch: { state } } では visibility が無く拒否される
+    expect(
+      bulkUpdateRiskVisibilitySchema.safeParse({
+        ids: [VALID_UUID],
+        filterFingerprint: {},
+        patch: { state: 'resolved' },
+      }).success,
+    ).toBe(false);
   });
 });
 

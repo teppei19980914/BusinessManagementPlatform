@@ -32,7 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 // Prisma types used for Decimal handling in toRiskDTO
 import type { CreateRiskInput } from '@/lib/validators/risk';
 import type { Priority } from '@/types';
@@ -688,40 +688,38 @@ export async function updateRisk(
 }
 
 /**
- * プロジェクト「リスク/課題一覧」からの **一括更新** (PR #165 / refactor/bulk-update-to-project-list で
- * cross-list から project-scoped に移し替え。元実装は PR #161 / feat/cross-list-bulk-update)。
+ * プロジェクト「リスク/課題一覧」からの **一括 visibility 更新** (UI_PATTERNS §35, 2026-05-24)。
  *
- * 設計判断:
+ * 履歴:
+ *   - PR #161 (2026-04-) cross-list bulk update (state+assigneeId+deadline 複合) として導入
+ *   - PR #165 (2026-04-) cross-list → project-scoped に移し替え
+ *   - feat/all-list-section-unification (2026-05-24): UI_PATTERNS §35 に従い、
+ *     5 一覧画面 (リスク/課題/ナレッジ/振り返り/メモ) の一括編集を visibility-only に統一。
+ *     state+assigneeId+deadline 複合 patch は撤廃 (per-row 編集 dialog で行う)。
+ *
+ * 設計判断 (Knowledge / Retrospective の bulkUpdate*VisibilityFromList と同設計):
  *   - **scope は projectId に限定**: where に projectId を加え、他プロジェクトのレコードを
- *     ids に混ぜても触れない (PR #165 で cross-list 廃止に伴い導入)。
- *   - 編集権限は単発 update と同じ「**reporter (作成者) 本人のみ**」(2026-04-24 の方針を踏襲)。
+ *     ids に混ぜても触れない。M:N (riskIssueProjects) 経由で判定。
+ *   - 編集権限は単発 update と同じ「**reporter (作成者) 本人のみ**」。
  *     viewer 自身が作成していないレコードは silently skip し、結果に skippedNotOwned カウントを返す。
- *     行が混在しても update は **reporter 本人分だけが反映** されるため、誤更新の事故が起きない。
  *   - admin であっても他人のレコードは更新しない (admin の管理操作は削除に限定する既存方針と一致)。
- *   - 全件更新の事故防止: 呼出側 (API 層) で「フィルター 1 つ以上の適用」を必須化する。
- *   - patch は state / assigneeId / deadline の 3 項目に限定 (自由文の一括置換は UX が壊れやすい)。
+ *   - 2026-05-12 severity-1 防御: tenantId / reporterId を where に明示。
  *
  * @returns updatedIds: 実際に更新した ID 配列 / skippedNotOwned: 作成者違いで skip した数 /
  *          skippedNotFound: 存在しない or 既に削除済 or 別プロジェクトの数
  */
-export async function bulkUpdateRisksFromList(
+export async function bulkUpdateRisksVisibilityFromList(
   projectId: string,
   ids: string[],
-  patch: {
-    state?: string;
-    assigneeId?: string | null;
-    deadline?: string | null;
-  },
+  visibility: 'draft' | 'public',
   viewerUserId: string,
   viewerTenantId: string,
-): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number }> {
-  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 };
+): Promise<{ updatedIds: string[]; skippedNotOwned: number; skippedNotFound: number; embeddingsGenerated: number }> {
+  if (ids.length === 0) return { updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, embeddingsGenerated: 0 };
 
-  // 一度のクエリで対象を取得し、所有権を行ごとに判定 (N+1 回避)
-  // PR #165: where に projectId を加え、他プロジェクトのレコードは skippedNotFound 扱いにする
-  // PR feat/asset-multi-project-linking: scope は M:N (riskIssueProjects) 経由で判定する。
-  //   つまり「この project に紐付け済 (作成元または参照先)」のレコードのみ一括更新可能。
-  // 2026-05-09 feedback Phase 2-3: 越境一括更新を遮断するため tenantId フィルタを併記。
+  // PR feat/project-list-section-unification (2026-05-24, embedding 追補):
+  //   draft→public 遷移 + state='resolved' の行のみ embedding 対象になるため、
+  //   text フィールド + visibility + state を select に含める。
   const targets = await prisma.riskIssue.findMany({
     where: {
       id: { in: ids },
@@ -729,33 +727,68 @@ export async function bulkUpdateRisksFromList(
       tenantId: viewerTenantId,
       riskIssueProjects: { some: { projectId } },
     },
-    select: { id: true, reporterId: true },
+    select: {
+      id: true,
+      reporterId: true,
+      visibility: true,
+      state: true,
+      title: true,
+      content: true,
+      cause: true,
+      responsePolicy: true,
+      responseDetail: true,
+    },
   });
-  const found = new Set(targets.map((t) => t.id));
-  const skippedNotFound = ids.length - found.size;
-  const ownedIds = targets.filter((t) => t.reporterId === viewerUserId).map((t) => t.id);
-  const skippedNotOwned = targets.length - ownedIds.length;
+  const skippedNotFound = ids.length - targets.length;
+  const owned = targets.filter((t) => t.reporterId === viewerUserId);
+  const skippedNotOwned = targets.length - owned.length;
+  const ownedIds = owned.map((t) => t.id);
 
   if (ownedIds.length === 0) {
-    return { updatedIds: [], skippedNotOwned, skippedNotFound };
-  }
-
-  // updateRisk と同じく、undefined のキーは patch しない (false 値や null との区別を維持)
-  const data: Record<string, unknown> = { updatedBy: viewerUserId };
-  if (patch.state !== undefined) data.state = patch.state;
-  if (patch.assigneeId !== undefined) data.assigneeId = patch.assigneeId;
-  if (patch.deadline !== undefined) {
-    // null 明示クリアは保持、`new Date(null)` (1970 epoch) を防ぐ (updateRisk §5.12 と同方針)
-    data.deadline = patch.deadline === null ? null : new Date(patch.deadline);
+    return { updatedIds: [], skippedNotOwned, skippedNotFound, embeddingsGenerated: 0 };
   }
 
   await prisma.riskIssue.updateMany({
-    // 2026-05-12 severity-1 防御: tenantId / reporterId 明示
     where: { id: { in: ownedIds }, tenantId: viewerTenantId, reporterId: viewerUserId },
-    data,
+    data: { visibility, updatedBy: viewerUserId },
   });
 
-  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound };
+  // PR feat/project-list-section-unification (2026-05-24): 一括 visibility 変更に伴う embedding
+  //   再生成 (コスト最適化版)。単発 updateRisk と整合する判定マトリクス:
+  //     - visibility='draft' (公開取り下げ)  → 生成しない (提案エンジン対象外)
+  //     - visibility='public' へ昇格
+  //         AND wasDraft (= draft→public 遷移)
+  //         AND state='resolved' (RiskIssue は public + resolved のみ提案候補)
+  //       → 対象行を batch で 1 ApiCallLog 集約して生成 (feedback_bulk_llm_call_unit 準拠)
+  //   public→public のままや draft 維持時は API 呼出ゼロ (= Voyage 課金回避)。
+  let embeddingsGenerated = 0;
+  if (visibility === 'public') {
+    const eligibleForEmbedding = owned.filter(
+      (t) => t.visibility === 'draft' && t.state === 'resolved',
+    );
+    if (eligibleForEmbedding.length > 0) {
+      const items = eligibleForEmbedding.map((t) => ({
+        table: 'risks_issues' as const,
+        rowId: t.id,
+        text: composeRiskText({
+          title: t.title,
+          content: t.content,
+          cause: t.cause,
+          responsePolicy: t.responsePolicy,
+          responseDetail: t.responseDetail,
+        }),
+      }));
+      const res = await generateAndPersistBatchEmbeddings({
+        items,
+        tenantId: viewerTenantId,
+        userId: viewerUserId,
+        featureUnit: 'risk-issue-embedding',
+      });
+      embeddingsGenerated = res.generated;
+    }
+  }
+
+  return { updatedIds: ownedIds, skippedNotOwned, skippedNotFound, embeddingsGenerated };
 }
 
 /**

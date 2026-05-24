@@ -32,10 +32,19 @@ import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { matchesAnyKeyword } from '@/lib/text-search';
-// Phase E 要件 1〜3 (2026-04-29): 共通バッジ + クリッカブルカード + 一括選択部品
+// UI_PATTERNS §35 (2026-05-24): カードから軽量テーブルに移行 (5 一覧 UI 統一)
 import { VisibilityBadge } from '@/components/common/visibility-badge';
-import { ClickableCard } from '@/components/common/clickable-row';
+import { ClickableRow } from '@/components/common/clickable-row';
 import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
+import {
+  TableBody, TableCell, TableHeader, TableRow,
+} from '@/components/ui/table';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
+import { useFormatters } from '@/lib/use-formatters';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import {
@@ -74,6 +83,18 @@ function buildRetroVisibilityOptions(t: (key: string) => string) {
   ];
 }
 
+// UI_PATTERNS §35 (2026-05-24): 軽量テーブル化に伴うカラムソート getter。
+function getProjectRetroSortValue(r: RetroDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'conductedDate': return r.conductedDate;
+    case 'state': return r.state;
+    case 'visibility': return r.visibility;
+    case 'createdBy': return r.createdBy;
+    case 'createdAt': return r.createdAt;
+    default: return null;
+  }
+}
+
 type Props = {
   projectId: string;
   retros: RetroDTO[];
@@ -88,10 +109,14 @@ type Props = {
 export function RetrospectivesClient({ projectId, retros, canCreate, currentUserId, onReload }: Props) {
   const t = useTranslations('action');
   const tRetro = useTranslations('retro');
+  const tCommon = useTranslations('common');
   const RETRO_VISIBILITY_OPTIONS = buildRetroVisibilityOptions(tRetro);
   const router = useRouter();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
+  const { formatDate } = useFormatters();
+  // UI_PATTERNS §35: カラムソート (sessionStorage 永続化、複数列対応)
+  const { sortState, setSortColumn } = useMultiSort(`sort:project-retrospectives-${projectId}`);
   const reload = useCallback(async () => {
     if (onReload) {
       await onReload();
@@ -142,7 +167,8 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
         ]),
       );
     }
-    return xs;
+    // UI_PATTERNS §35: 軽量テーブル化に伴い multi-sort 適用
+    return multiSort(xs, sortState, getProjectRetroSortValue);
   })();
 
   const selectableRetroIds = filteredRetros
@@ -348,103 +374,108 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
         onApplied={async () => { await reload(); }}
       />
 
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <BulkSelectHeader
-          allSelected={allRetrosSelected}
-          totalSelectable={selectableRetroIds.length}
-          onToggleAll={toggleAllRetros}
-          ariaLabel={tRetro('selectAllOwn')}
-        />
-        {tRetro('selectAllOwn')} ({selectableRetroIds.length})
+      {/* UI_PATTERNS §35 (2026-05-24): 軽量テーブル統一。詳細 (planSummary / actualSummary /
+          goodPoints / problems / improvements) は行クリックで RetrospectiveEditDialog
+          (readOnly 判定付き) を開いて表示する。 */}
+      <ResizableTableShell tableKey={`project-retrospectives-${projectId}`}>
+        <TableHeader>
+          <TableRow>
+            <ResizableHead columnKey="select" defaultWidth={36}>
+              <BulkSelectHeader
+                allSelected={allRetrosSelected}
+                totalSelectable={selectableRetroIds.length}
+                onToggleAll={toggleAllRetros}
+                ariaLabel={tRetro('selectAllOwn')}
+              />
+            </ResizableHead>
+            <SortableResizableHead columnKey="conductedDate" defaultWidth={130} label={tRetro('conductedDate')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="state" defaultWidth={100} label={tRetro('state')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="visibility" defaultWidth={90} label={tRetro('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRetro('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <ResizableHead columnKey="attachments" defaultWidth={180}>{tRetro('attachment')}</ResizableHead>
+            {/* 2026-04-24 / §35: 作成者本人だけが操作ボタンを使うので、自分の行が 1 つでもあれば列を出す */}
+            {filteredRetros.some((r) => r.createdBy === currentUserId) && (
+              <ResizableHead columnKey="actions" defaultWidth={160}>{tRetro('actions')}</ResizableHead>
+            )}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filteredRetros.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={filteredRetros.some((r) => r.createdBy === currentUserId) ? 8 : 7}
+                className="py-8 text-center text-muted-foreground"
+              >
+                {tRetro('noneInList')}
+              </TableCell>
+            </TableRow>
+          ) : (
+            filteredRetros.map((retro) => {
+              // 2026-04-24: 作成者本人のみ編集/確定/削除可
+              const isOwner = retro.createdBy === currentUserId;
+              return (
+                <ClickableRow key={retro.id} onClick={() => setEditingRetro(retro)}>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <BulkSelectCell
+                      canSelect={isOwner}
+                      hidePlaceholderWhenDisabled
+                      stopPropagation
+                      selected={selectedIds.has(retro.id)}
+                      onToggle={() => toggleOneRetro(retro.id)}
+                      ariaLabel={`振り返り (${retro.conductedDate}) を一括編集対象に追加`}
+                    />
+                  </TableCell>
+                  <TableCell className="font-medium">{retro.conductedDate}</TableCell>
+                  <TableCell>
+                    <Badge variant={retro.state === 'confirmed' ? 'default' : 'outline'}>
+                      {retro.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <VisibilityBadge
+                      visibility={retro.visibility}
+                      label={VISIBILITIES[retro.visibility as keyof typeof VISIBILITIES] || retro.visibility}
+                      className="text-xs"
+                    />
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{retro.createdBy}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{formatDate(retro.createdAt)}</TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <AttachmentsCell items={attachmentsByEntity[retro.id] ?? []} />
+                  </TableCell>
+                  {filteredRetros.some((x) => x.createdBy === currentUserId) && (
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        {isOwner && retro.state !== 'confirmed' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); handleConfirm(retro.id); }}
+                          >{tRetro('confirmAction')}</Button>
+                        )}
+                        {isOwner && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-destructive"
+                            onClick={(e) => { e.stopPropagation(); handleDelete(retro.id); }}
+                          >{t('delete')}</Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  )}
+                </ClickableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </ResizableTableShell>
+
+      {/* §35 件数表示は table 下部 */}
+      <div className="flex justify-end text-xs text-muted-foreground">
+        {tCommon('itemCount', { count: filteredRetros.length })}
       </div>
-
-      {filteredRetros.length === 0 && (
-        <p className="py-8 text-center text-muted-foreground">{tRetro('noneInList')}</p>
-      )}
-
-      {filteredRetros.map((retro) => {
-        // 2026-04-24: 作成者本人のみ編集/確定/削除可
-        const isOwner = retro.createdBy === currentUserId;
-        return (
-        <ClickableCard
-          key={retro.id}
-          // Phase B 要件 5 + Phase E 共通化: カードクリックで dialog を開く (全員 active)。
-          //   subtle で transition + 半透明 hover (大きいカード向けの落ち着いた表現)。
-          subtle
-          className="rounded-lg border p-6 space-y-4"
-          onClick={() => setEditingRetro(retro)}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <BulkSelectCell
-                canSelect={isOwner}
-                hidePlaceholderWhenDisabled
-                stopPropagation
-                selected={selectedIds.has(retro.id)}
-                onToggle={() => toggleOneRetro(retro.id)}
-                ariaLabel={`振り返り (${retro.conductedDate}) を一括編集対象に追加`}
-              />
-              <h3 className="font-semibold">{tRetro('title')}（{retro.conductedDate}）</h3>
-              <Badge variant={retro.state === 'confirmed' ? 'default' : 'outline'}>
-                {retro.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}
-              </Badge>
-              {/* feat/account-lock-and-ui-consistency: 公開範囲バッジを追加。
-                  編集ダイアログで visibility を変更しても一覧に表示されず「画面上データが
-                  更新されていない」ように見える bug の解消。state とは別概念なので
-                  「公開: ○○」のラベル付きで明示。 */}
-              <VisibilityBadge
-                visibility={retro.visibility}
-                label={VISIBILITIES[retro.visibility as keyof typeof VISIBILITIES] || retro.visibility}
-                prefix="公開: "
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              {isOwner && retro.state !== 'confirmed' && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => { e.stopPropagation(); handleConfirm(retro.id); }}
-                >{tRetro('confirmAction')}</Button>
-              )}
-              {isOwner && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive"
-                  onClick={(e) => { e.stopPropagation(); handleDelete(retro.id); }}
-                >{t('delete')}</Button>
-              )}
-            </div>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <h4 className="text-sm font-medium text-muted-foreground">{tRetro('goodPoints')}</h4>
-              <p className="mt-1 whitespace-pre-wrap text-sm">{retro.goodPoints}</p>
-            </div>
-            <div>
-              <h4 className="text-sm font-medium text-muted-foreground">{tRetro('problems')}</h4>
-              <p className="mt-1 whitespace-pre-wrap text-sm">{retro.problems}</p>
-            </div>
-            <div className="md:col-span-2">
-              <h4 className="text-sm font-medium text-muted-foreground">{tRetro('improvements')}</h4>
-              <p className="mt-1 whitespace-pre-wrap text-sm">{retro.improvements}</p>
-            </div>
-            {/* PR #168: 添付 chips (他エンティティ一覧と同パターン) */}
-            <div className="md:col-span-2" onClick={(e) => e.stopPropagation()}>
-              <h4 className="mb-1 text-sm font-medium text-muted-foreground">{tRetro('attachment')}</h4>
-              <AttachmentsCell items={attachmentsByEntity[retro.id] ?? []} />
-            </div>
-          </div>
-
-          {/*
-            PR #199: 振り返りのコメント機能は polymorphic <CommentSection> に統合。
-            一覧画面に列を追加せず、編集 dialog (RetrospectiveEditDialog) 内に表示する。
-            旧 RetrospectiveComment テーブル / 旧 API は削除済み。
-          */}
-        </ClickableCard>
-        );
-      })}
 
       {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。 */}
       <RetrospectiveEditDialog

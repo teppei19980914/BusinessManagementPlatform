@@ -67,7 +67,7 @@ describe('PATCH /api/memos/bulk', () => {
   // フィルター必須要件は撤廃され、per-row 作成者判定 + ids 上限で多層防御。
   it('filterFingerprint 空でも 200 (Phase C 要件 18 でフィルター必須は撤廃)', async () => {
     vi.mocked(bulkUpdateMemosVisibilityFromList).mockResolvedValue({
-      updatedIds: [VALID_UUID], skippedNotOwned: 0, skippedNotFound: 0,
+      updatedIds: [VALID_UUID], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0, embeddingsGenerated: 0,
     });
     const res = await PATCH(makeReq({
       ids: [VALID_UUID],
@@ -79,7 +79,7 @@ describe('PATCH /api/memos/bulk', () => {
 
   it('正常系: visibility=private で「全メモから取り下げ」', async () => {
     vi.mocked(bulkUpdateMemosVisibilityFromList).mockResolvedValue({
-      updatedIds: [VALID_UUID], skippedNotOwned: 0, skippedNotFound: 0,
+      updatedIds: [VALID_UUID], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0, embeddingsGenerated: 0,
     });
     const res = await PATCH(makeReq({
       ids: [VALID_UUID],

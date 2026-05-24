@@ -29,8 +29,10 @@ vi.mock('@/lib/db', () => ({
 }));
 
 // PR #5-c (T-03 Phase 2): createRetrospective / updateRetrospective から呼ばれる embedding helper をモック
+// 2026-05-24 (UI_PATTERNS §35 embedding 追補): bulkUpdateRetrospectivesVisibilityFromList が batch helper を呼ぶ
 vi.mock('./embedding.service', () => ({
   generateAndPersistEntityEmbedding: vi.fn().mockResolvedValue(undefined),
+  generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
 import {
@@ -47,7 +49,7 @@ import {
   unlinkRetrospectiveFromProject,
 } from './retrospective.service';
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -552,8 +554,8 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ids が空配列なら updateMany を呼ばずに 0 件で返す', async () => {
-    const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', [], 'draft', 'u-1');
-    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0 });
+    const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', [], 'draft', 'u-1', TEST_TENANT_ID);
+    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, embeddingsGenerated: 0 });
     expect(prisma.retrospective.updateMany).not.toHaveBeenCalled();
   });
 
@@ -612,10 +614,52 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
       { id: 'ret-1', createdBy: 'u-OTHER' },
     ] as never);
-    const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-1'], 'draft', 'u-1');
+    const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-1'], 'draft', 'u-1', TEST_TENANT_ID);
     expect(r.updatedIds).toEqual([]);
     expect(r.skippedNotOwned).toBe(1);
     expect(prisma.retrospective.updateMany).not.toHaveBeenCalled();
+  });
+
+  // UI_PATTERNS §35 (2026-05-24): bulk visibility 経路の embedding コスト最適化テスト。
+  describe('embedding 生成 (コスト最適化)', () => {
+    it('visibility=draft への変更は embedding を生成しない (Voyage 課金回避)', async () => {
+      vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+        { id: 'ret-1', createdBy: 'u-1', visibility: 'public', planSummary: 'p', actualSummary: 'a', goodPoints: 'g', problems: 'pr', improvements: 'i', knowledgeToShare: null },
+      ] as never);
+      vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-1'], 'draft', 'u-1', TEST_TENANT_ID);
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('public→public のままなら embedding を生成しない', async () => {
+      vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+        { id: 'ret-1', createdBy: 'u-1', visibility: 'public', planSummary: 'p', actualSummary: 'a', goodPoints: 'g', problems: 'pr', improvements: 'i', knowledgeToShare: null },
+      ] as never);
+      vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-1'], 'public', 'u-1', TEST_TENANT_ID);
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('draft→public 遷移行のみ batch で 1 ApiCallLog 集約', async () => {
+      vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+        { id: 'ret-1', createdBy: 'u-1', visibility: 'draft', planSummary: 'p1', actualSummary: 'a1', goodPoints: 'g1', problems: 'pr1', improvements: 'i1', knowledgeToShare: null },
+        { id: 'ret-2', createdBy: 'u-1', visibility: 'public', planSummary: 'p2', actualSummary: 'a2', goodPoints: 'g2', problems: 'pr2', improvements: 'i2', knowledgeToShare: null },
+      ] as never);
+      vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 2 } as never);
+      vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValue({ generated: 1, failed: 0, costJpy: 1 });
+
+      const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-1', 'ret-2'], 'public', 'u-1', TEST_TENANT_ID);
+
+      expect(r.embeddingsGenerated).toBe(1);
+      expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
+      const args = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      expect(args.items.map((i) => i.rowId)).toEqual(['ret-1']);
+      expect(args.featureUnit).toBe('retrospective-embedding');
+    });
   });
 });
 

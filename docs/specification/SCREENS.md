@@ -441,6 +441,12 @@
 ### 画面目的
 リスク・課題の可視化と追跡管理。
 
+> **★2026-05-24 UI_PATTERNS §35 で統一★ 一覧 UI レイアウト**
+> - プロジェクト配下 (CRUD) は **軽量テーブル + CrossListBulkVisibilityToolbar (visibility-only)** に統一。
+>   旧 state+assigneeId+deadline 複合 bulk dialog (PR #161) は **撤廃** (state/assignee/deadline 一括変更は per-row 編集 dialog で行う)。
+> - 5 一覧画面 (リスク/課題/ナレッジ/振り返り/メモ) の一括編集は全画面 visibility のみ。UI/API ともに統一。
+> - 詳細: [docs/design/UI_PATTERNS.md §35](../design/UI_PATTERNS.md)
+
 > **★2026-05-20 PR #416 で変更★ 削除権限の見直し**
 > - 一覧タブ (プロジェクト詳細内) からの削除: **作成者本人のみ** (PM/TL も admin も他人作成は不可)
 > - 全リスク / 全課題画面 (横断) からの admin 削除ボタンは **横断 DELETE 専用ルート** (`/api/risks/[id]` / `/api/issues/[id]`) を叩く (旧: project スコープルート経由 → 横断ルートへ統一)
@@ -496,6 +502,11 @@
 
 ### 画面目的
 知見の検索、参照、登録、公開。
+
+> **★2026-05-24 UI_PATTERNS §35 で統一★ 一覧 UI レイアウト**
+> - プロジェクト配下 (CRUD) は **軽量テーブル化** (旧カード形式から移行)。詳細 (背景/内容/結果等) は行クリックで KnowledgeEditDialog (readOnly 自動判定) を開いて表示。
+> - 一括編集は **CrossListBulkVisibilityToolbar (visibility-only)**。5 一覧画面で同一 UI。
+> - 詳細: [docs/design/UI_PATTERNS.md §35](../design/UI_PATTERNS.md)
 
 > **★2026-05-20 PR #416 で変更★ 削除権限の見直し**
 > - 一覧タブ (プロジェクト詳細内) からの削除: **作成者本人のみ** (PM/TL も admin も他人作成は不可)
@@ -553,6 +564,11 @@
 
 ### 画面目的
 完了後の総括と、次案件へつなぐ知見整理。
+
+> **★2026-05-24 UI_PATTERNS §35 で統一★ 一覧 UI レイアウト**
+> - プロジェクト配下 (CRUD) は **軽量テーブル化** (旧カード形式から移行)。詳細 (計画/実績総括, goodPoints, problems, improvements) は行クリックで RetrospectiveEditDialog (readOnly 自動判定) を開いて表示。
+> - 一括編集は **CrossListBulkVisibilityToolbar (visibility-only)**。5 一覧画面で同一 UI。
+> - 詳細: [docs/design/UI_PATTERNS.md §35](../design/UI_PATTERNS.md)
 
 > **★2026-05-20 PR #416 で変更★ 削除権限 + linkedProjects per-link gate**
 > - 一覧タブ (プロジェクト詳細内) からの削除: **作成者本人のみ** (PM/TL も admin も他人作成は不可)

@@ -1239,3 +1239,191 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
 
 ---
 
+## DESIGN §35. 「プロジェクト配下 CRUD 一覧画面」の統一レイアウト規約
+
+## 35. 「プロジェクト配下 CRUD 一覧画面」の統一レイアウト規約 (feat/all-list-section-unification, 2026-05-24)
+
+### 35.1 背景
+
+§34 で「全○○」横断 5 画面 (read-only) のセクション配置を統一した。
+ただし、その下位概念であるプロジェクト配下の 5 画面
+(/projects/[id]/risks, /projects/[id]/issues, /projects/[id]/knowledge,
+ /projects/[id]/retrospectives, /memos) も「同じ役割は同じ UI」原則で
+**§34 と同一の 4 セクション順序** で揃える。
+
+「全○○」と異なる点は以下のみ:
+
+- **CRUD 機能拡張**: 作成 / 編集 / 削除 操作が UI 上に存在する
+- **MineOnly フィルター**: 「自分が作成したもののみ」 checkbox を FilterBar に必ず含める
+- **一括選択 + 一括 visibility 編集**: BulkSelectHeader/Cell + CrossListBulkVisibilityToolbar
+- **編集ダイアログ**: `XxxEditDialog` を `readOnly={false}` で利用 (memo のみ別 dialog)
+- **testid 命名**: `project-{entity}-search-input` (全○○の `all-` プレフィックスとの混同回避)
+
+### 35.2 統一規約 (5 画面で必ず守る)
+
+```tsx
+<div className="space-y-6">
+  {/* 1. 件数行 — フィルタ後件数 + CRUD 用 action ボタン群 */}
+  <div className="flex items-center justify-between">
+    <span className="text-sm text-muted-foreground">
+      {tCommon('itemCount', { count: filteredXxx.length })}
+    </span>
+    <div className="flex gap-2">
+      {/* sync-import / 新規作成 などの右寄せボタン */}
+    </div>
+  </div>
+
+  {/* 2. FilterBar — キーワード + MineOnly + 画面固有フィルタ */}
+  <FilterBar>
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-N">
+      <div>
+        <Label htmlFor="project-{entity}-filter-keyword" className="text-xs">{t('keyword')}</Label>
+        <Input
+          id="project-{entity}-filter-keyword"
+          data-testid="project-{entity}-search-input"
+          value={bulkFilter.keyword}
+          onChange={(e) => setBulkFilter({ ...bulkFilter, keyword: e.target.value })}
+        />
+      </div>
+      <div className="flex items-end">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={bulkFilter.mineOnly}
+            onChange={(e) => setBulkFilter({ ...bulkFilter, mineOnly: e.target.checked })}
+          />
+          {t('mineOnly')}
+        </label>
+      </div>
+      {/* 画面固有の追加フィルタ (type / state / priority 等) */}
+    </div>
+  </FilterBar>
+
+  {/* 3. CrossListBulkVisibilityToolbar — 選択中件数 + 一括 visibility 編集ボタン */}
+  <CrossListBulkVisibilityToolbar
+    endpoint={`/api/projects/${projectId}/{entity}/bulk`}
+    formIdPrefix={`project-${projectId}-{entity}`}
+    filter={bulkFilter}
+    onFilterChange={setBulkFilter}
+    selectedIds={selectedIds}
+    onSelectionClear={() => setSelectedIds(new Set())}
+    visibilityOptions={VISIBILITY_OPTIONS}
+    entityLabel={t('entityLabel')}
+    onApplied={onReload}
+  />
+
+  {/* 4. ResizableTableShell — 軽量列 + BulkSelectHeader/Cell + 行クリックで編集 dialog */}
+  <ResizableTableShell tableKey={`project-${projectId}-{entity}`}>
+    <TableHeader>
+      <TableRow>
+        <TableHead>
+          <BulkSelectHeader
+            selectableIds={selectableIds}
+            selectedIds={selectedIds}
+            onToggleAll={toggleAll}
+          />
+        </TableHead>
+        {/* 軽量列のみ (title / type または conductedDate / visibility / createdBy / updatedAt / attachments / admin-actions) */}
+      </TableRow>
+    </TableHeader>
+    <TableBody>
+      {filteredXxx.map((row) => (
+        <ClickableRow key={row.id} onClick={() => setEditing(row)}>
+          <TableCell>
+            <BulkSelectCell
+              id={row.id}
+              isCreator={row.viewerIsCreator}
+              selectedIds={selectedIds}
+              onToggle={toggleOne}
+            />
+          </TableCell>
+          {/* 軽量セル */}
+        </ClickableRow>
+      ))}
+    </TableBody>
+  </ResizableTableShell>
+
+  {/* 5. 編集ダイアログ — XxxEditDialog (CRUD), 行クリックで開く */}
+  <XxxEditDialog
+    open={!!editing}
+    onClose={() => setEditing(null)}
+    initial={editing}
+    readOnly={editing && !editing.viewerIsCreator}
+    onSubmit={handleSubmit}
+  />
+</div>
+```
+
+### 35.3 §34 との差分一覧
+
+| セクション | §34 (全○○) | §35 (project 配下) | 理由 |
+|---|---|---|---|
+| 件数行 | `justify-end` のみ | `justify-between` で左に件数 / 右に CRUD ボタン群 | project 配下は新規作成・sync-import 等の action がある |
+| FilterBar | キーワード + 画面固有 | キーワード + **MineOnly** + 画面固有 | 「自分が作成したものだけ見たい」ニーズは project 配下に強い |
+| 一括編集 | なし (read-only) | CrossListBulkVisibilityToolbar | visibility (draft / public) の一括切替を提供 |
+| テーブル列 | 詳細列含む (background / content 等を直接表示) | **軽量列のみ** (主要列。詳細は行クリック dialog) | project 配下はナビゲーション中継点。詳細は dialog 専用に集約しスクロール感を抑制 |
+| 行クリック | dialog (readOnly=true) | dialog (readOnly=false / true: own/other 判定) | per-row 認可で編集権を分岐 |
+| testid | `all-{entity}-search-input` | `project-{entity}-search-input` | 全 vs project の testid 衝突回避 |
+
+### 35.4 一括編集の統一仕様
+
+5 画面すべてで **CrossListBulkVisibilityToolbar による visibility のみ一括編集** に統一する。
+過去存在した state / assigneeId / deadline 複合一括編集 (リスク/課題) は廃止 (UI + API とも)。
+
+理由:
+- 「同じ役割は同じ UI」 — リスクだけ 3 フィールド複合 dialog があると保守 / E2E が二重化
+- visibility (draft / public) の切替が最頻ユースケース (公開タイミング制御)
+- state / assignee / deadline の一括変更は per-row dialog で明示的に行うほうが事故が少ない
+
+#### 35.4.1 一括 visibility 変更時の embedding 再生成 (コスト最適化)
+
+4 つの bulk visibility サービス
+(`bulkUpdateRisksVisibilityFromList` / `bulkUpdateKnowledgeVisibilityFromList` /
+ `bulkUpdateRetrospectivesVisibilityFromList` / `bulkUpdateMemosVisibilityFromList`) は、
+**単発 update の `generateAndPersistEntityEmbedding` パターンと整合する判定マトリクス** を適用し、
+**遷移行のみ batch 集約で 1 ApiCallLog に embedding 生成** する。
+
+**判定マトリクス** (単発 update と同条件):
+
+| 旧 visibility | 新 visibility | embedding 生成 | 理由 |
+|---|---|---|---|
+| draft (private) | draft (private) | しない | 提案エンジン対象外、API 課金回避 |
+| public | draft (private) | しない | 公開取り下げ、既存 embedding は保持 |
+| public | public | しない | text 変更なし (bulk は visibility のみ更新) |
+| **draft (private)** | **public** | **生成 (batch)** | 初回公開化、提案エンジン対象に新規追加 |
+
+**Risk のみ追加条件**: `state='resolved'` 必須 (提案エンジンが `public + resolved` で候補化するため)。
+
+**コスト最適化の実装**:
+- `generateAndPersistBatchEmbeddings` を 1 度だけ呼び出し、Voyage embedding API を batch 集約
+- ApiCallLog は **1 業務操作 = 1 record** ([feedback_bulk_llm_call_unit](memory/feedback_bulk_llm_call_unit.md) 準拠)
+- 遷移行ゼロ件なら API 呼出ゼロ (テナント間の課金ノイズ防止)
+
+**返り値拡張**:
+全 4 サービスの戻り値に `embeddingsGenerated: number` フィールドを追加。
+
+### 35.5 testid 命名規約
+
+- `project-risks-search-input` (RisksClient typeFilter='risk' 時)
+- `project-issues-search-input` (RisksClient typeFilter='issue' 時)
+- `project-knowledge-search-input`
+- `project-retrospectives-search-input`
+- `project-memos-search-input` (※/memos は個人スコープなので `personal-memos-search-input` でも可)
+
+### 35.6 違反検知
+
+source-pattern invariant テスト
+(`src/app/(dashboard)/projects/[projectId]/project-list-layout-invariant.test.ts`) で
+以下を assert する:
+
+- project 3 画面 (risks-client / project-knowledge-client / retrospectives-client) とも
+  `tCommon('itemCount', { count: filtered*.length })` を含む
+- 3 画面とも `<FilterBar>` を含む
+- 3 画面とも `<CrossListBulkVisibilityToolbar` を含む
+- 3 画面とも `data-testid="project-{entity}-search-input"` を含む
+- 3 画面とも `mineOnly` フィルターを持つ
+
+§34 と同形のテストにより、誰かが偶発的に巻き戻した場合 PR 段階で検出できる。
+
+---
+

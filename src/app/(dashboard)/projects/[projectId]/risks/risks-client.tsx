@@ -45,8 +45,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
-import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
+// UI_PATTERNS §35 (2026-05-24): 一括 visibility 編集ツールバーを共通化
+import { CrossListBulkVisibilityToolbar } from '@/components/cross-list-bulk-visibility-toolbar';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -109,7 +110,6 @@ function getProjectRiskSortValue(r: RiskDTO, columnKey: string): unknown {
 export function RisksClient({ projectId, risks, members, canCreate, currentUserId, systemRole, typeFilter, onReload }: Props) {
   const router = useRouter();
   const tRisk = useTranslations('risk');
-  const tAction = useTranslations('action');
   const tField = useTranslations('field');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
@@ -249,62 +249,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     setSelectedIds(allSelectableSelected ? new Set() : new Set(selectableIds));
   }
 
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkApply, setBulkApply] = useState({ state: false, assigneeId: false, deadline: false });
-  const [bulkValues, setBulkValues] = useState({ state: 'open', assigneeId: '', deadline: '' });
-  const [bulkAssigneeClear, setBulkAssigneeClear] = useState(false);
-  const [bulkDeadlineClear, setBulkDeadlineClear] = useState(false);
-  const [bulkError, setBulkError] = useState('');
-
-  function openBulk() {
-    setBulkApply({ state: false, assigneeId: false, deadline: false });
-    setBulkValues({ state: 'open', assigneeId: '', deadline: '' });
-    setBulkAssigneeClear(false);
-    setBulkDeadlineClear(false);
-    setBulkError('');
-    setBulkOpen(true);
-  }
-
-  async function submitBulk() {
-    setBulkError('');
-    const patch: Record<string, string | null | undefined> = {};
-    if (bulkApply.state) patch.state = bulkValues.state;
-    if (bulkApply.assigneeId) patch.assigneeId = bulkAssigneeClear ? null : (bulkValues.assigneeId || null);
-    if (bulkApply.deadline) patch.deadline = bulkDeadlineClear ? null : (bulkValues.deadline || null);
-    if (Object.keys(patch).length === 0) {
-      setBulkError(tRisk('bulkUpdateRequireOne'));
-      return;
-    }
-    const res = await withLoading(() =>
-      fetch(`/api/projects/${projectId}/risks/bulk`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ids: Array.from(selectedIds),
-          filterFingerprint: {
-            type: typeFilter,
-            state: bulkFilter.state || undefined,
-            priority: bulkFilter.priority || undefined,
-            mineOnly: bulkFilter.mineOnly || undefined,
-            keyword: bulkFilter.keyword.trim() || undefined,
-          },
-          patch,
-        }),
-      }),
-    );
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      const msg = j?.message || j?.error || tRisk('bulkUpdateFailed');
-      setBulkError(msg);
-      showError(typeFilter === 'issue' ? '課題の一括更新に失敗しました' : 'リスクの一括更新に失敗しました');
-      return;
-    }
-    const total = selectedIds.size;
-    setBulkOpen(false);
-    setSelectedIds(new Set());
-    showSuccess(`${total} 件の${typeFilter === 'issue' ? '課題' : 'リスク'}を一括更新しました`);
-    await reload();
-  }
+  // UI_PATTERNS §35 (2026-05-24): 旧 state+assigneeId+deadline 複合 bulk dialog を撤廃し、
+  // CrossListBulkVisibilityToolbar (visibility-only) に統一。bulk 用ローカル state は不要。
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -568,26 +514,24 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         </div>
       </FilterBar>
 
-      {/* PR #165 + Phase C 要件 18 (2026-04-28): 一括選択ツールバー。フィルター有無に
-          関わらず常時表示し、任意の複数行に対する一括編集を許可する。 */}
-      <div className="flex items-center justify-between gap-2 py-2">
-        <div className="text-sm text-muted-foreground">
-          一括編集対象 (自分が起票): {selectableIds.length} 件 / 選択中: {selectedIds.size} 件
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setSelectedIds(new Set())}
-            disabled={selectedIds.size === 0}
-          >
-            選択解除
-          </Button>
-          <Button size="sm" onClick={openBulk} disabled={selectedIds.size === 0}>
-            一括編集 ({selectedIds.size})
-          </Button>
-        </div>
-      </div>
+      {/* UI_PATTERNS §35 (2026-05-24): 5 一覧画面で visibility-only 一括編集に統一。
+          画面固有 FilterBar (state + priority + mineOnly) は上部で別途描画しているため、
+          内蔵 FilterBar は hideFilterBar=true で抑止する。 */}
+      <CrossListBulkVisibilityToolbar
+        endpoint={`/api/projects/${projectId}/risks/bulk`}
+        formIdPrefix={`project-risks-${projectId}-${typeFilter ?? 'all'}`}
+        filter={{ keyword: bulkFilter.keyword, mineOnly: bulkFilter.mineOnly }}
+        onFilterChange={(next) => setBulkFilter((f) => ({ ...f, keyword: next.keyword, mineOnly: next.mineOnly }))}
+        selectedIds={selectedIds}
+        onSelectionClear={() => setSelectedIds(new Set())}
+        visibilityOptions={[
+          { value: 'draft', label: tRisk('visibilityDraftLabel') },
+          { value: 'public', label: tRisk('visibilityPublicLabel') },
+        ]}
+        entityLabel={typeFilter === 'issue' ? tRisk('labelIssue') : tRisk('labelRisk')}
+        onApplied={reload}
+        hideFilterBar
+      />
 
       <ResizableTableShell tableKey={`project-risks-${typeFilter ?? 'all'}`}>
         <TableHeader>
@@ -725,117 +669,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         }
       />
 
-      {/* PR #165: 一括編集ダイアログ */}
-      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>一括編集 ({selectedIds.size} 件)</DialogTitle>
-            <DialogDescription>
-              チェックを入れた項目だけが対象に適用されます。
-              他人が起票した行はサーバ側で自動的に除外されます。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                checked={bulkApply.state}
-                onChange={(e) => setBulkApply((a) => ({ ...a, state: e.target.checked }))}
-                className="mt-2 rounded"
-                aria-label={tRisk('bulkApplyState')}
-              />
-              <div className="flex-1 space-y-1">
-                <Label className="text-sm">{tRisk('state')}</Label>
-                <div className={bulkApply.state ? '' : 'pointer-events-none opacity-50'}>
-                  <select
-                    value={bulkValues.state}
-                    onChange={(e) => setBulkValues((b) => ({ ...b, state: e.target.value }))}
-                    className={nativeSelectClass}
-                  >
-                    {Object.entries(RISK_ISSUE_STATES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                checked={bulkApply.assigneeId}
-                onChange={(e) => setBulkApply((a) => ({ ...a, assigneeId: e.target.checked }))}
-                className="mt-2 rounded"
-                aria-label={tRisk('bulkApplyAssignee')}
-              />
-              <div className="flex-1 space-y-1">
-                <Label className="text-sm">{tRisk('assignee')}</Label>
-                <div className={bulkApply.assigneeId ? 'space-y-1' : 'pointer-events-none space-y-1 opacity-50'}>
-                  <select
-                    value={bulkValues.assigneeId}
-                    disabled={bulkAssigneeClear}
-                    onChange={(e) => setBulkValues((b) => ({ ...b, assigneeId: e.target.value }))}
-                    className={nativeSelectClass}
-                  >
-                    <option value="">{tRisk('notSetWithoutAssignee')}</option>
-                    {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
-                  </select>
-                  <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={bulkAssigneeClear}
-                      onChange={(e) => setBulkAssigneeClear(e.target.checked)}
-                      className="rounded"
-                    />
-                    担当者をクリア (未割り当てに戻す)
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                checked={bulkApply.deadline}
-                onChange={(e) => setBulkApply((a) => ({ ...a, deadline: e.target.checked }))}
-                className="mt-2 rounded"
-                aria-label={tRisk('bulkApplyDeadline')}
-              />
-              <div className="flex-1 space-y-1">
-                <Label className="text-sm">{tRisk('deadline')}</Label>
-                <div className={bulkApply.deadline ? 'space-y-1' : 'pointer-events-none space-y-1 opacity-50'}>
-                  {/* feat/date-field-clear-rename: 単発編集 dialog (RiskEditDialog) と同じ DateFieldWithActions を流用し
-                      「今日」「クリア」ボタンを必ず提供する (画面横断の操作一貫性 + 横展開漏れ防止) */}
-                  <DateFieldWithActions
-                    value={bulkValues.deadline}
-                    onChange={(v) => setBulkValues((b) => ({ ...b, deadline: v }))}
-                    disabled={bulkDeadlineClear}
-                  />
-                  <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={bulkDeadlineClear}
-                      onChange={(e) => setBulkDeadlineClear(e.target.checked)}
-                      className="rounded"
-                    />
-                    期限をクリア
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {bulkError && (
-            <div className="mt-3 rounded-md bg-destructive/10 p-2 text-sm text-destructive">
-              {bulkError}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setBulkOpen(false)}>{tAction('cancel')}</Button>
-            <Button onClick={submitBulk}>{tRisk('apply')}</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* UI_PATTERNS §35 (2026-05-24): 旧 state+assigneeId+deadline 複合 bulk dialog は撤廃。
+          一括編集は CrossListBulkVisibilityToolbar (visibility-only) に統一済。 */}
 
       {/* T-22 Phase 22a: 上書きインポート (sync-import) ダイアログ */}
       <EntitySyncImportDialog

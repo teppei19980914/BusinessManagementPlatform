@@ -32,10 +32,19 @@ import {
 } from '@/components/ui/dialog';
 import { Trash2 } from 'lucide-react';
 import { matchesAnyKeyword } from '@/lib/text-search';
-// Phase E 要件 1〜3 (2026-04-29): 共通バッジ + クリッカブルカード + 一括選択部品
+// UI_PATTERNS §35 (2026-05-24): カードから軽量テーブルに移行 (5 一覧 UI 統一)
 import { VisibilityBadge } from '@/components/common/visibility-badge';
-import { ClickableCard } from '@/components/common/clickable-row';
+import { ClickableRow } from '@/components/common/clickable-row';
 import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
+import {
+  TableBody, TableCell, TableHeader, TableRow,
+} from '@/components/ui/table';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { useMultiSort } from '@/components/sort/use-multi-sort';
+import { multiSort } from '@/lib/multi-sort';
+import { useFormatters } from '@/lib/use-formatters';
 import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
 import { EntitySyncImportDialog } from '@/components/dialogs/entity-sync-import-dialog';
 // fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
@@ -66,6 +75,18 @@ function buildKnowledgeVisibilityOptions(t: (key: string) => string) {
     { value: 'draft', label: t('visibilityDraftLabel') },
     { value: 'public', label: t('visibilityPublicLabel') },
   ];
+}
+
+// UI_PATTERNS §35 (2026-05-24): 軽量テーブル化に伴うカラムソート getter。multiSort の比較に使う。
+function getProjectKnowledgeSortValue(k: KnowledgeDTO, columnKey: string): unknown {
+  switch (columnKey) {
+    case 'title': return k.title;
+    case 'type': return k.knowledgeType;
+    case 'visibility': return k.visibility;
+    case 'createdBy': return k.creatorName ?? '';
+    case 'updatedAt': return k.updatedAt;
+    default: return null;
+  }
 }
 
 type Props = {
@@ -101,6 +122,9 @@ export function ProjectKnowledgeClient({
   const KNOWLEDGE_VISIBILITY_OPTIONS = buildKnowledgeVisibilityOptions(tKnowledge);
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
+  const { formatDate } = useFormatters();
+  // UI_PATTERNS §35: カラムソート (sessionStorage 永続化、複数列対応)
+  const { sortState, setSortColumn } = useMultiSort(`sort:project-knowledge-${projectId}`);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   // T-22 Phase 22c: 上書きインポート (sync-import) ダイアログ
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
@@ -124,7 +148,8 @@ export function ProjectKnowledgeClient({
         matchesAnyKeyword(bulkFilter.keyword, [k.title, k.background, k.content, k.result]),
       );
     }
-    return xs;
+    // UI_PATTERNS §35: 軽量テーブル化に伴い multi-sort 適用
+    return multiSort(xs, sortState, getProjectKnowledgeSortValue);
   })();
 
   const selectableKnowledgeIds = filteredKnowledges
@@ -376,34 +401,47 @@ export function ProjectKnowledgeClient({
         onImported={async () => { await onReload(); }}
       />
 
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <BulkSelectHeader
-          allSelected={allKnowledgeSelected}
-          totalSelectable={selectableKnowledgeIds.length}
-          onToggleAll={toggleAllKnowledge}
-          ariaLabel={tKnowledge('selectAllOwn')}
-        />
-        {tKnowledge('selectAllOwn')} ({tCommon('itemCount', { count: selectableKnowledgeIds.length })})
-      </div>
-
-      {filteredKnowledges.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">{tKnowledge('noneInList')}</p>
-      ) : (
-        <div className="space-y-2">
-          {filteredKnowledges.map((k) => {
-            const isOwner = k.createdBy === currentUserId;
-            return (
-            <ClickableCard
-              key={k.id}
-              // Phase B 要件 5 (2026-04-28) + Phase E 共通化: カードクリックで dialog を開く
-              //   動作は全員で active 化。詳細閲覧目的を含み、編集可否は dialog の readOnly prop
-              //   で分岐する。hover 強度はテーブル行と同じ (subtle 不指定)。
-              className="rounded border p-3"
-              onClick={() => setEditingKnowledge(k)}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
+      {/* UI_PATTERNS §35 (2026-05-24): 軽量テーブル統一。詳細 (background / content / result) は
+          行クリックで KnowledgeEditDialog (readOnly 判定付き) を開いて表示する。 */}
+      <ResizableTableShell tableKey={`project-knowledge-${projectId}`}>
+        <TableHeader>
+          <TableRow>
+            <ResizableHead columnKey="select" defaultWidth={36}>
+              <BulkSelectHeader
+                allSelected={allKnowledgeSelected}
+                totalSelectable={selectableKnowledgeIds.length}
+                onToggleAll={toggleAllKnowledge}
+                ariaLabel={tKnowledge('selectAllOwn')}
+              />
+            </ResizableHead>
+            <SortableResizableHead columnKey="title" defaultWidth={240} label={tKnowledge('fieldTitle')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="type" defaultWidth={100} label={tKnowledge('kind')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="visibility" defaultWidth={90} label={tKnowledge('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tKnowledge('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tKnowledge('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <ResizableHead columnKey="attachments" defaultWidth={180}>{tKnowledge('attachment')}</ResizableHead>
+            {/* 2026-04-24 / §35: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す */}
+            {filteredKnowledges.some((k) => k.createdBy === currentUserId) && (
+              <ResizableHead columnKey="actions" defaultWidth={64}>{tKnowledge('actions')}</ResizableHead>
+            )}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filteredKnowledges.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={filteredKnowledges.some((k) => k.createdBy === currentUserId) ? 8 : 7}
+                className="py-8 text-center text-muted-foreground"
+              >
+                {tKnowledge('noneInList')}
+              </TableCell>
+            </TableRow>
+          ) : (
+            filteredKnowledges.map((k) => {
+              const isOwner = k.createdBy === currentUserId;
+              return (
+                <ClickableRow key={k.id} onClick={() => setEditingKnowledge(k)}>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     <BulkSelectCell
                       canSelect={isOwner}
                       hidePlaceholderWhenDisabled
@@ -412,43 +450,52 @@ export function ProjectKnowledgeClient({
                       onToggle={() => toggleOneKnowledge(k.id)}
                       ariaLabel={tKnowledge('addToBulkEdit', { title: k.title })}
                     />
-                    <span className="font-medium">{k.title}</span>
+                  </TableCell>
+                  <TableCell className="font-medium">{k.title}</TableCell>
+                  <TableCell>
                     <Badge variant="secondary" className="text-xs">
                       {KNOWLEDGE_TYPES[k.knowledgeType as keyof typeof KNOWLEDGE_TYPES] || k.knowledgeType}
                     </Badge>
+                  </TableCell>
+                  <TableCell>
                     <VisibilityBadge
                       visibility={k.visibility}
                       label={VISIBILITIES[k.visibility as keyof typeof VISIBILITIES] || k.visibility}
                       className="text-xs"
                     />
-                    {k.creatorName && (
-                      <span className="text-xs text-muted-foreground">作成: {k.creatorName}</span>
-                    )}
-                  </div>
-                  <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{k.content}</p>
-                  {/* PR #168: 添付 chips (他エンティティ一覧と同パターン) */}
-                  <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{k.creatorName ?? ''}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{formatDate(k.updatedAt)}</TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
-                  </div>
-                </div>
-                {isOwner && (
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="text-destructive hover:text-destructive"
-                    title={tKnowledge('deleteAria')}
-                    aria-label={tKnowledge('deleteAria')}
-                    onClick={(e) => { e.stopPropagation(); handleDelete(k.id); }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            </ClickableCard>
-            );
-          })}
-        </div>
-      )}
+                  </TableCell>
+                  {filteredKnowledges.some((x) => x.createdBy === currentUserId) && (
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      {isOwner && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-destructive hover:text-destructive"
+                          title={tKnowledge('deleteAria')}
+                          aria-label={tKnowledge('deleteAria')}
+                          onClick={(e) => { e.stopPropagation(); handleDelete(k.id); }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </TableCell>
+                  )}
+                </ClickableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </ResizableTableShell>
+
+      {/* §35 件数表示は table 下部 (project 配下は table 上部に CRUD ボタン群があるため) */}
+      <div className="flex justify-end text-xs text-muted-foreground">
+        {tCommon('itemCount', { count: filteredKnowledges.length })}
+      </div>
 
       {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。 */}
       <KnowledgeEditDialog

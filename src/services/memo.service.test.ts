@@ -18,8 +18,10 @@ vi.mock('@/lib/db', () => ({
 
 // (2026-05-15) Memo に embedding 生成が追加されたためモック注入。
 //   visibility='public' のときのみ呼ばれることをテストで検証する。
+// 2026-05-24 (UI_PATTERNS §35 embedding 追補): bulkUpdateMemosVisibilityFromList が batch helper を呼ぶ
 vi.mock('./embedding.service', () => ({
   generateAndPersistEntityEmbedding: vi.fn().mockResolvedValue(undefined),
+  generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
 import {
@@ -32,7 +34,7 @@ import {
   bulkUpdateMemosVisibilityFromList,
 } from './memo.service';
 import { prisma } from '@/lib/db';
-import { generateAndPersistEntityEmbedding } from './embedding.service';
+import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 
 const now = new Date('2026-04-21T10:00:00Z');
 
@@ -255,7 +257,7 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
 
   it('ids 空 → updateMany 呼ばず 0 件', async () => {
     const r = await bulkUpdateMemosVisibilityFromList([], 'private', 'u-1', 't-1');
-    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0 });
+    expect(r).toEqual({ updatedIds: [], skippedNotOwned: 0, skippedNotFound: 0, skippedEmptyTitle: 0, embeddingsGenerated: 0 });
     expect(prisma.memo.updateMany).not.toHaveBeenCalled();
   });
 
@@ -324,6 +326,51 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
 
     expect(r.updatedIds).toEqual(['memo-empty']);
     expect(r.skippedEmptyTitle).toBe(0);
+  });
+
+  // UI_PATTERNS §35 (2026-05-24): bulk visibility 経路の embedding コスト最適化テスト。
+  // 単発 updateMemo の判定マトリクスと整合: private→public 遷移のみ embedding 対象。
+  describe('embedding 生成 (コスト最適化)', () => {
+    it('visibility=private への変更は embedding を生成しない (Voyage 課金回避)', async () => {
+      vi.mocked(prisma.memo.findMany).mockResolvedValue([
+        { id: 'memo-1', userId: 'u-1', title: 't', visibility: 'public', content: 'c' },
+      ] as never);
+      vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateMemosVisibilityFromList(['memo-1'], 'private', 'u-1', 't-1');
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('public→public のままなら embedding を生成しない (text 変更なしのため)', async () => {
+      vi.mocked(prisma.memo.findMany).mockResolvedValue([
+        { id: 'memo-1', userId: 'u-1', title: 't', visibility: 'public', content: 'c' },
+      ] as never);
+      vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const r = await bulkUpdateMemosVisibilityFromList(['memo-1'], 'public', 'u-1', 't-1');
+      expect(r.embeddingsGenerated).toBe(0);
+      expect(generateAndPersistBatchEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('private→public 遷移行のみ batch で 1 ApiCallLog 集約', async () => {
+      vi.mocked(prisma.memo.findMany).mockResolvedValue([
+        { id: 'memo-1', userId: 'u-1', title: 't1', visibility: 'private', content: 'c1' },
+        { id: 'memo-2', userId: 'u-1', title: 't2', visibility: 'private', content: 'c2' },
+        // 既 public は除外
+        { id: 'memo-3', userId: 'u-1', title: 't3', visibility: 'public', content: 'c3' },
+      ] as never);
+      vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 3 } as never);
+      vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValue({ generated: 2, failed: 0, costJpy: 1 });
+
+      const r = await bulkUpdateMemosVisibilityFromList(['memo-1', 'memo-2', 'memo-3'], 'public', 'u-1', 't-1');
+
+      expect(r.embeddingsGenerated).toBe(2);
+      expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
+      const args = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      expect(args.items.map((i) => i.rowId)).toEqual(['memo-1', 'memo-2']);
+      expect(args.featureUnit).toBe('memo-embedding');
+    });
   });
 });
 
