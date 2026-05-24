@@ -171,15 +171,18 @@ export function HelpClient({ isTenantAdmin }: Props) {
                 <>
                   <ul className="list-disc space-y-1 pl-5">
                     <li>
-                      <strong>Beginner (無料)</strong>: 5 席まで・月 100 回 API 呼出・Claude Haiku。
-                      上限到達で <strong>縮退モード</strong> (エンティティ作成・更新は継続、AI 裏方処理のみ一時停止)。
+                      <strong>Beginner (無料)</strong>: 5 席まで・プロジェクト作成/更新 月 50 回まで無料・Claude Haiku。
+                      <strong>資産入力 (ナレッジ・リスク・振り返り・メモ) とチャット検索は無料・無制限</strong> (ADR-0019)。
+                      プロジェクト作成/更新が 50 回到達すると当該機能のみ縮退、それ以外は継続。
                     </li>
                     <li>
-                      <strong>Expert (¥5/回)</strong>: 席数無制限・Claude Haiku・月間使用量上限なし
-                      (予算上限は自己設定可)。
+                      <strong>Expert (¥10/回)</strong>: 席数無制限・Claude Haiku・月間使用量上限なし
+                      (予算上限は自己設定可)。プロジェクト作成/更新のみ課金。
+                      <strong>資産入力とチャット検索は無料・無制限</strong>。
                     </li>
                     <li>
-                      <strong>Pro (¥15/回)</strong>: 席数無制限・Claude Sonnet・AI 説明文付き提案。
+                      <strong>Pro (¥15/回)</strong>: 席数無制限・Claude Sonnet・「なぜ?」機能限定。
+                      プロジェクト作成/更新 + なぜ機能のみ課金。資産入力とチャット検索は無料・無制限。
                     </li>
                   </ul>
                   <p className="mt-2 text-muted-foreground">
@@ -239,8 +242,10 @@ export function HelpClient({ isTenantAdmin }: Props) {
           </FaqCategory>
 
           {/* 生成 AI の仕組み (admin 限定、難しい言葉を避けた説明)
-              2026-05-13: 「中学生でも分かる」表現に書き直し。実装ベースで embedding も課金対象として記載
-              (resolveCostForPlan は plan 単価をそのまま返すため、Voyage 呼出も Expert ¥5 / Pro ¥15 が加算される。2026-05-15 価格改定後)。 */}
+              2026-05-13: 「中学生でも分かる」表現に書き直し。
+              ADR-0019 (2026-05-24): 課金対象は BILLABLE_FEATURE_UNITS (project-upsert /
+              suggestion-explanation / auto-tag-extract) のみに縮小。資産入力・チャット検索・
+              CSV インポートは全プラン無料化。Expert ¥5 → ¥10、Pro ¥15 据置。 */}
           <section className="rounded-lg border bg-card p-5">
             <h2 className="text-lg font-semibold">生成 AI の仕組みと注意事項 (テナント管理者向け)</h2>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -337,15 +342,27 @@ export function HelpClient({ isTenantAdmin }: Props) {
                         <td className="border-b p-2 align-top">無制限</td>
                       </tr>
                       <tr>
-                        <td className="border-b p-2 align-top">月の AI 呼出回数</td>
-                        <td className="border-b p-2 align-top">月 100 回まで</td>
+                        <td className="border-b p-2 align-top">プロジェクト作成/更新の月上限</td>
+                        <td className="border-b p-2 align-top">月 50 回まで</td>
                         <td className="border-b p-2 align-top">無制限</td>
                         <td className="border-b p-2 align-top">無制限</td>
                       </tr>
                       <tr>
-                        <td className="border-b p-2 align-top">1 回あたりの料金</td>
-                        <td className="border-b p-2 align-top">無料 (月 100 回まで)</td>
-                        <td className="border-b p-2 align-top">¥5 / 回</td>
+                        <td className="border-b p-2 align-top">資産入力 / チャット検索</td>
+                        <td className="border-b p-2 align-top">無料・無制限</td>
+                        <td className="border-b p-2 align-top">無料・無制限</td>
+                        <td className="border-b p-2 align-top">無料・無制限</td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">1 回あたりの料金 (プロジェクト作成/更新)</td>
+                        <td className="border-b p-2 align-top">無料 (月 50 回まで)</td>
+                        <td className="border-b p-2 align-top">¥10 / 回</td>
+                        <td className="border-b p-2 align-top">¥15 / 回</td>
+                      </tr>
+                      <tr>
+                        <td className="border-b p-2 align-top">なぜ?機能 (Pro 限定)</td>
+                        <td className="border-b p-2 align-top">利用不可</td>
+                        <td className="border-b p-2 align-top">利用不可</td>
                         <td className="border-b p-2 align-top">¥15 / 回</td>
                       </tr>
                       <tr>

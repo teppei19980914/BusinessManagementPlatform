@@ -30,6 +30,8 @@
 import { prisma } from '@/lib/db';
 import { getTenantMonthStart, getTenantNextMonthStart } from '@/lib/tenant-time';
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
+// ADR-0019 (2026-05-24): 月次履歴再生成も課金対象 featureUnit のみで集計。
+import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
 import {
   ADDON_MONTHLY_JPY as STORAGE_ADDON_MONTHLY_JPY,
   isStorageAddonPlan,
@@ -103,6 +105,8 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
       where: {
         tenantId,
         createdAt: { gte: rangeStart, lt: rangeEnd },
+        // ADR-0019 (2026-05-24): billable のみで集計 (= snapshot 保存と同条件)
+        featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
       },
       _count: { _all: true },
       _sum: { costJpy: true },

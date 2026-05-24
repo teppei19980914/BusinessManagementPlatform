@@ -79,6 +79,9 @@ export interface AutoTagDegraded {
     | 'beginner_limit_exceeded'
     | 'budget_exceeded'
     | 'plan_invalid'
+    // ADR-0019 (2026-05-24): auto-tag-extract は billable のため通常は発火しないが、
+    //   withMeteredLLM の reason union 整合のため列挙する。
+    | 'fair_use_limit_exceeded'
     | 'llm_error'
     | 'output_invalid';
   message: string;

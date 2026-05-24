@@ -32,10 +32,19 @@ datasource db {
 // v1 (2026-06-01) は default-tenant という単一テナントのみで稼働し、
 // v1.x で UI を介したテナント追加を可能にする。
 //
-// 課金モデル (per-API-call、3 プラン構成):
-//   - Beginner: 月間 100 回上限・最大 5 席・無料・Claude Haiku
-//   - Expert:   無制限従量課金 (¥5/call、2026-05-15 改定: ¥10 → ¥5)・Claude Haiku
-//   - Pro:      無制限従量課金 (¥15/call、2026-05-15 改定: ¥30 → ¥15)・Claude Sonnet
+// 課金モデル (per-API-call、3 プラン構成、ADR-0019 / 2026-05-24 改定版):
+//   - Beginner: 月間 **50 回**上限・最大 5 席・無料・Claude Haiku
+//     (上限カウントは `project-upsert` のみ。資産・チャット等の無料 featureUnit はカウント外)
+//   - Expert:   無制限従量課金 (**¥10/call**、ADR-0019 改定: ¥5 → ¥10)・Claude Haiku
+//   - Pro:      無制限従量課金 (¥15/call、据置)・Claude Sonnet
+//
+// 課金対象 call (= `BILLABLE_FEATURE_UNITS` / src/config/billing-feature-units.ts):
+//   - `project-upsert`: プロジェクト作成/更新 (LLM auto-tag + embedding 集約)
+//   - `suggestion-explanation`: なぜ機能 (Pro 限定の LLM)
+//   - `auto-tag-extract`: スタンドアロン auto-tag (予約)
+// それ以外の featureUnit (knowledge-embedding / chat-semantic-search / *-backfill 等) は
+// 全プラン無料。ApiCallLog には costJpy=0 で記録、counter / Stripe queue は不変。
+// 詳細: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md
 //
 // 月初リセット: Vercel Cron が `lastResetAt < 当月初` のテナントの
 // `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセット。
@@ -46,31 +55,37 @@ datasource db {
 // 既存コードを変更せずに単一テナント運用を可能にする。v1.x で DEFAULT を外す。
 
 model Tenant {
-  id                           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// URL ルーティング用 slug。v1 は 'default' 固定、v1.x で複数テナント対応時に動的解決。
-  slug                         String    @unique @db.VarChar(60)
-  name                         String    @db.VarChar(100)
+  slug                                 String    @unique @db.VarChar(60)
+  name                                 String    @db.VarChar(100)
   /// PR-X1 (2026-05-07): 顧客向け人間可読連番 (案 D / ROLE_REFACTORING_PLAN.md §2.3-bis)。
   ///   default-tenant=1 (固定 seed)、新規顧客は SEQUENCE で 2, 3, 4, ... 自動採番。
   ///   管理テナント (Knowledge Relay Platform) は null (顧客連番外)。
   ///   表示用 (請求書 / サポート / admin ダッシュボード一覧) のみで参照。
   ///   内部参照 (FK / 認可) は引き続き UUID id を使う。
-  tenantSeq                    Int?      @unique @map("tenant_seq")
+  tenantSeq                            Int?      @unique @map("tenant_seq")
   /// 'beginner' | 'expert' | 'pro'
-  plan                         String    @default("beginner") @db.VarChar(20)
-  currentMonthApiCallCount     Int       @default(0) @map("current_month_api_call_count")
-  currentMonthApiCostJpy       Int       @default(0) @map("current_month_api_cost_jpy")
+  plan                                 String    @default("beginner") @db.VarChar(20)
+  currentMonthApiCallCount             Int       @default(0) @map("current_month_api_call_count")
+  currentMonthApiCostJpy               Int       @default(0) @map("current_month_api_cost_jpy")
   /// ユーザ自己設定の月次予算上限 (円)。NULL = 無制限。withMeteredLLM が予測コスト超過チェックで参照。
-  monthlyBudgetCapJpy          Int?      @map("monthly_budget_cap_jpy")
-  /// Beginner プランの月間 API 呼び出し回数上限 (default 100)。プラン契約変更時のみ書き換え。
-  beginnerMonthlyCallLimit     Int       @default(100) @map("beginner_monthly_call_limit")
+  monthlyBudgetCapJpy                  Int?      @map("monthly_budget_cap_jpy")
+  /// Beginner プランの月間 API 呼び出し回数上限 (default **50**、ADR-0019 改定: 100 → 50)。
+  /// 上限カウント対象は **課金対象 featureUnit のみ** (= `BILLABLE_FEATURE_UNITS`)。
+  /// 無料の embedding / chat / backfill は本カウンタを進めない。
+  /// プラン契約変更時のみ書き換え。
+  beginnerMonthlyCallLimit             Int       @default(50) @map("beginner_monthly_call_limit")
   /// Beginner プランの最大席数 (default 5)。User.tenantId が同じカウントで判定。
-  beginnerMaxSeats             Int       @default(5) @map("beginner_max_seats")
+  beginnerMaxSeats                     Int       @default(5) @map("beginner_max_seats")
   /// per-API-call 単価 (円整数)。
   /// 2026-05-15 改定: Expert ¥10 → ¥5 / Pro ¥30 → ¥15 (= 半額化、ユーザ採用ハードル削減)。
-  /// 半額後でも粗利 73-75% で事業継続性確保。詳細は ADR-0002。
-  pricePerCallHaiku            Int       @default(5) @map("price_per_call_haiku")
-  pricePerCallSonnet           Int       @default(15) @map("price_per_call_sonnet")
+  /// ADR-0019 改定 (2026-05-24): Expert ¥5 → **¥10** / Pro ¥15 据置。
+  ///   課金対象を `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation /
+  ///   auto-tag-extract) に限定し、それ以外の embedding 系を全プラン無料化したことに
+  ///   合わせて Expert 単価を 2 倍に上げた。詳細は ADR-0019。
+  pricePerCallHaiku                    Int       @default(10) @map("price_per_call_haiku")
+  pricePerCallSonnet                   Int       @default(15) @map("price_per_call_sonnet")
   /// P-G (2026-05-08): 請求先情報。super_admin の請求業務 (CSV エクスポート / 請求書手作成) で使用。
   ///   - 既存テナント (default-tenant / management) は migration 後 null のまま
   ///     (運営内部のため請求対象外、空 OK)。
@@ -80,49 +95,49 @@ model Tenant {
   /// 2026-05-09 (PR C / #5): 請求先種別。'corporate' (法人) / 'individual' (個人)。
   ///   - corporate: billingCompanyName 必須
   ///   - individual: billingCompanyName は不要 (UI 非表示)、billingContactName が個人氏名
-  billingType                  String    @default("corporate") @map("billing_type") @db.VarChar(20)
+  billingType                          String    @default("corporate") @map("billing_type") @db.VarChar(20)
   /// 請求書発行先の正式会社名 / 法人名 (Tenant.name は表示用のため、請求文書では本フィールドを優先)。
   /// billingType='individual' のときは UI 非表示 + 任意 (NULL 可)。
-  billingCompanyName           String?   @map("billing_company_name") @db.VarChar(200)
+  billingCompanyName                   String?   @map("billing_company_name") @db.VarChar(200)
   /// 請求書送付先担当者名 (個人プランでは個人氏名、法人プランでは経理担当者など)
-  billingContactName           String?   @map("billing_contact_name") @db.VarChar(100)
+  billingContactName                   String?   @map("billing_contact_name") @db.VarChar(100)
   /// 請求書送付先メールアドレス (= 請求書 PDF / 案内メールの送り先)
-  billingContactEmail          String?   @map("billing_contact_email") @db.VarChar(255)
+  billingContactEmail                  String?   @map("billing_contact_email") @db.VarChar(255)
   /// 2026-05-09 (PR C / #8) で **構造化** 。新規入力はサブフィールドへ。
   /// Legacy: 旧 単一 Text 住所。データ損失防止のためフォールバック表示用に残置。
-  billingAddress               String?   @map("billing_address") @db.Text
+  billingAddress                       String?   @map("billing_address") @db.Text
   /// 郵便番号 (例 100-0001)。#8 で構造化追加
-  billingPostalCode            String?   @map("billing_postal_code") @db.VarChar(10)
+  billingPostalCode                    String?   @map("billing_postal_code") @db.VarChar(10)
   /// 都道府県 (例 東京都)。#8
-  billingPrefecture            String?   @map("billing_prefecture") @db.VarChar(20)
+  billingPrefecture                    String?   @map("billing_prefecture") @db.VarChar(20)
   /// 市区町村 (例 千代田区)。#8
-  billingCity                  String?   @map("billing_city") @db.VarChar(100)
+  billingCity                          String?   @map("billing_city") @db.VarChar(100)
   /// 番地・町名 (例 千代田1-1)。#8
-  billingStreetAddress         String?   @map("billing_street_address") @db.VarChar(200)
+  billingStreetAddress                 String?   @map("billing_street_address") @db.VarChar(200)
   /// 建物名・部屋番号 (任意 #10)
-  billingBuildingName          String?   @map("billing_building_name") @db.VarChar(200)
+  billingBuildingName                  String?   @map("billing_building_name") @db.VarChar(200)
   /// 連絡先電話番号 (任意)
-  billingPhoneNumber           String?   @map("billing_phone_number") @db.VarChar(20)
+  billingPhoneNumber                   String?   @map("billing_phone_number") @db.VarChar(20)
   /// 支払い方法 ('invoice' = 銀行振込（請求書送付） / 'credit_card' = 自動引落)。
   /// 旧 'bank_transfer' は 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
   /// 既存 'bank_transfer' 値は読み込み時 'invoice' と同等扱い、PATCH 時に invoice に正規化。
-  paymentMethod                String    @default("invoice") @map("payment_method") @db.VarChar(30)
+  paymentMethod                        String    @default("invoice") @map("payment_method") @db.VarChar(30)
   /// プラン変更予約: ダウングレード時のみ翌月適用 (Expert/Pro → Beginner)。
-  scheduledPlanChangeAt        DateTime? @map("scheduled_plan_change_at") @db.Timestamptz
-  scheduledNextPlan            String?   @map("scheduled_next_plan") @db.VarChar(20)
+  scheduledPlanChangeAt                DateTime? @map("scheduled_plan_change_at") @db.Timestamptz
+  scheduledNextPlan                    String?   @map("scheduled_next_plan") @db.VarChar(20)
   /// 月初リセット cron が処理した最後の月初 (UTC ベース、毎月 1 日 00:00 UTC)。
-  lastResetAt                  DateTime? @map("last_reset_at") @db.Timestamptz
+  lastResetAt                          DateTime? @map("last_reset_at") @db.Timestamptz
   /// P-B (2026-05-08): Beginner プラン永続利用防止。
   ///   - 計測起点: createdAt から 60/75/90 日経過判定で警告メール送信 + 90 日で read-only モード
   ///   - true 化条件: Tenant が一度でも Beginner 以外 (Expert/Pro) になった (= ダウングレードでも Beginner に戻せない)
   ///   - 解約済テナント (deletedAt セット) の billingContactEmail で同 email 再登録時の Beginner 拒否判定にも使用
-  beginnerEverUpgraded         Boolean   @default(false) @map("beginner_ever_upgraded")
+  beginnerEverUpgraded                 Boolean   @default(false) @map("beginner_ever_upgraded")
   /// P-B: 60 日警告メール送信日時 (重複送信防止用、null なら未送信)
-  beginnerNoticeDay60SentAt    DateTime? @map("beginner_notice_day60_sent_at") @db.Timestamptz
+  beginnerNoticeDay60SentAt            DateTime? @map("beginner_notice_day60_sent_at") @db.Timestamptz
   /// P-B: 75 日警告メール送信日時
-  beginnerNoticeDay75SentAt    DateTime? @map("beginner_notice_day75_sent_at") @db.Timestamptz
+  beginnerNoticeDay75SentAt            DateTime? @map("beginner_notice_day75_sent_at") @db.Timestamptz
   /// P-B: 90 日経過 read-only 通知メール送信日時
-  beginnerExpiredNoticeSentAt  DateTime? @map("beginner_expired_notice_sent_at") @db.Timestamptz
+  beginnerExpiredNoticeSentAt          DateTime? @map("beginner_expired_notice_sent_at") @db.Timestamptz
   /// 2026-05-11: 自動物理削除予告メール (150 日経過 = 削除 30 日前)
   beginnerAutoDeleteNoticeDay150SentAt DateTime? @map("beginner_auto_delete_notice_day150_sent_at") @db.Timestamptz
   /// 2026-05-11: 自動物理削除予告メール (170 日経過 = 削除 10 日前、最終警告)
@@ -134,56 +149,56 @@ model Tenant {
   /// 設計合意 B (2026-05-09): シード実データは管理テナント (MANAGEMENT_TENANT_ID) に集中。
   ///   このフラグはテナント管理者が「契約直後の宇宙人感を抑える」「業務に近いシードを使いたくない」
   ///   等のニーズに応じてシード参照を遮断するための toggle。
-  seedDataEnabled              Boolean   @default(true) @map("seed_data_enabled")
+  seedDataEnabled                      Boolean   @default(true) @map("seed_data_enabled")
   /// P-D (2026-05-08): データインポート進行中の in-flight ロック。
   ///   - 開始時 NOW() / 終了時 NULL に戻す。クラッシュ残留対策のためタイムスタンプ型。
   ///   - 30 分 (IMPORT_LOCK_STALE_MINUTES) 以上経過した値は自動失効扱い。
-  importInProgressAt           DateTime? @map("import_in_progress_at") @db.Timestamptz
+  importInProgressAt                   DateTime? @map("import_in_progress_at") @db.Timestamptz
   /// Storage add-on (Phase 2 / 2026-05-08): LLM プランと独立した容量プラン。
   ///   - 'standard' (default): LLM プラン連動 (Beginner 50MB / Expert 150MB / Pro 300MB)
   ///   - 'plus':       Standard + 200MB 拡張 (+¥500/月)
   ///   - 'pro_storage': Standard + 1GB 拡張 (+¥1500/月)
   ///   - 'enterprise': Standard + 5GB 拡張 (+¥5000/月)
   ///   ※ enum 名は LLM の 'pro' と衝突しないよう 'pro_storage' とする
-  storageAddonPlan             String    @default("standard") @map("storage_addon_plan") @db.VarChar(20)
+  storageAddonPlan                     String    @default("standard") @map("storage_addon_plan") @db.VarChar(20)
   /// Storage 使用量 (バイト)。日次 cron (`updateAllStorageBytesUsed`) で `pg_column_size`
   /// 集計で更新。インポート/作成時のリアルタイム更新は重いので避けてキャッシュ運用。
-  storageBytesUsed             BigInt    @default(0) @map("storage_bytes_used")
+  storageBytesUsed                     BigInt    @default(0) @map("storage_bytes_used")
   /// 最終更新時刻 (UI 表示で「○分前」を出すため、また stale 判定で on-demand 再計算するため)
-  storageBytesUsedAt           DateTime? @map("storage_bytes_used_at") @db.Timestamptz
+  storageBytesUsedAt                   DateTime? @map("storage_bytes_used_at") @db.Timestamptz
   /// 上限超過 → Grace period 開始日時 (P-B 風、null=正常)。Grace 7 日経過後に write 停止。
-  storageGracePeriodStartedAt  DateTime? @map("storage_grace_period_started_at") @db.Timestamptz
+  storageGracePeriodStartedAt          DateTime? @map("storage_grace_period_started_at") @db.Timestamptz
   /// 超過通知メール送信日時 (重複送信防止)
-  storageOverLimitNoticeSentAt DateTime? @map("storage_over_limit_notice_sent_at") @db.Timestamptz
+  storageOverLimitNoticeSentAt         DateTime? @map("storage_over_limit_notice_sent_at") @db.Timestamptz
   /// ダウングレード予約日時 (= 翌月 1 日 UTC)
-  scheduledStorageAddonAt      DateTime? @map("scheduled_storage_addon_at") @db.Timestamptz
+  scheduledStorageAddonAt              DateTime? @map("scheduled_storage_addon_at") @db.Timestamptz
   /// ダウングレード後のプラン名 (= scheduledStorageAddonAt と対)
-  scheduledNextStorageAddon    String?   @map("scheduled_next_storage_addon") @db.VarChar(20)
+  scheduledNextStorageAddon            String?   @map("scheduled_next_storage_addon") @db.VarChar(20)
   /// PR-1 (2026-05-15): テナント全体の IANA タイムゾーン名。
   ///   全ユーザの日付表示・残日数計算・月初リセット境界に使用する。
   ///   default 'Asia/Tokyo'。テナント管理者が /settings/tenant から変更可。
-  timezone                     String    @default("Asia/Tokyo") @map("timezone") @db.VarChar(60)
+  timezone                             String    @default("Asia/Tokyo") @map("timezone") @db.VarChar(60)
   /// PR-1 (2026-05-15): テナント全体の BCP 47 ロケール (例 'ja-JP' / 'en-US')。
   ///   default 'ja-JP'。テナント管理者が /settings/tenant から変更可。
-  locale                       String    @default("ja-JP") @map("locale") @db.VarChar(10)
-  createdAt                    DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt                    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt                    DateTime? @map("deleted_at") @db.Timestamptz
+  locale                               String    @default("ja-JP") @map("locale") @db.VarChar(10)
+  createdAt                            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt                            DateTime? @map("deleted_at") @db.Timestamptz
   /// 2026-05-14 (PR #372): 支払い滞納等による read-only 強制移行フラグ。
   ///   null = 通常運用 (= 書き込み可)
   ///   not null = read-only モード (write系 HTTP method を middleware で 403 遮断)
   ///   セット時刻 = super_admin が POST /api/admin/super/tenants/:id/suspend を実行した時刻
   ///   解除は POST .../resume (suspendedAt=null, resumedAt=now をセット)
   ///   関連: docs/business/PAYMENT_TERMS.md §2.3, docs/operations/PAYMENT_DELINQUENCY_SOP.md §3
-  suspendedAt                  DateTime? @map("suspended_at") @db.Timestamptz
+  suspendedAt                          DateTime? @map("suspended_at") @db.Timestamptz
   /// 停止理由コード (例: 'payment_delinquent' / 'tos_violation' / 'other')。停止時に必須、解除時 null。
   ///   将来的に enum 化を検討するが v1 では String で柔軟運用。
-  suspendReason                String?   @map("suspend_reason") @db.VarChar(50)
+  suspendReason                        String?   @map("suspend_reason") @db.VarChar(50)
   /// 停止を実行した super_admin の User.id (監査用)。auditLog にも別途記録するが、参照しやすさのため Tenant 自身にも保持。
-  suspendedBy                  String?   @map("suspended_by") @db.Uuid
+  suspendedBy                          String?   @map("suspended_by") @db.Uuid
   /// 直近の解除時刻 (監査用)。null = 一度も停止 → 解除されていない。
   ///   suspendedAt とのペア: (suspendedAt=null, resumedAt=2026-06-01) = 6/1 に解除済の通常運用状態
-  resumedAt                    DateTime? @map("resumed_at") @db.Timestamptz
+  resumedAt                            DateTime? @map("resumed_at") @db.Timestamptz
 
   /// ADR-0016 Revised (2026-05-22): テナント払い出し時の初期 admin User.id を保持。
   ///   公開セルフサインアップ (/api/auth/signup) からの「自前テナント保有」3 層判定で参照される。
@@ -193,7 +208,7 @@ model Tenant {
   ///     既に「自前テナント保有」のフラグ自体は残るため層判定に支障なし)
   ///   - NULLABLE: backfill が漏れたテナントを silent fail させないため、最終的に NOT NULL 化は
   ///     将来 ADR で検討 (本 migration では既存運用への影響回避を優先)
-  createdByUserId              String?   @map("created_by_user_id") @db.Uuid
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
 
   // ============================================================
   // Stripe Metered Billing 連携 (PR-S1 / 2026-05-14)
@@ -206,29 +221,29 @@ model Tenant {
   // ============================================================
   /// Stripe Customer ID。credit_card 払いに切替えた時点で作成。null = 未登録。
   ///   1 テナント = 1 Stripe Customer の前提 (UNIQUE 制約)
-  stripeCustomerId               String?   @unique @map("stripe_customer_id") @db.VarChar(50)
+  stripeCustomerId                String?   @unique @map("stripe_customer_id") @db.VarChar(50)
   /// Stripe Subscription ID。プラン契約時に作成、削除時に null へ。
   ///   1 テナント = 1 Active Subscription (UNIQUE 制約)
-  stripeSubscriptionId           String?   @unique @map("stripe_subscription_id") @db.VarChar(50)
+  stripeSubscriptionId            String?   @unique @map("stripe_subscription_id") @db.VarChar(50)
   /// Subscription の状態 ('active' / 'past_due' / 'canceled' / 'incomplete' / 'trialing' 等)。
   ///   Webhook customer.subscription.updated で同期更新
-  stripeSubscriptionStatus       String?   @map("stripe_subscription_status") @db.VarChar(30)
+  stripeSubscriptionStatus        String?   @map("stripe_subscription_status") @db.VarChar(30)
   /// Haiku (Expert plan) per-call Subscription Item ID。Metered Billing の Usage Record 送信先
-  stripeSubscriptionItemHaikuId  String?   @map("stripe_subscription_item_haiku_id") @db.VarChar(50)
+  stripeSubscriptionItemHaikuId   String?   @map("stripe_subscription_item_haiku_id") @db.VarChar(50)
   /// Sonnet (Pro plan) per-call Subscription Item ID
-  stripeSubscriptionItemSonnetId String?   @map("stripe_subscription_item_sonnet_id") @db.VarChar(50)
+  stripeSubscriptionItemSonnetId  String?   @map("stripe_subscription_item_sonnet_id") @db.VarChar(50)
   /// Storage add-on (月固定額) Subscription Item ID。standard プランも形式的に存在
-  stripeSubscriptionItemStorageId String?  @map("stripe_subscription_item_storage_id") @db.VarChar(50)
+  stripeSubscriptionItemStorageId String?   @map("stripe_subscription_item_storage_id") @db.VarChar(50)
   /// Default Payment Method ID (= デフォルトの請求用カード)。Stripe Checkout 登録後に保存
-  stripeDefaultPaymentMethodId   String?   @map("stripe_default_payment_method_id") @db.VarChar(50)
+  stripeDefaultPaymentMethodId    String?   @map("stripe_default_payment_method_id") @db.VarChar(50)
   /// 直近のカード検証成功時刻 (プラン変更時 + 月初検証 cron が更新)
-  cardLastVerifiedAt             DateTime? @map("card_last_verified_at") @db.Timestamptz
+  cardLastVerifiedAt              DateTime? @map("card_last_verified_at") @db.Timestamptz
   /// カード検証状態: 'valid' / 'expired' / 'declined' / 'never_verified'
-  cardVerificationStatus         String?   @map("card_verification_status") @db.VarChar(20)
+  cardVerificationStatus          String?   @map("card_verification_status") @db.VarChar(20)
   /// Smart Retries 全失敗後の自動 suspend 予定時刻 (= Webhook customer.subscription.updated で
   ///   status='past_due' 受信時に now+3日 をセット)
   ///   日次 cron がこれを参照して既存 suspendTenant() を自動呼出
-  autoSuspendScheduledAt         DateTime? @map("auto_suspend_scheduled_at") @db.Timestamptz
+  autoSuspendScheduledAt          DateTime? @map("auto_suspend_scheduled_at") @db.Timestamptz
 
   // Relations: 13 業務エンティティ + ApiCallLog + SuggestionExplanation (P-3) + monthlyUsageHistory (P-5b)
   // Phase 2-10 (2026-05-10): 監査・トークン系 7 model も back-relation を追加
@@ -709,17 +724,17 @@ model RiskIssue {
   updatedAt        DateTime                     @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt        DateTime?                    @map("deleted_at") @db.Timestamptz
 
-  tenant   Tenant  @relation(fields: [tenantId], references: [id])
+  tenant            Tenant             @relation(fields: [tenantId], references: [id])
   // PR feat/asset-multi-project-linking (2026-05-09):
   //   `projectId` は M:N 化に伴い「**作成元プロジェクト** (audit/UI 上の起源表示用)」に意味が変わる。
   //   検索 / 一覧 / cascade 駆動はすべて `riskIssueProjects` (中間テーブル) 経由になる。
   //   従って `Project @relation` は audit 用に残すが、code 上は `riskIssueProjects: { some: { projectId } }`
   //   形のフィルタを使用すること。直接 `where: { projectId }` は **作成元一致** を意味する別概念。
   //   ON DELETE SET NULL: 作成元 project 物理削除時に projectId は NULL になる (orphan 許容)。
-  project              Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  reporter             User                 @relation("RiskReporter", fields: [reporterId], references: [id])
-  assignee             User?                @relation("RiskAssignee", fields: [assigneeId], references: [id])
-  riskIssueProjects    RiskIssueProject[]
+  project           Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  reporter          User               @relation("RiskReporter", fields: [reporterId], references: [id])
+  assignee          User?              @relation("RiskAssignee", fields: [assigneeId], references: [id])
+  riskIssueProjects RiskIssueProject[]
 
   @@index([projectId, type], map: "idx_risks_project")
   @@index([state, priority], map: "idx_risks_state")
@@ -913,12 +928,12 @@ model Retrospective {
   updatedAt              DateTime                     @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt              DateTime?                    @map("deleted_at") @db.Timestamptz
 
-  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id])
   // PR feat/asset-multi-project-linking: `projectId` は「作成元プロジェクト」を意味する audit 用フィールド。
   // 検索 / 一覧 / cascade は retrospectiveProjects (M:N) 経由で行うこと。
   // ON DELETE SET NULL: 作成元 project 物理削除時に projectId は NULL になる (orphan 許容)。
-  project                Project?               @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  retrospectiveProjects  RetrospectiveProject[]
+  project               Project?               @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  retrospectiveProjects RetrospectiveProject[]
 
   @@index([projectId], map: "idx_retro_project")
   @@index([tenantId], map: "idx_retro_tenant")
@@ -1506,13 +1521,13 @@ model EmailSendLog {
 /// 関連: STRIPE_TECHNICAL_DESIGN.md §B-2
 model StripeWebhookEvent {
   /// = Stripe event.id (例: "evt_xxxxxxxxxxxxxx")。冪等性キー
-  id           String   @id @db.VarChar(50)
+  id           String    @id @db.VarChar(50)
   /// イベント種別 (例: "customer.subscription.updated", "invoice.payment_failed")
-  type         String   @db.VarChar(60)
+  type         String    @db.VarChar(60)
   /// 受信した payload 全体 (= JSON)。失敗時の調査・リプレイ用
-  payloadJson  Json     @map("payload_json")
+  payloadJson  Json      @map("payload_json")
   /// Stripe からの受信時刻
-  receivedAt   DateTime @default(now()) @map("received_at") @db.Timestamptz
+  receivedAt   DateTime  @default(now()) @map("received_at") @db.Timestamptz
   /// 処理完了時刻。null = 未処理 / Date = 処理完了
   processedAt  DateTime? @map("processed_at") @db.Timestamptz
   /// 処理失敗時のエラーメッセージ (運用調査用)
@@ -1543,19 +1558,19 @@ model StripeWebhookEvent {
 ///
 /// 関連: STRIPE_TECHNICAL_DESIGN.md §C-1 / STRIPE_BILLING.md §2.3
 model BillingHistory {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId        String   @map("tenant_id") @db.Uuid
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
   /// "YYYY-MM" 形式の請求対象月 (= テナント TZ ベースの月単位)
-  yearMonth       String   @map("year_month") @db.VarChar(7)
+  yearMonth          String    @map("year_month") @db.VarChar(7)
   /// 支払い方法 ('invoice' = 銀行振込（請求書送付） / 'credit_card' = 自動引落)。
   /// 旧 'bank_transfer' 値は廃止し 'invoice' に統合済 (UI ラベルは「銀行振込」)。
-  paymentMethod   String   @map("payment_method") @db.VarChar(20)
+  paymentMethod      String    @map("payment_method") @db.VarChar(20)
   /// 課金額 (税抜、円整数)
-  amountJpy       Int      @map("amount_jpy")
+  amountJpy          Int       @map("amount_jpy")
   /// 消費税額 (円整数)。Stripe Tax 計算結果を保存
-  taxAmountJpy    Int      @map("tax_amount_jpy")
+  taxAmountJpy       Int       @map("tax_amount_jpy")
   /// 税込み合計 (= amount_jpy + tax_amount_jpy)
-  totalAmountJpy  Int      @map("total_amount_jpy")
+  totalAmountJpy     Int       @map("total_amount_jpy")
   /// 状態:
   ///   'pending'             = 請求書発行待ち or Stripe Invoice 確定待ち
   ///   'paid'                = 入金確認済 (invoice は手動消込、credit_card は Webhook 自動)
@@ -1563,19 +1578,19 @@ model BillingHistory {
   ///   'refunded'            = 返金済
   ///   'canceled'            = 請求取消 (= 顧客側の合意のもと)
   ///   'replaced_by_stripe'  = 月途中で invoice → credit_card 切替時、invoice 側を Stripe 一括に置換
-  status          String   @map("status") @db.VarChar(20)
+  status             String    @map("status") @db.VarChar(20)
   /// Stripe Invoice ID (credit_card 払いのみ)
-  stripeInvoiceId String?  @map("stripe_invoice_id") @db.VarChar(50)
+  stripeInvoiceId    String?   @map("stripe_invoice_id") @db.VarChar(50)
   /// 入金確認日時 (status='paid' 時)
-  paidAt          DateTime? @map("paid_at") @db.Timestamptz
+  paidAt             DateTime? @map("paid_at") @db.Timestamptz
   /// 失敗理由 (= Stripe failure_code 等を保存)
-  failureReason   String?  @map("failure_reason") @db.VarChar(50)
+  failureReason      String?   @map("failure_reason") @db.VarChar(50)
   /// Smart Retries の試行回数 (credit_card のみ、0〜4)
-  retryCount      Int      @default(0) @map("retry_count")
+  retryCount         Int       @default(0) @map("retry_count")
   /// PR-V7a (2026-05-19): 銀行振込の支払期日 (= 翌月 25 日 JST 23:59:59)。
   ///   credit_card の場合は null (= Stripe Smart Retries が管理)。
   ///   src/config/billing.ts calculateInvoiceDueDate() で算出して保存。
-  paymentDueDate  DateTime? @map("payment_due_date") @db.Timestamptz
+  paymentDueDate     DateTime? @map("payment_due_date") @db.Timestamptz
   /// PR-V7a (2026-05-19): 期日超過 alert を super_admin に最後に送信した日時。
   ///   毎日 cron で「dueDate + OVERDUE_ALERT_THRESHOLD_DAYS 超過 AND status='pending'」を検知、
   ///   このフィールドが 24h 以内ならスキップ (= dedup)。
@@ -1586,12 +1601,12 @@ model BillingHistory {
   nextPaymentAttempt DateTime? @map("next_payment_attempt") @db.Timestamptz
   /// PR-V7a (2026-05-19): 銀行振込の手動消込実行者 User ID (= AuditLog にも記録、こちらは参照用)。
   ///   credit_card の場合は null (= Webhook 自動更新)。
-  confirmedBy     String?  @map("confirmed_by") @db.Uuid
+  confirmedBy        String?   @map("confirmed_by") @db.Uuid
   /// PR-V7a (2026-05-19): 手動消込実行時刻 (paidAt とは区別。paidAt は status=paid 移行時刻全般、
   ///   confirmedAt は super_admin の操作時刻のみ)。
-  confirmedAt     DateTime? @map("confirmed_at") @db.Timestamptz
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  confirmedAt        DateTime? @map("confirmed_at") @db.Timestamptz
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
@@ -1616,17 +1631,17 @@ model BillingHistory {
 ///
 /// 関連: STRIPE_TECHNICAL_DESIGN.md §B-3 / §C-1 / §D-1
 model StripeUsageRecordQueue {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId     String   @map("tenant_id") @db.Uuid
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
   /// 'haiku' / 'sonnet' = Subscription Item の識別 (= tenant の subscriptionItemId を解決)
-  callType     String   @map("call_type") @db.VarChar(20)
+  callType     String    @map("call_type") @db.VarChar(20)
   /// 元の ApiCallLog.id (= idempotency_key として使用)
-  apiCallLogId String   @map("api_call_log_id") @db.Uuid
-  quantity     Int      @default(1)
+  apiCallLogId String    @map("api_call_log_id") @db.Uuid
+  quantity     Int       @default(1)
   /// 元の API 呼び出し時刻 (= Stripe Usage Record の timestamp として送信)
-  occurredAt   DateTime @map("occurred_at") @db.Timestamptz
+  occurredAt   DateTime  @map("occurred_at") @db.Timestamptz
   /// 送信試行回数 (0〜5)
-  retryCount   Int      @default(0) @map("retry_count")
+  retryCount   Int       @default(0) @map("retry_count")
   /// 次回送信予定時刻 (null = もう送らない = DLQ 入り)
   ///   exponential backoff: 1, 5, 15, 60, 240 分
   nextSendAt   DateTime? @map("next_send_at") @db.Timestamptz
@@ -1660,20 +1675,20 @@ model StripeUsageRecordQueue {
 ///
 /// feat/legal-pages-lp-integration (2026-05-21)
 model TenantConsentLog {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId      String   @map("tenant_id") @db.Uuid
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
   /// 同意したユーザの ID (sign up 時の初期 admin)。User は作成と同時に作られるため tenant 作成後に確定。
   /// 直接の FK は張らず String 保持 (User の物理削除と独立に証跡を保つ)。
-  userId        String   @map("user_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
   /// 'terms' | 'privacy'
-  consentType   String   @map("consent_type") @db.VarChar(20)
+  consentType String   @map("consent_type") @db.VarChar(20)
   /// 同意した規約・プラポリのバージョン (例: '1.0')。LP 側の version 表記と一致。
-  version       String   @db.VarChar(20)
+  version     String   @db.VarChar(20)
   /// 同意取得時の IP アドレス (証跡)
-  ipAddress     String?  @map("ip_address") @db.VarChar(45)
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
   /// 同意取得時の User-Agent (証跡)
-  userAgent     String?  @map("user_agent") @db.Text
-  acceptedAt    DateTime @default(now()) @map("accepted_at") @db.Timestamptz
+  userAgent   String?  @map("user_agent") @db.Text
+  acceptedAt  DateTime @default(now()) @map("accepted_at") @db.Timestamptz
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
 

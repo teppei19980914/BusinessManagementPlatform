@@ -8,6 +8,10 @@
  *
  * 判定ロジック (withMeteredLLM の Step 3 + 4 と整合):
  *   - Beginner: `currentMonthApiCallCount >= beginnerMonthlyCallLimit`
+ *     ※ ADR-0019 (2026-05-24) 以降、`currentMonthApiCallCount` は課金対象 featureUnit
+ *       (= BILLABLE_FEATURE_UNITS) のみで increment される。よって本判定は自動的に
+ *       「課金対象 call が月 50 件 (default) に達したら縮退」を意味する。
+ *       無料 featureUnit (chat / asset embedding 等) は本上限を消費せず継続実行可能。
  *   - Expert / Pro: monthlyBudgetCapJpy が設定済なら
  *     `currentMonthApiCostJpy >= monthlyBudgetCapJpy`
  *     未設定 (NULL) の Pro/Expert は無制限なので縮退しない

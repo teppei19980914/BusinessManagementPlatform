@@ -19,6 +19,8 @@
 
 import { prisma } from '@/lib/db';
 import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
+// ADR-0019 (2026-05-24): 課金根拠の集計は billable featureUnit のみ。
+import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
 // PR-V7 #1 (2026-05-19): credit_card 払いテナント解約時に Stripe Subscription を停止し
 //   Storage add-on 等の固定費が永続引落されるのを防ぐため。
 import { isStripeEnabled } from '@/lib/stripe';
@@ -516,10 +518,14 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
   const [tenantCount, apiAgg, planGroups, activeUsersAgg, storageGroups] = await Promise.all([
     prisma.tenant.count({ where: tenantWhere }),
     // ★ ApiCallLog SUM (真値) で集計
+    // ADR-0019 (2026-05-24): super_admin ダッシュボードの「当月 API 利用」KPI は
+    //   課金対象 call のみで集計する。無料 call は別 KPI (= fair use limit / Voyage 監視) で
+    //   別途モニタする。
     prisma.apiCallLog.aggregate({
       where: {
         tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
         createdAt: { gte: utcMonthStart },
+        featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
       },
       _count: { _all: true },
       _sum: { costJpy: true },
@@ -660,13 +666,17 @@ const VOYAGE_FREE_TIER_TOKENS_PER_MONTH = 200_000_000;
  * Voyage AI 無料枠カードの返り値。
  *   - 当月累計の embedding token 数 (全テナント合算)
  *   - 200M 上限に対する利用率 (0.0-1.0+)
- *   - 'ok' / 'warn' (>=80%) / 'alert' (>=100%) のステータス
+ *   - 'ok' / 'warn' (>=80%) / 'critical' (>=90%) / 'alert' (>=100%) のステータス
+ *
+ * ADR-0019 (2026-05-24): 'critical' (90%) 段階を追加。Embedding を全プラン無料化したことで
+ *   Voyage 200M 無料枠の超過リスクが高まったため、80% (warn) と 100% (alert) の間に
+ *   90% (critical) を挟み、super_admin が早期対応できるよう監視段階を 3 段階化。
  */
 export type VoyageUsageSummary = {
   currentMonthTokens: number;
   freeTierTokens: number;
   utilizationRatio: number;
-  status: 'ok' | 'warn' | 'alert';
+  status: 'ok' | 'warn' | 'critical' | 'alert';
 };
 
 /**
@@ -721,8 +731,15 @@ export async function getVoyageUsageSummary(): Promise<VoyageUsageSummary> {
   });
   const currentMonthTokens = Number(result._sum.embeddingTokens ?? 0);
   const utilizationRatio = currentMonthTokens / VOYAGE_FREE_TIER_TOKENS_PER_MONTH;
+  // ADR-0019 (2026-05-24): 3 段階監視 (warn 80% / critical 90% / alert 100%)
   const status: VoyageUsageSummary['status'] =
-    utilizationRatio >= 1.0 ? 'alert' : utilizationRatio >= 0.8 ? 'warn' : 'ok';
+    utilizationRatio >= 1.0
+      ? 'alert'
+      : utilizationRatio >= 0.9
+        ? 'critical'
+        : utilizationRatio >= 0.8
+          ? 'warn'
+          : 'ok';
   return {
     currentMonthTokens,
     freeTierTokens: VOYAGE_FREE_TIER_TOKENS_PER_MONTH,
@@ -1125,10 +1142,14 @@ export async function deleteTenant(
   //   過剰/過少請求になる致命傷があった (= saveMonthlyUsageSnapshots と同型問題、PR-V8.2 で fix)。
   //   集計範囲: 当月のテナント TZ 月初 〜 now (= 解約時刻)。
   const currentMonthStart = getTenantMonthStart(now, tenant.timezone);
+  // ADR-0019 (2026-05-24): 解約時 snapshot も billable のみで集計 (= 顧客請求 invariant 維持)。
+  //   無料 call はそもそも cost=0 なので SUM 不変だが、_count._all (= apiCallCount 表示) を
+  //   正しく出すために明示的に絞る。
   const apiAgg = await prisma.apiCallLog.aggregate({
     where: {
       tenantId,
       createdAt: { gte: currentMonthStart, lte: now },
+      featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
     },
     _count: { _all: true },
     _sum: { costJpy: true },

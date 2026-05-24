@@ -40,6 +40,8 @@
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
 import { isTenantPlan, MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
+// ADR-0019 (2026-05-24): 月次 snapshot の集計は課金対象 featureUnit のみ対象。
+import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
 import {
   ADDON_MONTHLY_JPY as STORAGE_ADDON_MONTHLY_JPY,
   isStorageAddonPlan,
@@ -194,10 +196,15 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       // (15 日なら UTC とテナント TZ がどちらでも同じ月になるため安全)
       const prevMonthMid = new Date(currentMonthStart.getTime() - 16 * 24 * 60 * 60 * 1000);
       const prevMonthStart = getTenantMonthStart(prevMonthMid, tenant.timezone);
+      // ADR-0019 (2026-05-24): 月次 snapshot は billable な ApiCallLog のみで集計。
+      //   無料 call (cost=0) は SUM 不変だが、_count._all は影響するため、明示的に
+      //   billable のみカウントする。これにより TenantMonthlyUsageHistory.apiCallCount が
+      //   「課金対象 call の月内総数」を正しく表す (= ダッシュボード / CSV / 請求書一致)。
       const apiAgg = await prisma.apiCallLog.aggregate({
         where: {
           tenantId: tenant.id,
           createdAt: { gte: prevMonthStart, lt: currentMonthStart },
+          featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
         },
         _count: { _all: true },
         _sum: { costJpy: true },

@@ -646,35 +646,23 @@ function Step3Preview(props: {
           </div>
         </div>
 
-        {/* コスト見積 */}
-        <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
-          <p className="font-semibold">⚠ 生成 AI 利用課金の見積</p>
+        {/* CSV インポートはコスト 0 円固定 (ADR-0019 / 2026-05-24)。
+            旧仕様は plan 単価 × N 行で課金していたが、external-import-embedding を全プラン
+            無料化したため、本セクションは「処理件数」と「無料化案内」のみを表示する。 */}
+        <div className="mt-4 rounded border border-emerald-300 bg-emerald-50 p-3 text-sm dark:border-emerald-700/40 dark:bg-emerald-900/20">
+          <p className="font-semibold">✓ CSV インポートは無料</p>
           <p>
-            embedding 生成: <strong>{costEstimate.voyageCalls} 回</strong>
+            embedding 生成 (無料): <strong>{costEstimate.voyageCalls} 回</strong>
           </p>
-          {costEstimate.plan === 'beginner' ? (
-            <p>
-              プラン: Beginner (¥0/call、ただし月間 {costEstimate.beginnerCallLimit} 回上限あり)
-              <br />
-              当月既呼出: {costEstimate.currentMonthCallCount} 回 / インポート後予測:{' '}
-              {costEstimate.currentMonthCallCount + costEstimate.voyageCalls} 回
-            </p>
-          ) : (
-            <>
-              <p>
-                プラン: {costEstimate.plan === 'pro' ? 'Pro (¥15/call)' : 'Expert (¥5/call)'}
-                <br />
-                <strong>本インポート見積: ¥{costEstimate.estimatedJpy.toLocaleString()}</strong>
-              </p>
-              <p className="mt-1">
-                当月既消費: ¥{costEstimate.currentMonthJpy.toLocaleString()} → 取込後予測 ¥
-                {costEstimate.projectedMonthJpy.toLocaleString()}
-                {costEstimate.budgetCapJpy != null && (
-                  <> / 月次予算上限 ¥{costEstimate.budgetCapJpy.toLocaleString()}</>
-                )}
-              </p>
-            </>
-          )}
+          <p className="mt-1 text-xs text-muted-foreground">
+            CSV インポートは ADR-0019 で全プラン無料化されました。プラン:{' '}
+            {costEstimate.plan === 'pro'
+              ? 'Pro'
+              : costEstimate.plan === 'expert'
+                ? 'Expert'
+                : 'Beginner'}
+            。Beginner プランの月次上限 (プロジェクト作成/更新のみカウント) も本インポートでは消費されません。
+          </p>
 
           {costEstimate.warningCode && (
             <pre className="mt-2 whitespace-pre-wrap rounded bg-destructive/10 p-2 text-xs text-destructive">

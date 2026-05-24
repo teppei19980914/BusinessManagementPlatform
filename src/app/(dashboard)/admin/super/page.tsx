@@ -185,11 +185,11 @@ export default async function SuperAdminTopPage() {
                 className="flex justify-between border-b py-1 last:border-b-0"
                 title={
                   p.plan === 'beginner'
-                    ? 'Beginner: 月 100 回上限・最大 5 席・無料・90 日試用'
+                    ? 'Beginner: プロジェクト作成/更新 月 50 回まで無料・最大 5 席・90 日試用 (資産入力・チャット検索は無料・無制限、ADR-0019)'
                     : p.plan === 'expert'
-                      ? 'Expert: 無制限従量課金 (¥5/call)、Claude Haiku'
+                      ? 'Expert: プロジェクト作成/更新 ¥10/call、Claude Haiku (資産入力・チャット検索は無料、ADR-0019)'
                       : p.plan === 'pro'
-                        ? 'Pro: 無制限従量課金 (¥15/call)、Claude Sonnet、「なぜ?」機能限定'
+                        ? 'Pro: プロジェクト作成/更新 + なぜ機能 ¥15/call、Claude Sonnet (資産入力・チャット検索は無料、ADR-0019)'
                         : `プラン: ${p.plan}`
                 }
               >
@@ -805,6 +805,7 @@ function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
 // 2026-05-09 (PR E / #12): Voyage AI 無料枠カード
 // ================================================================
 
+// ADR-0019 (2026-05-24): Voyage 全社監視を 3 段階 (warn 80% / critical 90% / alert 100%) に拡張。
 const VOYAGE_STATUS_STYLES: Record<VoyageUsageSummary['status'], { bg: string; bar: string; badge: string; text: string }> = {
   ok: {
     bg: 'bg-background',
@@ -818,12 +819,25 @@ const VOYAGE_STATUS_STYLES: Record<VoyageUsageSummary['status'], { bg: string; b
     badge: 'bg-amber-200 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200',
     text: 'text-amber-700 dark:text-amber-400',
   },
+  critical: {
+    bg: 'bg-orange-50 dark:bg-orange-950/30',
+    bar: 'bg-orange-600',
+    badge: 'bg-orange-200 text-orange-900 dark:bg-orange-900/40 dark:text-orange-200',
+    text: 'text-orange-700 dark:text-orange-400',
+  },
   alert: {
     bg: 'bg-destructive/10',
     bar: 'bg-destructive',
     badge: 'bg-destructive text-destructive-foreground',
     text: 'text-destructive',
   },
+};
+
+const VOYAGE_STATUS_LABEL: Record<VoyageUsageSummary['status'], string> = {
+  ok: '正常',
+  warn: '要注意 (80%+)',
+  critical: '切迫 (90%+)',
+  alert: '超過 (100%+)',
 };
 
 function VoyageUsageCard({ voyage }: { voyage: VoyageUsageSummary }) {
@@ -843,9 +857,17 @@ function VoyageUsageCard({ voyage }: { voyage: VoyageUsageSummary }) {
         </h2>
         <span
           className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}
-          title={voyage.status === 'alert' ? '無料枠を超過。従量課金が発生中の可能性あり' : voyage.status === 'warn' ? '80% 超過、推移を要監視' : '健全 (80% 未満)'}
+          title={
+            voyage.status === 'alert'
+              ? '無料枠を超過。従量課金が発生中の可能性あり'
+              : voyage.status === 'critical'
+                ? '90% 超過、即時対応推奨 (ADR-0019)'
+                : voyage.status === 'warn'
+                  ? '80% 超過、推移を要監視'
+                  : '健全 (80% 未満)'
+          }
         >
-          {STATUS_LABEL[voyage.status]}
+          {VOYAGE_STATUS_LABEL[voyage.status]}
         </span>
       </div>
 
@@ -965,7 +987,7 @@ function BeginnerUsageCard({ beginner }: { beginner: BeginnerUsageSummary }) {
       className={`space-y-3 rounded border p-4 ${hasWarning ? 'bg-amber-50 dark:bg-amber-950/30' : ''}`}
       title="Beginner プラン契約中のテナント数と期限切迫サマリ。90 日試用期間後は読み取り専用モードに自動移行"
     >
-      <h2 className="text-lg font-semibold" title="Beginner プラン: 月 100 回上限・最大 5 席・無料・90 日試用">
+      <h2 className="text-lg font-semibold" title="Beginner プラン: プロジェクト作成/更新 月 50 回まで無料・最大 5 席・90 日試用 (資産入力・チャット検索は無料・無制限、ADR-0019)">
         Beginner プラン使用状況
       </h2>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -992,7 +1014,7 @@ function BeginnerUsageCard({ beginner }: { beginner: BeginnerUsageSummary }) {
         <SummaryCard
           label="当月 API 呼出 (合計)"
           value={beginner.totalCurrentMonthCalls.toLocaleString()}
-          tooltip="Beginner プランの当月 API 呼出総数 (各テナント 100 回上限)"
+          tooltip="Beginner プランの当月課金対象 call 総数 (各テナント月 50 回上限、ADR-0019)。プロジェクト作成/更新のみカウント、資産入力・チャット検索は対象外"
         />
       </div>
     </section>

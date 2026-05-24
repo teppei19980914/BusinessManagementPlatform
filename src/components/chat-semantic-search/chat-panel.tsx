@@ -33,8 +33,13 @@ type DegradedReason = NonNullable<ChatSearchResult['degradeReason']>;
 
 const DEGRADED_REASON_LABEL: Record<DegradedReason, string> = {
   rate_limited: 'リクエストが多すぎます',
-  beginner_limit_exceeded: '月間 API 呼出上限に達しました',
-  budget_exceeded: '月次予算上限に達しました',
+  // ADR-0019 (2026-05-24): チャット検索は無料化されたため、Beginner 上限 / 予算上限の判定からは
+  //   除外される。本 2 ラベルはサーバ側の reason union 整合 (legacy) のため残す。
+  //   通常の運用ではこの reason はチャット検索で発生しない。
+  beginner_limit_exceeded: 'チャット検索は無料機能です (上限超過の通知が出た場合はサポートへ)',
+  budget_exceeded: 'チャット検索は無料機能です (上限超過の通知が出た場合はサポートへ)',
+  // ADR-0019: チャット検索 (= 無料 featureUnit) の月次 fair use limit (10,000 calls/tenant) 到達。
+  fair_use_limit_exceeded: '無料機能の月間利用上限に達しました (来月自動再開)',
   tenant_inactive: 'テナントが無効です',
   plan_invalid: 'プラン設定が不正です',
   llm_error: 'AI サービスで一時的な問題が発生しています',

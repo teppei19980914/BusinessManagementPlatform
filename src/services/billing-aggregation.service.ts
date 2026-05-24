@@ -25,6 +25,8 @@ import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 import { getTenantMonthStart, getTenantNextMonthStart } from '@/lib/tenant-time';
 import { ADDON_MONTHLY_JPY, type StorageAddonPlan } from '@/config/storage-addon';
 import { calculateTaxJpy, calculateInvoiceDueDate } from '@/config/billing';
+// ADR-0019 (2026-05-24): 請求書生成の元集計は課金対象 featureUnit のみ対象。
+import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
 // PR-V7a 再検証 round 2 (2026-05-19): per-tenant 失敗が cron status='success' に紛れて
 //   検知されない問題を解消するため、errors.length > 0 で active push を実施
 import { sendSuperAdminAlert } from './admin-alert.service';
@@ -88,10 +90,14 @@ export async function aggregateInvoiceBillingForMonth(
       const monthEnd = getTenantNextMonthStart(monthMidPoint, tz);
 
       // API 利用料金 (= ApiCallLog.costJpy の単純合計)
+      // ADR-0019 (2026-05-24): 課金対象 featureUnit のみ集計。無料 call (cost=0) は SUM に
+      //   影響しないが、明示的に絞ることで「ある月に無料 call が ApiCallLog に大量に積まれた」
+      //   場合に集計コスト (DB I/O) を抑える + 意図を明示する。
       const apiAgg = await prisma.apiCallLog.aggregate({
         where: {
           tenantId: tenant.id,
           createdAt: { gte: monthStart, lt: monthEnd },
+          featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
         },
         _sum: { costJpy: true },
       });

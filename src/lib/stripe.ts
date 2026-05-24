@@ -54,9 +54,14 @@ export const STRIPE_API_VERSION = '2026-04-22.dahlia' as const;
  *
  * 設計:
  *   - Stripe Dashboard 設定: 商品カタログ → メーター → 「イベント名」フィールド
- *   - Haiku per-call (Expert plan) → 'tasukiba_haiku_api_call'
- *   - Sonnet per-call (Pro plan)  → 'tasukiba_sonnet_api_call'
+ *   - Haiku per-call (Expert / Beginner plan の billable call) → 'tasukiba_haiku_api_call'
+ *   - Sonnet per-call (Pro plan の billable call) → 'tasukiba_sonnet_api_call'
  *   - Storage プランは定額なので Meter 不要
+ *
+ *   ADR-0019 (2026-05-24): Meter event 名は据置 (= 既存 Stripe Dashboard 設定そのまま)。
+ *     billable な featureUnit (= project-upsert / suggestion-explanation / auto-tag-extract) のみが
+ *     本 Meter に投入される。無料 featureUnit (knowledge-embedding / chat-semantic-search 等) は
+ *     withMeteredLLM 側で Stripe queue 投入をスキップする。
  *
  * 関連:
  *   - 設定手順: docs/operations/STRIPE_SETUP.md §2 (Meter 作成)
@@ -131,12 +136,20 @@ export function getStripeWebhookSecret(): string {
 /**
  * Price ID 群 (= Stripe Dashboard で事前に作成、環境変数で参照する)。
  *
- * - Haiku per-call (Expert plan): ¥5/call、Metered (2026-05-15 改定: ¥10 → ¥5)
- * - Sonnet per-call (Pro plan): ¥15/call、Metered (2026-05-15 改定: ¥30 → ¥15)
- * - Storage Plus: ¥500/月、Recurring 固定額
- * - Storage Pro: ¥1,500/月、Recurring 固定額
+ * 単価表 (ADR-0019 / 2026-05-24 改定後):
+ *   - Haiku per-call (Expert plan): **¥10/call**、Metered (ADR-0019 改定: ¥5 → ¥10)
+ *   - Sonnet per-call (Pro plan): ¥15/call、Metered (据置)
+ *   - Storage Plus: ¥500/月、Recurring 固定額
+ *   - Storage Pro: ¥1,500/月、Recurring 固定額
  *
- * テスト/本番で異なる ID を持つため、環境ごとに Vercel で別途登録する。
+ * 価格改定の運用作業 (ADR-0019 反映時):
+ *   1. Stripe Dashboard で新 Haiku Price (¥10/call) を発行 (既存 Meter 'tasukiba_haiku_api_call' 紐付け)
+ *   2. 旧 Price (¥5/call) は archive する (削除はしない、過去 Invoice 参照保持のため)
+ *   3. Netlify env settings の `STRIPE_PRICE_HAIKU` を新 Price ID に切替
+ *   4. 既存 active Subscription があれば Subscription Item の Price 差し替え
+ *   (詳細手順は docs/operations/STRIPE_SETUP.md を参照)
+ *
+ * テスト/本番で異なる ID を持つため、環境ごとに Netlify で別途登録する。
  */
 export type StripePriceConfig = {
   haiku: string;

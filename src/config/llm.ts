@@ -78,10 +78,19 @@ export function resolveModelForPlan(plan: 'beginner' | 'expert' | 'pro'): string
 
 /**
  * Tenant の per-call 課金額を返す (円)。
- *   - beginner: ¥0 (無料、ただし月間呼び出し回数上限あり)
- *   - expert:   tenant.pricePerCallHaiku (default ¥5、2026-05-15 改定で ¥10 → ¥5)
- *   - pro:      tenant.pricePerCallSonnet (default ¥15、2026-05-15 改定で ¥30 → ¥15)
- *   詳細は [ADR-0002](../../docs/adr/0002-tenant-billing-per-api-call.md) §2026-05-15 改定。
+ *
+ * **本関数は plan 単価のみを返す**。実際に課金するかどうか (= billable か free か) は
+ * `withMeteredLLM` 側で `isBillableFeatureUnit(featureUnit)` により決定する。
+ *
+ * 単価表 (ADR-0019 / 2026-05-24 改定後):
+ *   - beginner: ¥0 (無料、ただし月間 50 回の billable call 上限あり)
+ *   - expert:   tenant.pricePerCallHaiku (default ¥10、ADR-0019 改定: ¥5 → ¥10)
+ *   - pro:      tenant.pricePerCallSonnet (default ¥15、据置)
+ *
+ * 履歴:
+ *   - 2026-05-15 (ADR-0002): Expert ¥10 → ¥5 / Pro ¥30 → ¥15 (半額化)
+ *   - 2026-05-24 (ADR-0019): Expert ¥5 → ¥10 / Pro ¥15 据置
+ *     (課金対象を BILLABLE_FEATURE_UNITS に限定したことに合わせ、Expert 単価を補填調整)
  */
 export function resolveCostForPlan(
   plan: 'beginner' | 'expert' | 'pro',

@@ -33,6 +33,10 @@ import { prisma } from '@/lib/db';
 // 2026-05-14: 閾値定数は Client Component (usage-drift-badge.tsx) からも参照されるため
 //   純粋な config に分離し、Client bundle に Prisma (pg) を混入させない設計境界。
 import { DRIFT_WARNING_THRESHOLD } from '@/config/api-usage-drift';
+// ADR-0019 (2026-05-24): drift 検知の集計対象を「課金対象 featureUnit」に限定する。
+//   withMeteredLLM が Tenant.currentMonthApiCallCount/CostJpy を billable のみで increment
+//   するように変更されたため、本サービスもこれと同じ条件で SUM を取らないと drift 誤検知。
+import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
 // PR-V8 (2026-05-19): テナント TZ 月初をベースにする (月初リセット cron と境界統一)
 import { getTenantMonthStart } from '@/lib/tenant-time';
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
@@ -128,8 +132,16 @@ export async function reconcileTenantApiUsage(
   // PR-V8: テナント TZ 月初を起点 (月初リセット cron と境界統一)
   const timezone = tenant.timezone ?? DEFAULT_TIMEZONE;
   const monthStart = getTenantMonthStart(now, timezone);
+  // ADR-0019 (2026-05-24): Tenant.currentMonthApiCallCount/CostJpy は billable な ApiCallLog のみで
+  //   increment される。drift 検知の真値もこれと同じ条件で計算しないと「無料 call (cost=0) が
+  //   ApiCallLog に大量に積まれている」状態を drift として誤検知してしまうため、featureUnit を
+  //   `BILLABLE_FEATURE_UNITS` に絞る。
   const aggregate = await prisma.apiCallLog.aggregate({
-    where: { tenantId, createdAt: { gte: monthStart } },
+    where: {
+      tenantId,
+      createdAt: { gte: monthStart },
+      featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
+    },
     _count: { _all: true },
     _sum: { costJpy: true },
   });

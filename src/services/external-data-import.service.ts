@@ -100,7 +100,14 @@ export type PreviewError = {
 export type CostEstimate = {
   voyageCalls: number;
   plan: 'beginner' | 'expert' | 'pro';
-  /** 当インポートで発生する見込課金 (Beginner=0、Expert=¥5×N、Pro=¥15×N、2026-05-15 改定後) */
+  /**
+   * 当インポートで発生する見込課金 (円)。
+   *
+   * ADR-0019 (2026-05-24): CSV インポート (`external-import-embedding` featureUnit) は
+   *   全プラン無料化されたため、本値は **常に 0**。
+   *   過去の値: Beginner=0 / Expert=¥5×N / Pro=¥15×N (ADR-0002 / 2026-05-15 改定後)。
+   *   旧ロジックを残しているのは Stripe 監査・テストの後方互換のため。
+   */
   estimatedJpy: number;
   /** 当月既消費 (¥) */
   currentMonthJpy: number;
@@ -902,30 +909,16 @@ function computeCostEstimate(args: {
   pricePerCallHaiku: number;
   pricePerCallSonnet: number;
 }): CostEstimate {
-  const unitPrice =
-    args.plan === 'pro'
-      ? args.pricePerCallSonnet
-      : args.plan === 'expert'
-        ? args.pricePerCallHaiku
-        : 0;
-  const estimatedJpy = args.voyageCalls * unitPrice;
-  const projectedMonthJpy = args.currentMonthCostJpy + estimatedJpy;
-  const projectedMonthCallCount = args.currentMonthCallCount + args.voyageCalls;
-
-  let warningCode: CostEstimate['warningCode'] = null;
-  let warningMessage: string | null = null;
-
-  if (args.plan === 'beginner') {
-    if (projectedMonthCallCount > args.beginnerCallLimit) {
-      warningCode = 'BEGINNER_CALL_LIMIT_EXCEEDED';
-      warningMessage = `Beginner プランは月 ${args.beginnerCallLimit} 回までの API 呼出制限があります。本インポートは ${args.voyageCalls} 回の生成 AI 呼出 (embedding) が発生し、当月既呼出 (${args.currentMonthCallCount} 回) との合計が ${projectedMonthCallCount} 回となるため上限を超過します。\n\n対処:\n- 翌月まで待つ\n- インポート件数を ${Math.max(0, args.beginnerCallLimit - args.currentMonthCallCount)} 件以下に減らす\n- Expert / Pro プランにアップグレード`;
-    }
-  } else {
-    if (args.monthlyBudgetCapJpy !== null && projectedMonthJpy > args.monthlyBudgetCapJpy) {
-      warningCode = 'BUDGET_CAP_EXCEEDED';
-      warningMessage = `本インポートで合計 ¥${estimatedJpy.toLocaleString()} の生成 AI 利用料が発生します。当月既消費 ¥${args.currentMonthCostJpy.toLocaleString()} と合算で ¥${projectedMonthJpy.toLocaleString()} となり、設定済の月次予算上限 ¥${args.monthlyBudgetCapJpy.toLocaleString()} を超過するためインポートできません。\n\n対処:\n- インポート件数を減らす\n- 月次予算上限をテナント設定画面から引き上げる`;
-    }
-  }
+  // ADR-0019 (2026-05-24): CSV インポート (featureUnit=`external-import-embedding`) は
+  //   全プラン無料化された。見込課金は常に 0、Beginner 上限 / 月次予算上限の判定も発火しない。
+  //   大量行による暴走防止は別途 fair-use-limit.service.ts (Phase 6) + TOO_MANY_ROWS gate で
+  //   対応する。pricePerCallHaiku / pricePerCallSonnet / beginnerCallLimit の引数は本関数では
+  //   使わなくなったが、シグネチャは互換性のため維持 (caller が変更不要)。
+  const estimatedJpy = 0;
+  const projectedMonthJpy = args.currentMonthCostJpy;
+  // BEGINNER_CALL_LIMIT_EXCEEDED / BUDGET_CAP_EXCEEDED warning は発火しない (無料化のため)。
+  const warningCode: CostEstimate['warningCode'] = null;
+  const warningMessage: string | null = null;
 
   return {
     voyageCalls: args.voyageCalls,

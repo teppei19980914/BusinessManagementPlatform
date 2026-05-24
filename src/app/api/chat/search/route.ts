@@ -2,8 +2,12 @@
  * POST /api/chat/search (仕様: docs/specification/CHAT_SEMANTIC_SEARCH.md)
  *
  * 認証済ユーザが自然文クエリを送信し、5 資産横断意味検索を実行する。
- * 1 リクエスト = 1 ApiCallLog 計上 (仕様 §4、Beginner は月100回枠と共有、
- * Expert ¥5、Pro ¥15、書込操作と同単価。価格は Tenant.pricePerCallHaiku/Sonnet 経由)。
+ * 1 リクエスト = 1 ApiCallLog 計上 (cost=0)。
+ *
+ * ADR-0019 (2026-05-24): チャット検索 (featureUnit=`chat-semantic-search`) は **全プラン無料**。
+ *   ApiCallLog には監査・分析のため cost=0 で記録するが、Tenant counter 増分なし、
+ *   Stripe queue 投入なし、Beginner 上限カウントなし。
+ *   暴走防止は fair-use-limit (月 10,000 calls/tenant) で対応 (src/services/fair-use-limit.service.ts)。
  *
  * 認可:
  *   - 認証必須 (getAuthenticatedUser)

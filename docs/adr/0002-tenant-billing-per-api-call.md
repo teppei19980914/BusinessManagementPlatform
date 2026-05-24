@@ -1,8 +1,18 @@
 # ADR-0002: テナント単位の従量課金モデル (per-API-call)
 
-- **Status**: Accepted (2026-04 初版 → 2026-05-15 料金構造を反映して改訂)
+- **Status**: **Superseded by [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md)** (2026-05-24)
 - **Date**: 2026-04 (反復改訂を経て確定)
 - **Deciders**: teppei
+
+> **⚠️ 本 ADR は 2026-05-24 に [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) で上書きされた。**
+>
+> プラン単価・課金対象 call の定義・Beginner 上限は ADR-0019 を参照。本 ADR は歴史記録として残置する (per-API-call 課金の基本思想と縮退モード設計は引き続き有効)。
+>
+> 主な変更点:
+> - Expert ¥5 → ¥10 / Pro ¥15 据置
+> - 課金対象を `project-upsert` + `suggestion-explanation` のみに限定 (資産・チャット・backfill・import は全プラン無料)
+> - Beginner 月次上限 100 → 50 件 (課金対象 call のみカウント)
+> - Fair use limit + Voyage 全社監視を新規追加
 
 ---
 
