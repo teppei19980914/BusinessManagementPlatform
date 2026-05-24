@@ -74,6 +74,7 @@ export function AllRetrospectivesTable({
 }) {
   const router = useRouter();
   const tRetro = useTranslations('retro');
+  const tCommon = useTranslations('common');
   const { formatDateTime } = useFormatters();
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
 
@@ -113,16 +114,25 @@ export function AllRetrospectivesTable({
   });
 
   return (
-    <>
+    <div className="space-y-6">
+      {/* feat/all-list-section-unification (2026-05-24): 全○○ 5 画面共通レイアウト規約
+          1. 件数行 (justify-end / フィルタ後件数 / common.itemCount)
+          2. FilterBar (検索・フィルタ、軸数は画面固有)
+          3. ResizableTableShell (テーブル本体)
+          4. 詳細ダイアログ (read-only) */}
+      <div className="flex justify-end">
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredRetros.length })}</span>
+      </div>
       {/* PR-δ / 項目 12: 検索フィルタ (○○一覧と同 UX に揃える) */}
-      <FilterBar className="mb-3">
+      <FilterBar>
         <div>
-          <Label htmlFor="all-retros-filter-keyword" className="text-xs">{tRetro('keyword')}</Label>
+          <Label htmlFor="all-retrospectives-filter-keyword" className="text-xs">{tRetro('keyword')}</Label>
           <Input
-            id="all-retros-filter-keyword"
+            id="all-retrospectives-filter-keyword"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder={tRetro('keywordPlaceholder')}
+            data-testid="all-retrospectives-search-input"
           />
         </div>
       </FilterBar>
@@ -221,6 +231,6 @@ export function AllRetrospectivesTable({
         // 2026-04-24 + PR #165: 全振り返りは編集不可 (読み取り専用)。編集は ○○一覧 経由。
         readOnly={true}
       />
-    </>
+    </div>
   );
 }

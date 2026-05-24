@@ -101,6 +101,7 @@ export function MemosClient({
   const tField = useTranslations('field');
   const tMessage = useTranslations('message');
   const tMemo = useTranslations('memo');
+  const tCommon = useTranslations('common');
 
   const MEMO_VISIBILITY_OPTIONS = [
     { value: 'private', label: tMemo('visibilityPrivateWithdraw') },
@@ -341,7 +342,7 @@ export function MemosClient({
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">{tMemo('listTitle')}</h2>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">{tMemo('count', { count: filteredMemos.length })}</span>
+          <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredMemos.length })}</span>
           {/* T-22 Phase 22d: sync-import (往復編集) — 自分のメモのみ */}
           <Button variant="outline" size="sm" onClick={() => window.open('/api/memos/export', '_blank')}>
             {tMemo('syncExport')}

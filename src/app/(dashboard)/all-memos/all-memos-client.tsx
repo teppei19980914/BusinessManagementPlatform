@@ -20,24 +20,11 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useListSearchParams } from '@/components/common/use-list-search-params';
 import { matchesAnyKeyword } from '@/lib/text-search';
-import { Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { useLoading } from '@/components/loading-overlay';
-import { useToast } from '@/components/toast-provider';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -46,18 +33,18 @@ import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
-import { AttachmentList } from '@/components/attachments/attachment-list';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
 import { useFormatters } from '@/lib/use-formatters';
-import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
-import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import type { MemoDTO } from '@/services/memo.service';
-// Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック + フィルタバー部品
 import { ClickableRow } from '@/components/common/clickable-row';
-// PR #213 (2026-05-01): 全メモにもコメント機能 + 通知 deep link auto-open を追加
-import { CommentSection } from '@/components/comments/comment-section';
+import { FilterBar } from '@/components/common/filter-bar';
 import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
+// feat/all-list-section-unification (2026-05-24): 他 4 画面の規約に合わせて
+//   詳細ダイアログ / admin 削除ボタンを専用 component に抽出。
+import { MemoViewDialog } from './memo-view-dialog';
+import { AdminMemoDeleteButton } from './admin-delete-button';
 
 function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
   switch (columnKey) {
@@ -82,31 +69,9 @@ export function AllMemosClient({
   const tField = useTranslations('field');
   const tMemo = useTranslations('memo');
   const tCommon = useTranslations('common');
-  const tAction = useTranslations('action');
-  const VISIBILITY_LABELS: Record<string, string> = {
-    private: tMemo('visibilityPrivate'),
-    public: tMemo('visibilityPublic'),
-  };
   const { formatDateTime } = useFormatters();
   const [viewing, setViewing] = useState<MemoDTO | null>(null);
-  const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
-  // feat/crud-permission-redesign (2026-05-20): admin の public メモモデレーション削除
-  const router = useRouter();
-  const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
   const isAdmin = currentSystemRole === 'admin';
-  async function handleAdminDelete(memoId: string, title: string) {
-    if (!confirm(tCommon('adminDeleteConfirm', { label: title }))) return;
-    const res = await withLoading(() =>
-      fetch(`/api/memos/${memoId}`, { method: 'DELETE' }),
-    );
-    if (!res.ok) {
-      showError(tMemo('deleteFailed'));
-      return;
-    }
-    showSuccess(tMemo('deleteSuccess'));
-    router.refresh();
-  }
 
   // PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword= 永続化
   const { keyword, setKeyword } = useListSearchParams({ initialKeyword });
@@ -132,18 +97,28 @@ export function AllMemosClient({
 
   return (
     <div className="space-y-6">
-      {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
-      <div className="flex items-center justify-between gap-4">
-        {/* PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword= 永続化 */}
-        <Input
-          placeholder={tMemo('searchPlaceholder')}
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          className="max-w-md"
-          data-testid="all-memos-search-input"
-        />
-        <span className="text-sm text-muted-foreground">{tMemo('count', { count: filteredMemos.length })}</span>
+      {/* feat/all-list-section-unification (2026-05-24): 全○○ 5 画面共通レイアウト規約
+          1. 件数行 (justify-end / フィルタ後件数 / common.itemCount)
+          2. FilterBar (検索・フィルタ、軸数は画面固有)
+          3. ResizableTableShell (テーブル本体)
+          4. 詳細ダイアログ (read-only) */}
+      <div className="flex justify-end">
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredMemos.length })}</span>
       </div>
+
+      <FilterBar>
+        <div>
+          <Label htmlFor="all-memos-filter-keyword" className="text-xs">{tMemo('keyword')}</Label>
+          {/* PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword= 永続化 */}
+          <Input
+            id="all-memos-filter-keyword"
+            placeholder={tMemo('searchPlaceholder')}
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            data-testid="all-memos-search-input"
+          />
+        </div>
+      </FilterBar>
 
       <ResizableTableShell tableKey="all-memos-readonly">
           <TableHeader>
@@ -182,16 +157,7 @@ export function AllMemosClient({
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {/* admin は他人の public メモのモデレーション削除可。自分のメモは /memos で削除する想定 */}
                     {!m.isMine && (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="text-destructive hover:text-destructive"
-                        title={tCommon('adminDeleteTitle', { label: m.title })}
-                        aria-label={tAction('delete')}
-                        onClick={() => handleAdminDelete(m.id, m.title)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <AdminMemoDeleteButton memoId={m.id} label={m.title} />
                     )}
                   </TableCell>
                 )}
@@ -208,65 +174,11 @@ export function AllMemosClient({
           </TableBody>
       </ResizableTableShell>
 
-      {/* 詳細ダイアログ (read-only) */}
-      <Dialog open={viewing != null} onOpenChange={(o) => { if (!o) setViewing(null); }}>
-        <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${fullscreenClassName}`}>
-          <DialogHeader>
-            <div className="flex items-center justify-between gap-2">
-              <DialogTitle>{tMemo('detail')}</DialogTitle>
-              <FullscreenToggle />
-            </div>
-            <DialogDescription>
-              {tMemo('detailDescription')}
-            </DialogDescription>
-          </DialogHeader>
-          {viewing && (
-            <div className="space-y-4">
-              <fieldset disabled className="space-y-4 disabled:opacity-90">
-                <div className="space-y-2">
-                  <Label>{tField('visibility')}</Label>
-                  <Input value={VISIBILITY_LABELS[viewing.visibility] ?? viewing.visibility} readOnly />
-                </div>
-                <div className="space-y-2">
-                  <Label>{tMemo('colAuthor')}</Label>
-                  <Input value={viewing.authorName ?? '-'} readOnly />
-                </div>
-                <div className="space-y-2">
-                  <Label>{tField('title')}</Label>
-                  <Input value={viewing.title} readOnly />
-                </div>
-                <div className="space-y-2">
-                  <Label>{tField('body')}</Label>
-                  <div className="rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[12rem]">
-                    <MarkdownDisplay value={viewing.content} />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>{tMemo('colUpdatedAt')}</Label>
-                  <Input value={formatDateTime(viewing.updatedAt)} readOnly />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">{tMemo('createdAt', { date: formatDateTime(viewing.createdAt) })}</Badge>
-                  {viewing.isMine && <Badge>{tMemo('mineBadge')}</Badge>}
-                </div>
-              </fieldset>
-              <AttachmentList
-                entityType="memo"
-                entityId={viewing.id}
-                canEdit={false}
-                label={tMemo('referenceUrl')}
-              />
-              {/* PR #213: コメント機能を追加 (他「全○○」と同じ UX、CommentSection は fieldset 外に配置)。
-                  認可は API 側で visibility-aware に判定される (public memo は誰でも投稿可、
-                  draft memo は作成者本人のみ)。 */}
-              <CommentSection
-                entityType="memo"
-                entityId={viewing.id}
-              />
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <MemoViewDialog
+        memo={viewing}
+        open={viewing != null}
+        onOpenChange={(o) => { if (!o) setViewing(null); }}
+      />
     </div>
   );
 }

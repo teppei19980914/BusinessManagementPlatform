@@ -1011,6 +1011,7 @@
     "updatedBy": "更新者",
     "actions": "操作",
     "all": "全種別",
+    "keyword": "キーワード",
     "searchPlaceholder": "キーワード検索 (タイトル・背景・内容・結果)",
     "primarySourceUrl": "一次情報源 URL",
     "officialDoc": "公式ドキュメント",
@@ -1027,8 +1028,7 @@
     "private": "（非公開）",
     "notLinked": "（未紐付け）",
     "deleted": "(削除済)",
-    "optional": "(任意)",
-    "countUnit": "{count} 件"
+    "optional": "(任意)"
   },
   "memo": {
     "listTitle": "メモ一覧",
@@ -1090,6 +1090,7 @@
     "empty": "メモがありません。右上の「メモ作成」から登録してください。",
     "emptyPublic": "公開メモがありません。",
     "emptyPublicHint": "(「メモ」画面で公開範囲を「全メンバー」にすると、このページに表示されます)",
+    "keyword": "キーワード",
     "searchPlaceholder": "タイトル・本文で検索 (空白区切りで OR / `-完了` で除外)",
     "mineSuffix": "(自分)",
     "mineBadge": "自分のメモ",
@@ -1098,7 +1099,6 @@
     "colUpdatedAt": "更新日時",
     "colAttachments": "添付",
     "colActions": "操作",
-    "count": "{count} 件",
     "deleteSuccess": "メモを削除しました",
     "deleteFailed": "メモの削除に失敗しました"
   },

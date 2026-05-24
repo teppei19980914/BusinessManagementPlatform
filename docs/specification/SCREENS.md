@@ -965,8 +965,20 @@ PR #127 でナビを **3 分類** にグループ化し、**画面幅でレイ�
 | グループ | 配下項目 | 備考 |
 |---|---|---|
 | **プロジェクト** | 全プロジェクト / **全顧客管理 (admin のみ)** | 全見積もり / 全 WBS は未実装 (DEVELOPER_GUIDE §11 T-15/T-16 で追跡) |
-| **資産** | 全リスク / 全課題 / 全振り返り / 全ナレッジ / 全メモ | プロジェクト横断の知見・気付き |
+| **資産** | 全リスク / 全課題 / 全振り返り / 全ナレッジ / 全メモ | プロジェクト横断の知見・気付き。**5 画面とも統一レイアウト規約に準拠** (UI_PATTERNS §34) |
 | **システム管理者 (admin のみ)** | ユーザ管理 / 監査ログ / 権限変更 | 運用管理系 |
+
+##### 「資産」5 画面の統一レイアウト (feat/all-list-section-unification, 2026-05-24)
+
+全リスク / 全課題 / 全振り返り / 全ナレッジ / 全メモ の 5 画面は以下のセクション順に統一:
+
+1. **件数行** (フィルタ後件数 / `common.itemCount` / 右寄せ)
+2. **FilterBar** (検索 + 画面固有のフィルタ軸 / `<Label>` 付き)
+3. **テーブル** (`ResizableTableShell` + `SortableResizableHead` + `ClickableRow`)
+4. **詳細ダイアログ** (read-only。memo のみ専用 `MemoViewDialog`、他 4 画面は `XxxEditDialog readOnly={true}`)
+
+検索入力の `data-testid` は `all-{entity}-search-input` (entity は複数形) に統一。
+詳細は [docs/design/UI_PATTERNS.md §34](../design/UI_PATTERNS.md) 参照。
 
 #### レイアウト切替 (hybrid)
 

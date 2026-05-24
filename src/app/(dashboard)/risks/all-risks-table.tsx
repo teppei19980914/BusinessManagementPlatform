@@ -93,6 +93,7 @@ export function AllRisksTable({
 }) {
   const router = useRouter();
   const tRisk = useTranslations('risk');
+  const tCommon = useTranslations('common');
   const { formatDateTime } = useFormatters();
   const [editingRisk, setEditingRisk] = useState<AllRiskDTO | null>(null);
   const [members, setMembers] = useState<MemberDTO[]>([]);
@@ -162,10 +163,22 @@ export function AllRisksTable({
     setEditingRisk(r);
   }
 
+  // feat/all-list-section-unification (2026-05-24): typeFilter ごとに testid を切替えて
+  //   E2E から「全リスク」「全課題」の検索ボックスを明確に区別できるようにする。
+  const searchTestId = typeFilter === 'issue' ? 'all-issues-search-input' : 'all-risks-search-input';
+
   return (
-    <>
+    <div className="space-y-6">
+      {/* feat/all-list-section-unification (2026-05-24): 全○○ 5 画面共通レイアウト規約
+          1. 件数行 (justify-end / フィルタ後件数 / common.itemCount)
+          2. FilterBar (検索・フィルタ、軸数は画面固有)
+          3. ResizableTableShell (テーブル本体)
+          4. 詳細ダイアログ (read-only) */}
+      <div className="flex justify-end">
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredRisks.length })}</span>
+      </div>
       {/* PR-δ / 項目 12: 検索 + フィルタ (○○一覧と同 UX に揃える) */}
-      <FilterBar className="mb-3">
+      <FilterBar>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
           <div className="md:col-span-2">
             <Label htmlFor={`all-risks-filter-keyword-${typeFilter ?? 'all'}`} className="text-xs">{tRisk('keyword')}</Label>
@@ -174,6 +187,7 @@ export function AllRisksTable({
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder={tRisk('keywordPlaceholder')}
+              data-testid={searchTestId}
             />
           </div>
           <div>
@@ -319,6 +333,6 @@ export function AllRisksTable({
         // 2026-04-24 + PR #165: 全リスク/全課題は編集不可 (読み取り専用)。編集は ○○一覧 経由。
         readOnly={true}
       />
-    </>
+    </div>
   );
 }
