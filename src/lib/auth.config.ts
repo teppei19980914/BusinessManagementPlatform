@@ -73,9 +73,15 @@ export const authConfig: NextAuthConfig = {
   callbacks: {
     authorized({ auth, request }) {
       const { nextUrl } = request;
-      const isPublicPath = PUBLIC_PATHS.some((path) =>
-        nextUrl.pathname.startsWith(path),
-      );
+      // feat/app-version-changelog-footer (2026-05-23): prefix match を厳密化。
+      //   旧: `startsWith('/login')` は `/loginAdmin` /loginAdmin-bypass のような
+      //   将来追加パスも意図せず公開扱いにする (現存しないが将来の足元事故予防)。
+      //   新: 完全一致 OR `/` 直下のサブパスのみ public。
+      //   例: `/login` は `/login` `/login/mfa` を許容、`/loginAdmin` は拒否。
+      const isPublicPath = PUBLIC_PATHS.some((path) => {
+        const pathname = nextUrl.pathname;
+        return pathname === path || pathname.startsWith(path + '/');
+      });
 
       if (isPublicPath) return true;
 

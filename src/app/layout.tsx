@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages, getTranslations } from 'next-intl/server';
 import './globals.css';
+import { AppFooter } from '@/components/app-footer';
 import { AppSessionProvider } from '@/components/session-provider';
 import { auth } from '@/lib/auth';
 import { toSafeThemeId } from '@/types';
@@ -121,6 +122,14 @@ export default async function RootLayout({
             確定値を参照できるようにする (ハイドレーション安全)。
           */}
           <AppSessionProvider session={session}>{children}</AppSessionProvider>
+          {/*
+            feat/app-version-changelog-footer (2026-05-23):
+              全画面共通フッタ。バージョン・運営者・更新履歴 / お知らせ / 規約への
+              導線を提供し、サービスが健全に運営されていることを常に可視化する。
+              body の `flex min-h-full flex-col` と AppFooter の `mt-auto` で
+              画面下に押し下げる (children に flex-1 を強制せず最小差分で実現)。
+          */}
+          <AppFooter />
         </NextIntlClientProvider>
       </body>
     </html>

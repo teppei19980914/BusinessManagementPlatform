@@ -8,6 +8,9 @@ import { getDegradedModeState } from '@/services/degraded-mode.service';
 import { DegradedModeBanner } from '@/components/degraded-mode-banner';
 // PR #373 / chat-semantic-search: 全ページ右下のチャット意味検索 FAB
 import { ChatSemanticSearchFab } from '@/components/chat-semantic-search';
+// feat/app-version-changelog-footer (2026-05-23): 最新お知らせを画面上部にバナー表示
+import { AnnouncementBanner } from '@/components/announcement-banner';
+import { loadAnnouncementMetas } from '@/lib/announcements';
 import type { SystemRole } from '@/config/master-data';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -24,6 +27,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     () => null,
   );
 
+  // feat/app-version-changelog-footer (2026-05-23): 最新 1 件のお知らせを取得しバナー表示。
+  //   markdown 真値 (docs/public/announcements/*.md) からの読み出しで DB 負荷ゼロ。
+  //   ユーザは dismiss すると同じ slug が再表示されない (localStorage 管理)。
+  const latestAnnouncement = loadAnnouncementMetas()[0] ?? null;
+
   return (
     <LoadingProvider>
       <ToastProvider>
@@ -35,6 +43,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
               systemRole={user.systemRole as SystemRole}
             />
           )}
+          <AnnouncementBanner announcement={latestAnnouncement} />
           {/*
             max-w-7xl は意図的に外している: 画面左右に大きな余白が残ったまま
             一覧テーブルに横スクロールが出るとユーザビリティが下がるため、

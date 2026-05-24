@@ -35,6 +35,9 @@
   (HomePage / tasukiba-user.md の #terms / #privacy アンカー) に集約済。本サービス内の
   /terms /privacy ページは廃止 (= E2E 対象外)。ログイン画面フッタの LP リンク href 値は
   e2e/specs/00-smoke.spec.ts で検証。
+- [x] `/changelog` — e2e/specs/15-version-and-announcements.spec.ts (feat/app-version-changelog-footer / 2026-05-23 / CHANGELOG.md 読み出し + v1.0.0 エントリ render + ページ titleと intro 文言)
+- [x] `/announcements` — e2e/specs/15-version-and-announcements.spec.ts (一覧 render + 2026-06-01 launch エントリの slug link + severity badge)
+- [x] `/announcements/[slug]` — e2e/specs/15-version-and-announcements.spec.ts (slug=2026-06-01-launch の詳細 render + frontmatter から title 表示 + 一覧へ戻るリンク)
 
 ### ダッシュボード
 - [x] `/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 作成 + Step 6b 一般ユーザ閲覧)
@@ -55,6 +58,7 @@
 - [x] `/all-memos` — e2e/specs/04-personal-features.spec.ts (PR #94 / 公開メモの一覧表示)
 - [x] `/my-tasks` — e2e/specs/04-personal-features.spec.ts (PR #94 / 画面 render)
 - [x] `/settings` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / パスワード変更 + MFA 有効化) + e2e/specs/04-personal-features.spec.ts (PR #94 / テーマ変更)
+- [x] `/settings/about` — e2e/specs/15-version-and-announcements.spec.ts (feat/app-version-changelog-footer / 2026-05-23 / サービス情報セクション + バージョン表示 + 運営者名 + 法定リンク href 値)
 - [ ] `/guide` — skip: PR I (2026-05-09 / #1) 静的 + tab 切替のみの使い方ガイド。auth リダイレクト + ロール別 initialTab は src/app/(dashboard)/guide/page.test.ts で担保。視覚回帰 + tab 切替の E2E は v1.x で検討
 - [ ] `/help` — skip: PR I (2026-05-09 / #2) 静的 + accordion のみの FAQ。auth リダイレクト + tenant admin セクション条件分岐は src/app/(dashboard)/help/page.test.ts で担保。E2E は v1.x で検討
 

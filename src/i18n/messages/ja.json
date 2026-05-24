@@ -114,6 +114,67 @@
     "metaTitle": "たすきば Knowledge Relay",
     "metaDescription": "知見を残す。判断をつなぐ。プロジェクトを強くする。"
   },
+  "footer": {
+    "operatorPrefix": "運営",
+    "version": "バージョン",
+    "lastUpdated": "最終更新",
+    "terms": "利用規約",
+    "privacy": "プライバシー",
+    "changelog": "更新履歴",
+    "announcements": "お知らせ",
+    "about": "サービス情報",
+    "contact": "お問い合わせ",
+    "copyright": "© {year} {operator}"
+  },
+  "about": {
+    "pageTitle": "サービス情報",
+    "pageDescription": "たすきば Knowledge Relay の運営・バージョン情報",
+    "sectionService": "サービス",
+    "serviceName": "サービス名",
+    "serviceDescription": "サービス概要",
+    "sectionVersion": "バージョン情報",
+    "currentVersion": "現在のバージョン",
+    "releaseDate": "リリース日",
+    "viewChangelog": "更新履歴を見る",
+    "sectionOperator": "運営者",
+    "operatorName": "運営",
+    "operatorForm": "事業形態",
+    "operatorFormValue": "個人事業",
+    "sectionContact": "連絡先",
+    "contactGeneral": "一般のお問い合わせ",
+    "contactGeneralLink": "お問い合わせフォーム",
+    "contactSecurity": "セキュリティ報告",
+    "contactSecurityLink": "GitHub Security Advisory",
+    "sectionLegal": "法的事項",
+    "termsLink": "利用規約",
+    "privacyLink": "プライバシーポリシー"
+  },
+  "changelogPage": {
+    "pageTitle": "更新履歴",
+    "pageDescription": "たすきば Knowledge Relay のバージョン別更新内容",
+    "intro": "リリースごとの変更内容を掲載しています。新しい順に並んでいます。",
+    "backToTop": "トップへ戻る",
+    "viewAnnouncements": "お知らせを見る",
+    "noEntries": "更新履歴はまだ登録されていません。"
+  },
+  "announcementsPage": {
+    "pageTitle": "お知らせ",
+    "pageDescription": "サービスのアップデート・障害情報・運営からのご案内",
+    "intro": "サービスからのお知らせを掲載しています。",
+    "noEntries": "現在お知らせはありません。",
+    "publishedAt": "公開日",
+    "categoryInfo": "お知らせ",
+    "categoryWarning": "ご注意",
+    "categoryCritical": "重要",
+    "categoryMaintenance": "メンテナンス",
+    "readMore": "続きを読む",
+    "backToList": "一覧に戻る",
+    "notFound": "お知らせが見つかりません"
+  },
+  "announcementBanner": {
+    "dismissAriaLabel": "このお知らせを閉じる",
+    "viewAll": "お知らせ一覧"
+  },
   "sort": {
     "asc": "昇順",
     "desc": "降順",

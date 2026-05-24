@@ -13402,3 +13402,244 @@ git push
 - 関連 PR: PR #432 (チャット意味検索実装)
 - 関連 KDD: §4.52 (dashboard-header に top-nav 追加 → 同類パターン)、§4.43 / §4.53 #14 (mobile baseline drift)
 - 関連 feedback: `feedback_visual_baseline_gen` (Claude memory)
+
+---
+
+## 5.X+117 **★severity-2 CI 突発 fail★ CodeQL が「regex で boundary validate された文字列」を stored XSS と誤検出する罠 + `statSync` → `readFileSync` の TOCTOU 警告 (2026-05-23 / PR #433)**
+
+PR #433 (feat/app-version-changelog-footer / バージョン基盤 + /changelog + /announcements + AppFooter) で **CodeQL** が 4 件の high severity アラートを出して red になった。ローカル `pnpm lint` `pnpm tsc` `pnpm test` `pnpm build` は全 PASS、`CodeQL Analysis (javascript-typescript)` (= 分析ジョブ自体) も別途 pass しており、**「分析は完走したが脆弱性報告で fail する」** という挙動を初観測。
+
+```
+× CodeQL (4s)  ← 4 件の new alert 報告 = fail
+✓ CodeQL Analysis (javascript-typescript) (1m58s)  ← 分析ジョブは成功
+✓ Lint / Test / Build (2m9s)
+```
+
+CodeQL の指摘内容:
+
+1. `src/app/(public)/announcements/page.tsx:69` — `<Link href={`/announcements/${a.slug}`}>` を **stored XSS** と判定
+2. `src/app/(public)/announcements/page.tsx:90` — 同上 (一覧内 readMore リンク)
+3. `src/components/announcement-banner.tsx:109` — 同上 (バナーの詳細リンク)
+4. `src/lib/announcements.ts:116` — `statSync(fullPath).isFile()` → `readFileSync(fullPath, ...)` を **TOCTOU race condition** と判定
+
+### 根本原因
+
+#### 1. Stored XSS 誤検出 (3 件)
+
+`slug` の取得経路:
+
+```ts
+// src/lib/announcements.ts
+const FILENAME_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\.md$/;
+const entries = readdirSync(ANNOUNCEMENTS_DIR);
+for (const filename of entries) {
+  const match = FILENAME_PATTERN.exec(filename);
+  if (!match) continue;
+  const filenameSlug = match[2]; // ← [a-z0-9-]+ に必ず一致
+  announcements.push({ slug: filenameSlug, ... });
+}
+```
+
+`slug` は regex capture group `[a-z0-9-]+` で **構造的に validate 済**。URL-unsafe な文字 (`/`, `:`, `?`, `#`, 制御文字、unicode) は通過不可能。`<Link href>` (= 最終的に `<a href>`) として描画されるが、React が attribute 値を自動 escape するため XSS は実害なし。
+
+しかし CodeQL の taint 分析は **regex capture の制約を追跡しない** (一般論として regex pattern matching を sanitizer と認めない)。 結果として:
+
+```
+[source: filesystem (readdirSync)] → filename → match → match[2] → slug → <Link href>
+                                                                              ↑
+                                                              [sink: href interpolation]
+```
+
+の taint flow が「フィルタなし」と判定され、stored XSS 警告となる。
+
+#### 2. TOCTOU race condition (1 件)
+
+```ts
+if (!statSync(fullPath).isFile()) continue;  // ← 時刻 T1: ファイルである確認
+const raw = readFileSync(fullPath, 'utf-8'); // ← 時刻 T2: 実際に読む
+```
+
+T1 と T2 の間にファイルが置き換わるとシンボリックリンク追跡などで意図しないファイル読み込みが起き得る (古典的 TOCTOU)。実際の運用では `docs/public/announcements/` は git 管理 + 起動中に変更されない想定だが、CodeQL は一般論として警告する。
+
+### 修正方針
+
+#### 3 件の Stored XSS
+
+(A) **boundary validation を明示関数化** して CodeQL に sanitizer signal を出す:
+
+```ts
+// src/lib/announcements.ts
+export function isSafeAnnouncementSlug(s: string): boolean {
+  return /^[a-z0-9-]+$/.test(s);
+}
+
+// loadAnnouncements 内
+if (!isSafeAnnouncementSlug(filenameSlug)) continue;
+```
+
+(B) **href 構築時に `encodeURIComponent`** を明示適用して taint flow に sanitizer node を挿入:
+
+```tsx
+// src/app/(public)/announcements/page.tsx
+const detailHref = `/announcements/${encodeURIComponent(a.slug)}`;
+// <Link href={detailHref}>...</Link>
+```
+
+`encodeURIComponent` は CodeQL の標準 sanitizer ライブラリで認識される。実用上 `[a-z0-9-]+` は変換不要だが、defense in depth + CI signal の二重目的で適用。
+
+#### TOCTOU
+
+`statSync` の事前チェックを廃止し、`readFileSync` 直叩き + 既存の `try/catch` で全エラー (`EISDIR` ディレクトリ / `ENOENT` 不在 / `EACCES` 権限不足) を一括処理:
+
+```ts
+// before
+if (!statSync(fullPath).isFile()) continue;
+const raw = readFileSync(fullPath, 'utf-8');
+
+// after
+try {
+  const raw = readFileSync(fullPath, 'utf-8');
+  // ...
+} catch {
+  continue; // ディレクトリ / 不在 / 権限不足 をまとめて skip
+}
+```
+
+### 学び
+
+1. **CodeQL の `CodeQL` チェックと `CodeQL Analysis (...)` チェックは別物**:
+   - 後者: 分析ジョブ自体 (分析が走れば pass)
+   - 前者: 分析結果に new alert があれば fail (PR ガード)
+   - 「Analysis pass」を見て安心しない、`CodeQL` 単体の状態を必ず確認
+2. **regex で validate された文字列でも CodeQL は信用しない**: branded type / 明示的 helper function (`isSafeX`) で sanitizer 関数を切り出し、ガード経路を追跡可能にする
+3. **`encodeURIComponent` を href 構築時に必ず使う**: 実害ゼロでも CodeQL の標準 sanitizer リストに入っているため、taint flow が必ず遮断される。今後の新規 `<Link href={...path/${var}...}>` 系は全て `encodeURIComponent` で包む方針
+4. **`statSync` + `readFileSync` の 2 段呼出は CodeQL TOCTOU 警告対象**: 例外で代替できる場合 `try/catch` 一本化が推奨パターン
+5. **ローカル PASS で push 直前にも CodeQL は走らない**: `pnpm lint` `pnpm tsc` `pnpm test` `pnpm build` の 4 点セットでは CodeQL は検出できず、push 後 PR の CI で初めて見える。push 後 5 分は PR checks を必ず確認する運用
+
+### 修正範囲
+
+- `src/lib/announcements.ts`: `isSafeAnnouncementSlug` 追加、`statSync` 廃止、boundary validation 追加
+- `src/lib/announcements.test.ts`: `isSafeAnnouncementSlug` のテスト 2 件追加
+- `src/app/(public)/announcements/page.tsx`: `encodeURIComponent(a.slug)` で href 構築
+- `src/components/announcement-banner.tsx`: 同上
+
+### 関連
+
+- 関連 PR: PR #433 (バージョン基盤 + フッタ + /changelog + /announcements)
+- 関連 KDD: §5.X+115 (CodeQL 系の別罠 — OSV-Scanner と pnpm audit の判定基準ズレ)
+- 関連 feedback: [[feedback-standalone-fs-tracing]] (本 PR で発見した standalone build 罠), [[feedback-tenant-isolation]] (boundary validation の同類パターン)
+- 関連 doc: 本 §5.X+117 を以後の新規 markdown 駆動ページ実装時の参照点とする (boundary validation + encodeURIComponent + try/catch 一本化が標準パターン)
+
+---
+
+## 5.X+118 **★severity-2 spec/実装乖離★ filename → slug 抽出 regex で「ハイフン区切り全体を slug にしたい」のに「日付の後ろだけ」になり E2E でしか発覚しないバグ + 単体テストが I/O 層を素通りした罠 (2026-05-23 / PR #433)**
+
+PR #433 の E2E `e2e/specs/15-version-and-announcements.spec.ts` で **2 件の test fail**:
+
+```
+✘ `/announcements` が 2026-06-01-launch エントリのリンクを render する
+  Error: getByTestId('announcement-2026-06-01-launch') not found
+
+✘ `/announcements/[slug]` 詳細ページが title と「一覧に戻る」リンクを持つ
+  (12s タイムアウト)
+```
+
+`/changelog` (同 spec の test 1) は pass、`/settings/about` (test 4) も pass。**announcements 関連のみ fail**。
+
+### 根本原因
+
+`src/lib/announcements.ts` の `FILENAME_PATTERN` で **slug 部分の capture group が誤っていた**:
+
+```ts
+// 旧版 (バグあり)
+const FILENAME_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\.md$/;
+//                        ^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^
+//                        match[1] = "2026-06-01"  match[2] = "launch"  ← BUG!
+```
+
+実装の意図 (URL 設計): ファイル `2026-06-01-launch.md` のスラグは **`2026-06-01-launch`** (= ファイル名全体 - 拡張子) で、URL は `/announcements/2026-06-01-launch` の形になることを期待。これは:
+- 一覧表示で公開日が一目で分かる
+- URL が `2026-06-01-launch` の形で人間可読
+
+しかし regex の `match[2]` は **「日付の後ろのみ」 = `'launch'`** を返していたため:
+- `data-testid="announcement-launch"` でレンダリング (test は `"announcement-2026-06-01-launch"` を期待 → 検出不能)
+- 詳細ページの href も `/announcements/launch` で生成 (test は `/announcements/2026-06-01-launch` に遷移 → 404 ページ表示)
+
+### なぜローカルテストで検出されなかったか
+
+`announcements.test.ts` は **frontmatter parser (parseFrontmatter) のみ単体テスト**しており、`loadAnnouncements` の I/O 層 (= regex で実ファイル名を分解する箇所) を一切実行していなかった。`parseFrontmatter` は文字列引数だけのpure 関数で fs を触らず、bug 箇所と関係ない。
+
+CodeQL 対応で導入した `isSafeAnnouncementSlug` の単体テストも slug 文字列に対する validate だけで、「ファイル名 → slug」抽出のロジックは test 外。
+
+結果:
+- `pnpm lint / tsc / test / build` ローカル 4 点セット全 pass
+- 本番 (CI) で初めて E2E が `data-testid` 検出失敗で fail → 12s タイムアウト
+
+### 修正方針
+
+**1. regex の capture group 構造を「全 slug を外側、日付を内側」に変更**:
+
+```ts
+// 新版 (修正後)
+const FILENAME_PATTERN = /^((\d{4}-\d{2}-\d{2})-[a-z0-9-]+)\.md$/;
+//                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+//                        match[1] = "2026-06-01-launch" (= 全 slug)
+//                         ^^^^^^^^^^^^^^^^^^^^^
+//                         match[2] = "2026-06-01" (= 日付のみ)
+```
+
+**2. ファイル名解析を純関数 `parseAnnouncementFilename` として切り出し**:
+
+```ts
+export function parseAnnouncementFilename(
+  filename: string,
+): { slug: string; date: string } | null {
+  const match = FILENAME_PATTERN.exec(filename);
+  if (!match) return null;
+  const slug = match[1];
+  const date = match[2];
+  if (!isSafeAnnouncementSlug(slug)) return null;
+  return { slug, date };
+}
+```
+
+これで I/O モック不要で「filename → slug + date」抽出ロジックを単体テスト可能に。
+
+**3. 回帰テスト追加** (announcements.test.ts):
+
+```ts
+it('YYYY-MM-DD-{slug}.md の slug は **全体** (例: 2026-06-01-launch)', () => {
+  expect(parseAnnouncementFilename('2026-06-01-launch.md')).toEqual({
+    slug: '2026-06-01-launch',
+    date: '2026-06-01',
+  });
+});
+```
+
+このテストが今後の regex 変更時に「ファイル名 = slug」原則の崩れを catch する。
+
+### 学び
+
+1. **「I/O 層を含む純粋ロジック」は必ず純関数として切り出してテストする**: regex で文字列を加工する処理が `readdirSync + readFileSync` のループに埋め込まれていると、テストするには fs モックが必須になり、結果としてテストされなくなる。**切り出すコストより、E2E でしか catch できない fail のコストの方が大きい**
+2. **E2E spec の locator (data-testid / href) は実装と契約**: spec を書く時点で URL 設計 / 識別子設計の最終形が確定するため、spec のセレクタ文字列は仕様レビューの対象として扱うべき
+3. **regex の capture group は **外側 / 内側** で意味が反転する罠**: `(A-B)` と `(A)-(B)` は match[1] が同じだが、match[2] が **B vs A** で逆転する。複数 capture を使う時は **必ずユニットテストで match index を assert**
+4. **「unit test 全 pass + CodeQL 全 pass + build 全 pass」でも E2E は別**: 仕様レイヤ (URL contract / DOM contract) は static analysis では catch できず E2E でしか出ない。**新規 page/component は E2E が走る前に local 1 回は必ず通す** か、少なくとも **E2E spec の locator と実装の data-testid を grep でクロスチェック**する運用が必要
+5. **§5.X+117 (CodeQL 対応) の修正で `parseAnnouncementFilename` 切り出しまで踏み込んでいれば、本 §5.X+118 の bug は事前 catch できていた**: refactor 時に「テスト容易性のための関数分割」をセットで行うのが正解
+
+### 今後の指針 (markdown 駆動ファイル系の標準パターン)
+
+`docs/public/foo/*.md` のような **filename → URL slug** 変換を持つ機能を実装する際は:
+
+1. `parseXxxFilename(filename: string): { slug, ... } | null` の純関数を必ず切り出す
+2. 単体テストで以下を必ず assert:
+   - 期待する filename が **slug 全体を含む** 結果を返す
+   - 形式外 filename が `null` を返す
+   - 1 つは「素朴な書き間違いを catch する」test (例: `match[2]` だけだと失敗するケース)
+3. E2E spec の `data-testid` / href と実装の値を **PR description で対応関係明示** (review 時のクロスチェック点)
+
+### 関連
+
+- 関連 PR: PR #433 (本事例)
+- 関連 KDD: §5.X+117 (本事例の前段、CodeQL 対応で `isSafeAnnouncementSlug` 導入時に regex 分解までは踏み込まなかった見落とし)
+- 関連 feedback: [[feedback-e2e-coverage-gate]] (新規 page/route は E2E 必須の運用ルール)、[[feedback-standalone-fs-tracing]] (本 PR の standalone build 罠)
+- 関連 doc: 本 §5.X+118 を以後の filename-driven 機能実装時の参照点 (純関数切り出し + 回帰テストが標準パターン)
