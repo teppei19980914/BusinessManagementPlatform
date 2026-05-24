@@ -52,7 +52,7 @@ export const EMBEDDING_DIMENSIONS = 1024;
  * 数値根拠:
  *   - 1 分 10 回: 通常操作 (画面で「提案ボタン」を高速連打) を許容しつつ、
  *     bot 級の連打を防ぐ。
- *   - 1 時間 60 回: ユーザ単位での持続的負荷を抑える (Beginner 月 100 回上限と
+ *   - 1 時間 60 回: ユーザ単位での持続的負荷を抑える (Beginner 月 50 回上限と
  *     ほぼ同等のペースで配分される)。
  */
 export const LLM_RATE_LIMIT = {

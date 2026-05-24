@@ -851,6 +851,62 @@ describe('withMeteredLLM - ADR-0019 §billable / free 分岐', () => {
     });
   });
 
+  describe('mid-month 単価変更: ADR-0019 migration 直後の新旧混在シナリオ', () => {
+    it('Tenant.pricePerCallHaiku の現在値で costJpy が決定 (migration 直後でも整合)', async () => {
+      // migration で pricePerCallHaiku が 5→10 に変わった直後を想定。
+      // Tenant 行は新単価 (10) を持ち、新規 call はその単価で記録される。
+      // 既存の ApiCallLog (旧単価 ¥5 で記録済) は immutable で SUM に新旧混在する設計。
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'expert',
+          pricePerCallHaiku: 10,
+          currentMonthApiCostJpy: 25,
+          currentMonthApiCallCount: 5,
+        }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'project-upsert',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.costJpy).toBe(10);
+      const tenantUpdate = vi.mocked(prisma.tenant.update).mock.calls[0]?.[0];
+      expect(tenantUpdate?.data?.currentMonthApiCostJpy).toEqual({ increment: 10 });
+    });
+
+    it('カスタム単価テナント (Enterprise 個別契約等) は migration で書き換えられず維持', async () => {
+      // migration WHERE 句: `WHERE price_per_call_haiku = 5` のため、カスタム単価 (例 ¥20) は維持
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'expert',
+          pricePerCallHaiku: 20,
+        }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'project-upsert',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.costJpy).toBe(20);
+    });
+  });
+
   describe('fair-use-limit (Step 3.5): 無料 featureUnit の月次上限', () => {
     it('hard limit (10,000 calls) 到達で fair_use_limit_exceeded', async () => {
       vi.mocked(prisma.tenant.findFirst).mockResolvedValue(

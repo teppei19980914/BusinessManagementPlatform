@@ -696,7 +696,8 @@ export type AnthropicUsageSummary = {
  * Beginner プラン使用状況サマリ。
  *   - Beginner プラン契約中のテナント件数
  *   - 期限切迫 (warning_60 / warning_75 / expired) のテナント件数
- *   - 当月の Beginner プラン総 API 呼び出し回数 (= 100 回/テナント上限の使用状況)
+ *   - 当月の Beginner プラン総 課金対象 call 回数 (= ADR-0019 後 50 回/テナント上限の使用状況、
+ *     project-upsert のみカウント。資産入力・チャット検索は無料・無制限)
  */
 export type BeginnerUsageSummary = {
   totalTenants: number;
