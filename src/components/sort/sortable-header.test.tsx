@@ -112,4 +112,13 @@ describe('SortableHeader Portal 化 invariant', () => {
     expect(source).toMatch(/className="fixed/);
     expect(source).toMatch(/getBoundingClientRect/);
   });
+
+  it('a11y: trigger button に aria-controls / menu に id を付与し、Portal でも関連付けを明示する', () => {
+    // Portal で menu が trigger の DOM 子孫でなくなるため、スクリーンリーダーが「どの
+    // 要素が menu か」を静的 DOM から推論できない。aria-controls (open 時のみ) で明示する。
+    // id は useId で SSR/CSR 一致の安定値を生成。
+    expect(source).toMatch(/useId/);
+    expect(source).toMatch(/aria-controls=\{open\s*\?\s*menuDomId\s*:\s*undefined\}/);
+    expect(source).toMatch(/id=\{menuDomId\}/);
+  });
 });

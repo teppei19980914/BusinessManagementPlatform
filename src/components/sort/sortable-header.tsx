@@ -40,7 +40,7 @@
  *   - scroll / resize: 座標が陳腐化するため close で対応 (再計算より単純で UX 影響小)
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslations } from 'next-intl';
 import { getColumnSort, type SortDir, type SortState } from '@/lib/multi-sort';
@@ -67,6 +67,11 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [coords, setCoords] = useState<Coords | null>(null);
+  // a11y: trigger と menu の関連付けに使う安定 id (Portal で menu が DOM tree 外に出る
+  // ため、aria-controls による明示的関連付けがスクリーンリーダー対応として必須)。
+  // useId は SSR/CSR で同じ id を生成する React 標準 hook。
+  const reactId = useId();
+  const menuDomId = `sortable-header-menu-${reactId}`;
 
   const triggerRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLUListElement | null>(null);
@@ -166,6 +171,7 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
           className="inline-flex items-center gap-1 hover:text-info focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded px-0.5"
           aria-haspopup="menu"
           aria-expanded={open}
+          aria-controls={open ? menuDomId : undefined}
           title={
             current
               ? `${label}: ${current.direction === 'asc' ? t('asc') : t('desc')} (${t('priority')} ${current.priority})`
@@ -192,6 +198,7 @@ export function SortableHeader({ columnKey, label, sortState, onSortChange, clas
       {mounted && open && coords && createPortal(
         <ul
           ref={menuRef}
+          id={menuDomId}
           role="menu"
           // z-50: dashboard-header (z-40) より前面、Dialog overlay (z-50) と同層。
           // 位置は trigger の bottom + 4px (旧 mt-1 相当)。Portal なので任意祖先の overflow から独立。

@@ -93,6 +93,11 @@ test.describe('@feature:ui:sort-dropdown カラムソート dropdown の可視�
     await expect(menu.getByRole('menuitem', { name: /↑.*昇順/ })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: /↓.*降順/ })).toBeVisible();
 
+    // a11y: trigger button の aria-controls が menu の id と一致する (Portal でも関連付け維持)
+    const menuId = await menu.getAttribute('id');
+    expect(menuId, 'menu に id 属性が付与されている').not.toBeNull();
+    await expect(trigger).toHaveAttribute('aria-controls', menuId!);
+
     // Portal 化の証拠: menu の親が <body> 直下にあること (Table 内ではないこと)。
     // = この menu node から最近の祖先 [data-slot="table-container"] は存在しない。
     const isOutsideTable = await menu.evaluate((el) => {
