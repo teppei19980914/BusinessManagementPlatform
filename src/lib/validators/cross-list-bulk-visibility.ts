@@ -5,16 +5,19 @@ import { z } from 'zod/v4';
  *
  * 設計方針:
  *   - visibility の取りうる値は entity ごとに異なる:
- *       Retrospective / Knowledge: 'draft' / 'public'
- *       Memo                     : 'private' / 'public'
- *     → entity ごとに 3 つの schema を export し、enum で値域を限定する。
- *   - patch 対象は visibility 1 項目のみ (Phase 2 の対象範囲)。
- *     status / state / 担当者などはエンティティ間で意味が違うので Phase 2 では出さない。
+ *       Retrospective / Knowledge / RiskIssue: 'draft' / 'public'
+ *       Memo                                 : 'private' / 'public'
+ *     → entity ごとに 4 つの schema を export し、enum で値域を限定する。
+ *   - patch 対象は visibility 1 項目のみ (UI_PATTERNS §35.4 で全 5 画面統一)。
+ *     status / state / 担当者 等の複合一括編集は UX を壊しやすいため UI/API ともに撤廃。
  *
  * 履歴:
  *   - Phase C 要件 18 (2026-04-28): フィルター必須は撤廃 (UI/API ともに任意)。
  *     filterFingerprint は schema 互換維持のため残すが、サーバ側で値の検証はしない。
  *     per-row 作成者判定 (silent skip) + ids 上限 500 で誤更新を防ぐ多層防御に集約。
+ *   - UI_PATTERNS §35 (2026-05-24): Risk/Issue の bulk 編集を従来の
+ *     state+assigneeId+deadline 複合 → visibility-only に統一。
+ *     旧 src/lib/validators/risk-bulk.ts は削除。
  */
 
 const filterFingerprintSchema = z.object({
@@ -59,6 +62,18 @@ export const bulkUpdateMemoVisibilitySchema = z.object({
   visibility: z.enum(['private', 'public']),
 });
 
+/**
+ * リスク/課題 (RiskIssue) 一括 visibility 更新。値域は 'draft' / 'public' (DB schema に準拠)。
+ * UI_PATTERNS §35 (2026-05-24): 旧 risk-bulk.ts の state+assigneeId+deadline 複合 patch を撤廃し、
+ * 他 4 画面と統一して visibility のみの一括編集に集約。
+ */
+export const bulkUpdateRiskVisibilitySchema = z.object({
+  ids: idsSchema,
+  filterFingerprint: filterFingerprintSchema,
+  visibility: z.enum(['draft', 'public']),
+});
+
 export type BulkUpdateRetrospectiveVisibilityInput = z.infer<typeof bulkUpdateRetrospectiveVisibilitySchema>;
 export type BulkUpdateKnowledgeVisibilityInput = z.infer<typeof bulkUpdateKnowledgeVisibilitySchema>;
 export type BulkUpdateMemoVisibilityInput = z.infer<typeof bulkUpdateMemoVisibilitySchema>;
+export type BulkUpdateRiskVisibilityInput = z.infer<typeof bulkUpdateRiskVisibilitySchema>;
