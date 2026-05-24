@@ -22,10 +22,18 @@
  * viewerUserId が未指定 (session 未取得等) の場合は安全側に /all-memos を返す
  * (= 自分の private memo は開けないが、他人の public memo へのリンクは破綻しない)。
  *
+ * entity-link.ts (通知 deep link) との差分: 通知では memo を常に `/all-memos` 一本に倒すが、
+ * チャット意味検索は自分の private memo も結果対象 (chat-search.service.ts §loadMemos) のため
+ * `/memos` での auto-open 経路を必要とする。本ヘルパは chat-search 固有の分岐を持つ。
+ *
  * 拡張性 (将来):
  *   - 新規 kind 追加時は exhaustive switch がコンパイルエラーで気付かせる
  *   - 専用詳細 page を後で作る場合はこの 1 ファイルの該当 case を差し替えるだけ
  *   - options 引数を追加すれば commentId / tab / anchor 等の deep link 拡張に対応可能
+ *
+ * セキュリティ: hit.id は DB UUID 由来で特殊文字を含まないが、`encodeURIComponent` を
+ * 通す defense-in-depth で URL injection / CodeQL 警告を予防する (commit 4629d3e で
+ * 同種警告 4 件を解消した方針と整合)。
  */
 
 import type { ChatSearchHit } from '@/services/chat-search.service';
@@ -39,22 +47,23 @@ export function buildChatHitLink(
   hit: ChatSearchHit,
   options: BuildChatHitLinkOptions = {},
 ): string {
+  const id = encodeURIComponent(hit.id);
   switch (hit.kind) {
     case 'project':
-      return `/projects/${hit.id}`;
+      return `/projects/${id}`;
     case 'knowledge':
-      return `/knowledge?knowledgeId=${hit.id}`;
+      return `/knowledge?knowledgeId=${id}`;
     case 'risk':
-      return `/risks?riskId=${hit.id}`;
+      return `/risks?riskId=${id}`;
     case 'issue':
-      return `/issues?riskId=${hit.id}`;
+      return `/issues?riskId=${id}`;
     case 'retrospective':
-      return `/retrospectives?retroId=${hit.id}`;
+      return `/retrospectives?retroId=${id}`;
     case 'memo': {
       const viewerUserId = options.viewerUserId;
       const isOwn =
         viewerUserId != null && hit.authorUserId != null && hit.authorUserId === viewerUserId;
-      return isOwn ? `/memos?memoId=${hit.id}` : `/all-memos?memoId=${hit.id}`;
+      return isOwn ? `/memos?memoId=${id}` : `/all-memos?memoId=${id}`;
     }
     default: {
       const _exhaustive: never = hit.kind;

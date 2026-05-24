@@ -79,4 +79,19 @@ describe('buildChatHitLink', () => {
       expect(buildChatHitLink(hit, { viewerUserId: 'user-A' })).toBe('/all-memos?memoId=memo-1');
     });
   });
+
+  describe('セキュリティ (defense-in-depth)', () => {
+    // hit.id は通常 DB UUID で特殊文字を含まないが、将来 id source が変わった場合や
+    // 万一不正な値が混入した場合に URL parse が想定外の振る舞いを起こさないよう
+    // encodeURIComponent を通す (commit 4629d3e の CodeQL 警告解消方針と整合)。
+    it('id に URL 特殊文字 (?, &, #, /) が含まれても encodeURIComponent で安全にエスケープする', () => {
+      const hit = makeHit({ kind: 'risk', id: 'risk-1?evil=true&x=y#hash/a' });
+      expect(buildChatHitLink(hit)).toBe('/risks?riskId=risk-1%3Fevil%3Dtrue%26x%3Dy%23hash%2Fa');
+    });
+
+    it('id がスペースを含んでも安全にエスケープする', () => {
+      const hit = makeHit({ kind: 'project', id: 'proj 1' });
+      expect(buildChatHitLink(hit)).toBe('/projects/proj%201');
+    });
+  });
 });
