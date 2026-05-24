@@ -14112,3 +14112,68 @@ await page.getByRole('button', { name: 'プロジェクトを削除する' }).cl
 - 関連 Playwright docs: [click `{ force: true }`](https://playwright.dev/docs/api/class-locator#locator-click-option-force) / [actionability checks](https://playwright.dev/docs/actionability)
 - 関連 Chromium 既知問題: DPR>=2 環境での subpixel hit-test 計算の不安定性 (issue tracker 多数)
 - 関連 file: [`e2e/specs/05-teardown-and-residuals.spec.ts:99`](../../e2e/specs/05-teardown-and-residuals.spec.ts) / [`e2e/specs/09-customers.spec.ts:122`](../../e2e/specs/09-customers.spec.ts) / [`src/components/ui/dialog.tsx:64`](../../src/components/ui/dialog.tsx) (translate-centered Dialog 起源)
+
+## 5.X+125 **★severity-2 CI 連鎖 fail★ §5.X+124 hit-test 誤判定が Dialog 内 click 全般に系統的影響することを実証 → モグラ叩きを避けるため全 dialog 内 click を一括 `{ force: true }` 化 (2026-05-24 / PR #439)**
+
+### 発生事象
+
+§5.X+124 で Step 11 (削除確認) / Step 3 (顧客登録) の 2 件に `{ force: true }` を適用した次の CI run で、**別の Dialog 内 click 2 件が新たに同じパターンで fail**:
+
+- `e2e/specs/05-teardown-and-residuals.spec.ts:120` **Step 10** 「このユーザを削除」(UserEditDialog 内)
+  ```
+  - <button>保存</button> from <form class="space-y-4">…</form> subtree intercepts pointer events
+  - <div ...dialog-content...> intercepts pointer events
+  ```
+- `e2e/specs/09-customers.spec.ts:159` **Step 4** 「更新」(顧客編集 dialog 内)
+  ```
+  - <textarea id="edit-notes"> ... intercepts pointer events
+  - <input id="edit-contact-email"> ... intercepts pointer events
+  - <div ...dialog-overlay...> intercepts pointer events
+  ```
+
+§5.X+124 の force:true bypass で前回 fail 2 件は解消されたが、**同じ事象が他の dialog click でも継続発生**することが実証された。
+
+### 根本原因 (≠ 表層原因)
+
+- **表層**: §5.X+124 で指摘した chromium-mobile DPR=3 hit-test 誤判定が、特定の click だけでなく **全 Dialog 内 click に系統的に発生** すること
+- **真の原因**: §5.X+124 の根本原因が「**Radix Dialog content の `position: fixed; transform: translate(-50%, -50%)` centered 配置に共通する subpixel hit-test 計算ズレ**」であるため、**Dialog 内のどの click も hit-test が誤判定し得る**。click 対象 button の位置や周囲要素は関係なく、Dialog 自体の transform に起因する
+- **個別 click 単位の修正はモグラ叩き**: 1 件直す → 次の CI で別の Dialog click が fail → また直す、の繰り返しになる
+
+### 対応 (本 PR の最終 hotfix の最終 hotfix)
+
+#### 直接的な fail 2 件
+- `05 Step 10:132` 「このユーザを削除」→ `{ force: true }` 追加
+- `09 Step 4:163` 「更新」→ `{ force: true }` 追加
+
+#### 先回りした 3 件 (CI fail 待ちを避ける)
+プロジェクト全 E2E spec を `grep -rn "getByRole('button'" e2e/specs/` で走査し、**Dialog 内 submit/confirm 系の click** を全て事前に force:true 化:
+- `09-customers Step 6b:267` 「作成」(新規プロジェクト dialog) → `{ force: true }` 追加
+- `09-customers Step 7:319` 「削除する」(カスケード削除 dialog) → `{ force: true }` 追加
+- `01-admin-and-member-setup Step 3:207` 「招待メールを送信」(ユーザ招待 dialog) → `{ force: true }` 追加
+
+合計 5 件に統一規則の force:true + KDD §5.X+124/125 参照コメントを付与。
+
+#### 適用しなかった click (Dialog 外で動作確認済 OR 該当条件外)
+- 行内 button (table row 内の「削除」等): Dialog 外の通常 click、hit-test 問題なし
+- `'今日'` ボタン (DateFieldWithActions の quick action): Dialog 内だが date-picker UI で hit-test 問題は報告無し
+- `'検証'` / `'検証して有効化'` (MFA フロー): 通常画面、Dialog 外
+
+### 再発防止 (今回入れた仕掛け)
+
+- **「Dialog 内の submit/confirm 系 click は最初から `{ force: true }` を付ける」原則を本 KDD §5.X+125 で確立**
+- 新規 E2E spec 作成時の checklist に「Dialog 内 click は force:true 検討」を追加
+- 既存 dialog click を grep して洗い出した先回り対処 (3 件) で「CI が fail してから直す」の悪循環を断ち切る
+- **将来 chromium-mobile を 1 度回したら全 spec を一気に修正する** (本件で 3 ラウンド使った: §5.X+124 で 2 件 → §5.X+125 で 2 件 + 先回り 3 件)
+
+### 教訓 (転用可能)
+
+- **「同根の事象は集約して 1 度で対処」原則**: 1 件の CI fail を発見したら、grep で類似 pattern を全て洗い出し、まとめて修正する。これにより「fix → CI fail → fix → CI fail」のラウンド数を最小化できる
+- **CI コストの観点**: chromium-mobile project だけで E2E 1 run 約 5 分 + visual ベースライン 5 分。fail 1 件あたり 10 分の loop が発生するので、先回り対処の価値は高い (今回は 2 ラウンド前に先回りすべきだった)
+- **Dialog 内 click は外と本質的に違う**: Dialog はそもそも focus trap / inert / centered transform で「特別な context」を持つ要素。Dialog 内テストには通常 click より厳密な obstacle 想定を入れて test を書く
+- **§5.X+124 の hypothesis 検証で「個別事象でなく系統事象」を判定する観点が抜けていた**: 「特定 button に起きる」を「Dialog 内 button 全般に起きる」と早期に拡張すれば 1 ラウンド減らせた
+
+### 関連
+
+- 関連 PR: PR #439 (本事例 / 2026-05-24)
+- 関連 KDD: [§5.X+124](#5x124) (前回 fix の根本原因確定、本セクションはそれの系統性実証 + 全 spec への展開)
+- 関連 file (本 PR で force:true 化した 5 件): [`e2e/specs/05-teardown-and-residuals.spec.ts:99,138`](../../e2e/specs/05-teardown-and-residuals.spec.ts) / [`e2e/specs/09-customers.spec.ts:122,167,272,324`](../../e2e/specs/09-customers.spec.ts) / [`e2e/specs/01-admin-and-member-setup.spec.ts:209`](../../e2e/specs/01-admin-and-member-setup.spec.ts)

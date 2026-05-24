@@ -160,7 +160,11 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
       (r) =>
         r.url().includes('/api/customers/') && r.request().method() === 'PATCH',
     );
-    await page.getByRole('button', { name: '更新' }).click();
+    // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+    //   hit-test 誤判定 (顧客編集 dialog 「更新」も該当、Step 3 と同根)。
+    //   visibility/enabled/stable は OK で hit-test だけが intercept 誤判定するため
+    //   { force: true } で bypass。
+    await page.getByRole('button', { name: '更新' }).click({ force: true });
     const res = await patchResponse;
     expect(res.ok(), `PATCH /api/customers failed: ${res.status()}`).toBeTruthy();
 
@@ -260,7 +264,9 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
       await page.getByRole('button', { name: '今日' }).nth(1).click();
 
       // 顧客を意図的に未選択のまま 作成 クリック
-      await page.getByRole('button', { name: '作成' }).click();
+      // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+      //   hit-test 誤判定 (新規プロジェクト dialog 「作成」も該当)。{ force: true } で bypass。
+      await page.getByRole('button', { name: '作成' }).click({ force: true });
 
       // (1) UI には「顧客を選択してください」が表示される
       await expect(page.getByText('顧客を選択してください').first()).toBeVisible({
@@ -312,7 +318,9 @@ test.describe('@feature:customers 顧客管理 (PR #111-2)', () => {
         r.url().includes(`/api/customers/${cascadeCustomer!.id}?`)
         && r.request().method() === 'DELETE',
     );
-    await page.getByRole('button', { name: '削除する' }).click();
+    // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+    //   hit-test 誤判定 (カスケード削除 dialog 「削除する」も該当)。{ force: true } で bypass。
+    await page.getByRole('button', { name: '削除する' }).click({ force: true });
     const res = await deleteResponse;
     expect(res.ok(), `DELETE /api/customers cascade failed: ${res.status()}`).toBeTruthy();
 

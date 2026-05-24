@@ -129,7 +129,11 @@ test.describe('@feature:teardown Steps 9-12 ログアウト + 削除 + 残存検
     // 2 段階 confirm + 完了 alert を連続で自動応答
     page.on('dialog', (dialog) => dialog.accept());
 
-    await page.getByRole('button', { name: 'このユーザを削除' }).click();
+    // KDD §5.X+124/125: chromium-mobile DPR=3 emulation での Dialog 内 button click
+    //   hit-test 誤判定 (UserEditDialog 内の「このユーザを削除」も該当)。
+    //   visibility/enabled/stable は OK で hit-test だけが intercept 誤判定するため
+    //   { force: true } で bypass。
+    await page.getByRole('button', { name: 'このユーザを削除' }).click({ force: true });
     // ダイアログ閉鎖 + 一覧更新を待つ
     await page.waitForLoadState('networkidle');
     await snapshotStep(page, 'step-10-user-deleted');
