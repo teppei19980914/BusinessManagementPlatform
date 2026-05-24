@@ -1,5 +1,5 @@
 # SECURITY-TASKS.md
-> 生成日時: 2026/5/23 12:26:06
+> 生成日時: 2026/5/24 17:08:56
 > スクリプト: `tsx scripts/security-check.ts`
 > 総合スコア: **98/100**
 > 検出件数: CRITICAL 0 / HIGH 0 / MEDIUM 0 / LOW 1
@@ -80,7 +80,7 @@ next-auth v5 は 2026-04-30 時点で stable 未リリース。NextAuth.js の�
 
 **Severity (元)**: MEDIUM
 **Category**: CSP
-**File**: `next.config.ts` (line 24)
+**File**: `next.config.ts` (line 39)
 
 ### 受容理由
 Next.js 16 + next-intl v4.x は SSR 時のクライアントハイドレーションでインラインスクリプト/スタイルを多数注入する。本番完全な nonce-based CSP に移行するには middleware.ts でリクエスト毎に nonce を生成し、Next.js の <Script> / <style> 全箇所に nonce を伝播させる大規模改修が必要 (公式 docs: https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy)。本対応は別 PR に分離。X-Frame-Options=DENY + frame-ancestors='none' で clickjacking 防御は維持済。
