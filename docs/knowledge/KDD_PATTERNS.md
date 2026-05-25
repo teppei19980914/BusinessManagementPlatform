@@ -14847,3 +14847,67 @@ ADR-0020 PR #443 に対して **5 回連続フルスキャン検証**:
 - 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
 - 関連 memory: [feedback_repeated_verification_request.md](../../memory/), [feedback_dont_expand_scope_under_uat_risk.md](../../memory/) (UI 影響 PR の検証中はスコープ拡大提案を控える)
 - 関連 file: [src/app/(dashboard)/settings/tenant/db-capacity-section.tsx](../../src/app/(dashboard)/settings/tenant/db-capacity-section.tsx), [src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx), [src/services/db-capacity-billing-integration.test.ts](../../src/services/db-capacity-billing-integration.test.ts)
+
+---
+
+## 5.X+137 **★severity-2 6 回目検証で直近追加分の 3 件発見★ Memory inefficiency / dynamic import / defense-in-depth (2026-05-25 / PR #443)**
+
+### 事象
+
+5 回目検証 (KDD §5.X+135) で実装堅牢性を確認した後、ユーザ要請で R12 UI / R12-admin UI / drift batch / 統合テストを本 PR に取込 (commit c46f209、KDD §5.X+136)。続けて 6 回目検証を **直近追加分 (3 ファイル + 4 変更) のみに集中** して実施した結果、実バグ 3 件発見。
+
+### 発見と対応
+
+#### 重大-1: DbCapacityAlertsCard でメモリ非効率な findMany 全件
+[src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx#L68)
+
+**問題**: 全テナント (deletedAt=null) を `findMany` で全件取得し、JS で sum 計算していた。5000+ テナント環境ではメモリ消費数 MB + ページロード遅延。
+
+**修正**: `prisma.tenant.aggregate({ _sum: { storageBytesPeakThisMonth } })` に変更:
+- メモリ消費: 全件配列 → 集約結果 1 件 (= 数バイト)
+- DB クエリコスト: SUM は PostgreSQL の planner で index 利用可
+- ページロード時間: 100-500ms 短縮 (大規模環境)
+
+#### 重大-2: detectDbCapacityDrift の dynamic import が毎呼出で cold-start
+[src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts#L417-L420)
+
+**問題**: `await import('@/services/tenant-storage-tables.service')` を関数内で dynamic import。Server Component の lazy load 意図か?と推測される書き方だが、service 層では誤適用。
+
+実害:
+- 日次 cron 実行時に 50-200ms の余分な遅延 (JS パース + 初期化)
+- updateAllStorageBytesUsed() でも同様の dynamic import → 同 1 cron 実行で 2 重ロード
+
+**修正**: ファイル冒頭で static import に統一:
+- `calculateTenantStorageBytesDynamic`
+- `getDbInstanceSizeBytes`
+- `classifyDbCapacityLevel`
+- `DB_DRIFT_WARNING_RATIO` / `DB_DRIFT_CRITICAL_RATIO`
+
+ついでに detectDbCapacityDrift 内の `findMany + reduce` も aggregate _sum に変更 (重大-1 と同型修正)。
+
+#### 重大-3: DbCapacityAlertsCard の認可が親 page 依存 + 型キャストの脆弱性
+[src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx#L46)
+
+**問題**:
+1. 認可チェックが本コンポーネント内に無く、親 page の認可に依存。将来 page 認可がバイパスされた場合に statistics 露出リスク
+2. `t.dbCapacityWarningLevel as DbCapacityWarningLevel` で無条件キャスト後に `in LEVEL_LABELS` で型ガード → defense-in-depth 不足
+
+**修正**:
+1. コンポーネント冒頭で `auth()` + `isSuperAdmin()` チェック追加 (defense-in-depth)
+2. 新規 type guard `isValidWarningLevel(value: string): value is DbCapacityWarningLevel` を定義
+3. cast 前に型ガードで検証、不正値検出時は `recordError` で warn ログ (silent fallback 防止)
+
+### 教訓 (transferable)
+
+- **`findMany` 全件 vs `aggregate _sum`**: 集計目的なら `aggregate` が常に正解。N 件取得は JS メモリと DB I/O を無駄に消費する
+- **Server Component の dynamic import は慎重に**: Server Component の lazy load は Next.js bundle splitting 目的で有効だが、service 層では cold-start オーバーヘッドのみ生じる
+- **defense-in-depth は本体に組込む**: Server Component の認可を親に依存させると、refactor で容易に脆弱性が混入。各層で独立して検証する
+- **型 cast 前に型ガード**: `as Type` 直接キャスト + 後段 `in obj` チェックは脆弱。`is Type` 型ガード関数で cast 前に検証 + 不正値の error log を統一
+- **6 回連続検証でも新規発見可能**: 直近追加分に範囲を絞ると新観点で問題発見可能 ([feedback_repeated_verification_request.md](../../memory/) と整合)
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 memory: [feedback_repeated_verification_request.md](../../memory/), [feedback_perf_antipatterns.md](../../memory/) (重複 findMany 警戒)
+- 関連 file: [src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx), [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts)

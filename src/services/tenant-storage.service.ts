@@ -403,6 +403,17 @@ export async function updateStorageBytesUsedForTenant(
  *
  * @returns 更新したテナント件数
  */
+// 6 回目検証 (重大-2): dynamic import を static に変更 (毎呼出の cold-start オーバヘッド除去)
+import {
+  calculateTenantStorageBytesDynamic,
+  getDbInstanceSizeBytes,
+} from '@/services/tenant-storage-tables.service';
+import {
+  classifyDbCapacityLevel,
+  DB_DRIFT_WARNING_RATIO,
+  DB_DRIFT_CRITICAL_RATIO,
+} from '@/config/db-capacity-pricing';
+
 export async function updateAllStorageBytesUsed(): Promise<number> {
   // ADR-0020 (2026-05-25): 動的計測 (36+ テーブル) に切替 + peak の MAX 同期も担う。
   //   旧 calculateTenantStorageBytes (16 テーブルハードコード) は計測漏れがあるため
@@ -414,10 +425,6 @@ export async function updateAllStorageBytesUsed(): Promise<number> {
   //     - storageBytesUsed: 常に現在値で更新
   //     - storageBytesPeakThisMonth: MAX(current_peak, new_used) で月内 peak を月初 cron まで蓄積
   //     - dbCapacityWarningLevel: 新 peak で classify、Level 昇格時のみ super_admin 通知
-  const { calculateTenantStorageBytesDynamic } = await import(
-    '@/services/tenant-storage-tables.service'
-  );
-  const { classifyDbCapacityLevel } = await import('@/config/db-capacity-pricing');
 
   const tenants = await prisma.tenant.findMany({
     where: { deletedAt: null },
@@ -510,20 +517,14 @@ export async function detectDbCapacityDrift(): Promise<{
   driftRatio: number;
   driftLevel: 'ok' | 'warning' | 'critical';
 }> {
-  const { getDbInstanceSizeBytes } = await import('@/services/tenant-storage-tables.service');
-  const { DB_DRIFT_WARNING_RATIO, DB_DRIFT_CRITICAL_RATIO } = await import(
-    '@/config/db-capacity-pricing'
-  );
+  // 6 回目検証 (重大-2): dynamic import 除去、ファイル冒頭 static import を使用
 
-  // 1. テナント peak SUM
-  const all = await prisma.tenant.findMany({
+  // 1. テナント peak SUM (重大-1 と同様、aggregate _sum でメモリ効率化)
+  const peakAggregate = await prisma.tenant.aggregate({
     where: { deletedAt: null },
-    select: { storageBytesPeakThisMonth: true },
+    _sum: { storageBytesPeakThisMonth: true },
   });
-  const tenantPeakSumBytes = all.reduce(
-    (sum, t) => sum + t.storageBytesPeakThisMonth,
-    BigInt(0),
-  );
+  const tenantPeakSumBytes = peakAggregate._sum.storageBytesPeakThisMonth ?? BigInt(0);
 
   // 2. pg_database_size
   let dbInstanceSizeBytes: bigint;

@@ -27,6 +27,14 @@ import {
   type DbCapacityWarningLevel,
 } from '@/config/db-capacity-pricing';
 import { getDbInstanceSizeBytes } from '@/services/tenant-storage-tables.service';
+import { auth } from '@/lib/auth';
+import { isSuperAdmin } from '@/lib/permissions/role';
+import { recordError } from '@/services/error-log.service';
+
+/** DB から取った警告 Level の値が DbCapacityWarningLevel に収まるか型ガード */
+function isValidWarningLevel(value: string): value is DbCapacityWarningLevel {
+  return value === 'none' || value === 'l1' || value === 'l2' || value === 'l3';
+}
 
 function formatBytes(bytes: bigint): string {
   const n = Number(bytes);
@@ -44,6 +52,12 @@ const LEVEL_LABELS: Record<DbCapacityWarningLevel, { label: string; color: strin
 };
 
 export async function DbCapacityAlertsCard() {
+  // 6 回目検証 (重大-3) で追加した内部認可チェック (= 親 page 認可に依存しない defense-in-depth)
+  const session = await auth();
+  if (!session?.user || !isSuperAdmin(session.user)) {
+    return null;
+  }
+
   // 1. L1+ レベルテナント一覧 (none を除く)
   const alertTenants = await prisma.tenant.findMany({
     where: {
@@ -65,14 +79,12 @@ export async function DbCapacityAlertsCard() {
   });
 
   // 2. drift 検知 (全テナント peak SUM vs pg_database_size)
-  const allTenants = await prisma.tenant.findMany({
+  // 6 回目検証 (重大-1): findMany 全件 → aggregate _sum で メモリ効率化 (5000+ テナント環境対応)
+  const peakAggregate = await prisma.tenant.aggregate({
     where: { deletedAt: null },
-    select: { storageBytesPeakThisMonth: true },
+    _sum: { storageBytesPeakThisMonth: true },
   });
-  const tenantPeakSum = allTenants.reduce(
-    (sum, t) => sum + t.storageBytesPeakThisMonth,
-    BigInt(0),
-  );
+  const tenantPeakSum = peakAggregate._sum.storageBytesPeakThisMonth ?? BigInt(0);
 
   let dbInstanceSize: bigint;
   try {
@@ -174,9 +186,20 @@ export async function DbCapacityAlertsCard() {
             </thead>
             <tbody>
               {alertTenants.map((t) => {
-                const level = t.dbCapacityWarningLevel as DbCapacityWarningLevel;
-                const safeLevel: DbCapacityWarningLevel =
-                  level in LEVEL_LABELS ? level : 'none';
+                // 6 回目検証 (重大-3): cast 前に型ガードで検証 (= DB に不正値が入っていても安全)
+                const rawLevel = t.dbCapacityWarningLevel;
+                const safeLevel: DbCapacityWarningLevel = isValidWarningLevel(rawLevel)
+                  ? rawLevel
+                  : 'none';
+                if (!isValidWarningLevel(rawLevel)) {
+                  // 不正値検知時は async fire-and-forget で error log
+                  recordError({
+                    severity: 'warn',
+                    source: 'server',
+                    message: `[db-capacity-alerts] invalid dbCapacityWarningLevel (tenant=${t.id})`,
+                    context: { kind: 'db_capacity_alerts_invalid_level', tenantId: t.id, rawLevel },
+                  }).catch(() => {});
+                }
                 const labelInfo = LEVEL_LABELS[safeLevel];
                 return (
                   <tr key={t.id} className="border-b border-gray-100">
