@@ -14311,3 +14311,73 @@ VALUES ($1, 'project-embedding',    'claude-sonnet-4-6', 22500, 200, ...) // ←
 - 関連 ADR: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (課金 featureUnit 縮小の根拠)
 - 関連 memory: [feedback_billing_invariant.md](../../memory/) (請求 invariant) / [feedback_localestring_grep_blindspot.md](../../memory/) (価格定数 grep 4 軸) / [feedback_repeated_verification_request.md](../../memory/) (繰返し検証で深い問題発見)
 - 関連 file: [`e2e/fixtures/super-admin.ts`](../../e2e/fixtures/super-admin.ts), [`e2e/specs/13-super-admin-dashboard.spec.ts`](../../e2e/specs/13-super-admin-dashboard.spec.ts), [`src/config/billing-feature-units.ts`](../../src/config/billing-feature-units.ts)
+
+---
+
+## 5.X+128 **★severity-2 CI 連鎖 fail★ E2E spec 16 (column-sort) の inline login が NextAuth `explicit-signout` 経由 CSRF cookie clear race で flake → `loginAsGeneral` ヘルパに揃え + `retries: 0` 削除 (2026-05-25 / PR #441)**
+
+### 事象
+
+PR #441 で `13-super-admin-dashboard.spec.ts` の fixture を修正 (§5.X+127) して spec 13 が PASS するようになった後、**今まで spec 13 の失敗にマスクされていた spec 16 の flaky 失敗が露呈**:
+
+```
+✘ 114 [chromium] › e2e/specs/16-column-sort.spec.ts:73:7 ›
+   @feature:ui:sort-dropdown カラムソート dropdown の可視性 (Portal 化) ›
+   /customers (plain TableHead パターン) で sortable-header クリック後に menu が visible (0ms)
+TimeoutError: page.waitForURL: Timeout 15000ms exceeded.
+  waiting for navigation to "**/projects" until "load"
+  at fixtures/auth.ts:17
+```
+
+サーバ側ログ:
+```
+[WebServer] [auth][error] MissingCSRF: CSRF token was missing during an action callback.
+```
+
+(0ms) failed = `beforeAll` 自体が失敗。`waitForProjectsReady` の `waitForURL('**/projects')` が 15s 待っても /projects に到達しないため timeout。
+
+### 根本原因
+
+1. **NextAuth v5 + 自前 `/api/auth/explicit-signout` の組合せで CSRF race condition**
+   - `LoginForm.handleSubmit` ([src/app/(auth)/login/page.tsx:75](../../src/app/(auth)/login/page.tsx#L75)) は `signIn()` 直前に
+     `fetch('/api/auth/explicit-signout', { method: 'POST' })` を実行する
+   - `explicit-signout` ([src/app/api/auth/explicit-signout/route.ts:53-58](../../src/app/api/auth/explicit-signout/route.ts#L53-L58)) は session token と並んで **`authjs.csrf-token` cookie も `Max-Age=0` で削除** する
+   - 直後の `signIn('credentials')` は内部で `getCsrfToken()` → `fetch('/api/auth/csrf')` で CSRF token を再取得 + Set-Cookie するが、続けて `POST /api/auth/callback/credentials` を fire する
+   - **fetch promise の resolution と Set-Cookie の browser 反映には microtask 単位の race がある** ため、稀に POST 時に CSRF cookie が未設定で `MissingCSRF` エラー
+   - main #439 (2026-05-24) でも同じパターンで spec 16 が intermittent fail していたが、spec 16 が `test.describe.configure({ mode: 'serial', retries: 0 })` で **`retries: 0` を明示 override** していたため、CI 1 回失敗で fail 確定。`playwright.config.ts` の `retries: isCI ? 2 : 0` が効かなかった
+
+2. **spec 16 の login が `auth.ts` 共通ヘルパを使わず inline 実装** だった
+   - 旧コード: `getByRole('button', { name: 'ログイン' })` (= `exact: true` 未指定)
+   - KDD §5.X+96 で「PR #420 で `履歴をクリア` ボタンを追加した際の substring match 罠」を回避するため、`auth.ts:loginAsGeneral` / `loginAsAdminWithMfa` は `exact: true` 化済 だったが、spec 16 はその知見を取り込んでいなかった
+   - さらに `context.clearCookies()` も呼んでおらず、theoretical には複数 worker 間で cookie 干渉のリスクもあった (実害は未確認)
+
+### 対応
+
+[`e2e/specs/16-column-sort.spec.ts:38-65`](../../e2e/specs/16-column-sort.spec.ts) で:
+
+1. **inline login を `auth.ts:loginAsGeneral` ヘルパ呼出に置換**:
+   - `clearCookies()` を必ず実行する
+   - `exact: true` で submit ボタンを厳密一致
+   - `waitForProjectsReady` (waitForURL + networkidle) で確実な遷移完了待ち
+   - admin / general どちらでも MFA 無し login の経路は同一 (= 関数名 `loginAsGeneral` を気にせず流用)
+2. **`retries: 0` 明示を削除** し、`playwright.config.ts` の `retries: isCI ? 2 : 0` (= CI で 2 回 retry) を尊重する設定に戻した
+
+### 再発防止
+
+- **新規 spec の login は必ず `auth.ts` 共通ヘルパ (`loginAsGeneral` / `loginAsAdminWithMfa`) を使う**
+- **`retries: 0` を override しない**: 既存ヘルパは flake を吸収できる設計だが、明示的に retries を 0 にすると 1 回の race で確実に失敗する。`playwright.config.ts` の default (CI で 2 retries) を尊重する
+- **inline login パターンの grep**: `await page.goto('/login')` + `getByRole('button', { name: 'ログイン' })` パターンを将来検出する CI ガード追加検討余地あり (本 PR スコープ外)
+
+### 教訓 (転用可能)
+
+- **マスクされていた flake は、より上流の失敗が直った瞬間に表面化する**: spec 13 が常に失敗していたため spec 16 のテスト結果は (test 13 の失敗で全体 fail なため) "見えていなかった"。本 PR で spec 13 を修正した結果、spec 16 が初めて単独評価され、隠れていた flake が露呈
+- **NextAuth v5 + 自前 sign-out route の組合せの罠**: 自前 sign-out で CSRF cookie を消すと、続く signIn() の CSRF refetch との race が発生する。**より根本的な fix は explicit-signout で CSRF cookie を消さないこと** (session token のみ消す)。本 PR では影響範囲を限定するため retries + ヘルパ統一で対処、CSRF cookie の clear 削除は別 PR で security review した上で実施推奨
+- **`retries: 0` の明示は flake 検知の手段としては有効だが、CI 安定性とのトレードオフ**: 既知の race condition がある場合、retries 0 だと CI が不安定化する。検知目的なら別 lane / 別 schedule で実施するのが筋良し
+- **spec 間の独立性は describe.serial だけでは担保されない**: 別 describe の test の失敗が次の test の評価をマスクする (Playwright の test 単位の独立性とは別問題)
+
+### 関連
+
+- 関連 PR: PR #441 (本事例 / 2026-05-25)
+- 関連 KDD: [§5.X+96](#5x96) (PR #420 `履歴をクリア` ボタンと substring match 罠) / [§5.X+72](#5x72) (`explicit-signout` 導入経緯 / Netlify Set-Cookie 脱落事故) / [§5.X+127](#5x127) (同 PR でマスク解除のトリガーとなった spec 13 fixture 修正)
+- 関連 file: [`e2e/specs/16-column-sort.spec.ts`](../../e2e/specs/16-column-sort.spec.ts), [`e2e/fixtures/auth.ts`](../../e2e/fixtures/auth.ts), [`src/app/(auth)/login/page.tsx`](../../src/app/(auth)/login/page.tsx), [`src/app/api/auth/explicit-signout/route.ts`](../../src/app/api/auth/explicit-signout/route.ts)
+- 累計影響: main #439 (層) #441 (本 PR) で同じ flake を確認、`auth.ts` ヘルパ化 + retries 設定見直しで 2 PR 分の CI 不安定化を解消

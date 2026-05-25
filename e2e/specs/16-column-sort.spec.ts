@@ -38,7 +38,7 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { RUN_ID } from '../fixtures/run-id';
 import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
-import { waitForProjectsReady } from '../fixtures/auth';
+import { loginAsGeneral } from '../fixtures/auth';
 
 const ADMIN_EMAIL = `admin-sort-portal-${RUN_ID}@example.com`.toLowerCase();
 const ADMIN_PW = 'E2eAdmin!Pw_2026';
@@ -46,7 +46,11 @@ const ADMIN_PW = 'E2eAdmin!Pw_2026';
 let sharedContext: BrowserContext;
 let sharedPage: Page;
 
-test.describe.configure({ mode: 'serial', retries: 0 });
+// KDD §5.X+128 (2026-05-25): `retries: 0` 明示は flake 検知のために残すが、playwright.config の
+//   `retries: isCI ? 2 : 0` を尊重するため override せず削除。
+//   理由: NextAuth v5 + `/api/auth/explicit-signout` で CSRF cookie clear → signIn() race
+//   condition の既知の flake (KDD §5.X+128) があり、`retries: 0` だと CI 1 回失敗で全体 fail。
+test.describe.configure({ mode: 'serial' });
 
 test.describe('@feature:ui:sort-dropdown カラムソート dropdown の可視性 (Portal 化)', () => {
   test.beforeAll(async ({ browser }) => {
@@ -55,12 +59,17 @@ test.describe('@feature:ui:sort-dropdown カラムソート dropdown の可視�
     sharedContext = await browser.newContext();
     sharedPage = await sharedContext.newPage();
 
-    await sharedPage.goto('/login');
-    await sharedPage.getByLabel('組織 ID').fill('default');
-    await sharedPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
-    await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
-    await sharedPage.getByRole('button', { name: 'ログイン' }).click();
-    await waitForProjectsReady(sharedPage);
+    // KDD §5.X+128 (2026-05-25): 旧 inline login (getByLabel + getByRole({ name: 'ログイン' }))
+    //   は (a) `exact: true` 未指定で substring match の罠 (KDD §5.X+96 と同型)、
+    //   (b) `explicit-signout` 経由の CSRF cookie clear race を回避できず flake していた。
+    //   共通ヘルパ `loginAsGeneral` (= clearCookies + exact match + waitForProjectsReady) に
+    //   揃えて両方の罠を一括解消する。admin/general どちらの role でも login 経路は同じため
+    //   関数名は気にしない (= MFA なし login の共通ヘルパ)。
+    await loginAsGeneral(sharedPage, sharedContext, {
+      email: ADMIN_EMAIL,
+      password: ADMIN_PW,
+      tenantSlug: 'default',
+    });
   });
 
   test.afterAll(async () => {
