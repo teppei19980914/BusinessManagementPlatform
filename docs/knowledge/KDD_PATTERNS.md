@@ -15002,3 +15002,117 @@ login form `handleSubmit` ([src/app/(auth)/login/page.tsx:75-88](../../src/app/(
 - 関連 KDD: [§5.X+128](#5x128) (本根本 fix の前段、retries + ヘルパ統一による対症療法) / [§5.X+129](#5x129) (visual specs 3 件への横展開) / [§5.X+72](#5x72) (`explicit-signout` 導入経緯、Netlify Set-Cookie 脱落事故)
 - 関連 file: [src/app/api/auth/explicit-signout/route.ts](../../src/app/api/auth/explicit-signout/route.ts), [src/app/api/auth/explicit-signout/route.test.ts](../../src/app/api/auth/explicit-signout/route.test.ts), [src/app/(auth)/login/page.tsx](../../src/app/(auth)/login/page.tsx), [e2e/specs/07-gantt-timeline.spec.ts](../../e2e/specs/07-gantt-timeline.spec.ts)
 - 累計影響: §5.X+128/+129 (4 spec を auth.ts ヘルパに統一) + §5.X+138 (根本 fix 適用) で **CSRF race による E2E flake は構造的に解消**
+
+---
+
+## 5.X+139 **★severity-2 既存 flake 根本原因 fix★ chromium-mobile spec 02 dropdown menuitem click の microtask race を「menuitem visible 待機 + menu close 確認」の 2 段 explicit wait で構造的解消 (2026-05-25 / PR #444)**
+
+### 事象
+
+PR #444 (docs-only: api-usage-guide.md 追加) の CI で `02-project-detail-tabs.spec.ts:129` (chromium-mobile) が 11.3s で失敗:
+
+```
+✘ 129 [chromium-mobile] › e2e/specs/02-project-detail-tabs.spec.ts:129:7 ›
+   @feature:project:detail Step 7 タブ render ›
+   各タブをクリックするとアクティブ切替が発生する (admin) (11.3s)
+
+Error: expect(locator).toHaveAttribute(expected) failed
+Locator:  locator('[role="tab"]').filter({ hasText: 'ガントチャート' }).first()
+Expected: "true"
+Received: "false"
+Timeout:  10000ms
+Call log:
+  - waiting for locator(...) (14× retries)
+  - aria-selected: "false"
+```
+
+PR #444 はドキュメント追加のみ (= コード差分なし) のため、本 PR が原因ではない既存 flake が露呈した形。[§5.X+129 Section B](#5x129) で「**chromium-mobile dropdown click flake、既存問題として再確認**、根本 fix は別 PR で実施推奨」と記録された問題が、ついに本 PR で根本 fix の機会を得た。
+
+### 根本原因
+
+#### 失敗フロー
+
+[`02-project-detail-tabs.spec.ts:161-167`](../../e2e/specs/02-project-detail-tabs.spec.ts#L161-L167) の旧コード:
+
+```typescript
+for (const name of progressTabsViaMenu) {
+  await page.getByRole('button', { name: '進捗管理メニューを開く' }).click({ force: true });
+  await page.getByRole('menuitem', { name }).click({ force: true });  // ★ ここで microtask race
+  const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
+  await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });  // ← 失敗箇所
+}
+```
+
+#### React onClick → setState 伝播の microtask race
+
+1. `Menu.Trigger.click({ force: true })` で popup を開く
+2. Base UI Menu (`Menu.Portal` → `Menu.Positioner` → `Menu.Popup`) が **`data-open:animate-in fade-in-0 zoom-in-95`** で開きアニメーション開始
+3. `getByRole('menuitem').click({ force: true })` がアニメーション中の menuitem に発火
+4. **menuitem DOM 要素は存在するが、Base UI の React event handler 登録が完了していない**ため、Playwright の synthetic click が React の event delegation に到達せず、`onClick={() => handleTabChange(opt.value)}` (`project-detail-client.tsx:625`) が呼ばれない
+5. `setActiveTab(value)` が走らない → `aria-selected` が "false" のまま 10s 経過
+
+#### `{ force: true }` の副作用
+
+§5.X+126 で `chromium-mobile DPR=3` の hit-test 誤判定回避のため `{ force: true }` を適用したが、これは **「Playwright の actionability auto-wait をスキップ」する副作用** がある:
+
+- actionability check には「element が stable (= 移動 / size 変化していない) であること」が含まれる
+- `force: true` はこのチェックも skip するため、**アニメ中の要素に click を打ってしまう**
+- §5.X+126 は hit-test 問題を解いたが、microtask race を新規に発生させた (= **片方治して片方の罠に落ちた**)
+
+### 対応
+
+[`02-project-detail-tabs.spec.ts:160-188`](../../e2e/specs/02-project-detail-tabs.spec.ts#L160-L188) で `progressTabsViaMenu` / `assetTabsViaMenu` 両方の menuitem click を以下の **2 段 explicit wait** に変更:
+
+```typescript
+for (const name of progressTabsViaMenu) {
+  await page.getByRole('button', { name: '進捗管理メニューを開く' }).click({ force: true });
+  const menuItem = page.getByRole('menuitem', { name });
+  // §5.X+139 step 1: menuitem visible 待機 = portal popup の open animation 完了
+  //   + React event handler 登録完了。これで click が「アニメ中の宙ぶらりん要素」に
+  //   発火する race を回避する。
+  await expect(menuItem).toBeVisible({ timeout: 5_000 });
+  await menuItem.click({ force: true });
+  // §5.X+139 step 2: menu close (menuitem が DOM から消えた) を確認 = click event が
+  //   React 側で完全処理された証拠。aria-selected 検証より先にここで失敗を catch する。
+  await expect(menuItem).toBeHidden({ timeout: 5_000 });
+  const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
+  await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+}
+```
+
+#### なぜ「menuitem visible 待機」だけでなく「menu close 確認」も必要か
+
+- **step 1 (visible 待機)** のみ: アニメ完了は待つが、click 後に menu close が走ったかは検証していない → 万一 React event handler 未登録の race が残った場合、aria-selected の 10s timeout で間接的に検知することになり、原因の特定が困難
+- **step 2 (close 確認)** を追加することで、「click event が確かに React に到達 → menu close が走った」を 5s 以内で明示確認 → race を **アサート単位で原因切り分け可能** にする
+- もし step 2 が頻繁に失敗するようになったら、step 1 の visible 待機だけでは不十分という根本問題のシグナルになる
+
+#### `{ force: true }` を維持する理由
+
+§5.X+126 の hit-test 問題は **chromium-mobile DPR=3 の DOM 計算ズレが root cause** で、本 PR の microtask race とは独立の問題。両方発生し得るため、`{ force: true }` は維持しつつ、actionability の代替を explicit wait で確保する設計。
+
+### 再発防止
+
+- **新規 dropdown menu click パターンの spec 作成時のチェックリスト** に追加:
+  1. trigger click は `{ force: true }` ([§5.X+126](#5x126) 配下の hit-test 対策)
+  2. menuitem click の **前に** `expect(menuItem).toBeVisible({ timeout })` 待機
+  3. menuitem click の **後に** `expect(menuItem).toBeHidden({ timeout })` で menu close を確認
+  4. その後で初めて state assertion (aria-selected / aria-pressed / 等)
+- 既存 spec で同じ「trigger click → menuitem click」パターンを使っているものは将来 grep で検出可能:
+  ```bash
+  rg -A 3 "getByRole\('button',.*メニュー.*\)\.click\(\{ force: true \}\)" e2e/
+  ```
+  本 PR では 02-project-detail-tabs.spec.ts のみが該当 (1 spec の 2 ループ)
+
+### 教訓 (転用可能)
+
+- **`{ force: true }` は actionability の auto-wait もスキップする副作用がある**。hit-test 問題を解く目的で導入しても、stable 待機が抜けるため別種の race を生む。**hit-test 問題と timing 問題は別軸で対策する** (force + explicit wait)
+- **microtask race と hit-test race は同型に見えて根本原因が違う**: hit-test = 「Playwright が click 対象を誤判定」、microtask = 「click は届くが React event 登録が間に合わない」。両方とも `force:true` で同じように見える失敗を起こすため類型化を誤りやすい
+- **assertion を 2 段に分けて切り分け可能にする** (= [feedback_drift_detection_design.md](../../memory/) の「両軸 max + 画面表示 + audit + 修復経路」と同じ思想)。`toBeHidden` の 5s wait は冗長に見えるが、**失敗時の root cause 特定コストを CI ラウンド 1 回ぶん削減できる** ため正味で得
+- **「別 PR で実施推奨」とマークした問題は、関連 PR で機会があれば取り込む**: [§5.X+129](#5x129) の Section B で「別 PR で fix」と先送りした問題が、PR #444 (docs only) で flake 露呈の機会となり、本 PR で根本 fix を実施できた。先送り KDD は **次の関連 PR の TODO**
+
+### 関連
+
+- 関連 PR: PR #444 (本事例 / 2026-05-25)
+- 関連 KDD: [§5.X+126](#5x126) (`{ force: true }` 導入経緯、chromium-mobile DPR=3 hit-test 問題) / [§5.X+129 Section B](#5x129) (本 fix の前段、「別 PR で fix 推奨」とマークされた本問題) / [§5.X+138](#5x138) (前回 PR #443 で別の chromium 系 flake を根本 fix)
+- 関連 file: [e2e/specs/02-project-detail-tabs.spec.ts](../../e2e/specs/02-project-detail-tabs.spec.ts), [src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx](../../src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx) (修正対象は spec のみ、本体コードは変更なし)
+- 累計 chromium-mobile flake 対処: §5.X+124-126 (force:true 11 件) + §5.X+138 (CSRF cookie 削除除去) + §5.X+139 (本 menuitem 2 段 wait) で **chromium-mobile + Base UI Menu 系の主要 race は構造的解消**

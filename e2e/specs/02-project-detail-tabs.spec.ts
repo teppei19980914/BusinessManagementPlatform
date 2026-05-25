@@ -157,20 +157,34 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
       // 2026-04-30 (Task 1) mobile: 進捗管理プルダウン経由で WBS管理 / ガントチャート を選択
       // KDD §5.X+126: chromium-mobile DPR=3 で dropdown menu trigger / menuitem click も
       //   hit-test 誤判定の対象 (Dialog / AppHeader と同根)。先回りで { force: true } を適用。
+      // KDD §5.X+139 (本 PR): menuitem click 後 React onClick → setState が伝播しない
+      //   microtask race の対策として、click 前後で「menuitem が visible」「menu が close」
+      //   の 2 段 explicit wait を挿入。force:true は hit-test 回避のため維持。
       const progressTabsViaMenu = ['WBS管理', 'ガントチャート'];
       for (const name of progressTabsViaMenu) {
         await page.getByRole('button', { name: '進捗管理メニューを開く' }).click({ force: true });
-        await page.getByRole('menuitem', { name }).click({ force: true });
+        const menuItem = page.getByRole('menuitem', { name });
+        // §5.X+139 step 1: menuitem visible 待機 = portal popup の open animation 完了
+        //   + React event handler 登録完了。これで click が「アニメ中の宙ぶらりん要素」に
+        //   発火する race を回避する。
+        await expect(menuItem).toBeVisible({ timeout: 5_000 });
+        await menuItem.click({ force: true });
+        // §5.X+139 step 2: menu close (menuitem が DOM から消えた) を確認 = click event が
+        //   React 側で完全処理された証拠。aria-selected 検証より先にここで失敗を catch する。
+        await expect(menuItem).toBeHidden({ timeout: 5_000 });
         // PR #167 hotfix 2 と同様: hidden lg:inline-flex で display:none の要素を
         // CSS セレクタ + filter(hasText) で取得し aria-selected を検証する。
         const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
         await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
       }
-      // PR #167 mobile: 資産プルダウン経由で配下タブを選択
+      // PR #167 mobile: 資産プルダウン経由で配下タブを選択 (§5.X+139 と同型 wait を適用)
       const assetTabsViaMenu = ['リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
       for (const name of assetTabsViaMenu) {
         await page.getByRole('button', { name: '資産メニューを開く' }).click({ force: true });
-        await page.getByRole('menuitem', { name }).click({ force: true });
+        const menuItem = page.getByRole('menuitem', { name });
+        await expect(menuItem).toBeVisible({ timeout: 5_000 });
+        await menuItem.click({ force: true });
+        await expect(menuItem).toBeHidden({ timeout: 5_000 });
         const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
         await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
       }
