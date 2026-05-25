@@ -404,22 +404,71 @@ export async function updateStorageBytesUsedForTenant(
  * @returns 更新したテナント件数
  */
 export async function updateAllStorageBytesUsed(): Promise<number> {
+  // ADR-0020 (2026-05-25): 動的計測 (36+ テーブル) に切替 + peak の MAX 同期も担う。
+  //   旧 calculateTenantStorageBytes (16 テーブルハードコード) は計測漏れがあるため
+  //   calculateTenantStorageBytesDynamic を使用。さらに「一般 CRUD は assertStorageLimitInTx を
+  //   通らない (= import 系のみ)」現状で peak が永久に 0 のまま課金漏れする問題を、
+  //   本 cron で日次 MAX 同期することで吸収する (= R5 横断対応の本体)。
+  //
+  //   ロジック:
+  //     - storageBytesUsed: 常に現在値で更新
+  //     - storageBytesPeakThisMonth: MAX(current_peak, new_used) で月内 peak を月初 cron まで蓄積
+  //     - dbCapacityWarningLevel: 新 peak で classify、Level 昇格時のみ super_admin 通知
+  const { calculateTenantStorageBytesDynamic } = await import(
+    '@/services/tenant-storage-tables.service'
+  );
+  const { classifyDbCapacityLevel } = await import('@/config/db-capacity-pricing');
+
   const tenants = await prisma.tenant.findMany({
     where: { deletedAt: null },
-    select: { id: true },
+    select: {
+      id: true,
+      storageBytesPeakThisMonth: true,
+      dbCapacityWarningLevel: true,
+    },
   });
 
   let updated = 0;
   for (const t of tenants) {
     try {
-      const bytes = await calculateTenantStorageBytes(t.id);
+      const bytes = await calculateTenantStorageBytesDynamic(t.id);
+      const currentPeak = t.storageBytesPeakThisMonth;
+      const newPeak = bytes > currentPeak ? bytes : currentPeak;
+      const peakChanged = bytes > currentPeak;
+      const newLevel = classifyDbCapacityLevel(newPeak);
+      const levelChanged = newLevel !== t.dbCapacityWarningLevel;
+
       await prisma.tenant.update({
         where: { id: t.id },
         data: {
           storageBytesUsed: bytes,
           storageBytesUsedAt: new Date(),
+          ...(peakChanged
+            ? { storageBytesPeakThisMonth: bytes, storageBytesPeakAt: new Date() }
+            : {}),
+          ...(levelChanged ? { dbCapacityWarningLevel: newLevel } : {}),
         },
       });
+
+      // Level 昇格時のみ super_admin に通知 (= 通知 spam 防止、storage-guard.service と同じパターン)
+      if (peakChanged && levelChanged && newLevel !== 'none') {
+        const order: Record<string, number> = { none: 0, l1: 1, l2: 2, l3: 3 };
+        if (order[newLevel]! > order[t.dbCapacityWarningLevel]!) {
+          await recordError({
+            severity: newLevel === 'l3' ? 'error' : newLevel === 'l2' ? 'warn' : 'info',
+            source: 'cron',
+            message: `[db-capacity] Tenant ${t.id} reached Level ${newLevel.toUpperCase()} via daily cron (peak=${Number(bytes)} bytes)`,
+            context: {
+              kind: 'db_capacity_warning',
+              tenantId: t.id,
+              peakBytes: Number(bytes),
+              previousLevel: t.dbCapacityWarningLevel,
+              newLevel,
+              source: 'daily_cron',
+            },
+          });
+        }
+      }
       updated += 1;
     } catch (e) {
       try {

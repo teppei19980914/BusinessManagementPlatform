@@ -21,7 +21,6 @@ vi.mock('@/lib/db', () => {
     tenant: txTenant,
     project: { create: vi.fn() },
     $queryRaw: vi.fn(),
-    $queryRawUnsafe: vi.fn(),
   };
   return {
     prisma: {
@@ -63,7 +62,6 @@ type MockedTx = {
   tenant: { findFirst: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
   project: { create: ReturnType<typeof vi.fn> & ((args?: unknown) => Promise<unknown>) };
   $queryRaw: ReturnType<typeof vi.fn>;
-  $queryRawUnsafe: ReturnType<typeof vi.fn>;
 };
 const tx = (prisma as unknown as { __tx: MockedTx }).__tx;
 

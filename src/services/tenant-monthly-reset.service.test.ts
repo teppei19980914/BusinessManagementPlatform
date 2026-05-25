@@ -27,6 +27,12 @@ vi.mock('@/lib/db', () => ({
       aggregate: vi.fn(() =>
         Promise.resolve({ _count: { _all: 0 }, _sum: { costJpy: null } }),
       ),
+      // ADR-0020 (2026-05-25): billOneTenantDbCapacityOverage 用
+      create: vi.fn(() => Promise.resolve({ id: 'mock-log-id' })),
+    },
+    // ADR-0020: StripeUsageRecordQueue enqueue 用
+    stripeUsageRecordQueue: {
+      create: vi.fn(() => Promise.resolve({ id: 'mock-queue-id' })),
     },
     $transaction: vi.fn(),
   },
@@ -49,9 +55,11 @@ import {
   resetTenantMonthlyCounters,
   runTenantMonthlyReset,
   saveMonthlyUsageSnapshots,
+  billOneTenantDbCapacityOverage,
 } from './tenant-monthly-reset.service';
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
+import { SI_GB_BYTES, SI_MB_BYTES } from '@/config/db-capacity-pricing';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -548,5 +556,174 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
         }),
       }),
     );
+  });
+});
+
+describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
+  const TENANT_ID = '11111111-1111-1111-1111-111111111111';
+  const NOW = new Date('2026-06-01T00:00:00Z');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // $transaction を tx callback として実行 (passthrough mock)
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
+      if (typeof fn === 'function') {
+        return await fn({
+          tenant: { update: vi.fn(() => Promise.resolve({})) },
+          apiCallLog: { create: vi.fn(() => Promise.resolve({ id: 'mock-log-id' })) },
+          stripeUsageRecordQueue: { create: vi.fn(() => Promise.resolve({ id: 'mock-q' })) },
+        });
+      }
+      return fn;
+    }) as never);
+  });
+
+  it('無料枠内 (peak=10MB) → 課金なし (billedJpy=0)', async () => {
+    const result = await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(10 * SI_MB_BYTES),
+      storageBytesPeakThisMonth: BigInt(10 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(0);
+    expect(result.apiCallLogId).toBeNull();
+  });
+
+  it('51MB (= tier 1 開始) → ¥50 課金', async () => {
+    const result = await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(51 * SI_MB_BYTES),
+      storageBytesPeakThisMonth: BigInt(51 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(50);
+    expect(result.apiCallLogId).toBe('mock-log-id');
+  });
+
+  it('1GB (= 950MB billable, tier 1 上限) → ¥50', async () => {
+    const result = await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(SI_GB_BYTES),
+      storageBytesPeakThisMonth: BigInt(SI_GB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(50);
+  });
+
+  it('50GB (= ハードキャップ peak) → ¥2,500 (tier 50)', async () => {
+    const result = await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(50 * SI_GB_BYTES),
+      storageBytesPeakThisMonth: BigInt(50 * SI_GB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(2500);
+  });
+
+  it('billingScope=previous-month は前月末瞬間を createdAt とする (snapshot SUM 範囲内)', async () => {
+    let capturedCreatedAt: Date | undefined;
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
+      if (typeof fn === 'function') {
+        return await fn({
+          tenant: { update: vi.fn(() => Promise.resolve({})) },
+          apiCallLog: {
+            create: vi.fn((args: { data: { createdAt: Date } }) => {
+              capturedCreatedAt = args.data.createdAt;
+              return Promise.resolve({ id: 'mock-log-id' });
+            }),
+          },
+          stripeUsageRecordQueue: { create: vi.fn(() => Promise.resolve({ id: 'mock-q' })) },
+        });
+      }
+      return fn;
+    }) as never);
+
+    await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(100 * SI_MB_BYTES),
+      storageBytesPeakThisMonth: BigInt(100 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    // 2026-06-01 00:00 JST = 2026-05-31 15:00 UTC → 前月末瞬間 = 2026-05-31 14:59:59.999 UTC
+    expect(capturedCreatedAt).toBeDefined();
+    expect(capturedCreatedAt!.getTime()).toBeLessThan(NOW.getTime());
+  });
+
+  it('billingScope=current-month-on-withdrawal は now を createdAt とする (退会時即時請求)', async () => {
+    let capturedCreatedAt: Date | undefined;
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
+      if (typeof fn === 'function') {
+        return await fn({
+          tenant: { update: vi.fn(() => Promise.resolve({})) },
+          apiCallLog: {
+            create: vi.fn((args: { data: { createdAt: Date; requestId: string } }) => {
+              capturedCreatedAt = args.data.createdAt;
+              expect(args.data.requestId).toContain('-withdraw');
+              return Promise.resolve({ id: 'mock-log-id' });
+            }),
+          },
+          stripeUsageRecordQueue: { create: vi.fn(() => Promise.resolve({ id: 'mock-q' })) },
+        });
+      }
+      return fn;
+    }) as never);
+
+    await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(100 * SI_MB_BYTES),
+      storageBytesPeakThisMonth: BigInt(100 * SI_MB_BYTES),
+      billingScope: 'current-month-on-withdrawal',
+      now: NOW,
+    });
+    expect(capturedCreatedAt).toEqual(NOW);
+  });
+
+  it('billing invariant: ApiCallLog.costJpy = Stripe Queue.quantity (R6 案 A)', async () => {
+    let capturedLogCost: number | undefined;
+    let capturedQueueQty: number | undefined;
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
+      if (typeof fn === 'function') {
+        return await fn({
+          tenant: { update: vi.fn(() => Promise.resolve({})) },
+          apiCallLog: {
+            create: vi.fn((args: { data: { costJpy: number } }) => {
+              capturedLogCost = args.data.costJpy;
+              return Promise.resolve({ id: 'mock-log-id' });
+            }),
+          },
+          stripeUsageRecordQueue: {
+            create: vi.fn((args: { data: { quantity: number } }) => {
+              capturedQueueQty = args.data.quantity;
+              return Promise.resolve({ id: 'mock-q' });
+            }),
+          },
+        });
+      }
+      return fn;
+    }) as never);
+
+    await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(2050 * SI_MB_BYTES), // tier 2 上限
+      storageBytesPeakThisMonth: BigInt(2050 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    // tier 2 = ¥100、quantity = ¥100 整数で完全一致
+    expect(capturedLogCost).toBe(100);
+    expect(capturedQueueQty).toBe(100);
+    expect(capturedLogCost).toBe(capturedQueueQty);
   });
 });

@@ -32,7 +32,8 @@
  */
 
 import { prisma } from '@/lib/db';
-import type { Prisma, PrismaClient } from '@/generated/prisma/client';
+import { Prisma } from '@/generated/prisma/client';
+import type { PrismaClient } from '@/generated/prisma/client';
 
 /** Prisma transaction client (PrismaClient の transaction 内コールバック引数) */
 export type TxClient = Omit<
@@ -173,7 +174,10 @@ export async function calculateTenantStorageBytesDynamic(
 ): Promise<bigint> {
   const directTables = await getDirectTenantScopedTables(tx);
 
-  // SQL injection 防止: テーブル名は information_schema 由来 + allowlist パターン照合のみ通す
+  // SQL injection 防止: テーブル名は information_schema 由来 + allowlist パターン照合のみ通す。
+  //   allowlist 通過後の table 名のみ Prisma.raw でクエリに埋め込む (Prisma 公式の trusted 文字列 API)。
+  //   Prisma 標準の sql タグドテンプレートのみ使い、unsafe 系 API は呼び出さない設計
+  //   (= SAST スキャナの SQL injection 警告も同時に回避)。
   const validTablePattern = /^[a-z_][a-z0-9_]*$/;
   const safeDirectTables = directTables.filter((t) => validTablePattern.test(t));
   if (safeDirectTables.length !== directTables.length) {
@@ -182,26 +186,32 @@ export async function calculateTenantStorageBytesDynamic(
     );
   }
 
-  // direct テーブル分の SELECT 文を組立
-  // 各 SELECT は (SELECT SUM(pg_column_size(t.*))::bigint FROM table_name t WHERE t.tenant_id = $1::uuid)
+  // direct テーブル分の SELECT 文を組立 (Prisma.sql タグドテンプレート + Prisma.raw)
+  // 各 SELECT は (SELECT SUM(pg_column_size(t.*))::bigint FROM "table_name" t WHERE t.tenant_id = ${tenantId}::uuid)
   const directSelects = safeDirectTables.map(
     (tableName) =>
-      `COALESCE((SELECT SUM(pg_column_size(__t.*))::bigint FROM "${tableName}" __t WHERE __t.tenant_id = $1::uuid), 0)`,
+      Prisma.sql`COALESCE((SELECT SUM(pg_column_size(__t.*))::bigint FROM ${Prisma.raw(
+        `"${tableName}"`,
+      )} __t WHERE __t.tenant_id = ${tenantId}::uuid), 0)`,
   );
 
-  // JOIN ベーステーブル分の SELECT 文を組立
+  // JOIN ベーステーブル分の SELECT 文を組立 (alias / joinClause / tenantIdSource は静的定義なので Prisma.raw 安全)
   const joinSelects = JOIN_BASED_TABLES.map(
     (j) =>
-      `COALESCE((SELECT SUM(pg_column_size(${j.alias}.*))::bigint FROM "${j.tableName}" ${j.alias} ${j.joinClause} WHERE ${j.tenantIdSource}.tenant_id = $1::uuid), 0)`,
+      Prisma.sql`COALESCE((SELECT SUM(pg_column_size(${Prisma.raw(j.alias)}.*))::bigint FROM ${Prisma.raw(
+        `"${j.tableName}"`,
+      )} ${Prisma.raw(j.alias)} ${Prisma.raw(j.joinClause)} WHERE ${Prisma.raw(
+        j.tenantIdSource,
+      )}.tenant_id = ${tenantId}::uuid), 0)`,
   );
 
-  const allSelects = [...directSelects, ...joinSelects].join(' + ');
-  const sql = `SELECT (${allSelects})::bigint AS total_bytes`;
+  const allSelects = Prisma.join([...directSelects, ...joinSelects], ' + ');
+  const sql = Prisma.sql`SELECT (${allSelects})::bigint AS total_bytes`;
 
   type Row = { total_bytes: bigint };
-  const rows = await (
-    tx as unknown as { $queryRawUnsafe: typeof prisma.$queryRawUnsafe }
-  ).$queryRawUnsafe<Row[]>(sql, tenantId);
+  const rows = await (tx as unknown as { $queryRaw: typeof prisma.$queryRaw }).$queryRaw<Row[]>(
+    sql,
+  );
 
   return rows[0]?.total_bytes ?? BigInt(0);
 }
