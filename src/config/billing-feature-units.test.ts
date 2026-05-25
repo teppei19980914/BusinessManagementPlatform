@@ -12,19 +12,20 @@ import {
 } from './billing-feature-units';
 
 describe('BILLABLE_FEATURE_UNITS', () => {
-  it('課金対象 featureUnit が ADR-0019 の決定通り 3 件存在する', () => {
-    // ADR-0019 で確定: project-upsert, suggestion-explanation, auto-tag-extract のみ課金
+  it('課金対象 featureUnit が ADR-0019/0020 の決定通り 4 件存在する', () => {
+    // ADR-0019: project-upsert, suggestion-explanation, auto-tag-extract
+    // ADR-0020 (2026-05-25 追加): db-capacity-overage
     expect(BILLABLE_FEATURE_UNITS).toEqual([
       'project-upsert',
       'suggestion-explanation',
       'auto-tag-extract',
+      'db-capacity-overage',
     ]);
   });
 
   it('配列は readonly (const assertion) で意図しない書き換えを防ぐ', () => {
-    // TypeScript 上は readonly tuple として推論される
     const expected: readonly string[] = BILLABLE_FEATURE_UNITS;
-    expect(expected.length).toBe(3);
+    expect(expected.length).toBe(4);
   });
 });
 
@@ -40,6 +41,10 @@ describe('isBillableFeatureUnit', () => {
 
     it('auto-tag-extract は課金対象 (スタンドアロン auto-tag 用の予約)', () => {
       expect(isBillableFeatureUnit('auto-tag-extract')).toBe(true);
+    });
+
+    it('db-capacity-overage は課金対象 (ADR-0020 / DB 容量月次集約)', () => {
+      expect(isBillableFeatureUnit('db-capacity-overage')).toBe(true);
     });
   });
 
@@ -106,9 +111,12 @@ describe('isBillableFeatureUnit', () => {
     it('isBillableFeatureUnit が true なら BillableFeatureUnit 型として narrow される', () => {
       const fu: string = 'project-upsert';
       if (isBillableFeatureUnit(fu)) {
-        // この分岐内では BillableFeatureUnit 型 (= 'project-upsert' | 'suggestion-explanation' | 'auto-tag-extract')
-        // 静的にチェックされるのみ。実行時には影響しないが、型ガードが効くことを示すケース。
-        const _check: 'project-upsert' | 'suggestion-explanation' | 'auto-tag-extract' = fu;
+        // この分岐内では BillableFeatureUnit 型 (= 4 つの union 型)
+        const _check:
+          | 'project-upsert'
+          | 'suggestion-explanation'
+          | 'auto-tag-extract'
+          | 'db-capacity-overage' = fu;
         expect(_check).toBe('project-upsert');
       } else {
         throw new Error('expected billable');

@@ -38,7 +38,8 @@ let sharedPage: Page;
 let projectId = '';
 let memberUserId = '';
 
-test.describe.configure({ mode: 'serial', retries: 0 });
+// retries は playwright.config.ts の default (CI: 2, local: 0) を尊重 (KDD §5.X+128)
+test.describe.configure({ mode: 'serial' });
 
 test.describe('@feature:project:gantt ガントチャート (PR #96)', () => {
   test.beforeAll(async ({ browser }) => {

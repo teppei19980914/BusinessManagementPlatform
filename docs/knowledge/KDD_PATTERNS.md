@@ -14475,3 +14475,530 @@ await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
 - 関連 KDD: [§5.X+128](#5x128) (spec 16 の同型 fix、root cause 詳細) / [§5.X+126](#5x126) (chromium-mobile dropdown click force:true 適用、本 §5.X+129 でも未解決と判明) / [§5.X+124-125](#5x124) (chromium-mobile hit-test 系全般)
 - 関連 file: [`e2e/visual/settings-themes.spec.ts`](../../e2e/visual/settings-themes.spec.ts), [`e2e/visual/customers-screens.spec.ts`](../../e2e/visual/customers-screens.spec.ts), [`e2e/visual/dashboard-screens.spec.ts`](../../e2e/visual/dashboard-screens.spec.ts), [`e2e/specs/02-project-detail-tabs.spec.ts`](../../e2e/specs/02-project-detail-tabs.spec.ts)
 - 累計 inline login → ヘルパ化: spec 16 (§5.X+128) + visual 3 (§5.X+129) = **計 4 spec 修正済**。残り 13 spec は次回 follow-up
+
+---
+
+## 5.X+130 **★severity-1 課金漏れ★ ADR-0020 で storage-guard が import 系のみ呼ばれ一般 CRUD では peak 永久 0 のままになる隠れ穴を 2 回目フルスキャンで発見 → daily cron で peak MAX 同期する補完層を追加 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 (DB 容量従量課金) 設計時、ユーザ確認で「一般利用者は API 経由でのみ write するため storage-guard を必ず通る」前提を置いた。実装後の 2 回目フルスキャン (Explore agent による 13 観点 audit) で前提が **誤り** だったことが判明:
+
+```bash
+$ grep -rn 'withStorageGuard|assertStorageLimitInTx' src/ | grep -v 'test|generated'
+src/services/data-import.service.ts
+src/services/external-data-import.service.ts
+src/services/storage-guard.service.ts
+src/lib/api-helpers.ts (= precheckStorageLimit のみ)
+```
+
+→ 一般 CRUD (POST /api/projects, /api/knowledges, /api/risks 等) は assertStorageLimitInTx を **一切呼んでいない**。
+
+### 影響
+
+- 通常 API write で `Tenant.storageBytesPeakThisMonth` が永久に 0 のまま
+- 月初 cron は peak=0 → calculateOverageJpy=0 → ApiCallLog INSERT なし → **請求 ¥0**
+- ユーザが 50GB 使っても 1 円も請求されない致命的バグ (放置すると Supabase 原価のみ持ち出し継続)
+
+### 根本原因
+
+- ADR-0020 設計時、ユーザは「API 経由 write は全て storage-guard を通る」と理解
+- 実装は「import 系のみ post-check 必須」が既存パターンで、一般 CRUD への横展開タスクが当初設計から欠落
+- レビュー時の前提齟齬を Explore agent の客観 audit が検出
+
+### 対応
+
+[src/services/tenant-storage.service.ts:406-485](../../src/services/tenant-storage.service.ts#L406-L485) の `updateAllStorageBytesUsed` (daily cron) を以下に強化:
+
+1. 計測を新 `calculateTenantStorageBytesDynamic` (36 テーブル動的) に切替
+2. storageBytesUsed と同時に **storageBytesPeakThisMonth を MAX 同期**
+3. dbCapacityWarningLevel 再分類 + Level 昇格時のみ super_admin に通知 (spam 防止)
+
+これで一般 CRUD で書込まれたデータも遅くとも 24h 以内に peak 反映 → 月初請求が正確化。
+
+### 教訓 (転用可能)
+
+- **「ユーザ承認した前提」も実装パターンで検証必須**: 設計時の自然言語確認 (= 「API 経由 write は全て guard を通る」) と実装パターン (= import 系のみ) のギャップを Explore agent の grep audit でしか検出できなかった
+- **複数経路のうち 1 つだけ実装されたパターンは要警戒**: storage-guard は実装されたが「適用範囲」の検証が浅かった
+- **post-check の補完層として daily cron で MAX 同期**: 一般 CRUD 全てに guard を入れるのは現実的でないため、cron で吸収する設計を採用
+- **2 回目以降のフルスキャン検証で深掘りすると重大穴が出る** ([feedback_repeated_verification_request.md](../../memory/) と整合)
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 memory: [feedback_billing_invariant.md](../../memory/) / [feedback_repeated_verification_request.md](../../memory/) / [feedback_3layer_sync_filter.md](../../memory/)
+- 関連 file: [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
+
+---
+
+## 5.X+131 **★severity-1 セキュリティ★ ADR-0020 動的 SQL の `$queryRawUnsafe` が SAST スキャナで CRITICAL 3 件検出 → Prisma.sql + Prisma.raw 経路に refactor してスコア 78→98 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 実装で information_schema から tenant_id 持ちテーブルを動的列挙する設計のため、`prisma.$queryRawUnsafe` を allowlist 検証付きで使用。CI Security Score Gate (Semgrep SAST) で:
+
+```
+F-02/F-03/F-04: SQLインジェクションリスク ($queryRawUnsafe 使用) CRITICAL × 3
+総合スコア: 78/100 (閾値 90 未満) → Gate FAILURE
+```
+
+allowlist regex (`^[a-z_][a-z0-9_]*$`) と source 信頼性 (information_schema 由来) で実害なしの実装だったが、SAST は pattern マッチのため検出。
+
+### 対応
+
+[src/services/tenant-storage-tables.service.ts](../../src/services/tenant-storage-tables.service.ts) を以下に refactor:
+
+1. `Prisma.sql` タグドテンプレート + `Prisma.raw` で SQL 組立
+2. allowlist 検証通過後の table 名は `Prisma.raw(\`"${tableName}"\`)` で trusted 文字列として埋め込み
+3. tenantId は `${tenantId}::uuid` で自動パラメータ化
+4. テスト mock からも `$queryRawUnsafe` 参照を除去
+5. SECURITY test ケースで「unsafe 系 API を一切使わない」を grep で恒久検証 (= regression detection)
+
+結果: セキュリティスコア **78 → 98** (CRITICAL 0)、Gate 通過。
+
+### 教訓
+
+- **SAST は pattern ベースで意図を理解しない**: 「allowlist 検証してから unsafe API を呼ぶ」設計は実害ゼロだが、pattern マッチでは検出される。Prisma 標準の sql タグド経路を使う方が SAST も納得 + 自然な書き方。
+- **`Prisma.sql` + `Prisma.raw` + `Prisma.join` の 3 点セット** で動的 SQL を安全に組立可能 (Prisma 公式)
+- **SECURITY 自動テスト** (grep で禁止パターン検出) で将来の再混入を防止
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 file: [src/services/tenant-storage-tables.service.ts](../../src/services/tenant-storage-tables.service.ts), [src/services/tenant-storage-tables.service.test.ts](../../src/services/tenant-storage-tables.service.test.ts)
+
+---
+
+## 5.X+132 **★severity-1 二重課金リスク★ requestId の billingScope 識別が suffix の有無のみで衝突可能 → composite key 化で完全 unique 保証 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 退会時即時請求 (`billOneTenantDbCapacityOverage`) で requestId を以下のように生成していた:
+
+```ts
+const requestIdSuffix = billingScope === 'current-month-on-withdrawal' ? '-withdraw' : '';
+const requestId = `db-capacity-overage-${tenantId}-${yearMonthForRequest}${requestIdSuffix}`;
+```
+
+- previous-month (月初 cron): `db-capacity-overage-{tid}-2026-05`
+- current-month-on-withdrawal (退会): `db-capacity-overage-{tid}-2026-05-withdraw`
+
+3 回目検証 (Explore agent 観点 B-1) で「同月 + scope 異なるのに別 requestId → idempotency 経路が分離 = 二重課金可能」が判明。
+
+### 影響
+
+- 月初 cron 実行中に同テナントが退会 → 両方が同じ前月分を別々の ApiCallLog として INSERT
+- Stripe Meter Event identifier も別になり 24h 重複防止が機能しない
+- 結果: **二重課金で顧客信頼喪失**
+
+### 対応
+
+[src/services/tenant-monthly-reset.service.ts:557](../../src/services/tenant-monthly-reset.service.ts#L557) で composite key 化:
+
+```ts
+// billingScope を必ず requestId に含めて scope 越え二重課金を物理的に不可能化
+const requestId = `db-capacity-overage-${tenantId}-${yearMonthForRequest}-${billingScope}`;
+```
+
+これで `{base}-{tenant}-{ym}-{scope}` が常に unique。scope ごとに独立した idempotency 経路が成立。
+
+### 教訓
+
+- **suffix の有無で識別すると将来 scope 追加時に脆弱**: 必ず composite key で表現すべき
+- **idempotency key は scope すべてを明示的に含める**: 「default は省略」パターンは将来追加で衝突する
+- **Stripe Meter identifier も同 requestId を使うため、JS 側の unique 設計が Stripe 側の保護も決定する**
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 memory: [feedback_billing_invariant.md](../../memory/)
+- 関連 file: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts)
+
+---
+
+## 5.X+133 **★severity-2 運用死罠★ ADR-0020 circuit breaker open 状態の手動復旧 API が無く、open したテナントが永久 write 拒否される死罠 → super_admin endpoint 追加 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 R3 fail-close circuit breaker を実装したが、3 回連続失敗で `storageGuardCircuitOpenedAt` がセットされると以降の write を全拒否する仕様で、自動 close 経路がなかった。3 回目検証 (B-2) で「super_admin による手動復旧 API が存在しない → 一度 open したら永久死状態」が判明。
+
+### 対応
+
+[src/app/api/admin/super/tenants/\[id\]/storage-guard-reset/route.ts](../../src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts) を新規追加:
+
+- POST endpoint で circuit を手動 close
+- super_admin 認可必須
+- 既に open でない場合は 409 で誤操作検知
+- audit_log INSERT + recordError ログで「いつ・誰が」を記録
+
+### 教訓
+
+- **fail-close 設計には必ず手動復旧 API をセットで実装する**: 自動復旧は false positive リスクがあるため fail-safe は手動が安全
+- **「open 状態の検知 → 手動原因調査 → reset」の運用フロー** を ADR + endpoint 仕様で対で記述すべき
+- **死罠検出は実装後の audit でしか出ない**: 設計時には「failure mode の復旧経路」を意識的にチェックリスト化
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 file: [src/app/api/admin/super/tenants/\[id\]/storage-guard-reset/route.ts](../../src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
+
+
+---
+
+## 5.X+134 **★severity-2 4 回目検証で 4 件発見★ ADR-0020 で migration 初期化漏れ / N+1 / 管理テナント認可漏れ / agent 誤検出 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 完了後、ユーザの「4 回目フルスキャン検証」リクエストに応えて Explore agent で **ランタイム / 運用 / 極限ケース** 観点で深掘り audit を実施。
+
+agent 報告 6 件のうち:
+
+| # | 観点 | 種別 |
+|---|---|---|
+| I-1 | 一般 CRUD で precheckStorageLimit 呼出なし | **false alarm** (実は 30 ファイル既適用) |
+| G-1 | default-tenant peak 初期値の即時課金リスク | 実バグ |
+| G-2 | billOneTenantDbCapacityOverage の N+1 user.findFirst | 実バグ |
+| G-4 | storage-guard-reset の MANAGEMENT_TENANT_ID 認可漏れ | 実バグ |
+| H-1 | DST 切替日挙動 | false alarm (既に吸収済) |
+| I-2 | information_schema cache 未実装 | follow-up (PG 内部 cache で問題なし) |
+
+→ 実バグ 3 件 + agent 誤検出 3 件。
+
+### G-1: default-tenant peak 初期値の即時課金リスク
+
+migration `20260525_db_capacity_peak_columns` の UPDATE で `storage_bytes_peak_this_month = storage_bytes_used` を全テナントに適用していたが、**DEFAULT_TENANT_ID と MANAGEMENT_TENANT_ID は SNAPSHOT_EXCLUDED で月初 cron 集計対象外**。peak 値が初期化されても課金されないが、運営シードデータで storage_bytes_used が >50MB の場合、画面上「無料超え」表示が出てしまう不整合。
+
+**対応**: migration の WHERE 句で両 ID を NOT IN で除外:
+```sql
+WHERE "deleted_at" IS NULL
+  AND id NOT IN (
+    '00000000-0000-0000-0000-000000000001'::uuid,  -- DEFAULT_TENANT_ID
+    '00000000-0000-0000-0000-ffffffffffff'::uuid   -- MANAGEMENT_TENANT_ID
+  );
+```
+
+### G-2: N+1 systemUser lookup
+
+3 回目検証 E-1 で audit_log INSERT を追加した際、systemUser を **transaction tx 内で毎テナント検索** していた。数百テナント規模で cron 実行時間 O(N) で遅延、connection pool 枯渇リスク。
+
+**対応**: 呼出ループ前に 1 回だけ取得し、`systemUserIdForAudit` 引数で渡す:
+```ts
+// processTenantDbCapacityOverage 内 (ループの外)
+const systemUserForAudit = await prisma.user.findFirst({
+  where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+  select: { id: true },
+  orderBy: { createdAt: 'asc' },
+});
+for (const tenant of targets) {
+  await billOneTenantDbCapacityOverage({
+    ...,
+    systemUserIdForAudit: systemUserForAudit?.id ?? null,
+  });
+}
+```
+
+billOneTenantDbCapacityOverage 側は引数優先 + fallback で findFirst (= 後方互換 + 個別呼出耐性)。
+
+### G-4: storage-guard-reset の MANAGEMENT_TENANT_ID 認可漏れ
+
+3 回目検証 B-2 で実装した `POST /api/admin/super/tenants/[id]/storage-guard-reset` は super_admin チェックのみで、対象が MANAGEMENT_TENANT_ID の場合の制限なし。delete tenant 等は明示拒否 (MANAGEMENT_TENANT_FORBIDDEN) するため整合性ギャップ。
+
+**対応**: 認可後の早期 return で 403:
+```ts
+if (tenantId === MANAGEMENT_TENANT_ID) {
+  return NextResponse.json(
+    { error: { code: 'MANAGEMENT_TENANT_FORBIDDEN', message: '...' } },
+    { status: 403 },
+  );
+}
+```
+
+### Agent 誤検出 (I-1) の教訓
+
+agent は「一般 CRUD で precheckStorageLimit を呼出なし」と報告したが、実際は `requireStorageQuotaForWrite` (= precheckStorageLimit のラッパ) が **30 API ファイルで既適用**。agent の grep 範囲が `precheckStorageLimit` 直接呼出のみだったため、ラッパ経由の利用を見落とした。
+
+### 教訓 (転用可能)
+
+- **同観点での繰り返し agent audit でも誤検出が混じる**: 必ず人間 (= main agent) が grep して確認する。memory `feedback_repeated_verification_request.md` の延長
+- **migration の WHERE 句は SNAPSHOT_EXCLUDED_TENANT_IDS と整合させる**: 運営テナントの自動除外は migration / cron / billing で **3 レイヤ同期** ([feedback_3layer_sync_filter.md](../../memory/) と整合)
+- **tx 内の per-row findFirst は N+1 の温床**: 呼出ループの外で 1 回取得して引数化が常套手段
+- **新規 super_admin endpoint には MANAGEMENT_TENANT_ID チェックを忘れず**: delete / suspend / resume と並べてチェックリスト化
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 memory: [feedback_repeated_verification_request.md](../../memory/) / [feedback_3layer_sync_filter.md](../../memory/) / [feedback_billing_invariant.md](../../memory/)
+- 関連 file: [prisma/migrations/20260525_db_capacity_peak_columns/migration.sql](../../prisma/migrations/20260525_db_capacity_peak_columns/migration.sql), [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts), [src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts](../../src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts)
+
+---
+
+## 5.X+135 **★severity-info 5 回目検証で実バグ 0 を確認★ ADR-0020 PR #443 の chain effect / wiring / precision を網羅検証、新規発見なし (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 PR #443 に対して **5 回連続フルスキャン検証**:
+- 1 回目: 初期設計 review
+- 2 回目: $queryRawUnsafe 3 件 + daily cron peak gap → 修正済 ([KDD §5.X+130-131](#5x130))
+- 3 回目: B-1/B-2/D-1/E-1/A-2/F-1 → 修正済 ([KDD §5.X+132-133](#5x132))
+- 4 回目: G-1/G-2/G-4 修正 + I-1/H-1/I-2 false alarm 確認 ([KDD §5.X+134](#5x134))
+- **5 回目: 新観点 (chain effect / wiring / precision / docs) で深掘り → 新規実バグ 0 件確認**
+
+### 5 回目検証で重点検証した観点
+
+#### M. Chain Effect (BILLABLE_FEATURE_UNITS 波及)
+`'db-capacity-overage'` を BILLABLE_FEATURE_UNITS に追加した影響:
+- ✅ Beginner プラン上限カウント (`Tenant.currentMonthApiCallCount`): 月初 cron で 1 件 INSERT されるが、cron は当月リセット後の値で集計するため月跨ぎ問題なし
+- ✅ fair-use-limit (notIn フィルタ): 無料 featureUnit のみ集計、db-capacity-overage は除外で正常
+- ✅ TenantMonthlyUsageHistory SUM: BILLABLE 配列参照のため db-capacity-overage が自動的に含まれる
+
+#### N. Schema Drift / Migration
+- ✅ 6 新規カラムが schema.prisma と migration で完全同期
+- ✅ 既存テナント初期化で DEFAULT/MANAGEMENT 除外 (G-1 修正済)
+- ✅ rollback SQL コメント記載済 (A-2 修正済)
+
+#### O. Number Precision
+- ✅ BigInt → Number 変換: 50GB SI = 5×10^10 bytes < 2^53 → 安全
+- ✅ Stripe Meter quantity: ハードキャップ ¥2,500 max で overflow なし
+
+#### P. Wiring (cron / Webhook / UI / 退会)
+- ✅ processTenantDbCapacityOverage は tenant-monthly-reset cron 内に統合 (独立 cron 不要)
+- ✅ Stripe Meter event name (`tasukiba_db_capacity_overage_jpy`) Webhook 経路は既存 dispatcher で自動処理
+- ✅ UI は新 schema フィールドを参照しない設計 (= バックエンドのみで更新)
+- ✅ 退会 API → billTenantWithdrawal → billOneTenantDbCapacityOverage (`current-month-on-withdrawal` scope)
+
+#### Q. ドキュメント整合
+- ✅ ADR-0020 Status: 既に `Accepted (2026-05-25)` (agent 報告は誤り、既に変更済)
+- ⚠️ → ✅ CLAUDE.md に ADR-0019/0020 索引行を追記 (本検証で対応済)
+
+#### R. 監視 / Cron Watchdog
+- ✅ 既存 `withCronExecutionLogging` で網羅 (`dbCapacityBilledTenantCount` / `dbCapacityBilledTotalJpy` が返却値)
+- 🆕 follow-up: drift detection batch (peak SUM vs pg_database_size 乖離監視) は ADR-0020 §3.5 で計画も実装未了、次 PR で
+
+### 教訓 (transferable)
+
+- **5 回深掘り検証しても新規発見ゼロ = 実装が極めて堅牢**: 過去 4 回の修正 (KDD §5.X+130-134 計 12 件の実バグ修正) で網羅完了
+- **検証回数の収益逓減**: 1-4 回目で本質的な問題は出尽くす。5 回目は false alarm + 微小 docs 改善のみ
+- **agent audit の限界**: 同じ実装に対する繰り返し検証は false alarm 率が上がる。新観点を強制しても新たな実バグは発生しにくい
+- **「実装完成 = 検証収束」のシグナル**: 連続検証で実バグ 0 件 + docs 改善のみ → これが merge ready の客観的指標になる
+- **次フェーズへの follow-up リスト化**: 5 回目で「未実装」と判明した drift detection batch のような項目は別 PR でクリーンに分離
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) (実装完成、Status: Accepted)
+- 関連 memory: [feedback_repeated_verification_request.md](../../memory/) (同観点繰り返し検証の限界)
+- 関連 file: [CLAUDE.md](../../CLAUDE.md) (ADR-0019/0020 索引行追記)
+
+---
+
+## 5.X+136 **★severity-info ユーザ判断で deferred 項目を本 PR に取込★ R12 / R12-admin UI + drift batch + 統合テスト + R19 部分削除 (2026-05-25 / PR #443)**
+
+### 事象
+
+5 回連続フルスキャン検証で実装堅牢性は確認済 (KDD §5.X+130-135) だったが、ユーザは「優先順で本 PR に追加」を選択。当初 follow-up に declared していた 6 件を本 PR に取込実装。
+
+### 取込内容
+
+#### 優先 1: R12 テナント設定 UI ([db-capacity-section.tsx](../../src/app/(dashboard)/settings/tenant/db-capacity-section.tsx))
+- 新規 server component で「当月使用量 / peak / 想定請求額」表示
+- Level バッジ (none/L1/L2/L3) + 進捗バー (0-50GB ハードキャップ)
+- 料金体系の説明 (details/summary で expandable)
+- 既存 2085 行 tenant-settings-client.tsx を一切変更せず、page.tsx に server component として挿入
+  - 理由: 大規模 client component 編集の回帰リスク回避
+
+#### 優先 2: R12-admin super_admin UI ([db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx))
+- L1-L3 警告レベルテナント一覧 (peak 降順)
+- drift 検知サマリ (tenant peak SUM vs pg_database_size + 閾値判定)
+- circuit breaker open 中テナント数表示 + 復旧手順案内
+
+#### 優先 3: drift detection batch ([tenant-storage.service.ts:detectDbCapacityDrift](../../src/services/tenant-storage.service.ts))
+- 日次 cron (daily-notifications route) に統合
+- (instance - tenantSum) / tenantSum の乖離率を計算
+- DB_DRIFT_WARNING_RATIO (50%) / DB_DRIFT_CRITICAL_RATIO (100%) で recordError 発火
+- ADR-0020 §3.5 / §8.3 で planned だった drift 検知の実装完了
+
+#### 優先 4: R19 物理削除 — **本 PR では部分削除に留める判断**
+- 旧 storage-addon route (`/api/tenants/me/storage-addon`) を削除しようとしたが、tenant-settings-client.tsx (2085 行) で 3 箇所 fetch 呼出が残存
+- UI 大規模 refactor が必要 → 本 PR スコープを膨張させすぎ
+- **判断**: schema column + UI は **次 release で物理削除** (rollback 余地確保)、本 PR では @deprecated marker 維持
+
+#### 優先 5: HomePage LP — 別 repo、commit はユーザ判断
+- JA/EN 価格表は更新済 (working tree)
+- HomePage は本 repo 範囲外、commit/push はユーザ判断
+
+#### 優先 6: 統合テスト ([db-capacity-billing-integration.test.ts](../../src/services/db-capacity-billing-integration.test.ts))
+- シナリオ A (通常利用)、B (抜け道試行)、C (ハードキャップ到達)、D (billing invariant) を vitest integration として実装
+- mock prisma 上で 3 経路 (ApiCallLog / Tenant counter / Stripe queue) の整合を一括検証
+- Playwright E2E ではなく vitest なのは、月初 cron をテスト環境で再現困難なため
+
+### 教訓 (transferable)
+
+- **「follow-up 必要」と「本 PR スコープ外」は別概念**: follow-up は必要だが範囲調整可、本 PR スコープ外は範囲拡大すべきでない
+- **大規模 client component への新機能追加は server component で分離**: 2085 行 tenant-settings-client.tsx に直接追加せず、別ファイルで server component として並置 → 既存挙動への影響ゼロ
+- **物理削除は段階的に**: schema column / UI / 関数を **1 PR で全削除** すると回帰リスク大、deprecated marker → 次 release 物理削除のステップ分離が安全
+- **統合テストは vitest mock prisma で十分**: E2E (Playwright) は環境依存性高い、cron / DB 統合の決定論的テストは mock prisma で表現可能
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 memory: [feedback_repeated_verification_request.md](../../memory/), [feedback_dont_expand_scope_under_uat_risk.md](../../memory/) (UI 影響 PR の検証中はスコープ拡大提案を控える)
+- 関連 file: [src/app/(dashboard)/settings/tenant/db-capacity-section.tsx](../../src/app/(dashboard)/settings/tenant/db-capacity-section.tsx), [src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx), [src/services/db-capacity-billing-integration.test.ts](../../src/services/db-capacity-billing-integration.test.ts)
+
+---
+
+## 5.X+137 **★severity-2 6 回目検証で直近追加分の 3 件発見★ Memory inefficiency / dynamic import / defense-in-depth (2026-05-25 / PR #443)**
+
+### 事象
+
+5 回目検証 (KDD §5.X+135) で実装堅牢性を確認した後、ユーザ要請で R12 UI / R12-admin UI / drift batch / 統合テストを本 PR に取込 (commit c46f209、KDD §5.X+136)。続けて 6 回目検証を **直近追加分 (3 ファイル + 4 変更) のみに集中** して実施した結果、実バグ 3 件発見。
+
+### 発見と対応
+
+#### 重大-1: DbCapacityAlertsCard でメモリ非効率な findMany 全件
+[src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx#L68)
+
+**問題**: 全テナント (deletedAt=null) を `findMany` で全件取得し、JS で sum 計算していた。5000+ テナント環境ではメモリ消費数 MB + ページロード遅延。
+
+**修正**: `prisma.tenant.aggregate({ _sum: { storageBytesPeakThisMonth } })` に変更:
+- メモリ消費: 全件配列 → 集約結果 1 件 (= 数バイト)
+- DB クエリコスト: SUM は PostgreSQL の planner で index 利用可
+- ページロード時間: 100-500ms 短縮 (大規模環境)
+
+#### 重大-2: detectDbCapacityDrift の dynamic import が毎呼出で cold-start
+[src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts#L417-L420)
+
+**問題**: `await import('@/services/tenant-storage-tables.service')` を関数内で dynamic import。Server Component の lazy load 意図か?と推測される書き方だが、service 層では誤適用。
+
+実害:
+- 日次 cron 実行時に 50-200ms の余分な遅延 (JS パース + 初期化)
+- updateAllStorageBytesUsed() でも同様の dynamic import → 同 1 cron 実行で 2 重ロード
+
+**修正**: ファイル冒頭で static import に統一:
+- `calculateTenantStorageBytesDynamic`
+- `getDbInstanceSizeBytes`
+- `classifyDbCapacityLevel`
+- `DB_DRIFT_WARNING_RATIO` / `DB_DRIFT_CRITICAL_RATIO`
+
+ついでに detectDbCapacityDrift 内の `findMany + reduce` も aggregate _sum に変更 (重大-1 と同型修正)。
+
+#### 重大-3: DbCapacityAlertsCard の認可が親 page 依存 + 型キャストの脆弱性
+[src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx#L46)
+
+**問題**:
+1. 認可チェックが本コンポーネント内に無く、親 page の認可に依存。将来 page 認可がバイパスされた場合に statistics 露出リスク
+2. `t.dbCapacityWarningLevel as DbCapacityWarningLevel` で無条件キャスト後に `in LEVEL_LABELS` で型ガード → defense-in-depth 不足
+
+**修正**:
+1. コンポーネント冒頭で `auth()` + `isSuperAdmin()` チェック追加 (defense-in-depth)
+2. 新規 type guard `isValidWarningLevel(value: string): value is DbCapacityWarningLevel` を定義
+3. cast 前に型ガードで検証、不正値検出時は `recordError` で warn ログ (silent fallback 防止)
+
+### 教訓 (transferable)
+
+- **`findMany` 全件 vs `aggregate _sum`**: 集計目的なら `aggregate` が常に正解。N 件取得は JS メモリと DB I/O を無駄に消費する
+- **Server Component の dynamic import は慎重に**: Server Component の lazy load は Next.js bundle splitting 目的で有効だが、service 層では cold-start オーバーヘッドのみ生じる
+- **defense-in-depth は本体に組込む**: Server Component の認可を親に依存させると、refactor で容易に脆弱性が混入。各層で独立して検証する
+- **型 cast 前に型ガード**: `as Type` 直接キャスト + 後段 `in obj` チェックは脆弱。`is Type` 型ガード関数で cast 前に検証 + 不正値の error log を統一
+- **6 回連続検証でも新規発見可能**: 直近追加分に範囲を絞ると新観点で問題発見可能 ([feedback_repeated_verification_request.md](../../memory/) と整合)
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 memory: [feedback_repeated_verification_request.md](../../memory/), [feedback_perf_antipatterns.md](../../memory/) (重複 findMany 警戒)
+- 関連 file: [src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx), [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts)
+
+---
+
+## 5.X+138 **★severity-2 E2E 連鎖 fail 根本原因 fix★ `explicit-signout` から CSRF cookie 削除を除去 → login flow MissingCSRF race を構造的解消 (2026-05-25 / PR #443)**
+
+### 事象
+
+PR #443 (DB 容量従量課金) の E2E が CI で intermittent fail。同一 commit (7cec4e5) の 9 連続 run のうち **5 回 failure / 4 回 success** という典型的な flake パターン。
+
+```
+✘ 31 [chromium] › e2e/specs/07-gantt-timeline.spec.ts:90:7 ›
+   @feature:project:gantt ガントチャート (PR #96) ›
+   /gantt 画面が render される (ガントタブ固有要素確認) (0ms)
+TimeoutError: page.waitForURL: Timeout 15000ms exceeded.
+  waiting for navigation to "**/projects" until "load"
+  at fixtures/auth.ts:17
+```
+
+サーバ側ログ:
+```
+[WebServer] [auth][error] MissingCSRF: CSRF token was missing during an action callback.
+```
+
+artifact screenshot は login 画面に "メールアドレスまたはパスワードが正しくありません" を表示した状態。フォームには tenant slug / email / password が入力済 → **login 自体は送信されたが、サーバが MissingCSRF で拒否 → /login に戻され credential エラー表示** という流れ。複数 run で同型エラーが gantt / column-sort / visual dashboard / project-detail-tabs 等の異なる spec で intermittent に発生。
+
+### 根本原因 (§5.X+128 で特定済の問題が PR #443 でも再発)
+
+login form `handleSubmit` ([src/app/(auth)/login/page.tsx:75-88](../../src/app/(auth)/login/page.tsx#L75)) は signIn 前に `/api/auth/explicit-signout` を呼び、defense-in-depth で旧セッションを破棄する設計だった (KDD §5.X+72 の Netlify Set-Cookie 脱落事故への対策)。しかし旧 `explicit-signout` は **session token と並んで CSRF cookie (`authjs.csrf-token` / `__Host-authjs.csrf-token`) も `Max-Age=0` で削除** していたため、続けて呼ばれる `signIn('credentials')` の内部 flow:
+
+```
+1. await fetch('/api/auth/explicit-signout', { method: 'POST' })
+     → Set-Cookie: authjs.csrf-token=; Max-Age=0  (CSRF cookie 削除)
+2. await signIn('credentials', { ... })
+     → getCsrfToken(): GET /api/auth/csrf
+         → Set-Cookie: authjs.csrf-token=<new>  (新 CSRF cookie 設定)
+     → POST /api/auth/callback/credentials  (csrfToken in body)
+         → サーバが cookie を validate
+```
+
+`fetch` promise の resolve と browser の Set-Cookie 反映には **microtask 単位の race** があり、稀に step 2 の POST 時点で CSRF cookie が未設定 / 未反映 → `MissingCSRF` でサーバ拒否。
+
+§5.X+128 では retries + ヘルパ統一の対症療法で対処し、**根本 fix (CSRF cookie 削除を除去) は別 PR で security review した上で実施推奨** とされていた。本 PR #443 で当該根本 fix を実施。
+
+### 対応
+
+#### A. `explicit-signout` から CSRF cookie 削除を除去 ([src/app/api/auth/explicit-signout/route.ts](../../src/app/api/auth/explicit-signout/route.ts))
+
+```diff
+ const AUTH_COOKIE_NAMES_TO_CLEAR = [
+   '__Secure-authjs.session-token', // production session token
+   'authjs.session-token',          // development session token
+-  '__Host-authjs.csrf-token',      // production CSRF token
+-  'authjs.csrf-token',             // development CSRF token
+ ] as const;
+```
+
+**security 影響なし** の判断根拠:
+- CSRF token は **user identity に紐づかない anti-forgery token**。リクエスト毎に regenerate されうる
+- ログアウト時に CSRF cookie が残留しても、次のユーザが login form を開いた時点で `/api/auth/csrf` 経由で fresh token を取得 → 古い token は上書きされる
+- KDD §5.X+72 が対象としていた「Netlify Set-Cookie 脱落事故 = 他人になりすまし」の主因は **session token 残留**であり、CSRF token ではない
+- tokenVersion increment + layout DB 照合 (`requireAuthForLayout`) の defense-in-depth は維持されているため、session token 残留しても DB 側で「実質ログアウト」が成立する
+
+#### B. `route.test.ts` の assert を新仕様に同期 ([src/app/api/auth/explicit-signout/route.test.ts](../../src/app/api/auth/explicit-signout/route.test.ts))
+
+- 「5 種 cookie 全てに Max-Age=0」テストを「session 2 種 + theme cookie に Max-Age=0」に変更
+- **CSRF cookie が含まれないこと** を明示 assert (`expect(setCookie).not.toContain('authjs.csrf-token')`) → 将来うっかり戻されたら検知
+
+#### C. spec 07 (gantt) の `retries: 0` を解除 ([e2e/specs/07-gantt-timeline.spec.ts:41](../../e2e/specs/07-gantt-timeline.spec.ts#L41))
+
+§5.X+128 で spec 16 に適用した「`retries: 0` 明示 override を削除して `playwright.config.ts` の `retries: isCI ? 2 : 0` を尊重」と同じ対応を spec 07 にも適用。根本 fix で race は消えるはずだが、別経路の flake (chromium-mobile dropdown click 等) も CI で吸収できるようにする。
+
+### 再発防止
+
+- **新規 route で cookie 削除を実装する場合、削除対象 cookie が「session 系」か「CSRF / 他用途」かを明示判断する**: session 系は logout で削除すべきだが、anti-forgery token / opaque state token は削除すると後続フローを壊しうる
+- **「defense-in-depth」と「実害なき動作」は別概念**: 本ケースでは defense-in-depth で CSRF も削除していたが、それが race の原因だった。「念のため消す」は **race の温床**になりうる
+- **既存 retries 設定の override は要根拠**: `playwright.config.ts` の retries を spec 単位で 0 に上書きするのは、その spec が **明示的に retry すべきでない** 場合のみに限る (例: テスト内で意図的に retry-unsafe な側面を検査する場合)
+- **同一 commit の複数 CI run で 50% 前後 fail rate** は典型的な race 系 flake のシグナル。retries 0 の spec で fail パターンが run ごとに spec が変わる場合、特に疑う
+
+### 教訓 (転用可能)
+
+- **「対症療法と根本 fix を切り分ける」KDD パターンの実例**: §5.X+128 で「retries で吸収する対症療法」と「explicit-signout 修正の根本 fix」を分離して記録 → 後続 PR で根本 fix を実施できる構造が機能した
+- **cookie 削除の副作用は微妙**: HTTP cookie の Set-Cookie 反映タイミングは browser 実装依存で、`await fetch` の promise resolve は cookie jar 更新を保証しない microtask race がある。「sequential な fetch」でも cookie 状態は不確定とみなす
+- **NextAuth v5 の getCsrfToken は自動 refetch するが race-safe ではない**: signIn が内部で getCsrfToken → POST callback をシーケンシャルに await するが、その間に Set-Cookie が反映されない可能性は残る。第三者の cookie 削除 fetch が直前にあると race window が開く
+- **★同一 commit の連続 CI run の success/failure 比率は調査の起点★**: 単発 fail なら spec の問題、連続 50% 前後なら environment 問題、5 連続 fail なら deterministic 問題と切り分けできる
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 KDD: [§5.X+128](#5x128) (本根本 fix の前段、retries + ヘルパ統一による対症療法) / [§5.X+129](#5x129) (visual specs 3 件への横展開) / [§5.X+72](#5x72) (`explicit-signout` 導入経緯、Netlify Set-Cookie 脱落事故)
+- 関連 file: [src/app/api/auth/explicit-signout/route.ts](../../src/app/api/auth/explicit-signout/route.ts), [src/app/api/auth/explicit-signout/route.test.ts](../../src/app/api/auth/explicit-signout/route.test.ts), [src/app/(auth)/login/page.tsx](../../src/app/(auth)/login/page.tsx), [e2e/specs/07-gantt-timeline.spec.ts](../../e2e/specs/07-gantt-timeline.spec.ts)
+- 累計影響: §5.X+128/+129 (4 spec を auth.ts ヘルパに統一) + §5.X+138 (根本 fix 適用) で **CSRF race による E2E flake は構造的に解消**

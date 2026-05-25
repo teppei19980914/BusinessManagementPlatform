@@ -403,23 +403,79 @@ export async function updateStorageBytesUsedForTenant(
  *
  * @returns 更新したテナント件数
  */
+// 6 回目検証 (重大-2): dynamic import を static に変更 (毎呼出の cold-start オーバヘッド除去)
+import {
+  calculateTenantStorageBytesDynamic,
+  getDbInstanceSizeBytes,
+} from '@/services/tenant-storage-tables.service';
+import {
+  classifyDbCapacityLevel,
+  DB_DRIFT_WARNING_RATIO,
+  DB_DRIFT_CRITICAL_RATIO,
+} from '@/config/db-capacity-pricing';
+
 export async function updateAllStorageBytesUsed(): Promise<number> {
+  // ADR-0020 (2026-05-25): 動的計測 (36+ テーブル) に切替 + peak の MAX 同期も担う。
+  //   旧 calculateTenantStorageBytes (16 テーブルハードコード) は計測漏れがあるため
+  //   calculateTenantStorageBytesDynamic を使用。さらに「一般 CRUD は assertStorageLimitInTx を
+  //   通らない (= import 系のみ)」現状で peak が永久に 0 のまま課金漏れする問題を、
+  //   本 cron で日次 MAX 同期することで吸収する (= R5 横断対応の本体)。
+  //
+  //   ロジック:
+  //     - storageBytesUsed: 常に現在値で更新
+  //     - storageBytesPeakThisMonth: MAX(current_peak, new_used) で月内 peak を月初 cron まで蓄積
+  //     - dbCapacityWarningLevel: 新 peak で classify、Level 昇格時のみ super_admin 通知
+
   const tenants = await prisma.tenant.findMany({
     where: { deletedAt: null },
-    select: { id: true },
+    select: {
+      id: true,
+      storageBytesPeakThisMonth: true,
+      dbCapacityWarningLevel: true,
+    },
   });
 
   let updated = 0;
   for (const t of tenants) {
     try {
-      const bytes = await calculateTenantStorageBytes(t.id);
+      const bytes = await calculateTenantStorageBytesDynamic(t.id);
+      const currentPeak = t.storageBytesPeakThisMonth;
+      const newPeak = bytes > currentPeak ? bytes : currentPeak;
+      const peakChanged = bytes > currentPeak;
+      const newLevel = classifyDbCapacityLevel(newPeak);
+      const levelChanged = newLevel !== t.dbCapacityWarningLevel;
+
       await prisma.tenant.update({
         where: { id: t.id },
         data: {
           storageBytesUsed: bytes,
           storageBytesUsedAt: new Date(),
+          ...(peakChanged
+            ? { storageBytesPeakThisMonth: bytes, storageBytesPeakAt: new Date() }
+            : {}),
+          ...(levelChanged ? { dbCapacityWarningLevel: newLevel } : {}),
         },
       });
+
+      // Level 昇格時のみ super_admin に通知 (= 通知 spam 防止、storage-guard.service と同じパターン)
+      if (peakChanged && levelChanged && newLevel !== 'none') {
+        const order: Record<string, number> = { none: 0, l1: 1, l2: 2, l3: 3 };
+        if (order[newLevel]! > order[t.dbCapacityWarningLevel]!) {
+          await recordError({
+            severity: newLevel === 'l3' ? 'error' : newLevel === 'l2' ? 'warn' : 'info',
+            source: 'cron',
+            message: `[db-capacity] Tenant ${t.id} reached Level ${newLevel.toUpperCase()} via daily cron (peak=${Number(bytes)} bytes)`,
+            context: {
+              kind: 'db_capacity_warning',
+              tenantId: t.id,
+              peakBytes: Number(bytes),
+              previousLevel: t.dbCapacityWarningLevel,
+              newLevel,
+              source: 'daily_cron',
+            },
+          });
+        }
+      }
       updated += 1;
     } catch (e) {
       try {
@@ -437,6 +493,90 @@ export async function updateAllStorageBytesUsed(): Promise<number> {
     }
   }
   return updated;
+}
+
+/**
+ * drift 検知 batch (ADR-0020 §3.5 / 5 回目検証 R で実装)。
+ *
+ * 全テナント peak SUM と pg_database_size を比較し、乖離率を計算 → 閾値超で super_admin 通知。
+ * 目的: 計測対象漏れ / 運営直接 SQL / vacuum bloat の早期発見。
+ *
+ * 動作:
+ *   1. 全テナント (deletedAt=null) の storageBytesPeakThisMonth SUM
+ *   2. pg_database_size(current_database())
+ *   3. drift ratio = (instance - tenantSum) / tenantSum
+ *   4. >= DB_DRIFT_WARNING_RATIO で warn ログ、 >= DB_DRIFT_CRITICAL_RATIO で error ログ
+ *
+ * 呼出元: src/app/api/cron/daily-notifications/route.ts (= 日次 cron 内ステップ)
+ *
+ * @returns drift 計算結果 (debug / dashboard 用)
+ */
+export async function detectDbCapacityDrift(): Promise<{
+  tenantPeakSumBytes: bigint;
+  dbInstanceSizeBytes: bigint;
+  driftRatio: number;
+  driftLevel: 'ok' | 'warning' | 'critical';
+}> {
+  // 6 回目検証 (重大-2): dynamic import 除去、ファイル冒頭 static import を使用
+
+  // 1. テナント peak SUM (重大-1 と同様、aggregate _sum でメモリ効率化)
+  const peakAggregate = await prisma.tenant.aggregate({
+    where: { deletedAt: null },
+    _sum: { storageBytesPeakThisMonth: true },
+  });
+  const tenantPeakSumBytes = peakAggregate._sum.storageBytesPeakThisMonth ?? BigInt(0);
+
+  // 2. pg_database_size
+  let dbInstanceSizeBytes: bigint;
+  try {
+    dbInstanceSizeBytes = await getDbInstanceSizeBytes();
+  } catch (e) {
+    await recordError({
+      severity: 'warn',
+      source: 'cron',
+      message: '[drift-detection] getDbInstanceSizeBytes failed',
+      context: {
+        kind: 'db_drift_detection',
+        error: e instanceof Error ? e.message : String(e),
+      },
+    });
+    dbInstanceSizeBytes = BigInt(0);
+  }
+
+  // 3. drift ratio
+  let driftRatio = 0;
+  if (tenantPeakSumBytes > BigInt(0)) {
+    const diff =
+      dbInstanceSizeBytes > tenantPeakSumBytes
+        ? dbInstanceSizeBytes - tenantPeakSumBytes
+        : BigInt(0);
+    driftRatio = Number(diff) / Number(tenantPeakSumBytes);
+  }
+
+  // 4. 閾値判定 + ログ
+  const driftLevel: 'ok' | 'warning' | 'critical' =
+    driftRatio >= DB_DRIFT_CRITICAL_RATIO
+      ? 'critical'
+      : driftRatio >= DB_DRIFT_WARNING_RATIO
+        ? 'warning'
+        : 'ok';
+
+  if (driftLevel !== 'ok') {
+    await recordError({
+      severity: driftLevel === 'critical' ? 'error' : 'warn',
+      source: 'cron',
+      message: `[drift-detection] db capacity drift ${(driftRatio * 100).toFixed(1)}% (${driftLevel})`,
+      context: {
+        kind: 'db_drift_detection',
+        driftLevel,
+        driftRatio,
+        tenantPeakSumBytes: tenantPeakSumBytes.toString(),
+        dbInstanceSizeBytes: dbInstanceSizeBytes.toString(),
+      },
+    });
+  }
+
+  return { tenantPeakSumBytes, dbInstanceSizeBytes, driftRatio, driftLevel };
 }
 
 /**

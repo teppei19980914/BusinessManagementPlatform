@@ -1,90 +1,57 @@
 /**
- * ストレージ容量 enforcement サービス (PR-3 / 2026-05-15)
+ * ストレージ容量 enforcement サービス (ADR-0020 / 2026-05-25 全面改修)
  *
  * 役割:
  *   テナント配下のデータを作成 / 更新 / インポートする際、
- *   `Tenant.storageAddonPlan` に応じた上限 (Standard 20MB / Plus 220MB /
- *   Pro 1.02GB / Enterprise 5.02GB) を超えないことをリアルタイムで保証する。
+ *   ADR-0020 で定めた **50GB ハードキャップ** を超えないことをリアルタイムで保証する。
+ *   ハードキャップは「他テナントへの影響を絶対不許容」原則 (R3) の技術的安全弁。
  *
- * 二段階チェック戦略:
+ * 主要機能 (ADR-0020):
+ *   1. **月中 peak (= max bytes) 計測**: write 経由で `storageBytesPeakThisMonth` を MAX 更新
+ *   2. **4 層防御 warning Level の自動分類**: 1GB / 10GB / 50GB / instance-wide
+ *   3. **50GB ハードキャップ**: 超過時に write 拒否 (read / export は別ロジックで許可)
+ *   4. **fail-close + circuit breaker** (R3): 計測失敗時は write 拒否、3 回連続失敗で long open
+ *   5. **並列性制御** (R8/R9): SELECT FOR UPDATE で同テナント並列 write を直列化
+ *   6. **動的計測** (R1): tenant-storage-tables.service へ委譲、新規テーブル自動追従
  *
+ * 旧仕様からの変更 (R4):
+ *   - 4 段階 addon プラン (Standard 20MB / Plus 220MB / Pro 1.02GB / Enterprise 5.02GB) は廃止
+ *   - 7 日 Grace period も廃止 (= 即時 hard cap 判定のみ)
+ *   - 旧上限は env DB_CAPACITY_L3_HARD_CAP_BYTES で上書き可能だが default 50GB SI
+ *
+ * 二段階チェック戦略 (旧仕様から継承、ロジック更新):
  *   **Pre-check** (リクエスト入口、低コスト):
- *     - `Tenant.storageBytesUsed` (キャッシュ値) + ペイロード byte size の近似で予測
- *     - 明らかに超過なら 413 で即時拒否、無駄な DB 書込を避ける
- *     - cache lag (最大 24h) があるため fail-open 寄り (近似で通すケースあり)
+ *     - `Tenant.storageBytesUsed` キャッシュ + 推測サイズで判定
+ *     - 明らかにハードキャップ超過なら 413 で即時拒否
  *
  *   **Post-check** (transaction 内、正確):
- *     - INSERT/UPDATE 後に `calculateTenantStorageBytes(tenantId)` で実測
- *     - 超過なら `throw new StorageLimitExceededError()` で transaction 全件ロールバック
- *     - 呼出側 API は 403 `STORAGE_LIMIT_EXCEEDED` で応答
- *
- * 使い方:
- *
- * ```ts
- * import { assertStorageLimitInTx, withStorageGuard } from '@/services/storage-guard.service';
- *
- * // 単発の create/update
- * await withStorageGuard(tenantId, async (tx) => {
- *   await tx.project.create({ data: { ... } });
- * });
- *
- * // 既存の transaction の中で
- * await prisma.$transaction(async (tx) => {
- *   await tx.project.create({ data: { ... } });
- *   await assertStorageLimitInTx(tx, tenantId);
- * });
- * ```
- *
- * 設計判断:
- *   - Pre-check は **入口バリデーション** (= ペイロード明らかに巨大なら早期拒否)。
- *     キャッシュ値での予測なので 24h ラグでズレうるが、Post-check が最終境界。
- *   - Post-check は **transaction 内の最終境界**。pg_column_size を再計算するため正確だが
- *     重い (テナント当たり 100ms 〜 数百 ms)。
- *   - 両方使う想定だが、コスト過大なら個別 endpoint で Post-check のみでも可。
+ *     - SELECT FOR UPDATE で tenant 行ロック (並列 write race 防止)
+ *     - 動的 SQL で `pg_column_size` 全テナント所属テーブルを集計
+ *     - storageBytesUsed + storageBytesPeakThisMonth (MAX) を atomic 更新
+ *     - dbCapacityWarningLevel を classify 結果で更新 (通知 spam 防止)
+ *     - 50GB 超過なら StorageLimitExceededError throw
+ *     - 計測失敗時は circuitBreakerFailCount を increment、3 回で long open
  *
  * 関連:
- *   - 上限定義: src/config/storage-addon.ts (computeStorageLimitBytes)
- *   - 使用量計算: src/services/tenant-storage.service.ts (calculateTenantStorageBytes)
- *   - middleware (7 日 Grace 後の全 write 停止): src/lib/auth.config.ts
+ *   - ADR: docs/adr/0020-db-capacity-usage-based-billing.md
+ *   - 単価/閾値: src/config/db-capacity-pricing.ts
+ *   - 動的計測: src/services/tenant-storage-tables.service.ts
+ *   - 月初請求: src/services/tenant-monthly-reset.service.ts (peak → ApiCallLog INSERT)
+ *   - 退会時請求: src/services/tenant-withdrawal-billing.service.ts
+ *   - middleware (suspended テナント拒否): 別経路 (本サービスはハードキャップのみ)
+ *   - Memory: feedback_billing_invariant.md / feedback_tenant_isolation.md
  */
 
-import type { Prisma, PrismaClient } from '@/generated/prisma/client';
+import type { PrismaClient } from '@/generated/prisma/client';
 import { prisma } from '@/lib/db';
 import {
-  computeStorageLimitBytes,
-  isStorageAddonPlan,
-  type StorageAddonPlan,
-} from '@/config/storage-addon';
-// PR-3: tenant-storage.service の calculateTenantStorageBytes (=prisma 直叩き) は
-//   transaction 外を見てしまうので使えない。代わりに本ファイル内で tx スコープの
-//   $queryRaw 版 (calculateTenantStorageBytesInTx) を持つ。
-
-/**
- * ストレージ上限超過時に投げる例外。
- * transaction 内で throw すれば全件ロールバックされる。
- * 呼出側 API は本例外を catch して 403 STORAGE_LIMIT_EXCEEDED で応答する。
- */
-export class StorageLimitExceededError extends Error {
-  readonly code = 'STORAGE_LIMIT_EXCEEDED';
-  readonly currentBytes: number;
-  readonly limitBytes: number;
-  readonly addonPlan: StorageAddonPlan;
-
-  constructor(args: {
-    tenantId: string;
-    currentBytes: number;
-    limitBytes: number;
-    addonPlan: StorageAddonPlan;
-  }) {
-    super(
-      `Tenant ${args.tenantId} storage usage ${args.currentBytes} bytes exceeds limit ${args.limitBytes} bytes (plan=${args.addonPlan})`,
-    );
-    this.name = 'StorageLimitExceededError';
-    this.currentBytes = args.currentBytes;
-    this.limitBytes = args.limitBytes;
-    this.addonPlan = args.addonPlan;
-  }
-}
+  DB_CAPACITY_L3_HARD_CAP_BYTES,
+  STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD,
+  classifyDbCapacityLevel,
+  type DbCapacityWarningLevel,
+} from '@/config/db-capacity-pricing';
+import { calculateTenantStorageBytesDynamic } from '@/services/tenant-storage-tables.service';
+import { recordError } from '@/services/error-log.service';
 
 /** Prisma transaction client (PrismaClient の transaction 内コールバック引数) */
 export type TxClient = Omit<
@@ -93,39 +60,59 @@ export type TxClient = Omit<
 >;
 
 /**
- * 共通: テナントの addonPlan + 上限を取得する。
+ * ハードキャップ (50GB) 超過時に投げる例外。
+ * transaction 内で throw すれば全件ロールバックされる。
+ * 呼出側 API は本例外を catch して 403 STORAGE_LIMIT_EXCEEDED で応答する。
+ *
+ * 旧 addonPlan フィールドは ADR-0020 で 4 段階プラン廃止のため除去。
  */
-async function getTenantLimit(
-  tx: TxClient | PrismaClient,
-  tenantId: string,
-): Promise<{ addonPlan: StorageAddonPlan; limitBytes: number; cachedUsedBytes: number }> {
-  const tenant = await tx.tenant.findFirst({
-    where: { id: tenantId, deletedAt: null },
-    select: { storageAddonPlan: true, storageBytesUsed: true },
-  });
-  if (!tenant) {
-    // テナント不在 → 上位で 401/404 が出ているはずだが defensive に明示
-    throw new Error(`Tenant not found: ${tenantId}`);
+export class StorageLimitExceededError extends Error {
+  readonly code = 'STORAGE_LIMIT_EXCEEDED';
+  readonly currentBytes: number;
+  readonly limitBytes: number;
+
+  constructor(args: { tenantId: string; currentBytes: number; limitBytes: number }) {
+    super(
+      `Tenant ${args.tenantId} storage usage ${args.currentBytes} bytes exceeds hard cap ${args.limitBytes} bytes`,
+    );
+    this.name = 'StorageLimitExceededError';
+    this.currentBytes = args.currentBytes;
+    this.limitBytes = args.limitBytes;
   }
-  const addonPlan: StorageAddonPlan = isStorageAddonPlan(tenant.storageAddonPlan)
-    ? tenant.storageAddonPlan
-    : 'standard';
-  return {
-    addonPlan,
-    limitBytes: computeStorageLimitBytes(addonPlan),
-    cachedUsedBytes: Number(tenant.storageBytesUsed),
-  };
 }
 
 /**
- * **Pre-check** — リクエスト入口で「明らかに超過するか」を低コストに判定する。
+ * Circuit breaker open 中に投げる例外 (R3 fail-close)。
+ * 連続 STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD 回 (= 3) 失敗で発火、super_admin の手動復旧待ち。
+ */
+export class StorageGuardCircuitOpenError extends Error {
+  readonly code = 'STORAGE_GUARD_CIRCUIT_OPEN';
+  readonly tenantId: string;
+  readonly failCount: number;
+
+  constructor(args: { tenantId: string; failCount: number }) {
+    super(
+      `Storage guard circuit open for tenant ${args.tenantId} (failCount=${args.failCount}), refusing write to protect data integrity`,
+    );
+    this.name = 'StorageGuardCircuitOpenError';
+    this.tenantId = args.tenantId;
+    this.failCount = args.failCount;
+  }
+}
+
+// ================================================================
+// Pre-check (低コスト)
+// ================================================================
+
+/**
+ * **Pre-check** — リクエスト入口でハードキャップに明らかに到達するかを低コストに判定。
  *
- * - キャッシュ値 (storageBytesUsed) + 予測サイズで判定
- * - キャッシュは日次 cron 更新なので最大 24h ラグ。fail-open 寄り (= 通すケースあり)
- * - 真の境界は Post-check が担保する
+ * - キャッシュ値 (storageBytesUsed) + 推測サイズで判定
+ * - キャッシュは write 経由で更新される (= 一般利用者の write は確実に新鮮)
+ * - 真の境界は Post-check が担保
  *
  * @param tenantId 対象テナント
- * @param estimatedNewBytes 追加見込みバイト数 (= payload サイズ等の予測値)
+ * @param estimatedNewBytes 追加見込みバイト数 (= payload サイズ等の推測値)
  * @returns ok=true なら継続、false なら即時拒否
  */
 export async function precheckStorageLimit(
@@ -138,75 +125,212 @@ export async function precheckStorageLimit(
       code: 'STORAGE_LIMIT_EXCEEDED';
       cachedUsedBytes: number;
       limitBytes: number;
-      addonPlan: StorageAddonPlan;
     }
 > {
-  const { addonPlan, limitBytes, cachedUsedBytes } = await getTenantLimit(prisma, tenantId);
-  if (cachedUsedBytes + estimatedNewBytes > limitBytes) {
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+    select: { storageBytesUsed: true, storageGuardCircuitOpenedAt: true },
+  });
+  if (!tenant) {
+    // テナント不在 → 上位で 401/404 が出ているはずだが defensive に通す (404 を Pre-check で扱わない)
+    return { ok: true, cachedUsedBytes: 0, limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES };
+  }
+
+  // Circuit open 中は早期に拒否 (= fail-close)
+  if (tenant.storageGuardCircuitOpenedAt != null) {
+    return {
+      ok: false,
+      code: 'STORAGE_LIMIT_EXCEEDED',
+      cachedUsedBytes: Number(tenant.storageBytesUsed),
+      limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
+    };
+  }
+
+  const cachedUsedBytes = Number(tenant.storageBytesUsed);
+  if (cachedUsedBytes + estimatedNewBytes > DB_CAPACITY_L3_HARD_CAP_BYTES) {
     return {
       ok: false,
       code: 'STORAGE_LIMIT_EXCEEDED',
       cachedUsedBytes,
-      limitBytes,
-      addonPlan,
+      limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
     };
   }
-  return { ok: true, cachedUsedBytes, limitBytes };
+  return { ok: true, cachedUsedBytes, limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES };
 }
 
+// ================================================================
+// Post-check (transaction 内、正確 + peak update + warning level + circuit breaker)
+// ================================================================
+
 /**
- * **Post-check** — transaction 内で実測値を計算し、超過なら throw でロールバック。
+ * **Post-check** — transaction 内で実測値を計算し、以下を atomic に実施:
  *
- * `prisma.$transaction(async (tx) => { ... await assertStorageLimitInTx(tx, tenantId); })`
- * のように **書込の直後** に呼ぶこと。super-admin 系の cron も含めると複数の経路から
- * 呼ばれうるため、tx 引数を必須化して「正しい tx の中で動いている」ことを型で保証する。
+ *   1. SELECT FOR UPDATE で tenant 行ロック (R8/R9: 並列 write race 防止)
+ *   2. 動的 SQL (`calculateTenantStorageBytesDynamic`) で実使用量を集計
+ *   3. `storageBytesUsed` + `storageBytesPeakThisMonth` (MAX) を atomic 更新
+ *   4. `dbCapacityWarningLevel` を classify 結果で更新 (`none` / `l1` / `l2` / `l3`)
+ *   5. ハードキャップ (50GB) 超過なら `StorageLimitExceededError` throw (= tx 全件ロールバック)
+ *   6. 計測失敗時は `storageGuardCircuitFailCount` increment、3 回連続で circuit open
  *
- * 副作用: 計算で取得した最新値を `Tenant.storageBytesUsed` キャッシュに同期して書き戻す
- *   (= 後続リクエストの pre-check 精度が向上)。
+ * 呼出側パターン:
+ *   ```ts
+ *   await prisma.$transaction(async (tx) => {
+ *     await tx.knowledge.create({...});
+ *     await assertStorageLimitInTx(tx, tenantId);  // 書込直後
+ *   });
+ *   ```
  *
- * @param tx prisma transaction client
- * @param tenantId 対象テナント
- * @throws StorageLimitExceededError 超過時
+ * @throws StorageLimitExceededError ハードキャップ超過時
+ * @throws StorageGuardCircuitOpenError circuit breaker open 中の場合
  */
 export async function assertStorageLimitInTx(
   tx: TxClient,
   tenantId: string,
 ): Promise<void> {
-  const { addonPlan, limitBytes } = await getTenantLimit(tx, tenantId);
+  // 1. SELECT FOR UPDATE で tenant 行ロック (R8/R9 並列 write 直列化)
+  //    pgcrypto の advisory lock より row-level lock の方が transaction scope で自然
+  await (tx as unknown as { $queryRaw: typeof prisma.$queryRaw }).$queryRaw`
+    SELECT id FROM tenants WHERE id = ${tenantId}::uuid FOR UPDATE
+  `;
 
-  // 実測 (pg_column_size を全 15 テーブル横断で集計)
-  const usedBytes = Number(await calculateTenantStorageBytesInTx(tx, tenantId));
-
-  // キャッシュ同期 (transaction 内で書き戻す。ロールバック時は当然破棄される)
-  await tx.tenant.update({
-    where: { id: tenantId },
-    data: { storageBytesUsed: BigInt(usedBytes), storageBytesUsedAt: new Date() },
+  const tenant = await tx.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+    select: {
+      id: true,
+      storageBytesPeakThisMonth: true,
+      storageGuardCircuitFailCount: true,
+      storageGuardCircuitOpenedAt: true,
+      dbCapacityWarningLevel: true,
+    },
   });
+  if (!tenant) {
+    throw new Error(`Tenant not found: ${tenantId}`);
+  }
 
-  if (usedBytes > limitBytes) {
+  // Circuit breaker が open 中なら即時拒否 (= fail-close)
+  if (tenant.storageGuardCircuitOpenedAt != null) {
+    throw new StorageGuardCircuitOpenError({
+      tenantId,
+      failCount: tenant.storageGuardCircuitFailCount,
+    });
+  }
+
+  // 2. 動的 SQL で実測 (= R1 計測対象の網羅性保証)
+  let usedBytes: bigint;
+  try {
+    usedBytes = await calculateTenantStorageBytesDynamic(tenantId, tx);
+  } catch (e) {
+    // R3 fail-close: 計測失敗時は counter increment、threshold で circuit open
+    const newFailCount = tenant.storageGuardCircuitFailCount + 1;
+    const shouldOpenCircuit = newFailCount >= STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD;
+
+    await tx.tenant.update({
+      where: { id: tenantId },
+      data: {
+        storageGuardCircuitFailCount: newFailCount,
+        storageGuardCircuitOpenedAt: shouldOpenCircuit ? new Date() : null,
+      },
+    });
+
+    // super_admin に緊急アラート (recordError 経由 / R12-admin)
+    await recordError({
+      severity: shouldOpenCircuit ? 'error' : 'warn',
+      source: 'server',
+      message: shouldOpenCircuit
+        ? `[storage-guard] CIRCUIT OPEN (tenant=${tenantId}, failCount=${newFailCount})`
+        : `[storage-guard] measurement failed (tenant=${tenantId}, failCount=${newFailCount})`,
+      stack: e instanceof Error ? e.stack : undefined,
+      context: {
+        kind: 'storage_guard_circuit',
+        tenantId,
+        failCount: newFailCount,
+        circuitOpened: shouldOpenCircuit,
+        originalError: e instanceof Error ? e.message : String(e),
+      },
+    });
+
+    // fail-close: 計測できない以上、write は通せない (= 他テナント保護の絶対原則 R3)
     throw new StorageLimitExceededError({
       tenantId,
-      currentBytes: usedBytes,
-      limitBytes,
-      addonPlan,
+      currentBytes: 0,
+      limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
+    });
+  }
+
+  // 3-4. peak / warning level / cache を atomic 更新
+  const usedBytesNumber = Number(usedBytes);
+  const currentPeak = tenant.storageBytesPeakThisMonth;
+  const newPeak = usedBytes > currentPeak ? usedBytes : currentPeak;
+  const peakChanged = usedBytes > currentPeak;
+  const newLevel: DbCapacityWarningLevel = classifyDbCapacityLevel(newPeak);
+  const levelChanged = newLevel !== tenant.dbCapacityWarningLevel;
+
+  await tx.tenant.update({
+    where: { id: tenantId },
+    data: {
+      storageBytesUsed: usedBytes,
+      storageBytesUsedAt: new Date(),
+      ...(peakChanged
+        ? { storageBytesPeakThisMonth: usedBytes, storageBytesPeakAt: new Date() }
+        : {}),
+      ...(levelChanged ? { dbCapacityWarningLevel: newLevel } : {}),
+      // 計測成功時は circuit breaker counter リセット
+      ...(tenant.storageGuardCircuitFailCount > 0
+        ? { storageGuardCircuitFailCount: 0 }
+        : {}),
+    },
+  });
+
+  // Level 昇格時のみ super_admin に通知 (= 通知 spam 防止 / R12)
+  if (levelChanged && newLevel !== 'none' && shouldNotifyAdmin(newLevel, tenant.dbCapacityWarningLevel as DbCapacityWarningLevel)) {
+    await recordError({
+      severity: newLevel === 'l3' ? 'error' : newLevel === 'l2' ? 'warn' : 'info',
+      source: 'server',
+      message: `[db-capacity] Tenant ${tenantId} reached Level ${newLevel.toUpperCase()} (peak=${usedBytesNumber} bytes)`,
+      context: {
+        kind: 'db_capacity_warning',
+        tenantId,
+        peakBytes: usedBytesNumber,
+        previousLevel: tenant.dbCapacityWarningLevel,
+        newLevel,
+      },
+    });
+  }
+
+  // 5. ハードキャップ判定
+  if (usedBytes > BigInt(DB_CAPACITY_L3_HARD_CAP_BYTES)) {
+    throw new StorageLimitExceededError({
+      tenantId,
+      currentBytes: usedBytesNumber,
+      limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
     });
   }
 }
 
 /**
- * **wrapper**: $transaction + Post-check を一括で行うヘルパ。
- *
- * - fn の中で `tx.X.create / update / delete` を呼ぶ
- * - fn 終了後に自動で assertStorageLimitInTx を実行
- * - 超過時は transaction ロールバック + StorageLimitExceededError throw
- *
- * 既存の transaction を使っていない単発 create/update の最小変更パターン:
+ * Level 昇格 (none→l1, l1→l2, l1→l3 等) の場合のみ super_admin 通知。
+ * 横ばい / 降格時は通知しない (spam 防止)。
+ */
+function shouldNotifyAdmin(
+  newLevel: DbCapacityWarningLevel,
+  oldLevel: DbCapacityWarningLevel,
+): boolean {
+  const order: Record<DbCapacityWarningLevel, number> = { none: 0, l1: 1, l2: 2, l3: 3 };
+  return order[newLevel] > order[oldLevel];
+}
+
+// ================================================================
+// withStorageGuard — $transaction + Post-check の一括 wrapper
+// ================================================================
+
+/**
+ * fn の中で書込操作を行い、その直後に `assertStorageLimitInTx` を実行する。
  *
  * ```ts
  * // 修正前
  * await prisma.project.create({ data: {...} });
  *
- * // 修正後 (PR-3)
+ * // 修正後
  * await withStorageGuard(tenantId, (tx) => tx.project.create({ data: {...} }));
  * ```
  */
@@ -228,45 +352,13 @@ export async function withStorageGuard<T>(
   );
 }
 
-/**
- * transaction 内で `calculateTenantStorageBytes` 相当の集計を実行する。
- *
- * `tenant-storage.service.ts` 側の `calculateTenantStorageBytes` は `prisma.$queryRaw` を
- * 直接使うため transaction 外を見てしまう。本関数は tx スコープで同 SQL を実行する。
- */
-async function calculateTenantStorageBytesInTx(
-  tx: TxClient,
-  tenantId: string,
-): Promise<bigint> {
-  type Row = { total_bytes: bigint };
-  // prisma の TxClient でも $queryRaw は利用可。SQL injection 防止のため値は parametrized。
-  const rows = await (tx as unknown as { $queryRaw: typeof prisma.$queryRaw }).$queryRaw<Row[]>`
-    SELECT
-      COALESCE((SELECT SUM(pg_column_size(t.*))::bigint FROM tenants t WHERE t.id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(p.*))::bigint FROM projects p WHERE p.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(t.*))::bigint FROM tasks t JOIN projects p ON t.project_id = p.id WHERE p.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(e.*))::bigint FROM estimates e JOIN projects p ON e.project_id = p.id WHERE p.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(pm.*))::bigint FROM project_members pm JOIN projects p ON pm.project_id = p.id WHERE p.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(k.*))::bigint FROM knowledges k WHERE k.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(kp.*))::bigint FROM knowledge_projects kp JOIN knowledges k ON kp.knowledge_id = k.id WHERE k.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(r.*))::bigint FROM risks_issues r WHERE r.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(rt.*))::bigint FROM retrospectives rt WHERE rt.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(m.*))::bigint FROM memos m WHERE m.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(c.*))::bigint FROM customers c WHERE c.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(s.*))::bigint FROM stakeholders s WHERE s.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(cm.*))::bigint FROM comments cm WHERE cm.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(mn.*))::bigint FROM mentions mn WHERE mn.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(a.*))::bigint FROM attachments a WHERE a.tenant_id = ${tenantId}::uuid), 0) +
-      COALESCE((SELECT SUM(pg_column_size(u.*))::bigint FROM users u WHERE u.tenant_id = ${tenantId}::uuid), 0)
-    AS total_bytes
-  `;
-  return rows[0]?.total_bytes ?? BigInt(0);
-}
+// ================================================================
+// エラーマッピング — API route から共通利用
+// ================================================================
 
 /**
- * API route 側のエラーハンドリングを簡潔にするためのヘルパ。
+ * API route の error handling を簡潔にするためのヘルパ。
  *
- * 例:
  * ```ts
  * try {
  *   await withStorageGuard(tenantId, (tx) => tx.project.create(...));
@@ -277,17 +369,20 @@ async function calculateTenantStorageBytesInTx(
  *   throw e;
  * }
  * ```
+ *
+ * ADR-0020 (R13) ハードキャップエラーメッセージ:
+ *   - read / export は別経路で許可される旨を伝える
+ *   - サポート問い合わせは v1.x で個別契約フロー検討予定 (今は記載なし)
  */
 export function mapStorageGuardErrorToResponse(error: unknown):
   | {
       status: 403;
       body: {
         error: {
-          code: 'STORAGE_LIMIT_EXCEEDED';
+          code: 'STORAGE_LIMIT_EXCEEDED' | 'STORAGE_GUARD_CIRCUIT_OPEN';
           message: string;
-          currentBytes: number;
-          limitBytes: number;
-          addonPlan: StorageAddonPlan;
+          currentBytes?: number;
+          limitBytes?: number;
         };
       };
     }
@@ -299,21 +394,24 @@ export function mapStorageGuardErrorToResponse(error: unknown):
         error: {
           code: 'STORAGE_LIMIT_EXCEEDED',
           message:
-            'ストレージ上限を超えるためデータを保存できません。データを削除するか、Storage プランをアップグレードしてください。',
+            'データ容量が上限 50GB に達しました。データを削除してから再度お試しください。データの読み取り・エクスポートは引き続き可能です。',
           currentBytes: error.currentBytes,
           limitBytes: error.limitBytes,
-          addonPlan: error.addonPlan,
+        },
+      },
+    };
+  }
+  if (error instanceof StorageGuardCircuitOpenError) {
+    return {
+      status: 403,
+      body: {
+        error: {
+          code: 'STORAGE_GUARD_CIRCUIT_OPEN',
+          message:
+            '一時的にデータの書き込みができません。管理者に通知済みです。しばらくしてから再度お試しください。',
         },
       },
     };
   }
   return null;
 }
-
-// テスト用に export (Prisma type に依存しない方式で transaction 外計算が必要な場合のため)
-export const _internals = {
-  calculateTenantStorageBytesInTx,
-};
-
-// Re-export for convenience
-export type { Prisma };

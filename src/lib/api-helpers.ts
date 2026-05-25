@@ -228,15 +228,15 @@ export async function requireStorageQuotaForWrite(
 ): Promise<NextResponse | null> {
   const result = await precheckStorageLimit(tenantId, estimatedBytes);
   if (!result.ok) {
+    // ADR-0020 (2026-05-25): 50GB ハードキャップ。4 段階プランは廃止。
     return NextResponse.json(
       {
         error: {
           code: 'STORAGE_LIMIT_EXCEEDED',
           message:
-            'ストレージ上限を超えるためデータを保存できません。データを削除するか、Storage プランをアップグレードしてください。',
+            'データ容量が上限 50GB に達しました。データを削除してから再度お試しください。データの読み取り・エクスポートは引き続き可能です。',
           currentBytes: result.cachedUsedBytes,
           limitBytes: result.limitBytes,
-          addonPlan: result.addonPlan,
         },
       },
       { status: 403 },

@@ -116,14 +116,21 @@ describe('checkFairUseLimit - 境界値', () => {
 });
 
 describe('checkFairUseLimit - 集計対象', () => {
-  it('課金対象 featureUnit (project-upsert / suggestion-explanation / auto-tag-extract) を集計から除外する', async () => {
+  it('課金対象 featureUnit (BILLABLE_FEATURE_UNITS) を集計から除外する', async () => {
     vi.mocked(prisma.apiCallLog.count).mockResolvedValue(0);
 
     await checkFairUseLimit(TENANT_ID, 'Asia/Tokyo');
 
     const callArg = vi.mocked(prisma.apiCallLog.count).mock.calls[0]?.[0];
+    // ADR-0019: project-upsert / suggestion-explanation / auto-tag-extract
+    // ADR-0020 (2026-05-25): + db-capacity-overage
     expect(callArg?.where?.featureUnit).toEqual({
-      notIn: ['project-upsert', 'suggestion-explanation', 'auto-tag-extract'],
+      notIn: [
+        'project-upsert',
+        'suggestion-explanation',
+        'auto-tag-extract',
+        'db-capacity-overage',
+      ],
     });
   });
 

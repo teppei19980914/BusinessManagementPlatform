@@ -18,19 +18,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db', () => {
-  // PR-3 (2026-05-15): tx 側にも storage-guard 用の tenant.findFirst / update / $queryRaw を追加
+  // ADR-0020 (2026-05-25): assertStorageLimitInTx は SELECT FOR UPDATE + 動的計測サービス経由
   const tx = {
     knowledge: { create: vi.fn() },
     riskIssue: { create: vi.fn() },
     tenantImportPreview: { delete: vi.fn() },
     tenant: {
       findFirst: vi.fn(async () => ({
-        storageAddonPlan: 'standard',
-        storageBytesUsed: BigInt(0),
+        id: '11111111-1111-1111-1111-111111111111',
+        storageBytesPeakThisMonth: BigInt(0),
+        storageGuardCircuitFailCount: 0,
+        storageGuardCircuitOpenedAt: null,
+        dbCapacityWarningLevel: 'none',
       })),
       update: vi.fn(),
     },
-    $queryRaw: vi.fn(async () => [{ total_bytes: BigInt(0) }]),
+    $queryRaw: vi.fn(async () => []),
   };
   return {
     prisma: {
@@ -57,6 +60,15 @@ vi.mock('@/services/embedding.service', () => ({
     failed: 0,
     costJpy: 0,
   })),
+}));
+
+// ADR-0020: storage-guard が動的計測サービス経由で集計
+vi.mock('@/services/tenant-storage-tables.service', () => ({
+  calculateTenantStorageBytesDynamic: vi.fn(async () => BigInt(0)),
+}));
+
+vi.mock('@/services/error-log.service', () => ({
+  recordError: vi.fn(),
 }));
 
 vi.mock('@/services/knowledge.service', () => ({

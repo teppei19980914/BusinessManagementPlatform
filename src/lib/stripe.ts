@@ -71,6 +71,11 @@ export const STRIPE_API_VERSION = '2026-04-22.dahlia' as const;
 export const STRIPE_METER_EVENT_NAMES = {
   haiku: 'tasukiba_haiku_api_call',
   sonnet: 'tasukiba_sonnet_api_call',
+  // ADR-0020 (2026-05-25): DB 容量従量課金。
+  //   R6 案 A: Meter unit = ¥1 (= quantity に円整数を送る、Stripe Price は ¥1/unit)。
+  //   これにより ApiCallLog.costJpy = Stripe Meter quantity = 請求金額の完全一致を保証。
+  //   月額固定 SKU と異なり Meter Event なので「使用量に応じた請求」が請求書に反映される。
+  db_capacity_overage: 'tasukiba_db_capacity_overage_jpy',
 } as const;
 
 export type StripeMeterCallType = keyof typeof STRIPE_METER_EVENT_NAMES;

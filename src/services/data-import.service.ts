@@ -190,7 +190,7 @@ export async function importTenantData(
       return {
         ok: false,
         error: 'STORAGE_LIMIT_EXCEEDED',
-        message: `取込データの合計容量がストレージ上限 (${Math.floor(error.limitBytes / (1024 * 1024))} MB) を超えるためインポートを中止しました。データを削除するか、Storage プランをアップグレードしてください。`,
+        message: `取込データの合計容量がデータ容量上限 (${Math.floor(error.limitBytes / (1000 * 1000 * 1000))} GB、ADR-0020) を超えるためインポートを中止しました。データを削除してから再度お試しください。`,
       };
     }
     throw error;

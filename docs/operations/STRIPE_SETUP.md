@@ -78,33 +78,61 @@ Dashboard → **商品カタログ** → **商品を追加**
 
 → 環境変数 `STRIPE_PRICE_SONNET` に保存。**ADR-0019 では Sonnet 単価変更なし**、既存 Price をそのまま使用可。
 
-### 2.3 Storage Add-on (Plus)
+### 2.3 ~~Storage Add-on (Plus)~~ — **ADR-0020 で廃止**
 
-> 定額プランのため Meter 不要。「その他の料金体系オプション」→ 定額制を選択。
+> **⚠️ ADR-0020 (2026-05-25)**: 4 段階 Storage Add-on プラン (Plus/Pro/Enterprise) は廃止され、
+> §2.5 の DB 容量従量課金 (1 Meter のみ) に統一されました。
+>
+> 既存運用では: Stripe Dashboard で旧 Storage Add-on Product を **archive** し、
+> 環境変数 `STRIPE_PRICE_STORAGE_PLUS` / `STRIPE_PRICE_STORAGE_PRO` は削除可。
+> ただし launch 前のため、本番に既存契約者なし → 単に Product を archive するのみで OK。
+
+### 2.4 ~~Storage Add-on (Pro)~~ — **ADR-0020 で廃止**
+
+§2.3 と同じ。
+
+### 2.5 DB 容量従量課金 (ADR-0020 / 2026-05-25)
+
+> **ADR-0020 新規追加**: DB 容量を「使った分だけ」階段関数型で課金 (50MB 無料 + 1GB tier × ¥50)。
+> 月中 peak ベースで請求する R6 案 A 設計のため、**Meter quantity 単位 = ¥1 (円整数)** で送信。
+> これにより `ApiCallLog.costJpy = Stripe Meter quantity = 請求金額` の完全一致を保証。
+
+#### Meter 作成
 
 | 項目 | 値 |
 |---|---|
-| 商品名 | `たすきば Storage Add-on (Plus)` |
-| 説明 | `Storage Plus プラン (¥500/月、追加 100MB)` |
-| 料金モデル | **定額制** (= 月次固定) |
-| 単価 | `¥500` |
-| 請求期間 | 月次 |
-| 検索キー | `storage_plus` |
+| イベント名 (event_name) | `tasukiba_db_capacity_overage_jpy` |
+| 表示名 | たすきば DB 容量超過 (円) |
+| ペイロードキー | `value` (= 円整数を文字列で送信) |
+| 集約方式 | sum |
 
-→ 環境変数 `STRIPE_PRICE_STORAGE_PLUS` に保存
-
-### 2.4 Storage Add-on (Pro)
+#### Price 作成
 
 | 項目 | 値 |
 |---|---|
-| 商品名 | `たすきば Storage Add-on (Pro)` |
-| 説明 | `Storage Pro プラン (¥1,500/月、追加 1GB)` |
-| 料金モデル | 定額制 |
-| 単価 | `¥1,500` |
+| 商品名 | `たすきば DB 容量超過 (従量課金)` |
+| 説明 | `50MB 超過分を 1GB tier ごとに ¥50 で課金 (R6 案 A: quantity=円整数)` |
+| 料金モデル | **従量課金ベース** (= Meter 連動) |
+| Meter | `tasukiba_db_capacity_overage_jpy` (= §2.5 で作成) |
+| **単価** | **¥1 / unit** (= quantity に円整数をそのまま送信) |
 | 請求期間 | 月次 |
-| 検索キー | `storage_pro` |
+| 検索キー (lookup_key) | `db_capacity_overage_jpy` |
 
-→ 環境変数 `STRIPE_PRICE_STORAGE_PRO` に保存
+→ 環境変数 `STRIPE_PRICE_DB_CAPACITY_OVERAGE` に保存。
+
+#### 動作確認
+
+1. テナント設定で 50MB を超える DB 使用量を作る (例: テストインポートで 100MB 投入)
+2. 月初 cron (`/api/cron/tenant-monthly-reset`) を手動実行
+3. Stripe Dashboard → Meter Events で `tasukiba_db_capacity_overage_jpy` の event が記録されるか確認
+4. 請求書プレビューで「DB 容量超過: ¥50」が計上されるか確認
+
+#### 注意点
+
+- **Meter quantity の最大値**: Stripe API は long を許容 (10^9+ 程度まで)。
+  ハードキャップ 50GB 到達ユーザでも max ¥2,500 → 余裕で範囲内。
+- **idempotency**: `identifier = usage:db_capacity_overage:{apiCallLogId}` で 24h 重複防止。
+- **timestamp**: 前月末瞬間 (= 月跨ぎ瞬間) を送信、過去 35 日以内なので正常受領される。
 
 ---
 

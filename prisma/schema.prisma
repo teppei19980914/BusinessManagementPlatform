@@ -171,9 +171,40 @@ model Tenant {
   /// 超過通知メール送信日時 (重複送信防止)
   storageOverLimitNoticeSentAt         DateTime? @map("storage_over_limit_notice_sent_at") @db.Timestamptz
   /// ダウングレード予約日時 (= 翌月 1 日 UTC)
+  /// @deprecated ADR-0020 (2026-05-25): 4 段階プラン廃止により未使用。P9-cleanup で削除予定。
   scheduledStorageAddonAt              DateTime? @map("scheduled_storage_addon_at") @db.Timestamptz
   /// ダウングレード後のプラン名 (= scheduledStorageAddonAt と対)
+  /// @deprecated ADR-0020 (2026-05-25): 4 段階プラン廃止により未使用。P9-cleanup で削除予定。
   scheduledNextStorageAddon            String?   @map("scheduled_next_storage_addon") @db.VarChar(20)
+  // ============================================================
+  // DB 容量従量課金 (ADR-0020 / 2026-05-25)
+  //
+  // 月中 peak ベース請求のため、storageBytesUsed (= 現在値) とは別に
+  // 「月中の最大値」を peak として保持する。write 経由でしか peak は更新されない
+  // (一般利用者は API 経由でのみ write するため確実に捕捉される、R2 確定済)。
+  //
+  // 関連:
+  //   - 計測: src/services/storage-guard.service.ts (assertStorageLimitInTx で MAX update)
+  //   - 月初請求: src/services/tenant-monthly-reset.service.ts (前月 peak → ApiCallLog INSERT)
+  //   - 4 層防御: src/config/db-capacity-pricing.ts
+  //   - circuit breaker: R3 fail-close で連続失敗時に write 拒否
+  // ============================================================
+  /// 月中の最大使用量 (バイト)。毎月 1 日 cron でリセット = 現在の storageBytesUsed。
+  /// この値が課金根拠 (= ApiCallLog.metadata.peakBytes に記録される真値)
+  storageBytesPeakThisMonth            BigInt    @default(0) @map("storage_bytes_peak_this_month")
+  /// peak 到達時刻 (UI 表示 / audit 用)
+  storageBytesPeakAt                   DateTime? @map("storage_bytes_peak_at") @db.Timestamptz
+  /// drift 監視用: pg_database_size の月中 peak (= Supabase 実請求対比)。
+  /// 日次 snapshot で MAX 更新。月初 cron で ApiCallLog.metadata に記録 + リセット。
+  dbInstanceBytesPeakThisMonth         BigInt?   @map("db_instance_bytes_peak_this_month")
+  /// 4 層防御の警告 Level (none / l1 / l2 / l3)。
+  /// 通知 spam 防止用: 月初 cron でリセットされ、月内で同 Level 通知は 1 回のみ発火 (R12)
+  dbCapacityWarningLevel               String    @default("none") @map("db_capacity_warning_level") @db.VarChar(8)
+  /// circuit breaker 連続失敗カウンタ (R3 fail-close)。
+  /// 3 回連続失敗で write 拒否、成功時に 0 リセット。
+  storageGuardCircuitFailCount         Int       @default(0) @map("storage_guard_circuit_fail_count")
+  /// circuit breaker open 時刻 (= 一時 write 全拒否状態)。null = 通常運用
+  storageGuardCircuitOpenedAt          DateTime? @map("storage_guard_circuit_opened_at") @db.Timestamptz
   /// PR-1 (2026-05-15): テナント全体の IANA タイムゾーン名。
   ///   全ユーザの日付表示・残日数計算・月初リセット境界に使用する。
   ///   default 'Asia/Tokyo'。テナント管理者が /settings/tenant から変更可。

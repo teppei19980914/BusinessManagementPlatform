@@ -1,0 +1,238 @@
+/**
+ * super_admin DB 容量アラートカード (ADR-0020 / 2026-05-25)
+ *
+ * 役割 (R12-admin / R14):
+ *   super_admin ダッシュボードで以下を可視化:
+ *   - L1-L3 警告 Level に到達しているテナント一覧
+ *   - drift 検知: 全テナント peak SUM vs pg_database_size の乖離率
+ *
+ * これにより:
+ *   - L1 通知 (1GB): 高使用量テナントの早期把握
+ *   - L2 通知 (10GB): super_admin alert (= 個別ヒアリング判断)
+ *   - L3 通知 (50GB): write 拒否中テナント (= ハードキャップ到達)
+ *   - drift > 50% warning / > 100% critical: 計測漏れ or 運営直接 SQL の疑い
+ *
+ * 関連:
+ *   - ADR: docs/adr/0020-db-capacity-usage-based-billing.md §4 (4 層防御) / §8.3 (drift)
+ *   - config: src/config/db-capacity-pricing.ts (DB_DRIFT_*, classifyDbCapacityLevel)
+ *   - 計測: src/services/tenant-storage-tables.service.ts (getDbInstanceSizeBytes)
+ */
+
+import { prisma } from '@/lib/db';
+import {
+  DB_DRIFT_WARNING_RATIO,
+  DB_DRIFT_CRITICAL_RATIO,
+  SI_GB_BYTES,
+  SI_MB_BYTES,
+  type DbCapacityWarningLevel,
+} from '@/config/db-capacity-pricing';
+import { getDbInstanceSizeBytes } from '@/services/tenant-storage-tables.service';
+import { auth } from '@/lib/auth';
+import { isSuperAdmin } from '@/lib/permissions/role';
+import { recordError } from '@/services/error-log.service';
+
+/** DB から取った警告 Level の値が DbCapacityWarningLevel に収まるか型ガード */
+function isValidWarningLevel(value: string): value is DbCapacityWarningLevel {
+  return value === 'none' || value === 'l1' || value === 'l2' || value === 'l3';
+}
+
+function formatBytes(bytes: bigint): string {
+  const n = Number(bytes);
+  if (n >= SI_GB_BYTES) return `${(n / SI_GB_BYTES).toFixed(2)} GB`;
+  if (n >= SI_MB_BYTES) return `${(n / SI_MB_BYTES).toFixed(1)} MB`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+const LEVEL_LABELS: Record<DbCapacityWarningLevel, { label: string; color: string }> = {
+  none: { label: '正常', color: 'text-gray-600' },
+  l1: { label: 'L1 警告 (1GB)', color: 'text-blue-700 bg-blue-50' },
+  l2: { label: 'L2 警告 (10GB)', color: 'text-yellow-700 bg-yellow-50' },
+  l3: { label: 'L3 緊急 (50GB 到達/write 拒否)', color: 'text-red-700 bg-red-50' },
+};
+
+export async function DbCapacityAlertsCard() {
+  // 6 回目検証 (重大-3) で追加した内部認可チェック (= 親 page 認可に依存しない defense-in-depth)
+  const session = await auth();
+  if (!session?.user || !isSuperAdmin(session.user)) {
+    return null;
+  }
+
+  // 1. L1+ レベルテナント一覧 (none を除く)
+  const alertTenants = await prisma.tenant.findMany({
+    where: {
+      deletedAt: null,
+      dbCapacityWarningLevel: { in: ['l1', 'l2', 'l3'] },
+    },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      tenantSeq: true,
+      storageBytesPeakThisMonth: true,
+      storageBytesPeakAt: true,
+      dbCapacityWarningLevel: true,
+      storageGuardCircuitOpenedAt: true,
+    },
+    orderBy: { storageBytesPeakThisMonth: 'desc' },
+    take: 20,
+  });
+
+  // 2. drift 検知 (全テナント peak SUM vs pg_database_size)
+  // 6 回目検証 (重大-1): findMany 全件 → aggregate _sum で メモリ効率化 (5000+ テナント環境対応)
+  const peakAggregate = await prisma.tenant.aggregate({
+    where: { deletedAt: null },
+    _sum: { storageBytesPeakThisMonth: true },
+  });
+  const tenantPeakSum = peakAggregate._sum.storageBytesPeakThisMonth ?? BigInt(0);
+
+  let dbInstanceSize: bigint;
+  try {
+    dbInstanceSize = await getDbInstanceSizeBytes();
+  } catch {
+    dbInstanceSize = BigInt(0);
+  }
+
+  // drift ratio = (instance - tenantSum) / tenantSum, 0 除算回避
+  let driftRatio = 0;
+  if (tenantPeakSum > BigInt(0)) {
+    const diff = dbInstanceSize > tenantPeakSum ? dbInstanceSize - tenantPeakSum : BigInt(0);
+    driftRatio = Number(diff) / Number(tenantPeakSum);
+  }
+  const driftLevel: 'ok' | 'warning' | 'critical' =
+    driftRatio >= DB_DRIFT_CRITICAL_RATIO
+      ? 'critical'
+      : driftRatio >= DB_DRIFT_WARNING_RATIO
+        ? 'warning'
+        : 'ok';
+
+  const driftColor =
+    driftLevel === 'critical'
+      ? 'text-red-700 bg-red-50'
+      : driftLevel === 'warning'
+        ? 'text-yellow-700 bg-yellow-50'
+        : 'text-green-700 bg-green-50';
+
+  // 3. circuit breaker open 中テナント数 (= write 拒否中)
+  const circuitOpenCount = alertTenants.filter(
+    (t) => t.storageGuardCircuitOpenedAt != null,
+  ).length;
+
+  return (
+    <section
+      className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm"
+      aria-labelledby="db-capacity-alerts-title"
+    >
+      <h2 id="db-capacity-alerts-title" className="mb-4 text-lg font-semibold text-gray-900">
+        DB 容量アラート (ADR-0020)
+      </h2>
+
+      {/* drift 検知 + circuit open 件数 サマリ */}
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className={`rounded p-3 ${driftColor}`}>
+          <div className="text-xs font-medium">drift 検知</div>
+          <div className="mt-1 text-lg font-semibold">
+            {(driftRatio * 100).toFixed(1)}%
+          </div>
+          <div className="text-xs">
+            {driftLevel === 'critical'
+              ? `≥${DB_DRIFT_CRITICAL_RATIO * 100}% 重大 (計測漏れの疑い)`
+              : driftLevel === 'warning'
+                ? `≥${DB_DRIFT_WARNING_RATIO * 100}% 警告 (要調査)`
+                : '正常範囲'}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-medium text-gray-500">tenant peak SUM</div>
+          <div className="mt-1 text-lg font-semibold text-gray-900">
+            {formatBytes(tenantPeakSum)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-medium text-gray-500">pg_database_size</div>
+          <div className="mt-1 text-lg font-semibold text-gray-900">
+            {formatBytes(dbInstanceSize)}
+          </div>
+        </div>
+      </div>
+
+      {circuitOpenCount > 0 && (
+        <div className="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          ⚠️ <strong>{circuitOpenCount} 件</strong> のテナントが circuit breaker open
+          中で write 拒否されています。原因調査後、
+          <code>POST /api/admin/super/tenants/[id]/storage-guard-reset</code>{' '}
+          で復旧できます。
+        </div>
+      )}
+
+      {/* テナント一覧 */}
+      <div>
+        <h3 className="mb-2 text-sm font-medium text-gray-700">
+          警告レベルテナント ({alertTenants.length} 件)
+        </h3>
+        {alertTenants.length === 0 ? (
+          <p className="text-sm text-gray-500">
+            現在、警告レベル (L1 以上) に達しているテナントはありません。
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="border-b border-gray-200 text-left text-xs text-gray-500">
+              <tr>
+                <th className="pb-2 pr-2">テナント</th>
+                <th className="pb-2 pr-2">Level</th>
+                <th className="pb-2 pr-2 text-right">月中 peak</th>
+                <th className="pb-2">peak 到達日時</th>
+              </tr>
+            </thead>
+            <tbody>
+              {alertTenants.map((t) => {
+                // 6 回目検証 (重大-3): cast 前に型ガードで検証 (= DB に不正値が入っていても安全)
+                const rawLevel = t.dbCapacityWarningLevel;
+                const safeLevel: DbCapacityWarningLevel = isValidWarningLevel(rawLevel)
+                  ? rawLevel
+                  : 'none';
+                if (!isValidWarningLevel(rawLevel)) {
+                  // 不正値検知時は async fire-and-forget で error log
+                  recordError({
+                    severity: 'warn',
+                    source: 'server',
+                    message: `[db-capacity-alerts] invalid dbCapacityWarningLevel (tenant=${t.id})`,
+                    context: { kind: 'db_capacity_alerts_invalid_level', tenantId: t.id, rawLevel },
+                  }).catch(() => {});
+                }
+                const labelInfo = LEVEL_LABELS[safeLevel];
+                return (
+                  <tr key={t.id} className="border-b border-gray-100">
+                    <td className="py-2 pr-2">
+                      <div className="font-medium">{t.name}</div>
+                      <div className="text-xs text-gray-500">
+                        #{t.tenantSeq ?? '—'} / {t.slug}
+                      </div>
+                    </td>
+                    <td className="py-2 pr-2">
+                      <span
+                        className={`rounded px-2 py-0.5 text-xs font-medium ${labelInfo.color}`}
+                      >
+                        {labelInfo.label}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-2 text-right font-mono">
+                      {formatBytes(t.storageBytesPeakThisMonth)}
+                    </td>
+                    <td className="py-2 text-xs text-gray-600">
+                      {t.storageBytesPeakAt
+                        ? t.storageBytesPeakAt.toLocaleString('ja-JP', {
+                            timeZone: 'Asia/Tokyo',
+                          })
+                        : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  );
+}

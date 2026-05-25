@@ -24,6 +24,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:update-snapshots": "playwright test --update-snapshots",
     "e2e:coverage-check": "tsx scripts/check-e2e-coverage.ts",
+    "verify:storage-coverage": "tsx scripts/verify-tenant-storage-coverage.ts",
     "security:check": "tsx scripts/security-check.ts",
     "security:gate": "tsx scripts/security-check.ts --min-score=90",
     "check:banned-auth-patterns": "tsx scripts/check-banned-auth-patterns.ts",

@@ -172,8 +172,11 @@ APP_DEFAULT_LOCALE=en-US
 | `STRIPE_WEBHOOK_SECRET` | (未設定) | Stripe Webhook の署名検証用 secret (`whsec_xxx`)。Stripe Dashboard → Developers → Webhooks → 該当エンドポイント詳細から取得。**Test / Live で必ず別エンドポイントを作成**し、それぞれの secret を context 別に設定 |
 | `STRIPE_PRICE_HAIKU` | (未設定) | Expert per-call (Haiku) の Price ID (`price_xxx`)。Stripe Dashboard → Products で事前作成 (= **単価 ¥10、Metered**、ADR-0019 / 2026-05-24 改定: ¥5 → ¥10)。**ADR-0019 後の運用作業: 新 Price ID への切替が必要**、詳細 [STRIPE_SETUP.md](./STRIPE_SETUP.md)。Test / Live で別 Price ID |
 | `STRIPE_PRICE_SONNET` | (未設定) | Pro per-call (Sonnet) の Price ID。**¥15/call、Metered** (据置)。Test / Live で別 |
-| `STRIPE_PRICE_STORAGE_PLUS` | (未設定) | Storage Plus add-on の Price ID。¥500/月、Recurring 固定。Test / Live で別 |
-| `STRIPE_PRICE_STORAGE_PRO` | (未設定) | Storage Pro add-on の Price ID。¥1,500/月、Recurring 固定。Test / Live で別 |
+| `STRIPE_PRICE_STORAGE_PLUS` | (未設定) | ~~Storage Plus add-on の Price ID。¥500/月、Recurring 固定。Test / Live で別~~ **ADR-0020 (2026-05-25) で廃止**: 4 段階プラン廃止に伴い、Stripe Dashboard で archive 推奨 (環境変数は削除可) |
+| `STRIPE_PRICE_STORAGE_PRO` | (未設定) | ~~Storage Pro add-on の Price ID。¥1,500/月、Recurring 固定。Test / Live で別~~ **ADR-0020 (2026-05-25) で廃止** (同上) |
+| `STRIPE_PRICE_DB_CAPACITY_OVERAGE` | (未設定) | **ADR-0020 (2026-05-25) 新規**: DB 容量超過 (Meter event `tasukiba_db_capacity_overage_jpy`) の Price ID。**¥1/unit、Metered** (= R6 案 A: quantity に円整数を送る方式で `ApiCallLog.costJpy = Stripe quantity = 請求金額` の完全一致を保証)。詳細 [STRIPE_SETUP.md §2.5](./STRIPE_SETUP.md)。Test / Live で別 |
+| `DB_INSTANCE_ALERT_THRESHOLD_BYTES` | (Compute サイズ別 default: Micro=4GB / Small=8GB / Medium=20GB / Large=80GB) | **ADR-0020 (2026-05-25) 新規**: super_admin に Compute upgrade 検討 alert を出すしきい値 (バイト、SI 単位)。env で上書き可、未設定なら `SUPABASE_COMPUTE_SIZE` 環境変数に応じた default を使う |
+| `SUPABASE_COMPUTE_SIZE` | `micro` | **ADR-0020 (2026-05-25) 新規**: Supabase Pro Plan の Compute size。default 'micro' (1GB RAM、推奨 DB 5GB)。Compute upgrade 時に 'small' / 'medium' / 'large' に変更すると `DB_INSTANCE_ALERT_THRESHOLD_BYTES` が連動 |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | (未設定) | Stripe Publishable Key (= ブラウザ側で使用、機密情報ではない)。**Test mode = `pk_test_xxx` / Live mode = `pk_live_xxx`**。Stripe Elements / Checkout で使用。SECRET_KEY とペアで context 別に切替 |
 | `SYSTEM_USER_ID` | (未設定) | 自動操作 (Webhook ハンドラ / cron) で auditLog の `userId` に記録するシステムユーザ UUID。専用 seed (= `system@internal`、`isActive=false`) で作成済 |
 

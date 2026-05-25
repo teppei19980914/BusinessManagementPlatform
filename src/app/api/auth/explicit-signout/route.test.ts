@@ -2,10 +2,11 @@
  * POST /api/auth/explicit-signout テスト (fix/session-clearance, 2026-05-20)。
  *
  * 観点 (KDD §5.X+66 の「set-cookie ヘッダ存在を必ず assert」原則):
- *   - 認証済 POST → 200 + tokenVersion increment + 5 種 cookie 全てに Max-Age=0 が含まれる
+ *   - 認証済 POST → 200 + tokenVersion increment + session token 2 種 + theme cookie に Max-Age=0
  *   - 未認証 POST → 200 (べき等) + tokenVersion increment は呼ばれない + cookie 削除は実施
  *   - tokenVersion increment 失敗 → 500 (cookie 残留で「ログアウトしたつもり」を防ぐ)
  *   - 監査ログ (auth_event_logs) に logout イベントが記録される
+ *   - **CSRF cookie は削除しない** (KDD §5.X+138 / login flow CSRF race 対策)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -58,7 +59,7 @@ describe('POST /api/auth/explicit-signout', () => {
     vi.clearAllMocks();
   });
 
-  it('認証済 POST → 200 + tokenVersion increment + 5 種 cookie 全てに Max-Age=0 (auth 4 + theme 1)', async () => {
+  it('認証済 POST → 200 + tokenVersion increment + session 2 種 + theme cookie に Max-Age=0', async () => {
     vi.mocked(auth).mockResolvedValue(authedSession as never);
     vi.mocked(prisma.user.update).mockResolvedValue({} as never);
     vi.mocked(recordAuthEvent).mockResolvedValue(undefined as never);
@@ -74,13 +75,14 @@ describe('POST /api/auth/explicit-signout', () => {
     const setCookie = res.headers.get('set-cookie');
     // ★ KDD §5.X+66: set-cookie ヘッダの存在を必ず assert
     expect(setCookie).not.toBeNull();
-    // auth 系 4 cookie 全て削除
+    // session token 2 種 (production / development 両方) を削除
     expectCookieCleared(setCookie, '__Secure-authjs.session-token');
     expectCookieCleared(setCookie, 'authjs.session-token');
-    expectCookieCleared(setCookie, '__Host-authjs.csrf-token');
-    expectCookieCleared(setCookie, 'authjs.csrf-token');
     // UI preference cookie (テーマ) も削除
     expectCookieCleared(setCookie, THEME_COOKIE_NAME);
+    // ★ CSRF cookie は削除しない (KDD §5.X+138: login flow の signIn() CSRF refetch との
+    //   microtask race で MissingCSRF を引き起こすため、意図的に対象外)。
+    expect(setCookie).not.toContain('authjs.csrf-token');
   });
 
   it('未認証 POST → 200 (べき等) + tokenVersion increment は呼ばれない + cookie 削除は実施 (残留 cookie 防御)', async () => {
@@ -126,16 +128,14 @@ describe('POST /api/auth/explicit-signout', () => {
     expect(body.error.code).toBe('LOGOUT_FAILED');
   });
 
-  it('auth 系 cookie 属性: __Secure- prefix は Secure=true、無 prefix は Secure=false', async () => {
+  it('session token cookie 属性: __Secure- prefix は Secure=true、無 prefix は Secure=false', async () => {
     vi.mocked(auth).mockResolvedValue(null as never);
     const res = await POST();
 
     const setCookie = res.headers.get('set-cookie');
     expect(setCookie).not.toBeNull();
-    // __Secure- prefix の cookie は Secure フラグが必須 (browser が prefix を強制)
+    // __Secure- prefix の session token は Secure フラグが必須 (browser が prefix を強制)
     expect(setCookie).toMatch(/__Secure-authjs\.session-token=[^,]*Secure/i);
-    // __Host- prefix の CSRF cookie も Secure が必須
-    expect(setCookie).toMatch(/__Host-authjs\.csrf-token=[^,]*Secure/i);
     // HttpOnly / SameSite=Strict / Path=/ が含まれること (auth.config.ts と整合)
     expect(setCookie).toContain('HttpOnly');
     expect(setCookie).toContain('Path=/');

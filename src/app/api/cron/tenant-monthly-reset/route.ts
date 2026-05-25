@@ -57,6 +57,9 @@ export async function POST(req: NextRequest) {
         // 縮退モード確定仕様 (2026-05-14): 月初 embedding 補完バッチ結果
         embeddingBackfillTenantCount: result.embeddingBackfillTenantCount,
         embeddingBackfillGeneratedCount: result.embeddingBackfillGeneratedCount,
+        // ADR-0020 (2026-05-25): DB 容量超過の月初請求集計結果
+        dbCapacityBilledTenantCount: result.dbCapacityBilledTenantCount,
+        dbCapacityBilledTotalJpy: result.dbCapacityBilledTotalJpy,
       },
     };
   });

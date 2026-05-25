@@ -46,16 +46,27 @@ import {
   ADDON_MONTHLY_JPY as STORAGE_ADDON_MONTHLY_JPY,
   isStorageAddonPlan,
 } from '@/config/storage-addon';
-import { applyScheduledStorageChanges } from '@/services/tenant-storage.service';
+// ADR-0020 (2026-05-25): applyScheduledStorageChanges は 4 段階プラン廃止に伴い廃止。
+//   下記 stub は呼出側との型整合維持のため。実体は no-op。
 import { purgeOldDeletedTenants } from '@/services/super-admin.service';
+// ADR-0020 (2026-05-25): DB 容量従量課金 (月中 peak ベース)
+import {
+  calculateOverageJpy,
+  calculateStripeMeterQuantity,
+  classifyDbCapacityLevel,
+} from '@/config/db-capacity-pricing';
 // PR-4 (2026-05-15): テナント TZ ベースの月初判定
-import { getTenantMonthStart, getTenantPreviousYearMonth } from '@/lib/tenant-time';
+// ADR-0020 (2026-05-25): 退会時請求の current-month 識別子用に getTenantCurrentYearMonth も import
+import {
+  getTenantMonthStart,
+  getTenantPreviousYearMonth,
+  getTenantCurrentYearMonth,
+} from '@/lib/tenant-time';
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
 // 2026-05-14: 縮退モード確定仕様 — 月初に embedding=NULL のエンティティを一括補完。
 import { runMonthlyEmbeddingBackfill } from '@/services/embedding-backfill.service';
-// PR-V8.1 (2026-05-19) ★請求重要★: snapshot を ApiCallLog SUM (真値) ベースに変更するため
-//   tenant-time の翌月初関数を追加 import (集計範囲の上限として使う)
-import { getTenantNextMonthStart } from '@/lib/tenant-time';
+// 注: getTenantNextMonthStart は ADR-0020 改修後の現コードでは未使用 (旧 saveMonthlyUsageSnapshots
+//   が prevMonthMid 経由で TZ 月初を導出するため不要)。export 維持は呼出側互換のみ。
 
 /**
  * 2026-05-11: 月次使用量履歴のスナップショット保存対象から **除外** するテナント。
@@ -87,6 +98,10 @@ export interface TenantMonthlyResetResult {
   embeddingBackfillTenantCount: number;
   /** 縮退モード確定仕様 (2026-05-14): 月初 embedding 補完で生成成功した embedding 総数。 */
   embeddingBackfillGeneratedCount: number;
+  /** ADR-0020 (2026-05-25): DB 容量超過で ApiCallLog INSERT したテナント件数 */
+  dbCapacityBilledTenantCount: number;
+  /** ADR-0020: DB 容量超過の合計請求額 (円、当月 cron で billed した分) */
+  dbCapacityBilledTotalJpy: number;
 }
 
 /**
@@ -209,6 +224,13 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
         _count: { _all: true },
         _sum: { costJpy: true },
       });
+      // ADR-0020 (2026-05-25): BILLABLE_FEATURE_UNITS は 'db-capacity-overage' も含むため、
+      //   reconciledCostJpy には API 利用 + DB 容量超過の **合計** が入る。
+      //   TenantMonthlyUsageHistory.apiCostJpy フィールド名は歴史的経緯のままだが、
+      //   実際は「課金対象 ApiCallLog の総コスト」(= 総請求額の根拠) を表す。
+      //   3 回目検証 A-1: 将来 schema 拡張で dbCapacityOverageJpy カラムを分離する場合は
+      //   migration + saveMonthlyUsageSnapshots + deleteTenant snapshot + super_admin CSV を
+      //   3 レイヤ同期修正すること (feedback_3layer_sync_filter.md)。
       const reconciledCallCount = apiAgg._count._all;
       const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
 
@@ -411,23 +433,285 @@ export async function applyScheduledPlanChanges(
 }
 
 /**
+ * ADR-0020 (2026-05-25): DB 容量従量課金 — 月中 peak ベースで前月分を ApiCallLog に記録。
+ *
+ * 動作:
+ *   - 対象: deletedAt IS NULL AND SNAPSHOT_EXCLUDED_TENANT_IDS 以外
+ *   - storageBytesPeakThisMonth を読出 → calculateOverageJpy で課金額算出
+ *   - 課金額 > 0 なら:
+ *       1. ApiCallLog INSERT (featureUnit='db-capacity-overage', costJpy, createdAt=月跨ぎ瞬間)
+ *       2. Tenant.currentMonthApiCostJpy increment (= billing invariant 維持)
+ *       3. StripeUsageRecordQueue enqueue (callType='db_capacity_overage', quantity=costJpy 整数 R6 案 A)
+ *   - 課金有無に関わらず:
+ *       4. storageBytesPeakThisMonth = storageBytesUsed (= 新月の起点に reset)
+ *       5. dbCapacityWarningLevel = classify(現在値) で再計算
+ *       6. dbInstanceBytesPeakThisMonth = NULL (= drift 監視リセット)
+ *
+ * 順序重要: saveMonthlyUsageSnapshots より **前** に実行する。
+ *   さもないと TenantMonthlyUsageHistory に db-capacity-overage 分が反映されない。
+ *
+ * トランザクション: 1 テナント = 1 transaction で確定 (= 真値経路の不整合を物理的に不可能化)。
+ *
+ * 関連: ADR-0020 §4.1 / docs/adr/0020-db-capacity-usage-based-billing.md
+ */
+export async function processTenantDbCapacityOverage(
+  now: Date = new Date(),
+): Promise<{ billedTenantCount: number; totalBilledJpy: number }> {
+  const tenants = await prisma.tenant.findMany({
+    where: {
+      id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS },
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      timezone: true,
+      lastResetAt: true,
+      storageBytesUsed: true,
+      storageBytesPeakThisMonth: true,
+      storageGracePeriodStartedAt: true, // 後続の冪等性チェックで参照
+    },
+  });
+
+  // 当該月既に処理済 (= lastResetAt < 今 cron での月初なら未処理) のフィルタ
+  const targets = tenants.filter((t) => {
+    const monthStart = getTenantMonthStart(now, t.timezone);
+    return t.lastResetAt == null || t.lastResetAt < monthStart;
+  });
+
+  // 4 回目検証 (G-2) で発見した N+1 修正: audit_log.userId に使う systemUser は
+  // ループの **外** で 1 度だけ取得して引数で渡す (= 数百テナントで cron timeout 防止)
+  const systemUserForAudit = await prisma.user.findFirst({
+    where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  let billedTenantCount = 0;
+  let totalBilledJpy = 0;
+
+  for (const tenant of targets) {
+    try {
+      const result = await billOneTenantDbCapacityOverage({
+        tenantId: tenant.id,
+        timezone: tenant.timezone,
+        storageBytesUsed: tenant.storageBytesUsed,
+        storageBytesPeakThisMonth: tenant.storageBytesPeakThisMonth,
+        billingScope: 'previous-month', // cron は前月分を請求
+        now,
+        systemUserIdForAudit: systemUserForAudit?.id ?? null,
+      });
+
+      if (result.billedJpy > 0) {
+        billedTenantCount += 1;
+        totalBilledJpy += result.billedJpy;
+      }
+    } catch (error) {
+      // 1 テナントの失敗で他テナントの処理を止めない
+      await recordError({
+        severity: 'error',
+        source: 'cron',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        context: {
+          kind: 'tenant_db_capacity_overage',
+          tenantId: tenant.id,
+          peakBytes: tenant.storageBytesPeakThisMonth.toString(),
+        },
+      });
+    }
+  }
+
+  return { billedTenantCount, totalBilledJpy };
+}
+
+/**
+ * 単一テナントの DB 容量超過分を ApiCallLog INSERT する共通ロジック (ADR-0020 / 2026-05-25)。
+ *
+ * 用途:
+ *   - 月初 cron (processTenantDbCapacityOverage): 全テナント前月分一括 → billingScope='previous-month'
+ *   - 退会時 (tenant-withdrawal-billing.service): 単一テナント当月分即時 → billingScope='current-month-on-withdrawal'
+ *
+ * 動作:
+ *   1. peak から calculateOverageJpy で costJpy 算出
+ *   2. > 0 なら ApiCallLog INSERT + counter increment + Stripe queue enqueue (= billing invariant)
+ *   3. peak / drift / warning level を reset (退会時は呼出側の論理削除でカラム解放される)
+ *
+ * R5 横断対応 (DB 容量 + API 利用量を退会時に抜け漏れなく請求):
+ *   - API 利用量は既存の saveMonthlyUsageSnapshots / deleteTenant 内 SUM で吸収される
+ *   - DB 容量は本関数を呼ぶことで月末 cron を待たずに請求可能
+ *
+ * @returns { billedJpy, apiCallLogId } 課金実施時は billedJpy > 0、なければ 0 + apiCallLogId=null
+ */
+export async function billOneTenantDbCapacityOverage(args: {
+  tenantId: string;
+  timezone: string;
+  storageBytesUsed: bigint;
+  storageBytesPeakThisMonth: bigint;
+  /** 'previous-month' = 月初 cron 用 (createdAt は前月末瞬間)、'current-month-on-withdrawal' = 退会用 (createdAt は now) */
+  billingScope: 'previous-month' | 'current-month-on-withdrawal';
+  now: Date;
+  /**
+   * 4 回目検証 G-2 で追加: audit_log.userId 用。
+   * 呼出ループの外で 1 度だけ取得した systemUser を渡す。
+   * 未指定 (= 後方互換) なら関数内で fallback として findFirst 実行 (1 件) するが、
+   * 大量呼出時は外部から渡すこと。
+   */
+  systemUserIdForAudit?: string | null;
+}): Promise<{ billedJpy: number; apiCallLogId: string | null }> {
+  const { tenantId, timezone, storageBytesUsed, storageBytesPeakThisMonth, billingScope, now } = args;
+
+  const peakBytes = storageBytesPeakThisMonth;
+  const costJpy = calculateOverageJpy(peakBytes);
+  const stripeQuantity = calculateStripeMeterQuantity(costJpy);
+
+  // 月跨ぎ識別子 (= ApiCallLog.requestId / 二重 INSERT 防止用)
+  // - previous-month: 前月の yearMonth (月初 cron 用)
+  // - current-month-on-withdrawal: 当月の yearMonth (退会用)
+  //
+  // R5-横断対応 (3 回目検証で発見した B-1): 二重請求防止のため
+  //   requestId に billingScope も合成し、scope ごとに完全 unique。
+  //   ・月初 cron (previous-month) と退会 (current-month-on-withdrawal) が同月実行されても
+  //     scope サフィックスで識別され二重 INSERT 不可
+  //   ・将来 scope が増えた場合も「{base}-{tenant}-{ym}-{scope}」で衝突なし
+  //   ・Stripe identifier も同じ requestId 基準で 24h 重複防止
+  const monthStart = getTenantMonthStart(now, timezone);
+  const prevMonthEndInstant = new Date(monthStart.getTime() - 1);
+  const createdAtForBilling =
+    billingScope === 'previous-month' ? prevMonthEndInstant : now;
+  const occurredAtForStripe = createdAtForBilling;
+  const yearMonthForRequest =
+    billingScope === 'previous-month'
+      ? getTenantPreviousYearMonth(now, timezone)
+      : getTenantCurrentYearMonth(now, timezone);
+  // billingScope を必ず requestId に含めて scope 越え二重課金を物理的に不可能化
+  const requestId = `db-capacity-overage-${tenantId}-${yearMonthForRequest}-${billingScope}`;
+
+  let createdLogId: string | null = null;
+
+  // 単一 transaction で billing invariant を確定 (ApiCallLog + counter + Stripe queue + audit_log)
+  await prisma.$transaction(async (tx) => {
+    if (costJpy > 0) {
+      // 1. ApiCallLog INSERT (真値、ADR-0020)
+      const log = await tx.apiCallLog.create({
+        data: {
+          tenantId,
+          userId: null,
+          featureUnit: 'db-capacity-overage',
+          modelName: 'db-capacity',
+          llmInputTokens: null,
+          llmOutputTokens: null,
+          embeddingTokens: null,
+          costJpy,
+          latencyMs: 0,
+          requestId,
+          createdAt: createdAtForBilling,
+        },
+      });
+      createdLogId = log.id;
+
+      // 2. Tenant.currentMonthApiCostJpy increment
+      await tx.tenant.update({
+        where: { id: tenantId },
+        data: {
+          currentMonthApiCostJpy: { increment: costJpy },
+        },
+      });
+
+      // 3. StripeUsageRecordQueue enqueue (R6 案 A: quantity=costJpy 整数)
+      await tx.stripeUsageRecordQueue.create({
+        data: {
+          tenantId,
+          callType: 'db_capacity_overage',
+          apiCallLogId: log.id,
+          quantity: stripeQuantity,
+          occurredAt: occurredAtForStripe,
+          nextSendAt: now,
+        },
+      });
+
+      // 4. audit_log INSERT (E-1: 3 回目検証で発見した運用性ギャップ修正)
+      //    誤請求や問い合わせ発生時に「いつ・どの peak で・いくら billed したか」を追跡可能にする
+      //    userId は cron / 退会 API どちらも system 起動。
+      //    4 回目検証 G-2: 呼出側から渡される systemUserIdForAudit を優先、未指定なら fallback で 1 回検索
+      let systemUserId: string | null = args.systemUserIdForAudit ?? null;
+      if (systemUserId === null) {
+        const systemUserForAudit = await tx.user.findFirst({
+          where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+          select: { id: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        systemUserId = systemUserForAudit?.id ?? null;
+      }
+      if (systemUserId) {
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: systemUserId,
+            action: 'CREATE',
+            entityType: 'api_call_log',
+            entityId: log.id,
+            beforeValue: { storageBytesPeakThisMonth: peakBytes.toString() },
+            afterValue: {
+              featureUnit: 'db-capacity-overage',
+              billingScope,
+              costJpy,
+              stripeQuantity,
+              requestId,
+              billedAt: createdAtForBilling.toISOString(),
+              adr: 'ADR-0020',
+            },
+          },
+        });
+      }
+    }
+
+    // 4-6. peak / level / drift を reset
+    //   - previous-month: 新月の起点 = 現在 storageBytesUsed
+    //   - current-month-on-withdrawal: テナント論理削除されるが念のため reset (Stripe queue 残置のため対象として残る)
+    const currentUsedBytes = storageBytesUsed;
+    const newLevel = classifyDbCapacityLevel(currentUsedBytes);
+    await tx.tenant.update({
+      where: { id: tenantId },
+      data: {
+        storageBytesPeakThisMonth: currentUsedBytes,
+        storageBytesPeakAt: now,
+        dbInstanceBytesPeakThisMonth: null,
+        dbCapacityWarningLevel: newLevel,
+      },
+    });
+  });
+
+  return { billedJpy: costJpy, apiCallLogId: createdLogId };
+}
+
+/**
  * 月次バッチのエントリポイント。Vercel Cron が叩く API ルートから呼ばれる。
  *
- * 順序: snapshot 保存 → 月初リセット → プラン変更適用
- *
- * P-5b (2026-05-08): スナップショット保存ステップを追加。リセット **前** の値を
- * tenant_monthly_usage_history に保存することで、後から月次の使用量を再現できる
- * (請求書根拠 / 履歴グラフ / CSV エクスポート)。
+ * 順序 (ADR-0020 / 2026-05-25 改訂):
+ *   1. **processTenantDbCapacityOverage**: DB 容量超過分を ApiCallLog INSERT (前月分として)
+ *   2. saveMonthlyUsageSnapshots: 前月分の使用量を tenant_monthly_usage_history に保存
+ *      (= 上記 ApiCallLog を含めた真値で snapshot)
+ *   3. resetTenantMonthlyCounters: API call counter / cost をリセット
+ *   4. applyScheduledPlanChanges: プラン変更予約を適用
+ *   5. applyScheduledStorageChanges (P9-cleanup 予定): 旧 storage addon 予約
+ *   6. runMonthlyEmbeddingBackfill: 縮退モード補完
+ *   7. purgeOldDeletedTenants: 90 日経過テナント物理削除
  */
 export async function runTenantMonthlyReset(
   now: Date = new Date(),
 ): Promise<TenantMonthlyResetResult> {
+  // ADR-0020 (2026-05-25): まず DB 容量超過分を ApiCallLog として記録する。
+  //   これにより後続の saveMonthlyUsageSnapshots が「db-capacity-overage を含んだ正しい SUM」を保存する。
+  const dbCapacityResult = await processTenantDbCapacityOverage(now);
+
   // P-5b: リセット直前にスナップショット保存 (順序重要: reset 後だと値が 0 になる)
   const snapshotSavedCount = await saveMonthlyUsageSnapshots(now);
   const resetCount = await resetTenantMonthlyCounters(now);
   const { applied, invalidSkipped } = await applyScheduledPlanChanges(now);
-  // Storage add-on (Phase 2 / 2026-05-08): LLM プランと同様、ダウングレード予約を月初に適用
-  const storageResult = await applyScheduledStorageChanges(now);
+  // ADR-0020 (2026-05-25): applyScheduledStorageChanges は廃止。
+  //   4 段階プラン (Standard/Plus/Pro/Enterprise) を廃止し従量課金に統一したため
+  //   ダウングレード予約適用フローは不要。互換性のため 0/0 を返す stub のみ残置。
+  const storageResult = { applied: 0, skippedDueToUsage: 0 };
   // 縮退モード確定仕様 (2026-05-14): counter リセット **後** に embedding=NULL の業務エンティティを
   //   一括補完する (= 当月の予算枠を使うので、当月分の課金として記録される)。
   //   テナント月間上限を超える分は次月の cron に持ち越され、過剰課金しない設計。
@@ -469,5 +753,7 @@ export async function runTenantMonthlyReset(
     purgedRowCount: purgeResult.totalRowsDeleted,
     embeddingBackfillTenantCount,
     embeddingBackfillGeneratedCount,
+    dbCapacityBilledTenantCount: dbCapacityResult.billedTenantCount,
+    dbCapacityBilledTotalJpy: dbCapacityResult.totalBilledJpy,
   };
 }
