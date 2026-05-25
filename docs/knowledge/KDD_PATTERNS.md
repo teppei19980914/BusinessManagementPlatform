@@ -14911,3 +14911,94 @@ ADR-0020 PR #443 に対して **5 回連続フルスキャン検証**:
 - 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
 - 関連 memory: [feedback_repeated_verification_request.md](../../memory/), [feedback_perf_antipatterns.md](../../memory/) (重複 findMany 警戒)
 - 関連 file: [src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx), [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts)
+
+---
+
+## 5.X+138 **★severity-2 E2E 連鎖 fail 根本原因 fix★ `explicit-signout` から CSRF cookie 削除を除去 → login flow MissingCSRF race を構造的解消 (2026-05-25 / PR #443)**
+
+### 事象
+
+PR #443 (DB 容量従量課金) の E2E が CI で intermittent fail。同一 commit (7cec4e5) の 9 連続 run のうち **5 回 failure / 4 回 success** という典型的な flake パターン。
+
+```
+✘ 31 [chromium] › e2e/specs/07-gantt-timeline.spec.ts:90:7 ›
+   @feature:project:gantt ガントチャート (PR #96) ›
+   /gantt 画面が render される (ガントタブ固有要素確認) (0ms)
+TimeoutError: page.waitForURL: Timeout 15000ms exceeded.
+  waiting for navigation to "**/projects" until "load"
+  at fixtures/auth.ts:17
+```
+
+サーバ側ログ:
+```
+[WebServer] [auth][error] MissingCSRF: CSRF token was missing during an action callback.
+```
+
+artifact screenshot は login 画面に "メールアドレスまたはパスワードが正しくありません" を表示した状態。フォームには tenant slug / email / password が入力済 → **login 自体は送信されたが、サーバが MissingCSRF で拒否 → /login に戻され credential エラー表示** という流れ。複数 run で同型エラーが gantt / column-sort / visual dashboard / project-detail-tabs 等の異なる spec で intermittent に発生。
+
+### 根本原因 (§5.X+128 で特定済の問題が PR #443 でも再発)
+
+login form `handleSubmit` ([src/app/(auth)/login/page.tsx:75-88](../../src/app/(auth)/login/page.tsx#L75)) は signIn 前に `/api/auth/explicit-signout` を呼び、defense-in-depth で旧セッションを破棄する設計だった (KDD §5.X+72 の Netlify Set-Cookie 脱落事故への対策)。しかし旧 `explicit-signout` は **session token と並んで CSRF cookie (`authjs.csrf-token` / `__Host-authjs.csrf-token`) も `Max-Age=0` で削除** していたため、続けて呼ばれる `signIn('credentials')` の内部 flow:
+
+```
+1. await fetch('/api/auth/explicit-signout', { method: 'POST' })
+     → Set-Cookie: authjs.csrf-token=; Max-Age=0  (CSRF cookie 削除)
+2. await signIn('credentials', { ... })
+     → getCsrfToken(): GET /api/auth/csrf
+         → Set-Cookie: authjs.csrf-token=<new>  (新 CSRF cookie 設定)
+     → POST /api/auth/callback/credentials  (csrfToken in body)
+         → サーバが cookie を validate
+```
+
+`fetch` promise の resolve と browser の Set-Cookie 反映には **microtask 単位の race** があり、稀に step 2 の POST 時点で CSRF cookie が未設定 / 未反映 → `MissingCSRF` でサーバ拒否。
+
+§5.X+128 では retries + ヘルパ統一の対症療法で対処し、**根本 fix (CSRF cookie 削除を除去) は別 PR で security review した上で実施推奨** とされていた。本 PR #443 で当該根本 fix を実施。
+
+### 対応
+
+#### A. `explicit-signout` から CSRF cookie 削除を除去 ([src/app/api/auth/explicit-signout/route.ts](../../src/app/api/auth/explicit-signout/route.ts))
+
+```diff
+ const AUTH_COOKIE_NAMES_TO_CLEAR = [
+   '__Secure-authjs.session-token', // production session token
+   'authjs.session-token',          // development session token
+-  '__Host-authjs.csrf-token',      // production CSRF token
+-  'authjs.csrf-token',             // development CSRF token
+ ] as const;
+```
+
+**security 影響なし** の判断根拠:
+- CSRF token は **user identity に紐づかない anti-forgery token**。リクエスト毎に regenerate されうる
+- ログアウト時に CSRF cookie が残留しても、次のユーザが login form を開いた時点で `/api/auth/csrf` 経由で fresh token を取得 → 古い token は上書きされる
+- KDD §5.X+72 が対象としていた「Netlify Set-Cookie 脱落事故 = 他人になりすまし」の主因は **session token 残留**であり、CSRF token ではない
+- tokenVersion increment + layout DB 照合 (`requireAuthForLayout`) の defense-in-depth は維持されているため、session token 残留しても DB 側で「実質ログアウト」が成立する
+
+#### B. `route.test.ts` の assert を新仕様に同期 ([src/app/api/auth/explicit-signout/route.test.ts](../../src/app/api/auth/explicit-signout/route.test.ts))
+
+- 「5 種 cookie 全てに Max-Age=0」テストを「session 2 種 + theme cookie に Max-Age=0」に変更
+- **CSRF cookie が含まれないこと** を明示 assert (`expect(setCookie).not.toContain('authjs.csrf-token')`) → 将来うっかり戻されたら検知
+
+#### C. spec 07 (gantt) の `retries: 0` を解除 ([e2e/specs/07-gantt-timeline.spec.ts:41](../../e2e/specs/07-gantt-timeline.spec.ts#L41))
+
+§5.X+128 で spec 16 に適用した「`retries: 0` 明示 override を削除して `playwright.config.ts` の `retries: isCI ? 2 : 0` を尊重」と同じ対応を spec 07 にも適用。根本 fix で race は消えるはずだが、別経路の flake (chromium-mobile dropdown click 等) も CI で吸収できるようにする。
+
+### 再発防止
+
+- **新規 route で cookie 削除を実装する場合、削除対象 cookie が「session 系」か「CSRF / 他用途」かを明示判断する**: session 系は logout で削除すべきだが、anti-forgery token / opaque state token は削除すると後続フローを壊しうる
+- **「defense-in-depth」と「実害なき動作」は別概念**: 本ケースでは defense-in-depth で CSRF も削除していたが、それが race の原因だった。「念のため消す」は **race の温床**になりうる
+- **既存 retries 設定の override は要根拠**: `playwright.config.ts` の retries を spec 単位で 0 に上書きするのは、その spec が **明示的に retry すべきでない** 場合のみに限る (例: テスト内で意図的に retry-unsafe な側面を検査する場合)
+- **同一 commit の複数 CI run で 50% 前後 fail rate** は典型的な race 系 flake のシグナル。retries 0 の spec で fail パターンが run ごとに spec が変わる場合、特に疑う
+
+### 教訓 (転用可能)
+
+- **「対症療法と根本 fix を切り分ける」KDD パターンの実例**: §5.X+128 で「retries で吸収する対症療法」と「explicit-signout 修正の根本 fix」を分離して記録 → 後続 PR で根本 fix を実施できる構造が機能した
+- **cookie 削除の副作用は微妙**: HTTP cookie の Set-Cookie 反映タイミングは browser 実装依存で、`await fetch` の promise resolve は cookie jar 更新を保証しない microtask race がある。「sequential な fetch」でも cookie 状態は不確定とみなす
+- **NextAuth v5 の getCsrfToken は自動 refetch するが race-safe ではない**: signIn が内部で getCsrfToken → POST callback をシーケンシャルに await するが、その間に Set-Cookie が反映されない可能性は残る。第三者の cookie 削除 fetch が直前にあると race window が開く
+- **★同一 commit の連続 CI run の success/failure 比率は調査の起点★**: 単発 fail なら spec の問題、連続 50% 前後なら environment 問題、5 連続 fail なら deterministic 問題と切り分けできる
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 KDD: [§5.X+128](#5x128) (本根本 fix の前段、retries + ヘルパ統一による対症療法) / [§5.X+129](#5x129) (visual specs 3 件への横展開) / [§5.X+72](#5x72) (`explicit-signout` 導入経緯、Netlify Set-Cookie 脱落事故)
+- 関連 file: [src/app/api/auth/explicit-signout/route.ts](../../src/app/api/auth/explicit-signout/route.ts), [src/app/api/auth/explicit-signout/route.test.ts](../../src/app/api/auth/explicit-signout/route.test.ts), [src/app/(auth)/login/page.tsx](../../src/app/(auth)/login/page.tsx), [e2e/specs/07-gantt-timeline.spec.ts](../../e2e/specs/07-gantt-timeline.spec.ts)
+- 累計影響: §5.X+128/+129 (4 spec を auth.ts ヘルパに統一) + §5.X+138 (根本 fix 適用) で **CSRF race による E2E flake は構造的に解消**

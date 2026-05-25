@@ -9,13 +9,29 @@
  *   - **【P0】 Server-side で必ず無効化**: `user.tokenVersion` を increment する。
  *     これにより、cookie が残留しても次回 API 呼出 / Server Component 描画で
  *     `getAuthenticatedUser` / `requireAuthForLayout` が DB 照合 → 401 / redirect に倒れる。
- *   - **【P0】 Cookie 削除はベストエフォート**: auth 系 4 cookie を `Max-Age=0` で削除。
+ *   - **【P0】 Cookie 削除はベストエフォート**: **session token 系のみ** `Max-Age=0` で削除。
  *     Set-Cookie 透過時は綺麗に消える、脱落時もサーバ側は既に無効化済。
  *   - **【P1】 UI preference cookie もログアウトで削除**: `tasukiba-theme` を同時削除。
  *     ユーザの DB themePreference は維持されるため、再ログイン時に JWT 経由で復元
  *     (`src/app/layout.tsx` の cookie > JWT > 'light' fallback)。
  *   - **べき等性**: 未認証 POST でも 200 を返す + cookie 削除 Set-Cookie は付与する
  *     (cookie が残留しているが session が既に無効、というシナリオを想定)。
+ *
+ * ★ CSRF cookie を削除しない理由 (KDD §5.X+138 / 2026-05-25 修正):
+ *   旧実装は `authjs.csrf-token` / `__Host-authjs.csrf-token` も削除対象だったが、
+ *   login form (`src/app/(auth)/login/page.tsx:handleSubmit`) が signIn 前に本 route を
+ *   呼ぶフローで以下の race が発生した:
+ *     1. `explicit-signout` が CSRF cookie を Max-Age=0 で削除
+ *     2. `signIn('credentials')` 内部の `getCsrfToken()` が新しい CSRF cookie を Set-Cookie
+ *     3. 続けて `POST /api/auth/callback/credentials` を fire
+ *     4. fetch promise resolution と browser の Set-Cookie 反映に microtask 単位の race
+ *        があり、稀に POST 時に CSRF cookie が未設定で **`MissingCSRF` エラー**
+ *     5. ログインが失敗し /login に戻され「メールアドレスまたはパスワードが正しくありません」
+ *        が表示される (KDD §5.X+128 / §5.X+129 で E2E flake として発覚)
+ *   CSRF token は user identity に紐づかない anti-forgery token (リクエスト毎に regenerate)
+ *   のため、ログアウト時に削除する必要は無い。session token を消せば「実質ログアウト」
+ *   は成立する。Netlify Set-Cookie 脱落事故 (KDD §5.X+72) の主因は session token 残留で
+ *   あり CSRF token ではない。
  *
  * Middleware 除外 (★ 重要):
  *   本 route は `src/middleware.ts` の matcher 除外リストに**必ず追加**する。
@@ -28,6 +44,7 @@
  *   - tokenVersion 検証: src/lib/api-helpers.ts (getAuthenticatedUser), src/lib/page-auth.ts
  *   - auth cookie 設定の整合元: src/lib/auth.config.ts cookies.sessionToken.options
  *   - theme cookie: src/config/themes.ts THEME_COOKIE_NAME
+ *   - CSRF race の経緯: KDD §5.X+128 / §5.X+129 / §5.X+138
  */
 
 import { NextResponse } from 'next/server';
@@ -49,12 +66,17 @@ function logExplicitSignoutFailure(payload: { reason: string; [key: string]: unk
   console.error('[explicit-signout] failed', payload);
 }
 
-/** NextAuth v5 が使う auth 系 cookie 名 (production / development の両方を削除対象に含める)。 */
+/**
+ * NextAuth v5 が使う session token cookie 名 (production / development 両方を削除対象に含める)。
+ *
+ * CSRF cookie (`authjs.csrf-token` / `__Host-authjs.csrf-token`) は **意図的に含めない**。
+ * 理由は本ファイル冒頭 docblock の「★ CSRF cookie を削除しない理由」を参照。
+ * 端的には、本 route 直後に signIn() が走る login flow で CSRF refetch との race を生み、
+ * `MissingCSRF` で login 失敗する flake の原因になるため。
+ */
 const AUTH_COOKIE_NAMES_TO_CLEAR = [
   '__Secure-authjs.session-token', // production session token
   'authjs.session-token',          // development session token
-  '__Host-authjs.csrf-token',      // production CSRF token
-  'authjs.csrf-token',             // development CSRF token
 ] as const;
 
 export async function POST() {
@@ -95,7 +117,8 @@ export async function POST() {
 
   const response = NextResponse.json({ ok: true });
 
-  // 【P0】 auth 系 cookie 削除 (Max-Age=0)。両環境名を網羅して salt 判定ズレ事故 (KDD §5.X+66 補遺) を回避
+  // 【P0】 session token cookie 削除 (Max-Age=0)。両環境名を網羅して salt 判定ズレ事故 (KDD §5.X+66 補遺) を回避
+  //        CSRF cookie は意図的に削除しない (KDD §5.X+138 / login flow CSRF race 対策)
   for (const name of AUTH_COOKIE_NAMES_TO_CLEAR) {
     response.cookies.set(name, '', {
       httpOnly: true,
