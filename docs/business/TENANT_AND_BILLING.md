@@ -2,9 +2,11 @@
 
 本ドキュメントは、本サービスのマルチテナント運用フローと、3 プラン構成 (Beginner / Expert / Pro) + 従量課金 (per-API-call) のビジネスロジックを集約する。技術的な実装設計は [../design/SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md)、ユーザから見える挙動は [../specification/](../specification/) を参照。
 
-## 🆕 最新の料金体系: ADR-0019 (2026-05-24)
+## 🆕 最新の料金体系: ADR-0019 + ADR-0020 (2026-05-25)
 
-**現行料金体系の確定版は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)** です。本ドキュメント中の `¥5/call` (Expert) や `月 100 回上限` (Beginner) 等の数値は ADR-0019 で以下のように改定されています:
+**現行料金体系の確定版は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)** です。
+
+### LLM/Embedding 課金 (ADR-0019 / 2026-05-24)
 
 | 項目 | ADR-0002 (旧) | **ADR-0019 (現行)** |
 |---|---|---|
@@ -14,7 +16,41 @@
 | 課金対象 | 全 LLM/Embedding 呼出 | **`BILLABLE_FEATURE_UNITS` のみ** (project-upsert / suggestion-explanation / auto-tag-extract) |
 | 無料化された機能 | — | **資産入力 (Knowledge/RiskIssue/Retrospective/Memo) + チャット検索 + CSV インポート + 月初 backfill cron** |
 
-詳細根拠 (実コスト構造の再検証、Voyage 200M 無料枠等) は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) 参照。
+### DB 容量課金 (ADR-0020 / 2026-05-25)
+
+| 項目 | 旧 4 段階プラン (PR-3 / 2026-05-15) | **ADR-0020 (現行)** |
+|---|---|---|
+| 課金モデル | 月額固定 (Standard ¥0 / Plus ¥500 / Pro ¥1,500 / Enterprise ¥5,000) | **階段関数型従量課金** |
+| 無料枠 | 20MB (Standard) | **50MB / tenant** (SI 単位) |
+| 超過単価 | プラン上限超過は 7 日 Grace 後 write 拒否 | **¥50 / GB tier** (1MB 未満切上 + 1GB tier 切上) |
+| 計測時点 | 現在の使用量 | **月中 peak** (= 月末削除→月初再投入の抜け道防止) |
+| ハードキャップ | 各プラン上限 (20MB/220MB/1.02GB/5.02GB) | **50GB SI 一律** (= 他テナント保護の技術的安全弁) |
+| 計測網羅性 | 16 テーブル SQL ハードコード (新規テーブル追加時の漏れリスク) | **動的解決** (`information_schema` 由来) + CI ガード |
+| 計測対象テーブル数 | 16 | **36 テーブル** (= 旧実装の 20+ テーブルが課金漏れだった) |
+
+請求例:
+- 0-50MB → **¥0**
+- 51MB-1,050MB → **¥50** (= tier 1)
+- 1,051MB-2,050MB → **¥100** (= tier 2)
+- 50GB (ハードキャップ到達) → **¥2,500** (= tier 50)
+
+詳細根拠 (実コスト構造の再検証、Supabase 原価、4 層防御、circuit breaker 等) は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) 参照。
+
+### 横断的な改修 (R5 退会時請求漏れ修正)
+
+旧仕様の月初 cron は `deletedAt IS NULL` フィルタで退会済テナント除外 → 月途中退会の当月分使用量が **永久に課金されない** 抜け道があった。
+
+ADR-0020 で **退会時即時請求集計** ([src/services/tenant-withdrawal-billing.service.ts](../../src/services/tenant-withdrawal-billing.service.ts)) を導入し、退会 API ([deleteTenant](../../src/services/super-admin.service.ts)) から呼び出して **DB 容量 + API 利用量を抜け漏れなく請求** できる構造に。
+
+### 単価変更ルール
+
+将来の単価変更時 (規約変更扱い):
+> 料金の値上げまたは課金体系の変更:
+> **効力発生日の 30 日以上前** から ユーザ規約ページに掲示し、かつ **登録メールアドレスへ通知** する。
+
+- 値下げの場合は即時適用可
+- ADR 改訂必須 (新 ADR-002X 起票)
+- 過去使用分には旧単価適用 (= 遡及課金禁止)
 
 ## ⚠️ 課金モデルの最新版は Part 5 (+ ADR-0019 で再改定)
 

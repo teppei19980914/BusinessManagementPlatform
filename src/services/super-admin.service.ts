@@ -54,6 +54,8 @@ import {
 import { getTenantCurrentYearMonth, getTenantMonthStart } from '@/lib/tenant-time';
 // PR-V8.2 (2026-05-19) ★請求 invariant★: getDefaultTenantOwnSummary / deleteTenant で SUM 真値
 import { reconcileTenantApiUsage } from './api-usage-recalc.service';
+// ADR-0020 (2026-05-25) R5 横断対応: 退会時 DB 容量超過の即時請求
+import { billTenantWithdrawal } from './tenant-withdrawal-billing.service';
 
 /**
  * 全テナント一覧 (super_admin ダッシュボード用)。
@@ -1114,6 +1116,8 @@ export async function deleteTenant(
       currentMonthApiCostJpy: true,
       storageAddonPlan: true,
       storageBytesUsed: true,
+      // ADR-0020 (2026-05-25): 退会時 DB 容量超過の即時請求用
+      storageBytesPeakThisMonth: true,
     },
   });
   if (!tenant) {
@@ -1130,6 +1134,24 @@ export async function deleteTenant(
   const activeUserCount = await prisma.user.count({
     where: { tenantId, isActive: true, deletedAt: null },
   });
+
+  // ★ ADR-0020 (2026-05-25) R5 横断対応: 退会時に DB 容量超過分を即時 ApiCallLog INSERT。
+  //   旧仕様の月初 cron は deletedAt フィルタで退会済テナント除外 → 月途中退会の DB 容量請求漏れ
+  //   発生していた。本ステップで apiCallLog.create + Stripe queue 投入を即時実施し、
+  //   後続の apiCallLog.aggregate (= snapshot SUM) で DB 容量分も自動的に含まれる構造に。
+  //   失敗しても退会処理自体は止めない (= recordError でログ取り、ユーザ操作優先)。
+  try {
+    await billTenantWithdrawal({
+      tenantId: tenant.id,
+      timezone: tenant.timezone,
+      storageBytesUsed: tenant.storageBytesUsed,
+      storageBytesPeakThisMonth: tenant.storageBytesPeakThisMonth,
+      now,
+    });
+  } catch (e) {
+    // billTenantWithdrawal 内部で既に recordError 済。ここでは退会処理を継続する。
+    // 後で super_admin が backfillDeletedTenantDbCapacity で手動補填可能。
+  }
 
   // 解約時の yearMonth スナップショットに使うアドオン情報を計算 (TZ 含めて)
   const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';

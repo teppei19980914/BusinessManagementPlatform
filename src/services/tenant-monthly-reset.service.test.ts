@@ -228,12 +228,44 @@ describe('applyScheduledPlanChanges', () => {
 });
 
 describe('runTenantMonthlyReset (バッチ全体)', () => {
-  it('snapshot → reset → apply の順で実行し、結果を集計して返す', async () => {
-    // P-5b (2026-05-08): runTenantMonthlyReset は内部で
-    // saveMonthlyUsageSnapshots → resetTenantMonthlyCounters → applyScheduledPlanChanges
-    // の順で呼ぶ。各ステップは別々のモックで応答する。
+  it('processDbCapacityOverage → snapshot → reset → apply の順で実行し、結果を集計して返す', async () => {
+    // ADR-0020 (2026-05-25): runTenantMonthlyReset は内部で
+    //   processTenantDbCapacityOverage → saveMonthlyUsageSnapshots →
+    //   resetTenantMonthlyCounters → applyScheduledPlanChanges → ...
+    //   の順で呼ぶ。各ステップは別々の findMany 呼出になるので順序通りにモックを準備。
 
-    // saveMonthlyUsageSnapshots: 対象 2 件
+    // 0. processTenantDbCapacityOverage: 全テナント無料枠内 (peak=0) → ApiCallLog INSERT なし
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: 'tenant-a',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
+        storageBytesUsed: BigInt(0),
+        storageBytesPeakThisMonth: BigInt(0),
+        storageGracePeriodStartedAt: null,
+      },
+      {
+        id: 'tenant-b',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
+        storageBytesUsed: BigInt(0),
+        storageBytesPeakThisMonth: BigInt(0),
+        storageGracePeriodStartedAt: null,
+      },
+    ] as never);
+    // $transaction は処理を実行するモック (peak=0 なら ApiCallLog INSERT なし、peak reset のみ)
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
+      if (typeof fn === 'function') {
+        return await fn({
+          tenant: { update: vi.fn() },
+          apiCallLog: { create: vi.fn() },
+          stripeUsageRecordQueue: { create: vi.fn() },
+        });
+      }
+      return fn;
+    }) as never);
+
+    // 1. saveMonthlyUsageSnapshots: 対象 2 件
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       {
         id: 'tenant-a',
@@ -258,7 +290,7 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
     ] as never);
     vi.mocked(prisma.tenantMonthlyUsageHistory.upsert).mockResolvedValue({} as never);
 
-    // resetTenantMonthlyCounters (PR-4: findMany + 個別 update に変更)
+    // 2. resetTenantMonthlyCounters (PR-4: findMany + 個別 update に変更)
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       { id: 'tenant-a', timezone: 'Asia/Tokyo', lastResetAt: null },
       { id: 'tenant-b', timezone: 'Asia/Tokyo', lastResetAt: null },
@@ -268,7 +300,7 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
     ] as never);
     vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
 
-    // applyScheduledPlanChanges
+    // 3. applyScheduledPlanChanges
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       { id: 'tenant-c', scheduledNextPlan: 'beginner' },
       { id: 'tenant-d', scheduledNextPlan: 'invalid' },
@@ -288,6 +320,9 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       // 2026-05-14: 縮退モード確定仕様 — runMonthlyEmbeddingBackfill のスタブが空を返す
       embeddingBackfillTenantCount: 0,
       embeddingBackfillGeneratedCount: 0,
+      // ADR-0020 (2026-05-25): 全テナント無料枠内 → 課金 0
+      dbCapacityBilledTenantCount: 0,
+      dbCapacityBilledTotalJpy: 0,
     });
   });
 });

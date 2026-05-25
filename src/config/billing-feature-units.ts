@@ -30,7 +30,7 @@
  */
 
 /**
- * 課金対象 featureUnit の集合 (ADR-0019 / 2026-05-24)。
+ * 課金対象 featureUnit の集合 (ADR-0019 / 2026-05-24、ADR-0020 / 2026-05-25 追加)。
  *
  * - `project-upsert`: プロジェクト作成/更新時の auto-tag (LLM) + embedding を 1 ApiCallLog に集約。
  *   plan 依存単価で課金 (Beginner 上限カウント / Expert ¥10 / Pro ¥15)。
@@ -38,6 +38,10 @@
  * - `auto-tag-extract`: スタンドアロン auto-tag (= project-upsert の集約外で呼ばれる場合)。
  *   実コードでは現状 project.service.ts の `extractTagsAndEmbedForProject` 経由のみ。
  *   将来単独利用される可能性に備えて課金対象として残す ([src/services/auto-tag.service.ts:309](../services/auto-tag.service.ts) に extractAutoTags() が export 済)。
+ * - **`db-capacity-overage`** (ADR-0020 / 2026-05-25): DB 容量従量課金。月初 cron で前月 peak ベースの
+ *   超過課金 (¥50/GB tier、50MB 無料) を ApiCallLog 1 件として記録。`withMeteredLLM` ではなく
+ *   `tenant-monthly-reset.service.ts` が直接 INSERT する (= call ベースではなく月次集約方式)。
+ *   費用計算は `src/config/db-capacity-pricing.ts:calculateOverageJpy()`。
  *
  * 上記以外の featureUnit (`{knowledge,risk-issue,retrospective,memo}-embedding`,
  * `chat-semantic-search`, `*-embedding-backfill`, `external-import-embedding`) は **無料**。
@@ -46,6 +50,7 @@ export const BILLABLE_FEATURE_UNITS = [
   'project-upsert',
   'suggestion-explanation',
   'auto-tag-extract',
+  'db-capacity-overage',
 ] as const;
 
 export type BillableFeatureUnit = (typeof BILLABLE_FEATURE_UNITS)[number];

@@ -556,17 +556,22 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
 
-  it('単一 transaction で実行 ($transaction 1 回呼出)', async () => {
+  it('退会本体の $transaction が 12 オペ、別途 ADR-0020 DB 容量請求の $transaction が 1 回', async () => {
     setupHappyPathMocks();
 
     await deleteTenant(TENANT_ID, PERFORMER_ID);
 
-    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    // 12 オペ: users, projects, knowledges, risksIssues, retrospectives,
+    // ADR-0020 (2026-05-25): billTenantWithdrawal が前段で $transaction を 1 回呼ぶため計 2 回
+    // (1 回目: billTenantWithdrawal の callback transaction、2 回目: deleteTenant 本体)
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    // 退会本体: 12 オペ — users, projects, knowledges, risksIssues, retrospectives,
     // memos, stakeholders, comments, attachments, tenant.update,
     // tenantMonthlyUsageHistory.upsert (2026-05-14), auditLog.create
-    const txArg = vi.mocked(prisma.$transaction).mock.calls[0]![0] as unknown as unknown[];
-    expect(txArg).toHaveLength(12);
+    // (= 2 回目の呼出が array 形式の transaction)
+    const txCalls = vi.mocked(prisma.$transaction).mock.calls;
+    const arrayCall = txCalls.find((c) => Array.isArray(c[0]));
+    expect(arrayCall).toBeDefined();
+    expect((arrayCall![0] as unknown as unknown[]).length).toBe(12);
   });
 
   // ================================================================

@@ -10,9 +10,9 @@ vi.mock('@/services/external-data-import.service', () => ({
   deleteExpiredPreviews: vi.fn(),
 }));
 
+// ADR-0020 (2026-05-25): checkAndStartGracePeriod は廃止 (= write 拒否は 50GB ハードキャップ一本化)
 vi.mock('@/services/tenant-storage.service', () => ({
   updateAllStorageBytesUsed: vi.fn(),
-  checkAndStartGracePeriod: vi.fn(),
 }));
 
 import { POST, GET } from './route';
@@ -21,10 +21,7 @@ import {
   cleanupReadNotifications,
 } from '@/services/notification.service';
 import { deleteExpiredPreviews } from '@/services/external-data-import.service';
-import {
-  updateAllStorageBytesUsed,
-  checkAndStartGracePeriod,
-} from '@/services/tenant-storage.service';
+import { updateAllStorageBytesUsed } from '@/services/tenant-storage.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -32,10 +29,6 @@ beforeEach(() => {
   vi.mocked(cleanupReadNotifications).mockResolvedValue({ deleted: 0 });
   vi.mocked(deleteExpiredPreviews).mockResolvedValue(0);
   vi.mocked(updateAllStorageBytesUsed).mockResolvedValue(0);
-  vi.mocked(checkAndStartGracePeriod).mockResolvedValue({
-    graceStartedCount: 0,
-    graceClearedCount: 0,
-  });
 });
 
 function cronReq(authHeader?: string): NextRequest {
@@ -66,36 +59,28 @@ describe('POST /api/cron/daily-notifications', () => {
     expect(res.status).toBe(401);
   });
 
-  it('正しい Bearer なら generate + cleanup + 期限切れ preview + storage 更新 を実行して 200', async () => {
+  it('正しい Bearer なら generate + cleanup + 期限切れ preview + storage キャッシュ更新 を実行して 200', async () => {
     process.env.CRON_SECRET = 'test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx';
     vi.mocked(generateDailyNotifications).mockResolvedValue({ startCreated: 3, endCreated: 2 });
     vi.mocked(cleanupReadNotifications).mockResolvedValue({ deleted: 5 });
     vi.mocked(deleteExpiredPreviews).mockResolvedValue(2);
     vi.mocked(updateAllStorageBytesUsed).mockResolvedValue(7);
-    vi.mocked(checkAndStartGracePeriod).mockResolvedValue({
-      graceStartedCount: 1,
-      graceClearedCount: 2,
-    });
 
     const res = await POST(cronReq('Bearer test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx'));
     expect(res.status).toBe(200);
     const json = await res.json();
+    // ADR-0020 (2026-05-25): Grace 判定廃止のため storage は bytesUpdated のみ
     expect(json.data).toEqual({
       source: 'cron',
       generated: { startCreated: 3, endCreated: 2 },
       cleaned: { deleted: 5 },
       expiredPreviewsDeleted: 2,
-      storage: {
-        bytesUpdated: 7,
-        graceStarted: 1,
-        graceCleared: 2,
-      },
+      storage: { bytesUpdated: 7 },
     });
     expect(generateDailyNotifications).toHaveBeenCalledOnce();
     expect(cleanupReadNotifications).toHaveBeenCalledOnce();
     expect(deleteExpiredPreviews).toHaveBeenCalledOnce();
     expect(updateAllStorageBytesUsed).toHaveBeenCalledOnce();
-    expect(checkAndStartGracePeriod).toHaveBeenCalledOnce();
   });
 });
 

@@ -38,14 +38,17 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       resetCount: 3,
       planAppliedCount: 1,
       invalidPlanSkippedCount: 0,
-      // P-5b (2026-05-08): スナップショット保存件数が結果に含まれる
       snapshotSavedCount: 3,
-      // Storage add-on (Phase 2 / 2026-05-08): ダウングレード適用 / 使用量超過 skip
       storageAddonAppliedCount: 0,
       storageAddonSkippedCount: 0,
-      // テナント物理削除 (2026-05-08): 90 日経過解約済テナントの purge 件数 / レコード数
       purgedTenantCount: 0,
       purgedRowCount: 0,
+      // 2026-05-14: 縮退モード確定仕様 (embedding backfill)
+      embeddingBackfillTenantCount: 0,
+      embeddingBackfillGeneratedCount: 0,
+      // ADR-0020 (2026-05-25): DB 容量超過の月初請求集計結果
+      dbCapacityBilledTenantCount: 0,
+      dbCapacityBilledTotalJpy: 0,
     });
 
     const res = await POST(makeReq('Bearer test-cron-secret-xyz-32chars-or-more-xxxxxxxxxxxx'));
@@ -62,6 +65,11 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       storageAddonSkippedCount: 0,
       purgedTenantCount: 0,
       purgedRowCount: 0,
+      embeddingBackfillTenantCount: 0,
+      embeddingBackfillGeneratedCount: 0,
+      // ADR-0020 (2026-05-25)
+      dbCapacityBilledTenantCount: 0,
+      dbCapacityBilledTotalJpy: 0,
     });
     expect(runTenantMonthlyReset).toHaveBeenCalledTimes(1);
   });
