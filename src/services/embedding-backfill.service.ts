@@ -20,8 +20,10 @@
  * 設計判断:
  *   - **テナントごとに**処理する: withMeteredLLM は tenantId スコープで rate limit / 予算
  *     チェックするため、テナント単位で呼び出すのが自然。
- *   - **テナントの月間上限を尊重**: Beginner 月 100 回 / Pro/Expert monthlyBudgetCapJpy。
- *     上限超過時はその時点で停止し、翌月以降の補完に持ち越す (= 過剰課金しない)。
+ *   - **テナントの月間上限を尊重**: Beginner 月 50 回 / Pro/Expert monthlyBudgetCapJpy。
+ *     ※ ADR-0019 (2026-05-24): backfill featureUnit (`*-embedding-backfill`) は無料化されたため
+ *     Tenant.currentMonthApiCallCount を消費せず、Beginner 上限にも影響しない。残るのは
+ *     fair-use-limit (月 10,000 calls/tenant) のみ。上限超過時はその時点で停止する。
  *   - **visibility='draft' は対象外**: 提案エンジン側で除外されるエンティティに対して
  *     embedding 生成 (= Voyage API 課金) を発生させない (PR #358 と整合)。
  *   - **bulk 集約**: `generateAndPersistBatchEmbeddings` を使い、1 業務操作 = 1 ApiCallLog

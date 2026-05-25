@@ -98,21 +98,24 @@ type TenantSelfInfo = {
 
 type PlanLabel = { value: 'beginner' | 'expert' | 'pro'; label: string; description: string };
 
+// ADR-0019 (2026-05-24): 課金対象を BILLABLE_FEATURE_UNITS (project-upsert /
+// suggestion-explanation) のみに限定し、資産入力・チャット検索・自動インポートを全プラン無料化。
+// Beginner 上限 100→50 (課金対象 call のみカウント)、Expert ¥5→¥10 / Pro ¥15 据置。
 const PLAN_OPTIONS: PlanLabel[] = [
   {
     value: 'beginner',
     label: 'Beginner',
-    description: '月間 100 回上限・最大 5 席・無料',
+    description: 'プロジェクト作成/更新 月 50 回まで無料・最大 5 席 (資産入力とチャット検索は無料・無制限)',
   },
   {
     value: 'expert',
     label: 'Expert',
-    description: '無制限従量課金 (¥5/call)',
+    description: 'プロジェクト作成/更新 ¥10/call (資産入力とチャット検索は無料・無制限)',
   },
   {
     value: 'pro',
     label: 'Pro',
-    description: '無制限従量課金 (¥15/call)・Claude Sonnet',
+    description: 'プロジェクト作成/更新 + なぜ機能 ¥15/call・Claude Sonnet (資産入力とチャット検索は無料)',
   },
 ];
 
@@ -265,7 +268,8 @@ export function TenantSettingsClient({
     try {
       const body: Record<string, unknown> = {};
       if (planChanged) body.plan = selectedPlan;
-      // PR-2 (2026-05-15): Beginner プラン時は予算上限が常に null (固定の月 100 回上限で運用)。
+      // PR-2 (2026-05-15) / ADR-0019 (2026-05-24): Beginner プラン時は予算上限が常に null
+      //   (固定の月 50 回上限で運用、課金対象 call=project-upsert のみカウント)。
       //   UI でフォーム自体は非表示だが、防御的に Beginner では送信内容から budgetCap を除外する。
       //   さらに「Expert/Pro → Beginner」のダウングレード時 (現状仕様禁止) や、
       //   現プランが Beginner なら予算を null に強制する。
@@ -475,9 +479,9 @@ export function TenantSettingsClient({
               )}
             </section>
 
-            {/* PR-2 (2026-05-15): Beginner プランでは月次予算上限フォームを非表示。
-                Beginner は固定の月 100 回上限で運用するため、テナント管理者が金額の上限を
-                設定する余地がない。Expert/Pro のみ表示。 */}
+            {/* PR-2 (2026-05-15) / ADR-0019 (2026-05-24): Beginner プランでは月次予算上限
+                フォームを非表示。Beginner は固定の月 50 回上限で運用 (課金対象 call のみ) する
+                ため、テナント管理者が金額の上限を設定する余地がない。Expert/Pro のみ表示。 */}
             {selectedPlan !== 'beginner' && (
               <section className="rounded border p-4">
                 <h2 className="mb-2 font-semibold">月次予算上限</h2>
@@ -736,9 +740,11 @@ function DegradedModeSection({ state }: { state: DegradedModeState }) {
   if (!state.active && nullEmbeddings.total === 0) return null;
 
   if (state.active) {
+    // ADR-0019 (2026-05-24): Beginner 上限は課金対象 call (プロジェクト作成/更新) のみカウント。
+    //   無料機能 (資産入力・チャット検索・自動インポート) は上限到達後も継続実行可能。
     const reasonText =
       state.reason === 'beginner_limit_exceeded'
-        ? `Beginner プランの月間 API 呼び出し上限 (${state.beginnerMonthlyCallLimit} 回) に達しました。`
+        ? `Beginner プランの月間プロジェクト作成/更新上限 (${state.beginnerMonthlyCallLimit} 回) に達しました。`
         : state.reason === 'budget_exceeded'
           ? `月次予算上限 (¥${state.monthlyBudgetCapJpy?.toLocaleString() ?? '?'}) に達しました。`
           : 'API 呼び出しが停止しています。';
@@ -749,8 +755,9 @@ function DegradedModeSection({ state }: { state: DegradedModeState }) {
         <p className="mt-1">{reasonText}</p>
         <ul className="mt-2 list-disc space-y-0.5 pl-5 text-muted-foreground">
           <li>
-            プロジェクト / ナレッジ / リスク・課題 / 振り返りの新規作成・更新は引き続き行えます
-            (embedding 生成のみ停止)。
+            プロジェクト作成・更新は停止していますが、
+            <strong>各資産 (ナレッジ / リスク・課題 / 振り返り / メモ) の作成・更新</strong>と
+            <strong>チャット検索</strong>は **無料・無制限**で継続できます (ADR-0019)。
           </li>
           <li>
             提案エンジンは <strong>タグ：テキスト = 5：5</strong> の縮退モード重み再配分で動作します。
@@ -861,7 +868,7 @@ function UsageSection({
         {isBeginner ? (
           <div
             className="cursor-help"
-            title="Beginner プランは月 100 回までの API 呼出が無料です。残数が 0 になると当月は LLM 呼出が停止します"
+            title="Beginner プランはプロジェクト作成/更新が月 50 回まで無料です (ADR-0019)。資産入力・チャット検索は無料・無制限。残数が 0 になると当月はプロジェクト作成/更新が停止します"
           >
             <p className="text-xs text-muted-foreground">月次API呼出 残数</p>
             <p
@@ -881,7 +888,7 @@ function UsageSection({
           <>
             <div
               className="cursor-help"
-              title="当月の内部請求額 (ApiCallLog 集計 = 請求書根拠と同じ真値)。Expert ¥5/call / Pro ¥15/call の固定単価で計算 (2026-05-15 改定後)"
+              title="当月の内部請求額 (ApiCallLog 集計 = 請求書根拠と同じ真値)。Expert ¥10/call / Pro ¥15/call の固定単価で計算 (ADR-0019 / 2026-05-24 改定後)。課金対象はプロジェクト作成/更新 + なぜ機能 (Pro のみ)。資産入力・チャット検索・自動インポートは無料"
             >
               <p className="text-xs text-muted-foreground">API 費用</p>
               <p className="text-xl font-bold">

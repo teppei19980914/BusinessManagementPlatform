@@ -1,8 +1,10 @@
 # ADR-0013: Beginner プランへのダウングレード禁止 (悪用防止ルール)
 
-- **Status**: Accepted
+- **Status**: Accepted (Beginner 上限値は [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) で 100 → 50 に改定、2026-05-24)
 - **Date**: 2026-05 (TENANT_AND_BILLING 確定版で正式採用)
 - **Deciders**: teppei
+
+> 🆕 **ADR-0019 (2026-05-24)**: Beginner プランの月次上限が 100 → 50 (課金対象 call のみカウント) に改定。本 ADR のダウングレード禁止ルールは継続有効。詳細: [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md)。
 
 ---
 

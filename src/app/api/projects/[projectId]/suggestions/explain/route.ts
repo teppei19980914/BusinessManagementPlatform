@@ -124,6 +124,9 @@ function mapDegradedToHttp(
     case 'tenant_inactive':
     case 'plan_invalid':
     case 'plan_forbidden':
+    // ADR-0019 (2026-05-24): suggestion-explanation は billable のため通常は発火しないが、
+    //   union 整合のため列挙する。発火時の HTTP 扱いは budget_exceeded と同等 (429)。
+    case 'fair_use_limit_exceeded':
     case 'llm_error':
       return NextResponse.json(
         {
@@ -151,6 +154,9 @@ function degradedReasonToCode(reason: DegradedReason): string {
       return 'PLAN_INVALID';
     case 'plan_forbidden':
       return 'PLAN_FORBIDDEN';
+    // ADR-0019 (2026-05-24): fair-use-limit 超過 (無料 featureUnit 用、suggestion-explanation では非該当)
+    case 'fair_use_limit_exceeded':
+      return 'FAIR_USE_LIMIT_EXCEEDED';
     case 'llm_error':
       return 'LLM_ERROR';
   }
@@ -161,6 +167,8 @@ function degradedReasonToHttpStatus(reason: DegradedReason): number {
     case 'rate_limited':
     case 'beginner_limit_exceeded':
     case 'budget_exceeded':
+    // ADR-0019 (2026-05-24): fair_use_limit_exceeded は budget_exceeded と同じ 429 で扱う
+    case 'fair_use_limit_exceeded':
       return 429;
     case 'tenant_inactive':
       return 503;

@@ -14253,3 +14253,225 @@ KDD §5.X+125 の「Dialog 内 click 全般」分類を **「chromium-mobile + s
 - 関連 KDD: [§5.X+124](#5x124) (根本原因の最初の確定) / [§5.X+125](#5x125) (Dialog 内 click と狭く限定した分類、本セクションで範囲拡張)
 - 関連 file (本 §5.X+126 で追加 force:true 化した 4 件): [`e2e/specs/05-teardown-and-residuals.spec.ts:160-165`](../../e2e/specs/05-teardown-and-residuals.spec.ts) (account-menu-trigger + logout menuitem) / [`e2e/specs/09-customers.spec.ts:265-266`](../../e2e/specs/09-customers.spec.ts) (今日 button × 2)
 - 累計 force:true 化件数: §5.X+124 で 2 + §5.X+125 で 3 (先回り) + §5.X+125 直接 fail 2 + §5.X+126 で 4 = **計 11 件**
+
+---
+
+## 5.X+127 **★severity-1 請求不整合★ 課金 featureUnit 縮小 (ADR-0019) で E2E fixture が無料 featureUnit を使っており super_admin ダッシュボード集計が ¥0 表示で破綻 → fixture を BILLABLE_FEATURE_UNITS に揃える (2026-05-25 / PR #441)**
+
+### 事象
+
+PR #441 (ADR-0019 価格改定) で導入した `BILLABLE_FEATURE_UNITS` (= `['project-upsert', 'suggestion-explanation', 'auto-tag-extract']`) フィルタが、E2E spec [`13-super-admin-dashboard.spec.ts`](../../e2e/specs/13-super-admin-dashboard.spec.ts) を破壊した。
+
+具体的には、fixture [`e2e/fixtures/super-admin.ts`](../../e2e/fixtures/super-admin.ts) が以下の **無料化された featureUnit** で ApiCallLog を seed していたため、新しい集計フィルタで除外され ¥0 表示になり、テスト `await expect(tenantARow).toContainText('1,500')` が失敗した:
+
+```typescript
+// 旧 fixture (E2E 破綻):
+VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, ...)   // ← 無料化済
+VALUES ($1, 'project-embedding',    'claude-sonnet-4-6', 22500, 200, ...) // ← 旧名 (= 現存しない)
+```
+
+### 根本原因
+
+**価格改定の core ロジック変更 (= "課金対象を縮小") が test fixture との整合性を見落とした**。
+
+3 重の検証 (2 回フルスキャン + security review) で `src/` 配下の整合は完全に取れていたが、`e2e/fixtures/` の seed データは生 SQL で featureUnit 文字列を直接書いていたため、TypeScript の型システムからも `BILLABLE_FEATURE_UNITS` 配列の参照からも検知できなかった。
+
+[`feedback_localestring_grep_blindspot.md`](../../memory/) で警告していた「価格定数変更時の grep は生値・表示文字列・自然文・アサーションの 4 軸で」という教訓そのものを、E2E fixture 側で踏んだ形。
+
+### 対応
+
+1. **fixture の featureUnit を `project-upsert`** (= BILLABLE_FEATURE_UNITS に含まれる課金対象) に変更
+   - tenantA: `risk-issue-embedding` → `project-upsert`
+   - tenantB: `project-embedding` → `project-upsert`
+2. **counter と SUM の整合 (drift なし状態)** は引き続き維持 (cost_jpy=1500 / 22500 を据置、新仕様でも同額表示)
+3. **コメントで KDD 参照** を明記し、将来の開発者が再度同じ罠を踏まないように
+4. テスト assert (¥1,500 / ¥22,500) は **変更不要** (= fixture が同額の billable call として seed されるため UI に同額が表示される)
+
+### 再発防止
+
+1. **価格改定 / featureUnit 仕様変更時のチェックリスト** (本 KDD 含む) を `docs/knowledge/PRICING_CHANGE_CHECKLIST.md` 等にまとめる (本 PR で対応予定):
+   - `src/config/billing-feature-units.ts` (中央定義) 確認
+   - `src/lib/llm/metered.ts` (billing engine) 確認
+   - **`e2e/fixtures/*` の生 SQL で featureUnit 直接指定箇所** ← 本 KDD の盲点
+   - test fixture 内の hardcoded 単価
+2. **fixture のリテラル `feature_unit` を const 化**: 将来 `e2e/fixtures/billable-feature-units.ts` 等で BILLABLE_FEATURE_UNITS を import し直接 SQL に埋めるか、Prisma client 経由で型安全に挿入する案 (今回は最小修正のため未対応、将来課題)
+3. **PR 内検証で E2E ローカル実行も検討**: ローカルで `pnpm test:e2e` は時間コストが高いが、価格改定のような core 変更時は実施推奨 ([CLAUDE.md](../../CLAUDE.md) §コミット前チェック §4 を強化)
+
+### 教訓 (転用可能)
+
+- **「unit test 全 PASS = 安全」ではない**: E2E fixture と業務ロジックの整合は別レイヤ。本 PR では unit test 3053/3053 PASS だったが E2E は破綻
+- **価格改定 / 課金体系変更時の盲点**: `src/` の整合性だけでは不十分。`e2e/`, `prisma/seed*.ts`, `scripts/` 配下の生 SQL / fixture も同レベルで検証必要
+- **ローカル `pnpm test:e2e` の必要性**: 「lint/tsc/test/build PASS だから push して CI で検証」は通常 OK だが、core ロジック変更 (billing / auth / 集計) では E2E もローカル実行すべき (E2E 失敗で CI 1 ラウンド消費 = ¥数百 + 開発者時間 30 分のコスト)
+- **「ApiCallLog SUM = 画面表示 = 請求書 = CSV」invariant は fixture でも維持必須** ([feedback_billing_invariant.md](../../memory/) の延長)
+- **価格改定では「不当な請求」が事業継続性の最大リスク** (本 KDD のような E2E 失敗で早期検知できたのは幸運。本番で見逃した場合は顧客請求の不整合 = 顧客信頼喪失)
+
+### 関連
+
+- 関連 PR: PR #441 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (課金 featureUnit 縮小の根拠)
+- 関連 memory: [feedback_billing_invariant.md](../../memory/) (請求 invariant) / [feedback_localestring_grep_blindspot.md](../../memory/) (価格定数 grep 4 軸) / [feedback_repeated_verification_request.md](../../memory/) (繰返し検証で深い問題発見)
+- 関連 file: [`e2e/fixtures/super-admin.ts`](../../e2e/fixtures/super-admin.ts), [`e2e/specs/13-super-admin-dashboard.spec.ts`](../../e2e/specs/13-super-admin-dashboard.spec.ts), [`src/config/billing-feature-units.ts`](../../src/config/billing-feature-units.ts)
+
+---
+
+## 5.X+128 **★severity-2 CI 連鎖 fail★ E2E spec 16 (column-sort) の inline login が NextAuth `explicit-signout` 経由 CSRF cookie clear race で flake → `loginAsGeneral` ヘルパに揃え + `retries: 0` 削除 (2026-05-25 / PR #441)**
+
+### 事象
+
+PR #441 で `13-super-admin-dashboard.spec.ts` の fixture を修正 (§5.X+127) して spec 13 が PASS するようになった後、**今まで spec 13 の失敗にマスクされていた spec 16 の flaky 失敗が露呈**:
+
+```
+✘ 114 [chromium] › e2e/specs/16-column-sort.spec.ts:73:7 ›
+   @feature:ui:sort-dropdown カラムソート dropdown の可視性 (Portal 化) ›
+   /customers (plain TableHead パターン) で sortable-header クリック後に menu が visible (0ms)
+TimeoutError: page.waitForURL: Timeout 15000ms exceeded.
+  waiting for navigation to "**/projects" until "load"
+  at fixtures/auth.ts:17
+```
+
+サーバ側ログ:
+```
+[WebServer] [auth][error] MissingCSRF: CSRF token was missing during an action callback.
+```
+
+(0ms) failed = `beforeAll` 自体が失敗。`waitForProjectsReady` の `waitForURL('**/projects')` が 15s 待っても /projects に到達しないため timeout。
+
+### 根本原因
+
+1. **NextAuth v5 + 自前 `/api/auth/explicit-signout` の組合せで CSRF race condition**
+   - `LoginForm.handleSubmit` ([src/app/(auth)/login/page.tsx:75](../../src/app/(auth)/login/page.tsx#L75)) は `signIn()` 直前に
+     `fetch('/api/auth/explicit-signout', { method: 'POST' })` を実行する
+   - `explicit-signout` ([src/app/api/auth/explicit-signout/route.ts:53-58](../../src/app/api/auth/explicit-signout/route.ts#L53-L58)) は session token と並んで **`authjs.csrf-token` cookie も `Max-Age=0` で削除** する
+   - 直後の `signIn('credentials')` は内部で `getCsrfToken()` → `fetch('/api/auth/csrf')` で CSRF token を再取得 + Set-Cookie するが、続けて `POST /api/auth/callback/credentials` を fire する
+   - **fetch promise の resolution と Set-Cookie の browser 反映には microtask 単位の race がある** ため、稀に POST 時に CSRF cookie が未設定で `MissingCSRF` エラー
+   - main #439 (2026-05-24) でも同じパターンで spec 16 が intermittent fail していたが、spec 16 が `test.describe.configure({ mode: 'serial', retries: 0 })` で **`retries: 0` を明示 override** していたため、CI 1 回失敗で fail 確定。`playwright.config.ts` の `retries: isCI ? 2 : 0` が効かなかった
+
+2. **spec 16 の login が `auth.ts` 共通ヘルパを使わず inline 実装** だった
+   - 旧コード: `getByRole('button', { name: 'ログイン' })` (= `exact: true` 未指定)
+   - KDD §5.X+96 で「PR #420 で `履歴をクリア` ボタンを追加した際の substring match 罠」を回避するため、`auth.ts:loginAsGeneral` / `loginAsAdminWithMfa` は `exact: true` 化済 だったが、spec 16 はその知見を取り込んでいなかった
+   - さらに `context.clearCookies()` も呼んでおらず、theoretical には複数 worker 間で cookie 干渉のリスクもあった (実害は未確認)
+
+### 対応
+
+[`e2e/specs/16-column-sort.spec.ts:38-65`](../../e2e/specs/16-column-sort.spec.ts) で:
+
+1. **inline login を `auth.ts:loginAsGeneral` ヘルパ呼出に置換**:
+   - `clearCookies()` を必ず実行する
+   - `exact: true` で submit ボタンを厳密一致
+   - `waitForProjectsReady` (waitForURL + networkidle) で確実な遷移完了待ち
+   - admin / general どちらでも MFA 無し login の経路は同一 (= 関数名 `loginAsGeneral` を気にせず流用)
+2. **`retries: 0` 明示を削除** し、`playwright.config.ts` の `retries: isCI ? 2 : 0` (= CI で 2 回 retry) を尊重する設定に戻した
+
+### 再発防止
+
+- **新規 spec の login は必ず `auth.ts` 共通ヘルパ (`loginAsGeneral` / `loginAsAdminWithMfa`) を使う**
+- **`retries: 0` を override しない**: 既存ヘルパは flake を吸収できる設計だが、明示的に retries を 0 にすると 1 回の race で確実に失敗する。`playwright.config.ts` の default (CI で 2 retries) を尊重する
+- **inline login パターンの grep**: `await page.goto('/login')` + `getByRole('button', { name: 'ログイン' })` パターンを将来検出する CI ガード追加検討余地あり (本 PR スコープ外)
+
+### 教訓 (転用可能)
+
+- **マスクされていた flake は、より上流の失敗が直った瞬間に表面化する**: spec 13 が常に失敗していたため spec 16 のテスト結果は (test 13 の失敗で全体 fail なため) "見えていなかった"。本 PR で spec 13 を修正した結果、spec 16 が初めて単独評価され、隠れていた flake が露呈
+- **NextAuth v5 + 自前 sign-out route の組合せの罠**: 自前 sign-out で CSRF cookie を消すと、続く signIn() の CSRF refetch との race が発生する。**より根本的な fix は explicit-signout で CSRF cookie を消さないこと** (session token のみ消す)。本 PR では影響範囲を限定するため retries + ヘルパ統一で対処、CSRF cookie の clear 削除は別 PR で security review した上で実施推奨
+- **`retries: 0` の明示は flake 検知の手段としては有効だが、CI 安定性とのトレードオフ**: 既知の race condition がある場合、retries 0 だと CI が不安定化する。検知目的なら別 lane / 別 schedule で実施するのが筋良し
+- **spec 間の独立性は describe.serial だけでは担保されない**: 別 describe の test の失敗が次の test の評価をマスクする (Playwright の test 単位の独立性とは別問題)
+
+### 関連
+
+- 関連 PR: PR #441 (本事例 / 2026-05-25)
+- 関連 KDD: [§5.X+96](#5x96) (PR #420 `履歴をクリア` ボタンと substring match 罠) / [§5.X+72](#5x72) (`explicit-signout` 導入経緯 / Netlify Set-Cookie 脱落事故) / [§5.X+127](#5x127) (同 PR でマスク解除のトリガーとなった spec 13 fixture 修正)
+- 関連 file: [`e2e/specs/16-column-sort.spec.ts`](../../e2e/specs/16-column-sort.spec.ts), [`e2e/fixtures/auth.ts`](../../e2e/fixtures/auth.ts), [`src/app/(auth)/login/page.tsx`](../../src/app/(auth)/login/page.tsx), [`src/app/api/auth/explicit-signout/route.ts`](../../src/app/api/auth/explicit-signout/route.ts)
+- 累計影響: main #439 (層) #441 (本 PR) で同じ flake を確認、`auth.ts` ヘルパ化 + retries 設定見直しで 2 PR 分の CI 不安定化を解消
+
+---
+
+## 5.X+129 **★severity-2 inline login CSRF race を 3 visual spec まで横展開 + chromium-mobile spec 02 dropdown click flake は既存問題と再確認 (2026-05-25 / PR #441 follow-up)**
+
+### 事象
+
+§5.X+128 で spec 16 (column-sort) の inline login を `loginAsGeneral` ヘルパに統一した後、続く CI run (26385050630) で **同型の MissingCSRF race が visual specs にも露呈**:
+
+```
+✘ 194 [chromium-mobile] › e2e/visual/settings-themes.spec.ts:70 (0ms)
+   → beforeAll の inline login で MissingCSRF 失敗
+✘ 189 [chromium-mobile] › e2e/visual/customers-screens.spec.ts:76 (1.3s)
+   → visual diff (= beforeAll の login が race で時間ズレ → 画面状態の差分が baseline と乖離)
+```
+
+並行して chromium-mobile spec 02 (project-detail-tabs) の **既存 flake** も再発:
+```
+✘ 130 [chromium-mobile] › e2e/specs/02-project-detail-tabs.spec.ts:129 (11.2s)
+   Error: expect(locator).toHaveAttribute('aria-selected', 'true') failed
+   → 進捗管理 dropdown → ガントチャート menuitem click 後、tab activation 状態 (aria-selected)
+     が "false" のまま 10s タイムアウト
+```
+
+### 根本原因
+
+#### A. inline login の CSRF race (§5.X+128 と同根)
+`e2e/visual/` 配下の 3 spec が **`e2e/specs/16-column-sort.spec.ts` (§5.X+128 の対象) と同じ inline login パターン** を使っていた:
+- `e2e/visual/settings-themes.spec.ts`
+- `e2e/visual/customers-screens.spec.ts`
+- `e2e/visual/dashboard-screens.spec.ts`
+
+`grep -r "getByRole\('button', { name: 'ログイン' }\)\.click\(\)" e2e/` で **17 ファイル** が該当。視覚回帰系 3 ファイル + 機能 spec 14 ファイル。
+
+#### B. chromium-mobile spec 02 dropdown click flake (KDD §5.X+124-126 の継続)
+進捗管理 dropdown を開いて ガントチャート menuitem を click する flow:
+
+```typescript
+await page.getByRole('button', { name: '進捗管理メニューを開く' }).click({ force: true });
+await page.getByRole('menuitem', { name }).click({ force: true });
+const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
+await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+```
+
+すでに `{ force: true }` で hit-test 回避済だが、**click event が React 状態更新まで完走しないケース** が chromium-mobile で intermittent に発生:
+- main #439 でも同じ test 129 が `(11.8s)` で失敗 (§5.X+124-126 の経緯参照)
+- main #440 では同テストが `(2.3s)` で成功
+- PR #441 CI run 26385050630 でも失敗 → **intermittent な既存 flake、本 PR が原因ではない**
+
+`{ force: true }` は Playwright の hit-test ゲートをスキップするのみで、click event の React state update への伝播は別問題。chromium-mobile (iPhone 13 emulation, DPR=3) で Radix UI / Base UI の dropdown menu close → menuitem onClick handler の microtask race が稀に発生する。
+
+### 対応
+
+#### A. visual specs 3 件の inline login を `loginAsGeneral` ヘルパに統一
+- [`e2e/visual/settings-themes.spec.ts:46-58`](../../e2e/visual/settings-themes.spec.ts)
+- [`e2e/visual/customers-screens.spec.ts:43-55`](../../e2e/visual/customers-screens.spec.ts)
+- [`e2e/visual/dashboard-screens.spec.ts:41-53`](../../e2e/visual/dashboard-screens.spec.ts)
+
+すべて `clearCookies + exact: true + waitForProjectsReady` を含む `loginAsGeneral` 経由に統一 (= §5.X+128 と同型 fix)。残り 14 spec も同様の置換が望ましいが、本 PR スコープを限定するため次回 follow-up で対応推奨。
+
+#### B. chromium-mobile spec 02 dropdown flake は **既存問題として再確認**
+本 PR では追加修正なし。理由:
+- 既に `{ force: true }` 適用済 (§5.X+126)
+- main #440 では同テスト成功、本 PR の変更が直接の原因ではない
+- 根本 fix は Radix UI / Base UI の dropdown 実装に依存し、E2E 側で安定化させるのは難しい
+- `playwright.config.ts` の `retries: isCI ? 2 : 0` で 2 回までは retry される
+
+### 再発防止
+
+#### 「新規 spec の login は必ず `auth.ts` ヘルパを使う」ルールの徹底
+- 既存 17 spec の inline login pattern の検出を CI ガード化 (将来課題):
+  ```bash
+  scripts/check-e2e-inline-login.ts  # 案: grep で `getByRole.*'ログイン'.*click` を検出
+  ```
+- レビュー時のチェックリストに「新規 e2e spec で `goto('/login')` した場合は必ず `loginAsGeneral` / `loginAsAdminWithMfa` を使う」を明記
+
+#### chromium-mobile spec 02 のさらなる安定化 (= 将来課題)
+- 候補 1: dropdown を開いた後、menuitem が visible になるまで explicit wait (`await expect(menuitem).toBeVisible({ timeout })`)
+- 候補 2: click 後、aria-selected の polling と並行して dropdown が close したことを確認
+- 候補 3: keyboard navigation (Enter キー) で menuitem を選択 (mouse 系の hit-test 問題を完全回避)
+- いずれも別 PR で実施推奨 (PR #441 のスコープから外す)
+
+### 教訓 (転用可能)
+
+- **同型 flake の横展開対応は「最初に見つかった 1 つだけ直すと残りが連鎖発火する」**: spec 16 を直したら visual 3 件が露呈。広範囲 grep で**同パターンを一括 list 化し、優先順位 (= 失敗実績 + 影響範囲) で順次対応**するのが効率的
+- **既存 flake と新規 flake を区別する**: main の同 commit hash で過去 run の結果を確認すると、既存 flake (main #439 でも失敗) と PR 由来の新規 (main 通過 + PR で失敗) を切り分けできる。前者は KDD 既存項目への追加、後者は新規 KDD 起票
+- **`{ force: true }` は hit-test の問題は解くが、その後の React state update race は別問題**: click event は dispatch されるが、React の event handler が microtask 内で完走しないケースがある。完全解は Radix UI / Base UI の close-on-select の挙動を理解した上で、explicit wait を入れること
+
+### 関連
+
+- 関連 PR: PR #441 (本事例 / 2026-05-25)
+- 関連 KDD: [§5.X+128](#5x128) (spec 16 の同型 fix、root cause 詳細) / [§5.X+126](#5x126) (chromium-mobile dropdown click force:true 適用、本 §5.X+129 でも未解決と判明) / [§5.X+124-125](#5x124) (chromium-mobile hit-test 系全般)
+- 関連 file: [`e2e/visual/settings-themes.spec.ts`](../../e2e/visual/settings-themes.spec.ts), [`e2e/visual/customers-screens.spec.ts`](../../e2e/visual/customers-screens.spec.ts), [`e2e/visual/dashboard-screens.spec.ts`](../../e2e/visual/dashboard-screens.spec.ts), [`e2e/specs/02-project-detail-tabs.spec.ts`](../../e2e/specs/02-project-detail-tabs.spec.ts)
+- 累計 inline login → ヘルパ化: spec 16 (§5.X+128) + visual 3 (§5.X+129) = **計 4 spec 修正済**。残り 13 spec は次回 follow-up

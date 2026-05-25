@@ -72,6 +72,14 @@ jobs:
         # 詳細: docs/knowledge/KDD_PATTERNS.md §5.X+84
         run: pnpm check:banned-auth-patterns
 
+      - name: LLM billing bypass check (ADR-0019 / 2026-05-24)
+        # ADR-0019 で課金エンジン (withMeteredLLM) 経由の設計を再確認した経緯から、
+        # `getAnthropicClient()` / `voyageEmbed()` の直接呼出を allowlist 外で
+        # 検出して CI を fail させる。バイパスすると ApiCallLog / Stripe queue /
+        # rate limit / fair use limit のすべてを素通りするため事業継続性の根本的破綻。
+        # 詳細: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md §LLM 暴走防止
+        run: pnpm check:llm-billing-bypass
+
       - name: Test (vitest + coverage)
         # PR #83: --coverage で v8 プロバイダが coverage-final.json / coverage-summary.json
         # / lcov.info を coverage/ 配下に出力する。

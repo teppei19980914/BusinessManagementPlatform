@@ -137,12 +137,15 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     await expect(superAdminPage.getByText(fixture!.customerTenantA.name)).toBeVisible();
     await expect(superAdminPage.getByText(fixture!.customerTenantB.name)).toBeVisible();
 
-    // 顧客テナント A の費用 (¥1,500) が表示される (2026-05-15 価格改定後)
+    // 顧客テナント A の費用 (¥1,500) が表示される
     // (テーブル行内検索: 顧客テナント名を含む行に LLM 費用が表示される)
+    // ADR-0019 (2026-05-24): fixture は featureUnit='project-upsert' (課金対象) で seed しているため
+    //   集計フィルタ `BILLABLE_FEATURE_UNITS` で含まれ、¥1,500 が表示される。
+    //   旧 fixture は無料化された embedding 系を使っており E2E が破綻していた (KDD §5.X+127)。
     const tenantARow = superAdminPage.locator('tr', {
       hasText: fixture!.customerTenantA.name,
     });
-    await expect(tenantARow).toContainText('1,500'); // 当月 LLM 費用 ¥1,500 (300 calls × ¥5)
+    await expect(tenantARow).toContainText('1,500');
 
     // Default テナント (運営者自身) セクションが存在する
     await expect(
@@ -209,9 +212,10 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     expect(text).toContain(fixture!.customerTenantB.name);
 
     // 顧客テナント A: LLM ¥1500 + Storage(plus) ¥500 = ¥2000
-    // PR-V8.1 (2026-05-19): fixture が ApiCallLog 1 件 (¥1500) で counter と SUM を一致させているため、
-    //   呼出数=1 / 費用=1500 が出力される (旧 fixture は 300 calls × ¥5 = ¥1500 だったが、counter
-    //   が ApiCallLog SUM と乖離していたため drift 警告が出る fixture だった)。
+    // ADR-0019 (2026-05-24): fixture は featureUnit='project-upsert' (課金対象) で seed しているため、
+    //   集計フィルタ `BILLABLE_FEATURE_UNITS` で含まれ、CSV に呼出数=1 / 費用=1500 が出力される。
+    //   旧 fixture (`risk-issue-embedding`) は ADR-0019 後の無料 featureUnit に該当し集計除外
+    //   される結果 ¥0 表示で E2E 失敗 → KDD §5.X+127 で記録、PR #441 修正後に解消。
     const lines = text.split('\r\n');
     const lineA = lines.find((l) => l.includes(fixture!.customerTenantA.name));
     expect(lineA, 'tenant-A 行が CSV に存在する').toBeDefined();
@@ -219,12 +223,12 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     //   API課金額(counter=1500), drift警告(空), drift呼出差分(+0), drift費用差分(+0),
     //   ユーザ数(1), 予算(空), Storage プラン(plus), 使用量(0), Storage月額(500), 合計月額(2000), ...
     expect(lineA).toContain(',expert,');
-    expect(lineA).toContain(',1500,'); // LLM 費用 (300 calls × ¥5)
+    expect(lineA).toContain(',1500,'); // LLM 費用
     expect(lineA).toContain(',plus,'); // Storage プラン
     expect(lineA).toContain(',500,'); // Storage 月額
     expect(lineA).toContain(',2000,'); // 合計
 
-    // 顧客テナント B: LLM ¥22500 (1500 calls × ¥15、2026-05-15 改定後) + Storage(pro_storage) ¥1500 = ¥24000
+    // 顧客テナント B: LLM ¥22500 + Storage(pro_storage) ¥1500 = ¥24000
     const lineB = lines.find((l) => l.includes(fixture!.customerTenantB.name));
     expect(lineB, 'tenant-B 行が CSV に存在する').toBeDefined();
     expect(lineB).toContain(',pro,');

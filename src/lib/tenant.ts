@@ -61,9 +61,15 @@ export function isManagementTenant(tenantId: string): boolean {
 /**
  * 課金プランの判別ユニオン。Tenant.plan カラムの値域。
  *
- * - `beginner`: 月間 100 回上限・最大 5 席・無料・Claude Haiku
- * - `expert`:   無制限従量課金 (¥5/call、2026-05-15 改定: ¥10 → ¥5)・Claude Haiku
- * - `pro`:      無制限従量課金 (¥15/call、2026-05-15 改定: ¥30 → ¥15)・Claude Sonnet
+ * ADR-0019 (2026-05-24) 改定後:
+ * - `beginner`: プロジェクト作成/更新 月 50 回まで無料・最大 5 席・Claude Haiku
+ *               (資産入力・チャット検索は無料・無制限、課金対象 call のみ上限カウント)
+ * - `expert`:   プロジェクト作成/更新 ¥10/call・Claude Haiku (資産入力・チャットは無料)
+ * - `pro`:      プロジェクト作成/更新 + なぜ機能 ¥15/call・Claude Sonnet (資産入力・チャットは無料)
+ *
+ * 履歴:
+ * - 2026-05-15 (ADR-0002): Expert ¥10 → ¥5 / Pro ¥30 → ¥15 (半額化)
+ * - 2026-05-24 (ADR-0019): Expert ¥5 → ¥10 / Pro ¥15 据置、課金対象を縮小
  */
 export type TenantPlan = 'beginner' | 'expert' | 'pro';
 

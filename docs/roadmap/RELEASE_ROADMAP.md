@@ -163,7 +163,7 @@
 > **2026-05-19 ステータス更新**: 実装系項目は PR #216-#226 系列で完了。残作業は **公開準備** (法的書類 / 公開ページ) のみで、詳細は [docs/operations/PUBLIC_LAUNCH_CHECKLIST.md](../operations/PUBLIC_LAUNCH_CHECKLIST.md) に集約。
 
 - [x] **マルチテナント基盤** (PR #216-): Tenant テーブル新設、全業務エンティティへの tenantId 追加、default-tenant への migration 完了。詳細: [ADR-0001](../adr/0001-multitenant-foundation.md)
-- [x] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant schema に全カラム配置済 (PR #216 系)。詳細: [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) (2026-05-15 半額改定 Expert ¥5 / Pro ¥15 反映済)
+- [x] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant schema に全カラム配置済 (PR #216 系)。詳細: [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) (2026-05-15 半額改定) → **[ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (2026-05-24 課金対象縮小: Expert ¥10 / Pro ¥15 / Beginner プロジェクト作成/更新 月 50 回、資産入力・チャット検索を全プラン無料化)**
 - [x] **ApiCallLog テーブル**: schema 実装済 (PR #218 系)
 - [x] **`withMeteredLLM()` ミドルウェア**: `src/lib/llm/metered.ts` で実装、テスト網羅済 (PR #218)
 - [x] **月初リセットバッチ**: Vercel Cron 実装済 (PR #219)。手順は [BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md)、障害時対応は [INCIDENT_RESPONSE.md §6.8](../operations/INCIDENT_RESPONSE.md)

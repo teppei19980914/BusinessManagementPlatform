@@ -25,6 +25,8 @@ export type DegradedReason =
   | 'tenant_inactive'
   | 'plan_invalid'
   | 'plan_forbidden'
+  // ADR-0019 (2026-05-24): 無料 featureUnit の月次 fair use limit (= 月 10,000 calls/tenant) 到達
+  | 'fair_use_limit_exceeded'
   | 'llm_error';
 
 /**
@@ -65,6 +67,12 @@ export function getDegradedMessage(
       return isAdminLike
         ? 'この機能は Pro プラン限定です。設定 → テナント → プラン変更から Pro プランへアップグレードしてください。'
         : 'この機能は Pro プラン限定です。利用希望の場合はテナント管理者へご相談ください。';
+
+    case 'fair_use_limit_exceeded':
+      // ADR-0019 (2026-05-24): 無料機能 (チャット検索・資産入力等) の月次上限 (10,000 calls/tenant) 到達
+      return isAdminLike
+        ? '無料機能の月間利用上限 (10,000 回/テナント) に達しました。来月になると自動的に再開します。Pro プランへのアップグレードで利用枠拡張を検討してください。'
+        : '無料機能の月間利用上限に達しました。来月になると自動的に再開します。早期復活が必要な場合はテナント管理者へご相談ください。';
 
     case 'llm_error':
       // LLM 側の一時障害なので、ロールを問わず「時間を置いて再試行」案内

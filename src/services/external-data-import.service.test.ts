@@ -109,8 +109,8 @@ beforeEach(() => {
     currentMonthApiCallCount: 10,
     currentMonthApiCostJpy: 100,
     monthlyBudgetCapJpy: 5000,
-    beginnerMonthlyCallLimit: 100,
-    pricePerCallHaiku: 5,
+    beginnerMonthlyCallLimit: 50,
+    pricePerCallHaiku: 10,
     pricePerCallSonnet: 15,
     deletedAt: null,
   } as never);
@@ -181,8 +181,9 @@ describe('previewImport', () => {
       expect(r.summary.knowledge.totalRows).toBe(2);
       expect(r.summary.knowledge.validRows).toBe(2);
       expect(r.summary.knowledge.errorRows).toBe(0);
-      // Expert: ¥5 × 2 = ¥10 (2026-05-15 価格改定後)
-      expect(r.costEstimate.estimatedJpy).toBe(10);
+      // ADR-0019 (2026-05-24): CSV インポート (external-import-embedding) は全プラン無料化された
+      //   ため、estimatedJpy は常に 0。
+      expect(r.costEstimate.estimatedJpy).toBe(0);
       expect(r.costEstimate.warningCode).toBeNull();
     }
   });
@@ -213,20 +214,20 @@ describe('previewImport', () => {
       expect(r.summary.knowledge.validRows).toBe(1);
       expect(r.summary.knowledge.errorRows).toBe(1);
       expect(r.errors[0]?.field).toBe('title');
-      // 有効分の見積は 1 件分のみ (Expert ¥5 × 1 = ¥5、2026-05-15 価格改定後)
-      expect(r.costEstimate.estimatedJpy).toBe(5);
+      // ADR-0019 (2026-05-24): CSV インポートは無料化されたため、有効行数に関わらず estimatedJpy=0
+      expect(r.costEstimate.estimatedJpy).toBe(0);
     }
   });
 
-  it('Beginner プランで月次上限超過 → warningCode=BEGINNER_CALL_LIMIT_EXCEEDED', async () => {
+  it('ADR-0019: Beginner プランで月次上限超過状態でも CSV インポートは warning 発火せず (= 無料化のため)', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       plan: 'beginner',
       currentMonthApiCallCount: 95,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10,
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
@@ -257,22 +258,23 @@ describe('previewImport', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // 既 95 + 7 = 102 > 100
-      expect(r.costEstimate.warningCode).toBe('BEGINNER_CALL_LIMIT_EXCEEDED');
-      expect(r.costEstimate.warningMessage).toContain('Beginner');
+      // ADR-0019: 既 95 + 7 = 102 > 100 でも、CSV インポートは Beginner 上限を消費しないため
+      //   warningCode=null。fair-use-limit (Phase 6) が別途暴走防止を担当する。
+      expect(r.costEstimate.warningCode).toBeNull();
+      expect(r.costEstimate.estimatedJpy).toBe(0);
     }
   });
 
-  it('Expert プランで月次予算超過 → warningCode=BUDGET_CAP_EXCEEDED', async () => {
-    // 2026-05-15 価格改定後: Expert ¥5/call。6 行 = ¥30。budget cap=4990 で 4980+30>4990 で発火
+  it('ADR-0019: Expert プランで月次予算超過状態でも CSV インポートは warning 発火せず (= 無料化のため)', async () => {
+    // ADR-0019: CSV インポートは無料化されたため、予算超過状態でも warning は出ない。
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       plan: 'expert',
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 4980,
       monthlyBudgetCapJpy: 5000,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10,
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
@@ -302,8 +304,10 @@ describe('previewImport', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // 既 ¥4980 + ¥5×6 = ¥5010 > ¥5000 (2026-05-15 価格改定後)
-      expect(r.costEstimate.warningCode).toBe('BUDGET_CAP_EXCEEDED');
+      // ADR-0019: 旧仕様では ¥4980 + ¥5×6 = ¥5010 > ¥5000 で BUDGET_CAP_EXCEEDED 発火だったが、
+      //   CSV インポート無料化により estimatedJpy=0 となり予算判定もスキップされる。
+      expect(r.costEstimate.warningCode).toBeNull();
+      expect(r.costEstimate.estimatedJpy).toBe(0);
     }
   });
 
@@ -468,9 +472,11 @@ describe('applyImport', () => {
     if (!r.ok) expect(r.error).toBe('PREVIEW_EXPIRED');
   });
 
-  it('apply 直前の再評価で Beginner 上限超過 → BEGINNER_CALL_LIMIT', async () => {
+  it('ADR-0019: apply 直前の再評価で Beginner 上限超過状態でも CSV インポートは成功する (= 無料化のため)', async () => {
+    // 旧仕様 (ADR-0002): Beginner 上限超過で BEGINNER_CALL_LIMIT エラー発火
+    // 新仕様 (ADR-0019): CSV インポートは無料化されたため、Beginner 上限を消費せず apply 成功
     vi.mocked(prisma.tenantImportPreview.findUnique).mockResolvedValueOnce(
-      makeFakePreview({ knowledge: 50 }),
+      makeFakePreview({ knowledge: 1 }), // 件数を 1 に減らし、knowledge 1 件取込でストレージ等の他の制約を回避
     );
     vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
       id: TENANT_ID,
@@ -478,14 +484,21 @@ describe('applyImport', () => {
       currentMonthApiCallCount: 80,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10, // ADR-0019: Expert default は ¥10 だが、Beginner なので使われない
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
+    tx.knowledge.create.mockResolvedValue({} as never);
+    tx.tenantImportPreview.delete.mockResolvedValue({} as never);
+    const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
+    vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
+      generated: 1,
+      failed: 0,
+      costJpy: 0, // ADR-0019: external-import-embedding は無料
+    });
     const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toBe('BEGINNER_CALL_LIMIT');
+    expect(r.ok).toBe(true);
   });
 
   it('正常系: Knowledge 1 件取込 + embedding 生成 + preview 削除', async () => {
@@ -498,8 +511,8 @@ describe('applyImport', () => {
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50, // ADR-0019: Beginner 上限 100 → 50
+      pricePerCallHaiku: 10, // ADR-0019: Expert ¥5 → ¥10
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
@@ -507,12 +520,13 @@ describe('applyImport', () => {
     tx.tenantImportPreview.delete.mockResolvedValue({} as never);
 
     // PR #357 (2026-05-14): バッチ helper は 1 件処理して 1 ApiCallLog 単価分を返す
-    // 2026-05-15 価格改定: Expert ¥10 → ¥5
+    // ADR-0019 (2026-05-24): CSV インポート (external-import-embedding) は全プラン無料化されたため、
+    //   generateAndPersistBatchEmbeddings の戻り値 costJpy は 0 (無料 call)。
     const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
     vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
       generated: 1,
       failed: 0,
-      costJpy: 5,
+      costJpy: 0,
     });
 
     const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
@@ -521,7 +535,7 @@ describe('applyImport', () => {
       expect(r.summary.knowledgeCreated).toBe(1);
       expect(r.summary.risksIssuesCreated).toBe(0);
       expect(r.summary.embeddingGenerated).toBe(1);
-      expect(r.summary.totalCostJpy).toBe(5); // ¥5 × 1 ApiCallLog (2026-05-15 価格改定後)
+      expect(r.summary.totalCostJpy).toBe(0); // ADR-0019: external-import-embedding 無料化
     }
     // PR #357 中核: N 件取込でも generateAndPersistBatchEmbeddings は **1 度だけ呼ばれる**
     //   (= ApiCallLog 1 件 = Tenant counter +1 = 画面表示 +1 のユーザ要件を満たす)
@@ -540,8 +554,8 @@ describe('applyImport', () => {
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10,
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
@@ -585,8 +599,8 @@ describe('applyImport', () => {
         currentMonthApiCallCount: 0,
         currentMonthApiCostJpy: 0,
         monthlyBudgetCapJpy: null,
-        beginnerMonthlyCallLimit: 100,
-        pricePerCallHaiku: 5,
+        beginnerMonthlyCallLimit: 50,
+        pricePerCallHaiku: 10,
         pricePerCallSonnet: 15,
         deletedAt: null,
       } as never);

@@ -45,17 +45,17 @@ Dashboard → **商品カタログ** → **商品を追加**
 #### Price 作成
 | 項目 | 値 |
 |---|---|
-| 商品名 | `たすきば Expert API Call (Haiku)` |
-| 説明 | `Expert プランの API 呼び出し従量課金 (¥5/call、2026-05-15 改定: ¥10 → ¥5)` |
+| 商品名 | `たすきば Expert プロジェクト作成/更新 (Haiku)` |
+| 説明 | `Expert プランのプロジェクト作成/更新 1 回あたり ¥10 (ADR-0019 / 2026-05-24 改定: ¥5 → ¥10)` |
 | **料金モデル** | **従量課金ベース** |
-| 単価 | **`¥5` per unit** |
+| 単価 | **`¥10` per unit** (ADR-0019 後) |
 | 通貨 | JPY |
 | 請求期間 | 月次 |
 | メーター | (上記で作成した meter を選択) |
-| 検索キー (lookup_key) | `haiku_per_call_expert` |
+| 検索キー (lookup_key) | `haiku_per_call_expert_v2` (旧 `haiku_per_call_expert` は archive) |
 | 税の挙動 | **税抜** (Exclusive、Stripe Tax 未使用時もこれ) |
 
-→ 環境変数 `STRIPE_PRICE_HAIKU` に Price ID (`price_1TYdtQK3TUQWW2eqIaBdikoV` 形式) を保存
+→ 環境変数 `STRIPE_PRICE_HAIKU` に **新 Price ID** (`price_1TYdtQK3TUQWW2eqIaBdikoV` 形式) を保存。Netlify production / staging の両方で切替必要。旧 ¥5/call Price は **archive** (削除不可、archive のみ)。
 
 ### 2.2 Sonnet per-call (Pro plan)
 
@@ -69,14 +69,14 @@ Dashboard → **商品カタログ** → **商品を追加**
 #### Price 作成
 | 項目 | 値 |
 |---|---|
-| 商品名 | `たすきば Pro API Call (Sonnet)` |
-| 説明 | `Pro プランの API 呼び出し従量課金 (¥15/call、2026-05-15 改定: ¥30 → ¥15)` |
+| 商品名 | `たすきば Pro プロジェクト作成/更新 + なぜ?機能 (Sonnet)` |
+| 説明 | `Pro プランのプロジェクト作成/更新 + なぜ?機能 1 回あたり ¥15 (据置、ADR-0019)` |
 | 料金モデル | 従量課金ベース |
-| 単価 | **`¥15` per unit** |
+| 単価 | **`¥15` per unit** (据置、変更不要) |
 | 請求期間 | 月次 |
 | 検索キー | `sonnet_per_call_pro` |
 
-→ 環境変数 `STRIPE_PRICE_SONNET` に保存
+→ 環境変数 `STRIPE_PRICE_SONNET` に保存。**ADR-0019 では Sonnet 単価変更なし**、既存 Price をそのまま使用可。
 
 ### 2.3 Storage Add-on (Plus)
 

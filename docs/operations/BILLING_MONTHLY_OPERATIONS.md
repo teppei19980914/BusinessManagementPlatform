@@ -1,6 +1,8 @@
 # 月次請求業務運用ガイド (super_admin 向け)
 
-最終更新: 2026-05-14
+最終更新: 2026-05-25 (ADR-0019 価格改定反映)
+
+> 🆕 **ADR-0019 (2026-05-24) 反映済**: 月次請求集計 (billing-aggregation.service.ts) は `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみ対象。資産入力・チャット検索・CSV インポート・月初 backfill cron は全プラン無料化のため請求金額に含まれない。Expert 単価 ¥5 → ¥10、Pro ¥15 据置。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)、Stripe Price 切替手順: [STRIPE_SETUP.md](./STRIPE_SETUP.md) §2.1
 
 ## 概要
 

@@ -6,10 +6,13 @@
  * Voyage embedding + pgvector 基盤を共有し、表示時にもクエリ側 embedding を
  * リアルタイム生成する (= 提案機能との根本的な違い)。
  *
+
+
  * 設計判断:
- *   - generateEmbedding ({ inputType: 'query' }) で 1 ApiCallLog 計上
- *     (Beginner は月100回枠と共有、Expert ¥5、Pro ¥15、書込と同単価。
- *      実単価は Tenant.pricePerCallHaiku / pricePerCallSonnet を `withMeteredLLM` 経由で参照)
+ *   - generateEmbedding ({ inputType: 'query' }) で 1 ApiCallLog 計上 (cost=0)
+ *     ADR-0019 (2026-05-24): チャット検索は全プラン無料化。ApiCallLog には監査・分析目的で
+ *     cost=0 で記録するが、Tenant counter / Stripe queue / Beginner 上限のいずれにも影響しない。
+ *     暴走防止は fair-use-limit (月 10,000 calls/tenant) で対応する。
  *   - 5 資産は並列 (Promise.all) で pgvector Cosine 検索
  *   - 各資産で SUGGESTION_DEFAULT_LIMIT (= 50) 件取得、assignPercentileTiers
  *     で tier 分類、weak は UI 側で折りたたみ
@@ -64,8 +67,20 @@ export interface ChatSearchResult {
   query: string;
   /** true なら embedding 生成に失敗し pg_trgm fallback で動作。 */
   degraded: boolean;
-  /** 縮退モード時の理由 (UI のバナー文言に使用)。 */
-  degradeReason?: 'rate_limited' | 'beginner_limit_exceeded' | 'budget_exceeded' | 'tenant_inactive' | 'plan_invalid' | 'llm_error' | 'output_invalid';
+  /**
+   * 縮退モード時の理由 (UI のバナー文言に使用)。
+   * ADR-0019 (2026-05-24): 'fair_use_limit_exceeded' を追加 (チャット検索は無料化されたため、
+   *   通常は Beginner 上限 / 予算上限ではなく fair-use-limit で停止)。
+   */
+  degradeReason?:
+    | 'rate_limited'
+    | 'beginner_limit_exceeded'
+    | 'budget_exceeded'
+    | 'tenant_inactive'
+    | 'plan_invalid'
+    | 'fair_use_limit_exceeded'
+    | 'llm_error'
+    | 'output_invalid';
   results: {
     projects: ChatSearchHit[];
     knowledges: ChatSearchHit[];

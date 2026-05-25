@@ -63,8 +63,9 @@ beforeEach(() => {
 const baseTenant = {
   id: TENANT_ID,
   // feat/settings-tenant-identity (2026-05-21): slug + 価格定数 + 停止状態を DTO に追加
+  // ADR-0019 (2026-05-24): pricePerCallHaiku 5 → 10
   slug: 'test-tenant',
-  pricePerCallHaiku: 5,
+  pricePerCallHaiku: 10,
   pricePerCallSonnet: 15,
   suspendedAt: null,
   suspendReason: null,
@@ -73,7 +74,7 @@ const baseTenant = {
   plan: 'expert',
   monthlyBudgetCapJpy: null,
   beginnerMaxSeats: 5,
-  beginnerMonthlyCallLimit: 100,
+  beginnerMonthlyCallLimit: 50, // ADR-0019: 100 → 50
   currentMonthApiCallCount: 10,
   currentMonthApiCostJpy: 100,
   scheduledPlanChangeAt: null,
@@ -143,8 +144,8 @@ describe('getTenantSelfInfo', () => {
     expect(r).not.toBeNull();
     if (!r) return;
     expect(r.slug).toBe('test-tenant');
-    expect(r.pricePerCallHaiku).toBe(5);
-    expect(r.pricePerCallSonnet).toBe(15);
+    expect(r.pricePerCallHaiku).toBe(10); // ADR-0019: Expert ¥5 → ¥10
+    expect(r.pricePerCallSonnet).toBe(15); // 据置
     expect(r.suspendedAt).toBeNull();
     expect(r.suspendReason).toBeNull();
     expect(r.createdAt).toEqual(new Date('2026-01-01T00:00:00Z'));

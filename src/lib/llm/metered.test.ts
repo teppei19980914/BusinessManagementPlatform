@@ -9,6 +9,9 @@ vi.mock('@/lib/db', () => ({
     },
     apiCallLog: {
       create: vi.fn(),
+      // ADR-0019 (2026-05-24): fair-use-limit が無料 featureUnit 呼出時に count を実行する。
+      // デフォルトは 0 件 (= fair use limit に余裕あり) を返す。各テストで上書き可能。
+      count: vi.fn().mockResolvedValue(0),
     },
     // PR-S6 (2026-05-14): credit_card テナントの Stripe Usage Record queue
     stripeUsageRecordQueue: {
@@ -37,9 +40,10 @@ function makeTenant(overrides: Partial<Record<string, unknown>> = {}) {
     currentMonthApiCallCount: 0,
     currentMonthApiCostJpy: 0,
     monthlyBudgetCapJpy: null as number | null,
-    beginnerMonthlyCallLimit: 100,
+    // ADR-0019 (2026-05-24): Beginner 上限 100 → 50 (課金対象 call のみカウント)
+    beginnerMonthlyCallLimit: 50,
     beginnerMaxSeats: 5,
-    pricePerCallHaiku: 5,
+    pricePerCallHaiku: 10,
     pricePerCallSonnet: 15,
     scheduledPlanChangeAt: null,
     scheduledNextPlan: null,
@@ -137,7 +141,7 @@ describe('withMeteredLLM - Step 2: Tenant 取得 + plan 解決', () => {
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -158,7 +162,7 @@ describe('withMeteredLLM - Step 2: Tenant 取得 + plan 解決', () => {
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -173,19 +177,20 @@ describe('withMeteredLLM - Step 2: Tenant 取得 + plan 解決', () => {
 });
 
 describe('withMeteredLLM - Step 3: Beginner プラン月間上限', () => {
+  // ADR-0019 (2026-05-24): Beginner 上限 100 → 50 (課金対象 call のみカウント)
   it('Beginner で currentMonthApiCallCount >= limit なら beginner_limit_exceeded', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'beginner',
-        beginnerMonthlyCallLimit: 100,
-        currentMonthApiCallCount: 100,
+        beginnerMonthlyCallLimit: 50,
+        currentMonthApiCallCount: 50,
       }) as never,
     );
     const call = vi.fn();
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -198,19 +203,19 @@ describe('withMeteredLLM - Step 3: Beginner プラン月間上限', () => {
     expect(call).not.toHaveBeenCalled();
   });
 
-  it('Beginner で limit 直前 (99/100) なら通過する', async () => {
+  it('Beginner で limit 直前 (49/50) なら通過する', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'beginner',
-        beginnerMonthlyCallLimit: 100,
-        currentMonthApiCallCount: 99,
+        beginnerMonthlyCallLimit: 50,
+        currentMonthApiCallCount: 49,
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'ok' });
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -225,7 +230,7 @@ describe('withMeteredLLM - Step 3: Beginner プラン月間上限', () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
-        beginnerMonthlyCallLimit: 100,
+        beginnerMonthlyCallLimit: 50,
         currentMonthApiCallCount: 999, // beginner なら超過、expert は無視
       }) as never,
     );
@@ -233,7 +238,7 @@ describe('withMeteredLLM - Step 3: Beginner プラン月間上限', () => {
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -251,7 +256,7 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
       makeTenant({
         plan: 'expert',
         currentMonthApiCostJpy: 998,
-        pricePerCallHaiku: 5, // 2026-05-15 改定後の単価
+        pricePerCallHaiku: 10, // ADR-0019 改定後の単価 (Expert ¥10/call)
         monthlyBudgetCapJpy: 1000, // 998 + 5 = 1003 > 1000 で拒否
       }) as never,
     );
@@ -259,7 +264,7 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -276,16 +281,16 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
-        currentMonthApiCostJpy: 995,
-        pricePerCallHaiku: 5, // 2026-05-15 改定後の単価
-        monthlyBudgetCapJpy: 1000, // 995 + 5 = 1000 (>=ではなく > なので通る)
+        currentMonthApiCostJpy: 990,
+        pricePerCallHaiku: 10, // ADR-0019 改定後の単価 (Expert ¥10/call)
+        monthlyBudgetCapJpy: 1000, // 990 + 10 = 1000 ちょうど (>= ではなく > なので通る)
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'ok' });
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -308,7 +313,7 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -324,7 +329,7 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
       makeTenant({
         plan: 'expert',
         currentMonthApiCostJpy: 95,
-        pricePerCallHaiku: 5, // plan 単価は ¥5 (2026-05-15 改定後)、ただし下記 predictedCostJpy が上書き
+        pricePerCallHaiku: 10, // plan 単価は ¥10 (ADR-0019 改定後)、ただし下記 predictedCostJpy が上書き
         monthlyBudgetCapJpy: 100,
       }) as never,
     );
@@ -333,7 +338,9 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
     // predictedCostJpy=20 を渡して 95+20>100 で拒否されることを確認
     const result = await withMeteredLLM(
       {
-        featureUnit: 'embedding-batch',
+        // ADR-0019: 課金対象 featureUnit で predictedCostJpy override の動作を確認
+        // (旧 'embedding-batch' は無料化されたため、billable な project-upsert で検証)
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         predictedCostJpy: 20,
@@ -355,7 +362,7 @@ describe('withMeteredLLM - Step 5: LLM 呼び出し失敗', () => {
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -435,15 +442,15 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
   });
 
   it('Expert プラン: model=Haiku, cost=pricePerCallHaiku', async () => {
-    // 2026-05-15 価格改定: Expert ¥10 → ¥5
+    // ADR-0019 (2026-05-24): Expert ¥5 → ¥10
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
-      makeTenant({ plan: 'expert', pricePerCallHaiku: 5 }) as never,
+      makeTenant({ plan: 'expert', pricePerCallHaiku: 10 }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'x' });
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -454,12 +461,12 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.modelName).toBe(LLM_MODELS.HAIKU);
-      expect(result.costJpy).toBe(5);
+      expect(result.costJpy).toBe(10);
     }
   });
 
   it('Pro プラン: model=Sonnet, cost=pricePerCallSonnet', async () => {
-    // 2026-05-15 価格改定: Pro ¥30 → ¥15
+    // 2026-05-15 価格改定: Pro ¥30 → ¥15 / ADR-0019 (2026-05-24): Pro ¥15 据置
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({ plan: 'pro', pricePerCallSonnet: 15 }) as never,
     );
@@ -467,7 +474,7 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -488,7 +495,7 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
 
     await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -526,7 +533,7 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: DEFAULT_TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -545,7 +552,7 @@ describe('withMeteredLLM - requestId 生成と伝播', () => {
 
     const result = await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         rateLimiter: allowAllRateLimiter(),
@@ -565,7 +572,7 @@ describe('withMeteredLLM - requestId 生成と伝播', () => {
 
     await withMeteredLLM(
       {
-        featureUnit: 'test',
+        featureUnit: 'project-upsert',
         tenantId: TENANT_ID,
         userId: USER_ID,
         requestId: explicit,
@@ -591,7 +598,7 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
     const call = vi.fn().mockResolvedValue({ result: 'x' });
 
     await withMeteredLLM(
-      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      { featureUnit: 'project-upsert', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
       call,
     );
 
@@ -609,7 +616,7 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
     const call = vi.fn().mockResolvedValue({ result: 'x' });
 
     await withMeteredLLM(
-      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      { featureUnit: 'project-upsert', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
       call,
     );
 
@@ -634,7 +641,7 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
     const call = vi.fn().mockResolvedValue({ result: 'x' });
 
     await withMeteredLLM(
-      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      { featureUnit: 'project-upsert', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
       call,
     );
 
@@ -653,7 +660,7 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
     const call = vi.fn().mockResolvedValue({ result: 'x' });
 
     await withMeteredLLM(
-      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      { featureUnit: 'project-upsert', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
       call,
     );
 
@@ -671,12 +678,281 @@ describe('withMeteredLLM - PR-S6: Stripe Usage Record queue 連携', () => {
     const call = vi.fn().mockRejectedValue(new Error('LLM down'));
 
     const result = await withMeteredLLM(
-      { featureUnit: 'test', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
+      { featureUnit: 'project-upsert', tenantId: TENANT_ID, userId: USER_ID, rateLimiter: allowAllRateLimiter() },
       call,
     );
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('llm_error');
     expect(prisma.stripeUsageRecordQueue.create).not.toHaveBeenCalled();
+  });
+});
+
+// ================================================================
+// ADR-0019 (2026-05-24): billable / free featureUnit 分岐
+// ================================================================
+
+describe('withMeteredLLM - ADR-0019 §billable / free 分岐', () => {
+  describe('無料 featureUnit (chat-semantic-search / *-embedding / *-backfill / external-import-embedding)', () => {
+    it('chat-semantic-search: costJpy=0 / counter +0 / Stripe queue 投入なし', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'expert',
+          paymentMethod: 'credit_card',
+          stripeCustomerId: 'cus_test_xxx',
+          pricePerCallHaiku: 10,
+          currentMonthApiCallCount: 0,
+          currentMonthApiCostJpy: 0,
+        }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'chat-semantic-search',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.costJpy).toBe(0);
+      }
+      // Tenant counter は不変 (transaction の operations 配列に prisma.tenant.update が含まれない)
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      // Stripe queue にも投入しない (= 無料 featureUnit なので)
+      expect(prisma.stripeUsageRecordQueue.create).not.toHaveBeenCalled();
+      // ApiCallLog は cost=0 で記録される (= 監査・分析・fair-use-limit カウント用)
+      const logCall = vi.mocked(prisma.apiCallLog.create).mock.calls[0]?.[0];
+      expect(logCall?.data.costJpy).toBe(0);
+      expect(logCall?.data.featureUnit).toBe('chat-semantic-search');
+    });
+
+    it('knowledge-embedding: 同様に無料 (counter +0 / queue なし / cost=0 記録)', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({ plan: 'pro' }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'knowledge-embedding',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.costJpy).toBe(0);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it('Beginner ユーザでも無料 featureUnit は上限 50 を消費しない (= 上限到達後も継続実行可能)', async () => {
+      // Beginner ユーザが currentMonthApiCallCount=50 (= 上限到達済) でも、無料 call は通る
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'beginner',
+          beginnerMonthlyCallLimit: 50, // ADR-0019: default 50
+          currentMonthApiCallCount: 50, // 上限到達
+        }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'chat-semantic-search', // 無料 featureUnit
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      // 無料 featureUnit なので Beginner 上限超過状態でも実行可能
+      expect(result.ok).toBe(true);
+      expect(call).toHaveBeenCalled();
+    });
+
+    it('Beginner ユーザで billable featureUnit (project-upsert) は 50 上限で beginner_limit_exceeded', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'beginner',
+          beginnerMonthlyCallLimit: 50,
+          currentMonthApiCallCount: 50,
+        }) as never,
+      );
+      const call = vi.fn();
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'project-upsert', // billable
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('beginner_limit_exceeded');
+      expect(call).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('課金対象 featureUnit (project-upsert / suggestion-explanation / auto-tag-extract)', () => {
+    it('Pro suggestion-explanation: sonnet で Stripe queue 投入される', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'pro',
+          paymentMethod: 'credit_card',
+          stripeCustomerId: 'cus_test_xxx',
+        }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      await withMeteredLLM(
+        {
+          featureUnit: 'suggestion-explanation',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      const enqueueCall = vi.mocked(prisma.stripeUsageRecordQueue.create).mock.calls[0]?.[0];
+      expect(enqueueCall?.data.callType).toBe('sonnet');
+    });
+
+    it('Expert project-upsert: 単価 ¥10 で課金 (ADR-0019)', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'expert',
+          pricePerCallHaiku: 10, // ADR-0019 default
+        }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'project-upsert',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.costJpy).toBe(10);
+    });
+  });
+
+  describe('mid-month 単価変更: ADR-0019 migration 直後の新旧混在シナリオ', () => {
+    it('Tenant.pricePerCallHaiku の現在値で costJpy が決定 (migration 直後でも整合)', async () => {
+      // migration で pricePerCallHaiku が 5→10 に変わった直後を想定。
+      // Tenant 行は新単価 (10) を持ち、新規 call はその単価で記録される。
+      // 既存の ApiCallLog (旧単価 ¥5 で記録済) は immutable で SUM に新旧混在する設計。
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'expert',
+          pricePerCallHaiku: 10,
+          currentMonthApiCostJpy: 25,
+          currentMonthApiCallCount: 5,
+        }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'project-upsert',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.costJpy).toBe(10);
+      const tenantUpdate = vi.mocked(prisma.tenant.update).mock.calls[0]?.[0];
+      expect(tenantUpdate?.data?.currentMonthApiCostJpy).toEqual({ increment: 10 });
+    });
+
+    it('カスタム単価テナント (Enterprise 個別契約等) は migration で書き換えられず維持', async () => {
+      // migration WHERE 句: `WHERE price_per_call_haiku = 5` のため、カスタム単価 (例 ¥20) は維持
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({
+          plan: 'expert',
+          pricePerCallHaiku: 20,
+        }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'project-upsert',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.costJpy).toBe(20);
+    });
+  });
+
+  describe('fair-use-limit (Step 3.5): 無料 featureUnit の月次上限', () => {
+    it('hard limit (10,000 calls) 到達で fair_use_limit_exceeded', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({ plan: 'expert' }) as never,
+      );
+      // fair-use-limit の count を 10,000 で返す (= hard limit 到達)
+      vi.mocked(prisma.apiCallLog.count).mockResolvedValueOnce(10_000);
+      const call = vi.fn();
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'chat-semantic-search',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('fair_use_limit_exceeded');
+      expect(call).not.toHaveBeenCalled();
+    });
+
+    it('billable featureUnit は fair-use-limit を check しない (= 通常の budget cap で防御)', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({ plan: 'expert' }) as never,
+      );
+      vi.mocked(prisma.apiCallLog.count).mockResolvedValueOnce(10_000); // 仮に超過していても
+      const call = vi.fn().mockResolvedValue({ result: 'x' });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'project-upsert', // billable
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      // billable なので fair-use-limit の count は呼ばれない
+      expect(prisma.apiCallLog.count).not.toHaveBeenCalled();
+    });
   });
 });

@@ -18,7 +18,7 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { RUN_ID } from '../fixtures/run-id';
 import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
-import { waitForProjectsReady } from '../fixtures/auth';
+import { loginAsGeneral } from '../fixtures/auth';
 
 const ADMIN_EMAIL = `admin-themes-${RUN_ID}@example.com`.toLowerCase();
 const ADMIN_PW = 'E2eAdmin!Pw_2026';
@@ -49,13 +49,15 @@ test.describe('@visual:themes 設定画面 10 テーマ マトリクス', () => 
     sharedContext = await browser.newContext();
     sharedPage = await sharedContext.newPage();
 
-    await sharedPage.goto('/login');
-    // ADR-0016 (2026-05-20): 組織 ID 必須化
-    await sharedPage.getByLabel('組織 ID').fill('default');
-    await sharedPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
-    await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
-    await sharedPage.getByRole('button', { name: 'ログイン' }).click();
-    await waitForProjectsReady(sharedPage);
+    // KDD §5.X+128 (2026-05-25): inline login (getByLabel + getByRole({ name: 'ログイン' }))
+    //   は NextAuth `explicit-signout` 経由の CSRF cookie clear race で flake する。
+    //   `loginAsGeneral` ヘルパ (clearCookies + exact: true + waitForProjectsReady) に統一して
+    //   spec 16 と同型 fix を適用。
+    await loginAsGeneral(sharedPage, sharedContext, {
+      email: ADMIN_EMAIL,
+      password: ADMIN_PW,
+      tenantSlug: 'default',
+    });
   });
 
   test.afterAll(async () => {

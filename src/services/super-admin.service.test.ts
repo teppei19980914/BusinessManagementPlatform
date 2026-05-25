@@ -1733,7 +1733,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingPhoneNumber: null, paymentMethod: 'invoice',
       storageAddonPlan: 'standard', storageBytesUsed: BigInt(10 * 1024 * 1024),
       storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 100,
+      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false,
     } as never);
@@ -1773,7 +1773,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingPhoneNumber: null, paymentMethod: 'invoice',
       storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
       storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 100,
+      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false,
     } as never);
@@ -1820,7 +1820,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingPhoneNumber: null, paymentMethod: 'invoice',
       storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
       storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 100,
+      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false, // upgrade 履歴なし = 期限切れ判定対象
     } as never);

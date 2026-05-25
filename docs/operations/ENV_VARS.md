@@ -170,8 +170,8 @@ APP_DEFAULT_LOCALE=en-US
 | `STRIPE_ENABLED` | `false` | **feature flag**。値が文字列 `'true'` (大小区別) の場合のみ機能を有効化 (UI 表示、API 受付、Webhook 処理)。それ以外 (未設定 / `'false'` / 任意文字列) は OFF。`'1'` や bool は不可。判定実装: [`src/lib/stripe.ts`](../../src/lib/stripe.ts) の `isStripeEnabled()` |
 | `STRIPE_SECRET_KEY` | (未設定) | Stripe API キー (= サーバサイド)。**Test mode = `sk_test_xxx` / Live mode = `sk_live_xxx`**。Stripe Dashboard → Developers → API keys から取得。**絶対に GitHub にコミットしない**。Production context のみ Live key、Deploy preview / Branch deploys / Local は必ず Test key |
 | `STRIPE_WEBHOOK_SECRET` | (未設定) | Stripe Webhook の署名検証用 secret (`whsec_xxx`)。Stripe Dashboard → Developers → Webhooks → 該当エンドポイント詳細から取得。**Test / Live で必ず別エンドポイントを作成**し、それぞれの secret を context 別に設定 |
-| `STRIPE_PRICE_HAIKU` | (未設定) | Expert per-call (Haiku) の Price ID (`price_xxx`)。Stripe Dashboard → Products で事前作成 (= **単価 ¥5、Metered**、2026-05-15 改定: ¥10 → ¥5)。Test / Live で別 Price ID |
-| `STRIPE_PRICE_SONNET` | (未設定) | Pro per-call (Sonnet) の Price ID。**¥15/call、Metered** (2026-05-15 改定: ¥30 → ¥15)。Test / Live で別 |
+| `STRIPE_PRICE_HAIKU` | (未設定) | Expert per-call (Haiku) の Price ID (`price_xxx`)。Stripe Dashboard → Products で事前作成 (= **単価 ¥10、Metered**、ADR-0019 / 2026-05-24 改定: ¥5 → ¥10)。**ADR-0019 後の運用作業: 新 Price ID への切替が必要**、詳細 [STRIPE_SETUP.md](./STRIPE_SETUP.md)。Test / Live で別 Price ID |
+| `STRIPE_PRICE_SONNET` | (未設定) | Pro per-call (Sonnet) の Price ID。**¥15/call、Metered** (据置)。Test / Live で別 |
 | `STRIPE_PRICE_STORAGE_PLUS` | (未設定) | Storage Plus add-on の Price ID。¥500/月、Recurring 固定。Test / Live で別 |
 | `STRIPE_PRICE_STORAGE_PRO` | (未設定) | Storage Pro add-on の Price ID。¥1,500/月、Recurring 固定。Test / Live で別 |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | (未設定) | Stripe Publishable Key (= ブラウザ側で使用、機密情報ではない)。**Test mode = `pk_test_xxx` / Live mode = `pk_live_xxx`**。Stripe Elements / Checkout で使用。SECRET_KEY とペアで context 別に切替 |

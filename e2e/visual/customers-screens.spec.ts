@@ -26,7 +26,7 @@ import {
   cleanupByRunId,
   disconnectDb,
 } from '../fixtures/db';
-import { waitForProjectsReady } from '../fixtures/auth';
+import { loginAsGeneral } from '../fixtures/auth';
 import { createCustomerViaApi } from '../fixtures/project';
 
 const ADMIN_EMAIL = `admin-visual-customers-${RUN_ID}@example.com`.toLowerCase();
@@ -46,13 +46,13 @@ test.describe('@visual:customers 顧客管理画面', () => {
     sharedContext = await browser.newContext();
     sharedPage = await sharedContext.newPage();
 
-    await sharedPage.goto('/login');
-    // ADR-0016 (2026-05-20): 組織 ID 必須化
-    await sharedPage.getByLabel('組織 ID').fill('default');
-    await sharedPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
-    await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
-    await sharedPage.getByRole('button', { name: 'ログイン' }).click();
-    await waitForProjectsReady(sharedPage);
+    // KDD §5.X+128 (2026-05-25): inline login の CSRF race を回避するため、
+    //   `loginAsGeneral` ヘルパに統一 (= clearCookies + exact: true + waitForProjectsReady)。
+    await loginAsGeneral(sharedPage, sharedContext, {
+      email: ADMIN_EMAIL,
+      password: ADMIN_PW,
+      tenantSlug: 'default',
+    });
 
     const { id } = await createCustomerViaApi(sharedPage, {
       name: CUSTOMER_NAME,

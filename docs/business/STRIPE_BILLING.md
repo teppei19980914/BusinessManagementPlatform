@@ -1,7 +1,9 @@
 # Stripe Metered Billing 連携仕様 (v1.x)
 
-最終更新: 2026-05-22
-ステータス: **仕様確定 + 実装済 (PR #425 で UAT 検出問題群を反映)**
+最終更新: 2026-05-25 (ADR-0019 価格改定反映)
+ステータス: **仕様確定 + 実装済 (PR #425 で UAT 検出問題群を反映、PR #441 で ADR-0019 価格改定反映)**
+
+> 🆕 **ADR-0019 (2026-05-24) 価格改定反映済**: Expert ¥5 → ¥10 / Pro ¥15 据置 / 課金対象を `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみに限定 / 資産入力・チャット検索・CSV インポート・月初 backfill cron は全プラン無料化。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 関連:
 - 詳細技術設計: [docs/design/STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) (= 本仕様の「how」レベル詳細)
 - 設計判断: [docs/adr/0006-stripe-metered-billing-integration.md](../adr/0006-stripe-metered-billing-integration.md)
@@ -160,16 +162,18 @@ model BillingHistory {
 
 | Product 名 | Price ID 環境変数 | 課金タイプ | 単価 |
 |---|---|---|---|
-| Expert API Call (Haiku) | `STRIPE_PRICE_HAIKU` | Metered (per_unit) | **¥5 / call** (2026-05-15 改定: ¥10 → ¥5) |
-| Pro API Call (Sonnet) | `STRIPE_PRICE_SONNET` | Metered (per_unit) | **¥15 / call** (2026-05-15 改定: ¥30 → ¥15) |
+| Expert プロジェクト作成/更新 (Haiku) | `STRIPE_PRICE_HAIKU` | Metered (per_unit) | **¥10 / call** (ADR-0019 / 2026-05-24 改定: ¥5 → ¥10) |
+| Pro プロジェクト作成/更新 + なぜ機能 (Sonnet) | `STRIPE_PRICE_SONNET` | Metered (per_unit) | **¥15 / call** (据置) |
 | Storage Add-on (Plus) | `STRIPE_PRICE_STORAGE_PLUS` | Recurring (固定) | ¥500 / 月 |
 | Storage Add-on (Pro Storage) | `STRIPE_PRICE_STORAGE_PRO` | Recurring (固定) | ¥1,500 / 月 |
 
-> **重要 (2026-05-15 価格改定)**: 既に Stripe Price を作成済の場合、Stripe では一度作成した Price の単価変更ができません。**新規 Price を作成して Subscription Item を切り替える運用** が必要です。手順:
-> 1. Stripe Dashboard で新 Price (¥5 / ¥15) を作成
-> 2. 環境変数 `STRIPE_PRICE_HAIKU` / `STRIPE_PRICE_SONNET` を新 Price ID に更新
+> **重要 (ADR-0019 / 2026-05-24 価格改定)**: Stripe では一度作成した Price の単価変更ができません。**新規 Price を作成して Subscription Item を切り替える運用** が必要です。手順:
+> 1. Stripe Dashboard で新 Haiku Price (¥10/call) を作成 (Sonnet は ¥15 据置のため変更不要)
+> 2. 環境変数 `STRIPE_PRICE_HAIKU` を新 Price ID に更新 (Netlify production / staging 両方)
 > 3. 既存の credit_card テナントの Subscription Item を新 Price に migrate (super_admin が `stripe_billing.service` 経由で実施)
-> 4. 旧 Price は archive (削除不可、archive のみ)
+> 4. 旧 Price (¥5/call) は archive (削除不可、archive のみ)
+>
+> Sonnet Price (¥15/call) は据置のため、上記手順は Haiku のみ実施。
 >
 > 移行中は新旧 Price が並行して Usage Record を受け取り得るが、`Subscription Item` の active 状態管理で防御。詳細手順は [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) を参照。
 

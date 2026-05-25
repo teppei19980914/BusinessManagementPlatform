@@ -2,6 +2,8 @@
 
 本ドキュメントは、Vercel Cron の構成と cron-job.org ウォームアップ設定を集約する (OPERATION.md §8〜§11)。
 
+> 🆕 **ADR-0019 (2026-05-24) 反映**: 月初 embedding backfill cron (`*-embedding-backfill` featureUnit) は全プラン無料化 (cost=0)。Tenant counter / Beginner 上限を消費せず、Stripe queue にも投入しない。fair-use-limit (月 10,000 calls/tenant) は適用される。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
+
 ---
 
 ## §8. 定期実行 (Cron) 構成

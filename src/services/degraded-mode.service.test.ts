@@ -39,11 +39,12 @@ beforeEach(() => {
 
 describe('getDegradedModeState', () => {
   it('Beginner で上限到達なら active=beginner_limit_exceeded', async () => {
+    // ADR-0019 (2026-05-24): Beginner 上限 100 → 50 (課金対象 call のみカウント)
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
       plan: 'beginner',
-      currentMonthApiCallCount: 100,
+      currentMonthApiCallCount: 50,
       currentMonthApiCostJpy: 0,
-      beginnerMonthlyCallLimit: 100,
+      beginnerMonthlyCallLimit: 50,
       monthlyBudgetCapJpy: null,
     } as never);
 
@@ -55,9 +56,9 @@ describe('getDegradedModeState', () => {
   it('Beginner で上限未到達なら active=false', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
       plan: 'beginner',
-      currentMonthApiCallCount: 50,
+      currentMonthApiCallCount: 25,
       currentMonthApiCostJpy: 0,
-      beginnerMonthlyCallLimit: 100,
+      beginnerMonthlyCallLimit: 50,
       monthlyBudgetCapJpy: null,
     } as never);
 
@@ -71,7 +72,7 @@ describe('getDegradedModeState', () => {
       plan: 'pro',
       currentMonthApiCallCount: 100,
       currentMonthApiCostJpy: 5000,
-      beginnerMonthlyCallLimit: 100,
+      beginnerMonthlyCallLimit: 50, // ADR-0019 default (Pro なので無視されるが整合性のため)
       monthlyBudgetCapJpy: 5000,
     } as never);
 
@@ -85,7 +86,7 @@ describe('getDegradedModeState', () => {
       plan: 'pro',
       currentMonthApiCallCount: 9999,
       currentMonthApiCostJpy: 999_999,
-      beginnerMonthlyCallLimit: 100,
+      beginnerMonthlyCallLimit: 50,
       monthlyBudgetCapJpy: null,
     } as never);
 
@@ -105,7 +106,7 @@ describe('getDegradedModeState', () => {
       plan: 'beginner',
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
-      beginnerMonthlyCallLimit: 100,
+      beginnerMonthlyCallLimit: 50,
       monthlyBudgetCapJpy: null,
     } as never);
     vi.mocked(countNullEmbeddings).mockResolvedValueOnce({

@@ -186,11 +186,11 @@ export function TenantCreateForm() {
             className={nativeSelectClass}
           >
             <option value="beginner" disabled={beginnerAvailable === false}>
-              Beginner (¥0、月 100 回上限、5 席、90 日試用)
+              Beginner (¥0、プロジェクト作成/更新 月 50 回まで無料、5 席、90 日試用)
               {beginnerAvailable === false ? ' — このメールは既登録のため選択不可' : ''}
             </option>
-            <option value="expert">Expert (¥5/call)</option>
-            <option value="pro">Pro (¥15/call、Sonnet 説明文付)</option>
+            <option value="expert">Expert (プロジェクト作成/更新 ¥10/call、資産入力・チャットは無料)</option>
+            <option value="pro">Pro (プロジェクト + なぜ機能 ¥15/call、Sonnet)</option>
           </select>
           {beginnerAvailable === false && eligibilityHint && (
             <p

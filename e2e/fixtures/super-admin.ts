@@ -44,14 +44,25 @@ export type SuperAdminFixture = {
   superAdminId: string;
   superAdminEmail: string;
   superAdminPassword: string;
-  /** 顧客テナント 1 (expert / plus): LLM ¥1500 (300 calls × ¥5、2026-05-15 改定後) + Storage ¥500 = ¥2000 */
+  /** 顧客テナント 1 (expert / plus): LLM ¥1500 + Storage ¥500 = ¥2000
+   *
+   * ADR-0019 (2026-05-24): featureUnit を `project-upsert` (= 課金対象) で seed。
+   *   旧 fixture は `risk-issue-embedding` を使っていたが、ADR-0019 で `*-embedding` 系は
+   *   無料化されたため、super_admin ダッシュボード集計 (`BILLABLE_FEATURE_UNITS` フィルタ)
+   *   が ¥0 を返し E2E が失敗した (KDD §5.X+127)。
+   *   費用 ¥1500 は ApiCallLog.costJpy に直接書き込む値で、計算根拠は問わない (test fixture)。
+   */
   customerTenantA: {
     id: string;
     name: string;
     slug: string;
     adminEmail: string;
   };
-  /** 顧客テナント 2 (pro / pro_storage): LLM ¥22500 (1500 calls × ¥15、2026-05-15 改定後) + Storage ¥1500 = ¥24000 */
+  /** 顧客テナント 2 (pro / pro_storage): LLM ¥22500 + Storage ¥1500 = ¥24000
+   *
+   * ADR-0019: featureUnit を `project-upsert` (= 課金対象) で seed (同上、tenantA と同型)。
+   *   ¥22500 は ApiCallLog.costJpy 直接書き込み。
+   */
   customerTenantB: {
     id: string;
     name: string;
@@ -115,7 +126,11 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
     [superAdminId, MANAGEMENT_TENANT_ID],
   );
 
-  // 2. 顧客テナント A: expert / plus = LLM ¥1500 (300 calls × ¥5、2026-05-15 改定後) + Storage ¥500
+  // 2. 顧客テナント A: expert / plus = LLM ¥1500 + Storage ¥500
+  //   ADR-0019 (2026-05-24): super_admin 画面の集計が `BILLABLE_FEATURE_UNITS` フィルタを
+  //   持つため、fixture は **課金対象 featureUnit (= project-upsert)** で seed する必要がある。
+  //   旧 fixture は `risk-issue-embedding` を使っていたが、これは ADR-0019 で無料化されたため
+  //   集計から除外され ¥0 表示になり E2E 失敗 → KDD §5.X+127 で記録。
   // NOTE (PR #337 fix): name にも suffix を付与する。slug だけ一意では不十分。
   //   playwright が同一 spec を chromium / chromium-mobile 両 project で実行する場合、
   //   同一 worker process なら RUN_ID が共有されるため、suffix 無しの name だと
@@ -139,16 +154,16 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   const tenantAId = tenantA.rows[0]!.id;
 
   // PR-V8.1 (2026-05-19): super_admin 画面表示が ApiCallLog SUM (真値) ベースに変わったため、
-  //   tenant counter と整合する ApiCallLog レコードを seed する。counter (300 calls / ¥1500)
-  //   に揃えるが、表示は SUM (= COUNT * cost) に基づくため、件数と費用合計が一致するレコードを作る。
-  //   bulkInsert で 300 行入れると遅いため、1 行に集約せず代表 1 行で件数 = 1 / cost = 1500 で
-  //   counter を `1, 1500` に同時 update する (= drift なし状態)。
+  //   tenant counter と整合する ApiCallLog レコードを seed する。counter (1 calls / ¥1500)
+  //   に揃え、件数と費用合計が一致する代表 1 行を作る (= drift なし状態)。
+  // ADR-0019 (2026-05-24): featureUnit は **課金対象** (= BILLABLE_FEATURE_UNITS) でなければ
+  //   集計フィルタで除外されるため、`project-upsert` を使う。旧 `risk-issue-embedding` は無料化済。
   // 2026-05-19: api_call_logs.request_id は NOT NULL (VarChar(64))。fixture でも明示必須。
   await pool.query(
     `INSERT INTO api_call_logs (
        tenant_id, feature_unit, model_name, cost_jpy, latency_ms, request_id, created_at
      )
-     VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, $2, NOW())`,
+     VALUES ($1, 'project-upsert', 'claude-haiku-4-5', 1500, 100, $2, NOW())`,
     [tenantAId, `e2e-sa-${runId}-${suffix}-a-req`],
   );
   // counter を ApiCallLog SUM と一致させる (1 件 / ¥1500)
@@ -177,7 +192,8 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
     [adminARes.rows[0]!.id, tenantAId],
   );
 
-  // 3. 顧客テナント B: pro / pro_storage = LLM ¥22500 (1500 calls × ¥15、2026-05-15 改定後) + Storage ¥1500
+  // 3. 顧客テナント B: pro / pro_storage = LLM ¥22500 + Storage ¥1500
+  //   ADR-0019: featureUnit は課金対象 `project-upsert` で seed (旧 `project-embedding` は無効)。
   const slugB = `e2e-sa-${runId}-${suffix}-b`;
   const nameB = `E2E Tenant B ${runId}-${suffix}`; // 名前にも suffix (上記 nameA と同理由)
   const tenantB = await pool.query<{ id: string }>(
@@ -196,13 +212,14 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   const tenantBId = tenantB.rows[0]!.id;
 
   // PR-V8.1 (2026-05-19): tenantA と同様、ApiCallLog seed + counter 整合
-  //   pro プラン × 1500 calls × ¥15 = ¥22500 を代表 1 行で表現 (counter も 1 / ¥22500 に揃える)
-  // 2026-05-19: request_id は NOT NULL のため明示
+  //   pro プラン ¥22500 を代表 1 行で表現 (counter も 1 / ¥22500 に揃える、drift なし状態)
+  // ADR-0019 (2026-05-24): featureUnit は課金対象 `project-upsert` (旧 `project-embedding` は
+  //   現在 BILLABLE_FEATURE_UNITS に含まれていないため集計除外される、KDD §5.X+127)。
   await pool.query(
     `INSERT INTO api_call_logs (
        tenant_id, feature_unit, model_name, cost_jpy, latency_ms, request_id, created_at
      )
-     VALUES ($1, 'project-embedding', 'claude-sonnet-4-6', 22500, 200, $2, NOW())`,
+     VALUES ($1, 'project-upsert', 'claude-sonnet-4-6', 22500, 200, $2, NOW())`,
     [tenantBId, `e2e-sa-${runId}-${suffix}-b-req`],
   );
   await pool.query(

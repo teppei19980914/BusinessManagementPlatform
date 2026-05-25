@@ -93,7 +93,7 @@ export async function PATCH(req: NextRequest) {
           error: {
             code: 'BEGINNER_BUDGET_NOT_ALLOWED',
             message:
-              'Beginner プランは固定の月 100 回上限で運用されるため、月次予算上限は設定できません。Expert または Pro プランへのアップグレード後に設定してください。',
+              'Beginner プランは固定のプロジェクト作成/更新 月 50 回まで無料で運用されるため (ADR-0019)、月次予算上限は設定できません。Expert または Pro プランへのアップグレード後に設定してください。',
           },
         },
         { status: 400 },

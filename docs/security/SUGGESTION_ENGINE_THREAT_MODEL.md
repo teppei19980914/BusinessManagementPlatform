@@ -1,8 +1,16 @@
 # 提案エンジンの脅威モデル (STRIDE)
 
 - 起票日: 2026-05-01
+- 最終更新: 2026-05-25 (ADR-0019 価格改定反映)
 - 対象機能: 提案エンジン v2 (Phase 1 + Phase 2、6月1日リリース)
-- 関連: [SUGGESTION_ENGINE_PLAN.md](../developer/SUGGESTION_ENGINE_PLAN.md) / [DESIGN.md §34](../developer/DESIGN.md)
+- 関連: [SUGGESTION_ENGINE_PLAN.md](../developer/SUGGESTION_ENGINE_PLAN.md) / [DESIGN.md §34](../developer/DESIGN.md) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (価格改定)
+
+> 🆕 **ADR-0019 (2026-05-24) 価格改定による脅威モデル影響**: 課金対象を `BILLABLE_FEATURE_UNITS` のみに縮小したことで、無料化された featureUnit (chat-semantic-search / *-embedding / *-backfill 等) の **DoS / 経済的攻撃リスク** が新たに顕在化。これに対し以下の防御を追加実装済 (PR #441):
+> - **fair-use-limit** (tenant 単位、月 10,000 calls 上限) — 単一テナントの異常利用を防御
+> - **Voyage 全社監視 3 段階** (warn 80% / critical 90% / alert 100%) — 200M tokens/月 無料枠の全社共有保護
+> - **CI ガード** (`scripts/check-llm-billing-bypass.ts`) — `getAnthropicClient` / `voyageEmbed` の直接呼出 (= bypass) を機械検出
+>
+> 詳細: [ADR-0019 §LLM 暴走防止](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 
 ---
 

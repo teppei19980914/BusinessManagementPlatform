@@ -83,6 +83,9 @@ export interface ExplainSuggestionDegraded {
     | 'plan_invalid'
     // 2026-05-09 (#22): Pro プラン限定機能のため、それ以外のプランは plan_forbidden で拒否。
     | 'plan_forbidden'
+    // ADR-0019 (2026-05-24): suggestion-explanation は billable のため通常は発火しないが、
+    //   withMeteredLLM の reason union 整合のため列挙する。
+    | 'fair_use_limit_exceeded'
     | 'llm_error'
     | 'project_not_found'
     | 'candidate_not_found'

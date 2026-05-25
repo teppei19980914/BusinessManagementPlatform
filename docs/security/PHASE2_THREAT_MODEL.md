@@ -1,8 +1,11 @@
 # Phase 2 機能の脅威モデル (STRIDE)
 
 - 起票日: 2026-05-08
+- 最終更新: 2026-05-25 (ADR-0019 価格改定反映)
 - 対象機能: P-D テナントデータ一括インポート (PR #270) / Phase 1 外部システムからの初回データ移行 (PR #273) / Storage add-on プラン (PR #274)
-- 関連: [V1_FINAL_TASKS.md](../roadmap/V1_FINAL_TASKS.md) / [SUGGESTION_ENGINE_THREAT_MODEL.md](./SUGGESTION_ENGINE_THREAT_MODEL.md) (先行モデル)
+- 関連: [V1_FINAL_TASKS.md](../roadmap/V1_FINAL_TASKS.md) / [SUGGESTION_ENGINE_THREAT_MODEL.md](./SUGGESTION_ENGINE_THREAT_MODEL.md) (先行モデル) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
+
+> 🆕 **ADR-0019 (2026-05-24) 価格改定影響**: CSV 一括インポート (`external-import-embedding` featureUnit) は **全プラン無料化**。これによる経済的攻撃リスク (= 大量データの無償インポート) は **fair-use-limit + Voyage 全社監視 + 物理的行数上限** (`TOO_MANY_ROWS` gate、既存) の 3 層防御で対応。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 
 ---
 

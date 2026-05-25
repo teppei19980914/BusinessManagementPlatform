@@ -71,6 +71,8 @@ export interface GenerateEmbeddingFailure {
     | 'beginner_limit_exceeded'
     | 'budget_exceeded'
     | 'plan_invalid'
+    // ADR-0019 (2026-05-24): 無料 featureUnit (chat-semantic-search 等) で fair-use-limit 超過時。
+    | 'fair_use_limit_exceeded'
     | 'llm_error'
     | 'output_invalid';
   message: string;

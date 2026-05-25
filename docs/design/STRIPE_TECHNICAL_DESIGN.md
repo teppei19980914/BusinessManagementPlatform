@@ -1,8 +1,10 @@
 # Stripe Metered Billing 詳細技術設計
 
-最終更新: 2026-05-22
-ステータス: **詳細設計確定 + 実装済 (PR #425 で UAT 検出問題群を反映)**
-関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) (仕様) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) (設計判断) / [STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md) (実装計画)
+最終更新: 2026-05-25 (ADR-0019 価格改定反映)
+ステータス: **詳細設計確定 + 実装済 (PR #425 で UAT 検出問題群を反映、PR #441 で ADR-0019 価格改定反映)**
+関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) (仕様) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) (設計判断) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (2026-05-24 価格改定) / [STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md) (実装計画)
+
+> 🆕 **ADR-0019 (2026-05-24) 反映**: Stripe queue 投入は `BILLABLE_FEATURE_UNITS` のみ (project-upsert / suggestion-explanation / auto-tag-extract)。Haiku Price 単価 ¥5 → ¥10 (新 Price ID 発行 + ENV 切替必要)、Sonnet ¥15 据置。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)、運用手順: [STRIPE_SETUP.md](../operations/STRIPE_SETUP.md)
 
 ## 概要
 

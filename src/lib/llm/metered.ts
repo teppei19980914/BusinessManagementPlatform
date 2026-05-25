@@ -1,26 +1,36 @@
 /**
  * `withMeteredLLM()` — LLM 呼び出しの計測 + 認可 + 縮退判定ミドルウェア
- * (PR #2-c / T-03 提案エンジン v2)
+ * (PR #2-c / T-03 提案エンジン v2、ADR-0019 で billable/free 分岐を追加 / 2026-05-24)
  *
  * 役割:
- *   提案エンジンや自動タグ抽出など **すべての課金対象 LLM/Embedding 呼び出し** を
- *   本ミドルウェア越しに行う。漏れを構造的に防ぐため、サービス層で直接
- *   anthropic-sdk を叩くのではなく、必ず本関数で wrap する。
+ *   提案エンジンや自動タグ抽出など **すべての LLM/Embedding 呼び出し** を本ミドルウェア越しに
+ *   行う。漏れを構造的に防ぐため、サービス層で直接 anthropic-sdk / voyage を叩くのではなく、
+ *   必ず本関数で wrap する。
  *
- * 実行ステップ (SUGGESTION_ENGINE_PLAN.md PR #2 章より):
- *   1. 短期 rate limit (1 ユーザ / 1 分 / 10 回、1 ユーザ / 1 時間 / 60 回)
+ *   ADR-0019 改定 (2026-05-24):
+ *     featureUnit が課金対象 (= BILLABLE_FEATURE_UNITS) かどうかで以下を分岐する:
+ *       - **billable** (project-upsert / suggestion-explanation / auto-tag-extract):
+ *         従来通り cost > 0 で記録、counter increment、Stripe queue enqueue、
+ *         Beginner 月次上限カウント対象。
+ *       - **free** (knowledge-embedding / chat-semantic-search / *-embedding-backfill 等):
+ *         cost = 0 で ApiCallLog のみ記録、counter は不変、Stripe queue 投入なし、
+ *         Beginner 月次上限はカウントしない (= 上限超過後でも継続実行可能)。
+ *         予算上限 (monthlyBudgetCapJpy) も予測コスト 0 のため発火しない。
+ *
+ * 実行ステップ:
+ *   1. 短期 rate limit (1 ユーザ / 1 分 / 10 回、1 ユーザ / 1 時間 / 60 回) — 全 featureUnit 対象
  *   2. Tenant 取得 + plan 解決
- *   3. Beginner プランの月間呼び出し回数上限チェック
- *   4. monthlyBudgetCapJpy 設定時の予測コスト超過チェック
+ *   3. Beginner プランの月間呼び出し回数上限チェック (**billable のみ**)
+ *   4. monthlyBudgetCapJpy 設定時の予測コスト超過チェック (**billable のみ**)
  *   5. 実 LLM 呼び出し (caller の callback)
- *   6. 成功時に Tenant.currentMonthApiCallCount/CostJpy をアトミック increment
- *      + ApiCallLog 記録
+ *   6. 成功時に ApiCallLog 記録 (全 featureUnit) + Tenant counter increment + Stripe queue
+ *      enqueue (**billable のみ**)
  *
  * 縮退モード (LLM 呼び出しを行わず即返却):
  *   - rate_limited: 短期 rate limit 超過
  *   - tenant_inactive: Tenant 削除済 (deletedAt != null) または存在しない
- *   - beginner_limit_exceeded: Beginner 月間 100 回 (default) 超過
- *   - budget_exceeded: ユーザ自己設定の monthlyBudgetCapJpy 超過予測
+ *   - beginner_limit_exceeded: Beginner 月間 50 回 (default、ADR-0019) 超過 (billable call のみカウント)
+ *   - budget_exceeded: ユーザ自己設定の monthlyBudgetCapJpy 超過予測 (billable のみ判定)
  *
  * 失敗モード (LLM 呼び出しが投げた場合):
  *   - llm_error: 内部例外。caller 側でフォールバック (既存スコアリング等) する想定。
@@ -30,25 +40,32 @@
  *   - userId は optional (undefined = cron / システム実行)。userId なし時は
  *     rate limit をスキップ (admin 責任で別途制御)。
  *   - 予測コストは options.predictedCostJpy で上書き可能 (embedding 等で
- *     per-call 価格と差がある特殊ケース用)。デフォルトは plan 単価。
+ *     per-call 価格と差がある特殊ケース用)。デフォルトは plan 単価 (billable 時のみ計上)。
  *   - increment と ApiCallLog 記録は単一 transaction で実行 (整合性担保)。
  *     transaction 失敗は内部エラーとして throw — caller がエラー処理。
+ *   - 課金対象判定は `isBillableFeatureUnit(featureUnit)` で行う。これが ApiCallLog SUM /
+ *     画面表示 / Stripe queue / 請求書 の 5 経路で参照される単一の真実源
+ *     (feedback_billing_invariant.md)。
  *
  * 関連:
  *   - 設計: docs/design/SUGGESTION_ENGINE.md
- *   - 計画: docs/roadmap/SUGGESTION_ENGINE_PLAN.md PR #2
+ *   - 課金分類: src/config/billing-feature-units.ts (BILLABLE_FEATURE_UNITS)
+ *   - ADR: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md
  *   - 配下: src/lib/llm/rate-limiter.ts
  *   - 設定: src/config/llm.ts
  */
 
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/db';
+import { isBillableFeatureUnit } from '@/config/billing-feature-units';
 import {
   LLM_RATE_LIMIT,
   resolveCostForPlan,
   resolveModelForPlan,
 } from '@/config/llm';
 import { isTenantPlan, type TenantPlan } from '@/lib/tenant';
+// ADR-0019 (2026-05-24): 無料 featureUnit の暴走防止 (tenant 単位の月次 fair use limit)
+import { checkFairUseLimit } from '@/services/fair-use-limit.service';
 import {
   getDefaultRateLimiter,
   type RateLimiter,
@@ -118,7 +135,8 @@ export interface WithMeteredLLMDegraded {
     | 'tenant_inactive'
     | 'beginner_limit_exceeded'
     | 'budget_exceeded'
-    | 'plan_invalid';
+    | 'plan_invalid'
+    | 'fair_use_limit_exceeded';
   retryAfterSec?: number;
   message: string;
 }
@@ -188,13 +206,26 @@ export async function withMeteredLLM<T>(
   const plan: TenantPlan = tenant.plan;
 
   const modelName = resolveModelForPlan(plan);
-  const costJpy = resolveCostForPlan(plan, {
-    pricePerCallHaiku: tenant.pricePerCallHaiku,
-    pricePerCallSonnet: tenant.pricePerCallSonnet,
-  });
 
-  // ---------- Step 3: Beginner プラン月間上限チェック ----------
-  if (plan === 'beginner') {
+  // ADR-0019 (2026-05-24): featureUnit が課金対象 (= BILLABLE_FEATURE_UNITS) かを判定。
+  //   billable: 通常の課金フロー (cost > 0 / counter increment / Stripe queue enqueue)
+  //   free:     ApiCallLog のみ cost=0 で記録、counter / Stripe queue は不変、
+  //             Beginner 上限 + budget cap の判定からも除外。
+  //   詳細: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md
+  const billable = isBillableFeatureUnit(options.featureUnit);
+
+  // billable な call のみ plan 単価で課金。free call は cost=0 (= 顧客請求なし、監査ログのみ記録)。
+  const costJpy = billable
+    ? resolveCostForPlan(plan, {
+        pricePerCallHaiku: tenant.pricePerCallHaiku,
+        pricePerCallSonnet: tenant.pricePerCallSonnet,
+      })
+    : 0;
+
+  // ---------- Step 3: Beginner プラン月間上限チェック (billable のみ) ----------
+  // ADR-0019: 無料 featureUnit (chat / asset embedding / backfill 等) は Beginner 上限を消費せず、
+  //   上限到達後でも継続実行可能。"資産入力とチャットは Beginner でも完全無料で無制限" の訴求と整合。
+  if (billable && plan === 'beginner') {
     if (tenant.currentMonthApiCallCount >= tenant.beginnerMonthlyCallLimit) {
       return {
         ok: false,
@@ -204,18 +235,38 @@ export async function withMeteredLLM<T>(
     }
   }
 
-  // ---------- Step 4: monthlyBudgetCapJpy 予測超過チェック ----------
-  const predictedCost = options.predictedCostJpy ?? costJpy;
-  if (tenant.monthlyBudgetCapJpy != null) {
-    if (
-      tenant.currentMonthApiCostJpy + predictedCost >
-      tenant.monthlyBudgetCapJpy
-    ) {
+  // ---------- Step 3.5: Fair use limit (無料 featureUnit のみ、ADR-0019) ----------
+  // ADR-0019: 無料 featureUnit (knowledge-embedding / chat-semantic-search / *-backfill 等) は
+  //   plan 単価 × budget cap で防御できないため、tenant 単位の月次 call 数で別途上限を設ける。
+  //   1 テナントが Voyage 200M 無料枠 (全社共有) を食い潰す DoS / 経済的攻撃を防ぐ最終防衛線。
+  //   詳細: src/services/fair-use-limit.service.ts + ADR-0019 §LLM 暴走防止
+  if (!billable) {
+    const fairUse = await checkFairUseLimit(options.tenantId, tenant.timezone ?? null);
+    if (!fairUse.allowed) {
       return {
         ok: false,
-        reason: 'budget_exceeded',
-        message: `月次予算上限 (${tenant.monthlyBudgetCapJpy} 円) に達するため、これ以上の呼び出しを停止しました`,
+        reason: 'fair_use_limit_exceeded',
+        message: fairUse.message,
       };
+    }
+  }
+
+  // ---------- Step 4: monthlyBudgetCapJpy 予測超過チェック (billable のみ) ----------
+  // ADR-0019: 無料 featureUnit は cost=0 で予算消費しないため、予測超過判定もスキップ。
+  //   無料 call の暴走防止は Step 3.5 (fair use limit) で対応する。
+  if (billable) {
+    const predictedCost = options.predictedCostJpy ?? costJpy;
+    if (tenant.monthlyBudgetCapJpy != null) {
+      if (
+        tenant.currentMonthApiCostJpy + predictedCost >
+        tenant.monthlyBudgetCapJpy
+      ) {
+        return {
+          ok: false,
+          reason: 'budget_exceeded',
+          message: `月次予算上限 (${tenant.monthlyBudgetCapJpy} 円) に達するため、これ以上の呼び出しを停止しました`,
+        };
+      }
     }
   }
 
@@ -235,7 +286,14 @@ export async function withMeteredLLM<T>(
   }
   const latencyMs = Date.now() - startMs;
 
-  // ---------- Step 6: アトミック increment + ApiCallLog 記録 ----------
+  // ---------- Step 6: ApiCallLog 記録 + (billable のみ) counter increment + Stripe queue ----------
+  // ADR-0019 (2026-05-24): ApiCallLog は全 featureUnit で記録するが、Tenant counter increment と
+  //   Stripe queue 投入は billable な call のみ行う。これにより:
+  //     - 無料 call の暴走監視は ApiCallLog SUM (featureUnit GROUP BY) で可能
+  //     - Beginner 上限 / Stripe 請求は billable のみで集計 (= 顧客請求 invariant 維持)
+  //   feedback_billing_invariant.md: 「ApiCallLog SUM = 画面表示 = Stripe 送信 = 請求書 = CSV」
+  //   不変条件は維持される (cost=0 が混ざるだけ)。
+  //
   // PR-S6 (2026-05-14): credit_card テナントは Stripe Usage Record queue にも 1 行追加。
   //   - apiCallLog.id を事前生成 → queue 行で参照 (= idempotency_key 用)
   //   - 同一 transaction で実行する事で「ApiCallLog 作成成功 / queue 未追加」の不整合を防ぐ
@@ -245,18 +303,15 @@ export async function withMeteredLLM<T>(
   //   「stripeCustomerId 存在」判定に変更。Meter API は Customer 単位送信のため。
   const apiCallLogId = randomUUID();
   const stripeCallType = plan === 'pro' ? 'sonnet' : 'haiku';
+  // ADR-0019: free call は Stripe queue に投入しない (cost=0 / 顧客請求対象外のため)。
   const shouldEnqueueStripe =
-    tenant.paymentMethod === 'credit_card' && tenant.stripeCustomerId != null;
+    billable &&
+    tenant.paymentMethod === 'credit_card' &&
+    tenant.stripeCustomerId != null;
 
-  // Prisma の $transaction はオーバーロード (配列 / 関数) のため、明示的に配列型として扱う
+  // Prisma の $transaction はオーバーロード (配列 / 関数) のため、明示的に配列型として扱う。
+  // ApiCallLog は billable / free の両方で常に記録 (cost=0 が混ざるだけ)。
   const operations: unknown[] = [
-    prisma.tenant.update({
-      where: { id: options.tenantId },
-      data: {
-        currentMonthApiCallCount: { increment: 1 },
-        currentMonthApiCostJpy: { increment: costJpy },
-      },
-    }),
     prisma.apiCallLog.create({
       data: {
         id: apiCallLogId,
@@ -273,6 +328,19 @@ export async function withMeteredLLM<T>(
       },
     }),
   ];
+  // ADR-0019: counter increment は billable のみ。free call は Tenant.currentMonthApiCallCount /
+  //   currentMonthApiCostJpy のいずれも進めない (= Beginner 上限・予算上限を消費しない)。
+  if (billable) {
+    operations.unshift(
+      prisma.tenant.update({
+        where: { id: options.tenantId },
+        data: {
+          currentMonthApiCallCount: { increment: 1 },
+          currentMonthApiCostJpy: { increment: costJpy },
+        },
+      }),
+    );
+  }
   if (shouldEnqueueStripe) {
     operations.push(
       prisma.stripeUsageRecordQueue.create({

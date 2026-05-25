@@ -2,7 +2,9 @@
 
 本ドキュメントは、T-03 提案エンジン v2 のリリース内容、運用上の留意点、緊急停止手順を集約する。**運用者必読**。
 
-関連: [SUGGESTION_ENGINE_PLAN.md](../roadmap/SUGGESTION_ENGINE_PLAN.md) / [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) / [SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md)
+関連: [SUGGESTION_ENGINE_PLAN.md](../roadmap/SUGGESTION_ENGINE_PLAN.md) / [SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md) / [SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (価格改定)
+
+> 🆕 **ADR-0019 (2026-05-24) 価格改定**: 課金対象を `BILLABLE_FEATURE_UNITS` のみに縮小 (project-upsert / suggestion-explanation / auto-tag-extract)。資産入力 (knowledge / risk-issue / retrospective / memo embedding) / チャット検索 / CSV インポート / 月初 backfill は全プラン無料化。Expert ¥5 → ¥10、Pro ¥15 据置、Beginner 上限 100 → 50。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 
 ---
 
