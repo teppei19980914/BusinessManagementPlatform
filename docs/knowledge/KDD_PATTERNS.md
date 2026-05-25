@@ -14475,3 +14475,172 @@ await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
 - 関連 KDD: [§5.X+128](#5x128) (spec 16 の同型 fix、root cause 詳細) / [§5.X+126](#5x126) (chromium-mobile dropdown click force:true 適用、本 §5.X+129 でも未解決と判明) / [§5.X+124-125](#5x124) (chromium-mobile hit-test 系全般)
 - 関連 file: [`e2e/visual/settings-themes.spec.ts`](../../e2e/visual/settings-themes.spec.ts), [`e2e/visual/customers-screens.spec.ts`](../../e2e/visual/customers-screens.spec.ts), [`e2e/visual/dashboard-screens.spec.ts`](../../e2e/visual/dashboard-screens.spec.ts), [`e2e/specs/02-project-detail-tabs.spec.ts`](../../e2e/specs/02-project-detail-tabs.spec.ts)
 - 累計 inline login → ヘルパ化: spec 16 (§5.X+128) + visual 3 (§5.X+129) = **計 4 spec 修正済**。残り 13 spec は次回 follow-up
+
+---
+
+## 5.X+130 **★severity-1 課金漏れ★ ADR-0020 で storage-guard が import 系のみ呼ばれ一般 CRUD では peak 永久 0 のままになる隠れ穴を 2 回目フルスキャンで発見 → daily cron で peak MAX 同期する補完層を追加 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 (DB 容量従量課金) 設計時、ユーザ確認で「一般利用者は API 経由でのみ write するため storage-guard を必ず通る」前提を置いた。実装後の 2 回目フルスキャン (Explore agent による 13 観点 audit) で前提が **誤り** だったことが判明:
+
+```bash
+$ grep -rn 'withStorageGuard|assertStorageLimitInTx' src/ | grep -v 'test|generated'
+src/services/data-import.service.ts
+src/services/external-data-import.service.ts
+src/services/storage-guard.service.ts
+src/lib/api-helpers.ts (= precheckStorageLimit のみ)
+```
+
+→ 一般 CRUD (POST /api/projects, /api/knowledges, /api/risks 等) は assertStorageLimitInTx を **一切呼んでいない**。
+
+### 影響
+
+- 通常 API write で `Tenant.storageBytesPeakThisMonth` が永久に 0 のまま
+- 月初 cron は peak=0 → calculateOverageJpy=0 → ApiCallLog INSERT なし → **請求 ¥0**
+- ユーザが 50GB 使っても 1 円も請求されない致命的バグ (放置すると Supabase 原価のみ持ち出し継続)
+
+### 根本原因
+
+- ADR-0020 設計時、ユーザは「API 経由 write は全て storage-guard を通る」と理解
+- 実装は「import 系のみ post-check 必須」が既存パターンで、一般 CRUD への横展開タスクが当初設計から欠落
+- レビュー時の前提齟齬を Explore agent の客観 audit が検出
+
+### 対応
+
+[src/services/tenant-storage.service.ts:406-485](../../src/services/tenant-storage.service.ts#L406-L485) の `updateAllStorageBytesUsed` (daily cron) を以下に強化:
+
+1. 計測を新 `calculateTenantStorageBytesDynamic` (36 テーブル動的) に切替
+2. storageBytesUsed と同時に **storageBytesPeakThisMonth を MAX 同期**
+3. dbCapacityWarningLevel 再分類 + Level 昇格時のみ super_admin に通知 (spam 防止)
+
+これで一般 CRUD で書込まれたデータも遅くとも 24h 以内に peak 反映 → 月初請求が正確化。
+
+### 教訓 (転用可能)
+
+- **「ユーザ承認した前提」も実装パターンで検証必須**: 設計時の自然言語確認 (= 「API 経由 write は全て guard を通る」) と実装パターン (= import 系のみ) のギャップを Explore agent の grep audit でしか検出できなかった
+- **複数経路のうち 1 つだけ実装されたパターンは要警戒**: storage-guard は実装されたが「適用範囲」の検証が浅かった
+- **post-check の補完層として daily cron で MAX 同期**: 一般 CRUD 全てに guard を入れるのは現実的でないため、cron で吸収する設計を採用
+- **2 回目以降のフルスキャン検証で深掘りすると重大穴が出る** ([feedback_repeated_verification_request.md](../../memory/) と整合)
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 memory: [feedback_billing_invariant.md](../../memory/) / [feedback_repeated_verification_request.md](../../memory/) / [feedback_3layer_sync_filter.md](../../memory/)
+- 関連 file: [src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
+
+---
+
+## 5.X+131 **★severity-1 セキュリティ★ ADR-0020 動的 SQL の `$queryRawUnsafe` が SAST スキャナで CRITICAL 3 件検出 → Prisma.sql + Prisma.raw 経路に refactor してスコア 78→98 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 実装で information_schema から tenant_id 持ちテーブルを動的列挙する設計のため、`prisma.$queryRawUnsafe` を allowlist 検証付きで使用。CI Security Score Gate (Semgrep SAST) で:
+
+```
+F-02/F-03/F-04: SQLインジェクションリスク ($queryRawUnsafe 使用) CRITICAL × 3
+総合スコア: 78/100 (閾値 90 未満) → Gate FAILURE
+```
+
+allowlist regex (`^[a-z_][a-z0-9_]*$`) と source 信頼性 (information_schema 由来) で実害なしの実装だったが、SAST は pattern マッチのため検出。
+
+### 対応
+
+[src/services/tenant-storage-tables.service.ts](../../src/services/tenant-storage-tables.service.ts) を以下に refactor:
+
+1. `Prisma.sql` タグドテンプレート + `Prisma.raw` で SQL 組立
+2. allowlist 検証通過後の table 名は `Prisma.raw(\`"${tableName}"\`)` で trusted 文字列として埋め込み
+3. tenantId は `${tenantId}::uuid` で自動パラメータ化
+4. テスト mock からも `$queryRawUnsafe` 参照を除去
+5. SECURITY test ケースで「unsafe 系 API を一切使わない」を grep で恒久検証 (= regression detection)
+
+結果: セキュリティスコア **78 → 98** (CRITICAL 0)、Gate 通過。
+
+### 教訓
+
+- **SAST は pattern ベースで意図を理解しない**: 「allowlist 検証してから unsafe API を呼ぶ」設計は実害ゼロだが、pattern マッチでは検出される。Prisma 標準の sql タグド経路を使う方が SAST も納得 + 自然な書き方。
+- **`Prisma.sql` + `Prisma.raw` + `Prisma.join` の 3 点セット** で動的 SQL を安全に組立可能 (Prisma 公式)
+- **SECURITY 自動テスト** (grep で禁止パターン検出) で将来の再混入を防止
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 file: [src/services/tenant-storage-tables.service.ts](../../src/services/tenant-storage-tables.service.ts), [src/services/tenant-storage-tables.service.test.ts](../../src/services/tenant-storage-tables.service.test.ts)
+
+---
+
+## 5.X+132 **★severity-1 二重課金リスク★ requestId の billingScope 識別が suffix の有無のみで衝突可能 → composite key 化で完全 unique 保証 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 退会時即時請求 (`billOneTenantDbCapacityOverage`) で requestId を以下のように生成していた:
+
+```ts
+const requestIdSuffix = billingScope === 'current-month-on-withdrawal' ? '-withdraw' : '';
+const requestId = `db-capacity-overage-${tenantId}-${yearMonthForRequest}${requestIdSuffix}`;
+```
+
+- previous-month (月初 cron): `db-capacity-overage-{tid}-2026-05`
+- current-month-on-withdrawal (退会): `db-capacity-overage-{tid}-2026-05-withdraw`
+
+3 回目検証 (Explore agent 観点 B-1) で「同月 + scope 異なるのに別 requestId → idempotency 経路が分離 = 二重課金可能」が判明。
+
+### 影響
+
+- 月初 cron 実行中に同テナントが退会 → 両方が同じ前月分を別々の ApiCallLog として INSERT
+- Stripe Meter Event identifier も別になり 24h 重複防止が機能しない
+- 結果: **二重課金で顧客信頼喪失**
+
+### 対応
+
+[src/services/tenant-monthly-reset.service.ts:557](../../src/services/tenant-monthly-reset.service.ts#L557) で composite key 化:
+
+```ts
+// billingScope を必ず requestId に含めて scope 越え二重課金を物理的に不可能化
+const requestId = `db-capacity-overage-${tenantId}-${yearMonthForRequest}-${billingScope}`;
+```
+
+これで `{base}-{tenant}-{ym}-{scope}` が常に unique。scope ごとに独立した idempotency 経路が成立。
+
+### 教訓
+
+- **suffix の有無で識別すると将来 scope 追加時に脆弱**: 必ず composite key で表現すべき
+- **idempotency key は scope すべてを明示的に含める**: 「default は省略」パターンは将来追加で衝突する
+- **Stripe Meter identifier も同 requestId を使うため、JS 側の unique 設計が Stripe 側の保護も決定する**
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 memory: [feedback_billing_invariant.md](../../memory/)
+- 関連 file: [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts)
+
+---
+
+## 5.X+133 **★severity-2 運用死罠★ ADR-0020 circuit breaker open 状態の手動復旧 API が無く、open したテナントが永久 write 拒否される死罠 → super_admin endpoint 追加 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 R3 fail-close circuit breaker を実装したが、3 回連続失敗で `storageGuardCircuitOpenedAt` がセットされると以降の write を全拒否する仕様で、自動 close 経路がなかった。3 回目検証 (B-2) で「super_admin による手動復旧 API が存在しない → 一度 open したら永久死状態」が判明。
+
+### 対応
+
+[src/app/api/admin/super/tenants/\[id\]/storage-guard-reset/route.ts](../../src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts) を新規追加:
+
+- POST endpoint で circuit を手動 close
+- super_admin 認可必須
+- 既に open でない場合は 409 で誤操作検知
+- audit_log INSERT + recordError ログで「いつ・誰が」を記録
+
+### 教訓
+
+- **fail-close 設計には必ず手動復旧 API をセットで実装する**: 自動復旧は false positive リスクがあるため fail-safe は手動が安全
+- **「open 状態の検知 → 手動原因調査 → reset」の運用フロー** を ADR + endpoint 仕様で対で記述すべき
+- **死罠検出は実装後の audit でしか出ない**: 設計時には「failure mode の復旧経路」を意識的にチェックリスト化
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 file: [src/app/api/admin/super/tenants/\[id\]/storage-guard-reset/route.ts](../../src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
+

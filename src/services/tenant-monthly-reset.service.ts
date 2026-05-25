@@ -224,6 +224,13 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
         _count: { _all: true },
         _sum: { costJpy: true },
       });
+      // ADR-0020 (2026-05-25): BILLABLE_FEATURE_UNITS は 'db-capacity-overage' も含むため、
+      //   reconciledCostJpy には API 利用 + DB 容量超過の **合計** が入る。
+      //   TenantMonthlyUsageHistory.apiCostJpy フィールド名は歴史的経緯のままだが、
+      //   実際は「課金対象 ApiCallLog の総コスト」(= 総請求額の根拠) を表す。
+      //   3 回目検証 A-1: 将来 schema 拡張で dbCapacityOverageJpy カラムを分離する場合は
+      //   migration + saveMonthlyUsageSnapshots + deleteTenant snapshot + super_admin CSV を
+      //   3 レイヤ同期修正すること (feedback_3layer_sync_filter.md)。
       const reconciledCallCount = apiAgg._count._all;
       const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
 
@@ -542,8 +549,15 @@ export async function billOneTenantDbCapacityOverage(args: {
   const stripeQuantity = calculateStripeMeterQuantity(costJpy);
 
   // 月跨ぎ識別子 (= ApiCallLog.requestId / 二重 INSERT 防止用)
-  // - previous-month: 前月の yearMonth
-  // - current-month-on-withdrawal: 当月の yearMonth (退会で当月の billing を即時確定)
+  // - previous-month: 前月の yearMonth (月初 cron 用)
+  // - current-month-on-withdrawal: 当月の yearMonth (退会用)
+  //
+  // R5-横断対応 (3 回目検証で発見した B-1): 二重請求防止のため
+  //   requestId に billingScope も合成し、scope ごとに完全 unique。
+  //   ・月初 cron (previous-month) と退会 (current-month-on-withdrawal) が同月実行されても
+  //     scope サフィックスで識別され二重 INSERT 不可
+  //   ・将来 scope が増えた場合も「{base}-{tenant}-{ym}-{scope}」で衝突なし
+  //   ・Stripe identifier も同じ requestId 基準で 24h 重複防止
   const monthStart = getTenantMonthStart(now, timezone);
   const prevMonthEndInstant = new Date(monthStart.getTime() - 1);
   const createdAtForBilling =
@@ -553,12 +567,12 @@ export async function billOneTenantDbCapacityOverage(args: {
     billingScope === 'previous-month'
       ? getTenantPreviousYearMonth(now, timezone)
       : getTenantCurrentYearMonth(now, timezone);
-  const requestIdSuffix = billingScope === 'current-month-on-withdrawal' ? '-withdraw' : '';
-  const requestId = `db-capacity-overage-${tenantId}-${yearMonthForRequest}${requestIdSuffix}`;
+  // billingScope を必ず requestId に含めて scope 越え二重課金を物理的に不可能化
+  const requestId = `db-capacity-overage-${tenantId}-${yearMonthForRequest}-${billingScope}`;
 
   let createdLogId: string | null = null;
 
-  // 単一 transaction で billing invariant を確定 (ApiCallLog + counter + Stripe queue)
+  // 単一 transaction で billing invariant を確定 (ApiCallLog + counter + Stripe queue + audit_log)
   await prisma.$transaction(async (tx) => {
     if (costJpy > 0) {
       // 1. ApiCallLog INSERT (真値、ADR-0020)
@@ -598,6 +612,37 @@ export async function billOneTenantDbCapacityOverage(args: {
           nextSendAt: now,
         },
       });
+
+      // 4. audit_log INSERT (E-1: 3 回目検証で発見した運用性ギャップ修正)
+      //    誤請求や問い合わせ発生時に「いつ・どの peak で・いくら billed したか」を追跡可能にする
+      //    userId は cron / 退会 API どちらも system 起動なので省略 (schema 上 userId は required string)
+      //    将来 system user UUID を導入する場合は MANAGEMENT_USER_ID 等を渡す
+      const systemUserForAudit = await tx.user.findFirst({
+        where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+        select: { id: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (systemUserForAudit) {
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: systemUserForAudit.id,
+            action: 'CREATE',
+            entityType: 'api_call_log',
+            entityId: log.id,
+            beforeValue: { storageBytesPeakThisMonth: peakBytes.toString() },
+            afterValue: {
+              featureUnit: 'db-capacity-overage',
+              billingScope,
+              costJpy,
+              stripeQuantity,
+              requestId,
+              billedAt: createdAtForBilling.toISOString(),
+              adr: 'ADR-0020',
+            },
+          },
+        });
+      }
     }
 
     // 4-6. peak / level / drift を reset

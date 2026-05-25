@@ -117,6 +117,28 @@ export const JOIN_BASED_TABLE_NAMES: readonly string[] = JOIN_BASED_TABLES.map(
 );
 
 /**
+ * PostgreSQL 予約語の blacklist (3 回目検証 D-1 で追加)。
+ *
+ * allowlist regex `^[a-z_][a-z0-9_]*$` は予約語小文字も通過するため、
+ * 明示拒否しないと `CREATE TABLE "select" (tenant_id uuid, ...)` 等の異常 schema で SQL 異常動作の余地。
+ * 本配列は PostgreSQL 18 公式予約語のうち identifier として使われると危険な代表的 keyword を網羅。
+ *
+ * 公式: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
+ */
+export const POSTGRES_RESERVED_KEYWORDS: readonly string[] = [
+  'select', 'from', 'where', 'insert', 'update', 'delete', 'drop', 'create',
+  'alter', 'table', 'index', 'into', 'values', 'set', 'order', 'group', 'by',
+  'having', 'limit', 'offset', 'join', 'left', 'right', 'inner', 'outer',
+  'full', 'cross', 'on', 'using', 'as', 'and', 'or', 'not', 'null', 'true',
+  'false', 'case', 'when', 'then', 'else', 'end', 'union', 'intersect',
+  'except', 'all', 'distinct', 'any', 'some', 'between', 'in', 'like', 'is',
+  'with', 'returning', 'grant', 'revoke', 'commit', 'rollback', 'savepoint',
+  'transaction', 'begin', 'check', 'unique', 'primary', 'foreign', 'references',
+  'constraint', 'default', 'cascade', 'restrict', 'user', 'session', 'current',
+  'analyze', 'vacuum', 'cluster', 'explain', 'copy',
+] as const;
+
+/**
  * tenant_id を持つ direct テーブル名一覧を information_schema から取得する。
  *
  * フィルタ:
@@ -178,12 +200,24 @@ export async function calculateTenantStorageBytesDynamic(
   //   allowlist 通過後の table 名のみ Prisma.raw でクエリに埋め込む (Prisma 公式の trusted 文字列 API)。
   //   Prisma 標準の sql タグドテンプレートのみ使い、unsafe 系 API は呼び出さない設計
   //   (= SAST スキャナの SQL injection 警告も同時に回避)。
+  //
+  // 3 回目検証 (D-1) で追加: PostgreSQL 予約語名のテーブルが万一存在した場合に拒否。
+  //   regex allowlist は通るが SQL 構文として "select" / "from" 等は識別子クォート必須で
+  //   FROM "select" 等が正常実行できても予期せぬ意味になるため、明示拒否する。
   const validTablePattern = /^[a-z_][a-z0-9_]*$/;
   const safeDirectTables = directTables.filter((t) => validTablePattern.test(t));
   if (safeDirectTables.length !== directTables.length) {
     throw new Error(
       `[tenant-storage-tables] unsafe table name detected: ${JSON.stringify(directTables)}`,
     );
+  }
+  const reservedKeywordSet = new Set(POSTGRES_RESERVED_KEYWORDS);
+  for (const t of safeDirectTables) {
+    if (reservedKeywordSet.has(t)) {
+      throw new Error(
+        `[tenant-storage-tables] table name is PostgreSQL reserved keyword: ${t}`,
+      );
+    }
   }
 
   // direct テーブル分の SELECT 文を組立 (Prisma.sql タグドテンプレート + Prisma.raw)

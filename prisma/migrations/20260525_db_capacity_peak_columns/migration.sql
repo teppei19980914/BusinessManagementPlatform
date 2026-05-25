@@ -46,6 +46,16 @@
 --   - 既存運用: 影響なし (追加カラムのみ、既存カラム未変更)
 --   - rollback 容易性: 追加カラムを DROP するだけで rollback 可能
 --
+-- Rollback SQL (本番 migration 失敗時に手動実行可、A-2 3 回目検証で追記):
+--   ALTER TABLE "tenants"
+--     DROP COLUMN IF EXISTS "storage_bytes_peak_this_month",
+--     DROP COLUMN IF EXISTS "storage_bytes_peak_at",
+--     DROP COLUMN IF EXISTS "db_instance_bytes_peak_this_month",
+--     DROP COLUMN IF EXISTS "db_capacity_warning_level",
+--     DROP COLUMN IF EXISTS "storage_guard_circuit_fail_count",
+--     DROP COLUMN IF EXISTS "storage_guard_circuit_opened_at";
+--   -- その後 `prisma migrate resolve --rolled-back 20260525_db_capacity_peak_columns` で状態同期
+--
 -- 関連:
 --   - ADR: docs/adr/0020-db-capacity-usage-based-billing.md
 --   - config: src/config/db-capacity-pricing.ts (SI 単位定数 / 計算ヘルパ)

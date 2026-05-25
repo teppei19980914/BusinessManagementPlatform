@@ -42,7 +42,17 @@ export const SI_GB_BYTES = 1_000_000_000;
 /** 無料枠 (バイト) = 50MB (SI) = 50,000,000 bytes */
 export const DB_CAPACITY_FREE_TIER_BYTES = 50 * SI_MB_BYTES;
 
-/** 課金単価: 1 GB tier あたり ¥50 (階段関数) */
+/**
+ * 課金単価: 1 GB tier あたり ¥50 (階段関数)。
+ *
+ * **税仕様** (F-1 3 回目検証で明文化):
+ *   - 本値は **税抜** 表記 (= ADR-0019 LLM 単価 ¥10/¥15 と整合)。
+ *   - 消費税 (= [src/config/billing.ts](./billing.ts) `TAX_RATE = 0.10`) は請求書生成時に
+ *     billing-aggregation.service / monthly invoice 生成で一括加算される。
+ *   - Stripe Meter (`tasukiba_db_capacity_overage_jpy`) にも税抜で送信。Stripe Tax 設定で
+ *     消費税自動付与する場合は本値を tax-exclusive として扱う。
+ *   - LP 表記 ([HomePage](https://github.com/teppei19980914/HomePage)) も税抜で統一済。
+ */
 export const DB_CAPACITY_PRICE_JPY_PER_GB_TIER = 50;
 
 // ============================================================

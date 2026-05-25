@@ -268,6 +268,8 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
           tenant: { update: vi.fn() },
           apiCallLog: { create: vi.fn() },
           stripeUsageRecordQueue: { create: vi.fn() },
+          auditLog: { create: vi.fn() },
+          user: { findFirst: vi.fn(() => Promise.resolve(null)) },
         });
       }
       return fn;
@@ -572,6 +574,8 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
           tenant: { update: vi.fn(() => Promise.resolve({})) },
           apiCallLog: { create: vi.fn(() => Promise.resolve({ id: 'mock-log-id' })) },
           stripeUsageRecordQueue: { create: vi.fn(() => Promise.resolve({ id: 'mock-q' })) },
+          auditLog: { create: vi.fn(() => Promise.resolve({})) },
+          user: { findFirst: vi.fn(() => Promise.resolve(null)) },
         });
       }
       return fn;
@@ -641,6 +645,8 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
             }),
           },
           stripeUsageRecordQueue: { create: vi.fn(() => Promise.resolve({ id: 'mock-q' })) },
+          auditLog: { create: vi.fn(() => Promise.resolve({})) },
+          user: { findFirst: vi.fn(() => Promise.resolve(null)) },
         });
       }
       return fn;
@@ -673,6 +679,8 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
             }),
           },
           stripeUsageRecordQueue: { create: vi.fn(() => Promise.resolve({ id: 'mock-q' })) },
+          auditLog: { create: vi.fn(() => Promise.resolve({})) },
+          user: { findFirst: vi.fn(() => Promise.resolve(null)) },
         });
       }
       return fn;
@@ -708,6 +716,8 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
               return Promise.resolve({ id: 'mock-q' });
             }),
           },
+          auditLog: { create: vi.fn(() => Promise.resolve({})) },
+          user: { findFirst: vi.fn(() => Promise.resolve(null)) },
         });
       }
       return fn;
