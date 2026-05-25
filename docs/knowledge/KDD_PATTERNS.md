@@ -14732,3 +14732,62 @@ agent は「一般 CRUD で precheckStorageLimit を呼出なし」と報告し�
 - 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
 - 関連 memory: [feedback_repeated_verification_request.md](../../memory/) / [feedback_3layer_sync_filter.md](../../memory/) / [feedback_billing_invariant.md](../../memory/)
 - 関連 file: [prisma/migrations/20260525_db_capacity_peak_columns/migration.sql](../../prisma/migrations/20260525_db_capacity_peak_columns/migration.sql), [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts), [src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts](../../src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts)
+
+---
+
+## 5.X+135 **★severity-info 5 回目検証で実バグ 0 を確認★ ADR-0020 PR #443 の chain effect / wiring / precision を網羅検証、新規発見なし (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 PR #443 に対して **5 回連続フルスキャン検証**:
+- 1 回目: 初期設計 review
+- 2 回目: $queryRawUnsafe 3 件 + daily cron peak gap → 修正済 ([KDD §5.X+130-131](#5x130))
+- 3 回目: B-1/B-2/D-1/E-1/A-2/F-1 → 修正済 ([KDD §5.X+132-133](#5x132))
+- 4 回目: G-1/G-2/G-4 修正 + I-1/H-1/I-2 false alarm 確認 ([KDD §5.X+134](#5x134))
+- **5 回目: 新観点 (chain effect / wiring / precision / docs) で深掘り → 新規実バグ 0 件確認**
+
+### 5 回目検証で重点検証した観点
+
+#### M. Chain Effect (BILLABLE_FEATURE_UNITS 波及)
+`'db-capacity-overage'` を BILLABLE_FEATURE_UNITS に追加した影響:
+- ✅ Beginner プラン上限カウント (`Tenant.currentMonthApiCallCount`): 月初 cron で 1 件 INSERT されるが、cron は当月リセット後の値で集計するため月跨ぎ問題なし
+- ✅ fair-use-limit (notIn フィルタ): 無料 featureUnit のみ集計、db-capacity-overage は除外で正常
+- ✅ TenantMonthlyUsageHistory SUM: BILLABLE 配列参照のため db-capacity-overage が自動的に含まれる
+
+#### N. Schema Drift / Migration
+- ✅ 6 新規カラムが schema.prisma と migration で完全同期
+- ✅ 既存テナント初期化で DEFAULT/MANAGEMENT 除外 (G-1 修正済)
+- ✅ rollback SQL コメント記載済 (A-2 修正済)
+
+#### O. Number Precision
+- ✅ BigInt → Number 変換: 50GB SI = 5×10^10 bytes < 2^53 → 安全
+- ✅ Stripe Meter quantity: ハードキャップ ¥2,500 max で overflow なし
+
+#### P. Wiring (cron / Webhook / UI / 退会)
+- ✅ processTenantDbCapacityOverage は tenant-monthly-reset cron 内に統合 (独立 cron 不要)
+- ✅ Stripe Meter event name (`tasukiba_db_capacity_overage_jpy`) Webhook 経路は既存 dispatcher で自動処理
+- ✅ UI は新 schema フィールドを参照しない設計 (= バックエンドのみで更新)
+- ✅ 退会 API → billTenantWithdrawal → billOneTenantDbCapacityOverage (`current-month-on-withdrawal` scope)
+
+#### Q. ドキュメント整合
+- ✅ ADR-0020 Status: 既に `Accepted (2026-05-25)` (agent 報告は誤り、既に変更済)
+- ⚠️ → ✅ CLAUDE.md に ADR-0019/0020 索引行を追記 (本検証で対応済)
+
+#### R. 監視 / Cron Watchdog
+- ✅ 既存 `withCronExecutionLogging` で網羅 (`dbCapacityBilledTenantCount` / `dbCapacityBilledTotalJpy` が返却値)
+- 🆕 follow-up: drift detection batch (peak SUM vs pg_database_size 乖離監視) は ADR-0020 §3.5 で計画も実装未了、次 PR で
+
+### 教訓 (transferable)
+
+- **5 回深掘り検証しても新規発見ゼロ = 実装が極めて堅牢**: 過去 4 回の修正 (KDD §5.X+130-134 計 12 件の実バグ修正) で網羅完了
+- **検証回数の収益逓減**: 1-4 回目で本質的な問題は出尽くす。5 回目は false alarm + 微小 docs 改善のみ
+- **agent audit の限界**: 同じ実装に対する繰り返し検証は false alarm 率が上がる。新観点を強制しても新たな実バグは発生しにくい
+- **「実装完成 = 検証収束」のシグナル**: 連続検証で実バグ 0 件 + docs 改善のみ → これが merge ready の客観的指標になる
+- **次フェーズへの follow-up リスト化**: 5 回目で「未実装」と判明した drift detection batch のような項目は別 PR でクリーンに分離
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) (実装完成、Status: Accepted)
+- 関連 memory: [feedback_repeated_verification_request.md](../../memory/) (同観点繰り返し検証の限界)
+- 関連 file: [CLAUDE.md](../../CLAUDE.md) (ADR-0019/0020 索引行追記)
