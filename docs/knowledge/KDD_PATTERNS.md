@@ -14253,3 +14253,61 @@ KDD §5.X+125 の「Dialog 内 click 全般」分類を **「chromium-mobile + s
 - 関連 KDD: [§5.X+124](#5x124) (根本原因の最初の確定) / [§5.X+125](#5x125) (Dialog 内 click と狭く限定した分類、本セクションで範囲拡張)
 - 関連 file (本 §5.X+126 で追加 force:true 化した 4 件): [`e2e/specs/05-teardown-and-residuals.spec.ts:160-165`](../../e2e/specs/05-teardown-and-residuals.spec.ts) (account-menu-trigger + logout menuitem) / [`e2e/specs/09-customers.spec.ts:265-266`](../../e2e/specs/09-customers.spec.ts) (今日 button × 2)
 - 累計 force:true 化件数: §5.X+124 で 2 + §5.X+125 で 3 (先回り) + §5.X+125 直接 fail 2 + §5.X+126 で 4 = **計 11 件**
+
+---
+
+## 5.X+127 **★severity-1 請求不整合★ 課金 featureUnit 縮小 (ADR-0019) で E2E fixture が無料 featureUnit を使っており super_admin ダッシュボード集計が ¥0 表示で破綻 → fixture を BILLABLE_FEATURE_UNITS に揃える (2026-05-25 / PR #441)**
+
+### 事象
+
+PR #441 (ADR-0019 価格改定) で導入した `BILLABLE_FEATURE_UNITS` (= `['project-upsert', 'suggestion-explanation', 'auto-tag-extract']`) フィルタが、E2E spec [`13-super-admin-dashboard.spec.ts`](../../e2e/specs/13-super-admin-dashboard.spec.ts) を破壊した。
+
+具体的には、fixture [`e2e/fixtures/super-admin.ts`](../../e2e/fixtures/super-admin.ts) が以下の **無料化された featureUnit** で ApiCallLog を seed していたため、新しい集計フィルタで除外され ¥0 表示になり、テスト `await expect(tenantARow).toContainText('1,500')` が失敗した:
+
+```typescript
+// 旧 fixture (E2E 破綻):
+VALUES ($1, 'risk-issue-embedding', 'claude-haiku-4-5', 1500, 100, ...)   // ← 無料化済
+VALUES ($1, 'project-embedding',    'claude-sonnet-4-6', 22500, 200, ...) // ← 旧名 (= 現存しない)
+```
+
+### 根本原因
+
+**価格改定の core ロジック変更 (= "課金対象を縮小") が test fixture との整合性を見落とした**。
+
+3 重の検証 (2 回フルスキャン + security review) で `src/` 配下の整合は完全に取れていたが、`e2e/fixtures/` の seed データは生 SQL で featureUnit 文字列を直接書いていたため、TypeScript の型システムからも `BILLABLE_FEATURE_UNITS` 配列の参照からも検知できなかった。
+
+[`feedback_localestring_grep_blindspot.md`](../../memory/) で警告していた「価格定数変更時の grep は生値・表示文字列・自然文・アサーションの 4 軸で」という教訓そのものを、E2E fixture 側で踏んだ形。
+
+### 対応
+
+1. **fixture の featureUnit を `project-upsert`** (= BILLABLE_FEATURE_UNITS に含まれる課金対象) に変更
+   - tenantA: `risk-issue-embedding` → `project-upsert`
+   - tenantB: `project-embedding` → `project-upsert`
+2. **counter と SUM の整合 (drift なし状態)** は引き続き維持 (cost_jpy=1500 / 22500 を据置、新仕様でも同額表示)
+3. **コメントで KDD 参照** を明記し、将来の開発者が再度同じ罠を踏まないように
+4. テスト assert (¥1,500 / ¥22,500) は **変更不要** (= fixture が同額の billable call として seed されるため UI に同額が表示される)
+
+### 再発防止
+
+1. **価格改定 / featureUnit 仕様変更時のチェックリスト** (本 KDD 含む) を `docs/knowledge/PRICING_CHANGE_CHECKLIST.md` 等にまとめる (本 PR で対応予定):
+   - `src/config/billing-feature-units.ts` (中央定義) 確認
+   - `src/lib/llm/metered.ts` (billing engine) 確認
+   - **`e2e/fixtures/*` の生 SQL で featureUnit 直接指定箇所** ← 本 KDD の盲点
+   - test fixture 内の hardcoded 単価
+2. **fixture のリテラル `feature_unit` を const 化**: 将来 `e2e/fixtures/billable-feature-units.ts` 等で BILLABLE_FEATURE_UNITS を import し直接 SQL に埋めるか、Prisma client 経由で型安全に挿入する案 (今回は最小修正のため未対応、将来課題)
+3. **PR 内検証で E2E ローカル実行も検討**: ローカルで `pnpm test:e2e` は時間コストが高いが、価格改定のような core 変更時は実施推奨 ([CLAUDE.md](../../CLAUDE.md) §コミット前チェック §4 を強化)
+
+### 教訓 (転用可能)
+
+- **「unit test 全 PASS = 安全」ではない**: E2E fixture と業務ロジックの整合は別レイヤ。本 PR では unit test 3053/3053 PASS だったが E2E は破綻
+- **価格改定 / 課金体系変更時の盲点**: `src/` の整合性だけでは不十分。`e2e/`, `prisma/seed*.ts`, `scripts/` 配下の生 SQL / fixture も同レベルで検証必要
+- **ローカル `pnpm test:e2e` の必要性**: 「lint/tsc/test/build PASS だから push して CI で検証」は通常 OK だが、core ロジック変更 (billing / auth / 集計) では E2E もローカル実行すべき (E2E 失敗で CI 1 ラウンド消費 = ¥数百 + 開発者時間 30 分のコスト)
+- **「ApiCallLog SUM = 画面表示 = 請求書 = CSV」invariant は fixture でも維持必須** ([feedback_billing_invariant.md](../../memory/) の延長)
+- **価格改定では「不当な請求」が事業継続性の最大リスク** (本 KDD のような E2E 失敗で早期検知できたのは幸運。本番で見逃した場合は顧客請求の不整合 = 顧客信頼喪失)
+
+### 関連
+
+- 関連 PR: PR #441 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (課金 featureUnit 縮小の根拠)
+- 関連 memory: [feedback_billing_invariant.md](../../memory/) (請求 invariant) / [feedback_localestring_grep_blindspot.md](../../memory/) (価格定数 grep 4 軸) / [feedback_repeated_verification_request.md](../../memory/) (繰返し検証で深い問題発見)
+- 関連 file: [`e2e/fixtures/super-admin.ts`](../../e2e/fixtures/super-admin.ts), [`e2e/specs/13-super-admin-dashboard.spec.ts`](../../e2e/specs/13-super-admin-dashboard.spec.ts), [`src/config/billing-feature-units.ts`](../../src/config/billing-feature-units.ts)

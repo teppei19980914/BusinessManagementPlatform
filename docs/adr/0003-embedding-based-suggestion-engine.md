@@ -1,8 +1,10 @@
 # ADR-0003: Embedding ベース意味検索を提案エンジンに採用
 
-- **Status**: Accepted
+- **Status**: Accepted (Embedding 課金扱いは [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) で全プラン無料化、2026-05-24)
 - **Date**: 2026-04 (Voyage AI 採用時点)
 - **Deciders**: teppei
+
+> 🆕 **ADR-0019 (2026-05-24)**: 本 ADR で採用した Embedding ベース意味検索の課金扱いを再評価し、**資産入力 (Knowledge / RiskIssue / Retrospective / Memo の embedding) / チャット検索 / CSV インポート / 月初 backfill は全プラン無料化**。実コスト (Voyage voyage-4-lite: 月 200M tokens 無料枠 + 超過時 $0.02/1M tokens = ¥0.036/call) が LLM の 1/50-1/150 で、無料化しても事業継続性に影響しないことを根拠とした。詳細: [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md)。
 
 ---
 

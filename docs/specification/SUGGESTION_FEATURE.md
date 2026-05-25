@@ -4,6 +4,8 @@
 
 技術的な実装設計は [../design/SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md)、課金モデルのビジネスロジック詳細は [../business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md)、インフラ容量計画は [../operations/MIGRATION_TO_AWS.md](../operations/MIGRATION_TO_AWS.md) を参照。
 
+> 🆕 **ADR-0019 (2026-05-24) 価格改定**: 課金対象は `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみ。資産入力 (knowledge / risk-issue / retrospective / memo の embedding) / チャット検索 / CSV インポート / 月初 backfill cron は **全プラン無料化**。Expert 単価 ¥5 → ¥10、Pro ¥15 据置。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)。本ドキュメント内の `¥5` / `100 回` 等の数値は ADR-0019 で改定されている可能性があるため、最新値は ADR-0019 を優先参照のこと。
+
 ---
 
 ## 1. 提案機能とは何か

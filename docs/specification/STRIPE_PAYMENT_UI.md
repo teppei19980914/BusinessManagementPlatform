@@ -1,9 +1,11 @@
 # クレジットカード払い UI 仕様 (v1.x)
 
-最終更新: 2026-05-22
-関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) / [STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md)
+最終更新: 2026-05-25 (ADR-0019 価格改定反映)
+関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) / [STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 
 本ドキュメントは、v1.x で導入する **クレジットカード払い + Stripe 連携** に関する画面仕様を定義する。バックエンド仕様は [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) を参照。
+
+> 🆕 **ADR-0019 (2026-05-24)**: 課金対象は `project-upsert` / `suggestion-explanation` (Pro 限定) / `auto-tag-extract` のみ。資産入力・チャット検索・CSV インポート・月初 backfill は全プラン無料化。Expert ¥10/call (¥5 → ¥10) / Pro ¥15/call 据置。本 UI の表示単価・上限値は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) を最新基準として参照。
 
 > **2026-05-22 (PR #425) 大幅改修**: TC-1〜TC-10 の UAT で多数の severity-1 不具合を検出 / 修正したため、§2 を抜本改修。
 > - 「カード登録」と「クレジットカード払い切替」を独立 2 ステップにしていた旧 UI を **「請求先情報フォームで paymentMethod=credit_card に変更 → 自動 Stripe Checkout 遷移」の 1 ステップ強制遷移化** に変更 (KDD §5.X+100/§5.X+103)

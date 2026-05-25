@@ -2,6 +2,8 @@
 
 本ドキュメントは、本サービスの核心機能である提案エンジン v2 の技術設計を集約する。ビジネスロジック (テナント・課金) は [business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md)、要件は [archive/developer/REQUIREMENTS.md §13](../archive/developer/REQUIREMENTS.md)、機能仕様は [archive/developer/SPECIFICATION.md §26](../archive/developer/SPECIFICATION.md)、脅威モデルは [security/SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)、実装計画は [roadmap/SUGGESTION_ENGINE_PLAN.md](../roadmap/SUGGESTION_ENGINE_PLAN.md)、設計議論経緯は [archive/developer/DEVELOPER_GUIDE.md §5.62](../archive/developer/DEVELOPER_GUIDE.md) を参照。
 
+> 🆕 **ADR-0019 (2026-05-24) 価格改定**: 課金対象を `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみに縮小。資産入力 (knowledge-embedding / risk-issue-embedding / retrospective-embedding / memo-embedding) / チャット検索 (chat-semantic-search) / CSV インポート (external-import-embedding) / 月初 backfill cron (`*-embedding-backfill`) は **全プラン無料化**。Expert 単価 ¥5 → ¥10、Pro ¥15 据置。Beginner 上限 100 → 50 回 (課金対象 call のみカウント)。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
+
 ---
 
 ## 概要 — 提案機能の全体像とコスト構造 (2026-05-03 時点)
@@ -94,9 +96,9 @@ Pro プランの差別化価値として、提案結果上位 N 件に **Anthrop
 
 | プラン | 席数 | 月額固定 | 従量課金 | API 呼び出し上限 | 自動タグ抽出モデル | 提案機能 (検索) | 提案機能 (説明文付与) |
 |---|---|---|---|---|---|---|---|
-| **Beginner** | 5 席まで | ¥0 | なし | 月 100 回まで無料、超過後縮退 | Haiku | ✅ 3 軸スコアリング | ❌ 未実装 |
-| **Expert** | 無制限 | ¥0 | **¥5 / 1 API 呼び出し** (2026-05-15 改定: ¥10 → ¥5) | 無制限 | Haiku | ✅ 3 軸スコアリング | ❌ 未実装 |
-| **Pro** | 無制限 | ¥0 | **¥15 / 1 API 呼び出し** (2026-05-15 改定: ¥30 → ¥15) | 無制限 | Sonnet | ✅ 3 軸スコアリング | ❌ 未実装 (Phase 3 で実装予定) |
+| **Beginner** | 5 席まで | ¥0 | なし | プロジェクト作成/更新 月 50 回まで無料 (ADR-0019)、資産・チャットは無料・無制限 | Haiku | ✅ 3 軸スコアリング | ❌ 未実装 |
+| **Expert** | 無制限 | ¥0 | **プロジェクト作成/更新 ¥10/call** (ADR-0019: ¥5 → ¥10) | 無制限 | Haiku | ✅ 3 軸スコアリング | ❌ 未実装 |
+| **Pro** | 無制限 | ¥0 | **プロジェクト作成/更新 + なぜ機能 ¥15/call** (据置) | 無制限 | Sonnet | ✅ 3 軸スコアリング | ✅ 実装済 (suggestion-explanation) |
 
 **3 プラン共通**: 上限到達時は **縮退モード**（[docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) / NF-13.14 参照）に遷移。エンティティ作成・更新は HTTP 200 で継続、embedding 生成と auto-tag 抽出は一時停止。提案エンジンは NULL 候補をタグ：テキスト = 5：5 の重み再配分で評価。月初バッチで一括補完して翌月には完全回復する fail-safe 設計。
 

@@ -1,8 +1,10 @@
 # ADR-0008: 縮退モード (graceful degradation) — ハードカット 429 を採用しない
 
-- **Status**: Accepted
+- **Status**: Accepted ([ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) で `fair_use_limit_exceeded` reason 追加、2026-05-24)
 - **Date**: 2026-05 (TENANT_AND_BILLING 確定版で正式採用)
 - **Deciders**: teppei
+
+> 🆕 **ADR-0019 (2026-05-24) 拡張**: 本 ADR の縮退モード設計は **継続有効** だが、新たに `fair_use_limit_exceeded` reason (無料 featureUnit の月次 10,000 calls/tenant 上限到達時) が追加された。Beginner 上限の意味も「全 API call」から「課金対象 call のみ」に変化し、無料機能は上限到達後も継続利用可能になった。詳細: [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) §LLM 暴走防止。
 
 ---
 

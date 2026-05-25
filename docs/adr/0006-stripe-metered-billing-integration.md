@@ -1,8 +1,10 @@
 # ADR-0006: Stripe Metered Billing 連携によるクレジットカード自動引き落としの導入
 
-- **Status**: Accepted
+- **Status**: Accepted (価格改定は [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) で 2026-05-24 に反映)
 - **Date**: 2026-05-14
 - **Deciders**: super_admin (運営)
+
+> 🆕 **ADR-0019 (2026-05-24) 価格改定**: 本 ADR で確定した Stripe Metered Billing 統合は **継続有効** だが、Price 単価 (Expert ¥5 → ¥10、Pro ¥15 据置) と課金対象 (BILLABLE_FEATURE_UNITS のみ) は ADR-0019 で再定義済。実装変更点 (新 Haiku Price 発行 + ENV 切替 + Subscription Item migrate) は [STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) §2.1 参照。
 
 ---
 

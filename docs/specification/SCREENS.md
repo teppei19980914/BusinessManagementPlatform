@@ -2,6 +2,8 @@
 
 本ドキュメントは、本サービスの全主要画面の機能仕様を集約する (SPECIFICATION.md §11 + §16〜§24 の関連追記を統合)。画面別権限マトリクスは [PERMISSION_MATRIX.md](./PERMISSION_MATRIX.md)、共通 UI 制御ルールは [UI_RULES.md](./UI_RULES.md) を参照。
 
+> 🆕 **ADR-0019 (2026-05-24) 価格改定**: 課金対象は `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみ。資産入力 (Knowledge / RiskIssue / Retrospective / Memo) / チャット検索 / CSV インポートは全プラン無料化。Expert ¥10/call、Pro ¥15/call、Beginner プロジェクト作成/更新 月 50 回まで無料。本仕様内の単価・上限の最新値は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) を優先参照。
+
 ---
 
 ## §11. 主要画面仕様

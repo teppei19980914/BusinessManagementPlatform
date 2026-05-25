@@ -78,17 +78,19 @@
 
 テナントごとに選択する料金プラン。本サービスは LLM プランと Storage プランの 2 軸で構成される。
 
-#### LLM プラン (提案エンジン API 利用枠) — 2026-05-15 確定版
+#### LLM プラン (提案エンジン API 利用枠) — ADR-0019 確定版 (2026-05-24)
 
 | プラン | 月額固定 | 席数 | API 上限 | 単価 | モデル |
 |---|---|---|---|---|---|
-| Beginner | ¥0 | 5 席 | 月 100 回まで無料 (上限到達後は縮退) | — | Haiku |
-| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **¥5 / 1 API 呼び出し** (2026-05-15 改定: ¥10 → ¥5) | Haiku |
-| Pro | ¥0 | 無制限 | 無制限 (同上) | **¥15 / 1 API 呼び出し** (2026-05-15 改定: ¥30 → ¥15) | Sonnet |
+| Beginner | ¥0 | 5 席 | プロジェクト作成/更新 **月 50 回まで無料** (上限到達後は縮退) | — | Haiku |
+| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **プロジェクト作成/更新 ¥10/call** (ADR-0019 改定: ¥5 → ¥10) | Haiku |
+| Pro | ¥0 | 無制限 | 無制限 (同上) | **プロジェクト作成/更新 + なぜ機能 ¥15/call** (据置) | Sonnet |
 
-**「1 回の API 呼び出し」の定義 (1 業務操作 = 1 ApiCallLog ルール)**: ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、ApiCallLog / counter は **1 件 / +1** に集約される (例: プロジェクト新規作成は `featureUnit='project-upsert'` で Anthropic auto-tag + Voyage embedding を 1 件に集約)。
+**ADR-0019 (2026-05-24) で全プラン無料化**: 資産入力 (Knowledge / RiskIssue / Retrospective / Memo) / チャット検索 / CSV インポート / 月初 embedding backfill cron は **全プラン無料・無制限**。課金対象は `BILLABLE_FEATURE_UNITS` (= project-upsert / suggestion-explanation / auto-tag-extract) のみ。
 
-詳細: [TENANT_AND_BILLING.md Part 5](./TENANT_AND_BILLING.md) (確定版)
+**「1 回の API 呼び出し」の定義 (1 業務操作 = 1 ApiCallLog ルール)**: ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、ApiCallLog は **1 件** に集約される (例: プロジェクト新規作成は `featureUnit='project-upsert'` で Anthropic auto-tag + Voyage embedding を 1 件に集約)。無料 featureUnit (chat-semantic-search 等) も ApiCallLog には記録するが `costJpy=0` で counter は +0。
+
+詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (最新確定版) + [TENANT_AND_BILLING.md Part 5](./TENANT_AND_BILLING.md)
 
 #### Storage プラン (容量 add-on)
 

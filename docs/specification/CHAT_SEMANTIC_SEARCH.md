@@ -113,29 +113,30 @@
 
 ---
 
-## 3. プラン別挙動 (全プラン API 呼び出し計上)
+## 3. プラン別挙動 (ADR-0019 / 2026-05-24 改定後: 全プラン無料)
 
-本機能は **書込操作と同等に API 呼び出し 1 回として計上** する。
+**ADR-0019 (2026-05-24) でチャット検索 (`chat-semantic-search`) は全プラン無料化** されました。
 
 | プラン | チャット検索 1 回あたり | 月次上限 | 縮退時挙動 |
 |---|---|---|---|
-| **Beginner** | 月 100 回枠を **書込操作と共有** (1 検索 = 1 API 呼び出し) | 月 100 回 (書込含む) | pg_trgm fallback |
-| **Expert** | **¥5 / 1 検索** (書込と同単価、2026-05-15 改定 ¥10→¥5) | 実質無制限 (テナント月次予算上限まで) | pg_trgm fallback |
-| **Pro** | **¥15 / 1 検索** (書込と同単価、2026-05-15 改定 ¥30→¥15) | 実質無制限 (テナント月次予算上限まで) | pg_trgm fallback |
+| **Beginner** | **¥0 (無料)** | **無制限** (fair-use-limit 月 10,000 calls/tenant のみ) | pg_trgm fallback |
+| **Expert** | **¥0 (無料)** | **無制限** (fair-use-limit 同上) | pg_trgm fallback |
+| **Pro** | **¥0 (無料)** | **無制限** (fair-use-limit 同上) | pg_trgm fallback |
 
-### 3.1 全プラン計上の根拠
+### 3.1 全プラン無料化の根拠 (ADR-0019)
 
-- **サービス哲学の根幹**: about.md §5-2 が掲げる「**意味検索 = サービスの核心**」を成立させるため Voyage embedding は不可欠。これを使う限り、書込であれ読込であれ「**外部 AI を呼び出す = API 呼び出し 1 回**」という単位で統一的に計上することがユーザにとって最も透明性が高い。
-- **Beginner の自己制御**: 月100回枠を書込と共有することで、「思いつきで連投」が自然に抑制される (= 書込余力を残すために慎重にクエリを練る経済圧力)。
-- **Expert / Pro の透明な従量課金**: 1 検索 = 1 API 呼び出し = 書込と同単価。ユーザは「使った分だけ」のシンプルさを保持でき、テナント月次予算上限・予算消化率プログレスバー (about.md §Q2) でリアルタイムに費用を可視化できる。
-- **Pro 単価 ¥15 の意味**: 現状チャット検索では Pro 固有の Sonnet 呼出は発生しないが、書込操作との価格整合性 + 将来の Level 2 (LLM 要約) で Sonnet 呼出を追加する余地を残す。
+- **実コスト構造**: チャット検索は **Voyage embedding のみ** (1 検索 = 12,000 tokens 程度) で、Claude LLM を呼ばない。Voyage は 200M tokens/月 の無料枠があり、実コストは ¥0.036/call 程度
+- **無料化の事業判断**: チャット検索は「サービスの核心」体験のため、心理的ハードルなく使えることが UX 上重要。実コスト極小 (LLM の 1/50-1/150) のため、無料化しても事業継続性に影響しない
+- **暴走防止**: fair-use-limit (tenant 単位の月次 10,000 calls 上限) + Voyage 全社監視 (200M tokens) の 2 層で DoS / 経済的攻撃を防御
+- **詳細**: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 
-### 3.2 課金記録の詳細
+### 3.2 課金記録の詳細 (ADR-0019 後)
 
-- `ApiCallLog.featureUnit = 'chat-semantic-search'` で識別
-- `Tenant.currentMonthApiCallCount` / `currentMonthCostJpy` への加算は既存 `withMeteredLLM` 経由で自動実現
-- 失敗時 (rate_limited / budget_exceeded) はカウンタ進まず、ユーザに課金されない (既存メーター仕様)
-- クエリ文字列は `ApiCallLog` に保存しない (機微情報リスク回避)
+- `ApiCallLog.featureUnit = 'chat-semantic-search'` で識別 (記録は継続、監査・分析用途)
+- **`costJpy=0`** で記録、`Tenant.currentMonthApiCallCount` / `currentMonthCostJpy` への加算は **しない** (ADR-0019)
+- Stripe queue にも投入しない
+- 失敗時 (rate_limited / fair_use_limit_exceeded / llm_error) は ApiCallLog 記録なし、ユーザに課金されない (= cost=0 のため元々課金なし)
+- クエリ文字列は `ApiCallLog` に保存しない (機微情報リスク回避、不変)
 
 ---
 
@@ -149,7 +150,7 @@
 |---|---|---|---|---|
 | **T-CS-1** | **別テナント情報流出 (severity-1)** | 個人情報漏洩 / サービス信頼性破壊 | **3 層 defense-in-depth**: pgvector / pg_trgm WHERE + loadXxx findMany WHERE で `tenantId IN (...)` を必須付与。`tenant-isolation-invariants.test.ts` の I-2 invariant で全 prisma クエリを静的検査 | chat-search.service.ts:107-109 (buildTenantIdList), 130-208 (pgvectorSearch), 273-403 (loadXxx) |
 | **T-CS-2** | **Voyage への機微情報送信** | 規約違反 / 第三者への情報漏洩 | UI 常時バナーで「クエリ内容は Voyage AI に送信される」旨を告知。クエリ文字列は ApiCallLog にも error_log にも保存しない | chat-panel.tsx (banner), route.ts:79-90 (recordError から query 除外) |
-| **T-CS-3** | **API コスト爆発 (DoS / 連打)** | サービス継続性 | **3 層 rate limit**: 1 ユーザ/分 10 回, 1 ユーザ/時 60 回, Beginner 月 100 回。`withMeteredLLM` 経由で全層チェック。Expert/Pro はテナント月次予算上限でも遮断 | metered.ts:156-205 (Step 1-4), config/llm.ts:LLM_RATE_LIMIT |
+| **T-CS-3** | **API コスト爆発 (DoS / 連打)** | サービス継続性 | **3 層 rate limit**: 1 ユーザ/分 10 回, 1 ユーザ/時 60 回, tenant fair-use-limit 月 10,000 calls (ADR-0019)。`withMeteredLLM` 経由で全層チェック | metered.ts:156-205 (Step 1-4 + 3.5), config/llm.ts:LLM_RATE_LIMIT, fair-use-limit.service.ts |
 | **T-CS-4** | **ApiCallLog バイパス** | 不正利用 / 課金漏れ | `voyageEmbed` は必ず `withMeteredLLM` 経由で呼ばれる設計 (直接呼出経路なし)。featureUnit で trace 可能 | chat-search.service.ts:444-451 (featureUnit), embedding.service.ts:144-160 |
 | **T-CS-5** | **プロンプトインジェクション** | LLM 挙動改変 | **本機能は LLM 生成を行わない** (Voyage は encoder のみ) → 構造的に該当しない。将来 Level 2 で Sonnet 要約を追加する際は再評価が必須 | (V1 では LLM generation なし) |
 | **T-CS-6** | **SQL Injection** | DB 改ざん / 情報漏洩 | Prisma `$queryRaw` の tagged template で parametrized binding 強制、テーブル名は TypeScript union + exhaustive switch で静的固定 | chat-search.service.ts:130-208 (pgvectorSearch), 215-271 (pgTrgmSearch) |
@@ -205,7 +206,7 @@ V1 では構造的に該当しないが、Level 2 で LLM 生成を入れる場�
 | **API route (IP 単位)** | **1 分 30 リクエスト / IP** | `applyRateLimit(key: 'chat-search')` (route.ts 冒頭、認証直後) | **pg_trgm fallback の DB DoS 防御** (PR fix/chat-search-and-auto-open / 2026-05-24)。`withMeteredLLM` の rate_limited は LLM 経路にのみ作用し、縮退モードで pg_trgm が無防備になる弱点を route 側で塞ぐ |
 | ユーザ単位・分次 | **1 分 10 回** | `LLM_RATE_LIMIT` ([src/config/llm.ts](../../src/config/llm.ts)) | Voyage 側 429 / 連鎖障害防止 |
 | ユーザ単位・時間次 | **1 時間 60 回** | 同上 | 1 セッション集中検索の上限 |
-| Beginner プラン | **月 100 回 (書込と共有)** | 同上 | Voyage 無料枠 DoS 防御 + 自己制御 |
+| Beginner プラン | **無料・無制限** (ADR-0019) | fair-use-limit 月 10,000 calls/tenant で異常利用のみ防御 | Voyage 200M tokens/月 無料枠の全社共有保護 |
 
 ### 6.1 fail-closed 方針 (シードデータ参照)
 
