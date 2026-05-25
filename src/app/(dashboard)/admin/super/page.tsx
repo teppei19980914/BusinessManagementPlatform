@@ -31,6 +31,8 @@ import {
   type DefaultTenantOwnSummary,
 } from '@/services/super-admin.service';
 import { getDatabaseCapacityReport } from '@/services/db-capacity.service';
+// ADR-0020 (2026-05-25): DB 容量従量課金アラート (R12-admin / R14)
+import { DbCapacityAlertsCard } from './db-capacity-alerts-card';
 import { getEmailSendStats } from '@/services/email-send-log.service';
 import type { DbCapacityStatus } from '@/config/db-capacity';
 import type { EmailLimitStatus } from '@/config/email-limit';
@@ -169,6 +171,9 @@ export default async function SuperAdminTopPage() {
 
       {/* Storage add-on (Phase 2 / 2026-05-08): テナント別容量 TOP 10 */}
       <StorageUsageTopCard rows={storageTop} />
+
+      {/* ADR-0020 (2026-05-25): DB 容量従量課金 L1-L4 alert + drift 検知 (R12-admin / R14) */}
+      <DbCapacityAlertsCard />
 
       <section className="space-y-2" title="現在の契約プラン別テナント分布 (顧客テナントのみ)。営業・解約予測のベース指標">
         <h2 className="text-lg font-semibold">プラン別テナント数 (顧客テナントのみ)</h2>

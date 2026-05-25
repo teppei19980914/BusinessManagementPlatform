@@ -489,6 +489,96 @@ export async function updateAllStorageBytesUsed(): Promise<number> {
 }
 
 /**
+ * drift 検知 batch (ADR-0020 §3.5 / 5 回目検証 R で実装)。
+ *
+ * 全テナント peak SUM と pg_database_size を比較し、乖離率を計算 → 閾値超で super_admin 通知。
+ * 目的: 計測対象漏れ / 運営直接 SQL / vacuum bloat の早期発見。
+ *
+ * 動作:
+ *   1. 全テナント (deletedAt=null) の storageBytesPeakThisMonth SUM
+ *   2. pg_database_size(current_database())
+ *   3. drift ratio = (instance - tenantSum) / tenantSum
+ *   4. >= DB_DRIFT_WARNING_RATIO で warn ログ、 >= DB_DRIFT_CRITICAL_RATIO で error ログ
+ *
+ * 呼出元: src/app/api/cron/daily-notifications/route.ts (= 日次 cron 内ステップ)
+ *
+ * @returns drift 計算結果 (debug / dashboard 用)
+ */
+export async function detectDbCapacityDrift(): Promise<{
+  tenantPeakSumBytes: bigint;
+  dbInstanceSizeBytes: bigint;
+  driftRatio: number;
+  driftLevel: 'ok' | 'warning' | 'critical';
+}> {
+  const { getDbInstanceSizeBytes } = await import('@/services/tenant-storage-tables.service');
+  const { DB_DRIFT_WARNING_RATIO, DB_DRIFT_CRITICAL_RATIO } = await import(
+    '@/config/db-capacity-pricing'
+  );
+
+  // 1. テナント peak SUM
+  const all = await prisma.tenant.findMany({
+    where: { deletedAt: null },
+    select: { storageBytesPeakThisMonth: true },
+  });
+  const tenantPeakSumBytes = all.reduce(
+    (sum, t) => sum + t.storageBytesPeakThisMonth,
+    BigInt(0),
+  );
+
+  // 2. pg_database_size
+  let dbInstanceSizeBytes: bigint;
+  try {
+    dbInstanceSizeBytes = await getDbInstanceSizeBytes();
+  } catch (e) {
+    await recordError({
+      severity: 'warn',
+      source: 'cron',
+      message: '[drift-detection] getDbInstanceSizeBytes failed',
+      context: {
+        kind: 'db_drift_detection',
+        error: e instanceof Error ? e.message : String(e),
+      },
+    });
+    dbInstanceSizeBytes = BigInt(0);
+  }
+
+  // 3. drift ratio
+  let driftRatio = 0;
+  if (tenantPeakSumBytes > BigInt(0)) {
+    const diff =
+      dbInstanceSizeBytes > tenantPeakSumBytes
+        ? dbInstanceSizeBytes - tenantPeakSumBytes
+        : BigInt(0);
+    driftRatio = Number(diff) / Number(tenantPeakSumBytes);
+  }
+
+  // 4. 閾値判定 + ログ
+  const driftLevel: 'ok' | 'warning' | 'critical' =
+    driftRatio >= DB_DRIFT_CRITICAL_RATIO
+      ? 'critical'
+      : driftRatio >= DB_DRIFT_WARNING_RATIO
+        ? 'warning'
+        : 'ok';
+
+  if (driftLevel !== 'ok') {
+    await recordError({
+      severity: driftLevel === 'critical' ? 'error' : 'warn',
+      source: 'cron',
+      message: `[drift-detection] db capacity drift ${(driftRatio * 100).toFixed(1)}% (${driftLevel})`,
+      context: {
+        kind: 'db_drift_detection',
+        driftLevel,
+        driftRatio,
+        tenantPeakSumBytes: tenantPeakSumBytes.toString(),
+        dbInstanceSizeBytes: dbInstanceSizeBytes.toString(),
+      },
+    });
+  }
+
+  return { tenantPeakSumBytes, dbInstanceSizeBytes, driftRatio, driftLevel };
+}
+
+/**
  * 全テナントの上限超過状態を判定し、Grace period の開始/解除を行う (日次 cron 用)。
  *
  * 動作:

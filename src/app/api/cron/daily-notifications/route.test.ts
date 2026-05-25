@@ -11,8 +11,10 @@ vi.mock('@/services/external-data-import.service', () => ({
 }));
 
 // ADR-0020 (2026-05-25): checkAndStartGracePeriod は廃止 (= write 拒否は 50GB ハードキャップ一本化)
+// 5 回目検証 R で追加: detectDbCapacityDrift も同 service から export される
 vi.mock('@/services/tenant-storage.service', () => ({
   updateAllStorageBytesUsed: vi.fn(),
+  detectDbCapacityDrift: vi.fn(),
 }));
 
 import { POST, GET } from './route';
@@ -21,7 +23,10 @@ import {
   cleanupReadNotifications,
 } from '@/services/notification.service';
 import { deleteExpiredPreviews } from '@/services/external-data-import.service';
-import { updateAllStorageBytesUsed } from '@/services/tenant-storage.service';
+import {
+  updateAllStorageBytesUsed,
+  detectDbCapacityDrift,
+} from '@/services/tenant-storage.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -29,6 +34,12 @@ beforeEach(() => {
   vi.mocked(cleanupReadNotifications).mockResolvedValue({ deleted: 0 });
   vi.mocked(deleteExpiredPreviews).mockResolvedValue(0);
   vi.mocked(updateAllStorageBytesUsed).mockResolvedValue(0);
+  vi.mocked(detectDbCapacityDrift).mockResolvedValue({
+    tenantPeakSumBytes: BigInt(0),
+    dbInstanceSizeBytes: BigInt(0),
+    driftRatio: 0,
+    driftLevel: 'ok',
+  });
 });
 
 function cronReq(authHeader?: string): NextRequest {
@@ -69,13 +80,13 @@ describe('POST /api/cron/daily-notifications', () => {
     const res = await POST(cronReq('Bearer test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx'));
     expect(res.status).toBe(200);
     const json = await res.json();
-    // ADR-0020 (2026-05-25): Grace 判定廃止のため storage は bytesUpdated のみ
+    // ADR-0020 (2026-05-25): Grace 判定廃止 + 5 回目検証 R で drift 検知追加
     expect(json.data).toEqual({
       source: 'cron',
       generated: { startCreated: 3, endCreated: 2 },
       cleaned: { deleted: 5 },
       expiredPreviewsDeleted: 2,
-      storage: { bytesUpdated: 7 },
+      storage: { bytesUpdated: 7, driftRatio: 0, driftLevel: 'ok' },
     });
     expect(generateDailyNotifications).toHaveBeenCalledOnce();
     expect(cleanupReadNotifications).toHaveBeenCalledOnce();

@@ -14791,3 +14791,59 @@ ADR-0020 PR #443 に対して **5 回連続フルスキャン検証**:
 - 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) (実装完成、Status: Accepted)
 - 関連 memory: [feedback_repeated_verification_request.md](../../memory/) (同観点繰り返し検証の限界)
 - 関連 file: [CLAUDE.md](../../CLAUDE.md) (ADR-0019/0020 索引行追記)
+
+---
+
+## 5.X+136 **★severity-info ユーザ判断で deferred 項目を本 PR に取込★ R12 / R12-admin UI + drift batch + 統合テスト + R19 部分削除 (2026-05-25 / PR #443)**
+
+### 事象
+
+5 回連続フルスキャン検証で実装堅牢性は確認済 (KDD §5.X+130-135) だったが、ユーザは「優先順で本 PR に追加」を選択。当初 follow-up に declared していた 6 件を本 PR に取込実装。
+
+### 取込内容
+
+#### 優先 1: R12 テナント設定 UI ([db-capacity-section.tsx](../../src/app/(dashboard)/settings/tenant/db-capacity-section.tsx))
+- 新規 server component で「当月使用量 / peak / 想定請求額」表示
+- Level バッジ (none/L1/L2/L3) + 進捗バー (0-50GB ハードキャップ)
+- 料金体系の説明 (details/summary で expandable)
+- 既存 2085 行 tenant-settings-client.tsx を一切変更せず、page.tsx に server component として挿入
+  - 理由: 大規模 client component 編集の回帰リスク回避
+
+#### 優先 2: R12-admin super_admin UI ([db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx))
+- L1-L3 警告レベルテナント一覧 (peak 降順)
+- drift 検知サマリ (tenant peak SUM vs pg_database_size + 閾値判定)
+- circuit breaker open 中テナント数表示 + 復旧手順案内
+
+#### 優先 3: drift detection batch ([tenant-storage.service.ts:detectDbCapacityDrift](../../src/services/tenant-storage.service.ts))
+- 日次 cron (daily-notifications route) に統合
+- (instance - tenantSum) / tenantSum の乖離率を計算
+- DB_DRIFT_WARNING_RATIO (50%) / DB_DRIFT_CRITICAL_RATIO (100%) で recordError 発火
+- ADR-0020 §3.5 / §8.3 で planned だった drift 検知の実装完了
+
+#### 優先 4: R19 物理削除 — **本 PR では部分削除に留める判断**
+- 旧 storage-addon route (`/api/tenants/me/storage-addon`) を削除しようとしたが、tenant-settings-client.tsx (2085 行) で 3 箇所 fetch 呼出が残存
+- UI 大規模 refactor が必要 → 本 PR スコープを膨張させすぎ
+- **判断**: schema column + UI は **次 release で物理削除** (rollback 余地確保)、本 PR では @deprecated marker 維持
+
+#### 優先 5: HomePage LP — 別 repo、commit はユーザ判断
+- JA/EN 価格表は更新済 (working tree)
+- HomePage は本 repo 範囲外、commit/push はユーザ判断
+
+#### 優先 6: 統合テスト ([db-capacity-billing-integration.test.ts](../../src/services/db-capacity-billing-integration.test.ts))
+- シナリオ A (通常利用)、B (抜け道試行)、C (ハードキャップ到達)、D (billing invariant) を vitest integration として実装
+- mock prisma 上で 3 経路 (ApiCallLog / Tenant counter / Stripe queue) の整合を一括検証
+- Playwright E2E ではなく vitest なのは、月初 cron をテスト環境で再現困難なため
+
+### 教訓 (transferable)
+
+- **「follow-up 必要」と「本 PR スコープ外」は別概念**: follow-up は必要だが範囲調整可、本 PR スコープ外は範囲拡大すべきでない
+- **大規模 client component への新機能追加は server component で分離**: 2085 行 tenant-settings-client.tsx に直接追加せず、別ファイルで server component として並置 → 既存挙動への影響ゼロ
+- **物理削除は段階的に**: schema column / UI / 関数を **1 PR で全削除** すると回帰リスク大、deprecated marker → 次 release 物理削除のステップ分離が安全
+- **統合テストは vitest mock prisma で十分**: E2E (Playwright) は環境依存性高い、cron / DB 統合の決定論的テストは mock prisma で表現可能
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 memory: [feedback_repeated_verification_request.md](../../memory/), [feedback_dont_expand_scope_under_uat_risk.md](../../memory/) (UI 影響 PR の検証中はスコープ拡大提案を控える)
+- 関連 file: [src/app/(dashboard)/settings/tenant/db-capacity-section.tsx](../../src/app/(dashboard)/settings/tenant/db-capacity-section.tsx), [src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx](../../src/app/(dashboard)/admin/super/db-capacity-alerts-card.tsx), [src/services/db-capacity-billing-integration.test.ts](../../src/services/db-capacity-billing-integration.test.ts)

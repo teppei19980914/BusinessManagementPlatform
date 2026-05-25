@@ -24,7 +24,11 @@ import { generateDailyNotifications, cleanupReadNotifications } from '@/services
 import { deleteExpiredPreviews } from '@/services/external-data-import.service';
 // ADR-0020 (2026-05-25): checkAndStartGracePeriod は 4 段階プラン廃止に伴い無効化。
 //   write 拒否は assertStorageLimitInTx (storage-guard.service) の 50GB ハードキャップに一本化。
-import { updateAllStorageBytesUsed } from '@/services/tenant-storage.service';
+// 5 回目検証 R で追加: drift detection batch を日次実行 (ADR-0020 §3.5 / §8.3)
+import {
+  updateAllStorageBytesUsed,
+  detectDbCapacityDrift,
+} from '@/services/tenant-storage.service';
 // 2026-05-13 (security/auth-secret-hardening, B-6): タイミング攻撃耐性のある共通 cron 認可ヘルパに統一。
 // 2026-05-18 (PR feat/cron-execution-log): 実行履歴を super_admin から確認可能にするためロギング組込。
 import { isCronAuthorized } from '@/lib/cron-auth';
@@ -44,8 +48,19 @@ export async function POST(req: NextRequest) {
     // Phase 1 (2026-05-08): 期限切れ tenant_import_preview を物理削除 (TTL 24h)
     const expiredPreviewsDeleted = await deleteExpiredPreviews();
     // ADR-0020 (2026-05-25): Grace period 判定は廃止。50GB ハードキャップは即時 storage-guard で判定。
-    //   日次 cron では storageBytesUsed のキャッシュ更新のみ (= UI 表示の鮮度確保)。
+    //   日次 cron では storageBytesUsed のキャッシュ更新 + peak MAX 同期 + drift 検知を実行。
     const storageBytesUpdated = await updateAllStorageBytesUsed();
+    // 5 回目検証 R: 全テナント peak SUM vs pg_database_size 乖離率を計測し閾値超で super_admin 通知
+    const driftResult = await detectDbCapacityDrift().catch((e) => {
+      // drift 検知失敗は他のステップを止めない (= 既存挙動と整合)
+      return {
+        tenantPeakSumBytes: BigInt(0),
+        dbInstanceSizeBytes: BigInt(0),
+        driftRatio: 0,
+        driftLevel: 'ok' as const,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    });
 
     return {
       data: {
@@ -55,6 +70,8 @@ export async function POST(req: NextRequest) {
         expiredPreviewsDeleted,
         storage: {
           bytesUpdated: storageBytesUpdated,
+          driftRatio: driftResult.driftRatio,
+          driftLevel: driftResult.driftLevel,
         },
       },
     };
