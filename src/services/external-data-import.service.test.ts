@@ -109,8 +109,8 @@ beforeEach(() => {
     currentMonthApiCallCount: 10,
     currentMonthApiCostJpy: 100,
     monthlyBudgetCapJpy: 5000,
-    beginnerMonthlyCallLimit: 100,
-    pricePerCallHaiku: 5,
+    beginnerMonthlyCallLimit: 50,
+    pricePerCallHaiku: 10,
     pricePerCallSonnet: 15,
     deletedAt: null,
   } as never);
@@ -226,8 +226,8 @@ describe('previewImport', () => {
       currentMonthApiCallCount: 95,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10,
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
@@ -273,8 +273,8 @@ describe('previewImport', () => {
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 4980,
       monthlyBudgetCapJpy: 5000,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10,
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
@@ -484,7 +484,7 @@ describe('applyImport', () => {
       currentMonthApiCallCount: 80,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
-      beginnerMonthlyCallLimit: 100,
+      beginnerMonthlyCallLimit: 50,
       pricePerCallHaiku: 10, // ADR-0019: Expert default は ¥10 だが、Beginner なので使われない
       pricePerCallSonnet: 15,
       deletedAt: null,
@@ -511,8 +511,8 @@ describe('applyImport', () => {
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50, // ADR-0019: Beginner 上限 100 → 50
+      pricePerCallHaiku: 10, // ADR-0019: Expert ¥5 → ¥10
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
@@ -520,12 +520,13 @@ describe('applyImport', () => {
     tx.tenantImportPreview.delete.mockResolvedValue({} as never);
 
     // PR #357 (2026-05-14): バッチ helper は 1 件処理して 1 ApiCallLog 単価分を返す
-    // 2026-05-15 価格改定: Expert ¥10 → ¥5
+    // ADR-0019 (2026-05-24): CSV インポート (external-import-embedding) は全プラン無料化されたため、
+    //   generateAndPersistBatchEmbeddings の戻り値 costJpy は 0 (無料 call)。
     const { generateAndPersistBatchEmbeddings } = await import('@/services/embedding.service');
     vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
       generated: 1,
       failed: 0,
-      costJpy: 5,
+      costJpy: 0,
     });
 
     const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
@@ -534,7 +535,7 @@ describe('applyImport', () => {
       expect(r.summary.knowledgeCreated).toBe(1);
       expect(r.summary.risksIssuesCreated).toBe(0);
       expect(r.summary.embeddingGenerated).toBe(1);
-      expect(r.summary.totalCostJpy).toBe(5); // ¥5 × 1 ApiCallLog (2026-05-15 価格改定後)
+      expect(r.summary.totalCostJpy).toBe(0); // ADR-0019: external-import-embedding 無料化
     }
     // PR #357 中核: N 件取込でも generateAndPersistBatchEmbeddings は **1 度だけ呼ばれる**
     //   (= ApiCallLog 1 件 = Tenant counter +1 = 画面表示 +1 のユーザ要件を満たす)
@@ -553,8 +554,8 @@ describe('applyImport', () => {
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
       monthlyBudgetCapJpy: null,
-      beginnerMonthlyCallLimit: 100,
-      pricePerCallHaiku: 5,
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10,
       pricePerCallSonnet: 15,
       deletedAt: null,
     } as never);
@@ -598,8 +599,8 @@ describe('applyImport', () => {
         currentMonthApiCallCount: 0,
         currentMonthApiCostJpy: 0,
         monthlyBudgetCapJpy: null,
-        beginnerMonthlyCallLimit: 100,
-        pricePerCallHaiku: 5,
+        beginnerMonthlyCallLimit: 50,
+        pricePerCallHaiku: 10,
         pricePerCallSonnet: 15,
         deletedAt: null,
       } as never);

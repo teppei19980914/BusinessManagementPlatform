@@ -40,9 +40,10 @@ function makeTenant(overrides: Partial<Record<string, unknown>> = {}) {
     currentMonthApiCallCount: 0,
     currentMonthApiCostJpy: 0,
     monthlyBudgetCapJpy: null as number | null,
-    beginnerMonthlyCallLimit: 100,
+    // ADR-0019 (2026-05-24): Beginner 上限 100 → 50 (課金対象 call のみカウント)
+    beginnerMonthlyCallLimit: 50,
     beginnerMaxSeats: 5,
-    pricePerCallHaiku: 5,
+    pricePerCallHaiku: 10,
     pricePerCallSonnet: 15,
     scheduledPlanChangeAt: null,
     scheduledNextPlan: null,
@@ -176,12 +177,13 @@ describe('withMeteredLLM - Step 2: Tenant 取得 + plan 解決', () => {
 });
 
 describe('withMeteredLLM - Step 3: Beginner プラン月間上限', () => {
+  // ADR-0019 (2026-05-24): Beginner 上限 100 → 50 (課金対象 call のみカウント)
   it('Beginner で currentMonthApiCallCount >= limit なら beginner_limit_exceeded', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'beginner',
-        beginnerMonthlyCallLimit: 100,
-        currentMonthApiCallCount: 100,
+        beginnerMonthlyCallLimit: 50,
+        currentMonthApiCallCount: 50,
       }) as never,
     );
     const call = vi.fn();
@@ -201,12 +203,12 @@ describe('withMeteredLLM - Step 3: Beginner プラン月間上限', () => {
     expect(call).not.toHaveBeenCalled();
   });
 
-  it('Beginner で limit 直前 (99/100) なら通過する', async () => {
+  it('Beginner で limit 直前 (49/50) なら通過する', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'beginner',
-        beginnerMonthlyCallLimit: 100,
-        currentMonthApiCallCount: 99,
+        beginnerMonthlyCallLimit: 50,
+        currentMonthApiCallCount: 49,
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'ok' });
@@ -228,7 +230,7 @@ describe('withMeteredLLM - Step 3: Beginner プラン月間上限', () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
-        beginnerMonthlyCallLimit: 100,
+        beginnerMonthlyCallLimit: 50,
         currentMonthApiCallCount: 999, // beginner なら超過、expert は無視
       }) as never,
     );
@@ -254,7 +256,7 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
       makeTenant({
         plan: 'expert',
         currentMonthApiCostJpy: 998,
-        pricePerCallHaiku: 5, // 2026-05-15 改定後の単価
+        pricePerCallHaiku: 10, // ADR-0019 改定後の単価 (Expert ¥10/call)
         monthlyBudgetCapJpy: 1000, // 998 + 5 = 1003 > 1000 で拒否
       }) as never,
     );
@@ -279,9 +281,9 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({
         plan: 'expert',
-        currentMonthApiCostJpy: 995,
-        pricePerCallHaiku: 5, // 2026-05-15 改定後の単価
-        monthlyBudgetCapJpy: 1000, // 995 + 5 = 1000 (>=ではなく > なので通る)
+        currentMonthApiCostJpy: 990,
+        pricePerCallHaiku: 10, // ADR-0019 改定後の単価 (Expert ¥10/call)
+        monthlyBudgetCapJpy: 1000, // 990 + 10 = 1000 ちょうど (>= ではなく > なので通る)
       }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'ok' });
@@ -327,7 +329,7 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
       makeTenant({
         plan: 'expert',
         currentMonthApiCostJpy: 95,
-        pricePerCallHaiku: 5, // plan 単価は ¥5 (2026-05-15 改定後)、ただし下記 predictedCostJpy が上書き
+        pricePerCallHaiku: 10, // plan 単価は ¥10 (ADR-0019 改定後)、ただし下記 predictedCostJpy が上書き
         monthlyBudgetCapJpy: 100,
       }) as never,
     );
@@ -440,9 +442,9 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
   });
 
   it('Expert プラン: model=Haiku, cost=pricePerCallHaiku', async () => {
-    // 2026-05-15 価格改定: Expert ¥10 → ¥5
+    // ADR-0019 (2026-05-24): Expert ¥5 → ¥10
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
-      makeTenant({ plan: 'expert', pricePerCallHaiku: 5 }) as never,
+      makeTenant({ plan: 'expert', pricePerCallHaiku: 10 }) as never,
     );
     const call = vi.fn().mockResolvedValue({ result: 'x' });
 
@@ -459,12 +461,12 @@ describe('withMeteredLLM - Step 6: 成功時の increment + ApiCallLog 記録', 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.modelName).toBe(LLM_MODELS.HAIKU);
-      expect(result.costJpy).toBe(5);
+      expect(result.costJpy).toBe(10);
     }
   });
 
   it('Pro プラン: model=Sonnet, cost=pricePerCallSonnet', async () => {
-    // 2026-05-15 価格改定: Pro ¥30 → ¥15
+    // 2026-05-15 価格改定: Pro ¥30 → ¥15 / ADR-0019 (2026-05-24): Pro ¥15 据置
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
       makeTenant({ plan: 'pro', pricePerCallSonnet: 15 }) as never,
     );

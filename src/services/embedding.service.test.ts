@@ -509,7 +509,7 @@ describe('generateBatchEmbeddings (PR #357)', () => {
       return {
         ok: true,
         result: r.result,
-        costJpy: 5,
+        costJpy: 10, // ADR-0019: 新 Expert 単価 ¥10 を mock 値として使用 (test fixture)
         latencyMs: 80,
         modelName: 'voyage-4-lite',
         requestId: 'req-batch',
@@ -526,7 +526,7 @@ describe('generateBatchEmbeddings (PR #357)', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.embeddings).toHaveLength(3);
-      expect(result.costJpy).toBe(5);
+      expect(result.costJpy).toBe(10);
     }
     expect(withMeteredLLM).toHaveBeenCalledTimes(1);
     expect(voyageEmbed).toHaveBeenCalledTimes(1);

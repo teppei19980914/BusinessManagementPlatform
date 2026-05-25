@@ -14381,3 +14381,97 @@ TimeoutError: page.waitForURL: Timeout 15000ms exceeded.
 - 関連 KDD: [§5.X+96](#5x96) (PR #420 `履歴をクリア` ボタンと substring match 罠) / [§5.X+72](#5x72) (`explicit-signout` 導入経緯 / Netlify Set-Cookie 脱落事故) / [§5.X+127](#5x127) (同 PR でマスク解除のトリガーとなった spec 13 fixture 修正)
 - 関連 file: [`e2e/specs/16-column-sort.spec.ts`](../../e2e/specs/16-column-sort.spec.ts), [`e2e/fixtures/auth.ts`](../../e2e/fixtures/auth.ts), [`src/app/(auth)/login/page.tsx`](../../src/app/(auth)/login/page.tsx), [`src/app/api/auth/explicit-signout/route.ts`](../../src/app/api/auth/explicit-signout/route.ts)
 - 累計影響: main #439 (層) #441 (本 PR) で同じ flake を確認、`auth.ts` ヘルパ化 + retries 設定見直しで 2 PR 分の CI 不安定化を解消
+
+---
+
+## 5.X+129 **★severity-2 inline login CSRF race を 3 visual spec まで横展開 + chromium-mobile spec 02 dropdown click flake は既存問題と再確認 (2026-05-25 / PR #441 follow-up)**
+
+### 事象
+
+§5.X+128 で spec 16 (column-sort) の inline login を `loginAsGeneral` ヘルパに統一した後、続く CI run (26385050630) で **同型の MissingCSRF race が visual specs にも露呈**:
+
+```
+✘ 194 [chromium-mobile] › e2e/visual/settings-themes.spec.ts:70 (0ms)
+   → beforeAll の inline login で MissingCSRF 失敗
+✘ 189 [chromium-mobile] › e2e/visual/customers-screens.spec.ts:76 (1.3s)
+   → visual diff (= beforeAll の login が race で時間ズレ → 画面状態の差分が baseline と乖離)
+```
+
+並行して chromium-mobile spec 02 (project-detail-tabs) の **既存 flake** も再発:
+```
+✘ 130 [chromium-mobile] › e2e/specs/02-project-detail-tabs.spec.ts:129 (11.2s)
+   Error: expect(locator).toHaveAttribute('aria-selected', 'true') failed
+   → 進捗管理 dropdown → ガントチャート menuitem click 後、tab activation 状態 (aria-selected)
+     が "false" のまま 10s タイムアウト
+```
+
+### 根本原因
+
+#### A. inline login の CSRF race (§5.X+128 と同根)
+`e2e/visual/` 配下の 3 spec が **`e2e/specs/16-column-sort.spec.ts` (§5.X+128 の対象) と同じ inline login パターン** を使っていた:
+- `e2e/visual/settings-themes.spec.ts`
+- `e2e/visual/customers-screens.spec.ts`
+- `e2e/visual/dashboard-screens.spec.ts`
+
+`grep -r "getByRole\('button', { name: 'ログイン' }\)\.click\(\)" e2e/` で **17 ファイル** が該当。視覚回帰系 3 ファイル + 機能 spec 14 ファイル。
+
+#### B. chromium-mobile spec 02 dropdown click flake (KDD §5.X+124-126 の継続)
+進捗管理 dropdown を開いて ガントチャート menuitem を click する flow:
+
+```typescript
+await page.getByRole('button', { name: '進捗管理メニューを開く' }).click({ force: true });
+await page.getByRole('menuitem', { name }).click({ force: true });
+const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
+await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+```
+
+すでに `{ force: true }` で hit-test 回避済だが、**click event が React 状態更新まで完走しないケース** が chromium-mobile で intermittent に発生:
+- main #439 でも同じ test 129 が `(11.8s)` で失敗 (§5.X+124-126 の経緯参照)
+- main #440 では同テストが `(2.3s)` で成功
+- PR #441 CI run 26385050630 でも失敗 → **intermittent な既存 flake、本 PR が原因ではない**
+
+`{ force: true }` は Playwright の hit-test ゲートをスキップするのみで、click event の React state update への伝播は別問題。chromium-mobile (iPhone 13 emulation, DPR=3) で Radix UI / Base UI の dropdown menu close → menuitem onClick handler の microtask race が稀に発生する。
+
+### 対応
+
+#### A. visual specs 3 件の inline login を `loginAsGeneral` ヘルパに統一
+- [`e2e/visual/settings-themes.spec.ts:46-58`](../../e2e/visual/settings-themes.spec.ts)
+- [`e2e/visual/customers-screens.spec.ts:43-55`](../../e2e/visual/customers-screens.spec.ts)
+- [`e2e/visual/dashboard-screens.spec.ts:41-53`](../../e2e/visual/dashboard-screens.spec.ts)
+
+すべて `clearCookies + exact: true + waitForProjectsReady` を含む `loginAsGeneral` 経由に統一 (= §5.X+128 と同型 fix)。残り 14 spec も同様の置換が望ましいが、本 PR スコープを限定するため次回 follow-up で対応推奨。
+
+#### B. chromium-mobile spec 02 dropdown flake は **既存問題として再確認**
+本 PR では追加修正なし。理由:
+- 既に `{ force: true }` 適用済 (§5.X+126)
+- main #440 では同テスト成功、本 PR の変更が直接の原因ではない
+- 根本 fix は Radix UI / Base UI の dropdown 実装に依存し、E2E 側で安定化させるのは難しい
+- `playwright.config.ts` の `retries: isCI ? 2 : 0` で 2 回までは retry される
+
+### 再発防止
+
+#### 「新規 spec の login は必ず `auth.ts` ヘルパを使う」ルールの徹底
+- 既存 17 spec の inline login pattern の検出を CI ガード化 (将来課題):
+  ```bash
+  scripts/check-e2e-inline-login.ts  # 案: grep で `getByRole.*'ログイン'.*click` を検出
+  ```
+- レビュー時のチェックリストに「新規 e2e spec で `goto('/login')` した場合は必ず `loginAsGeneral` / `loginAsAdminWithMfa` を使う」を明記
+
+#### chromium-mobile spec 02 のさらなる安定化 (= 将来課題)
+- 候補 1: dropdown を開いた後、menuitem が visible になるまで explicit wait (`await expect(menuitem).toBeVisible({ timeout })`)
+- 候補 2: click 後、aria-selected の polling と並行して dropdown が close したことを確認
+- 候補 3: keyboard navigation (Enter キー) で menuitem を選択 (mouse 系の hit-test 問題を完全回避)
+- いずれも別 PR で実施推奨 (PR #441 のスコープから外す)
+
+### 教訓 (転用可能)
+
+- **同型 flake の横展開対応は「最初に見つかった 1 つだけ直すと残りが連鎖発火する」**: spec 16 を直したら visual 3 件が露呈。広範囲 grep で**同パターンを一括 list 化し、優先順位 (= 失敗実績 + 影響範囲) で順次対応**するのが効率的
+- **既存 flake と新規 flake を区別する**: main の同 commit hash で過去 run の結果を確認すると、既存 flake (main #439 でも失敗) と PR 由来の新規 (main 通過 + PR で失敗) を切り分けできる。前者は KDD 既存項目への追加、後者は新規 KDD 起票
+- **`{ force: true }` は hit-test の問題は解くが、その後の React state update race は別問題**: click event は dispatch されるが、React の event handler が microtask 内で完走しないケースがある。完全解は Radix UI / Base UI の close-on-select の挙動を理解した上で、explicit wait を入れること
+
+### 関連
+
+- 関連 PR: PR #441 (本事例 / 2026-05-25)
+- 関連 KDD: [§5.X+128](#5x128) (spec 16 の同型 fix、root cause 詳細) / [§5.X+126](#5x126) (chromium-mobile dropdown click force:true 適用、本 §5.X+129 でも未解決と判明) / [§5.X+124-125](#5x124) (chromium-mobile hit-test 系全般)
+- 関連 file: [`e2e/visual/settings-themes.spec.ts`](../../e2e/visual/settings-themes.spec.ts), [`e2e/visual/customers-screens.spec.ts`](../../e2e/visual/customers-screens.spec.ts), [`e2e/visual/dashboard-screens.spec.ts`](../../e2e/visual/dashboard-screens.spec.ts), [`e2e/specs/02-project-detail-tabs.spec.ts`](../../e2e/specs/02-project-detail-tabs.spec.ts)
+- 累計 inline login → ヘルパ化: spec 16 (§5.X+128) + visual 3 (§5.X+129) = **計 4 spec 修正済**。残り 13 spec は次回 follow-up
