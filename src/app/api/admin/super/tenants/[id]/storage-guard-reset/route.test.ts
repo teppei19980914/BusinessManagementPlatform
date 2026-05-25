@@ -77,6 +77,24 @@ describe('POST storage-guard-reset', () => {
     expect(body.error.code).toBe('FORBIDDEN');
   });
 
+  it('対象が MANAGEMENT_TENANT_ID → 403 MANAGEMENT_TENANT_FORBIDDEN (G-4 4 回目検証)', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValueOnce({ id: USER_ID } as never);
+    vi.mocked(isSuperAdmin).mockReturnValueOnce(true);
+
+    // src/lib/tenant.ts の MANAGEMENT_TENANT_ID 実値
+    const MANAGEMENT_ID = '00000000-0000-0000-0000-ffffffffffff';
+    const req = new NextRequest(
+      `http://localhost/api/admin/super/tenants/${MANAGEMENT_ID}/storage-guard-reset`,
+      { method: 'POST' },
+    );
+    const res = await POST(req, { params: Promise.resolve({ id: MANAGEMENT_ID }) });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.code).toBe('MANAGEMENT_TENANT_FORBIDDEN');
+    // テナント検索すら走らないこと (= 早期 return)
+    expect(prisma.tenant.findFirst).not.toHaveBeenCalled();
+  });
+
   it('テナント不在 → 404', async () => {
     vi.mocked(getAuthenticatedUser).mockResolvedValueOnce({ id: USER_ID } as never);
     vi.mocked(isSuperAdmin).mockReturnValueOnce(true);

@@ -72,7 +72,17 @@ ALTER TABLE "tenants"
 
 -- 既存テナントの peak を現在値に初期化 (= 移行月初回 cron の起点を整える)
 -- これにより、移行月の peak は「現在値 from now on の MAX」となり、過去使用量の遡及課金を回避する
+--
+-- 4 回目検証 (G-1) で発見した修正: SNAPSHOT_EXCLUDED_TENANT_IDS と整合するため
+--   DEFAULT_TENANT_ID と MANAGEMENT_TENANT_ID は除外。
+--   - DEFAULT_TENANT_ID = 運営者自身、請求対象外 (= peak 初期化は意味なし、運営シードで >50MB な場合の誤通知防止)
+--   - MANAGEMENT_TENANT_ID = 運営管理テナント、請求対象外
+--   両 ID は src/lib/tenant.ts で SQL 定数として定義されている UUID をハードコード
 UPDATE "tenants"
    SET "storage_bytes_peak_this_month" = "storage_bytes_used",
        "storage_bytes_peak_at"         = NOW()
- WHERE "deleted_at" IS NULL;
+ WHERE "deleted_at" IS NULL
+   AND id NOT IN (
+     '00000000-0000-0000-0000-000000000001'::uuid,  -- DEFAULT_TENANT_ID (src/lib/tenant.ts)
+     '00000000-0000-0000-0000-ffffffffffff'::uuid   -- MANAGEMENT_TENANT_ID (src/lib/tenant.ts)
+   );

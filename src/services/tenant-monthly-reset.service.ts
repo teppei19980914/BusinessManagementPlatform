@@ -478,6 +478,14 @@ export async function processTenantDbCapacityOverage(
     return t.lastResetAt == null || t.lastResetAt < monthStart;
   });
 
+  // 4 回目検証 (G-2) で発見した N+1 修正: audit_log.userId に使う systemUser は
+  // ループの **外** で 1 度だけ取得して引数で渡す (= 数百テナントで cron timeout 防止)
+  const systemUserForAudit = await prisma.user.findFirst({
+    where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
   let billedTenantCount = 0;
   let totalBilledJpy = 0;
 
@@ -490,6 +498,7 @@ export async function processTenantDbCapacityOverage(
         storageBytesPeakThisMonth: tenant.storageBytesPeakThisMonth,
         billingScope: 'previous-month', // cron は前月分を請求
         now,
+        systemUserIdForAudit: systemUserForAudit?.id ?? null,
       });
 
       if (result.billedJpy > 0) {
@@ -541,6 +550,13 @@ export async function billOneTenantDbCapacityOverage(args: {
   /** 'previous-month' = 月初 cron 用 (createdAt は前月末瞬間)、'current-month-on-withdrawal' = 退会用 (createdAt は now) */
   billingScope: 'previous-month' | 'current-month-on-withdrawal';
   now: Date;
+  /**
+   * 4 回目検証 G-2 で追加: audit_log.userId 用。
+   * 呼出ループの外で 1 度だけ取得した systemUser を渡す。
+   * 未指定 (= 後方互換) なら関数内で fallback として findFirst 実行 (1 件) するが、
+   * 大量呼出時は外部から渡すこと。
+   */
+  systemUserIdForAudit?: string | null;
 }): Promise<{ billedJpy: number; apiCallLogId: string | null }> {
   const { tenantId, timezone, storageBytesUsed, storageBytesPeakThisMonth, billingScope, now } = args;
 
@@ -615,18 +631,22 @@ export async function billOneTenantDbCapacityOverage(args: {
 
       // 4. audit_log INSERT (E-1: 3 回目検証で発見した運用性ギャップ修正)
       //    誤請求や問い合わせ発生時に「いつ・どの peak で・いくら billed したか」を追跡可能にする
-      //    userId は cron / 退会 API どちらも system 起動なので省略 (schema 上 userId は required string)
-      //    将来 system user UUID を導入する場合は MANAGEMENT_USER_ID 等を渡す
-      const systemUserForAudit = await tx.user.findFirst({
-        where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
-        select: { id: true },
-        orderBy: { createdAt: 'asc' },
-      });
-      if (systemUserForAudit) {
+      //    userId は cron / 退会 API どちらも system 起動。
+      //    4 回目検証 G-2: 呼出側から渡される systemUserIdForAudit を優先、未指定なら fallback で 1 回検索
+      let systemUserId: string | null = args.systemUserIdForAudit ?? null;
+      if (systemUserId === null) {
+        const systemUserForAudit = await tx.user.findFirst({
+          where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+          select: { id: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        systemUserId = systemUserForAudit?.id ?? null;
+      }
+      if (systemUserId) {
         await tx.auditLog.create({
           data: {
             tenantId,
-            userId: systemUserForAudit.id,
+            userId: systemUserId,
             action: 'CREATE',
             entityType: 'api_call_log',
             entityId: log.id,

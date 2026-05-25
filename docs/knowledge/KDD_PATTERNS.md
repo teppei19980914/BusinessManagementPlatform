@@ -14644,3 +14644,91 @@ ADR-0020 R3 fail-close circuit breaker を実装したが、3 回連続失敗で
 - 関連 PR: PR #443 (本事例 / 2026-05-25)
 - 関連 file: [src/app/api/admin/super/tenants/\[id\]/storage-guard-reset/route.ts](../../src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts), [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)
 
+
+---
+
+## 5.X+134 **★severity-2 4 回目検証で 4 件発見★ ADR-0020 で migration 初期化漏れ / N+1 / 管理テナント認可漏れ / agent 誤検出 (2026-05-25 / PR #443)**
+
+### 事象
+
+ADR-0020 完了後、ユーザの「4 回目フルスキャン検証」リクエストに応えて Explore agent で **ランタイム / 運用 / 極限ケース** 観点で深掘り audit を実施。
+
+agent 報告 6 件のうち:
+
+| # | 観点 | 種別 |
+|---|---|---|
+| I-1 | 一般 CRUD で precheckStorageLimit 呼出なし | **false alarm** (実は 30 ファイル既適用) |
+| G-1 | default-tenant peak 初期値の即時課金リスク | 実バグ |
+| G-2 | billOneTenantDbCapacityOverage の N+1 user.findFirst | 実バグ |
+| G-4 | storage-guard-reset の MANAGEMENT_TENANT_ID 認可漏れ | 実バグ |
+| H-1 | DST 切替日挙動 | false alarm (既に吸収済) |
+| I-2 | information_schema cache 未実装 | follow-up (PG 内部 cache で問題なし) |
+
+→ 実バグ 3 件 + agent 誤検出 3 件。
+
+### G-1: default-tenant peak 初期値の即時課金リスク
+
+migration `20260525_db_capacity_peak_columns` の UPDATE で `storage_bytes_peak_this_month = storage_bytes_used` を全テナントに適用していたが、**DEFAULT_TENANT_ID と MANAGEMENT_TENANT_ID は SNAPSHOT_EXCLUDED で月初 cron 集計対象外**。peak 値が初期化されても課金されないが、運営シードデータで storage_bytes_used が >50MB の場合、画面上「無料超え」表示が出てしまう不整合。
+
+**対応**: migration の WHERE 句で両 ID を NOT IN で除外:
+```sql
+WHERE "deleted_at" IS NULL
+  AND id NOT IN (
+    '00000000-0000-0000-0000-000000000001'::uuid,  -- DEFAULT_TENANT_ID
+    '00000000-0000-0000-0000-ffffffffffff'::uuid   -- MANAGEMENT_TENANT_ID
+  );
+```
+
+### G-2: N+1 systemUser lookup
+
+3 回目検証 E-1 で audit_log INSERT を追加した際、systemUser を **transaction tx 内で毎テナント検索** していた。数百テナント規模で cron 実行時間 O(N) で遅延、connection pool 枯渇リスク。
+
+**対応**: 呼出ループ前に 1 回だけ取得し、`systemUserIdForAudit` 引数で渡す:
+```ts
+// processTenantDbCapacityOverage 内 (ループの外)
+const systemUserForAudit = await prisma.user.findFirst({
+  where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+  select: { id: true },
+  orderBy: { createdAt: 'asc' },
+});
+for (const tenant of targets) {
+  await billOneTenantDbCapacityOverage({
+    ...,
+    systemUserIdForAudit: systemUserForAudit?.id ?? null,
+  });
+}
+```
+
+billOneTenantDbCapacityOverage 側は引数優先 + fallback で findFirst (= 後方互換 + 個別呼出耐性)。
+
+### G-4: storage-guard-reset の MANAGEMENT_TENANT_ID 認可漏れ
+
+3 回目検証 B-2 で実装した `POST /api/admin/super/tenants/[id]/storage-guard-reset` は super_admin チェックのみで、対象が MANAGEMENT_TENANT_ID の場合の制限なし。delete tenant 等は明示拒否 (MANAGEMENT_TENANT_FORBIDDEN) するため整合性ギャップ。
+
+**対応**: 認可後の早期 return で 403:
+```ts
+if (tenantId === MANAGEMENT_TENANT_ID) {
+  return NextResponse.json(
+    { error: { code: 'MANAGEMENT_TENANT_FORBIDDEN', message: '...' } },
+    { status: 403 },
+  );
+}
+```
+
+### Agent 誤検出 (I-1) の教訓
+
+agent は「一般 CRUD で precheckStorageLimit を呼出なし」と報告したが、実際は `requireStorageQuotaForWrite` (= precheckStorageLimit のラッパ) が **30 API ファイルで既適用**。agent の grep 範囲が `precheckStorageLimit` 直接呼出のみだったため、ラッパ経由の利用を見落とした。
+
+### 教訓 (転用可能)
+
+- **同観点での繰り返し agent audit でも誤検出が混じる**: 必ず人間 (= main agent) が grep して確認する。memory `feedback_repeated_verification_request.md` の延長
+- **migration の WHERE 句は SNAPSHOT_EXCLUDED_TENANT_IDS と整合させる**: 運営テナントの自動除外は migration / cron / billing で **3 レイヤ同期** ([feedback_3layer_sync_filter.md](../../memory/) と整合)
+- **tx 内の per-row findFirst は N+1 の温床**: 呼出ループの外で 1 回取得して引数化が常套手段
+- **新規 super_admin endpoint には MANAGEMENT_TENANT_ID チェックを忘れず**: delete / suspend / resume と並べてチェックリスト化
+
+### 関連
+
+- 関連 PR: PR #443 (本事例 / 2026-05-25)
+- 関連 ADR: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+- 関連 memory: [feedback_repeated_verification_request.md](../../memory/) / [feedback_3layer_sync_filter.md](../../memory/) / [feedback_billing_invariant.md](../../memory/)
+- 関連 file: [prisma/migrations/20260525_db_capacity_peak_columns/migration.sql](../../prisma/migrations/20260525_db_capacity_peak_columns/migration.sql), [src/services/tenant-monthly-reset.service.ts](../../src/services/tenant-monthly-reset.service.ts), [src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts](../../src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.ts)

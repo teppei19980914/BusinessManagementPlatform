@@ -36,6 +36,7 @@ import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { isSuperAdmin } from '@/lib/permissions/role';
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
+import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 
 export async function POST(
   _req: NextRequest,
@@ -49,6 +50,20 @@ export async function POST(
   }
 
   const { id: tenantId } = await params;
+
+  // 4 回目検証 (G-4) で発見した整合性ギャップ修正: 管理テナントへの操作は明示拒否。
+  //   delete tenant ([../route.ts]) と同じ MANAGEMENT_TENANT_FORBIDDEN 経路で誤操作防止。
+  if (tenantId === MANAGEMENT_TENANT_ID) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'MANAGEMENT_TENANT_FORBIDDEN',
+          message: '管理テナント (運営内部) の storage-guard reset はサポートされていません',
+        },
+      },
+      { status: 403 },
+    );
+  }
 
   const tenant = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
