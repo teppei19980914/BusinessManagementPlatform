@@ -1,6 +1,16 @@
 -- feat/risk-issue-4-section (2026-05-26):
 --   課題 (issue) / リスク (risk) dialog を 4 セクション化するための「発生事象 (occurrence)」列追加。
 --
+-- ★★★ 再投稿経緯 (2026-05-26) ★★★
+--   - 旧 migration directory: 20260529_risk_issue_occurrence
+--   - 旧 SQL に typo: `ALTER TABLE "risk_issues"` (正しくは "risks_issues")
+--   - PR #448 初回 push 時に Netlify build が `prisma migrate deploy` 実行 → P3018 で fail
+--   - その結果 _prisma_migrations テーブルに「failed 状態の旧 migration entry」が残存
+--   - SQL を fix しても Prisma が「failed migration がある」状態を解消できず blocker 化
+--   - 解決策: directory を `20260530_risk_issue_occurrence_retry` にリネーム
+--     → Prisma は新規 migration として認識し正しい SQL を適用
+--     → 旧 entry はテーブルに残るが orphan で実害なし (詳細: KDD §5.X+103)
+--
 -- 4 セクション体系 (UI 上、内部値は同一):
 --   - occurrence       : 発生事象 (issue) / 考えられる事象 (risk)  ← 新規追加
 --   - cause            : 直接原因 (issue) / 考えられる原因 (risk)  ← 既存列の UI 露出を追加

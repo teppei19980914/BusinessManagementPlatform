@@ -15787,3 +15787,190 @@ cron が silent stop (= cron-job.org の登録忘れ / 認証エラーで全 fai
 - 関連 PR: PR #446
 - 該当コード: [src/config/cron-jobs.ts:146-156](../../src/config/cron-jobs.ts#L146-L156)
 - 関連 memory: `feedback_cron_watchdog_pattern`
+
+
+## 5.X+152 ★severity-high★ Prisma migration directory の SQL 内 table 名 typo は failed migration entry を残し以降の deploy を全 block する (PR #448 post-PR フルスキャン検証で発覚)
+
+### 事象
+
+PR #448 (feat/asset-restructure-and-assignee-expansion) で `prisma/migrations/20260529_risk_issue_occurrence/migration.sql` 内に `ALTER TABLE "risk_issues" ADD COLUMN "occurrence" TEXT;` と書いた。実際のテーブル名は `risks_issues` (複数形 + アンダースコア) で、`risk_issues` テーブルは存在しない。
+
+その結果:
+
+1. **Playwright E2E + Visual Regression**: 一時 DB に migration 全件適用しようとして P3018 で fail (`ERROR: relation "risk_issues" does not exist`)
+2. **Netlify Deploy Preview**: production Supabase DB に同 migration を適用しようとして同じく fail。`_prisma_migrations` テーブルに「failed 状態の旧 entry」が残存
+3. **SQL を fix しても deploy 続行不可**: Prisma は `_prisma_migrations` に failed entry がある限り「P3009: migrate found failed migrations in the target database」で全ての後続 migration を block する
+
+ローカル `pnpm test` / `pnpm tsc` / `pnpm build` は migration を実行しないため検出できなかった。
+
+### 原因
+
+- schema.prisma の `@@map("risks_issues")` (実際のテーブル名) と migration SQL の `ALTER TABLE` 直書きが乖離
+- 移行 SQL を手書きする際、schema model 名 (`RiskIssue` 単数形) と table 名 (`risks_issues` 複数形 + 物理命名) を混同
+- review 時に table 名のスペル確認まで踏み込まれなかった
+
+### 解決策
+
+**A. Migration directory を rename して bypass** (PR #448 で採用):
+- `20260529_risk_issue_occurrence` → `20260530_risk_issue_occurrence_retry`
+- Prisma は directory 名から migration_name を生成するため、リネーム後は新規 migration として認識
+- 旧 failed entry は `_prisma_migrations` に残るが、Prisma の deploy 判定対象外になるので block 解除
+- 旧 entry は orphan として残る (実害なし、`pnpm prisma migrate status` で「未管理 entry」として表示される程度)
+
+**B. 手動 resolve** (DB アクセスがある場合):
+```bash
+# 失敗した migration を rolled-back 扱いにする
+pnpm prisma migrate resolve --rolled-back 20260529_risk_issue_occurrence
+# 次回 deploy で新 SQL が適用される
+```
+
+### 再発防止策
+
+1. **Migration SQL 作成時の検証フロー** (新規 migration directory 追加時の必須手順):
+   - `grep -rn 'CREATE TABLE "対象テーブル名"' prisma/migrations/` で実テーブル名を確認
+   - schema.prisma の `@@map("...")` 行で table 名を一次確認
+   - migration SQL を `psql -f` でローカル DB に dry-run 適用 (= 構文 + テーブル存在を事前検証)
+   - PR description に「table 名確認: `risks_issues` (検証済)」と明記する
+
+2. **CI gate 追加 (将来 work)**:
+   - `prisma migrate diff` で migration SQL ↔ schema 整合を自動検証
+   - Lint/Test/Build workflow に migration validation step を追加
+   - これにより table 名 typo は GitHub Actions 段階で検出可能 (= Netlify deploy 前 + production DB 汚染前)
+
+3. **トラブル発生時の対処**: 本セクション参照 (rename approach 採用)
+
+### 関連
+
+- 関連 PR: #448
+- 該当 migration: `prisma/migrations/20260530_risk_issue_occurrence_retry/migration.sql`
+- 関連 memory: `feedback_repeated_verification_request` (= フルスキャン検証 2 回目で重大バグ検出の実績、本件も該当)
+
+---
+
+## 5.X+153 ★severity-1 (情報漏洩リスク)★ 「他人参照不可」可視性 + 「編集権限」の組合せは service 層で明示的に拒否しないと、API 直叩きで可視性矛盾の編集権限が付与される (PR #448)
+
+### 事象
+
+PR #448 で 4 資産 (Risk/Issue/Knowledge/Retrospective/Memo) の編集権限を「作成者のみ」→「作成者 OR 担当者」に拡張した際、Memo については以下の矛盾が発生していた:
+
+- Memo.visibility=`'private'` は「作成者本人のみ閲覧可」(他人には不存在扱い)
+- 担当者 (assigneeId) は編集権限を持つようになったが、private memo を **閲覧** できない
+- → 担当者は memo の中身を見れないのに `PATCH /api/memos/[id]` を叩けば編集可能 (= 内容を上書きしたら参照不可なまま保存)
+
+API 直叩きであれば `{ assigneeId: '他人ID', visibility: 'private' }` を送信できる。UI は selector を非表示にしていたが、防御は service 層で必要だった (validator は generic で `viewerUserId` の文脈を知らないため上記検査不能)。
+
+migration SQL コメント (memo_assignee) には設計意図として記載されていたが、service 実装が抜けていた:
+
+```
+# memo_assignee/migration.sql コメント抜粋
+#   - private memo に他人を assignee 指定すると、assignee は memo を参照不可になるため
+#     service 層 (memo.service.ts) で「assigneeId が他人 かつ visibility='private'」を拒否する
+```
+
+### 影響範囲
+
+- **既存メモへの侵入経路**: API 認証済ユーザが PATCH リクエストを直接送れば、他人を担当者に指定した private memo を作成・更新可能
+- **担当者には情報を見せない**: assignee は private memo を読めないので情報漏洩 (= 機微情報を「担当者と書かれた相手」に見せる) には直接繋がらないが、データ整合性違反
+- **業務インシデント**: 「担当を渡したつもりが、相手は何も見えていない」UI 不整合で運用者が混乱する
+
+### 解決策
+
+`memo.service.ts` の `createMemo` / `updateMemo` 両方に拒否ロジック追加:
+
+```typescript
+// createMemo:
+if (visibility === 'private' && input.assigneeId && input.assigneeId !== userId) {
+  throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+}
+
+// updateMemo: effective visibility と effective assigneeId のマージ後で判定
+const effectiveVisibility = input.visibility ?? existing.visibility;
+const effectiveAssigneeId =
+  input.assigneeId !== undefined ? input.assigneeId : existing.assigneeId;
+if (
+  effectiveVisibility === 'private' &&
+  effectiveAssigneeId &&
+  effectiveAssigneeId !== existing.userId
+) {
+  throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+}
+```
+
+注意点:
+- **「効果的な可視性」**を判定: input.visibility が省略時は既存値を使う (= 部分更新時の漏れ防止)
+- **self-assign は許容**: `assigneeId === userId` (= 自分を担当者にセット) は意味的に「担当 = 作成者」なので OK
+- **public → private 切替** + 既存 assignee=他人 のケースも拒否対象: UI から「公開範囲だけ private に変更」と送られた場合、既存 assignee の整合性を再評価する
+
+### 再発防止策
+
+1. **migration SQL に「service 層で enforce」と書いたら、必ず実装する**:
+   - migration SQL のコメントは「設計意図」のメモではなく実装契約
+   - PR レビュー時に「コメントで言及された service 層拒否ロジックが実在するか」を確認するチェックリストを追加
+2. **「可視性 × 編集権限」マトリクスを明示的に列挙**:
+   - 4 資産のうち memo だけが visibility='private' = 他人不可視という特殊仕様
+   - 同じ特殊仕様を持つ entity を増やす場合、本セクションを参照して service 層拒否を必ず実装
+3. **テスト**: `private memo に他人 assignee 指定すると PRIVATE_MEMO_ASSIGNEE_FORBIDDEN` などの単体テスト追加 (4 ケース)
+
+### 関連
+
+- 関連 PR: #448 (commit e00eefd)
+- 該当コード: [src/services/memo.service.ts](../../src/services/memo.service.ts) (createMemo / updateMemo)
+- 関連テスト: [src/services/memo.service.test.ts](../../src/services/memo.service.test.ts)
+- 関連 memory: `feedback_tenant_isolation` (= 「個人情報漏洩リスクは最優先」と同じ重大度)
+
+---
+
+## 5.X+154 ★severity-2 (UI と認可の乖離)★ 個別 update と bulk update で認可ロジックが乖離すると、UI から選択可能だが silent skip される行が発生する (PR #448)
+
+### 事象
+
+PR #448 で 4 資産の単発 `updateX` / `deleteX` の認可を「作成者のみ」→「作成者 OR 担当者」に拡張した一方、`bulkUpdateXVisibilityFromList` (一括 visibility 変更) は「作成者のみ」のままだった。
+
+その結果:
+
+- UI の `selectableIds` は「作成者 OR 担当者」を選択可にする (B9 で更新済)
+- 担当者がチェックボックスをチェックして「全メンバーに公開」をクリック
+- bulk API が「担当者は対象外」として silent skip → `skippedNotOwned` カウントが増えるが UI は成功扱い
+- ユーザ視点では「クリックしたのに変わらない」 (= UX バグ)
+
+### 原因
+
+- 単発 update/delete の認可拡張時に bulk 経路の認可を見落とした
+- bulk update の owned filter `t.X === viewerUserId` を担当者まで含めるよう改修されていなかった
+- `selectableIds` (UI) と `owned` filter (service) の認可ロジックが別ファイルで管理されていた
+
+### 解決策
+
+3 サービス (risk / knowledge / retrospective) の bulk update に対し:
+
+1. `findMany` の `select` に `assigneeId: true` を追加
+2. `owned` filter を OR に拡張: `t.X === userId || t.assigneeId === userId`
+3. `updateMany` の `where` も二重防御で OR 句に: `OR: [{ X: userId }, { assigneeId: userId }]`
+
+memo bulk (`bulkUpdateMemosVisibilityFromList`) は対象外:
+- /memos UI が `listMyMemos` (`userId === viewerUserId` のみ) を使うため、UI から担当者の memo を選択不可
+- 将来 `listMyMemos` を「assigned-to-me memo も含む」に拡張する際に、bulk memo の認可も同期更新が必要 (= 関連 work として残置)
+
+### 再発防止策
+
+1. **「認可テーブル」(認可ロジックの一元化)**:
+   - 同じ entity の CRUD で「個別 vs bulk」「create vs update vs delete」「project vs global context」など複数の認可経路が存在
+   - 4 資産 × N 経路 = M セルあり、認可ロジックを横並びで把握できる表 (docs/specification/PERMISSION_MATRIX.md 等) を更新する習慣を作る
+2. **テスト**: 「担当者本人のレコードも bulk 更新対象に含まれる」テストを 3 サービスに追加
+3. **UI と service 層の対称性チェックリスト**:
+   - `selectableIds` (UI) の判定条件
+   - `BulkSelectCell canSelect={...}` の判定条件
+   - service `owned` filter
+   - service `updateMany where` 句
+   - これら 4 つが同じ認可ロジックを表現していること
+
+### 関連
+
+- 関連 PR: #448 (commit e00eefd)
+- 該当コード:
+  - [src/services/risk.service.ts:780-795](../../src/services/risk.service.ts#L780-L795) (bulkUpdateRisksVisibilityFromList)
+  - [src/services/knowledge.service.ts:710-744](../../src/services/knowledge.service.ts#L710-L744)
+  - [src/services/retrospective.service.ts:628-650](../../src/services/retrospective.service.ts#L628-L650)
+- 関連テスト: 各 service の `担当者本人のレコードも bulk 更新対象に含まれる` テスト
+
+---
