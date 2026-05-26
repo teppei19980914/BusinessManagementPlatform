@@ -35,8 +35,11 @@
 | **無料** | 資産の新規作成・更新 (Knowledge / RiskIssue / Retrospective / Memo) | 全プラン無料・無制限 |
 | **無料** | チャット意味検索 (💬 ボタンの自然言語検索) | 全プラン無料・無制限 |
 | **無料** | CSV / XLSX インポート (= 一括資産取込) | 全プラン無料・無制限 |
+| **無料** | 添付ファイル本文の embedding 生成 (PDF/Excel/Word/CSV/text、ファイル意味検索用) *(ADR-0021)* | 全プラン無料・無制限 |
 
-> **注: 上記は AI 機能 (= API 利用) の料金です。** ストレージ (DB 容量) は別建てで [50MB まで無料 / 1GB ごと ¥50](./db-capacity-billing-guide.md) の従量課金が並行して発生します。
+> **注: 上記は AI 機能 (= API 利用) の料金です。** ストレージは別建てで以下の従量課金が並行して発生します:
+> - DB 容量: [50MB まで無料 / 1GB ごと ¥50](./db-capacity-billing-guide.md)
+> - **添付ファイル容量** *(ADR-0021 / 2026-05-26)*: [100MB まで無料 / 1GB ごと ¥10](./file-storage-billing-guide.md)
 
 ---
 
@@ -69,11 +72,15 @@
 | **チャット意味検索** | クエリを Voyage で embedding → 過去資産との類似度上位を表示 | **無料・無制限** |
 | **CSV / XLSX インポート** | 一括取込時に embedding を生成 | **無料・無制限** |
 | **月初の embedding 補完 cron** | 失敗していた embedding を月初に再生成 (バックグラウンド) | **無料・無制限** |
+| **添付ファイルの embedding 生成** *(ADR-0021 / 2026-05-26)* | PDF/Excel/Word/CSV/text/docx をアップロードした際、本文を抽出 → Voyage で embedding → ファイル意味検索の索引に追加 | **無料・無制限** |
 
 > ※ ただし、**1 テナントあたり月 10,000 calls** の Fair Use Limit が適用されます ([§6.3](#63-無料機能の-fair-use-limit-暴走防止) 参照)。通常運用ではまず到達しません (典型値: 月 200 calls 程度)。
 
+> **添付ファイル embedding の補足** *(ADR-0021)*: ファイル本体の保存容量は **別途従量課金** (100MB まで無料 / 1GB ごと ¥10、詳細は [ファイルストレージ ご利用ガイド](./file-storage-billing-guide.md)) ですが、**embedding 生成自体は無料** です。提案エンジンとチャット「ファイル」キーワード検索の精度向上のため、運営側で負担しています。
+
 各機能の詳細:
 - チャット検索: [チャットボット意味検索 使い方ガイド](./chat-semantic-search-guide.md)
+- ファイルストレージ + embedding: [ファイルストレージ ご利用ガイド](./file-storage-billing-guide.md)
 
 ### 2.3 そもそも AI を呼ばない操作 (= 完全無料)
 

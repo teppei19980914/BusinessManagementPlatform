@@ -205,6 +205,37 @@ model Tenant {
   storageGuardCircuitFailCount         Int       @default(0) @map("storage_guard_circuit_fail_count")
   /// circuit breaker open 時刻 (= 一時 write 全拒否状態)。null = 通常運用
   storageGuardCircuitOpenedAt          DateTime? @map("storage_guard_circuit_opened_at") @db.Timestamptz
+  // ============================================================
+  // ファイル添付ストレージ従量課金 (ADR-0021 / 2026-05-26)
+  //
+  // Supabase Storage に保存された Attachment 本体の容量を月中 peak ベースで従量課金する。
+  // DB 容量 (ADR-0020) と同設計 (peak 計測 / 4 層防御 / drift) を mirror する。
+  //
+  // 関連:
+  //   - 単価/閾値: src/config/file-storage-pricing.ts (100MB 無料 + 1GB tier × ¥10、50GB 上限)
+  //   - 計測: src/services/file-storage-bucket-usage.service.ts (storage.objects 集計 + MAX update)
+  //   - 月初請求: src/services/tenant-monthly-reset.service.ts (前月 peak → ApiCallLog INSERT)
+  //   - 退会精算: src/services/tenant-withdrawal-billing.service.ts (月途中精算)
+  // ============================================================
+  /// 現在の Supabase Storage 使用バイト数。日次 cron で storage.objects から集計してキャッシュ。
+  /// UI 表示 + drift 検知に使用 (= 表示は再集計 invariant: feedback_billing_data_realtime.md)
+  storageFileBytesUsed                 BigInt    @default(0) @map("storage_file_bytes_used")
+  /// 最終更新時刻 (UI で「○分前」表示 + stale 判定で on-demand 再計算用)
+  storageFileBytesUsedAt               DateTime? @map("storage_file_bytes_used_at") @db.Timestamptz
+  /// 月中の最大使用バイト数。月初 cron でリセット、write 経由で MAX 更新。課金根拠の真値。
+  /// この値が ApiCallLog.metadata.peakBytes に記録される (= storage_file_overage 単価計算の入力)
+  storageFileBytesPeakThisMonth        BigInt    @default(0) @map("storage_file_bytes_peak_this_month")
+  /// peak 到達時刻 (UI 表示 / audit 用)
+  storageFileBytesPeakAt               DateTime? @map("storage_file_bytes_peak_at") @db.Timestamptz
+  /// drift 検知用: Supabase Storage Dashboard で観測される bucket 容量 peak。
+  /// 日次 snapshot で MAX 更新。Storage Dashboard 実請求対比 (= 推測されたテナント peak SUM とのズレ検知)
+  storageBucketBytesPeakThisMonth      BigInt?   @map("storage_bucket_bytes_peak_this_month")
+  /// 4 層防御の現状 Level ('none' / 'l1' / 'l2' / 'l3')
+  /// 月初 cron でリセット、通知 spam 防止に使用 (= dbCapacityWarningLevel と同設計)
+  fileStorageWarningLevel              String    @default("none") @map("file_storage_warning_level") @db.VarChar(8)
+  /// 日次 anomaly 検知用: 直近 24h で +5GB 以上増加した場合 super_admin にアラート。
+  /// 値: 直近 anomaly 検知の baseline (= 24h 前 snapshot)。
+  storageFileBytesYesterday            BigInt?   @map("storage_file_bytes_yesterday")
   /// PR-1 (2026-05-15): テナント全体の IANA タイムゾーン名。
   ///   全ユーザの日付表示・残日数計算・月初リセット境界に使用する。
   ///   default 'Asia/Tokyo'。テナント管理者が /settings/tenant から変更可。
@@ -1158,12 +1189,55 @@ model Attachment {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
+  // ============================================================
+  // ADR-0021 (2026-05-26): Supabase Storage 本体ファイル + Embedding
+  //
+  // 既存の url-only Attachment は storageProvider='url' で残し、Supabase Storage
+  // 経由でアップロードされたファイルは storageProvider='supabase' とする。
+  //
+  // 関連:
+  //   - 単価/閾値: src/config/file-storage-pricing.ts (50MB/file, 50GB/tenant)
+  //   - アップロード: src/services/attachment.service.ts + POST /api/attachments/upload + /finalize
+  //   - Embedding: src/services/attachment-embedding.service.ts (Voyage 呼出)
+  //   - テキスト抽出: src/services/file-text-extraction.service.ts (PDF/Excel/CSV/text/docx)
+  // ============================================================
+  /// ファイル保存先 ('url' = 旧 URL のみ / 'supabase' = Supabase Storage 本体保存)
+  /// 既存 row は migration で 'url' に backfill される
+  storageProvider      String                       @default("url") @map("storage_provider") @db.VarChar(20)
+  /// Supabase Storage Object Key (= tenants/{tenantId}/{entityType}/{entityId}/{uuid}-{sanitizedFileName})
+  /// storageProvider='url' の場合は NULL
+  storageObjectKey     String?                      @map("storage_object_key") @db.VarChar(500)
+  /// ファイルサイズ (バイト)。Supabase Storage の場合は finalize 時にセット、url 型は NULL
+  sizeBytes            BigInt?                      @map("size_bytes")
+  /// 添付ファイル本文の Voyage embedding (1024 次元)。
+  /// テキスト抽出に成功した場合のみセット。提案エンジン + チャット file scope 検索で使用
+  contentEmbedding     Unsupported("vector(1024)")? @map("content_embedding")
+  /// Embedding 生成ステータス ('pending' / 'generating' / 'completed' / 'failed' / 'unsupported')
+  ///   - pending: アップロード完了、embedding 生成待ち
+  ///   - generating: 背景 cron で生成中
+  ///   - completed: 成功 (contentEmbedding セット済)
+  ///   - failed: 3 回リトライ後も失敗 (contentEmbedding NULL のまま)
+  ///   - unsupported: テキスト抽出非対応形式 (画像/動画/zip 等)
+  embeddingStatus      String                       @default("pending") @map("embedding_status") @db.VarChar(20)
+  /// 抽出テキストの SHA-256 ハッシュ。同一内容ファイルの重複 embedding 生成防止 + 改ざん検知
+  extractedTextHash    String?                      @map("extracted_text_hash") @db.VarChar(64)
+  /// Embedding 生成成功時刻 (= ApiCallLog との突合用 / drift 検知 / 監査)
+  embeddingGeneratedAt DateTime?                    @map("embedding_generated_at") @db.Timestamptz
+  /// Embedding 生成リトライ回数 (3 で打ち切り → failed)
+  embeddingRetryCount  Int                          @default(0) @map("embedding_retry_count")
+  /// 最終リトライ時刻 (cron の next retry 判定で使用、指数 backoff: 1min → 5min → 30min)
+  embeddingLastRetryAt DateTime?                    @map("embedding_last_retry_at") @db.Timestamptz
+
   addedByUser User   @relation("AttachmentAddedBy", fields: [addedBy], references: [id])
   tenant      Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([entityType, entityId], map: "idx_attachments_entity")
   @@index([entityType, entityId, slot], map: "idx_attachments_slot")
   @@index([tenantId], map: "idx_attachments_tenant")
+  /// embedding cron で pending を高速 fetch するための部分インデックス
+  @@index([embeddingStatus, embeddingLastRetryAt], map: "idx_attachments_embedding_status")
+  /// drift 検知 / bucket 集計の高速化用
+  @@index([tenantId, storageProvider, deletedAt], map: "idx_attachments_tenant_provider")
   @@map("attachments")
 }
 

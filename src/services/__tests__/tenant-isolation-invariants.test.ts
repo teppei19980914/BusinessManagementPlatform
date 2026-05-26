@@ -145,6 +145,18 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   //   tenantId 概念が存在しない (= テナント DB アクセスなし、外部 SaaS のグローバル metrics)。
   //   呼出側は super_admin Diagnostics ダッシュボードのみ (= role gate で多層防御済)。
   'netlify-metrics.service.ts',
+  // ADR-0021 (2026-05-26): ファイル本文テキスト抽出は純粋ユーティリティ (Buffer を受けて
+  //   parser に渡し抽出テキストを返すのみ)。DB アクセスなし、tenant 概念なし。
+  //   呼出元 (attachment-embedding.service.ts) で tenant scope を確保。
+  'file-text-extraction.service.ts',
+  // ADR-0021 (2026-05-26): attachment embedding 生成サービス。
+  //   embedAttachment(attachmentId, tenantId, ...) 形式で tenantId は引数として受け取り、
+  //   ApiCallLog.create では tenantId: args.tenantId を必ずセット。
+  //   prisma.attachment.findUnique/update は id (UUID) を主キー lookup するため
+  //   tenantId フィルタは構造上不要 (= attachment.id は UUID で衝突しない、
+  //   かつ呼出元の upload API が tenant 認可を実施済)。
+  //   呼出側で tenantId 確保 + Stripe Invariant のため許可リスト入り。
+  'attachment-embedding.service.ts',
 ]);
 
 /**

@@ -30,7 +30,7 @@
  */
 
 /**
- * 課金対象 featureUnit の集合 (ADR-0019 / 2026-05-24、ADR-0020 / 2026-05-25 追加)。
+ * 課金対象 featureUnit の集合 (ADR-0019 / 2026-05-24、ADR-0020 / 2026-05-25 追加、ADR-0021 / 2026-05-26 追加)。
  *
  * - `project-upsert`: プロジェクト作成/更新時の auto-tag (LLM) + embedding を 1 ApiCallLog に集約。
  *   plan 依存単価で課金 (Beginner 上限カウント / Expert ¥10 / Pro ¥15)。
@@ -42,15 +42,26 @@
  *   超過課金 (¥50/GB tier、50MB 無料) を ApiCallLog 1 件として記録。`withMeteredLLM` ではなく
  *   `tenant-monthly-reset.service.ts` が直接 INSERT する (= call ベースではなく月次集約方式)。
  *   費用計算は `src/config/db-capacity-pricing.ts:calculateOverageJpy()`。
+ * - **`storage-file-overage`** (ADR-0021 / 2026-05-26): ファイル添付ストレージ従量課金。月初 cron で
+ *   前月 peak ベースの超過課金 (¥10/GB tier、100MB 無料) を ApiCallLog 1 件として記録。
+ *   `withMeteredLLM` ではなく `tenant-monthly-reset.service.ts` が直接 INSERT する。
+ *   費用計算は `src/config/file-storage-pricing.ts:calculateFileStorageOverageJpy()`。
  *
- * 上記以外の featureUnit (`{knowledge,risk-issue,retrospective,memo}-embedding`,
- * `chat-semantic-search`, `*-embedding-backfill`, `external-import-embedding`) は **無料**。
+ * 上記以外の featureUnit は **無料**:
+ *   - 資産作成系: `{knowledge,risk-issue,retrospective,memo}-embedding`
+ *   - チャット: `chat-semantic-search`
+ *   - cron 補完: `*-embedding-backfill`
+ *   - 外部インポート: `external-import-embedding`
+ *   - **`attachment-embedding`** (ADR-0021 / 2026-05-26): 添付ファイル本文の意味検索用 embedding 生成
+ *     (= Voyage embedding API 呼出)。提案エンジン/チャット精度向上のため運営側負担で無料化。
+ *     ApiCallLog には記録するが `costJpy = 0`、counter / Stripe queue いずれも更新しない。
  */
 export const BILLABLE_FEATURE_UNITS = [
   'project-upsert',
   'suggestion-explanation',
   'auto-tag-extract',
   'db-capacity-overage',
+  'storage-file-overage',
 ] as const;
 
 export type BillableFeatureUnit = (typeof BILLABLE_FEATURE_UNITS)[number];
