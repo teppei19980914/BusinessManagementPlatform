@@ -16086,3 +16086,66 @@ PR #448 で Knowledge / Retrospective / Memo に `assigneeId` 列を追加した
 - 関連 memory: `feedback_3layer_sync_filter` (= 「同期更新が必要な 4 経路」、本件は export/import が同種の sync 対象)
 
 ---
+
+## 5.X+157 ★severity-2★ User の soft-delete を assignee 検証で考慮しないと、退職者が担当者に指定可能になる罠 (PR #448 post-PR 4 巡目検証で発覚)
+
+### 事象
+
+PR #448 (feat/asset-restructure-and-assignee-expansion) で導入した `src/lib/assignee-validation.ts` の `assertAssigneeTenant()` は以下のロジックだった:
+
+```typescript
+const user = await prisma.user.findUnique({
+  where: { id: assigneeId },
+  select: { tenantId: true },
+});
+if (!user || user.tenantId !== expectedTenantId) {
+  throw new Error('ASSIGNEE_TENANT_MISMATCH');
+}
+```
+
+`findUnique` は `deletedAt` を考慮しないため、**soft-delete された User (退職等)** を assigneeId として指定すると validation を透過してしまう。
+
+### 影響範囲
+
+- **業務 dead-end**: 担当者がログイン不可なのに「編集権限保持者」として残り続ける
+- **UI 表示の混乱**: 担当者列に「削除済ユーザ」名前が表示される (UX 問題)
+- **権限剥奪の機会逸失**: 退職者の権限を assigneeId 経由で実質維持してしまう (= compliance 観点で問題)
+- **重大度判定**: 情報漏洩はないが、業務運用の整合性が崩れるため severity-2
+
+### 解決策
+
+`findUnique` → `findFirst` に変更し、`where` に `deletedAt: null` を追加:
+
+```typescript
+const user = await prisma.user.findFirst({
+  where: { id: assigneeId, deletedAt: null },
+  select: { tenantId: true },
+});
+if (!user || user.tenantId !== expectedTenantId) {
+  throw new Error('ASSIGNEE_TENANT_MISMATCH');
+}
+```
+
+(`findUnique` は primary key 系のみ受け付け、`deletedAt: null` を where に追加できない仕様のため `findFirst` に切替)
+
+### 再発防止策
+
+1. **「外部入力 FK の検証」テンプレート**:
+   - tenantId 検証
+   - deletedAt: null フィルタ
+   - (必要に応じて) isActive=true フィルタ
+   - 3 点セットを「外部から受け取る user FK」全箇所に適用
+2. **横展開対象 (将来 work)**:
+   - Task.assigneeId の入力検証 (現状は別経路だが同パターン)
+   - 他の外部入力 user FK (Customer.handlerUserId 等) を grep して同様の罠がないか確認
+3. **テスト**: assignee-validation.test.ts に「soft-delete user は reject」ケース追加 (= 6 ケース体制)
+
+### 関連
+
+- 関連 PR: #448 (post-PR 検証 4 巡目で検出)
+- 該当コード: [src/lib/assignee-validation.ts](../../src/lib/assignee-validation.ts)
+- 関連テスト: [src/lib/assignee-validation.test.ts](../../src/lib/assignee-validation.test.ts)
+- 関連 memory: `feedback_tenant_isolation` (= 個人情報漏洩は最優先、本件は dead-end 系の severity-2 派生)
+- 関連 memory: `feedback_repeated_verification_request` (= フルスキャン N 回目で重大バグ検出、本件は 4 回目で検出)
+
+---
